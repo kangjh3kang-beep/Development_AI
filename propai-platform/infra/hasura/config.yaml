@@ -1,0 +1,8 @@
+# PropAI v30.0 - Hasura CLI 설정
+version: 3
+endpoint: http://localhost:8088
+admin_secret: hasura_super_secret_key
+metadata_directory: metadata
+actions:
+  kind: synchronous
+  handler_webhook_baseurl: http://localhost:8000

@@ -1,0 +1,234 @@
+import { render, screen } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import BimPage from "../bim/page";
+import BlockchainPage from "../blockchain/page";
+import ContractsPage from "../contracts/page";
+import ProjectDetailPage from "../page";
+import DesignPage from "../design/page";
+import DronePage from "../drone/page";
+import FinancePage from "../finance/page";
+import ReportPage from "../report/page";
+
+vi.mock("@/components/layout/ModulePlaceholder", () => ({
+  ModulePlaceholder: ({
+    title,
+    statusLabel,
+    items,
+  }: {
+    title: string;
+    statusLabel: string;
+    items: string[];
+  }) => (
+    <div data-testid="module-placeholder">
+      <h1>{title}</h1>
+      <p>{statusLabel}</p>
+      <ul>
+        {items.map((item) => (
+          <li key={item}>{item}</li>
+        ))}
+      </ul>
+    </div>
+  ),
+}));
+
+vi.mock("@/components/projects/ProjectFinanceWorkspaceClient", () => ({
+  ProjectFinanceWorkspaceClient: ({
+    projectId,
+  }: {
+    projectId: string;
+  }) => <div data-testid="project-finance-workspace">{projectId}</div>,
+}));
+
+vi.mock("@/components/projects/ProjectContractWorkspaceClient", () => ({
+  ProjectContractWorkspaceClient: ({
+    projectId,
+  }: {
+    projectId: string;
+  }) => <div data-testid="project-contract-workspace">{projectId}</div>,
+}));
+
+vi.mock("@/components/projects/ProjectDroneWorkspaceClient", () => ({
+  ProjectDroneWorkspaceClient: ({
+    projectId,
+  }: {
+    projectId: string;
+  }) => <div data-testid="project-drone-workspace">{projectId}</div>,
+}));
+
+vi.mock("@/components/projects/ProjectDesignWorkspaceClient", () => ({
+  ProjectDesignWorkspaceClient: ({
+    projectId,
+  }: {
+    projectId: string;
+  }) => <div data-testid="project-design-workspace">{projectId}</div>,
+}));
+
+vi.mock("@/components/projects/ProjectBimWorkspaceClient", () => ({
+  ProjectBimWorkspaceClient: ({
+    projectId,
+  }: {
+    projectId: string;
+  }) => <div data-testid="project-bim-workspace">{projectId}</div>,
+}));
+
+vi.mock("@/components/projects/ProjectBlockchainWorkspaceClient", () => ({
+  ProjectBlockchainWorkspaceClient: ({
+    projectId,
+  }: {
+    projectId: string;
+  }) => <div data-testid="project-blockchain-workspace">{projectId}</div>,
+}));
+
+vi.mock("@/components/projects/ProjectReportWorkspaceClient", () => ({
+  ProjectReportWorkspaceClient: ({
+    projectId,
+  }: {
+    projectId: string;
+  }) => <div data-testid="project-report-workspace">{projectId}</div>,
+}));
+
+vi.mock("@/components/projects/ProjectSummaryClient", () => ({
+  ProjectSummaryClient: ({
+    projectId,
+  }: {
+    projectId: string;
+  }) => <div data-testid="project-summary-workspace">{projectId}</div>,
+}));
+
+vi.mock("@/i18n/get-dictionary", () => ({
+  getDictionary: vi.fn(async () => ({
+    workspace: {
+      modeLive: "LIVE",
+      modeMock: "MOCK",
+    },
+    nav: {
+      contracts: "Contracts",
+      design: "Design",
+      bim: "BIM",
+      finance: "Finance",
+      drone: "Drone",
+      blockchain: "Blockchain",
+      report: "Report",
+    },
+  })),
+}));
+
+describe("Project live subroutes", () => {
+  beforeEach(() => {
+    vi.stubEnv("NEXT_PUBLIC_USE_MOCKS", "false");
+  });
+
+  it("renders the finance project page with the live workspace", async () => {
+    render(
+      await FinancePage({
+        params: Promise.resolve({ locale: "en", id: "project-finance-001" }),
+      }),
+    );
+
+    expect(screen.getByText("Project finance live route")).toBeInTheDocument();
+    expect(screen.getByText("LIVE")).toBeInTheDocument();
+    expect(screen.getByTestId("project-finance-workspace")).toHaveTextContent(
+      "project-finance-001",
+    );
+  });
+
+  it("renders the contracts project page with the live workspace", async () => {
+    render(
+      await ContractsPage({
+        params: Promise.resolve({ locale: "en", id: "project-contract-001" }),
+      }),
+    );
+
+    expect(
+      screen.getByText("Project contract automation live route"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("LIVE")).toBeInTheDocument();
+    expect(screen.getByTestId("project-contract-workspace")).toHaveTextContent(
+      "project-contract-001",
+    );
+  });
+
+  it("renders the report project page with the live workspace", async () => {
+    render(
+      await ReportPage({
+        params: Promise.resolve({ locale: "en", id: "project-report-001" }),
+      }),
+    );
+
+    expect(screen.getByText("Project report live route")).toBeInTheDocument();
+    expect(screen.getByText("LIVE")).toBeInTheDocument();
+    expect(screen.getByTestId("project-report-workspace")).toHaveTextContent(
+      "project-report-001",
+    );
+  });
+
+  it("renders the drone project page with the live workspace", async () => {
+    render(
+      await DronePage({
+        params: Promise.resolve({ locale: "en", id: "project-drone-001" }),
+      }),
+    );
+
+    expect(screen.getByText("Project drone live route")).toBeInTheDocument();
+    expect(screen.getByText("LIVE")).toBeInTheDocument();
+    expect(screen.getByTestId("project-drone-workspace")).toHaveTextContent(
+      "project-drone-001",
+    );
+  });
+
+  it("renders the design project page with the live workspace", async () => {
+    render(
+      await DesignPage({
+        params: Promise.resolve({ locale: "en", id: "project-design-001" }),
+      }),
+    );
+
+    expect(screen.getByText("Project design live route")).toBeInTheDocument();
+    expect(screen.getByText("LIVE")).toBeInTheDocument();
+    expect(screen.getByTestId("project-design-workspace")).toHaveTextContent(
+      "project-design-001",
+    );
+  });
+
+  it("renders the bim project page with the live workspace", async () => {
+    render(
+      await BimPage({
+        params: Promise.resolve({ locale: "en", id: "project-bim-001" }),
+      }),
+    );
+
+    expect(screen.getByText("Project BIM live route")).toBeInTheDocument();
+    expect(screen.getByText("LIVE")).toBeInTheDocument();
+    expect(screen.getByTestId("project-bim-workspace")).toHaveTextContent(
+      "project-bim-001",
+    );
+  });
+
+  it("renders the blockchain project page with the live workspace", async () => {
+    render(
+      await BlockchainPage({
+        params: Promise.resolve({ locale: "en", id: "project-chain-001" }),
+      }),
+    );
+
+    expect(screen.getByText("Project blockchain live route")).toBeInTheDocument();
+    expect(screen.getByText("LIVE")).toBeInTheDocument();
+    expect(
+      screen.getByTestId("project-blockchain-workspace"),
+    ).toHaveTextContent("project-chain-001");
+  });
+
+  it("renders the project overview page with the live summary workspace", async () => {
+    render(
+      await ProjectDetailPage({
+        params: Promise.resolve({ locale: "en", id: "project-overview-001" }),
+      }),
+    );
+
+    expect(screen.getByText("Project live overview")).toBeInTheDocument();
+    expect(screen.getByText("LIVE")).toBeInTheDocument();
+    expect(screen.getByTestId("project-summary-workspace")).toHaveTextContent(
+      "project-overview-001",
+    );
+  });
+});

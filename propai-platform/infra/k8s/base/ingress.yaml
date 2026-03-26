@@ -1,0 +1,39 @@
+# PropAI v30.0 - Ingress (nginx ingress controller)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: propai-ingress
+  namespace: propai
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "120"
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - api.propai.io
+        - app.propai.io
+      secretName: propai-tls-secret
+  rules:
+    - host: api.propai.io
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: propai-api
+                port:
+                  number: 8000
+    - host: app.propai.io
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: propai-web
+                port:
+                  number: 3000

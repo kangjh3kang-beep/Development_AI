@@ -1,0 +1,51 @@
+{
+  "name": "@propai/web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint .",
+    "type-check": "node -e \"require('node:fs').rmSync('.next/cache', { recursive: true, force: true })\" && next typegen && tsc --noEmit --incremental false",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "e2e:run": "playwright test",
+    "e2e:accessibility": "playwright test e2e/accessibility.spec.ts"
+  },
+  "dependencies": {
+    "@apollo/client": "^3.13.9",
+    "@propai/ui": "workspace:*",
+    "@tanstack/react-query": "^5.66.9",
+    "ethers": "^6.0.0",
+    "framer-motion": "^12.38.0",
+    "graphql": "^16.10.0",
+    "konva": "^9.3.22",
+    "next": "16.1.7",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "react-konva": "^18.2.14",
+    "recharts": "^3.8.0",
+    "solc": "^0.8.26",
+    "three": "^0.160.0",
+    "zustand": "^5.0.3"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.11.1",
+    "@playwright/test": "^1.58.2",
+    "@tailwindcss/postcss": "^4",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.0",
+    "@testing-library/user-event": "^14.6.1",
+    "@types/node": "^20",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19",
+    "@types/three": "^0.160.0",
+    "eslint": "^9",
+    "eslint-config-next": "16.1.7",
+    "jsdom": "^27.0.0",
+    "tailwindcss": "^4",
+    "typescript": "^5",
+    "vitest": "^3.2.4"
+  }
+}

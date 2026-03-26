@@ -1,0 +1,36 @@
+# PropAI v30.0 - arq 워커 Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: propai-worker
+  namespace: propai
+  labels:
+    app.kubernetes.io/name: propai-worker
+    app.kubernetes.io/component: worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: propai-worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: propai-worker
+        app.kubernetes.io/component: worker
+    spec:
+      containers:
+        - name: propai-worker
+          image: ghcr.io/propai/propai-worker:latest
+          command: ["python", "-m", "apps.worker.main"]
+          resources:
+            limits:
+              cpu: 1000m
+              memory: 2Gi
+            requests:
+              cpu: 250m
+              memory: 512Mi
+          envFrom:
+            - configMapRef:
+                name: propai-config
+            - secretRef:
+                name: propai-secrets

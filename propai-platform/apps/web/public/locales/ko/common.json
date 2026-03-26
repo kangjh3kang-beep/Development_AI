@@ -1,0 +1,245 @@
+{
+  "meta": {
+    "title": "PropAI 워크스페이스",
+    "siteName": "PropAI",
+    "description": "부동산 개발 전주기 AI 자동화 플랫폼의 프론트엔드 시작 화면입니다."
+  },
+  "hero": {
+    "badge": "Next.js 프론트엔드 환경",
+    "title": "프로젝트의 언어와 워크플로를 한 번에 정리하는 운영 화면",
+    "description": "한국어, 영어, 중국어 간체를 기준으로 라우팅을 고정하고, 이후 설계·금융·드론·블록체인 모듈을 순차적으로 연결할 수 있는 웹 환경을 준비합니다.",
+    "primaryCta": "대시보드 열기",
+    "secondaryCta": "로그인 준비 화면"
+  },
+  "nav": {
+    "locale": "언어",
+    "dashboard": "대시보드",
+    "projects": "프로젝트",
+    "contracts": "계약",
+    "design": "설계",
+    "bim": "3D BIM",
+    "finance": "금융",
+    "drone": "드론",
+    "blockchain": "블록체인",
+    "report": "보고서",
+    "agent": "에이전트",
+    "approvals": "승인 운영",
+    "tax": "세금",
+    "auction": "경공매",
+    "inspection": "현장",
+    "login": "로그인",
+    "register": "회원가입"
+  },
+  "dashboard": {
+    "title": "프론트엔드 기반 구성이 준비되었습니다.",
+    "description": "현재 단계에서는 i18n 라우팅, 기본 레이아웃, 대시보드 구조, 페이지 골격을 우선 구성합니다. 실제 API 연동은 백엔드 응답 계약이 고정되는 시점에 맞춰 확장합니다.",
+    "summaryTitle": "초기 구동 상태",
+    "summaryDesign": "AI 설계와 평면도 생성 화면을 연결할 수 있는 구조를 확보했습니다.",
+    "summaryFinance": "금융 분석과 세금 계산 화면을 모듈 단위로 분리했습니다.",
+    "summaryBlockchain": "에스크로 상태 화면과 컨트랙트 연동 자리를 선제적으로 마련했습니다."
+  },
+  "auth": {
+    "loginEyebrow": "인증 라우트",
+    "loginTitle": "로그인 화면 준비",
+    "loginDescription": "실제 OAuth 및 JWT 연동 전 단계에서 라우팅과 UI 진입 구조를 먼저 고정합니다.",
+    "loginPlaceholder": "백엔드 인증 엔드포인트가 고정되면 이 영역에 로그인 폼과 상태 처리를 연결합니다.",
+    "registerEyebrow": "가입 라우트",
+    "registerTitle": "회원가입 화면 준비",
+    "registerDescription": "다국어 환경에서 동일한 가입 흐름을 제공할 수 있도록 기본 구조를 먼저 구성합니다.",
+    "registerPlaceholder": "사용자 유형, 테넌트 연결, 약관 흐름은 이후 API 계약에 맞춰 연결합니다."
+  },
+  "pages": {
+    "projects": {
+      "eyebrow": "프로젝트 목록",
+      "title": "프로젝트 포트폴리오 화면",
+      "description": "프로젝트 검색, 상태 필터, 최근 작업 접근을 붙일 예정입니다.",
+      "items": {
+        "first": "목록/카드 전환",
+        "second": "프로젝트 상태 필터",
+        "third": "최근 활동 타임라인"
+      }
+    },
+    "projectDetail": {
+      "eyebrow": "프로젝트 상세",
+      "title": "프로젝트 상세 허브",
+      "description": "설계, BIM, 금융, 드론, 블록체인, 보고서를 하나의 프로젝트 맥락으로 묶습니다.",
+      "items": {
+        "first": "프로젝트 개요",
+        "second": "모듈별 진입점",
+        "third": "상태 요약 패널"
+      }
+    },
+    "design": {
+      "eyebrow": "설계 모듈",
+      "title": "AI 설계 및 평면도 생성",
+      "description": "텍스트 설계, 이미지 생성, 참조 이미지 업로드 UI를 연결할 준비 단계입니다.",
+      "items": {
+        "first": "설계 입력 패널",
+        "second": "평면도 생성 결과",
+        "third": "스트리밍 보고서 연계"
+      }
+    },
+    "bim": {
+      "eyebrow": "BIM 모듈",
+      "title": "IFC 물량 및 3D 뷰어",
+      "description": "Three.js 기반 BIM 시각화와 수량 테이블을 배치할 자리입니다.",
+      "items": {
+        "first": "IFC 업로드 흐름",
+        "second": "3D 뷰어 영역",
+        "third": "물량산출 테이블"
+      }
+    },
+    "finance": {
+      "eyebrow": "금융 모듈",
+      "title": "사업성·AVM·전세 리스크",
+      "description": "금융 분석 카드와 시세 결과 위젯을 묶는 기본 레이아웃입니다.",
+      "items": {
+        "first": "AVM 결과 카드",
+        "second": "전세 리스크 카드",
+        "third": "사업성 분석 슬롯"
+      }
+    },
+    "drone": {
+      "eyebrow": "드론 모듈",
+      "title": "드론 점검과 하자 히트맵",
+      "description": "점검 이력, 위험도 분포, 긴급 알림 상태를 시각화할 준비 단계입니다.",
+      "items": {
+        "first": "하자 탐지 요약",
+        "second": "심각도 범례",
+        "third": "보고서 링크 영역"
+      }
+    },
+    "blockchain": {
+      "eyebrow": "블록체인 모듈",
+      "title": "에스크로 현황과 트랜잭션 상태",
+      "description": "컨트랙트 ABI와 배포 메타데이터가 확정되면 이 화면에 실시간 상태를 연결합니다.",
+      "items": {
+        "first": "에스크로 상태 카드",
+        "second": "기한 및 조건 요약",
+        "third": "트랜잭션 링크"
+      }
+    },
+    "report": {
+      "eyebrow": "보고서 모듈",
+      "title": "스트리밍 보고서 화면",
+      "description": "SSE 보고서를 실시간으로 누적 표시할 레이아웃입니다.",
+      "items": {
+        "first": "스트리밍 헤더",
+        "second": "본문 누적 영역",
+        "third": "다운로드 액션"
+      }
+    },
+    "agent": {
+      "eyebrow": "AGENT / LIVE",
+      "title": "도메인 에이전트 오케스트레이션",
+      "description": "자산, 개발, 거래, 금융 에이전트를 실제 `/agents/domain` 워크플로에 연결해 승인 필요 상태와 권고안을 한 화면에서 검증합니다.",
+      "items": {
+        "first": "단건 분석과 멀티도메인 오케스트레이션",
+        "second": "프로젝트 컨텍스트와 리스크 신호 입력",
+        "third": "승인 필요 결과와 포트폴리오 요약"
+      }
+    },
+    "tax": {
+      "eyebrow": "세금 모듈",
+      "title": "세금 계산 및 절세 시나리오",
+      "description": "세금 계산 폼과 분석 결과를 놓을 기본 그리드입니다.",
+      "items": {
+        "first": "세금 입력 폼",
+        "second": "절세 비교 결과",
+        "third": "법규 근거 슬롯"
+      }
+    },
+    "auction": {
+      "eyebrow": "경공매 모듈",
+      "title": "경공매 분석 준비 화면",
+      "description": "법원 데이터와 권리 분석 결과를 붙일 기본 구조를 먼저 만듭니다.",
+      "items": {
+        "first": "매물 요약",
+        "second": "권리 분석",
+        "third": "리스크 체크"
+      }
+    },
+    "inspection": {
+      "eyebrow": "현장 모듈",
+      "title": "오프라인 현장 점검 준비",
+      "description": "PWA 오프라인 흐름과 현장 점검 체크리스트를 연결할 자리입니다.",
+      "items": {
+        "first": "오프라인 배너",
+        "second": "현장 체크리스트",
+        "third": "동기화 대기 상태"
+      }
+    }
+  },
+  "status": {
+    "ready": "기본 구조 준비",
+    "mock": "목업 연동 단계"
+  },
+  "workspace": {
+    "connectionTitle": "데이터 연결 상태와 Mock 어댑터 현황",
+    "sourceLabel": "데이터 소스",
+    "onlineLabel": "네트워크 온라인",
+    "offlineLabel": "네트워크 오프라인",
+    "featuredProjectLabel": "현재 기준 프로젝트",
+    "openProjectLabel": "프로젝트 열기",
+    "lastUpdatedLabel": "최근 갱신",
+    "nextActionLabel": "다음 액션",
+    "viewGridLabel": "그리드",
+    "viewListLabel": "리스트",
+    "selectProjectLabel": "프로젝트 선택",
+    "selectedLabel": "선택됨",
+    "modulesLabel": "모듈 구성",
+    "emptyStateTitle": "아직 프로젝트가 없습니다",
+    "emptyStateDescription": "프로젝트를 생성하거나 동기화하면 실연동 포트폴리오 목록이 여기에 표시됩니다.",
+    "errorStateTitle": "프로젝트 목록을 불러올 수 없습니다",
+    "errorStateDescription": "실연동 프로젝트 목록을 가져오지 못했습니다. API 연결 상태를 확인한 뒤 다시 시도하세요.",
+    "retryLabel": "다시 시도",
+    "timelineTitle": "작업 타임라인",
+    "nextStepsTitle": "다음 단계",
+    "budgetLabel": "예산",
+    "scheduleLabel": "일정",
+    "riskLabel": "리스크",
+    "integrationRestLabel": "REST API",
+    "integrationGraphqlLabel": "GraphQL",
+    "integrationRealtimeLabel": "실시간 스트림",
+    "modeMock": "Mock",
+    "modeLive": "실연동",
+    "modeWaiting": "대기"
+  },
+  "pwa": {
+    "eyebrow": "G163 / PWA",
+    "title": "오프라인 셸, 설치 프롬프트, 푸시 기준선",
+    "description": "서비스 워커를 등록하고, 대시보드 셸을 오프라인으로 유지하며, 현장 기기에 워크스페이스를 설치하고, 실웹푸시 연동 전 알림 권한까지 검증합니다.",
+    "runtimeLabel": "서비스 워커",
+    "runtimeReady": "준비 완료",
+    "runtimeRegistering": "등록 중",
+    "runtimeError": "오류",
+    "runtimeUnsupported": "미지원",
+    "installLabel": "설치 상태",
+    "installAvailable": "설치 가능",
+    "installInstalled": "설치됨",
+    "installUnavailable": "브라우저 제어",
+    "notificationsLabel": "알림",
+    "notificationsGranted": "허용됨",
+    "notificationsDefault": "권한 필요",
+    "notificationsDenied": "차단됨",
+    "notificationsUnsupported": "미지원",
+    "cacheLabel": "오프라인 캐시",
+    "cacheReady": "셸 캐시 완료",
+    "cachePending": "캐시 준비 중",
+    "cacheUnsupported": "사용 불가",
+    "updateTitle": "대기 중인 오프라인 업데이트가 있습니다.",
+    "updateDescription": "대기 중인 서비스 워커를 적용해 최신 오프라인 자산으로 셸을 새로고침합니다.",
+    "installAction": "워크스페이스 설치",
+    "enableNotificationsAction": "알림 허용",
+    "testNotificationAction": "테스트 알림 보내기",
+    "refreshAction": "PWA 새로고침",
+    "offlineAction": "오프라인 페이지 열기",
+    "errorTitle": "PWA 런타임 이슈",
+    "testNotificationTitle": "PropAI 현장 동기화",
+    "testNotificationBody": "오프라인 워크스페이스가 점검과 현장 보고에 준비되었습니다."
+  },
+  "a11y": {
+    "screenReaderRegion": "화면 변경 알림 영역",
+    "skipToContent": "본문으로 건너뛰기"
+  }
+}

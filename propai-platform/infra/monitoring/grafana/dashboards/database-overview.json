@@ -1,0 +1,61 @@
+{
+  "annotations": { "list": [] },
+  "description": "PropAI PostgreSQL 모니터링",
+  "editable": true,
+  "graphTooltip": 1,
+  "id": null,
+  "panels": [
+    {
+      "title": "활성 연결 수",
+      "type": "gauge",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 0 },
+      "targets": [
+        { "expr": "pg_stat_activity_count", "legendFormat": "Active" }
+      ],
+      "fieldConfig": {
+        "defaults": { "thresholds": { "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 50 }, { "color": "red", "value": 100 }] } }
+      }
+    },
+    {
+      "title": "트랜잭션 / 초",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 16, "x": 8, "y": 0 },
+      "targets": [
+        { "expr": "rate(pg_stat_database_xact_commit{datname=\"propaidb\"}[5m])", "legendFormat": "Commits/s" },
+        { "expr": "rate(pg_stat_database_xact_rollback{datname=\"propaidb\"}[5m])", "legendFormat": "Rollbacks/s" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops" } }
+    },
+    {
+      "title": "캐시 히트율",
+      "type": "stat",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 8 },
+      "targets": [
+        { "expr": "pg_stat_database_blks_hit{datname=\"propaidb\"} / (pg_stat_database_blks_hit{datname=\"propaidb\"} + pg_stat_database_blks_read{datname=\"propaidb\"}) * 100", "legendFormat": "Hit %" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percent" } }
+    },
+    {
+      "title": "DB 크기",
+      "type": "stat",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 8 },
+      "targets": [
+        { "expr": "pg_database_size_bytes{datname=\"propaidb\"}", "legendFormat": "Size" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "bytes" } }
+    },
+    {
+      "title": "슬로우 쿼리 수",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 8 },
+      "targets": [
+        { "expr": "rate(pg_stat_statements_calls{mean_exec_time_ms>1000}[5m])", "legendFormat": "Slow Queries/s" }
+      ]
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["propai", "database"],
+  "time": { "from": "now-6h", "to": "now" },
+  "title": "PropAI - Database Overview",
+  "uid": "propai-db-overview"
+}

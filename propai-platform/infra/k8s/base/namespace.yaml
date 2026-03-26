@@ -1,0 +1,7 @@
+# PropAI v30.0 - 네임스페이스
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: propai
+  labels:
+    app.kubernetes.io/part-of: propai

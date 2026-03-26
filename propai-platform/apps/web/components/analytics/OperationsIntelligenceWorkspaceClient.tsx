@@ -1,0 +1,1165 @@
+"use client";
+
+import { useEffect, useState, type FormEvent } from "react";
+import { useQuery } from "@tanstack/react-query";
+import {
+  Button,
+  Card,
+  CardContent,
+  CardTitle,
+  Input,
+  Select,
+} from "@propai/ui";
+import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
+import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
+import { ApiClientError, apiClient } from "@/lib/api-client";
+import type { Locale } from "@/i18n/config";
+
+type ProjectSummary = {
+  id: string;
+  name: string;
+  status: string;
+  address: string | null;
+  total_area_sqm: number | null;
+  updated_at: string;
+};
+
+type PaginatedResponse<T> = {
+  items: T[];
+  page: number;
+  page_size: number;
+  has_next: boolean;
+};
+
+type MaintenanceAnomalyResponse = {
+  alert_id: string;
+  project_id: string;
+  anomaly_score: number;
+  remaining_useful_life_days: number | null;
+  hvac_efficiency_score: number | null;
+  severity: string;
+  recommendation: string;
+  work_order_id: string | null;
+};
+
+type TenantFeedbackResponse = {
+  ticket_id: string;
+  project_id: string;
+  sentiment_score: number;
+  sentiment_label: string;
+  ai_reply: string;
+  created_at: string;
+};
+
+type TenantSatisfactionResponse = {
+  financial_health_id: string;
+  project_id: string;
+  nps: number;
+  churn_risk_score: number;
+  health_grade: string;
+  created_at: string;
+};
+
+type AssetIntelligenceResponse = {
+  snapshot_id: string;
+  project_id: string;
+  composite_score: number;
+  grade: string;
+  adjusted_value_krw: number;
+  component_scores: Record<string, number>;
+  capex_recommendations: Array<{
+    strategy_name?: string;
+    strategy?: string;
+    expected_roi: number;
+    payback_months: number;
+  }>;
+  created_at: string;
+};
+
+type WorkspaceSection = "maintenance" | "tenant" | "asset";
+
+type Labels = {
+  heroTitle: string;
+  heroDescription: string;
+  heroHint: string;
+  tokenHint: string;
+  projectTitle: string;
+  projectSelectLabel: string;
+  manualProjectIdLabel: string;
+  selectedProjectLabel: string;
+  noProjectsLabel: string;
+  authError: string;
+  missingProjectError: string;
+  maintenanceTitle: string;
+  equipmentNameLabel: string;
+  equipmentTypeLabel: string;
+  locationLabel: string;
+  vibrationLabel: string;
+  temperatureLabel: string;
+  efficiencyLabel: string;
+  runMaintenanceAction: string;
+  tenantTitle: string;
+  feedbackTitle: string;
+  unitLabel: string;
+  categoryLabel: string;
+  feedbackTextLabel: string;
+  ratingLabel: string;
+  analyzeFeedbackAction: string;
+  satisfactionTitle: string;
+  promotersLabel: string;
+  passivesLabel: string;
+  detractorsLabel: string;
+  occupancyLabel: string;
+  arrearsLabel: string;
+  calculateSatisfactionAction: string;
+  assetTitle: string;
+  baseValueLabel: string;
+  analyzeAssetAction: string;
+  chainHint: string;
+  anomalyLabel: string;
+  severityLabel: string;
+  workOrderLabel: string;
+  sentimentLabel: string;
+  replyLabel: string;
+  npsLabel: string;
+  churnLabel: string;
+  gradeLabel: string;
+  adjustedValueLabel: string;
+  scoreLabel: string;
+  recommendationsLabel: string;
+  projectLoadErrorTitle: string;
+  projectLoadErrorDetail: string;
+  retryAction: string;
+};
+
+const LABELS: Record<Locale, Labels> = {
+  ko: {
+    heroTitle: "운영 인텔리전스 워크스페이스",
+    heroDescription:
+      "예지정비, 테넌트 경험, 자산 인텔리전스를 실제 운영 API 체인으로 검증합니다.",
+    heroHint:
+      "자산 인텔리전스는 같은 프로젝트의 최신 maintenance/tenant 신호를 자동으로 다시 읽습니다.",
+    tokenHint:
+      "실 API 호출에는 `NEXT_PUBLIC_API_ACCESS_TOKEN` 또는 `localStorage.propai_access_token`이 필요합니다.",
+    projectTitle: "운영 대상 프로젝트",
+    projectSelectLabel: "라이브 프로젝트",
+    manualProjectIdLabel: "수동 프로젝트 UUID",
+    selectedProjectLabel: "현재 대상",
+    noProjectsLabel: "라이브 프로젝트가 아직 없습니다. 기존 UUID를 직접 입력하세요.",
+    authError: "실시간 호출을 위해 API 인증이 필요합니다.",
+    missingProjectError: "실존 프로젝트 UUID가 필요합니다.",
+    maintenanceTitle: "예지정비 분석",
+    equipmentNameLabel: "설비명",
+    equipmentTypeLabel: "설비 유형",
+    locationLabel: "설치 위치",
+    vibrationLabel: "진동(mm/s)",
+    temperatureLabel: "온도(℃)",
+    efficiencyLabel: "효율비",
+    runMaintenanceAction: "정비 분석 실행",
+    tenantTitle: "테넌트 경험 분석",
+    feedbackTitle: "피드백 분석",
+    unitLabel: "호실/존",
+    categoryLabel: "카테고리",
+    feedbackTextLabel: "피드백 내용",
+    ratingLabel: "만족도(1-5)",
+    analyzeFeedbackAction: "피드백 분석",
+    satisfactionTitle: "NPS / 점유 건전성",
+    promotersLabel: "Promoters",
+    passivesLabel: "Passives",
+    detractorsLabel: "Detractors",
+    occupancyLabel: "점유율",
+    arrearsLabel: "연체율",
+    calculateSatisfactionAction: "건전성 계산",
+    assetTitle: "자산 인텔리전스",
+    baseValueLabel: "기준 가치(원)",
+    analyzeAssetAction: "자산 분석 실행",
+    chainHint:
+      "먼저 maintenance와 tenant를 실행한 뒤 asset intelligence를 호출하면 최신 운영 신호가 반영됩니다.",
+    anomalyLabel: "이상 점수",
+    severityLabel: "심각도",
+    workOrderLabel: "워크오더",
+    sentimentLabel: "감성 라벨",
+    replyLabel: "AI 응답",
+    npsLabel: "NPS",
+    churnLabel: "이탈 리스크",
+    gradeLabel: "등급",
+    adjustedValueLabel: "조정 가치",
+    scoreLabel: "복합 점수",
+    recommendationsLabel: "CAPEX 권고",
+    projectLoadErrorTitle: "프로젝트 로드 실패",
+    projectLoadErrorDetail:
+      "운영 대상 프로젝트 목록을 불러오지 못했습니다. 기존 UUID 수동 입력은 계속 사용할 수 있습니다.",
+    retryAction: "다시 시도",
+  },
+  en: {
+    heroTitle: "Operations intelligence workspace",
+    heroDescription:
+      "Validate predictive maintenance, tenant experience, and asset intelligence through the live operational API chain.",
+    heroHint:
+      "Asset intelligence re-reads the latest maintenance and tenant signals for the same project.",
+    tokenHint:
+      "Live API calls require `NEXT_PUBLIC_API_ACCESS_TOKEN` or `localStorage.propai_access_token`.",
+    projectTitle: "Target project",
+    projectSelectLabel: "Live project",
+    manualProjectIdLabel: "Manual project UUID",
+    selectedProjectLabel: "Current target",
+    noProjectsLabel: "No live projects are available yet. Enter an existing UUID manually.",
+    authError: "API authentication is required for live workspace calls.",
+    missingProjectError: "A real project UUID is required.",
+    maintenanceTitle: "Predictive maintenance",
+    equipmentNameLabel: "Equipment name",
+    equipmentTypeLabel: "Equipment type",
+    locationLabel: "Location",
+    vibrationLabel: "Vibration (mm/s)",
+    temperatureLabel: "Temperature (C)",
+    efficiencyLabel: "Efficiency ratio",
+    runMaintenanceAction: "Run maintenance analysis",
+    tenantTitle: "Tenant experience",
+    feedbackTitle: "Feedback analysis",
+    unitLabel: "Unit / zone",
+    categoryLabel: "Category",
+    feedbackTextLabel: "Feedback text",
+    ratingLabel: "Rating (1-5)",
+    analyzeFeedbackAction: "Analyze feedback",
+    satisfactionTitle: "NPS / occupancy health",
+    promotersLabel: "Promoters",
+    passivesLabel: "Passives",
+    detractorsLabel: "Detractors",
+    occupancyLabel: "Occupancy rate",
+    arrearsLabel: "Arrears ratio",
+    calculateSatisfactionAction: "Calculate health",
+    assetTitle: "Asset intelligence",
+    baseValueLabel: "Base value (KRW)",
+    analyzeAssetAction: "Run asset analysis",
+    chainHint:
+      "Run maintenance and tenant calculations first so asset intelligence can pick up the latest operational signals.",
+    anomalyLabel: "Anomaly score",
+    severityLabel: "Severity",
+    workOrderLabel: "Work order",
+    sentimentLabel: "Sentiment",
+    replyLabel: "AI reply",
+    npsLabel: "NPS",
+    churnLabel: "Churn risk",
+    gradeLabel: "Grade",
+    adjustedValueLabel: "Adjusted value",
+    scoreLabel: "Composite score",
+    recommendationsLabel: "CAPEX recommendations",
+    projectLoadErrorTitle: "Project list unavailable",
+    projectLoadErrorDetail:
+      "The live operations project picker failed to load. Manual UUID targeting remains available.",
+    retryAction: "Retry",
+  },
+  "zh-CN": {
+    heroTitle: "运营智能工作台",
+    heroDescription:
+      "通过实时运营 API 链路验证预测性维护、租户体验和资产智能。",
+    heroHint:
+      "资产智能会自动读取同一项目最近的 maintenance 与 tenant 信号。",
+    tokenHint:
+      "实时 API 调用需要 `NEXT_PUBLIC_API_ACCESS_TOKEN` 或 `localStorage.propai_access_token`。",
+    projectTitle: "目标项目",
+    projectSelectLabel: "实时项目",
+    manualProjectIdLabel: "手动项目 UUID",
+    selectedProjectLabel: "当前目标",
+    noProjectsLabel: "当前没有实时项目。可手动输入已有 UUID。",
+    authError: "实时调用需要 API 身份认证。",
+    missingProjectError: "必须提供真实项目 UUID。",
+    maintenanceTitle: "预测性维护",
+    equipmentNameLabel: "设备名称",
+    equipmentTypeLabel: "设备类型",
+    locationLabel: "位置",
+    vibrationLabel: "振动(mm/s)",
+    temperatureLabel: "温度(℃)",
+    efficiencyLabel: "效率比",
+    runMaintenanceAction: "执行维护分析",
+    tenantTitle: "租户体验",
+    feedbackTitle: "反馈分析",
+    unitLabel: "房间 / 区域",
+    categoryLabel: "类别",
+    feedbackTextLabel: "反馈内容",
+    ratingLabel: "满意度(1-5)",
+    analyzeFeedbackAction: "分析反馈",
+    satisfactionTitle: "NPS / 入住健康度",
+    promotersLabel: "Promoters",
+    passivesLabel: "Passives",
+    detractorsLabel: "Detractors",
+    occupancyLabel: "入住率",
+    arrearsLabel: "欠费率",
+    calculateSatisfactionAction: "计算健康度",
+    assetTitle: "资产智能",
+    baseValueLabel: "基础价值(韩元)",
+    analyzeAssetAction: "执行资产分析",
+    chainHint:
+      "建议先执行 maintenance 与 tenant，再调用 asset intelligence，以便自动读取最新运营信号。",
+    anomalyLabel: "异常分数",
+    severityLabel: "严重度",
+    workOrderLabel: "工单",
+    sentimentLabel: "情绪标签",
+    replyLabel: "AI 回复",
+    npsLabel: "NPS",
+    churnLabel: "流失风险",
+    gradeLabel: "等级",
+    adjustedValueLabel: "调整后价值",
+    scoreLabel: "综合分数",
+    recommendationsLabel: "CAPEX 建议",
+    projectLoadErrorTitle: "项目列表不可用",
+    projectLoadErrorDetail:
+      "无法加载实时运营项目列表，但仍可继续手动输入项目 UUID。",
+    retryAction: "重试",
+  },
+};
+
+const EQUIPMENT_OPTIONS = [
+  { label: "HVAC", value: "hvac" },
+  { label: "Chiller", value: "chiller" },
+  { label: "Air Handling Unit", value: "ahu" },
+  { label: "Pump", value: "pump" },
+];
+
+const FEEDBACK_CATEGORY_OPTIONS = [
+  { label: "Facility", value: "facility" },
+  { label: "Noise", value: "noise" },
+  { label: "Comfort", value: "comfort" },
+  { label: "Service", value: "service" },
+];
+
+function formatCurrency(locale: string, value: number) {
+  return new Intl.NumberFormat(locale, {
+    style: "currency",
+    currency: "KRW",
+    maximumFractionDigits: 0,
+  }).format(value);
+}
+
+function formatDate(locale: string, value: string) {
+  return new Intl.DateTimeFormat(locale, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(value));
+}
+
+function extractErrorMessage(error: unknown, authMessage: string) {
+  if (error instanceof ApiClientError) {
+    if (error.status === 401 || error.status === 403) {
+      return authMessage;
+    }
+
+    return `API request failed with status ${error.status}.`;
+  }
+
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  return "Request failed.";
+}
+
+export function OperationsIntelligenceWorkspaceClient({
+  locale,
+  sections = ["maintenance", "tenant", "asset"],
+  showHero = true,
+}: {
+  locale: Locale;
+  sections?: WorkspaceSection[];
+  showHero?: boolean;
+}) {
+  const labels = LABELS[locale];
+  const runtimeConfig = apiClient.getRuntimeConfig();
+  const canUseLiveApi =
+    runtimeConfig.mode === "live" || runtimeConfig.hasAccessToken;
+  const showMaintenance = sections.includes("maintenance");
+  const showTenant = sections.includes("tenant");
+  const showAsset = sections.includes("asset");
+
+  const [selectedProjectId, setSelectedProjectId] = useState("");
+  const [manualProjectId, setManualProjectId] = useState("");
+  const [workspaceError, setWorkspaceError] = useState("");
+  const [maintenanceResult, setMaintenanceResult] =
+    useState<MaintenanceAnomalyResponse | null>(null);
+  const [feedbackResult, setFeedbackResult] =
+    useState<TenantFeedbackResponse | null>(null);
+  const [satisfactionResult, setSatisfactionResult] =
+    useState<TenantSatisfactionResponse | null>(null);
+  const [assetResult, setAssetResult] =
+    useState<AssetIntelligenceResponse | null>(null);
+  const [isRunningMaintenance, setIsRunningMaintenance] = useState(false);
+  const [isAnalyzingFeedback, setIsAnalyzingFeedback] = useState(false);
+  const [isCalculatingSatisfaction, setIsCalculatingSatisfaction] =
+    useState(false);
+  const [isAnalyzingAsset, setIsAnalyzingAsset] = useState(false);
+
+  const [maintenanceForm, setMaintenanceForm] = useState({
+    equipmentName: "B1 HVAC-02",
+    equipmentType: "hvac",
+    location: "B1 plant room",
+    vibrationMmS: "9.2",
+    temperatureC: "31.5",
+    efficiencyRatio: "0.71",
+  });
+  const [feedbackForm, setFeedbackForm] = useState({
+    unitLabel: "8F-803",
+    category: "comfort",
+    feedbackText:
+      "The office is too hot in the afternoon and the response to the complaint was delayed.",
+    satisfactionRating: "2",
+  });
+  const [satisfactionForm, setSatisfactionForm] = useState({
+    promoters: "42",
+    passives: "18",
+    detractors: "14",
+    occupancyRate: "0.91",
+    arrearsRatio: "0.03",
+  });
+  const [assetForm, setAssetForm] = useState({
+    baseValueKrw: "18800000000",
+  });
+
+  const projectsQuery = useQuery({
+    queryKey: ["projects", "ops-intelligence-picker"],
+    enabled: canUseLiveApi,
+    queryFn: () =>
+      apiClient.get<PaginatedResponse<ProjectSummary>>(
+        "/projects?page=1&page_size=20",
+        { useMock: false },
+      ),
+  });
+
+  useEffect(() => {
+    if (!selectedProjectId && projectsQuery.data?.items.length) {
+      setSelectedProjectId(projectsQuery.data.items[0].id);
+    }
+  }, [projectsQuery.data, selectedProjectId]);
+
+  const selectedProject =
+    projectsQuery.data?.items.find((project) => project.id === selectedProjectId) ??
+    null;
+  const projectQueryError = projectsQuery.error
+    ? extractErrorMessage(projectsQuery.error, labels.authError)
+    : "";
+  const activeProjectId = manualProjectId.trim() || selectedProject?.id || "";
+
+  async function handleMaintenance(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setWorkspaceError("");
+
+    if (!activeProjectId) {
+      setWorkspaceError(labels.missingProjectError);
+      return;
+    }
+
+    setIsRunningMaintenance(true);
+
+    try {
+      const result = await apiClient.post<MaintenanceAnomalyResponse>(
+        "/maintenance/detect-anomaly",
+        {
+          useMock: false,
+          body: {
+            project_id: activeProjectId,
+            equipment_name: maintenanceForm.equipmentName,
+            equipment_type: maintenanceForm.equipmentType,
+            location: maintenanceForm.location,
+            vibration_mm_s: Number(maintenanceForm.vibrationMmS),
+            temperature_c: Number(maintenanceForm.temperatureC),
+            energy_efficiency_ratio: Number(maintenanceForm.efficiencyRatio),
+          },
+        },
+      );
+      setMaintenanceResult(result);
+    } catch (error) {
+      setWorkspaceError(extractErrorMessage(error, labels.authError));
+    } finally {
+      setIsRunningMaintenance(false);
+    }
+  }
+
+  async function handleFeedback(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setWorkspaceError("");
+
+    if (!activeProjectId) {
+      setWorkspaceError(labels.missingProjectError);
+      return;
+    }
+
+    setIsAnalyzingFeedback(true);
+
+    try {
+      const result = await apiClient.post<TenantFeedbackResponse>(
+        "/tenant/feedback/analyze",
+        {
+          useMock: false,
+          body: {
+            project_id: activeProjectId,
+            unit_label: feedbackForm.unitLabel,
+            category: feedbackForm.category,
+            feedback_text: feedbackForm.feedbackText,
+            satisfaction_rating: Number(feedbackForm.satisfactionRating),
+          },
+        },
+      );
+      setFeedbackResult(result);
+    } catch (error) {
+      setWorkspaceError(extractErrorMessage(error, labels.authError));
+    } finally {
+      setIsAnalyzingFeedback(false);
+    }
+  }
+
+  async function handleSatisfaction(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setWorkspaceError("");
+
+    if (!activeProjectId) {
+      setWorkspaceError(labels.missingProjectError);
+      return;
+    }
+
+    setIsCalculatingSatisfaction(true);
+
+    try {
+      const result = await apiClient.post<TenantSatisfactionResponse>(
+        "/tenant/satisfaction/nps",
+        {
+          useMock: false,
+          body: {
+            project_id: activeProjectId,
+            promoter_count: Number(satisfactionForm.promoters),
+            passive_count: Number(satisfactionForm.passives),
+            detractor_count: Number(satisfactionForm.detractors),
+            occupancy_rate: Number(satisfactionForm.occupancyRate),
+            arrears_ratio: Number(satisfactionForm.arrearsRatio),
+          },
+        },
+      );
+      setSatisfactionResult(result);
+    } catch (error) {
+      setWorkspaceError(extractErrorMessage(error, labels.authError));
+    } finally {
+      setIsCalculatingSatisfaction(false);
+    }
+  }
+
+  async function handleAsset(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setWorkspaceError("");
+
+    if (!activeProjectId) {
+      setWorkspaceError(labels.missingProjectError);
+      return;
+    }
+
+    setIsAnalyzingAsset(true);
+
+    try {
+      const result = await apiClient.post<AssetIntelligenceResponse>(
+        "/digital-twin/asset-intelligence",
+        {
+          useMock: false,
+          body: {
+            project_id: activeProjectId,
+            base_value_krw: Number(assetForm.baseValueKrw),
+          },
+        },
+      );
+      setAssetResult(result);
+    } catch (error) {
+      setWorkspaceError(extractErrorMessage(error, labels.authError));
+    } finally {
+      setIsAnalyzingAsset(false);
+    }
+  }
+
+  return (
+    <section className="grid gap-6">
+      {showHero ? (
+        <Card className="rounded-[2rem] bg-[var(--surface-strong)] shadow-[0_20px_60px_rgba(19,33,47,0.08)]">
+          <CardContent className="p-8">
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="rounded-full bg-[rgba(14,116,144,0.1)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--accent-strong)]">
+                {labels.heroTitle}
+              </span>
+              <span className="rounded-full border border-[var(--line)] px-4 py-2 text-xs font-medium text-[rgba(19,33,47,0.7)]">
+                {runtimeConfig.mode === "live" ? "LIVE" : "HYBRID"}
+              </span>
+            </div>
+            <h3 className="mt-5 text-3xl font-bold text-[var(--foreground)]">
+              {labels.heroDescription}
+            </h3>
+            <p className="mt-4 max-w-3xl text-sm leading-8 text-[rgba(19,33,47,0.72)]">
+              {labels.heroHint}
+            </p>
+            <p className="mt-3 max-w-3xl text-sm leading-8 text-[rgba(19,33,47,0.6)]">
+              {labels.tokenHint}
+            </p>
+            {!canUseLiveApi ? (
+              <div className="mt-6 rounded-[1.5rem] border border-dashed border-[var(--line)] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[rgba(19,33,47,0.72)]">
+                {labels.authError}
+              </div>
+            ) : null}
+            {workspaceError ? (
+              <div className="mt-6 rounded-[1.5rem] border border-[rgba(217,119,6,0.28)] bg-[rgba(217,119,6,0.08)] p-5 text-sm leading-7 text-[var(--spot)]">
+                {workspaceError}
+              </div>
+            ) : null}
+          </CardContent>
+        </Card>
+      ) : workspaceError ? (
+        <div className="rounded-[1.5rem] border border-[rgba(217,119,6,0.28)] bg-[rgba(217,119,6,0.08)] p-5 text-sm leading-7 text-[var(--spot)]">
+          {workspaceError}
+        </div>
+      ) : !canUseLiveApi ? (
+        <div className="rounded-[1.5rem] border border-dashed border-[var(--line)] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[rgba(19,33,47,0.72)]">
+          {labels.authError}
+        </div>
+      ) : null}
+
+      <Card>
+        <CardContent className="grid gap-5 p-6 lg:grid-cols-[1.3fr_0.7fr]">
+          <div className="grid gap-3">
+            <div>
+              <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.5)]">
+                {labels.projectTitle}
+              </p>
+              <CardTitle className="mt-2 text-xl">
+                {labels.projectSelectLabel}
+              </CardTitle>
+            </div>
+            {projectsQuery.isLoading ? (
+              <SkeletonLoader count={1} itemClassName="h-14" />
+            ) : (
+              <div className="grid gap-3">
+                {projectsQuery.isError ? (
+                  <WorkspaceQueryErrorCard
+                    title={labels.projectLoadErrorTitle}
+                    description={labels.projectLoadErrorDetail}
+                    message={projectQueryError}
+                    actionLabel={labels.retryAction}
+                    onRetry={() => {
+                      void projectsQuery.refetch();
+                    }}
+                  />
+                ) : null}
+                <Select
+                  label={labels.projectSelectLabel}
+                  value={selectedProjectId}
+                  onValueChange={setSelectedProjectId}
+                  options={[
+                    {
+                      label:
+                        projectsQuery.data?.items.length
+                          ? labels.projectSelectLabel
+                          : labels.noProjectsLabel,
+                      value: "",
+                      disabled: true,
+                    },
+                    ...(projectsQuery.data?.items.map((project) => ({
+                      label: project.name,
+                      value: project.id,
+                    })) ?? []),
+                  ]}
+                />
+              </div>
+            )}
+            <Input
+              value={manualProjectId}
+              onChange={(event) => setManualProjectId(event.target.value)}
+              placeholder={labels.manualProjectIdLabel}
+            />
+          </div>
+          <div className="rounded-[1.5rem] bg-[var(--surface-soft)] p-5">
+            <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.5)]">
+              {labels.selectedProjectLabel}
+            </p>
+            <p className="mt-3 text-sm font-semibold text-[var(--foreground)]">
+              {selectedProject?.name || "-"}
+            </p>
+            <p className="mt-2 break-all text-xs text-[rgba(19,33,47,0.56)]">
+              {activeProjectId || "-"}
+            </p>
+            {selectedProject?.address ? (
+              <p className="mt-3 text-sm text-[rgba(19,33,47,0.72)]">
+                {selectedProject.address}
+              </p>
+            ) : null}
+            {selectedProject ? (
+              <p className="mt-2 text-xs text-[rgba(19,33,47,0.56)]">
+                {selectedProject.status} ·{" "}
+                {formatDate(locale, selectedProject.updated_at)}
+              </p>
+            ) : null}
+          </div>
+        </CardContent>
+      </Card>
+
+      <div
+        className={
+          showMaintenance && (showTenant || showAsset)
+            ? "grid gap-6 xl:grid-cols-[0.92fr_1.08fr]"
+            : "grid gap-6"
+        }
+      >
+        {showMaintenance ? (
+          <Card>
+            <CardContent className="p-6">
+              <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.5)]">
+                {labels.maintenanceTitle}
+              </p>
+              <form className="mt-5 grid gap-3" onSubmit={handleMaintenance}>
+              <div className="grid gap-3 md:grid-cols-2">
+                <Input
+                  value={maintenanceForm.equipmentName}
+                  onChange={(event) =>
+                    setMaintenanceForm((current) => ({
+                      ...current,
+                      equipmentName: event.target.value,
+                    }))
+                  }
+                  placeholder={labels.equipmentNameLabel}
+                />
+                <Select
+                  label={labels.equipmentTypeLabel}
+                  value={maintenanceForm.equipmentType}
+                  onValueChange={(value) =>
+                    setMaintenanceForm((current) => ({
+                      ...current,
+                      equipmentType: value,
+                    }))
+                  }
+                  options={EQUIPMENT_OPTIONS}
+                />
+              </div>
+              <Input
+                value={maintenanceForm.location}
+                onChange={(event) =>
+                  setMaintenanceForm((current) => ({
+                    ...current,
+                    location: event.target.value,
+                  }))
+                }
+                placeholder={labels.locationLabel}
+              />
+              <div className="grid gap-3 md:grid-cols-3">
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.1"
+                  value={maintenanceForm.vibrationMmS}
+                  onChange={(event) =>
+                    setMaintenanceForm((current) => ({
+                      ...current,
+                      vibrationMmS: event.target.value,
+                    }))
+                  }
+                  placeholder={labels.vibrationLabel}
+                />
+                <Input
+                  type="number"
+                  step="0.1"
+                  value={maintenanceForm.temperatureC}
+                  onChange={(event) =>
+                    setMaintenanceForm((current) => ({
+                      ...current,
+                      temperatureC: event.target.value,
+                    }))
+                  }
+                  placeholder={labels.temperatureLabel}
+                />
+                <Input
+                  type="number"
+                  min="0"
+                  max="2"
+                  step="0.01"
+                  value={maintenanceForm.efficiencyRatio}
+                  onChange={(event) =>
+                    setMaintenanceForm((current) => ({
+                      ...current,
+                      efficiencyRatio: event.target.value,
+                    }))
+                  }
+                  placeholder={labels.efficiencyLabel}
+                />
+              </div>
+              <Button
+                type="submit"
+                disabled={!canUseLiveApi || isRunningMaintenance}
+              >
+                {isRunningMaintenance
+                  ? `${labels.runMaintenanceAction}...`
+                  : labels.runMaintenanceAction}
+              </Button>
+            </form>
+
+            {maintenanceResult ? (
+              <div className="mt-5 grid gap-4 md:grid-cols-2">
+                <MetricTile
+                  label={labels.anomalyLabel}
+                  value={maintenanceResult.anomaly_score.toFixed(2)}
+                />
+                <MetricTile
+                  label={labels.severityLabel}
+                  value={maintenanceResult.severity}
+                />
+                <MetricTile
+                  label="RUL"
+                  value={
+                    maintenanceResult.remaining_useful_life_days != null
+                      ? `${maintenanceResult.remaining_useful_life_days}d`
+                      : "-"
+                  }
+                />
+                <MetricTile
+                  label="HVAC score"
+                  value={
+                    maintenanceResult.hvac_efficiency_score != null
+                      ? maintenanceResult.hvac_efficiency_score.toFixed(1)
+                      : "-"
+                  }
+                />
+                <MetricTile
+                  label={labels.workOrderLabel}
+                  value={maintenanceResult.work_order_id ? "open" : "not-created"}
+                />
+              </div>
+            ) : null}
+
+              {maintenanceResult ? (
+                <div className="mt-5 rounded-[1.5rem] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[rgba(19,33,47,0.72)]">
+                  {maintenanceResult.recommendation}
+                </div>
+              ) : null}
+            </CardContent>
+          </Card>
+        ) : null}
+
+        {showTenant || showAsset ? (
+          <div className="grid gap-6">
+            {showTenant ? (
+              <Card>
+                <CardContent className="p-6">
+                  <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.5)]">
+                    {labels.tenantTitle}
+                  </p>
+
+                  <div className="mt-5 grid gap-6 lg:grid-cols-2">
+                    <form className="grid gap-3" onSubmit={handleFeedback}>
+                      <CardTitle className="text-lg">{labels.feedbackTitle}</CardTitle>
+                      <div className="grid gap-3 md:grid-cols-2">
+                        <Input
+                          value={feedbackForm.unitLabel}
+                          onChange={(event) =>
+                            setFeedbackForm((current) => ({
+                              ...current,
+                              unitLabel: event.target.value,
+                            }))
+                          }
+                          placeholder={labels.unitLabel}
+                        />
+                        <Select
+                          label={labels.categoryLabel}
+                          value={feedbackForm.category}
+                          onValueChange={(value) =>
+                            setFeedbackForm((current) => ({
+                              ...current,
+                              category: value,
+                            }))
+                          }
+                          options={FEEDBACK_CATEGORY_OPTIONS}
+                        />
+                      </div>
+                      <textarea
+                        className="min-h-28 rounded-[1rem] border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-3 text-sm text-[var(--foreground)] outline-none transition placeholder:text-[rgba(19,33,47,0.4)] focus:border-[var(--accent)]"
+                        value={feedbackForm.feedbackText}
+                        onChange={(event) =>
+                          setFeedbackForm((current) => ({
+                            ...current,
+                            feedbackText: event.target.value,
+                          }))
+                        }
+                        placeholder={labels.feedbackTextLabel}
+                      />
+                      <Input
+                        type="number"
+                        min="1"
+                        max="5"
+                        step="1"
+                        value={feedbackForm.satisfactionRating}
+                        onChange={(event) =>
+                          setFeedbackForm((current) => ({
+                            ...current,
+                            satisfactionRating: event.target.value,
+                          }))
+                        }
+                        placeholder={labels.ratingLabel}
+                      />
+                      <Button
+                        type="submit"
+                        disabled={!canUseLiveApi || isAnalyzingFeedback}
+                      >
+                        {isAnalyzingFeedback
+                          ? `${labels.analyzeFeedbackAction}...`
+                          : labels.analyzeFeedbackAction}
+                      </Button>
+                    </form>
+
+                    <form className="grid gap-3" onSubmit={handleSatisfaction}>
+                      <CardTitle className="text-lg">
+                        {labels.satisfactionTitle}
+                      </CardTitle>
+                      <div className="grid gap-3 md:grid-cols-3">
+                        <Input
+                          type="number"
+                          min="0"
+                          step="1"
+                          value={satisfactionForm.promoters}
+                          onChange={(event) =>
+                            setSatisfactionForm((current) => ({
+                              ...current,
+                              promoters: event.target.value,
+                            }))
+                          }
+                          placeholder={labels.promotersLabel}
+                        />
+                        <Input
+                          type="number"
+                          min="0"
+                          step="1"
+                          value={satisfactionForm.passives}
+                          onChange={(event) =>
+                            setSatisfactionForm((current) => ({
+                              ...current,
+                              passives: event.target.value,
+                            }))
+                          }
+                          placeholder={labels.passivesLabel}
+                        />
+                        <Input
+                          type="number"
+                          min="0"
+                          step="1"
+                          value={satisfactionForm.detractors}
+                          onChange={(event) =>
+                            setSatisfactionForm((current) => ({
+                              ...current,
+                              detractors: event.target.value,
+                            }))
+                          }
+                          placeholder={labels.detractorsLabel}
+                        />
+                      </div>
+                      <div className="grid gap-3 md:grid-cols-2">
+                        <Input
+                          type="number"
+                          min="0"
+                          max="1"
+                          step="0.01"
+                          value={satisfactionForm.occupancyRate}
+                          onChange={(event) =>
+                            setSatisfactionForm((current) => ({
+                              ...current,
+                              occupancyRate: event.target.value,
+                            }))
+                          }
+                          placeholder={labels.occupancyLabel}
+                        />
+                        <Input
+                          type="number"
+                          min="0"
+                          max="1"
+                          step="0.01"
+                          value={satisfactionForm.arrearsRatio}
+                          onChange={(event) =>
+                            setSatisfactionForm((current) => ({
+                              ...current,
+                              arrearsRatio: event.target.value,
+                            }))
+                          }
+                          placeholder={labels.arrearsLabel}
+                        />
+                      </div>
+                      <Button
+                        type="submit"
+                        disabled={!canUseLiveApi || isCalculatingSatisfaction}
+                      >
+                        {isCalculatingSatisfaction
+                          ? `${labels.calculateSatisfactionAction}...`
+                          : labels.calculateSatisfactionAction}
+                      </Button>
+                    </form>
+                  </div>
+
+                  {(feedbackResult || satisfactionResult) && (
+                    <div className="mt-5 grid gap-4 md:grid-cols-2">
+                      {feedbackResult ? (
+                        <div className="rounded-[1.5rem] bg-[var(--surface-soft)] p-5">
+                          <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.5)]">
+                            {labels.sentimentLabel}
+                          </p>
+                          <p className="mt-3 text-lg font-semibold text-[var(--foreground)]">
+                            {feedbackResult.sentiment_label}
+                          </p>
+                          <p className="mt-2 text-xs text-[rgba(19,33,47,0.56)]">
+                            {feedbackResult.sentiment_score.toFixed(2)} ·{" "}
+                            {formatDate(locale, feedbackResult.created_at)}
+                          </p>
+                          <p className="mt-3 text-sm leading-7 text-[rgba(19,33,47,0.72)]">
+                            {feedbackResult.ai_reply}
+                          </p>
+                        </div>
+                      ) : null}
+                      {satisfactionResult ? (
+                        <div className="rounded-[1.5rem] bg-[var(--surface-soft)] p-5">
+                          <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.5)]">
+                            {labels.gradeLabel}
+                          </p>
+                          <p className="mt-3 text-lg font-semibold text-[var(--foreground)]">
+                            {satisfactionResult.health_grade}
+                          </p>
+                          <p className="mt-2 text-xs text-[rgba(19,33,47,0.56)]">
+                            {labels.npsLabel}: {satisfactionResult.nps.toFixed(1)} ·{" "}
+                            {labels.churnLabel}:{" "}
+                            {(satisfactionResult.churn_risk_score * 100).toFixed(1)}%
+                          </p>
+                          <p className="mt-2 text-xs text-[rgba(19,33,47,0.56)]">
+                            {formatDate(locale, satisfactionResult.created_at)}
+                          </p>
+                        </div>
+                      ) : null}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            ) : null}
+            {showAsset ? (
+              <Card>
+                <CardContent className="p-6">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.5)]">
+                        {labels.assetTitle}
+                      </p>
+                      <CardTitle className="mt-2 text-xl">
+                        {labels.chainHint}
+                      </CardTitle>
+                    </div>
+                    <span className="rounded-full bg-[var(--surface-soft)] px-3 py-1 text-xs font-medium text-[var(--accent-strong)]">
+                      {activeProjectId ? "PROJECT READY" : "PROJECT REQUIRED"}
+                    </span>
+                  </div>
+
+                  <form className="mt-5 grid gap-3" onSubmit={handleAsset}>
+                    <Input
+                      type="number"
+                      min="1"
+                      step="1"
+                      value={assetForm.baseValueKrw}
+                      onChange={(event) =>
+                        setAssetForm((current) => ({
+                          ...current,
+                          baseValueKrw: event.target.value,
+                        }))
+                      }
+                      placeholder={labels.baseValueLabel}
+                    />
+                    <Button
+                      type="submit"
+                      disabled={!canUseLiveApi || isAnalyzingAsset}
+                    >
+                      {isAnalyzingAsset
+                        ? `${labels.analyzeAssetAction}...`
+                        : labels.analyzeAssetAction}
+                    </Button>
+                  </form>
+
+                  {assetResult ? (
+                    <div className="mt-5 space-y-4">
+                      <div className="grid gap-4 md:grid-cols-2">
+                        <MetricTile
+                          label={labels.scoreLabel}
+                          value={assetResult.composite_score.toFixed(2)}
+                        />
+                        <MetricTile
+                          label={labels.gradeLabel}
+                          value={assetResult.grade}
+                        />
+                        <MetricTile
+                          label={labels.adjustedValueLabel}
+                          value={formatCurrency(locale, assetResult.adjusted_value_krw)}
+                        />
+                        <MetricTile
+                          label="Created"
+                          value={formatDate(locale, assetResult.created_at)}
+                        />
+                      </div>
+
+                      <div className="grid gap-3 md:grid-cols-2">
+                        {Object.entries(assetResult.component_scores).map(
+                          ([key, value]) => (
+                            <div
+                              key={key}
+                              className="rounded-[1.25rem] border border-[var(--line)] p-4"
+                            >
+                              <div className="flex items-center justify-between gap-3">
+                                <p className="text-sm font-semibold capitalize text-[var(--foreground)]">
+                                  {key}
+                                </p>
+                                <span className="text-sm font-medium text-[var(--accent-strong)]">
+                                  {value.toFixed(2)}
+                                </span>
+                              </div>
+                            </div>
+                          ),
+                        )}
+                      </div>
+
+                      <div className="rounded-[1.5rem] bg-[var(--surface-soft)] p-5">
+                        <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.5)]">
+                          {labels.recommendationsLabel}
+                        </p>
+                        <div className="mt-3 space-y-3">
+                          {assetResult.capex_recommendations.map((item, index) => (
+                            <div
+                              key={`${item.strategy_name ?? item.strategy ?? "plan"}-${index}`}
+                              className="rounded-[1.25rem] bg-white/80 p-4"
+                            >
+                              <p className="text-sm font-semibold text-[var(--foreground)]">
+                                {item.strategy_name ?? item.strategy ?? "CAPEX plan"}
+                              </p>
+                              <p className="mt-2 text-xs text-[rgba(19,33,47,0.56)]">
+                                ROI {(item.expected_roi * 100).toFixed(1)}% ·{" "}
+                                {item.payback_months} months
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+                </CardContent>
+              </Card>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
+function MetricTile({
+  label,
+  value,
+}: {
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="rounded-[1.5rem] bg-[var(--surface-soft)] p-5">
+      <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.5)]">
+        {label}
+      </p>
+      <p className="mt-3 text-xl font-semibold text-[var(--foreground)]">
+        {value}
+      </p>
+    </div>
+  );
+}

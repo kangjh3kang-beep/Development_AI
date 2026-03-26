@@ -1,0 +1,245 @@
+{
+  "meta": {
+    "title": "PropAI 工作区",
+    "siteName": "PropAI",
+    "description": "房地产开发全周期 AI 平台的前端初始工作区。"
+  },
+  "hero": {
+    "badge": "Next.js 前端环境",
+    "title": "统一语言路由与工作流入口的运营工作区",
+    "description": "当前阶段先固定韩语、英语、简体中文路由，再为设计、金融、无人机和区块链模块准备稳定的网页框架。",
+    "primaryCta": "打开仪表盘",
+    "secondaryCta": "登录占位页"
+  },
+  "nav": {
+    "locale": "语言",
+    "dashboard": "仪表盘",
+    "projects": "项目",
+    "contracts": "合同",
+    "design": "设计",
+    "bim": "3D BIM",
+    "finance": "金融",
+    "drone": "无人机",
+    "blockchain": "区块链",
+    "report": "报告",
+    "agent": "智能体",
+    "approvals": "审批运营",
+    "tax": "税务",
+    "auction": "拍卖",
+    "inspection": "现场",
+    "login": "登录",
+    "register": "注册"
+  },
+  "dashboard": {
+    "title": "前端基础已经就绪。",
+    "description": "当前阶段优先完成多语言路由、基础布局、仪表盘结构和占位页面。真实 API 连接会在后端响应契约稳定后继续接入。",
+    "summaryTitle": "初始运行状态",
+    "summaryDesign": "已经预留 AI 设计与平面图生成模块的位置。",
+    "summaryFinance": "金融分析和税务计算页面已按模块分开。",
+    "summaryBlockchain": "已预留托管状态页面和合约联动区域。"
+  },
+  "auth": {
+    "loginEyebrow": "认证路由",
+    "loginTitle": "登录页面占位",
+    "loginDescription": "在接入真实 OAuth 和 JWT 之前，先固定路由和页面入口结构。",
+    "loginPlaceholder": "后端认证接口固定后，这里将接入登录表单和状态处理。",
+    "registerEyebrow": "注册路由",
+    "registerTitle": "注册页面占位",
+    "registerDescription": "先准备多语言通用的注册布局，再按 API 契约继续接线。",
+    "registerPlaceholder": "用户类型、租户绑定和条款流程会在 API 契约确定后接入。"
+  },
+  "pages": {
+    "projects": {
+      "eyebrow": "项目列表",
+      "title": "项目组合页面",
+      "description": "后续会接入搜索、状态筛选和最近活动入口。",
+      "items": {
+        "first": "列表与卡片切换",
+        "second": "项目状态筛选",
+        "third": "最近活动时间线"
+      }
+    },
+    "projectDetail": {
+      "eyebrow": "项目详情",
+      "title": "项目详情枢纽",
+      "description": "设计、BIM、金融、无人机、区块链和报告会统一归入一个项目上下文。",
+      "items": {
+        "first": "项目概览",
+        "second": "模块入口",
+        "third": "状态摘要面板"
+      }
+    },
+    "design": {
+      "eyebrow": "设计模块",
+      "title": "AI 设计与平面图生成",
+      "description": "这里将承载文本设计、图片生成和参考图上传 UI。",
+      "items": {
+        "first": "设计输入面板",
+        "second": "平面图结果区域",
+        "third": "流式报告接口"
+      }
+    },
+    "bim": {
+      "eyebrow": "BIM 模块",
+      "title": "IFC 工程量与 3D 查看器",
+      "description": "此处预留 Three.js BIM 查看器和工程量表格。",
+      "items": {
+        "first": "IFC 上传流程",
+        "second": "3D 查看区域",
+        "third": "工程量表格"
+      }
+    },
+    "finance": {
+      "eyebrow": "金融模块",
+      "title": "可行性、AVM 与租赁风险",
+      "description": "本页面将金融分析卡片和估值组件统一到一个布局中。",
+      "items": {
+        "first": "AVM 结果卡片",
+        "second": "租赁风险卡片",
+        "third": "可行性分析区域"
+      }
+    },
+    "drone": {
+      "eyebrow": "无人机模块",
+      "title": "无人机巡检与缺陷热力图",
+      "description": "这里将接入巡检历史、风险分布和紧急告警状态。",
+      "items": {
+        "first": "缺陷摘要",
+        "second": "严重度图例",
+        "third": "报告链接区域"
+      }
+    },
+    "blockchain": {
+      "eyebrow": "区块链模块",
+      "title": "托管状态与交易状态",
+      "description": "合约 ABI 和部署元数据固定后，可在这里连接实时托管状态。",
+      "items": {
+        "first": "托管状态卡片",
+        "second": "期限与条件摘要",
+        "third": "交易链接"
+      }
+    },
+    "report": {
+      "eyebrow": "报告模块",
+      "title": "流式报告页面",
+      "description": "此布局用于实时累积 SSE 报告内容。",
+      "items": {
+        "first": "流式页头",
+        "second": "正文累积区域",
+        "third": "下载操作"
+      }
+    },
+    "agent": {
+      "eyebrow": "AGENT / LIVE",
+      "title": "领域智能体编排",
+      "description": "将资产、开发、交易、金融智能体接入实时 `/agents/domain` 工作流，并在同一界面检查需要审批的建议结果。",
+      "items": {
+        "first": "单领域分析与多领域编排",
+        "second": "项目上下文与风险信号输入",
+        "third": "审批门控结果与组合摘要"
+      }
+    },
+    "tax": {
+      "eyebrow": "税务模块",
+      "title": "税务计算与优化",
+      "description": "此基础网格将承载表单与结果面板。",
+      "items": {
+        "first": "税务输入表单",
+        "second": "优化对比结果",
+        "third": "法律依据区域"
+      }
+    },
+    "auction": {
+      "eyebrow": "拍卖模块",
+      "title": "拍卖分析占位页",
+      "description": "法院数据和权利分析稍后会接到这个基础结构上。",
+      "items": {
+        "first": "标的摘要",
+        "second": "权利分析",
+        "third": "风险检查"
+      }
+    },
+    "inspection": {
+      "eyebrow": "现场模块",
+      "title": "离线现场巡检占位页",
+      "description": "此页面用于准备 PWA 离线流程和现场检查清单。",
+      "items": {
+        "first": "离线横幅",
+        "second": "现场检查清单",
+        "third": "同步等待状态"
+      }
+    }
+  },
+  "status": {
+    "ready": "基础结构已准备",
+    "mock": "Mock 联调阶段"
+  },
+  "workspace": {
+    "connectionTitle": "数据连接与 Mock 适配状态",
+    "sourceLabel": "数据来源",
+    "onlineLabel": "网络在线",
+    "offlineLabel": "网络离线",
+    "featuredProjectLabel": "当前重点项目",
+    "openProjectLabel": "打开项目",
+    "lastUpdatedLabel": "最近更新",
+    "nextActionLabel": "下一步动作",
+    "viewGridLabel": "网格",
+    "viewListLabel": "列表",
+    "selectProjectLabel": "选择项目",
+    "selectedLabel": "已选中",
+    "modulesLabel": "模块组成",
+    "emptyStateTitle": "当前还没有项目",
+    "emptyStateDescription": "创建或同步项目后，这里会显示真实联动的项目组合列表。",
+    "errorStateTitle": "无法加载项目列表",
+    "errorStateDescription": "真实联动项目列表加载失败。请检查 API 连接后重试。",
+    "retryLabel": "重试",
+    "timelineTitle": "工作时间线",
+    "nextStepsTitle": "下一阶段",
+    "budgetLabel": "预算",
+    "scheduleLabel": "进度",
+    "riskLabel": "风险",
+    "integrationRestLabel": "REST API",
+    "integrationGraphqlLabel": "GraphQL",
+    "integrationRealtimeLabel": "实时流",
+    "modeMock": "Mock",
+    "modeLive": "真实联动",
+    "modeWaiting": "等待中"
+  },
+  "pwa": {
+    "eyebrow": "G163 / PWA",
+    "title": "离线壳层、安装提示与推送基线",
+    "description": "注册 service worker，让仪表盘壳层支持离线访问，在现场设备上安装工作区，并在接入真实 Web Push 前先完成通知权限验证。",
+    "runtimeLabel": "Service Worker",
+    "runtimeReady": "已就绪",
+    "runtimeRegistering": "注册中",
+    "runtimeError": "错误",
+    "runtimeUnsupported": "不支持",
+    "installLabel": "安装状态",
+    "installAvailable": "可安装",
+    "installInstalled": "已安装",
+    "installUnavailable": "由浏览器控制",
+    "notificationsLabel": "通知",
+    "notificationsGranted": "已授权",
+    "notificationsDefault": "需要权限",
+    "notificationsDenied": "已阻止",
+    "notificationsUnsupported": "不支持",
+    "cacheLabel": "离线缓存",
+    "cacheReady": "壳层已缓存",
+    "cachePending": "缓存准备中",
+    "cacheUnsupported": "不可用",
+    "updateTitle": "离线更新已待命。",
+    "updateDescription": "应用等待中的 service worker，以最新离线资源刷新工作区壳层。",
+    "installAction": "安装工作区",
+    "enableNotificationsAction": "启用通知",
+    "testNotificationAction": "发送测试通知",
+    "refreshAction": "刷新 PWA",
+    "offlineAction": "打开离线页面",
+    "errorTitle": "PWA 运行问题",
+    "testNotificationTitle": "PropAI 现场同步",
+    "testNotificationBody": "离线工作区已可用于巡检与现场报告。"
+  },
+  "a11y": {
+    "screenReaderRegion": "屏幕阅读器提示区域",
+    "skipToContent": "跳转到正文"
+  }
+}

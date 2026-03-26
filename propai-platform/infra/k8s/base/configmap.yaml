@@ -1,0 +1,16 @@
+# PropAI v30.0 - 공통 설정 ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: propai-config
+  namespace: propai
+data:
+  ENVIRONMENT: "production"
+  DATABASE_URL: "postgresql+asyncpg://propai:$(POSTGRES_PASSWORD)@propai-postgres:5432/propai_db"
+  REDIS_URL: "redis://propai-redis:6379/0"
+  HASURA_URL: "http://propai-hasura:8080/v1/graphql"
+  MLFLOW_TRACKING_URI: "http://propai-mlflow:5000"
+  MINIO_URL: "http://propai-minio:9000"
+  QDRANT_HOST: "propai-qdrant"
+  QDRANT_PORT: "6333"
+  CORS_ORIGINS: "https://app.propai.io"

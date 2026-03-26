@@ -1,0 +1,223 @@
+name: Deploy to Production
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ${{ github.repository }}
+
+jobs:
+  preflight:
+    name: Production Preflight
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://app.propai.io
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate release environment
+        env:
+          RELEASE_KUBE_CONFIG: ${{ secrets.KUBE_CONFIG_PRODUCTION }}
+          RELEASE_API_URL: ${{ secrets.PRODUCTION_API_URL || 'https://api.propai.io' }}
+          RELEASE_WEB_URL: ${{ secrets.PRODUCTION_WEB_URL || 'https://app.propai.io' }}
+          RELEASE_SMOKE_TOKEN: ${{ secrets.RELEASE_SMOKE_TOKEN_PRODUCTION || secrets.RELEASE_SMOKE_TOKEN }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          python scripts/release/validate_release_env.py --target production
+
+  build-and-push:
+    name: Build Production Images
+    needs: preflight
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+      contents: read
+    outputs:
+      api_image: ${{ steps.deploy-images.outputs.api_image }}
+      web_image: ${{ steps.deploy-images.outputs.web_image }}
+      worker_image: ${{ steps.deploy-images.outputs.worker_image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract version tag
+        id: version
+        run: echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+
+      - name: Build & push API
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: apps/api/Dockerfile
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/api:${{ steps.version.outputs.tag }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/api:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            BUILD_VERSION=${{ steps.version.outputs.tag }}
+
+      - name: Build & push Web
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: apps/web/Dockerfile
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/web:${{ steps.version.outputs.tag }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/web:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build & push Worker
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: apps/worker/Dockerfile
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/worker:${{ steps.version.outputs.tag }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/worker:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Set deploy image refs
+        id: deploy-images
+        run: |
+          echo "api_image=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/api:${{ steps.version.outputs.tag }}" >> "$GITHUB_OUTPUT"
+          echo "web_image=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/web:${{ steps.version.outputs.tag }}" >> "$GITHUB_OUTPUT"
+          echo "worker_image=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/worker:${{ steps.version.outputs.tag }}" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    name: Deploy to Production
+    needs: [preflight, build-and-push]
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://app.propai.io
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v3
+
+      - name: Configure kubeconfig
+        env:
+          RELEASE_KUBE_CONFIG: ${{ secrets.KUBE_CONFIG_PRODUCTION }}
+        run: |
+          mkdir -p $HOME/.kube
+          python - <<'PY'
+          import base64
+          import os
+          from pathlib import Path
+
+          value = os.environ["RELEASE_KUBE_CONFIG"].strip()
+          output = Path.home() / ".kube" / "config"
+
+          try:
+              decoded = base64.b64decode(value, validate=True).decode("utf-8")
+              content = decoded if "apiVersion:" in decoded and "clusters:" in decoded else value
+          except Exception:
+              content = value
+
+          output.write_text(content, encoding="utf-8")
+          PY
+
+      - name: Apply Kustomize overlay
+        run: |
+          kubectl apply -k infra/k8s/overlays/production/
+
+      - name: Pin rollout images
+        run: |
+          kubectl set image deployment/propai-api propai-api="${{ needs.build-and-push.outputs.api_image }}" -n propai-production
+          kubectl set image deployment/propai-web propai-web="${{ needs.build-and-push.outputs.web_image }}" -n propai-production
+          kubectl set image deployment/propai-worker propai-worker="${{ needs.build-and-push.outputs.worker_image }}" -n propai-production
+
+      - name: Rollout restart
+        run: |
+          kubectl rollout restart deployment/propai-api -n propai-production
+          kubectl rollout restart deployment/propai-web -n propai-production
+          kubectl rollout restart deployment/propai-worker -n propai-production
+
+      - name: Wait for rollout
+        run: |
+          kubectl rollout status deployment/propai-api -n propai-production --timeout=600s
+          kubectl rollout status deployment/propai-web -n propai-production --timeout=600s
+          kubectl rollout status deployment/propai-worker -n propai-production --timeout=600s
+
+      - name: Post-deploy release smoke
+        env:
+          RELEASE_API_URL: ${{ secrets.PRODUCTION_API_URL || 'https://api.propai.io' }}
+          RELEASE_WEB_URL: ${{ secrets.PRODUCTION_WEB_URL || 'https://app.propai.io' }}
+          RELEASE_SMOKE_TOKEN: ${{ secrets.RELEASE_SMOKE_TOKEN_PRODUCTION || secrets.RELEASE_SMOKE_TOKEN }}
+        run: |
+          sleep 10
+          python scripts/release/run_release_smoke.py \
+            --target production \
+            --api-base-url "$RELEASE_API_URL" \
+            --web-base-url "$RELEASE_WEB_URL" \
+            --access-token "$RELEASE_SMOKE_TOKEN"
+          echo "Production 배포 성공 — ${{ github.ref_name }}"
+
+      - name: Post-deploy observability smoke
+        env:
+          RELEASE_PROMETHEUS_URL: ${{ secrets.PRODUCTION_PROMETHEUS_URL || secrets.PROMETHEUS_URL }}
+          RELEASE_ALERTMANAGER_URL: ${{ secrets.PRODUCTION_ALERTMANAGER_URL || secrets.ALERTMANAGER_URL }}
+          RELEASE_GRAFANA_URL: ${{ secrets.PRODUCTION_GRAFANA_URL || secrets.GRAFANA_URL }}
+          RELEASE_GRAFANA_API_KEY: ${{ secrets.PRODUCTION_GRAFANA_API_KEY || secrets.GRAFANA_API_KEY }}
+        run: |
+          if [ -z "$RELEASE_PROMETHEUS_URL" ] || [ -z "$RELEASE_ALERTMANAGER_URL" ] || [ -z "$RELEASE_GRAFANA_URL" ]; then
+            echo "Observability smoke skipped: required URLs are not configured."
+            exit 0
+          fi
+
+          ARGS=(
+            --target production
+            --prometheus-url "$RELEASE_PROMETHEUS_URL"
+            --alertmanager-url "$RELEASE_ALERTMANAGER_URL"
+            --grafana-url "$RELEASE_GRAFANA_URL"
+          )
+          if [ -n "$RELEASE_GRAFANA_API_KEY" ]; then
+            ARGS+=(--grafana-api-key "$RELEASE_GRAFANA_API_KEY")
+          fi
+
+          python scripts/release/run_observability_smoke.py "${ARGS[@]}"
+
+      - name: Notify Slack
+        if: always()
+        uses: slackapi/slack-github-action@v1.25.0
+        with:
+          payload: |
+            {
+              "text": "PropAI ${{ github.ref_name }} 프로덕션 배포 ${{ job.status == 'success' && '성공 ✅' || '실패 ❌' }}"
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}

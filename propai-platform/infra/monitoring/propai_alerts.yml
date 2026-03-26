@@ -1,0 +1,20 @@
+groups:
+  - name: propai_alerts
+    rules:
+      - alert: HighCPUUsage
+        expr: 100 - (avg by(instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Instance {{ $labels.instance }} High CPU usage"
+          description: "{{ $labels.instance }} CPU usage is above 80% (current value: {{ $value }})"
+
+      - alert: APIHighErrorRate
+        expr: sum(rate(fastapi_responses_total{status=~"5.."}[5m])) / sum(rate(fastapi_responses_total[5m])) * 100 > 5
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High HTTP 5xx error rate on API"
+          description: "API is returning > 5% 5xx errors (current rate: {{ $value }}%)"

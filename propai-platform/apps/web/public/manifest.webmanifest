@@ -1,0 +1,55 @@
+{
+  "id": "/ko",
+  "name": "PropAI",
+  "short_name": "PropAI",
+  "description": "부동산 개발 전주기 AI 자동화 플랫폼",
+  "lang": "ko",
+  "start_url": "/ko",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["standalone", "browser"],
+  "background_color": "#f6f1e7",
+  "theme_color": "#f6f1e7",
+  "categories": ["business", "finance", "productivity"],
+  "prefer_related_applications": false,
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-maskable.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "대시보드",
+      "short_name": "대시보드",
+      "url": "/ko",
+      "description": "운영 대시보드로 바로 이동합니다."
+    },
+    {
+      "name": "프로젝트",
+      "short_name": "프로젝트",
+      "url": "/ko/projects",
+      "description": "실연동 프로젝트 포트폴리오를 엽니다."
+    },
+    {
+      "name": "현장 점검",
+      "short_name": "점검",
+      "url": "/ko/inspection",
+      "description": "오프라인 현장 점검 워크스페이스로 이동합니다."
+    },
+    {
+      "name": "공사비 인텔리전스",
+      "short_name": "공사비",
+      "url": "/ko/analytics/cost",
+      "description": "자재가와 공사비 에스컬레이션 워크스페이스를 엽니다."
+    }
+  ]
+}

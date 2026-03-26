@@ -1,0 +1,103 @@
+# PropAI v30.0 - 트래킹 테이블 목록
+# 명세서 주요 테이블 (Part III 기준)
+
+# 프로젝트 관련
+- table:
+    schema: public
+    name: projects
+  select_permissions:
+    - role: user
+      permission:
+        columns: '*'
+        filter:
+          _or:
+            - owner_id: { _eq: X-Hasura-User-Id }
+            - members: { user_id: { _eq: X-Hasura-User-Id } }
+  insert_permissions:
+    - role: user
+      permission:
+        columns: [name, description, location, total_area, project_type, status]
+        check: {}
+  update_permissions:
+    - role: user
+      permission:
+        columns: [name, description, status]
+        filter:
+          owner_id: { _eq: X-Hasura-User-Id }
+
+# 사용자
+- table:
+    schema: public
+    name: users
+  select_permissions:
+    - role: user
+      permission:
+        columns: [id, email, full_name, role, created_at]
+        filter:
+          id: { _eq: X-Hasura-User-Id }
+
+# 부지 분석
+- table:
+    schema: public
+    name: site_analyses
+  select_permissions:
+    - role: user
+      permission:
+        columns: '*'
+        filter:
+          project: { owner_id: { _eq: X-Hasura-User-Id } }
+
+# AVM 감정 평가
+- table:
+    schema: public
+    name: avm_valuations
+  select_permissions:
+    - role: user
+      permission:
+        columns: '*'
+        filter:
+          project: { owner_id: { _eq: X-Hasura-User-Id } }
+
+# 수익성 분석
+- table:
+    schema: public
+    name: feasibility_analyses
+  select_permissions:
+    - role: user
+      permission:
+        columns: '*'
+        filter:
+          project: { owner_id: { _eq: X-Hasura-User-Id } }
+
+# 인허가
+- table:
+    schema: public
+    name: permits
+  select_permissions:
+    - role: user
+      permission:
+        columns: '*'
+        filter:
+          project: { owner_id: { _eq: X-Hasura-User-Id } }
+
+# 문서
+- table:
+    schema: public
+    name: documents
+  select_permissions:
+    - role: user
+      permission:
+        columns: '*'
+        filter:
+          project: { owner_id: { _eq: X-Hasura-User-Id } }
+
+# 에스크로 거래
+- table:
+    schema: public
+    name: escrow_transactions
+  select_permissions:
+    - role: user
+      permission:
+        columns: '*'
+        filter:
+          project: { owner_id: { _eq: X-Hasura-User-Id } }

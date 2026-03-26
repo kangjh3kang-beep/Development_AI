@@ -1,0 +1,12 @@
+{
+  "lockedFiles": [
+    "package.json",
+    "pnpm-workspace.yaml",
+    "turbo.json",
+    ".pre-commit-config.yaml",
+    "infra/docker/docker-compose.dev.yml"
+  ],
+  "lockedBy": "Gemini (Infra/DevOps)",
+  "reason": "BOOT and STEP 7 infrastructure setup and validation in progress.",
+  "timestamp": "2026-03-22T06:40:00+09:00"
+}

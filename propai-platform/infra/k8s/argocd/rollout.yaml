@@ -1,0 +1,108 @@
+# ArgoCD Rollout CRD — 카나리 배포 전략
+# 요구사항: Argo Rollouts 컨트롤러 설치 필요
+# kubectl apply -n argo-rollouts -f https://github.com/argoproj/argo-rollouts/releases/latest/download/install.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: propai-api
+  namespace: propai
+  labels:
+    app: propai-api
+spec:
+  replicas: 3
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      app: propai-api
+  template:
+    metadata:
+      labels:
+        app: propai-api
+    spec:
+      containers:
+        - name: api
+          image: ghcr.io/propai/api:latest
+          ports:
+            - containerPort: 8000
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1000m"
+              memory: "2Gi"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: propai-secrets
+                  key: database-url
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: propai-secrets
+                  key: redis-url
+  strategy:
+    canary:
+      steps:
+        # 1단계: 카나리 10% 트래픽, 5분 대기
+        - setWeight: 10
+        - pause:
+            duration: 5m
+        # 2단계: 카나리 30% 트래픽, 메트릭 분석
+        - setWeight: 30
+        - pause:
+            duration: 5m
+        # 3단계: 카나리 60% 트래픽
+        - setWeight: 60
+        - pause:
+            duration: 5m
+        # 4단계: 전체 롤아웃
+        - setWeight: 100
+      canaryService: propai-api-canary
+      stableService: propai-api-stable
+      trafficRouting:
+        nginx:
+          stableIngress: propai-api-ingress
+      analysis:
+        templates:
+          - templateName: propai-success-rate
+        startingStep: 2
+        args:
+          - name: service-name
+            value: propai-api-canary
+
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: propai-success-rate
+  namespace: propai
+spec:
+  args:
+    - name: service-name
+  metrics:
+    - name: success-rate
+      interval: 60s
+      count: 5
+      successCondition: result[0] >= 0.95
+      failureLimit: 2
+      provider:
+        prometheus:
+          address: http://prometheus.monitoring:9090
+          query: |
+            sum(rate(http_requests_total{service="{{args.service-name}}", status=~"2.."}[5m]))
+            /
+            sum(rate(http_requests_total{service="{{args.service-name}}"}[5m]))

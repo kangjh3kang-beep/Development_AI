@@ -1,0 +1,245 @@
+{
+  "meta": {
+    "title": "PropAI Workspace",
+    "siteName": "PropAI",
+    "description": "Initial frontend workspace for the real-estate development AI platform."
+  },
+  "hero": {
+    "badge": "Next.js Frontend Setup",
+    "title": "An operational workspace that aligns language routing and product flow",
+    "description": "This stage fixes Korean, English, and Simplified Chinese routing first, then prepares a stable web shell for design, finance, drone, and blockchain modules.",
+    "primaryCta": "Open dashboard",
+    "secondaryCta": "Login placeholder"
+  },
+  "nav": {
+    "locale": "Language",
+    "dashboard": "Dashboard",
+    "projects": "Projects",
+    "contracts": "Contracts",
+    "design": "Design",
+    "bim": "3D BIM",
+    "finance": "Finance",
+    "drone": "Drone",
+    "blockchain": "Blockchain",
+    "report": "Report",
+    "agent": "Agent",
+    "approvals": "Approval Ops",
+    "tax": "Tax",
+    "auction": "Auction",
+    "inspection": "Field",
+    "login": "Login",
+    "register": "Register"
+  },
+  "dashboard": {
+    "title": "The frontend foundation is ready.",
+    "description": "At this stage the focus is locale routing, base layouts, dashboard structure, and placeholder pages. Real API connections can be added once backend contracts are stable.",
+    "summaryTitle": "Initial runtime status",
+    "summaryDesign": "The structure now has a clear slot for AI design and floor-plan generation.",
+    "summaryFinance": "Finance analysis and tax calculation views are separated into modules.",
+    "summaryBlockchain": "The escrow screen and contract integration area are reserved in advance."
+  },
+  "auth": {
+    "loginEyebrow": "Auth route",
+    "loginTitle": "Login screen placeholder",
+    "loginDescription": "The routing and entry structure are fixed before real OAuth and JWT integration.",
+    "loginPlaceholder": "This area will receive the login form and state handling after backend auth endpoints are fixed.",
+    "registerEyebrow": "Registration route",
+    "registerTitle": "Registration screen placeholder",
+    "registerDescription": "The base layout is prepared first so the same signup flow can be reused across locales.",
+    "registerPlaceholder": "User type, tenant connection, and policy flow will be wired after the API contract is finalized."
+  },
+  "pages": {
+    "projects": {
+      "eyebrow": "Project list",
+      "title": "Project portfolio screen",
+      "description": "Search, state filters, and recent activity shortcuts will be attached here.",
+      "items": {
+        "first": "List and card view",
+        "second": "Project status filter",
+        "third": "Recent activity timeline"
+      }
+    },
+    "projectDetail": {
+      "eyebrow": "Project detail",
+      "title": "Project detail hub",
+      "description": "Design, BIM, finance, drone, blockchain, and reports are grouped under one project context.",
+      "items": {
+        "first": "Project overview",
+        "second": "Module entry points",
+        "third": "Status summary panel"
+      }
+    },
+    "design": {
+      "eyebrow": "Design module",
+      "title": "AI design and floor-plan generation",
+      "description": "This screen is ready to host text design, image generation, and reference-image upload UI.",
+      "items": {
+        "first": "Design input panel",
+        "second": "Floor-plan result area",
+        "third": "Streaming report hook"
+      }
+    },
+    "bim": {
+      "eyebrow": "BIM module",
+      "title": "IFC quantities and 3D viewer",
+      "description": "This space is reserved for a Three.js BIM viewer and quantity table.",
+      "items": {
+        "first": "IFC upload flow",
+        "second": "3D viewer area",
+        "third": "Quantity table"
+      }
+    },
+    "finance": {
+      "eyebrow": "Finance module",
+      "title": "Feasibility, AVM, and jeonse risk",
+      "description": "This layout groups finance cards and valuation widgets in one shell.",
+      "items": {
+        "first": "AVM result card",
+        "second": "Jeonse risk card",
+        "third": "Feasibility slot"
+      }
+    },
+    "drone": {
+      "eyebrow": "Drone module",
+      "title": "Drone inspection and defect heatmap",
+      "description": "This view is prepared for inspection history, risk distribution, and urgent alert state.",
+      "items": {
+        "first": "Defect summary",
+        "second": "Severity legend",
+        "third": "Report link area"
+      }
+    },
+    "blockchain": {
+      "eyebrow": "Blockchain module",
+      "title": "Escrow status and transaction state",
+      "description": "Once contract ABI and deployment metadata are fixed, real-time escrow state can be connected here.",
+      "items": {
+        "first": "Escrow status card",
+        "second": "Deadline and conditions",
+        "third": "Transaction links"
+      }
+    },
+    "report": {
+      "eyebrow": "Report module",
+      "title": "Streaming report screen",
+      "description": "This layout is prepared for accumulating SSE reports in real time.",
+      "items": {
+        "first": "Streaming header",
+        "second": "Body accumulation area",
+        "third": "Download action"
+      }
+    },
+    "agent": {
+      "eyebrow": "AGENT / LIVE",
+      "title": "Domain agent orchestration",
+      "description": "Run asset, development, transaction, and finance agents through the live `/agents/domain` workflow and inspect approval-gated recommendations in one surface.",
+      "items": {
+        "first": "Focused run plus multi-domain orchestration",
+        "second": "Project context and risk-signal inputs",
+        "third": "Approval-gated outcomes and portfolio summary"
+      }
+    },
+    "tax": {
+      "eyebrow": "Tax module",
+      "title": "Tax calculation and optimization",
+      "description": "The base grid is ready for forms and result panels.",
+      "items": {
+        "first": "Tax input form",
+        "second": "Optimization comparison",
+        "third": "Legal basis slot"
+      }
+    },
+    "auction": {
+      "eyebrow": "Auction module",
+      "title": "Auction analysis placeholder",
+      "description": "Court data and rights analysis will be attached to this base structure later.",
+      "items": {
+        "first": "Listing summary",
+        "second": "Rights analysis",
+        "third": "Risk check"
+      }
+    },
+    "inspection": {
+      "eyebrow": "Field module",
+      "title": "Offline field inspection placeholder",
+      "description": "This screen prepares the PWA offline flow and on-site inspection checklist.",
+      "items": {
+        "first": "Offline banner",
+        "second": "Inspection checklist",
+        "third": "Sync waiting state"
+      }
+    }
+  },
+  "status": {
+    "ready": "Base structure ready",
+    "mock": "Mock integration stage"
+  },
+  "workspace": {
+    "connectionTitle": "Data connection and mock adapter status",
+    "sourceLabel": "Data source",
+    "onlineLabel": "Network online",
+    "offlineLabel": "Network offline",
+    "featuredProjectLabel": "Current featured project",
+    "openProjectLabel": "Open project",
+    "lastUpdatedLabel": "Last updated",
+    "nextActionLabel": "Next action",
+    "viewGridLabel": "Grid",
+    "viewListLabel": "List",
+    "selectProjectLabel": "Select project",
+    "selectedLabel": "Selected",
+    "modulesLabel": "Modules",
+    "emptyStateTitle": "No projects yet",
+    "emptyStateDescription": "Create or sync a project to populate the live portfolio view.",
+    "errorStateTitle": "Project list is unavailable",
+    "errorStateDescription": "The live project list could not be loaded. Check the API connection and try again.",
+    "retryLabel": "Retry",
+    "timelineTitle": "Work timeline",
+    "nextStepsTitle": "Next steps",
+    "budgetLabel": "Budget",
+    "scheduleLabel": "Schedule",
+    "riskLabel": "Risk",
+    "integrationRestLabel": "REST API",
+    "integrationGraphqlLabel": "GraphQL",
+    "integrationRealtimeLabel": "Realtime stream",
+    "modeMock": "Mock",
+    "modeLive": "Live",
+    "modeWaiting": "Waiting"
+  },
+  "pwa": {
+    "eyebrow": "G163 / PWA",
+    "title": "Offline shell, install prompt, and push baseline",
+    "description": "Register the service worker, keep the dashboard shell available offline, install the workspace on field devices, and validate notification permission before live web-push binding.",
+    "runtimeLabel": "Service worker",
+    "runtimeReady": "Ready",
+    "runtimeRegistering": "Registering",
+    "runtimeError": "Error",
+    "runtimeUnsupported": "Unsupported",
+    "installLabel": "Install state",
+    "installAvailable": "Ready to install",
+    "installInstalled": "Installed",
+    "installUnavailable": "Browser-controlled",
+    "notificationsLabel": "Notifications",
+    "notificationsGranted": "Granted",
+    "notificationsDefault": "Permission required",
+    "notificationsDenied": "Blocked",
+    "notificationsUnsupported": "Unsupported",
+    "cacheLabel": "Offline cache",
+    "cacheReady": "Shell cached",
+    "cachePending": "Priming cache",
+    "cacheUnsupported": "Not available",
+    "updateTitle": "A cached update is ready.",
+    "updateDescription": "Apply the waiting service worker to reload the shell with the latest offline assets.",
+    "installAction": "Install workspace",
+    "enableNotificationsAction": "Enable notifications",
+    "testNotificationAction": "Send test notification",
+    "refreshAction": "Refresh PWA",
+    "offlineAction": "Open offline page",
+    "errorTitle": "PWA runtime issue",
+    "testNotificationTitle": "PropAI field sync",
+    "testNotificationBody": "The offline workspace is ready for inspection and field reporting."
+  },
+  "a11y": {
+    "screenReaderRegion": "Screen change announcement region",
+    "skipToContent": "Skip to content"
+  }
+}

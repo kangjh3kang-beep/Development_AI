@@ -1,0 +1,100 @@
+# PropAI v30.0 - Prometheus 알림 규칙
+groups:
+  - name: propai_api
+    rules:
+      - alert: APIHighErrorRate
+        expr: rate(http_requests_total{status=~"5.."}[5m]) / rate(http_requests_total[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "API 5xx 에러율 5% 초과"
+          description: "{{ $labels.instance }}: 에러율 {{ $value | humanizePercentage }}"
+
+      - alert: APIHighLatency
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "API P95 레이턴시 2초 초과"
+
+      - alert: APIDown
+        expr: up{job="propai-api"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "PropAI API 서버 다운"
+
+  - name: propai_worker
+    rules:
+      - alert: WorkerDown
+        expr: up{job="propai-worker"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "arq 워커 다운"
+
+      - alert: WorkerTaskBacklog
+        expr: arq_pending_tasks > 100
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "워커 대기 태스크 100개 초과"
+
+  - name: propai_database
+    rules:
+      - alert: PostgresDown
+        expr: up{job="postgres"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "PostgreSQL 다운"
+
+      - alert: PostgresHighConnections
+        expr: pg_stat_activity_count / pg_settings_max_connections > 0.8
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "PostgreSQL 연결 80% 초과"
+
+  - name: propai_redis
+    rules:
+      - alert: RedisDown
+        expr: up{job="redis"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Redis 다운"
+
+      - alert: RedisHighMemory
+        expr: redis_memory_used_bytes / redis_memory_max_bytes > 0.9
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Redis 메모리 90% 초과"
+
+  - name: propai_infra
+    rules:
+      - alert: HighCPUUsage
+        expr: 100 - (avg by(instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 85
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "CPU 사용률 85% 초과"
+
+      - alert: DiskSpaceLow
+        expr: (1 - node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) > 0.85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "디스크 사용률 85% 초과"

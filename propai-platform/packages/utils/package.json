@@ -1,0 +1,25 @@
+{
+  "name": "@propai/utils",
+  "version": "0.1.0",
+  "description": "PropAI 공유 유틸리티 (포맷, 검증, API 클라이언트)",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@propai/types": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0"
+  },
+  "files": ["dist"]
+}

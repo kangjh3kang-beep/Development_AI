@@ -1,0 +1,68 @@
+version: '3.8'
+
+services:
+  propai-api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    image: propai-api:v49.0
+    container_name: propai-api-prod
+    restart: always
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://propai:secret@postgres:5432/propaidb
+      - REDIS_URL=redis://redis:6379/0
+      - ENVIRONMENT=production
+      - DEBUG=false
+    ports:
+      - "8000:8000"
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - propai-net
+
+  propai-web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    image: propai-web:v49.0
+    container_name: propai-web-prod
+    restart: always
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+    ports:
+      - "3000:3000"
+    networks:
+      - propai-net
+    depends_on:
+      - propai-api
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: propai-postgres-prod
+    restart: always
+    environment:
+      - POSTGRES_USER=propai
+      - POSTGRES_PASSWORD=secret
+      - POSTGRES_DB=propaidb
+    volumes:
+      - propai_pg_data:/var/lib/postgresql/data
+    networks:
+      - propai-net
+
+  redis:
+    image: redis:7-alpine
+    container_name: propai-redis-prod
+    restart: always
+    volumes:
+      - propai_redis_data:/data
+    networks:
+      - propai-net
+
+volumes:
+  propai_pg_data:
+  propai_redis_data:
+
+networks:
+  propai-net:
+    driver: bridge

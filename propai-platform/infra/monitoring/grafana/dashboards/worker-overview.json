@@ -1,0 +1,63 @@
+{
+  "annotations": { "list": [] },
+  "description": "PropAI arq 워커 모니터링",
+  "editable": true,
+  "graphTooltip": 1,
+  "id": null,
+  "panels": [
+    {
+      "title": "대기 태스크 수",
+      "type": "stat",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 0 },
+      "targets": [
+        { "expr": "arq_pending_tasks", "legendFormat": "Pending" }
+      ],
+      "fieldConfig": {
+        "defaults": { "thresholds": { "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 50 }, { "color": "red", "value": 100 }] } }
+      }
+    },
+    {
+      "title": "처리 완료 태스크 / 분",
+      "type": "stat",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 0 },
+      "targets": [
+        { "expr": "rate(arq_tasks_completed_total[5m]) * 60", "legendFormat": "Completed/min" }
+      ]
+    },
+    {
+      "title": "실패 태스크 / 분",
+      "type": "stat",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 0 },
+      "targets": [
+        { "expr": "rate(arq_tasks_failed_total[5m]) * 60", "legendFormat": "Failed/min" }
+      ],
+      "fieldConfig": {
+        "defaults": { "thresholds": { "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 1 }] } }
+      }
+    },
+    {
+      "title": "태스크 타입별 처리량",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        { "expr": "rate(arq_tasks_completed_total[5m])", "legendFormat": "{{ task_name }}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops" } }
+    },
+    {
+      "title": "태스크 실행 시간",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        { "expr": "histogram_quantile(0.50, rate(arq_task_duration_seconds_bucket[5m]))", "legendFormat": "P50" },
+        { "expr": "histogram_quantile(0.95, rate(arq_task_duration_seconds_bucket[5m]))", "legendFormat": "P95" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" } }
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["propai", "worker"],
+  "time": { "from": "now-6h", "to": "now" },
+  "title": "PropAI - Worker Overview",
+  "uid": "propai-worker-overview"
+}

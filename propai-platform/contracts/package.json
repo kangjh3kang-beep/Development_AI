@@ -1,0 +1,25 @@
+{
+  "name": "@propai/contracts",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "hardhat compile",
+    "clean": "hardhat clean",
+    "test": "hardhat test",
+    "extract:abi": "hardhat run scripts/extract-abi.ts",
+    "deploy:local": "hardhat run scripts/deploy.ts",
+    "deploy:amoy": "hardhat run scripts/deploy.ts --network amoy",
+    "deploy:polygon": "hardhat run scripts/deploy.ts --network polygon",
+    "verify:amoy": "hardhat verify --network amoy",
+    "verify:polygon": "hardhat verify --network polygon"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "@openzeppelin/contracts": "^5.1.0",
+    "@types/node": "^24.0.0",
+    "dotenv": "^17.0.0",
+    "hardhat": "^2.22.19",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.8.3"
+  }
+}

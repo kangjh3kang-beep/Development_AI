@@ -1,0 +1,27 @@
+{
+  "name": "@propai/ui",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./styles/tokens.css": "./src/styles/tokens.css"
+  },
+  "sideEffects": ["./src/styles/tokens.css"],
+  "peerDependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3",
+    "typescript": "^5"
+  },
+  "scripts": {
+    "type-check": "tsc --project tsconfig.json --noEmit"
+  }
+}

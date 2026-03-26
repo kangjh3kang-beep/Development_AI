@@ -1,0 +1,26 @@
+global:
+  scrape_interval: 15s
+
+rule_files:
+  - "propai_alerts.yml"
+
+scrape_configs:
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  - job_name: "propai-api"
+    static_configs:
+      - targets: ["propai-api:8000"]
+
+  - job_name: "propai-web"
+    static_configs:
+      - targets: ["propai-web:3000"]
+
+  - job_name: "propai-redis"
+    static_configs:
+      - targets: ["propai-redis-exporter:9121"]
+
+  - job_name: "propai-postgres"
+    static_configs:
+      - targets: ["propai-postgres-exporter:9187"]

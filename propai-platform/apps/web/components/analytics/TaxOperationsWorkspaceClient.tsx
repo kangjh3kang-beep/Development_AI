@@ -1,0 +1,555 @@
+"use client";
+
+import { useEffect, useState, type FormEvent } from "react";
+import { useQuery } from "@tanstack/react-query";
+import {
+  Button,
+  Card,
+  CardContent,
+  CardTitle,
+  Input,
+  Select,
+} from "@propai/ui";
+import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
+import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
+import { ApiClientError, apiClient } from "@/lib/api-client";
+import type { Locale } from "@/i18n/config";
+
+type ProjectSummary = {
+  id: string;
+  name: string;
+  status: string;
+  address: string | null;
+  total_area_sqm: number | null;
+  updated_at: string;
+};
+
+type PaginatedResponse<T> = {
+  items: T[];
+  page: number;
+  page_size: number;
+  has_next: boolean;
+};
+
+type TaxCalculationResponse = {
+  id: string;
+  project_id: string;
+  tax_type: string;
+  amount: number;
+  taxable_value: number;
+  tax_rate: number;
+  deductions: Array<Record<string, unknown>>;
+  optimization_tips: string[];
+  created_at: string;
+};
+
+type Labels = {
+  heroTitle: string;
+  heroDescription: string;
+  heroHint: string;
+  tokenHint: string;
+  projectTitle: string;
+  projectSelectLabel: string;
+  manualProjectIdLabel: string;
+  selectedProjectLabel: string;
+  noProjectsLabel: string;
+  authError: string;
+  missingProjectError: string;
+  calculateTitle: string;
+  taxTypeLabel: string;
+  taxableValueLabel: string;
+  firstHomeLabel: string;
+  holdingYearsLabel: string;
+  calculateAction: string;
+  amountLabel: string;
+  taxRateLabel: string;
+  taxableBaseLabel: string;
+  deductionsLabel: string;
+  tipsLabel: string;
+  projectLoadErrorTitle: string;
+  projectLoadErrorDetail: string;
+  retryAction: string;
+};
+
+const LABELS: Record<Locale, Labels> = {
+  ko: {
+    heroTitle: "세금 라이브 워크스페이스",
+    heroDescription:
+      "실제 `tax` API로 취득세, 보유세, 양도세 시나리오를 계산합니다.",
+    heroHint:
+      "프로젝트 FK가 필요한 계산이므로 live 프로젝트 또는 기존 UUID가 필요합니다.",
+    tokenHint:
+      "실 API 호출에는 `NEXT_PUBLIC_API_ACCESS_TOKEN` 또는 `localStorage.propai_access_token`이 필요합니다.",
+    projectTitle: "세금 계산 대상 프로젝트",
+    projectSelectLabel: "라이브 프로젝트",
+    manualProjectIdLabel: "수동 프로젝트 UUID",
+    selectedProjectLabel: "현재 대상",
+    noProjectsLabel: "라이브 프로젝트가 아직 없습니다. 기존 UUID를 직접 입력하세요.",
+    authError: "실시간 호출을 위해 API 인증이 필요합니다.",
+    missingProjectError: "실존 프로젝트 UUID가 필요합니다.",
+    calculateTitle: "세금 시나리오 계산",
+    taxTypeLabel: "세금 유형",
+    taxableValueLabel: "과세표준(원)",
+    firstHomeLabel: "생애 최초 주택 여부",
+    holdingYearsLabel: "보유기간(년)",
+    calculateAction: "세금 계산",
+    amountLabel: "예상 세액",
+    taxRateLabel: "적용 세율",
+    taxableBaseLabel: "과세표준",
+    deductionsLabel: "공제 항목",
+    tipsLabel: "절세 팁",
+    projectLoadErrorTitle: "프로젝트 로드 실패",
+    projectLoadErrorDetail:
+      "세금 계산 대상 프로젝트 목록을 불러오지 못했습니다. 기존 UUID 수동 입력은 계속 사용할 수 있습니다.",
+    retryAction: "다시 시도",
+  },
+  en: {
+    heroTitle: "Tax live workspace",
+    heroDescription:
+      "Calculate acquisition, holding, and transfer tax scenarios through the live `tax` API.",
+    heroHint:
+      "The calculation persists against a real project foreign key, so a live project or an existing UUID is required.",
+    tokenHint:
+      "Live API calls require `NEXT_PUBLIC_API_ACCESS_TOKEN` or `localStorage.propai_access_token`.",
+    projectTitle: "Target project",
+    projectSelectLabel: "Live project",
+    manualProjectIdLabel: "Manual project UUID",
+    selectedProjectLabel: "Current target",
+    noProjectsLabel: "No live projects are available yet. Enter an existing UUID manually.",
+    authError: "API authentication is required for live workspace calls.",
+    missingProjectError: "A real project UUID is required.",
+    calculateTitle: "Tax scenario calculation",
+    taxTypeLabel: "Tax type",
+    taxableValueLabel: "Taxable value (KRW)",
+    firstHomeLabel: "First-home acquisition",
+    holdingYearsLabel: "Holding period (years)",
+    calculateAction: "Calculate tax",
+    amountLabel: "Estimated tax",
+    taxRateLabel: "Applied rate",
+    taxableBaseLabel: "Taxable value",
+    deductionsLabel: "Deductions",
+    tipsLabel: "Optimization tips",
+    projectLoadErrorTitle: "Project list unavailable",
+    projectLoadErrorDetail:
+      "The tax workspace could not load the live project picker. Manual UUID input remains available.",
+    retryAction: "Retry",
+  },
+  "zh-CN": {
+    heroTitle: "税务实时工作台",
+    heroDescription: "通过实时 `tax` API 计算取得税、持有税与转让税情景。",
+    heroHint: "该计算需要真实项目外键，因此必须选择实时项目或输入已有 UUID。",
+    tokenHint:
+      "实时 API 调用需要 `NEXT_PUBLIC_API_ACCESS_TOKEN` 或 `localStorage.propai_access_token`。",
+    projectTitle: "目标项目",
+    projectSelectLabel: "实时项目",
+    manualProjectIdLabel: "手动项目 UUID",
+    selectedProjectLabel: "当前目标",
+    noProjectsLabel: "当前没有实时项目。可手动输入已有 UUID。",
+    authError: "实时调用需要 API 身份认证。",
+    missingProjectError: "必须提供真实项目 UUID。",
+    calculateTitle: "税务情景计算",
+    taxTypeLabel: "税种",
+    taxableValueLabel: "计税基数(韩元)",
+    firstHomeLabel: "首次购房",
+    holdingYearsLabel: "持有年限",
+    calculateAction: "计算税额",
+    amountLabel: "预计税额",
+    taxRateLabel: "适用税率",
+    taxableBaseLabel: "计税基数",
+    deductionsLabel: "扣减项",
+    tipsLabel: "优化建议",
+    projectLoadErrorTitle: "项目列表不可用",
+    projectLoadErrorDetail:
+      "税务工作台无法加载实时项目列表，但仍可继续手动输入项目 UUID。",
+    retryAction: "重试",
+  },
+};
+
+const TAX_TYPE_OPTIONS = [
+  { label: "Acquisition", value: "acquisition" },
+  { label: "Transfer", value: "transfer" },
+  { label: "Property", value: "property" },
+];
+
+function formatCurrency(locale: string, value: number) {
+  return new Intl.NumberFormat(locale, {
+    style: "currency",
+    currency: "KRW",
+    maximumFractionDigits: 0,
+  }).format(value);
+}
+
+function formatPercent(value: number) {
+  return `${(value * 100).toFixed(2)}%`;
+}
+
+function formatDate(locale: string, value: string) {
+  return new Intl.DateTimeFormat(locale, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(value));
+}
+
+function extractErrorMessage(error: unknown, authMessage: string) {
+  if (error instanceof ApiClientError) {
+    if (error.status === 401 || error.status === 403) {
+      return authMessage;
+    }
+
+    return `API request failed with status ${error.status}.`;
+  }
+
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  return "Request failed.";
+}
+
+export function TaxOperationsWorkspaceClient({
+  locale,
+}: {
+  locale: Locale;
+}) {
+  const labels = LABELS[locale];
+  const runtimeConfig = apiClient.getRuntimeConfig();
+  const canUseLiveApi =
+    runtimeConfig.mode === "live" || runtimeConfig.hasAccessToken;
+
+  const [selectedProjectId, setSelectedProjectId] = useState("");
+  const [manualProjectId, setManualProjectId] = useState("");
+  const [workspaceError, setWorkspaceError] = useState("");
+  const [result, setResult] = useState<TaxCalculationResponse | null>(null);
+  const [isCalculating, setIsCalculating] = useState(false);
+  const [form, setForm] = useState({
+    taxType: "acquisition",
+    taxableValue: "1200000000",
+    isFirstHome: false,
+    holdingYears: "5",
+  });
+
+  const projectsQuery = useQuery({
+    queryKey: ["projects", "tax-picker"],
+    enabled: canUseLiveApi,
+    queryFn: () =>
+      apiClient.get<PaginatedResponse<ProjectSummary>>(
+        "/projects?page=1&page_size=20",
+        { useMock: false },
+      ),
+  });
+
+  useEffect(() => {
+    if (!selectedProjectId && projectsQuery.data?.items.length) {
+      setSelectedProjectId(projectsQuery.data.items[0].id);
+    }
+  }, [projectsQuery.data, selectedProjectId]);
+
+  const selectedProject =
+    projectsQuery.data?.items.find((project) => project.id === selectedProjectId) ??
+    null;
+  const activeProjectId = manualProjectId.trim() || selectedProject?.id || "";
+  const projectQueryError = projectsQuery.error
+    ? extractErrorMessage(projectsQuery.error, labels.authError)
+    : "";
+
+  async function handleCalculate(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setWorkspaceError("");
+
+    if (!activeProjectId) {
+      setWorkspaceError(labels.missingProjectError);
+      return;
+    }
+
+    setIsCalculating(true);
+
+    try {
+      const response = await apiClient.post<TaxCalculationResponse>(
+        "/tax/calculate",
+        {
+          useMock: false,
+          body: {
+            project_id: activeProjectId,
+            tax_type: form.taxType,
+            taxable_value: Number(form.taxableValue),
+            is_first_home: form.isFirstHome,
+            holding_years: Number(form.holdingYears),
+          },
+        },
+      );
+      setResult(response);
+    } catch (error) {
+      setWorkspaceError(extractErrorMessage(error, labels.authError));
+    } finally {
+      setIsCalculating(false);
+    }
+  }
+
+  return (
+    <section className="grid gap-6">
+      <Card className="rounded-[2rem] bg-[var(--surface-strong)] shadow-[0_20px_60px_rgba(19,33,47,0.08)]">
+        <CardContent className="p-8">
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="rounded-full bg-[rgba(14,116,144,0.1)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--accent-strong)]">
+              {labels.heroTitle}
+            </span>
+            <span className="rounded-full border border-[var(--line)] px-4 py-2 text-xs font-medium text-[rgba(19,33,47,0.7)]">
+              {runtimeConfig.mode === "live" ? "LIVE" : "HYBRID"}
+            </span>
+          </div>
+          <h3 className="mt-5 text-3xl font-bold text-[var(--foreground)]">
+            {labels.heroDescription}
+          </h3>
+          <p className="mt-4 max-w-3xl text-sm leading-8 text-[rgba(19,33,47,0.72)]">
+            {labels.heroHint}
+          </p>
+          <p className="mt-3 max-w-3xl text-sm leading-8 text-[rgba(19,33,47,0.6)]">
+            {labels.tokenHint}
+          </p>
+          {!canUseLiveApi ? (
+            <div className="mt-6 rounded-[1.5rem] border border-dashed border-[var(--line)] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[rgba(19,33,47,0.72)]">
+              {labels.authError}
+            </div>
+          ) : null}
+          {workspaceError ? (
+            <div className="mt-6 rounded-[1.5rem] border border-[rgba(217,119,6,0.28)] bg-[rgba(217,119,6,0.08)] p-5 text-sm leading-7 text-[var(--spot)]">
+              {workspaceError}
+            </div>
+          ) : null}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardContent className="grid gap-5 p-6 lg:grid-cols-[1.3fr_0.7fr]">
+          <div className="grid gap-3">
+            <div>
+              <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.5)]">
+                {labels.projectTitle}
+              </p>
+              <CardTitle className="mt-2 text-xl">
+                {labels.projectSelectLabel}
+              </CardTitle>
+            </div>
+            {projectsQuery.isLoading ? (
+              <SkeletonLoader count={1} itemClassName="h-14" />
+            ) : (
+              <div className="grid gap-3">
+                {projectsQuery.isError ? (
+                  <WorkspaceQueryErrorCard
+                    title={labels.projectLoadErrorTitle}
+                    description={labels.projectLoadErrorDetail}
+                    message={projectQueryError}
+                    actionLabel={labels.retryAction}
+                    onRetry={() => {
+                      void projectsQuery.refetch();
+                    }}
+                  />
+                ) : null}
+                <Select
+                  label={labels.projectSelectLabel}
+                  value={selectedProjectId}
+                  onValueChange={setSelectedProjectId}
+                  options={[
+                    {
+                      label:
+                        projectsQuery.data?.items.length
+                          ? labels.projectSelectLabel
+                          : labels.noProjectsLabel,
+                      value: "",
+                      disabled: true,
+                    },
+                    ...(projectsQuery.data?.items.map((project) => ({
+                      label: project.name,
+                      value: project.id,
+                    })) ?? []),
+                  ]}
+                />
+              </div>
+            )}
+            <Input
+              value={manualProjectId}
+              onChange={(event) => setManualProjectId(event.target.value)}
+              placeholder={labels.manualProjectIdLabel}
+            />
+          </div>
+          <div className="rounded-[1.5rem] bg-[var(--surface-soft)] p-5">
+            <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.5)]">
+              {labels.selectedProjectLabel}
+            </p>
+            <p className="mt-3 text-sm font-semibold text-[var(--foreground)]">
+              {selectedProject?.name ?? "-"}
+            </p>
+            <p className="mt-2 break-all text-xs text-[rgba(19,33,47,0.56)]">
+              {activeProjectId || "-"}
+            </p>
+            {selectedProject?.address ? (
+              <p className="mt-3 text-sm text-[rgba(19,33,47,0.72)]">
+                {selectedProject.address}
+              </p>
+            ) : null}
+            {selectedProject ? (
+              <p className="mt-2 text-xs text-[rgba(19,33,47,0.56)]">
+                {selectedProject.status} ·{" "}
+                {formatDate(locale, selectedProject.updated_at)}
+              </p>
+            ) : null}
+          </div>
+        </CardContent>
+      </Card>
+
+      <div className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
+        <Card>
+          <CardContent className="p-6">
+            <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.5)]">
+              {labels.calculateTitle}
+            </p>
+            <form className="mt-5 grid gap-3" onSubmit={handleCalculate}>
+              <Select
+                label={labels.taxTypeLabel}
+                value={form.taxType}
+                onValueChange={(value) =>
+                  setForm((current) => ({
+                    ...current,
+                    taxType: value,
+                  }))
+                }
+                options={TAX_TYPE_OPTIONS}
+              />
+              <Input
+                type="number"
+                min="1"
+                step="1"
+                value={form.taxableValue}
+                onChange={(event) =>
+                  setForm((current) => ({
+                    ...current,
+                    taxableValue: event.target.value,
+                  }))
+                }
+                placeholder={labels.taxableValueLabel}
+              />
+              <Input
+                type="number"
+                min="0"
+                step="1"
+                value={form.holdingYears}
+                onChange={(event) =>
+                  setForm((current) => ({
+                    ...current,
+                    holdingYears: event.target.value,
+                  }))
+                }
+                placeholder={labels.holdingYearsLabel}
+              />
+              <label className="flex items-center gap-3 rounded-[1rem] border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-3 text-sm text-[var(--foreground)]">
+                <input
+                  type="checkbox"
+                  checked={form.isFirstHome}
+                  onChange={(event) =>
+                    setForm((current) => ({
+                      ...current,
+                      isFirstHome: event.target.checked,
+                    }))
+                  }
+                />
+                <span>{labels.firstHomeLabel}</span>
+              </label>
+              <Button type="submit" disabled={!canUseLiveApi || isCalculating}>
+                {isCalculating
+                  ? `${labels.calculateAction}...`
+                  : labels.calculateAction}
+              </Button>
+            </form>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent className="p-6">
+            {result ? (
+              <div className="space-y-4">
+                <div className="grid gap-4 md:grid-cols-2">
+                  <MetricTile
+                    label={labels.amountLabel}
+                    value={formatCurrency(locale, result.amount)}
+                  />
+                  <MetricTile
+                    label={labels.taxRateLabel}
+                    value={formatPercent(result.tax_rate)}
+                  />
+                  <MetricTile
+                    label={labels.taxableBaseLabel}
+                    value={formatCurrency(locale, result.taxable_value)}
+                  />
+                  <MetricTile
+                    label="Created"
+                    value={formatDate(locale, result.created_at)}
+                  />
+                </div>
+                <div className="rounded-[1.5rem] bg-[var(--surface-soft)] p-5">
+                  <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.5)]">
+                    {labels.deductionsLabel}
+                  </p>
+                  {result.deductions.length ? (
+                    <ul className="mt-3 space-y-2 text-sm leading-7 text-[rgba(19,33,47,0.72)]">
+                      {result.deductions.map((item, index) => (
+                        <li key={`${index}-${JSON.stringify(item)}`}>
+                          • {Object.entries(item)
+                            .map(([key, value]) => `${key}: ${String(value)}`)
+                            .join(", ")}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="mt-3 text-sm leading-7 text-[rgba(19,33,47,0.62)]">
+                      -
+                    </p>
+                  )}
+                </div>
+                <div className="rounded-[1.5rem] bg-[var(--surface-soft)] p-5">
+                  <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.5)]">
+                    {labels.tipsLabel}
+                  </p>
+                  {result.optimization_tips.length ? (
+                    <ul className="mt-3 space-y-2 text-sm leading-7 text-[rgba(19,33,47,0.72)]">
+                      {result.optimization_tips.map((item) => (
+                        <li key={item}>• {item}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="mt-3 text-sm leading-7 text-[rgba(19,33,47,0.62)]">
+                      -
+                    </p>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="rounded-[1.5rem] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[rgba(19,33,47,0.68)]">
+                Select a live project and run a tax scenario to inspect the persisted
+                `tax/calculate` response.
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+    </section>
+  );
+}
+
+function MetricTile({
+  label,
+  value,
+}: {
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="rounded-[1.5rem] bg-[var(--surface-soft)] p-5">
+      <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.5)]">
+        {label}
+      </p>
+      <p className="mt-3 text-xl font-semibold text-[var(--foreground)]">
+        {value}
+      </p>
+    </div>
+  );
+}

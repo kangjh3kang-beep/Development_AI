@@ -1,0 +1,22 @@
+{
+  "name": "@propai/types",
+  "version": "0.1.0",
+  "description": "PropAI 공유 TypeScript 타입 정의 (Pydantic 모델 기반)",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "type-check": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0"
+  },
+  "files": ["dist"]
+}
