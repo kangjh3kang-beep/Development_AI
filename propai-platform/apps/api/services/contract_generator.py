@@ -1,6 +1,7 @@
 """Deterministic contract generation service for v53 smart contracts."""
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
+UTC = timezone.utc
 import secrets
 import uuid
 from collections.abc import Iterable

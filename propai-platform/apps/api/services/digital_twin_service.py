@@ -14,7 +14,8 @@ sklearn IsolationForest 기반 IoT 센서 이상 감지.
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime
+from datetime import datetime, timezone
+UTC = timezone.utc
 from typing import TYPE_CHECKING
 from uuid import UUID
 
@@ -324,3 +325,113 @@ class DigitalTwinService:
         )
 
         return anomaly_record
+
+    # ── v57 Phase 16 확장: IFC 파싱, 센서 수집, 운영 탄소 ──
+
+    @staticmethod
+    def parse_ifc_metadata(ifc_data: dict) -> dict:
+        """IFC 메타데이터를 파싱한다.
+
+        ifcopenshell 미설치 환경에서는 JSON dict 입력을 직접 처리한다.
+
+        Args:
+            ifc_data: IFC 데이터 (JSON dict)
+
+        Returns:
+            {"building_name", "site_area", "gross_area", "num_floors", "materials", "height"}
+        """
+        return {
+            "building_name": ifc_data.get("name", "Unknown"),
+            "site_area": ifc_data.get("site_area_sqm", 0),
+            "gross_area": ifc_data.get("gross_floor_area_sqm", 0),
+            "num_floors": ifc_data.get("num_floors", 0),
+            "materials": ifc_data.get("materials", []),
+            "height": ifc_data.get("building_height_m", 0),
+        }
+
+    async def ingest_sensor_reading(
+        self,
+        *,
+        tenant_id,
+        project_id,
+        sensor_type: str,
+        value: float,
+        timestamp=None,
+    ) -> dict:
+        """개별 센서 데이터를 수집하여 DB에 저장한다 (MQTT 메시지 호환).
+
+        Args:
+            tenant_id: 테넌트 ID
+            project_id: 프로젝트 ID
+            sensor_type: 센서 유형 (temperature, humidity 등)
+            value: 센서 값
+            timestamp: 타임스탬프 (None이면 현재 시각)
+
+        Returns:
+            {"sensor_type": str, "value": float, "timestamp": str, "stored": bool}
+        """
+        ts = timestamp or datetime.now(UTC)
+
+        record = DigitalTwinAnomaly(
+            tenant_id=tenant_id,
+            project_id=project_id,
+            sensor_type=sensor_type,
+            anomaly_score=0.0,
+            is_anomaly=False,
+            data_points_used=1,
+            feature_values_json={"value": value, "timestamp": ts.isoformat()},
+            severity="info",
+            detected_at=ts,
+        )
+        self.db.add(record)
+        await self.db.commit()
+        return {
+            "sensor_type": sensor_type,
+            "value": value,
+            "timestamp": ts.isoformat(),
+            "stored": True,
+        }
+
+    @staticmethod
+    def calculate_operational_carbon(
+        energy_readings: list[dict],
+        grid_ef: float = 0.4629,
+    ) -> dict:
+        """실제 에너지 사용량 기반 운영 탄소 배출량을 산출한다.
+
+        Args:
+            energy_readings: [{"month": "2026-01", "kwh": 15000}, ...]
+            grid_ef: 전력배출계수 (kgCO2eq/kWh) -- 한국 기본값 0.4629
+
+        Returns:
+            {"total_carbon_kg": float, "monthly": [...], "trend": "increasing"|"decreasing"|"stable"}
+        """
+        monthly = []
+        for r in energy_readings:
+            carbon_kg = r["kwh"] * grid_ef
+            monthly.append({
+                "month": r["month"],
+                "kwh": r["kwh"],
+                "carbon_kg": round(carbon_kg, 2),
+            })
+
+        total = sum(m["carbon_kg"] for m in monthly)
+
+        # 트렌드 판정 (최근 3개월 vs 이전 3개월)
+        if len(monthly) >= 6:
+            recent = sum(m["carbon_kg"] for m in monthly[-3:])
+            earlier = sum(m["carbon_kg"] for m in monthly[-6:-3])
+            if recent > earlier * 1.05:
+                trend = "increasing"
+            elif recent < earlier * 0.95:
+                trend = "decreasing"
+            else:
+                trend = "stable"
+        else:
+            trend = "stable"
+
+        return {
+            "total_carbon_kg": round(total, 2),
+            "monthly": monthly,
+            "trend": trend,
+        }

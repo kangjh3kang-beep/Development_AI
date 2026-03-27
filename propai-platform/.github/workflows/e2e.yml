@@ -72,8 +72,20 @@ jobs:
           JWT_SECRET: e2e-test-secret-key
           ENVIRONMENT: test
         run: |
-          cd apps/api && python -m uvicorn main:app --host 0.0.0.0 --port 8000 &
-          sleep 5
+          cd apps/api && PYTHONPATH=. python -m uvicorn main:app --host 0.0.0.0 --port 8000 &
+          API_PID=$!
+          echo "API_PID=$API_PID" >> $GITHUB_ENV
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8000/health > /dev/null 2>&1; then
+              echo "API server ready (${i}s)"
+              break
+            fi
+            if [ "$i" -eq 30 ]; then
+              echo "API server start failed"
+              exit 1
+            fi
+            sleep 1
+          done
 
       - name: Build & start Web
         env:

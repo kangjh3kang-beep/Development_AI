@@ -1,8 +1,8 @@
 # PropAI v53 rebaseline plan
 
 Date: 2026-03-24
-Stage: 57
-Status: Active v53 roadmap; Phases v53.1 through v53.10 completed and the next execution target is the first live staging release rehearsal
+Stage: 58
+Status: Active v53 roadmap; Phases v53.1 through v53.11 completed and the next execution target is the first live staging release rehearsal
 
 ## Source set
 
@@ -65,6 +65,7 @@ Current execution status:
 - `Phase v53.8` completed in stage 55
 - `Phase v53.9` completed in stage 56
 - `Phase v53.10` completed in stage 57
+- `Phase v53.11` completed in stage 58
 
 But that baseline does not automatically satisfy the v53 delta.
 
@@ -418,6 +419,30 @@ Current status:
 - completed in stage 57
 - implementation plan: `.build-journal/v53-phase-10-observability-rehearsal-plan-2026-03-27.md`
 - implementation record: `.build-journal/v53-phase-10-observability-rehearsal-update-2026-03-27.md`
+
+### Phase v53.11: Rehearsal evidence automation
+
+Goal:
+ensure the first live staging rehearsal leaves a cutover-ready evidence bundle even when failures occur
+
+Scope:
+
+- generate markdown and JSON release evidence reports
+- capture rollout logs, kubectl inventory, pod snapshots, and event logs
+- upload the evidence bundle from staging and production deploy workflows
+- validate the evidence wiring inside release asset checks and system verification
+
+Exit criteria:
+
+- release workflows always emit a structured evidence bundle
+- report generation works for both success and failure combinations
+- quality gates remain green after the evidence automation is added
+
+Current status:
+
+- completed in stage 58
+- implementation plan: `.build-journal/v53-phase-11-rehearsal-evidence-automation-plan-2026-03-27.md`
+- implementation record: `.build-journal/v53-phase-11-rehearsal-evidence-automation-update-2026-03-27.md`
 
 ## Immediate next action
 

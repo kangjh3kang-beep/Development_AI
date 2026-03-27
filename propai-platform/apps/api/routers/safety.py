@@ -1,6 +1,7 @@
 """공사현장 AI 안전관리 라우터 (G116)."""
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
+UTC = timezone.utc
 
 from uuid import UUID
 

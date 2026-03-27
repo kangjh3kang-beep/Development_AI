@@ -35,6 +35,9 @@ class BuildingModel:
     building_area_sqm: float  # 건축면적
     num_floors: int  # 층수
     floor_height_m: float  # 층고 (m)
+    # v57 신규 필드
+    setback_distances: dict[str, float] | None = None  # {"north": 3.0, "south": 2.0, ...}
+    min_floor_height_m: float = 2.7  # 최소 층고
 
     @property
     def gross_floor_area_sqm(self) -> float:
@@ -232,3 +235,70 @@ class CadAutoCorrectionService:
             is_compliant=len(violations_after) == 0,
             corrections_applied=corrections,
         )
+
+    # ── v57 Phase 15 확장: 세트백/층고 최적화 ──
+
+    @staticmethod
+    def check_setback_compliance(
+        building_model: "BuildingModel",
+        site_boundary: dict,
+        min_setback_m: float,
+    ) -> list[dict]:
+        """세트백 준수 여부를 검증한다.
+
+        건축물 각 면의 이격거리가 최소 세트백 기준을 충족하는지 검증한다.
+
+        Args:
+            building_model: 건축물 모델
+            site_boundary: 대지 경계 정보
+            min_setback_m: 최소 세트백 거리 (m)
+
+        Returns:
+            [{"side": str, "distance": float, "min_required": float, "compliant": bool}]
+        """
+        results = []
+        if hasattr(building_model, "setback_distances") and building_model.setback_distances:
+            for side, dist in building_model.setback_distances.items():
+                results.append({
+                    "side": side,
+                    "distance": dist,
+                    "min_required": min_setback_m,
+                    "compliant": dist >= min_setback_m,
+                })
+        return results
+
+    @staticmethod
+    def optimize_floor_height(
+        building_model: "BuildingModel",
+        max_height_m: float,
+    ) -> dict:
+        """층고를 최적화한다 (최소 2.7m 확보하면서 높이 제한 준수).
+
+        최소 층고를 유지하면서 가능한 최대 층수를 산출하고,
+        각 층의 최적 층고를 계산한다.
+
+        Args:
+            building_model: 건축물 모델
+            max_height_m: 건물 높이 상한 (m)
+
+        Returns:
+            {"optimized_floor_height_m": float, "max_floors": int, "total_height_m": float}
+        """
+        min_h = getattr(building_model, "min_floor_height_m", 2.7)
+        if min_h <= 0:
+            min_h = 2.7
+        max_floors = int(max_height_m / min_h)
+        if max_floors <= 0:
+            return {
+                "optimized_floor_height_m": round(min_h, 2),
+                "max_floors": 0,
+                "total_height_m": 0.0,
+            }
+        optimal_height = max_height_m / max_floors
+        optimal_height = max(optimal_height, min_h)
+        actual_floors = int(max_height_m / optimal_height)
+        return {
+            "optimized_floor_height_m": round(optimal_height, 2),
+            "max_floors": actual_floors,
+            "total_height_m": round(optimal_height * actual_floors, 2),
+        }

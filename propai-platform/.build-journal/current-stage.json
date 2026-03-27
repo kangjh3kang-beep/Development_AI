@@ -1,5 +1,5 @@
 {
-  "current_stage": 57,
+  "current_stage": 58,
   "agents": {
     "gemini": {
       "status": "completed",
@@ -36,7 +36,7 @@
     },
     "codex": {
       "status": "in_progress",
-      "stage": "Phases v53.1 through v53.10 are now implemented: cost intelligence, digital twin status, unified risk scoring, permit automation, contract generation with e-sign handoff, multilingual surfaces, mobile PWA runtime support, operator shell normalization for safety/webrtc/sre, auth lifecycle hardening, approval operations center, browser release cutover, deployment hardening with release preflight plus post-deploy smoke gates, release rehearsal hardening with image pinning and asset drift validation, and observability rehearsal readiness with manual workflow dispatch plus Prometheus/Alertmanager/Grafana smoke checks; the next priority is the first live staging release rehearsal",
+      "stage": "Phases v53.1 through v53.11 are now implemented: cost intelligence, digital twin status, unified risk scoring, permit automation, contract generation with e-sign handoff, multilingual surfaces, mobile PWA runtime support, operator shell normalization for safety/webrtc/sre, auth lifecycle hardening, approval operations center, browser release cutover, deployment hardening with release preflight plus post-deploy smoke gates, release rehearsal hardening with image pinning and asset drift validation, observability rehearsal readiness with manual workflow dispatch plus Prometheus/Alertmanager/Grafana smoke checks, and rehearsal evidence automation with artifact capture and cutover-ready markdown/json reports; the next priority is the first live staging release rehearsal",
       "locked_files": [
         "apps/api/config.py",
         "apps/api/",
@@ -56,8 +56,8 @@
     "playwright_e2e": "12 passed (release cutover flows: auth -> dashboard, maintenance -> tenant -> digital twin, permit -> contract -> e-sign, project finance/report/design/BIM, agent -> approval ops, and KDX -> feasibility, plus accessibility audits on login/dashboard/approval ops/project contracts/offline fallback)",
     "web_lint": "Passed (`npm run lint` in apps/web)",
     "web_type_check": "Passed (`npm run type-check` in apps/web)",
-    "pytest": "877 passed, 31 skipped, 1 warning (root default suite: tests/ including release deployment hardening, release asset validation, and observability rehearsal smoke coverage)",
-    "system_verify": "Passed (`bash scripts/test/verify_system.sh` -> PASS 68 / FAIL 0 / WARN 0)"
+    "pytest": "879 passed, 31 skipped, 1 warning (root default suite: tests/ including release deployment hardening, release asset validation, observability rehearsal smoke coverage, and release evidence report generation)",
+    "system_verify": "Passed (`bash scripts/test/verify_system.sh` -> PASS 69 / FAIL 0 / WARN 0)"
   },
   "api_endpoints": [
     "/api/v1/auth",
@@ -139,5 +139,5 @@
     "/api/v2/design",
     "/api/latest/{path}"
   ],
-  "last_updated": "2026-03-27T08:40:12+09:00"
+  "last_updated": "2026-03-27T08:59:50+09:00"
 }

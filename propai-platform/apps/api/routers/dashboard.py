@@ -1,7 +1,8 @@
 """Dashboard endpoints backed by current tenant data."""
 
 from collections import Counter
-from datetime import UTC, datetime
+from datetime import datetime, timezone
+UTC = timezone.utc
 
 from fastapi import APIRouter, Depends
 from packages.schemas.models import (

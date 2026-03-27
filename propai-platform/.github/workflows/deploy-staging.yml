@@ -128,8 +128,14 @@ jobs:
     needs: [preflight, build-and-push]
     runs-on: ubuntu-latest
     environment: staging
+    env:
+      RELEASE_NAMESPACE: propai-staging
+      RELEASE_ARTIFACT_DIR: .artifacts/release/staging
     steps:
       - uses: actions/checkout@v4
+
+      - name: Initialize release artifacts
+        run: mkdir -p "$RELEASE_ARTIFACT_DIR"
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -166,7 +172,13 @@ jobs:
           kubectl apply -k infra/k8s/overlays/staging/
 
       - name: Pin rollout images
+        id: pin-images
         run: |
+          cat <<EOF > "$RELEASE_ARTIFACT_DIR/image-refs.env"
+          api=${{ needs.build-and-push.outputs.api_image }}
+          web=${{ needs.build-and-push.outputs.web_image }}
+          worker=${{ needs.build-and-push.outputs.worker_image }}
+          EOF
           kubectl set image deployment/propai-api propai-api="${{ needs.build-and-push.outputs.api_image }}" -n propai-staging
           kubectl set image deployment/propai-web propai-web="${{ needs.build-and-push.outputs.web_image }}" -n propai-staging
           kubectl set image deployment/propai-worker propai-worker="${{ needs.build-and-push.outputs.worker_image }}" -n propai-staging
@@ -178,12 +190,14 @@ jobs:
           kubectl rollout restart deployment/propai-worker -n propai-staging
 
       - name: Wait for rollout
+        id: rollout
         run: |
-          kubectl rollout status deployment/propai-api -n propai-staging --timeout=300s
-          kubectl rollout status deployment/propai-web -n propai-staging --timeout=300s
-          kubectl rollout status deployment/propai-worker -n propai-staging --timeout=300s
+          kubectl rollout status deployment/propai-api -n "$RELEASE_NAMESPACE" --timeout=300s | tee "$RELEASE_ARTIFACT_DIR/rollout-api.log"
+          kubectl rollout status deployment/propai-web -n "$RELEASE_NAMESPACE" --timeout=300s | tee "$RELEASE_ARTIFACT_DIR/rollout-web.log"
+          kubectl rollout status deployment/propai-worker -n "$RELEASE_NAMESPACE" --timeout=300s | tee "$RELEASE_ARTIFACT_DIR/rollout-worker.log"
 
       - name: Post-deploy release smoke
+        id: release-smoke
         env:
           RELEASE_API_URL: ${{ secrets.STAGING_API_URL || secrets.STAGING_URL }}
           RELEASE_WEB_URL: ${{ secrets.STAGING_WEB_URL || secrets.STAGING_URL }}
@@ -193,10 +207,11 @@ jobs:
             --target staging \
             --api-base-url "$RELEASE_API_URL" \
             --web-base-url "$RELEASE_WEB_URL" \
-            --access-token "$RELEASE_SMOKE_TOKEN"
+            --access-token "$RELEASE_SMOKE_TOKEN" | tee "$RELEASE_ARTIFACT_DIR/release-smoke.log"
           echo "Staging 배포 성공"
 
       - name: Post-deploy observability smoke
+        id: observability-smoke
         env:
           RELEASE_PROMETHEUS_URL: ${{ secrets.STAGING_PROMETHEUS_URL || secrets.PROMETHEUS_URL }}
           RELEASE_ALERTMANAGER_URL: ${{ secrets.STAGING_ALERTMANAGER_URL || secrets.ALERTMANAGER_URL }}
@@ -204,7 +219,7 @@ jobs:
           RELEASE_GRAFANA_API_KEY: ${{ secrets.STAGING_GRAFANA_API_KEY || secrets.GRAFANA_API_KEY }}
         run: |
           if [ -z "$RELEASE_PROMETHEUS_URL" ] || [ -z "$RELEASE_ALERTMANAGER_URL" ] || [ -z "$RELEASE_GRAFANA_URL" ]; then
-            echo "Observability smoke skipped: required URLs are not configured."
+            echo "Observability smoke skipped: required URLs are not configured." | tee "$RELEASE_ARTIFACT_DIR/observability-smoke.log"
             exit 0
           fi
 
@@ -218,4 +233,41 @@ jobs:
             ARGS+=(--grafana-api-key "$RELEASE_GRAFANA_API_KEY")
           fi
 
-          python scripts/release/run_observability_smoke.py "${ARGS[@]}"
+          python scripts/release/run_observability_smoke.py "${ARGS[@]}" | tee "$RELEASE_ARTIFACT_DIR/observability-smoke.log"
+
+      - name: Capture kubectl evidence
+        if: always()
+        run: |
+          kubectl get deployment,pods,svc,ingress -n "$RELEASE_NAMESPACE" -o wide > "$RELEASE_ARTIFACT_DIR/kubectl-overview.txt" || true
+          kubectl get pods -n "$RELEASE_NAMESPACE" -o json > "$RELEASE_ARTIFACT_DIR/kubectl-pods.json" || true
+          kubectl get events -n "$RELEASE_NAMESPACE" --sort-by=.lastTimestamp | tail -n 200 > "$RELEASE_ARTIFACT_DIR/kubectl-events.log" || true
+
+      - name: Generate release evidence report
+        if: always()
+        run: |
+          python scripts/release/generate_release_report.py \
+            --target staging \
+            --workflow-name "${{ github.workflow }}" \
+            --git-ref "${{ github.ref_name }}" \
+            --commit-sha "${{ github.sha }}" \
+            --namespace "$RELEASE_NAMESPACE" \
+            --workflow-run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --artifact-dir "$RELEASE_ARTIFACT_DIR" \
+            --markdown-output "$RELEASE_ARTIFACT_DIR/release-report.md" \
+            --json-output "$RELEASE_ARTIFACT_DIR/release-report.json" \
+            --preflight-status "${{ needs.preflight.result }}" \
+            --build-status "${{ needs.build-and-push.result }}" \
+            --rollout-status "${{ steps.rollout.outcome }}" \
+            --release-smoke-status "${{ steps.release-smoke.outcome }}" \
+            --observability-smoke-status "${{ steps.observability-smoke.outcome }}" \
+            --api-image "${{ needs.build-and-push.outputs.api_image }}" \
+            --web-image "${{ needs.build-and-push.outputs.web_image }}" \
+            --worker-image "${{ needs.build-and-push.outputs.worker_image }}"
+
+      - name: Upload release evidence artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-release-evidence-${{ github.run_id }}
+          path: ${{ env.RELEASE_ARTIFACT_DIR }}
+          retention-days: 14

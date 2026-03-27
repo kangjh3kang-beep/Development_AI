@@ -1,6 +1,7 @@
 """AI 스마트 주차 관리 라우터 (G119)."""
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
+UTC = timezone.utc
 
 from uuid import UUID
 

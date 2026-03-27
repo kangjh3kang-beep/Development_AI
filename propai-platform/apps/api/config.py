@@ -181,6 +181,12 @@ class Settings(BaseSettings):
     slack_webhook_url: str = ""
     log_level: str = "INFO"
 
+    # ── OpenTelemetry / 분산 추적 ──
+    otel_exporter_otlp_endpoint: str = "http://localhost:4318"
+    otel_service_name: str = "propai-api"
+    otel_sample_rate: float = Field(default=1.0, ge=0.0, le=1.0)
+    otel_enabled: bool = False
+
     # ── Qdrant ──
     qdrant_host: str = "localhost"
     qdrant_port: int = 6333

@@ -1,6 +1,7 @@
 """Regression tests for v53 phase 3 contract automation and i18n hardening."""
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
+UTC = timezone.utc
 from pathlib import Path
 
 from apps.api.auth.rbac import check_permission

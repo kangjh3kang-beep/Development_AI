@@ -4,7 +4,8 @@ AgentStepEvent, StreamingReportEvent, DroneAlertEvent 필드 검증.
 datetime.now(UTC) 사용 확인.
 """
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
+UTC = timezone.utc
 from pathlib import Path
 
 from packages.schemas.events import AgentStepEvent, DroneAlertEvent, StreamingReportEvent

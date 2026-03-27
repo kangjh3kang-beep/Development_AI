@@ -5,7 +5,8 @@ ReportLab으로 생성 후 MinIO에 저장.
 """
 
 import io
-from datetime import UTC, datetime
+from datetime import datetime, timezone
+UTC = timezone.utc
 from typing import Any
 from uuid import uuid4
 

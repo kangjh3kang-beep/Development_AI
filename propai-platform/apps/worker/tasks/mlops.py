@@ -4,7 +4,8 @@ AVM XGBoost 모델을 최신 실거래가 데이터로 재학습하고 MLflow에
 """
 
 import math
-from datetime import UTC, datetime
+from datetime import datetime, timezone
+UTC = timezone.utc
 from typing import Any
 
 import structlog

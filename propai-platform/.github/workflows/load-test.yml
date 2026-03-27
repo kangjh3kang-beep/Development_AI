@@ -1,0 +1,96 @@
+name: Load Test (Locust)
+
+on:
+  schedule:
+    - cron: "0 2 * * 0"
+  workflow_dispatch: {}
+
+env:
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  load-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: propai_user
+          POSTGRES_PASSWORD: propai_pass_dev
+          POSTGRES_DB: propai_db
+        ports:
+          - 5444:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        working-directory: apps/api
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install locust
+
+      - name: Start API server
+        working-directory: apps/api
+        env:
+          DATABASE_URL: postgresql+asyncpg://propai_user:propai_pass_dev@localhost:5444/propai_db
+          REDIS_URL: redis://localhost:6379/0
+          ENVIRONMENT: test
+          JWT_SECRET: test-secret-for-ci
+        run: |
+          PYTHONPATH=. python -m uvicorn main:app --host 0.0.0.0 --port 8000 &
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8000/health > /dev/null 2>&1; then
+              echo "API server ready"
+              break
+            fi
+            echo "Waiting... ($i/30)"
+            sleep 1
+          done
+
+      - name: Run Locust load test
+        run: |
+          locust -f tests/load/locustfile.py \
+            --host http://localhost:8000 \
+            --users 50 \
+            --spawn-rate 5 \
+            --run-time 2m \
+            --headless \
+            --csv=results/locust \
+            --html=results/locust-report.html \
+            2>&1 | tee results/locust-output.txt
+
+      - name: Check P95 SLA
+        run: |
+          P95=$(tail -1 results/locust_stats.csv | cut -d',' -f10)
+          echo "P95: ${P95}ms"
+          if [ "${P95}" -gt 3000 ]; then
+            echo "::error::P95 SLA violation: ${P95}ms > 3000ms"
+            exit 1
+          fi
+          echo "P95 SLA pass: ${P95}ms <= 3000ms"
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: load-test-results
+          path: results/
+          retention-days: 30

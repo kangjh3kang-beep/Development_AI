@@ -1,6 +1,7 @@
 """KCCI material price service for v53 cost intelligence."""
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
+UTC = timezone.utc
 from math import sin
 from uuid import UUID
 

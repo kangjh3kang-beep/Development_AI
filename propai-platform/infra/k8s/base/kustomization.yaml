@@ -15,6 +15,7 @@ resources:
   - worker-deployment.yaml
   - ingress.yaml
   - hpa.yaml
+  - jaeger-deployment.yaml
 
 commonLabels:
   app.kubernetes.io/part-of: propai

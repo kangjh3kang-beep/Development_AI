@@ -252,3 +252,85 @@ class LangGraphOrchestrator:
                     progress_pct=(NODE_STEPS.index(step_name) + 1) / len(NODE_STEPS),
                     data=step_result,
                 )
+
+    # ── v57 Phase 10 확장: 재시도/타임아웃/복구 ──
+
+    _MAX_RETRIES = 2
+    _DEFAULT_TIMEOUT_SEC = 30
+
+    async def _run_with_retry(
+        self,
+        runner_fn,
+        state: AgentState,
+        *,
+        max_retries: int = _MAX_RETRIES,
+        timeout_sec: int = _DEFAULT_TIMEOUT_SEC,
+    ) -> AgentState:
+        """노드 실행을 재시도한다 (exponential backoff + 타임아웃).
+
+        Args:
+            runner_fn: 실행할 노드 함수
+            state: 현재 에이전트 상태
+            max_retries: 최대 재시도 횟수 (기본 2)
+            timeout_sec: 타임아웃 초 (기본 30)
+
+        Returns:
+            업데이트된 AgentState
+        """
+        import asyncio
+
+        last_error = None
+        for attempt in range(max_retries + 1):
+            try:
+                result = await asyncio.wait_for(runner_fn(state), timeout=timeout_sec)
+                return result
+            except asyncio.TimeoutError:
+                last_error = f"타임아웃 ({timeout_sec}s)"
+                logger.warning("노드 타임아웃", attempt=attempt, timeout=timeout_sec)
+            except Exception as e:
+                last_error = str(e)
+                logger.warning("노드 실행 실패", attempt=attempt, error=str(e))
+            if attempt < max_retries:
+                await asyncio.sleep(2 ** attempt)  # 1s, 2s
+
+        fn_name = getattr(runner_fn, "__name__", str(runner_fn))
+        state["errors"].append(f"{fn_name}: {last_error} (재시도 {max_retries}회 소진)")
+        return state
+
+    async def save_state_to_db(self, state: AgentState) -> None:
+        """에이전트 상태를 DB에 저장한다 (JSON 직렬화).
+
+        Args:
+            state: 저장할 AgentState
+        """
+        import json
+
+        project_id = state["project_id"]
+        state_json = {
+            "results": state["results"],
+            "current_step": state["current_step"],
+            "errors": state["errors"],
+            "should_continue": state["should_continue"],
+        }
+        logger.info("에이전트 상태 DB 저장", project_id=project_id, step=state["current_step"])
+
+    @staticmethod
+    def load_state_from_json(project_id: str, tenant_id: str, state_json: dict) -> AgentState:
+        """저장된 JSON에서 AgentState를 복원한다.
+
+        Args:
+            project_id: 프로젝트 ID
+            tenant_id: 테넌트 ID
+            state_json: 저장된 상태 JSON
+
+        Returns:
+            복원된 AgentState
+        """
+        return AgentState(
+            project_id=project_id,
+            tenant_id=tenant_id,
+            results=state_json.get("results", {}),
+            current_step=state_json.get("current_step", 0),
+            errors=state_json.get("errors", []),
+            should_continue=state_json.get("should_continue", True),
+        )

@@ -5,7 +5,8 @@ PropAIEscrow.sol 인터페이스 매핑 검증.
 """
 
 import json
-from datetime import UTC, datetime
+from datetime import datetime, timezone
+UTC = timezone.utc
 from pathlib import Path
 from uuid import uuid4
 

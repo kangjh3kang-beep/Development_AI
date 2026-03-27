@@ -1,6 +1,7 @@
 """KDX integration pipeline service."""
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
+UTC = timezone.utc
 from uuid import UUID
 
 import structlog

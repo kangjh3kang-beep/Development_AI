@@ -6,7 +6,8 @@ molit_client 68-254 를 직접 실행하여 커버한다.
 
 import os
 import sys
-from datetime import UTC, datetime
+from datetime import datetime, timezone
+UTC = timezone.utc
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 

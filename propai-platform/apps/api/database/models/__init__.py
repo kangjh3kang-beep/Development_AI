@@ -1,6 +1,6 @@
 """ORM 모델 패키지.
 
-73개 테이블 + 2개 TimescaleDB 하이퍼테이블.
+80개 테이블 + 2개 TimescaleDB 하이퍼테이블.
 모든 핵심 테이블은 tenant_id 기반 RLS 격리를 전제로 한다.
 """
 
@@ -111,6 +111,14 @@ from apps.api.database.models.webhook import Webhook
 from apps.api.database.models.webhook_delivery import WebhookDelivery
 from apps.api.database.models.webrtc_session import WebRTCSession
 
+# v57 Track A 완성 모델
+from apps.api.database.models.development_workflow import DevelopmentWorkflow
+from apps.api.database.models.floor_plan import CadElement, FloorPlan
+from apps.api.database.models.green_certification import GreenCertification
+from apps.api.database.models.low_carbon_alternative import LowCarbonAlternative
+from apps.api.database.models.reference_image import ReferenceImage
+from apps.api.database.models.stakeholder import Stakeholder
+
 __all__ = [
     "Base",
     "TenantMixin",
@@ -216,4 +224,12 @@ __all__ = [
     "QuantityTakeoff",
     "UnifiedRiskAssessment",
     "PermitSubmission",
+    # v57 Track A
+    "ReferenceImage",
+    "GreenCertification",
+    "LowCarbonAlternative",
+    "Stakeholder",
+    "DevelopmentWorkflow",
+    "FloorPlan",
+    "CadElement",
 ]

@@ -261,6 +261,12 @@ else
   log_fail "Observability smoke CLI failed"
 fi
 
+if [ -n "$PYTHON_BIN" ] && "$PYTHON_BIN" scripts/release/generate_release_report.py --help >/dev/null 2>&1; then
+  log_pass "Release report CLI loads"
+else
+  log_fail "Release report CLI failed"
+fi
+
 if [ -n "$PYTHON_BIN" ] && "$PYTHON_BIN" scripts/release/validate_release_assets.py >/tmp/propai-release-assets.log 2>&1; then
   log_pass "Release asset validation passed"
 else

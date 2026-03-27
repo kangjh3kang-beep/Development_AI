@@ -109,6 +109,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
         logger.info("Sentry 초기화 완료")
 
+    # OpenTelemetry 분산 추적
+    if settings.otel_enabled:
+        from apps.api.core.tracing import init_tracing, instrument_fastapi
+        if init_tracing(
+            service_name=settings.otel_service_name,
+            otlp_endpoint=settings.otel_exporter_otlp_endpoint,
+            sample_rate=settings.otel_sample_rate,
+        ):
+            instrument_fastapi(app)
+
     # Qdrant 컬렉션 초기화
     try:
         qdrant_results = await init_qdrant_collections()

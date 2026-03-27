@@ -12,7 +12,8 @@ XGBoost 기반 부동산 시세 추정.
 """
 
 import math
-from datetime import UTC, datetime
+from datetime import datetime, timezone
+UTC = timezone.utc
 from typing import Any
 from uuid import UUID
 
@@ -530,3 +531,118 @@ class AVMService:
             model_version=valuation.model_version,
             created_at=valuation.created_at,
         )
+
+    # ── MAPE 검증 ──
+
+    @staticmethod
+    def validate_mape(predictions: list[float], actuals: list[float]) -> dict:
+        """MAPE(Mean Absolute Percentage Error)를 산출한다.
+
+        예측값과 실제값의 평균 절대 백분율 오차를 계산하여
+        모델 성능이 허용 범위(5%) 이내인지 판정한다.
+
+        Args:
+            predictions: 예측값 리스트
+            actuals: 실제값 리스트
+
+        Returns:
+            {"mape_pct": float, "is_acceptable": bool, "threshold_pct": 5.0}
+
+        Raises:
+            ValueError: 리스트가 비어있거나 길이가 다를 때
+            ZeroDivisionError: 실제값에 0이 포함될 때
+        """
+        if not predictions or not actuals:
+            raise ValueError("predictions와 actuals는 비어있을 수 없습니다.")
+        if len(predictions) != len(actuals):
+            raise ValueError("predictions와 actuals의 길이가 같아야 합니다.")
+
+        for i, actual in enumerate(actuals):
+            if actual == 0:
+                raise ZeroDivisionError(f"actuals[{i}]가 0이므로 MAPE를 계산할 수 없습니다.")
+
+        n = len(predictions)
+        mape = sum(abs(actual - pred) / abs(actual) for pred, actual in zip(predictions, actuals)) / n * 100
+        threshold = 5.0
+
+        return {
+            "mape_pct": round(mape, 4),
+            "is_acceptable": mape <= threshold,
+            "threshold_pct": threshold,
+        }
+
+    # ── 지역별 시장 보정 계수 ──
+
+    @staticmethod
+    def _apply_regional_weight(base_value: float, region_code: str) -> float:
+        """17개 지역별 시장 보정 계수를 적용한다.
+
+        강남, 서초 등 프리미엄 지역은 가중치 > 1.0,
+        외곽 지역은 < 1.0 으로 시세를 보정한다.
+
+        Args:
+            base_value: 보정 전 기본 시세
+            region_code: 지역 코드 (예: "강남", "서초", "부산" 등)
+
+        Returns:
+            보정된 시세
+        """
+        weights: dict[str, float] = {
+            "강남": 1.15,
+            "서초": 1.12,
+            "송파": 1.08,
+            "마포": 1.05,
+            "용산": 1.10,
+            "성동": 1.03,
+            "영등포": 1.02,
+            "강서": 0.98,
+            "노원": 0.95,
+            "도봉": 0.93,
+            "인천": 0.90,
+            "수원": 0.92,
+            "성남": 1.00,
+            "고양": 0.88,
+            "부산": 0.85,
+            "대구": 0.83,
+            "기타": 0.80,
+        }
+        weight = weights.get(region_code, weights["기타"])
+        return base_value * weight
+
+    # ── 외부 API 재시도 ──
+
+    async def _fetch_with_retry(self, fetch_fn, *args, max_retries: int = 3) -> Any:
+        """외부 API 호출을 재시도한다 (exponential backoff).
+
+        1초, 2초, 4초 간격으로 재시도하며,
+        최대 재시도 횟수 초과 시 마지막 예외를 다시 발생시킨다.
+
+        Args:
+            fetch_fn: 호출할 비동기 함수
+            *args: 함수에 전달할 인자
+            max_retries: 최대 재시도 횟수 (기본 3)
+
+        Returns:
+            fetch_fn의 반환값
+
+        Raises:
+            Exception: 최대 재시도 횟수 초과 시 마지막 예외
+        """
+        import asyncio
+
+        last_error: Exception | None = None
+        for attempt in range(max_retries + 1):
+            try:
+                return await fetch_fn(*args)
+            except Exception as e:
+                last_error = e
+                logger.warning(
+                    "외부 API 호출 실패",
+                    attempt=attempt + 1,
+                    max_retries=max_retries,
+                    error=str(e),
+                )
+                if attempt < max_retries:
+                    await asyncio.sleep(2 ** attempt)  # 1s, 2s, 4s
+
+        raise last_error  # type: ignore[misc]

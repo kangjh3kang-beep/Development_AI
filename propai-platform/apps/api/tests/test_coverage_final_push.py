@@ -8,7 +8,8 @@ projects router, webhooks 등 남은 대형 갭을 커버한다.
 import os
 import sys
 import time
-from datetime import UTC, datetime
+from datetime import datetime, timezone
+UTC = timezone.utc
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 

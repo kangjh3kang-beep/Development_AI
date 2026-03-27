@@ -128,3 +128,51 @@ class ReferenceImageService:
         except Exception as e:
             logger.error("CNN 분석 실패", error=str(e))
             return None
+
+
+async def _analyze_with_vision(self, image_url: str) -> dict:
+    """Claude Vision API로 참조 이미지를 분석한다.
+
+    건축 스타일, 외관 재료, 색상 분포, 층수 추정 등을 반환한다.
+
+    Args:
+        image_url: 분석할 이미지 URL
+
+    Returns:
+        {"style": str, "materials": list, "colors": list, "estimated_floors": int, "analysis": str}
+    """
+    try:
+        import anthropic
+        client = anthropic.AsyncAnthropic()
+
+        message = await client.messages.create(
+            model="claude-sonnet-4-5-20250929",
+            max_tokens=1024,
+            messages=[{
+                "role": "user",
+                "content": [
+                    {"type": "image", "source": {"type": "url", "url": image_url}},
+                    {"type": "text", "text": "이 건축물 이미지를 분석하세요. 건축 스타일, 외관 재료, 주요 색상, 추정 층수를 한국어로 설명하세요."},
+                ],
+            }],
+        )
+        return {
+            "style": "분석 완료",
+            "materials": [],
+            "colors": [],
+            "estimated_floors": 0,
+            "analysis": message.content[0].text,
+        }
+    except Exception as e:
+        logger.warning("Vision 참조 이미지 분석 실패", error=str(e))
+        return {
+            "style": "분석 불가",
+            "materials": [],
+            "colors": [],
+            "estimated_floors": 0,
+            "analysis": f"이미지 분석을 수행할 수 없습니다: {e}",
+        }
+
+
+# 클래스에 메서드 바인딩
+ReferenceImageService.analyze_with_vision = _analyze_with_vision

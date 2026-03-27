@@ -17,6 +17,10 @@ from scripts.release.release_hardening import (
     validate_release_assets,
     validate_release_environment,
 )
+from scripts.release.release_report import (
+    build_release_evidence_report,
+    render_release_markdown,
+)
 
 
 def _sample_kube_config() -> str:
@@ -110,6 +114,76 @@ def test_validate_release_assets_flags_legacy_deploy_contract(tmp_path: Path) ->
     assert ".github/workflows/cicd.yml" in error_keys
     assert "infra/k8s/base/worker-deployment.yaml" in error_keys
     assert "infra/k8s/overlays/production/kustomization.yaml" in error_keys
+
+
+def test_build_release_evidence_report_recommends_cutover_when_complete(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifacts"
+    artifact_dir.mkdir()
+    for name in (
+        "rollout-api.log",
+        "rollout-web.log",
+        "rollout-worker.log",
+        "kubectl-overview.txt",
+        "kubectl-pods.json",
+        "kubectl-events.log",
+        "release-smoke.log",
+        "observability-smoke.log",
+    ):
+        (artifact_dir / name).write_text("ok", encoding="utf-8")
+
+    report = build_release_evidence_report(
+        target="staging",
+        workflow_name="Deploy to Staging",
+        git_ref="main",
+        commit_sha="abcdef123456",
+        namespace="propai-staging",
+        workflow_run_url="https://github.example/run/1",
+        artifact_dir=artifact_dir,
+        step_statuses={
+            "preflight": "success",
+            "build": "success",
+            "rollout": "success",
+            "release_smoke": "success",
+            "observability_smoke": "success",
+        },
+        image_refs={
+            "api": "ghcr.io/org/repo/api:staging-latest",
+            "web": "ghcr.io/org/repo/web:staging-latest",
+            "worker": "ghcr.io/org/repo/worker:staging-latest",
+        },
+    )
+
+    markdown = render_release_markdown(report)
+
+    assert report.missing_expected_artifacts == []
+    assert report.recommendation.startswith("Ready for cutover review")
+    assert "Deploy to Staging" in markdown
+    assert "ghcr.io/org/repo/api:staging-latest" in markdown
+
+
+def test_build_release_evidence_report_flags_incomplete_evidence(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifacts"
+    artifact_dir.mkdir()
+    (artifact_dir / "rollout-api.log").write_text("ok", encoding="utf-8")
+
+    report = build_release_evidence_report(
+        target="production",
+        workflow_name="Deploy to Production",
+        git_ref="v53.0.0",
+        commit_sha="abcdef123456",
+        artifact_dir=artifact_dir,
+        step_statuses={
+            "preflight": "success",
+            "build": "success",
+            "rollout": "failure",
+            "release_smoke": "skipped",
+            "observability_smoke": "skipped",
+        },
+        image_refs={},
+    )
+
+    assert "rollout-web.log" in report.missing_expected_artifacts
+    assert report.recommendation.startswith("Hold release")
 
 
 @pytest.fixture()

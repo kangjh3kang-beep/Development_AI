@@ -1,6 +1,7 @@
 """Regression tests for KDX live monitoring and feasibility endpoints."""
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
+UTC = timezone.utc
 from pathlib import Path
 
 from apps.api.auth.rbac import check_permission

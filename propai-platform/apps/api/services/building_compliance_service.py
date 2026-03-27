@@ -41,6 +41,8 @@ class DesignData:
     floor_count: int = 1
     building_height_m: float = 0.0
     scale: float = 10.0
+    setback_distances: dict[str, float] | None = None  # {"north": 3.0, "south": 2.0, ...}
+    north_setback_m: float = 0.0  # 정북방향 이격거리
 
 
 @dataclass
@@ -124,6 +126,29 @@ class LegalRegulationVerifier:
                 limit_value=limits.max_height_m,
             ))
 
+        # 세트백 검증
+        if hasattr(design, 'setback_distances') and design.setback_distances:
+            for side, distance in design.setback_distances.items():
+                if distance < limits.min_setback_m:
+                    violations.append(ComplianceViolation(
+                        type="setback",
+                        message=f"세트백 미달: {side}면 {distance:.1f}m (최소 {limits.min_setback_m}m)",
+                        severity="error",
+                        current_value=distance,
+                        limit_value=limits.min_setback_m,
+                    ))
+
+        # 일조권 검증 (정북방향 이격거리)
+        if design.building_height_m > 0 and hasattr(design, 'north_setback_m') and design.north_setback_m > 0:
+            required_north = _calculate_north_setback(design.building_height_m)
+            if design.north_setback_m < required_north:
+                violations.append(ComplianceViolation(
+                    type="sunlight",
+                    message=f"일조권 이격거리 미달: {design.north_setback_m:.1f}m (최소 {required_north:.1f}m)",
+                    severity="error",
+                    current_value=design.north_setback_m,
+                    limit_value=required_north,
+                ))
         return violations
 
 
@@ -208,6 +233,18 @@ class BuildingComplianceService:
             sunlight_hours_min=2.0,
         )
 
+    @staticmethod
+    def get_zone_limits(zone_code: str) -> LegalLimits | None:
+        """용도지역 코드로 법규 기본값을 조회한다.
+
+        Args:
+            zone_code: 용도지역 코드 (1R, 2R, 3R, GC, NC, QI, QR)
+
+        Returns:
+            해당 용도지역의 LegalLimits 또는 None
+        """
+        return ZONE_LIMITS.get(zone_code)
+
     async def _get_site_area(self, project_id: str) -> float:
         return 500.0
 
@@ -266,3 +303,37 @@ class BuildingComplianceService:
                 for a in alts
             ],
         }
+
+
+# ── 정북방향 이격거리 계산 (건축법 제61조) ──
+
+def _calculate_north_setback(building_height_m: float) -> float:
+    """건축법 제61조 기준 정북방향 이격거리를 산출한다.
+
+    - 9m 이하: max(높이 * 0.5, 1.0)
+    - 9m 초과: max((높이 - 9) * 0.5 + 4.5, 3.0)
+      (9m까지 4.5m + 초과분 * 0.5, 최소 3.0m)
+
+    Args:
+        building_height_m: 건물 높이 (m)
+
+    Returns:
+        정북방향 최소 이격거리 (m)
+    """
+    if building_height_m <= 9.0:
+        return max(building_height_m * 0.5, 1.0)
+    else:
+        return max((building_height_m - 9.0) * 0.5 + 4.5, 3.0)
+
+
+# ── 7개 용도지역별 법규 기본값 ──
+
+ZONE_LIMITS: dict[str, LegalLimits] = {
+    "1R": LegalLimits(0.60, 1.00, 12.0, 1.0, 4.0),  # 제1종일반주거
+    "2R": LegalLimits(0.60, 2.00, 18.0, 1.0, 3.0),  # 제2종일반주거
+    "3R": LegalLimits(0.50, 3.00, 35.0, 1.5, 2.0),  # 제3종일반주거
+    "GC": LegalLimits(0.60, 4.00, 50.0, 0.0, 0.0),  # 일반상업
+    "NC": LegalLimits(0.60, 9.00, 60.0, 0.0, 0.0),  # 근린상업
+    "QI": LegalLimits(0.60, 4.00, 35.0, 0.0, 0.0),  # 준공업
+    "QR": LegalLimits(0.60, 5.00, 35.0, 1.0, 2.0),  # 준주거
+}

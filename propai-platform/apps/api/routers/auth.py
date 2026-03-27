@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
+UTC = timezone.utc
 import re
 from uuid import UUID
 

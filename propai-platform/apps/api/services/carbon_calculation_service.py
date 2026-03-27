@@ -283,3 +283,27 @@ class CarbonCalculationService:
             breakdown=breakdown,
             reduction_tips=tips,
         )
+
+    # ── v57 Phase 16 확장: 실시간 탄소 산출 ──
+
+    @staticmethod
+    def calculate_realtime_carbon(
+        energy_readings: list[float],
+        grid_ef: float = 0.4629,
+    ) -> dict:
+        """실시간 에너지 데이터 기반 탄소 배출량을 산출한다.
+
+        Args:
+            energy_readings: 에너지 사용량 리스트 (kWh)
+            grid_ef: 전력배출계수 (kgCO2eq/kWh) -- 한국 기본값 0.4629
+
+        Returns:
+            {"total_carbon_kg": float, "avg_carbon_per_reading_kg": float, "grid_ef": float}
+        """
+        total = sum(r * grid_ef for r in energy_readings)
+        avg = total / len(energy_readings) if energy_readings else 0
+        return {
+            "total_carbon_kg": round(total, 2),
+            "avg_carbon_per_reading_kg": round(avg, 2),
+            "grid_ef": grid_ef,
+        }

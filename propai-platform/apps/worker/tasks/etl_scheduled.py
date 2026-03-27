@@ -3,7 +3,8 @@
 야간 배치로 외부 공공 API 데이터를 수집하고 DB를 갱신한다.
 """
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
+UTC = timezone.utc
 from typing import Any
 
 import structlog

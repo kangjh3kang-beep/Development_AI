@@ -1,7 +1,8 @@
 """Notification endpoints."""
 
 import secrets
-from datetime import UTC, datetime
+from datetime import datetime, timezone
+UTC = timezone.utc
 
 from fastapi import APIRouter, Depends, status
 from packages.schemas.models import AlimTalkRequest, NotificationResponse
