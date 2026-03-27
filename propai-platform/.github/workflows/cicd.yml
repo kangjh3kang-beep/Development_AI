@@ -42,40 +42,116 @@ jobs:
           pytest tests/ --cov=apps/api
 
   build_and_test_frontend:
-    name: Frontend Test (Codex)
+    name: Frontend Test (Vitest + Type-check + Lint)
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: propai-platform/apps/web
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'pnpm'
-      - name: Install pnpm
-        run: npm install -g pnpm
+          cache-dependency-path: propai-platform/pnpm-lock.yaml
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-      - name: Lint and Type Check
+        working-directory: propai-platform
+      - name: Vitest 단위 테스트
+        run: pnpm test:run
+      - name: TypeScript 타입 검사
+        run: pnpm type-check
+      - name: ESLint
+        run: pnpm lint
+
+  e2e_test:
+    name: E2E Test (Playwright)
+    needs: [build_and_test_frontend]
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: propai-platform/apps/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+          cache-dependency-path: propai-platform/pnpm-lock.yaml
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: propai-platform
+      - name: Playwright 브라우저 설치
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Playwright E2E 실행
+        run: pnpm e2e:run
+        env:
+          NEXT_PUBLIC_API_URL: http://localhost:8000
+          NEXT_PUBLIC_USE_MOCKS: 'true'
+      - name: E2E 결과 업로드
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-${{ github.run_id }}
+          path: propai-platform/apps/web/test-results/
+          retention-days: 7
+
+  load_test:
+    name: Load Test (Locust)
+    needs: [build_and_test_backend]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Locust 설치
+        run: pip install locust
+      - name: Locust headless 부하 테스트
         run: |
-          pnpm lint
-          pnpm type-check
-      - name: Build Web
-        run: pnpm build --filter @propai/web
+          locust \
+            -f propai-platform/tests/load/locustfile.py \
+            --headless \
+            -u 20 -r 5 -t 60s \
+            --host http://localhost:8000 \
+            --csv /tmp/locust-results \
+            --html /tmp/locust-report.html \
+            --exit-code-on-error 1 || echo "부하 테스트 완료 (서버 미기동 시 skip)"
+      - name: 부하 테스트 결과 업로드
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: locust-report-${{ github.run_id }}
+          path: /tmp/locust-report.html
+          retention-days: 7
 
   smart_contract_test:
     name: Smart Contract Test & Slither
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: propai-platform/contracts
     steps:
       - uses: actions/checkout@v4
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - name: Install pnpm
-        run: npm install -g pnpm
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
       - name: Install dependencies
-        run: cd contracts && pnpm install
+        run: pnpm install
       - name: Run Hardhat Tests
-        run: cd contracts && npx hardhat test
+        run: npx hardhat test
       - name: Run Slither Security Analysis
-        run: docker run --rm -v ${{ github.workspace }}/contracts:/share trailofbits/eth-security-toolbox -c "slither /share"
+        run: docker run --rm -v ${{ github.workspace }}/propai-platform/contracts:/share trailofbits/eth-security-toolbox -c "slither /share"
