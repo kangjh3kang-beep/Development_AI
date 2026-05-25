@@ -20,15 +20,67 @@ export type CadPolygon = {
   label?: string;
 };
 
-export type CadTool = "select" | "point" | "line" | "polygon";
+export type CadRect = {
+  id: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  rotation?: number;
+  label?: string;
+};
+
+export type CadCircle = {
+  id: string;
+  cx: number;
+  cy: number;
+  radius: number;
+  label?: string;
+};
+
+export type CadText = {
+  id: string;
+  x: number;
+  y: number;
+  text: string;
+  fontSize?: number;
+  rotation?: number;
+};
+
+export type CadTool = "select" | "point" | "line" | "polygon" | "text" | "rect" | "circle";
+
+/** 설계 도면 파트 (공정별 구분) */
+export type CadPart = "ARCH" | "STRUCT" | "MEP" | "LAND" | "CIVIL";
+
+/** v61 레이어 설정. */
+export type LayerConfig = {
+  name: string;
+  color: string;
+  weight: number;
+  visible: boolean;
+  locked: boolean;
+};
+
+export type CadAnalysisMarker = {
+  id: string;
+  x: number;
+  y: number;
+  severity: "high" | "med" | "low";
+  desc: string;
+};
 
 export type CadState = {
   points: CadPoint[];
   lines: CadLine[];
   polygons: CadPolygon[];
+  rects: CadRect[];
+  circles: CadCircle[];
+  texts: CadText[];
   floorCount: number;
   buildingHeightM: number;
   scale: number;
+  analysisMarkers: CadAnalysisMarker[];
+  isAnalyzing: boolean;
 };
 
 export type CadSnapshot = Readonly<CadState>;
@@ -38,9 +90,55 @@ export type DesignPayload = {
   points: Array<{ id: string; x: number; y: number }>;
   lines: Array<{ id: string; startPointId: string; endPointId: string }>;
   surfaces: Array<{ id: string; pointIds: string[] }>;
+  rects?: Array<{ id: string; x: number; y: number; width: number; height: number }>;
+  circles?: Array<{ id: string; cx: number; cy: number; radius: number }>;
+  texts?: Array<{ id: string; x: number; y: number; text: string }>;
   floor_count: number;
   building_height_m: number;
   scale: number;
+};
+
+/** AI 자동 설계 요청/응답 타입. */
+export type AutoDesignRequest = {
+  site_area_sqm: number;
+  site_shape?: Array<{ x: number; y: number }>;
+  site_width_m?: number;
+  site_depth_m?: number;
+  zone_code: string;
+  building_use: string;
+  target_unit_types: string[];
+  floor_height_m: number;
+  setback_m: Record<string, number>;
+};
+
+export type AutoDesignSummary = {
+  building_area_sqm: number;
+  total_floor_area_sqm: number;
+  num_floors: number;
+  building_height_m: number;
+  bcr_percent: number;
+  far_percent: number;
+  total_units: number;
+  parking_count: number;
+  core_count: number;
+};
+
+export type AutoDesignCompliance = {
+  bcr_ok: boolean;
+  far_ok: boolean;
+  height_ok: boolean;
+  setback_ok: boolean;
+  all_pass: boolean;
+};
+
+export type AutoDesignResponse = {
+  design_payload: DesignPayload;
+  summary: AutoDesignSummary;
+  compliance: AutoDesignCompliance;
+};
+
+export type DesignAlternativesResponse = {
+  alternatives: AutoDesignResponse[];
 };
 
 export type ComplianceViolation = {

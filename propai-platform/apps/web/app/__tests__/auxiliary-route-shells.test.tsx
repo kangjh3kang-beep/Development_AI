@@ -1,19 +1,19 @@
 import type { ReactNode } from "react";
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import KdxDashboardPage from "../dashboard/kdx/page";
-import FeasibilityPage from "../feasibility/page";
+import KdxPage from "../[locale]/(dashboard)/dashboard/kdx/page";
+import FeasibilityPage from "../[locale]/(dashboard)/projects/[id]/feasibility/page";
 import OfflinePage from "../offline/page";
 
 vi.mock("@/components/dashboard/kdx/KdxMonitoringWorkspaceClient", () => ({
   KdxMonitoringWorkspaceClient: () => (
-    <div data-testid="kdx-monitoring-workspace">KDX monitoring workspace</div>
+    <div>KDX monitoring workspace</div>
   ),
 }));
 
-vi.mock("@/components/feasibility/FeasibilityWorkspaceClient", () => ({
-  FeasibilityWorkspaceClient: () => (
-    <div data-testid="feasibility-workspace">Feasibility workspace</div>
+vi.mock("@/components/feasibility/FeasibilityEditorV2", () => ({
+  FeasibilityEditorV2: () => (
+    <div>Feasibility workspace</div>
   ),
 }));
 
@@ -33,14 +33,14 @@ vi.mock("recharts", () => ({
 }));
 
 describe("Auxiliary route shells", () => {
-  it("renders the KDX monitoring route shell", () => {
-    render(<KdxDashboardPage />);
+  it("renders the KDX monitoring route shell", async () => {
+    render(await KdxPage({ params: Promise.resolve({ locale: "en" }) }));
 
     expect(screen.getByTestId("kdx-monitoring-workspace")).toBeInTheDocument();
   });
 
-  it("renders the feasibility live route shell", () => {
-    render(<FeasibilityPage />);
+  it("renders the feasibility live route shell", async () => {
+    render(await FeasibilityPage({ params: Promise.resolve({ locale: "en", id: "p001" }) }));
 
     expect(screen.getByTestId("feasibility-workspace")).toBeInTheDocument();
   });

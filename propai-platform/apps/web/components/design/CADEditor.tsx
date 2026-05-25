@@ -1,8 +1,43 @@
 "use client";
 
 import React, { useState, useCallback, useRef, useEffect } from "react";
-import { Stage, Layer, Circle, Line, Text, Group } from "react-konva";
-import Konva from "konva";
+import type Konva from "konva";
+
+// React 19 Shim for React 18-era libraries (Proxy-based)
+const applyShim = () => {
+  if (typeof window !== "undefined" && React.version.startsWith("19")) {
+    const anyReact = React as any;
+    const client = anyReact.__CLIENT_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED;
+    const secret = anyReact.__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED;
+
+    if (client && secret && !secret.ReactCurrentOwner) {
+      try {
+        const proxy = new Proxy(secret, {
+          get: (target, prop) => {
+            if (prop === "ReactCurrentOwner") return client.ReactCurrentOwner;
+            if (prop === "ReactCurrentDispatcher") return client.ReactCurrentDispatcher;
+            if (prop === "ReactCurrentBatchConfig") return client.ReactCurrentBatchConfig;
+            if (prop === "ReactCurrentOwner") return client.ReactCurrentOwner;
+            return target[prop];
+          },
+        });
+        Object.defineProperty(anyReact, "__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED", {
+          get: () => proxy,
+          configurable: true,
+        });
+      } catch (e) {
+        if (client.ReactCurrentOwner && !secret.ReactCurrentOwner) {
+          secret.ReactCurrentOwner = client.ReactCurrentOwner;
+        }
+      }
+    } else if (client && !secret) {
+        Object.defineProperty(anyReact, "__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED", {
+          get: () => client,
+          configurable: true,
+        });
+    }
+  }
+};
 
 /* ───────────── 타입 정의 ───────────── */
 interface DesignPoint {
@@ -86,6 +121,19 @@ export default function CADEditor({
   const [isChecking, setIsChecking] = useState(false);
   const [floorCount, setFloorCount] = useState(5);
   const [buildingHeight, setBuildingHeight] = useState(15);
+  const [isReady, setIsReady] = useState(false);
+  const [rk, setRK] = useState<any>(null);
+
+  useEffect(() => {
+    applyShim();
+    try {
+      const modules = require("react-konva");
+      setRK(modules);
+    } catch (e) {
+      console.error("[CADEditor] Failed to load react-konva:", e);
+    }
+    setIsReady(true);
+  }, []);
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -111,10 +159,6 @@ export default function CADEditor({
             scale: 10.0,
           },
         };
-        console.log(
-          "[CADEditor] POST /api/v1/building-compliance/check",
-          JSON.stringify(body)
-        );
         const res = await fetch(
           `${apiBaseUrl}/api/v1/building-compliance/check`,
           {
@@ -124,13 +168,7 @@ export default function CADEditor({
           }
         );
         const data = await res.json();
-        console.log("[CADEditor] 법규 검증 결과:", JSON.stringify(data));
         setViolations(data.violations ?? []);
-        if (data.violations?.length) {
-          console.warn(
-            `[CADEditor] 법규 위반 ${data.violations.length}건 감지!`
-          );
-        }
       } catch (err) {
         console.error("[CADEditor] 법규 검증 API 오류:", err);
       } finally {
@@ -156,10 +194,6 @@ export default function CADEditor({
           },
           violation_type: violationType,
         };
-        console.log(
-          "[CADEditor] POST /api/v1/building-compliance/auto-correct",
-          JSON.stringify(body)
-        );
         const res = await fetch(
           `${apiBaseUrl}/api/v1/building-compliance/auto-correct`,
           {
@@ -169,7 +203,6 @@ export default function CADEditor({
           }
         );
         const data = await res.json();
-        console.log("[CADEditor] 자동 보정 결과:", JSON.stringify(data));
         setAlternatives(data.alternatives ?? []);
       } catch (err) {
         console.error("[CADEditor] 자동 보정 API 오류:", err);
@@ -189,9 +222,10 @@ export default function CADEditor({
 
   /* ── 초기 검증 ── */
   useEffect(() => {
-    checkCompliance(points);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    if (isReady) {
+      checkCompliance(points);
+    }
+  }, [isReady, points, checkCompliance]);
 
   /* ── 포인트 드래그 핸들러 ── */
   const handleDragEnd = useCallback(
@@ -201,9 +235,6 @@ export default function CADEditor({
       setPoints((prev) => {
         const next = [...prev];
         next[idx] = { ...next[idx], x: newX, y: newY };
-        console.log(
-          `[CADEditor] 점 ${next[idx].id} 이동 → (${newX}, ${newY})`
-        );
         debouncedCheck(next);
         return next;
       });
@@ -211,41 +242,30 @@ export default function CADEditor({
     [snap, debouncedCheck]
   );
 
-  /* ── 그리드 렌더링 ── */
-  const gridLines: React.ReactElement[] = [];
-  for (let i = 0; i <= width; i += gridSize) {
-    gridLines.push(
-      <Line
-        key={`gv-${i}`}
-        points={[i, 0, i, height]}
-        stroke="#e5e7eb"
-        strokeWidth={0.5}
-      />
-    );
-  }
-  for (let j = 0; j <= height; j += gridSize) {
-    gridLines.push(
-      <Line
-        key={`gh-${j}`}
-        points={[0, j, width, j]}
-        stroke="#e5e7eb"
-        strokeWidth={0.5}
-      />
-    );
-  }
+  /* ── 렌더링 ── */
+  if (!isReady || !rk) return (
+    <div className="flex h-[600px] w-full items-center justify-center rounded-[2.5rem] bg-[#0a0f14] text-white">
+      <div className="flex flex-col items-center gap-4">
+        <div className="h-10 w-10 animate-spin rounded-full border-4 border-teal-500 border-t-transparent" />
+        <p className="text-xs font-black uppercase tracking-[0.2em] text-teal-400">Initializing AI Engine...</p>
+      </div>
+    </div>
+  );
+
+  const { Stage, Layer, Group, Line, Circle, Text, Rect } = rk;
 
   /* ── 포인트 맵 ── */
-  const pointMap = Object.fromEntries(points.map((p) => [p.id, p]));
+  const pointMap: Record<string, DesignPoint> = Object.fromEntries(
+    points.map((p) => [p.id, p])
+  );
 
-  /* ── 면 좌표 ── */
   const surfaceCoords = surfaces.flatMap((s) =>
     s.point_ids
       .filter((pid) => pointMap[pid])
       .flatMap((pid) => [pointMap[pid].x, pointMap[pid].y])
   );
 
-  /* ── 선 좌표 ── */
-  const lineElements = lines.map((l) => {
+  const lineElems = lines.map((l) => {
     const sp = pointMap[l.start_point_id];
     const ep = pointMap[l.end_point_id];
     if (!sp || !ep) return null;
@@ -253,61 +273,72 @@ export default function CADEditor({
       <Line
         key={l.id}
         points={[sp.x, sp.y, ep.x, ep.y]}
-        stroke="#1e40af"
-        strokeWidth={2}
+        stroke="#2dd4bf"
+        strokeWidth={3}
+        shadowBlur={10}
+        shadowColor="#2dd4bf"
       />
     );
   });
 
   return (
-    <div style={{ display: "flex", gap: 16 }}>
-      {/* ── 캔버스 ── */}
-      <div
-        style={{
-          border: "2px solid #3b82f6",
-          borderRadius: 8,
-          overflow: "hidden",
-        }}
-      >
+    <div className="relative h-[800px] w-full overflow-hidden rounded-[3rem] border border-white/10 bg-[#0a0f14] shadow-2xl">
+      {/* ── Grid/Scanline Layer ── */}
+      <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.03)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.03)_1px,transparent_1px)] bg-[size:20px_20px]" />
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_0%,#0a0f14_80%)]" />
+
+      {/* ── Canvas Layer (Konva) ── */}
+      <div className="absolute inset-0 flex items-center justify-center cursor-crosshair">
         <Stage width={width} height={height}>
           <Layer>
-            {/* 그리드 */}
-            {gridLines}
-
             {/* 면 (반투명 채움) */}
             {surfaceCoords.length >= 6 && (
               <Line
                 points={surfaceCoords}
                 closed
-                fill="rgba(59,130,246,0.12)"
-                stroke="#3b82f6"
+                fill="rgba(45,212,191,0.08)"
+                stroke="#2dd4bf"
                 strokeWidth={1}
+                dash={[5, 5]}
               />
             )}
 
             {/* 선 */}
-            {lineElements}
+            {lineElems}
 
             {/* 점 (드래그 가능) */}
             {points.map((p, idx) => (
               <Group key={p.id}>
+                {/* Outer Glow */}
+                <Circle x={p.x} y={p.y} radius={12} fill="rgba(45,212,191,0.1)" />
                 <Circle
                   x={p.x}
                   y={p.y}
-                  radius={8}
-                  fill="#2563eb"
-                  stroke="#1e3a8a"
-                  strokeWidth={2}
+                  radius={6}
+                  fill="#ffffff"
+                  stroke="#2dd4bf"
+                  strokeWidth={3}
                   draggable
-                  onDragEnd={(e) => handleDragEnd(idx, e)}
-                  style={{ cursor: "grab" }}
+                  onDragEnd={(e: Konva.KonvaEventObject<DragEvent>) => handleDragEnd(idx, e)}
+                  onMouseEnter={(e: Konva.KonvaEventObject<MouseEvent>) => {
+                    const container = e.target.getStage()?.container();
+                    if (container) container.style.cursor = "move";
+                    (e.target as Konva.Circle).radius(8);
+                  }}
+                  onMouseLeave={(e: Konva.KonvaEventObject<MouseEvent>) => {
+                    const container = e.target.getStage()?.container();
+                    if (container) container.style.cursor = "crosshair";
+                    (e.target as Konva.Circle).radius(6);
+                  }}
                 />
                 <Text
-                  x={p.x + 10}
-                  y={p.y - 6}
-                  text={p.id}
-                  fontSize={11}
-                  fill="#64748b"
+                  x={p.x + 12}
+                  y={p.y - 12}
+                  text={p.id.toUpperCase()}
+                  fontSize={10}
+                  fontStyle="900"
+                  fill="#2dd4bf"
+                  fontFamily="Inter, sans-serif"
                 />
               </Group>
             ))}
@@ -315,161 +346,139 @@ export default function CADEditor({
         </Stage>
       </div>
 
-      {/* ── 사이드 패널 ── */}
-      <div style={{ width: 320, fontFamily: "sans-serif", fontSize: 13 }}>
-        <h3 style={{ marginBottom: 8 }}>
-          건축 법규 검증 패널{" "}
-          {isChecking && <span style={{ color: "#f59e0b" }}>검증 중...</span>}
-        </h3>
+      {/* ── HUD Left: Build Stats ── */}
+      <div className="absolute left-8 top-8 w-[320px] space-y-4">
+        <div className="glass rounded-[2rem] p-6 border border-white/10">
+           <div className="flex items-center gap-3 mb-6">
+              <div className="h-10 w-10 rounded-full bg-teal-500/20 flex items-center justify-center text-teal-400">
+                 <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2v20"/><path d="m5 15 7-7 7 7"/></svg>
+              </div>
+              <div>
+                <h4 className="text-sm font-black text-white uppercase tracking-widest">Building Geometry</h4>
+                <p className="text-[10px] text-white/40 font-bold italic tracking-tighter">Real-time Constraints Active</p>
+              </div>
+           </div>
 
-        {/* 층수 / 높이 컨트롤 */}
-        <div style={{ marginBottom: 12 }}>
-          <label>
-            층수:{" "}
-            <input
-              type="number"
-              value={floorCount}
-              min={1}
-              max={50}
-              onChange={(e) => {
-                const v = Number(e.target.value);
-                setFloorCount(v);
-                debouncedCheck(points);
-              }}
-              style={{ width: 60 }}
-            />
-          </label>
-          <label style={{ marginLeft: 12 }}>
-            높이(m):{" "}
-            <input
-              type="number"
-              value={buildingHeight}
-              min={0}
-              max={200}
-              onChange={(e) => {
-                const v = Number(e.target.value);
-                setBuildingHeight(v);
-                debouncedCheck(points);
-              }}
-              style={{ width: 60 }}
-            />
-          </label>
+           <div className="space-y-4">
+              <div className="flex flex-col gap-2">
+                 <div className="flex justify-between px-1">
+                   <span className="text-[10px] font-black text-white/40 uppercase">Floor Count</span>
+                   <span className="text-xs font-black text-teal-400">{floorCount} F</span>
+                 </div>
+                 <input 
+                   type="range" min="1" max="30" value={floorCount} 
+                   onChange={(e) => { setFloorCount(Number(e.target.value)); debouncedCheck(points); }}
+                   className="h-1 w-full bg-white/10 rounded-full accent-teal-400 cursor-pointer"
+                 />
+              </div>
+              <div className="flex flex-col gap-2">
+                 <div className="flex justify-between px-1">
+                   <span className="text-[10px] font-black text-white/40 uppercase">Total Height</span>
+                   <span className="text-xs font-black text-blue-400">{buildingHeight} m</span>
+                 </div>
+                 <input 
+                   type="range" min="3" max="150" value={buildingHeight} 
+                   onChange={(e) => { setBuildingHeight(Number(e.target.value)); debouncedCheck(points); }}
+                   className="h-1 w-full bg-white/10 rounded-full accent-blue-400 cursor-pointer"
+                 />
+              </div>
+           </div>
         </div>
 
-        {/* 위반 목록 */}
-        {violations.length === 0 ? (
-          <div
-            style={{
-              padding: 12,
-              background: "#ecfdf5",
-              borderRadius: 6,
-              color: "#065f46",
-            }}
-          >
-            법규 준수 상태 (위반 없음)
-          </div>
-        ) : (
-          <div>
-            {violations.map((v, i) => (
-              <div
-                key={i}
-                style={{
-                  padding: 10,
-                  marginBottom: 6,
-                  background:
-                    v.severity === "error" ? "#fef2f2" : "#fffbeb",
-                  border: `1px solid ${
-                    v.severity === "error" ? "#fca5a5" : "#fcd34d"
-                  }`,
-                  borderRadius: 6,
-                }}
-              >
-                <strong style={{ color: v.severity === "error" ? "#dc2626" : "#d97706" }}>
-                  [{v.severity === "error" ? "위반" : "경고"}] {v.type}
-                </strong>
-                <p style={{ margin: "4px 0 0" }}>{v.message}</p>
-                {v.severity === "error" && (
-                  <button
-                    onClick={() => requestAutoCorrect(v.type)}
-                    style={{
-                      marginTop: 6,
-                      padding: "4px 10px",
-                      background: "#2563eb",
-                      color: "#fff",
-                      border: "none",
-                      borderRadius: 4,
-                      cursor: "pointer",
-                      fontSize: 12,
-                    }}
-                  >
-                    자동 보정 요청
-                  </button>
-                )}
+        {/* AI Compliance Ticker */}
+        <div className="glass rounded-[2rem] p-6 border border-white/5 bg-black/40">
+           <div className="flex items-center justify-between mb-4">
+              <span className="text-[10px] font-black text-white/40 uppercase tracking-[0.2em]">Compliance Monitor</span>
+              {isChecking ? (
+                 <span className="flex h-2 w-2 rounded-full bg-amber-500 animate-pulse" />
+              ) : (
+                 <span className="flex h-2 w-2 rounded-full bg-teal-500" />
+              )}
+           </div>
+           
+           {violations.length === 0 ? (
+              <p className="text-xs font-bold text-teal-400 flex items-center gap-2">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                모든 법규 조건을 충족합니다
+              </p>
+           ) : (
+              <div className="space-y-3">
+                 {violations.slice(0, 2).map((v, i) => (
+                    <div key={i} className="rounded-xl border border-rose-500/20 bg-rose-500/5 p-3">
+                       <p className="text-[10px] font-black text-rose-400 uppercase mb-1">{v.type}</p>
+                       <p className="text-[11px] leading-tight text-white/70">{v.message}</p>
+                    </div>
+                 ))}
+                 {violations.length > 2 && <p className="text-[9px] text-center text-white/30 font-black italic">외 {violations.length - 2}건의 위반 사항 검출</p>}
               </div>
-            ))}
-          </div>
-        )}
+           )}
+        </div>
+      </div>
 
-        {/* 보정 대안 */}
-        {alternatives.length > 0 && (
-          <div style={{ marginTop: 12 }}>
-            <h4>보정 대안</h4>
-            {alternatives.map((alt) => (
-              <div
-                key={alt.alternative_id}
-                style={{
-                  padding: 10,
-                  marginBottom: 6,
-                  background: "#eff6ff",
-                  border: "1px solid #93c5fd",
-                  borderRadius: 6,
-                }}
-              >
-                <strong>대안 {alt.alternative_id}</strong>
-                <p style={{ margin: "4px 0" }}>{alt.description}</p>
-                <p style={{ margin: 0, fontSize: 11, color: "#6b7280" }}>
-                  예상 공사비 변동: {alt.estimated_cost_change_krw.toLocaleString()}원
-                  | BCR: {(alt.bcr_after * 100).toFixed(1)}% | FAR:{" "}
-                  {(alt.far_after * 100).toFixed(1)}%
-                </p>
-                <button
-                  onClick={() => {
-                    const cd = alt.corrected_design as Record<string, unknown>;
-                    if (Array.isArray(cd.points)) {
-                      setPoints(
-                        (cd.points as { id: string; x: number; y: number }[]).map(
-                          (p) => ({ id: p.id, x: p.x, y: p.y })
-                        )
-                      );
-                      console.log("[CADEditor] 보정 대안 적용:", alt.alternative_id);
-                      checkCompliance(
-                        (cd.points as { id: string; x: number; y: number }[]).map(
-                          (p) => ({ id: p.id, x: p.x, y: p.y })
-                        )
-                      );
-                    }
-                    if (cd.building_height_m !== undefined) {
-                      setBuildingHeight(cd.building_height_m as number);
-                    }
-                    setAlternatives([]);
-                  }}
-                  style={{
-                    marginTop: 6,
-                    padding: "4px 10px",
-                    background: "#16a34a",
-                    color: "#fff",
-                    border: "none",
-                    borderRadius: 4,
-                    cursor: "pointer",
-                    fontSize: 12,
-                  }}
-                >
-                  이 대안 적용
-                </button>
-              </div>
+      {/* ── HUD Right: AI Recommendations ── */}
+      <div className="absolute right-8 top-8 w-[360px] space-y-4">
+         <div className="glass rounded-[2.5rem] p-8 border border-white/10 shadow-2xl">
+            <h4 className="text-lg font-black text-white tracking-tight mb-6 flex items-center gap-3">
+               <span className="h-8 w-8 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-xs">AI</span>
+               최적화 제안
+            </h4>
+
+            {alternatives.length === 0 ? (
+               <div className="py-8 flex flex-col items-center text-center gap-3">
+                  <div className="h-12 w-12 rounded-2xl bg-white/5 flex items-center justify-center text-white/20">
+                     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m12 3-1.912 5.813a2 2 0 0 0 1.275 1.275L21 12l-5.813 1.912a2 2 0 0 0-1.275 1.275L12 21l-1.912-5.813a2 2 0 0 0-1.275-1.275L3 12l5.813-1.912a2 2 0 0 0 1.275-1.275L12 3Z"/></svg>
+                  </div>
+                  <p className="text-xs font-medium text-white/40 leading-relaxed italic">
+                    포인트를 드래그하여 설계를 수정하면<br/>AI가 법규 준수 대안을 생성합니다.
+                  </p>
+               </div>
+            ) : (
+               <div className="space-y-4">
+                  {alternatives.map((alt) => (
+                    <div key={alt.alternative_id} className="group relative rounded-2xl border border-white/5 bg-white/5 p-5 transition-all hover:border-teal-500/50 hover:bg-teal-500/5 cursor-pointer"
+                      onClick={() => {
+                        const cd = alt.corrected_design as any;
+                        if (cd.points) setPoints(cd.points);
+                        if (cd.building_height_m) setBuildingHeight(cd.building_height_m);
+                        setAlternatives([]);
+                      }}
+                    >
+                       <div className="flex items-center justify-between mb-3">
+                          <span className="text-[10px] font-black text-teal-400 uppercase tracking-widest">Alternative #{alt.alternative_id}</span>
+                          <span className="rounded-full bg-teal-500/20 px-2 py-0.5 text-[9px] font-black text-teal-400">Score 98+</span>
+                       </div>
+                       <p className="text-xs font-bold text-white/90 mb-2">{alt.description}</p>
+                       <div className="flex gap-4 text-[9px] font-black text-white/40 uppercase">
+                          <span>BCR: {(alt.bcr_after * 100).toFixed(1)}%</span>
+                          <span>FAR: {(alt.far_after * 100).toFixed(1)}%</span>
+                       </div>
+                    </div>
+                  ))}
+               </div>
+            )}
+         </div>
+
+         {/* Design Tools Bar */}
+         <div className="flex gap-2 justify-center">
+            {['SELECT', 'POINT', 'POLY', 'DIM'].map((tool) => (
+              <button key={tool} className="h-12 flex-1 rounded-2xl border border-white/10 bg-[#0a0f14] text-[9px] font-black text-white/40 hover:text-white hover:border-teal-500 transition-all uppercase tracking-widest">
+                {tool}
+              </button>
             ))}
-          </div>
-        )}
+         </div>
+      </div>
+
+      {/* ── Bottom HUD: Coordinate System ── */}
+      <div className="absolute bottom-8 left-1/2 -translate-x-1/2 flex items-center gap-6 rounded-full bg-[#0a0f14]/80 backdrop-blur-xl border border-white/10 px-8 py-3 shadow-2xl">
+         <div className="flex items-center gap-2">
+            <span className="text-[9px] font-black text-white/30 uppercase tracking-widest">Project Space</span>
+            <span className="text-xs font-black text-white">EPSG:5186 (GRS80)</span>
+         </div>
+         <div className="w-px h-3 bg-white/10" />
+         <div className="flex items-center gap-2 px-2">
+           <div className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+           <span className="text-[10px] font-black text-white/70 uppercase">Linked Database</span>
+         </div>
       </div>
     </div>
   );

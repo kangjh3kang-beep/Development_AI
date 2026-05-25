@@ -176,20 +176,20 @@ export function KakaoCallbackWorkspaceClient({
 
   return (
     <main className="mx-auto flex min-h-screen max-w-4xl items-center px-6 py-10">
-      <Card className="w-full rounded-[2rem] border border-[var(--line)] bg-[var(--surface-strong)] shadow-[0_20px_60px_rgba(19,33,47,0.08)]">
+      <Card className="w-full rounded-[var(--radius-2xl)] border border-[var(--line)] bg-[var(--surface-strong)] shadow-[var(--shadow-lg)]">
         <CardContent className="p-8 md:p-10">
           <span className="inline-flex rounded-full bg-[rgba(14,116,144,0.12)] px-4 py-2 text-sm font-semibold text-[var(--accent-strong)]">
             {labels.eyebrow}
           </span>
-          <CardTitle className="mt-5 text-3xl font-bold text-[var(--foreground)] md:text-4xl">
+          <CardTitle className="mt-5 text-3xl font-bold text-[var(--text-primary)] md:text-4xl">
             {labels.title}
           </CardTitle>
-          <p className="mt-4 text-sm leading-7 text-[rgba(19,33,47,0.72)] md:text-base">
+          <p className="mt-4 text-sm leading-7 text-[var(--text-secondary)] md:text-base">
             {labels.description}
           </p>
 
           <div
-            className={`mt-8 rounded-[1.5rem] border px-5 py-4 text-sm ${feedbackClassName}`}
+            className={`mt-8 rounded-[var(--radius-xl)] border px-5 py-4 text-sm ${feedbackClassName}`}
             role="status"
           >
             {message}
@@ -204,7 +204,7 @@ export function KakaoCallbackWorkspaceClient({
             </Button>
             <Link
               href={`/${locale}/login`}
-              className="rounded-full border border-[var(--line)] px-4 py-2 text-sm font-semibold text-[var(--foreground)] transition hover:bg-white"
+              className="rounded-full border border-[var(--line)] px-4 py-2 text-sm font-semibold text-[var(--text-primary)] transition hover:bg-white"
             >
               {labels.backToLogin}
             </Link>

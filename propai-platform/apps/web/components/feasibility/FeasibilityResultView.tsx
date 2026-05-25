@@ -1,0 +1,294 @@
+import { Card, CardContent, Badge, Button } from "@propai/ui";
+import { motion } from "framer-motion";
+import { useParams } from "next/navigation";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  Legend,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
+import { useFeasibilityV2Store } from "@/store/use-feasibility-v2-store";
+import { FeasibilitySimulationWidget } from "@/components/finance/FeasibilitySimulationWidget";
+
+function formatWon(value: number): string {
+  if (Math.abs(value) >= 1e12) return `${(value / 1e12).toFixed(1)}조`;
+  if (Math.abs(value) >= 1e8) return `${(value / 1e8).toFixed(0)}억`;
+  if (Math.abs(value) >= 1e4) return `${(value / 1e4).toFixed(0)}만`;
+  return value.toLocaleString();
+}
+
+const GRADE_COLORS: Record<string, string> = {
+  A: "bg-[var(--accent-strong)] text-white shadow-[var(--shadow-glow)]",
+  B: "bg-blue-500 text-white shadow-[0_0_20px_rgba(59,130,246,0.3)]",
+  C: "bg-cyan-500 text-white",
+  D: "bg-amber-500 text-white",
+  E: "bg-orange-500 text-white",
+  F: "bg-red-500 text-white",
+};
+
+const PIE_COLORS = [
+  "var(--accent-strong)", "#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6",
+  "#06b6d4", "#ec4899", "#84cc16",
+];
+
+/**
+ * 전용 용어 해설 컴포넌트
+ */
+function Term({ children, definition }: { children: React.ReactNode; definition: string }) {
+  return (
+    <span 
+      className="cursor-help border-b border-dotted border-[var(--text-hint)] transition-colors hover:text-[var(--accent-strong)] hover:border-[var(--accent-strong)]"
+      title={definition}
+    >
+      {children}
+    </span>
+  );
+}
+
+const TERM_DEFINITIONS = {
+  ROI: "투자자본수익률 (Return on Investment): 투자액 대비 순이익 비율을 나타내는 지표입니다.",
+  NPV: "순현재가치 (Net Present Value): 미래에 발생할 현금흐름을 현재 가치로 환산하여 투자 타당성을 평가하는 지표입니다.",
+};
+
+export function FeasibilityResultView() {
+  const params = useParams();
+  const projectId = typeof params.id === 'string' ? params.id : "default-project";
+  const { result } = useFeasibilityV2Store();
+
+  // Dictionary for simulation widget (In production, this should come from getDictionary)
+  const simulationDict = {
+    title: "경제적 민감도 시뮬레이션",
+    description: "다양한 경제 변수를 조정하여 수익성의 확률적 변동성을 예측합니다.",
+    runBtn: "시뮬레이션 실행",
+    runningBtn: "연산 중...",
+    inputTitle: "변수 조정 패널",
+    outputTitle: "시뮬레이션 결과분포",
+    costVol: "사업비 변동성 (±%)",
+    interestRate: "목표 이자율",
+    salesDelay: "분양/임대 지연율",
+    meanNpv: "기대 NPV (평균)",
+    var5: "Value-at-Risk (하위 5%)",
+    profitIndex: "수익성 지수 (PI)",
+  };
+
+  if (!result) {
+    return (
+      <Card className="rounded-[3rem] border-dashed border-[var(--line-strong)] bg-[var(--surface-soft)] shadow-none">
+        <CardContent className="p-16 text-center flex flex-col items-center gap-6">
+          <div className="h-20 w-20 rounded-3xl bg-[var(--surface-strong)] flex items-center justify-center text-[var(--text-hint)] shadow-[var(--shadow-lg)] border border-[var(--line)]">
+             <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/></svg>
+          </div>
+          <div className="space-y-2">
+            <h3 className="text-xl font-[1000] text-[var(--text-primary)]">분석 데이터 준비됨</h3>
+            <p className="text-sm font-bold text-[var(--text-secondary)] italic underline decoration-[var(--line)] underline-offset-4">
+              입력 탭에서 데이터를 구성한 후 분석을 실행하여 실시간 결과를 확인하세요.
+            </p>
+          </div>
+          <Button variant={"outline" as any} className="mt-4 rounded-full px-10 h-14 border-[var(--line-strong)] hover:bg-[var(--accent-strong)] hover:text-white transition-all font-black text-xs uppercase tracking-widest">분석 가이드 라인 보기</Button>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const kpis = [
+    { id: "revenue", label: "총 수입", value: formatWon(result.total_revenue_won), color: "text-[var(--accent-strong)]", icon: "💰" },
+    { id: "cost", label: "총 비용", value: formatWon(result.total_cost_won), color: "text-rose-500", icon: "📉" },
+    { id: "profit", label: "세전 이익", value: formatWon(result.net_profit_won), color: "text-blue-500", icon: "📈" },
+    { id: "rate", label: "사업 수익률", value: `${result.profit_rate_pct.toFixed(1)}%`, color: "text-cyan-500", icon: "🎯" },
+    { id: "roi", label: <Term definition={TERM_DEFINITIONS.ROI}>ROI</Term>, value: `${result.roi_pct.toFixed(1)}%`, color: "text-indigo-500", icon: "🏦" },
+    { id: "npv", label: <Term definition={TERM_DEFINITIONS.NPV}>NPV</Term>, value: formatWon(result.npv_won), color: "text-[var(--text-primary)]", icon: "💎" },
+  ];
+
+  const costData = Object.entries(result.cost_breakdown_won)
+    .filter(([, v]) => v > 0)
+    .map(([name, value]) => ({ name, value }));
+
+  return (
+    <div className="space-y-12 animate-premium-fade">
+      {/* ── Summary Hero Scorecard ── */}
+      <div className="relative overflow-hidden rounded-[3.5rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-10 shadow-[var(--shadow-2xl)]">
+         <div className="absolute top-0 right-0 -mr-20 -mt-20 h-64 w-64 rounded-full bg-[var(--accent-strong)] opacity-[0.05] blur-[100px]" />
+         <div className="absolute bottom-0 left-0 -ml-20 -mb-20 h-64 w-64 rounded-full bg-blue-500/5 blur-[100px]" />
+         
+         <div className="relative z-10 grid items-center gap-10 lg:grid-cols-[1fr_auto_1.2fr]">
+            {/* Left: Grade Indicator */}
+            <div className="flex items-center gap-10">
+               <div className={`relative flex h-32 w-32 items-center justify-center rounded-[2.5rem] text-5xl font-[1000] ${GRADE_COLORS[result.grade] ?? "bg-slate-700"} ring-8 ring-[var(--line-strong)]/50`}>
+                  {result.grade}
+                  <div className="absolute -bottom-2 -right-2 flex h-10 w-10 items-center justify-center rounded-2xl bg-[var(--surface)] text-[10px] font-black text-[var(--accent-strong)] shadow-lg border border-[var(--line-strong)]">
+                    AI
+                  </div>
+               </div>
+               <div className="space-y-2">
+                  <div className="inline-flex items-center gap-2 rounded-full border border-[var(--accent-strong)]/20 bg-[var(--accent-soft)] px-3 py-1 text-[10px] font-black uppercase tracking-[0.2em] text-[var(--accent-strong)]">
+                    Real-time Analysis
+                  </div>
+                  <h3 className="text-3xl font-[1000] tracking-tight text-[var(--text-primary)] leading-tight">{result.module_name}</h3>
+                  <div className="flex items-center gap-3">
+                     <span className="text-xs font-black text-[var(--text-primary)] tracking-widest decoration-[var(--accent-strong)]/30 underline decoration-2 underline-offset-4">
+                        {result.development_type}
+                     </span>
+                     <span className="text-[10px] font-[1000] text-[var(--text-hint)] uppercase tracking-[0.2em]">v58.5-ADVANCED</span>
+                  </div>
+               </div>
+            </div>
+
+            {/* Middle: Divider */}
+            <div className="hidden h-24 w-px bg-[var(--line-strong)] lg:block opacity-50" />
+
+            {/* Right: Primary ROI Gauge Result */}
+            <div className="flex flex-wrap items-center gap-12 lg:justify-end">
+               <div className="flex flex-col">
+                  <span className="text-[10px] font-black uppercase tracking-[0.3em] text-[var(--text-hint)] mb-2">Expected ROI</span>
+                  <div className="flex items-baseline gap-2">
+                     <span className="text-6xl font-[1000] text-[var(--accent-strong)] tracking-tighter">{result.roi_pct.toFixed(2)}</span>
+                     <span className="text-xl font-black text-[var(--accent-strong)] opacity-60">%</span>
+                  </div>
+               </div>
+               <div className="flex flex-col">
+                  <span className="text-[10px] font-black uppercase tracking-[0.3em] text-[var(--text-hint)] mb-2">Net Value (NPV)</span>
+                  <div className="flex items-baseline gap-2">
+                     <span className="text-3xl font-[1000] text-[var(--text-primary)] tracking-tight">{formatWon(result.npv_won)}</span>
+                  </div>
+               </div>
+            </div>
+         </div>
+      </div>
+
+      {/* ── KPI Grid ── */}
+      <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+        {kpis.map((kpi, i) => (
+          <motion.div
+            key={kpi.id}
+            initial={{ y: 20, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            transition={{ delay: i * 0.05 }}
+            className="flex"
+          >
+            <Card className="group flex-1 rounded-[2.5rem] border-[var(--line-strong)] bg-[var(--surface-strong)] transition-all duration-500 hover:scale-[1.05] hover:shadow-[var(--shadow-2xl)] hover:border-[var(--accent-strong)]/30 overflow-hidden">
+              <CardContent className="p-8">
+                <div className="mb-6 flex items-center justify-between">
+                   <div className="h-10 w-10 rounded-2xl bg-[var(--surface-soft)] flex items-center justify-center text-xl shadow-[var(--shadow-sm)] border border-[var(--line)]">
+                      {kpi.icon}
+                   </div>
+                   <span className="text-[9px] font-[1000] uppercase tracking-[0.3em] text-[var(--text-hint)] group-hover:text-[var(--accent-strong)] transition-colors">{kpi.label}</span>
+                </div>
+                <div className="space-y-1">
+                  <p className={`text-2xl font-[1000] tracking-tighter ${kpi.color}`}>{kpi.value}</p>
+                  <div className="h-1 w-10 rounded-full bg-[var(--line)] group-hover:w-full group-hover:bg-[var(--accent-strong)]/50 transition-all duration-1000" />
+                </div>
+              </CardContent>
+            </Card>
+          </motion.div>
+        ))}
+      </div>
+
+      {/* ── Real-time Financial Sensitivity Simulation ── */}
+      <section className="space-y-6">
+        <div className="flex items-center gap-3">
+          <div className="h-2 w-10 rounded-full bg-[var(--accent-strong)]" />
+          <h4 className="text-xl font-[1000] tracking-tighter text-[var(--text-primary)] uppercase">Financial Sensitivity Matrix</h4>
+        </div>
+        <Card className="rounded-[3.5rem] border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-2xl)] overflow-hidden">
+          <CardContent className="p-10">
+            <FeasibilitySimulationWidget projectId={projectId} dictionary={simulationDict} />
+          </CardContent>
+        </Card>
+      </section>
+
+      {/* ── Charts Section ── */}
+      <div className="grid gap-8 lg:grid-cols-[1fr_480px]">
+        {/* Cost Breakdown Chart */}
+        <Card className="rounded-[3.5rem] border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-2xl)] overflow-hidden">
+          <CardContent className="p-12">
+            <div className="mb-10 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h4 className="text-2xl font-[1000] text-[var(--text-primary)] tracking-tighter">상세 비용 구조 분석</h4>
+                <div className="flex items-center gap-2 mt-1">
+                  <div className="h-1.5 w-1.5 rounded-full bg-[var(--accent-strong)]" />
+                  <p className="text-[10px] font-black text-[var(--text-hint)] uppercase tracking-[0.4em]">Granular Cost Allocation Matrix</p>
+                </div>
+              </div>
+              <Badge variant={"outline" as any} className="rounded-xl px-5 py-2 font-black text-[10px] border-[var(--line-strong)] text-[var(--text-secondary)] uppercase tracking-widest bg-[var(--surface-soft)]">
+                Total Basis: {formatWon(result.total_cost_won)}
+              </Badge>
+            </div>
+            
+            <div className="h-[400px] w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <defs>
+                    {PIE_COLORS.map((color, i) => (
+                      <linearGradient key={`grad-${i}`} id={`grad-${i}`} x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor={color} stopOpacity={1} />
+                        <stop offset="100%" stopColor={color} stopOpacity={0.4} />
+                      </linearGradient>
+                    ))}
+                  </defs>
+                  <Pie
+                    data={costData}
+                    dataKey="value"
+                    nameKey="name"
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={100}
+                    outerRadius={140}
+                    paddingAngle={8}
+                    stroke="none"
+                  >
+                    {costData.map((_, i) => (
+                      <Cell key={`cell-${i}`} fill={`url(#grad-${i % PIE_COLORS.length})`} className="outline-none focus:outline-none transition-all duration-300 hover:opacity-80" />
+                    ))}
+                  </Pie>
+                  <Tooltip 
+                    contentStyle={{ borderRadius: '2rem', border: '1px solid var(--line-strong)', backgroundColor: 'var(--surface)', boxShadow: 'var(--shadow-2xl)', padding: '1.5rem', fontWeight: 'bold' }}
+                    itemStyle={{ color: 'var(--text-primary)' }}
+                    formatter={(v) => [formatWon(Number(v ?? 0)), '비용 규모']}
+                  />
+                  <Legend 
+                    verticalAlign="bottom" 
+                    height={36} 
+                    iconType="circle"
+                    formatter={(value) => <span className="text-[10px] font-black text-[var(--text-secondary)] uppercase tracking-widest">{value}</span>}
+                  />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* AI Insight Card */}
+        <div className="flex flex-col gap-8">
+           <Card className="relative flex-1 overflow-hidden rounded-[3.5rem] border-none bg-gradient-to-br from-[var(--accent-strong)] to-blue-600 p-1 text-white shadow-[var(--shadow-2xl)]">
+              <CardContent className="relative z-10 h-full rounded-[3.4rem] bg-[var(--surface-strong)]/80 p-10 backdrop-blur-3xl flex flex-col border border-white/10">
+                 <div className="mb-10 flex h-14 w-14 items-center justify-center rounded-3xl bg-[var(--surface)] shadow-[var(--shadow-lg)] border border-[var(--line-strong)]">
+                    <span className="text-3xl animate-bounce-subtle">✨</span>
+                 </div>
+                 <h4 className="text-3xl font-[1000] tracking-tighter text-[var(--text-primary)] mb-4">AI 총평 및 전략 포인트</h4>
+                 <p className="flex-1 text-base leading-[1.8] text-[var(--text-secondary)] font-bold italic underline decoration-[var(--line)] underline-offset-8">
+                    해당 부지의 개발 시나리오는 <span className="text-[var(--accent-strong)] font-black italic underline decoration-[var(--accent-strong)]/30 underline-offset-4">'상업 복합 시설'</span> 일 때 가장 높은 NPV를 보입니다. 
+                    특히 주변 성수역 시세 상승률이 연평균 12%를 상회하고 있어, 준공 후 매각 차익(Capital Gain) 비중을 높이는 전략이 유효합니다.
+                 </p>
+                 <div className="mt-12 pt-8 border-t border-[var(--line-strong)]">
+                    <p className="text-[10px] font-black uppercase tracking-[0.4em] text-[var(--text-hint)] mb-4">AI Investment Viability Score</p>
+                    <div className="flex items-center gap-6">
+                       <div className="h-3 flex-1 rounded-full bg-[var(--line)] overflow-hidden p-0.5 border border-[var(--line-strong)]">
+                          <div className="h-full w-[92%] bg-gradient-to-r from-[var(--accent-strong)] to-blue-400 rounded-full shadow-[var(--shadow-glow)]" />
+                       </div>
+                       <span className="text-2xl font-[1000] italic text-[var(--text-primary)] tracking-tighter">92 <span className="text-xs font-black opacity-40">PT</span></span>
+                    </div>
+                 </div>
+              </CardContent>
+           </Card>
+        </div>
+      </div>
+    </div>
+  );
+}

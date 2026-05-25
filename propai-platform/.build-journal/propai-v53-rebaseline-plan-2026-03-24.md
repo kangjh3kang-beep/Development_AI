@@ -1,8 +1,8 @@
 # PropAI v53 rebaseline plan
 
 Date: 2026-03-24
-Stage: 58
-Status: Active v53 roadmap; Phases v53.1 through v53.11 completed and the next execution target is the first live staging release rehearsal
+Stage: 59
+Status: Active v53 roadmap; Phases v53.1 through v53.12 completed and the next execution target is the first live staging release rehearsal with cutover packet review
 
 ## Source set
 
@@ -66,6 +66,7 @@ Current execution status:
 - `Phase v53.9` completed in stage 56
 - `Phase v53.10` completed in stage 57
 - `Phase v53.11` completed in stage 58
+- `Phase v53.12` completed in stage 59
 
 But that baseline does not automatically satisfy the v53 delta.
 
@@ -444,6 +445,30 @@ Current status:
 - implementation plan: `.build-journal/v53-phase-11-rehearsal-evidence-automation-plan-2026-03-27.md`
 - implementation record: `.build-journal/v53-phase-11-rehearsal-evidence-automation-update-2026-03-27.md`
 
+### Phase v53.12: Cutover checklist automation
+
+Goal:
+turn the rehearsal evidence bundle into an operator-facing signoff packet before the first live staging release
+
+Scope:
+
+- generate markdown and JSON cutover checklists from the release evidence report
+- wire checklist generation into staging and production deploy workflows
+- document the GitHub environment secret contract in `.env.example`
+- validate the checklist wiring and secret reference contract in release asset checks and system verification
+
+Exit criteria:
+
+- every deploy rehearsal artifact bundle contains both a release report and a cutover checklist
+- the required GitHub environment secret contract is explicitly documented in-repo
+- full quality gates remain green after the checklist automation is added
+
+Current status:
+
+- completed in stage 59
+- implementation plan: `.build-journal/v53-phase-12-cutover-checklist-plan-2026-03-27.md`
+- implementation record: `.build-journal/v53-phase-12-cutover-checklist-update-2026-03-27.md`
+
 ## Immediate next action
 
 Start live release rehearsal against real infrastructure.
@@ -451,10 +476,10 @@ Start live release rehearsal against real infrastructure.
 The first concrete execution order should be:
 
 1. populate the standardized release secrets for staging and production environments
-2. run the staging deployment workflow end-to-end with the new image-pinning and smoke gates
+2. run the staging deployment workflow end-to-end with the new image-pinning, smoke, evidence, and checklist gates
 3. verify observability, alert routing, and operational dashboards against the live rollout
-4. finalize release notes, descopes, and cutover checklist from the rehearsal evidence
-5. schedule production cutover only after the staging rehearsal remains green
+4. review the generated release report and cutover checklist for operator signoff
+5. schedule production cutover only after the staging rehearsal remains green and the cutover packet is accepted
 
 ## What should not be treated as the v53 driver
 

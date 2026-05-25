@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { useComplianceCheck } from "@/hooks/use-compliance-check";
 import { useCadStore } from "@/store/use-cad-store";
@@ -20,7 +20,7 @@ function MetricRow({ label, metric, unit = "" }: MetricRowProps) {
   if (!metric) return null;
   return (
     <div className="flex items-center justify-between gap-3">
-      <span className="text-xs text-[rgba(19,33,47,0.72)]">{label}</span>
+      <span className="text-xs text-[var(--text-secondary)]">{label}</span>
       <div className="flex items-center gap-2">
         <span
           className={`text-xs font-semibold ${metric.pass ? "text-emerald-600" : "text-red-600"}`}
@@ -28,7 +28,7 @@ function MetricRow({ label, metric, unit = "" }: MetricRowProps) {
           {metric.current.toFixed(1)}
           {unit}
         </span>
-        <span className="text-[10px] text-[rgba(19,33,47,0.44)]">
+        <span className="text-[10px] text-[var(--text-hint)]">
           / {metric.limit.toFixed(1)}
           {unit}
         </span>
@@ -69,11 +69,28 @@ function ViolationList({
 }
 
 export function ComplianceHud({ projectId }: ComplianceHudProps) {
-  const designPayload = useCadStore((s) => s.toDesignPayload());
+  const points = useCadStore((s) => s.points);
+  const lines = useCadStore((s) => s.lines);
+  const polygons = useCadStore((s) => s.polygons);
+  const floorCount = useCadStore((s) => s.floorCount);
+  const buildingHeightM = useCadStore((s) => s.buildingHeightM);
+  const scale = useCadStore((s) => s.scale);
+  const loadDesignPayload = useCadStore((s) => s.loadDesignPayload);
+
   const stablePayload = useMemo(
-    () => designPayload,
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [JSON.stringify(designPayload)],
+    () => ({
+      points: points.map((p) => ({ id: p.id, x: p.x, y: p.y })),
+      lines: lines.map((l) => ({
+        id: l.id,
+        startPointId: l.startPointId,
+        endPointId: l.endPointId,
+      })),
+      surfaces: polygons.map((pg) => ({ id: pg.id, pointIds: pg.pointIds })),
+      floor_count: floorCount,
+      building_height_m: buildingHeightM,
+      scale: scale,
+    }),
+    [points, lines, polygons, floorCount, buildingHeightM, scale]
   );
 
   const { data, isLoading, error } = useComplianceCheck(
@@ -81,9 +98,36 @@ export function ComplianceHud({ projectId }: ComplianceHudProps) {
     stablePayload,
   );
 
+  const [correcting, setCorrecting] = useState(false);
+
+  const handleAutoCorrect = useCallback(async () => {
+    setCorrecting(true);
+    try {
+      const res = await fetch("/api/v1/building-compliance/auto-correct", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          project_id: projectId,
+          design: stablePayload,
+        }),
+      });
+      if (!res.ok) return;
+      const corrected = await res.json();
+      if (corrected.design_payload) {
+        loadDesignPayload(corrected.design_payload);
+      }
+    } catch {
+      // 자동보정 실패 시 무시
+    } finally {
+      setCorrecting(false);
+    }
+  }, [projectId, stablePayload, loadDesignPayload]);
+
   const hasElements = stablePayload.points.length > 0;
 
   if (!hasElements) return null;
+
+  const showAutoCorrect = data && !data.is_compliant && !isLoading;
 
   return (
     <AnimatePresence>
@@ -100,7 +144,7 @@ export function ComplianceHud({ projectId }: ComplianceHudProps) {
       >
         {/* 헤더 */}
         <div className="flex items-center justify-between">
-          <h4 className="text-xs font-semibold uppercase tracking-widest text-[rgba(19,33,47,0.56)]">
+          <h4 className="text-xs font-semibold uppercase tracking-widest text-[var(--text-tertiary)]">
             Compliance
           </h4>
           {isLoading && (
@@ -136,6 +180,19 @@ export function ComplianceHud({ projectId }: ComplianceHudProps) {
             <MetricRow label="일조권" metric={data.sunlight} unit="h" />
             <ViolationList violations={data.violations} />
           </div>
+        )}
+
+        {/* 자동 보정 버튼 */}
+        {showAutoCorrect && (
+          <button
+            type="button"
+            onClick={handleAutoCorrect}
+            disabled={correcting}
+            className="mt-3 w-full rounded-xl bg-amber-500 px-3 py-1.5 text-xs font-semibold text-white transition-opacity disabled:opacity-50"
+            aria-label="법규 자동 보정"
+          >
+            {correcting ? "보정 중..." : "자동 보정"}
+          </button>
         )}
       </motion.div>
     </AnimatePresence>

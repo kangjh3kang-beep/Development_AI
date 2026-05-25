@@ -227,23 +227,23 @@ export function ProjectSummaryClient({
         <CardContent className="p-6">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <p className="text-sm text-[rgba(19,33,47,0.6)]">
+              <p className="text-sm text-[var(--text-tertiary)]">
                 {project.address ?? "Address pending"}
               </p>
-              <h3 className="mt-2 text-2xl font-semibold text-[var(--foreground)]">
+              <h3 className="mt-2 text-2xl font-semibold text-[var(--text-primary)]">
                 {project.name}
               </h3>
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <span className="rounded-full bg-[rgba(14,116,144,0.1)] px-3 py-1 text-xs font-medium text-[var(--accent-strong)]">
+              <span className="rounded-full bg-[var(--accent-soft)] px-3 py-1 text-xs font-medium text-[var(--accent-strong)]">
                 {project.status}
               </span>
-              <span className="rounded-full border border-[var(--line)] px-3 py-1 text-xs font-medium text-[rgba(19,33,47,0.68)]">
+              <span className="rounded-full border border-[var(--line)] px-3 py-1 text-xs font-medium text-[var(--text-secondary)]">
                 {runtimeConfig.mode === "live" ? "LIVE" : "HYBRID"}
               </span>
             </div>
           </div>
-          <p className="mt-4 text-sm text-[rgba(19,33,47,0.68)]">
+          <p className="mt-4 text-sm text-[var(--text-secondary)]">
             Last updated: {formatDate(locale, project.updated_at)}
           </p>
           <div className="mt-6 grid gap-3 md:grid-cols-4">
@@ -266,7 +266,7 @@ export function ProjectSummaryClient({
             />
           </div>
           <div className="mt-6">
-            <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.48)]">
+            <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-hint)]">
               Module routes
             </p>
             <div className="mt-3 flex flex-wrap gap-2">
@@ -278,7 +278,7 @@ export function ProjectSummaryClient({
                   className={`rounded-full px-4 py-2 text-sm font-medium ${
                     activeModule === entry.id
                       ? "bg-[var(--accent-strong)] text-[#ffffff]"
-                      : "border border-[var(--line)] bg-[var(--surface-soft)] text-[rgba(19,33,47,0.72)]"
+                      : "border border-[var(--line)] bg-[var(--surface-soft)] text-[var(--text-secondary)]"
                   }`}
                 >
                   {entry.label}
@@ -291,16 +291,16 @@ export function ProjectSummaryClient({
       <div className="grid gap-4 lg:grid-cols-2">
         <Card className="bg-[var(--surface-strong)]">
           <CardContent className="p-6">
-            <h4 className="text-lg font-semibold text-[var(--foreground)]">
+            <h4 className="text-lg font-semibold text-[var(--text-primary)]">
               Live route coverage
             </h4>
             <ul className="mt-4 grid gap-3">
               {liveModules.map((entry) => (
                 <li
                   key={entry.id}
-                  className="rounded-[1.25rem] border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-3 text-sm leading-7 text-[rgba(19,33,47,0.76)]"
+                  className="rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-3 text-sm leading-7 text-[var(--text-secondary)]"
                 >
-                  <span className="font-semibold text-[var(--foreground)]">
+                  <span className="font-semibold text-[var(--text-primary)]">
                     {entry.label}
                   </span>{" "}
                   · {entry.note}
@@ -309,9 +309,9 @@ export function ProjectSummaryClient({
               {previewModules.map((entry) => (
                 <li
                   key={entry.id}
-                  className="rounded-[1.25rem] border border-dashed border-[var(--line)] bg-[var(--surface-soft)] px-4 py-3 text-sm leading-7 text-[rgba(19,33,47,0.62)]"
+                  className="rounded-[var(--radius-md)] border border-dashed border-[var(--line)] bg-[var(--surface-soft)] px-4 py-3 text-sm leading-7 text-[var(--text-tertiary)]"
                 >
-                  <span className="font-semibold text-[var(--foreground)]">
+                  <span className="font-semibold text-[var(--text-primary)]">
                     {entry.label}
                   </span>{" "}
                   · {entry.note}
@@ -322,14 +322,14 @@ export function ProjectSummaryClient({
         </Card>
         <Card className="bg-[var(--surface-strong)]">
           <CardContent className="p-6">
-            <h4 className="text-lg font-semibold text-[var(--foreground)]">
+            <h4 className="text-lg font-semibold text-[var(--text-primary)]">
               Next actions
             </h4>
             <ul className="mt-4 grid gap-3">
               {nextActions.map((item) => (
                 <li
                   key={item}
-                  className="rounded-[1.25rem] border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-3 text-sm leading-7 text-[rgba(19,33,47,0.76)]"
+                  className="rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-3 text-sm leading-7 text-[var(--text-secondary)]"
                 >
                   {item}
                 </li>
@@ -350,11 +350,11 @@ function SummaryTile({
   value: string;
 }) {
   return (
-    <div className="rounded-[1.25rem] bg-[var(--surface-soft)] p-4">
-      <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.48)]">
+    <div className="rounded-[var(--radius-md)] bg-[var(--surface-soft)] p-4">
+      <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-hint)]">
         {label}
       </p>
-      <p className="mt-3 break-all text-sm leading-7 text-[rgba(19,33,47,0.76)]">
+      <p className="mt-3 break-all text-sm leading-7 text-[var(--text-secondary)]">
         {value}
       </p>
     </div>

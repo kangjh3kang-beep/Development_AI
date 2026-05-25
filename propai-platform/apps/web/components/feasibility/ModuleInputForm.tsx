@@ -1,0 +1,200 @@
+"use client";
+
+import { Button, Card, CardContent, Input } from "@propai/ui";
+import { useFeasibilityV2Store } from "@/store/use-feasibility-v2-store";
+import { useCadStore } from "@/store/use-cad-store";
+import { motion } from "framer-motion";
+
+const LAND_CATEGORIES = [
+  { value: "land", label: "대지" },
+  { value: "farmland", label: "농지 (전/답)" },
+  { value: "forest", label: "임야" },
+];
+
+const BUILDING_TYPES = [
+  { value: "apartment", label: "아파트" },
+  { value: "officetel", label: "오피스텔" },
+  { value: "office", label: "오피스" },
+  { value: "commercial", label: "상가" },
+  { value: "mixed", label: "복합" },
+];
+
+function NumberInput({
+  label,
+  value,
+  unit,
+  onChange,
+}: {
+  label: string;
+  value: number | undefined;
+  unit?: string;
+  onChange: (v: number) => void;
+}) {
+  return (
+    <label className="grid gap-1.5 text-sm">
+      <span className="font-medium text-slate-700 dark:text-slate-200">{label}</span>
+      <div className="relative">
+        <Input
+          type="number"
+          value={value ?? 0}
+          onChange={(e) => onChange(Number(e.target.value))}
+          className="pr-12"
+        />
+        {unit && (
+          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400">
+            {unit}
+          </span>
+        )}
+      </div>
+    </label>
+  );
+}
+
+export function ModuleInputForm() {
+  const { input, setInput, calculate, isCalculating, selectedModule } =
+    useFeasibilityV2Store();
+
+  const syncWithCAD = () => {
+    const cadState = useCadStore.getState();
+    // Simulate area calculation from polygons
+    const floorArea = cadState.polygons.length * 450 * cadState.floorCount; // Rough estimate for demo
+    if (floorArea > 0) {
+      setInput({ 
+        total_gfa_sqm: floorArea,
+        total_households: Math.floor(floorArea / 85) // 85sqm per household
+      });
+      alert("CAD 설계 데이터가 동기화되었습니다: 연면적 " + floorArea.toLocaleString() + "m²");
+    } else {
+      alert("동기화할 CAD 설계 데이터(면적)가 존재하지 않습니다. Stage 4에서 도면을 작성해 주세요.");
+    }
+  };
+
+  return (
+    <Card className="rounded-[var(--radius-xl)] border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900 overflow-hidden">
+      <CardContent className="p-6">
+         {/* Synergy Alert */}
+         <motion.div 
+           initial={{ opacity: 0, y: -10 }}
+           animate={{ opacity: 1, y: 0 }}
+           className="mb-6 rounded-2xl bg-blue-50 border border-blue-100 p-4 flex items-center justify-between"
+         >
+            <div className="flex items-center gap-3">
+               <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-blue-600 text-white shadow-lg">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="m12 3-1.912 5.813a2 2 0 0 0-1.275 1.275L3 12l5.813 1.912a2 2 0 0 0 1.275 1.275L12 21l-1.912-5.813a2 2 0 0 0-1.275-1.275L21 12l-5.813-1.912a2 2 0 0 0-1.275-1.275L12 3Z"/></svg>
+               </div>
+               <div>
+                  <p className="text-xs font-black text-blue-600 uppercase tracking-widest">Cross-Stage Synergy</p>
+                  <p className="text-[11px] font-bold text-blue-800">Stage 4(설계)의 CAD 데이터와 Stage 5(수지분석)가 논리적으로 연결되어 있습니다.</p>
+               </div>
+            </div>
+            <Button variant={"outline" as any} size="sm" onClick={syncWithCAD} className="bg-white border-blue-200 text-blue-700 hover:bg-blue-50 font-black">
+               CAD 설계 데이터 가져오기 (Sync)
+            </Button>
+         </motion.div>
+
+        <div className="mb-4 flex items-center justify-between border-b border-slate-100 pb-4">
+          <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
+            {selectedModule} 입력 항목
+          </h3>
+          <Button onClick={() => calculate()} disabled={isCalculating} className="bg-black text-white px-8">
+            {isCalculating ? "계산 중..." : "수지분석 실행"}
+          </Button>
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+          {/* 기본 정보 */}
+          <label className="grid gap-1.5 text-sm">
+            <span className="font-medium text-slate-700 dark:text-slate-200">프로젝트명</span>
+            <Input
+              value={input.project_name ?? ""}
+              onChange={(e) => setInput({ project_name: e.target.value })}
+              placeholder="예: 오산 내삼미동 프로젝트"
+            />
+          </label>
+
+          <label className="grid gap-1.5 text-sm">
+            <span className="font-medium text-slate-700 dark:text-slate-200">지목</span>
+            <select
+              value={input.land_category ?? "land"}
+              onChange={(e) => setInput({ land_category: e.target.value })}
+              className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none transition focus:border-blue-400 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+            >
+              {LAND_CATEGORIES.map((c) => (
+                <option key={c.value} value={c.value}>{c.label}</option>
+              ))}
+            </select>
+          </label>
+
+          <label className="grid gap-1.5 text-sm">
+            <span className="font-medium text-slate-700 dark:text-slate-200">건물유형</span>
+            <select
+              value={input.building_type ?? "apartment"}
+              onChange={(e) => setInput({ building_type: e.target.value })}
+              className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none transition focus:border-blue-400 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+            >
+              {BUILDING_TYPES.map((t) => (
+                <option key={t.value} value={t.value}>{t.label}</option>
+              ))}
+            </select>
+          </label>
+
+          {/* 면적/규모 */}
+          <NumberInput label="대지면적" value={input.total_land_area_sqm} unit="m²"
+            onChange={(v) => setInput({ total_land_area_sqm: v })} />
+          <NumberInput label="연면적" value={input.total_gfa_sqm} unit="m²"
+            onChange={(v) => setInput({ total_gfa_sqm: v })} />
+          <NumberInput label="총 세대수" value={input.total_households} unit="세대"
+            onChange={(v) => setInput({ total_households: v })} />
+
+          {/* 분양 */}
+          <NumberInput label="평당 분양가" value={input.avg_sale_price_per_pyeong} unit="원/평"
+            onChange={(v) => setInput({ avg_sale_price_per_pyeong: v })} />
+          <NumberInput label="평균 전용면적" value={input.avg_area_pyeong} unit="평"
+            onChange={(v) => setInput({ avg_area_pyeong: v })} />
+          <NumberInput label="분양률" value={input.sale_ratio} unit="%"
+            onChange={(v) => setInput({ sale_ratio: v })} />
+
+          {/* 토지비 */}
+          <NumberInput label="공시지가" value={input.official_price_per_sqm} unit="원/m²"
+            onChange={(v) => setInput({ official_price_per_sqm: v })} />
+          <NumberInput label="배율" value={input.price_multiplier}
+            onChange={(v) => setInput({ price_multiplier: v })} />
+
+          {/* 금융 */}
+          <NumberInput label="브릿지론" value={input.bridge_amount_won} unit="원"
+            onChange={(v) => setInput({ bridge_amount_won: v })} />
+          <NumberInput label="본PF" value={input.pf_amount_won} unit="원"
+            onChange={(v) => setInput({ pf_amount_won: v })} />
+          <NumberInput label="중도금대출" value={input.midpay_amount_won} unit="원"
+            onChange={(v) => setInput({ midpay_amount_won: v })} />
+
+          {/* 지역 */}
+          <label className="grid gap-1.5 text-sm">
+            <span className="font-medium text-slate-700 dark:text-slate-200">시/도</span>
+            <Input
+              value={input.sido_name ?? ""}
+              onChange={(e) => setInput({ sido_name: e.target.value })}
+              placeholder="예: 경기"
+            />
+          </label>
+          <label className="grid gap-1.5 text-sm">
+            <span className="font-medium text-slate-700 dark:text-slate-200">시/군/구</span>
+            <Input
+              value={input.sigungu_name ?? ""}
+              onChange={(e) => setInput({ sigungu_name: e.target.value })}
+              placeholder="예: 오산시"
+            />
+          </label>
+
+          {/* 기타 */}
+          <NumberInput label="사업기간" value={input.project_months} unit="개월"
+            onChange={(v) => setInput({ project_months: v })} />
+          <NumberInput label="할인율" value={input.discount_rate}
+            onChange={(v) => setInput({ discount_rate: v })} />
+          <NumberInput label="자기자본" value={input.equity_won} unit="원"
+            onChange={(v) => setInput({ equity_won: v })} />
+        </div>
+      </CardContent>
+    </Card>
+  );
+}

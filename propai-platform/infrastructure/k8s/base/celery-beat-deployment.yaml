@@ -1,0 +1,44 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: propai-celery-beat
+  namespace: propai
+  labels:
+    app: propai
+    component: celery-beat
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: propai
+      component: celery-beat
+  template:
+    metadata:
+      labels:
+        app: propai
+        component: celery-beat
+    spec:
+      containers:
+        - name: celery-beat
+          image: propai/api:latest
+          command:
+            - celery
+            - -A
+            - app.tasks.celery_app
+            - beat
+            - --loglevel=info
+            - --scheduler
+            - celery.beat:PersistentScheduler
+          envFrom:
+            - secretRef:
+                name: propai-api-secrets
+            - configMapRef:
+                name: propai-api-config
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 250m
+              memory: 512Mi
+      restartPolicy: Always

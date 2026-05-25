@@ -26,17 +26,13 @@ export default async function InspectionPage({
 
   return (
     <div className="grid gap-6">
-      <ModulePlaceholder
-        eyebrow="INSPECTION / DRONE"
-        title="현장 점검 라이브 센터"
-        description="실제 drone API에 연결해 이미지 기반 하자 탐지, 심각도 집계, flight_id 저장 흐름을 검증합니다."
+            <ModulePlaceholder
+        eyebrow={dictionary.modulePlaceholders["inspection"].eyebrow}
+        title={dictionary.modulePlaceholders["inspection"].title}
+        description={dictionary.modulePlaceholders["inspection"].description}
         statusLabel={runtimeMode}
         localeLabel={locale}
-        items={[
-          "이미지 URL 기반 defect detection",
-          "심각도별 집계와 처리 이미지 수 확인",
-          "프로젝트 / flight_id 단위 inspection persistence",
-        ]}
+        items={dictionary.modulePlaceholders["inspection"].items}
       />
       <InspectionOperationsWorkspaceClient locale={locale as Locale} />
     </div>

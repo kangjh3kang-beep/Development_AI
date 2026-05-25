@@ -671,17 +671,17 @@ export function AuthWorkspaceClient({
   return (
     <main className="mx-auto flex min-h-screen max-w-6xl items-center px-6 py-10">
       <section className="grid w-full gap-6 lg:grid-cols-[1.25fr_0.95fr]">
-        <Card className="rounded-[2rem] border border-[var(--line)] bg-[var(--surface-strong)] shadow-[0_20px_60px_rgba(19,33,47,0.08)]">
+        <Card className="rounded-[var(--radius-2xl)] border border-[var(--line)] bg-[var(--surface-strong)] shadow-[var(--shadow-lg)]">
           <CardContent className="p-8 md:p-10">
             <div className="space-y-4">
               <span className="inline-flex rounded-full bg-[rgba(14,116,144,0.12)] px-4 py-2 text-sm font-semibold text-[var(--accent-strong)]">
                 {labels.eyebrow}
               </span>
               <div className="space-y-3">
-                <h1 className="text-3xl font-bold text-[var(--foreground)] md:text-4xl">
+                <h1 className="text-3xl font-bold text-[var(--text-primary)] md:text-4xl">
                   {labels.title}
                 </h1>
-                <p className="text-sm leading-7 text-[rgba(19,33,47,0.72)] md:text-base">
+                <p className="text-sm leading-7 text-[var(--text-secondary)] md:text-base">
                   {labels.description}
                 </p>
               </div>
@@ -700,12 +700,12 @@ export function AuthWorkspaceClient({
               ))}
             </div>
 
-            <div className="mt-6 rounded-[1.5rem] border border-[var(--line)] bg-white/70 p-5">
+            <div className="mt-6 rounded-[var(--radius-xl)] border border-[var(--line)] bg-[var(--surface)] p-5">
               <div className="space-y-2">
-                <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.44)]">
+                <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-hint)]">
                   {labels.modeLabels[mode]}
                 </p>
-                <p className="text-sm leading-7 text-[rgba(19,33,47,0.76)]">
+                <p className="text-sm leading-7 text-[var(--text-secondary)]">
                   {labels.modeDescriptions[mode]}
                 </p>
               </div>
@@ -713,7 +713,7 @@ export function AuthWorkspaceClient({
               <form className="mt-6 grid gap-4" onSubmit={handleSubmit}>
                 {mode === "register" ? (
                   <>
-                    <label className="grid gap-2 text-sm font-medium text-[var(--foreground)]">
+                    <label className="grid gap-2 text-sm font-medium text-[var(--text-primary)]">
                       <span>{labels.registerFields.name}</span>
                       <Input
                         name="name"
@@ -730,7 +730,7 @@ export function AuthWorkspaceClient({
                         maxLength={100}
                       />
                     </label>
-                    <label className="grid gap-2 text-sm font-medium text-[var(--foreground)]">
+                    <label className="grid gap-2 text-sm font-medium text-[var(--text-primary)]">
                       <span>{labels.registerFields.companyName}</span>
                       <Input
                         name="companyName"
@@ -747,7 +747,7 @@ export function AuthWorkspaceClient({
                         maxLength={200}
                       />
                     </label>
-                    <label className="grid gap-2 text-sm font-medium text-[var(--foreground)]">
+                    <label className="grid gap-2 text-sm font-medium text-[var(--text-primary)]">
                       <span>{labels.registerFields.email}</span>
                       <Input
                         name="email"
@@ -763,7 +763,7 @@ export function AuthWorkspaceClient({
                         required
                       />
                     </label>
-                    <label className="grid gap-2 text-sm font-medium text-[var(--foreground)]">
+                    <label className="grid gap-2 text-sm font-medium text-[var(--text-primary)]">
                       <span>{labels.registerFields.password}</span>
                       <Input
                         name="password"
@@ -786,7 +786,7 @@ export function AuthWorkspaceClient({
                   </>
                 ) : (
                   <>
-                    <label className="grid gap-2 text-sm font-medium text-[var(--foreground)]">
+                    <label className="grid gap-2 text-sm font-medium text-[var(--text-primary)]">
                       <span>{labels.loginFields.email}</span>
                       <Input
                         name="email"
@@ -802,7 +802,7 @@ export function AuthWorkspaceClient({
                         required
                       />
                     </label>
-                    <label className="grid gap-2 text-sm font-medium text-[var(--foreground)]">
+                    <label className="grid gap-2 text-sm font-medium text-[var(--text-primary)]">
                       <span>{labels.loginFields.password}</span>
                       <Input
                         name="password"
@@ -827,7 +827,7 @@ export function AuthWorkspaceClient({
 
               {feedback ? (
                 <div
-                  className={`mt-4 rounded-[1rem] border px-4 py-3 text-sm ${feedbackClassName}`}
+                  className={`mt-4 rounded-[var(--radius-md)] border px-4 py-3 text-sm ${feedbackClassName}`}
                   role="status"
                 >
                   {feedback.message}
@@ -836,10 +836,10 @@ export function AuthWorkspaceClient({
             </div>
 
             <div className="mt-6 flex flex-wrap items-center gap-3 text-sm">
-              <span className="text-[rgba(19,33,47,0.55)]">{labels.switchLabel}</span>
+              <span className="text-[var(--text-tertiary)]">{labels.switchLabel}</span>
               <Link
                 href={`/${locale}/${mode === "login" ? "register" : "login"}`}
-                className="rounded-full border border-[var(--line)] px-4 py-2 font-semibold text-[var(--foreground)] transition hover:bg-white"
+                className="rounded-full border border-[var(--line)] px-4 py-2 font-semibold text-[var(--text-primary)] transition hover:bg-white"
               >
                 {labels.switchLinks[mode === "login" ? "register" : "login"]}
               </Link>
@@ -848,40 +848,40 @@ export function AuthWorkspaceClient({
         </Card>
 
         <div className="grid gap-6">
-          <Card className="rounded-[2rem] border border-[var(--line)] bg-[var(--surface)] shadow-[0_20px_60px_rgba(19,33,47,0.06)]">
+          <Card className="rounded-[var(--radius-2xl)] border border-[var(--line)] bg-[var(--surface)] shadow-[var(--shadow-lg)]">
             <CardContent className="p-6">
-              <CardTitle className="text-xl text-[var(--foreground)]">
+              <CardTitle className="text-xl text-[var(--text-primary)]">
                 {labels.runtimeTitle}
               </CardTitle>
-              <p className="mt-3 text-sm leading-7 text-[rgba(19,33,47,0.72)]">
+              <p className="mt-3 text-sm leading-7 text-[var(--text-secondary)]">
                 {labels.runtimeDescription}
               </p>
               <dl className="mt-5 grid gap-3 text-sm">
-                <div className="rounded-[1rem] border border-[var(--line)] bg-white/75 px-4 py-3">
-                  <dt className="text-[rgba(19,33,47,0.54)]">{labels.runtimeMode}</dt>
-                  <dd className="mt-1 font-semibold text-[var(--foreground)]">
+                <div className="rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] px-4 py-3">
+                  <dt className="text-[var(--text-tertiary)]">{labels.runtimeMode}</dt>
+                  <dd className="mt-1 font-semibold text-[var(--text-primary)]">
                     {runtime.mode === "live"
                       ? labels.runtimeModeLabels.live
                       : labels.runtimeModeLabels.mock}
                   </dd>
                 </div>
-                <div className="rounded-[1rem] border border-[var(--line)] bg-white/75 px-4 py-3">
-                  <dt className="text-[rgba(19,33,47,0.54)]">{labels.runtimeApiBase}</dt>
-                  <dd className="mt-1 break-all font-mono text-xs text-[var(--foreground)]">
+                <div className="rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] px-4 py-3">
+                  <dt className="text-[var(--text-tertiary)]">{labels.runtimeApiBase}</dt>
+                  <dd className="mt-1 break-all font-mono text-xs text-[var(--text-primary)]">
                     {runtime.apiBaseUrl}
                   </dd>
                 </div>
-                <div className="rounded-[1rem] border border-[var(--line)] bg-white/75 px-4 py-3">
-                  <dt className="text-[rgba(19,33,47,0.54)]">{labels.runtimeToken}</dt>
-                  <dd className="mt-1 font-semibold text-[var(--foreground)]">
+                <div className="rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] px-4 py-3">
+                  <dt className="text-[var(--text-tertiary)]">{labels.runtimeToken}</dt>
+                  <dd className="mt-1 font-semibold text-[var(--text-primary)]">
                     {storedTokenPresent || session ? labels.tokenPresent : labels.tokenMissing}
                   </dd>
                 </div>
-                <div className="rounded-[1rem] border border-[var(--line)] bg-white/75 px-4 py-3">
-                  <dt className="text-[rgba(19,33,47,0.54)]">
+                <div className="rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] px-4 py-3">
+                  <dt className="text-[var(--text-tertiary)]">
                     {labels.runtimeRefreshToken}
                   </dt>
-                  <dd className="mt-1 font-semibold text-[var(--foreground)]">
+                  <dd className="mt-1 font-semibold text-[var(--text-primary)]">
                     {hasStoredRefreshToken() ? labels.tokenPresent : labels.tokenMissing}
                   </dd>
                 </div>
@@ -889,58 +889,58 @@ export function AuthWorkspaceClient({
             </CardContent>
           </Card>
 
-          <Card className="rounded-[2rem] border border-[var(--line)] bg-[var(--surface)] shadow-[0_20px_60px_rgba(19,33,47,0.06)]">
+          <Card className="rounded-[var(--radius-2xl)] border border-[var(--line)] bg-[var(--surface)] shadow-[var(--shadow-lg)]">
             <CardContent className="p-6">
-              <CardTitle className="text-xl text-[var(--foreground)]">
+              <CardTitle className="text-xl text-[var(--text-primary)]">
                 {labels.sessionTitle}
               </CardTitle>
-              <p className="mt-3 text-sm leading-7 text-[rgba(19,33,47,0.72)]">
+              <p className="mt-3 text-sm leading-7 text-[var(--text-secondary)]">
                 {labels.sessionDescription}
               </p>
 
-              <div className="mt-5 rounded-[1.25rem] border border-[var(--line)] bg-white/80 p-5">
+              <div className="mt-5 rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] p-5">
                 {isSessionLoading ? (
-                  <p className="text-sm text-[rgba(19,33,47,0.68)]">
+                  <p className="text-sm text-[var(--text-secondary)]">
                     {labels.sessionLoading}
                   </p>
                 ) : session ? (
                   <div className="space-y-4">
                     <div>
-                      <p className="text-lg font-semibold text-[var(--foreground)]">
+                      <p className="text-lg font-semibold text-[var(--text-primary)]">
                         {session.user.name}
                       </p>
-                      <p className="text-sm text-[rgba(19,33,47,0.62)]">
+                      <p className="text-sm text-[var(--text-tertiary)]">
                         {session.user.email}
                       </p>
                     </div>
                     <dl className="grid gap-3 text-sm">
                       <div className="grid gap-1">
-                        <dt className="text-[rgba(19,33,47,0.5)]">{labels.sessionRole}</dt>
-                        <dd className="font-semibold text-[var(--foreground)]">
+                        <dt className="text-[var(--text-tertiary)]">{labels.sessionRole}</dt>
+                        <dd className="font-semibold text-[var(--text-primary)]">
                           {formatRole(session.user.role)}
                         </dd>
                       </div>
                       <div className="grid gap-1">
-                        <dt className="text-[rgba(19,33,47,0.5)]">{labels.sessionTenant}</dt>
-                        <dd className="break-all font-mono text-xs text-[var(--foreground)]">
+                        <dt className="text-[var(--text-tertiary)]">{labels.sessionTenant}</dt>
+                        <dd className="break-all font-mono text-xs text-[var(--text-primary)]">
                           {session.user.tenant_id}
                         </dd>
                       </div>
                       <div className="grid gap-1">
-                        <dt className="text-[rgba(19,33,47,0.5)]">{labels.sessionCreatedAt}</dt>
-                        <dd className="text-[var(--foreground)]">
+                        <dt className="text-[var(--text-tertiary)]">{labels.sessionCreatedAt}</dt>
+                        <dd className="text-[var(--text-primary)]">
                           {formatDateTime(locale, session.user.created_at)}
                         </dd>
                       </div>
                       <div className="grid gap-1">
-                        <dt className="text-[rgba(19,33,47,0.5)]">{labels.sessionExpiry}</dt>
-                        <dd className="text-[var(--foreground)]">
+                        <dt className="text-[var(--text-tertiary)]">{labels.sessionExpiry}</dt>
+                        <dd className="text-[var(--text-primary)]">
                           {session.expiresIn ?? "n/a"}
                         </dd>
                       </div>
                       <div className="grid gap-1">
-                        <dt className="text-[rgba(19,33,47,0.5)]">{labels.sessionSource}</dt>
-                        <dd className="text-[var(--foreground)]">
+                        <dt className="text-[var(--text-tertiary)]">{labels.sessionSource}</dt>
+                        <dd className="text-[var(--text-primary)]">
                           {labels.sessionSourceLabels[session.source]}
                         </dd>
                       </div>
@@ -970,7 +970,7 @@ export function AuthWorkspaceClient({
                     </div>
                   </div>
                 ) : (
-                  <p className="text-sm text-[rgba(19,33,47,0.68)]">
+                  <p className="text-sm text-[var(--text-secondary)]">
                     {labels.sessionEmpty}
                   </p>
                 )}

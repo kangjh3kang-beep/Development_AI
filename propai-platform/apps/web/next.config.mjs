@@ -22,7 +22,7 @@ const nextConfig = {
     return [
       {
         source: "/api/proxy/:path*",
-        destination: `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/:path*`,
+        destination: "http://api:8000/api/v1/:path*",
       },
     ];
   },

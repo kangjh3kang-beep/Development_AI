@@ -1,7 +1,7 @@
 import { resolveMockRequest } from "@/mocks/handlers";
 
 const apiBaseUrl =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000/api/latest";
+  process.env.NEXT_PUBLIC_API_BASE_URL ?? "/api/proxy";
 
 const useMocksByDefault = process.env.NEXT_PUBLIC_USE_MOCKS !== "false";
 const publicAccessToken = process.env.NEXT_PUBLIC_API_ACCESS_TOKEN?.trim() ?? "";
@@ -34,7 +34,14 @@ function getRequestUrl(path: string) {
 
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
 
-  return `${apiBaseUrl}${normalizedPath}`;
+  // If executing in Node.js (Server Component), use Docker internal DNS.
+  if (typeof window === "undefined") {
+    return `http://api:8000/api/v1${normalizedPath}`;
+  }
+
+  // In Browser, Next.js Proxy throws internal 500 network errors due to IPv6 DNS bugs in Node 18+.
+  // We completely bypass Next.js rewrites and hit the exposed host port directly!
+  return `http://localhost:8000/api/v1${normalizedPath}`;
 }
 
 function getAccessToken() {
@@ -131,6 +138,15 @@ async function request<T>(path: string, options: ApiRequestOptions = {}) {
   return payload as T;
 }
 
+function getV2RequestUrl(path: string) {
+  if (isAbsoluteUrl(path)) return path;
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  if (typeof window === "undefined") {
+    return `http://api:8000/api/v2${normalizedPath}`;
+  }
+  return `http://localhost:8000/api/v2${normalizedPath}`;
+}
+
 export const apiClient = {
   request,
   get<T>(path: string, options?: Omit<ApiRequestOptions, "method">) {
@@ -138,6 +154,31 @@ export const apiClient = {
   },
   post<T>(path: string, options?: Omit<ApiRequestOptions, "method">) {
     return request<T>(path, { ...options, method: "POST" });
+  },
+  put<T>(path: string, options?: Omit<ApiRequestOptions, "method">) {
+    return request<T>(path, { ...options, method: "PUT" });
+  },
+  patch<T>(path: string, options?: Omit<ApiRequestOptions, "method">) {
+    return request<T>(path, { ...options, method: "PATCH" });
+  },
+  delete<T>(path: string, options?: Omit<ApiRequestOptions, "method">) {
+    return request<T>(path, { ...options, method: "DELETE" });
+  },
+  getV2<T>(path: string, options?: Omit<ApiRequestOptions, "method">) {
+    const url = getV2RequestUrl(path);
+    return request<T>(url, { ...options, method: "GET" });
+  },
+  postV2<T>(path: string, options?: Omit<ApiRequestOptions, "method">) {
+    const url = getV2RequestUrl(path);
+    return request<T>(url, { ...options, method: "POST" });
+  },
+  putV2<T>(path: string, options?: Omit<ApiRequestOptions, "method">) {
+    const url = getV2RequestUrl(path);
+    return request<T>(url, { ...options, method: "PUT" });
+  },
+  deleteV2<T>(path: string, options?: Omit<ApiRequestOptions, "method">) {
+    const url = getV2RequestUrl(path);
+    return request<T>(url, { ...options, method: "DELETE" });
   },
   getRuntimeConfig() {
     const accessToken = getAccessToken();

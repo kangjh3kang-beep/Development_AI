@@ -8,6 +8,10 @@ from pathlib import Path
 
 import pytest
 
+from scripts.release.cutover_checklist import (
+    build_cutover_checklist,
+    render_cutover_markdown,
+)
 from scripts.release.release_hardening import (
     ReleaseSmokeError,
     normalize_api_base_url,
@@ -184,6 +188,81 @@ def test_build_release_evidence_report_flags_incomplete_evidence(tmp_path: Path)
 
     assert "rollout-web.log" in report.missing_expected_artifacts
     assert report.recommendation.startswith("Hold release")
+
+
+def test_build_cutover_checklist_marks_ready_for_review_when_all_gates_pass(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifacts"
+    artifact_dir.mkdir()
+    for name in (
+        "rollout-api.log",
+        "rollout-web.log",
+        "rollout-worker.log",
+        "kubectl-overview.txt",
+        "kubectl-pods.json",
+        "kubectl-events.log",
+        "release-smoke.log",
+        "observability-smoke.log",
+    ):
+        (artifact_dir / name).write_text("ok", encoding="utf-8")
+
+    report = build_release_evidence_report(
+        target="staging",
+        workflow_name="Deploy to Staging",
+        git_ref="main",
+        commit_sha="abcdef123456",
+        artifact_dir=artifact_dir,
+        step_statuses={
+            "preflight": "success",
+            "build": "success",
+            "rollout": "success",
+            "release_smoke": "success",
+            "observability_smoke": "success",
+        },
+        image_refs={
+            "api": "ghcr.io/org/repo/api:staging-latest",
+            "web": "ghcr.io/org/repo/web:staging-latest",
+            "worker": "ghcr.io/org/repo/worker:staging-latest",
+        },
+    )
+
+    checklist = build_cutover_checklist(report)
+    markdown = render_cutover_markdown(checklist)
+
+    assert checklist.overall_status == "ready-for-review"
+    assert checklist.blockers == []
+    assert "Overall status: `ready-for-review`" in markdown
+
+
+def test_build_cutover_checklist_blocks_when_evidence_is_incomplete(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifacts"
+    artifact_dir.mkdir()
+    (artifact_dir / "rollout-api.log").write_text("ok", encoding="utf-8")
+
+    report = build_release_evidence_report(
+        target="production",
+        workflow_name="Deploy to Production",
+        git_ref="v53.0.0",
+        commit_sha="abcdef123456",
+        artifact_dir=artifact_dir,
+        step_statuses={
+            "preflight": "success",
+            "build": "success",
+            "rollout": "failure",
+            "release_smoke": "skipped",
+            "observability_smoke": "skipped",
+        },
+        image_refs={
+            "api": "ghcr.io/org/repo/api:v53.0.0",
+            "web": "",
+            "worker": "ghcr.io/org/repo/worker:v53.0.0",
+        },
+    )
+
+    checklist = build_cutover_checklist(report)
+
+    assert checklist.overall_status == "no-go"
+    assert "Kubernetes rollout completed" in checklist.blockers
+    assert "Release evidence bundle complete" in checklist.blockers
 
 
 @pytest.fixture()

@@ -24,17 +24,13 @@ export default async function InvestmentPage({ params }: InvestmentPageProps) {
 
   return (
     <div className="grid gap-6">
-      <ModulePlaceholder
-        eyebrow="INVESTMENT / OPS"
-        title="투자 운영 컨트롤타워"
-        description="AI 비용, 투자자 보고서, 포털 게재를 실제 백엔드와 연결해 투자 운영 실행 체인을 검증합니다."
+            <ModulePlaceholder
+        eyebrow={dictionary.modulePlaceholders["investment"].eyebrow}
+        title={dictionary.modulePlaceholders["investment"].title}
+        description={dictionary.modulePlaceholders["investment"].description}
         statusLabel={runtimeMode}
         localeLabel={locale}
-        items={[
-          "AI 사용량/예산 게이트 실연동",
-          "다국어 투자자 리포트 생성",
-          "부동산 포털 일괄 게재 + 시장 데이터",
-        ]}
+        items={dictionary.modulePlaceholders["investment"].items}
       />
       <InvestmentOperationsWorkspaceClient locale={locale as Locale} />
     </div>

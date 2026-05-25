@@ -1,0 +1,142 @@
+# Page snapshot
+
+```yaml
+- generic [active] [ref=e1]:
+  - status "Screen change announcement region" [ref=e2]
+  - link "Skip to content" [ref=e3] [cursor=pointer]:
+    - /url: "#main-content"
+  - generic [ref=e5]:
+    - banner [ref=e6]:
+      - generic [ref=e7]:
+        - generic [ref=e8]:
+          - paragraph [ref=e10]: Sa-Tong-Pal-Ttang Workspace
+          - heading "Sa-Tong-Pal-Ttang" [level=1] [ref=e12]
+        - generic [ref=e13]:
+          - generic [ref=e14]: Live
+          - generic [ref=e15]:
+            - generic [ref=e16]: Language
+            - combobox "Language" [ref=e17]:
+              - option "한국어"
+              - option "English" [selected]
+              - option "简体中文"
+    - generic [ref=e18]:
+      - complementary [ref=e19]:
+        - navigation "Dashboard navigation" [ref=e20]:
+          - link "Dashboard" [ref=e21] [cursor=pointer]:
+            - /url: /en
+            - text: Dashboard
+          - link "Projects" [ref=e23] [cursor=pointer]:
+            - /url: /en/projects
+            - text: Projects
+          - link "AI Portfolio Map" [ref=e25] [cursor=pointer]:
+            - /url: /en/portfolio
+            - text: AI Portfolio Map
+          - link "AI Agent" [ref=e27] [cursor=pointer]:
+            - /url: /en/agent
+            - text: AI Agent
+          - link "Auction Analysis" [ref=e29] [cursor=pointer]:
+            - /url: /en/auction
+            - text: Auction Analysis
+          - link "Field Inspection" [ref=e31] [cursor=pointer]:
+            - /url: /en/inspection
+            - text: Field Inspection
+          - link "Tax Simulation" [ref=e33] [cursor=pointer]:
+            - /url: /en/tax
+            - text: Tax Simulation
+          - link "Tenant Management" [ref=e35] [cursor=pointer]:
+            - /url: /en/tenant
+            - text: Tenant Management
+          - link "Real-time Collab" [ref=e37] [cursor=pointer]:
+            - /url: /en/webrtc
+            - text: Real-time Collab
+        - paragraph [ref=e40]: Analytics
+        - navigation "Analytics navigation" [ref=e41]:
+          - link "Investment/AVM" [ref=e42] [cursor=pointer]:
+            - /url: /en/analytics/investment
+          - link "ESG Dashboard" [ref=e43] [cursor=pointer]:
+            - /url: /en/analytics/esg
+          - link "Carbon/LCA" [ref=e44] [cursor=pointer]:
+            - /url: /en/analytics/carbon
+          - link "Cost/Indices" [ref=e45] [cursor=pointer]:
+            - /url: /en/analytics/cost
+          - link "IoT/Energy" [ref=e46] [cursor=pointer]:
+            - /url: /en/analytics/iot
+          - link "Market Insights" [ref=e47] [cursor=pointer]:
+            - /url: /en/market-insights
+          - link "Regulations" [ref=e48] [cursor=pointer]:
+            - /url: /en/regulations
+        - paragraph [ref=e50]: Operations
+        - navigation "Operations navigation" [ref=e51]:
+          - link "Digital Twin" [ref=e52] [cursor=pointer]:
+            - /url: /en/digital-twin
+          - link "Maintenance" [ref=e53] [cursor=pointer]:
+            - /url: /en/maintenance
+          - link "AI Safety" [ref=e54] [cursor=pointer]:
+            - /url: /en/safety
+          - link "Approval Ops" [ref=e55] [cursor=pointer]:
+            - /url: /en/approvals
+          - link "SRE Systems" [ref=e56] [cursor=pointer]:
+            - /url: /en/sre
+          - link "KDX Monitoring" [ref=e57] [cursor=pointer]:
+            - /url: /en/dashboard/kdx
+      - main [ref=e58]:
+        - generic [ref=e59]:
+          - generic [ref=e61]:
+            - generic [ref=e62]:
+              - generic [ref=e63]: PROP / MAINTENANCE
+              - generic [ref=e64]: en
+              - generic [ref=e65]: Live
+            - generic [ref=e66]:
+              - generic [ref=e67]:
+                - heading "디지털 트윈 유지보수" [level=3] [ref=e68]
+                - paragraph [ref=e69]: 설비의 센서 기반 예지 정비 및 현장 유지보수 일정을 관리합니다.
+              - generic [ref=e71]:
+                - paragraph [ref=e72]: PropAI Scope
+                - list [ref=e73]:
+                  - listitem [ref=e74]: ✓ 데이터 실시간 연동 대기
+                  - listitem [ref=e75]: ✓ 보안 컴플라이언스 통과
+                  - listitem [ref=e76]: ✓ 워크플로우 상태 라우팅
+          - generic [ref=e77]:
+            - generic [ref=e78]: Failed to fetch
+            - generic [ref=e80]:
+              - generic [ref=e81]:
+                - generic [ref=e82]:
+                  - paragraph [ref=e83]: Target project
+                  - heading "Live project" [level=3] [ref=e84]
+                - generic [ref=e85]:
+                  - alert [ref=e86]:
+                    - generic [ref=e87]:
+                      - generic [ref=e88]:
+                        - paragraph [ref=e89]: Project list unavailable
+                        - paragraph [ref=e90]: The live operations project picker failed to load. Manual UUID targeting remains available.
+                        - paragraph [ref=e91]: Failed to fetch
+                      - button "Retry" [ref=e92]
+                  - generic [ref=e93]:
+                    - generic [ref=e94]: Live project
+                    - combobox "Live project" [ref=e95]:
+                      - option "No live projects are available yet. Enter an existing UUID manually." [disabled] [selected]
+                - textbox "Manual project UUID" [ref=e96]: project-release-001
+              - generic [ref=e97]:
+                - paragraph [ref=e98]: Current target
+                - paragraph [ref=e99]: "-"
+                - paragraph [ref=e100]: project-release-001
+            - generic [ref=e103]:
+              - paragraph [ref=e104]: Predictive maintenance
+              - generic [ref=e105]:
+                - generic [ref=e106]:
+                  - textbox "Equipment name" [ref=e107]: B1 HVAC-02
+                  - generic [ref=e108]:
+                    - generic [ref=e109]: Equipment type
+                    - combobox "Equipment type" [ref=e110]:
+                      - option "HVAC" [selected]
+                      - option "Chiller"
+                      - option "Air Handling Unit"
+                      - option "Pump"
+                - textbox "Location" [ref=e111]: B1 plant room
+                - generic [ref=e112]:
+                  - spinbutton [ref=e113]: "9.2"
+                  - spinbutton [ref=e114]: "31.5"
+                  - spinbutton [ref=e115]: "0.71"
+                - button "Run maintenance analysis" [ref=e116]
+  - alert [ref=e117]
+```

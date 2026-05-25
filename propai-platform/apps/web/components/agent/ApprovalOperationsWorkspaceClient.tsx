@@ -479,16 +479,16 @@ export function ApprovalOperationsWorkspaceClient({
         <CardContent className="grid gap-5 p-6 lg:grid-cols-[1.35fr_0.9fr]">
           <div>
             <CardTitle>{labels.heroTitle}</CardTitle>
-            <p className="mt-3 text-sm leading-7 text-[rgba(19,33,47,0.72)]">
+            <p className="mt-3 text-sm leading-7 text-[var(--text-secondary)]">
               {labels.heroDescription}
             </p>
           </div>
-          <div className="rounded-[1.35rem] border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-4 text-sm leading-7 text-[rgba(19,33,47,0.72)]">
+          <div className="rounded-[1.35rem] border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-4 text-sm leading-7 text-[var(--text-secondary)]">
             <p>{labels.tokenHint}</p>
             <div className="mt-4 flex flex-wrap gap-3">
               <Link
                 href={`/${locale}/agent`}
-                className="rounded-full border border-[var(--line)] bg-white px-4 py-2 text-sm font-medium text-[var(--foreground)] transition hover:border-[var(--accent)] hover:text-[var(--accent-strong)]"
+                className="rounded-full border border-[var(--line)] bg-white px-4 py-2 text-sm font-medium text-[var(--text-primary)] transition hover:border-[var(--accent)] hover:text-[var(--accent-strong)]"
               >
                 {labels.goToAgentAction}
               </Link>
@@ -501,7 +501,7 @@ export function ApprovalOperationsWorkspaceClient({
         <Card>
           <CardContent className="p-6">
             <CardTitle>{labels.projectTitle}</CardTitle>
-            <p className="mt-3 text-sm leading-7 text-[rgba(19,33,47,0.72)]">
+            <p className="mt-3 text-sm leading-7 text-[var(--text-secondary)]">
               {labels.projectHint}
             </p>
             <div className="mt-5 grid gap-4 md:grid-cols-2">
@@ -519,7 +519,7 @@ export function ApprovalOperationsWorkspaceClient({
                   value: project.id,
                 }))}
               />
-              <label className="grid gap-2 text-sm font-medium text-[var(--foreground)]">
+              <label className="grid gap-2 text-sm font-medium text-[var(--text-primary)]">
                 <span>{labels.manualProjectIdLabel}</span>
                 <Input
                   value={manualProjectId}
@@ -554,9 +554,9 @@ export function ApprovalOperationsWorkspaceClient({
                 />
               </div>
             ) : null}
-            <div className="mt-5 rounded-[1.35rem] border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-4 text-sm text-[rgba(19,33,47,0.74)]">
+            <div className="mt-5 rounded-[1.35rem] border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-4 text-sm text-[var(--text-secondary)]">
               {labels.currentProjectLabel}:{" "}
-              <span className="font-semibold text-[var(--foreground)]">
+              <span className="font-semibold text-[var(--text-primary)]">
                 {auditScope === "tenant" ? "Tenant-wide" : activeProjectId ?? "Not selected"}
               </span>
             </div>
@@ -566,7 +566,7 @@ export function ApprovalOperationsWorkspaceClient({
         <Card>
           <CardContent className="p-6">
             <CardTitle>{labels.auditTitle}</CardTitle>
-            <p className="mt-3 text-sm leading-7 text-[rgba(19,33,47,0.72)]">
+            <p className="mt-3 text-sm leading-7 text-[var(--text-secondary)]">
               {labels.auditDescription}
             </p>
             <div className="mt-5 grid gap-4 md:grid-cols-2">
@@ -620,30 +620,30 @@ export function ApprovalOperationsWorkspaceClient({
       <div className="grid gap-4 md:grid-cols-3">
         <Card>
           <CardContent className="p-5">
-            <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.52)]">
+            <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
               {labels.pendingLabel}
             </p>
-            <p className="mt-3 text-3xl font-semibold text-[var(--foreground)]">
+            <p className="mt-3 text-3xl font-semibold text-[var(--text-primary)]">
               {summary.pending}
             </p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="p-5">
-            <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.52)]">
+            <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
               {labels.approvedLabel}
             </p>
-            <p className="mt-3 text-3xl font-semibold text-[var(--foreground)]">
+            <p className="mt-3 text-3xl font-semibold text-[var(--text-primary)]">
               {summary.approved}
             </p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="p-5">
-            <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.52)]">
+            <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
               {labels.rejectedLabel}
             </p>
-            <p className="mt-3 text-3xl font-semibold text-[var(--foreground)]">
+            <p className="mt-3 text-3xl font-semibold text-[var(--text-primary)]">
               {summary.rejected}
             </p>
           </CardContent>
@@ -677,14 +677,14 @@ export function ApprovalOperationsWorkspaceClient({
             !approvalsQuery.isLoading &&
             !approvalsQuery.isError ? (
               <div className="mt-5 rounded-[1.35rem] border border-[var(--line)] bg-[rgba(255,255,255,0.72)] px-4 py-4">
-                <p className="text-sm font-semibold text-[var(--foreground)]">
+                <p className="text-sm font-semibold text-[var(--text-primary)]">
                   {labels.bulkTitle}
                 </p>
-                <p className="mt-2 text-sm leading-7 text-[rgba(19,33,47,0.7)]">
+                <p className="mt-2 text-sm leading-7 text-[var(--text-secondary)]">
                   {labels.bulkDescription}
                 </p>
                 <label
-                  className="mt-4 grid gap-2 text-sm font-medium text-[rgba(19,33,47,0.78)]"
+                  className="mt-4 grid gap-2 text-sm font-medium text-[var(--text-secondary)]"
                   htmlFor="approval-bulk-note"
                 >
                   <span>{labels.bulkNoteLabel}</span>
@@ -694,7 +694,7 @@ export function ApprovalOperationsWorkspaceClient({
                     onChange={(event) => setBulkApprovalNote(event.target.value)}
                     disabled={isBulkDecisionPending || Boolean(pendingApprovalId)}
                     placeholder={labels.bulkNotePlaceholder}
-                    className="min-h-20 rounded-[1rem] border border-[var(--line)] bg-white/85 px-4 py-3 text-sm text-[var(--foreground)] outline-none transition placeholder:text-[rgba(19,33,47,0.4)] focus:border-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-60"
+                    className="min-h-20 rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] px-4 py-3 text-sm text-[var(--text-primary)] outline-none transition placeholder:text-[var(--text-hint)] focus:border-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-60"
                   />
                 </label>
                 <div className="mt-4 flex flex-wrap gap-2">
@@ -727,20 +727,20 @@ export function ApprovalOperationsWorkspaceClient({
                   >
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div>
-                        <p className="text-sm font-semibold text-[var(--foreground)]">
+                        <p className="text-sm font-semibold text-[var(--text-primary)]">
                           {labels.domainLabels[item.domain]}
                         </p>
-                        <p className="mt-2 text-sm text-[rgba(19,33,47,0.7)]">
+                        <p className="mt-2 text-sm text-[var(--text-secondary)]">
                           {labels.recommendationLabel}:{" "}
                           {labels.recommendationLabels[item.recommendation]}
                         </p>
                       </div>
-                      <span className="rounded-full border border-[var(--line)] px-3 py-1 text-xs font-medium text-[rgba(19,33,47,0.72)]">
+                      <span className="rounded-full border border-[var(--line)] px-3 py-1 text-xs font-medium text-[var(--text-secondary)]">
                         {labels.approvalStatusLabels[item.status as ApprovalStatus] ??
                           item.status}
                       </span>
                     </div>
-                    <div className="mt-3 flex flex-wrap gap-2 text-xs text-[rgba(19,33,47,0.72)]">
+                    <div className="mt-3 flex flex-wrap gap-2 text-xs text-[var(--text-secondary)]">
                       <span className="rounded-full bg-white px-3 py-1">
                         {labels.approverRoleLabel}: {item.approver_role}
                       </span>
@@ -756,13 +756,13 @@ export function ApprovalOperationsWorkspaceClient({
                         </span>
                       ) : null}
                     </div>
-                    <p className="mt-3 text-sm leading-7 text-[rgba(19,33,47,0.72)]">
+                    <p className="mt-3 text-sm leading-7 text-[var(--text-secondary)]">
                       {labels.rationaleLabel}: {item.rationale ?? "n/a"}
                     </p>
                     {item.status === "pending" ? (
                       <>
                         <label
-                          className="mt-4 grid gap-2 text-sm font-medium text-[rgba(19,33,47,0.78)]"
+                          className="mt-4 grid gap-2 text-sm font-medium text-[var(--text-secondary)]"
                           htmlFor={`approval-note-${item.approval_id}`}
                         >
                           <span>{labels.decisionNoteLabel}</span>
@@ -779,7 +779,7 @@ export function ApprovalOperationsWorkspaceClient({
                               pendingApprovalId === item.approval_id || isBulkDecisionPending
                             }
                             placeholder={labels.decisionNotePlaceholder}
-                            className="min-h-20 rounded-[1rem] border border-[var(--line)] bg-white/85 px-4 py-3 text-sm text-[var(--foreground)] outline-none transition placeholder:text-[rgba(19,33,47,0.4)] focus:border-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-60"
+                            className="min-h-20 rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] px-4 py-3 text-sm text-[var(--text-primary)] outline-none transition placeholder:text-[var(--text-hint)] focus:border-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-60"
                           />
                         </label>
                         <div className="mt-4 flex flex-wrap gap-2">
@@ -819,7 +819,7 @@ export function ApprovalOperationsWorkspaceClient({
                 ))}
               </ol>
             ) : !approvalsQuery.isLoading && !approvalsQuery.isError ? (
-              <p className="mt-4 text-sm leading-7 text-[rgba(19,33,47,0.68)]">
+              <p className="mt-4 text-sm leading-7 text-[var(--text-secondary)]">
                 {labels.approvalEmpty}
               </p>
             ) : null}
@@ -856,19 +856,19 @@ export function ApprovalOperationsWorkspaceClient({
                   >
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div>
-                        <p className="text-sm font-semibold text-[var(--foreground)]">
+                        <p className="text-sm font-semibold text-[var(--text-primary)]">
                           {labels.domainLabels[item.domain]}
                         </p>
-                        <p className="mt-2 text-sm text-[rgba(19,33,47,0.7)]">
+                        <p className="mt-2 text-sm text-[var(--text-secondary)]">
                           {labels.recommendationLabel}:{" "}
                           {labels.recommendationLabels[item.recommendation]}
                         </p>
                       </div>
-                      <span className="rounded-full border border-[var(--line)] px-3 py-1 text-xs font-medium text-[rgba(19,33,47,0.72)]">
+                      <span className="rounded-full border border-[var(--line)] px-3 py-1 text-xs font-medium text-[var(--text-secondary)]">
                         {formatPercent(locale, item.confidence_score)}
                       </span>
                     </div>
-                    <div className="mt-3 flex flex-wrap gap-2 text-xs text-[rgba(19,33,47,0.72)]">
+                    <div className="mt-3 flex flex-wrap gap-2 text-xs text-[var(--text-secondary)]">
                       <span className="rounded-full bg-white px-3 py-1">
                         {labels.statusLabel}: {item.status}
                       </span>
@@ -883,7 +883,7 @@ export function ApprovalOperationsWorkspaceClient({
                       </span>
                     </div>
                     {item.narrative ? (
-                      <p className="mt-3 text-sm leading-7 text-[rgba(19,33,47,0.72)]">
+                      <p className="mt-3 text-sm leading-7 text-[var(--text-secondary)]">
                         {labels.narrativeLabel}: {item.narrative}
                       </p>
                     ) : null}
@@ -891,7 +891,7 @@ export function ApprovalOperationsWorkspaceClient({
                 ))}
               </ol>
             ) : !historyQuery.isLoading && !historyQuery.isError ? (
-              <p className="mt-4 text-sm leading-7 text-[rgba(19,33,47,0.68)]">
+              <p className="mt-4 text-sm leading-7 text-[var(--text-secondary)]">
                 {labels.historyEmpty}
               </p>
             ) : null}

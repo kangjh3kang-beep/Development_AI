@@ -1,8 +1,8 @@
 {
   "meta": {
-    "title": "PropAI 워크스페이스",
-    "siteName": "PropAI",
-    "description": "부동산 개발 전주기 AI 자동화 플랫폼의 프론트엔드 시작 화면입니다."
+    "title": "사통팔땅 (Sa-Tong-Pal-Ttang)",
+    "siteName": "사통팔땅",
+    "description": "세상 모든 곳을 연결하고 개발사업 전주기를 자동화하는 프리미엄 부동산 인텔리전스 플랫폼입니다."
   },
   "hero": {
     "badge": "Next.js 프론트엔드 환경",
@@ -22,16 +22,33 @@
     "drone": "드론",
     "blockchain": "블록체인",
     "report": "보고서",
-    "agent": "에이전트",
-    "approvals": "승인 운영",
-    "tax": "세금",
-    "auction": "경공매",
-    "inspection": "현장",
+    "portfolio": "AI 포트폴리오 맵",
+    "agent": "AI 에이전트",
+    "auction": "경공매 분석",
+    "inspection": "현장 점검",
+    "tax": "세금 시뮬레이션",
+    "tenant": "테넌트 관리",
+    "webrtc": "실시간 협업",
+    "analytics_investment": "투자/자동가치산정",
+    "analytics_esg": "ESG 대시보드",
+    "analytics_carbon": "탄소/전과정평가",
+    "analytics_cost": "원가/물가지수",
+    "analytics_iot": "IoT/에너지",
+    "feasibility": "사업성 시뮬레이션",
+    "market_insights": "시장 동향",
+    "regulations": "규제 모니터링",
+    "digital_twin": "디지털 트윈",
+    "maintenance": "유지보수",
+    "safety": "AI 안전관리",
+    "sre": "SRE 시스템 관리",
+    "kdx": "KDX 모니터링",
+    "approvals": "승인/결재",
     "login": "로그인",
     "register": "회원가입"
   },
   "dashboard": {
-    "title": "프론트엔드 기반 구성이 준비되었습니다.",
+    "title": "AI 기반 부동산 비즈니스 자동화 솔루션",
+    "welcome": "개발사업의 시작! 당신이 디벨로퍼로 비상할 준비가 되었습니다.",
     "description": "현재 단계에서는 i18n 라우팅, 기본 레이아웃, 대시보드 구조, 페이지 골격을 우선 구성합니다. 실제 API 연동은 백엔드 응답 계약이 고정되는 시점에 맞춰 확장합니다.",
     "summaryTitle": "초기 구동 상태",
     "summaryDesign": "AI 설계와 평면도 생성 화면을 연결할 수 있는 구조를 확보했습니다.",
@@ -61,12 +78,20 @@
     },
     "projectDetail": {
       "eyebrow": "프로젝트 상세",
-      "title": "프로젝트 상세 허브",
-      "description": "설계, BIM, 금융, 드론, 블록체인, 보고서를 하나의 프로젝트 맥락으로 묶습니다.",
+      "title": "사통팔땅 프로젝트 허브",
+      "description": "부지 분석부터 운영까지, 개발 전주기를 정밀하게 연결하는 통합 관제 센터입니다.",
       "items": {
         "first": "프로젝트 개요",
         "second": "모듈별 진입점",
         "third": "상태 요약 패널"
+      },
+      "summary": {
+        "hub": "사통팔땅 인텔리전스 허브 / ID:",
+        "name": "강남 스마트 플라자 신축공사",
+        "pnu": "고유번호(PNU): 1168010100104120002",
+        "zone": "용도지역: 일반상업지역",
+        "npv": "예상 수익치 (NPV)",
+        "roi": "프로젝트 ROI"
       }
     },
     "design": {
@@ -161,13 +186,38 @@
     },
     "inspection": {
       "eyebrow": "현장 모듈",
-      "title": "오프라인 현장 점검 준비",
+      "title": "AI驱动的房地产业务自动化",
+      "welcome": "开发业务的开始！你已准备好作为开发者腾飞。",
       "description": "PWA 오프라인 흐름과 현장 점검 체크리스트를 연결할 자리입니다.",
       "items": {
         "first": "오프라인 배너",
         "second": "현장 체크리스트",
         "third": "동기화 대기 상태"
       }
+    },
+    "sre": {
+      "eyebrow": "ENGINEERING / SRE",
+      "title": "시스템 신뢰성 관제 (SRE)",
+      "description": "사통팔땅 플랫폼의 인프라 상태, 빌드 품질 및 서비스 건전성을 실시간으로 모니터링합니다.",
+      "items": {
+        "first": "인프라 가용성",
+        "second": "빌드 품질 지표",
+        "third": "품질 게이트 상태"
+      }
+    },
+    "feasibility_simulation": {
+      "title": "경제적 민감도 시뮬레이션",
+      "description": "다양한 경제 변수를 조정하여 수익성의 확률적 변동성을 예측합니다.",
+      "runBtn": "시뮬레이션 실행",
+      "runningBtn": "연산 중...",
+      "inputTitle": "변수 조정 패널",
+      "outputTitle": "시뮬레이션 결과분포",
+      "costVol": "사업비 변동성 (±%)",
+      "interestRate": "목표 이자율",
+      "salesDelay": "분양/임대 지연율",
+      "meanNpv": "기대 NPV (평균)",
+      "var5": "Value-at-Risk (하위 5%)",
+      "profitIndex": "수익성 지수 (PI)"
     }
   },
   "status": {
@@ -234,12 +284,384 @@
     "testNotificationAction": "테스트 알림 보내기",
     "refreshAction": "PWA 새로고침",
     "offlineAction": "오프라인 페이지 열기",
-    "errorTitle": "PWA 런타임 이슈",
-    "testNotificationTitle": "PropAI 현장 동기화",
+    "errorTitle": "PWA 런타임 오류",
+    "testNotificationTitle": "사통팔땅 현장 동기화",
     "testNotificationBody": "오프라인 워크스페이스가 점검과 현장 보고에 준비되었습니다."
   },
   "a11y": {
     "screenReaderRegion": "화면 변경 알림 영역",
     "skipToContent": "본문으로 건너뛰기"
+  },
+  "deepIntegration": {
+    "lifecycle": {
+      "title": "딥-인티그레이션 상세 뷰",
+      "stageSite": "부지 분석",
+      "stageLegal": "법규 검토",
+      "stageDesignAI": "설계 AI (CAD/BIM)",
+      "stageFeasibility": "사업성 대시보드 (Monte Carlo)",
+      "stageESG": "ESG 대시보드",
+      "stagePermits": "인허가 지원",
+      "stageConstruction": "건설 원가 및 공정",
+      "stageOperations": "운영 및 유지보수",
+      "pendingTitle": "모듈 통합 준비 중",
+      "pendingDesc": "해석 단계에 대한 심층 통합 뷰는 168-table DB 연계의 다음 페이즈에 릴리즈 예정입니다."
+    },
+    "cadBim": {
+      "title": "설계 AI 인티그레이션",
+      "description": "사통팔땅 코어 엔진이 생성한 파라메트릭 CAD 도면 제안 및 3D BIM 모델 뷰어입니다.",
+      "btn2D": "2D CAD 평면도",
+      "btn3D": "3D BIM 뷰어",
+      "loading3D": "WebGL Three.js 캔버스 초기화 중...",
+      "loading2D": "SVG 파라메트릭 에디터 렌더링 중...",
+      "legalCheck": "법규 검토 현황",
+      "compliant": "100% 적법",
+      "autoCorrected": "시스템에 의해 3건 자동 보정됨",
+      "exportBtn": "IFC/DXF 내보내기"
+    },
+    "feasibility": {
+      "title": "AI-Powered Real Estate Business Automation",
+      "welcome": "The start of your development! You are ready to soar as a developer.",
+      "description": "최소 10,000회 이상의 반복 시나리오를 구성하여 확률적 ROI 및 NPV 구간을 모델링합니다.",
+      "runBtn": "시뮬레이션 실행",
+      "runningBtn": "10k 회 반복 시뮬레이터 가동 중...",
+      "inputTitle": "입력 변수 (정규 분포 적용)",
+      "costVol": "건설 공사비 변동성",
+      "interestRate": "기준 금리 (평균)",
+      "salesDelay": "분양 지연 확률",
+      "outputTitle": "시뮬레이션 결과 리포트",
+      "meanNpv": "예상되는 평균 순현재가치(NPV)",
+      "var5": "5% 극단 리스크 (VaR)",
+      "profitIndex": "수익성 지수 (PI)"
+    },
+    "feasibilityV2": {
+      "title": "수지분석 v2",
+      "subtitle": "15개 개발유형 x 38종 세금 x 229개 시군구 완전 자동화",
+      "tabInput": "입력",
+      "tabResult": "분석 결과",
+      "tabMonteCarlo": "몬테카를로",
+      "tabVersion": "버전 이력",
+      "devType": "개발 유형",
+      "calculate": "수지분석 실행",
+      "calculating": "계산 중...",
+      "grade": "등급",
+      "revenue": "총수입",
+      "totalCost": "총비용",
+      "netProfit": "순이익",
+      "profitRate": "수익률",
+      "roi": "ROI",
+      "npv": "NPV",
+      "costBreakdown": "비용 구성",
+      "commit": "커밋",
+      "commitHistory": "커밋 이력",
+      "aiDiagnosis": "AI 진단 권고",
+      "export": "내보내기"
+    },
+    "taxV2": {
+      "title": "세금 시뮬레이션 v2",
+      "subtitle": "4단계 38종 세금 일괄 계산",
+      "calculateAll": "세금 계산",
+      "grandTotal": "총 세금",
+      "stageAcquisition": "취득단계",
+      "stageUtility": "공사단계",
+      "stageSale": "분양단계",
+      "stageDisposal": "양도단계",
+      "matrix": "개발유형별 매트릭스",
+      "regionSearch": "지역별 세율 조회",
+      "lawChanges": "법령변경 모니터링"
+    },
+    "cost": {
+      "title": "건설 원가 및 물량 산출 (QTO)",
+      "description": "연계된 3D BIM 객체에서 자동 스캔된 수량 및 조달청 자재 단가가 실시간 결합된 내역서입니다.",
+      "exportBtn": "엑셀(BOQ) 내보내기",
+      "colCode": "공종 코드",
+      "colDesc": "공사 설명 내용",
+      "colUnit": "단위",
+      "colQty": "산출 수량(BIM)",
+      "colRate": "자재/노무 단가(KRW)",
+      "colTotal": "총액(KRW)",
+      "subtotal": "공사 직접비 소계"
+    },
+    "bimCost": {
+      "title": "BIM 공사비 산출",
+      "uploadIfc": "IFC 파일 업로드",
+      "calculateCost": "원가계산서 생성",
+      "monteCarlo": "몬테카를로 시뮬레이션",
+      "legalRates": "2026 법정요율",
+      "directMaterial": "직접재료비",
+      "directLabor": "직접노무비",
+      "directExpense": "직접경비",
+      "indirectLabor": "간접노무비",
+      "netConstruction": "순공사원가",
+      "totalWithVat": "도급액(VAT 포함)",
+      "categoryBreakdown": "공종별 원가 구성",
+      "mcConverged": "수렴 완료",
+      "mcNotConverged": "미수렴",
+      "riskContributions": "리스크 기여도",
+      "exportExcel": "엑셀 내보내기",
+      "billing": "기성 현황",
+      "spi": "SPI (일정성과지수)",
+      "cpi": "CPI (원가성과지수)"
+    },
+    "schedule": {
+      "title": "공정 관리 및 AI 자동 감리",
+      "description": "4D 스케줄링 간트 차트 및 현장 카메라와 연동된 AI 품질/안전 감리 실시간 알림 패널입니다.",
+      "ganttTitle": "4D 건설 공정 스케줄 (Gantt)",
+      "inspectionTitle": "활성화된 감리 상태",
+      "statusApproved": "승인 완료",
+      "statusAlert": "AI 경고",
+      "statusPending": "조치 대기"
+    }
+  },
+  "modulePlaceholders": {
+    "agent": {
+      "eyebrow": "PROP / AGENT",
+      "title": "AI 에이전트 시스템",
+      "description": "분산된 AI 에이전트들의 상태와 로그를 실시간으로 모니터링하고 제어합니다.",
+      "items": [
+        "✓ AI 에이전트 오케스트레이션 활성",
+        "✓ 도메인별 추론 로그 실시간 스트리밍",
+        "✓ 의사결정 지원 시스템 로드 완료"
+      ]
+    },
+    "maintenance": {
+      "eyebrow": "PROP / MAINTENANCE",
+      "title": "디지털 트윈 유지보수",
+      "description": "설비의 센서 기반 예지 정비 및 현장 유지보수 일정을 관리합니다.",
+      "items": [
+        "✓ 설비 IoT 센서 22개소 실시간 연동",
+        "✓ 예지 정비(Predictive ML) 모델 가동",
+        "✓ 현장 유지보수 디지털 워크로 정렬"
+      ]
+    },
+    "tenant": {
+      "eyebrow": "PROP / TENANT",
+      "title": "테넌트 통합 관리",
+      "description": "임대차 계약, CS 요청 처리 및 테넌트 포괄 운용 상태를 시각화합니다.",
+      "items": [
+        "✓ 데이터 실시간 연동 대기",
+        "✓ 보안 컴플라이언스 통과",
+        "✓ 워크플로우 상태 라우팅"
+      ]
+    },
+    "inspection": {
+      "eyebrow": "PROP / INSPECTION",
+      "title": "AI 현장 점검",
+      "description": "모바일 장치와 드론 비전 데이터를 통해 현장의 안전 및 품질을 원격 점검합니다.",
+      "items": [
+        "✓ 4K 드론 비전 안전 로직 동기화",
+        "✓ 부위별 균열/누수 AI 탐지 활성",
+        "✓ 오프라인 PWA 현장 점검 모드 준비"
+      ]
+    },
+    "auction": {
+      "eyebrow": "PROP / AUCTION",
+      "title": "경공매 분석 엔진",
+      "description": "법원 경매 및 공매 낙찰가 예측과 권리 분석을 AI로 구동합니다.",
+      "items": [
+        "✓ 데이터 실시간 연동 대기",
+        "✓ 보안 컴플라이언스 통과",
+        "✓ 워크플로우 상태 라우팅"
+      ]
+    },
+    "projects": {
+      "eyebrow": "PROP / PROJECTS",
+      "title": "전체 프로젝트 파이프라인",
+      "description": "권한이 부여된 모든 부동산 개발 프로젝트들의 통합 진행률을 관제합니다.",
+      "items": [
+        "✓ 데이터 실시간 연동 대기",
+        "✓ 보안 컴플라이언스 통과",
+        "✓ 워크플로우 상태 라우팅"
+      ]
+    },
+    "tax": {
+      "eyebrow": "PROP / TAX",
+      "title": "세무/재무 시뮬레이터",
+      "description": "취득세, 양도세, 종부세 등 부동산 관련 세금 영향을 몬테카를로 분석에 결합합니다.",
+      "items": [
+        "✓ 15개 유형별 AI 수지분석 매트릭스",
+        "✓ 몬테카를로 ROI 리스크 변동성 모델",
+        "✓ 38종 세금 자동 연동 시뮬레이터"
+      ]
+    },
+    "iot": {
+      "eyebrow": "PROP / IOT",
+      "title": "IoT 에너지 관제",
+      "description": "건물 내 스마트 센서 네트워크를 대시보드와 연동하여 실시간 에너지 효율을 제어합니다.",
+      "items": [
+        "✓ 데이터 실시간 연동 대기",
+        "✓ 보안 컴플라이언스 통과",
+        "✓ 워크플로우 상태 라우팅"
+      ]
+    },
+    "cost": {
+      "eyebrow": "PROP / COST",
+      "title": "실시간 물가지수 분석",
+      "description": "시장 자재 단가 및 건설 물가지수를 연동하여 원가 상승 리스크를 예측합니다.",
+      "items": [
+        "✓ 데이터 실시간 연동 대기",
+        "✓ 보안 컴플라이언스 통과",
+        "✓ 워크플로우 상태 라우팅"
+      ]
+    },
+    "investment": {
+      "eyebrow": "PROP / INVESTMENT",
+      "title": "투자 가치 산정 (AVM)",
+      "description": "지역 데이터와 거시경제 지표를 결합하여 해당 물건의 최종 자산 가치를 환산합니다.",
+      "items": [
+        "✓ 데이터 실시간 연동 대기",
+        "✓ 보안 컴플라이언스 통과",
+        "✓ 워크플로우 상태 라우팅"
+      ]
+    },
+    "carbon": {
+      "eyebrow": "PROP / CARBON",
+      "title": "탄소 배출 (LCA) 전과정 평가",
+      "description": "설계, 시공, 운영의 전체 사이클에서 발생하는 탄소 발자국을 추적/절감합니다.",
+      "items": [
+        "✓ 데이터 실시간 연동 대기",
+        "✓ 보안 컴플라이언스 통과",
+        "✓ 워크플로우 상태 라우팅"
+      ]
+    },
+    "contracts": {
+      "eyebrow": "PROP / CONTRACTS",
+      "title": "전자 계약 관리",
+      "description": "이더리움 스마트 컨트랙트 기반의 용역/수주/임대차 계약을 모니터링합니다.",
+      "items": [
+        "✓ 데이터 실시간 연동 대기",
+        "✓ 보안 컴플라이언스 통과",
+        "✓ 워크플로우 상태 라우팅"
+      ]
+    },
+    "legal": {
+      "eyebrow": "PROP / LEGAL",
+      "title": "법규 및 조례 검토",
+      "description": "해당 지번의 용도 지역 분석 및 최신 건축/환경 법규 위반을 검사합니다.",
+      "items": [
+        "✓ 전국 지적도 및 용도지역 DB 연동",
+        "✓ 최신 건축법/지자체 조례 엔진 활성",
+        "✓ GIS 기반 다중 규제 오버레이 완료"
+      ]
+    },
+    "finance": {
+      "eyebrow": "PROP / FINANCE",
+      "title": "수지 분석 및 대출 구조",
+      "description": "PF 구조화, 자기자본(Equity) 시뮬레이션 및 상환 스케줄을 디자인합니다.",
+      "items": [
+        "✓ 데이터 실시간 연동 대기",
+        "✓ 보안 컴플라이언스 통과",
+        "✓ 워크플로우 상태 라우팅"
+      ]
+    },
+    "report": {
+      "eyebrow": "PROP / REPORT",
+      "title": "최종 사업성 리포트",
+      "description": "지금까지 분석된 법규, 설계, 수지 종합 결과를 PDF 및 대시보드로 요약 보고합니다.",
+      "items": [
+        "✓ 데이터 실시간 연동 대기",
+        "✓ 보안 컴플라이언스 통과",
+        "✓ 워크플로우 상태 라우팅"
+      ]
+    },
+    "site-analysis": {
+      "eyebrow": "PROP / SITE ANALYSIS",
+      "title": "부지 및 환경 분석",
+      "description": "지형 데이터, 일조량, 소음 및 주변 인프라를 공간 정보(GIS) 기반으로 파악합니다.",
+      "items": [
+        "✓ 데이터 실시간 연동 대기",
+        "✓ 보안 컴플라이언스 통과",
+        "✓ 워크플로우 상태 라우팅"
+      ]
+    },
+    "esg": {
+      "eyebrow": "PROP / ESG",
+      "title": "ESG 지표 통합",
+      "description": "EU 택소노미 및 녹색건축인증 요건을 충족하기 위한 프로젝트의 비재무적 가치를 추적합니다.",
+      "items": [
+        "✓ RE100/LCA 탄소 배출량 추적 시스템",
+        "✓ ESG 투자 적격성 AI 진단 완료",
+        "✓ 녹색건축인증 및 G-SEED 예비 평점"
+      ]
+    },
+    "bim": {
+      "eyebrow": "PROP / BIM",
+      "title": "BIM 수량 산출",
+      "description": "생성된 IFC 파일에서 골조, 마감재 등 3D 물량(QTO)을 자동 산출하고 매핑합니다.",
+      "items": [
+        "✓ 3D QTO 엔진 (물량 자동 산출)",
+        "✓ IFC 4.x 기반 표준 준수 상호운용성",
+        "✓ 부재별 단위 중량 및 단가 매핑 완료"
+      ]
+    },
+    "cad": {
+      "eyebrow": "PROP / CAD",
+      "title": "2D 평면도 검토",
+      "description": "설계 도면 분석 및 규제 오버레이 뷰어를 통해 면적과 효율성을 평가합니다.",
+      "items": [
+        "✓ CAD Layer 자동 분류 파서 가동",
+        "✓ 실별 면적(GFA/NFA) 오차 검증 완료",
+        "✓ 유니버설 디자인(Barrier-Free) 법규 체크"
+      ]
+    },
+    "construction": {
+      "eyebrow": "PROP / CONSTRUCTION",
+      "title": "4D/5D 시공 감리",
+      "description": "공정표와 내역서를 연동하여 시공 기성 및 비용 지출을 실시간 감리합니다.",
+      "items": [
+        "✓ 4D 시공 스케줄링 간섭 체크 활성",
+        "✓ 현장 IoT 센서 실시간 기성 데이터 연동",
+        "✓ 공급 사슬(Supply Chain) 리스크 추적"
+      ]
+    },
+    "permit": {
+      "eyebrow": "PROP / PERMIT",
+      "title": "인허가 자동화",
+      "description": "건축 허가에 필요한 도서 리스트를 점검하고, 행정 처리 워크플로우를 보조합니다.",
+      "items": [
+        "✓ 전자 민원(세움터) G2B 인터페이스 대기",
+        "✓ 심의 위원회 지적 사항 이력 관리",
+        "✓ 단계별 필독 공문 자동 요약 알림"
+      ]
+    },
+    "operations": {
+      "eyebrow": "PROP / OPERATIONS",
+      "title": "자산 운영 (FM)",
+      "description": "준공 후 빌딩 모니터링(스마트 빌딩) 및 재무적 수익 회수 라인을 감독합니다.",
+      "items": [
+        "✓ 시설 관리(FM) 에셋 추명 엔진 활성",
+        "✓ 에너지 소비 효율(BEMS) 최적화 트랙킹",
+        "✓ 테넌트(임차인) 경험 지수(TX) 모니터링"
+      ]
+    },
+    "drone": {
+      "eyebrow": "PROP / DRONE",
+      "title": "드론 열화상/맵핑 데이터",
+      "description": "현장에서 수집된 드론 정사영상 및 3D 포인트 클라우드 데이터를 시각화합니다.",
+      "items": [
+        "✓ 정사영상 맵핑(Orthomosaic) 처리 완료",
+        "✓ 토공량 오차 범위 3% 이내 정밀 스캔",
+        "✓ 열화상 기반 에너지 누출 진단 모듈"
+      ]
+    },
+    "blockchain": {
+      "eyebrow": "PROP / BLOCKCHAIN",
+      "title": "STO 블록체인 펀딩",
+      "description": "부동산 조각 투자 및 블록체인(Tokenization) 기반의 자본 조달 원장을 모니터링합니다.",
+      "items": [
+        "✓ STO 기반 조각 투자 원장 라이브",
+        "✓ 스마트 계약(Smart Contract) 실시간 검증",
+        "✓ ESG 투자 공시 시스템(Global Standard)"
+      ]
+    },
+    "design": {
+      "eyebrow": "PROP / DESIGN",
+      "title": "AI 기본 설계 생성",
+      "description": "건폐율 및 용적률을 극대화하는 자동 평면도 및 법규 보정 3D 매스를 생성합니다.",
+      "items": [
+        "✓ 생성형 AI 기반 대안 설계(Optioneering)",
+        "✓ 법정 주차 대수 및 일조권 자동 최적화",
+        "✓ 3D 매스 하이라이트 렌더링 동기화"
+      ]
+    }
   }
 }

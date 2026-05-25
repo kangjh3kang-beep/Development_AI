@@ -24,17 +24,13 @@ export default async function TaxPage({ params }: TaxPageProps) {
 
   return (
     <div className="grid gap-6">
-      <ModulePlaceholder
-        eyebrow="TAX / LIVE OPS"
-        title="세금 라이브 센터"
-        description="실제 tax API에 연결해 프로젝트 기준의 세액, 세율, 공제, 절세 팁을 검증합니다."
+            <ModulePlaceholder
+        eyebrow={dictionary.modulePlaceholders["tax"].eyebrow}
+        title={dictionary.modulePlaceholders["tax"].title}
+        description={dictionary.modulePlaceholders["tax"].description}
         statusLabel={runtimeMode}
         localeLabel={locale}
-        items={[
-          "프로젝트 FK 기반 실세금 계산",
-          "취득세 / 보유세 / 양도세 시나리오",
-          "공제 항목과 절세 팁 확인",
-        ]}
+        items={dictionary.modulePlaceholders["tax"].items}
       />
       <TaxOperationsWorkspaceClient locale={locale as Locale} />
     </div>

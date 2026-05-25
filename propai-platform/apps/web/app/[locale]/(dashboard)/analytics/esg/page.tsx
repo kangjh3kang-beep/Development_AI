@@ -24,17 +24,13 @@ export default async function ESGPage({ params }: ESGPageProps) {
 
   return (
     <div className="grid gap-6">
-      <ModulePlaceholder
-        eyebrow="ENERGY / CERT"
-        title="에너지 인증 워크스페이스"
-        description="KEPCO 전기요금과 프로젝트별 에너지/ZEB 인증 추정을 실 API에 연결해 검증합니다."
+            <ModulePlaceholder
+        eyebrow={dictionary.modulePlaceholders["esg"].eyebrow}
+        title={dictionary.modulePlaceholders["esg"].title}
+        description={dictionary.modulePlaceholders["esg"].description}
         statusLabel={runtimeMode}
         localeLabel={locale}
-        items={[
-          "KEPCO 요금 계산 실연동",
-          "프로젝트별 에너지 등급/ZEB 추정",
-          "BEMS 절감률과 권고안 검증",
-        ]}
+        items={dictionary.modulePlaceholders["esg"].items}
       />
       <EnergyOperationsWorkspaceClient locale={locale as Locale} />
     </div>

@@ -57,28 +57,28 @@ export function OfflineBanner({
       <div
         role="status"
         aria-live="polite"
-        className={`rounded-[1.5rem] border px-5 py-4 ${
+        className={`rounded-[var(--radius-xl)] border px-5 py-4 ${
           isOnline
             ? "border-[rgba(14,116,144,0.24)] bg-[rgba(14,116,144,0.08)]"
             : "border-[rgba(217,119,6,0.26)] bg-[rgba(217,119,6,0.12)]"
         }`}
       >
-        <p className="text-sm font-semibold text-[var(--foreground)]">
+        <p className="text-sm font-semibold text-[var(--text-primary)]">
           {isOnline ? labels.onlineTitle : labels.offlineTitle}
         </p>
-        <p className="mt-2 text-sm leading-7 text-[rgba(19,33,47,0.76)]">
+        <p className="mt-2 text-sm leading-7 text-[var(--text-secondary)]">
           {isOnline ? labels.onlineDescription : labels.offlineDescription}
         </p>
       </div>
-      <div className="rounded-[1.5rem] border border-[var(--line)] bg-[var(--surface-soft)] px-5 py-4">
-        <p className="text-sm font-semibold text-[var(--foreground)]">
+      <div className="rounded-[var(--radius-xl)] border border-[var(--line)] bg-[var(--surface-soft)] px-5 py-4">
+        <p className="text-sm font-semibold text-[var(--text-primary)]">
           {labels.cachedTitle}
         </p>
-        <p className="mt-2 text-sm leading-7 text-[rgba(19,33,47,0.76)]">
+        <p className="mt-2 text-sm leading-7 text-[var(--text-secondary)]">
           {labels.cachedDescription}
         </p>
         {cachedAt ? (
-          <p className="mt-3 text-xs font-medium text-[rgba(19,33,47,0.62)]">
+          <p className="mt-3 text-xs font-medium text-[var(--text-tertiary)]">
             {labels.cachedAtLabel}: {cachedAt}
           </p>
         ) : null}

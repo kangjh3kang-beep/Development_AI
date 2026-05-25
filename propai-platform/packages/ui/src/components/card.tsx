@@ -20,7 +20,7 @@ export const Card = forwardRef<HTMLDivElement, CardProps>(
       <div
         ref={ref}
         className={cn(
-          "rounded-[1.75rem] border border-[var(--line)] bg-[var(--surface)] shadow-[0_12px_32px_rgba(19,33,47,0.06)]",
+          "rounded-[var(--radius-lg)] border border-[var(--line)] bg-[var(--surface)] shadow-[var(--shadow-sm)] transition-shadow duration-200",
           className,
         )}
         {...props}
@@ -50,7 +50,7 @@ export const CardTitle = forwardRef<HTMLHeadingElement, CardTitleProps>(
     return (
       <h3
         ref={ref}
-        className={cn("text-xl font-semibold text-[var(--foreground)]", className)}
+        className={cn("text-xl font-bold tracking-tight text-[var(--text-primary)]", className)}
         {...props}
       >
         {children}
@@ -68,7 +68,7 @@ export const CardDescription = forwardRef<
   return (
     <p
       ref={ref}
-      className={cn("text-sm leading-7 text-[rgba(19,33,47,0.72)]", className)}
+      className={cn("text-sm leading-relaxed text-[var(--text-secondary)]", className)}
       {...props}
     >
       {children}

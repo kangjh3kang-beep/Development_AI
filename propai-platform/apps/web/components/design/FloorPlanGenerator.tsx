@@ -44,23 +44,23 @@ export function FloorPlanGenerator({
     <Card className="bg-[var(--surface-strong)]">
       <CardHeader>
         <CardTitle>{labels.title}</CardTitle>
-        <p className="text-sm leading-7 text-[rgba(19,33,47,0.72)]">
+        <p className="text-sm leading-7 text-[var(--text-secondary)]">
           {labels.description}
         </p>
       </CardHeader>
       <CardContent className="grid gap-5 pt-0">
-        <label className="grid gap-2 text-sm font-medium text-[rgba(19,33,47,0.78)]">
+        <label className="grid gap-2 text-sm font-medium text-[var(--text-secondary)]">
           {labels.promptLabel}
           <textarea
-            className="min-h-[140px] rounded-[1.25rem] border border-[var(--line)] bg-white/80 px-4 py-3 text-sm text-[var(--foreground)] outline-none"
+            className="min-h-[140px] rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] px-4 py-3 text-sm text-[var(--text-primary)] outline-none"
             value={prompt}
             onChange={(event) => setPrompt(event.target.value)}
           />
         </label>
-        <label className="grid gap-2 text-sm font-medium text-[rgba(19,33,47,0.78)]">
+        <label className="grid gap-2 text-sm font-medium text-[var(--text-secondary)]">
           {labels.uploadLabel}
           <input
-            className="rounded-[1.25rem] border border-[var(--line)] bg-white/80 px-4 py-3 text-sm text-[rgba(19,33,47,0.72)]"
+            className="rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] px-4 py-3 text-sm text-[var(--text-secondary)]"
             type="file"
             accept="image/*"
             onChange={(event) =>
@@ -68,7 +68,7 @@ export function FloorPlanGenerator({
             }
           />
         </label>
-        <div className="rounded-[1.25rem] border border-[var(--line)] bg-white/80 px-4 py-3 text-sm leading-7 text-[rgba(19,33,47,0.72)]">
+        <div className="rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] px-4 py-3 text-sm leading-7 text-[var(--text-secondary)]">
           {referenceName
             ? `${labels.referenceReady}: ${referenceName}`
             : labels.referenceIdle}
@@ -94,7 +94,7 @@ export function FloorPlanGenerator({
           {isPending ? `${labels.generateLabel}...` : labels.generateLabel}
         </Button>
         <div>
-          <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.48)]">
+          <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-hint)]">
             {labels.optionsTitle}
           </p>
           <div className="mt-3 grid gap-3">
@@ -106,21 +106,21 @@ export function FloorPlanGenerator({
                   setPrompt(plan.prompt);
                   onSelectPlan(plan.id);
                 }}
-                className={`rounded-[1.25rem] border px-4 py-4 text-left transition ${
+                className={`rounded-[var(--radius-md)] border px-4 py-4 text-left transition ${
                   selectedPlanId === plan.id
-                    ? "border-[var(--foreground)] bg-[rgba(19,33,47,0.06)]"
-                    : "border-[var(--line)] bg-white/80"
+                    ? "border-[var(--text-primary)] bg-[var(--surface-muted)]"
+                    : "border-[var(--line)] bg-[var(--surface)]"
                 }`}
               >
                 <div className="flex flex-wrap items-center gap-3">
-                  <p className="text-sm font-semibold text-[var(--foreground)]">
+                  <p className="text-sm font-semibold text-[var(--text-primary)]">
                     {plan.name}
                   </p>
                   <span className="rounded-full bg-[rgba(14,116,144,0.12)] px-3 py-1 text-xs font-medium text-[var(--accent-strong)]">
                     {labels.statusLabels[plan.status]}
                   </span>
                 </div>
-                <p className="mt-3 text-sm leading-7 text-[rgba(19,33,47,0.74)]">
+                <p className="mt-3 text-sm leading-7 text-[var(--text-secondary)]">
                   {plan.summary}
                 </p>
               </button>

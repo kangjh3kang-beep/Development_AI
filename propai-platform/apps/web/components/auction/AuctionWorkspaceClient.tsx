@@ -2,7 +2,8 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Button, Card, CardContent, Input, Select } from "@propai/ui";
+import { motion, AnimatePresence } from "framer-motion";
+import { Button, Card, CardContent, Input } from "@propai/ui";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import { ApiClientError, apiClient } from "@/lib/api-client";
@@ -21,30 +22,6 @@ type AuctionListingResponse = {
   recommended_max_bid_krw: number;
   expected_margin_krw: number;
   diligence_flags: string[];
-};
-
-type ContractorResponse = {
-  contractor_id: string;
-  company_name: string;
-  category: string;
-  specialties: string[];
-  address: string | null;
-  rating: number | null;
-};
-
-type ContractorRecommendationItem = {
-  contractor_id: string;
-  company_name: string;
-  category: string;
-  specialties: string[];
-  rating: number | null;
-  match_score: number;
-  reasons: string[];
-};
-
-type ContractorRecommendationResponse = {
-  category: string;
-  recommendations: ContractorRecommendationItem[];
 };
 
 type ChatbotSessionResponse = {
@@ -69,14 +46,10 @@ type Labels = {
   connectionHint: string;
   opportunitiesTitle: string;
   opportunitiesEmpty: string;
-  contractorsTitle: string;
-  contractorsEmpty: string;
   analysisTitle: string;
-  recommendationsTitle: string;
   advisoryTitle: string;
   advisoryHint: string;
   analyzeAction: string;
-  recommendAction: string;
   sendAction: string;
   latestReplyTitle: string;
   scoreLabel: string;
@@ -88,15 +61,11 @@ type Labels = {
   addressLabel: string;
   appraisedLabel: string;
   minimumBidLabel: string;
-  specialtiesLabel: string;
-  regionLabel: string;
   promptLabel: string;
   tokenRequirement: string;
   authError: string;
   opportunitiesLoadErrorTitle: string;
   opportunitiesLoadErrorDetail: string;
-  contractorsLoadErrorTitle: string;
-  contractorsLoadErrorDetail: string;
   sessionsLoadErrorTitle: string;
   sessionsLoadErrorDetail: string;
   retryAction: string;
@@ -106,20 +75,16 @@ const LABELS: Record<Locale, Labels> = {
   ko: {
     connectionTitle: "실시간 경공매 워크스페이스",
     connectionDescription:
-      "G95 백엔드와 직접 연결해 경공매 분석, 시공사 추천, 자문 챗봇 흐름을 한 화면에서 검증합니다.",
+      "G95 백엔드와 직접 연결해 경공매 분석 및 전략 자문 흐름을 통합 검증합니다.",
     connectionHint:
       "실 API 호출에는 `NEXT_PUBLIC_API_ACCESS_TOKEN` 또는 `localStorage.propai_access_token` 이 필요합니다.",
     opportunitiesTitle: "우선 검토 매물",
     opportunitiesEmpty: "저장된 경공매 분석 결과가 없습니다.",
-    contractorsTitle: "활성 협력사 네트워크",
-    contractorsEmpty: "등록된 활성 협력사가 없습니다.",
     analysisTitle: "경공매 분석 실행",
-    recommendationsTitle: "시공사 추천",
-    advisoryTitle: "자문 챗봇",
+    advisoryTitle: "전략 자문 챗봇",
     advisoryHint:
-      "입력한 프롬프트는 `chatbot -> auction -> contractors` 운영 흐름 검증용으로 저장됩니다.",
+      "현재 매물의 실사 포인트와 입찰 전략을 AI와 연계하여 최적화합니다.",
     analyzeAction: "분석 실행",
-    recommendAction: "추천 조회",
     sendAction: "자문 요청",
     latestReplyTitle: "최신 자문 응답",
     scoreLabel: "투자 점수",
@@ -131,17 +96,12 @@ const LABELS: Record<Locale, Labels> = {
     addressLabel: "주소",
     appraisedLabel: "감정가(원)",
     minimumBidLabel: "최저입찰가(원)",
-    specialtiesLabel: "필요 공종",
-    regionLabel: "권역 힌트",
-    promptLabel: "자문 프롬프트",
+    promptLabel: "자문 프롬프트 (예: 권익 관계 분석해줘)",
     tokenRequirement: "API 토큰을 연결하면 실시간 결과를 확인할 수 있습니다.",
     authError: "실시간 호출을 위해 API 인증이 필요합니다.",
     opportunitiesLoadErrorTitle: "경공매 목록 로드 실패",
     opportunitiesLoadErrorDetail:
       "저장된 경공매 분석 결과를 불러오지 못했습니다. 분석 실행 없이도 재시도할 수 있습니다.",
-    contractorsLoadErrorTitle: "협력사 네트워크 로드 실패",
-    contractorsLoadErrorDetail:
-      "활성 협력사 목록을 불러오지 못했습니다. 추천 실행 전에도 재시도할 수 있습니다.",
     sessionsLoadErrorTitle: "챗봇 세션 로드 실패",
     sessionsLoadErrorDetail:
       "기존 자문 세션을 불러오지 못했습니다. 새 세션을 생성하기 전에 다시 시도할 수 있습니다.",
@@ -150,20 +110,16 @@ const LABELS: Record<Locale, Labels> = {
   en: {
     connectionTitle: "Live auction workspace",
     connectionDescription:
-      "Validate the G95 backend in one surface across auction scoring, contractor recommendations, and advisory chat.",
+      "Validate the G95 backend in one surface across auction scoring and strategy advisory.",
     connectionHint:
       "Live API calls require `NEXT_PUBLIC_API_ACCESS_TOKEN` or `localStorage.propai_access_token`.",
     opportunitiesTitle: "Priority opportunities",
     opportunitiesEmpty: "No analyzed auction listings have been stored yet.",
-    contractorsTitle: "Active contractor network",
-    contractorsEmpty: "No active contractors are registered yet.",
     analysisTitle: "Run auction analysis",
-    recommendationsTitle: "Contractor recommendations",
-    advisoryTitle: "Advisory chatbot",
+    advisoryTitle: "Strategy advisory",
     advisoryHint:
-      "Prompts are stored through the operational `chatbot -> auction -> contractors` validation flow.",
+      "Optimize diligence points and bidding strategies with AI insights.",
     analyzeAction: "Analyze",
-    recommendAction: "Recommend",
     sendAction: "Send prompt",
     latestReplyTitle: "Latest advisory response",
     scoreLabel: "Investment score",
@@ -175,17 +131,12 @@ const LABELS: Record<Locale, Labels> = {
     addressLabel: "Address",
     appraisedLabel: "Appraised value (KRW)",
     minimumBidLabel: "Minimum bid (KRW)",
-    specialtiesLabel: "Required specialties",
-    regionLabel: "Region hint",
     promptLabel: "Advisory prompt",
     tokenRequirement: "Connect an API token to view live results.",
     authError: "API authentication is required for live workspace calls.",
     opportunitiesLoadErrorTitle: "Auction opportunities unavailable",
     opportunitiesLoadErrorDetail:
       "Stored auction analyses failed to load. You can retry before running a fresh analysis.",
-    contractorsLoadErrorTitle: "Contractor network unavailable",
-    contractorsLoadErrorDetail:
-      "Active contractor records failed to load. You can retry before requesting recommendations.",
     sessionsLoadErrorTitle: "Chatbot sessions unavailable",
     sessionsLoadErrorDetail:
       "Stored advisory sessions failed to load. Retry before creating a new session.",
@@ -194,20 +145,16 @@ const LABELS: Record<Locale, Labels> = {
   "zh-CN": {
     connectionTitle: "实时拍卖工作台",
     connectionDescription:
-      "在一个页面中验证 G95 后端，包括拍卖评分、承包商推荐和顾问聊天。",
+      "在一个页面中验证 G95 后端，包括拍卖评分与战略顾问咨询。",
     connectionHint:
       "实时 API 调用需要 `NEXT_PUBLIC_API_ACCESS_TOKEN` 或 `localStorage.propai_access_token`。",
     opportunitiesTitle: "优先机会",
     opportunitiesEmpty: "尚未保存任何拍卖分析结果。",
-    contractorsTitle: "活跃合作网络",
-    contractorsEmpty: "尚未注册活跃承包商。",
     analysisTitle: "执行拍卖分析",
-    recommendationsTitle: "承包商推荐",
-    advisoryTitle: "顾问聊天",
+    advisoryTitle: "战略顾问",
     advisoryHint:
-      "输入的提示会通过 `chatbot -> auction -> contractors` 运营链路保存。",
+      "通过 AI 洞察优化尽调要点与竞标策略。",
     analyzeAction: "开始分析",
-    recommendAction: "获取推荐",
     sendAction: "发送请求",
     latestReplyTitle: "最新顾问回复",
     scoreLabel: "投资评分",
@@ -219,17 +166,12 @@ const LABELS: Record<Locale, Labels> = {
     addressLabel: "地址",
     appraisedLabel: "评估价（韩元）",
     minimumBidLabel: "最低投标价（韩元）",
-    specialtiesLabel: "所需专业",
-    regionLabel: "区域提示",
     promptLabel: "顾问提示",
     tokenRequirement: "连接 API token 后即可查看实时结果。",
     authError: "实时调用需要 API 身份认证。",
     opportunitiesLoadErrorTitle: "拍卖机会列表不可用",
     opportunitiesLoadErrorDetail:
       "无法加载已保存的拍卖分析结果，可在重新执行分析前先重试。",
-    contractorsLoadErrorTitle: "合作网络不可用",
-    contractorsLoadErrorDetail:
-      "无法加载活跃承包商记录，可在请求推荐前先重试。",
     sessionsLoadErrorTitle: "聊天会话不可用",
     sessionsLoadErrorDetail:
       "无法加载已有顾问会话，可在新建会话前先重试。",
@@ -284,13 +226,9 @@ export function AuctionWorkspaceClient({
   const [latestReply, setLatestReply] = useState("");
   const [formError, setFormError] = useState("");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [isRecommending, setIsRecommending] = useState(false);
   const [isSendingPrompt, setIsSendingPrompt] = useState(false);
   const [analysisResult, setAnalysisResult] =
     useState<AuctionListingResponse | null>(null);
-  const [recommendations, setRecommendations] = useState<
-    ContractorRecommendationItem[]
-  >([]);
 
   const [analysisForm, setAnalysisForm] = useState({
     caseNumber: "2026타경1024",
@@ -299,11 +237,7 @@ export function AuctionWorkspaceClient({
     appraisedValue: "1200000000",
     minimumBid: "910000000",
   });
-  const [recommendationForm, setRecommendationForm] = useState({
-    category: "general_contractor",
-    specialties: "mep, interior",
-    regionHint: "Mapo",
-  });
+
   const [prompt, setPrompt] = useState(
     locale === "ko"
       ? "이 경공매 물건의 핵심 실사 포인트와 입찰 전략을 정리해줘."
@@ -319,23 +253,14 @@ export function AuctionWorkspaceClient({
       apiClient.get<AuctionListingResponse[]>("/auction/opportunities?limit=5"),
   });
 
-  const contractorsQuery = useQuery({
-    queryKey: ["contractors", "active"],
-    enabled: canUseLiveApi,
-    queryFn: () =>
-      apiClient.get<ContractorResponse[]>("/contractors/active?limit=6"),
-  });
-
   const sessionsQuery = useQuery({
     queryKey: ["chatbot", "sessions"],
     enabled: canUseLiveApi,
     queryFn: () => apiClient.get<ChatbotSessionResponse[]>("/chatbot/sessions"),
   });
+
   const opportunitiesQueryError = opportunitiesQuery.error
     ? extractErrorMessage(opportunitiesQuery.error, labels.authError)
-    : "";
-  const contractorsQueryError = contractorsQuery.error
-    ? extractErrorMessage(contractorsQuery.error, labels.authError)
     : "";
   const sessionsQueryError = sessionsQuery.error
     ? extractErrorMessage(sessionsQuery.error, labels.authError)
@@ -378,34 +303,6 @@ export function AuctionWorkspaceClient({
       setFormError(extractErrorMessage(error, labels.authError));
     } finally {
       setIsAnalyzing(false);
-    }
-  }
-
-  async function handleRecommend(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setFormError("");
-    setIsRecommending(true);
-
-    try {
-      const result = await apiClient.post<ContractorRecommendationResponse>(
-        "/contractors/recommend",
-        {
-          body: {
-            category: recommendationForm.category,
-            required_specialties: recommendationForm.specialties
-              .split(",")
-              .map((item) => item.trim())
-              .filter(Boolean),
-            region_hint: recommendationForm.regionHint || null,
-            max_results: 5,
-          },
-        },
-      );
-      setRecommendations(result.recommendations);
-    } catch (error) {
-      setFormError(extractErrorMessage(error, labels.authError));
-    } finally {
-      setIsRecommending(false);
     }
   }
 
@@ -456,114 +353,144 @@ export function AuctionWorkspaceClient({
   }
 
   return (
-    <section className="grid gap-6">
-      <Card className="rounded-[2rem] bg-[var(--surface-strong)] shadow-[0_20px_60px_rgba(19,33,47,0.08)]">
-        <CardContent className="p-8">
-          <div className="flex flex-wrap items-center gap-3">
-            <span className="rounded-full bg-[rgba(14,116,144,0.1)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--accent-strong)]">
+    <section className="grid gap-8 font-sans">
+      <Card className="rounded-[3.5rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-2xl)] overflow-hidden group">
+        <CardContent className="p-10 lg:p-14 relative">
+          <div className="absolute -right-20 -top-20 h-64 w-64 rounded-full bg-[var(--accent-strong)]/10 blur-[80px] transition-all duration-1000 group-hover:scale-150" />
+          
+          <div className="relative z-10 flex flex-wrap items-center gap-4">
+            <span className="rounded-full border border-[var(--accent-strong)]/30 bg-[var(--accent-soft)] px-5 py-2 text-[10px] font-black uppercase tracking-[0.3em] text-[var(--accent-strong)] backdrop-blur-md">
+              <span className="mr-2 inline-block h-2 w-2 rounded-full bg-[var(--accent-strong)] animate-pulse shadow-[var(--shadow-glow)]" />
               {labels.connectionTitle}
             </span>
-            <span className="rounded-full border border-[var(--line)] px-4 py-2 text-xs font-medium text-[rgba(19,33,47,0.7)]">
-              {runtimeConfig.mode === "live" ? "LIVE" : "HYBRID"}
+            <span className="rounded-full border border-[var(--line-strong)] bg-[var(--surface-soft)] px-5 py-2 text-[10px] font-black uppercase tracking-[0.2em] text-[var(--text-hint)]">
+              {runtimeConfig.mode === "live" ? "REAL-TIME ENGINE" : "HYBRID SIMULATION"}
             </span>
           </div>
-          <h3 className="mt-5 text-3xl font-bold text-[var(--foreground)]">
+          
+          <h3 className="relative z-10 mt-8 text-4xl font-[1000] text-[var(--text-primary)] tracking-tighter leading-tight max-w-4xl">
             {labels.connectionDescription}
           </h3>
-          <p className="mt-4 max-w-3xl text-sm leading-8 text-[rgba(19,33,47,0.72)]">
+          <p className="relative z-10 mt-6 max-w-3xl text-lg font-medium leading-relaxed text-[var(--text-secondary)] italic underline decoration-[var(--line-strong)] decoration-2 underline-offset-8">
             {labels.connectionHint}
           </p>
+          
           {!canUseLiveApi ? (
-            <div className="mt-6 rounded-[1.5rem] border border-dashed border-[var(--line)] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[rgba(19,33,47,0.72)]">
+            <div className="relative z-10 mt-10 rounded-3xl border border-dashed border-[var(--line-strong)] bg-[var(--surface-soft)]/50 p-6 text-sm font-bold text-[var(--text-hint)] italic flex items-center gap-4">
+              <div className="h-2 w-2 rounded-full bg-[var(--spot)]" />
               {labels.tokenRequirement}
             </div>
           ) : null}
+          
           {formError ? (
-            <div className="mt-6 rounded-[1.5rem] border border-[rgba(217,119,6,0.28)] bg-[rgba(217,119,6,0.08)] p-5 text-sm leading-7 text-[var(--spot)]">
+            <div className="relative z-10 mt-8 rounded-3xl border border-[var(--spot)]/20 bg-[var(--spot)]/5 p-6 text-sm font-bold text-[var(--spot)] italic flex items-center gap-4">
+              <div className="h-2 w-2 rounded-full bg-[var(--spot)] animate-ping" />
               {formError}
             </div>
           ) : null}
         </CardContent>
       </Card>
 
-      <div className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
-        <Card>
-          <CardContent className="p-6">
-            <div className="flex items-center justify-between gap-3">
+      <div className="grid gap-8 xl:grid-cols-[1.2fr_0.8fr]">
+        {/* --- Analysis Section --- */}
+        <Card className="rounded-[4rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-xl)] overflow-hidden">
+          <CardContent className="p-10 lg:p-14">
+            <div className="flex items-center justify-between gap-6 border-b border-[var(--line)] pb-8 mb-10">
               <div>
-                <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.5)]">
+                <p className="text-[10px] font-black uppercase tracking-[0.4em] text-[var(--text-hint)]">
                   {labels.opportunitiesTitle}
                 </p>
-                <h4 className="mt-2 text-xl font-semibold text-[var(--foreground)]">
-                  {labels.analysisTitle}
+                <h4 className="mt-3 text-3xl font-[1000] text-[var(--text-primary)] tracking-tighter italic">
+                  {labels.analysisTitle}<span className="text-[var(--accent-strong)]">.</span>
                 </h4>
               </div>
-              <span className="rounded-full bg-[var(--surface-soft)] px-3 py-1 text-xs font-medium text-[var(--accent-strong)]">
-                {opportunitiesQuery.data?.length ?? 0}
-              </span>
+              <div className="flex h-16 w-16 items-center justify-center rounded-[2rem] bg-[var(--accent-strong)]/10 text-[var(--accent-strong)] border border-[var(--accent-strong)]/20 shadow-[var(--shadow-glow)]">
+                <span className="text-xl font-[1000]">{opportunitiesQuery.data?.length ?? 0}</span>
+              </div>
             </div>
-            <form className="mt-5 grid gap-3" onSubmit={handleAnalyze}>
-              <div className="grid gap-3 md:grid-cols-2">
+
+            <form className="grid gap-6" onSubmit={handleAnalyze}>
+              <div className="grid gap-6 md:grid-cols-2">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)] ml-4">{labels.caseNumberLabel}</label>
+                  <Input
+                    value={analysisForm.caseNumber}
+                    className="h-16 rounded-[2rem] border-[var(--line-strong)] bg-[var(--surface-soft)] px-8 text-sm font-bold text-[var(--text-primary)] focus:ring-2 focus:ring-[var(--accent-strong)]/50 transition-all"
+                    onChange={(event) =>
+                      setAnalysisForm((current) => ({
+                        ...current,
+                        caseNumber: event.target.value,
+                      }))
+                    }
+                  />
+                </div>
+                <div className="space-y-2">
+                   <label className="text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)] ml-4">{labels.courtLabel}</label>
+                  <Input
+                    value={analysisForm.courtName}
+                    className="h-16 rounded-[2rem] border-[var(--line-strong)] bg-[var(--surface-soft)] px-8 text-sm font-bold text-[var(--text-primary)]"
+                    onChange={(event) =>
+                      setAnalysisForm((current) => ({
+                        ...current,
+                        courtName: event.target.value,
+                      }))
+                    }
+                  />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <label className="text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)] ml-4">{labels.addressLabel}</label>
                 <Input
-                  value={analysisForm.caseNumber}
+                  value={analysisForm.address}
+                  className="h-16 rounded-[2rem] border-[var(--line-strong)] bg-[var(--surface-soft)] px-8 text-sm font-bold text-[var(--text-primary)]"
                   onChange={(event) =>
                     setAnalysisForm((current) => ({
                       ...current,
-                      caseNumber: event.target.value,
+                      address: event.target.value,
                     }))
                   }
-                  placeholder={labels.caseNumberLabel}
-                />
-                <Input
-                  value={analysisForm.courtName}
-                  onChange={(event) =>
-                    setAnalysisForm((current) => ({
-                      ...current,
-                      courtName: event.target.value,
-                    }))
-                  }
-                  placeholder={labels.courtLabel}
                 />
               </div>
-              <Input
-                value={analysisForm.address}
-                onChange={(event) =>
-                  setAnalysisForm((current) => ({
-                    ...current,
-                    address: event.target.value,
-                  }))
-                }
-                placeholder={labels.addressLabel}
-              />
-              <div className="grid gap-3 md:grid-cols-2">
-                <Input
-                  value={analysisForm.appraisedValue}
-                  onChange={(event) =>
-                    setAnalysisForm((current) => ({
-                      ...current,
-                      appraisedValue: event.target.value,
-                    }))
-                  }
-                  placeholder={labels.appraisedLabel}
-                />
-                <Input
-                  value={analysisForm.minimumBid}
-                  onChange={(event) =>
-                    setAnalysisForm((current) => ({
-                      ...current,
-                      minimumBid: event.target.value,
-                    }))
-                  }
-                  placeholder={labels.minimumBidLabel}
-                />
+              <div className="grid gap-6 md:grid-cols-2">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)] ml-4">{labels.appraisedLabel}</label>
+                  <Input
+                    value={analysisForm.appraisedValue}
+                    className="h-16 rounded-[2rem] border-[var(--line-strong)] bg-[var(--surface-soft)] px-8 text-sm font-bold text-[var(--text-primary)]"
+                    onChange={(event) =>
+                      setAnalysisForm((current) => ({
+                        ...current,
+                        appraisedValue: event.target.value,
+                      }))
+                    }
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)] ml-4">{labels.minimumBidLabel}</label>
+                  <Input
+                    value={analysisForm.minimumBid}
+                    className="h-16 rounded-[2rem] border-[var(--line-strong)] bg-[var(--surface-soft)] px-8 text-sm font-bold text-[var(--text-primary)]"
+                    onChange={(event) =>
+                      setAnalysisForm((current) => ({
+                        ...current,
+                        minimumBid: event.target.value,
+                      }))
+                    }
+                  />
+                </div>
               </div>
-              <Button type="submit" disabled={!canUseLiveApi || isAnalyzing}>
+              <Button 
+                type="submit" 
+                disabled={!canUseLiveApi || isAnalyzing}
+                className="h-16 rounded-[2rem] bg-[var(--accent-strong)] text-white text-xs font-black uppercase tracking-[0.3em] shadow-[var(--shadow-glow)] hover:scale-[1.02] active:scale-95 transition-all mt-4"
+              >
                 {isAnalyzing ? `${labels.analyzeAction}...` : labels.analyzeAction}
               </Button>
             </form>
-            <div className="mt-6 grid gap-3">
+
+            <div className="mt-12 grid gap-6">
               {opportunitiesQuery.isLoading ? (
-                <SkeletonLoader count={2} itemClassName="h-28" />
+                <SkeletonLoader count={2} itemClassName="h-32 rounded-[2.5rem]" />
               ) : null}
               {opportunitiesQuery.isError ? (
                 <WorkspaceQueryErrorCard
@@ -576,41 +503,48 @@ export function AuctionWorkspaceClient({
                   }}
                 />
               ) : null}
+              
               {analysisResult ? (
-                <Card className="rounded-[1.5rem] bg-[var(--surface-soft)] shadow-none">
-                  <CardContent className="p-5">
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div>
-                        <p className="text-sm font-semibold text-[var(--foreground)]">
+                <Card className="rounded-[3rem] border border-[var(--accent-strong)]/30 bg-[var(--surface-soft)] shadow-[var(--shadow-lg)] overflow-hidden motion-safe:animate-fade-in-up">
+                  <CardContent className="p-8">
+                    <div className="flex flex-wrap items-start justify-between gap-6 border-b border-[var(--line)] pb-6 mb-6">
+                      <div className="space-y-1">
+                        <p className="text-2xl font-[1000] text-[var(--text-primary)] tracking-tighter">
                           {analysisResult.case_number}
                         </p>
-                        <p className="mt-2 text-sm leading-6 text-[rgba(19,33,47,0.68)]">
+                        <p className="text-sm font-bold text-[var(--text-secondary)] italic">
                           {analysisResult.address}
                         </p>
                       </div>
-                      <span className="rounded-full bg-[rgba(14,116,144,0.1)] px-3 py-1 text-xs font-medium text-[var(--accent-strong)]">
+                      <div className="rounded-2xl border border-[var(--accent-strong)]/30 bg-[var(--accent-soft)] px-6 py-3 text-sm font-black text-[var(--accent-strong)] shadow-[var(--shadow-glow)]">
                         {labels.scoreLabel}: {analysisResult.investment_score}
-                      </span>
+                      </div>
                     </div>
-                    <div className="mt-4 grid gap-3 md:grid-cols-2">
-                      <p className="text-sm text-[rgba(19,33,47,0.72)]">
-                        {labels.marginLabel}:{" "}
-                        {formatCurrency(locale, analysisResult.expected_margin_krw)}
-                      </p>
-                      <p className="text-sm text-[rgba(19,33,47,0.72)]">
-                        Max bid:{" "}
-                        {formatCurrency(locale, analysisResult.recommended_max_bid_krw)}
-                      </p>
+                    
+                    <div className="grid gap-6 md:grid-cols-2">
+                      <div className="space-y-1 p-5 rounded-2xl bg-[var(--surface-strong)] border border-[var(--line)] shadow-sm">
+                        <p className="text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)]">{labels.marginLabel}</p>
+                        <p className="text-2xl font-[1000] text-[var(--text-primary)] tracking-tighter">
+                          {formatCurrency(locale, analysisResult.expected_margin_krw)}
+                        </p>
+                      </div>
+                      <div className="space-y-1 p-5 rounded-2xl bg-[var(--surface-strong)] border border-[var(--line)] shadow-sm">
+                        <p className="text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)]">Max Recommended Bid</p>
+                        <p className="text-2xl font-[1000] text-[var(--accent-strong)] tracking-tighter">
+                          {formatCurrency(locale, analysisResult.recommended_max_bid_krw)}
+                        </p>
+                      </div>
                     </div>
-                    <div className="mt-4">
-                      <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.5)]">
+
+                    <div className="mt-8 space-y-4">
+                      <p className="text-[10px] font-black uppercase tracking-[0.4em] text-[var(--text-hint)]">
                         {labels.diligenceLabel}
                       </p>
-                      <div className="mt-3 flex flex-wrap gap-2">
+                      <div className="flex flex-wrap gap-2">
                         {analysisResult.diligence_flags.map((flag) => (
                           <span
                             key={flag}
-                            className="rounded-full border border-[var(--line)] px-3 py-1 text-xs font-medium text-[rgba(19,33,47,0.7)]"
+                            className="rounded-full border border-[var(--line-strong)] bg-[var(--surface-strong)] px-5 py-2 text-[10px] font-black uppercase tracking-widest text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors shadow-sm"
                           >
                             {flag}
                           </span>
@@ -620,247 +554,149 @@ export function AuctionWorkspaceClient({
                   </CardContent>
                 </Card>
               ) : null}
+
               {opportunitiesQuery.data?.map((listing) => (
                 <Card
                   key={listing.listing_id}
-                  className="rounded-[1.5rem] bg-[var(--surface-soft)] shadow-none"
+                  className="rounded-[2.5rem] border border-[var(--line-strong)] bg-[var(--surface-soft)]/50 shadow-none hover:bg-[var(--surface-soft)] transition-colors"
                 >
-                  <CardContent className="p-5">
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div>
-                        <p className="text-sm font-semibold text-[var(--foreground)]">
+                  <CardContent className="p-8">
+                    <div className="flex flex-wrap items-center justify-between gap-6">
+                      <div className="space-y-1">
+                        <p className="text-xl font-[1000] text-[var(--text-primary)] tracking-tighter">
                           {listing.case_number}
                         </p>
-                        <p className="mt-2 text-sm leading-6 text-[rgba(19,33,47,0.68)]">
+                        <p className="text-xs font-bold text-[var(--text-secondary)] italic">
                           {listing.address}
                         </p>
                       </div>
-                      <span className="rounded-full bg-[rgba(19,33,47,0.06)] px-3 py-1 text-xs font-medium text-[rgba(19,33,47,0.72)]">
-                        {labels.scoreLabel}: {listing.investment_score}
-                      </span>
+                      <div className="rounded-xl border border-[var(--line-strong)] bg-[var(--surface-strong)] px-5 py-2 text-xs font-black text-[var(--text-secondary)]">
+                        {labels.scoreLabel}: <span className="text-[var(--text-primary)]">{listing.investment_score}</span>
+                      </div>
                     </div>
                   </CardContent>
                 </Card>
               ))}
+
               {!opportunitiesQuery.isLoading &&
               !opportunitiesQuery.isError &&
               !analysisResult &&
               !opportunitiesQuery.data?.length ? (
-                <p className="text-sm leading-7 text-[rgba(19,33,47,0.68)]">
-                  {labels.opportunitiesEmpty}
-                </p>
+                <div className="py-20 text-center flex flex-col items-center gap-6">
+                   <div className="h-16 w-16 rounded-3xl bg-[var(--surface-soft)] flex items-center justify-center text-[var(--text-hint)] grayscale opacity-50 border border-[var(--line)]">🏛️</div>
+                   <p className="text-sm font-bold text-[var(--text-hint)] italic tracking-tight underline decoration-[var(--line)] decoration-2 underline-offset-8">
+                    {labels.opportunitiesEmpty}
+                  </p>
+                </div>
               ) : null}
             </div>
           </CardContent>
         </Card>
 
-        <div className="grid gap-6">
-          <Card>
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.5)]">
-                    {labels.contractorsTitle}
-                  </p>
-                  <h4 className="mt-2 text-xl font-semibold text-[var(--foreground)]">
-                    {labels.recommendationsTitle}
-                  </h4>
-                </div>
-                <span className="rounded-full bg-[var(--surface-soft)] px-3 py-1 text-xs font-medium text-[var(--accent-strong)]">
-                  {contractorsQuery.data?.length ?? 0}
-                </span>
+        {/* --- Advisory Section --- */}
+        <Card className="rounded-[4rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-xl)] overflow-hidden">
+          <CardContent className="p-10 lg:p-14 border-t-8 border-[var(--accent-strong)]">
+            <div className="flex items-center justify-between gap-6 mb-8">
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-[0.4em] text-[var(--text-hint)]">
+                  {labels.advisoryTitle}
+                </p>
+                <h4 className="mt-3 text-3xl font-[1000] text-[var(--text-primary)] tracking-tighter italic">
+                  {labels.latestReplyTitle}<span className="text-[var(--accent-strong)]">.</span>
+                </h4>
               </div>
-              <form className="mt-5 grid gap-3" onSubmit={handleRecommend}>
-                <Select
-                  value={recommendationForm.category}
-                  onValueChange={(value) =>
-                    setRecommendationForm((current) => ({
-                      ...current,
-                      category: value,
-                    }))
-                  }
-                  options={[
-                    { value: "general_contractor", label: "General contractor" },
-                    { value: "sub_contractor", label: "Sub contractor" },
-                    { value: "design_firm", label: "Design firm" },
-                  ]}
-                />
-                <Input
-                  value={recommendationForm.specialties}
-                  onChange={(event) =>
-                    setRecommendationForm((current) => ({
-                      ...current,
-                      specialties: event.target.value,
-                    }))
-                  }
-                  placeholder={labels.specialtiesLabel}
-                />
-                <Input
-                  value={recommendationForm.regionHint}
-                  onChange={(event) =>
-                    setRecommendationForm((current) => ({
-                      ...current,
-                      regionHint: event.target.value,
-                    }))
-                  }
-                  placeholder={labels.regionLabel}
-                />
-                <Button type="submit" variant="secondary" disabled={!canUseLiveApi || isRecommending}>
-                  {isRecommending
-                    ? `${labels.recommendAction}...`
-                    : labels.recommendAction}
-                </Button>
-              </form>
-              <div className="mt-6 grid gap-3">
-                {contractorsQuery.isError ? (
-                  <WorkspaceQueryErrorCard
-                    title={labels.contractorsLoadErrorTitle}
-                    description={labels.contractorsLoadErrorDetail}
-                    message={contractorsQueryError}
-                    actionLabel={labels.retryAction}
-                    onRetry={() => {
-                      void contractorsQuery.refetch();
-                    }}
-                  />
-                ) : null}
-                {recommendations.map((item) => (
-                  <Card
-                    key={item.contractor_id}
-                    className="rounded-[1.5rem] bg-[var(--surface-soft)] shadow-none"
-                  >
-                    <CardContent className="p-5">
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <p className="text-sm font-semibold text-[var(--foreground)]">
-                            {item.company_name}
-                          </p>
-                          <p className="mt-2 text-sm leading-6 text-[rgba(19,33,47,0.68)]">
-                            {item.reasons.join(" · ")}
-                          </p>
-                        </div>
-                        <span className="rounded-full bg-[rgba(14,116,144,0.1)] px-3 py-1 text-xs font-medium text-[var(--accent-strong)]">
-                          {item.match_score}
-                        </span>
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
-                {contractorsQuery.isLoading ? (
-                  <SkeletonLoader count={2} itemClassName="h-24" />
-                ) : null}
-                {!recommendations.length && contractorsQuery.data?.length ? (
-                  contractorsQuery.data.map((contractor) => (
-                    <Card
-                      key={contractor.contractor_id}
-                      className="rounded-[1.5rem] bg-[var(--surface-soft)] shadow-none"
-                    >
-                      <CardContent className="p-5">
-                        <div className="flex items-start justify-between gap-3">
-                          <div>
-                            <p className="text-sm font-semibold text-[var(--foreground)]">
-                              {contractor.company_name}
-                            </p>
-                            <p className="mt-2 text-sm leading-6 text-[rgba(19,33,47,0.68)]">
-                              {contractor.specialties.join(", ") || contractor.category}
-                            </p>
-                          </div>
-                          <span className="rounded-full bg-[rgba(19,33,47,0.06)] px-3 py-1 text-xs font-medium text-[rgba(19,33,47,0.72)]">
-                            {contractor.rating ?? "-"}
-                          </span>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))
-                ) : null}
-                {!contractorsQuery.isLoading &&
-                !contractorsQuery.isError &&
-                !recommendations.length &&
-                !contractorsQuery.data?.length ? (
-                  <p className="text-sm leading-7 text-[rgba(19,33,47,0.68)]">
-                    {labels.contractorsEmpty}
-                  </p>
-                ) : null}
+              <div className="rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-soft)] px-5 py-2 text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)]">
+                {labels.sessionsLabel}: {sessionsQuery.data?.length ?? 0}
               </div>
-            </CardContent>
-          </Card>
+            </div>
 
-          <Card>
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.5)]">
-                    {labels.advisoryTitle}
-                  </p>
-                  <h4 className="mt-2 text-xl font-semibold text-[var(--foreground)]">
-                    {labels.latestReplyTitle}
-                  </h4>
-                </div>
-                <span className="rounded-full bg-[var(--surface-soft)] px-3 py-1 text-xs font-medium text-[var(--accent-strong)]">
-                  {labels.sessionsLabel}: {sessionsQuery.data?.length ?? 0}
-                </span>
-              </div>
-              <p className="mt-4 text-sm leading-7 text-[rgba(19,33,47,0.68)]">
-                {labels.advisoryHint}
-              </p>
-              <form className="mt-5 grid gap-3" onSubmit={handlePrompt}>
-                <textarea
-                  value={prompt}
-                  onChange={(event) => setPrompt(event.target.value)}
-                  className="min-h-28 rounded-[1.5rem] border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-3 text-sm text-[var(--foreground)] outline-none"
-                  placeholder={labels.promptLabel}
-                />
-                <Button type="submit" disabled={!canUseLiveApi || isSendingPrompt}>
-                  {isSendingPrompt ? `${labels.sendAction}...` : labels.sendAction}
-                </Button>
-              </form>
-              {latestReply ? (
-                <Card className="mt-5 rounded-[1.5rem] bg-[var(--surface-soft)] shadow-none">
-                  <CardContent className="p-5">
-                    <p className="text-sm leading-7 text-[rgba(19,33,47,0.76)]">
+            <p className="text-sm font-medium leading-relaxed text-[var(--text-secondary)] mb-10 italic underline decoration-[var(--line-strong)] decoration-2 underline-offset-8">
+              {labels.advisoryHint}
+            </p>
+
+            <form className="grid gap-6" onSubmit={handlePrompt}>
+              <textarea
+                value={prompt}
+                onChange={(event) => setPrompt(event.target.value)}
+                className="min-h-[160px] w-full rounded-[2.5rem] border border-[var(--line-strong)] bg-[var(--surface-soft)] px-8 py-6 text-sm font-bold text-[var(--text-primary)] outline-none focus:ring-4 focus:ring-[var(--accent-strong)]/30 transition-all resize-none placeholder:text-[var(--text-hint)]/50"
+                placeholder={labels.promptLabel}
+              />
+              <button
+                type="submit"
+                disabled={!canUseLiveApi || isSendingPrompt}
+                className="h-16 w-full rounded-[2rem] bg-[var(--accent-strong)] text-white text-xs font-black uppercase tracking-[0.3em] shadow-[var(--shadow-glow)] hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center gap-3 disabled:opacity-50"
+              >
+                {isSendingPrompt ? `${labels.sendAction}...` : (
+                   <>
+                     {labels.sendAction}
+                     <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
+                   </>
+                )}
+              </button>
+            </form>
+
+            <AnimatePresence mode="wait">
+              {latestReply && (
+                <motion.div
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="mt-10"
+                >
+                  <div className="rounded-[3rem] border border-[var(--line-strong)] bg-[var(--surface-soft)] p-8 shadow-[var(--shadow-lg)]">
+                    <p className="text-sm font-medium leading-loose text-[var(--text-primary)] italic relative whitespace-pre-wrap">
+                      <span className="text-4xl text-[var(--accent-strong)]/20 absolute -top-4 -left-4">"</span>
                       {latestReply}
+                      <span className="text-4xl text-[var(--accent-strong)]/20 absolute -bottom-8 right-0">"</span>
                     </p>
-                  </CardContent>
-                </Card>
-              ) : null}
-              {sessionsQuery.isError ? (
-                <div className="mt-5">
-                  <WorkspaceQueryErrorCard
-                    title={labels.sessionsLoadErrorTitle}
-                    description={labels.sessionsLoadErrorDetail}
-                    message={sessionsQueryError}
-                    actionLabel={labels.retryAction}
-                    onRetry={() => {
-                      void sessionsQuery.refetch();
-                    }}
-                  />
-                </div>
-              ) : null}
-              {sessionsQuery.data?.length ? (
-                <div className="mt-5 grid gap-2">
-                  {sessionsQuery.data.slice(0, 3).map((session) => (
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            {sessionsQuery.isError ? (
+              <div className="mt-8">
+                <WorkspaceQueryErrorCard
+                  title={labels.sessionsLoadErrorTitle}
+                  description={labels.sessionsLoadErrorDetail}
+                  message={sessionsQueryError}
+                  actionLabel={labels.retryAction}
+                  onRetry={() => {
+                    void sessionsQuery.refetch();
+                  }}
+                />
+              </div>
+            ) : null}
+
+            {sessionsQuery.data?.length ? (
+              <div className="mt-12 space-y-4">
+                 <p className="text-[10px] font-black uppercase tracking-[0.4em] text-[var(--text-hint)] ml-4">Recent Strategy Sessions</p>
+                <div className="grid gap-3">
+                  {sessionsQuery.data.slice(0, 4).map((session) => (
                     <button
                       key={session.session_id}
                       type="button"
                       onClick={() => setActiveSessionId(session.session_id)}
-                      className={`rounded-[1.25rem] px-4 py-3 text-left text-sm transition ${
+                      className={`group rounded-[2rem] border p-6 text-left transition-all duration-300 ${
                         activeSessionId === session.session_id
-                          ? "bg-[rgba(14,116,144,0.12)] text-[var(--accent-strong)]"
-                          : "bg-[var(--surface-soft)] text-[rgba(19,33,47,0.72)]"
+                          ? "border-[var(--accent-strong)]/50 bg-[var(--accent-soft)] shadow-[var(--shadow-md)]"
+                          : "border-[var(--line-strong)] bg-[var(--surface-soft)]/50 hover:bg-[var(--surface-soft)]"
                       }`}
                     >
-                      <div className="flex items-center justify-between gap-3">
-                        <span className="font-semibold">{session.title}</span>
-                        <span className="text-xs">
+                      <div className="flex items-center justify-between gap-4">
+                        <span className={`font-black tracking-tight transition-colors ${activeSessionId === session.session_id ? 'text-[var(--accent-strong)]' : 'text-[var(--text-secondary)] group-hover:text-[var(--text-primary)]'}`}>
+                          {session.title}
+                        </span>
+                        <span className="text-[10px] font-bold text-[var(--text-hint)] italic tabular-nums">
                           {formatDate(locale, session.last_activity_at)}
                         </span>
                       </div>
                     </button>
                   ))}
                 </div>
-              ) : null}
-            </CardContent>
-          </Card>
-        </div>
+              </div>
+            ) : null}
+          </CardContent>
+        </Card>
       </div>
     </section>
   );

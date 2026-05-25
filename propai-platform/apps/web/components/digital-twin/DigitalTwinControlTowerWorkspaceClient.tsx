@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { motion, AnimatePresence } from "framer-motion";
 import { Button, Card, CardContent, CardTitle, Input, Select } from "@propai/ui";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
 import { ApiClientError, apiClient } from "@/lib/api-client";
@@ -252,36 +253,67 @@ export function DigitalTwinControlTowerWorkspaceClient({
   }
 
   return (
-    <section className="grid gap-6">
-      <Card className="rounded-[2rem] bg-[var(--surface-strong)] shadow-[0_20px_60px_rgba(19,33,47,0.08)]">
-        <CardContent className="p-8">
-          <div className="flex flex-wrap items-center gap-3">
-            <span className="rounded-full bg-[rgba(14,116,144,0.1)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--accent-strong)]">
-              v53.2 control tower
+    <section className="grid gap-10 font-sans">
+      <Card className="rounded-[3.5rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-2xl)] overflow-hidden group">
+        <CardContent className="p-10 lg:p-14 relative">
+          <div className="absolute -right-20 -top-20 h-64 w-64 rounded-full bg-[var(--accent-strong)]/10 blur-[80px] transition-all duration-1000 group-hover:scale-150" />
+          
+          <div className="relative z-10 flex flex-wrap items-center gap-4">
+            <span className="rounded-full border border-[var(--accent-strong)]/30 bg-[var(--accent-soft)] px-5 py-2 text-[10px] font-black uppercase tracking-[0.3em] text-[var(--accent-strong)] backdrop-blur-md">
+              <span className="mr-2 inline-block h-2 w-2 rounded-full bg-[var(--accent-strong)] animate-pulse" />
+              v53.2 CONTROL TOWER
             </span>
-            <span className="rounded-full border border-[var(--line)] px-4 py-2 text-xs font-medium text-[rgba(19,33,47,0.7)]">
-              {runtime.mode === "live" ? "LIVE" : "HYBRID"}
+            <span className="rounded-full border border-[var(--line-strong)] bg-[var(--surface-soft)] px-5 py-2 text-[10px] font-black uppercase tracking-[0.3em] text-[var(--text-hint)]">
+              {runtime.mode === "live" ? "ACTIVE TELEMETRY" : "HISTORICAL REPLAY"}
             </span>
           </div>
-          <h3 className="mt-5 text-3xl font-bold text-[var(--foreground)]">
-            Digital twin, risk, and permit readiness
+
+          <h3 className="relative z-10 mt-8 text-4xl font-[1000] text-[var(--text-primary)] tracking-tighter leading-tight max-w-4xl italic">
+            Digital twin, risk, and permit <span className="text-[var(--accent-strong)]">readiness.</span>
           </h3>
-          <p className="mt-4 max-w-3xl text-sm leading-8 text-[rgba(19,33,47,0.72)]">
-            Run the v53 operations loop from telemetry to unified risk scoring and permit tracking.
+          <p className="relative z-10 mt-6 max-w-3xl text-lg font-medium leading-relaxed text-[var(--text-secondary)] italic underline decoration-[var(--line-strong)] decoration-2 underline-offset-8">
+            Run the v53 operations loop from real-time telemetry to unified risk scoring and permit lifecycle tracking.
           </p>
-          <div className="mt-6 grid gap-3 md:grid-cols-2">
-            <Select
-              label="Project"
-              value={selectedProjectId}
-              onValueChange={(value) => setSelectedProjectId(value)}
-              options={projectsQuery.data?.items.map((project) => ({ label: project.name, value: project.id })) ?? []}
-            />
-            <Input value={manualProjectId} onChange={(event) => setManualProjectId(event.target.value)} placeholder="Manual project UUID" />
+
+          <div className="mt-12 grid gap-6 md:grid-cols-2 relative z-10">
+            <div className="space-y-3">
+              <label className="ml-5 text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)]">Target Project</label>
+              <Select
+                value={selectedProjectId}
+                onValueChange={(value) => setSelectedProjectId(value)}
+                options={projectsQuery.data?.items.map((project) => ({ label: project.name, value: project.id })) ?? []}
+                className="h-16 rounded-[2rem] border-[var(--line-strong)] bg-[var(--surface-soft)]/50 px-8 font-bold"
+              />
+            </div>
+            <div className="space-y-3">
+              <label className="ml-5 text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)]">Manual Override (UUID)</label>
+              <Input 
+                value={manualProjectId} 
+                onChange={(event) => setManualProjectId(event.target.value)} 
+                placeholder="00000000-0000-0000-0000-000000000000" 
+                className="h-16 rounded-[2rem] border-[var(--line-strong)] bg-[var(--surface-soft)]/50 px-8 font-mono text-sm"
+              />
+            </div>
           </div>
-          <p className="mt-3 text-sm text-[rgba(19,33,47,0.68)]">
-            Current target: {(selectedProject?.name ?? activeProjectId) || "-"}
-          </p>
-          {workspaceError ? <p className="mt-4 text-sm text-[var(--spot)]">{workspaceError}</p> : null}
+          
+          <div className="mt-8 flex items-center gap-3 ml-5">
+            <div className="h-2 w-2 rounded-full bg-[var(--accent-strong)]" />
+            <p className="text-sm font-black text-[var(--text-primary)] uppercase tracking-widest">
+              CURRENT TARGET: <span className="text-[var(--accent-strong)]">{(selectedProject?.name ?? activeProjectId) || "NOT_ASSIGNED"}</span>
+            </p>
+          </div>
+
+          <AnimatePresence>
+            {workspaceError && (
+              <motion.p 
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="mt-6 ml-5 text-sm font-black text-[var(--spot)] uppercase tracking-widest animate-pulse"
+              >
+                [SYSTEM_ERROR] {workspaceError}
+              </motion.p>
+            )}
+          </AnimatePresence>
         </CardContent>
       </Card>
 
@@ -295,21 +327,176 @@ export function DigitalTwinControlTowerWorkspaceClient({
         />
       ) : null}
 
-      <div className="grid gap-6 xl:grid-cols-3">
-        <Card><CardContent className="p-6"><p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.5)]">Digital twin status</p><CardTitle className="mt-2 text-xl">Persist operations status</CardTitle><form className="mt-5 grid gap-3" onSubmit={handleStatus}><Select label="Building type" value={statusForm.buildingType} onValueChange={(value) => setStatusForm((current) => ({ ...current, buildingType: value }))} options={buildingTypes} /><Input type="number" value={statusForm.grossFloorArea} onChange={(event) => setStatusForm((current) => ({ ...current, grossFloorArea: event.target.value }))} placeholder="Gross floor area (sqm)" /><Input type="number" value={statusForm.annualEnergy} onChange={(event) => setStatusForm((current) => ({ ...current, annualEnergy: event.target.value }))} placeholder="Annual energy use (kWh)" /><div className="grid gap-3 md:grid-cols-3"><Input type="number" value={statusForm.occupancyRate} onChange={(event) => setStatusForm((current) => ({ ...current, occupancyRate: event.target.value }))} placeholder="Occupancy rate" /><Input type="number" value={statusForm.sensorCount} onChange={(event) => setStatusForm((current) => ({ ...current, sensorCount: event.target.value }))} placeholder="Sensors" /><Input type="number" value={statusForm.onlineSensorCount} onChange={(event) => setStatusForm((current) => ({ ...current, onlineSensorCount: event.target.value }))} placeholder="Online" /></div><Button type="submit" disabled={!canUseLiveApi || pending === "status"}>{pending === "status" ? "Saving..." : "Save status snapshot"}</Button></form>{statusQuery.error ? <div className="mt-5"><WorkspaceQueryErrorCard title="Status snapshot unavailable" description="The latest persisted digital twin status could not be loaded." message={errorMessage(statusQuery.error)} actionLabel="Retry" onRetry={() => void statusQuery.refetch()} /></div> : statusQuery.data ? <div className="mt-5 grid gap-3"><Stat label="Status" value={statusQuery.data.status} /><Stat label="Readiness" value={`${statusQuery.data.operational_readiness_score.toFixed(1)}%`} /><Stat label="EUI" value={`${statusQuery.data.eui_grade} / ${statusQuery.data.eui.toFixed(1)}`} /><Stat label="Sensor health" value={`${(statusQuery.data.sensor_health_ratio * 100).toFixed(1)}%`} /><p className="rounded-[1rem] bg-[var(--surface-soft)] p-3 text-sm leading-7 text-[rgba(19,33,47,0.68)]">Anomaly severity {statusQuery.data.highest_anomaly_severity}</p></div> : <Empty title="No digital twin status yet" body="Run the snapshot action to persist the first v53 operations status record." />}</CardContent></Card>
+      <div className="grid gap-8 xl:grid-cols-3">
+        {/* --- Digital Twin Status --- */}
+        <Card className="rounded-[4rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-xl)] overflow-hidden">
+          <CardContent className="p-10 lg:p-12 border-t-8 border-[var(--info)]">
+            <p className="text-[10px] font-black uppercase tracking-[0.4em] text-[var(--text-hint)]">DIMENSION_01</p>
+            <CardTitle className="mt-3 text-2xl font-[1000] tracking-tighter italic text-[var(--text-primary)]">Digital Twin Status<span className="text-[var(--info)]">.</span></CardTitle>
+            
+            <form className="mt-8 grid gap-4" onSubmit={handleStatus}>
+              <Select label="Building type" value={statusForm.buildingType} onValueChange={(value) => setStatusForm((current) => ({ ...current, buildingType: value }))} options={buildingTypes} className="h-14 rounded-2xl border-[var(--line)] bg-[var(--surface-soft)]" />
+              <Input type="number" value={statusForm.grossFloorArea} onChange={(event) => setStatusForm((current) => ({ ...current, grossFloorArea: event.target.value }))} placeholder="Gross floor area (sqm)" className="h-14 rounded-2xl border-[var(--line)] bg-[var(--surface-soft)]" />
+              <Input type="number" value={statusForm.annualEnergy} onChange={(event) => setStatusForm((current) => ({ ...current, annualEnergy: event.target.value }))} placeholder="Annual energy use (kWh)" className="h-14 rounded-2xl border-[var(--line)] bg-[var(--surface-soft)]" />
+              <div className="grid gap-3 grid-cols-3">
+                <Input type="number" value={statusForm.occupancyRate} onChange={(event) => setStatusForm((current) => ({ ...current, occupancyRate: event.target.value }))} placeholder="Occ %" className="h-14 rounded-2xl px-2 text-center border-[var(--line)] bg-[var(--surface-soft)] font-mono" />
+                <Input type="number" value={statusForm.sensorCount} onChange={(event) => setStatusForm((current) => ({ ...current, sensorCount: event.target.value }))} placeholder="Sens" className="h-14 rounded-2xl px-2 text-center border-[var(--line)] bg-[var(--surface-soft)] font-mono" />
+                <Input type="number" value={statusForm.onlineSensorCount} onChange={(event) => setStatusForm((current) => ({ ...current, onlineSensorCount: event.target.value }))} placeholder="Online" className="h-14 rounded-2xl px-2 text-center border-[var(--line)] bg-[var(--surface-soft)] font-mono" />
+              </div>
+              <Button type="submit" disabled={!canUseLiveApi || pending === "status"} className="h-14 rounded-2xl bg-[var(--info-strong)] text-white font-black uppercase tracking-widest shadow-[var(--shadow-glow)] mt-2">
+                {pending === "status" ? "UPDATING..." : "COMMIT SNAPSHOT"}
+              </Button>
+            </form>
 
-        <Card><CardContent className="p-6"><p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.5)]">Unified risk engine</p><CardTitle className="mt-2 text-xl">Score seven risk dimensions</CardTitle><form className="mt-5 grid gap-3" onSubmit={handleRisk}><Input type="number" value={riskForm.baseProjectCost} onChange={(event) => setRiskForm((current) => ({ ...current, baseProjectCost: event.target.value }))} placeholder="Base project cost (KRW)" /><div className="grid gap-3 md:grid-cols-2"><Input type="number" value={riskForm.marketRiskScore} onChange={(event) => setRiskForm((current) => ({ ...current, marketRiskScore: event.target.value }))} placeholder="Market risk score" /><Input type="number" value={riskForm.climateRiskScore} onChange={(event) => setRiskForm((current) => ({ ...current, climateRiskScore: event.target.value }))} placeholder="Climate risk score" /></div><div className="grid gap-3 md:grid-cols-2"><Input type="number" value={riskForm.ltvRatio} onChange={(event) => setRiskForm((current) => ({ ...current, ltvRatio: event.target.value }))} placeholder="LTV ratio" /><Input type="number" value={riskForm.dscr} onChange={(event) => setRiskForm((current) => ({ ...current, dscr: event.target.value }))} placeholder="DSCR" /></div><div className="grid gap-3 md:grid-cols-3"><Input type="number" value={riskForm.permitReadinessRatio} onChange={(event) => setRiskForm((current) => ({ ...current, permitReadinessRatio: event.target.value }))} placeholder="Permit readiness" /><Input type="number" value={riskForm.occupancyRate} onChange={(event) => setRiskForm((current) => ({ ...current, occupancyRate: event.target.value }))} placeholder="Occupancy rate" /><Input type="number" value={riskForm.presaleRatio} onChange={(event) => setRiskForm((current) => ({ ...current, presaleRatio: event.target.value }))} placeholder="Presale ratio" /></div><Input type="number" value={riskForm.costVolatilityRatio} onChange={(event) => setRiskForm((current) => ({ ...current, costVolatilityRatio: event.target.value }))} placeholder="Cost volatility ratio" /><Button type="submit" disabled={!canUseLiveApi || pending === "risk"}>{pending === "risk" ? "Analyzing..." : "Analyze unified risk"}</Button></form>{riskQuery.error ? <div className="mt-5"><WorkspaceQueryErrorCard title="Unified risk unavailable" description="The latest persisted risk assessment could not be loaded." message={errorMessage(riskQuery.error)} actionLabel="Retry" onRetry={() => void riskQuery.refetch()} /></div> : riskQuery.data ? <div className="mt-5 grid gap-3"><Stat label="Composite" value={riskQuery.data.composite_risk_score.toFixed(1)} /><Stat label="Grade" value={riskQuery.data.grade} /><Stat label="VaR95" value={`${(riskQuery.data.var_95_ratio * 100).toFixed(1)}%`} /><Stat label="P90 cost" value={new Intl.NumberFormat(locale, { style: "currency", currency: "KRW", maximumFractionDigits: 0 }).format(riskQuery.data.p90_adjusted_cost_krw)} /><p className="rounded-[1rem] bg-[var(--surface-soft)] p-3 text-sm leading-7 text-[rgba(19,33,47,0.68)]">{riskQuery.data.summary}</p></div> : <Empty title="No unified risk assessment yet" body="Run the risk engine after updating status or permit context." />}</CardContent></Card>
+            <div className="mt-10 pt-8 border-t border-[var(--line)]">
+              {statusQuery.error ? (
+                <WorkspaceQueryErrorCard title="Status Unavailable" description="..." message={errorMessage(statusQuery.error)} actionLabel="Retry" onRetry={() => void statusQuery.refetch()} />
+              ) : statusQuery.data ? (
+                <div className="grid gap-3">
+                  <Stat label="Operational Status" value={statusQuery.data.status} color="text-[var(--info)]" />
+                  <Stat label="Readiness Index" value={`${statusQuery.data.operational_readiness_score.toFixed(1)}%`} />
+                  <Stat label="EUI Benchmark" value={`${statusQuery.data.eui_grade} / ${statusQuery.data.eui.toFixed(1)}`} />
+                  <Stat label="Sensor Health" value={`${(statusQuery.data.sensor_health_ratio * 100).toFixed(1)}%`} />
+                  <div className="rounded-2xl bg-[var(--surface-soft)] p-4 flex items-center justify-between border border-[var(--line-subtle)]">
+                    <span className="text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)]">ANOMALY_LEVEL</span>
+                    <span className={`text-xs font-black uppercase tracking-widest ${statusQuery.data.highest_anomaly_severity === 'critical' ? 'text-[var(--spot)]' : 'text-[var(--text-secondary)]'}`}>
+                       {statusQuery.data.highest_anomaly_severity}
+                    </span>
+                  </div>
+                </div>
+              ) : (
+                <Empty title="NO_TELEMETRY" body="Run snapshot action to persist the first operations status record." />
+              )}
+            </div>
+          </CardContent>
+        </Card>
 
-        <Card><CardContent className="p-6"><p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.5)]">Permit readiness</p><CardTitle className="mt-2 text-xl">Submit and track permit packages</CardTitle><form className="mt-5 grid gap-3" onSubmit={handlePermit}><Select label="Permit type" value={permitForm.permitType} onValueChange={(value) => setPermitForm((current) => ({ ...current, permitType: value }))} options={permitTypes} /><Select label="Region" value={permitForm.region} onValueChange={(value) => setPermitForm((current) => ({ ...current, region: value }))} options={regions} /><Input type="number" value={permitForm.buildingArea} onChange={(event) => setPermitForm((current) => ({ ...current, buildingArea: event.target.value }))} placeholder="Building area (sqm)" /><div className="grid gap-3 md:grid-cols-3"><Select label="Public" value={permitForm.isPublic} onValueChange={(value) => setPermitForm((current) => ({ ...current, isPublic: value }))} options={yesNo} /><Select label="Agricultural" value={permitForm.isAgricultural} onValueChange={(value) => setPermitForm((current) => ({ ...current, isAgricultural: value }))} options={yesNo} /><Select label="Submit" value={permitForm.submitToSeumter} onValueChange={(value) => setPermitForm((current) => ({ ...current, submitToSeumter: value }))} options={yesNo} /></div><Input value={permitForm.submittedDocumentIds} onChange={(event) => setPermitForm((current) => ({ ...current, submittedDocumentIds: event.target.value }))} placeholder="Submitted document IDs (comma separated)" /><Button type="submit" disabled={!canUseLiveApi || pending === "permit"}>{pending === "permit" ? "Submitting..." : "Submit permit package"}</Button></form>{permitQuery.error ? <div className="mt-5"><WorkspaceQueryErrorCard title="Permit tracker unavailable" description="The latest persisted permit submission could not be loaded." message={errorMessage(permitQuery.error)} actionLabel="Retry" onRetry={() => void permitQuery.refetch()} /></div> : permitQuery.data ? <div className="mt-5 grid gap-3"><Stat label="Status" value={permitQuery.data.status} /><Stat label="Stage" value={permitQuery.data.current_stage} /><Stat label="Readiness" value={`${permitQuery.data.readiness_score.toFixed(1)}%`} /><Stat label="Progress" value={`${permitQuery.data.progress_pct.toFixed(1)}%`} /><p className="rounded-[1rem] bg-[var(--surface-soft)] p-3 text-sm leading-7 text-[rgba(19,33,47,0.68)]">Ref {permitQuery.data.submission_reference}{permitQuery.data.missing_required_documents.length ? ` · Missing ${permitQuery.data.missing_required_documents.join(", ")}` : ""}</p></div> : <Empty title="No permit submission yet" body="Submit the first permit package to populate the tracking read model." />}</CardContent></Card>
+        {/* --- Unified Risk Engine --- */}
+        <Card className="rounded-[4rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-xl)] overflow-hidden">
+          <CardContent className="p-10 lg:p-12 border-t-8 border-[var(--accent-strong)]">
+            <p className="text-[10px] font-black uppercase tracking-[0.4em] text-[var(--text-hint)]">DIMENSION_02</p>
+            <CardTitle className="mt-3 text-2xl font-[1000] tracking-tighter italic text-[var(--text-primary)]">Unified Risk Engine<span className="text-[var(--accent-strong)]">.</span></CardTitle>
+            
+            <form className="mt-8 grid gap-4" onSubmit={handleRisk}>
+              <Input type="number" value={riskForm.baseProjectCost} onChange={(event) => setRiskForm((current) => ({ ...current, baseProjectCost: event.target.value }))} placeholder="Base cost (KRW)" className="h-14 rounded-2xl border-[var(--line)] bg-[var(--surface-soft)]" />
+              <div className="grid gap-3 grid-cols-2">
+                <Input type="number" value={riskForm.marketRiskScore} onChange={(event) => setRiskForm((current) => ({ ...current, marketRiskScore: event.target.value }))} placeholder="Market" className="h-14 rounded-2xl border-[var(--line)] bg-[var(--surface-soft)]" />
+                <Input type="number" value={riskForm.climateRiskScore} onChange={(event) => setRiskForm((current) => ({ ...current, climateRiskScore: event.target.value }))} placeholder="Climate" className="h-14 rounded-2xl border-[var(--line)] bg-[var(--surface-soft)]" />
+              </div>
+              <div className="grid gap-3 grid-cols-2">
+                <Input type="number" value={riskForm.ltvRatio} onChange={(event) => setRiskForm((current) => ({ ...current, ltvRatio: event.target.value }))} placeholder="LTV" className="h-14 rounded-2xl border-[var(--line)] bg-[var(--surface-soft)]" />
+                <Input type="number" value={riskForm.dscr} onChange={(event) => setRiskForm((current) => ({ ...current, dscr: event.target.value }))} placeholder="DSCR" className="h-14 rounded-2xl border-[var(--line)] bg-[var(--surface-soft)]" />
+              </div>
+              <div className="grid gap-2 grid-cols-3">
+                <Input type="number" value={riskForm.permitReadinessRatio} onChange={(event) => setRiskForm((current) => ({ ...current, permitReadinessRatio: event.target.value }))} placeholder="Permit" className="h-14 rounded-2xl px-1 text-center border-[var(--line)] bg-[var(--surface-soft)] font-mono" />
+                <Input type="number" value={riskForm.occupancyRate} onChange={(event) => setRiskForm((current) => ({ ...current, occupancyRate: event.target.value }))} placeholder="Occ" className="h-14 rounded-2xl px-1 text-center border-[var(--line)] bg-[var(--surface-soft)] font-mono" />
+                <Input type="number" value={riskForm.presaleRatio} onChange={(event) => setRiskForm((current) => ({ ...current, presaleRatio: event.target.value }))} placeholder="Pre" className="h-14 rounded-2xl px-1 text-center border-[var(--line)] bg-[var(--surface-soft)] font-mono" />
+              </div>
+              <Button type="submit" disabled={!canUseLiveApi || pending === "risk"} className="h-14 rounded-2xl bg-[var(--accent-strong)] text-white font-black uppercase tracking-widest shadow-[var(--shadow-glow)] mt-2">
+                {pending === "risk" ? "ANALYZING..." : "EXECUTE_RISK_AI"}
+              </Button>
+            </form>
+
+             <div className="mt-10 pt-8 border-t border-[var(--line)]">
+              {riskQuery.error ? (
+                <WorkspaceQueryErrorCard title="Risk Sync Failed" description="..." message={errorMessage(riskQuery.error)} actionLabel="Retry" onRetry={() => void riskQuery.refetch()} />
+              ) : riskQuery.data ? (
+                <div className="grid gap-3">
+                  <Stat label="Composite Score" value={riskQuery.data.composite_risk_score.toFixed(1)} color="text-[var(--accent-strong)]" />
+                  <Stat label="Asset Grade" value={riskQuery.data.grade} />
+                  <Stat label="VaR 95% Ratio" value={`${(riskQuery.data.var_95_ratio * 100).toFixed(1)}%`} />
+                  <Stat label="P90 Adj. Cost" value={new Intl.NumberFormat(locale, { style: "currency", currency: "KRW", maximumFractionDigits: 0 }).format(riskQuery.data.p90_adjusted_cost_krw)} />
+                  <div className="rounded-2xl bg-[var(--surface-soft)] p-5 border border-[var(--line-subtle)]">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)] mb-2">SUMMARY_REPORT</p>
+                    <p className="text-xs font-bold leading-relaxed text-[var(--text-secondary)] italic underline decoration-[var(--line-strong)]">{riskQuery.data.summary}</p>
+                  </div>
+                </div>
+              ) : (
+                <Empty title="AWAITING_INPUT" body="Run unified risk engine after updating status or permit context." />
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* --- Permit Readiness --- */}
+        <Card className="rounded-[4rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-xl)] overflow-hidden">
+          <CardContent className="p-10 lg:p-12 border-t-8 border-[var(--success)]">
+            <p className="text-[10px] font-black uppercase tracking-[0.4em] text-[var(--text-hint)]">DIMENSION_03</p>
+            <CardTitle className="mt-3 text-2xl font-[1000] tracking-tighter italic text-[var(--text-primary)]">Permit Lifecycle<span className="text-[var(--success)]">.</span></CardTitle>
+            
+            <form className="mt-8 grid gap-4" onSubmit={handlePermit}>
+              <Select label="Permit type" value={permitForm.permitType} onValueChange={(value) => setPermitForm((current) => ({ ...current, permitType: value }))} options={permitTypes} className="h-14 rounded-2xl border-[var(--line)] bg-[var(--surface-soft)]" />
+              <Select label="Region" value={permitForm.region} onValueChange={(value) => setPermitForm((current) => ({ ...current, region: value }))} options={regions} className="h-14 rounded-2xl border-[var(--line)] bg-[var(--surface-soft)]" />
+              <Input type="number" value={permitForm.buildingArea} onChange={(event) => setPermitForm((current) => ({ ...current, buildingArea: event.target.value }))} placeholder="Building area (sqm)" className="h-14 rounded-2xl border-[var(--line)] bg-[var(--surface-soft)]" />
+              <div className="grid gap-3 grid-cols-3">
+                <Select label="Pb" value={permitForm.isPublic} onValueChange={(value) => setPermitForm((current) => ({ ...current, isPublic: value }))} options={yesNo} className="h-14 rounded-2xl border-[var(--line)] bg-[var(--surface-soft)]" />
+                <Select label="Ag" value={permitForm.isAgricultural} onValueChange={(value) => setPermitForm((current) => ({ ...current, isAgricultural: value }))} options={yesNo} className="h-14 rounded-2xl border-[var(--line)] bg-[var(--surface-soft)]" />
+                <Select label="Sm" value={permitForm.submitToSeumter} onValueChange={(value) => setPermitForm((current) => ({ ...current, submitToSeumter: value }))} options={yesNo} className="h-14 rounded-2xl border-[var(--line)] bg-[var(--surface-soft)]" />
+              </div>
+              <Input value={permitForm.submittedDocumentIds} onChange={(event) => setPermitForm((current) => ({ ...current, submittedDocumentIds: event.target.value }))} placeholder="Doc IDs (e.g. BA-01, BA-02)" className="h-14 rounded-2xl border-[var(--line)] bg-[var(--surface-soft)]" />
+              <Button type="submit" disabled={!canUseLiveApi || pending === "permit"} className="h-14 rounded-2xl bg-[var(--success-strong)] text-white font-black uppercase tracking-widest shadow-[0_0_20px_rgba(var(--success-rgb),0.3)] mt-2">
+                {pending === "permit" ? "SUBMITTING..." : "INIT_LIFECYCLE"}
+              </Button>
+            </form>
+
+             <div className="mt-10 pt-8 border-t border-[var(--line)]">
+              {permitQuery.error ? (
+                <WorkspaceQueryErrorCard title="Permit Sync Error" description="..." message={errorMessage(permitQuery.error)} actionLabel="Retry" onRetry={() => void permitQuery.refetch()} />
+              ) : permitQuery.data ? (
+                <div className="grid gap-3">
+                  <Stat label="Current Status" value={permitQuery.data.status} color="text-[var(--success)]" />
+                  <Stat label="Current Stage" value={permitQuery.data.current_stage} />
+                  <Stat label="Readiness Index" value={`${permitQuery.data.readiness_score.toFixed(1)}%`} />
+                  <div className="space-y-2 p-5 rounded-2xl bg-[var(--surface-soft)] border border-[var(--line-subtle)]">
+                    <div className="flex justify-between items-center mb-2">
+                      <span className="text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)]">PROGRESS</span>
+                      <span className="text-xs font-black text-[var(--text-primary)] antialiased">{permitQuery.data.progress_pct.toFixed(0)}%</span>
+                    </div>
+                    <div className="h-2 w-full bg-[var(--surface-strong)] rounded-full overflow-hidden border border-[var(--line)]">
+                      <motion.div 
+                        initial={{ width: 0 }}
+                        animate={{ width: `${permitQuery.data.progress_pct}%` }}
+                        transition={{ duration: 1, ease: "circOut" }}
+                        className="h-full bg-[var(--success)] shadow-[0_0_10px_var(--success)]" 
+                      />
+                    </div>
+                  </div>
+                  <div className="rounded-2xl bg-[var(--surface-soft)] p-4 border border-[var(--line-subtle)]">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)] mb-2">METADATA</p>
+                    <p className="text-xs font-bold text-[var(--text-secondary)] italic truncate antialiased">REF: {permitQuery.data.submission_reference}</p>
+                    {permitQuery.data.missing_required_documents.length ? (
+                      <p className="mt-2 text-[10px] font-black text-[var(--spot)] uppercase tracking-tight antialiased animate-pulse"> MISSING: {permitQuery.data.missing_required_documents.join(", ")}</p>
+                    ) : null}
+                  </div>
+                </div>
+              ) : (
+                <Empty title="NO_ACTIVE_LIFE" body="Submit the first permit package to populate the tracking read model." />
+              )}
+            </div>
+          </CardContent>
+        </Card>
       </div>
     </section>
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
-  return <div className="rounded-[1rem] bg-[var(--surface-soft)] p-3 text-sm"><p className="text-[rgba(19,33,47,0.5)]">{label}</p><p className="mt-1 font-semibold text-[var(--foreground)]">{value}</p></div>;
+function Stat({ label, value, color = "text-[var(--text-primary)]" }: { label: string; value: string; color?: string }) {
+  return (
+    <div className="flex items-center justify-between rounded-2xl bg-[var(--surface-soft)] p-4 border border-[var(--line-subtle)] shadow-sm">
+      <span className="text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)]">{label}</span>
+      <span className={`text-sm font-[1000] tracking-tight ${color}`}>{value}</span>
+    </div>
+  );
 }
 
 function Empty({ title, body }: { title: string; body: string }) {
-  return <div className="mt-5 rounded-[1rem] border border-dashed border-[var(--line)] p-4 text-sm"><p className="font-semibold text-[var(--foreground)]">{title}</p><p className="mt-2 leading-7 text-[rgba(19,33,47,0.68)]">{body}</p></div>;
+  return (
+    <div className="rounded-3xl border border-dashed border-[var(--line-strong)] bg-[var(--surface-soft)]/30 p-8 text-center flex flex-col items-center gap-4">
+       <div className="h-12 w-12 rounded-2xl bg-[var(--surface-strong)] flex items-center justify-center text-[var(--text-hint)] grayscale opacity-50">📡</div>
+       <div className="space-y-1">
+         <p className="text-xs font-black uppercase tracking-[0.2em] text-[var(--text-hint)]">{title}</p>
+         <p className="text-[10px] font-medium leading-relaxed text-[var(--text-hint)]/60 italic">{body}</p>
+       </div>
+    </div>
+  );
 }

@@ -888,18 +888,18 @@ export function AgentOrchestrationWorkspaceClient({
         <CardContent className="p-6">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div className="max-w-3xl">
-              <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.54)]">
+              <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
                 {labels.configurationTitle}
               </p>
               <CardTitle className="mt-3 text-2xl">{labels.heroTitle}</CardTitle>
-              <p className="mt-4 text-sm leading-7 text-[rgba(19,33,47,0.72)]">
+              <p className="mt-4 text-sm leading-7 text-[var(--text-secondary)]">
                 {labels.heroDescription}
               </p>
-              <p className="mt-3 text-sm leading-7 text-[rgba(19,33,47,0.68)]">
+              <p className="mt-3 text-sm leading-7 text-[var(--text-secondary)]">
                 {labels.heroHint}
               </p>
             </div>
-            <div className="rounded-[1.5rem] border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-4 text-sm leading-7 text-[rgba(19,33,47,0.7)]">
+            <div className="rounded-[var(--radius-xl)] border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-4 text-sm leading-7 text-[var(--text-secondary)]">
               {labels.tokenHint}
             </div>
           </div>
@@ -927,11 +927,11 @@ export function AgentOrchestrationWorkspaceClient({
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <CardTitle>{labels.projectTitle}</CardTitle>
-                <p className="mt-2 text-sm leading-7 text-[rgba(19,33,47,0.72)]">
+                <p className="mt-2 text-sm leading-7 text-[var(--text-secondary)]">
                   {labels.projectHint}
                 </p>
               </div>
-              <span className="rounded-full border border-[var(--line)] px-3 py-1 text-xs font-medium text-[rgba(19,33,47,0.68)]">
+              <span className="rounded-full border border-[var(--line)] px-3 py-1 text-xs font-medium text-[var(--text-secondary)]">
                 {labels.currentProjectLabel}: {activeProjectId || "-"}
               </span>
             </div>
@@ -972,7 +972,7 @@ export function AgentOrchestrationWorkspaceClient({
               />
               <div className="grid gap-2">
                 <label
-                  className="text-sm font-medium text-[rgba(19,33,47,0.78)]"
+                  className="text-sm font-medium text-[var(--text-secondary)]"
                   htmlFor="agent-manual-project-id"
                 >
                   {labels.manualProjectIdLabel}
@@ -984,15 +984,15 @@ export function AgentOrchestrationWorkspaceClient({
                   placeholder="00000000-0000-0000-0000-000000000000"
                 />
               </div>
-              <div className="rounded-[1.35rem] border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-4 text-sm leading-7 text-[rgba(19,33,47,0.72)]">
-                <p className="font-medium text-[var(--foreground)]">
+              <div className="rounded-[1.35rem] border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-4 text-sm leading-7 text-[var(--text-secondary)]">
+                <p className="font-medium text-[var(--text-primary)]">
                   {labels.currentProjectLabel}
                 </p>
                 <p className="mt-2">
                   {selectedProject?.name ??
                     (manualProjectId.trim() || labels.noProjectsLabel)}
                 </p>
-                <p className="mt-2 text-xs text-[rgba(19,33,47,0.56)]">
+                <p className="mt-2 text-xs text-[var(--text-tertiary)]">
                   {labels.projectIdLabel}: {activeProjectId || "-"}
                 </p>
               </div>
@@ -1008,7 +1008,7 @@ export function AgentOrchestrationWorkspaceClient({
               </div>
               <div className="grid gap-2">
                 <label
-                  className="text-sm font-medium text-[rgba(19,33,47,0.78)]"
+                  className="text-sm font-medium text-[var(--text-secondary)]"
                   htmlFor="agent-question"
                 >
                   {labels.questionLabel}
@@ -1039,7 +1039,7 @@ export function AgentOrchestrationWorkspaceClient({
               <div className="grid gap-3 md:grid-cols-2">
                 <div className="grid gap-2">
                   <label
-                    className="text-sm font-medium text-[rgba(19,33,47,0.78)]"
+                    className="text-sm font-medium text-[var(--text-secondary)]"
                     htmlFor="agent-occupancy"
                   >
                     {labels.occupancyRateLabel}
@@ -1061,7 +1061,7 @@ export function AgentOrchestrationWorkspaceClient({
                 </div>
                 <div className="grid gap-2">
                   <label
-                    className="text-sm font-medium text-[rgba(19,33,47,0.78)]"
+                    className="text-sm font-medium text-[var(--text-secondary)]"
                     htmlFor="agent-ltv"
                   >
                     {labels.ltvLabel}
@@ -1083,7 +1083,7 @@ export function AgentOrchestrationWorkspaceClient({
                 </div>
                 <div className="grid gap-2">
                   <label
-                    className="text-sm font-medium text-[rgba(19,33,47,0.78)]"
+                    className="text-sm font-medium text-[var(--text-secondary)]"
                     htmlFor="agent-buffer"
                   >
                     {labels.scheduleBufferLabel}
@@ -1104,7 +1104,7 @@ export function AgentOrchestrationWorkspaceClient({
                 </div>
                 <div className="grid gap-2">
                   <label
-                    className="text-sm font-medium text-[rgba(19,33,47,0.78)]"
+                    className="text-sm font-medium text-[var(--text-secondary)]"
                     htmlFor="agent-preleasing"
                   >
                     {labels.preLeasingLabel}
@@ -1126,7 +1126,7 @@ export function AgentOrchestrationWorkspaceClient({
                 </div>
               </div>
               <div>
-                <p className="text-sm font-medium text-[rgba(19,33,47,0.78)]">
+                <p className="text-sm font-medium text-[var(--text-secondary)]">
                   {labels.orchestrationDomainsLabel}
                 </p>
                 <div className="mt-3 flex flex-wrap gap-2">
@@ -1142,7 +1142,7 @@ export function AgentOrchestrationWorkspaceClient({
                         className={`rounded-full px-4 py-2 text-sm font-medium transition ${
                           selected
                             ? "bg-[var(--foreground)] text-white"
-                            : "border border-[var(--line)] bg-[var(--surface-soft)] text-[rgba(19,33,47,0.72)]"
+                            : "border border-[var(--line)] bg-[var(--surface-soft)] text-[var(--text-secondary)]"
                         }`}
                       >
                         {labels.domainLabels[domain]}
@@ -1171,10 +1171,10 @@ export function AgentOrchestrationWorkspaceClient({
 
       <Card>
         <CardContent className="p-6">
-          <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.54)]">
+          <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
             {AUDIT_FILTER_UI.title}
           </p>
-          <p className="mt-3 text-sm leading-7 text-[rgba(19,33,47,0.72)]">
+          <p className="mt-3 text-sm leading-7 text-[var(--text-secondary)]">
             {AUDIT_FILTER_UI.description}
           </p>
           <div className="mt-4 flex flex-wrap gap-3">
@@ -1208,7 +1208,7 @@ export function AgentOrchestrationWorkspaceClient({
             <CardTitle>{labels.focusedTitle}</CardTitle>
             {focusedResult ? (
               <div className="mt-5 grid gap-4">
-                <div className="grid gap-2 rounded-[1.35rem] bg-[var(--surface-soft)] px-4 py-4 text-sm text-[rgba(19,33,47,0.74)]">
+                <div className="grid gap-2 rounded-[1.35rem] bg-[var(--surface-soft)] px-4 py-4 text-sm text-[var(--text-secondary)]">
                   <p>
                     {labels.projectIdLabel}: {focusedResult.project_id}
                   </p>
@@ -1232,7 +1232,7 @@ export function AgentOrchestrationWorkspaceClient({
                   </p>
                 </div>
                 <div>
-                  <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.54)]">
+                  <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
                     {labels.findingsLabel}
                   </p>
                   <div className="mt-3 flex flex-wrap gap-2">
@@ -1240,13 +1240,13 @@ export function AgentOrchestrationWorkspaceClient({
                       focusedResult.findings.map((finding) => (
                         <span
                           key={`${finding.factor}-${finding.impact}`}
-                          className="rounded-full border border-[var(--line)] px-3 py-1 text-xs font-medium text-[rgba(19,33,47,0.72)]"
+                          className="rounded-full border border-[var(--line)] px-3 py-1 text-xs font-medium text-[var(--text-secondary)]"
                         >
                           {[finding.factor, finding.impact].filter(Boolean).join(": ")}
                         </span>
                       ))
                     ) : (
-                      <span className="text-sm text-[rgba(19,33,47,0.62)]">
+                      <span className="text-sm text-[var(--text-tertiary)]">
                         {labels.noFindingsLabel}
                       </span>
                     )}
@@ -1254,7 +1254,7 @@ export function AgentOrchestrationWorkspaceClient({
                 </div>
               </div>
             ) : (
-              <p className="mt-4 text-sm leading-7 text-[rgba(19,33,47,0.68)]">
+              <p className="mt-4 text-sm leading-7 text-[var(--text-secondary)]">
                 {labels.focusedEmpty}
               </p>
             )}
@@ -1265,7 +1265,7 @@ export function AgentOrchestrationWorkspaceClient({
             <CardTitle>{labels.portfolioTitle}</CardTitle>
             {portfolioResult ? (
               <div className="mt-5 grid gap-4">
-                <div className="grid gap-3 rounded-[1.35rem] bg-[var(--surface-soft)] px-4 py-4 text-sm text-[rgba(19,33,47,0.74)] md:grid-cols-2">
+                <div className="grid gap-3 rounded-[1.35rem] bg-[var(--surface-soft)] px-4 py-4 text-sm text-[var(--text-secondary)] md:grid-cols-2">
                   <p>
                     {labels.portfolioSummaryLabel}: {portfolioResult.portfolio_summary}
                   </p>
@@ -1287,19 +1287,19 @@ export function AgentOrchestrationWorkspaceClient({
                     >
                       <div className="flex flex-wrap items-center justify-between gap-3">
                         <div>
-                          <p className="text-sm font-semibold text-[var(--foreground)]">
+                          <p className="text-sm font-semibold text-[var(--text-primary)]">
                             {labels.domainLabels[item.domain]}
                           </p>
-                          <p className="mt-2 text-sm text-[rgba(19,33,47,0.7)]">
+                          <p className="mt-2 text-sm text-[var(--text-secondary)]">
                             {labels.recommendationLabel}:{" "}
                             {labels.recommendationLabels[item.recommendation]}
                           </p>
                         </div>
-                        <span className="rounded-full border border-[var(--line)] px-3 py-1 text-xs font-medium text-[rgba(19,33,47,0.72)]">
+                        <span className="rounded-full border border-[var(--line)] px-3 py-1 text-xs font-medium text-[var(--text-secondary)]">
                           {formatPercent(locale, item.confidence_score)}
                         </span>
                       </div>
-                      <div className="mt-3 flex flex-wrap gap-2 text-xs text-[rgba(19,33,47,0.7)]">
+                      <div className="mt-3 flex flex-wrap gap-2 text-xs text-[var(--text-secondary)]">
                         <span className="rounded-full bg-white px-3 py-1">
                           {labels.statusLabel}: {item.status}
                         </span>
@@ -1313,7 +1313,7 @@ export function AgentOrchestrationWorkspaceClient({
                 </ol>
               </div>
             ) : (
-              <p className="mt-4 text-sm leading-7 text-[rgba(19,33,47,0.68)]">
+              <p className="mt-4 text-sm leading-7 text-[var(--text-secondary)]">
                 {labels.portfolioEmpty}
               </p>
             )}
@@ -1352,19 +1352,19 @@ export function AgentOrchestrationWorkspaceClient({
                   >
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div>
-                        <p className="text-sm font-semibold text-[var(--foreground)]">
+                        <p className="text-sm font-semibold text-[var(--text-primary)]">
                           {labels.domainLabels[item.domain]}
                         </p>
-                        <p className="mt-2 text-sm text-[rgba(19,33,47,0.7)]">
+                        <p className="mt-2 text-sm text-[var(--text-secondary)]">
                           {labels.recommendationLabel}:{" "}
                           {labels.recommendationLabels[item.recommendation]}
                         </p>
                       </div>
-                      <span className="rounded-full border border-[var(--line)] px-3 py-1 text-xs font-medium text-[rgba(19,33,47,0.72)]">
+                      <span className="rounded-full border border-[var(--line)] px-3 py-1 text-xs font-medium text-[var(--text-secondary)]">
                         {formatPercent(locale, item.confidence_score)}
                       </span>
                     </div>
-                    <div className="mt-3 flex flex-wrap gap-2 text-xs text-[rgba(19,33,47,0.7)]">
+                    <div className="mt-3 flex flex-wrap gap-2 text-xs text-[var(--text-secondary)]">
                       <span className="rounded-full bg-white px-3 py-1">
                         {labels.statusLabel}: {item.status}
                       </span>
@@ -1380,7 +1380,7 @@ export function AgentOrchestrationWorkspaceClient({
                       </span>
                     </div>
                     {item.narrative ? (
-                      <p className="mt-3 text-sm leading-7 text-[rgba(19,33,47,0.72)]">
+                      <p className="mt-3 text-sm leading-7 text-[var(--text-secondary)]">
                         {readUi.narrativeLabel}: {item.narrative}
                       </p>
                     ) : null}
@@ -1388,7 +1388,7 @@ export function AgentOrchestrationWorkspaceClient({
                 ))}
               </ol>
             ) : !historyQuery.isLoading && !historyQuery.isError ? (
-              <p className="mt-4 text-sm leading-7 text-[rgba(19,33,47,0.68)]">
+              <p className="mt-4 text-sm leading-7 text-[var(--text-secondary)]">
                 {readUi.historyEmpty}
               </p>
             ) : null}
@@ -1426,17 +1426,17 @@ export function AgentOrchestrationWorkspaceClient({
             !approvalsQuery.isLoading &&
             !approvalsQuery.isError ? (
               <div className="mt-5 rounded-[1.35rem] border border-[var(--line)] bg-[rgba(255,255,255,0.7)] px-4 py-4">
-                <p className="text-sm font-semibold text-[var(--foreground)]">
+                <p className="text-sm font-semibold text-[var(--text-primary)]">
                   {APPROVAL_DECISION_UI.bulkTitle}
                 </p>
-                <p className="mt-2 text-sm leading-7 text-[rgba(19,33,47,0.7)]">
+                <p className="mt-2 text-sm leading-7 text-[var(--text-secondary)]">
                   {APPROVAL_DECISION_UI.bulkDescription}
                 </p>
-                <p className="mt-3 text-xs uppercase tracking-[0.2em] text-[rgba(19,33,47,0.52)]">
+                <p className="mt-3 text-xs uppercase tracking-[0.2em] text-[var(--text-tertiary)]">
                   {APPROVAL_DECISION_UI.pendingCountLabel}: {pendingApprovalItems.length}
                 </p>
                 <label
-                  className="mt-4 grid gap-2 text-sm font-medium text-[rgba(19,33,47,0.78)]"
+                  className="mt-4 grid gap-2 text-sm font-medium text-[var(--text-secondary)]"
                   htmlFor="bulk-approval-note"
                 >
                   <span>{APPROVAL_DECISION_UI.bulkLabel}</span>
@@ -1446,7 +1446,7 @@ export function AgentOrchestrationWorkspaceClient({
                     onChange={(event) => setBulkApprovalNote(event.target.value)}
                     disabled={isBulkDecisionPending || Boolean(pendingApprovalId)}
                     placeholder={APPROVAL_DECISION_UI.bulkPlaceholder}
-                    className="min-h-20 rounded-[1rem] border border-[var(--line)] bg-white/85 px-4 py-3 text-sm text-[var(--foreground)] outline-none transition placeholder:text-[rgba(19,33,47,0.4)] focus:border-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-60"
+                    className="min-h-20 rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] px-4 py-3 text-sm text-[var(--text-primary)] outline-none transition placeholder:text-[var(--text-hint)] focus:border-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-60"
                   />
                 </label>
                 <div className="mt-4 flex flex-wrap gap-2">
@@ -1462,7 +1462,7 @@ export function AgentOrchestrationWorkspaceClient({
                     type="button"
                     disabled={isBulkDecisionPending || Boolean(pendingApprovalId)}
                     onClick={() => void handleBulkApprovalDecision("rejected")}
-                    className="rounded-full border border-[var(--line)] bg-white px-4 py-2 text-sm font-medium text-[var(--foreground)] transition disabled:cursor-not-allowed disabled:opacity-50"
+                    className="rounded-full border border-[var(--line)] bg-white px-4 py-2 text-sm font-medium text-[var(--text-primary)] transition disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {APPROVAL_DECISION_UI.rejectAllAction}
                   </button>
@@ -1478,20 +1478,20 @@ export function AgentOrchestrationWorkspaceClient({
                   >
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div>
-                        <p className="text-sm font-semibold text-[var(--foreground)]">
+                        <p className="text-sm font-semibold text-[var(--text-primary)]">
                           {labels.domainLabels[item.domain]}
                         </p>
-                        <p className="mt-2 text-sm text-[rgba(19,33,47,0.7)]">
+                        <p className="mt-2 text-sm text-[var(--text-secondary)]">
                           {labels.recommendationLabel}:{" "}
                           {labels.recommendationLabels[item.recommendation]}
                         </p>
                       </div>
-                      <span className="rounded-full border border-[var(--line)] px-3 py-1 text-xs font-medium text-[rgba(19,33,47,0.72)]">
+                      <span className="rounded-full border border-[var(--line)] px-3 py-1 text-xs font-medium text-[var(--text-secondary)]">
                         {labels.approvalStatusLabels[item.status as ApprovalStatus] ??
                           item.status}
                       </span>
                     </div>
-                    <div className="mt-3 flex flex-wrap gap-2 text-xs text-[rgba(19,33,47,0.7)]">
+                    <div className="mt-3 flex flex-wrap gap-2 text-xs text-[var(--text-secondary)]">
                       <span className="rounded-full bg-white px-3 py-1">
                         {readUi.approverRoleLabel}: {item.approver_role}
                       </span>
@@ -1509,14 +1509,14 @@ export function AgentOrchestrationWorkspaceClient({
                       ) : null}
                     </div>
                     {item.rationale ? (
-                      <p className="mt-3 text-sm leading-7 text-[rgba(19,33,47,0.72)]">
+                      <p className="mt-3 text-sm leading-7 text-[var(--text-secondary)]">
                         {readUi.rationaleLabel}: {item.rationale}
                       </p>
                     ) : null}
                     {item.status === "pending" ? (
                       <>
                         <label
-                          className="mt-4 grid gap-2 text-sm font-medium text-[rgba(19,33,47,0.78)]"
+                          className="mt-4 grid gap-2 text-sm font-medium text-[var(--text-secondary)]"
                           htmlFor={`approval-note-${item.approval_id}`}
                         >
                           <span>{APPROVAL_DECISION_UI.itemLabel}</span>
@@ -1533,7 +1533,7 @@ export function AgentOrchestrationWorkspaceClient({
                               pendingApprovalId === item.approval_id || isBulkDecisionPending
                             }
                             placeholder={APPROVAL_DECISION_UI.itemPlaceholder}
-                            className="min-h-20 rounded-[1rem] border border-[var(--line)] bg-white/85 px-4 py-3 text-sm text-[var(--foreground)] outline-none transition placeholder:text-[rgba(19,33,47,0.4)] focus:border-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-60"
+                            className="min-h-20 rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] px-4 py-3 text-sm text-[var(--text-primary)] outline-none transition placeholder:text-[var(--text-hint)] focus:border-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-60"
                           />
                         </label>
                         <div className="mt-4 flex flex-wrap gap-2">
@@ -1565,7 +1565,7 @@ export function AgentOrchestrationWorkspaceClient({
                                 "rejected",
                               )
                             }
-                            className="rounded-full border border-[var(--line)] bg-white px-4 py-2 text-sm font-medium text-[var(--foreground)] transition disabled:cursor-not-allowed disabled:opacity-50"
+                            className="rounded-full border border-[var(--line)] bg-white px-4 py-2 text-sm font-medium text-[var(--text-primary)] transition disabled:cursor-not-allowed disabled:opacity-50"
                           >
                             {readUi.rejectAction}
                           </button>
@@ -1576,7 +1576,7 @@ export function AgentOrchestrationWorkspaceClient({
                 ))}
               </ol>
             ) : !approvalsQuery.isLoading && !approvalsQuery.isError ? (
-              <p className="mt-4 text-sm leading-7 text-[rgba(19,33,47,0.68)]">
+              <p className="mt-4 text-sm leading-7 text-[var(--text-secondary)]">
                 {readUi.approvalEmpty}
               </p>
             ) : null}

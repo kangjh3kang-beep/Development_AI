@@ -55,11 +55,46 @@ vi.mock("@/components/digital-twin/DigitalTwinAnomalyDashboard", () => ({
   ),
 }));
 
+vi.mock("next/navigation", () => {
+  return {
+    useParams: () => ({ locale: "en" }),
+    usePathname: () => "/en",
+    useRouter: () => ({
+      push: vi.fn(),
+      replace: vi.fn(),
+      back: vi.fn(),
+      prefetch: vi.fn(),
+    }),
+  };
+});
+
 vi.mock("@/i18n/get-dictionary", () => ({
   getDictionary: vi.fn(async () => ({
     workspace: {
       modeLive: "LIVE",
       modeMock: "MOCK",
+    },
+    nav: {},
+    pages: {
+      projectDetail: {
+        summary: {
+          hub: "HUB",
+          name: "NAME",
+          pnu: "PNU",
+          zone: "ZONE",
+          npv: "NPV",
+          roi: "ROI",
+        },
+      },
+    },
+    deepIntegration: {
+      lifecycle: {
+        title: "Lifecycle",
+      },
+    },
+    modulePlaceholders: {
+      maintenance: { title: "예지정비 운영센터", eyebrow: "MAINTENANCE", description: "Desc", items: [] },
+      tenant: { title: "테넌트 경험 센터", eyebrow: "TENANT", description: "Desc", items: [] },
     },
   })),
 }));

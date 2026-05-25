@@ -24,17 +24,13 @@ export default async function IoTPage({ params }: IoTPageProps) {
 
   return (
     <div className="grid gap-6">
-      <ModulePlaceholder
-        eyebrow="OPS / INTELLIGENCE"
-        title="운영 인텔리전스 워크스페이스"
-        description="예지정비, 테넌트 경험, 자산 인텔리전스를 실제 운영 API 체인으로 검증합니다."
+            <ModulePlaceholder
+        eyebrow={dictionary.modulePlaceholders["iot"].eyebrow}
+        title={dictionary.modulePlaceholders["iot"].title}
+        description={dictionary.modulePlaceholders["iot"].description}
         statusLabel={runtimeMode}
         localeLabel={locale}
-        items={[
-          "예지정비 anomaly detection",
-          "테넌트 sentiment / NPS",
-          "자산 인텔리전스 복합 점수",
-        ]}
+        items={dictionary.modulePlaceholders["iot"].items}
       />
       <OperationsIntelligenceWorkspaceClient locale={locale as Locale} />
     </div>

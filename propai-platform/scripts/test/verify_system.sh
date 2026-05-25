@@ -267,6 +267,12 @@ else
   log_fail "Release report CLI failed"
 fi
 
+if [ -n "$PYTHON_BIN" ] && "$PYTHON_BIN" scripts/release/generate_cutover_checklist.py --help >/dev/null 2>&1; then
+  log_pass "Cutover checklist CLI loads"
+else
+  log_fail "Cutover checklist CLI failed"
+fi
+
 if [ -n "$PYTHON_BIN" ] && "$PYTHON_BIN" scripts/release/validate_release_assets.py >/tmp/propai-release-assets.log 2>&1; then
   log_pass "Release asset validation passed"
 else
@@ -276,8 +282,10 @@ fi
 
 if grep -q "scripts/release/validate_release_env.py" .github/workflows/deploy-staging.yml \
   && grep -q "scripts/release/run_release_smoke.py" .github/workflows/deploy-staging.yml \
+  && grep -q "scripts/release/generate_cutover_checklist.py" .github/workflows/deploy-staging.yml \
   && grep -q "scripts/release/validate_release_env.py" .github/workflows/deploy-prod.yml \
-  && grep -q "scripts/release/run_release_smoke.py" .github/workflows/deploy-prod.yml; then
+  && grep -q "scripts/release/run_release_smoke.py" .github/workflows/deploy-prod.yml \
+  && grep -q "scripts/release/generate_cutover_checklist.py" .github/workflows/deploy-prod.yml; then
   log_pass "Release workflows reference preflight and smoke scripts"
 else
   log_fail "Release workflows missing preflight/smoke script wiring"

@@ -20,7 +20,7 @@ export function StreamingReport({
     <Card className="bg-[var(--surface-strong)]">
       <CardHeader>
         <CardTitle>{labels.title}</CardTitle>
-        <p className="text-sm leading-7 text-[rgba(19,33,47,0.72)]">
+        <p className="text-sm leading-7 text-[var(--text-secondary)]">
           {labels.description}
         </p>
       </CardHeader>
@@ -28,16 +28,16 @@ export function StreamingReport({
         {sections.map((section, index) => (
           <div
             key={section.id}
-            className="rounded-[1.25rem] border border-[var(--line)] bg-white/80 px-5 py-4"
+            className="rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] px-5 py-4"
           >
-            <p className="text-sm font-semibold text-[var(--foreground)]">
+            <p className="text-sm font-semibold text-[var(--text-primary)]">
               {section.title}
             </p>
             <StreamingText
               key={`${section.id}-${section.content}`}
               stepMs={14 + index * 4}
               text={section.content}
-              className="mt-3 text-sm leading-7 text-[rgba(19,33,47,0.76)]"
+              className="mt-3 text-sm leading-7 text-[var(--text-secondary)]"
             />
           </div>
         ))}

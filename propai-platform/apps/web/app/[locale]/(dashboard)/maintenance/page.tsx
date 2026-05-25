@@ -26,17 +26,13 @@ export default async function MaintenancePage({
 
   return (
     <div className="grid gap-6">
-      <ModulePlaceholder
-        eyebrow="MAINTENANCE / OPS"
-        title="예지정비 운영센터"
-        description="실시간 운영 데이터 대신 실제 maintenance API로 설비 이상 징후와 워크오더 흐름을 검증합니다."
+            <ModulePlaceholder
+        eyebrow={dictionary.modulePlaceholders["maintenance"].eyebrow}
+        title={dictionary.modulePlaceholders["maintenance"].title}
+        description={dictionary.modulePlaceholders["maintenance"].description}
         statusLabel={runtimeMode}
         localeLabel={locale}
-        items={[
-          "설비 telemetry 기반 anomaly detection",
-          "심각도 + RUL + HVAC 효율 점수",
-          "워크오더 생성 여부 확인",
-        ]}
+        items={dictionary.modulePlaceholders["maintenance"].items}
       />
       <OperationsIntelligenceWorkspaceClient
         locale={locale as Locale}

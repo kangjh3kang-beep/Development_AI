@@ -176,8 +176,12 @@ vi.mock("@/i18n/get-dictionary", () => ({
     hero: {
       badge: "PROP AI",
     },
+    meta: {
+      siteName: "PropAI",
+    },
     dashboard: {
       title: "Dashboard home",
+      welcome: "Welcome to PropAI",
       description: "Live operating center",
       summaryTitle: "Summary panel",
     },
@@ -200,6 +204,24 @@ vi.mock("@/i18n/get-dictionary", () => ({
       drone: "Drone",
       blockchain: "Blockchain",
       report: "Report",
+    },
+    modulePlaceholders: {
+      agent: { title: "Agent orchestration center", eyebrow: "AGENT", description: "Desc", items: [] },
+      auction: { title: "Auction live center", eyebrow: "AUCTION", description: "Desc", items: [] },
+      blockchain: { title: "Blockchain", eyebrow: "BLOCKCHAIN", description: "Desc", items: [] },
+      projects: { title: "Projects overview", eyebrow: "PROJECTS", description: "Desc", items: [] },
+      tax: { title: "세금 라이브 센터", eyebrow: "TAX", description: "Desc", items: [] },
+      inspection: { title: "현장 점검 라이브 센터", eyebrow: "INSPECTION", description: "Desc", items: [] },
+      energy: { title: "에너지 인증 워크스페이스", eyebrow: "ENERGY", description: "Desc", items: [] },
+      esg: { title: "에너지 인증 워크스페이스", eyebrow: "ENERGY", description: "Desc", items: [] },
+      cost: { title: "공사비 인텔리전스 허브", eyebrow: "COST", description: "Desc", items: [] },
+      investment: { title: "투자 운영 컨트롤타워", eyebrow: "INVESTMENT", description: "Desc", items: [] },
+      iot: { title: "운영 인텔리전스 워크스페이스", eyebrow: "IOT", description: "Desc", items: [] },
+      sre: { title: "SRE", eyebrow: "SRE", description: "Desc", items: [] },
+      webrtc: { title: "WebRTC", eyebrow: "WEBRTC", description: "Desc", items: [] },
+      safety: { title: "Safety", eyebrow: "SAFETY", description: "Desc", items: [] },
+      maintenance: { title: "예지정비 운영센터", eyebrow: "MAINTENANCE", description: "Desc", items: [] },
+      tenant: { title: "테넌트 경험 센터", eyebrow: "TENANT", description: "Desc", items: [] },
     },
     pages: {
       agent: {
@@ -232,9 +254,57 @@ vi.mock("@/i18n/get-dictionary", () => ({
           third: "Module access",
         },
       },
+      projectDetail: {
+        summary: {
+          hub: "HUB",
+          name: "NAME",
+          pnu: "PNU",
+          zone: "ZONE",
+          npv: "NPV",
+          roi: "ROI",
+        },
+      },
+    },
+    deepIntegration: {
+      lifecycle: {
+        title: "Lifecycle",
+        stageSite: "Site",
+        stageLegal: "Legal",
+        stageDesignAI: "Design AI",
+        stageFeasibility: "Feasibility",
+        stageESG: "ESG",
+        stagePermits: "Permits",
+        stageConstruction: "Construction",
+        stageOperations: "Operations",
+      },
+      cadBim: {
+        title: "CAD/BIM",
+      },
+      feasibility: {
+        title: "Feasibility",
+      },
+      cost: {
+        title: "Cost",
+      },
+      schedule: {
+        title: "Schedule",
+      },
     },
   })),
 }));
+
+vi.mock("next/navigation", () => {
+  return {
+    useParams: () => ({ locale: "en" }),
+    usePathname: () => "/en",
+    useRouter: () => ({
+      push: vi.fn(),
+      replace: vi.fn(),
+      back: vi.fn(),
+      prefetch: vi.fn(),
+    }),
+  };
+});
 
 vi.mock("@/i18n/module-copy", () => ({
   getModuleCopy: vi.fn(() => ({
@@ -273,16 +343,14 @@ describe("Dashboard route shells", () => {
     vi.stubEnv("NEXT_PUBLIC_USE_MOCKS", "false");
   });
 
-  it("renders the dashboard home with the summary panel and overview cards", async () => {
+  it("renders the dashboard home with the premium hero and KPI cards", async () => {
     render(await DashboardPage({ params: Promise.resolve({ locale: "en" }) }));
 
     expect(screen.getByText("Dashboard home")).toBeInTheDocument();
-    expect(screen.getByTestId("dashboard-client-panel")).toHaveTextContent(
-      "Summary panel",
-    );
-    expect(screen.getByTestId("pwa-status-card")).toBeInTheDocument();
-    expect(screen.getAllByTestId("overview-card")).toHaveLength(4);
-    expect(screen.getByRole("link", { name: "Projects" })).toHaveAttribute(
+    expect(screen.getByText("PropAI")).toBeInTheDocument();
+    expect(screen.getByText("Welcome to PropAI")).toBeInTheDocument();
+    expect(screen.getByText("총 포트폴리오 자산")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "모든 프로젝트 보기" })).toHaveAttribute(
       "href",
       "/en/projects",
     );
@@ -292,7 +360,7 @@ describe("Dashboard route shells", () => {
     render(await ProjectsPage({ params: Promise.resolve({ locale: "en" }) }));
 
     expect(screen.getByText("Projects overview")).toBeInTheDocument();
-    expect(screen.getByText("READY")).toBeInTheDocument();
+    expect(screen.getByText("LIVE")).toBeInTheDocument();
     expect(screen.getByTestId("projects-overview-client")).toHaveTextContent(
       "en",
     );

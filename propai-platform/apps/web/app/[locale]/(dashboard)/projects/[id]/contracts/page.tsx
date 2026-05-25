@@ -27,17 +27,13 @@ export default async function ProjectContractsPage({
 
   return (
     <div className="grid gap-6">
-      <ModulePlaceholder
-        eyebrow="PROJECT / CONTRACTS"
-        title="Project contract automation live route"
-        description="Use the routed project id to generate a localized contract draft, reload the latest persisted contract, and hand it off to the live e-sign workflow."
+            <ModulePlaceholder
+        eyebrow={dictionary.modulePlaceholders["contracts"].eyebrow}
+        title={dictionary.modulePlaceholders["contracts"].title}
+        description={dictionary.modulePlaceholders["contracts"].description}
         statusLabel={runtimeMode}
         localeLabel={locale}
-        items={[
-          "Load GET /projects/{id} as the project-aware source of truth",
-          "Submit POST /contracts/generate for sale, lease, construction, and consulting drafts",
-          "Handoff the generated draft through POST /contracts/{draft_id}/esign to reuse the live e-sign write path",
-        ]}
+        items={dictionary.modulePlaceholders["contracts"].items}
       />
       <ProjectContractWorkspaceClient locale={locale as Locale} projectId={id} />
     </div>

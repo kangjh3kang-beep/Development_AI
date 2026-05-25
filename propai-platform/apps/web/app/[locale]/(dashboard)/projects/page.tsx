@@ -17,20 +17,20 @@ export default async function ProjectsPage({ params }: ProjectsPageProps) {
   }
 
   const dictionary = await getDictionary(locale as Locale);
+  const runtimeMode =
+    process.env.NEXT_PUBLIC_USE_MOCKS === "false"
+      ? dictionary.workspace.modeLive
+      : dictionary.workspace.modeMock;
 
   return (
     <div className="grid gap-6">
-      <ModulePlaceholder
-        eyebrow={dictionary.pages.projects.eyebrow}
-        title={dictionary.pages.projects.title}
-        description={dictionary.pages.projects.description}
-        statusLabel={dictionary.status.ready}
+            <ModulePlaceholder
+        eyebrow={dictionary.modulePlaceholders["projects"].eyebrow}
+        title={dictionary.modulePlaceholders["projects"].title}
+        description={dictionary.modulePlaceholders["projects"].description}
+        statusLabel={runtimeMode}
         localeLabel={locale}
-        items={[
-          dictionary.pages.projects.items.first,
-          dictionary.pages.projects.items.second,
-          dictionary.pages.projects.items.third,
-        ]}
+        items={dictionary.modulePlaceholders["projects"].items}
       />
       <ProjectsOverviewClient
         locale={locale}

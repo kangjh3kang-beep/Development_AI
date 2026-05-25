@@ -12,7 +12,7 @@ type ParcelsLayerProps = {
 const parcelStatusClassName = {
   available: "bg-[rgba(14,116,144,0.28)] text-[var(--accent-strong)]",
   review: "bg-[rgba(217,119,6,0.22)] text-[var(--spot)]",
-  restricted: "bg-[rgba(19,33,47,0.2)] text-[var(--foreground)]",
+  restricted: "bg-[var(--surface-muted)] text-[var(--text-primary)]",
 } as const;
 
 export function ParcelsLayer({
@@ -35,7 +35,7 @@ export function ParcelsLayer({
             key={parcel.id}
             type="button"
             aria-pressed={selectedParcelId === parcel.id}
-            className={`absolute rounded-[1.1rem] border border-white/70 px-3 py-2 text-left text-xs font-semibold shadow-[0_10px_24px_rgba(19,33,47,0.08)] transition hover:scale-[1.01] ${
+            className={`absolute rounded-[var(--radius-md)] border border-white/70 px-3 py-2 text-left text-xs font-semibold shadow-[var(--shadow-md)] transition hover:scale-[1.01] ${
               parcelStatusClassName[parcel.status]
             } ${
               selectedParcelId === parcel.id

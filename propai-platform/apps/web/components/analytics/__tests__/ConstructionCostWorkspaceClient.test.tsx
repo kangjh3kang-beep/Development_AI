@@ -91,7 +91,7 @@ describe("ConstructionCostWorkspaceClient", () => {
       throw new Error(`Unhandled GET path: ${path}`);
     });
 
-    renderWithQueryClient(<ConstructionCostWorkspaceClient locale="en" />);
+    renderWithQueryClient(<ConstructionCostWorkspaceClient locale="ko" />);
 
     expect(
       await screen.findByText("KCCI 자재가와 PPI 공사비 보정 시뮬레이션"),
@@ -190,13 +190,20 @@ describe("ConstructionCostWorkspaceClient", () => {
       throw new Error(`Unhandled POST path: ${path}`);
     });
 
-    renderWithQueryClient(<ConstructionCostWorkspaceClient locale="en" />);
+    renderWithQueryClient(<ConstructionCostWorkspaceClient locale="ko" />);
 
     await screen.findByText("Yeouido Prime");
 
     const buttons = await screen.findAllByRole("button");
-    await userEvent.click(buttons.find((button) => button.textContent?.includes("자재가"))!);
-    await userEvent.click(buttons.find((button) => button.textContent?.includes("에스컬레이션"))!);
+    const refreshBtn = buttons.find((button) => button.textContent?.includes("자재가"));
+    const analyzeBtn = buttons.find((button) => button.textContent?.includes("에스컬레이션"));
+    
+    if (!refreshBtn || !analyzeBtn) {
+       throw new Error("Could not find refresh or analyze buttons");
+    }
+
+    await userEvent.click(refreshBtn);
+    await userEvent.click(analyzeBtn);
 
     await waitFor(() => {
       expect(apiClient.post).toHaveBeenCalledWith(

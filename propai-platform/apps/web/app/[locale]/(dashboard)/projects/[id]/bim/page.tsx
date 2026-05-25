@@ -25,17 +25,13 @@ export default async function BimPage({ params }: BimPageProps) {
 
   return (
     <div className="grid gap-6">
-      <ModulePlaceholder
-        eyebrow="PROJECT / BIM"
-        title="Project BIM live route"
-        description="Use the routed project id to generate BIM quantities and geometry summaries through the live BIM APIs."
+            <ModulePlaceholder
+        eyebrow={dictionary.modulePlaceholders["bim"].eyebrow}
+        title={dictionary.modulePlaceholders["bim"].title}
+        description={dictionary.modulePlaceholders["bim"].description}
         statusLabel={runtimeMode}
         localeLabel={locale}
-        items={[
-          "Load the current project context from GET /projects/{id}",
-          "Submit POST /bim/generate-ifc from the project detail route",
-          "Load GET /bim/threejs/{project_id} to review generated geometry coverage",
-        ]}
+        items={dictionary.modulePlaceholders["bim"].items}
       />
       <ProjectBimWorkspaceClient locale={locale as Locale} projectId={id} />
     </div>

@@ -426,27 +426,27 @@ export function ProjectContractWorkspaceClient({
 
   return (
     <section className="grid gap-6">
-      <Card className="rounded-[2rem] bg-[var(--surface-strong)] shadow-[0_20px_60px_rgba(19,33,47,0.08)]">
+      <Card className="rounded-[var(--radius-2xl)] bg-[var(--surface-strong)] shadow-[var(--shadow-lg)]">
         <CardContent className="p-8">
           <div className="flex flex-wrap items-center gap-3">
             <span className="rounded-full bg-[rgba(14,116,144,0.1)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--accent-strong)]">
               {labels.heroBadge}
             </span>
-            <span className="rounded-full border border-[var(--line)] px-4 py-2 text-xs font-medium text-[rgba(19,33,47,0.7)]">
+            <span className="rounded-full border border-[var(--line)] px-4 py-2 text-xs font-medium text-[var(--text-secondary)]">
               {runtimeConfig.mode === "live" ? "LIVE" : "HYBRID"}
             </span>
           </div>
-          <h3 className="mt-5 text-3xl font-bold text-[var(--foreground)]">
+          <h3 className="mt-5 text-3xl font-bold text-[var(--text-primary)]">
             {labels.heroTitle}
           </h3>
-          <p className="mt-4 max-w-3xl text-sm leading-8 text-[rgba(19,33,47,0.72)]">
+          <p className="mt-4 max-w-3xl text-sm leading-8 text-[var(--text-secondary)]">
             {labels.heroDescription}
           </p>
-          <p className="mt-3 text-xs uppercase tracking-[0.18em] text-[rgba(19,33,47,0.45)]">
+          <p className="mt-3 text-xs uppercase tracking-[0.18em] text-[var(--text-hint)]">
             {labels.tokenHint}
           </p>
           {workspaceError ? (
-            <div className="mt-6 rounded-[1.5rem] border border-[rgba(217,119,6,0.28)] bg-[rgba(217,119,6,0.08)] p-5 text-sm leading-7 text-[var(--spot)]">
+            <div className="mt-6 rounded-[var(--radius-xl)] border border-[rgba(217,119,6,0.28)] bg-[rgba(217,119,6,0.08)] p-5 text-sm leading-7 text-[var(--spot)]">
               {workspaceError}
             </div>
           ) : null}
@@ -470,11 +470,11 @@ export function ProjectContractWorkspaceClient({
                 }}
               />
             ) : projectQuery.data ? (
-              <div className="rounded-[1.5rem] border border-[var(--line)] bg-white/85 p-5 text-sm text-[rgba(19,33,47,0.76)]">
-                <p className="text-xs uppercase tracking-[0.22em] text-[rgba(19,33,47,0.45)]">
+              <div className="rounded-[var(--radius-xl)] border border-[var(--line)] bg-[var(--surface)] p-5 text-sm text-[var(--text-secondary)]">
+                <p className="text-xs uppercase tracking-[0.22em] text-[var(--text-hint)]">
                   {projectQuery.data.id}
                 </p>
-                <h4 className="mt-3 text-xl font-semibold text-[var(--foreground)]">
+                <h4 className="mt-3 text-xl font-semibold text-[var(--text-primary)]">
                   {projectQuery.data.name}
                 </h4>
                 <div className="mt-4 grid gap-2">
@@ -515,7 +515,7 @@ export function ProjectContractWorkspaceClient({
                   }))
                 }
               />
-              <label className="grid gap-2 text-sm font-medium text-[var(--foreground)]">
+              <label className="grid gap-2 text-sm font-medium text-[var(--text-primary)]">
                 <span>{labels.counterpartyLabel}</span>
                 <Input
                   value={form.counterpartyName}
@@ -527,7 +527,7 @@ export function ProjectContractWorkspaceClient({
                   }
                 />
               </label>
-              <label className="grid gap-2 text-sm font-medium text-[var(--foreground)]">
+              <label className="grid gap-2 text-sm font-medium text-[var(--text-primary)]">
                 <span>{labels.effectiveDateLabel}</span>
                 <Input
                   type="date"
@@ -540,7 +540,7 @@ export function ProjectContractWorkspaceClient({
                   }
                 />
               </label>
-              <label className="grid gap-2 text-sm font-medium text-[var(--foreground)]">
+              <label className="grid gap-2 text-sm font-medium text-[var(--text-primary)]">
                 <span>{labels.amountLabel}</span>
                 <Input
                   inputMode="decimal"
@@ -554,10 +554,10 @@ export function ProjectContractWorkspaceClient({
                 />
               </label>
             </div>
-            <label className="grid gap-2 text-sm font-medium text-[var(--foreground)]">
+            <label className="grid gap-2 text-sm font-medium text-[var(--text-primary)]">
               <span>{labels.specialClausesLabel}</span>
               <textarea
-                className="min-h-28 rounded-[1rem] border border-[var(--line)] bg-white px-4 py-3 text-sm text-[var(--foreground)] outline-none transition focus:border-[var(--accent-strong)]"
+                className="min-h-28 rounded-[var(--radius-md)] border border-[var(--line)] bg-white px-4 py-3 text-sm text-[var(--text-primary)] outline-none transition focus:border-[var(--accent-strong)]"
                 value={form.specialClauses}
                 onChange={(event) =>
                   setForm((current) => ({
@@ -591,13 +591,13 @@ export function ProjectContractWorkspaceClient({
                 }}
               />
             ) : latestDraft ? (
-              <div className="grid gap-4 rounded-[1.5rem] border border-[var(--line)] bg-white/85 p-5">
+              <div className="grid gap-4 rounded-[var(--radius-xl)] border border-[var(--line)] bg-[var(--surface)] p-5">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
-                    <h4 className="text-xl font-semibold text-[var(--foreground)]">
+                    <h4 className="text-xl font-semibold text-[var(--text-primary)]">
                       {latestDraft.title}
                     </h4>
-                    <p className="mt-2 text-sm leading-7 text-[rgba(19,33,47,0.72)]">
+                    <p className="mt-2 text-sm leading-7 text-[var(--text-secondary)]">
                       {latestDraft.summary}
                     </p>
                   </div>
@@ -605,12 +605,12 @@ export function ProjectContractWorkspaceClient({
                     <span className="rounded-full bg-[rgba(14,116,144,0.1)] px-3 py-1 text-[var(--accent-strong)]">
                       {labels.statusLabel}: {latestDraft.status}
                     </span>
-                    <span className="rounded-full border border-[var(--line)] px-3 py-1 text-[rgba(19,33,47,0.72)]">
+                    <span className="rounded-full border border-[var(--line)] px-3 py-1 text-[var(--text-secondary)]">
                       {labels.signStatusLabel}: {latestDraft.sign_status}
                     </span>
                   </div>
                 </div>
-                <div className="grid gap-2 text-sm text-[rgba(19,33,47,0.76)]">
+                <div className="grid gap-2 text-sm text-[var(--text-secondary)]">
                   <p>
                     {labels.documentUrlLabel}: {latestDraft.document_url}
                   </p>
@@ -623,37 +623,37 @@ export function ProjectContractWorkspaceClient({
                   </p>
                 </div>
                 <div className="grid gap-3">
-                  <p className="text-xs uppercase tracking-[0.22em] text-[rgba(19,33,47,0.45)]">
+                  <p className="text-xs uppercase tracking-[0.22em] text-[var(--text-hint)]">
                     {labels.keyTermsLabel}
                   </p>
                   <div className="grid gap-2 md:grid-cols-2">
                     {latestDraft.key_terms.map((term) => (
                       <div
                         key={`${term.label}-${term.value}`}
-                        className="rounded-[1rem] border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-3 text-sm"
+                        className="rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-3 text-sm"
                       >
-                        <p className="text-xs uppercase tracking-[0.2em] text-[rgba(19,33,47,0.45)]">
+                        <p className="text-xs uppercase tracking-[0.2em] text-[var(--text-hint)]">
                           {term.label}
                         </p>
-                        <p className="mt-2 text-[var(--foreground)]">{term.value}</p>
+                        <p className="mt-2 text-[var(--text-primary)]">{term.value}</p>
                       </div>
                     ))}
                   </div>
                 </div>
                 <div className="grid gap-3">
-                  <p className="text-xs uppercase tracking-[0.22em] text-[rgba(19,33,47,0.45)]">
+                  <p className="text-xs uppercase tracking-[0.22em] text-[var(--text-hint)]">
                     {labels.clausesLabel}
                   </p>
                   <div className="grid gap-3">
                     {latestDraft.clauses.map((clause) => (
                       <div
                         key={clause.title}
-                        className="rounded-[1rem] border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-4"
+                        className="rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-4"
                       >
-                        <p className="font-semibold text-[var(--foreground)]">
+                        <p className="font-semibold text-[var(--text-primary)]">
                           {clause.title}
                         </p>
-                        <p className="mt-2 text-sm leading-7 text-[rgba(19,33,47,0.72)]">
+                        <p className="mt-2 text-sm leading-7 text-[var(--text-secondary)]">
                           {clause.body}
                         </p>
                       </div>
@@ -662,15 +662,15 @@ export function ProjectContractWorkspaceClient({
                 </div>
               </div>
             ) : (
-              <div className="rounded-[1.5rem] border border-dashed border-[var(--line)] bg-white/80 p-6 text-sm leading-7 text-[rgba(19,33,47,0.72)]">
+              <div className="rounded-[var(--radius-xl)] border border-dashed border-[var(--line)] bg-[var(--surface)] p-6 text-sm leading-7 text-[var(--text-secondary)]">
                 {labels.latestEmpty}
               </div>
             )}
           </div>
 
-          <div className="grid gap-4 rounded-[1.5rem] border border-[var(--line)] bg-[var(--surface-soft)] p-5">
+          <div className="grid gap-4 rounded-[var(--radius-xl)] border border-[var(--line)] bg-[var(--surface-soft)] p-5">
             <CardTitle>{labels.signerTitle}</CardTitle>
-            <label className="grid gap-2 text-sm font-medium text-[var(--foreground)]">
+            <label className="grid gap-2 text-sm font-medium text-[var(--text-primary)]">
               <span>{labels.signerNameLabel}</span>
               <Input
                 value={form.signerName}
@@ -682,7 +682,7 @@ export function ProjectContractWorkspaceClient({
                 }
               />
             </label>
-            <label className="grid gap-2 text-sm font-medium text-[var(--foreground)]">
+            <label className="grid gap-2 text-sm font-medium text-[var(--text-primary)]">
               <span>{labels.signerEmailLabel}</span>
               <Input
                 value={form.signerEmail}
@@ -694,7 +694,7 @@ export function ProjectContractWorkspaceClient({
                 }
               />
             </label>
-            <label className="grid gap-2 text-sm font-medium text-[var(--foreground)]">
+            <label className="grid gap-2 text-sm font-medium text-[var(--text-primary)]">
               <span>{labels.signerPhoneLabel}</span>
               <Input
                 value={form.signerPhone}

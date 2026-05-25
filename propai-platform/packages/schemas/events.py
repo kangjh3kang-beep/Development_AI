@@ -4,10 +4,7 @@ Codex의 StreamingReport, AgentTimeline 컴포넌트와 정합을 위해
 필드를 사전 확정한다. (부록 B 기준)
 """
 
-from datetime import datetime, timezone
-
-UTC = timezone.utc
-
+from datetime import UTC, datetime
 
 from pydantic import BaseModel, Field
 

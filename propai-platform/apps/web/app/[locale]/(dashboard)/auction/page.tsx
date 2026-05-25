@@ -24,17 +24,13 @@ export default async function AuctionPage({ params }: AuctionPageProps) {
 
   return (
     <div className="grid gap-6">
-      <ModulePlaceholder
-        eyebrow={dictionary.pages.auction.eyebrow}
-        title={dictionary.pages.auction.title}
-        description={dictionary.pages.auction.description}
+            <ModulePlaceholder
+        eyebrow={dictionary.modulePlaceholders["auction"].eyebrow}
+        title={dictionary.modulePlaceholders["auction"].title}
+        description={dictionary.modulePlaceholders["auction"].description}
         statusLabel={runtimeMode}
         localeLabel={locale}
-        items={[
-          dictionary.pages.auction.items.first,
-          dictionary.pages.auction.items.second,
-          dictionary.pages.auction.items.third,
-        ]}
+        items={dictionary.modulePlaceholders["auction"].items}
       />
       <AuctionWorkspaceClient locale={locale as Locale} />
     </div>

@@ -1,0 +1,98 @@
+# Page snapshot
+
+```yaml
+- generic [active] [ref=e1]:
+  - status "Screen change announcement region" [ref=e2]
+  - link "Skip to content" [ref=e3] [cursor=pointer]:
+    - /url: "#main-content"
+  - generic [ref=e5]:
+    - banner [ref=e6]:
+      - generic [ref=e7]:
+        - generic [ref=e8]:
+          - paragraph [ref=e10]: Sa-Tong-Pal-Ttang Workspace
+          - heading "Sa-Tong-Pal-Ttang" [level=1] [ref=e12]
+        - generic [ref=e13]:
+          - generic [ref=e14]: Live
+          - generic [ref=e15]:
+            - generic [ref=e16]: Language
+            - combobox "Language" [ref=e17]:
+              - option "한국어"
+              - option "English" [selected]
+              - option "简体中文"
+    - generic [ref=e18]:
+      - complementary [ref=e19]:
+        - navigation "Dashboard navigation" [ref=e20]:
+          - link "Dashboard" [ref=e21] [cursor=pointer]:
+            - /url: /en
+            - text: Dashboard
+          - link "Projects" [ref=e23] [cursor=pointer]:
+            - /url: /en/projects
+            - text: Projects
+          - link "AI Portfolio Map" [ref=e25] [cursor=pointer]:
+            - /url: /en/portfolio
+            - text: AI Portfolio Map
+          - link "AI Agent" [ref=e27] [cursor=pointer]:
+            - /url: /en/agent
+            - text: AI Agent
+          - link "Auction Analysis" [ref=e29] [cursor=pointer]:
+            - /url: /en/auction
+            - text: Auction Analysis
+          - link "Field Inspection" [ref=e31] [cursor=pointer]:
+            - /url: /en/inspection
+            - text: Field Inspection
+          - link "Tax Simulation" [ref=e33] [cursor=pointer]:
+            - /url: /en/tax
+            - text: Tax Simulation
+          - link "Tenant Management" [ref=e35] [cursor=pointer]:
+            - /url: /en/tenant
+            - text: Tenant Management
+          - link "Real-time Collab" [ref=e37] [cursor=pointer]:
+            - /url: /en/webrtc
+            - text: Real-time Collab
+        - paragraph [ref=e40]: Analytics
+        - navigation "Analytics navigation" [ref=e41]:
+          - link "Investment/AVM" [ref=e42] [cursor=pointer]:
+            - /url: /en/analytics/investment
+          - link "ESG Dashboard" [ref=e43] [cursor=pointer]:
+            - /url: /en/analytics/esg
+          - link "Carbon/LCA" [ref=e44] [cursor=pointer]:
+            - /url: /en/analytics/carbon
+          - link "Cost/Indices" [ref=e45] [cursor=pointer]:
+            - /url: /en/analytics/cost
+          - link "IoT/Energy" [ref=e46] [cursor=pointer]:
+            - /url: /en/analytics/iot
+          - link "Market Insights" [ref=e47] [cursor=pointer]:
+            - /url: /en/market-insights
+          - link "Regulations" [ref=e48] [cursor=pointer]:
+            - /url: /en/regulations
+        - paragraph [ref=e50]: Operations
+        - navigation "Operations navigation" [ref=e51]:
+          - link "Digital Twin" [ref=e52] [cursor=pointer]:
+            - /url: /en/digital-twin
+          - link "Maintenance" [ref=e53] [cursor=pointer]:
+            - /url: /en/maintenance
+          - link "AI Safety" [ref=e54] [cursor=pointer]:
+            - /url: /en/safety
+          - link "Approval Ops" [ref=e55] [cursor=pointer]:
+            - /url: /en/approvals
+          - link "SRE Systems" [ref=e56] [cursor=pointer]:
+            - /url: /en/sre
+          - link "KDX Monitoring" [ref=e57] [cursor=pointer]:
+            - /url: /en/dashboard/kdx
+      - main [ref=e58]:
+        - generic [ref=e61]:
+          - generic [ref=e62]:
+            - generic [ref=e63]:
+              - paragraph [ref=e64]: Live monitoring
+              - heading "KDX Monitoring Center" [level=1] [ref=e65]
+              - paragraph [ref=e66]: Inspect the live KDX ingestion surface through persisted telemetry, latest metric snapshots, and the websocket property index stream.
+            - generic [ref=e67]: loading
+          - alert [ref=e68]:
+            - generic [ref=e69]:
+              - generic [ref=e70]:
+                - paragraph [ref=e71]: KDX overview is unavailable.
+                - paragraph [ref=e72]: The KDX live monitoring read model failed. Retry after restoring API connectivity or access token state.
+                - paragraph [ref=e73]: Failed to fetch
+              - button "Retry" [ref=e74]
+  - alert [ref=e75]
+```

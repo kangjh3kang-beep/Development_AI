@@ -37,7 +37,7 @@ describe("apiClient", () => {
     const { apiClient } = await loadApiClient();
 
     expect(apiClient.getRuntimeConfig()).toEqual({
-      apiBaseUrl: "http://localhost:8000/api/latest",
+      apiBaseUrl: "/api/proxy",
       useMocksByDefault: true,
       hasAccessToken: false,
       mode: "mock",
@@ -52,7 +52,7 @@ describe("apiClient", () => {
     window.localStorage.setItem("propai_access_token", "live-token");
 
     expect(apiClient.getRuntimeConfig()).toEqual({
-      apiBaseUrl: "http://localhost:8000/api/latest",
+      apiBaseUrl: "/api/proxy",
       useMocksByDefault: false,
       hasAccessToken: true,
       mode: "live",
@@ -96,7 +96,7 @@ describe("apiClient", () => {
     });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://localhost:8000/api/latest/tax/calculate",
+      "http://localhost:8000/api/v1/tax/calculate",
       expect.objectContaining({
         method: "POST",
         body: JSON.stringify({ taxable_value: 1200000000 }),

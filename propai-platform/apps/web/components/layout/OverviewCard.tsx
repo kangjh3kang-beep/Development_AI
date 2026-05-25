@@ -15,13 +15,13 @@ export function OverviewCard({ href, title, description }: OverviewCardProps) {
     >
       <Card className="h-full bg-[var(--surface-strong)] hover:bg-[var(--surface-soft)]">
         <CardContent className="p-6">
-          <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.76)]">
+          <p className="text-xs font-bold uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
             Module
           </p>
-          <h3 className="mt-4 text-xl font-semibold text-[var(--foreground)]">
+          <h3 className="mt-4 text-xl font-semibold text-[var(--text-primary)]">
             {title}
           </h3>
-          <p className="mt-3 text-sm leading-7 text-[rgba(19,33,47,0.78)]">
+          <p className="mt-3 text-sm leading-7 text-[var(--text-secondary)]">
             {description}
           </p>
         </CardContent>

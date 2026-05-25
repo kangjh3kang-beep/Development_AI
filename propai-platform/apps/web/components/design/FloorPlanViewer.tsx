@@ -20,17 +20,17 @@ export function FloorPlanViewer({ plan, labels }: FloorPlanViewerProps) {
       </CardHeader>
       <CardContent className="grid gap-5 pt-0">
         <div className="grid gap-5 xl:grid-cols-[1.2fr_0.8fr]">
-          <div className="rounded-[1.75rem] border border-[var(--line)] bg-[linear-gradient(180deg,rgba(19,33,47,0.05),rgba(14,116,144,0.08))] p-5">
-            <div className="grid min-h-[300px] grid-cols-3 gap-3 rounded-[1.5rem] border border-white/80 bg-white/78 p-3">
+          <div className="rounded-[var(--radius-xl)] border border-[var(--line)] bg-[linear-gradient(180deg,rgba(19,33,47,0.05),rgba(14,116,144,0.08))] p-5">
+            <div className="grid min-h-[300px] grid-cols-3 gap-3 rounded-[var(--radius-xl)] border border-white/80 bg-[var(--surface)] p-3">
               {plan.rooms.map((room, index) => (
                 <div
                   key={room}
-                  className={`rounded-[1.25rem] border border-[var(--line)] px-4 py-4 text-sm font-medium text-[rgba(19,33,47,0.76)] ${
+                  className={`rounded-[var(--radius-md)] border border-[var(--line)] px-4 py-4 text-sm font-medium text-[var(--text-secondary)] ${
                     index === 0
                       ? "col-span-2 bg-[rgba(14,116,144,0.12)]"
                       : index === plan.rooms.length - 1
                         ? "col-span-2 bg-[rgba(217,119,6,0.12)]"
-                        : "bg-[rgba(19,33,47,0.04)]"
+                        : "bg-[var(--surface-muted)]/40"
                   }`}
                 >
                   {room}
@@ -39,31 +39,31 @@ export function FloorPlanViewer({ plan, labels }: FloorPlanViewerProps) {
             </div>
           </div>
           <div className="grid gap-3">
-            <div className="rounded-[1.25rem] border border-[var(--line)] bg-white/80 px-4 py-4">
-              <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.48)]">
+            <div className="rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] px-4 py-4">
+              <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-hint)]">
                 {labels.statusTitle}
               </p>
-              <p className="mt-3 text-sm font-semibold text-[var(--foreground)]">
+              <p className="mt-3 text-sm font-semibold text-[var(--text-primary)]">
                 {labels.statusValue}
               </p>
             </div>
-            <div className="rounded-[1.25rem] border border-[var(--line)] bg-white/80 px-4 py-4">
-              <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.48)]">
+            <div className="rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] px-4 py-4">
+              <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-hint)]">
                 {labels.areaLabel}
               </p>
-              <p className="mt-3 text-sm font-semibold text-[rgba(19,33,47,0.78)]">
+              <p className="mt-3 text-sm font-semibold text-[var(--text-secondary)]">
                 {plan.areaLabel}
               </p>
             </div>
-            <div className="rounded-[1.25rem] border border-[var(--line)] bg-white/80 px-4 py-4">
-              <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.48)]">
+            <div className="rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] px-4 py-4">
+              <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-hint)]">
                 {labels.roomsLabel}
               </p>
               <ul className="mt-3 grid gap-2">
                 {plan.rooms.map((room) => (
                   <li
                     key={room}
-                    className="rounded-full bg-[rgba(19,33,47,0.05)] px-3 py-2 text-sm text-[rgba(19,33,47,0.74)]"
+                    className="rounded-full bg-[rgba(19,33,47,0.05)] px-3 py-2 text-sm text-[var(--text-secondary)]"
                   >
                     {room}
                   </li>
@@ -72,11 +72,11 @@ export function FloorPlanViewer({ plan, labels }: FloorPlanViewerProps) {
             </div>
           </div>
         </div>
-        <div className="rounded-[1.5rem] border border-[var(--line)] bg-white/80 px-5 py-4">
-          <p className="text-sm font-semibold text-[var(--foreground)]">
+        <div className="rounded-[var(--radius-xl)] border border-[var(--line)] bg-[var(--surface)] px-5 py-4">
+          <p className="text-sm font-semibold text-[var(--text-primary)]">
             {plan.name}
           </p>
-          <p className="text-sm leading-7 text-[rgba(19,33,47,0.76)]">
+          <p className="text-sm leading-7 text-[var(--text-secondary)]">
             {plan.summary}
           </p>
         </div>

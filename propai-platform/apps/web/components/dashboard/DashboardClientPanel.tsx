@@ -289,14 +289,14 @@ export function DashboardClientPanel({
         <CardContent className="p-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.64)]">
+            <p className="text-xs font-bold uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
               {summaryTitle}
             </p>
             <CardTitle className="mt-3 text-2xl">
               {labels.connectionTitle}
             </CardTitle>
           </div>
-          <span className="rounded-full border border-[var(--line)] px-4 py-2 text-sm font-medium text-[rgba(19,33,47,0.72)]">
+          <span className="rounded-full border border-[var(--line)] px-4 py-2 text-sm font-medium text-[var(--text-secondary)]">
             {online ? labels.onlineLabel : labels.offlineLabel}
           </span>
         </div>
@@ -324,11 +324,11 @@ export function DashboardClientPanel({
           {overviewQuery.data?.metrics.map((metric) => (
             <Card
               key={metric.id}
-              className="rounded-[1.5rem] bg-[var(--surface-soft)] shadow-none"
+              className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] shadow-none"
             >
               <CardContent className="p-5">
-                <p className="text-sm text-[rgba(19,33,47,0.74)]">{metric.label}</p>
-                <p className="mt-4 text-2xl font-semibold text-[var(--foreground)]">
+                <p className="text-sm text-[var(--text-secondary)]">{metric.label}</p>
+                <p className="mt-4 text-2xl font-semibold text-[var(--text-primary)]">
                   {metric.value}
                 </p>
               </CardContent>
@@ -339,7 +339,7 @@ export function DashboardClientPanel({
       </Card>
       <Card className="bg-[var(--surface-strong)]">
         <CardContent className="p-6">
-        <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.64)]">
+        <p className="text-xs font-bold uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
           {labels.sourceLabel}
         </p>
         <div className="mt-4 grid gap-3">
@@ -360,15 +360,15 @@ export function DashboardClientPanel({
           {integrationQuery.data?.channels.map((channel) => (
             <Card
               key={channel.id}
-              className="rounded-[1.25rem] bg-[var(--surface-soft)] shadow-none"
+              className="rounded-[var(--radius-md)] bg-[var(--surface-soft)] shadow-none"
             >
               <CardContent className="p-4">
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <p className="text-sm font-semibold text-[var(--foreground)]">
+                    <p className="text-sm font-semibold text-[var(--text-primary)]">
                       {channelLabelMap[channel.id]}
                     </p>
-                    <p className="mt-2 text-sm leading-6 text-[rgba(19,33,47,0.66)]">
+                    <p className="mt-2 text-sm leading-6 text-[var(--text-tertiary)]">
                       {channel.detail}
                     </p>
                   </div>
@@ -380,18 +380,18 @@ export function DashboardClientPanel({
             </Card>
           ))}
         </div>
-        <Card className="mt-5 rounded-[1.25rem] bg-[var(--surface-soft)] shadow-none">
+        <Card className="mt-5 rounded-[var(--radius-md)] bg-[var(--surface-soft)] shadow-none">
           <CardContent className="p-4">
-          <p className="text-sm text-[rgba(19,33,47,0.74)]">
+          <p className="text-sm text-[var(--text-secondary)]">
             {labels.featuredProjectLabel}
           </p>
           <div className="mt-3 flex items-center justify-between gap-3">
-            <p className="text-base font-semibold text-[var(--foreground)]">
+            <p className="text-base font-semibold text-[var(--text-primary)]">
               {featuredProjectId}
             </p>
             <Link
               href={`/${locale}/projects/${featuredProjectId}`}
-              className="rounded-full border border-[var(--line)] bg-[#ffffff] px-4 py-2 text-sm font-semibold text-[var(--foreground)] shadow-[0_8px_20px_rgba(19,33,47,0.08)]"
+              className="rounded-full border border-[var(--line)] bg-white px-4 py-2 text-sm font-semibold text-[var(--text-primary)] shadow-[var(--shadow-md)]"
             >
               {labels.openProjectLabel}
             </Link>

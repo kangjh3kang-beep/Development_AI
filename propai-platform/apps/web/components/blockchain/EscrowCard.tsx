@@ -41,67 +41,67 @@ export function EscrowCard({ locale, snapshot, labels }: EscrowCardProps) {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <CardTitle>{labels.title}</CardTitle>
-            <p className="mt-2 text-sm leading-7 text-[rgba(19,33,47,0.72)]">
+            <p className="mt-2 text-sm leading-7 text-[var(--text-secondary)]">
               {labels.description}
             </p>
           </div>
-          <span className="rounded-full bg-[var(--surface-soft)] px-4 py-2 text-sm font-medium text-[var(--foreground)]">
+          <span className="rounded-full bg-[var(--surface-soft)] px-4 py-2 text-sm font-medium text-[var(--text-primary)]">
             {labels.stateLabels[snapshot.state]}
           </span>
         </div>
       </CardHeader>
       <CardContent className="grid gap-5 pt-0 xl:grid-cols-[1.05fr_0.95fr]">
         <div className="grid gap-3 md:grid-cols-2">
-          <div className="rounded-[1.25rem] border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-4">
-            <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.54)]">
+          <div className="rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-4">
+            <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
               {labels.balanceLabel}
             </p>
-            <p className="mt-3 text-lg font-semibold text-[var(--foreground)]">
+            <p className="mt-3 text-lg font-semibold text-[var(--text-primary)]">
               {formatCurrency(locale, snapshot.balance)}
             </p>
           </div>
-          <div className="rounded-[1.25rem] border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-4">
-            <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.54)]">
+          <div className="rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-4">
+            <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
               {labels.feeLabel}
             </p>
-            <p className="mt-3 text-lg font-semibold text-[var(--foreground)]">
+            <p className="mt-3 text-lg font-semibold text-[var(--text-primary)]">
               {snapshot.feeBps / 100}%
             </p>
           </div>
-          <div className="rounded-[1.25rem] border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-4">
-            <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.54)]">
+          <div className="rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-4">
+            <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
               {labels.expiresAtLabel}
             </p>
-            <p className="mt-3 text-sm font-medium text-[rgba(19,33,47,0.78)]">
+            <p className="mt-3 text-sm font-medium text-[var(--text-secondary)]">
               {formatDate(locale, snapshot.expiresAt)}
             </p>
           </div>
-          <div className="rounded-[1.25rem] border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-4">
-            <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.54)]">
+          <div className="rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-4">
+            <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
               {labels.subcontractorLabel}
             </p>
-            <p className="mt-3 text-sm font-medium text-[rgba(19,33,47,0.78)]">
+            <p className="mt-3 text-sm font-medium text-[var(--text-secondary)]">
               {snapshot.subcontractor}
             </p>
           </div>
-          <div className="rounded-[1.25rem] border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-4 md:col-span-2">
-            <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.54)]">
+          <div className="rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-4 md:col-span-2">
+            <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
               {labels.milestoneLabel}
             </p>
-            <p className="mt-3 text-sm leading-7 text-[rgba(19,33,47,0.78)]">
+            <p className="mt-3 text-sm leading-7 text-[var(--text-secondary)]">
               {snapshot.milestone}
             </p>
           </div>
-          <div className="rounded-[1.25rem] border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-4 md:col-span-2">
-            <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.54)]">
+          <div className="rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-4 md:col-span-2">
+            <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
               {labels.contractLabel}
             </p>
-            <p className="mt-3 font-mono text-sm text-[rgba(19,33,47,0.78)]">
+            <p className="mt-3 font-mono text-sm text-[var(--text-secondary)]">
               {snapshot.contractAddress}
             </p>
           </div>
-          <div className="rounded-[1.25rem] border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-4 md:col-span-2">
-            <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.54)]">
+          <div className="rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-4 md:col-span-2">
+            <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
               {labels.txLabel}
             </p>
             <a
@@ -114,25 +114,25 @@ export function EscrowCard({ locale, snapshot, labels }: EscrowCardProps) {
             </a>
           </div>
         </div>
-        <div className="rounded-[1.5rem] border border-[var(--line)] bg-[var(--surface-soft)] px-5 py-5">
-          <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.54)]">
+        <div className="rounded-[var(--radius-xl)] border border-[var(--line)] bg-[var(--surface-soft)] px-5 py-5">
+          <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
             {labels.eventsTitle}
           </p>
           <ol className="mt-4 grid gap-3">
             {snapshot.events.map((event, index) => (
               <li
                 key={event.id}
-                className="rounded-[1.15rem] border border-[var(--line)] bg-[#ffffff] px-4 py-4"
+                className="rounded-[1.15rem] border border-[var(--line)] bg-white px-4 py-4"
               >
                 <div className="flex items-center gap-3">
                   <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[var(--foreground)] text-xs font-semibold text-[#ffffff]">
                     {index + 1}
                   </span>
-                  <p className="text-sm font-semibold text-[var(--foreground)]">
+                  <p className="text-sm font-semibold text-[var(--text-primary)]">
                     {event.title}
                   </p>
                 </div>
-                <p className="mt-3 text-xs text-[rgba(19,33,47,0.56)]">
+                <p className="mt-3 text-xs text-[var(--text-tertiary)]">
                   {formatDate(locale, event.time)}
                 </p>
               </li>

@@ -1,0 +1,62 @@
+# Page snapshot
+
+```yaml
+- generic [active] [ref=e1]:
+  - status "Screen change announcement region" [ref=e2]
+  - link "Skip to content" [ref=e3] [cursor=pointer]:
+    - /url: "#main-content"
+  - main [ref=e5]:
+    - generic [ref=e6]:
+      - generic [ref=e8]:
+        - generic [ref=e9]:
+          - generic [ref=e10]: AUTH / LIVE
+          - generic [ref=e11]:
+            - heading "Live authentication workspace" [level=1] [ref=e12]
+            - paragraph [ref=e13]: "Login and tenant-admin onboarding now run against the real `/auth` API instead of placeholder screens."
+        - generic [ref=e14]:
+          - button "Login" [pressed] [ref=e15]
+          - button "Register admin" [ref=e16]
+        - generic [ref=e17]:
+          - generic [ref=e18]:
+            - paragraph [ref=e19]: Login
+            - paragraph [ref=e20]: Issue a JWT session for an existing account.
+          - generic [ref=e21]:
+            - generic [ref=e22]:
+              - generic [ref=e23]: Email
+              - textbox "Email" [ref=e24]:
+                - /placeholder: operator@company.com
+                - text: ops@propai.dev
+            - generic [ref=e25]:
+              - generic [ref=e26]: Password
+              - textbox "Password" [ref=e27]:
+                - /placeholder: "********"
+                - text: super-secret-password
+            - button "Run login" [ref=e28]
+          - status [ref=e29]: Failed to fetch
+        - generic [ref=e30]:
+          - generic [ref=e31]: Alternative path
+          - link "Create a new tenant" [ref=e32] [cursor=pointer]:
+            - /url: /en/register
+      - generic [ref=e33]:
+        - generic [ref=e35]:
+          - heading "Runtime connection" [level=3] [ref=e36]
+          - paragraph [ref=e37]: The auth surface prefers live API calls without a mock fallback and refreshes browser tokens immediately after success.
+          - generic [ref=e38]:
+            - generic [ref=e39]:
+              - term [ref=e40]: Workspace mode
+              - definition [ref=e41]: LIVE
+            - generic [ref=e42]:
+              - term [ref=e43]: API Base URL
+              - definition [ref=e44]: /api/proxy
+            - generic [ref=e45]:
+              - term [ref=e46]: Stored access token
+              - definition [ref=e47]: Missing
+            - generic [ref=e48]:
+              - term [ref=e49]: Stored refresh token
+              - definition [ref=e50]: Missing
+        - generic [ref=e52]:
+          - heading "Authenticated session" [level=3] [ref=e53]
+          - paragraph [ref=e54]: "After login or registration, the client re-reads `/auth/me` to validate the active profile."
+          - paragraph [ref=e56]: No authenticated session is currently available.
+  - alert [ref=e57]
+```

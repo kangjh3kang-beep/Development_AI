@@ -95,6 +95,7 @@ export function FeasibilityWorkspaceClient() {
   const [formState, setFormState] = useState(DEFAULT_FORM);
   const [submissionError, setSubmissionError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
   const [report, setReport] = useState<FeasibilityAnalysisResponse | null>(null);
 
   const projectsQuery = useQuery({
@@ -184,6 +185,51 @@ export function FeasibilityWorkspaceClient() {
     }
   }
 
+  async function handleExportExcel() {
+    setIsExporting(true);
+    try {
+      const res = await fetch(
+        `${process.env.NEXT_PUBLIC_API_URL || ""}/api/v2/feasibility/export-excel`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            development_type: "공동주택",
+            project_name: "Excel Export",
+            total_land_area_sqm: 3000,
+            land_category: "대",
+            official_price_per_sqm: 5000000,
+            price_multiplier: 1.2,
+            total_gfa_sqm: Number(formState.totalInvestmentKrw) / 5000000 || 10000,
+            building_type: "아파트",
+            total_households: 100,
+            avg_sale_price_per_pyeong: 30000000,
+            avg_area_pyeong: 25,
+            sale_ratio: 1.0,
+            sido_name: "서울특별시",
+            sigungu_name: "강남구",
+            project_months: Number(formState.analysisYears) * 12 || 36,
+            discount_rate: Number(formState.discountRate) || 0.05,
+          }),
+        },
+      );
+      if (!res.ok) throw new Error("Excel 내보내기 실패");
+      const blob = await res.blob();
+      const contentType = res.headers.get("Content-Type") || "";
+      const ext = contentType.includes("spreadsheet") ? "xlsx" : "csv";
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `feasibility_report.${ext}`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      setSubmissionError("Excel 내보내기에 실패했습니다.");
+    } finally {
+      setIsExporting(false);
+    }
+  }
+
   return (
     <div className="min-h-screen bg-slate-50 p-6 font-sans dark:bg-slate-950 md:p-10">
       <div className="mx-auto max-w-6xl space-y-6">
@@ -215,7 +261,7 @@ export function FeasibilityWorkspaceClient() {
         ) : null}
 
         <div className="grid gap-6 lg:grid-cols-[0.9fr_1.1fr]">
-          <Card className="rounded-[1.5rem] border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+          <Card className="rounded-[var(--radius-xl)] border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
             <CardContent className="p-6">
               <CardTitle className="text-xl text-slate-900 dark:text-slate-100">
                 Scenario inputs
@@ -353,9 +399,19 @@ export function FeasibilityWorkspaceClient() {
                   </div>
                 ) : null}
 
-                <Button type="submit" disabled={isSubmitting || projectsQuery.isLoading}>
-                  {isSubmitting ? "Analyzing..." : "Run live feasibility"}
-                </Button>
+                <div className="flex gap-2">
+                  <Button type="submit" disabled={isSubmitting || projectsQuery.isLoading} className="flex-1">
+                    {isSubmitting ? "Analyzing..." : "Run live feasibility"}
+                  </Button>
+                  <Button
+                    type="button"
+                    disabled={isExporting}
+                    onClick={handleExportExcel}
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                  >
+                    {isExporting ? "Exporting..." : "Excel"}
+                  </Button>
+                </div>
               </form>
             </CardContent>
           </Card>
@@ -376,15 +432,15 @@ export function FeasibilityWorkspaceClient() {
             {report ? (
               <>
                 <div className="grid gap-4 md:grid-cols-4">
-                  <Card className="rounded-[1.5rem] border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+                  <Card className="rounded-[var(--radius-xl)] border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
                     <CardContent className="p-6">
                       <p className="text-sm text-slate-500 dark:text-slate-400">NPV</p>
-                      <p className="mt-3 text-2xl font-bold text-blue-600 dark:text-blue-400">
+                      <p className="mt-3 text-2xl font-bold text-[var(--accent-strong)]">
                         {formatKrw(report.npv)}
                       </p>
                     </CardContent>
                   </Card>
-                  <Card className="rounded-[1.5rem] border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+                  <Card className="rounded-[var(--radius-xl)] border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
                     <CardContent className="p-6">
                       <p className="text-sm text-slate-500 dark:text-slate-400">IRR</p>
                       <p className="mt-3 text-2xl font-bold text-emerald-600 dark:text-emerald-400">
@@ -392,7 +448,7 @@ export function FeasibilityWorkspaceClient() {
                       </p>
                     </CardContent>
                   </Card>
-                  <Card className="rounded-[1.5rem] border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+                  <Card className="rounded-[var(--radius-xl)] border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
                     <CardContent className="p-6">
                       <p className="text-sm text-slate-500 dark:text-slate-400">Payback</p>
                       <p className="mt-3 text-2xl font-bold text-orange-500">
@@ -400,7 +456,7 @@ export function FeasibilityWorkspaceClient() {
                       </p>
                     </CardContent>
                   </Card>
-                  <Card className="rounded-[1.5rem] border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+                  <Card className="rounded-[var(--radius-xl)] border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
                     <CardContent className="p-6">
                       <p className="text-sm text-slate-500 dark:text-slate-400">Risk score</p>
                       <p className="mt-3 text-2xl font-bold text-slate-900 dark:text-slate-100">
@@ -410,7 +466,7 @@ export function FeasibilityWorkspaceClient() {
                   </Card>
                 </div>
 
-                <Card className="rounded-[1.5rem] border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+                <Card className="rounded-[var(--radius-xl)] border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
                   <CardContent className="p-6">
                     <CardTitle className="text-lg text-slate-900 dark:text-slate-100">
                       Cashflow scenario
@@ -435,7 +491,7 @@ export function FeasibilityWorkspaceClient() {
             ) : latestReportQuery.isLoading ? (
               <SkeletonLoader count={2} itemClassName="h-40" />
             ) : (
-              <Card className="rounded-[1.5rem] border-dashed border-slate-300 bg-white/80 shadow-none dark:border-slate-700 dark:bg-slate-900/70">
+              <Card className="rounded-[var(--radius-xl)] border-dashed border-slate-300 bg-[var(--surface)] shadow-none dark:border-slate-700 dark:bg-slate-900/70">
                 <CardContent className="p-8 text-center">
                   <CardTitle className="text-lg text-slate-900 dark:text-slate-100">
                     No feasibility snapshot yet

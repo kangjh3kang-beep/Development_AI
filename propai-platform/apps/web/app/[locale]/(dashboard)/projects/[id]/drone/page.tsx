@@ -25,17 +25,13 @@ export default async function DronePage({ params }: DronePageProps) {
 
   return (
     <div className="grid gap-6">
-      <ModulePlaceholder
-        eyebrow="PROJECT / DRONE"
-        title="Project drone live route"
-        description="Use the routed project id to run persisted drone inspection against the live image-based defect detection API."
+            <ModulePlaceholder
+        eyebrow={dictionary.modulePlaceholders["drone"].eyebrow}
+        title={dictionary.modulePlaceholders["drone"].title}
+        description={dictionary.modulePlaceholders["drone"].description}
         statusLabel={runtimeMode}
         localeLabel={locale}
-        items={[
-          "Load the current project context from GET /projects/{id}",
-          "Submit POST /drone/inspect from the project detail route",
-          "Review persisted defect counts, severity summary, and detected issues",
-        ]}
+        items={dictionary.modulePlaceholders["drone"].items}
       />
       <ProjectDroneWorkspaceClient locale={locale as Locale} projectId={id} />
     </div>

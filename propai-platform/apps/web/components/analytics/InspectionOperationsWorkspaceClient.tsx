@@ -72,6 +72,7 @@ type Labels = {
   projectLoadErrorTitle: string;
   projectLoadErrorDetail: string;
   retryAction: string;
+  resultPlaceholder: string;
 };
 
 const LABELS: Record<Locale, Labels> = {
@@ -103,6 +104,7 @@ const LABELS: Record<Locale, Labels> = {
     projectLoadErrorDetail:
       "점검 대상 프로젝트 목록을 불러오지 못했습니다. 기존 UUID 수동 입력은 계속 사용할 수 있습니다.",
     retryAction: "다시 시도",
+    resultPlaceholder: "라이브 프로젝트를 선택하고 이미지 URL을 제출하여 `drone/inspect` 응답 체인을 검증하세요.",
   },
   en: {
     heroTitle: "Inspection live workspace",
@@ -132,6 +134,7 @@ const LABELS: Record<Locale, Labels> = {
     projectLoadErrorDetail:
       "The inspection workspace could not load the live project picker. Manual UUID input remains available.",
     retryAction: "Retry",
+    resultPlaceholder: "Select a live project and submit image URLs to validate the persisted `drone/inspect` response chain.",
   },
   "zh-CN": {
     heroTitle: "现场检查实时工作台",
@@ -160,6 +163,7 @@ const LABELS: Record<Locale, Labels> = {
     projectLoadErrorDetail:
       "检查工作台无法加载实时项目列表，但仍可继续手动输入项目 UUID。",
     retryAction: "重试",
+    resultPlaceholder: "选择实时项目并提交图像 URL，以验证持久化的 `drone/inspect` 响应链。",
   },
 };
 
@@ -171,12 +175,13 @@ function formatDate(locale: string, value: string) {
 }
 
 function extractErrorMessage(error: unknown, authMessage: string) {
-  if (error instanceof ApiClientError) {
-    if (error.status === 401 || error.status === 403) {
+  if (error && typeof error === "object" && "status" in error) {
+    const status = (error as { status: number }).status;
+    if (status === 401 || status === 403) {
       return authMessage;
     }
 
-    return `API request failed with status ${error.status}.`;
+    return `API request failed with status ${status}.`;
   }
 
   if (error instanceof Error) {
@@ -191,7 +196,13 @@ export function InspectionOperationsWorkspaceClient({
 }: {
   locale: Locale;
 }) {
+  const [isMounted, setIsMounted] = useState(false);
   const labels = LABELS[locale];
+  
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
+
   const runtimeConfig = apiClient.getRuntimeConfig();
   const canUseLiveApi =
     runtimeConfig.mode === "live" || runtimeConfig.hasAccessToken;
@@ -272,34 +283,38 @@ export function InspectionOperationsWorkspaceClient({
     }
   }
 
+  if (!isMounted) {
+    return <SkeletonLoader count={3} />;
+  }
+
   return (
     <section className="grid gap-6">
-      <Card className="rounded-[2rem] bg-[var(--surface-strong)] shadow-[0_20px_60px_rgba(19,33,47,0.08)]">
+      <Card className="rounded-[var(--radius-2xl)] bg-[var(--surface-strong)] shadow-[var(--shadow-lg)]">
         <CardContent className="p-8">
           <div className="flex flex-wrap items-center gap-3">
             <span className="rounded-full bg-[rgba(14,116,144,0.1)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--accent-strong)]">
               {labels.heroTitle}
             </span>
-            <span className="rounded-full border border-[var(--line)] px-4 py-2 text-xs font-medium text-[rgba(19,33,47,0.7)]">
+            <span className="rounded-full border border-[var(--line)] px-4 py-2 text-xs font-medium text-[var(--text-secondary)]">
               {runtimeConfig.mode === "live" ? "LIVE" : "HYBRID"}
             </span>
           </div>
-          <h3 className="mt-5 text-3xl font-bold text-[var(--foreground)]">
+          <h3 className="mt-5 text-3xl font-bold text-[var(--text-primary)]">
             {labels.heroDescription}
           </h3>
-          <p className="mt-4 max-w-3xl text-sm leading-8 text-[rgba(19,33,47,0.72)]">
+          <p className="mt-4 max-w-3xl text-sm leading-8 text-[var(--text-secondary)]">
             {labels.heroHint}
           </p>
-          <p className="mt-3 max-w-3xl text-sm leading-8 text-[rgba(19,33,47,0.6)]">
+          <p className="mt-3 max-w-3xl text-sm leading-8 text-[var(--text-tertiary)]">
             {labels.tokenHint}
           </p>
           {!canUseLiveApi ? (
-            <div className="mt-6 rounded-[1.5rem] border border-dashed border-[var(--line)] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[rgba(19,33,47,0.72)]">
+            <div className="mt-6 rounded-[var(--radius-xl)] border border-dashed border-[var(--line)] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[var(--text-secondary)]">
               {labels.authError}
             </div>
           ) : null}
           {workspaceError ? (
-            <div className="mt-6 rounded-[1.5rem] border border-[rgba(217,119,6,0.28)] bg-[rgba(217,119,6,0.08)] p-5 text-sm leading-7 text-[var(--spot)]">
+            <div className="mt-6 rounded-[var(--radius-xl)] border border-[rgba(217,119,6,0.28)] bg-[rgba(217,119,6,0.08)] p-5 text-sm leading-7 text-[var(--spot)]">
               {workspaceError}
             </div>
           ) : null}
@@ -310,7 +325,7 @@ export function InspectionOperationsWorkspaceClient({
         <CardContent className="grid gap-5 p-6 lg:grid-cols-[1.3fr_0.7fr]">
           <div className="grid gap-3">
             <div>
-              <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.5)]">
+              <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
                 {labels.projectTitle}
               </p>
               <CardTitle className="mt-2 text-xl">
@@ -359,23 +374,23 @@ export function InspectionOperationsWorkspaceClient({
               placeholder={labels.manualProjectIdLabel}
             />
           </div>
-          <div className="rounded-[1.5rem] bg-[var(--surface-soft)] p-5">
-            <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.5)]">
+          <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
+            <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
               {labels.selectedProjectLabel}
             </p>
-            <p className="mt-3 text-sm font-semibold text-[var(--foreground)]">
+            <p className="mt-3 text-sm font-semibold text-[var(--text-primary)]">
               {selectedProject?.name ?? "-"}
             </p>
-            <p className="mt-2 break-all text-xs text-[rgba(19,33,47,0.56)]">
+            <p className="mt-2 break-all text-xs text-[var(--text-tertiary)]">
               {activeProjectId || "-"}
             </p>
             {selectedProject?.address ? (
-              <p className="mt-3 text-sm text-[rgba(19,33,47,0.72)]">
+              <p className="mt-3 text-sm text-[var(--text-secondary)]">
                 {selectedProject.address}
               </p>
             ) : null}
             {selectedProject ? (
-              <p className="mt-2 text-xs text-[rgba(19,33,47,0.56)]">
+              <p className="mt-2 text-xs text-[var(--text-tertiary)]">
                 {selectedProject.status} ·{" "}
                 {formatDate(locale, selectedProject.updated_at)}
               </p>
@@ -387,7 +402,7 @@ export function InspectionOperationsWorkspaceClient({
       <div className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
         <Card>
           <CardContent className="p-6">
-            <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.5)]">
+            <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
               {labels.inspectTitle}
             </p>
             <form className="mt-5 grid gap-3" onSubmit={handleInspect}>
@@ -401,7 +416,7 @@ export function InspectionOperationsWorkspaceClient({
                 }
                 placeholder={labels.flightIdLabel}
               />
-              <label className="grid gap-2 text-sm font-medium text-[rgba(19,33,47,0.78)]">
+              <label className="grid gap-2 text-sm font-medium text-[var(--text-secondary)]">
                 <span>{labels.imageUrlsLabel}</span>
                 <textarea
                   value={form.imageUrls}
@@ -411,7 +426,7 @@ export function InspectionOperationsWorkspaceClient({
                       imageUrls: event.target.value,
                     }))
                   }
-                  className="min-h-36 rounded-[1rem] border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-3 text-sm text-[var(--foreground)] outline-none transition placeholder:text-[rgba(19,33,47,0.4)] focus:border-[var(--accent)]"
+                  className="min-h-36 rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-3 text-sm text-[var(--text-primary)] outline-none transition placeholder:text-[var(--text-hint)] focus:border-[var(--accent)]"
                 />
               </label>
               <Button type="submit" disabled={!canUseLiveApi || isInspecting}>
@@ -445,27 +460,27 @@ export function InspectionOperationsWorkspaceClient({
                     value={formatDate(locale, result.created_at)}
                   />
                 </div>
-                <div className="rounded-[1.5rem] bg-[var(--surface-soft)] p-5">
-                  <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.5)]">
+                <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
+                  <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
                     {labels.severityLabel}
                   </p>
                   <div className="mt-3 grid gap-3 md:grid-cols-2">
                     {Object.entries(result.severity_summary).map(([key, value]) => (
                       <div
                         key={key}
-                        className="rounded-[1rem] border border-[var(--line)] bg-white/75 px-4 py-3 text-sm text-[rgba(19,33,47,0.72)]"
+                        className="rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] px-4 py-3 text-sm text-[var(--text-secondary)]"
                       >
                         {key}: {value}
                       </div>
                     ))}
                   </div>
                 </div>
-                <div className="rounded-[1.5rem] bg-[var(--surface-soft)] p-5">
-                  <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.5)]">
+                <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
+                  <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
                     {labels.detectedDefectsLabel}
                   </p>
                   {result.defects.length ? (
-                    <ul className="mt-3 space-y-2 text-sm leading-7 text-[rgba(19,33,47,0.72)]">
+                    <ul className="mt-3 space-y-2 text-sm leading-7 text-[var(--text-secondary)]">
                       {result.defects.map((item, index) => (
                         <li key={`${item.defect_type}-${index}`}>
                           • {item.defect_type ?? "unknown"} /{" "}
@@ -477,16 +492,15 @@ export function InspectionOperationsWorkspaceClient({
                       ))}
                     </ul>
                   ) : (
-                    <p className="mt-3 text-sm leading-7 text-[rgba(19,33,47,0.62)]">
+                    <p className="mt-3 text-sm leading-7 text-[var(--text-tertiary)]">
                       -
                     </p>
                   )}
                 </div>
               </div>
             ) : (
-              <div className="rounded-[1.5rem] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[rgba(19,33,47,0.68)]">
-                Select a live project and submit image URLs to validate the persisted
-                `drone/inspect` response chain.
+              <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[var(--text-secondary)]">
+                {labels.resultPlaceholder}
               </div>
             )}
           </CardContent>
@@ -504,11 +518,11 @@ function MetricTile({
   value: string;
 }) {
   return (
-    <div className="rounded-[1.5rem] bg-[var(--surface-soft)] p-5">
-      <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.5)]">
+    <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
+      <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
         {label}
       </p>
-      <p className="mt-3 text-xl font-semibold text-[var(--foreground)]">
+      <p className="mt-3 text-xl font-semibold text-[var(--text-primary)]">
         {value}
       </p>
     </div>

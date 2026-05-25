@@ -27,17 +27,13 @@ export default async function BlockchainPage({
 
   return (
     <div className="grid gap-6">
-      <ModulePlaceholder
-        eyebrow="PROJECT / BLOCKCHAIN"
-        title="Project blockchain live route"
-        description="Use the routed project id to inspect next escrow state, create an escrow record, and query on-chain status through the live blockchain APIs."
+            <ModulePlaceholder
+        eyebrow={dictionary.modulePlaceholders["blockchain"].eyebrow}
+        title={dictionary.modulePlaceholders["blockchain"].title}
+        description={dictionary.modulePlaceholders["blockchain"].description}
         statusLabel={runtimeMode}
         localeLabel={locale}
-        items={[
-          "Load the current project context from GET /projects/{id}",
-          "Read GET /blockchain/escrow/next-id and create POST /blockchain/escrow records",
-          "Query GET /blockchain/escrow/{id} for project-scoped escrow status review",
-        ]}
+        items={dictionary.modulePlaceholders["blockchain"].items}
       />
       <ProjectBlockchainWorkspaceClient
         locale={locale as Locale}

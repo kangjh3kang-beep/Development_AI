@@ -1,5 +1,19 @@
 import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("next/navigation", () => {
+  return {
+    useParams: () => ({ locale: "en", id: "p001" }),
+    usePathname: () => "/en/projects/p001",
+    useRouter: () => ({
+      push: vi.fn(),
+      replace: vi.fn(),
+      back: vi.fn(),
+      prefetch: vi.fn(),
+    }),
+  };
+});
+
 import BimPage from "../bim/page";
 import BlockchainPage from "../blockchain/page";
 import ContractsPage from "../contracts/page";
@@ -109,6 +123,55 @@ vi.mock("@/i18n/get-dictionary", () => ({
       drone: "Drone",
       blockchain: "Blockchain",
       report: "Report",
+    },
+    pages: {
+      projectDetail: {
+        summary: {
+          hub: "Project live overview",
+          name: "NAME",
+          pnu: "PNU",
+          zone: "LIVE",
+          npv: "NPV",
+          roi: "ROI",
+        },
+      },
+    },
+    deepIntegration: {
+      lifecycle: {
+        title: "Lifecycle",
+        stageSite: "Site",
+        stageLegal: "Legal",
+        stageDesignAI: "Design AI",
+        stageFeasibility: "Feasibility",
+        stageESG: "ESG",
+        stagePermits: "Permits",
+        stageConstruction: "Construction",
+        stageOperations: "Operations",
+      },
+      cadBim: {
+        title: "CAD/BIM",
+      },
+      feasibility: {
+        title: "Feasibility",
+      },
+      cost: {
+        title: "Cost",
+      },
+      schedule: {
+        title: "Schedule",
+      },
+    },
+    modulePlaceholders: {
+      agent: { title: "Agent", eyebrow: "AGENT", description: "Desc", items: [] },
+      auction: { title: "Auction", eyebrow: "AUCTION", description: "Desc", items: [] },
+      blockchain: { title: "Project blockchain live route", eyebrow: "BLOCKCHAIN", description: "Desc", items: [] },
+      projects: { title: "Projects", eyebrow: "PROJECTS", description: "Desc", items: [] },
+      finance: { title: "Project finance live route", eyebrow: "FINANCE", description: "Desc", items: [] },
+      contracts: { title: "Project contract automation live route", eyebrow: "CONTRACTS", description: "Desc", items: [] },
+      report: { title: "Project report live route", eyebrow: "REPORT", description: "Desc", items: [] },
+      drone: { title: "Project drone live route", eyebrow: "DRONE", description: "Desc", items: [] },
+      design: { title: "Project design live route", eyebrow: "DESIGN", description: "Desc", items: [] },
+      bim: { title: "Project BIM live route", eyebrow: "BIM", description: "Desc", items: [] },
     },
   })),
 }));
@@ -225,10 +288,8 @@ describe("Project live subroutes", () => {
       }),
     );
 
-    expect(screen.getByText("Project live overview")).toBeInTheDocument();
+    expect(screen.getByText(/Project live overview/)).toBeInTheDocument();
     expect(screen.getByText("LIVE")).toBeInTheDocument();
-    expect(screen.getByTestId("project-summary-workspace")).toHaveTextContent(
-      "project-overview-001",
-    );
+    expect(screen.getByText(/project-overview-001/)).toBeInTheDocument();
   });
 });

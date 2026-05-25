@@ -52,7 +52,7 @@ export function AgentTimeline({
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <CardTitle>{labels.title}</CardTitle>
-            <p className="mt-2 text-sm leading-7 text-[rgba(19,33,47,0.72)]">
+            <p className="mt-2 text-sm leading-7 text-[var(--text-secondary)]">
               {labels.description}
             </p>
           </div>
@@ -62,14 +62,14 @@ export function AgentTimeline({
         </div>
       </CardHeader>
       <CardContent className="grid gap-5 pt-0 xl:grid-cols-[0.95fr_1.05fr]">
-        <div className="rounded-[1.5rem] border border-[var(--line)] bg-[var(--surface-soft)] px-5 py-5">
-          <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.54)]">
+        <div className="rounded-[var(--radius-xl)] border border-[var(--line)] bg-[var(--surface-soft)] px-5 py-5">
+          <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
             {labels.connectionTitle}
           </p>
-          <p className="mt-3 text-lg font-semibold text-[var(--foreground)]">
+          <p className="mt-3 text-lg font-semibold text-[var(--text-primary)]">
             {labels.connectionLabels[connection]}
           </p>
-          <p className="mt-2 text-sm text-[rgba(19,33,47,0.64)]">
+          <p className="mt-2 text-sm text-[var(--text-tertiary)]">
             {labels.updatedAtLabel}: {formatDate(locale, snapshot.lastEventAt)}
           </p>
         </div>
@@ -86,7 +86,7 @@ export function AgentTimeline({
                       ? "bg-[var(--accent)] text-[#ffffff]"
                       : stage.status === "active"
                         ? "bg-[var(--spot)] text-[#ffffff]"
-                        : "bg-[var(--surface-muted)] text-[var(--foreground)]"
+                        : "bg-[var(--surface-muted)] text-[var(--text-primary)]"
                   }`}
                 >
                   {index + 1}
@@ -94,17 +94,17 @@ export function AgentTimeline({
               </div>
               <div>
                 <div className="flex flex-wrap items-center gap-3">
-                  <p className="text-sm font-semibold text-[var(--foreground)]">
+                  <p className="text-sm font-semibold text-[var(--text-primary)]">
                     {stage.title}
                   </p>
-                  <span className="rounded-full bg-[#ffffff] px-3 py-1 text-xs font-medium text-[rgba(19,33,47,0.72)]">
+                  <span className="rounded-full bg-white px-3 py-1 text-xs font-medium text-[var(--text-secondary)]">
                     {labels.statusLabels[stage.status]}
                   </span>
                 </div>
-                <p className="mt-3 text-sm leading-7 text-[rgba(19,33,47,0.76)]">
+                <p className="mt-3 text-sm leading-7 text-[var(--text-secondary)]">
                   {stage.detail}
                 </p>
-                <p className="mt-3 text-xs text-[rgba(19,33,47,0.56)]">
+                <p className="mt-3 text-xs text-[var(--text-tertiary)]">
                   {labels.updatedAtLabel}: {formatDate(locale, stage.updatedAt)}
                 </p>
               </div>

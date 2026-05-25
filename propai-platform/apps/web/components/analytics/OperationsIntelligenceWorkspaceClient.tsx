@@ -363,7 +363,13 @@ export function OperationsIntelligenceWorkspaceClient({
   sections?: WorkspaceSection[];
   showHero?: boolean;
 }) {
+  const [isMounted, setIsMounted] = useState(false);
   const labels = LABELS[locale];
+  
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
+
   const runtimeConfig = apiClient.getRuntimeConfig();
   const canUseLiveApi =
     runtimeConfig.mode === "live" || runtimeConfig.hasAccessToken;
@@ -570,46 +576,50 @@ export function OperationsIntelligenceWorkspaceClient({
     }
   }
 
+  if (!isMounted) {
+    return <SkeletonLoader count={3} />;
+  }
+
   return (
     <section className="grid gap-6">
       {showHero ? (
-        <Card className="rounded-[2rem] bg-[var(--surface-strong)] shadow-[0_20px_60px_rgba(19,33,47,0.08)]">
+        <Card className="rounded-[var(--radius-2xl)] bg-[var(--surface-strong)] shadow-[var(--shadow-lg)]">
           <CardContent className="p-8">
             <div className="flex flex-wrap items-center gap-3">
               <span className="rounded-full bg-[rgba(14,116,144,0.1)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--accent-strong)]">
                 {labels.heroTitle}
               </span>
-              <span className="rounded-full border border-[var(--line)] px-4 py-2 text-xs font-medium text-[rgba(19,33,47,0.7)]">
+              <span className="rounded-full border border-[var(--line)] px-4 py-2 text-xs font-medium text-[var(--text-secondary)]">
                 {runtimeConfig.mode === "live" ? "LIVE" : "HYBRID"}
               </span>
             </div>
-            <h3 className="mt-5 text-3xl font-bold text-[var(--foreground)]">
+            <h3 className="mt-5 text-3xl font-bold text-[var(--text-primary)]">
               {labels.heroDescription}
             </h3>
-            <p className="mt-4 max-w-3xl text-sm leading-8 text-[rgba(19,33,47,0.72)]">
+            <p className="mt-4 max-w-3xl text-sm leading-8 text-[var(--text-secondary)]">
               {labels.heroHint}
             </p>
-            <p className="mt-3 max-w-3xl text-sm leading-8 text-[rgba(19,33,47,0.6)]">
+            <p className="mt-3 max-w-3xl text-sm leading-8 text-[var(--text-tertiary)]">
               {labels.tokenHint}
             </p>
             {!canUseLiveApi ? (
-              <div className="mt-6 rounded-[1.5rem] border border-dashed border-[var(--line)] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[rgba(19,33,47,0.72)]">
+              <div className="mt-6 rounded-[var(--radius-xl)] border border-dashed border-[var(--line)] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[var(--text-secondary)]">
                 {labels.authError}
               </div>
             ) : null}
             {workspaceError ? (
-              <div className="mt-6 rounded-[1.5rem] border border-[rgba(217,119,6,0.28)] bg-[rgba(217,119,6,0.08)] p-5 text-sm leading-7 text-[var(--spot)]">
+              <div className="mt-6 rounded-[var(--radius-xl)] border border-[rgba(217,119,6,0.28)] bg-[rgba(217,119,6,0.08)] p-5 text-sm leading-7 text-[var(--spot)]">
                 {workspaceError}
               </div>
             ) : null}
           </CardContent>
         </Card>
       ) : workspaceError ? (
-        <div className="rounded-[1.5rem] border border-[rgba(217,119,6,0.28)] bg-[rgba(217,119,6,0.08)] p-5 text-sm leading-7 text-[var(--spot)]">
+        <div className="rounded-[var(--radius-xl)] border border-[rgba(217,119,6,0.28)] bg-[rgba(217,119,6,0.08)] p-5 text-sm leading-7 text-[var(--spot)]">
           {workspaceError}
         </div>
       ) : !canUseLiveApi ? (
-        <div className="rounded-[1.5rem] border border-dashed border-[var(--line)] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[rgba(19,33,47,0.72)]">
+        <div className="rounded-[var(--radius-xl)] border border-dashed border-[var(--line)] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[var(--text-secondary)]">
           {labels.authError}
         </div>
       ) : null}
@@ -618,7 +628,7 @@ export function OperationsIntelligenceWorkspaceClient({
         <CardContent className="grid gap-5 p-6 lg:grid-cols-[1.3fr_0.7fr]">
           <div className="grid gap-3">
             <div>
-              <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.5)]">
+              <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
                 {labels.projectTitle}
               </p>
               <CardTitle className="mt-2 text-xl">
@@ -667,23 +677,23 @@ export function OperationsIntelligenceWorkspaceClient({
               placeholder={labels.manualProjectIdLabel}
             />
           </div>
-          <div className="rounded-[1.5rem] bg-[var(--surface-soft)] p-5">
-            <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.5)]">
+          <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
+            <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
               {labels.selectedProjectLabel}
             </p>
-            <p className="mt-3 text-sm font-semibold text-[var(--foreground)]">
+            <p className="mt-3 text-sm font-semibold text-[var(--text-primary)]">
               {selectedProject?.name || "-"}
             </p>
-            <p className="mt-2 break-all text-xs text-[rgba(19,33,47,0.56)]">
+            <p className="mt-2 break-all text-xs text-[var(--text-tertiary)]">
               {activeProjectId || "-"}
             </p>
             {selectedProject?.address ? (
-              <p className="mt-3 text-sm text-[rgba(19,33,47,0.72)]">
+              <p className="mt-3 text-sm text-[var(--text-secondary)]">
                 {selectedProject.address}
               </p>
             ) : null}
             {selectedProject ? (
-              <p className="mt-2 text-xs text-[rgba(19,33,47,0.56)]">
+              <p className="mt-2 text-xs text-[var(--text-tertiary)]">
                 {selectedProject.status} ·{" "}
                 {formatDate(locale, selectedProject.updated_at)}
               </p>
@@ -702,7 +712,7 @@ export function OperationsIntelligenceWorkspaceClient({
         {showMaintenance ? (
           <Card>
             <CardContent className="p-6">
-              <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.5)]">
+              <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
                 {labels.maintenanceTitle}
               </p>
               <form className="mt-5 grid gap-3" onSubmit={handleMaintenance}>
@@ -824,7 +834,7 @@ export function OperationsIntelligenceWorkspaceClient({
             ) : null}
 
               {maintenanceResult ? (
-                <div className="mt-5 rounded-[1.5rem] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[rgba(19,33,47,0.72)]">
+                <div className="mt-5 rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[var(--text-secondary)]">
                   {maintenanceResult.recommendation}
                 </div>
               ) : null}
@@ -837,7 +847,7 @@ export function OperationsIntelligenceWorkspaceClient({
             {showTenant ? (
               <Card>
                 <CardContent className="p-6">
-                  <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.5)]">
+                  <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
                     {labels.tenantTitle}
                   </p>
 
@@ -868,7 +878,7 @@ export function OperationsIntelligenceWorkspaceClient({
                         />
                       </div>
                       <textarea
-                        className="min-h-28 rounded-[1rem] border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-3 text-sm text-[var(--foreground)] outline-none transition placeholder:text-[rgba(19,33,47,0.4)] focus:border-[var(--accent)]"
+                        className="min-h-28 rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-3 text-sm text-[var(--text-primary)] outline-none transition placeholder:text-[var(--text-hint)] focus:border-[var(--accent)]"
                         value={feedbackForm.feedbackText}
                         onChange={(event) =>
                           setFeedbackForm((current) => ({
@@ -991,36 +1001,36 @@ export function OperationsIntelligenceWorkspaceClient({
                   {(feedbackResult || satisfactionResult) && (
                     <div className="mt-5 grid gap-4 md:grid-cols-2">
                       {feedbackResult ? (
-                        <div className="rounded-[1.5rem] bg-[var(--surface-soft)] p-5">
-                          <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.5)]">
+                        <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
+                          <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
                             {labels.sentimentLabel}
                           </p>
-                          <p className="mt-3 text-lg font-semibold text-[var(--foreground)]">
+                          <p className="mt-3 text-lg font-semibold text-[var(--text-primary)]">
                             {feedbackResult.sentiment_label}
                           </p>
-                          <p className="mt-2 text-xs text-[rgba(19,33,47,0.56)]">
+                          <p className="mt-2 text-xs text-[var(--text-tertiary)]">
                             {feedbackResult.sentiment_score.toFixed(2)} ·{" "}
                             {formatDate(locale, feedbackResult.created_at)}
                           </p>
-                          <p className="mt-3 text-sm leading-7 text-[rgba(19,33,47,0.72)]">
+                          <p className="mt-3 text-sm leading-7 text-[var(--text-secondary)]">
                             {feedbackResult.ai_reply}
                           </p>
                         </div>
                       ) : null}
                       {satisfactionResult ? (
-                        <div className="rounded-[1.5rem] bg-[var(--surface-soft)] p-5">
-                          <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.5)]">
+                        <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
+                          <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
                             {labels.gradeLabel}
                           </p>
-                          <p className="mt-3 text-lg font-semibold text-[var(--foreground)]">
+                          <p className="mt-3 text-lg font-semibold text-[var(--text-primary)]">
                             {satisfactionResult.health_grade}
                           </p>
-                          <p className="mt-2 text-xs text-[rgba(19,33,47,0.56)]">
+                          <p className="mt-2 text-xs text-[var(--text-tertiary)]">
                             {labels.npsLabel}: {satisfactionResult.nps.toFixed(1)} ·{" "}
                             {labels.churnLabel}:{" "}
                             {(satisfactionResult.churn_risk_score * 100).toFixed(1)}%
                           </p>
-                          <p className="mt-2 text-xs text-[rgba(19,33,47,0.56)]">
+                          <p className="mt-2 text-xs text-[var(--text-tertiary)]">
                             {formatDate(locale, satisfactionResult.created_at)}
                           </p>
                         </div>
@@ -1035,7 +1045,7 @@ export function OperationsIntelligenceWorkspaceClient({
                 <CardContent className="p-6">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
-                      <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.5)]">
+                      <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
                         {labels.assetTitle}
                       </p>
                       <CardTitle className="mt-2 text-xl">
@@ -1097,10 +1107,10 @@ export function OperationsIntelligenceWorkspaceClient({
                           ([key, value]) => (
                             <div
                               key={key}
-                              className="rounded-[1.25rem] border border-[var(--line)] p-4"
+                              className="rounded-[var(--radius-md)] border border-[var(--line)] p-4"
                             >
                               <div className="flex items-center justify-between gap-3">
-                                <p className="text-sm font-semibold capitalize text-[var(--foreground)]">
+                                <p className="text-sm font-semibold capitalize text-[var(--text-primary)]">
                                   {key}
                                 </p>
                                 <span className="text-sm font-medium text-[var(--accent-strong)]">
@@ -1112,20 +1122,20 @@ export function OperationsIntelligenceWorkspaceClient({
                         )}
                       </div>
 
-                      <div className="rounded-[1.5rem] bg-[var(--surface-soft)] p-5">
-                        <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.5)]">
+                      <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
+                        <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
                           {labels.recommendationsLabel}
                         </p>
                         <div className="mt-3 space-y-3">
                           {assetResult.capex_recommendations.map((item, index) => (
                             <div
                               key={`${item.strategy_name ?? item.strategy ?? "plan"}-${index}`}
-                              className="rounded-[1.25rem] bg-white/80 p-4"
+                              className="rounded-[var(--radius-md)] bg-[var(--surface)] p-4"
                             >
-                              <p className="text-sm font-semibold text-[var(--foreground)]">
+                              <p className="text-sm font-semibold text-[var(--text-primary)]">
                                 {item.strategy_name ?? item.strategy ?? "CAPEX plan"}
                               </p>
-                              <p className="mt-2 text-xs text-[rgba(19,33,47,0.56)]">
+                              <p className="mt-2 text-xs text-[var(--text-tertiary)]">
                                 ROI {(item.expected_roi * 100).toFixed(1)}% ·{" "}
                                 {item.payback_months} months
                               </p>
@@ -1153,11 +1163,11 @@ function MetricTile({
   value: string;
 }) {
   return (
-    <div className="rounded-[1.5rem] bg-[var(--surface-soft)] p-5">
-      <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.5)]">
+    <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
+      <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
         {label}
       </p>
-      <p className="mt-3 text-xl font-semibold text-[var(--foreground)]">
+      <p className="mt-3 text-xl font-semibold text-[var(--text-primary)]">
         {value}
       </p>
     </div>

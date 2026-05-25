@@ -25,17 +25,13 @@ export default async function FinancePage({ params }: FinancePageProps) {
 
   return (
     <div className="grid gap-6">
-      <ModulePlaceholder
-        eyebrow="PROJECT / FINANCE"
-        title="Project finance live route"
-        description="Use the routed project id to run persisted AVM valuation and jeonse risk analysis against the live finance APIs."
+            <ModulePlaceholder
+        eyebrow={dictionary.modulePlaceholders["finance"].eyebrow}
+        title={dictionary.modulePlaceholders["finance"].title}
+        description={dictionary.modulePlaceholders["finance"].description}
         statusLabel={runtimeMode}
         localeLabel={locale}
-        items={[
-          "Load the current project context from GET /projects/{id}",
-          "Chain POST /avm with POST /finance/jeonse-risk",
-          "Review persisted pricing, ratio, and risk output for this project path",
-        ]}
+        items={dictionary.modulePlaceholders["finance"].items}
       />
       <ProjectFinanceWorkspaceClient locale={locale as Locale} projectId={id} />
     </div>

@@ -264,6 +264,14 @@ jobs:
             --web-image "${{ needs.build-and-push.outputs.web_image }}" \
             --worker-image "${{ needs.build-and-push.outputs.worker_image }}"
 
+      - name: Generate cutover checklist
+        if: always()
+        run: |
+          python scripts/release/generate_cutover_checklist.py \
+            --report-json "$RELEASE_ARTIFACT_DIR/release-report.json" \
+            --markdown-output "$RELEASE_ARTIFACT_DIR/cutover-checklist.md" \
+            --json-output "$RELEASE_ARTIFACT_DIR/cutover-checklist.json"
+
       - name: Upload release evidence artifact
         if: always()
         uses: actions/upload-artifact@v4

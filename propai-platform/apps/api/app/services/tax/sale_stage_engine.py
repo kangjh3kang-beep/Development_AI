@@ -1,0 +1,191 @@
+"""분양단계 세금 엔진 — C01~C08 (8종).
+
+C01: 부가가치세 (85m² 초과분)
+C02: HUG 분양보증수수료
+C03: 분양광고비 부담금
+C04: 취득세 (분양자 부담, 시행사 기준)
+C05: 등기비용 (분양자)
+C06: 국민주택채권 (분양자)
+C07: 기반시설부담금
+C08: 에너지절약부담금
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from app.services.tax.regional_tax_data import (
+    VAT_EXEMPT_AREA_SQM,
+    VAT_RATE,
+    HUG_GUARANTEE_RATES,
+)
+
+
+def calculate_c01_vat(
+    *,
+    total_sale_amount_won: int,
+    total_units: int,
+    avg_area_sqm: float,
+    exempt_area_sqm: float = VAT_EXEMPT_AREA_SQM,
+) -> dict[str, Any]:
+    """C01 부가가치세 (85m² 초과분에만 과세)."""
+    if avg_area_sqm <= exempt_area_sqm:
+        return {
+            "code": "C01", "name": "부가가치세",
+            "base_won": 0, "rate": VAT_RATE,
+            "amount_won": 0,
+            "detail": {"reason": f"평균 {avg_area_sqm}m² ≤ {exempt_area_sqm}m² 면세"},
+        }
+
+    # 초과분 비례 과세 (간이)
+    taxable_ratio = (avg_area_sqm - exempt_area_sqm) / avg_area_sqm
+    taxable_amount = int(total_sale_amount_won * taxable_ratio)
+    amount = int(taxable_amount * VAT_RATE)
+
+    return {
+        "code": "C01", "name": "부가가치세",
+        "base_won": taxable_amount, "rate": VAT_RATE,
+        "amount_won": amount,
+        "detail": {"taxable_ratio": round(taxable_ratio, 4)},
+    }
+
+
+def calculate_c02_hug_guarantee(
+    *,
+    total_sale_amount_won: int,
+    building_type: str = "apartment",
+) -> dict[str, Any]:
+    """C02 HUG 분양보증수수료."""
+    rate = HUG_GUARANTEE_RATES.get(building_type, HUG_GUARANTEE_RATES["apartment"])
+    amount = int(total_sale_amount_won * rate)
+    return {
+        "code": "C02", "name": "HUG 분양보증수수료",
+        "base_won": total_sale_amount_won, "rate": rate,
+        "amount_won": amount,
+    }
+
+
+def calculate_c03_ad_charge(
+    *,
+    total_sale_amount_won: int,
+    rate: float = 0.003,
+) -> dict[str, Any]:
+    """C03 분양광고비 부담금."""
+    amount = int(total_sale_amount_won * rate)
+    return {
+        "code": "C03", "name": "분양광고비 부담금",
+        "base_won": total_sale_amount_won, "rate": rate,
+        "amount_won": amount,
+    }
+
+
+def calculate_c04_buyer_acquisition_tax(
+    *,
+    total_sale_amount_won: int,
+    rate: float = 0.011,
+) -> dict[str, Any]:
+    """C04 취득세 (분양자 부담 — 시행사 대행 납부)."""
+    amount = int(total_sale_amount_won * rate)
+    return {
+        "code": "C04", "name": "취득세(분양자)",
+        "base_won": total_sale_amount_won, "rate": rate,
+        "amount_won": amount,
+    }
+
+
+def calculate_c05_registration(
+    *,
+    total_sale_amount_won: int,
+    rate: float = 0.002,
+) -> dict[str, Any]:
+    """C05 등기비용 (분양자)."""
+    amount = int(total_sale_amount_won * rate)
+    return {
+        "code": "C05", "name": "등기비용(분양자)",
+        "base_won": total_sale_amount_won, "rate": rate,
+        "amount_won": amount,
+    }
+
+
+def calculate_c06_housing_bond_buyer(
+    *,
+    total_sale_amount_won: int,
+    rate: float = 0.05,
+    discount: float = 0.05,
+) -> dict[str, Any]:
+    """C06 국민주택채권 (분양자)."""
+    bond = int(total_sale_amount_won * rate)
+    cost = int(bond * discount)
+    return {
+        "code": "C06", "name": "국민주택채권(분양자)",
+        "base_won": total_sale_amount_won, "rate": rate,
+        "amount_won": cost,
+    }
+
+
+def calculate_c07_infrastructure_charge(
+    *,
+    total_gfa_sqm: float,
+    per_sqm_won: int = 15_000,
+) -> dict[str, Any]:
+    """C07 기반시설부담금."""
+    amount = int(total_gfa_sqm * per_sqm_won)
+    return {
+        "code": "C07", "name": "기반시설부담금",
+        "base_won": int(total_gfa_sqm), "rate": per_sqm_won,
+        "amount_won": amount,
+    }
+
+
+def calculate_c08_energy_saving(
+    *,
+    total_gfa_sqm: float,
+    per_sqm_won: int = 5_000,
+) -> dict[str, Any]:
+    """C08 에너지절약부담금."""
+    amount = int(total_gfa_sqm * per_sqm_won)
+    return {
+        "code": "C08", "name": "에너지절약부담금",
+        "base_won": int(total_gfa_sqm), "rate": per_sqm_won,
+        "amount_won": amount,
+    }
+
+
+def calculate_all_sale_stage(
+    *,
+    total_sale_amount_won: int = 0,
+    total_units: int = 0,
+    avg_area_sqm: float = 85.0,
+    total_gfa_sqm: float = 0,
+    building_type: str = "apartment",
+) -> dict[str, Any]:
+    """C01~C08 분양단계 전체 일괄 계산.
+
+    Returns:
+        {'items': [...], 'total_won': int, 'applicable_count': int}
+    """
+    items = [
+        calculate_c01_vat(
+            total_sale_amount_won=total_sale_amount_won,
+            total_units=total_units,
+            avg_area_sqm=avg_area_sqm,
+        ),
+        calculate_c02_hug_guarantee(
+            total_sale_amount_won=total_sale_amount_won,
+            building_type=building_type,
+        ),
+        calculate_c03_ad_charge(total_sale_amount_won=total_sale_amount_won),
+        calculate_c04_buyer_acquisition_tax(total_sale_amount_won=total_sale_amount_won),
+        calculate_c05_registration(total_sale_amount_won=total_sale_amount_won),
+        calculate_c06_housing_bond_buyer(total_sale_amount_won=total_sale_amount_won),
+        calculate_c07_infrastructure_charge(total_gfa_sqm=total_gfa_sqm),
+        calculate_c08_energy_saving(total_gfa_sqm=total_gfa_sqm),
+    ]
+
+    total = sum(it["amount_won"] for it in items)
+    return {
+        "stage": "sale",
+        "items": items,
+        "total_won": total,
+        "applicable_count": len(items),
+    }

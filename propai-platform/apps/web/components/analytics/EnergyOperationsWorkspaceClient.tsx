@@ -255,7 +255,13 @@ export function EnergyOperationsWorkspaceClient({
 }: {
   locale: Locale;
 }) {
+  const [isMounted, setIsMounted] = useState(false);
   const labels = LABELS[locale];
+  
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
+
   const runtimeConfig = apiClient.getRuntimeConfig();
   const canUseLiveApi =
     runtimeConfig.mode === "live" || runtimeConfig.hasAccessToken;
@@ -380,34 +386,38 @@ export function EnergyOperationsWorkspaceClient({
     }
   }
 
+  if (!isMounted) {
+    return <SkeletonLoader count={4} />;
+  }
+
   return (
     <section className="grid gap-6">
-      <Card className="rounded-[2rem] bg-[var(--surface-strong)] shadow-[0_20px_60px_rgba(19,33,47,0.08)]">
+      <Card className="rounded-[var(--radius-2xl)] bg-[var(--surface-strong)] shadow-[var(--shadow-lg)]">
         <CardContent className="p-8">
           <div className="flex flex-wrap items-center gap-3">
             <span className="rounded-full bg-[rgba(14,116,144,0.1)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--accent-strong)]">
               {labels.heroTitle}
             </span>
-            <span className="rounded-full border border-[var(--line)] px-4 py-2 text-xs font-medium text-[rgba(19,33,47,0.7)]">
+            <span className="rounded-full border border-[var(--line)] px-4 py-2 text-xs font-medium text-[var(--text-secondary)]">
               {runtimeConfig.mode === "live" ? "LIVE" : "HYBRID"}
             </span>
           </div>
-          <h3 className="mt-5 text-3xl font-bold text-[var(--foreground)]">
+          <h3 className="mt-5 text-3xl font-bold text-[var(--text-primary)]">
             {labels.heroDescription}
           </h3>
-          <p className="mt-4 max-w-3xl text-sm leading-8 text-[rgba(19,33,47,0.72)]">
+          <p className="mt-4 max-w-3xl text-sm leading-8 text-[var(--text-secondary)]">
             {labels.heroHint}
           </p>
-          <p className="mt-3 max-w-3xl text-sm leading-8 text-[rgba(19,33,47,0.6)]">
+          <p className="mt-3 max-w-3xl text-sm leading-8 text-[var(--text-tertiary)]">
             {labels.tokenHint}
           </p>
           {!canUseLiveApi ? (
-            <div className="mt-6 rounded-[1.5rem] border border-dashed border-[var(--line)] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[rgba(19,33,47,0.72)]">
+            <div className="mt-6 rounded-[var(--radius-xl)] border border-dashed border-[var(--line)] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[var(--text-secondary)]">
               {labels.authError}
             </div>
           ) : null}
           {workspaceError ? (
-            <div className="mt-6 rounded-[1.5rem] border border-[rgba(217,119,6,0.28)] bg-[rgba(217,119,6,0.08)] p-5 text-sm leading-7 text-[var(--spot)]">
+            <div className="mt-6 rounded-[var(--radius-xl)] border border-[rgba(217,119,6,0.28)] bg-[rgba(217,119,6,0.08)] p-5 text-sm leading-7 text-[var(--spot)]">
               {workspaceError}
             </div>
           ) : null}
@@ -418,7 +428,7 @@ export function EnergyOperationsWorkspaceClient({
         <CardContent className="grid gap-5 p-6 lg:grid-cols-[1.3fr_0.7fr]">
           <div className="grid gap-3">
             <div>
-              <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.5)]">
+              <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
                 {labels.projectTitle}
               </p>
               <CardTitle className="mt-2 text-xl">
@@ -474,23 +484,23 @@ export function EnergyOperationsWorkspaceClient({
               />
             </div>
           </div>
-          <div className="rounded-[1.5rem] bg-[var(--surface-soft)] p-5">
-            <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.5)]">
+          <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
+            <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
               {labels.selectedProjectLabel}
             </p>
-            <p className="mt-3 text-sm font-semibold text-[var(--foreground)]">
+            <p className="mt-3 text-sm font-semibold text-[var(--text-primary)]">
               {activeProjectName || "-"}
             </p>
-            <p className="mt-2 break-all text-xs text-[rgba(19,33,47,0.56)]">
+            <p className="mt-2 break-all text-xs text-[var(--text-tertiary)]">
               {activeProjectId || "-"}
             </p>
             {selectedProject?.address ? (
-              <p className="mt-3 text-sm text-[rgba(19,33,47,0.72)]">
+              <p className="mt-3 text-sm text-[var(--text-secondary)]">
                 {selectedProject.address}
               </p>
             ) : null}
             {selectedProject ? (
-              <p className="mt-2 text-xs text-[rgba(19,33,47,0.56)]">
+              <p className="mt-2 text-xs text-[var(--text-tertiary)]">
                 {selectedProject.status} ·{" "}
                 {formatDate(locale, selectedProject.updated_at)}
               </p>
@@ -502,7 +512,7 @@ export function EnergyOperationsWorkspaceClient({
       <div className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
         <Card>
           <CardContent className="p-6">
-            <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.5)]">
+            <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
               {labels.kepcoTitle}
             </p>
             <form className="mt-5 grid gap-3" onSubmit={handleCalculateKepco}>
@@ -559,23 +569,23 @@ export function EnergyOperationsWorkspaceClient({
                   value={formatCurrency(locale, kepcoResult.total_bill_krw)}
                 />
                 <MetricTile
-                  label="VAT"
+                  label="부가가치세 (VAT)"
                   value={formatCurrency(locale, kepcoResult.vat_krw)}
                 />
                 <MetricTile
-                  label="Base charge"
+                  label="기본 요금"
                   value={formatCurrency(locale, kepcoResult.base_charge_krw)}
                 />
                 <MetricTile
-                  label="Energy charge"
+                  label="전력량 요금"
                   value={formatCurrency(locale, kepcoResult.energy_charge_krw)}
                 />
                 <MetricTile
-                  label="Fuel adjustment"
+                  label="연료비 조정액"
                   value={formatCurrency(locale, kepcoResult.fuel_adjustment_krw)}
                 />
                 <MetricTile
-                  label="Climate fund"
+                  label="기후환경 요금"
                   value={formatCurrency(locale, kepcoResult.climate_fund_krw)}
                 />
               </div>
@@ -585,7 +595,7 @@ export function EnergyOperationsWorkspaceClient({
 
         <Card>
           <CardContent className="p-6">
-            <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.5)]">
+            <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
               {labels.certificationTitle}
             </p>
             <form
@@ -672,11 +682,11 @@ export function EnergyOperationsWorkspaceClient({
               <div className="mt-5 space-y-4">
                 <div className="grid gap-4 md:grid-cols-2">
                   <MetricTile
-                    label="Energy grade"
+                    label="에너지 등급"
                     value={certificationResult.energy_grade}
                   />
                   <MetricTile
-                    label="ZEB grade"
+                    label="ZEB 등급"
                     value={certificationResult.zeb_grade}
                   />
                   <MetricTile
@@ -692,15 +702,15 @@ export function EnergyOperationsWorkspaceClient({
                     value={`${(certificationResult.energy_independence_rate * 100).toFixed(1)}%`}
                   />
                   <MetricTile
-                    label="BEMS savings"
+                    label="BEMS 절감량"
                     value={`${certificationResult.bems_saving_kwh.toLocaleString(locale)} kWh`}
                   />
                 </div>
-                <div className="rounded-[1.5rem] bg-[var(--surface-soft)] p-5">
-                  <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.5)]">
+                <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
+                  <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
                     {labels.recommendationsLabel}
                   </p>
-                  <ul className="mt-3 space-y-2 text-sm leading-7 text-[rgba(19,33,47,0.72)]">
+                  <ul className="mt-3 space-y-2 text-sm leading-7 text-[var(--text-secondary)]">
                     {certificationResult.recommendations.map((item) => (
                       <li key={item}>• {item}</li>
                     ))}
@@ -723,11 +733,11 @@ function MetricTile({
   value: string;
 }) {
   return (
-    <div className="rounded-[1.5rem] bg-[var(--surface-soft)] p-5">
-      <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.5)]">
+    <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
+      <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
         {label}
       </p>
-      <p className="mt-3 text-xl font-semibold text-[var(--foreground)]">
+      <p className="mt-3 text-xl font-semibold text-[var(--text-primary)]">
         {value}
       </p>
     </div>

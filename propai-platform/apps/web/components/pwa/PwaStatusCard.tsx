@@ -113,13 +113,13 @@ export function PwaStatusCard({ labels }: PwaStatusCardProps) {
   return (
     <Card className="bg-[var(--surface)]">
       <CardContent className="p-6">
-        <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.64)]">
+        <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
           {labels.eyebrow}
         </p>
         <div className="mt-3 flex flex-wrap items-start justify-between gap-4">
           <div className="max-w-3xl">
             <CardTitle className="text-2xl">{labels.title}</CardTitle>
-            <p className="mt-3 text-sm leading-7 text-[rgba(19,33,47,0.7)]">
+            <p className="mt-3 text-sm leading-7 text-[var(--text-secondary)]">
               {labels.description}
             </p>
           </div>
@@ -128,42 +128,42 @@ export function PwaStatusCard({ labels }: PwaStatusCardProps) {
             onClick={() => {
               void refreshRuntime();
             }}
-            className="rounded-full border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-2 text-sm font-semibold text-[var(--foreground)] transition hover:border-[var(--accent)] hover:text-[var(--accent-strong)]"
+            className="rounded-full border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-2 text-sm font-semibold text-[var(--text-primary)] transition hover:border-[var(--accent)] hover:text-[var(--accent-strong)]"
           >
             {labels.refreshAction}
           </button>
         </div>
         <div className="mt-6 grid gap-3 lg:grid-cols-4">
-          <Card className="rounded-[1.5rem] bg-[var(--surface-soft)] shadow-none">
+          <Card className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] shadow-none">
             <CardContent className="p-5">
-              <p className="text-sm text-[rgba(19,33,47,0.68)]">{labels.runtimeLabel}</p>
-              <p className="mt-3 text-xl font-semibold text-[var(--foreground)]">
+              <p className="text-sm text-[var(--text-secondary)]">{labels.runtimeLabel}</p>
+              <p className="mt-3 text-xl font-semibold text-[var(--text-primary)]">
                 {getRuntimeLabel(serviceWorkerState, labels)}
               </p>
             </CardContent>
           </Card>
-          <Card className="rounded-[1.5rem] bg-[var(--surface-soft)] shadow-none">
+          <Card className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] shadow-none">
             <CardContent className="p-5">
-              <p className="text-sm text-[rgba(19,33,47,0.68)]">{labels.installLabel}</p>
-              <p className="mt-3 text-xl font-semibold text-[var(--foreground)]">
+              <p className="text-sm text-[var(--text-secondary)]">{labels.installLabel}</p>
+              <p className="mt-3 text-xl font-semibold text-[var(--text-primary)]">
                 {getInstallLabel(installState, labels)}
               </p>
             </CardContent>
           </Card>
-          <Card className="rounded-[1.5rem] bg-[var(--surface-soft)] shadow-none">
+          <Card className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] shadow-none">
             <CardContent className="p-5">
-              <p className="text-sm text-[rgba(19,33,47,0.68)]">
+              <p className="text-sm text-[var(--text-secondary)]">
                 {labels.notificationsLabel}
               </p>
-              <p className="mt-3 text-xl font-semibold text-[var(--foreground)]">
+              <p className="mt-3 text-xl font-semibold text-[var(--text-primary)]">
                 {getNotificationLabel(notificationPermission, labels)}
               </p>
             </CardContent>
           </Card>
-          <Card className="rounded-[1.5rem] bg-[var(--surface-soft)] shadow-none">
+          <Card className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] shadow-none">
             <CardContent className="p-5">
-              <p className="text-sm text-[rgba(19,33,47,0.68)]">{labels.cacheLabel}</p>
-              <p className="mt-3 text-xl font-semibold text-[var(--foreground)]">
+              <p className="text-sm text-[var(--text-secondary)]">{labels.cacheLabel}</p>
+              <p className="mt-3 text-xl font-semibold text-[var(--text-primary)]">
                 {serviceWorkerState === "unsupported"
                   ? labels.cacheUnsupported
                   : cacheReady
@@ -175,19 +175,19 @@ export function PwaStatusCard({ labels }: PwaStatusCardProps) {
         </div>
         {updateReady ? (
           <div
-            className="mt-5 rounded-[1.5rem] border border-[rgba(13,148,136,0.2)] bg-[rgba(240,253,250,0.9)] p-5"
+            className="mt-5 rounded-[var(--radius-xl)] border border-[var(--success)]/20 bg-[var(--success-soft)] p-5"
             role="status"
           >
-            <p className="text-sm font-semibold text-[var(--foreground)]">
+            <p className="text-sm font-semibold text-[var(--text-primary)]">
               {labels.updateTitle}
             </p>
-            <p className="mt-2 text-sm leading-7 text-[rgba(19,33,47,0.68)]">
+            <p className="mt-2 text-sm leading-7 text-[var(--text-secondary)]">
               {labels.updateDescription}
             </p>
             <button
               type="button"
               onClick={applyUpdate}
-              className="mt-4 rounded-full border border-[var(--line)] bg-white px-4 py-2 text-sm font-semibold text-[var(--foreground)] transition hover:border-[var(--accent)] hover:text-[var(--accent-strong)]"
+              className="mt-4 rounded-full border border-[var(--line)] bg-white px-4 py-2 text-sm font-semibold text-[var(--text-primary)] transition hover:border-[var(--accent)] hover:text-[var(--accent-strong)]"
             >
               {labels.refreshAction}
             </button>
@@ -195,10 +195,10 @@ export function PwaStatusCard({ labels }: PwaStatusCardProps) {
         ) : null}
         {lastError ? (
           <div
-            className="mt-5 rounded-[1.5rem] border border-[rgba(217,119,6,0.24)] bg-[rgba(255,247,237,0.92)] p-5"
+            className="mt-5 rounded-[var(--radius-xl)] border border-[var(--warning)]/20 bg-[var(--warning-soft)] p-5"
             role="alert"
           >
-            <p className="text-sm font-semibold text-[var(--foreground)]">
+            <p className="text-sm font-semibold text-[var(--text-primary)]">
               {labels.errorTitle}
             </p>
             <p className="mt-2 text-sm leading-7 text-[var(--spot)]">{lastError}</p>
@@ -211,7 +211,7 @@ export function PwaStatusCard({ labels }: PwaStatusCardProps) {
               onClick={() => {
                 void requestInstall();
               }}
-              className="rounded-full border border-[var(--line)] bg-[#ffffff] px-4 py-2 text-sm font-semibold text-[var(--foreground)] shadow-[0_8px_20px_rgba(19,33,47,0.08)]"
+              className="rounded-full border border-[var(--line)] bg-white px-4 py-2 text-sm font-semibold text-[var(--text-primary)] shadow-[var(--shadow-md)]"
             >
               {labels.installAction}
             </button>
@@ -222,7 +222,7 @@ export function PwaStatusCard({ labels }: PwaStatusCardProps) {
               onClick={() => {
                 void requestNotificationPermission();
               }}
-              className="rounded-full border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-2 text-sm font-semibold text-[var(--foreground)]"
+              className="rounded-full border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-2 text-sm font-semibold text-[var(--text-primary)]"
             >
               {labels.enableNotificationsAction}
             </button>
@@ -236,14 +236,14 @@ export function PwaStatusCard({ labels }: PwaStatusCardProps) {
                   labels.testNotificationBody,
                 );
               }}
-              className="rounded-full border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-2 text-sm font-semibold text-[var(--foreground)]"
+              className="rounded-full border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-2 text-sm font-semibold text-[var(--text-primary)]"
             >
               {labels.testNotificationAction}
             </button>
           ) : null}
           <Link
             href="/offline"
-            className="rounded-full border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-2 text-sm font-semibold text-[var(--foreground)]"
+            className="rounded-full border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-2 text-sm font-semibold text-[var(--text-primary)]"
           >
             {labels.offlineAction}
           </Link>

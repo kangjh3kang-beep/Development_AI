@@ -1,13 +1,25 @@
 "use client";
 
+import { useCallback } from "react";
 import { useCadStore } from "@/store/use-cad-store";
-import type { CadTool } from "@/components/cad/types";
+import type { CadTool, CadPart } from "@/components/cad/types";
 
 const TOOLS: Array<{ id: CadTool; label: string; shortcut: string }> = [
   { id: "select", label: "선택", shortcut: "V" },
   { id: "point", label: "점", shortcut: "P" },
   { id: "line", label: "선", shortcut: "L" },
   { id: "polygon", label: "면", shortcut: "G" },
+  { id: "text", label: "문자", shortcut: "T" },
+  { id: "rect", label: "사각형", shortcut: "R" },
+  { id: "circle", label: "원", shortcut: "C" },
+];
+
+const PARTS: Array<{ id: CadPart; label: string }> = [
+  { id: "ARCH", label: "기본설계" },
+  { id: "STRUCT", label: "구조도" },
+  { id: "MEP", label: "기계/전기" },
+  { id: "LAND", label: "조경/토목" },
+  { id: "CIVIL", label: "토공사" },
 ];
 
 export function CadToolbar() {
@@ -30,6 +42,29 @@ export function CadToolbar() {
   const cancelPending = useCadStore((s) => s.cancelPending);
   const resetCanvas = useCadStore((s) => s.resetCanvas);
   const selectedId = useCadStore((s) => s.selectedId);
+  const selectedIds = useCadStore((s) => s.selectedIds);
+  const activePart = useCadStore((s) => s.activePart);
+  const setPart = useCadStore((s) => s.setPart);
+
+  // 라디오 그룹 키보드 네비게이션 (화살표 키)
+  const handleToolKeyDown = useCallback(
+    (e: React.KeyboardEvent, currentIdx: number) => {
+      let nextIdx = -1;
+      if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+        e.preventDefault();
+        nextIdx = (currentIdx + 1) % TOOLS.length;
+      } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+        e.preventDefault();
+        nextIdx = (currentIdx - 1 + TOOLS.length) % TOOLS.length;
+      }
+      if (nextIdx >= 0) {
+        setTool(TOOLS[nextIdx].id);
+        const btn = (e.currentTarget.parentElement?.children[nextIdx] as HTMLElement);
+        btn?.focus();
+      }
+    },
+    [setTool],
+  );
 
   return (
     <div
@@ -37,20 +72,42 @@ export function CadToolbar() {
       role="toolbar"
       aria-label="CAD 도구 모음"
     >
+      {/* 파트 선택 */}
+      <div className="flex gap-1 bg-[var(--surface-soft)] p-1 rounded-xl" role="group" aria-label="설계 파트 선택">
+        {PARTS.map((p) => (
+          <button
+            key={p.id}
+            type="button"
+            onClick={() => setPart(p.id)}
+            className={`rounded-lg px-2.5 py-1 text-[11px] font-bold uppercase transition-all ${
+              activePart === p.id
+                ? "bg-[var(--accent-strong)] text-white shadow-sm"
+                : "text-[var(--text-tertiary)] hover:text-[var(--text-primary)]"
+            }`}
+          >
+            {p.label}
+          </button>
+        ))}
+      </div>
+
+      <div className="mx-1 h-6 w-px bg-[var(--line)]" aria-hidden="true" />
+
       {/* 도구 버튼 */}
       <div className="flex gap-1" role="radiogroup" aria-label="그리기 도구">
-        {TOOLS.map((t) => (
+        {TOOLS.map((t, idx) => (
           <button
             key={t.id}
             type="button"
             role="radio"
             aria-checked={tool === t.id}
             aria-label={`${t.label} 도구 (${t.shortcut})`}
+            tabIndex={tool === t.id ? 0 : -1}
             onClick={() => setTool(t.id)}
+            onKeyDown={(e) => handleToolKeyDown(e, idx)}
             className={`rounded-xl px-3 py-1.5 text-sm font-medium transition-colors ${
               tool === t.id
                 ? "bg-[var(--accent)] text-white"
-                : "bg-[var(--surface-soft)] text-[var(--foreground)] hover:bg-[var(--surface-muted)]"
+                : "bg-[var(--surface-soft)] text-[var(--text-primary)] hover:bg-[var(--surface-muted)]"
             }`}
           >
             {t.label}
@@ -75,7 +132,7 @@ export function CadToolbar() {
         <button
           type="button"
           onClick={cancelPending}
-          className="rounded-xl bg-[var(--surface-soft)] px-3 py-1.5 text-sm font-medium text-[var(--foreground)]"
+          className="rounded-xl bg-[var(--surface-soft)] px-3 py-1.5 text-sm font-medium text-[var(--text-primary)]"
           aria-label="취소"
         >
           취소
@@ -88,7 +145,7 @@ export function CadToolbar() {
         onClick={undo}
         disabled={undoStack.length === 0}
         aria-label="실행 취소"
-        className="rounded-xl bg-[var(--surface-soft)] px-3 py-1.5 text-sm font-medium text-[var(--foreground)] disabled:opacity-40"
+        className="rounded-xl bg-[var(--surface-soft)] px-3 py-1.5 text-sm font-medium text-[var(--text-primary)] disabled:opacity-40"
       >
         ↩ 실행취소
       </button>
@@ -97,27 +154,27 @@ export function CadToolbar() {
         onClick={redo}
         disabled={redoStack.length === 0}
         aria-label="다시 실행"
-        className="rounded-xl bg-[var(--surface-soft)] px-3 py-1.5 text-sm font-medium text-[var(--foreground)] disabled:opacity-40"
+        className="rounded-xl bg-[var(--surface-soft)] px-3 py-1.5 text-sm font-medium text-[var(--text-primary)] disabled:opacity-40"
       >
         ↪ 다시실행
       </button>
 
       {/* 선택 삭제 */}
-      {selectedId && (
+      {(selectedId || selectedIds.length > 0) && (
         <button
           type="button"
           onClick={removeSelected}
           aria-label="선택 요소 삭제"
           className="rounded-xl bg-red-500/10 px-3 py-1.5 text-sm font-medium text-red-600"
         >
-          삭제
+          삭제{selectedIds.length > 1 ? ` (${selectedIds.length})` : ""}
         </button>
       )}
 
       <div className="mx-1 h-6 w-px bg-[var(--line)]" aria-hidden="true" />
 
       {/* 그리드 스냅 */}
-      <label className="flex items-center gap-1.5 text-sm text-[rgba(19,33,47,0.72)]">
+      <label className="flex items-center gap-1.5 text-sm text-[var(--text-secondary)]">
         <input
           type="checkbox"
           checked={gridSnap}
@@ -131,7 +188,7 @@ export function CadToolbar() {
       <div className="mx-1 h-6 w-px bg-[var(--line)]" aria-hidden="true" />
 
       {/* 건물 설정 */}
-      <label className="flex items-center gap-1.5 text-sm text-[rgba(19,33,47,0.72)]">
+      <label className="flex items-center gap-1.5 text-sm text-[var(--text-secondary)]">
         층수
         <input
           type="number"
@@ -144,7 +201,7 @@ export function CadToolbar() {
         />
       </label>
 
-      <label className="flex items-center gap-1.5 text-sm text-[rgba(19,33,47,0.72)]">
+      <label className="flex items-center gap-1.5 text-sm text-[var(--text-secondary)]">
         높이(m)
         <input
           type="number"
@@ -161,7 +218,7 @@ export function CadToolbar() {
       <button
         type="button"
         onClick={resetCanvas}
-        className="ml-auto rounded-xl bg-[var(--surface-soft)] px-3 py-1.5 text-sm font-medium text-[rgba(19,33,47,0.56)] hover:text-[var(--foreground)]"
+        className="ml-auto rounded-xl bg-[var(--surface-soft)] px-3 py-1.5 text-sm font-medium text-[var(--text-tertiary)] hover:text-[var(--text-primary)]"
         aria-label="캔버스 초기화"
       >
         초기화

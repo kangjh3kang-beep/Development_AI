@@ -1,36 +1,94 @@
+"use client";
+
+import { useParams } from "next/navigation";
+import { motion } from "framer-motion";
 import { CadEditor } from "@/components/cad/CadEditor";
 import { ModulePlaceholder } from "@/components/layout/ModulePlaceholder";
-import { isValidLocale } from "@/i18n/config";
+import { isValidLocale, type Locale } from "@/i18n/config";
+import { useDictionary } from "@/hooks/use-dictionary";
 
-type CadPageProps = {
-  params: Promise<{
-    locale: string;
-    id: string;
-  }>;
-};
+export default function CadPage() {
+  const { locale, id } = useParams() as { locale: string; id: string };
+  const { dictionary, isLoading } = useDictionary(locale as Locale);
 
-export default async function CadPage({ params }: CadPageProps) {
-  const { locale, id } = await params;
+  if (isLoading || !dictionary) {
+    return (
+      <div className="flex h-[60vh] items-center justify-center">
+        <div className="h-12 w-12 animate-spin rounded-full border-4 border-teal-500 border-t-transparent shadow-[0_0_20px_rgba(20,184,166,0.3)]" />
+      </div>
+    );
+  }
 
   if (!isValidLocale(locale)) {
     return null;
   }
 
+  const runtimeMode =
+    process.env.NEXT_PUBLIC_USE_MOCKS === "false"
+      ? dictionary.workspace.modeLive
+      : dictionary.workspace.modeMock;
+
+  const t = dictionary.modulePlaceholders["cad"];
+
   return (
-    <div className="grid gap-6">
-      <ModulePlaceholder
-        eyebrow="PROJECT / CAD"
-        title="Project CAD editor route"
-        description="Keep the parametric CAD editor available on this route, but treat it as editor-only until the current Three.js and dependency blockers are resolved."
-        statusLabel="EDITOR"
-        localeLabel={locale}
-        items={[
-          "react-konva based editor remains available for route-level design editing",
-          "This route is not treated as a live backend-bound workspace yet",
-          "Resolve current CAD dependency and type-check blockers before promoting it to live status",
-        ]}
-      />
-      <CadEditor projectId={id} />
+    <div className="flex flex-col gap-12 pb-20">
+      <motion.div
+        initial={{ opacity: 0, y: 30 }}
+        animate={{ opacity: 1, y: 0 }}
+      >
+        <ModulePlaceholder
+          eyebrow={t.eyebrow}
+          title={t.title}
+          description={t.description}
+          statusLabel={runtimeMode}
+          localeLabel={locale}
+          items={t.items}
+        />
+      </motion.div>
+
+      {/* ── Design Synergy Multi-layer Insight ── */}
+      <motion.div 
+        initial={{ opacity: 0, scale: 0.98 }}
+        animate={{ opacity: 1, scale: 1 }}
+        transition={{ delay: 0.2 }}
+        className="relative overflow-hidden rounded-[3rem] border border-[var(--accent-strong)]/20 bg-[var(--surface-strong)] p-12 lg:p-16 shadow-[var(--shadow-2xl)] backdrop-blur-3xl group"
+      >
+        <div className="absolute -left-20 -top-20 h-64 w-64 rounded-full bg-[var(--accent-strong)]/10 blur-[100px] transition-all duration-1000 group-hover:scale-150" />
+        
+        <div className="relative z-10 flex flex-col gap-10 lg:flex-row lg:items-center lg:gap-16">
+          <div className="flex h-24 w-24 shrink-0 items-center justify-center rounded-[2rem] bg-[var(--accent-strong)] shadow-[var(--shadow-glow)]">
+            <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m18 16 4-4-4-4"/><path d="m6 8-4 4 4 4"/><path d="m14.5 4-5 16"/></svg>
+          </div>
+          <div className="space-y-6">
+            <div className="inline-flex items-center gap-2 rounded-full border border-[var(--accent-strong)]/20 bg-[var(--accent-soft)] px-4 py-1.5 text-[10px] font-black uppercase tracking-[0.2em] text-[var(--accent-strong)]">
+               Design-To-Code Pipeline Active
+            </div>
+            <h3 className="text-3xl font-[1000] tracking-tight text-[var(--text-primary)] sm:text-4xl">
+              AI 건축 설계와 <span className="text-[var(--accent-strong)] italic underline decoration-[var(--accent-strong)]/30 underline-offset-4 font-black">CAD 엔진의 완벽한 결합.</span>
+            </h3>
+            <p className="max-w-3xl text-sm font-bold leading-[1.8] text-[var(--text-secondary)] italic tracking-tight underline decoration-[var(--line)] underline-offset-4">
+              &quot;사통팔땅의 AI 설계 엔진은 단순히 공간을 배치하는 것을 넘어, 생성된 설계안을 즉시 <span className="text-[var(--text-primary)] font-black underline decoration-[var(--accent-strong)]/50 underline-offset-4">CAD 레이어 데이터와 동기화</span>합니다. 사용자는 웹 기반 고성능 CAD 뷰어에서 AI가 제안한 평면과 단면을 실시간으로 검토하고, 즉각적인 수정을 통해 설계의 완성도를 극대화할 수 있습니다.&quot;
+            </p>
+          </div>
+        </div>
+      </motion.div>
+
+      <motion.div 
+        initial={{ opacity: 0, y: 40 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.4 }}
+        className="rounded-[4rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-4 lg:p-8 shadow-[var(--shadow-2xl)] backdrop-blur-3xl overflow-hidden group"
+      >
+        <div className="mb-6 flex items-center justify-between px-8">
+            <h4 className="text-[10px] font-[1000] text-[var(--text-hint)] uppercase tracking-[0.5em]">High-Fidelity CAD Design Studio</h4>
+            <div className="flex gap-2">
+                <div className="h-2 w-2 rounded-full bg-red-500/30 group-hover:bg-red-500 transition-colors" />
+                <div className="h-2 w-2 rounded-full bg-yellow-500/30 group-hover:bg-yellow-500 transition-colors shadow-[var(--shadow-glow)] shadow-transparent group-hover:shadow-[var(--accent-strong)]/50" />
+                <div className="h-2 w-2 rounded-full bg-green-500/30 group-hover:bg-green-500 transition-colors shadow-[0_0_10px_#22c55e] shadow-transparent group-hover:shadow-green-500/50" />
+            </div>
+        </div>
+        <CadEditor projectId={id} />
+      </motion.div>
     </div>
   );
 }

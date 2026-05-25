@@ -84,13 +84,13 @@ export function TaxCalculator({
     <Card className="bg-[var(--surface-strong)]">
       <CardHeader>
         <CardTitle>{labels.title}</CardTitle>
-        <p className="text-sm leading-7 text-[rgba(19,33,47,0.72)]">
+        <p className="text-sm leading-7 text-[var(--text-secondary)]">
           {labels.description}
         </p>
       </CardHeader>
       <CardContent className="grid gap-5 pt-0 xl:grid-cols-[1.1fr_0.9fr]">
         <div className="grid gap-4">
-          <label className="grid gap-2 text-sm font-medium text-[rgba(19,33,47,0.78)]">
+          <label className="grid gap-2 text-sm font-medium text-[var(--text-secondary)]">
             {labels.acquisitionLabel}
             <Input
               inputMode="numeric"
@@ -103,7 +103,7 @@ export function TaxCalculator({
               }
             />
           </label>
-          <label className="grid gap-2 text-sm font-medium text-[rgba(19,33,47,0.78)]">
+          <label className="grid gap-2 text-sm font-medium text-[var(--text-secondary)]">
             {labels.saleLabel}
             <Input
               inputMode="numeric"
@@ -116,7 +116,7 @@ export function TaxCalculator({
               }
             />
           </label>
-          <label className="grid gap-2 text-sm font-medium text-[rgba(19,33,47,0.78)]">
+          <label className="grid gap-2 text-sm font-medium text-[var(--text-secondary)]">
             {labels.deductibleLabel}
             <Input
               inputMode="numeric"
@@ -129,7 +129,7 @@ export function TaxCalculator({
               }
             />
           </label>
-          <label className="grid gap-2 text-sm font-medium text-[rgba(19,33,47,0.78)]">
+          <label className="grid gap-2 text-sm font-medium text-[var(--text-secondary)]">
             {labels.holdingYearsLabel}
             <Input
               inputMode="numeric"
@@ -152,43 +152,43 @@ export function TaxCalculator({
           </Button>
         </div>
         <div className="grid gap-3">
-          <div className="rounded-[1.25rem] border border-[var(--line)] bg-white/80 px-4 py-4">
-            <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.48)]">
+          <div className="rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] px-4 py-4">
+            <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-hint)]">
               {labels.acquisitionTaxLabel}
             </p>
-            <p className="mt-3 text-sm font-semibold text-[rgba(19,33,47,0.78)]">
+            <p className="mt-3 text-sm font-semibold text-[var(--text-secondary)]">
               {formatCurrency(locale, calculated.acquisitionTax)}
             </p>
           </div>
-          <div className="rounded-[1.25rem] border border-[var(--line)] bg-white/80 px-4 py-4">
-            <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.48)]">
+          <div className="rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] px-4 py-4">
+            <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-hint)]">
               {labels.capitalGainsTaxLabel}
             </p>
-            <p className="mt-3 text-sm font-semibold text-[rgba(19,33,47,0.78)]">
+            <p className="mt-3 text-sm font-semibold text-[var(--text-secondary)]">
               {formatCurrency(locale, calculated.capitalGainsTax)}
             </p>
           </div>
-          <div className="rounded-[1.25rem] border border-[var(--line)] bg-white/80 px-4 py-4">
-            <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.48)]">
+          <div className="rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] px-4 py-4">
+            <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-hint)]">
               {labels.localTaxLabel}
             </p>
-            <p className="mt-3 text-sm font-semibold text-[rgba(19,33,47,0.78)]">
+            <p className="mt-3 text-sm font-semibold text-[var(--text-secondary)]">
               {formatCurrency(locale, calculated.localTax)}
             </p>
           </div>
-          <div className="rounded-[1.25rem] border border-[var(--line)] bg-white/80 px-4 py-4">
-            <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.48)]">
+          <div className="rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] px-4 py-4">
+            <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-hint)]">
               {labels.totalTaxLabel}
             </p>
             <p className="mt-3 text-lg font-semibold text-[var(--spot)]">
               {formatCurrency(locale, calculated.totalTax)}
             </p>
           </div>
-          <div className="rounded-[1.25rem] border border-[var(--line)] bg-[rgba(14,116,144,0.08)] px-4 py-4">
-            <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.48)]">
+          <div className="rounded-[var(--radius-md)] border border-[var(--line)] bg-[rgba(14,116,144,0.08)] px-4 py-4">
+            <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-hint)]">
               {labels.netLabel}
             </p>
-            <p className="mt-3 text-lg font-semibold text-[var(--foreground)]">
+            <p className="mt-3 text-lg font-semibold text-[var(--text-primary)]">
               {formatCurrency(locale, calculated.netAmount)}
             </p>
           </div>

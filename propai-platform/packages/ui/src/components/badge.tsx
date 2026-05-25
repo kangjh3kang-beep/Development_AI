@@ -9,15 +9,15 @@ export type BadgeProps = HTMLAttributes<HTMLSpanElement> & {
 
 const variantClassName: Record<BadgeVariant, string> = {
   default:
-    "bg-[var(--surface-soft)] text-[var(--foreground)]",
+    "bg-[var(--surface-soft)] text-[var(--text-secondary)]",
   success:
-    "bg-[rgba(34,197,94,0.15)] text-[rgb(22,163,74)]",
+    "bg-[var(--success-soft)] text-[var(--success)]",
   warning:
-    "bg-[rgba(234,179,8,0.15)] text-[rgb(161,98,7)]",
+    "bg-[var(--warning-soft)] text-[var(--warning)]",
   error:
-    "bg-[rgba(239,68,68,0.15)] text-[rgb(220,38,38)]",
+    "bg-[var(--error-soft)] text-[var(--error)]",
   info:
-    "bg-[rgba(59,130,246,0.15)] text-[rgb(37,99,235)]",
+    "bg-[var(--info-soft)] text-[var(--info)]",
 };
 
 export const Badge = forwardRef<HTMLSpanElement, BadgeProps>(
@@ -26,7 +26,7 @@ export const Badge = forwardRef<HTMLSpanElement, BadgeProps>(
       <span
         ref={ref}
         className={cn(
-          "inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium",
+          "inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold",
           variantClassName[variant],
           className,
         )}

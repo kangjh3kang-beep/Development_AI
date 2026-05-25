@@ -1,8 +1,8 @@
 {
   "meta": {
-    "title": "PropAI 工作区",
-    "siteName": "PropAI",
-    "description": "房地产开发全周期 AI 平台的前端初始工作区。"
+    "title": "사통팔땅 (Sa-Tong-Pal-Ttang) 工作区",
+    "siteName": "사통팔땅",
+    "description": "连接全球每一个角落，自动化整个开发周期的顶级房地产人工智能平台。"
   },
   "hero": {
     "badge": "Next.js 前端环境",
@@ -22,16 +22,32 @@
     "drone": "无人机",
     "blockchain": "区块链",
     "report": "报告",
-    "agent": "智能体",
-    "approvals": "审批运营",
-    "tax": "税务",
-    "auction": "拍卖",
-    "inspection": "现场",
+    "portfolio": "AI 投资组合地图",
+    "agent": "AI 智能体",
+    "auction": "竞公拍分析",
+    "inspection": "现场检查",
+    "tax": "税务模拟",
+    "tenant": "租户管理",
+    "webrtc": "实时协作",
+    "analytics_investment": "投资/估值 (AVM)",
+    "analytics_esg": "ESG 仪表盘",
+    "analytics_carbon": "碳排放/LCA",
+    "analytics_cost": "成本/价格指数",
+    "analytics_iot": "IoT/能源控制",
+    "feasibility": "可行性模拟",
+    "market_insights": "市场动向",
+    "regulations": "法规监测",
+    "digital_twin": "数字孪生",
+    "maintenance": "设备维护",
+    "safety": "AI 安全管理",
+    "sre": "SRE 系统管理",
+    "kdx": "KDX 监控",
     "login": "登录",
     "register": "注册"
   },
   "dashboard": {
-    "title": "前端基础已经就绪。",
+    "title": "AI驱动的房地产业务自动化",
+    "welcome": "开发业务的开始！您已准备好作为开发商腾飞。",
     "description": "当前阶段优先完成多语言路由、基础布局、仪表盘结构和占位页面。真实 API 连接会在后端响应契约稳定后继续接入。",
     "summaryTitle": "初始运行状态",
     "summaryDesign": "已经预留 AI 设计与平面图生成模块的位置。",
@@ -61,12 +77,20 @@
     },
     "projectDetail": {
       "eyebrow": "项目详情",
-      "title": "项目详情枢纽",
-      "description": "设计、BIM、金融、无人机、区块链和报告会统一归入一个项目上下文。",
+      "title": "사통팔땅 项目中心",
+      "description": "从地块分析到运营管理，精确连接整个开发生命周期。",
       "items": {
         "first": "项目概览",
         "second": "模块入口",
         "third": "状态摘要面板"
+      },
+      "summary": {
+        "hub": "사통팔땅 智能中心 / ID:",
+        "name": "江南智能广场新建工程",
+        "pnu": "地块编码(PNU): 1168010100104120002",
+        "zone": "用途地域: 一般商业地区",
+        "npv": "预计净现值 (NPV)",
+        "roi": "项目投资回报率 (ROI)"
       }
     },
     "design": {
@@ -112,7 +136,7 @@
     "blockchain": {
       "eyebrow": "区块链模块",
       "title": "托管状态与交易状态",
-      "description": "合约 ABI 和部署元数据固定后，可在这里连接实时托管状态。",
+      "description": "合约 ABI 和 deployment 元数据固定后，可在这里连接实时托管状态。",
       "items": {
         "first": "托管状态卡片",
         "second": "期限与条件摘要",
@@ -144,7 +168,7 @@
       "title": "税务计算与优化",
       "description": "此基础网格将承载表单与结果面板。",
       "items": {
-        "first": "税务输入表单",
+        "first": "税务预测表单",
         "second": "优化对比结果",
         "third": "法律依据区域"
       }
@@ -168,6 +192,30 @@
         "second": "现场检查清单",
         "third": "同步等待状态"
       }
+    },
+    "sre": {
+      "eyebrow": "ENGINEERING / SRE",
+      "title": "系统可靠性工程 (SRE)",
+      "description": "实时监控사통팔땅平台的基础设施、构建质量和业务健康状况。",
+      "items": {
+        "first": "基础架构可用性",
+        "second": "构建质量指标",
+        "third": "质量门控状态"
+      }
+    },
+    "feasibility_simulation": {
+      "title": "经济敏感度模拟",
+      "description": "调整各项经济变量以预测 ROI 和 NPV 的概率性波动。",
+      "runBtn": "运行模拟",
+      "runningBtn": "计算中...",
+      "inputTitle": "变量输入面板",
+      "outputTitle": "模拟结果分布",
+      "costVol": "建筑成本波动 (±%)",
+      "interestRate": "目标利率",
+      "salesDelay": "销售回笼延迟",
+      "meanNpv": "预计平均 NPV",
+      "var5": "在险价值 (下位 5%)",
+      "profitIndex": "获利指数 (PI)"
     }
   },
   "status": {
@@ -232,14 +280,113 @@
     "installAction": "安装工作区",
     "enableNotificationsAction": "启用通知",
     "testNotificationAction": "发送测试通知",
-    "refreshAction": "刷新 PWA",
+    "refreshAction": "PWA 刷新",
     "offlineAction": "打开离线页面",
     "errorTitle": "PWA 运行问题",
-    "testNotificationTitle": "PropAI 现场同步",
+    "testNotificationTitle": "사통팔땅 现场同步",
     "testNotificationBody": "离线工作区已可用于巡检与现场报告。"
   },
   "a11y": {
     "screenReaderRegion": "屏幕阅读器提示区域",
     "skipToContent": "跳转到正文"
+  },
+  "deepIntegration": {
+    "lifecycle": {
+      "title": "深度集成分析视图",
+      "stageSite": "选址分析",
+      "stageLegal": "法规审查",
+      "stageDesignAI": "人工智能设计 (CAD/BIM)",
+      "stageFeasibility": "项目可行性 (蒙特卡洛)",
+      "stageESG": "ESG 仪表盘",
+      "stagePermits": "许可审批支持",
+      "stageConstruction": "施工成本与工程量",
+      "stageOperations": "资产运营与维护",
+      "pendingTitle": "模块集成中",
+      "pendingDesc": "该阶段的深度集成视图计划在 168 表数据库联动的下一阶段发布。"
+    },
+    "cadBim": {
+      "title": "AI设计集成",
+      "description": "基于 사통팔땅 核心引擎生成的参数化 CAD 提案及 3D BIM 模型查看器。",
+      "btn2D": "2D CAD 平면도",
+      "btn3D": "3D BIM 查看器",
+      "loading3D": "WebGL Three.js 画布初始化中...",
+      "loading2D": "SVG 参数化编辑器渲染中...",
+      "legalCheck": "法规审查状态",
+      "compliant": "100% 合规",
+      "autoCorrected": "系统自动修正 3 项",
+      "exportBtn": "导出 IFC/DXF"
+    },
+    "feasibility": {
+      "title": "AI 驱动的业务自动化",
+      "welcome": "开发业务的开始！您已准备好作为开发商腾飞。",
+      "description": "通过配置 10,000 次以上的迭代场景，对概率性 ROI 和 NPV 区间进行建模。",
+      "runBtn": "运行模拟",
+      "runningBtn": "10k 次迭代模拟器运行中...",
+      "inputTitle": "输入变量 (正态分布)",
+      "costVol": "建筑施工成本波动性",
+      "interestRate": "基准利率 (平均)",
+      "salesDelay": "销售延迟概率",
+      "outputTitle": "模拟结果报告",
+      "meanNpv": "预计平均净现值 (NPV)",
+      "var5": "5% 极端风险 (VaR)",
+      "profitIndex": "获利指数 (PI)"
+    },
+    "feasibilityV2": {
+      "title": "收支分析 v2",
+      "subtitle": "15种开发类型 x 38种税种 x 229个区县 全自动化",
+      "tabInput": "输入",
+      "tabResult": "分析结果",
+      "tabMonteCarlo": "蒙特卡洛",
+      "tabVersion": "版本历史",
+      "devType": "开发类型",
+      "calculate": "执行分析",
+      "calculating": "计算中...",
+      "grade": "等级",
+      "revenue": "总收入",
+      "totalCost": "总成本",
+      "netProfit": "净利润",
+      "profitRate": "利润率",
+      "roi": "投资回报率",
+      "npv": "净现值",
+      "costBreakdown": "成本构成",
+      "commit": "提交",
+      "commitHistory": "提交历史",
+      "aiDiagnosis": "AI诊断建议",
+      "export": "导出"
+    },
+    "taxV2": {
+      "title": "税务模拟 v2",
+      "subtitle": "4阶段38种税一键计算",
+      "calculateAll": "计算税费",
+      "grandTotal": "总税额",
+      "stageAcquisition": "取得阶段",
+      "stageUtility": "施工阶段",
+      "stageSale": "销售阶段",
+      "stageDisposal": "转让阶段",
+      "matrix": "开发类型税务矩阵",
+      "regionSearch": "区域税率查询",
+      "lawChanges": "法律变更监控"
+    },
+    "cost": {
+      "title": "建筑成本与工程量计算 (QTO)",
+      "description": "基于 3D BIM 自动扫描工程量，并实时结合调配厅材料单价的报表。",
+      "exportBtn": "导出 Excel 工程量清单(BOQ)",
+      "colCode": "分项编码",
+      "colDesc": "工项描述",
+      "colUnit": "单位",
+      "colQty": "计算数量(BIM)",
+      "colRate": "材料/人工单价(KRW)",
+      "colTotal": "总额(KRW)",
+      "subtotal": "直接工程费小计"
+    },
+    "schedule": {
+      "title": "进度管理与 AI 自动监理",
+      "description": "4D 进度计划甘特图以及与现场摄像头联动的 AI 质量/安全监理实时告警面板。",
+      "ganttTitle": "4D 建筑施工进度 (Gantt)",
+      "inspectionTitle": "已激活的监理状态",
+      "statusApproved": "审批完成",
+      "statusAlert": "AI 告警",
+      "statusPending": "等待处理"
+    }
   }
 }

@@ -77,11 +77,186 @@ function extractErrorMessage(error: unknown) {
   return "Request failed.";
 }
 
+type Labels = {
+  heroTitle: string;
+  heroDescription: string;
+  heroHint: string;
+  projectTitle: string;
+  projectSelectLabel: string;
+  manualProjectIdLabel: string;
+  selectedProjectLabel: string;
+  manualTargetLabel: string;
+  materialSnapshotTitle: string;
+  materialTrendTitle: string;
+  regionCodeLabel: string;
+  materialCodesLabel: string;
+  refreshAction: string;
+  analysisTitle: string;
+  analysisHint: string;
+  baseCostLabel: string;
+  durationLabel: string;
+  baselineYearLabel: string;
+  targetYearLabel: string;
+  materialShareLabel: string;
+  laborShareLabel: string;
+  overheadShareLabel: string;
+  contingencyLabel: string;
+  analyzeAction: string;
+  adjustedCostLabel: string;
+  escalationRateLabel: string;
+  sourceLabel: string;
+  deltaLabel: string;
+  impactLabel: string;
+  projectLoadErrorTitle: string;
+  projectLoadErrorDetail: string;
+  materialLoadErrorTitle: string;
+  materialLoadErrorDetail: string;
+  escalationLoadErrorTitle: string;
+  escalationLoadErrorDetail: string;
+  retryAction: string;
+  authError: string;
+  missingProjectError: string;
+  alertsLabel: string;
+};
+
+const LABELS: Record<Locale, Labels> = {
+  ko: {
+    heroTitle: "비용 리서치 인텔리전스",
+    heroDescription: "KCCI 자재가와 PPI 공사비 보정 시뮬레이션",
+    heroHint: "프로젝트별 자재 노출액과 최신 공사비 보정안을 실 API 기준으로 확인합니다.",
+    projectTitle: "비용 추적 대상 프로젝트",
+    projectSelectLabel: "라이브 프로젝트",
+    manualProjectIdLabel: "수동 프로젝트 UUID",
+    selectedProjectLabel: "현재 대상",
+    manualTargetLabel: "수동 대상",
+    materialSnapshotTitle: "자재가 스냅샷 갱신",
+    materialTrendTitle: "최신 자재가 추이",
+    regionCodeLabel: "권역 코드",
+    materialCodesLabel: "자재 코드 목록",
+    refreshAction: "자재가 새로고침",
+    analysisTitle: "공사비 에스컬레이션 분석",
+    analysisHint: "최신 공사비 보정안",
+    baseCostLabel: "기준 공사비(원)",
+    durationLabel: "공사 기간(개월)",
+    baselineYearLabel: "기준 연도",
+    targetYearLabel: "목표 연도",
+    materialShareLabel: "자재 비중",
+    laborShareLabel: "노무 비중",
+    overheadShareLabel: "간접비 비중",
+    contingencyLabel: "컨틴전시 비율",
+    analyzeAction: "에스컬레이션 분석",
+    adjustedCostLabel: "보정 후 공사비",
+    escalationRateLabel: "상승률",
+    sourceLabel: "소스",
+    deltaLabel: "Delta",
+    impactLabel: "Impact",
+    projectLoadErrorTitle: "프로젝트 목록 로드 실패",
+    projectLoadErrorDetail: "비용 인텔리전스 대상 프로젝트를 불러오지 못했습니다.",
+    materialLoadErrorTitle: "자재가 조회 실패",
+    materialLoadErrorDetail: "최신 자재가 추이를 가져오지 못했습니다.",
+    escalationLoadErrorTitle: "공사비 보정안 조회 실패",
+    escalationLoadErrorDetail: "프로젝트의 최신 에스컬레이션 시나리오를 읽지 못했습니다.",
+    retryAction: "다시 시도",
+    authError: "API 인증이 필요합니다.",
+    missingProjectError: "실제 프로젝트 UUID가 필요합니다.",
+    alertsLabel: "경보",
+  },
+  en: {
+    heroTitle: "Cost Intelligence",
+    heroDescription: "KCCI Material Prices & PPI Escalation Simulation",
+    heroHint: "Check project-specific material exposure and latest cost adjustments based on live APIs.",
+    projectTitle: "Cost Tracking Projects",
+    projectSelectLabel: "Live Projects",
+    manualProjectIdLabel: "Manual Project UUID",
+    selectedProjectLabel: "Current Target",
+    manualTargetLabel: "Manual Entry",
+    materialSnapshotTitle: "Refresh Material Snapshot",
+    materialTrendTitle: "Latest Material Trends",
+    regionCodeLabel: "Region Code",
+    materialCodesLabel: "Material Code List",
+    refreshAction: "Refresh Prices",
+    analysisTitle: "Escalation Analysis",
+    analysisHint: "Latest Cost Adjustment Plan",
+    baseCostLabel: "Base Cost (KRW)",
+    durationLabel: "Duration (Months)",
+    baselineYearLabel: "Baseline Year",
+    targetYearLabel: "Target Year",
+    materialShareLabel: "Material Share",
+    laborShareLabel: "Labor Share",
+    overheadShareLabel: "Overhead Share",
+    contingencyLabel: "Contingency Ratio",
+    analyzeAction: "Analyze Escalation",
+    adjustedCostLabel: "Adjusted Construction Cost",
+    escalationRateLabel: "Escalation Rate",
+    sourceLabel: "Source",
+    deltaLabel: "Delta",
+    impactLabel: "Impact",
+    projectLoadErrorTitle: "Failed to Load Projects",
+    projectLoadErrorDetail: "Could not load projects for cost intelligence tracking.",
+    materialLoadErrorTitle: "Price Lookup Failed",
+    materialLoadErrorDetail: "Could not fetch the latest material price trends.",
+    escalationLoadErrorTitle: "Escalation Analysis Failed",
+    escalationLoadErrorDetail: "Could not read the latest escalation scenario for this project.",
+    retryAction: "Retry",
+    authError: "API authentication is required.",
+    missingProjectError: "A real project UUID is required.",
+    alertsLabel: "Alerts",
+  },
+  "zh-CN": {
+    heroTitle: "成本情报中心",
+    heroDescription: "KCCI 材料价格与 PPI 造价补正模拟",
+    heroHint: "基于实时 API 验证各项目的材料敞口及最新造价补正方案。",
+    projectTitle: "成本追踪目标项目",
+    projectSelectLabel: "实时项目",
+    manualProjectIdLabel: "手动项目 UUID",
+    selectedProjectLabel: "当前目标",
+    manualTargetLabel: "手动输入",
+    materialSnapshotTitle: "刷新材料价格快照",
+    materialTrendTitle: "最新材料价格趋势",
+    regionCodeLabel: "区域代码",
+    materialCodesLabel: "材料代码列表",
+    refreshAction: "刷新价格",
+    analysisTitle: "造价调差分析",
+    analysisHint: "最新造价补正方案",
+    baseCostLabel: "基准造价（韩元）",
+    durationLabel: "工期（月）",
+    baselineYearLabel: "基准年份",
+    targetYearLabel: "目标年份",
+    materialShareLabel: "材料占比",
+    laborShareLabel: "人工占比",
+    overheadShareLabel: "间接费占比",
+    contingencyLabel: "不可预见费比例",
+    analyzeAction: "分析调差",
+    adjustedCostLabel: "补正后造价",
+    escalationRateLabel: "上涨率",
+    sourceLabel: "来源",
+    deltaLabel: "变动额",
+    impactLabel: "影响额",
+    projectLoadErrorTitle: "项目列表加载失败",
+    projectLoadErrorDetail: "无法加载用于成本情报追踪的项目列表。",
+    materialLoadErrorTitle: "价格查询失败",
+    materialLoadErrorDetail: "无法获取最新的材料价格趋势数据。",
+    escalationLoadErrorTitle: "调差分析失败",
+    escalationLoadErrorDetail: "无法读取该项目的最新调差情景分析。",
+    retryAction: "重试",
+    authError: "需要 API 身份认证。",
+    missingProjectError: "需要真实的项目 UUID。",
+    alertsLabel: "预警数",
+  },
+};
+
 export function ConstructionCostWorkspaceClient({
   locale,
 }: {
   locale: Locale;
 }) {
+  const [isMounted, setIsMounted] = useState(false);
+  const labels = LABELS[locale];
+
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
+
   const runtimeConfig = apiClient.getRuntimeConfig();
   const canUseLiveApi =
     runtimeConfig.mode === "live" || runtimeConfig.hasAccessToken;
@@ -190,7 +365,7 @@ export function ConstructionCostWorkspaceClient({
     event.preventDefault();
     setWorkspaceError("");
     if (!activeProjectId) {
-      setWorkspaceError("실제 프로젝트 UUID가 필요합니다.");
+      setWorkspaceError(labels.missingProjectError);
       return;
     }
     setIsAnalyzing(true);
@@ -226,26 +401,30 @@ export function ConstructionCostWorkspaceClient({
   const materials = materialResult ?? materialQuery.data ?? null;
   const escalation = escalationResult ?? escalationQuery.data ?? null;
 
+  if (!isMounted) {
+    return <SkeletonLoader count={3} />;
+  }
+
   return (
     <section className="grid gap-6">
-      <Card className="rounded-[2rem] bg-[var(--surface-strong)] shadow-[0_20px_60px_rgba(19,33,47,0.08)]">
+      <Card className="rounded-[var(--radius-2xl)] bg-[var(--surface-strong)] shadow-[var(--shadow-lg)]">
         <CardContent className="p-8">
           <div className="flex flex-wrap items-center gap-3">
             <span className="rounded-full bg-[rgba(14,116,144,0.1)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--accent-strong)]">
-              COST INTELLIGENCE
+              {labels.heroTitle}
             </span>
-            <span className="rounded-full border border-[var(--line)] px-4 py-2 text-xs font-medium text-[rgba(19,33,47,0.7)]">
+            <span className="rounded-full border border-[var(--line)] px-4 py-2 text-xs font-medium text-[var(--text-secondary)]">
               {runtimeConfig.mode === "live" ? "LIVE" : "HYBRID"}
             </span>
           </div>
-          <h3 className="mt-5 text-3xl font-bold text-[var(--foreground)]">
-            KCCI 자재가와 PPI 공사비 보정 시뮬레이션
+          <h3 className="mt-5 text-3xl font-bold text-[var(--text-primary)]">
+            {labels.heroDescription}
           </h3>
-          <p className="mt-4 max-w-3xl text-sm leading-8 text-[rgba(19,33,47,0.72)]">
-            프로젝트별 자재 노출액과 최신 공사비 보정안을 실 API 기준으로 확인합니다.
+          <p className="mt-4 max-w-3xl text-sm leading-8 text-[var(--text-secondary)]">
+            {labels.heroHint}
           </p>
           {workspaceError ? (
-            <div className="mt-6 rounded-[1.5rem] border border-[rgba(217,119,6,0.28)] bg-[rgba(217,119,6,0.08)] p-5 text-sm leading-7 text-[var(--spot)]">
+            <div className="mt-6 rounded-[var(--radius-xl)] border border-[rgba(217,119,6,0.28)] bg-[rgba(217,119,6,0.08)] p-5 text-sm leading-7 text-[var(--spot)]">
               {workspaceError}
             </div>
           ) : null}
@@ -255,10 +434,10 @@ export function ConstructionCostWorkspaceClient({
         <CardContent className="grid gap-5 p-6 lg:grid-cols-[1.3fr_0.7fr]">
           <div className="grid gap-3">
             <div>
-              <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.5)]">
-                비용 추적 대상 프로젝트
+              <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+                {labels.projectTitle}
               </p>
-              <CardTitle className="mt-2 text-xl">라이브 프로젝트</CardTitle>
+              <CardTitle className="mt-2 text-xl">{labels.projectSelectLabel}</CardTitle>
             </div>
             {projectsQuery.isLoading ? (
               <SkeletonLoader count={1} itemClassName="h-14" />
@@ -266,24 +445,24 @@ export function ConstructionCostWorkspaceClient({
               <div className="grid gap-3">
                 {projectsQuery.isError ? (
                   <WorkspaceQueryErrorCard
-                    title="프로젝트 목록 로드 실패"
-                    description="비용 인텔리전스 대상 프로젝트를 불러오지 못했습니다. 수동 UUID 입력은 계속 사용할 수 있습니다."
+                    title={labels.projectLoadErrorTitle}
+                    description={labels.projectLoadErrorDetail}
                     message={extractErrorMessage(projectsQuery.error)}
-                    actionLabel="다시 시도"
+                    actionLabel={labels.retryAction}
                     onRetry={() => {
                       void projectsQuery.refetch();
                     }}
                   />
                 ) : null}
                 <Select
-                  label="라이브 프로젝트"
+                  label={labels.projectSelectLabel}
                   value={selectedProjectId}
                   onValueChange={setSelectedProjectId}
                   options={[
                     {
                       label:
                         projectsQuery.data?.items.length
-                          ? "라이브 프로젝트"
+                          ? labels.projectSelectLabel
                           : "라이브 프로젝트가 아직 없습니다.",
                       value: "",
                       disabled: true,
@@ -299,18 +478,18 @@ export function ConstructionCostWorkspaceClient({
             <Input
               value={manualProjectId}
               onChange={(event) => setManualProjectId(event.target.value)}
-              placeholder="수동 프로젝트 UUID"
+              placeholder={labels.manualProjectIdLabel}
             />
           </div>
-          <div className="rounded-[1.5rem] bg-[var(--surface-soft)] p-5">
-            <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.5)]">
-              현재 대상
+          <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
+            <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+              {labels.selectedProjectLabel}
             </p>
-            <p className="mt-3 text-sm font-semibold text-[var(--foreground)]">
+            <p className="mt-3 text-sm font-semibold text-[var(--text-primary)]">
               {(selectedProject?.name ?? activeProjectId) || "-"}
             </p>
-            <p className="mt-2 text-sm text-[rgba(19,33,47,0.68)]">
-              {selectedProject?.status ?? "수동 대상"}
+            <p className="mt-2 text-sm text-[var(--text-secondary)]">
+              {selectedProject?.status ?? labels.manualTargetLabel}
             </p>
           </div>
         </CardContent>
@@ -320,34 +499,34 @@ export function ConstructionCostWorkspaceClient({
         <Card>
           <CardContent className="grid gap-5 p-6">
             <div>
-              <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.5)]">
-                자재가 스냅샷 갱신
+              <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+                {labels.materialSnapshotTitle}
               </p>
-              <CardTitle className="mt-2 text-xl">최신 자재가 추이</CardTitle>
+              <CardTitle className="mt-2 text-xl">{labels.materialTrendTitle}</CardTitle>
             </div>
             <form className="grid gap-4" onSubmit={handleRefreshMaterials}>
-              <p className="text-xs uppercase tracking-[0.2em] text-[rgba(19,33,47,0.45)]">
-                권역 코드
+              <p className="text-xs uppercase tracking-[0.2em] text-[var(--text-hint)]">
+                {labels.regionCodeLabel}
               </p>
               <Input
                 value={form.regionCode}
                 onChange={(event) =>
                   setForm((current) => ({ ...current, regionCode: event.target.value }))
                 }
-                placeholder="권역 코드"
+                placeholder={labels.regionCodeLabel}
               />
-              <p className="text-xs uppercase tracking-[0.2em] text-[rgba(19,33,47,0.45)]">
-                자재 코드 목록
+              <p className="text-xs uppercase tracking-[0.2em] text-[var(--text-hint)]">
+                {labels.materialCodesLabel}
               </p>
               <Input
                 value={form.materialCodes}
                 onChange={(event) =>
                   setForm((current) => ({ ...current, materialCodes: event.target.value }))
                 }
-                placeholder="자재 코드 목록"
+                placeholder={labels.materialCodesLabel}
               />
               <Button type="submit" disabled={!canUseLiveApi || isRefreshing}>
-                {isRefreshing ? "자재가 새로고침..." : "자재가 새로고침"}
+                {isRefreshing ? `${labels.refreshAction}...` : labels.refreshAction}
               </Button>
             </form>
             {materialQuery.isLoading ? (
@@ -355,10 +534,10 @@ export function ConstructionCostWorkspaceClient({
             ) : null}
             {materialQuery.isError ? (
               <WorkspaceQueryErrorCard
-                title="자재가 조회 실패"
-                description="최신 자재가 추이를 가져오지 못했습니다. 같은 조건으로 다시 조회하면 됩니다."
+                title={labels.materialLoadErrorTitle}
+                description={labels.materialLoadErrorDetail}
                 message={extractErrorMessage(materialQuery.error)}
-                actionLabel="다시 시도"
+                actionLabel={labels.retryAction}
                 onRetry={() => {
                   void materialQuery.refetch();
                 }}
@@ -366,22 +545,22 @@ export function ConstructionCostWorkspaceClient({
             ) : null}
             {materials ? (
               <div className="grid gap-4">
-                <div className="rounded-[1.5rem] border border-[var(--line)] bg-[var(--surface-soft)] p-4 text-sm text-[rgba(19,33,47,0.72)]">
-                  <p>소스: {materials.items[0]?.history.at(-1)?.source_name ?? "-"}</p>
+                <div className="rounded-[var(--radius-xl)] border border-[var(--line)] bg-[var(--surface-soft)] p-4 text-sm text-[var(--text-secondary)]">
+                  <p>{labels.sourceLabel}: {materials.items[0]?.history.at(-1)?.source_name ?? "-"}</p>
                   <p className="mt-2">{new Date(materials.as_of).toLocaleString(locale)}</p>
-                  <p className="mt-2">경보: {materials.alerts.length}</p>
+                  <p className="mt-2">{labels.alertsLabel}: {materials.alerts.length}</p>
                 </div>
                 {materials.items.map((item) => (
                   <div
                     key={item.material_code}
-                    className="rounded-[1.5rem] border border-[var(--line)] bg-white p-4"
+                    className="rounded-[var(--radius-xl)] border border-[var(--line)] bg-white p-4"
                   >
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div>
-                        <p className="text-sm font-semibold text-[var(--foreground)]">
+                        <p className="text-sm font-semibold text-[var(--text-primary)]">
                           {item.material_name}
                         </p>
-                        <p className="mt-1 text-xs uppercase tracking-[0.2em] text-[rgba(19,33,47,0.5)]">
+                        <p className="mt-1 text-xs uppercase tracking-[0.2em] text-[var(--text-tertiary)]">
                           {item.material_code}
                         </p>
                       </div>
@@ -398,7 +577,7 @@ export function ConstructionCostWorkspaceClient({
                           : "-"}
                       </p>
                     </div>
-                    <p className="mt-4 text-sm leading-7 text-[rgba(19,33,47,0.68)]">
+                    <p className="mt-4 text-sm leading-7 text-[var(--text-secondary)]">
                       MoM {formatPercent(item.mom_change_ratio)} / YoY{" "}
                       {formatPercent(item.yoy_change_ratio)}
                     </p>
@@ -411,10 +590,10 @@ export function ConstructionCostWorkspaceClient({
         <Card>
           <CardContent className="grid gap-5 p-6">
             <div>
-              <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.5)]">
-                공사비 에스컬레이션 분석
+              <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+                {labels.analysisTitle}
               </p>
-              <CardTitle className="mt-2 text-xl">최신 공사비 보정안</CardTitle>
+              <CardTitle className="mt-2 text-xl">{labels.analysisHint}</CardTitle>
             </div>
             <form className="grid gap-4 md:grid-cols-2" onSubmit={handleAnalyze}>
               <Input
@@ -422,60 +601,60 @@ export function ConstructionCostWorkspaceClient({
                 onChange={(event) =>
                   setForm((current) => ({ ...current, baseCost: event.target.value }))
                 }
-                placeholder="기준 공사비(원)"
+                placeholder={labels.baseCostLabel}
               />
               <Input
                 value={form.durationMonths}
                 onChange={(event) =>
                   setForm((current) => ({ ...current, durationMonths: event.target.value }))
                 }
-                placeholder="공사 기간(개월)"
+                placeholder={labels.durationLabel}
               />
               <Input
                 value={form.baselineYear}
                 onChange={(event) =>
                   setForm((current) => ({ ...current, baselineYear: event.target.value }))
                 }
-                placeholder="기준 연도"
+                placeholder={labels.baselineYearLabel}
               />
               <Input
                 value={form.targetYear}
                 onChange={(event) =>
                   setForm((current) => ({ ...current, targetYear: event.target.value }))
                 }
-                placeholder="목표 연도"
+                placeholder={labels.targetYearLabel}
               />
               <Input
                 value={form.materialShare}
                 onChange={(event) =>
                   setForm((current) => ({ ...current, materialShare: event.target.value }))
                 }
-                placeholder="자재 비중"
+                placeholder={labels.materialShareLabel}
               />
               <Input
                 value={form.laborShare}
                 onChange={(event) =>
                   setForm((current) => ({ ...current, laborShare: event.target.value }))
                 }
-                placeholder="노무 비중"
+                placeholder={labels.laborShareLabel}
               />
               <Input
                 value={form.overheadShare}
                 onChange={(event) =>
                   setForm((current) => ({ ...current, overheadShare: event.target.value }))
                 }
-                placeholder="간접비 비중"
+                placeholder={labels.overheadShareLabel}
               />
               <Input
                 value={form.contingency}
                 onChange={(event) =>
                   setForm((current) => ({ ...current, contingency: event.target.value }))
                 }
-                placeholder="컨틴전시 비율"
+                placeholder={labels.contingencyLabel}
               />
               <div className="md:col-span-2">
                 <Button type="submit" disabled={!canUseLiveApi || isAnalyzing}>
-                  {isAnalyzing ? "에스컬레이션 분석..." : "에스컬레이션 분석"}
+                  {isAnalyzing ? `${labels.analyzeAction}...` : labels.analyzeAction}
                 </Button>
               </div>
             </form>
@@ -484,10 +663,10 @@ export function ConstructionCostWorkspaceClient({
             ) : null}
             {activeProjectId && escalationQuery.isError ? (
               <WorkspaceQueryErrorCard
-                title="공사비 보정안 조회 실패"
-                description="프로젝트의 최신 에스컬레이션 시나리오를 읽지 못했습니다. 새 분석을 수행하거나 다시 조회하세요."
+                title={labels.escalationLoadErrorTitle}
+                description={labels.escalationLoadErrorDetail}
                 message={extractErrorMessage(escalationQuery.error)}
-                actionLabel="다시 시도"
+                actionLabel={labels.retryAction}
                 onRetry={() => {
                   void escalationQuery.refetch();
                 }}
@@ -495,38 +674,38 @@ export function ConstructionCostWorkspaceClient({
             ) : null}
             {escalation ? (
               <div className="grid gap-4">
-                <div className="rounded-[1.5rem] border border-[var(--line)] bg-[var(--surface-soft)] p-4">
-                  <p className="text-sm font-semibold text-[var(--foreground)]">
-                    보정 후 공사비
+                <div className="rounded-[var(--radius-xl)] border border-[var(--line)] bg-[var(--surface-soft)] p-4">
+                  <p className="text-sm font-semibold text-[var(--text-primary)]">
+                    {labels.adjustedCostLabel}
                   </p>
-                  <p className="mt-3 text-2xl font-bold text-[var(--foreground)]">
+                  <p className="mt-3 text-2xl font-bold text-[var(--text-primary)]">
                     {formatCurrency(locale, escalation.adjusted_cost_krw)}
                   </p>
-                  <p className="mt-3 text-sm leading-7 text-[rgba(19,33,47,0.68)]">
-                    상승률: {formatPercent(escalation.overall_escalation_ratio)}
+                  <p className="mt-3 text-sm leading-7 text-[var(--text-secondary)]">
+                    {labels.escalationRateLabel}: {formatPercent(escalation.overall_escalation_ratio)}
                   </p>
-                  <p className="mt-2 text-sm leading-7 text-[rgba(19,33,47,0.68)]">
-                    소스: {escalation.ppi_source}
+                  <p className="mt-2 text-sm leading-7 text-[var(--text-secondary)]">
+                    {labels.sourceLabel}: {escalation.ppi_source}
                   </p>
-                  <p className="mt-2 text-sm leading-7 text-[rgba(19,33,47,0.68)]">
+                  <p className="mt-2 text-sm leading-7 text-[var(--text-secondary)]">
                     {escalation.summary}
                   </p>
                 </div>
                 {escalation.material_impacts.map((item) => (
                   <div
                     key={item.material_code}
-                    className="rounded-[1.5rem] border border-[var(--line)] bg-white p-4"
+                    className="rounded-[var(--radius-xl)] border border-[var(--line)] bg-white p-4"
                   >
                     <div className="flex flex-wrap items-center justify-between gap-3">
-                      <p className="text-sm font-semibold text-[var(--foreground)]">
+                      <p className="text-sm font-semibold text-[var(--text-primary)]">
                         {item.material_name}
                       </p>
                       <span className="rounded-full bg-[var(--surface-soft)] px-3 py-1 text-xs font-medium text-[var(--accent-strong)]">
                         {formatPercent(item.weight_ratio)}
                       </span>
                     </div>
-                    <p className="mt-3 text-sm leading-7 text-[rgba(19,33,47,0.68)]">
-                      Delta {formatPercent(item.delta_ratio)} / Impact{" "}
+                    <p className="mt-3 text-sm leading-7 text-[var(--text-secondary)]">
+                      {labels.deltaLabel} {formatPercent(item.delta_ratio)} / {labels.impactLabel}{" "}
                       {formatCurrency(locale, item.cost_impact_krw)}
                     </p>
                   </div>

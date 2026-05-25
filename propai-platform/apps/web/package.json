@@ -6,7 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint .",
+    "lint": "eslint . --no-cache",
     "type-check": "node -e \"require('node:fs').rmSync('.next/cache', { recursive: true, force: true })\" && next typegen && tsc --noEmit --incremental false",
     "test": "vitest",
     "test:run": "vitest run",
@@ -28,6 +28,8 @@
     "recharts": "^3.8.0",
     "solc": "^0.8.26",
     "three": "^0.160.0",
+    "@react-three/fiber": "^9.0.0-rc.3",
+    "@react-three/drei": "^9.117.0",
     "zustand": "^5.0.3"
   },
   "devDependencies": {

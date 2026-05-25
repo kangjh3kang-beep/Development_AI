@@ -23,11 +23,12 @@ vi.mock("@/components/pwa/PwaStatusCard", () => ({
 
 vi.mock("@/i18n/get-dictionary", () => ({
   getDictionary: vi.fn(async () => ({
-    hero: {
-      badge: "PROP AI",
+    meta: {
+      siteName: "PropAI",
     },
     dashboard: {
       title: "Dashboard home",
+      welcome: "Welcome to PropAI",
       description: "Live operating center",
       summaryTitle: "Summary panel",
     },
@@ -50,6 +51,30 @@ vi.mock("@/i18n/get-dictionary", () => ({
       modeMock: "MOCK",
       modeLive: "LIVE",
       modeWaiting: "WAITING",
+    },
+    pages: {
+      projectDetail: {
+        summary: {
+          hub: "HUB",
+          name: "NAME",
+          pnu: "PNU",
+          zone: "ZONE",
+          npv: "NPV",
+          roi: "ROI",
+        },
+      },
+    },
+    deepIntegration: {
+      lifecycle: {
+        title: "Lifecycle",
+      },
+    },
+    modulePlaceholders: {
+      maintenance: { title: "Maintenance", eyebrow: "MAINTENANCE", description: "Desc", items: [] },
+      tenant: { title: "Tenant", eyebrow: "TENANT", description: "Desc", items: [] },
+      tax: { title: "Tax", eyebrow: "TAX", description: "Desc", items: [] },
+      approvals: { title: "Approval Ops", eyebrow: "APPROVALS", description: "Desc", items: [] },
+      auction: { title: "Auction", eyebrow: "AUCTION", description: "Desc", items: [] },
     },
     pwa: {
       eyebrow: "G163 / PWA",
@@ -92,64 +117,29 @@ describe("Dashboard home navigation", () => {
     render(await DashboardPage({ params: Promise.resolve({ locale: "en" }) }));
 
     expect(screen.getByText("Dashboard home")).toBeInTheDocument();
-    expect(screen.getByTestId("dashboard-client-panel")).toHaveTextContent(
-      "Summary panel",
-    );
-    expect(screen.getByTestId("pwa-status-card")).toBeInTheDocument();
+    expect(screen.getByText("PropAI")).toBeInTheDocument();
+    expect(screen.getByText("Welcome to PropAI")).toBeInTheDocument();
 
-    expect(screen.getByRole("link", { name: "Projects" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "모든 프로젝트 보기" })).toHaveAttribute(
       "href",
       "/en/projects",
     );
 
     const allLinks = screen.getAllByRole("link");
-    const auctionLinks = allLinks.filter(
-      (link) => link.getAttribute("href") === "/en/auction",
-    );
-    expect(auctionLinks).toHaveLength(2);
-    for (const link of auctionLinks) {
-      expect(link).toHaveAttribute("href", "/en/auction");
-    }
-
-    expect(
-      allLinks.find((link) => link.getAttribute("href") === "/en/tax"),
-    ).toBeDefined();
-    expect(
-      allLinks.find((link) => link.getAttribute("href") === "/en/maintenance"),
-    ).toBeDefined();
-    expect(
-      allLinks.find((link) => link.getAttribute("href") === "/en/tax"),
-    ).toHaveTextContent("Tax");
-    expect(
-      allLinks.find((link) => link.getAttribute("href") === "/en/maintenance"),
-    ).toHaveTextContent("Maintenance");
-    expect(
-      allLinks.find((link) => link.getAttribute("href") === "/en/approvals"),
-    ).toHaveTextContent("Approval Ops");
+    expect(allLinks.find((link) => link.getAttribute("href") === "/en/auction")).toBeDefined();
+    expect(allLinks.find((link) => link.getAttribute("href") === "/en/tax")).toBeDefined();
+    expect(allLinks.find((link) => link.getAttribute("href") === "/en/tenant")).toBeDefined();
+    expect(allLinks.find((link) => link.getAttribute("href") === "/en/inspection")).toBeDefined();
+    expect(allLinks.find((link) => link.getAttribute("href") === "/en/webrtc")).toBeDefined();
   });
 
-  it("renders the live overview card descriptions for the home entry modules", async () => {
+  it("renders the KPI summary and active pipeline cards", async () => {
     render(await DashboardPage({ params: Promise.resolve({ locale: "en" }) }));
 
-    expect(
-      screen.getByText(
-        "Calculate project-linked tax scenarios through the live tax API.",
-      ),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        "Validate auction analysis, contractor matching, and chatbot queries through live APIs.",
-      ),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        "Jump into the live maintenance, tenant-signal, and asset-intelligence chain.",
-      ),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        "Review tenant-wide approval queues, resolved decisions, and batch actions from one live control surface.",
-      ),
-    ).toBeInTheDocument();
+    expect(screen.getByText("총 포트폴리오 자산")).toBeInTheDocument();
+    expect(screen.getByText("3,500억")).toBeInTheDocument();
+    expect(screen.getByText("강남 게이트웨이 신축")).toBeInTheDocument();
+    expect(screen.getByText("송도 호라이즌 개발")).toBeInTheDocument();
+    expect(screen.getByText("남산 에코타워 리모델링")).toBeInTheDocument();
   });
 });

@@ -25,17 +25,13 @@ export default async function ReportPage({ params }: ReportPageProps) {
 
   return (
     <div className="grid gap-6">
-      <ModulePlaceholder
-        eyebrow="PROJECT / REPORT"
-        title="Project report live route"
-        description="Use the routed project id to generate multilingual investor reports through the live reporting APIs."
+            <ModulePlaceholder
+        eyebrow={dictionary.modulePlaceholders["report"].eyebrow}
+        title={dictionary.modulePlaceholders["report"].title}
+        description={dictionary.modulePlaceholders["report"].description}
         statusLabel={runtimeMode}
         localeLabel={locale}
-        items={[
-          "Load the current project context from GET /projects/{id}",
-          "Submit POST /reports/investor/generate from the project detail route",
-          "Review multilingual report variants and generated sections on-screen",
-        ]}
+        items={dictionary.modulePlaceholders["report"].items}
       />
       <ProjectReportWorkspaceClient locale={locale as Locale} projectId={id} />
     </div>

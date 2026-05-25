@@ -70,6 +70,14 @@ export type CommonDictionary = {
       title: string;
       description: string;
       items: ItemGroup;
+      summary: {
+         hub: string;
+         name: string;
+         pnu: string;
+         zone: string;
+         npv: string;
+         roi: string;
+      };
     };
     design: {
       eyebrow: string;
@@ -130,6 +138,26 @@ export type CommonDictionary = {
       title: string;
       description: string;
       items: ItemGroup;
+    };
+    sre: {
+      eyebrow: string;
+      title: string;
+      description: string;
+      items: ItemGroup;
+    };
+    feasibility_simulation: {
+      title: string;
+      description: string;
+      runBtn: string;
+      runningBtn: string;
+      inputTitle: string;
+      outputTitle: string;
+      costVol: string;
+      interestRate: string;
+      salesDelay: string;
+      meanNpv: string;
+      var5: string;
+      profitIndex: string;
     };
   };
   status: {
@@ -204,6 +232,74 @@ export type CommonDictionary = {
     screenReaderRegion: string;
     skipToContent: string;
   };
+  deepIntegration: {
+    lifecycle: {
+      title: string;
+      stageSite: string;
+      stageLegal: string;
+      stageDesignAI: string;
+      stageFeasibility: string;
+      stageESG: string;
+      stagePermits: string;
+      stageConstruction: string;
+      stageOperations: string;
+      pendingTitle: string;
+      pendingDesc: string;
+    };
+    cadBim: {
+      title: string;
+      description: string;
+      btn2D: string;
+      btn3D: string;
+      loading3D: string;
+      loading2D: string;
+      legalCheck: string;
+      compliant: string;
+      autoCorrected: string;
+      exportBtn: string;
+    };
+    feasibility: {
+      title: string;
+      description: string;
+      runBtn: string;
+      runningBtn: string;
+      inputTitle: string;
+      costVol: string;
+      interestRate: string;
+      salesDelay: string;
+      outputTitle: string;
+      meanNpv: string;
+      var5: string;
+      profitIndex: string;
+    };
+    cost: {
+      title: string;
+      description: string;
+      exportBtn: string;
+      colCode: string;
+      colDesc: string;
+      colUnit: string;
+      colQty: string;
+      colRate: string;
+      colTotal: string;
+      subtotal: string;
+    };
+    schedule: {
+      title: string;
+      description: string;
+      ganttTitle: string;
+      inspectionTitle: string;
+      statusApproved: string;
+      statusAlert: string;
+      statusPending: string;
+    };
+  };
+  modulePlaceholders: Record<string, {
+    eyebrow: string;
+    title: string;
+    description: string;
+    items: string[];
+  }>;
 };
 
 async function loadDictionary(locale: Locale): Promise<CommonDictionary> {

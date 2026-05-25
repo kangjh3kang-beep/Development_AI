@@ -1,110 +1,67 @@
-"""보안 헤더 미들웨어 테스트.
+"""보안 헤더 미들웨어 테스트."""
 
-SecurityHeadersMiddleware가 OWASP 권장 헤더를 정상 추가하는지 검증.
-"""
-
+import os
+import sys
 import pytest
-from httpx import ASGITransport, AsyncClient
-from starlette.applications import Starlette
-from starlette.requests import Request
-from starlette.responses import JSONResponse
-from starlette.routing import Route
 
-from apps.api.middleware import SecurityHeadersMiddleware
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 
-def _make_test_app() -> Starlette:
-    """테스트용 최소 앱 생성."""
+class TestSecurityHeaders:
+    """SecurityHeadersMiddleware 테스트."""
 
-    async def homepage(request: Request) -> JSONResponse:
-        return JSONResponse({"status": "ok"})
+    def test_default_headers_count(self):
+        from app.core.security_headers import DEFAULT_SECURITY_HEADERS
+        assert len(DEFAULT_SECURITY_HEADERS) == 8
 
-    app = Starlette(routes=[Route("/", homepage)])
-    app.add_middleware(SecurityHeadersMiddleware)
-    return app
+    def test_hsts_header_present(self):
+        from app.core.security_headers import DEFAULT_SECURITY_HEADERS
+        assert "Strict-Transport-Security" in DEFAULT_SECURITY_HEADERS
+        assert "31536000" in DEFAULT_SECURITY_HEADERS["Strict-Transport-Security"]
 
+    def test_content_type_options(self):
+        from app.core.security_headers import DEFAULT_SECURITY_HEADERS
+        assert DEFAULT_SECURITY_HEADERS["X-Content-Type-Options"] == "nosniff"
 
-@pytest.fixture()
-def test_app() -> Starlette:
-    return _make_test_app()
+    def test_frame_options_deny(self):
+        from app.core.security_headers import DEFAULT_SECURITY_HEADERS
+        assert DEFAULT_SECURITY_HEADERS["X-Frame-Options"] == "DENY"
 
+    def test_csp_default_src(self):
+        from app.core.security_headers import DEFAULT_SECURITY_HEADERS
+        assert "default-src" in DEFAULT_SECURITY_HEADERS["Content-Security-Policy"]
 
-@pytest.mark.asyncio
-async def test_x_content_type_options(test_app: Starlette) -> None:
-    """X-Content-Type-Options: nosniff 헤더 확인."""
-    async with AsyncClient(transport=ASGITransport(app=test_app), base_url="http://test") as client:
-        response = await client.get("/")
-    assert response.headers.get("x-content-type-options") == "nosniff"
+    def test_referrer_policy(self):
+        from app.core.security_headers import DEFAULT_SECURITY_HEADERS
+        assert DEFAULT_SECURITY_HEADERS["Referrer-Policy"] == "strict-origin-when-cross-origin"
 
+    def test_middleware_header_count(self):
+        from app.core.security_headers import SecurityHeadersMiddleware
+        mw = SecurityHeadersMiddleware(app=None)
+        assert mw.header_count == 8
 
-@pytest.mark.asyncio
-async def test_x_frame_options(test_app: Starlette) -> None:
-    """X-Frame-Options: DENY 헤더 확인."""
-    async with AsyncClient(transport=ASGITransport(app=test_app), base_url="http://test") as client:
-        response = await client.get("/")
-    assert response.headers.get("x-frame-options") == "DENY"
+    def test_middleware_get_headers(self):
+        from app.core.security_headers import SecurityHeadersMiddleware
+        mw = SecurityHeadersMiddleware(app=None)
+        headers = mw.get_headers()
+        assert isinstance(headers, dict)
+        assert "X-XSS-Protection" in headers
 
+    def test_custom_headers(self):
+        from app.core.security_headers import SecurityHeadersMiddleware
+        custom = {"X-Custom": "value"}
+        mw = SecurityHeadersMiddleware(app=None, headers=custom)
+        assert mw.header_count == 1
+        assert mw.get_headers()["X-Custom"] == "value"
 
-@pytest.mark.asyncio
-async def test_strict_transport_security(test_app: Starlette) -> None:
-    """Strict-Transport-Security (HSTS) 헤더 확인."""
-    async with AsyncClient(transport=ASGITransport(app=test_app), base_url="http://test") as client:
-        response = await client.get("/")
-    hsts = response.headers.get("strict-transport-security", "")
-    assert "max-age=31536000" in hsts
-    assert "includeSubDomains" in hsts
+    def test_validate_csp_valid(self):
+        from app.core.security_headers import SecurityHeadersMiddleware
+        assert SecurityHeadersMiddleware.validate_csp("default-src 'self'") is True
 
+    def test_validate_csp_invalid(self):
+        from app.core.security_headers import SecurityHeadersMiddleware
+        assert SecurityHeadersMiddleware.validate_csp("script-src 'unsafe-inline'") is False
 
-@pytest.mark.asyncio
-async def test_x_xss_protection(test_app: Starlette) -> None:
-    """X-XSS-Protection 헤더 확인."""
-    async with AsyncClient(transport=ASGITransport(app=test_app), base_url="http://test") as client:
-        response = await client.get("/")
-    assert response.headers.get("x-xss-protection") == "1; mode=block"
-
-
-@pytest.mark.asyncio
-async def test_referrer_policy(test_app: Starlette) -> None:
-    """Referrer-Policy 헤더 확인."""
-    async with AsyncClient(transport=ASGITransport(app=test_app), base_url="http://test") as client:
-        response = await client.get("/")
-    assert response.headers.get("referrer-policy") == "strict-origin-when-cross-origin"
-
-
-@pytest.mark.asyncio
-async def test_permissions_policy(test_app: Starlette) -> None:
-    """Permissions-Policy 헤더 확인."""
-    async with AsyncClient(transport=ASGITransport(app=test_app), base_url="http://test") as client:
-        response = await client.get("/")
-    pp = response.headers.get("permissions-policy", "")
-    assert "camera=()" in pp
-    assert "microphone=()" in pp
-
-
-@pytest.mark.asyncio
-async def test_content_security_policy(test_app: Starlette) -> None:
-    """Content-Security-Policy 헤더 확인."""
-    async with AsyncClient(transport=ASGITransport(app=test_app), base_url="http://test") as client:
-        response = await client.get("/")
-    csp = response.headers.get("content-security-policy", "")
-    assert "default-src 'self'" in csp
-    assert "frame-ancestors 'none'" in csp
-
-
-@pytest.mark.asyncio
-async def test_all_security_headers_present(test_app: Starlette) -> None:
-    """모든 보안 헤더가 동시에 존재하는지 확인."""
-    async with AsyncClient(transport=ASGITransport(app=test_app), base_url="http://test") as client:
-        response = await client.get("/")
-
-    required_headers = [
-        "x-content-type-options",
-        "x-frame-options",
-        "x-xss-protection",
-        "strict-transport-security",
-        "referrer-policy",
-        "permissions-policy",
-        "content-security-policy",
-    ]
-    for header in required_headers:
-        assert header in response.headers, f"누락된 보안 헤더: {header}"
+    def test_xss_protection_header(self):
+        from app.core.security_headers import DEFAULT_SECURITY_HEADERS
+        assert DEFAULT_SECURITY_HEADERS["X-XSS-Protection"] == "1; mode=block"

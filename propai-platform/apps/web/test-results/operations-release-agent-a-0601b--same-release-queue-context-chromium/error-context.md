@@ -1,0 +1,176 @@
+# Page snapshot
+
+```yaml
+- generic [ref=e1]:
+  - status "Screen change announcement region" [ref=e2]
+  - link "Skip to content" [ref=e3] [cursor=pointer]:
+    - /url: "#main-content"
+  - generic [ref=e5]:
+    - banner [ref=e6]:
+      - generic [ref=e7]:
+        - generic [ref=e8]:
+          - paragraph [ref=e10]: Sa-Tong-Pal-Ttang Workspace
+          - heading "Sa-Tong-Pal-Ttang" [level=1] [ref=e12]
+        - generic [ref=e13]:
+          - generic [ref=e14]: Live
+          - generic [ref=e15]:
+            - generic [ref=e16]: Language
+            - combobox "Language" [ref=e17]:
+              - option "한국어"
+              - option "English" [selected]
+              - option "简体中文"
+    - generic [ref=e18]:
+      - complementary [ref=e19]:
+        - navigation "Dashboard navigation" [ref=e20]:
+          - link "Dashboard" [ref=e21] [cursor=pointer]:
+            - /url: /en
+            - text: Dashboard
+          - link "Projects" [ref=e23] [cursor=pointer]:
+            - /url: /en/projects
+            - text: Projects
+          - link "AI Portfolio Map" [ref=e25] [cursor=pointer]:
+            - /url: /en/portfolio
+            - text: AI Portfolio Map
+          - link "AI Agent" [ref=e27] [cursor=pointer]:
+            - /url: /en/agent
+            - text: AI Agent
+          - link "Auction Analysis" [ref=e29] [cursor=pointer]:
+            - /url: /en/auction
+            - text: Auction Analysis
+          - link "Field Inspection" [ref=e31] [cursor=pointer]:
+            - /url: /en/inspection
+            - text: Field Inspection
+          - link "Tax Simulation" [ref=e33] [cursor=pointer]:
+            - /url: /en/tax
+            - text: Tax Simulation
+          - link "Tenant Management" [ref=e35] [cursor=pointer]:
+            - /url: /en/tenant
+            - text: Tenant Management
+          - link "Real-time Collab" [ref=e37] [cursor=pointer]:
+            - /url: /en/webrtc
+            - text: Real-time Collab
+        - paragraph [ref=e40]: Analytics
+        - navigation "Analytics navigation" [ref=e41]:
+          - link "Investment/AVM" [ref=e42] [cursor=pointer]:
+            - /url: /en/analytics/investment
+          - link "ESG Dashboard" [ref=e43] [cursor=pointer]:
+            - /url: /en/analytics/esg
+          - link "Carbon/LCA" [ref=e44] [cursor=pointer]:
+            - /url: /en/analytics/carbon
+          - link "Cost/Indices" [ref=e45] [cursor=pointer]:
+            - /url: /en/analytics/cost
+          - link "IoT/Energy" [ref=e46] [cursor=pointer]:
+            - /url: /en/analytics/iot
+          - link "Market Insights" [ref=e47] [cursor=pointer]:
+            - /url: /en/market-insights
+          - link "Regulations" [ref=e48] [cursor=pointer]:
+            - /url: /en/regulations
+        - paragraph [ref=e50]: Operations
+        - navigation "Operations navigation" [ref=e51]:
+          - link "Digital Twin" [ref=e52] [cursor=pointer]:
+            - /url: /en/digital-twin
+          - link "Maintenance" [ref=e53] [cursor=pointer]:
+            - /url: /en/maintenance
+          - link "AI Safety" [ref=e54] [cursor=pointer]:
+            - /url: /en/safety
+          - link "Approval Ops" [active] [ref=e55] [cursor=pointer]:
+            - /url: /en/approvals
+          - link "SRE Systems" [ref=e56] [cursor=pointer]:
+            - /url: /en/sre
+          - link "KDX Monitoring" [ref=e57] [cursor=pointer]:
+            - /url: /en/dashboard/kdx
+      - main [ref=e58]:
+        - generic [ref=e59]:
+          - generic [ref=e61]:
+            - generic [ref=e62]:
+              - generic [ref=e63]: APPROVAL OPS / LIVE
+              - generic [ref=e64]: en
+              - generic [ref=e65]: Live
+            - generic [ref=e66]:
+              - generic [ref=e67]:
+                - heading "Approval operations center" [level=3] [ref=e68]
+                - paragraph [ref=e69]: Operate pending approvals, tenant-wide audit filters, rationale review, and project-scoped batch decisions from one live workspace.
+              - generic [ref=e71]:
+                - paragraph [ref=e72]: Live Scope
+                - list [ref=e73]:
+                  - listitem [ref=e74]: Tenant-wide approval queue and resolved decisions
+                  - listitem [ref=e75]: Approver-role and status filters
+                  - listitem [ref=e76]: Project-scoped bulk approve and reject actions
+          - generic [ref=e77]:
+            - generic [ref=e79]:
+              - generic [ref=e80]:
+                - heading "Approval operations center" [level=3] [ref=e81]
+                - paragraph [ref=e82]: Review pending approvals, resolved decisions, and execution history without opening the agent analysis route first.
+              - generic [ref=e83]:
+                - paragraph [ref=e84]: Live approval operations require NEXT_PUBLIC_API_ACCESS_TOKEN or localStorage.propai_access_token.
+                - link "Open agent orchestration" [ref=e86] [cursor=pointer]:
+                  - /url: /en/agent
+            - generic [ref=e87]:
+              - generic [ref=e89]:
+                - heading "Project context" [level=3] [ref=e90]
+                - paragraph [ref=e91]: Choose a live project or pin an existing UUID when the audit scope should stay project-specific.
+                - generic [ref=e92]:
+                  - generic [ref=e93]:
+                    - generic [ref=e94]: Live project
+                    - combobox "Live project" [ref=e95]
+                  - generic [ref=e96]:
+                    - generic [ref=e97]: Manual project UUID
+                    - textbox "Manual project UUID" [ref=e98]:
+                      - /placeholder: 00000000-0000-0000-0000-000000000000
+                - alert [ref=e100]:
+                  - generic [ref=e101]:
+                    - generic [ref=e102]:
+                      - paragraph [ref=e103]: The project list could not be loaded.
+                      - paragraph [ref=e104]: Choose a live project or pin an existing UUID when the audit scope should stay project-specific.
+                      - paragraph [ref=e105]: Failed to fetch
+                    - button "Retry" [ref=e106]
+                - generic [ref=e107]: "Current target: Not selected"
+              - generic [ref=e109]:
+                - heading "Audit filters" [level=3] [ref=e110]
+                - paragraph [ref=e111]: Switch between active-project and tenant-wide views, then narrow the queue by status or approver role.
+                - generic [ref=e112]:
+                  - generic [ref=e113]:
+                    - generic [ref=e114]: Scope
+                    - combobox "Scope" [ref=e115]:
+                      - option "Active project" [selected]
+                      - option "Tenant-wide"
+                  - generic [ref=e116]:
+                    - generic [ref=e117]: Approval status
+                    - combobox "Approval status" [ref=e118]:
+                      - option "Pending only" [selected]
+                      - option "Approved only"
+                      - option "Rejected only"
+                      - option "All statuses"
+                  - generic [ref=e119]:
+                    - generic [ref=e120]: Approver role
+                    - combobox "Approver role" [ref=e121]:
+                      - option "All roles" [selected]
+                      - option "Manager"
+                      - option "Investment Committee"
+                      - option "Risk Committee"
+                  - generic [ref=e122]:
+                    - generic [ref=e123]: Records
+                    - combobox "Records" [ref=e124]:
+                      - option "6"
+                      - option "12" [selected]
+                      - option "20"
+            - alert [ref=e125]: A real project UUID is required for project-scoped approval actions.
+            - generic [ref=e126]:
+              - generic [ref=e128]:
+                - paragraph [ref=e129]: Pending approvals
+                - paragraph [ref=e130]: "0"
+              - generic [ref=e132]:
+                - paragraph [ref=e133]: Approved decisions
+                - paragraph [ref=e134]: "0"
+              - generic [ref=e136]:
+                - paragraph [ref=e137]: Rejected decisions
+                - paragraph [ref=e138]: "0"
+            - generic [ref=e139]:
+              - generic [ref=e141]:
+                - heading "Approval queue and audit" [level=3] [ref=e142]
+                - paragraph [ref=e143]: No approval items match the current filters.
+              - generic [ref=e145]:
+                - heading "Execution history" [level=3] [ref=e146]
+                - paragraph [ref=e147]: No execution history is available for the current scope.
+  - alert [ref=e148]
+```

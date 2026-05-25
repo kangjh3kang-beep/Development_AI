@@ -163,6 +163,11 @@ type Labels = {
   marketLoadErrorTitle: string;
   marketLoadErrorDetail: string;
   retryAction: string;
+  listingsLabel: string;
+  avgPriceLabel: string;
+  avgAreaLabel: string;
+  requestsLabel: string;
+  tokensLabel: string;
 };
 
 const LABELS: Record<Locale, Labels> = {
@@ -227,6 +232,11 @@ const LABELS: Record<Locale, Labels> = {
     marketLoadErrorDetail:
       "선택한 권역의 포털 시장 데이터를 불러오지 못했습니다. 권역 코드를 유지한 채 재시도할 수 있습니다.",
     retryAction: "다시 시도",
+    listingsLabel: "등록 수",
+    avgPriceLabel: "평균 호가",
+    avgAreaLabel: "평균 면적",
+    requestsLabel: "요청",
+    tokensLabel: "토큰",
   },
   en: {
     heroTitle: "Investment operations control tower",
@@ -289,6 +299,11 @@ const LABELS: Record<Locale, Labels> = {
     marketLoadErrorDetail:
       "Regional portal market data failed to load. Retry with the current region code.",
     retryAction: "Retry",
+    listingsLabel: "Listings",
+    avgPriceLabel: "Avg. price",
+    avgAreaLabel: "Avg. area",
+    requestsLabel: "requests",
+    tokensLabel: "tokens",
   },
   "zh-CN": {
     heroTitle: "投资运营控制台",
@@ -349,6 +364,11 @@ const LABELS: Record<Locale, Labels> = {
     marketLoadErrorDetail:
       "无法加载当前区域的门户市场数据，可保留区域代码后重试。",
     retryAction: "重试",
+    listingsLabel: "列表数量",
+    avgPriceLabel: "平均价格",
+    avgAreaLabel: "平均面积",
+    requestsLabel: "请求次数",
+    tokensLabel: "Token数",
   },
 };
 
@@ -402,7 +422,13 @@ export function InvestmentOperationsWorkspaceClient({
 }: {
   locale: Locale;
 }) {
+  const [isMounted, setIsMounted] = useState(false);
   const labels = LABELS[locale];
+
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
+
   const runtimeConfig = apiClient.getRuntimeConfig();
   const canUseLiveApi =
     runtimeConfig.mode === "live" || runtimeConfig.hasAccessToken;
@@ -612,34 +638,38 @@ export function InvestmentOperationsWorkspaceClient({
     }
   }
 
+  if (!isMounted) {
+    return <SkeletonLoader count={5} />;
+  }
+
   return (
     <section className="grid gap-6">
-      <Card className="rounded-[2rem] bg-[var(--surface-strong)] shadow-[0_20px_60px_rgba(19,33,47,0.08)]">
+      <Card className="rounded-[var(--radius-2xl)] bg-[var(--surface-strong)] shadow-[var(--shadow-lg)]">
         <CardContent className="p-8">
           <div className="flex flex-wrap items-center gap-3">
             <span className="rounded-full bg-[rgba(14,116,144,0.1)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--accent-strong)]">
               {labels.heroTitle}
             </span>
-            <span className="rounded-full border border-[var(--line)] px-4 py-2 text-xs font-medium text-[rgba(19,33,47,0.7)]">
+            <span className="rounded-full border border-[var(--line)] px-4 py-2 text-xs font-medium text-[var(--text-secondary)]">
               {runtimeConfig.mode === "live" ? "LIVE" : "HYBRID"}
             </span>
           </div>
-          <h3 className="mt-5 text-3xl font-bold text-[var(--foreground)]">
+          <h3 className="mt-5 text-3xl font-bold text-[var(--text-primary)]">
             {labels.heroDescription}
           </h3>
-          <p className="mt-4 max-w-3xl text-sm leading-8 text-[rgba(19,33,47,0.72)]">
+          <p className="mt-4 max-w-3xl text-sm leading-8 text-[var(--text-secondary)]">
             {labels.heroHint}
           </p>
-          <p className="mt-3 max-w-3xl text-sm leading-8 text-[rgba(19,33,47,0.6)]">
+          <p className="mt-3 max-w-3xl text-sm leading-8 text-[var(--text-tertiary)]">
             {labels.tokenHint}
           </p>
           {!canUseLiveApi ? (
-            <div className="mt-6 rounded-[1.5rem] border border-dashed border-[var(--line)] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[rgba(19,33,47,0.72)]">
+            <div className="mt-6 rounded-[var(--radius-xl)] border border-dashed border-[var(--line)] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[var(--text-secondary)]">
               {labels.authError}
             </div>
           ) : null}
           {workspaceError ? (
-            <div className="mt-6 rounded-[1.5rem] border border-[rgba(217,119,6,0.28)] bg-[rgba(217,119,6,0.08)] p-5 text-sm leading-7 text-[var(--spot)]">
+            <div className="mt-6 rounded-[var(--radius-xl)] border border-[rgba(217,119,6,0.28)] bg-[rgba(217,119,6,0.08)] p-5 text-sm leading-7 text-[var(--spot)]">
               {workspaceError}
             </div>
           ) : null}
@@ -650,7 +680,7 @@ export function InvestmentOperationsWorkspaceClient({
         <CardContent className="grid gap-5 p-6 lg:grid-cols-[1.3fr_0.7fr]">
           <div className="grid gap-3">
             <div>
-              <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.5)]">
+              <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
                 {labels.projectTitle}
               </p>
               <CardTitle className="mt-2 text-xl">{labels.projectHint}</CardTitle>
@@ -704,23 +734,23 @@ export function InvestmentOperationsWorkspaceClient({
               />
             </div>
           </div>
-          <div className="rounded-[1.5rem] bg-[var(--surface-soft)] p-5">
-            <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.5)]">
+          <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
+            <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
               {labels.selectedProjectLabel}
             </p>
-            <p className="mt-3 text-sm font-semibold text-[var(--foreground)]">
+            <p className="mt-3 text-sm font-semibold text-[var(--text-primary)]">
               {activeProjectName || "-"}
             </p>
-            <p className="mt-2 break-all text-xs text-[rgba(19,33,47,0.56)]">
+            <p className="mt-2 break-all text-xs text-[var(--text-tertiary)]">
               {activeProjectId || "-"}
             </p>
             {selectedProject?.address ? (
-              <p className="mt-3 text-sm text-[rgba(19,33,47,0.72)]">
+              <p className="mt-3 text-sm text-[var(--text-secondary)]">
                 {selectedProject.address}
               </p>
             ) : null}
             {selectedProject ? (
-              <p className="mt-2 text-xs text-[rgba(19,33,47,0.56)]">
+              <p className="mt-2 text-xs text-[var(--text-tertiary)]">
                 {selectedProject.status} ·{" "}
                 {formatDate(locale, selectedProject.updated_at)}
               </p>
@@ -734,7 +764,7 @@ export function InvestmentOperationsWorkspaceClient({
           <CardContent className="p-6">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.5)]">
+                <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
                   {labels.aiCostsTitle}
                 </p>
                 <CardTitle className="mt-2 text-xl">
@@ -796,7 +826,7 @@ export function InvestmentOperationsWorkspaceClient({
             ) : null}
 
             {!aiCostsQuery.isLoading && !aiCostsQuery.isError && !aiCostsQuery.data ? (
-              <div className="mt-5 rounded-[1.5rem] bg-[var(--surface-soft)] p-5 text-sm text-[rgba(19,33,47,0.7)]">
+              <div className="mt-5 rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5 text-sm text-[var(--text-secondary)]">
                 {labels.aiCostsEmpty}
               </div>
             ) : null}
@@ -806,14 +836,14 @@ export function InvestmentOperationsWorkspaceClient({
                 {aiCostsQuery.data.by_service.map((item) => (
                   <div
                     key={`${item.service_name}-${item.model_name}`}
-                    className="rounded-[1.25rem] border border-[var(--line)] p-4"
+                    className="rounded-[var(--radius-md)] border border-[var(--line)] p-4"
                   >
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div>
-                        <p className="text-sm font-semibold text-[var(--foreground)]">
+                        <p className="text-sm font-semibold text-[var(--text-primary)]">
                           {item.service_name}
                         </p>
-                        <p className="text-xs text-[rgba(19,33,47,0.56)]">
+                        <p className="text-xs text-[var(--text-tertiary)]">
                           {item.model_name}
                         </p>
                       </div>
@@ -821,9 +851,9 @@ export function InvestmentOperationsWorkspaceClient({
                         {formatCurrency(locale, item.total_cost_usd, "USD")}
                       </p>
                     </div>
-                    <p className="mt-2 text-xs text-[rgba(19,33,47,0.56)]">
-                      {item.request_count.toLocaleString(locale)} requests ·{" "}
-                      {item.total_tokens.toLocaleString(locale)} tokens
+                    <p className="mt-2 text-xs text-[var(--text-tertiary)]">
+                      {item.request_count.toLocaleString(locale)} {labels.requestsLabel} ·{" "}
+                      {item.total_tokens.toLocaleString(locale)} {labels.tokensLabel}
                     </p>
                   </div>
                 ))}
@@ -831,7 +861,7 @@ export function InvestmentOperationsWorkspaceClient({
             ) : null}
 
             <form className="mt-6 grid gap-3" onSubmit={handleSaveBudget}>
-              <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.5)]">
+              <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
                 {labels.budgetTitle}
               </p>
               <Input
@@ -881,19 +911,19 @@ export function InvestmentOperationsWorkspaceClient({
             </form>
 
             {savedBudget ? (
-              <div className="mt-5 rounded-[1.5rem] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[rgba(19,33,47,0.72)]">
-                <p className="font-semibold text-[var(--foreground)]">
+              <div className="mt-5 rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[var(--text-secondary)]">
+                <p className="font-semibold text-[var(--text-primary)]">
                   {savedBudget.endpoint}
                 </p>
                 <p>
                   {formatCurrency(locale, savedBudget.monthly_budget_usd, "USD")} ·{" "}
                   {(savedBudget.alert_threshold_ratio * 100).toFixed(0)}%
                 </p>
-                <p className="text-xs text-[rgba(19,33,47,0.56)]">
+                <p className="text-xs text-[var(--text-tertiary)]">
                   {savedBudget.month} · {formatDate(locale, savedBudget.created_at)}
                 </p>
                 {budgetGate ? (
-                  <p className="mt-2 text-xs text-[rgba(19,33,47,0.56)]">
+                  <p className="mt-2 text-xs text-[var(--text-tertiary)]">
                     {labels.remainingBudgetLabel}:{" "}
                     {formatCurrency(locale, budgetGate.remaining_budget_usd, "USD")}
                   </p>
@@ -906,7 +936,7 @@ export function InvestmentOperationsWorkspaceClient({
         <div className="grid gap-6">
           <Card>
             <CardContent className="p-6">
-              <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.5)]">
+              <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
                 {labels.reportsTitle}
               </p>
               <form className="mt-5 grid gap-3" onSubmit={handleGenerateReport}>
@@ -973,21 +1003,21 @@ export function InvestmentOperationsWorkspaceClient({
 
               {generatedReport ? (
                 <div className="mt-5 space-y-3">
-                  <p className="text-xs text-[rgba(19,33,47,0.56)]">
+                  <p className="text-xs text-[var(--text-tertiary)]">
                     {labels.generatedSectionsLabel}:{" "}
                     {generatedReport.generated_sections.join(", ")}
                   </p>
                   {generatedReport.variants.map((variant) => (
                     <div
                       key={variant.report_id}
-                      className="rounded-[1.25rem] border border-[var(--line)] p-4"
+                      className="rounded-[var(--radius-md)] border border-[var(--line)] p-4"
                     >
                       <div className="flex flex-wrap items-center justify-between gap-3">
                         <div>
-                          <p className="text-sm font-semibold text-[var(--foreground)]">
+                          <p className="text-sm font-semibold text-[var(--text-primary)]">
                             {variant.title}
                           </p>
-                          <p className="text-xs text-[rgba(19,33,47,0.56)]">
+                          <p className="text-xs text-[var(--text-tertiary)]">
                             {variant.target_language.toUpperCase()}
                           </p>
                         </div>
@@ -996,7 +1026,7 @@ export function InvestmentOperationsWorkspaceClient({
                           {variant.quality_score?.toFixed(2) ?? "-"}
                         </span>
                       </div>
-                      <p className="mt-3 text-sm leading-7 text-[rgba(19,33,47,0.72)]">
+                      <p className="mt-3 text-sm leading-7 text-[var(--text-secondary)]">
                         {variant.translated_text}
                       </p>
                     </div>
@@ -1010,7 +1040,7 @@ export function InvestmentOperationsWorkspaceClient({
             <CardContent className="p-6">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.5)]">
+                  <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
                     {labels.portalsTitle}
                   </p>
                   <CardTitle className="mt-2 text-xl">
@@ -1045,7 +1075,7 @@ export function InvestmentOperationsWorkspaceClient({
               {marketDataQuery.data ? (
                 <div className="mt-5 grid gap-4 md:grid-cols-2">
                   <SummaryTile
-                    label="Listings"
+                    label={labels.listingsLabel}
                     value={marketDataQuery.data.active_listing_count.toLocaleString(locale)}
                   />
                   <SummaryTile
@@ -1053,7 +1083,7 @@ export function InvestmentOperationsWorkspaceClient({
                     value={marketDataQuery.data.average_inquiry_count.toFixed(1)}
                   />
                   <SummaryTile
-                    label="Avg. price"
+                    label={labels.avgPriceLabel}
                     value={formatCurrency(
                       locale,
                       marketDataQuery.data.average_price_krw,
@@ -1061,7 +1091,7 @@ export function InvestmentOperationsWorkspaceClient({
                     )}
                   />
                   <SummaryTile
-                    label="Avg. area"
+                    label={labels.avgAreaLabel}
                     value={`${marketDataQuery.data.average_area_sqm.toFixed(1)} ㎡`}
                   />
                 </div>
@@ -1130,7 +1160,7 @@ export function InvestmentOperationsWorkspaceClient({
                   placeholder={labels.titleLabel}
                 />
                 <textarea
-                  className="min-h-28 rounded-[1rem] border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-3 text-sm text-[var(--foreground)] outline-none transition placeholder:text-[rgba(19,33,47,0.4)] focus:border-[var(--accent)]"
+                  className="min-h-28 rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-3 text-sm text-[var(--text-primary)] outline-none transition placeholder:text-[var(--text-hint)] focus:border-[var(--accent)]"
                   value={portalForm.description}
                   onChange={(event) =>
                     setPortalForm((current) => ({
@@ -1162,17 +1192,17 @@ export function InvestmentOperationsWorkspaceClient({
                   {marketDataQuery.data.top_portals.map((portal) => (
                     <div
                       key={portal.portal_name}
-                      className="rounded-[1.25rem] border border-[var(--line)] p-4"
+                      className="rounded-[var(--radius-md)] border border-[var(--line)] p-4"
                     >
                       <div className="flex flex-wrap items-center justify-between gap-3">
-                        <p className="text-sm font-semibold text-[var(--foreground)]">
+                        <p className="text-sm font-semibold text-[var(--text-primary)]">
                           {portal.portal_name}
                         </p>
-                        <span className="text-xs text-[rgba(19,33,47,0.56)]">
-                          {portal.listing_count.toLocaleString(locale)} listings
+                        <span className="text-xs text-[var(--text-tertiary)]">
+                          {portal.listing_count.toLocaleString(locale)} {labels.listingsLabel}
                         </span>
                       </div>
-                      <p className="mt-2 text-xs text-[rgba(19,33,47,0.56)]">
+                      <p className="mt-2 text-xs text-[var(--text-tertiary)]">
                         {labels.portalInquiriesLabel}:{" "}
                         {portal.average_inquiry_count.toFixed(1)}
                       </p>
@@ -1186,23 +1216,23 @@ export function InvestmentOperationsWorkspaceClient({
                   {publishedListings.items.map((listing) => (
                     <div
                       key={listing.listing_id}
-                      className="rounded-[1.25rem] bg-[var(--surface-soft)] p-4"
+                      className="rounded-[var(--radius-md)] bg-[var(--surface-soft)] p-4"
                     >
                       <div className="flex flex-wrap items-center justify-between gap-3">
-                        <p className="text-sm font-semibold text-[var(--foreground)]">
+                        <p className="text-sm font-semibold text-[var(--text-primary)]">
                           {listing.portal_name}
                         </p>
                         <span className="rounded-full bg-[rgba(14,116,144,0.1)] px-3 py-1 text-xs font-medium text-[var(--accent-strong)]">
                           {listing.status}
                         </span>
                       </div>
-                      <p className="mt-2 text-xs text-[rgba(19,33,47,0.56)]">
+                      <p className="mt-2 text-xs text-[var(--text-tertiary)]">
                         {labels.portalViewsLabel}:{" "}
                         {listing.view_count.toLocaleString(locale)} ·{" "}
                         {labels.portalInquiriesLabel}:{" "}
                         {listing.inquiry_count.toLocaleString(locale)}
                       </p>
-                      <p className="mt-2 break-all text-xs text-[rgba(19,33,47,0.56)]">
+                      <p className="mt-2 break-all text-xs text-[var(--text-tertiary)]">
                         {listing.listing_url || listing.listing_external_id}
                       </p>
                     </div>
@@ -1225,11 +1255,11 @@ function SummaryTile({
   value: string;
 }) {
   return (
-    <div className="rounded-[1.5rem] bg-[var(--surface-soft)] p-5">
-      <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.5)]">
+    <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
+      <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
         {label}
       </p>
-      <p className="mt-3 text-xl font-semibold text-[var(--foreground)]">
+      <p className="mt-3 text-xl font-semibold text-[var(--text-primary)]">
         {value}
       </p>
     </div>

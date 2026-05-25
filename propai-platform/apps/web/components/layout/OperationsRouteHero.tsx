@@ -18,13 +18,13 @@ export function OperationsRouteHero({
   items,
 }: OperationsRouteHeroProps) {
   return (
-    <Card className="rounded-[2rem] bg-[var(--surface-strong)] shadow-[0_20px_60px_rgba(19,33,47,0.08)]">
+    <Card className="rounded-[var(--radius-2xl)] bg-[var(--surface-strong)] shadow-[var(--shadow-lg)]">
       <CardContent className="p-8">
         <div className="flex flex-wrap items-center gap-3">
           <span className="rounded-full bg-[rgba(14,116,144,0.1)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--accent-strong)]">
             {eyebrow}
           </span>
-          <span className="rounded-full border border-[var(--line)] px-4 py-2 text-xs font-medium text-[rgba(19,33,47,0.7)]">
+          <span className="rounded-full border border-[var(--line)] px-4 py-2 text-xs font-medium text-[var(--text-secondary)]">
             {localeLabel}
           </span>
           <span className="rounded-full bg-[rgba(13,148,136,0.12)] px-4 py-2 text-xs font-medium text-[rgb(15,118,110)]">
@@ -40,16 +40,16 @@ export function OperationsRouteHero({
               {description}
             </CardDescription>
           </CardHeader>
-          <Card className="rounded-[1.5rem] bg-[var(--surface-soft)] shadow-none">
+          <Card className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] shadow-none">
             <CardContent className="p-5">
-              <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.58)]">
+              <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
                 Live Scope
               </p>
               <ul className="mt-4 grid gap-3">
                 {items.map((item) => (
                   <li
                     key={item}
-                    className="rounded-2xl bg-[rgba(19,33,47,0.04)] px-4 py-3 text-sm leading-7 text-[rgba(19,33,47,0.78)]"
+                    className="rounded-2xl bg-[var(--surface-muted)]/40 px-4 py-3 text-sm leading-7 text-[var(--text-secondary)]"
                   >
                     {item}
                   </li>

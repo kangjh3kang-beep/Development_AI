@@ -1,0 +1,188 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgis/postgis:16-3.4
+    container_name: propai_postgres
+    restart: always
+    environment:
+      POSTGRES_DB: propai_db
+      POSTGRES_USER: propai
+      POSTGRES_PASSWORD: propai_dev_pass
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-postgis.sql:/docker-entrypoint-initdb.d/init-postgis.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U propai -d propai_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7.2-alpine
+    container_name: propai_redis
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: ../../apps/api
+      dockerfile: Dockerfile
+    container_name: propai_api
+    restart: always
+    env_file:
+      - ../../apps/api/.env
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../../apps/api:/app
+      - uploads_data:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  celery_worker:
+    build:
+      context: ../../apps/api
+      dockerfile: Dockerfile
+    container_name: propai_celery
+    restart: always
+    env_file:
+      - ../../apps/api/.env
+    volumes:
+      - ../../apps/api:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: celery -A app.tasks.celery_app worker --loglevel=info --concurrency=4
+
+  celery_beat:
+    build:
+      context: ../../apps/api
+      dockerfile: Dockerfile
+    container_name: propai_celery_beat
+    restart: always
+    env_file:
+      - ../../apps/api/.env
+    depends_on:
+      - redis
+    command: celery -A app.tasks.celery_app beat --loglevel=info
+
+  flower:
+    build:
+      context: ../../apps/api
+      dockerfile: Dockerfile
+    container_name: propai_flower
+    restart: always
+    env_file:
+      - ../../apps/api/.env
+    ports:
+      - "5555:5555"
+    depends_on:
+      - redis
+    command: celery -A app.tasks.celery_app flower --port=5555
+
+  web:
+    build:
+      context: ../../
+      dockerfile: apps/web/Dockerfile
+    container_name: propai_web
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+      NEXT_PUBLIC_WS_URL: ws://localhost:8000
+    volumes:
+      - ../../apps/web:/app
+      - /app/node_modules
+      - /app/.next
+    depends_on:
+      - api
+
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.17.2
+    container_name: propai_mlflow
+    restart: always
+    ports:
+      - "5000:5000"
+    environment:
+      MLFLOW_BACKEND_STORE_URI: postgresql://propai:propai_dev_pass@postgres:5432/propai_db
+      MLFLOW_DEFAULT_ARTIFACT_ROOT: /mlflow/artifacts
+    volumes:
+      - mlflow_data:/mlflow/artifacts
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: mlflow server --host 0.0.0.0 --port 5000 --backend-store-uri postgresql://propai:propai_dev_pass@postgres:5432/propai_db --default-artifact-root /mlflow/artifacts
+
+  prometheus:
+    image: prom/prometheus:v2.55.0
+    container_name: propai_prometheus
+    restart: always
+    ports:
+      - "9090:9090"
+    volumes:
+      - ../monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+
+  grafana:
+    image: grafana/grafana:11.3.0
+    container_name: propai_grafana
+    restart: always
+    ports:
+      - "3001:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: propai_grafana_admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ../monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.0
+    container_name: propai_elasticsearch
+    restart: always
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.15.0
+    container_name: propai_kibana
+    restart: always
+    ports:
+      - "5601:5601"
+    environment:
+      ELASTICSEARCH_HOSTS: http://elasticsearch:9200
+    depends_on:
+      - elasticsearch
+
+volumes:
+  postgres_data:
+  redis_data:
+  uploads_data:
+  mlflow_data:
+  prometheus_data:
+  grafana_data:
+  elasticsearch_data:

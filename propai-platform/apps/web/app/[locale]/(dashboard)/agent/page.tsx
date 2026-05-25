@@ -24,17 +24,13 @@ export default async function AgentPage({ params }: AgentPageProps) {
 
   return (
     <div className="grid gap-6">
-      <ModulePlaceholder
-        eyebrow={dictionary.pages.agent.eyebrow}
-        title={dictionary.pages.agent.title}
-        description={dictionary.pages.agent.description}
+            <ModulePlaceholder
+        eyebrow={dictionary.modulePlaceholders["agent"].eyebrow}
+        title={dictionary.modulePlaceholders["agent"].title}
+        description={dictionary.modulePlaceholders["agent"].description}
         statusLabel={runtimeMode}
         localeLabel={locale}
-        items={[
-          dictionary.pages.agent.items.first,
-          dictionary.pages.agent.items.second,
-          dictionary.pages.agent.items.third,
-        ]}
+        items={dictionary.modulePlaceholders["agent"].items}
       />
       <AgentOrchestrationWorkspaceClient locale={locale as Locale} />
     </div>

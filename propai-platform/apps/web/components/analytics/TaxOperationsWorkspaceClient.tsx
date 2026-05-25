@@ -211,7 +211,13 @@ export function TaxOperationsWorkspaceClient({
 }: {
   locale: Locale;
 }) {
+  const [isMounted, setIsMounted] = useState(false);
   const labels = LABELS[locale];
+  
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
+
   const runtimeConfig = apiClient.getRuntimeConfig();
   const canUseLiveApi =
     runtimeConfig.mode === "live" || runtimeConfig.hasAccessToken;
@@ -285,34 +291,38 @@ export function TaxOperationsWorkspaceClient({
     }
   }
 
+  if (!isMounted) {
+    return <SkeletonLoader count={3} />;
+  }
+
   return (
     <section className="grid gap-6">
-      <Card className="rounded-[2rem] bg-[var(--surface-strong)] shadow-[0_20px_60px_rgba(19,33,47,0.08)]">
+      <Card className="rounded-[var(--radius-2xl)] bg-[var(--surface-strong)] shadow-[var(--shadow-lg)]">
         <CardContent className="p-8">
           <div className="flex flex-wrap items-center gap-3">
             <span className="rounded-full bg-[rgba(14,116,144,0.1)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--accent-strong)]">
               {labels.heroTitle}
             </span>
-            <span className="rounded-full border border-[var(--line)] px-4 py-2 text-xs font-medium text-[rgba(19,33,47,0.7)]">
+            <span className="rounded-full border border-[var(--line)] px-4 py-2 text-xs font-medium text-[var(--text-secondary)]">
               {runtimeConfig.mode === "live" ? "LIVE" : "HYBRID"}
             </span>
           </div>
-          <h3 className="mt-5 text-3xl font-bold text-[var(--foreground)]">
+          <h3 className="mt-5 text-3xl font-bold text-[var(--text-primary)]">
             {labels.heroDescription}
           </h3>
-          <p className="mt-4 max-w-3xl text-sm leading-8 text-[rgba(19,33,47,0.72)]">
+          <p className="mt-4 max-w-3xl text-sm leading-8 text-[var(--text-secondary)]">
             {labels.heroHint}
           </p>
-          <p className="mt-3 max-w-3xl text-sm leading-8 text-[rgba(19,33,47,0.6)]">
+          <p className="mt-3 max-w-3xl text-sm leading-8 text-[var(--text-tertiary)]">
             {labels.tokenHint}
           </p>
           {!canUseLiveApi ? (
-            <div className="mt-6 rounded-[1.5rem] border border-dashed border-[var(--line)] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[rgba(19,33,47,0.72)]">
+            <div className="mt-6 rounded-[var(--radius-xl)] border border-dashed border-[var(--line)] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[var(--text-secondary)]">
               {labels.authError}
             </div>
           ) : null}
           {workspaceError ? (
-            <div className="mt-6 rounded-[1.5rem] border border-[rgba(217,119,6,0.28)] bg-[rgba(217,119,6,0.08)] p-5 text-sm leading-7 text-[var(--spot)]">
+            <div className="mt-6 rounded-[var(--radius-xl)] border border-[rgba(217,119,6,0.28)] bg-[rgba(217,119,6,0.08)] p-5 text-sm leading-7 text-[var(--spot)]">
               {workspaceError}
             </div>
           ) : null}
@@ -323,7 +333,7 @@ export function TaxOperationsWorkspaceClient({
         <CardContent className="grid gap-5 p-6 lg:grid-cols-[1.3fr_0.7fr]">
           <div className="grid gap-3">
             <div>
-              <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.5)]">
+              <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
                 {labels.projectTitle}
               </p>
               <CardTitle className="mt-2 text-xl">
@@ -372,23 +382,23 @@ export function TaxOperationsWorkspaceClient({
               placeholder={labels.manualProjectIdLabel}
             />
           </div>
-          <div className="rounded-[1.5rem] bg-[var(--surface-soft)] p-5">
-            <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.5)]">
+          <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
+            <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
               {labels.selectedProjectLabel}
             </p>
-            <p className="mt-3 text-sm font-semibold text-[var(--foreground)]">
+            <p className="mt-3 text-sm font-semibold text-[var(--text-primary)]">
               {selectedProject?.name ?? "-"}
             </p>
-            <p className="mt-2 break-all text-xs text-[rgba(19,33,47,0.56)]">
+            <p className="mt-2 break-all text-xs text-[var(--text-tertiary)]">
               {activeProjectId || "-"}
             </p>
             {selectedProject?.address ? (
-              <p className="mt-3 text-sm text-[rgba(19,33,47,0.72)]">
+              <p className="mt-3 text-sm text-[var(--text-secondary)]">
                 {selectedProject.address}
               </p>
             ) : null}
             {selectedProject ? (
-              <p className="mt-2 text-xs text-[rgba(19,33,47,0.56)]">
+              <p className="mt-2 text-xs text-[var(--text-tertiary)]">
                 {selectedProject.status} ·{" "}
                 {formatDate(locale, selectedProject.updated_at)}
               </p>
@@ -400,7 +410,7 @@ export function TaxOperationsWorkspaceClient({
       <div className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
         <Card>
           <CardContent className="p-6">
-            <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.5)]">
+            <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
               {labels.calculateTitle}
             </p>
             <form className="mt-5 grid gap-3" onSubmit={handleCalculate}>
@@ -441,7 +451,7 @@ export function TaxOperationsWorkspaceClient({
                 }
                 placeholder={labels.holdingYearsLabel}
               />
-              <label className="flex items-center gap-3 rounded-[1rem] border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-3 text-sm text-[var(--foreground)]">
+              <label className="flex items-center gap-3 rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-3 text-sm text-[var(--text-primary)]">
                 <input
                   type="checkbox"
                   checked={form.isFirstHome}
@@ -485,12 +495,12 @@ export function TaxOperationsWorkspaceClient({
                     value={formatDate(locale, result.created_at)}
                   />
                 </div>
-                <div className="rounded-[1.5rem] bg-[var(--surface-soft)] p-5">
-                  <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.5)]">
+                <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
+                  <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
                     {labels.deductionsLabel}
                   </p>
                   {result.deductions.length ? (
-                    <ul className="mt-3 space-y-2 text-sm leading-7 text-[rgba(19,33,47,0.72)]">
+                    <ul className="mt-3 space-y-2 text-sm leading-7 text-[var(--text-secondary)]">
                       {result.deductions.map((item, index) => (
                         <li key={`${index}-${JSON.stringify(item)}`}>
                           • {Object.entries(item)
@@ -500,30 +510,30 @@ export function TaxOperationsWorkspaceClient({
                       ))}
                     </ul>
                   ) : (
-                    <p className="mt-3 text-sm leading-7 text-[rgba(19,33,47,0.62)]">
+                    <p className="mt-3 text-sm leading-7 text-[var(--text-tertiary)]">
                       -
                     </p>
                   )}
                 </div>
-                <div className="rounded-[1.5rem] bg-[var(--surface-soft)] p-5">
-                  <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.5)]">
+                <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
+                  <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
                     {labels.tipsLabel}
                   </p>
                   {result.optimization_tips.length ? (
-                    <ul className="mt-3 space-y-2 text-sm leading-7 text-[rgba(19,33,47,0.72)]">
+                    <ul className="mt-3 space-y-2 text-sm leading-7 text-[var(--text-secondary)]">
                       {result.optimization_tips.map((item) => (
                         <li key={item}>• {item}</li>
                       ))}
                     </ul>
                   ) : (
-                    <p className="mt-3 text-sm leading-7 text-[rgba(19,33,47,0.62)]">
+                    <p className="mt-3 text-sm leading-7 text-[var(--text-tertiary)]">
                       -
                     </p>
                   )}
                 </div>
               </div>
             ) : (
-              <div className="rounded-[1.5rem] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[rgba(19,33,47,0.68)]">
+              <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[var(--text-secondary)]">
                 Select a live project and run a tax scenario to inspect the persisted
                 `tax/calculate` response.
               </div>
@@ -543,11 +553,11 @@ function MetricTile({
   value: string;
 }) {
   return (
-    <div className="rounded-[1.5rem] bg-[var(--surface-soft)] p-5">
-      <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.5)]">
+    <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
+      <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
         {label}
       </p>
-      <p className="mt-3 text-xl font-semibold text-[var(--foreground)]">
+      <p className="mt-3 text-xl font-semibold text-[var(--text-primary)]">
         {value}
       </p>
     </div>

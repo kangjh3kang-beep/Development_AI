@@ -1,98 +1,120 @@
-"""AuditService(record_audit) 단위 테스트.
-
-INSERT-ONLY 감사 추적 기록 함수의 인터페이스를 검증한다.
-AsyncMock DB로 DB 커밋 없이 테스트.
-"""
-
+"""감사 추적 서비스 테스트."""
 import os
 import sys
-from unittest.mock import AsyncMock
-from uuid import uuid4
 
-import pytest
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-
-from apps.api.services.audit_service import record_audit
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 
-@pytest.mark.asyncio
-async def test_감사_레코드_DB에_추가():
-    """record_audit 호출 시 db.add + db.flush 호출."""
-    mock_db = AsyncMock()
-    mock_db.add = lambda x: None
-    mock_db.flush = AsyncMock()
+class TestAuditEntry:
+    """AuditEntry 테스트."""
 
-    result = await record_audit(
-        mock_db,
-        tenant_id=uuid4(),
-        entity_type="project",
-        entity_id=uuid4(),
-        action="create",
-        actor_id=uuid4(),
-    )
-    assert result is not None
-    mock_db.flush.assert_awaited_once()
+    def test_entry_creation(self):
+        from app.services.audit.audit_service import AuditEntry
 
+        entry = AuditEntry(
+            action="CREATE", user_id="u1",
+            resource_type="project", resource_id="p1",
+        )
+        assert entry.action == "CREATE"
+        assert entry.user_id == "u1"
+        assert len(entry.entry_hash) == 64
 
-@pytest.mark.asyncio
-async def test_before_after_state_저장():
-    """변경 전/후 상태가 레코드에 포함."""
-    mock_db = AsyncMock()
-    mock_db.add = lambda x: None
-    mock_db.flush = AsyncMock()
+    def test_entry_to_dict(self):
+        from app.services.audit.audit_service import AuditEntry
 
-    before = {"name": "old"}
-    after = {"name": "new"}
-    result = await record_audit(
-        mock_db,
-        tenant_id=uuid4(),
-        entity_type="project",
-        entity_id=uuid4(),
-        action="update",
-        actor_id=uuid4(),
-        before_state=before,
-        after_state=after,
-    )
-    assert result.before_state == before
-    assert result.after_state == after
+        entry = AuditEntry(
+            action="UPDATE", user_id="u2",
+            resource_type="contract", resource_id="c1",
+            changes={"status": "active"},
+        )
+        d = entry.to_dict()
+        assert d["action"] == "UPDATE"
+        assert d["changes"] == {"status": "active"}
+        assert "entry_hash" in d
+
+    def test_entry_hash_unique_per_instance(self):
+        from app.services.audit.audit_service import AuditEntry
+
+        e1 = AuditEntry(action="READ", user_id="u1", resource_type="x", resource_id="y")
+        e2 = AuditEntry(action="READ", user_id="u1", resource_type="x", resource_id="y")
+        assert e1.entry_hash != e2.entry_hash
 
 
-@pytest.mark.asyncio
-async def test_IP_주소_기록():
-    mock_db = AsyncMock()
-    mock_db.add = lambda x: None
-    mock_db.flush = AsyncMock()
+class TestAuditTrailService:
+    """AuditTrailService 테스트."""
 
-    result = await record_audit(
-        mock_db,
-        tenant_id=uuid4(),
-        entity_type="user",
-        entity_id=uuid4(),
-        action="login",
-        actor_id=uuid4(),
-        ip_address="192.168.1.1",
-    )
-    assert result.ip_address == "192.168.1.1"
+    def test_log_creates_entry(self):
+        from app.services.audit.audit_service import AuditTrailService
 
+        svc = AuditTrailService()
+        entry = svc.log("CREATE", "u1", "project", "p1")
+        assert svc.total_entries == 1
+        assert entry.action == "CREATE"
 
-@pytest.mark.asyncio
-async def test_사유_기록():
-    mock_db = AsyncMock()
-    mock_db.add = lambda x: None
-    mock_db.flush = AsyncMock()
+    def test_hash_chain_integrity(self):
+        from app.services.audit.audit_service import AuditTrailService
 
-    result = await record_audit(
-        mock_db,
-        tenant_id=uuid4(),
-        entity_type="escrow",
-        entity_id=uuid4(),
-        action="dispute",
-        actor_id=uuid4(),
-        reason="시공 하자 발견",
-    )
-    assert result.reason == "시공 하자 발견"
+        svc = AuditTrailService()
+        svc.log("CREATE", "u1", "project", "p1")
+        svc.log("UPDATE", "u1", "project", "p1", changes={"name": "new"})
+        svc.log("DELETE", "u2", "project", "p1")
+        assert svc.verify_chain() is True
 
+    def test_empty_chain_is_valid(self):
+        from app.services.audit.audit_service import AuditTrailService
 
-if __name__ == "__main__":
-    pytest.main([__file__, "-v", "--tb=short"])
+        svc = AuditTrailService()
+        assert svc.verify_chain() is True
+
+    def test_filter_by_action(self):
+        from app.services.audit.audit_service import AuditTrailService
+
+        svc = AuditTrailService()
+        svc.log("CREATE", "u1", "project", "p1")
+        svc.log("READ", "u2", "project", "p1")
+        svc.log("CREATE", "u1", "contract", "c1")
+        result = svc.get_entries(action="CREATE")
+        assert len(result) == 2
+
+    def test_filter_by_resource_type(self):
+        from app.services.audit.audit_service import AuditTrailService
+
+        svc = AuditTrailService()
+        svc.log("CREATE", "u1", "project", "p1")
+        svc.log("CREATE", "u1", "contract", "c1")
+        result = svc.get_entries(resource_type="contract")
+        assert len(result) == 1
+
+    def test_filter_by_user_id(self):
+        from app.services.audit.audit_service import AuditTrailService
+
+        svc = AuditTrailService()
+        svc.log("CREATE", "u1", "project", "p1")
+        svc.log("CREATE", "u2", "project", "p2")
+        result = svc.get_entries(user_id="u1")
+        assert len(result) == 1
+
+    def test_get_entry_by_id(self):
+        from app.services.audit.audit_service import AuditTrailService
+
+        svc = AuditTrailService()
+        entry = svc.log("CREATE", "u1", "project", "p1")
+        found = svc.get_entry_by_id(entry.id)
+        assert found is not None
+        assert found.id == entry.id
+
+    def test_get_entry_by_id_not_found(self):
+        from app.services.audit.audit_service import AuditTrailService
+
+        svc = AuditTrailService()
+        assert svc.get_entry_by_id("nonexistent") is None
+
+    def test_last_hash_updates(self):
+        from app.services.audit.audit_service import AuditTrailService
+
+        svc = AuditTrailService()
+        assert svc.last_hash == ""
+        e1 = svc.log("CREATE", "u1", "project", "p1")
+        assert svc.last_hash == e1.entry_hash
+        e2 = svc.log("UPDATE", "u1", "project", "p1")
+        assert svc.last_hash == e2.entry_hash

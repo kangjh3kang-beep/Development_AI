@@ -49,14 +49,14 @@ export function DesignWorkspaceClient({
 
   return (
     <section className="grid gap-6">
-      <div className="rounded-[1.75rem] border border-[var(--line)] bg-white/72 px-6 py-5">
-        <p className="text-xs uppercase tracking-[0.24em] text-[rgba(19,33,47,0.48)]">
+      <div className="rounded-[var(--radius-xl)] border border-[var(--line)] bg-[var(--surface)] px-6 py-5">
+        <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-hint)]">
           Workspace
         </p>
-        <h3 className="mt-3 text-2xl font-semibold text-[var(--foreground)]">
+        <h3 className="mt-3 text-2xl font-semibold text-[var(--text-primary)]">
           {labels.workspaceTitle}
         </h3>
-        <p className="mt-3 text-sm leading-7 text-[rgba(19,33,47,0.74)]">
+        <p className="mt-3 text-sm leading-7 text-[var(--text-secondary)]">
           {labels.workspaceDescription}
         </p>
       </div>

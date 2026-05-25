@@ -1,0 +1,110 @@
+# Page snapshot
+
+```yaml
+- generic [active] [ref=e1]:
+  - status "Screen change announcement region" [ref=e2]
+  - link "Skip to content" [ref=e3] [cursor=pointer]:
+    - /url: "#main-content"
+  - generic [ref=e5]:
+    - banner [ref=e6]:
+      - generic [ref=e7]:
+        - generic [ref=e8]:
+          - paragraph [ref=e10]: Sa-Tong-Pal-Ttang Workspace
+          - heading "Sa-Tong-Pal-Ttang" [level=1] [ref=e12]
+        - generic [ref=e13]:
+          - generic [ref=e14]: Live
+          - generic [ref=e15]:
+            - generic [ref=e16]: Language
+            - combobox "Language" [ref=e17]:
+              - option "한국어"
+              - option "English" [selected]
+              - option "简体中文"
+    - generic [ref=e18]:
+      - complementary [ref=e19]:
+        - navigation "Dashboard navigation" [ref=e20]:
+          - link "Dashboard" [ref=e21] [cursor=pointer]:
+            - /url: /en
+            - text: Dashboard
+          - link "Projects" [ref=e23] [cursor=pointer]:
+            - /url: /en/projects
+            - text: Projects
+          - link "AI Portfolio Map" [ref=e25] [cursor=pointer]:
+            - /url: /en/portfolio
+            - text: AI Portfolio Map
+          - link "AI Agent" [ref=e27] [cursor=pointer]:
+            - /url: /en/agent
+            - text: AI Agent
+          - link "Auction Analysis" [ref=e29] [cursor=pointer]:
+            - /url: /en/auction
+            - text: Auction Analysis
+          - link "Field Inspection" [ref=e31] [cursor=pointer]:
+            - /url: /en/inspection
+            - text: Field Inspection
+          - link "Tax Simulation" [ref=e33] [cursor=pointer]:
+            - /url: /en/tax
+            - text: Tax Simulation
+          - link "Tenant Management" [ref=e35] [cursor=pointer]:
+            - /url: /en/tenant
+            - text: Tenant Management
+          - link "Real-time Collab" [ref=e37] [cursor=pointer]:
+            - /url: /en/webrtc
+            - text: Real-time Collab
+        - paragraph [ref=e40]: Analytics
+        - navigation "Analytics navigation" [ref=e41]:
+          - link "Investment/AVM" [ref=e42] [cursor=pointer]:
+            - /url: /en/analytics/investment
+          - link "ESG Dashboard" [ref=e43] [cursor=pointer]:
+            - /url: /en/analytics/esg
+          - link "Carbon/LCA" [ref=e44] [cursor=pointer]:
+            - /url: /en/analytics/carbon
+          - link "Cost/Indices" [ref=e45] [cursor=pointer]:
+            - /url: /en/analytics/cost
+          - link "IoT/Energy" [ref=e46] [cursor=pointer]:
+            - /url: /en/analytics/iot
+          - link "Market Insights" [ref=e47] [cursor=pointer]:
+            - /url: /en/market-insights
+          - link "Regulations" [ref=e48] [cursor=pointer]:
+            - /url: /en/regulations
+        - paragraph [ref=e50]: Operations
+        - navigation "Operations navigation" [ref=e51]:
+          - link "Digital Twin" [ref=e52] [cursor=pointer]:
+            - /url: /en/digital-twin
+          - link "Maintenance" [ref=e53] [cursor=pointer]:
+            - /url: /en/maintenance
+          - link "AI Safety" [ref=e54] [cursor=pointer]:
+            - /url: /en/safety
+          - link "Approval Ops" [ref=e55] [cursor=pointer]:
+            - /url: /en/approvals
+          - link "SRE Systems" [ref=e56] [cursor=pointer]:
+            - /url: /en/sre
+          - link "KDX Monitoring" [ref=e57] [cursor=pointer]:
+            - /url: /en/dashboard/kdx
+      - main [ref=e58]:
+        - generic [ref=e59]:
+          - generic [ref=e61]:
+            - generic [ref=e62]:
+              - generic [ref=e63]: PROP / PROJECTS
+              - generic [ref=e64]: en
+              - generic [ref=e65]: Live
+            - generic [ref=e66]:
+              - generic [ref=e67]:
+                - heading "전체 프로젝트 파이프라인" [level=3] [ref=e68]
+                - paragraph [ref=e69]: 권한이 부여된 모든 부동산 개발 프로젝트들의 통합 진행률을 관제합니다.
+              - generic [ref=e71]:
+                - paragraph [ref=e72]: PropAI Scope
+                - list [ref=e73]:
+                  - listitem [ref=e74]: ✓ 데이터 실시간 연동 대기
+                  - listitem [ref=e75]: ✓ 보안 컴플라이언스 통과
+                  - listitem [ref=e76]: ✓ 워크플로우 상태 라우팅
+          - generic [ref=e77]:
+            - generic [ref=e79]:
+              - button "Grid" [ref=e80]
+              - button "List" [ref=e81]
+            - generic [ref=e84]:
+              - paragraph [ref=e85]: Modules
+              - heading "Project list is unavailable" [level=3] [ref=e86]
+              - paragraph [ref=e87]: The live project list could not be loaded. Check the API connection and try again.
+              - paragraph [ref=e88]: Failed to fetch
+              - button "Retry" [ref=e90]
+  - alert [ref=e91]
+```
