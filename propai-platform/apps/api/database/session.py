@@ -19,14 +19,21 @@ from apps.api.config import get_settings
 settings = get_settings()
 
 # 메인 PostgreSQL + PostGIS 엔진
+# Supabase pgBouncer 사용 시 prepared statements 비활성화 필요
+_connect_args = {}
+if settings.db_use_pgbouncer:
+    _connect_args["statement_cache_size"] = 0
+    _connect_args["prepared_statement_cache_size"] = 0
+
 engine = create_async_engine(
     settings.database_url,
-    pool_size=settings.db_pool_size,
-    max_overflow=settings.db_max_overflow,
+    pool_size=min(settings.db_pool_size, 10),  # Supabase 무료 티어: 최대 15 커넥션
+    max_overflow=min(settings.db_max_overflow, 5),
     pool_timeout=settings.db_pool_timeout,
     pool_recycle=settings.db_pool_recycle,
     echo=settings.debug,
     pool_pre_ping=True,
+    connect_args=_connect_args,
 )
 
 # TimescaleDB 엔진 (시계열 데이터용)

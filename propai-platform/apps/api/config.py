@@ -65,6 +65,16 @@ class Settings(BaseSettings):
     db_max_overflow: int = 10
     db_pool_timeout: int = 30
     db_pool_recycle: int = 1800
+    db_use_pgbouncer: bool = Field(
+        default=False,
+        description="Supabase pgBouncer 사용 시 True (prepared statements 비활성화)",
+    )
+
+    # ── Supabase ──
+    supabase_url: str = Field(default="", description="Supabase 프로젝트 URL (예: https://xxx.supabase.co)")
+    supabase_anon_key: str = Field(default="", description="Supabase 익명 키 (클라이언트용)")
+    supabase_service_role_key: str = Field(default="", description="Supabase 서비스 역할 키 (서버용)")
+    supabase_storage_bucket: str = Field(default="propai-uploads", description="Supabase Storage 버킷명")
 
     # ── Redis ──
     redis_url: str = "redis://localhost:6379/0"
@@ -128,7 +138,7 @@ class Settings(BaseSettings):
 
     # ── CORS ──
     cors_origins: str = Field(
-        default="http://localhost:3000,http://localhost:3001",
+        default="http://localhost:3000,http://localhost:3001,https://propai.kr,https://www.propai.kr,https://propai-web.pages.dev",
         validation_alias=AliasChoices("cors_origins", "ALLOWED_ORIGINS"),
     )
 

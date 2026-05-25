@@ -34,6 +34,11 @@ function getRequestUrl(path: string) {
 
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
 
+  // 환경변수에 API URL이 설정된 경우 (프로덕션: Railway 등)
+  if (apiBaseUrl && apiBaseUrl !== "/api/proxy") {
+    return `${apiBaseUrl}${normalizedPath}`;
+  }
+
   // If executing in Node.js (Server Component), use Docker internal DNS.
   if (typeof window === "undefined") {
     return `http://api:8000/api/v1${normalizedPath}`;
