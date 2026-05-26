@@ -2,8 +2,8 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Card, CardContent, Button } from "@propai/ui";
-import { ModulePlaceholder } from "@/components/layout/ModulePlaceholder";
+import { motion } from "framer-motion";
+import { useProjectStore } from "@/store/useProjectStore";
 
 const PROJECT_TYPES = [
   { value: "residential", label: "주거" },
@@ -18,16 +18,20 @@ const AVAILABLE_MODULES = [
   { key: "bim", label: "BIM 3D", defaultOn: true },
   { key: "finance", label: "금융 분석", defaultOn: true },
   { key: "drone", label: "드론 점검", defaultOn: false },
-  { key: "blockchain", label: "블록체인 에스크로", defaultOn: false },
+  { key: "blockchain", label: "에스크로", defaultOn: false },
   { key: "tax", label: "세금 시뮬레이션", defaultOn: false },
   { key: "inspection", label: "현장 점검", defaultOn: false },
-  { key: "report", label: "보고서 생성", defaultOn: true },
+  { key: "report", label: "보고서", defaultOn: true },
 ];
 
 export default function NewProjectPage() {
   const router = useRouter();
+  const addProject = useProjectStore(state => state.addProject);
+  
   const [name, setName] = useState("");
   const [location, setLocation] = useState("");
+  const [pnu, setPnu] = useState("");
+  const [area, setArea] = useState("");
   const [projectType, setProjectType] = useState("mixed");
   const [modules, setModules] = useState<Set<string>>(
     new Set(AVAILABLE_MODULES.filter(m => m.defaultOn).map(m => m.key))
@@ -50,121 +54,186 @@ export default function NewProjectPage() {
     if (!name.trim() || !location.trim()) return;
     setIsSubmitting(true);
 
-    // TODO: POST /projects API 연동
-    const projectId = `proj-${Date.now()}`;
+    const projectId = addProject({
+      name,
+      address: location,
+      pnu: pnu || "1120011500103150001", // Default PNU if empty for map testing
+      area: area || "1200",
+      type: projectType
+    });
 
-    // 임시: 생성 후 프로젝트 상세 페이지로 이동
-    router.push(`projects/${projectId}`);
+    setTimeout(() => {
+      router.push(`/ko/projects/${projectId}`);
+    }, 1500);
   };
 
   return (
-    <div className="grid gap-6">
-      <ModulePlaceholder
-        eyebrow="PROJECTS / NEW"
-        title="신규 프로젝트 생성"
-        description="새로운 부동산 개발 프로젝트를 생성하고 AI 자동 분석을 시작합니다."
-        statusLabel="Setup"
-        localeLabel="ko"
-        items={[
-          "기본 정보 입력 (프로젝트명, 위치, 유형)",
-          "분석 모듈 선택 (설계/BIM/금융/드론 등)",
-          "POST /projects API로 프로젝트 생성",
-        ]}
-      />
+    <div className="flex flex-col gap-10 pb-20 max-w-5xl mx-auto mt-4">
+      <div className="space-y-2">
+        <h1 className="text-4xl font-[900] tracking-tighter text-[var(--text-primary)]">
+          Launch Project <span className="text-[var(--accent-strong)]">_</span>
+        </h1>
+        <p className="text-[var(--text-secondary)] font-medium">
+          새로운 디지털 트윈 기반 부동산 프로젝트를 생성하고 AI 분석을 시작합니다.
+        </p>
+      </div>
 
-      <Card className="rounded-[var(--radius-2xl)]">
-        <CardContent className="p-8">
-          <h3 className="text-xl font-bold text-[var(--text-primary)]">Step 1: 기본 정보</h3>
-          <div className="mt-6 grid gap-4">
-            <div>
-              <label className="text-sm font-medium text-[var(--text-secondary)]">프로젝트명</label>
-              <input
-                type="text"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="예: 성수 복합개발 1차"
-                className="mt-2 w-full rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] px-5 py-3 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
-              />
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        {/* Left Column: Form Steps */}
+        <div className="lg:col-span-2 space-y-8">
+          {/* Step 1 */}
+          <section className="relative overflow-hidden rounded-[2rem] border border-[var(--line-strong)] bg-[var(--surface-soft)] p-8 shadow-[var(--shadow-xl)] backdrop-blur-xl group transition-all focus-within:border-[var(--accent-strong)]/50 focus-within:shadow-[0_0_30px_rgba(45,212,191,0.1)]">
+            <div className="absolute top-0 left-0 w-1 h-full bg-gradient-to-b from-[var(--accent-strong)] to-transparent opacity-50" />
+            
+            <div className="flex items-center gap-4 mb-8">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--surface)] border border-[var(--line-strong)] text-[var(--text-secondary)] font-black">
+                01
+              </div>
+              <h3 className="text-xl font-bold text-[var(--text-primary)] tracking-wide">프로젝트 메타데이터</h3>
             </div>
-            <div>
-              <label className="text-sm font-medium text-[var(--text-secondary)]">위치</label>
-              <input
-                type="text"
-                value={location}
-                onChange={(e) => setLocation(e.target.value)}
-                placeholder="예: 서울 성동구 성수동"
-                className="mt-2 w-full rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] px-5 py-3 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
-              />
+
+            <div className="space-y-6">
+              <div className="grid gap-2">
+                <label className="text-xs font-bold uppercase tracking-widest text-[var(--text-tertiary)]">프로젝트 명칭</label>
+                <input
+                  type="text"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="예: 성수 IT밸리 복합개발"
+                  className="w-full rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-muted)] py-4 px-5 text-sm font-bold placeholder:text-[var(--text-hint)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-strong)]/30 focus:border-[var(--accent-strong)] transition-all text-[var(--text-primary)]"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="grid gap-2">
+                  <label className="text-xs font-bold uppercase tracking-widest text-[var(--text-tertiary)]">소재지 (주소)</label>
+                  <input
+                    type="text"
+                    value={location}
+                    onChange={(e) => setLocation(e.target.value)}
+                    placeholder="예: 서울 성동구 성수동2가"
+                    className="w-full rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-muted)] py-4 px-5 text-sm font-bold placeholder:text-[var(--text-hint)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-strong)]/30 focus:border-[var(--accent-strong)] transition-all text-[var(--text-primary)]"
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <label className="text-xs font-bold uppercase tracking-widest text-[var(--text-tertiary)]">고유 지번(PNU) (선택)</label>
+                  <input
+                    type="text"
+                    value={pnu}
+                    onChange={(e) => setPnu(e.target.value)}
+                    placeholder="19자리 법정동 코드"
+                    className="w-full rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-muted)] py-4 px-5 text-sm font-mono placeholder:text-[var(--text-hint)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-strong)]/30 focus:border-[var(--accent-strong)] transition-all text-[var(--text-primary)]"
+                  />
+                </div>
+              </div>
+
+              <div className="grid gap-2">
+                <label className="text-xs font-bold uppercase tracking-widest text-[var(--text-tertiary)]">프로젝트 용도</label>
+                <div className="flex flex-wrap gap-3">
+                  {PROJECT_TYPES.map((type) => (
+                    <button
+                      key={type.value}
+                      type="button"
+                      onClick={() => setProjectType(type.value)}
+                      className={`rounded-xl px-5 py-3 text-sm font-black tracking-wide transition-all ${
+                        projectType === type.value
+                          ? "bg-[var(--accent-soft)] border border-[var(--accent-strong)] text-[var(--accent-strong)] shadow-[0_0_15px_rgba(45,212,191,0.2)]"
+                          : "border border-[var(--line-strong)] bg-[var(--surface)] text-[var(--text-tertiary)] hover:border-[var(--text-secondary)]"
+                      }`}
+                    >
+                      {type.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
-            <div>
-              <label className="text-sm font-medium text-[var(--text-secondary)]">프로젝트 유형</label>
-              <div className="mt-2 flex flex-wrap gap-2">
-                {PROJECT_TYPES.map((type) => (
-                  <button
-                    key={type.value}
-                    type="button"
-                    onClick={() => setProjectType(type.value)}
-                    className={`rounded-full px-4 py-2 text-sm font-medium transition ${
-                      projectType === type.value
-                        ? "bg-[var(--accent-strong)] text-white"
-                        : "border border-[var(--line)] bg-[var(--surface)] text-[var(--text-secondary)] hover:bg-[var(--surface-soft)]"
-                    }`}
-                  >
-                    {type.label}
-                  </button>
-                ))}
+          </section>
+
+          {/* Step 2 */}
+          <section className="relative overflow-hidden rounded-[2rem] border border-[var(--line-strong)] bg-[var(--surface-soft)] p-8 shadow-[var(--shadow-xl)] backdrop-blur-xl">
+             <div className="flex items-center gap-4 mb-8">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--surface)] border border-[var(--line-strong)] text-[var(--text-secondary)] font-black">
+                02
+              </div>
+              <h3 className="text-xl font-bold text-[var(--text-primary)] tracking-wide">활성화 모듈 선택</h3>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+              {AVAILABLE_MODULES.map((mod) => (
+                <button
+                  key={mod.key}
+                  type="button"
+                  onClick={() => toggleModule(mod.key)}
+                  className={`relative overflow-hidden flex flex-col items-start gap-3 rounded-2xl px-5 py-4 text-left transition-all ${
+                    modules.has(mod.key)
+                      ? "bg-[var(--accent-strong)]/10 border border-[var(--accent-strong)] text-[var(--accent-strong)]"
+                      : "bg-[var(--surface)] border border-[var(--line-strong)] text-[var(--text-tertiary)] hover:bg-[var(--surface-muted)]"
+                  }`}
+                >
+                  <div className={`h-4 w-4 rounded-full border-2 flex items-center justify-center ${
+                    modules.has(mod.key) ? "border-[var(--accent-strong)]" : "border-[var(--line-strong)]"
+                  }`}>
+                    {modules.has(mod.key) && <div className="h-2 w-2 rounded-full bg-[var(--accent-strong)]" />}
+                  </div>
+                  <span className="text-sm font-black tracking-tight">{mod.label}</span>
+                </button>
+              ))}
+            </div>
+          </section>
+        </div>
+
+        {/* Right Column: Summary & Actions */}
+        <div className="relative">
+          <div className="sticky top-24 space-y-6">
+            <section className="rounded-[2rem] border border-[var(--line-strong)] bg-[var(--surface-soft)] p-8 shadow-[var(--shadow-xl)] backdrop-blur-xl relative overflow-hidden">
+               <div className="absolute top-0 right-0 w-32 h-32 bg-[var(--accent-strong)]/10 blur-[50px] rounded-full" />
+               <h3 className="text-lg font-black text-[var(--text-primary)] mb-6">Launch Sequence</h3>
+               
+               <div className="space-y-4 mb-8">
+                 <div className="flex justify-between items-center text-sm">
+                   <span className="text-[var(--text-tertiary)] font-medium">프로젝트</span>
+                   <span className="text-[var(--text-primary)] font-bold truncate max-w-[120px]">{name || "N/A"}</span>
+                 </div>
+                 <div className="flex justify-between items-center text-sm">
+                   <span className="text-[var(--text-tertiary)] font-medium">위치</span>
+                   <span className="text-[var(--text-primary)] font-bold truncate max-w-[120px]">{location || "N/A"}</span>
+                 </div>
+                 <div className="flex justify-between items-center text-sm">
+                   <span className="text-[var(--text-tertiary)] font-medium">선택 모듈</span>
+                   <span className="text-[var(--accent-strong)] font-black">{modules.size} EA</span>
+                 </div>
+               </div>
+
+               <button
+                  onClick={handleSubmit}
+                  disabled={!name.trim() || !location.trim() || isSubmitting}
+                  className="w-full relative overflow-hidden rounded-2xl py-4 text-sm font-black transition-all shadow-[var(--shadow-md)] flex items-center justify-center gap-2
+                  disabled:opacity-50 disabled:cursor-not-allowed
+                  bg-gradient-to-r from-[var(--accent-strong)] to-[#085d73] text-white hover:shadow-[0_0_20px_rgba(45,212,191,0.4)]"
+                >
+                  {isSubmitting ? (
+                    <>
+                      <span className="h-4 w-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      INITIALIZING...
+                    </>
+                  ) : (
+                    "INITIALIZE PROJECT"
+                  )}
+                </button>
+            </section>
+            
+            <div className="rounded-[1.5rem] border border-[var(--line)] bg-[var(--surface-muted)]/50 p-6 backdrop-blur-sm">
+              <div className="flex items-start gap-3 text-[var(--text-hint)]">
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 mt-0.5"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+                <p className="text-xs leading-relaxed font-medium">
+                  프로젝트가 생성되면 지적도(Cadastral Map) 기반의 AI 심층 분석이 백그라운드에서 자동 시작됩니다. 
+                  초기 데이터 로드에 5~10초 가량 소요될 수 있습니다.
+                </p>
               </div>
             </div>
           </div>
-        </CardContent>
-      </Card>
-
-      <Card className="rounded-[var(--radius-2xl)]">
-        <CardContent className="p-8">
-          <h3 className="text-xl font-bold text-[var(--text-primary)]">Step 2: 분석 모듈 선택</h3>
-          <div className="mt-6 grid gap-3 md:grid-cols-2">
-            {AVAILABLE_MODULES.map((mod) => (
-              <button
-                key={mod.key}
-                type="button"
-                onClick={() => toggleModule(mod.key)}
-                className={`flex items-center gap-3 rounded-2xl px-5 py-3 text-left transition ${
-                  modules.has(mod.key)
-                    ? "bg-[var(--accent-soft)] border border-[var(--accent-strong)] text-[var(--accent-strong)]"
-                    : "bg-[var(--surface-soft)] border border-transparent text-[var(--text-tertiary)]"
-                }`}
-              >
-                <span className={`flex h-5 w-5 items-center justify-center rounded-md border text-xs ${
-                  modules.has(mod.key)
-                    ? "border-[var(--accent-strong)] bg-[var(--accent-strong)] text-white"
-                    : "border-[var(--line)] text-transparent"
-                }`}>
-                  {modules.has(mod.key) ? "✓" : ""}
-                </span>
-                <span className="text-sm font-medium">{mod.label}</span>
-              </button>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card className="rounded-[var(--radius-2xl)]">
-        <CardContent className="p-8">
-          <h3 className="text-xl font-bold text-[var(--text-primary)]">Step 3: 프로젝트 생성</h3>
-          <p className="mt-2 text-sm text-[var(--text-tertiary)]">
-            프로젝트를 생성하면 선택한 모듈에 대해 AI 자동 분석이 시작됩니다.
-          </p>
-          <div className="mt-6">
-            <Button
-              onClick={handleSubmit}
-              disabled={!name.trim() || !location.trim() || isSubmitting}
-              className="rounded-full bg-[var(--accent-strong)] px-8 py-3 text-sm font-semibold text-white disabled:opacity-40"
-            >
-              {isSubmitting ? "생성 중..." : "프로젝트 생성 & AI 분석 시작"}
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
+        </div>
+      </div>
     </div>
   );
 }

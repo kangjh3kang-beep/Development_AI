@@ -3,24 +3,43 @@
 import React, { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { usePathname } from "next/navigation";
+import { useChat } from "@ai-sdk/react";
+import { useSystemStore } from "@/store/useSystemStore";
+import Link from "next/link";
 
 const Icons = {
   Sparkles: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m12 3 1.912 5.813a2 2 0 0 0 1.275 1.275L21 12l-5.813 1.912a2 2 0 0 0-1.275 1.275L12 21l-1.912-5.813a2 2 0 0 0-1.275-1.275L3 12l5.813-1.912a2 2 0 0 0 1.275-1.275L12 3Z"/><path d="M5 3v4"/><path d="M19 17v4"/><path d="M3 5h4"/><path d="M17 19h4"/></svg>,
   X: () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>,
   Send: () => <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>,
   Bot: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>,
+  Settings: () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
 };
-
-type Message = { role: "user" | "ai", text: string };
 
 export function AIAssistant() {
   const pathname = usePathname();
   const [isOpen, setIsOpen] = useState(false);
-  const [message, setMessage] = useState("");
-  const [chat, setChat] = useState<Message[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
+  
+  const { llmProvider, openaiApiKey, anthropicApiKey, llmModel, hasValidKey } = useSystemStore();
+  const apiKey = llmProvider === 'openai' ? openaiApiKey : anthropicApiKey;
+  
+  // Vercel AI SDK
+  const { messages, input, handleInputChange, handleSubmit, setMessages, isLoading } = useChat({
+    api: '/api/ai/chat',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: {
+      provider: llmProvider,
+      model: llmModel,
+      pathname, // Send context to backend if needed
+    },
+    onError: (error) => {
+      console.error(error);
+    }
+  });
 
-  // 컨텍스트 인지형 초기 메시지 설정
+  // 컨텍스트 인지형 초기 메시지 설정 (클라이언트 전용)
   useEffect(() => {
     let initialText = "안녕하세요! 사통팔땅 AI 비서입니다. 무엇을 도와드릴까요?";
     
@@ -34,38 +53,24 @@ export function AIAssistant() {
       initialText = "디지털 트윈 제어 타워에 오신 것을 환영합니다. 센서 가동 현황과 LCC 분석 값을 동기화하겠습니다.";
     }
 
-    setChat([{ role: "ai", text: initialText }]);
-  }, [pathname]);
+    setMessages([{ id: 'initial', role: "assistant", content: initialText }]);
+  }, [pathname, setMessages]);
 
   useEffect(() => {
     if (scrollRef.current) {
         scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [chat]);
-
-  const handleSend = () => {
-    if (!message.trim()) return;
-    const newChat = [...chat, { role: "user" as const, text: message }];
-    setChat(newChat);
-    setMessage("");
-
-    // Simulate AI response based on context
-    setTimeout(() => {
-        let response = "현재 페이지의 상세 데이터를 분석 중입니다. 잠시만 기다려 주세요.";
-        if (pathname.includes("/sre")) {
-          response = "V58.5 품질 게이트 통과를 확인했습니다. 모든 파라미터가 최상위 정합성을 유지하고 있습니다.";
-        } else if (pathname.includes("/projects")) {
-          response = "현재 PNU 기반으로 성수동 일대 지구단위계획을 오버레이했습니다. 인센티브 용적률 확보를 위해 ESG 인증 가점을 추천합니다.";
-        }
-        setChat([...newChat, { role: "ai" as const, text: response }]);
-    }, 1000);
-  };
+  }, [messages]);
 
   const getSuggestedTags = () => {
     if (pathname.includes("/sre")) return ["#시스템가용성", "#품질게이트", "#빌드로그"];
     if (pathname.includes("/projects")) return ["#용적률상향", "#법규리스크", "#ESG인센티브"];
     if (pathname.includes("/auction")) return ["#권리분석", "#낙찰가예측", "#대항력검증"];
     return ["#종변경이란?", "#토지형질분석", "#수익성모델"];
+  };
+
+  const handleTagClick = (tag: string) => {
+    handleInputChange({ target: { value: tag.replace('#', '') } } as any);
   };
 
   return (
@@ -79,10 +84,8 @@ export function AIAssistant() {
             transition={{ type: "spring", stiffness: 300, damping: 30 }}
             className="group relative mb-6 w-80 sm:w-96 overflow-hidden rounded-[2.5rem] border border-[var(--line-strong)] bg-[var(--surface)] shadow-[var(--shadow-2xl)]"
           >
-            {/* Ambient Background */}
             <div className="absolute -left-10 -top-10 h-32 w-32 rounded-full bg-[var(--accent-strong)]/20 blur-[40px] animate-pulse" />
             
-            {/* Header */}
             <div className="relative bg-gradient-to-br from-[var(--accent-strong)] to-[#085d73] p-6 text-white shadow-lg overflow-hidden">
               <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-10" />
               <div className="relative flex items-center justify-between">
@@ -92,48 +95,78 @@ export function AIAssistant() {
                   </div>
                   <div>
                     <h3 className="text-sm font-[1000] tracking-tighter uppercase italic">PropAI Orchestrator</h3>
-                    <p className="text-[9px] font-black text-white/50 uppercase tracking-[0.3em]">Neural Context: Active</p>
+                    <div className="flex items-center gap-2">
+                      <p className="text-[9px] font-black text-white/50 uppercase tracking-[0.3em]">
+                        {hasValidKey() ? `Neural Context: Active (${llmModel})` : 'Disconnected'}
+                      </p>
+                      {!hasValidKey() && (
+                        <span className="h-1.5 w-1.5 rounded-full bg-red-400 animate-pulse" />
+                      )}
+                    </div>
                   </div>
                 </div>
-                <button 
-                  onClick={() => setIsOpen(false)} 
-                  className="flex h-8 w-8 items-center justify-center rounded-full bg-white/10 hover:bg-white/20 transition-all hover:rotate-90"
-                >
-                  <Icons.X />
-                </button>
+                <div className="flex items-center gap-2">
+                  {!hasValidKey() && (
+                    <Link href="/ko/settings" className="flex h-8 w-8 items-center justify-center rounded-full bg-white/10 hover:bg-white/20 transition-all text-red-200 hover:text-white" title="Settings">
+                      <Icons.Settings />
+                    </Link>
+                  )}
+                  <button 
+                    onClick={() => setIsOpen(false)} 
+                    className="flex h-8 w-8 items-center justify-center rounded-full bg-white/10 hover:bg-white/20 transition-all hover:rotate-90"
+                  >
+                    <Icons.X />
+                  </button>
+                </div>
               </div>
             </div>
 
-            {/* Chat Body */}
             <div 
               ref={scrollRef}
               className="relative flex h-[380px] flex-col gap-5 overflow-y-auto p-6 scrollbar-hide bg-[var(--surface-soft)]/50 backdrop-blur-sm"
             >
-              {chat.map((msg, i) => (
+              {!hasValidKey() && (
+                <div className="mb-4 rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-center">
+                  <p className="text-xs font-bold text-red-400 mb-2">API 키가 등록되지 않았습니다.</p>
+                  <Link href="/ko/settings" className="inline-block rounded-lg bg-red-500/20 px-4 py-2 text-xs font-bold text-red-300 hover:bg-red-500/30 transition-colors">
+                    설정으로 이동
+                  </Link>
+                </div>
+              )}
+
+              {messages.map((msg, i) => (
                 <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
                   <motion.div 
                     initial={{ opacity: 0, x: msg.role === "user" ? 10 : -10 }}
                     animate={{ opacity: 1, x: 0 }}
-                    className={`relative max-w-[85%] rounded-[1.5rem] px-5 py-3 text-[12px] font-bold leading-relaxed shadow-sm transition-all ${
+                    className={`relative max-w-[85%] rounded-[1.5rem] px-5 py-3 text-[12px] font-bold leading-relaxed shadow-sm transition-all whitespace-pre-wrap ${
                     msg.role === "user" 
                       ? "bg-[var(--accent-strong)] text-white" 
                       : "bg-[var(--surface)] text-[var(--text-primary)] border border-[var(--line)]"
                   }`}>
-                    {msg.text}
-                    {msg.role === "ai" && (
+                    {msg.content}
+                    {msg.role === "assistant" && (
                          <div className="absolute -left-1 top-4 h-3 w-3 rotate-45 border-l border-b border-[var(--line)] bg-[var(--surface)] hidden dark:block"></div>
                     )}
                   </motion.div>
                 </div>
               ))}
+              {isLoading && (
+                <div className="flex justify-start">
+                  <div className="bg-[var(--surface)] border border-[var(--line)] rounded-[1.5rem] px-4 py-3 flex items-center gap-1">
+                    <span className="h-1.5 w-1.5 bg-[var(--accent-strong)] rounded-full animate-bounce" />
+                    <span className="h-1.5 w-1.5 bg-[var(--accent-strong)] rounded-full animate-bounce" style={{ animationDelay: '0.2s' }} />
+                    <span className="h-1.5 w-1.5 bg-[var(--accent-strong)] rounded-full animate-bounce" style={{ animationDelay: '0.4s' }} />
+                  </div>
+                </div>
+              )}
               
-              {/* Contextual Suggested Tags */}
-              {!message && (
+              {!input && messages.length <= 1 && hasValidKey() && (
                 <div className="mt-2 flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
                     {getSuggestedTags().map(tag => (
                         <button 
                             key={tag}
-                            onClick={() => setMessage(tag.replace('#', ''))}
+                            onClick={() => handleTagClick(tag)}
                             className="shrink-0 rounded-[1.25rem] bg-[var(--accent-soft)] border border-[var(--line)] px-4 py-2 text-[10px] font-black tracking-tighter text-[var(--accent-strong)] hover:bg-[var(--accent-strong)] hover:text-white transition-all transform hover:-translate-y-1"
                         >
                             {tag}
@@ -143,30 +176,29 @@ export function AIAssistant() {
               )}
             </div>
 
-            {/* Input */}
             <div className="relative border-t border-[var(--line)] bg-[var(--surface)] p-5">
-              <div className="relative">
+              <form onSubmit={handleSubmit} className="relative">
                 <input
                   type="text"
-                  placeholder="Ask for site intelligence..."
-                  value={message}
-                  onChange={(e) => setMessage(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && handleSend()}
-                  className="w-full rounded-[1.75rem] border border-[var(--line)] bg-[var(--surface-muted)] py-4 pl-6 pr-14 text-sm font-bold placeholder:text-[var(--text-hint)] focus:outline-none focus:ring-4 focus:ring-[var(--accent-strong)]/10 transition-all text-[var(--text-primary)] shadow-inner"
+                  placeholder={hasValidKey() ? "Ask for site intelligence..." : "API 키를 먼저 설정해주세요"}
+                  value={input}
+                  onChange={handleInputChange}
+                  disabled={!hasValidKey() || isLoading}
+                  className="w-full rounded-[1.75rem] border border-[var(--line)] bg-[var(--surface-muted)] py-4 pl-6 pr-14 text-sm font-bold placeholder:text-[var(--text-hint)] focus:outline-none focus:ring-4 focus:ring-[var(--accent-strong)]/10 transition-all text-[var(--text-primary)] shadow-inner disabled:opacity-50"
                 />
                 <button 
-                  onClick={handleSend}
-                  className="absolute right-2 top-2 flex h-10 w-10 items-center justify-center rounded-2xl bg-[var(--accent-strong)] text-white shadow-xl hover:scale-105 active:scale-95 transition-all"
+                  type="submit"
+                  disabled={!hasValidKey() || isLoading || !input.trim()}
+                  className="absolute right-2 top-2 flex h-10 w-10 items-center justify-center rounded-2xl bg-[var(--accent-strong)] text-white shadow-xl hover:scale-105 active:scale-95 transition-all disabled:opacity-50 disabled:hover:scale-100"
                 >
                   <Icons.Send />
                 </button>
-              </div>
+              </form>
             </div>
           </motion.div>
         )}
       </AnimatePresence>
 
-      {/* Floating Toggle Button */}
       <motion.button
         animate={{ 
           scale: [1, 1.05, 1],
@@ -185,9 +217,8 @@ export function AIAssistant() {
         <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-10" />
         {isOpen ? <Icons.X /> : <Icons.Sparkles />}
         
-        {/* Pulse effect */}
         {!isOpen && (
-            <div className="absolute -top-1 -right-1 flex h-6 w-6 items-center justify-center rounded-full bg-[var(--accent-strong)] text-[10px] font-black ring-4 ring-[var(--background)]">
+            <div className={`absolute -top-1 -right-1 flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-black ring-4 ring-[var(--background)] ${hasValidKey() ? 'bg-[var(--accent-strong)]' : 'bg-red-500'}`}>
                 <span className="h-2 w-2 rounded-full bg-white animate-ping" />
             </div>
         )}
