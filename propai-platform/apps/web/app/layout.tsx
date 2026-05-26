@@ -45,7 +45,10 @@ type RootLayoutProps = Readonly<{
 
 export default function RootLayout({ children }: RootLayoutProps) {
   return (
-    <html lang="ko" suppressHydrationWarning>
+    <html lang="ko" className="notranslate" translate="no" suppressHydrationWarning>
+      <head>
+        <meta name="google" content="notranslate" />
+      </head>
       <body className={`${sansFont.variable} ${monoFont.variable} antialiased`}>
         {children}
       </body>

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { AccessibilityProvider } from "@/components/ui/AccessibilityProvider";
+import { HtmlLangSetter } from "@/components/layout/HtmlLangSetter";
 import { getDictionary } from "@/i18n/get-dictionary";
 import { AppProviders } from "@/lib/providers";
 import { isValidLocale, locales, type Locale } from "@/i18n/config";
@@ -61,6 +62,7 @@ export default async function LocaleLayout({
       locale={locale as Locale}
       announcerLabel={dictionary.a11y.screenReaderRegion}
     >
+      <HtmlLangSetter locale={locale as Locale} />
       <AppProviders locale={locale as Locale}>
         <a href="#main-content" className="skip-link">
           {dictionary.a11y.skipToContent}
