@@ -10,6 +10,7 @@ const nextConfig = {
   turbopack: {
     root: path.join(__dirname, "../../"),
   },
+  outputFileTracingRoot: path.join(__dirname, "../../"),
   experimental: {},
 
   images: {
