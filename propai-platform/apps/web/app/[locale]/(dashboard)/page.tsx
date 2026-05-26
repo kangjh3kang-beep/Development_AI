@@ -62,27 +62,27 @@ export default async function DashboardPage({ params }: DashboardPageProps) {
               </span>
             </div>
             
-            <h1 className="text-6xl font-[1000] tracking-tighter text-[var(--text-primary)] sm:text-7xl lg:text-8xl leading-[0.9] italic">
+            <h1 className="text-6xl font-[1000] tracking-tighter text-[var(--text-primary)] sm:text-7xl lg:text-8xl leading-[0.9]">
                <span className="bg-gradient-to-r from-[var(--text-primary)] to-[var(--accent-strong)] bg-clip-text text-transparent">{dictionary.meta.siteName}</span>
                <span className="text-[var(--accent-strong)]">.</span>
             </h1>
 
-            <p className="max-w-xl text-xl font-medium leading-relaxed text-[var(--text-secondary)] sm:text-2xl italic tracking-tight underline decoration-[var(--line-strong)] decoration-2 underline-offset-8">
+            <p className="max-w-xl text-xl font-medium leading-relaxed text-[var(--text-secondary)] sm:text-2xl tracking-tight underline decoration-[var(--line-strong)] decoration-2 underline-offset-8">
               &quot;{(dictionary.dashboard as any).welcome}&quot;
             </p>
           </div>
 
-          <div className="flex flex-col gap-4 sm:flex-row lg:mb-4">
+          <div className="flex flex-col gap-4 sm:flex-row lg:mb-4 shrink-0">
             <Link
               href={`/${locale}/projects/new`}
-              className="group flex h-20 items-center justify-center gap-6 rounded-[2.5rem] bg-gradient-to-br from-[var(--accent-strong)] to-teal-700 px-12 text-xl font-black text-white shadow-[var(--shadow-glow)] transition-all hover:scale-[1.05] active:scale-[0.95]"
+              className="group flex h-20 items-center justify-center gap-6 rounded-[2.5rem] bg-gradient-to-br from-[var(--accent-strong)] to-teal-700 px-12 text-xl font-black text-white shadow-[var(--shadow-glow)] transition-all hover:scale-[1.05] active:scale-[0.95] shrink-0 whitespace-nowrap"
             >
               <span>{dictionary.nav.projects} 생성</span>
               <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" className="transition-transform group-hover:translate-x-2"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
             </Link>
             <Link
               href={`/${locale}/guide`}
-              className="flex h-20 items-center justify-center gap-4 rounded-[2.5rem] border border-[var(--line-strong)] bg-[var(--surface-soft)] px-10 text-lg font-black text-[var(--text-primary)] backdrop-blur-xl transition-all hover:bg-[var(--surface-strong)]"
+              className="flex h-20 items-center justify-center gap-4 rounded-[2.5rem] border border-[var(--line-strong)] bg-[var(--surface-soft)] px-10 text-lg font-black text-[var(--text-primary)] backdrop-blur-xl transition-all hover:bg-[var(--surface-strong)] shrink-0 whitespace-nowrap"
             >
               {dictionary.nav.report}
             </Link>
@@ -168,9 +168,9 @@ export default async function DashboardPage({ params }: DashboardPageProps) {
 
         {/* Sidebar Widgets: System Health & Compliance */}
         <div className="space-y-8">
-           <div className="glass rounded-[2.5rem] p-8 border border-white/10 shadow-2xl space-y-8">
+           <div className="glass rounded-[2.5rem] p-8 border border-[var(--line)] shadow-2xl space-y-8">
               <div>
-                 <h4 className="text-sm font-black text-white uppercase tracking-[0.2em] mb-6 flex items-center gap-2">
+                 <h4 className="text-sm font-black text-[var(--text-primary)] uppercase tracking-[0.2em] mb-6 flex items-center gap-2">
                    <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
                    Market Regulations
                  </h4>
@@ -182,20 +182,20 @@ export default async function DashboardPage({ params }: DashboardPageProps) {
                       <div key={i} className="group cursor-pointer">
                          <div className="flex justify-between items-center mb-1">
                             <span className="text-[9px] font-black text-teal-400 uppercase tracking-widest">{item.type}</span>
-                            <span className="text-[9px] font-black text-white/20">{item.date}</span>
+                            <span className="text-[9px] font-black text-[var(--text-hint)]">{item.date}</span>
                          </div>
-                         <h5 className="text-[13px] font-black text-white group-hover:text-teal-400 transition-colors uppercase">{item.title}</h5>
-                         <p className="text-[11px] text-white/40 leading-relaxed italic">{item.desc}</p>
+                         <h5 className="text-[13px] font-black text-[var(--text-primary)] group-hover:text-teal-400 transition-colors uppercase">{item.title}</h5>
+                         <p className="text-[11px] text-[var(--text-secondary)] leading-relaxed italic">{item.desc}</p>
                       </div>
                     ))}
                  </div>
               </div>
 
-              <div className="pt-8 border-t border-white/5 space-y-6">
-                 <h4 className="text-sm font-black text-white uppercase tracking-[0.2em] mb-4">ESG Integrated Score</h4>
+              <div className="pt-8 border-t border-[var(--line)] space-y-6">
+                 <h4 className="text-sm font-black text-[var(--text-primary)] uppercase tracking-[0.2em] mb-4">ESG Integrated Score</h4>
                  <div className="relative h-40 w-full rounded-2xl bg-gradient-to-br from-indigo-500/20 to-purple-600/20 border border-indigo-500/20 flex flex-col items-center justify-center gap-2 overflow-hidden group">
                     <div className="absolute inset-0 bg-indigo-500/5 animate-pulse group-hover:scale-150 transition-transform duration-[3000ms]" />
-                    <span className="text-5xl font-black text-white tracking-tighter z-10">84.2</span>
+                    <span className="text-5xl font-black text-[var(--text-primary)] tracking-tighter z-10">84.2</span>
                     <span className="text-[10px] font-black text-indigo-400 uppercase tracking-[0.4em] z-10 transition-all group-hover:tracking-[0.6em]">System Rating: A+</span>
                  </div>
               </div>

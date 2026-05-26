@@ -76,8 +76,8 @@ export default async function DashboardLayout({
       {/* Header */}
       <header className="sticky top-2 z-50 glass rounded-[var(--radius-xl)] border border-[var(--line)] bg-[var(--glass-bg)] px-4 py-3 md:px-8 md:py-4 shadow-[var(--shadow-lg)] transition-all duration-500 mt-2">
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div className="flex items-center gap-4">
-            <div className="flex h-12 w-12 md:h-14 md:w-14 shrink-0 items-center justify-center rounded-[1.25rem] bg-gradient-to-br from-teal-600 to-teal-400 shadow-xl shadow-teal-500/20 ring-1 ring-white/10 transition-transform hover:scale-105 active:scale-95 cursor-pointer">
+          <Link href={`/${locale}`} className="flex items-center gap-4 group">
+            <div className="flex h-12 w-12 md:h-14 md:w-14 shrink-0 items-center justify-center rounded-[1.25rem] bg-gradient-to-br from-teal-600 to-teal-400 shadow-xl shadow-teal-500/20 ring-1 ring-white/10 transition-transform group-hover:scale-105 active:scale-95">
               <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M3 3h7v7H3z"/><path d="M14 3h7v7h-7z"/><path d="M14 14h7v7h-7z"/><path d="M3 14h7v7H3z"/></svg>
             </div>
             <div className="min-w-0">
@@ -89,7 +89,7 @@ export default async function DashboardLayout({
                   <span className="text-[var(--accent-strong)] ml-px text-3xl md:text-4xl leading-none drop-shadow-sm">.</span>
                </h1>
             </div>
-          </div>
+          </Link>
 
           <div className="flex flex-wrap items-center gap-3">
             <span className="hidden sm:inline-block rounded-full bg-[var(--accent-soft)] border border-[var(--line)] px-4 py-2 text-[10px] font-black tracking-widest uppercase text-[var(--accent-strong)] shadow-sm">
