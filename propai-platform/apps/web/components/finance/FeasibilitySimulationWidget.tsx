@@ -187,14 +187,14 @@ export function FeasibilitySimulationWidget({ projectId, dictionary }: { project
                   stroke="var(--spot)" 
                   strokeWidth={2}
                   strokeDasharray="10 10" 
-                  label={{ position: 'top', value: 'Value at Risk (5%)', fill: 'var(--spot)', fontSize: 9, fontWeight: 900, textTransform: 'uppercase', tracking: '0.2em' }} 
+                  label={{ position: 'top', value: 'VALUE AT RISK (5%)', fill: 'var(--spot)', fontSize: 9, fontWeight: 900 }} 
                 />
                 <ReferenceLine 
                   x={1250000000} 
                   stroke="var(--success)" 
                   strokeWidth={2}
                   strokeDasharray="10 10" 
-                  label={{ position: 'top', value: 'Expected Mean', fill: 'var(--success)', fontSize: 9, fontWeight: 900, textTransform: 'uppercase', tracking: '0.2em' }} 
+                  label={{ position: 'top', value: 'EXPECTED MEAN', fill: 'var(--success)', fontSize: 9, fontWeight: 900 }} 
                 />
                 <Area 
                   type="monotone" 
