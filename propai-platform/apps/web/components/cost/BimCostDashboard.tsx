@@ -113,7 +113,7 @@ export default function BimCostDashboard({ projectId }: { projectId: string }) {
            </CardTitle>
            <div className="flex gap-4">
               <Button
-                variant="outline"
+                variant="secondary"
                 onClick={fetchRates}
                 className="h-10 border-[var(--line)] text-[11px] font-black uppercase tracking-widest text-[var(--text-secondary)]"
               >
