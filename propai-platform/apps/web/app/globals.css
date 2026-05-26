@@ -1,8 +1,9 @@
 @import "tailwindcss";
 
 /* ═══════════════════════════════════════════════════
-   사통팔땅 (Sa-Tong-Pal-Ttang) Global Styles v2.0
+   사통팔땅 (Sa-Tong-Pal-Ttang) Global Styles v3.0
    세상을 연결하는 건축학적 심미성 + 미래기술 진보성
+   가독성 · 직관력 극대화 에디션
    ═══════════════════════════════════════════════════ */
 
 @theme inline {
@@ -102,6 +103,8 @@ textarea {
   backdrop-filter: blur(var(--glass-blur));
   -webkit-backdrop-filter: blur(var(--glass-blur));
   border: 1px solid var(--glass-border);
+  transition: background var(--duration-normal) var(--ease-out-expo),
+              border-color var(--duration-normal) var(--ease-out-expo);
 }
 
 /* Scrollbar Hide */
@@ -189,6 +192,15 @@ textarea {
   }
 }
 
+@keyframes float {
+  0%, 100% {
+    transform: translateY(0) scale(1);
+  }
+  50% {
+    transform: translateY(-20px) scale(1.05);
+  }
+}
+
 .animate-text-reveal {
   animation: text-reveal 0.8s var(--ease-out-expo) forwards;
 }
@@ -206,6 +218,10 @@ textarea {
   );
   background-size: 200% auto;
   animation: accent-shine 3s linear infinite;
+}
+
+.animate-float {
+  animation: float 8s ease-in-out infinite;
 }
 
 .reveal-container {
