@@ -2,15 +2,15 @@ import { headers, cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { defaultLocale, isValidLocale, localeCookieName, type Locale } from "@/i18n/config";
 
-export default function Home() {
-  const cookieStore = cookies();
+export default async function Home() {
+  const cookieStore = await cookies();
   const cookieLocale = cookieStore.get(localeCookieName)?.value;
 
   if (cookieLocale && isValidLocale(cookieLocale)) {
     redirect(`/${cookieLocale}`);
   }
 
-  const headerList = headers();
+  const headerList = await headers();
   const acceptLanguage = headerList.get("accept-language");
 
   if (acceptLanguage) {
