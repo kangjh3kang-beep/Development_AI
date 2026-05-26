@@ -11,7 +11,20 @@ const nextConfig = {
     root: path.join(__dirname, "../../"),
   },
   outputFileTracingRoot: path.join(__dirname, "../../"),
-  experimental: {},
+  experimental: {
+    optimizePackageImports: [
+      "recharts",
+      "framer-motion",
+      "three",
+      "@react-three/fiber",
+      "@react-three/drei",
+      "konva",
+      "react-konva",
+      "ethers",
+      "graphql",
+      "solc",
+    ],
+  },
 
   images: {
     remotePatterns: [

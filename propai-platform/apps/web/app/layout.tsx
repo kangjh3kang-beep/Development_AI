@@ -1,6 +1,5 @@
 import type { Metadata, Viewport } from "next";
 import { JetBrains_Mono, Noto_Sans_KR } from "next/font/google";
-import { cookies } from "next/headers";
 import "@propai/ui/styles/tokens.css";
 import { defaultLocale, getHtmlLang, localeCookieName } from "@/i18n/config";
 import "./globals.css";
@@ -45,13 +44,9 @@ type RootLayoutProps = Readonly<{
   children: React.ReactNode;
 }>;
 
-export default async function RootLayout({ children }: RootLayoutProps) {
-  const cookieStore = await cookies();
-  const locale = cookieStore.get(localeCookieName)?.value ?? defaultLocale;
-  const htmlLang = getHtmlLang(locale);
-
+export default function RootLayout({ children }: RootLayoutProps) {
   return (
-    <html lang={htmlLang} suppressHydrationWarning>
+    <html lang="ko" suppressHydrationWarning>
       <body className={`${sansFont.variable} ${monoFont.variable} antialiased`}>
         {children}
       </body>
