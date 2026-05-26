@@ -7,6 +7,11 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const nextConfig = {
   reactStrictMode: true,
   transpilePackages: ["@propai/ui"],
+  experimental: {
+    turbopack: {
+      root: path.join(__dirname, "../../"),
+    },
+  },
 
   images: {
     remotePatterns: [
