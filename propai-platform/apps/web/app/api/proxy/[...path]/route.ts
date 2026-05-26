@@ -6,10 +6,11 @@ const API_BASE_URL = "http://api:8000/api/v1";
 
 async function handleProxy(
   request: NextRequest,
-  { params }: { params: { path: string[] } }
+  { params }: { params: Promise<{ path: string[] }> }
 ) {
   try {
-    const path = params.path.join("/");
+    const resolvedParams = await params;
+    const path = resolvedParams.path.join("/");
     const url = new URL(request.url);
     const targetUrl = `${API_BASE_URL}/${path}${url.search}`;
 
