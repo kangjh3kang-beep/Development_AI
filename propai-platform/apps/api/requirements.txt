@@ -80,3 +80,8 @@ pytest==8.3.3
 pytest-asyncio==0.24.0
 slowapi==0.1.9
 qdrant-client==1.11.3
+sse-starlette==2.1.0
+langchain-anthropic==0.1.15
+casbin==3.1.1
+casbin-async-sqlalchemy-adapter==1.4.0
+passlib==1.7.4
