@@ -45,9 +45,9 @@ function getPreferredLocale(request: NextRequest): Locale {
   return defaultLocale;
 }
 
-export const runtime = "edge";
+export const runtime = "experimental-edge";
 
-export function middleware(request: NextRequest) {
+export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   if (pathname.startsWith("/api/proxy/")) {
