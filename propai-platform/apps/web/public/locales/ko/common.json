@@ -186,11 +186,10 @@
     },
     "inspection": {
       "eyebrow": "현장 모듈",
-      "title": "AI驱动的房地产业务自动化",
-      "welcome": "开发业务的开始！你已准备好作为开发者腾飞。",
-      "description": "PWA 오프라인 흐름과 현장 점검 체크리스트를 연결할 자리입니다.",
+      "title": "AI 기반 현장 점검 자동화",
+      "description": "PWA 오프라인 흐름과 현장 점검 체크리스트를 연결하여 현장 품질·안전을 실시간 관리합니다.",
       "items": {
-        "first": "오프라인 배너",
+        "first": "오프라인 점검 배너",
         "second": "현장 체크리스트",
         "third": "동기화 대기 상태"
       }
@@ -319,8 +318,7 @@
       "exportBtn": "IFC/DXF 내보내기"
     },
     "feasibility": {
-      "title": "AI-Powered Real Estate Business Automation",
-      "welcome": "The start of your development! You are ready to soar as a developer.",
+      "title": "경제적 민감도 시뮬레이션 (Monte Carlo)",
       "description": "최소 10,000회 이상의 반복 시나리오를 구성하여 확률적 ROI 및 NPV 구간을 모델링합니다.",
       "runBtn": "시뮬레이션 실행",
       "runningBtn": "10k 회 반복 시뮬레이터 가동 중...",

@@ -186,8 +186,7 @@
     },
     "inspection": {
       "eyebrow": "Field module",
-      "title": "Offline field inspection placeholder",
-      "welcome": "The start of your development! You are ready to soar as a developer.",
+      "title": "AI-powered field inspection automation",
       "description": "This screen prepares the PWA offline flow and on-site inspection checklist.",
       "items": {
         "first": "Offline banner",
@@ -319,8 +318,7 @@
       "exportBtn": "Export IFC/DXF"
     },
     "feasibility": {
-      "title": "Monte Carlo Feasibility",
-      "welcome": "The start of your development! You are ready to soar as a developer.",
+      "title": "Monte Carlo Feasibility Simulation",
       "description": "Run 10,000+ iteration simulations for probabilistic ROI and NPV modeling.",
       "runBtn": "Run Simulation",
       "runningBtn": "Simulating 10k Iterations...",
