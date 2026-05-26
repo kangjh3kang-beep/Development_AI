@@ -63,24 +63,27 @@ export default function GuidePage() {
             transition={{ duration: 0.8, ease: "easeOut" }}
             className="flex flex-col lg:flex-row gap-20 items-center"
           >
-            <div className={`flex-1 flex flex-col gap-8 ${i % 2 === 1 ? 'lg:order-2' : ''}`}>
-               <div className="space-y-4">
+            <div className={`flex-1 flex flex-col gap-8 p-8 lg:p-12 rounded-[3rem] bg-[var(--surface-soft)] border border-[var(--line-strong)] backdrop-blur-2xl shadow-[var(--shadow-xl)] relative overflow-hidden group/card ${i % 2 === 1 ? 'lg:order-2' : ''}`}>
+               {/* Cyber Glow Background */}
+               <div className="absolute -inset-20 bg-gradient-to-tr from-teal-500/10 via-transparent to-indigo-500/10 opacity-0 group-hover/card:opacity-100 transition-opacity duration-1000 blur-2xl" />
+               
+               <div className="relative z-10 space-y-4">
                  <div className="flex items-center gap-4">
-                    <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-teal-500/10 border border-teal-500/20 text-teal-400 font-black text-xl italic shadow-[0_0_20px_rgba(20,184,166,0.1)]">
+                    <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[var(--accent-soft)] border border-[var(--line-strong)] text-[var(--accent-strong)] font-black text-xl italic shadow-[var(--shadow-glow)]">
                       {i + 1}
                     </span>
-                    <span className="text-xs font-black uppercase tracking-[0.5em] text-teal-400/60">Step 0{i + 1}</span>
+                    <span className="text-xs font-black uppercase tracking-[0.5em] text-[var(--text-hint)]">Step 0{i + 1}</span>
                  </div>
-                 <h2 className="text-4xl font-black text-white tracking-tighter leading-tight lg:text-5xl">{step.title}</h2>
+                 <h2 className="text-4xl font-black text-[var(--text-primary)] tracking-tighter leading-tight lg:text-5xl">{step.title}</h2>
                </div>
                
-               <p className="text-lg leading-relaxed text-white/40 font-medium italic">
+               <p className="relative z-10 text-lg leading-relaxed text-[var(--text-secondary)] font-medium italic">
                  {step.desc}
                </p>
 
                <div className="flex flex-wrap gap-3">
                  {step.tags.map(tag => (
-                   <span key={tag} className="rounded-xl border border-white/5 bg-white/5 px-4 py-2 text-[10px] font-black uppercase tracking-widest text-teal-400/80 backdrop-blur-md">
+                   <span key={tag} className="relative z-10 rounded-xl border border-[var(--line-strong)] bg-[var(--surface-muted)] px-4 py-2 text-[10px] font-black uppercase tracking-widest text-[var(--accent-strong)] backdrop-blur-md shadow-sm">
                      #{tag}
                    </span>
                  ))}

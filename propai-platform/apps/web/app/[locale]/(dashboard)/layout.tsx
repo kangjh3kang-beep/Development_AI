@@ -4,7 +4,7 @@ import { getDictionary } from "@/i18n/get-dictionary";
 import { isValidLocale, type Locale } from "@/i18n/config";
 import { AIAssistant } from "@/components/common/AIAssistant";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
-
+import { SidebarNav } from "@/components/layout/SidebarNav";
 type DashboardLayoutProps = Readonly<{
   children: React.ReactNode;
   params: Promise<{
@@ -221,33 +221,7 @@ export default async function DashboardLayout({
       <div className="grid gap-6 md:grid-cols-[260px_minmax(0,1fr)]">
         {/* 사이드바 */}
         <aside className="glass space-y-5 rounded-[var(--radius-xl)] border border-[var(--line)] bg-[var(--surface-secondary)] p-5 shadow-[var(--shadow-md)]">
-          
-          {sections.map((section, sectionIdx) => (
-            <div key={section.title}>
-              {sectionIdx > 0 && (
-                <div className="h-px bg-[var(--line)] opacity-50 mb-5" aria-hidden="true" />
-              )}
-              <p className="px-3 pb-2.5 text-[11px] font-bold tracking-[0.12em] text-[var(--text-tertiary)]">
-                {section.title}
-              </p>
-              <nav className="grid gap-0.5">
-                {section.items.map((item) => (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    className="group relative flex items-center gap-3 rounded-[var(--radius-md)] px-3 py-2 text-[13px] font-semibold text-[var(--text-secondary)] transition-all duration-300 hover:bg-[var(--accent-soft)] hover:text-[var(--accent-strong)]"
-                  >
-                    <span className="shrink-0 text-[var(--text-hint)] transition-colors group-hover:text-[var(--accent-strong)]">
-                      {item.icon}
-                    </span>
-                    {item.label}
-                    <span className="absolute left-0 top-1/2 h-3.5 w-1 -translate-y-1/2 rounded-r-full bg-[var(--accent)] opacity-0 transition-all group-hover:opacity-100" />
-                  </Link>
-                ))}
-              </nav>
-            </div>
-          ))}
-
+          <SidebarNav sections={sections} />
         </aside>
 
         {/* 콘텐츠 영역 */}

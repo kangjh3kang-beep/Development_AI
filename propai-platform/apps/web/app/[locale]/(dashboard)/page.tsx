@@ -46,13 +46,13 @@ export default async function DashboardPage({ params }: DashboardPageProps) {
 
   return (
     <div className="flex flex-col gap-10 pb-20">
-      {/* ── 프리미엄 히어로 섹션: 커맨드 센터 ── */}
-      <section className="relative min-h-[480px] overflow-hidden rounded-[var(--radius-2xl)] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-12 lg:p-20 shadow-[var(--shadow-2xl)] transition-all group">
-        {/* 애니메이션 배경 요소 */}
-        <div className="absolute -right-20 -top-20 h-[500px] w-[500px] rounded-full bg-[var(--accent-strong)]/10 blur-[120px] transition-all duration-[2000ms] group-hover:scale-150" />
-        <div className="absolute -bottom-40 left-1/4 h-[400px] w-[400px] rounded-full bg-blue-600/10 blur-[100px] animate-float opacity-50" />
-        {/* 로컬 CSS 그리드 패턴 (외부 URL 의존 제거) */}
-        <div className="absolute inset-0 bg-[linear-gradient(var(--line-subtle)_1px,transparent_1px),linear-gradient(90deg,var(--line-subtle)_1px,transparent_1px)] bg-[size:40px_40px] opacity-30" />
+      {/* ── 프리미엄 히어로 섹션: AI 커맨드 센터 ── */}
+      <section className="relative min-h-[480px] overflow-hidden rounded-[3rem] border border-[var(--line-strong)] bg-[var(--surface-soft)] p-12 lg:p-20 shadow-[var(--shadow-2xl)] transition-all group backdrop-blur-2xl">
+        {/* 애니메이션 배경 요소 (Cyber Glows) */}
+        <div className="absolute -right-20 -top-20 h-[500px] w-[500px] rounded-full bg-[var(--accent-strong)]/10 blur-[120px] transition-all duration-[3000ms] group-hover:scale-150 group-hover:bg-[var(--accent-strong)]/20" />
+        <div className="absolute -bottom-40 left-1/4 h-[400px] w-[400px] rounded-full bg-indigo-500/10 blur-[100px] animate-float opacity-70" />
+        {/* 로컬 CSS 그리드 패턴 (사이버틱한 공간감) */}
+        <div className="absolute inset-0 bg-[linear-gradient(var(--line-strong)_1px,transparent_1px),linear-gradient(90deg,var(--line-strong)_1px,transparent_1px)] bg-[size:40px_40px] opacity-20 group-hover:opacity-40 transition-opacity duration-1000" />
 
         <div className="relative z-10 flex flex-col justify-between h-full gap-12 lg:flex-row lg:items-end">
           <div className="max-w-4xl space-y-10">
@@ -98,8 +98,10 @@ export default async function DashboardPage({ params }: DashboardPageProps) {
           { label: "평균 프로젝트 ROI", value: "18.4", unit: "%", trend: "+2.1%", sub: "12개 주요 프로젝트 기준", color: "text-blue-600 dark:text-blue-400", bg: "bg-blue-500/5 dark:bg-blue-500/10", border: "border-blue-500/20" },
           { label: "탄소 배출 절감률", value: "24.9", unit: "%", trend: "-1.5%", sub: "전과정평가 (LCA) 기반", color: "text-emerald-600 dark:text-emerald-400", bg: "bg-emerald-500/5 dark:bg-emerald-500/10", border: "border-emerald-500/20" },
         ].map((item, i) => (
-          <div key={i} className={`group relative overflow-hidden rounded-[2rem] border ${item.border} ${item.bg} p-8 transition-all hover:border-[var(--accent)] hover:scale-[1.02] shadow-[var(--shadow-sm)]`}>
-            <div className="flex items-center justify-between">
+          <div key={i} className={`group relative overflow-hidden rounded-[2.5rem] border ${item.border} ${item.bg} p-8 transition-all hover:border-[var(--accent-strong)] hover:scale-[1.02] shadow-[var(--shadow-lg)] hover:shadow-[var(--shadow-glow)] backdrop-blur-md`}>
+            {/* Cyber Hover Glow */}
+            <div className="absolute inset-0 bg-gradient-to-br from-white/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+            <div className="relative z-10 flex items-center justify-between">
               <span className="text-xs font-bold tracking-[0.1em] text-[var(--text-tertiary)]">{item.label}</span>
               <span className={`text-[11px] font-bold ${item.color} px-2.5 py-1 rounded-full bg-white/10 dark:bg-black/20`}>{item.trend}</span>
             </div>
@@ -127,8 +129,9 @@ export default async function DashboardPage({ params }: DashboardPageProps) {
                  { id: "demo-gangnam", name: "강남 게이트웨이 복합시설", status: "AI 설계 단계", value: "12,940", tag: "ULTRA", progress: 68 },
                  { id: "demo-songdo", name: "송도 이노베이션 루프", status: "사업 타당성 검토", value: "8,210", tag: "CORE", progress: 42 },
                ] as const).map((proj) => (
-                 <Link href={`/${locale}/projects/${proj.id}`} key={proj.id} className="group relative rounded-[2rem] border border-[var(--line)] bg-[var(--surface)] p-8 transition-all hover:border-[var(--accent)] hover:bg-[var(--accent-soft)] shadow-[var(--shadow-sm)]">
-                    <div className="flex items-center justify-between mb-6">
+                 <Link href={`/${locale}/projects/${proj.id}`} key={proj.id} className="group relative rounded-[2rem] border border-[var(--line-strong)] bg-[var(--surface-soft)] p-8 transition-all hover:border-[var(--accent-strong)] shadow-[var(--shadow-md)] hover:shadow-[var(--shadow-glow)] backdrop-blur-lg overflow-hidden">
+                    <div className="absolute inset-0 bg-[var(--accent-soft)] opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+                    <div className="relative z-10 flex items-center justify-between mb-6">
                        <span className="rounded-lg bg-[var(--surface-muted)] px-3 py-1 text-[11px] font-bold text-[var(--text-tertiary)]">{proj.tag}</span>
                        <div className="h-8 w-8 rounded-full border border-[var(--line)] flex items-center justify-center transition-all group-hover:bg-[var(--accent)] group-hover:border-[var(--accent)]">
                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--text-primary)] group-hover:text-white transition-colors"><path d="m9 18 6-6-6-6"/></svg>

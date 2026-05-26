@@ -35,9 +35,8 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#f3f0eb",
+  themeColor: "#060b14",
 };
-
 
 type RootLayoutProps = Readonly<{
   children: React.ReactNode;
@@ -45,7 +44,7 @@ type RootLayoutProps = Readonly<{
 
 export default function RootLayout({ children }: RootLayoutProps) {
   return (
-    <html lang="ko" className="notranslate" translate="no" suppressHydrationWarning>
+    <html lang="ko" className="notranslate dark" translate="no" suppressHydrationWarning>
       <head>
         <meta name="google" content="notranslate" />
       </head>
