@@ -45,8 +45,17 @@ function getPreferredLocale(request: NextRequest): Locale {
   return defaultLocale;
 }
 
-export function proxy(request: NextRequest) {
+export const runtime = "edge";
+
+export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
+
+  if (pathname.startsWith("/api/proxy/")) {
+    const newPath = pathname.replace(/^\/api\/proxy/, "/api/v1");
+    const url = new URL(`http://api:8000${newPath}`);
+    url.search = request.nextUrl.search;
+    return NextResponse.rewrite(url);
+  }
 
   if (
     pathname.startsWith("/_next") ||
