@@ -5,6 +5,8 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "build:worker": "opennextjs-cloudflare build",
+    "build:pages": "opennextjs-cloudflare build && cp .open-next/worker.js .open-next/assets/_worker.js",
     "start": "next start",
     "lint": "eslint . --no-cache",
     "type-check": "node -e \"require('node:fs').rmSync('.next/cache', { recursive: true, force: true })\" && next typegen && tsc --noEmit --incremental false",
@@ -32,6 +34,7 @@
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.11.1",
+    "@opennextjs/cloudflare": "^1.19.11",
     "@playwright/test": "^1.58.2",
     "@tailwindcss/postcss": "^4",
     "@testing-library/jest-dom": "^6.9.1",
@@ -46,6 +49,7 @@
     "jsdom": "^27.0.0",
     "tailwindcss": "^4",
     "typescript": "^5",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.4",
+    "wrangler": "^4.94.0"
   }
 }

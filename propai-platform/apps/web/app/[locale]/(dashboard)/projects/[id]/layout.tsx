@@ -2,6 +2,8 @@ import { isValidLocale } from "@/i18n/config";
 import { LifecycleNavigator } from "@/components/projects/LifecycleNavigator";
 import React from "react";
 
+export const dynamicParams = true;
+
 type ProjectLayoutProps = {
   children: React.ReactNode;
   params: Promise<{

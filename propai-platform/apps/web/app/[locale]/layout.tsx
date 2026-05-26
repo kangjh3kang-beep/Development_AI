@@ -5,6 +5,8 @@ import { getDictionary } from "@/i18n/get-dictionary";
 import { AppProviders } from "@/lib/providers";
 import { isValidLocale, locales, type Locale } from "@/i18n/config";
 
+export const dynamicParams = false;
+
 type LocaleLayoutProps = Readonly<{
   children: React.ReactNode;
   params: Promise<{

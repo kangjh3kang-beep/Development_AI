@@ -1,6 +1,7 @@
 import { KakaoCallbackWorkspaceClient } from "@/components/auth/KakaoCallbackWorkspaceClient";
 import { isValidLocale, type Locale } from "@/i18n/config";
 
+
 type KakaoCallbackPageProps = {
   params: Promise<{
     locale: string;

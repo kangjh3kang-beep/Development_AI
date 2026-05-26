@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 
-export const runtime = "edge";
 
 const API_BASE_URL = "http://api:8000/api/v1";
 

@@ -2,6 +2,7 @@ import { headers, cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { defaultLocale, isValidLocale, localeCookieName, type Locale } from "@/i18n/config";
 
+
 export default async function Home() {
   const cookieStore = await cookies();
   const cookieLocale = cookieStore.get(localeCookieName)?.value;

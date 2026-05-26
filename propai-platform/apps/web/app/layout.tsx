@@ -38,7 +38,6 @@ export const viewport: Viewport = {
   themeColor: "#f3f0eb",
 };
 
-export const runtime = "edge";
 
 type RootLayoutProps = Readonly<{
   children: React.ReactNode;

@@ -8,3 +8,4 @@ build/
 .turbo/
 *.log
 .DS_Store
+.open-next
