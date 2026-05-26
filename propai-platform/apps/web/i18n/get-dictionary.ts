@@ -309,7 +309,7 @@ const dictionaries = {
 
 async function loadDictionary(locale: Locale): Promise<CommonDictionary> {
   const loadFn = dictionaries[locale] ?? dictionaries[defaultLocale];
-  return loadFn() as Promise<CommonDictionary>;
+  return loadFn() as unknown as Promise<CommonDictionary>;
 }
 
 export const getDictionary = cache(loadDictionary);
