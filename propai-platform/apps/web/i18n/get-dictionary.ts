@@ -1,5 +1,4 @@
-import { readFile } from "node:fs/promises";
-import path from "node:path";
+
 import { cache } from "react";
 import { defaultLocale, type Locale } from "@/i18n/config";
 
@@ -302,29 +301,15 @@ export type CommonDictionary = {
   }>;
 };
 
-async function loadDictionary(locale: Locale): Promise<CommonDictionary> {
-  const filePath = path.join(
-    process.cwd(),
-    "public",
-    "locales",
-    locale,
-    "common.json",
-  );
+const dictionaries = {
+  ko: () => import("../public/locales/ko/common.json").then((module) => module.default),
+  en: () => import("../public/locales/en/common.json").then((module) => module.default),
+  "zh-CN": () => import("../public/locales/zh-CN/common.json").then((module) => module.default),
+};
 
-  try {
-    const file = await readFile(filePath, "utf8");
-    return JSON.parse(file) as CommonDictionary;
-  } catch {
-    const fallbackPath = path.join(
-      process.cwd(),
-      "public",
-      "locales",
-      defaultLocale,
-      "common.json",
-    );
-    const file = await readFile(fallbackPath, "utf8");
-    return JSON.parse(file) as CommonDictionary;
-  }
+async function loadDictionary(locale: Locale): Promise<CommonDictionary> {
+  const loadFn = dictionaries[locale] ?? dictionaries[defaultLocale];
+  return loadFn() as Promise<CommonDictionary>;
 }
 
 export const getDictionary = cache(loadDictionary);
