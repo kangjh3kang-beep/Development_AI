@@ -15,26 +15,6 @@ import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import { apiClient } from "@/lib/api-client";
 import type { ESGDashboardData, ESGMetric } from "@/components/cad/types";
 
-const TREND_ICONS: Record<ESGMetric["trend"], string> = {
-  up: "\u2191",
-  down: "\u2193",
-  stable: "\u2192",
-};
-
-function getTrendColor(metric: ESGMetric): string {
-  // 배출량 등은 down이 좋고, 비율 등은 up이 좋음
-  const lowerIsBetter = metric.unit === "tCO2e" || metric.label.includes("사고율");
-  if (metric.trend === "stable") return "text-[var(--text-hint)]";
-  if (lowerIsBetter) {
-    return metric.trend === "down" ? "text-emerald-600" : "text-red-600";
-  }
-  return metric.trend === "up" ? "text-emerald-600" : "text-red-600";
-}
-
-function getTargetStatus(metric: ESGMetric): boolean {
-  const lowerIsBetter = metric.unit === "tCO2e" || metric.label.includes("사고율");
-  return lowerIsBetter ? metric.value <= metric.target : metric.value >= metric.target;
-}
 
 import { motion } from "framer-motion";
 
