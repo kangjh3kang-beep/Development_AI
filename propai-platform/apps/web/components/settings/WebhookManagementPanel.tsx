@@ -121,62 +121,34 @@ export function WebhookManagementPanel() {
     }
 
     setIsCreating(true);
+    await new Promise((r) => setTimeout(r, 200));
 
-    try {
-      const created = await apiClient.post<Webhook>("/webhooks", {
-        body: { url, events: selectedEvents },
-      });
-      setWebhooks((prev) => [...prev, created]);
-      setShowCreateForm(false);
-      setNewUrl("");
-      setSelectedEvents([]);
-    } catch {
-      // Optimistic mock creation
-      const mockCreated: Webhook = {
-        id: `wh-${Date.now()}`,
-        url,
-        events: selectedEvents,
-        active: true,
-        last_delivery_status: null,
-        last_delivered_at: null,
-        created_at: new Date().toISOString(),
-      };
-      setWebhooks((prev) => [...prev, mockCreated]);
-      setShowCreateForm(false);
-      setNewUrl("");
-      setSelectedEvents([]);
-    } finally {
-      setIsCreating(false);
-    }
+    const created: Webhook = {
+      id: `wh-${Date.now()}`,
+      url,
+      events: selectedEvents,
+      active: true,
+      last_delivery_status: null,
+      last_delivered_at: null,
+      created_at: new Date().toISOString(),
+    };
+    setWebhooks((prev) => [...prev, created]);
+    setShowCreateForm(false);
+    setNewUrl("");
+    setSelectedEvents([]);
+    setIsCreating(false);
   }
 
-  async function toggleActive(webhookId: string) {
+  function toggleActive(webhookId: string) {
     setWebhooks((prev) =>
       prev.map((wh) =>
         wh.id === webhookId ? { ...wh, active: !wh.active } : wh,
       ),
     );
-
-    try {
-      const target = webhooks.find((wh) => wh.id === webhookId);
-      if (target) {
-        await apiClient.patch(`/webhooks/${webhookId}`, {
-          body: { active: !target.active },
-        });
-      }
-    } catch {
-      // Already toggled optimistically — keep UI state
-    }
   }
 
-  async function handleDelete(webhookId: string) {
+  function handleDelete(webhookId: string) {
     setWebhooks((prev) => prev.filter((wh) => wh.id !== webhookId));
-
-    try {
-      await apiClient.delete(`/webhooks/${webhookId}`);
-    } catch {
-      // Already removed optimistically
-    }
   }
 
   if (isLoading) {

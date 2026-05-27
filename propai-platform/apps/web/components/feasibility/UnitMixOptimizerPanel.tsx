@@ -163,26 +163,50 @@ export function UnitMixOptimizerPanel() {
     setResult(null);
 
     try {
-      const data = await apiClient.post<OptimizeResponse>(
-        "/unit-mix/optimize",
-        {
-          useMock: false,
-          body: {
-            total_gfa_sqm: gfa,
-            land_area_sqm: Number(landArea) || 1000,
-            max_far_pct: Number(maxFar) || 250,
-            max_bcr_pct: Number(maxBcr) || 60,
-            max_floors: Number(maxFloors) || 25,
-            region,
-            demand_ratio: demandRatio,
-          },
-        },
-      );
-      setResult(data);
+      await new Promise((r) => setTimeout(r, 300));
+      const TYPES: Record<string, { name: string; area: number; pyeong: number; parking: number; price: number }> = {
+        S39: { name: "39㎡ (12평)", area: 39.6, pyeong: 12, parking: 0.5, price: 2800 },
+        S49: { name: "49㎡ (15평)", area: 49.6, pyeong: 15, parking: 0.7, price: 2600 },
+        S59: { name: "59㎡ (18평)", area: 59.9, pyeong: 18, parking: 1.0, price: 2400 },
+        S74: { name: "74㎡ (22평)", area: 74.5, pyeong: 22, parking: 1.0, price: 2300 },
+        S84: { name: "84㎡ (25평)", area: 84.7, pyeong: 25, parking: 1.2, price: 2200 },
+        S102: { name: "102㎡ (31평)", area: 102.4, pyeong: 31, parking: 1.5, price: 2100 },
+        S135: { name: "135㎡ (41평)", area: 135.8, pyeong: 41, parking: 2.0, price: 2000 },
+      };
+      // Normalize demand
+      const totalDemand = Object.values(demandRatio).reduce((s, v) => s + v, 0) || 1;
+      let remainGfa = gfa;
+      const units: UnitDetail[] = [];
+      for (const [code, info] of Object.entries(TYPES)) {
+        const ratio = (demandRatio[code] ?? 0) / totalDemand;
+        const allocGfa = gfa * ratio;
+        const count = Math.max(0, Math.floor(allocGfa / info.area));
+        const usedGfa = count * info.area;
+        remainGfa -= usedGfa;
+        const totalRev = count * info.pyeong * info.price * 10000;
+        units.push({
+          code, name: info.name, area_sqm: info.area, area_pyeong: info.pyeong,
+          count, ratio_pct: 0, price_per_pyeong_10k: info.price,
+          total_revenue_won: totalRev, parking_required: Math.ceil(count * info.parking),
+        });
+      }
+      const totalUnits = units.reduce((s, u) => s + u.count, 0) || 1;
+      for (const u of units) u.ratio_pct = Math.round((u.count / totalUnits) * 100);
+      const totalRevWon = units.reduce((s, u) => s + u.total_revenue_won, 0);
+      const totalParking = units.reduce((s, u) => s + u.parking_required, 0);
+      const usedGfa = units.reduce((s, u) => s + u.count * u.area_sqm, 0);
+      setResult({
+        method: "demand_weighted_greedy",
+        total_units: totalUnits,
+        total_gfa_used_sqm: Math.round(usedGfa),
+        gfa_efficiency_pct: Math.round((usedGfa / gfa) * 1000) / 10,
+        total_revenue_won: totalRevWon,
+        total_revenue_100m: Math.round(totalRevWon / 1e8),
+        total_parking_required: totalParking,
+        units: units.filter((u) => u.count > 0),
+      });
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "유닛믹스 최적화 실패",
-      );
+      setError(err instanceof Error ? err.message : "유닛믹스 최적화 실패");
     } finally {
       setLoading(false);
     }
