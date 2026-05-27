@@ -20,14 +20,33 @@ settings = get_settings()
 
 # 메인 PostgreSQL + PostGIS 엔진
 # Supabase pgBouncer 사용 시 prepared statements 비활성화 필요
-_connect_args = {}
+_connect_args: dict = {}
 if settings.db_use_pgbouncer:
     _connect_args["statement_cache_size"] = 0
     _connect_args["prepared_statement_cache_size"] = 0
 
+
+def _fix_supabase_url(url: str) -> str:
+    """Supabase PGBouncer URL의 사용자명에 '.'이 포함된 경우 asyncpg 호환 처리.
+
+    asyncpg/SQLAlchemy URL 파서가 'postgres.xxxxx' 형식의 사용자명에서
+    '.' 뒤를 호스트로 오인하는 문제를 우회한다.
+    사용자명의 '.'을 URL 인코딩(%2E)으로 치환한다.
+    """
+    if "pooler.supabase.com" in url and "postgres." in url:
+        # postgresql+asyncpg://postgres.REF:PASS@HOST → postgres%2EREF
+        import re
+        url = re.sub(
+            r"(postgresql\+asyncpg://)postgres\.([^:]+)",
+            r"\1postgres%2E\2",
+            url,
+        )
+    return url
+
+
 engine = create_async_engine(
-    settings.database_url,
-    pool_size=min(settings.db_pool_size, 10),  # Supabase 무료 티어: 최대 15 커넥션
+    _fix_supabase_url(settings.database_url),
+    pool_size=min(settings.db_pool_size, 10),
     max_overflow=min(settings.db_max_overflow, 5),
     pool_timeout=settings.db_pool_timeout,
     pool_recycle=settings.db_pool_recycle,
@@ -38,13 +57,14 @@ engine = create_async_engine(
 
 # TimescaleDB 엔진 (시계열 데이터용)
 timescale_engine = create_async_engine(
-    settings.timescale_url,
+    _fix_supabase_url(settings.timescale_url),
     pool_size=5,
     max_overflow=5,
     pool_timeout=settings.db_pool_timeout,
     pool_recycle=settings.db_pool_recycle,
     echo=settings.debug,
     pool_pre_ping=True,
+    connect_args=_connect_args,
 )
 
 # 세션 팩토리
