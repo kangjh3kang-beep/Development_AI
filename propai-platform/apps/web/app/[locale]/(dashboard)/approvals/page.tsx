@@ -25,15 +25,15 @@ export default async function ApprovalsPage({ params }: ApprovalsPageProps) {
   return (
     <div className="grid gap-6">
       <OperationsRouteHero
-        eyebrow="APPROVAL OPS / LIVE"
-        title="Approval operations center"
-        description="Operate pending approvals, tenant-wide audit filters, rationale review, and project-scoped batch decisions from one live workspace."
+        eyebrow={dictionary.pages.approvalCenter.eyebrow}
+        title={dictionary.pages.approvalCenter.title}
+        description={dictionary.pages.approvalCenter.description}
         statusLabel={runtimeMode}
         localeLabel={locale}
         items={[
-          "Tenant-wide approval queue and resolved decisions",
-          "Approver-role and status filters",
-          "Project-scoped bulk approve and reject actions",
+          dictionary.pages.approvalCenter.items.first,
+          dictionary.pages.approvalCenter.items.second,
+          dictionary.pages.approvalCenter.items.third,
         ]}
       />
       <ApprovalOperationsWorkspaceClient locale={locale as Locale} />

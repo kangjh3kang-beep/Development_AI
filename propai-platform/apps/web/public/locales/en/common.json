@@ -217,6 +217,33 @@
       "meanNpv": "Expected Mean NPV",
       "var5": "Value-at-Risk (Lower 5%)",
       "profitIndex": "Profitability Index (PI)"
+    },
+    "approvalCenter": {
+      "eyebrow": "APPROVAL OPS / LIVE",
+      "title": "Approval operations center",
+      "description": "Operate pending approvals, tenant-wide audit filters, rationale review, and project-scoped batch decisions from one live workspace.",
+      "items": {
+        "first": "Tenant-wide approval queue and resolved decisions",
+        "second": "Approver-role and status filters",
+        "third": "Project-scoped bulk approve and reject actions"
+      },
+      "projectContext": "Project context",
+      "projectContextDesc": "Choose a live project or pin an existing UUID when the audit scope should stay project-specific.",
+      "liveProjectLabel": "Live project",
+      "manualUuidLabel": "Manual project UUID",
+      "auditFilters": "Audit filters",
+      "auditFiltersDesc": "Switch between active-project and tenant-wide views, then narrow the queue by status or approver role.",
+      "scopeLabel": "Scope",
+      "statusLabel": "Approval status",
+      "roleLabel": "Approver role",
+      "pendingOnly": "Pending only",
+      "activeProject": "Active project",
+      "allRoles": "All roles",
+      "apiAuthRequired": "API authentication is required for live approval operations.",
+      "realProjectRequired": "A real project UUID is required for project-scoped approval actions.",
+      "pendingApprovals": "PENDING APPROVALS",
+      "approvedDecisions": "APPROVED DECISIONS",
+      "rejectedDecisions": "REJECTED DECISIONS"
     }
   },
   "status": {

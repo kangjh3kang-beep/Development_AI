@@ -113,6 +113,11 @@ function IconSRE() {
     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.268 21a2 2 0 0 0 3.464 0"/><path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"/></svg>
   );
 }
+function IconTenant() {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+  );
+}
 function IconGuide() {
   return (
     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H19a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H6.5a1 1 0 0 1 0-5H20"/></svg>
@@ -169,6 +174,7 @@ export default async function DashboardLayout({
     { href: `/${locale}/webrtc`, label: "실시간 협업", icon: <IconWebRTC /> },
     { href: `/${locale}/approvals`, label: "전자 승인 시스템", icon: <IconApprovals /> },
     { href: `/${locale}/sre`, label: "시스템 신뢰성 (SRE)", icon: <IconSRE /> },
+    { href: `/${locale}/tenant`, label: "테넌트 통합 관리", icon: <IconTenant /> },
     { href: `/${locale}/guide`, label: "이용 가이드", icon: <IconGuide /> },
   ];
 

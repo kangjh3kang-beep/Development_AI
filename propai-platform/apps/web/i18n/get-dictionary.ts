@@ -158,6 +158,29 @@ export type CommonDictionary = {
       var5: string;
       profitIndex: string;
     };
+    approvalCenter: {
+      eyebrow: string;
+      title: string;
+      description: string;
+      items: ItemGroup;
+      projectContext: string;
+      projectContextDesc: string;
+      liveProjectLabel: string;
+      manualUuidLabel: string;
+      auditFilters: string;
+      auditFiltersDesc: string;
+      scopeLabel: string;
+      statusLabel: string;
+      roleLabel: string;
+      pendingOnly: string;
+      activeProject: string;
+      allRoles: string;
+      apiAuthRequired: string;
+      realProjectRequired: string;
+      pendingApprovals: string;
+      approvedDecisions: string;
+      rejectedDecisions: string;
+    };
   };
   status: {
     ready: string;

@@ -340,20 +340,35 @@ export function ProjectDesignWorkspaceClient({
     setIsGeneratingPlan(true);
 
     try {
-      const response = await apiClient.post<FloorPlanResponse>(
-        "/design/floor-plan",
-        {
-          useMock: false,
-          body: {
-            project_id: projectId,
-            area_sqm: areaSqm,
-            room_count: roomCount,
-            style: planForm.style,
+      if (canUseLiveApi) {
+        const response = await apiClient.post<FloorPlanResponse>(
+          "/design/floor-plan",
+          {
+            useMock: false,
+            body: {
+              project_id: projectId,
+              area_sqm: areaSqm,
+              room_count: roomCount,
+              style: planForm.style,
+            },
           },
-        },
-      );
-
-      setFloorPlanResult(response);
+        );
+        setFloorPlanResult(response);
+      } else {
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        setFloorPlanResult({
+          design_id: `mock-design-${Date.now()}`,
+          file_url: "https://via.placeholder.com/600x400?text=Mock+Floor+Plan",
+          room_count: roomCount,
+          generation_method: "AI Parameterized Mock",
+          vision_validation: {
+            detected_rooms: roomCount,
+            expected_rooms: roomCount,
+            confidence: 0.98,
+            match: true,
+          },
+        });
+      }
     } catch (error) {
       setWorkspaceError(extractErrorMessage(error, labels.authError));
     } finally {
@@ -381,30 +396,54 @@ export function ProjectDesignWorkspaceClient({
     setIsGeneratingIfc(true);
 
     try {
-      const bim = await apiClient.post<BIMQuantityResponse>("/bim/generate-ifc", {
-        useMock: false,
-        body: {
-          project_id: projectId,
-          total_area_sqm: totalAreaSqm,
-          floors,
-          structure_type: ifcForm.structureType,
-        },
-      });
-
-      const carbon = await apiClient.post<CarbonCalculationResponse>(
-        "/bim/carbon",
-        {
+      if (canUseLiveApi) {
+        const bim = await apiClient.post<BIMQuantityResponse>("/bim/generate-ifc", {
           useMock: false,
           body: {
             project_id: projectId,
-            material_breakdown: bim.material_breakdown,
-            total_area_sqm: bim.total_area_sqm,
+            total_area_sqm: totalAreaSqm,
+            floors,
+            structure_type: ifcForm.structureType,
           },
-        },
-      );
+        });
 
-      setBimResult(bim);
-      setCarbonResult(carbon);
+        const carbon = await apiClient.post<CarbonCalculationResponse>(
+          "/bim/carbon",
+          {
+            useMock: false,
+            body: {
+              project_id: projectId,
+              material_breakdown: bim.material_breakdown,
+              total_area_sqm: bim.total_area_sqm,
+            },
+          },
+        );
+
+        setBimResult(bim);
+        setCarbonResult(carbon);
+      } else {
+        await new Promise((resolve) => setTimeout(resolve, 2500));
+        setBimResult({
+          id: `mock-bim-${Date.now()}`,
+          project_id: projectId,
+          total_volume_m3: totalAreaSqm * floors * 3,
+          total_area_sqm: totalAreaSqm,
+          material_breakdown: [{ name: "Concrete" }, { name: "Steel" }],
+          element_count: floors * 150,
+          ifc_version: "IFC4",
+          created_at: new Date().toISOString(),
+        });
+        setCarbonResult({
+          total_embodied_carbon: totalAreaSqm * 450,
+          total_operational_carbon: totalAreaSqm * 200,
+          total_carbon: totalAreaSqm * 650,
+          breakdown: [{ type: "Material" }, { type: "Transport" }],
+          reduction_tips: [
+            "고효율 단열재로 변경하여 운영 탄소 15% 저감 가능",
+            "저탄소 콘크리트 배합 적용 시 내재 탄소 10% 저감",
+          ],
+        });
+      }
     } catch (error) {
       setWorkspaceError(extractErrorMessage(error, labels.authError));
     } finally {
@@ -435,7 +474,7 @@ export function ProjectDesignWorkspaceClient({
           </p>
           {!canUseLiveApi ? (
             <div className="mt-6 rounded-[var(--radius-xl)] border border-dashed border-[var(--line)] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[var(--text-secondary)]">
-              {labels.authError}
+              {labels.authError} (현재 하이브리드 Mock 엔진으로 시뮬레이션 구동 중입니다.)
             </div>
           ) : null}
           {projectError ? (
@@ -535,7 +574,7 @@ export function ProjectDesignWorkspaceClient({
                     }
                     options={STYLE_OPTIONS}
                   />
-                  <Button type="submit" disabled={!canUseLiveApi || isGeneratingPlan}>
+                  <Button type="submit" disabled={isGeneratingPlan}>
                     {isGeneratingPlan
                       ? `${labels.generateFloorPlanAction}...`
                       : labels.generateFloorPlanAction}
@@ -585,7 +624,7 @@ export function ProjectDesignWorkspaceClient({
                     }
                     options={STRUCTURE_OPTIONS}
                   />
-                  <Button type="submit" disabled={!canUseLiveApi || isGeneratingIfc}>
+                  <Button type="submit" disabled={isGeneratingIfc}>
                     {isGeneratingIfc
                       ? `${labels.generateIfcAction}...`
                       : labels.generateIfcAction}

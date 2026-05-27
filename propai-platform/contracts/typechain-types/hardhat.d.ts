@@ -33,6 +33,18 @@ declare module "hardhat/types/runtime" {
       name: "PropAIEscrow",
       signerOrOptions?: ethers.Signer | FactoryOptions
     ): Promise<Contracts.PropAIEscrow__factory>;
+    getContractFactory(
+      name: "PropAIGovernance",
+      signerOrOptions?: ethers.Signer | FactoryOptions
+    ): Promise<Contracts.PropAIGovernance__factory>;
+    getContractFactory(
+      name: "PropAIToken",
+      signerOrOptions?: ethers.Signer | FactoryOptions
+    ): Promise<Contracts.PropAIToken__factory>;
+    getContractFactory(
+      name: "SubcontractPayment",
+      signerOrOptions?: ethers.Signer | FactoryOptions
+    ): Promise<Contracts.SubcontractPayment__factory>;
 
     getContractAt(
       name: "Ownable",
@@ -59,6 +71,21 @@ declare module "hardhat/types/runtime" {
       address: string | ethers.Addressable,
       signer?: ethers.Signer
     ): Promise<Contracts.PropAIEscrow>;
+    getContractAt(
+      name: "PropAIGovernance",
+      address: string | ethers.Addressable,
+      signer?: ethers.Signer
+    ): Promise<Contracts.PropAIGovernance>;
+    getContractAt(
+      name: "PropAIToken",
+      address: string | ethers.Addressable,
+      signer?: ethers.Signer
+    ): Promise<Contracts.PropAIToken>;
+    getContractAt(
+      name: "SubcontractPayment",
+      address: string | ethers.Addressable,
+      signer?: ethers.Signer
+    ): Promise<Contracts.SubcontractPayment>;
 
     deployContract(
       name: "Ownable",
@@ -80,6 +107,18 @@ declare module "hardhat/types/runtime" {
       name: "PropAIEscrow",
       signerOrOptions?: ethers.Signer | DeployContractOptions
     ): Promise<Contracts.PropAIEscrow>;
+    deployContract(
+      name: "PropAIGovernance",
+      signerOrOptions?: ethers.Signer | DeployContractOptions
+    ): Promise<Contracts.PropAIGovernance>;
+    deployContract(
+      name: "PropAIToken",
+      signerOrOptions?: ethers.Signer | DeployContractOptions
+    ): Promise<Contracts.PropAIToken>;
+    deployContract(
+      name: "SubcontractPayment",
+      signerOrOptions?: ethers.Signer | DeployContractOptions
+    ): Promise<Contracts.SubcontractPayment>;
 
     deployContract(
       name: "Ownable",
@@ -106,6 +145,21 @@ declare module "hardhat/types/runtime" {
       args: any[],
       signerOrOptions?: ethers.Signer | DeployContractOptions
     ): Promise<Contracts.PropAIEscrow>;
+    deployContract(
+      name: "PropAIGovernance",
+      args: any[],
+      signerOrOptions?: ethers.Signer | DeployContractOptions
+    ): Promise<Contracts.PropAIGovernance>;
+    deployContract(
+      name: "PropAIToken",
+      args: any[],
+      signerOrOptions?: ethers.Signer | DeployContractOptions
+    ): Promise<Contracts.PropAIToken>;
+    deployContract(
+      name: "SubcontractPayment",
+      args: any[],
+      signerOrOptions?: ethers.Signer | DeployContractOptions
+    ): Promise<Contracts.SubcontractPayment>;
 
     // default types
     getContractFactory(

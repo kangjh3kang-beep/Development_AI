@@ -3,3 +3,6 @@
 /* eslint-disable */
 export * as mocks from "./mocks";
 export { PropAIEscrow__factory } from "./PropAIEscrow__factory";
+export { PropAIGovernance__factory } from "./PropAIGovernance__factory";
+export { PropAIToken__factory } from "./PropAIToken__factory";
+export { SubcontractPayment__factory } from "./SubcontractPayment__factory";

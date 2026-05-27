@@ -4,3 +4,6 @@
 import type * as mocks from "./mocks";
 export type { mocks };
 export type { PropAIEscrow } from "./PropAIEscrow";
+export type { PropAIGovernance } from "./PropAIGovernance";
+export type { PropAIToken } from "./PropAIToken";
+export type { SubcontractPayment } from "./SubcontractPayment";

@@ -16,3 +16,9 @@ export type { ReentrantRefundAttacker } from "./src/mocks/ReentrantRefundAttacke
 export { ReentrantRefundAttacker__factory } from "./factories/src/mocks/ReentrantRefundAttacker__factory";
 export type { PropAIEscrow } from "./src/PropAIEscrow";
 export { PropAIEscrow__factory } from "./factories/src/PropAIEscrow__factory";
+export type { PropAIGovernance } from "./src/PropAIGovernance";
+export { PropAIGovernance__factory } from "./factories/src/PropAIGovernance__factory";
+export type { PropAIToken } from "./src/PropAIToken";
+export { PropAIToken__factory } from "./factories/src/PropAIToken__factory";
+export type { SubcontractPayment } from "./src/SubcontractPayment";
+export { SubcontractPayment__factory } from "./factories/src/SubcontractPayment__factory";

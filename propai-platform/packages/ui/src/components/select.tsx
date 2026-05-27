@@ -38,6 +38,7 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(
               key={option.value}
               value={option.value}
               disabled={option.disabled}
+              className="bg-[var(--surface-soft)] text-[var(--foreground)]"
             >
               {option.label}
             </option>

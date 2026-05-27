@@ -216,6 +216,33 @@
       "meanNpv": "预计平均 NPV",
       "var5": "在险价值 (下位 5%)",
       "profitIndex": "获利指数 (PI)"
+    },
+    "approvalCenter": {
+      "eyebrow": "审批操作 / 实时模式",
+      "title": "电子审批运营中心",
+      "description": "在一个实时工作区中操作待处理审批、全租户审计过滤器、理由审查以及项目范围内的批量决策。",
+      "items": {
+        "first": "全租户审批队列和已决定的决策",
+        "second": "审批者角色和状态过滤",
+        "third": "项目范围内的批量批准和拒绝操作"
+      },
+      "projectContext": "项目上下文",
+      "projectContextDesc": "当审计范围应保持特定于项目时，选择一个实时项目或固定现有的 UUID。",
+      "liveProjectLabel": "实时项目",
+      "manualUuidLabel": "手动项目 UUID",
+      "auditFilters": "审计过滤器",
+      "auditFiltersDesc": "在活动项目和全租户视图之间切换，然后按状态或审批者角色缩小队列范围。",
+      "scopeLabel": "范围",
+      "statusLabel": "审批状态",
+      "roleLabel": "审批者角色",
+      "pendingOnly": "仅待处理",
+      "activeProject": "活动项目",
+      "allRoles": "所有角色",
+      "apiAuthRequired": "实时审批操作需要 API 身份验证。",
+      "realProjectRequired": "项目范围内的审批操作需要真实的项目 UUID。",
+      "pendingApprovals": "待处理审批",
+      "approvedDecisions": "已批准的决策",
+      "rejectedDecisions": "已拒绝的决策"
     }
   },
   "status": {

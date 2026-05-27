@@ -217,6 +217,33 @@
       "meanNpv": "기대 NPV (평균)",
       "var5": "Value-at-Risk (하위 5%)",
       "profitIndex": "수익성 지수 (PI)"
+    },
+    "approvalCenter": {
+      "eyebrow": "승인 관제 / 라이브 모드",
+      "title": "전자 승인 운영 센터",
+      "description": "진행 중인 결재, 테넌트 전체 감사 필터, 사유 검토, 프로젝트 단위 일괄 결정을 하나의 라이브 워크스페이스에서 운영합니다.",
+      "items": {
+        "first": "테넌트 단위 승인 대기열 및 완료 결정",
+        "second": "결재자 역할 및 상태 필터링",
+        "third": "프로젝트 단위 일괄 승인/반려 액션"
+      },
+      "projectContext": "프로젝트 컨텍스트",
+      "projectContextDesc": "감사 범위를 특정 프로젝트로 제한할 때 라이브 프로젝트를 선택하거나 수동 UUID를 입력하세요.",
+      "liveProjectLabel": "라이브 프로젝트",
+      "manualUuidLabel": "수동 프로젝트 UUID",
+      "auditFilters": "감사 필터",
+      "auditFiltersDesc": "활성 프로젝트와 테넌트 전체 뷰를 전환하고, 상태나 결재자 역할에 따라 대기열을 좁힙니다.",
+      "scopeLabel": "범위",
+      "statusLabel": "승인 상태",
+      "roleLabel": "결재자 역할",
+      "pendingOnly": "대기 중만",
+      "activeProject": "활성 프로젝트",
+      "allRoles": "모든 역할",
+      "apiAuthRequired": "라이브 승인 작업을 위해 API 인증이 필요합니다.",
+      "realProjectRequired": "프로젝트 단위 승인 작업에는 실제 프로젝트 UUID가 필요합니다.",
+      "pendingApprovals": "대기 중인 승인",
+      "approvedDecisions": "승인 완료 결정",
+      "rejectedDecisions": "반려된 결정"
     }
   },
   "status": {
