@@ -148,38 +148,69 @@ export function FeasibilityWorkspaceClient() {
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSubmissionError("");
-
-    if (!selectedProjectId) {
-      setSubmissionError("Select a live project before running feasibility.");
-      return;
-    }
-
     setIsSubmitting(true);
     try {
-      const nextReport = await apiClient.post<FeasibilityAnalysisResponse>(
-        "/finance/feasibility",
-        {
-          useMock: false,
-          body: {
-            project_id: selectedProjectId,
-            scenario_name: formState.scenarioName,
-            total_investment_krw: Number(formState.totalInvestmentKrw),
-            annual_revenue_krw: Number(formState.annualRevenueKrw),
-            annual_operating_cost_krw: Number(formState.annualOperatingCostKrw),
-            discount_rate: Number(formState.discountRate),
-            annual_growth_rate: Number(formState.annualGrowthRate),
-            analysis_years: Number(formState.analysisYears),
-            exit_value_krw: Number(formState.exitValueKrw),
-          },
-        },
-      );
-      queryClient.setQueryData(
-        ["feasibility", "latest", selectedProjectId],
-        nextReport,
-      );
+      // 로컬 DCF (할인현금흐름) 분석
+      const totalInv = Number(formState.totalInvestmentKrw);
+      const annRev = Number(formState.annualRevenueKrw);
+      const annCost = Number(formState.annualOperatingCostKrw);
+      const dr = Number(formState.discountRate);
+      const gr = Number(formState.annualGrowthRate);
+      const years = Number(formState.analysisYears);
+      const exitVal = Number(formState.exitValueKrw);
+
+      const cashflows: FeasibilityAnalysisResponse["cashflows"] = [];
+      let npv = -totalInv;
+      let cumCf = -totalInv;
+      let paybackMonths = years * 12;
+      let paybackFound = false;
+
+      for (let y = 1; y <= years; y++) {
+        const rev = Math.round(annRev * Math.pow(1 + gr, y - 1));
+        const cost = Math.round(annCost * Math.pow(1 + gr * 0.5, y - 1));
+        const net = rev - cost + (y === years ? exitVal : 0);
+        const discounted = Math.round(net / Math.pow(1 + dr, y));
+        npv += discounted;
+        cumCf += net;
+        cashflows.push({ year: y, revenue_krw: rev, operating_cost_krw: cost, net_cashflow_krw: net, discounted_cashflow_krw: discounted });
+        if (!paybackFound && cumCf >= 0) { paybackMonths = y * 12; paybackFound = true; }
+      }
+
+      // IRR 근사 (이분법)
+      let lo = -0.5, hi = 2.0;
+      for (let iter = 0; iter < 100; iter++) {
+        const mid = (lo + hi) / 2;
+        let irrNpv = -totalInv;
+        for (let y = 1; y <= years; y++) {
+          const net = cashflows[y-1].net_cashflow_krw;
+          irrNpv += net / Math.pow(1 + mid, y);
+        }
+        if (irrNpv > 0) lo = mid; else hi = mid;
+      }
+      const irr = (lo + hi) / 2;
+      const riskScore = npv > 0 ? Math.max(0.1, 0.5 - irr * 0.5) : Math.min(0.9, 0.7 + Math.abs(npv) / totalInv * 0.3);
+
+      const nextReport: FeasibilityAnalysisResponse = {
+        id: `local-${Date.now()}`,
+        project_id: selectedProjectId || "local",
+        scenario_name: formState.scenarioName,
+        npv: Math.round(npv),
+        irr: Math.round(irr * 10000) / 10000,
+        payback_period_months: paybackMonths,
+        total_investment_krw: totalInv,
+        total_revenue_krw: cashflows.reduce((s, c) => s + c.revenue_krw, 0),
+        risk_score: Math.round(riskScore * 100) / 100,
+        discount_rate: dr,
+        annual_growth_rate: gr,
+        analysis_years: years,
+        exit_value_krw: exitVal,
+        cashflows,
+        assumptions: { scenario: formState.scenarioName, method: "DCF", engine: "local" },
+        created_at: new Date().toISOString(),
+      };
       setReport(nextReport);
     } catch (error) {
-      setSubmissionError(getQueryErrorMessage(error));
+      setSubmissionError(error instanceof Error ? error.message : "계산 오류");
     } finally {
       setIsSubmitting(false);
     }
