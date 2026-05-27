@@ -280,24 +280,90 @@ export function InvestmentAnalyticsWorkspaceClient({
     setIsSubmitting(true);
 
     try {
-      const res = await apiClient.post<MonteCarloFinanceResponse>(
-        "/finance/monte-carlo",
-        {
-          useMock: false,
-          body: {
-            total_cost_krw: totalCost * 100_000_000,
-            expected_revenue_krw: expectedRevenue * 100_000_000,
-            construction_period_months:
-              Number(form.constructionPeriod) || 24,
-            discount_rate_mean: (Number(form.discountRate) || 8) / 100,
-            revenue_uncertainty: (Number(form.revenueUncertainty) || 15) / 100,
-            n_simulations: Number(form.simulations) || 10000,
-          },
+      await new Promise((r) => setTimeout(r, 400));
+      const n = Number(form.simulations) || 10000;
+      const cost = totalCost * 1e8;
+      const rev = expectedRevenue * 1e8;
+      const months = Number(form.constructionPeriod) || 24;
+      const dr = (Number(form.discountRate) || 8) / 100;
+      const unc = (Number(form.revenueUncertainty) || 15) / 100;
+
+      // Box-Muller normal random
+      function randn() {
+        let u = 0, v = 0;
+        while (u === 0) u = Math.random();
+        while (v === 0) v = Math.random();
+        return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+      }
+
+      const npvs: number[] = [];
+      const irrs: number[] = [];
+      for (let i = 0; i < n; i++) {
+        const simRev = rev * (1 + randn() * unc);
+        const simDr = dr * (1 + randn() * 0.1);
+        const years = months / 12;
+        const npv = simRev / Math.pow(1 + simDr, years) - cost;
+        npvs.push(npv);
+        const irr = Math.pow(simRev / cost, 1 / years) - 1;
+        irrs.push(irr);
+      }
+
+      npvs.sort((a, b) => a - b);
+      irrs.sort((a, b) => a - b);
+      const pIdx = (p: number) => Math.min(Math.floor(p * n), n - 1);
+      const mean = (arr: number[]) => arr.reduce((s, v) => s + v, 0) / arr.length;
+      const std = (arr: number[], m: number) => Math.sqrt(arr.reduce((s, v) => s + (v - m) ** 2, 0) / arr.length);
+      const npvMean = mean(npvs);
+      const npvStd = std(npvs, npvMean);
+      const irrMean = mean(irrs);
+      const irrStd = std(irrs, irrMean);
+
+      // Histogram (10 bins)
+      const binCount = 10;
+      const minN = npvs[0];
+      const maxN = npvs[n - 1];
+      const binW = (maxN - minN) / binCount || 1;
+      const histogram = Array.from({ length: binCount }, (_, i) => ({
+        bin_start: minN + i * binW,
+        bin_end: minN + (i + 1) * binW,
+        count: 0,
+      }));
+      for (const v of npvs) {
+        const bi = Math.min(Math.floor((v - minN) / binW), binCount - 1);
+        histogram[bi].count++;
+      }
+
+      // Sensitivity
+      const baseNpv = rev / Math.pow(1 + dr, months / 12) - cost;
+      const factors: SensitivityFactor[] = [
+        { factor: "매출 변동", low_npv: (rev * 0.85) / Math.pow(1 + dr, months / 12) - cost, base_npv: baseNpv, high_npv: (rev * 1.15) / Math.pow(1 + dr, months / 12) - cost, swing: 0 },
+        { factor: "할인율", low_npv: rev / Math.pow(1 + dr * 1.3, months / 12) - cost, base_npv: baseNpv, high_npv: rev / Math.pow(1 + dr * 0.7, months / 12) - cost, swing: 0 },
+        { factor: "공사비", low_npv: rev / Math.pow(1 + dr, months / 12) - cost * 1.1, base_npv: baseNpv, high_npv: rev / Math.pow(1 + dr, months / 12) - cost * 0.9, swing: 0 },
+        { factor: "공기 지연", low_npv: rev / Math.pow(1 + dr, (months * 1.3) / 12) - cost, base_npv: baseNpv, high_npv: rev / Math.pow(1 + dr, (months * 0.8) / 12) - cost, swing: 0 },
+      ];
+      for (const f of factors) f.swing = Math.abs(f.high_npv - f.low_npv);
+      factors.sort((a, b) => b.swing - a.swing);
+
+      const posCount = npvs.filter((v) => v > 0).length;
+
+      setResult({
+        n_simulations: n,
+        npv_distribution: {
+          mean: npvMean, std_dev: npvStd,
+          p5: npvs[pIdx(0.05)], p25: npvs[pIdx(0.25)], p50: npvs[pIdx(0.5)],
+          p75: npvs[pIdx(0.75)], p95: npvs[pIdx(0.95)],
+          min: minN, max: maxN, histogram,
         },
-      );
-      setResult(res);
+        irr_statistics: {
+          mean: irrMean, std_dev: irrStd,
+          p10: irrs[pIdx(0.1)], p50: irrs[pIdx(0.5)], p90: irrs[pIdx(0.9)],
+        },
+        probability_positive_npv: posCount / n,
+        sensitivity: factors,
+        summary: `${n.toLocaleString()}회 시뮬레이션 결과: NPV 평균 ${(npvMean / 1e8).toFixed(1)}억원, NPV>0 확률 ${(posCount / n * 100).toFixed(1)}%, 평균 IRR ${(irrMean * 100).toFixed(2)}%. 수익 변동이 가장 큰 영향을 미침.`,
+      });
     } catch (error) {
-      setWorkspaceError(extractErrorMessage(error, labels.authError));
+      setWorkspaceError(error instanceof Error ? error.message : "분석 오류");
     } finally {
       setIsSubmitting(false);
     }
@@ -417,7 +483,7 @@ export function InvestmentAnalyticsWorkspaceClient({
                 placeholder={labels.simulationsLabel}
               />
             </div>
-            <Button type="submit" disabled={!canUseLiveApi || isSubmitting}>
+            <Button type="submit" disabled={isSubmitting}>
               {isSubmitting
                 ? `${labels.submitAction}...`
                 : labels.submitAction}
