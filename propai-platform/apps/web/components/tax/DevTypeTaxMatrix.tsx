@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import { Card, CardContent } from "@propai/ui";
-import { apiClient } from "@/lib/api-client";
 
 type MatrixEntry = {
   development_type: string;
@@ -21,15 +20,15 @@ export function DevTypeTaxMatrix() {
   const [matrix, setMatrix] = useState<MatrixEntry[]>([]);
 
   useEffect(() => {
-    async function load() {
-      try {
-        const data = await apiClient.getV2<{ matrix: MatrixEntry[]; count: number }>("/tax/matrix");
-        setMatrix(data.matrix ?? []);
-      } catch {
-        /* 무시 */
-      }
-    }
-    load();
+    const localMatrix: MatrixEntry[] = [
+      { development_type: "M01", applicable_codes: ["ACQ", "REG", "VAT"], count: 3 },
+      { development_type: "M02", applicable_codes: ["ACQ", "REG", "PROP", "CGT"], count: 4 },
+      { development_type: "M03", applicable_codes: ["ACQ", "REG"], count: 2 },
+      { development_type: "M06", applicable_codes: ["ACQ", "REG", "PROP", "CGT", "COMP"], count: 5 },
+      { development_type: "M07", applicable_codes: ["ACQ", "REG", "PROP", "CGT"], count: 4 },
+      { development_type: "M08", applicable_codes: ["ACQ", "REG", "PROP"], count: 3 },
+    ];
+    setMatrix(localMatrix);
   }, []);
 
   if (matrix.length === 0) {

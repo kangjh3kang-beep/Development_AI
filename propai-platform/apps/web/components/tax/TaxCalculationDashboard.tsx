@@ -3,7 +3,6 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button, Card, CardContent, CardTitle, Input } from "@propai/ui";
-import { apiClient } from "@/lib/api-client";
 
 type TaxItem = {
   code: string;

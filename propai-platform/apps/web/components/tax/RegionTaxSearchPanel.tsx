@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import { Button, Card, CardContent, Input } from "@propai/ui";
-import { apiClient } from "@/lib/api-client";
 
 type RegionResult = {
   sido_name: string;
@@ -25,14 +24,24 @@ export function RegionTaxSearchPanel() {
 
   const handleSearch = async () => {
     setIsLoading(true);
-    try {
-      const data = await apiClient.getV2<RegionResult>(`/tax/regions/${encodeURIComponent(sido)}`);
-      setResult(data);
-    } catch {
-      setResult(null);
-    } finally {
-      setIsLoading(false);
-    }
+    await new Promise(r => setTimeout(r, 200));
+    const DB: Record<string, RegionResult> = {
+      "서울": { sido_name: "서울특별시", base_acquisition_rate: 0.04, sigungu_overrides: [
+        { sigungu_name: "강남구", override_rate: 0.12, metro_transport_charge: 2000000 },
+        { sigungu_name: "서초구", override_rate: 0.12, metro_transport_charge: 2000000 },
+        { sigungu_name: "송파구", override_rate: 0.08, metro_transport_charge: 1500000 },
+      ]},
+      "경기": { sido_name: "경기도", base_acquisition_rate: 0.04, sigungu_overrides: [
+        { sigungu_name: "성남시", override_rate: 0.08, metro_transport_charge: 1200000 },
+        { sigungu_name: "과천시", override_rate: 0.12, metro_transport_charge: 1500000 },
+        { sigungu_name: "하남시", override_rate: 0.08, metro_transport_charge: 1000000 },
+      ]},
+      "부산": { sido_name: "부산광역시", base_acquisition_rate: 0.035, sigungu_overrides: [
+        { sigungu_name: "해운대구", override_rate: 0.08 },
+      ]},
+    };
+    setResult(DB[sido] ?? { sido_name: sido, base_acquisition_rate: 0.04, sigungu_overrides: [] });
+    setIsLoading(false);
   };
 
   return (

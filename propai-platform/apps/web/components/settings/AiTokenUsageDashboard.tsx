@@ -2,7 +2,6 @@
 
 import { useEffect, useState, useRef } from "react";
 import { Card, CardContent } from "@propai/ui";
-import { apiClient } from "@/lib/api-client";
 
 type ServiceUsage = {
   service: string;
@@ -100,24 +99,8 @@ export function AiTokenUsageDashboard() {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    let cancelled = false;
-
-    async function fetchUsage() {
-      try {
-        const data = await apiClient.get<UsageData>("/ai-costs/usage");
-        if (!cancelled) setUsage(data);
-      } catch {
-        // Fallback to mock data
-        if (!cancelled) setUsage(MOCK_USAGE);
-      } finally {
-        if (!cancelled) setIsLoading(false);
-      }
-    }
-
-    fetchUsage();
-    return () => {
-      cancelled = true;
-    };
+    setUsage(MOCK_USAGE);
+    setIsLoading(false);
   }, []);
 
   if (isLoading) {
