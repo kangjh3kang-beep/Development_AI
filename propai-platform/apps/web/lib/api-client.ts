@@ -1,7 +1,20 @@
 import { resolveMockRequest } from "@/mocks/handlers";
 
-const apiBaseUrl =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? "/api/proxy";
+const apiBaseUrl = (() => {
+  // 1) 빌드 타임 환경변수 (Vercel/로컬 등)
+  if (process.env.NEXT_PUBLIC_API_BASE_URL) {
+    return process.env.NEXT_PUBLIC_API_BASE_URL;
+  }
+  // 2) 브라우저 런타임: 도메인 기반 자동 감지
+  if (typeof window !== "undefined") {
+    const host = window.location.hostname;
+    // 프로덕션 도메인들
+    if (host === "4t8t.net" || host === "www.4t8t.net" || host.endsWith(".pages.dev") || host === "propai.kr") {
+      return "https://developmentai-production.up.railway.app/api/v1";
+    }
+  }
+  return "/api/proxy";
+})();
 
 const useMocksByDefault = process.env.NEXT_PUBLIC_USE_MOCKS === "true";
 const publicAccessToken = process.env.NEXT_PUBLIC_API_ACCESS_TOKEN?.trim() ?? "";
@@ -149,9 +162,20 @@ async function request<T>(path: string, options: ApiRequestOptions = {}) {
 function getV2RequestUrl(path: string) {
   if (isAbsoluteUrl(path)) return path;
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+
+  // 프로덕션: Railway 백엔드
+  if (typeof window !== "undefined") {
+    const host = window.location.hostname;
+    if (host === "4t8t.net" || host === "www.4t8t.net" || host.endsWith(".pages.dev") || host === "propai.kr") {
+      return `https://developmentai-production.up.railway.app/api/v2${normalizedPath}`;
+    }
+  }
+
+  // SSR (Docker)
   if (typeof window === "undefined") {
     return `http://api:8000/api/v2${normalizedPath}`;
   }
+  // 로컬 개발
   return `http://localhost:8000/api/v2${normalizedPath}`;
 }
 
