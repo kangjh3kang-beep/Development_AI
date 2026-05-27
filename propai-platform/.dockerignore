@@ -1,0 +1,27 @@
+# 환경변수 파일 (Railway 환경변수가 우선 적용되어야 함)
+.env
+.env.*
+apps/api/.env
+apps/api/.env.*
+apps/web/.env
+apps/web/.env.*
+
+# 개발 도구
+.venv/
+node_modules/
+.git/
+.github/
+__pycache__/
+*.pyc
+
+# 테스트/빌드 결과
+.build-journal/
+test-results/
+coverage/
+.next/
+dist/
+
+# IDE
+.vscode/
+.idea/
+.claude/
