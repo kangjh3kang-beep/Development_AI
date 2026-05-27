@@ -102,7 +102,7 @@ interface FeasibilityV2State {
   runMonteCarlo: (variables: Array<{ name: string; mean: number; std: number }>, n?: number) => Promise<void>;
   fetchRecommendations: () => Promise<void>;
   fetchModules: () => Promise<void>;
-  commitVersion: (message: string) => Promise<void>;
+  commitVersion: (message: string, projectId?: string) => Promise<void>;
   fetchCommitLog: (projectId: string) => Promise<void>;
   reset: () => void;
 }
@@ -245,10 +245,11 @@ export const useFeasibilityV2Store = create<FeasibilityV2State>()(
       }
     },
 
-    commitVersion: async (message) => {
+    commitVersion: async (message, projectId?) => {
       try {
+        const pid = projectId || "default";
         const snapshot = { input: get().input, result: get().result };
-        await apiClient.postV2("/feasibility/repos/default/commit", {
+        await apiClient.postV2(`/feasibility/repos/${pid}/commit`, {
           body: { message, snapshot } as unknown as Record<string, unknown>,
         });
       } catch {

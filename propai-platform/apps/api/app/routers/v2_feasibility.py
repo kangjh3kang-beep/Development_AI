@@ -1,9 +1,14 @@
-"""수지분석 v2 API 라우터 — 12개 엔드포인트 (Excel 내보내기 포함)."""
+"""수지분석 v2 API 라우터 — 14개 엔드포인트 (Auto-Recommend Top 3 포함)."""
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+import uuid
+from datetime import datetime
+
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
+from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.schemas.feasibility_v2 import (
     FeasibilityCalculateRequest,
@@ -23,19 +28,24 @@ from app.services.feasibility.modules.base_module import ModuleInput
 from app.services.feasibility.monte_carlo_engine import run_monte_carlo, MCVariable
 from app.services.feasibility.ai_optimizer import optimize_slsqp
 from app.services.feasibility.ai_recommendation import diagnose
-from app.services.feasibility.version_control import FeasibilityVCS
+from app.services.feasibility.version_control_db import FeasibilityVCSDB
 from app.services.feasibility.sensitivity_engine import run_sensitivity_analysis
+from app.core.database import get_db
 
 router = APIRouter(prefix="/api/v2/feasibility", tags=["feasibility-v2"])
 
 _service = FeasibilityServiceV2()
-_vcs_instances: dict[str, FeasibilityVCS] = {}
+
+# 기본 테넌트 ID (인증 미적용 엔드포인트용)
+_DEFAULT_TENANT_ID = uuid.UUID("00000000-0000-0000-0000-000000000000")
 
 
-def _get_vcs(project_id: str) -> FeasibilityVCS:
-    if project_id not in _vcs_instances:
-        _vcs_instances[project_id] = FeasibilityVCS()
-    return _vcs_instances[project_id]
+def _parse_project_id(project_id: str) -> uuid.UUID:
+    """project_id 문자열을 UUID로 변환. 'default' 등 비UUID 문자열은 결정적 UUID로 매핑."""
+    try:
+        return uuid.UUID(project_id)
+    except ValueError:
+        return uuid.uuid5(uuid.NAMESPACE_DNS, f"propai.feasibility.{project_id}")
 
 
 def _request_to_input(req: FeasibilityCalculateRequest) -> ModuleInput:
@@ -187,41 +197,41 @@ async def get_recommendations(req: FeasibilityCalculateRequest):
 
 
 @router.post("/repos/{project_id}/commit")
-async def vcs_commit(project_id: str, req: VCSCommitRequest):
+async def vcs_commit(project_id: str, req: VCSCommitRequest, db: AsyncSession = Depends(get_db)):
     """수지분석 커밋."""
-    vcs = _get_vcs(project_id)
-    c = vcs.commit(req.snapshot, req.message)
-    return {"sha": c.sha, "message": c.message, "timestamp": c.timestamp}
+    vcs = FeasibilityVCSDB(db, project_id=_parse_project_id(project_id), tenant_id=_DEFAULT_TENANT_ID)
+    result = await vcs.commit(req.snapshot, req.message)
+    return {"sha": result["sha"], "message": result["message"], "timestamp": result.get("timestamp", "")}
 
 
 @router.post("/repos/{project_id}/rollback")
-async def vcs_rollback(project_id: str, req: VCSRollbackRequest):
+async def vcs_rollback(project_id: str, req: VCSRollbackRequest, db: AsyncSession = Depends(get_db)):
     """수지분석 롤백."""
-    vcs = _get_vcs(project_id)
-    c = vcs.rollback(req.target_sha)
-    if not c:
+    vcs = FeasibilityVCSDB(db, project_id=_parse_project_id(project_id), tenant_id=_DEFAULT_TENANT_ID)
+    result = await vcs.rollback(req.target_sha)
+    if not result:
         raise HTTPException(status_code=404, detail="커밋을 찾을 수 없습니다")
-    return {"sha": c.sha, "message": c.message}
+    return {"sha": result["sha"], "message": result["message"]}
 
 
 @router.get("/repos/{project_id}/log")
-async def vcs_log(project_id: str, max_count: int = 50):
+async def vcs_log(project_id: str, max_count: int = 50, db: AsyncSession = Depends(get_db)):
     """커밋 이력."""
-    vcs = _get_vcs(project_id)
-    log = vcs.log(max_count)
+    vcs = FeasibilityVCSDB(db, project_id=_parse_project_id(project_id), tenant_id=_DEFAULT_TENANT_ID)
+    log_entries = await vcs.log(max_count)
     return {
         "commits": [
-            {"sha": c.sha, "message": c.message, "parent_sha": c.parent_sha, "timestamp": c.timestamp}
-            for c in log
+            {"sha": c["sha"], "message": c["message"], "parent_sha": c["parent_sha"], "timestamp": c["timestamp"]}
+            for c in log_entries
         ]
     }
 
 
 @router.get("/repos/{project_id}/diff/{sha_a}/{sha_b}")
-async def vcs_diff(project_id: str, sha_a: str, sha_b: str):
+async def vcs_diff(project_id: str, sha_a: str, sha_b: str, db: AsyncSession = Depends(get_db)):
     """두 커밋 간 diff."""
-    vcs = _get_vcs(project_id)
-    return vcs.diff(sha_a, sha_b)
+    vcs = FeasibilityVCSDB(db, project_id=_parse_project_id(project_id), tenant_id=_DEFAULT_TENANT_ID)
+    return await vcs.diff(sha_a, sha_b)
 
 
 @router.post("/export-excel", response_class=Response)
@@ -260,3 +270,61 @@ async def export_feasibility_excel(req: FeasibilityCalculateRequest):
         )
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
+
+
+# ------------------------------------------------------------------
+# Auto-Recommend Top 3 + Finalize
+# ------------------------------------------------------------------
+
+
+class AutoRecommendRequest(BaseModel):
+    address: str
+    land_area_sqm: float | None = None
+    region: str = "서울"
+    equity_won: int = 10_000_000_000
+
+
+@router.post("/auto-recommend")
+async def auto_recommend_top3(req: AutoRecommendRequest):
+    """부지 주소로부터 최적 사업모델 Top 3 자동 추천."""
+    service = FeasibilityServiceV2()
+    return await service.auto_recommend_top3(
+        address=req.address,
+        land_area_sqm=req.land_area_sqm,
+        region=req.region,
+        equity_won=req.equity_won,
+    )
+
+
+class FinalizeRequest(BaseModel):
+    project_id: str
+    development_type: str
+    module_input: dict  # The refined ModuleInput from user
+
+
+@router.post("/finalize")
+async def finalize_business_model(req: FinalizeRequest):
+    """선택된 사업모델을 최종 확정."""
+    service = FeasibilityServiceV2()
+    # Calculate final result
+    inp = ModuleInput(**req.module_input)
+    result = service.calculate(inp)
+    return {
+        "project_id": req.project_id,
+        "status": "finalized",
+        "development_type": req.development_type,
+        "final_result": {
+            "development_type": result.development_type,
+            "module_name": result.module_name,
+            "total_revenue_won": result.total_revenue_won,
+            "total_cost_won": result.total_cost_won,
+            "net_profit_won": result.net_profit_won,
+            "profit_rate_pct": result.profit_rate_pct,
+            "roi_pct": result.roi_pct,
+            "npv_won": result.npv_won,
+            "grade": result.grade,
+            "cost_breakdown_won": result.cost_detail,
+            "tax_detail": result.tax_detail,
+        },
+        "finalized_at": datetime.now().isoformat(),
+    }

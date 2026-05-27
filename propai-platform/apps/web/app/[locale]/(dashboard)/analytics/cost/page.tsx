@@ -1,12 +1,17 @@
 "use client";
 
 import React, { useState } from "react";
+import { useParams } from "next/navigation";
 import { motion } from "framer-motion";
 import { useAIAnalyze, useAIReady } from "@/lib/ai-analyze-client";
+import { CostAnalyticsWorkspaceClient } from "@/components/analytics/CostAnalyticsWorkspaceClient";
+import { isValidLocale, type Locale } from "@/i18n/config";
 
 type CostResult = { estimatedCost?: { total: number; perUnit: number; unit: string }; breakdown?: Array<{ category: string; amount: number; ratio: number }>; marketComparison?: string; summary?: string };
 
 export default function CostPage() {
+  const params = useParams();
+  const locale = params.locale as string;
   const { isReady } = useAIReady();
   const { mutate, data: aiResult, isPending, error } = useAIAnalyze<CostResult>();
   const [form, setForm] = useState({ buildingType: "공동주택", grossArea: "", floors: "", structure: "RC조" });
@@ -16,6 +21,9 @@ export default function CostPage() {
   };
 
   const ai = aiResult?.data;
+  const safeLocale = (isValidLocale(locale) ? locale : "ko") as Locale;
+  // Analytics pages use a generic project ID since they are not project-scoped
+  const projectId = "default";
 
   return (
     <div className="space-y-8 p-6">
@@ -37,10 +45,10 @@ export default function CostPage() {
               {["RC조","SRC조","S조","PC조","목구조"].map(s => <option key={s}>{s}</option>)}</select></div>
         </div>
         <button onClick={handleAnalyze} disabled={isPending || !isReady || !form.grossArea} className="mt-6 w-full rounded-2xl bg-gradient-to-r from-amber-600 to-orange-600 py-4 font-black text-white shadow-lg transition-all hover:scale-[1.01] active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed">
-          {isPending ? "🔄 분석 중..." : !isReady ? "⚙️ API 키를 먼저 등록하세요" : "🏗️ 공사비 AI 분석"}
+          {isPending ? "분석 중..." : !isReady ? "API 키를 먼저 등록하세요" : "공사비 AI 분석"}
         </button>
       </motion.div>
-      {error && <div className="rounded-2xl bg-red-500/10 border border-red-500/20 p-4"><p className="text-sm text-red-400 font-bold">⚠️ {error.message}</p></div>}
+      {error && <div className="rounded-2xl bg-red-500/10 border border-red-500/20 p-4"><p className="text-sm text-red-400 font-bold">{error.message}</p></div>}
       {ai && (
         <motion.div initial={{ y: 30, opacity: 0 }} animate={{ y: 0, opacity: 1 }} className="space-y-6">
           {ai.estimatedCost && (
@@ -50,14 +58,17 @@ export default function CostPage() {
             </div>
           )}
           {ai.breakdown && ai.breakdown.length > 0 && (
-            <div className="glass rounded-2xl p-6 border border-[var(--line)]"><h3 className="text-lg font-black text-[var(--text-primary)] mb-4">📊 비용 항목별 내역</h3>
+            <div className="glass rounded-2xl p-6 border border-[var(--line)]"><h3 className="text-lg font-black text-[var(--text-primary)] mb-4">비용 항목별 내역</h3>
               {ai.breakdown.map((b, i) => (<div key={i} className="flex items-center gap-3 mb-3"><span className="text-sm font-bold text-[var(--text-primary)] w-24">{b.category}</span><div className="flex-1 h-3 rounded-full bg-[var(--line)]"><div className="h-3 rounded-full bg-amber-400" style={{ width: `${b.ratio}%` }} /></div><span className="text-xs font-bold text-[var(--text-secondary)] w-20 text-right">{b.amount?.toLocaleString()}</span></div>))}
             </div>
           )}
-          {ai.summary && (<div className="glass rounded-2xl p-6 border border-amber-500/20 bg-amber-500/5"><h3 className="text-lg font-black text-amber-400 mb-2">🤖 AI 공사비 분석</h3><p className="text-sm text-[var(--text-secondary)] leading-relaxed">{ai.summary}</p></div>)}
+          {ai.summary && (<div className="glass rounded-2xl p-6 border border-amber-500/20 bg-amber-500/5"><h3 className="text-lg font-black text-amber-400 mb-2">AI 공사비 분석</h3><p className="text-sm text-[var(--text-secondary)] leading-relaxed">{ai.summary}</p></div>)}
         </motion.div>
       )}
       {aiResult && !ai && aiResult.text && (<div className="glass rounded-2xl p-6 border border-[var(--line)]"><p className="text-sm text-[var(--text-secondary)] whitespace-pre-wrap">{aiResult.text}</p></div>)}
+
+      {/* ── Live Workspace Client ── */}
+      <CostAnalyticsWorkspaceClient locale={safeLocale} projectId={projectId} />
     </div>
   );
 }

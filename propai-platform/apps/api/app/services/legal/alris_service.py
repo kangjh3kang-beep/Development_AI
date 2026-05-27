@@ -61,12 +61,37 @@ class ALRISService:
     async def check_compliance(self, zone_type: str, floor_area_ratio: float,
                                 building_coverage_ratio: float, height_m: float) -> Dict:
         zone_rules = {
+            "제1종전용주거지역": {"max_far": 100, "max_bcr": 40, "max_height": 10},
+            "제2종전용주거지역": {"max_far": 150, "max_bcr": 50, "max_height": 12},
+            "제1종일반주거지역": {"max_far": 200, "max_bcr": 60, "max_height": None},
             "제2종일반주거지역": {"max_far": 250, "max_bcr": 60, "max_height": None},
             "제3종일반주거지역": {"max_far": 300, "max_bcr": 50, "max_height": None},
             "준주거지역": {"max_far": 500, "max_bcr": 70, "max_height": None},
+            "중심상업지역": {"max_far": 1500, "max_bcr": 90, "max_height": None},
             "일반상업지역": {"max_far": 1300, "max_bcr": 80, "max_height": None},
+            "근린상업지역": {"max_far": 900, "max_bcr": 70, "max_height": None},
+            "유통상업지역": {"max_far": 1100, "max_bcr": 80, "max_height": None},
+            "전용공업지역": {"max_far": 300, "max_bcr": 70, "max_height": None},
+            "일반공업지역": {"max_far": 350, "max_bcr": 70, "max_height": None},
+            "준공업지역": {"max_far": 400, "max_bcr": 70, "max_height": None},
+            "보전녹지지역": {"max_far": 80, "max_bcr": 20, "max_height": None},
+            "생산녹지지역": {"max_far": 100, "max_bcr": 20, "max_height": None},
+            "자연녹지지역": {"max_far": 100, "max_bcr": 20, "max_height": None},
+            # Special districts
+            "역세권개발구역": {"max_far": 700, "max_bcr": 80, "max_height": None},
+            "도시재생활성화구역": {"max_far": 500, "max_bcr": 80, "max_height": None},
+            "지구단위계획구역": {"max_far": 400, "max_bcr": 60, "max_height": None},
         }
-        rules = zone_rules.get(zone_type, {"max_far": 300, "max_bcr": 60, "max_height": None})
+
+        if not zone_type or zone_type not in zone_rules:
+            return {
+                "compliant": False,
+                "message": f"알 수 없는 용도지역: '{zone_type}'. 지원 용도지역: {', '.join(zone_rules.keys())}",
+                "violations": [f"용도지역 '{zone_type}'을(를) 확인할 수 없습니다."],
+                "warnings": [],
+            }
+
+        rules = zone_rules[zone_type]
         violations = []
         if floor_area_ratio > rules["max_far"]:
             violations.append(f"용적률 초과: {floor_area_ratio}% > {rules['max_far']}%")

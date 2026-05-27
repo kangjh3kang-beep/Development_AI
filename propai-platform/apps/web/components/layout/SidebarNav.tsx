@@ -41,26 +41,26 @@ export function SidebarNav({ sections }: SidebarNavProps) {
                   key={item.href}
                   href={item.href}
                   className={`group relative flex items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] font-semibold transition-all duration-300 overflow-hidden ${
-                    isActive 
-                      ? "text-teal-400 bg-teal-500/10 shadow-[inset_0_0_20px_rgba(20,184,166,0.1)] border border-teal-500/20" 
+                    isActive
+                      ? "text-[var(--accent-strong)] bg-[var(--accent-soft)] shadow-[inset_0_0_20px_var(--accent-soft)] border border-[var(--accent-strong)]/20"
                       : "text-[var(--text-secondary)] hover:bg-[var(--surface-muted)] hover:text-white"
                   }`}
                 >
                   {/* Hover/Active Glow Background */}
                   {isActive && (
-                    <motion.div 
+                    <motion.div
                       layoutId="active-sidebar-bg"
-                      className="absolute inset-0 bg-teal-500/5" 
+                      className="absolute inset-0 bg-[var(--accent-soft)]"
                       transition={{ type: "spring", stiffness: 300, damping: 30 }}
                     />
                   )}
                   
                   {/* Left Active Indicator */}
                   {isActive && (
-                    <div className="absolute left-0 top-1/2 h-4 w-1 -translate-y-1/2 rounded-r-full bg-teal-400 shadow-[0_0_10px_rgba(45,212,191,0.8)]" />
+                    <div className="absolute left-0 top-1/2 h-4 w-1 -translate-y-1/2 rounded-r-full bg-[var(--accent-strong)] shadow-[var(--shadow-glow)]" />
                   )}
 
-                  <span className={`relative z-10 shrink-0 transition-colors ${isActive ? "text-teal-400" : "text-[var(--text-hint)] group-hover:text-white"}`}>
+                  <span className={`relative z-10 shrink-0 transition-colors ${isActive ? "text-[var(--accent-strong)]" : "text-[var(--text-hint)] group-hover:text-white"}`}>
                     {item.icon}
                   </span>
                   <span className="relative z-10">{item.label}</span>

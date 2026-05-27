@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { LandIntelligencePanel } from "@/components/projects/LandIntelligencePanel";
 import { SiteInitiator } from "@/components/projects/SiteInitiator";
+import { ProjectSiteAnalysisWorkspaceClient } from "@/components/projects/ProjectSiteAnalysisWorkspaceClient";
 import { isValidLocale, type Locale } from "@/i18n/config";
 import { useDictionary } from "@/hooks/use-dictionary";
 
@@ -36,20 +37,22 @@ export default function SiteAnalysisPage() {
   const handleInitiate = (data: any) => {
     setStage("analyzing");
     setSiteData(data);
-    
+
     // Simulate deep AI analysis
     setTimeout(() => {
       setStage("result");
     }, 3200);
   };
 
+  const safeLocale = (isValidLocale(locale) ? locale : "ko") as Locale;
+
   return (
     <div className="flex flex-col gap-12 min-h-screen pb-20 font-sans">
       {/* ── High-Fidelity Project Hero ── */}
-      <section className="relative overflow-hidden rounded-[4rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-12 lg:p-20 shadow-[var(--shadow-2xl)] group">
+      <section className="relative overflow-hidden rounded-2xl sm:rounded-[2rem] lg:rounded-[4rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-6 sm:p-10 lg:p-20 shadow-[var(--shadow-2xl)] group">
         <div className="absolute -right-20 -top-20 h-80 w-80 rounded-full bg-[var(--accent-strong)]/10 blur-[100px] transition-all duration-1000 group-hover:scale-125" />
         <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-[0.03] dark:invert" />
-        
+
         <div className="relative z-10 flex flex-col gap-10 lg:flex-row lg:items-end lg:justify-between">
           <div className="max-w-4xl space-y-8">
             <div className="flex items-center gap-4">
@@ -58,19 +61,19 @@ export default function SiteAnalysisPage() {
                 Land Intelligence System
               </span>
             </div>
-            
-            <h1 className="text-6xl font-[1000] tracking-tighter text-[var(--text-primary)] sm:text-7xl lg:text-8xl leading-[0.9]">
+
+            <h1 className="text-3xl font-[1000] tracking-tighter text-[var(--text-primary)] sm:text-5xl md:text-6xl lg:text-8xl leading-[0.9]">
               부지 분석 및<br/>
               <span className="text-[var(--accent-strong)] italic">입지 전략 수집<span className="text-[var(--text-primary)]">.</span></span>
             </h1>
 
-            <p className="max-w-2xl text-xl font-medium leading-relaxed text-[var(--text-secondary)] italic tracking-tight underline decoration-[var(--line-strong)] decoration-2 underline-offset-8">
+            <p className="max-w-2xl text-base sm:text-lg lg:text-xl font-medium leading-relaxed text-[var(--text-secondary)] italic tracking-tight underline decoration-[var(--line-strong)] decoration-2 underline-offset-8">
               "사통팔땅의 AI 엔진이 공공 빅데이터와 정밀 GIS를 실시간 결합하여, 리스크는 최소화하고 개발 가치는 극대화하는 멀티레이어 지능형 보고서를 생성합니다."
             </p>
           </div>
 
           <div className="hidden lg:block">
-            <motion.div 
+            <motion.div
               animate={{ y: [0, -20, 0] }}
               transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
               className="h-44 w-44 rounded-[3.5rem] bg-[var(--surface-soft)] border border-[var(--line-strong)] flex items-center justify-center text-[var(--accent-strong)] backdrop-blur-3xl shadow-[var(--shadow-2xl)]"
@@ -91,8 +94,8 @@ export default function SiteAnalysisPage() {
             exit={{ opacity: 0, y: -40, filter: "blur(20px)" }}
             className="mx-auto w-full max-w-5xl"
           >
-            <div className="rounded-[4.5rem] p-1.5 border border-[var(--line)] bg-[var(--surface-soft)] overflow-hidden group shadow-[var(--shadow-2xl)]">
-               <div className="rounded-[4.2rem] p-12 lg:p-20 bg-[var(--surface-strong)]/80 backdrop-blur-3xl transition-all group-hover:bg-[var(--surface-strong)]/60 border border-[var(--line-strong)]">
+            <div className="rounded-2xl sm:rounded-[2.5rem] lg:rounded-[4.5rem] p-1.5 border border-[var(--line)] bg-[var(--surface-soft)] overflow-hidden group shadow-[var(--shadow-2xl)]">
+               <div className="rounded-xl sm:rounded-[2.2rem] lg:rounded-[4.2rem] p-6 sm:p-10 lg:p-20 bg-[var(--surface-strong)]/80 backdrop-blur-3xl transition-all group-hover:bg-[var(--surface-strong)]/60 border border-[var(--line-strong)]">
                   <SiteInitiator onInitiate={handleInitiate} loading={false} />
                </div>
             </div>
@@ -109,7 +112,7 @@ export default function SiteAnalysisPage() {
           >
             <div className="relative group">
               <div className="absolute -inset-24 animate-spin-slow bg-gradient-to-r from-[var(--accent-strong)] via-blue-500 to-teal-500 rounded-full blur-[80px] opacity-10" />
-              <motion.div 
+              <motion.div
                 animate={{ scale: [1, 1.05, 1] }}
                 transition={{ duration: 2, repeat: Infinity }}
                 className="relative flex h-64 w-64 items-center justify-center rounded-[4rem] bg-[var(--surface-strong)] border border-[var(--line-strong)] shadow-[var(--shadow-2xl)] backdrop-blur-3xl overflow-hidden"
@@ -118,10 +121,10 @@ export default function SiteAnalysisPage() {
                  <Icons.Brain width={112} height={112} strokeWidth={1} />
               </motion.div>
             </div>
-            
+
             <div className="flex flex-col items-center gap-10 text-center max-w-2xl px-6">
                <div className="space-y-4">
-                  <h3 className="text-5xl font-[1000] text-[var(--text-primary)] italic tracking-tighter leading-tight">Deep AI <span className="text-[var(--accent-strong)]">GIS Core</span> Scanning...</h3>
+                  <h3 className="text-2xl sm:text-3xl lg:text-5xl font-[1000] text-[var(--text-primary)] italic tracking-tighter leading-tight">Deep AI <span className="text-[var(--accent-strong)]">GIS Core</span> Scanning...</h3>
                   <p className="text-[11px] font-black text-[var(--accent-strong)]/50 uppercase tracking-[0.6em]">사통팔땅 멀티레이어 지능형 엔진 가동 중</p>
                </div>
 
@@ -156,19 +159,19 @@ export default function SiteAnalysisPage() {
             className="w-full flex flex-col gap-16"
           >
             {/* Context Summary Bar */}
-            <div className="flex flex-col lg:flex-row lg:items-center justify-between rounded-[4rem] bg-[var(--surface-strong)] p-10 lg:px-14 border border-[var(--line-strong)] backdrop-blur-3xl shadow-[var(--shadow-2xl)] gap-8">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between rounded-2xl sm:rounded-[2rem] lg:rounded-[4rem] bg-[var(--surface-strong)] p-6 sm:p-8 lg:p-10 lg:px-14 border border-[var(--line-strong)] backdrop-blur-3xl shadow-[var(--shadow-2xl)] gap-6 sm:gap-8">
                <div className="flex items-center gap-8">
                   <div className="flex h-20 w-20 items-center justify-center rounded-[2rem] bg-[var(--accent-strong)]/10 text-[var(--accent-strong)] border border-[var(--accent-strong)]/20 shadow-[var(--shadow-glow)]">
                     <Icons.Map width={40} height={40} strokeWidth={1.5} />
                   </div>
                   <div className="space-y-1">
                     <p className="text-[10px] font-black uppercase tracking-[0.4em] text-[var(--text-hint)]">Analysis Target Identity</p>
-                    <p className="text-3xl font-[1000] text-[var(--text-primary)] tracking-tighter italic">
+                    <p className="text-xl sm:text-2xl lg:text-3xl font-[1000] text-[var(--text-primary)] tracking-tighter italic">
                       {siteData?.address || "분석 대상 주소를 입력하세요"}
                     </p>
                   </div>
                </div>
-               <button 
+               <button
                 onClick={() => setStage("init")}
                 className="group flex h-16 items-center justify-center gap-4 rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-soft)] px-10 text-[11px] font-black text-[var(--text-primary)] hover:text-white uppercase tracking-[0.3em] transition-all hover:bg-[var(--accent-strong)] hover:border-[var(--accent-strong)] active:scale-95 shadow-[var(--shadow-lg)]"
                >
@@ -177,17 +180,20 @@ export default function SiteAnalysisPage() {
                </button>
             </div>
 
-            <motion.div 
+            <motion.div
               initial={{ opacity: 0, y: 40 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.2 }}
-              className="rounded-[4.5rem] border border-[var(--line-strong)] bg-[var(--surface-strong)]/50 p-8 lg:p-14 shadow-[var(--shadow-2xl)] backdrop-blur-xl"
+              className="rounded-2xl sm:rounded-[2.5rem] lg:rounded-[4.5rem] border border-[var(--line-strong)] bg-[var(--surface-strong)]/50 p-4 sm:p-8 lg:p-14 shadow-[var(--shadow-2xl)] backdrop-blur-xl"
             >
               <LandIntelligencePanel projectId="demo" data={siteData} />
             </motion.div>
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* ── Live Workspace Client ── */}
+      <ProjectSiteAnalysisWorkspaceClient locale={safeLocale} projectId={id} />
     </div>
   );
 }

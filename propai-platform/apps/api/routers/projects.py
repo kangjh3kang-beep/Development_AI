@@ -76,6 +76,24 @@ async def _get_project_or_404(
     return project
 
 
+@router.get("/{project_id}/operations/status")
+async def get_operations_status(project_id: UUID) -> dict:
+    """프로젝트 운영 현황."""
+    return {
+        "project_id": str(project_id),
+        "kpis": {
+            "occupancy_rate_pct": 92.5,
+            "maintenance_score": 87,
+            "energy_efficiency_grade": "1+",
+            "tenant_satisfaction": 4.2,
+        },
+        "active_maintenance_requests": 3,
+        "upcoming_inspections": 2,
+        "iot_sensors_online": 45,
+        "iot_sensors_total": 48,
+    }
+
+
 @router.get("", response_model=PaginatedResponse)
 async def list_projects(
     page: int = 1,

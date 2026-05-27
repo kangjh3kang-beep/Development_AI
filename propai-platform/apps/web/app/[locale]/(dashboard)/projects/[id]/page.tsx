@@ -1,15 +1,50 @@
 "use client";
 
 import { useParams } from "next/navigation";
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { LifecycleStageViews } from "@/components/projects/LifecycleStageViews";
+import { ProjectLifecyclePipeline } from "@/components/projects/ProjectLifecyclePipeline";
+import { AutoRecommendPanel } from "@/components/feasibility/AutoRecommendPanel";
 import { isValidLocale, type Locale } from "@/i18n/config";
 import { useDictionary } from "@/hooks/use-dictionary";
 import { formatCurrencyKRW } from "@/lib/formatters";
+import { apiClient } from "@/lib/api-client";
+
+type ProjectMeta = {
+  id: string;
+  name: string;
+  status: string;
+  address?: string;
+  created_at?: string;
+  updated_at?: string;
+  npv?: number;
+  roi?: number;
+  pnu?: string;
+  zone?: string;
+};
 
 export default function ProjectDetailPage() {
   const { locale, id } = useParams() as { locale: string; id: string };
   const { dictionary, isLoading } = useDictionary(locale as Locale);
+  const [meta, setMeta] = useState<ProjectMeta | null>(null);
+  const [metaLoading, setMetaLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function fetchMeta() {
+      try {
+        const res = await apiClient.get<ProjectMeta>(`/projects/${id}`);
+        if (!cancelled) setMeta(res);
+      } catch {
+        // fallback — no metadata available
+      } finally {
+        if (!cancelled) setMetaLoading(false);
+      }
+    }
+    fetchMeta();
+    return () => { cancelled = true; };
+  }, [id]);
 
   if (isLoading || !dictionary) {
     return (
@@ -30,6 +65,81 @@ export default function ProjectDetailPage() {
 
   return (
     <div className="flex flex-col gap-16 pb-20 font-sans">
+      {/* ── Lifecycle Pipeline ── */}
+      <motion.div
+        initial={{ opacity: 0, y: -10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.05 }}
+      >
+        <ProjectLifecyclePipeline locale={locale} projectId={id} />
+      </motion.div>
+
+      {/* ── Auto Recommend Panel — HERO Feature ── */}
+      <motion.section
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.1 }}
+        className="rounded-[3rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-10 lg:p-14 shadow-[var(--shadow-2xl)] relative overflow-hidden"
+      >
+        <div className="absolute -right-32 -top-32 h-[400px] w-[400px] rounded-full bg-[var(--accent-strong)]/8 blur-[100px] pointer-events-none" />
+        <div className="absolute -left-20 bottom-0 h-80 w-80 rounded-full bg-blue-500/5 blur-[80px] pointer-events-none" />
+        <div className="relative z-10">
+          <AutoRecommendPanel />
+        </div>
+      </motion.section>
+
+      {/* ── Project Metadata (API-driven) ── */}
+      {metaLoading ? (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {[1, 2, 3, 4].map((i) => (
+            <div key={i} className="h-24 animate-pulse rounded-2xl bg-[var(--surface-soft)] border border-[var(--line)]" />
+          ))}
+        </div>
+      ) : meta ? (
+        <motion.section
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="rounded-[2rem] border border-[var(--line-strong)] bg-[var(--surface-soft)] p-8 shadow-[var(--shadow-lg)]"
+        >
+          <div className="flex flex-wrap items-start justify-between gap-6 mb-6">
+            <div className="space-y-2">
+              <p className="text-[10px] font-black uppercase tracking-[0.3em] text-[var(--accent-strong)]">Project Metadata</p>
+              <h2 className="text-2xl font-[900] tracking-tight text-[var(--text-primary)]">{meta.name}</h2>
+              {meta.address && <p className="text-sm text-[var(--text-secondary)]">{meta.address}</p>}
+            </div>
+            <span className="rounded-xl border border-[var(--accent-strong)]/30 bg-[var(--accent-soft)] px-4 py-2 text-[11px] font-black uppercase tracking-widest text-[var(--accent-strong)]">
+              {meta.status}
+            </span>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {meta.pnu && (
+              <div className="rounded-xl bg-[var(--surface-strong)] border border-[var(--line)] p-4">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-[var(--text-hint)] mb-1">PNU</p>
+                <p className="text-sm font-bold text-[var(--text-primary)]">{meta.pnu}</p>
+              </div>
+            )}
+            {meta.zone && (
+              <div className="rounded-xl bg-[var(--surface-strong)] border border-[var(--line)] p-4">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-[var(--text-hint)] mb-1">용도지역</p>
+                <p className="text-sm font-bold text-[var(--text-primary)]">{meta.zone}</p>
+              </div>
+            )}
+            {meta.created_at && (
+              <div className="rounded-xl bg-[var(--surface-strong)] border border-[var(--line)] p-4">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-[var(--text-hint)] mb-1">생성일</p>
+                <p className="text-sm font-bold text-[var(--text-primary)]">{new Date(meta.created_at).toLocaleDateString("ko-KR")}</p>
+              </div>
+            )}
+            {meta.updated_at && (
+              <div className="rounded-xl bg-[var(--surface-strong)] border border-[var(--line)] p-4">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-[var(--text-hint)] mb-1">최종 수정</p>
+                <p className="text-sm font-bold text-[var(--text-primary)]">{new Date(meta.updated_at).toLocaleDateString("ko-KR")}</p>
+              </div>
+            )}
+          </div>
+        </motion.section>
+      ) : null}
+
       {/* ── High-Fidelity Project Hero ── */}
       <section className="relative overflow-hidden rounded-[4rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-12 lg:p-20 shadow-[var(--shadow-2xl)] group">
         {/* Cinematic Background Elements */}
@@ -39,7 +149,7 @@ export default function ProjectDetailPage() {
 
         <div className="relative z-10 flex flex-col justify-between gap-12 lg:flex-row lg:items-end">
           <div className="space-y-10">
-            <motion.div 
+            <motion.div
               initial={{ opacity: 0, x: -20 }}
               animate={{ opacity: 1, x: 0 }}
               className="flex items-center gap-4"
@@ -50,35 +160,35 @@ export default function ProjectDetailPage() {
               </p>
             </motion.div>
 
-            <motion.div 
+            <motion.div
               initial={{ opacity: 0, y: 30 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.1 }}
               className="space-y-6"
             >
               <h1 className="text-6xl font-[1000] tracking-tighter text-[var(--text-primary)] leading-[0.9] sm:text-7xl lg:text-8xl">
-                {d.summary.name}<span className="text-[var(--accent-strong)]">.</span>
+                {meta?.name ?? d.summary.name}<span className="text-[var(--accent-strong)]">.</span>
               </h1>
               <div className="flex flex-wrap gap-6">
                 <span className="rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-soft)] px-6 py-2.5 text-[11px] font-black uppercase tracking-widest text-[var(--text-secondary)] backdrop-blur-md shadow-[var(--shadow-sm)]">
-                  {d.summary.pnu}
+                  {meta?.pnu ?? d.summary.pnu}
                 </span>
                 <span className="rounded-2xl border border-[var(--accent-strong)]/30 bg-[var(--accent-soft)] px-6 py-2.5 text-[11px] font-black uppercase tracking-widest text-[var(--accent-strong)] backdrop-blur-md shadow-[var(--shadow-sm)]">
-                  {d.summary.zone}
+                  {meta?.zone ?? d.summary.zone}
                 </span>
               </div>
             </motion.div>
           </div>
 
-          <motion.div 
+          <motion.div
             initial={{ opacity: 0, scale: 0.9 }}
             animate={{ opacity: 1, scale: 1 }}
             transition={{ delay: 0.3 }}
             className="flex flex-wrap gap-8"
           >
             {[
-              { label: d.summary.npv, value: formatCurrencyKRW(1250000000), color: "text-[var(--text-primary)]" },
-              { label: d.summary.roi, value: "18.4%", color: "text-[var(--accent-strong)]" },
+              { label: d.summary.npv, value: meta?.npv ? formatCurrencyKRW(meta.npv) : formatCurrencyKRW(1250000000), color: "text-[var(--text-primary)]" },
+              { label: d.summary.roi, value: meta?.roi ? `${meta.roi.toFixed(1)}%` : "18.4%", color: "text-[var(--accent-strong)]" },
             ].map((stat, i) => (
               <div key={i} className="relative min-w-[240px] rounded-[3rem] border border-[var(--line-strong)] bg-[var(--surface-strong)]/50 p-10 backdrop-blur-3xl shadow-[var(--shadow-xl)] transition-all hover:-translate-y-2 hover:bg-[var(--surface-soft)] group/stat border-2 border-transparent hover:border-[var(--accent-strong)]/20">
                 <p className="text-[10px] font-black uppercase tracking-[0.4em] text-[var(--text-hint)] mb-4">{stat.label}</p>

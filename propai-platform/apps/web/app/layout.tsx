@@ -6,8 +6,8 @@ import "./globals.css";
 
 const sansFont = Noto_Sans_KR({
   variable: "--font-sans",
+  weight: ["300", "400", "500", "600", "700"],
   subsets: ["latin"],
-  weight: ["400", "500", "700"],
 });
 
 const monoFont = JetBrains_Mono({

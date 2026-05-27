@@ -10,6 +10,7 @@ MQTT(EMQX) 기반 드론 데이터 수신 + YOLOv8(Roboflow) 하자 탐지.
 4. 심각도별 알림 (DroneAlertEvent SSE)
 """
 
+from typing import Union
 from uuid import UUID
 
 import structlog
@@ -30,13 +31,23 @@ class DroneIoTService:
         self.db = db
         self.settings = get_settings()
 
-    async def _detect_defects(self, image_url: str) -> list[dict]:
-        """Roboflow API로 하자를 탐지한다."""
+    async def _detect_defects(self, image_url: str) -> Union[list[dict], dict]:
+        """Roboflow API로 하자를 탐지한다.
+
+        Returns:
+            list[dict]: 탐지된 하자 목록.
+            dict: 서비스 미설정 시 상태 정보 딕셔너리.
+        """
         import httpx
 
         if not self.settings.roboflow_api_key:
-            logger.warning("Roboflow API 키 미설정 — Mock 탐지 결과 반환")
-            return []
+            logger.warning("Roboflow API 키 미설정 — 서비스 미설정 상태 반환")
+            return {
+                "status": "service_not_configured",
+                "message": "드론 하자탐지 서비스가 설정되지 않았습니다. ROBOFLOW_API_KEY 환경변수를 설정하세요.",
+                "detections": [],
+                "service_available": False,
+            }
 
         try:
             async with httpx.AsyncClient(timeout=30) as client:

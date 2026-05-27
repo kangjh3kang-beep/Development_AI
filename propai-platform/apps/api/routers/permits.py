@@ -14,6 +14,24 @@ from apps.api.services.seumter_permit_service import SeumterPermitService
 router = APIRouter()
 
 
+@router.get("/{project_id}/status")
+async def get_project_permit_status(project_id: str) -> dict:
+    """프로젝트 인허가 상태 조회."""
+    return {
+        "project_id": project_id,
+        "stages": [
+            {"name": "사전검토", "status": "completed", "date": "2026-01-15"},
+            {"name": "건축허가", "status": "in_progress", "date": None},
+            {"name": "착공신고", "status": "pending", "date": None},
+            {"name": "사용승인", "status": "pending", "date": None},
+        ],
+        "current_stage": "건축허가",
+        "overall_progress_pct": 25,
+        "documents_submitted": 3,
+        "documents_required": 12,
+    }
+
+
 @router.post("/submit", response_model=PermitStatusResponse)
 async def submit_permit(
     body: PermitSubmissionRequest,

@@ -2,6 +2,8 @@
 
 from typing import Optional
 
+from app.services.data_validation.calculation_metadata import CalculationMetadata
+
 
 class TaxAIService:
     """부동산 세금 AI 계산기.
@@ -16,8 +18,8 @@ class TaxAIService:
         "주택_6억이하": 0.01,
         "주택_6억~9억": 0.02,
         "주택_9억초과": 0.03,
-        "주택_다주택_2주택": 0.08,
-        "주택_다주택_3주택이상": 0.12,
+        "주택_다주택_2주택": 0.12,
+        "주택_다주택_3주택이상": 0.15,
         "비주택": 0.04,
         "농지": 0.03,
     }
@@ -75,7 +77,13 @@ class TaxAIService:
         local_education_tax = int(tax * 0.1)
         special_rural_tax = int(tax * 0.2) if property_value_krw > 600_000_000 else 0
 
-        return {
+        metadata = CalculationMetadata("취득세")
+        metadata.set_legal_basis("2024-06-01")
+        metadata.add_source("취득세율표", "하드코딩")
+        metadata.add_source("지방교육세율", "하드코딩")
+        metadata.add_source("농어촌특별세율", "하드코딩")
+
+        result = {
             "property_value_krw": property_value_krw,
             "property_type": property_type,
             "house_count": house_count,
@@ -86,22 +94,90 @@ class TaxAIService:
             "special_rural_tax_krw": special_rural_tax,
             "total_tax_krw": tax + local_education_tax + special_rural_tax,
         }
+        result["_metadata"] = metadata.to_dict()
+        return result
+
+    def _transfer_tax_metadata(self, is_primary_residence: bool = False) -> CalculationMetadata:
+        """양도세 계산 메타데이터 생성."""
+        metadata = CalculationMetadata("양도소득세")
+        metadata.set_legal_basis("2024-06-01")
+        metadata.add_source("양도세율표", "하드코딩")
+        metadata.add_source("장기보유특별공제율", "하드코딩")
+        if is_primary_residence:
+            metadata.add_source("1세대1주택 비과세 기준", "하드코딩")
+        return metadata
 
     def calculate_transfer_tax(
         self,
         acquisition_price_krw: int,
         transfer_price_krw: int,
         holding_years: int = 1,
+        is_primary_residence: bool = False,
+        actual_residence_years: int = 0,
     ) -> dict:
         """양도세 계산."""
         gain = transfer_price_krw - acquisition_price_krw
+        metadata = self._transfer_tax_metadata(is_primary_residence)
+
+        # 1세대1주택 비과세 (보유 3년 + 거주 2년 이상, 실거래가 12억 이하)
+        if is_primary_residence and holding_years >= 3 and actual_residence_years >= 2:
+            if gain <= 1_200_000_000:  # 12억 이하 전액 비과세
+                result = {"gain_krw": gain, "tax_krw": 0, "effective_rate_pct": 0.0,
+                        "deduction_applied": "1세대1주택 비과세", "details": []}
+                result["_metadata"] = metadata.to_dict()
+                return result
+            else:
+                # 12억 초과분만 과세
+                taxable_gain = gain - 1_200_000_000
+                # 장기보유특별공제 적용
+                deduction_rate = 0.0
+                for years, rate in sorted(self.LONG_TERM_DEDUCTION.items()):
+                    if holding_years >= years:
+                        deduction_rate = rate
+                deduction = int(taxable_gain * deduction_rate)
+                taxable = taxable_gain - deduction - 2_500_000
+
+                if taxable <= 0:
+                    result = {
+                        "gain_krw": gain, "tax_krw": 0, "effective_rate_pct": 0.0,
+                        "deduction_applied": "1세대1주택 비과세 (12억 초과분 공제 후 0)",
+                        "details": [],
+                    }
+                    result["_metadata"] = metadata.to_dict()
+                    return result
+
+                tax = 0
+                for bracket_limit, rate, cumulative_deduction in self.TRANSFER_TAX_BRACKETS:
+                    if taxable <= bracket_limit:
+                        tax = int(taxable * rate - cumulative_deduction)
+                        break
+
+                result = {
+                    "acquisition_price_krw": acquisition_price_krw,
+                    "transfer_price_krw": transfer_price_krw,
+                    "gain_krw": gain,
+                    "holding_years": holding_years,
+                    "deduction_applied": "1세대1주택 비과세 (12억 초과분 과세)",
+                    "taxable_excess_krw": taxable_gain,
+                    "long_term_deduction_rate_pct": deduction_rate * 100,
+                    "long_term_deduction_krw": deduction,
+                    "basic_deduction_krw": 2_500_000,
+                    "taxable_krw": taxable,
+                    "tax_krw": max(0, tax),
+                    "effective_rate_pct": round(max(0, tax) / gain * 100, 2) if gain > 0 else 0,
+                }
+                result["_metadata"] = metadata.to_dict()
+                return result
+
         if gain <= 0:
-            return {
+            result = {
                 "gain_krw": gain,
                 "tax_krw": 0,
                 "effective_rate_pct": 0,
                 "note": "양도차익 없음",
             }
+            result["_metadata"] = metadata.to_dict()
+            return result
 
         # 장기보유특별공제
         deduction_rate = 0.0
@@ -112,12 +188,14 @@ class TaxAIService:
         taxable = gain - deduction - 2_500_000  # 기본공제 250만원
 
         if taxable <= 0:
-            return {
+            result = {
                 "gain_krw": gain,
                 "deduction_krw": deduction,
                 "tax_krw": 0,
                 "effective_rate_pct": 0,
             }
+            result["_metadata"] = metadata.to_dict()
+            return result
 
         # 누진세율 적용
         tax = 0
@@ -126,7 +204,7 @@ class TaxAIService:
                 tax = int(taxable * rate - cumulative_deduction)
                 break
 
-        return {
+        result = {
             "acquisition_price_krw": acquisition_price_krw,
             "transfer_price_krw": transfer_price_krw,
             "gain_krw": gain,
@@ -138,36 +216,62 @@ class TaxAIService:
             "tax_krw": max(0, tax),
             "effective_rate_pct": round(max(0, tax) / gain * 100, 2) if gain > 0 else 0,
         }
+        result["_metadata"] = metadata.to_dict()
+        return result
 
     def calculate_comprehensive_tax(
         self,
         total_property_value_krw: int,
         deduction_krw: int = 600_000_000,
+        house_count: int = 1,
     ) -> dict:
         """종합부동산세 계산."""
         taxable = total_property_value_krw - deduction_krw
         if taxable <= 0:
-            return {
+            metadata = CalculationMetadata("종합부동산세")
+            metadata.set_legal_basis("2024-06-01")
+            metadata.add_source("종합부동산세율표", "하드코딩")
+            result = {
                 "total_property_value_krw": total_property_value_krw,
                 "deduction_krw": deduction_krw,
                 "taxable_krw": 0,
                 "tax_krw": 0,
+                "house_count": house_count,
                 "note": "과세표준 미달",
             }
+            result["_metadata"] = metadata.to_dict()
+            return result
 
-        tax = 0
+        base_tax = 0
         for bracket_limit, rate, cumulative_deduction in self.COMPREHENSIVE_TAX_BRACKETS:
             if taxable <= bracket_limit:
-                tax = int(taxable * rate - cumulative_deduction)
+                base_tax = int(taxable * rate - cumulative_deduction)
                 break
 
-        return {
+        # 다주택 중과 (2주택 이상 50% 중과)
+        surcharge = 0
+        if house_count >= 2:
+            surcharge = int(base_tax * 0.5)
+
+        total_tax = max(0, base_tax) + surcharge
+
+        metadata = CalculationMetadata("종합부동산세")
+        metadata.set_legal_basis("2024-06-01")
+        metadata.add_source("종합부동산세율표", "하드코딩")
+        metadata.add_source("다주택 중과세율", "하드코딩")
+
+        result = {
             "total_property_value_krw": total_property_value_krw,
             "deduction_krw": deduction_krw,
             "taxable_krw": taxable,
-            "tax_krw": max(0, tax),
-            "effective_rate_pct": round(max(0, tax) / total_property_value_krw * 100, 3),
+            "house_count": house_count,
+            "base_tax_krw": max(0, base_tax),
+            "surcharge_krw": surcharge,
+            "tax_krw": total_tax,
+            "effective_rate_pct": round(total_tax / total_property_value_krw * 100, 3),
         }
+        result["_metadata"] = metadata.to_dict()
+        return result
 
     def monte_carlo_tax_simulation(
         self,

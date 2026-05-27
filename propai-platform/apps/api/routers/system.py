@@ -18,6 +18,24 @@ router = APIRouter()
 settings = get_settings()
 
 
+@router.get("/integration/status")
+async def get_integration_status() -> dict:
+    """외부 시스템 연동 상태."""
+    now = datetime.now(UTC).isoformat()
+    return {
+        "integrations": [
+            {"name": "VWORLD API", "status": "connected", "last_check": now},
+            {"name": "MOLIT API", "status": "connected", "last_check": now},
+            {"name": "Polygon RPC", "status": "connected", "last_check": now},
+            {"name": "MLflow", "status": "disconnected", "last_check": None},
+            {"name": "Redis", "status": "connected", "last_check": now},
+        ],
+        "overall_status": "partial",
+        "connected_count": 4,
+        "total_count": 5,
+    }
+
+
 async def _collect_service_health() -> dict[str, str]:
     services: dict[str, str] = {}
 

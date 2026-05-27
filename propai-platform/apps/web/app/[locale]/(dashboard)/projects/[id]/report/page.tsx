@@ -1,5 +1,7 @@
 import { ModulePlaceholder } from "@/components/layout/ModulePlaceholder";
 import { ProjectReportWorkspaceClient } from "@/components/projects/ProjectReportWorkspaceClient";
+import { ReportPdfDownload } from "@/components/projects/ReportPdfDownload";
+import { BankReadyReportBuilder } from "@/components/report/BankReadyReportBuilder";
 import { getDictionary } from "@/i18n/get-dictionary";
 import { isValidLocale, type Locale } from "@/i18n/config";
 
@@ -33,6 +35,15 @@ export default async function ReportPage({ params }: ReportPageProps) {
         localeLabel={locale}
         items={dictionary.modulePlaceholders["report"].items}
       />
+
+      {/* Innovation 4: Bank-Ready Report Engine */}
+      <BankReadyReportBuilder />
+
+      <div className="flex justify-end">
+        <div className="w-full max-w-xs">
+          <ReportPdfDownload projectId={id} />
+        </div>
+      </div>
       <ProjectReportWorkspaceClient locale={locale as Locale} projectId={id} />
     </div>
   );

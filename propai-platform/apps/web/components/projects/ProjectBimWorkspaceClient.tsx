@@ -68,7 +68,7 @@ type Labels = {
   retryAction: string;
 };
 
-const COMMON_LABELS: Labels = {
+const EN_LABELS: Labels = {
   heroTitle: "Project BIM live workspace",
   heroDescription:
     "Generate BIM quantities and load Three.js geometry summaries for the current project route through the live BIM APIs.",
@@ -103,10 +103,45 @@ const COMMON_LABELS: Labels = {
   retryAction: "Retry",
 };
 
+const KO_LABELS: Labels = {
+  heroTitle: "프로젝트 BIM 라이브 워크스페이스",
+  heroDescription:
+    "현재 프로젝트의 BIM 물량을 산출하고 3D 형상 요약을 불러옵니다.",
+  heroHint:
+    "프로젝트 ID를 기반으로 IFC 생성 및 Three.js 형상 데이터를 조회합니다.",
+  tokenHint:
+    "라이브 API 호출에는 인증 토큰이 필요합니다.",
+  authError: "라이브 워크스페이스 호출에 API 인증이 필요합니다.",
+  contextTitle: "프로젝트 컨텍스트",
+  contextHint:
+    "프로젝트 메타데이터가 라이브 API에서 로드되어 BIM 생성 설정에 자동 반영됩니다.",
+  projectFallback: "라이브 API에서 프로젝트 메타데이터를 불러올 수 없습니다.",
+  generateTitle: "BIM 생성 입력",
+  totalAreaLabel: "총면적 (㎡)",
+  floorsLabel: "층수",
+  structureLabel: "구조 유형",
+  generateAction: "BIM 물량 산출",
+  resultTitle: "BIM 물량 산출 결과",
+  totalVolumeLabel: "총 체적",
+  elementCountLabel: "요소 수",
+  ifcVersionLabel: "IFC 버전",
+  geometryTitle: "Three.js 형상 요약",
+  geometryFormatLabel: "형식",
+  geometryTypesLabel: "형상 유형",
+  missingAreaError: "양수의 면적 값이 필요합니다.",
+  missingFloorsError: "양수의 층수 값이 필요합니다.",
+  placeholder:
+    "BIM 물량을 산출하여 이 프로젝트 경로의 BIM 및 형상 응답 체인을 검증하세요.",
+  projectLoadErrorTitle: "프로젝트 메타데이터 조회 불가",
+  projectLoadErrorDetail:
+    "프로젝트 정보를 불러오지 못했습니다. 재시도하여 BIM 자동 입력을 복원하세요.",
+  retryAction: "재시도",
+};
+
 const LABELS: Record<Locale, Labels> = {
-  ko: COMMON_LABELS,
-  en: COMMON_LABELS,
-  "zh-CN": COMMON_LABELS,
+  ko: KO_LABELS,
+  en: EN_LABELS,
+  "zh-CN": KO_LABELS,
 };
 
 const STRUCTURE_OPTIONS = [

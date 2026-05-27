@@ -83,7 +83,7 @@ type Labels = {
   retryAction: string;
 };
 
-const COMMON_LABELS: Labels = {
+const EN_LABELS: Labels = {
   heroTitle: "Project blockchain live workspace",
   heroDescription:
     "Create and inspect escrow state for the current project route through the live blockchain API.",
@@ -130,10 +130,57 @@ const COMMON_LABELS: Labels = {
   retryAction: "Retry",
 };
 
+const KO_LABELS: Labels = {
+  heroTitle: "프로젝트 블록체인 라이브 워크스페이스",
+  heroDescription:
+    "에스크로 거래를 생성하고 관리합니다.",
+  heroHint:
+    "현재 프로젝트 ID를 기반으로 다음 에스크로 ID를 조회하고, 에스크로를 생성하며, 온체인 상태를 확인합니다.",
+  tokenHint:
+    "라이브 API 호출에는 인증 토큰이 필요합니다.",
+  authError: "라이브 워크스페이스 호출에 API 인증이 필요합니다.",
+  contextTitle: "프로젝트 컨텍스트",
+  contextHint:
+    "이 프로젝트 경로는 에스크로 워크스페이스(다음 ID, 에스크로 생성, 상태 조회)에 바인딩됩니다.",
+  createTitle: "에스크로 생성",
+  payerLabel: "납부자 주소",
+  payeeLabel: "수취인 주소",
+  subcontractorLabel: "하도급자 주소",
+  expiresAtLabel: "만료 Unix 타임스탬프",
+  conditionHashLabel: "조건 해시",
+  createAction: "에스크로 생성",
+  nextEscrowTitle: "다음 에스크로 ID",
+  nextEscrowLabel: "사용 가능한 온체인 ID",
+  statusLookupTitle: "온체인 상태 조회",
+  statusLookupLabel: "온체인 에스크로 ID",
+  loadStatusAction: "에스크로 상태 조회",
+  escrowResultTitle: "생성된 에스크로 기록",
+  statusLabel: "상태",
+  onChainIdLabel: "온체인 에스크로 ID",
+  txHashLabel: "트랜잭션 해시",
+  contractLabel: "컨트랙트 주소",
+  buyerLabel: "매수인 주소",
+  sellerLabel: "매도인 주소",
+  onChainStatusTitle: "온체인 상태",
+  totalAmountLabel: "총 금액 (wei)",
+  remainingAmountLabel: "잔여 금액 (wei)",
+  missingConditionHashError: "조건 해시를 입력해 주세요.",
+  placeholder:
+    "에스크로를 생성하거나 조회하여 이 프로젝트 경로의 블록체인 응답 체인을 검증하세요.",
+  projectFallback: "라이브 API에서 프로젝트 메타데이터를 불러올 수 없습니다.",
+  projectLoadErrorTitle: "프로젝트 메타데이터 조회 불가",
+  projectLoadErrorDetail:
+    "프로젝트 정보를 불러오지 못했습니다. 재시도하여 에스크로 경로 메타데이터를 복원하세요.",
+  nextEscrowLoadErrorTitle: "다음 에스크로 ID 조회 불가",
+  nextEscrowLoadErrorDetail:
+    "블록체인 서비스에서 다음 온체인 에스크로 ID를 반환하지 못했습니다. 새 에스크로 생성 전 재시도하세요.",
+  retryAction: "재시도",
+};
+
 const LABELS: Record<Locale, Labels> = {
-  ko: COMMON_LABELS,
-  en: COMMON_LABELS,
-  "zh-CN": COMMON_LABELS,
+  ko: KO_LABELS,
+  en: EN_LABELS,
+  "zh-CN": KO_LABELS,
 };
 
 function formatDate(locale: string, value: string) {

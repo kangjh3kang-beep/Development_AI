@@ -3,49 +3,17 @@
 import { useParams } from "next/navigation";
 import { motion } from "framer-motion";
 import { CadEditor } from "@/components/cad/CadEditor";
-import { ModulePlaceholder } from "@/components/layout/ModulePlaceholder";
-import { isValidLocale, type Locale } from "@/i18n/config";
-import { useDictionary } from "@/hooks/use-dictionary";
+import { isValidLocale } from "@/i18n/config";
 
 export default function CadPage() {
   const { locale, id } = useParams() as { locale: string; id: string };
-  const { dictionary, isLoading } = useDictionary(locale as Locale);
-
-  if (isLoading || !dictionary) {
-    return (
-      <div className="flex h-[60vh] items-center justify-center">
-        <div className="h-12 w-12 animate-spin rounded-full border-4 border-teal-500 border-t-transparent shadow-[0_0_20px_rgba(20,184,166,0.3)]" />
-      </div>
-    );
-  }
 
   if (!isValidLocale(locale)) {
     return null;
   }
 
-  const runtimeMode =
-    process.env.NEXT_PUBLIC_USE_MOCKS === "false"
-      ? dictionary.workspace.modeLive
-      : dictionary.workspace.modeMock;
-
-  const t = dictionary.modulePlaceholders["cad"];
-
   return (
     <div className="flex flex-col gap-12 pb-20">
-      <motion.div
-        initial={{ opacity: 0, y: 30 }}
-        animate={{ opacity: 1, y: 0 }}
-      >
-        <ModulePlaceholder
-          eyebrow={t.eyebrow}
-          title={t.title}
-          description={t.description}
-          statusLabel={runtimeMode}
-          localeLabel={locale}
-          items={t.items}
-        />
-      </motion.div>
-
       {/* ── Design Synergy Multi-layer Insight ── */}
       <motion.div 
         initial={{ opacity: 0, scale: 0.98 }}
@@ -73,7 +41,7 @@ export default function CadPage() {
         </div>
       </motion.div>
 
-      <motion.div 
+      <motion.div
         initial={{ opacity: 0, y: 40 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.4 }}
@@ -81,10 +49,15 @@ export default function CadPage() {
       >
         <div className="mb-6 flex items-center justify-between px-8">
             <h4 className="text-[10px] font-[1000] text-[var(--text-hint)] uppercase tracking-[0.5em]">High-Fidelity CAD Design Studio</h4>
-            <div className="flex gap-2">
-                <div className="h-2 w-2 rounded-full bg-red-500/30 group-hover:bg-red-500 transition-colors" />
-                <div className="h-2 w-2 rounded-full bg-yellow-500/30 group-hover:bg-yellow-500 transition-colors shadow-[var(--shadow-glow)] shadow-transparent group-hover:shadow-[var(--accent-strong)]/50" />
-                <div className="h-2 w-2 rounded-full bg-green-500/30 group-hover:bg-green-500 transition-colors shadow-[0_0_10px_#22c55e] shadow-transparent group-hover:shadow-green-500/50" />
+            <div className="flex items-center gap-4">
+              <span className="text-[9px] font-bold text-[var(--text-hint)] uppercase tracking-widest">
+                Stage 2 — Enhanced
+              </span>
+              <div className="flex gap-2">
+                  <div className="h-2 w-2 rounded-full bg-red-500/30 group-hover:bg-red-500 transition-colors" />
+                  <div className="h-2 w-2 rounded-full bg-yellow-500/30 group-hover:bg-yellow-500 transition-colors shadow-[var(--shadow-glow)] shadow-transparent group-hover:shadow-[var(--accent-strong)]/50" />
+                  <div className="h-2 w-2 rounded-full bg-green-500/30 group-hover:bg-green-500 transition-colors shadow-[0_0_10px_#22c55e] shadow-transparent group-hover:shadow-green-500/50" />
+              </div>
             </div>
         </div>
         <CadEditor projectId={id} />

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useFeasibilityV2Store } from "@/store/use-feasibility-v2-store";
 import { ProjectTypeSelector } from "./ProjectTypeSelector";
@@ -10,6 +10,7 @@ import { MonteCarloPanel } from "./MonteCarloPanel";
 import { VersionHistoryView } from "./VersionHistoryView";
 import { AIRecommendationPanel } from "./AIRecommendationPanel";
 import { ExcelExportButton } from "./ExcelExportButton";
+import { AutoRecommendPanel } from "./AutoRecommendPanel";
 
 interface Props {
   projectId: string;
@@ -33,6 +34,8 @@ export function FeasibilityEditorV2({ projectId }: Props) {
     fetchCommitLog,
   } = useFeasibilityV2Store();
 
+  const [showAutoRecommend, setShowAutoRecommend] = useState(false);
+
   useEffect(() => {
     fetchModules();
     fetchCommitLog(projectId);
@@ -40,6 +43,46 @@ export function FeasibilityEditorV2({ projectId }: Props) {
 
   return (
     <div className="flex flex-col gap-10">
+      {/* ── Auto Recommend CTA ── */}
+      <div className="flex items-center gap-4 px-2">
+        <button
+          onClick={() => setShowAutoRecommend(true)}
+          className="flex items-center gap-3 rounded-2xl border border-[var(--accent-strong)]/30 bg-[var(--accent-soft)] px-6 py-3 text-sm font-[900] text-[var(--accent-strong)] shadow-[var(--shadow-sm)] transition-all hover:bg-[var(--accent-strong)] hover:text-white hover:shadow-[var(--shadow-glow)]"
+        >
+          <span>{"\uD83D\uDD0D"}</span>
+          최적 모델 자동 추천
+        </button>
+        <span className="text-xs text-[var(--text-hint)]">
+          AI가 12개 사업모델을 분석하여 최적 Top 3를 추천합니다
+        </span>
+      </div>
+
+      {/* ── Auto Recommend Modal Overlay ── */}
+      <AnimatePresence>
+        {showAutoRecommend && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 overflow-y-auto bg-black/60 backdrop-blur-sm"
+            onClick={(e) => {
+              if (e.target === e.currentTarget) setShowAutoRecommend(false);
+            }}
+          >
+            <div className="flex min-h-full items-start justify-center p-6 pt-20">
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95, y: 20 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.95, y: 20 }}
+                className="w-full max-w-5xl rounded-[3rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-10 shadow-2xl"
+              >
+                <AutoRecommendPanel isModal onClose={() => setShowAutoRecommend(false)} />
+              </motion.div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* ── High-Fidelity Tab Navigation ── */}
       <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between px-2">
         <div className="flex items-center gap-2 rounded-[2.5rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-1.5 backdrop-blur-xl shadow-[var(--shadow-xl)]">

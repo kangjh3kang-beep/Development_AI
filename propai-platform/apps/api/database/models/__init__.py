@@ -119,6 +119,9 @@ from apps.api.database.models.low_carbon_alternative import LowCarbonAlternative
 from apps.api.database.models.reference_image import ReferenceImage
 from apps.api.database.models.stakeholder import Stakeholder
 
+# VCS (수지분석 버전관리)
+from apps.api.database.models.feasibility_vcs import FeasibilityCommit, FeasibilityBranch, FeasibilityTag
+
 __all__ = [
     "Base",
     "TenantMixin",
@@ -232,4 +235,8 @@ __all__ = [
     "DevelopmentWorkflow",
     "FloorPlan",
     "CadElement",
+    # VCS (수지분석 버전관리)
+    "FeasibilityCommit",
+    "FeasibilityBranch",
+    "FeasibilityTag",
 ]

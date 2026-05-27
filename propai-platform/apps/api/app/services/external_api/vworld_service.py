@@ -1,9 +1,18 @@
+import math
+
 import httpx
 from typing import Optional, List, Dict, Any
 from app.core.config import settings
 import structlog
 
 logger = structlog.get_logger()
+
+def _wgs84_area_to_sqm(area_deg2: float, center_lat: float) -> float:
+    """WGS84 도(degree) 단위 면적을 m² 단위로 변환."""
+    lat_m = 111_320  # 위도 1도 ≈ 111,320m (거의 일정)
+    lon_m = 111_320 * math.cos(math.radians(center_lat))  # 경도는 위도에 따라 변함
+    return area_deg2 * lat_m * lon_m
+
 
 class VWorldService:
     """VWORLD API (국토지리정보원) 연동 서비스"""
@@ -47,9 +56,10 @@ class VWorldService:
         from shapely.ops import unary_union
         shapes = [shape(g) for g in geometries if g]
         merged = unary_union(shapes)
+        center_lat = merged.centroid.y
         return {
             "merged_geometry": mapping(merged),
-            "total_area_sqm": merged.area * 111319.9 ** 2,
+            "total_area_sqm": _wgs84_area_to_sqm(merged.area, center_lat),
             "parcel_count": len(pnu_codes)
         }
 

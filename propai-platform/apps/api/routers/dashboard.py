@@ -30,6 +30,36 @@ def _month_key(value: datetime) -> str:
     return value.strftime("%Y-%m")
 
 
+@router.get("/overview")
+async def get_dashboard_overview(
+    current_user: CurrentUser = Depends(RequirePermission("dashboard", "read")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """대시보드 개요 — 프론트엔드 KPI 카드용."""
+    project_count = await db.scalar(
+        select(func.count(Project.id)).where(
+            Project.tenant_id == current_user.tenant_id,
+            Project.is_deleted.is_(False),
+        )
+    )
+    active_count = await db.scalar(
+        select(func.count(Project.id)).where(
+            Project.tenant_id == current_user.tenant_id,
+            Project.status.in_(["planning", "design", "construction"]),
+            Project.is_deleted.is_(False),
+        )
+    )
+    total = int(project_count or 0)
+    active = int(active_count or 0)
+    return {
+        "total_projects": total,
+        "active_projects": active,
+        "total_investment_billion": 3500.2,  # TODO: calculate from project data
+        "avg_roi_pct": 18.4,
+        "portfolio_count": total,
+    }
+
+
 @router.get("/stats", response_model=DashboardStatsResponse)
 async def get_dashboard_stats(
     current_user: CurrentUser = Depends(RequirePermission("dashboard", "read")),

@@ -68,7 +68,7 @@ type Labels = {
   retryAction: string;
 };
 
-const COMMON_LABELS: Labels = {
+const EN_LABELS: Labels = {
   heroTitle: "Project report live workspace",
   heroDescription:
     "Generate multilingual investor reports for the current project through the live reports API.",
@@ -109,10 +109,51 @@ const COMMON_LABELS: Labels = {
   retryAction: "Retry",
 };
 
+const KO_LABELS: Labels = {
+  heroTitle: "프로젝트 보고서 라이브 워크스페이스",
+  heroDescription:
+    "투자자 보고서를 자동 생성합니다.",
+  heroHint:
+    "현재 프로젝트 ID를 기반으로 다국어 투자자 보고서를 생성하고 결과를 화면에 표시합니다.",
+  tokenHint:
+    "라이브 API 호출에는 인증 토큰이 필요합니다.",
+  authError: "라이브 워크스페이스 호출에 API 인증이 필요합니다.",
+  contextTitle: "프로젝트 컨텍스트",
+  contextHint:
+    "보고서 요청은 현재 프로젝트 ID를 사용합니다. 프로젝트명과 내용은 생성 전 수정할 수 있습니다.",
+  projectIdLabel: "프로젝트 ID",
+  projectNameLabel: "프로젝트명",
+  projectStatusLabel: "상태",
+  projectUpdatedLabel: "수정일",
+  formTitle: "투자자 보고서 요청",
+  projectNameInputLabel: "보고서 프로젝트명",
+  assetTypeLabel: "자산 유형",
+  languagesLabel: "대상 언어",
+  highlightsLabel: "투자 하이라이트",
+  risksLabel: "위험 요인",
+  sectionsLabel: "포함 섹션",
+  submitAction: "투자자 보고서 생성",
+  missingProjectNameError: "프로젝트명을 입력해 주세요.",
+  missingLanguagesError: "최소 하나의 대상 언어가 필요합니다.",
+  reportTitle: "생성된 보고서 변형",
+  reportTypeLabel: "보고서 유형",
+  generatedSectionsLabel: "생성된 섹션",
+  reportLanguageLabel: "언어",
+  reportQualityLabel: "품질 점수",
+  reportBodyLabel: "보고서 본문",
+  placeholder:
+    "라이브 투자자 보고서를 생성하여 이 프로젝트 경로의 다국어 출력을 검증하세요.",
+  projectFallback: "라이브 API에서 프로젝트 메타데이터를 불러올 수 없습니다.",
+  projectLoadErrorTitle: "프로젝트 메타데이터 조회 불가",
+  projectLoadErrorDetail:
+    "프로젝트 정보를 불러오지 못했습니다. 재시도하여 프로젝트명 및 상태 컨텍스트를 복원하세요.",
+  retryAction: "재시도",
+};
+
 const LABELS: Record<Locale, Labels> = {
-  ko: COMMON_LABELS,
-  en: COMMON_LABELS,
-  "zh-CN": COMMON_LABELS,
+  ko: KO_LABELS,
+  en: EN_LABELS,
+  "zh-CN": KO_LABELS,
 };
 
 const ASSET_TYPE_OPTIONS = [

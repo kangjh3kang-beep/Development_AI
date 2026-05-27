@@ -1,4 +1,5 @@
 import { ApprovalOperationsWorkspaceClient } from "@/components/agent/ApprovalOperationsWorkspaceClient";
+import { ApprovalsWorkspaceClient } from "@/components/operations/ApprovalsWorkspaceClient";
 import { OperationsRouteHero } from "@/components/layout/OperationsRouteHero";
 import { getDictionary } from "@/i18n/get-dictionary";
 import { isValidLocale, type Locale } from "@/i18n/config";
@@ -37,6 +38,7 @@ export default async function ApprovalsPage({ params }: ApprovalsPageProps) {
         ]}
       />
       <ApprovalOperationsWorkspaceClient locale={locale as Locale} />
+      <ApprovalsWorkspaceClient locale={locale as Locale} />
     </div>
   );
 }

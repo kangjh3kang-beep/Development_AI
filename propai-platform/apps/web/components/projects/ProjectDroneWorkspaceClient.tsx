@@ -59,7 +59,7 @@ type Labels = {
   retryAction: string;
 };
 
-const COMMON_LABELS: Labels = {
+const EN_LABELS: Labels = {
   heroTitle: "Project drone live workspace",
   heroDescription:
     "Run persisted drone inspection for the current project path through the live inspection API.",
@@ -88,10 +88,39 @@ const COMMON_LABELS: Labels = {
   retryAction: "Retry",
 };
 
+const KO_LABELS: Labels = {
+  heroTitle: "프로젝트 드론 점검 라이브 워크스페이스",
+  heroDescription:
+    "드론 촬영 이미지를 업로드하여 하자를 AI로 자동 탐지합니다.",
+  heroHint:
+    "현재 프로젝트 ID를 기반으로 이미지 URL을 드론 점검 API에 제출합니다.",
+  tokenHint:
+    "라이브 API 호출에는 인증 토큰이 필요합니다.",
+  authError: "라이브 워크스페이스 호출에 API 인증이 필요합니다.",
+  contextTitle: "프로젝트 컨텍스트",
+  contextHint:
+    "점검은 현재 프로젝트 ID에 바인딩됩니다. 실제 이미지 URL과 선택적 비행 ID를 입력하세요.",
+  inspectTitle: "드론 점검 입력",
+  imageUrlsLabel: "이미지 URL (줄바꿈 또는 쉼표로 구분)",
+  flightIdLabel: "비행 ID",
+  inspectAction: "드론 분석 실행",
+  missingImagesError: "최소 하나의 이미지 URL이 필요합니다.",
+  projectFallback: "라이브 API에서 프로젝트 메타데이터를 불러올 수 없습니다.",
+  selectedProjectLabel: "현재 프로젝트",
+  imagesProcessedLabel: "처리된 이미지 수",
+  defectsFoundLabel: "탐지된 하자 수",
+  severityLabel: "심각도 요약",
+  detectedDefectsLabel: "탐지된 하자 목록",
+  projectLoadErrorTitle: "프로젝트 메타데이터 조회 불가",
+  projectLoadErrorDetail:
+    "프로젝트 정보를 불러오지 못했습니다. 재시도하여 점검 대상 메타데이터를 복원하세요.",
+  retryAction: "재시도",
+};
+
 const LABELS: Record<Locale, Labels> = {
-  ko: COMMON_LABELS,
-  en: COMMON_LABELS,
-  "zh-CN": COMMON_LABELS,
+  ko: KO_LABELS,
+  en: EN_LABELS,
+  "zh-CN": KO_LABELS,
 };
 
 function formatDate(locale: string, value: string) {

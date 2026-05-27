@@ -68,6 +68,20 @@
   --tracking-wider: 0.1em;
   --tracking-widest: 0.25em;
 
+  /* ── Status Colors ── */
+  --status-success: #10b981;
+  --status-warning: #f59e0b;
+  --status-error: #ef4444;
+  --status-info: #3b82f6;
+
+  /* ── Chart Palette (6 colors, accessible) ── */
+  --chart-1: #14b8a6;
+  --chart-2: #6366f1;
+  --chart-3: #f59e0b;
+  --chart-4: #ec4899;
+  --chart-5: #8b5cf6;
+  --chart-6: #06b6d4;
+
   /* ── Transition ── */
   --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
   --duration-fast: 150ms;
@@ -116,6 +130,20 @@
   /* Cyber Glows */
   --shadow-glow: 0 0 24px rgba(45, 212, 191, 0.4);
   --shadow-glow-strong: 0 0 32px rgba(45, 212, 191, 0.6), 0 0 12px rgba(45, 212, 191, 0.8);
+
+  /* ── Status Colors (Dark) ── */
+  --status-success: #34d399;
+  --status-warning: #fbbf24;
+  --status-error: #f87171;
+  --status-info: #60a5fa;
+
+  /* ── Chart Palette (Dark, accessible) ── */
+  --chart-1: #2dd4bf;
+  --chart-2: #818cf8;
+  --chart-3: #fbbf24;
+  --chart-4: #f472b6;
+  --chart-5: #a78bfa;
+  --chart-6: #22d3ee;
 
   /* ── Glass Effect (Cyber Dark) ── */
   --glass-bg: rgba(6, 11, 20, 0.75);

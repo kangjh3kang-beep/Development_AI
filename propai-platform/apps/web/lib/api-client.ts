@@ -3,7 +3,7 @@ import { resolveMockRequest } from "@/mocks/handlers";
 const apiBaseUrl =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "/api/proxy";
 
-const useMocksByDefault = process.env.NEXT_PUBLIC_USE_MOCKS !== "false";
+const useMocksByDefault = process.env.NEXT_PUBLIC_USE_MOCKS === "true";
 const publicAccessToken = process.env.NEXT_PUBLIC_API_ACCESS_TOKEN?.trim() ?? "";
 
 export class ApiClientError extends Error {

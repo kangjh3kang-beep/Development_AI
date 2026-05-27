@@ -1,7 +1,8 @@
 import Link from "next/link";
-import { DashboardClientPanel } from "@/components/dashboard/DashboardClientPanel";
-import { OverviewCard } from "@/components/layout/OverviewCard";
-import { PwaStatusCard } from "@/components/pwa/PwaStatusCard";
+import { HeroGridBackground } from "@/components/dashboard/DashboardDynamicElements";
+import { DashboardKpiLoader } from "@/components/dashboard/DashboardKpiLoader";
+import { DashboardProjectLoader } from "@/components/dashboard/DashboardProjectLoader";
+import { OnboardingWizard } from "@/components/onboarding/OnboardingWizard";
 import { getDictionary } from "@/i18n/get-dictionary";
 import { isValidLocale, type Locale } from "@/i18n/config";
 
@@ -46,13 +47,16 @@ export default async function DashboardPage({ params }: DashboardPageProps) {
 
   return (
     <div className="flex flex-col gap-10 pb-20">
+      {/* ── 온보딩 위자드 (최초 방문 시에만 표시) ── */}
+      <OnboardingWizard />
+
       {/* ── 프리미엄 히어로 섹션: AI 커맨드 센터 ── */}
-      <section className="relative min-h-[480px] overflow-hidden rounded-[3rem] border border-[var(--line-strong)] bg-[var(--surface-soft)] p-12 lg:p-20 shadow-[var(--shadow-2xl)] transition-all group backdrop-blur-2xl">
+      <section className="relative min-h-[320px] sm:min-h-[400px] lg:min-h-[480px] overflow-hidden rounded-2xl sm:rounded-[2rem] lg:rounded-[3rem] border border-[var(--line-strong)] bg-[var(--surface-soft)] p-6 sm:p-10 lg:p-20 shadow-[var(--shadow-2xl)] transition-all group backdrop-blur-2xl">
         {/* 애니메이션 배경 요소 (Cyber Glows) */}
         <div className="absolute -right-20 -top-20 h-[500px] w-[500px] rounded-full bg-[var(--accent-strong)]/10 blur-[120px] transition-all duration-[3000ms] group-hover:scale-150 group-hover:bg-[var(--accent-strong)]/20" />
         <div className="absolute -bottom-40 left-1/4 h-[400px] w-[400px] rounded-full bg-indigo-500/10 blur-[100px] animate-float opacity-70" />
-        {/* 로컬 CSS 그리드 패턴 (사이버틱한 공간감) */}
-        <div className="absolute inset-0 bg-[linear-gradient(var(--line-strong)_1px,transparent_1px),linear-gradient(90deg,var(--line-strong)_1px,transparent_1px)] bg-[size:40px_40px] opacity-20 group-hover:opacity-40 transition-opacity duration-1000" />
+        {/* 그리드 배경 패턴 (사이버틱한 공간감) */}
+        <HeroGridBackground />
 
         <div className="relative z-10 flex flex-col justify-between h-full gap-12 lg:flex-row lg:items-end">
           <div className="max-w-4xl space-y-10">
@@ -63,12 +67,12 @@ export default async function DashboardPage({ params }: DashboardPageProps) {
               </span>
             </div>
             
-            <h1 className="text-5xl font-[900] tracking-tighter text-[var(--text-primary)] sm:text-6xl lg:text-7xl leading-[0.9]">
+            <h1 className="text-3xl font-[900] tracking-tighter text-[var(--text-primary)] sm:text-5xl md:text-6xl lg:text-7xl leading-[0.9]">
                <span className="bg-gradient-to-r from-[var(--text-primary)] to-[var(--accent-strong)] bg-clip-text text-transparent">{dictionary.meta.siteName}</span>
                <span className="text-[var(--accent-strong)]">.</span>
             </h1>
 
-            <p className="max-w-xl text-lg font-medium leading-relaxed text-[var(--text-secondary)] sm:text-xl tracking-tight">
+            <p className="max-w-xl text-base font-medium leading-relaxed text-[var(--text-secondary)] sm:text-lg lg:text-xl tracking-tight">
               &quot;{(dictionary.dashboard as any).welcome}&quot;
             </p>
           </div>
@@ -76,7 +80,7 @@ export default async function DashboardPage({ params }: DashboardPageProps) {
           <div className="flex flex-col gap-4 sm:flex-row lg:mb-4 shrink-0">
             <Link
               href={`/${locale}/projects/new`}
-              className="group/btn flex h-16 items-center justify-center gap-5 rounded-[2rem] bg-gradient-to-br from-[var(--accent-strong)] to-teal-700 px-10 text-lg font-bold text-white shadow-[var(--shadow-glow)] transition-all hover:scale-[1.05] active:scale-[0.95] shrink-0 whitespace-nowrap"
+              className="group/btn flex h-16 items-center justify-center gap-5 rounded-[2rem] bg-gradient-to-br from-[var(--accent-strong)] to-[var(--accent)] px-10 text-lg font-bold text-white shadow-[var(--shadow-glow)] transition-all hover:scale-[1.05] active:scale-[0.95] shrink-0 whitespace-nowrap"
             >
               <span>프로젝트 생성</span>
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="transition-transform group-hover/btn:translate-x-1"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
@@ -91,28 +95,8 @@ export default async function DashboardPage({ params }: DashboardPageProps) {
         </div>
       </section>
 
-      {/* ── KPI 그리드: 실시간 인텔리전스 ── */}
-      <div className="grid gap-8 md:grid-cols-3">
-        {[
-          { label: "전체 포트폴리오 자산", value: "3,500.2", unit: "B", trend: "+12.5%", sub: "Total Assets Under Management", color: "text-teal-600 dark:text-teal-400", bg: "bg-teal-500/5 dark:bg-teal-500/10", border: "border-teal-500/20" },
-          { label: "평균 프로젝트 ROI", value: "18.4", unit: "%", trend: "+2.1%", sub: "12개 주요 프로젝트 기준", color: "text-blue-600 dark:text-blue-400", bg: "bg-blue-500/5 dark:bg-blue-500/10", border: "border-blue-500/20" },
-          { label: "탄소 배출 절감률", value: "24.9", unit: "%", trend: "-1.5%", sub: "전과정평가 (LCA) 기반", color: "text-emerald-600 dark:text-emerald-400", bg: "bg-emerald-500/5 dark:bg-emerald-500/10", border: "border-emerald-500/20" },
-        ].map((item, i) => (
-          <div key={i} className={`group relative overflow-hidden rounded-[2.5rem] border ${item.border} ${item.bg} p-8 transition-all hover:border-[var(--accent-strong)] hover:scale-[1.02] shadow-[var(--shadow-lg)] hover:shadow-[var(--shadow-glow)] backdrop-blur-md`}>
-            {/* Cyber Hover Glow */}
-            <div className="absolute inset-0 bg-gradient-to-br from-white/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
-            <div className="relative z-10 flex items-center justify-between">
-              <span className="text-xs font-bold tracking-[0.1em] text-[var(--text-tertiary)]">{item.label}</span>
-              <span className={`text-[11px] font-bold ${item.color} px-2.5 py-1 rounded-full bg-white/10 dark:bg-black/20`}>{item.trend}</span>
-            </div>
-            <div className="mt-6 flex items-baseline gap-2">
-              <h3 className="text-5xl font-[900] tracking-tighter text-[var(--text-primary)]">{item.value}</h3>
-              <span className="text-xl font-semibold text-[var(--text-tertiary)]">{item.unit}</span>
-            </div>
-            <p className="mt-4 text-[11px] font-semibold text-[var(--text-hint)] uppercase tracking-wider">{item.sub}</p>
-          </div>
-        ))}
-      </div>
+      {/* ── KPI 그리드: 실시간 API 연동 (fallback 포함) ── */}
+      <DashboardKpiLoader />
 
       {/* ── 대시보드 콘텐츠 레이아웃 ── */}
       <div className="grid gap-12 lg:grid-cols-[1fr_420px]">
@@ -124,34 +108,7 @@ export default async function DashboardPage({ params }: DashboardPageProps) {
               <Link href={`/${locale}/projects`} className="text-xs font-bold text-[var(--accent-strong)] tracking-wider hover:underline underline-offset-8">전체 보기</Link>
            </div>
 
-           <div className="grid gap-6 sm:grid-cols-2">
-               {([
-                 { id: "demo-gangnam", name: "강남 게이트웨이 복합시설", status: "AI 설계 단계", value: "12,940", tag: "ULTRA", progress: 68 },
-                 { id: "demo-songdo", name: "송도 이노베이션 루프", status: "사업 타당성 검토", value: "8,210", tag: "CORE", progress: 42 },
-               ] as const).map((proj) => (
-                 <Link href={`/${locale}/projects/${proj.id}`} key={proj.id} className="group relative rounded-[2rem] border border-[var(--line-strong)] bg-[var(--surface-soft)] p-8 transition-all hover:border-[var(--accent-strong)] shadow-[var(--shadow-md)] hover:shadow-[var(--shadow-glow)] backdrop-blur-lg overflow-hidden">
-                    <div className="absolute inset-0 bg-[var(--accent-soft)] opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
-                    <div className="relative z-10 flex items-center justify-between mb-6">
-                       <span className="rounded-lg bg-[var(--surface-muted)] px-3 py-1 text-[11px] font-bold text-[var(--text-tertiary)]">{proj.tag}</span>
-                       <div className="h-8 w-8 rounded-full border border-[var(--line)] flex items-center justify-center transition-all group-hover:bg-[var(--accent)] group-hover:border-[var(--accent)]">
-                         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--text-primary)] group-hover:text-white transition-colors"><path d="m9 18 6-6-6-6"/></svg>
-                       </div>
-                    </div>
-                    <h4 className="text-lg font-bold text-[var(--text-primary)] leading-tight mb-2">{proj.name}</h4>
-                    <p className="text-[11px] font-bold text-[var(--accent-strong)] tracking-wider mb-8">{proj.status}</p>
-                    
-                    <div className="space-y-2">
-                       <div className="flex justify-between text-[11px] font-semibold text-[var(--text-hint)]">
-                         <span>전체 진행률</span>
-                         <span>{proj.progress}%</span>
-                       </div>
-                       <div className="h-1.5 w-full rounded-full bg-[var(--line)]">
-                         <div className="h-full rounded-full bg-gradient-to-r from-[var(--accent)] to-blue-500 transition-all duration-1000 group-hover:w-full" style={{ width: `${proj.progress}%` }} />
-                       </div>
-                    </div>
-                 </Link>
-               ))}
-           </div>
+           <DashboardProjectLoader locale={locale} />
 
            {/* AI 포트폴리오 지능형 지도 */}
             <div className="relative h-[300px] w-full overflow-hidden rounded-[2rem] border border-[var(--line)] bg-[var(--surface-soft)] shadow-[var(--shadow-inner)]">
@@ -206,7 +163,7 @@ export default async function DashboardPage({ params }: DashboardPageProps) {
            </div>
 
            {/* 사용자 온보딩 카드 */}
-           <div className="rounded-[2rem] bg-gradient-to-br from-teal-500/10 to-blue-500/10 p-1 border border-[var(--line)] group overflow-hidden">
+           <div className="rounded-[2rem] bg-gradient-to-br from-[var(--accent-soft)] to-[var(--status-info)]/10 p-1 border border-[var(--line)] group overflow-hidden">
               <div className="rounded-[2rem] bg-[var(--surface)] p-10 space-y-6 transition-all group-hover:bg-[var(--surface-strong)]">
                  <h4 className="text-lg font-bold text-[var(--text-primary)] leading-tight tracking-tight">전문 가이드가<br/>필요하신가요?</h4>
                  <p className="text-sm font-medium text-[var(--text-secondary)] leading-relaxed">

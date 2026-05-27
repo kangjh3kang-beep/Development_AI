@@ -3,14 +3,14 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { apiClient } from "@/lib/api-client";
-import { getDictionary } from "@/i18n/get-dictionary";
-import type { Locale } from "@/i18n/config";
+import { ProjectPermitWorkspaceClient } from "@/components/projects/ProjectPermitWorkspaceClient";
+import { isValidLocale, type Locale } from "@/i18n/config";
 
 export default function PermitPage() {
   const params = useParams();
   const locale = params.locale as string;
   const id = params.id as string;
-  
+
   const [data, setData] = useState<{ stages: any[], documents: any[] } | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -27,6 +27,8 @@ export default function PermitPage() {
     }
     fetchStatus();
   }, [id]);
+
+  const safeLocale = (isValidLocale(locale) ? locale : "ko") as Locale;
 
   if (loading) return <div className="p-12 text-center animate-pulse font-bold text-[var(--text-tertiary)] uppercase tracking-widest">분석 중...</div>;
 
@@ -53,7 +55,7 @@ export default function PermitPage() {
                     ? "border-[var(--accent-strong)] text-[var(--accent-strong)] bg-[var(--accent-soft)] animate-pulse shadow-md"
                     : "border-[var(--line-strong)] text-[var(--text-hint)]"
                 }`}>
-                  {stage.status === "completed" ? "✓" : i + 1}
+                  {stage.status === "completed" ? "\u2713" : i + 1}
                 </div>
                 <span className={`text-sm font-bold ${stage.status === "current" ? "text-[var(--accent-strong)]" : "text-[var(--text-tertiary)]"}`}>
                   {stage.label}
@@ -79,7 +81,7 @@ export default function PermitPage() {
                       ? "border-[var(--success)] bg-[var(--success-soft)] text-[var(--success)]"
                       : "border-[var(--line-strong)] text-transparent"
                   }`}>
-                    {doc.submitted ? "✓" : ""}
+                    {doc.submitted ? "\u2713" : ""}
                   </span>
                   <span className={`text-sm font-semibold ${doc.submitted ? "text-[var(--text-primary)]" : "text-[var(--text-secondary)]"}`}>
                     {doc.label}
@@ -95,7 +97,6 @@ export default function PermitPage() {
 
         <div className="flex flex-col gap-6 rounded-[var(--radius-2xl)] border border-[var(--line)] bg-[var(--surface-soft)] p-8">
            <div className="flex items-center gap-3">
-              <span className="text-2xl">⚡</span>
               <h3 className="text-xl font-bold text-[var(--text-primary)]">AI 규제 검토 알림</h3>
            </div>
            <div className="space-y-4">
@@ -113,6 +114,9 @@ export default function PermitPage() {
            </button>
         </div>
       </div>
+
+      {/* ── Live Workspace Client ── */}
+      <ProjectPermitWorkspaceClient locale={safeLocale} projectId={id} />
     </div>
   );
 }

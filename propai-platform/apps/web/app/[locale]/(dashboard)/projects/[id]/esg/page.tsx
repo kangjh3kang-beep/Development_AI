@@ -5,6 +5,7 @@ import { motion } from "framer-motion";
 import { ModulePlaceholder } from "@/components/layout/ModulePlaceholder";
 import { isValidLocale, type Locale } from "@/i18n/config";
 import { useDictionary } from "@/hooks/use-dictionary";
+import { ProjectEsgWorkspaceClient } from "@/components/projects/ProjectEsgWorkspaceClient";
 
 export default function ESGPage() {
   const { locale, id } = useParams() as { locale: string; id: string };
@@ -47,7 +48,7 @@ export default function ESGPage() {
 
       <div className="grid gap-10 md:grid-cols-2">
         {/* ESG Score Matrix */}
-        <motion.div 
+        <motion.div
           initial={{ opacity: 0, x: -30 }}
           animate={{ opacity: 1, x: 0 }}
           transition={{ delay: 0.2 }}
@@ -79,7 +80,7 @@ export default function ESGPage() {
                   </div>
                 </div>
                 <div className="mt-4 h-1.5 w-full rounded-full bg-[var(--line)] overflow-hidden">
-                  <motion.div 
+                  <motion.div
                     initial={{ width: 0 }}
                     animate={{ width: `${item.score}%` }}
                     transition={{ delay: 0.5 + i * 0.1, duration: 1 }}
@@ -92,7 +93,7 @@ export default function ESGPage() {
         </motion.div>
 
         {/* Carbon Emission Intelligence */}
-        <motion.div 
+        <motion.div
           initial={{ opacity: 0, x: 30 }}
           animate={{ opacity: 1, x: 0 }}
           transition={{ delay: 0.3 }}
@@ -134,6 +135,15 @@ export default function ESGPage() {
           </div>
         </motion.div>
       </div>
+
+      {/* ── Live Workspace: LCA, EPD, Low-Carbon Alternatives ── */}
+      <motion.div
+        initial={{ opacity: 0, y: 40 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.4 }}
+      >
+        <ProjectEsgWorkspaceClient locale={locale as Locale} projectId={id} />
+      </motion.div>
     </div>
   );
 }

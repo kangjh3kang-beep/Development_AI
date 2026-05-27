@@ -5,6 +5,7 @@ import { isValidLocale, type Locale } from "@/i18n/config";
 import { AIAssistant } from "@/components/common/AIAssistant";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
 import { SidebarNav } from "@/components/layout/SidebarNav";
+import { MobileSidebarToggle } from "@/components/layout/MobileSidebarToggle";
 type DashboardLayoutProps = Readonly<{
   children: React.ReactNode;
   params: Promise<{
@@ -208,6 +209,7 @@ export default async function DashboardLayout({
           </Link>
 
           <div className="flex flex-wrap items-center gap-3">
+            <MobileSidebarToggle sections={sections} />
             <span className="hidden sm:inline-block rounded-full bg-[var(--accent-soft)] border border-[var(--line)] px-4 py-2 text-[11px] font-bold tracking-widest uppercase text-[var(--accent-strong)] shadow-sm">
               {runtimeModeLabel}
             </span>
@@ -224,9 +226,9 @@ export default async function DashboardLayout({
       </header>
 
       {/* 메인 그리드 */}
-      <div className="grid gap-6 md:grid-cols-[260px_minmax(0,1fr)]">
-        {/* 사이드바 */}
-        <aside className="glass space-y-5 rounded-[var(--radius-xl)] border border-[var(--line)] bg-[var(--surface-secondary)] p-5 shadow-[var(--shadow-md)] sticky top-[88px] h-[calc(100vh-100px)] overflow-y-auto custom-scrollbar">
+      <div className="grid gap-6 lg:grid-cols-[260px_minmax(0,1fr)]">
+        {/* 사이드바 — 모바일에서 숨김, lg 이상에서 표시 */}
+        <aside className="hidden lg:block glass space-y-5 rounded-[var(--radius-xl)] border border-[var(--line)] bg-[var(--surface-secondary)] p-5 shadow-[var(--shadow-md)] sticky top-[88px] h-[calc(100vh-100px)] overflow-y-auto custom-scrollbar">
           <SidebarNav sections={sections} />
         </aside>
 

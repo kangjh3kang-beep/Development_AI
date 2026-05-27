@@ -1,8 +1,11 @@
 "use client";
 
 import React, { useState, useMemo } from "react";
+import { useParams } from "next/navigation";
 import { motion } from "framer-motion";
 import { useAIAnalyze, useAIReady } from "@/lib/ai-analyze-client";
+import { InvestmentAnalyticsWorkspaceClient } from "@/components/analytics/InvestmentAnalyticsWorkspaceClient";
+import { isValidLocale, type Locale } from "@/i18n/config";
 
 type FeasibilityResult = {
   summary?: string;
@@ -57,6 +60,8 @@ function calcROI(investment: number, purchase: number, monthlyRent: number, hold
 }
 
 export default function InvestmentPage() {
+  const params = useParams();
+  const locale = params.locale as string;
   const { isReady } = useAIReady();
   const { mutate, data: aiResult, isPending, error } = useAIAnalyze<FeasibilityResult>();
 
@@ -94,6 +99,9 @@ export default function InvestmentPage() {
   const ai = aiResult?.data;
   const riskColor = (level: string) =>
     level === "high" ? "text-red-400 bg-red-500/10 border-red-500/20" : level === "medium" ? "text-amber-400 bg-amber-500/10 border-amber-500/20" : "text-emerald-400 bg-emerald-500/10 border-emerald-500/20";
+
+  const safeLocale = (isValidLocale(locale) ? locale : "ko") as Locale;
+  const projectId = "default";
 
   return (
     <div className="space-y-8 p-6">
@@ -138,13 +146,13 @@ export default function InvestmentPage() {
         </div>
         <button onClick={handleAIAnalyze} disabled={isPending || !isReady}
           className="mt-6 w-full rounded-2xl bg-gradient-to-r from-emerald-600 to-teal-600 py-4 font-black text-white shadow-lg transition-all hover:scale-[1.01] hover:shadow-xl active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed">
-          {isPending ? "🔄 AI 분석 중..." : !isReady ? "⚙️ API 키 없이도 아래 자동 계산됩니다" : "🤖 AI 심층 수익성 분석"}
+          {isPending ? "AI 분석 중..." : !isReady ? "API 키 없이도 아래 자동 계산됩니다" : "AI 심층 수익성 분석"}
         </button>
       </motion.div>
 
-      {error && <div className="rounded-2xl bg-red-500/10 border border-red-500/20 p-4"><p className="text-sm text-red-400 font-bold">⚠️ {error.message}</p></div>}
+      {error && <div className="rounded-2xl bg-red-500/10 border border-red-500/20 p-4"><p className="text-sm text-red-400 font-bold">{error.message}</p></div>}
 
-      {/* Results — 즉시 표시 */}
+      {/* Results -- 즉시 표시 */}
       {localCalc && (
         <motion.div initial={{ y: 30, opacity: 0 }} animate={{ y: 0, opacity: 1 }} className="space-y-6">
           {/* Source */}
@@ -186,7 +194,7 @@ export default function InvestmentPage() {
 
           {/* Risks */}
           <div className="glass rounded-2xl p-6 border border-[var(--line)]">
-            <h3 className="text-lg font-black text-[var(--text-primary)] mb-4">⚡ 리스크 분석</h3>
+            <h3 className="text-lg font-black text-[var(--text-primary)] mb-4">리스크 분석</h3>
             <div className="space-y-2">
               {(ai?.risks || localCalc.risks).map((r, i) => (
                 <div key={i} className={`flex items-start gap-3 rounded-xl border p-3 ${riskColor(r.level)}`}>
@@ -203,13 +211,16 @@ export default function InvestmentPage() {
           {/* AI Summary */}
           {ai?.summary && (
             <div className="glass rounded-2xl p-6 border border-emerald-500/20 bg-emerald-500/5">
-              <h3 className="text-lg font-black text-emerald-400 mb-2">🤖 AI 투자 판단</h3>
+              <h3 className="text-lg font-black text-emerald-400 mb-2">AI 투자 판단</h3>
               <p className="text-sm text-[var(--text-secondary)] leading-relaxed">{ai.summary}</p>
-              {ai.recommendation && <p className="text-sm font-bold text-[var(--text-primary)] mt-3">💡 {ai.recommendation}</p>}
+              {ai.recommendation && <p className="text-sm font-bold text-[var(--text-primary)] mt-3">{ai.recommendation}</p>}
             </div>
           )}
         </motion.div>
       )}
+
+      {/* ── Live Workspace Client ── */}
+      <InvestmentAnalyticsWorkspaceClient locale={safeLocale} projectId={projectId} />
     </div>
   );
 }

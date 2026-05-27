@@ -7,6 +7,7 @@ import { ModulePlaceholder } from "@/components/layout/ModulePlaceholder";
 import { isValidLocale, type Locale } from "@/i18n/config";
 import { useDictionary } from "@/hooks/use-dictionary";
 import { ContractorIntelligence } from "@/components/construction/ContractorIntelligence";
+import { ProjectConstructionWorkspaceClient } from "@/components/projects/ProjectConstructionWorkspaceClient";
 
 const CostAndQuantityDashboard = dynamic(
   () => import("@/components/construction/CostAndQuantityDashboard").then(mod => mod.CostAndQuantityDashboard)
@@ -31,7 +32,7 @@ export default function ConstructionPage() {
   if (!isValidLocale(locale)) {
     return null;
   }
-  
+
   const runtimeMode =
     process.env.NEXT_PUBLIC_USE_MOCKS === "false"
       ? dictionary.workspace.modeLive
@@ -56,14 +57,14 @@ export default function ConstructionPage() {
       </motion.div>
 
       {/* ── Cinematic Insight Box ── */}
-      <motion.div 
+      <motion.div
         initial={{ opacity: 0, scale: 0.98 }}
         animate={{ opacity: 1, scale: 1 }}
         transition={{ delay: 0.2 }}
         className="relative overflow-hidden rounded-[2.5rem] border border-teal-500/20 bg-teal-500/5 p-10 shadow-xl backdrop-blur-3xl group"
       >
         <div className="absolute -right-20 -top-20 h-40 w-40 rounded-full bg-teal-500/10 blur-3xl transition-all duration-1000 group-hover:scale-150" />
-        
+
         <div className="relative z-10 flex flex-col gap-6 lg:flex-row lg:items-center lg:gap-12">
           <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-teal-500 shadow-[0_0_20px_rgba(20,184,166,0.3)]">
             <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
@@ -79,8 +80,17 @@ export default function ConstructionPage() {
         </div>
       </motion.div>
 
+      {/* ── Live Workspace: Cost, Checklist, Risk ── */}
+      <motion.div
+        initial={{ opacity: 0, y: 40 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.25 }}
+      >
+        <ProjectConstructionWorkspaceClient locale={locale as Locale} projectId={id} />
+      </motion.div>
+
       <div className="space-y-16">
-        <motion.div 
+        <motion.div
           initial={{ opacity: 0, y: 40 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true }}
@@ -89,7 +99,7 @@ export default function ConstructionPage() {
           <ContractorIntelligence locale={locale as Locale} />
         </motion.div>
 
-        <motion.div 
+        <motion.div
           initial={{ opacity: 0, y: 40 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true }}
@@ -98,7 +108,7 @@ export default function ConstructionPage() {
           <CostAndQuantityDashboard projectId={id} dictionary={(dictionary as any).cost ?? {}} />
         </motion.div>
 
-        <motion.div 
+        <motion.div
           initial={{ opacity: 0, y: 40 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true }}

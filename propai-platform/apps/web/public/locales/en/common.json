@@ -723,6 +723,16 @@
         "✓ 법정 주차 대수 및 일조권 자동 최적화",
         "✓ 3D 매스 하이라이트 렌더링 동기화"
       ]
+    },
+    "market-insights": {
+      "eyebrow": "PROP / MARKET INSIGHTS",
+      "title": "Market Trend Analysis",
+      "description": "Analyzes real estate market trends based on actual transaction prices, assessed land values, and regional supply-demand data.",
+      "items": [
+        "✓ Real-time transaction data streaming",
+        "✓ AI-powered price prediction model active",
+        "✓ Regional supply-demand index monitoring"
+      ]
     }
   }
 }

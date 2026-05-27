@@ -1,4 +1,6 @@
 import { HarnessControlDashboard } from "@/components/tenant/HarnessControlDashboard";
+import { TenantWorkspaceClient } from "@/components/operations/TenantWorkspaceClient";
+import { ModulePlaceholder } from "@/components/layout/ModulePlaceholder";
 import { getDictionary } from "@/i18n/get-dictionary";
 import { isValidLocale, type Locale } from "@/i18n/config";
 
@@ -23,7 +25,16 @@ export default async function TenantPage({ params }: TenantPageProps) {
 
   return (
     <div className="grid gap-6">
+      <ModulePlaceholder
+        eyebrow={dictionary.modulePlaceholders["tenant"].eyebrow}
+        title={dictionary.modulePlaceholders["tenant"].title}
+        description={dictionary.modulePlaceholders["tenant"].description}
+        statusLabel={runtimeMode}
+        localeLabel={locale}
+        items={dictionary.modulePlaceholders["tenant"].items}
+      />
       <HarnessControlDashboard />
+      <TenantWorkspaceClient locale={locale as Locale} />
     </div>
   );
 }

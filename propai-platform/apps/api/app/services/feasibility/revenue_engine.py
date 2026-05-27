@@ -9,8 +9,30 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.services.data_validation.calculation_metadata import CalculationMetadata
+
 # 평 → m² 변환 상수
 PYEONG_TO_SQM = 3.305785
+
+# 지역별 자본환원율 (Cap Rate)
+REGIONAL_CAP_RATES: dict[str, float] = {
+    "서울": 0.045, "경기": 0.055, "인천": 0.055,
+    "부산": 0.06, "대구": 0.06, "대전": 0.06,
+    "광주": 0.065, "울산": 0.065, "세종": 0.055,
+    "default": 0.06,
+}
+
+
+def get_regional_cap_rate(region: str = "default") -> float:
+    """지역별 자본환원율 조회.
+
+    Args:
+        region: 지역명 (시도 단위, 예: '서울', '경기')
+
+    Returns:
+        자본환원율 (소수점)
+    """
+    return REGIONAL_CAP_RATES.get(region, REGIONAL_CAP_RATES["default"])
 
 
 def calculate_sale_revenue(
@@ -75,36 +97,86 @@ def calculate_union_revenue(
 def calculate_rental_revenue(
     *,
     rental_units: int,
-    avg_area_pyeong: float,
+    monthly_rent_per_unit: int = 0,
+    management_fee_per_unit: int = 0,
+    vacancy_rate: float = 0.05,
+    cap_rate: float = 0.05,
+    region: str = "default",
+    avg_area_pyeong: float = 0,
     avg_deposit_per_pyeong: float = 0,
     avg_monthly_rent_per_pyeong: float = 0,
-    cap_rate: float = 0.05,
+    **kwargs: Any,
 ) -> dict[str, Any]:
-    """임대수입 계산 (보증금 + 월세의 자본환원가치).
+    """임대수입 계산 (보증금 제외, 순 월세 기반 자본환원).
+
+    월세 수입만 자본환원(cap rate)하여 가치를 산정합니다.
+    보증금은 별도로 total_deposit_won으로 반환하되,
+    capitalized_value_won 계산에는 포함하지 않습니다.
 
     Args:
         rental_units: 임대 세대/호수
-        avg_area_pyeong: 평균 면적 (평)
-        avg_deposit_per_pyeong: 보증금 (원/평)
-        avg_monthly_rent_per_pyeong: 월세 (원/평)
-        cap_rate: 자본환원율
+        monthly_rent_per_unit: 세대당 월세 (원) — 신규 방식
+        management_fee_per_unit: 세대당 관리비 (원) — 신규 방식
+        vacancy_rate: 공실률 (기본 5%)
+        cap_rate: 자본환원율 (직접 지정 시 사용, 없으면 region 기반)
+        region: 지역명 (cap_rate 미지정 시 자동 조회)
+        avg_area_pyeong: 평균 면적 (평) — 레거시 호환
+        avg_deposit_per_pyeong: 보증금 (원/평) — 레거시 호환
+        avg_monthly_rent_per_pyeong: 월세 (원/평) — 레거시 호환
 
     Returns:
-        {'rental_units', 'total_deposit_won', 'annual_rent_won', 'capitalized_value_won'}
+        {'rental_units', 'total_deposit_won', 'annual_rent_won',
+         'annual_net_rent_won', 'capitalized_value_won', 'total_revenue_won'}
     """
+    # 지역 기반 cap_rate 적용 (명시적으로 지정하지 않은 경우)
+    if region != "default" and cap_rate == 0.05:
+        cap_rate = get_regional_cap_rate(region)
+
+    metadata = CalculationMetadata("임대수입")
+    metadata.add_source("자본환원율(Cap Rate)", "하드코딩", is_live=False)
+    metadata.add_source("공실률", "하드코딩")
+    metadata.add_warning("임대수입은 시장 상황에 따라 ±10% 변동 가능")
+
+    # 신규 방식 (세대당 월세 직접 입력)
+    if monthly_rent_per_unit > 0:
+        annual_net_rent = (monthly_rent_per_unit - management_fee_per_unit) * 12 * rental_units
+        annual_net_rent_after_vacancy = int(annual_net_rent * (1 - vacancy_rate))
+        capitalized_value = int(annual_net_rent_after_vacancy / cap_rate) if cap_rate > 0 else 0
+
+        result = {
+            "rental_units": rental_units,
+            "monthly_rent_per_unit": monthly_rent_per_unit,
+            "management_fee_per_unit": management_fee_per_unit,
+            "vacancy_rate": vacancy_rate,
+            "cap_rate": cap_rate,
+            "annual_rent_won": annual_net_rent,
+            "annual_net_rent_won": annual_net_rent_after_vacancy,
+            "capitalized_value_won": capitalized_value,
+            "total_revenue_won": capitalized_value,
+        }
+        result["_metadata"] = metadata.to_dict()
+        return result
+
+    # 레거시 방식 (평당 단가 입력) — 보증금 제외, 월세만 자본환원
     total_area = rental_units * avg_area_pyeong
     total_deposit = int(total_area * avg_deposit_per_pyeong)
     annual_rent = int(total_area * avg_monthly_rent_per_pyeong * 12)
-    capitalized = int(annual_rent / cap_rate) if cap_rate > 0 else 0
+    annual_rent_after_vacancy = int(annual_rent * (1 - vacancy_rate))
+    capitalized = int(annual_rent_after_vacancy / cap_rate) if cap_rate > 0 else 0
 
-    return {
+    result = {
         "rental_units": rental_units,
         "total_area_pyeong": round(total_area, 2),
         "total_deposit_won": total_deposit,
+        "vacancy_rate": vacancy_rate,
+        "cap_rate": cap_rate,
         "annual_rent_won": annual_rent,
+        "annual_net_rent_won": annual_rent_after_vacancy,
         "capitalized_value_won": capitalized,
         "total_revenue_won": total_deposit + capitalized,
     }
+    result["_metadata"] = metadata.to_dict()
+    return result
 
 
 def calculate_ancillary_revenue(

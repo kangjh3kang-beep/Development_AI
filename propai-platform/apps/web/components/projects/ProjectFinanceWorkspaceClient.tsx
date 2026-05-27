@@ -6,6 +6,7 @@ import { Button, Card, CardContent, CardTitle, Input } from "@propai/ui";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import { ApiClientError, apiClient } from "@/lib/api-client";
+import { useProjectContextStore } from "@/store/useProjectContextStore";
 import type { Locale } from "@/i18n/config";
 
 type ProjectResponse = {
@@ -87,7 +88,7 @@ type Labels = {
   retryAction: string;
 };
 
-const COMMON_LABELS: Labels = {
+const EN_LABELS: Labels = {
   heroTitle: "Project finance live workspace",
   heroDescription:
     "Run a persisted AVM valuation and a jeonse risk analysis for the current project path.",
@@ -136,10 +137,59 @@ const COMMON_LABELS: Labels = {
   retryAction: "Retry",
 };
 
+const KO_LABELS: Labels = {
+  heroTitle: "프로젝트 금융분석 라이브 워크스페이스",
+  heroDescription:
+    "AVM 시세 추정과 전세 위험도 분석을 실행합니다.",
+  heroHint:
+    "현재 프로젝트 ID를 기반으로 AVM 시세 추정 및 전세 위험도 분석을 연쇄 실행합니다.",
+  tokenHint:
+    "라이브 API 호출에는 인증 토큰이 필요합니다.",
+  authError: "라이브 워크스페이스 호출에 API 인증이 필요합니다.",
+  contextTitle: "프로젝트 컨텍스트",
+  contextHint:
+    "프로젝트 ID는 현재 경로에서 가져옵니다. 주소와 면적은 제출 전 수정할 수 있습니다.",
+  projectIdLabel: "프로젝트 ID",
+  projectNameLabel: "프로젝트명",
+  projectStatusLabel: "상태",
+  projectUpdatedLabel: "수정일",
+  formTitle: "금융분석 입력",
+  addressLabel: "주소",
+  areaLabel: "면적 (㎡)",
+  buildingAgeLabel: "건물 연식 (년)",
+  floorLabel: "층",
+  totalFloorsLabel: "총층수",
+  lawdCodeLabel: "법정동 코드",
+  pnuLabel: "PNU",
+  jeonsePriceLabel: "전세금 (원)",
+  submitAction: "AVM + 위험분석 실행",
+  missingAddressError: "주소를 입력해 주세요.",
+  missingAreaError: "양수의 면적 값이 필요합니다.",
+  missingJeonsePriceError: "양수의 전세금 값이 필요합니다.",
+  avmTitle: "AVM 시세 추정",
+  avmEstimateLabel: "추정 시세",
+  avmUnitPriceLabel: "㎡당 가격",
+  avmConfidenceLabel: "신뢰도",
+  avmComparablesLabel: "비교사례 수",
+  avmModelLabel: "모델 버전",
+  jeonseTitle: "전세 위험도",
+  jeonseRatioLabel: "전세 비율",
+  jeonseRiskLabel: "위험 등급",
+  jeonseScoreLabel: "위험 점수",
+  jeonseFactorsLabel: "위험 요인",
+  placeholder:
+    "양식을 제출하여 AVM 시세 추정 및 전세 위험도 응답 체인을 검증하세요.",
+  projectFallback: "라이브 API에서 프로젝트 메타데이터를 불러올 수 없습니다.",
+  projectLoadErrorTitle: "프로젝트 메타데이터 조회 불가",
+  projectLoadErrorDetail:
+    "프로젝트 정보를 불러오지 못했습니다. 재시도하여 자동 입력 및 프로젝트 메타데이터를 복원하세요.",
+  retryAction: "재시도",
+};
+
 const LABELS: Record<Locale, Labels> = {
-  ko: COMMON_LABELS,
-  en: COMMON_LABELS,
-  "zh-CN": COMMON_LABELS,
+  ko: KO_LABELS,
+  en: EN_LABELS,
+  "zh-CN": KO_LABELS,
 };
 
 function formatCurrency(locale: string, value: number) {
@@ -189,6 +239,8 @@ export function ProjectFinanceWorkspaceClient({
   const canUseLiveApi =
     runtimeConfig.mode === "live" || runtimeConfig.hasAccessToken;
 
+  const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
+
   const [workspaceError, setWorkspaceError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [avmResult, setAvmResult] = useState<AVMValuationResponse | null>(null);
@@ -228,6 +280,21 @@ export function ProjectFinanceWorkspaceClient({
           : ""),
     }));
   }, [projectQuery.data]);
+
+  // Pre-fill from site analysis context (capillary network)
+  useEffect(() => {
+    if (!siteAnalysis) return;
+    setForm((current) => ({
+      ...current,
+      address: current.address || siteAnalysis.address || "",
+      areaSqm:
+        current.areaSqm ||
+        (siteAnalysis.landAreaSqm != null
+          ? String(siteAnalysis.landAreaSqm)
+          : ""),
+      pnu: current.pnu || siteAnalysis.pnu || "",
+    }));
+  }, [siteAnalysis]);
 
   const projectError = projectQuery.error
     ? extractErrorMessage(projectQuery.error, labels.authError)
@@ -298,7 +365,7 @@ export function ProjectFinanceWorkspaceClient({
   return (
     <section className="grid gap-6">
       <Card className="rounded-[var(--radius-2xl)] bg-[var(--surface-strong)] shadow-[var(--shadow-lg)]">
-        <CardContent className="p-8">
+        <CardContent className="p-4 sm:p-6 lg:p-8">
           <div className="flex flex-wrap items-center gap-3">
             <span className="rounded-full bg-[rgba(14,116,144,0.1)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--accent-strong)]">
               {labels.heroTitle}
@@ -307,7 +374,7 @@ export function ProjectFinanceWorkspaceClient({
               {runtimeConfig.mode === "live" ? "LIVE" : "HYBRID"}
             </span>
           </div>
-          <h3 className="mt-5 text-3xl font-bold text-[var(--text-primary)]">
+          <h3 className="mt-5 text-xl sm:text-2xl lg:text-3xl font-bold text-[var(--text-primary)]">
             {labels.heroDescription}
           </h3>
           <p className="mt-4 max-w-3xl text-sm leading-8 text-[var(--text-secondary)]">
@@ -579,6 +646,8 @@ export function ProjectFinanceWorkspaceClient({
                     </p>
                   )}
                 </div>
+                {/* 7 Jeonse Risk Patterns */}
+                <JeonseRiskPatterns riskScore={riskResult.risk_score} factors={riskResult.factors} />
               </div>
             ) : (
               <div className="mt-4 rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[var(--text-secondary)]">
@@ -589,6 +658,105 @@ export function ProjectFinanceWorkspaceClient({
         </Card>
       </div>
     </section>
+  );
+}
+
+type JeonseRiskPattern = {
+  name: string;
+  description: string;
+};
+
+const JEONSE_RISK_PATTERNS: JeonseRiskPattern[] = [
+  { name: "적금 미보유", description: "임대인의 전세보증금 반환 능력이 불확실한 경우" },
+  { name: "건물 소유권 분쟁", description: "소유권에 대한 법적 분쟁이 존재하는 경우" },
+  { name: "명의 도용", description: "임대인의 실제 소유자 확인이 불가하거나 위조된 경우" },
+  { name: "과다 전세금", description: "시세 대비 전세금이 비정상적으로 높은 경우" },
+  { name: "다중 전세 설정", description: "동일 물건에 복수의 전세권이 설정된 경우" },
+  { name: "대출 담보 설정", description: "근저당 등 담보 설정 금액이 과다한 경우" },
+  { name: "미등기 채권", description: "등기부에 반영되지 않은 채권이 존재하는 경우" },
+];
+
+function derivePatternRiskLevel(
+  patternIndex: number,
+  riskScore: number,
+  factors: JeonseRiskFactor[],
+): "높음" | "중간" | "낮음" {
+  // Check if any returned factor matches this pattern
+  const patternName = JEONSE_RISK_PATTERNS[patternIndex].name;
+  const matchedFactor = factors.find(
+    (f) =>
+      f.factor?.includes(patternName) ||
+      f.detail?.includes(patternName),
+  );
+
+  if (matchedFactor && matchedFactor.score != null) {
+    if (matchedFactor.score >= 0.7) return "높음";
+    if (matchedFactor.score >= 0.4) return "중간";
+    return "낮음";
+  }
+
+  // Heuristic: derive from overall risk score with pattern-specific weighting
+  const highThreshold = 0.6;
+  const medThreshold = 0.35;
+  // Some patterns are inherently higher risk
+  const highRiskPatterns = [3, 4, 5]; // 과다 전세금, 다중 전세, 대출 담보
+  const adjustedScore = highRiskPatterns.includes(patternIndex)
+    ? riskScore * 1.15
+    : riskScore;
+
+  if (adjustedScore >= highThreshold) return "높음";
+  if (adjustedScore >= medThreshold) return "중간";
+  return "낮음";
+}
+
+function JeonseRiskPatterns({
+  riskScore,
+  factors,
+}: {
+  riskScore: number;
+  factors: JeonseRiskFactor[];
+}) {
+  const LEVEL_STYLES: Record<string, { bg: string; text: string; border: string }> = {
+    "높음": { bg: "bg-red-500/10", text: "text-red-500", border: "border-red-500/20" },
+    "중간": { bg: "bg-amber-500/10", text: "text-amber-500", border: "border-amber-500/20" },
+    "낮음": { bg: "bg-emerald-500/10", text: "text-emerald-500", border: "border-emerald-500/20" },
+  };
+
+  return (
+    <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
+      <p className="text-xs font-bold uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+        전세 사기 7대 위험 패턴 분석
+      </p>
+      <div className="mt-4 grid gap-2">
+        {JEONSE_RISK_PATTERNS.map((pattern, index) => {
+          const level = derivePatternRiskLevel(index, riskScore, factors);
+          const style = LEVEL_STYLES[level];
+          return (
+            <div
+              key={pattern.name}
+              className={`flex items-center justify-between rounded-xl border p-3 ${style.border} ${style.bg}`}
+            >
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-semibold text-[var(--text-primary)]">
+                  <span className="text-[var(--text-hint)] mr-2">
+                    {index + 1}.
+                  </span>
+                  {pattern.name}
+                </p>
+                <p className="mt-0.5 text-xs text-[var(--text-secondary)]">
+                  {pattern.description}
+                </p>
+              </div>
+              <span
+                className={`shrink-0 rounded-lg px-3 py-1 text-xs font-bold ${style.text} ${style.bg}`}
+              >
+                {level}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 

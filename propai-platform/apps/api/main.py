@@ -32,6 +32,7 @@ from apps.api.routers import (
     api_keys,
     auction,
     auth,
+    auto_zoning,
     avm,
     bim,
     blockchain,
@@ -45,6 +46,7 @@ from apps.api.routers import (
     contractors,
     cost_intelligence,
     dashboard,
+    data_integrity,
     design,
     development_methods,
     digital_twin,
@@ -56,10 +58,12 @@ from apps.api.routers import (
     eu_taxonomy,
     facility_reservations,
     finance,
+    gresb,
     kdx,
     lcc,
     leases,
     maintenance,
+    market_ai,
     marketing,
     monte_carlo,
     notifications,
@@ -77,9 +81,11 @@ from apps.api.routers import (
     tax,
     tenant,
     underwriting,
+    unit_mix,
     webhooks,
     webrtc,
 )
+from apps.api.app.routers.bank_report import router as bank_report_router
 from apps.api.routers.v2 import auth as v2_auth
 from apps.api.routers.v2 import design as v2_design
 from apps.api.routers.v2 import projects as v2_projects
@@ -272,6 +278,18 @@ app.include_router(cost_intelligence.router, prefix="/api/v1/cost-intelligence",
 app.include_router(contracts.router, prefix="/api/v1/contracts", tags=["contracts"])
 app.include_router(risk.router, prefix="/api/v1/risk", tags=["risk"])
 app.include_router(permits.router, prefix="/api/v1/permits", tags=["permits"])
+app.include_router(data_integrity.router, prefix="/api/v1", tags=["데이터 무결성"])
+
+# 자동 용도지역 + 유닛믹스 최적화 라우터
+app.include_router(auto_zoning.router, prefix="/api/v1/zoning", tags=["자동 용도지역"])
+app.include_router(unit_mix.router, prefix="/api/v1/unit-mix", tags=["유닛믹스 최적화"])
+
+# 대화형 시장분석 AI + GRESB ESG 스코어링 라우터
+app.include_router(market_ai.router, prefix="/api/v1/market-ai", tags=["대화형 시장분석"])
+app.include_router(gresb.router, prefix="/api/v1/gresb", tags=["GRESB ESG 스코어링"])
+
+# 은행제출용 통합 보고서 라우터
+app.include_router(bank_report_router, prefix="/api/v1", tags=["은행제출용 보고서"])
 
 # ──────────────────────────────────────
 # API v2 라우터

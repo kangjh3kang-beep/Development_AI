@@ -1,6 +1,7 @@
 import { OperationsRouteHero } from "@/components/layout/OperationsRouteHero";
 import { SafetyCCTVDashboard } from "@/components/safety/SafetyCCTVDashboard";
 import { ParkingLogView } from "@/components/safety/ParkingLogView";
+import { SafetyWorkspaceClient } from "@/components/operations/SafetyWorkspaceClient";
 import { getDictionary } from "@/i18n/get-dictionary";
 import { isValidLocale, type Locale } from "@/i18n/config";
 
@@ -33,6 +34,7 @@ export default async function SafetyPage({ params }: PageProps) {
       />
       <SafetyCCTVDashboard />
       <ParkingLogView />
+      <SafetyWorkspaceClient locale={locale as Locale} />
     </div>
   );
 }

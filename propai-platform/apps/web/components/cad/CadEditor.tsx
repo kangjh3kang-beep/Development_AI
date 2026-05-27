@@ -9,7 +9,12 @@ import { ExportPanel } from "@/components/cad/ExportPanel";
 import { CadCommandLine } from "@/components/cad/CadCommandLine";
 import { ComplianceHud } from "@/components/compliance/ComplianceHud";
 import LayerPanel from "@/components/cad/LayerPanel";
+import { CadCompliancePanel } from "@/components/cad/CadCompliancePanel";
+import { CadBimSidePanel } from "@/components/cad/CadBimSidePanel";
+import { CadExportPanel } from "@/components/cad/CadExportPanel";
 import { useCadStore } from "@/store/use-cad-store";
+
+type RightPanelTab = "none" | "compliance" | "bim" | "export";
 
 const CadCanvasInner = dynamic(
   () =>
@@ -58,6 +63,7 @@ export function CadEditor({ projectId }: CadEditorProps) {
 
   const [textValue, setTextValue] = useState("");
   const textInputRef = useRef<HTMLInputElement>(null);
+  const [rightPanel, setRightPanel] = useState<RightPanelTab>("none");
 
   // 캔버스 크기 자동 조정
   useEffect(() => {
@@ -155,10 +161,49 @@ export function CadEditor({ projectId }: CadEditorProps) {
     setTextValue("");
   }, [cancelTextInput]);
 
+  const RIGHT_PANEL_TABS: Array<{ id: RightPanelTab; label: string }> = [
+    { id: "compliance", label: "검증" },
+    { id: "bim", label: "BIM" },
+    { id: "export", label: "내보내기" },
+  ];
+
+  const toggleRightPanel = useCallback(
+    (tab: RightPanelTab) => {
+      setRightPanel((prev) => (prev === tab ? "none" : tab));
+    },
+    [],
+  );
+
   return (
     <section className="grid gap-4" aria-label="CAD 파라메트릭 에디터">
       <CadToolbar />
-      <div className="grid grid-cols-[280px_1fr] gap-4">
+
+      {/* 우측 패널 탭 버튼 */}
+      <div className="flex items-center gap-1" role="group" aria-label="확장 패널">
+        {RIGHT_PANEL_TABS.map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            onClick={() => toggleRightPanel(tab.id)}
+            className={`rounded-xl px-3 py-1.5 text-xs font-bold transition-colors ${
+              rightPanel === tab.id
+                ? "bg-[var(--accent)] text-white"
+                : "bg-[var(--surface-soft)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+            }`}
+            aria-pressed={rightPanel === tab.id}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      <div
+        className={`grid gap-4 ${
+          rightPanel !== "none"
+            ? "grid-cols-[280px_1fr_320px]"
+            : "grid-cols-[280px_1fr]"
+        }`}
+      >
         {/* 좌측: AI 설계 패널 + 레이어 */}
         <div className="flex flex-col gap-4 overflow-y-auto" style={{ maxHeight: 640 }}>
           <AutoDesignPanel projectId={projectId} />
@@ -167,7 +212,7 @@ export function CadEditor({ projectId }: CadEditorProps) {
           <ExportPanel projectId={projectId} />
         </div>
 
-        {/* 우측: 캔버스 + HUD */}
+        {/* 중앙: 캔버스 + HUD */}
         <div className="relative" ref={containerRef}>
           <div className="overflow-hidden rounded-2xl border border-[var(--line-strong)] bg-[var(--surface)] shadow-[var(--shadow-lg)]">
             <CadCanvasInner width={canvasSize.width} height={canvasSize.height} />
@@ -206,7 +251,23 @@ export function CadEditor({ projectId }: CadEditorProps) {
             </div>
           )}
         </div>
+
+        {/* 우측: 확장 패널 (슬라이드) */}
+        {rightPanel !== "none" && (
+          <div className="flex flex-col gap-4 overflow-y-auto" style={{ maxHeight: 640 }}>
+            {rightPanel === "compliance" && (
+              <CadCompliancePanel projectId={projectId} />
+            )}
+            {rightPanel === "bim" && (
+              <CadBimSidePanel projectId={projectId} />
+            )}
+            {rightPanel === "export" && (
+              <CadExportPanel projectId={projectId} />
+            )}
+          </div>
+        )}
       </div>
+
       {/* 커맨드라인 */}
       <CadCommandLine />
 
