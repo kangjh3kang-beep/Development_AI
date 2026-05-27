@@ -164,7 +164,7 @@ export default function SiteAnalysisPage() {
                   <div className="space-y-1">
                     <p className="text-[10px] font-black uppercase tracking-[0.4em] text-[var(--text-hint)]">Analysis Target Identity</p>
                     <p className="text-3xl font-[1000] text-[var(--text-primary)] tracking-tighter italic">
-                      {siteData?.address || "서울 특별시 성동구 성수동 125-1번지"}
+                      {siteData?.address || "분석 대상 주소를 입력하세요"}
                     </p>
                   </div>
                </div>

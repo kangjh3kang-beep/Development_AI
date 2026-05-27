@@ -22,24 +22,25 @@ interface LandIntelligencePanelProps {
 }
 
 export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanelProps) {
-  // Demo Data - normally from API
+  const displayAddress = data?.address || "분석 대상 주소를 입력하세요";
+  const displayPnu = data?.pnu || "—";
   const analysis = {
     zoning: {
-      current: data?.address?.includes("상업") ? "일반상업지역" : "준공업지역",
-      target: "일반상업지역",
-      possibility: data?.address ? 88 : 84, // %
-      reason: data?.address ? `${data.address} 인근 복합개발 계획 반영` : "성동구 특별계획구역 지정 및 상가 활성화 조례에 근거",
+      current: data?.zoning || "용도지역 분석 중",
+      target: data?.targetZoning || "일반상업지역",
+      possibility: data?.zoningProbability ? Number(data.zoningProbability) : 0,
+      reason: data?.address ? `${data.address} 인근 개발 계획 및 지자체 조례 반영` : "API 연동 후 자동 분석됩니다",
     },
     characteristics: [
-      { label: "경사도", value: data?.address ? "2.1° (평지)" : "1.2° (평지)", status: "safe" as const },
-      { label: "접도 상태", value: "12m 전면도로 면함", status: "safe" as const },
-      { label: "지형", value: "장방형 (정방형에 가까움)", status: "safe" as const },
-      { label: "고도 제한", value: "성수 전략정비구역 영향권 (150m)", status: "warning" as const },
+      { label: "경사도", value: data?.slope || "—", status: "safe" as const },
+      { label: "접도 상태", value: data?.roadAccess || "—", status: "safe" as const },
+      { label: "지형", value: data?.landShape || "—", status: "safe" as const },
+      { label: "고도 제한", value: data?.heightLimit || "—", status: "warning" as const },
     ],
     optimalModes: [
-      { title: "오피스+리테일 복합", match: 94, reason: "성수동 MZ 오피스 및 지식산업센터 수요 급증" },
-      { title: "하이엔드 주거 (오피스텔)", match: 82, reason: "역세권 고소득 1인 가구 타겟팅 상품" },
-      { title: "콘텐츠 허브 (Studio)", match: 70, reason: "배후 대형 엔터테인먼트 사옥 시너지" },
+      { title: data?.scenario1Name || "시나리오 1", match: data?.scenario1Score ? Number(data.scenario1Score) : 0, reason: data?.scenario1Reason || "분석 결과 대기 중" },
+      { title: data?.scenario2Name || "시나리오 2", match: data?.scenario2Score ? Number(data.scenario2Score) : 0, reason: data?.scenario2Reason || "분석 결과 대기 중" },
+      { title: data?.scenario3Name || "시나리오 3", match: data?.scenario3Score ? Number(data.scenario3Score) : 0, reason: data?.scenario3Reason || "분석 결과 대기 중" },
     ],
   };
 
@@ -47,7 +48,7 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
     <div className="relative min-h-[800px] w-full overflow-hidden rounded-[3rem] border border-[var(--line)] bg-[var(--surface-strong)] shadow-[var(--shadow-xl)]">
       {/* Background GIS Map Layer (Simulated) */}
       <div className="absolute inset-0 opacity-40 grayscale contrast-125 dark:invert dark:brightness-75" style={{ zIndex: 0 }}>
-        <div className="absolute inset-0 bg-[url('https://images.unsplash.com/photo-1543163521-1bf539c55dd2?auto=format&fit=crop&q=80&w=1600')] bg-cover bg-center" />
+        <div className="absolute inset-0 bg-[url('https://images.unsplash.com/photo-1477959858617-67f85cf4f1df?auto=format&fit=crop&q=80&w=1600')] bg-cover bg-center" />
         <div className="absolute inset-0 bg-blue-900/10 mix-blend-overlay dark:bg-blue-900/20" />
       </div>
 
@@ -154,10 +155,10 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
               <div className="h-8 w-8 flex items-center justify-center rounded-lg bg-[var(--line)] text-[var(--text-tertiary)] hover:text-[var(--text-primary)] transition-colors">
                 <Icons.Map />
               </div>
-              <span className="text-[10px] font-black text-[var(--text-hint)] uppercase tracking-widest">PNU: 1120011400101250001</span>
+              <span className="text-[10px] font-black text-[var(--text-hint)] uppercase tracking-widest">{displayPnu !== "—" ? `PNU: ${displayPnu}` : "PNU: API 연동 대기"}</span>
            </div>
            <div className="px-2">
-              <p className="text-sm font-bold text-[var(--text-secondary)]">서울특별시 성동구 성수동 1가 12-5번지</p>
+              <p className="text-sm font-bold text-[var(--text-secondary)]">{displayAddress}</p>
               <p className="text-[9px] text-[var(--text-hint)] mt-1 uppercase font-black">Official Lot Address (KDX Data Synced)</p>
            </div>
         </motion.div>
