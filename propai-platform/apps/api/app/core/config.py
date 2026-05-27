@@ -76,7 +76,7 @@ class Settings(BaseSettings):
     SENTRY_DSN: str = ""
 
     class Config:
-        env_file = ".env"
+        env_file = ".env" if __import__("os").path.exists(".env") else None
         case_sensitive = True
         extra = "ignore"
 

@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     """전역 설정. 환경 변수에서 자동 로딩."""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=".env" if __import__("os").path.exists(".env") else None,
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
