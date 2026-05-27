@@ -197,7 +197,7 @@ export function InspectionOperationsWorkspaceClient({
   locale: Locale;
 }) {
   const [isMounted, setIsMounted] = useState(false);
-  const labels = LABELS[locale];
+  const labels = LABELS[locale] || LABELS["ko"];
   
   useEffect(() => {
     setIsMounted(true);

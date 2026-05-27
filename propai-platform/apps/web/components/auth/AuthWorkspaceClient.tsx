@@ -437,7 +437,7 @@ export function AuthWorkspaceClient({
   defaultMode,
 }: AuthWorkspaceClientProps) {
   const router = useRouter();
-  const labels = LABELS[locale];
+  const labels = LABELS[locale] || LABELS["ko"];
   const runtime = useMemo(() => apiClient.getRuntimeConfig(), []);
   const [mode, setMode] = useState<AuthMode>(defaultMode);
   const [session, setSession] = useState<SessionState | null>(null);

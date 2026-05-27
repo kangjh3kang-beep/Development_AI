@@ -34,13 +34,15 @@ export default async function MarketInsightsPage({
             </div>
             <div className="flex h-[240px] items-end justify-between px-4 pb-4 border-b border-[var(--line)]">
                {[3.5, 3.5, 3.25, 3.0, 2.75, 2.5].map((rate, i) => (
-                 <div key={i} className="flex flex-col items-center gap-4 group cursor-help">
-                   <div
-                     className="w-10 bg-gradient-to-t from-[var(--accent-strong)]/20 to-[var(--accent-strong)] rounded-t-xl relative transition-all group-hover:scale-y-110 shadow-[0_0_20px_var(--accent-strong)]/10"
-                     style={{ height: `${(rate / 4) * 100}%` }}
-                   >
-                     <div className="absolute -top-10 left-1/2 -translate-x-1/2 bg-[var(--surface-inverted)] text-[var(--text-inverted)] px-2 py-1 rounded text-[9px] font-black opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
-                        {rate}%
+                 <div key={i} className="flex flex-col items-center gap-2 group cursor-help">
+                   <div className="h-40 w-10 relative flex items-end">
+                     <div
+                       className="w-full bg-gradient-to-t from-[var(--accent-strong)]/20 to-[var(--accent-strong)] rounded-t-xl relative transition-all group-hover:scale-y-110 shadow-[0_0_20px_var(--accent-strong)]/10"
+                       style={{ height: `${(rate / 4) * 100}%` }}
+                     >
+                       <div className="absolute -top-10 left-1/2 -translate-x-1/2 bg-[var(--surface-inverted)] text-[var(--text-inverted)] px-2 py-1 rounded text-[9px] font-black opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
+                          {rate}%
+                       </div>
                      </div>
                    </div>
                    <span className="text-[10px] font-black text-[var(--text-hint)] uppercase tracking-tighter">Q{6-i} '24</span>

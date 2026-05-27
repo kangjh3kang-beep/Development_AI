@@ -221,7 +221,7 @@ export function ProjectsOverviewClient({
                 <Button
                   onClick={() => setCurrentProject(project.id)}
                   variant="secondary"
-                  className="flex-1 h-14 rounded-3xl border-[var(--line-strong)] font-black text-xs uppercase tracking-widest hover:bg-[var(--surface-soft)]"
+                  className="flex-1 h-14 rounded-3xl border-[var(--line-strong)] font-black text-xs uppercase tracking-widest hover:bg-[var(--surface-soft)] whitespace-nowrap"
                 >
                   {labels.selectProjectLabel}
                 </Button>

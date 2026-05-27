@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Card, CardContent, CardTitle, Input, Select } from "@propai/ui";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
@@ -480,12 +480,19 @@ export function ApprovalOperationsWorkspaceClient({
 }: {
   locale: Locale;
 }) {
-  const labels = LABELS[locale];
+  const labels = LABELS[locale] || LABELS["ko"];
   const queryClient = useQueryClient();
   const currentProjectId = useProjectStore((state) => state.currentProjectId);
   const setCurrentProject = useProjectStore((state) => state.setCurrentProject);
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [manualProjectId, setManualProjectId] = useState("");
+
+  useEffect(() => {
+    if (currentProjectId) {
+      setSelectedProjectId(currentProjectId);
+    }
+  }, [currentProjectId]);
+
   const [auditScope, setAuditScope] = useState<AuditScope>("project");
   const [approvalStatusFilter, setApprovalStatusFilter] =
     useState<ApprovalStatusFilter>("pending");
@@ -668,7 +675,7 @@ export function ApprovalOperationsWorkspaceClient({
             <div className="mt-4 flex flex-wrap gap-3">
               <Link
                 href={`/${locale}/agent`}
-                className="rounded-full border border-[var(--line)] bg-white px-4 py-2 text-sm font-medium text-[var(--text-primary)] transition hover:border-[var(--accent)] hover:text-[var(--accent-strong)]"
+                className="rounded-full border border-[var(--line)] bg-[var(--surface)] px-4 py-2 text-sm font-medium text-[var(--text-primary)] transition hover:border-[var(--accent)] hover:text-[var(--accent-strong)]"
               >
                 {labels.goToAgentAction}
               </Link>
@@ -921,17 +928,17 @@ export function ApprovalOperationsWorkspaceClient({
                       </span>
                     </div>
                     <div className="mt-3 flex flex-wrap gap-2 text-xs text-[var(--text-secondary)]">
-                      <span className="rounded-full bg-white px-3 py-1">
+                      <span className="rounded-full bg-[var(--surface-muted)] border border-[var(--line-strong)]/40 px-3 py-1 text-[11px]">
                         {labels.approverRoleLabel}: {item.approver_role}
                       </span>
-                      <span className="rounded-full bg-white px-3 py-1">
+                      <span className="rounded-full bg-[var(--surface-muted)] border border-[var(--line-strong)]/40 px-3 py-1 text-[11px]">
                         {labels.projectIdLabel}: {item.project_id}
                       </span>
-                      <span className="rounded-full bg-white px-3 py-1">
+                      <span className="rounded-full bg-[var(--surface-muted)] border border-[var(--line-strong)]/40 px-3 py-1 text-[11px]">
                         {labels.createdLabel}: {formatDateTime(locale, item.created_at)}
                       </span>
                       {item.decided_at ? (
-                        <span className="rounded-full bg-white px-3 py-1">
+                        <span className="rounded-full bg-[var(--surface-muted)] border border-[var(--line-strong)]/40 px-3 py-1 text-[11px]">
                           {labels.decidedLabel}: {formatDateTime(locale, item.decided_at)}
                         </span>
                       ) : null}
@@ -1049,16 +1056,16 @@ export function ApprovalOperationsWorkspaceClient({
                       </span>
                     </div>
                     <div className="mt-3 flex flex-wrap gap-2 text-xs text-[var(--text-secondary)]">
-                      <span className="rounded-full bg-white px-3 py-1">
+                      <span className="rounded-full bg-[var(--surface-muted)] border border-[var(--line-strong)]/40 px-3 py-1 text-[11px]">
                         {labels.statusLabel}: {item.status}
                       </span>
-                      <span className="rounded-full bg-white px-3 py-1">
+                      <span className="rounded-full bg-[var(--surface-muted)] border border-[var(--line-strong)]/40 px-3 py-1 text-[11px]">
                         {labels.projectIdLabel}: {item.project_id}
                       </span>
-                      <span className="rounded-full bg-white px-3 py-1">
+                      <span className="rounded-full bg-[var(--surface-muted)] border border-[var(--line-strong)]/40 px-3 py-1 text-[11px]">
                         {labels.approverRoleLabel}: {item.approver_role ?? "n/a"}
                       </span>
-                      <span className="rounded-full bg-white px-3 py-1">
+                      <span className="rounded-full bg-[var(--surface-muted)] border border-[var(--line-strong)]/40 px-3 py-1 text-[11px]">
                         {labels.createdLabel}: {formatDateTime(locale, item.created_at)}
                       </span>
                     </div>

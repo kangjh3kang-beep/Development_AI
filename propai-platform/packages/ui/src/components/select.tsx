@@ -20,7 +20,7 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(
   ({ className, label, onChange, onValueChange, options, ...props }, ref) => {
     return (
       <label className="flex items-center gap-2 rounded-full border border-[var(--line)] bg-[var(--surface-soft)] px-3 py-2 text-sm font-medium text-[var(--foreground)]">
-        {label ? <span>{label}</span> : null}
+        {label ? <span className="shrink-0 whitespace-nowrap">{label}</span> : null}
         <select
           ref={ref}
           className={cn(

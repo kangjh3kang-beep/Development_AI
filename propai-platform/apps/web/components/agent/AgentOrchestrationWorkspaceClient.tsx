@@ -508,8 +508,8 @@ export function AgentOrchestrationWorkspaceClient({
   locale: Locale;
 }) {
   const queryClient = useQueryClient();
-  const labels = LABELS[locale];
-  const readUi = AGENT_READ_UI[locale] ?? AGENT_READ_UI.en;
+  const labels = LABELS[locale] || LABELS["ko"];
+  const readUi = (locale && AGENT_READ_UI[locale]) || AGENT_READ_UI.ko || AGENT_READ_UI.en;
   const runtimeConfig = apiClient.getRuntimeConfig();
   const canUseLiveApi =
     runtimeConfig.mode === "live" || runtimeConfig.hasAccessToken;
@@ -560,19 +560,12 @@ export function AgentOrchestrationWorkspaceClient({
   });
 
   useEffect(() => {
-    if (selectedProjectId) {
-      return;
-    }
-
     if (currentProjectId) {
       setSelectedProjectId(currentProjectId);
-      return;
-    }
-
-    if (projectsQuery.data?.items.length) {
+    } else if (projectsQuery.data?.items.length && !selectedProjectId) {
       setSelectedProjectId(projectsQuery.data.items[0].id);
     }
-  }, [currentProjectId, projectsQuery.data, selectedProjectId]);
+  }, [currentProjectId, projectsQuery.data?.items, selectedProjectId]);
 
   useEffect(() => {
     if (!manualProjectId.trim() && selectedProjectId) {
@@ -912,9 +905,9 @@ export function AgentOrchestrationWorkspaceClient({
       </Card>
 
       {workspaceError ? (
-        <Card className="border-[rgba(217,119,6,0.35)] bg-[rgba(255,247,237,0.92)] shadow-none">
+        <Card className="border-[rgba(217,119,6,0.28)] bg-[rgba(217,119,6,0.08)] shadow-none">
           <CardContent className="p-5">
-            <p className="text-sm font-medium text-[var(--spot)]" role="alert">
+            <p className="text-sm font-semibold text-[var(--spot)]" role="alert">
               {workspaceError}
             </p>
           </CardContent>
@@ -1139,10 +1132,10 @@ export function AgentOrchestrationWorkspaceClient({
                         type="button"
                         aria-pressed={selected}
                         onClick={() => toggleDomain(domain)}
-                        className={`rounded-full px-4 py-2 text-sm font-medium transition ${
+                        className={`rounded-full px-4 py-2 text-sm font-bold transition ${
                           selected
-                            ? "bg-[var(--foreground)] text-white"
-                            : "border border-[var(--line)] bg-[var(--surface-soft)] text-[var(--text-secondary)]"
+                            ? "bg-[var(--accent-strong)] text-white shadow-[var(--shadow-glow)]"
+                            : "border border-[var(--line-strong)] bg-[var(--surface-soft)] text-[var(--text-secondary)] hover:border-[var(--text-secondary)]"
                         }`}
                       >
                         {labels.domainLabels[domain]}
@@ -1300,10 +1293,10 @@ export function AgentOrchestrationWorkspaceClient({
                         </span>
                       </div>
                       <div className="mt-3 flex flex-wrap gap-2 text-xs text-[var(--text-secondary)]">
-                        <span className="rounded-full bg-white px-3 py-1">
+                        <span className="rounded-full bg-[var(--surface-muted)] border border-[var(--line-strong)]/40 px-3 py-1 text-[11px]">
                           {labels.statusLabel}: {item.status}
                         </span>
-                        <span className="rounded-full bg-white px-3 py-1">
+                        <span className="rounded-full bg-[var(--surface-muted)] border border-[var(--line-strong)]/40 px-3 py-1 text-[11px]">
                           {labels.approvalLabel}:{" "}
                           {labels.approvalStatusLabels[item.approval_status]}
                         </span>
@@ -1365,17 +1358,17 @@ export function AgentOrchestrationWorkspaceClient({
                       </span>
                     </div>
                     <div className="mt-3 flex flex-wrap gap-2 text-xs text-[var(--text-secondary)]">
-                      <span className="rounded-full bg-white px-3 py-1">
+                      <span className="rounded-full bg-[var(--surface-muted)] border border-[var(--line-strong)]/40 px-3 py-1 text-[11px]">
                         {labels.statusLabel}: {item.status}
                       </span>
-                      <span className="rounded-full bg-white px-3 py-1">
+                      <span className="rounded-full bg-[var(--surface-muted)] border border-[var(--line-strong)]/40 px-3 py-1 text-[11px]">
                         {labels.approvalLabel}:{" "}
                         {labels.approvalStatusLabels[item.approval_status]}
                       </span>
-                      <span className="rounded-full bg-white px-3 py-1">
+                      <span className="rounded-full bg-[var(--surface-muted)] border border-[var(--line-strong)]/40 px-3 py-1 text-[11px]">
                         {labels.projectIdLabel}: {item.project_id}
                       </span>
-                      <span className="rounded-full bg-white px-3 py-1">
+                      <span className="rounded-full bg-[var(--surface-muted)] border border-[var(--line-strong)]/40 px-3 py-1 text-[11px]">
                         {readUi.createdLabel}: {new Date(item.created_at).toLocaleString(locale)}
                       </span>
                     </div>
@@ -1425,7 +1418,7 @@ export function AgentOrchestrationWorkspaceClient({
             pendingApprovalItems.length > 1 &&
             !approvalsQuery.isLoading &&
             !approvalsQuery.isError ? (
-              <div className="mt-5 rounded-[1.35rem] border border-[var(--line)] bg-[rgba(255,255,255,0.7)] px-4 py-4">
+              <div className="mt-5 rounded-[1.35rem] border border-[var(--line-strong)] bg-[var(--surface-soft)]/80 backdrop-blur-md px-4 py-4">
                 <p className="text-sm font-semibold text-[var(--text-primary)]">
                   {APPROVAL_DECISION_UI.bulkTitle}
                 </p>
@@ -1462,7 +1455,7 @@ export function AgentOrchestrationWorkspaceClient({
                     type="button"
                     disabled={isBulkDecisionPending || Boolean(pendingApprovalId)}
                     onClick={() => void handleBulkApprovalDecision("rejected")}
-                    className="rounded-full border border-[var(--line)] bg-white px-4 py-2 text-sm font-medium text-[var(--text-primary)] transition disabled:cursor-not-allowed disabled:opacity-50"
+                    className="rounded-full border border-[var(--line)] bg-[var(--surface)] px-4 py-2 text-sm font-medium text-[var(--text-primary)] transition disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {APPROVAL_DECISION_UI.rejectAllAction}
                   </button>
@@ -1492,17 +1485,17 @@ export function AgentOrchestrationWorkspaceClient({
                       </span>
                     </div>
                     <div className="mt-3 flex flex-wrap gap-2 text-xs text-[var(--text-secondary)]">
-                      <span className="rounded-full bg-white px-3 py-1">
+                      <span className="rounded-full bg-[var(--surface-muted)] border border-[var(--line-strong)]/40 px-3 py-1 text-[11px]">
                         {readUi.approverRoleLabel}: {item.approver_role}
                       </span>
-                      <span className="rounded-full bg-white px-3 py-1">
+                      <span className="rounded-full bg-[var(--surface-muted)] border border-[var(--line-strong)]/40 px-3 py-1 text-[11px]">
                         {labels.projectIdLabel}: {item.project_id}
                       </span>
-                      <span className="rounded-full bg-white px-3 py-1">
+                      <span className="rounded-full bg-[var(--surface-muted)] border border-[var(--line-strong)]/40 px-3 py-1 text-[11px]">
                         {readUi.createdLabel}: {new Date(item.created_at).toLocaleString(locale)}
                       </span>
                       {item.decided_at ? (
-                        <span className="rounded-full bg-white px-3 py-1">
+                        <span className="rounded-full bg-[var(--surface-muted)] border border-[var(--line-strong)]/40 px-3 py-1 text-[11px]">
                           {AUDIT_FILTER_UI.decidedLabel}:{" "}
                           {new Date(item.decided_at).toLocaleString(locale)}
                         </span>
@@ -1565,7 +1558,7 @@ export function AgentOrchestrationWorkspaceClient({
                                 "rejected",
                               )
                             }
-                            className="rounded-full border border-[var(--line)] bg-white px-4 py-2 text-sm font-medium text-[var(--text-primary)] transition disabled:cursor-not-allowed disabled:opacity-50"
+                            className="rounded-full border border-[var(--line)] bg-[var(--surface)] px-4 py-2 text-sm font-medium text-[var(--text-primary)] transition disabled:cursor-not-allowed disabled:opacity-50"
                           >
                             {readUi.rejectAction}
                           </button>

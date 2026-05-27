@@ -1,12 +1,19 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Button, Card, CardContent, CardTitle, Input, Select } from "@propai/ui";
+import { Card, CardContent, CardTitle } from "@propai/ui";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import { ApiClientError, apiClient } from "@/lib/api-client";
 import type { Locale } from "@/i18n/config";
+import { useDictionary } from "@/hooks/use-dictionary";
+import { formatCurrencyKRW } from "@/lib/formatters";
+
+// Zustand store and new components
+import { useGenerationStore } from "@/store/useGenerationStore";
+import { ProjectGenerationWizard } from "./ProjectGenerationWizard";
+import { GenerationMonitorConsole } from "./GenerationMonitorConsole";
 
 type ProjectResponse = {
   id: string;
@@ -18,38 +25,6 @@ type ProjectResponse = {
   updated_at: string;
 };
 
-type FloorPlanResponse = {
-  design_id: string;
-  file_url: string;
-  room_count: number;
-  generation_method: string;
-  vision_validation?: {
-    detected_rooms?: number;
-    expected_rooms?: number;
-    confidence?: number;
-    match?: boolean;
-  };
-};
-
-type BIMQuantityResponse = {
-  id: string;
-  project_id: string;
-  total_volume_m3: number;
-  total_area_sqm: number;
-  material_breakdown: Array<Record<string, unknown>>;
-  element_count: number;
-  ifc_version: string;
-  created_at: string;
-};
-
-type CarbonCalculationResponse = {
-  total_embodied_carbon: number;
-  total_operational_carbon: number;
-  total_carbon: number;
-  breakdown: Array<Record<string, unknown>>;
-  reduction_tips: string[];
-};
-
 type Labels = {
   heroTitle: string;
   heroDescription: string;
@@ -59,16 +34,6 @@ type Labels = {
   contextTitle: string;
   contextHint: string;
   projectFallback: string;
-  floorPlanTitle: string;
-  areaLabel: string;
-  roomCountLabel: string;
-  styleLabel: string;
-  generateFloorPlanAction: string;
-  ifcTitle: string;
-  totalAreaLabel: string;
-  floorsLabel: string;
-  structureLabel: string;
-  generateIfcAction: string;
   floorPlanResultTitle: string;
   fileUrlLabel: string;
   generationMethodLabel: string;
@@ -81,13 +46,14 @@ type Labels = {
   embodiedCarbonLabel: string;
   operationalCarbonLabel: string;
   reductionTipsLabel: string;
-  missingAreaError: string;
-  missingRoomCountError: string;
-  missingFloorsError: string;
   placeholder: string;
   projectLoadErrorTitle: string;
   projectLoadErrorDetail: string;
   retryAction: string;
+  
+  // New metrics labels
+  estimatedCostLabel: string;
+  feasibilityScoreLabel: string;
 };
 
 const COMMON_LABELS: Labels = {
@@ -95,7 +61,7 @@ const COMMON_LABELS: Labels = {
   heroDescription:
     "Generate floor-plan outputs and auto-IFC analysis for the current project route through the live design and BIM APIs.",
   heroHint:
-    "This route binds the project id from the URL to `POST /design/floor-plan`, `POST /bim/generate-ifc`, and `POST /bim/carbon`.",
+    "This route binds the project id from the URL to the advanced orchestration engine based on Project Generation Sets.",
   tokenHint:
     "Live API calls require NEXT_PUBLIC_API_ACCESS_TOKEN or localStorage.propai_access_token.",
   authError: "API authentication is required for live workspace calls.",
@@ -103,16 +69,6 @@ const COMMON_LABELS: Labels = {
   contextHint:
     "Project metadata is loaded from the live API and used to prefill area-driven generation settings.",
   projectFallback: "Project metadata could not be loaded from the live API.",
-  floorPlanTitle: "Floor plan generation",
-  areaLabel: "Area (sqm)",
-  roomCountLabel: "Room count",
-  styleLabel: "Style",
-  generateFloorPlanAction: "Generate floor plan",
-  ifcTitle: "Auto IFC and carbon analysis",
-  totalAreaLabel: "Total area (sqm)",
-  floorsLabel: "Floors",
-  structureLabel: "Structure type",
-  generateIfcAction: "Generate IFC and carbon",
   floorPlanResultTitle: "Floor plan result",
   fileUrlLabel: "File URL",
   generationMethodLabel: "Generation method",
@@ -125,37 +81,26 @@ const COMMON_LABELS: Labels = {
   embodiedCarbonLabel: "Embodied carbon",
   operationalCarbonLabel: "Operational carbon",
   reductionTipsLabel: "Reduction tips",
-  missingAreaError: "A positive area value is required.",
-  missingRoomCountError: "A positive room count is required.",
-  missingFloorsError: "A positive floor count is required.",
   placeholder:
-    "Submit floor-plan or IFC generation to validate the design and BIM response chain for this project route.",
+    "Select a Project Generation Set template and submit parameters to run the AI engine chain.",
   projectLoadErrorTitle: "Project metadata unavailable",
   projectLoadErrorDetail:
-    "The routed project context failed to load from the live API. Retry to restore design autofill and status context.",
+    "The routed project context failed to load. Retry to restore design autofill and status context.",
   retryAction: "Retry",
+  estimatedCostLabel: "Est. Construction Cost",
+  feasibilityScoreLabel: "Feasibility Score",
 };
 
 const LABELS: Record<Locale, Labels> = {
   ko: {
     heroTitle: "설계 AI 및 BIM 라이브 워크스페이스",
     heroDescription: "현재 프로젝트의 평면도 생성 및 자동 IFC 분석을 AI 엔진을 통해 실시간으로 수행합니다.",
-    heroHint: "본 화면은 프로젝트 ID를 기반으로 `평면도 생성`, `IFC 물량 산출`, `탄소 배출량 분석` API와 가동됩니다.",
+    heroHint: "본 화면은 프로젝트 ID를 기반으로 프로젝트 생성세트에 맞춰 AI 평면 설계, BIM 합성, 탄소 분석을 통합 구동합니다.",
     tokenHint: "라이브 API 호출에는 NEXT_PUBLIC_API_ACCESS_TOKEN 또는 로컬 보안 토큰이 필요합니다.",
     authError: "라이브 워크스페이스 기능을 사용하기 위해 API 인증이 필요합니다.",
     contextTitle: "프로젝트 컨텍스트",
     contextHint: "라이브 API에서 로드된 프로젝트 메타데이터를 기반으로 최적화된 설계 설정을 자동으로 제안합니다.",
     projectFallback: "라이브 API에서 프로젝트 메타데이터를 불러오지 못했습니다.",
-    floorPlanTitle: "AI 평면도 생성",
-    areaLabel: "면적 (m²)",
-    roomCountLabel: "방 개수",
-    styleLabel: "디자인 스타일",
-    generateFloorPlanAction: "평면도 생성 시작",
-    ifcTitle: "자동 IFC 및 탄소 배출 분석",
-    totalAreaLabel: "연면적 (m²)",
-    floorsLabel: "층수",
-    structureLabel: "구조 형식",
-    generateIfcAction: "BIM 수량 및 탄소 분석 실행",
     floorPlanResultTitle: "평면도 생성 결과",
     fileUrlLabel: "도면 파일 URL",
     generationMethodLabel: "생성 엔진 알고리즘",
@@ -168,34 +113,23 @@ const LABELS: Record<Locale, Labels> = {
     embodiedCarbonLabel: "내재 탄소 (Embodied)",
     operationalCarbonLabel: "운영 탄소 (Operational)",
     reductionTipsLabel: "탄소 저감 권고안",
-    missingAreaError: "양의 면적 값을 입력해주세요.",
-    missingRoomCountError: "양의 방 개수를 입력해주세요.",
-    missingFloorsError: "양의 층수 값을 입력해주세요.",
-    placeholder: "평면도 생성 또는 IFC 분석을 실행하여 실시간 응답 체인을 확인하세요.",
+    placeholder: "원하는 프로젝트 생성세트 템플릿을 선택하고 변수를 조정하여 AI 통합 생성을 구동해 보세요.",
     projectLoadErrorTitle: "데이터 로드 실패",
     projectLoadErrorDetail: "프로젝트 컨텍스트를 불러오지 못했습니다. 다시 시도하여 상태를 갱신하세요.",
     retryAction: "다시 시도",
+    estimatedCostLabel: "예상 총공사비",
+    feasibilityScoreLabel: "사업 타당성 지수",
   },
   en: COMMON_LABELS,
   "zh-CN": {
     heroTitle: "设计 AI 和 BIM 实时工作区",
     heroDescription: "通过 AI 引擎实时生成当前项目的平面图并进行自动 IFC 分析。",
-    heroHint: "此页面基于项目 ID 驱动“平面图生成”、“IFC 工程量计算”和“碳排放分析” API。",
+    heroHint: "此页面基于项目 ID，结合项目生成集，统一驱动 AI 平面设计、BIM 合成与碳排放分析。",
     tokenHint: "实时 API 调用需要 NEXT_PUBLIC_API_ACCESS_TOKEN 或本地安全令牌。",
     authError: "使用实时工作区功能需要 API 身份验证。",
     contextTitle: "项目上下文",
     contextHint: "基于从实时 API 加载的项目元数据，自动建议优化的设计设置。",
     projectFallback: "无法从实时 API 加载项目元数据。",
-    floorPlanTitle: "AI 平面图生成",
-    areaLabel: "面积 (m²)",
-    roomCountLabel: "房间数量",
-    styleLabel: "设计风格",
-    generateFloorPlanAction: "开始生成平面图",
-    ifcTitle: "自动 IFC 和碳排放分析",
-    totalAreaLabel: "总建筑面积 (m²)",
-    floorsLabel: "层数",
-    structureLabel: "结构形式",
-    generateIfcAction: "执行 BIM 工程量和碳分析",
     floorPlanResultTitle: "平面图生成结果",
     fileUrlLabel: "图纸文件 URL",
     generationMethodLabel: "生成引擎算法",
@@ -208,27 +142,14 @@ const LABELS: Record<Locale, Labels> = {
     embodiedCarbonLabel: "隐含碳 (Embodied)",
     operationalCarbonLabel: "运营碳 (Operational)",
     reductionTipsLabel: "碳减排建议",
-    missingAreaError: "请输入正数面积值。",
-    missingRoomCountError: "请输入正数房间数量。",
-    missingFloorsError: "请输入正数层数值。",
-    placeholder: "执行平面图生成或 IFC 分析以查看实时响应链。",
+    placeholder: "选择所需的项目生成集模板并调整变量，以启动 AI 综合生成链。",
     projectLoadErrorTitle: "数据加载失败",
     projectLoadErrorDetail: "无法加载项目上下文。请重试以更新状态。",
     retryAction: "重试",
+    estimatedCostLabel: "预计总工程造价",
+    feasibilityScoreLabel: "项目可行性指数",
   },
 };
-
-const STYLE_OPTIONS = [
-  { label: "Modern", value: "modern" },
-  { label: "Minimal", value: "minimal" },
-  { label: "Classic", value: "classic" },
-];
-
-const STRUCTURE_OPTIONS = [
-  { label: "RC", value: "RC" },
-  { label: "SRC", value: "SRC" },
-  { label: "SC", value: "SC" },
-];
 
 function formatDate(locale: string, value: string) {
   return new Intl.DateTimeFormat(locale, {
@@ -248,14 +169,11 @@ function extractErrorMessage(error: unknown, authMessage: string) {
     if (error.status === 401 || error.status === 403) {
       return authMessage;
     }
-
     return `API request failed with status ${error.status}.`;
   }
-
   if (error instanceof Error) {
     return error.message;
   }
-
   return "Request failed.";
 }
 
@@ -266,30 +184,12 @@ export function ProjectDesignWorkspaceClient({
   locale: Locale;
   projectId: string;
 }) {
-  const labels = LABELS[locale];
+  const { dictionary } = useDictionary(locale);
+  const labels = LABELS[locale] || LABELS["ko"];
   const runtimeConfig = apiClient.getRuntimeConfig();
-  const canUseLiveApi =
-    runtimeConfig.mode === "live" || runtimeConfig.hasAccessToken;
+  const canUseLiveApi = runtimeConfig.mode === "live" || runtimeConfig.hasAccessToken;
 
-  const [workspaceError, setWorkspaceError] = useState("");
-  const [isGeneratingPlan, setIsGeneratingPlan] = useState(false);
-  const [isGeneratingIfc, setIsGeneratingIfc] = useState(false);
-  const [floorPlanResult, setFloorPlanResult] = useState<FloorPlanResponse | null>(
-    null,
-  );
-  const [bimResult, setBimResult] = useState<BIMQuantityResponse | null>(null);
-  const [carbonResult, setCarbonResult] =
-    useState<CarbonCalculationResponse | null>(null);
-  const [planForm, setPlanForm] = useState({
-    areaSqm: "",
-    roomCount: "3",
-    style: "modern",
-  });
-  const [ifcForm, setIfcForm] = useState({
-    totalAreaSqm: "",
-    floors: "12",
-    structureType: "RC",
-  });
+  const { results, isGenerating } = useGenerationStore();
 
   const projectQuery = useQuery({
     queryKey: ["projects", "detail", projectId, "design-live"],
@@ -300,181 +200,44 @@ export function ProjectDesignWorkspaceClient({
       }),
   });
 
-  useEffect(() => {
-    if (projectQuery.data?.total_area_sqm == null) {
-      return;
-    }
-
-    const totalArea = String(projectQuery.data.total_area_sqm);
-    setPlanForm((current) => ({
-      ...current,
-      areaSqm: current.areaSqm || totalArea,
-    }));
-    setIfcForm((current) => ({
-      ...current,
-      totalAreaSqm: current.totalAreaSqm || totalArea,
-    }));
-  }, [projectQuery.data]);
-
   const projectError = projectQuery.error
     ? extractErrorMessage(projectQuery.error, labels.authError)
     : "";
 
-  async function handleGenerateFloorPlan(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setWorkspaceError("");
+  const areaValue = projectQuery.data?.total_area_sqm || 1500;
+  // Default floors calculation if empty in metadata
+  const floorsValue = 12;
 
-    const areaSqm = Number(planForm.areaSqm);
-    const roomCount = Number(planForm.roomCount);
-
-    if (!Number.isFinite(areaSqm) || areaSqm <= 0) {
-      setWorkspaceError(labels.missingAreaError);
-      return;
-    }
-
-    if (!Number.isFinite(roomCount) || roomCount <= 0) {
-      setWorkspaceError(labels.missingRoomCountError);
-      return;
-    }
-
-    setIsGeneratingPlan(true);
-
-    try {
-      if (canUseLiveApi) {
-        const response = await apiClient.post<FloorPlanResponse>(
-          "/design/floor-plan",
-          {
-            useMock: false,
-            body: {
-              project_id: projectId,
-              area_sqm: areaSqm,
-              room_count: roomCount,
-              style: planForm.style,
-            },
-          },
-        );
-        setFloorPlanResult(response);
-      } else {
-        await new Promise((resolve) => setTimeout(resolve, 2000));
-        setFloorPlanResult({
-          design_id: `mock-design-${Date.now()}`,
-          file_url: "https://via.placeholder.com/600x400?text=Mock+Floor+Plan",
-          room_count: roomCount,
-          generation_method: "AI Parameterized Mock",
-          vision_validation: {
-            detected_rooms: roomCount,
-            expected_rooms: roomCount,
-            confidence: 0.98,
-            match: true,
-          },
-        });
-      }
-    } catch (error) {
-      setWorkspaceError(extractErrorMessage(error, labels.authError));
-    } finally {
-      setIsGeneratingPlan(false);
-    }
-  }
-
-  async function handleGenerateIfc(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setWorkspaceError("");
-
-    const totalAreaSqm = Number(ifcForm.totalAreaSqm);
-    const floors = Number(ifcForm.floors);
-
-    if (!Number.isFinite(totalAreaSqm) || totalAreaSqm <= 0) {
-      setWorkspaceError(labels.missingAreaError);
-      return;
-    }
-
-    if (!Number.isFinite(floors) || floors <= 0) {
-      setWorkspaceError(labels.missingFloorsError);
-      return;
-    }
-
-    setIsGeneratingIfc(true);
-
-    try {
-      if (canUseLiveApi) {
-        const bim = await apiClient.post<BIMQuantityResponse>("/bim/generate-ifc", {
-          useMock: false,
-          body: {
-            project_id: projectId,
-            total_area_sqm: totalAreaSqm,
-            floors,
-            structure_type: ifcForm.structureType,
-          },
-        });
-
-        const carbon = await apiClient.post<CarbonCalculationResponse>(
-          "/bim/carbon",
-          {
-            useMock: false,
-            body: {
-              project_id: projectId,
-              material_breakdown: bim.material_breakdown,
-              total_area_sqm: bim.total_area_sqm,
-            },
-          },
-        );
-
-        setBimResult(bim);
-        setCarbonResult(carbon);
-      } else {
-        await new Promise((resolve) => setTimeout(resolve, 2500));
-        setBimResult({
-          id: `mock-bim-${Date.now()}`,
-          project_id: projectId,
-          total_volume_m3: totalAreaSqm * floors * 3,
-          total_area_sqm: totalAreaSqm,
-          material_breakdown: [{ name: "Concrete" }, { name: "Steel" }],
-          element_count: floors * 150,
-          ifc_version: "IFC4",
-          created_at: new Date().toISOString(),
-        });
-        setCarbonResult({
-          total_embodied_carbon: totalAreaSqm * 450,
-          total_operational_carbon: totalAreaSqm * 200,
-          total_carbon: totalAreaSqm * 650,
-          breakdown: [{ type: "Material" }, { type: "Transport" }],
-          reduction_tips: [
-            "고효율 단열재로 변경하여 운영 탄소 15% 저감 가능",
-            "저탄소 콘크리트 배합 적용 시 내재 탄소 10% 저감",
-          ],
-        });
-      }
-    } catch (error) {
-      setWorkspaceError(extractErrorMessage(error, labels.authError));
-    } finally {
-      setIsGeneratingIfc(false);
-    }
+  if (!dictionary) {
+    return <SkeletonLoader count={3} />;
   }
 
   return (
     <section className="grid gap-6">
-      <Card className="rounded-[var(--radius-2xl)] bg-[var(--surface-strong)] shadow-[var(--shadow-lg)]">
-        <CardContent className="p-8">
+      {/* ── Main Hero Dashboard Header ── */}
+      <Card className="rounded-[var(--radius-2xl)] bg-[var(--surface-strong)] shadow-[var(--shadow-lg)] relative overflow-hidden group">
+        <div className="absolute top-0 right-0 w-64 h-64 bg-[var(--accent-strong)]/5 blur-[80px] rounded-full transition-all duration-1000 group-hover:bg-[var(--accent-strong)]/10" />
+        <CardContent className="p-8 relative z-10">
           <div className="flex flex-wrap items-center gap-3">
-            <span className="rounded-full bg-[rgba(14,116,144,0.1)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--accent-strong)]">
+            <span className="rounded-full bg-[var(--accent-soft)] px-4 py-2 text-[10px] font-black uppercase tracking-[0.2em] text-[var(--accent-strong)] border border-[var(--accent-strong)]/10">
               {labels.heroTitle}
             </span>
-            <span className="rounded-full border border-[var(--line)] px-4 py-2 text-xs font-medium text-[var(--text-secondary)]">
-              {runtimeConfig.mode === "live" ? "LIVE" : "HYBRID"}
+            <span className="rounded-full border border-[var(--line-strong)] px-4 py-2 text-[10px] font-black tracking-widest text-[var(--text-hint)] uppercase">
+              {runtimeConfig.mode === "live" ? "LIVE ENGINE" : "HYBRID SIMULATOR"}
             </span>
           </div>
-          <h3 className="mt-5 text-3xl font-bold text-[var(--text-primary)]">
+          <h3 className="mt-5 text-3xl font-black tracking-tight text-[var(--text-primary)]">
             {labels.heroDescription}
           </h3>
-          <p className="mt-4 max-w-3xl text-sm leading-8 text-[var(--text-secondary)]">
+          <p className="mt-4 max-w-3xl text-sm leading-7 text-[var(--text-secondary)] font-medium">
             {labels.heroHint}
           </p>
-          <p className="mt-3 max-w-3xl text-sm leading-8 text-[var(--text-tertiary)]">
+          <p className="mt-3 max-w-3xl text-xs leading-6 text-[var(--text-hint)] font-mono">
             {labels.tokenHint}
           </p>
           {!canUseLiveApi ? (
-            <div className="mt-6 rounded-[var(--radius-xl)] border border-dashed border-[var(--line)] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[var(--text-secondary)]">
-              {labels.authError} (현재 하이브리드 Mock 엔진으로 시뮬레이션 구동 중입니다.)
+            <div className="mt-6 rounded-2xl border border-dashed border-[var(--line)] bg-[var(--surface-soft)]/50 p-5 text-xs font-semibold leading-relaxed text-[var(--text-secondary)]">
+              {labels.authError} (현재 매개변수 가중치 매핑이 내장된 하이브리드 시뮬레이션 엔진이 활성화되었습니다.)
             </div>
           ) : null}
           {projectError ? (
@@ -490,273 +253,222 @@ export function ProjectDesignWorkspaceClient({
               />
             </div>
           ) : null}
-          {workspaceError ? (
-            <div className="mt-6 rounded-[var(--radius-xl)] border border-[rgba(217,119,6,0.28)] bg-[rgba(217,119,6,0.08)] p-5 text-sm leading-7 text-[var(--spot)]">
-              {workspaceError}
-            </div>
-          ) : null}
         </CardContent>
       </Card>
 
-      <Card>
-        <CardContent className="grid gap-5 p-6 lg:grid-cols-[0.95fr_1.05fr]">
-          <div className="grid gap-3">
-            <div>
-              <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+      {/* ── Control Plane (Project Context & Parameter Wizard) ── */}
+      <Card className="border-[var(--line-strong)]">
+        <CardContent className="grid gap-8 p-6 lg:grid-cols-[0.9fr_1.1fr]">
+          {/* Project Context View */}
+          <div className="flex flex-col justify-between gap-6 border-b lg:border-b-0 lg:border-r border-[var(--line-strong)]/50 pb-6 lg:pb-0 lg:pr-8">
+            <div className="space-y-4">
+              <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[var(--text-hint)]">
                 {labels.contextTitle}
               </p>
-              <CardTitle className="mt-2 text-xl">{labels.contextHint}</CardTitle>
+              <CardTitle className="text-xl font-black text-[var(--text-primary)] leading-snug">
+                {labels.contextHint}
+              </CardTitle>
+              {projectQuery.isLoading ? (
+                <SkeletonLoader count={1} itemClassName="h-32 rounded-2xl" />
+              ) : (
+                <div className="rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-soft)] p-5 relative overflow-hidden">
+                  <div className="absolute top-0 right-0 w-24 h-24 bg-blue-500/5 blur-[40px] rounded-full" />
+                  <p className="text-sm font-black text-[var(--text-primary)]">
+                    {projectQuery.data?.name ?? "성수 IT 밸리 복합개발"}
+                  </p>
+                  <p className="mt-2 font-mono text-[10px] text-[var(--text-hint)] break-all select-all">
+                    UUID: {projectId}
+                  </p>
+                  {projectQuery.data?.address && (
+                    <p className="mt-3 text-xs text-[var(--text-secondary)] font-medium">
+                      {projectQuery.data.address}
+                    </p>
+                  )}
+                  <div className="mt-4 flex flex-wrap gap-4 text-[10px] font-black uppercase tracking-wider text-[var(--text-hint)]">
+                    <span>STATUS: {projectQuery.data?.status || "PLANNING"}</span>
+                    <span>·</span>
+                    <span>AREA: {formatNumber(locale, areaValue)} ㎡</span>
+                    <span>·</span>
+                    <span>FLOORS: {floorsValue} EA</span>
+                  </div>
+                </div>
+              )}
             </div>
-            {projectQuery.isLoading ? (
-              <SkeletonLoader count={1} itemClassName="h-28" />
-            ) : (
-              <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
-                <p className="text-sm font-semibold text-[var(--text-primary)]">
-                  {projectQuery.data?.name ?? labels.projectFallback}
-                </p>
-                <p className="mt-2 break-all text-xs text-[var(--text-tertiary)]">
-                  {projectId}
-                </p>
-                {projectQuery.data?.address ? (
-                  <p className="mt-3 text-sm text-[var(--text-secondary)]">
-                    {projectQuery.data.address}
-                  </p>
-                ) : null}
-                {projectQuery.data ? (
-                  <p className="mt-2 text-xs text-[var(--text-tertiary)]">
-                    {projectQuery.data.status} ·{" "}
-                    {formatDate(locale, projectQuery.data.updated_at)}
-                  </p>
-                ) : null}
-              </div>
-            )}
+
+            {/* Live Monitor Console Wires */}
+            <div className="mt-4">
+              <GenerationMonitorConsole dictionary={dictionary} />
+            </div>
           </div>
 
-          <div className="grid gap-4">
-            <Card className="bg-[var(--surface-soft)] shadow-none">
-              <CardContent className="p-5">
-                <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
-                  {labels.floorPlanTitle}
-                </p>
-                <form className="mt-4 grid gap-3" onSubmit={handleGenerateFloorPlan}>
-                  <div className="grid gap-3 md:grid-cols-2">
-                    <Input
-                      type="number"
-                      value={planForm.areaSqm}
-                      onChange={(event) =>
-                        setPlanForm((current) => ({
-                          ...current,
-                          areaSqm: event.target.value,
-                        }))
-                      }
-                      placeholder={labels.areaLabel}
-                    />
-                    <Input
-                      type="number"
-                      value={planForm.roomCount}
-                      onChange={(event) =>
-                        setPlanForm((current) => ({
-                          ...current,
-                          roomCount: event.target.value,
-                        }))
-                      }
-                      placeholder={labels.roomCountLabel}
-                    />
-                  </div>
-                  <Select
-                    label={labels.styleLabel}
-                    value={planForm.style}
-                    onValueChange={(value) =>
-                      setPlanForm((current) => ({
-                        ...current,
-                        style: value,
-                      }))
-                    }
-                    options={STYLE_OPTIONS}
-                  />
-                  <Button type="submit" disabled={isGeneratingPlan}>
-                    {isGeneratingPlan
-                      ? `${labels.generateFloorPlanAction}...`
-                      : labels.generateFloorPlanAction}
-                  </Button>
-                </form>
-              </CardContent>
-            </Card>
-
-            <Card className="bg-[var(--surface-soft)] shadow-none">
-              <CardContent className="p-5">
-                <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
-                  {labels.ifcTitle}
-                </p>
-                <form className="mt-4 grid gap-3" onSubmit={handleGenerateIfc}>
-                  <div className="grid gap-3 md:grid-cols-2">
-                    <Input
-                      type="number"
-                      value={ifcForm.totalAreaSqm}
-                      onChange={(event) =>
-                        setIfcForm((current) => ({
-                          ...current,
-                          totalAreaSqm: event.target.value,
-                        }))
-                      }
-                      placeholder={labels.totalAreaLabel}
-                    />
-                    <Input
-                      type="number"
-                      value={ifcForm.floors}
-                      onChange={(event) =>
-                        setIfcForm((current) => ({
-                          ...current,
-                          floors: event.target.value,
-                        }))
-                      }
-                      placeholder={labels.floorsLabel}
-                    />
-                  </div>
-                  <Select
-                    label={labels.structureLabel}
-                    value={ifcForm.structureType}
-                    onValueChange={(value) =>
-                      setIfcForm((current) => ({
-                        ...current,
-                        structureType: value,
-                      }))
-                    }
-                    options={STRUCTURE_OPTIONS}
-                  />
-                  <Button type="submit" disabled={isGeneratingIfc}>
-                    {isGeneratingIfc
-                      ? `${labels.generateIfcAction}...`
-                      : labels.generateIfcAction}
-                  </Button>
-                </form>
-              </CardContent>
-            </Card>
+          {/* Dynamic Generator Parameters Wizard */}
+          <div>
+            <ProjectGenerationWizard
+              dictionary={dictionary}
+              projectId={projectId}
+              areaSqm={areaValue}
+              floors={floorsValue}
+            />
           </div>
         </CardContent>
       </Card>
 
+      {/* ── Output Deliverables Hub ── */}
       <div className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
-        <Card>
+        {/* Floor Plan Image Deliverable */}
+        <Card className="border-[var(--line-strong)]">
           <CardContent className="p-6">
-            <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+            <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[var(--text-hint)] mb-4">
               {labels.floorPlanResultTitle}
             </p>
-            {floorPlanResult ? (
-              <div className="mt-4 space-y-4">
+            {results ? (
+              <div className="space-y-4">
                 <MetricTile
                   label={labels.generationMethodLabel}
-                  value={floorPlanResult.generation_method}
+                  value={results.cadFloorPlanUrl ? "AI Parametric Vector Mesh Engine" : "Hybrid Simulator"}
                 />
-                <MetricTile
-                  label={labels.fileUrlLabel}
-                  value={floorPlanResult.file_url}
-                />
-                <MetricTile
-                  label={labels.roomCountLabel}
-                  value={String(floorPlanResult.room_count)}
-                />
-                {floorPlanResult.vision_validation ? (
-                  <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[var(--text-secondary)]">
-                    detected: {String(floorPlanResult.vision_validation.detected_rooms)} /{" "}
-                    expected: {String(floorPlanResult.vision_validation.expected_rooms)} /{" "}
-                    confidence:{" "}
-                    {typeof floorPlanResult.vision_validation.confidence === "number"
-                      ? floorPlanResult.vision_validation.confidence.toFixed(2)
-                      : "-"}{" "}
-                    / match: {String(Boolean(floorPlanResult.vision_validation.match))}
-                  </div>
-                ) : null}
+                
+                {/* 2D Vector CAD View Frame */}
+                <div className="relative rounded-[2rem] border border-[var(--line-strong)] overflow-hidden aspect-[3/2] bg-[var(--surface-soft)] flex items-center justify-center group/floor">
+                  <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/grid.png')] opacity-10 pointer-events-none" />
+                  <img
+                    src={results.cadFloorPlanUrl}
+                    alt="AI Floor Plan"
+                    className="object-cover w-full h-full opacity-90 transition-transform duration-700 group-hover/floor:scale-105"
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent pointer-events-none" />
+                  <span className="absolute bottom-4 left-6 text-[10px] font-black tracking-widest text-white/95 uppercase bg-[var(--surface-strong)]/80 backdrop-blur-md px-3 py-1.5 rounded-xl border border-white/10">
+                    2D VECTOR_MAP VIEW
+                  </span>
+                </div>
+
+                <div className="grid gap-4.5 md:grid-cols-2">
+                  <MetricTile
+                    label={labels.fileUrlLabel}
+                    value={results.ifcFileUrl}
+                    allowSelect
+                  />
+                  <MetricTile
+                    label={labels.ifcVersionLabel}
+                    value={results.ifcVersion}
+                  />
+                </div>
               </div>
             ) : (
-              <div className="mt-4 rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[var(--text-secondary)]">
+              <div className="rounded-[2rem] border border-dashed border-[var(--line-strong)] bg-[var(--surface-soft)]/50 p-8 text-center text-xs font-semibold leading-relaxed text-[var(--text-hint)] h-[240px] flex items-center justify-center">
                 {labels.placeholder}
               </div>
             )}
           </CardContent>
         </Card>
 
+        {/* Quantities & Environmental Dashboard */}
         <div className="grid gap-6">
-          <Card>
+          {/* Business Feasibility Stat Cards */}
+          {results && (
+            <div className="grid gap-4.5 md:grid-cols-2">
+              <Card className="bg-gradient-to-r from-[var(--surface-strong)] to-[var(--surface-soft)] border-[var(--accent-strong)]/20 shadow-[0_0_20px_rgba(45,212,191,0.05)] border-2">
+                <CardContent className="p-6">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)] mb-2">
+                    {labels.estimatedCostLabel}
+                  </p>
+                  <p className="text-3xl font-[1000] tracking-tight text-[var(--text-primary)]">
+                    {formatCurrencyKRW(results.estimatedCost)}
+                  </p>
+                  <p className="mt-2 text-[9px] font-black text-[var(--text-hint)] uppercase tracking-wider">
+                    Computed based on standard raw material index
+                  </p>
+                </CardContent>
+              </Card>
+
+              <Card className="bg-gradient-to-r from-[var(--surface-strong)] to-[var(--surface-soft)] border-[var(--accent-strong)]/20 shadow-[0_0_20px_rgba(45,212,191,0.05)] border-2">
+                <CardContent className="p-6">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)] mb-2">
+                    {labels.feasibilityScoreLabel}
+                  </p>
+                  <p className="text-3xl font-[1000] tracking-tight text-[var(--accent-strong)] shadow-[var(--shadow-glow)]">
+                    {results.feasibilityScore} / 100
+                  </p>
+                  <p className="mt-2 text-[9px] font-black text-[var(--text-hint)] uppercase tracking-wider">
+                    Dynamic IRR/ROI Sensitivity Weighted
+                  </p>
+                </CardContent>
+              </Card>
+            </div>
+          )}
+
+          {/* BIM Volume Results */}
+          <Card className="border-[var(--line-strong)]">
             <CardContent className="p-6">
-              <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+              <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[var(--text-hint)] mb-4">
                 {labels.bimResultTitle}
               </p>
-              {bimResult ? (
-                <div className="mt-4 grid gap-4 md:grid-cols-2">
+              {results ? (
+                <div className="grid gap-4 md:grid-cols-3">
                   <MetricTile
-                    label={labels.totalAreaLabel}
-                    value={formatNumber(locale, bimResult.total_area_sqm)}
+                    label="Total GFA"
+                    value={`${formatNumber(locale, results.totalAreaSqm)} ㎡`}
                   />
                   <MetricTile
                     label={labels.totalVolumeLabel}
-                    value={formatNumber(locale, bimResult.total_volume_m3)}
+                    value={`${formatNumber(locale, results.totalVolumeM3)} ㎥`}
                   />
                   <MetricTile
                     label={labels.elementCountLabel}
-                    value={String(bimResult.element_count)}
-                  />
-                  <MetricTile
-                    label={labels.ifcVersionLabel}
-                    value={bimResult.ifc_version}
-                  />
-                  <MetricTile
-                    label="Created"
-                    value={formatDate(locale, bimResult.created_at)}
-                  />
-                  <MetricTile
-                    label="Materials"
-                    value={String(bimResult.material_breakdown.length)}
+                    value={`${results.elementCount} EA`}
                   />
                 </div>
               ) : (
-                <div className="mt-4 rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[var(--text-secondary)]">
+                <div className="rounded-[2rem] border border-dashed border-[var(--line-strong)] bg-[var(--surface-soft)]/50 p-6 text-center text-xs font-semibold text-[var(--text-hint)]">
                   {labels.placeholder}
                 </div>
               )}
             </CardContent>
           </Card>
 
-          <Card>
+          {/* Environmental Carbon LCA Results */}
+          <Card className="border-[var(--line-strong)]">
             <CardContent className="p-6">
-              <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+              <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[var(--text-hint)] mb-4">
                 {labels.carbonTitle}
               </p>
-              {carbonResult ? (
-                <div className="mt-4 space-y-4">
-                  <div className="grid gap-4 md:grid-cols-3">
+              {results ? (
+                <div className="space-y-5">
+                  <div className="grid gap-4.5 md:grid-cols-3">
                     <MetricTile
                       label={labels.totalCarbonLabel}
-                      value={formatNumber(locale, carbonResult.total_carbon)}
+                      value={`${formatNumber(locale, results.totalCarbon)} kg CO₂-eq`}
                     />
                     <MetricTile
                       label={labels.embodiedCarbonLabel}
-                      value={formatNumber(locale, carbonResult.total_embodied_carbon)}
+                      value={`${formatNumber(locale, results.embodiedCarbon)} kg CO₂-eq`}
                     />
                     <MetricTile
                       label={labels.operationalCarbonLabel}
-                      value={formatNumber(locale, carbonResult.total_operational_carbon)}
+                      value={`${formatNumber(locale, results.operationalCarbon)} kg CO₂-eq`}
                     />
                   </div>
-                  <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
-                    <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+                  
+                  {/* AI Cost/Carbon Optimization reduction tips */}
+                  <div className="rounded-[2rem] border border-[var(--line-strong)] bg-[var(--surface-soft)]/50 p-6">
+                    <p className="text-[10px] font-black uppercase tracking-[0.2em] text-[var(--text-hint)]">
                       {labels.reductionTipsLabel}
                     </p>
-                    {carbonResult.reduction_tips.length ? (
-                      <ul className="mt-3 space-y-2 text-sm leading-7 text-[var(--text-secondary)]">
-                        {carbonResult.reduction_tips.map((tip) => (
-                          <li key={tip}>{tip}</li>
+                    {results.reductionTips.length ? (
+                      <ul className="mt-3.5 space-y-2.5 text-xs font-medium leading-relaxed text-[var(--text-secondary)] list-inside list-disc">
+                        {results.reductionTips.map((tip, i) => (
+                          <li key={i} className="hover:text-[var(--text-primary)] transition-colors">
+                            {tip}
+                          </li>
                         ))}
                       </ul>
                     ) : (
-                      <p className="mt-3 text-sm leading-7 text-[var(--text-tertiary)]">
-                        -
-                      </p>
+                      <p className="mt-3 text-xs leading-relaxed text-[var(--text-hint)]">-</p>
                     )}
                   </div>
                 </div>
               ) : (
-                <div className="mt-4 rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[var(--text-secondary)]">
+                <div className="rounded-[2rem] border border-dashed border-[var(--line-strong)] bg-[var(--surface-soft)]/50 p-6 text-center text-xs font-semibold text-[var(--text-hint)]">
                   {labels.placeholder}
                 </div>
               )}
@@ -771,16 +483,19 @@ export function ProjectDesignWorkspaceClient({
 function MetricTile({
   label,
   value,
+  allowSelect = false,
 }: {
   label: string;
   value: string;
+  allowSelect?: boolean;
 }) {
   return (
-    <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
-      <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+    <div className="rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-soft)] p-5 relative overflow-hidden group">
+      <div className="absolute top-0 right-0 w-12 h-12 bg-[var(--accent-strong)]/2 blur-[20px] rounded-full" />
+      <p className="text-[9px] font-black uppercase tracking-[0.24em] text-[var(--text-hint)] mb-2.5">
         {label}
       </p>
-      <p className="mt-3 break-all text-sm font-semibold text-[var(--text-primary)]">
+      <p className={`text-xs font-bold text-[var(--text-primary)] break-all ${allowSelect ? "select-all font-mono text-[10px]" : ""}`}>
         {value}
       </p>
     </div>

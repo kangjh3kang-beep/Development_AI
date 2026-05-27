@@ -217,7 +217,7 @@ function extractErrorMessage(error: unknown, authMessage: string) {
 export function AuctionWorkspaceClient({
   locale,
 }: AuctionWorkspaceClientProps) {
-  const labels = LABELS[locale];
+  const labels = LABELS[locale] || LABELS["ko"];
   const runtimeConfig = apiClient.getRuntimeConfig();
   const canUseLiveApi =
     runtimeConfig.mode === "live" || runtimeConfig.hasAccessToken;

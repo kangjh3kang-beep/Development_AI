@@ -364,7 +364,7 @@ export function OperationsIntelligenceWorkspaceClient({
   showHero?: boolean;
 }) {
   const [isMounted, setIsMounted] = useState(false);
-  const labels = LABELS[locale];
+  const labels = LABELS[locale] || LABELS["ko"];
   
   useEffect(() => {
     setIsMounted(true);

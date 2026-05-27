@@ -27,7 +27,7 @@ export function OperationsRouteHero({
           <span className="rounded-full border border-[var(--line)] px-4 py-2 text-xs font-medium text-[var(--text-secondary)]">
             {localeLabel}
           </span>
-          <span className="rounded-full bg-[rgba(13,148,136,0.12)] px-4 py-2 text-xs font-medium text-[rgb(15,118,110)]">
+          <span className="rounded-full bg-[var(--accent-soft)] px-4 py-2 text-xs font-semibold text-[var(--accent-strong)] border border-[var(--accent-strong)]/20">
             {statusLabel}
           </span>
         </div>

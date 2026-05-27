@@ -108,7 +108,7 @@ export function KakaoCallbackWorkspaceClient({
   redirectUri,
 }: KakaoCallbackWorkspaceClientProps) {
   const router = useRouter();
-  const labels = LABELS[locale];
+  const labels = LABELS[locale] || LABELS["ko"];
   const hasRequiredParams = Boolean(code && tenantId);
   const [requestState, setRequestState] = useState<{
     status: "loading" | "success" | "error";

@@ -46,17 +46,17 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
   return (
     <div className="relative min-h-[800px] w-full overflow-hidden rounded-[3rem] border border-[var(--line)] bg-[var(--surface-strong)] shadow-[var(--shadow-xl)]">
       {/* Background GIS Map Layer (Simulated) */}
-      <div className="absolute inset-0 opacity-40 grayscale contrast-125 dark:invert dark:brightness-75">
+      <div className="absolute inset-0 opacity-40 grayscale contrast-125 dark:invert dark:brightness-75" style={{ zIndex: 0 }}>
         <div className="absolute inset-0 bg-[url('https://images.unsplash.com/photo-1543163521-1bf539c55dd2?auto=format&fit=crop&q=80&w=1600')] bg-cover bg-center" />
         <div className="absolute inset-0 bg-blue-900/10 mix-blend-overlay dark:bg-blue-900/20" />
       </div>
 
       {/* Grid Overlay */}
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_0%,var(--background)_90%)]" />
-      <div className="absolute inset-0 bg-[linear-gradient(var(--line)_1px,transparent_1px),linear-gradient(90deg,var(--line)_1px,transparent_1px)] bg-[size:40px_40px] opacity-10 dark:opacity-30" />
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_0%,var(--background)_90%)]" style={{ zIndex: 1 }} />
+      <div className="absolute inset-0 bg-[linear-gradient(var(--line)_1px,transparent_1px),linear-gradient(90deg,var(--line)_1px,transparent_1px)] bg-[size:40px_40px] opacity-10 dark:opacity-30" style={{ zIndex: 1 }} />
 
       {/* Floating HUD - Left Side: Analysis Note */}
-      <div className="absolute left-8 top-8 w-[380px] space-y-6">
+      <div className="absolute left-8 top-8 z-10 w-[380px] space-y-6" style={{ zIndex: 20 }}>
         <motion.div 
           initial={{ x: -20, opacity: 0 }}
           animate={{ x: 0, opacity: 1 }}
@@ -108,7 +108,7 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
       </div>
 
       {/* Floating HUD - Right Side: Optimal Strategy */}
-      <div className="absolute right-8 top-8 w-[400px] flex flex-col gap-6">
+      <div className="absolute right-8 top-8 z-10 w-[400px] flex flex-col gap-6" style={{ zIndex: 20 }}>
         <motion.div 
           initial={{ x: 20, opacity: 0 }}
           animate={{ x: 0, opacity: 1 }}
@@ -164,7 +164,7 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
       </div>
 
       {/* Center Focus: parcel shape (Simplified SVG) */}
-      <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+      <div className="pointer-events-none absolute inset-0 z-0 flex items-center justify-center" style={{ zIndex: 10 }}>
          <motion.div
             initial={{ scale: 0.5, opacity: 0, rotate: -20 }}
             animate={{ scale: 1, opacity: 1, rotate: 15 }}
@@ -189,13 +189,13 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
       </div>
 
       {/* Bottom GIS Controls */}
-      <div className="absolute bottom-10 left-1/2 -translate-x-1/2 flex items-center gap-4">
+      <div className="absolute bottom-10 left-1/2 -translate-x-1/2 z-10 flex items-center gap-4" style={{ zIndex: 20 }}>
          <div className="flex gap-1 rounded-2xl bg-[var(--background)]/80 backdrop-blur-xl border border-[var(--line-strong)] p-1.5 shadow-[var(--shadow-xl)]">
-            <button className="rounded-xl px-4 py-2 text-xs font-black text-white bg-[var(--accent-strong)] shadow-md">상세 지적(PNU)</button>
-            <button className="rounded-xl px-4 py-2 text-xs font-black text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors">공시지가 추이</button>
-            <button className="rounded-xl px-4 py-2 text-xs font-black text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors">인근 실거래가</button>
+            <button className="rounded-xl px-4 py-2 text-xs font-black text-white bg-[var(--accent-strong)] shadow-md whitespace-nowrap">상세 지적(PNU)</button>
+            <button className="rounded-xl px-4 py-2 text-xs font-black text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors whitespace-nowrap">공시지가 추이</button>
+            <button className="rounded-xl px-4 py-2 text-xs font-black text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors whitespace-nowrap">인근 실거래가</button>
             <div className="w-px h-4 bg-[var(--line-strong)] mx-2 self-center" />
-            <button className="flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-black text-[var(--accent-strong)]">
+            <button className="flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-black text-[var(--accent-strong)] whitespace-nowrap">
                <Icons.Layers />
                GIS layers
             </button>

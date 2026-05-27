@@ -170,7 +170,7 @@ export function ProjectBlockchainWorkspaceClient({
   locale: Locale;
   projectId: string;
 }) {
-  const labels = LABELS[locale];
+  const labels = LABELS[locale] || LABELS["ko"];
   const runtimeConfig = apiClient.getRuntimeConfig();
   const canUseLiveApi =
     runtimeConfig.mode === "live" || runtimeConfig.hasAccessToken;
