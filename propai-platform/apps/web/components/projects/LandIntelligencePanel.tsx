@@ -1,7 +1,9 @@
 "use client";
 
-import React from "react";
+import React, { useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
+import { useAIAnalyze, useAIReady } from "@/lib/ai-analyze-client";
+
 const Icons = {
   TrendingUp: () => <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg>,
   Map: () => <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="3 6 9 3 15 6 21 3 21 18 15 21 9 18 3 21"/><line x1="9" y1="3" x2="9" y2="18"/><line x1="15" y1="6" x2="15" y2="21"/></svg>,
@@ -16,6 +18,14 @@ const Icons = {
   AlertTriangle: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>,
 };
 
+// AI 분석 결과 타입
+type SiteAnalysisResult = {
+  zoning?: { current?: string; target?: string; probability?: number; reason?: string };
+  characteristics?: Array<{ label: string; value: string; status: string }>;
+  scenarios?: Array<{ title: string; score: number; reason: string }>;
+  summary?: string;
+};
+
 interface LandIntelligencePanelProps {
   projectId: string;
   data: Record<string, string | undefined>;
@@ -24,31 +34,61 @@ interface LandIntelligencePanelProps {
 export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanelProps) {
   const displayAddress = data?.address || "분석 대상 주소를 입력하세요";
   const displayPnu = data?.pnu || "—";
+  const { isReady } = useAIReady();
+  const { mutate: runAnalysis, data: aiResult, isPending: isAnalyzing, error: aiError } = useAIAnalyze<SiteAnalysisResult>();
+
+  // AI 분석 자동 실행 (주소가 있고, API 키가 등록되어 있을 때)
+  const triggerAnalysis = useCallback(() => {
+    if (!data?.address || !isReady) return;
+    runAnalysis({
+      domain: "site-analysis",
+      context: { address: data.address, pnu: data.pnu || "", projectId },
+    });
+  }, [data?.address, data?.pnu, isReady, projectId, runAnalysis]);
+
+  useEffect(() => {
+    if (data?.address && isReady) {
+      triggerAnalysis();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data?.address]);
+
+  // AI 결과 또는 기본값으로 분석 데이터 구성
+  const aiData = aiResult?.data;
   const analysis = {
     zoning: {
-      current: data?.zoning || "용도지역 분석 중",
-      target: data?.targetZoning || "일반상업지역",
-      possibility: data?.zoningProbability ? Number(data.zoningProbability) : 0,
-      reason: data?.address ? `${data.address} 인근 개발 계획 및 지자체 조례 반영` : "API 연동 후 자동 분석됩니다",
+      current: aiData?.zoning?.current || data?.zoning || "용도지역 분석 대기",
+      target: aiData?.zoning?.target || data?.targetZoning || "—",
+      possibility: aiData?.zoning?.probability ?? (data?.zoningProbability ? Number(data.zoningProbability) : 0),
+      reason: aiData?.zoning?.reason || (data?.address ? `${data.address} 인근 개발 계획 및 지자체 조례 반영` : "AI 분석을 실행하세요"),
     },
-    characteristics: [
+    characteristics: aiData?.characteristics?.map(c => ({
+      label: c.label,
+      value: c.value,
+      status: c.status as "safe" | "warning" | "danger",
+    })) || [
       { label: "경사도", value: data?.slope || "—", status: "safe" as const },
       { label: "접도 상태", value: data?.roadAccess || "—", status: "safe" as const },
       { label: "지형", value: data?.landShape || "—", status: "safe" as const },
       { label: "고도 제한", value: data?.heightLimit || "—", status: "warning" as const },
     ],
-    optimalModes: [
-      { title: data?.scenario1Name || "시나리오 1", match: data?.scenario1Score ? Number(data.scenario1Score) : 0, reason: data?.scenario1Reason || "분석 결과 대기 중" },
-      { title: data?.scenario2Name || "시나리오 2", match: data?.scenario2Score ? Number(data.scenario2Score) : 0, reason: data?.scenario2Reason || "분석 결과 대기 중" },
-      { title: data?.scenario3Name || "시나리오 3", match: data?.scenario3Score ? Number(data.scenario3Score) : 0, reason: data?.scenario3Reason || "분석 결과 대기 중" },
+    optimalModes: aiData?.scenarios?.map(s => ({
+      title: s.title,
+      match: s.score,
+      reason: s.reason,
+    })) || [
+      { title: "시나리오 1", match: 0, reason: "AI 분석 대기 중" },
+      { title: "시나리오 2", match: 0, reason: "AI 분석 대기 중" },
+      { title: "시나리오 3", match: 0, reason: "AI 분석 대기 중" },
     ],
   };
 
   return (
     <div className="relative min-h-[800px] w-full overflow-hidden rounded-[3rem] border border-[var(--line)] bg-[var(--surface-strong)] shadow-[var(--shadow-xl)]">
-      {/* Background GIS Map Layer (Simulated) */}
-      <div className="absolute inset-0 opacity-40 grayscale contrast-125 dark:invert dark:brightness-75" style={{ zIndex: 0 }}>
-        <div className="absolute inset-0 bg-[url('https://images.unsplash.com/photo-1477959858617-67f85cf4f1df?auto=format&fit=crop&q=80&w=1600')] bg-cover bg-center" />
+      {/* Background GIS Map Layer (CSS Pattern) */}
+      <div className="absolute inset-0 opacity-40" style={{ zIndex: 0 }}>
+        <div className="absolute inset-0 bg-gradient-to-br from-blue-900/20 via-slate-800/30 to-emerald-900/20" />
+        <div className="absolute inset-0 bg-[conic-gradient(from_0deg_at_50%_50%,transparent_0deg,rgba(59,130,246,0.05)_60deg,transparent_120deg,rgba(16,185,129,0.05)_180deg,transparent_240deg,rgba(99,102,241,0.05)_300deg,transparent_360deg)]" />
         <div className="absolute inset-0 bg-blue-900/10 mix-blend-overlay dark:bg-blue-900/20" />
       </div>
 
@@ -69,7 +109,15 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
             </div>
             <div>
               <h4 className="text-xl font-black text-[var(--text-primary)] tracking-tight">지능형 입지 분석</h4>
-              <p className="text-[10px] font-black text-[var(--accent-strong)] uppercase tracking-[0.2em]">AI Intelligence Node</p>
+              <p className="text-[10px] font-black uppercase tracking-[0.2em] flex items-center gap-1">
+                {isAnalyzing ? (
+                  <><span className="inline-block h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse" /><span className="text-amber-400">AI 분석 중...</span></>
+                ) : aiData ? (
+                  <><span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400" /><span className="text-emerald-400">AI 분석 완료</span></>
+                ) : (
+                  <><span className="inline-block h-1.5 w-1.5 rounded-full bg-slate-400" /><span className="text-[var(--accent-strong)]">AI Intelligence Node</span></>
+                )}
+              </p>
             </div>
           </div>
 
@@ -101,8 +149,25 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
              </div>
           </div>
 
-          <button className="mt-8 flex w-full items-center justify-center gap-3 rounded-2xl bg-teal-500 py-4 font-black text-[#0a0f14] shadow-[0_0_30px_rgba(45,212,191,0.4)] transition-all hover:scale-[1.02] hover:brightness-110 active:scale-[0.98]">
-             심층 데이터 리포트 (PDF)
+          {aiError && (
+            <div className="mt-4 rounded-xl bg-red-500/10 border border-red-500/20 p-3">
+              <p className="text-xs text-red-400 font-medium">{aiError.message}</p>
+            </div>
+          )}
+
+          {aiData?.summary && (
+            <div className="mt-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20 p-4">
+              <p className="text-xs font-bold text-emerald-400 mb-1 uppercase tracking-widest">AI 종합 의견</p>
+              <p className="text-xs text-[var(--text-secondary)] leading-relaxed">{aiData.summary}</p>
+            </div>
+          )}
+
+          <button
+            onClick={triggerAnalysis}
+            disabled={isAnalyzing || !isReady}
+            className="mt-6 flex w-full items-center justify-center gap-3 rounded-2xl bg-teal-500 py-4 font-black text-[#0a0f14] shadow-[0_0_30px_rgba(45,212,191,0.4)] transition-all hover:scale-[1.02] hover:brightness-110 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+             {isAnalyzing ? 'AI 분석 중...' : isReady ? 'AI 재분석 실행' : 'API 키를 먼저 등록하세요'}
              <Icons.ArrowRight />
           </button>
         </motion.div>
