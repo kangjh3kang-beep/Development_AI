@@ -51,13 +51,88 @@ export function TaxCalculationDashboard() {
   const handleCalculate = async () => {
     setIsLoading(true);
     try {
-      const data = await apiClient.postV2<TaxResult>("/tax/calculate-all", {
-        body: form as unknown as Record<string, unknown>,
+      const { calculateAcquisitionTax, calculateCapitalGainsTax, calculateComprehensivePropertyTax } = await import("@/lib/kr-tax-calculator");
+      const purchase = form.purchase_won;
+      const saleTotal = form.total_sale_amount_won;
+      const gfa = form.total_gfa_sqm;
+      const households = form.total_households;
+
+      // 취득 단계
+      const acqRes = calculateAcquisitionTax(purchase, 1);
+      const acqItems: TaxItem[] = [
+        { code: "ACQ-01", name: "취득세", stage: "acquisition", amount_won: acqRes.acquisitionTax },
+        { code: "ACQ-02", name: "농어촌특별세", stage: "acquisition", amount_won: acqRes.ruralTax },
+        { code: "ACQ-03", name: "지방교육세", stage: "acquisition", amount_won: acqRes.educationTax },
+        { code: "ACQ-04", name: "인지세", stage: "acquisition", amount_won: purchase > 1e9 ? 350000 : 150000 },
+        { code: "ACQ-05", name: "등록면허세", stage: "acquisition", amount_won: Math.round(purchase * 0.002) },
+        { code: "ACQ-06", name: "국민주택채권 매입", stage: "acquisition", amount_won: Math.round(purchase * 0.01) },
+        { code: "ACQ-07", name: "법무사 보수", stage: "acquisition", amount_won: Math.round(purchase * 0.001) },
+        { code: "ACQ-08", name: "중개수수료", stage: "acquisition", amount_won: Math.round(purchase * 0.004) },
+      ];
+
+      // 공사/보유 단계
+      const propRes = calculateComprehensivePropertyTax(purchase, 1);
+      const utilItems: TaxItem[] = [
+        { code: "UTL-01", name: "재산세", stage: "utility", amount_won: propRes.propertyTax },
+        { code: "UTL-02", name: "종합부동산세", stage: "utility", amount_won: propRes.comprehensiveTax },
+        { code: "UTL-03", name: "도시계획세", stage: "utility", amount_won: Math.round(propRes.propertyTax * 0.14) },
+        { code: "UTL-04", name: "지역자원시설세", stage: "utility", amount_won: Math.round(propRes.propertyTax * 0.1) },
+        { code: "UTL-05", name: "건설부담금", stage: "utility", amount_won: Math.round(gfa * 15000) },
+        { code: "UTL-06", name: "교통유발부담금", stage: "utility", amount_won: Math.round(gfa * 3500) },
+        { code: "UTL-07", name: "학교용지부담금", stage: "utility", amount_won: Math.round(households * 500000) },
+        { code: "UTL-08", name: "광역교통시설부담금", stage: "utility", amount_won: Math.round(households * 850000) },
+        { code: "UTL-09", name: "상하수도 원인자부담금", stage: "utility", amount_won: Math.round(households * 300000) },
+        { code: "UTL-10", name: "전기수전부담금", stage: "utility", amount_won: Math.round(households * 200000) },
+      ];
+
+      // 분양/운영 단계
+      const saleItems: TaxItem[] = [
+        { code: "SAL-01", name: "부가가치세", stage: "sale", amount_won: Math.round(saleTotal * 0.1) },
+        { code: "SAL-02", name: "분양보증수수료", stage: "sale", amount_won: Math.round(saleTotal * 0.003) },
+        { code: "SAL-03", name: "하자보수보증금", stage: "sale", amount_won: Math.round(saleTotal * 0.03) },
+        { code: "SAL-04", name: "입주관리비", stage: "sale", amount_won: Math.round(households * 150000) },
+        { code: "SAL-05", name: "취득세 감면 대상 환급", stage: "sale", amount_won: -Math.round(households * 200000) },
+        { code: "SAL-06", name: "종합소득세(사업소득)", stage: "sale", amount_won: Math.round((saleTotal - purchase) * 0.15) },
+        { code: "SAL-07", name: "주민세(종업원분)", stage: "sale", amount_won: Math.round(households * 10000) },
+        { code: "SAL-08", name: "환경개선부담금", stage: "sale", amount_won: Math.round(gfa * 1200) },
+        { code: "SAL-09", name: "농지전용부담금", stage: "sale", amount_won: form.land_category === "farmland" ? Math.round(purchase * 0.2) : 0 },
+        { code: "SAL-10", name: "산지전용부담금", stage: "sale", amount_won: form.land_category === "forest" ? Math.round(purchase * 0.1) : 0 },
+      ];
+
+      // 양도/매각 단계
+      const cgRes = calculateCapitalGainsTax({
+        acquisitionPrice: purchase,
+        salePrice: saleTotal,
+        holdingYears: 3,
+        houseCount: 1,
+        isSingleHome: false,
+        expenses: Math.round(purchase * 0.02),
       });
-      setResult(data);
-    } catch {
-      /* 무시 */
-    } finally {
+      const dispItems: TaxItem[] = [
+        { code: "DSP-01", name: "양도소득세", stage: "disposal", amount_won: cgRes.calculatedTax },
+        { code: "DSP-02", name: "지방소득세(양도)", stage: "disposal", amount_won: cgRes.localTax },
+        { code: "DSP-03", name: "법인세(법인매각시)", stage: "disposal", amount_won: Math.round((saleTotal - purchase) * 0.22) },
+        { code: "DSP-04", name: "지방소득세(법인)", stage: "disposal", amount_won: Math.round((saleTotal - purchase) * 0.022) },
+        { code: "DSP-05", name: "중개수수료(매도)", stage: "disposal", amount_won: Math.round(saleTotal * 0.003) },
+        { code: "DSP-06", name: "말소등기비용", stage: "disposal", amount_won: 150000 },
+        { code: "DSP-07", name: "양도 인지세", stage: "disposal", amount_won: saleTotal > 1e9 ? 350000 : 150000 },
+        { code: "DSP-08", name: "부동산신탁 보수", stage: "disposal", amount_won: Math.round(saleTotal * 0.002) },
+        { code: "DSP-09", name: "감정평가수수료", stage: "disposal", amount_won: Math.round(saleTotal * 0.001) },
+        { code: "DSP-10", name: "세무사 보수", stage: "disposal", amount_won: Math.round(saleTotal * 0.0005) },
+      ];
+
+      const items = [...acqItems, ...utilItems, ...saleItems, ...dispItems];
+      const stageTotals: Record<string, number> = {};
+      for (const item of items) {
+        stageTotals[item.stage] = (stageTotals[item.stage] || 0) + item.amount_won;
+      }
+      setResult({
+        grand_total_won: items.reduce((s, i) => s + i.amount_won, 0),
+        total_items_count: items.length,
+        items,
+        stage_totals: stageTotals,
+      });
+    } catch { /* 무시 */ } finally {
       setIsLoading(false);
     }
   };

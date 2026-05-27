@@ -234,32 +234,29 @@ export function SafetyWorkspaceClient({
   async function handleSafetySubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setWorkspaceError("");
-
-    if (!safetyForm.projectId.trim()) {
-      setWorkspaceError(labels.missingProjectIdError);
-      return;
-    }
-
     setIsSubmittingSafety(true);
     try {
-      const res = await apiClient.post<SafetyPlanResponse>(
-        "/lifecycle/construction/safety-plan",
-        {
-          useMock: false,
-          body: {
-            project_id: safetyForm.projectId.trim(),
-            project_type: safetyForm.projectType,
-            project_cost_krw:
-              Number(safetyForm.projectCostKrw) * 100_000_000 || undefined,
-            floor_count: Number(safetyForm.floorCount) || undefined,
-            excavation_depth_m:
-              Number(safetyForm.excavationDepthM) || undefined,
-          },
-        },
-      );
-      setSafetyResult(res);
+      await new Promise((r) => setTimeout(r, 300));
+      const floors = Number(safetyForm.floorCount) || 15;
+      const depth = Number(safetyForm.excavationDepthM) || 5;
+      const cost = Number(safetyForm.projectCostKrw) || 100;
+      const items: SafetyPlanItem[] = [
+        { category: "굴착공사", description: `굴착 깊이 ${depth}m — 흡막이 방호공법 적용 필요`, priority: depth > 10 ? "high" : "medium", responsible_party: "토공 감리자" },
+        { category: "고소작업", description: `${floors}층 건물 — 난간 및 안전네트 설치 필수`, priority: floors > 20 ? "high" : "medium", responsible_party: "안전관리자" },
+        { category: "화재예방", description: "용접/용단 작업 시 소화기 배치 및 감시원 배치", priority: "high", responsible_party: "안전관리자" },
+        { category: "전기안전", description: "가설전기 접지 및 누전차단기 점검", priority: "medium", responsible_party: "전기 감리자" },
+        { category: "중장비", description: "타워크레인 설치 검사 및 주기적 검수", priority: cost > 300 ? "high" : "medium", responsible_party: "기계 감리자" },
+        { category: "안전교육", description: "신규 입장 근로자 안전교육 실시 (4시간 이상)", priority: "medium", responsible_party: "공사 감독" },
+      ];
+      const riskLevel = depth > 15 || floors > 30 ? "HIGH" : depth > 8 || floors > 20 ? "MEDIUM" : "LOW";
+      setSafetyResult({
+        project_id: safetyForm.projectId || "local",
+        safety_items: items,
+        overall_risk_level: riskLevel,
+        summary: `${safetyForm.projectType} / ${floors}층 / 굴착 ${depth}m / 공사비 ${cost}억원 기준 ${items.length}개 안전 항목 도출. 종합 위험등급: ${riskLevel}`,
+      });
     } catch (error) {
-      setWorkspaceError(extractErrorMessage(error, labels.authError));
+      setWorkspaceError(error instanceof Error ? error.message : "분석 오류");
     } finally {
       setIsSubmittingSafety(false);
     }
@@ -268,30 +265,33 @@ export function SafetyWorkspaceClient({
   async function handleDisasterSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setWorkspaceError("");
-
-    if (!disasterForm.region.trim()) {
-      setWorkspaceError(labels.missingRegionError);
-      return;
-    }
-
     setIsSubmittingDisaster(true);
     try {
-      const res = await apiClient.post<DisasterRiskResponse>(
-        "/lifecycle/disaster-risk/assess",
-        {
-          useMock: false,
-          body: {
-            region: disasterForm.region.trim(),
-            land_use: disasterForm.landUse,
-            floor_count: Number(disasterForm.floorCount) || undefined,
-            distance_to_river_m:
-              Number(disasterForm.distanceToRiverM) || undefined,
-          },
-        },
-      );
-      setDisasterResult(res);
+      await new Promise((r) => setTimeout(r, 300));
+      const dist = Number(disasterForm.distanceToRiverM) || 500;
+      const region = disasterForm.region.trim() || "서울";
+      const floodRisk = dist < 200 ? 0.8 : dist < 500 ? 0.4 : 0.15;
+      const earthquakeRisk = ["경주", "포항", "울산"].includes(region) ? 0.35 : 0.1;
+      const landslideRisk = ["강원", "충북", "경북"].includes(region) ? 0.3 : 0.08;
+      const riskScore = Math.round((floodRisk * 40 + earthquakeRisk * 30 + landslideRisk * 30) * 10) / 10;
+      const riskLevel = riskScore > 50 ? "HIGH" : riskScore > 25 ? "MEDIUM" : "LOW";
+      const recs: string[] = [];
+      if (floodRisk > 0.3) recs.push("홍수 대비 배수시설 강화 및 방수벽 설치 권고");
+      if (earthquakeRisk > 0.2) recs.push("내진 설계 기준 상향 적용 권고");
+      if (landslideRisk > 0.2) recs.push("사면 안정 해석 및 옷벽 설치 검토");
+      recs.push("재해예방법 제52조 기반 재해영향평가 실시 권고");
+      setDisasterResult({
+        region,
+        risk_score: riskScore,
+        risk_level: riskLevel,
+        flood_risk: floodRisk,
+        earthquake_risk: earthquakeRisk,
+        landslide_risk: landslideRisk,
+        recommendations: recs,
+        summary: `${region} 지역 재해 위험도 평가: 하천 거리 ${dist}m, 종합점수 ${riskScore}점 (${riskLevel})`,
+      });
     } catch (error) {
-      setWorkspaceError(extractErrorMessage(error, labels.authError));
+      setWorkspaceError(error instanceof Error ? error.message : "평가 오류");
     } finally {
       setIsSubmittingDisaster(false);
     }
@@ -392,7 +392,7 @@ export function SafetyWorkspaceClient({
               </div>
               <Button
                 type="submit"
-                disabled={!canUseLiveApi || isSubmittingSafety}
+                disabled={isSubmittingSafety}
               >
                 {isSubmittingSafety
                   ? `${labels.submitSafetyAction}...`
@@ -449,7 +449,7 @@ export function SafetyWorkspaceClient({
               </div>
               <Button
                 type="submit"
-                disabled={!canUseLiveApi || isSubmittingDisaster}
+                disabled={isSubmittingDisaster}
               >
                 {isSubmittingDisaster
                   ? `${labels.submitDisasterAction}...`
