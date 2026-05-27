@@ -127,13 +127,13 @@ export function DigitalTwinControlTowerWorkspaceClient({
   });
 
   useEffect(() => {
-    if (!selectedProjectId && projectsQuery.data?.items.length) {
+    if (!selectedProjectId && projectsQuery.data?.items?.length) {
       setSelectedProjectId(projectsQuery.data.items[0].id);
     }
   }, [projectsQuery.data, selectedProjectId]);
 
   const selectedProject =
-    projectsQuery.data?.items.find((project) => project.id === selectedProjectId) ?? null;
+    projectsQuery.data?.items?.find((project) => project.id === selectedProjectId) ?? null;
   const activeProjectId = manualProjectId.trim() || selectedProject?.id || "";
 
   useEffect(() => {
@@ -281,7 +281,7 @@ export function DigitalTwinControlTowerWorkspaceClient({
               <Select
                 value={selectedProjectId}
                 onValueChange={(value) => setSelectedProjectId(value)}
-                options={projectsQuery.data?.items.map((project) => ({ label: project.name, value: project.id })) ?? []}
+                options={projectsQuery.data?.items?.map((project) => ({ label: project.name, value: project.id })) ?? []}
                 className="h-16 rounded-[2rem] border-[var(--line-strong)] bg-[var(--surface-soft)]/50 px-8 font-bold"
               />
             </div>

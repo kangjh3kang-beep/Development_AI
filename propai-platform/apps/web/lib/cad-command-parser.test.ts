@@ -209,7 +209,7 @@ describe("cad-command-parser", () => {
           { id: "pt-2", x: 100, y: 0 },
         ],
       });
-      store.addPoint.mockReturnValueOnce("pt-3").mockReturnValueOnce("pt-4");
+      (store.addPoint as any).mockReturnValueOnce("pt-3").mockReturnValueOnce("pt-4");
       const result = executeCommand("COPY 0,5", store);
       expect(result.ok).toBe(true);
       expect(store.addPoint).toHaveBeenCalledWith(0, 50);

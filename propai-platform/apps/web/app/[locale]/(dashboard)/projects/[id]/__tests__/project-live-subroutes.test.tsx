@@ -1,10 +1,11 @@
 import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+let mockParams = { locale: "en", id: "p001" };
 vi.mock("next/navigation", () => {
   return {
-    useParams: () => ({ locale: "en", id: "p001" }),
-    usePathname: () => "/en/projects/p001",
+    useParams: () => mockParams,
+    usePathname: () => `/en/projects/${mockParams.id}`,
     useRouter: () => ({
       push: vi.fn(),
       replace: vi.fn(),
@@ -240,11 +241,8 @@ describe("Project live subroutes", () => {
   });
 
   it("renders the design project page with the live workspace", async () => {
-    render(
-      await DesignPage({
-        params: Promise.resolve({ locale: "en", id: "project-design-001" }),
-      }),
-    );
+    mockParams = { locale: "en", id: "project-design-001" };
+    render(<DesignPage />);
 
     expect(screen.getByText("Project design live route")).toBeInTheDocument();
     expect(screen.getByText("LIVE")).toBeInTheDocument();
@@ -282,11 +280,8 @@ describe("Project live subroutes", () => {
   });
 
   it("renders the project overview page with the live summary workspace", async () => {
-    render(
-      await ProjectDetailPage({
-        params: Promise.resolve({ locale: "en", id: "project-overview-001" }),
-      }),
-    );
+    mockParams = { locale: "en", id: "project-overview-001" };
+    render(<ProjectDetailPage />);
 
     expect(screen.getByText(/Project live overview/)).toBeInTheDocument();
     expect(screen.getByText("LIVE")).toBeInTheDocument();

@@ -107,7 +107,7 @@ export function FeasibilityWorkspaceClient() {
   });
 
   useEffect(() => {
-    if (selectedProjectId || !projectsQuery.data?.items.length) {
+    if (selectedProjectId || !projectsQuery.data?.items?.length) {
       return;
     }
 

@@ -293,13 +293,13 @@ export function ConstructionCostWorkspaceClient({
   });
 
   useEffect(() => {
-    if (!selectedProjectId && projectsQuery.data?.items.length) {
+    if (!selectedProjectId && projectsQuery.data?.items?.length) {
       setSelectedProjectId(projectsQuery.data.items[0].id);
     }
   }, [projectsQuery.data, selectedProjectId]);
 
   const selectedProject =
-    projectsQuery.data?.items.find((project) => project.id === selectedProjectId) ??
+    projectsQuery.data?.items?.find((project) => project.id === selectedProjectId) ??
     null;
   const activeProjectId = manualProjectId.trim() || selectedProject?.id || "";
 
@@ -461,13 +461,13 @@ export function ConstructionCostWorkspaceClient({
                   options={[
                     {
                       label:
-                        projectsQuery.data?.items.length
+                        projectsQuery.data?.items?.length
                           ? labels.projectSelectLabel
                           : "라이브 프로젝트가 아직 없습니다.",
                       value: "",
                       disabled: true,
                     },
-                    ...(projectsQuery.data?.items.map((project) => ({
+                    ...(projectsQuery.data?.items?.map((project) => ({
                       label: project.name,
                       value: project.id,
                     })) ?? []),

@@ -63,7 +63,7 @@ export function ProjectsOverviewClient({
     queryKey: ["projects", "list"],
     queryFn: () => apiClient.get<ProjectListResponse>("/projects"),
   });
-  const hasProjects = (projectsQuery.data?.projects.length ?? 0) > 0;
+  const hasProjects = (projectsQuery.data?.projects?.length ?? 0) > 0;
   const errorDetail = getProjectsErrorDetail(projectsQuery.error);
 
   return (
@@ -158,7 +158,7 @@ export function ProjectsOverviewClient({
             </CardContent>
           </Card>
         ) : null}
-        {hasProjects ? projectsQuery.data?.projects.map((project) => {
+        {hasProjects ? projectsQuery.data?.projects?.map((project) => {
           const isSelected = currentProjectId === project.id;
 
           return (

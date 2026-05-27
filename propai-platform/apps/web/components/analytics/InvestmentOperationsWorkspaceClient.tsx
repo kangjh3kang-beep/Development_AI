@@ -500,13 +500,13 @@ export function InvestmentOperationsWorkspaceClient({
   });
 
   useEffect(() => {
-    if (!selectedProjectId && projectsQuery.data?.items.length) {
+    if (!selectedProjectId && projectsQuery.data?.items?.length) {
       setSelectedProjectId(projectsQuery.data.items[0].id);
     }
   }, [projectsQuery.data, selectedProjectId]);
 
   const selectedProject =
-    projectsQuery.data?.items.find((project) => project.id === selectedProjectId) ??
+    projectsQuery.data?.items?.find((project) => project.id === selectedProjectId) ??
     null;
 
   useEffect(() => {
@@ -707,13 +707,13 @@ export function InvestmentOperationsWorkspaceClient({
                   options={[
                     {
                       label:
-                        projectsQuery.data?.items.length
+                        projectsQuery.data?.items?.length
                           ? labels.projectSelectLabel
                           : labels.noProjectsLabel,
                       value: "",
                       disabled: true,
                     },
-                    ...(projectsQuery.data?.items.map((project) => ({
+                    ...(projectsQuery.data?.items?.map((project) => ({
                       label: project.name,
                       value: project.id,
                     })) ?? []),
@@ -772,7 +772,7 @@ export function InvestmentOperationsWorkspaceClient({
                 </CardTitle>
               </div>
               <span className="rounded-full bg-[var(--surface-soft)] px-3 py-1 text-xs font-medium text-[var(--accent-strong)]">
-                {aiCostsQuery.data?.by_service.length ?? 0}
+                {aiCostsQuery.data?.by_service?.length ?? 0}
               </span>
             </div>
 
@@ -812,7 +812,7 @@ export function InvestmentOperationsWorkspaceClient({
                 />
                 <SummaryTile
                   label={labels.trackedServicesLabel}
-                  value={String(aiCostsQuery.data.by_service.length)}
+                  value={String(aiCostsQuery.data.by_service?.length ?? 0)}
                 />
                 <SummaryTile
                   label={labels.remainingBudgetLabel}
@@ -831,7 +831,7 @@ export function InvestmentOperationsWorkspaceClient({
               </div>
             ) : null}
 
-            {aiCostsQuery.data?.by_service.length ? (
+            {aiCostsQuery.data?.by_service?.length ? (
               <div className="mt-6 space-y-3">
                 {aiCostsQuery.data.by_service.map((item) => (
                   <div
@@ -1187,7 +1187,7 @@ export function InvestmentOperationsWorkspaceClient({
                 </Button>
               </form>
 
-              {marketDataQuery.data?.top_portals.length ? (
+              {marketDataQuery.data?.top_portals?.length ? (
                 <div className="mt-5 space-y-3">
                   {marketDataQuery.data.top_portals.map((portal) => (
                     <div

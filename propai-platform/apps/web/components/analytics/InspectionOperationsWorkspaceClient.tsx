@@ -229,13 +229,13 @@ export function InspectionOperationsWorkspaceClient({
   });
 
   useEffect(() => {
-    if (!selectedProjectId && projectsQuery.data?.items.length) {
+    if (!selectedProjectId && projectsQuery.data?.items?.length) {
       setSelectedProjectId(projectsQuery.data.items[0].id);
     }
   }, [projectsQuery.data, selectedProjectId]);
 
   const selectedProject =
-    projectsQuery.data?.items.find((project) => project.id === selectedProjectId) ??
+    projectsQuery.data?.items?.find((project) => project.id === selectedProjectId) ??
     null;
   const activeProjectId = manualProjectId.trim() || selectedProject?.id || "";
   const projectQueryError = projectsQuery.error
@@ -354,13 +354,13 @@ export function InspectionOperationsWorkspaceClient({
                   options={[
                     {
                       label:
-                        projectsQuery.data?.items.length
+                        projectsQuery.data?.items?.length
                           ? labels.projectSelectLabel
                           : labels.noProjectsLabel,
                       value: "",
                       disabled: true,
                     },
-                    ...(projectsQuery.data?.items.map((project) => ({
+                    ...(projectsQuery.data?.items?.map((project) => ({
                       label: project.name,
                       value: project.id,
                     })) ?? []),

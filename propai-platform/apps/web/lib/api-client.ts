@@ -51,10 +51,13 @@ function getRequestUrl(path: string) {
 
 function getAccessToken() {
   if (typeof window !== "undefined") {
-    const storedToken = window.localStorage.getItem("propai_access_token")?.trim();
-
-    if (storedToken) {
-      return storedToken;
+    try {
+      const storedToken = window.localStorage.getItem("propai_access_token")?.trim();
+      if (storedToken) {
+        return storedToken;
+      }
+    } catch (e) {
+      // Ignored: localStorage is disabled or blocked in this environment
     }
   }
 
