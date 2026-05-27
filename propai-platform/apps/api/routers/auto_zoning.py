@@ -3,7 +3,7 @@
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from app.services.zoning.auto_zoning_service import AutoZoningService
+from apps.api.app.services.zoning.auto_zoning_service import AutoZoningService
 
 router = APIRouter()
 

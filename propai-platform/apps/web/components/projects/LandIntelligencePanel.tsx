@@ -443,8 +443,9 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
   const dataSourceLabel = useMemo(() => {
     if (isAnalyzing || deepAnalysisLoading) return { dot: "bg-amber-400 animate-pulse", text: "AI 분석 중...", color: "text-amber-400" };
     if (deepAnalysisResult || aiData) return { dot: "bg-emerald-400", text: "AI 분석 완료", color: "text-emerald-400" };
-    if (hasZoningApi) return { dot: "bg-teal-400", text: "실시간 API 분석 완료", color: "text-teal-400" };
-    if (localResult) return { dot: "bg-blue-400", text: "법규 기반 분석 완료", color: "text-blue-400" };
+    if (hasZoningApi) return { dot: "bg-teal-400", text: "실시간 API 연동 완료", color: "text-teal-400" };
+    if (zoningError || txError || scenarioError) return { dot: "bg-amber-400", text: "API 연결 실패 — 로컬 추정 표시 중", color: "text-amber-400" };
+    if (localResult) return { dot: "bg-blue-400", text: "로컬 추정값 (백엔드 연결 필요)", color: "text-blue-400" };
     return { dot: "bg-slate-400", text: "대기 중", color: "text-[var(--accent-strong)]" };
   }, [isAnalyzing, deepAnalysisLoading, deepAnalysisResult, aiData, hasZoningApi, localResult]);
 

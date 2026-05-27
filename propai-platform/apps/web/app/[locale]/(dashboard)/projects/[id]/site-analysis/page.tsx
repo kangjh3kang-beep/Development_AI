@@ -58,7 +58,7 @@ export default function SiteAnalysisPage() {
             <div className="flex items-center gap-4">
               <span className="inline-flex items-center gap-3 rounded-full border border-[var(--accent-strong)]/30 bg-[var(--accent-soft)] px-6 py-2 text-[10px] font-black uppercase tracking-[0.4em] text-[var(--accent-strong)] backdrop-blur-md">
                 <span className="h-2 w-2 rounded-full bg-[var(--accent-strong)] animate-ping shadow-[var(--shadow-glow)]" />
-                Land Intelligence System
+                지능형 부지분석 시스템
               </span>
             </div>
 
@@ -124,7 +124,7 @@ export default function SiteAnalysisPage() {
 
             <div className="flex flex-col items-center gap-10 text-center max-w-2xl px-6">
                <div className="space-y-4">
-                  <h3 className="text-2xl sm:text-3xl lg:text-5xl font-[1000] text-[var(--text-primary)] italic tracking-tighter leading-tight">Deep AI <span className="text-[var(--accent-strong)]">GIS Core</span> Scanning...</h3>
+                  <h3 className="text-2xl sm:text-3xl lg:text-5xl font-[1000] text-[var(--text-primary)] italic tracking-tighter leading-tight">AI <span className="text-[var(--accent-strong)]">GIS 엔진</span> 분석 중...</h3>
                   <p className="text-[11px] font-black text-[var(--accent-strong)]/50 uppercase tracking-[0.6em]">사통팔땅 멀티레이어 지능형 엔진 가동 중</p>
                </div>
 
@@ -165,7 +165,7 @@ export default function SiteAnalysisPage() {
                     <Icons.Map width={40} height={40} strokeWidth={1.5} />
                   </div>
                   <div className="space-y-1">
-                    <p className="text-[10px] font-black uppercase tracking-[0.4em] text-[var(--text-hint)]">Analysis Target Identity</p>
+                    <p className="text-[10px] font-black uppercase tracking-[0.4em] text-[var(--text-hint)]">분석 대상 부지</p>
                     <p className="text-xl sm:text-2xl lg:text-3xl font-[1000] text-[var(--text-primary)] tracking-tighter italic">
                       {siteData?.address || "분석 대상 주소를 입력하세요"}
                     </p>
@@ -175,7 +175,7 @@ export default function SiteAnalysisPage() {
                 onClick={() => setStage("init")}
                 className="group flex h-16 items-center justify-center gap-4 rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-soft)] px-10 text-[11px] font-black text-[var(--text-primary)] hover:text-white uppercase tracking-[0.3em] transition-all hover:bg-[var(--accent-strong)] hover:border-[var(--accent-strong)] active:scale-95 shadow-[var(--shadow-lg)]"
                >
-                 <span>New Analysis</span>
+                 <span>새 분석</span>
                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="transition-transform group-hover:rotate-180"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
                </button>
             </div>

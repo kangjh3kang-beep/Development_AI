@@ -5,7 +5,7 @@ from typing import Optional
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from app.services.feasibility.unit_mix_optimizer import (
+from apps.api.app.services.feasibility.unit_mix_optimizer import (
     DEFAULT_DEMAND_RATIO,
     DEFAULT_PRICE_BY_TYPE,
     STANDARD_UNIT_TYPES,
