@@ -87,7 +87,7 @@ export type CadSnapshot = Readonly<CadState>;
 
 /** 백엔드 POST /api/v1/building-compliance/check 요청 바디. */
 export type DesignPayload = {
-  points: Array<{ id: string; x: number; y: number }>;
+  points: Array<{ id: string; x: number; y: number; label?: string }>;
   lines: Array<{ id: string; startPointId: string; endPointId: string }>;
   surfaces: Array<{ id: string; pointIds: string[] }>;
   rects?: Array<{ id: string; x: number; y: number; width: number; height: number }>;
@@ -108,7 +108,7 @@ export type AutoDesignRequest = {
   building_use: string;
   target_unit_types: string[];
   floor_height_m: number;
-  setback_m: Record<string, number>;
+  setback_m: { north: number; south: number; east: number; west: number; };
 };
 
 export type AutoDesignSummary = {
@@ -120,7 +120,8 @@ export type AutoDesignSummary = {
   far_percent: number;
   total_units: number;
   parking_count: number;
-  core_count: number;
+  core_count?: number;
+  units_per_floor?: number;
 };
 
 export type AutoDesignCompliance = {
@@ -128,7 +129,8 @@ export type AutoDesignCompliance = {
   far_ok: boolean;
   height_ok: boolean;
   setback_ok: boolean;
-  all_pass: boolean;
+  parking_ok?: boolean;
+  all_pass?: boolean;
 };
 
 export type AutoDesignResponse = {

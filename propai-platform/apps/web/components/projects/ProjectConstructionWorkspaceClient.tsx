@@ -437,7 +437,7 @@ export function ProjectConstructionWorkspaceClient({
                   {costItems.length > 1 && (
                     <Button
                       type="button"
-                      variant="outline"
+                      variant="secondary"
                       onClick={() => removeCostItem(index)}
                       className="shrink-0"
                     >
@@ -448,7 +448,7 @@ export function ProjectConstructionWorkspaceClient({
               </div>
             ))}
             <div className="flex gap-3">
-              <Button type="button" variant="outline" onClick={addCostItem}>
+              <Button type="button" variant="secondary" onClick={addCostItem}>
                 {labels.addItemAction}
               </Button>
               <Button

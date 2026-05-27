@@ -58,6 +58,7 @@ export function AutoDesignPanel({ projectId }: AutoDesignPanelProps) {
     setLoading(true);
     setError(null);
     try {
+      const { generateAutoDesign } = await import("@/lib/parametric-design-engine");
       const body: AutoDesignRequest = {
         site_area_sqm: siteArea,
         zone_code: zoneCode,
@@ -66,20 +67,17 @@ export function AutoDesignPanel({ projectId }: AutoDesignPanelProps) {
         floor_height_m: floorHeight,
         setback_m: setback,
       };
-      const res = await fetch("/api/v1/drawing/auto-design", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      if (!res.ok) throw new Error(`서버 오류 (${res.status})`);
-      const data: AutoDesignResponse = await res.json();
+      // 로컬 엔진으로 즉시 생성 (백엔드 불필요)
+      const data = generateAutoDesign(body);
       setResult(data);
+      // 자동으로 캔버스에 적용
+      loadDesignPayload(data.design_payload);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "알 수 없는 오류");
+      setError(e instanceof Error ? e.message : "설계 생성 실패");
     } finally {
       setLoading(false);
     }
-  }, [siteArea, zoneCode, buildingUse, unitTypes, floorHeight, setback]);
+  }, [siteArea, zoneCode, buildingUse, unitTypes, floorHeight, setback, loadDesignPayload]);
 
   const handleApply = useCallback(() => {
     if (!result) return;
@@ -89,26 +87,8 @@ export function AutoDesignPanel({ projectId }: AutoDesignPanelProps) {
   const handleExportDxf = useCallback(async () => {
     if (!result) return;
     try {
-      const body = {
-        building_width_m: Math.sqrt(result.summary.building_area_sqm) * 1.5,
-        building_depth_m: Math.sqrt(result.summary.building_area_sqm) / 1.5,
-        floor_count: result.summary.num_floors,
-        unit_width_m: 8.0,
-        corridor_width_m: 1.8,
-      };
-      const res = await fetch("/api/v1/drawing/export-dxf", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      if (!res.ok) throw new Error("DXF 내보내기 실패");
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = "floor_plan.dxf";
-      a.click();
-      URL.revokeObjectURL(url);
+      const { downloadDXF } = await import("@/lib/dxf-exporter");
+      downloadDXF(result.design_payload, "floor_plan.dxf");
     } catch {
       setError("DXF 다운로드 실패");
     }

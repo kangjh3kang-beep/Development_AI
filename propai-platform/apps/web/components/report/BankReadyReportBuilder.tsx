@@ -2,7 +2,6 @@
 
 import { useState, useCallback } from "react";
 import { Button, Card, CardContent, CardTitle } from "@propai/ui";
-import { apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 
 /* ── Types ── */
@@ -361,17 +360,41 @@ export function BankReadyReportBuilder() {
     setError(null);
     setReport(null);
     try {
-      const payload = {
-        project_data: buildProjectData(),
-        selected_sections: Array.from(selectedSections),
-        template,
+      // 로컬에서 보고서 생성 (백엔드 불필요)
+      await new Promise((r) => setTimeout(r, 500));
+      const pd = buildProjectData();
+      const selected = Array.from(selectedSections);
+      const sections: ReportSection[] = ALL_SECTIONS
+        .filter((s) => selected.includes(s.id))
+        .map((s) => {
+          const hasData = sectionHasData(s.id);
+          let content: Record<string, unknown> = {};
+          if (s.id === "summary") content = { project_name: pd.project_name, ...(pd.site_analysis || {}) };
+          else if (s.id === "market") content = pd.market_analysis || {};
+          else if (s.id === "legal") content = pd.compliance || {};
+          else if (s.id === "design") content = pd.design || {};
+          else if (s.id === "unit_mix") content = pd.unit_mix || {};
+          else if (s.id === "feasibility") content = pd.feasibility || {};
+          else if (s.id === "finance") content = pd.finance || {};
+          else if (s.id === "risk") content = pd.monte_carlo || {};
+          else if (s.id === "esg") content = { ...(pd.esg || {}), ...(pd.gresb || {}) };
+          else content = {};
+          return { id: s.id, title: s.title, has_data: hasData, content };
+        });
+      const filled = sections.filter((s) => s.has_data).length;
+      const result: BankReport = {
+        meta: {
+          title: `${pd.project_name || "프로젝트"} 사업성 분석 보고서`,
+          template: template === "bank" ? "금융기관 제출용" : "내부 검토용",
+          generated_at: new Date().toISOString(),
+          generated_by: "PropAI Platform",
+          legal_disclaimer: "본 보고서는 AI 기반 자동 분석 결과이며, 최종 투자 판단은 전문가 자문을 받으시기 바랍니다.",
+          data_basis_date: new Date().toLocaleDateString("ko-KR"),
+        },
+        sections,
+        completeness: { total: sections.length, filled, empty: sections.length - filled, pct: sections.length > 0 ? Math.round((filled / sections.length) * 100) : 0 },
       };
-      const result = await apiClient<BankReport>("/bank-report/generate", {
-        method: "POST",
-        body: payload,
-      });
       setReport(result);
-      // Expand all sections with data by default
       setExpandedSections(new Set(result.sections.filter((s) => s.has_data).map((s) => s.id)));
     } catch (err) {
       setError(err instanceof Error ? err.message : "보고서 생성 중 오류가 발생했습니다.");
@@ -541,7 +564,7 @@ export function BankReadyReportBuilder() {
                 </div>
                 <div className="flex items-center gap-4">
                   <CompletenessRing pct={report.completeness.pct} />
-                  <Button onClick={handleDownloadPdf} variant="outline">
+                  <Button onClick={handleDownloadPdf} variant="secondary">
                     PDF 다운로드
                   </Button>
                 </div>

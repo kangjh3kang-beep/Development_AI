@@ -453,7 +453,7 @@ export function ProjectEsgWorkspaceClient({
                   {lcaMaterials.length > 1 && (
                     <Button
                       type="button"
-                      variant="outline"
+                      variant="secondary"
                       onClick={() => removeLcaMaterial(index)}
                     >
                       {labels.removeMaterialAction}
@@ -463,7 +463,7 @@ export function ProjectEsgWorkspaceClient({
               </div>
             ))}
             <div className="flex gap-3">
-              <Button type="button" variant="outline" onClick={addLcaMaterial}>
+              <Button type="button" variant="secondary" onClick={addLcaMaterial}>
                 {labels.addMaterialAction}
               </Button>
               <Button
@@ -601,7 +601,7 @@ export function ProjectEsgWorkspaceClient({
                     {epdMaterials.length > 1 && (
                       <Button
                         type="button"
-                        variant="outline"
+                        variant="secondary"
                         onClick={() => removeEpdMaterial(index)}
                       >
                         {labels.removeMaterialAction}
@@ -613,7 +613,7 @@ export function ProjectEsgWorkspaceClient({
               <div className="flex gap-3">
                 <Button
                   type="button"
-                  variant="outline"
+                  variant="secondary"
                   onClick={addEpdMaterial}
                 >
                   {labels.addMaterialAction}

@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import { Button, Card, CardContent } from "@propai/ui";
-import { apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 
 /* ── Types ── */
@@ -185,20 +184,50 @@ export default function GresbScoreCard() {
   const calculate = async () => {
     setLoading(true);
     try {
-      const payload = {
-        building_type: form.building_type,
-        energy_kwh_per_sqm: form.energy_kwh_per_sqm ? parseFloat(form.energy_kwh_per_sqm) : null,
-        ghg_kg_per_sqm: form.ghg_kg_per_sqm ? parseFloat(form.ghg_kg_per_sqm) : null,
-        water_l_per_sqm: form.water_l_per_sqm ? parseFloat(form.water_l_per_sqm) : null,
-        has_esg_policy: form.has_esg_policy,
-        has_green_cert: form.green_cert_level !== "none",
-        green_cert_level: form.green_cert_level,
-        waste_recycling_pct: parseFloat(form.waste_recycling_pct) || 0,
-        renewable_energy_pct: parseFloat(form.renewable_energy_pct) || 0,
-        floor_area_sqm: parseFloat(form.floor_area_sqm) || 1000,
-      };
+      const energy = form.energy_kwh_per_sqm ? parseFloat(form.energy_kwh_per_sqm) : 130;
+      const ghg = form.ghg_kg_per_sqm ? parseFloat(form.ghg_kg_per_sqm) : 62;
+      const water = form.water_l_per_sqm ? parseFloat(form.water_l_per_sqm) : 500;
+      const waste = parseFloat(form.waste_recycling_pct) || 0;
+      const renewable = parseFloat(form.renewable_energy_pct) || 0;
+      const certLevel = form.green_cert_level;
 
-      const res = await apiClient.post<GresbResult>("/api/v1/gresb/score", payload);
+      // 로컬 GRESB 스코어링 계산
+      const mgmt = Math.min(30, (form.has_esg_policy ? 15 : 0) + (certLevel !== "none" ? 10 : 0) + 5);
+      const energyBench = 130; // kWh/m² benchmark
+      const ghgBench = 62;
+      const energyScore = Math.max(0, Math.min(20, 20 * (1 - (energy - energyBench * 0.5) / energyBench)));
+      const ghgScore = Math.max(0, Math.min(15, 15 * (1 - (ghg - ghgBench * 0.5) / ghgBench)));
+      const wasteScore = Math.min(10, waste / 10);
+      const renewableScore = Math.min(10, renewable / 10);
+      const waterScore = Math.max(0, Math.min(5, 5 * (1 - (water - 250) / 500)));
+      const perf = Math.round(energyScore + ghgScore + wasteScore + renewableScore + waterScore);
+      const dev = Math.min(10, (certLevel === "excellent" ? 10 : certLevel === "good" ? 7 : certLevel === "basic" ? 4 : 0));
+      const total = Math.min(100, mgmt + perf + dev);
+      const grade = total >= 75 ? "A" : total >= 55 ? "B" : total >= 35 ? "C" : "D";
+      const gradeLabel = grade === "A" ? "Green Star" : grade === "B" ? "우수" : grade === "C" ? "보통" : "개선필요";
+
+      const energyRating = energy <= energyBench * 0.7 ? "우수" : energy <= energyBench ? "보통" : "개선필요";
+      const ghgRating = ghg <= ghgBench * 0.7 ? "우수" : ghg <= ghgBench ? "보통" : "개선필요";
+
+      const recommendations: Recommendation[] = [];
+      if (renewable < 20) recommendations.push({ area: "에너지", action: "태양광 패널 설치로 재생에너지 비율 20% 달성", potential_gain: 5, cost_grade: "medium", priority: 1 });
+      if (!form.has_esg_policy) recommendations.push({ area: "경영", action: "ESG 정책 수립 및 공시", potential_gain: 15, cost_grade: "low", priority: 2 });
+      if (certLevel === "none") recommendations.push({ area: "개발", action: "녹색건축 인증(G-SEED) 취득", potential_gain: 10, cost_grade: "high", priority: 3 });
+      if (waste < 50) recommendations.push({ area: "성과", action: "폐기물 재활용률 50% 이상 달성", potential_gain: 5, cost_grade: "low", priority: 4 });
+
+      const res: GresbResult = {
+        total_score: total, max_score: 100, grade, grade_label: gradeLabel,
+        components: {
+          management: { score: mgmt, max: 30 },
+          performance: { score: perf, max: 60 },
+          development: { score: dev, max: 10 },
+          energy: { value: energy, benchmark: energyBench, rating: energyRating },
+          ghg: { value: ghg, benchmark: ghgBench, rating: ghgRating },
+        },
+        benchmark_type: form.building_type === "apartment" ? "아시아-주거" : "아시아-상업",
+        recommendations,
+        potential_score: Math.min(100, total + recommendations.reduce((s, r) => s + r.potential_gain, 0)),
+      };
       setResult(res);
 
       addAnalysisResult({
@@ -227,7 +256,7 @@ export default function GresbScoreCard() {
             <h3 className="text-base font-semibold text-gray-900">GRESB ESG 스코어링</h3>
             <p className="text-xs text-gray-500">GRESB 2025 기준 ESG 점수 예측</p>
           </div>
-          <Button variant="outline" size="sm" onClick={loadFromEsg} className="text-xs">
+          <Button variant="secondary" size="sm" onClick={loadFromEsg} className="text-xs">
             ESG 분석에서 자동 입력
           </Button>
         </div>

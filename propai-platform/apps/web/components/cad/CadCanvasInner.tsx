@@ -20,42 +20,7 @@ type ReactKonvaModules = {
 type GridLine = { points: number[]; vertical: boolean; label: string };
 type LineDimension = { id: string; mx: number; my: number; lenM: number; offset: number };
 
-// React 19 Shim for React 18-era libraries (Proxy-based)
-const applyShim = () => {
-  if (typeof window !== "undefined" && React.version.startsWith("19")) {
-    const anyReact = React as any;
-    const client = anyReact.__CLIENT_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED;
-    const secret = anyReact.__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED;
-
-    if (client && secret && !secret.ReactCurrentOwner) {
-      try {
-        const proxy = new Proxy(secret, {
-          get: (target, prop) => {
-            if (prop === "ReactCurrentOwner") return client.ReactCurrentOwner;
-            if (prop === "ReactCurrentDispatcher") return client.ReactCurrentDispatcher;
-            if (prop === "ReactCurrentBatchConfig") return client.ReactCurrentBatchConfig;
-            if (prop === "ReactCurrentOwner") return client.ReactCurrentOwner;
-            return target[prop];
-          },
-        });
-        Object.defineProperty(anyReact, "__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED", {
-          get: () => proxy,
-          configurable: true,
-        });
-      } catch (e) {
-        // Fallback: direct assignment if already exists
-        if (client.ReactCurrentOwner && !secret.ReactCurrentOwner) {
-           secret.ReactCurrentOwner = client.ReactCurrentOwner;
-        }
-      }
-    } else if (client && !secret) {
-        Object.defineProperty(anyReact, "__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED", {
-          get: () => client,
-          configurable: true,
-        });
-    }
-  }
-};
+// react-konva 19.2.4 officially supports React 19 — no shim needed.
 
 type CadCanvasInnerProps = {
   width: number;
@@ -87,7 +52,6 @@ export function CadCanvasInner({ width, height }: CadCanvasInnerProps) {
   const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
-    applyShim();
     try {
       const modules = require("react-konva") as ReactKonvaModules;
       setRK(modules);
