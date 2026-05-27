@@ -261,31 +261,63 @@ export function TaxOperationsWorkspaceClient({
   async function handleCalculate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setWorkspaceError("");
-
-    if (!activeProjectId) {
-      setWorkspaceError(labels.missingProjectError);
-      return;
-    }
-
     setIsCalculating(true);
 
     try {
-      const response = await apiClient.post<TaxCalculationResponse>(
-        "/tax/calculate",
-        {
-          useMock: false,
-          body: {
-            project_id: activeProjectId,
-            tax_type: form.taxType,
-            taxable_value: Number(form.taxableValue),
-            is_first_home: form.isFirstHome,
-            holding_years: Number(form.holdingYears),
-          },
-        },
-      );
-      setResult(response);
+      const { calculateCapitalGainsTax, calculateAcquisitionTax, calculateComprehensivePropertyTax } = await import("@/lib/kr-tax-calculator");
+      const taxableValue = Number(form.taxableValue);
+      const holdingYears = Number(form.holdingYears);
+
+      let amount = 0;
+      let taxRate = 0;
+      const deductions: Array<Record<string, unknown>> = [];
+      const tips: string[] = [];
+
+      if (form.taxType === "acquisition") {
+        const res = calculateAcquisitionTax(taxableValue, 1);
+        amount = res.totalTax;
+        taxRate = res.taxRate / 100;
+        deductions.push({ type: "취득세", amount: res.acquisitionTax }, { type: "농특세", amount: res.ruralTax }, { type: "교육세", amount: res.educationTax });
+        if (form.isFirstHome && taxableValue <= 600_000_000) tips.push("생애 최초 주택 취득세 감면 적용 가능 (200만원 한도)");
+        tips.push("취득일 기준 60일 이내 신고/납부 필요");
+      } else if (form.taxType === "transfer") {
+        const res = calculateCapitalGainsTax({
+          acquisitionPrice: Math.round(taxableValue * 0.7),
+          salePrice: taxableValue,
+          holdingYears,
+          houseCount: 1,
+          isSingleHome: form.isFirstHome,
+          expenses: Math.round(taxableValue * 0.01),
+        });
+        amount = res.totalTax;
+        taxRate = res.appliedRate / 100;
+        if (res.ltcgDeduction > 0) deductions.push({ type: "장기보유특별공제", amount: res.ltcgDeduction, rate: `${res.ltcgRate}%` });
+        deductions.push({ type: "기본공제", amount: res.basicDeduction });
+        tips.push(`실효세율: ${res.effectiveRate}%`);
+        if (holdingYears < 3) tips.push("3년 이상 보유 시 장기보유특별공제 적용 가능");
+        if (holdingYears >= 10 && form.isFirstHome) tips.push("1세대 1주택 10년 이상 보유 시 최대 40% 공제");
+      } else {
+        const res = calculateComprehensivePropertyTax(taxableValue, 1);
+        amount = res.totalTax;
+        taxRate = res.propertyTax / (taxableValue || 1);
+        deductions.push({ type: "재산세", amount: res.propertyTax }, { type: "종합부동산세", amount: res.comprehensiveTax });
+        tips.push(`공정시장가액비율: ${res.fairMarketRatio}%`);
+        if (res.comprehensiveTax > 0) tips.push("종부세 합산배제 신청 가능 여부 확인 권장");
+      }
+
+      setResult({
+        id: `local-${Date.now()}`,
+        project_id: activeProjectId || "local",
+        tax_type: form.taxType,
+        amount,
+        taxable_value: taxableValue,
+        tax_rate: taxRate,
+        deductions,
+        optimization_tips: tips,
+        created_at: new Date().toISOString(),
+      });
     } catch (error) {
-      setWorkspaceError(extractErrorMessage(error, labels.authError));
+      setWorkspaceError(error instanceof Error ? error.message : "계산 오류");
     } finally {
       setIsCalculating(false);
     }
@@ -464,7 +496,7 @@ export function TaxOperationsWorkspaceClient({
                 />
                 <span>{labels.firstHomeLabel}</span>
               </label>
-              <Button type="submit" disabled={!canUseLiveApi || isCalculating}>
+              <Button type="submit" disabled={isCalculating}>
                 {isCalculating
                   ? `${labels.calculateAction}...`
                   : labels.calculateAction}
