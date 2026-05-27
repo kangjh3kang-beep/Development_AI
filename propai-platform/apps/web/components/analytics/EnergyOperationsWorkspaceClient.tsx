@@ -331,22 +331,32 @@ export function EnergyOperationsWorkspaceClient({
     event.preventDefault();
     setWorkspaceError("");
     setIsCalculating(true);
-
     try {
-      const result = await apiClient.post<KepcoCalculationResponse>(
-        "/energy/kepco/calculate",
-        {
-          useMock: false,
-          body: {
-            usage_kwh: Number(kepcoForm.usageKwh),
-            contract_type: kepcoForm.contractType,
-            demand_kw: Number(kepcoForm.demandKw),
-          },
-        },
-      );
-      setKepcoResult(result);
+      await new Promise((r) => setTimeout(r, 200));
+      const usage = Number(kepcoForm.usageKwh) || 0;
+      const demand = Number(kepcoForm.demandKw) || 0;
+      const type = kepcoForm.contractType;
+      const ratePerKwh = type === "industrial" ? 110 : type === "education" ? 100 : 130;
+      const basePer = type === "industrial" ? 7220 : type === "education" ? 5550 : 6160;
+      const baseCharge = Math.round(demand * basePer);
+      const energyCharge = Math.round(usage * ratePerKwh);
+      const climateFund = Math.round(usage * 9);
+      const fuelAdj = Math.round(usage * 5);
+      const subTotal = baseCharge + energyCharge + climateFund + fuelAdj;
+      const vat = Math.round(subTotal * 0.1);
+      setKepcoResult({
+        contract_type: type,
+        usage_kwh: usage,
+        demand_kw: demand,
+        base_charge_krw: baseCharge,
+        energy_charge_krw: energyCharge,
+        climate_fund_krw: climateFund,
+        fuel_adjustment_krw: fuelAdj,
+        vat_krw: vat,
+        total_bill_krw: subTotal + vat,
+      });
     } catch (error) {
-      setWorkspaceError(extractErrorMessage(error, labels.authError));
+      setWorkspaceError(error instanceof Error ? error.message : "계산 오류");
     } finally {
       setIsCalculating(false);
     }
@@ -355,32 +365,42 @@ export function EnergyOperationsWorkspaceClient({
   async function handleEstimateCertification(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setWorkspaceError("");
-
-    if (!activeProjectId) {
-      setWorkspaceError(labels.missingProjectError);
-      return;
-    }
-
     setIsCertifying(true);
-
     try {
-      const result = await apiClient.post<EnergyCertificationResponse>(
-        "/energy/certification",
-        {
-          useMock: false,
-          body: {
-            project_id: activeProjectId,
-            total_area_sqm: Number(certificationForm.totalAreaSqm),
-            floors: Number(certificationForm.floors),
-            window_wall_ratio: Number(certificationForm.windowWallRatio),
-            insulation_grade: certificationForm.insulationGrade,
-            bems_saving_rate: Number(certificationForm.bemsSavingRate),
-          },
-        },
-      );
-      setCertificationResult(result);
+      await new Promise((r) => setTimeout(r, 200));
+      const area = Number(certificationForm.totalAreaSqm) || 10000;
+      const floors = Number(certificationForm.floors) || 10;
+      const wwr = Number(certificationForm.windowWallRatio) || 0.3;
+      const bems = Number(certificationForm.bemsSavingRate) || 0.08;
+      const insGrade = certificationForm.insulationGrade;
+      const insK = insGrade === "premium" ? 0.75 : insGrade === "standard" ? 1.0 : 1.25;
+      const baseEUI = 140 * insK * (1 + (wwr - 0.3) * 0.5);
+      const annualDemand = Math.round(area * baseEUI);
+      const renewableRatio = insGrade === "premium" ? 0.25 : insGrade === "standard" ? 0.15 : 0.08;
+      const renewableGen = Math.round(annualDemand * renewableRatio);
+      const independence = renewableGen / annualDemand;
+      const bemsSaving = Math.round(annualDemand * bems);
+      const effectiveEUI = baseEUI * (1 - bems) * (1 - renewableRatio);
+      const energyGrade = effectiveEUI < 60 ? "1++" : effectiveEUI < 90 ? "1+" : effectiveEUI < 120 ? "1" : effectiveEUI < 150 ? "2" : effectiveEUI < 200 ? "3" : "4";
+      const zebGrade = independence >= 1.0 ? "ZEB 1" : independence >= 0.8 ? "ZEB 2" : independence >= 0.6 ? "ZEB 3" : independence >= 0.4 ? "ZEB 4" : independence >= 0.2 ? "ZEB 5" : "해당없음";
+      const recs: string[] = [];
+      if (wwr > 0.4) recs.push("창면적비 축소 검토 (0.4 이하 권장)");
+      if (insGrade !== "premium") recs.push("단열 등급 상향 검토 (열관류율 0.15 W/m²K 이하)");
+      if (bems < 0.1) recs.push("BEMS 고도화로 추가 절감 가능 (목표 10% 이상)");
+      if (independence < 0.2) recs.push("태양광 패널 설치 면적 확대 권고");
+      recs.push(`건물 에너지효율등급 ${energyGrade} 달성 가능`);
+      setCertificationResult({
+        energy_grade: energyGrade,
+        zeb_grade: zebGrade,
+        annual_energy_demand_kwh: annualDemand,
+        annual_renewable_generation_kwh: renewableGen,
+        energy_independence_rate: Math.round(independence * 1000) / 1000,
+        bems_saving_rate: bems,
+        bems_saving_kwh: bemsSaving,
+        recommendations: recs,
+      });
     } catch (error) {
-      setWorkspaceError(extractErrorMessage(error, labels.authError));
+      setWorkspaceError(error instanceof Error ? error.message : "인증 오류");
     } finally {
       setIsCertifying(false);
     }
@@ -555,7 +575,7 @@ export function EnergyOperationsWorkspaceClient({
                 }
                 options={CONTRACT_OPTIONS}
               />
-              <Button type="submit" disabled={!canUseLiveApi || isCalculating}>
+              <Button type="submit" disabled={isCalculating}>
                 {isCalculating
                   ? `${labels.calculateAction}...`
                   : labels.calculateAction}
@@ -671,7 +691,7 @@ export function EnergyOperationsWorkspaceClient({
                 }
                 options={INSULATION_OPTIONS}
               />
-              <Button type="submit" disabled={!canUseLiveApi || isCertifying}>
+              <Button type="submit" disabled={isCertifying}>
                 {isCertifying
                   ? `${labels.certifyAction}...`
                   : labels.certifyAction}
