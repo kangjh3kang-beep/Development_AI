@@ -1,9 +1,7 @@
 
 import { cache } from "react";
 import { defaultLocale, type Locale } from "@/i18n/config";
-import koCommon from "../public/locales/ko/common.json";
-import enCommon from "../public/locales/en/common.json";
-import zhCNCommon from "../public/locales/zh-CN/common.json";
+
 
 type ItemGroup = {
   first: string;
@@ -364,14 +362,14 @@ export type CommonDictionary = {
 };
 
 const dictionaries = {
-  ko: () => Promise.resolve(koCommon as unknown as CommonDictionary),
-  en: () => Promise.resolve(enCommon as unknown as CommonDictionary),
-  "zh-CN": () => Promise.resolve(zhCNCommon as unknown as CommonDictionary),
+  ko: () => import("../public/locales/ko/common.json").then((module) => module.default),
+  en: () => import("../public/locales/en/common.json").then((module) => module.default),
+  "zh-CN": () => import("../public/locales/zh-CN/common.json").then((module) => module.default),
 };
 
 async function loadDictionary(locale: Locale): Promise<CommonDictionary> {
   const loadFn = dictionaries[locale] ?? dictionaries[defaultLocale];
-  return loadFn();
+  return loadFn() as unknown as Promise<CommonDictionary>;
 }
 
 export const getDictionary = cache(loadDictionary);
