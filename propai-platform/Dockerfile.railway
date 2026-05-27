@@ -17,6 +17,7 @@ RUN apt-get update && apt-get install -y \
 
 ENV GDAL_VERSION=3.9.3
 ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/app:/app/apps/api
 
 # 의존성 설치 (캐싱 최적화)
 COPY apps/api/requirements.txt ./requirements.txt
