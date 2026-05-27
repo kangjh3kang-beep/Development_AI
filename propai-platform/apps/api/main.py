@@ -188,8 +188,11 @@ async def health_check() -> HealthResponse:
         async with engine.connect() as conn:
             await conn.execute(__import__("sqlalchemy").text("SELECT 1"))
         services["postgres"] = "healthy"
-    except Exception:
-        services["postgres"] = "unhealthy"
+    except Exception as e:
+        db_url = str(engine.url)
+        # 비밀번호 마스킹
+        masked = db_url.split("@")[-1] if "@" in db_url else db_url
+        services["postgres"] = f"unhealthy (host: {masked}, err: {str(e)[:80]})"
 
     # Redis 연결 확인
     try:
