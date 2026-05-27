@@ -40,25 +40,43 @@ async function fetchAIAnalysis<T = unknown>(
   provider: string,
   model: string,
 ): Promise<AIAnalysisResponse<T>> {
-  const response = await fetch("/api/ai/analyze", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      ...request,
-      provider,
-      model,
-    }),
-  });
+  // API 키가 없으면 즉시 에러
+  if (!apiKey || apiKey.trim().length < 10) {
+    throw new Error("API 키가 등록되지 않았습니다. 설정 > API 키에서 등록해주세요.");
+  }
+
+  let response: Response;
+  try {
+    response = await fetch("/api/ai/analyze", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        ...request,
+        provider,
+        model,
+      }),
+    });
+  } catch (networkError) {
+    // 네트워크 연결 자체 실패
+    throw new Error("네트워크 연결에 실패했습니다. 인터넷 연결을 확인해주세요.");
+  }
 
   if (!response.ok) {
-    const err: AIAnalysisError = await response.json().catch(() => ({
-      error: "분석 요청에 실패했습니다.",
-      code: "UNKNOWN",
-    }));
-    throw new Error(err.error);
+    let errorMsg = `서버 에러 (${response.status})`;
+    try {
+      const errBody = await response.json();
+      errorMsg = errBody.error || errBody.message || errorMsg;
+      if (errBody.code) errorMsg += ` [${errBody.code}]`;
+    } catch {
+      // JSON 파싱 실패 → status 기반 메시지
+      if (response.status === 401) errorMsg = "API 키가 유효하지 않습니다. 설정에서 확인해주세요.";
+      else if (response.status === 429) errorMsg = "API 호출 한도를 초과했습니다. 잠시 후 다시 시도해주세요.";
+      else if (response.status >= 500) errorMsg = "AI 서버 내부 에러입니다. 잠시 후 다시 시도해주세요.";
+    }
+    throw new Error(errorMsg);
   }
 
   return response.json();

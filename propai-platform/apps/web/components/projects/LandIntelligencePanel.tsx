@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useCallback } from "react";
+import React, { useCallback } from "react";
 import { motion } from "framer-motion";
 import { useAIAnalyze, useAIReady } from "@/lib/ai-analyze-client";
 
@@ -37,7 +37,7 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
   const { isReady } = useAIReady();
   const { mutate: runAnalysis, data: aiResult, isPending: isAnalyzing, error: aiError } = useAIAnalyze<SiteAnalysisResult>();
 
-  // AI 분석 자동 실행 (주소가 있고, API 키가 등록되어 있을 때)
+  // AI 분석 실행 (사용자 수동 트리거)
   const triggerAnalysis = useCallback(() => {
     if (!data?.address || !isReady) return;
     runAnalysis({
@@ -45,13 +45,6 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
       context: { address: data.address, pnu: data.pnu || "", projectId },
     });
   }, [data?.address, data?.pnu, isReady, projectId, runAnalysis]);
-
-  useEffect(() => {
-    if (data?.address && isReady) {
-      triggerAnalysis();
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data?.address]);
 
   // AI 결과 또는 기본값으로 분석 데이터 구성
   const aiData = aiResult?.data;

@@ -107,27 +107,56 @@ export async function POST(req: Request) {
       usage: result.usage ?? {},
     });
   } catch (error: unknown) {
-    const message =
-      error instanceof Error ? error.message : "분석 중 오류가 발생했습니다.";
-    console.error("AI Analyze Error:", error);
+    const rawMessage =
+      error instanceof Error ? error.message : String(error);
+    console.error("AI Analyze Error:", rawMessage, error);
 
-    // API 키 관련 에러 구분
-    if (message.includes("401") || message.includes("Unauthorized") || message.includes("invalid_api_key")) {
+    // 세분화된 에러 분류
+    const lowerMsg = rawMessage.toLowerCase();
+
+    // 1) API 키 관련
+    if (lowerMsg.includes("401") || lowerMsg.includes("unauthorized") || lowerMsg.includes("invalid_api_key") || lowerMsg.includes("incorrect api key")) {
       return NextResponse.json(
-        { error: "API 키가 유효하지 않습니다. 설정에서 확인해주세요.", code: "INVALID_KEY" },
+        { error: "API 키가 유효하지 않습니다. 설정에서 올바른 키를 등록해주세요.", code: "INVALID_KEY" },
         { status: 401 },
       );
     }
 
-    if (message.includes("429") || message.includes("rate_limit")) {
+    // 2) 한도 초과
+    if (lowerMsg.includes("429") || lowerMsg.includes("rate_limit") || lowerMsg.includes("rate limit") || lowerMsg.includes("quota")) {
       return NextResponse.json(
         { error: "API 호출 한도를 초과했습니다. 잠시 후 다시 시도해주세요.", code: "RATE_LIMITED" },
         { status: 429 },
       );
     }
 
+    // 3) 모델 없음
+    if (lowerMsg.includes("model") && (lowerMsg.includes("not found") || lowerMsg.includes("does not exist"))) {
+      return NextResponse.json(
+        { error: `선택한 모델을 사용할 수 없습니다. 설정에서 다른 모델을 선택하거나 'auto'로 설정해주세요. (${rawMessage})`, code: "MODEL_NOT_FOUND" },
+        { status: 400 },
+      );
+    }
+
+    // 4) 네트워크/타임아웃
+    if (lowerMsg.includes("timeout") || lowerMsg.includes("econnrefused") || lowerMsg.includes("fetch failed") || lowerMsg.includes("network")) {
+      return NextResponse.json(
+        { error: "AI 서비스 연결에 실패했습니다. 네트워크 상태를 확인해주세요.", code: "NETWORK_ERROR" },
+        { status: 502 },
+      );
+    }
+
+    // 5) 잔액 부족
+    if (lowerMsg.includes("insufficient") || lowerMsg.includes("billing") || lowerMsg.includes("payment")) {
+      return NextResponse.json(
+        { error: "API 사용 잔액이 부족합니다. API 제공사의 결제 설정을 확인해주세요.", code: "BILLING_ERROR" },
+        { status: 402 },
+      );
+    }
+
+    // 6) 기타 에러 — 원문 메시지 전달
     return NextResponse.json(
-      { error: message, code: "ANALYSIS_ERROR" },
+      { error: `AI 분석 중 오류: ${rawMessage}`, code: "ANALYSIS_ERROR" },
       { status: 500 },
     );
   }
