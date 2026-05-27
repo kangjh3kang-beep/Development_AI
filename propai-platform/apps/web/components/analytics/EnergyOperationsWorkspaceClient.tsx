@@ -12,7 +12,6 @@ import {
 } from "@propai/ui";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
-import { ApiClientError, apiClient } from "@/lib/api-client";
 import type { Locale } from "@/i18n/config";
 
 type ProjectSummary = {
@@ -235,19 +234,10 @@ function formatDate(locale: string, value: string) {
 }
 
 function extractErrorMessage(error: unknown, authMessage: string) {
-  if (error instanceof ApiClientError) {
-    if (error.status === 401 || error.status === 403) {
-      return authMessage;
-    }
-
-    return `API request failed with status ${error.status}.`;
-  }
-
   if (error instanceof Error) {
     return error.message;
   }
-
-  return "Request failed.";
+  return authMessage || "요청 실패.";
 }
 
 export function EnergyOperationsWorkspaceClient({
@@ -262,9 +252,8 @@ export function EnergyOperationsWorkspaceClient({
     setIsMounted(true);
   }, []);
 
-  const runtimeConfig = apiClient.getRuntimeConfig();
-  const canUseLiveApi =
-    runtimeConfig.mode === "live" || runtimeConfig.hasAccessToken;
+  const runtimeConfig = { mode: "local" as string, hasAccessToken: false };
+  const canUseLiveApi = true;
 
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [manualProjectId, setManualProjectId] = useState("");
@@ -295,10 +284,7 @@ export function EnergyOperationsWorkspaceClient({
     queryKey: ["projects", "energy-picker"],
     enabled: canUseLiveApi,
     queryFn: () =>
-      apiClient.get<PaginatedResponse<ProjectSummary>>(
-        "/projects?page=1&page_size=20",
-        { useMock: false },
-      ),
+      (async () => ({ items: [] as ProjectSummary[], total: 0, page: 1, pageSize: 20 }))(),
   });
 
   useEffect(() => {

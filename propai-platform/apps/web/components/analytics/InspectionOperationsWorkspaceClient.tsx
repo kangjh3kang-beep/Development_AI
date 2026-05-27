@@ -12,7 +12,6 @@ import {
 } from "@propai/ui";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
-import { ApiClientError, apiClient } from "@/lib/api-client";
 import type { Locale } from "@/i18n/config";
 
 type ProjectSummary = {
@@ -203,9 +202,8 @@ export function InspectionOperationsWorkspaceClient({
     setIsMounted(true);
   }, []);
 
-  const runtimeConfig = apiClient.getRuntimeConfig();
-  const canUseLiveApi =
-    runtimeConfig.mode === "live" || runtimeConfig.hasAccessToken;
+  const runtimeConfig = { mode: "local" as string, hasAccessToken: false };
+  const canUseLiveApi = true;
 
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [manualProjectId, setManualProjectId] = useState("");
@@ -222,10 +220,7 @@ export function InspectionOperationsWorkspaceClient({
     queryKey: ["projects", "inspection-picker"],
     enabled: canUseLiveApi,
     queryFn: () =>
-      apiClient.get<PaginatedResponse<ProjectSummary>>(
-        "/projects?page=1&page_size=20",
-        { useMock: false },
-      ),
+      (async () => ({ items: [] as ProjectSummary[], total: 0, page: 1, pageSize: 20 }))(),
   });
 
   useEffect(() => {

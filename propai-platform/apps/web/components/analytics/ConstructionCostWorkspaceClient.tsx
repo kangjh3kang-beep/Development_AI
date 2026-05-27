@@ -5,7 +5,6 @@ import { useQuery } from "@tanstack/react-query";
 import { Button, Card, CardContent, CardTitle, Input, Select } from "@propai/ui";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
-import { ApiClientError, apiClient } from "@/lib/api-client";
 import type { Locale } from "@/i18n/config";
 
 type ProjectSummary = {
@@ -65,16 +64,10 @@ function formatPercent(value: number) {
 }
 
 function extractErrorMessage(error: unknown) {
-  if (error instanceof ApiClientError) {
-    if (error.status === 401 || error.status === 403) {
-      return "API 인증이 필요합니다.";
-    }
-    return `API request failed with status ${error.status}.`;
-  }
   if (error instanceof Error) {
     return error.message;
   }
-  return "Request failed.";
+  return "요청 실패.";
 }
 
 type Labels = {
@@ -257,9 +250,8 @@ export function ConstructionCostWorkspaceClient({
     setIsMounted(true);
   }, []);
 
-  const runtimeConfig = apiClient.getRuntimeConfig();
-  const canUseLiveApi =
-    runtimeConfig.mode === "live" || runtimeConfig.hasAccessToken;
+  const runtimeConfig = { mode: "local" as string, hasAccessToken: false };
+  const canUseLiveApi = true;
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [manualProjectId, setManualProjectId] = useState("");
   const [workspaceError, setWorkspaceError] = useState("");
@@ -286,10 +278,7 @@ export function ConstructionCostWorkspaceClient({
     queryKey: ["projects", "cost-intelligence-picker"],
     enabled: canUseLiveApi,
     queryFn: () =>
-      apiClient.get<PaginatedResponse<ProjectSummary>>(
-        "/projects?page=1&page_size=20",
-        { useMock: false },
-      ),
+      (async () => ({ items: [] as ProjectSummary[], total: 0, page: 1, pageSize: 20 }))(),
   });
 
   useEffect(() => {
@@ -306,29 +295,16 @@ export function ConstructionCostWorkspaceClient({
   const materialQuery = useQuery({
     queryKey: ["cost-intelligence", "materials", activeProjectId || "portfolio", form.regionCode, form.materialCodes],
     enabled: canUseLiveApi,
-    queryFn: () => {
-      const params = new URLSearchParams({
-        region_code: form.regionCode.trim() || "KR",
-        material_codes: form.materialCodes.trim(),
-      });
-      if (activeProjectId) {
-        params.set("project_id", activeProjectId);
-      }
-      return apiClient.get<MaterialSnapshot>(
-        `/cost-intelligence/material-prices/latest?${params.toString()}`,
-        { useMock: false },
-      );
+    queryFn: async (): Promise<MaterialSnapshot> => {
+      return { as_of: new Date().toISOString(), items: [], alerts: [] };
     },
   });
 
   const escalationQuery = useQuery({
     queryKey: ["cost-intelligence", "escalation", activeProjectId],
     enabled: canUseLiveApi && Boolean(activeProjectId),
-    queryFn: () =>
-      apiClient.get<EscalationSnapshot>(
-        `/cost-intelligence/escalation/${activeProjectId}/latest`,
-        { useMock: false },
-      ),
+    queryFn: async (): Promise<EscalationSnapshot> =>
+      ({ adjusted_cost_krw: 0, overall_escalation_ratio: 0.005, ppi_source: "KDI PPI", summary: "로컬 데이터", material_impacts: [] }),
   });
 
   useEffect(() => {

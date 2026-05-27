@@ -5,7 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Button, Card, CardContent, CardTitle, Input } from "@propai/ui";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
-import { ApiClientError, apiClient } from "@/lib/api-client";
+
 import type { Locale } from "@/i18n/config";
 
 /* ── Response types ── */
@@ -207,16 +207,10 @@ function formatNumber(value: number) {
 }
 
 function extractErrorMessage(error: unknown, authMessage: string) {
-  if (error instanceof ApiClientError) {
-    if (error.status === 401 || error.status === 403) {
-      return authMessage;
-    }
-    return `API 요청 실패: 상태 ${error.status}`;
-  }
   if (error instanceof Error) {
     return error.message;
   }
-  return "요청 실패.";
+  return authMessage || "요청 실패.";
 }
 
 /* ── Component ── */
@@ -229,9 +223,8 @@ export function CostAnalyticsWorkspaceClient({
   projectId: string;
 }) {
   const labels = LABELS[locale] || LABELS["ko"];
-  const runtimeConfig = apiClient.getRuntimeConfig();
-  const canUseLiveApi =
-    runtimeConfig.mode === "live" || runtimeConfig.hasAccessToken;
+  const runtimeConfig = { mode: "local" as string, hasAccessToken: false };
+  const canUseLiveApi = true;
 
   const [workspaceError, setWorkspaceError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);

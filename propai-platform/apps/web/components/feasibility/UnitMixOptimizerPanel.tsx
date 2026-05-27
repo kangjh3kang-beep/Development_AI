@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import { Button, Card, CardContent, CardTitle, Input } from "@propai/ui";
-import { apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 
 /* ── Types ── */
@@ -118,33 +117,19 @@ export function UnitMixOptimizerPanel() {
     }
   }, [designData, siteAnalysis]);
 
-  // Fetch unit types on mount
+  // Initialize unit types with local data
   useEffect(() => {
-    async function fetchTypes() {
-      try {
-        const data = await apiClient.get<UnitTypesResponse>(
-          "/unit-mix/types",
-          { useMock: false },
-        );
-        setUnitTypes(data.types);
-        setDemandRatio(data.default_demand);
-        setDefaultDemand(data.default_demand);
-      } catch {
-        // Use hardcoded defaults if API unavailable
-        const fallback: Record<string, number> = {
-          S39: 0.05,
-          S49: 0.1,
-          S59: 0.25,
-          S74: 0.15,
-          S84: 0.3,
-          S102: 0.1,
-          S135: 0.05,
-        };
-        setDemandRatio(fallback);
-        setDefaultDemand(fallback);
-      }
-    }
-    fetchTypes();
+    const fallback: Record<string, number> = {
+      S39: 0.05,
+      S49: 0.1,
+      S59: 0.25,
+      S74: 0.15,
+      S84: 0.3,
+      S102: 0.1,
+      S135: 0.05,
+    };
+    setDemandRatio(fallback);
+    setDefaultDemand(fallback);
   }, []);
 
   function handleDemandChange(code: string, value: number) {

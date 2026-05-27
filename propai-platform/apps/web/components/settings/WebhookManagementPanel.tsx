@@ -2,7 +2,6 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 import { Button, Card, CardContent, Input } from "@propai/ui";
-import { apiClient } from "@/lib/api-client";
 
 type Webhook = {
   id: string;
@@ -66,23 +65,8 @@ export function WebhookManagementPanel() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    let cancelled = false;
-
-    async function fetchWebhooks() {
-      try {
-        const data = await apiClient.get<WebhookListResponse>("/webhooks");
-        if (!cancelled) setWebhooks(data.webhooks);
-      } catch {
-        if (!cancelled) setWebhooks(MOCK_WEBHOOKS);
-      } finally {
-        if (!cancelled) setIsLoading(false);
-      }
-    }
-
-    fetchWebhooks();
-    return () => {
-      cancelled = true;
-    };
+    setWebhooks(MOCK_WEBHOOKS);
+    setIsLoading(false);
   }, []);
 
   function toggleEvent(event: string) {

@@ -4,7 +4,6 @@ import { useState, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useParams, useRouter } from "next/navigation";
 import { TiltCard } from "@/components/ui/TiltCard";
-import { apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { useFeasibilityV2Store } from "@/store/use-feasibility-v2-store";
 import { BusinessModelRefineModal } from "./BusinessModelRefineModal";
