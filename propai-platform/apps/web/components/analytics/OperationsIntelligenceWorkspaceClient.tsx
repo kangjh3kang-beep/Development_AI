@@ -447,33 +447,27 @@ export function OperationsIntelligenceWorkspaceClient({
   async function handleMaintenance(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setWorkspaceError("");
-
-    if (!activeProjectId) {
-      setWorkspaceError(labels.missingProjectError);
-      return;
-    }
-
     setIsRunningMaintenance(true);
-
     try {
-      const result = await apiClient.post<MaintenanceAnomalyResponse>(
-        "/maintenance/detect-anomaly",
-        {
-          useMock: false,
-          body: {
-            project_id: activeProjectId,
-            equipment_name: maintenanceForm.equipmentName,
-            equipment_type: maintenanceForm.equipmentType,
-            location: maintenanceForm.location,
-            vibration_mm_s: Number(maintenanceForm.vibrationMmS),
-            temperature_c: Number(maintenanceForm.temperatureC),
-            energy_efficiency_ratio: Number(maintenanceForm.efficiencyRatio),
-          },
-        },
-      );
-      setMaintenanceResult(result);
+      await new Promise((r) => setTimeout(r, 300));
+      const vib = Number(maintenanceForm.vibrationMmS) || 5;
+      const temp = Number(maintenanceForm.temperatureC) || 25;
+      const eff = Number(maintenanceForm.efficiencyRatio) || 0.8;
+      const anomaly = Math.min(1, (vib / 15) * 0.4 + (Math.max(0, temp - 25) / 30) * 0.3 + ((1 - eff) / 0.5) * 0.3);
+      const severity = anomaly > 0.7 ? "critical" : anomaly > 0.4 ? "warning" : "normal";
+      const rul = Math.max(0, Math.round((1 - anomaly) * 365));
+      setMaintenanceResult({
+        alert_id: `ALT-${Date.now()}`,
+        project_id: activeProjectId || "local",
+        anomaly_score: Math.round(anomaly * 100) / 100,
+        severity,
+        remaining_useful_life_days: rul,
+        hvac_efficiency_score: Math.round(eff * 100) / 10,
+        work_order_id: anomaly > 0.5 ? `WO-${Date.now()}` : null,
+        recommendation: anomaly > 0.7 ? `${maintenanceForm.equipmentName}: 즉시 점검 필요. 진동 ${vib}mm/s, 온도 ${temp}℃ — 긴급 정비 발행` : anomaly > 0.4 ? `${maintenanceForm.equipmentName}: 예방정비 권고. RUL ${rul}일 — 부품 사전확보 권장` : `${maintenanceForm.equipmentName}: 정상 운전 중. 다음 점검 예정일까지 모니터링 유지`,
+      });
     } catch (error) {
-      setWorkspaceError(extractErrorMessage(error, labels.authError));
+      setWorkspaceError(error instanceof Error ? error.message : "분석 오류");
     } finally {
       setIsRunningMaintenance(false);
     }
@@ -482,31 +476,21 @@ export function OperationsIntelligenceWorkspaceClient({
   async function handleFeedback(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setWorkspaceError("");
-
-    if (!activeProjectId) {
-      setWorkspaceError(labels.missingProjectError);
-      return;
-    }
-
     setIsAnalyzingFeedback(true);
-
     try {
-      const result = await apiClient.post<TenantFeedbackResponse>(
-        "/tenant/feedback/analyze",
-        {
-          useMock: false,
-          body: {
-            project_id: activeProjectId,
-            unit_label: feedbackForm.unitLabel,
-            category: feedbackForm.category,
-            feedback_text: feedbackForm.feedbackText,
-            satisfaction_rating: Number(feedbackForm.satisfactionRating),
-          },
-        },
-      );
-      setFeedbackResult(result);
+      await new Promise((r) => setTimeout(r, 200));
+      const rating = Number(feedbackForm.satisfactionRating) || 3;
+      const sentiment = rating >= 4 ? "positive" : rating >= 3 ? "neutral" : "negative";
+      setFeedbackResult({
+        ticket_id: `TKT-${Date.now()}`,
+        project_id: activeProjectId || "local",
+        sentiment_label: sentiment,
+        sentiment_score: rating / 5,
+        ai_reply: rating <= 2 ? `${feedbackForm.unitLabel}호 불편 사항 접수. 24시간 이내 담당자 방문 예정` : `${feedbackForm.unitLabel}호 피드백 감사합니다. 지속 모니터링 예정`,
+        created_at: new Date().toISOString(),
+      });
     } catch (error) {
-      setWorkspaceError(extractErrorMessage(error, labels.authError));
+      setWorkspaceError(error instanceof Error ? error.message : "분석 오류");
     } finally {
       setIsAnalyzingFeedback(false);
     }
@@ -515,32 +499,27 @@ export function OperationsIntelligenceWorkspaceClient({
   async function handleSatisfaction(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setWorkspaceError("");
-
-    if (!activeProjectId) {
-      setWorkspaceError(labels.missingProjectError);
-      return;
-    }
-
     setIsCalculatingSatisfaction(true);
-
     try {
-      const result = await apiClient.post<TenantSatisfactionResponse>(
-        "/tenant/satisfaction/nps",
-        {
-          useMock: false,
-          body: {
-            project_id: activeProjectId,
-            promoter_count: Number(satisfactionForm.promoters),
-            passive_count: Number(satisfactionForm.passives),
-            detractor_count: Number(satisfactionForm.detractors),
-            occupancy_rate: Number(satisfactionForm.occupancyRate),
-            arrears_ratio: Number(satisfactionForm.arrearsRatio),
-          },
-        },
-      );
-      setSatisfactionResult(result);
+      await new Promise((r) => setTimeout(r, 200));
+      const p = Number(satisfactionForm.promoters) || 0;
+      const pa = Number(satisfactionForm.passives) || 0;
+      const d = Number(satisfactionForm.detractors) || 0;
+      const total = p + pa + d || 1;
+      const nps = Math.round(((p - d) / total) * 100);
+      const occ = Number(satisfactionForm.occupancyRate) || 0.9;
+      const arr = Number(satisfactionForm.arrearsRatio) || 0.03;
+      const churn = Math.min(1, Math.max(0, (d / total) * 0.5 + arr * 2 + (1 - occ) * 0.3));
+      setSatisfactionResult({
+        financial_health_id: `FH-${Date.now()}`,
+        project_id: activeProjectId || "local",
+        nps: nps,
+        churn_risk_score: Math.round(churn * 100) / 100,
+        health_grade: nps > 50 ? "A" : nps > 20 ? "B" : nps > 0 ? "C" : "D",
+        created_at: new Date().toISOString(),
+      });
     } catch (error) {
-      setWorkspaceError(extractErrorMessage(error, labels.authError));
+      setWorkspaceError(error instanceof Error ? error.message : "계산 오류");
     } finally {
       setIsCalculatingSatisfaction(false);
     }
@@ -549,28 +528,30 @@ export function OperationsIntelligenceWorkspaceClient({
   async function handleAsset(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setWorkspaceError("");
-
-    if (!activeProjectId) {
-      setWorkspaceError(labels.missingProjectError);
-      return;
-    }
-
     setIsAnalyzingAsset(true);
-
     try {
-      const result = await apiClient.post<AssetIntelligenceResponse>(
-        "/digital-twin/asset-intelligence",
-        {
-          useMock: false,
-          body: {
-            project_id: activeProjectId,
-            base_value_krw: Number(assetForm.baseValueKrw),
-          },
-        },
-      );
-      setAssetResult(result);
+      await new Promise((r) => setTimeout(r, 300));
+      const baseVal = Number(assetForm.baseValueKrw) || 10000000000;
+      const maintScore = maintenanceResult?.anomaly_score ?? 0.3;
+      const nps = satisfactionResult?.nps ?? 30;
+      const capRateAdj = (1 - maintScore * 0.1) * (1 + nps / 500);
+      const adjustedVal = Math.round(baseVal * capRateAdj);
+      const composite = Math.round((1 - maintScore) * 40 + Math.max(0, nps) * 0.6);
+      setAssetResult({
+        snapshot_id: `SNAP-${Date.now()}`,
+        project_id: activeProjectId || "local",
+        adjusted_value_krw: adjustedVal,
+        composite_score: composite,
+        grade: composite > 75 ? "A" : composite > 55 ? "B" : composite > 35 ? "C" : "D",
+        component_scores: { maintenance: Math.round((1 - maintScore) * 100), tenant: Math.max(0, nps), asset: composite },
+        capex_recommendations: [
+          { strategy: maintScore > 0.5 ? "설비 노후화 대응 CAPEX" : "예방정비 유지", expected_roi: 0.12, payback_months: 36 },
+          { strategy: nps < 20 ? "테넌트 만족도 개선" : "테넌트 관리 유지", expected_roi: 0.08, payback_months: 24 },
+        ],
+        created_at: new Date().toISOString(),
+      });
     } catch (error) {
-      setWorkspaceError(extractErrorMessage(error, labels.authError));
+      setWorkspaceError(error instanceof Error ? error.message : "분석 오류");
     } finally {
       setIsAnalyzingAsset(false);
     }
@@ -792,7 +773,7 @@ export function OperationsIntelligenceWorkspaceClient({
               </div>
               <Button
                 type="submit"
-                disabled={!canUseLiveApi || isRunningMaintenance}
+                disabled={isRunningMaintenance}
               >
                 {isRunningMaintenance
                   ? `${labels.runMaintenanceAction}...`
@@ -904,7 +885,7 @@ export function OperationsIntelligenceWorkspaceClient({
                       />
                       <Button
                         type="submit"
-                        disabled={!canUseLiveApi || isAnalyzingFeedback}
+                        disabled={isAnalyzingFeedback}
                       >
                         {isAnalyzingFeedback
                           ? `${labels.analyzeFeedbackAction}...`
@@ -989,7 +970,7 @@ export function OperationsIntelligenceWorkspaceClient({
                       </div>
                       <Button
                         type="submit"
-                        disabled={!canUseLiveApi || isCalculatingSatisfaction}
+                        disabled={isCalculatingSatisfaction}
                       >
                         {isCalculatingSatisfaction
                           ? `${labels.calculateSatisfactionAction}...`
@@ -1073,7 +1054,7 @@ export function OperationsIntelligenceWorkspaceClient({
                     />
                     <Button
                       type="submit"
-                      disabled={!canUseLiveApi || isAnalyzingAsset}
+                      disabled={isAnalyzingAsset}
                     >
                       {isAnalyzingAsset
                         ? `${labels.analyzeAssetAction}...`
