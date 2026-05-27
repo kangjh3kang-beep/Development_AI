@@ -220,7 +220,7 @@ export default async function DashboardLayout({
       {/* 메인 그리드 */}
       <div className="grid gap-6 md:grid-cols-[260px_minmax(0,1fr)]">
         {/* 사이드바 */}
-        <aside className="glass space-y-5 rounded-[var(--radius-xl)] border border-[var(--line)] bg-[var(--surface-secondary)] p-5 shadow-[var(--shadow-md)]">
+        <aside className="glass space-y-5 rounded-[var(--radius-xl)] border border-[var(--line)] bg-[var(--surface-secondary)] p-5 shadow-[var(--shadow-md)] sticky top-[88px] h-[calc(100vh-100px)] overflow-y-auto custom-scrollbar">
           <SidebarNav sections={sections} />
         </aside>
 

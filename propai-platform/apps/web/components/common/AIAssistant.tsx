@@ -24,7 +24,8 @@ export function AIAssistant() {
   const apiKey = llmProvider === 'openai' ? openaiApiKey : anthropicApiKey;
   
   // Vercel AI SDK
-  const { messages, input, handleInputChange, handleSubmit, setMessages, isLoading } = useChat({
+  const [input, setInput] = useState("");
+  const chatOptions: any = {
     api: '/api/ai/chat',
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -34,10 +35,11 @@ export function AIAssistant() {
       model: llmModel,
       pathname, // Send context to backend if needed
     },
-    onError: (error) => {
+    onError: (error: any) => {
       console.error(error);
     }
-  });
+  };
+  const { messages, append, setMessages, isLoading } = useChat(chatOptions) as any;
 
   // 컨텍스트 인지형 초기 메시지 설정 (클라이언트 전용)
   useEffect(() => {
@@ -70,7 +72,14 @@ export function AIAssistant() {
   };
 
   const handleTagClick = (tag: string) => {
-    handleInputChange({ target: { value: tag.replace('#', '') } } as any);
+    setInput(tag.replace('#', ''));
+  };
+
+  const handleManualSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!input.trim() || !hasValidKey() || isLoading) return;
+    append({ role: 'user', content: input });
+    setInput('');
   };
 
   return (
@@ -134,7 +143,7 @@ export function AIAssistant() {
                 </div>
               )}
 
-              {messages.map((msg, i) => (
+              {messages?.map((msg: any, i: number) => (
                 <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
                   <motion.div 
                     initial={{ opacity: 0, x: msg.role === "user" ? 10 : -10 }}
@@ -161,7 +170,7 @@ export function AIAssistant() {
                 </div>
               )}
               
-              {!input && messages.length <= 1 && hasValidKey() && (
+              {!input && (messages?.length ?? 0) <= 1 && hasValidKey() && (
                 <div className="mt-2 flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
                     {getSuggestedTags().map(tag => (
                         <button 
@@ -177,12 +186,12 @@ export function AIAssistant() {
             </div>
 
             <div className="relative border-t border-[var(--line)] bg-[var(--surface)] p-5">
-              <form onSubmit={handleSubmit} className="relative">
+              <form onSubmit={handleManualSubmit} className="relative">
                 <input
                   type="text"
                   placeholder={hasValidKey() ? "Ask for site intelligence..." : "API 키를 먼저 설정해주세요"}
                   value={input}
-                  onChange={handleInputChange}
+                  onChange={(e) => setInput(e.target.value)}
                   disabled={!hasValidKey() || isLoading}
                   className="w-full rounded-[1.75rem] border border-[var(--line)] bg-[var(--surface-muted)] py-4 pl-6 pr-14 text-sm font-bold placeholder:text-[var(--text-hint)] focus:outline-none focus:ring-4 focus:ring-[var(--accent-strong)]/10 transition-all text-[var(--text-primary)] shadow-inner disabled:opacity-50"
                 />
