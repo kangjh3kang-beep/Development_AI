@@ -22,12 +22,17 @@ export async function POST(req: Request) {
 
     let languageModel;
 
+    // Resolve 'auto' or missing model to provider defaults
+    const resolvedModel = (!model || model === 'auto')
+      ? (provider === 'anthropic' ? 'claude-3-5-haiku-20241022' : 'gpt-4o-mini')
+      : model;
+
     if (provider === 'anthropic') {
       const anthropic = createAnthropic({ apiKey });
-      languageModel = anthropic(model || 'claude-3-haiku-20240307');
+      languageModel = anthropic(resolvedModel);
     } else {
       const openai = createOpenAI({ apiKey });
-      languageModel = openai(model || 'gpt-3.5-turbo');
+      languageModel = openai(resolvedModel);
     }
 
     const result = streamText({

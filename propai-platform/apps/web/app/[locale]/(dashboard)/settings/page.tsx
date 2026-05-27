@@ -111,7 +111,7 @@ export default function SettingsPage() {
 
             <div className="space-y-3">
               <label className="text-xs font-bold uppercase tracking-[0.15em] text-[var(--text-tertiary)]">
-                AI Model (선택된 모델)
+                AI Model (선택사항 — 미지정 시 자동 선택)
               </label>
               <select
                 value={llmModel}
@@ -119,17 +119,20 @@ export default function SettingsPage() {
                 className="w-full rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-muted)] py-4 px-6 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-[var(--accent-strong)]/50 focus:border-[var(--accent-strong)] transition-all text-[var(--text-primary)] appearance-none cursor-pointer"
                 style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 1rem center' }}
               >
+                <option value="auto">🤖 자동 선택 (Provider 최적 모델)</option>
                 {llmProvider === 'openai' ? (
                   <>
-                    <option value="gpt-4o">GPT-4o (초고속 프리미엄 모델)</option>
-                    <option value="gpt-4-turbo">GPT-4 Turbo (안정적인 고성능 모델)</option>
-                    <option value="gpt-3.5-turbo">GPT-3.5 Turbo (빠른 응답 기본 모델)</option>
+                    <option value="gpt-4o">GPT-4o</option>
+                    <option value="gpt-4-turbo">GPT-4 Turbo</option>
+                    <option value="gpt-4o-mini">GPT-4o Mini</option>
+                    <option value="gpt-3.5-turbo">GPT-3.5 Turbo</option>
                   </>
                 ) : (
                   <>
-                    <option value="claude-3-opus-20240229">Claude 3 Opus (최고성능)</option>
-                    <option value="claude-3-sonnet-20240229">Claude 3 Sonnet (균형)</option>
-                    <option value="claude-3-haiku-20240307">Claude 3 Haiku (초고속)</option>
+                    <option value="claude-sonnet-4-20250514">Claude Sonnet 4</option>
+                    <option value="claude-3-5-sonnet-20241022">Claude 3.5 Sonnet</option>
+                    <option value="claude-3-5-haiku-20241022">Claude 3.5 Haiku</option>
+                    <option value="claude-3-opus-20240229">Claude 3 Opus</option>
                   </>
                 )}
               </select>
@@ -140,7 +143,7 @@ export default function SettingsPage() {
             <div className="flex items-center gap-3">
               <div className={`h-3 w-3 rounded-full ${hasValidKey() ? 'bg-emerald-500 animate-pulse shadow-[0_0_10px_rgba(16,185,129,0.5)]' : 'bg-red-500'}`} />
               <span className="text-xs font-bold uppercase tracking-widest text-[var(--text-hint)]">
-                {hasValidKey() ? 'System Connected' : 'Key Required'}
+                {hasValidKey() ? `Connected — ${llmProvider === 'openai' ? 'OpenAI' : 'Anthropic'} ${llmModel === 'auto' ? '(자동 모델)' : llmModel}` : 'API 키를 입력해 주세요'}
               </span>
             </div>
             

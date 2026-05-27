@@ -11,6 +11,7 @@ type SystemState = {
   setAnthropicApiKey: (key: string) => void;
   setLLMModel: (model: string) => void;
   hasValidKey: () => boolean;
+  getActiveApiKey: () => string;
 };
 
 export const useSystemStore = create<SystemState>()(
@@ -19,26 +20,29 @@ export const useSystemStore = create<SystemState>()(
       llmProvider: 'openai',
       openaiApiKey: '',
       anthropicApiKey: '',
-      llmModel: 'gpt-4o',
+      llmModel: 'auto',
       
-      setLLMProvider: (provider) => set({ llmProvider: provider }),
-      setOpenAIApiKey: (key) => set({ openaiApiKey: key }),
-      setAnthropicApiKey: (key) => set({ anthropicApiKey: key }),
+      setLLMProvider: (provider) => set({ llmProvider: provider, llmModel: 'auto' }),
+      setOpenAIApiKey: (key) => set({ openaiApiKey: key.trim() }),
+      setAnthropicApiKey: (key) => set({ anthropicApiKey: key.trim() }),
       setLLMModel: (model) => set({ llmModel: model }),
       
       hasValidKey: () => {
         const state = get();
-        if (state.llmProvider === 'openai') {
-          return state.openaiApiKey.startsWith('sk-') && state.openaiApiKey.length > 20;
-        }
-        if (state.llmProvider === 'anthropic') {
-          return state.anthropicApiKey.startsWith('sk-ant-') && state.anthropicApiKey.length > 20;
-        }
-        return false;
-      }
+        const key = state.llmProvider === 'openai' ? state.openaiApiKey : state.anthropicApiKey;
+        // Accept any key that is non-empty and at least 10 chars long
+        // Modern OpenAI keys: sk-proj-..., sk-..., sess-... etc.
+        // Modern Anthropic keys: sk-ant-api03-..., sk-ant-..., etc.
+        return key.trim().length >= 10;
+      },
+
+      getActiveApiKey: () => {
+        const state = get();
+        return state.llmProvider === 'openai' ? state.openaiApiKey : state.anthropicApiKey;
+      },
     }),
     {
-      name: 'propai-system-storage', // name of the item in the storage (must be unique)
+      name: 'propai-system-storage',
     }
   )
 );

@@ -106,7 +106,7 @@ export function AIAssistant() {
                     <h3 className="text-sm font-[1000] tracking-tighter uppercase italic">PropAI Orchestrator</h3>
                     <div className="flex items-center gap-2">
                       <p className="text-[9px] font-black text-white/50 uppercase tracking-[0.3em]">
-                        {hasValidKey() ? `Neural Context: Active (${llmModel})` : 'Disconnected'}
+                        {hasValidKey() ? `Neural Context: Active${llmModel !== 'auto' ? ` (${llmModel})` : ''}` : 'Disconnected'}
                       </p>
                       {!hasValidKey() && (
                         <span className="h-1.5 w-1.5 rounded-full bg-red-400 animate-pulse" />
