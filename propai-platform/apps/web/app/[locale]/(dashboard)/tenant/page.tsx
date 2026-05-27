@@ -1,5 +1,4 @@
-import { OperationsIntelligenceWorkspaceClient } from "@/components/analytics/OperationsIntelligenceWorkspaceClient";
-import { ModulePlaceholder } from "@/components/layout/ModulePlaceholder";
+import { HarnessControlDashboard } from "@/components/tenant/HarnessControlDashboard";
 import { getDictionary } from "@/i18n/get-dictionary";
 import { isValidLocale, type Locale } from "@/i18n/config";
 
@@ -24,19 +23,7 @@ export default async function TenantPage({ params }: TenantPageProps) {
 
   return (
     <div className="grid gap-6">
-            <ModulePlaceholder
-        eyebrow={dictionary.modulePlaceholders["tenant"].eyebrow}
-        title={dictionary.modulePlaceholders["tenant"].title}
-        description={dictionary.modulePlaceholders["tenant"].description}
-        statusLabel={runtimeMode}
-        localeLabel={locale}
-        items={dictionary.modulePlaceholders["tenant"].items}
-      />
-      <OperationsIntelligenceWorkspaceClient
-        locale={locale as Locale}
-        sections={["tenant"]}
-        showHero={false}
-      />
+      <HarnessControlDashboard />
     </div>
   );
 }
