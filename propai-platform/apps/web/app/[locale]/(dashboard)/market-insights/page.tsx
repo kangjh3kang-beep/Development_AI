@@ -1,83 +1,58 @@
-import { getDictionary } from "@/i18n/get-dictionary";
-import { isValidLocale, type Locale } from "@/i18n/config";
+"use client";
 
-export const dynamic = "force-dynamic";
+import React, { useState } from "react";
+import { motion } from "framer-motion";
+import { useAIAnalyze, useAIReady } from "@/lib/ai-analyze-client";
 
-export default async function MarketInsightsPage({
-  params,
-}: {
-  params: Promise<{ locale: string }>;
-}) {
-  const { locale } = await params;
-  if (!isValidLocale(locale)) return null;
+type MarketResult = { marketOverview?: string; priceIndex?: { current: number; yoy: number; unit: string }; supplyDemand?: { supply: number; demand: number; absorptionRate: number }; investmentGrade?: string; forecast?: string; summary?: string };
+
+export default function MarketInsightsPage() {
+  const { isReady } = useAIReady();
+  const { mutate, data: aiResult, isPending, error } = useAIAnalyze<MarketResult>();
+  const [form, setForm] = useState({ region: "", propertyType: "아파트", analysisScope: "매매" });
+
+  const handleAnalyze = () => {
+    if (!form.region) return;
+    mutate({ domain: "market", context: { region: form.region, propertyType: form.propertyType, analysisScope: form.analysisScope } });
+  };
+  const ai = aiResult?.data;
+  const gradeColor = (g?: string) => g === "A" ? "bg-emerald-500" : g === "B" ? "bg-blue-500" : g === "C" ? "bg-amber-500" : "bg-red-500";
 
   return (
-    <div className="flex flex-col gap-8">
-      <header className="rounded-[var(--radius-3xl)] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-10 shadow-[var(--shadow-lg)] relative overflow-hidden group">
-        <div className="absolute inset-0 bg-gradient-to-br from-[var(--accent-strong)]/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-700" />
-        <div className="relative z-10">
-          <h1 className="text-4xl font-[1000] tracking-tighter text-[var(--text-primary)] mb-3">
-            Market Insights <span className="text-[var(--accent-strong)] tracking-normal italic font-black text-xl ml-2">.KRW</span>
-          </h1>
-          <p className="max-w-2xl text-sm font-medium leading-relaxed text-[var(--text-secondary)]">
-            실시간 한국은행 기준금리 추이, 건설 원자재 지수, 오피스 공실률 등<br/>부동산 개발 사업성에 직결되는 거시경제 지표를 AI 모델에 통합하기 전 최종 검증합니다.
-          </p>
+    <div className="space-y-8 p-6">
+      <motion.div initial={{ y: -20, opacity: 0 }} animate={{ y: 0, opacity: 1 }}>
+        <h1 className="text-3xl font-black tracking-tight text-[var(--text-primary)]">마켓 인텔리전스</h1>
+        <p className="text-sm text-[var(--text-secondary)] mt-1">지역별 부동산 시장 동향을 AI가 분석합니다</p>
+      </motion.div>
+      <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.1 }} className="glass rounded-3xl p-8 border border-[var(--line-strong)]">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div><label className="text-xs font-bold uppercase tracking-widest text-[var(--text-tertiary)] mb-2 block">분석 지역</label>
+            <input type="text" placeholder="서울시 강남구" value={form.region} onChange={e => setForm(f => ({ ...f, region: e.target.value }))} className="w-full rounded-xl border border-[var(--line)] bg-[var(--surface-muted)] px-4 py-3 text-sm text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-strong)]/50" /></div>
+          <div><label className="text-xs font-bold uppercase tracking-widest text-[var(--text-tertiary)] mb-2 block">부동산 유형</label>
+            <select value={form.propertyType} onChange={e => setForm(f => ({ ...f, propertyType: e.target.value }))} className="w-full rounded-xl border border-[var(--line)] bg-[var(--surface-muted)] px-4 py-3 text-sm text-[var(--text-primary)] appearance-none cursor-pointer">
+              {["아파트","오피스텔","상가","오피스","토지"].map(t => <option key={t}>{t}</option>)}</select></div>
+          <div><label className="text-xs font-bold uppercase tracking-widest text-[var(--text-tertiary)] mb-2 block">분석 범위</label>
+            <select value={form.analysisScope} onChange={e => setForm(f => ({ ...f, analysisScope: e.target.value }))} className="w-full rounded-xl border border-[var(--line)] bg-[var(--surface-muted)] px-4 py-3 text-sm text-[var(--text-primary)] appearance-none cursor-pointer">
+              {["매매","전세","월세","종합"].map(s => <option key={s}>{s}</option>)}</select></div>
         </div>
-      </header>
-
-      <div className="grid gap-8 md:grid-cols-2">
-         {/* Interest Rate */}
-         <div className="rounded-[var(--radius-3xl)] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-8 shadow-[var(--shadow-md)]">
-            <div className="flex items-center justify-between mb-8">
-               <h2 className="text-[10px] font-black uppercase tracking-[0.4em] text-[var(--text-tertiary)]">Interest Rate Trend</h2>
-               <span className="rounded-full bg-[var(--accent-soft)] px-3 py-1 text-[10px] font-black text-[var(--accent-strong)] uppercase">LIVE</span>
-            </div>
-            <div className="flex h-[240px] items-end justify-between px-4 pb-4 border-b border-[var(--line)]">
-               {[3.5, 3.5, 3.25, 3.0, 2.75, 2.5].map((rate, i) => (
-                 <div key={i} className="flex flex-col items-center gap-2 group cursor-help">
-                   <div className="h-40 w-10 relative flex items-end">
-                     <div
-                       className="w-full bg-gradient-to-t from-[var(--accent-strong)]/20 to-[var(--accent-strong)] rounded-t-xl relative transition-all group-hover:scale-y-110 shadow-[0_0_20px_var(--accent-strong)]/10"
-                       style={{ height: `${(rate / 4) * 100}%` }}
-                     >
-                       <div className="absolute -top-10 left-1/2 -translate-x-1/2 bg-[var(--surface-inverted)] text-[var(--text-inverted)] px-2 py-1 rounded text-[9px] font-black opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
-                          {rate}%
-                       </div>
-                     </div>
-                   </div>
-                   <span className="text-[10px] font-black text-[var(--text-hint)] uppercase tracking-tighter">Q{6-i} '24</span>
-                 </div>
-               ))}
-            </div>
-         </div>
-
-         {/* Materials Cost */}
-         <div className="rounded-[var(--radius-3xl)] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-8 shadow-[var(--shadow-md)]">
-            <h2 className="text-[10px] font-black uppercase tracking-[0.4em] text-[var(--text-tertiary)] mb-8">Construction Material Index</h2>
-            <div className="space-y-4">
-              <div className="flex justify-between items-center p-6 rounded-3xl bg-[var(--error-soft)] border border-[var(--error)]/20 group hover:shadow-[0_0_30px_var(--error)]/10 transition-all">
-                 <div>
-                    <span className="text-[9px] font-black text-[var(--error)] uppercase tracking-widest mb-1 block">Critical Alert</span>
-                    <h4 className="font-black text-[var(--text-primary)] text-lg uppercase tracking-tight">Cement <span className="text-[10px] font-bold opacity-40">/ TON</span></h4>
-                 </div>
-                 <div className="text-right">
-                    <p className="text-2xl font-[1000] text-[var(--text-primary)] tracking-tight">120K <span className="text-sm font-bold opacity-30">₩</span></p>
-                    <p className="text-[10px] font-black text-[var(--error)] mt-1 animate-pulse">▲ 5.2% (MoM)</p>
-                 </div>
-              </div>
-              <div className="flex justify-between items-center p-6 rounded-3xl bg-[var(--info-soft)] border border-[var(--info)]/20 group hover:shadow-[0_0_30px_var(--info)]/10 transition-all">
-                 <div>
-                    <span className="text-[9px] font-black text-[var(--info)] uppercase tracking-widest mb-1 block">Stabilizing</span>
-                    <h4 className="font-black text-[var(--text-primary)] text-lg uppercase tracking-tight">Rebar <span className="text-[10px] font-bold opacity-40">/ TON</span></h4>
-                 </div>
-                 <div className="text-right">
-                    <p className="text-2xl font-[1000] text-[var(--text-primary)] tracking-tight">890K <span className="text-sm font-bold opacity-30">₩</span></p>
-                    <p className="text-[10px] font-black text-[var(--info)] mt-1">▼ 1.5% (MoM)</p>
-                 </div>
-              </div>
-            </div>
-         </div>
-      </div>
+        <button onClick={handleAnalyze} disabled={isPending || !isReady || !form.region} className="mt-6 w-full rounded-2xl bg-gradient-to-r from-indigo-600 to-violet-600 py-4 font-black text-white shadow-lg transition-all hover:scale-[1.01] active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed">
+          {isPending ? "🔄 시장 분석 중..." : !isReady ? "⚙️ API 키를 먼저 등록하세요" : "📈 마켓 AI 분석"}
+        </button>
+      </motion.div>
+      {error && <div className="rounded-2xl bg-red-500/10 border border-red-500/20 p-4"><p className="text-sm text-red-400 font-bold">⚠️ {error.message}</p></div>}
+      {ai && (
+        <motion.div initial={{ y: 30, opacity: 0 }} animate={{ y: 0, opacity: 1 }} className="space-y-6">
+          <div className="grid grid-cols-3 gap-4">
+            <div className="glass rounded-2xl p-5 border border-[var(--line)] text-center"><p className="text-xs font-bold text-indigo-400 uppercase tracking-widest mb-2">가격 지수</p><p className="text-2xl font-black text-[var(--text-primary)]">{ai.priceIndex?.current ?? "—"}</p><p className="text-xs text-[var(--text-hint)]">전년비 {ai.priceIndex?.yoy ?? 0}%</p></div>
+            <div className="glass rounded-2xl p-5 border border-[var(--line)] text-center"><p className="text-xs font-bold text-cyan-400 uppercase tracking-widest mb-2">흡수율</p><p className="text-2xl font-black text-[var(--text-primary)]">{ai.supplyDemand?.absorptionRate ?? "—"}%</p></div>
+            <div className="glass rounded-2xl p-5 border border-[var(--line)] text-center"><p className="text-xs font-bold text-purple-400 uppercase tracking-widest mb-2">투자등급</p><span className={`inline-block rounded-full px-4 py-2 text-lg font-black text-white ${gradeColor(ai.investmentGrade)}`}>{ai.investmentGrade ?? "—"}</span></div>
+          </div>
+          {ai.marketOverview && (<div className="glass rounded-2xl p-6 border border-[var(--line)]"><h3 className="text-sm font-bold text-[var(--text-primary)] mb-2">시장 현황</h3><p className="text-sm text-[var(--text-secondary)] leading-relaxed">{ai.marketOverview}</p></div>)}
+          {ai.forecast && (<div className="glass rounded-2xl p-6 border border-[var(--line)]"><h3 className="text-sm font-bold text-[var(--text-primary)] mb-2">향후 전망</h3><p className="text-sm text-[var(--text-secondary)] leading-relaxed">{ai.forecast}</p></div>)}
+          {ai.summary && (<div className="glass rounded-2xl p-6 border border-indigo-500/20 bg-indigo-500/5"><h3 className="text-lg font-black text-indigo-400 mb-2">🤖 AI 시장 분석</h3><p className="text-sm text-[var(--text-secondary)] leading-relaxed">{ai.summary}</p></div>)}
+        </motion.div>
+      )}
+      {aiResult && !ai && aiResult.text && (<div className="glass rounded-2xl p-6 border border-[var(--line)]"><p className="text-sm text-[var(--text-secondary)] whitespace-pre-wrap">{aiResult.text}</p></div>)}
     </div>
   );
 }
