@@ -6,137 +6,189 @@
   - link "Skip to content" [ref=e3] [cursor=pointer]:
     - /url: "#main-content"
   - generic [ref=e5]:
-    - banner [ref=e6]:
-      - generic [ref=e7]:
-        - generic [ref=e8]:
-          - paragraph [ref=e10]: Sa-Tong-Pal-Ttang Workspace
-          - heading "Sa-Tong-Pal-Ttang" [level=1] [ref=e12]
-        - generic [ref=e13]:
-          - generic [ref=e14]: Live
-          - generic [ref=e15]:
-            - generic [ref=e16]: Language
-            - combobox "Language" [ref=e17]:
-              - option "한국어"
-              - option "English" [selected]
-              - option "简体中文"
-    - generic [ref=e18]:
-      - complementary [ref=e19]:
-        - navigation "Dashboard navigation" [ref=e20]:
-          - link "Dashboard" [ref=e21] [cursor=pointer]:
-            - /url: /en
-            - text: Dashboard
-          - link "Projects" [ref=e23] [cursor=pointer]:
-            - /url: /en/projects
-            - text: Projects
-          - link "AI Portfolio Map" [ref=e25] [cursor=pointer]:
-            - /url: /en/portfolio
-            - text: AI Portfolio Map
-          - link "AI Agent" [ref=e27] [cursor=pointer]:
-            - /url: /en/agent
-            - text: AI Agent
-          - link "Auction Analysis" [ref=e29] [cursor=pointer]:
-            - /url: /en/auction
-            - text: Auction Analysis
-          - link "Field Inspection" [ref=e31] [cursor=pointer]:
-            - /url: /en/inspection
-            - text: Field Inspection
-          - link "Tax Simulation" [ref=e33] [cursor=pointer]:
-            - /url: /en/tax
-            - text: Tax Simulation
-          - link "Tenant Management" [ref=e35] [cursor=pointer]:
-            - /url: /en/tenant
-            - text: Tenant Management
-          - link "Real-time Collab" [ref=e37] [cursor=pointer]:
-            - /url: /en/webrtc
-            - text: Real-time Collab
-        - paragraph [ref=e40]: Analytics
-        - navigation "Analytics navigation" [ref=e41]:
-          - link "Investment/AVM" [ref=e42] [cursor=pointer]:
-            - /url: /en/analytics/investment
-          - link "ESG Dashboard" [ref=e43] [cursor=pointer]:
-            - /url: /en/analytics/esg
-          - link "Carbon/LCA" [ref=e44] [cursor=pointer]:
-            - /url: /en/analytics/carbon
-          - link "Cost/Indices" [ref=e45] [cursor=pointer]:
-            - /url: /en/analytics/cost
-          - link "IoT/Energy" [ref=e46] [cursor=pointer]:
-            - /url: /en/analytics/iot
-          - link "Market Insights" [ref=e47] [cursor=pointer]:
-            - /url: /en/market-insights
-          - link "Regulations" [ref=e48] [cursor=pointer]:
-            - /url: /en/regulations
-        - paragraph [ref=e50]: Operations
-        - navigation "Operations navigation" [ref=e51]:
-          - link "Digital Twin" [ref=e52] [cursor=pointer]:
-            - /url: /en/digital-twin
-          - link "Maintenance" [ref=e53] [cursor=pointer]:
-            - /url: /en/maintenance
-          - link "AI Safety" [ref=e54] [cursor=pointer]:
-            - /url: /en/safety
-          - link "Approval Ops" [ref=e55] [cursor=pointer]:
-            - /url: /en/approvals
-          - link "SRE Systems" [ref=e56] [cursor=pointer]:
-            - /url: /en/sre
-          - link "KDX Monitoring" [ref=e57] [cursor=pointer]:
-            - /url: /en/dashboard/kdx
-      - main [ref=e58]:
-        - generic [ref=e59]:
-          - generic [ref=e61]:
-            - generic [ref=e62]:
-              - generic [ref=e63]: PROP / MAINTENANCE
-              - generic [ref=e64]: en
-              - generic [ref=e65]: Live
-            - generic [ref=e66]:
-              - generic [ref=e67]:
-                - heading "디지털 트윈 유지보수" [level=3] [ref=e68]
-                - paragraph [ref=e69]: 설비의 센서 기반 예지 정비 및 현장 유지보수 일정을 관리합니다.
-              - generic [ref=e71]:
-                - paragraph [ref=e72]: PropAI Scope
-                - list [ref=e73]:
-                  - listitem [ref=e74]: ✓ 데이터 실시간 연동 대기
-                  - listitem [ref=e75]: ✓ 보안 컴플라이언스 통과
-                  - listitem [ref=e76]: ✓ 워크플로우 상태 라우팅
-          - generic [ref=e77]:
-            - generic [ref=e78]: Failed to fetch
-            - generic [ref=e80]:
-              - generic [ref=e81]:
-                - generic [ref=e82]:
-                  - paragraph [ref=e83]: Target project
-                  - heading "Live project" [level=3] [ref=e84]
-                - generic [ref=e85]:
-                  - alert [ref=e86]:
-                    - generic [ref=e87]:
-                      - generic [ref=e88]:
-                        - paragraph [ref=e89]: Project list unavailable
-                        - paragraph [ref=e90]: The live operations project picker failed to load. Manual UUID targeting remains available.
-                        - paragraph [ref=e91]: Failed to fetch
-                      - button "Retry" [ref=e92]
-                  - generic [ref=e93]:
-                    - generic [ref=e94]: Live project
-                    - combobox "Live project" [ref=e95]:
+    - button [ref=e7]:
+      - img [ref=e9]
+    - banner [ref=e13]:
+      - generic [ref=e14]:
+        - link "AI Real-Estate Intelligence 사통팔땅." [ref=e15] [cursor=pointer]:
+          - /url: /en
+          - img [ref=e17]
+          - generic [ref=e22]:
+            - paragraph [ref=e23]: AI Real-Estate Intelligence
+            - heading "사통팔땅." [level=1] [ref=e24]
+        - generic [ref=e25]:
+          - generic [ref=e26]: Live
+          - generic [ref=e27]:
+            - button "Toggle Theme" [ref=e28]:
+              - img [ref=e30]
+            - generic [ref=e33]:
+              - generic [ref=e34]: Language
+              - combobox "Language" [ref=e35]:
+                - option "한국어"
+                - option "English" [selected]
+                - option "简体中文"
+    - generic [ref=e36]:
+      - complementary [ref=e37]:
+        - generic [ref=e38]:
+          - paragraph [ref=e39]: 개발 전주기 매니지먼트
+          - navigation [ref=e40]:
+            - link "대시보드" [ref=e41] [cursor=pointer]:
+              - /url: /en
+              - img [ref=e43]
+              - generic [ref=e48]: 대시보드
+            - link "프로젝트 관리" [ref=e49] [cursor=pointer]:
+              - /url: /en/projects
+              - img [ref=e51]
+              - generic [ref=e53]: 프로젝트 관리
+            - link "입지 및 사업성 분석" [ref=e54] [cursor=pointer]:
+              - /url: /en/projects/sample-project/site-analysis
+              - img [ref=e56]
+              - generic [ref=e59]: 입지 및 사업성 분석
+            - link "마켓 인텔리전스" [ref=e60] [cursor=pointer]:
+              - /url: /en/market-insights
+              - img [ref=e62]
+              - generic [ref=e65]: 마켓 인텔리전스
+            - link "AI 설계 & BIM" [ref=e66] [cursor=pointer]:
+              - /url: /en/projects/sample-project/design
+              - img [ref=e68]
+              - generic [ref=e70]: AI 설계 & BIM
+            - link "인허가 자동화" [ref=e71] [cursor=pointer]:
+              - /url: /en/permits
+              - img [ref=e73]
+              - generic [ref=e77]: 인허가 자동화
+            - link "부동산 규제 연동" [ref=e78] [cursor=pointer]:
+              - /url: /en/regulations
+              - img [ref=e80]
+              - generic [ref=e83]: 부동산 규제 연동
+        - generic [ref=e84]:
+          - paragraph [ref=e86]: 수익성 및 ESG 분석
+          - navigation [ref=e87]:
+            - link "투자 수익성 (ROI)" [ref=e88] [cursor=pointer]:
+              - /url: /en/analytics/investment
+              - img [ref=e90]
+              - generic [ref=e93]: 투자 수익성 (ROI)
+            - link "ESG / 탄소 경영" [ref=e94] [cursor=pointer]:
+              - /url: /en/analytics/esg
+              - img [ref=e96]
+              - generic [ref=e100]: ESG / 탄소 경영
+            - link "공사비 정밀 분석" [ref=e101] [cursor=pointer]:
+              - /url: /en/analytics/cost
+              - img [ref=e103]
+              - generic [ref=e107]: 공사비 정밀 분석
+        - generic [ref=e108]:
+          - paragraph [ref=e110]: 자산 운영 및 물권
+          - navigation [ref=e111]:
+            - link "경공매 AI 분석" [ref=e112] [cursor=pointer]:
+              - /url: /en/auction
+              - img [ref=e114]
+              - generic [ref=e119]: 경공매 AI 분석
+            - link "데이터 허브 (IoT)" [ref=e120] [cursor=pointer]:
+              - /url: /en/analytics/iot
+              - img [ref=e122]
+              - generic [ref=e124]: 데이터 허브 (IoT)
+            - link "디지털 트윈 (FM)" [ref=e125] [cursor=pointer]:
+              - /url: /en/digital-twin
+              - img [ref=e127]
+              - generic [ref=e130]: 디지털 트윈 (FM)
+            - link "시설 관리 점검" [ref=e131] [cursor=pointer]:
+              - /url: /en/maintenance
+              - img [ref=e135]
+              - generic [ref=e137]: 시설 관리 점검
+            - link "현장 안전 관제" [ref=e138] [cursor=pointer]:
+              - /url: /en/safety
+              - img [ref=e140]
+              - generic [ref=e142]: 현장 안전 관제
+            - link "국가 데이터 거점 (KDX)" [ref=e143] [cursor=pointer]:
+              - /url: /en/dashboard/kdx
+              - img [ref=e145]
+              - generic [ref=e149]: 국가 데이터 거점 (KDX)
+        - generic [ref=e150]:
+          - paragraph [ref=e152]: 엔터프라이즈 지원
+          - navigation [ref=e153]:
+            - link "AI 오케스트레이터" [ref=e154] [cursor=pointer]:
+              - /url: /en/agent
+              - img [ref=e156]
+              - generic [ref=e159]: AI 오케스트레이터
+            - link "실시간 협업" [ref=e160] [cursor=pointer]:
+              - /url: /en/webrtc
+              - img [ref=e162]
+              - generic [ref=e167]: 실시간 협업
+            - link "전자 승인 시스템" [ref=e168] [cursor=pointer]:
+              - /url: /en/approvals
+              - img [ref=e170]
+              - generic [ref=e173]: 전자 승인 시스템
+            - link "시스템 신뢰성 (SRE)" [ref=e174] [cursor=pointer]:
+              - /url: /en/sre
+              - img [ref=e176]
+              - generic [ref=e179]: 시스템 신뢰성 (SRE)
+            - link "테넌트 통합 관리" [ref=e180] [cursor=pointer]:
+              - /url: /en/tenant
+              - img [ref=e182]
+              - generic [ref=e187]: 테넌트 통합 관리
+            - link "이용 가이드" [ref=e188] [cursor=pointer]:
+              - /url: /en/guide
+              - img [ref=e190]
+              - generic [ref=e192]: 이용 가이드
+      - main [ref=e193]:
+        - generic [ref=e194]:
+          - generic [ref=e198]:
+            - generic [ref=e199]:
+              - generic [ref=e200]:
+                - generic [ref=e201]: PROP / MAINTENANCE
+                - generic [ref=e203]: en
+                - generic [ref=e204]: Live
+              - generic [ref=e205]:
+                - heading "디지털 트윈 유지보수." [level=2] [ref=e206]
+                - paragraph [ref=e207]: "\"설비의 센서 기반 예지 정비 및 현장 유지보수 일정을 관리합니다.\""
+            - generic [ref=e210]:
+              - generic [ref=e211]:
+                - img [ref=e213]
+                - paragraph [ref=e215]: 범위 및 준비 상태
+              - list [ref=e216]:
+                - listitem [ref=e217]: ✓ 설비 IoT 센서 22개소 실시간 연동
+                - listitem [ref=e219]: ✓ 예지 정비(Predictive ML) 모델 가동
+                - listitem [ref=e221]: ✓ 현장 유지보수 디지털 워크로 정렬
+          - generic [ref=e223]:
+            - generic [ref=e224]: Failed to fetch
+            - generic [ref=e226]:
+              - generic [ref=e227]:
+                - generic [ref=e228]:
+                  - paragraph [ref=e229]: Target project
+                  - heading "Live project" [level=3] [ref=e230]
+                - generic [ref=e231]:
+                  - alert [ref=e232]:
+                    - generic [ref=e233]:
+                      - generic [ref=e234]:
+                        - paragraph [ref=e235]: Project list unavailable
+                        - paragraph [ref=e236]: The live operations project picker failed to load. Manual UUID targeting remains available.
+                        - paragraph [ref=e237]: API request failed with status 503.
+                      - button "Retry" [ref=e238]
+                  - generic [ref=e239]:
+                    - generic [ref=e240]: Live project
+                    - combobox "Live project" [ref=e241]:
                       - option "No live projects are available yet. Enter an existing UUID manually." [disabled] [selected]
-                - textbox "Manual project UUID" [ref=e96]: project-release-001
-              - generic [ref=e97]:
-                - paragraph [ref=e98]: Current target
-                - paragraph [ref=e99]: "-"
-                - paragraph [ref=e100]: project-release-001
-            - generic [ref=e103]:
-              - paragraph [ref=e104]: Predictive maintenance
-              - generic [ref=e105]:
-                - generic [ref=e106]:
-                  - textbox "Equipment name" [ref=e107]: B1 HVAC-02
-                  - generic [ref=e108]:
-                    - generic [ref=e109]: Equipment type
-                    - combobox "Equipment type" [ref=e110]:
+                - textbox "Manual project UUID" [ref=e242]: project-release-001
+              - generic [ref=e243]:
+                - paragraph [ref=e244]: Current target
+                - paragraph [ref=e245]: "-"
+                - paragraph [ref=e246]: project-release-001
+            - generic [ref=e249]:
+              - paragraph [ref=e250]: Predictive maintenance
+              - generic [ref=e251]:
+                - generic [ref=e252]:
+                  - textbox "Equipment name" [ref=e253]: B1 HVAC-02
+                  - generic [ref=e254]:
+                    - generic [ref=e255]: Equipment type
+                    - combobox "Equipment type" [ref=e256]:
                       - option "HVAC" [selected]
                       - option "Chiller"
                       - option "Air Handling Unit"
                       - option "Pump"
-                - textbox "Location" [ref=e111]: B1 plant room
-                - generic [ref=e112]:
-                  - spinbutton [ref=e113]: "9.2"
-                  - spinbutton [ref=e114]: "31.5"
-                  - spinbutton [ref=e115]: "0.71"
-                - button "Run maintenance analysis" [ref=e116]
-  - alert [ref=e117]
+                - textbox "Location" [ref=e257]: B1 plant room
+                - generic [ref=e258]:
+                  - spinbutton [ref=e259]: "9.2"
+                  - spinbutton [ref=e260]: "31.5"
+                  - spinbutton [ref=e261]: "0.71"
+                - button "Run maintenance analysis" [ref=e262]
+  - alert [ref=e263]
 ```

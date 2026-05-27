@@ -1,195 +1,240 @@
 # Page snapshot
 
 ```yaml
-- generic [ref=e1]:
+- generic [active] [ref=e1]:
   - status "Screen change announcement region" [ref=e2]
   - link "Skip to content" [ref=e3] [cursor=pointer]:
     - /url: "#main-content"
   - generic [ref=e5]:
-    - banner [ref=e6]:
-      - generic [ref=e7]:
-        - generic [ref=e8]:
-          - paragraph [ref=e10]: Sa-Tong-Pal-Ttang Workspace
-          - heading "Sa-Tong-Pal-Ttang" [level=1] [ref=e12]
-        - generic [ref=e13]:
-          - generic [ref=e14]: Live
-          - generic [ref=e15]:
-            - generic [ref=e16]: Language
-            - combobox "Language" [ref=e17]:
-              - option "한국어"
-              - option "English" [selected]
-              - option "简体中文"
-    - generic [ref=e18]:
-      - complementary [ref=e19]:
-        - navigation "Dashboard navigation" [ref=e20]:
-          - link "Dashboard" [ref=e21] [cursor=pointer]:
-            - /url: /en
-            - text: Dashboard
-          - link "Projects" [ref=e23] [cursor=pointer]:
-            - /url: /en/projects
-            - text: Projects
-          - link "AI Portfolio Map" [ref=e25] [cursor=pointer]:
-            - /url: /en/portfolio
-            - text: AI Portfolio Map
-          - link "AI Agent" [ref=e27] [cursor=pointer]:
-            - /url: /en/agent
-            - text: AI Agent
-          - link "Auction Analysis" [ref=e29] [cursor=pointer]:
-            - /url: /en/auction
-            - text: Auction Analysis
-          - link "Field Inspection" [ref=e31] [cursor=pointer]:
-            - /url: /en/inspection
-            - text: Field Inspection
-          - link "Tax Simulation" [ref=e33] [cursor=pointer]:
-            - /url: /en/tax
-            - text: Tax Simulation
-          - link "Tenant Management" [ref=e35] [cursor=pointer]:
-            - /url: /en/tenant
-            - text: Tenant Management
-          - link "Real-time Collab" [ref=e37] [cursor=pointer]:
-            - /url: /en/webrtc
-            - text: Real-time Collab
-        - paragraph [ref=e40]: Analytics
-        - navigation "Analytics navigation" [ref=e41]:
-          - link "Investment/AVM" [ref=e42] [cursor=pointer]:
-            - /url: /en/analytics/investment
-          - link "ESG Dashboard" [ref=e43] [cursor=pointer]:
-            - /url: /en/analytics/esg
-          - link "Carbon/LCA" [ref=e44] [cursor=pointer]:
-            - /url: /en/analytics/carbon
-          - link "Cost/Indices" [ref=e45] [cursor=pointer]:
-            - /url: /en/analytics/cost
-          - link "IoT/Energy" [ref=e46] [cursor=pointer]:
-            - /url: /en/analytics/iot
-          - link "Market Insights" [ref=e47] [cursor=pointer]:
-            - /url: /en/market-insights
-          - link "Regulations" [ref=e48] [cursor=pointer]:
-            - /url: /en/regulations
-        - paragraph [ref=e50]: Operations
-        - navigation "Operations navigation" [ref=e51]:
-          - link "Digital Twin" [ref=e52] [cursor=pointer]:
-            - /url: /en/digital-twin
-          - link "Maintenance" [ref=e53] [cursor=pointer]:
-            - /url: /en/maintenance
-          - link "AI Safety" [ref=e54] [cursor=pointer]:
-            - /url: /en/safety
-          - link "Approval Ops" [ref=e55] [cursor=pointer]:
-            - /url: /en/approvals
-          - link "SRE Systems" [ref=e56] [cursor=pointer]:
-            - /url: /en/sre
-          - link "KDX Monitoring" [ref=e57] [cursor=pointer]:
-            - /url: /en/dashboard/kdx
-      - main [ref=e58]:
-        - generic [ref=e60]:
-          - generic [ref=e62]:
-            - generic [ref=e63]:
-              - generic [ref=e64]: v53.2 control tower
-              - generic [ref=e65]: LIVE
-            - heading "Digital twin, risk, and permit readiness" [level=3] [ref=e66]
-            - paragraph [ref=e67]: Run the v53 operations loop from telemetry to unified risk scoring and permit tracking.
-            - generic [ref=e68]:
-              - generic [ref=e69]:
-                - generic [ref=e70]: Project
-                - combobox "Project" [ref=e71]
-              - textbox "Manual project UUID" [active] [ref=e72]: project-release-001
-            - paragraph [ref=e73]: "Current target: project-release-001"
-          - alert [ref=e74]:
-            - generic [ref=e75]:
-              - generic [ref=e76]:
-                - paragraph [ref=e77]: Project picker unavailable
-                - paragraph [ref=e78]: The live project list failed to load, but manual UUID targeting remains available.
-                - paragraph [ref=e79]: Failed to fetch
-              - button "Retry" [ref=e80]
-          - generic [ref=e81]:
-            - generic [ref=e83]:
-              - paragraph [ref=e84]: Digital twin status
-              - heading "Persist operations status" [level=3] [ref=e85]
-              - generic [ref=e86]:
-                - generic [ref=e87]:
-                  - generic [ref=e88]: Building type
-                  - combobox "Building type" [ref=e89]:
+    - button [ref=e7]:
+      - img [ref=e9]
+    - banner [ref=e13]:
+      - generic [ref=e14]:
+        - link "AI Real-Estate Intelligence 사통팔땅." [ref=e15] [cursor=pointer]:
+          - /url: /en
+          - img [ref=e17]
+          - generic [ref=e22]:
+            - paragraph [ref=e23]: AI Real-Estate Intelligence
+            - heading "사통팔땅." [level=1] [ref=e24]
+        - generic [ref=e25]:
+          - generic [ref=e26]: Live
+          - generic [ref=e27]:
+            - button "Toggle Theme" [ref=e28]:
+              - img [ref=e30]
+            - generic [ref=e33]:
+              - generic [ref=e34]: Language
+              - combobox "Language" [ref=e35]:
+                - option "한국어"
+                - option "English" [selected]
+                - option "简体中文"
+    - generic [ref=e36]:
+      - complementary [ref=e37]:
+        - generic [ref=e38]:
+          - paragraph [ref=e39]: 개발 전주기 매니지먼트
+          - navigation [ref=e40]:
+            - link "대시보드" [ref=e41] [cursor=pointer]:
+              - /url: /en
+              - img [ref=e43]
+              - generic [ref=e48]: 대시보드
+            - link "프로젝트 관리" [ref=e49] [cursor=pointer]:
+              - /url: /en/projects
+              - img [ref=e51]
+              - generic [ref=e53]: 프로젝트 관리
+            - link "입지 및 사업성 분석" [ref=e54] [cursor=pointer]:
+              - /url: /en/projects/sample-project/site-analysis
+              - img [ref=e56]
+              - generic [ref=e59]: 입지 및 사업성 분석
+            - link "마켓 인텔리전스" [ref=e60] [cursor=pointer]:
+              - /url: /en/market-insights
+              - img [ref=e62]
+              - generic [ref=e65]: 마켓 인텔리전스
+            - link "AI 설계 & BIM" [ref=e66] [cursor=pointer]:
+              - /url: /en/projects/sample-project/design
+              - img [ref=e68]
+              - generic [ref=e70]: AI 설계 & BIM
+            - link "인허가 자동화" [ref=e71] [cursor=pointer]:
+              - /url: /en/permits
+              - img [ref=e73]
+              - generic [ref=e77]: 인허가 자동화
+            - link "부동산 규제 연동" [ref=e78] [cursor=pointer]:
+              - /url: /en/regulations
+              - img [ref=e80]
+              - generic [ref=e83]: 부동산 규제 연동
+        - generic [ref=e84]:
+          - paragraph [ref=e86]: 수익성 및 ESG 분석
+          - navigation [ref=e87]:
+            - link "투자 수익성 (ROI)" [ref=e88] [cursor=pointer]:
+              - /url: /en/analytics/investment
+              - img [ref=e90]
+              - generic [ref=e93]: 투자 수익성 (ROI)
+            - link "ESG / 탄소 경영" [ref=e94] [cursor=pointer]:
+              - /url: /en/analytics/esg
+              - img [ref=e96]
+              - generic [ref=e100]: ESG / 탄소 경영
+            - link "공사비 정밀 분석" [ref=e101] [cursor=pointer]:
+              - /url: /en/analytics/cost
+              - img [ref=e103]
+              - generic [ref=e107]: 공사비 정밀 분석
+        - generic [ref=e108]:
+          - paragraph [ref=e110]: 자산 운영 및 물권
+          - navigation [ref=e111]:
+            - link "경공매 AI 분석" [ref=e112] [cursor=pointer]:
+              - /url: /en/auction
+              - img [ref=e114]
+              - generic [ref=e119]: 경공매 AI 분석
+            - link "데이터 허브 (IoT)" [ref=e120] [cursor=pointer]:
+              - /url: /en/analytics/iot
+              - img [ref=e122]
+              - generic [ref=e124]: 데이터 허브 (IoT)
+            - link "디지털 트윈 (FM)" [ref=e125] [cursor=pointer]:
+              - /url: /en/digital-twin
+              - img [ref=e129]
+              - generic [ref=e132]: 디지털 트윈 (FM)
+            - link "시설 관리 점검" [ref=e133] [cursor=pointer]:
+              - /url: /en/maintenance
+              - img [ref=e135]
+              - generic [ref=e137]: 시설 관리 점검
+            - link "현장 안전 관제" [ref=e138] [cursor=pointer]:
+              - /url: /en/safety
+              - img [ref=e140]
+              - generic [ref=e142]: 현장 안전 관제
+            - link "국가 데이터 거점 (KDX)" [ref=e143] [cursor=pointer]:
+              - /url: /en/dashboard/kdx
+              - img [ref=e145]
+              - generic [ref=e149]: 국가 데이터 거점 (KDX)
+        - generic [ref=e150]:
+          - paragraph [ref=e152]: 엔터프라이즈 지원
+          - navigation [ref=e153]:
+            - link "AI 오케스트레이터" [ref=e154] [cursor=pointer]:
+              - /url: /en/agent
+              - img [ref=e156]
+              - generic [ref=e159]: AI 오케스트레이터
+            - link "실시간 협업" [ref=e160] [cursor=pointer]:
+              - /url: /en/webrtc
+              - img [ref=e162]
+              - generic [ref=e167]: 실시간 협업
+            - link "전자 승인 시스템" [ref=e168] [cursor=pointer]:
+              - /url: /en/approvals
+              - img [ref=e170]
+              - generic [ref=e173]: 전자 승인 시스템
+            - link "시스템 신뢰성 (SRE)" [ref=e174] [cursor=pointer]:
+              - /url: /en/sre
+              - img [ref=e176]
+              - generic [ref=e179]: 시스템 신뢰성 (SRE)
+            - link "테넌트 통합 관리" [ref=e180] [cursor=pointer]:
+              - /url: /en/tenant
+              - img [ref=e182]
+              - generic [ref=e187]: 테넌트 통합 관리
+            - link "이용 가이드" [ref=e188] [cursor=pointer]:
+              - /url: /en/guide
+              - img [ref=e190]
+              - generic [ref=e192]: 이용 가이드
+      - main [ref=e193]:
+        - generic [ref=e195]:
+          - generic [ref=e197]:
+            - generic [ref=e199]:
+              - generic [ref=e200]: v53.2 CONTROL TOWER
+              - generic [ref=e202]: ACTIVE TELEMETRY
+            - heading "Digital twin, risk, and permit readiness." [level=3] [ref=e203]
+            - paragraph [ref=e204]: Run the v53 operations loop from real-time telemetry to unified risk scoring and permit lifecycle tracking.
+            - generic [ref=e205]:
+              - generic [ref=e206]:
+                - text: Target Project
+                - combobox [ref=e208]
+              - generic [ref=e209]:
+                - text: Manual Override (UUID)
+                - textbox "00000000-0000-0000-0000-000000000000" [ref=e210]
+            - paragraph [ref=e213]: "CURRENT TARGET: NOT_ASSIGNED"
+          - alert [ref=e214]:
+            - generic [ref=e215]:
+              - generic [ref=e216]:
+                - paragraph [ref=e217]: Project picker unavailable
+                - paragraph [ref=e218]: The live project list failed to load, but manual UUID targeting remains available.
+                - paragraph [ref=e219]: API request failed with status 503.
+              - button "Retry" [ref=e220]
+          - generic [ref=e221]:
+            - generic [ref=e223]:
+              - paragraph [ref=e224]: DIMENSION_01
+              - heading "Digital Twin Status." [level=3] [ref=e225]
+              - generic [ref=e226]:
+                - generic [ref=e227]:
+                  - generic [ref=e228]: Building type
+                  - combobox "Building type" [ref=e229]:
                     - option "Office" [selected]
                     - option "Residential"
                     - option "Retail"
-                - spinbutton [ref=e90]: "4200"
-                - spinbutton [ref=e91]: "756000"
-                - generic [ref=e92]:
-                  - spinbutton [ref=e93]: "0.91"
-                  - spinbutton [ref=e94]: "24"
-                  - spinbutton [ref=e95]: "22"
-                - button "Save status snapshot" [ref=e96]
-              - alert [ref=e98]:
-                - generic [ref=e99]:
-                  - generic [ref=e100]:
-                    - paragraph [ref=e101]: Status snapshot unavailable
-                    - paragraph [ref=e102]: The latest persisted digital twin status could not be loaded.
-                    - paragraph [ref=e103]: Failed to fetch
-                  - button "Retry" [ref=e104]
-            - generic [ref=e106]:
-              - paragraph [ref=e107]: Unified risk engine
-              - heading "Score seven risk dimensions" [level=3] [ref=e108]
-              - generic [ref=e109]:
-                - spinbutton [ref=e110]: "18500000000"
-                - generic [ref=e111]:
-                  - spinbutton [ref=e112]: "52"
-                  - spinbutton [ref=e113]: "38"
-                - generic [ref=e114]:
-                  - spinbutton [ref=e115]: "0.65"
-                  - spinbutton [ref=e116]: "1.18"
-                - generic [ref=e117]:
-                  - spinbutton [ref=e118]: "0.55"
-                  - spinbutton [ref=e119]: "0.91"
-                  - spinbutton [ref=e120]: "0.42"
-                - spinbutton [ref=e121]: "0.12"
-                - button "Analyze unified risk" [ref=e122]
-              - alert [ref=e124]:
-                - generic [ref=e125]:
-                  - generic [ref=e126]:
-                    - paragraph [ref=e127]: Unified risk unavailable
-                    - paragraph [ref=e128]: The latest persisted risk assessment could not be loaded.
-                    - paragraph [ref=e129]: Failed to fetch
-                  - button "Retry" [ref=e130]
-            - generic [ref=e132]:
-              - paragraph [ref=e133]: Permit readiness
-              - heading "Submit and track permit packages" [level=3] [ref=e134]
-              - generic [ref=e135]:
-                - generic [ref=e136]:
-                  - generic [ref=e137]: Permit type
-                  - combobox "Permit type" [ref=e138]:
+                - spinbutton [ref=e230]: "4200"
+                - spinbutton [ref=e231]: "756000"
+                - generic [ref=e232]:
+                  - spinbutton [ref=e233]: "0.91"
+                  - spinbutton [ref=e234]: "24"
+                  - spinbutton [ref=e235]: "22"
+                - button "COMMIT SNAPSHOT" [ref=e236]
+              - generic [ref=e238]:
+                - generic [ref=e239]: 📡
+                - generic [ref=e240]:
+                  - paragraph [ref=e241]: NO_TELEMETRY
+                  - paragraph [ref=e242]: Run snapshot action to persist the first operations status record.
+            - generic [ref=e244]:
+              - paragraph [ref=e245]: DIMENSION_02
+              - heading "Unified Risk Engine." [level=3] [ref=e246]
+              - generic [ref=e247]:
+                - spinbutton [ref=e248]: "18500000000"
+                - generic [ref=e249]:
+                  - spinbutton [ref=e250]: "52"
+                  - spinbutton [ref=e251]: "38"
+                - generic [ref=e252]:
+                  - spinbutton [ref=e253]: "0.65"
+                  - spinbutton [ref=e254]: "1.18"
+                - generic [ref=e255]:
+                  - spinbutton [ref=e256]: "0.55"
+                  - spinbutton [ref=e257]: "0.91"
+                  - spinbutton [ref=e258]: "0.42"
+                - button "EXECUTE_RISK_AI" [ref=e259]
+              - generic [ref=e261]:
+                - generic [ref=e262]: 📡
+                - generic [ref=e263]:
+                  - paragraph [ref=e264]: AWAITING_INPUT
+                  - paragraph [ref=e265]: Run unified risk engine after updating status or permit context.
+            - generic [ref=e267]:
+              - paragraph [ref=e268]: DIMENSION_03
+              - heading "Permit Lifecycle." [level=3] [ref=e269]
+              - generic [ref=e270]:
+                - generic [ref=e271]:
+                  - generic [ref=e272]: Permit type
+                  - combobox "Permit type" [ref=e273]:
                     - option "Building permit" [selected]
                     - option "Development permit"
                     - option "Occupancy approval"
-                - generic [ref=e139]:
-                  - generic [ref=e140]: Region
-                  - combobox "Region" [ref=e141]:
+                - generic [ref=e274]:
+                  - generic [ref=e275]: Region
+                  - combobox "Region" [ref=e276]:
                     - option "Seoul" [selected]
                     - option "Gyeonggi"
                     - option "Default"
-                - spinbutton [ref=e142]: "4200"
-                - generic [ref=e143]:
-                  - generic [ref=e144]:
-                    - generic [ref=e145]: Public
-                    - combobox "Public" [ref=e146]:
+                - spinbutton [ref=e277]: "4200"
+                - generic [ref=e278]:
+                  - generic [ref=e279]:
+                    - generic [ref=e280]: Pb
+                    - combobox "Pb" [ref=e281]:
                       - option "No" [selected]
                       - option "Yes"
-                  - generic [ref=e147]:
-                    - generic [ref=e148]: Agricultural
-                    - combobox "Agricultural" [ref=e149]:
+                  - generic [ref=e282]:
+                    - generic [ref=e283]: Ag
+                    - combobox "Ag" [ref=e284]:
                       - option "No" [selected]
                       - option "Yes"
-                  - generic [ref=e150]:
-                    - generic [ref=e151]: Submit
-                    - combobox "Submit" [ref=e152]:
+                  - generic [ref=e285]:
+                    - generic [ref=e286]: Sm
+                    - combobox "Sm" [ref=e287]:
                       - option "No"
                       - option "Yes" [selected]
-                - textbox "Submitted document IDs (comma separated)" [ref=e153]: BA-01, BA-02, BA-03, BA-04, BA-05
-                - button "Submit permit package" [ref=e154]
-              - alert [ref=e156]:
-                - generic [ref=e157]:
-                  - generic [ref=e158]:
-                    - paragraph [ref=e159]: Permit tracker unavailable
-                    - paragraph [ref=e160]: The latest persisted permit submission could not be loaded.
-                    - paragraph [ref=e161]: Failed to fetch
-                  - button "Retry" [ref=e162]
-  - alert [ref=e163]
+                - textbox "Doc IDs (e.g. BA-01, BA-02)" [ref=e288]: BA-01, BA-02, BA-03, BA-04, BA-05
+                - button "INIT_LIFECYCLE" [ref=e289]
+              - generic [ref=e291]:
+                - generic [ref=e292]: 📡
+                - generic [ref=e293]:
+                  - paragraph [ref=e294]: NO_ACTIVE_LIFE
+                  - paragraph [ref=e295]: Submit the first permit package to populate the tracking read model.
+  - alert [ref=e296]
 ```

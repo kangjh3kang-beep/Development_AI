@@ -6,93 +6,145 @@
   - link "Skip to content" [ref=e3] [cursor=pointer]:
     - /url: "#main-content"
   - generic [ref=e5]:
-    - banner [ref=e6]:
-      - generic [ref=e7]:
-        - generic [ref=e8]:
-          - paragraph [ref=e10]: Sa-Tong-Pal-Ttang Workspace
-          - heading "Sa-Tong-Pal-Ttang" [level=1] [ref=e12]
-        - generic [ref=e13]:
-          - generic [ref=e14]: Live
-          - generic [ref=e15]:
-            - generic [ref=e16]: Language
-            - combobox "Language" [ref=e17]:
-              - option "한국어"
-              - option "English" [selected]
-              - option "简体中文"
-    - generic [ref=e18]:
-      - complementary [ref=e19]:
-        - navigation "Dashboard navigation" [ref=e20]:
-          - link "Dashboard" [ref=e21] [cursor=pointer]:
-            - /url: /en
-            - text: Dashboard
-          - link "Projects" [ref=e23] [cursor=pointer]:
-            - /url: /en/projects
-            - text: Projects
-          - link "AI Portfolio Map" [ref=e25] [cursor=pointer]:
-            - /url: /en/portfolio
-            - text: AI Portfolio Map
-          - link "AI Agent" [ref=e27] [cursor=pointer]:
-            - /url: /en/agent
-            - text: AI Agent
-          - link "Auction Analysis" [ref=e29] [cursor=pointer]:
-            - /url: /en/auction
-            - text: Auction Analysis
-          - link "Field Inspection" [ref=e31] [cursor=pointer]:
-            - /url: /en/inspection
-            - text: Field Inspection
-          - link "Tax Simulation" [ref=e33] [cursor=pointer]:
-            - /url: /en/tax
-            - text: Tax Simulation
-          - link "Tenant Management" [ref=e35] [cursor=pointer]:
-            - /url: /en/tenant
-            - text: Tenant Management
-          - link "Real-time Collab" [ref=e37] [cursor=pointer]:
-            - /url: /en/webrtc
-            - text: Real-time Collab
-        - paragraph [ref=e40]: Analytics
-        - navigation "Analytics navigation" [ref=e41]:
-          - link "Investment/AVM" [ref=e42] [cursor=pointer]:
-            - /url: /en/analytics/investment
-          - link "ESG Dashboard" [ref=e43] [cursor=pointer]:
-            - /url: /en/analytics/esg
-          - link "Carbon/LCA" [ref=e44] [cursor=pointer]:
-            - /url: /en/analytics/carbon
-          - link "Cost/Indices" [ref=e45] [cursor=pointer]:
-            - /url: /en/analytics/cost
-          - link "IoT/Energy" [ref=e46] [cursor=pointer]:
-            - /url: /en/analytics/iot
-          - link "Market Insights" [ref=e47] [cursor=pointer]:
-            - /url: /en/market-insights
-          - link "Regulations" [ref=e48] [cursor=pointer]:
-            - /url: /en/regulations
-        - paragraph [ref=e50]: Operations
-        - navigation "Operations navigation" [ref=e51]:
-          - link "Digital Twin" [ref=e52] [cursor=pointer]:
-            - /url: /en/digital-twin
-          - link "Maintenance" [ref=e53] [cursor=pointer]:
-            - /url: /en/maintenance
-          - link "AI Safety" [ref=e54] [cursor=pointer]:
-            - /url: /en/safety
-          - link "Approval Ops" [ref=e55] [cursor=pointer]:
-            - /url: /en/approvals
-          - link "SRE Systems" [ref=e56] [cursor=pointer]:
-            - /url: /en/sre
-          - link "KDX Monitoring" [ref=e57] [cursor=pointer]:
-            - /url: /en/dashboard/kdx
-      - main [ref=e58]:
-        - generic [ref=e61]:
-          - generic [ref=e62]:
-            - generic [ref=e63]:
-              - paragraph [ref=e64]: Live monitoring
-              - heading "KDX Monitoring Center" [level=1] [ref=e65]
-              - paragraph [ref=e66]: Inspect the live KDX ingestion surface through persisted telemetry, latest metric snapshots, and the websocket property index stream.
-            - generic [ref=e67]: loading
-          - alert [ref=e68]:
-            - generic [ref=e69]:
-              - generic [ref=e70]:
-                - paragraph [ref=e71]: KDX overview is unavailable.
-                - paragraph [ref=e72]: The KDX live monitoring read model failed. Retry after restoring API connectivity or access token state.
-                - paragraph [ref=e73]: Failed to fetch
-              - button "Retry" [ref=e74]
-  - alert [ref=e75]
+    - button [ref=e7]:
+      - img [ref=e9]
+    - banner [ref=e13]:
+      - generic [ref=e14]:
+        - link "AI Real-Estate Intelligence 사통팔땅." [ref=e15] [cursor=pointer]:
+          - /url: /en
+          - img [ref=e17]
+          - generic [ref=e22]:
+            - paragraph [ref=e23]: AI Real-Estate Intelligence
+            - heading "사통팔땅." [level=1] [ref=e24]
+        - generic [ref=e25]:
+          - generic [ref=e26]: Live
+          - generic [ref=e27]:
+            - button "Toggle Theme" [ref=e28]:
+              - img [ref=e30]
+            - generic [ref=e33]:
+              - generic [ref=e34]: Language
+              - combobox "Language" [ref=e35]:
+                - option "한국어"
+                - option "English" [selected]
+                - option "简体中文"
+    - generic [ref=e36]:
+      - complementary [ref=e37]:
+        - generic [ref=e38]:
+          - paragraph [ref=e39]: 개발 전주기 매니지먼트
+          - navigation [ref=e40]:
+            - link "대시보드" [ref=e41] [cursor=pointer]:
+              - /url: /en
+              - img [ref=e43]
+              - generic [ref=e48]: 대시보드
+            - link "프로젝트 관리" [ref=e49] [cursor=pointer]:
+              - /url: /en/projects
+              - img [ref=e51]
+              - generic [ref=e53]: 프로젝트 관리
+            - link "입지 및 사업성 분석" [ref=e54] [cursor=pointer]:
+              - /url: /en/projects/sample-project/site-analysis
+              - img [ref=e56]
+              - generic [ref=e59]: 입지 및 사업성 분석
+            - link "마켓 인텔리전스" [ref=e60] [cursor=pointer]:
+              - /url: /en/market-insights
+              - img [ref=e62]
+              - generic [ref=e65]: 마켓 인텔리전스
+            - link "AI 설계 & BIM" [ref=e66] [cursor=pointer]:
+              - /url: /en/projects/sample-project/design
+              - img [ref=e68]
+              - generic [ref=e70]: AI 설계 & BIM
+            - link "인허가 자동화" [ref=e71] [cursor=pointer]:
+              - /url: /en/permits
+              - img [ref=e73]
+              - generic [ref=e77]: 인허가 자동화
+            - link "부동산 규제 연동" [ref=e78] [cursor=pointer]:
+              - /url: /en/regulations
+              - img [ref=e80]
+              - generic [ref=e83]: 부동산 규제 연동
+        - generic [ref=e84]:
+          - paragraph [ref=e86]: 수익성 및 ESG 분석
+          - navigation [ref=e87]:
+            - link "투자 수익성 (ROI)" [ref=e88] [cursor=pointer]:
+              - /url: /en/analytics/investment
+              - img [ref=e90]
+              - generic [ref=e93]: 투자 수익성 (ROI)
+            - link "ESG / 탄소 경영" [ref=e94] [cursor=pointer]:
+              - /url: /en/analytics/esg
+              - img [ref=e96]
+              - generic [ref=e100]: ESG / 탄소 경영
+            - link "공사비 정밀 분석" [ref=e101] [cursor=pointer]:
+              - /url: /en/analytics/cost
+              - img [ref=e103]
+              - generic [ref=e107]: 공사비 정밀 분석
+        - generic [ref=e108]:
+          - paragraph [ref=e110]: 자산 운영 및 물권
+          - navigation [ref=e111]:
+            - link "경공매 AI 분석" [ref=e112] [cursor=pointer]:
+              - /url: /en/auction
+              - img [ref=e114]
+              - generic [ref=e119]: 경공매 AI 분석
+            - link "데이터 허브 (IoT)" [ref=e120] [cursor=pointer]:
+              - /url: /en/analytics/iot
+              - img [ref=e122]
+              - generic [ref=e124]: 데이터 허브 (IoT)
+            - link "디지털 트윈 (FM)" [ref=e125] [cursor=pointer]:
+              - /url: /en/digital-twin
+              - img [ref=e127]
+              - generic [ref=e130]: 디지털 트윈 (FM)
+            - link "시설 관리 점검" [ref=e131] [cursor=pointer]:
+              - /url: /en/maintenance
+              - img [ref=e133]
+              - generic [ref=e135]: 시설 관리 점검
+            - link "현장 안전 관제" [ref=e136] [cursor=pointer]:
+              - /url: /en/safety
+              - img [ref=e138]
+              - generic [ref=e140]: 현장 안전 관제
+            - link "국가 데이터 거점 (KDX)" [ref=e141] [cursor=pointer]:
+              - /url: /en/dashboard/kdx
+              - img [ref=e145]
+              - generic [ref=e149]: 국가 데이터 거점 (KDX)
+        - generic [ref=e150]:
+          - paragraph [ref=e152]: 엔터프라이즈 지원
+          - navigation [ref=e153]:
+            - link "AI 오케스트레이터" [ref=e154] [cursor=pointer]:
+              - /url: /en/agent
+              - img [ref=e156]
+              - generic [ref=e159]: AI 오케스트레이터
+            - link "실시간 협업" [ref=e160] [cursor=pointer]:
+              - /url: /en/webrtc
+              - img [ref=e162]
+              - generic [ref=e167]: 실시간 협업
+            - link "전자 승인 시스템" [ref=e168] [cursor=pointer]:
+              - /url: /en/approvals
+              - img [ref=e170]
+              - generic [ref=e173]: 전자 승인 시스템
+            - link "시스템 신뢰성 (SRE)" [ref=e174] [cursor=pointer]:
+              - /url: /en/sre
+              - img [ref=e176]
+              - generic [ref=e179]: 시스템 신뢰성 (SRE)
+            - link "테넌트 통합 관리" [ref=e180] [cursor=pointer]:
+              - /url: /en/tenant
+              - img [ref=e182]
+              - generic [ref=e187]: 테넌트 통합 관리
+            - link "이용 가이드" [ref=e188] [cursor=pointer]:
+              - /url: /en/guide
+              - img [ref=e190]
+              - generic [ref=e192]: 이용 가이드
+      - main [ref=e193]:
+        - generic [ref=e196]:
+          - generic [ref=e197]:
+            - generic [ref=e198]:
+              - paragraph [ref=e199]: Telemetric Engine / LIVE
+              - heading "KDX Monitoring Center" [level=1] [ref=e200]
+              - paragraph [ref=e201]:
+                - text: 국가 데이터 거점(KDX)의 실시간 수집 모델을 모니터링합니다.
+                - text: 웹소켓 기반 자산 인덱싱 스트림과 영구 텔레메트리 스냅샷을 통합 검증합니다.
+            - generic [ref=e204]: CONNECTING
+          - alert [ref=e205]:
+            - generic [ref=e206]:
+              - generic [ref=e207]:
+                - paragraph [ref=e208]: KDX overview is unavailable.
+                - paragraph [ref=e209]: The KDX live monitoring read model failed. Retry after restoring API connectivity or access token state.
+                - paragraph [ref=e210]: API 요청 처리에 실패했습니다.
+              - button "Retry" [ref=e211]
+  - alert [ref=e212]
 ```
