@@ -119,6 +119,8 @@ export function AutoRecommendPanel({ onClose, isModal = false }: AutoRecommendPa
   const { locale, id: projectId } = useParams() as { locale: string; id: string };
   const router = useRouter();
   const ctxStore = useProjectContextStore();
+  // 분석 완료 후 주소를 컨텍스트 스토어에 저장하여 다른 모듈에서 공유 (모세혈관 네트워크 주소 공유 패턴)
+  const updateSiteAnalysis = useProjectContextStore((s) => s.updateSiteAnalysis);
   const feasibilityStore = useFeasibilityV2Store();
 
   // Input state
@@ -210,6 +212,16 @@ export function AutoRecommendPanel({ onClose, isModal = false }: AutoRecommendPa
       setTopModels(results.slice(0, 3));
       setAllModels(results);
       setAnalysisCount(results.length);
+
+      // 분석 완료 후 주소를 컨텍스트 스토어에 저장하여 다른 모듈에서 공유
+      updateSiteAnalysis({
+        ...ctxStore.siteAnalysis,
+        estimatedValue: ctxStore.siteAnalysis?.estimatedValue ?? null,
+        landAreaSqm: landArea ? parseFloat(landArea) : ctxStore.siteAnalysis?.landAreaSqm ?? null,
+        zoneCode: ctxStore.siteAnalysis?.zoneCode ?? null,
+        address: address,
+        pnu: ctxStore.siteAnalysis?.pnu ?? null,
+      });
     } catch (e: unknown) {
       if (progressRef.current) clearInterval(progressRef.current);
       setError(e instanceof Error ? e.message : "분석에 실패했습니다. 다시 시도해주세요.");
@@ -301,13 +313,22 @@ export function AutoRecommendPanel({ onClose, isModal = false }: AutoRecommendPa
               <label className="mb-2 block text-[10px] font-[900] uppercase tracking-[0.3em] text-[var(--text-hint)]">
                 주소 입력
               </label>
-              <input
-                type="text"
-                value={address}
-                onChange={(e) => setAddress(e.target.value)}
-                placeholder="서울특별시 강남구 역삼동 123-45"
-                className="w-full rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] px-5 py-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-hint)] focus:border-[var(--accent-strong)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-strong)]/20 transition-all"
-              />
+              {/* 주소 검색 입력: 부지분석 주소를 기본값으로 사용하며, 분석 완료 시 스토어에 저장 */}
+              <div className="relative">
+                <svg className="absolute left-4 top-1/2 -translate-y-1/2 text-[var(--text-hint)]" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+                <input
+                  type="text"
+                  value={address}
+                  onChange={(e) => setAddress(e.target.value)}
+                  placeholder="주소를 검색하세요 (예: 서울특별시 강남구 삼성동)"
+                  className="w-full rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] pl-11 pr-5 py-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-hint)] focus:border-[var(--accent-strong)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-strong)]/20 transition-all"
+                />
+              </div>
+              {ctxStore.siteAnalysis?.address && address === ctxStore.siteAnalysis.address && (
+                <p className="text-[10px] text-[var(--text-hint)] -mt-1">
+                  📍 부지분석에서 설정된 주소입니다
+                </p>
+              )}
             </div>
             <div className="w-full lg:w-56">
               <label className="mb-2 block text-[10px] font-[900] uppercase tracking-[0.3em] text-[var(--text-hint)]">

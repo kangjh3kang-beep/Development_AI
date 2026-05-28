@@ -264,7 +264,8 @@ export function ProjectFinanceWorkspaceClient({
     }));
   }, [projectQuery.data]);
 
-  // Pre-fill from site analysis context (capillary network)
+  // 부지분석에서 설정한 주소를 자동으로 불러옵니다 (모세혈관 네트워크 주소 공유 패턴)
+  // siteAnalysis.address가 변경되면 아직 사용자가 입력하지 않은 경우 자동 동기화
   useEffect(() => {
     if (!siteAnalysis) return;
     setForm((current) => ({
@@ -424,16 +425,26 @@ export function ProjectFinanceWorkspaceClient({
                 {labels.formTitle}
               </p>
               <form className="mt-4 grid gap-3" onSubmit={handleSubmit}>
-                <Input
-                  value={form.address}
-                  onChange={(event) =>
-                    setForm((current) => ({
-                      ...current,
-                      address: event.target.value,
-                    }))
-                  }
-                  placeholder={labels.addressLabel}
-                />
+                {/* 주소 검색 입력: 부지분석 주소를 공유하며, 이 페이지에서 변경 가능 */}
+                <div className="relative">
+                  <svg className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-hint)]" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+                  <Input
+                    value={form.address}
+                    onChange={(event) =>
+                      setForm((current) => ({
+                        ...current,
+                        address: event.target.value,
+                      }))
+                    }
+                    placeholder="주소를 검색하세요 (예: 서울특별시 강남구 삼성동)"
+                    className="pl-10"
+                  />
+                </div>
+                {siteAnalysis?.address && form.address === siteAnalysis.address && (
+                  <p className="text-[10px] text-[var(--text-hint)] -mt-2">
+                    📍 부지분석에서 설정된 주소입니다
+                  </p>
+                )}
                 <div className="grid gap-3 md:grid-cols-2">
                   <Input
                     type="number"

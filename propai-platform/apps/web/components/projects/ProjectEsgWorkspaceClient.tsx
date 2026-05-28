@@ -203,6 +203,8 @@ export function ProjectEsgWorkspaceClient({
   const canUseLiveApi =
     runtimeConfig.mode === "live" || runtimeConfig.hasAccessToken;
 
+  // 부지분석에서 설정한 주소를 읽기 전용으로 표시합니다 (모세혈관 네트워크 주소 공유 패턴)
+  const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
   const updateEsgData = useProjectContextStore((s) => s.updateEsgData);
   const markStageComplete = useProjectContextStore((s) => s.markStageComplete);
   const addAnalysisResult = useProjectContextStore((s) => s.addAnalysisResult);
@@ -385,6 +387,14 @@ export function ProjectEsgWorkspaceClient({
           ) : null}
         </CardContent>
       </Card>
+
+      {/* 부지분석에서 설정된 주소 읽기 전용 표시 */}
+      {siteAnalysis?.address && (
+        <div className="rounded-xl bg-[var(--surface-muted)] p-3 text-sm">
+          <span className="text-[var(--text-hint)]">📍 분석 대상:</span>
+          <span className="font-bold ml-2">{siteAnalysis.address}</span>
+        </div>
+      )}
 
       {/* ── LCA Section ── */}
       <Card>

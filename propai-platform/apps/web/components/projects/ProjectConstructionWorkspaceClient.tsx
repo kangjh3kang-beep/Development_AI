@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Button, Card, CardContent, CardTitle, Input } from "@propai/ui";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
+import { useProjectContextStore } from "@/store/useProjectContextStore";
 import type { Locale } from "@/i18n/config";
 
 /* ── Response Types ── */
@@ -225,6 +226,9 @@ export function ProjectConstructionWorkspaceClient({
   const canUseLiveApi =
     runtimeConfig.mode === "live" || runtimeConfig.hasAccessToken;
 
+  // 부지분석에서 설정한 주소를 읽기 전용으로 표시합니다 (모세혈관 네트워크 주소 공유 패턴)
+  const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
+
   const [workspaceError, setWorkspaceError] = useState("");
   const [isSubmittingCost, setIsSubmittingCost] = useState(false);
   const [isSubmittingChecklist, setIsSubmittingChecklist] = useState(false);
@@ -355,6 +359,14 @@ export function ProjectConstructionWorkspaceClient({
           ) : null}
         </CardContent>
       </Card>
+
+      {/* 부지분석에서 설정된 주소 읽기 전용 표시 */}
+      {siteAnalysis?.address && (
+        <div className="rounded-xl bg-[var(--surface-muted)] p-3 text-sm">
+          <span className="text-[var(--text-hint)]">📍 분석 대상:</span>
+          <span className="font-bold ml-2">{siteAnalysis.address}</span>
+        </div>
+      )}
 
       {/* Cost Calculation Form + Results */}
       <Card>
