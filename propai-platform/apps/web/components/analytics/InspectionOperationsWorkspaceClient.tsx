@@ -183,13 +183,6 @@ function extractErrorMessage(error: unknown, authMessage: string) {
     return `API request failed with status ${status}.`;
   }
 
-  if (error instanceof Error) {
-    return error.message;
-  }
-
-  return "Request failed.";
-}
-
 export function InspectionOperationsWorkspaceClient({
   locale,
 }: {

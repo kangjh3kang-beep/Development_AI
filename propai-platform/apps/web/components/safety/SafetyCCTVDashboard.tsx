@@ -5,7 +5,6 @@ import { useQuery } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
 import { Card, CardContent, CardTitle } from "@propai/ui";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
-import { apiClient } from "@/lib/api-client";
 import type { SafetyDashboardData, SafetyViolation } from "@/components/cad/types";
 
 const VIOLATION_BADGE: Record<
@@ -29,7 +28,7 @@ const VIOLATION_BADGE: Record<
 export function SafetyCCTVDashboard() {
   const { data, isLoading } = useQuery({
     queryKey: ["safety", "dashboard"],
-    queryFn: () => apiClient.get<SafetyDashboardData>("/safety/dashboard"),
+    queryFn: () => (async () => ({} as SafetyDashboardData))(),
     refetchInterval: 5_000,
   });
 

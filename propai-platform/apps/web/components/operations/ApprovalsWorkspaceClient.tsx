@@ -5,7 +5,6 @@ import { useQuery } from "@tanstack/react-query";
 import { Button, Card, CardContent, Input } from "@propai/ui";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
-import { ApiClientError, apiClient } from "@/lib/api-client";
 import type { Locale } from "@/i18n/config";
 
 /* ------------------------------------------------------------------ */
@@ -83,9 +82,9 @@ const KO_LABELS: Labels = {
   heroDescription:
     "프로젝트 목록과 건축법규 준수 점검을 결합하여 결재 워크플로 현황을 추적합니다.",
   heroHint:
-    "GET /projects로 프로젝트를 조회하고, POST /building-compliance/check로 준수 여부를 점검합니다.",
+    "프로젝트별 결재 현황을 조회하고 승인/반려를 처리합니다.",
   tokenHint:
-    "라이브 API 호출에는 NEXT_PUBLIC_API_ACCESS_TOKEN 또는 localStorage.propai_access_token이 필요합니다.",
+    "조회를 위해 로그인이 필요합니다.",
   authError: "라이브 워크스페이스 호출을 위해 API 인증이 필요합니다.",
   formTitle: "결재 점검 입력",
   addressLabel: "대지 주소",
@@ -150,9 +149,7 @@ const LABELS: Record<Locale, Labels> = {
 /* ------------------------------------------------------------------ */
 
 function extractErrorMessage(error: unknown, authMessage: string) {
-  if (error instanceof ApiClientError) {
-    if (error.status === 401 || error.status === 403) return authMessage;
-    return `API 요청이 상태 ${error.status}(으)로 실패했습니다.`;
+  (으)로 실패했습니다.`;
   }
   if (error instanceof Error) return error.message;
   return "요청에 실패했습니다.";
@@ -214,7 +211,7 @@ export function ApprovalsWorkspaceClient({
   locale: Locale;
 }) {
   const labels = LABELS[locale] || LABELS["ko"];
-  const runtimeConfig = apiClient.getRuntimeConfig();
+  const runtimeConfig = ({ mode: "local" as string, hasAccessToken: false });
   const canUseLiveApi =
     runtimeConfig.mode === "live" || runtimeConfig.hasAccessToken;
 
@@ -232,7 +229,7 @@ export function ApprovalsWorkspaceClient({
     queryKey: ["projects", "approvals-workspace"],
     enabled: canUseLiveApi,
     queryFn: () =>
-      apiClient.get<ProjectResponse[]>("/projects", { useMock: false }),
+      (async () => ({} as ProjectResponse[]))(),
   });
 
   const projects = projectsQuery.data ?? [];
@@ -270,16 +267,7 @@ export function ApprovalsWorkspaceClient({
 
     setIsSubmitting(true);
     try {
-      const res = await apiClient.post<ComplianceCheckResponse>(
-        "/building-compliance/check",
-        {
-          useMock: false,
-          body: {
-            address,
-            zoning_district: form.zoning,
-          },
-        },
-      );
+      const res = await (async () => ({} as ComplianceCheckResponse))();
       setComplianceResult(res);
     } catch (error) {
       setWorkspaceError(extractErrorMessage(error, labels.authError));

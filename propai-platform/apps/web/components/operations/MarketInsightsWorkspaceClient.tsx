@@ -1,25 +1,23 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { Button, Card, CardContent, Input } from "@propai/ui";
-import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
-import { ApiClientError, apiClient } from "@/lib/api-client";
-import type { Locale } from "@/i18n/config";
+import { useState, useCallback } from "react";
+import { Card, CardContent } from "@propai/ui";
+import {
+  AddressSearchWithRadius,
+  type AddressSearchResult,
+} from "@/components/ui/AddressSearchWithRadius";
+import { apiClient, ApiClientError } from "@/lib/api-client";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                             */
 /* ------------------------------------------------------------------ */
 
 type AVMEstimateResponse = {
-  id?: string;
-  project_id?: string;
   estimated_price?: number;
   price_per_sqm?: number;
   confidence_score?: number;
   comparable_count?: number;
   model_version?: string;
-  created_at?: string;
 };
 
 type TransactionItem = {
@@ -31,6 +29,7 @@ type TransactionItem = {
   floor?: number;
   apt_name?: string;
   dong?: string;
+  distance_m?: number;
   [key: string]: unknown;
 };
 
@@ -39,141 +38,83 @@ type TransactionsResponse = {
   total_count?: number;
 };
 
-/* ------------------------------------------------------------------ */
-/*  Labels                                                            */
-/* ------------------------------------------------------------------ */
-
-type Labels = {
-  heroTitle: string;
-  heroDescription: string;
-  heroHint: string;
-  tokenHint: string;
-  authError: string;
-  avmFormTitle: string;
-  addressLabel: string;
-  areaSqmLabel: string;
-  submitAvmAction: string;
-  missingAddressError: string;
-  missingAreaError: string;
-  txFormTitle: string;
-  lawdCdLabel: string;
-  dealYmLabel: string;
-  submitTxAction: string;
-  missingLawdCdError: string;
-  avmResultTitle: string;
-  estimatedPriceLabel: string;
-  pricePerSqmLabel: string;
-  confidenceLabel: string;
-  comparablesLabel: string;
-  modelLabel: string;
-  txResultTitle: string;
-  aptNameLabel: string;
-  dealAmountLabel: string;
-  areaLabel: string;
-  floorLabel: string;
-  dealDateLabel: string;
-  placeholder: string;
-};
-
-const KO_LABELS: Labels = {
-  heroTitle: "마켓 인사이트 라이브 워크스페이스",
-  heroDescription:
-    "AVM 시세 추정과 최근 실거래 데이터를 조합하여 시장 동향을 분석합니다.",
-  heroHint:
-    "POST /avm/estimate로 시세를 추정하고, GET /external/transactions/apt로 실거래 내역을 조회합니다.",
-  tokenHint:
-    "라이브 API 호출에는 NEXT_PUBLIC_API_ACCESS_TOKEN 또는 localStorage.propai_access_token이 필요합니다.",
-  authError: "라이브 워크스페이스 호출을 위해 API 인증이 필요합니다.",
-  avmFormTitle: "AVM 시세 추정 입력",
-  addressLabel: "주소",
-  areaSqmLabel: "면적 (sqm)",
-  submitAvmAction: "시세 추정 실행",
-  missingAddressError: "주소를 입력해 주세요.",
-  missingAreaError: "양수인 면적 값을 입력해 주세요.",
-  txFormTitle: "실거래 조회 입력",
-  lawdCdLabel: "법정동 코드 (lawd_cd)",
-  dealYmLabel: "거래 년월 (YYYYMM)",
-  submitTxAction: "실거래 조회 실행",
-  missingLawdCdError: "법정동 코드를 입력해 주세요.",
-  avmResultTitle: "AVM 시세 추정 결과",
-  estimatedPriceLabel: "추정 시세",
-  pricePerSqmLabel: "sqm당 가격",
-  confidenceLabel: "신뢰도",
-  comparablesLabel: "비교 사례 수",
-  modelLabel: "모델 버전",
-  txResultTitle: "최근 실거래 내역",
-  aptNameLabel: "단지명",
-  dealAmountLabel: "거래가 (만원)",
-  areaLabel: "면적",
-  floorLabel: "층",
-  dealDateLabel: "거래일",
-  placeholder: "양식을 제출하면 결과가 표시됩니다.",
-};
-
-const EN_LABELS: Labels = {
-  heroTitle: "Market Insights Live Workspace",
-  heroDescription:
-    "Combine AVM valuation estimates with recent transaction data to analyze market trends.",
-  heroHint:
-    "Calls POST /avm/estimate for valuation and GET /external/transactions/apt for transaction data.",
-  tokenHint:
-    "Live API calls require NEXT_PUBLIC_API_ACCESS_TOKEN or localStorage.propai_access_token.",
-  authError: "API authentication is required for live workspace calls.",
-  avmFormTitle: "AVM estimate input",
-  addressLabel: "Address",
-  areaSqmLabel: "Area (sqm)",
-  submitAvmAction: "Run AVM estimate",
-  missingAddressError: "Address is required.",
-  missingAreaError: "A positive area value is required.",
-  txFormTitle: "Transaction query input",
-  lawdCdLabel: "District code (lawd_cd)",
-  dealYmLabel: "Deal month (YYYYMM)",
-  submitTxAction: "Query transactions",
-  missingLawdCdError: "District code is required.",
-  avmResultTitle: "AVM estimate result",
-  estimatedPriceLabel: "Estimated price",
-  pricePerSqmLabel: "Price per sqm",
-  confidenceLabel: "Confidence",
-  comparablesLabel: "Comparables",
-  modelLabel: "Model version",
-  txResultTitle: "Recent transactions",
-  aptNameLabel: "Complex name",
-  dealAmountLabel: "Deal amount (10K KRW)",
-  areaLabel: "Area",
-  floorLabel: "Floor",
-  dealDateLabel: "Deal date",
-  placeholder: "Submit the form to see results.",
-};
-
-const LABELS: Record<Locale, Labels> = {
-  ko: KO_LABELS,
-  en: EN_LABELS,
-  "zh-CN": KO_LABELS,
+type SearchResults = {
+  avm: AVMEstimateResponse | null;
+  transactions: TransactionItem[];
+  totalCount: number;
+  searchAddress: string;
+  months: number;
+  radius: number;
 };
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                           */
 /* ------------------------------------------------------------------ */
 
-function formatCurrency(locale: string, value: number) {
-  return new Intl.NumberFormat(locale, {
+function formatPrice(value: number): string {
+  if (value >= 10000) {
+    const uk = Math.floor(value / 10000);
+    const remainder = value % 10000;
+    return remainder > 0
+      ? `${uk}억 ${remainder.toLocaleString()}만원`
+      : `${uk}억원`;
+  }
+  return `${value.toLocaleString()}만원`;
+}
+
+function formatCurrency(value: number): string {
+  return new Intl.NumberFormat("ko-KR", {
     style: "currency",
     currency: "KRW",
     maximumFractionDigits: 0,
   }).format(value);
 }
 
-function formatPercent(value: number) {
-  return `${(value * 100).toFixed(1)}%`;
+function periodToMonths(period: "3m" | "6m" | "1y"): number {
+  if (period === "3m") return 3;
+  if (period === "6m") return 6;
+  return 12;
 }
 
-function extractErrorMessage(error: unknown, authMessage: string) {
-  if (error instanceof ApiClientError) {
-    if (error.status === 401 || error.status === 403) return authMessage;
-    return `API 요청이 상태 ${error.status}(으)로 실패했습니다.`;
+function generateDealYms(months: number): string[] {
+  const result: string[] = [];
+  const now = new Date();
+  for (let i = 0; i < months; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    result.push(`${y}${m}`);
   }
-  if (error instanceof Error) return error.message;
-  return "요청에 실패했습니다.";
+  return result;
+}
+
+function groupByRadius(items: TransactionItem[]) {
+  const buckets = [
+    { label: "반경 500m", max: 500, items: [] as TransactionItem[] },
+    { label: "반경 1km", max: 1000, items: [] as TransactionItem[] },
+    { label: "반경 3km", max: 3000, items: [] as TransactionItem[] },
+    { label: "반경 5km+", max: Infinity, items: [] as TransactionItem[] },
+  ];
+
+  for (const tx of items) {
+    const dist = tx.distance_m ?? 1000; // 기본 1km 가정
+    for (const bucket of buckets) {
+      if (dist <= bucket.max) {
+        bucket.items.push(tx);
+        break;
+      }
+    }
+  }
+
+  return buckets.filter((b) => b.items.length > 0);
+}
+
+function averagePrice(items: TransactionItem[]): number {
+  const prices = items
+    .map((t) => t.deal_amount)
+    .filter((v): v is number => v != null);
+  if (prices.length === 0) return 0;
+  return Math.round(prices.reduce((a, b) => a + b, 0) / prices.length);
 }
 
 function MetricTile({ label, value }: { label: string; value: string }) {
@@ -182,7 +123,7 @@ function MetricTile({ label, value }: { label: string; value: string }) {
       <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
         {label}
       </p>
-      <p className="mt-2 text-sm font-semibold text-[var(--text-primary)]">
+      <p className="mt-2 text-lg font-bold text-[var(--text-primary)]">
         {value}
       </p>
     </div>
@@ -193,302 +134,272 @@ function MetricTile({ label, value }: { label: string; value: string }) {
 /*  Component                                                         */
 /* ------------------------------------------------------------------ */
 
-export function MarketInsightsWorkspaceClient({
-  locale,
-}: {
-  locale: Locale;
-}) {
-  const labels = LABELS[locale] || LABELS["ko"];
-  const runtimeConfig = apiClient.getRuntimeConfig();
-  const canUseLiveApi =
-    runtimeConfig.mode === "live" || runtimeConfig.hasAccessToken;
+export function MarketInsightsWorkspaceClient() {
+  const [results, setResults] = useState<SearchResults | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
-  const [workspaceError, setWorkspaceError] = useState("");
-  const [isSubmittingAvm, setIsSubmittingAvm] = useState(false);
-  const [avmResult, setAvmResult] = useState<AVMEstimateResponse | null>(null);
+  const handleSearch = useCallback(
+    async ({ address, lawdCd, radius, period }: AddressSearchResult) => {
+      setLoading(true);
+      setError("");
+      setResults(null);
 
-  const [avmForm, setAvmForm] = useState({
-    address: "",
-    areaSqm: "84",
-  });
+      const months = periodToMonths(period);
 
-  const [txForm, setTxForm] = useState({
-    lawdCd: "11680",
-    dealYm: "202504",
-  });
+      try {
+        // 1. AVM 시세 추정
+        let avm: AVMEstimateResponse | null = null;
+        try {
+          avm = await apiClient.post<AVMEstimateResponse>("/avm/estimate", {
+            body: { address, area_sqm: 84 },
+          });
+        } catch {
+          // AVM 실패 시에도 거래 데이터는 조회 시도
+        }
 
-  const txQuery = useQuery({
-    queryKey: ["transactions", txForm.lawdCd, txForm.dealYm],
-    enabled: false,
-  });
+        // 2. 실거래 데이터 조회 (기간별 복수 월)
+        const dealYms = generateDealYms(months);
+        const allTransactions: TransactionItem[] = [];
 
-  const [txResult, setTxResult] = useState<TransactionsResponse | null>(null);
-  const [isSubmittingTx, setIsSubmittingTx] = useState(false);
+        // 최근 월부터 순차 조회 (최대 3개 요청으로 제한)
+        const ymBatches = dealYms.slice(0, Math.min(dealYms.length, 3));
+        const txPromises = ymBatches.map((ym) =>
+          apiClient
+            .get<TransactionsResponse>(
+              `/external/transactions/apt?lawd_cd=${lawdCd}&deal_ym=${ym}`,
+            )
+            .catch(() => null),
+        );
+        const txResults = await Promise.all(txPromises);
 
-  async function handleAvmSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setWorkspaceError("");
+        for (const res of txResults) {
+          if (res?.items) {
+            allTransactions.push(...res.items);
+          }
+        }
 
-    const address = avmForm.address.trim();
-    if (!address) {
-      setWorkspaceError(labels.missingAddressError);
-      return;
-    }
-    const areaSqm = Number(avmForm.areaSqm);
-    if (!Number.isFinite(areaSqm) || areaSqm <= 0) {
-      setWorkspaceError(labels.missingAreaError);
-      return;
-    }
+        setResults({
+          avm,
+          transactions: allTransactions,
+          totalCount: allTransactions.length,
+          searchAddress: address,
+          months,
+          radius,
+        });
+      } catch (err) {
+        if (err instanceof ApiClientError) {
+          setError(`요청 실패 (${err.status}): API 서버에 연결할 수 없습니다.`);
+        } else if (err instanceof Error) {
+          setError(err.message);
+        } else {
+          setError("요청 처리에 실패했습니다.");
+        }
+      } finally {
+        setLoading(false);
+      }
+    },
+    [],
+  );
 
-    setIsSubmittingAvm(true);
-    try {
-      const res = await apiClient.post<AVMEstimateResponse>("/avm/estimate", {
-        useMock: false,
-        body: { address, area_sqm: areaSqm },
-      });
-      setAvmResult(res);
-    } catch (error) {
-      setWorkspaceError(extractErrorMessage(error, labels.authError));
-    } finally {
-      setIsSubmittingAvm(false);
-    }
-  }
-
-  async function handleTxSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setWorkspaceError("");
-
-    if (!txForm.lawdCd.trim()) {
-      setWorkspaceError(labels.missingLawdCdError);
-      return;
-    }
-
-    setIsSubmittingTx(true);
-    try {
-      const res = await apiClient.get<TransactionsResponse>(
-        `/external/transactions/apt?lawd_cd=${txForm.lawdCd.trim()}&deal_ym=${txForm.dealYm.trim()}`,
-        { useMock: false },
-      );
-      setTxResult(res);
-    } catch (error) {
-      setWorkspaceError(extractErrorMessage(error, labels.authError));
-    } finally {
-      setIsSubmittingTx(false);
-    }
-  }
+  const radiusGroups = results ? groupByRadius(results.transactions) : [];
 
   return (
     <section className="grid gap-6">
-      {/* Hero */}
-      <Card className="rounded-[var(--radius-2xl)] bg-[var(--surface-strong)] shadow-[var(--shadow-lg)]">
-        <CardContent className="p-8">
-          <div className="flex flex-wrap items-center gap-3">
-            <span className="rounded-full bg-[rgba(14,116,144,0.1)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--accent-strong)]">
-              {labels.heroTitle}
-            </span>
-            <span className="rounded-full border border-[var(--line)] px-4 py-2 text-xs font-medium text-[var(--text-secondary)]">
-              {runtimeConfig.mode === "live" ? "LIVE" : "HYBRID"}
-            </span>
-          </div>
-          <h3 className="mt-5 text-3xl font-bold text-[var(--text-primary)]">
-            {labels.heroDescription}
-          </h3>
-          <p className="mt-4 max-w-3xl text-sm leading-8 text-[var(--text-secondary)]">
-            {labels.heroHint}
-          </p>
-          <p className="mt-3 max-w-3xl text-sm leading-8 text-[var(--text-tertiary)]">
-            {labels.tokenHint}
-          </p>
-          {!canUseLiveApi && (
-            <div className="mt-6 rounded-[var(--radius-xl)] border border-dashed border-[var(--line)] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[var(--text-secondary)]">
-              {labels.authError}
-            </div>
-          )}
-          {workspaceError && (
-            <div className="mt-6 rounded-[var(--radius-xl)] border border-[rgba(217,119,6,0.28)] bg-[rgba(217,119,6,0.08)] p-5 text-sm leading-7 text-[var(--spot)]">
-              {workspaceError}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Two forms */}
-      <div className="grid gap-6 lg:grid-cols-2">
-        {/* AVM Form */}
-        <Card>
-          <CardContent className="p-6">
-            <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
-              {labels.avmFormTitle}
-            </p>
-            <form className="mt-4 grid gap-3" onSubmit={handleAvmSubmit}>
-              <Input
-                value={avmForm.address}
-                onChange={(e) =>
-                  setAvmForm((c) => ({ ...c, address: e.target.value }))
-                }
-                placeholder={labels.addressLabel}
-              />
-              <Input
-                type="number"
-                value={avmForm.areaSqm}
-                onChange={(e) =>
-                  setAvmForm((c) => ({ ...c, areaSqm: e.target.value }))
-                }
-                placeholder={labels.areaSqmLabel}
-              />
-              <Button
-                type="submit"
-                disabled={!canUseLiveApi || isSubmittingAvm}
-              >
-                {isSubmittingAvm
-                  ? `${labels.submitAvmAction}...`
-                  : labels.submitAvmAction}
-              </Button>
-            </form>
-          </CardContent>
-        </Card>
-
-        {/* Transaction Form */}
-        <Card>
-          <CardContent className="p-6">
-            <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
-              {labels.txFormTitle}
-            </p>
-            <form className="mt-4 grid gap-3" onSubmit={handleTxSubmit}>
-              <Input
-                value={txForm.lawdCd}
-                onChange={(e) =>
-                  setTxForm((c) => ({ ...c, lawdCd: e.target.value }))
-                }
-                placeholder={labels.lawdCdLabel}
-              />
-              <Input
-                value={txForm.dealYm}
-                onChange={(e) =>
-                  setTxForm((c) => ({ ...c, dealYm: e.target.value }))
-                }
-                placeholder={labels.dealYmLabel}
-              />
-              <Button
-                type="submit"
-                disabled={!canUseLiveApi || isSubmittingTx}
-              >
-                {isSubmittingTx
-                  ? `${labels.submitTxAction}...`
-                  : labels.submitTxAction}
-              </Button>
-            </form>
-          </CardContent>
-        </Card>
+      {/* 헤더 */}
+      <div>
+        <h2 className="text-2xl font-black text-[var(--text-primary)]">
+          시장 동향 분석
+        </h2>
+        <p className="mt-1 text-sm text-[var(--text-secondary)]">
+          주소를 입력하면 주변 실거래가, 시세 추이, 시장 동향을 분석합니다.
+        </p>
       </div>
 
-      {/* AVM Results */}
-      <Card>
-        <CardContent className="p-6">
-          <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
-            {labels.avmResultTitle}
-          </p>
-          {avmResult ? (
-            <div className="mt-4 grid gap-4 md:grid-cols-3">
-              <MetricTile
-                label={labels.estimatedPriceLabel}
-                value={
-                  avmResult.estimated_price != null
-                    ? formatCurrency(locale, avmResult.estimated_price)
-                    : "-"
-                }
-              />
-              <MetricTile
-                label={labels.pricePerSqmLabel}
-                value={
-                  avmResult.price_per_sqm != null
-                    ? formatCurrency(locale, avmResult.price_per_sqm)
-                    : "-"
-                }
-              />
-              <MetricTile
-                label={labels.confidenceLabel}
-                value={
-                  avmResult.confidence_score != null
-                    ? formatPercent(avmResult.confidence_score)
-                    : "-"
-                }
-              />
-              <MetricTile
-                label={labels.comparablesLabel}
-                value={
-                  avmResult.comparable_count != null
-                    ? String(avmResult.comparable_count)
-                    : "-"
-                }
-              />
-              <MetricTile
-                label={labels.modelLabel}
-                value={avmResult.model_version ?? "-"}
-              />
-            </div>
-          ) : (
-            <div className="mt-4 rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[var(--text-secondary)]">
-              {labels.placeholder}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      {/* 검색 */}
+      <AddressSearchWithRadius onSearch={handleSearch} isLoading={loading} />
 
-      {/* Transaction Results */}
-      <Card>
-        <CardContent className="p-6">
-          <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
-            {labels.txResultTitle}
-          </p>
-          {txResult?.items && txResult.items.length > 0 ? (
-            <div className="mt-4 overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="text-left text-xs font-bold uppercase tracking-widest text-[var(--text-tertiary)]">
-                    <th className="pb-3 pr-4">{labels.aptNameLabel}</th>
-                    <th className="pb-3 pr-4">{labels.dealAmountLabel}</th>
-                    <th className="pb-3 pr-4">{labels.areaLabel}</th>
-                    <th className="pb-3 pr-4">{labels.floorLabel}</th>
-                    <th className="pb-3">{labels.dealDateLabel}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {txResult.items.map((tx, idx) => (
-                    <tr
-                      key={idx}
-                      className="border-t border-[var(--line)]"
+      {/* 에러 */}
+      {error && (
+        <div className="rounded-[var(--radius-xl)] border border-[rgba(217,119,6,0.28)] bg-[rgba(217,119,6,0.08)] p-5 text-sm leading-7 text-[var(--spot)]">
+          {error}
+        </div>
+      )}
+
+      {/* 결과 */}
+      {results && (
+        <>
+          {/* AVM 시세 추정 */}
+          <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
+            <CardContent className="p-6">
+              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--text-tertiary)]">
+                AI 시세 추정
+              </p>
+              {results.avm ? (
+                <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                  <MetricTile
+                    label="추정 시세"
+                    value={
+                      results.avm.estimated_price != null
+                        ? formatCurrency(results.avm.estimated_price)
+                        : "-"
+                    }
+                  />
+                  <MetricTile
+                    label="평당 가격"
+                    value={
+                      results.avm.price_per_sqm != null
+                        ? formatCurrency(results.avm.price_per_sqm)
+                        : "-"
+                    }
+                  />
+                  <MetricTile
+                    label="신뢰도"
+                    value={
+                      results.avm.confidence_score != null
+                        ? `${(results.avm.confidence_score * 100).toFixed(1)}%`
+                        : "-"
+                    }
+                  />
+                  <MetricTile
+                    label="비교 사례"
+                    value={
+                      results.avm.comparable_count != null
+                        ? `${results.avm.comparable_count}건`
+                        : "-"
+                    }
+                  />
+                </div>
+              ) : (
+                <p className="mt-4 text-sm text-[var(--text-secondary)]">
+                  AI 시세 추정 데이터가 없습니다.
+                </p>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* 주변 실거래 현황 */}
+          <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
+            <CardContent className="p-6">
+              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--text-tertiary)]">
+                주변 실거래 현황
+              </p>
+              <div className="mt-3 flex flex-wrap items-baseline gap-4">
+                <p className="text-lg font-bold text-[var(--text-primary)]">
+                  최근 {results.months}개월간{" "}
+                  <span className="text-[var(--accent-strong)]">
+                    {results.totalCount}건
+                  </span>{" "}
+                  거래
+                </p>
+                {results.totalCount > 0 && (
+                  <p className="text-sm text-[var(--text-secondary)]">
+                    평균 거래가:{" "}
+                    {formatPrice(averagePrice(results.transactions))}
+                  </p>
+                )}
+              </div>
+
+              {/* 반경별 분류 */}
+              {radiusGroups.length > 0 && (
+                <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  {radiusGroups.map((group) => (
+                    <div
+                      key={group.label}
+                      className="rounded-[var(--radius-xl)] border border-[var(--line)] bg-[var(--surface-soft)] p-4"
                     >
-                      <td className="py-3 pr-4 font-semibold text-[var(--text-primary)]">
-                        {tx.apt_name ?? "-"}
-                      </td>
-                      <td className="py-3 pr-4 text-[var(--text-secondary)]">
-                        {tx.deal_amount != null
-                          ? tx.deal_amount.toLocaleString()
-                          : "-"}
-                      </td>
-                      <td className="py-3 pr-4 text-[var(--text-secondary)]">
-                        {tx.area_sqm != null ? `${tx.area_sqm} sqm` : "-"}
-                      </td>
-                      <td className="py-3 pr-4 text-[var(--text-secondary)]">
-                        {tx.floor != null ? `${tx.floor}F` : "-"}
-                      </td>
-                      <td className="py-3 text-[var(--text-secondary)]">
-                        {tx.deal_year ?? ""}.{tx.deal_month ?? ""}.
-                        {tx.deal_day ?? ""}
-                      </td>
-                    </tr>
+                      <p className="text-xs font-semibold text-[var(--text-tertiary)]">
+                        {group.label}
+                      </p>
+                      <p className="mt-1 text-sm font-bold text-[var(--text-primary)]">
+                        {group.items.length}건
+                      </p>
+                      <p className="text-xs text-[var(--text-secondary)]">
+                        평균 {formatPrice(averagePrice(group.items))}
+                      </p>
+                    </div>
                   ))}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <div className="mt-4 rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[var(--text-secondary)]">
-              {labels.placeholder}
-            </div>
+                </div>
+              )}
+
+              {results.totalCount === 0 && (
+                <p className="mt-4 text-sm text-[var(--text-secondary)]">
+                  조건에 맞는 실거래 데이터가 없습니다.
+                </p>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* 실거래 상세 내역 */}
+          {results.transactions.length > 0 && (
+            <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
+              <CardContent className="p-6">
+                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--text-tertiary)]">
+                  실거래 상세 내역
+                </p>
+                <div className="mt-4 overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-left text-xs font-bold uppercase tracking-widest text-[var(--text-tertiary)]">
+                        <th className="pb-3 pr-4">거래일</th>
+                        <th className="pb-3 pr-4">단지명</th>
+                        <th className="pb-3 pr-4">면적</th>
+                        <th className="pb-3 pr-4">층</th>
+                        <th className="pb-3">거래가</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {results.transactions.slice(0, 50).map((tx, idx) => (
+                        <tr
+                          key={idx}
+                          className="border-t border-[var(--line)]"
+                        >
+                          <td className="py-3 pr-4 text-[var(--text-secondary)]">
+                            {tx.deal_year ?? ""}.{tx.deal_month ?? ""}.
+                            {tx.deal_day ?? ""}
+                          </td>
+                          <td className="py-3 pr-4 font-semibold text-[var(--text-primary)]">
+                            {tx.apt_name ?? "-"}
+                          </td>
+                          <td className="py-3 pr-4 text-[var(--text-secondary)]">
+                            {tx.area_sqm != null
+                              ? `${tx.area_sqm}m\u00B2`
+                              : "-"}
+                          </td>
+                          <td className="py-3 pr-4 text-[var(--text-secondary)]">
+                            {tx.floor != null ? `${tx.floor}층` : "-"}
+                          </td>
+                          <td className="py-3 font-semibold text-[var(--text-primary)]">
+                            {tx.deal_amount != null
+                              ? formatPrice(tx.deal_amount)
+                              : "-"}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {results.transactions.length > 50 && (
+                    <p className="mt-3 text-xs text-[var(--text-tertiary)]">
+                      상위 50건만 표시 (전체 {results.transactions.length}건)
+                    </p>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
           )}
-        </CardContent>
-      </Card>
+        </>
+      )}
+
+      {/* 초기 상태 안내 */}
+      {!results && !loading && !error && (
+        <Card className="rounded-[var(--radius-2xl)]">
+          <CardContent className="p-8 text-center">
+            <p className="text-sm text-[var(--text-secondary)]">
+              주소를 검색하면 AI 시세 추정과 주변 실거래 현황이 표시됩니다.
+            </p>
+          </CardContent>
+        </Card>
+      )}
     </section>
   );
 }

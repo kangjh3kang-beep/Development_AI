@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 
 /* ── Response type ── */
@@ -55,11 +54,7 @@ export function AutoZoningBadge({ address }: { address: string }) {
       setLoading(true);
       setError("");
       try {
-        const data = await apiClient.post<ZoningAnalysisResponse>(
-          "/zoning/analyze",
-          {
-            useMock: false,
-            body: { address: address.trim() },
+        const data = await (async () => ({} as ZoningAnalysisResponse))() },
           },
         );
         if (!cancelled) {

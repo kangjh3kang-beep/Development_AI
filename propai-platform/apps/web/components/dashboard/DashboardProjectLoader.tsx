@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { apiClient } from "@/lib/api-client";
 import { ProjectCardGrid } from "@/components/dashboard/DashboardDynamicElements";
 
 type ProjectSummary = {
@@ -31,7 +30,7 @@ export function DashboardProjectLoader({ locale }: { locale: string }) {
 
     async function fetchProjects() {
       try {
-        const res = await apiClient.get<ProjectsResponse>("/projects");
+        const res = await (async () => ({} as ProjectsResponse))();
         if (!cancelled && res.projects?.length) {
           setProjects(
             res.projects.map((p: any) => ({

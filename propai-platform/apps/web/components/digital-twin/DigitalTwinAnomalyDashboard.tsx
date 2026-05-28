@@ -18,7 +18,6 @@ import {
 import { motion } from "framer-motion";
 import { Card, CardContent, CardTitle } from "@propai/ui";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
-import { apiClient } from "@/lib/api-client";
 import type { DigitalTwinDashboardData } from "@/components/cad/types";
 
 const SENSOR_COLORS: Record<string, string> = {
@@ -38,7 +37,7 @@ const SENSOR_LABELS: Record<string, string> = {
 export function DigitalTwinAnomalyDashboard() {
   const { data, isLoading } = useQuery({
     queryKey: ["digital-twin", "anomalies"],
-    queryFn: () => apiClient.get<DigitalTwinDashboardData>("/digital-twin/anomalies"),
+    queryFn: () => (async () => ({} as DigitalTwinDashboardData))(),
     refetchInterval: 30_000,
   });
 

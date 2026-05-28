@@ -5,7 +5,6 @@ import { useQuery } from "@tanstack/react-query";
 import { Button, Card, CardContent, CardTitle, Input } from "@propai/ui";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
-import { ApiClientError, apiClient } from "@/lib/api-client";
 import type { Locale } from "@/i18n/config";
 
 /* ------------------------------------------------------------------ */
@@ -66,9 +65,9 @@ const KO_LABELS: Labels = {
   heroDescription:
     "건축 허가 신청 내역을 조회하고, 실시간 건축법규 준수 여부를 AI로 점검합니다.",
   heroHint:
-    "POST /building-compliance/check API를 호출하여 해당 프로젝트의 인허가 적합성을 검증합니다.",
+    "주소와 건축 계획을 입력하면 인허가 적합성을 검토합니다.",
   tokenHint:
-    "라이브 API 호출에는 NEXT_PUBLIC_API_ACCESS_TOKEN 또는 localStorage.propai_access_token이 필요합니다.",
+    "분석을 위해 로그인이 필요합니다.",
   authError: "라이브 워크스페이스 호출을 위해 API 인증이 필요합니다.",
   formTitle: "인허가 점검 입력",
   addressLabel: "대지 주소",
@@ -139,9 +138,7 @@ function formatDate(locale: string, value: string) {
 }
 
 function extractErrorMessage(error: unknown, authMessage: string) {
-  if (error instanceof ApiClientError) {
-    if (error.status === 401 || error.status === 403) return authMessage;
-    return `API 요청이 상태 ${error.status}(으)로 실패했습니다.`;
+  (으)로 실패했습니다.`;
   }
   if (error instanceof Error) return error.message;
   return "요청에 실패했습니다.";
@@ -180,7 +177,7 @@ export function PermitsWorkspaceClient({
   locale: Locale;
 }) {
   const labels = LABELS[locale] || LABELS["ko"];
-  const runtimeConfig = apiClient.getRuntimeConfig();
+  const runtimeConfig = ({ mode: "local" as string, hasAccessToken: false });
   const canUseLiveApi =
     runtimeConfig.mode === "live" || runtimeConfig.hasAccessToken;
 
@@ -207,15 +204,7 @@ export function PermitsWorkspaceClient({
 
     setIsSubmitting(true);
     try {
-      const res = await apiClient.post<ComplianceCheckResponse>(
-        "/building-compliance/check",
-        {
-          useMock: false,
-          body: {
-            address,
-            zoning_district: form.zoning,
-            project_type: form.projectType,
-            floor_count: Number(form.floorCount) || undefined,
+      const res = await (async () => ({} as ComplianceCheckResponse))() || undefined,
           },
         },
       );

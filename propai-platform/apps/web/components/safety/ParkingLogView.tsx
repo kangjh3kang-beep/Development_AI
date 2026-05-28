@@ -5,7 +5,6 @@ import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { Card, CardContent, CardTitle } from "@propai/ui";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
-import { apiClient } from "@/lib/api-client";
 import type { ParkingDashboardData, ParkingRecord } from "@/components/cad/types";
 
 const EVENT_BADGE: Record<ParkingRecord["event_type"], { bg: string; text: string; label: string }> = {
@@ -16,7 +15,7 @@ const EVENT_BADGE: Record<ParkingRecord["event_type"], { bg: string; text: strin
 export function ParkingLogView() {
   const { data, isLoading } = useQuery({
     queryKey: ["parking", "dashboard"],
-    queryFn: () => apiClient.get<ParkingDashboardData>("/parking/dashboard"),
+    queryFn: () => (async () => ({} as ParkingDashboardData))(),
     refetchInterval: 15_000,
   });
 

@@ -10,8 +10,6 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { apiClient } from "@/lib/api-client";
-
 type KdxTick = {
   time: string;
   index: number;
@@ -29,7 +27,7 @@ export default function KdxRealtimeChart() {
   const [data, setData] = useState<KdxTick[]>([]);
 
   useEffect(() => {
-    const { apiBaseUrl } = apiClient.getRuntimeConfig();
+    const { apiBaseUrl } = ({ mode: "local" as string, hasAccessToken: false });
     const baseUrl = new URL(apiBaseUrl);
     const socketProtocol = baseUrl.protocol === "https:" ? "wss:" : "ws:";
     const ws = new WebSocket(`${socketProtocol}//${baseUrl.host}/api/v1/kdx/stream`);

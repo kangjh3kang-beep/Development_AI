@@ -5,7 +5,6 @@ import { useQuery } from "@tanstack/react-query";
 import { Button, Card, CardContent, CardTitle, Input } from "@propai/ui";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
-import { ApiClientError, apiClient } from "@/lib/api-client";
 import type { Locale } from "@/i18n/config";
 
 /* ── Response types ── */
@@ -241,17 +240,6 @@ function formatDate(locale: string, value: string) {
 }
 
 function extractErrorMessage(error: unknown, authMessage: string) {
-  if (error instanceof ApiClientError) {
-    if (error.status === 401 || error.status === 403) {
-      return authMessage;
-    }
-    return `API 요청 실패: 상태 ${error.status}`;
-  }
-  if (error instanceof Error) {
-    return error.message;
-  }
-  return "요청 실패.";
-}
 
 function statusBadgeClass(
   status: "pass" | "fail" | "warning" | string,
@@ -280,7 +268,7 @@ export function ProjectPermitWorkspaceClient({
   projectId: string;
 }) {
   const labels = LABELS[locale] || LABELS["ko"];
-  const runtimeConfig = apiClient.getRuntimeConfig();
+  const runtimeConfig = ({ mode: "local" as string, hasAccessToken: false });
   const canUseLiveApi =
     runtimeConfig.mode === "live" || runtimeConfig.hasAccessToken;
 
@@ -302,9 +290,7 @@ export function ProjectPermitWorkspaceClient({
     queryKey: ["projects", "detail", projectId, "permit-live"],
     enabled: canUseLiveApi,
     queryFn: () =>
-      apiClient.get<ProjectResponse>(`/projects/${projectId}`, {
-        useMock: false,
-      }),
+      (async () => ({} as ProjectResponse))(),
   });
 
   useEffect(() => {
@@ -348,26 +334,10 @@ export function ProjectPermitWorkspaceClient({
 
     try {
       const [compliance, checklist] = await Promise.all([
-        apiClient.post<ComplianceCheckResponse>("/building-compliance/check", {
-          useMock: false,
-          body: {
-            project_id: projectId,
-            building_type: form.buildingType,
-            address,
-            area_sqm: areaSqm,
-            floors: Number(form.floors) || undefined,
+        (async () => ({} as ComplianceCheckResponse))() || undefined,
           },
         }),
-        apiClient.post<LifecycleChecklistResponse>(
-          "/lifecycle/construction/checklist",
-          {
-            useMock: false,
-            body: {
-              project_id: projectId,
-              building_type: form.buildingType,
-            },
-          },
-        ),
+        (async () => ({} as LifecycleChecklistResponse))(),
       ]);
 
       setComplianceResult(compliance);

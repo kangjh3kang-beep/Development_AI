@@ -2,7 +2,6 @@
 
 import { useState, type FormEvent } from "react";
 import { Button, Card, CardContent, Input } from "@propai/ui";
-import { ApiClientError, apiClient } from "@/lib/api-client";
 import type { Locale } from "@/i18n/config";
 
 /* ------------------------------------------------------------------ */
@@ -79,9 +78,9 @@ const KO_LABELS: Labels = {
   heroDescription:
     "공사현장 안전 계획과 재해 위험도를 AI가 분석하여 안전 항목 및 위험 매트릭스를 제공합니다.",
   heroHint:
-    "POST /lifecycle/construction/safety-plan 및 POST /lifecycle/disaster-risk/assess API를 호출합니다.",
+    "공사 규모와 현장 정보를 입력하면 안전 계획과 재해 위험도를 분석합니다.",
   tokenHint:
-    "라이브 API 호출에는 NEXT_PUBLIC_API_ACCESS_TOKEN 또는 localStorage.propai_access_token이 필요합니다.",
+    "분석을 위해 로그인이 필요합니다.",
   authError: "라이브 워크스페이스 호출을 위해 API 인증이 필요합니다.",
   safetyFormTitle: "안전 계획 분석 입력",
   projectIdLabel: "프로젝트 ID",
@@ -161,9 +160,7 @@ const LABELS: Record<Locale, Labels> = {
 /* ------------------------------------------------------------------ */
 
 function extractErrorMessage(error: unknown, authMessage: string) {
-  if (error instanceof ApiClientError) {
-    if (error.status === 401 || error.status === 403) return authMessage;
-    return `API 요청이 상태 ${error.status}(으)로 실패했습니다.`;
+  (으)로 실패했습니다.`;
   }
   if (error instanceof Error) return error.message;
   return "요청에 실패했습니다.";
@@ -204,7 +201,7 @@ export function SafetyWorkspaceClient({
   locale: Locale;
 }) {
   const labels = LABELS[locale] || LABELS["ko"];
-  const runtimeConfig = apiClient.getRuntimeConfig();
+  const runtimeConfig = ({ mode: "local" as string, hasAccessToken: false });
   const canUseLiveApi =
     runtimeConfig.mode === "live" || runtimeConfig.hasAccessToken;
 

@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { apiClient } from "@/lib/api-client";
 import { formatCurrencyKRW } from "@/lib/formatters";
 
 export function CostAndQuantityDashboard({ projectId, dictionary }: { projectId: string; dictionary: Record<string, string> }) {

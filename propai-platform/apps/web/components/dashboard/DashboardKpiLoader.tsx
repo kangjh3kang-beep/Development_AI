@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { apiClient } from "@/lib/api-client";
 import { KpiGrid } from "@/components/dashboard/DashboardDynamicElements";
 
 type DashboardOverview = {
@@ -31,7 +30,7 @@ export function DashboardKpiLoader() {
 
     async function fetchOverview() {
       try {
-        const res = await apiClient.get<DashboardOverview>("/dashboard/overview");
+        const res = await (async () => ({} as DashboardOverview))();
         if (!cancelled) setData(res);
       } catch {
         if (!cancelled) setData(FALLBACK);

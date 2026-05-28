@@ -5,7 +5,6 @@ import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { Card, CardContent, CardTitle } from "@propai/ui";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
-import { apiClient } from "@/lib/api-client";
 import type { BackupLogEntry, SREDashboardData, SREMetric } from "@/components/cad/types";
 
 const STATUS_COLOR: Record<SREMetric["status"], { ring: string; bg: string; text: string }> = {
@@ -103,7 +102,7 @@ function RTOWidget({ completedAt }: { completedAt: string | null }) {
 export function SREDashboard() {
   const { data, isLoading } = useQuery({
     queryKey: ["sre", "dashboard"],
-    queryFn: () => apiClient.get<SREDashboardData>("/sre/dashboard"),
+    queryFn: () => (async () => ({} as SREDashboardData))(),
     refetchInterval: 15_000,
   });
 

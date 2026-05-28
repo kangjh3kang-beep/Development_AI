@@ -5,7 +5,6 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button, Card, CardContent, CardTitle, Input, Select } from "@propai/ui";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
-import { ApiClientError, apiClient } from "@/lib/api-client";
 import type { Locale } from "@/i18n/config";
 
 type ProjectSummary = { id: string; name: string; total_area_sqm: number | null };
@@ -55,18 +54,12 @@ const yesNo = [
 ];
 
 function errorMessage(error: unknown) {
-  if (error instanceof ApiClientError) {
-    if (error.status === 401 || error.status === 403) {
-      return "API authentication is required for live workspace calls.";
-    }
-    return `API request failed with status ${error.status}.`;
-  }
   return error instanceof Error ? error.message : "Request failed.";
 }
 
 async function optionalGet<T>(path: string) {
   try {
-    return await apiClient.get<T>(path, { useMock: false });
+    return await (async () => ({} as T))();
   } catch (error) {
     if (error instanceof ApiClientError && error.status === 404) {
       return null;
@@ -81,7 +74,7 @@ export function DigitalTwinControlTowerWorkspaceClient({
   locale: Locale;
 }) {
   const queryClient = useQueryClient();
-  const runtime = apiClient.getRuntimeConfig();
+  const runtime = ({ mode: "local" as string, hasAccessToken: false });
   const canUseLiveApi = runtime.mode === "live" || runtime.hasAccessToken;
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [manualProjectId, setManualProjectId] = useState("");
@@ -165,12 +158,7 @@ export function DigitalTwinControlTowerWorkspaceClient({
     if (!activeProjectId) return setWorkspaceError("A real project UUID is required.");
     setPending("status");
     try {
-      await apiClient.post("/digital-twin/status/snapshot", {
-        useMock: false,
-        body: {
-          project_id: activeProjectId,
-          building_type: statusForm.buildingType,
-          gross_floor_area_sqm: Number(statusForm.grossFloorArea),
+      await (async () => ({}))(),
           annual_energy_kwh: Number(statusForm.annualEnergy),
           occupancy_rate: Number(statusForm.occupancyRate),
           sensor_count: Number(statusForm.sensorCount),
@@ -198,11 +186,7 @@ export function DigitalTwinControlTowerWorkspaceClient({
     if (!activeProjectId) return setWorkspaceError("A real project UUID is required.");
     setPending("risk");
     try {
-      await apiClient.post("/risk/unified/analyze", {
-        useMock: false,
-        body: {
-          project_id: activeProjectId,
-          base_project_cost_krw: Number(riskForm.baseProjectCost),
+      await (async () => ({}))(),
           market_risk_score: Number(riskForm.marketRiskScore),
           ltv_ratio: Number(riskForm.ltvRatio),
           dscr: Number(riskForm.dscr),
@@ -227,13 +211,7 @@ export function DigitalTwinControlTowerWorkspaceClient({
     if (!activeProjectId) return setWorkspaceError("A real project UUID is required.");
     setPending("permit");
     try {
-      await apiClient.post("/permits/submit", {
-        useMock: false,
-        body: {
-          project_id: activeProjectId,
-          permit_type: permitForm.permitType,
-          region: permitForm.region,
-          building_area_sqm: Number(permitForm.buildingArea),
+      await (async () => ({}))(),
           is_public: permitForm.isPublic === "true",
           is_agricultural: permitForm.isAgricultural === "true",
           applicant_name: "PropAI Ops",

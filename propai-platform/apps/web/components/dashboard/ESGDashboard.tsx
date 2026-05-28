@@ -12,7 +12,6 @@ import {
 } from "recharts";
 import { Card, CardContent, CardTitle } from "@propai/ui";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
-import { apiClient } from "@/lib/api-client";
 import type { ESGDashboardData, ESGMetric } from "@/components/cad/types";
 
 
@@ -41,7 +40,7 @@ function getTargetStatus(metric: ESGMetric): boolean {
 export function ESGDashboard() {
   const { data, isLoading } = useQuery({
     queryKey: ["analytics", "esg"],
-    queryFn: () => apiClient.get<ESGDashboardData>("/analytics/esg"),
+    queryFn: () => (async () => ({} as ESGDashboardData))(),
     refetchInterval: 60_000,
   });
 

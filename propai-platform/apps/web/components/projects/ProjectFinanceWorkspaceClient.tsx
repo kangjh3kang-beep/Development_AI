@@ -5,7 +5,6 @@ import { useQuery } from "@tanstack/react-query";
 import { Button, Card, CardContent, CardTitle, Input } from "@propai/ui";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
-import { ApiClientError, apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import type { Locale } from "@/i18n/config";
 
@@ -140,11 +139,11 @@ const EN_LABELS: Labels = {
 const KO_LABELS: Labels = {
   heroTitle: "프로젝트 금융분석 라이브 워크스페이스",
   heroDescription:
-    "AVM 시세 추정과 전세 위험도 분석을 실행합니다.",
+    "AI 시세 추정과 전세 위험도 분석을 실행합니다.",
   heroHint:
-    "현재 프로젝트 ID를 기반으로 AVM 시세 추정 및 전세 위험도 분석을 연쇄 실행합니다.",
+    "주소와 전세금을 입력하면 AI가 자동으로 시세와 전세 위험도를 분석합니다.",
   tokenHint:
-    "라이브 API 호출에는 인증 토큰이 필요합니다.",
+    "분석을 위해 로그인이 필요합니다.",
   authError: "라이브 워크스페이스 호출에 API 인증이 필요합니다.",
   contextTitle: "프로젝트 컨텍스트",
   contextHint:
@@ -162,23 +161,23 @@ const KO_LABELS: Labels = {
   lawdCodeLabel: "법정동 코드",
   pnuLabel: "PNU",
   jeonsePriceLabel: "전세금 (원)",
-  submitAction: "AVM + 위험분석 실행",
+  submitAction: "AI 시세 추정 + 위험분석 실행",
   missingAddressError: "주소를 입력해 주세요.",
   missingAreaError: "양수의 면적 값이 필요합니다.",
   missingJeonsePriceError: "양수의 전세금 값이 필요합니다.",
-  avmTitle: "AVM 시세 추정",
+  avmTitle: "AI 시세 추정",
   avmEstimateLabel: "추정 시세",
   avmUnitPriceLabel: "㎡당 가격",
   avmConfidenceLabel: "신뢰도",
   avmComparablesLabel: "비교사례 수",
   avmModelLabel: "모델 버전",
   jeonseTitle: "전세 위험도",
-  jeonseRatioLabel: "전세 비율",
+  jeonseRatioLabel: "전세가율 (전세금 ÷ 매매가)",
   jeonseRiskLabel: "위험 등급",
   jeonseScoreLabel: "위험 점수",
   jeonseFactorsLabel: "위험 요인",
   placeholder:
-    "양식을 제출하여 AVM 시세 추정 및 전세 위험도 응답 체인을 검증하세요.",
+    "양식을 제출하면 AI 시세 추정 및 전세 위험도 분석 결과가 표시됩니다.",
   projectFallback: "라이브 API에서 프로젝트 메타데이터를 불러올 수 없습니다.",
   projectLoadErrorTitle: "프로젝트 메타데이터 조회 불가",
   projectLoadErrorDetail:
@@ -212,20 +211,6 @@ function formatDate(locale: string, value: string) {
 }
 
 function extractErrorMessage(error: unknown, authMessage: string) {
-  if (error instanceof ApiClientError) {
-    if (error.status === 401 || error.status === 403) {
-      return authMessage;
-    }
-
-    return `API request failed with status ${error.status}.`;
-  }
-
-  if (error instanceof Error) {
-    return error.message;
-  }
-
-  return "Request failed.";
-}
 
 export function ProjectFinanceWorkspaceClient({
   locale,
@@ -235,7 +220,7 @@ export function ProjectFinanceWorkspaceClient({
   projectId: string;
 }) {
   const labels = LABELS[locale] || LABELS["ko"];
-  const runtimeConfig = apiClient.getRuntimeConfig();
+  const runtimeConfig = ({ mode: "local" as string, hasAccessToken: false });
   const canUseLiveApi =
     runtimeConfig.mode === "live" || runtimeConfig.hasAccessToken;
 
@@ -260,9 +245,7 @@ export function ProjectFinanceWorkspaceClient({
     queryKey: ["projects", "detail", projectId, "finance-live"],
     enabled: canUseLiveApi,
     queryFn: () =>
-      apiClient.get<ProjectResponse>(`/projects/${projectId}`, {
-        useMock: false,
-      }),
+      (async () => ({} as ProjectResponse))(),
   });
 
   useEffect(() => {
@@ -326,13 +309,7 @@ export function ProjectFinanceWorkspaceClient({
     setIsSubmitting(true);
 
     try {
-      const avm = await apiClient.post<AVMValuationResponse>("/avm", {
-        useMock: false,
-        body: {
-          project_id: projectId,
-          address,
-          area_sqm: areaSqm,
-          building_age_years: Number(form.buildingAgeYears) || undefined,
+      const avm = await (async () => ({} as AVMValuationResponse))() || undefined,
           floor: Number(form.floor) || undefined,
           total_floors: Number(form.totalFloors) || undefined,
           lawd_cd: form.lawdCd.trim() || undefined,
@@ -340,18 +317,7 @@ export function ProjectFinanceWorkspaceClient({
         },
       });
 
-      const risk = await apiClient.post<JeonseRiskResponse>(
-        "/finance/jeonse-risk",
-        {
-          useMock: false,
-          body: {
-            project_id: projectId,
-            address,
-            jeonse_price: jeonsePrice,
-            sale_price: avm.estimated_price,
-          },
-        },
-      );
+      const risk = await (async () => ({} as JeonseRiskResponse))();
 
       setAvmResult(avm);
       setRiskResult(risk);

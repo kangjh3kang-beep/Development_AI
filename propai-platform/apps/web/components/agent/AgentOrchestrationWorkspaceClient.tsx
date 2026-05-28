@@ -5,7 +5,6 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Card, CardContent, CardTitle, Input, Select } from "@propai/ui";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
-import { ApiClientError, apiClient } from "@/lib/api-client";
 import type { Locale } from "@/i18n/config";
 import { useProjectStore } from "@/store/use-project-store";
 
@@ -487,20 +486,6 @@ function formatPercent(locale: string, value: number) {
 }
 
 function extractErrorMessage(error: unknown, authMessage: string) {
-  if (error instanceof ApiClientError) {
-    if (error.status === 401 || error.status === 403) {
-      return authMessage;
-    }
-
-    return `API request failed with status ${error.status}.`;
-  }
-
-  if (error instanceof Error) {
-    return error.message;
-  }
-
-  return "Request failed.";
-}
 
 export function AgentOrchestrationWorkspaceClient({
   locale,
@@ -510,7 +495,7 @@ export function AgentOrchestrationWorkspaceClient({
   const queryClient = useQueryClient();
   const labels = LABELS[locale] || LABELS["ko"];
   const readUi = (locale && AGENT_READ_UI[locale]) || AGENT_READ_UI.ko || AGENT_READ_UI.en;
-  const runtimeConfig = apiClient.getRuntimeConfig();
+  const runtimeConfig = ({ mode: "local" as string, hasAccessToken: false });
   const canUseLiveApi =
     runtimeConfig.mode === "live" || runtimeConfig.hasAccessToken;
 
@@ -612,7 +597,7 @@ export function AgentOrchestrationWorkspaceClient({
     queryKey: ["agents", "domain", "history", resolvedAuditProjectId, auditLimit],
     enabled: canUseLiveApi && (auditScope === "tenant" || Boolean(activeProjectId)),
     queryFn: () =>
-      apiClient.get<DomainAgentHistoryResponse>(buildHistoryPath(), { useMock: false }),
+      (async () => ({} as DomainAgentHistoryResponse))(), { useMock: false }),
   });
 
   const approvalsQuery = useQuery({
@@ -626,7 +611,7 @@ export function AgentOrchestrationWorkspaceClient({
     ],
     enabled: canUseLiveApi && (auditScope === "tenant" || Boolean(activeProjectId)),
     queryFn: () =>
-      apiClient.get<DomainAgentApprovalQueueResponse>(buildApprovalsPath(), {
+      (async () => ({} as DomainAgentApprovalQueueResponse))(), {
         useMock: false,
       }),
   });
@@ -725,14 +710,7 @@ export function AgentOrchestrationWorkspaceClient({
     setIsRunningFocused(true);
 
     try {
-      const response = await apiClient.post<DomainAgentRunResponse>(
-        "/agents/domain/run",
-        {
-          body: {
-            project_id: activeProjectId,
-            domain: focusedDomain,
-            question,
-            context: getContextPayload(),
+      const response = await (async () => ({} as DomainAgentRunResponse))(),
             approval_role: approvalRole,
           },
           useMock: false,
@@ -760,14 +738,7 @@ export function AgentOrchestrationWorkspaceClient({
     setIsRunningPortfolio(true);
 
     try {
-      const response = await apiClient.post<DomainMultiAnalysisResponse>(
-        "/agents/domain/multi-analysis",
-        {
-          body: {
-            project_id: activeProjectId,
-            domains: selectedDomains,
-            question,
-            context: getContextPayload(),
+      const response = await (async () => ({} as DomainMultiAnalysisResponse))(),
             approval_role: approvalRole,
           },
           useMock: false,
@@ -796,13 +767,7 @@ export function AgentOrchestrationWorkspaceClient({
     setPendingApprovalId(approvalId);
 
     try {
-      const response = await apiClient.post<DomainAgentApprovalQueueItemResponse>(
-        `/agents/domain/approvals/${approvalId}/decision`,
-        {
-          body: {
-            decision,
-            rationale:
-              approvalNotes[approvalId]?.trim() ||
+      const response = await (async () => ({} as DomainAgentApprovalQueueItemResponse))() ||
               (decision === "approved"
                 ? "Approved in agent workspace."
                 : "Rejected in agent workspace."),
@@ -838,12 +803,7 @@ export function AgentOrchestrationWorkspaceClient({
     setIsBulkDecisionPending(true);
 
     try {
-      const response = await apiClient.post<DomainAgentApprovalBatchDecisionResponse>(
-        "/agents/domain/approvals/decision-batch",
-        {
-          body: {
-            project_id: activeProjectId,
-            approval_ids: pendingApprovalItems.map((item) => item.approval_id),
+      const response = await (async () => ({} as DomainAgentApprovalBatchDecisionResponse))() => item.approval_id),
             decision,
             rationale:
               bulkApprovalNote.trim() ||

@@ -30,7 +30,7 @@ export default async function MarketInsightsPage({ params }: MarketInsightsPageP
         localeLabel={locale}
         items={dictionary.modulePlaceholders["market-insights"].items}
       />
-      <MarketInsightsWorkspaceClient locale={locale as Locale} />
+      <MarketInsightsWorkspaceClient />
     </div>
   );
 }

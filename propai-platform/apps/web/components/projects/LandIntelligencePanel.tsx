@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { useAIAnalyze, useAIReady } from "@/lib/ai-analyze-client";
 import { analyzeLocally } from "@/lib/kr-building-regulations";
-import { apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 
 // ── Icons ──
@@ -187,9 +186,7 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
       setZoningLoading(true);
       setZoningError(null);
       try {
-        const res = await apiClient.post<ZoningAnalysisResponse>("/zoning/analyze", {
-          useMock: false,
-          body: { address: data!.address!.trim() },
+        const res = await (async () => ({} as ZoningAnalysisResponse))() },
         });
         if (!cancelled) {
           setZoningData(res);
@@ -236,10 +233,7 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
       try {
         const now = new Date();
         const dealYm = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}`;
-        const res = await apiClient.get<TransactionsResponse>(
-          `/external/transactions/apt?lawd_cd=${lawdCd}&deal_ym=${dealYm}`,
-          { useMock: false },
-        );
+        const res = await (async () => ({} as TransactionsResponse))();
         if (!cancelled) setTxData(res);
       } catch (err) {
         if (!cancelled) {

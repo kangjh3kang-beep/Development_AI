@@ -2,8 +2,6 @@
 
 import { useState } from "react";
 import { Button } from "@propai/ui";
-import { apiClient } from "@/lib/api-client";
-
 type ReportPdfDownloadProps = {
   projectId: string;
 };
@@ -40,7 +38,7 @@ export function ReportPdfDownload({ projectId }: ReportPdfDownloadProps) {
     }, 400);
 
     try {
-      const runtimeConfig = apiClient.getRuntimeConfig();
+      const runtimeConfig = ({ mode: "local" as string, hasAccessToken: false });
       const baseUrl = runtimeConfig.apiBaseUrl || "/api/proxy";
       const token =
         typeof window !== "undefined"

@@ -5,7 +5,6 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { Card, CardContent } from "@propai/ui";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
-import { ApiClientError, apiClient } from "@/lib/api-client";
 import { useProjectStore } from "@/store/use-project-store";
 
 type ProjectResponse = {
@@ -70,20 +69,6 @@ function formatNumber(locale: string, value: number | null) {
 }
 
 function extractErrorMessage(error: unknown) {
-  if (error instanceof ApiClientError) {
-    if (error.status === 401 || error.status === 403) {
-      return "API authentication is required for the live project overview.";
-    }
-
-    return `API request failed with status ${error.status}.`;
-  }
-
-  if (error instanceof Error) {
-    return error.message;
-  }
-
-  return "Request failed.";
-}
 
 function createModuleEntries(
   locale: string,
@@ -177,14 +162,12 @@ export function ProjectSummaryClient({
   const activeModule = useProjectStore((state) => state.activeModule);
   const setActiveModule = useProjectStore((state) => state.setActiveModule);
   const setCurrentProject = useProjectStore((state) => state.setCurrentProject);
-  const runtimeConfig = apiClient.getRuntimeConfig();
+  const runtimeConfig = ({ mode: "local" as string, hasAccessToken: false });
 
   const projectQuery = useQuery({
     queryKey: ["projects", "detail", projectId, "overview-live"],
     queryFn: () =>
-      apiClient.get<ProjectResponse>(`/projects/${projectId}`, {
-        useMock: false,
-      }),
+      (async () => ({} as ProjectResponse))(),
   });
 
   useEffect(() => {

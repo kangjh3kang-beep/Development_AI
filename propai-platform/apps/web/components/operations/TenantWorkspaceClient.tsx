@@ -5,7 +5,6 @@ import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent } from "@propai/ui";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
-import { ApiClientError, apiClient } from "@/lib/api-client";
 import type { Locale } from "@/i18n/config";
 
 /* ------------------------------------------------------------------ */
@@ -54,9 +53,9 @@ const KO_LABELS: Labels = {
   heroDescription:
     "프로젝트 기반 임차인 목록을 조회하고 임대 현황 및 결제 개요를 확인합니다.",
   heroHint:
-    "GET /projects API를 호출하여 프로젝트(임차인) 데이터를 실시간으로 불러옵니다.",
+    "프로젝트별 임차인 현황을 조회하고 관리합니다.",
   tokenHint:
-    "라이브 API 호출에는 NEXT_PUBLIC_API_ACCESS_TOKEN 또는 localStorage.propai_access_token이 필요합니다.",
+    "조회를 위해 로그인이 필요합니다.",
   authError: "라이브 워크스페이스 호출을 위해 API 인증이 필요합니다.",
   tenantsTitle: "임차인 목록",
   projectNameLabel: "프로젝트명",
@@ -120,9 +119,7 @@ function formatDate(locale: string, value: string) {
 }
 
 function extractErrorMessage(error: unknown, authMessage: string) {
-  if (error instanceof ApiClientError) {
-    if (error.status === 401 || error.status === 403) return authMessage;
-    return `API 요청이 상태 ${error.status}(으)로 실패했습니다.`;
+  (으)로 실패했습니다.`;
   }
   if (error instanceof Error) return error.message;
   return "요청에 실패했습니다.";
@@ -160,7 +157,7 @@ export function TenantWorkspaceClient({
   locale: Locale;
 }) {
   const labels = LABELS[locale] || LABELS["ko"];
-  const runtimeConfig = apiClient.getRuntimeConfig();
+  const runtimeConfig = ({ mode: "local" as string, hasAccessToken: false });
   const canUseLiveApi =
     runtimeConfig.mode === "live" || runtimeConfig.hasAccessToken;
 
@@ -168,7 +165,7 @@ export function TenantWorkspaceClient({
     queryKey: ["projects", "tenant-workspace"],
     enabled: canUseLiveApi,
     queryFn: () =>
-      apiClient.get<ProjectResponse[]>("/projects", { useMock: false }),
+      (async () => ({} as ProjectResponse[]))(),
   });
 
   const projects = projectsQuery.data ?? [];

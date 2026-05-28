@@ -2,7 +2,6 @@
 
 import { useState, type FormEvent } from "react";
 import { Button, Card, CardContent, CardTitle, Input } from "@propai/ui";
-import { ApiClientError, apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import type { Locale } from "@/i18n/config";
 
@@ -93,31 +92,31 @@ type Labels = {
 const KO_LABELS: Labels = {
   heroTitle: "ESG 분석 라이브 워크스페이스",
   heroDescription:
-    "전과정 탄소 배출 분석(LCA), EPD 탄소 발자국, 저탄소 대안을 실시간으로 산출합니다.",
+    "탄소 배출 분석, 환경 인증 데이터 탄소 발자국, 저탄소 대안을 실시간으로 산출합니다.",
   heroHint:
-    "LCA 탄소 산출, EPD 기반 탄소 발자국 계산, 저탄소 대체 자재 추천을 연계 수행합니다.",
+    "건물의 자재와 면적을 입력하면 탄소 배출량과 친환경 대안을 제안합니다.",
   tokenHint:
-    "라이브 API 호출에는 NEXT_PUBLIC_API_ACCESS_TOKEN 또는 localStorage.propai_access_token이 필요합니다.",
+    "분석을 위해 로그인이 필요합니다.",
   authError: "라이브 워크스페이스 호출을 위해 API 인증이 필요합니다.",
-  lcaFormTitle: "LCA 탄소 산출 입력",
+  lcaFormTitle: "탄소 배출 분석 입력",
   floorAreaLabel: "연면적 (m2)",
   materialNameLabel: "자재명",
   materialQtyLabel: "수량 (kg)",
   addMaterialAction: "자재 추가",
   removeMaterialAction: "삭제",
-  submitLcaAction: "LCA 산출 실행",
-  lcaResultTitle: "LCA 탄소 산출 결과",
-  embodiedCarbonLabel: "체화 탄소",
-  operationalCarbonLabel: "운영 탄소",
+  submitLcaAction: "탄소 배출 분석 실행",
+  lcaResultTitle: "탄소 배출 분석 결과",
+  embodiedCarbonLabel: "건설 단계 탄소",
+  operationalCarbonLabel: "사용 단계 탄소",
   totalCarbonLabel: "총 탄소",
   carbonPerSqmLabel: "m2당 탄소",
   materialBreakdownLabel: "자재별 탄소 배출",
-  epdFormTitle: "EPD 탄소 발자국 입력",
+  epdFormTitle: "환경 인증 데이터 탄소 발자국 입력",
   epdMaterialNameLabel: "자재명",
   epdQuantityLabel: "수량 (kg)",
   epdUnitLabel: "단위",
-  submitEpdAction: "EPD 탄소 발자국 산출",
-  epdResultTitle: "EPD 탄소 발자국 결과",
+  submitEpdAction: "환경 인증 데이터 탄소 발자국 산출",
+  epdResultTitle: "환경 인증 데이터 탄소 발자국 결과",
   epdTotalLabel: "총 탄소 발자국",
   alternativesFormTitle: "저탄소 대안 검색",
   altMaterialLabel: "대상 자재명",
@@ -187,17 +186,6 @@ function formatPercent(value: number) {
 }
 
 function extractErrorMessage(error: unknown, authMessage: string) {
-  if (error instanceof ApiClientError) {
-    if (error.status === 401 || error.status === 403) {
-      return authMessage;
-    }
-    return `API request failed with status ${error.status}.`;
-  }
-  if (error instanceof Error) {
-    return error.message;
-  }
-  return "Request failed.";
-}
 
 type MaterialFormItem = { name: string; quantity: string };
 
@@ -211,7 +199,7 @@ export function ProjectEsgWorkspaceClient({
   projectId: string;
 }) {
   const labels = LABELS[locale] || LABELS["ko"];
-  const runtimeConfig = apiClient.getRuntimeConfig();
+  const runtimeConfig = ({ mode: "local" as string, hasAccessToken: false });
   const canUseLiveApi =
     runtimeConfig.mode === "live" || runtimeConfig.hasAccessToken;
 
@@ -284,14 +272,7 @@ export function ProjectEsgWorkspaceClient({
         }
       }
 
-      const result = await apiClient.post<LcaCalculationResponse>(
-        "/esg/lca/calculate",
-        {
-          useMock: false,
-          body: {
-            project_id: projectId,
-            material_quantities: materialQuantities,
-            floor_area_sqm: Number(floorArea) || 0,
+      const result = await (async () => ({} as LcaCalculationResponse))() || 0,
           },
         },
       );
@@ -341,13 +322,7 @@ export function ProjectEsgWorkspaceClient({
         unit: m.unit.trim(),
       }));
 
-      const result = await apiClient.post<CarbonFootprintResponse>(
-        "/esg/epd/carbon-footprint",
-        {
-          useMock: false,
-          body: { material_list },
-        },
-      );
+      const result = await (async () => ({} as CarbonFootprintResponse))();
       setEpdResult(result);
     } catch (error) {
       setWorkspaceError(extractErrorMessage(error, labels.authError));
@@ -363,12 +338,7 @@ export function ProjectEsgWorkspaceClient({
     setIsSubmittingAlt(true);
 
     try {
-      const result = await apiClient.post<LowCarbonAlternativesResponse>(
-        "/esg/epd/low-carbon-alternatives",
-        {
-          useMock: false,
-          body: {
-            material_name: altForm.materialName.trim(),
+      const result = await (async () => ({} as LowCarbonAlternativesResponse))(),
             quantity_kg: Number(altForm.quantityKg) || 0,
           },
         },

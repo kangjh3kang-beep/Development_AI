@@ -5,7 +5,6 @@ import { useQuery } from "@tanstack/react-query";
 import { Button, Card, CardContent, CardTitle, Input } from "@propai/ui";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
-import { ApiClientError, apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import type { Locale } from "@/i18n/config";
 
@@ -85,9 +84,9 @@ const KO_LABELS: Labels = {
   heroDescription:
     "현재 프로젝트의 건축 법규 적합성을 실시간으로 검토합니다.",
   heroHint:
-    "건폐율, 용적률, 높이 제한 등 건축 규제 사항을 API를 통해 자동 검증합니다.",
+    "주소와 건축 계획을 입력하면 법규 적합 여부를 자동 검토합니다.",
   tokenHint:
-    "라이브 API 호출에는 NEXT_PUBLIC_API_ACCESS_TOKEN 또는 localStorage.propai_access_token이 필요합니다.",
+    "분석을 위해 로그인이 필요합니다.",
   authError: "라이브 워크스페이스 호출을 위해 API 인증이 필요합니다.",
   contextTitle: "프로젝트 컨텍스트",
   contextHint:
@@ -107,8 +106,8 @@ const KO_LABELS: Labels = {
   missingAddressError: "주소를 입력해 주세요.",
   missingZoneCodeError: "용도지역 코드를 입력해 주세요.",
   complianceTitle: "건축 규제 검토 결과",
-  bcrLabel: "건폐율",
-  farLabel: "용적률",
+  bcrLabel: "건폐율 (대지 중 건물 면적 비율)",
+  farLabel: "용적률 (대지 대비 건물 총면적 비율)",
   heightLabel: "높이 제한",
   limitLabel: "제한",
   plannedLabel: "계획",
@@ -190,17 +189,6 @@ function formatDate(locale: string, value: string) {
 }
 
 function extractErrorMessage(error: unknown, authMessage: string) {
-  if (error instanceof ApiClientError) {
-    if (error.status === 401 || error.status === 403) {
-      return authMessage;
-    }
-    return `API request failed with status ${error.status}.`;
-  }
-  if (error instanceof Error) {
-    return error.message;
-  }
-  return "Request failed.";
-}
 
 /* ── Fallback Data (from existing legal page) ── */
 
@@ -232,7 +220,7 @@ export function ProjectLegalWorkspaceClient({
   projectId: string;
 }) {
   const labels = LABELS[locale] || LABELS["ko"];
-  const runtimeConfig = apiClient.getRuntimeConfig();
+  const runtimeConfig = ({ mode: "local" as string, hasAccessToken: false });
   const canUseLiveApi =
     runtimeConfig.mode === "live" || runtimeConfig.hasAccessToken;
 
@@ -258,9 +246,7 @@ export function ProjectLegalWorkspaceClient({
     queryKey: ["projects", "detail", projectId, "legal-live"],
     enabled: canUseLiveApi,
     queryFn: () =>
-      apiClient.get<ProjectResponse>(`/projects/${projectId}`, {
-        useMock: false,
-      }),
+      (async () => ({} as ProjectResponse))(),
   });
 
   useEffect(() => {
@@ -306,14 +292,7 @@ export function ProjectLegalWorkspaceClient({
     setIsSubmitting(true);
 
     try {
-      const result = await apiClient.post<ComplianceCheckResponse>(
-        "/building-compliance/check",
-        {
-          useMock: false,
-          body: {
-            address,
-            zone_code: zoneCode,
-            planned_bcr: Number(form.plannedBcr) || 0,
+      const result = await (async () => ({} as ComplianceCheckResponse))() || 0,
             planned_far: Number(form.plannedFar) || 0,
             planned_height_m: Number(form.plannedHeight) || 0,
             planned_floors: Number(form.plannedFloors) || 0,

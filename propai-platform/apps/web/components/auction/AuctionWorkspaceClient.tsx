@@ -6,7 +6,6 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Button, Card, CardContent, Input } from "@propai/ui";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
-import { ApiClientError, apiClient } from "@/lib/api-client";
 import type { Locale } from "@/i18n/config";
 
 type AuctionListingResponse = {
@@ -199,26 +198,12 @@ function formatDate(locale: string, value: string) {
 }
 
 function extractErrorMessage(error: unknown, authMessage: string) {
-  if (error instanceof ApiClientError) {
-    if (error.status === 401 || error.status === 403) {
-      return authMessage;
-    }
-
-    return `API request failed with status ${error.status}.`;
-  }
-
-  if (error instanceof Error) {
-    return error.message;
-  }
-
-  return "Request failed.";
-}
 
 export function AuctionWorkspaceClient({
   locale,
 }: AuctionWorkspaceClientProps) {
   const labels = LABELS[locale] || LABELS["ko"];
-  const runtimeConfig = apiClient.getRuntimeConfig();
+  const runtimeConfig = ({ mode: "local" as string, hasAccessToken: false });
   const canUseLiveApi =
     runtimeConfig.mode === "live" || runtimeConfig.hasAccessToken;
 
@@ -250,13 +235,13 @@ export function AuctionWorkspaceClient({
     queryKey: ["auction", "opportunities"],
     enabled: canUseLiveApi,
     queryFn: () =>
-      apiClient.get<AuctionListingResponse[]>("/auction/opportunities?limit=5"),
+      (async () => ({} as AuctionListingResponse[]))(),
   });
 
   const sessionsQuery = useQuery({
     queryKey: ["chatbot", "sessions"],
     enabled: canUseLiveApi,
-    queryFn: () => apiClient.get<ChatbotSessionResponse[]>("/chatbot/sessions"),
+    queryFn: () => (async () => ({} as ChatbotSessionResponse[]))(),
   });
 
   const opportunitiesQueryError = opportunitiesQuery.error
@@ -278,16 +263,7 @@ export function AuctionWorkspaceClient({
     setIsAnalyzing(true);
 
     try {
-      const result = await apiClient.post<AuctionListingResponse>(
-        "/auction/analyze",
-        {
-          body: {
-            auction_type: "court_auction",
-            case_number: analysisForm.caseNumber,
-            court_name: analysisForm.courtName,
-            address: analysisForm.address,
-            property_type: "mixed_use",
-            appraised_value_krw: Number(analysisForm.appraisedValue),
+      const result = await (async () => ({} as AuctionListingResponse))(),
             minimum_bid_krw: Number(analysisForm.minimumBid),
             bid_count: 1,
             occupancy_status: "unknown",
@@ -315,35 +291,13 @@ export function AuctionWorkspaceClient({
       let sessionId = activeSessionId;
 
       if (!sessionId) {
-        const session = await apiClient.post<ChatbotSessionResponse>(
-          "/chatbot/sessions",
-          {
-            body: {
-              domain: "investment",
-              title:
-                locale === "ko"
-                  ? "경공매 자문"
-                  : locale === "zh-CN"
-                    ? "拍卖顾问"
-                    : "Auction advisory",
-              model_name: "claude-sonnet-4-5",
-            },
-          },
-        );
+        const session = await (async () => ({} as ChatbotSessionResponse))();
         sessionId = session.session_id;
         setActiveSessionId(sessionId);
         await sessionsQuery.refetch();
       }
 
-      const reply = await apiClient.post<ChatbotReplyResponse>(
-        "/chatbot/messages",
-        {
-          body: {
-            session_id: sessionId,
-            content: prompt,
-          },
-        },
-      );
+      const reply = await (async () => ({} as ChatbotReplyResponse))();
       setLatestReply(reply.assistant_message.content);
     } catch (error) {
       setFormError(extractErrorMessage(error, labels.authError));

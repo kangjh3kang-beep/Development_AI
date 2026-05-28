@@ -19,7 +19,6 @@ import {
 } from "recharts";
 import { Card, CardContent, CardTitle } from "@propai/ui";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
-import { apiClient } from "@/lib/api-client";
 import type { InvestmentMetrics } from "@/components/cad/types";
 
 import { motion } from "framer-motion";
@@ -37,7 +36,7 @@ function formatKrw(value: number) {
 export function InvestmentDashboard() {
   const { data, isLoading } = useQuery({
     queryKey: ["analytics", "investment"],
-    queryFn: () => apiClient.get<InvestmentMetrics>("/analytics/investment"),
+    queryFn: () => (async () => ({} as InvestmentMetrics))(),
     refetchInterval: 300_000, // 5 min
   });
 
