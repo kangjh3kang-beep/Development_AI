@@ -81,11 +81,42 @@ type RecommendedModel = {
   ai_summary: string;
 };
 
-type AutoRecommendResponse = {
-  recommendations: RecommendedModel[];
-  all_models: RecommendedModel[];
-  analysis_count: number;
+// 백엔드 실제 응답 타입
+type BackendRecommendItem = {
+  development_type: string;
+  type_name: string;
+  feasibility: { total_revenue_won: number; net_profit_won: number; profit_rate_pct: number; roi_pct: number; grade: string };
+  permit: { complexity_label: string; reason: string };
+  unit_summary: { total_gfa_sqm: number; total_households: number; avg_area_pyeong: number };
+  composite_score: number;
+  input_used: { project_months: number; avg_sale_price_per_pyeong: number };
 };
+
+type AutoRecommendApiResponse = {
+  recommendations: BackendRecommendItem[];
+  all_results: BackendRecommendItem[];
+  total_types_analyzed: number;
+};
+
+function mapBackendToModel(item: BackendRecommendItem, rank: number): RecommendedModel {
+  return {
+    rank,
+    type_code: item.development_type,
+    type_name: item.type_name,
+    profit_rate_pct: item.feasibility.profit_rate_pct,
+    roi_pct: item.feasibility.roi_pct,
+    grade: item.feasibility.grade,
+    permit_ease: item.permit.complexity_label,
+    total_revenue_won: item.feasibility.total_revenue_won,
+    net_profit_won: item.feasibility.net_profit_won,
+    project_months: item.input_used?.project_months ?? 36,
+    total_gfa_sqm: item.unit_summary.total_gfa_sqm,
+    total_households: item.unit_summary.total_households,
+    avg_sale_price_per_pyeong: item.input_used?.avg_sale_price_per_pyeong ?? 0,
+    composite_score: item.composite_score,
+    ai_summary: `${item.type_name}: ${item.permit.reason}`,
+  };
+}
 
 interface LandIntelligencePanelProps {
   projectId: string;
@@ -157,7 +188,7 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
   const [txError, setTxError] = useState<string | null>(null);
 
   // ── Auto-recommend (scenarios) API state ──
-  const [scenarioData, setScenarioData] = useState<AutoRecommendResponse | null>(null);
+  const [scenarioData, setScenarioData] = useState<{ recommendations: RecommendedModel[]; all_models: RecommendedModel[]; analysis_count: number } | null>(null);
   const [scenarioLoading, setScenarioLoading] = useState(false);
   const [scenarioError, setScenarioError] = useState<string | null>(null);
 
@@ -172,7 +203,7 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
 
   // ── AI deep analysis state ──
   const [deepAnalysisLoading, setDeepAnalysisLoading] = useState(false);
-  const [deepAnalysisResult, setDeepAnalysisResult] = useState<AutoRecommendResponse | null>(null);
+  const [deepAnalysisResult, setDeepAnalysisResult] = useState<{ recommendations: RecommendedModel[]; all_models: RecommendedModel[]; analysis_count: number } | null>(null);
   const [deepAnalysisError, setDeepAnalysisError] = useState<string | null>(null);
 
   // ── 1) Fetch zoning data from /zoning/analyze ──
@@ -266,14 +297,20 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
       setScenarioLoading(true);
       setScenarioError(null);
       try {
-        const res = await apiClient.postV2<AutoRecommendResponse>("/feasibility/auto-recommend", {
+        const raw = await apiClient.postV2<AutoRecommendApiResponse>("/feasibility/auto-recommend", {
           body: {
             address: data!.address!.trim(),
             land_area_sqm: zoningData?.land_area_sqm ?? undefined,
             region: data?.address?.includes("서울") ? "서울특별시" : "경기도",
           },
         });
-        if (!cancelled) setScenarioData(res);
+        // 백엔드 응답을 프론트엔드 타입으로 변환
+        const mapped = {
+          recommendations: raw.recommendations.map((item, i) => mapBackendToModel(item, i + 1)),
+          all_models: (raw.all_results ?? raw.recommendations).map((item, i) => mapBackendToModel(item, i + 1)),
+          analysis_count: raw.total_types_analyzed ?? raw.recommendations.length,
+        };
+        if (!cancelled) setScenarioData(mapped);
       } catch (err) {
         if (!cancelled) {
           setScenarioError(err instanceof Error ? err.message : "시나리오 분석 실패");
@@ -305,7 +342,7 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
 
     try {
       // Try backend auto-recommend as the deep analysis endpoint
-      const res = await apiClient.postV2<AutoRecommendResponse>("/feasibility/auto-recommend", {
+      const raw = await apiClient.postV2<AutoRecommendApiResponse>("/feasibility/auto-recommend", {
         body: {
           address: data.address.trim(),
           land_area_sqm: zoningData?.land_area_sqm ?? undefined,
@@ -313,7 +350,12 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
           equity_won: 15_000_000_000,
         },
       });
-      setDeepAnalysisResult(res);
+      const mapped = {
+        recommendations: raw.recommendations.map((item, i) => mapBackendToModel(item, i + 1)),
+        all_models: (raw.all_results ?? raw.recommendations).map((item, i) => mapBackendToModel(item, i + 1)),
+        analysis_count: raw.total_types_analyzed ?? raw.recommendations.length,
+      };
+      setDeepAnalysisResult(mapped);
     } catch {
       // AI 분석 실패 시 사용자 친화적 안내
       setDeepAnalysisError("AI 심층 분석을 사용하려면 관리자 설정에서 AI API 키를 등록하세요. (설정 → API 키 관리)");

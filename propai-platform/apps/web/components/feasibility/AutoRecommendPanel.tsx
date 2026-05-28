@@ -29,10 +29,57 @@ export interface RecommendedModel {
   ai_summary: string;
 }
 
-interface AutoRecommendResponse {
-  recommendations: RecommendedModel[];
-  all_models: RecommendedModel[];
-  analysis_count: number;
+// 백엔드 실제 응답 타입
+interface BackendRecommendItem {
+  development_type: string;
+  type_name: string;
+  feasibility: {
+    total_revenue_won: number;
+    total_cost_won: number;
+    net_profit_won: number;
+    profit_rate_pct: number;
+    roi_pct: number;
+    grade: string;
+  };
+  permit: {
+    is_permitted: boolean;
+    complexity_label: string;
+    reason: string;
+  };
+  unit_summary: {
+    total_gfa_sqm: number;
+    total_households: number;
+    avg_area_pyeong: number;
+  };
+  composite_score: number;
+  input_used: { project_months: number; avg_sale_price_per_pyeong: number };
+}
+
+interface AutoRecommendApiResponse {
+  recommendations: BackendRecommendItem[];
+  all_results: BackendRecommendItem[];
+  total_types_analyzed: number;
+}
+
+// 백엔드 응답 → 프론트엔드 모델 변환
+function mapToRecommendedModel(item: BackendRecommendItem, rank: number): RecommendedModel {
+  return {
+    rank,
+    type_code: item.development_type,
+    type_name: item.type_name,
+    profit_rate_pct: item.feasibility.profit_rate_pct,
+    roi_pct: item.feasibility.roi_pct,
+    grade: item.feasibility.grade,
+    permit_ease: item.permit.complexity_label,
+    total_revenue_won: item.feasibility.total_revenue_won,
+    net_profit_won: item.feasibility.net_profit_won,
+    project_months: item.input_used?.project_months ?? 36,
+    total_gfa_sqm: item.unit_summary.total_gfa_sqm,
+    total_households: item.unit_summary.total_households,
+    avg_sale_price_per_pyeong: item.input_used?.avg_sale_price_per_pyeong ?? 0,
+    composite_score: item.composite_score,
+    ai_summary: `${item.type_name}: ${item.permit.reason}`,
+  };
 }
 
 /* ── Constants ── */
@@ -170,7 +217,7 @@ export function AutoRecommendPanel({ onClose, isModal = false }: AutoRecommendPa
 
     try {
       // 실제 백엔드 /auto-recommend API 호출
-      const response = await apiClient.postV2<AutoRecommendResponse>("/feasibility/auto-recommend", {
+      const response = await apiClient.postV2<AutoRecommendApiResponse>("/feasibility/auto-recommend", {
         body: {
           address: address.trim(),
           land_area_sqm: landArea ? parseFloat(landArea) : undefined,
@@ -179,11 +226,15 @@ export function AutoRecommendPanel({ onClose, isModal = false }: AutoRecommendPa
         },
       });
 
+      // 백엔드 응답 → 프론트엔드 모델 변환
+      const mappedRecs = response.recommendations.map((item, i) => mapToRecommendedModel(item, i + 1));
+      const mappedAll = (response.all_results ?? response.recommendations).map((item, i) => mapToRecommendedModel(item, i + 1));
+
       if (progressRef.current) clearInterval(progressRef.current);
       setProgress(100);
-      setTopModels(response.recommendations.slice(0, 3));
-      setAllModels(response.all_models ?? response.recommendations);
-      setAnalysisCount(response.analysis_count);
+      setTopModels(mappedRecs.slice(0, 3));
+      setAllModels(mappedAll);
+      setAnalysisCount(response.total_types_analyzed ?? mappedAll.length);
 
       // 분석 완료 후 주소를 컨텍스트 스토어에 저장하여 다른 모듈에서 공유
       updateSiteAnalysis({
