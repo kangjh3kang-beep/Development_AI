@@ -76,7 +76,7 @@ app.include_router(v2_tax.router)
 async def health_check():
     return {
         "status": "healthy",
-        "version": "61.0.0",
+        "version": "61.1.0",
         "services": {
             "postgres": "healthy",
             "redis": "healthy",
