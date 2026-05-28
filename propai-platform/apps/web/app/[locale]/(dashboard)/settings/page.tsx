@@ -3,17 +3,96 @@
 import { useSystemStore } from "@/store/useSystemStore";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { ApiKeyManagementPanel } from "@/components/settings/ApiKeyManagementPanel";
 import { AiTokenUsageDashboard } from "@/components/settings/AiTokenUsageDashboard";
 import { WebhookManagementPanel } from "@/components/settings/WebhookManagementPanel";
+import { SubscriptionPanel } from "@/components/settings/SubscriptionPanel";
 
-type TabId = "ai-usage" | "webhooks" | "system" | "users";
+/* ------------------------------------------------------------------ */
+/*  Tab definition                                                    */
+/* ------------------------------------------------------------------ */
 
-const TABS: { id: TabId; label: string }[] = [
-  { id: "ai-usage", label: "AI 사용량" },
-  { id: "webhooks", label: "웹훅 관리" },
-  { id: "system", label: "시스템 설정" },
-  { id: "users", label: "사용자 관리" },
+type TabId =
+  | "api-keys"
+  | "ai-usage"
+  | "webhooks"
+  | "subscription"
+  | "users"
+  | "system";
+
+const TABS: { id: TabId; label: string; icon: React.ReactNode }[] = [
+  {
+    id: "api-keys",
+    label: "API 키 관리",
+    icon: (
+      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="m15.5 7.5 2.3 2.3a1 1 0 0 0 1.4 0l2.1-2.1a1 1 0 0 0 0-1.4L19 4" />
+        <path d="m21 2-9.6 9.6" />
+        <circle cx="7.5" cy="15.5" r="5.5" />
+      </svg>
+    ),
+  },
+  {
+    id: "ai-usage",
+    label: "AI 사용량",
+    icon: (
+      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M3 3v18h18" />
+        <path d="m19 9-5 5-4-4-3 3" />
+      </svg>
+    ),
+  },
+  {
+    id: "webhooks",
+    label: "웹훅 관리",
+    icon: (
+      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M18 16.98h-5.99c-1.1 0-1.95.94-2.48 1.9A4 4 0 0 1 2 17c.01-.7.2-1.4.57-2" />
+        <path d="m6 17 3.13-5.78c.53-.97.1-2.18-.5-3.1a4 4 0 1 1 6.89-4.06" />
+        <path d="m12 6 3.13 5.73C15.66 12.7 16.9 13 18 13a4 4 0 0 1 0 8H12" />
+      </svg>
+    ),
+  },
+  {
+    id: "subscription",
+    label: "구독 관리",
+    icon: (
+      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M6 3h12l4 6-10 13L2 9Z" />
+      </svg>
+    ),
+  },
+  {
+    id: "users",
+    label: "사용자 관리",
+    icon: (
+      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+        <circle cx="9" cy="7" r="4" />
+        <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+        <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+      </svg>
+    ),
+  },
+  {
+    id: "system",
+    label: "시스템 설정",
+    icon: (
+      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M12 8V4H8" />
+        <rect width="16" height="12" x="4" y="8" rx="2" />
+        <path d="M2 14h2" />
+        <path d="M20 14h2" />
+        <path d="M15 13v2" />
+        <path d="M9 13v2" />
+      </svg>
+    ),
+  },
 ];
+
+/* ------------------------------------------------------------------ */
+/*  Page                                                              */
+/* ------------------------------------------------------------------ */
 
 export default function SettingsPage() {
   const router = useRouter();
@@ -34,7 +113,7 @@ export default function SettingsPage() {
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved">(
     "idle",
   );
-  const [activeTab, setActiveTab] = useState<TabId>("ai-usage");
+  const [activeTab, setActiveTab] = useState<TabId>("api-keys");
 
   useEffect(() => {
     setIsMounted(true);
@@ -42,7 +121,7 @@ export default function SettingsPage() {
 
   if (!isMounted) {
     return (
-      <div className="flex flex-col gap-10 pb-20 max-w-4xl mx-auto">
+      <div className="flex flex-col gap-10 pb-20 max-w-5xl mx-auto">
         <div className="space-y-2">
           <div className="h-10 w-64 animate-pulse rounded-xl bg-[var(--surface-soft)]" />
           <div className="h-5 w-96 animate-pulse rounded-lg bg-[var(--surface-soft)]" />
@@ -62,18 +141,19 @@ export default function SettingsPage() {
   };
 
   return (
-    <div className="flex flex-col gap-10 pb-20 max-w-4xl mx-auto">
+    <div className="flex flex-col gap-10 pb-20 max-w-5xl mx-auto">
+      {/* Header */}
       <div className="space-y-2">
         <h1 className="text-4xl font-[900] tracking-tighter text-[var(--text-primary)]">
-          System Settings <span className="text-[var(--accent-strong)]">_</span>
+          관리자 설정 <span className="text-[var(--accent-strong)]">_</span>
         </h1>
         <p className="text-[var(--text-secondary)] font-medium">
-          사통팔땅 AI 커맨드 센터의 코어 시스템 환경을 설정합니다.
+          API 키, 구독, AI 사용량, 시스템 환경을 통합 관리합니다.
         </p>
       </div>
 
       {/* Tab navigation */}
-      <div className="flex gap-1 rounded-2xl bg-[var(--surface-soft)] p-1.5 border border-[var(--line)]">
+      <div className="flex gap-1 rounded-2xl bg-[var(--surface-soft)] p-1.5 border border-[var(--line)] overflow-x-auto">
         {TABS.map((tab) => (
           <button
             key={tab.id}
@@ -84,22 +164,28 @@ export default function SettingsPage() {
               }
               setActiveTab(tab.id);
             }}
-            className={`flex-1 rounded-xl px-6 py-3 text-sm font-bold transition-all ${
+            className={`flex items-center justify-center gap-2 whitespace-nowrap rounded-xl px-5 py-3 text-sm font-bold transition-all ${
               activeTab === tab.id
                 ? "bg-[var(--surface)] text-[var(--text-primary)] shadow-[var(--shadow-md)]"
                 : "text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]"
             }`}
           >
+            <span className={activeTab === tab.id ? "text-[var(--accent-strong)]" : ""}>
+              {tab.icon}
+            </span>
             {tab.label}
           </button>
         ))}
       </div>
 
       {/* Tab content */}
+      {activeTab === "api-keys" && <ApiKeyManagementPanel />}
+
       {activeTab === "ai-usage" && <AiTokenUsageDashboard />}
 
       {activeTab === "webhooks" && <WebhookManagementPanel />}
 
+      {activeTab === "subscription" && <SubscriptionPanel />}
 
       {activeTab === "system" && (
         <section className="relative overflow-hidden rounded-[2.5rem] border border-[var(--line-strong)] bg-[var(--surface-soft)] p-8 lg:p-12 shadow-[var(--shadow-xl)] backdrop-blur-xl group">
@@ -298,9 +384,9 @@ export default function SettingsPage() {
                     : "bg-gradient-to-tr from-[var(--accent-strong)] to-teal-700 text-white hover:scale-105 active:scale-95"
                 }`}
               >
-                {saveStatus === "idle" && "Save Settings"}
-                {saveStatus === "saving" && "Saving..."}
-                {saveStatus === "saved" && "Saved Successfully"}
+                {saveStatus === "idle" && "설정 저장"}
+                {saveStatus === "saving" && "저장 중..."}
+                {saveStatus === "saved" && "저장 완료"}
               </button>
             </div>
           </div>

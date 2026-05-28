@@ -179,11 +179,17 @@ export default async function DashboardLayout({
     { href: `/${locale}/guide`, label: "이용 가이드", icon: <IconGuide /> },
   ];
 
+  // V. 관리자
+  const adminNavigation = [
+    { href: `/${locale}/settings`, label: "⚙️ 관리자 설정", icon: <IconSRE /> },
+  ];
+
   const sections = [
     { title: "개발 전주기 매니지먼트", items: lifecycleNavigation },
     { title: "수익성 및 ESG 분석", items: analyticsNavigation },
     { title: "자산 운영 및 물권", items: operationsNavigation },
     { title: "엔터프라이즈 지원", items: enterpriseNavigation },
+    { title: "관리", items: adminNavigation },
   ];
 
   return (
