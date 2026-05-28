@@ -39,9 +39,14 @@ export default function DesignPage() {
     const maxGross = calcMaxGrossArea(area, form.zoning);
     const parking = calcParkingRequired(maxGross, form.buildingUse);
     const buildableArea = area * (spec.buildingCoverageMax / 100);
-    const maxFloors = spec.floorAreaRatioMax > 0 ? Math.floor(maxGross / buildableArea) : 1;
+    // 용적률 기준 최소 필요 층수 (건폐율로 나눈 값)
+    const minFloorsFromFar = spec.floorAreaRatioMax > 0 ? Math.ceil(maxGross / buildableArea) : 1;
+    // 높이 제한이 있으면 그에 맞춤, 없으면 현실적 층수 적용
     const heightPerFloor = 3.3;
+    const maxFloorsByHeight = spec.heightLimit ? Math.floor(spec.heightLimit / heightPerFloor) : 25;
+    const maxFloors = Math.min(minFloorsFromFar, maxFloorsByHeight);
     const maxHeight = spec.heightLimit || (maxFloors * heightPerFloor);
+    const heightNote = spec.heightLimit ? "법적 높이 제한" : "예상 높이 (제한 없음)";
 
     return {
       buildingCoverage: spec.buildingCoverageMax,
@@ -124,7 +129,7 @@ export default function DesignPage() {
             {[
               { label: "건폐율", val: `${ai?.buildingCoverage?.value ?? calc.buildingCoverage}%`, sub: `최대 ${ai?.buildingCoverage?.max ?? calc.buildingCoverage}%`, color: "text-blue-400" },
               { label: "용적률", val: `${ai?.floorAreaRatio?.value ?? calc.floorAreaRatio}%`, sub: `최대 ${ai?.floorAreaRatio?.max ?? calc.floorAreaRatio}%`, color: "text-emerald-400" },
-              { label: "최고 층수", val: `${ai?.maxFloors ?? calc.maxFloors}층`, sub: `${ai?.maxHeight?.value ?? calc.maxHeight}m`, color: "text-purple-400" },
+              { label: "예상 층수", val: `${ai?.maxFloors ?? calc.maxFloors}층`, sub: `${ai?.maxHeight?.value ?? calc.maxHeight}m (${calc.heightNote})`, color: "text-purple-400" },
               { label: "주차 대수", val: `${ai?.parkingRequired ?? calc.parking}대`, sub: "주차장법 기준", color: "text-amber-400" },
             ].map(k => (
               <div key={k.label} className="glass rounded-2xl p-5 border border-[var(--line)] text-center">
