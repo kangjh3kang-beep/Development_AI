@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import { CadToolbar } from "@/components/cad/CadToolbar";
 import { AutoDesignPanel } from "@/components/cad/AutoDesignPanel";
 import { DrawingAnalysisPanel } from "@/components/cad/DrawingAnalysisPanel";
-import { ExportPanel } from "@/components/cad/ExportPanel";
+// ExportPanel은 우측 CadExportPanel로 통합됨
 import { CadCommandLine } from "@/components/cad/CadCommandLine";
 import { ComplianceHud } from "@/components/compliance/ComplianceHud";
 import LayerPanel from "@/components/cad/LayerPanel";
@@ -14,6 +14,7 @@ import { CadBimSidePanel } from "@/components/cad/CadBimSidePanel";
 import { CadExportPanel } from "@/components/cad/CadExportPanel";
 import { useCadStore } from "@/store/use-cad-store";
 
+type LeftPanelTab = "design" | "analysis" | "layers";
 type RightPanelTab = "none" | "compliance" | "bim" | "export";
 
 const CadCanvasInner = dynamic(
@@ -63,6 +64,7 @@ export function CadEditor({ projectId }: CadEditorProps) {
 
   const [textValue, setTextValue] = useState("");
   const textInputRef = useRef<HTMLInputElement>(null);
+  const [leftPanel, setLeftPanel] = useState<LeftPanelTab>("design");
   const [rightPanel, setRightPanel] = useState<RightPanelTab>("none");
 
   // 캔버스 크기 자동 조정
@@ -204,12 +206,37 @@ export function CadEditor({ projectId }: CadEditorProps) {
             : "grid-cols-[280px_1fr]"
         }`}
       >
-        {/* 좌측: AI 설계 패널 + 레이어 */}
-        <div className="flex flex-col gap-4 overflow-y-auto" style={{ maxHeight: 640 }}>
-          <AutoDesignPanel projectId={projectId} />
-          <DrawingAnalysisPanel />
-          <LayerPanel />
-          <ExportPanel projectId={projectId} />
+        {/* 좌측: 탭 전환 패널 */}
+        <div className="flex flex-col gap-2 overflow-hidden" style={{ maxHeight: 640 }}>
+          {/* 탭 버튼 */}
+          <div className="flex gap-1 rounded-xl bg-[var(--surface-soft)] p-1" role="tablist">
+            {([
+              { id: "design" as const, label: "AI 설계" },
+              { id: "analysis" as const, label: "분석" },
+              { id: "layers" as const, label: "레이어" },
+            ]).map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                role="tab"
+                aria-selected={leftPanel === tab.id}
+                onClick={() => setLeftPanel(tab.id)}
+                className={`flex-1 rounded-lg px-2 py-1.5 text-xs font-bold transition-colors ${
+                  leftPanel === tab.id
+                    ? "bg-[var(--accent)] text-white shadow-sm"
+                    : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+          {/* 탭 콘텐츠 */}
+          <div className="flex-1 overflow-y-auto">
+            {leftPanel === "design" && <AutoDesignPanel projectId={projectId} />}
+            {leftPanel === "analysis" && <DrawingAnalysisPanel />}
+            {leftPanel === "layers" && <LayerPanel />}
+          </div>
         </div>
 
         {/* 중앙: 캔버스 + HUD */}

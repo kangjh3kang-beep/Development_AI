@@ -307,7 +307,7 @@ function SummaryMetrics({
       {metrics.map((m) => (
         <div
           key={m.label}
-          className="flex items-center gap-1 rounded-lg bg-white px-2 py-1"
+          className="flex items-center gap-1 rounded-lg bg-[var(--surface-soft)] px-2 py-1"
         >
           <span
             className={`inline-block h-1.5 w-1.5 rounded-full ${m.pass ? "bg-emerald-500" : "bg-red-500"}`}
