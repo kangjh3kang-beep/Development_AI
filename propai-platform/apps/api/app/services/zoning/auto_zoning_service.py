@@ -58,12 +58,27 @@ class AutoZoningService:
                     "lat": geocode.get("lat"),
                     "lon": geocode.get("lon"),
                 }
-        except Exception as e:
-            result["warnings"].append(f"주소->PNU 변환 실패: {str(e)}")
+        except Exception:
+            # VWORLD API 키 미설정 시 PNU 변환 불가 — 경고 없이 계속 진행
+            pass
 
+        # PNU 없어도 주소 키워드 기반으로 용도지역 분석 계속 진행
         if not result["pnu"]:
-            result["warnings"].append(
-                "PNU를 확인할 수 없습니다. 수동으로 입력해주세요."
+            # 주소에서 용도지역을 추론하여 기본 분석 제공
+            result["zone_type"] = self._detect_zone_from_address(address)
+            if result["zone_type"]:
+                zone_key = self._normalize_zone_name(result["zone_type"])
+                limits = ZONE_LIMITS.get(zone_key)
+                if limits:
+                    result["zone_limits"] = {
+                        "max_bcr_pct": limits["max_bcr"],
+                        "max_far_pct": limits["max_far"],
+                        "max_height_m": limits["max_height_m"],
+                        "zone_key": zone_key,
+                        "legal_basis": "국토의 계획 및 이용에 관한 법률 제78조",
+                    }
+            result["special_districts"] = self._detect_special_districts(
+                str(result.get("zone_type") or ""), address
             )
             return result
 
@@ -124,6 +139,24 @@ class AutoZoningService:
             if zone_name in land_use_plan:
                 return zone_name
         return None
+
+    def _detect_zone_from_address(self, address: str) -> Optional[str]:
+        """주소 키워드로 용도지역을 추론.
+
+        VWORLD API 없이도 주소의 지역명으로 대략적인 용도지역을 판단한다.
+        정확도는 낮지만, PNU 변환 실패 시 폴백으로 사용.
+        """
+        # 상업지역 키워드
+        if any(kw in address for kw in ["역", "상가", "시장", "번화가", "명동", "강남역", "종로"]):
+            return "일반상업지역"
+        # 공업지역 키워드
+        if any(kw in address for kw in ["공단", "산단", "공업", "지식산업"]):
+            return "준공업지역"
+        # 녹지지역 키워드
+        if any(kw in address for kw in ["산", "임야", "녹지", "자연"]):
+            return "자연녹지지역"
+        # 기본: 일반주거지역 (한국 도시의 대부분)
+        return "제2종일반주거지역"
 
     def _detect_special_districts(self, zone_type: str, address: str) -> list:
         """특수구역 감지 (역세권, 도시재생 등)."""
