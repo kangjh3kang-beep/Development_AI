@@ -63,6 +63,121 @@ class VWorldService:
             "parcel_count": len(pnu_codes)
         }
 
+    async def geocode_address(self, address: str) -> Optional[Dict]:
+        """주소를 좌표+PNU로 변환 (지오코딩)"""
+        if not settings.VWORLD_API_KEY:
+            return None
+        params = {
+            "service": "address",
+            "request": "getcoord",
+            "key": settings.VWORLD_API_KEY,
+            "address": address,
+            "type": "ROAD",
+            "format": "json",
+        }
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            try:
+                resp = await client.get(f"{self.BASE_URL}/req/address", params=params)
+                resp.raise_for_status()
+                data = resp.json()
+                response = data.get("response", {})
+                if response.get("status") != "OK":
+                    return None
+                result = response.get("result", {})
+                point = result.get("point", {})
+                lat = float(point.get("y", 0) or 0)
+                lon = float(point.get("x", 0) or 0)
+                if lat == 0 and lon == 0:
+                    return None
+                # PNU 추출 시도
+                pnu = result.get("structure", {}).get("level4LC", "") + result.get("structure", {}).get("level4AC", "")
+                return {"lat": lat, "lon": lon, "pnu": pnu or None, "address": address}
+            except Exception as e:
+                logger.error("VWORLD 지오코딩 실패", address=address, error=str(e))
+                return None
+
+    async def get_land_info(self, pnu: str) -> Optional[Dict]:
+        """PNU로 토지정보(지목, 면적, 소유구분, 이용상황, 공시지가) 조회"""
+        if not settings.VWORLD_API_KEY:
+            return None
+        params = {
+            "service": "data",
+            "request": "GetFeature",
+            "data": "LP_PA_CBND_BUBUN",
+            "key": settings.VWORLD_API_KEY,
+            "format": "json",
+            "crs": "EPSG:4326",
+            "attrFilter": f"pnu:=:{pnu}",
+            "geometry": "true",
+            "attribute": "true",
+        }
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            try:
+                resp = await client.get(f"{self.BASE_URL}/req/data", params=params)
+                resp.raise_for_status()
+                data = resp.json()
+                features = (
+                    data.get("response", {})
+                    .get("result", {})
+                    .get("featureCollection", {})
+                    .get("features", [])
+                )
+                if not features:
+                    return None
+                props = features[0].get("properties", {})
+                geom = features[0].get("geometry", {})
+                return {
+                    "properties": {
+                        "area": float(props.get("area", 0) or 0),
+                        "jimok": props.get("lndcgr_nm", ""),
+                        "use_zone": props.get("land_use", ""),
+                        "official_price": float(props.get("pblntf_pc", 0) or 0),
+                        "owner_type": props.get("own_gbn_nm", ""),
+                        "land_use_situation": props.get("lnd_crnt_nm", ""),
+                        "road_side": props.get("road_side_nm", ""),
+                        "terrain": props.get("tpgrp_nm", ""),
+                        "address": props.get("addr", ""),
+                    },
+                    "geometry": geom,
+                }
+            except Exception as e:
+                logger.error("VWORLD 토지정보 조회 실패", pnu=pnu, error=str(e))
+                return None
+
+    async def get_land_use_districts(self, pnu: str) -> List[Dict]:
+        """PNU로 용도지구/구역 (UD802, UD803) 목록 조회"""
+        results = []
+        for data_code, category in [("LT_C_UD802", "용도지구"), ("LT_C_UD803", "용도구역")]:
+            try:
+                params = {
+                    "service": "data",
+                    "request": "GetFeature",
+                    "data": data_code,
+                    "key": settings.VWORLD_API_KEY,
+                    "format": "json",
+                    "attrFilter": f"pnu:=:{pnu}",
+                }
+                async with httpx.AsyncClient(timeout=15.0) as client:
+                    resp = await client.get(f"{self.BASE_URL}/req/data", params=params)
+                    resp.raise_for_status()
+                    data = resp.json()
+                    features = (
+                        data.get("response", {})
+                        .get("result", {})
+                        .get("featureCollection", {})
+                        .get("features", [])
+                    )
+                    for feat in features:
+                        props = feat.get("properties", {})
+                        results.append({
+                            "category": category,
+                            "name": props.get("uname", "") or props.get("gname", ""),
+                            "code": props.get("ucode", "") or props.get("gcode", ""),
+                        })
+            except Exception:
+                pass  # 용도지구 없는 필지는 정상
+        return results
+
     async def get_land_use_zone(self, x: float, y: float) -> Optional[Dict]:
         """좌표 기반 용도지역 조회"""
         params = {
