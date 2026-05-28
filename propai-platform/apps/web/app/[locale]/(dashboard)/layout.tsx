@@ -6,6 +6,7 @@ import { AIAssistant } from "@/components/common/AIAssistant";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
 import { SidebarNav } from "@/components/layout/SidebarNav";
 import { MobileSidebarToggle } from "@/components/layout/MobileSidebarToggle";
+import { AuthGuard } from "@/components/auth/AuthGuard";
 type DashboardLayoutProps = Readonly<{
   children: React.ReactNode;
   params: Promise<{
@@ -193,6 +194,7 @@ export default async function DashboardLayout({
   ];
 
   return (
+    <AuthGuard>
     <div className="mx-auto flex min-h-screen max-w-7xl flex-col gap-6 px-4 py-5 md:px-6">
       <AIAssistant />
       
@@ -242,5 +244,6 @@ export default async function DashboardLayout({
         <main className="min-w-0">{children}</main>
       </div>
     </div>
+    </AuthGuard>
   );
 }
