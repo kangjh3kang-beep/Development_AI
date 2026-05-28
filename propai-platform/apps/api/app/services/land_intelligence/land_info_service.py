@@ -15,30 +15,13 @@ from typing import Any
 
 from ..external_api.vworld_service import VWorldService
 from ..external_api.molit_service import MOLITService
-from ..zoning.auto_zoning_service import AutoZoningService, ZONE_LIMITS
+from ..zoning.auto_zoning_service import AutoZoningService
+from .ordinance_service import OrdinanceService
 
 logger = logging.getLogger(__name__)
 
 
-# 지자체별 조례 건폐율/용적률 (법정 상한 이내 실효값)
-# 향후 DB화 또는 법제처 API 연동 예정
-LOCAL_ORDINANCE_DB: dict[str, dict[str, dict[str, float]]] = {
-    "서울특별시": {
-        "강남구": {"제2종일반주거지역": {"bcr": 60, "far": 200}, "제3종일반주거지역": {"bcr": 50, "far": 250}, "일반상업지역": {"bcr": 60, "far": 800}},
-        "서초구": {"제2종일반주거지역": {"bcr": 60, "far": 200}, "제3종일반주거지역": {"bcr": 50, "far": 250}},
-        "송파구": {"제2종일반주거지역": {"bcr": 60, "far": 200}},
-        "마포구": {"제2종일반주거지역": {"bcr": 60, "far": 200}, "준주거지역": {"bcr": 60, "far": 400}},
-        "영등포구": {"준공업지역": {"bcr": 60, "far": 400}},
-        "성동구": {"준공업지역": {"bcr": 60, "far": 400}, "제2종일반주거지역": {"bcr": 60, "far": 200}},
-    },
-    "경기도": {
-        "성남시": {"제2종일반주거지역": {"bcr": 60, "far": 220}},
-        "수원시": {"제2종일반주거지역": {"bcr": 60, "far": 250}},
-        "용인시": {"제2종일반주거지역": {"bcr": 60, "far": 200}},
-        "화성시": {"제2종일반주거지역": {"bcr": 60, "far": 250}},
-        "의정부시": {"제2종일반주거지역": {"bcr": 60, "far": 250}},
-    },
-}
+# 조례 데이터: OrdinanceService가 법제처 API → 캐시DB → 법정상한 순으로 실시간 조회
 
 
 class LandInfoService:
@@ -48,6 +31,7 @@ class LandInfoService:
         self.vworld = VWorldService()
         self.molit = MOLITService()
         self.zoning = AutoZoningService()
+        self.ordinance = OrdinanceService()
 
     async def collect_comprehensive(self, address: str) -> dict[str, Any]:
         """주소로부터 종합 토지정보를 수집한다.
@@ -131,18 +115,25 @@ class LandInfoService:
             if isinstance(prices, list):
                 result["official_prices"] = prices
 
-        # Phase 3: 지자체 조례 분석
+        # Phase 3: 지자체 조례 실시간 분석 (법제처 API → 캐시 → 법정상한)
         if result["zone_type"]:
-            result["local_ordinance"] = self._analyze_local_ordinance(
-                address, result["zone_type"]
-            )
-            # 조례 실효값으로 zone_limits 업데이트
-            if result["local_ordinance"] and result["zone_limits"]:
-                ord_data = result["local_ordinance"]
-                if ord_data.get("effective_bcr"):
-                    result["zone_limits"]["ordinance_bcr_pct"] = ord_data["effective_bcr"]
-                if ord_data.get("effective_far"):
-                    result["zone_limits"]["ordinance_far_pct"] = ord_data["effective_far"]
+            try:
+                ordinance_result = await self.ordinance.get_ordinance_limits(
+                    address, result["zone_type"]
+                )
+                result["local_ordinance"] = ordinance_result
+
+                # 조례 실효값으로 zone_limits 업데이트
+                if result["zone_limits"] and ordinance_result:
+                    if ordinance_result.get("effective_bcr"):
+                        result["zone_limits"]["ordinance_bcr_pct"] = ordinance_result["effective_bcr"]
+                    if ordinance_result.get("effective_far"):
+                        result["zone_limits"]["ordinance_far_pct"] = ordinance_result["effective_far"]
+                    result["zone_limits"]["ordinance_source"] = ordinance_result.get("source", "")
+                    result["zone_limits"]["ordinance_legal_basis"] = ordinance_result.get("legal_basis", "")
+            except Exception as e:
+                logger.warning("조례 분석 실패: %s (%s)", address, str(e))
+                result["local_ordinance"] = None
 
         return result
 
@@ -219,45 +210,3 @@ class LandInfoService:
                     regulations.append({"name": name, "restriction": "해당 지구/구역 관련 법규 확인 필요"})
         return regulations
 
-    def _analyze_local_ordinance(self, address: str, zone_type: str) -> dict[str, Any] | None:
-        """지자체 조례 기반 건폐율/용적률 실효값 분석."""
-        # 주소에서 시도/시군구 추출
-        sido = None
-        sigungu = None
-        for s in LOCAL_ORDINANCE_DB:
-            if s in address:
-                sido = s
-                break
-        if not sido:
-            return None
-
-        for sg in LOCAL_ORDINANCE_DB.get(sido, {}):
-            if sg in address:
-                sigungu = sg
-                break
-
-        if not sigungu:
-            return {"sido": sido, "sigungu": None, "effective_bcr": None, "effective_far": None, "note": "해당 시군구 조례 데이터 미보유"}
-
-        zone_data = LOCAL_ORDINANCE_DB.get(sido, {}).get(sigungu, {}).get(zone_type)
-        legal_limits = ZONE_LIMITS.get(zone_type, {})
-
-        if zone_data:
-            return {
-                "sido": sido,
-                "sigungu": sigungu,
-                "legal_bcr": legal_limits.get("max_bcr"),
-                "legal_far": legal_limits.get("max_far"),
-                "ordinance_bcr": zone_data.get("bcr"),
-                "ordinance_far": zone_data.get("far"),
-                "effective_bcr": min(legal_limits.get("max_bcr", 100), zone_data.get("bcr", 100)),
-                "effective_far": min(legal_limits.get("max_far", 1500), zone_data.get("far", 1500)),
-                "legal_basis": f"{sido} {sigungu} 도시계획 조례",
-            }
-        return {
-            "sido": sido,
-            "sigungu": sigungu,
-            "effective_bcr": legal_limits.get("max_bcr"),
-            "effective_far": legal_limits.get("max_far"),
-            "note": f"{sigungu}의 {zone_type} 조례 세부값 미보유 — 법정 상한 적용",
-        }
