@@ -1,8 +1,9 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { KakaoAddressSearch } from "@/components/ui/KakaoAddressSearch";
+import { apiClient } from "@/lib/api-client";
 
 const Icons = {
   Search: () => <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>,
@@ -23,6 +24,46 @@ export function SiteInitiator({ onInitiate, loading }: SiteInitiatorProps) {
   const [address, setAddress] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [activeTab, setActiveTab] = useState<"search" | "upload">("search");
+
+  // 실시간 용도지역 프리뷰 (주소 입력 시 자동 조회)
+  const [zoningPreview, setZoningPreview] = useState<{
+    zoneType: string | null;
+    maxBcr: number | null;
+    maxFar: number | null;
+    landCategory: string | null;
+  } | null>(null);
+  const [zoningPreviewLoading, setZoningPreviewLoading] = useState(false);
+
+  useEffect(() => {
+    if (!address || address.trim().length < 5) {
+      setZoningPreview(null);
+      return;
+    }
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      setZoningPreviewLoading(true);
+      try {
+        const res = await apiClient.post<{
+          zone_type: string | null;
+          zone_limits: { max_bcr_pct: number; max_far_pct: number } | null;
+          land_category: string | null;
+        }>("/zoning/analyze", { useMock: false, body: { address: address.trim() } });
+        if (!cancelled) {
+          setZoningPreview({
+            zoneType: res.zone_type,
+            maxBcr: res.zone_limits?.max_bcr_pct ?? null,
+            maxFar: res.zone_limits?.max_far_pct ?? null,
+            landCategory: res.land_category,
+          });
+        }
+      } catch {
+        if (!cancelled) setZoningPreview(null);
+      } finally {
+        if (!cancelled) setZoningPreviewLoading(false);
+      }
+    }, 800);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [address]);
 
   const handleSearch = () => {
     if (!address) return;
@@ -77,17 +118,36 @@ export function SiteInitiator({ onInitiate, loading }: SiteInitiatorProps) {
                   {!loading && <Icons.ArrowRight />}
                 </button>
                 
-                {/* AI Helper for Search */}
+                {/* AI 분석 프리뷰 — 주소 입력 시 실시간 용도지역 조회 결과 */}
                 <div className="flex items-start gap-4 rounded-2xl bg-[var(--surface-muted)] p-5 border border-[var(--line)] backdrop-blur-md">
                   <div className="mt-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--accent-soft)] text-[var(--accent-strong)] shadow-sm">
                     <Icons.Cpu />
                   </div>
                   <div className="flex flex-col gap-1">
-                      <p className="text-[10px] font-black text-[var(--text-hint)] uppercase tracking-[0.2em] mb-1">AI 분석 노트 (Analyst)</p>
-                      <p className="text-xs leading-relaxed text-[var(--text-secondary)] font-medium">
-                        지정한 지번의 현재 용도지역은 <span className="text-[var(--accent-strong)] font-bold">'준공업지역'</span>입니다. 
-                        인근 성수역 복합개발 사례를 분석한 결과, 종변경을 통해 용적률 상향 가능성이 탐지되었습니다.
-                      </p>
+                      <p className="text-[10px] font-black text-[var(--text-hint)] uppercase tracking-[0.2em] mb-1">AI 분석 프리뷰</p>
+                      {zoningPreviewLoading ? (
+                        <p className="text-xs leading-relaxed text-[var(--text-secondary)] font-medium animate-pulse">
+                          용도지역 실시간 조회 중...
+                        </p>
+                      ) : zoningPreview?.zoneType ? (
+                        <p className="text-xs leading-relaxed text-[var(--text-secondary)] font-medium">
+                          해당 부지의 현재 용도지역은 <span className="text-[var(--accent-strong)] font-bold">'{zoningPreview.zoneType}'</span>입니다.
+                          {zoningPreview.maxBcr != null && zoningPreview.maxFar != null && (
+                            <> 건폐율 <span className="font-bold">{zoningPreview.maxBcr}%</span>, 용적률 <span className="font-bold">{zoningPreview.maxFar}%</span> 이하 개발이 가능합니다.</>
+                          )}
+                          {zoningPreview.landCategory && (
+                            <> 지목: <span className="font-bold">{zoningPreview.landCategory}</span>.</>
+                          )}
+                        </p>
+                      ) : address.length >= 5 ? (
+                        <p className="text-xs leading-relaxed text-[var(--text-secondary)] font-medium">
+                          용도지역 정보를 조회할 수 없습니다. 분석 시작 후 상세 결과를 확인하세요.
+                        </p>
+                      ) : (
+                        <p className="text-xs leading-relaxed text-[var(--text-secondary)] font-medium">
+                          주소를 입력하면 용도지역, 건폐율, 용적률 등을 실시간으로 조회합니다.
+                        </p>
+                      )}
                   </div>
                 </div>
               </motion.div>

@@ -8,6 +8,7 @@ import { SiteInitiator } from "@/components/projects/SiteInitiator";
 import { ProjectSiteAnalysisWorkspaceClient } from "@/components/projects/ProjectSiteAnalysisWorkspaceClient";
 import { isValidLocale, type Locale } from "@/i18n/config";
 import { useDictionary } from "@/hooks/use-dictionary";
+import { apiClient } from "@/lib/api-client";
 
 type IconProps = React.SVGAttributes<SVGElement>;
 
@@ -24,7 +25,8 @@ export default function SiteAnalysisPage() {
   const { locale, id } = useParams() as { locale: string; id: string };
   const { dictionary, isLoading } = useDictionary(locale as Locale);
   const [stage, setStage] = useState<"init" | "analyzing" | "result">("init");
-  const [siteData, setSiteData] = useState<any>(null);
+  const [siteData, setSiteData] = useState<Record<string, string | undefined> | null>(null);
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
 
   if (isLoading || !dictionary) {
     return (
@@ -34,14 +36,42 @@ export default function SiteAnalysisPage() {
     );
   }
 
-  const handleInitiate = (data: any) => {
-    setStage("analyzing");
-    setSiteData(data);
+  const handleInitiate = async (data: { address?: string; file?: File | null; fileName?: string }) => {
+    const address = data.address?.trim();
+    if (!address) return;
 
-    // Simulate deep AI analysis
-    setTimeout(() => {
+    setStage("analyzing");
+    setAnalysisError(null);
+    setSiteData({ address });
+
+    try {
+      // 실제 용도지역 분석 API 호출
+      const zoningResult = await apiClient.post<{
+        address: string;
+        pnu: string | null;
+        zone_type: string | null;
+        zone_limits: { max_bcr_pct: number; max_far_pct: number; max_height_m: number | null; zone_key: string; legal_basis: string } | null;
+        land_area_sqm: number | null;
+        land_category: string | null;
+        official_price_per_sqm: number | null;
+      }>("/zoning/analyze", {
+        useMock: false,
+        body: { address },
+      });
+
+      setSiteData({
+        address: zoningResult.address || address,
+        pnu: zoningResult.pnu ?? undefined,
+        zoneType: zoningResult.zone_type ?? undefined,
+        landAreaSqm: zoningResult.land_area_sqm?.toString(),
+        landCategory: zoningResult.land_category ?? undefined,
+      });
+    } catch {
+      // API 실패 시에도 주소 기반으로 결과 화면 진행 (LandIntelligencePanel이 자체 폴백 보유)
+      setAnalysisError("용도지역 API 연결 실패 — 로컬 추정값으로 표시합니다.");
+    } finally {
       setStage("result");
-    }, 3200);
+    }
   };
 
   const safeLocale = (isValidLocale(locale) ? locale : "ko") as Locale;
@@ -151,7 +181,7 @@ export default function SiteAnalysisPage() {
           </motion.div>
         )}
 
-        {stage === "result" && (
+        {stage === "result" && siteData && (
           <motion.div
             key="result"
             initial={{ opacity: 0, y: 40 }}
@@ -167,12 +197,19 @@ export default function SiteAnalysisPage() {
                   <div className="space-y-1">
                     <p className="text-[10px] font-black uppercase tracking-[0.4em] text-[var(--text-hint)]">분석 대상 부지</p>
                     <p className="text-xl sm:text-2xl lg:text-3xl font-[1000] text-[var(--text-primary)] tracking-tighter italic">
-                      {siteData?.address || "분석 대상 주소를 입력하세요"}
+                      {siteData.address || "분석 대상 주소를 입력하세요"}
                     </p>
+                    {siteData.zoneType && (
+                      <p className="text-sm font-bold text-[var(--accent-strong)]">
+                        {siteData.zoneType}
+                        {siteData.landAreaSqm && ` · ${Number(siteData.landAreaSqm).toLocaleString()}m²`}
+                        {siteData.landCategory && ` · ${siteData.landCategory}`}
+                      </p>
+                    )}
                   </div>
                </div>
                <button
-                onClick={() => setStage("init")}
+                onClick={() => { setStage("init"); setSiteData(null); setAnalysisError(null); }}
                 className="group flex h-16 items-center justify-center gap-4 rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-soft)] px-10 text-[11px] font-black text-[var(--text-primary)] hover:text-white uppercase tracking-[0.3em] transition-all hover:bg-[var(--accent-strong)] hover:border-[var(--accent-strong)] active:scale-95 shadow-[var(--shadow-lg)]"
                >
                  <span>새 분석</span>
@@ -180,13 +217,20 @@ export default function SiteAnalysisPage() {
                </button>
             </div>
 
+            {/* API 연결 실패 안내 */}
+            {analysisError && (
+              <div className="rounded-2xl border border-amber-500/20 bg-amber-500/5 p-5 text-sm text-amber-600 dark:text-amber-400 font-medium">
+                {analysisError}
+              </div>
+            )}
+
             <motion.div
               initial={{ opacity: 0, y: 40 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.2 }}
               className="rounded-2xl sm:rounded-[2.5rem] lg:rounded-[4.5rem] border border-[var(--line-strong)] bg-[var(--surface-strong)]/50 p-4 sm:p-8 lg:p-14 shadow-[var(--shadow-2xl)] backdrop-blur-xl"
             >
-              <LandIntelligencePanel projectId="demo" data={siteData} />
+              <LandIntelligencePanel projectId={id} data={siteData} />
             </motion.div>
           </motion.div>
         )}
