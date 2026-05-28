@@ -5,6 +5,7 @@ import { Button, Card, CardContent, Input } from "@propai/ui";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { apiClient } from "@/lib/api-client";
+import { KakaoAddressSearch } from "@/components/ui/KakaoAddressSearch";
 import type { Locale } from "@/i18n/config";
 
 /* ── Types ── */
@@ -273,19 +274,14 @@ export function ProjectSiteAnalysisWorkspaceClient({
           <p className="mb-4 text-xs font-semibold uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
             주소 입력
           </p>
-          <div className="grid gap-3 sm:grid-cols-[1fr_auto_auto]">
-            <Input
+          <div className="grid gap-3">
+            {/* 카카오 주소 검색 — 클릭하면 검색 팝업 열림 */}
+            <KakaoAddressSearch
               value={activeParcel.address}
-              onChange={(e) =>
-                updateParcel(activeParcelId, { address: e.target.value })
-              }
-              placeholder="주소를 입력하세요 (예: 서울특별시 강남구 삼성동 123)"
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  void analyzeParcel(activeParcelId);
-                }
+              onSelect={(result) => {
+                updateParcel(activeParcelId, { address: result.fullAddress });
               }}
+              placeholder="주소를 검색하세요 (클릭하면 검색창이 열립니다)"
             />
             <Input
               type="number"

@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { KakaoAddressSearch } from "@/components/ui/KakaoAddressSearch";
 
 const Icons = {
   Search: () => <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>,
@@ -58,28 +59,23 @@ export function SiteInitiator({ onInitiate, loading }: SiteInitiatorProps) {
                 exit={{ opacity: 0, y: -10 }}
                 className="flex flex-col gap-6"
               >
-                <div className="flex gap-3">
-                  <div className="relative flex-1">
-                    <div className="absolute left-4 top-1/2 -translate-y-1/2 text-[var(--text-tertiary)] group-focus-within:text-[var(--accent-strong)] transition-colors">
-                      <Icons.Search />
-                    </div>
-                    <input
-                      type="text"
-                      placeholder="서울시 성동구 성수동 1가 12-3..."
-                      value={address}
-                      onChange={(e) => setAddress(e.target.value)}
-                      className="w-full rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] py-4 pl-12 pr-4 text-sm font-medium text-[var(--text-primary)] placeholder:text-[var(--text-hint)] focus:border-[var(--accent-strong)] focus:outline-none focus:ring-4 focus:ring-[var(--accent-soft)] transition-all shadow-sm"
-                    />
-                  </div>
-                  <button
-                    onClick={handleSearch}
-                    disabled={loading || !address}
-                    className="flex items-center gap-2 rounded-2xl bg-[var(--accent-strong)] px-8 py-4 font-black text-white shadow-lg transition-all hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 disabled:grayscale"
-                  >
-                    {loading ? "분석 중..." : "분석 시작"}
-                    {!loading && <Icons.ArrowRight />}
-                  </button>
-                </div>
+                {/* 카카오 주소 검색 (구주소/도로명 검색) */}
+                <KakaoAddressSearch
+                  value={address}
+                  onSelect={(result) => {
+                    setAddress(result.fullAddress);
+                  }}
+                  placeholder="주소를 검색하세요 (클릭하면 검색창이 열립니다)"
+                />
+
+                <button
+                  onClick={handleSearch}
+                  disabled={loading || !address}
+                  className="flex w-full items-center justify-center gap-2 rounded-2xl bg-[var(--accent-strong)] px-8 py-4 font-black text-white shadow-lg transition-all hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 disabled:grayscale"
+                >
+                  {loading ? "분석 중..." : "분석 시작"}
+                  {!loading && <Icons.ArrowRight />}
+                </button>
                 
                 {/* AI Helper for Search */}
                 <div className="flex items-start gap-4 rounded-2xl bg-[var(--surface-muted)] p-5 border border-[var(--line)] backdrop-blur-md">
