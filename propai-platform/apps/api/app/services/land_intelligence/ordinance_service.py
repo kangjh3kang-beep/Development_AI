@@ -132,8 +132,8 @@ class OrdinanceService:
 
         # 법정 상한
         national = NATIONAL_LIMITS.get(zone_type, {})
-        national_bcr = national.get("bcr", 60)
-        national_far = national.get("far", 250)
+        national_bcr: float = float(national.get("bcr") or 60)
+        national_far: float = float(national.get("far") or 250)
 
         result = {
             "sido": sido,
@@ -152,12 +152,14 @@ class OrdinanceService:
         }
 
         # 1차: 법제처 API 실시간 조회
-        api_result = await self._fetch_from_moleg_api(sido, sigungu, zone_type)
+        api_result = await self._fetch_from_moleg_api(sido or "", sigungu, zone_type)
         if api_result and api_result.get("bcr") is not None:
-            result["ordinance_bcr"] = api_result["bcr"]
-            result["ordinance_far"] = api_result["far"]
-            result["effective_bcr"] = min(national_bcr, api_result["bcr"])
-            result["effective_far"] = min(national_far, api_result["far"])
+            ord_bcr = api_result["bcr"]
+            ord_far = api_result["far"]
+            result["ordinance_bcr"] = ord_bcr
+            result["ordinance_far"] = ord_far
+            result["effective_bcr"] = min(national_bcr, ord_bcr) if ord_bcr else national_bcr
+            result["effective_far"] = min(national_far, ord_far) if ord_far else national_far
             result["source"] = "법제처API"
             result["ordinance_name"] = api_result.get("ordinance_name")
             result["last_updated"] = api_result.get("last_updated")
@@ -165,12 +167,14 @@ class OrdinanceService:
             return result
 
         # 2차: 정적 캐시 조회
-        cache_result = self._lookup_cache(sido, sigungu, zone_type)
+        cache_result = self._lookup_cache(sido or "", sigungu, zone_type)
         if cache_result:
-            result["ordinance_bcr"] = cache_result["bcr"]
-            result["ordinance_far"] = cache_result["far"]
-            result["effective_bcr"] = min(national_bcr, cache_result["bcr"])
-            result["effective_far"] = min(national_far, cache_result["far"])
+            c_bcr = cache_result["bcr"]
+            c_far = cache_result["far"]
+            result["ordinance_bcr"] = c_bcr
+            result["ordinance_far"] = c_far
+            result["effective_bcr"] = min(national_bcr, c_bcr)
+            result["effective_far"] = min(national_far, c_far)
             result["source"] = "캐시DB"
             result["legal_basis"] = f"{sigungu or sido} 도시계획 조례 (캐시)"
             return result
@@ -190,8 +194,9 @@ class OrdinanceService:
         search_name = f"{sigungu or sido} 도시계획 조례" if sigungu else f"{sido} 도시계획 조례"
 
         try:
-            # Step 1: 자치법규 목록 검색
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            # Step 1: 자치법규 목록 검색 (User-Agent 필수)
+            headers = {"User-Agent": "PropAI/1.0 (https://4t8t.net)"}
+            async with httpx.AsyncClient(timeout=10.0, headers=headers) as client:
                 resp = await client.get(
                     MOLEG_ORDIN_LIST_URL,
                     params={
@@ -212,7 +217,7 @@ class OrdinanceService:
                 return None
 
             # Step 2: 조례 본문 조회
-            async with httpx.AsyncClient(timeout=15.0) as client:
+            async with httpx.AsyncClient(timeout=15.0, headers=headers) as client:
                 resp = await client.get(
                     MOLEG_ORDIN_TEXT_URL,
                     params={
@@ -229,7 +234,7 @@ class OrdinanceService:
             return self._parse_bcr_far_from_text(ordin_text, zone_type, sigungu or sido)
 
         except Exception as e:
-            logger.warning("법제처 API 조례 조회 실패", sido=sido, sigungu=sigungu, error=str(e))
+            logger.warning("법제처 API 조례 조회 실패: %s %s (%s)", sido, sigungu, str(e))
             return None
 
     def _parse_ordin_id(self, xml_text: str, region_name: str) -> str | None:
