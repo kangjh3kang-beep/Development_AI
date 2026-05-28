@@ -557,7 +557,7 @@ export function OperationsIntelligenceWorkspaceClient({
                 {labels.heroTitle}
               </span>
               <span className="rounded-full border border-[var(--line)] px-4 py-2 text-xs font-medium text-[var(--text-secondary)]">
-                {runtimeConfig.mode === "live" ? "LIVE" : "HYBRID"}
+                {runtimeConfig.mode === "live" ? "실연동" : "로컬"}
               </span>
             </div>
             <h3 className="mt-5 text-3xl font-bold text-[var(--text-primary)]">

@@ -14,7 +14,7 @@ const PROJECT_TYPES = [
 ];
 
 const AVAILABLE_MODULES = [
-  { key: "design", label: "설계 (Design)", defaultOn: true },
+  { key: "design", label: "설계", defaultOn: true },
   { key: "bim", label: "BIM 3D", defaultOn: true },
   { key: "finance", label: "금융 분석", defaultOn: true },
   { key: "drone", label: "드론 점검", defaultOn: false },
@@ -71,7 +71,7 @@ export default function NewProjectPage() {
     <div className="flex flex-col gap-10 pb-20 max-w-5xl mx-auto mt-4">
       <div className="space-y-2">
         <h1 className="text-4xl font-[900] tracking-tighter text-[var(--text-primary)]">
-          Launch Project <span className="text-[var(--accent-strong)]">_</span>
+          새 프로젝트 <span className="text-[var(--accent-strong)]">_</span>
         </h1>
         <p className="text-[var(--text-secondary)] font-medium">
           새로운 디지털 트윈 기반 부동산 프로젝트를 생성하고 AI 분석을 시작합니다.
@@ -116,7 +116,7 @@ export default function NewProjectPage() {
                   />
                 </div>
                 <div className="grid gap-2">
-                  <label className="text-xs font-bold uppercase tracking-widest text-[var(--text-tertiary)]">고유 지번(PNU) (선택)</label>
+                  <label className="text-xs font-bold uppercase tracking-widest text-[var(--text-tertiary)]">필지번호 (선택)</label>
                   <input
                     type="text"
                     value={pnu}
@@ -187,20 +187,20 @@ export default function NewProjectPage() {
           <div className="sticky top-24 space-y-6">
             <section className="rounded-[2rem] border border-[var(--line-strong)] bg-[var(--surface-soft)] p-8 shadow-[var(--shadow-xl)] backdrop-blur-xl relative overflow-hidden">
                <div className="absolute top-0 right-0 w-32 h-32 bg-[var(--accent-strong)]/10 blur-[50px] rounded-full" />
-               <h3 className="text-lg font-black text-[var(--text-primary)] mb-6">Launch Sequence</h3>
+               <h3 className="text-lg font-black text-[var(--text-primary)] mb-6">프로젝트 요약</h3>
                
                <div className="space-y-4 mb-8">
                  <div className="flex justify-between items-center text-sm">
                    <span className="text-[var(--text-tertiary)] font-medium">프로젝트</span>
-                   <span className="text-[var(--text-primary)] font-bold truncate max-w-[120px]">{name || "N/A"}</span>
+                   <span className="text-[var(--text-primary)] font-bold truncate max-w-[120px]">{name || "-"}</span>
                  </div>
                  <div className="flex justify-between items-center text-sm">
                    <span className="text-[var(--text-tertiary)] font-medium">위치</span>
-                   <span className="text-[var(--text-primary)] font-bold truncate max-w-[120px]">{location || "N/A"}</span>
+                   <span className="text-[var(--text-primary)] font-bold truncate max-w-[120px]">{location || "-"}</span>
                  </div>
                  <div className="flex justify-between items-center text-sm">
                    <span className="text-[var(--text-tertiary)] font-medium">선택 모듈</span>
-                   <span className="text-[var(--accent-strong)] font-black">{modules.size} EA</span>
+                   <span className="text-[var(--accent-strong)] font-black">{modules.size}개</span>
                  </div>
                </div>
 
@@ -214,10 +214,10 @@ export default function NewProjectPage() {
                   {isSubmitting ? (
                     <>
                       <span className="h-4 w-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                      INITIALIZING...
+                      초기화 중...
                     </>
                   ) : (
-                    "INITIALIZE PROJECT"
+                    "프로젝트 시작"
                   )}
                 </button>
             </section>

@@ -18,25 +18,25 @@ const STATUS_STYLES: Record<
     dot: "bg-[var(--status-success)]",
     bg: "bg-[var(--status-success)]/10 border-[var(--status-success)]/20",
     text: "text-[var(--status-success)]",
-    defaultLabel: "LIVE",
+    defaultLabel: "실연동",
   },
   mock: {
     dot: "bg-[var(--status-warning)]",
     bg: "bg-[var(--status-warning)]/10 border-[var(--status-warning)]/20",
     text: "text-[var(--status-warning)]",
-    defaultLabel: "MOCK",
+    defaultLabel: "모의",
   },
   loading: {
     dot: "bg-[var(--status-info)] animate-pulse",
     bg: "bg-[var(--status-info)]/10 border-[var(--status-info)]/20",
     text: "text-[var(--status-info)]",
-    defaultLabel: "LOADING",
+    defaultLabel: "로딩 중",
   },
   error: {
     dot: "bg-[var(--status-error)]",
     bg: "bg-[var(--status-error)]/10 border-[var(--status-error)]/20",
     text: "text-[var(--status-error)]",
-    defaultLabel: "ERROR",
+    defaultLabel: "오류",
   },
 };
 

@@ -222,7 +222,7 @@ export function ProjectSummaryClient({
                 {project.status}
               </span>
               <span className="rounded-full border border-[var(--line)] px-3 py-1 text-xs font-medium text-[var(--text-secondary)]">
-                {runtimeConfig.mode === "live" ? "LIVE" : "HYBRID"}
+                {runtimeConfig.mode === "live" ? "실연동" : "로컬"}
               </span>
             </div>
           </div>

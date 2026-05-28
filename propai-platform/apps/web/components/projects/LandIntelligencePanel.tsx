@@ -657,7 +657,7 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
                 <Icons.Map />
               </div>
               <span className="text-[10px] font-black text-[var(--text-hint)] uppercase tracking-widest">
-                {zoningData?.pnu ? `PNU: ${zoningData.pnu}` : displayPnu !== "—" ? `PNU: ${displayPnu}` : "PNU: 주소 입력 시 자동 매핑"}
+                {zoningData?.pnu ? `필지번호: ${zoningData.pnu}` : displayPnu !== "—" ? `필지번호: ${displayPnu}` : "필지번호: 주소 입력 시 자동 매핑"}
               </span>
             </div>
             <div className="px-2">
@@ -703,7 +703,7 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
                 : "text-[var(--accent-strong)]"
             }`}
           >
-            <Icons.Layers /> GIS layers
+            <Icons.Layers /> 지도 레이어
           </button>
         </div>
 

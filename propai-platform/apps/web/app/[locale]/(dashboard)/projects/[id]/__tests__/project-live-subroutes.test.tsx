@@ -113,7 +113,7 @@ vi.mock("@/components/projects/ProjectSummaryClient", () => ({
 vi.mock("@/i18n/get-dictionary", () => ({
   getDictionary: vi.fn(async () => ({
     workspace: {
-      modeLive: "LIVE",
+      modeLive: "실연동",
       modeMock: "MOCK",
     },
     nav: {
@@ -131,7 +131,7 @@ vi.mock("@/i18n/get-dictionary", () => ({
           hub: "Project live overview",
           name: "NAME",
           pnu: "PNU",
-          zone: "LIVE",
+          zone: "실연동",
           npv: "NPV",
           roi: "ROI",
         },
@@ -190,7 +190,7 @@ describe("Project live subroutes", () => {
     );
 
     expect(screen.getByText("Project finance live route")).toBeInTheDocument();
-    expect(screen.getByText("LIVE")).toBeInTheDocument();
+    expect(screen.getByText("실연동")).toBeInTheDocument();
     expect(screen.getByTestId("project-finance-workspace")).toHaveTextContent(
       "project-finance-001",
     );
@@ -206,7 +206,7 @@ describe("Project live subroutes", () => {
     expect(
       screen.getByText("Project contract automation live route"),
     ).toBeInTheDocument();
-    expect(screen.getByText("LIVE")).toBeInTheDocument();
+    expect(screen.getByText("실연동")).toBeInTheDocument();
     expect(screen.getByTestId("project-contract-workspace")).toHaveTextContent(
       "project-contract-001",
     );
@@ -220,7 +220,7 @@ describe("Project live subroutes", () => {
     );
 
     expect(screen.getByText("Project report live route")).toBeInTheDocument();
-    expect(screen.getByText("LIVE")).toBeInTheDocument();
+    expect(screen.getByText("실연동")).toBeInTheDocument();
     expect(screen.getByTestId("project-report-workspace")).toHaveTextContent(
       "project-report-001",
     );
@@ -234,7 +234,7 @@ describe("Project live subroutes", () => {
     );
 
     expect(screen.getByText("Project drone live route")).toBeInTheDocument();
-    expect(screen.getByText("LIVE")).toBeInTheDocument();
+    expect(screen.getByText("실연동")).toBeInTheDocument();
     expect(screen.getByTestId("project-drone-workspace")).toHaveTextContent(
       "project-drone-001",
     );
@@ -245,7 +245,7 @@ describe("Project live subroutes", () => {
     render(<DesignPage />);
 
     expect(screen.getByText("Project design live route")).toBeInTheDocument();
-    expect(screen.getByText("LIVE")).toBeInTheDocument();
+    expect(screen.getByText("실연동")).toBeInTheDocument();
     expect(screen.getByTestId("project-design-workspace")).toHaveTextContent(
       "project-design-001",
     );
@@ -259,7 +259,7 @@ describe("Project live subroutes", () => {
     );
 
     expect(screen.getByText("Project BIM live route")).toBeInTheDocument();
-    expect(screen.getByText("LIVE")).toBeInTheDocument();
+    expect(screen.getByText("실연동")).toBeInTheDocument();
     expect(screen.getByTestId("project-bim-workspace")).toHaveTextContent(
       "project-bim-001",
     );
@@ -273,7 +273,7 @@ describe("Project live subroutes", () => {
     );
 
     expect(screen.getByText("Project blockchain live route")).toBeInTheDocument();
-    expect(screen.getByText("LIVE")).toBeInTheDocument();
+    expect(screen.getByText("실연동")).toBeInTheDocument();
     expect(
       screen.getByTestId("project-blockchain-workspace"),
     ).toHaveTextContent("project-chain-001");
@@ -284,7 +284,7 @@ describe("Project live subroutes", () => {
     render(<ProjectDetailPage />);
 
     expect(screen.getByText(/Project live overview/)).toBeInTheDocument();
-    expect(screen.getByText("LIVE")).toBeInTheDocument();
+    expect(screen.getByText("실연동")).toBeInTheDocument();
     expect(screen.getByText(/project-overview-001/)).toBeInTheDocument();
   });
 });

@@ -71,7 +71,7 @@ vi.mock("next/navigation", () => {
 vi.mock("@/i18n/get-dictionary", () => ({
   getDictionary: vi.fn(async () => ({
     workspace: {
-      modeLive: "LIVE",
+      modeLive: "실연동",
       modeMock: "MOCK",
     },
     nav: {},
@@ -108,7 +108,7 @@ describe("Operations live pages", () => {
     render(await MaintenancePage({ params: Promise.resolve({ locale: "en" }) }));
 
     expect(screen.getByText("예지정비 운영센터")).toBeInTheDocument();
-    expect(screen.getByText("LIVE")).toBeInTheDocument();
+    expect(screen.getByText("실연동")).toBeInTheDocument();
     expect(screen.getByText("maintenance")).toBeInTheDocument();
     expect(screen.getByText("hero-off")).toBeInTheDocument();
   });

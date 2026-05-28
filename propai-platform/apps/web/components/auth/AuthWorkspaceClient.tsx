@@ -144,8 +144,8 @@ const LABELS: Record<Locale, Labels> = {
     runtimeToken: "저장된 액세스 토큰",
     runtimeRefreshToken: "저장된 리프레시 토큰",
     runtimeModeLabels: {
-      live: "LIVE",
-      mock: "MOCK",
+      live: "실연동",
+      mock: "모의",
     },
     tokenPresent: "있음",
     tokenMissing: "없음",

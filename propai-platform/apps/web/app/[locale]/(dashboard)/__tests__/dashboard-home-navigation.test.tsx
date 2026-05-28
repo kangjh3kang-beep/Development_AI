@@ -49,7 +49,7 @@ vi.mock("@/i18n/get-dictionary", () => ({
       integrationGraphqlLabel: "GraphQL",
       integrationRealtimeLabel: "Realtime",
       modeMock: "MOCK",
-      modeLive: "LIVE",
+      modeLive: "실연동",
       modeWaiting: "WAITING",
     },
     pages: {

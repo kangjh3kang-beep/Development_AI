@@ -186,7 +186,7 @@ vi.mock("@/i18n/get-dictionary", () => ({
       summaryTitle: "Summary panel",
     },
     workspace: {
-      modeLive: "LIVE",
+      modeLive: "실연동",
       modeMock: "MOCK",
     },
     status: {
@@ -360,7 +360,7 @@ describe("Dashboard route shells", () => {
     render(await ProjectsPage({ params: Promise.resolve({ locale: "en" }) }));
 
     expect(screen.getByText("Projects overview")).toBeInTheDocument();
-    expect(screen.getByText("LIVE")).toBeInTheDocument();
+    expect(screen.getByText("실연동")).toBeInTheDocument();
     expect(screen.getByTestId("projects-overview-client")).toHaveTextContent(
       "en",
     );
@@ -370,7 +370,7 @@ describe("Dashboard route shells", () => {
     render(await AgentPage({ params: Promise.resolve({ locale: "en" }) }));
 
     expect(screen.getByText("Agent orchestration center")).toBeInTheDocument();
-    expect(screen.getByText("LIVE")).toBeInTheDocument();
+    expect(screen.getByText("실연동")).toBeInTheDocument();
     expect(screen.getByTestId("agent-workspace")).toHaveTextContent("en");
   });
 
@@ -378,7 +378,7 @@ describe("Dashboard route shells", () => {
     render(await AuctionPage({ params: Promise.resolve({ locale: "en" }) }));
 
     expect(screen.getByText("Auction live center")).toBeInTheDocument();
-    expect(screen.getByText("LIVE")).toBeInTheDocument();
+    expect(screen.getByText("실연동")).toBeInTheDocument();
     expect(screen.getByTestId("auction-workspace")).toHaveTextContent("en");
   });
 
@@ -387,7 +387,7 @@ describe("Dashboard route shells", () => {
 
     expect(screen.queryByTestId("module-placeholder")).not.toBeInTheDocument();
     expect(screen.getByText("Approval operations center")).toBeInTheDocument();
-    expect(screen.getByText("LIVE")).toBeInTheDocument();
+    expect(screen.getByText("실연동")).toBeInTheDocument();
     expect(screen.getByTestId("approval-ops-workspace")).toHaveTextContent("en");
   });
 
@@ -395,7 +395,7 @@ describe("Dashboard route shells", () => {
     render(await TaxPage({ params: Promise.resolve({ locale: "en" }) }));
 
     expect(screen.getByText("세금 라이브 센터")).toBeInTheDocument();
-    expect(screen.getByText("LIVE")).toBeInTheDocument();
+    expect(screen.getByText("실연동")).toBeInTheDocument();
     expect(screen.getByTestId("tax-workspace")).toHaveTextContent("en");
   });
 
@@ -403,7 +403,7 @@ describe("Dashboard route shells", () => {
     render(await InspectionPage({ params: Promise.resolve({ locale: "en" }) }));
 
     expect(screen.getByText("현장 점검 라이브 센터")).toBeInTheDocument();
-    expect(screen.getByText("LIVE")).toBeInTheDocument();
+    expect(screen.getByText("실연동")).toBeInTheDocument();
     expect(screen.getByTestId("inspection-workspace")).toHaveTextContent("en");
   });
 
@@ -411,7 +411,7 @@ describe("Dashboard route shells", () => {
     render(await InvestmentPage({ params: Promise.resolve({ locale: "en" }) }));
 
     expect(screen.getByText("투자 운영 컨트롤타워")).toBeInTheDocument();
-    expect(screen.getByText("LIVE")).toBeInTheDocument();
+    expect(screen.getByText("실연동")).toBeInTheDocument();
     expect(screen.getByTestId("investment-workspace")).toHaveTextContent("en");
   });
 
@@ -419,7 +419,7 @@ describe("Dashboard route shells", () => {
     render(await ESGPage({ params: Promise.resolve({ locale: "en" }) }));
 
     expect(screen.getByText("에너지 인증 워크스페이스")).toBeInTheDocument();
-    expect(screen.getByText("LIVE")).toBeInTheDocument();
+    expect(screen.getByText("실연동")).toBeInTheDocument();
     expect(screen.getByTestId("energy-workspace")).toHaveTextContent("en");
   });
 
@@ -427,7 +427,7 @@ describe("Dashboard route shells", () => {
     render(await CostPage({ params: Promise.resolve({ locale: "en" }) }));
 
     expect(screen.getByText("공사비 인텔리전스 허브")).toBeInTheDocument();
-    expect(screen.getByText("LIVE")).toBeInTheDocument();
+    expect(screen.getByText("실연동")).toBeInTheDocument();
     expect(screen.getByTestId("cost-workspace")).toHaveTextContent("en");
   });
 
@@ -437,7 +437,7 @@ describe("Dashboard route shells", () => {
     expect(
       screen.getByText("운영 인텔리전스 워크스페이스"),
     ).toBeInTheDocument();
-    expect(screen.getByText("LIVE")).toBeInTheDocument();
+    expect(screen.getByText("실연동")).toBeInTheDocument();
     expect(screen.getByTestId("ops-intelligence-workspace")).toHaveTextContent(
       "en",
     );

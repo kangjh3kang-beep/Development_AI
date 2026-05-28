@@ -209,7 +209,7 @@ export function ProjectDesignWorkspaceClient({
               {labels.heroTitle}
             </span>
             <span className="rounded-full border border-[var(--line-strong)] px-4 py-2 text-[10px] font-black tracking-widest text-[var(--text-hint)] uppercase">
-              {runtimeConfig.mode === "live" ? "LIVE ENGINE" : "HYBRID SIMULATOR"}
+              {runtimeConfig.mode === "live" ? "실시간 엔진" : "로컬 시뮬레이터"}
             </span>
           </div>
           <h3 className="mt-5 text-3xl font-black tracking-tight text-[var(--text-primary)]">
