@@ -74,7 +74,7 @@ async function fetchAIAnalysis<T = unknown>(
       // JSON 파싱 실패 → status 기반 메시지
       if (response.status === 401) errorMsg = "API 키가 유효하지 않습니다. 설정에서 확인해주세요.";
       else if (response.status === 429) errorMsg = "API 호출 한도를 초과했습니다. 잠시 후 다시 시도해주세요.";
-      else if (response.status >= 500) errorMsg = "AI 서버 내부 에러입니다. 잠시 후 다시 시도해주세요.";
+      else if (response.status >= 500) errorMsg = "AI 분석을 사용하려면 관리자 설정에서 AI API 키를 등록하세요.";
     }
     throw new Error(errorMsg);
   }

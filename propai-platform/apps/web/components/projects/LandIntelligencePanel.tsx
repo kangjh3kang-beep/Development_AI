@@ -315,15 +315,8 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
       });
       setDeepAnalysisResult(res);
     } catch {
-      // Fallback: try AI analyze client if backend fails
-      if (isReady) {
-        runAnalysis({
-          domain: "site-analysis",
-          context: { address: data.address, pnu: data.pnu || "", projectId },
-        });
-      } else {
-        setDeepAnalysisError("백엔드 분석 서비스에 연결할 수 없습니다. 잠시 후 다시 시도해주세요.");
-      }
+      // AI 분석 실패 시 사용자 친화적 안내
+      setDeepAnalysisError("AI 심층 분석을 사용하려면 관리자 설정에서 AI API 키를 등록하세요. (설정 → API 키 관리)");
     } finally {
       setDeepAnalysisLoading(false);
     }

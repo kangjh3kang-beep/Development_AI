@@ -419,6 +419,19 @@ export function ApiKeyManagementPanel() {
       const next = { ...keys, [serviceId]: value };
       setKeys(next);
       persistKeys(next);
+
+      // AI 키는 useSystemStore에도 동기화 (AI 분석 기능에서 사용)
+      try {
+        const { useSystemStore } = require("@/store/useSystemStore");
+        const store = useSystemStore.getState();
+        if (serviceId === "openai" && value) {
+          store.setOpenAIApiKey(value);
+          store.setLLMProvider("openai");
+        } else if (serviceId === "anthropic" && value) {
+          store.setAnthropicApiKey(value);
+          store.setLLMProvider("anthropic");
+        }
+      } catch { /* useSystemStore 미로드 시 무시 */ }
     },
     [keys],
   );
