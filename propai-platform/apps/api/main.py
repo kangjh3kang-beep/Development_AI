@@ -192,7 +192,7 @@ async def health_check() -> HealthResponse:
         db_url = str(engine.url)
         # 비밀번호 마스킹
         masked = db_url.split("@")[-1] if "@" in db_url else db_url
-        services["postgres"] = f"unhealthy (host: {masked}, err: {str(e)[:80]})"
+        services["postgres"] = f"unhealthy (host: {masked}, user: {engine.url.username}, pgbouncer: {settings.db_use_pgbouncer}, err: {str(e)[:200]})"
 
     # Redis 연결 확인
     try:
