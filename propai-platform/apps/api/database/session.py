@@ -18,12 +18,12 @@ from apps.api.config import get_settings
 
 settings = get_settings()
 
-# 메인 PostgreSQL + PostGIS 엔진
-# Supabase pgBouncer 사용 시 prepared statements 비활성화 필요
-_connect_args: dict = {}
-if settings.db_use_pgbouncer:
-    _connect_args["statement_cache_size"] = 0
-    _connect_args["prepared_statement_cache_size"] = 0
+# Supabase PGBouncer 호환: prepared statements 항상 비활성화
+# DB_USE_PGBOUNCER 설정과 무관하게 안전하게 0으로 설정
+_connect_args: dict = {
+    "statement_cache_size": 0,
+    "prepared_statement_cache_size": 0,
+}
 
 
 def _fix_supabase_url(url: str) -> str:
