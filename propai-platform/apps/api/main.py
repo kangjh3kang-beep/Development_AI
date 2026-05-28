@@ -89,6 +89,12 @@ from apps.api.app.routers.bank_report import router as bank_report_router
 from apps.api.routers.v2 import auth as v2_auth
 from apps.api.routers.v2 import design as v2_design
 from apps.api.routers.v2 import projects as v2_projects
+
+# v2 feasibility (자체 prefix 포함)
+try:
+    from apps.api.app.routers.v2_feasibility import router as v2_feasibility_router
+except ImportError:
+    v2_feasibility_router = None
 from apps.api.versioning import VersionHeaderMiddleware, create_latest_redirect_router
 
 settings = get_settings()
@@ -301,3 +307,5 @@ app.include_router(bank_report_router, prefix="/api/v1", tags=["은행제출용 
 app.include_router(v2_auth.router, prefix="/api/v2/auth", tags=["인증 v2"])
 app.include_router(v2_projects.router, prefix="/api/v2/projects", tags=["프로젝트 v2"])
 app.include_router(v2_design.router, prefix="/api/v2/design", tags=["설계 v2"])
+if v2_feasibility_router is not None:
+    app.include_router(v2_feasibility_router)  # 자체 prefix: /api/v2/feasibility
