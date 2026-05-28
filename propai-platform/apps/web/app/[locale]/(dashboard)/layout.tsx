@@ -241,6 +241,25 @@ export default async function DashboardLayout({
         {/* 콘텐츠 영역 */}
         <main className="min-w-0">{children}</main>
       </div>
+
+      {/* 회사정보 푸터 */}
+      <footer className="mt-16 border-t border-[var(--line)] bg-[var(--surface-soft)] py-8 px-6">
+        <div className="mx-auto max-w-6xl flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+          <div className="space-y-2">
+            <p className="text-sm font-bold text-[var(--text-primary)]">사통팔땅</p>
+            <div className="space-y-1 text-xs text-[var(--text-tertiary)] leading-relaxed">
+              <p>대표: 강재희 | 사업자등록번호: 682-38-01463</p>
+              <p>업태: 도매 및 소매업</p>
+              <p>소재지: 경기도 광주시 회안대로 637-36</p>
+            </div>
+          </div>
+          <div className="space-y-1 text-xs text-[var(--text-tertiary)]">
+            <p>대표번호: <a href="tel:1666-0916" className="text-[var(--text-secondary)] hover:text-[var(--accent-strong)]">1666-0916</a></p>
+            <p>팩스: 02-6305-0044</p>
+            <p className="mt-2 text-[var(--text-hint)]">&copy; 2026 사통팔땅. All rights reserved.</p>
+          </div>
+        </div>
+      </footer>
     </div>
   );
 }
