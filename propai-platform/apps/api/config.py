@@ -138,7 +138,7 @@ class Settings(BaseSettings):
 
     # ── CORS ──
     cors_origins: str = Field(
-        default="http://localhost:3000,http://localhost:3001,https://propai.kr,https://www.propai.kr,https://propai-web.pages.dev",
+        default="http://localhost:3000,http://localhost:3001,https://propai.kr,https://www.propai.kr,https://propai-web.pages.dev,https://4t8t.net,https://www.4t8t.net",
         validation_alias=AliasChoices("cors_origins", "ALLOWED_ORIGINS"),
     )
 
