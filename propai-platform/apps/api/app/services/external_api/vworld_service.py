@@ -213,3 +213,85 @@ class VWorldService:
             except httpx.RequestError as e:
                 logger.error("용도지역 네트워크 오류", error=str(e))
                 return None
+
+    # ── VWORLD NED API (공시지가, 토지이용계획) ──
+    NED_BASE_URL = "https://api.vworld.kr/ned/data"
+
+    async def get_individual_land_price(self, pnu: str, year: int = 2025) -> Optional[Dict]:
+        """PNU 기반 개별공시지가 조회.
+
+        반환: { pnu, year, price_per_sqm, land_code, land_name, ... }
+        """
+        if not settings.VWORLD_API_KEY:
+            return None
+        try:
+            async with httpx.AsyncClient(timeout=15.0, headers=self.HEADERS) as client:
+                resp = await client.get(
+                    f"{self.NED_BASE_URL}/getIndvdLandPriceAttr",
+                    params={
+                        "key": settings.VWORLD_API_KEY,
+                        "pnu": pnu,
+                        "stdrYear": str(year),
+                        "format": "json",
+                        "numOfRows": "1",
+                    },
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                fields = data.get("indvdLandPrices", {}).get("field", [])
+                if not fields:
+                    return None
+                item = fields[0] if isinstance(fields, list) else fields
+                return {
+                    "pnu": item.get("pnu", pnu),
+                    "year": int(item.get("stdrYear", year)),
+                    "price_per_sqm": int(item.get("pblntfPclnd", 0) or 0),
+                    "land_code": item.get("ldCode", ""),
+                    "land_name": item.get("ldCodeNm", ""),
+                    "last_updated": item.get("lastUpdtDt", ""),
+                    "is_standard_land": item.get("stdLandAt", "") == "Y",
+                }
+        except Exception as e:
+            logger.error("개별공시지가 조회 실패: %s (%s)", pnu, str(e))
+            return None
+
+    async def get_land_use_plan(self, pnu: str) -> List[Dict]:
+        """PNU 기반 토지이용계획 조회 (용도지역/지구/구역 + 기타 규제 전부).
+
+        하나의 필지에 중첩된 모든 규제를 배열로 반환.
+        예: [대공방어협조구역, 도시지역, 제2종일반주거지역, ...]
+        """
+        if not settings.VWORLD_API_KEY:
+            return []
+        try:
+            async with httpx.AsyncClient(timeout=15.0, headers=self.HEADERS) as client:
+                resp = await client.get(
+                    f"{self.NED_BASE_URL}/getLandUseAttr",
+                    params={
+                        "key": settings.VWORLD_API_KEY,
+                        "pnu": pnu,
+                        "format": "json",
+                        "numOfRows": "30",
+                    },
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                fields = data.get("landUses", {}).get("field", [])
+                if not fields:
+                    return []
+                if not isinstance(fields, list):
+                    fields = [fields]
+                results = []
+                for item in fields:
+                    results.append({
+                        "district_name": item.get("prposAreaDstrcCodeNm", ""),
+                        "district_code": item.get("prposAreaDstrcCode", ""),
+                        "conflict_status": item.get("cnflcAtNm", ""),
+                        "land_name": item.get("ldCodeNm", ""),
+                        "register_date": item.get("registDt", ""),
+                        "last_updated": item.get("lastUpdtDt", ""),
+                    })
+                return results
+        except Exception as e:
+            logger.error("토지이용계획 조회 실패: %s (%s)", pnu, str(e))
+            return []
