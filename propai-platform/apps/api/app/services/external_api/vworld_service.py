@@ -67,37 +67,47 @@ class VWorldService:
     HEADERS = {"Referer": "https://developmentai-production.up.railway.app"}
 
     async def geocode_address(self, address: str) -> Optional[Dict]:
-        """주소를 좌표+PNU로 변환 (지오코딩)"""
+        """주소를 좌표+PNU로 변환 (지오코딩).
+
+        PARCEL 타입 우선 시도 (PNU 포함) → 실패 시 ROAD 타입 폴백.
+        """
         if not settings.VWORLD_API_KEY:
             return None
-        params = {
-            "service": "address",
-            "request": "getcoord",
-            "key": settings.VWORLD_API_KEY,
-            "address": address,
-            "type": "ROAD",
-            "format": "json",
-        }
+
         async with httpx.AsyncClient(timeout=30.0, headers=self.HEADERS) as client:
-            try:
-                resp = await client.get(f"{self.BASE_URL}/address", params=params)
-                resp.raise_for_status()
-                data = resp.json()
-                response = data.get("response", {})
-                if response.get("status") != "OK":
-                    return None
-                result = response.get("result", {})
-                point = result.get("point", {})
-                lat = float(point.get("y", 0) or 0)
-                lon = float(point.get("x", 0) or 0)
-                if lat == 0 and lon == 0:
-                    return None
-                # PNU 추출 시도
-                pnu = result.get("structure", {}).get("level4LC", "") + result.get("structure", {}).get("level4AC", "")
-                return {"lat": lat, "lon": lon, "pnu": pnu or None, "address": address}
-            except Exception as e:
-                logger.error("VWORLD 지오코딩 실패", address=address, error=str(e))
-                return None
+            # PARCEL 타입 우선 (PNU가 level4LC에 포함됨)
+            for addr_type in ["PARCEL", "ROAD"]:
+                try:
+                    params = {
+                        "service": "address",
+                        "request": "getcoord",
+                        "key": settings.VWORLD_API_KEY,
+                        "address": address,
+                        "type": addr_type,
+                        "format": "json",
+                    }
+                    resp = await client.get(f"{self.BASE_URL}/address", params=params)
+                    resp.raise_for_status()
+                    data = resp.json()
+                    response = data.get("response", {})
+                    if response.get("status") != "OK":
+                        continue
+
+                    point = response.get("result", {}).get("point", {})
+                    lat = float(point.get("y", 0) or 0)
+                    lon = float(point.get("x", 0) or 0)
+                    if lat == 0 and lon == 0:
+                        continue
+
+                    # PNU 추출: PARCEL → level4LC, ROAD → level4AC
+                    structure = response.get("refined", {}).get("structure", {})
+                    pnu = structure.get("level4LC") or None
+
+                    return {"lat": lat, "lon": lon, "pnu": pnu, "address": address}
+                except Exception as e:
+                    logger.error("VWORLD 지오코딩 실패 (%s): %s — %s", addr_type, address, str(e))
+                    continue
+            return None
 
     async def get_land_info(self, pnu: str) -> Optional[Dict]:
         """PNU로 토지정보(지목, 면적, 소유구분, 이용상황, 공시지가) 조회"""
