@@ -237,6 +237,7 @@ export function ProjectLegalWorkspaceClient({
     runtimeConfig.mode === "live" || runtimeConfig.hasAccessToken;
 
   const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
+  const designData = useProjectContextStore((s) => s.designData);
   const updateComplianceData = useProjectContextStore((s) => s.updateComplianceData);
   const markStageComplete = useProjectContextStore((s) => s.markStageComplete);
   const addAnalysisResult = useProjectContextStore((s) => s.addAnalysisResult);
@@ -248,10 +249,10 @@ export function ProjectLegalWorkspaceClient({
   const [form, setForm] = useState({
     address: "",
     zoneCode: "",
-    plannedBcr: "58.2",
-    plannedFar: "298.5",
-    plannedHeight: "75.2",
-    plannedFloors: "25",
+    plannedBcr: "",
+    plannedFar: "",
+    plannedHeight: "",
+    plannedFloors: "",
   });
 
   const projectQuery = useQuery({
@@ -273,15 +274,18 @@ export function ProjectLegalWorkspaceClient({
     }));
   }, [projectQuery.data]);
 
-  // Pre-fill from site analysis context (capillary network)
+  // Pre-fill from site analysis + design context (capillary network)
   useEffect(() => {
-    if (!siteAnalysis) return;
     setForm((current) => ({
       ...current,
-      address: current.address || siteAnalysis.address || "",
-      zoneCode: current.zoneCode || siteAnalysis.zoneCode || "",
+      address: current.address || siteAnalysis?.address || "",
+      zoneCode: current.zoneCode || siteAnalysis?.zoneCode || "",
+      plannedBcr: current.plannedBcr || (designData?.bcr ? String(designData.bcr) : ""),
+      plannedFar: current.plannedFar || (designData?.far ? String(designData.far) : ""),
+      plannedFloors: current.plannedFloors || (designData?.floorCount ? String(designData.floorCount) : ""),
+      plannedHeight: current.plannedHeight || (designData?.floorCount ? String(designData.floorCount * 3.3) : ""),
     }));
-  }, [siteAnalysis]);
+  }, [siteAnalysis, designData]);
 
   const projectError = projectQuery.error
     ? extractErrorMessage(projectQuery.error, labels.authError)

@@ -6,6 +6,7 @@ import { Button, Card, CardContent, CardTitle, Input, Select } from "@propai/ui"
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import { ApiClientError, apiClient } from "@/lib/api-client";
+import { useProjectContextStore } from "@/store/useProjectContextStore";
 import type { Locale } from "@/i18n/config";
 
 type ProjectResponse = {
@@ -191,6 +192,13 @@ export function ProjectBimWorkspaceClient({
   const canUseLiveApi =
     runtimeConfig.mode === "live" || runtimeConfig.hasAccessToken;
 
+  // 부지분석/설계 데이터 연동
+  const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
+  const designData = useProjectContextStore((s) => s.designData);
+  const updateDesignData = useProjectContextStore((s) => s.updateDesignData);
+  const markStageComplete = useProjectContextStore((s) => s.markStageComplete);
+  const addAnalysisResult = useProjectContextStore((s) => s.addAnalysisResult);
+
   const [workspaceError, setWorkspaceError] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
   const [bimResult, setBimResult] = useState<BIMQuantityResponse | null>(null);
@@ -210,18 +218,28 @@ export function ProjectBimWorkspaceClient({
       }),
   });
 
+  // 프로젝트 메타데이터 → 폼 자동 반영
   useEffect(() => {
     const totalAreaSqm = projectQuery.data?.total_area_sqm;
-
-    if (totalAreaSqm == null) {
-      return;
-    }
-
+    if (totalAreaSqm == null) return;
     setForm((current) => ({
       ...current,
       totalAreaSqm: current.totalAreaSqm || String(totalAreaSqm),
     }));
   }, [projectQuery.data]);
+
+  // 부지분석/설계 데이터 → 폼 자동 반영
+  useEffect(() => {
+    setForm((current) => {
+      const area = designData?.totalGfaSqm ?? siteAnalysis?.landAreaSqm;
+      const floors = designData?.floorCount;
+      return {
+        ...current,
+        totalAreaSqm: current.totalAreaSqm || (area ? String(area) : ""),
+        floors: current.floors === "12" && floors ? String(floors) : current.floors,
+      };
+    });
+  }, [siteAnalysis, designData]);
 
   const geometryTypeSummary = useMemo(() => {
     if (!geometryResult) {
@@ -277,6 +295,25 @@ export function ProjectBimWorkspaceClient({
 
       setBimResult(bim);
 
+      // 프로젝트 컨텍스트에 BIM 결과 저장
+      updateDesignData({
+        totalGfaSqm: bim.total_area_sqm,
+        floorCount: Number(form.floors),
+        buildingType: form.structureType,
+        bcr: null,
+        far: null,
+      });
+      markStageComplete("bim");
+      addAnalysisResult({
+        module: "bim",
+        completedAt: new Date().toISOString(),
+        summary: {
+          totalVolume: bim.total_volume_m3,
+          elementCount: bim.element_count,
+          ifcVersion: bim.ifc_version,
+        },
+      });
+
       try {
         const geometry = await apiClient.get<GeometryResponse>(
           `/bim/threejs/${projectId}`,
@@ -313,6 +350,14 @@ export function ProjectBimWorkspaceClient({
           <p className="mt-4 max-w-3xl text-sm leading-8 text-[var(--text-secondary)]">
             {labels.heroHint}
           </p>
+          {siteAnalysis?.address && (
+            <p className="mt-2 text-xs text-emerald-500 flex items-center gap-1.5">
+              <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500" />
+              부지분석 연동: {siteAnalysis.address}
+              {designData?.totalGfaSqm && ` · 연면적 ${designData.totalGfaSqm.toLocaleString()}m²`}
+              {designData?.floorCount && ` · ${designData.floorCount}층`}
+            </p>
+          )}
           <p className="mt-3 max-w-3xl text-sm leading-8 text-[var(--text-tertiary)]">
             {labels.tokenHint}
           </p>

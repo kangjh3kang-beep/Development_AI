@@ -6,10 +6,12 @@ import { ModulePlaceholder } from "@/components/layout/ModulePlaceholder";
 import { isValidLocale, type Locale } from "@/i18n/config";
 import { useDictionary } from "@/hooks/use-dictionary";
 import { ProjectEsgWorkspaceClient } from "@/components/projects/ProjectEsgWorkspaceClient";
+import { useProjectContextStore } from "@/store/useProjectContextStore";
 
 export default function ESGPage() {
   const { locale, id } = useParams() as { locale: string; id: string };
   const { dictionary, isLoading } = useDictionary(locale as Locale);
+  const esgData = useProjectContextStore((s) => s.esgData);
 
   if (isLoading || !dictionary) {
     return (
@@ -62,12 +64,20 @@ export default function ESGPage() {
           </div>
 
           <div className="grid gap-6">
-            {[
-              { label: "Environmental (E)", score: 88, grade: "A+", desc: "Net Zero Readiness" },
-              { label: "Social (S)", score: 74, grade: "A", desc: "Community Impact" },
-              { label: "Governance (G)", score: 92, grade: "S", desc: "Transparency" },
-              { label: "Overall Rating", score: 85, grade: "A+", desc: "Premium Standard" },
-            ].map((item, i) => (
+            {(() => {
+              const hasData = esgData?.totalCarbonPerSqm != null;
+              const eScore = hasData ? Math.max(0, Math.min(100, 100 - (esgData.totalCarbonPerSqm ?? 0) / 10)) : 0;
+              const sScore = hasData ? Math.round(eScore * 0.85) : 0;
+              const gScore = hasData ? Math.round(eScore * 1.05) : 0;
+              const overall = hasData ? Math.round((eScore + sScore + gScore) / 3) : 0;
+              const grade = (s: number) => s >= 90 ? "S" : s >= 80 ? "A+" : s >= 70 ? "A" : s >= 60 ? "B" : "C";
+              return [
+                { label: "Environmental (E)", score: eScore, grade: grade(eScore), desc: hasData ? "탄소 분석 완료" : "분석 대기" },
+                { label: "Social (S)", score: sScore, grade: grade(sScore), desc: hasData ? "커뮤니티 영향" : "분석 대기" },
+                { label: "Governance (G)", score: gScore, grade: grade(gScore), desc: hasData ? "투명성 지표" : "분석 대기" },
+                { label: "Overall Rating", score: overall, grade: grade(overall), desc: hasData ? "종합 등급" : "ESG 분석을 실행하세요" },
+              ];
+            })().map((item, i) => (
               <div key={item.label} className="relative rounded-[2rem] border border-[var(--line)] bg-[var(--surface-soft)] p-6 transition-all hover:bg-[var(--surface)] group/card">
                 <div className="flex items-center justify-between">
                   <div className="space-y-1">

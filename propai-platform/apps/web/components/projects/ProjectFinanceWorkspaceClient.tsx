@@ -240,6 +240,8 @@ export function ProjectFinanceWorkspaceClient({
     runtimeConfig.mode === "live" || runtimeConfig.hasAccessToken;
 
   const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
+  const markStageComplete = useProjectContextStore((s) => s.markStageComplete);
+  const addAnalysisResult = useProjectContextStore((s) => s.addAnalysisResult);
 
   const [workspaceError, setWorkspaceError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -355,6 +357,18 @@ export function ProjectFinanceWorkspaceClient({
 
       setAvmResult(avm);
       setRiskResult(risk);
+
+      // 프로젝트 컨텍스트에 결과 저장
+      markStageComplete("finance");
+      addAnalysisResult({
+        module: "finance",
+        completedAt: new Date().toISOString(),
+        summary: {
+          estimatedPrice: avm.estimated_price,
+          riskLevel: risk.risk_level,
+          jeonseRatio: risk.jeonse_ratio,
+        },
+      });
     } catch (error) {
       setWorkspaceError(extractErrorMessage(error, labels.authError));
     } finally {

@@ -1,10 +1,11 @@
 "use client";
 
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import { motion } from "framer-motion";
 import { useParams } from "next/navigation";
 import { useAIAnalyze, useAIReady } from "@/lib/ai-analyze-client";
 import { getZoningSpec, calcMaxGrossArea, calcParkingRequired } from "@/lib/kr-building-regulations";
+import { useProjectContextStore } from "@/store/useProjectContextStore";
 
 type DesignResult = {
   buildingCoverage?: { value: number; max: number; unit: string };
@@ -23,12 +24,23 @@ export default function DesignPage() {
   const projectId = (params?.id as string) || "";
   const { isReady } = useAIReady();
   const { mutate, data: aiResult, isPending, error } = useAIAnalyze<DesignResult>();
+  const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
 
   const [form, setForm] = useState({
     landArea: "500",
     zoning: "제2종일반주거지역",
     buildingUse: "공동주택",
   });
+
+  // 부지분석 완료 데이터가 있으면 자동 반영
+  useEffect(() => {
+    if (!siteAnalysis) return;
+    setForm((prev) => ({
+      ...prev,
+      landArea: siteAnalysis.landAreaSqm ? String(siteAnalysis.landAreaSqm) : prev.landArea,
+      zoning: siteAnalysis.zoneCode || prev.zoning,
+    }));
+  }, [siteAnalysis]);
 
   // ── 로컬 계산 (즉시) ──
   const localCalc = useMemo(() => {
@@ -82,6 +94,12 @@ export default function DesignPage() {
       <motion.div initial={{ y: -20, opacity: 0 }} animate={{ y: 0, opacity: 1 }}>
         <h1 className="text-3xl font-black tracking-tight text-[var(--text-primary)]">AI 건축 설계</h1>
         <p className="text-sm text-[var(--text-secondary)] mt-1">한국 건축법 기반 즉시 계산 + AI 심층 분석</p>
+        {siteAnalysis?.address && (
+          <p className="text-xs text-emerald-500 mt-2 flex items-center gap-1.5">
+            <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500" />
+            부지분석 연동: {siteAnalysis.address} ({siteAnalysis.zoneCode || "용도지역 미확인"})
+          </p>
+        )}
       </motion.div>
 
       {/* Input */}

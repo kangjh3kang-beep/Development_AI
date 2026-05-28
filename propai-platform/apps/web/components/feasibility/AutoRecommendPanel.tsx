@@ -6,6 +6,7 @@ import { useParams, useRouter } from "next/navigation";
 import { TiltCard } from "@/components/ui/TiltCard";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { useFeasibilityV2Store } from "@/store/use-feasibility-v2-store";
+import { apiClient } from "@/lib/api-client";
 import { BusinessModelRefineModal } from "./BusinessModelRefineModal";
 
 /* ── Types ── */
@@ -168,50 +169,21 @@ export function AutoRecommendPanel({ onClose, isModal = false }: AutoRecommendPa
     }, 300);
 
     try {
-      await new Promise((r) => setTimeout(r, 1500));
-      const area = landArea ? parseFloat(landArea) : 1500;
-      const eqWon = equity ? parseFloat(equity) * 1e8 : 100e8;
-      const MODELS = [
-        { code: "APT_GENERAL", name: "일반분양 아파트", far: 250, gfaMul: 2.5, price: 2200, profitBase: 18, permitEase: "보통", months: 36 },
-        { code: "APT_PREMIUM", name: "프리미엄 아파트", far: 200, gfaMul: 2.0, price: 3500, profitBase: 22, permitEase: "어려움", months: 42 },
-        { code: "OFFICETEL", name: "오피스텔", far: 800, gfaMul: 8.0, price: 1800, profitBase: 15, permitEase: "쉬움", months: 30 },
-        { code: "MIXED_USE", name: "주상복합", far: 600, gfaMul: 6.0, price: 2000, profitBase: 20, permitEase: "보통", months: 40 },
-        { code: "KNOWLEDGE_IND", name: "지식산업센터", far: 500, gfaMul: 5.0, price: 1200, profitBase: 16, permitEase: "매우쉬움", months: 28 },
-        { code: "LOGISTICS", name: "물류센터", far: 200, gfaMul: 2.0, price: 600, profitBase: 12, permitEase: "쉬움", months: 18 },
-        { code: "HOTEL", name: "관광호텔", far: 400, gfaMul: 4.0, price: 2800, profitBase: 14, permitEase: "어려움", months: 48 },
-        { code: "COMMERCIAL", name: "근린상가", far: 300, gfaMul: 3.0, price: 3000, profitBase: 10, permitEase: "쉬움", months: 24 },
-        { code: "STUDIO_APT", name: "도시형생활주택", far: 400, gfaMul: 4.0, price: 1600, profitBase: 17, permitEase: "매우쉬움", months: 24 },
-        { code: "SENIOR_HOUSING", name: "실버타운", far: 200, gfaMul: 2.0, price: 1800, profitBase: 13, permitEase: "보통", months: 36 },
-        { code: "COLIVING", name: "코리빙", far: 500, gfaMul: 5.0, price: 1400, profitBase: 19, permitEase: "쉬움", months: 22 },
-        { code: "DATA_CENTER", name: "데이터센터", far: 200, gfaMul: 2.0, price: 800, profitBase: 25, permitEase: "매우어려움", months: 30 },
-      ];
-      const results: RecommendedModel[] = MODELS.map((m, i) => {
-        const gfa = area * m.gfaMul;
-        const pyeong = gfa / 3.3058;
-        const totalRev = pyeong * m.price * 10000;
-        const netProfit = totalRev * (m.profitBase / 100);
-        const roi = (netProfit / eqWon) * 100;
-        const composite = m.profitBase * 0.3 + Math.min(roi, 100) * 0.3 + (m.permitEase === "매우쉬움" ? 25 : m.permitEase === "쉬움" ? 20 : m.permitEase === "보통" ? 15 : 8) + (60 - m.months) * 0.2;
-        const households = m.code.includes("APT") ? Math.floor(gfa / 85) : m.code === "OFFICETEL" ? Math.floor(gfa / 30) : Math.floor(gfa / 60);
-        return {
-          rank: 0, type_code: m.code, type_name: m.name,
-          profit_rate_pct: m.profitBase + (Math.random() - 0.5) * 4,
-          roi_pct: Math.round(roi * 10) / 10,
-          grade: composite > 35 ? "A" : composite > 28 ? "B" : composite > 20 ? "C" : "D",
-          permit_ease: m.permitEase, total_revenue_won: totalRev, net_profit_won: netProfit,
-          project_months: m.months, total_gfa_sqm: Math.round(gfa),
-          total_households: households, avg_sale_price_per_pyeong: m.price,
-          composite_score: Math.round(composite * 10) / 10,
-          ai_summary: `${m.name}: 예상 수익률 ${m.profitBase}%, ROI ${roi.toFixed(1)}%, 사업기간 ${m.months}개월`,
-        };
-      }).sort((a, b) => b.composite_score - a.composite_score);
-      results.forEach((r, i) => { r.rank = i + 1; });
+      // 실제 백엔드 /auto-recommend API 호출
+      const response = await apiClient.postV2<AutoRecommendResponse>("/feasibility/auto-recommend", {
+        body: {
+          address: address.trim(),
+          land_area_sqm: landArea ? parseFloat(landArea) : undefined,
+          region,
+          equity_won: equity ? parseFloat(equity) * 1e8 : undefined,
+        },
+      });
 
       if (progressRef.current) clearInterval(progressRef.current);
       setProgress(100);
-      setTopModels(results.slice(0, 3));
-      setAllModels(results);
-      setAnalysisCount(results.length);
+      setTopModels(response.recommendations.slice(0, 3));
+      setAllModels(response.all_models ?? response.recommendations);
+      setAnalysisCount(response.analysis_count);
 
       // 분석 완료 후 주소를 컨텍스트 스토어에 저장하여 다른 모듈에서 공유
       updateSiteAnalysis({
