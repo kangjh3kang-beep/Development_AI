@@ -15,6 +15,7 @@ from typing import Any
 
 from ..external_api.vworld_service import VWorldService
 from ..external_api.molit_service import MOLITService
+from ..external_api.building_registry_service import BuildingRegistryService
 from ..zoning.auto_zoning_service import AutoZoningService
 from .ordinance_service import OrdinanceService
 
@@ -30,6 +31,7 @@ class LandInfoService:
     def __init__(self):
         self.vworld = VWorldService()
         self.molit = MOLITService()
+        self.building = BuildingRegistryService()
         self.zoning = AutoZoningService()
         self.ordinance = OrdinanceService()
 
@@ -56,6 +58,7 @@ class LandInfoService:
             "pnu": None,
             "coordinates": None,
             "land_register": None,
+            "building_info": None,
             "official_prices": [],
             "land_use_plan": None,
             "local_ordinance": None,
@@ -95,8 +98,9 @@ class LandInfoService:
                 self._fetch_land_register(pnu),
                 self._fetch_land_use_districts(pnu),
                 self._fetch_official_prices(pnu),
+                self._fetch_building_info(pnu),
             ]
-            land_reg, districts, prices = await asyncio.gather(*tasks, return_exceptions=True)
+            land_reg, districts, prices, bldg = await asyncio.gather(*tasks, return_exceptions=True)
 
             # 토지대장 정보
             if isinstance(land_reg, dict) and land_reg:
@@ -114,6 +118,10 @@ class LandInfoService:
             # 공시지가 이력
             if isinstance(prices, list):
                 result["official_prices"] = prices
+
+            # 건축물대장
+            if isinstance(bldg, dict) and bldg:
+                result["building_info"] = bldg
 
         # Phase 3: 지자체 조례 실시간 분석 (법제처 API → 캐시 → 법정상한)
         if result["zone_type"]:
@@ -184,6 +192,14 @@ class LandInfoService:
         except Exception as e:
             logger.warning("공시지가 이력 조회 실패", pnu=pnu, error=str(e))
         return prices
+
+    async def _fetch_building_info(self, pnu: str) -> dict[str, Any] | None:
+        """건축물대장 조회 (공공데이터포털 건축HUB)."""
+        try:
+            return await self.building.get_building_by_pnu(pnu)
+        except Exception as e:
+            logger.warning("건축물대장 조회 실패: %s (%s)", pnu, str(e))
+            return None
 
     def _extract_regulations(self, districts: list[dict[str, Any]]) -> list[dict[str, str]]:
         """용도지구/구역에서 행위제한 정보를 추출."""
