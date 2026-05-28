@@ -254,64 +254,47 @@ class OrdinanceService:
     ) -> dict[str, Any] | None:
         """조례 본문에서 용도지역별 건폐율/용적률 값을 추출.
 
-        파싱 전략:
-        1. 용도지역명이 포함된 조문 찾기
-        2. 해당 조문 근처에서 "OO퍼센트" 또는 "OO%" 패턴 추출
-        3. 건폐율/용적률 구분하여 반환
+        파싱 전략 (실증 검증 완료):
+        1. CDATA 블록을 추출하여 전체 텍스트 구성
+        2. "용도지역안에서의 건폐율" / "용도지역안에서의 용적률" 조문 위치 탐색
+        3. "{용도지역} : {숫자}퍼센트" 패턴으로 전체 테이블 파싱
+        4. 요청된 zone_type에 해당하는 값 반환
         """
-        # 용도지역 키워드 (변형 대응)
-        zone_keywords = [zone_type]
-        if "일반주거" in zone_type:
-            # "제2종일반주거지역" → "제2종일반주거", "2종일반주거" 등
-            zone_keywords.append(zone_type.replace("지역", ""))
-            zone_keywords.append(zone_type.replace("제", "").replace("종", "종"))
+        # CDATA 블록 추출하여 전체 텍스트 구성
+        chunks = re.findall(r"CDATA\[(.*?)\]", xml_text, re.DOTALL)
+        full_text = " ".join(chunks)
 
-        # 건폐율 패턴
+        if not full_text:
+            return None
+
         bcr = None
         far = None
 
-        for keyword in zone_keywords:
-            if keyword not in xml_text:
-                continue
+        # 건폐율 조문 파싱
+        bcr_idx = full_text.find("용도지역안에서의 건폐율")
+        if bcr_idx >= 0:
+            bcr_section = full_text[bcr_idx:bcr_idx + 1000]
+            items = re.findall(r"(\S+지역)\s*:\s*(\d+)퍼센트", bcr_section)
+            for zone_name, pct_str in items:
+                if zone_type in zone_name or zone_name in zone_type:
+                    bcr = int(pct_str)
+                    break
 
-            # 키워드 주변 텍스트 추출 (앞뒤 500자)
-            idx = xml_text.index(keyword)
-            context = xml_text[max(0, idx - 200):idx + 500]
-
-            # 건폐율 추출: "건폐율" ... "OO퍼센트" 또는 "OO%"
-            bcr_patterns = [
-                r"건폐율[^0-9]*?(\d{1,3})(?:\s*퍼센트|\s*%)",
-                r"(\d{1,3})(?:\s*퍼센트|\s*%)\s*이하.*?건폐율",
-            ]
-            for pat in bcr_patterns:
-                m = re.search(pat, context)
-                if m:
-                    val = int(m.group(1))
-                    if 10 <= val <= 100:
-                        bcr = val
-                        break
-
-            # 용적률 추출
-            far_patterns = [
-                r"용적률[^0-9]*?(\d{2,4})(?:\s*퍼센트|\s*%)",
-                r"(\d{2,4})(?:\s*퍼센트|\s*%)\s*이하.*?용적률",
-            ]
-            for pat in far_patterns:
-                m = re.search(pat, context)
-                if m:
-                    val = int(m.group(1))
-                    if 50 <= val <= 2000:
-                        far = val
-                        break
-
-            if bcr is not None or far is not None:
-                break
+        # 용적률 조문 파싱
+        far_idx = full_text.find("용도지역안에서의 용적률")
+        if far_idx >= 0:
+            far_section = full_text[far_idx:far_idx + 1500]
+            items = re.findall(r"(\S+지역)\s*:\s*(\d+)퍼센트", far_section)
+            for zone_name, pct_str in items:
+                if zone_type in zone_name or zone_name in zone_type:
+                    far = int(pct_str)
+                    break
 
         if bcr is None and far is None:
             return None
 
         # 조례명/시행일 추출
-        ordin_name_match = re.search(r"<법령명_한글>([^<]+)</법령명_한글>", xml_text)
+        ordin_name_match = re.search(r"<자치법규명>.*?CDATA\[([^\]]+)\]", xml_text)
         date_match = re.search(r"<시행일자>(\d{8})</시행일자>", xml_text)
 
         return {
