@@ -6,6 +6,7 @@ import { useEffect } from "react";
 import { Card, CardContent, CardTitle } from "@propai/ui";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
+import { apiClient } from "@/lib/api-client";
 import type {
   DashboardOverviewResponse,
   IntegrationMode,
@@ -130,13 +131,20 @@ function getQueryErrorDetail(error: unknown, authMessage: string) {
     return authMessage;
   }
 
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  return "Request failed.";
+}
+
 export function DashboardClientPanel({
   locale,
   summaryTitle,
   labels,
 }: DashboardClientPanelProps) {
   const errorLabels = ERROR_LABELS[locale] ?? ERROR_LABELS.en;
-  const runtimeConfig = ({ mode: "local" as string, hasAccessToken: false });
+  const runtimeConfig = apiClient.getRuntimeConfig();
   const useLiveWorkspaceData =
     runtimeConfig.mode === "live" || runtimeConfig.hasAccessToken;
   const online = useAppStore((state) => state.online);
@@ -148,15 +156,17 @@ export function DashboardClientPanel({
     queryKey: ["dashboard", "overview"],
     queryFn: async () => {
       if (!useLiveWorkspaceData) {
-        return (async () => ({} as DashboardOverviewResponse))();
+        return apiClient.get<DashboardOverviewResponse>("/dashboard/overview");
       }
 
-      const stats = await (async () => ({} as DashboardStatsApiResponse))();
+      const stats = await apiClient.get<DashboardStatsApiResponse>("/dashboard/stats");
       let featuredProjectId = currentProjectId ?? "live-workspace";
 
       if (!currentProjectId) {
         try {
-          const projects = await (async () => ({} as DashboardProjectPickerResponse))();
+          const projects = await apiClient.get<DashboardProjectPickerResponse>(
+            "/projects?page=1&page_size=1",
+          );
           featuredProjectId = projects.items[0]?.id ?? featuredProjectId;
         } catch {
           // Keep the dashboard summary resilient even when the project picker read model is unavailable.
@@ -190,12 +200,12 @@ export function DashboardClientPanel({
     queryKey: ["integration", "status"],
     queryFn: async () => {
       if (!useLiveWorkspaceData) {
-        return (async () => ({} as IntegrationStatusResponse))();
+        return apiClient.get<IntegrationStatusResponse>("/integration/status");
       }
 
       const [version, health] = await Promise.all([
-        (async () => ({} as SystemVersionApiResponse))(),
-        (async () => ({} as SystemHealthApiResponse))(),
+        apiClient.get<SystemVersionApiResponse>("/system/version"),
+        apiClient.get<SystemHealthApiResponse>("/system/health/full"),
       ]);
 
       const qdrantHealthy = health.services.qdrant === "healthy";

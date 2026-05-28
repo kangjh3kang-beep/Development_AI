@@ -6,6 +6,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Card, CardContent, CardTitle, Input, Select } from "@propai/ui";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
+import { ApiClientError, apiClient } from "@/lib/api-client";
 import type { Locale } from "@/i18n/config";
 import { useProjectStore } from "@/store/use-project-store";
 
@@ -434,6 +435,17 @@ function formatDateTime(locale: string, value: string) {
 }
 
 function extractErrorMessage(error: unknown, authMessage: string) {
+  if (error instanceof ApiClientError) {
+    if (error.status === 401 || error.status === 403) {
+      return authMessage;
+    }
+    return `API request failed with status ${error.status}.`;
+  }
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return "Request failed.";
+}
 
 function buildHistoryPath(scope: AuditScope, projectId: string | null, limit: string) {
   const params = new URLSearchParams();
@@ -491,7 +503,7 @@ export function ApprovalOperationsWorkspaceClient({
   const [pendingApprovalId, setPendingApprovalId] = useState<string | null>(null);
   const [isBulkDecisionPending, setIsBulkDecisionPending] = useState(false);
   const [approvalActionError, setApprovalActionError] = useState<string | null>(null);
-  const runtimeConfig = ({ mode: "local" as string, hasAccessToken: false });
+  const runtimeConfig = apiClient.getRuntimeConfig();
   const canUseLiveApi =
     runtimeConfig.mode === "live" || runtimeConfig.hasAccessToken;
 
@@ -517,7 +529,8 @@ export function ApprovalOperationsWorkspaceClient({
   const historyQuery = useQuery({
     queryKey: ["approval-ops", "history", auditScope, activeProjectId, auditLimit],
     queryFn: () =>
-      (async () => ({} as DomainAgentHistoryResponse))(),
+      apiClient.get<DomainAgentHistoryResponse>(
+        buildHistoryPath(auditScope, activeProjectId, auditLimit),
         { useMock: false },
       ),
     enabled: canUseLiveApi && (auditScope === "tenant" || Boolean(activeProjectId)),
@@ -534,7 +547,14 @@ export function ApprovalOperationsWorkspaceClient({
       approverRoleFilter,
     ],
     queryFn: () =>
-      (async () => ({} as DomainAgentApprovalQueueResponse))(),
+      apiClient.get<DomainAgentApprovalQueueResponse>(
+        buildApprovalsPath(
+          auditScope,
+          activeProjectId,
+          auditLimit,
+          approvalStatusFilter,
+          approverRoleFilter,
+        ),
         { useMock: false },
       ),
     enabled: canUseLiveApi && (auditScope === "tenant" || Boolean(activeProjectId)),
@@ -586,7 +606,11 @@ export function ApprovalOperationsWorkspaceClient({
     setPendingApprovalId(approvalId);
     setApprovalActionError(null);
     try {
-      await (async () => ({}))() || undefined,
+      await apiClient.post(`/agents/domain/approvals/${approvalId}/decision`, {
+        body: {
+          task_id: taskId,
+          decision,
+          rationale: approvalNotes[approvalId]?.trim() || undefined,
         },
         useMock: false,
       });
@@ -615,7 +639,12 @@ export function ApprovalOperationsWorkspaceClient({
     setIsBulkDecisionPending(true);
     setApprovalActionError(null);
     try {
-      await (async () => ({} as DomainAgentApprovalBatchDecisionResponse))() => item.approval_id),
+      await apiClient.post<DomainAgentApprovalBatchDecisionResponse>(
+        "/agents/domain/approvals/decision-batch",
+        {
+          body: {
+            project_id: activeProjectId,
+            approval_ids: pendingApprovalItems.map((item) => item.approval_id),
             decision,
             rationale: bulkApprovalNote.trim() || undefined,
           },

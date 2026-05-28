@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Button, Card, CardContent, Input, Select } from "@propai/ui";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
+import { ApiClientError, apiClient } from "@/lib/api-client";
 import type { Locale } from "@/i18n/config";
 
 type ContractorResponse = {
@@ -75,14 +76,16 @@ const LABELS: Record<string, Labels> = {
 };
 
 function extractErrorMessage(error: unknown, authMessage: string) {
-  `;
+  if (error instanceof ApiClientError) {
+    if (error.status === 401 || error.status === 403) return authMessage;
+    return `API error: ${error.status}`;
   }
   return error instanceof Error ? error.message : "Request failed";
 }
 
 export function ContractorIntelligence({ locale }: { locale: Locale }) {
   const labels = LABELS[locale] || LABELS["en"];
-  const runtimeConfig = ({ mode: "local" as string, hasAccessToken: false });
+  const runtimeConfig = apiClient.getRuntimeConfig();
   const canUseLiveApi = runtimeConfig.mode === "live" || runtimeConfig.hasAccessToken;
 
   const [isRecommending, setIsRecommending] = useState(false);
@@ -98,7 +101,7 @@ export function ContractorIntelligence({ locale }: { locale: Locale }) {
   const contractorsQuery = useQuery({
     queryKey: ["contractors", "active"],
     enabled: canUseLiveApi,
-    queryFn: () => (async () => ({} as ContractorResponse[]))(),
+    queryFn: () => apiClient.get<ContractorResponse[]>("/contractors/active?limit=5"),
   });
 
   const contractorsQueryError = contractorsQuery.error
@@ -111,7 +114,13 @@ export function ContractorIntelligence({ locale }: { locale: Locale }) {
     setIsRecommending(true);
 
     try {
-      const result = await (async () => ({} as ContractorRecommendationResponse))()
+      const result = await apiClient.post<ContractorRecommendationResponse>(
+        "/contractors/recommend",
+        {
+          body: {
+            category: form.category,
+            required_specialties: form.specialties
+              .split(",")
               .map((s) => s.trim())
               .filter(Boolean),
             region_hint: form.regionHint || null,

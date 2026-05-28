@@ -2,6 +2,7 @@
 
 import { useCallback, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
+import { apiClient } from "@/lib/api-client";
 import { useCadStore } from "@/store/use-cad-store";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { Button, Card, CardContent } from "@propai/ui";
@@ -51,7 +52,17 @@ export function CadBimSidePanel({ projectId }: CadBimSidePanelProps) {
     setError(null);
     try {
       const payload = toDesignPayload();
-      const data = await (async () => ({} as BimGenerateResult))();
+      const data = await apiClient.post<BimGenerateResult>(
+        "/bim/generate-ifc",
+        {
+          body: {
+            project_id: projectId,
+            design: payload,
+            floor_count: floorCount,
+            building_height_m: buildingHeightM,
+          },
+        },
+      );
       setResult(data);
     } catch (err) {
       const message =

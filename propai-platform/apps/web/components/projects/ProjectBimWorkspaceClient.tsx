@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Button, Card, CardContent, CardTitle, Input, Select } from "@propai/ui";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
+import { ApiClientError, apiClient } from "@/lib/api-client";
 import type { Locale } from "@/i18n/config";
 
 type ProjectResponse = {
@@ -107,9 +108,9 @@ const KO_LABELS: Labels = {
   heroDescription:
     "현재 프로젝트의 BIM 물량을 산출하고 3D 형상 요약을 불러옵니다.",
   heroHint:
-    "건물 면적과 구조를 입력하면 BIM 물량을 자동 산출합니다.",
+    "프로젝트 ID를 기반으로 IFC 생성 및 Three.js 형상 데이터를 조회합니다.",
   tokenHint:
-    "분석을 위해 로그인이 필요합니다.",
+    "라이브 API 호출에는 인증 토큰이 필요합니다.",
   authError: "라이브 워크스페이스 호출에 API 인증이 필요합니다.",
   contextTitle: "프로젝트 컨텍스트",
   contextHint:
@@ -163,6 +164,20 @@ function formatNumber(locale: string, value: number) {
 }
 
 function extractErrorMessage(error: unknown, authMessage: string) {
+  if (error instanceof ApiClientError) {
+    if (error.status === 401 || error.status === 403) {
+      return authMessage;
+    }
+
+    return `API request failed with status ${error.status}.`;
+  }
+
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  return "Request failed.";
+}
 
 export function ProjectBimWorkspaceClient({
   locale,
@@ -172,7 +187,7 @@ export function ProjectBimWorkspaceClient({
   projectId: string;
 }) {
   const labels = LABELS[locale] || LABELS["ko"];
-  const runtimeConfig = ({ mode: "local" as string, hasAccessToken: false });
+  const runtimeConfig = apiClient.getRuntimeConfig();
   const canUseLiveApi =
     runtimeConfig.mode === "live" || runtimeConfig.hasAccessToken;
 
@@ -190,7 +205,9 @@ export function ProjectBimWorkspaceClient({
     queryKey: ["projects", "detail", projectId, "bim-live"],
     enabled: canUseLiveApi,
     queryFn: () =>
-      (async () => ({} as ProjectResponse))(),
+      apiClient.get<ProjectResponse>(`/projects/${projectId}`, {
+        useMock: false,
+      }),
   });
 
   useEffect(() => {
@@ -248,12 +265,25 @@ export function ProjectBimWorkspaceClient({
     setIsGenerating(true);
 
     try {
-      const bim = await (async () => ({} as BIMQuantityResponse))();
+      const bim = await apiClient.post<BIMQuantityResponse>("/bim/generate-ifc", {
+        useMock: false,
+        body: {
+          project_id: projectId,
+          total_area_sqm: totalAreaSqm,
+          floors,
+          structure_type: form.structureType,
+        },
+      });
 
       setBimResult(bim);
 
       try {
-        const geometry = await (async () => ({} as GeometryResponse))();
+        const geometry = await apiClient.get<GeometryResponse>(
+          `/bim/threejs/${projectId}`,
+          {
+            useMock: false,
+          },
+        );
         setGeometryResult(geometry);
       } catch (error) {
         setWorkspaceError(extractErrorMessage(error, labels.authError));
@@ -274,7 +304,7 @@ export function ProjectBimWorkspaceClient({
               {labels.heroTitle}
             </span>
             <span className="rounded-full border border-[var(--line)] px-4 py-2 text-xs font-medium text-[var(--text-secondary)]">
-              {runtimeConfig.mode === "live" ? "실연동" : "로컬"}
+              {runtimeConfig.mode === "live" ? "LIVE" : "HYBRID"}
             </span>
           </div>
           <h3 className="mt-5 text-3xl font-bold text-[var(--text-primary)]">

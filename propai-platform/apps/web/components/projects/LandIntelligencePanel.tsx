@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { useAIAnalyze, useAIReady } from "@/lib/ai-analyze-client";
 import { analyzeLocally } from "@/lib/kr-building-regulations";
+import { apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 
 // ── Icons ──
@@ -186,7 +187,9 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
       setZoningLoading(true);
       setZoningError(null);
       try {
-        const res = await (async () => ({} as ZoningAnalysisResponse))() },
+        const res = await apiClient.post<ZoningAnalysisResponse>("/zoning/analyze", {
+          useMock: false,
+          body: { address: data!.address!.trim() },
         });
         if (!cancelled) {
           setZoningData(res);
@@ -233,7 +236,10 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
       try {
         const now = new Date();
         const dealYm = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}`;
-        const res = await (async () => ({} as TransactionsResponse))();
+        const res = await apiClient.get<TransactionsResponse>(
+          `/external/transactions/apt?lawd_cd=${lawdCd}&deal_ym=${dealYm}`,
+          { useMock: false },
+        );
         if (!cancelled) setTxData(res);
       } catch (err) {
         if (!cancelled) {
@@ -657,7 +663,7 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
                 <Icons.Map />
               </div>
               <span className="text-[10px] font-black text-[var(--text-hint)] uppercase tracking-widest">
-                {zoningData?.pnu ? `필지번호: ${zoningData.pnu}` : displayPnu !== "—" ? `필지번호: ${displayPnu}` : "필지번호: 주소 입력 시 자동 매핑"}
+                {zoningData?.pnu ? `PNU: ${zoningData.pnu}` : displayPnu !== "—" ? `PNU: ${displayPnu}` : "PNU: 주소 입력 시 자동 매핑"}
               </span>
             </div>
             <div className="px-2">
@@ -703,7 +709,7 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
                 : "text-[var(--accent-strong)]"
             }`}
           >
-            <Icons.Layers /> 지도 레이어
+            <Icons.Layers /> GIS layers
           </button>
         </div>
 

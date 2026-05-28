@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
+import { apiClient } from "@/lib/api-client";
 import { useCadStore } from "@/store/use-cad-store";
 import { Button, Card, CardContent } from "@propai/ui";
 
@@ -60,7 +61,11 @@ export function CadExportPanel({ projectId }: CadExportPanelProps) {
     setGenerating(true);
     setError(null);
     try {
-      const result = await (async () => ({} as DrawingSetResult))(),
+      const result = await apiClient.post<DrawingSetResult>(
+        `/design/${projectId}/generate-full-set`,
+        {
+          body: {
+            drawing_types: Array.from(selected),
             floor_count: floorCount,
             floor_height_m: buildingHeightM / Math.max(floorCount, 1),
             building_width_m: 30,

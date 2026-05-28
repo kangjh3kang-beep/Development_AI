@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardTitle } from "@propai/ui";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
+import { ApiClientError, apiClient } from "@/lib/api-client";
 import type { Locale } from "@/i18n/config";
 import { useDictionary } from "@/hooks/use-dictionary";
 import { formatCurrencyKRW } from "@/lib/formatters";
@@ -164,6 +165,17 @@ function formatNumber(locale: string, value: number) {
 }
 
 function extractErrorMessage(error: unknown, authMessage: string) {
+  if (error instanceof ApiClientError) {
+    if (error.status === 401 || error.status === 403) {
+      return authMessage;
+    }
+    return `API request failed with status ${error.status}.`;
+  }
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return "Request failed.";
+}
 
 export function ProjectDesignWorkspaceClient({
   locale,
@@ -174,7 +186,7 @@ export function ProjectDesignWorkspaceClient({
 }) {
   const { dictionary } = useDictionary(locale);
   const labels = LABELS[locale] || LABELS["ko"];
-  const runtimeConfig = ({ mode: "local" as string, hasAccessToken: false });
+  const runtimeConfig = apiClient.getRuntimeConfig();
   const canUseLiveApi = runtimeConfig.mode === "live" || runtimeConfig.hasAccessToken;
 
   const { results, isGenerating } = useGenerationStore();
@@ -183,7 +195,9 @@ export function ProjectDesignWorkspaceClient({
     queryKey: ["projects", "detail", projectId, "design-live"],
     enabled: canUseLiveApi,
     queryFn: () =>
-      (async () => ({} as ProjectResponse))(),
+      apiClient.get<ProjectResponse>(`/projects/${projectId}`, {
+        useMock: false,
+      }),
   });
 
   const projectError = projectQuery.error
@@ -209,7 +223,7 @@ export function ProjectDesignWorkspaceClient({
               {labels.heroTitle}
             </span>
             <span className="rounded-full border border-[var(--line-strong)] px-4 py-2 text-[10px] font-black tracking-widest text-[var(--text-hint)] uppercase">
-              {runtimeConfig.mode === "live" ? "실시간 엔진" : "로컬 시뮬레이터"}
+              {runtimeConfig.mode === "live" ? "LIVE ENGINE" : "HYBRID SIMULATOR"}
             </span>
           </div>
           <h3 className="mt-5 text-3xl font-black tracking-tight text-[var(--text-primary)]">

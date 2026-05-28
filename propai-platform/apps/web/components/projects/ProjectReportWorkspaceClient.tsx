@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Button, Card, CardContent, CardTitle, Input, Select } from "@propai/ui";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
+import { ApiClientError, apiClient } from "@/lib/api-client";
 import type { Locale } from "@/i18n/config";
 
 type ProjectResponse = {
@@ -113,9 +114,9 @@ const KO_LABELS: Labels = {
   heroDescription:
     "투자자 보고서를 자동 생성합니다.",
   heroHint:
-    "프로젝트 분석 데이터를 종합하여 투자자 보고서를 자동 생성합니다.",
+    "현재 프로젝트 ID를 기반으로 다국어 투자자 보고서를 생성하고 결과를 화면에 표시합니다.",
   tokenHint:
-    "보고서 생성을 위해 로그인이 필요합니다.",
+    "라이브 API 호출에는 인증 토큰이 필요합니다.",
   authError: "라이브 워크스페이스 호출에 API 인증이 필요합니다.",
   contextTitle: "프로젝트 컨텍스트",
   contextHint:
@@ -177,6 +178,20 @@ function splitList(value: string) {
 }
 
 function extractErrorMessage(error: unknown, authMessage: string) {
+  if (error instanceof ApiClientError) {
+    if (error.status === 401 || error.status === 403) {
+      return authMessage;
+    }
+
+    return `API request failed with status ${error.status}.`;
+  }
+
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  return "Request failed.";
+}
 
 export function ProjectReportWorkspaceClient({
   locale,
@@ -186,7 +201,7 @@ export function ProjectReportWorkspaceClient({
   projectId: string;
 }) {
   const labels = LABELS[locale] || LABELS["ko"];
-  const runtimeConfig = ({ mode: "local" as string, hasAccessToken: false });
+  const runtimeConfig = apiClient.getRuntimeConfig();
   const canUseLiveApi =
     runtimeConfig.mode === "live" || runtimeConfig.hasAccessToken;
 
@@ -206,7 +221,9 @@ export function ProjectReportWorkspaceClient({
     queryKey: ["projects", "detail", projectId, "report-live"],
     enabled: canUseLiveApi,
     queryFn: () =>
-      (async () => ({} as ProjectResponse))(),
+      apiClient.get<ProjectResponse>(`/projects/${projectId}`, {
+        useMock: false,
+      }),
   });
 
   useEffect(() => {
@@ -244,7 +261,16 @@ export function ProjectReportWorkspaceClient({
     setIsSubmitting(true);
 
     try {
-      const response = await (async () => ({} as InvestorReportResponse))(),
+      const response = await apiClient.post<InvestorReportResponse>(
+        "/reports/investor/generate",
+        {
+          useMock: false,
+          body: {
+            project_id: projectId,
+            project_name: projectName,
+            asset_type: form.assetType,
+            target_languages: targetLanguages,
+            investment_highlights: splitList(form.highlights),
             risks: splitList(form.risks),
             include_sections: splitList(form.sections),
           },
@@ -268,7 +294,7 @@ export function ProjectReportWorkspaceClient({
               {labels.heroTitle}
             </span>
             <span className="rounded-full border border-[var(--line)] px-4 py-2 text-xs font-medium text-[var(--text-secondary)]">
-              {runtimeConfig.mode === "live" ? "실연동" : "로컬"}
+              {runtimeConfig.mode === "live" ? "LIVE" : "HYBRID"}
             </span>
           </div>
           <h3 className="mt-5 text-3xl font-bold text-[var(--text-primary)]">

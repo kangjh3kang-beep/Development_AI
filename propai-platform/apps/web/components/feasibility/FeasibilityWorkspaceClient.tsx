@@ -15,6 +15,8 @@ import {
 } from "recharts";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
+import { ApiClientError, apiClient } from "@/lib/api-client";
+
 type ProjectSummary = {
   id: string;
   name: string;
@@ -72,6 +74,13 @@ function getQueryErrorMessage(error: unknown) {
     return "API authentication is required for live feasibility analysis.";
   }
 
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  return "Request failed.";
+}
+
 function formatKrw(value: number) {
   return new Intl.NumberFormat("ko-KR", {
     style: "currency",
@@ -110,7 +119,10 @@ export function FeasibilityWorkspaceClient() {
     enabled: Boolean(selectedProjectId),
     queryFn: async () => {
       try {
-        return await (async () => ({} as FeasibilityAnalysisResponse))();
+        return await apiClient.get<FeasibilityAnalysisResponse>(
+          `/finance/feasibility/${selectedProjectId}/latest`,
+          { useMock: false },
+        );
       } catch (error) {
         if (error instanceof ApiClientError && error.status === 404) {
           return null;

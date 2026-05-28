@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { Button, Card, CardContent } from "@propai/ui";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
+import { apiClient } from "@/lib/api-client";
 import type {
   ProjectListResponse,
   ProjectModuleKey,
@@ -60,7 +61,7 @@ export function ProjectsOverviewClient({
 
   const projectsQuery = useQuery({
     queryKey: ["projects", "list"],
-    queryFn: () => (async () => ({} as ProjectListResponse))(),
+    queryFn: () => apiClient.get<ProjectListResponse>("/projects"),
   });
   const hasProjects = (projectsQuery.data?.projects?.length ?? 0) > 0;
   const errorDetail = getProjectsErrorDetail(projectsQuery.error);

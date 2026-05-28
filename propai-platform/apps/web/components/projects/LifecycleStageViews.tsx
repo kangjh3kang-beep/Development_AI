@@ -6,6 +6,8 @@ import { useParams } from "next/navigation";
 import dynamic from "next/dynamic";
 import { motion, AnimatePresence } from "framer-motion";
 import { useQuery } from "@tanstack/react-query";
+import { apiClient } from "@/lib/api-client";
+
 const FeasibilitySimulationWidget = dynamic(
   () => import("../finance/FeasibilitySimulationWidget").then(mod => mod.FeasibilitySimulationWidget),
   { ssr: false, loading: () => <div className="h-[400px] w-full animate-pulse rounded-[2rem] bg-white/5 flex items-center justify-center"><p className="text-white/20 font-black uppercase tracking-[0.3em] text-xs text-center">AI 사업성 분석 엔진 로딩 중...</p></div> }

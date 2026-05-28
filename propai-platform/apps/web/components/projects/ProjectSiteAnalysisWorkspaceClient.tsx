@@ -1,64 +1,262 @@
 "use client";
 
-import { useCallback, useState } from "react";
-import { Button, Card, CardContent, Input } from "@propai/ui";
+import { useEffect, useState, type FormEvent } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { Button, Card, CardContent, CardTitle, Input } from "@propai/ui";
+import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
+import { ApiClientError, apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
-import { apiClient } from "@/lib/api-client";
-import { KakaoAddressSearch } from "@/components/ui/KakaoAddressSearch";
+import { AutoZoningBadge } from "@/components/projects/AutoZoningBadge";
 import type { Locale } from "@/i18n/config";
 
-/* ── Types ── */
+/* ── Response types ── */
 
-type ZoningResult = {
-  zone_type: string;
-  max_bcr: number;
-  max_far: number;
-  max_height: number;
-  land_area: number;
-  pnu: string;
-  official_price: number;
+type ProjectResponse = {
+  id: string;
+  name: string;
+  status: string;
+  address: string | null;
+  total_area_sqm: number | null;
+  created_at: string;
+  updated_at: string;
 };
 
-type AVMResult = {
+type AVMEstimateResponse = {
+  id: string;
+  project_id: string;
   estimated_price: number;
   price_per_sqm: number;
-  confidence: number;
+  confidence_score: number;
+  comparable_count: number;
+  model_version: string;
   comparables: Array<{
     address: string;
     price: number;
     area_sqm: number;
     transaction_date: string;
   }>;
+  created_at: string;
 };
 
-type Parcel = {
-  id: string;
+type ParcelInfoResponse = {
+  pnu: string;
   address: string;
-  areaOverride: string;
-  status: "idle" | "analyzing" | "done" | "error";
-  zoning?: ZoningResult;
-  avm?: AVMResult;
-  error?: string;
+  land_category: string;
+  zoning: string;
+  area_sqm: number;
+  land_use_situation: string;
+  official_price_per_sqm: number;
+  road_side: string;
+  terrain: string;
+  restrictions: string[];
 };
 
-/* ── Helpers ── */
+/* ── Labels (Korean primary) ── */
 
-function formatKRW(value: number): string {
-  if (value >= 1_0000_0000) {
-    const eok = value / 1_0000_0000;
-    return `${eok.toFixed(eok % 1 === 0 ? 0 : 1)}억원`;
-  }
-  if (value >= 1_0000) {
-    const man = value / 1_0000;
-    return `${man.toFixed(man % 1 === 0 ? 0 : 1)}만원`;
-  }
-  return `${value.toLocaleString("ko-KR")}원`;
+type Labels = {
+  heroTitle: string;
+  heroDescription: string;
+  heroHint: string;
+  tokenHint: string;
+  authError: string;
+  contextTitle: string;
+  contextHint: string;
+  projectIdLabel: string;
+  projectNameLabel: string;
+  projectStatusLabel: string;
+  projectUpdatedLabel: string;
+  formTitle: string;
+  addressLabel: string;
+  areaLabel: string;
+  buildingAgeLabel: string;
+  floorLabel: string;
+  totalFloorsLabel: string;
+  lawdCodeLabel: string;
+  pnuLabel: string;
+  submitAction: string;
+  missingAddressError: string;
+  missingAreaError: string;
+  missingPnuError: string;
+  avmTitle: string;
+  avmEstimateLabel: string;
+  avmUnitPriceLabel: string;
+  avmConfidenceLabel: string;
+  avmComparablesLabel: string;
+  avmModelLabel: string;
+  parcelTitle: string;
+  parcelCategoryLabel: string;
+  parcelZoningLabel: string;
+  parcelAreaLabel: string;
+  parcelUseSituationLabel: string;
+  parcelOfficialPriceLabel: string;
+  parcelRoadLabel: string;
+  parcelTerrainLabel: string;
+  parcelRestrictionsLabel: string;
+  comparablesTitle: string;
+  comparableAddressLabel: string;
+  comparablePriceLabel: string;
+  comparableAreaLabel: string;
+  comparableDateLabel: string;
+  placeholder: string;
+  projectFallback: string;
+  projectLoadErrorTitle: string;
+  projectLoadErrorDetail: string;
+  retryAction: string;
+};
+
+const KO_LABELS: Labels = {
+  heroTitle: "부지 분석 라이브 워크스페이스",
+  heroDescription:
+    "AVM 시세 추정과 필지 정보를 실시간으로 조회하여 부지 가치를 분석합니다.",
+  heroHint:
+    "POST /avm/estimate 및 POST /external/parcel/info API를 체이닝하여 종합 부지 분석 결과를 생성합니다.",
+  tokenHint:
+    "라이브 API 호출에는 NEXT_PUBLIC_API_ACCESS_TOKEN 또는 localStorage.propai_access_token이 필요합니다.",
+  authError: "라이브 워크스페이스 호출에 API 인증이 필요합니다.",
+  contextTitle: "프로젝트 컨텍스트",
+  contextHint:
+    "프로젝트 ID는 현재 라우트에서 가져옵니다. 주소와 면적은 제출 전 수정할 수 있습니다.",
+  projectIdLabel: "프로젝트 ID",
+  projectNameLabel: "프로젝트명",
+  projectStatusLabel: "상태",
+  projectUpdatedLabel: "최근 수정일",
+  formTitle: "부지 분석 입력",
+  addressLabel: "주소",
+  areaLabel: "면적 (㎡)",
+  buildingAgeLabel: "건물 연식 (년)",
+  floorLabel: "층",
+  totalFloorsLabel: "총 층수",
+  lawdCodeLabel: "법정동 코드",
+  pnuLabel: "PNU (필지 고유번호)",
+  submitAction: "부지 분석 실행",
+  missingAddressError: "주소는 필수 입력 항목입니다.",
+  missingAreaError: "양수의 면적 값이 필요합니다.",
+  missingPnuError: "PNU는 필지 정보 조회에 필수입니다.",
+  avmTitle: "AVM 시세 추정",
+  avmEstimateLabel: "추정 시세",
+  avmUnitPriceLabel: "㎡당 단가",
+  avmConfidenceLabel: "신뢰도",
+  avmComparablesLabel: "비교사례 건수",
+  avmModelLabel: "모델 버전",
+  parcelTitle: "필지 정보",
+  parcelCategoryLabel: "지목",
+  parcelZoningLabel: "용도지역",
+  parcelAreaLabel: "면적",
+  parcelUseSituationLabel: "이용 상황",
+  parcelOfficialPriceLabel: "공시지가 (㎡당)",
+  parcelRoadLabel: "도로 접면",
+  parcelTerrainLabel: "지형",
+  parcelRestrictionsLabel: "규제사항",
+  comparablesTitle: "비교 거래 사례",
+  comparableAddressLabel: "주소",
+  comparablePriceLabel: "거래가격",
+  comparableAreaLabel: "면적",
+  comparableDateLabel: "거래일",
+  placeholder:
+    "입력 양식을 제출하면 AVM 시세 추정 및 필지 정보가 표시됩니다.",
+  projectFallback: "라이브 API에서 프로젝트 메타데이터를 로드하지 못했습니다.",
+  projectLoadErrorTitle: "프로젝트 메타데이터 불가",
+  projectLoadErrorDetail:
+    "라이브 API에서 라우트 프로젝트 컨텍스트를 로드하지 못했습니다. 재시도하여 자동 입력과 메타데이터를 복원하세요.",
+  retryAction: "재시도",
+};
+
+const EN_LABELS: Labels = {
+  heroTitle: "Site analysis live workspace",
+  heroDescription:
+    "Run AVM valuation and parcel info queries for real-time site value analysis.",
+  heroHint:
+    "Chains POST /avm/estimate with POST /external/parcel/info for comprehensive site analysis.",
+  tokenHint:
+    "Live API calls require NEXT_PUBLIC_API_ACCESS_TOKEN or localStorage.propai_access_token.",
+  authError: "API authentication is required for live workspace calls.",
+  contextTitle: "Project context",
+  contextHint:
+    "The project id comes from the current route. Address and area can be adjusted before submission.",
+  projectIdLabel: "Project ID",
+  projectNameLabel: "Project name",
+  projectStatusLabel: "Status",
+  projectUpdatedLabel: "Updated",
+  formTitle: "Site analysis input",
+  addressLabel: "Address",
+  areaLabel: "Area (sqm)",
+  buildingAgeLabel: "Building age (years)",
+  floorLabel: "Floor",
+  totalFloorsLabel: "Total floors",
+  lawdCodeLabel: "LAWD code",
+  pnuLabel: "PNU (parcel ID)",
+  submitAction: "Run site analysis",
+  missingAddressError: "Address is required.",
+  missingAreaError: "A positive area value is required.",
+  missingPnuError: "PNU is required for parcel info lookup.",
+  avmTitle: "AVM valuation",
+  avmEstimateLabel: "Estimated price",
+  avmUnitPriceLabel: "Price per sqm",
+  avmConfidenceLabel: "Confidence",
+  avmComparablesLabel: "Comparables",
+  avmModelLabel: "Model version",
+  parcelTitle: "Parcel information",
+  parcelCategoryLabel: "Land category",
+  parcelZoningLabel: "Zoning",
+  parcelAreaLabel: "Area",
+  parcelUseSituationLabel: "Land use",
+  parcelOfficialPriceLabel: "Official price (per sqm)",
+  parcelRoadLabel: "Road access",
+  parcelTerrainLabel: "Terrain",
+  parcelRestrictionsLabel: "Restrictions",
+  comparablesTitle: "Comparable transactions",
+  comparableAddressLabel: "Address",
+  comparablePriceLabel: "Price",
+  comparableAreaLabel: "Area",
+  comparableDateLabel: "Date",
+  placeholder:
+    "Submit the form to view AVM estimates and parcel information.",
+  projectFallback: "Project metadata could not be loaded from the live API.",
+  projectLoadErrorTitle: "Project metadata unavailable",
+  projectLoadErrorDetail:
+    "The routed project context failed to load from the live API. Retry to restore autofill and project metadata.",
+  retryAction: "Retry",
+};
+
+const LABELS: Record<Locale, Labels> = {
+  ko: KO_LABELS,
+  en: EN_LABELS,
+  "zh-CN": KO_LABELS,
+};
+
+/* ── Formatters ── */
+
+function formatCurrency(locale: string, value: number) {
+  return new Intl.NumberFormat(locale, {
+    style: "currency",
+    currency: "KRW",
+    maximumFractionDigits: 0,
+  }).format(value);
 }
 
-function nextId(parcels: Parcel[]): string {
-  const max = parcels.reduce((m, p) => Math.max(m, Number(p.id) || 0), 0);
-  return String(max + 1);
+function formatPercent(value: number) {
+  return `${(value * 100).toFixed(1)}%`;
+}
+
+function formatDate(locale: string, value: string) {
+  return new Intl.DateTimeFormat(locale, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(value));
+}
+
+function extractErrorMessage(error: unknown, authMessage: string) {
+  if (error instanceof ApiClientError) {
+    if (error.status === 401 || error.status === 403) {
+      return authMessage;
+    }
+    return `API 요청 실패: 상태 ${error.status}`;
+  }
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return "요청 실패.";
 }
 
 /* ── Component ── */
@@ -70,505 +268,486 @@ export function ProjectSiteAnalysisWorkspaceClient({
   locale: Locale;
   projectId: string;
 }) {
-  const updateSiteAnalysis = useProjectContextStore(
-    (s) => s.updateSiteAnalysis,
+  const labels = LABELS[locale] || LABELS["ko"];
+  const runtimeConfig = apiClient.getRuntimeConfig();
+  const canUseLiveApi =
+    runtimeConfig.mode === "live" || runtimeConfig.hasAccessToken;
+
+  const updateSiteAnalysis = useProjectContextStore((s) => s.updateSiteAnalysis);
+  const markStageComplete = useProjectContextStore((s) => s.markStageComplete);
+  const addAnalysisResult = useProjectContextStore((s) => s.addAnalysisResult);
+
+  const [workspaceError, setWorkspaceError] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [avmResult, setAvmResult] = useState<AVMEstimateResponse | null>(null);
+  const [parcelResult, setParcelResult] = useState<ParcelInfoResponse | null>(
+    null,
   );
-  const markStageComplete = useProjectContextStore(
-    (s) => s.markStageComplete,
-  );
-  const addAnalysisResult = useProjectContextStore(
-    (s) => s.addAnalysisResult,
-  );
+  const [form, setForm] = useState({
+    address: "",
+    areaSqm: "",
+    buildingAgeYears: "5",
+    floor: "1",
+    totalFloors: "5",
+    lawdCd: "",
+    pnu: "",
+  });
 
-  const [parcels, setParcels] = useState<Parcel[]>([
-    { id: "1", address: "", areaOverride: "", status: "idle" },
-  ]);
-  const [activeParcelId, setActiveParcelId] = useState("1");
+  const projectQuery = useQuery({
+    queryKey: ["projects", "detail", projectId, "site-analysis-live"],
+    enabled: canUseLiveApi,
+    queryFn: () =>
+      apiClient.get<ProjectResponse>(`/projects/${projectId}`, {
+        useMock: false,
+      }),
+  });
 
-  const activeParcel = parcels.find((p) => p.id === activeParcelId) ?? parcels[0]!;
-  const doneParcels = parcels.filter((p) => p.status === "done");
+  useEffect(() => {
+    if (!projectQuery.data) {
+      return;
+    }
+    setForm((current) => ({
+      ...current,
+      address: current.address || projectQuery.data.address || "",
+      areaSqm:
+        current.areaSqm ||
+        (projectQuery.data.total_area_sqm != null
+          ? String(projectQuery.data.total_area_sqm)
+          : ""),
+    }));
+  }, [projectQuery.data]);
 
-  /* ── Parcel CRUD ── */
+  const projectError = projectQuery.error
+    ? extractErrorMessage(projectQuery.error, labels.authError)
+    : "";
 
-  const addParcel = useCallback(() => {
-    setParcels((prev) => {
-      const id = nextId(prev);
-      return [
-        ...prev,
-        { id, address: "", areaOverride: "", status: "idle" as const },
-      ];
-    });
-  }, []);
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setWorkspaceError("");
 
-  const removeParcel = useCallback(
-    (id: string) => {
-      setParcels((prev) => {
-        if (prev.length <= 1) return prev;
-        const next = prev.filter((p) => p.id !== id);
-        if (activeParcelId === id) {
-          setActiveParcelId(next[0]!.id);
-        }
-        return next;
-      });
-    },
-    [activeParcelId],
-  );
+    const address = form.address.trim();
+    const areaSqm = Number(form.areaSqm);
+    const pnu = form.pnu.trim();
 
-  const updateParcel = useCallback(
-    (id: string, patch: Partial<Parcel>) => {
-      setParcels((prev) =>
-        prev.map((p) => (p.id === id ? { ...p, ...patch } : p)),
-      );
-    },
-    [],
-  );
+    if (!address) {
+      setWorkspaceError(labels.missingAddressError);
+      return;
+    }
+    if (!Number.isFinite(areaSqm) || areaSqm <= 0) {
+      setWorkspaceError(labels.missingAreaError);
+      return;
+    }
 
-  /* ── Analysis ── */
+    setIsSubmitting(true);
 
-  const analyzeParcel = useCallback(
-    async (parcelId: string) => {
-      const parcel = parcels.find((p) => p.id === parcelId);
-      if (!parcel) return;
-
-      const address = parcel.address.trim();
-      if (!address) {
-        updateParcel(parcelId, {
-          status: "error",
-          error: "주소를 입력해주세요.",
-        });
-        return;
-      }
-
-      updateParcel(parcelId, { status: "analyzing", error: undefined });
-
-      try {
-        // Step 1: Zoning analysis
-        const zoning = await apiClient.post<ZoningResult>("/zoning/analyze", {
-          body: {
-            address,
-            area_sqm: parcel.areaOverride
-              ? Number(parcel.areaOverride)
-              : undefined,
-          },
-        });
-
-        // Step 2: AVM estimate
-        const avm = await apiClient.post<AVMResult>("/avm/estimate", {
-          body: {
-            address,
-            area_sqm:
-              parcel.areaOverride
-                ? Number(parcel.areaOverride)
-                : zoning.land_area || 300,
-            pnu: zoning.pnu || undefined,
-          },
-        });
-
-        updateParcel(parcelId, { status: "done", zoning, avm });
-
-        // Save first completed parcel to context store
-        updateSiteAnalysis({
-          estimatedValue: avm.estimated_price,
-          landAreaSqm: zoning.land_area || Number(parcel.areaOverride) || 0,
-          zoneCode: zoning.zone_type || null,
+    try {
+      const avm = await apiClient.post<AVMEstimateResponse>("/avm/estimate", {
+        useMock: false,
+        body: {
           address,
-          pnu: zoning.pnu || null,
-        });
-        markStageComplete("site-analysis");
-        addAnalysisResult({
-          module: "site-analysis",
-          completedAt: new Date().toISOString(),
-          summary: {
-            estimatedPrice: avm.estimated_price,
-            confidence: avm.confidence,
-            address,
+          area_sqm: areaSqm,
+          building_age_years: Number(form.buildingAgeYears) || undefined,
+          floor: Number(form.floor) || undefined,
+          total_floors: Number(form.totalFloors) || undefined,
+          lawd_cd: form.lawdCd.trim() || undefined,
+          pnu: pnu || undefined,
+        },
+      });
+      setAvmResult(avm);
+
+      let parcelZoning: string | null = null;
+      if (pnu) {
+        const parcel = await apiClient.post<ParcelInfoResponse>(
+          "/external/parcel/info",
+          {
+            useMock: false,
+            body: { pnu },
           },
-        });
-      } catch (err: unknown) {
-        const message =
-          err instanceof Error ? err.message : "분석 중 오류가 발생했습니다.";
-        updateParcel(parcelId, { status: "error", error: message });
+        );
+        setParcelResult(parcel);
+        parcelZoning = parcel.zoning || null;
       }
-    },
-    [
-      parcels,
-      updateParcel,
-      updateSiteAnalysis,
-      markStageComplete,
-      addAnalysisResult,
-    ],
-  );
+
+      // Update project context store (capillary network)
+      updateSiteAnalysis({
+        estimatedValue: avm.estimated_price,
+        landAreaSqm: areaSqm,
+        zoneCode: parcelZoning,
+        address,
+        pnu: pnu || null,
+      });
+      markStageComplete("site-analysis");
+      addAnalysisResult({
+        module: "site-analysis",
+        completedAt: new Date().toISOString(),
+        summary: {
+          estimatedPrice: avm.estimated_price,
+          confidence: avm.confidence_score,
+          address,
+        },
+      });
+    } catch (error) {
+      setWorkspaceError(extractErrorMessage(error, labels.authError));
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
 
   return (
     <section className="grid gap-6">
       {/* Hero */}
       <Card className="rounded-[var(--radius-2xl)] bg-[var(--surface-strong)] shadow-[var(--shadow-lg)]">
         <CardContent className="p-8">
-          <span className="rounded-full bg-[rgba(14,116,144,0.1)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--accent-strong)]">
-            부지 분석
-          </span>
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="rounded-full bg-[rgba(14,116,144,0.1)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--accent-strong)]">
+              {labels.heroTitle}
+            </span>
+            <span className="rounded-full border border-[var(--line)] px-4 py-2 text-xs font-medium text-[var(--text-secondary)]">
+              {runtimeConfig.mode === "live" ? "LIVE" : "HYBRID"}
+            </span>
+          </div>
           <h3 className="mt-5 text-3xl font-bold text-[var(--text-primary)]">
-            주소 검색으로 부지 가치를 즉시 분석합니다
+            {labels.heroDescription}
           </h3>
           <p className="mt-4 max-w-3xl text-sm leading-8 text-[var(--text-secondary)]">
-            주소를 입력하면 용도지역, 건폐율/용적률, 공시지가, AVM 시세 추정을
-            자동으로 조회합니다. 여러 필지를 추가하여 비교 분석할 수 있습니다.
+            {labels.heroHint}
           </p>
-        </CardContent>
-      </Card>
-
-      {/* Parcel Tabs */}
-      <div className="flex flex-wrap items-center gap-2">
-        {parcels.map((p) => (
-          <button
-            key={p.id}
-            type="button"
-            onClick={() => setActiveParcelId(p.id)}
-            className={`group relative rounded-[var(--radius-xl)] border px-4 py-2.5 text-sm font-medium transition-all ${
-              p.id === activeParcelId
-                ? "border-[var(--accent-strong)] bg-[rgba(14,116,144,0.08)] text-[var(--accent-strong)]"
-                : "border-[var(--line)] bg-[var(--surface)] text-[var(--text-secondary)] hover:border-[var(--accent-strong)] hover:text-[var(--text-primary)]"
-            }`}
-          >
-            <span className="flex items-center gap-2">
-              {p.status === "done" && (
-                <span className="inline-block h-2 w-2 rounded-full bg-emerald-500" />
-              )}
-              {p.status === "analyzing" && (
-                <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-amber-400" />
-              )}
-              {p.status === "error" && (
-                <span className="inline-block h-2 w-2 rounded-full bg-red-500" />
-              )}
-              {p.address.trim() || `필지 ${p.id}`}
-            </span>
-            {parcels.length > 1 && (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  removeParcel(p.id);
+          <p className="mt-3 max-w-3xl text-sm leading-8 text-[var(--text-tertiary)]">
+            {labels.tokenHint}
+          </p>
+          {!canUseLiveApi ? (
+            <div className="mt-6 rounded-[var(--radius-xl)] border border-dashed border-[var(--line)] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[var(--text-secondary)]">
+              {labels.authError}
+            </div>
+          ) : null}
+          {projectError ? (
+            <div className="mt-6">
+              <WorkspaceQueryErrorCard
+                title={labels.projectLoadErrorTitle}
+                description={labels.projectLoadErrorDetail}
+                message={projectError}
+                actionLabel={labels.retryAction}
+                onRetry={() => {
+                  void projectQuery.refetch();
                 }}
-                className="ml-2 text-xs text-[var(--text-tertiary)] opacity-0 transition-opacity group-hover:opacity-100 hover:text-red-500"
-                aria-label="필지 삭제"
-              >
-                &times;
-              </button>
-            )}
-          </button>
-        ))}
-        <Button
-          type="button"
-          variant="secondary"
-          size="sm"
-          onClick={addParcel}
-          className="rounded-[var(--radius-xl)]"
-        >
-          + 필지 추가
-        </Button>
-      </div>
-
-      {/* Active Parcel Input */}
-      <Card>
-        <CardContent className="p-6">
-          <p className="mb-4 text-xs font-semibold uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
-            주소 입력
-          </p>
-          <div className="grid gap-3">
-            {/* 카카오 주소 검색 — 클릭하면 검색 팝업 열림 */}
-            <KakaoAddressSearch
-              value={activeParcel.address}
-              onSelect={(result) => {
-                updateParcel(activeParcelId, { address: result.fullAddress });
-              }}
-              placeholder="주소를 검색하세요 (클릭하면 검색창이 열립니다)"
-            />
-            <Input
-              type="number"
-              value={activeParcel.areaOverride}
-              onChange={(e) =>
-                updateParcel(activeParcelId, { areaOverride: e.target.value })
-              }
-              placeholder="면적 (m2) — 자동감지"
-              className="w-full sm:w-44"
-            />
-            <Button
-              type="button"
-              onClick={() => void analyzeParcel(activeParcelId)}
-              disabled={activeParcel.status === "analyzing"}
-              className="whitespace-nowrap"
-            >
-              {activeParcel.status === "analyzing" ? "분석 중..." : "분석 실행"}
-            </Button>
-          </div>
+              />
+            </div>
+          ) : null}
+          {workspaceError ? (
+            <div className="mt-6 rounded-[var(--radius-xl)] border border-[rgba(217,119,6,0.28)] bg-[rgba(217,119,6,0.08)] p-5 text-sm leading-7 text-[var(--spot)]">
+              {workspaceError}
+            </div>
+          ) : null}
         </CardContent>
       </Card>
 
-      {/* Loading */}
-      {activeParcel.status === "analyzing" && (
-        <SkeletonLoader count={2} itemClassName="h-40" />
-      )}
+      {/* Context + Form */}
+      <Card>
+        <CardContent className="grid gap-5 p-6 lg:grid-cols-[0.95fr_1.05fr]">
+          <div className="grid gap-3">
+            <div>
+              <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+                {labels.contextTitle}
+              </p>
+              <CardTitle className="mt-2 text-xl">
+                {labels.contextHint}
+              </CardTitle>
+            </div>
+            {projectQuery.isLoading ? (
+              <SkeletonLoader count={1} itemClassName="h-28" />
+            ) : (
+              <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
+                <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+                  {labels.projectIdLabel}
+                </p>
+                <p className="mt-2 break-all text-sm font-semibold text-[var(--text-primary)]">
+                  {projectId}
+                </p>
+                <p className="mt-4 text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+                  {labels.projectNameLabel}
+                </p>
+                <p className="mt-2 text-sm text-[var(--text-secondary)]">
+                  {projectQuery.data?.name ?? labels.projectFallback}
+                </p>
+                <div className="mt-4 grid gap-3 md:grid-cols-2">
+                  <MetricTile
+                    label={labels.projectStatusLabel}
+                    value={projectQuery.data?.status ?? "-"}
+                  />
+                  <MetricTile
+                    label={labels.projectUpdatedLabel}
+                    value={
+                      projectQuery.data?.updated_at
+                        ? formatDate(locale, projectQuery.data.updated_at)
+                        : "-"
+                    }
+                  />
+                </div>
+              </div>
+            )}
+          </div>
 
-      {/* Error */}
-      {activeParcel.status === "error" && activeParcel.error && (
-        <Card className="border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-950">
+          <Card className="bg-[var(--surface-soft)] shadow-none">
+            <CardContent className="p-5">
+              <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+                {labels.formTitle}
+              </p>
+              <form className="mt-4 grid gap-3" onSubmit={handleSubmit}>
+                <Input
+                  value={form.address}
+                  onChange={(event) =>
+                    setForm((current) => ({
+                      ...current,
+                      address: event.target.value,
+                    }))
+                  }
+                  placeholder={labels.addressLabel}
+                />
+                <div className="grid gap-3 md:grid-cols-2">
+                  <Input
+                    type="number"
+                    value={form.areaSqm}
+                    onChange={(event) =>
+                      setForm((current) => ({
+                        ...current,
+                        areaSqm: event.target.value,
+                      }))
+                    }
+                    placeholder={labels.areaLabel}
+                  />
+                  <Input
+                    value={form.pnu}
+                    onChange={(event) =>
+                      setForm((current) => ({
+                        ...current,
+                        pnu: event.target.value,
+                      }))
+                    }
+                    placeholder={labels.pnuLabel}
+                  />
+                </div>
+                <div className="grid gap-3 md:grid-cols-3">
+                  <Input
+                    type="number"
+                    value={form.buildingAgeYears}
+                    onChange={(event) =>
+                      setForm((current) => ({
+                        ...current,
+                        buildingAgeYears: event.target.value,
+                      }))
+                    }
+                    placeholder={labels.buildingAgeLabel}
+                  />
+                  <Input
+                    type="number"
+                    value={form.floor}
+                    onChange={(event) =>
+                      setForm((current) => ({
+                        ...current,
+                        floor: event.target.value,
+                      }))
+                    }
+                    placeholder={labels.floorLabel}
+                  />
+                  <Input
+                    type="number"
+                    value={form.totalFloors}
+                    onChange={(event) =>
+                      setForm((current) => ({
+                        ...current,
+                        totalFloors: event.target.value,
+                      }))
+                    }
+                    placeholder={labels.totalFloorsLabel}
+                  />
+                </div>
+                <Input
+                  value={form.lawdCd}
+                  onChange={(event) =>
+                    setForm((current) => ({
+                      ...current,
+                      lawdCd: event.target.value,
+                    }))
+                  }
+                  placeholder={labels.lawdCodeLabel}
+                />
+                <Button type="submit" disabled={!canUseLiveApi || isSubmitting}>
+                  {isSubmitting
+                    ? `${labels.submitAction}...`
+                    : labels.submitAction}
+                </Button>
+              </form>
+            </CardContent>
+          </Card>
+        </CardContent>
+      </Card>
+
+      {/* Auto-Zoning Badge */}
+      {form.address.trim().length >= 3 && (
+        <Card>
           <CardContent className="p-6">
-            <p className="text-sm font-semibold text-red-700 dark:text-red-400">
-              분석 오류
+            <p className="mb-3 text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+              {locale === "en" ? "Auto-detected zoning" : "자동 용도지역 감지"}
             </p>
-            <p className="mt-2 text-sm leading-7 text-red-600 dark:text-red-300">
-              {activeParcel.error}
-            </p>
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              className="mt-4"
-              onClick={() => void analyzeParcel(activeParcelId)}
-            >
-              재시도
-            </Button>
+            <AutoZoningBadge address={form.address} />
           </CardContent>
         </Card>
       )}
 
       {/* Results */}
-      {activeParcel.status === "done" && (
-        <div className="grid gap-6 xl:grid-cols-2">
-          {/* Zoning Card */}
-          {activeParcel.zoning && (
-            <Card>
-              <CardContent className="p-6">
-                <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
-                  용도지역 분석
-                </p>
-                <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                  <MetricTile
-                    label="용도지역"
-                    value={activeParcel.zoning.zone_type || "-"}
-                  />
-                  <MetricTile
-                    label="건폐율 한도"
-                    value={`${activeParcel.zoning.max_bcr}%`}
-                  />
-                  <MetricTile
-                    label="용적률 한도"
-                    value={`${activeParcel.zoning.max_far}%`}
-                  />
-                  <MetricTile
-                    label="높이 한도"
-                    value={
-                      activeParcel.zoning.max_height
-                        ? `${activeParcel.zoning.max_height}m`
-                        : "제한 없음"
-                    }
-                  />
-                  <MetricTile
-                    label="토지 면적"
-                    value={`${activeParcel.zoning.land_area.toLocaleString("ko-KR")} m2`}
-                  />
-                  <MetricTile
-                    label="PNU"
-                    value={activeParcel.zoning.pnu || "-"}
-                    small
-                  />
-                  <MetricTile
-                    label="공시지가"
-                    value={
-                      activeParcel.zoning.official_price
-                        ? formatKRW(activeParcel.zoning.official_price)
-                        : "-"
-                    }
-                  />
-                </div>
-              </CardContent>
-            </Card>
-          )}
-
-          {/* AVM Card */}
-          {activeParcel.avm && (
-            <Card>
-              <CardContent className="p-6">
-                <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
-                  AVM 시세 추정
-                </p>
-                <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                  <MetricTile
-                    label="추정 시세"
-                    value={formatKRW(activeParcel.avm.estimated_price)}
-                    highlight
-                  />
-                  <MetricTile
-                    label="m2당 단가"
-                    value={formatKRW(activeParcel.avm.price_per_sqm)}
-                  />
-                  <MetricTile
-                    label="신뢰도"
-                    value={`${(activeParcel.avm.confidence * 100).toFixed(1)}%`}
-                  />
-                  <MetricTile
-                    label="비교사례"
-                    value={`${activeParcel.avm.comparables?.length ?? 0}건`}
-                  />
-                </div>
-              </CardContent>
-            </Card>
-          )}
-        </div>
-      )}
-
-      {/* Comparables Table */}
-      {activeParcel.status === "done" &&
-        activeParcel.avm?.comparables &&
-        activeParcel.avm.comparables.length > 0 && (
-          <Card>
-            <CardContent className="p-6">
-              <p className="mb-4 text-xs font-semibold uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
-                비교 거래 사례
-              </p>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-[var(--line)]">
-                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.2em] text-[var(--text-tertiary)]">
-                        주소
-                      </th>
-                      <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-[0.2em] text-[var(--text-tertiary)]">
-                        거래가격
-                      </th>
-                      <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-[0.2em] text-[var(--text-tertiary)]">
-                        면적
-                      </th>
-                      <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-[0.2em] text-[var(--text-tertiary)]">
-                        거래일
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {activeParcel.avm.comparables.map((comp, i) => (
-                      <tr
-                        key={`comp-${i}`}
-                        className="border-b border-[var(--line)] last:border-0"
-                      >
-                        <td className="px-4 py-3 text-[var(--text-primary)]">
-                          {comp.address}
-                        </td>
-                        <td className="px-4 py-3 text-right font-semibold text-[var(--text-primary)]">
-                          {formatKRW(comp.price)}
-                        </td>
-                        <td className="px-4 py-3 text-right text-[var(--text-secondary)]">
-                          {comp.area_sqm.toLocaleString("ko-KR")} m2
-                        </td>
-                        <td className="px-4 py-3 text-right text-[var(--text-secondary)]">
-                          {comp.transaction_date}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
-      {/* Multi-Parcel Comparison */}
-      {doneParcels.length >= 2 && (
+      <div className="grid gap-6 xl:grid-cols-2">
+        {/* AVM Valuation */}
         <Card>
           <CardContent className="p-6">
-            <p className="mb-4 text-xs font-semibold uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
-              필지 비교 분석
+            <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+              {labels.avmTitle}
             </p>
-            <div className="overflow-x-auto">
+            {avmResult ? (
+              <div className="mt-4 grid gap-4 md:grid-cols-2">
+                <MetricTile
+                  label={labels.avmEstimateLabel}
+                  value={formatCurrency(locale, avmResult.estimated_price)}
+                />
+                <MetricTile
+                  label={labels.avmUnitPriceLabel}
+                  value={formatCurrency(locale, avmResult.price_per_sqm)}
+                />
+                <MetricTile
+                  label={labels.avmConfidenceLabel}
+                  value={formatPercent(avmResult.confidence_score)}
+                />
+                <MetricTile
+                  label={labels.avmComparablesLabel}
+                  value={String(avmResult.comparable_count)}
+                />
+                <MetricTile
+                  label={labels.avmModelLabel}
+                  value={avmResult.model_version}
+                />
+                <MetricTile
+                  label={labels.projectUpdatedLabel}
+                  value={formatDate(locale, avmResult.created_at)}
+                />
+              </div>
+            ) : (
+              <div className="mt-4 rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[var(--text-secondary)]">
+                {labels.placeholder}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Parcel Info */}
+        <Card>
+          <CardContent className="p-6">
+            <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+              {labels.parcelTitle}
+            </p>
+            {parcelResult ? (
+              <div className="mt-4 space-y-4">
+                <div className="grid gap-4 md:grid-cols-2">
+                  <MetricTile
+                    label={labels.parcelCategoryLabel}
+                    value={parcelResult.land_category}
+                  />
+                  <MetricTile
+                    label={labels.parcelZoningLabel}
+                    value={parcelResult.zoning}
+                  />
+                  <MetricTile
+                    label={labels.parcelAreaLabel}
+                    value={`${parcelResult.area_sqm.toLocaleString()} m2`}
+                  />
+                  <MetricTile
+                    label={labels.parcelUseSituationLabel}
+                    value={parcelResult.land_use_situation}
+                  />
+                  <MetricTile
+                    label={labels.parcelOfficialPriceLabel}
+                    value={formatCurrency(
+                      locale,
+                      parcelResult.official_price_per_sqm,
+                    )}
+                  />
+                  <MetricTile
+                    label={labels.parcelRoadLabel}
+                    value={parcelResult.road_side}
+                  />
+                  <MetricTile
+                    label={labels.parcelTerrainLabel}
+                    value={parcelResult.terrain}
+                  />
+                </div>
+                {parcelResult.restrictions.length > 0 && (
+                  <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
+                    <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+                      {labels.parcelRestrictionsLabel}
+                    </p>
+                    <ul className="mt-3 space-y-2 text-sm leading-7 text-[var(--text-secondary)]">
+                      {parcelResult.restrictions.map((r, i) => (
+                        <li key={`restriction-${i}`}>{r}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="mt-4 rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[var(--text-secondary)]">
+                {labels.placeholder}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Comparable Transactions */}
+      {avmResult && avmResult.comparables && avmResult.comparables.length > 0 && (
+        <Card>
+          <CardContent className="p-6">
+            <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+              {labels.comparablesTitle}
+            </p>
+            <div className="mt-4 overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-[var(--line)]">
                     <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.2em] text-[var(--text-tertiary)]">
-                      항목
+                      {labels.comparableAddressLabel}
                     </th>
-                    {doneParcels.map((p) => (
-                      <th
-                        key={p.id}
-                        className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-[0.2em] text-[var(--text-tertiary)]"
-                      >
-                        {p.address.length > 20
-                          ? `${p.address.slice(0, 20)}...`
-                          : p.address}
-                      </th>
-                    ))}
+                    <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-[0.2em] text-[var(--text-tertiary)]">
+                      {labels.comparablePriceLabel}
+                    </th>
+                    <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-[0.2em] text-[var(--text-tertiary)]">
+                      {labels.comparableAreaLabel}
+                    </th>
+                    <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-[0.2em] text-[var(--text-tertiary)]">
+                      {labels.comparableDateLabel}
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
-                  <ComparisonRow
-                    label="용도지역"
-                    parcels={doneParcels}
-                    getValue={(p) => p.zoning?.zone_type ?? "-"}
-                  />
-                  <ComparisonRow
-                    label="건폐율"
-                    parcels={doneParcels}
-                    getValue={(p) =>
-                      p.zoning?.max_bcr != null ? `${p.zoning.max_bcr}%` : "-"
-                    }
-                  />
-                  <ComparisonRow
-                    label="용적률"
-                    parcels={doneParcels}
-                    getValue={(p) =>
-                      p.zoning?.max_far != null ? `${p.zoning.max_far}%` : "-"
-                    }
-                  />
-                  <ComparisonRow
-                    label="토지 면적"
-                    parcels={doneParcels}
-                    getValue={(p) =>
-                      p.zoning?.land_area
-                        ? `${p.zoning.land_area.toLocaleString("ko-KR")} m2`
-                        : "-"
-                    }
-                  />
-                  <ComparisonRow
-                    label="추정 시세"
-                    parcels={doneParcels}
-                    getValue={(p) =>
-                      p.avm?.estimated_price
-                        ? formatKRW(p.avm.estimated_price)
-                        : "-"
-                    }
-                    highlight
-                  />
-                  <ComparisonRow
-                    label="m2당 단가"
-                    parcels={doneParcels}
-                    getValue={(p) =>
-                      p.avm?.price_per_sqm
-                        ? formatKRW(p.avm.price_per_sqm)
-                        : "-"
-                    }
-                  />
-                  <ComparisonRow
-                    label="신뢰도"
-                    parcels={doneParcels}
-                    getValue={(p) =>
-                      p.avm?.confidence != null
-                        ? `${(p.avm.confidence * 100).toFixed(1)}%`
-                        : "-"
-                    }
-                  />
+                  {avmResult.comparables.map((comp, i) => (
+                    <tr
+                      key={`comp-${i}`}
+                      className="border-b border-[var(--line)] last:border-0"
+                    >
+                      <td className="px-4 py-3 text-[var(--text-primary)]">
+                        {comp.address}
+                      </td>
+                      <td className="px-4 py-3 text-right font-semibold text-[var(--text-primary)]">
+                        {formatCurrency(locale, comp.price)}
+                      </td>
+                      <td className="px-4 py-3 text-right text-[var(--text-secondary)]">
+                        {comp.area_sqm.toLocaleString()} m2
+                      </td>
+                      <td className="px-4 py-3 text-right text-[var(--text-secondary)]">
+                        {comp.transaction_date}
+                      </td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Placeholder when no analysis yet */}
-      {parcels.every((p) => p.status === "idle") && (
-        <Card className="bg-[var(--surface-soft)]">
-          <CardContent className="p-8 text-center">
-            <p className="text-sm leading-7 text-[var(--text-secondary)]">
-              주소를 입력하고 &quot;분석 실행&quot; 버튼을 클릭하면 용도지역 정보와
-              AVM 시세 추정 결과가 표시됩니다.
-            </p>
           </CardContent>
         </Card>
       )}
@@ -581,70 +760,18 @@ export function ProjectSiteAnalysisWorkspaceClient({
 function MetricTile({
   label,
   value,
-  highlight,
-  small,
 }: {
   label: string;
   value: string;
-  highlight?: boolean;
-  small?: boolean;
 }) {
   return (
-    <div
-      className={`rounded-[var(--radius-xl)] p-4 ${
-        highlight
-          ? "bg-[rgba(14,116,144,0.08)] ring-1 ring-[var(--accent-strong)]"
-          : "bg-[var(--surface-soft)]"
-      }`}
-    >
+    <div className="rounded-[var(--radius-xl)] bg-[var(--surface)] p-4">
       <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
         {label}
       </p>
-      <p
-        className={`mt-2 font-semibold text-[var(--text-primary)] ${
-          small ? "break-all text-xs" : "text-sm"
-        }`}
-      >
+      <p className="mt-2 text-sm font-semibold text-[var(--text-primary)]">
         {value}
       </p>
     </div>
-  );
-}
-
-/* ── ComparisonRow ── */
-
-function ComparisonRow({
-  label,
-  parcels,
-  getValue,
-  highlight,
-}: {
-  label: string;
-  parcels: Parcel[];
-  getValue: (p: Parcel) => string;
-  highlight?: boolean;
-}) {
-  return (
-    <tr
-      className={`border-b border-[var(--line)] last:border-0 ${
-        highlight ? "bg-[rgba(14,116,144,0.04)]" : ""
-      }`}
-    >
-      <td className="px-4 py-3 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--text-tertiary)]">
-        {label}
-      </td>
-      {parcels.map((p) => (
-        <td
-          key={p.id}
-          className={`px-4 py-3 text-right text-sm ${
-            highlight
-              ? "font-bold text-[var(--accent-strong)]"
-              : "font-semibold text-[var(--text-primary)]"
-          }`}
-        >
-          {getValue(p)}
-        </td>
-      ))}
-    </tr>
   );
 }

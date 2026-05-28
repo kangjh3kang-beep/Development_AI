@@ -56,6 +56,7 @@ export default function DesignPage() {
       buildableArea: Math.round(buildableArea * 10) / 10,
       maxGrossArea: Math.round(maxGross * 10) / 10,
       parking,
+      heightNote,
       setbacks: { front: 6, side: 1.5, rear: 2, unit: "m" },
       massingOptions: [
         { name: "판상형", description: `${maxFloors}층 2개동, 남향 배치`, efficiency: 78 },

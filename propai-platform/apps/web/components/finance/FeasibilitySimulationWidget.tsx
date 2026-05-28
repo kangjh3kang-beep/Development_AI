@@ -3,6 +3,7 @@
 import { useState, useMemo, useEffect } from "react";
 import { AreaChart, Area, XAxis, Tooltip, ResponsiveContainer, ReferenceLine } from "recharts";
 import { motion } from "framer-motion";
+import { apiClient } from "@/lib/api-client";
 import { formatCurrencyKRW, formatCurrencyCompact } from "@/lib/formatters";
 
 interface SimulationResult {
@@ -41,7 +42,7 @@ export function FeasibilitySimulationWidget({ projectId, dictionary }: { project
   const runSimulation = async () => {
     setIsRunning(true);
     try {
-      const res = await (async () => ({} as SimulationResult))();
+      const res = await apiClient.post<SimulationResult>(`/projects/${projectId}/simulate-feasibility`);
       if (res && res.results) {
         if (res.results.npv_mean_krw) setNpv(res.results.npv_mean_krw);
         if (res.results.var_5_krw) setVar5(res.results.var_5_krw);

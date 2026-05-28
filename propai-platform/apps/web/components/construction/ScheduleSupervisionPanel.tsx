@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
+import { apiClient } from "@/lib/api-client";
+
 export function ScheduleSupervisionPanel({ projectId, dictionary }: { projectId: string; dictionary: Record<string, string> }) {
   const [isMounted, setIsMounted] = useState(false);
   const t = dictionary;

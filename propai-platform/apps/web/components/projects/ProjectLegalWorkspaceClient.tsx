@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Button, Card, CardContent, CardTitle, Input } from "@propai/ui";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
+import { ApiClientError, apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import type { Locale } from "@/i18n/config";
 
@@ -84,9 +85,9 @@ const KO_LABELS: Labels = {
   heroDescription:
     "현재 프로젝트의 건축 법규 적합성을 실시간으로 검토합니다.",
   heroHint:
-    "주소와 건축 계획을 입력하면 법규 적합 여부를 자동 검토합니다.",
+    "건폐율, 용적률, 높이 제한 등 건축 규제 사항을 API를 통해 자동 검증합니다.",
   tokenHint:
-    "분석을 위해 로그인이 필요합니다.",
+    "라이브 API 호출에는 NEXT_PUBLIC_API_ACCESS_TOKEN 또는 localStorage.propai_access_token이 필요합니다.",
   authError: "라이브 워크스페이스 호출을 위해 API 인증이 필요합니다.",
   contextTitle: "프로젝트 컨텍스트",
   contextHint:
@@ -106,8 +107,8 @@ const KO_LABELS: Labels = {
   missingAddressError: "주소를 입력해 주세요.",
   missingZoneCodeError: "용도지역 코드를 입력해 주세요.",
   complianceTitle: "건축 규제 검토 결과",
-  bcrLabel: "건폐율 (대지 중 건물 면적 비율)",
-  farLabel: "용적률 (대지 대비 건물 총면적 비율)",
+  bcrLabel: "건폐율",
+  farLabel: "용적률",
   heightLabel: "높이 제한",
   limitLabel: "제한",
   plannedLabel: "계획",
@@ -189,6 +190,17 @@ function formatDate(locale: string, value: string) {
 }
 
 function extractErrorMessage(error: unknown, authMessage: string) {
+  if (error instanceof ApiClientError) {
+    if (error.status === 401 || error.status === 403) {
+      return authMessage;
+    }
+    return `API request failed with status ${error.status}.`;
+  }
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return "Request failed.";
+}
 
 /* ── Fallback Data (from existing legal page) ── */
 
@@ -220,7 +232,7 @@ export function ProjectLegalWorkspaceClient({
   projectId: string;
 }) {
   const labels = LABELS[locale] || LABELS["ko"];
-  const runtimeConfig = ({ mode: "local" as string, hasAccessToken: false });
+  const runtimeConfig = apiClient.getRuntimeConfig();
   const canUseLiveApi =
     runtimeConfig.mode === "live" || runtimeConfig.hasAccessToken;
 
@@ -246,7 +258,9 @@ export function ProjectLegalWorkspaceClient({
     queryKey: ["projects", "detail", projectId, "legal-live"],
     enabled: canUseLiveApi,
     queryFn: () =>
-      (async () => ({} as ProjectResponse))(),
+      apiClient.get<ProjectResponse>(`/projects/${projectId}`, {
+        useMock: false,
+      }),
   });
 
   useEffect(() => {
@@ -259,8 +273,7 @@ export function ProjectLegalWorkspaceClient({
     }));
   }, [projectQuery.data]);
 
-  // 부지분석에서 설정한 주소를 자동으로 불러옵니다 (모세혈관 네트워크 주소 공유 패턴)
-  // siteAnalysis.address가 변경되면 아직 사용자가 입력하지 않은 경우 자동 동기화
+  // Pre-fill from site analysis context (capillary network)
   useEffect(() => {
     if (!siteAnalysis) return;
     setForm((current) => ({
@@ -293,7 +306,14 @@ export function ProjectLegalWorkspaceClient({
     setIsSubmitting(true);
 
     try {
-      const result = await (async () => ({} as ComplianceCheckResponse))() || 0,
+      const result = await apiClient.post<ComplianceCheckResponse>(
+        "/building-compliance/check",
+        {
+          useMock: false,
+          body: {
+            address,
+            zone_code: zoneCode,
+            planned_bcr: Number(form.plannedBcr) || 0,
             planned_far: Number(form.plannedFar) || 0,
             planned_height_m: Number(form.plannedHeight) || 0,
             planned_floors: Number(form.plannedFloors) || 0,
@@ -341,7 +361,7 @@ export function ProjectLegalWorkspaceClient({
               {labels.heroTitle}
             </span>
             <span className="rounded-full border border-[var(--line)] px-4 py-2 text-xs font-medium text-[var(--text-secondary)]">
-              {runtimeConfig.mode === "live" ? "실연동" : "로컬"}
+              {runtimeConfig.mode === "live" ? "LIVE" : "HYBRID"}
             </span>
           </div>
           <h3 className="mt-5 text-3xl font-bold text-[var(--text-primary)]">
@@ -431,26 +451,16 @@ export function ProjectLegalWorkspaceClient({
                 {labels.formTitle}
               </p>
               <form className="mt-4 grid gap-3" onSubmit={handleSubmit}>
-                {/* 주소 검색 입력: 부지분석 주소를 공유하며, 이 페이지에서 변경 가능 */}
-                <div className="relative">
-                  <svg className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-hint)]" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-                  <Input
-                    value={form.address}
-                    onChange={(event) =>
-                      setForm((current) => ({
-                        ...current,
-                        address: event.target.value,
-                      }))
-                    }
-                    placeholder="주소를 검색하세요 (예: 서울특별시 강남구 삼성동)"
-                    className="pl-10"
-                  />
-                </div>
-                {siteAnalysis?.address && form.address === siteAnalysis.address && (
-                  <p className="text-[10px] text-[var(--text-hint)] -mt-2">
-                    📍 부지분석에서 설정된 주소입니다
-                  </p>
-                )}
+                <Input
+                  value={form.address}
+                  onChange={(event) =>
+                    setForm((current) => ({
+                      ...current,
+                      address: event.target.value,
+                    }))
+                  }
+                  placeholder={labels.addressLabel}
+                />
                 <Input
                   value={form.zoneCode}
                   onChange={(event) =>

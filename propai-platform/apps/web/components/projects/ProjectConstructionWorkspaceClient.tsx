@@ -5,7 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Button, Card, CardContent, CardTitle, Input } from "@propai/ui";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
-import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { ApiClientError, apiClient } from "@/lib/api-client";
 import type { Locale } from "@/i18n/config";
 
 /* ── Response Types ── */
@@ -101,13 +101,13 @@ const KO_LABELS: Labels = {
   heroDescription:
     "공사비 산출, 시공 체크리스트, 리스크 평가를 실시간으로 수행합니다.",
   heroHint:
-    "건축 유형과 규모를 입력하면 예상 공사비와 시공 체크리스트를 생성합니다.",
+    "원가 산출 API, 시공 체크리스트 생성, 리스크 평가를 연계하여 종합 시공관리를 지원합니다.",
   tokenHint:
-    "분석을 위해 로그인이 필요합니다.",
+    "라이브 API 호출에는 NEXT_PUBLIC_API_ACCESS_TOKEN 또는 localStorage.propai_access_token이 필요합니다.",
   authError: "라이브 워크스페이스 호출을 위해 API 인증이 필요합니다.",
   formTitle: "공사비 항목 입력",
   costTitle: "공사비 산출 결과",
-  costWorkCodeLabel: "공사 항목",
+  costWorkCodeLabel: "공종 코드",
   costDescLabel: "내용",
   costUnitLabel: "단위",
   costQtyLabel: "수량",
@@ -195,6 +195,17 @@ function formatCurrency(value: number) {
 }
 
 function extractErrorMessage(error: unknown, authMessage: string) {
+  if (error instanceof ApiClientError) {
+    if (error.status === 401 || error.status === 403) {
+      return authMessage;
+    }
+    return `API request failed with status ${error.status}.`;
+  }
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return "Request failed.";
+}
 
 type CostFormItem = {
   work_code: string;
@@ -222,12 +233,9 @@ export function ProjectConstructionWorkspaceClient({
   projectId: string;
 }) {
   const labels = LABELS[locale] || LABELS["ko"];
-  const runtimeConfig = ({ mode: "local" as string, hasAccessToken: false });
+  const runtimeConfig = apiClient.getRuntimeConfig();
   const canUseLiveApi =
     runtimeConfig.mode === "live" || runtimeConfig.hasAccessToken;
-
-  // 부지분석에서 설정한 주소를 읽기 전용으로 표시합니다 (모세혈관 네트워크 주소 공유 패턴)
-  const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
 
   const [workspaceError, setWorkspaceError] = useState("");
   const [isSubmittingCost, setIsSubmittingCost] = useState(false);
@@ -254,7 +262,9 @@ export function ProjectConstructionWorkspaceClient({
     queryKey: ["lifecycle", "risk", projectId],
     enabled: canUseLiveApi,
     queryFn: () =>
-      (async () => ({} as RiskAssessmentResponse))(),
+      apiClient.get<RiskAssessmentResponse>("/lifecycle/risk/assessment", {
+        useMock: false,
+      }),
   });
 
   const riskError = riskQuery.error
@@ -295,7 +305,13 @@ export function ProjectConstructionWorkspaceClient({
         unit_rate_krw: Number(item.unit_rate_krw) || 0,
       }));
 
-      const result = await (async () => ({} as CostCalculationResponse))();
+      const result = await apiClient.post<CostCalculationResponse>(
+        `/cost/${projectId}/calculate`,
+        {
+          useMock: false,
+          body: { items },
+        },
+      );
       setCostResult(result);
     } catch (error) {
       setWorkspaceError(extractErrorMessage(error, labels.authError));
@@ -310,7 +326,13 @@ export function ProjectConstructionWorkspaceClient({
     setIsSubmittingChecklist(true);
 
     try {
-      const result = await (async () => ({} as ConstructionChecklistResponse))(),
+      const result = await apiClient.post<ConstructionChecklistResponse>(
+        "/lifecycle/construction/checklist",
+        {
+          useMock: false,
+          body: {
+            project_id: projectId,
+            project_type: checklistForm.projectType.trim(),
             project_cost_krw: Number(checklistForm.projectCost) || 0,
             floor_count: Number(checklistForm.floorCount) || 0,
             excavation_depth_m: Number(checklistForm.excavationDepth) || 0,
@@ -335,7 +357,7 @@ export function ProjectConstructionWorkspaceClient({
               {labels.heroTitle}
             </span>
             <span className="rounded-full border border-[var(--line)] px-4 py-2 text-xs font-medium text-[var(--text-secondary)]">
-              {runtimeConfig.mode === "live" ? "실연동" : "로컬"}
+              {runtimeConfig.mode === "live" ? "LIVE" : "HYBRID"}
             </span>
           </div>
           <h3 className="mt-5 text-3xl font-bold text-[var(--text-primary)]">
@@ -359,14 +381,6 @@ export function ProjectConstructionWorkspaceClient({
           ) : null}
         </CardContent>
       </Card>
-
-      {/* 부지분석에서 설정된 주소 읽기 전용 표시 */}
-      {siteAnalysis?.address && (
-        <div className="rounded-xl bg-[var(--surface-muted)] p-3 text-sm">
-          <span className="text-[var(--text-hint)]">📍 분석 대상:</span>
-          <span className="font-bold ml-2">{siteAnalysis.address}</span>
-        </div>
-      )}
 
       {/* Cost Calculation Form + Results */}
       <Card>

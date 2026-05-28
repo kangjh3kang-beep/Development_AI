@@ -5,6 +5,8 @@ import { Card, CardContent, CardTitle } from "@propai/ui";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
 import KdxRealtimeChart from "@/components/dashboard/kdx/KdxRealtimeChart";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
+import { ApiClientError, apiClient } from "@/lib/api-client";
+
 type KdxOverviewResponse = {
   connection_status: string;
   throughput_tps: number;
@@ -30,6 +32,13 @@ function getQueryErrorMessage(error: unknown) {
     return "API authentication is required for live KDX monitoring.";
   }
 
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  return "Request failed.";
+}
+
 function formatMetricValue(metric: KdxOverviewResponse["latest_metric"]) {
   if (!metric) {
     return "No metric received";
@@ -50,7 +59,9 @@ export function KdxMonitoringWorkspaceClient() {
   const overviewQuery = useQuery({
     queryKey: ["kdx", "overview"],
     queryFn: () =>
-      (async () => ({} as KdxOverviewResponse))(),
+      apiClient.get<KdxOverviewResponse>("/kdx/overview", {
+        useMock: false,
+      }),
   });
 
   const errorMessage = overviewQuery.error

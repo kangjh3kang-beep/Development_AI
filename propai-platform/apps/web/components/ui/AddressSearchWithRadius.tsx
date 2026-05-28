@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import { Button, Card, CardContent, Input, Select } from "@propai/ui";
+import { Button, Card, CardContent, Input } from "@propai/ui";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                             */
@@ -136,7 +136,7 @@ export function AddressSearchWithRadius({
               <label className="mb-1 block text-xs text-[var(--text-secondary)]">
                 검색 반경
               </label>
-              <Select
+              <select className="w-full rounded-lg border border-[var(--line)] bg-[var(--surface-soft)] px-3 py-2 text-sm text-[var(--text-primary)]"
                 value={radius}
                 onChange={(e) => setRadius(e.target.value)}
               >
@@ -145,7 +145,7 @@ export function AddressSearchWithRadius({
                     {opt.label}
                   </option>
                 ))}
-              </Select>
+              </select>
             </div>
 
             {/* 기간 선택 */}
@@ -153,7 +153,7 @@ export function AddressSearchWithRadius({
               <label className="mb-1 block text-xs text-[var(--text-secondary)]">
                 조회 기간
               </label>
-              <Select
+              <select className="w-full rounded-lg border border-[var(--line)] bg-[var(--surface-soft)] px-3 py-2 text-sm text-[var(--text-primary)]"
                 value={period}
                 onChange={(e) =>
                   setPeriod(e.target.value as "3m" | "6m" | "1y")
@@ -164,7 +164,7 @@ export function AddressSearchWithRadius({
                     {opt.label}
                   </option>
                 ))}
-              </Select>
+              </select>
             </div>
 
             {/* 검색 버튼 */}

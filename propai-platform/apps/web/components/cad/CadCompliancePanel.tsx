@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
+import { apiClient } from "@/lib/api-client";
 import { useCadStore } from "@/store/use-cad-store";
 import { Button, Card, CardContent, Badge } from "@propai/ui";
 
@@ -107,7 +108,19 @@ export function CadCompliancePanel({ projectId }: CadCompliancePanelProps) {
       const plannedBcr = (footprint / siteArea) * 100;
       const plannedFar = (totalFloorArea / siteArea) * 100;
 
-      const result = await (async () => ({} as ComplianceCheckResult))();
+      const result = await apiClient.post<ComplianceCheckResult>(
+        "/cad-correction/check",
+        {
+          body: {
+            address: "",
+            zone_code: "2종일반주거",
+            planned_bcr: plannedBcr,
+            planned_far: plannedFar,
+            planned_height_m: buildingHeightM,
+            planned_floors: floorCount,
+          },
+        },
+      );
       setCheckResult(result);
       setCorrection(null);
     } catch (err) {
@@ -128,7 +141,13 @@ export function CadCompliancePanel({ projectId }: CadCompliancePanelProps) {
       const siteArea = 1000;
       const totalFloorArea = footprint * floorCount;
 
-      const result = await (async () => ({} as CorrectionResult))() * 100,
+      const result = await apiClient.post<CorrectionResult>(
+        "/cad-correction/auto-correct",
+        {
+          body: {
+            address: "",
+            zone_code: "2종일반주거",
+            planned_bcr: (footprint / siteArea) * 100,
             planned_far: (totalFloorArea / siteArea) * 100,
             planned_height_m: buildingHeightM,
             planned_floors: floorCount,

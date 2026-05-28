@@ -12,6 +12,7 @@ import {
 } from "@propai/ui";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
+import { ApiClientError, apiClient } from "@/lib/api-client";
 import type { Locale } from "@/i18n/config";
 
 type ProjectSummary = {
@@ -183,6 +184,13 @@ function extractErrorMessage(error: unknown, authMessage: string) {
     return `API request failed with status ${status}.`;
   }
 
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  return "Request failed.";
+}
+
 export function InspectionOperationsWorkspaceClient({
   locale,
 }: {
@@ -195,8 +203,9 @@ export function InspectionOperationsWorkspaceClient({
     setIsMounted(true);
   }, []);
 
-  const runtimeConfig = { mode: "local" as string, hasAccessToken: false };
-  const canUseLiveApi = true;
+  const runtimeConfig = apiClient.getRuntimeConfig();
+  const canUseLiveApi =
+    runtimeConfig.mode === "live" || runtimeConfig.hasAccessToken;
 
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [manualProjectId, setManualProjectId] = useState("");
@@ -213,7 +222,10 @@ export function InspectionOperationsWorkspaceClient({
     queryKey: ["projects", "inspection-picker"],
     enabled: canUseLiveApi,
     queryFn: () =>
-      (async () => ({ items: [] as ProjectSummary[], total: 0, page: 1, pageSize: 20 }))(),
+      apiClient.get<PaginatedResponse<ProjectSummary>>(
+        "/projects?page=1&page_size=20",
+        { useMock: false },
+      ),
   });
 
   useEffect(() => {
@@ -278,7 +290,7 @@ export function InspectionOperationsWorkspaceClient({
               {labels.heroTitle}
             </span>
             <span className="rounded-full border border-[var(--line)] px-4 py-2 text-xs font-medium text-[var(--text-secondary)]">
-              {runtimeConfig.mode === "live" ? "실연동" : "로컬"}
+              {runtimeConfig.mode === "live" ? "LIVE" : "HYBRID"}
             </span>
           </div>
           <h3 className="mt-5 text-3xl font-bold text-[var(--text-primary)]">

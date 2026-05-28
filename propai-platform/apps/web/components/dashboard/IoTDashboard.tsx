@@ -14,6 +14,7 @@ import {
 } from "recharts";
 import { Card, CardContent, CardTitle } from "@propai/ui";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
+import { apiClient } from "@/lib/api-client";
 import type { IoTDashboardData, MaintenanceAlert } from "@/components/cad/types";
 import { motion } from "framer-motion";
 
@@ -43,7 +44,7 @@ const SENSOR_ICONS: Record<string, string> = {
 export function IoTDashboard() {
   const { data, isLoading } = useQuery({
     queryKey: ["analytics", "iot"],
-    queryFn: () => (async () => ({} as IoTDashboardData))(),
+    queryFn: () => apiClient.get<IoTDashboardData>("/analytics/iot"),
     refetchInterval: 15_000,
   });
 

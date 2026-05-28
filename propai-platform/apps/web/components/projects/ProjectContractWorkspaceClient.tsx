@@ -6,6 +6,8 @@ import { Button, Card, CardContent, CardTitle, Input, Select } from "@propai/ui"
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import type { Locale } from "@/i18n/config";
+import { ApiClientError, apiClient } from "@/lib/api-client";
+
 type ProjectResponse = {
   id: string;
   name: string;
@@ -250,6 +252,17 @@ function formatCurrency(locale: string, value: number | null) {
 }
 
 function extractErrorMessage(error: unknown, authMessage: string) {
+  if (error instanceof ApiClientError) {
+    if (error.status === 401 || error.status === 403) {
+      return authMessage;
+    }
+    return `API request failed with status ${error.status}.`;
+  }
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return "Request failed.";
+}
 
 function splitClauses(value: string) {
   return value
@@ -266,7 +279,7 @@ export function ProjectContractWorkspaceClient({
   projectId: string;
 }) {
   const labels = LABELS[locale] || LABELS["ko"];
-  const runtimeConfig = ({ mode: "local" as string, hasAccessToken: false });
+  const runtimeConfig = apiClient.getRuntimeConfig();
   const canUseLiveApi =
     runtimeConfig.mode === "live" || runtimeConfig.hasAccessToken;
   const [workspaceError, setWorkspaceError] = useState("");
@@ -292,7 +305,7 @@ export function ProjectContractWorkspaceClient({
     queryKey: ["projects", "detail", projectId, "contracts-live"],
     enabled: canUseLiveApi,
     queryFn: () =>
-      (async () => ({} as ProjectResponse))(),
+      apiClient.get<ProjectResponse>(`/projects/${projectId}`, { useMock: false }),
   });
 
   const latestDraftQuery = useQuery({
@@ -300,7 +313,10 @@ export function ProjectContractWorkspaceClient({
     enabled: canUseLiveApi,
     queryFn: async () => {
       try {
-        return await (async () => ({} as ContractDraftResponse))();
+        return await apiClient.get<ContractDraftResponse>(
+          `/contracts/${projectId}/latest?contract_type=${form.contractType}`,
+          { useMock: false },
+        );
       } catch (error) {
         if (error instanceof ApiClientError && error.status === 404) {
           return null;
@@ -344,7 +360,15 @@ export function ProjectContractWorkspaceClient({
     setIsGenerating(true);
 
     try {
-      const response = await (async () => ({} as ContractDraftResponse))(),
+      const response = await apiClient.post<ContractDraftResponse>(
+        "/contracts/generate",
+        {
+          useMock: false,
+          body: {
+            project_id: projectId,
+            contract_type: form.contractType,
+            target_language: form.targetLanguage,
+            counterparty_name: form.counterpartyName.trim(),
             effective_date: new Date(form.effectiveDate).toISOString(),
             contract_amount_krw: form.contractAmount.trim()
               ? Number(form.contractAmount)
@@ -378,7 +402,12 @@ export function ProjectContractWorkspaceClient({
     setIsRequestingESign(true);
 
     try {
-      const response = await (async () => ({} as ContractDraftResponse))(),
+      const response = await apiClient.post<ContractDraftResponse>(
+        `/contracts/${activeDraft.draft_id}/esign`,
+        {
+          useMock: false,
+          body: {
+            signer_name: form.signerName.trim(),
             signer_email: form.signerEmail.trim(),
             signer_phone: form.signerPhone.trim() || null,
           },
@@ -404,7 +433,7 @@ export function ProjectContractWorkspaceClient({
               {labels.heroBadge}
             </span>
             <span className="rounded-full border border-[var(--line)] px-4 py-2 text-xs font-medium text-[var(--text-secondary)]">
-              {runtimeConfig.mode === "live" ? "실연동" : "로컬"}
+              {runtimeConfig.mode === "live" ? "LIVE" : "HYBRID"}
             </span>
           </div>
           <h3 className="mt-5 text-3xl font-bold text-[var(--text-primary)]">

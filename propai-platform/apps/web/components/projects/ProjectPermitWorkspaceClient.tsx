@@ -5,7 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Button, Card, CardContent, CardTitle, Input } from "@propai/ui";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
-import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { ApiClientError, apiClient } from "@/lib/api-client";
 import type { Locale } from "@/i18n/config";
 
 /* ── Response types ── */
@@ -241,6 +241,17 @@ function formatDate(locale: string, value: string) {
 }
 
 function extractErrorMessage(error: unknown, authMessage: string) {
+  if (error instanceof ApiClientError) {
+    if (error.status === 401 || error.status === 403) {
+      return authMessage;
+    }
+    return `API 요청 실패: 상태 ${error.status}`;
+  }
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return "요청 실패.";
+}
 
 function statusBadgeClass(
   status: "pass" | "fail" | "warning" | string,
@@ -269,12 +280,9 @@ export function ProjectPermitWorkspaceClient({
   projectId: string;
 }) {
   const labels = LABELS[locale] || LABELS["ko"];
-  const runtimeConfig = ({ mode: "local" as string, hasAccessToken: false });
+  const runtimeConfig = apiClient.getRuntimeConfig();
   const canUseLiveApi =
     runtimeConfig.mode === "live" || runtimeConfig.hasAccessToken;
-
-  // 부지분석에서 설정한 주소를 자동으로 불러옵니다 (모세혈관 네트워크 주소 공유 패턴)
-  const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
 
   const [workspaceError, setWorkspaceError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -294,7 +302,9 @@ export function ProjectPermitWorkspaceClient({
     queryKey: ["projects", "detail", projectId, "permit-live"],
     enabled: canUseLiveApi,
     queryFn: () =>
-      (async () => ({} as ProjectResponse))(),
+      apiClient.get<ProjectResponse>(`/projects/${projectId}`, {
+        useMock: false,
+      }),
   });
 
   useEffect(() => {
@@ -313,13 +323,6 @@ export function ProjectPermitWorkspaceClient({
         current.buildingType || projectQuery.data.building_type || "공동주택",
     }));
   }, [projectQuery.data]);
-
-  // 부지분석에서 설정한 주소가 변경되면 아직 사용자가 입력하지 않은 경우 자동 동기화
-  useEffect(() => {
-    if (siteAnalysis?.address && !form.address) {
-      setForm((f) => ({ ...f, address: siteAnalysis.address! }));
-    }
-  }, [siteAnalysis?.address]);
 
   const projectError = projectQuery.error
     ? extractErrorMessage(projectQuery.error, labels.authError)
@@ -345,10 +348,26 @@ export function ProjectPermitWorkspaceClient({
 
     try {
       const [compliance, checklist] = await Promise.all([
-        (async () => ({} as ComplianceCheckResponse))() || undefined,
+        apiClient.post<ComplianceCheckResponse>("/building-compliance/check", {
+          useMock: false,
+          body: {
+            project_id: projectId,
+            building_type: form.buildingType,
+            address,
+            area_sqm: areaSqm,
+            floors: Number(form.floors) || undefined,
           },
         }),
-        (async () => ({} as LifecycleChecklistResponse))(),
+        apiClient.post<LifecycleChecklistResponse>(
+          "/lifecycle/construction/checklist",
+          {
+            useMock: false,
+            body: {
+              project_id: projectId,
+              building_type: form.buildingType,
+            },
+          },
+        ),
       ]);
 
       setComplianceResult(compliance);
@@ -413,7 +432,7 @@ export function ProjectPermitWorkspaceClient({
               {labels.heroTitle}
             </span>
             <span className="rounded-full border border-[var(--line)] px-4 py-2 text-xs font-medium text-[var(--text-secondary)]">
-              {runtimeConfig.mode === "live" ? "실연동" : "로컬"}
+              {runtimeConfig.mode === "live" ? "LIVE" : "HYBRID"}
             </span>
           </div>
           <h3 className="mt-5 text-3xl font-bold text-[var(--text-primary)]">
@@ -513,26 +532,16 @@ export function ProjectPermitWorkspaceClient({
                   }
                   placeholder={labels.buildingTypeLabel}
                 />
-                {/* 주소 검색 입력: 부지분석 주소를 공유하며, 이 페이지에서 변경 가능 */}
-                <div className="relative">
-                  <svg className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-hint)]" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-                  <Input
-                    value={form.address}
-                    onChange={(event) =>
-                      setForm((current) => ({
-                        ...current,
-                        address: event.target.value,
-                      }))
-                    }
-                    placeholder="주소를 검색하세요 (예: 서울특별시 강남구 삼성동)"
-                    className="pl-10"
-                  />
-                </div>
-                {siteAnalysis?.address && form.address === siteAnalysis.address && (
-                  <p className="text-[10px] text-[var(--text-hint)] -mt-2">
-                    📍 부지분석에서 설정된 주소입니다
-                  </p>
-                )}
+                <Input
+                  value={form.address}
+                  onChange={(event) =>
+                    setForm((current) => ({
+                      ...current,
+                      address: event.target.value,
+                    }))
+                  }
+                  placeholder={labels.addressLabel}
+                />
                 <div className="grid gap-3 md:grid-cols-2">
                   <Input
                     type="number"
