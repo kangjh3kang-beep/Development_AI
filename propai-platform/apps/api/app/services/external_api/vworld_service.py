@@ -29,7 +29,7 @@ class VWorldService:
             "crs": "EPSG:4326",
             "attrFilter": f"pnu:=:{pnu_code}",
         }
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=30.0, headers=self.HEADERS) as client:
             try:
                 resp = await client.get(f"{self.BASE_URL}/data", params=params)
                 resp.raise_for_status()
@@ -63,6 +63,9 @@ class VWorldService:
             "parcel_count": len(pnu_codes)
         }
 
+    # VWORLD 데이터 API는 Referer 헤더로 도메인 검증
+    HEADERS = {"Referer": "https://developmentai-production.up.railway.app"}
+
     async def geocode_address(self, address: str) -> Optional[Dict]:
         """주소를 좌표+PNU로 변환 (지오코딩)"""
         if not settings.VWORLD_API_KEY:
@@ -75,9 +78,9 @@ class VWorldService:
             "type": "ROAD",
             "format": "json",
         }
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=30.0, headers=self.HEADERS) as client:
             try:
-                resp = await client.get(f"{self.BASE_URL}/req/address", params=params)
+                resp = await client.get(f"{self.BASE_URL}/address", params=params)
                 resp.raise_for_status()
                 data = resp.json()
                 response = data.get("response", {})
@@ -111,9 +114,9 @@ class VWorldService:
             "geometry": "true",
             "attribute": "true",
         }
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=30.0, headers=self.HEADERS) as client:
             try:
-                resp = await client.get(f"{self.BASE_URL}/req/data", params=params)
+                resp = await client.get(f"{self.BASE_URL}/data", params=params)
                 resp.raise_for_status()
                 data = resp.json()
                 features = (
@@ -157,8 +160,8 @@ class VWorldService:
                     "format": "json",
                     "attrFilter": f"pnu:=:{pnu}",
                 }
-                async with httpx.AsyncClient(timeout=15.0) as client:
-                    resp = await client.get(f"{self.BASE_URL}/req/data", params=params)
+                async with httpx.AsyncClient(timeout=15.0, headers=self.HEADERS) as client:
+                    resp = await client.get(f"{self.BASE_URL}/data", params=params)
                     resp.raise_for_status()
                     data = resp.json()
                     features = (
@@ -189,7 +192,7 @@ class VWorldService:
             "crs": "EPSG:4326",
             "geomFilter": f"BOX({x-0.001},{y-0.001},{x+0.001},{y+0.001})",
         }
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=30.0, headers=self.HEADERS) as client:
             try:
                 resp = await client.get(f"{self.BASE_URL}/data", params=params)
                 resp.raise_for_status()
