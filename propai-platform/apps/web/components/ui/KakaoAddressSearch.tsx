@@ -9,7 +9,7 @@
  * @see https://postcode.map.kakao.com/guide
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 /* ── 카카오 주소 검색 결과 타입 ── */
 interface DaumPostcodeData {
@@ -100,15 +100,13 @@ export function KakaoAddressSearch({
   disabled = false,
 }: KakaoAddressSearchProps) {
   const [displayValue, setDisplayValue] = useState(value);
-  const [isOpen, setIsOpen] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
 
   // 외부 value 변경 시 동기화
   useEffect(() => {
     setDisplayValue(value);
   }, [value]);
 
-  /* ── 카카오 주소 검색 팝업 열기 ── */
+  /* ── 카카오 주소 검색 팝업 열기 (새 창 팝업 방식 — 페이지 스크롤 방지) ── */
   const openSearch = useCallback(async () => {
     if (disabled) return;
 
@@ -117,14 +115,10 @@ export function KakaoAddressSearch({
     const daum = (window as any).daum;
     if (!daum?.Postcode) return;
 
-    setIsOpen(true);
-
     new daum.Postcode({
       oncomplete: (data: DaumPostcodeData) => {
-        // 사용자가 선택한 주소 유형에 따라 전체 주소 결정
         let fullAddress = data.userSelectedType === "R" ? data.roadAddress : data.jibunAddress;
 
-        // 건물명 추가
         if (data.buildingName) {
           fullAddress += ` (${data.buildingName})`;
         }
@@ -141,15 +135,9 @@ export function KakaoAddressSearch({
         };
 
         setDisplayValue(fullAddress);
-        setIsOpen(false);
         onSelect(result);
       },
-      onclose: () => {
-        setIsOpen(false);
-      },
-      width: "100%",
-      height: "100%",
-    }).embed(containerRef.current);
+    }).open(); // embed 대신 open() — 별도 팝업 창으로 열림
   }, [disabled, onSelect]);
 
   return (
@@ -199,15 +187,6 @@ export function KakaoAddressSearch({
         )}
       </div>
 
-      {/* 카카오 주소 검색 임베드 영역 */}
-      {isOpen && (
-        <div className="rounded-xl border border-[var(--line)] overflow-hidden shadow-lg">
-          <div
-            ref={containerRef}
-            style={{ width: "100%", height: "400px" }}
-          />
-        </div>
-      )}
     </div>
   );
 }
