@@ -95,7 +95,7 @@ const LABELS: Record<Locale, Labels> = {
     heroDescription:
       "프로젝트 컨텍스트를 기준으로 계약 초안을 생성하고, 최신 초안을 다시 불러온 뒤 곧바로 전자서명 요청으로 넘깁니다.",
     tokenHint:
-      "실 API 호출에는 NEXT_PUBLIC_API_ACCESS_TOKEN 또는 localStorage.propai_access_token이 필요합니다.",
+      "분석을 위해 로그인이 필요합니다.",
     authError: "실연동 API 인증이 필요합니다.",
     projectTitle: "프로젝트 컨텍스트",
     projectStatusLabel: "상태",
@@ -138,7 +138,7 @@ const LABELS: Record<Locale, Labels> = {
     heroDescription:
       "Generate a project-aware contract draft, reload the latest persisted draft, and hand it off directly into the e-sign workflow.",
     tokenHint:
-      "Live API calls require NEXT_PUBLIC_API_ACCESS_TOKEN or localStorage.propai_access_token.",
+      "분석을 위해 로그인이 필요합니다.",
     authError: "API authentication is required for live workspace calls.",
     projectTitle: "Project context",
     projectStatusLabel: "Status",
@@ -181,7 +181,7 @@ const LABELS: Record<Locale, Labels> = {
     heroDescription:
       "基于项目上下文生成合同草案，读取最新持久化草案，并直接移交到电子签署流程。",
     tokenHint:
-      "实时 API 调用需要 NEXT_PUBLIC_API_ACCESS_TOKEN 或 localStorage.propai_access_token。",
+      "分析需要登录。",
     authError: "实时工作台调用需要 API 认证。",
     projectTitle: "项目上下文",
     projectStatusLabel: "状态",

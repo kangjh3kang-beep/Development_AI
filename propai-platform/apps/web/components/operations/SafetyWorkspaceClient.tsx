@@ -79,9 +79,9 @@ const KO_LABELS: Labels = {
   heroDescription:
     "공사현장 안전 계획과 재해 위험도를 AI가 분석하여 안전 항목 및 위험 매트릭스를 제공합니다.",
   heroHint:
-    "POST /lifecycle/construction/safety-plan 및 POST /lifecycle/disaster-risk/assess API를 호출합니다.",
+    "",
   tokenHint:
-    "라이브 API 호출에는 NEXT_PUBLIC_API_ACCESS_TOKEN 또는 localStorage.propai_access_token이 필요합니다.",
+    "분석을 위해 로그인이 필요합니다.",
   authError: "라이브 워크스페이스 호출을 위해 API 인증이 필요합니다.",
   safetyFormTitle: "안전 계획 분석 입력",
   projectIdLabel: "프로젝트 ID",
@@ -119,7 +119,7 @@ const EN_LABELS: Labels = {
   heroHint:
     "Calls POST /lifecycle/construction/safety-plan and POST /lifecycle/disaster-risk/assess APIs.",
   tokenHint:
-    "Live API calls require NEXT_PUBLIC_API_ACCESS_TOKEN or localStorage.propai_access_token.",
+    "분석을 위해 로그인이 필요합니다.",
   authError: "API authentication is required for live workspace calls.",
   safetyFormTitle: "Safety plan analysis input",
   projectIdLabel: "Project ID",

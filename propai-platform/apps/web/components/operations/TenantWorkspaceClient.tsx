@@ -54,9 +54,9 @@ const KO_LABELS: Labels = {
   heroDescription:
     "프로젝트 기반 임차인 목록을 조회하고 임대 현황 및 결제 개요를 확인합니다.",
   heroHint:
-    "GET /projects API를 호출하여 프로젝트(임차인) 데이터를 실시간으로 불러옵니다.",
+    "",
   tokenHint:
-    "라이브 API 호출에는 NEXT_PUBLIC_API_ACCESS_TOKEN 또는 localStorage.propai_access_token이 필요합니다.",
+    "분석을 위해 로그인이 필요합니다.",
   authError: "라이브 워크스페이스 호출을 위해 API 인증이 필요합니다.",
   tenantsTitle: "임차인 목록",
   projectNameLabel: "프로젝트명",
@@ -83,7 +83,7 @@ const EN_LABELS: Labels = {
   heroHint:
     "Calls GET /projects API to fetch project (tenant) data in real-time.",
   tokenHint:
-    "Live API calls require NEXT_PUBLIC_API_ACCESS_TOKEN or localStorage.propai_access_token.",
+    "분석을 위해 로그인이 필요합니다.",
   authError: "API authentication is required for live workspace calls.",
   tenantsTitle: "Tenant list",
   projectNameLabel: "Project name",

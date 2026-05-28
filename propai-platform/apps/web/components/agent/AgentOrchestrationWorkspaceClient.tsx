@@ -154,7 +154,7 @@ const LABELS: Record<Locale, Labels> = {
     heroHint:
       "단건 심화 분석과 멀티도메인 오케스트레이션을 같은 프로젝트 컨텍스트에서 바로 비교할 수 있습니다.",
     tokenHint:
-      "실 API 호출에는 `NEXT_PUBLIC_API_ACCESS_TOKEN` 또는 `localStorage.propai_access_token`이 필요합니다.",
+      "분석을 위해 로그인이 필요합니다.",
     projectTitle: "프로젝트 컨텍스트",
     projectHint:
       "라이브 프로젝트를 선택하거나 기존 프로젝트 UUID를 직접 입력해 에이전트 실행 대상을 고정합니다.",
@@ -222,7 +222,7 @@ const LABELS: Record<Locale, Labels> = {
     heroHint:
       "Run a focused deep-dive and a multi-domain orchestration against the same project context to compare outcomes immediately.",
     tokenHint:
-      "Live API calls require `NEXT_PUBLIC_API_ACCESS_TOKEN` or `localStorage.propai_access_token`.",
+      "Login required for analysis.",
     projectTitle: "Project context",
     projectHint:
       "Choose a live project or enter an existing project UUID to pin the analysis target.",
@@ -291,7 +291,7 @@ const LABELS: Record<Locale, Labels> = {
     heroHint:
       "可在同一项目上下文中对比单领域深度分析与多领域编排输出。",
     tokenHint:
-      "实时 API 调用需要 `NEXT_PUBLIC_API_ACCESS_TOKEN` 或 `localStorage.propai_access_token`。",
+      "分析需要登录。",
     projectTitle: "项目上下文",
     projectHint:
       "选择实时项目或手动输入已有项目 UUID，以固定分析目标。",

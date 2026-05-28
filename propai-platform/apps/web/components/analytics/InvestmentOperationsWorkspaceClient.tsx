@@ -177,7 +177,7 @@ const LABELS: Record<Locale, Labels> = {
     heroHint:
       "프로젝트 FK가 필요한 작업은 live 프로젝트를 선택하거나 실제 UUID를 직접 입력해야 합니다.",
     tokenHint:
-      "실 API 호출에는 `NEXT_PUBLIC_API_ACCESS_TOKEN` 또는 `localStorage.propai_access_token`이 필요합니다.",
+      "분석을 위해 로그인이 필요합니다.",
     projectTitle: "프로젝트 컨텍스트",
     projectHint:
       "라이브 프로젝트를 불러와 선택하거나, 기존 프로젝트 UUID를 직접 지정할 수 있습니다.",
@@ -244,7 +244,7 @@ const LABELS: Record<Locale, Labels> = {
     heroHint:
       "Project-linked actions require a live project selection or a real existing project UUID.",
     tokenHint:
-      "Live API calls require `NEXT_PUBLIC_API_ACCESS_TOKEN` or `localStorage.propai_access_token`.",
+      "Login required for analysis.",
     projectTitle: "Project context",
     projectHint:
       "Load live projects for selection or enter an existing project UUID manually.",
@@ -311,7 +311,7 @@ const LABELS: Record<Locale, Labels> = {
     heroHint:
       "带项目外键的操作需要选择实时项目，或手动输入真实存在的项目 UUID。",
     tokenHint:
-      "实时 API 调用需要 `NEXT_PUBLIC_API_ACCESS_TOKEN` 或 `localStorage.propai_access_token`。",
+      "分析需要登录。",
     projectTitle: "项目上下文",
     projectHint: "可加载实时项目进行选择，也可手动输入已有项目 UUID。",
     projectSelectLabel: "实时项目",

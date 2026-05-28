@@ -103,7 +103,7 @@ const KO_LABELS: Labels = {
   heroHint:
     "원가 산출 API, 시공 체크리스트 생성, 리스크 평가를 연계하여 종합 시공관리를 지원합니다.",
   tokenHint:
-    "라이브 API 호출에는 NEXT_PUBLIC_API_ACCESS_TOKEN 또는 localStorage.propai_access_token이 필요합니다.",
+    "분석을 위해 로그인이 필요합니다.",
   authError: "라이브 워크스페이스 호출을 위해 API 인증이 필요합니다.",
   formTitle: "공사비 항목 입력",
   costTitle: "공사비 산출 결과",
@@ -144,7 +144,7 @@ const EN_LABELS: Labels = {
   heroHint:
     "Chains cost calculation API, construction checklist generation, and risk assessment for comprehensive management.",
   tokenHint:
-    "Live API calls require NEXT_PUBLIC_API_ACCESS_TOKEN or localStorage.propai_access_token.",
+    "분석을 위해 로그인이 필요합니다.",
   authError: "API authentication is required for live workspace calls.",
   formTitle: "Cost item input",
   costTitle: "Cost calculation results",

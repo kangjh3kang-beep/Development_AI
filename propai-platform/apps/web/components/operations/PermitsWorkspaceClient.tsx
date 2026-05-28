@@ -66,9 +66,9 @@ const KO_LABELS: Labels = {
   heroDescription:
     "건축 허가 신청 내역을 조회하고, 실시간 건축법규 준수 여부를 AI로 점검합니다.",
   heroHint:
-    "POST /building-compliance/check API를 호출하여 해당 프로젝트의 인허가 적합성을 검증합니다.",
+    "",
   tokenHint:
-    "라이브 API 호출에는 NEXT_PUBLIC_API_ACCESS_TOKEN 또는 localStorage.propai_access_token이 필요합니다.",
+    "분석을 위해 로그인이 필요합니다.",
   authError: "라이브 워크스페이스 호출을 위해 API 인증이 필요합니다.",
   formTitle: "인허가 점검 입력",
   addressLabel: "대지 주소",
@@ -98,7 +98,7 @@ const EN_LABELS: Labels = {
   heroHint:
     "Calls POST /building-compliance/check to verify permit eligibility for the project.",
   tokenHint:
-    "Live API calls require NEXT_PUBLIC_API_ACCESS_TOKEN or localStorage.propai_access_token.",
+    "분석을 위해 로그인이 필요합니다.",
   authError: "API authentication is required for live workspace calls.",
   formTitle: "Compliance check input",
   addressLabel: "Site address",

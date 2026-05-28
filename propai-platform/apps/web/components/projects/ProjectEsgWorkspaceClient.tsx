@@ -97,7 +97,7 @@ const KO_LABELS: Labels = {
   heroHint:
     "LCA 탄소 산출, EPD 기반 탄소 발자국 계산, 저탄소 대체 자재 추천을 연계 수행합니다.",
   tokenHint:
-    "라이브 API 호출에는 NEXT_PUBLIC_API_ACCESS_TOKEN 또는 localStorage.propai_access_token이 필요합니다.",
+    "분석을 위해 로그인이 필요합니다.",
   authError: "라이브 워크스페이스 호출을 위해 API 인증이 필요합니다.",
   lcaFormTitle: "LCA 탄소 산출 입력",
   floorAreaLabel: "연면적 (m2)",
@@ -137,7 +137,7 @@ const EN_LABELS: Labels = {
   heroHint:
     "Chains LCA carbon calculation, EPD-based carbon footprint, and low-carbon material recommendations.",
   tokenHint:
-    "Live API calls require NEXT_PUBLIC_API_ACCESS_TOKEN or localStorage.propai_access_token.",
+    "분석을 위해 로그인이 필요합니다.",
   authError: "API authentication is required for live workspace calls.",
   lcaFormTitle: "LCA carbon calculation input",
   floorAreaLabel: "Floor area (sqm)",

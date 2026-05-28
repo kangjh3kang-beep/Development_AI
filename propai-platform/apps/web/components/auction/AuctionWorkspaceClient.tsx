@@ -77,7 +77,7 @@ const LABELS: Record<Locale, Labels> = {
     connectionDescription:
       "G95 백엔드와 직접 연결해 경공매 분석 및 전략 자문 흐름을 통합 검증합니다.",
     connectionHint:
-      "실 API 호출에는 `NEXT_PUBLIC_API_ACCESS_TOKEN` 또는 `localStorage.propai_access_token` 이 필요합니다.",
+      "분석을 위해 로그인이 필요합니다.",
     opportunitiesTitle: "우선 검토 매물",
     opportunitiesEmpty: "저장된 경공매 분석 결과가 없습니다.",
     analysisTitle: "경공매 분석 실행",
@@ -112,7 +112,7 @@ const LABELS: Record<Locale, Labels> = {
     connectionDescription:
       "Validate the G95 backend in one surface across auction scoring and strategy advisory.",
     connectionHint:
-      "Live API calls require `NEXT_PUBLIC_API_ACCESS_TOKEN` or `localStorage.propai_access_token`.",
+      "Login required for analysis.",
     opportunitiesTitle: "Priority opportunities",
     opportunitiesEmpty: "No analyzed auction listings have been stored yet.",
     analysisTitle: "Run auction analysis",
@@ -147,7 +147,7 @@ const LABELS: Record<Locale, Labels> = {
     connectionDescription:
       "在一个页面中验证 G95 后端，包括拍卖评分与战略顾问咨询。",
     connectionHint:
-      "实时 API 调用需要 `NEXT_PUBLIC_API_ACCESS_TOKEN` 或 `localStorage.propai_access_token`。",
+      "分析需要登录。",
     opportunitiesTitle: "优先机会",
     opportunitiesEmpty: "尚未保存任何拍卖分析结果。",
     analysisTitle: "执行拍卖分析",

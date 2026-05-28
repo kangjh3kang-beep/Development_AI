@@ -101,9 +101,9 @@ const KO_LABELS: Labels = {
   heroDescription:
     "몬테카를로 시뮬레이션 기반 NPV 분포, IRR 통계, 민감도 분석을 실시간으로 실행합니다.",
   heroHint:
-    "POST /finance/monte-carlo API를 호출하여 확률적 투자 분석 결과를 생성합니다.",
+    "",
   tokenHint:
-    "라이브 API 호출에는 NEXT_PUBLIC_API_ACCESS_TOKEN 또는 localStorage.propai_access_token이 필요합니다.",
+    "분석을 위해 로그인이 필요합니다.",
   authError: "라이브 워크스페이스 호출에 API 인증이 필요합니다.",
   formTitle: "투자 시뮬레이션 입력",
   totalCostLabel: "총 사업비 (억원)",
@@ -153,7 +153,7 @@ const EN_LABELS: Labels = {
   heroHint:
     "Calls POST /finance/monte-carlo to generate probabilistic investment analysis.",
   tokenHint:
-    "Live API calls require NEXT_PUBLIC_API_ACCESS_TOKEN or localStorage.propai_access_token.",
+    "분석을 위해 로그인이 필요합니다.",
   authError: "API authentication is required for live workspace calls.",
   formTitle: "Investment simulation input",
   totalCostLabel: "Total cost (100M KRW)",

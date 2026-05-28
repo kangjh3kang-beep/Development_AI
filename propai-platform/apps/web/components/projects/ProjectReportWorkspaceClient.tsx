@@ -73,9 +73,9 @@ const EN_LABELS: Labels = {
   heroDescription:
     "Generate multilingual investor reports for the current project through the live reports API.",
   heroHint:
-    "This page binds the route project id to `POST /reports/investor/generate` and keeps the output on-screen for review.",
+    "",
   tokenHint:
-    "Live API calls require NEXT_PUBLIC_API_ACCESS_TOKEN or localStorage.propai_access_token.",
+    "분석을 위해 로그인이 필요합니다.",
   authError: "API authentication is required for live workspace calls.",
   contextTitle: "Project context",
   contextHint:
@@ -116,7 +116,7 @@ const KO_LABELS: Labels = {
   heroHint:
     "현재 프로젝트 ID를 기반으로 다국어 투자자 보고서를 생성하고 결과를 화면에 표시합니다.",
   tokenHint:
-    "라이브 API 호출에는 인증 토큰이 필요합니다.",
+    "분석을 위해 로그인이 필요합니다.",
   authError: "라이브 워크스페이스 호출에 API 인증이 필요합니다.",
   contextTitle: "프로젝트 컨텍스트",
   contextHint:

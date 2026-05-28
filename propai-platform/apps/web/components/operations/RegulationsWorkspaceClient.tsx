@@ -60,9 +60,9 @@ const KO_LABELS: Labels = {
   heroDescription:
     "해당 토지에 적용되는 건축 규제(건폐율, 용적률, 높이 제한, 주차 기준)를 AI로 분석합니다.",
   heroHint:
-    "POST /building-compliance/check API를 호출하여 규제 분석 결과를 반환합니다.",
+    "",
   tokenHint:
-    "라이브 API 호출에는 NEXT_PUBLIC_API_ACCESS_TOKEN 또는 localStorage.propai_access_token이 필요합니다.",
+    "분석을 위해 로그인이 필요합니다.",
   authError: "라이브 워크스페이스 호출을 위해 API 인증이 필요합니다.",
   formTitle: "규제 분석 입력",
   addressLabel: "주소",
@@ -89,7 +89,7 @@ const EN_LABELS: Labels = {
   heroHint:
     "Calls POST /building-compliance/check to return regulation analysis.",
   tokenHint:
-    "Live API calls require NEXT_PUBLIC_API_ACCESS_TOKEN or localStorage.propai_access_token.",
+    "분석을 위해 로그인이 필요합니다.",
   authError: "API authentication is required for live workspace calls.",
   formTitle: "Regulation analysis input",
   addressLabel: "Address",

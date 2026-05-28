@@ -142,7 +142,7 @@ const EN_LABELS: Labels = {
   heroDescription:
     "Review pending approvals, resolved decisions, and execution history without opening the agent analysis route first.",
   tokenHint:
-    "Live approval operations require NEXT_PUBLIC_API_ACCESS_TOKEN or localStorage.propai_access_token.",
+    "Login required.",
   projectTitle: "Project context",
   projectHint:
     "Choose a live project or pin an existing UUID when the audit scope should stay project-specific.",
@@ -237,7 +237,7 @@ const EN_LABELS: Labels = {
 const KO_LABELS: Labels = {
   heroTitle: "전자 승인 운영 센터",
   heroDescription: "에이전트 분석 라우트를 열지 않고도 대기 중인 결재, 완료된 결정, 실행 내역을 한 곳에서 검토합니다.",
-  tokenHint: "라이브 승인 작업을 위해 API 토큰(NEXT_PUBLIC_API_ACCESS_TOKEN)이 필요합니다.",
+  tokenHint: "분석을 위해 로그인이 필요합니다.",
   projectTitle: "프로젝트 컨텍스트",
   projectHint: "감사 범위를 특정 프로젝트로 유지할 때 라이브 프로젝트를 선택하거나 UUID를 직접 입력하세요.",
   projectSelectLabel: "라이브 프로젝트",
@@ -327,7 +327,7 @@ const KO_LABELS: Labels = {
 const ZH_CN_LABELS: Labels = {
   heroTitle: "电子审批运营中心",
   heroDescription: "无需先打开智能体分析路由，即可在一个位置查看待处理的审批、已解决的决定和执行历史记录。",
-  tokenHint: "实时审批操作需要 API 令牌 (NEXT_PUBLIC_API_ACCESS_TOKEN)。",
+  tokenHint: "分析需要登录。",
   projectTitle: "项目上下文",
   projectHint: "当审计范围应保持在项目级别时，选择实时项目或手动输入 UUID。",
   projectSelectLabel: "实时项目",

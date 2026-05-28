@@ -83,7 +83,7 @@ const LABELS: Record<Locale, Labels> = {
     heroHint:
       "점검 결과는 프로젝트와 flight_id 기준으로 저장되므로 실제 UUID와 이미지 URL이 필요합니다.",
     tokenHint:
-      "실 API 호출에는 `NEXT_PUBLIC_API_ACCESS_TOKEN` 또는 `localStorage.propai_access_token`이 필요합니다.",
+      "분석을 위해 로그인이 필요합니다.",
     projectTitle: "점검 대상 프로젝트",
     projectSelectLabel: "라이브 프로젝트",
     manualProjectIdLabel: "수동 프로젝트 UUID",
@@ -113,7 +113,7 @@ const LABELS: Record<Locale, Labels> = {
     heroHint:
       "Inspection results persist against the project and `flight_id`, so a real UUID and image URLs are required.",
     tokenHint:
-      "Live API calls require `NEXT_PUBLIC_API_ACCESS_TOKEN` or `localStorage.propai_access_token`.",
+      "Login required for analysis.",
     projectTitle: "Target project",
     projectSelectLabel: "Live project",
     manualProjectIdLabel: "Manual project UUID",
@@ -142,7 +142,7 @@ const LABELS: Record<Locale, Labels> = {
     heroHint:
       "检查结果会按项目与 `flight_id` 持久化，因此需要真实 UUID 和图像 URL。",
     tokenHint:
-      "实时 API 调用需要 `NEXT_PUBLIC_API_ACCESS_TOKEN` 或 `localStorage.propai_access_token`。",
+      "分析需要登录。",
     projectTitle: "目标项目",
     projectSelectLabel: "实时项目",
     manualProjectIdLabel: "手动项目 UUID",

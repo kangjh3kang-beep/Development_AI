@@ -120,9 +120,9 @@ const KO_LABELS: Labels = {
   heroDescription:
     "건축 인허가 진행 현황, 법규 적합성 검사 및 제출 서류 체크리스트를 실시간으로 관리합니다.",
   heroHint:
-    "GET /projects, POST /building-compliance/check, POST /lifecycle/construction/checklist API를 체이닝합니다.",
+    "",
   tokenHint:
-    "라이브 API 호출에는 NEXT_PUBLIC_API_ACCESS_TOKEN 또는 localStorage.propai_access_token이 필요합니다.",
+    "분석을 위해 로그인이 필요합니다.",
   authError: "라이브 워크스페이스 호출에 API 인증이 필요합니다.",
   contextTitle: "프로젝트 컨텍스트",
   contextHint:
@@ -177,7 +177,7 @@ const EN_LABELS: Labels = {
   heroHint:
     "Chains GET /projects, POST /building-compliance/check, and POST /lifecycle/construction/checklist.",
   tokenHint:
-    "Live API calls require NEXT_PUBLIC_API_ACCESS_TOKEN or localStorage.propai_access_token.",
+    "분석을 위해 로그인이 필요합니다.",
   authError: "API authentication is required for live workspace calls.",
   contextTitle: "Project context",
   contextHint:

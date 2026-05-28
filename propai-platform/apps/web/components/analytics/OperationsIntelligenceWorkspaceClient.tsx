@@ -139,7 +139,7 @@ const LABELS: Record<Locale, Labels> = {
     heroHint:
       "자산 인텔리전스는 같은 프로젝트의 최신 maintenance/tenant 신호를 자동으로 다시 읽습니다.",
     tokenHint:
-      "실 API 호출에는 `NEXT_PUBLIC_API_ACCESS_TOKEN` 또는 `localStorage.propai_access_token`이 필요합니다.",
+      "분석을 위해 로그인이 필요합니다.",
     projectTitle: "운영 대상 프로젝트",
     projectSelectLabel: "라이브 프로젝트",
     manualProjectIdLabel: "수동 프로젝트 UUID",
@@ -197,7 +197,7 @@ const LABELS: Record<Locale, Labels> = {
     heroHint:
       "Asset intelligence re-reads the latest maintenance and tenant signals for the same project.",
     tokenHint:
-      "Live API calls require `NEXT_PUBLIC_API_ACCESS_TOKEN` or `localStorage.propai_access_token`.",
+      "Login required for analysis.",
     projectTitle: "Target project",
     projectSelectLabel: "Live project",
     manualProjectIdLabel: "Manual project UUID",
@@ -255,7 +255,7 @@ const LABELS: Record<Locale, Labels> = {
     heroHint:
       "资产智能会自动读取同一项目最近的 maintenance 与 tenant 信号。",
     tokenHint:
-      "实时 API 调用需要 `NEXT_PUBLIC_API_ACCESS_TOKEN` 或 `localStorage.propai_access_token`。",
+      "分析需要登录。",
     projectTitle: "目标项目",
     projectSelectLabel: "实时项目",
     manualProjectIdLabel: "手动项目 UUID",

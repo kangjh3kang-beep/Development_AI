@@ -83,9 +83,9 @@ const KO_LABELS: Labels = {
   heroDescription:
     "프로젝트 목록과 건축법규 준수 점검을 결합하여 결재 워크플로 현황을 추적합니다.",
   heroHint:
-    "GET /projects로 프로젝트를 조회하고, POST /building-compliance/check로 준수 여부를 점검합니다.",
+    "",
   tokenHint:
-    "라이브 API 호출에는 NEXT_PUBLIC_API_ACCESS_TOKEN 또는 localStorage.propai_access_token이 필요합니다.",
+    "분석을 위해 로그인이 필요합니다.",
   authError: "라이브 워크스페이스 호출을 위해 API 인증이 필요합니다.",
   formTitle: "결재 점검 입력",
   addressLabel: "대지 주소",
@@ -116,7 +116,7 @@ const EN_LABELS: Labels = {
   heroHint:
     "Calls GET /projects and POST /building-compliance/check for combined tracking.",
   tokenHint:
-    "Live API calls require NEXT_PUBLIC_API_ACCESS_TOKEN or localStorage.propai_access_token.",
+    "분석을 위해 로그인이 필요합니다.",
   authError: "API authentication is required for live workspace calls.",
   formTitle: "Approval check input",
   addressLabel: "Site address",

@@ -106,17 +106,14 @@ type Labels = {
 };
 
 const KO_LABELS: Labels = {
-  heroTitle: "부지 분석 라이브 워크스페이스",
+  heroTitle: "부지 분석",
   heroDescription:
-    "AVM 시세 추정과 필지 정보를 실시간으로 조회하여 부지 가치를 분석합니다.",
-  heroHint:
-    "POST /avm/estimate 및 POST /external/parcel/info API를 체이닝하여 종합 부지 분석 결과를 생성합니다.",
-  tokenHint:
-    "라이브 API 호출에는 NEXT_PUBLIC_API_ACCESS_TOKEN 또는 localStorage.propai_access_token이 필요합니다.",
-  authError: "라이브 워크스페이스 호출에 API 인증이 필요합니다.",
-  contextTitle: "프로젝트 컨텍스트",
-  contextHint:
-    "프로젝트 ID는 현재 라우트에서 가져옵니다. 주소와 면적은 제출 전 수정할 수 있습니다.",
+    "주소를 입력하면 시세, 용도지역, 필지 정보를 자동으로 분석합니다.",
+  heroHint: "",
+  tokenHint: "",
+  authError: "분석을 위해 로그인이 필요합니다.",
+  contextTitle: "프로젝트 정보",
+  contextHint: "주소와 면적을 입력하여 분석을 시작하세요.",
   projectIdLabel: "프로젝트 ID",
   projectNameLabel: "프로젝트명",
   projectStatusLabel: "상태",
@@ -167,9 +164,9 @@ const EN_LABELS: Labels = {
   heroDescription:
     "Run AVM valuation and parcel info queries for real-time site value analysis.",
   heroHint:
-    "Chains POST /avm/estimate with POST /external/parcel/info for comprehensive site analysis.",
+    "",
   tokenHint:
-    "Live API calls require NEXT_PUBLIC_API_ACCESS_TOKEN or localStorage.propai_access_token.",
+    "분석을 위해 로그인이 필요합니다.",
   authError: "API authentication is required for live workspace calls.",
   contextTitle: "Project context",
   contextHint:

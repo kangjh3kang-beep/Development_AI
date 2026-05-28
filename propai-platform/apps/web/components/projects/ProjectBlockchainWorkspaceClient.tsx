@@ -90,7 +90,7 @@ const EN_LABELS: Labels = {
   heroHint:
     "This route uses the project id from the URL, reads the next escrow id, creates an escrow record, and optionally loads on-chain status.",
   tokenHint:
-    "Live API calls require NEXT_PUBLIC_API_ACCESS_TOKEN or localStorage.propai_access_token.",
+    "분석을 위해 로그인이 필요합니다.",
   authError: "API authentication is required for live workspace calls.",
   contextTitle: "Project context",
   contextHint:
@@ -137,7 +137,7 @@ const KO_LABELS: Labels = {
   heroHint:
     "현재 프로젝트 ID를 기반으로 다음 에스크로 ID를 조회하고, 에스크로를 생성하며, 온체인 상태를 확인합니다.",
   tokenHint:
-    "라이브 API 호출에는 인증 토큰이 필요합니다.",
+    "분석을 위해 로그인이 필요합니다.",
   authError: "라이브 워크스페이스 호출에 API 인증이 필요합니다.",
   contextTitle: "프로젝트 컨텍스트",
   contextHint:

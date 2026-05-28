@@ -64,9 +64,9 @@ const EN_LABELS: Labels = {
   heroDescription:
     "Run persisted drone inspection for the current project path through the live inspection API.",
   heroHint:
-    "This route uses the project id from the URL directly and submits image URLs to `POST /drone/inspect`.",
+    "",
   tokenHint:
-    "Live API calls require NEXT_PUBLIC_API_ACCESS_TOKEN or localStorage.propai_access_token.",
+    "분석을 위해 로그인이 필요합니다.",
   authError: "API authentication is required for live workspace calls.",
   contextTitle: "Project context",
   contextHint:
@@ -95,7 +95,7 @@ const KO_LABELS: Labels = {
   heroHint:
     "현재 프로젝트 ID를 기반으로 이미지 URL을 드론 점검 API에 제출합니다.",
   tokenHint:
-    "라이브 API 호출에는 인증 토큰이 필요합니다.",
+    "분석을 위해 로그인이 필요합니다.",
   authError: "라이브 워크스페이스 호출에 API 인증이 필요합니다.",
   contextTitle: "프로젝트 컨텍스트",
   contextHint:

@@ -96,7 +96,7 @@ const LABELS: Record<Locale, Labels> = {
     heroHint:
       "인증 결과는 실존 프로젝트 FK로 저장되므로 live 프로젝트 또는 기존 UUID가 필요합니다.",
     tokenHint:
-      "실 API 호출에는 `NEXT_PUBLIC_API_ACCESS_TOKEN` 또는 `localStorage.propai_access_token`이 필요합니다.",
+      "분석을 위해 로그인이 필요합니다.",
     projectTitle: "인증 대상 프로젝트",
     projectSelectLabel: "라이브 프로젝트",
     manualProjectIdLabel: "수동 프로젝트 UUID",
@@ -134,7 +134,7 @@ const LABELS: Record<Locale, Labels> = {
     heroHint:
       "Certification records persist against a real project foreign key, so a live project or existing UUID is required.",
     tokenHint:
-      "Live API calls require `NEXT_PUBLIC_API_ACCESS_TOKEN` or `localStorage.propai_access_token`.",
+      "Login required for analysis.",
     projectTitle: "Certification target project",
     projectSelectLabel: "Live project",
     manualProjectIdLabel: "Manual project UUID",
@@ -173,7 +173,7 @@ const LABELS: Record<Locale, Labels> = {
     heroHint:
       "认证记录会写入真实项目外键，因此需要选择实时项目或输入已有 UUID。",
     tokenHint:
-      "实时 API 调用需要 `NEXT_PUBLIC_API_ACCESS_TOKEN` 或 `localStorage.propai_access_token`。",
+      "分析需要登录。",
     projectTitle: "认证目标项目",
     projectSelectLabel: "实时项目",
     manualProjectIdLabel: "手动项目 UUID",

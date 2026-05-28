@@ -63,7 +63,7 @@ const COMMON_LABELS: Labels = {
   heroHint:
     "This route binds the project id from the URL to the advanced orchestration engine based on Project Generation Sets.",
   tokenHint:
-    "Live API calls require NEXT_PUBLIC_API_ACCESS_TOKEN or localStorage.propai_access_token.",
+    "분석을 위해 로그인이 필요합니다.",
   authError: "API authentication is required for live workspace calls.",
   contextTitle: "Project context",
   contextHint:
@@ -96,7 +96,7 @@ const LABELS: Record<Locale, Labels> = {
     heroTitle: "설계 AI 및 BIM 라이브 워크스페이스",
     heroDescription: "현재 프로젝트의 평면도 생성 및 자동 IFC 분석을 AI 엔진을 통해 실시간으로 수행합니다.",
     heroHint: "본 화면은 프로젝트 ID를 기반으로 프로젝트 생성세트에 맞춰 AI 평면 설계, BIM 합성, 탄소 분석을 통합 구동합니다.",
-    tokenHint: "라이브 API 호출에는 NEXT_PUBLIC_API_ACCESS_TOKEN 또는 로컬 보안 토큰이 필요합니다.",
+    tokenHint: "분석을 위해 로그인이 필요합니다.",
     authError: "라이브 워크스페이스 기능을 사용하기 위해 API 인증이 필요합니다.",
     contextTitle: "프로젝트 컨텍스트",
     contextHint: "라이브 API에서 로드된 프로젝트 메타데이터를 기반으로 최적화된 설계 설정을 자동으로 제안합니다.",

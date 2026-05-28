@@ -101,9 +101,9 @@ const KO_LABELS: Labels = {
   heroDescription:
     "정밀 공사비 산출과 몬테카를로 리스크 시뮬레이션을 실시간으로 실행합니다.",
   heroHint:
-    "POST /cost/{projectId}/calculate 및 POST /cost/{projectId}/monte-carlo API를 체이닝합니다.",
+    "",
   tokenHint:
-    "라이브 API 호출에는 NEXT_PUBLIC_API_ACCESS_TOKEN 또는 localStorage.propai_access_token이 필요합니다.",
+    "분석을 위해 로그인이 필요합니다.",
   authError: "라이브 워크스페이스 호출에 API 인증이 필요합니다.",
   formTitle: "공사비 분석 입력",
   projectIdLabel: "프로젝트 ID",
@@ -146,9 +146,9 @@ const EN_LABELS: Labels = {
   heroDescription:
     "Run precise cost estimation and Monte Carlo risk simulation in real-time.",
   heroHint:
-    "Chains POST /cost/{projectId}/calculate with POST /cost/{projectId}/monte-carlo.",
+    "",
   tokenHint:
-    "Live API calls require NEXT_PUBLIC_API_ACCESS_TOKEN or localStorage.propai_access_token.",
+    "분석을 위해 로그인이 필요합니다.",
   authError: "API authentication is required for live workspace calls.",
   formTitle: "Cost analysis input",
   projectIdLabel: "Project ID",
