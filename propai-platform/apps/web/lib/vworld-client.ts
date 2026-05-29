@@ -8,7 +8,6 @@
  */
 
 const VWORLD_API_KEY = process.env.NEXT_PUBLIC_VWORLD_API_KEY ?? "";
-const VWORLD_BASE_URL = "https://api.vworld.kr/req";
 
 interface VWorldGeocodeResult {
   lat: number;
@@ -62,6 +61,8 @@ const ZONE_LIMITS: Record<string, { bcr: number; far: number }> = {
 
 /**
  * 주소 → 좌표+PNU 지오코딩 (PARCEL 우선)
+ *
+ * VWORLD API가 CORS를 차단하므로 Next.js API Route 프록시를 경유.
  */
 async function geocodeAddress(address: string): Promise<VWorldGeocodeResult | null> {
   if (!VWORLD_API_KEY) return null;
@@ -77,7 +78,8 @@ async function geocodeAddress(address: string): Promise<VWorldGeocodeResult | nu
         format: "json",
       });
 
-      const resp = await fetch(`${VWORLD_BASE_URL}/address?${params}`);
+      // CORS 우회: Next.js API Route 프록시 경유
+      const resp = await fetch(`/api/vworld/data?${params}`);
       if (!resp.ok) continue;
 
       const data = await resp.json();
