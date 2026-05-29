@@ -10,19 +10,13 @@
  *   /api/vworld/data?service=address&request=getcoord&... (지오코딩)
  */
 
-import { NextRequest, NextResponse } from "next/server";
-
-export const runtime = "edge";
+import { NextRequest } from "next/server";
 
 const VWORLD_BASE = "https://api.vworld.kr/req";
 
 export async function GET(request: NextRequest) {
-  const { searchParams } = new URL(request.url);
-
-  const params = new URLSearchParams();
-  searchParams.forEach((value, key) => {
-    params.set(key, value);
-  });
+  const url = new URL(request.url);
+  const params = new URLSearchParams(url.search);
 
   // service 파라미터로 address/data API 구분
   const service = params.get("service") ?? "data";
@@ -31,15 +25,10 @@ export async function GET(request: NextRequest) {
     : `${VWORLD_BASE}/data?${params.toString()}`;
 
   try {
-    const resp = await fetch(targetUrl, {
-      headers: {
-        Referer: "https://developmentai-production.up.railway.app",
-      },
-    });
+    const resp = await fetch(targetUrl);
+    const text = await resp.text();
 
-    const data = await resp.text();
-
-    return new NextResponse(data, {
+    return new Response(text, {
       status: resp.status,
       headers: {
         "Content-Type": "application/json; charset=utf-8",
@@ -48,9 +37,12 @@ export async function GET(request: NextRequest) {
       },
     });
   } catch (error) {
-    return NextResponse.json(
-      { error: "VWORLD API 프록시 실패", detail: String(error) },
-      { status: 502 },
+    return new Response(
+      JSON.stringify({ error: "VWORLD API 프록시 실패", detail: String(error) }),
+      {
+        status: 502,
+        headers: { "Content-Type": "application/json" },
+      },
     );
   }
 }
