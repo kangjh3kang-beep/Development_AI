@@ -178,9 +178,22 @@ class ProjectPipeline:
         from app.services.zoning import far_incentive_calculator as fic
         from app.services.zoning import development_type_analyzer as dta
 
-        # 프론트엔드에서 site_data가 전달되면 외부 API 호출 건너뜀
-        # (면적/용도지역이 0/빈값이어도 주소 기반 기본값으로 분석 수행)
+        # 프론트에서 site_data가 전달되었는지 확인
         pre_collected = opts.get("site_data")
+
+        # site_data의 핵심 값이 유효한지 판단 (면적>0 AND 용도지역 있음)
+        has_valid_site_data = (
+            pre_collected is not None
+            and pre_collected.get("land_area_sqm")
+            and pre_collected.get("land_area_sqm") > 0
+            and pre_collected.get("zone_type")
+            and len(str(pre_collected.get("zone_type", ""))) > 0
+        )
+
+        # 유효한 site_data가 없으면 → 외부 API 호출하여 실제 데이터 수집
+        if not has_valid_site_data:
+            pre_collected = await self._fetch_real_site_data(state.address, pre_collected)
+
         if pre_collected is not None:
             zone_type = pre_collected.get("zone_type", "")
             land_area_sqm = pre_collected.get("land_area_sqm", 0.0)
@@ -192,8 +205,8 @@ class ProjectPipeline:
             ordinance_far = pre_collected.get("ordinance_far") or pre_collected.get("max_far", 200.0)
             national_bcr = pre_collected.get("national_bcr", ordinance_bcr)
             national_far = pre_collected.get("national_far", ordinance_far)
-            effective_bcr = min(float(national_bcr), float(ordinance_bcr))
-            effective_far = min(float(national_far), float(ordinance_far))
+            effective_bcr = min(float(national_bcr or 60), float(ordinance_bcr or 60))
+            effective_far = min(float(national_far or 200), float(ordinance_far or 200))
             max_height = pre_collected.get("max_height", 0.0)
 
             # 기부체납 인센티브 계산
@@ -203,7 +216,7 @@ class ProjectPipeline:
                     zone_type=zone_type,
                     ordinance_far=effective_far,
                     donation_ratio_pct=0.0,
-                    national_far=float(national_far),
+                    national_far=float(national_far or 200),
                 )
             except Exception:
                 far_incentive = {"error": "인센티브 계산 실패"}
@@ -244,10 +257,10 @@ class ProjectPipeline:
                 },
                 "zoning": {
                     "zone_type": zone_type,
-                    "national_bcr": float(national_bcr),
-                    "national_far": float(national_far),
-                    "ordinance_bcr": float(ordinance_bcr),
-                    "ordinance_far": float(ordinance_far),
+                    "national_bcr": float(national_bcr or 60),
+                    "national_far": float(national_far or 200),
+                    "ordinance_bcr": float(ordinance_bcr or 60),
+                    "ordinance_far": float(ordinance_far or 200),
                     "effective_bcr": effective_bcr,
                     "effective_far": effective_far,
                     "max_height_m": max_height,
@@ -417,6 +430,85 @@ class ProjectPipeline:
 
         # ProjectLandData 자동 저장: 분석 결과를 Project 모델에 반영
         await self._save_site_analysis_to_project(state)
+
+    async def _fetch_real_site_data(self, address: str, fallback: dict | None) -> dict:
+        """외부 API(VWORLD/MOLIT)를 호출하여 실제 부지 데이터를 수집한다.
+
+        프론트에서 전달한 site_data가 비어있거나 불완전할 때 호출된다.
+        실패 시 fallback 데이터 또는 주소 기반 기본값을 반환한다.
+        """
+        result: dict[str, Any] = dict(fallback) if fallback else {}
+
+        # 1. AutoZoningService → 용도지역 + 법적 한도
+        try:
+            from app.services.zoning.auto_zoning_service import AutoZoningService
+
+            zoning_svc = AutoZoningService()
+            zoning = await zoning_svc.analyze_by_address(address)
+
+            if zoning.get("zone_type"):
+                result["zone_type"] = zoning["zone_type"]
+            if zoning.get("zone_limits"):
+                zl = zoning["zone_limits"]
+                result["max_bcr"] = zl.get("max_bcr_pct", zl.get("bcr", result.get("max_bcr", 60)))
+                result["max_far"] = zl.get("max_far_pct", zl.get("far", result.get("max_far", 200)))
+            if zoning.get("pnu"):
+                result["pnu_codes"] = [zoning["pnu"]]
+            if zoning.get("land_area_sqm"):
+                result["land_area_sqm"] = zoning["land_area_sqm"]
+            if zoning.get("official_price_per_sqm"):
+                result["official_land_price"] = zoning["official_price_per_sqm"]
+            if zoning.get("coordinates"):
+                result["coordinates"] = zoning["coordinates"]
+            result["special_districts"] = zoning.get("special_districts", [])
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning("AutoZoningService 호출 실패: %s", str(e)[:200])
+
+        # 2. LandInfoService → 종합 토지정보 (실거래가, 건축물대장, 인프라 등)
+        try:
+            from app.services.land_intelligence.land_info_service import LandInfoService
+
+            land_svc = LandInfoService()
+            pnu = result.get("pnu_codes", [None])[0] if result.get("pnu_codes") else None
+            comprehensive = await land_svc.collect_comprehensive(address, pnu=pnu)
+
+            # 종합 데이터로 보충
+            if comprehensive.get("land_register") and comprehensive["land_register"].get("area_sqm"):
+                result["land_area_sqm"] = comprehensive["land_register"]["area_sqm"]
+            if comprehensive.get("zone_type") and not result.get("zone_type"):
+                result["zone_type"] = comprehensive["zone_type"]
+            result["nearby_transactions"] = comprehensive.get("nearby_transactions")
+            result["building_info"] = comprehensive.get("building_info")
+            result["building_detail"] = comprehensive.get("building_detail")
+            result["infrastructure"] = comprehensive.get("infrastructure")
+            result["land_use_plan"] = comprehensive.get("land_use_plan")
+            result["local_ordinance"] = comprehensive.get("local_ordinance")
+            result["warnings"] = comprehensive.get("warnings", [])
+
+            # 조례값 반영
+            if comprehensive.get("local_ordinance"):
+                ord_data = comprehensive["local_ordinance"]
+                if ord_data.get("effective_bcr"):
+                    result["ordinance_bcr"] = ord_data["effective_bcr"]
+                if ord_data.get("effective_far"):
+                    result["ordinance_far"] = ord_data["effective_far"]
+                result["ordinance_source"] = ord_data.get("source", "")
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning("LandInfoService 호출 실패: %s", str(e)[:200])
+
+        # 3. 최소 기본값 보장
+        if not result.get("zone_type"):
+            result["zone_type"] = "제2종일반주거지역"  # 한국 도시 기본값
+        if not result.get("land_area_sqm") or result["land_area_sqm"] <= 0:
+            result["land_area_sqm"] = 500.0  # 기본 대지면적
+        if not result.get("max_bcr"):
+            result["max_bcr"] = 60.0
+        if not result.get("max_far"):
+            result["max_far"] = 250.0
+
+        return result
 
     async def _save_site_analysis_to_project(self, state: PipelineState):
         """부지분석 결과를 Project 테이블의 컬럼에 자동 저장.
