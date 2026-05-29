@@ -25,7 +25,9 @@ export async function GET(request: NextRequest) {
     : `${VWORLD_BASE}/data?${params.toString()}`;
 
   try {
-    const resp = await fetch(targetUrl);
+    const resp = await fetch(targetUrl, {
+      headers: { Referer: "https://developmentai-production.up.railway.app" },
+    });
     const text = await resp.text();
 
     return new Response(text, {
