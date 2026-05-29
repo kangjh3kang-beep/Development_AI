@@ -30,6 +30,14 @@ async def startup(ctx: dict[str, Any]) -> None:
     logger.info("PropAI 워커 시작")
     ctx["settings"] = settings
 
+    # DB 세션 팩토리 주입 — 태스크에서 ctx['db_factory']()로 세션 생성
+    try:
+        from apps.api.database.session import AsyncSessionLocal
+        ctx["db_factory"] = AsyncSessionLocal
+        logger.info("DB 세션 팩토리 주입 완료")
+    except ImportError:
+        logger.warning("DB 세션 팩토리 로드 실패 — DB 접근 태스크 비활성화")
+
     # MQTT 드론 구독자 시작 (EMQX 설정이 있을 때만)
     mqtt_host = getattr(settings, "mqtt_broker_host", "")
     if mqtt_host:

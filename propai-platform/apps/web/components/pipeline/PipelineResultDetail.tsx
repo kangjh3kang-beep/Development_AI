@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
+import { apiClient } from "@/lib/api-client";
 
 /* ── Types ── */
 
@@ -333,16 +334,14 @@ export function PipelineResultDetail({ result, onRerun }: PipelineResultDetailPr
   const handleDownload = useCallback(async () => {
     setDownloading(true);
     try {
-      const res = await fetch("/api/v2/pipeline/report", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      const data = await apiClient.postV2("/pipeline/report", {
+        body: {
           pipeline_id: result.pipeline_id,
           project_id: result.project_id,
-        }),
+        },
+        useMock: false,
       });
-      if (!res.ok) throw new Error("보고서 생성 실패");
-      const blob = await res.blob();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;

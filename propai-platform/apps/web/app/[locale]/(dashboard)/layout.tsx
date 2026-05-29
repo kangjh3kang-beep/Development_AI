@@ -9,6 +9,7 @@ import { ThemeToggle } from "@/components/ui/ThemeToggle";
 import { SidebarNav } from "@/components/layout/SidebarNav";
 import { MobileSidebarToggle } from "@/components/layout/MobileSidebarToggle";
 import { AuthButton } from "@/components/auth/AuthButton";
+import { AuthGuard } from "@/components/auth/AuthGuard";
 type DashboardLayoutProps = Readonly<{
   children: React.ReactNode;
   params: Promise<{
@@ -233,8 +234,10 @@ export default async function DashboardLayout({
           <SidebarNav sections={sections} />
         </aside>
 
-        {/* 콘텐츠 영역 */}
-        <main className="min-w-0">{children}</main>
+        {/* 콘텐츠 영역 — AuthGuard로 미인증 접근 차단 */}
+        <main className="min-w-0">
+          <AuthGuard>{children}</AuthGuard>
+        </main>
       </div>
 
       {/* 회사정보 푸터 */}

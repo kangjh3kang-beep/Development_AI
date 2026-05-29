@@ -122,6 +122,7 @@ class ProjectPipeline:
 
         opts = options or {}
         skip_stages: list[str] = opts.get("skip_stages", [])
+        stop_after: str | None = opts.get("stop_after")
 
         # 순차 실행
         for stage in self._stages_order:
@@ -156,13 +157,16 @@ class ProjectPipeline:
             except Exception as e:
                 stage_result.status = PipelineStatus.FAILED
                 stage_result.error = str(e)[:500]
-                # 실패해도 다음 단계는 가능한 데이터로 계속 시도
             finally:
                 stage_result.completed_at = datetime.now()
                 if stage_result.started_at:
                     stage_result.duration_ms = int(
                         (stage_result.completed_at - stage_result.started_at).total_seconds() * 1000
                     )
+
+            # stop_after: 지정된 단계까지만 실행하고 나머지는 pending으로 유지
+            if stop_after and stage.value == stop_after:
+                break
 
         state.status = PipelineStatus.COMPLETED
         state.current_stage = None

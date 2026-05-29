@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
+import { apiClient } from "@/lib/api-client";
 import { useCadStore } from "@/store/use-cad-store";
 
 type ExportPanelProps = {
@@ -28,26 +29,27 @@ export function ExportPanel({ projectId }: ExportPanelProps) {
     async (drawingType: string) => {
       setDownloading(drawingType);
       try {
-        const res = await fetch("/api/v1/drawing/export-dxf", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            building_width_m: 30,
-            building_depth_m: 15,
-            floor_count: floorCount,
-            floor_height_m: buildingHeightM / Math.max(floorCount, 1),
-            unit_width_m: 8.0,
-            corridor_width_m: 1.8,
-            basement_floors: 1,
-            site_width_m: 60,
-            site_depth_m: 40,
-            setback_m: 3.0,
-            parking_count: 50,
-            drawing_type: drawingType,
-          }),
-        });
-        if (!res.ok) throw new Error("DXF 내보내기 실패");
-        const blob = await res.blob();
+        const result = await apiClient.post<{ message: string }>(
+          "/drawing/export-dxf",
+          {
+            body: {
+              building_width_m: 30,
+              building_depth_m: 15,
+              floor_count: floorCount,
+              floor_height_m: buildingHeightM / Math.max(floorCount, 1),
+              unit_width_m: 8.0,
+              corridor_width_m: 1.8,
+              basement_floors: 1,
+              site_width_m: 60,
+              site_depth_m: 40,
+              setback_m: 3.0,
+              parking_count: 50,
+              drawing_type: drawingType,
+            },
+          },
+        );
+        const text = typeof result === "string" ? result : (result as { message: string }).message ?? "";
+        const blob = new Blob([text], { type: "application/dxf" });
         triggerDownload(blob, `${drawingType}.dxf`);
       } catch {
         // silent
@@ -61,19 +63,19 @@ export function ExportPanel({ projectId }: ExportPanelProps) {
   const handleExportSvgSite = useCallback(async () => {
     setDownloading("svg-site");
     try {
-      const res = await fetch("/api/v1/drawing/site-plan", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          site_width_m: 40,
-          site_depth_m: 30,
-          building_width_m: 30,
-          building_depth_m: 15,
-          setback_m: 3.0,
-        }),
-      });
-      if (!res.ok) throw new Error("SVG 내보내기 실패");
-      const text = await res.text();
+      const result = await apiClient.post<{ message: string }>(
+        "/drawing/site-plan",
+        {
+          body: {
+            site_width_m: 40,
+            site_depth_m: 30,
+            building_width_m: 30,
+            building_depth_m: 15,
+            setback_m: 3.0,
+          },
+        },
+      );
+      const text = typeof result === "string" ? result : (result as { message: string }).message ?? "";
       const blob = new Blob([text], { type: "image/svg+xml" });
       triggerDownload(blob, "site_plan.svg");
     } catch {
@@ -86,18 +88,18 @@ export function ExportPanel({ projectId }: ExportPanelProps) {
   const handleExportSvgFloor = useCallback(async () => {
     setDownloading("svg-floor");
     try {
-      const res = await fetch("/api/v1/drawing/floor-plan", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          total_floor_area_sqm: 500,
-          unit_type: "84A",
-          core_count: 2,
-          parking_count: 50,
-        }),
-      });
-      if (!res.ok) throw new Error("SVG 내보내기 실패");
-      const text = await res.text();
+      const result = await apiClient.post<{ message: string }>(
+        "/drawing/floor-plan",
+        {
+          body: {
+            total_floor_area_sqm: 500,
+            unit_type: "84A",
+            core_count: 2,
+            parking_count: 50,
+          },
+        },
+      );
+      const text = typeof result === "string" ? result : (result as { message: string }).message ?? "";
       const blob = new Blob([text], { type: "image/svg+xml" });
       triggerDownload(blob, "floor_plan.svg");
     } catch {
@@ -110,12 +112,10 @@ export function ExportPanel({ projectId }: ExportPanelProps) {
   const handleExportFullSet = useCallback(async () => {
     setDownloading("full-set");
     try {
-      const res = await fetch(
-        `/api/v1/design/${projectId}/generate-full-set`,
+      const data = await apiClient.post<Record<string, unknown>>(
+        `/design/${projectId}/generate-full-set`,
         {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
+          body: {
             site_width_m: 60,
             site_depth_m: 40,
             building_width_m: 30,
@@ -126,11 +126,9 @@ export function ExportPanel({ projectId }: ExportPanelProps) {
             unit_width_m: 8.0,
             setback_m: 3.0,
             parking_count: 50,
-          }),
+          },
         },
       );
-      if (!res.ok) throw new Error("전체 도면 세트 생성 실패");
-      const data = await res.json();
       // JSON 결과를 다운로드 (도면 목록)
       const blob = new Blob([JSON.stringify(data, null, 2)], {
         type: "application/json",

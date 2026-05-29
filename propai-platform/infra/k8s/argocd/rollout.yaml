@@ -43,6 +43,9 @@ spec:
               port: 8000
             initialDelaySeconds: 30
             periodSeconds: 10
+          envFrom:
+            - configMapRef:
+                name: propai-config
           env:
             - name: DATABASE_URL
               valueFrom:
@@ -54,6 +57,11 @@ spec:
                 secretKeyRef:
                   name: propai-secrets
                   key: redis-url
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: propai-secrets
+                  key: jwt-secret
   strategy:
     canary:
       steps:

@@ -1,9 +1,9 @@
 "use client";
 
 import { useCallback, useState } from "react";
+import { apiClient } from "@/lib/api-client";
 import { useCadStore } from "@/store/use-cad-store";
 import type {
-  AutoDesignRequest,
   AutoDesignResponse,
   DesignAlternativesResponse,
 } from "@/components/cad/types";
@@ -47,13 +47,10 @@ export function DesignAlternativesPanel({
         setback_m: setback,
         count: 3,
       };
-      const res = await fetch("/api/v1/drawing/design-alternatives", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      if (!res.ok) throw new Error(`서버 오류 (${res.status})`);
-      const data: DesignAlternativesResponse = await res.json();
+      const data = await apiClient.post<DesignAlternativesResponse>(
+        "/drawing/design-alternatives",
+        { body },
+      );
       setAlternatives(data.alternatives);
       setSelectedIdx(null);
     } catch (e) {

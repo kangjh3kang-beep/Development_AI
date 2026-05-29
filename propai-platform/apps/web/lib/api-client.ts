@@ -17,7 +17,10 @@ const apiBaseUrl = (() => {
 })();
 
 const useMocksByDefault = process.env.NEXT_PUBLIC_USE_MOCKS === "true";
-const publicAccessToken = process.env.NEXT_PUBLIC_API_ACCESS_TOKEN?.trim() ?? "";
+// 보안: NEXT_PUBLIC_* 환경변수는 빌드 시 클라이언트 번들에 포함되므로
+// 토큰을 NEXT_PUBLIC_ 접두사 환경변수에 저장하면 안 됨.
+// 토큰은 localStorage에서만 읽는다.
+// TODO: 향후 HttpOnly 쿠키로 전환 권장 (XSS 방어 강화)
 
 export class ApiClientError extends Error {
   status: number;
@@ -62,19 +65,16 @@ function getRequestUrl(path: string) {
   return `http://localhost:8000/api/v1${normalizedPath}`;
 }
 
-function getAccessToken() {
+function getAccessToken(): string {
+  // 토큰은 localStorage에서만 읽는다 (향후 HttpOnly 쿠키로 전환 권장)
   if (typeof window !== "undefined") {
     try {
-      const storedToken = window.localStorage.getItem("propai_access_token")?.trim();
-      if (storedToken) {
-        return storedToken;
-      }
-    } catch (e) {
+      return window.localStorage.getItem("propai_access_token")?.trim() ?? "";
+    } catch {
       // Ignored: localStorage is disabled or blocked in this environment
     }
   }
-
-  return publicAccessToken;
+  return "";
 }
 
 function createRequestBody(body: ApiRequestOptions["body"]) {

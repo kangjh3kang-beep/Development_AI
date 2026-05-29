@@ -32,11 +32,14 @@ async def run_parse_large_ifc(
     """
     import httpx
     from sqlalchemy import text
-    from sqlalchemy.ext.asyncio import AsyncSession
 
     logger.info("대용량 IFC 파싱 시작", file_url=file_url, project_id=project_id)
 
-    db: AsyncSession = ctx["db"]
+    # ctx['db_factory']로 세션 생성 (startup에서 주입)
+    db_factory = ctx.get("db_factory")
+    if db_factory is None:
+        raise RuntimeError("db_factory가 워커 ctx에 주입되지 않음 — startup 확인 필요")
+    db = db_factory()
 
     # 1. IFC 파일 다운로드
     with tempfile.NamedTemporaryFile(suffix=".ifc", delete=False) as tmp:
@@ -101,14 +104,17 @@ async def run_parse_large_ifc(
         "file_url": file_url,
     }
 
-    await db.execute(
-        text(
-            "UPDATE designs SET bim_data = :data, updated_at = NOW() "
-            "WHERE project_id = :pid"
-        ),
-        {"data": str(result_json), "pid": project_id},
-    )
-    await db.commit()
+    try:
+        await db.execute(
+            text(
+                "UPDATE designs SET bim_data = :data, updated_at = NOW() "
+                "WHERE project_id = :pid"
+            ),
+            {"data": str(result_json), "pid": project_id},
+        )
+        await db.commit()
+    finally:
+        await db.close()
 
     # 임시 파일 삭제
     import os

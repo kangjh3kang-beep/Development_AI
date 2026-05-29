@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiClient } from "@/lib/api-client";
 import { useCadStore } from "@/store/use-cad-store";
 import { Button, Card, CardContent } from "@propai/ui";
@@ -94,26 +94,27 @@ export function CadExportPanel({ projectId }: CadExportPanelProps) {
     setExportingDxf(true);
     setError(null);
     try {
-      const res = await fetch("/api/v1/drawing/export-dxf", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          building_width_m: 30,
-          building_depth_m: 15,
-          floor_count: floorCount,
-          floor_height_m: buildingHeightM / Math.max(floorCount, 1),
-          unit_width_m: 8.0,
-          corridor_width_m: 1.8,
-          basement_floors: 1,
-          site_width_m: 60,
-          site_depth_m: 40,
-          setback_m: 3.0,
-          parking_count: 50,
-          drawing_type: "floor_plan",
-        }),
-      });
-      if (!res.ok) throw new Error("DXF 내보내기 실패");
-      const blob = await res.blob();
+      const result = await apiClient.post<{ message: string }>(
+        "/drawing/export-dxf",
+        {
+          body: {
+            building_width_m: 30,
+            building_depth_m: 15,
+            floor_count: floorCount,
+            floor_height_m: buildingHeightM / Math.max(floorCount, 1),
+            unit_width_m: 8.0,
+            corridor_width_m: 1.8,
+            basement_floors: 1,
+            site_width_m: 60,
+            site_depth_m: 40,
+            setback_m: 3.0,
+            parking_count: 50,
+            drawing_type: "floor_plan",
+          },
+        },
+      );
+      const text = typeof result === "string" ? result : (result as { message: string }).message ?? "";
+      const blob = new Blob([text], { type: "application/dxf" });
       triggerDownload(blob, `${projectId}_drawings.dxf`);
     } catch (err) {
       const message =
@@ -204,18 +205,7 @@ export function CadExportPanel({ projectId }: CadExportPanelProps) {
             </p>
             <div className="grid grid-cols-2 gap-2">
               {drawings.drawings.map((d, i) => (
-                <div
-                  key={i}
-                  className="flex flex-col gap-1 rounded-lg border border-[var(--line)] bg-[var(--surface-soft)] p-2"
-                >
-                  <span className="text-[10px] font-medium text-[var(--text-secondary)]">
-                    {d.label}
-                  </span>
-                  <div
-                    className="aspect-square w-full overflow-hidden rounded bg-white"
-                    dangerouslySetInnerHTML={{ __html: d.svg }}
-                  />
-                </div>
+                <SafeSvgPreview key={i} label={d.label} svg={d.svg} />
               ))}
             </div>
           </div>
@@ -245,6 +235,34 @@ export function CadExportPanel({ projectId }: CadExportPanelProps) {
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+/* ── SafeSvgPreview: XSS 방지를 위해 object URL 방식으로 SVG 렌더링 ── */
+
+function SafeSvgPreview({ label, svg }: { label: string; svg: string }) {
+  const objectUrl = useMemo(
+    () => URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" })),
+    [svg],
+  );
+
+  useEffect(() => {
+    return () => URL.revokeObjectURL(objectUrl);
+  }, [objectUrl]);
+
+  return (
+    <div className="flex flex-col gap-1 rounded-lg border border-[var(--line)] bg-[var(--surface-soft)] p-2">
+      <span className="text-[10px] font-medium text-[var(--text-secondary)]">
+        {label}
+      </span>
+      <div className="aspect-square w-full overflow-hidden rounded bg-white">
+        <img
+          src={objectUrl}
+          alt={label}
+          className="h-full w-full object-contain"
+        />
+      </div>
+    </div>
   );
 }
 

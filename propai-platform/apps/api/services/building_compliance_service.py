@@ -225,12 +225,53 @@ class BuildingComplianceService:
         self._correction_executor = AutoCorrectionExecutor()
 
     async def _get_legal_limits(self, project_id: str) -> LegalLimits:
-        return LegalLimits(
+        """프로젝트 DB에서 법규 한도를 조회한다.
+
+        프로젝트에 zone_type, max_bcr, max_far, max_height가 저장되어 있으면
+        해당 값을 사용하고, 없으면 용도지역 기본값 → 최종 폴백 순서로 결정한다.
+        """
+        from apps.api.database.models.project import Project
+        from sqlalchemy import select
+
+        fallback = LegalLimits(
             building_coverage_ratio=0.60,
             floor_area_ratio=2.50,
             max_height_m=35.0,
             min_setback_m=1.0,
             sunlight_hours_min=2.0,
+        )
+
+        try:
+            stmt = select(Project).where(Project.id == project_id)
+            result = await self._db.execute(stmt)
+            project = result.scalar_one_or_none()
+        except Exception:
+            return fallback
+
+        if project is None:
+            return fallback
+
+        # 용도지역 기본값 조회
+        zone_defaults = ZONE_LIMITS.get(project.zone_type or "") if project.zone_type else None
+
+        bcr = float(project.max_bcr) / 100.0 if project.max_bcr else (
+            zone_defaults.building_coverage_ratio if zone_defaults else fallback.building_coverage_ratio
+        )
+        far = float(project.max_far) / 100.0 if project.max_far else (
+            zone_defaults.floor_area_ratio if zone_defaults else fallback.floor_area_ratio
+        )
+        max_h = float(project.max_height) if project.max_height else (
+            zone_defaults.max_height_m if zone_defaults else fallback.max_height_m
+        )
+        min_setback = zone_defaults.min_setback_m if zone_defaults else fallback.min_setback_m
+        sunlight = zone_defaults.sunlight_hours_min if zone_defaults else fallback.sunlight_hours_min
+
+        return LegalLimits(
+            building_coverage_ratio=bcr,
+            floor_area_ratio=far,
+            max_height_m=max_h,
+            min_setback_m=min_setback,
+            sunlight_hours_min=sunlight,
         )
 
     @staticmethod
@@ -246,6 +287,18 @@ class BuildingComplianceService:
         return ZONE_LIMITS.get(zone_code)
 
     async def _get_site_area(self, project_id: str) -> float:
+        """프로젝트 DB에서 대지면적을 조회한다. 없으면 500.0m2 폴백."""
+        from apps.api.database.models.project import Project
+        from sqlalchemy import select
+
+        try:
+            stmt = select(Project.total_area_sqm).where(Project.id == project_id)
+            result = await self._db.execute(stmt)
+            area = result.scalar_one_or_none()
+            if area is not None and float(area) > 0:
+                return float(area)
+        except Exception:
+            pass
         return 500.0
 
     async def check_compliance(self, project_id: str, design_raw: dict) -> dict:

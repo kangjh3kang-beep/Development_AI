@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { apiClient } from "@/lib/api-client";
+import { GlobalAddressSearch, type AddressEntry } from "@/components/common/GlobalAddressSearch";
 import { PipelineResultDetail } from "./PipelineResultDetail";
 import { ProjectCompareView } from "./ProjectCompareView";
 
@@ -181,13 +183,24 @@ type ViewMode = "pipeline" | "detail" | "compare";
 
 /* ── Component ── */
 
+/** 단계별 워크플로우 상태 */
+type WorkflowPhase =
+  | "input"           // 주소 입력 단계
+  | "site_review"     // 부지분석 결과 확인 단계
+  | "remaining"       // 나머지 단계 진행 중
+  | "done";           // 전체 완료
+
 export function ProjectPipelinePanel() {
   const [address, setAddress] = useState("");
+  const [allAddresses, setAllAddresses] = useState<AddressEntry[]>([]);
   const [stages, setStages] = useState<PipelineStageStatus[]>(DEFAULT_STAGES);
   const [summary, setSummary] = useState<Record<string, Record<string, unknown>>>({});
   const [isRunning, setIsRunning] = useState(false);
   const [expandedStage, setExpandedStage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // 단계별 워크플로우
+  const [workflowPhase, setWorkflowPhase] = useState<WorkflowPhase>("input");
 
   // Phase 3: view mode, history, compare
   const [viewMode, setViewMode] = useState<ViewMode>("pipeline");
@@ -288,7 +301,19 @@ export function ProjectPipelinePanel() {
     [history],
   );
 
-  const runPipeline = useCallback(async () => {
+  // 주소 검색 콜백 (다필지 지원)
+  const handleAddressChange = useCallback((entries: AddressEntry[]) => {
+    setAllAddresses(entries);
+    if (entries.length > 0) {
+      // 대표 주소 설정 (첫 번째 필지)
+      setAddress(entries[0]!.fullAddress);
+    } else {
+      setAddress("");
+    }
+  }, []);
+
+  // STEP 1: 부지분석만 실행
+  const runSiteAnalysis = useCallback(async () => {
     if (!address.trim()) return;
 
     setIsRunning(true);
@@ -298,43 +323,80 @@ export function ProjectPipelinePanel() {
     setExpandedStage(null);
     setViewMode("pipeline");
     setLastResult(null);
-
-    const updatedStages = DEFAULT_STAGES.map((s) => ({ ...s }));
+    setWorkflowPhase("input");
 
     try {
+      const updatedStages = DEFAULT_STAGES.map((s) => ({ ...s }));
       updatedStages[0]!.status = "running";
       setStages([...updatedStages]);
 
-      const response = await fetch("/api/v2/pipeline/run", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ address: address.trim(), project_id: projectId }),
+      // 부지분석만 실행 (나머지는 stop)
+      const parcels = allAddresses.map((a) => ({
+        address: a.fullAddress,
+        jibun: a.jibunAddress,
+        road: a.roadAddress,
+        sido: a.sido,
+        sigungu: a.sigungu,
+        area_sqm: a.areaSqm,
+      }));
+      const result = await apiClient.postV2<PipelineRunResponse>("/pipeline/run", {
+        body: {
+          address: address.trim(),
+          project_id: projectId,
+          options: {
+            stop_after: "site_analysis",
+            parcels: parcels.length > 0 ? parcels : undefined,
+          },
+        },
+        useMock: false,
       });
-
-      if (!response.ok) {
-        const errBody = await response.text();
-        throw new Error(`파이프라인 실행 실패 (${response.status}): ${errBody}`);
-      }
-
-      const result: PipelineRunResponse = await response.json();
 
       setStages(result.stages);
       setSummary(result.summary ?? {});
       setLastResult(result);
 
-      // Save to Zustand store
-      saveToStore(result);
+      // 부지분석 결과가 있으면 확인 단계로 전환
+      const siteStage = result.stages.find((s) => s.stage === "site_analysis");
+      if (siteStage?.status === "completed") {
+        setWorkflowPhase("site_review");
+        setExpandedStage("site_analysis");
+        saveToStore(result);
+      } else {
+        setError("부지분석에 실패했습니다. 주소를 확인해주세요.");
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "알 수 없는 오류가 발생했습니다.";
+      setError(msg);
+    } finally {
+      setIsRunning(false);
+    }
+  }, [address, projectId, saveToStore]);
 
-      // Save to history
+  // STEP 2: 나머지 단계 진행 (부지분석 결과 확인 후)
+  const runRemainingStages = useCallback(async () => {
+    if (!address.trim()) return;
+
+    setIsRunning(true);
+    setError(null);
+    setWorkflowPhase("remaining");
+
+    try {
+      // 전체 파이프라인 실행 (이전 부지분석 결과 포함)
+      const result = await apiClient.postV2<PipelineRunResponse>("/pipeline/run", {
+        body: { address: address.trim(), project_id: projectId },
+        useMock: false,
+      });
+
+      setStages(result.stages);
+      setSummary(result.summary ?? {});
+      setLastResult(result);
+      setWorkflowPhase("done");
+
+      saveToStore(result);
       addToHistory(result, address.trim());
     } catch (err) {
       const msg = err instanceof Error ? err.message : "알 수 없는 오류가 발생했습니다.";
       setError(msg);
-
-      const failedStages = updatedStages.map((s) =>
-        s.status === "completed" ? s : { ...s, status: "failed" as const, error: msg },
-      );
-      setStages(failedStages);
     } finally {
       setIsRunning(false);
     }
@@ -342,7 +404,7 @@ export function ProjectPipelinePanel() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    runPipeline();
+    runSiteAnalysis();
   };
 
   const toggleStage = (stageKey: string) => {
@@ -357,22 +419,15 @@ export function ProjectPipelinePanel() {
       setViewMode("pipeline");
 
       try {
-        const response = await fetch("/api/v2/pipeline/run", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
+        const result = await apiClient.postV2<PipelineRunResponse>("/pipeline/run", {
+          body: {
             address: address.trim(),
             project_id: projectId,
             options: { from_stage: stageName, overrides },
-          }),
+          },
+          useMock: false,
         });
 
-        if (!response.ok) {
-          const errBody = await response.text();
-          throw new Error(`재분석 실패 (${response.status}): ${errBody}`);
-        }
-
-        const result: PipelineRunResponse = await response.json();
         setStages(result.stages);
         setSummary(result.summary ?? {});
         setLastResult(result);
@@ -468,38 +523,94 @@ export function ProjectPipelinePanel() {
           </h2>
         </div>
         <p className="text-sm font-medium text-[var(--text-secondary)] tracking-tight ml-11">
-          주소를 입력하면 7단계 분석을 자동 수행합니다
+          주소를 검색하면 부지분석 → 결과 확인 → 나머지 6단계를 순차 수행합니다
         </p>
       </div>
 
-      {/* ── Address Input ── */}
-      <form onSubmit={handleSubmit} className="flex flex-col sm:flex-row gap-3 px-6 py-4 sm:px-8 border-b border-[var(--line)]">
-        <input
-          type="text"
-          value={address}
-          onChange={(e) => setAddress(e.target.value)}
-          placeholder="분석할 주소를 입력하세요 (예: 서울특별시 강남구 테헤란로 123)"
-          disabled={isRunning}
-          className="flex-1 h-12 rounded-xl border border-[var(--line-strong)] bg-[var(--surface)] px-4 text-sm font-medium text-[var(--text-primary)] placeholder:text-[var(--text-hint)] focus:outline-none focus:border-[var(--accent-strong)] focus:ring-2 focus:ring-[var(--accent-strong)]/20 transition-all disabled:opacity-50"
-        />
-        <button
-          type="submit"
-          disabled={isRunning || !address.trim()}
-          className="h-12 px-6 sm:px-8 rounded-xl bg-gradient-to-br from-[var(--accent-strong)] to-[var(--accent)] text-white text-sm font-bold tracking-wide shadow-[var(--shadow-glow)] transition-all hover:scale-[1.03] active:scale-[0.97] disabled:opacity-50 disabled:hover:scale-100 disabled:cursor-not-allowed whitespace-nowrap flex items-center justify-center gap-2"
-        >
-          {isRunning ? (
-            <>
-              <svg className="animate-spin" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M21 12a9 9 0 1 1-6.219-8.56" /></svg>
-              분석 중...
-            </>
-          ) : (
-            <>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polygon points="6 3 20 12 6 21 6 3" /></svg>
-              분석 시작
-            </>
-          )}
-        </button>
-      </form>
+      {/* ── Address Search Input (GlobalAddressSearch) ── */}
+      <div className="px-6 py-4 sm:px-8 border-b border-[var(--line)]">
+        <div className="flex flex-col sm:flex-row gap-3">
+          <div className="flex-1">
+            <GlobalAddressSearch
+              single={false}
+              onChange={handleAddressChange}
+              placeholder="주소를 검색하세요 (예: 서울 강남구 역삼동)"
+              disabled={isRunning}
+            />
+          </div>
+          <button
+            type="button"
+            onClick={runSiteAnalysis}
+            disabled={isRunning || !address.trim()}
+            className="h-12 px-6 sm:px-8 rounded-xl bg-gradient-to-br from-[var(--accent-strong)] to-[var(--accent)] text-white text-sm font-bold tracking-wide shadow-[var(--shadow-glow)] transition-all hover:scale-[1.03] active:scale-[0.97] disabled:opacity-50 disabled:hover:scale-100 disabled:cursor-not-allowed whitespace-nowrap flex items-center justify-center gap-2 shrink-0"
+          >
+            {isRunning && workflowPhase === "input" ? (
+              <>
+                <svg className="animate-spin" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M21 12a9 9 0 1 1-6.219-8.56" /></svg>
+                부지분석 중...
+              </>
+            ) : (
+              <>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0"/><circle cx="12" cy="10" r="3"/></svg>
+                부지분석 시작
+              </>
+            )}
+          </button>
+        </div>
+        {allAddresses.length > 0 && (
+          <div className="mt-2 text-xs font-medium text-[var(--text-secondary)]">
+            {allAddresses.length === 1 ? (
+              <p>선택된 주소: <span className="text-[var(--accent-strong)]">{address}</span></p>
+            ) : (
+              <p>선택된 필지: <span className="text-[var(--accent-strong)]">{allAddresses.length}개</span> — {allAddresses.map((a) => a.fullAddress).join(", ")}</p>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* ── Site Analysis Review Banner ── */}
+      {workflowPhase === "site_review" && (
+        <div className="mx-6 sm:mx-8 mt-4 rounded-xl border border-[var(--accent-strong)]/30 bg-[var(--accent-strong)]/5 px-5 py-4">
+          <div className="flex items-start gap-3">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--accent-strong)]/20 text-[var(--accent-strong)]">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
+            </div>
+            <div className="flex-1">
+              <h4 className="text-sm font-bold text-[var(--text-primary)]">부지분석 완료 — 결과를 확인하세요</h4>
+              <p className="text-xs text-[var(--text-secondary)] mt-1">
+                아래 부지분석 결과를 확인한 후, 만족스러우면 &quot;다음 단계 진행&quot;을 눌러 설계→공사비→수지분석을 이어서 실행합니다.
+              </p>
+              <div className="flex gap-3 mt-3">
+                <button
+                  type="button"
+                  onClick={runRemainingStages}
+                  disabled={isRunning}
+                  className="h-10 px-6 rounded-xl bg-gradient-to-br from-[var(--accent-strong)] to-[var(--accent)] text-white text-sm font-bold shadow-[var(--shadow-glow)] hover:scale-[1.03] active:scale-[0.97] transition-all disabled:opacity-50 flex items-center gap-2"
+                >
+                  {isRunning ? (
+                    <>
+                      <svg className="animate-spin" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M21 12a9 9 0 1 1-6.219-8.56" /></svg>
+                      나머지 분석 진행 중...
+                    </>
+                  ) : (
+                    <>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polygon points="6 3 20 12 6 21 6 3" /></svg>
+                      다음 단계 진행 (설계→공사비→수지분석)
+                    </>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setWorkflowPhase("input"); setStages(DEFAULT_STAGES.map((s) => ({ ...s }))); }}
+                  className="h-10 px-4 rounded-xl border border-[var(--line-strong)] text-sm font-bold text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-strong)] transition-all"
+                >
+                  다른 주소 분석
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Error Banner ── */}
       {error && (
