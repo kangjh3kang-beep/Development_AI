@@ -30,6 +30,8 @@ export default function NewProjectPage() {
   const router = useRouter();
   const addProject = useProjectStore(state => state.addProject);
   const clearProject = useProjectContextStore(state => state.clearProject);
+  const setProject = useProjectContextStore(state => state.setProject);
+  const siteAnalysis = useProjectContextStore(state => state.siteAnalysis);
 
   // 새 프로젝트 진입 시 이전 데이터 초기화
   useState(() => { clearProject(); });
@@ -63,10 +65,21 @@ export default function NewProjectPage() {
     const projectId = addProject({
       name,
       address: location,
-      pnu: pnu || "1120011500103150001", // Default PNU if empty for map testing
-      area: area || "1200",
+      pnu: pnu || "",
+      area: area || "0",
       type: projectType
     });
+
+    // GlobalAddressSearch가 수집한 siteAnalysis 데이터를 임시 저장
+    const currentSiteAnalysis = useProjectContextStore.getState().siteAnalysis;
+
+    // ProjectContextStore에 프로젝트 ID 설정
+    setProject(projectId, name, "draft");
+
+    // setProject가 cross-module 데이터를 초기화하므로 siteAnalysis를 복원
+    if (currentSiteAnalysis) {
+      useProjectContextStore.getState().updateSiteAnalysis(currentSiteAnalysis);
+    }
 
     setTimeout(() => {
       router.push(`/ko/projects/${projectId}`);
