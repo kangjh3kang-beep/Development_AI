@@ -7,8 +7,8 @@ PostGIS geometry 컬럼으로 위치 정보를 저장한다.
 import uuid
 
 from geoalchemy2 import Geometry
-from sqlalchemy import Float, ForeignKey, String, Text
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import Float, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy.dialects.postgresql import JSON, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from apps.api.database.models.base import Base, SoftDeleteMixin, TenantMixin, TimestampMixin
@@ -35,6 +35,16 @@ class Project(Base, TenantMixin, TimestampMixin, SoftDeleteMixin):
         Geometry(geometry_type="POINT", srid=4326), nullable=True
     )
     total_area_sqm: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    # v61 확장 컬럼 (마이그레이션 005)
+    pnu_codes: Mapped[dict | None] = mapped_column(JSON, nullable=True, comment="필지 PNU 코드 목록")
+    zone_type: Mapped[str | None] = mapped_column(String(100), nullable=True, comment="용도지역 유형")
+    max_bcr: Mapped[float | None] = mapped_column(Numeric(5, 2), nullable=True, comment="최대 건폐율 %")
+    max_far: Mapped[float | None] = mapped_column(Numeric(6, 2), nullable=True, comment="최대 용적률 %")
+    max_height: Mapped[float | None] = mapped_column(Numeric(6, 1), nullable=True, comment="최대 높이 m")
+    building_type: Mapped[str | None] = mapped_column(String(50), nullable=True, comment="건물 유형")
+    floor_above: Mapped[int | None] = mapped_column(Integer, nullable=True, comment="지상 층수")
+    floor_below: Mapped[int | None] = mapped_column(Integer, nullable=True, comment="지하 층수")
 
     # 관계
     tenant = relationship("Tenant", back_populates="projects")

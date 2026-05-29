@@ -159,7 +159,7 @@ export default function SettingsPage() {
             key={tab.id}
             onClick={() => {
               if (tab.id === "users") {
-                router.push("settings/users");
+                router.push("./settings/users");
                 return;
               }
               setActiveTab(tab.id);

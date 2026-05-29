@@ -8,7 +8,7 @@ class TestV61DesignModels:
     """설계 도메인 6개 모델 클래스 존재 + 필드 검증."""
 
     def test_design_stage_creation(self):
-        from app.models.v61_design import DesignStage
+        from apps.api.database.models.v61_design import DesignStage
         obj = DesignStage(stage_no=1, stage_name="계획설계", stage_status="active")
         assert obj.stage_no == 1
         assert obj.stage_name == "계획설계"
@@ -16,7 +16,7 @@ class TestV61DesignModels:
         assert hasattr(obj, "completion_pct")
 
     def test_drawing_creation(self):
-        from app.models.v61_design import Drawing
+        from apps.api.database.models.v61_design import Drawing
         obj = Drawing()
         obj.drawing_code = "B-01"
         obj.drawing_type = "배치도"
@@ -28,7 +28,7 @@ class TestV61DesignModels:
         assert hasattr(obj, "vector_data")
 
     def test_drawing_layer_creation(self):
-        from app.models.v61_design import DrawingLayer
+        from apps.api.database.models.v61_design import DrawingLayer
         obj = DrawingLayer()
         obj.layer_name = "A-WALL"
         obj.layer_color = "#000000"
@@ -38,14 +38,14 @@ class TestV61DesignModels:
         assert obj.layer_visible is True
 
     def test_drawing_edit_history_creation(self):
-        from app.models.v61_design import DrawingEditHistory
+        from apps.api.database.models.v61_design import DrawingEditHistory
         obj = DrawingEditHistory(edit_type="ADD", element_type="LINE", layer_name="A-WALL")
         assert obj.edit_type == "ADD"
         assert hasattr(obj, "before_data")
         assert hasattr(obj, "after_data")
 
     def test_permit_document_set_creation(self):
-        from app.models.v61_design import PermitDocumentSet
+        from apps.api.database.models.v61_design import PermitDocumentSet
         obj = PermitDocumentSet()
         obj.doc_code = "A-01"
         obj.doc_category = "A"
@@ -57,7 +57,7 @@ class TestV61DesignModels:
         assert obj.is_completed is False
 
     def test_design_alternative_creation(self):
-        from app.models.v61_design import DesignAlternative
+        from apps.api.database.models.v61_design import DesignAlternative
         obj = DesignAlternative()
         obj.alt_no = 1
         obj.alt_name = "대안A"
@@ -68,7 +68,7 @@ class TestV61DesignModels:
         assert hasattr(obj, "mc_win_rate")
 
     def test_design_tablenames(self):
-        from app.models.v61_design import (
+        from apps.api.database.models.v61_design import (
             DesignStage, Drawing, DrawingLayer,
             DrawingEditHistory, PermitDocumentSet, DesignAlternative,
         )

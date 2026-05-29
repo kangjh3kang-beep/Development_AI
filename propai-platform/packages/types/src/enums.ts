@@ -76,3 +76,20 @@ export const TaxType = {
   GIFT: 'gift',
 } as const;
 export type TaxType = (typeof TaxType)[keyof typeof TaxType];
+
+export const RegulationType = {
+  ZONING: 'zoning',
+  BUILDING_CODE: 'building_code',
+  FIRE_SAFETY: 'fire_safety',
+  ENVIRONMENT: 'environment',
+  PARKING: 'parking',
+  URBAN_PLANNING: 'urban_planning',
+} as const;
+export type RegulationType = (typeof RegulationType)[keyof typeof RegulationType];
+
+export const CircuitBreakerState = {
+  CLOSED: 'closed',
+  OPEN: 'open',
+  HALF_OPEN: 'half_open',
+} as const;
+export type CircuitBreakerState = (typeof CircuitBreakerState)[keyof typeof CircuitBreakerState];

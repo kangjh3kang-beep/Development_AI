@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import type { ProjectStatus } from '@propai/types';
 
 export type Project = {
   id: string;
@@ -8,7 +9,7 @@ export type Project = {
   pnu: string;
   address: string;
   area: string;
-  status: 'planning' | 'in_progress' | 'completed';
+  status: ProjectStatus;
   createdAt: string;
 };
 
@@ -28,7 +29,7 @@ export const useProjectStore = create<ProjectState>()(
         const newProject: Project = {
           ...projectData,
           id,
-          status: 'planning',
+          status: 'draft',
           createdAt: new Date().toISOString(),
         };
         set((state) => ({

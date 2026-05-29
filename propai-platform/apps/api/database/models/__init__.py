@@ -122,6 +122,17 @@ from apps.api.database.models.stakeholder import Stakeholder
 # VCS (수지분석 버전관리)
 from apps.api.database.models.feasibility_vcs import FeasibilityCommit, FeasibilityBranch, FeasibilityTag
 
+# v61 설계도면
+from apps.api.database.models.v61_design import (
+    DesignStage, Drawing, DrawingLayer, DrawingEditHistory,
+    PermitDocumentSet, DesignAlternative,
+)
+# v61 BIM 공사비
+from apps.api.database.models.v61_cost import (
+    CostWorkType, MaterialUnitPrice, BimQuantity, CostCalculationSheet,
+    ProgressBilling, LegalRateHistory, StandardPriceUpdate,
+)
+
 __all__ = [
     "Base",
     "TenantMixin",
@@ -239,4 +250,19 @@ __all__ = [
     "FeasibilityCommit",
     "FeasibilityBranch",
     "FeasibilityTag",
+    # v61 설계도면
+    "DesignStage",
+    "Drawing",
+    "DrawingLayer",
+    "DrawingEditHistory",
+    "PermitDocumentSet",
+    "DesignAlternative",
+    # v61 BIM 공사비
+    "CostWorkType",
+    "MaterialUnitPrice",
+    "BimQuantity",
+    "CostCalculationSheet",
+    "ProgressBilling",
+    "LegalRateHistory",
+    "StandardPriceUpdate",
 ]

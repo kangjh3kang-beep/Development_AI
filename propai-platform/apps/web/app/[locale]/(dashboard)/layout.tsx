@@ -146,9 +146,9 @@ export default async function DashboardLayout({
   const lifecycleNavigation = [
     { href: `/${locale}`, label: "대시보드", icon: <IconDashboard /> },
     { href: `/${locale}/projects`, label: "프로젝트 관리", icon: <IconProject /> },
-    { href: `/${locale}/projects/sample-project/site-analysis`, label: "입지 및 사업성 분석", icon: <IconSiteAnalysis /> },
+    { href: `/${locale}/projects`, label: "입지 및 사업성 분석", icon: <IconSiteAnalysis /> },
     { href: `/${locale}/market-insights`, label: "마켓 인텔리전스", icon: <IconMarket /> },
-    { href: `/${locale}/projects/sample-project/design`, label: "AI 설계 & BIM", icon: <IconDesign /> },
+    { href: `/${locale}/projects`, label: "AI 설계 & BIM", icon: <IconDesign /> },
     { href: `/${locale}/permits`, label: "인허가 자동화", icon: <IconPermit /> },
     { href: `/${locale}/regulations`, label: "부동산 규제 연동", icon: <IconRegulation /> },
   ];
@@ -201,18 +201,8 @@ export default async function DashboardLayout({
       <header className="sticky top-2 z-50 glass rounded-[var(--radius-xl)] border border-[var(--line)] bg-[var(--glass-bg)] px-4 py-3 md:px-8 md:py-4 shadow-[var(--shadow-lg)] transition-all duration-500 mt-2">
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <Link href={`/${locale}`} className="flex items-center gap-4 group">
-            <div className="flex h-12 w-12 md:h-14 md:w-14 shrink-0 items-center justify-center rounded-[1.25rem] bg-gradient-to-br from-teal-600 to-teal-400 shadow-xl shadow-teal-500/20 ring-1 ring-white/10 transition-transform group-hover:scale-105 active:scale-95">
-              <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M3 3h7v7H3z"/><path d="M14 3h7v7h-7z"/><path d="M14 14h7v7h-7z"/><path d="M3 14h7v7H3z"/></svg>
-            </div>
-            <div className="min-w-0">
-               <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-[var(--accent-strong)] mb-0.5 truncate">
-                  AI Real-Estate Intelligence
-               </p>
-               <h1 className="text-2xl md:text-3xl font-[900] tracking-tighter text-[var(--text-primary)] transition-colors">
-                  <span className="bg-gradient-to-r from-[var(--text-primary)] to-[var(--accent-strong)] bg-clip-text text-transparent">사통</span>팔땅
-                  <span className="text-[var(--accent-strong)] ml-px text-3xl md:text-4xl leading-none drop-shadow-sm">.</span>
-               </h1>
-            </div>
+             <img src="/logos/logo-horizontal.png" alt="사통팔땅 로고" className="h-10 md:h-12 w-auto object-contain transition-transform group-hover:scale-105 active:scale-95 drop-shadow-md" />
+             <span className="sr-only">사통팔땅 AI Real-Estate Intelligence</span>
           </Link>
 
           <div className="flex flex-wrap items-center gap-3">
@@ -248,8 +238,8 @@ export default async function DashboardLayout({
       {/* 회사정보 푸터 */}
       <footer className="mt-16 border-t border-[var(--line)] bg-[var(--surface-soft)] py-8 px-6">
         <div className="mx-auto max-w-6xl flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-          <div className="space-y-2">
-            <p className="text-sm font-bold text-[var(--text-primary)]">사통팔땅</p>
+          <div className="space-y-4">
+            <img src="/logos/logo-horizontal.png" alt="사통팔땅" className="h-8 w-auto object-contain opacity-90" />
             <div className="space-y-1 text-xs text-[var(--text-tertiary)] leading-relaxed">
               <p>대표: 강재희 | 사업자등록번호: 682-38-01463</p>
               <p>업태: 도매 및 소매업</p>

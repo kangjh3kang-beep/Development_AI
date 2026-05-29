@@ -68,8 +68,8 @@ export default async function DashboardPage({ params }: DashboardPageProps) {
             </div>
             
             <h1 className="text-3xl font-[900] tracking-tighter text-[var(--text-primary)] sm:text-5xl md:text-6xl lg:text-7xl leading-[0.9]">
-               <span className="bg-gradient-to-r from-[var(--text-primary)] to-[var(--accent-strong)] bg-clip-text text-transparent">{dictionary.meta.siteName}</span>
-               <span className="text-[var(--accent-strong)]">.</span>
+               <span className="sr-only">{dictionary.meta.siteName}</span>
+               <img src="/logos/logo-horizontal.png" alt="사통팔땅 로고" className="h-16 sm:h-24 md:h-28 lg:h-32 w-auto drop-shadow-2xl" />
             </h1>
 
             <p className="max-w-xl text-base font-medium leading-relaxed text-[var(--text-secondary)] sm:text-lg lg:text-xl tracking-tight">
@@ -93,6 +93,11 @@ export default async function DashboardPage({ params }: DashboardPageProps) {
             </Link>
           </div>
         </div>
+      </section>
+
+      {/* ── 기능 요약 배너 (로고 배너) ── */}
+      <section className="w-full overflow-hidden rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-soft)] shadow-[var(--shadow-lg)] mt-[-1rem] mb-4">
+        <img src="/logos/banner-icons.png" alt="전국 데이터 연결, AI 분석 예측, 개발계획 자동수립" className="w-full h-auto object-cover" />
       </section>
 
       {/* ── KPI 그리드: 실시간 API 연동 (fallback 포함) ── */}

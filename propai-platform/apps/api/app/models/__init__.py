@@ -6,11 +6,11 @@ from app.models.v58_extensions import (
     PortfolioOptimization, NaturalDisasterRisk, ProcurementOptimization,
     DesignReviewResult, PublicInsightReport
 )
-from app.models.v61_design import (
+from apps.api.database.models.v61_design import (
     DesignStage, Drawing, DrawingLayer, DrawingEditHistory,
     PermitDocumentSet, DesignAlternative,
 )
-from app.models.v61_cost import (
+from apps.api.database.models.v61_cost import (
     CostWorkType, MaterialUnitPrice, BimQuantity, CostCalculationSheet,
     ProgressBilling, LegalRateHistory, StandardPriceUpdate,
 )

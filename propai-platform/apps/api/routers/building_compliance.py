@@ -38,11 +38,31 @@ class AutoCorrectRequest(BaseModel):
     violation_type: str
 
 
-@router.post("/check")
+# ── 응답 스키마 ──
+
+
+class ComplianceCheckResult(BaseModel):
+    """건축 법규 검증 결과."""
+    project_id: str | None = None
+    overall_status: str = "unknown"
+    results: list[dict[str, Any]] = Field(default_factory=list)
+    bcr: float | None = None
+    far: float | None = None
+    height_ok: bool | None = None
+
+
+class AutoCorrectResult(BaseModel):
+    """자동 보정 결과."""
+    original_violation: str = ""
+    corrected_design: dict[str, Any] = Field(default_factory=dict)
+    correction_summary: str = ""
+
+
+@router.post("/check", response_model=ComplianceCheckResult)
 async def check_compliance(
     req: CheckRequest,
     db: AsyncSession = Depends(get_db),
-) -> dict:
+):
     """설계 데이터의 건축 법규 준수 여부를 검증한다."""
     svc = BuildingComplianceService(db=db)
     return await svc.check_compliance(
