@@ -1,7 +1,9 @@
 "use client";
 
+import { useCallback, useRef, useState } from "react";
 import { Button, Card, CardContent, Input } from "@propai/ui";
 import { useFeasibilityV2Store } from "@/store/use-feasibility-v2-store";
+import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { useCadStore } from "@/store/use-cad-store";
 import { motion } from "framer-motion";
 
@@ -51,8 +53,36 @@ function NumberInput({
 }
 
 export function ModuleInputForm() {
-  const { input, setInput, calculate, isCalculating, selectedModule } =
+  const { input, setInput, calculate, isCalculating, selectedModule, commitVersion } =
     useFeasibilityV2Store();
+  const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
+
+  // 자동 산정값 (API에서 추천된 초기값) — 사용자가 수정하면 배지 표시
+  const [autoValues] = useState<Partial<Record<string, number>>>({});
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // 사용자 수정 시 자동 히스토리 저장 (디바운스 3초)
+  const handleInputChange = useCallback((patch: Partial<typeof input>) => {
+    setInput(patch);
+    // 3초 후 자동 커밋
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => {
+      const changedKeys = Object.keys(patch).join(", ");
+      commitVersion(`사용자 수정: ${changedKeys}`).catch(() => {});
+    }, 3000);
+  }, [setInput, commitVersion]);
+
+  // 부지분석 데이터에서 자동 반영
+  const loadFromSiteAnalysis = useCallback(() => {
+    if (!siteAnalysis) return;
+    const patch: Partial<typeof input> = {};
+    if (siteAnalysis.landAreaSqm) patch.total_land_area_sqm = siteAnalysis.landAreaSqm;
+    if (siteAnalysis.address) patch.sido_name = siteAnalysis.address.split(" ")[0] || "";
+    if (siteAnalysis.officialPrices?.[0]?.pricePerSqm) {
+      patch.official_price_per_sqm = siteAnalysis.officialPrices[0].pricePerSqm;
+    }
+    setInput(patch);
+  }, [siteAnalysis, setInput]);
 
   const syncWithCAD = () => {
     const cadState = useCadStore.getState();
@@ -92,14 +122,27 @@ export function ModuleInputForm() {
             </Button>
          </motion.div>
 
-        <div className="mb-4 flex items-center justify-between border-b border-slate-100 pb-4">
-          <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 dark:border-slate-800 pb-4">
+          <h3 className="text-lg font-semibold text-[var(--text-primary)]">
             {selectedModule} 입력 항목
           </h3>
-          <Button onClick={() => calculate()} disabled={isCalculating} className="bg-black text-white px-8">
-            {isCalculating ? "계산 중..." : "수지분석 실행"}
-          </Button>
+          <div className="flex gap-2">
+            {siteAnalysis?.address && (
+              <Button variant={"outline" as any} size="sm" onClick={loadFromSiteAnalysis} className="text-xs">
+                부지분석 데이터 반영
+              </Button>
+            )}
+            <Button onClick={() => calculate()} disabled={isCalculating} className="bg-[var(--accent-strong)] text-white px-6">
+              {isCalculating ? "계산 중..." : "수지분석 실행"}
+            </Button>
+          </div>
         </div>
+        {siteAnalysis?.address && (
+          <p className="mb-3 text-xs text-emerald-500 flex items-center gap-1.5">
+            <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500" />
+            부지분석 연동: {siteAnalysis.address} ({siteAnalysis.zoneCode || ""})
+          </p>
+        )}
 
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           {/* 기본 정보 */}
@@ -146,27 +189,27 @@ export function ModuleInputForm() {
           <NumberInput label="총 세대수" value={input.total_households} unit="세대"
             onChange={(v) => setInput({ total_households: v })} />
 
-          {/* 분양 */}
+          {/* 분양 (핵심 수정 항목 — 변경 시 자동 히스토리) */}
           <NumberInput label="평당 분양가" value={input.avg_sale_price_per_pyeong} unit="원/평"
-            onChange={(v) => setInput({ avg_sale_price_per_pyeong: v })} />
+            onChange={(v) => handleInputChange({ avg_sale_price_per_pyeong: v })} />
           <NumberInput label="평균 전용면적" value={input.avg_area_pyeong} unit="평"
-            onChange={(v) => setInput({ avg_area_pyeong: v })} />
+            onChange={(v) => handleInputChange({ avg_area_pyeong: v })} />
           <NumberInput label="분양률" value={input.sale_ratio} unit="%"
-            onChange={(v) => setInput({ sale_ratio: v })} />
+            onChange={(v) => handleInputChange({ sale_ratio: v })} />
 
-          {/* 토지비 */}
+          {/* 토지비 (핵심 수정 항목) */}
           <NumberInput label="공시지가" value={input.official_price_per_sqm} unit="원/m²"
-            onChange={(v) => setInput({ official_price_per_sqm: v })} />
-          <NumberInput label="배율" value={input.price_multiplier}
-            onChange={(v) => setInput({ price_multiplier: v })} />
+            onChange={(v) => handleInputChange({ official_price_per_sqm: v })} />
+          <NumberInput label="시가반영배율" value={input.price_multiplier}
+            onChange={(v) => handleInputChange({ price_multiplier: v })} />
 
-          {/* 금융 */}
+          {/* 금융 (핵심 수정 항목) */}
           <NumberInput label="브릿지론" value={input.bridge_amount_won} unit="원"
-            onChange={(v) => setInput({ bridge_amount_won: v })} />
+            onChange={(v) => handleInputChange({ bridge_amount_won: v })} />
           <NumberInput label="본PF" value={input.pf_amount_won} unit="원"
-            onChange={(v) => setInput({ pf_amount_won: v })} />
+            onChange={(v) => handleInputChange({ pf_amount_won: v })} />
           <NumberInput label="중도금대출" value={input.midpay_amount_won} unit="원"
-            onChange={(v) => setInput({ midpay_amount_won: v })} />
+            onChange={(v) => handleInputChange({ midpay_amount_won: v })} />
 
           {/* 지역 */}
           <label className="grid gap-1.5 text-sm">
