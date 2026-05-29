@@ -238,11 +238,10 @@ export function AutoRecommendPanel({ onClose, isModal = false }: AutoRecommendPa
 
       // 분석 완료 후 주소를 컨텍스트 스토어에 저장하여 다른 모듈에서 공유
       updateSiteAnalysis({
-        ...ctxStore.siteAnalysis,
         estimatedValue: ctxStore.siteAnalysis?.estimatedValue ?? null,
         landAreaSqm: landArea ? parseFloat(landArea) : ctxStore.siteAnalysis?.landAreaSqm ?? null,
         zoneCode: ctxStore.siteAnalysis?.zoneCode ?? null,
-        address: address,
+        address,
         pnu: ctxStore.siteAnalysis?.pnu ?? null,
       });
     } catch (e: unknown) {
