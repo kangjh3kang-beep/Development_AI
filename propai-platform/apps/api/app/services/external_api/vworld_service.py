@@ -65,7 +65,7 @@ class VWorldService:
 
     # VWORLD 데이터 API는 Referer 헤더로 도메인 검증
     # 등록 도메인: developmentai-production.up.railway.app
-    HEADERS = {"Referer": "https://developmentai-production.up.railway.app"}
+    HEADERS = {"Referer": "https://www.4t8t.net"}
 
     async def geocode_address(self, address: str) -> Optional[Dict]:
         """주소를 좌표+PNU로 변환 (지오코딩).

@@ -458,7 +458,7 @@ class ProjectPipeline:
                     "geometry": "true",
                     "attribute": "true",
                 }
-                headers = {"Referer": "https://developmentai-production.up.railway.app"}
+                headers = {"Referer": "https://www.4t8t.net"}
                 async with httpx.AsyncClient(timeout=15, headers=headers) as client:
                     resp = await client.get("https://api.vworld.kr/req/data", params=params)
                     if resp.status_code == 200:

@@ -26,7 +26,7 @@ export async function GET(request: NextRequest) {
 
   try {
     const resp = await fetch(targetUrl, {
-      headers: { Referer: "https://developmentai-production.up.railway.app" },
+      headers: { Referer: "https://www.4t8t.net" },
     });
     const text = await resp.text();
 
