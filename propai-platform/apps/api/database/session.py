@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     create_async_engine,
 )
+from sqlalchemy.pool import NullPool
 
 from apps.api.config import get_settings
 
@@ -44,26 +45,20 @@ def _fix_supabase_url(url: str) -> str:
     return url
 
 
+# PGBouncer 환경: NullPool 사용 — prepared statement 충돌 완전 방지
+# 매 요청마다 새 커넥션 생성/해제 (PGBouncer가 풀링 담당)
 engine = create_async_engine(
     _fix_supabase_url(settings.database_url),
-    pool_size=min(settings.db_pool_size, 10),
-    max_overflow=min(settings.db_max_overflow, 5),
-    pool_timeout=settings.db_pool_timeout,
-    pool_recycle=settings.db_pool_recycle,
+    poolclass=NullPool,
     echo=settings.debug,
-    pool_pre_ping=True,
     connect_args=_connect_args,
 )
 
 # TimescaleDB 엔진 (시계열 데이터용)
 timescale_engine = create_async_engine(
     _fix_supabase_url(settings.timescale_url),
-    pool_size=5,
-    max_overflow=5,
-    pool_timeout=settings.db_pool_timeout,
-    pool_recycle=settings.db_pool_recycle,
+    poolclass=NullPool,
     echo=settings.debug,
-    pool_pre_ping=True,
     connect_args=_connect_args,
 )
 
