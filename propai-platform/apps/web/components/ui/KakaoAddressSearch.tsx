@@ -25,6 +25,7 @@ interface DaumPostcodeData {
   sigungu: string;         // 시군구명
   bname1: string;          // 법정동 첫 번째 부분
   bname2: string;          // 법정동 두 번째 부분
+  bcode: string;           // 법정동 코드 (10자리)
   userSelectedType: "R" | "J"; // 사용자가 선택한 주소 유형
 }
 
@@ -46,6 +47,8 @@ export interface KakaoAddressResult {
   bname: string;
   /** 건물명 */
   buildingName: string;
+  /** 법정동 코드 (10자리) — PNU 구성에 사용 */
+  bcode: string;
 }
 
 interface KakaoAddressSearchProps {
@@ -132,6 +135,7 @@ export function KakaoAddressSearch({
           sigungu: data.sigungu,
           bname: data.bname || data.bname2,
           buildingName: data.buildingName,
+          bcode: data.bcode ?? "",
         };
 
         setDisplayValue(fullAddress);

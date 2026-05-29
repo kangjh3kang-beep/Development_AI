@@ -18,7 +18,6 @@ import { useCallback, useState } from "react";
 import { KakaoAddressSearch, type KakaoAddressResult } from "@/components/ui/KakaoAddressSearch";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { apiClient } from "@/lib/api-client";
-import { fetchVWorldComprehensive } from "@/lib/vworld-client";
 
 export interface AddressEntry {
   fullAddress: string;
@@ -28,6 +27,7 @@ export interface AddressEntry {
   sigungu: string;
   bname: string;
   zonecode: string;
+  bcode: string; // 법정동 코드 (10자리) — PNU 구성에 사용
   areaSqm?: number; // 면적 (m²) — API에서 자동 반영
   areaPyeong?: number; // 면적 (평) — 자동 환산
 }
@@ -62,47 +62,10 @@ export function GlobalAddressSearch({
   const displayAddresses = addresses;
 
   // 종합 토지 분석 자동 트리거 (주소 입력 즉시 백그라운드 실행)
-  // Railway 서버(해외 IP)에서 VWORLD 502 에러 발생하므로 브라우저에서 직접 호출
-  const triggerComprehensiveAnalysis = useCallback(async (address: string) => {
+  // 카카오에서 얻은 bcode(법정동코드) + 지번주소를 백엔드에 전달하여 토지정보 조회
+  const triggerComprehensiveAnalysis = useCallback(async (address: string, bcode?: string, jibunAddress?: string) => {
     setIsAnalyzing(true);
     try {
-      // 1차: 브라우저에서 직접 VWORLD API 호출 (한국 IP → 정상 동작)
-      const vworldData = await fetchVWorldComprehensive(address);
-
-      if (vworldData && (vworldData.pnu || vworldData.land_register)) {
-        // VWORLD 직접 호출 성공 → 결과 저장
-        const bcr = vworldData.zone_limits?.max_bcr_pct ?? 60;
-        const far = vworldData.zone_limits?.max_far_pct ?? 250;
-
-        updateSiteAnalysis({
-          address,
-          pnu: vworldData.pnu ?? siteAnalysis?.pnu ?? null,
-          estimatedValue: siteAnalysis?.estimatedValue ?? null,
-          landAreaSqm: vworldData.land_register?.area_sqm ?? siteAnalysis?.landAreaSqm ?? null,
-          zoneCode: vworldData.zone_type ?? siteAnalysis?.zoneCode ?? null,
-          coordinates: vworldData.coordinates ?? undefined,
-          officialPrices: vworldData.land_register?.official_price_per_sqm
-            ? [{ pnu: vworldData.pnu ?? "", year: 2025, pricePerSqm: vworldData.land_register.official_price_per_sqm }]
-            : undefined,
-          ordinance: {
-            sido: "",
-            sigungu: null,
-            nationalBcr: bcr,
-            nationalFar: far,
-            ordinanceBcr: bcr,
-            ordinanceFar: far,
-            effectiveBcr: bcr,
-            effectiveFar: far,
-            source: "VWORLD(브라우저 직접호출)",
-            legalBasis: "국토계획법 제78조",
-          },
-          dataSource: "VWORLD(브라우저 직접호출)",
-          fetchedAt: new Date().toISOString(),
-        });
-        return;
-      }
-
-      // 2차 폴백: 백엔드 API 호출 (VWORLD 직접 호출 실패 시)
       const data = await apiClient.post<{
         pnu: string | null;
         coordinates: { lat: number; lon: number } | null;
@@ -112,7 +75,10 @@ export function GlobalAddressSearch({
         building_info: { building_name: string; main_purpose: string; total_area_sqm: number; ground_floors: number } | null;
         official_prices: Array<{ pnu: string; year: number; price_per_sqm: number }>;
         local_ordinance: { sido: string; sigungu: string | null; effective_bcr: number; effective_far: number; source: string } | null;
-      }>("/zoning/comprehensive", { body: { address }, useMock: false });
+      }>("/zoning/comprehensive", {
+        body: { address, bcode: bcode ?? "", jibun_address: jibunAddress ?? "" },
+        useMock: false,
+      });
 
       updateSiteAnalysis({
         address,
@@ -142,7 +108,7 @@ export function GlobalAddressSearch({
           structure: "",
           useApprovalDate: "",
         } : undefined,
-        dataSource: "백엔드 API",
+        dataSource: "백엔드 API (bcode:" + (bcode ?? "없음") + ")",
         fetchedAt: new Date().toISOString(),
       });
     } catch {
@@ -161,6 +127,7 @@ export function GlobalAddressSearch({
       sigungu: result.sigungu,
       bname: result.bname,
       zonecode: result.zonecode,
+      bcode: result.bcode,
     };
 
     let newAddresses: AddressEntry[];
@@ -186,8 +153,8 @@ export function GlobalAddressSearch({
         pnu: siteAnalysis?.pnu ?? null,
       });
 
-      // 자동 종합 분석 트리거 (백그라운드)
-      triggerComprehensiveAnalysis(primary.fullAddress);
+      // 자동 종합 분석 트리거 (bcode + 지번주소 포함)
+      triggerComprehensiveAnalysis(primary.fullAddress, primary.bcode, primary.jibunAddress);
     }
 
     onChange?.(newAddresses);
