@@ -95,6 +95,10 @@ class VWorldService:
                         "format": "json",
                     }
                     resp = await client.get(f"{self.BASE_URL}/address", params=params)
+                    logger.info(
+                        "VWORLD 응답 (%s): status_code=%d, len=%d",
+                        addr_type, resp.status_code, len(resp.text),
+                    )
                     resp.raise_for_status()
                     data = resp.json()
                     response = data.get("response", {})
