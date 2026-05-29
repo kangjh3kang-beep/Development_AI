@@ -7,6 +7,7 @@ import { TiltCard } from "@/components/ui/TiltCard";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { useFeasibilityV2Store } from "@/store/use-feasibility-v2-store";
 import { apiClient } from "@/lib/api-client";
+import { GlobalAddressSearch } from "@/components/common/GlobalAddressSearch";
 import { BusinessModelRefineModal } from "./BusinessModelRefineModal";
 
 /* ── Types ── */
@@ -335,22 +336,20 @@ export function AutoRecommendPanel({ onClose, isModal = false }: AutoRecommendPa
               <label className="mb-2 block text-[10px] font-[900] uppercase tracking-[0.3em] text-[var(--text-hint)]">
                 주소 입력
               </label>
-              {/* 주소 검색 입력: 부지분석 주소를 기본값으로 사용하며, 분석 완료 시 스토어에 저장 */}
-              <div className="relative">
-                <svg className="absolute left-4 top-1/2 -translate-y-1/2 text-[var(--text-hint)]" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-                <input
-                  type="text"
-                  value={address}
-                  onChange={(e) => setAddress(e.target.value)}
-                  placeholder="주소를 검색하세요 (예: 서울특별시 강남구 삼성동)"
-                  className="w-full rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] pl-11 pr-5 py-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-hint)] focus:border-[var(--accent-strong)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-strong)]/20 transition-all"
-                />
-              </div>
-              {ctxStore.siteAnalysis?.address && address === ctxStore.siteAnalysis.address && (
-                <p className="text-[10px] text-[var(--text-hint)] -mt-1">
-                  📍 부지분석에서 설정된 주소입니다
-                </p>
-              )}
+              {/* 주소 검색 (GlobalAddressSearch — 단일/다필지 지원) */}
+              <GlobalAddressSearch
+                single
+                onChange={(entries) => {
+                  if (entries.length > 0) {
+                    setAddress(entries[0].fullAddress);
+                    // 시도 자동 설정
+                    if (entries[0].sido) {
+                      setRegion(entries[0].sido);
+                    }
+                  }
+                }}
+                placeholder="주소를 검색하세요"
+              />
             </div>
             <div className="w-full lg:w-56">
               <label className="mb-2 block text-[10px] font-[900] uppercase tracking-[0.3em] text-[var(--text-hint)]">

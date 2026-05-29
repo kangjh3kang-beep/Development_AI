@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { KakaoAddressSearch } from "@/components/ui/KakaoAddressSearch";
+import { GlobalAddressSearch, type AddressEntry } from "@/components/common/GlobalAddressSearch";
 import { apiClient } from "@/lib/api-client";
 
 const Icons = {
@@ -100,11 +100,12 @@ export function SiteInitiator({ onInitiate, loading }: SiteInitiatorProps) {
                 exit={{ opacity: 0, y: -10 }}
                 className="flex flex-col gap-6"
               >
-                {/* 카카오 주소 검색 (구주소/도로명 검색) */}
-                <KakaoAddressSearch
-                  value={address}
-                  onSelect={(result) => {
-                    setAddress(result.fullAddress);
+                {/* 주소 검색 (단일/다필지 지원) */}
+                <GlobalAddressSearch
+                  onChange={(entries) => {
+                    if (entries.length > 0) {
+                      setAddress(entries[0].fullAddress);
+                    }
                   }}
                   placeholder="주소를 검색하세요 (클릭하면 검색창이 열립니다)"
                 />
