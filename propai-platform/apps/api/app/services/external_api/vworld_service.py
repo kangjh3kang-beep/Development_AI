@@ -75,6 +75,13 @@ class VWorldService:
         if not settings.VWORLD_API_KEY:
             return None
 
+        vworld_key = settings.VWORLD_API_KEY
+        logger.info(
+            "VWORLD geocode 시작: address=%s, key_len=%d, key_prefix=%s",
+            address[:30], len(vworld_key) if vworld_key else 0,
+            vworld_key[:8] if vworld_key and len(vworld_key) > 8 else "EMPTY",
+        )
+
         async with httpx.AsyncClient(timeout=30.0, headers=self.HEADERS) as client:
             # PARCEL 타입 우선 (PNU가 level4LC에 포함됨)
             for addr_type in ["PARCEL", "ROAD"]:
