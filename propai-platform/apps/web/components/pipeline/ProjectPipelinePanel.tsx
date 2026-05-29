@@ -406,15 +406,19 @@ export function ProjectPipelinePanel() {
       updatedStages[0]!.status = "running";
       setStages([...updatedStages]);
 
-      // 프론트에서 이미 수집한 siteAnalysis가 있으면 백엔드에 전달 (보충용)
-      const preCollected = siteAnalysis ? {
+      // 프론트에서 수집한 siteAnalysis가 있으면 항상 백엔드에 전달
+      // (면적이 0이어도 zone_type이나 pnu만 있어도 유용)
+      const siteDataForBackend = siteAnalysis ? {
         zone_type: siteAnalysis.zoneCode ?? "",
         land_area_sqm: siteAnalysis.landAreaSqm ?? 0,
-        max_bcr: siteAnalysis.ordinance?.effectiveBcr ?? 0,
-        max_far: siteAnalysis.ordinance?.effectiveFar ?? 0,
+        max_bcr: siteAnalysis.ordinance?.effectiveBcr ?? siteAnalysis.ordinance?.nationalBcr ?? 0,
+        max_far: siteAnalysis.ordinance?.effectiveFar ?? siteAnalysis.ordinance?.nationalFar ?? 0,
         official_land_price: siteAnalysis.officialPrices?.[0]?.pricePerSqm ?? 0,
         pnu_codes: siteAnalysis.pnu ? [siteAnalysis.pnu] : [],
         coordinates: siteAnalysis.coordinates ?? null,
+        ordinance_source: siteAnalysis.ordinance?.source ?? "",
+        building_info: siteAnalysis.buildingInfo ?? null,
+        land_use_districts: siteAnalysis.landUseDistricts ?? [],
       } : undefined;
 
       // 백엔드 파이프라인 호출 (부지분석만)
@@ -424,9 +428,7 @@ export function ProjectPipelinePanel() {
           project_id: projectId,
           options: {
             stop_after: "site_analysis",
-            // 프론트 캐시가 유효하면 전달 (백엔드에서 외부 API 폴백으로 보충)
-            site_data: (preCollected?.land_area_sqm && preCollected.land_area_sqm > 0)
-              ? preCollected : undefined,
+            site_data: siteDataForBackend,  // 항상 전달 (null이어도 백엔드가 폴백 처리)
           },
         },
         useMock: false,

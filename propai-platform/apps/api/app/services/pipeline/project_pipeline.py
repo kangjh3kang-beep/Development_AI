@@ -178,9 +178,10 @@ class ProjectPipeline:
         from app.services.zoning import far_incentive_calculator as fic
         from app.services.zoning import development_type_analyzer as dta
 
-        # 프론트엔드에서 이미 수집한 site_data가 있으면 외부 API 호출 건너뜀
+        # 프론트엔드에서 site_data가 전달되면 외부 API 호출 건너뜀
+        # (면적/용도지역이 0/빈값이어도 주소 기반 기본값으로 분석 수행)
         pre_collected = opts.get("site_data")
-        if pre_collected and (pre_collected.get("land_area_sqm") or pre_collected.get("zone_type")):
+        if pre_collected is not None:
             zone_type = pre_collected.get("zone_type", "")
             land_area_sqm = pre_collected.get("land_area_sqm", 0.0)
             pnu_codes = pre_collected.get("pnu_codes", [])
