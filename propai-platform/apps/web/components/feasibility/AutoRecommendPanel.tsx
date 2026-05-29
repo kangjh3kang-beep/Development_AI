@@ -172,9 +172,14 @@ export function AutoRecommendPanel({ onClose, isModal = false }: AutoRecommendPa
   const updateSiteAnalysis = useProjectContextStore((s) => s.updateSiteAnalysis);
   const feasibilityStore = useFeasibilityV2Store();
 
-  // Input state
+  // Input state — siteAnalysis에서 자동 반영
   const [address, setAddress] = useState(ctxStore.siteAnalysis?.address ?? "");
-  const [region, setRegion] = useState("서울특별시");
+  const [region, setRegion] = useState(() => {
+    // 주소에서 시도 자동 추출
+    const addr = ctxStore.siteAnalysis?.address ?? "";
+    const match = REGIONS.find((r) => addr.includes(r) || addr.includes(r.replace("특별시","").replace("광역시","").replace("도","")));
+    return match ?? "서울특별시";
+  });
   const [landArea, setLandArea] = useState(ctxStore.siteAnalysis?.landAreaSqm?.toString() ?? "");
   const [equity, setEquity] = useState("");
 
@@ -344,7 +349,8 @@ export function AutoRecommendPanel({ onClose, isModal = false }: AutoRecommendPa
                     setAddress(entries[0].fullAddress);
                     // 시도 자동 설정
                     if (entries[0].sido) {
-                      setRegion(entries[0].sido);
+                      const matchedRegion = REGIONS.find((r) => entries[0].sido.includes(r) || r.includes(entries[0].sido));
+                      if (matchedRegion) setRegion(matchedRegion);
                     }
                   }
                 }}
@@ -357,7 +363,7 @@ export function AutoRecommendPanel({ onClose, isModal = false }: AutoRecommendPa
               </label>
               <select
                 value={region}
-                onChange={(e) => setRegion(e.target.value)}
+                onChange={(e) => setRegion(e.target.value as typeof REGIONS[number])}
                 className="w-full rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] px-5 py-3.5 text-sm text-[var(--text-primary)] focus:border-[var(--accent-strong)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-strong)]/20 transition-all appearance-none cursor-pointer"
               >
                 {REGIONS.map((r) => (

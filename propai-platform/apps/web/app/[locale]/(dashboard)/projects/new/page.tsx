@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { useProjectStore } from "@/store/useProjectStore";
+import { GlobalAddressSearch, type AddressEntry } from "@/components/common/GlobalAddressSearch";
 
 const PROJECT_TYPES = [
   { value: "residential", label: "주거" },
@@ -104,27 +105,16 @@ export default function NewProjectPage() {
                 />
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="grid gap-2">
-                  <label className="text-xs font-bold uppercase tracking-widest text-[var(--text-tertiary)]">소재지 (주소)</label>
-                  <input
-                    type="text"
-                    value={location}
-                    onChange={(e) => setLocation(e.target.value)}
-                    placeholder="예: 서울 성동구 성수동2가"
-                    className="w-full rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-muted)] py-4 px-5 text-sm font-bold placeholder:text-[var(--text-hint)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-strong)]/30 focus:border-[var(--accent-strong)] transition-all text-[var(--text-primary)]"
-                  />
-                </div>
-                <div className="grid gap-2">
-                  <label className="text-xs font-bold uppercase tracking-widest text-[var(--text-tertiary)]">필지번호 (선택)</label>
-                  <input
-                    type="text"
-                    value={pnu}
-                    onChange={(e) => setPnu(e.target.value)}
-                    placeholder="19자리 법정동 코드"
-                    className="w-full rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-muted)] py-4 px-5 text-sm font-mono placeholder:text-[var(--text-hint)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-strong)]/30 focus:border-[var(--accent-strong)] transition-all text-[var(--text-primary)]"
-                  />
-                </div>
+              <div className="grid gap-2">
+                <label className="text-xs font-bold uppercase tracking-widest text-[var(--text-tertiary)]">소재지 (주소 검색)</label>
+                <GlobalAddressSearch
+                  onChange={(entries: AddressEntry[]) => {
+                    if (entries.length > 0) {
+                      setLocation(entries[0].fullAddress);
+                    }
+                  }}
+                  placeholder="주소를 검색하세요 (다필지 입력 가능)"
+                />
               </div>
 
               <div className="grid gap-2">

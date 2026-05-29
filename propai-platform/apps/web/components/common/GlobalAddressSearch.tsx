@@ -27,6 +27,8 @@ export interface AddressEntry {
   sigungu: string;
   bname: string;
   zonecode: string;
+  areaSqm?: number; // 면적 (m²) — API에서 자동 반영
+  areaPyeong?: number; // 면적 (평) — 자동 환산
 }
 
 interface GlobalAddressSearchProps {
@@ -195,11 +197,15 @@ export function GlobalAddressSearch({
               <span className="text-sm text-[var(--text-primary)] truncate flex-1">
                 {addr.fullAddress}
               </span>
-              {addr.sido && (
+              {addr.areaSqm ? (
+                <span className="text-[10px] text-[var(--accent-strong)] font-bold flex-shrink-0">
+                  {addr.areaSqm.toLocaleString()}m² ({(addr.areaSqm / 3.305785).toFixed(1)}평)
+                </span>
+              ) : addr.sido ? (
                 <span className="text-[10px] text-[var(--text-hint)] flex-shrink-0">
                   {addr.sido} {addr.sigungu}
                 </span>
-              )}
+              ) : null}
               {addresses.length > 0 && (
                 <button
                   type="button"
@@ -278,12 +284,24 @@ export function GlobalAddressSearch({
         </div>
       )}
 
-      {/* 다필지 요약 */}
-      {!single && displayAddresses.length > 1 && (
-        <p className="text-[10px] text-[var(--text-hint)]">
-          {displayAddresses.length}개 필지 등록됨 — 합필 분석 시 전체 면적이 합산됩니다.
-        </p>
-      )}
+      {/* 다필지 요약 + 면적 합계 */}
+      {!single && displayAddresses.length > 1 && (() => {
+        const totalSqm = displayAddresses.reduce((sum, a) => sum + (a.areaSqm || 0), 0);
+        return (
+          <div className="rounded-lg bg-[var(--surface-soft)] p-2.5 text-[10px]">
+            <div className="flex items-center justify-between">
+              <span className="text-[var(--text-secondary)] font-bold">
+                {displayAddresses.length}개 필지 등록
+              </span>
+              {totalSqm > 0 && (
+                <span className="text-[var(--accent-strong)] font-bold">
+                  합계: {totalSqm.toLocaleString()}m² ({(totalSqm / 3.305785).toFixed(1)}평)
+                </span>
+              )}
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

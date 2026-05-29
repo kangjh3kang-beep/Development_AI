@@ -7,6 +7,7 @@ import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryEr
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import { ApiClientError, apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { GlobalAddressSearch } from "@/components/common/GlobalAddressSearch";
 import { AutoZoningBadge } from "@/components/projects/AutoZoningBadge";
 import type { Locale } from "@/i18n/config";
 
@@ -490,14 +491,13 @@ export function ProjectSiteAnalysisWorkspaceClient({
                 {labels.formTitle}
               </p>
               <form className="mt-4 grid gap-3" onSubmit={handleSubmit}>
-                <Input
-                  value={form.address}
-                  onChange={(event) =>
-                    setForm((current) => ({
-                      ...current,
-                      address: event.target.value,
-                    }))
-                  }
+                <GlobalAddressSearch
+                  single
+                  onChange={(entries) => {
+                    if (entries.length > 0) {
+                      setForm((current) => ({ ...current, address: entries[0].fullAddress }));
+                    }
+                  }}
                   placeholder={labels.addressLabel}
                 />
                 <div className="grid gap-3 md:grid-cols-2">
