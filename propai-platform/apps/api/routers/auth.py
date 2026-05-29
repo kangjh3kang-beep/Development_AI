@@ -85,14 +85,23 @@ async def login(
     settings: Settings = Depends(get_settings),
 ) -> TokenResponse:
     """Issue JWT credentials for an existing user."""
-    result = await db.execute(select(User).where(User.email == body.email))
-    user = result.scalar_one_or_none()
+    import traceback
+    try:
+        result = await db.execute(select(User).where(User.email == body.email))
+        user = result.scalar_one_or_none()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"DB 쿼리 오류: {str(e)[:200]}")
 
-    if user is None or not pwd_context.verify(body.password, user.hashed_password):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Email or password is invalid.",
-        )
+    if user is None:
+        raise HTTPException(status_code=401, detail="등록되지 않은 이메일입니다.")
+
+    try:
+        if not pwd_context.verify(body.password, user.hashed_password):
+            raise HTTPException(status_code=401, detail="비밀번호가 일치하지 않습니다.")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"비밀번호 검증 오류: {str(e)[:200]}")
 
     if not user.is_active:
         raise HTTPException(
