@@ -3,6 +3,7 @@ import { HeroGridBackground } from "@/components/dashboard/DashboardDynamicEleme
 import { DashboardKpiLoader } from "@/components/dashboard/DashboardKpiLoader";
 import { DashboardProjectLoader } from "@/components/dashboard/DashboardProjectLoader";
 import { MarketingPanels } from "@/components/dashboard/MarketingPanels";
+import { PromoBanner } from "@/components/dashboard/PromoBanner";
 import { OnboardingWizard } from "@/components/onboarding/OnboardingWizard";
 import { ProjectPipelinePanel } from "@/components/pipeline/ProjectPipelinePanel";
 import { Logo } from "@/components/ui/Logo";
@@ -142,6 +143,9 @@ export default async function DashboardPage({ params }: DashboardPageProps) {
           ))}
         </div>
       </section>
+
+      {/* ── 사통팔땅 홍보 배너 ── */}
+      <PromoBanner />
 
       {/* ── 자동 분석 파이프라인 ── */}
       <ProjectPipelinePanel />

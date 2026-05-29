@@ -1,0 +1,26 @@
+{
+  "version": "2025.1",
+  "source": "Internal baseline aligned to GRESB 2025 scoring intent",
+  "building_types": {
+    "apartment": {
+      "energy_kwh_sqm": 130,
+      "ghg_kg_sqm": 62,
+      "water_l_sqm": 500
+    },
+    "office": {
+      "energy_kwh_sqm": 200,
+      "ghg_kg_sqm": 95,
+      "water_l_sqm": 700
+    },
+    "commercial": {
+      "energy_kwh_sqm": 250,
+      "ghg_kg_sqm": 120,
+      "water_l_sqm": 800
+    },
+    "logistics": {
+      "energy_kwh_sqm": 170,
+      "ghg_kg_sqm": 84,
+      "water_l_sqm": 420
+    }
+  }
+}

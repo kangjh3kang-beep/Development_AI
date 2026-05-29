@@ -20,10 +20,11 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = structlog.get_logger(__name__)
+settings = get_settings()
 
 # B02: Redis Connection Pool 고갈 방어를 위한 최적화
 redis_pool = redis.ConnectionPool.from_url(
-    "redis://localhost:6379/1",
+    settings.redis_cache_url,
     max_connections=500,
     timeout=5,
     socket_keepalive=True,

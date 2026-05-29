@@ -2,8 +2,13 @@
 GRESB ESG 자동 스코어링 서비스.
 GRESB 2025 평가 항목 기반 점수 예측.
 """
+import json
 import logging
+import os
+from pathlib import Path
 from typing import Optional
+
+from apps.api.config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -37,12 +42,73 @@ GRESB_COMPONENTS = {
     },
 }
 
-# Benchmark values (Korean average for similar buildings)
-BENCHMARKS = {
+# Benchmark fallback values (Korean average for similar buildings)
+_FALLBACK_BENCHMARKS = {
     "apartment": {"energy_kwh_sqm": 130, "ghg_kg_sqm": 62, "water_l_sqm": 500},
     "office": {"energy_kwh_sqm": 200, "ghg_kg_sqm": 95, "water_l_sqm": 700},
     "commercial": {"energy_kwh_sqm": 250, "ghg_kg_sqm": 120, "water_l_sqm": 800},
 }
+
+_DEFAULT_BENCHMARK_PATH = (
+    Path(__file__).resolve().parents[3] / "config_data" / "gresb_benchmarks_2025.default.json"
+)
+
+
+def _load_benchmark_payload() -> dict:
+    """환경 설정/파일 기반 GRESB 벤치마크를 로드한다."""
+    settings = get_settings()
+    configured = (settings.gresb_benchmarks_path or os.getenv("GRESB_BENCHMARKS_PATH", "")).strip()
+    candidate_paths = [Path(configured)] if configured else []
+    candidate_paths.append(_DEFAULT_BENCHMARK_PATH)
+
+    for path in candidate_paths:
+        try:
+            if path.exists():
+                payload = json.loads(path.read_text(encoding="utf-8"))
+                building_types = payload.get("building_types")
+                if isinstance(building_types, dict) and building_types:
+                    return payload
+        except Exception:
+            continue
+    return {
+        "version": "fallback",
+        "source": "embedded defaults",
+        "building_types": _FALLBACK_BENCHMARKS,
+    }
+
+
+def _normalize_benchmarks(raw: dict) -> dict:
+    normalized: dict = {}
+    for btype, values in raw.items():
+        try:
+            normalized[btype] = {
+                "energy_kwh_sqm": float(values["energy_kwh_sqm"]),
+                "ghg_kg_sqm": float(values["ghg_kg_sqm"]),
+                "water_l_sqm": float(values["water_l_sqm"]),
+            }
+        except Exception:
+            continue
+    return normalized or dict(_FALLBACK_BENCHMARKS)
+
+
+_BENCHMARK_PAYLOAD = _load_benchmark_payload()
+BENCHMARKS = _normalize_benchmarks(_BENCHMARK_PAYLOAD.get("building_types", {}))
+BENCHMARK_META = {
+    "version": _BENCHMARK_PAYLOAD.get("version", "unknown"),
+    "source": _BENCHMARK_PAYLOAD.get("source", "unknown"),
+}
+
+
+def refresh_benchmark_cache() -> dict:
+    """환경/파일 변경 시 벤치마크 캐시를 갱신한다."""
+    global _BENCHMARK_PAYLOAD, BENCHMARKS, BENCHMARK_META
+    _BENCHMARK_PAYLOAD = _load_benchmark_payload()
+    BENCHMARKS = _normalize_benchmarks(_BENCHMARK_PAYLOAD.get("building_types", {}))
+    BENCHMARK_META = {
+        "version": _BENCHMARK_PAYLOAD.get("version", "unknown"),
+        "source": _BENCHMARK_PAYLOAD.get("source", "unknown"),
+    }
+    return BENCHMARKS
 
 
 class GresbScoringService:
@@ -182,6 +248,7 @@ class GresbScoringService:
             "grade_label": grade_label,
             "components": scores,
             "benchmark_type": building_type,
+            "benchmark_meta": BENCHMARK_META,
             "recommendations": recommendations,
             "potential_score": total + sum(
                 r.get("potential_gain", 0) for r in recommendations

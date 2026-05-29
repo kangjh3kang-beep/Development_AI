@@ -1,0 +1,46 @@
+{
+  "version": "2026-05-29",
+  "source": "Default IFC embodied carbon factors",
+  "factors": {
+    "IfcWall": {
+      "factor": 120.0,
+      "unit": "m³",
+      "description": "콘크리트 벽체"
+    },
+    "IfcSlab": {
+      "factor": 130.0,
+      "unit": "m³",
+      "description": "콘크리트 슬래브"
+    },
+    "IfcBeam": {
+      "factor": 140.0,
+      "unit": "m³",
+      "description": "콘크리트 보"
+    },
+    "IfcColumn": {
+      "factor": 150.0,
+      "unit": "m³",
+      "description": "콘크리트 기둥"
+    },
+    "IfcWindow": {
+      "factor": 45.0,
+      "unit": "m²",
+      "description": "유리 창호"
+    },
+    "IfcDoor": {
+      "factor": 35.0,
+      "unit": "m²",
+      "description": "문"
+    },
+    "IfcRoof": {
+      "factor": 110.0,
+      "unit": "m²",
+      "description": "지붕"
+    },
+    "IfcStair": {
+      "factor": 100.0,
+      "unit": "m³",
+      "description": "계단"
+    }
+  }
+}

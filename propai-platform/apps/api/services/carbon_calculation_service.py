@@ -10,6 +10,9 @@
 4. 탄소 저감 방안 제시
 """
 
+import json
+import os
+from pathlib import Path
 from uuid import UUID
 
 import structlog
@@ -92,8 +95,8 @@ LOW_CARBON_ALTERNATIVES = {
     "glass_float": ["glass_low_e"],
 }
 
-# 건축자재별 탄소 배출 계수 (kgCO2e/단위)
-_CARBON_FACTORS = {
+# 건축자재별 탄소 배출 계수 fallback (kgCO2e/단위)
+_FALLBACK_CARBON_FACTORS = {
     "IfcWall": {"factor": 120.0, "unit": "m³", "description": "콘크리트 벽체"},
     "IfcSlab": {"factor": 130.0, "unit": "m³", "description": "콘크리트 슬래브"},
     "IfcBeam": {"factor": 140.0, "unit": "m³", "description": "콘크리트 보"},
@@ -103,6 +106,53 @@ _CARBON_FACTORS = {
     "IfcRoof": {"factor": 110.0, "unit": "m²", "description": "지붕"},
     "IfcStair": {"factor": 100.0, "unit": "m³", "description": "계단"},
 }
+
+_DEFAULT_CARBON_FACTORS_PATH = (
+    Path(__file__).resolve().parents[1] / "config_data" / "carbon_factors_ifc.default.json"
+)
+
+
+def _normalize_factor_payload(raw: dict) -> dict[str, dict]:
+    normalized: dict[str, dict] = {}
+    for element_type, info in raw.items():
+        try:
+            factor = float(info["factor"])
+            unit = str(info.get("unit", "m3"))
+            description = str(info.get("description", element_type))
+        except Exception:
+            continue
+        normalized[element_type] = {
+            "factor": factor,
+            "unit": unit,
+            "description": description,
+        }
+    return normalized or dict(_FALLBACK_CARBON_FACTORS)
+
+
+def _load_carbon_factors(settings) -> tuple[dict[str, dict], dict[str, str]]:
+    configured = (settings.carbon_factors_path or os.getenv("CARBON_FACTORS_PATH", "")).strip()
+    candidate_paths = [Path(configured)] if configured else []
+    candidate_paths.append(_DEFAULT_CARBON_FACTORS_PATH)
+
+    for path in candidate_paths:
+        try:
+            if not path.exists():
+                continue
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            factors = _normalize_factor_payload(payload.get("factors", {}))
+            meta = {
+                "version": str(payload.get("version", "unknown")),
+                "source": str(payload.get("source", str(path))),
+            }
+            return factors, meta
+        except Exception:
+            continue
+
+    return dict(_FALLBACK_CARBON_FACTORS), {"version": "fallback", "source": "embedded defaults"}
+
+
+# 하위 호환: 기존 모듈 레벨 상수 참조 지점 유지
+_CARBON_FACTORS = dict(_FALLBACK_CARBON_FACTORS)
 
 
 class CarbonCalculationResult:
@@ -127,6 +177,7 @@ class CarbonCalculationService:
     def __init__(self, db: AsyncSession) -> None:
         self.db = db
         self.settings = get_settings()
+        self._carbon_factors, self._carbon_factors_meta = _load_carbon_factors(self.settings)
 
     # ──────────────────────────────────────────────
     # T3-1: Ecoinvent GWP 조회 / 탄소 등급 산출
@@ -196,7 +247,7 @@ class CarbonCalculationService:
 
         for material in material_breakdown:
             element_type = material.get("type", "")
-            factor_info = _CARBON_FACTORS.get(element_type)
+            factor_info = self._carbon_factors.get(element_type)
 
             if factor_info:
                 # 체적 또는 면적 기반 계산

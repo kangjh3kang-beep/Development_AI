@@ -1,0 +1,993 @@
+{
+  "summary": {
+    "에이전트/보고": {
+      "routers": 4,
+      "services": 4,
+      "tests_linked": 7,
+      "flagged": 0,
+      "items": 8
+    },
+    "BIM/공사비/리스크": {
+      "routers": 6,
+      "services": 9,
+      "tests_linked": 12,
+      "flagged": 0,
+      "items": 15
+    },
+    "인증/권한": {
+      "routers": 4,
+      "services": 2,
+      "tests_linked": 5,
+      "flagged": 0,
+      "items": 6
+    },
+    "입지/AVM/시장": {
+      "routers": 8,
+      "services": 6,
+      "tests_linked": 10,
+      "flagged": 1,
+      "items": 14
+    },
+    "금융/세무/계약": {
+      "routers": 6,
+      "services": 4,
+      "tests_linked": 7,
+      "flagged": 0,
+      "items": 10
+    },
+    "법규/인허가": {
+      "routers": 4,
+      "services": 5,
+      "tests_linked": 6,
+      "flagged": 1,
+      "items": 9
+    },
+    "설계/CAD": {
+      "routers": 3,
+      "services": 4,
+      "tests_linked": 3,
+      "flagged": 0,
+      "items": 7
+    },
+    "기타": {
+      "routers": 8,
+      "services": 15,
+      "tests_linked": 16,
+      "flagged": 4,
+      "items": 23
+    },
+    "프로젝트/대시보드": {
+      "routers": 4,
+      "services": 0,
+      "tests_linked": 4,
+      "flagged": 0,
+      "items": 4
+    },
+    "디지털트윈/IoT/운영": {
+      "routers": 6,
+      "services": 7,
+      "tests_linked": 8,
+      "flagged": 0,
+      "items": 13
+    },
+    "ESG/에너지": {
+      "routers": 5,
+      "services": 6,
+      "tests_linked": 6,
+      "flagged": 0,
+      "items": 11
+    }
+  },
+  "items": [
+    {
+      "type": "router",
+      "name": "agents",
+      "group": "에이전트/보고",
+      "endpoints": 2,
+      "tests": 8,
+      "flags": []
+    },
+    {
+      "type": "router",
+      "name": "ai_costs",
+      "group": "BIM/공사비/리스크",
+      "endpoints": 3,
+      "tests": 3,
+      "flags": []
+    },
+    {
+      "type": "router",
+      "name": "api_keys",
+      "group": "인증/권한",
+      "endpoints": 3,
+      "tests": 3,
+      "flags": []
+    },
+    {
+      "type": "router",
+      "name": "auction",
+      "group": "입지/AVM/시장",
+      "endpoints": 3,
+      "tests": 2,
+      "flags": []
+    },
+    {
+      "type": "router",
+      "name": "auth",
+      "group": "인증/권한",
+      "endpoints": 7,
+      "tests": 22,
+      "flags": []
+    },
+    {
+      "type": "router",
+      "name": "auto_zoning",
+      "group": "입지/AVM/시장",
+      "endpoints": 2,
+      "tests": 0,
+      "flags": []
+    },
+    {
+      "type": "router",
+      "name": "avm",
+      "group": "입지/AVM/시장",
+      "endpoints": 1,
+      "tests": 13,
+      "flags": []
+    },
+    {
+      "type": "router",
+      "name": "bim",
+      "group": "BIM/공사비/리스크",
+      "endpoints": 4,
+      "tests": 5,
+      "flags": []
+    },
+    {
+      "type": "router",
+      "name": "blockchain",
+      "group": "금융/세무/계약",
+      "endpoints": 9,
+      "tests": 3,
+      "flags": []
+    },
+    {
+      "type": "router",
+      "name": "building_compliance",
+      "group": "법규/인허가",
+      "endpoints": 2,
+      "tests": 0,
+      "flags": []
+    },
+    {
+      "type": "router",
+      "name": "cad_correction",
+      "group": "설계/CAD",
+      "endpoints": 2,
+      "tests": 0,
+      "flags": []
+    },
+    {
+      "type": "router",
+      "name": "chatbot",
+      "group": "에이전트/보고",
+      "endpoints": 4,
+      "tests": 2,
+      "flags": []
+    },
+    {
+      "type": "router",
+      "name": "climate",
+      "group": "기타",
+      "endpoints": 1,
+      "tests": 5,
+      "flags": []
+    },
+    {
+      "type": "router",
+      "name": "compliance",
+      "group": "법규/인허가",
+      "endpoints": 1,
+      "tests": 4,
+      "flags": []
+    },
+    {
+      "type": "router",
+      "name": "construction",
+      "group": "BIM/공사비/리스크",
+      "endpoints": 4,
+      "tests": 5,
+      "flags": []
+    },
+    {
+      "type": "router",
+      "name": "contractors",
+      "group": "기타",
+      "endpoints": 3,
+      "tests": 2,
+      "flags": []
+    },
+    {
+      "type": "router",
+      "name": "contracts",
+      "group": "금융/세무/계약",
+      "endpoints": 3,
+      "tests": 8,
+      "flags": []
+    },
+    {
+      "type": "router",
+      "name": "cost_intelligence",
+      "group": "BIM/공사비/리스크",
+      "endpoints": 4,
+      "tests": 1,
+      "flags": []
+    },
+    {
+      "type": "router",
+      "name": "dashboard",
+      "group": "프로젝트/대시보드",
+      "endpoints": 4,
+      "tests": 5,
+      "flags": []
+    },
+    {
+      "type": "router",
+      "name": "data_integrity",
+      "group": "기타",
+      "endpoints": 3,
+      "tests": 0,
+      "flags": [
+        "hardcoded"
+      ]
+    },
+    {
+      "type": "router",
+      "name": "design",
+      "group": "설계/CAD",
+      "endpoints": 3,
+      "tests": 9,
+      "flags": []
+    },
+    {
+      "type": "router",
+      "name": "development_methods",
+      "group": "기타",
+      "endpoints": 1,
+      "tests": 0,
+      "flags": []
+    },
+    {
+      "type": "router",
+      "name": "digital_twin",
+      "group": "디지털트윈/IoT/운영",
+      "endpoints": 3,
+      "tests": 2,
+      "flags": []
+    },
+    {
+      "type": "router",
+      "name": "domain_agents",
+      "group": "에이전트/보고",
+      "endpoints": 6,
+      "tests": 3,
+      "flags": []
+    },
+    {
+      "type": "router",
+      "name": "drawing",
+      "group": "설계/CAD",
+      "endpoints": 4,
+      "tests": 0,
+      "flags": []
+    },
+    {
+      "type": "router",
+      "name": "drone",
+      "group": "디지털트윈/IoT/운영",
+      "endpoints": 1,
+      "tests": 4,
+      "flags": []
+    },
+    {
+      "type": "router",
+      "name": "energy",
+      "group": "ESG/에너지",
+      "endpoints": 2,
+      "tests": 7,
+      "flags": []
+    },
+    {
+      "type": "router",
+      "name": "esg",
+      "group": "ESG/에너지",
+      "endpoints": 1,
+      "tests": 3,
+      "flags": []
+    },
+    {
+      "type": "router",
+      "name": "esign",
+      "group": "기타",
+      "endpoints": 2,
+      "tests": 12,
+      "flags": [
+        "mock"
+      ]
+    },
+    {
+      "type": "router",
+      "name": "eu_taxonomy",
+      "group": "금융/세무/계약",
+      "endpoints": 1,
+      "tests": 0,
+      "flags": []
+    },
+    {
+      "type": "router",
+      "name": "facility_reservations",
+      "group": "디지털트윈/IoT/운영",
+      "endpoints": 2,
+      "tests": 0,
+      "flags": []
+    },
+    {
+      "type": "router",
+      "name": "finance",
+      "group": "금융/세무/계약",
+      "endpoints": 4,
+      "tests": 3,
+      "flags": []
+    },
+    {
+      "type": "router",
+      "name": "gresb",
+      "group": "ESG/에너지",
+      "endpoints": 2,
+      "tests": 1,
+      "flags": []
+    },
+    {
+      "type": "router",
+      "name": "kdx",
+      "group": "입지/AVM/시장",
+      "endpoints": 4,
+      "tests": 3,
+      "flags": []
+    },
+    {
+      "type": "router",
+      "name": "lcc",
+      "group": "ESG/에너지",
+      "endpoints": 1,
+      "tests": 0,
+      "flags": []
+    },
+    {
+      "type": "router",
+      "name": "leases",
+      "group": "기타",
+      "endpoints": 1,
+      "tests": 1,
+      "flags": []
+    },
+    {
+      "type": "router",
+      "name": "maintenance",
+      "group": "디지털트윈/IoT/운영",
+      "endpoints": 1,
+      "tests": 2,
+      "flags": []
+    },
+    {
+      "type": "router",
+      "name": "market_ai",
+      "group": "입지/AVM/시장",
+      "endpoints": 2,
+      "tests": 0,
+      "flags": []
+    },
+    {
+      "type": "router",
+      "name": "marketing",
+      "group": "입지/AVM/시장",
+      "endpoints": 2,
+      "tests": 2,
+      "flags": []
+    },
+    {
+      "type": "router",
+      "name": "monte_carlo",
+      "group": "BIM/공사비/리스크",
+      "endpoints": 1,
+      "tests": 0,
+      "flags": []
+    },
+    {
+      "type": "router",
+      "name": "notifications",
+      "group": "프로젝트/대시보드",
+      "endpoints": 1,
+      "tests": 1,
+      "flags": []
+    },
+    {
+      "type": "router",
+      "name": "parking",
+      "group": "기타",
+      "endpoints": 2,
+      "tests": 2,
+      "flags": []
+    },
+    {
+      "type": "router",
+      "name": "permits",
+      "group": "법규/인허가",
+      "endpoints": 5,
+      "tests": 1,
+      "flags": []
+    },
+    {
+      "type": "router",
+      "name": "portals",
+      "group": "입지/AVM/시장",
+      "endpoints": 3,
+      "tests": 3,
+      "flags": []
+    },
+    {
+      "type": "router",
+      "name": "projects",
+      "group": "프로젝트/대시보드",
+      "endpoints": 7,
+      "tests": 10,
+      "flags": []
+    },
+    {
+      "type": "router",
+      "name": "re100",
+      "group": "ESG/에너지",
+      "endpoints": 1,
+      "tests": 0,
+      "flags": []
+    },
+    {
+      "type": "router",
+      "name": "regulation",
+      "group": "법규/인허가",
+      "endpoints": 1,
+      "tests": 9,
+      "flags": []
+    },
+    {
+      "type": "router",
+      "name": "reports",
+      "group": "에이전트/보고",
+      "endpoints": 2,
+      "tests": 4,
+      "flags": []
+    },
+    {
+      "type": "router",
+      "name": "risk",
+      "group": "BIM/공사비/리스크",
+      "endpoints": 2,
+      "tests": 13,
+      "flags": []
+    },
+    {
+      "type": "router",
+      "name": "safety",
+      "group": "디지털트윈/IoT/운영",
+      "endpoints": 3,
+      "tests": 1,
+      "flags": []
+    },
+    {
+      "type": "router",
+      "name": "sre",
+      "group": "디지털트윈/IoT/운영",
+      "endpoints": 1,
+      "tests": 1,
+      "flags": []
+    },
+    {
+      "type": "router",
+      "name": "system",
+      "group": "프로젝트/대시보드",
+      "endpoints": 3,
+      "tests": 2,
+      "flags": []
+    },
+    {
+      "type": "router",
+      "name": "tax",
+      "group": "금융/세무/계약",
+      "endpoints": 1,
+      "tests": 3,
+      "flags": []
+    },
+    {
+      "type": "router",
+      "name": "tenant",
+      "group": "인증/권한",
+      "endpoints": 2,
+      "tests": 16,
+      "flags": []
+    },
+    {
+      "type": "router",
+      "name": "underwriting",
+      "group": "금융/세무/계약",
+      "endpoints": 2,
+      "tests": 3,
+      "flags": []
+    },
+    {
+      "type": "router",
+      "name": "unit_mix",
+      "group": "입지/AVM/시장",
+      "endpoints": 2,
+      "tests": 0,
+      "flags": []
+    },
+    {
+      "type": "router",
+      "name": "webhooks",
+      "group": "기타",
+      "endpoints": 7,
+      "tests": 3,
+      "flags": []
+    },
+    {
+      "type": "router",
+      "name": "webrtc",
+      "group": "인증/권한",
+      "endpoints": 6,
+      "tests": 1,
+      "flags": []
+    },
+    {
+      "type": "service",
+      "name": "ai_costs_service",
+      "group": "BIM/공사비/리스크",
+      "tests": 1,
+      "flags": []
+    },
+    {
+      "type": "service",
+      "name": "ai_usage_tracker",
+      "group": "기타",
+      "tests": 3,
+      "flags": []
+    },
+    {
+      "type": "service",
+      "name": "asset_intelligence_service",
+      "group": "기타",
+      "tests": 1,
+      "flags": []
+    },
+    {
+      "type": "service",
+      "name": "auction_service",
+      "group": "입지/AVM/시장",
+      "tests": 2,
+      "flags": []
+    },
+    {
+      "type": "service",
+      "name": "audit_service",
+      "group": "기타",
+      "tests": 1,
+      "flags": []
+    },
+    {
+      "type": "service",
+      "name": "avm_service",
+      "group": "입지/AVM/시장",
+      "tests": 2,
+      "flags": [
+        "stub_like"
+      ]
+    },
+    {
+      "type": "service",
+      "name": "bim_ifc_service",
+      "group": "BIM/공사비/리스크",
+      "tests": 2,
+      "flags": []
+    },
+    {
+      "type": "service",
+      "name": "blockchain_service",
+      "group": "금융/세무/계약",
+      "tests": 1,
+      "flags": []
+    },
+    {
+      "type": "service",
+      "name": "building_compliance_service",
+      "group": "법규/인허가",
+      "tests": 0,
+      "flags": [
+        "stub_like"
+      ]
+    },
+    {
+      "type": "service",
+      "name": "cad_auto_correction_service",
+      "group": "설계/CAD",
+      "tests": 0,
+      "flags": []
+    },
+    {
+      "type": "service",
+      "name": "carbon_calculation_service",
+      "group": "ESG/에너지",
+      "tests": 1,
+      "flags": []
+    },
+    {
+      "type": "service",
+      "name": "chatbot_service",
+      "group": "에이전트/보고",
+      "tests": 2,
+      "flags": []
+    },
+    {
+      "type": "service",
+      "name": "climate_risk_service",
+      "group": "BIM/공사비/리스크",
+      "tests": 0,
+      "flags": []
+    },
+    {
+      "type": "service",
+      "name": "compliance_service",
+      "group": "법규/인허가",
+      "tests": 1,
+      "flags": []
+    },
+    {
+      "type": "service",
+      "name": "construction_ai_service",
+      "group": "BIM/공사비/리스크",
+      "tests": 1,
+      "flags": []
+    },
+    {
+      "type": "service",
+      "name": "contract_generator",
+      "group": "기타",
+      "tests": 1,
+      "flags": [
+        "mock"
+      ]
+    },
+    {
+      "type": "service",
+      "name": "contractor_service",
+      "group": "기타",
+      "tests": 2,
+      "flags": []
+    },
+    {
+      "type": "service",
+      "name": "cost_escalation_engine",
+      "group": "BIM/공사비/리스크",
+      "tests": 1,
+      "flags": []
+    },
+    {
+      "type": "service",
+      "name": "demand_forecast_service",
+      "group": "기타",
+      "tests": 1,
+      "flags": []
+    },
+    {
+      "type": "service",
+      "name": "design_ai_service",
+      "group": "설계/CAD",
+      "tests": 1,
+      "flags": []
+    },
+    {
+      "type": "service",
+      "name": "development_method_service",
+      "group": "기타",
+      "tests": 0,
+      "flags": []
+    },
+    {
+      "type": "service",
+      "name": "digital_twin_service",
+      "group": "디지털트윈/IoT/운영",
+      "tests": 0,
+      "flags": []
+    },
+    {
+      "type": "service",
+      "name": "digital_twin_status_service",
+      "group": "디지털트윈/IoT/운영",
+      "tests": 1,
+      "flags": []
+    },
+    {
+      "type": "service",
+      "name": "domain_agents_service",
+      "group": "에이전트/보고",
+      "tests": 2,
+      "flags": []
+    },
+    {
+      "type": "service",
+      "name": "drone_iot_service",
+      "group": "디지털트윈/IoT/운영",
+      "tests": 1,
+      "flags": []
+    },
+    {
+      "type": "service",
+      "name": "dt_service",
+      "group": "기타",
+      "tests": 0,
+      "flags": []
+    },
+    {
+      "type": "service",
+      "name": "energy_service",
+      "group": "ESG/에너지",
+      "tests": 1,
+      "flags": []
+    },
+    {
+      "type": "service",
+      "name": "esg_service",
+      "group": "ESG/에너지",
+      "tests": 1,
+      "flags": []
+    },
+    {
+      "type": "service",
+      "name": "eu_taxonomy_service",
+      "group": "금융/세무/계약",
+      "tests": 0,
+      "flags": []
+    },
+    {
+      "type": "service",
+      "name": "facility_reservation_service",
+      "group": "디지털트윈/IoT/운영",
+      "tests": 0,
+      "flags": []
+    },
+    {
+      "type": "service",
+      "name": "feasibility_service",
+      "group": "기타",
+      "tests": 1,
+      "flags": []
+    },
+    {
+      "type": "service",
+      "name": "floor_plan_image_service",
+      "group": "설계/CAD",
+      "tests": 2,
+      "flags": []
+    },
+    {
+      "type": "service",
+      "name": "green_certification_service",
+      "group": "ESG/에너지",
+      "tests": 0,
+      "flags": []
+    },
+    {
+      "type": "service",
+      "name": "investor_report_service",
+      "group": "에이전트/보고",
+      "tests": 2,
+      "flags": []
+    },
+    {
+      "type": "service",
+      "name": "jeonse_risk_service",
+      "group": "BIM/공사비/리스크",
+      "tests": 2,
+      "flags": []
+    },
+    {
+      "type": "service",
+      "name": "kcci_material_price_service",
+      "group": "BIM/공사비/리스크",
+      "tests": 1,
+      "flags": []
+    },
+    {
+      "type": "service",
+      "name": "kdx_integration_service",
+      "group": "입지/AVM/시장",
+      "tests": 1,
+      "flags": []
+    },
+    {
+      "type": "service",
+      "name": "lcc_service",
+      "group": "ESG/에너지",
+      "tests": 0,
+      "flags": []
+    },
+    {
+      "type": "service",
+      "name": "lease_service",
+      "group": "기타",
+      "tests": 2,
+      "flags": []
+    },
+    {
+      "type": "service",
+      "name": "maintenance_service",
+      "group": "디지털트윈/IoT/운영",
+      "tests": 1,
+      "flags": []
+    },
+    {
+      "type": "service",
+      "name": "marketing_service",
+      "group": "입지/AVM/시장",
+      "tests": 1,
+      "flags": []
+    },
+    {
+      "type": "service",
+      "name": "monte_carlo_service",
+      "group": "BIM/공사비/리스크",
+      "tests": 0,
+      "flags": []
+    },
+    {
+      "type": "service",
+      "name": "parking_service",
+      "group": "기타",
+      "tests": 0,
+      "flags": [
+        "mock"
+      ]
+    },
+    {
+      "type": "service",
+      "name": "permit_package_service",
+      "group": "법규/인허가",
+      "tests": 0,
+      "flags": []
+    },
+    {
+      "type": "service",
+      "name": "portals_service",
+      "group": "입지/AVM/시장",
+      "tests": 2,
+      "flags": []
+    },
+    {
+      "type": "service",
+      "name": "predictive_maintenance_service",
+      "group": "디지털트윈/IoT/운영",
+      "tests": 0,
+      "flags": []
+    },
+    {
+      "type": "service",
+      "name": "re100_tracker_service",
+      "group": "ESG/에너지",
+      "tests": 0,
+      "flags": []
+    },
+    {
+      "type": "service",
+      "name": "reference_image_service",
+      "group": "설계/CAD",
+      "tests": 0,
+      "flags": []
+    },
+    {
+      "type": "service",
+      "name": "regulation_service",
+      "group": "법규/인허가",
+      "tests": 1,
+      "flags": []
+    },
+    {
+      "type": "service",
+      "name": "reservation_service",
+      "group": "기타",
+      "tests": 0,
+      "flags": []
+    },
+    {
+      "type": "service",
+      "name": "risk_scoring_engine",
+      "group": "BIM/공사비/리스크",
+      "tests": 1,
+      "flags": []
+    },
+    {
+      "type": "service",
+      "name": "safety_service",
+      "group": "디지털트윈/IoT/운영",
+      "tests": 0,
+      "flags": []
+    },
+    {
+      "type": "service",
+      "name": "seumter_permit_service",
+      "group": "법규/인허가",
+      "tests": 1,
+      "flags": []
+    },
+    {
+      "type": "service",
+      "name": "spatial_service",
+      "group": "입지/AVM/시장",
+      "tests": 0,
+      "flags": []
+    },
+    {
+      "type": "service",
+      "name": "stakeholder_service",
+      "group": "기타",
+      "tests": 0,
+      "flags": []
+    },
+    {
+      "type": "service",
+      "name": "tax_ai_service",
+      "group": "금융/세무/계약",
+      "tests": 1,
+      "flags": []
+    },
+    {
+      "type": "service",
+      "name": "tenant_experience_service",
+      "group": "인증/권한",
+      "tests": 1,
+      "flags": []
+    },
+    {
+      "type": "service",
+      "name": "underwriting_service",
+      "group": "금융/세무/계약",
+      "tests": 0,
+      "flags": []
+    },
+    {
+      "type": "service",
+      "name": "union_management_service",
+      "group": "기타",
+      "tests": 1,
+      "flags": []
+    },
+    {
+      "type": "service",
+      "name": "webhook_service",
+      "group": "기타",
+      "tests": 4,
+      "flags": []
+    },
+    {
+      "type": "service",
+      "name": "webrtc_service",
+      "group": "인증/권한",
+      "tests": 0,
+      "flags": []
+    },
+    {
+      "type": "service",
+      "name": "workflow_service",
+      "group": "에이전트/보고",
+      "tests": 0,
+      "flags": []
+    }
+  ]
+}

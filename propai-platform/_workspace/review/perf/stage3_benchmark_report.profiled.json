@@ -1,0 +1,90 @@
+{
+  "generated_at_utc": "2026-05-29T09:51:52.381739+00:00",
+  "dataset_path": "/home/kangjh3kang/My_Projects/Development_AI/propai-platform/tests/fixtures/ifc/golden_quantity_reference.v1.json",
+  "targets": {
+    "ifc_mae_max": 0.02,
+    "monte_carlo_p95_sec_max": 30.0
+  },
+  "ifc_accuracy": {
+    "dataset_version": "2026-05-29.v1",
+    "case_count": 8,
+    "mae": 0.009031845238095238,
+    "mae_pct": 0.9032,
+    "target": 0.02,
+    "pass_target": true,
+    "cases": [
+      {
+        "id": "office_small",
+        "area_error_pct": 0.7,
+        "volume_error_pct": 0.52,
+        "max_error_pct": 0.7
+      },
+      {
+        "id": "apartment_mid",
+        "area_error_pct": 1.1071,
+        "volume_error_pct": 0.5,
+        "max_error_pct": 1.1071
+      },
+      {
+        "id": "warehouse",
+        "area_error_pct": 1.3,
+        "volume_error_pct": 1.2,
+        "max_error_pct": 1.3
+      },
+      {
+        "id": "school",
+        "area_error_pct": 0.6667,
+        "volume_error_pct": 0.8571,
+        "max_error_pct": 0.8571
+      },
+      {
+        "id": "hospital",
+        "area_error_pct": 1.1,
+        "volume_error_pct": 0.9,
+        "max_error_pct": 1.1
+      },
+      {
+        "id": "cultural_center",
+        "area_error_pct": 1.1,
+        "volume_error_pct": 1.0,
+        "max_error_pct": 1.1
+      },
+      {
+        "id": "mixed_use_tower",
+        "area_error_pct": 1.0,
+        "volume_error_pct": 0.9,
+        "max_error_pct": 1.0
+      },
+      {
+        "id": "community_hall",
+        "area_error_pct": 0.7,
+        "volume_error_pct": 0.9,
+        "max_error_pct": 0.9
+      }
+    ]
+  },
+  "monte_carlo": {
+    "attempts": 1,
+    "n_simulations": 10000,
+    "durations_sec": [
+      0.249
+    ],
+    "min_sec": 0.249,
+    "avg_sec": 0.249,
+    "p95_sec": 0.249,
+    "max_sec": 0.249,
+    "target_sec": 30.0,
+    "pass_target": true,
+    "result_snapshot": {
+      "mean_npv": 7574041977.56,
+      "std_npv": 13488042931.98,
+      "p5_npv": -13578996844.68,
+      "p50_npv": 7070346622.11,
+      "p95_npv": 30642374235.48,
+      "positive_ratio": 0.7081,
+      "convergence_ratio": 1.780825
+    }
+  },
+  "profile_output": "/home/kangjh3kang/My_Projects/Development_AI/propai-platform/_workspace/review/perf/stage3_monte_carlo.prof",
+  "overall_pass": true
+}

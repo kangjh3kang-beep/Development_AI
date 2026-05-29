@@ -30,9 +30,22 @@ export default function KdxRealtimeChart() {
 
   useEffect(() => {
     const { apiBaseUrl } = apiClient.getRuntimeConfig();
-    const baseUrl = new URL(apiBaseUrl);
+    const accessToken =
+      typeof window !== "undefined"
+        ? window.localStorage.getItem("propai_access_token")?.trim() ?? ""
+        : "";
+
+    if (!accessToken) {
+      return;
+    }
+    const baseUrl = new URL(
+      apiBaseUrl,
+      typeof window !== "undefined" ? window.location.origin : "http://localhost:3000",
+    );
     const socketProtocol = baseUrl.protocol === "https:" ? "wss:" : "ws:";
-    const ws = new WebSocket(`${socketProtocol}//${baseUrl.host}/api/v1/kdx/stream`);
+    const ws = new WebSocket(
+      `${socketProtocol}//${baseUrl.host}/api/v1/kdx/stream?token=${encodeURIComponent(accessToken)}`,
+    );
 
     ws.onmessage = (event) => {
       const payload = JSON.parse(event.data) as WebSocketTickPayload;

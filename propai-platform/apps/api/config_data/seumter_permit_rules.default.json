@@ -1,0 +1,158 @@
+{
+  "version": "2026-05-29",
+  "stages": [
+    "document-prep",
+    "submitted",
+    "under-review",
+    "site-inspection",
+    "approved"
+  ],
+  "region_aliases": {
+    "서울": "seoul",
+    "서울시": "seoul",
+    "서울특별시": "seoul",
+    "seoul": "seoul",
+    "경기": "gyeonggi",
+    "경기도": "gyeonggi",
+    "gyeonggi": "gyeonggi",
+    "인천": "incheon",
+    "인천광역시": "incheon",
+    "incheon": "incheon"
+  },
+  "permit_types": {
+    "building_permit": {
+      "checklist": [
+        {
+          "id": "BA-01",
+          "name": "Site plan",
+          "required": true
+        },
+        {
+          "id": "BA-02",
+          "name": "Structural review",
+          "required": true
+        },
+        {
+          "id": "BA-03",
+          "name": "Fire and life safety plan",
+          "required": true
+        },
+        {
+          "id": "BA-04",
+          "name": "Energy compliance sheet",
+          "required": true
+        },
+        {
+          "id": "BA-05",
+          "name": "Land-use confirmation",
+          "required": true
+        },
+        {
+          "id": "BA-06",
+          "name": "Traffic impact memo",
+          "required": false,
+          "condition": "large_site"
+        },
+        {
+          "id": "BA-07",
+          "name": "Environmental review note",
+          "required": false,
+          "condition": "public_or_large"
+        }
+      ],
+      "durations": {
+        "seoul": 20,
+        "gyeonggi": 18,
+        "default": 15
+      }
+    },
+    "development_permit": {
+      "checklist": [
+        {
+          "id": "DA-01",
+          "name": "Development masterplan",
+          "required": true
+        },
+        {
+          "id": "DA-02",
+          "name": "Drainage strategy",
+          "required": true
+        },
+        {
+          "id": "DA-03",
+          "name": "Access road plan",
+          "required": true
+        },
+        {
+          "id": "DA-04",
+          "name": "Boundary survey",
+          "required": true
+        },
+        {
+          "id": "DA-05",
+          "name": "Environmental baseline",
+          "required": true
+        },
+        {
+          "id": "DA-06",
+          "name": "Agricultural conversion opinion",
+          "required": false,
+          "condition": "agricultural"
+        }
+      ],
+      "durations": {
+        "seoul": 30,
+        "gyeonggi": 28,
+        "default": 24
+      }
+    },
+    "occupancy_approval": {
+      "checklist": [
+        {
+          "id": "UC-01",
+          "name": "Completion certificate",
+          "required": true
+        },
+        {
+          "id": "UC-02",
+          "name": "Commissioning report",
+          "required": true
+        },
+        {
+          "id": "UC-03",
+          "name": "Fire completion sign-off",
+          "required": true
+        },
+        {
+          "id": "UC-04",
+          "name": "Energy performance certificate",
+          "required": true
+        },
+        {
+          "id": "UC-05",
+          "name": "Indoor air quality report",
+          "required": true
+        },
+        {
+          "id": "UC-06",
+          "name": "Accessibility closeout",
+          "required": false,
+          "condition": "public"
+        }
+      ],
+      "durations": {
+        "seoul": 12,
+        "gyeonggi": 10,
+        "default": 8
+      }
+    }
+  },
+  "duration_multipliers": {
+    "large_site_threshold_sqm": 10000,
+    "large_site_multiplier": 1.1,
+    "very_large_site_threshold_sqm": 30000,
+    "very_large_site_multiplier": 1.2,
+    "public_project_multiplier": 1.15,
+    "agricultural_multiplier": 1.1
+  }
+}

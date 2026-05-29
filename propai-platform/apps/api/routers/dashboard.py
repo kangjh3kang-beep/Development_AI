@@ -19,6 +19,7 @@ from apps.api.auth.jwt_handler import CurrentUser
 from apps.api.auth.rbac import RequirePermission
 from apps.api.database.models.ai_usage_log import AIUsageLog
 from apps.api.database.models.api_key import APIKey
+from apps.api.database.models.financial_analysis import FinancialAnalysis
 from apps.api.database.models.project import Project
 from apps.api.database.models.webhook import Webhook
 from apps.api.database.session import get_db
@@ -49,13 +50,49 @@ async def get_dashboard_overview(
             Project.is_deleted.is_(False),
         )
     )
+    latest_financial_subquery = (
+        select(
+            FinancialAnalysis.project_id.label("project_id"),
+            func.max(FinancialAnalysis.created_at).label("latest_created_at"),
+        )
+        .where(FinancialAnalysis.tenant_id == current_user.tenant_id)
+        .group_by(FinancialAnalysis.project_id)
+        .subquery()
+    )
+
+    investment_row = (
+        await db.execute(
+            select(
+                func.coalesce(func.sum(FinancialAnalysis.total_investment), 0.0),
+                func.coalesce(
+                    func.avg(
+                        (
+                            (FinancialAnalysis.total_revenue - FinancialAnalysis.total_investment)
+                            / func.nullif(FinancialAnalysis.total_investment, 0.0)
+                        )
+                        * 100.0
+                    ),
+                    0.0,
+                ),
+            )
+            .join(
+                latest_financial_subquery,
+                (FinancialAnalysis.project_id == latest_financial_subquery.c.project_id)
+                & (FinancialAnalysis.created_at == latest_financial_subquery.c.latest_created_at),
+            )
+            .where(FinancialAnalysis.tenant_id == current_user.tenant_id)
+        )
+    ).one()
+
+    total_investment_krw = float(investment_row[0] or 0.0)
+    avg_roi_pct = float(investment_row[1] or 0.0)
     total = int(project_count or 0)
     active = int(active_count or 0)
     return {
         "total_projects": total,
         "active_projects": active,
-        "total_investment_billion": 3500.2,  # TODO: calculate from project data
-        "avg_roi_pct": 18.4,
+        "total_investment_billion": round(total_investment_krw / 1_000_000_000, 2),
+        "avg_roi_pct": round(avg_roi_pct, 2),
         "portfolio_count": total,
     }
 

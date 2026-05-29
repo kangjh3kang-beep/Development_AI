@@ -114,6 +114,18 @@ class Settings(BaseSettings):
     ecos_api_key: str = ""
     kcci_api_key: str = ""
     kets_api_key: str = ""
+    seumter_permit_rules_path: str = Field(
+        default="",
+        description="세움터 인허가 규칙 JSON 경로(비어 있으면 기본 내장 규칙 사용)",
+    )
+    gresb_benchmarks_path: str = Field(
+        default="",
+        description="GRESB 벤치마크 JSON 경로(비어 있으면 기본 내장 벤치마크 사용)",
+    )
+    carbon_factors_path: str = Field(
+        default="",
+        description="IFC 탄소계수 JSON 경로(비어 있으면 기본 내장 계수 사용)",
+    )
 
     # ── 블록체인 (Polygon Amoy testnet) ──
     polygon_node_url: str = "https://rpc-amoy.polygon.technology/"

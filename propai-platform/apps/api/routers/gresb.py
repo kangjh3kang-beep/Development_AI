@@ -3,6 +3,7 @@ from pydantic import BaseModel
 from typing import Optional
 
 from apps.api.app.services.esg.gresb_scoring_service import (
+    BENCHMARK_META,
     BENCHMARKS,
     GRESB_COMPONENTS,
     GresbScoringService,
@@ -33,4 +34,8 @@ async def calculate_gresb_score(req: GresbScoreRequest):
 
 @router.get("/benchmarks")
 async def get_benchmarks():
-    return {"benchmarks": BENCHMARKS, "components": GRESB_COMPONENTS}
+    return {
+        "benchmarks": BENCHMARKS,
+        "components": GRESB_COMPONENTS,
+        "meta": BENCHMARK_META,
+    }

@@ -396,7 +396,7 @@ export function PipelineResultDetail({ result, onRerun }: PipelineResultDetailPr
           <div className="flex items-center gap-2 mb-4">
             <span className="h-2 w-2 rounded-full bg-[var(--accent-strong)] animate-pulse" />
             <h3 className="text-sm font-bold text-[var(--text-primary)] tracking-[0.1em]">
-              Executive Summary
+              핵심 요약
             </h3>
             {typeof profitRate === "number" && typeof grade === "string" && (
               <span className="ml-auto text-xs font-bold px-3 py-1 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">

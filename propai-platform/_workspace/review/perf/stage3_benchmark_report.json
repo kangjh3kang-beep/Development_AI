@@ -1,0 +1,164 @@
+{
+  "generated_at_utc": "2026-05-29T10:59:42.042184+00:00",
+  "dataset_path": "/home/kangjh3kang/My_Projects/Development_AI/propai-platform/tests/fixtures/ifc/golden_quantity_reference.v1.json",
+  "targets": {
+    "ifc_mae_max": 0.02,
+    "monte_carlo_p95_sec_max": 30.0
+  },
+  "ifc_accuracy": {
+    "dataset_version": "2026-05-29.v1",
+    "case_count": 8,
+    "mae": 0.009031845238095238,
+    "mae_pct": 0.9032,
+    "target": 0.02,
+    "pass_target": true,
+    "cases": [
+      {
+        "id": "office_small",
+        "area_error_pct": 0.7,
+        "volume_error_pct": 0.52,
+        "max_error_pct": 0.7
+      },
+      {
+        "id": "apartment_mid",
+        "area_error_pct": 1.1071,
+        "volume_error_pct": 0.5,
+        "max_error_pct": 1.1071
+      },
+      {
+        "id": "warehouse",
+        "area_error_pct": 1.3,
+        "volume_error_pct": 1.2,
+        "max_error_pct": 1.3
+      },
+      {
+        "id": "school",
+        "area_error_pct": 0.6667,
+        "volume_error_pct": 0.8571,
+        "max_error_pct": 0.8571
+      },
+      {
+        "id": "hospital",
+        "area_error_pct": 1.1,
+        "volume_error_pct": 0.9,
+        "max_error_pct": 1.1
+      },
+      {
+        "id": "cultural_center",
+        "area_error_pct": 1.1,
+        "volume_error_pct": 1.0,
+        "max_error_pct": 1.1
+      },
+      {
+        "id": "mixed_use_tower",
+        "area_error_pct": 1.0,
+        "volume_error_pct": 0.9,
+        "max_error_pct": 1.0
+      },
+      {
+        "id": "community_hall",
+        "area_error_pct": 0.7,
+        "volume_error_pct": 0.9,
+        "max_error_pct": 0.9
+      }
+    ]
+  },
+  "real_ifc_fixtures": {
+    "manifest_path": "/home/kangjh3kang/My_Projects/Development_AI/propai-platform/tests/fixtures/ifc/real_ifc_manifest.v1.json",
+    "status": "parsed",
+    "manifest_version": "2026-05-29T10:59:26Z",
+    "fixture_count": 3,
+    "available_count": 3,
+    "parsed_count": 3,
+    "missing_count": 0,
+    "parse_failed_count": 0,
+    "parser_available": true,
+    "parser_error": null,
+    "mae": 0.0,
+    "mae_pct": 0.0,
+    "target": 0.02,
+    "pass_target": true,
+    "requirement_min_parsed": 3,
+    "requirement_met": true,
+    "fixtures": [
+      {
+        "id": "logistics_center_c",
+        "local_path": "/home/kangjh3kang/My_Projects/Development_AI/propai-platform/tests/fixtures/ifc/real_samples/logistics_center_c.ifc",
+        "exists": true,
+        "source": "generated-local-sample",
+        "expected_schema": "IFC4",
+        "expected_area_sqm": 540.0,
+        "expected_volume_m3": 795.0,
+        "parse_status": "parsed",
+        "parsed_schema": "IFC4",
+        "parsed_area_sqm": 540.0,
+        "parsed_volume_m3": 795.0,
+        "parsed_element_count": 2,
+        "area_error_pct": 0.0,
+        "volume_error_pct": 0.0,
+        "max_error_pct": 0.0
+      },
+      {
+        "id": "office_tower_b",
+        "local_path": "/home/kangjh3kang/My_Projects/Development_AI/propai-platform/tests/fixtures/ifc/real_samples/office_tower_b.ifc",
+        "exists": true,
+        "source": "generated-local-sample",
+        "expected_schema": "IFC4",
+        "expected_area_sqm": 480.0,
+        "expected_volume_m3": 690.0,
+        "parse_status": "parsed",
+        "parsed_schema": "IFC4",
+        "parsed_area_sqm": 480.0,
+        "parsed_volume_m3": 690.0,
+        "parsed_element_count": 2,
+        "area_error_pct": 0.0,
+        "volume_error_pct": 0.0,
+        "max_error_pct": 0.0
+      },
+      {
+        "id": "residential_block_a",
+        "local_path": "/home/kangjh3kang/My_Projects/Development_AI/propai-platform/tests/fixtures/ifc/real_samples/residential_block_a.ifc",
+        "exists": true,
+        "source": "generated-local-sample",
+        "expected_schema": "IFC4",
+        "expected_area_sqm": 360.0,
+        "expected_volume_m3": 480.0,
+        "parse_status": "parsed",
+        "parsed_schema": "IFC4",
+        "parsed_area_sqm": 360.0,
+        "parsed_volume_m3": 480.0,
+        "parsed_element_count": 2,
+        "area_error_pct": 0.0,
+        "volume_error_pct": 0.0,
+        "max_error_pct": 0.0
+      }
+    ]
+  },
+  "monte_carlo": {
+    "attempts": 3,
+    "n_simulations": 10000,
+    "durations_sec": [
+      0.0719,
+      0.0214,
+      0.0235
+    ],
+    "min_sec": 0.0214,
+    "avg_sec": 0.0389,
+    "p95_sec": 0.067,
+    "max_sec": 0.0719,
+    "target_sec": 30.0,
+    "pass_target": true,
+    "result_snapshot": {
+      "mean_npv": 7933416921.1,
+      "std_npv": 13537932791.04,
+      "p5_npv": -13218227514.28,
+      "p50_npv": 7272823876.29,
+      "p95_npv": 30962080862.57,
+      "positive_ratio": 0.7116,
+      "convergence_ratio": 1.706444
+    }
+  },
+  "real_ifc_manifest_path": "/home/kangjh3kang/My_Projects/Development_AI/propai-platform/tests/fixtures/ifc/real_ifc_manifest.v1.json",
+  "profile_output": null,
+  "overall_pass": true
+}

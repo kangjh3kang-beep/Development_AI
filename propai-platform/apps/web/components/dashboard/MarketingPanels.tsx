@@ -22,7 +22,7 @@ export function MarketingPanels() {
               <span className="flex items-center justify-center h-10 w-10 rounded-full bg-[var(--accent)]/10 text-[var(--accent-strong)] border border-[var(--accent)]/20">
                 <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m12 14 4-4"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/></svg>
               </span>
-              <span className="text-sm font-bold tracking-widest text-[var(--text-tertiary)] uppercase">Core Engine</span>
+              <span className="text-sm font-bold tracking-widest text-[var(--text-tertiary)] uppercase">핵심 코어 엔진</span>
             </div>
             <div>
               <h3 className="text-2xl md:text-3xl font-extrabold text-[var(--text-primary)] mb-3 tracking-tight group-hover:text-[var(--accent-strong)] transition-colors">초고속 AI 입지 및 상권 분석</h3>
@@ -75,7 +75,7 @@ export function MarketingPanels() {
               <span className="flex items-center justify-center h-10 w-10 rounded-full bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">
                 <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2a10 10 0 1 0 10 10H12V2z"/><path d="M12 12 2.1 7.1"/><path d="m12 12 5-8.7"/></svg>
               </span>
-              <span className="text-sm font-bold tracking-widest text-[var(--text-tertiary)] uppercase">Sustainable Future</span>
+              <span className="text-sm font-bold tracking-widest text-[var(--text-tertiary)] uppercase">지속가능한 미래</span>
             </div>
             <div>
               <h3 className="text-2xl md:text-3xl font-extrabold text-[var(--text-primary)] mb-3 tracking-tight group-hover:text-emerald-500 transition-colors">ESG 기반 친환경 탄소중립 설계</h3>

@@ -1,0 +1,59 @@
+{
+  "manifest_version": "2026-05-29T10:59:26Z",
+  "description": "실 IFC fixture 자동 온보딩 결과",
+  "generated_by": "scripts/perf/onboard_real_ifc_fixtures.py",
+  "incoming_dir": "tests/fixtures/ifc/real_samples",
+  "output_dir": "tests/fixtures/ifc/real_samples",
+  "mode": "move",
+  "scrub_owner_data": true,
+  "fixtures": [
+    {
+      "id": "logistics_center_c",
+      "local_path": "tests/fixtures/ifc/real_samples/logistics_center_c.ifc",
+      "source": "generated-local-sample",
+      "expected_schema": "IFC4",
+      "expected_area_sqm": 540.0,
+      "expected_volume_m3": 795.0,
+      "expected_element_count": 2,
+      "scrub_owner_data": true,
+      "scrub_summary": {
+        "person_count": 0,
+        "organization_count": 0,
+        "application_count": 0,
+        "actor_count": 0
+      }
+    },
+    {
+      "id": "office_tower_b",
+      "local_path": "tests/fixtures/ifc/real_samples/office_tower_b.ifc",
+      "source": "generated-local-sample",
+      "expected_schema": "IFC4",
+      "expected_area_sqm": 480.0,
+      "expected_volume_m3": 690.0,
+      "expected_element_count": 2,
+      "scrub_owner_data": true,
+      "scrub_summary": {
+        "person_count": 0,
+        "organization_count": 0,
+        "application_count": 0,
+        "actor_count": 0
+      }
+    },
+    {
+      "id": "residential_block_a",
+      "local_path": "tests/fixtures/ifc/real_samples/residential_block_a.ifc",
+      "source": "generated-local-sample",
+      "expected_schema": "IFC4",
+      "expected_area_sqm": 360.0,
+      "expected_volume_m3": 480.0,
+      "expected_element_count": 2,
+      "scrub_owner_data": true,
+      "scrub_summary": {
+        "person_count": 0,
+        "organization_count": 0,
+        "application_count": 0,
+        "actor_count": 0
+      }
+    }
+  ]
+}
