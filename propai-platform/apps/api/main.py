@@ -95,13 +95,19 @@ from apps.api.routers.v2 import projects as v2_projects
 try:
     from apps.api.app.routers.v2_feasibility import router as v2_feasibility_router
 except ImportError:
-    v2_feasibility_router = None
+    try:
+        from app.routers.v2_feasibility import router as v2_feasibility_router
+    except ImportError:
+        v2_feasibility_router = None
 
 # v2 pipeline (자체 prefix 포함)
 try:
     from apps.api.app.routers.pipeline import router as pipeline_router
 except ImportError:
-    pipeline_router = None
+    try:
+        from app.routers.pipeline import router as pipeline_router
+    except ImportError:
+        pipeline_router = None
 from apps.api.versioning import VersionHeaderMiddleware, create_latest_redirect_router
 
 settings = get_settings()
