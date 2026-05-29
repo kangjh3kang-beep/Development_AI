@@ -64,6 +64,7 @@ class VWorldService:
         }
 
     # VWORLD 데이터 API는 Referer 헤더로 도메인 검증
+    # 등록 도메인: developmentai-production.up.railway.app
     HEADERS = {"Referer": "https://developmentai-production.up.railway.app"}
 
     async def geocode_address(self, address: str) -> Optional[Dict]:
@@ -91,6 +92,11 @@ class VWorldService:
                     data = resp.json()
                     response = data.get("response", {})
                     if response.get("status") != "OK":
+                        logger.warning(
+                            "VWORLD 지오코딩 NOT OK (%s): %s — status=%s, msg=%s",
+                            addr_type, address[:30],
+                            response.get("status"), response.get("error", {}).get("text", ""),
+                        )
                         continue
 
                     point = response.get("result", {}).get("point", {})
@@ -105,7 +111,10 @@ class VWorldService:
 
                     return {"lat": lat, "lon": lon, "pnu": pnu, "address": address}
                 except Exception as e:
-                    logger.error("VWORLD 지오코딩 실패 (%s): %s — %s", addr_type, address, str(e))
+                    logger.error(
+                        "VWORLD 지오코딩 실패 (%s): %s — error=%s, type=%s",
+                        addr_type, address[:30], str(e)[:300], type(e).__name__,
+                    )
                     continue
             return None
 
