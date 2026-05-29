@@ -6,6 +6,7 @@ import { AIAssistant } from "@/components/common/AIAssistant";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
 import { SidebarNav } from "@/components/layout/SidebarNav";
 import { MobileSidebarToggle } from "@/components/layout/MobileSidebarToggle";
+import { AuthButton } from "@/components/auth/AuthButton";
 type DashboardLayoutProps = Readonly<{
   children: React.ReactNode;
   params: Promise<{
@@ -226,6 +227,8 @@ export default async function DashboardLayout({
                 currentLocale={locale as Locale}
                 label={dictionary.nav.locale}
               />
+              <div className="h-6 w-px bg-[var(--line)]" />
+              <AuthButton locale={locale} />
             </div>
           </div>
         </div>

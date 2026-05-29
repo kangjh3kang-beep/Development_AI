@@ -268,3 +268,35 @@ async def kakao_callback(
         refresh_token=result["refresh_token"],
         expires_in=settings.jwt_access_token_expire_minutes * 60,
     )
+
+
+# ── 관리자 전용 엔드포인트 ──
+
+
+@router.get("/admin/users")
+async def get_admin_users(
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """관리자용: 테넌트의 모든 사용자 조회."""
+    if current_user.role not in ("admin", "owner"):
+        raise HTTPException(status_code=403, detail="관리자 권한이 필요합니다.")
+
+    result = await db.execute(
+        select(User).where(User.tenant_id == current_user.tenant_id)
+    )
+    users = result.scalars().all()
+
+    return {
+        "users": [
+            {
+                "id": str(u.id),
+                "email": u.email,
+                "name": u.name,
+                "role": u.role,
+                "is_active": u.is_active,
+                "created_at": u.created_at.isoformat() if u.created_at else None,
+            }
+            for u in users
+        ]
+    }
