@@ -118,9 +118,12 @@ class FeasibilityServiceV2:
                 "recommendations": [],
             }
 
-        # Step 3: 각 유형별 입력값 자동 생성 + 수지분석 계산
-        max_far = zone_limits.get("max_far_pct", 250)
-        max_bcr = zone_limits.get("max_bcr_pct", 60)
+        # Step 2.5: 조례 기반 유효 용적률/건폐율 적용
+        # 조례값이 있으면 법정 상한보다 낮은 값이 실효값
+        ordinance_far = zone_limits.get("ordinance_far_pct")
+        ordinance_bcr = zone_limits.get("ordinance_bcr_pct")
+        max_far = ordinance_far or zone_limits.get("max_far_pct", 250)
+        max_bcr = ordinance_bcr or zone_limits.get("max_bcr_pct", 60)
 
         results: list[dict[str, Any]] = []
         for dev_type in permitted_types:

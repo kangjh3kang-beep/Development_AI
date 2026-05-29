@@ -14,6 +14,7 @@ class ZoningAnalyzeRequest(BaseModel):
     """용도지역 분석 요청."""
 
     address: str
+    pnu: str | None = None  # 프론트엔드에서 VWORLD 지오코딩으로 미리 얻은 PNU
 
 
 @router.post("/analyze")
@@ -27,7 +28,7 @@ async def analyze_zoning(req: ZoningAnalyzeRequest):
 async def comprehensive_land_analysis(req: ZoningAnalyzeRequest):
     """종합 토지정보 수집 — 토지대장+공시지가+토지이용계획+조례 통합."""
     service = LandInfoService()
-    return await service.collect_comprehensive(req.address)
+    return await service.collect_comprehensive(req.address, pnu=req.pnu)
 
 
 @router.get("/debug-keys")

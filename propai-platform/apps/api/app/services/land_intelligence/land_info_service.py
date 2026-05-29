@@ -35,7 +35,7 @@ class LandInfoService:
         self.zoning = AutoZoningService()
         self.ordinance = OrdinanceService()
 
-    async def collect_comprehensive(self, address: str) -> dict[str, Any]:
+    async def collect_comprehensive(self, address: str, pnu: str | None = None) -> dict[str, Any]:
         """주소로부터 종합 토지정보를 수집한다.
 
         반환 구조:
@@ -91,14 +91,18 @@ class LandInfoService:
         except Exception as e:
             result["warnings"].append(f"기본 용도지역 분석 실패: {str(e)}")
 
+        # 프론트엔드에서 전달된 PNU가 있으면 우선 사용 (VWORLD 서버 차단 우회)
+        if pnu and not result.get("pnu"):
+            result["pnu"] = pnu
+
         # Phase 2: PNU 기반 상세정보 병렬 수집 (VWORLD NED + 공공데이터포털)
-        pnu = result.get("pnu")
-        if pnu:
+        effective_pnu: str | None = result.get("pnu")
+        if effective_pnu is not None:
             tasks = [
-                self._fetch_land_register(pnu),
-                self._fetch_land_use_plan(pnu),
-                self._fetch_official_price(pnu),
-                self._fetch_building_info(pnu),
+                self._fetch_land_register(effective_pnu),
+                self._fetch_land_use_plan(effective_pnu),
+                self._fetch_official_price(effective_pnu),
+                self._fetch_building_info(effective_pnu),
             ]
             land_reg, land_use, price_data, bldg = await asyncio.gather(*tasks, return_exceptions=True)
 
