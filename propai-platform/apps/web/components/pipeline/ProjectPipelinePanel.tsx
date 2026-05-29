@@ -57,30 +57,30 @@ function saveHistory(entries: HistoryEntry[]) {
 const STAGE_LABELS: Record<string, string> = {
   site_analysis: "부지분석",
   design: "건축설계",
-  construction_cost: "공사비",
+  cost: "공사비",
   feasibility: "수지분석",
   tax: "세금계산",
-  esg_carbon: "ESG/탄소",
+  esg: "ESG/탄소",
   report: "통합보고서",
 };
 
 const STAGE_NUMBERS: Record<string, string> = {
   site_analysis: "\u2460",
   design: "\u2461",
-  construction_cost: "\u2462",
+  cost: "\u2462",
   feasibility: "\u2463",
   tax: "\u2464",
-  esg_carbon: "\u2465",
+  esg: "\u2465",
   report: "\u2466",
 };
 
 const DEFAULT_STAGES: PipelineStageStatus[] = [
   "site_analysis",
   "design",
-  "construction_cost",
+  "cost",
   "feasibility",
   "tax",
-  "esg_carbon",
+  "esg",
   "report",
 ].map((s) => ({
   stage: s,
@@ -172,9 +172,9 @@ interface SummaryCard {
 
 const SUMMARY_CARDS: SummaryCard[] = [
   { label: "토지면적", key: "land_area_sqm", unit: "m\u00B2", source: "site_analysis", format: (v) => (typeof v === "number" ? `${v.toLocaleString("ko-KR")}` : "-") },
-  { label: "총공사비", key: "total_cost_won", unit: "", source: "construction_cost", format: (v) => formatNumber(v) },
+  { label: "총공사비", key: "total_construction_cost", unit: "", source: "cost", format: (v) => formatNumber(v) },
   { label: "수익률", key: "profit_rate_pct", unit: "%", source: "feasibility", format: (v) => (typeof v === "number" ? v.toFixed(1) : "-") },
-  { label: "탄소배출", key: "total_carbon_per_sqm", unit: "kgCO\u2082/m\u00B2", source: "esg_carbon", format: (v) => (typeof v === "number" ? v.toFixed(1) : "-") },
+  { label: "탄소배출", key: "carbon_per_sqm_kg", unit: "kgCO\u2082/m\u00B2", source: "esg", format: (v) => (typeof v === "number" ? v.toFixed(1) : "-") },
 ];
 
 /* ── View Mode ── */
@@ -214,6 +214,7 @@ export function ProjectPipelinePanel() {
   }, []);
 
   const projectId = useProjectContextStore((s) => s.projectId);
+  const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
   const updateSiteAnalysis = useProjectContextStore((s) => s.updateSiteAnalysis);
   const updateDesignData = useProjectContextStore((s) => s.updateDesignData);
   const updateFeasibilityData = useProjectContextStore((s) => s.updateFeasibilityData);
@@ -312,17 +313,50 @@ export function ProjectPipelinePanel() {
     }
   }, []);
 
-  // STEP 1: 부지분석만 실행
+  // STEP 1: 부지분석 — GlobalAddressSearch가 이미 수집한 데이터 활용
   const runSiteAnalysis = useCallback(async () => {
     if (!address.trim()) return;
 
-    setIsRunning(true);
     setError(null);
     setStages(DEFAULT_STAGES.map((s) => ({ ...s })));
     setSummary({});
     setExpandedStage(null);
     setViewMode("pipeline");
     setLastResult(null);
+
+    // GlobalAddressSearch가 이미 siteAnalysis 데이터를 수집했는지 확인
+    if (siteAnalysis && siteAnalysis.landAreaSqm && siteAnalysis.zoneCode) {
+      // 이미 수집된 데이터로 부지분석 결과 즉시 구성 (API 재호출 불필요)
+      const siteData: Record<string, unknown> = {
+        zone_type: siteAnalysis.zoneCode ?? "",
+        land_area_sqm: siteAnalysis.landAreaSqm ?? 0,
+        max_bcr: siteAnalysis.ordinance?.effectiveBcr ?? 60,
+        max_far: siteAnalysis.ordinance?.effectiveFar ?? 200,
+        official_land_price: siteAnalysis.officialPrices?.[0]?.pricePerSqm ?? 0,
+        pnu_codes: siteAnalysis.pnu ? [siteAnalysis.pnu] : [],
+        address: siteAnalysis.address ?? address,
+        estimated_value: siteAnalysis.estimatedValue,
+        building_info: siteAnalysis.buildingInfo ?? null,
+        coordinates: siteAnalysis.coordinates ?? null,
+      };
+
+      const completedStages = DEFAULT_STAGES.map((s) => ({ ...s }));
+      completedStages[0] = {
+        ...completedStages[0]!,
+        status: "completed" as const,
+        duration_ms: 0,
+        data: siteData,
+      };
+      setStages(completedStages);
+      setSummary({ site_analysis: siteData });
+      setWorkflowPhase("site_review");
+      setExpandedStage("site_analysis");
+      markStageComplete("site-analysis");
+      return;
+    }
+
+    // siteAnalysis 데이터 없으면 API 호출
+    setIsRunning(true);
     setWorkflowPhase("input");
 
     try {
@@ -330,7 +364,6 @@ export function ProjectPipelinePanel() {
       updatedStages[0]!.status = "running";
       setStages([...updatedStages]);
 
-      // 부지분석만 실행 (나머지는 stop)
       const parcels = allAddresses.map((a) => ({
         address: a.fullAddress,
         jibun: a.jibunAddress,
@@ -355,7 +388,6 @@ export function ProjectPipelinePanel() {
       setSummary(result.summary ?? {});
       setLastResult(result);
 
-      // 부지분석 결과가 있으면 확인 단계로 전환
       const siteStage = result.stages.find((s) => s.stage === "site_analysis");
       if (siteStage?.status === "completed") {
         setWorkflowPhase("site_review");
@@ -370,7 +402,7 @@ export function ProjectPipelinePanel() {
     } finally {
       setIsRunning(false);
     }
-  }, [address, projectId, saveToStore]);
+  }, [address, allAddresses, projectId, siteAnalysis, saveToStore, markStageComplete]);
 
   // STEP 2: 나머지 단계 진행 (부지분석 결과 확인 후)
   const runRemainingStages = useCallback(async () => {
