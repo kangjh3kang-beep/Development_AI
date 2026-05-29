@@ -19,8 +19,7 @@ from apps.api.config import get_settings
 
 settings = get_settings()
 
-# Supabase PGBouncer 호환: prepared statements 항상 비활성화
-# DB_USE_PGBOUNCER 설정과 무관하게 안전하게 0으로 설정
+# Supabase PGBouncer 호환: prepared statements 완전 비활성화
 _connect_args: dict = {
     "statement_cache_size": 0,
     "prepared_statement_cache_size": 0,
@@ -28,20 +27,23 @@ _connect_args: dict = {
 
 
 def _fix_supabase_url(url: str) -> str:
-    """Supabase PGBouncer URL의 사용자명에 '.'이 포함된 경우 asyncpg 호환 처리.
+    """Supabase PGBouncer URL 호환 처리.
 
-    asyncpg/SQLAlchemy URL 파서가 'postgres.xxxxx' 형식의 사용자명에서
-    '.' 뒤를 호스트로 오인하는 문제를 우회한다.
-    사용자명의 '.'을 URL 인코딩(%2E)으로 치환한다.
+    1. 사용자명의 '.'을 URL 인코딩(%2E)으로 치환 (asyncpg 파서 호환)
+    2. prepared_statement_cache_size=0 쿼리 파라미터 강제 추가 (PGBouncer 호환)
     """
     if "pooler.supabase.com" in url and "postgres." in url:
-        # postgresql+asyncpg://postgres.REF:PASS@HOST → postgres%2EREF
         import re
         url = re.sub(
             r"(postgresql\+asyncpg://)postgres\.([^:]+)",
             r"\1postgres%2E\2",
             url,
         )
+    # PGBouncer 호환: prepared_statement_cache_size=0 쿼리 파라미터 추가
+    if "?" not in url:
+        url += "?prepared_statement_cache_size=0"
+    elif "prepared_statement_cache_size" not in url:
+        url += "&prepared_statement_cache_size=0"
     return url
 
 
