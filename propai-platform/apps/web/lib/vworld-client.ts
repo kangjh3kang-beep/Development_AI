@@ -102,6 +102,8 @@ async function geocodeAddress(address: string): Promise<VWorldGeocodeResult | nu
 
 /**
  * PNU → 토지정보 (지목, 면적, 공시지가)
+ *
+ * VWORLD /req/data API는 CORS 미지원이므로 Next.js API Route를 통해 프록시.
  */
 async function getLandInfo(pnu: string): Promise<VWorldLandInfo | null> {
   if (!VWORLD_API_KEY || !pnu) return null;
@@ -119,7 +121,9 @@ async function getLandInfo(pnu: string): Promise<VWorldLandInfo | null> {
       attribute: "true",
     });
 
-    const resp = await fetch(`${VWORLD_BASE_URL}/data?${params}`);
+    // CORS 미지원이므로 Next.js API Route 프록시를 통해 호출
+    const proxyUrl = `/api/vworld/data?${params}`;
+    const resp = await fetch(proxyUrl);
     if (!resp.ok) return null;
 
     const data = await resp.json();
