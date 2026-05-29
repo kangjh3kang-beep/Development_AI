@@ -12,6 +12,8 @@
 
 import { NextRequest, NextResponse } from "next/server";
 
+export const runtime = "edge";
+
 const VWORLD_BASE = "https://api.vworld.kr/req";
 
 export async function GET(request: NextRequest) {
@@ -42,6 +44,7 @@ export async function GET(request: NextRequest) {
       headers: {
         "Content-Type": "application/json; charset=utf-8",
         "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "no-store",
       },
     });
   } catch (error) {
