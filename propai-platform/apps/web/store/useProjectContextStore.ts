@@ -9,12 +9,83 @@ interface AnalysisResult {
   summary: Record<string, unknown>;
 }
 
+/** 개별 필지 정보 */
+interface ParcelData {
+  pnu: string;
+  address: string;
+  areaSqm: number;
+  landCategory: string; // 지목
+  ownerType: string;
+}
+
+/** 토지이용계획 규제 항목 */
+interface LandUseDistrict {
+  districtName: string;
+  districtCode: string;
+  conflictStatus: string;
+}
+
+/** 지자체 조례 정보 */
+interface OrdinanceData {
+  sido: string;
+  sigungu: string | null;
+  nationalBcr: number;
+  nationalFar: number;
+  ordinanceBcr: number | null;
+  ordinanceFar: number | null;
+  effectiveBcr: number;
+  effectiveFar: number;
+  source: string; // "법제처API" | "캐시DB" | "법정상한"
+  legalBasis: string;
+}
+
+/** 건축물대장 정보 */
+interface BuildingInfo {
+  buildingName: string;
+  mainPurpose: string;
+  totalAreaSqm: number;
+  groundFloors: number;
+  structure: string;
+  useApprovalDate: string;
+}
+
+/** 공시지가 정보 */
+interface OfficialPriceData {
+  pnu: string;
+  year: number;
+  pricePerSqm: number;
+}
+
+/** 기초 데이터 파이프라인 — 모든 모듈의 근간 */
 interface SiteAnalysisData {
+  // 기본 정보
   estimatedValue: number | null;
   landAreaSqm: number | null;
   zoneCode: string | null;
   address: string | null;
   pnu: string | null;
+
+  // 다필지 정보 (LAYER 0)
+  parcels: ParcelData[];
+
+  // 토지이용계획 (용도지역/지구/구역 + 규제)
+  landUseDistricts: LandUseDistrict[];
+
+  // 지자체 조례
+  ordinance: OrdinanceData | null;
+
+  // 건축물대장 (기존 건물)
+  buildingInfo: BuildingInfo | null;
+
+  // 공시지가
+  officialPrices: OfficialPriceData[];
+
+  // 좌표
+  coordinates: { lat: number; lon: number } | null;
+
+  // 데이터 출처 + 수집 시각 (할루시네이션 방지)
+  dataSource: string; // "VWORLD+법제처+공공데이터포털"
+  fetchedAt: string | null; // ISO 8601
 }
 
 interface DesignData {
