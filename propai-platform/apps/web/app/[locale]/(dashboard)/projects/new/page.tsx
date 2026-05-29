@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { useProjectStore } from "@/store/useProjectStore";
+import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { GlobalAddressSearch, type AddressEntry } from "@/components/common/GlobalAddressSearch";
 
 const PROJECT_TYPES = [
@@ -28,7 +29,11 @@ const AVAILABLE_MODULES = [
 export default function NewProjectPage() {
   const router = useRouter();
   const addProject = useProjectStore(state => state.addProject);
-  
+  const clearProject = useProjectContextStore(state => state.clearProject);
+
+  // 새 프로젝트 진입 시 이전 데이터 초기화
+  useState(() => { clearProject(); });
+
   const [name, setName] = useState("");
   const [location, setLocation] = useState("");
   const [pnu, setPnu] = useState("");

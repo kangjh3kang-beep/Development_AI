@@ -57,10 +57,8 @@ export function GlobalAddressSearch({
   const updateSiteAnalysis = useProjectContextStore((s) => s.updateSiteAnalysis);
   const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
 
-  // 기존 siteAnalysis에 주소가 있으면 초기값으로 표시
-  const displayAddresses = addresses.length > 0 ? addresses : (
-    siteAnalysis?.address ? [{ fullAddress: siteAnalysis.address, jibunAddress: "", roadAddress: "", sido: "", sigungu: "", bname: "", zonecode: "" }] : []
-  );
+  // 로컬 state가 있으면 그것을 표시, 없으면 빈 상태 (siteAnalysis 참조 제거 — 새 프로젝트 시 이전 데이터 잔류 방지)
+  const displayAddresses = addresses;
 
   // 종합 토지 분석 자동 트리거 (주소 입력 즉시 백그라운드 실행)
   const triggerComprehensiveAnalysis = useCallback(async (address: string) => {
