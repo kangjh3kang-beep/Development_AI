@@ -138,7 +138,7 @@ class FeasibilityServiceV2:
                     total_land_area_sqm=site_area,
                     total_gfa_sqm=total_gfa,
                     total_households=total_hh,
-                    avg_sale_price_per_pyeong=self._get_regional_price(dev_type, region),
+                    avg_sale_price_per_pyeong=self._get_regional_price(dev_type, region, address),
                     avg_area_pyeong=self._get_type_avg_unit_area(dev_type) / 3.305785,
                     sale_ratio=0.95 if dev_type not in ("M14", "M15") else 0.0,
                     official_price_per_sqm=zoning.get("official_price_per_sqm") or 1_500_000,
@@ -154,10 +154,12 @@ class FeasibilityServiceV2:
                 output = self.calculate(inp)
                 permit = check_permit_feasibility(dev_type, zone_type)
 
-                # Composite score: 70% profitability + 30% permit ease
-                profit_score = min(100, max(0, output.profit_rate_pct * 5))  # 20% -> 100점
-                permit_score = (6 - permit["permit_complexity"]) * 20  # 1->100, 5->20
-                composite = profit_score * 0.7 + permit_score * 0.3
+                # 종합 점수: 순이익(50%) + 수익률(30%) + 인허가용이성(20%)
+                # 순이익 기준: 100억 이상이면 만점
+                profit_amount_score = min(100, max(0, output.net_profit_won / 1e8))  # 100억→100점
+                profit_rate_score = min(100, max(0, output.profit_rate_pct * 2))     # 50%→100점
+                permit_score = (6 - permit["permit_complexity"]) * 20                # 1→100, 5→20
+                composite = profit_amount_score * 0.5 + profit_rate_score * 0.3 + permit_score * 0.2
 
                 results.append({
                     "development_type": dev_type,
@@ -220,31 +222,69 @@ class FeasibilityServiceV2:
         }
         return areas.get(dev_type, 84)
 
-    def _get_regional_price(self, dev_type: str, region: str) -> int:
+    def _get_regional_price(self, dev_type: str, region: str, address: str = "") -> int:
         """지역x개발유형별 평균 분양가 (원/평).
 
-        내부 기준표는 만원/평 단위이며, 반환 시 원 단위로 변환.
-        예: 경기 단독주택 = 2500 * 1.2 = 3000만원/평 → 30,000,000원/평
+        주소에서 시군구를 추출하여 세분화된 단가 적용.
+        향후 실거래가 API 연동으로 교체 예정.
+
+        2026년 기준 평균 분양가 (만원/평, 보수적):
+        - 서울 강남권: 5000~7000, 강북권: 2500~3500
+        - 경기 판교/분당: 3500~4500, 수원/용인: 1800~2500, 의정부/파주: 1200~1800
         """
-        base_man_won = {
-            "서울특별시": 4000, "서울": 4000,
-            "경기도": 2500, "경기": 2500,
-            "인천광역시": 2200, "인천": 2200,
-            "부산광역시": 2300, "부산": 2300,
-            "대구광역시": 2100, "대구": 2100,
-            "대전광역시": 2000, "대전": 2000,
-            "광주광역시": 1800, "광주": 1800,
-            "울산광역시": 2000, "울산": 2000,
-            "세종특별자치시": 2200, "세종": 2200,
-            "제주특별자치도": 1800, "제주": 1800,
-            "강원도": 1500, "충청북도": 1600, "충청남도": 1700,
-            "전라북도": 1400, "전라남도": 1300,
-            "경상북도": 1500, "경상남도": 1600,
-        }.get(region, 2000)
+        # 시군구 세분화 (경기도 내 격차 반영)
+        sigungu_prices: dict[str, int] = {
+            # 서울 구별
+            "강남구": 5500, "서초구": 5000, "송파구": 4500, "용산구": 4000,
+            "마포구": 3500, "성동구": 3200, "영등포구": 3000,
+            "강동구": 3000, "동작구": 2800, "광진구": 2800,
+            "노원구": 2200, "도봉구": 2000, "중랑구": 2200, "강북구": 2000,
+            # 경기 시별
+            "성남시": 3500, "분당": 4000, "판교": 4500,
+            "수원시": 2200, "용인시": 2000, "화성시": 1800,
+            "고양시": 2000, "일산": 2200,
+            "의정부시": 1400, "남양주시": 1600, "구리시": 2200,
+            "파주시": 1200, "양주시": 1100, "동두천시": 900,
+            "안양시": 2500, "안산시": 1500, "시흥시": 1400,
+            "김포시": 1600, "광명시": 2800, "하남시": 3000,
+            "평택시": 1300, "오산시": 1200, "이천시": 1100,
+            "부천시": 2000, "광주시": 1500,
+            # 인천 구별
+            "연수구": 2500, "송도": 2800, "부평구": 1600, "남동구": 1800,
+            # 부산
+            "해운대구": 2800, "수영구": 2500, "부산진구": 2000,
+        }
+
+        # 주소에서 시군구 매칭
+        base_man_won = None
+        for sg, price in sigungu_prices.items():
+            if sg in address:
+                base_man_won = price
+                break
+
+        # 시군구 매칭 실패 시 시도 기본값
+        if base_man_won is None:
+            base_man_won = {
+                "서울특별시": 3000, "서울": 3000,
+                "경기도": 1800, "경기": 1800,
+                "인천광역시": 1800, "인천": 1800,
+                "부산광역시": 2000, "부산": 2000,
+                "대구광역시": 1800, "대구": 1800,
+                "대전광역시": 1700, "대전": 1700,
+                "광주광역시": 1500, "광주": 1500,
+                "울산광역시": 1600, "울산": 1600,
+                "세종특별자치시": 1800, "세종": 1800,
+                "제주특별자치도": 1500, "제주": 1500,
+                "강원도": 1100, "충청북도": 1200, "충청남도": 1300,
+                "전라북도": 1000, "전라남도": 900,
+                "경상북도": 1100, "경상남도": 1200,
+            }.get(region, 1500)
+
+        # 개발유형별 보정
         multiplier = {
             "M01": 1.0, "M02": 1.0, "M04": 0.95, "M06": 1.0,
-            "M07": 1.1, "M08": 0.85, "M09": 0.7,
-            "M10": 1.2, "M11": 0.8, "M12": 1.1, "M13": 0.75,
+            "M07": 1.1, "M08": 0.8, "M09": 0.65,
+            "M10": 1.1, "M11": 0.75, "M12": 1.05, "M13": 0.7,
         }.get(dev_type, 1.0)
         return int(base_man_won * multiplier * 10000)  # 만원 → 원 변환
 
