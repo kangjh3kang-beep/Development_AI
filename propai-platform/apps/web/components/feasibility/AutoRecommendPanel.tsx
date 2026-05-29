@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useParams, useRouter } from "next/navigation";
 import { TiltCard } from "@/components/ui/TiltCard";
@@ -175,13 +175,28 @@ export function AutoRecommendPanel({ onClose, isModal = false }: AutoRecommendPa
   // Input state — siteAnalysis에서 자동 반영
   const [address, setAddress] = useState(ctxStore.siteAnalysis?.address ?? "");
   const [region, setRegion] = useState(() => {
-    // 주소에서 시도 자동 추출
     const addr = ctxStore.siteAnalysis?.address ?? "";
     const match = REGIONS.find((r) => addr.includes(r) || addr.includes(r.replace("특별시","").replace("광역시","").replace("도","")));
     return match ?? "서울특별시";
   });
   const [landArea, setLandArea] = useState(ctxStore.siteAnalysis?.landAreaSqm?.toString() ?? "");
   const [equity, setEquity] = useState("");
+
+  // siteAnalysis가 나중에 복원되면 input 필드에 자동 반영
+  useEffect(() => {
+    const site = ctxStore.siteAnalysis;
+    if (!site) return;
+    if (site.address && !address) {
+      setAddress(site.address);
+    }
+    if (site.landAreaSqm && !landArea) {
+      setLandArea(site.landAreaSqm.toString());
+    }
+    if (site.address) {
+      const match = REGIONS.find((r) => site.address!.includes(r) || site.address!.includes(r.replace("특별시","").replace("광역시","").replace("도","")));
+      if (match) setRegion(match);
+    }
+  }, [ctxStore.siteAnalysis]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Result state
   const [isLoading, setIsLoading] = useState(false);
