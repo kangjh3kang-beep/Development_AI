@@ -18,6 +18,7 @@ import { useCallback, useState } from "react";
 import { KakaoAddressSearch, type KakaoAddressResult } from "@/components/ui/KakaoAddressSearch";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { apiClient } from "@/lib/api-client";
+import { fetchVWorldComprehensive } from "@/lib/vworld-client";
 
 export interface AddressEntry {
   fullAddress: string;
@@ -61,22 +62,58 @@ export function GlobalAddressSearch({
   const displayAddresses = addresses;
 
   // 종합 토지 분석 자동 트리거 (주소 입력 즉시 백그라운드 실행)
+  // Railway 서버(해외 IP)에서 VWORLD 502 에러 발생하므로 브라우저에서 직접 호출
   const triggerComprehensiveAnalysis = useCallback(async (address: string) => {
     setIsAnalyzing(true);
     try {
+      // 1차: 브라우저에서 직접 VWORLD API 호출 (한국 IP → 정상 동작)
+      const vworldData = await fetchVWorldComprehensive(address);
+
+      if (vworldData && (vworldData.pnu || vworldData.land_register)) {
+        // VWORLD 직접 호출 성공 → 결과 저장
+        const bcr = vworldData.zone_limits?.max_bcr_pct ?? 60;
+        const far = vworldData.zone_limits?.max_far_pct ?? 250;
+
+        updateSiteAnalysis({
+          address,
+          pnu: vworldData.pnu ?? siteAnalysis?.pnu ?? null,
+          estimatedValue: siteAnalysis?.estimatedValue ?? null,
+          landAreaSqm: vworldData.land_register?.area_sqm ?? siteAnalysis?.landAreaSqm ?? null,
+          zoneCode: vworldData.zone_type ?? siteAnalysis?.zoneCode ?? null,
+          coordinates: vworldData.coordinates ?? undefined,
+          officialPrices: vworldData.land_register?.official_price_per_sqm
+            ? [{ pnu: vworldData.pnu ?? "", year: 2025, pricePerSqm: vworldData.land_register.official_price_per_sqm }]
+            : undefined,
+          ordinance: {
+            sido: "",
+            sigungu: null,
+            nationalBcr: bcr,
+            nationalFar: far,
+            ordinanceBcr: bcr,
+            ordinanceFar: far,
+            effectiveBcr: bcr,
+            effectiveFar: far,
+            source: "VWORLD(브라우저 직접호출)",
+            legalBasis: "국토계획법 제78조",
+          },
+          dataSource: "VWORLD(브라우저 직접호출)",
+          fetchedAt: new Date().toISOString(),
+        });
+        return;
+      }
+
+      // 2차 폴백: 백엔드 API 호출 (VWORLD 직접 호출 실패 시)
       const data = await apiClient.post<{
         pnu: string | null;
         coordinates: { lat: number; lon: number } | null;
         zone_type: string | null;
-        zone_limits: { max_bcr_pct: number; max_far_pct: number; ordinance_bcr_pct?: number; ordinance_far_pct?: number; ordinance_source?: string } | null;
+        zone_limits: { max_bcr_pct: number; max_far_pct: number } | null;
         land_register: { land_category: string; area_sqm: number; official_price_per_sqm: number } | null;
         building_info: { building_name: string; main_purpose: string; total_area_sqm: number; ground_floors: number } | null;
         official_prices: Array<{ pnu: string; year: number; price_per_sqm: number }>;
-        land_use_plan: { districts: Array<{ district_name: string; district_code: string }>; regulations: Array<{ name: string; restriction: string }> } | null;
         local_ordinance: { sido: string; sigungu: string | null; effective_bcr: number; effective_far: number; source: string } | null;
       }>("/zoning/comprehensive", { body: { address }, useMock: false });
 
-      // ProjectLandData에 종합 저장
       updateSiteAnalysis({
         address,
         pnu: data.pnu ?? siteAnalysis?.pnu ?? null,
@@ -105,16 +142,11 @@ export function GlobalAddressSearch({
           structure: "",
           useApprovalDate: "",
         } : undefined,
-        landUseDistricts: data.land_use_plan?.districts?.map((d) => ({
-          districtName: d.district_name,
-          districtCode: d.district_code,
-          conflictStatus: "",
-        })),
-        dataSource: "VWORLD+법제처+공공데이터포털",
+        dataSource: "백엔드 API",
         fetchedAt: new Date().toISOString(),
       });
     } catch {
-      // 분석 실패해도 주소는 이미 저장됨 — 조용히 무시
+      // 분석 실패해도 주소는 이미 저장됨
     } finally {
       setIsAnalyzing(false);
     }
