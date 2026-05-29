@@ -23,7 +23,7 @@ class Settings(BaseSettings):
 
     # ── 앱 기본 ──
     app_name: str = "PropAI"
-    app_version: str = "30.0.0"
+    app_version: str = "62.0.0"
     debug: bool = False
     environment: str = Field(default="development", description="development | staging | production")
 
