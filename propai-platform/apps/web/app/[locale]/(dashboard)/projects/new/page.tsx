@@ -77,9 +77,18 @@ export default function NewProjectPage() {
     setProject(projectId, name, "draft");
 
     // setProject가 cross-module 데이터를 초기화하므로 siteAnalysis를 복원
-    if (currentSiteAnalysis) {
-      useProjectContextStore.getState().updateSiteAnalysis(currentSiteAnalysis);
+    // 최소한 주소는 항상 전달되도록 보장
+    const restoredSiteAnalysis = currentSiteAnalysis ?? {
+      estimatedValue: null,
+      landAreaSqm: null,
+      zoneCode: null,
+      address: location,
+      pnu: pnu || null,
+    };
+    if (!restoredSiteAnalysis.address) {
+      restoredSiteAnalysis.address = location;
     }
+    useProjectContextStore.getState().updateSiteAnalysis(restoredSiteAnalysis);
 
     setTimeout(() => {
       router.push(`/ko/projects/${projectId}`);
