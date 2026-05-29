@@ -50,7 +50,7 @@ export default async function DashboardPage({ params }: DashboardPageProps) {
   const dictionary = await getDictionary(locale as Locale);
 
   return (
-    <div className="flex flex-col gap-10 pb-20">
+    <div className="flex flex-col gap-5 pb-20">
       {/* ── 온보딩 위자드 (최초 방문 시에만 표시) ── */}
       <OnboardingWizard />
 
