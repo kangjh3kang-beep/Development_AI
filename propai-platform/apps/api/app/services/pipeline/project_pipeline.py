@@ -173,11 +173,37 @@ class ProjectPipeline:
         return state
 
     async def _run_site_analysis(self, state: PipelineState, opts: dict):
-        """STEP 1: 부지분석 — 주소→용도지역+법규한도+공시지가+좌표 자동수집."""
+        """STEP 1: 부지분석 — 프론트에서 전달한 데이터 우선, 없으면 외부 API 호출."""
+        # 프론트엔드에서 이미 수집한 site_data가 있으면 외부 API 호출 건너뜀
+        pre_collected = opts.get("site_data")
+        if pre_collected and (pre_collected.get("land_area_sqm") or pre_collected.get("zone_type")):
+            state.site_to_design = SiteToDesignPayload(
+                pnu_codes=pre_collected.get("pnu_codes", []),
+                zone_type=pre_collected.get("zone_type", ""),
+                max_bcr=pre_collected.get("max_bcr", 60.0),
+                max_far=pre_collected.get("max_far", 200.0),
+                max_height=pre_collected.get("max_height", 0.0),
+                land_area_sqm=pre_collected.get("land_area_sqm", 0.0),
+                land_shape=None,
+                official_land_price=pre_collected.get("official_land_price", 0.0),
+                address=state.address,
+                coordinates=pre_collected.get("coordinates"),
+            )
+            state.stages["site_analysis"].data = {
+                "zone_type": state.site_to_design.zone_type,
+                "max_bcr": state.site_to_design.max_bcr,
+                "max_far": state.site_to_design.max_far,
+                "land_area_sqm": state.site_to_design.land_area_sqm,
+                "official_land_price": state.site_to_design.official_land_price,
+                "pnu_codes": state.site_to_design.pnu_codes,
+                "source": "pre_collected",
+            }
+            return
+
+        # 외부 API 호출 (프론트에서 데이터를 전달하지 않은 경우)
         zoning: dict[str, Any] = {}
         comprehensive: dict[str, Any] = {}
 
-        # 용도지역 자동 감지
         try:
             from app.services.zoning.auto_zoning_service import AutoZoningService
 
@@ -190,7 +216,6 @@ class ProjectPipeline:
                 "pnu": "",
             }
 
-        # 종합 토지정보 수집
         try:
             from app.services.land_intelligence.land_info_service import LandInfoService
 
@@ -207,7 +232,6 @@ class ProjectPipeline:
 
         zone_limits = zoning.get("zone_limits", {})
 
-        # 부지→설계 Payload 생성
         state.site_to_design = SiteToDesignPayload(
             pnu_codes=comprehensive.get("pnu_codes", [zoning.get("pnu", "")]),
             zone_type=zoning.get("zone_type", ""),

@@ -325,10 +325,18 @@ export function ProjectPipelinePanel() {
     setLastResult(null);
 
     // GlobalAddressSearch가 이미 siteAnalysis 데이터를 수집했는지 확인
-    if (siteAnalysis && siteAnalysis.landAreaSqm && siteAnalysis.zoneCode) {
+    // (zoneCode 또는 landAreaSqm 또는 ordinance 중 하나라도 있으면 사용)
+    const hasSiteData = siteAnalysis && (
+      siteAnalysis.landAreaSqm ||
+      siteAnalysis.zoneCode ||
+      siteAnalysis.ordinance ||
+      siteAnalysis.pnu
+    );
+
+    if (hasSiteData) {
       // 이미 수집된 데이터로 부지분석 결과 즉시 구성 (API 재호출 불필요)
       const siteData: Record<string, unknown> = {
-        zone_type: siteAnalysis.zoneCode ?? "",
+        zone_type: siteAnalysis.zoneCode ?? siteAnalysis.ordinance?.source ?? "미확인",
         land_area_sqm: siteAnalysis.landAreaSqm ?? 0,
         max_bcr: siteAnalysis.ordinance?.effectiveBcr ?? 60,
         max_far: siteAnalysis.ordinance?.effectiveFar ?? 200,
@@ -413,9 +421,23 @@ export function ProjectPipelinePanel() {
     setWorkflowPhase("remaining");
 
     try {
-      // 전체 파이프라인 실행 (이전 부지분석 결과 포함)
+      // siteAnalysis 데이터를 백엔드에 전달하여 외부 API 재호출 방지
+      const siteDataForBackend = siteAnalysis ? {
+        zone_type: siteAnalysis.zoneCode ?? "",
+        land_area_sqm: siteAnalysis.landAreaSqm ?? 0,
+        max_bcr: siteAnalysis.ordinance?.effectiveBcr ?? 60,
+        max_far: siteAnalysis.ordinance?.effectiveFar ?? 200,
+        official_land_price: siteAnalysis.officialPrices?.[0]?.pricePerSqm ?? 0,
+        pnu_codes: siteAnalysis.pnu ? [siteAnalysis.pnu] : [],
+        coordinates: siteAnalysis.coordinates ?? null,
+      } : undefined;
+
       const result = await apiClient.postV2<PipelineRunResponse>("/pipeline/run", {
-        body: { address: address.trim(), project_id: projectId },
+        body: {
+          address: address.trim(),
+          project_id: projectId,
+          options: { site_data: siteDataForBackend },
+        },
         useMock: false,
       });
 
