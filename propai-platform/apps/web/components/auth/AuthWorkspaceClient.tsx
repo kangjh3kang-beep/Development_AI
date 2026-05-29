@@ -510,15 +510,12 @@ export function AuthWorkspaceClient({
         const user = await apiClient.get<UserResponse>("/auth/me", { useMock: false });
         setSession({ user, expiresIn, source });
         setStoredTokenPresent(true);
-        setFeedback({
-          tone: "success",
-          message:
-            source === "stored"
-              ? labels.successLabels.sessionRestored
-              : source === "refreshed"
-                ? labels.successLabels.sessionRefreshed
-              : labels.successLabels[source],
-        });
+
+        // 로그인 성공 → 대시보드로 자동 이동
+        if (source === "login" || source === "register") {
+          router.push(`/${locale}/dashboard`);
+          return;
+        }
       } catch (error) {
         if (allowRefresh && hasStoredRefreshToken() && isAuthFailure(error)) {
           try {
@@ -670,7 +667,7 @@ export function AuthWorkspaceClient({
 
   return (
     <main className="mx-auto flex min-h-screen max-w-6xl items-center px-6 py-10">
-      <section className="grid w-full gap-6 lg:grid-cols-[1.25fr_0.95fr]">
+      <section className="mx-auto w-full max-w-lg">
         <Card className="rounded-[var(--radius-2xl)] border border-[var(--line)] bg-[var(--surface-strong)] shadow-[var(--shadow-lg)]">
           <CardContent className="p-8 md:p-10">
             <div className="space-y-4">
@@ -847,7 +844,9 @@ export function AuthWorkspaceClient({
           </CardContent>
         </Card>
 
-        <div className="grid gap-6">
+        {/* 런타임/세션 디버그 패널 제거 — 프로덕션에서 불필요 */}
+        {/* eslint-disable-next-line no-constant-condition */}
+        {(false as boolean) && <div className="grid gap-6">
           <Card className="rounded-[var(--radius-2xl)] border border-[var(--line)] bg-[var(--surface)] shadow-[var(--shadow-lg)]">
             <CardContent className="p-6">
               <CardTitle className="text-xl text-[var(--text-primary)]">
@@ -977,7 +976,7 @@ export function AuthWorkspaceClient({
               </div>
             </CardContent>
           </Card>
-        </div>
+        </div>}
       </section>
     </main>
   );
