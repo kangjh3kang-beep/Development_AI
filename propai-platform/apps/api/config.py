@@ -161,17 +161,20 @@ class Settings(BaseSettings):
     @field_validator("jwt_secret", mode="after")
     @classmethod
     def warn_default_jwt_secret(cls, value: str) -> str:
-        """프로덕션 환경에서 기본 JWT 시크릿 사용 시 경고."""
+        """프로덕션 환경에서 기본 JWT 시크릿 사용 시 시작 차단."""
         import os
-        import warnings
-
         if value == "complex_jwt_secret_key_change_in_prod":
             env = os.getenv("ENVIRONMENT", "development").lower()
             if env in {"production", "staging"}:
-                warnings.warn(
-                    "JWT_SECRET이 기본값입니다. 프로덕션 환경에서는 반드시 변경하세요!",
-                    stacklevel=2,
+                raise ValueError(
+                    "JWT_SECRET이 기본값입니다. 프로덕션/스테이징 환경에서는 반드시 고유한 시크릿을 설정하세요. "
+                    "환경변수 JWT_SECRET_KEY를 설정해주세요."
                 )
+            import warnings
+            warnings.warn(
+                "JWT_SECRET이 기본값입니다. 프로덕션 환경에서는 반드시 변경하세요!",
+                stacklevel=2,
+            )
         return value
 
     # ── 스토리지 ──

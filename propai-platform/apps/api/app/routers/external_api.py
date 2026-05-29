@@ -31,6 +31,7 @@ async def merge_parcels(req: MergeRequest, current_user: User = Depends(get_curr
     return result
 
 @router.get("/transactions/apt")
-async def get_apt_transactions(region_code: str, year_month: str,
+async def get_apt_transactions(lawd_cd: str, deal_ym: str,
                                 current_user: User = Depends(get_current_user)):
-    return await molit.get_apt_transactions(region_code, year_month)
+    items = await molit.get_apt_transactions(lawd_cd, deal_ym)
+    return {"items": items, "total_count": len(items)}

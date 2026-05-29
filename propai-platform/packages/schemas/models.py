@@ -311,6 +311,7 @@ class DesignResponse(BaseModel):
     project_id: UUID
     design_type: DesignType
     file_url: str | None = None
+    thumbnail_url: str | None = None
     metadata: dict = Field(default_factory=dict)
     created_at: datetime
 

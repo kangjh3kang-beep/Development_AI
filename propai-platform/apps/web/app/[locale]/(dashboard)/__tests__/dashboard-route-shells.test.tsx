@@ -375,7 +375,7 @@ describe("Dashboard route shells", () => {
   });
 
   it("renders the auction route shell with the live workspace", async () => {
-    render(await AuctionPage({ params: Promise.resolve({ locale: "en" }) }));
+    render(<AuctionPage />);
 
     expect(screen.getByText("Auction live center")).toBeInTheDocument();
     expect(screen.getByText("실연동")).toBeInTheDocument();
@@ -408,7 +408,7 @@ describe("Dashboard route shells", () => {
   });
 
   it("renders the investment analytics shell with the live workspace", async () => {
-    render(await InvestmentPage({ params: Promise.resolve({ locale: "en" }) }));
+    render(<InvestmentPage />);
 
     expect(screen.getByText("투자 운영 컨트롤타워")).toBeInTheDocument();
     expect(screen.getByText("실연동")).toBeInTheDocument();
@@ -416,7 +416,7 @@ describe("Dashboard route shells", () => {
   });
 
   it("renders the ESG analytics shell with the energy workspace", async () => {
-    render(await ESGPage({ params: Promise.resolve({ locale: "en" }) }));
+    render(<ESGPage />);
 
     expect(screen.getByText("에너지 인증 워크스페이스")).toBeInTheDocument();
     expect(screen.getByText("실연동")).toBeInTheDocument();
@@ -424,7 +424,7 @@ describe("Dashboard route shells", () => {
   });
 
   it("renders the cost analytics shell with the cost workspace", async () => {
-    render(await CostPage({ params: Promise.resolve({ locale: "en" }) }));
+    render(<CostPage />);
 
     expect(screen.getByText("공사비 인텔리전스 허브")).toBeInTheDocument();
     expect(screen.getByText("실연동")).toBeInTheDocument();

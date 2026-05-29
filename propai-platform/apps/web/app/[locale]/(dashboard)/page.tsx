@@ -2,7 +2,10 @@ import Link from "next/link";
 import { HeroGridBackground } from "@/components/dashboard/DashboardDynamicElements";
 import { DashboardKpiLoader } from "@/components/dashboard/DashboardKpiLoader";
 import { DashboardProjectLoader } from "@/components/dashboard/DashboardProjectLoader";
+import { MarketingPanels } from "@/components/dashboard/MarketingPanels";
 import { OnboardingWizard } from "@/components/onboarding/OnboardingWizard";
+import { ProjectPipelinePanel } from "@/components/pipeline/ProjectPipelinePanel";
+import { Logo } from "@/components/ui/Logo";
 import { getDictionary } from "@/i18n/get-dictionary";
 import { isValidLocale, type Locale } from "@/i18n/config";
 
@@ -66,10 +69,12 @@ export default async function DashboardPage({ params }: DashboardPageProps) {
                 {dictionary.dashboard.title}
               </span>
             </div>
-            
+
             <h1 className="text-3xl font-[900] tracking-tighter text-[var(--text-primary)] sm:text-5xl md:text-6xl lg:text-7xl leading-[0.9]">
                <span className="sr-only">{dictionary.meta.siteName}</span>
-               <img src="/logos/logo-horizontal.png" alt="사통팔땅 로고" className="h-16 sm:h-24 md:h-28 lg:h-32 w-auto drop-shadow-2xl" />
+               <div className="flex justify-start items-center">
+                 <Logo size="xl" />
+               </div>
             </h1>
 
             <p className="max-w-xl text-base font-medium leading-relaxed text-[var(--text-secondary)] sm:text-lg lg:text-xl tracking-tight">
@@ -95,10 +100,54 @@ export default async function DashboardPage({ params }: DashboardPageProps) {
         </div>
       </section>
 
-      {/* ── 기능 요약 배너 (로고 배너) ── */}
-      <section className="w-full overflow-hidden rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-soft)] shadow-[var(--shadow-lg)] mt-[-1rem] mb-4">
-        <img src="/logos/banner-icons.png" alt="전국 데이터 연결, AI 분석 예측, 개발계획 자동수립" className="w-full h-auto object-cover" />
+      {/* ── 기능 요약 배너 (유기적 플로팅 카드) ── */}
+      <section className="w-full mb-12 mt-4 relative z-10">
+        <div className="flex flex-wrap justify-center gap-4 lg:gap-6">
+          {[
+            {
+              title: "전국 데이터 연결",
+              desc: "공간정보 통합",
+              icon: <svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--accent-strong)] opacity-90"><circle cx="12" cy="5" r="3"/><circle cx="5" cy="19" r="3"/><circle cx="19" cy="19" r="3"/><path d="m7.5 16.5 4.5-9"/><path d="m16.5 16.5-4.5-9"/><path d="M5 19h14"/></svg>
+            },
+            {
+              title: "AI 분석/예측",
+              desc: "최적 개발안 도출",
+              icon: <svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--accent-strong)] opacity-90"><rect width="16" height="16" x="4" y="4" rx="2"/><rect width="6" height="6" x="9" y="9" rx="1"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="M6 2v2"/><path d="M6 20v2"/><path d="M18 2v2"/><path d="M18 20v2"/><path d="M2 6h2"/><path d="M2 18h2"/><path d="M20 6h2"/><path d="M20 18h2"/></svg>
+            },
+            {
+              title: "개발계획 자동수립",
+              desc: "시간과 비용 절감",
+              icon: <svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--accent-strong)] opacity-90"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="m9 15 2 2 4-4"/></svg>
+            },
+            {
+              title: "수익성 분석",
+              desc: "사업성 극대화",
+              icon: <svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--accent-strong)] opacity-90"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/><path d="M12 14v4"/><path d="M16 10v8"/></svg>
+            },
+            {
+              title: "미래가치 창출",
+              desc: "지속가능한 개발",
+              icon: <svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--accent-strong)] opacity-90"><circle cx="12" cy="12" r="10"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/><path d="M2 12h20"/></svg>
+            }
+          ].map((item, idx) => (
+            <div key={idx} className="flex items-center gap-3 px-4 py-3 lg:px-6 lg:py-4 rounded-2xl bg-[var(--surface-soft)] border border-[var(--line-strong)] shadow-sm hover:shadow-[var(--shadow-glow)] hover:border-[var(--accent)] hover:-translate-y-1 transition-all duration-300 group flex-1 min-w-[200px] w-full sm:w-auto backdrop-blur-md">
+              <div className="flex items-center justify-center shrink-0 h-10 w-10 lg:h-12 lg:w-12 rounded-xl bg-gradient-to-br from-[var(--surface-muted)] to-[var(--surface)] border border-[var(--line)] group-hover:border-[var(--accent-strong)]/50 group-hover:scale-110 group-hover:bg-[var(--accent-soft)] transition-all duration-300">
+                {item.icon}
+              </div>
+              <div className="flex flex-col gap-1 min-w-0">
+                <p className="text-[14px] lg:text-[15px] font-[800] text-[var(--text-primary)] leading-tight tracking-tight group-hover:text-[var(--accent-strong)] transition-colors truncate">{item.title}</p>
+                <p className="text-[12px] lg:text-[13px] font-medium text-[var(--text-secondary)] tracking-tight truncate">{item.desc}</p>
+              </div>
+            </div>
+          ))}
+        </div>
       </section>
+
+      {/* ── 자동 분석 파이프라인 ── */}
+      <ProjectPipelinePanel />
+
+      {/* ── 마케팅 홍보 벤토(Bento) 패널 ── */}
+      <MarketingPanels />
 
       {/* ── KPI 그리드: 실시간 API 연동 (fallback 포함) ── */}
       <DashboardKpiLoader />

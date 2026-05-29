@@ -47,7 +47,6 @@ describe("KakaoCallbackWorkspaceClient", () => {
       <KakaoCallbackWorkspaceClient
         locale="en"
         code="kakao-code-123"
-        tenantId="11111111-1111-1111-1111-111111111111"
         redirectUri="https://propai.ai/auth/kakao/callback"
       />,
     );
@@ -59,7 +58,6 @@ describe("KakaoCallbackWorkspaceClient", () => {
           useMock: false,
           body: {
             code: "kakao-code-123",
-            tenant_id: "11111111-1111-1111-1111-111111111111",
             redirect_uri: "https://propai.ai/auth/kakao/callback",
           },
         }),
@@ -81,14 +79,13 @@ describe("KakaoCallbackWorkspaceClient", () => {
       <KakaoCallbackWorkspaceClient
         locale="en"
         code={null}
-        tenantId={null}
         redirectUri={null}
       />,
     );
 
     expect(
       screen.getByText(
-        "The Kakao callback payload is incomplete. Check that both code and tenant_id are present.",
+        "The Kakao callback payload is incomplete. Check that the code parameter is present.",
       ),
     ).toBeInTheDocument();
     expect(apiClient.post).not.toHaveBeenCalled();

@@ -54,9 +54,52 @@ class AltSelectionRequest(BaseModel):
     noise_pct: float = Field(0.10, ge=0.01, le=0.50)
 
 
+# ── 응답 스키마 ──
+
+
+class DrawingInfo(BaseModel):
+    """개별 도면 정보."""
+    svg_length: int
+    has_content: bool
+
+
+class FullDrawingSetResponse(BaseModel):
+    """전체 도면 세트 생성 결과."""
+    project_id: str
+    drawings: dict[str, DrawingInfo]
+    drawing_count: int
+
+
+class DrawingSaveResponse(BaseModel):
+    """도면 저장 결과."""
+    project_id: str
+    drawing_code: str
+    drawing_type: str
+    svg_length: int
+    layer_count: int
+    status: str
+
+
+class AlternativeSelectionResponse(BaseModel):
+    """대안 선정 결과."""
+    project_id: str
+    ranked: list[dict[str, Any]]
+    mc_results: list[dict[str, Any]] = Field(default_factory=list)
+    winner: dict[str, Any] = Field(default_factory=dict)
+
+
+class PermitDocsResponse(BaseModel):
+    """인허가 도서 현황."""
+    project_id: str
+    documents: list[dict[str, Any]]
+    total: int
+    completed: int
+    completion_pct: float
+
+
 # ── 엔드포인트 ──
 
-@router.post("/{project_id}/generate-full-set")
+@router.post("/{project_id}/generate-full-set", response_model=FullDrawingSetResponse)
 async def generate_full_drawing_set(project_id: str, req: DrawingSetRequest):
     """전체 도면 세트를 일괄 생성한다 (B-01~C-03)."""
     project_data = req.model_dump()
@@ -81,7 +124,7 @@ async def get_drawing_svg(project_id: str, code: str):
     return Response(content=svg, media_type="image/svg+xml")
 
 
-@router.post("/{project_id}/drawings/save")
+@router.post("/{project_id}/drawings/save", response_model=DrawingSaveResponse)
 async def save_drawing(project_id: str, req: CADSaveRequest):
     """도면+레이어를 DB에 저장한다."""
     return {
@@ -113,7 +156,7 @@ async def export_dxf(project_id: str, req: DrawingSetRequest):
         return Response(content=b"DXF_PLACEHOLDER", media_type="application/dxf")
 
 
-@router.post("/{project_id}/select-alternative")
+@router.post("/{project_id}/select-alternative", response_model=AlternativeSelectionResponse)
 async def select_alternative(project_id: str, req: AltSelectionRequest):
     """MCDM + 몬테카를로 대안 선정."""
     result = alt_selector.simulate(
@@ -129,7 +172,7 @@ async def select_alternative(project_id: str, req: AltSelectionRequest):
     }
 
 
-@router.get("/{project_id}/permit-docs")
+@router.get("/{project_id}/permit-docs", response_model=PermitDocsResponse)
 async def get_permit_docs(project_id: str):
     """인허가 도서 현황을 반환한다."""
     from app.services.seed.v61_seed_data import seed_permit_documents

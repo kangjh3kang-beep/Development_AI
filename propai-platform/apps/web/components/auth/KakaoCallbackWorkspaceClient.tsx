@@ -16,7 +16,6 @@ type TokenResponse = {
 type KakaoCallbackWorkspaceClientProps = {
   locale: Locale;
   code: string | null;
-  tenantId: string | null;
   redirectUri: string | null;
 };
 
@@ -40,7 +39,7 @@ const LABELS: Record<Locale, CallbackLabels> = {
       "인가 코드를 실제 `/auth/kakao/callback` API에 전달해 브라우저 세션을 복구합니다.",
     loading: "카카오 인증 코드를 교환하는 중입니다.",
     success: "카카오 인증이 완료되어 브라우저 세션을 저장했습니다.",
-    missingParams: "카카오 callback 파라미터가 부족합니다. code와 tenant_id를 확인하세요.",
+    missingParams: "카카오 callback 파라미터가 부족합니다. code를 확인하세요.",
     error: "카카오 인증을 완료하지 못했습니다.",
     openDashboard: "대시보드로 이동",
     backToLogin: "로그인으로 돌아가기",
@@ -53,7 +52,7 @@ const LABELS: Record<Locale, CallbackLabels> = {
     loading: "Exchanging the Kakao authorization code.",
     success: "Kakao authentication completed and the browser session has been stored.",
     missingParams:
-      "The Kakao callback payload is incomplete. Check that both code and tenant_id are present.",
+      "The Kakao callback payload is incomplete. Check that the code parameter is present.",
     error: "Kakao authentication could not be completed.",
     openDashboard: "Open dashboard",
     backToLogin: "Back to login",
@@ -65,7 +64,7 @@ const LABELS: Record<Locale, CallbackLabels> = {
       "通过真实 `/auth/kakao/callback` API 交换授权码并恢复浏览器会话。",
     loading: "正在交换 Kakao 授权码。",
     success: "Kakao 认证完成，浏览器会话已保存。",
-    missingParams: "Kakao 回调参数不完整，请确认同时提供 code 和 tenant_id。",
+    missingParams: "Kakao 回调参数不完整，请确认提供 code。",
     error: "无法完成 Kakao 认证。",
     openDashboard: "进入仪表盘",
     backToLogin: "返回登录",
@@ -104,12 +103,11 @@ function resolveApiErrorMessage(error: unknown, fallback: string) {
 export function KakaoCallbackWorkspaceClient({
   locale,
   code,
-  tenantId,
   redirectUri,
 }: KakaoCallbackWorkspaceClientProps) {
   const router = useRouter();
   const labels = LABELS[locale] || LABELS["ko"];
-  const hasRequiredParams = Boolean(code && tenantId);
+  const hasRequiredParams = Boolean(code);
   const [requestState, setRequestState] = useState<{
     status: "loading" | "success" | "error";
     message: string;
@@ -130,7 +128,6 @@ export function KakaoCallbackWorkspaceClient({
         const tokens = await apiClient.post<TokenResponse>("/auth/kakao/callback", {
           body: {
             code,
-            tenant_id: tenantId,
             redirect_uri: redirectUri,
           },
           useMock: false,
@@ -162,7 +159,7 @@ export function KakaoCallbackWorkspaceClient({
     return () => {
       active = false;
     };
-  }, [code, hasRequiredParams, labels.error, labels.success, redirectUri, tenantId]);
+  }, [code, hasRequiredParams, labels.error, labels.success, redirectUri]);
 
   const status = hasRequiredParams ? requestState.status : "error";
   const message = hasRequiredParams ? requestState.message : labels.missingParams;

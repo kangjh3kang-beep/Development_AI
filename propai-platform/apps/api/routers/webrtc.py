@@ -16,8 +16,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSock
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apps.api.auth.jwt_handler import CurrentUser
+from apps.api.auth.jwt_handler import CurrentUser, decode_token
 from apps.api.auth.rbac import RequirePermission
+from apps.api.config import get_settings
 from apps.api.database.models.webrtc_session import WebRTCSession
 from apps.api.database.session import get_db
 from apps.api.services.webrtc_service import WebRTCService
@@ -274,14 +275,41 @@ async def handle_ice_candidate(
 async def webrtc_signaling_ws(
     websocket: WebSocket,
     session_id: UUID,
+    token: str = Query(...),
     db: AsyncSession = Depends(get_db),
 ) -> None:
     """WebSocket 기반 시그널링 채널.
 
     클라이언트와 서버 간 SDP/ICE 메시지를 중계한다.
+    핸드셰이크 시 token 쿼리 파라미터로 JWT 인증을 수행한다.
     """
+    # ── 인증: JWT 토큰 검증 ──
+    settings = get_settings()
+    try:
+        payload = decode_token(token, settings)
+    except Exception:
+        await websocket.close(code=4001)
+        return
+
+    if payload.token_type != "access":
+        await websocket.close(code=4001)
+        return
+
+    user_tenant_id = UUID(payload.tenant_id)
+
+    # ── 세션 소유권 확인: tenant_id 일치 ──
+    from sqlalchemy import select as sa_select
+
+    result = await db.execute(
+        sa_select(WebRTCSession).where(WebRTCSession.id == session_id)
+    )
+    session_row = result.scalar_one_or_none()
+    if session_row is None or session_row.tenant_id != user_tenant_id:
+        await websocket.close(code=4001)
+        return
+
     await websocket.accept()
-    logger.info("WebSocket 시그널링 연결", session_id=str(session_id))
+    logger.info("WebSocket 시그널링 연결", session_id=str(session_id), user_id=payload.sub)
 
     try:
         while True:

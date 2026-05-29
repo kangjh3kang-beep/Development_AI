@@ -23,16 +23,13 @@ vi.mock("@/components/auth/KakaoCallbackWorkspaceClient", () => ({
   KakaoCallbackWorkspaceClient: ({
     locale,
     code,
-    tenantId,
   }: {
     locale: string;
     code: string | null;
-    tenantId: string | null;
   }) => (
     <div data-testid="kakao-callback-workspace">
       <span>{locale}</span>
       <span>{code}</span>
-      <span>{tenantId}</span>
     </div>
   ),
 }));
@@ -58,7 +55,6 @@ describe("Auth route shells", () => {
         params: Promise.resolve({ locale: "en" }),
         searchParams: Promise.resolve({
           code: "kakao-code-001",
-          tenant_id: "tenant-001",
         }),
       }),
     );
@@ -66,9 +62,6 @@ describe("Auth route shells", () => {
     expect(screen.getByTestId("kakao-callback-workspace")).toHaveTextContent("en");
     expect(screen.getByTestId("kakao-callback-workspace")).toHaveTextContent(
       "kakao-code-001",
-    );
-    expect(screen.getByTestId("kakao-callback-workspace")).toHaveTextContent(
-      "tenant-001",
     );
   });
 });

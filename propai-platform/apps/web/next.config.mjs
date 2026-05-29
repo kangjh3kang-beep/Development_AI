@@ -23,9 +23,7 @@ const nextConfig = {
       "@react-three/drei",
       "konva",
       "react-konva",
-      "ethers",
       "graphql",
-      "solc",
     ],
   },
 

@@ -2,9 +2,10 @@
 
 from typing import Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
+from apps.api.auth.jwt_handler import CurrentUser, get_current_user
 from apps.api.app.services.feasibility.unit_mix_optimizer import (
     DEFAULT_DEMAND_RATIO,
     DEFAULT_PRICE_BY_TYPE,
@@ -31,7 +32,10 @@ class UnitMixRequest(BaseModel):
 
 
 @router.post("/optimize")
-async def optimize_unit_mix(req: UnitMixRequest):
+async def optimize_unit_mix(
+    req: UnitMixRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+):
     """수익 극대화 최적 유닛믹스 계산."""
     optimizer = UnitMixOptimizer()
     inp = UnitMixInput(**req.model_dump())
@@ -39,7 +43,9 @@ async def optimize_unit_mix(req: UnitMixRequest):
 
 
 @router.get("/types")
-async def get_unit_types():
+async def get_unit_types(
+    current_user: CurrentUser = Depends(get_current_user),
+):
     """표준 평형 타입 및 기본 시세/수요 비율 조회."""
     return {
         "types": STANDARD_UNIT_TYPES,

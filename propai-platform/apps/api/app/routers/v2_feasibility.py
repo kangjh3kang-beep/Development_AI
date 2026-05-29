@@ -31,13 +31,12 @@ from app.services.feasibility.ai_recommendation import diagnose
 from app.services.feasibility.version_control_db import FeasibilityVCSDB
 from app.services.feasibility.sensitivity_engine import run_sensitivity_analysis
 from app.core.database import get_db
+from app.services.auth.auth_service import get_current_user
+from app.models.auth import User
 
 router = APIRouter(prefix="/api/v2/feasibility", tags=["feasibility-v2"])
 
 _service = FeasibilityServiceV2()
-
-# 기본 테넌트 ID (인증 미적용 엔드포인트용)
-_DEFAULT_TENANT_ID = uuid.UUID("00000000-0000-0000-0000-000000000000")
 
 
 def _parse_project_id(project_id: str) -> uuid.UUID:
@@ -197,17 +196,27 @@ async def get_recommendations(req: FeasibilityCalculateRequest):
 
 
 @router.post("/repos/{project_id}/commit")
-async def vcs_commit(project_id: str, req: VCSCommitRequest, db: AsyncSession = Depends(get_db)):
+async def vcs_commit(
+    project_id: str,
+    req: VCSCommitRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """수지분석 커밋."""
-    vcs = FeasibilityVCSDB(db, project_id=_parse_project_id(project_id), tenant_id=_DEFAULT_TENANT_ID)
+    vcs = FeasibilityVCSDB(db, project_id=_parse_project_id(project_id), tenant_id=current_user.organization_id)
     result = await vcs.commit(req.snapshot, req.message)
     return {"sha": result["sha"], "message": result["message"], "timestamp": result.get("timestamp", "")}
 
 
 @router.post("/repos/{project_id}/rollback")
-async def vcs_rollback(project_id: str, req: VCSRollbackRequest, db: AsyncSession = Depends(get_db)):
+async def vcs_rollback(
+    project_id: str,
+    req: VCSRollbackRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """수지분석 롤백."""
-    vcs = FeasibilityVCSDB(db, project_id=_parse_project_id(project_id), tenant_id=_DEFAULT_TENANT_ID)
+    vcs = FeasibilityVCSDB(db, project_id=_parse_project_id(project_id), tenant_id=current_user.organization_id)
     result = await vcs.rollback(req.target_sha)
     if not result:
         raise HTTPException(status_code=404, detail="커밋을 찾을 수 없습니다")
@@ -215,9 +224,14 @@ async def vcs_rollback(project_id: str, req: VCSRollbackRequest, db: AsyncSessio
 
 
 @router.get("/repos/{project_id}/log")
-async def vcs_log(project_id: str, max_count: int = 50, db: AsyncSession = Depends(get_db)):
+async def vcs_log(
+    project_id: str,
+    max_count: int = 50,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """커밋 이력."""
-    vcs = FeasibilityVCSDB(db, project_id=_parse_project_id(project_id), tenant_id=_DEFAULT_TENANT_ID)
+    vcs = FeasibilityVCSDB(db, project_id=_parse_project_id(project_id), tenant_id=current_user.organization_id)
     log_entries = await vcs.log(max_count)
     return {
         "commits": [
@@ -228,9 +242,15 @@ async def vcs_log(project_id: str, max_count: int = 50, db: AsyncSession = Depen
 
 
 @router.get("/repos/{project_id}/diff/{sha_a}/{sha_b}")
-async def vcs_diff(project_id: str, sha_a: str, sha_b: str, db: AsyncSession = Depends(get_db)):
+async def vcs_diff(
+    project_id: str,
+    sha_a: str,
+    sha_b: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """두 커밋 간 diff."""
-    vcs = FeasibilityVCSDB(db, project_id=_parse_project_id(project_id), tenant_id=_DEFAULT_TENANT_ID)
+    vcs = FeasibilityVCSDB(db, project_id=_parse_project_id(project_id), tenant_id=current_user.organization_id)
     return await vcs.diff(sha_a, sha_b)
 
 

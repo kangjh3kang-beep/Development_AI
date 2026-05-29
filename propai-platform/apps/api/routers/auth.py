@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-UTC = timezone.utc
+import hashlib
+from datetime import datetime, timedelta, timezone
 import re
 from uuid import UUID
 
@@ -24,12 +24,14 @@ from apps.api.auth.jwt_handler import (
 )
 from apps.api.auth.kakao_handler import KakaoOAuthError, process_kakao_callback
 from apps.api.config import Settings, get_settings
+from apps.api.database.models.refresh_token import RefreshToken
 from apps.api.database.models.tenant import Tenant
 from apps.api.database.models.user import User
 from apps.api.database.session import get_db
 
 router = APIRouter()
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+UTC = timezone.utc
 
 
 class LoginRequest(BaseModel):
@@ -78,6 +80,32 @@ async def _build_unique_tenant_slug(db: AsyncSession, base_value: str) -> str:
         suffix += 1
 
 
+def _refresh_expires_at(expire_days: int) -> datetime:
+    return datetime.now(UTC) + timedelta(days=expire_days)
+
+
+async def _persist_refresh_token(
+    db: AsyncSession,
+    *,
+    refresh_token: str,
+    user_id: UUID,
+    tenant_id: UUID,
+    expire_days: int,
+    device_info: str,
+) -> None:
+    token_hash = hashlib.sha256(refresh_token.encode()).hexdigest()
+    db.add(
+        RefreshToken(
+            user_id=user_id,
+            tenant_id=tenant_id,
+            token_hash=token_hash,
+            expires_at=_refresh_expires_at(expire_days),
+            device_info=device_info,
+        )
+    )
+    await db.commit()
+
+
 @router.post("/login", response_model=TokenResponse)
 async def login(
     body: LoginRequest,
@@ -85,7 +113,6 @@ async def login(
     settings: Settings = Depends(get_settings),
 ) -> TokenResponse:
     """Issue JWT credentials for an existing user."""
-    import traceback
     try:
         result = await db.execute(select(User).where(User.email == body.email))
         user = result.scalar_one_or_none()
@@ -111,6 +138,14 @@ async def login(
 
     access = create_access_token(user.id, user.tenant_id, user.role, settings)
     refresh = create_refresh_token(user.id, user.tenant_id, user.role, settings)
+    await _persist_refresh_token(
+        db,
+        refresh_token=refresh,
+        user_id=user.id,
+        tenant_id=user.tenant_id,
+        expire_days=settings.jwt_refresh_token_expire_days,
+        device_info="auth:login",
+    )
 
     return TokenResponse(
         access_token=access,
@@ -156,6 +191,14 @@ async def register(
 
     access = create_access_token(user.id, user.tenant_id, user.role, settings)
     refresh = create_refresh_token(user.id, user.tenant_id, user.role, settings)
+    await _persist_refresh_token(
+        db,
+        refresh_token=refresh,
+        user_id=user.id,
+        tenant_id=user.tenant_id,
+        expire_days=settings.jwt_refresh_token_expire_days,
+        device_info="auth:register",
+    )
 
     return TokenResponse(
         access_token=access,
@@ -168,6 +211,7 @@ async def register(
 async def refresh_token(
     body: RefreshRequest,
     settings: Settings = Depends(get_settings),
+    db: AsyncSession = Depends(get_db),
 ) -> TokenResponse:
     """Exchange a refresh token for a fresh access token pair."""
     payload = decode_token(body.refresh_token, settings)
@@ -176,6 +220,37 @@ async def refresh_token(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="The supplied token is not a refresh token.",
         )
+
+    # DB에서 토큰 해시를 조회하여 revoke 여부 확인
+    token_hash = hashlib.sha256(body.refresh_token.encode()).hexdigest()
+    result = await db.execute(
+        select(RefreshToken).where(RefreshToken.token_hash == token_hash)
+    )
+    stored_token = result.scalar_one_or_none()
+
+    if stored_token is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh token not found.",
+        )
+    if stored_token.is_revoked:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh token has been revoked.",
+        )
+    expires_at = stored_token.expires_at
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=UTC)
+    if expires_at <= datetime.now(UTC):
+        stored_token.is_revoked = True
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh token has expired.",
+        )
+
+    # 기존 토큰 무효화 (토큰 로테이션)
+    stored_token.is_revoked = True
 
     access = create_access_token(
         UUID(payload.sub),
@@ -189,6 +264,14 @@ async def refresh_token(
         payload.role,
         settings,
     )
+    await _persist_refresh_token(
+        db,
+        refresh_token=refresh,
+        user_id=UUID(payload.sub),
+        tenant_id=UUID(payload.tenant_id),
+        expire_days=settings.jwt_refresh_token_expire_days,
+        device_info="auth:refresh",
+    )
 
     return TokenResponse(
         access_token=access,
@@ -201,14 +284,25 @@ async def refresh_token(
 async def logout(
     body: LogoutRequest,
     settings: Settings = Depends(get_settings),
+    db: AsyncSession = Depends(get_db),
 ) -> LogoutResponse:
-    """Acknowledge browser logout and validate the supplied refresh token shape."""
+    """Acknowledge browser logout and revoke the refresh token in DB."""
     payload = decode_token(body.refresh_token, settings)
     if payload.token_type != "refresh":
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="The supplied token is not a refresh token.",
         )
+
+    # DB에서 해당 리프레시 토큰을 revoke 처리
+    token_hash = hashlib.sha256(body.refresh_token.encode()).hexdigest()
+    result = await db.execute(
+        select(RefreshToken).where(RefreshToken.token_hash == token_hash)
+    )
+    stored_token = result.scalar_one_or_none()
+    if stored_token is not None:
+        stored_token.is_revoked = True
+        await db.commit()
 
     return LogoutResponse(
         success=True,
@@ -247,7 +341,6 @@ class KakaoCallbackRequest(BaseModel):
 
     code: str
     redirect_uri: str | None = None
-    tenant_id: UUID
 
 
 @router.post("/kakao/callback", response_model=TokenResponse)
@@ -262,7 +355,6 @@ async def kakao_callback(
         result = await process_kakao_callback(
             code=body.code,
             redirect_uri=redirect_uri,
-            tenant_id=body.tenant_id,
             db=db,
             settings=settings,
         )
@@ -282,7 +374,22 @@ async def kakao_callback(
 # ── 관리자 전용 엔드포인트 ──
 
 
-@router.get("/admin/users")
+class AdminUserItem(BaseModel):
+    """관리자용 사용자 항목."""
+    id: str
+    email: str
+    name: str
+    role: str
+    is_active: bool
+    created_at: str | None = None
+
+
+class AdminUsersResponse(BaseModel):
+    """관리자용 사용자 목록 응답."""
+    users: list[AdminUserItem]
+
+
+@router.get("/admin/users", response_model=AdminUsersResponse)
 async def get_admin_users(
     current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),

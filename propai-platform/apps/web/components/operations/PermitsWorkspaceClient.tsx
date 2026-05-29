@@ -208,7 +208,7 @@ export function PermitsWorkspaceClient({
     setIsSubmitting(true);
     try {
       const res = await apiClient.post<ComplianceCheckResponse>(
-        "/building-compliance/check",
+        "/permits/compliance-check",
         {
           useMock: false,
           body: {

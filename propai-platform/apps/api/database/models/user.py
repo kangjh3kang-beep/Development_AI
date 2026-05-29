@@ -27,6 +27,12 @@ class User(Base, TenantMixin, TimestampMixin):
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
     role: Mapped[str] = mapped_column(String(50), default="viewer", nullable=False)
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
+    oauth_provider: Mapped[str | None] = mapped_column(
+        String(50), nullable=True, comment="OAuth 제공자 (kakao, google 등)"
+    )
+    oauth_id: Mapped[str | None] = mapped_column(
+        String(255), nullable=True, comment="OAuth 제공자 사용자 ID"
+    )
 
     # 관계
     tenant = relationship("Tenant", back_populates="users")

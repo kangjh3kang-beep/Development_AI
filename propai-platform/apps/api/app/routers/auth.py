@@ -78,11 +78,25 @@ async def refresh(req: RefreshRequest):
     except JWTError:
         raise HTTPException(status_code=401, detail="토큰 검증 실패")
 
-@router.get("/me")
+class MeResponse(BaseModel):
+    """현재 사용자 정보."""
+    id: str
+    email: str
+    full_name: str
+
+
+class AdminUserItem(BaseModel):
+    """관리자용 사용자 항목."""
+    id: str
+    email: str
+    full_name: str
+
+
+@router.get("/me", response_model=MeResponse)
 async def me(current_user: User = Depends(get_current_user)):
     return {"id": str(current_user.id), "email": current_user.email, "full_name": current_user.full_name}
 
-@router.get("/admin/users")
+@router.get("/admin/users", response_model=list[AdminUserItem])
 async def admin_list_users(
     db: AsyncSession = Depends(get_db),
     _role=Depends(require_admin),

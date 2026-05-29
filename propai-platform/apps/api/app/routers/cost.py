@@ -62,9 +62,78 @@ class FeasibilityRequest(BaseModel):
     project_months: int = Field(36, ge=1)
 
 
+# ── 응답 스키마 ──
+
+
+class IFCUploadResponse(BaseModel):
+    """IFC 업로드 결과."""
+    project_id: str
+    mapped_items: list[dict[str, Any]]
+    item_count: int
+    unique_work_codes: list[str]
+
+
+class CostCalculateResponse(BaseModel):
+    """원가계산 결과."""
+    project_id: str
+    items: list[dict[str, Any]] = Field(default_factory=list)
+    subtotals: dict[str, Any] = Field(default_factory=dict)
+    total: float = 0.0
+
+
+class MonteCarloResponse(BaseModel):
+    """몬테카를로 시뮬레이션 결과."""
+    project_id: str
+    mean: float = 0.0
+    std: float = 0.0
+    p10: float = 0.0
+    p50: float = 0.0
+    p90: float = 0.0
+
+    class Config:
+        extra = "allow"
+
+
+class BillingCreateResponse(BaseModel):
+    """기성 생성 결과."""
+    project_id: str
+    billing_no: int
+    period: str
+    planned_value: float
+    earned_value: float
+    actual_cost: float
+    evm_spi: float
+    evm_cpi: float
+    status: str
+    work_entries_count: int
+
+
+class BillingSummaryResponse(BaseModel):
+    """누적 기성 현황."""
+    project_id: str
+    total_billings: int
+    cumulative_pv: float
+    cumulative_ev: float
+    cumulative_ac: float
+    overall_spi: float
+    overall_cpi: float
+    status: str
+
+
+class FeasibilityResultResponse(BaseModel):
+    """수지분석 연동 결과."""
+    project_id: str
+    total_cost: float
+    total_revenue: float
+    gross_profit: float
+    profit_rate_pct: float
+    monthly_return: float
+    irr_estimate: float
+
+
 # ── 엔드포인트 ──
 
-@router.post("/{project_id}/upload-ifc")
+@router.post("/{project_id}/upload-ifc", response_model=IFCUploadResponse)
 async def upload_ifc(project_id: str, req: IFCUploadRequest):
     """IFC 파일 업로드 + 공종코드 매핑."""
     mapped = bim_service.extract_quantities_with_work_codes(req.elements)
@@ -76,7 +145,7 @@ async def upload_ifc(project_id: str, req: IFCUploadRequest):
     }
 
 
-@router.post("/{project_id}/calculate")
+@router.post("/{project_id}/calculate", response_model=CostCalculateResponse)
 async def calculate_cost(project_id: str, req: CostCalculateRequest):
     """원가계산서를 생성한다."""
     result = cost_calc.calculate(req.items, rates=req.rates)
@@ -86,7 +155,7 @@ async def calculate_cost(project_id: str, req: CostCalculateRequest):
     }
 
 
-@router.post("/{project_id}/monte-carlo")
+@router.post("/{project_id}/monte-carlo", response_model=MonteCarloResponse)
 async def run_monte_carlo(project_id: str, req: MonteCarloRequest):
     """공사비 몬테카를로 시뮬레이션."""
     mc = CostMonteCarlo(req.base_result, iters=req.iterations, seed=req.seed)
@@ -97,7 +166,7 @@ async def run_monte_carlo(project_id: str, req: MonteCarloRequest):
     }
 
 
-@router.post("/{project_id}/billing/create")
+@router.post("/{project_id}/billing/create", response_model=BillingCreateResponse)
 async def create_billing(project_id: str, req: BillingCreateRequest):
     """기성을 생성한다 (EVM SPI/CPI 자동 산출)."""
     pv = req.planned_value
@@ -121,7 +190,7 @@ async def create_billing(project_id: str, req: BillingCreateRequest):
     }
 
 
-@router.get("/{project_id}/billing/summary")
+@router.get("/{project_id}/billing/summary", response_model=BillingSummaryResponse)
 async def billing_summary(project_id: str):
     """누적 기성 현황을 반환한다."""
     return {
@@ -136,7 +205,7 @@ async def billing_summary(project_id: str):
     }
 
 
-@router.post("/{project_id}/feasibility")
+@router.post("/{project_id}/feasibility", response_model=FeasibilityResultResponse)
 async def cost_to_feasibility(project_id: str, req: FeasibilityRequest):
     """원가계산서→수지분석 연동."""
     profit = req.total_revenue - req.total_project_cost

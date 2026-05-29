@@ -1,4 +1,6 @@
 import Link from "next/link";
+import { headers } from "next/headers";
+import { Logo } from "@/components/ui/Logo";
 import { LocaleSwitcher } from "@/components/ui/LocaleSwitcher";
 import { getDictionary } from "@/i18n/get-dictionary";
 import { isValidLocale, type Locale } from "@/i18n/config";
@@ -146,9 +148,9 @@ export default async function DashboardLayout({
   const lifecycleNavigation = [
     { href: `/${locale}`, label: "대시보드", icon: <IconDashboard /> },
     { href: `/${locale}/projects`, label: "프로젝트 관리", icon: <IconProject /> },
-    { href: `/${locale}/projects`, label: "입지 및 사업성 분석", icon: <IconSiteAnalysis /> },
+    { href: `/${locale}/projects/site-analysis`, label: "입지 및 사업성 분석", icon: <IconSiteAnalysis /> },
     { href: `/${locale}/market-insights`, label: "마켓 인텔리전스", icon: <IconMarket /> },
-    { href: `/${locale}/projects`, label: "AI 설계 & BIM", icon: <IconDesign /> },
+    { href: `/${locale}/projects/design`, label: "AI 설계 & BIM", icon: <IconDesign /> },
     { href: `/${locale}/permits`, label: "인허가 자동화", icon: <IconPermit /> },
     { href: `/${locale}/regulations`, label: "부동산 규제 연동", icon: <IconRegulation /> },
   ];
@@ -200,8 +202,8 @@ export default async function DashboardLayout({
       {/* 헤더 */}
       <header className="sticky top-2 z-50 glass rounded-[var(--radius-xl)] border border-[var(--line)] bg-[var(--glass-bg)] px-4 py-3 md:px-8 md:py-4 shadow-[var(--shadow-lg)] transition-all duration-500 mt-2">
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <Link href={`/${locale}`} className="flex items-center gap-4 group">
-             <img src="/logos/logo-horizontal.png" alt="사통팔땅 로고" className="h-10 md:h-12 w-auto object-contain transition-transform group-hover:scale-105 active:scale-95 drop-shadow-md" />
+          <Link href={`/${locale}`} className="flex items-center gap-4 group min-w-0">
+             <Logo size="md" className="transition-transform group-hover:scale-105 active:scale-95 shrink-0" />
              <span className="sr-only">사통팔땅 AI Real-Estate Intelligence</span>
           </Link>
 
@@ -239,7 +241,7 @@ export default async function DashboardLayout({
       <footer className="mt-16 border-t border-[var(--line)] bg-[var(--surface-soft)] py-8 px-6">
         <div className="mx-auto max-w-6xl flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
           <div className="space-y-4">
-            <img src="/logos/logo-horizontal.png" alt="사통팔땅" className="h-8 w-auto object-contain opacity-90" />
+            <Logo size="sm" className="opacity-80 grayscale" />
             <div className="space-y-1 text-xs text-[var(--text-tertiary)] leading-relaxed">
               <p>대표: 강재희 | 사업자등록번호: 682-38-01463</p>
               <p>업태: 도매 및 소매업</p>

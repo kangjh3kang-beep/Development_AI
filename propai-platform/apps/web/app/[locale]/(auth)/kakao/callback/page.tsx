@@ -8,7 +8,6 @@ type KakaoCallbackPageProps = {
   }>;
   searchParams: Promise<{
     code?: string;
-    tenant_id?: string;
     redirect_uri?: string;
   }>;
 };
@@ -29,11 +28,6 @@ export default async function KakaoCallbackPage({
     <KakaoCallbackWorkspaceClient
       locale={locale as Locale}
       code={typeof callbackParams.code === "string" ? callbackParams.code : null}
-      tenantId={
-        typeof callbackParams.tenant_id === "string"
-          ? callbackParams.tenant_id
-          : null
-      }
       redirectUri={
         typeof callbackParams.redirect_uri === "string"
           ? callbackParams.redirect_uri

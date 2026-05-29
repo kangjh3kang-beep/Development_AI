@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 
 interface GridBackgroundProps {
   className?: string;
+  patternId?: string;
 }
 
-export function GridBackground({ className = "" }: GridBackgroundProps) {
+export function GridBackground({ className = "", patternId = "default-grid" }: GridBackgroundProps) {
   const [reduceMotion, setReduceMotion] = useState(false);
 
   useEffect(() => {
@@ -15,9 +16,8 @@ export function GridBackground({ className = "" }: GridBackgroundProps) {
     );
   }, []);
 
-  // Use a unique ID suffix to avoid SVG ID collisions when multiple instances exist
-  const idRef = useRef(Math.random().toString(36).slice(2, 8));
-  const id = idRef.current;
+  // Use the provided patternId (or static default) to absolutely guarantee no hydration mismatch
+  const id = patternId;
 
   return (
     <div

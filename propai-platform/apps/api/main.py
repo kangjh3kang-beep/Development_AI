@@ -48,6 +48,7 @@ from apps.api.routers import (
     dashboard,
     data_integrity,
     design,
+    drawing,
     development_methods,
     digital_twin,
     domain_agents,
@@ -95,6 +96,12 @@ try:
     from apps.api.app.routers.v2_feasibility import router as v2_feasibility_router
 except ImportError:
     v2_feasibility_router = None
+
+# v2 pipeline (자체 prefix 포함)
+try:
+    from apps.api.app.routers.pipeline import router as pipeline_router
+except ImportError:
+    pipeline_router = None
 from apps.api.versioning import VersionHeaderMiddleware, create_latest_redirect_router
 
 settings = get_settings()
@@ -196,9 +203,9 @@ async def health_check() -> HealthResponse:
         services["postgres"] = "healthy"
     except Exception as e:
         db_url = str(engine.url)
-        # 비밀번호 마스킹
         masked = db_url.split("@")[-1] if "@" in db_url else db_url
-        services["postgres"] = f"unhealthy (host: {masked}, user: {engine.url.username}, pgbouncer: {settings.db_use_pgbouncer}, err: {str(e)[:200]})"
+        logger.error("PostgreSQL health check failed", host=masked, error=str(e)[:200])
+        services["postgres"] = "unhealthy"
 
     # Redis 연결 확인
     try:
@@ -244,6 +251,7 @@ app.include_router(webhooks.router, prefix="/api/v1/webhooks", tags=["웹훅"])
 app.include_router(api_keys.router, prefix="/api/v1/api-keys", tags=["API 키"])
 app.include_router(building_compliance.router, prefix="/api/v1/building-compliance", tags=["건축 법규 검증"])
 app.include_router(cad_correction.router, prefix="/api/v1/cad-correction", tags=["CAD 자동 보정"])
+app.include_router(drawing.router, prefix="/api/v1/drawing", tags=["도면 자동 생성"])
 app.include_router(system.router, prefix="/api/v1/system", tags=["system"])
 app.include_router(dashboard.router, prefix="/api/v1/dashboard", tags=["dashboard"])
 app.include_router(ai_costs.router, prefix="/api/v1/ai-costs", tags=["ai-costs"])
@@ -309,3 +317,5 @@ app.include_router(v2_projects.router, prefix="/api/v2/projects", tags=["프로�
 app.include_router(v2_design.router, prefix="/api/v2/design", tags=["설계 v2"])
 if v2_feasibility_router is not None:
     app.include_router(v2_feasibility_router)  # 자체 prefix: /api/v2/feasibility
+if pipeline_router is not None:
+    app.include_router(pipeline_router)  # 자체 prefix: /api/v2/pipeline

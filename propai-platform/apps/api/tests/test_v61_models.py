@@ -84,12 +84,12 @@ class TestV61CostModels:
     """공사비 도메인 7개 모델 클래스 존재 + 필드 검증."""
 
     def test_cost_work_type_creation(self):
-        from app.models.v61_cost import CostWorkType
+        from apps.api.database.models.v61_cost import CostWorkType
         obj = CostWorkType(work_code="A01", work_name="철근콘크리트공사", work_category="건축")
         assert obj.work_code == "A01"
 
     def test_material_unit_price_creation(self):
-        from app.models.v61_cost import MaterialUnitPrice
+        from apps.api.database.models.v61_cost import MaterialUnitPrice
         obj = MaterialUnitPrice()
         obj.material_code = "RC-001"
         obj.material_name = "레미콘 25-240-15"
@@ -99,7 +99,7 @@ class TestV61CostModels:
         assert obj.price_basis_year == 2026
 
     def test_bim_quantity_creation(self):
-        from app.models.v61_cost import BimQuantity
+        from apps.api.database.models.v61_cost import BimQuantity
         obj = BimQuantity()
         obj.ifc_object_type = "IfcWall"
         obj.work_code = "A01"
@@ -111,26 +111,26 @@ class TestV61CostModels:
         assert obj.verified is False
 
     def test_cost_calculation_sheet_creation(self):
-        from app.models.v61_cost import CostCalculationSheet
+        from apps.api.database.models.v61_cost import CostCalculationSheet
         obj = CostCalculationSheet(work_category="건축", direct_material_cost=1_000_000_000)
         assert obj.work_category == "건축"
         assert hasattr(obj, "industrial_acc_ins")
         assert hasattr(obj, "total_project_cost")
 
     def test_progress_billing_creation(self):
-        from app.models.v61_cost import ProgressBilling
+        from apps.api.database.models.v61_cost import ProgressBilling
         obj = ProgressBilling(billing_no=1, planned_value=500_000_000, earned_value=450_000_000,
                               actual_cost=480_000_000, evm_spi=0.90, evm_cpi=0.94)
         assert obj.evm_spi == 0.90
 
     def test_legal_rate_history_creation(self):
-        from app.models.v61_cost import LegalRateHistory
+        from apps.api.database.models.v61_cost import LegalRateHistory
         obj = LegalRateHistory(rate_category="산재보험_건설업", rate_value=0.035,
                                effective_from=date(2026, 1, 1))
         assert obj.rate_category == "산재보험_건설업"
 
     def test_standard_price_update_creation(self):
-        from app.models.v61_cost import StandardPriceUpdate
+        from apps.api.database.models.v61_cost import StandardPriceUpdate
         obj = StandardPriceUpdate()
         obj.price_period = "2026H1"
         obj.update_type = "품셈"
@@ -138,7 +138,7 @@ class TestV61CostModels:
         assert obj.processed is False
 
     def test_cost_tablenames(self):
-        from app.models.v61_cost import (
+        from apps.api.database.models.v61_cost import (
             CostWorkType, MaterialUnitPrice, BimQuantity,
             CostCalculationSheet, ProgressBilling, LegalRateHistory, StandardPriceUpdate,
         )

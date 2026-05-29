@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { LandIntelligencePanel } from "@/components/projects/LandIntelligencePanel";
@@ -9,6 +9,7 @@ import { ProjectSiteAnalysisWorkspaceClient } from "@/components/projects/Projec
 import { isValidLocale, type Locale } from "@/i18n/config";
 import { useDictionary } from "@/hooks/use-dictionary";
 import { apiClient } from "@/lib/api-client";
+import { useProjectContextStore, type SiteAnalysisData } from "@/store/useProjectContextStore";
 
 type IconProps = React.SVGAttributes<SVGElement>;
 
@@ -21,12 +22,216 @@ const Icons = {
   Sparkles: (props: IconProps) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}><path d="m12 3 1.912 5.813a2 2 0 0 0 1.275 1.275L21 12l-5.813 1.912a2 2 0 0 0-1.275 1.275L12 21l-1.912-5.813a2 2 0 0 0-1.275-1.275L3 12l5.813-1.912a2 2 0 0 0 1.275-1.275L12 3Z"/><path d="M5 3v4"/><path d="M19 17v4"/><path d="M3 5h4"/><path d="M17 19h4"/></svg>,
 };
 
+// ── L3 Enhanced Types ──
+type NearbyTransactionSummary = {
+  avg_price_10k: number;
+  max_price_10k: number;
+  min_price_10k: number;
+  count: number;
+  items: Array<{ price_10k: string; area_sqm: string; deal_date: string; name: string; floor: string }>;
+};
+
+type InfrastructureData = {
+  nearest_subway: { name: string; distance_m: number } | null;
+  schools: Array<{ name: string; type: string; distance_m: number }>;
+};
+
+type BuildingDetail = {
+  main_purpose: string;
+  structure: string;
+  total_area_sqm: number;
+  ground_floors: number;
+  underground_floors: number;
+  use_approval_date: string;
+  building_name: string;
+};
+
+type L3SiteData = {
+  nearby_transactions?: { apt?: NearbyTransactionSummary; land?: NearbyTransactionSummary } | null;
+  infrastructure?: InfrastructureData | null;
+  building_detail?: BuildingDetail | null;
+};
+
+function formatPriceKr(amount10k: number): string {
+  if (amount10k >= 10000) {
+    const eok = Math.floor(amount10k / 10000);
+    const remain = amount10k % 10000;
+    return remain > 0 ? `${eok}억 ${remain.toLocaleString()}만` : `${eok}억`;
+  }
+  return `${amount10k.toLocaleString()}만`;
+}
+
+// ── L3 Enhanced Cards Component ──
+function L3EnhancedCards({
+  l3Data,
+  siteAnalysis,
+}: {
+  l3Data: L3SiteData | null;
+  siteAnalysis: SiteAnalysisData | null;
+}) {
+  // l3Data를 우선 사용, siteAnalysis는 향후 파이프라인 데이터 연동 시 활용
+  const _storeRef = siteAnalysis; // 향후 파이프라인 스토어 데이터 연동용
+  void _storeRef;
+  const tx = l3Data?.nearby_transactions;
+  const infra = l3Data?.infrastructure;
+  const bldg = l3Data?.building_detail;
+
+  const hasAnyData = tx || infra || bldg;
+  if (!hasAnyData) return null;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 30 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: 0.4 }}
+      className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"
+    >
+      {/* 실거래가 요약 카드 */}
+      {tx?.apt && tx.apt.count > 0 && (
+        <div className="rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-strong)] p-6 shadow-[var(--shadow-xl)]">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-400">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" x2="12" y1="2" y2="22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+            </div>
+            <div>
+              <h4 className="text-sm font-black text-[var(--text-primary)]">인근 아파트 실거래가</h4>
+              <p className="text-[9px] font-bold text-emerald-400 uppercase tracking-widest">최근 3개월 · {tx.apt.count}건</p>
+            </div>
+          </div>
+          <div className="space-y-3">
+            <div className="grid grid-cols-3 gap-2">
+              <div className="rounded-lg bg-[var(--surface-muted)] p-3 text-center border border-[var(--line)]">
+                <p className="text-[8px] font-black text-[var(--text-hint)] uppercase mb-1">평균</p>
+                <p className="text-sm font-black text-[var(--text-primary)]">{formatPriceKr(tx.apt.avg_price_10k)}</p>
+              </div>
+              <div className="rounded-lg bg-[var(--surface-muted)] p-3 text-center border border-[var(--line)]">
+                <p className="text-[8px] font-black text-[var(--text-hint)] uppercase mb-1">최고</p>
+                <p className="text-sm font-black text-red-400">{formatPriceKr(tx.apt.max_price_10k)}</p>
+              </div>
+              <div className="rounded-lg bg-[var(--surface-muted)] p-3 text-center border border-[var(--line)]">
+                <p className="text-[8px] font-black text-[var(--text-hint)] uppercase mb-1">최저</p>
+                <p className="text-sm font-black text-blue-400">{formatPriceKr(tx.apt.min_price_10k)}</p>
+              </div>
+            </div>
+            {tx.apt.items.length > 0 && (
+              <div className="space-y-1 mt-2">
+                {tx.apt.items.slice(0, 3).map((item, i) => (
+                  <div key={i} className="flex items-center justify-between text-[10px] text-[var(--text-secondary)] bg-[var(--surface-muted)] rounded-lg px-3 py-1.5">
+                    <span className="font-medium">{item.deal_date}</span>
+                    <span className="text-[var(--text-hint)] truncate max-w-[120px]">{item.name}</span>
+                    <span className="font-bold text-[var(--text-primary)]">{formatPriceKr(parseInt(item.price_10k) || 0)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* 건축물대장 카드 */}
+      {bldg && bldg.main_purpose && (
+        <div className="rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-strong)] p-6 shadow-[var(--shadow-xl)]">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-500/10 text-blue-400">
+              <Icons.Database width={20} height={20} />
+            </div>
+            <div>
+              <h4 className="text-sm font-black text-[var(--text-primary)]">기존 건축물 현황</h4>
+              <p className="text-[9px] font-bold text-blue-400 uppercase tracking-widest">건축물대장 조회</p>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div className="rounded-lg bg-[var(--surface-muted)] p-3 border border-[var(--line)]">
+              <p className="text-[8px] font-black text-[var(--text-hint)] uppercase mb-1">용도</p>
+              <p className="text-xs font-bold text-[var(--text-primary)]">{bldg.main_purpose || "—"}</p>
+            </div>
+            <div className="rounded-lg bg-[var(--surface-muted)] p-3 border border-[var(--line)]">
+              <p className="text-[8px] font-black text-[var(--text-hint)] uppercase mb-1">구조</p>
+              <p className="text-xs font-bold text-[var(--text-primary)]">{bldg.structure || "—"}</p>
+            </div>
+            <div className="rounded-lg bg-[var(--surface-muted)] p-3 border border-[var(--line)]">
+              <p className="text-[8px] font-black text-[var(--text-hint)] uppercase mb-1">연면적</p>
+              <p className="text-xs font-bold text-[var(--text-primary)]">{bldg.total_area_sqm ? `${bldg.total_area_sqm.toLocaleString()}m²` : "—"}</p>
+            </div>
+            <div className="rounded-lg bg-[var(--surface-muted)] p-3 border border-[var(--line)]">
+              <p className="text-[8px] font-black text-[var(--text-hint)] uppercase mb-1">층수</p>
+              <p className="text-xs font-bold text-[var(--text-primary)]">
+                지상 {bldg.ground_floors}층{bldg.underground_floors ? ` / 지하 ${bldg.underground_floors}층` : ""}
+              </p>
+            </div>
+            {bldg.use_approval_date && (
+              <div className="rounded-lg bg-[var(--surface-muted)] p-3 border border-[var(--line)] col-span-2">
+                <p className="text-[8px] font-black text-[var(--text-hint)] uppercase mb-1">사용승인일</p>
+                <p className="text-xs font-bold text-[var(--text-primary)]">{bldg.use_approval_date}</p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* 주변 인프라 카드 */}
+      {infra && (infra.nearest_subway || infra.schools.length > 0) && (
+        <div className="rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-strong)] p-6 shadow-[var(--shadow-xl)]">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-purple-500/10 text-purple-400">
+              <Icons.Map width={20} height={20} />
+            </div>
+            <div>
+              <h4 className="text-sm font-black text-[var(--text-primary)]">주변 인프라</h4>
+              <p className="text-[9px] font-bold text-purple-400 uppercase tracking-widest">교통 · 학군</p>
+            </div>
+          </div>
+          <div className="space-y-3">
+            {infra.nearest_subway && (
+              <div className="rounded-lg bg-[var(--surface-muted)] p-3 border border-[var(--line)] flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="h-6 w-6 rounded-full bg-blue-500/20 flex items-center justify-center">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-blue-400"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
+                  </div>
+                  <div>
+                    <p className="text-[8px] font-black text-[var(--text-hint)] uppercase">최근접 지하철</p>
+                    <p className="text-xs font-bold text-[var(--text-primary)]">{infra.nearest_subway.name}</p>
+                  </div>
+                </div>
+                <span className={`text-sm font-black ${infra.nearest_subway.distance_m <= 500 ? "text-emerald-400" : infra.nearest_subway.distance_m <= 1000 ? "text-amber-400" : "text-red-400"}`}>
+                  {infra.nearest_subway.distance_m.toLocaleString()}m
+                </span>
+              </div>
+            )}
+            {infra.schools.length > 0 && (
+              <div className="space-y-1.5">
+                <p className="text-[8px] font-black text-[var(--text-hint)] uppercase tracking-widest px-1">학군 (반경 500m)</p>
+                {infra.schools.slice(0, 4).map((school, i) => (
+                  <div key={i} className="flex items-center justify-between text-[10px] bg-[var(--surface-muted)] rounded-lg px-3 py-2 border border-[var(--line)]">
+                    <div className="flex items-center gap-2">
+                      <span className={`inline-block h-1.5 w-1.5 rounded-full ${
+                        school.type === "초등학교" ? "bg-green-400" :
+                        school.type === "중학교" ? "bg-blue-400" :
+                        school.type === "고등학교" ? "bg-purple-400" : "bg-gray-400"
+                      }`} />
+                      <span className="font-bold text-[var(--text-primary)]">{school.name}</span>
+                      <span className="text-[var(--text-hint)]">{school.type}</span>
+                    </div>
+                    <span className="font-bold text-[var(--text-secondary)]">{school.distance_m}m</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </motion.div>
+  );
+}
+
 export default function SiteAnalysisPage() {
   const { locale, id } = useParams() as { locale: string; id: string };
   const { dictionary, isLoading } = useDictionary(locale as Locale);
   const [stage, setStage] = useState<"init" | "analyzing" | "result">("init");
   const [siteData, setSiteData] = useState<Record<string, string | undefined> | null>(null);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
+  const [l3Data, setL3Data] = useState<L3SiteData | null>(null);
+  const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
 
   if (isLoading || !dictionary) {
     return (
@@ -66,6 +271,25 @@ export default function SiteAnalysisPage() {
         landAreaSqm: zoningResult.land_area_sqm?.toString(),
         landCategory: zoningResult.land_category ?? undefined,
       });
+
+      // L3: 종합 토지정보 비동기 수집 (실거래가, 건축물대장, 인프라)
+      try {
+        const landResult = await apiClient.post<{
+          nearby_transactions?: L3SiteData["nearby_transactions"];
+          infrastructure?: L3SiteData["infrastructure"];
+          building_detail?: L3SiteData["building_detail"];
+        }>("/land-intelligence/comprehensive", {
+          useMock: false,
+          body: { address, pnu: zoningResult.pnu },
+        });
+        setL3Data({
+          nearby_transactions: landResult.nearby_transactions ?? null,
+          infrastructure: landResult.infrastructure ?? null,
+          building_detail: landResult.building_detail ?? null,
+        });
+      } catch {
+        // L3 데이터 실패는 무시 — 기본 분석만 표시
+      }
     } catch {
       // API 실패 시에도 주소 기반으로 결과 화면 진행 (LandIntelligencePanel이 자체 폴백 보유)
       setAnalysisError("용도지역 API 연결 실패 — 로컬 추정값으로 표시합니다.");
@@ -232,6 +456,9 @@ export default function SiteAnalysisPage() {
             >
               <LandIntelligencePanel projectId={id} data={siteData} />
             </motion.div>
+
+            {/* ── L3 Enhanced Cards: 실거래가, 건축물대장, 인프라 ── */}
+            <L3EnhancedCards l3Data={l3Data} siteAnalysis={siteAnalysis} />
           </motion.div>
         )}
       </AnimatePresence>

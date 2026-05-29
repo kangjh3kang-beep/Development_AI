@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from apps.api.auth.jwt_handler import CurrentUser, get_current_user
 from apps.api.database.session import get_db
 from apps.api.services.cad_auto_correction_service import (
     BuildingModel,
@@ -102,6 +103,7 @@ class CorrectionResponse(BaseModel):
 async def check_compliance(
     req: CheckRequest,
     db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
 ) -> CheckResponse:
     """설계안의 법규 적합성을 검증한다."""
     logger.info(
@@ -148,6 +150,7 @@ async def check_compliance(
 async def auto_correct(
     req: AutoCorrectRequest,
     db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
 ) -> CorrectionResponse:
     """법규 위반 항목에 대한 자동 보정을 수행한다."""
     logger.info(
