@@ -60,6 +60,40 @@ const ZONE_LIMITS: Record<string, { bcr: number; far: number }> = {
 };
 
 /**
+ * WGS84 좌표 배열에서 면적(㎡)을 계산한다 (Shoelace 공식).
+ */
+function shoelaceAreaWgs84(coords: number[][]): number {
+  const n = coords.length;
+  if (n < 3) return 0;
+  const avgLat = coords.reduce((s, c) => s + c[1], 0) / n;
+  const mPerDegLat = 111320;
+  const mPerDegLon = 111320 * Math.cos((avgLat * Math.PI) / 180);
+  let area = 0;
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    const x1 = coords[i][0] * mPerDegLon;
+    const y1 = coords[i][1] * mPerDegLat;
+    const x2 = coords[j][0] * mPerDegLon;
+    const y2 = coords[j][1] * mPerDegLat;
+    area += x1 * y2 - x2 * y1;
+  }
+  return Math.abs(area) / 2;
+}
+
+function calculateAreaFromGeometry(geom: { type: string; coordinates: number[][][][] | number[][][] }): number {
+  if (geom.type === "MultiPolygon") {
+    return (geom.coordinates as number[][][][]).reduce(
+      (total, polygon) => total + shoelaceAreaWgs84(polygon[0]),
+      0,
+    );
+  }
+  if (geom.type === "Polygon") {
+    return shoelaceAreaWgs84((geom.coordinates as number[][][])[0]);
+  }
+  return 0;
+}
+
+/**
  * 주소 → 좌표+PNU 지오코딩 (PARCEL 우선)
  *
  * VWORLD API가 CORS를 차단하므로 Next.js API Route 프록시를 경유.
@@ -111,6 +145,7 @@ async function getLandInfo(pnu: string): Promise<VWorldLandInfo | null> {
   if (!VWORLD_API_KEY || !pnu) return null;
 
   try {
+    // geometry=true로 필지 형상도 가져와서 면적을 직접 계산
     const params = new URLSearchParams({
       service: "data",
       request: "GetFeature",
@@ -119,11 +154,10 @@ async function getLandInfo(pnu: string): Promise<VWorldLandInfo | null> {
       format: "json",
       crs: "EPSG:4326",
       attrFilter: `pnu:=:${pnu}`,
-      geometry: "false",
+      geometry: "true",
       attribute: "true",
     });
 
-    // CORS 미지원이므로 Next.js API Route 프록시를 통해 호출
     const proxyUrl = `/api/vworld/data?${params}`;
     const resp = await fetch(proxyUrl);
     if (!resp.ok) return null;
@@ -132,7 +166,15 @@ async function getLandInfo(pnu: string): Promise<VWorldLandInfo | null> {
     const features = data?.response?.result?.featureCollection?.features;
     if (!features || features.length === 0) return null;
 
-    const props = features[0].properties ?? {};
+    const feature = features[0];
+    const props = feature.properties ?? {};
+    const geom = feature.geometry;
+
+    // 면적 계산: 필지 형상(Polygon/MultiPolygon)의 좌표로 Shoelace 공식 적용
+    let areaSqm = 0;
+    if (geom) {
+      areaSqm = calculateAreaFromGeometry(geom);
+    }
 
     // 용도지역 추출
     const landUse = props.lnbpLndcgrNm ?? props.prposAreaDstrcCodeNm ?? "";
@@ -144,11 +186,15 @@ async function getLandInfo(pnu: string): Promise<VWorldLandInfo | null> {
       }
     }
 
+    // 지목 추출: "226-2 대" → "대"
+    const jibunStr = String(props.jibun ?? "");
+    const landCat = jibunStr.split(" ").pop() ?? props.jimok ?? "";
+
     return {
       pnu,
-      land_category: props.jimok ?? props.lndcgrCodeNm ?? "",
-      area_sqm: parseFloat(props.lndpclAr ?? props.area ?? "0"),
-      official_price_per_sqm: parseFloat(props.pblntfPclnd ?? props.official_price ?? "0"),
+      land_category: landCat,
+      area_sqm: areaSqm > 0 ? areaSqm : parseFloat(props.lndpclAr ?? props.area ?? "0"),
+      official_price_per_sqm: parseFloat(props.jiga ?? props.pblntfPclnd ?? "0"),
       zone_type: zoneType,
     };
   } catch {
