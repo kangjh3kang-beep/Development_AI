@@ -439,6 +439,61 @@ class ProjectPipeline:
         """
         result: dict[str, Any] = dict(fallback) if fallback else {}
 
+        # 0. PNU가 이미 있으면 VWORLD 데이터 API로 면적/공시지가 직접 조회
+        # (지오코딩 없이 데이터 API만 호출 — Railway 해외 IP에서도 동작)
+        existing_pnu = (result.get("pnu_codes") or [None])[0]
+        if existing_pnu and len(existing_pnu) >= 19:
+            try:
+                import httpx
+                from app.core.config import settings
+
+                params = {
+                    "service": "data",
+                    "request": "GetFeature",
+                    "data": "LP_PA_CBND_BUBUN",
+                    "key": settings.VWORLD_API_KEY,
+                    "format": "json",
+                    "crs": "EPSG:4326",
+                    "attrFilter": f"pnu:=:{existing_pnu}",
+                    "geometry": "true",
+                    "attribute": "true",
+                }
+                headers = {"Referer": "https://developmentai-production.up.railway.app"}
+                async with httpx.AsyncClient(timeout=15, headers=headers) as client:
+                    resp = await client.get("https://api.vworld.kr/req/data", params=params)
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        features = data.get("response", {}).get("result", {}).get("featureCollection", {}).get("features", [])
+                        if features:
+                            props = features[0].get("properties", {})
+                            geom = features[0].get("geometry")
+
+                            # 공시지가
+                            jiga = props.get("jiga")
+                            if jiga:
+                                result["official_land_price"] = float(jiga)
+
+                            # 면적: geometry에서 Shoelace 공식으로 계산
+                            if geom:
+                                area = self._calculate_area_from_geometry(geom)
+                                if area > 0:
+                                    result["land_area_sqm"] = area
+
+                            # 지목
+                            jibun_str = str(props.get("jibun", ""))
+                            land_cat = jibun_str.split(" ")[-1] if " " in jibun_str else ""
+                            if land_cat:
+                                result["land_category"] = land_cat
+
+                            import logging
+                            logging.getLogger(__name__).info(
+                                "VWORLD 데이터 API 성공: pnu=%s, area=%.1f, jiga=%s",
+                                existing_pnu, result.get("land_area_sqm", 0), jiga,
+                            )
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning("VWORLD 데이터 API 직접 조회 실패: %s", str(e)[:200])
+
         # 1. AutoZoningService → 용도지역 + 법적 한도
         try:
             from app.services.zoning.auto_zoning_service import AutoZoningService
@@ -509,6 +564,34 @@ class ProjectPipeline:
             result["max_far"] = 250.0
 
         return result
+
+    @staticmethod
+    def _calculate_area_from_geometry(geom: dict) -> float:
+        """WGS84 좌표의 Polygon/MultiPolygon에서 면적(㎡)을 계산한다 (Shoelace 공식)."""
+        import math
+
+        def shoelace(coords: list) -> float:
+            n = len(coords)
+            if n < 3:
+                return 0.0
+            avg_lat = sum(c[1] for c in coords) / n
+            m_lat = 111320.0
+            m_lon = 111320.0 * math.cos(math.radians(avg_lat))
+            area = 0.0
+            for i in range(n):
+                j = (i + 1) % n
+                area += coords[i][0] * m_lon * coords[j][1] * m_lat
+                area -= coords[j][0] * m_lon * coords[i][1] * m_lat
+            return abs(area) / 2.0
+
+        geom_type = geom.get("type", "")
+        coordinates = geom.get("coordinates", [])
+
+        if geom_type == "MultiPolygon":
+            return sum(shoelace(polygon[0]) for polygon in coordinates)
+        if geom_type == "Polygon":
+            return shoelace(coordinates[0])
+        return 0.0
 
     async def _save_site_analysis_to_project(self, state: PipelineState):
         """부지분석 결과를 Project 테이블의 컬럼에 자동 저장.
