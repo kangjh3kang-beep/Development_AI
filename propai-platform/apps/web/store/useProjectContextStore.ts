@@ -72,6 +72,7 @@ interface SiteAnalysisData {
   buildingInfo?: BuildingInfo | null;
   officialPrices?: OfficialPriceData[];
   coordinates?: { lat: number; lon: number } | null;
+  infrastructure?: Record<string, unknown> | null;
   dataSource?: string;
   fetchedAt?: string | null;
 }

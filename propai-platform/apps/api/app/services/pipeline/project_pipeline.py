@@ -174,28 +174,104 @@ class ProjectPipeline:
 
     async def _run_site_analysis(self, state: PipelineState, opts: dict):
         """STEP 1: 부지분석 — 프론트에서 전달한 데이터 우선, 없으면 외부 API 호출."""
+        # ── 고도화 서비스 임포트 ──
+        from app.services.zoning import far_incentive_calculator as fic
+        from app.services.zoning import development_type_analyzer as dta
+
         # 프론트엔드에서 이미 수집한 site_data가 있으면 외부 API 호출 건너뜀
         pre_collected = opts.get("site_data")
         if pre_collected and (pre_collected.get("land_area_sqm") or pre_collected.get("zone_type")):
+            zone_type = pre_collected.get("zone_type", "")
+            land_area_sqm = pre_collected.get("land_area_sqm", 0.0)
+            pnu_codes = pre_collected.get("pnu_codes", [])
+            official_land_price = pre_collected.get("official_land_price", 0.0)
+
+            # 조례값 우선, 없으면 법정 상한
+            ordinance_bcr = pre_collected.get("ordinance_bcr") or pre_collected.get("max_bcr", 60.0)
+            ordinance_far = pre_collected.get("ordinance_far") or pre_collected.get("max_far", 200.0)
+            national_bcr = pre_collected.get("national_bcr", ordinance_bcr)
+            national_far = pre_collected.get("national_far", ordinance_far)
+            effective_bcr = min(float(national_bcr), float(ordinance_bcr))
+            effective_far = min(float(national_far), float(ordinance_far))
+            max_height = pre_collected.get("max_height", 0.0)
+
+            # 기부체납 인센티브 계산
+            far_incentive: dict[str, Any] = {}
+            try:
+                far_incentive = fic.calculate(
+                    zone_type=zone_type,
+                    ordinance_far=effective_far,
+                    donation_ratio_pct=0.0,
+                    national_far=float(national_far),
+                )
+            except Exception:
+                far_incentive = {"error": "인센티브 계산 실패"}
+
+            # 개발 가능 유형 분석
+            development_types: dict[str, Any] = {}
+            try:
+                development_types = dta.analyze(
+                    zone_type=zone_type,
+                    land_area_sqm=float(land_area_sqm),
+                    existing_building=pre_collected.get("existing_building"),
+                )
+            except Exception:
+                development_types = {"error": "개발유형 분석 실패"}
+
             state.site_to_design = SiteToDesignPayload(
-                pnu_codes=pre_collected.get("pnu_codes", []),
-                zone_type=pre_collected.get("zone_type", ""),
-                max_bcr=pre_collected.get("max_bcr", 60.0),
-                max_far=pre_collected.get("max_far", 200.0),
-                max_height=pre_collected.get("max_height", 0.0),
-                land_area_sqm=pre_collected.get("land_area_sqm", 0.0),
+                pnu_codes=pnu_codes,
+                zone_type=zone_type,
+                max_bcr=effective_bcr,
+                max_far=effective_far,
+                max_height=max_height,
+                land_area_sqm=float(land_area_sqm),
                 land_shape=None,
-                official_land_price=pre_collected.get("official_land_price", 0.0),
+                official_land_price=float(official_land_price),
                 address=state.address,
                 coordinates=pre_collected.get("coordinates"),
             )
+
             state.stages["site_analysis"].data = {
-                "zone_type": state.site_to_design.zone_type,
-                "max_bcr": state.site_to_design.max_bcr,
-                "max_far": state.site_to_design.max_far,
-                "land_area_sqm": state.site_to_design.land_area_sqm,
-                "official_land_price": state.site_to_design.official_land_price,
-                "pnu_codes": state.site_to_design.pnu_codes,
+                # 구조화된 데이터 (프론트엔드 SiteAnalysisDetail용)
+                "basic": {
+                    "address": state.address,
+                    "pnu": pnu_codes[0] if pnu_codes else "",
+                    "zone_type": zone_type,
+                    "land_category": pre_collected.get("land_category", ""),
+                    "land_area_sqm": float(land_area_sqm),
+                    "owner_type": pre_collected.get("owner_type", ""),
+                },
+                "zoning": {
+                    "zone_type": zone_type,
+                    "national_bcr": float(national_bcr),
+                    "national_far": float(national_far),
+                    "ordinance_bcr": float(ordinance_bcr),
+                    "ordinance_far": float(ordinance_far),
+                    "effective_bcr": effective_bcr,
+                    "effective_far": effective_far,
+                    "max_height_m": max_height,
+                    "ordinance_source": pre_collected.get("ordinance_source", "pre_collected"),
+                    "far_incentive": far_incentive,
+                },
+                "development_types": development_types,
+                "pricing": {
+                    "official_price_per_sqm": float(official_land_price),
+                    "nearby_transactions": pre_collected.get("nearby_transactions"),
+                },
+                "building": pre_collected.get("building_info"),
+                "infrastructure": pre_collected.get("infrastructure"),
+                "regulations": {
+                    "land_use_plan": pre_collected.get("land_use_plan"),
+                    "special_districts": pre_collected.get("special_districts", []),
+                    "warnings": pre_collected.get("warnings", []),
+                },
+                # 하위호환 (기존 평탄 키 유지 — 다른 단계에서 참조)
+                "zone_type": zone_type,
+                "max_bcr": effective_bcr,
+                "max_far": effective_far,
+                "land_area_sqm": float(land_area_sqm),
+                "official_land_price": float(official_land_price),
+                "pnu_codes": pnu_codes,
                 "source": "pre_collected",
             }
             return
@@ -212,7 +288,7 @@ class ProjectPipeline:
         except Exception:
             zoning = {
                 "zone_type": "제2종일반주거지역",
-                "zone_limits": {"bcr": 60.0, "far": 200.0, "max_height": 0.0},
+                "zone_limits": {"max_bcr_pct": 60.0, "max_far_pct": 200.0, "max_height_m": 0.0},
                 "pnu": "",
             }
 
@@ -231,34 +307,111 @@ class ProjectPipeline:
             }
 
         zone_limits = zoning.get("zone_limits", {})
+        zone_type = zoning.get("zone_type", "")
+        land_area_sqm = comprehensive.get("land_area_sqm", 0.0)
+        pnu_codes = comprehensive.get("pnu_codes", [zoning.get("pnu", "")])
+        official_land_price = comprehensive.get("official_price_per_sqm", 0.0)
+
+        # zone_limits 키 호환: max_bcr_pct 우선, 없으면 bcr 폴백
+        national_bcr = zone_limits.get("max_bcr_pct", zone_limits.get("bcr", 60.0))
+        national_far = zone_limits.get("max_far_pct", zone_limits.get("far", 200.0))
+        max_height = zone_limits.get("max_height_m", zone_limits.get("max_height", 0.0))
+
+        # 조례 조회 시도
+        ordinance_bcr = national_bcr
+        ordinance_far = national_far
+        ordinance_source = "법정상한"
+        try:
+            from app.services.land_intelligence.ordinance_service import OrdinanceService
+
+            ord_svc = OrdinanceService()
+            ord_result = await ord_svc.get_ordinance_limits(state.address, zone_type)
+            if ord_result.get("ordinance_bcr") is not None:
+                ordinance_bcr = ord_result["ordinance_bcr"]
+                ordinance_far = ord_result.get("ordinance_far", national_far)
+                ordinance_source = ord_result.get("source", "조례")
+        except Exception:
+            pass
+
+        effective_bcr = min(float(national_bcr), float(ordinance_bcr))
+        effective_far = min(float(national_far), float(ordinance_far))
+
+        # 기부체납 인센티브 계산
+        far_incentive: dict[str, Any] = {}
+        try:
+            far_incentive = fic.calculate(
+                zone_type=zone_type,
+                ordinance_far=effective_far,
+                donation_ratio_pct=0.0,
+                national_far=float(national_far),
+            )
+        except Exception:
+            far_incentive = {"error": "인센티브 계산 실패"}
+
+        # 개발 가능 유형 분석
+        development_types: dict[str, Any] = {}
+        try:
+            development_types = dta.analyze(
+                zone_type=zone_type,
+                land_area_sqm=float(land_area_sqm),
+            )
+        except Exception:
+            development_types = {"error": "개발유형 분석 실패"}
 
         state.site_to_design = SiteToDesignPayload(
-            pnu_codes=comprehensive.get("pnu_codes", [zoning.get("pnu", "")]),
-            zone_type=zoning.get("zone_type", ""),
-            max_bcr=zone_limits.get("bcr", 60.0),
-            max_far=zone_limits.get("far", 200.0),
-            max_height=zone_limits.get("max_height", 0.0),
-            land_area_sqm=comprehensive.get("land_area_sqm", 0.0),
+            pnu_codes=pnu_codes,
+            zone_type=zone_type,
+            max_bcr=effective_bcr,
+            max_far=effective_far,
+            max_height=max_height,
+            land_area_sqm=float(land_area_sqm),
             land_shape=comprehensive.get("geometry"),
-            official_land_price=comprehensive.get("official_price_per_sqm", 0.0),
+            official_land_price=float(official_land_price),
             address=state.address,
             coordinates=comprehensive.get("coordinates"),
         )
 
         state.stages["site_analysis"].data = {
-            "zone_type": state.site_to_design.zone_type,
-            "max_bcr": state.site_to_design.max_bcr,
-            "max_far": state.site_to_design.max_far,
-            "land_area_sqm": state.site_to_design.land_area_sqm,
-            "official_land_price": state.site_to_design.official_land_price,
-            "pnu_codes": state.site_to_design.pnu_codes,
-            # L3 확장 데이터
-            "nearby_transactions": comprehensive.get("nearby_transactions"),
-            "building_detail": comprehensive.get("building_detail"),
+            # 구조화된 데이터 (프론트엔드 SiteAnalysisDetail용)
+            "basic": {
+                "address": state.address,
+                "pnu": pnu_codes[0] if pnu_codes else zoning.get("pnu", ""),
+                "zone_type": zone_type,
+                "land_category": zoning.get("land_category", ""),
+                "land_area_sqm": float(land_area_sqm),
+                "owner_type": zoning.get("owner_type", ""),
+            },
+            "zoning": {
+                "zone_type": zone_type,
+                "national_bcr": float(national_bcr),
+                "national_far": float(national_far),
+                "ordinance_bcr": float(ordinance_bcr),
+                "ordinance_far": float(ordinance_far),
+                "effective_bcr": effective_bcr,
+                "effective_far": effective_far,
+                "max_height_m": max_height,
+                "ordinance_source": ordinance_source,
+                "far_incentive": far_incentive,
+            },
+            "development_types": development_types,
+            "pricing": {
+                "official_price_per_sqm": float(official_land_price),
+                "nearby_transactions": comprehensive.get("nearby_transactions"),
+            },
+            "building": comprehensive.get("building_detail") or comprehensive.get("building_info"),
             "infrastructure": comprehensive.get("infrastructure"),
-            "building_info": comprehensive.get("building_info"),
-            "local_ordinance": comprehensive.get("local_ordinance"),
-            "warnings": comprehensive.get("warnings", []),
+            "regulations": {
+                "land_use_plan": comprehensive.get("local_ordinance"),
+                "special_districts": zoning.get("special_districts", []),
+                "warnings": comprehensive.get("warnings", []),
+            },
+            # 하위호환 (기존 평탄 키 유지 — 다른 단계에서 참조)
+            "zone_type": zone_type,
+            "max_bcr": effective_bcr,
+            "max_far": effective_far,
+            "land_area_sqm": float(land_area_sqm),
+            "official_land_price": float(official_land_price),
+            "pnu_codes": pnu_codes,
         }
 
         # ProjectLandData 자동 저장: 분석 결과를 Project 모델에 반영
@@ -305,9 +458,9 @@ class ProjectPipeline:
                     .values(
                         pnu_codes=site.pnu_codes,
                         zone_type=site.zone_type,
-                        max_bcr=float(site.max_bcr) if site.max_bcr else None,
-                        max_far=float(site.max_far) if site.max_far else None,
-                        max_height=float(site.max_height) if site.max_height else None,
+                        max_bcr=site.max_bcr if site.max_bcr else None,
+                        max_far=site.max_far if site.max_far else None,
+                        max_height=site.max_height if site.max_height else None,
                         building_type=building_type,
                         total_area_sqm=site.land_area_sqm if site.land_area_sqm else None,
                         latitude=site.coordinates.get("lat") if site.coordinates else None,

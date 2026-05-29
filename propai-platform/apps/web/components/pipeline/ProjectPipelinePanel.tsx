@@ -6,6 +6,7 @@ import { apiClient } from "@/lib/api-client";
 import { GlobalAddressSearch, type AddressEntry } from "@/components/common/GlobalAddressSearch";
 import { PipelineResultDetail } from "./PipelineResultDetail";
 import { ProjectCompareView } from "./ProjectCompareView";
+import { SiteAnalysisDetail } from "./SiteAnalysisDetail";
 
 /* ── Types ── */
 
@@ -72,6 +73,77 @@ const STAGE_NUMBERS: Record<string, string> = {
   tax: "\u2464",
   esg: "\u2465",
   report: "\u2466",
+};
+
+const FIELD_LABELS: Record<string, string> = {
+  // site_analysis
+  zone_type: "용도지역",
+  land_area_sqm: "대지면적(m²)",
+  max_bcr: "법정 최대 건폐율(%)",
+  max_far: "법정 최대 용적률(%)",
+  official_land_price: "공시지가(원)",
+  pnu_codes: "PNU 코드",
+  address: "주소",
+  estimated_value: "추정가치(원)",
+  building_info: "기존 건축물 정보",
+  coordinates: "좌표",
+  
+  // design
+  building_type: "건축물 용도",
+  total_gfa_sqm: "연면적(m²)",
+  building_area_sqm: "건축면적(m²)",
+  floor_count_above: "지상 층수",
+  floor_count_below: "지하 층수",
+  unit_count: "세대수",
+  bcr: "적용 건폐율(%)",
+  far: "적용 용적률(%)",
+  bcr_used_pct: "적용 건폐율(%)",
+  far_used_pct: "적용 용적률(%)",
+  compliance: "법규검토결과",
+  floor_count: "총 층수",
+
+  // cost
+  total_construction_cost: "총공사비",
+  direct_cost: "직접공사비",
+  indirect_cost: "간접공사비",
+  cost_per_sqm: "평당공사비",
+  duration_months: "예상 공기(개월)",
+
+  // feasibility
+  total_revenue_won: "총 예상 분양수입",
+  total_cost_won: "총 투자비용",
+  profit_rate_pct: "예상 수익률(%)",
+  npv: "순현재가치(NPV)",
+  irr: "내부수익률(IRR)",
+  grade: "사업성 등급",
+
+  // tax
+  acquisition_tax: "취득세",
+  property_tax: "재산세",
+  comprehensive_real_estate_tax: "종합부동산세",
+  corporate_tax: "법인세",
+  total_tax: "총 납부세액",
+
+  // esg
+  embodied_carbon: "내재탄소 상세 분석",
+  operational_carbon: "운영탄소 상세 분석",
+  lifecycle_total: "전과정 총 탄소 배출 시나리오",
+  low_carbon_scenario: "저탄소 대안 시나리오",
+  gseed_prediction: "녹색건축인증(G-SEED) 예측",
+  gresb: "GRESB 평가 지표",
+  embodied_carbon_kg: "내재탄소량(kg)",
+  operational_carbon_kg: "운영탄소량(kg)",
+  operational_carbon_30yr_kg: "30년 운영탄소량(kg)",
+  total_lifecycle_carbon_kg: "전과정 총 탄소량(kg)",
+  carbon_per_sqm_kg: "단위면적당 탄소(kg/m²)",
+  total_carbon_per_sqm: "단위면적당 탄소(kg/m²)",
+  esg_score: "ESG 종합 점수",
+  certification_level: "친환경 인증 등급",
+
+  // report
+  report_url: "보고서 다운로드 링크",
+  generated_at: "보고서 생성 일시",
+  sections_included: "포함된 분석 섹션",
 };
 
 const DEFAULT_STAGES: PipelineStageStatus[] = [
@@ -335,17 +407,24 @@ export function ProjectPipelinePanel() {
 
     if (hasSiteData) {
       // 이미 수집된 데이터로 부지분석 결과 즉시 구성 (API 재호출 불필요)
+      const ordinance = siteAnalysis.ordinance;
       const siteData: Record<string, unknown> = {
-        zone_type: siteAnalysis.zoneCode ?? siteAnalysis.ordinance?.source ?? "미확인",
+        zone_type: siteAnalysis.zoneCode ?? ordinance?.source ?? "미확인",
         land_area_sqm: siteAnalysis.landAreaSqm ?? 0,
-        max_bcr: siteAnalysis.ordinance?.effectiveBcr ?? 60,
-        max_far: siteAnalysis.ordinance?.effectiveFar ?? 200,
+        max_bcr: ordinance?.effectiveBcr ?? 60,
+        max_far: ordinance?.effectiveFar ?? 200,
+        national_bcr: ordinance?.nationalBcr ?? null,
+        national_far: ordinance?.nationalFar ?? null,
+        ordinance_bcr: ordinance?.ordinanceBcr ?? null,
+        ordinance_far: ordinance?.ordinanceFar ?? null,
         official_land_price: siteAnalysis.officialPrices?.[0]?.pricePerSqm ?? 0,
         pnu_codes: siteAnalysis.pnu ? [siteAnalysis.pnu] : [],
         address: siteAnalysis.address ?? address,
         estimated_value: siteAnalysis.estimatedValue,
         building_info: siteAnalysis.buildingInfo ?? null,
         coordinates: siteAnalysis.coordinates ?? null,
+        land_use_plan: siteAnalysis.landUseDistricts ?? [],
+        infrastructure: siteAnalysis.infrastructure ?? null,
       };
 
       const completedStages = DEFAULT_STAGES.map((s) => ({ ...s }));
@@ -741,18 +820,22 @@ export function ProjectPipelinePanel() {
                   {stage.error && (
                     <p className="text-xs text-red-400 mb-2">{stage.error}</p>
                   )}
-                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                    {Object.entries(stage.data).map(([key, value]) => (
-                      <div key={key} className="rounded-lg bg-[var(--surface)] border border-[var(--line)] px-3 py-2">
-                        <p className="text-[10px] font-bold text-[var(--text-hint)] tracking-wider uppercase mb-0.5">
-                          {key.replace(/_/g, " ")}
-                        </p>
-                        <p className="text-xs font-bold text-[var(--text-primary)] truncate">
-                          {typeof value === "object" ? JSON.stringify(value) : formatNumber(value)}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
+                  {stage.stage === "site_analysis" ? (
+                    <SiteAnalysisDetail data={stage.data} />
+                  ) : (
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                      {Object.entries(stage.data).map(([key, value]) => (
+                        <div key={key} className="rounded-lg bg-[var(--surface)] border border-[var(--line)] px-3 py-2">
+                          <p className="text-[10px] font-bold text-[var(--text-hint)] tracking-wider uppercase mb-0.5">
+                            {FIELD_LABELS[key] || key.replace(/_/g, " ")}
+                          </p>
+                          <p className="text-xs font-bold text-[var(--text-primary)] truncate">
+                            {typeof value === "object" ? JSON.stringify(value) : formatNumber(value)}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
