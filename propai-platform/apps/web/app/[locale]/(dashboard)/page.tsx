@@ -50,12 +50,12 @@ export default async function DashboardPage({ params }: DashboardPageProps) {
   const dictionary = await getDictionary(locale as Locale);
 
   return (
-    <div className="flex flex-col gap-5 pb-20">
+    <div className="flex flex-col gap-3 pb-12">
       {/* ── 온보딩 위자드 (최초 방문 시에만 표시) ── */}
       <OnboardingWizard />
 
       {/* ── 프리미엄 히어로 섹션: AI 커맨드 센터 ── */}
-      <section className="relative min-h-[320px] sm:min-h-[400px] lg:min-h-[480px] overflow-hidden rounded-2xl sm:rounded-[2rem] lg:rounded-[3rem] border border-[var(--line-strong)] bg-[var(--surface-soft)] p-6 sm:p-10 lg:p-20 shadow-[var(--shadow-2xl)] transition-all group backdrop-blur-2xl">
+      <section className="relative min-h-[200px] sm:min-h-[260px] lg:min-h-[320px] overflow-hidden rounded-2xl sm:rounded-[2rem] lg:rounded-[3rem] border border-[var(--line-strong)] bg-[var(--surface-soft)] p-5 sm:p-8 lg:p-12 shadow-[var(--shadow-2xl)] transition-all group backdrop-blur-2xl">
         {/* 애니메이션 배경 요소 (Cyber Glows) */}
         <div className="absolute -right-20 -top-20 h-[500px] w-[500px] rounded-full bg-[var(--accent-strong)]/10 blur-[120px] transition-all duration-[3000ms] group-hover:scale-150 group-hover:bg-[var(--accent-strong)]/20" />
         <div className="absolute -bottom-40 left-1/4 h-[400px] w-[400px] rounded-full bg-indigo-500/10 blur-[100px] animate-float opacity-70" />
@@ -102,7 +102,7 @@ export default async function DashboardPage({ params }: DashboardPageProps) {
       </section>
 
       {/* ── 기능 요약 배너 (유기적 플로팅 카드) ── */}
-      <section className="w-full mb-12 mt-4 relative z-10">
+      <section className="w-full mb-3 mt-1 relative z-10">
         <div className="flex flex-wrap justify-center gap-4 lg:gap-6">
           {[
             {
@@ -157,7 +157,7 @@ export default async function DashboardPage({ params }: DashboardPageProps) {
       <DashboardKpiLoader />
 
       {/* ── 대시보드 콘텐츠 레이아웃 ── */}
-      <div className="grid gap-12 lg:grid-cols-[1fr_420px]">
+      <div className="grid gap-4 lg:grid-cols-[1fr_420px]">
         
         {/* 메인 콘텐츠: 파이프라인 모니터링 */}
         <div className="space-y-8">
