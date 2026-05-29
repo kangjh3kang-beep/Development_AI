@@ -17,6 +17,7 @@
 import { useCallback, useState } from "react";
 import { KakaoAddressSearch, type KakaoAddressResult } from "@/components/ui/KakaoAddressSearch";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { apiClient } from "@/lib/api-client";
 
 export interface AddressEntry {
   fullAddress: string;
@@ -50,6 +51,7 @@ export function GlobalAddressSearch({
 }: GlobalAddressSearchProps) {
   const [addresses, setAddresses] = useState<AddressEntry[]>([]);
   const [isSearching, setIsSearching] = useState(false);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
   const updateSiteAnalysis = useProjectContextStore((s) => s.updateSiteAnalysis);
   const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
 
@@ -57,6 +59,66 @@ export function GlobalAddressSearch({
   const displayAddresses = addresses.length > 0 ? addresses : (
     siteAnalysis?.address ? [{ fullAddress: siteAnalysis.address, jibunAddress: "", roadAddress: "", sido: "", sigungu: "", bname: "", zonecode: "" }] : []
   );
+
+  // 종합 토지 분석 자동 트리거 (주소 입력 즉시 백그라운드 실행)
+  const triggerComprehensiveAnalysis = useCallback(async (address: string) => {
+    setIsAnalyzing(true);
+    try {
+      const data = await apiClient.post<{
+        pnu: string | null;
+        coordinates: { lat: number; lon: number } | null;
+        zone_type: string | null;
+        zone_limits: { max_bcr_pct: number; max_far_pct: number; ordinance_bcr_pct?: number; ordinance_far_pct?: number; ordinance_source?: string } | null;
+        land_register: { land_category: string; area_sqm: number; official_price_per_sqm: number } | null;
+        building_info: { building_name: string; main_purpose: string; total_area_sqm: number; ground_floors: number } | null;
+        official_prices: Array<{ pnu: string; year: number; price_per_sqm: number }>;
+        land_use_plan: { districts: Array<{ district_name: string; district_code: string }>; regulations: Array<{ name: string; restriction: string }> } | null;
+        local_ordinance: { sido: string; sigungu: string | null; effective_bcr: number; effective_far: number; source: string } | null;
+      }>("/zoning/comprehensive", { body: { address }, useMock: false });
+
+      // ProjectLandData에 종합 저장
+      updateSiteAnalysis({
+        address,
+        pnu: data.pnu ?? siteAnalysis?.pnu ?? null,
+        estimatedValue: siteAnalysis?.estimatedValue ?? null,
+        landAreaSqm: data.land_register?.area_sqm ?? siteAnalysis?.landAreaSqm ?? null,
+        zoneCode: data.zone_type ?? siteAnalysis?.zoneCode ?? null,
+        coordinates: data.coordinates ?? undefined,
+        officialPrices: data.official_prices?.map((p) => ({ pnu: p.pnu, year: p.year, pricePerSqm: p.price_per_sqm })),
+        ordinance: data.local_ordinance ? {
+          sido: data.local_ordinance.sido,
+          sigungu: data.local_ordinance.sigungu,
+          nationalBcr: data.zone_limits?.max_bcr_pct ?? 60,
+          nationalFar: data.zone_limits?.max_far_pct ?? 250,
+          ordinanceBcr: data.local_ordinance.effective_bcr,
+          ordinanceFar: data.local_ordinance.effective_far,
+          effectiveBcr: data.local_ordinance.effective_bcr,
+          effectiveFar: data.local_ordinance.effective_far,
+          source: data.local_ordinance.source,
+          legalBasis: "",
+        } : undefined,
+        buildingInfo: data.building_info ? {
+          buildingName: data.building_info.building_name,
+          mainPurpose: data.building_info.main_purpose,
+          totalAreaSqm: data.building_info.total_area_sqm,
+          groundFloors: data.building_info.ground_floors,
+          structure: "",
+          useApprovalDate: "",
+        } : undefined,
+        landUseDistricts: data.land_use_plan?.districts?.map((d) => ({
+          districtName: d.district_name,
+          districtCode: d.district_code,
+          conflictStatus: "",
+        })),
+        dataSource: "VWORLD+법제처+공공데이터포털",
+        fetchedAt: new Date().toISOString(),
+      });
+    } catch {
+      // 분석 실패해도 주소는 이미 저장됨 — 조용히 무시
+    } finally {
+      setIsAnalyzing(false);
+    }
+  }, [siteAnalysis, updateSiteAnalysis]);
 
   const handleAddressSelect = useCallback((result: KakaoAddressResult) => {
     const entry: AddressEntry = {
@@ -91,6 +153,9 @@ export function GlobalAddressSearch({
         address: primary.fullAddress,
         pnu: siteAnalysis?.pnu ?? null,
       });
+
+      // 자동 종합 분석 트리거 (백그라운드)
+      triggerComprehensiveAnalysis(primary.fullAddress);
     }
 
     onChange?.(newAddresses);
@@ -177,6 +242,38 @@ export function GlobalAddressSearch({
               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
               필지 추가
             </button>
+          )}
+        </div>
+      )}
+
+      {/* 분석 중 표시 */}
+      {isAnalyzing && (
+        <div className="flex items-center gap-2 text-xs text-[var(--accent-strong)]">
+          <div className="h-3 w-3 animate-spin rounded-full border-2 border-[var(--accent-strong)] border-t-transparent" />
+          토지정보 종합 분석 중...
+        </div>
+      )}
+
+      {/* 분석 완료 — 기본 정보 요약 */}
+      {!isAnalyzing && siteAnalysis?.zoneCode && displayAddresses.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 text-[10px]">
+          <span className="rounded-md bg-[var(--accent-soft)] px-2 py-0.5 font-bold text-[var(--accent-strong)]">
+            {siteAnalysis.zoneCode}
+          </span>
+          {siteAnalysis.landAreaSqm && (
+            <span className="text-[var(--text-secondary)]">
+              {siteAnalysis.landAreaSqm.toLocaleString()}m²
+            </span>
+          )}
+          {siteAnalysis.ordinance?.effectiveBcr && (
+            <span className="text-[var(--text-hint)]">
+              건폐율 {siteAnalysis.ordinance.effectiveBcr}% · 용적률 {siteAnalysis.ordinance.effectiveFar}%
+            </span>
+          )}
+          {siteAnalysis.dataSource && (
+            <span className="text-[var(--text-hint)]">
+              ({siteAnalysis.dataSource})
+            </span>
           )}
         </div>
       )}
