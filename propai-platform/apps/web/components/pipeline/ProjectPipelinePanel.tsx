@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { apiClient } from "@/lib/api-client";
 import { GlobalAddressSearch, type AddressEntry } from "@/components/common/GlobalAddressSearch";
@@ -262,7 +262,22 @@ type WorkflowPhase =
   | "remaining"       // 나머지 단계 진행 중
   | "done";           // 전체 완료
 
-export function ProjectPipelinePanel() {
+/**
+ * @param projectMode  프로젝트 상세 허브에서 사용. 주소 입력을 숨기고 store의 부지정보를 사용한다.
+ * @param autoStart    projectMode에서 마운트 시 부지분석을 자동 실행한다.
+ * @param onSiteAnalysisComplete  부지분석 완료 후 "사업모델 추천 보기" CTA에서 호출 (통합 흐름 연결점).
+ */
+interface ProjectPipelinePanelProps {
+  projectMode?: boolean;
+  autoStart?: boolean;
+  onSiteAnalysisComplete?: () => void;
+}
+
+export function ProjectPipelinePanel({
+  projectMode = false,
+  autoStart = false,
+  onSiteAnalysisComplete,
+}: ProjectPipelinePanelProps = {}) {
   const [address, setAddress] = useState("");
   const [allAddresses, setAllAddresses] = useState<AddressEntry[]>([]);
   const [stages, setStages] = useState<PipelineStageStatus[]>(DEFAULT_STAGES);
@@ -287,6 +302,9 @@ export function ProjectPipelinePanel() {
 
   const projectId = useProjectContextStore((s) => s.projectId);
   const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
+  const completedStages = useProjectContextStore((s) => s.completedStages);
+  const storeAddress = useProjectContextStore((s) => s.siteAnalysis?.address ?? "");
+  const autoStartedRef = useRef(false);
   const updateSiteAnalysis = useProjectContextStore((s) => s.updateSiteAnalysis);
   const updateDesignData = useProjectContextStore((s) => s.updateDesignData);
   const updateFeasibilityData = useProjectContextStore((s) => s.updateFeasibilityData);
@@ -512,6 +530,29 @@ export function ProjectPipelinePanel() {
     runSiteAnalysis();
   };
 
+  // projectMode: store 주소를 입력값으로 동기화 (persist 하이드레이션 대응)
+  useEffect(() => {
+    if (projectMode && storeAddress && storeAddress !== address) {
+      setAddress(storeAddress);
+    }
+  }, [projectMode, storeAddress]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // projectMode + autoStart: 마운트 후 주소가 준비되면 부지분석 1회 자동 실행
+  useEffect(() => {
+    if (!projectMode || !autoStart) return;
+    if (autoStartedRef.current) return;
+    if (!address.trim()) return;
+    if (isRunning || workflowPhase !== "input") return;
+    // 이미 부지분석이 끝난 프로젝트라면 결과 확인 단계로 자동 전환
+    if (completedStages.includes("site-analysis")) {
+      autoStartedRef.current = true;
+      setWorkflowPhase("site_review");
+      return;
+    }
+    autoStartedRef.current = true;
+    runSiteAnalysis();
+  }, [projectMode, autoStart, address, isRunning, workflowPhase, completedStages, runSiteAnalysis]);
+
   const toggleStage = (stageKey: string) => {
     setExpandedStage((prev) => (prev === stageKey ? null : stageKey));
   };
@@ -628,50 +669,82 @@ export function ProjectPipelinePanel() {
           </h2>
         </div>
         <p className="text-sm font-medium text-[var(--text-secondary)] tracking-tight ml-11">
-          주소를 검색하면 부지분석 → 결과 확인 → 나머지 6단계를 순차 수행합니다
+          {projectMode
+            ? "프로젝트 주소로 부지분석을 자동 수행합니다. 완료 후 사업모델 추천으로 이어집니다."
+            : "주소를 검색하면 부지분석 → 결과 확인 → 나머지 6단계를 순차 수행합니다"}
         </p>
       </div>
 
-      {/* ── Address Search Input (GlobalAddressSearch) ── */}
-      <div className="px-6 py-4 sm:px-8 border-b border-[var(--line)]">
-        <div className="flex flex-col sm:flex-row gap-3">
-          <div className="flex-1">
-            <GlobalAddressSearch
-              single={false}
-              onChange={handleAddressChange}
-              placeholder="주소를 검색하세요 (예: 서울 강남구 역삼동)"
-              disabled={isRunning}
-            />
+      {/* ── Address Search Input (GlobalAddressSearch) — 대시보드 체험 모드 ── */}
+      {!projectMode && (
+        <div className="px-6 py-4 sm:px-8 border-b border-[var(--line)]">
+          <div className="flex flex-col sm:flex-row gap-3">
+            <div className="flex-1">
+              <GlobalAddressSearch
+                single={false}
+                onChange={handleAddressChange}
+                placeholder="주소를 검색하세요 (예: 서울 강남구 역삼동)"
+                disabled={isRunning}
+              />
+            </div>
+            <button
+              type="button"
+              onClick={runSiteAnalysis}
+              disabled={isRunning || !address.trim()}
+              className="h-12 px-6 sm:px-8 rounded-xl bg-gradient-to-br from-[var(--accent-strong)] to-[var(--accent)] text-white text-sm font-bold tracking-wide shadow-[var(--shadow-glow)] transition-all hover:scale-[1.03] active:scale-[0.97] disabled:opacity-50 disabled:hover:scale-100 disabled:cursor-not-allowed whitespace-nowrap flex items-center justify-center gap-2 shrink-0"
+            >
+              {isRunning && workflowPhase === "input" ? (
+                <>
+                  <svg className="animate-spin" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M21 12a9 9 0 1 1-6.219-8.56" /></svg>
+                  부지분석 중...
+                </>
+              ) : (
+                <>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0"/><circle cx="12" cy="10" r="3"/></svg>
+                  부지분석 시작
+                </>
+              )}
+            </button>
+          </div>
+          {allAddresses.length > 0 && (
+            <div className="mt-2 text-xs font-medium text-[var(--text-secondary)]">
+              {allAddresses.length === 1 ? (
+                <p>선택된 주소: <span className="text-[var(--accent-strong)]">{address}</span></p>
+              ) : (
+                <p>선택된 필지: <span className="text-[var(--accent-strong)]">{allAddresses.length}개</span> — {allAddresses.map((a) => a.fullAddress).join(", ")}</p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Project Mode: 읽기 전용 주소 바 + 재분석 ── */}
+      {projectMode && (
+        <div className="px-6 py-4 sm:px-8 border-b border-[var(--line)] flex flex-wrap items-center gap-3">
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--accent-soft)] text-[var(--accent-strong)]">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0"/><circle cx="12" cy="10" r="3"/></svg>
+          </span>
+          <div className="flex-1 min-w-0">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-[var(--text-hint)]">분석 대상 주소</p>
+            <p className="text-sm font-bold text-[var(--text-primary)] truncate">{address || "주소 정보 없음"}</p>
           </div>
           <button
             type="button"
             onClick={runSiteAnalysis}
             disabled={isRunning || !address.trim()}
-            className="h-12 px-6 sm:px-8 rounded-xl bg-gradient-to-br from-[var(--accent-strong)] to-[var(--accent)] text-white text-sm font-bold tracking-wide shadow-[var(--shadow-glow)] transition-all hover:scale-[1.03] active:scale-[0.97] disabled:opacity-50 disabled:hover:scale-100 disabled:cursor-not-allowed whitespace-nowrap flex items-center justify-center gap-2 shrink-0"
+            className="h-9 px-4 rounded-lg border border-[var(--line-strong)] text-xs font-bold text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-strong)] transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 shrink-0"
           >
             {isRunning && workflowPhase === "input" ? (
               <>
-                <svg className="animate-spin" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M21 12a9 9 0 1 1-6.219-8.56" /></svg>
+                <svg className="animate-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M21 12a9 9 0 1 1-6.219-8.56" /></svg>
                 부지분석 중...
               </>
             ) : (
-              <>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0"/><circle cx="12" cy="10" r="3"/></svg>
-                부지분석 시작
-              </>
+              "부지분석 재실행"
             )}
           </button>
         </div>
-        {allAddresses.length > 0 && (
-          <div className="mt-2 text-xs font-medium text-[var(--text-secondary)]">
-            {allAddresses.length === 1 ? (
-              <p>선택된 주소: <span className="text-[var(--accent-strong)]">{address}</span></p>
-            ) : (
-              <p>선택된 필지: <span className="text-[var(--accent-strong)]">{allAddresses.length}개</span> — {allAddresses.map((a) => a.fullAddress).join(", ")}</p>
-            )}
-          </div>
-        )}
-      </div>
+      )}
 
       {/* ── Site Analysis Review Banner ── */}
       {workflowPhase === "site_review" && (
@@ -683,34 +756,66 @@ export function ProjectPipelinePanel() {
             <div className="flex-1">
               <h4 className="text-sm font-bold text-[var(--text-primary)]">부지분석 완료 — 결과를 확인하세요</h4>
               <p className="text-xs text-[var(--text-secondary)] mt-1">
-                아래 부지분석 결과를 확인한 후, 만족스러우면 &quot;다음 단계 진행&quot;을 눌러 설계→공사비→수지분석을 이어서 실행합니다.
+                {projectMode
+                  ? "아래 부지분석 결과를 확인한 후, “사업모델 추천 보기”를 눌러 이 부지에 최적인 사업모델 Top 3를 추천받으세요."
+                  : "아래 부지분석 결과를 확인한 후, 만족스러우면 “다음 단계 진행”을 눌러 설계→공사비→수지분석을 이어서 실행합니다."}
               </p>
-              <div className="flex gap-3 mt-3">
-                <button
-                  type="button"
-                  onClick={runRemainingStages}
-                  disabled={isRunning}
-                  className="h-10 px-6 rounded-xl bg-gradient-to-br from-[var(--accent-strong)] to-[var(--accent)] text-white text-sm font-bold shadow-[var(--shadow-glow)] hover:scale-[1.03] active:scale-[0.97] transition-all disabled:opacity-50 flex items-center gap-2"
-                >
-                  {isRunning ? (
-                    <>
-                      <svg className="animate-spin" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M21 12a9 9 0 1 1-6.219-8.56" /></svg>
-                      나머지 분석 진행 중...
-                    </>
-                  ) : (
-                    <>
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polygon points="6 3 20 12 6 21 6 3" /></svg>
-                      다음 단계 진행 (설계→공사비→수지분석)
-                    </>
-                  )}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => { setWorkflowPhase("input"); setStages(DEFAULT_STAGES.map((s) => ({ ...s }))); }}
-                  className="h-10 px-4 rounded-xl border border-[var(--line-strong)] text-sm font-bold text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-strong)] transition-all"
-                >
-                  다른 주소 분석
-                </button>
+              <div className="flex flex-wrap gap-3 mt-3">
+                {projectMode ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => onSiteAnalysisComplete?.()}
+                      className="h-10 px-6 rounded-xl bg-gradient-to-br from-[var(--accent-strong)] to-[var(--accent)] text-white text-sm font-bold shadow-[var(--shadow-glow)] hover:scale-[1.03] active:scale-[0.97] transition-all flex items-center gap-2"
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m22 12-4-4v3H3v2h15v3z" /></svg>
+                      사업모델 추천 보기
+                    </button>
+                    <button
+                      type="button"
+                      onClick={runRemainingStages}
+                      disabled={isRunning}
+                      className="h-10 px-4 rounded-xl border border-[var(--line-strong)] text-sm font-bold text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-strong)] transition-all disabled:opacity-50 flex items-center gap-2"
+                    >
+                      {isRunning ? (
+                        <>
+                          <svg className="animate-spin" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M21 12a9 9 0 1 1-6.219-8.56" /></svg>
+                          전체 분석 진행 중...
+                        </>
+                      ) : (
+                        "전체 7단계 분석 계속"
+                      )}
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      onClick={runRemainingStages}
+                      disabled={isRunning}
+                      className="h-10 px-6 rounded-xl bg-gradient-to-br from-[var(--accent-strong)] to-[var(--accent)] text-white text-sm font-bold shadow-[var(--shadow-glow)] hover:scale-[1.03] active:scale-[0.97] transition-all disabled:opacity-50 flex items-center gap-2"
+                    >
+                      {isRunning ? (
+                        <>
+                          <svg className="animate-spin" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M21 12a9 9 0 1 1-6.219-8.56" /></svg>
+                          나머지 분석 진행 중...
+                        </>
+                      ) : (
+                        <>
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polygon points="6 3 20 12 6 21 6 3" /></svg>
+                          다음 단계 진행 (설계→공사비→수지분석)
+                        </>
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setWorkflowPhase("input"); setStages(DEFAULT_STAGES.map((s) => ({ ...s }))); }}
+                      className="h-10 px-4 rounded-xl border border-[var(--line-strong)] text-sm font-bold text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-strong)] transition-all"
+                    >
+                      다른 주소 분석
+                    </button>
+                  </>
+                )}
               </div>
             </div>
           </div>

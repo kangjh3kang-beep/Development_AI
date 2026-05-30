@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { LifecycleStageViews } from "@/components/projects/LifecycleStageViews";
 import { ProjectLifecyclePipeline } from "@/components/projects/ProjectLifecyclePipeline";
-import { AutoRecommendPanel } from "@/components/feasibility/AutoRecommendPanel";
+import { ProjectAnalysisFlow } from "@/components/projects/ProjectAnalysisFlow";
 import { isValidLocale, type Locale } from "@/i18n/config";
 import { useDictionary } from "@/hooks/use-dictionary";
 import { formatCurrencyKRW } from "@/lib/formatters";
@@ -74,19 +74,14 @@ export default function ProjectDetailPage() {
         <ProjectLifecyclePipeline locale={locale} projectId={id} />
       </motion.div>
 
-      {/* ── Auto Recommend Panel — HERO Feature ── */}
-      <motion.section
+      {/* ── 통합 분석 흐름: 부지분석(자동) → 사업모델 추천 ── */}
+      <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.1 }}
-        className="rounded-[3rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-10 lg:p-14 shadow-[var(--shadow-2xl)] relative overflow-hidden"
       >
-        <div className="absolute -right-32 -top-32 h-[400px] w-[400px] rounded-full bg-[var(--accent-strong)]/8 blur-[100px] pointer-events-none" />
-        <div className="absolute -left-20 bottom-0 h-80 w-80 rounded-full bg-blue-500/5 blur-[80px] pointer-events-none" />
-        <div className="relative z-10">
-          <AutoRecommendPanel />
-        </div>
-      </motion.section>
+        <ProjectAnalysisFlow projectId={id} projectName={meta?.name} />
+      </motion.div>
 
       {/* ── Project Metadata (API-driven) ── */}
       {metaLoading ? (

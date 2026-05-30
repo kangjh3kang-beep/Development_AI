@@ -162,9 +162,11 @@ function formatBillionWon(won: number): string {
 interface AutoRecommendPanelProps {
   onClose?: () => void;
   isModal?: boolean;
+  /** 통합 흐름(프로젝트 허브)에서 사용. 주소/지역/면적 입력 폼을 숨기고 store의 부지정보로 자동 분석한다. */
+  embedded?: boolean;
 }
 
-export function AutoRecommendPanel({ onClose, isModal = false }: AutoRecommendPanelProps) {
+export function AutoRecommendPanel({ onClose, isModal = false, embedded = false }: AutoRecommendPanelProps) {
   const { locale, id: projectId } = useParams() as { locale: string; id: string };
   const router = useRouter();
   const ctxStore = useProjectContextStore();
@@ -272,6 +274,16 @@ export function AutoRecommendPanel({ onClose, isModal = false }: AutoRecommendPa
     }
   }, [address, region, landArea]);
 
+  // embedded 모드: 마운트 시 store의 주소로 1회 자동 분석 (통합 흐름의 "단계 확인 후" 진입점)
+  const embeddedAutoRunRef = useRef(false);
+  useEffect(() => {
+    if (!embedded) return;
+    if (embeddedAutoRunRef.current) return;
+    if (!address.trim() || isLoading) return;
+    embeddedAutoRunRef.current = true;
+    handleAnalyze();
+  }, [embedded, address, isLoading, handleAnalyze]);
+
   const handleSelectModel = useCallback((model: RecommendedModel) => {
     setSelectedModel(model);
     setShowRefineModal(true);
@@ -320,7 +332,8 @@ export function AutoRecommendPanel({ onClose, isModal = false }: AutoRecommendPa
 
   return (
     <div className="flex flex-col gap-8">
-      {/* ── Header ── */}
+      {/* ── Header (체험/모달 모드) ── */}
+      {!embedded && (
       <div className="flex items-start justify-between">
         <div className="space-y-3">
           <div className="flex items-center gap-3">
@@ -345,8 +358,42 @@ export function AutoRecommendPanel({ onClose, isModal = false }: AutoRecommendPa
           </button>
         )}
       </div>
+      )}
 
-      {/* ── Input Form ── */}
+      {/* ── Embedded 모드: store 기반 분석 대상 요약 바 ── */}
+      {embedded && (
+        <div className="flex flex-wrap items-center gap-4 rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-strong)] px-5 py-4 shadow-[var(--shadow-md)]">
+          <div className="flex items-center gap-3 flex-1 min-w-0">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--accent-soft)] text-[var(--accent-strong)]">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0"/><circle cx="12" cy="10" r="3"/></svg>
+            </span>
+            <div className="min-w-0">
+              <p className="text-[10px] font-[900] uppercase tracking-[0.2em] text-[var(--text-hint)]">분석 대상</p>
+              <p className="text-sm font-bold text-[var(--text-primary)] truncate">{address || "주소 정보 없음"}</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-5 text-xs">
+            <div>
+              <p className="text-[10px] font-bold text-[var(--text-hint)] tracking-wider">지역</p>
+              <p className="font-bold text-[var(--text-primary)]">{region}</p>
+            </div>
+            <div>
+              <p className="text-[10px] font-bold text-[var(--text-hint)] tracking-wider">대지면적</p>
+              <p className="font-bold text-[var(--text-primary)] tabular-nums">{landArea ? `${Number(landArea).toLocaleString()} m²` : "—"}</p>
+            </div>
+          </div>
+          <button
+            onClick={handleAnalyze}
+            disabled={isLoading || !address.trim()}
+            className="h-9 px-4 rounded-lg border border-[var(--line-strong)] text-xs font-bold text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-soft)] transition-all disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+          >
+            {isLoading ? "추천 분석 중..." : "다시 추천"}
+          </button>
+        </div>
+      )}
+
+      {/* ── Input Form (체험/모달 모드) ── */}
+      {!embedded && (
       <div className="rounded-[2rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-8 shadow-[var(--shadow-xl)]">
         <div className="flex flex-col gap-6">
           {/* Row 1: Address + Region */}
@@ -420,6 +467,7 @@ export function AutoRecommendPanel({ onClose, isModal = false }: AutoRecommendPa
 
         </div>
       </div>
+      )}
 
       {/* ── Error ── */}
       <AnimatePresence>
