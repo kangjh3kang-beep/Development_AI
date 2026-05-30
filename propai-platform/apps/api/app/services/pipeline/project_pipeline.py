@@ -339,6 +339,15 @@ class ProjectPipeline:
                 "coordinates": None,
             }
 
+        # 종합분석 보고서 생성 (7섹션)
+        comprehensive_report: dict[str, Any] = {}
+        try:
+            from app.services.land_intelligence.comprehensive_analysis_service import ComprehensiveAnalysisService
+            comp_svc = ComprehensiveAnalysisService()
+            comprehensive_report = await comp_svc.analyze(state.address)
+        except Exception:
+            pass
+
         zone_limits = zoning.get("zone_limits", {})
         zone_type = zoning.get("zone_type", "")
         land_area_sqm = comprehensive.get("land_area_sqm", 0.0)
@@ -446,6 +455,7 @@ class ProjectPipeline:
             "land_area_sqm": float(land_area_sqm),
             "official_land_price": float(official_land_price),
             "pnu_codes": pnu_codes,
+            "comprehensive_report": comprehensive_report if comprehensive_report else None,
         }
 
         # ProjectLandData 자동 저장: 분석 결과를 Project 모델에 반영

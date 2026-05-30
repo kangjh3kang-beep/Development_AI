@@ -30,6 +30,48 @@ class MOLITService:
                 logger.error("MOLIT 실거래가 네트워크 오류", error=str(e))
                 return []
 
+    async def get_officetel_transactions(self, region_code: str, year_month: str) -> List[Dict]:
+        """오피스텔 매매 실거래가 조회"""
+        return await self._fetch_transactions(
+            "https://apis.data.go.kr/1613000/RTMSDataSvcOffiTrade/getRTMSDataSvcOffiTrade",
+            region_code, year_month,
+        )
+
+    async def get_villa_transactions(self, region_code: str, year_month: str) -> List[Dict]:
+        """연립/다세대 매매 실거래가 조회"""
+        return await self._fetch_transactions(
+            "https://apis.data.go.kr/1613000/RTMSDataSvcRHTrade/getRTMSDataSvcRHTrade",
+            region_code, year_month,
+        )
+
+    async def get_commercial_transactions(self, region_code: str, year_month: str) -> List[Dict]:
+        """상업/업무용 부동산 매매 실거래가 조회"""
+        return await self._fetch_transactions(
+            "https://apis.data.go.kr/1613000/RTMSDataSvcNrgTrade/getRTMSDataSvcNrgTrade",
+            region_code, year_month,
+        )
+
+    async def _fetch_transactions(self, url: str, region_code: str, year_month: str) -> List[Dict]:
+        params = {
+            "serviceKey": settings.MOLIT_API_KEY,
+            "LAWD_CD": region_code,
+            "DEAL_YMD": year_month,
+            "numOfRows": 100,
+            "pageNo": 1,
+        }
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            try:
+                resp = await client.get(url, params=params)
+                resp.raise_for_status()
+                data = resp.json()
+                items = data.get("response", {}).get("body", {}).get("items", {})
+                if isinstance(items, dict):
+                    return items.get("item", [])
+                return []
+            except Exception as e:
+                logger.warning("MOLIT 실거래가 조회 실패", url=url[:60], error=str(e)[:200])
+                return []
+
     async def get_official_land_price(self, pnu_code: str) -> Optional[Dict]:
         """표준 공시지가 조회"""
         params = {

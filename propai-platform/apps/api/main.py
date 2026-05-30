@@ -108,6 +108,15 @@ except ImportError:
         from app.routers.pipeline import router as pipeline_router
     except ImportError:
         pipeline_router = None
+
+# v2 종합분석
+try:
+    from apps.api.app.routers.comprehensive_analysis import router as comprehensive_analysis_router
+except ImportError:
+    try:
+        from app.routers.comprehensive_analysis import router as comprehensive_analysis_router
+    except ImportError:
+        comprehensive_analysis_router = None
 from apps.api.versioning import VersionHeaderMiddleware, create_latest_redirect_router
 
 settings = get_settings()
@@ -325,3 +334,5 @@ if v2_feasibility_router is not None:
     app.include_router(v2_feasibility_router)  # 자체 prefix: /api/v2/feasibility
 if pipeline_router is not None:
     app.include_router(pipeline_router)  # 자체 prefix: /api/v2/pipeline
+if comprehensive_analysis_router is not None:
+    app.include_router(comprehensive_analysis_router, prefix="/api/v2/analysis", tags=["종합 부지분석"])
