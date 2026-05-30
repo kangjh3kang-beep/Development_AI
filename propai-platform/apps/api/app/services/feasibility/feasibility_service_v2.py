@@ -189,7 +189,7 @@ class FeasibilityServiceV2:
         results.sort(key=lambda r: r["composite_score"], reverse=True)
         top3 = results[:3]
 
-        return {
+        result = {
             "address": address,
             "zone_type": zone_type,
             "zone_limits": zone_limits,
@@ -199,6 +199,18 @@ class FeasibilityServiceV2:
             "recommendations": top3,
             "all_results": results,  # Full ranking for reference
         }
+
+        # Step 5: AI 해석 생성
+        try:
+            from app.services.ai.feasibility_interpreter import FeasibilityInterpreter
+            interpreter = FeasibilityInterpreter()
+            ai = await interpreter.generate_interpretation(result)
+            result["ai_interpretation"] = ai
+        except Exception:
+            logger.warning("수지분석 AI 해석 생성 실패 — 폴백 처리")
+            result["ai_interpretation"] = None
+
+        return result
 
     # ------------------------------------------------------------------
     # Helper methods for auto-generation

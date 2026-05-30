@@ -190,6 +190,16 @@ class ComprehensiveAnalysisService:
             logger.warning("AI 해석 생성 스킵", error=str(e))
             result["ai_interpretation"] = None
 
+        # Phase 4: 시장분석 AI 내러티브 생성 (선택적 — API 키 있을 때만)
+        try:
+            from app.services.ai.market_interpreter import MarketInterpreter
+            market_interpreter = MarketInterpreter()
+            market_interpretation = await market_interpreter.generate_interpretation(result)
+            result["market_interpretation"] = market_interpretation
+        except Exception as e:
+            logger.warning("시장분석 AI 해석 생성 스킵", error=str(e))
+            result["market_interpretation"] = None
+
         return result
 
     # ────────────────────────────────────────────
