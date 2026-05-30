@@ -205,6 +205,36 @@ class ComprehensiveAnalysisService:
         except Exception:
             pass
 
+        # 분석 주석 생성
+        source = ordinance.get("source", "법정상한")
+        sido = ordinance.get("sido", "")
+        sigungu = ordinance.get("sigungu", "")
+        region_name = f"{sido} {sigungu}".strip() or "해당 지자체"
+
+        annotations: list[str] = []
+        annotations.append(f"[법정 상한] 국토의 계획 및 이용에 관한 법률 시행령 별표: {zone_type} 건폐율 {national_bcr}%, 용적률 {national_far}%")
+
+        if ordinance_far < national_far:
+            annotations.append(f"[조례 제한] {region_name} 도시계획 조례에 의해 용적률 {national_far}% → {ordinance_far}%로 강화 (출처: {source})")
+        elif ordinance_far == national_far:
+            annotations.append(f"[조례 동일] {region_name} 조례가 법정 상한과 동일하게 적용 (출처: {source})")
+
+        if ordinance_bcr < national_bcr:
+            annotations.append(f"[조례 제한] {region_name} 도시계획 조례에 의해 건폐율 {national_bcr}% → {ordinance_bcr}%로 강화")
+
+        annotations.append(f"[실효 용적률] min(법정 {national_far}%, 조례 {ordinance_far}%) = {effective_far}%")
+        annotations.append(f"[실효 건폐율] min(법정 {national_bcr}%, 조례 {ordinance_bcr}%) = {effective_bcr}%")
+
+        if land_area > 0:
+            max_gfa = land_area * effective_far / 100
+            max_bldg = land_area * effective_bcr / 100
+            annotations.append(f"[적용 결과] 대지면적 {land_area:.1f}m² 기준: 최대 연면적 {max_gfa:.1f}m², 최대 건축면적 {max_bldg:.1f}m²")
+
+        if incentive.get("simulation_table"):
+            base_far = incentive.get("base_far", effective_far)
+            max_incentive_far = incentive.get("max_far", national_far)
+            annotations.append(f"[기부체납 여력] 기본용적률 {base_far}% → 기부체납 시 최대 {max_incentive_far}%까지 완화 가능 (국토계획법 시행령 §46)")
+
         return {
             "national_bcr_pct": national_bcr,
             "national_far_pct": national_far,
@@ -213,7 +243,8 @@ class ComprehensiveAnalysisService:
             "effective_bcr_pct": effective_bcr,
             "effective_far_pct": effective_far,
             "far_incentive": incentive,
-            "source": ordinance.get("source", "법정상한"),
+            "source": source,
+            "annotations": annotations,
             "far_optimization": self._simulate_far_optimization(zone_type, effective_far, national_far, land_area),
         }
 

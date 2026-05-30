@@ -161,6 +161,14 @@ export function ComprehensiveAnalysisPanel() {
               <Field label="실효 용적률" value={`${ef.effective_far_pct ?? "-"}%`} />
             </div>
             {ef.source && <p className="text-[10px] text-[var(--text-hint)] mt-1">출처: {ef.source}</p>}
+            {Array.isArray(ef.annotations) && ef.annotations.length > 0 && (
+              <div className="mt-3 rounded-lg bg-[var(--surface-soft)] border border-[var(--line)] p-3 space-y-1">
+                <p className="text-[10px] font-bold text-[var(--text-hint)] mb-1">분석 근거</p>
+                {ef.annotations.map((note: string, i: number) => (
+                  <p key={i} className="text-[10px] text-[var(--text-secondary)] leading-relaxed">{note}</p>
+                ))}
+              </div>
+            )}
           </SectionCard>
 
           {/* Section 1-B: 용적률 최적화 시뮬레이션 */}
@@ -252,6 +260,48 @@ export function ComprehensiveAnalysisPanel() {
                     ))}
                   </tbody>
                 </table>
+                {/* 유형별 검증 상세 */}
+                {supplyAreas.filter((sa: AnalysisResult) => sa.conditions_met?.length > 0).length > 0 && (
+                  <div className="mt-3 space-y-2">
+                    <p className="text-[10px] font-bold text-[var(--text-hint)]">유형별 법적 조건 검증 상세</p>
+                    {supplyAreas.map((sa: AnalysisResult) => {
+                      const conditions = sa.conditions_met as AnalysisResult[] | undefined;
+                      if (!conditions || conditions.length === 0) return null;
+                      return (
+                        <div key={sa.dev_type} className="rounded-lg bg-[var(--surface-soft)] border border-[var(--line)] p-3">
+                          <p className="text-[11px] font-bold text-[var(--text-primary)] mb-1">
+                            {sa.type_name}
+                            <span className={`ml-2 text-[10px] px-1.5 py-0.5 rounded ${
+                              sa.feasibility_status === "적합" ? "bg-emerald-500/20 text-emerald-400" :
+                              sa.feasibility_status === "부적합" ? "bg-red-500/20 text-red-400" :
+                              "bg-amber-500/20 text-amber-400"
+                            }`}>{sa.feasibility_status}</span>
+                          </p>
+                          <div className="space-y-0.5">
+                            {conditions.map((c: AnalysisResult, i: number) => (
+                              <p key={i} className="text-[10px] text-[var(--text-secondary)]">
+                                <span className={`inline-block w-3 h-3 mr-1 rounded-full text-center text-[8px] leading-3 font-bold ${
+                                  c.status === "pass" ? "bg-emerald-500/20 text-emerald-400" :
+                                  c.status === "fail" ? "bg-red-500/20 text-red-400" :
+                                  c.status === "unknown" ? "bg-gray-500/20 text-gray-400" :
+                                  "bg-amber-500/20 text-amber-400"
+                                }`}>{c.status === "pass" ? "O" : c.status === "fail" ? "X" : "?"}</span>
+                                <span className="font-medium">{c.rule}:</span> {c.detail}
+                              </p>
+                            ))}
+                          </div>
+                          {sa.recommendations?.length > 0 && (
+                            <div className="mt-1 pt-1 border-t border-[var(--line)]">
+                              {(sa.recommendations as string[]).map((r: string, i: number) => (
+                                <p key={i} className="text-[10px] text-[var(--accent-strong)]">→ {r}</p>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             ) : (
               <p className="text-xs text-[var(--text-hint)] italic">해당 용도지역에서 허용된 개발유형이 없습니다</p>
