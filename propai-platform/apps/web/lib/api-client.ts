@@ -10,7 +10,7 @@ const apiBaseUrl = (() => {
     const host = window.location.hostname;
     // 프로덕션 도메인들
     if (host === "4t8t.net" || host === "www.4t8t.net" || host.endsWith(".pages.dev") || host === "propai.kr") {
-      return "https://developmentai-production.up.railway.app/api/v1";
+      return "https://api.4t8t.net/api/v1";
     }
   }
   return "/api/proxy";
@@ -167,7 +167,7 @@ function getV2RequestUrl(path: string) {
   if (typeof window !== "undefined") {
     const host = window.location.hostname;
     if (host === "4t8t.net" || host === "www.4t8t.net" || host.endsWith(".pages.dev") || host === "propai.kr") {
-      return `https://developmentai-production.up.railway.app/api/v2${normalizedPath}`;
+      return `https://api.4t8t.net/api/v2${normalizedPath}`;
     }
   }
 
