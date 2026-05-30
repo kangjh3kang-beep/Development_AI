@@ -106,12 +106,12 @@ const SECTIONS: SectionDef[] = [
   {
     id: "cost",
     label: "5. 공사비",
-    sourceStage: "construction_cost",
+    sourceStage: "cost",
     fields: [
-      { key: "total_cost_won", label: "총공사비", unit: "", editable: true, format: fmtNum },
+      { key: "total_construction_cost", label: "총공사비", unit: "", editable: true, format: fmtNum },
       { key: "cost_per_sqm", label: "m\u00B2당 공사비", unit: "원/m\u00B2", editable: false, format: fmtNum },
-      { key: "structure_cost", label: "구조공사비", unit: "", editable: false, format: fmtNum },
-      { key: "mep_cost", label: "기계전기공사비", unit: "", editable: false, format: fmtNum },
+      { key: "direct_cost", label: "직접공사비", unit: "", editable: false, format: fmtNum },
+      { key: "construction_months", label: "공사기간", unit: "개월", editable: false },
     ],
   },
   {
@@ -140,10 +140,10 @@ const SECTIONS: SectionDef[] = [
   {
     id: "esg",
     label: "8. ESG/탄소",
-    sourceStage: "esg_carbon",
+    sourceStage: "esg",
     fields: [
       { key: "embodied_carbon_kg", label: "내재탄소", unit: "kg", editable: false, format: fmtNum },
-      { key: "operational_carbon_kg", label: "운영탄소", unit: "kg", editable: false, format: fmtNum },
+      { key: "operational_carbon_30yr_kg", label: "운영탄소(30년)", unit: "kg", editable: false, format: fmtNum },
       { key: "total_carbon_per_sqm", label: "탄소밀도", unit: "kgCO\u2082/m\u00B2", editable: false, format: fmtPct },
       { key: "gresb_score", label: "GRESB 점수", unit: "점", editable: false },
     ],

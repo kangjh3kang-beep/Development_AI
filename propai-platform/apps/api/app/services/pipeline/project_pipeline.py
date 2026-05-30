@@ -927,7 +927,21 @@ class ProjectPipeline:
         # ── 기본 수지분석 ──
         land_cost = site.land_area_sqm * site.official_land_price * 1.3  # 공시지가 x 1.3 보정
 
-        avg_sale_price = cost.cost_per_pyeong * 1.3  # 공사비 대비 30% 마진
+        # 분양가는 시장 시세 기반으로 산정한다. 공사비에서 역산(cost_per_pyeong x 1.3)하면
+        # 토지비가 수입에 반영되지 않아 토지비만큼 구조적 적자가 발생한다.
+        # regional_pricing(단일 출처)을 사용하고, 조회 실패 시에만 공사비 기반으로 폴백한다.
+        from app.services.feasibility.regional_pricing import (
+            get_regional_sale_price_per_pyeong,
+        )
+
+        market_price = get_regional_sale_price_per_pyeong(address=site.address)
+        if market_price and market_price > 0:
+            avg_sale_price = float(market_price)
+            sale_price_source = "regional_market_table"
+        else:
+            avg_sale_price = cost.cost_per_pyeong * 1.3  # 최후 폴백
+            sale_price_source = "cost_based_fallback"
+
         total_gfa_pyeong = design.total_gfa_sqm / 3.3058
         sellable_pyeong = total_gfa_pyeong * 0.75
         total_revenue = avg_sale_price * sellable_pyeong
@@ -950,10 +964,14 @@ class ProjectPipeline:
             "land_cost": land_cost,
             "construction_cost": cost.total_construction_cost,
             "total_project_cost": total_project_cost,
+            "total_cost_won": total_project_cost,  # 보고서 호환 alias
             "total_revenue": total_revenue,
+            "total_revenue_won": total_revenue,  # 보고서 호환 alias
             "net_profit": net_profit,
+            "net_profit_won": net_profit,  # 보고서 호환 alias
             "profit_rate_pct": round(profit_rate, 2),
             "avg_sale_price_per_pyeong": avg_sale_price,
+            "sale_price_source": sale_price_source,
             "grade": grade,
         }
 
@@ -1233,6 +1251,9 @@ class ProjectPipeline:
         esg_data["operational_carbon_30yr_kg"] = esg_data.get("operational_carbon", {}).get("total_30yr_kgCO2eq", 0)
         esg_data["total_lifecycle_carbon_kg"] = esg_data.get("lifecycle_total", {}).get("total_kgCO2eq", 0)
         esg_data["carbon_per_sqm_kg"] = esg_data.get("lifecycle_total", {}).get("per_sqm_kgCO2eq", 0)
+        # 보고서 호환 alias
+        esg_data["total_carbon_per_sqm"] = esg_data["carbon_per_sqm_kg"]
+        esg_data["operational_carbon_kg"] = esg_data["operational_carbon_30yr_kg"]
 
         state.stages["esg"].data = esg_data
 
@@ -1243,10 +1264,24 @@ class ProjectPipeline:
             if stage_result.status == PipelineStatus.COMPLETED:
                 summary[stage_name] = stage_result.data
 
+        # 보고서 호환 alias — 일부 프론트엔드가 esg_carbon 키를 참조
+        if "esg" in summary:
+            summary["esg_carbon"] = summary["esg"]
+
+        # 법규검토 요약(설계 단계 산출)을 평탄 키로 노출 — 보고서 호환
+        design_stage = state.stages.get("design")
+        compliance_summary = (
+            (design_stage.data.get("compliance") or {}).get("summary", {})
+            if design_stage else {}
+        )
+
         state.stages["report"].data = {
             "report_type": "pipeline_summary",
             "project_address": state.address,
             "pipeline_id": state.pipeline_id,
             "summary": summary,
+            "compliance_pass": compliance_summary.get("pass"),
+            "compliance_fail": compliance_summary.get("fail"),
+            "compliance_total": compliance_summary.get("total_checks"),
             "generated_at": datetime.now().isoformat(),
         }
