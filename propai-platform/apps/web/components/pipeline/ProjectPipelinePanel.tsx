@@ -296,15 +296,17 @@ export function ProjectPipelinePanel() {
 
   const saveToStore = useCallback(
     (result: PipelineRunResponse) => {
-      // site_analysis
+      // site_analysis — summary 우선, 없으면 stages[0].data에서 직접 추출
       const site = result.summary?.site_analysis;
-      if (site) {
+      const siteStageData = result.stages?.find((s) => s.stage === "site_analysis")?.data as Record<string, unknown> | undefined;
+      const basic = (siteStageData?.basic ?? {}) as Record<string, unknown>;
+      if (site || siteStageData) {
         updateSiteAnalysis({
-          estimatedValue: (site.estimated_value as number) ?? null,
-          landAreaSqm: (site.land_area_sqm as number) ?? null,
-          zoneCode: (site.zone_code as string) ?? null,
+          estimatedValue: (site?.estimated_value as number) ?? null,
+          landAreaSqm: (site?.land_area_sqm as number) ?? (basic.land_area_sqm as number) ?? (siteStageData?.land_area_sqm as number) ?? null,
+          zoneCode: (site?.zone_code as string) ?? (basic.zone_type as string) ?? (siteStageData?.zone_type as string) ?? null,
           address: address || null,
-          pnu: (site.pnu as string) ?? null,
+          pnu: (site?.pnu as string) ?? (basic.pnu as string) ?? null,
         });
         markStageComplete("site-analysis");
       }

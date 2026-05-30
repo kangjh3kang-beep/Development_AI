@@ -180,7 +180,6 @@ export function AutoRecommendPanel({ onClose, isModal = false }: AutoRecommendPa
     return match ?? "서울특별시";
   });
   const [landArea, setLandArea] = useState(ctxStore.siteAnalysis?.landAreaSqm?.toString() ?? "");
-  const [equity, setEquity] = useState("");
 
   // siteAnalysis가 나중에 복원되면 input 필드에 자동 반영
   useEffect(() => {
@@ -243,7 +242,7 @@ export function AutoRecommendPanel({ onClose, isModal = false }: AutoRecommendPa
           address: address.trim(),
           land_area_sqm: landArea ? parseFloat(landArea) : undefined,
           region,
-          equity_won: equity ? parseFloat(equity) * 1e8 : undefined,
+          equity_won: undefined,
         },
       });
 
@@ -271,7 +270,7 @@ export function AutoRecommendPanel({ onClose, isModal = false }: AutoRecommendPa
     } finally {
       setIsLoading(false);
     }
-  }, [address, region, landArea, equity]);
+  }, [address, region, landArea]);
 
   const handleSelectModel = useCallback((model: RecommendedModel) => {
     setSelectedModel(model);
@@ -402,18 +401,6 @@ export function AutoRecommendPanel({ onClose, isModal = false }: AutoRecommendPa
                 value={landArea}
                 onChange={(e) => setLandArea(e.target.value)}
                 placeholder="1,500"
-                className="w-full rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] px-5 py-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-hint)] focus:border-[var(--accent-strong)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-strong)]/20 transition-all"
-              />
-            </div>
-            <div className="flex-1">
-              <label className="mb-2 block text-[10px] font-[900] uppercase tracking-[0.3em] text-[var(--text-hint)]">
-                자기자본 (억원)
-              </label>
-              <input
-                type="number"
-                value={equity}
-                onChange={(e) => setEquity(e.target.value)}
-                placeholder="100"
                 className="w-full rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] px-5 py-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-hint)] focus:border-[var(--accent-strong)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-strong)]/20 transition-all"
               />
             </div>
@@ -711,7 +698,7 @@ export function AutoRecommendPanel({ onClose, isModal = false }: AutoRecommendPa
         {showRefineModal && selectedModel && (
           <BusinessModelRefineModal
             model={selectedModel}
-            equity={equity ? parseFloat(equity) : 100}
+            equity={100}
             onConfirm={handleRefineConfirm}
             onClose={() => setShowRefineModal(false)}
           />
