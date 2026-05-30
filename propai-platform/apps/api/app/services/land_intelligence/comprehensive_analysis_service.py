@@ -140,8 +140,8 @@ class ComprehensiveAnalysisService:
         if isinstance(lr, dict):
             land_area = float(lr.get("area_sqm", 0) or 0)
 
-        # Phase 2: 7개 분석 섹션
-        sec1 = self._calc_effective_far(base, zone_type)
+        # Phase 2: 7개 분석 섹션 + 법적 검증 + FAR 최적화
+        sec1 = self._calc_effective_far(base, zone_type, land_area)
         effective_far = sec1["effective_far_pct"]
         effective_bcr = sec1["effective_bcr_pct"]
 
@@ -183,7 +183,7 @@ class ComprehensiveAnalysisService:
     # ────────────────────────────────────────────
     # Section 1: 실효용적률 산정
     # ────────────────────────────────────────────
-    def _calc_effective_far(self, base: dict, zone_type: str) -> dict[str, Any]:
+    def _calc_effective_far(self, base: dict, zone_type: str, land_area: float = 0) -> dict[str, Any]:
         ordinance = base.get("local_ordinance") or {}
         zone_limits = base.get("zone_limits") or {}
 
@@ -214,7 +214,22 @@ class ComprehensiveAnalysisService:
             "effective_far_pct": effective_far,
             "far_incentive": incentive,
             "source": ordinance.get("source", "법정상한"),
+            "far_optimization": self._simulate_far_optimization(zone_type, effective_far, national_far, land_area),
         }
+
+    def _simulate_far_optimization(
+        self, zone_type: str, effective_far: float, national_far: float, land_area: float,
+    ) -> dict[str, Any]:
+        try:
+            from app.services.zoning.far_optimization_simulator import simulate_far_scenarios
+            return simulate_far_scenarios(
+                zone_type=zone_type,
+                ordinance_far=effective_far,
+                national_far=national_far,
+                land_area_sqm=land_area,
+            )
+        except Exception:
+            return {}
 
     # ────────────────────────────────────────────
     # Section 2: 개발방식별 적정공급면적 산정
@@ -264,9 +279,29 @@ class ComprehensiveAnalysisService:
                 "estimated_construction_cost_won": int(total_gfa * construction_cost),
                 "permit_complexity": PERMIT_COMPLEXITY.get(dev_type, 3),
                 "project_months": self._project_months(dev_type),
+                **self._validate_feasibility(
+                    dev_type, type_name, zone_type, land_area,
+                    effective_far, effective_bcr, unit_count, total_gfa, floor_count,
+                ),
             })
 
         return sorted(results, key=lambda x: x["permit_complexity"])
+
+    def _validate_feasibility(
+        self, dev_type: str, type_name: str, zone_type: str,
+        land_area: float, effective_far: float, effective_bcr: float,
+        unit_count: int, total_gfa: float, floor_count: int,
+    ) -> dict[str, Any]:
+        try:
+            from app.services.zoning.development_feasibility_validator import validate_development_feasibility
+            result = validate_development_feasibility(
+                dev_type=dev_type, type_name=type_name, zone_type=zone_type,
+                land_area=land_area, effective_far=effective_far, effective_bcr=effective_bcr,
+                unit_count=unit_count, total_gfa=total_gfa, floor_count=floor_count,
+            )
+            return result.to_dict()
+        except Exception:
+            return {"feasibility_status": "조건부", "conditions_met": [], "blocking_issues": [], "recommendations": []}
 
     def _calc_parking(self, dev_type: str, unit_count: int, total_gfa: float) -> int:
         rule = PARKING_RULES.get(dev_type, {"method": "per_unit", "ratio": 1.0})

@@ -163,6 +163,52 @@ export function ComprehensiveAnalysisPanel() {
             {ef.source && <p className="text-[10px] text-[var(--text-hint)] mt-1">출처: {ef.source}</p>}
           </SectionCard>
 
+          {/* Section 1-B: 용적률 최적화 시뮬레이션 */}
+          {ef.far_optimization?.scenarios && (
+            <SectionCard title="1-B. 용적률 최적화 시뮬레이션" icon="📈" defaultOpen>
+              <div className="grid grid-cols-3 gap-2 mb-3">
+                <Field label="현재 기본 용적률" value={`${ef.far_optimization.base_far}%`} />
+                <Field label="최대 달성 가능" value={`${ef.far_optimization.max_achievable_far}%`} />
+                <Field label="법정 상한" value={`${ef.far_optimization.cap_far}%`} />
+              </div>
+              {ef.far_optimization.recommended_scenario && (
+                <div className="rounded-lg bg-[var(--accent-strong)]/10 border border-[var(--accent-strong)]/30 p-3 mb-3">
+                  <p className="text-[10px] font-bold text-[var(--accent-strong)]">추천: {ef.far_optimization.recommended_scenario}</p>
+                  <p className="text-[10px] text-[var(--text-secondary)]">{ef.far_optimization.recommended_reason}</p>
+                </div>
+              )}
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-[var(--line)] text-[var(--text-hint)]">
+                      <th className="py-2 px-2 text-left">시나리오</th>
+                      <th className="py-2 px-1 text-right">달성 용적률</th>
+                      <th className="py-2 px-1 text-right">인센티브</th>
+                      <th className="py-2 px-1 text-right">기부체납</th>
+                      <th className="py-2 px-1 text-right">연면적 증가</th>
+                      <th className="py-2 px-1 text-center">상한</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(ef.far_optimization.scenarios as AnalysisResult[]).map((sc: AnalysisResult, i: number) => (
+                      <tr key={i} className={`border-b border-[var(--line)]/50 ${sc.scenario_name === ef.far_optimization.recommended_scenario ? "bg-[var(--accent-strong)]/5" : ""}`}>
+                        <td className="py-2 px-2 font-bold text-[var(--text-primary)]">
+                          {sc.scenario_name === ef.far_optimization.recommended_scenario && <span className="text-[var(--accent-strong)] mr-1">★</span>}
+                          {sc.scenario_name}
+                        </td>
+                        <td className="py-2 px-1 text-right font-bold text-[var(--accent-strong)]">{sc.achieved_far}%</td>
+                        <td className="py-2 px-1 text-right text-[var(--text-secondary)]">+{sc.total_incentive}%</td>
+                        <td className="py-2 px-1 text-right text-[var(--text-secondary)]">{sc.donation_pct > 0 ? `${sc.donation_pct}%` : "-"}</td>
+                        <td className="py-2 px-1 text-right text-[var(--text-secondary)]">{sc.gfa_increase_sqm > 0 ? `+${sc.gfa_increase_sqm}m²` : "-"}</td>
+                        <td className="py-2 px-1 text-center">{sc.is_capped ? <span className="text-amber-400 text-[10px] font-bold">상한</span> : ""}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </SectionCard>
+          )}
+
           {/* Section 2: 개발방식별 적정공급면적 */}
           <SectionCard title="2. 개발방식별 적정공급면적 산정" icon="🏗️" defaultOpen>
             {supplyAreas.length > 0 ? (
@@ -179,11 +225,12 @@ export function ComprehensiveAnalysisPanel() {
                       <th className="py-2 px-1 text-right">주차</th>
                       <th className="py-2 px-1 text-right">공사비(추정)</th>
                       <th className="py-2 px-1 text-center">인허가</th>
+                      <th className="py-2 px-1 text-center">적합성</th>
                     </tr>
                   </thead>
                   <tbody>
                     {supplyAreas.map((sa: AnalysisResult) => (
-                      <tr key={sa.dev_type} className="border-b border-[var(--line)]/50 hover:bg-[var(--surface-soft)] transition-colors">
+                      <tr key={sa.dev_type} className={`border-b border-[var(--line)]/50 hover:bg-[var(--surface-soft)] transition-colors ${sa.feasibility_status === "부적합" ? "opacity-50" : ""}`}>
                         <td className="py-2.5 px-2 font-bold text-[var(--text-primary)]">{sa.type_name}</td>
                         <td className="py-2.5 px-1 text-right text-[var(--text-secondary)]">{sa.exclusive_ratio_pct}%</td>
                         <td className="py-2.5 px-1 text-right text-[var(--text-secondary)]">{sa.supply_area_per_unit_pyeong}평</td>
@@ -193,6 +240,14 @@ export function ComprehensiveAnalysisPanel() {
                         <td className="py-2.5 px-1 text-right text-[var(--text-secondary)]">{sa.parking_count}대</td>
                         <td className="py-2.5 px-1 text-right text-[var(--text-secondary)]">{formatWon(sa.estimated_construction_cost_won)}</td>
                         <td className="py-2.5 px-1 text-center"><PermitBadge complexity={sa.permit_complexity} /></td>
+                        <td className="py-2.5 px-1 text-center">
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                            sa.feasibility_status === "적합" ? "bg-emerald-500/20 text-emerald-400" :
+                            sa.feasibility_status === "조건부" ? "bg-amber-500/20 text-amber-400" :
+                            sa.feasibility_status === "부적합" ? "bg-red-500/20 text-red-400" :
+                            "bg-gray-500/20 text-gray-400"
+                          }`}>{sa.feasibility_status || "-"}</span>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
