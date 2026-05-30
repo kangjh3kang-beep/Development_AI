@@ -181,6 +181,9 @@ export function AutoRecommendPanel({ onClose, isModal = false }: AutoRecommendPa
   });
   const [landArea, setLandArea] = useState(ctxStore.siteAnalysis?.landAreaSqm?.toString() ?? "");
   const [equity, setEquity] = useState("");
+  const [landCostPerPyeong, setLandCostPerPyeong] = useState("");
+  const [salePricePerPyeong, setSalePricePerPyeong] = useState("");
+  const [constructionCostPerSqm, setConstructionCostPerSqm] = useState("");
 
   // siteAnalysis가 나중에 복원되면 input 필드에 자동 반영
   useEffect(() => {
@@ -359,6 +362,7 @@ export function AutoRecommendPanel({ onClose, isModal = false }: AutoRecommendPa
               {/* 주소 검색 (GlobalAddressSearch — 단일/다필지 지원) */}
               <GlobalAddressSearch
                 single
+                initialAddress={address}
                 onChange={(entries) => {
                   if (entries.length > 0) {
                     setAddress(entries[0].fullAddress);
@@ -428,6 +432,27 @@ export function AutoRecommendPanel({ onClose, isModal = false }: AutoRecommendPa
               )}
               분석 시작
             </button>
+          </div>
+
+          {/* Row 3: 시세 직접 입력 (선택) */}
+          <div className="rounded-xl border border-dashed border-[var(--line)] bg-[var(--surface-soft)]/50 p-4">
+            <p className="mb-3 text-[10px] font-[900] uppercase tracking-[0.3em] text-[var(--text-hint)]">
+              시세 직접 입력 <span className="normal-case tracking-normal font-medium">(선택 - 미입력 시 주변 시세 자동 적용)</span>
+            </p>
+            <div className="flex flex-col gap-3 lg:flex-row">
+              <div className="flex-1">
+                <label className="mb-1 block text-[10px] text-[var(--text-secondary)]">평당 토지비 (만원/평)</label>
+                <input type="number" value={landCostPerPyeong} onChange={(e) => setLandCostPerPyeong(e.target.value)} placeholder="주변 시세 자동" className="w-full rounded-lg border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-2.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-hint)] focus:border-[var(--accent-strong)] focus:outline-none transition-all" />
+              </div>
+              <div className="flex-1">
+                <label className="mb-1 block text-[10px] text-[var(--text-secondary)]">예상 분양가 (만원/평)</label>
+                <input type="number" value={salePricePerPyeong} onChange={(e) => setSalePricePerPyeong(e.target.value)} placeholder="주변 시세 자동" className="w-full rounded-lg border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-2.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-hint)] focus:border-[var(--accent-strong)] focus:outline-none transition-all" />
+              </div>
+              <div className="flex-1">
+                <label className="mb-1 block text-[10px] text-[var(--text-secondary)]">공사비 단가 (만원/m2)</label>
+                <input type="number" value={constructionCostPerSqm} onChange={(e) => setConstructionCostPerSqm(e.target.value)} placeholder="표준 단가 자동" className="w-full rounded-lg border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-2.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-hint)] focus:border-[var(--accent-strong)] focus:outline-none transition-all" />
+              </div>
+            </div>
           </div>
         </div>
       </div>

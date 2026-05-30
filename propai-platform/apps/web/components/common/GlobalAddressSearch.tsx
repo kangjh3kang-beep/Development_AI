@@ -43,6 +43,8 @@ interface GlobalAddressSearchProps {
   placeholder?: string;
   /** 비활성화 */
   disabled?: boolean;
+  /** 초기 주소 (스토어에서 가져온 값 사전 표시) */
+  initialAddress?: string;
 }
 
 export function GlobalAddressSearch({
@@ -51,8 +53,14 @@ export function GlobalAddressSearch({
   className = "",
   placeholder = "주소를 검색하세요",
   disabled = false,
+  initialAddress,
 }: GlobalAddressSearchProps) {
-  const [addresses, setAddresses] = useState<AddressEntry[]>([]);
+  const [addresses, setAddresses] = useState<AddressEntry[]>(() => {
+    if (initialAddress) {
+      return [{ fullAddress: initialAddress, jibunAddress: "", roadAddress: "", sido: "", sigungu: "", bname: "", zonecode: "", bcode: "" }];
+    }
+    return [];
+  });
   const [isSearching, setIsSearching] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const updateSiteAnalysis = useProjectContextStore((s) => s.updateSiteAnalysis);
