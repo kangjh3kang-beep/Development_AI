@@ -414,9 +414,10 @@ class ProjectPipeline:
             },
             "building": comprehensive.get("building_detail") or comprehensive.get("building_info"),
             "infrastructure": comprehensive.get("infrastructure"),
+            "coordinates": comprehensive.get("coordinates"),
             "regulations": {
-                "land_use_plan": comprehensive.get("local_ordinance"),
-                "special_districts": zoning.get("special_districts", []),
+                "land_use_plan": comprehensive.get("land_use_plan") or comprehensive.get("local_ordinance"),
+                "special_districts": comprehensive.get("special_districts") or zoning.get("special_districts", []),
                 "warnings": comprehensive.get("warnings", []),
             },
             # 하위호환 (기존 평탄 키 유지 — 다른 단계에서 참조)

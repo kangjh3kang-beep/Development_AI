@@ -249,8 +249,11 @@ export function SiteAnalysisDetail({ data }: SiteAnalysisDetailProps) {
   const allowedFar = n(zoning.allowed_far ?? data.allowed_far);
   const capFar = n(zoning.cap_far ?? data.cap_far);
 
-  // 3. 개발 가능 유형
-  const devTypes = arr(data.development_types);
+  // 3. 개발 가능 유형 (backend returns dict with allowed_types array)
+  const devTypesRaw = data.development_types;
+  const devTypes = Array.isArray(devTypesRaw)
+    ? devTypesRaw
+    : arr((devTypesRaw as Record<string, unknown>)?.allowed_types);
 
   // 4. 공시지가/시세
   const pricing = obj(data.pricing);
@@ -268,14 +271,18 @@ export function SiteAnalysisDetail({ data }: SiteAnalysisDetailProps) {
   // 7. 규제 사항
   const regulations = obj(data.regulations);
   const specialDistricts = arr(data.special_districts ?? regulations.special_districts);
-  const landUseRegs = arr(regulations.land_use_plan ?? data.land_use_plan);
+  const landUsePlan = obj(regulations.land_use_plan ?? data.land_use_plan);
+  const landUseRegs = arr(
+    landUsePlan.districts ?? landUsePlan.regulations ?? regulations.land_use_plan ?? data.land_use_plan
+  );
   const warnings = arr(regulations.warnings ?? data.warnings);
 
   const hasBasic = landAddress || pnu || landAreaSqm;
   const hasZoning = zoneType || effectiveBcr || effectiveFar;
   const hasDevTypes = devTypes.length > 0;
   const hasPricing = officialPrice || totalLandValue || recentDeals.length > 0;
-  const hasBuilding = Object.keys(building).length > 0;
+  const hasBuilding = Object.keys(building).length > 0 &&
+    Boolean(s(building.buildingName || building.building_name) || n(building.totalAreaSqm ?? building.total_area_sqm));
   const hasInfra = Object.keys(infra).length > 0;
   const hasRegulations = specialDistricts.length > 0 || landUseRegs.length > 0 || warnings.length > 0;
 
@@ -329,7 +336,7 @@ export function SiteAnalysisDetail({ data }: SiteAnalysisDetailProps) {
             <div className="flex flex-wrap gap-1.5">
               {devTypes.map((item, i) => {
                 const dt = obj(item);
-                const name = s(dt.name || dt.type || item);
+                const name = s(dt.type_name || dt.name || dt.type || item);
                 const recommended = Boolean(dt.recommended);
                 const restricted = Boolean(dt.restricted);
                 return (
@@ -350,15 +357,15 @@ export function SiteAnalysisDetail({ data }: SiteAnalysisDetailProps) {
               })}
             </div>
             {/* Conditions */}
-            {devTypes.some((item) => obj(item).condition) && (
+            {devTypes.some((item) => obj(item).conditions || obj(item).condition) && (
               <div className="space-y-1 mt-2">
                 {devTypes.map((item, i) => {
                   const dt = obj(item);
-                  const condition = s(dt.condition);
+                  const condition = s(dt.conditions || dt.condition);
                   if (!condition) return null;
                   return (
                     <p key={i} className="text-[10px] text-[var(--text-secondary)]">
-                      <span className="font-bold">{s(dt.name || dt.type)}:</span> {condition}
+                      <span className="font-bold">{s(dt.type_name || dt.name || dt.type)}:</span> {condition}
                     </p>
                   );
                 })}
@@ -511,7 +518,7 @@ export function SiteAnalysisDetail({ data }: SiteAnalysisDetailProps) {
                     return (
                       <div key={i} className="flex items-center gap-2 text-[11px]">
                         <span className="h-1.5 w-1.5 rounded-full bg-amber-400 shrink-0" />
-                        <span className="text-[var(--text-primary)]">{s(r.districtName || r.name || reg)}</span>
+                        <span className="text-[var(--text-primary)]">{s(r.district_name || r.districtName || r.name || reg)}</span>
                       </div>
                     );
                   })}
