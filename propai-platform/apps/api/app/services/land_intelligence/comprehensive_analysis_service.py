@@ -128,8 +128,18 @@ class ComprehensiveAnalysisService:
     def __init__(self) -> None:
         self.land_info = LandInfoService()
 
-    async def analyze(self, address: str) -> dict[str, Any]:
-        logger.info("종합분석 시작", address=address[:30])
+    async def analyze(
+        self,
+        address: str,
+        llm_provider: str | None = None,
+        llm_model: str | None = None,
+    ) -> dict[str, Any]:
+        logger.info(
+            "종합분석 시작",
+            address=address[:30],
+            llm_provider=llm_provider or "default",
+            llm_model=llm_model or "default",
+        )
 
         # Phase 1: 기본 데이터 수집 (LandInfoService 재사용)
         base = await self.land_info.collect_comprehensive(address)
@@ -177,13 +187,36 @@ class ComprehensiveAnalysisService:
             "location": sec6,
             "development_plans": sec7,
             "analyzed_at": datetime.now().isoformat(),
+            "llm_config": {
+                "provider": llm_provider or "anthropic",
+                "model": llm_model,
+            },
             "warnings": base.get("warnings", []),
         }
 
         # Phase 3: AI 해석 생성 (선택적 — API 키 있을 때만)
+        # llm_provider/llm_model이 지정된 경우 get_llm()으로 커스텀 LLM 생성
+        custom_llm = None
+        if llm_provider:
+            try:
+                from app.services.ai.llm_provider import get_llm
+                custom_llm = get_llm(
+                    provider=llm_provider,
+                    model=llm_model,
+                )
+            except Exception as e:
+                logger.warning(
+                    "커스텀 LLM 생성 실패, 기본 프로바이더로 폴백",
+                    provider=llm_provider,
+                    model=llm_model,
+                    error=str(e),
+                )
+
         try:
             from app.services.ai.site_analysis_interpreter import SiteAnalysisInterpreter
             interpreter = SiteAnalysisInterpreter()
+            if custom_llm is not None:
+                interpreter._llm = custom_llm
             ai_interpretation = await interpreter.generate_interpretation(result)
             result["ai_interpretation"] = ai_interpretation
         except Exception as e:
@@ -194,6 +227,8 @@ class ComprehensiveAnalysisService:
         try:
             from app.services.ai.market_interpreter import MarketInterpreter
             market_interpreter = MarketInterpreter()
+            if custom_llm is not None:
+                market_interpreter._llm = custom_llm
             market_interpretation = await market_interpreter.generate_interpretation(result)
             result["market_interpretation"] = market_interpretation
         except Exception as e:

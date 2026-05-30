@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { GlobalAddressSearch } from "@/components/common/GlobalAddressSearch";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { apiClient } from "@/lib/api-client";
@@ -103,6 +103,21 @@ function PermitBadge({ complexity }: { complexity: number }) {
   );
 }
 
+/* ── Types ── */
+
+interface ModelInfo {
+  id: string;
+  name: string;
+  tier: "standard" | "premium" | "economy";
+}
+
+interface ProviderInfo {
+  provider: string;
+  name: string;
+  models: ModelInfo[];
+  default_model: string;
+}
+
 /* ── Main Component ── */
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -114,13 +129,32 @@ export function ComprehensiveAnalysisPanel() {
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [providers, setProviders] = useState<ProviderInfo[]>([]);
+  const [selectedProvider, setSelectedProvider] = useState<string>("anthropic");
+  const [selectedModel, setSelectedModel] = useState<string>("");
+
+  useEffect(() => {
+    apiClient.get<{ providers: ProviderInfo[] }>("/analysis/llm-providers")
+      .then(data => {
+        setProviders(data.providers);
+        if (data.providers.length > 0) {
+          setSelectedProvider(data.providers[0].provider);
+          setSelectedModel(data.providers[0].default_model);
+        }
+      })
+      .catch(() => {}); // 실패 시 기본값 유지
+  }, []);
 
   const handleAnalyze = useCallback(async () => {
     if (!address.trim()) { setError("주소를 입력해주세요."); return; }
     setLoading(true); setError(null); setResult(null);
     try {
       const data = await apiClient.post<AnalysisResult>("/analysis/comprehensive", {
-        body: { address },
+        body: {
+          address,
+          llm_provider: selectedProvider || undefined,
+          llm_model: selectedModel || undefined,
+        },
         useMock: false,
       });
       setResult(data);
@@ -129,7 +163,7 @@ export function ComprehensiveAnalysisPanel() {
     } finally {
       setLoading(false);
     }
-  }, [address]);
+  }, [address, selectedProvider, selectedModel]);
 
   const ef = result?.effective_far || {};
   const supplyAreas: AnalysisResult[] = result?.supply_areas || [];
@@ -162,6 +196,42 @@ export function ComprehensiveAnalysisPanel() {
             {loading ? "분석 중..." : "종합 분석 시작"}
           </button>
         </div>
+        {providers.length > 0 ? (
+          <div className="flex gap-3 items-center mt-3">
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-bold text-[var(--text-hint)]">AI 모델</span>
+              <select
+                value={selectedProvider}
+                onChange={(e) => {
+                  setSelectedProvider(e.target.value);
+                  const p = providers.find(pr => pr.provider === e.target.value);
+                  if (p) setSelectedModel(p.default_model);
+                }}
+                className="rounded-lg border border-[var(--line)] bg-[var(--surface-soft)] px-3 py-1.5 text-xs text-[var(--text-primary)]"
+              >
+                {providers.map(p => (
+                  <option key={p.provider} value={p.provider}>{p.name}</option>
+                ))}
+              </select>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-bold text-[var(--text-hint)]">모델</span>
+              <select
+                value={selectedModel}
+                onChange={(e) => setSelectedModel(e.target.value)}
+                className="rounded-lg border border-[var(--line)] bg-[var(--surface-soft)] px-3 py-1.5 text-xs text-[var(--text-primary)]"
+              >
+                {providers.find(p => p.provider === selectedProvider)?.models.map(m => (
+                  <option key={m.id} value={m.id}>
+                    {m.name} {m.tier === "premium" ? "★" : m.tier === "economy" ? "⚡" : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+        ) : (
+          <p className="text-[10px] text-[var(--text-hint)] mt-2">AI 해석: API 키 미설정 (규칙 기반 분석만 제공)</p>
+        )}
       </div>
 
       {error && (
