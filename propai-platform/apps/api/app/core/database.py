@@ -8,6 +8,12 @@ engine = create_async_engine(
     pool_size=20,
     max_overflow=10,
     pool_pre_ping=True,
+    # Supabase pgbouncer(transaction pooling) 호환: asyncpg prepared statement 캐시 비활성화.
+    # 미설정 시 풀링된 커넥션 재사용에서 DuplicatePreparedStatementError 발생.
+    connect_args={
+        "statement_cache_size": 0,
+        "prepared_statement_cache_size": 0,
+    },
 )
 
 AsyncSessionLocal = async_sessionmaker(

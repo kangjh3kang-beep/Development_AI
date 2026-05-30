@@ -8,10 +8,10 @@ from __future__ import annotations
 import logging
 import re
 from datetime import datetime, timedelta
-from typing import Any, Optional, Sequence
+from typing import Any, Optional
 from uuid import UUID
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.g2b_bid import G2BAwardStat, G2BBid

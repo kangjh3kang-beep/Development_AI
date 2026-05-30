@@ -439,12 +439,11 @@ class BidFeasibilityIntegrator:
         """base 응답(G2BBidAnalyzeResponse)에 정밀 섹션을 채운다(in-place)."""
         from app.schemas.g2b_bid import (
             BidSpecEstimate, BidCostBreakdown, BidQtoItem, BidZoning,
-            BidPermitCheck, BidEsg, BidCashflow, BidSensitivity, BidMarketFeed,
+            BidPermitCheck, BidEsg, BidSensitivity, BidMarketFeed,
             G2BAwardStatResponse,
         )
 
         est_price = int(bid.estimated_price or 0)
-        building_type = bid.bid_type or "공사"
 
         # [0] 역산 스펙
         spec = reverse_estimate_spec(bid, req)

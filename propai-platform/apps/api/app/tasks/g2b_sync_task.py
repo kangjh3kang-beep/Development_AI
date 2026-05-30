@@ -12,7 +12,6 @@ import logging
 import os
 from datetime import datetime, timedelta
 
-from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
