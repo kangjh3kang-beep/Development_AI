@@ -350,9 +350,28 @@ class ProjectPipeline:
 
         zone_limits = zoning.get("zone_limits", {})
         zone_type = zoning.get("zone_type", "")
-        land_area_sqm = comprehensive.get("land_area_sqm", 0.0)
-        pnu_codes = comprehensive.get("pnu_codes", [zoning.get("pnu", "")])
-        official_land_price = comprehensive.get("official_price_per_sqm", 0.0)
+
+        # 면적: land_register.area_sqm > land_area_sqm > zoning > 폴백
+        _lr = comprehensive.get("land_register") or {}
+        land_area_sqm = (
+            (float(_lr.get("area_sqm", 0) or 0) if isinstance(_lr, dict) else 0)
+            or float(comprehensive.get("land_area_sqm", 0) or 0)
+            or float(zoning.get("land_area_sqm", 0) or 0)
+        )
+
+        pnu_codes = comprehensive.get("pnu_codes", [])
+        if not pnu_codes:
+            pnu = comprehensive.get("pnu") or zoning.get("pnu", "")
+            pnu_codes = [pnu] if pnu else []
+
+        # 공시지가: land_register > official_prices > 폴백
+        official_land_price = float(_lr.get("official_price_per_sqm", 0) or 0)
+        if not official_land_price:
+            _ops = comprehensive.get("official_prices", [])
+            if _ops and isinstance(_ops, list) and len(_ops) > 0:
+                official_land_price = float(_ops[0].get("price_per_sqm", 0) or 0)
+        if not official_land_price:
+            official_land_price = float(comprehensive.get("official_price_per_sqm", 0) or 0)
 
         # zone_limits 키 호환: max_bcr_pct 우선, 없으면 bcr 폴백
         national_bcr = zone_limits.get("max_bcr_pct", zone_limits.get("bcr", 60.0))
