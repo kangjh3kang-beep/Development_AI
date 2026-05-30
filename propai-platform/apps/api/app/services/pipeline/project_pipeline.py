@@ -204,26 +204,32 @@ class ProjectPipeline:
             except Exception:
                 comprehensive = {}
 
-            # comprehensive 데이터로 pre_collected 보충
+            # comprehensive 데이터로 pre_collected 덮어쓰기 (실제 API 데이터 우선)
             if comprehensive:
                 _clr = comprehensive.get("land_register") or {}
-                if isinstance(_clr, dict) and _clr.get("area_sqm"):
-                    pre_collected.setdefault("land_area_sqm", float(_clr["area_sqm"]))
-                    if not pre_collected.get("land_area_sqm") or pre_collected["land_area_sqm"] <= 0:
-                        pre_collected["land_area_sqm"] = float(_clr["area_sqm"])
-                pre_collected.setdefault("infrastructure", comprehensive.get("infrastructure"))
-                pre_collected.setdefault("coordinates", comprehensive.get("coordinates"))
-                pre_collected.setdefault("building_info", comprehensive.get("building_detail") or comprehensive.get("building_info"))
-                pre_collected.setdefault("land_use_plan", comprehensive.get("land_use_plan"))
-                pre_collected.setdefault("special_districts", comprehensive.get("special_districts", []))
-                pre_collected.setdefault("nearby_transactions", comprehensive.get("nearby_transactions"))
+                if isinstance(_clr, dict) and float(_clr.get("area_sqm", 0) or 0) > 0:
+                    pre_collected["land_area_sqm"] = float(_clr["area_sqm"])
+                if comprehensive.get("infrastructure"):
+                    pre_collected["infrastructure"] = comprehensive["infrastructure"]
+                if comprehensive.get("coordinates"):
+                    pre_collected["coordinates"] = comprehensive["coordinates"]
+                _bldg = comprehensive.get("building_detail") or comprehensive.get("building_info")
+                if _bldg:
+                    pre_collected["building_info"] = _bldg
+                if comprehensive.get("land_use_plan"):
+                    pre_collected["land_use_plan"] = comprehensive["land_use_plan"]
+                if comprehensive.get("special_districts"):
+                    pre_collected["special_districts"] = comprehensive["special_districts"]
+                if comprehensive.get("nearby_transactions"):
+                    pre_collected["nearby_transactions"] = comprehensive["nearby_transactions"]
                 _ops = comprehensive.get("official_prices", [])
                 if _ops and isinstance(_ops, list) and len(_ops) > 0:
-                    pre_collected.setdefault("official_land_price", float(_ops[0].get("price_per_sqm", 0) or 0))
-                if not pre_collected.get("pnu_codes"):
-                    pnu = comprehensive.get("pnu")
-                    if pnu:
-                        pre_collected["pnu_codes"] = [pnu]
+                    price = float(_ops[0].get("price_per_sqm", 0) or 0)
+                    if price > 0:
+                        pre_collected["official_land_price"] = price
+                pnu = comprehensive.get("pnu")
+                if pnu:
+                    pre_collected["pnu_codes"] = [pnu]
 
             zone_type = pre_collected.get("zone_type", "")
             land_area_sqm = pre_collected.get("land_area_sqm", 0.0)
