@@ -247,25 +247,54 @@ class LandInfoService:
 
         BuildingRegistryService.get_building_by_pnu()를 호출하되,
         building_info와 별도로 정리된 상세 정보를 반환한다.
+        연면적·층수가 0인 경우 "정보 미등록"으로 표시하여
+        데이터 부재를 명확히 전달한다.
         """
         try:
             raw = await self.building.get_building_by_pnu(pnu)
             if not raw:
                 return None
-            return {
-                "main_purpose": raw.get("main_purpose", ""),
-                "structure": raw.get("structure", ""),
-                "total_area_sqm": raw.get("total_area_sqm", 0),
-                "building_area_sqm": raw.get("building_area_sqm", 0),
-                "ground_floors": raw.get("ground_floors", 0),
-                "underground_floors": raw.get("underground_floors", 0),
-                "bcr_pct": raw.get("bcr_pct", 0),
-                "far_pct": raw.get("far_pct", 0),
-                "use_approval_date": raw.get("use_approval_date", ""),
-                "building_name": raw.get("building_name", ""),
+
+            total_area = float(raw.get("total_area_sqm", 0) or 0)
+            building_area = float(raw.get("building_area_sqm", 0) or 0)
+            ground_floors = int(raw.get("ground_floors", 0) or 0)
+            underground_floors = int(raw.get("underground_floors", 0) or 0)
+            bcr_pct = float(raw.get("bcr_pct", 0) or 0)
+            far_pct = float(raw.get("far_pct", 0) or 0)
+            main_purpose = raw.get("main_purpose", "") or ""
+            structure = raw.get("structure", "") or ""
+            use_approval_date = raw.get("use_approval_date", "") or ""
+            building_name = raw.get("building_name", "") or ""
+
+            # 건축물대장에 건물명만 있고 상세 데이터가 모두 0인 경우 처리
+            has_detail = (total_area > 0 or ground_floors > 0 or main_purpose)
+            data_status = "정상" if has_detail else "정보 미등록"
+
+            if not has_detail and building_name:
+                logger.info(
+                    "건축물대장 상세 데이터 미등록: pnu=%s, 건물명=%s "
+                    "(건축물대장 표제부에 건물명만 기재되고 상세 정보가 미등록된 경우)",
+                    pnu, building_name,
+                )
+
+            result = {
+                "main_purpose": main_purpose or ("정보 미등록" if not has_detail else ""),
+                "structure": structure or ("정보 미등록" if not has_detail else ""),
+                "total_area_sqm": total_area,
+                "total_area_sqm_display": f"{total_area:,.1f}㎡" if total_area > 0 else "정보 미등록",
+                "building_area_sqm": building_area,
+                "ground_floors": ground_floors,
+                "ground_floors_display": f"지상 {ground_floors}층" if ground_floors > 0 else "정보 미등록",
+                "underground_floors": underground_floors,
+                "bcr_pct": bcr_pct,
+                "far_pct": far_pct,
+                "use_approval_date": use_approval_date or ("정보 미등록" if not has_detail else ""),
+                "building_name": building_name,
                 "address": raw.get("address", ""),
                 "road_address": raw.get("road_address", ""),
+                "data_status": data_status,
             }
+            return result
         except Exception as e:
             logger.warning("건축물대장 상세 조회 실패: %s (%s)", pnu, str(e))
             return None
@@ -361,8 +390,13 @@ class LandInfoService:
     ) -> dict[str, Any] | None:
         """주변 인프라 분석 (VWORLD POI 검색 활용).
 
-        - 최근접 지하철역 거리 (반경 1km)
-        - 학군 정보 (반경 500m 학교)
+        - 최근접 지하철역 거리 (반경 2km, 1차 1km → 폴백 2km)
+        - 학군 정보 (반경 1km 학교)
+
+        VWORLD POI 검색 API 주의사항:
+        - Referer 헤더는 VWORLD에 등록된 도메인과 일치해야 함
+        - bbox 형식: "minX,minY,maxX,maxY" (EPSG:4326 경위도)
+        - type=place 검색 시 category는 선택 사항 (지정하면 결과 제한)
         """
         import httpx
         from app.core.config import settings
@@ -375,82 +409,116 @@ class LandInfoService:
         if not settings.VWORLD_API_KEY:
             return None
 
-        headers = {"Referer": "https://developmentai-production.up.railway.app"}
+        # VWORLD 등록 도메인과 일치하는 Referer
+        headers = {"Referer": "https://www.4t8t.net"}
 
-        # 지하철역 검색 (반경 1km)
-        try:
-            async with httpx.AsyncClient(timeout=10.0, headers=headers) as client:
-                resp = await client.get(
-                    f"{settings.VWORLD_BASE_URL}/req/search",
-                    params={
-                        "service": "search",
-                        "request": "search",
-                        "key": settings.VWORLD_API_KEY,
-                        "query": "지하철역",
-                        "type": "place",
-                        "category": "교통시설",
-                        "format": "json",
-                        "size": "1",
-                        "bbox": self._make_bbox(lat, lon, radius_m=1000),
-                    },
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                items = data.get("response", {}).get("result", {}).get("items", [])
-                if items:
-                    item = items[0]
-                    station_lat = float(item.get("point", {}).get("y", 0))
-                    station_lon = float(item.get("point", {}).get("x", 0))
-                    dist_m = self._haversine_m(lat, lon, station_lat, station_lon)
-                    infra["nearest_subway"] = {
-                        "name": item.get("title", ""),
-                        "distance_m": round(dist_m),
-                    }
-        except Exception as e:
-            logger.debug("지하철역 검색 실패: %s", str(e))
+        # ── 지하철역 검색 (1차: 반경 1km → 결과 없으면 2km로 확대) ──
+        for search_radius in [1000, 2000]:
+            try:
+                async with httpx.AsyncClient(timeout=10.0, headers=headers) as client:
+                    # category 파라미터를 제거하여 검색 범위를 넓힘
+                    # VWORLD POI 검색에서 category 지정 시 일부 데이터 누락 발생
+                    resp = await client.get(
+                        f"{settings.VWORLD_BASE_URL}/search",
+                        params={
+                            "service": "search",
+                            "request": "search",
+                            "key": settings.VWORLD_API_KEY,
+                            "query": "지하철역",
+                            "type": "place",
+                            "format": "json",
+                            "size": "3",
+                            "bbox": self._make_bbox(lat, lon, radius_m=search_radius),
+                        },
+                    )
+                    if resp.status_code == 404:
+                        logger.debug(
+                            "VWORLD POI 검색 404 — URL 경로 확인 필요: %s (반경 %dm)",
+                            resp.url, search_radius,
+                        )
+                        break  # 404는 반경 확대해도 동일
+                    resp.raise_for_status()
+                    data = resp.json()
+                    response_obj = data.get("response", {})
+                    status = response_obj.get("status", "")
+                    if status != "OK":
+                        logger.debug(
+                            "VWORLD 지하철 검색 NOT OK: status=%s, 반경=%dm",
+                            status, search_radius,
+                        )
+                        continue
 
-        # 학교 검색 (반경 500m)
-        try:
-            async with httpx.AsyncClient(timeout=10.0, headers=headers) as client:
-                resp = await client.get(
-                    f"{settings.VWORLD_BASE_URL}/req/search",
-                    params={
+                    result_obj = response_obj.get("result", {})
+                    items = result_obj.get("items", [])
+                    if items:
+                        item = items[0]
+                        station_lat = float(item.get("point", {}).get("y", 0))
+                        station_lon = float(item.get("point", {}).get("x", 0))
+                        dist_m = self._haversine_m(lat, lon, station_lat, station_lon)
+                        infra["nearest_subway"] = {
+                            "name": item.get("title", ""),
+                            "distance_m": round(dist_m),
+                        }
+                        break  # 찾았으면 중단
+            except Exception as e:
+                logger.debug("지하철역 검색 실패 (반경 %dm): %s", search_radius, str(e))
+
+        # ── 학교 검색 (반경 1km, category 미지정으로 폴백) ──
+        for attempt, params_override in enumerate([
+            {"category": "교육시설"},  # 1차: 교육시설 카테고리
+            {},                         # 2차: 카테고리 미지정 (전체 검색)
+        ]):
+            if infra["schools"]:
+                break  # 이미 결과가 있으면 재시도 불필요
+            try:
+                async with httpx.AsyncClient(timeout=10.0, headers=headers) as client:
+                    search_params: dict[str, Any] = {
                         "service": "search",
                         "request": "search",
                         "key": settings.VWORLD_API_KEY,
                         "query": "학교",
                         "type": "place",
-                        "category": "교육시설",
                         "format": "json",
                         "size": "5",
-                        "bbox": self._make_bbox(lat, lon, radius_m=500),
-                    },
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                items = data.get("response", {}).get("result", {}).get("items", [])
-                for item in (items or []):
-                    s_lat = float(item.get("point", {}).get("y", 0))
-                    s_lon = float(item.get("point", {}).get("x", 0))
-                    dist_m = self._haversine_m(lat, lon, s_lat, s_lon)
-                    name = item.get("title", "")
-                    # 학교 유형 추정
-                    school_type = "기타"
-                    if "초등" in name or "초교" in name:
-                        school_type = "초등학교"
-                    elif "중학" in name or "중교" in name:
-                        school_type = "중학교"
-                    elif "고등" in name or "고교" in name:
-                        school_type = "고등학교"
-                    elif "대학" in name:
-                        school_type = "대학교"
-                    infra["schools"].append({
-                        "name": name,
-                        "type": school_type,
-                        "distance_m": round(dist_m),
-                    })
-        except Exception as e:
-            logger.debug("학교 검색 실패: %s", str(e))
+                        "bbox": self._make_bbox(lat, lon, radius_m=1000),
+                    }
+                    search_params.update(params_override)
+                    resp = await client.get(
+                        f"{settings.VWORLD_BASE_URL}/search",
+                        params=search_params,
+                    )
+                    if resp.status_code == 404:
+                        logger.debug("VWORLD POI 학교 검색 404 (시도 %d)", attempt + 1)
+                        break
+                    resp.raise_for_status()
+                    data = resp.json()
+                    response_obj = data.get("response", {})
+                    if response_obj.get("status") != "OK":
+                        continue
+
+                    items = response_obj.get("result", {}).get("items", [])
+                    for item in (items or []):
+                        s_lat = float(item.get("point", {}).get("y", 0))
+                        s_lon = float(item.get("point", {}).get("x", 0))
+                        dist_m = self._haversine_m(lat, lon, s_lat, s_lon)
+                        name = item.get("title", "")
+                        # 학교 유형 추정
+                        school_type = "기타"
+                        if "초등" in name or "초교" in name:
+                            school_type = "초등학교"
+                        elif "중학" in name or "중교" in name:
+                            school_type = "중학교"
+                        elif "고등" in name or "고교" in name:
+                            school_type = "고등학교"
+                        elif "대학" in name:
+                            school_type = "대학교"
+                        infra["schools"].append({
+                            "name": name,
+                            "type": school_type,
+                            "distance_m": round(dist_m),
+                        })
+            except Exception as e:
+                logger.debug("학교 검색 실패 (시도 %d): %s", attempt + 1, str(e))
 
         has_data = infra["nearest_subway"] is not None or len(infra["schools"]) > 0
         return infra if has_data else None

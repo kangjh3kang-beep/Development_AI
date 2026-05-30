@@ -28,6 +28,9 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str = ""
     OPENAI_MODEL: str = "gpt-4o-mini"
 
+    ANTHROPIC_API_KEY: str = ""
+    ANTHROPIC_MODEL: str = "claude-sonnet-4-20250514"
+
     VWORLD_API_KEY: str = ""
     VWORLD_BASE_URL: str = "https://api.vworld.kr/req"
 

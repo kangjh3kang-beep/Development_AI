@@ -47,6 +47,43 @@ function SectionCard({ title, icon, children, defaultOpen = false }: {
   );
 }
 
+function AiInterpretation({ text }: { text: string }) {
+  return (
+    <div className="mt-3 rounded-lg bg-blue-500/5 border border-blue-500/20 p-4">
+      <div className="flex items-start gap-2">
+        <span className="text-blue-400 text-sm shrink-0">AI</span>
+        <p className="text-[11px] text-[var(--text-secondary)] leading-relaxed whitespace-pre-line">
+          {text}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function AnnotationLine({ text }: { text: string }) {
+  const tagMatch = text.match(/^\[(.+?)\]\s*(.*)/);
+  if (!tagMatch) return <p className="text-[10px] text-[var(--text-secondary)]">{text}</p>;
+
+  const [, tag, content] = tagMatch;
+  const colors: Record<string, string> = {
+    "법정 상한": "bg-blue-500/20 text-blue-400",
+    "조례 제한": "bg-amber-500/20 text-amber-400",
+    "조례 동일": "bg-gray-500/20 text-gray-400",
+    "실효 용적률": "bg-emerald-500/20 text-emerald-400",
+    "실효 건폐율": "bg-emerald-500/20 text-emerald-400",
+    "적용 결과": "bg-[var(--accent-strong)]/20 text-[var(--accent-strong)]",
+    "기부체납 여력": "bg-purple-500/20 text-purple-400",
+  };
+  const color = colors[tag] || "bg-gray-500/20 text-gray-400";
+
+  return (
+    <div className="flex items-start gap-2 text-[10px]">
+      <span className={`shrink-0 px-1.5 py-0.5 rounded text-[9px] font-bold ${color}`}>{tag}</span>
+      <span className="text-[var(--text-secondary)] leading-relaxed">{content}</span>
+    </div>
+  );
+}
+
 function Field({ label, value }: { label: string; value: string | number }) {
   return (
     <div className="rounded-lg bg-[var(--surface-soft)] border border-[var(--line)] p-3">
@@ -135,6 +172,10 @@ export function ComprehensiveAnalysisPanel() {
         <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-strong)] p-8 text-center">
           <div className="inline-block h-8 w-8 animate-spin rounded-full border-3 border-[var(--accent-strong)] border-t-transparent mb-3" />
           <p className="text-sm text-[var(--text-secondary)]">7개 카테고리 분석 중... (약 5~10초)</p>
+          <div className="mt-3 flex items-center justify-center gap-2">
+            <span className="inline-block h-2 w-2 rounded-full bg-blue-400 animate-pulse" />
+            <p className="text-[11px] text-blue-400">AI 해석 생성 중...</p>
+          </div>
         </div>
       )}
 
@@ -150,6 +191,28 @@ export function ComprehensiveAnalysisPanel() {
             </div>
           </div>
 
+          {/* AI 종합 요약 */}
+          {result.ai_interpretation?.overall_summary && (
+            <div className="rounded-2xl border border-[var(--accent-strong)]/30 bg-gradient-to-r from-[var(--accent-strong)]/5 to-transparent p-6">
+              <h3 className="text-sm font-bold text-[var(--accent-strong)] mb-2">AI 종합 분석</h3>
+              <p className="text-xs text-[var(--text-secondary)] leading-relaxed whitespace-pre-line">
+                {result.ai_interpretation.overall_summary}
+              </p>
+              {result.ai_interpretation.risk_factors && (
+                <div className="mt-3 flex gap-4">
+                  <div className="flex-1 rounded-lg bg-red-500/5 border border-red-500/20 p-3">
+                    <p className="text-[10px] font-bold text-red-400 mb-1">리스크 요인</p>
+                    <p className="text-[10px] text-[var(--text-secondary)] whitespace-pre-line">{result.ai_interpretation.risk_factors}</p>
+                  </div>
+                  <div className="flex-1 rounded-lg bg-emerald-500/5 border border-emerald-500/20 p-3">
+                    <p className="text-[10px] font-bold text-emerald-400 mb-1">기회 요인</p>
+                    <p className="text-[10px] text-[var(--text-secondary)] whitespace-pre-line">{result.ai_interpretation.opportunity_factors}</p>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Section 1: 실효용적률 */}
           <SectionCard title="1. 실효용적률 산정" icon="📊" defaultOpen>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
@@ -162,12 +225,15 @@ export function ComprehensiveAnalysisPanel() {
             </div>
             {ef.source && <p className="text-[10px] text-[var(--text-hint)] mt-1">출처: {ef.source}</p>}
             {Array.isArray(ef.annotations) && ef.annotations.length > 0 && (
-              <div className="mt-3 rounded-lg bg-[var(--surface-soft)] border border-[var(--line)] p-3 space-y-1">
+              <div className="mt-3 rounded-lg bg-[var(--surface-soft)] border border-[var(--line)] p-3 space-y-1.5">
                 <p className="text-[10px] font-bold text-[var(--text-hint)] mb-1">분석 근거</p>
                 {ef.annotations.map((note: string, i: number) => (
-                  <p key={i} className="text-[10px] text-[var(--text-secondary)] leading-relaxed">{note}</p>
+                  <AnnotationLine key={i} text={note} />
                 ))}
               </div>
+            )}
+            {result.ai_interpretation?.effective_far_interpretation && (
+              <AiInterpretation text={result.ai_interpretation.effective_far_interpretation} />
             )}
           </SectionCard>
 
@@ -306,6 +372,9 @@ export function ComprehensiveAnalysisPanel() {
             ) : (
               <p className="text-xs text-[var(--text-hint)] italic">해당 용도지역에서 허용된 개발유형이 없습니다</p>
             )}
+            {result.ai_interpretation?.supply_area_interpretation && (
+              <AiInterpretation text={result.ai_interpretation.supply_area_interpretation} />
+            )}
           </SectionCard>
 
           {/* Section 3: 토지 주변시세 */}
@@ -317,6 +386,9 @@ export function ComprehensiveAnalysisPanel() {
               <Field label="추정 시세 총액" value={formatWon(landPrices.total_estimated_value_won)} />
               <Field label="시세 보정계수" value={`×${landPrices.market_multiplier ?? "-"}`} />
             </div>
+            {result.ai_interpretation?.land_price_interpretation && (
+              <AiInterpretation text={result.ai_interpretation.land_price_interpretation} />
+            )}
           </SectionCard>
 
           {/* Section 4: 물건별 주변 실거래가 */}
@@ -341,6 +413,9 @@ export function ComprehensiveAnalysisPanel() {
             ) : (
               <p className="text-xs text-[var(--text-hint)] italic">{transactions.error || transactions.message || "실거래 데이터 없음"}</p>
             )}
+            {result.ai_interpretation?.transaction_interpretation && (
+              <AiInterpretation text={result.ai_interpretation.transaction_interpretation} />
+            )}
           </SectionCard>
 
           {/* Section 5: 물건별 분양가 */}
@@ -357,6 +432,9 @@ export function ComprehensiveAnalysisPanel() {
             ) : (
               <p className="text-xs text-[var(--text-hint)] italic">분양가 데이터 없음</p>
             )}
+            {result.ai_interpretation?.sale_price_interpretation && (
+              <AiInterpretation text={result.ai_interpretation.sale_price_interpretation} />
+            )}
           </SectionCard>
 
           {/* Section 6: 입지분석 */}
@@ -371,6 +449,9 @@ export function ComprehensiveAnalysisPanel() {
               )}
               <Field label="인근 학교" value={`${location.education?.school_count ?? 0}개교`} />
             </div>
+            {result.ai_interpretation?.location_interpretation && (
+              <AiInterpretation text={result.ai_interpretation.location_interpretation} />
+            )}
           </SectionCard>
 
           {/* Section 7: 주변 개발계획 */}
@@ -393,6 +474,9 @@ export function ComprehensiveAnalysisPanel() {
               </div>
             ) : (
               <p className="text-xs text-[var(--text-hint)] italic">개발계획/규제 정보 없음</p>
+            )}
+            {result.ai_interpretation?.development_plan_interpretation && (
+              <AiInterpretation text={result.ai_interpretation.development_plan_interpretation} />
             )}
           </SectionCard>
 

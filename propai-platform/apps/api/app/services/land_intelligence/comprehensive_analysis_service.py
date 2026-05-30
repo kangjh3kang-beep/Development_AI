@@ -164,7 +164,7 @@ class ComprehensiveAnalysisService:
 
         sec7 = self._research_dev_plans(base)
 
-        return {
+        result = {
             "address": address,
             "pnu": base.get("pnu"),
             "zone_type": zone_type,
@@ -179,6 +179,18 @@ class ComprehensiveAnalysisService:
             "analyzed_at": datetime.now().isoformat(),
             "warnings": base.get("warnings", []),
         }
+
+        # Phase 3: AI 해석 생성 (선택적 — API 키 있을 때만)
+        try:
+            from app.services.ai.site_analysis_interpreter import SiteAnalysisInterpreter
+            interpreter = SiteAnalysisInterpreter()
+            ai_interpretation = await interpreter.generate_interpretation(result)
+            result["ai_interpretation"] = ai_interpretation
+        except Exception as e:
+            logger.warning("AI 해석 생성 스킵", error=str(e))
+            result["ai_interpretation"] = None
+
+        return result
 
     # ────────────────────────────────────────────
     # Section 1: 실효용적률 산정
@@ -205,35 +217,61 @@ class ComprehensiveAnalysisService:
         except Exception:
             pass
 
-        # 분석 주석 생성
+        # 분석 주석 생성 — 전문적 부동산 용어, 자연스러운 한국어
         source = ordinance.get("source", "법정상한")
         sido = ordinance.get("sido", "")
         sigungu = ordinance.get("sigungu", "")
         region_name = f"{sido} {sigungu}".strip() or "해당 지자체"
 
         annotations: list[str] = []
-        annotations.append(f"[법정 상한] 국토의 계획 및 이용에 관한 법률 시행령 별표: {zone_type} 건폐율 {national_bcr}%, 용적률 {national_far}%")
+        annotations.append(
+            f"국토계획법 시행령에 따른 {zone_type}의 법정 건폐율 상한은 {national_bcr}%, "
+            f"법정 용적률 상한은 {national_far}%입니다."
+        )
 
         if ordinance_far < national_far:
-            annotations.append(f"[조례 제한] {region_name} 도시계획 조례에 의해 용적률 {national_far}% → {ordinance_far}%로 강화 (출처: {source})")
+            diff_pct = national_far - ordinance_far
+            annotations.append(
+                f"{region_name} 도시계획 조례에서 용적률을 {ordinance_far}%로 규정하여, "
+                f"법정상한 대비 {diff_pct:.0f}%p 낮게 적용됩니다. "
+                f"이는 해당 지역의 도시계획 방향(기반시설 용량, 주거환경 보전 등)을 반영한 것입니다."
+            )
         elif ordinance_far == national_far:
-            annotations.append(f"[조례 동일] {region_name} 조례가 법정 상한과 동일하게 적용 (출처: {source})")
+            annotations.append(
+                f"{region_name}의 조례 용적률이 법정상한({national_far}%)과 동일하게 규정되어 있어, "
+                f"별도의 조례 제한 없이 법정상한이 그대로 적용됩니다."
+            )
 
         if ordinance_bcr < national_bcr:
-            annotations.append(f"[조례 제한] {region_name} 도시계획 조례에 의해 건폐율 {national_bcr}% → {ordinance_bcr}%로 강화")
+            annotations.append(
+                f"{region_name} 조례에서 건폐율을 {ordinance_bcr}%로 강화 적용하고 있습니다. "
+                f"(법정상한 {national_bcr}% 대비 {national_bcr - ordinance_bcr:.0f}%p 축소)"
+            )
 
-        annotations.append(f"[실효 용적률] min(법정 {national_far}%, 조례 {ordinance_far}%) = {effective_far}%")
-        annotations.append(f"[실효 건폐율] min(법정 {national_bcr}%, 조례 {ordinance_bcr}%) = {effective_bcr}%")
+        annotations.append(
+            f"실효 용적률은 법정상한({national_far}%)과 조례({ordinance_far}%) 중 "
+            f"낮은 값인 {effective_far}%가 적용되며, "
+            f"실효 건폐율은 {effective_bcr}%입니다."
+        )
 
         if land_area > 0:
             max_gfa = land_area * effective_far / 100
             max_bldg = land_area * effective_bcr / 100
-            annotations.append(f"[적용 결과] 대지면적 {land_area:.1f}m² 기준: 최대 연면적 {max_gfa:.1f}m², 최대 건축면적 {max_bldg:.1f}m²")
+            annotations.append(
+                f"대지면적 {land_area:,.1f}㎡ 기준으로 최대 연면적 {max_gfa:,.1f}㎡ "
+                f"(약 {max_gfa / 3.305785:,.0f}평), "
+                f"최대 건축면적 {max_bldg:,.1f}㎡ (약 {max_bldg / 3.305785:,.0f}평)까지 "
+                f"건축이 가능합니다."
+            )
 
         if incentive.get("simulation_table"):
             base_far = incentive.get("base_far", effective_far)
             max_incentive_far = incentive.get("max_far", national_far)
-            annotations.append(f"[기부체납 여력] 기본용적률 {base_far}% → 기부체납 시 최대 {max_incentive_far}%까지 완화 가능 (국토계획법 시행령 §46)")
+            annotations.append(
+                f"기부체납 활용 시 기본용적률 {base_far}%에서 최대 {max_incentive_far}%까지 "
+                f"완화가 가능합니다 (국토계획법 시행령 제46조). "
+                f"기부체납 비율에 따른 상세 시뮬레이션은 별도 섹션을 참조하세요."
+            )
 
         return {
             "national_bcr_pct": national_bcr,
@@ -291,6 +329,12 @@ class ComprehensiveAnalysisService:
             parking = self._calc_parking(dev_type, unit_count, total_gfa)
             construction_cost = CONSTRUCTION_COST_PER_SQM.get(dev_type, 2_400_000)
 
+            # 개발방식별 적합성 분석 설명 생성
+            suitability_note = self._generate_suitability_note(
+                dev_type, type_name, zone_type, land_area,
+                applied_far, effective_bcr, unit_count, floor_count, total_gfa,
+            )
+
             results.append({
                 "dev_type": dev_type,
                 "type_name": type_name,
@@ -310,6 +354,7 @@ class ComprehensiveAnalysisService:
                 "estimated_construction_cost_won": int(total_gfa * construction_cost),
                 "permit_complexity": PERMIT_COMPLEXITY.get(dev_type, 3),
                 "project_months": self._project_months(dev_type),
+                "suitability_note": suitability_note,
                 **self._validate_feasibility(
                     dev_type, type_name, zone_type, land_area,
                     effective_far, effective_bcr, unit_count, total_gfa, floor_count,
@@ -317,6 +362,45 @@ class ComprehensiveAnalysisService:
             })
 
         return sorted(results, key=lambda x: x["permit_complexity"])
+
+    def _generate_suitability_note(
+        self,
+        dev_type: str, type_name: str, zone_type: str, land_area: float,
+        applied_far: float, effective_bcr: float,
+        unit_count: int, floor_count: int, total_gfa: float,
+    ) -> str:
+        """개발방식별 적합성을 자연어로 설명."""
+        notes: list[str] = []
+
+        # 대지 규모 적합성
+        if land_area < 200:
+            if dev_type in ("M10", "M11", "M13"):
+                notes.append(f"대지면적 {land_area:,.0f}㎡로 {type_name}에 적합한 소규모 필지입니다.")
+            else:
+                notes.append(f"대지면적 {land_area:,.0f}㎡는 {type_name} 사업에 다소 협소할 수 있습니다.")
+        elif land_area < 1000:
+            notes.append(f"대지면적 {land_area:,.0f}㎡로 {type_name} 중소규모 사업이 가능합니다.")
+        else:
+            notes.append(f"대지면적 {land_area:,.0f}㎡로 {type_name} 대규모 사업에 유리합니다.")
+
+        # 용적률 활용도
+        typical = TYPICAL_FAR.get(dev_type, 250)
+        if applied_far < typical * 0.7:
+            notes.append(
+                f"해당 용도지역의 실효 용적률({applied_far:.0f}%)이 "
+                f"{type_name} 통상 기준({typical:.0f}%) 대비 낮아 사업성 검토가 필요합니다."
+            )
+        elif applied_far >= typical:
+            notes.append(
+                f"실효 용적률({applied_far:.0f}%)이 {type_name} 통상 기준을 충족하여 "
+                f"용적률 측면에서 양호합니다."
+            )
+
+        # 세대수/층수 규모감
+        if unit_count > 0 and dev_type not in ("M10", "M11"):
+            notes.append(f"예상 {unit_count}세대, 지상 {floor_count}층 규모입니다.")
+
+        return " ".join(notes)
 
     def _validate_feasibility(
         self, dev_type: str, type_name: str, zone_type: str,
@@ -351,6 +435,67 @@ class ComprehensiveAnalysisService:
     # ────────────────────────────────────────────
     # Section 3: 토지 주변시세
     # ────────────────────────────────────────────
+
+    # 지역별 공시지가 대비 시세 보정계수
+    # 공시지가 현실화율(2025 기준)의 역수 + 지역 프리미엄 반영
+    # - 서울 강남권: 공시지가 현실화율 약 50~65% → 보정계수 1.5~2.0배
+    # - 서울 비강남권: 공시지가 현실화율 약 65~80% → 보정계수 1.2~1.5배
+    # - 경기 주요시(성남/용인/화성 등): 현실화율 약 70~85% → 보정계수 1.1~1.4배
+    # - 기타 지방: 현실화율 약 80~90% → 보정계수 1.0~1.2배
+    MARKET_MULTIPLIER_MAP: dict[str, float] = {
+        # 서울 강남권 (공시지가 대비 시세 괴리가 큰 지역)
+        "강남구": 1.8, "서초구": 1.7, "송파구": 1.6, "용산구": 1.6,
+        # 서울 주요 주거·상업지역
+        "마포구": 1.5, "성동구": 1.5, "광진구": 1.4, "영등포구": 1.4,
+        "동작구": 1.4, "강동구": 1.4,
+        # 서울 기타
+        "관악구": 1.3, "구로구": 1.3, "금천구": 1.2,
+        "노원구": 1.3, "도봉구": 1.2, "중랑구": 1.2, "강북구": 1.2,
+        "성북구": 1.3, "은평구": 1.2, "서대문구": 1.3,
+        "종로구": 1.5, "중구": 1.5, "양천구": 1.3, "강서구": 1.3,
+        # 경기 주요시
+        "성남시": 1.4, "분당": 1.5, "판교": 1.6,
+        "수원시": 1.3, "용인시": 1.3, "화성시": 1.2,
+        "고양시": 1.3, "일산": 1.3,
+        "의정부시": 1.2, "남양주시": 1.2, "구리시": 1.3,
+        "파주시": 1.1, "양주시": 1.1,
+        "안양시": 1.3, "안산시": 1.2, "시흥시": 1.2,
+        "김포시": 1.2, "광명시": 1.4, "하남시": 1.4,
+        "부천시": 1.2, "광주시": 1.2,
+        # 광역시
+        "해운대구": 1.4, "수영구": 1.3,
+        "연수구": 1.3, "송도": 1.4,
+    }
+    MARKET_MULTIPLIER_REGION: dict[str, float] = {
+        "서울특별시": 1.4, "서울": 1.4,
+        "경기도": 1.2, "경기": 1.2,
+        "인천광역시": 1.2, "인천": 1.2,
+        "부산광역시": 1.2, "부산": 1.2,
+        "대구광역시": 1.15, "대전광역시": 1.15,
+        "광주광역시": 1.1, "울산광역시": 1.15,
+        "세종특별자치시": 1.2, "제주특별자치도": 1.15,
+    }
+
+    def _get_market_multiplier(self, address: str) -> tuple[float, str]:
+        """주소 기반 공시지가→시세 보정계수 산정.
+
+        Returns:
+            (보정계수, 산정 근거 설명)
+        """
+        for district, mult in self.MARKET_MULTIPLIER_MAP.items():
+            if district in address:
+                return mult, (
+                    f"{district} 지역의 공시지가 현실화율(약 {100/mult:.0f}%)을 반영한 "
+                    f"보정계수 {mult}배를 적용하였습니다."
+                )
+        for region, mult in self.MARKET_MULTIPLIER_REGION.items():
+            if region in address:
+                return mult, (
+                    f"{region} 평균 공시지가 현실화율을 기반으로 "
+                    f"보정계수 {mult}배를 적용하였습니다."
+                )
+        return 1.2, "지역별 세부 보정계수가 미등록되어 전국 평균 보정계수 1.2배를 적용하였습니다."
+
     def _calc_land_prices(self, base: dict, land_area: float) -> dict[str, Any]:
         prices = base.get("official_prices", [])
         latest = prices[0] if prices else {}
@@ -360,8 +505,32 @@ class ComprehensiveAnalysisService:
         if not price_per_sqm:
             price_per_sqm = int(lr.get("official_price_per_sqm", 0) or 0)
 
-        market_multiplier = 1.2
+        address = base.get("address", "")
+        market_multiplier, multiplier_rationale = self._get_market_multiplier(address)
         estimated_market = int(price_per_sqm * market_multiplier)
+
+        # 분석 주석 생성
+        annotations: list[str] = []
+        if price_per_sqm > 0:
+            annotations.append(
+                f"개별공시지가 ㎡당 {price_per_sqm:,}원 "
+                f"(평당 {int(price_per_sqm * 3.305785):,}원)이 확인되었습니다."
+            )
+            annotations.append(multiplier_rationale)
+            annotations.append(
+                f"추정 시세는 ㎡당 {estimated_market:,}원 "
+                f"(평당 {int(estimated_market * 3.305785):,}원)이며, "
+                f"실제 거래 시 입지·접도·형상 등에 따라 차이가 발생할 수 있습니다."
+            )
+            if land_area > 0:
+                total_est = int(estimated_market * land_area)
+                annotations.append(
+                    f"대지면적 기준 추정 토지가액은 약 {total_est / 100_000_000:,.1f}억원입니다."
+                )
+        else:
+            annotations.append(
+                "개별공시지가가 조회되지 않았습니다. 토지대장 미등록 또는 비과세 필지일 수 있습니다."
+            )
 
         return {
             "official_price_per_sqm": price_per_sqm,
@@ -371,7 +540,8 @@ class ComprehensiveAnalysisService:
             "estimated_market_per_pyeong": int(estimated_market * 3.305785),
             "total_estimated_value_won": int(estimated_market * land_area),
             "market_multiplier": market_multiplier,
-            "source": "VWORLD 개별공시지가 + 시세보정",
+            "source": "VWORLD 개별공시지가 + 지역별 시세보정",
+            "annotations": annotations,
         }
 
     # ────────────────────────────────────────────
@@ -465,19 +635,68 @@ class ComprehensiveAnalysisService:
         subway = infra.get("nearest_subway")
         schools = infra.get("schools", [])
 
+        # 입지 점수 산정 (100점 만점)
+        # 기본점수 50점 + 교통접근성 최대 25점 + 교육환경 최대 15점 + 지역보정 최대 10점
         score = 50
+        score_breakdown: list[str] = ["기본 입지점수 50점"]
+
         if subway:
             dist = subway.get("distance_m", 9999)
+            station_name = subway.get("name", "")
             if dist < 300:
                 score += 25
+                score_breakdown.append(
+                    f"역세권 최우수 — {station_name} 도보 {dist}m (약 {dist // 80}분), "
+                    f"초역세권으로 교통 접근성 최고 등급 (+25점)"
+                )
             elif dist < 500:
                 score += 20
+                score_breakdown.append(
+                    f"역세권 우수 — {station_name} 도보 {dist}m (약 {dist // 80}분), "
+                    f"도보 통근 가능 거리 (+20점)"
+                )
             elif dist < 1000:
                 score += 10
+                score_breakdown.append(
+                    f"역세권 보통 — {station_name} 도보 {dist}m (약 {dist // 80}분), "
+                    f"도보 접근은 가능하나 다소 거리 있음 (+10점)"
+                )
+            else:
+                score_breakdown.append(
+                    f"비역세권 — 최근접 역 {station_name} {dist}m, "
+                    f"대중교통 접근성이 낮아 차량 의존도가 높을 수 있음 (+0점)"
+                )
+        else:
+            score_breakdown.append(
+                "반경 2km 내 지하철역 미확인 — 비역세권으로 교통 접근성 점수 미부여 (+0점)"
+            )
+
         if len(schools) >= 3:
             score += 15
+            school_names = ", ".join(s.get("name", "") for s in schools[:3])
+            score_breakdown.append(
+                f"학군 우수 — 반경 1km 내 학교 {len(schools)}개소 "
+                f"({school_names} 등), 학부모 수요 높을 것으로 판단 (+15점)"
+            )
         elif len(schools) >= 1:
             score += 10
+            score_breakdown.append(
+                f"학군 보통 — 반경 1km 내 학교 {len(schools)}개소, "
+                f"기본적 교육 인프라 확보 (+10점)"
+            )
+        else:
+            score_breakdown.append(
+                "반경 1km 내 학교 미확인 — 교육 인프라 점수 미부여 (+0점)"
+            )
+
+        final_score = min(100, score)
+        grade = "A" if final_score >= 80 else "B" if final_score >= 60 else "C" if final_score >= 40 else "D"
+        grade_desc = {
+            "A": "우수 입지 — 역세권·학군 모두 양호하여 주거·상업 개발 모두 유리",
+            "B": "양호 입지 — 교통 또는 교육 인프라 중 하나 이상 양호",
+            "C": "보통 입지 — 기반 인프라 보완이 필요하며, 개발 유형 선정 시 주의",
+            "D": "취약 입지 — 대중교통·학교 접근이 어려워 특수 개발(물류, 공장 등) 검토 권장",
+        }
 
         return {
             "transportation": {
@@ -489,18 +708,72 @@ class ComprehensiveAnalysisService:
                 "school_count": len(schools),
             },
             "coordinates": coords,
-            "location_score": min(100, score),
-            "grade": "A" if score >= 80 else "B" if score >= 60 else "C" if score >= 40 else "D",
+            "location_score": final_score,
+            "grade": grade,
+            "grade_description": grade_desc.get(grade, ""),
+            "score_breakdown": score_breakdown,
         }
 
     # ────────────────────────────────────────────
     # Section 7: 주변 개발계획
     # ────────────────────────────────────────────
+    # 규제 지역명 → 개발 영향 해석
+    REGULATION_INTERPRETATION: dict[str, str] = {
+        "대공방어협조구역": (
+            "대공방어협조구역에 포함되어 군부대 협의가 필요합니다. "
+            "건축물 높이가 제한될 수 있으며, 사업 인허가 시 국방부 협의 절차가 추가됩니다."
+        ),
+        "비행안전구역": (
+            "비행안전구역으로 건축물 높이가 엄격히 제한됩니다. "
+            "공항·비행장 인근 지역으로 항공법에 따른 높이 제한 검토가 필수입니다."
+        ),
+        "폐기물매립시설": (
+            "폐기물매립시설 설치제한지역에 포함됩니다. "
+            "환경영향평가가 필요할 수 있으며, 주거개발 시 민원 리스크가 존재합니다."
+        ),
+        "상수원보호구역": (
+            "상수원보호구역으로 개발이 극히 제한됩니다. "
+            "음식점·숙박시설 등 오염 유발 시설은 원칙적으로 불허됩니다."
+        ),
+        "개발제한구역": (
+            "개발제한구역(그린벨트)에 포함되어 건축행위가 극히 제한됩니다. "
+            "해제 여부 및 해제 가능성을 별도로 검토해야 합니다."
+        ),
+        "경관지구": (
+            "경관지구로 지정되어 건축물의 높이·형태·색채 등이 제한될 수 있습니다. "
+            "해당 지자체의 경관 심의를 거쳐야 합니다."
+        ),
+        "고도지구": (
+            "고도지구로 지정되어 건축물 높이가 최고 또는 최저로 제한됩니다. "
+            "고층 개발이 제한될 수 있어 용적률 소진에 영향을 줍니다."
+        ),
+        "방화지구": (
+            "방화지구로 지정되어 건축물은 내화구조 의무 적용 대상입니다. "
+            "공사비가 상승할 수 있습니다 (건축법 제58조)."
+        ),
+        "군사시설보호": (
+            "군사시설보호구역에 포함되어 군부대 협의 없이 건축이 불가합니다. "
+            "인허가 소요 기간이 길어질 수 있습니다."
+        ),
+        "문화재보호": (
+            "문화재보호구역으로 문화재청 협의가 필요합니다. "
+            "발굴 조사비 부담 및 사업 지연 리스크가 있습니다."
+        ),
+        "자연공원": (
+            "자연공원구역에 포함되어 개발이 크게 제한됩니다. "
+            "자연공원법에 따른 행위 허가를 별도로 받아야 합니다."
+        ),
+        "도시자연공원": (
+            "도시자연공원구역에 포함됩니다. "
+            "공원 해제 절차를 거치지 않으면 건축이 불가합니다."
+        ),
+    }
+
     def _research_dev_plans(self, base: dict) -> dict[str, Any]:
         districts = base.get("special_districts", [])
         land_use = base.get("land_use_plan")
 
-        regulations = []
+        regulations: list[str] = []
         if isinstance(land_use, dict):
             for d in land_use.get("districts", []):
                 if isinstance(d, dict):
@@ -510,8 +783,51 @@ class ComprehensiveAnalysisService:
                 if isinstance(d, dict):
                     regulations.append(d.get("district_name", ""))
 
+        clean_regulations = [r for r in regulations if r]
+
+        # 각 규제에 대한 해석 주석 생성
+        regulation_notes: list[dict[str, str]] = []
+        for reg_name in clean_regulations:
+            interpretation = None
+            for keyword, note in self.REGULATION_INTERPRETATION.items():
+                if keyword in reg_name:
+                    interpretation = note
+                    break
+            regulation_notes.append({
+                "name": reg_name,
+                "interpretation": interpretation or "",
+            })
+
+        # 종합 개발 리스크 평가
+        risk_keywords = {
+            "개발제한구역": "극히 높음",
+            "상수원보호구역": "극히 높음",
+            "군사시설보호": "높음",
+            "대공방어협조구역": "보통",
+            "비행안전구역": "보통",
+            "폐기물매립시설": "보통",
+            "고도지구": "보통",
+            "경관지구": "낮음",
+            "방화지구": "낮음",
+        }
+        risk_level = "낮음"
+        risk_factors: list[str] = []
+        for reg_name in clean_regulations:
+            for keyword, level in risk_keywords.items():
+                if keyword in reg_name:
+                    risk_factors.append(f"{reg_name} ({level})")
+                    if level == "극히 높음":
+                        risk_level = "극히 높음"
+                    elif level == "높음" and risk_level not in ("극히 높음",):
+                        risk_level = "높음"
+                    elif level == "보통" and risk_level == "낮음":
+                        risk_level = "보통"
+
         return {
             "special_districts": districts,
-            "land_use_regulations": [r for r in regulations if r],
+            "land_use_regulations": clean_regulations,
+            "regulation_notes": regulation_notes,
+            "risk_level": risk_level,
+            "risk_factors": risk_factors,
             "source": "VWORLD 토지이용계획",
         }
