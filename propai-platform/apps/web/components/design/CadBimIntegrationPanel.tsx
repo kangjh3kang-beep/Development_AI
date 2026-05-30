@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Canvas } from "@react-three/fiber";
 import { OrbitControls, Environment, Grid, Float } from "@react-three/drei";
 import { motion } from "framer-motion";
+import CADEditor from "./CADEditor";
 
 function BuildingModel() {
   return (
@@ -89,56 +90,50 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
             </Canvas>
           </div>
         ) : (
-          <div className="absolute inset-0 flex flex-col items-center justify-center text-white/20 bg-[#0d1520]">
-             <motion.span 
-               initial={{ scale: 0.8, opacity: 0 }}
-               animate={{ scale: 1, opacity: 1 }}
-               className="text-8xl mb-8"
-             >
-              📐
-             </motion.span>
-             <p className="font-black text-[10px] uppercase tracking-[0.6em] text-[var(--accent-strong)] animate-pulse">
-               {t.loading2D || "GENERATING_VECTOR_SCHEMA..."}
-             </p>
-             <p className="mt-4 text-[9px] opacity-30 font-mono tracking-tighter">PROJECT_ID: {projectId}</p>
+          <div className="absolute inset-0 z-30 bg-[#0a0f14] flex flex-col overflow-hidden [&>div]:h-full [&>div]:rounded-none [&>div]:border-none">
+            <CADEditor projectId={projectId} />
           </div>
         )}
 
-        {/* Overlay Tools */}
-        <div className="absolute right-10 top-10 flex flex-col gap-4 z-20">
-          <motion.div 
-            initial={{ opacity: 0, x: 20 }}
-            animate={{ opacity: 1, x: 0 }}
-            className="rounded-[2.5rem] border border-white/5 bg-black/60 p-8 text-white backdrop-blur-2xl shadow-2xl"
-          >
-            <div className="flex items-center gap-3 mb-4">
-               <div className="h-1.5 w-1.5 rounded-full bg-[var(--success)] shadow-[0_0_10px_var(--success)] animate-pulse" />
-               <p className="text-[10px] font-black uppercase tracking-[0.4em] opacity-50">{t.legalCheck || "BIM CHECKLIST"}</p>
+        {/* Overlay Tools (only for 3D) */}
+        {viewMode === "bim_3d" && (
+          <>
+            <div className="absolute right-10 top-10 flex flex-col gap-4 z-20">
+              <motion.div 
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                className="rounded-[2.5rem] border border-white/5 bg-black/60 p-8 text-white backdrop-blur-2xl shadow-2xl"
+              >
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="h-1.5 w-1.5 rounded-full bg-[var(--success)] shadow-[0_0_10px_var(--success)] animate-pulse" />
+                  <p className="text-[10px] font-black uppercase tracking-[0.4em] opacity-50">{t.legalCheck || "BIM CHECKLIST"}</p>
+                </div>
+                <div className="space-y-2">
+                  <span className="block text-xl font-[1000] tracking-tighter italic">{t.compliant || "법규 적합성 통과"}</span>
+                  <p className="text-[10px] font-bold opacity-40 italic underline decoration-white/20 underline-offset-4">{t.autoCorrected || "AI 자동 보정 기능 활성화됨"}</p>
+                </div>
+              </motion.div>
+              
+              <button className="group relative overflow-hidden rounded-[2rem] bg-white px-10 py-5 text-xs font-black text-[#0d1520] uppercase tracking-widest shadow-[var(--shadow-glow)] transition-all hover:scale-105 hover:bg-[var(--accent-strong)] hover:text-white active:scale-95">
+                <span className="relative z-10 flex items-center gap-3">
+                  {t.exportBtn || "3D 모델 데이터 내보내기"}
+                  <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M7 17L17 7M17 7H7M17 7V17"/></svg>
+                </span>
+              </button>
             </div>
-            <div className="space-y-2">
-               <span className="block text-xl font-[1000] tracking-tighter italic">{t.compliant || "법규 적합성 통과"}</span>
-               <p className="text-[10px] font-bold opacity-40 italic underline decoration-white/20 underline-offset-4">{t.autoCorrected || "AI 자동 보정 기능 활성화됨"}</p>
+            
+            {/* HUD Bottom Left */}
+            <div className="absolute bottom-10 left-10 z-20 flex items-center gap-6">
+              <div className="flex h-12 items-center gap-4 rounded-2xl bg-black/40 px-6 backdrop-blur-xl border border-white/5">
+                  <span className="h-2 w-2 rounded-full bg-blue-500 shadow-[0_0_10px_#3b82f6]" />
+                  <span className="text-[9px] font-black text-white/50 uppercase tracking-[0.3em]">Telemetry Streaming</span>
+              </div>
+              <div className="flex h-12 items-center gap-4 rounded-2xl bg-black/40 px-6 backdrop-blur-xl border border-white/5">
+                  <span className="text-[9px] font-black text-white/50 uppercase tracking-[0.3em]">FOV: 40°</span>
+              </div>
             </div>
-          </motion.div>
-          
-          <button className="group relative overflow-hidden rounded-[2rem] bg-white px-10 py-5 text-xs font-black text-[#0d1520] uppercase tracking-widest shadow-[var(--shadow-glow)] transition-all hover:scale-105 hover:bg-[var(--accent-strong)] hover:text-white active:scale-95">
-            <span className="relative z-10 flex items-center gap-3">
-              {t.exportBtn || "3D 모델 데이터 내보내기"}
-              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M7 17L17 7M17 7H7M17 7V17"/></svg>
-            </span>
-          </button>
-        </div>
-        
-        {/* HUD Bottom Left */}
-        <div className="absolute bottom-10 left-10 z-20 flex items-center gap-6">
-           <div className="flex h-12 items-center gap-4 rounded-2xl bg-black/40 px-6 backdrop-blur-xl border border-white/5">
-              <span className="h-2 w-2 rounded-full bg-blue-500 shadow-[0_0_10px_#3b82f6]" />
-              <span className="text-[9px] font-black text-white/50 uppercase tracking-[0.3em]">Telemetry Streaming</span>
-           </div>
-           <div className="flex h-12 items-center gap-4 rounded-2xl bg-black/40 px-6 backdrop-blur-xl border border-white/5">
-              <span className="text-[9px] font-black text-white/50 uppercase tracking-[0.3em]">FOV: 40°</span>
-           </div>
-        </div>
+          </>
+        )}
       </div>
     </div>
   );

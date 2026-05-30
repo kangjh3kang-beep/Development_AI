@@ -17,6 +17,9 @@ AsyncSessionLocal = async_sessionmaker(
     autoflush=False,
 )
 
+# 별칭: 일부 서비스/태스크가 async_session_factory 이름으로 세션 팩토리를 사용한다.
+async_session_factory = AsyncSessionLocal
+
 class Base(DeclarativeBase):
     pass
 

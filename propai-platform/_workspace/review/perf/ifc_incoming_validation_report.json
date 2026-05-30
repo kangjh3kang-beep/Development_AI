@@ -1,0 +1,68 @@
+{
+  "generated_at_utc": "2026-05-29T20:55:56.983707+00:00",
+  "generated_by": "scripts/perf/validate_real_ifc_incoming.py",
+  "incoming_dir": "tests/fixtures/ifc/incoming",
+  "min_ifc_files": 3,
+  "require_positive_quantities": true,
+  "fail_on_duplicate_hash": true,
+  "max_file_size_mb": 512.0,
+  "summary": {
+    "file_count": 3,
+    "parsed_count": 3,
+    "parse_failed_count": 0,
+    "positive_quantity_count": 3,
+    "size_pass_count": 3,
+    "duplicate_hash_count": 0,
+    "min_file_pass": true,
+    "parse_pass": true,
+    "quantity_pass": true,
+    "size_pass": true,
+    "duplicate_pass": true,
+    "overall_pass": true
+  },
+  "duplicate_hash_groups": [],
+  "files": [
+    {
+      "file_name": "logistics_center_c.ifc",
+      "file_path": "tests/fixtures/ifc/incoming/logistics_center_c.ifc",
+      "size_bytes": 1486,
+      "size_mb": 0.001417,
+      "size_ok": true,
+      "sha256": "de4ae5695695c5194f6f68bf991d0de810942c7972a53e0f0bc8a31178935c56",
+      "parse_status": "parsed",
+      "schema": "IFC4",
+      "element_count": 2,
+      "area_sqm": 540.0,
+      "volume_m3": 795.0,
+      "positive_quantities": true
+    },
+    {
+      "file_name": "office_tower_b.ifc",
+      "file_path": "tests/fixtures/ifc/incoming/office_tower_b.ifc",
+      "size_bytes": 1486,
+      "size_mb": 0.001417,
+      "size_ok": true,
+      "sha256": "835036fadcb218a54fdd9e215757613c4294ed874ace66ef3936cae3c4dee20f",
+      "parse_status": "parsed",
+      "schema": "IFC4",
+      "element_count": 2,
+      "area_sqm": 480.0,
+      "volume_m3": 690.0,
+      "positive_quantities": true
+    },
+    {
+      "file_name": "residential_block_a.ifc",
+      "file_path": "tests/fixtures/ifc/incoming/residential_block_a.ifc",
+      "size_bytes": 1486,
+      "size_mb": 0.001417,
+      "size_ok": true,
+      "sha256": "dc319c4766f03534d81a5c3f050b89d889682a22dcfca03abb7ee94d4deeb774",
+      "parse_status": "parsed",
+      "schema": "IFC4",
+      "element_count": 2,
+      "area_sqm": 360.0,
+      "volume_m3": 480.0,
+      "positive_quantities": true
+    }
+  ]
+}

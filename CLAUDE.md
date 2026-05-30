@@ -25,3 +25,4 @@
 | 2026-05-27 | Innovation4: 은행제출용 보고서 | bank_ready_report_service.py, BankReadyReportBuilder.tsx | PF대출 심사용 10섹션 통합보고서 (Feasibly 벤치마크) |
 | 2026-05-27 | Innovation5: GRESB ESG 스코어링 | gresb_scoring_service.py, GresbScoreCard.tsx | GRESB 2025 기준 자동 ESG 점수 산출 |
 | 2026-05-28 | 킬러기능: Top3 자동추천 파이프라인 | permit_validator.py, auto_recommend_top3(), AutoRecommendPanel.tsx, BusinessModelRefineModal.tsx | 주소입력→15모델시뮬→인허가검증→Top3추천→수정→완성 |
+| 2026-05-31 | 나라장터(G2B) 6엔진 연동 | bid_analyzer, schemas, routers, 프론트 모달 | 입찰 추정가격→QTO/수지/용도지역/인허가/ESG/시장 정밀분석 + 적정투찰가 |

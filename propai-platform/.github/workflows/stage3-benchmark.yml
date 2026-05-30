@@ -1,4 +1,4 @@
-name: Stage3 Benchmark Gate
+name: Stage3-4 Benchmark Gate
 
 on:
   schedule:
@@ -21,6 +21,26 @@ on:
         description: "실 IFC 최소 파싱 요구 개수(기본 3)"
         required: false
         default: "3"
+      run_refresh_rehearsal:
+        description: "refresh 컷오버 리허설 실행 여부 (true/false)"
+        required: false
+        default: "false"
+      refresh_mode:
+        description: "refresh 리허설 mode (copy/move)"
+        required: false
+        default: "move"
+      api_attempts:
+        description: "Stage4 API latency 엔드포인트별 반복 횟수"
+        required: false
+        default: "20"
+      api_auth_role:
+        description: "Stage4 인증 레이턴시 측정용 role (admin/manager/analyst/viewer)"
+        required: false
+        default: "admin"
+      api_include_authenticated:
+        description: "Stage4 인증 엔드포인트 측정 포함 여부 (true/false, 기본 false)"
+        required: false
+        default: "false"
 
 permissions:
   contents: read
@@ -43,14 +63,19 @@ jobs:
           pip install -r apps/api/requirements.txt
           pip install pytest
 
-      - name: Stage3 계약/벤치 테스트
+      - name: Stage3-4 계약/벤치 테스트
         env:
           PROPAI_STRICT_PERF_GATE: "1"
+          PROPAI_STRICT_API_GATE: "1"
         run: |
           pytest -q \
+            tests/unit/test_stage3_ifc_incoming_validation_contract.py \
             tests/unit/test_stage3_real_ifc_onboarding_contract.py \
+            tests/unit/test_stage3_refresh_real_ifc_pipeline_contract.py \
             tests/unit/test_stage3_benchmark_pipeline_contract.py \
-            tests/benchmarks/bench_stage3_pipeline.py
+            tests/unit/test_stage4_api_latency_pipeline_contract.py \
+            tests/benchmarks/bench_stage3_pipeline.py \
+            tests/benchmarks/bench_stage4_api_latency.py
 
       - name: Run Stage3 benchmark (strict gate)
         env:
@@ -71,6 +96,54 @@ jobs:
           fi
 
           python scripts/perf/run_stage3_benchmarks.py "${ARGS[@]}" --fail-on-target-miss
+
+      - name: Run refresh cutover rehearsal (optional)
+        if: ${{ github.event.inputs.run_refresh_rehearsal == 'true' }}
+        env:
+          PROPAI_STRICT_PERF_GATE: "1"
+          INPUT_ATTEMPTS: ${{ github.event.inputs.attempts }}
+          INPUT_N_SIMULATIONS: ${{ github.event.inputs.n_simulations }}
+          INPUT_REQUIRE_REAL_IFC_MIN: ${{ github.event.inputs.require_real_ifc_min }}
+          INPUT_REFRESH_MODE: ${{ github.event.inputs.refresh_mode }}
+        run: |
+          ATTEMPTS="${INPUT_ATTEMPTS:-3}"
+          N_SIMS="${INPUT_N_SIMULATIONS:-10000}"
+          REQUIRE_REAL_IFC_MIN="${INPUT_REQUIRE_REAL_IFC_MIN:-3}"
+          REFRESH_MODE="${INPUT_REFRESH_MODE:-move}"
+
+          rm -f tests/fixtures/ifc/incoming/*.ifc
+          cp tests/fixtures/ifc/real_samples/*.ifc tests/fixtures/ifc/incoming/
+
+          python scripts/perf/refresh_real_ifc_pipeline.py \
+            --incoming tests/fixtures/ifc/incoming \
+            --output-dir tests/fixtures/ifc/real_samples \
+            --manifest tests/fixtures/ifc/real_ifc_manifest.v1.json \
+            --source-label ci-rehearsal \
+            --mode "$REFRESH_MODE" \
+            --attempts "$ATTEMPTS" \
+            --n-simulations "$N_SIMS" \
+            --require-real-ifc-min "$REQUIRE_REAL_IFC_MIN" \
+            --skip-benchmark
+
+      - name: Run Stage4 API latency benchmark (strict gate)
+        env:
+          PROPAI_STRICT_API_GATE: "1"
+          INPUT_API_ATTEMPTS: ${{ github.event.inputs.api_attempts }}
+          INPUT_API_AUTH_ROLE: ${{ github.event.inputs.api_auth_role }}
+          INPUT_API_INCLUDE_AUTHENTICATED: ${{ github.event.inputs.api_include_authenticated }}
+        run: |
+          API_ATTEMPTS="${INPUT_API_ATTEMPTS:-20}"
+          API_AUTH_ROLE="${INPUT_API_AUTH_ROLE:-admin}"
+          API_INCLUDE_AUTH="${INPUT_API_INCLUDE_AUTHENTICATED:-false}"
+
+          ARGS=(--attempts "$API_ATTEMPTS" --warmup 2)
+          if [ "$API_INCLUDE_AUTH" = "true" ]; then
+            ARGS+=(--include-authenticated --auth-role "$API_AUTH_ROLE")
+          else
+            ARGS+=(--no-include-authenticated)
+          fi
+
+          python scripts/perf/run_stage4_api_latency_benchmarks.py "${ARGS[@]}" --fail-on-target-miss
 
       - name: Upload Stage3 benchmark artifacts
         if: always()

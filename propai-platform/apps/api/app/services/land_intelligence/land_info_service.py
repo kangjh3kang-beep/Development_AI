@@ -18,6 +18,7 @@ from typing import Any
 from ..external_api.vworld_service import VWorldService
 from ..external_api.molit_service import MOLITService
 from ..external_api.building_registry_service import BuildingRegistryService
+from ..external_api.commercial_area_service import CommercialAreaService
 from ..zoning.auto_zoning_service import AutoZoningService
 from .ordinance_service import OrdinanceService
 
@@ -25,6 +26,238 @@ logger = logging.getLogger(__name__)
 
 
 # 조례 데이터: OrdinanceService가 법제처 API → 캐시DB → 법정상한 순으로 실시간 조회
+
+
+# ── 접도(도로접면) → 도로 너비 추정 ──
+# 토지대장 '도로접면' 표준 분류를 대표 너비(m)로 환산한다.
+# 출처: 부동산 가격공시 토지특성조사표 도로접면 구분.
+_ROAD_SIDE_WIDTH_M: list[tuple[str, float]] = [
+    ("광대로", 40.0),   # 광대한면/광대소각/광대세각 — 폭 25m 이상
+    ("광대", 40.0),
+    ("중로", 20.0),     # 중로한면/중로각지 — 폭 12~25m
+    ("소로", 10.0),     # 소로한면/소로각지 — 폭 8~12m
+    ("세로(가)", 6.0),  # 자동차 통행 가능 — 폭 4~8m
+    ("세로가", 6.0),
+    ("세로(불)", 3.0),  # 자동차 통행 불가 — 폭 < 4m
+    ("세로불", 3.0),
+    ("맹지", 0.0),      # 도로 없음
+]
+
+
+def estimate_road_width_m(road_side: str | None) -> float | None:
+    """토지대장 '도로접면' 문자열로부터 대표 도로 너비(m)를 추정.
+
+    매칭 실패 시 None을 반환하여 데이터 부재를 명확히 한다(보고서 "-" 표시).
+    """
+    if not road_side:
+        return None
+    text = road_side.replace(" ", "")
+    # '세로(가)'와 '세로(불)'을 먼저 구분해야 하므로 긴 키부터 매칭
+    for keyword, width in _ROAD_SIDE_WIDTH_M:
+        if keyword.replace(" ", "") in text:
+            return width
+    return None
+
+
+# ── 정밀 접도 (연속지적도 도로 필지 기하 측정) ──
+
+def _haversine_m_pure(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """두 경위도 좌표 간 거리(m). 모듈 레벨 순수함수."""
+    import math
+    R = 6_371_000
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    d_phi = math.radians(lat2 - lat1)
+    d_lam = math.radians(lon2 - lon1)
+    a = math.sin(d_phi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(d_lam / 2) ** 2
+    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
+def _mrr_short_side_m(geom) -> float | None:
+    """폴리곤 최소회전사각형(MRR)의 짧은 변 길이(m) — 도로 필지의 폭.
+
+    도로 필지는 보통 가늘고 긴 형태이므로 MRR의 짧은 변이 도로 폭에 해당한다.
+    퇴화(점·선) 형상이면 None.
+    """
+    try:
+        mrr = geom.minimum_rotated_rectangle
+        xs, ys = mrr.exterior.coords.xy  # 닫힌 5점
+    except Exception:
+        return None
+    if len(xs) < 4:
+        return None
+    s1 = _haversine_m_pure(ys[0], xs[0], ys[1], xs[1])
+    s2 = _haversine_m_pure(ys[1], xs[1], ys[2], xs[2])
+    short = min(s1, s2)
+    return short if short > 0 else None
+
+
+def compute_precise_road_width_m(
+    subject_geom_json: dict,
+    road_parcels: list[dict],
+    adjacency_m: float = 3.0,
+) -> float | None:
+    """대상 필지에 인접한 도로 필지의 폭(m)을 측정.
+
+    연속지적도에서 지목='도로'인 필지 중 대상 필지에 접한(거리 adjacency_m 이내)
+    것들을 찾아, 그중 가장 넓은 도로의 폭을 반환한다. 주된 접도 도로가 개발
+    가능성을 좌우하므로 최댓값을 채택한다. 측정 불가 시 None.
+    """
+    from shapely.geometry import shape
+
+    try:
+        subj = shape(subject_geom_json)
+    except Exception:
+        return None
+
+    # 인접 판정 임계값을 도(degree) 단위로 환산 (위도 기준 근사)
+    thr_deg = adjacency_m / 111_320.0
+
+    best: float | None = None
+    for rp in road_parcels:
+        if "도로" not in (rp.get("jimok") or ""):
+            continue
+        try:
+            rgeom = shape(rp["geometry"])
+        except Exception:
+            continue
+        try:
+            if subj.distance(rgeom) > thr_deg:
+                continue
+        except Exception:
+            continue
+        width = _mrr_short_side_m(rgeom)
+        if width and (best is None or width > best):
+            best = width
+
+    return round(best, 1) if best else None
+
+
+# ── 입지 점수화 ──
+# 항목별 가중치(합 100). 거리가 가까울수록(또는 너비가 넓을수록) 높은 점수.
+_LOCATION_WEIGHTS: dict[str, int] = {
+    "subway": 25,      # 지하철 접근성
+    "school": 15,      # 학군
+    "hospital": 12,    # 의료
+    "mart": 12,        # 대형마트
+    "convenience": 8,  # 편의점
+    "park": 10,        # 공원/녹지
+    "bus": 8,          # 버스 접근성
+    "road": 10,        # 접도(도로 너비)
+}
+
+# 거리 기반 항목: (full_score_거리m, zero_score_거리m). 선형 보간.
+_LOCATION_DISTANCE_BANDS: dict[str, tuple[float, float]] = {
+    "subway": (400, 2000),
+    "school": (300, 1500),
+    "hospital": (500, 3000),
+    "mart": (500, 3000),
+    "convenience": (200, 1000),
+    "park": (400, 2000),
+    "bus": (200, 800),
+}
+
+
+def _distance_score(distance_m: float | None, full_m: float, zero_m: float) -> float:
+    """거리(m)를 0~1 점수로 선형 보간. 가까우면 1, 멀면 0."""
+    if distance_m is None:
+        return 0.0
+    if distance_m <= full_m:
+        return 1.0
+    if distance_m >= zero_m:
+        return 0.0
+    return (zero_m - distance_m) / (zero_m - full_m)
+
+
+def _road_score(road_width_m: float | None) -> float:
+    """도로 너비(m)를 0~1 점수로 환산. 6m=0.5, 20m 이상=1.0, 맹지=0."""
+    if road_width_m is None:
+        return 0.0
+    if road_width_m <= 0:
+        return 0.0
+    if road_width_m >= 20:
+        return 1.0
+    return min(1.0, road_width_m / 20.0)
+
+
+def _nearest_distance(items: list[dict] | None) -> float | None:
+    """POI 리스트에서 최근접 거리(m)를 반환."""
+    if not items:
+        return None
+    dists = [
+        i.get("distance_m") for i in items
+        if isinstance(i, dict) and i.get("distance_m") is not None
+    ]
+    return min(dists) if dists else None
+
+
+def compute_location_score(
+    infra: dict[str, Any] | None, road_width_m: float | None = None
+) -> dict[str, Any]:
+    """수집된 인프라 + 접도 정보로 입지 점수(0~100)와 등급(A~E)을 산출.
+
+    각 항목은 가중치 × 정규화 점수(0~1)로 합산한다. 데이터가 없는 항목은
+    0점으로 처리되며, items에 '미수집'으로 표기되어 할루시네이션을 방지한다.
+    레이더 차트용 항목별 점수(0~100)도 함께 반환한다.
+    """
+    infra = infra or {}
+
+    # 항목별 최근접 거리 산출
+    subway = infra.get("nearest_subway") or {}
+    subway_dist = subway.get("distance_m") if isinstance(subway, dict) else None
+    distances: dict[str, float | None] = {
+        "subway": subway_dist,
+        "school": _nearest_distance(infra.get("schools")),
+        "hospital": _nearest_distance(infra.get("hospitals")),
+        "mart": _nearest_distance(infra.get("marts")),
+        "convenience": _nearest_distance(infra.get("convenience_stores")),
+        "park": _nearest_distance(infra.get("parks")),
+        "bus": _nearest_distance(infra.get("bus_stops")),
+    }
+
+    labels = {
+        "subway": "지하철", "school": "학교", "hospital": "병원",
+        "mart": "대형마트", "convenience": "편의점", "park": "공원",
+        "bus": "버스", "road": "접도",
+    }
+
+    items: list[dict[str, Any]] = []
+    total = 0.0
+    for key, weight in _LOCATION_WEIGHTS.items():
+        if key == "road":
+            norm = _road_score(road_width_m)
+            detail = f"{road_width_m:.0f}m" if road_width_m else "미수집"
+        else:
+            band = _LOCATION_DISTANCE_BANDS[key]
+            dist = distances.get(key)
+            norm = _distance_score(dist, band[0], band[1])
+            detail = f"{round(dist)}m" if dist is not None else "미수집"
+        score = weight * norm
+        total += score
+        items.append({
+            "category": labels[key],
+            "key": key,
+            "score": round(norm * 100),   # 레이더용 0~100
+            "weight": weight,
+            "detail": detail,
+        })
+
+    total_score = round(total)
+    if total_score >= 80:
+        grade = "A"
+    elif total_score >= 65:
+        grade = "B"
+    elif total_score >= 50:
+        grade = "C"
+    elif total_score >= 35:
+        grade = "D"
+    else:
+        grade = "E"
+
+    return {
+        "total_score": total_score,
+        "grade": grade,
+        "items": items,
+    }
 
 
 class LandInfoService:
@@ -36,6 +269,7 @@ class LandInfoService:
         self.building = BuildingRegistryService()
         self.zoning = AutoZoningService()
         self.ordinance = OrdinanceService()
+        self.commercial = CommercialAreaService()
 
     async def collect_comprehensive(self, address: str, pnu: str | None = None) -> dict[str, Any]:
         """주소로부터 종합 토지정보를 수집한다.
@@ -161,7 +395,29 @@ class LandInfoService:
         except Exception as e:
             result["warnings"].append(f"인근 실거래가 수집 실패: {str(e)}")
 
-        # Phase 2-D: 주변 인프라 분석 (VWORLD POI — 지하철, 학교)
+        # Phase 2-D: 접도 너비 — 정밀(연속지적도 도로필지 기하측정) 우선,
+        # 실패 시 토지대장 도로접면 텍스트 추정으로 폴백.
+        road_width_m: float | None = None
+        road_width_source: str | None = None
+        try:
+            road_width_m = await self._fetch_precise_road_width(
+                effective_pnu, result.get("coordinates")
+            )
+            if road_width_m is not None:
+                road_width_source = "cadastral_road_parcel"
+        except Exception as e:
+            logger.warning("정밀 접도 분석 실패: %s (%s)", address, str(e))
+
+        _lr_road = result.get("land_register") or {}
+        if road_width_m is None and isinstance(_lr_road, dict):
+            road_width_m = estimate_road_width_m(_lr_road.get("road_side"))
+            if road_width_m is not None:
+                road_width_source = "road_side_estimate"
+        if road_width_m is not None and isinstance(_lr_road, dict):
+            _lr_road["road_width_m"] = road_width_m
+            _lr_road["road_width_source"] = road_width_source
+
+        # Phase 2-E: 주변 인프라 분석 (VWORLD POI — 지하철/학교/병원/마트/편의점/공원/버스)
         coords = result.get("coordinates")
         if coords and coords.get("lat") and coords.get("lon"):
             try:
@@ -172,6 +428,20 @@ class LandInfoService:
                     result["infrastructure"] = infra
             except Exception as e:
                 result["warnings"].append(f"주변 인프라 분석 실패: {str(e)}")
+
+        # Phase 2-F: 입지 점수화 (인프라 + 접도 → 0~100 점수, A~E 등급)
+        # 인프라 데이터가 전혀 없어도 접도 점수만으로 산출 가능하므로 항상 계산한다.
+        try:
+            location_score = compute_location_score(
+                result.get("infrastructure"), road_width_m
+            )
+            if result.get("infrastructure") is None:
+                result["infrastructure"] = {}
+            result["infrastructure"]["location_score"] = location_score
+            result["infrastructure"]["road_width_m"] = road_width_m
+            result["infrastructure"]["road_width_source"] = road_width_source
+        except Exception as e:
+            logger.warning("입지 점수화 실패: %s (%s)", address, str(e))
 
         # Phase 3: 지자체 조례 실시간 분석 (법제처 API → 캐시 → 법정상한)
         if result["zone_type"]:
@@ -385,6 +655,40 @@ class LandInfoService:
 
         return result if any(v.get("count", 0) > 0 for v in result.values()) else None
 
+    async def _fetch_precise_road_width(
+        self, pnu: str | None, coords: dict | None,
+    ) -> float | None:
+        """연속지적도 도로 필지 기반 정밀 접도 너비(m).
+
+        대상 필지 geometry를 가져와 주변 bbox(반경 ~60m) 필지 중 지목='도로'인
+        인접 필지의 폭을 측정한다. PNU·좌표 부재 또는 측정 불가 시 None.
+        """
+        import math
+
+        if not pnu or not coords:
+            return None
+        lat = coords.get("lat")
+        lon = coords.get("lon")
+        if not lat or not lon:
+            return None
+
+        # 대상 필지 경계
+        land = await self.vworld.get_land_info(pnu)
+        subj_geom = land.get("geometry") if isinstance(land, dict) else None
+        if not subj_geom:
+            return None
+
+        # 주변 필지 bbox (반경 ~60m): 위도/경도 도 단위 환산
+        d_lat = 60 / 111_320
+        d_lon = 60 / (111_320 * max(0.1, math.cos(math.radians(lat))))
+        parcels = await self.vworld.get_parcels_in_bbox(
+            lon - d_lon, lat - d_lat, lon + d_lon, lat + d_lat,
+        )
+        if not parcels:
+            return None
+
+        return compute_precise_road_width_m(subj_geom, parcels)
+
     async def _fetch_infrastructure(
         self, lat: float, lon: float,
     ) -> dict[str, Any] | None:
@@ -404,6 +708,11 @@ class LandInfoService:
         infra: dict[str, Any] = {
             "nearest_subway": None,
             "schools": [],
+            "hospitals": [],
+            "marts": [],
+            "convenience_stores": [],
+            "parks": [],
+            "bus_stops": [],
         }
 
         if not settings.VWORLD_API_KEY:
@@ -520,8 +829,76 @@ class LandInfoService:
             except Exception as e:
                 logger.debug("학교 검색 실패 (시도 %d): %s", attempt + 1, str(e))
 
-        has_data = infra["nearest_subway"] is not None or len(infra["schools"]) > 0
+        # ── 생활 인프라 POI 확장 (병원/마트/편의점/공원/버스/IC) ──
+        # 각 카테고리를 반경 내에서 검색해 최근접순 상위 N개를 수집한다.
+        # 개별 카테고리 실패는 무시하고 나머지를 계속 수집한다.
+        poi_categories: list[tuple[str, str, int, int]] = [
+            # (infra_key, query, radius_m, size)
+            ("hospitals", "병원", 3000, 3),
+            ("marts", "대형마트", 3000, 3),
+            ("convenience_stores", "편의점", 1000, 5),
+            ("parks", "공원", 2000, 3),
+            ("bus_stops", "버스정류장", 800, 5),
+        ]
+        for infra_key, query, radius, size in poi_categories:
+            try:
+                pois = await self._search_poi(lat, lon, query, radius, size, headers, settings)
+                if pois:
+                    infra[infra_key] = pois
+            except Exception as e:
+                logger.debug("POI 검색 실패 (%s): %s", query, str(e))
+
+        has_data = (
+            infra["nearest_subway"] is not None
+            or len(infra["schools"]) > 0
+            or any(infra.get(k) for k in ("hospitals", "marts", "convenience_stores", "parks", "bus_stops"))
+        )
         return infra if has_data else None
+
+    async def _search_poi(
+        self, lat: float, lon: float, query: str,
+        radius_m: int, size: int, headers: dict, settings,
+    ) -> list[dict[str, Any]]:
+        """VWORLD POI 검색 범용 헬퍼 — 거리순 정렬된 {name, distance_m} 리스트 반환.
+
+        지하철·학교 검색과 동일한 패턴(category 미지정, bbox 반경)을 사용한다.
+        """
+        import httpx
+
+        async with httpx.AsyncClient(timeout=10.0, headers=headers) as client:
+            resp = await client.get(
+                f"{settings.VWORLD_BASE_URL}/search",
+                params={
+                    "service": "search",
+                    "request": "search",
+                    "key": settings.VWORLD_API_KEY,
+                    "query": query,
+                    "type": "place",
+                    "format": "json",
+                    "size": str(size),
+                    "bbox": self._make_bbox(lat, lon, radius_m=radius_m),
+                },
+            )
+            if resp.status_code == 404:
+                return []
+            resp.raise_for_status()
+            response_obj = resp.json().get("response", {})
+            if response_obj.get("status") != "OK":
+                return []
+            items = response_obj.get("result", {}).get("items", []) or []
+
+        pois: list[dict[str, Any]] = []
+        for item in items:
+            p_lat = float(item.get("point", {}).get("y", 0))
+            p_lon = float(item.get("point", {}).get("x", 0))
+            if p_lat == 0 or p_lon == 0:
+                continue
+            pois.append({
+                "name": item.get("title", ""),
+                "distance_m": round(self._haversine_m(lat, lon, p_lat, p_lon)),
+            })
+        pois.sort(key=lambda x: x["distance_m"])
+        return pois
 
     @staticmethod
     def _extract_lawd_cd(address: str, pnu: str | None) -> str | None:

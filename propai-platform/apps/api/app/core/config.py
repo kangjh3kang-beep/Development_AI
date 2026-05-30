@@ -46,6 +46,15 @@ class Settings(BaseSettings):
     EPD_KOREA_API_KEY: str = ""
     EPD_KOREA_BASE_URL: str = "https://www.epd.or.kr/api"
 
+    # 소상공인시장진흥공단 상가(상권)정보 API (data.go.kr B553077)
+    # 신버전 baroApi 통합 엔드포인트 (resId/catId로 세부 조회 지정)
+    SEMAS_API_KEY: str = ""
+    SEMAS_BASE_URL: str = "http://apis.data.go.kr/B553077/api/open/sdsc2"
+
+    # 조달청 나라장터(G2B) 입찰/낙찰 API (data.go.kr 1230000)
+    # data.go.kr 인증키는 계정당 1개 공용 → 미설정 시 MOLIT_API_KEY로 폴백(get_settings)
+    G2B_SERVICE_KEY: str = ""
+
     AWS_ACCESS_KEY_ID: str = ""
     AWS_SECRET_ACCESS_KEY: str = ""
     AWS_S3_BUCKET: str = "propai-files"
@@ -99,6 +108,9 @@ def get_settings() -> Settings:
     if not s.JWT_SECRET_KEY:
         object.__setattr__(s, "JWT_SECRET_KEY", secrets.token_urlsafe(32))
         warnings.warn("JWT_SECRET_KEY 미설정 — 임시 키 자동 생성됨", stacklevel=2)
+    # 나라장터(G2B) 키 미설정 시 동일 계정의 MOLIT 키로 폴백(data.go.kr 키 공용)
+    if not s.G2B_SERVICE_KEY and s.MOLIT_API_KEY:
+        object.__setattr__(s, "G2B_SERVICE_KEY", s.MOLIT_API_KEY)
     return s
 
 settings = get_settings()

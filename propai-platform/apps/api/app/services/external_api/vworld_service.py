@@ -177,6 +177,59 @@ class VWorldService:
                 logger.error("VWORLD 토지정보 조회 실패", pnu=pnu, error=str(e))
                 return None
 
+    async def get_parcels_in_bbox(
+        self,
+        min_lon: float, min_lat: float, max_lon: float, max_lat: float,
+        max_count: int = 100,
+    ) -> List[Dict]:
+        """bbox 내 필지 목록 조회 (geometry + 지목).
+
+        연속지적도(LP_PA_CBND_BUBUN)에서 bbox에 걸치는 필지를 가져온다.
+        정밀 접도 분석에서 인접 도로 필지(지목=도로)를 찾는 데 사용된다.
+
+        반환: [{pnu, jimok, geometry(GeoJSON)}, ...]
+        """
+        if not settings.VWORLD_API_KEY:
+            return []
+        params = {
+            "service": "data",
+            "request": "GetFeature",
+            "data": "LP_PA_CBND_BUBUN",
+            "key": settings.VWORLD_API_KEY,
+            "format": "json",
+            "crs": "EPSG:4326",
+            "geomFilter": f"BOX({min_lon},{min_lat},{max_lon},{max_lat})",
+            "geometry": "true",
+            "attribute": "true",
+            "size": str(max_count),
+        }
+        try:
+            async with httpx.AsyncClient(timeout=20.0, headers=self.HEADERS) as client:
+                resp = await client.get(f"{self.BASE_URL}/data", params=params)
+                resp.raise_for_status()
+                data = resp.json()
+                features = (
+                    data.get("response", {})
+                    .get("result", {})
+                    .get("featureCollection", {})
+                    .get("features", [])
+                )
+                parcels = []
+                for feat in features:
+                    props = feat.get("properties", {})
+                    geom = feat.get("geometry")
+                    if not geom:
+                        continue
+                    parcels.append({
+                        "pnu": props.get("pnu", ""),
+                        "jimok": props.get("lndcgr_nm", ""),
+                        "geometry": geom,
+                    })
+                return parcels
+        except Exception as e:
+            logger.warning("bbox 필지 조회 실패: %s", str(e))
+            return []
+
     async def get_land_use_districts(self, pnu: str) -> List[Dict]:
         """PNU로 용도지구/구역 (UD802, UD803) 목록 조회"""
         results = []

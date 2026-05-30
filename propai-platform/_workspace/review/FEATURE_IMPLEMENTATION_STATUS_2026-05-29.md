@@ -12,7 +12,7 @@
 ## B. 현재 구현 규모(코드 기준)
 - API 라우터 등록: 64개 (`apps/api/main.py`)
 - 서비스 모듈: 62개 (`apps/api/services/*.py`)
-- 테스트: unit 74 / benchmarks 7 / load 2
+- 테스트: unit 76 / benchmarks 7 / load 2
 
 ## C. 기능군별 비교 매트릭스
 | 기능군 | 라우터 | 서비스 | 테스트연결 항목수 | 이슈표식 항목수 | 구현성숙도 점수(0-100) | 판정 |
@@ -32,7 +32,7 @@
 점수 산식: `(테스트연결/항목수)*100 - 이슈표식*8` (정량 우선순위 산정용 내부 지표)
 
 ## D. 핵심 갭(우선순위)
-1. 벤치마크 테스트 일부가 목표 증명형이 아니라 계약검증 위주 -> 실데이터 벤치 인프라 필요
+1. 벤치마크 테스트 일부가 목표 증명형이 아니라 계약검증 위주 -> 실데이터 벤치 인프라 필요 (Stage 4 API p95 게이트 1차 해소)
 2. 인허가/ESG 일부 로직이 정적 규칙/상수 의존 -> 동적 규정/지표 피드 연동 확대 필요
 3. IFC/Monte Carlo 목표(정확도/처리시간)의 CI 자동 측정 파이프라인 부재 (Stage 3 1차 해소)
 4. 전체 백엔드 테스트는 로컬 의존성(casbin 등) 정비가 필요
@@ -54,12 +54,22 @@
 - Stage 3 strict 게이트 옵션 추가: `scripts/perf/run_stage3_benchmarks.py --fail-on-target-miss`
 - Stage 3 실 IFC 최소요구 게이트 추가: `scripts/perf/run_stage3_benchmarks.py --require-real-ifc-min`
 - 실 IFC 온보딩 자동화 스크립트 추가: `scripts/perf/onboard_real_ifc_fixtures.py`
+- 실 IFC 교체 오케스트레이션 스크립트 추가(온보딩+strict 벤치): `scripts/perf/refresh_real_ifc_pipeline.py`
+- incoming IFC 품질게이트 검증기 추가: `scripts/perf/validate_real_ifc_incoming.py`
 - 실 IFC 온보딩 계약 테스트 추가: `tests/unit/test_stage3_real_ifc_onboarding_contract.py`
+- 실 IFC 교체 오케스트레이션 계약 테스트 추가: `tests/unit/test_stage3_refresh_real_ifc_pipeline_contract.py`
+- incoming IFC 품질게이트 계약 테스트 추가: `tests/unit/test_stage3_ifc_incoming_validation_contract.py`
+- 컷오버 안전성 fail-path 테스트 추가: `tests/unit/test_stage3_ifc_incoming_validation_contract.py`(max-file-size), `tests/unit/test_stage3_refresh_real_ifc_pipeline_contract.py`(move 후 잔존 IFC 실패)
 - 실 IFC 온보딩 익명화 강화 + 외부 경로 호환성 수정: `scripts/perf/onboard_real_ifc_fixtures.py`
 - ifcopenshell 설치 및 실 IFC 샘플 생성: `scripts/perf/generate_real_ifc_samples.py`, `tests/fixtures/ifc/real_samples/*.ifc`
 - Stage 3 CI 스케줄 워크플로우 추가: `.github/workflows/stage3-benchmark.yml`
+- Stage 3 workflow_dispatch 컷오버 리허설 입력 추가: `run_refresh_rehearsal`, `refresh_mode`
 - 실 IFC 확장 manifest/샘플 디렉터리 추가: `tests/fixtures/ifc/real_ifc_manifest.v1.json`, `tests/fixtures/ifc/real_samples/`
 - Stage 3 상세계획 문서화: `_workspace/review/STAGE3_EXECUTION_PLAN_2026-05-29.md`
+- Stage 4 API 레이턴시 벤치 스크립트 추가: `scripts/perf/run_stage4_api_latency_benchmarks.py`
+- Stage 4 계약/벤치 테스트 추가: `tests/unit/test_stage4_api_latency_pipeline_contract.py`, `tests/benchmarks/bench_stage4_api_latency.py`
+- Stage 3 CI 워크플로우를 Stage 3-4 게이트로 확장: `.github/workflows/stage3-benchmark.yml`
+- Stage 4 상세계획 문서화: `_workspace/review/STAGE4_EXECUTION_PLAN_2026-05-30.md`
 
 ## F. 목표달성 단계별 구현계획 (실행순서)
 ### Stage 1 (이번 주)
@@ -82,11 +92,20 @@
 - 실 IFC 원본 온보딩 자동화(파일수집/manifest/비식별화) 완료
 - 잔여작업: generated 샘플을 실 프로젝트 원본(비식별 완료본)으로 교체
 
+### Stage 4 (지속운영)
+- API p95(<=200ms) 자동측정 스크립트/리포트/strict gate 1차 완료
+- Stage3-4 통합 워크플로우에 계약/벤치 테스트 포함 완료
+- 잔여작업: 인증 필요 엔드포인트/실운영 경로 기반 레이턴시 샘플셋 확장
+
 ## G. 검증 결과 (이번 턴)
-- `pytest -q tests/unit/test_stage2_dynamic_rules.py tests/unit/test_kdx_stream_security_contract.py tests/unit/test_platform_p0_regressions.py tests/unit/test_stage3_benchmark_pipeline_contract.py tests/unit/test_stage3_real_ifc_onboarding_contract.py tests/benchmarks/bench_ifc.py tests/benchmarks/bench_graphql.py tests/benchmarks/bench_stage3_pipeline.py`
-- 결과: **32 passed, 1 warning**
+- `pytest -q tests/unit/test_stage2_dynamic_rules.py tests/unit/test_kdx_stream_security_contract.py tests/unit/test_platform_p0_regressions.py tests/unit/test_stage3_benchmark_pipeline_contract.py tests/unit/test_stage3_real_ifc_onboarding_contract.py tests/unit/test_stage3_refresh_real_ifc_pipeline_contract.py tests/unit/test_stage3_ifc_incoming_validation_contract.py tests/benchmarks/bench_ifc.py tests/benchmarks/bench_graphql.py tests/benchmarks/bench_stage3_pipeline.py`
+- 결과: **42 passed, 1 warning** (오케스트레이션+incoming gate 계약 테스트 포함)
 - `python scripts/perf/run_stage3_benchmarks.py --attempts 3 --n-simulations 10000`
 - 결과: **overall PASS** (IFC MAE 0.9032%, Monte Carlo p95 0.067초)
+- `python scripts/perf/refresh_real_ifc_pipeline.py --incoming /tmp/stage3_refresh_incoming --output-dir tests/fixtures/ifc/real_samples --manifest tests/fixtures/ifc/real_ifc_manifest.v1.json --keep-original-name --mode copy --source-label generated-local-sample --attempts 3 --n-simulations 10000 --require-real-ifc-min 3`
+- 결과: **overall PASS** (incoming gate pass + IFC MAE 0.9032%, Monte Carlo p95 0.0578초, real IFC parsed_count 3)
+- `python scripts/perf/refresh_real_ifc_pipeline.py --incoming tests/fixtures/ifc/incoming --output-dir tests/fixtures/ifc/real_samples --manifest tests/fixtures/ifc/real_ifc_manifest.v1.json --keep-original-name --mode move --source-label generated-local-sample --attempts 3 --n-simulations 10000 --require-real-ifc-min 3`
+- 결과: **overall PASS** (incoming gate pass + IFC MAE 0.9032%, Monte Carlo p95 0.0617초, real IFC parsed_count 3, 실행 후 incoming 비움 확인)
 - `PROPAI_STRICT_PERF_GATE=1 python scripts/perf/run_stage3_benchmarks.py --attempts 2 --n-simulations 10000 --fail-on-target-miss`
 - 결과: **exit code 0 (strict gate pass)**
 - `python scripts/perf/onboard_real_ifc_fixtures.py --incoming tests/fixtures/ifc/real_samples --output-dir /tmp/stage3_onboard_out --manifest /tmp/stage3_onboard_manifest.json --keep-original-name --mode copy`
@@ -95,4 +114,8 @@
 - 결과: **exit code 2 (실 IFC 최소요구 미충족 시 strict fail 정상동작)**
 - `python scripts/perf/run_stage3_benchmarks.py --attempts 3 --n-simulations 10000 --require-real-ifc-min 3 --fail-on-target-miss`
 - 결과: **overall PASS** (실 IFC parsed_count 3, real IFC MAE 0.0%)
+- `pytest -q tests/unit/test_stage2_dynamic_rules.py tests/unit/test_kdx_stream_security_contract.py tests/unit/test_platform_p0_regressions.py tests/unit/test_stage3_benchmark_pipeline_contract.py tests/unit/test_stage3_real_ifc_onboarding_contract.py tests/unit/test_stage3_refresh_real_ifc_pipeline_contract.py tests/unit/test_stage3_ifc_incoming_validation_contract.py tests/unit/test_stage4_api_latency_pipeline_contract.py tests/benchmarks/bench_ifc.py tests/benchmarks/bench_graphql.py tests/benchmarks/bench_stage3_pipeline.py tests/benchmarks/bench_stage4_api_latency.py`
+- 결과: **45 passed, 1 warning** (Stage4 API latency 계약/벤치 포함)
+- `apps/api/.venv/bin/python scripts/perf/run_stage4_api_latency_benchmarks.py --attempts 20 --warmup 2 --fail-on-target-miss`
+- 결과: **overall PASS** (`/api/v1/system/integration/status` p95 0.0014초, `/api/latest` p95 0.0012초)
 - 제한: `tests/unit/test_kdx_feasibility_live_modules.py`는 로컬 `casbin` 의존성 부재로 수집 실패

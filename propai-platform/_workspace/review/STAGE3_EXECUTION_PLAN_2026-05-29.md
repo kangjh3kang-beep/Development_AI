@@ -10,9 +10,13 @@
 - 구현
   - `scripts/perf/run_stage3_benchmarks.py`
   - `scripts/perf/onboard_real_ifc_fixtures.py`
+  - `scripts/perf/refresh_real_ifc_pipeline.py`
+  - `scripts/perf/validate_real_ifc_incoming.py`
   - `tests/fixtures/ifc/golden_quantity_reference.v1.json`
   - `tests/unit/test_stage3_benchmark_pipeline_contract.py`
   - `tests/unit/test_stage3_real_ifc_onboarding_contract.py`
+  - `tests/unit/test_stage3_refresh_real_ifc_pipeline_contract.py`
+  - `tests/unit/test_stage3_ifc_incoming_validation_contract.py`
   - `tests/benchmarks/bench_stage3_pipeline.py`
 - 산출물
   - `_workspace/review/perf/stage3_benchmark_report.json`
@@ -40,7 +44,7 @@
 - Stage 3 벤치 실행:
   - `python scripts/perf/run_stage3_benchmarks.py --attempts 3 --n-simulations 10000`
 - pytest 계약/벤치 검증:
-  - `pytest -q tests/unit/test_stage3_real_ifc_onboarding_contract.py tests/unit/test_stage3_benchmark_pipeline_contract.py tests/benchmarks/bench_stage3_pipeline.py`
+  - `pytest -q tests/unit/test_stage3_ifc_incoming_validation_contract.py tests/unit/test_stage3_refresh_real_ifc_pipeline_contract.py tests/unit/test_stage3_real_ifc_onboarding_contract.py tests/unit/test_stage3_benchmark_pipeline_contract.py tests/benchmarks/bench_stage3_pipeline.py`
 
 ## 5) 검증 게이트
 - 기본 게이트
@@ -59,17 +63,23 @@
 
 ## 7) 실행 결과 (2026-05-29)
 - pytest:
-  - `pytest -q tests/unit/test_stage3_real_ifc_onboarding_contract.py tests/unit/test_stage3_benchmark_pipeline_contract.py tests/benchmarks/bench_stage3_pipeline.py`
-  - 결과: `11 passed, 1 warning`
+  - `pytest -q tests/unit/test_stage3_ifc_incoming_validation_contract.py tests/unit/test_stage3_refresh_real_ifc_pipeline_contract.py tests/unit/test_stage3_real_ifc_onboarding_contract.py tests/unit/test_stage3_benchmark_pipeline_contract.py tests/benchmarks/bench_stage3_pipeline.py`
+  - 결과: `21 passed, 1 warning`
 - 통합 회귀/벤치:
-  - `pytest -q tests/unit/test_stage2_dynamic_rules.py tests/unit/test_kdx_stream_security_contract.py tests/unit/test_platform_p0_regressions.py tests/unit/test_stage3_benchmark_pipeline_contract.py tests/unit/test_stage3_real_ifc_onboarding_contract.py tests/benchmarks/bench_ifc.py tests/benchmarks/bench_graphql.py tests/benchmarks/bench_stage3_pipeline.py`
-  - 결과: `32 passed, 1 warning`
+  - `pytest -q tests/unit/test_stage2_dynamic_rules.py tests/unit/test_kdx_stream_security_contract.py tests/unit/test_platform_p0_regressions.py tests/unit/test_stage3_benchmark_pipeline_contract.py tests/unit/test_stage3_real_ifc_onboarding_contract.py tests/unit/test_stage3_refresh_real_ifc_pipeline_contract.py tests/unit/test_stage3_ifc_incoming_validation_contract.py tests/benchmarks/bench_ifc.py tests/benchmarks/bench_graphql.py tests/benchmarks/bench_stage3_pipeline.py`
+  - 결과: `42 passed, 1 warning`
 - Stage 3 벤치 리포트:
   - `python scripts/perf/run_stage3_benchmarks.py --attempts 3 --n-simulations 10000`
   - 결과: `overall PASS` (IFC MAE 0.9032%, Monte Carlo p95 0.067초)
 - 실 IFC strict pass 검증:
   - `python scripts/perf/run_stage3_benchmarks.py --attempts 3 --n-simulations 10000 --require-real-ifc-min 3 --fail-on-target-miss`
   - 결과: `overall PASS` (parsed_count=3, real IFC MAE=0.0%)
+- 실 IFC 교체 오케스트레이션 검증:
+  - `python scripts/perf/refresh_real_ifc_pipeline.py --incoming /tmp/stage3_refresh_incoming --output-dir tests/fixtures/ifc/real_samples --manifest tests/fixtures/ifc/real_ifc_manifest.v1.json --keep-original-name --mode copy --source-label generated-local-sample --attempts 3 --n-simulations 10000 --require-real-ifc-min 3`
+  - 결과: `overall PASS` (incoming gate pass + IFC MAE 0.9032%, Monte Carlo p95 0.0578초, real IFC parsed_count=3)
+- incoming dropzone consume 리허설:
+  - `python scripts/perf/refresh_real_ifc_pipeline.py --incoming tests/fixtures/ifc/incoming --output-dir tests/fixtures/ifc/real_samples --manifest tests/fixtures/ifc/real_ifc_manifest.v1.json --keep-original-name --mode move --source-label generated-local-sample --attempts 3 --n-simulations 10000 --require-real-ifc-min 3`
+  - 결과: `overall PASS` (incoming gate pass + IFC MAE 0.9032%, Monte Carlo p95 0.0617초, real IFC parsed_count=3, 실행 후 incoming 폴더 비움 확인)
 - 온보딩 경로 호환성 검증:
   - `python scripts/perf/onboard_real_ifc_fixtures.py --incoming tests/fixtures/ifc/real_samples --output-dir /tmp/stage3_onboard_out --manifest /tmp/stage3_onboard_manifest.json --keep-original-name --mode copy`
   - 결과: `output-dir`가 저장소 외부여도 정상 완료 (manifest는 절대경로 저장)
@@ -90,8 +100,22 @@
   - `PROPAI_STRICT_PERF_GATE=1`
   - `python scripts/perf/run_stage3_benchmarks.py --fail-on-target-miss`
   - `python scripts/perf/run_stage3_benchmarks.py --require-real-ifc-min N` (workflow 기본값 3)
+- workflow_dispatch 추가 입력:
+  - `run_refresh_rehearsal` (true/false, 기본 false)
+  - `refresh_mode` (copy/move, 기본 move)
 - 온보딩:
   - `python scripts/perf/onboard_real_ifc_fixtures.py --mode copy --source-label internal-anonymized`
   - 기본값: `--scrub-owner-data` 활성화 (필요 시 `--no-scrub-owner-data`)
+- 통합 갱신:
+  - `python scripts/perf/refresh_real_ifc_pipeline.py ...` (온보딩+strict 벤치 일괄 수행)
+  - 기본값: incoming 품질게이트 선행 실행 (`--no-validate-incoming`으로 비활성화 가능)
 - 아티팩트 업로드:
-  - `_workspace/review/perf/*` (JSON/MD/prof)
+  - `_workspace/review/perf/*` (JSON/MD/prof + incoming validation report)
+
+## 9) Stage4 연계 (2026-05-30)
+- `.github/workflows/stage3-benchmark.yml`를 Stage3-4 통합 게이트로 확장
+- 추가 테스트:
+  - `tests/unit/test_stage4_api_latency_pipeline_contract.py`
+  - `tests/benchmarks/bench_stage4_api_latency.py`
+- 추가 strict gate:
+  - `python scripts/perf/run_stage4_api_latency_benchmarks.py --fail-on-target-miss`

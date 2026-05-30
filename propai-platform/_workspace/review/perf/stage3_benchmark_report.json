@@ -1,5 +1,5 @@
 {
-  "generated_at_utc": "2026-05-29T10:59:42.042184+00:00",
+  "generated_at_utc": "2026-05-29T20:55:57.527127+00:00",
   "dataset_path": "/home/kangjh3kang/My_Projects/Development_AI/propai-platform/tests/fixtures/ifc/golden_quantity_reference.v1.json",
   "targets": {
     "ifc_mae_max": 0.02,
@@ -66,7 +66,7 @@
   "real_ifc_fixtures": {
     "manifest_path": "/home/kangjh3kang/My_Projects/Development_AI/propai-platform/tests/fixtures/ifc/real_ifc_manifest.v1.json",
     "status": "parsed",
-    "manifest_version": "2026-05-29T10:59:26Z",
+    "manifest_version": "2026-05-29T20:55:57Z",
     "fixture_count": 3,
     "available_count": 3,
     "parsed_count": 3,
@@ -138,14 +138,14 @@
     "attempts": 3,
     "n_simulations": 10000,
     "durations_sec": [
-      0.0719,
-      0.0214,
+      0.0659,
+      0.0232,
       0.0235
     ],
-    "min_sec": 0.0214,
-    "avg_sec": 0.0389,
-    "p95_sec": 0.067,
-    "max_sec": 0.0719,
+    "min_sec": 0.0232,
+    "avg_sec": 0.0376,
+    "p95_sec": 0.0617,
+    "max_sec": 0.0659,
     "target_sec": 30.0,
     "pass_target": true,
     "result_snapshot": {

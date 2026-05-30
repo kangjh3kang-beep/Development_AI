@@ -81,6 +81,35 @@ class CostToFeasibilityPayload(BaseModel):
     cost_breakdown: dict[str, Any] = Field(default_factory=dict)  # 공종별 비용 상세
 
 
+# ── 유닛믹스 고도화 상수 ──
+# 건물유형별 전용률(연면적 대비 분양/전용면적 비율) — 고정 0.75를 유형별 현실값으로 대체.
+_SELLABLE_EFFICIENCY_BY_TYPE: dict[str, float] = {
+    "아파트": 0.75,
+    "다세대주택": 0.78,
+    "오피스텔": 0.70,
+    "공동주택": 0.76,
+    "근린생활시설": 0.70,
+}
+
+# 유닛믹스 최적화를 적용할 주거 계열 건물유형(상업/근생은 평형 배분 미적용).
+_RESIDENTIAL_TYPES = {"아파트", "다세대주택", "공동주택", "오피스텔"}
+
+# 건물유형별 허용 평형(None=전체). 다세대·오피스텔은 중소형 위주.
+_ENABLED_UNIT_TYPES: dict[str, list[str] | None] = {
+    "아파트": None,
+    "공동주택": None,
+    "다세대주택": ["S39", "S49", "S59", "S74", "S84"],
+    "오피스텔": ["S39", "S49", "S59"],
+}
+
+# 평형별 분양가 프리미엄 — 84㎡(25평)=1.0 기준으로 정규화.
+# 지역 기준시세(regional_pricing 단일 출처, 만원/평)에 곱해 평형별 분양가를 산출한다.
+_UNIT_PRICE_PREMIUM: dict[str, float] = {
+    "S39": 0.80, "S49": 0.86, "S59": 0.91, "S74": 0.97,
+    "S84": 1.00, "S102": 1.09, "S135": 1.20,
+}
+
+
 class PipelineState(BaseModel):
     """파이프라인 전체 상태."""
 
@@ -760,9 +789,70 @@ class ProjectPipeline:
         else:
             building_type = "공동주택"
 
-        avg_unit_area = 25.0  # 평 (기본값)
-        sellable_area = total_gfa * 0.75  # 전용률 75%
+        # ── 전용률: 건물유형별 현실값 (고정 0.75 대체) ──
+        efficiency = _SELLABLE_EFFICIENCY_BY_TYPE.get(building_type, 0.75)
+        sellable_area = total_gfa * efficiency
+
+        # ── 유닛믹스 최적화 연동 (UnitMixOptimizer) ──
+        # crude 추산(고정 25평으로 세대수만 산출) 대신 SLSQP 수익극대화 평형 배분을 사용한다.
+        # 평형별 세대수·구성비·주차요구량을 산출하고, 최적화 실패 시에만 폴백 추산을 쓴다.
+        avg_unit_area = 25.0  # 폴백 기본값(평)
         unit_count = max(1, int(sellable_area / (avg_unit_area * 3.3058)))
+        unit_types: list[dict] = []
+        parking_ratio: float | None = None
+        unit_mix_method: str | None = None
+        unit_mix_revenue_won: float | None = None
+
+        if building_type in _RESIDENTIAL_TYPES and sellable_area > 0:
+            try:
+                from app.services.feasibility.unit_mix_optimizer import (
+                    UnitMixInput,
+                    UnitMixOptimizer,
+                )
+                from app.services.feasibility.regional_pricing import (
+                    get_regional_base_price_man_won,
+                )
+
+                # 평형별 분양가 = 지역 기준시세(단일 출처) × 평형 프리미엄 (만원/평)
+                base_price_man = get_regional_base_price_man_won(address=site.address)
+                price_by_type = {
+                    code: max(1, round(base_price_man * premium))
+                    for code, premium in _UNIT_PRICE_PREMIUM.items()
+                }
+
+                mix = UnitMixOptimizer().optimize(
+                    UnitMixInput(
+                        total_gfa_sqm=sellable_area,  # 전용면적 기준으로 평형 배분
+                        max_far_pct=far,
+                        max_bcr_pct=bcr,
+                        land_area_sqm=land_area,
+                        max_floors=floor_count,
+                        max_parking_spaces=10_000,  # 상한 미구속(주차는 요구량으로 산출)
+                        region=site.zone_type or "서울",
+                        price_by_type=price_by_type,
+                        enabled_types=_ENABLED_UNIT_TYPES.get(building_type),
+                    )
+                )
+
+                if mix.get("units"):
+                    unit_types = mix["units"]
+                    unit_count = mix.get("total_units") or unit_count
+                    unit_mix_method = mix.get("method")
+                    unit_mix_revenue_won = mix.get("total_revenue_won")
+                    total_parking = mix.get("total_parking_required", 0)
+                    if unit_count > 0:
+                        parking_ratio = round(total_parking / unit_count, 2)
+                        avg_unit_area = round(
+                            mix.get("total_gfa_used_sqm", sellable_area)
+                            / unit_count
+                            / 3.3058,
+                            1,
+                        )
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "유닛믹스 최적화 실패, 폴백 추산 사용: %s", str(e)[:200]
+                )
 
         state.design_to_cost = DesignToCostPayload(
             total_gfa_sqm=total_gfa,
@@ -783,11 +873,17 @@ class ProjectPipeline:
             "unit_count": unit_count,
             "bcr_used_pct": bcr,
             "far_used_pct": far,
+            "sellable_efficiency_pct": round(efficiency * 100, 1),
             # 보고서 호환 alias (건축계획/유닛믹스 섹션)
             "floor_count": floor_count,
             "bcr": bcr,
             "far": far,
             "avg_unit_sqm": round(avg_unit_area * 3.3058, 1),
+            # 유닛믹스 상세 (보고서 유닛믹스 탭 → UnitTypesTable)
+            "unit_types": unit_types,
+            "parking_ratio": parking_ratio,
+            "unit_mix_method": unit_mix_method,
+            "unit_mix_revenue_won": unit_mix_revenue_won,
         }
 
         # ── 건축법규 자동 검증 (BuildingCodeRuleEngine) ──
@@ -948,7 +1044,10 @@ class ProjectPipeline:
             sale_price_source = "cost_based_fallback"
 
         total_gfa_pyeong = design.total_gfa_sqm / 3.3058
-        sellable_pyeong = total_gfa_pyeong * 0.75
+        # 전용률은 설계 단계와 동일 단일 출처(건물유형별)를 사용한다.
+        design_data = state.stages["design"].data if "design" in state.stages else {}
+        efficiency_pct = design_data.get("sellable_efficiency_pct", 75.0)
+        sellable_pyeong = total_gfa_pyeong * (efficiency_pct / 100)
         total_revenue = avg_sale_price * sellable_pyeong
 
         total_project_cost = land_cost + cost.total_construction_cost
@@ -1292,7 +1391,29 @@ class ProjectPipeline:
                     site_data["distance_subway_m"] = subway.get("distance_m")
                 if schools and isinstance(schools[0], dict):
                     site_data["distance_school_m"] = schools[0].get("distance_m")
-                    site_data["nearby_amenities"] = len(schools)
+                # 주변 편의시설 = 학교+병원+마트+편의점+공원+버스 총합
+                amenity_keys = ("schools", "hospitals", "marts",
+                                "convenience_stores", "parks", "bus_stops")
+                amenity_count = sum(
+                    len(infra.get(k) or []) for k in amenity_keys
+                )
+                if amenity_count > 0:
+                    site_data["nearby_amenities"] = amenity_count
+                # 접도 너비 (토지대장 도로접면 → 추정), 보고서 빈값 해결
+                if infra.get("road_width_m") is not None:
+                    site_data["road_width_m"] = infra["road_width_m"]
+                # 입지 점수·등급 (레이더/종합평가용)
+                loc_score = infra.get("location_score")
+                if isinstance(loc_score, dict):
+                    site_data["location_score"] = loc_score.get("total_score")
+                    site_data["location_grade"] = loc_score.get("grade")
+                    site_data["location_score_items"] = loc_score.get("items")
+                # 상권 분석 (상업/주상복합 — 점포 밀도·업종 다양성)
+                commercial = infra.get("commercial_area")
+                if isinstance(commercial, dict):
+                    site_data["commercial_stores"] = commercial.get("total_stores")
+                    site_data["commercial_grade"] = commercial.get("grade")
+                    site_data["commercial_vitality_score"] = commercial.get("vitality_score")
 
         # 종합평가 — 수지분석 수익률에서 파생(외부 데이터 없이 산출).
         feas = summary.get("feasibility") or {}

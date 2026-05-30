@@ -1,0 +1,132 @@
+{
+  "generated_at_utc": "2026-05-30T06:27:09.577211+00:00",
+  "targets": {
+    "api_p95_sec_max": 0.2,
+    "request_timeout_sec": 2.0
+  },
+  "authenticated_profile": {
+    "enabled": true,
+    "role": "admin",
+    "endpoint_count": 1
+  },
+  "endpoints": [
+    {
+      "endpoint": "/api/v1/system/integration/status",
+      "attempts": 20,
+      "warmup": 2,
+      "completed_attempts": 20,
+      "statuses": [
+        200,
+        200,
+        200,
+        200,
+        200,
+        200,
+        200,
+        200,
+        200,
+        200,
+        200,
+        200,
+        200,
+        200,
+        200,
+        200,
+        200,
+        200,
+        200,
+        200
+      ],
+      "status_ok": true,
+      "timeout_count": 0,
+      "warmup_timeout_count": 0,
+      "latency": {
+        "p95_sec": 0.0019,
+        "avg_sec": 0.0015,
+        "min_sec": 0.0011,
+        "max_sec": 0.002
+      },
+      "kind": "public",
+      "pass_target": true
+    },
+    {
+      "endpoint": "/api/latest",
+      "attempts": 20,
+      "warmup": 2,
+      "completed_attempts": 20,
+      "statuses": [
+        307,
+        307,
+        307,
+        307,
+        307,
+        307,
+        307,
+        307,
+        307,
+        307,
+        307,
+        307,
+        307,
+        307,
+        307,
+        307,
+        307,
+        307,
+        307,
+        307
+      ],
+      "status_ok": true,
+      "timeout_count": 0,
+      "warmup_timeout_count": 0,
+      "latency": {
+        "p95_sec": 0.0018,
+        "avg_sec": 0.0015,
+        "min_sec": 0.0012,
+        "max_sec": 0.0021
+      },
+      "kind": "public",
+      "pass_target": true
+    },
+    {
+      "endpoint": "/api/v1/system/version",
+      "attempts": 20,
+      "warmup": 2,
+      "completed_attempts": 20,
+      "statuses": [
+        200,
+        200,
+        200,
+        200,
+        200,
+        200,
+        200,
+        200,
+        200,
+        200,
+        200,
+        200,
+        200,
+        200,
+        200,
+        200,
+        200,
+        200,
+        200,
+        200
+      ],
+      "status_ok": true,
+      "timeout_count": 0,
+      "warmup_timeout_count": 0,
+      "latency": {
+        "p95_sec": 0.0034,
+        "avg_sec": 0.0028,
+        "min_sec": 0.002,
+        "max_sec": 0.0038
+      },
+      "kind": "authenticated",
+      "pass_target": true
+    }
+  ],
+  "overall_pass": true
+}

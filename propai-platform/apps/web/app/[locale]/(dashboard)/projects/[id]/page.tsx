@@ -162,14 +162,14 @@ export default function ProjectDetailPage() {
               className="space-y-6"
             >
               <h1 className="text-6xl font-[1000] tracking-tighter text-[var(--text-primary)] leading-[0.9] sm:text-7xl lg:text-8xl">
-                {meta?.name ?? d.summary.name}<span className="text-[var(--accent-strong)]">.</span>
+                {meta?.name ?? "알 수 없는 프로젝트"}<span className="text-[var(--accent-strong)]">.</span>
               </h1>
               <div className="flex flex-wrap gap-6">
                 <span className="rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-soft)] px-6 py-2.5 text-[11px] font-black uppercase tracking-widest text-[var(--text-secondary)] backdrop-blur-md shadow-[var(--shadow-sm)]">
-                  {meta?.pnu ?? d.summary.pnu}
+                  {meta?.pnu ?? "PNU 미상"}
                 </span>
                 <span className="rounded-2xl border border-[var(--accent-strong)]/30 bg-[var(--accent-soft)] px-6 py-2.5 text-[11px] font-black uppercase tracking-widest text-[var(--accent-strong)] backdrop-blur-md shadow-[var(--shadow-sm)]">
-                  {meta?.zone ?? d.summary.zone}
+                  {meta?.zone ?? "용도지역 미상"}
                 </span>
               </div>
             </motion.div>
@@ -182,8 +182,8 @@ export default function ProjectDetailPage() {
             className="flex flex-wrap gap-8"
           >
             {[
-              { label: d.summary.npv, value: meta?.npv ? formatCurrencyKRW(meta.npv) : formatCurrencyKRW(1250000000), color: "text-[var(--text-primary)]" },
-              { label: d.summary.roi, value: meta?.roi ? `${meta.roi.toFixed(1)}%` : "18.4%", color: "text-[var(--accent-strong)]" },
+              { label: d.summary.npv, value: meta?.npv ? formatCurrencyKRW(meta.npv) : "분석 전", color: "text-[var(--text-primary)]" },
+              { label: d.summary.roi, value: meta?.roi ? `${meta.roi.toFixed(1)}%` : "분석 전", color: "text-[var(--accent-strong)]" },
             ].map((stat, i) => (
               <div key={i} className="relative min-w-[240px] rounded-[3rem] border border-[var(--line-strong)] bg-[var(--surface-strong)]/50 p-10 backdrop-blur-3xl shadow-[var(--shadow-xl)] transition-all hover:-translate-y-2 hover:bg-[var(--surface-soft)] group/stat border-2 border-transparent hover:border-[var(--accent-strong)]/20">
                 <p className="text-[10px] font-black uppercase tracking-[0.4em] text-[var(--text-hint)] mb-4">{stat.label}</p>

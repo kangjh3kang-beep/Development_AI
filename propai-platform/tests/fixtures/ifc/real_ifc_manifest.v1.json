@@ -1,8 +1,8 @@
 {
-  "manifest_version": "2026-05-29T10:59:26Z",
+  "manifest_version": "2026-05-29T20:55:57Z",
   "description": "실 IFC fixture 자동 온보딩 결과",
   "generated_by": "scripts/perf/onboard_real_ifc_fixtures.py",
-  "incoming_dir": "tests/fixtures/ifc/real_samples",
+  "incoming_dir": "tests/fixtures/ifc/incoming",
   "output_dir": "tests/fixtures/ifc/real_samples",
   "mode": "move",
   "scrub_owner_data": true,

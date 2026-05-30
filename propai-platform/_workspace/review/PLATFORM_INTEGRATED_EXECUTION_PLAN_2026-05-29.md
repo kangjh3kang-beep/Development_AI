@@ -223,7 +223,8 @@
 4. `apps/api/services/carbon_calculation_service.py` EPD 연동 레이어 추가 (**완료: JSON/ENV 외부화 1차**)
 5. `apps/api/services/demand_forecast_service.py` Redis DSN 환경변수화 (**완료**)
 6. `scripts/perf/run_stage3_benchmarks.py` 추가 및 Stage 3 리포트 자동생성 (**완료**)
-7. CI 주기 실행(스케줄) + 실 IFC fixture 확장 + strict gate 적용 (**샘플 기준 완료: workflow/strict gate/real-ifc-min + parsed_count=3 통과, 실 원본 온보딩 자동화/비식별화(scrub) + 외부경로 호환성 테스트 완료, 실 프로젝트 원본 fixture 교체 대기**)
+7. CI 주기 실행(스케줄) + 실 IFC fixture 확장 + strict gate 적용 (**샘플 기준 완료: workflow/strict gate/real-ifc-min + parsed_count=3 통과, 실 원본 온보딩 자동화/비식별화(scrub) + 외부경로 호환성 테스트 + incoming 품질게이트(중복/용량 포함) + 온보딩/벤치 오케스트레이션 + mode=move 후 incoming 비움 검증 완료, workflow_dispatch의 refresh 컷오버 리허설 입력(run_refresh_rehearsal/refresh_mode) 추가, 실 프로젝트 원본 fixture 교체 대기**)
+8. API p95(<=200ms) 자동측정 Stage4 벤치 + strict gate + 리포트 자동화 (**완료: `run_stage4_api_latency_benchmarks.py` + Stage3-4 workflow 확장 + `/api/v1/system/integration/status` p95 0.0014s, `/api/latest` p95 0.0012s**)
 
 ## 9) 결론
 - 현재 플랫폼은 기능 폭은 넓지만, 목표를 "측정/증명"하는 계층(벤치마크/운영계측/표준정합)이 약하다.

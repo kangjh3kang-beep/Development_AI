@@ -145,6 +145,24 @@ async def cleanup_expired(ctx: dict[str, Any]) -> dict[str, Any]:
     return await run_cleanup_expired(ctx)
 
 
+async def g2b_sync_bids(ctx: dict[str, Any]) -> dict[str, Any]:
+    """나라장터 신규 입찰 공고 수집."""
+    from app.tasks.g2b_sync_task import sync_bid_notices
+    return await sync_bid_notices(ctx)
+
+
+async def g2b_sync_awards(ctx: dict[str, Any]) -> dict[str, Any]:
+    """나라장터 낙찰 결과 갱신."""
+    from app.tasks.g2b_sync_task import sync_award_results
+    return await sync_award_results(ctx)
+
+
+async def g2b_rebuild_stats(ctx: dict[str, Any]) -> dict[str, Any]:
+    """나라장터 낙찰가율 통계 재집계."""
+    from app.tasks.g2b_sync_task import rebuild_award_stats
+    return await rebuild_award_stats(ctx)
+
+
 class WorkerSettings:
     """arq 워커 설정."""
 
@@ -159,6 +177,9 @@ class WorkerSettings:
         blockchain_listen,
         etl_public_data,
         cleanup_expired,
+        g2b_sync_bids,
+        g2b_sync_awards,
+        g2b_rebuild_stats,
     ]
 
     cron_jobs = [
@@ -170,6 +191,13 @@ class WorkerSettings:
         cron(cleanup_expired, hour=4, minute=0),
         # 매 10분: 블록체인 이벤트 리스닝
         cron(blockchain_listen, minute={0, 10, 20, 30, 40, 50}),
+        # 나라장터(G2B) — 워커 TZ는 UTC 가정 (KST = UTC+9)
+        # 매 2시간: 신규 입찰 공고 수집
+        cron(g2b_sync_bids, hour=set(range(0, 24, 2)), minute=0),
+        # 매일 21:00 UTC(= KST 06:00): 낙찰 결과 갱신
+        cron(g2b_sync_awards, hour=21, minute=0),
+        # 매주 월 22:00 UTC: 낙찰가율 통계 재집계
+        cron(g2b_rebuild_stats, weekday="mon", hour=22, minute=0),
     ]
 
     on_startup = startup

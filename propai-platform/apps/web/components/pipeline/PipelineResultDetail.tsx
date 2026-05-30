@@ -79,6 +79,10 @@ const SECTIONS: SectionDef[] = [
       { key: "distance_school_m", label: "학교 거리", unit: "m", editable: false, format: fmtNum },
       { key: "nearby_amenities", label: "주변 편의시설", unit: "개", editable: false },
       { key: "road_width_m", label: "접도 너비", unit: "m", editable: false },
+      { key: "location_grade", label: "입지 등급", unit: "", editable: false },
+      { key: "location_score", label: "입지 점수", unit: "점", editable: false },
+      { key: "commercial_grade", label: "상권 등급", unit: "", editable: false },
+      { key: "commercial_stores", label: "반경 500m 점포수", unit: "개", editable: false },
     ],
   },
   {

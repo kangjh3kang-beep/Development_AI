@@ -166,6 +166,7 @@ export default async function DashboardLayout({
   // III. 자산 운영 (운영 및 물권)
   const operationsNavigation = [
     { href: `/${locale}/auction`, label: "경공매 AI 분석", icon: <IconAuction /> },
+    { href: `/${locale}/g2b`, label: "공공입찰 (나라장터)", icon: <IconAuction /> },
     { href: `/${locale}/analytics/iot`, label: "데이터 허브 (IoT)", icon: <IconIoT /> },
     { href: `/${locale}/digital-twin`, label: "디지털 트윈 (FM)", icon: <IconDigitalTwin /> },
     { href: `/${locale}/maintenance`, label: "시설 관리 점검", icon: <IconMaintenance /> },

@@ -12,3 +12,31 @@ python scripts/perf/onboard_real_ifc_fixtures.py --mode copy --source-label inte
 실행 후 결과:
 - `tests/fixtures/ifc/real_samples/*.ifc` 업데이트
 - `tests/fixtures/ifc/real_ifc_manifest.v1.json` 자동 갱신
+
+사전 검증(권장):
+
+```bash
+python scripts/perf/validate_real_ifc_incoming.py \
+  --incoming tests/fixtures/ifc/incoming \
+  --min-ifc-files 3
+```
+
+기본 품질게이트:
+- IFC 파싱 성공
+- 면적/체적 양수
+- 동일 SHA-256 파일 중복 없음
+- 파일 크기 상한(기본 512MB) 이내
+
+원클릭(온보딩 + strict 벤치) 실행:
+
+```bash
+python scripts/perf/refresh_real_ifc_pipeline.py \
+  --incoming tests/fixtures/ifc/incoming \
+  --output-dir tests/fixtures/ifc/real_samples \
+  --manifest tests/fixtures/ifc/real_ifc_manifest.v1.json \
+  --source-label internal-anonymized \
+  --require-real-ifc-min 3
+```
+
+`refresh_real_ifc_pipeline.py`는 기본적으로 incoming 품질게이트를 선행 실행한다.
+또한 `--mode move`일 때 기본값으로 실행 후 incoming에 IFC가 남아있으면 실패한다.

@@ -95,9 +95,18 @@ def decode_token(token: str, settings: Settings | None = None) -> TokenPayload:
         ) from e
 
 
+async def _get_auth_settings() -> Settings:
+    """인증 의존성에서 설정을 비동기 경로로 제공한다.
+
+    일부 환경에서 동기 Depends(get_settings)가 threadpool 경로에서 블로킹되어
+    인증 요청 전체가 지연/정지될 수 있어, 이벤트루프 컨텍스트에서 직접 반환한다.
+    """
+    return get_settings()
+
+
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(_bearer_scheme),
-    settings: Settings = Depends(get_settings),
+    settings: Settings = Depends(_get_auth_settings),
 ) -> CurrentUser:
     """요청에서 현재 사용자를 추출한다. FastAPI Depends로 사용."""
     token_data = decode_token(credentials.credentials, settings)

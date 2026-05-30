@@ -117,6 +117,15 @@ except ImportError:
         from app.routers.comprehensive_analysis import router as comprehensive_analysis_router
     except ImportError:
         comprehensive_analysis_router = None
+
+# 나라장터(G2B) 공공입찰 (자체 prefix="/g2b")
+try:
+    from apps.api.app.routers.g2b_bid import router as g2b_router
+except ImportError:
+    try:
+        from app.routers.g2b_bid import router as g2b_router
+    except ImportError:
+        g2b_router = None
 from apps.api.versioning import VersionHeaderMiddleware, create_latest_redirect_router
 
 settings = get_settings()
@@ -322,6 +331,10 @@ app.include_router(gresb.router, prefix="/api/v1/gresb", tags=["GRESB ESG 스코
 
 # 은행제출용 통합 보고서 라우터
 app.include_router(bank_report_router, prefix="/api/v1", tags=["은행제출용 보고서"])
+
+# 나라장터(G2B) 공공입찰 — 라우터 자체 prefix="/g2b" → 최종 /api/v1/g2b/*
+if g2b_router is not None:
+    app.include_router(g2b_router, prefix="/api/v1", tags=["공공입찰(G2B)"])
 
 # ──────────────────────────────────────
 # API v2 라우터
