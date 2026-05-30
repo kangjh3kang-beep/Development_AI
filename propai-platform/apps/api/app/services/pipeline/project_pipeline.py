@@ -195,6 +195,36 @@ class ProjectPipeline:
             pre_collected = await self._fetch_real_site_data(state.address, pre_collected)
 
         if pre_collected is not None:
+            # pre_collected에 누락된 데이터를 LandInfoService로 보충
+            comprehensive: dict[str, Any] = {}
+            try:
+                from app.services.land_intelligence.land_info_service import LandInfoService
+                land_svc = LandInfoService()
+                comprehensive = await land_svc.collect_comprehensive(state.address)
+            except Exception:
+                comprehensive = {}
+
+            # comprehensive 데이터로 pre_collected 보충
+            if comprehensive:
+                _clr = comprehensive.get("land_register") or {}
+                if isinstance(_clr, dict) and _clr.get("area_sqm"):
+                    pre_collected.setdefault("land_area_sqm", float(_clr["area_sqm"]))
+                    if not pre_collected.get("land_area_sqm") or pre_collected["land_area_sqm"] <= 0:
+                        pre_collected["land_area_sqm"] = float(_clr["area_sqm"])
+                pre_collected.setdefault("infrastructure", comprehensive.get("infrastructure"))
+                pre_collected.setdefault("coordinates", comprehensive.get("coordinates"))
+                pre_collected.setdefault("building_info", comprehensive.get("building_detail") or comprehensive.get("building_info"))
+                pre_collected.setdefault("land_use_plan", comprehensive.get("land_use_plan"))
+                pre_collected.setdefault("special_districts", comprehensive.get("special_districts", []))
+                pre_collected.setdefault("nearby_transactions", comprehensive.get("nearby_transactions"))
+                _ops = comprehensive.get("official_prices", [])
+                if _ops and isinstance(_ops, list) and len(_ops) > 0:
+                    pre_collected.setdefault("official_land_price", float(_ops[0].get("price_per_sqm", 0) or 0))
+                if not pre_collected.get("pnu_codes"):
+                    pnu = comprehensive.get("pnu")
+                    if pnu:
+                        pre_collected["pnu_codes"] = [pnu]
+
             zone_type = pre_collected.get("zone_type", "")
             land_area_sqm = pre_collected.get("land_area_sqm", 0.0)
             pnu_codes = pre_collected.get("pnu_codes", [])
@@ -291,12 +321,13 @@ class ProjectPipeline:
                     "official_price_per_sqm": float(official_land_price),
                     "nearby_transactions": pre_collected.get("nearby_transactions"),
                 },
-                "building": pre_collected.get("building_info"),
-                "infrastructure": pre_collected.get("infrastructure"),
+                "building": pre_collected.get("building_info") or comprehensive.get("building_detail") or comprehensive.get("building_info"),
+                "infrastructure": pre_collected.get("infrastructure") or comprehensive.get("infrastructure"),
+                "coordinates": pre_collected.get("coordinates") or comprehensive.get("coordinates"),
                 "regulations": {
-                    "land_use_plan": pre_collected.get("land_use_plan"),
-                    "special_districts": pre_collected.get("special_districts", []),
-                    "warnings": pre_collected.get("warnings", []),
+                    "land_use_plan": pre_collected.get("land_use_plan") or comprehensive.get("land_use_plan"),
+                    "special_districts": pre_collected.get("special_districts") or comprehensive.get("special_districts", []),
+                    "warnings": pre_collected.get("warnings") or comprehensive.get("warnings", []),
                 },
                 # 하위호환 (기존 평탄 키 유지 — 다른 단계에서 참조)
                 "zone_type": zone_type,
@@ -305,7 +336,7 @@ class ProjectPipeline:
                 "land_area_sqm": float(land_area_sqm),
                 "official_land_price": float(official_land_price),
                 "pnu_codes": pnu_codes,
-                "source": "pre_collected",
+                "source": "pre_collected+comprehensive",
             }
             return
 
