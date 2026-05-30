@@ -783,6 +783,11 @@ class ProjectPipeline:
             "unit_count": unit_count,
             "bcr_used_pct": bcr,
             "far_used_pct": far,
+            # 보고서 호환 alias (건축계획/유닛믹스 섹션)
+            "floor_count": floor_count,
+            "bcr": bcr,
+            "far": far,
+            "avg_unit_sqm": round(avg_unit_area * 3.3058, 1),
         }
 
         # ── 건축법규 자동 검증 (BuildingCodeRuleEngine) ──
@@ -1275,6 +1280,34 @@ class ProjectPipeline:
             if design_stage else {}
         )
 
+        # 입지 지표를 평탄 키로 노출 (infrastructure → 보고서 입지분석 섹션).
+        # VWORLD POI 미수집 시 키는 생략되어 "-"로 표시된다.
+        site_data = summary.get("site_analysis")
+        if isinstance(site_data, dict):
+            infra = site_data.get("infrastructure") or {}
+            if isinstance(infra, dict):
+                subway = infra.get("nearest_subway") or {}
+                schools = infra.get("schools") or []
+                if isinstance(subway, dict) and subway.get("distance_m") is not None:
+                    site_data["distance_subway_m"] = subway.get("distance_m")
+                if schools and isinstance(schools[0], dict):
+                    site_data["distance_school_m"] = schools[0].get("distance_m")
+                    site_data["nearby_amenities"] = len(schools)
+
+        # 종합평가 — 수지분석 수익률에서 파생(외부 데이터 없이 산출).
+        feas = summary.get("feasibility") or {}
+        overall_grade = feas.get("grade")
+        profit_rate = feas.get("profit_rate_pct")
+        if isinstance(profit_rate, (int, float)):
+            if profit_rate >= 15:
+                risk_level, recommendation = "낮음", "사업 추진 권장"
+            elif profit_rate >= 0:
+                risk_level, recommendation = "보통", "조건부 추진 — 분양가·원가 재검토"
+            else:
+                risk_level, recommendation = "높음", "사업 재검토 필요 (수익성 미달)"
+        else:
+            risk_level, recommendation = None, None
+
         state.stages["report"].data = {
             "report_type": "pipeline_summary",
             "project_address": state.address,
@@ -1283,5 +1316,8 @@ class ProjectPipeline:
             "compliance_pass": compliance_summary.get("pass"),
             "compliance_fail": compliance_summary.get("fail"),
             "compliance_total": compliance_summary.get("total_checks"),
+            "overall_grade": overall_grade,
+            "risk_level": risk_level,
+            "recommendation": recommendation,
             "generated_at": datetime.now().isoformat(),
         }
