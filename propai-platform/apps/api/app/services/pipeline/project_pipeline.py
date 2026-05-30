@@ -200,14 +200,33 @@ class ProjectPipeline:
             pnu_codes = pre_collected.get("pnu_codes", [])
             official_land_price = pre_collected.get("official_land_price", 0.0)
 
-            # 조례값 우선, 없으면 법정 상한
-            ordinance_bcr = pre_collected.get("ordinance_bcr") or pre_collected.get("max_bcr", 60.0)
-            ordinance_far = pre_collected.get("ordinance_far") or pre_collected.get("max_far", 200.0)
-            national_bcr = pre_collected.get("national_bcr", ordinance_bcr)
-            national_far = pre_collected.get("national_far", ordinance_far)
+            # 국토계획법 법정 상한
+            national_bcr = pre_collected.get("national_bcr") or pre_collected.get("max_bcr", 60.0)
+            national_far = pre_collected.get("national_far") or pre_collected.get("max_far", 200.0)
+            max_height = pre_collected.get("max_height", 0.0)
+
+            # 조례 조회 (pre_collected에 없으면 OrdinanceService로 실시간 조회)
+            ordinance_bcr = pre_collected.get("ordinance_bcr")
+            ordinance_far = pre_collected.get("ordinance_far")
+            ordinance_source = pre_collected.get("ordinance_source", "")
+            if not ordinance_bcr:
+                try:
+                    from app.services.land_intelligence.ordinance_service import OrdinanceService
+                    ord_svc = OrdinanceService()
+                    ord_result = await ord_svc.get_ordinance_limits(state.address, zone_type)
+                    if ord_result.get("ordinance_bcr") is not None:
+                        ordinance_bcr = ord_result["ordinance_bcr"]
+                        ordinance_far = ord_result.get("ordinance_far", national_far)
+                        ordinance_source = ord_result.get("source", "조례")
+                except Exception:
+                    pass
+            if not ordinance_bcr:
+                ordinance_bcr = national_bcr
+                ordinance_far = national_far
+                ordinance_source = ordinance_source or "법정상한"
+
             effective_bcr = min(float(national_bcr or 60), float(ordinance_bcr or 60))
             effective_far = min(float(national_far or 200), float(ordinance_far or 200))
-            max_height = pre_collected.get("max_height", 0.0)
 
             # 기부체납 인센티브 계산
             far_incentive: dict[str, Any] = {}
@@ -264,7 +283,7 @@ class ProjectPipeline:
                     "effective_bcr": effective_bcr,
                     "effective_far": effective_far,
                     "max_height_m": max_height,
-                    "ordinance_source": pre_collected.get("ordinance_source", "pre_collected"),
+                    "ordinance_source": ordinance_source or "pre_collected",
                     "far_incentive": far_incentive,
                 },
                 "development_types": development_types,

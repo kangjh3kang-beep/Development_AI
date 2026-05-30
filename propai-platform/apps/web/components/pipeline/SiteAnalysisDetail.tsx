@@ -315,8 +315,11 @@ export function SiteAnalysisDetail({ data }: SiteAnalysisDetailProps) {
               {ordinanceFar != null && <Field label="조례 용적률 (지자체)" value={formatPct(ordinanceFar)} />}
               {effectiveBcr != null && <Field label="실효 건폐율" value={formatPct(effectiveBcr)} />}
               {effectiveFar != null && <Field label="실효 용적률" value={formatPct(effectiveFar)} />}
-              {heightLimit != null && <Field label="높이제한" value={`${heightLimit}m`} />}
+              {heightLimit != null && heightLimit > 0 && <Field label="높이제한" value={`${heightLimit}m`} />}
             </div>
+            {s(zoning.ordinance_source) && (
+              <p className="text-[10px] text-[var(--text-hint)] mt-1">출처: {s(zoning.ordinance_source)}</p>
+            )}
             {baseFar != null && allowedFar != null && capFar != null && (
               <>
                 <FarProgressBar base={baseFar} allowed={allowedFar} cap={capFar} />
