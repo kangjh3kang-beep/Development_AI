@@ -297,16 +297,22 @@ export function ProjectPipelinePanel() {
   const saveToStore = useCallback(
     (result: PipelineRunResponse) => {
       // site_analysis — summary 우선, 없으면 stages[0].data에서 직접 추출
+      // partial merge로 기존 데이터 유지하면서 새 값만 덮어쓰기
       const site = result.summary?.site_analysis;
       const siteStageData = result.stages?.find((s) => s.stage === "site_analysis")?.data as Record<string, unknown> | undefined;
       const basic = (siteStageData?.basic ?? {}) as Record<string, unknown>;
       if (site || siteStageData) {
+        const newLandArea = (site?.land_area_sqm as number) ?? (basic.land_area_sqm as number) ?? (siteStageData?.land_area_sqm as number);
+        const newZoneCode = (site?.zone_code as string) ?? (basic.zone_type as string) ?? (siteStageData?.zone_type as string);
+        const newPnu = (site?.pnu as string) ?? (basic.pnu as string);
+        const newEstValue = site?.estimated_value as number | undefined;
+
         updateSiteAnalysis({
-          estimatedValue: (site?.estimated_value as number) ?? null,
-          landAreaSqm: (site?.land_area_sqm as number) ?? (basic.land_area_sqm as number) ?? (siteStageData?.land_area_sqm as number) ?? null,
-          zoneCode: (site?.zone_code as string) ?? (basic.zone_type as string) ?? (siteStageData?.zone_type as string) ?? null,
-          address: address || null,
-          pnu: (site?.pnu as string) ?? (basic.pnu as string) ?? null,
+          ...(newEstValue != null ? { estimatedValue: newEstValue } : {}),
+          ...(newLandArea != null && newLandArea > 0 ? { landAreaSqm: newLandArea } : {}),
+          ...(newZoneCode ? { zoneCode: newZoneCode } : {}),
+          ...(address ? { address } : {}),
+          ...(newPnu ? { pnu: newPnu } : {}),
         });
         markStageComplete("site-analysis");
       }
@@ -409,16 +415,16 @@ export function ProjectPipelinePanel() {
       setStages([...updatedStages]);
 
       // 프론트에서 수집한 siteAnalysis가 있으면 항상 백엔드에 전달
-      // (면적이 0이어도 zone_type이나 pnu만 있어도 유용)
+      // null/0은 undefined로 변환하여 백엔드가 "미제공"으로 인식
       const siteDataForBackend = siteAnalysis ? {
-        zone_type: siteAnalysis.zoneCode ?? "",
-        land_area_sqm: siteAnalysis.landAreaSqm ?? 0,
-        max_bcr: siteAnalysis.ordinance?.effectiveBcr ?? siteAnalysis.ordinance?.nationalBcr ?? 0,
-        max_far: siteAnalysis.ordinance?.effectiveFar ?? siteAnalysis.ordinance?.nationalFar ?? 0,
-        official_land_price: siteAnalysis.officialPrices?.[0]?.pricePerSqm ?? 0,
+        zone_type: siteAnalysis.zoneCode || undefined,
+        land_area_sqm: siteAnalysis.landAreaSqm || undefined,
+        max_bcr: siteAnalysis.ordinance?.effectiveBcr || siteAnalysis.ordinance?.nationalBcr || undefined,
+        max_far: siteAnalysis.ordinance?.effectiveFar || siteAnalysis.ordinance?.nationalFar || undefined,
+        official_land_price: siteAnalysis.officialPrices?.[0]?.pricePerSqm || undefined,
         pnu_codes: siteAnalysis.pnu ? [siteAnalysis.pnu] : [],
         coordinates: siteAnalysis.coordinates ?? null,
-        ordinance_source: siteAnalysis.ordinance?.source ?? "",
+        ordinance_source: siteAnalysis.ordinance?.source || undefined,
         building_info: siteAnalysis.buildingInfo ?? null,
         land_use_districts: siteAnalysis.landUseDistricts ?? [],
       } : undefined;
@@ -466,12 +472,13 @@ export function ProjectPipelinePanel() {
 
     try {
       // siteAnalysis 데이터를 백엔드에 전달하여 외부 API 재호출 방지
+      // null/0은 undefined로 변환하여 백엔드가 "미제공"으로 인식
       const siteDataForBackend = siteAnalysis ? {
-        zone_type: siteAnalysis.zoneCode ?? "",
-        land_area_sqm: siteAnalysis.landAreaSqm ?? 0,
-        max_bcr: siteAnalysis.ordinance?.effectiveBcr ?? 60,
-        max_far: siteAnalysis.ordinance?.effectiveFar ?? 200,
-        official_land_price: siteAnalysis.officialPrices?.[0]?.pricePerSqm ?? 0,
+        zone_type: siteAnalysis.zoneCode || undefined,
+        land_area_sqm: siteAnalysis.landAreaSqm || undefined,
+        max_bcr: siteAnalysis.ordinance?.effectiveBcr || undefined,
+        max_far: siteAnalysis.ordinance?.effectiveFar || undefined,
+        official_land_price: siteAnalysis.officialPrices?.[0]?.pricePerSqm || undefined,
         pnu_codes: siteAnalysis.pnu ? [siteAnalysis.pnu] : [],
         coordinates: siteAnalysis.coordinates ?? null,
       } : undefined;

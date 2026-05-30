@@ -92,7 +92,9 @@ export function GlobalAddressSearch({
         address,
         pnu: data.pnu ?? siteAnalysis?.pnu ?? null,
         estimatedValue: siteAnalysis?.estimatedValue ?? null,
-        landAreaSqm: data.land_register?.area_sqm ?? siteAnalysis?.landAreaSqm ?? null,
+        landAreaSqm: data.land_register?.area_sqm
+          ?? (data as Record<string, unknown>).land_area_sqm as number | undefined
+          ?? siteAnalysis?.landAreaSqm ?? null,
         zoneCode: data.zone_type ?? siteAnalysis?.zoneCode ?? null,
         coordinates: data.coordinates ?? undefined,
         officialPrices: data.official_prices?.map((p) => ({ pnu: p.pnu, year: p.year, pricePerSqm: p.price_per_sqm })),
@@ -151,14 +153,11 @@ export function GlobalAddressSearch({
     setIsSearching(false);
 
     // ProjectContextStore에 자동 저장 (Single Source of Truth)
+    // 주소만 즉시 저장, 나머지 필드는 기존값 유지 (partial merge)
     const primary = newAddresses[0];
     if (primary) {
       updateSiteAnalysis({
-        estimatedValue: siteAnalysis?.estimatedValue ?? null,
-        landAreaSqm: siteAnalysis?.landAreaSqm ?? null,
-        zoneCode: siteAnalysis?.zoneCode ?? null,
         address: primary.fullAddress,
-        pnu: siteAnalysis?.pnu ?? null,
       });
 
       // 자동 종합 분석 트리거 (bcode + 지번주소 포함)
@@ -172,14 +171,10 @@ export function GlobalAddressSearch({
     const newAddresses = addresses.filter((_, i) => i !== index);
     setAddresses(newAddresses);
 
-    // 첫 번째 주소가 변경되면 store 업데이트
+    // 첫 번째 주소가 변경되면 store 업데이트 (partial merge)
     if (newAddresses.length > 0) {
       updateSiteAnalysis({
-        estimatedValue: siteAnalysis?.estimatedValue ?? null,
-        landAreaSqm: siteAnalysis?.landAreaSqm ?? null,
-        zoneCode: siteAnalysis?.zoneCode ?? null,
         address: newAddresses[0].fullAddress,
-        pnu: siteAnalysis?.pnu ?? null,
       });
     }
 

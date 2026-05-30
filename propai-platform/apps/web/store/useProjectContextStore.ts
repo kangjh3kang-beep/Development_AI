@@ -148,7 +148,7 @@ export interface ProjectContextState {
   setProject: (id: string, name: string, status: string) => void;
   clearProject: () => void;
 
-  updateSiteAnalysis: (data: SiteAnalysisData) => void;
+  updateSiteAnalysis: (data: Partial<SiteAnalysisData>) => void;
   updateDesignData: (data: DesignData) => void;
   updateFeasibilityData: (data: FeasibilityData) => void;
   updateEsgData: (data: EsgData) => void;
@@ -225,7 +225,18 @@ export const useProjectContextStore = create<ProjectContextState>()(
       },
 
       updateSiteAnalysis: (data) => {
-        set({ siteAnalysis: data });
+        set((state) => ({
+          siteAnalysis: {
+            ...(state.siteAnalysis ?? {
+              estimatedValue: null,
+              landAreaSqm: null,
+              zoneCode: null,
+              address: null,
+              pnu: null,
+            }),
+            ...data,
+          } as SiteAnalysisData,
+        }));
       },
 
       updateDesignData: (data) => {

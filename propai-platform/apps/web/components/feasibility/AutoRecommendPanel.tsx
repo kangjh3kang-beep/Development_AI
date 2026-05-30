@@ -179,7 +179,10 @@ export function AutoRecommendPanel({ onClose, isModal = false }: AutoRecommendPa
     const match = REGIONS.find((r) => addr.includes(r) || addr.includes(r.replace("특별시","").replace("광역시","").replace("도","")));
     return match ?? "서울특별시";
   });
-  const [landArea, setLandArea] = useState(ctxStore.siteAnalysis?.landAreaSqm?.toString() ?? "");
+  const [landArea, setLandArea] = useState(() => {
+    const area = ctxStore.siteAnalysis?.landAreaSqm;
+    return area && area > 0 ? area.toString() : "";
+  });
 
   // siteAnalysis가 나중에 복원되면 input 필드에 자동 반영
   useEffect(() => {
@@ -188,7 +191,7 @@ export function AutoRecommendPanel({ onClose, isModal = false }: AutoRecommendPa
     if (site.address && !address) {
       setAddress(site.address);
     }
-    if (site.landAreaSqm && !landArea) {
+    if (site.landAreaSqm && site.landAreaSqm > 0 && !landArea) {
       setLandArea(site.landAreaSqm.toString());
     }
     if (site.address) {
@@ -256,13 +259,10 @@ export function AutoRecommendPanel({ onClose, isModal = false }: AutoRecommendPa
       setAllModels(mappedAll);
       setAnalysisCount(response.total_types_analyzed ?? mappedAll.length);
 
-      // 분석 완료 후 주소를 컨텍스트 스토어에 저장하여 다른 모듈에서 공유
+      // 분석 완료 후 주소를 컨텍스트 스토어에 저장 (partial merge)
       updateSiteAnalysis({
-        estimatedValue: ctxStore.siteAnalysis?.estimatedValue ?? null,
-        landAreaSqm: landArea ? parseFloat(landArea) : ctxStore.siteAnalysis?.landAreaSqm ?? null,
-        zoneCode: ctxStore.siteAnalysis?.zoneCode ?? null,
         address,
-        pnu: ctxStore.siteAnalysis?.pnu ?? null,
+        ...(landArea ? { landAreaSqm: parseFloat(landArea) } : {}),
       });
     } catch (e: unknown) {
       if (progressRef.current) clearInterval(progressRef.current);

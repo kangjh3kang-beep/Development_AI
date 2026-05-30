@@ -181,11 +181,10 @@ class ProjectPipeline:
         # 프론트에서 site_data가 전달되었는지 확인
         pre_collected = opts.get("site_data")
 
-        # site_data의 핵심 값이 유효한지 판단 (면적>0 AND 용도지역 있음)
+        # site_data의 핵심 값이 유효한지 판단
+        # land_area_sqm은 comprehensive에서 항상 보충하므로 zone_type만 체크
         has_valid_site_data = (
             pre_collected is not None
-            and pre_collected.get("land_area_sqm")
-            and pre_collected.get("land_area_sqm") > 0
             and pre_collected.get("zone_type")
             and len(str(pre_collected.get("zone_type", ""))) > 0
         )
