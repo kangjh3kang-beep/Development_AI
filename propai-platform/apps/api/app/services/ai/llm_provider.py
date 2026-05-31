@@ -19,7 +19,6 @@
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
 # ── 등록된 프로바이더 목록 ──
@@ -61,9 +60,11 @@ def get_available_providers() -> list[dict[str, Any]]:
         각 프로바이더의 이름, 모델 목록, 기본 모델을 담은 dict 리스트.
         API 키가 환경변수에 설정되지 않은 프로바이더는 제외된다.
     """
+    from app.services.ai.key_sanitizer import get_clean_env_key
+
     available: list[dict[str, Any]] = []
     for key, provider in PROVIDERS.items():
-        api_key = os.environ.get(provider["env_key"], "")
+        api_key = get_clean_env_key(provider["env_key"])
         if api_key:
             available.append({
                 "provider": key,
@@ -99,7 +100,11 @@ def get_llm(
             f"Unknown provider: {provider}. Valid providers: {valid}"
         )
 
-    api_key = os.environ.get(config["env_key"], "")
+    from app.services.ai.key_sanitizer import get_clean_env_key
+
+    # .env 복사 사고로 키에 비-ASCII('→')·공백·줄바꿈이 섞이면 httpx 헤더
+    # 인코딩 단계에서 UnicodeEncodeError로 터진다. 로드 시점에 정상화한다.
+    api_key = get_clean_env_key(config["env_key"])
     if not api_key:
         raise ValueError(
             f"{provider} API key not configured. "
