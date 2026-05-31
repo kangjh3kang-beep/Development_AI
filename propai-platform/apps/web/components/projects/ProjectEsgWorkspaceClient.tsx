@@ -775,17 +775,6 @@ export function ProjectEsgWorkspaceClient({
 
 /* ── Sub-components ── */
 
-function EsgAiBlock({ label, text }: { label: string; text?: string }) {
-  if (!text) return null;
-  return (
-    <div>
-      <p className="text-[11px] font-bold text-emerald-400 mb-0.5">{label}</p>
-      <p className="text-[11px] text-[var(--text-secondary)] leading-relaxed whitespace-pre-line">
-        {text}
-      </p>
-    </div>
-  );
-}
 
 function MetricTile({ label, value }: { label: string; value: string }) {
   return (
