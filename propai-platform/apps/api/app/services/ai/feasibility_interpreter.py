@@ -136,7 +136,13 @@ class FeasibilityInterpreter(BaseInterpreter):
             recommendations_json=json.dumps(compact, ensure_ascii=False, indent=2),
         )
 
-        return await self._invoke(user_prompt, cache_data=compact)
+        return await self._invoke(
+            user_prompt, cache_data=compact, evidence_data=recommend_data
+        )
+
+    def _evidence(self, data: dict) -> str | None:
+        """P3: 대상지 주소 기반 지역 시세 벤치마크 주입."""
+        return self._regional_benchmark(address=str(data.get("address", "")))
 
     def _extract_compact_data(self, data: dict) -> list[dict[str, Any]]:
         """Top3 추천 결과에서 LLM에 필요한 핵심 데이터만 추출.

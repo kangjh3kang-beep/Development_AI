@@ -82,7 +82,51 @@ class _TTLCache:
 
 
 # 인터프리터 전역 공유 캐시(클래스명+입력해시로 충돌 방지).
-_RESULT_CACHE = _TTLCache(ttl_sec=int(os.environ.get("INTERP_CACHE_TTL_SEC", "3600")))
+_CACHE_TTL_SEC = int(os.environ.get("INTERP_CACHE_TTL_SEC", "3600"))
+_RESULT_CACHE = _TTLCache(ttl_sec=_CACHE_TTL_SEC)
+
+# 기능 토글(운영 중 환경변수로 끌 수 있도록).
+_REDIS_CACHE_ENABLED = os.environ.get("INTERP_REDIS_CACHE", "1") != "0"
+_PROMPT_CACHE_ENABLED = os.environ.get("INTERP_PROMPT_CACHE", "1") != "0"
+
+
+async def _redis_get(key: str | None) -> dict[str, str] | None:
+    """P4-L2: Redis에서 결과 조회. 미가용/오류 시 None(무중단).
+
+    integrations/base_client.py의 검증된 패턴(from_url→get→aclose)을 재사용.
+    다중 워커/인스턴스 간 캐시 공유가 목적(L1은 프로세스 한정).
+    """
+    if not key or not _REDIS_CACHE_ENABLED:
+        return None
+    try:
+        import redis.asyncio as aioredis
+
+        from app.core.config import settings
+
+        r = aioredis.from_url(settings.REDIS_URL)
+        data = await r.get(key)
+        await r.aclose()
+        if data:
+            return json.loads(data)
+    except Exception:  # noqa: BLE001 — 캐시는 best-effort, 실패해도 LLM 호출로 진행
+        pass
+    return None
+
+
+async def _redis_set(key: str | None, value: dict[str, str], ttl: int = _CACHE_TTL_SEC) -> None:
+    """P4-L2: Redis에 결과 저장. 미가용/오류 시 무시(무중단)."""
+    if not key or not _REDIS_CACHE_ENABLED:
+        return
+    try:
+        import redis.asyncio as aioredis
+
+        from app.core.config import settings
+
+        r = aioredis.from_url(settings.REDIS_URL)
+        await r.setex(key, ttl, json.dumps(value, ensure_ascii=False, default=str))
+        await r.aclose()
+    except Exception:  # noqa: BLE001
+        pass
 
 
 class BaseInterpreter:
@@ -127,6 +171,34 @@ class BaseInterpreter:
         user_prompt 뒤에 붙는다. 기본은 None(추가 근거 없음)."""
         return None
 
+    @staticmethod
+    def _regional_benchmark(address: str = "", region: str = "") -> str | None:
+        """P3: 지역 평균 분양가 벤치마크를 근거 문자열로 반환.
+
+        regional_pricing(sync·외부키 불필요·결정적)만 사용해 결합도·지연·키의존을
+        만들지 않는다. 실거래가/법규RAG/용도지역 같은 async+키 소스는 호출처가
+        data로 주입하는 게 올바른 계층이라 여기서 직접 호출하지 않는다.
+        주소를 못 찾으면 None(근거 미부착).
+        """
+        if not (address or region):
+            return None
+        try:
+            from app.services.feasibility.regional_pricing import (
+                get_regional_base_price_man_won,
+            )
+
+            man_won = get_regional_base_price_man_won(region=region, address=address)
+            if man_won:
+                won_per_sqm = int(man_won * 10000 / 3.305785)
+                return (
+                    f"- 지역 평균 분양가 벤치마크: 약 {man_won:,}만원/평"
+                    f"(약 {won_per_sqm:,}원/㎡), 2026년 보수적 시세 테이블 기준. "
+                    f"이 값과 분석 데이터의 가격을 비교해 적정성을 판단할 것."
+                )
+        except Exception:  # noqa: BLE001
+            pass
+        return None
+
     # ── P4: 캐시 키 ──
     def _cache_key(self, cache_data: Any) -> str:
         payload = json.dumps(cache_data, ensure_ascii=False, sort_keys=True, default=str)
@@ -148,12 +220,19 @@ class BaseInterpreter:
         - 시스템 프롬프트에는 그라운딩 규칙을 자동 주입(P3).
         - 모든 실패는 graceful: 빈 dict 반환(호출자 폴백).
         """
+        # P4: L1(in-process) → L2(Redis) 순으로 조회. 적중 시 LLM 스킵.
         cache_key = self._cache_key(cache_data) if cache_data is not None else None
+        redis_key = f"interp:{cache_key}" if cache_key else None
         if cache_key:
             cached = _RESULT_CACHE.get(cache_key)
             if cached is not None:
-                logger.info("인터프리터 캐시 적중", interp=self.name)
+                logger.info("인터프리터 캐시 적중(L1)", interp=self.name)
                 return cached
+            l2 = await _redis_get(redis_key)
+            if l2 is not None:
+                logger.info("인터프리터 캐시 적중(L2 Redis)", interp=self.name)
+                _RESULT_CACHE.set(cache_key, l2)  # L1 워밍
+                return l2
 
         # P3: 추가 근거 부착
         if evidence_data is not None:
@@ -169,9 +248,20 @@ class BaseInterpreter:
 
         from langchain_core.messages import HumanMessage, SystemMessage
 
-        system_prompt = (self.system_prompt or "") + GROUNDING_RULE
+        # P3: 그라운딩 규칙을 시스템 프롬프트에 결합.
+        system_text = (self.system_prompt or "") + GROUNDING_RULE
+        # P4-b: Anthropic prompt caching — 고정 시스템 프롬프트를 ephemeral 블록으로
+        # 표기하면 재호출 시 입력 토큰을 캐시에서 읽어 비용↓(시스템 프롬프트가
+        # 캐시 최소 토큰 미만이면 Anthropic이 무시, 오류 없음). 비-Anthropic이면
+        # 일반 문자열로 폴백.
+        if _PROMPT_CACHE_ENABLED:
+            system_content: Any = [
+                {"type": "text", "text": system_text, "cache_control": {"type": "ephemeral"}}
+            ]
+        else:
+            system_content = system_text
         messages = [
-            SystemMessage(content=system_prompt),
+            SystemMessage(content=system_content),
             HumanMessage(content=user_prompt),
         ]
         logger.info("인터프리터 LLM 요청", interp=self.name, prompt_chars=len(user_prompt))
@@ -188,8 +278,10 @@ class BaseInterpreter:
         result = self._parse_response(raw_text)
         logger.info("인터프리터 LLM 완료", interp=self.name, keys=list(result.keys()))
 
+        # P4: 결과를 L1·L2 모두에 저장.
         if cache_key and result:
             _RESULT_CACHE.set(cache_key, result)
+            await _redis_set(redis_key, result)
         return result
 
     # ── P2: 공통 JSON 파서(expected_keys/fallback_key 파라미터화) ──
