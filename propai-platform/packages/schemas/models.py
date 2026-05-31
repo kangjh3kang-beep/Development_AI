@@ -307,6 +307,14 @@ class TaxCalculationResponse(BaseModel):
     optimization_tips: list[str] = Field(default_factory=list, description="절세 팁")
     created_at: datetime
 
+    # LLM(Claude) 세무 전략 해석 (TaxInterpreter, 키 설정 시 채워짐)
+    ai_tax_summary: str | None = Field(default=None, description="세금 부담 종합")
+    ai_optimization_strategy: str | None = Field(default=None, description="절세 전략")
+    ai_entity_comparison: str | None = Field(default=None, description="사업주체별 비교")
+    ai_timing_strategy: str | None = Field(default=None, description="시점 전략")
+    ai_deduction_opportunities: str | None = Field(default=None, description="공제·감면 기회")
+    ai_risk_factors: str | None = Field(default=None, description="세무 리스크")
+
 
 # ──────────────────────────────────────
 # 설계/BIM

@@ -434,8 +434,21 @@ class TaxAIService:
             tax_type, taxable_value, amount, **kwargs,
         )
 
-        # 3. 절세 팁 생성
-        tips = await self._generate_optimization_tips(tax_type, taxable_value, amount)
+        # 3. LLM 세무 전략 해석 (TaxInterpreter 6섹션) — 실패 시 기존 팁 생성으로 폴백
+        ai_sections = await self._generate_tax_interpretation(
+            tax_type, taxable_value, amount, rate, **kwargs,
+        )
+        if ai_sections:
+            # 6섹션에서 절세 팁 합성 (프론트 기존 optimization_tips 호환)
+            tips = [
+                v for v in (
+                    ai_sections.get("optimization_strategy"),
+                    ai_sections.get("deduction_opportunities"),
+                    ai_sections.get("timing_strategy"),
+                ) if v
+            ]
+        else:
+            tips = await self._generate_optimization_tips(tax_type, taxable_value, amount)
         if scenarios:
             tips.insert(0, f"Monte Carlo 분석: 최대 {scenarios[0].get('savings_pct', 0)}% 절세 가능")
 
@@ -467,4 +480,54 @@ class TaxAIService:
             deductions=tax_calc.deductions or [],
             optimization_tips=tax_calc.optimization_tips or [],
             created_at=tax_calc.created_at,
+            ai_tax_summary=ai_sections.get("tax_summary"),
+            ai_optimization_strategy=ai_sections.get("optimization_strategy"),
+            ai_entity_comparison=ai_sections.get("entity_comparison"),
+            ai_timing_strategy=ai_sections.get("timing_strategy"),
+            ai_deduction_opportunities=ai_sections.get("deduction_opportunities"),
+            ai_risk_factors=ai_sections.get("risk_factors"),
         )
+
+    async def _generate_tax_interpretation(
+        self,
+        tax_type: str,
+        taxable_value: float,
+        amount: float,
+        rate: float,
+        **kwargs: Any,
+    ) -> dict[str, str]:
+        """TaxInterpreter로 세무 전략 6섹션을 생성한다. 실패 시 빈 dict.
+
+        세금유형별로 산출 세액을 interpreter 입력 구조(취득/양도/종부/총세액)에
+        매핑한다. key_sanitizer를 경유하는 llm_provider/interpreter 경로를 쓴다.
+        """
+        try:
+            from app.services.ai.tax_interpreter import TaxInterpreter
+
+            holding = kwargs.get("holding_years")
+            bucket = {
+                "acquisition": "acquisition_tax",
+                "transfer": "transfer_tax",
+                "comprehensive_real_estate": "comprehensive_property_tax",
+            }.get(tax_type, "acquisition_tax")
+            tax_block: dict[str, Any] = {
+                "tax_amount_won": round(amount),
+                "tax_rate_pct": round(rate * 100, 3),
+            }
+            if bucket == "transfer_tax" and holding is not None:
+                tax_block["holding_period_years"] = holding
+
+            data = {
+                bucket: tax_block,
+                "total_tax": {
+                    "total_amount_won": round(amount),
+                    "effective_rate_pct": round(rate * 100, 3),
+                },
+                "property_value_won": round(taxable_value),
+                "holding_period_years": holding,
+            }
+            result = await TaxInterpreter().generate_interpretation(data)
+            return result if isinstance(result, dict) else {}
+        except Exception as e:  # noqa: BLE001
+            logger.warning("세무 AI 해석 생성 스킵", error=str(e)[:120])
+            return {}
