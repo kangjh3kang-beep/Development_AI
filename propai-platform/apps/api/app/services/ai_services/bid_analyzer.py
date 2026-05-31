@@ -142,6 +142,26 @@ class BidAnalyzer:
         await integrator.run(bid, req, base, warnings)
 
         base.analysis_warnings = warnings
+
+        # 2) LLM(Claude) 자연어 해석 — 6엔진 수치를 입찰 전략으로 해석.
+        #    실패해도 규칙기반 결과는 그대로 반환(graceful fallback).
+        if getattr(req, "include_ai_interpretation", True):
+            try:
+                from app.schemas.g2b_bid import BidInterpretation
+                from app.services.ai_services.bid_interpreter import BidInterpreter
+
+                interp = await BidInterpreter().generate_interpretation(
+                    base.model_dump(mode="json"),
+                    model_tier=getattr(req, "model_tier", "standard"),
+                )
+                if interp:
+                    base.ai_interpretation = BidInterpretation(**interp)
+                else:
+                    warnings.append("AI 해석 미생성(LLM 미설정/호출 실패) — 규칙기반 결과만 제공")
+            except Exception as e:
+                warnings.append(f"AI 해석 실패: {str(e)[:80]}")
+
+        base.analysis_warnings = warnings
         # 정밀 분석 결과를 raw_data에 캐시 (신규 컬럼 회피)
         try:
             raw = dict(bid.raw_data or {})

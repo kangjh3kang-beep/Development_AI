@@ -130,6 +130,14 @@ class G2BBidAnalyzeRequest(BaseModel):
     building_type_override: Optional[str] = Field(None, description="건물유형 수동 지정")
     target_margin_pct: float = Field(5.0, ge=0.0, le=30.0, description="목표 마진율(%)")
 
+    # AI(LLM) 해석 (선택)
+    include_ai_interpretation: bool = Field(
+        True, description="LLM 자연어 해석 포함 여부(정밀분석 기본 활성)"
+    )
+    model_tier: str = Field(
+        "standard", description="LLM 등급(standard=Sonnet/premium=Opus)"
+    )
+
 
 # ── 정밀 분석 섹션 서브모델 (6엔진 연동 결과) ──
 
@@ -221,6 +229,23 @@ class BidMarketFeed(BaseModel):
     region_std: Optional[float] = None
 
 
+class BidInterpretation(BaseModel):
+    """입찰 분석 결과에 대한 LLM(Claude) 자연어 해석.
+
+    규칙기반 6엔진 수치를 입력으로, 입찰 의사결정에 필요한 5개 관점을
+    전문가 내러티브로 생성한다. LLM 호출 실패 시 None으로 폴백한다.
+    """
+
+    bid_strategy: str = Field(description="투찰 전략 — 적정 투찰가율 근거, 시장 대비 포지셔닝")
+    feasibility_view: str = Field(description="사업성 진단 — NPV/ROI/수익확률 해석, 수주 매력도")
+    risk_assessment: str = Field(description="리스크 평가 — 원가/경쟁/발주처 리스크 종합 진단")
+    cost_competitiveness: str = Field(description="원가 경쟁력 — 손익분기 대비 여유, 실행원가 관점")
+    recommendation: str = Field(description="종합 권고 — 입찰 참여/조건부/회피 의견과 핵심 근거")
+
+    model_used: Optional[str] = Field(None, description="해석에 사용된 LLM 모델 ID")
+    generated: bool = Field(True, description="LLM 생성 성공 여부(폴백 시 False)")
+
+
 class G2BBidAnalyzeResponse(BaseModel):
     """입찰 AI 분석 결과."""
 
@@ -264,6 +289,9 @@ class G2BBidAnalyzeResponse(BaseModel):
     break_even_bid_rate: Optional[float] = Field(None, description="손익분기 낙찰가율(%)")
     recommended_bid_price: Optional[int] = Field(None, description="적정 투찰가(KRW)")
     analysis_warnings: list[str] = Field(default_factory=list)
+
+    # ── LLM 자연어 해석 (정밀분석 + include_ai_interpretation=True 시 채워짐) ──
+    ai_interpretation: Optional["BidInterpretation"] = None
 
 
 # ── 대시보드 통계 ──
