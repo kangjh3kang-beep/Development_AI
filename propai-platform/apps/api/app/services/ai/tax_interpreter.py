@@ -68,7 +68,7 @@ USER_PROMPT_TEMPLATE = """\
 class TaxInterpreter:
     """세금 계산 결과를 AI가 해석하여 절세 전략을 제안."""
 
-    def __init__(self, *, timeout_sec: float = 10.0) -> None:
+    def __init__(self, *, timeout_sec: float = 45.0) -> None:
         self._timeout_sec = timeout_sec
         self._llm = None
 

@@ -74,7 +74,7 @@ USER_PROMPT_TEMPLATE = """\
 class PermitInterpreter:
     """인허가 검증 결과를 AI가 해석하여 예외 조항/완화 가능성을 분석."""
 
-    def __init__(self, *, timeout_sec: float = 10.0) -> None:
+    def __init__(self, *, timeout_sec: float = 45.0) -> None:
         self._timeout_sec = timeout_sec
         self._llm = None
 

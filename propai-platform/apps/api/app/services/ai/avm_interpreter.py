@@ -67,7 +67,7 @@ USER_PROMPT_TEMPLATE = """\
 class AvmInterpreter:
     """AVM 시세 추정 결과를 AI가 해석하여 가치 평가 내러티브를 생성."""
 
-    def __init__(self, *, timeout_sec: float = 10.0) -> None:
+    def __init__(self, *, timeout_sec: float = 45.0) -> None:
         self._timeout_sec = timeout_sec
         self._llm = None
 
@@ -79,7 +79,7 @@ class AvmInterpreter:
         try:
             from app.services.ai.llm_provider import get_llm
 
-            self._llm = get_llm()
+            self._llm = get_llm(timeout=self._timeout_sec)
         except ImportError:
             from langchain_anthropic import ChatAnthropic
 

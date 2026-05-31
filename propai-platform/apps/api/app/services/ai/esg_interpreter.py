@@ -67,7 +67,7 @@ USER_PROMPT_TEMPLATE = """\
 class EsgInterpreter:
     """ESG/탄소 분석 결과를 AI가 해석하여 녹색건축 전략을 제안."""
 
-    def __init__(self, *, timeout_sec: float = 10.0) -> None:
+    def __init__(self, *, timeout_sec: float = 45.0) -> None:
         self._timeout_sec = timeout_sec
         self._llm = None
 
@@ -79,7 +79,7 @@ class EsgInterpreter:
         try:
             from app.services.ai.llm_provider import get_llm
 
-            self._llm = get_llm()
+            self._llm = get_llm(timeout=self._timeout_sec)
         except ImportError:
             from langchain_anthropic import ChatAnthropic
 
