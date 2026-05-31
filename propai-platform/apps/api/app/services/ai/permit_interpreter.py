@@ -152,6 +152,29 @@ class PermitInterpreter:
             prompt_chars=len(user_prompt),
         )
 
+        # P1: 구조화 출력(tool-use) 우선 — 필드 보장·파싱실패 0. 실패 시 텍스트 파싱 폴백.
+        try:
+            from pydantic import BaseModel as _BM, Field as _F
+
+            class _Sections(_BM):
+                permit_assessment: str = _F(default="", description="permit_assessment")
+                exception_analysis: str = _F(default="", description="exception_analysis")
+                relaxation_options: str = _F(default="", description="relaxation_options")
+                timeline_estimate: str = _F(default="", description="timeline_estimate")
+                risk_factors: str = _F(default="", description="risk_factors")
+                strategy_recommendation: str = _F(default="", description="strategy_recommendation")
+
+            _structured = llm.with_structured_output(_Sections)
+            _parsed = await asyncio.wait_for(
+                _structured.ainvoke(messages), timeout=self._timeout_sec,
+            )
+            _r = _parsed.model_dump()
+            if any(_r.values()):
+                logger.info("AI 해석 완료(구조화)", keys=list(_r.keys()))
+                return _r
+        except Exception as _e:
+            logger.warning("구조화 출력 실패, 텍스트 파싱 폴백", error=str(_e)[:120])
+
         try:
             response = await asyncio.wait_for(
                 llm.ainvoke(messages),
