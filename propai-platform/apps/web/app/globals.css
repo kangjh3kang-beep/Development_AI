@@ -1,7 +1,8 @@
 @import "tailwindcss";
 
 /* ═══════════════════════════════════════════════════
-   사통팔땅 (Sa-Tong-Pal-Ttang) Global Styles v3.0
+   사통팔땅 (Sa-Tong-Pal-Ttang) Global Styles v4.0
+   Stitch Design System Integration
    세상을 연결하는 건축학적 심미성 + 미래기술 진보성
    가독성 · 직관력 극대화 에디션
    ═══════════════════════════════════════════════════ */
@@ -9,8 +10,17 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-primary: #135bec;
+  --color-primary-light: #4d8af0;
+  --color-primary-dark: #0e47c0;
+  --color-bg-dark: #101622;
+  --color-card-dark: #1c222e;
+  --color-surface-dark: #1a1d23;
+  --color-border-dark: #2e3646;
+  --color-bg-input-dark: #111318;
   --font-sans: var(--font-sans);
   --font-mono: var(--font-mono);
+  --font-display: "Space Grotesk", "Pretendard", sans-serif;
 }
 
 /* ── Base Reset ── */
@@ -257,4 +267,163 @@ textarea {
     --text-secondary: #1a1a1a;
     --text-tertiary: #333333;
   }
+}
+
+/* ═══════════════════════════════════════════════════
+   Stitch Design System - Utility Classes
+   ═══════════════════════════════════════════════════ */
+
+/* Glass Panel (Stitch style) */
+.glass-panel {
+  background: rgba(16, 22, 34, 0.7);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+/* Stitch Card */
+.stitch-card {
+  background: #1c222e;
+  border: 1px solid #2e3646;
+  border-radius: 0.75rem;
+  transition: all 0.3s ease;
+}
+
+.stitch-card:hover {
+  box-shadow: 0 0 0 1px rgba(19, 91, 236, 0.3);
+  border-color: rgba(19, 91, 236, 0.5);
+}
+
+/* Stitch Primary Glow Button */
+.stitch-btn-primary {
+  background: #135bec;
+  color: white;
+  font-weight: 700;
+  border-radius: 0.5rem;
+  box-shadow: 0 0 15px rgba(19, 91, 236, 0.25);
+  transition: all 0.2s ease;
+}
+
+.stitch-btn-primary:hover {
+  background: #1e6af0;
+  box-shadow: 0 0 25px rgba(19, 91, 236, 0.5);
+}
+
+/* Stitch Secondary Button */
+.stitch-btn-secondary {
+  background: transparent;
+  color: white;
+  font-weight: 500;
+  border: 1px solid #2e3646;
+  border-radius: 0.5rem;
+  transition: all 0.2s ease;
+}
+
+.stitch-btn-secondary:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+/* Stitch Status Badges */
+.stitch-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 4px;
+  backdrop-filter: blur(8px);
+}
+
+.stitch-badge-success {
+  background: rgba(16, 185, 129, 0.2);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.stitch-badge-warning {
+  background: rgba(245, 158, 11, 0.1);
+  color: #f59e0b;
+  border: 1px solid rgba(245, 158, 11, 0.2);
+}
+
+.stitch-badge-info {
+  background: rgba(59, 130, 246, 0.2);
+  color: #60a5fa;
+  border: 1px solid rgba(59, 130, 246, 0.3);
+}
+
+.stitch-badge-neutral {
+  background: rgba(100, 116, 139, 0.2);
+  color: #94a3b8;
+  border: 1px solid rgba(100, 116, 139, 0.3);
+}
+
+/* Stitch Sidebar Active Item */
+.stitch-nav-active {
+  background: #135bec;
+  color: white;
+  box-shadow: 0 4px 12px rgba(19, 91, 236, 0.3);
+}
+
+/* Stitch Progress Bar */
+.stitch-progress-track {
+  height: 8px;
+  width: 100%;
+  background: rgba(100, 116, 139, 0.2);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.stitch-progress-fill {
+  height: 100%;
+  background: #135bec;
+  border-radius: 999px;
+  transition: width 0.5s ease;
+}
+
+/* Stitch Input */
+.stitch-input {
+  background: #111318;
+  border: 1px solid #2e3646;
+  border-radius: 0.5rem;
+  color: white;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+  outline: none;
+  transition: all 0.2s ease;
+}
+
+.stitch-input:focus {
+  border-color: #135bec;
+  box-shadow: 0 0 0 2px rgba(19, 91, 236, 0.3);
+}
+
+/* Stitch Sidebar */
+.stitch-sidebar {
+  background: #101622;
+  border-right: 1px solid #2e3646;
+}
+
+/* Stitch Header */
+.stitch-header {
+  background: #111318;
+  border-bottom: 1px solid #2e3646;
+}
+
+/* Stitch Glow Accent */
+.stitch-glow {
+  position: relative;
+}
+
+.stitch-glow::after {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  background: linear-gradient(135deg, rgba(19, 91, 236, 0.15), transparent 50%);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.stitch-glow:hover::after {
+  opacity: 1;
 }

@@ -63,7 +63,10 @@ export function LifecycleNavigator({
     },
     {
       id: "analysis", label: "입지 분석", icon: <Icons.SiteAnalysis />,
-      links: [{ href: `${base}/site-analysis`, label: "부지 분석", icon: <Icons.SiteAnalysis /> }],
+      links: [
+        { href: `${base}/site-analysis`, label: "단일 부지 분석", icon: <Icons.SiteAnalysis /> },
+        { href: `${base}/multi-parcel`, label: "다필지 통합", icon: <Icons.SiteAnalysis /> },
+      ],
     },
     {
       id: "legal", label: "법규 검토", icon: <Icons.Legal />,
@@ -97,12 +100,14 @@ export function LifecycleNavigator({
       id: "execution", label: "시공 관리", icon: <Icons.Construction />,
       links: [
         { href: `${base}/construction`, label: "시공 원가", icon: <Icons.Construction /> },
+        { href: `${base}/supervision`, label: "감리 자동화", icon: <Icons.Construction /> },
         { href: `${base}/drone`, label: "드론 측량", icon: <Icons.Drone /> },
       ],
     },
     {
       id: "management", label: "운영", icon: <Icons.Operations />,
       links: [
+        { href: `${base}/agent`, label: "에이전트 제어", icon: <Icons.Operations /> },
         { href: `${base}/operations`, label: "자산 운영", icon: <Icons.Operations /> },
         { href: `${base}/report`, label: "최종 보고서", icon: <Icons.Report /> },
       ],
