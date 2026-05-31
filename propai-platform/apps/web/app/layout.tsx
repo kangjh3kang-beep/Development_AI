@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { JetBrains_Mono, Noto_Sans_KR } from "next/font/google";
+import { JetBrains_Mono, Noto_Sans_KR, Space_Grotesk } from "next/font/google";
 import "@propai/ui/styles/tokens.css";
 import { defaultLocale, getHtmlLang, localeCookieName } from "@/i18n/config";
 import "./globals.css";
@@ -7,6 +7,11 @@ import "./globals.css";
 const sansFont = Noto_Sans_KR({
   variable: "--font-sans",
   weight: ["300", "400", "500", "600", "700"],
+  subsets: ["latin"],
+});
+
+const displayFont = Space_Grotesk({
+  variable: "--font-display",
   subsets: ["latin"],
 });
 
@@ -48,7 +53,7 @@ export default function RootLayout({ children }: RootLayoutProps) {
       <head>
         <meta name="google" content="notranslate" />
       </head>
-      <body className={`${sansFont.variable} ${monoFont.variable} antialiased`}>
+      <body className={`${sansFont.variable} ${displayFont.variable} ${monoFont.variable} antialiased`}>
         {children}
       </body>
     </html>

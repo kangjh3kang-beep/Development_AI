@@ -23,7 +23,9 @@ const config: Config = {
         }
       },
       fontFamily: {
-        sans: ["Pretendard", "Inter", "system-ui", "sans-serif"]
+        sans: ["var(--font-sans)", "Noto Sans KR", "Pretendard", "sans-serif"],
+        display: ["var(--font-display)", "Space Grotesk", "sans-serif"],
+        mono: ["var(--font-mono)", "JetBrains Mono", "monospace"],
       }
     }
   },

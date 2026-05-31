@@ -31,7 +31,7 @@ body {
     radial-gradient(ellipse at 90% 50%, rgba(79, 70, 229, 0.05), transparent 40%);
   background-attachment: fixed;
   color: var(--text-primary);
-  font-family: var(--font-sans), "Pretendard", "Inter", system-ui, sans-serif;
+  font-family: var(--font-sans), "Noto Sans KR", "Pretendard", system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
