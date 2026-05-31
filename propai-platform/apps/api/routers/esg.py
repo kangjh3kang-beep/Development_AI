@@ -35,6 +35,33 @@ async def run_esg_assessment(
         board_independence_ratio=body.board_independence_ratio,
         disclosures=body.disclosures,
     )
+    carbon_total = footprint.scope1_tco2e + footprint.scope2_tco2e + footprint.scope3_tco2e
+
+    # LLM(Claude) ESG 해석 — 실패해도 평가 결과는 정상 반환(graceful fallback)
+    ai: dict = {}
+    try:
+        from app.services.ai.esg_interpreter import EsgInterpreter
+
+        gfa = body.gross_floor_area_sqm or 0
+        interp = await EsgInterpreter().generate_interpretation({
+            "carbon_emissions": {
+                "total_emissions_tco2": carbon_total,
+                "emissions_per_sqm": (round(carbon_total / gfa, 4) if gfa else None),
+                "scope1": footprint.scope1_tco2e,
+                "scope2": footprint.scope2_tco2e,
+                "scope3": footprint.scope3_tco2e,
+            },
+            "gresb_score": {
+                "total_score": assessment.score,
+                "peer_ranking": assessment.rating,
+            },
+            "building_info": {"total_gfa_sqm": gfa},
+        })
+        if isinstance(interp, dict):
+            ai = interp
+    except Exception:
+        ai = {}
+
     return ESGAssessmentResponse(
         assessment_id=assessment.id,
         project_id=report.project_id,
@@ -45,7 +72,13 @@ async def run_esg_assessment(
         governance_score=report.governance_score,
         overall_score=assessment.score,
         gresb_rating=assessment.rating,
-        carbon_total_tco2e=footprint.scope1_tco2e + footprint.scope2_tco2e + footprint.scope3_tco2e,
+        carbon_total_tco2e=carbon_total,
         disclosures=report.disclosures_json or [],
         action_plan=assessment.action_plan,
+        ai_carbon_assessment=ai.get("carbon_assessment"),
+        ai_reduction_strategy=ai.get("reduction_strategy"),
+        ai_certification_pathway=ai.get("certification_pathway"),
+        ai_zeb_roadmap=ai.get("zeb_roadmap"),
+        ai_esg_investment_impact=ai.get("esg_investment_impact"),
+        ai_regulatory_outlook=ai.get("regulatory_outlook"),
     )
