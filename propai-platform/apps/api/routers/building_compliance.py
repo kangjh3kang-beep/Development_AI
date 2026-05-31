@@ -58,6 +58,15 @@ class AutoCorrectResult(BaseModel):
     alternatives: list[dict[str, Any]] = Field(default_factory=list)
 
 
+def _severity_to_status(severity: str) -> str:
+    s = (severity or "").lower()
+    if s in ("critical", "high", "error", "violation"):
+        return "fail"
+    if s in ("warning", "medium", "low"):
+        return "warning"
+    return "warning"
+
+
 @router.post("/check", response_model=ComplianceCheckResult)
 async def check_compliance(
     req: CheckRequest,
@@ -65,10 +74,88 @@ async def check_compliance(
 ):
     """설계 데이터의 건축 법규 준수 여부를 검증한다."""
     svc = BuildingComplianceService(db=db)
-    return await svc.check_compliance(
+    raw = await svc.check_compliance(
         project_id=req.project_id,
         design_raw=req.design.model_dump(),
     )
+
+    violations = raw.get("violations", []) or []
+    compliant = bool(raw.get("compliant", False))
+
+    # ── 프론트(ComplianceCheckResponse) 계약으로 변환 ──
+    checks = [
+        {
+            "rule_code": v.get("type", ""),
+            "rule_name": v.get("type", "법규 항목"),
+            "status": _severity_to_status(v.get("severity", "")),
+            "detail": (
+                f"{v.get('message', '')} "
+                f"(현재 {v.get('current_value')}, 한도 {v.get('limit_value')})"
+            ).strip(),
+            "regulation_ref": v.get("type", ""),
+        }
+        for v in violations
+    ]
+    overall_status = "pass" if compliant else (
+        "fail" if any(c["status"] == "fail" for c in checks) else "warning"
+    )
+
+    # 규칙기반 기본 요약
+    summary = (
+        "모든 건축 법규 항목을 충족합니다."
+        if compliant
+        else f"{len(violations)}건의 법규 위반/주의 항목이 발견되었습니다."
+    )
+
+    # ── permit_interpreter LLM 해석 → summary 확장 (graceful fallback) ──
+    try:
+        from app.services.ai.permit_interpreter import PermitInterpreter
+
+        design = req.design.model_dump()
+        interp = await PermitInterpreter().generate_interpretation({
+            "overall_feasibility": overall_status,
+            "violation_count": sum(1 for c in checks if c["status"] == "fail"),
+            "warning_count": sum(1 for c in checks if c["status"] == "warning"),
+            "total_gfa_sqm": None,
+            "violations": [
+                {
+                    "rule_name": v.get("type"),
+                    "severity": v.get("severity"),
+                    "current_value": v.get("current_value"),
+                    "limit_value": v.get("limit_value"),
+                    "description": v.get("message"),
+                    "legal_basis": v.get("type"),
+                }
+                for v in violations
+            ],
+            "floor_count": design.get("floor_count"),
+            "building_height_m": design.get("building_height_m"),
+        })
+        if isinstance(interp, dict) and interp:
+            _labels = {
+                "permit_assessment": "인허가 난이도",
+                "exception_analysis": "예외 조항",
+                "relaxation_options": "완화 가능성",
+                "timeline_estimate": "소요 기간",
+                "risk_factors": "리스크 요인",
+                "strategy_recommendation": "전략 제안",
+            }
+            sections = [
+                f"[{_labels[k]}] {interp[k]}" for k in _labels if interp.get(k)
+            ]
+            if sections:
+                summary = summary + "\n\n" + "\n\n".join(sections)
+    except Exception:
+        pass
+
+    return {
+        "project_id": req.project_id,
+        "violations": violations,
+        "compliant": compliant,
+        "overall_status": overall_status,
+        "checks": checks,
+        "summary": summary,
+    }
 
 
 @router.post("/auto-correct", response_model=AutoCorrectResult)
