@@ -527,7 +527,7 @@ class TaxAIService:
                 "holding_period_years": holding,
             }
             # 세무 6섹션 생성은 10초를 넘기기 쉬워 타임아웃을 넉넉히 둔다(bid_interpreter와 동일 40s).
-            result = await TaxInterpreter(timeout_sec=40.0).generate_interpretation(data)
+            result = await TaxInterpreter(timeout_sec=90.0).generate_interpretation(data)
             return result if isinstance(result, dict) else {}
         except Exception as e:  # noqa: BLE001
             logger.warning("세무 AI 해석 생성 스킵", error=str(e)[:120])
