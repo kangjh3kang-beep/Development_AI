@@ -71,7 +71,7 @@ export default async function DashboardPage({ params }: DashboardPageProps) {
               </span>
             </div>
 
-            <h1 className="text-3xl font-[900] tracking-tighter text-[var(--text-primary)] sm:text-5xl md:text-6xl lg:text-7xl leading-[0.9]">
+            <h1 className="text-3xl font-[900] font-display tracking-tighter text-[var(--text-primary)] sm:text-5xl md:text-6xl lg:text-7xl leading-[0.9]">
                <span className="sr-only">{dictionary.meta.siteName}</span>
                <div className="flex justify-start items-center">
                  <Logo size="xl" />
