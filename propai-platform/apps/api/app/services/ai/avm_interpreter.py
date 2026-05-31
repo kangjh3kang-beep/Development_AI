@@ -11,12 +11,12 @@ AVM 시세 추정 결과를 LLM(Claude)이 해석하여
 
 from __future__ import annotations
 
-import asyncio
 import json
-import os
 from typing import Any
 
 import structlog
+
+from app.services.ai.base_interpreter import BaseInterpreter
 
 logger = structlog.get_logger()
 
@@ -64,35 +64,20 @@ USER_PROMPT_TEMPLATE = """\
 """
 
 
-class AvmInterpreter:
+class AvmInterpreter(BaseInterpreter):
     """AVM 시세 추정 결과를 AI가 해석하여 가치 평가 내러티브를 생성."""
 
-    def __init__(self, *, timeout_sec: float = 90.0) -> None:
-        self._timeout_sec = timeout_sec
-        self._llm = None
-
-    def _get_llm(self):
-        """LLM 인스턴스를 지연 생성. llm_provider 우선, 없으면 직접 생성."""
-        if self._llm is not None:
-            return self._llm
-
-        try:
-            from app.services.ai.llm_provider import get_llm
-
-            self._llm = get_llm(timeout=self._timeout_sec)
-        except ImportError:
-            from langchain_anthropic import ChatAnthropic
-
-            from app.services.ai.key_sanitizer import get_clean_env_key
-
-            self._llm = ChatAnthropic(
-                model=os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-20250514"),
-                anthropic_api_key=get_clean_env_key("ANTHROPIC_API_KEY"),
-                temperature=0.3,
-                max_tokens=4096,
-                timeout=self._timeout_sec,
-            )
-        return self._llm
+    name = "avm"
+    expected_keys = [
+        "valuation_narrative",
+        "comparable_explanation",
+        "market_position",
+        "appreciation_outlook",
+        "investment_recommendation",
+    ]
+    fallback_key = "valuation_narrative"
+    max_tokens = 4096
+    system_prompt = SYSTEM_PROMPT
 
     async def generate_interpretation(self, avm_data: dict) -> dict[str, str]:
         """AVM 시세 추정 결과에 대한 해석 텍스트를 생성.
@@ -102,44 +87,13 @@ class AvmInterpreter:
 
         Returns:
             5개 키를 가진 dict - 각 값은 전문가 해석 문자열.
-            LLM 호출 실패 시 빈 dict가 아니라 None을 반환하여
-            호출자가 폴백 처리할 수 있게 한다.
+            LLM 호출 실패 시 빈 dict 반환(호출자 폴백).
         """
-        llm = self._get_llm()
-
-        # 토큰 절약: 핵심 데이터만 추출
         compact = self._extract_compact_data(avm_data)
-
         user_prompt = USER_PROMPT_TEMPLATE.format(
             analysis_json=json.dumps(compact, ensure_ascii=False, indent=2),
         )
-
-        from langchain_core.messages import HumanMessage, SystemMessage
-
-        messages = [
-            SystemMessage(content=SYSTEM_PROMPT),
-            HumanMessage(content=user_prompt),
-        ]
-
-        logger.info(
-            "AVM AI 해석 요청",
-            prompt_chars=len(user_prompt),
-        )
-
-        # timeout 적용하여 LLM 호출
-        response = await asyncio.wait_for(
-            llm.ainvoke(messages),
-            timeout=self._timeout_sec,
-        )
-
-        raw_text = response.content if hasattr(response, "content") else str(response)
-        result = self._parse_response(raw_text)
-
-        logger.info(
-            "AVM AI 해석 완료",
-            keys=list(result.keys()),
-        )
-        return result
+        return await self._invoke(user_prompt, cache_data=compact)
 
     def _extract_compact_data(self, data: dict) -> dict[str, Any]:
         """전체 AVM 결과에서 LLM에 필요한 핵심 데이터만 추출."""
@@ -222,49 +176,3 @@ class AvmInterpreter:
                 compact[key] = data[key]
 
         return compact
-
-    def _parse_response(self, raw: str) -> dict[str, str]:
-        """LLM 응답에서 JSON을 추출하여 파싱."""
-        text = raw.strip()
-
-        # ```json ... ``` 블록 제거
-        if text.startswith("```"):
-            lines = text.split("\n")
-            start = 1
-            end = len(lines)
-            for i in range(len(lines) - 1, 0, -1):
-                if lines[i].strip() == "```":
-                    end = i
-                    break
-            text = "\n".join(lines[start:end])
-
-        try:
-            parsed = json.loads(text)
-        except json.JSONDecodeError:
-            brace_start = text.find("{")
-            brace_end = text.rfind("}")
-            if brace_start != -1 and brace_end != -1:
-                try:
-                    parsed = json.loads(text[brace_start : brace_end + 1])
-                except json.JSONDecodeError:
-                    logger.warning("AVM AI 응답 JSON 파싱 최종 실패", raw_length=len(raw))
-                    return {"valuation_narrative": text[:500]}
-            else:
-                logger.warning("AVM AI 응답에서 JSON을 찾을 수 없음", raw_length=len(raw))
-                return {"valuation_narrative": text[:500]}
-
-        expected_keys = [
-            "valuation_narrative",
-            "comparable_explanation",
-            "market_position",
-            "appreciation_outlook",
-            "investment_recommendation",
-        ]
-
-        result: dict[str, str] = {}
-        for key in expected_keys:
-            val = parsed.get(key)
-            if val is not None:
-                result[key] = str(val)
-
-        return result
