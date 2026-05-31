@@ -80,7 +80,9 @@ class TaxInterpreter:
         try:
             from app.services.ai.llm_provider import get_llm
 
-            self._llm = get_llm()
+            # timeout을 명시 전달 — 미전달 시 get_llm 기본값 10s라 세무 6섹션 생성이
+            # APITimeoutError로 끊긴다(세무 프롬프트가 길어 ~30s+ 소요).
+            self._llm = get_llm(timeout=self._timeout_sec)
         except ImportError:
             from langchain_anthropic import ChatAnthropic
 
