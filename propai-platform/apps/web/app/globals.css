@@ -1,4 +1,6 @@
 @import "tailwindcss";
+@custom-variant dark (&:is(.dark *));
+@custom-variant dark (&:where(.dark, .dark *));
 
 /* ═══════════════════════════════════════════════════
    사통팔땅 (Sa-Tong-Pal-Ttang) Global Styles v4.0

@@ -12,6 +12,7 @@ export type Project = {
   area: string;
   status: ProjectStatus;
   createdAt: string;
+  siteImageUrl?: string;
 };
 
 type ProjectState = {
@@ -19,6 +20,7 @@ type ProjectState = {
   addProject: (project: Omit<Project, 'id' | 'createdAt' | 'status'>) => string;
   getProjectById: (id: string) => Project | undefined;
   removeProject: (id: string) => void;
+  updateProject: (id: string, updates: Partial<Project>) => void;
 };
 
 export const useProjectStore = create<ProjectState>()(
@@ -40,6 +42,13 @@ export const useProjectStore = create<ProjectState>()(
       },
       getProjectById: (id) => {
         return get().projects.find(p => p.id === id);
+      },
+      updateProject: (id, updates) => {
+        set((state) => ({
+          projects: state.projects.map((p) => 
+            p.id === id ? { ...p, ...updates } : p
+          )
+        }));
       },
       removeProject: (id) => {
         set((state) => ({

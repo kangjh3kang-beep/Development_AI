@@ -55,10 +55,10 @@ export default async function DashboardPage({ params }: DashboardPageProps) {
       {/* ── 페이지 헤딩 (Stitch Style) ── */}
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
         <div className="flex flex-col gap-1">
-          <h2 className="text-3xl md:text-4xl font-bold tracking-tight text-slate-900 dark:text-white font-display">
+          <h2 className="text-3xl md:text-4xl font-bold tracking-tight text-[var(--text-primary)] font-display">
             프로젝트 대시보드
           </h2>
-          <p className="text-slate-500 dark:text-slate-400 text-sm">
+          <p className="text-[var(--text-secondary)] text-sm">
             활성 개발 사업지 현황 및 AI 예측 개요
           </p>
         </div>
@@ -76,13 +76,13 @@ export default async function DashboardPage({ params }: DashboardPageProps) {
       {/* ── Stats Row (Stitch Style) ── */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {/* Total Active Projects */}
-        <div className="flex flex-col gap-2 rounded-xl p-6 bg-white dark:bg-card-dark border border-slate-200 dark:border-border-dark shadow-sm">
+        <div className="flex flex-col gap-2 rounded-xl p-6 bg-[var(--surface-strong)] border border-[var(--line-strong)] shadow-[var(--shadow-sm)]">
           <div className="flex items-center justify-between">
-            <p className="text-slate-500 dark:text-slate-400 text-sm font-medium uppercase tracking-wider">활성 프로젝트</p>
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-primary"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>
+            <p className="text-[var(--text-secondary)] text-sm font-medium uppercase tracking-wider">활성 프로젝트</p>
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--accent-strong)]"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>
           </div>
           <div className="flex items-end gap-3 mt-1">
-            <p className="text-3xl font-bold text-slate-900 dark:text-white">12</p>
+            <p className="text-3xl font-bold text-[var(--text-primary)]">12</p>
             <div className="flex items-center gap-1 text-emerald-500 text-sm font-bold mb-1">
               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m22 7-7.5 7.5-5-5L2 17"/><path d="M16 7h6v6"/></svg>
               <span>+2 이번 달</span>
@@ -91,13 +91,13 @@ export default async function DashboardPage({ params }: DashboardPageProps) {
         </div>
 
         {/* Budget Deployed */}
-        <div className="flex flex-col gap-2 rounded-xl p-6 bg-white dark:bg-card-dark border border-slate-200 dark:border-border-dark shadow-sm">
+        <div className="flex flex-col gap-2 rounded-xl p-6 bg-[var(--surface-strong)] border border-[var(--line-strong)] shadow-[var(--shadow-sm)]">
           <div className="flex items-center justify-between">
-            <p className="text-slate-500 dark:text-slate-400 text-sm font-medium uppercase tracking-wider">투입 자본</p>
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-primary"><circle cx="12" cy="12" r="10"/><path d="M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8"/><path d="M12 18V6"/></svg>
+            <p className="text-[var(--text-secondary)] text-sm font-medium uppercase tracking-wider">투입 자본</p>
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--accent-strong)]"><circle cx="12" cy="12" r="10"/><path d="M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8"/><path d="M12 18V6"/></svg>
           </div>
           <div className="flex items-end gap-3 mt-1">
-            <p className="text-3xl font-bold text-slate-900 dark:text-white">₩145억</p>
+            <p className="text-3xl font-bold text-[var(--text-primary)]">₩145억</p>
             <div className="flex items-center gap-1 text-emerald-500 text-sm font-bold mb-1">
               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m22 7-7.5 7.5-5-5L2 17"/><path d="M16 7h6v6"/></svg>
               <span>+12% 전년 대비</span>
@@ -106,14 +106,14 @@ export default async function DashboardPage({ params }: DashboardPageProps) {
         </div>
 
         {/* AI Risk Alerts */}
-        <div className="flex flex-col gap-2 rounded-xl p-6 bg-white dark:bg-card-dark border border-primary/20 dark:border-primary/20 shadow-[0_0_15px_rgba(19,91,236,0.1)] relative overflow-hidden group">
-          <div className="absolute -right-4 -top-4 w-24 h-24 bg-primary/10 rounded-full blur-2xl group-hover:bg-primary/20 transition-all" />
+        <div className="flex flex-col gap-2 rounded-xl p-6 bg-[var(--surface-strong)] border border-[var(--status-warning)]/30 shadow-[0_0_15px_rgba(245,158,11,0.1)] relative overflow-hidden group">
+          <div className="absolute -right-4 -top-4 w-24 h-24 bg-[var(--status-warning)]/10 rounded-full blur-2xl group-hover:bg-[var(--status-warning)]/20 transition-all" />
           <div className="flex items-center justify-between relative z-10">
-            <p className="text-slate-500 dark:text-slate-400 text-sm font-medium uppercase tracking-wider">AI 리스크 알림</p>
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-primary"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+            <p className="text-[var(--text-secondary)] text-sm font-medium uppercase tracking-wider">AI 리스크 알림</p>
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--status-warning)]"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
           </div>
           <div className="flex items-end gap-3 mt-1 relative z-10">
-            <p className="text-3xl font-bold text-slate-900 dark:text-white">3</p>
+            <p className="text-3xl font-bold text-[var(--text-primary)]">3</p>
             <div className="flex items-center gap-1 text-amber-500 text-sm font-bold mb-1">
               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/></svg>
               <span>주의 필요</span>
@@ -123,20 +123,20 @@ export default async function DashboardPage({ params }: DashboardPageProps) {
       </div>
 
       {/* ── 검색 & 필터 (Stitch Style) ── */}
-      <div className="flex flex-col md:flex-row gap-4 items-end bg-white dark:bg-card-dark p-4 rounded-xl border border-slate-200 dark:border-border-dark shadow-sm">
+      <div className="flex flex-col md:flex-row gap-4 items-end bg-[var(--surface-strong)] p-4 rounded-xl border border-[var(--line-strong)] shadow-[var(--shadow-sm)]">
         <label className="flex flex-col w-full md:flex-1">
-          <span className="text-sm font-medium pb-2 text-slate-500 dark:text-slate-400">프로젝트 검색</span>
+          <span className="text-sm font-medium pb-2 text-[var(--text-secondary)]">프로젝트 검색</span>
           <div className="relative">
             <input
-              className="w-full rounded-lg border border-slate-200 dark:border-border-dark bg-white dark:bg-[#111318] h-11 pl-10 pr-4 text-sm focus:ring-2 focus:ring-primary focus:border-transparent outline-none transition-all placeholder:text-slate-400 text-slate-900 dark:text-white"
+              className="w-full rounded-lg border border-[var(--line)] bg-[var(--surface)] h-11 pl-10 pr-4 text-sm focus:ring-2 focus:ring-[var(--accent)] focus:border-transparent outline-none transition-all placeholder:text-[var(--text-hint)] text-[var(--text-primary)]"
               placeholder="프로젝트 이름 또는 위치로 검색..."
             />
-            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-hint)]"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
           </div>
         </label>
         <label className="flex flex-col w-full md:w-64">
-          <span className="text-sm font-medium pb-2 text-slate-500 dark:text-slate-400">상태</span>
-          <select className="w-full appearance-none rounded-lg border border-slate-200 dark:border-border-dark bg-white dark:bg-[#111318] h-11 pl-4 pr-10 text-sm focus:ring-2 focus:ring-primary focus:border-transparent outline-none transition-all text-slate-700 dark:text-slate-200">
+          <span className="text-sm font-medium pb-2 text-[var(--text-secondary)]">상태</span>
+          <select className="w-full appearance-none rounded-lg border border-[var(--line)] bg-[var(--surface)] h-11 pl-4 pr-10 text-sm focus:ring-2 focus:ring-[var(--accent)] focus:border-transparent outline-none transition-all text-[var(--text-primary)]">
             <option>전체 상태</option>
             <option>진행 중</option>
             <option>보류</option>

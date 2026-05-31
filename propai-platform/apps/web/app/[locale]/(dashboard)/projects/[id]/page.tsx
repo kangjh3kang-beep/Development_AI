@@ -10,6 +10,8 @@ import { isValidLocale, type Locale } from "@/i18n/config";
 import { useDictionary } from "@/hooks/use-dictionary";
 import { formatCurrencyKRW } from "@/lib/formatters";
 import { apiClient } from "@/lib/api-client";
+import { useProjectStore } from "@/store/useProjectStore";
+import { ImageUpload } from "@/components/ui/ImageUpload";
 
 type ProjectMeta = {
   id: string;
@@ -27,6 +29,11 @@ type ProjectMeta = {
 export default function ProjectDetailPage() {
   const { locale, id } = useParams() as { locale: string; id: string };
   const { dictionary, isLoading } = useDictionary(locale as Locale);
+  
+  // Zustand store 연동
+  const projectFromStore = useProjectStore((state) => state.getProjectById(id));
+  const updateProject = useProjectStore((state) => state.updateProject);
+
   const [meta, setMeta] = useState<ProjectMeta | null>(null);
   const [metaLoading, setMetaLoading] = useState(true);
 
@@ -99,8 +106,8 @@ export default function ProjectDetailPage() {
           <div className="flex flex-wrap items-start justify-between gap-6 mb-6">
             <div className="space-y-2">
               <p className="text-[10px] font-black uppercase tracking-[0.3em] text-[var(--accent-strong)]">Project Metadata</p>
-              <h2 className="text-2xl font-[900] tracking-tight text-[var(--text-primary)]">{meta.name}</h2>
-              {meta.address && <p className="text-sm text-[var(--text-secondary)]">{meta.address}</p>}
+              <h2 className="text-2xl font-[900] tracking-tight text-[var(--text-primary)]">{projectFromStore?.name || meta.name}</h2>
+              {(projectFromStore?.address || meta.address) && <p className="text-sm text-[var(--text-secondary)]">{projectFromStore?.address || meta.address}</p>}
             </div>
             <span className="rounded-xl border border-[var(--accent-strong)]/30 bg-[var(--accent-soft)] px-4 py-2 text-[11px] font-black uppercase tracking-widest text-[var(--accent-strong)]">
               {meta.status}
@@ -131,6 +138,17 @@ export default function ProjectDetailPage() {
                 <p className="text-sm font-bold text-[var(--text-primary)]">{new Date(meta.updated_at).toLocaleDateString("ko-KR")}</p>
               </div>
             )}
+          </div>
+          <div className="mt-8 border-t border-[var(--line-strong)] pt-8">
+            <h3 className="text-sm font-bold text-[var(--text-primary)] mb-4">현장(부지) 이미지 관리</h3>
+            <ImageUpload 
+              value={projectFromStore?.siteImageUrl}
+              onChange={(base64) => {
+                updateProject(id, { siteImageUrl: base64 });
+              }}
+              label="현장 이미지를 클릭하거나 드래그하여 등록/수정하세요"
+              className="max-w-xl bg-[var(--surface)]"
+            />
           </div>
         </motion.section>
       ) : null}

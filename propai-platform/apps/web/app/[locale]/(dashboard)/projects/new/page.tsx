@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useProjectStore } from "@/store/useProjectStore";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { GlobalAddressSearch, type AddressEntry } from "@/components/common/GlobalAddressSearch";
+import { ImageUpload } from "@/components/ui/ImageUpload";
 
 export default function NewProjectPage() {
   const router = useRouter();
@@ -18,6 +19,7 @@ export default function NewProjectPage() {
 
   const [name, setName] = useState("");
   const [location, setLocation] = useState("");
+  const [siteImageUrl, setSiteImageUrl] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // 주소가 선택되면 GlobalAddressSearch가 /zoning/comprehensive를 호출하여
@@ -43,6 +45,7 @@ export default function NewProjectPage() {
       pnu: currentSiteAnalysis?.pnu ?? "",
       area: currentSiteAnalysis?.landAreaSqm ? String(currentSiteAnalysis.landAreaSqm) : "0",
       type: "mixed",
+      siteImageUrl: siteImageUrl || undefined,
     });
 
     // setProject는 프로젝트 전환 시 cross-module 데이터를 초기화하므로
@@ -108,6 +111,15 @@ export default function NewProjectPage() {
             <p className="text-[11px] font-medium text-[var(--text-hint)] mt-1">
               주소를 선택하면 용도지역·대지면적·공시지가·지자체 조례를 자동 조회합니다.
             </p>
+          </div>
+
+          <div className="grid gap-2 mt-4">
+            <label className="text-xs font-bold uppercase tracking-widest text-[var(--text-tertiary)]">현장(부지) 이미지 등록</label>
+            <ImageUpload 
+              value={siteImageUrl}
+              onChange={setSiteImageUrl}
+              label="클릭하거나 현장 사진을 드래그하여 업로드하세요"
+            />
           </div>
         </div>
       </section>
