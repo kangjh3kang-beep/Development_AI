@@ -47,6 +47,17 @@ function SectionCard({ title, icon, children, defaultOpen = false }: {
   );
 }
 
+function MarketAiBlock({ label, text }: { label: string; text: string }) {
+  return (
+    <div>
+      <p className="text-xs font-black text-emerald-400 mb-1">{label}</p>
+      <p className="text-[11px] text-[var(--text-secondary)] leading-relaxed whitespace-pre-line">
+        {text}
+      </p>
+    </div>
+  );
+}
+
 function AiInterpretation({ text }: { text: string }) {
   return (
     <div className="mt-3 rounded-lg bg-blue-500/5 border border-blue-500/20 p-4">
@@ -280,6 +291,33 @@ export function ComprehensiveAnalysisPanel() {
                   </div>
                 </div>
               )}
+            </div>
+          )}
+
+          {/* AI 시장분석 종합 해석 (market_interpretation) */}
+          {result.market_interpretation && (
+            <div className="rounded-2xl border border-emerald-500/25 bg-emerald-500/5 p-6">
+              <h3 className="text-sm font-bold text-emerald-400 mb-3">📊 AI 시장분석</h3>
+              <div className="space-y-3">
+                {result.market_interpretation.market_overview && (
+                  <MarketAiBlock label="시장 종합 현황" text={result.market_interpretation.market_overview} />
+                )}
+                {result.market_interpretation.price_trend_analysis && (
+                  <MarketAiBlock label="가격 추이·전망" text={result.market_interpretation.price_trend_analysis} />
+                )}
+                {result.market_interpretation.comparable_analysis && (
+                  <MarketAiBlock label="유사물건 비교" text={result.market_interpretation.comparable_analysis} />
+                )}
+                {result.market_interpretation.investment_insight && (
+                  <MarketAiBlock label="투자 시사점" text={result.market_interpretation.investment_insight} />
+                )}
+                {result.market_interpretation.risk_factors && (
+                  <MarketAiBlock label="시장 리스크" text={result.market_interpretation.risk_factors} />
+                )}
+                {result.market_interpretation.timing_recommendation && (
+                  <MarketAiBlock label="매수·개발 타이밍" text={result.market_interpretation.timing_recommendation} />
+                )}
+              </div>
             </div>
           )}
 
