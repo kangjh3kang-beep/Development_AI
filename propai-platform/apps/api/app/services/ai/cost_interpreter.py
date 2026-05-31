@@ -72,7 +72,7 @@ USER_PROMPT_TEMPLATE = """\
 class CostInterpreter:
     """공사비 분석 결과를 AI가 해석하여 VE 절감 방안을 제안."""
 
-    def __init__(self, *, timeout_sec: float = 45.0) -> None:
+    def __init__(self, *, timeout_sec: float = 90.0) -> None:
         self._timeout_sec = timeout_sec
         self._llm = None
 
@@ -99,7 +99,7 @@ class CostInterpreter:
             model=model,
             anthropic_api_key=api_key,
             temperature=0.3,
-            max_tokens=2048,
+            max_tokens=4096,
             timeout=self._timeout_sec,
         )
         return self._llm

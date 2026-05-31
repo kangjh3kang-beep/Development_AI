@@ -83,7 +83,7 @@ USER_PROMPT_TEMPLATE = """\
 class FeasibilityInterpreter:
     """수지분석 결과를 AI가 해석하여 전문가 수준의 투자 자문을 생성."""
 
-    def __init__(self, *, timeout_sec: float = 45.0) -> None:
+    def __init__(self, *, timeout_sec: float = 90.0) -> None:
         self._timeout_sec = timeout_sec
         self._llm = None
 
@@ -110,7 +110,7 @@ class FeasibilityInterpreter:
             model=model,
             anthropic_api_key=api_key,
             temperature=0.3,
-            max_tokens=3000,
+            max_tokens=6000,
             timeout=self._timeout_sec,
         )
         return self._llm

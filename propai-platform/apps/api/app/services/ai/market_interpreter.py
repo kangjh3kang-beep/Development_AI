@@ -83,7 +83,7 @@ class MarketInterpreter:
         "timing_recommendation",
     ]
 
-    def __init__(self, *, timeout_sec: float = 45.0) -> None:
+    def __init__(self, *, timeout_sec: float = 90.0) -> None:
         self._timeout_sec = timeout_sec
         self._llm = None
 
@@ -110,7 +110,7 @@ class MarketInterpreter:
             model=model,
             anthropic_api_key=api_key,
             temperature=0.3,
-            max_tokens=2048,
+            max_tokens=4096,
             timeout=self._timeout_sec,
         )
         return self._llm

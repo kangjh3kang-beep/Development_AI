@@ -122,7 +122,7 @@ def get_llm(
         )
 
     temperature = kwargs.get("temperature", 0.3)
-    max_tokens = kwargs.get("max_tokens", 2048)
+    max_tokens = kwargs.get("max_tokens", 4096)
     timeout = kwargs.get("timeout", 10.0)
 
     if provider == "anthropic":

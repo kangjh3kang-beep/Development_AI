@@ -67,7 +67,7 @@ USER_PROMPT_TEMPLATE = """\
 class AvmInterpreter:
     """AVM 시세 추정 결과를 AI가 해석하여 가치 평가 내러티브를 생성."""
 
-    def __init__(self, *, timeout_sec: float = 45.0) -> None:
+    def __init__(self, *, timeout_sec: float = 90.0) -> None:
         self._timeout_sec = timeout_sec
         self._llm = None
 
@@ -89,7 +89,7 @@ class AvmInterpreter:
                 model=os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-20250514"),
                 anthropic_api_key=get_clean_env_key("ANTHROPIC_API_KEY"),
                 temperature=0.3,
-                max_tokens=2048,
+                max_tokens=4096,
                 timeout=self._timeout_sec,
             )
         return self._llm

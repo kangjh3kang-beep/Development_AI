@@ -72,7 +72,7 @@ USER_PROMPT_TEMPLATE = """\
 class ReportInterpreter:
     """파이프라인 전체 결과를 AI가 종합하여 보고서 내러티브를 생성."""
 
-    def __init__(self, *, timeout_sec: float = 45.0) -> None:
+    def __init__(self, *, timeout_sec: float = 90.0) -> None:
         self._timeout_sec = timeout_sec
         self._llm = None
 
@@ -99,7 +99,7 @@ class ReportInterpreter:
             model=model,
             anthropic_api_key=api_key,
             temperature=0.3,
-            max_tokens=2048,
+            max_tokens=4096,
             timeout=self._timeout_sec,
         )
         return self._llm
