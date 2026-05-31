@@ -84,8 +84,12 @@ class SiteAnalysisInterpreter:
             return self._llm
 
         from app.core.config import settings
+        from app.services.ai.key_sanitizer import sanitize_api_key
 
-        api_key = settings.ANTHROPIC_API_KEY or os.environ.get("ANTHROPIC_API_KEY", "")
+        api_key = sanitize_api_key(
+            settings.ANTHROPIC_API_KEY or os.environ.get("ANTHROPIC_API_KEY", ""),
+            key_name="ANTHROPIC_API_KEY",
+        )
         if not api_key:
             raise ValueError("ANTHROPIC_API_KEY가 설정되지 않았습니다.")
 

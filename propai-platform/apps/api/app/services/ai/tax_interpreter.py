@@ -84,9 +84,11 @@ class TaxInterpreter:
         except ImportError:
             from langchain_anthropic import ChatAnthropic
 
+            from app.services.ai.key_sanitizer import get_clean_env_key
+
             self._llm = ChatAnthropic(
                 model=os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-20250514"),
-                anthropic_api_key=os.environ.get("ANTHROPIC_API_KEY", ""),
+                anthropic_api_key=get_clean_env_key("ANTHROPIC_API_KEY"),
                 temperature=0.3,
                 max_tokens=2048,
                 timeout=self._timeout_sec,
