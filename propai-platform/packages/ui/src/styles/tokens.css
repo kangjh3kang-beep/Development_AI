@@ -90,33 +90,33 @@
 }
 
 .dark {
-  /* ── Dark Mode (Premium AI Command Center) ── */
-  --background: #060b14;
-  --foreground: #f0f4f8;
+  /* ── Dark Mode (Nexus Geo-Intelligence) ── */
+  --background: #11131b;
+  --foreground: #e1e1ee;
 
-  /* ── Surface Hierarchy (Readable Dark) ── */
-  --surface: #0c1220;
-  --surface-strong: #111a2e;
-  --surface-soft: #0a1018;
-  --surface-secondary: #131d30;
-  --surface-tertiary: #1a2640;
+  /* ── Surface Hierarchy ── */
+  --surface: #11131b;
+  --surface-strong: #1c1f27;
+  --surface-soft: #0c0e16;
+  --surface-secondary: #191b24;
+  --surface-tertiary: #282a32;
   --surface-muted: rgba(255, 255, 255, 0.06);
 
-  /* ── Text Hierarchy (WCAG AA 준수, 최소 4.5:1 대비) ── */
-  --text-primary: #f0f4f8;
-  --text-secondary: #b0bec5;
-  --text-tertiary: #8899a6;
-  --text-hint: #607080;
+  /* ── Text Hierarchy ── */
+  --text-primary: #e1e1ee;
+  --text-secondary: #c3c5d8;
+  --text-tertiary: #8d90a1;
+  --text-hint: #434655;
 
-  /* ── Borders & Dividers (Visible) ── */
+  /* ── Borders & Dividers ── */
   --line: rgba(255, 255, 255, 0.12);
-  --line-strong: rgba(255, 255, 255, 0.20);
+  --line-strong: #282e39;
   --line-subtle: rgba(255, 255, 255, 0.06);
 
-  /* ── Brand Accent (Cyber Neon) ── */
-  --accent: #14b8a6;
-  --accent-strong: #2dd4bf;
-  --accent-soft: rgba(20, 184, 166, 0.15);
+  /* ── Brand Accent ── */
+  --accent: #135bec;
+  --accent-strong: #b4c5ff;
+  --accent-soft: rgba(19, 91, 236, 0.15);
 
   /* ── Elevation Shadows (Deep Depth) ── */
   --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.5);

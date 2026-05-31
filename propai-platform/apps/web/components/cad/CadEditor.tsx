@@ -177,153 +177,145 @@ export function CadEditor({ projectId }: CadEditorProps) {
   );
 
   return (
-    <div className="flex h-[calc(100vh-160px)] w-full overflow-hidden bg-slate-50 dark:bg-[#090b10] rounded-xl border border-slate-200 dark:border-border-dark shadow-sm font-display text-slate-900 dark:text-white" aria-label="CAD 파라메트릭 에디터">
-      {/* ── 좌측 툴바 ── */}
-      <aside className="w-16 flex flex-col items-center bg-white dark:bg-[#111318] border-r border-slate-200 dark:border-border-dark py-4 gap-4 shrink-0 z-40">
-        <div className="flex flex-col gap-2 w-full px-2">
-          <button onClick={() => setTool("select")} className={`group flex flex-col items-center justify-center w-full aspect-square rounded-lg relative transition-colors ${useCadStore.getState().tool === 'select' ? 'bg-primary/10 text-primary dark:bg-border-dark dark:text-white' : 'text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-border-dark dark:hover:text-white'}`} title="Select">
-            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m3 3 7.07 16.97 2.51-7.39 7.39-2.51L3 3z"/><path d="m13 13 6 6"/></svg>
-            <span className="absolute left-14 bg-white dark:bg-surface-dark px-2 py-1 rounded text-xs opacity-0 group-hover:opacity-100 transition-opacity border border-slate-200 dark:border-border-dark whitespace-nowrap pointer-events-none z-50 shadow-sm">Select (V)</span>
-          </button>
-        </div>
-        <div className="w-8 h-px bg-slate-200 dark:bg-border-dark" />
-        
-        <div className="flex flex-col gap-2 w-full px-2">
-          <button onClick={() => setTool("line")} className={`group flex flex-col items-center justify-center w-full aspect-square rounded-lg relative transition-colors ${useCadStore.getState().tool === 'line' ? 'bg-primary/10 text-primary dark:bg-border-dark dark:text-white' : 'text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-border-dark dark:hover:text-white'}`}>
-            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="5" x2="19" y1="12" y2="12"/></svg>
-            <span className="absolute left-14 bg-white dark:bg-surface-dark px-2 py-1 rounded text-xs opacity-0 group-hover:opacity-100 transition-opacity border border-slate-200 dark:border-border-dark whitespace-nowrap pointer-events-none z-50 shadow-sm">Line (L)</span>
-          </button>
-          <button onClick={() => setTool("rect")} className={`group flex flex-col items-center justify-center w-full aspect-square rounded-lg relative transition-colors ${useCadStore.getState().tool === 'rect' ? 'bg-primary/10 text-primary dark:bg-border-dark dark:text-white' : 'text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-border-dark dark:hover:text-white'}`}>
-            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/></svg>
-            <span className="absolute left-14 bg-white dark:bg-surface-dark px-2 py-1 rounded text-xs opacity-0 group-hover:opacity-100 transition-opacity border border-slate-200 dark:border-border-dark whitespace-nowrap pointer-events-none z-50 shadow-sm">Rectangle (R)</span>
-          </button>
-          <button onClick={() => setTool("polygon")} className={`group flex flex-col items-center justify-center w-full aspect-square rounded-lg relative transition-colors ${useCadStore.getState().tool === 'polygon' ? 'bg-primary/10 text-primary dark:bg-border-dark dark:text-white' : 'text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-border-dark dark:hover:text-white'}`}>
-            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2l9 4-3 10H6L3 6l9-4z"/></svg>
-            <span className="absolute left-14 bg-white dark:bg-surface-dark px-2 py-1 rounded text-xs opacity-0 group-hover:opacity-100 transition-opacity border border-slate-200 dark:border-border-dark whitespace-nowrap pointer-events-none z-50 shadow-sm">Polygon (G)</span>
-          </button>
-          <button onClick={() => setTool("circle")} className={`group flex flex-col items-center justify-center w-full aspect-square rounded-lg relative transition-colors ${useCadStore.getState().tool === 'circle' ? 'bg-primary/10 text-primary dark:bg-border-dark dark:text-white' : 'text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-border-dark dark:hover:text-white'}`}>
-            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/></svg>
-            <span className="absolute left-14 bg-white dark:bg-surface-dark px-2 py-1 rounded text-xs opacity-0 group-hover:opacity-100 transition-opacity border border-slate-200 dark:border-border-dark whitespace-nowrap pointer-events-none z-50 shadow-sm">Circle (C)</span>
-          </button>
-        </div>
-      </aside>
+    <section className="grid gap-4" aria-label="CAD 파라메트릭 에디터">
+      <CadToolbar />
 
-      {/* ── 중앙 뷰포트 ── */}
-      <main className="flex-1 flex flex-col relative overflow-hidden">
-        {/* Top Overlay Bar */}
-        <div className="absolute top-4 left-4 right-4 flex justify-between items-start z-20 pointer-events-none">
-          <div className="bg-white/90 dark:bg-surface-dark/90 backdrop-blur-sm p-1 rounded-lg border border-slate-200 dark:border-border-dark shadow-sm pointer-events-auto">
-            <div className="flex h-8 items-center justify-center gap-1">
-              <label className="cursor-pointer h-full px-3 rounded flex items-center justify-center text-slate-500 dark:text-gray-400 hover:text-slate-800 dark:hover:text-white transition-all has-[:checked]:bg-primary has-[:checked]:text-white">
-                <span className="text-xs font-bold uppercase tracking-wider">Wireframe</span>
-                <input className="hidden" name="viewmode" type="radio" value="Wireframe" />
-              </label>
-              <div className="w-px h-4 bg-slate-300 dark:bg-gray-700" />
-              <label className="cursor-pointer h-full px-3 rounded flex items-center justify-center text-slate-500 dark:text-gray-400 hover:text-slate-800 dark:hover:text-white transition-all has-[:checked]:bg-primary has-[:checked]:text-white">
-                <span className="text-xs font-bold uppercase tracking-wider">Shaded</span>
-                <input defaultChecked className="hidden" name="viewmode" type="radio" value="Shaded" />
-              </label>
-            </div>
+      {/* 우측 패널 탭 버튼 */}
+      <div className="flex items-center gap-1" role="group" aria-label="확장 패널">
+        {RIGHT_PANEL_TABS.map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            onClick={() => toggleRightPanel(tab.id)}
+            className={`rounded-xl px-3 py-1.5 text-xs font-bold transition-colors ${
+              rightPanel === tab.id
+                ? "bg-[var(--accent)] text-white"
+                : "bg-[var(--surface-soft)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+            }`}
+            aria-pressed={rightPanel === tab.id}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      <div
+        className={`grid gap-4 ${
+          rightPanel !== "none"
+            ? "grid-cols-[280px_1fr_320px]"
+            : "grid-cols-[280px_1fr]"
+        }`}
+      >
+        {/* 좌측: 탭 전환 패널 */}
+        <div className="flex flex-col gap-2 overflow-hidden" style={{ maxHeight: 640 }}>
+          {/* 탭 버튼 */}
+          <div className="flex gap-1 rounded-xl bg-[var(--surface-soft)] p-1" role="tablist">
+            {([
+              { id: "design" as const, label: "AI 설계" },
+              { id: "analysis" as const, label: "분석" },
+              { id: "layers" as const, label: "레이어" },
+            ]).map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                role="tab"
+                aria-selected={leftPanel === tab.id}
+                onClick={() => setLeftPanel(tab.id)}
+                className={`flex-1 rounded-lg px-2 py-1.5 text-xs font-bold transition-colors ${
+                  leftPanel === tab.id
+                    ? "bg-[var(--accent)] text-white shadow-sm"
+                    : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
           </div>
-          
-          <div className="flex gap-2 bg-white/90 dark:bg-surface-dark/90 backdrop-blur-sm p-1 rounded-lg border border-slate-200 dark:border-border-dark shadow-sm pointer-events-auto">
-             <button className="p-1.5 text-slate-500 dark:text-gray-400 hover:text-slate-800 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-white/10 rounded transition-colors" onClick={undo} title="Undo">
-               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg>
-             </button>
-             <button className="p-1.5 text-slate-500 dark:text-gray-400 hover:text-slate-800 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-white/10 rounded transition-colors" onClick={redo} title="Redo">
-               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3l3 2.7"/></svg>
-             </button>
+          {/* 탭 콘텐츠 */}
+          <div className="flex-1 overflow-y-auto">
+            {leftPanel === "design" && <AutoDesignPanel projectId={projectId} />}
+            {leftPanel === "analysis" && <DrawingAnalysisPanel />}
+            {leftPanel === "layers" && <LayerPanel />}
           </div>
         </div>
 
-        {/* Canvas Area */}
-        <div className="w-full h-full relative" ref={containerRef} style={{ backgroundImage: 'linear-gradient(to right, var(--line-subtle) 1px, transparent 1px), linear-gradient(to bottom, var(--line-subtle) 1px, transparent 1px)', backgroundSize: '40px 40px' }}>
-          <CadCanvasInner width={canvasSize.width} height={canvasSize.height} />
-          
+        {/* 중앙: 캔버스 + HUD */}
+        <div className="relative" ref={containerRef}>
+          <div className="overflow-hidden rounded-2xl border border-[var(--line-strong)] bg-[var(--surface)] shadow-[var(--shadow-lg)]">
+            <CadCanvasInner width={canvasSize.width} height={canvasSize.height} />
+          </div>
+          <ComplianceHud projectId={projectId} />
+
+          {/* TEXT 인라인 입력 오버레이 */}
           {textInputPending && (
-            <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/10 dark:bg-black/40 backdrop-blur-sm">
-              <form onSubmit={handleTextSubmit} className="flex items-center gap-2 rounded-xl bg-white dark:bg-surface-dark px-4 py-3 shadow-xl border border-slate-200 dark:border-border-dark">
-                <span className="text-xs font-bold text-primary">텍스트 입력:</span>
-                <input ref={textInputRef} type="text" value={textValue} onChange={(e) => setTextValue(e.target.value)} onKeyDown={(e) => { if (e.key === "Escape") handleTextCancel(); }} className="w-64 rounded-lg border border-slate-200 dark:border-border-dark bg-slate-50 dark:bg-[#111318] px-3 py-1.5 text-sm font-mono outline-none focus:border-primary focus:ring-1 focus:ring-primary text-slate-900 dark:text-white" autoFocus autoComplete="off" />
-                <button type="submit" className="rounded-lg bg-primary hover:bg-primary-dark px-3 py-1.5 text-xs font-bold text-white transition-colors">확인</button>
-                <button type="button" onClick={handleTextCancel} className="rounded-lg bg-slate-100 dark:bg-border-dark hover:bg-slate-200 dark:hover:bg-gray-700 px-3 py-1.5 text-xs font-medium text-slate-600 dark:text-gray-300 transition-colors">취소</button>
+            <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/20 rounded-2xl">
+              <form
+                onSubmit={handleTextSubmit}
+                className="flex items-center gap-2 rounded-xl bg-[var(--surface)] px-4 py-3 shadow-lg border border-[var(--line-strong)]"
+                role="dialog"
+                aria-label="텍스트 입력"
+              >
+                <span className="text-xs font-bold text-[var(--accent)]">텍스트:</span>
+                <input
+                  ref={textInputRef}
+                  type="text"
+                  value={textValue}
+                  onChange={(e) => setTextValue(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Escape") handleTextCancel(); }}
+                  placeholder="텍스트 내용 입력 후 Enter"
+                  className="w-64 rounded-lg border border-[var(--line)] bg-[var(--surface-soft)] px-3 py-1.5 text-sm font-mono outline-none focus:border-[var(--accent)]"
+                  aria-label="텍스트 내용"
+                  autoComplete="off"
+                  maxLength={200}
+                />
+                <button type="submit" className="rounded-lg bg-[var(--accent)] px-3 py-1.5 text-xs font-bold text-white">
+                  확인
+                </button>
+                <button type="button" onClick={handleTextCancel} className="rounded-lg bg-[var(--surface-soft)] px-3 py-1.5 text-xs font-medium text-[var(--text-secondary)]">
+                  취소
+                </button>
               </form>
             </div>
           )}
         </div>
 
-        {/* Bottom Status Bar */}
-        <div className="h-8 bg-white dark:bg-[#111318] border-t border-slate-200 dark:border-border-dark flex items-center justify-between px-4 text-[11px] font-mono text-slate-500 dark:text-gray-400 shrink-0 z-20">
-          <div className="flex items-center gap-4">
-            <span className="text-primary font-bold">READY</span>
-            <span>요소: {points.length + lines.length + polygons.length + rects.length + circles.length}개</span>
-            {selectedIds.length > 0 && <span className="text-emerald-500 font-bold">선택: {selectedIds.length}개</span>}
+        {/* 우측: 확장 패널 (슬라이드) */}
+        {rightPanel !== "none" && (
+          <div className="flex flex-col gap-4 overflow-y-auto" style={{ maxHeight: 640 }}>
+            {rightPanel === "compliance" && (
+              <CadCompliancePanel projectId={projectId} />
+            )}
+            {rightPanel === "bim" && (
+              <CadBimSidePanel projectId={projectId} />
+            )}
+            {rightPanel === "export" && (
+              <CadExportPanel projectId={projectId} />
+            )}
           </div>
-          <div className="flex items-center gap-4">
-            <span>X: {(cursorPos.x / cadScale).toFixed(2)}m</span>
-            <span>Y: {(cursorPos.y / cadScale).toFixed(2)}m</span>
-            <div className="w-px h-3 bg-slate-300 dark:bg-border-dark" />
-            <span>줌: {Math.round(viewScale * 100)}%</span>
-          </div>
-        </div>
-      </main>
+        )}
+      </div>
 
-      {/* ── 우측 속성 패널 ── */}
-      <aside className="w-[320px] bg-white dark:bg-[#111318] border-l border-slate-200 dark:border-border-dark flex flex-col overflow-y-auto shrink-0 z-40">
-        <div className="p-4 border-b border-slate-200 dark:border-border-dark">
-          <div className="flex items-center justify-between mb-1">
-            <h3 className="text-slate-900 dark:text-white text-sm font-bold uppercase tracking-wider">Properties</h3>
-            <button className="text-slate-400 hover:text-slate-700 dark:hover:text-white"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg></button>
-          </div>
-          <div className="text-primary text-xs font-mono">{selectedIds.length > 0 ? `선택됨 (${selectedIds.length})` : '선택 없음'}</div>
-        </div>
-        
-        {/* Transform / Info */}
-        <div className="p-4 border-b border-slate-200 dark:border-border-dark">
-           <div className="flex items-center gap-2 mb-3 text-slate-500 dark:text-gray-400">
-             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m21 16-4 4-4-4"/><path d="M17 20V4"/><path d="m3 8 4-4 4 4"/><path d="M7 4v16"/></svg>
-             <span className="text-xs font-bold uppercase">Transform & Info</span>
-           </div>
-           
-           <div className="space-y-3">
-             <div className="flex flex-col gap-1.5">
-               <label className="text-[10px] text-slate-500 dark:text-gray-500 font-mono uppercase">Current Tool</label>
-               <div className="bg-slate-50 dark:bg-surface-dark border border-slate-200 dark:border-border-dark rounded text-xs text-slate-900 dark:text-white px-3 py-2 font-mono uppercase tracking-wider">
-                 {useCadStore.getState().tool}
-               </div>
-             </div>
-             
-             <div className="flex items-center justify-between gap-4 mt-2">
-                <label className="text-xs text-slate-500 dark:text-gray-400">Lines</label>
-                <span className="text-xs font-bold text-slate-900 dark:text-white">{lines.length}</span>
-             </div>
-             <div className="flex items-center justify-between gap-4">
-                <label className="text-xs text-slate-500 dark:text-gray-400">Polygons</label>
-                <span className="text-xs font-bold text-slate-900 dark:text-white">{polygons.length + rects.length + circles.length}</span>
-             </div>
-           </div>
-        </div>
+      {/* 커맨드라인 */}
+      <CadCommandLine />
 
-        {/* AI Auto Design Panels */}
-        <div className="flex flex-col flex-1 p-4 gap-4">
-           <div className="flex items-center gap-2 mb-1 text-slate-500 dark:text-gray-400">
-             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2 12h20"/><path d="M12 2v20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-             <span className="text-xs font-bold uppercase">AI Modules</span>
-           </div>
-           
-           <div className="flex flex-col gap-4 overflow-y-auto pr-1">
-             <div className="bg-slate-50 dark:bg-surface-dark rounded-xl border border-slate-200 dark:border-border-dark p-3">
-               <AutoDesignPanel projectId={projectId} />
-             </div>
-             <div className="bg-slate-50 dark:bg-surface-dark rounded-xl border border-slate-200 dark:border-border-dark p-3">
-               <CadCompliancePanel projectId={projectId} />
-             </div>
-             <div className="bg-slate-50 dark:bg-surface-dark rounded-xl border border-slate-200 dark:border-border-dark p-3">
-               <CadExportPanel projectId={projectId} />
-             </div>
-           </div>
-        </div>
-      </aside>
-    </div>
+      <div
+        className="flex gap-4 text-xs text-[var(--text-hint)]"
+        aria-live="polite"
+      >
+        <span>점: {points.length}</span>
+        <span>선: {lines.length}</span>
+        <span>면: {polygons.length}</span>
+        <span>사각형: {rects.length}</span>
+        <span>원: {circles.length}</span>
+        <span>문자: {texts.length}</span>
+        {selectedIds.length > 0 && (
+          <span className="text-[var(--accent)] font-medium">선택: {selectedIds.length}</span>
+        )}
+        <span className="ml-auto">
+          X: {(cursorPos.x / cadScale).toFixed(1)} Y: {(cursorPos.y / cadScale).toFixed(1)} m
+        </span>
+        <span>줌: {Math.round(viewScale * 100)}%</span>
+      </div>
+    </section>
   );
 }

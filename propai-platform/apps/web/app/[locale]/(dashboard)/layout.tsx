@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { headers } from "next/headers";
 import { Logo } from "@/components/ui/Logo";
 import { LocaleSwitcher } from "@/components/ui/LocaleSwitcher";
 import { getDictionary } from "@/i18n/get-dictionary";
@@ -197,86 +198,67 @@ export default async function DashboardLayout({
   ];
 
   return (
-    <div className="flex h-screen w-full bg-background-light dark:bg-background-dark font-display overflow-hidden">
+    <div className="mx-auto flex min-h-screen max-w-7xl flex-col gap-6 px-4 py-5 md:px-6">
       <AIAssistant />
-
-      {/* ── 사이드바 (Stitch Design) ── */}
-      <aside className="hidden lg:flex flex-col w-64 h-full border-r border-border-light dark:border-border-dark bg-card-light dark:bg-background-dark flex-shrink-0">
-        {/* 로고 */}
-        <div className="p-6 flex items-center gap-3">
-          <Link href={`/${locale}`} className="flex items-center gap-3 group">
-            <Logo size="md" className="transition-transform group-hover:scale-105 active:scale-95 shrink-0" />
-            <span className="sr-only">사통팔땅 AI Real-Estate Intelligence</span>
+      
+      {/* 헤더 */}
+      <header className="sticky top-2 z-50 glass rounded-[var(--radius-xl)] border border-[var(--line)] bg-[var(--glass-bg)] px-4 py-3 md:px-8 md:py-4 shadow-[var(--shadow-lg)] transition-all duration-500 mt-2">
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <Link href={`/${locale}`} className="flex items-center gap-4 group min-w-0">
+             <Logo size="md" className="transition-transform group-hover:scale-105 active:scale-95 shrink-0" />
+             <span className="sr-only">사통팔땅 AI Real-Estate Intelligence</span>
           </Link>
-        </div>
 
-        {/* 네비게이션 */}
-        <div className="flex-1 px-4 py-2 flex flex-col gap-1 overflow-y-auto custom-scrollbar">
-          <SidebarNav sections={sections} />
-        </div>
-
-        {/* 하단 유저 프로필 */}
-        <div className="p-4 border-t border-border-light dark:border-border-dark">
-          <div className="flex items-center gap-3 p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-card-dark cursor-pointer transition-colors">
-            <AuthButton locale={locale} />
-          </div>
-        </div>
-      </aside>
-
-      {/* ── 메인 콘텐츠 영역 ── */}
-      <div className="flex-1 flex flex-col h-full overflow-hidden relative">
-        {/* 상단 네비게이션 바 (Stitch Design) */}
-        <header className="flex items-center justify-between whitespace-nowrap border-b border-border-light dark:border-border-dark bg-card-light dark:bg-[#111318] px-4 md:px-6 py-3 shrink-0 z-20">
-          <div className="flex items-center gap-4">
-            {/* 모바일 메뉴 */}
+          <div className="flex flex-wrap items-center gap-3">
             <MobileSidebarToggle sections={sections} />
-            {/* 모바일 로고 */}
-            <Link href={`/${locale}`} className="lg:hidden flex items-center gap-2">
-              <Logo size="sm" />
-            </Link>
-          </div>
-
-          <div className="flex items-center gap-3">
-            <span className="hidden sm:inline-block rounded-full bg-primary/10 border border-primary/20 px-4 py-1.5 text-[10px] font-bold tracking-widest uppercase text-primary">
+            <span className="hidden sm:inline-block rounded-full bg-[var(--accent-soft)] border border-[var(--line)] px-4 py-2 text-[11px] font-bold tracking-widest uppercase text-[var(--accent-strong)] shadow-sm">
               {runtimeModeLabel}
             </span>
-            <div className="flex items-center gap-2 rounded-lg bg-slate-100 dark:bg-surface-dark p-1 border border-border-light dark:border-border-dark">
+            <div className="flex items-center gap-2 rounded-2xl bg-[var(--surface-soft)] p-1 border border-[var(--line)] backdrop-blur-md shadow-inner">
               <ThemeToggle />
-              <div className="h-5 w-px bg-border-light dark:bg-border-dark" />
+              <div className="h-6 w-px bg-[var(--line)]" />
               <LocaleSwitcher
                 currentLocale={locale as Locale}
                 label={dictionary.nav.locale}
               />
+              <div className="h-6 w-px bg-[var(--line)]" />
+              <AuthButton locale={locale} />
             </div>
           </div>
-        </header>
+        </div>
+      </header>
 
-        {/* 메인 콘텐츠 */}
-        <main className="flex-1 overflow-y-auto p-4 md:p-8">
-          <div className="max-w-7xl mx-auto">
-            <AuthGuard>{children}</AuthGuard>
-          </div>
+      {/* 메인 그리드 */}
+      <div className="grid gap-6 lg:grid-cols-[260px_minmax(0,1fr)]">
+        {/* 사이드바 — 모바일에서 숨김, lg 이상에서 표시 */}
+        <aside className="hidden lg:block glass space-y-5 rounded-[var(--radius-xl)] border border-[var(--line)] bg-[var(--surface-secondary)] p-5 shadow-[var(--shadow-md)] sticky top-[88px] h-[calc(100vh-100px)] overflow-y-auto custom-scrollbar">
+          <SidebarNav sections={sections} />
+        </aside>
+
+        {/* 콘텐츠 영역 — AuthGuard로 미인증 접근 차단 */}
+        <main className="min-w-0">
+          <AuthGuard>{children}</AuthGuard>
         </main>
+      </div>
 
-        {/* 회사정보 푸터 */}
-        <footer className="border-t border-border-light dark:border-border-dark bg-card-light dark:bg-[#111318] py-6 px-6">
-          <div className="mx-auto max-w-6xl flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-            <div className="space-y-3">
-              <Logo size="sm" className="opacity-80 grayscale" />
-              <div className="space-y-1 text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-                <p>대표: 강재희 | 사업자등록번호: 682-38-01463</p>
-                <p>업태: 도매 및 소매업</p>
-                <p>소재지: 경기도 광주시 회안대로 637-36</p>
-              </div>
-            </div>
-            <div className="space-y-1 text-xs text-slate-500 dark:text-slate-400">
-              <p>대표번호: <a href="tel:1666-0916" className="text-slate-700 dark:text-slate-300 hover:text-primary">1666-0916</a></p>
-              <p>팩스: 02-6305-0044</p>
-              <p className="mt-2 text-slate-400 dark:text-slate-500">&copy; 2026 사통팔땅. All rights reserved.</p>
+      {/* 회사정보 푸터 */}
+      <footer className="mt-16 border-t border-[var(--line)] bg-[var(--surface-soft)] py-8 px-6">
+        <div className="mx-auto max-w-6xl flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+          <div className="space-y-4">
+            <Logo size="sm" className="opacity-80 grayscale" />
+            <div className="space-y-1 text-xs text-[var(--text-tertiary)] leading-relaxed">
+              <p>대표: 강재희 | 사업자등록번호: 682-38-01463</p>
+              <p>업태: 도매 및 소매업</p>
+              <p>소재지: 경기도 광주시 회안대로 637-36</p>
             </div>
           </div>
-        </footer>
-      </div>
+          <div className="space-y-1 text-xs text-[var(--text-tertiary)]">
+            <p>대표번호: <a href="tel:1666-0916" className="text-[var(--text-secondary)] hover:text-[var(--accent-strong)]">1666-0916</a></p>
+            <p>팩스: 02-6305-0044</p>
+            <p className="mt-2 text-[var(--text-hint)]">&copy; 2026 사통팔땅. All rights reserved.</p>
+          </div>
+        </div>
+      </footer>
     </div>
   );
 }

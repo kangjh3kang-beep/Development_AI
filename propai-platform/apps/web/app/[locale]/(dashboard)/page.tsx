@@ -1,10 +1,12 @@
 import Link from "next/link";
+import { HeroGridBackground } from "@/components/dashboard/DashboardDynamicElements";
 import { DashboardKpiLoader } from "@/components/dashboard/DashboardKpiLoader";
 import { DashboardProjectLoader } from "@/components/dashboard/DashboardProjectLoader";
 import { MarketingPanels } from "@/components/dashboard/MarketingPanels";
 import { PromoBanner } from "@/components/dashboard/PromoBanner";
 import { OnboardingWizard } from "@/components/onboarding/OnboardingWizard";
 import { ProjectPipelinePanel } from "@/components/pipeline/ProjectPipelinePanel";
+import { Logo } from "@/components/ui/Logo";
 import { getDictionary } from "@/i18n/get-dictionary";
 import { isValidLocale, type Locale } from "@/i18n/config";
 
@@ -48,102 +50,99 @@ export default async function DashboardPage({ params }: DashboardPageProps) {
   const dictionary = await getDictionary(locale as Locale);
 
   return (
-    <div className="flex flex-col gap-8 pb-12">
+    <div className="flex flex-col gap-3 pb-12">
       {/* ── 온보딩 위자드 (최초 방문 시에만 표시) ── */}
       <OnboardingWizard />
 
-      {/* ── 페이지 헤딩 (Stitch Style) ── */}
-      <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
-        <div className="flex flex-col gap-1">
-          <h2 className="text-3xl md:text-4xl font-bold tracking-tight text-[var(--text-primary)] font-display">
-            프로젝트 대시보드
-          </h2>
-          <p className="text-[var(--text-secondary)] text-sm">
-            활성 개발 사업지 현황 및 AI 예측 개요
-          </p>
-        </div>
-        <div className="flex items-center gap-3">
-          <Link
-            href={`/${locale}/projects/new`}
-            className="flex items-center justify-center gap-2 rounded-lg h-10 px-6 bg-primary hover:bg-primary/90 transition-colors text-white text-sm font-bold shadow-lg shadow-primary/25"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
-            <span>프로젝트 생성</span>
-          </Link>
-        </div>
-      </div>
+      {/* ── 프리미엄 히어로 섹션: AI 커맨드 센터 ── */}
+      <section className="relative min-h-[200px] sm:min-h-[260px] lg:min-h-[320px] overflow-hidden rounded-2xl sm:rounded-[2rem] lg:rounded-[3rem] border border-[var(--line-strong)] bg-[var(--surface-soft)] p-5 sm:p-8 lg:p-12 shadow-[var(--shadow-2xl)] transition-all group backdrop-blur-2xl">
+        {/* 애니메이션 배경 요소 (Cyber Glows) */}
+        <div className="absolute -right-20 -top-20 h-[500px] w-[500px] rounded-full bg-[var(--accent-strong)]/10 blur-[120px] transition-all duration-[3000ms] group-hover:scale-150 group-hover:bg-[var(--accent-strong)]/20" />
+        <div className="absolute -bottom-40 left-1/4 h-[400px] w-[400px] rounded-full bg-indigo-500/10 blur-[100px] animate-float opacity-70" />
+        {/* 그리드 배경 패턴 (사이버틱한 공간감) */}
+        <HeroGridBackground />
 
-      {/* ── Stats Row (Stitch Style) ── */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {/* Total Active Projects */}
-        <div className="flex flex-col gap-2 rounded-xl p-6 bg-[var(--surface-strong)] border border-[var(--line-strong)] shadow-[var(--shadow-sm)]">
-          <div className="flex items-center justify-between">
-            <p className="text-[var(--text-secondary)] text-sm font-medium uppercase tracking-wider">활성 프로젝트</p>
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--accent-strong)]"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>
-          </div>
-          <div className="flex items-end gap-3 mt-1">
-            <p className="text-3xl font-bold text-[var(--text-primary)]">12</p>
-            <div className="flex items-center gap-1 text-emerald-500 text-sm font-bold mb-1">
-              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m22 7-7.5 7.5-5-5L2 17"/><path d="M16 7h6v6"/></svg>
-              <span>+2 이번 달</span>
+        <div className="relative z-10 flex flex-col justify-between h-full gap-12 lg:flex-row lg:items-end">
+          <div className="max-w-4xl space-y-10">
+            <div className="flex items-center gap-3">
+              <span className="inline-flex items-center gap-2 rounded-full border border-[var(--accent-strong)]/30 bg-[var(--accent-soft)] px-5 py-2 text-[11px] font-bold uppercase tracking-[0.2em] text-[var(--accent-strong)] backdrop-blur-md">
+                <span className="h-2 w-2 rounded-full bg-[var(--accent-strong)] animate-pulse" />
+                {dictionary.dashboard.title}
+              </span>
             </div>
+
+            <h1 className="text-3xl font-[900] tracking-tighter text-[var(--text-primary)] sm:text-5xl md:text-6xl lg:text-7xl leading-[0.9]">
+               <span className="sr-only">{dictionary.meta.siteName}</span>
+               <div className="flex justify-start items-center">
+                 <Logo size="xl" />
+               </div>
+            </h1>
+
+            <p className="max-w-xl text-base font-medium leading-relaxed text-[var(--text-secondary)] sm:text-lg lg:text-xl tracking-tight">
+              &quot;{(dictionary.dashboard as any).welcome}&quot;
+            </p>
+          </div>
+
+          <div className="flex flex-col gap-4 sm:flex-row lg:mb-4 shrink-0">
+            <Link
+              href={`/${locale}/projects/new`}
+              className="group/btn flex h-16 items-center justify-center gap-5 rounded-[2rem] bg-gradient-to-br from-[var(--accent-strong)] to-[var(--accent)] px-10 text-lg font-bold text-white shadow-[var(--shadow-glow)] transition-all hover:scale-[1.05] active:scale-[0.95] shrink-0 whitespace-nowrap"
+            >
+              <span>프로젝트 생성</span>
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="transition-transform group-hover/btn:translate-x-1"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+            </Link>
+            <Link
+              href={`/${locale}/guide`}
+              className="flex h-16 items-center justify-center gap-4 rounded-[2rem] border border-[var(--line-strong)] bg-[var(--surface-soft)] px-8 text-base font-bold text-[var(--text-primary)] backdrop-blur-xl transition-all hover:bg-[var(--surface-strong)] shrink-0 whitespace-nowrap"
+            >
+              이용 가이드
+            </Link>
           </div>
         </div>
+      </section>
 
-        {/* Budget Deployed */}
-        <div className="flex flex-col gap-2 rounded-xl p-6 bg-[var(--surface-strong)] border border-[var(--line-strong)] shadow-[var(--shadow-sm)]">
-          <div className="flex items-center justify-between">
-            <p className="text-[var(--text-secondary)] text-sm font-medium uppercase tracking-wider">투입 자본</p>
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--accent-strong)]"><circle cx="12" cy="12" r="10"/><path d="M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8"/><path d="M12 18V6"/></svg>
-          </div>
-          <div className="flex items-end gap-3 mt-1">
-            <p className="text-3xl font-bold text-[var(--text-primary)]">₩145억</p>
-            <div className="flex items-center gap-1 text-emerald-500 text-sm font-bold mb-1">
-              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m22 7-7.5 7.5-5-5L2 17"/><path d="M16 7h6v6"/></svg>
-              <span>+12% 전년 대비</span>
+      {/* ── 기능 요약 배너 (유기적 플로팅 카드) ── */}
+      <section className="w-full mb-3 mt-1 relative z-10">
+        <div className="flex flex-wrap justify-center gap-4 lg:gap-6">
+          {[
+            {
+              title: "전국 데이터 연결",
+              desc: "공간정보 통합",
+              icon: <svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--accent-strong)] opacity-90"><circle cx="12" cy="5" r="3"/><circle cx="5" cy="19" r="3"/><circle cx="19" cy="19" r="3"/><path d="m7.5 16.5 4.5-9"/><path d="m16.5 16.5-4.5-9"/><path d="M5 19h14"/></svg>
+            },
+            {
+              title: "AI 분석/예측",
+              desc: "최적 개발안 도출",
+              icon: <svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--accent-strong)] opacity-90"><rect width="16" height="16" x="4" y="4" rx="2"/><rect width="6" height="6" x="9" y="9" rx="1"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="M6 2v2"/><path d="M6 20v2"/><path d="M18 2v2"/><path d="M18 20v2"/><path d="M2 6h2"/><path d="M2 18h2"/><path d="M20 6h2"/><path d="M20 18h2"/></svg>
+            },
+            {
+              title: "개발계획 자동수립",
+              desc: "시간과 비용 절감",
+              icon: <svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--accent-strong)] opacity-90"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="m9 15 2 2 4-4"/></svg>
+            },
+            {
+              title: "수익성 분석",
+              desc: "사업성 극대화",
+              icon: <svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--accent-strong)] opacity-90"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/><path d="M12 14v4"/><path d="M16 10v8"/></svg>
+            },
+            {
+              title: "미래가치 창출",
+              desc: "지속가능한 개발",
+              icon: <svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--accent-strong)] opacity-90"><circle cx="12" cy="12" r="10"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/><path d="M2 12h20"/></svg>
+            }
+          ].map((item, idx) => (
+            <div key={idx} className="flex items-center gap-3 px-4 py-3 lg:px-6 lg:py-4 rounded-2xl bg-[var(--surface-soft)] border border-[var(--line-strong)] shadow-sm hover:shadow-[var(--shadow-glow)] hover:border-[var(--accent)] hover:-translate-y-1 transition-all duration-300 group flex-1 min-w-[200px] w-full sm:w-auto backdrop-blur-md">
+              <div className="flex items-center justify-center shrink-0 h-10 w-10 lg:h-12 lg:w-12 rounded-xl bg-gradient-to-br from-[var(--surface-muted)] to-[var(--surface)] border border-[var(--line)] group-hover:border-[var(--accent-strong)]/50 group-hover:scale-110 group-hover:bg-[var(--accent-soft)] transition-all duration-300">
+                {item.icon}
+              </div>
+              <div className="flex flex-col gap-1 min-w-0">
+                <p className="text-[14px] lg:text-[15px] font-[800] text-[var(--text-primary)] leading-tight tracking-tight group-hover:text-[var(--accent-strong)] transition-colors truncate">{item.title}</p>
+                <p className="text-[12px] lg:text-[13px] font-medium text-[var(--text-secondary)] tracking-tight truncate">{item.desc}</p>
+              </div>
             </div>
-          </div>
+          ))}
         </div>
-
-        {/* AI Risk Alerts */}
-        <div className="flex flex-col gap-2 rounded-xl p-6 bg-[var(--surface-strong)] border border-[var(--status-warning)]/30 shadow-[0_0_15px_rgba(245,158,11,0.1)] relative overflow-hidden group">
-          <div className="absolute -right-4 -top-4 w-24 h-24 bg-[var(--status-warning)]/10 rounded-full blur-2xl group-hover:bg-[var(--status-warning)]/20 transition-all" />
-          <div className="flex items-center justify-between relative z-10">
-            <p className="text-[var(--text-secondary)] text-sm font-medium uppercase tracking-wider">AI 리스크 알림</p>
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--status-warning)]"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
-          </div>
-          <div className="flex items-end gap-3 mt-1 relative z-10">
-            <p className="text-3xl font-bold text-[var(--text-primary)]">3</p>
-            <div className="flex items-center gap-1 text-amber-500 text-sm font-bold mb-1">
-              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/></svg>
-              <span>주의 필요</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* ── 검색 & 필터 (Stitch Style) ── */}
-      <div className="flex flex-col md:flex-row gap-4 items-end bg-[var(--surface-strong)] p-4 rounded-xl border border-[var(--line-strong)] shadow-[var(--shadow-sm)]">
-        <label className="flex flex-col w-full md:flex-1">
-          <span className="text-sm font-medium pb-2 text-[var(--text-secondary)]">프로젝트 검색</span>
-          <div className="relative">
-            <input
-              className="w-full rounded-lg border border-[var(--line)] bg-[var(--surface)] h-11 pl-10 pr-4 text-sm focus:ring-2 focus:ring-[var(--accent)] focus:border-transparent outline-none transition-all placeholder:text-[var(--text-hint)] text-[var(--text-primary)]"
-              placeholder="프로젝트 이름 또는 위치로 검색..."
-            />
-            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-hint)]"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-          </div>
-        </label>
-        <label className="flex flex-col w-full md:w-64">
-          <span className="text-sm font-medium pb-2 text-[var(--text-secondary)]">상태</span>
-          <select className="w-full appearance-none rounded-lg border border-[var(--line)] bg-[var(--surface)] h-11 pl-4 pr-10 text-sm focus:ring-2 focus:ring-[var(--accent)] focus:border-transparent outline-none transition-all text-[var(--text-primary)]">
-            <option>전체 상태</option>
-            <option>진행 중</option>
-            <option>보류</option>
-            <option>완료</option>
-          </select>
-        </label>
-      </div>
+      </section>
 
       {/* ── 사통팔땅 홍보 배너 ── */}
       <PromoBanner />
@@ -157,79 +156,81 @@ export default async function DashboardPage({ params }: DashboardPageProps) {
       {/* ── KPI 그리드: 실시간 API 연동 (fallback 포함) ── */}
       <DashboardKpiLoader />
 
-      {/* ── 대시보드 콘텐츠 레이아웃 (Stitch Style) ── */}
-      <div className="grid gap-6 lg:grid-cols-[1fr_420px]">
+      {/* ── 대시보드 콘텐츠 레이아웃 ── */}
+      <div className="grid gap-4 lg:grid-cols-[1fr_420px]">
         
         {/* 메인 콘텐츠: 파이프라인 모니터링 */}
-        <div className="space-y-6">
-           <div className="flex items-center justify-between">
-              <h2 className="text-xl font-bold tracking-tight text-slate-900 dark:text-white">활성 파이프라인</h2>
-              <Link href={`/${locale}/projects`} className="text-xs font-bold text-primary tracking-wider hover:underline underline-offset-8">전체 보기</Link>
+        <div className="space-y-8">
+           <div className="flex items-center justify-between px-4">
+              <h2 className="text-2xl font-bold tracking-tight text-[var(--text-primary)]">활성 파이프라인 <span className="text-[var(--accent)]">_</span></h2>
+              <Link href={`/${locale}/projects`} className="text-xs font-bold text-[var(--accent-strong)] tracking-wider hover:underline underline-offset-8">전체 보기</Link>
            </div>
 
            <DashboardProjectLoader locale={locale} />
 
            {/* AI 포트폴리오 지능형 지도 */}
-           <div className="relative h-[300px] w-full overflow-hidden rounded-xl border border-slate-200 dark:border-border-dark bg-slate-50 dark:bg-card-dark shadow-sm">
-              <div className="absolute inset-0 bg-[linear-gradient(rgba(46,54,70,0.2)_1px,transparent_1px),linear-gradient(90deg,rgba(46,54,70,0.2)_1px,transparent_1px)] bg-[size:24px_24px] opacity-30" />
-              <div className="absolute inset-0 flex items-center justify-center">
-                 <div className="flex flex-col items-center gap-4 text-center">
-                    <div className="h-14 w-14 rounded-xl bg-primary/10 flex items-center justify-center text-primary border border-primary/20">
-                       <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2v20"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-                    </div>
-                    <div>
-                       <h3 className="text-base font-bold text-slate-900 dark:text-white tracking-tight">AI 포트폴리오 인텔리전스 맵</h3>
-                       <p className="text-xs font-medium text-slate-500 dark:text-slate-400 tracking-wider mt-1">글로벌 자산 시각화 활성</p>
-                    </div>
-                 </div>
-              </div>
-           </div>
+            <div className="relative h-[300px] w-full overflow-hidden rounded-[2rem] border border-[var(--line)] bg-[var(--surface-soft)] shadow-[var(--shadow-inner)]">
+               <div className="absolute inset-0 bg-[linear-gradient(var(--line-subtle)_1px,transparent_1px),linear-gradient(90deg,var(--line-subtle)_1px,transparent_1px)] bg-[size:24px_24px] opacity-30" />
+               <div className="absolute inset-0 flex items-center justify-center">
+                  <div className="flex flex-col items-center gap-4 text-center">
+                     <div className="h-16 w-16 rounded-3xl bg-[var(--accent-soft)] flex items-center justify-center text-[var(--accent-strong)] border border-[var(--accent-strong)]/20 shadow-[var(--shadow-md)]">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2v20"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                     </div>
+                     <div>
+                        <h3 className="text-lg font-bold text-[var(--text-primary)] tracking-tight">AI 포트폴리오 인텔리전스 맵</h3>
+                        <p className="text-xs font-medium text-[var(--text-tertiary)] tracking-wider mt-1">글로벌 자산 시각화 활성</p>
+                     </div>
+                  </div>
+               </div>
+            </div>
         </div>
 
         {/* 사이드바 위젯: 시스템 상태 & 규제 */}
-        <div className="space-y-6">
-           <div className="rounded-xl p-6 bg-white dark:bg-card-dark border border-slate-200 dark:border-border-dark shadow-sm space-y-6">
+        <div className="space-y-8">
+           <div className="glass rounded-[2rem] p-8 border border-[var(--line)] shadow-2xl space-y-8">
               <div>
-                 <h4 className="text-sm font-bold text-slate-900 dark:text-white uppercase tracking-wider mb-4 flex items-center gap-2">
+                 <h4 className="text-sm font-bold text-[var(--text-primary)] tracking-[0.12em] mb-6 flex items-center gap-2">
                    <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
                    부동산 규제 동향
                  </h4>
-                 <div className="space-y-4">
+                 <div className="space-y-6">
                     {[
                       { title: "건축법 제21조 (개정안)", desc: "친환경 건축물 가산 용적률 상향", date: "24.03.20", type: "업데이트" },
                       { title: "도시정비법 (시행령)", desc: "재건축 초과이익 환수제 완화 지침", date: "24.03.18", type: "중요" },
                     ].map((item, i) => (
                       <div key={i} className="group cursor-pointer">
                          <div className="flex justify-between items-center mb-1">
-                            <span className="text-[10px] font-bold text-primary uppercase tracking-wider">{item.type}</span>
-                            <span className="text-[10px] font-medium text-slate-400">{item.date}</span>
+                            <span className="text-[11px] font-bold text-[var(--accent-strong)] tracking-wider">{item.type}</span>
+                            <span className="text-[11px] font-medium text-[var(--text-hint)]">{item.date}</span>
                          </div>
-                         <h5 className="text-sm font-bold text-slate-900 dark:text-white group-hover:text-primary transition-colors">{item.title}</h5>
-                         <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed mt-0.5">{item.desc}</p>
+                         <h5 className="text-[13px] font-bold text-[var(--text-primary)] group-hover:text-[var(--accent)] transition-colors">{item.title}</h5>
+                         <p className="text-[12px] text-[var(--text-secondary)] leading-relaxed mt-0.5">{item.desc}</p>
                       </div>
                     ))}
                  </div>
               </div>
 
-              <div className="pt-6 border-t border-slate-200 dark:border-border-dark space-y-4">
-                 <h4 className="text-sm font-bold text-slate-900 dark:text-white uppercase tracking-wider">ESG 통합 점수</h4>
-                 <div className="relative h-36 w-full rounded-xl bg-gradient-to-br from-primary/20 to-blue-600/10 border border-primary/20 flex flex-col items-center justify-center gap-2 overflow-hidden group">
-                    <div className="absolute inset-0 bg-primary/5 animate-pulse group-hover:scale-150 transition-transform duration-[3000ms]" />
-                    <span className="text-5xl font-[900] text-slate-900 dark:text-white tracking-tighter z-10">84.2</span>
-                    <span className="text-[10px] font-bold text-primary tracking-[0.3em] z-10 transition-all group-hover:tracking-[0.5em]">시스템 등급: A+</span>
+              <div className="pt-8 border-t border-[var(--line)] space-y-6">
+                 <h4 className="text-sm font-bold text-[var(--text-primary)] tracking-[0.12em] mb-4">ESG 통합 점수</h4>
+                 <div className="relative h-40 w-full rounded-2xl bg-gradient-to-br from-indigo-500/20 to-purple-600/20 border border-indigo-500/20 flex flex-col items-center justify-center gap-2 overflow-hidden group">
+                    <div className="absolute inset-0 bg-indigo-500/5 animate-pulse group-hover:scale-150 transition-transform duration-[3000ms]" />
+                    <span className="text-5xl font-[900] text-[var(--text-primary)] tracking-tighter z-10">84.2</span>
+                    <span className="text-[11px] font-bold text-indigo-400 tracking-[0.3em] z-10 transition-all group-hover:tracking-[0.5em]">시스템 등급: A+</span>
                  </div>
               </div>
            </div>
 
            {/* 사용자 온보딩 카드 */}
-           <div className="rounded-xl bg-white dark:bg-card-dark border border-slate-200 dark:border-border-dark shadow-sm p-8 space-y-4">
-              <h4 className="text-lg font-bold text-slate-900 dark:text-white leading-tight tracking-tight">전문 가이드가<br/>필요하신가요?</h4>
-              <p className="text-sm font-medium text-slate-500 dark:text-slate-400 leading-relaxed">
-                 사통팔땅의 168종 데이터 맵과<br/>AI 엔진을 활용하는 방법을 확인하세요.
-              </p>
-              <Link href={`/${locale}/guide`} className="inline-flex h-10 items-center justify-center rounded-lg bg-primary px-6 text-xs font-bold text-white tracking-wider transition-all hover:bg-primary/90 shadow-lg shadow-primary/25">
-                 온보딩 시작하기
-              </Link>
+           <div className="rounded-[2rem] bg-gradient-to-br from-[var(--accent-soft)] to-[var(--status-info)]/10 p-1 border border-[var(--line)] group overflow-hidden">
+              <div className="rounded-[2rem] bg-[var(--surface)] p-10 space-y-6 transition-all group-hover:bg-[var(--surface-strong)]">
+                 <h4 className="text-lg font-bold text-[var(--text-primary)] leading-tight tracking-tight">전문 가이드가<br/>필요하신가요?</h4>
+                 <p className="text-sm font-medium text-[var(--text-secondary)] leading-relaxed">
+                    사통팔땅의 168종 데이터 맵과<br/>AI 엔진을 활용하는 방법을 확인하세요.
+                 </p>
+                 <Link href={`/${locale}/guide`} className="inline-flex h-12 items-center justify-center rounded-2xl bg-[var(--accent-strong)] px-8 text-[12px] font-bold text-white tracking-wider transition-all hover:scale-105 active:scale-95">
+                    온보딩 시작하기
+                 </Link>
+              </div>
            </div>
         </div>
 
@@ -237,4 +238,3 @@ export default async function DashboardPage({ params }: DashboardPageProps) {
     </div>
   );
 }
-

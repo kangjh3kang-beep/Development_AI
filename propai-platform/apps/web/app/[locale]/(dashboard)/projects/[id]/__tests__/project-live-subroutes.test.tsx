@@ -183,7 +183,11 @@ describe("Project live subroutes", () => {
   });
 
   it("renders the finance project page with the live workspace", async () => {
-    render(<FinancePage />);
+    render(
+      await FinancePage({
+        params: Promise.resolve({ locale: "en", id: "project-finance-001" }),
+      }),
+    );
 
     expect(screen.getByText("Project finance live route")).toBeInTheDocument();
     expect(screen.getByText("실연동")).toBeInTheDocument();
@@ -248,7 +252,11 @@ describe("Project live subroutes", () => {
   });
 
   it("renders the bim project page with the live workspace", async () => {
-    render(<BimPage />);
+    render(
+      await BimPage({
+        params: Promise.resolve({ locale: "en", id: "project-bim-001" }),
+      }),
+    );
 
     expect(screen.getByText("Project BIM live route")).toBeInTheDocument();
     expect(screen.getByText("실연동")).toBeInTheDocument();
