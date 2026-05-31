@@ -60,6 +60,15 @@ type MarketFeed = {
   region_avg: number | null;
   region_std: number | null;
 };
+type AiInterpretation = {
+  bid_strategy: string;
+  feasibility_view: string;
+  risk_assessment: string;
+  cost_competitiveness: string;
+  recommendation: string;
+  model_used: string | null;
+  generated: boolean;
+};
 type AnalysisResult = {
   bid_notice_no: string;
   bid_notice_nm: string;
@@ -89,6 +98,7 @@ type AnalysisResult = {
   break_even_bid_rate: number | null;
   recommended_bid_price: number | null;
   analysis_warnings: string[];
+  ai_interpretation: AiInterpretation | null;
 };
 
 /* ── 유틸 ── */
@@ -372,13 +382,41 @@ export function G2BBidAnalysisModal({
               )}
             </section>
 
-            {/* AI 요약 */}
+            {/* AI 요약 (규칙기반 한줄 요약) */}
             {result.ai_summary && (
               <section className="rounded-xl border border-[var(--border)] p-4">
                 <h3 className="text-sm font-black text-[var(--text-primary)] mb-2">AI 종합 의견</h3>
                 <pre className="whitespace-pre-wrap text-sm text-[var(--text-secondary)] font-sans">
                   {result.ai_summary}
                 </pre>
+              </section>
+            )}
+
+            {/* LLM(Claude) 입찰 전략 해석 — 5섹션 전용 카드 */}
+            {result.ai_interpretation?.generated && (
+              <section className="rounded-xl border border-blue-500/30 bg-blue-500/5 p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-sm font-black text-[var(--text-primary)] flex items-center gap-2">
+                    <span className="text-blue-400">🧠</span> AI 입찰 전략 분석
+                  </h3>
+                  {result.ai_interpretation.model_used && (
+                    <span className="text-[10px] text-[var(--text-hint)]">
+                      {result.ai_interpretation.model_used}
+                    </span>
+                  )}
+                </div>
+                <div className="space-y-3">
+                  <AiSection icon="📊" title="투찰 전략" text={result.ai_interpretation.bid_strategy} />
+                  <AiSection icon="💰" title="사업성 진단" text={result.ai_interpretation.feasibility_view} />
+                  <AiSection icon="⚠️" title="리스크 평가" text={result.ai_interpretation.risk_assessment} />
+                  <AiSection icon="🏗️" title="원가 경쟁력" text={result.ai_interpretation.cost_competitiveness} />
+                  <AiSection
+                    icon="✅"
+                    title="종합 권고"
+                    text={result.ai_interpretation.recommendation}
+                    emphasis
+                  />
+                </div>
               </section>
             )}
 
@@ -424,6 +462,44 @@ function RiskBar({ label, v }: { label: string; v: number }) {
         <div className={`h-2 rounded-full ${color}`} style={{ width: `${Math.min(100, v)}%` }} />
       </div>
       <span className="text-xs text-[var(--text-hint)] w-8 text-right">{v.toFixed(0)}</span>
+    </div>
+  );
+}
+
+/* LLM 입찰 전략 해석 섹션 카드 (종합권고는 emphasis로 강조) */
+function AiSection({
+  icon,
+  title,
+  text,
+  emphasis = false,
+}: {
+  icon: string;
+  title: string;
+  text: string;
+  emphasis?: boolean;
+}) {
+  if (!text) return null;
+  return (
+    <div
+      className={`rounded-lg p-3 ${
+        emphasis
+          ? "bg-blue-500/10 border border-blue-500/30"
+          : "bg-[var(--surface-muted)]/40"
+      }`}
+    >
+      <div className="flex items-center gap-1.5 mb-1">
+        <span className="text-sm shrink-0">{icon}</span>
+        <span
+          className={`text-xs font-bold ${
+            emphasis ? "text-blue-300" : "text-[var(--text-primary)]"
+          }`}
+        >
+          {title}
+        </span>
+      </div>
+      <p className="text-[11px] text-[var(--text-secondary)] leading-relaxed whitespace-pre-line">
+        {text}
+      </p>
     </div>
   );
 }
