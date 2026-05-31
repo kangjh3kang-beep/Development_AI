@@ -93,7 +93,7 @@ async def sync_award_results(ctx: dict) -> dict:
 
 async def rebuild_award_stats(ctx: dict) -> dict:
     """낙찰가율 통계를 재집계한다."""
-    from sqlalchemy import and_, func, select, text
+    from sqlalchemy import and_, delete, func, select, text
 
     from app.core.database import async_session_factory
     from app.models.g2b_bid import G2BAwardStat, G2BBid
@@ -129,6 +129,10 @@ async def rebuild_award_stats(ctx: dict) -> dict:
         result = await db.execute(query)
         rows = result.all()
         count = 0
+
+        # 전체 재집계이므로 기존 통계를 먼저 비운다.
+        # (stat_period·bid_type·region_sido UNIQUE 제약 → 미삭제 시 재실행이 UniqueViolation)
+        await db.execute(delete(G2BAwardStat))
 
         for row in rows:
             stat = G2BAwardStat(

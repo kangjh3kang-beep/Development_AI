@@ -340,13 +340,23 @@ class G2BBidService:
         return saved
 
     async def update_award_results(self, raw_items: list[dict[str, Any]]) -> int:
-        """낙찰 결과 데이터로 기존 입찰 공고 레코드를 갱신한다."""
-        updated = 0
+        """개찰(낙찰) 결과로 기존 입찰 공고 레코드를 갱신한다.
+
+        getScsbidListSttus* 는 한 공고당 '참가업체 순위별' 다수 행을 반환한다
+        (각 행: opengRank·sucsfbidRate·scsbidYn 등). 따라서 공고번호로 그룹핑하여
+        낙찰자(scsbidYn=Y) 또는 1순위(최저 opengRank) 행을 대표 낙찰값으로 사용하고,
+        그룹의 행 개수를 참가업체수로 쓴다(응답에 prtcptCnum 필드가 없음).
+        """
+        # 1) 공고번호별로 개찰 행을 그룹핑
+        grouped: dict[str, list[dict[str, Any]]] = {}
         for item in raw_items:
             notice_no = str(item.get("bidNtceNo", "") or "")
             if not notice_no:
                 continue
+            grouped.setdefault(notice_no, []).append(item)
 
+        updated = 0
+        for notice_no, rows in grouped.items():
             existing = await self.db.execute(
                 select(G2BBid).where(G2BBid.bid_notice_no == notice_no)
             )
@@ -354,19 +364,28 @@ class G2BBidService:
             if bid is None:
                 continue
 
-            bid.award_price = _safe_int(item.get("sucsfbidAmt"))
-            bid.award_rate = _safe_float(item.get("sucsfbidRate"))
-            bid.award_company = str(item.get("bidwinnrNm", "") or "")
-            bid.award_dt = _parse_g2b_datetime(
-                item.get("rlOpengDt") or item.get("fnlSucsfDate")
+            # 낙찰자 행 우선, 없으면 최저 순위(1순위) 행을 대표로 선택
+            winner = next((r for r in rows if r.get("scsbidYn") == "Y"), None)
+            rep = winner or min(
+                rows, key=lambda r: _safe_int(r.get("opengRank")) or 9999
             )
-            bid.bid_count = _safe_int(item.get("prtcptCnum"))
+
+            bid.award_price = _safe_int(rep.get("sucsfbidAmt"))
+            bid.award_rate = _safe_float(rep.get("sucsfbidRate"))
+            bid.award_company = str(
+                rep.get("bidwinnrNm") or rep.get("opengCorpInfo") or ""
+            )
+            bid.award_dt = _parse_g2b_datetime(
+                rep.get("opengDt") or rep.get("rlOpengDt") or rep.get("fnlSucsfDate")
+            )
+            # 참가업체수 = 해당 공고의 개찰 행 수
+            bid.bid_count = len(rows)
             bid.status = "awarded"
             bid.updated_at = datetime.utcnow()
             updated += 1
 
         await self.db.commit()
-        logger.info("G2B 낙찰 결과 %d건 갱신 완료", updated)
+        logger.info("G2B 낙찰 결과 %d건 갱신 완료 (그룹 %d건)", updated, len(grouped))
         return updated
 
     # ──────────────────────────────────────────
