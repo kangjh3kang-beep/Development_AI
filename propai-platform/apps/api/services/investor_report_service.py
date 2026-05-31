@@ -115,6 +115,42 @@ class InvestorReportService:
             asset_snapshot=asset_snapshot,
         )
 
+        # ── report_interpreter LLM 종합 내러티브를 source_text에 결합 (graceful fallback) ──
+        try:
+            from app.services.ai.report_interpreter import ReportInterpreter
+
+            interp = await ReportInterpreter().generate_report_narrative({
+                "project_name": project_name,
+                "financial_analysis": (
+                    {
+                        "profit_rate_pct": getattr(underwriting, "profit_margin_ratio", None),
+                        "risk_level": getattr(underwriting, "risk_level", None),
+                    }
+                    if underwriting is not None
+                    else {}
+                ),
+                "risk_assessment": {"top_risks": risks},
+                "building_design": {"development_type": asset_type},
+            })
+            if isinstance(interp, dict) and interp:
+                _labels = {
+                    "executive_summary": "총평",
+                    "site_narrative": "입지 분석",
+                    "financial_narrative": "재무 분석",
+                    "risk_narrative": "리스크 평가",
+                    "recommendation_narrative": "투자 권고",
+                    "legal_compliance_narrative": "법규 적합성",
+                }
+                parts = [
+                    f"[AI {_labels[k]}] {interp[k]}"
+                    for k in _labels
+                    if interp.get(k)
+                ]
+                if parts:
+                    source_text = source_text + "\n\n=== AI 종합 분석 ===\n" + "\n\n".join(parts)
+        except Exception:
+            pass
+
         variants: list[MultilingualReport] = []
         for language in target_languages:
             title, translated_text, quality = self._translate(project_name, language, source_text)
