@@ -308,6 +308,19 @@ def _classify_from_notice(notice_nm: str) -> dict:
 
     text = notice_nm or ""
     # building_type (StandardQuantityEstimator 키와 1:1)
+    # 1) 건물 신축/증축형: 면적·층수가 의미 있어 GFA 역산·QTO 적용 대상.
+    # 2) 토목·설비·단종형(사면정비·배수로·농로·포장·승강기설치·전기/소방공사 등):
+    #    "건물"이 아니므로 GFA 역산이 무의미 → "비건물"로 분류해 QTO 미적용.
+    _NON_BUILDING = re.search(
+        r"사면|비탈면|옹벽|배수로?|수로|농로|포장|도로|교량|상하수도|관로|"
+        r"준설|하천|정비사업|사방|수리시설|저수지|제방|법면|굴착|토공|"
+        r"승강기|엘리베이터|에스컬레이터|전기공사|소방공사|통신공사|"
+        r"기계설비|냉난방|조경공사|식재|살수|방수공사|도장공사",
+        text,
+    )
+    _BUILDING = re.search(
+        r"신축|증축|개축|대수선|건립|신설.*(청사|센터|관|동)|건축공사", text
+    )
     if re.search(r"아파트|APT", text, re.I):
         btype = "아파트"
     elif re.search(r"오피스텔", text):
@@ -316,8 +329,12 @@ def _classify_from_notice(notice_nm: str) -> dict:
         btype = "다세대주택"
     elif re.search(r"근린생활|근생|상가|판매시설|청사|관사|업무시설|사옥", text):
         btype = "근린생활시설"
+    elif _NON_BUILDING and not _BUILDING:
+        btype = "비건물"  # 토목·설비·단종공사 → GFA역산/QTO 미적용
+    elif _BUILDING:
+        btype = "공동주택"  # 건물 신축이 명시된 일반 건물
     else:
-        btype = "공동주택"  # 기본 폴백(주택/임대주택/행복주택 포함)
+        btype = "비건물"  # 건물 키워드가 전혀 없으면 보수적으로 비건물 처리
 
     # structure_type
     if re.search(r"SRC|철골철근", text):
@@ -387,6 +404,11 @@ def reverse_estimate_spec(bid: G2BBid, req: G2BBidAnalyzeRequest) -> dict:
         gfa = float(req.total_gfa_sqm)
         source = "manual"
         confidence = 0.95
+    elif building_type == "비건물":
+        # 토목·설비·단종공사는 연면적 개념이 없어 GFA 역산/QTO를 적용하지 않는다.
+        gfa = 0.0
+        source = "non_building"
+        confidence = 0.3
     elif notice["total_gfa_sqm"]:
         gfa = float(notice["total_gfa_sqm"])
         source = "notice"
@@ -493,53 +515,74 @@ class BidFeasibilityIntegrator:
                 ]
             except Exception as e:
                 warnings.append(f"QTO/원가 분석 실패: {str(e)[:80]}")
+        elif btype == "비건물":
+            warnings.append("토목·설비·단종공사: 연면적 개념 없음 → QTO/원가 미적용, 도급 수지만 산출")
         else:
             warnings.append("비주거/용역·물품: QTO 미적용(추정가격 기반 간이 분석)")
 
-        # [5] 입찰 수지 MC (낙찰가 vs QTO 실원가) + [2-4] 적정투찰가 BEP
+        # [5] 입찰 수지 MC (도급공사 현실모델) + [2-4] 적정투찰가 BEP
+        #
+        # 도급공사 수지의 핵심:
+        #   매출 = 낙찰금액 = 추정가(예정가격) × 낙찰가율
+        #   원가 = 시공사 실원가 ≈ 추정가 × 실원가율(절대비율)
+        # 예정가격은 이미 발주처 산정 원가+제경비+이윤을 포함하므로, 시공사 실원가는
+        # 통상 예정가의 0.85~0.90 수준이다. 따라서 이윤 = 추정가 × (낙찰가율 - 실원가율).
+        # 손익분기 낙찰가율 = 실원가율 × 100 으로 명확히 정의되며(이 가율 미만이면 적자),
+        # 시장 낙찰가율이 손익분기를 상회하는 정도가 곧 마진이 된다.
+        # (이전 모델은 원가를 '낙찰액 대비 비율'로 잡아 낙찰가율과 무관하게 항상 흑자가
+        #  나오는 오류가 있었음 → 추정가 대비 절대 원가율로 교정.)
         region_stats = await self._region_stats(bid)
         try:
             from app.services.feasibility.monte_carlo_engine import MCVariable, run_monte_carlo
 
-            base_cost = cost_total if cost_total > 0 else int(est_price * 0.85)
             avg_rate = region_stats["avg"]
             std_rate = region_stats["std"]
+            # 실원가율: 추정가 대비 시공사 실원가 비율(평균 0.87, 표준편차는 입력 변동성 연동).
+            cost_ratio_mean = 0.87
+            cost_ratio_std = max(0.005, req.cost_volatility_pct / 100.0 * 0.3)
 
             def bid_npv_fn(v: dict) -> float:
-                revenue = est_price * (v["award_rate"] / 100.0)
-                actual_cost = base_cost * v["cost_factor"]
-                return revenue - actual_cost
+                award_amount = est_price * (v["award_rate"] / 100.0)
+                actual_cost = est_price * v["cost_ratio"]
+                return award_amount - actual_cost  # 도급 이윤(원)
 
             mc = run_monte_carlo(
                 calculate_fn=bid_npv_fn,
                 variables=[
                     MCVariable(name="award_rate", mean=avg_rate, std=max(1.0, std_rate)),
-                    MCVariable(
-                        name="cost_factor", mean=1.0,
-                        std=max(0.01, req.cost_volatility_pct / 100.0),
-                    ),
+                    MCVariable(name="cost_ratio", mean=cost_ratio_mean, std=cost_ratio_std),
                 ],
                 n_simulations=min(req.simulation_iterations, 10000),
                 seed=42,
             )
+            base_cost = est_price * cost_ratio_mean  # ROI 분모(기대 실원가)
             base.expected_npv = int(mc.get("mean", 0))
             base.profit_probability = round(mc.get("probability_positive", 0) * 100, 2)
             base.expected_roi = round(
                 (mc.get("mean", 0) / base_cost * 100) if base_cost > 0 else 0.0, 2
             )
 
-            # 손익분기 낙찰가율 + 적정 투찰가 (흑자 보장)
+            # 손익분기 낙찰가율 = 실원가율 × 100 (이 가율 미만으로 받으면 적자).
             if est_price > 0:
-                bep = base_cost / est_price * 100.0
+                bep = cost_ratio_mean * 100.0
                 base.break_even_bid_rate = round(bep, 2)
                 margin = req.target_margin_pct
+                # 적정 투찰가율: 손익분기 위에서 목표마진을 더하되, 시장 낙찰가율 통계
+                # 범위 안에서 클램프하고 손익분기 미만으로는 절대 내려가지 않는다.
                 low = max(bep, avg_rate - std_rate)
-                mid = max(bep * (1 + margin / 100.0), avg_rate)
-                high = min(100.0, avg_rate + std_rate * 0.5)
-                base.recommended_bid_rate_low = round(min(low, 100.0), 3)
+                mid = min(max(bep + margin, avg_rate), avg_rate + std_rate)
+                mid = max(mid, low)
+                high = max(mid, min(100.0, avg_rate + std_rate * 0.5))
+                base.recommended_bid_rate_low = round(min(max(low, bep), 100.0), 3)
                 base.recommended_bid_rate_mid = round(min(mid, 100.0), 3)
-                base.recommended_bid_rate_high = round(high, 3)
+                base.recommended_bid_rate_high = round(min(high, 100.0), 3)
                 base.recommended_bid_price = int(est_price * base.recommended_bid_rate_mid / 100.0)
+                # 시장 낙찰가율이 손익분기 미만이면 적자 경고.
+                if avg_rate < bep:
+                    warnings.append(
+                        f"시장 평균 낙찰가율({avg_rate:.1f}%)이 손익분기({bep:.1f}%) 미만 "
+                        f"— 시장가 투찰 시 적자 위험, 원가절감 없이는 수주 비권장"
+                    )
         except Exception as e:
             warnings.append(f"수지 시뮬레이션 실패: {str(e)[:80]}")
 
@@ -547,17 +590,16 @@ class BidFeasibilityIntegrator:
         try:
             from app.services.feasibility.sensitivity_engine import run_sensitivity_analysis
 
-            base_cost2 = cost_total if cost_total > 0 else int(est_price * 0.85)
-
+            # 민감도도 [5]와 동일한 도급 수지모델(추정가 대비 절대 원가율)을 사용한다.
             def sens_fn(vals: dict) -> dict:
-                revenue = est_price * (vals["award_rate"] / 100.0)
-                cost_v = base_cost2 * (vals["cost_factor"])
-                profit = revenue - cost_v
-                rate = (profit / cost_v * 100) if cost_v > 0 else 0
+                award_amount = est_price * (vals["award_rate"] / 100.0)
+                actual_cost = est_price * vals["cost_ratio"]
+                profit = award_amount - actual_cost
+                rate = (profit / actual_cost * 100) if actual_cost > 0 else 0
                 return {"profit_rate_pct": round(rate, 2), "npv_won": round(profit)}
 
             sens = run_sensitivity_analysis(
-                base_values={"award_rate": region_stats["avg"], "cost_factor": 1.0},
+                base_values={"award_rate": region_stats["avg"], "cost_ratio": 0.87},
                 calculate_fn=sens_fn,
             )
             base.sensitivity = BidSensitivity(
