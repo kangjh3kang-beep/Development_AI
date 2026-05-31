@@ -80,6 +80,16 @@ class CostCalculateResponse(BaseModel):
     subtotals: dict[str, Any] = Field(default_factory=dict)
     total: float = 0.0
 
+    # LLM(Claude) 원가 해석 (CostInterpreter, 키 설정 시 채워짐)
+    ai_cost_analysis: Optional[str] = None
+    ai_ve_suggestions: Optional[str] = None
+    ai_material_advice: Optional[str] = None
+    ai_schedule_impact: Optional[str] = None
+    ai_risk_factors: Optional[str] = None
+
+    class Config:
+        extra = "allow"
+
 
 class MonteCarloResponse(BaseModel):
     """몬테카를로 시뮬레이션 결과."""
@@ -149,9 +159,51 @@ async def upload_ifc(project_id: str, req: IFCUploadRequest):
 async def calculate_cost(project_id: str, req: CostCalculateRequest):
     """원가계산서를 생성한다."""
     result = cost_calc.calculate(req.items, rates=req.rates)
+
+    # LLM(Claude) 원가 해석 — 실패해도 산정 결과는 정상 반환(graceful fallback)
+    ai: dict[str, Any] = {}
+    try:
+        from app.services.ai.cost_interpreter import CostInterpreter
+
+        gfa = sum(float(it.get("quantity", 0) or 0) for it in req.items) or 0
+        interp = await CostInterpreter().generate_interpretation({
+            "total_cost": result.get("total_project_cost", 0),
+            "cost_per_sqm": (
+                round(result.get("total_project_cost", 0) / gfa) if gfa else 0
+            ),
+            "cost_items": [
+                {
+                    "category": k,
+                    "amount": v,
+                    "ratio_pct": (
+                        round(v / result.get("total_project_cost", 1) * 100, 1)
+                        if result.get("total_project_cost")
+                        else 0
+                    ),
+                }
+                for k, v in (result.get("category_totals", {}) or {}).items()
+            ],
+            "cost_breakdown": {
+                "material_cost": result.get("direct_material_cost"),
+                "labor_cost": result.get("total_labor_cost"),
+                "expense_cost": result.get("direct_expense_cost"),
+                "overhead_cost": result.get("general_mgmt"),
+                "profit": result.get("profit"),
+            },
+        })
+        if isinstance(interp, dict):
+            ai = interp
+    except Exception:
+        ai = {}
+
     return {
         "project_id": project_id,
         **result,
+        "ai_cost_analysis": ai.get("cost_analysis"),
+        "ai_ve_suggestions": ai.get("ve_suggestions"),
+        "ai_material_advice": ai.get("material_advice"),
+        "ai_schedule_impact": ai.get("schedule_impact"),
+        "ai_risk_factors": ai.get("risk_factors"),
     }
 
 
