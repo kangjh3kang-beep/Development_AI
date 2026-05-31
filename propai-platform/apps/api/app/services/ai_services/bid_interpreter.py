@@ -83,9 +83,10 @@ _RESULT_KEYS = (
 class BidInterpreter:
     """입찰 6엔진 분석 결과를 LLM이 해석하여 입찰 전략 내러티브를 생성."""
 
-    def __init__(self, *, timeout_sec: float = 40.0) -> None:
-        # 5개 섹션 한국어 해석(max_tokens 2048)은 생성에 20~30초가 걸릴 수 있어
+    def __init__(self, *, timeout_sec: float = 60.0) -> None:
+        # 5개 섹션 한국어 해석(max_tokens 4096)은 생성에 25~50초가 걸릴 수 있어
         # 기본 타임아웃을 넉넉히 둔다(짧으면 asyncio.TimeoutError로 폴백됨).
+        # max_tokens 2048은 풍부출력 중간 절단→JSON파싱실패 위험이 있어 4096으로 둔다.
         self._timeout_sec = timeout_sec
 
     def _resolve_model(self, model_tier: str) -> str:
@@ -105,7 +106,7 @@ class BidInterpreter:
             model=model_id,
             anthropic_api_key=api_key,
             temperature=0.3,
-            max_tokens=2048,
+            max_tokens=4096,
             timeout=self._timeout_sec,
         )
 
