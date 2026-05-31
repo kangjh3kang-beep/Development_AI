@@ -131,7 +131,8 @@ async def rebuild_award_stats(ctx: dict) -> dict:
         count = 0
 
         # 전체 재집계이므로 기존 통계를 먼저 비운다.
-        # (stat_period·bid_type·region_sido UNIQUE 제약 → 미삭제 시 재실행이 UniqueViolation)
+        # (테이블에 UNIQUE 제약이 없어 미삭제 시 매 실행마다 동일 기간 통계가
+        #  중복 누적되어 get_award_stats 평균이 왜곡된다.)
         await db.execute(delete(G2BAwardStat))
 
         for row in rows:
