@@ -28,6 +28,11 @@ type AVMValuationResponse = {
   comparable_count: number;
   model_version: string;
   created_at: string;
+  valuation_narrative?: string | null;
+  comparable_explanation?: string | null;
+  market_position?: string | null;
+  appreciation_outlook?: string | null;
+  investment_recommendation?: string | null;
 };
 
 type JeonseRiskFactor = {
