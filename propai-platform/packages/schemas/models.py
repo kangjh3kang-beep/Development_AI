@@ -254,6 +254,13 @@ class AVMValuationResponse(BaseModel):
     model_version: str
     created_at: datetime
 
+    # ── LLM(Claude) 자연어 해석 (AvmInterpreter, 키 설정 시 채워짐) ──
+    valuation_narrative: str | None = Field(default=None, description="시세 추정 근거·신뢰도 해석")
+    comparable_explanation: str | None = Field(default=None, description="비교 사례 분석")
+    market_position: str | None = Field(default=None, description="시장 내 가격 포지셔닝")
+    appreciation_outlook: str | None = Field(default=None, description="향후 가치 전망")
+    investment_recommendation: str | None = Field(default=None, description="투자 관점 종합 의견")
+
 
 class AVMRequest(BaseModel):
     """AVM 시세 추정 요청"""
