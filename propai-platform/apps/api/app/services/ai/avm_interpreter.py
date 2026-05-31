@@ -79,11 +79,15 @@ class AvmInterpreter(BaseInterpreter):
     max_tokens = 4096
     system_prompt = SYSTEM_PROMPT
 
-    async def generate_interpretation(self, avm_data: dict) -> dict[str, str]:
+    async def generate_interpretation(
+        self, avm_data: dict, *, evidence_text: str | None = None
+    ) -> dict[str, str]:
         """AVM 시세 추정 결과에 대한 해석 텍스트를 생성.
 
         Args:
             avm_data: AVM 시세 추정 결과 dict
+            evidence_text: P3 — 호출처(서비스/라우터)가 async로 만든 근거
+                (MOLIT 실거래 사례 등)를 그대로 부착. None이면 미부착.
 
         Returns:
             5개 키를 가진 dict - 각 값은 전문가 해석 문자열.
@@ -94,7 +98,10 @@ class AvmInterpreter(BaseInterpreter):
             analysis_json=json.dumps(compact, ensure_ascii=False, indent=2),
         )
         return await self._invoke(
-            user_prompt, cache_data=compact, evidence_data=avm_data
+            user_prompt,
+            cache_data=compact,
+            evidence_data=avm_data,
+            evidence_text=evidence_text,
         )
 
     def _evidence(self, data: dict) -> str | None:

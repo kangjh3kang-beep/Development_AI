@@ -88,11 +88,15 @@ class PermitInterpreter(BaseInterpreter):
     system_prompt = SYSTEM_PROMPT
 
 
-    async def generate_interpretation(self, permit_data: dict) -> dict[str, str]:
+    async def generate_interpretation(
+        self, permit_data: dict, *, evidence_text: str | None = None
+    ) -> dict[str, str]:
         """인허가 검증 결과를 해석하여 예외 조항/완화 가능성을 분석.
 
         Args:
             permit_data: 인허가 검증 결과 dict
+            evidence_text: P3 — 호출처가 async로 만든 근거(법규 RAG 검색결과 등)를
+                그대로 부착. None이면 미부착.
 
         Returns:
             6개 키를 가진 dict — 각 값은 해석 문자열.

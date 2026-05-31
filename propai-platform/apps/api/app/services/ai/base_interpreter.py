@@ -212,14 +212,22 @@ class BaseInterpreter:
         *,
         cache_data: Any = None,
         evidence_data: dict | None = None,
+        evidence_text: str | None = None,
     ) -> dict[str, str]:
         """시스템/유저 프롬프트로 LLM을 호출하고 파싱된 dict를 반환.
 
         - cache_data가 주어지면 입력 해시로 캐시 조회/저장(P4).
-        - evidence_data가 주어지면 _evidence()로 추가 근거를 user_prompt에 부착(P3).
+        - evidence_data가 주어지면 _evidence()로 sync 근거(지역시세 등)를 부착(P3).
+        - evidence_text가 주어지면 호출처(서비스/라우터)가 async로 만든 근거
+          (MOLIT 실거래·법규 RAG 등)를 그대로 부착(P3 라우터 주입). 키·async는
+          호출처 책임. evidence_text는 캐시 키에 반영돼 근거가 다르면 다른 결과로 본다.
         - 시스템 프롬프트에는 그라운딩 규칙을 자동 주입(P3).
         - 모든 실패는 graceful: 빈 dict 반환(호출자 폴백).
         """
+        # P4: evidence_text는 결과를 바꾸므로 캐시 키에 포함(근거 다르면 캐시 분리).
+        if cache_data is not None and evidence_text:
+            cache_data = {"_data": cache_data, "_evidence": evidence_text}
+
         # P4: L1(in-process) → L2(Redis) 순으로 조회. 적중 시 LLM 스킵.
         cache_key = self._cache_key(cache_data) if cache_data is not None else None
         redis_key = f"interp:{cache_key}" if cache_key else None
@@ -234,11 +242,18 @@ class BaseInterpreter:
                 _RESULT_CACHE.set(cache_key, l2)  # L1 워밍
                 return l2
 
-        # P3: 추가 근거 부착
+        # P3: 추가 근거 부착 — (1) sync 자체근거(_evidence: 지역시세 등)
+        #                        (2) 호출처 주입 근거(evidence_text: MOLIT·법규RAG 등)
+        evidences: list[str] = []
         if evidence_data is not None:
             extra = self._evidence(evidence_data)
             if extra:
-                user_prompt = f"{user_prompt}\n\n## 추가 근거 자료\n{extra}"
+                evidences.append(extra)
+        if evidence_text:
+            evidences.append(evidence_text)
+        if evidences:
+            joined = "\n".join(evidences)
+            user_prompt = f"{user_prompt}\n\n## 추가 근거 자료\n{joined}"
 
         try:
             llm = self._get_llm()
@@ -276,7 +291,29 @@ class BaseInterpreter:
 
         raw_text = response.content if hasattr(response, "content") else str(response)
         result = self._parse_response(raw_text)
-        logger.info("인터프리터 LLM 완료", interp=self.name, keys=list(result.keys()))
+
+        # P4-b: prompt caching 효과 모니터링 — cache_read 비율 로깅.
+        # langchain usage_metadata.input_token_details.{cache_read,cache_creation}
+        cache_read = cache_creation = input_tokens = 0
+        try:
+            meta = getattr(response, "usage_metadata", None) or {}
+            details = meta.get("input_token_details", {}) if isinstance(meta, dict) else {}
+            cache_read = int(details.get("cache_read", 0) or 0)
+            cache_creation = int(details.get("cache_creation", 0) or 0)
+            input_tokens = int(meta.get("input_tokens", 0) or 0) if isinstance(meta, dict) else 0
+        except Exception:  # noqa: BLE001
+            pass
+        cached_total = cache_read + cache_creation
+        cache_hit_ratio = round(cache_read / cached_total, 3) if cached_total else 0.0
+        logger.info(
+            "인터프리터 LLM 완료",
+            interp=self.name,
+            keys=list(result.keys()),
+            input_tokens=input_tokens,
+            cache_read=cache_read,
+            cache_creation=cache_creation,
+            cache_hit_ratio=cache_hit_ratio,
+        )
 
         # P4: 결과를 L1·L2 모두에 저장.
         if cache_key and result:
