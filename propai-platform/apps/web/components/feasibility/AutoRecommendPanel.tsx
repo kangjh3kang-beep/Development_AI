@@ -56,10 +56,20 @@ interface BackendRecommendItem {
   input_used: { project_months: number; avg_sale_price_per_pyeong: number };
 }
 
+// LLM(Claude) 사업성 해석 — feasibility_interpreter 출력 5섹션
+interface FeasibilityInterpretation {
+  overall_recommendation?: string;
+  risk_assessment?: string;
+  profit_optimization?: string;
+  market_timing?: string;
+  financing_advice?: string;
+}
+
 interface AutoRecommendApiResponse {
   recommendations: BackendRecommendItem[];
   all_results: BackendRecommendItem[];
   total_types_analyzed: number;
+  ai_interpretation?: FeasibilityInterpretation | null;
 }
 
 // 백엔드 응답 → 프론트엔드 모델 변환
@@ -207,6 +217,7 @@ export function AutoRecommendPanel({ onClose, isModal = false, embedded = false 
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [topModels, setTopModels] = useState<RecommendedModel[]>([]);
+  const [aiInterpretation, setAiInterpretation] = useState<FeasibilityInterpretation | null>(null);
   const [allModels, setAllModels] = useState<RecommendedModel[]>([]);
   const [analysisCount, setAnalysisCount] = useState(0);
   const [showFullTable, setShowFullTable] = useState(false);
@@ -228,6 +239,7 @@ export function AutoRecommendPanel({ onClose, isModal = false, embedded = false 
     setProgress(0);
     setTopModels([]);
     setAllModels([]);
+    setAiInterpretation(null);
 
     // Simulate progress
     progressRef.current = setInterval(() => {
@@ -260,6 +272,7 @@ export function AutoRecommendPanel({ onClose, isModal = false, embedded = false 
       setTopModels(mappedRecs.slice(0, 3));
       setAllModels(mappedAll);
       setAnalysisCount(response.total_types_analyzed ?? mappedAll.length);
+      setAiInterpretation(response.ai_interpretation ?? null);
 
       // 분석 완료 후 주소를 컨텍스트 스토어에 저장 (partial merge)
       updateSiteAnalysis({
@@ -625,6 +638,25 @@ export function AutoRecommendPanel({ onClose, isModal = false, embedded = false 
         )}
       </AnimatePresence>
 
+      {/* ── LLM(Claude) 사업성 종합 해석 ── */}
+      {aiInterpretation && (
+        <div className="rounded-[2rem] border border-blue-500/30 bg-blue-500/5 p-6 shadow-[var(--shadow-lg)]">
+          <div className="flex items-center gap-2 mb-4">
+            <span className="text-blue-400 text-lg">🧠</span>
+            <h3 className="text-base font-black text-[var(--text-primary)]">
+              AI 사업성 종합 해석
+            </h3>
+          </div>
+          <div className="grid gap-3 md:grid-cols-2">
+            <FeasAiSection icon="✅" title="종합 추천" text={aiInterpretation.overall_recommendation} emphasis />
+            <FeasAiSection icon="⚠️" title="리스크 평가" text={aiInterpretation.risk_assessment} />
+            <FeasAiSection icon="💰" title="수익 극대화" text={aiInterpretation.profit_optimization} />
+            <FeasAiSection icon="📈" title="시장 타이밍" text={aiInterpretation.market_timing} />
+            <FeasAiSection icon="🏦" title="자금조달 제안" text={aiInterpretation.financing_advice} />
+          </div>
+        </div>
+      )}
+
       {/* ── Full Comparison Table ── */}
       {allModels.length > 0 && (
         <div className="space-y-4">
@@ -752,6 +784,44 @@ export function AutoRecommendPanel({ onClose, isModal = false, embedded = false 
           />
         )}
       </AnimatePresence>
+    </div>
+  );
+}
+
+/* LLM 사업성 해석 섹션 카드 (종합추천은 emphasis로 강조, 전폭) */
+function FeasAiSection({
+  icon,
+  title,
+  text,
+  emphasis = false,
+}: {
+  icon: string;
+  title: string;
+  text?: string;
+  emphasis?: boolean;
+}) {
+  if (!text) return null;
+  return (
+    <div
+      className={`rounded-xl p-4 ${
+        emphasis
+          ? "md:col-span-2 bg-blue-500/10 border border-blue-500/30"
+          : "bg-[var(--surface-muted)]/40 border border-[var(--border)]"
+      }`}
+    >
+      <div className="flex items-center gap-1.5 mb-1.5">
+        <span className="text-sm shrink-0">{icon}</span>
+        <span
+          className={`text-xs font-bold ${
+            emphasis ? "text-blue-300" : "text-[var(--text-primary)]"
+          }`}
+        >
+          {title}
+        </span>
+      </div>
+      <p className="text-[11px] text-[var(--text-secondary)] leading-relaxed whitespace-pre-line">
+        {text}
+      </p>
     </div>
   );
 }
