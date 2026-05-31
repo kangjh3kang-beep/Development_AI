@@ -29,7 +29,26 @@ class EPDRequest(BaseModel):
 
 @router.post("/lca/calculate")
 async def calculate_lca(req: LCARequest, current_user: User = Depends(get_current_user)):
-    return lca_service.calculate_total_lca(req.material_quantities, req.floor_area_sqm)
+    result = lca_service.calculate_total_lca(req.material_quantities, req.floor_area_sqm)
+
+    # LLM(Claude) ESG/탄소 해석 — 실패해도 LCA 결과는 정상 반환(graceful fallback)
+    try:
+        from app.services.ai.esg_interpreter import EsgInterpreter
+
+        interp = await EsgInterpreter().generate_interpretation({
+            "carbon_emissions": {
+                "total_emissions_tco2": result.get("total_gwp_tonco2e"),
+                "emissions_per_sqm": result.get("embodied_carbon_per_sqm"),
+                "benchmark_comparison": result.get("carbon_benchmark"),
+            },
+            "building_info": {"total_gfa_sqm": req.floor_area_sqm},
+        })
+        if isinstance(interp, dict) and interp:
+            result["ai_esg_interpretation"] = interp
+    except Exception:
+        pass
+
+    return result
 
 @router.post("/lcc/calculate")
 async def calculate_lcc(req: LCCRequest, current_user: User = Depends(get_current_user)):
