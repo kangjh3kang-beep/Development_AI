@@ -154,7 +154,7 @@ class FeasibilityInterpreter:
             recommendations_json=json.dumps(compact, ensure_ascii=False, indent=2),
         )
 
-        from langchain.schema import HumanMessage, SystemMessage
+        from langchain_core.messages import HumanMessage, SystemMessage
 
         messages = [
             SystemMessage(content=SYSTEM_PROMPT),

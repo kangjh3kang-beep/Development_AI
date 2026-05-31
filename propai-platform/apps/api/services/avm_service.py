@@ -521,6 +521,28 @@ class AVMService:
             comparables=len(comparables),
         )
 
+        # LLM(Claude) 자연어 해석 — 실패해도 기존 AVM 결과는 정상 반환(graceful fallback)
+        narrative: dict[str, Any] = {}
+        try:
+            from app.services.ai.avm_interpreter import AvmInterpreter
+
+            interp_input = {
+                "estimated_value": {
+                    "value_won": round(predicted_price, 2),
+                    "value_per_sqm_won": round(price_per_sqm, 2),
+                    "confidence_score": round(confidence, 4),
+                    "valuation_date": str(valuation.created_at),
+                },
+                "comparables": top_comparables,
+                "address": request.address,
+                "area_sqm": request.area_sqm,
+            }
+            interp = await AvmInterpreter().generate_interpretation(interp_input)
+            if isinstance(interp, dict):
+                narrative = interp
+        except Exception as e:  # noqa: BLE001
+            logger.warning("AVM AI 해석 생성 스킵", error=str(e)[:120])
+
         return AVMValuationResponse(
             id=valuation.id,
             project_id=valuation.project_id,
@@ -530,6 +552,11 @@ class AVMService:
             comparable_count=valuation.comparable_count,
             model_version=valuation.model_version,
             created_at=valuation.created_at,
+            valuation_narrative=narrative.get("valuation_narrative"),
+            comparable_explanation=narrative.get("comparable_explanation"),
+            market_position=narrative.get("market_position"),
+            appreciation_outlook=narrative.get("appreciation_outlook"),
+            investment_recommendation=narrative.get("investment_recommendation"),
         )
 
     # ── MAPE 검증 ──
