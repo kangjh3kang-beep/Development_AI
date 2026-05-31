@@ -11,12 +11,12 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
-import os
 from typing import Any
 
 import structlog
+
+from app.services.ai.base_interpreter import BaseInterpreter
 
 logger = structlog.get_logger()
 
@@ -71,40 +71,26 @@ USER_PROMPT_TEMPLATE = """\
 """
 
 
-class SiteAnalysisInterpreter:
+class SiteAnalysisInterpreter(BaseInterpreter):
     """수집된 부지분석 데이터를 AI가 해석하여 전문가 수준의 분석 설명을 생성."""
 
-    def __init__(self, *, timeout_sec: float = 90.0) -> None:
-        self._timeout_sec = timeout_sec
-        self._llm = None
+    name = "site_analysis"
+    expected_keys = [
+        "effective_far_interpretation",
+        "supply_area_interpretation",
+        "land_price_interpretation",
+        "transaction_interpretation",
+        "sale_price_interpretation",
+        "location_interpretation",
+        "development_plan_interpretation",
+        "overall_summary",
+        "risk_factors",
+        "opportunity_factors",
+    ]
+    fallback_key = "overall_summary"
+    max_tokens = 6000
+    system_prompt = SYSTEM_PROMPT
 
-    def _get_llm(self):
-        """ChatAnthropic 인스턴스를 지연 생성."""
-        if self._llm is not None:
-            return self._llm
-
-        from app.core.config import settings
-        from app.services.ai.key_sanitizer import sanitize_api_key
-
-        api_key = sanitize_api_key(
-            settings.ANTHROPIC_API_KEY or os.environ.get("ANTHROPIC_API_KEY", ""),
-            key_name="ANTHROPIC_API_KEY",
-        )
-        if not api_key:
-            raise ValueError("ANTHROPIC_API_KEY가 설정되지 않았습니다.")
-
-        model = settings.ANTHROPIC_MODEL or "claude-sonnet-4-20250514"
-
-        from langchain_anthropic import ChatAnthropic
-
-        self._llm = ChatAnthropic(
-            model=model,
-            anthropic_api_key=api_key,
-            temperature=0.3,
-            max_tokens=6000,
-            timeout=self._timeout_sec,
-        )
-        return self._llm
 
     async def generate_interpretation(self, analysis_data: dict) -> dict[str, str]:
         """7개 섹션 각각에 대한 해석 텍스트를 생성.
@@ -135,34 +121,7 @@ class SiteAnalysisInterpreter:
             analysis_json=json.dumps(compact, ensure_ascii=False, indent=2),
         )
 
-        from langchain_core.messages import HumanMessage, SystemMessage
-
-        messages = [
-            SystemMessage(content=SYSTEM_PROMPT),
-            HumanMessage(content=user_prompt),
-        ]
-
-        logger.info(
-            "AI 해석 요청",
-            address=address[:20],
-            prompt_chars=len(user_prompt),
-        )
-
-        # timeout 적용하여 LLM 호출
-        response = await asyncio.wait_for(
-            llm.ainvoke(messages),
-            timeout=self._timeout_sec,
-        )
-
-        raw_text = response.content if hasattr(response, "content") else str(response)
-        result = self._parse_response(raw_text)
-
-        logger.info(
-            "AI 해석 완료",
-            address=address[:20],
-            keys=list(result.keys()),
-        )
-        return result
+        return await self._invoke(user_prompt, cache_data=compact)
 
     def _extract_compact_data(self, data: dict) -> dict[str, Any]:
         """전체 분석 결과에서 LLM에 필요한 핵심 데이터만 추출.
@@ -263,59 +222,3 @@ class SiteAnalysisInterpreter:
 
         return compact
 
-    def _parse_response(self, raw: str) -> dict[str, str]:
-        """LLM 응답에서 JSON을 추출하여 파싱.
-
-        응답이 ```json ... ``` 블록으로 감싸져 있을 수 있으므로 처리.
-        """
-        text = raw.strip()
-
-        # ```json ... ``` 블록 제거
-        if text.startswith("```"):
-            lines = text.split("\n")
-            # 첫 줄(```json)과 마지막 줄(```) 제거
-            start = 1
-            end = len(lines)
-            for i in range(len(lines) - 1, 0, -1):
-                if lines[i].strip() == "```":
-                    end = i
-                    break
-            text = "\n".join(lines[start:end])
-
-        try:
-            parsed = json.loads(text)
-        except json.JSONDecodeError:
-            # JSON 파싱 실패 시 중괄호 범위를 찾아 재시도
-            brace_start = text.find("{")
-            brace_end = text.rfind("}")
-            if brace_start != -1 and brace_end != -1:
-                try:
-                    parsed = json.loads(text[brace_start : brace_end + 1])
-                except json.JSONDecodeError:
-                    logger.warning("AI 응답 JSON 파싱 최종 실패", raw_length=len(raw))
-                    return {"overall_summary": text[:500]}
-            else:
-                logger.warning("AI 응답에서 JSON을 찾을 수 없음", raw_length=len(raw))
-                return {"overall_summary": text[:500]}
-
-        # 예상 키 목록
-        expected_keys = [
-            "effective_far_interpretation",
-            "supply_area_interpretation",
-            "land_price_interpretation",
-            "transaction_interpretation",
-            "sale_price_interpretation",
-            "location_interpretation",
-            "development_plan_interpretation",
-            "overall_summary",
-            "risk_factors",
-            "opportunity_factors",
-        ]
-
-        result: dict[str, str] = {}
-        for key in expected_keys:
-            val = parsed.get(key)
-            if val is not None:
-                result[key] = str(val)
-
-        return result

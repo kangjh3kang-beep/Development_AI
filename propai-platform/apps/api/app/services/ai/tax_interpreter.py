@@ -11,12 +11,12 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
-import os
 from typing import Any
 
 import structlog
+
+from app.services.ai.base_interpreter import BaseInterpreter
 
 logger = structlog.get_logger()
 
@@ -65,37 +65,22 @@ USER_PROMPT_TEMPLATE = """\
 """
 
 
-class TaxInterpreter:
+class TaxInterpreter(BaseInterpreter):
     """세금 계산 결과를 AI가 해석하여 절세 전략을 제안."""
 
-    def __init__(self, *, timeout_sec: float = 90.0) -> None:
-        self._timeout_sec = timeout_sec
-        self._llm = None
+    name = "tax"
+    expected_keys = [
+        "tax_summary",
+        "optimization_strategy",
+        "entity_comparison",
+        "timing_strategy",
+        "deduction_opportunities",
+        "risk_factors",
+    ]
+    fallback_key = "tax_summary"
+    max_tokens = 4096
+    system_prompt = SYSTEM_PROMPT
 
-    def _get_llm(self):
-        """LLM 인스턴스를 지연 생성. llm_provider 우선, 없으면 직접 생성."""
-        if self._llm is not None:
-            return self._llm
-
-        try:
-            from app.services.ai.llm_provider import get_llm
-
-            # timeout을 명시 전달 — 미전달 시 get_llm 기본값 10s라 세무 6섹션 생성이
-            # APITimeoutError로 끊긴다(세무 프롬프트가 길어 ~30s+ 소요).
-            self._llm = get_llm(timeout=self._timeout_sec)
-        except ImportError:
-            from langchain_anthropic import ChatAnthropic
-
-            from app.services.ai.key_sanitizer import get_clean_env_key
-
-            self._llm = ChatAnthropic(
-                model=os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-20250514"),
-                anthropic_api_key=get_clean_env_key("ANTHROPIC_API_KEY"),
-                temperature=0.3,
-                max_tokens=4096,
-                timeout=self._timeout_sec,
-            )
-        return self._llm
 
     async def generate_interpretation(self, tax_data: dict) -> dict[str, str]:
         """세금 계산 결과에 대한 해석 텍스트를 생성.
@@ -117,32 +102,7 @@ class TaxInterpreter:
             analysis_json=json.dumps(compact, ensure_ascii=False, indent=2),
         )
 
-        from langchain_core.messages import HumanMessage, SystemMessage
-
-        messages = [
-            SystemMessage(content=SYSTEM_PROMPT),
-            HumanMessage(content=user_prompt),
-        ]
-
-        logger.info(
-            "세금 AI 해석 요청",
-            prompt_chars=len(user_prompt),
-        )
-
-        # timeout 적용하여 LLM 호출
-        response = await asyncio.wait_for(
-            llm.ainvoke(messages),
-            timeout=self._timeout_sec,
-        )
-
-        raw_text = response.content if hasattr(response, "content") else str(response)
-        result = self._parse_response(raw_text)
-
-        logger.info(
-            "세금 AI 해석 완료",
-            keys=list(result.keys()),
-        )
-        return result
+        return await self._invoke(user_prompt, cache_data=compact)
 
     def _extract_compact_data(self, data: dict) -> dict[str, Any]:
         """전체 세금 계산 결과에서 LLM에 필요한 핵심 데이터만 추출."""
@@ -230,49 +190,3 @@ class TaxInterpreter:
 
         return compact
 
-    def _parse_response(self, raw: str) -> dict[str, str]:
-        """LLM 응답에서 JSON을 추출하여 파싱."""
-        text = raw.strip()
-
-        # ```json ... ``` 블록 제거
-        if text.startswith("```"):
-            lines = text.split("\n")
-            start = 1
-            end = len(lines)
-            for i in range(len(lines) - 1, 0, -1):
-                if lines[i].strip() == "```":
-                    end = i
-                    break
-            text = "\n".join(lines[start:end])
-
-        try:
-            parsed = json.loads(text)
-        except json.JSONDecodeError:
-            brace_start = text.find("{")
-            brace_end = text.rfind("}")
-            if brace_start != -1 and brace_end != -1:
-                try:
-                    parsed = json.loads(text[brace_start : brace_end + 1])
-                except json.JSONDecodeError:
-                    logger.warning("세금 AI 응답 JSON 파싱 최종 실패", raw_length=len(raw))
-                    return {"tax_summary": text[:500]}
-            else:
-                logger.warning("세금 AI 응답에서 JSON을 찾을 수 없음", raw_length=len(raw))
-                return {"tax_summary": text[:500]}
-
-        expected_keys = [
-            "tax_summary",
-            "optimization_strategy",
-            "entity_comparison",
-            "timing_strategy",
-            "deduction_opportunities",
-            "risk_factors",
-        ]
-
-        result: dict[str, str] = {}
-        for key in expected_keys:
-            val = parsed.get(key)
-            if val is not None:
-                result[key] = str(val)
-
-        return result
