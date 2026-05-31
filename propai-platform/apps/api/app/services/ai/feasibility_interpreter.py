@@ -118,8 +118,6 @@ class FeasibilityInterpreter(BaseInterpreter):
                 "financing_advice": "자금조달 구조 제안",
             }
         """
-        llm = self._get_llm()
-
         # 토큰 절약: 핵심 데이터만 추출
         compact = self._extract_compact_data(recommend_data)
 

@@ -114,8 +114,6 @@ class MarketInterpreter(BaseInterpreter):
             6개 키를 가진 dict -- 각 값은 전문가 해석 문자열.
             LLM 호출 실패 시 None을 반환하여 호출자가 폴백 처리할 수 있게 한다.
         """
-        llm = self._get_llm()
-
         # 토큰 절약: 핵심 데이터만 추출
         compact = self._extract_compact_data(market_data)
 

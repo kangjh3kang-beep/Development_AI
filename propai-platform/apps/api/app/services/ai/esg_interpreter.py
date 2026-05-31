@@ -92,8 +92,6 @@ class EsgInterpreter(BaseInterpreter):
             LLM 호출 실패 시 빈 dict가 아니라 None을 반환하여
             호출자가 폴백 처리할 수 있게 한다.
         """
-        llm = self._get_llm()
-
         # 토큰 절약: 핵심 데이터만 추출
         compact = self._extract_compact_data(esg_data)
 

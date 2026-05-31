@@ -10,12 +10,12 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
-import os
 from typing import Any
 
 import structlog
+
+from app.services.ai.base_interpreter import BaseInterpreter
 
 logger = structlog.get_logger()
 
@@ -71,40 +71,22 @@ USER_PROMPT_TEMPLATE = """\
 """
 
 
-class PermitInterpreter:
+class PermitInterpreter(BaseInterpreter):
     """인허가 검증 결과를 AI가 해석하여 예외 조항/완화 가능성을 분석."""
 
-    def __init__(self, *, timeout_sec: float = 90.0) -> None:
-        self._timeout_sec = timeout_sec
-        self._llm = None
+    name = "permit"
+    expected_keys = [
+        "permit_assessment",
+        "exception_analysis",
+        "relaxation_options",
+        "timeline_estimate",
+        "risk_factors",
+        "strategy_recommendation",
+    ]
+    fallback_key = "permit_assessment"
+    max_tokens = 4096
+    system_prompt = SYSTEM_PROMPT
 
-    def _get_llm(self):
-        """ChatAnthropic 인스턴스를 지연 생성."""
-        if self._llm is not None:
-            return self._llm
-
-        from app.core.config import settings
-        from app.services.ai.key_sanitizer import sanitize_api_key
-
-        api_key = sanitize_api_key(
-            settings.ANTHROPIC_API_KEY or os.environ.get("ANTHROPIC_API_KEY", ""),
-            key_name="ANTHROPIC_API_KEY",
-        )
-        if not api_key:
-            raise ValueError("ANTHROPIC_API_KEY가 설정되지 않았습니다.")
-
-        model = settings.ANTHROPIC_MODEL or "claude-sonnet-4-20250514"
-
-        from langchain_anthropic import ChatAnthropic
-
-        self._llm = ChatAnthropic(
-            model=model,
-            anthropic_api_key=api_key,
-            temperature=0.3,
-            max_tokens=4096,
-            timeout=self._timeout_sec,
-        )
-        return self._llm
 
     async def generate_interpretation(self, permit_data: dict) -> dict[str, str]:
         """인허가 검증 결과를 해석하여 예외 조항/완화 가능성을 분석.
@@ -116,12 +98,6 @@ class PermitInterpreter:
             6개 키를 가진 dict — 각 값은 해석 문자열.
             LLM 호출 실패 시 빈 dict 반환하여 호출자가 폴백 처리.
         """
-        try:
-            llm = self._get_llm()
-        except Exception as e:
-            logger.warning("LLM 초기화 실패", error=str(e))
-            return {}
-
         compact = self._extract_compact_data(permit_data)
 
         address = permit_data.get("address", "주소 미상")
@@ -139,60 +115,7 @@ class PermitInterpreter:
             permit_json=json.dumps(compact, ensure_ascii=False, indent=2),
         )
 
-        from langchain_core.messages import HumanMessage, SystemMessage
-
-        messages = [
-            SystemMessage(content=SYSTEM_PROMPT),
-            HumanMessage(content=user_prompt),
-        ]
-
-        logger.info(
-            "인허가 AI 해석 요청",
-            address=address[:20],
-            prompt_chars=len(user_prompt),
-        )
-
-        # P1: 구조화 출력(tool-use) 우선 — 필드 보장·파싱실패 0. 실패 시 텍스트 파싱 폴백.
-        try:
-            from pydantic import BaseModel as _BM, Field as _F
-
-            class _Sections(_BM):
-                permit_assessment: str = _F(default="", description="permit_assessment")
-                exception_analysis: str = _F(default="", description="exception_analysis")
-                relaxation_options: str = _F(default="", description="relaxation_options")
-                timeline_estimate: str = _F(default="", description="timeline_estimate")
-                risk_factors: str = _F(default="", description="risk_factors")
-                strategy_recommendation: str = _F(default="", description="strategy_recommendation")
-
-            _structured = llm.with_structured_output(_Sections)
-            _parsed = await asyncio.wait_for(
-                _structured.ainvoke(messages), timeout=self._timeout_sec,
-            )
-            _r = _parsed.model_dump()
-            if any(_r.values()):
-                logger.info("AI 해석 완료(구조화)", keys=list(_r.keys()))
-                return _r
-        except Exception as _e:
-            logger.warning("구조화 출력 실패, 텍스트 파싱 폴백", error=str(_e)[:120])
-
-        try:
-            response = await asyncio.wait_for(
-                llm.ainvoke(messages),
-                timeout=self._timeout_sec,
-            )
-
-            raw_text = response.content if hasattr(response, "content") else str(response)
-            result = self._parse_response(raw_text)
-
-            logger.info(
-                "인허가 AI 해석 완료",
-                address=address[:20],
-                keys=list(result.keys()),
-            )
-            return result
-        except Exception as e:
-            logger.warning("인허가 AI 해석 생성 실패", error=str(e))
-            return {}
+        return await self._invoke(user_prompt, cache_data=compact)
 
     def _extract_compact_data(self, data: dict) -> dict[str, Any]:
         """인허가 검증 결과에서 LLM에 필요한 핵심 데이터만 추출."""
@@ -269,49 +192,3 @@ class PermitInterpreter:
 
         return compact
 
-    def _parse_response(self, raw: str) -> dict[str, str]:
-        """LLM 응답에서 JSON을 추출하여 파싱."""
-        text = raw.strip()
-
-        # ```json ... ``` 블록 제거
-        if text.startswith("```"):
-            lines = text.split("\n")
-            start = 1
-            end = len(lines)
-            for i in range(len(lines) - 1, 0, -1):
-                if lines[i].strip() == "```":
-                    end = i
-                    break
-            text = "\n".join(lines[start:end])
-
-        try:
-            parsed = json.loads(text)
-        except json.JSONDecodeError:
-            brace_start = text.find("{")
-            brace_end = text.rfind("}")
-            if brace_start != -1 and brace_end != -1:
-                try:
-                    parsed = json.loads(text[brace_start : brace_end + 1])
-                except json.JSONDecodeError:
-                    logger.warning("인허가 AI 응답 JSON 파싱 최종 실패", raw_length=len(raw))
-                    return {"permit_assessment": text[:500]}
-            else:
-                logger.warning("인허가 AI 응답에서 JSON을 찾을 수 없음", raw_length=len(raw))
-                return {"permit_assessment": text[:500]}
-
-        expected_keys = [
-            "permit_assessment",
-            "exception_analysis",
-            "relaxation_options",
-            "timeline_estimate",
-            "risk_factors",
-            "strategy_recommendation",
-        ]
-
-        result: dict[str, str] = {}
-        for key in expected_keys:
-            val = parsed.get(key)
-            if val is not None:
-                result[key] = str(val)
-
-        return result
