@@ -241,9 +241,13 @@ def _extract_region(raw_item: dict[str, Any]) -> tuple[Optional[str], Optional[s
     공사현장지역(cnstrtsiteRgnNm)을 우선 사용하되, 전국 입찰은 모든 시/도가
     나열되므로(매칭 3개 초과) '전국'으로 처리한다.
     """
+    # 공사현장지역을 우선하되, 비어 있으면 수요기관/공고기관명에서 지역을 보강 추출한다
+    # (다수 공사 입찰은 cnstrtsiteRgnNm가 비어 있고 기관명에 "대구광역시 달서구" 식으로 지역 포함).
     place = str(
         raw_item.get("cnstrtsiteRgnNm", "")
         or raw_item.get("rgnLmtBidLocplcJdgmBssNm", "")
+        or raw_item.get("dminsttNm", "")
+        or raw_item.get("ntceInsttNm", "")
         or ""
     )
     if not place:
@@ -269,6 +273,9 @@ class G2BBidService:
     async def upsert_bid_notices(self, raw_items: list[dict[str, Any]]) -> int:
         """수집된 입찰 공고 데이터를 DB에 저장/갱신한다. 부동산 관련 건만 필터링."""
         saved = 0
+        # 같은 배치에 동일 bid_notice_no가 중복 등장(공고 정정/페이지 겹침)할 수 있어
+        # 아직 flush 전인 신규 레코드를 추적해 UniqueViolation을 방지한다.
+        pending: dict[str, G2BBid] = {}
         for item in raw_items:
             title = str(item.get("bidNtceNm", "") or item.get("pblancNm", "") or "")
             org = str(item.get("ntceInsttNm", "") or item.get("dminsttNm", "") or "")
@@ -280,10 +287,12 @@ class G2BBidService:
             if not notice_no:
                 continue
 
-            existing = await self.db.execute(
-                select(G2BBid).where(G2BBid.bid_notice_no == notice_no)
-            )
-            bid = existing.scalar_one_or_none()
+            bid = pending.get(notice_no)
+            if bid is None:
+                existing = await self.db.execute(
+                    select(G2BBid).where(G2BBid.bid_notice_no == notice_no)
+                )
+                bid = existing.scalar_one_or_none()
 
             bid_type = str(item.get("_bid_type", "공사"))
             tags = _classify_tags(title)
@@ -318,11 +327,13 @@ class G2BBidService:
                     raw_data=item,
                 )
                 self.db.add(bid)
+                pending[notice_no] = bid
                 saved += 1
             else:
                 bid.bid_close_dt = _parse_g2b_datetime(item.get("bidClseDt")) or bid.bid_close_dt
                 bid.category_tags = tags or bid.category_tags
                 bid.updated_at = datetime.utcnow()
+                pending[notice_no] = bid
 
         await self.db.commit()
         logger.info("G2B 입찰 공고 %d건 저장/갱신 완료", saved)

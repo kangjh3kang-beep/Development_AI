@@ -612,11 +612,21 @@ class BidFeasibilityIntegrator:
                     building_type=_BUILDING_TYPE_EN.get(btype, "apartment"),
                     floor_area_sqm=spec["total_gfa_sqm"],
                 )
+                # GresbScoringService는 recommendations를 dict 리스트
+                # (area/action/priority/potential_gain/cost_grade)로 반환하므로
+                # BidEsg.recommendations(list[str]) 규격에 맞춰 문자열로 변환한다.
+                raw_recs = gresb.get("recommendations", []) or []
+                rec_texts = [
+                    r
+                    if isinstance(r, str)
+                    else f"[{r.get('area', '')}] {r.get('action', '')}".strip()
+                    for r in raw_recs
+                ]
                 base.esg = BidEsg(
                     total_score=gresb.get("total_score"),
                     grade=gresb.get("grade"),
                     components=gresb.get("components", {}) or {},
-                    recommendations=gresb.get("recommendations", []) or [],
+                    recommendations=rec_texts,
                 )
             except Exception as e:
                 warnings.append(f"ESG 분석 실패: {str(e)[:80]}")
