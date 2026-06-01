@@ -58,11 +58,17 @@ export const useProjectStore = create<ProjectState>()(
     }),
     {
       name: 'propai-project-storage',
-      // base64 siteImageUrl은 수 MB라 localStorage(약 5MB) 용량을 초과시켜
-      // QuotaExceededError로 프로젝트 생성/이동이 실패하던 문제 → persist 시 제외.
-      // (이미지는 세션 내 메모리에만 유지; 영속 필요 시 추후 서버 업로드로 전환)
+      // 서버 업로드 URL(짧음)은 영속화하고, base64(data:) 폴백만 제외한다.
+      // base64는 수 MB라 localStorage(약 5MB) 용량초과(QuotaExceededError)를 유발하므로
+      // 세션 메모리에만 유지한다. (서버 업로드 = Supabase Storage public URL)
       partialize: (state) => ({
-        projects: state.projects.map(({ siteImageUrl: _omit, ...rest }) => rest),
+        projects: state.projects.map((p) => ({
+          ...p,
+          siteImageUrl:
+            p.siteImageUrl && !p.siteImageUrl.startsWith("data:")
+              ? p.siteImageUrl
+              : undefined,
+        })),
       }),
     }
   )

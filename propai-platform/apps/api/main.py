@@ -87,6 +87,7 @@ from apps.api.routers import (
     webrtc,
 )
 from apps.api.app.routers.bank_report import router as bank_report_router
+from apps.api.app.routers.uploads import router as uploads_router
 from apps.api.routers.v2 import auth as v2_auth
 from apps.api.routers.v2 import design as v2_design
 from apps.api.routers.v2 import projects as v2_projects
@@ -331,6 +332,9 @@ app.include_router(gresb.router, prefix="/api/v1/gresb", tags=["GRESB ESG 스코
 
 # 은행제출용 통합 보고서 라우터
 app.include_router(bank_report_router, prefix="/api/v1", tags=["은행제출용 보고서"])
+
+# 파일 업로드(현장 이미지 등) → /api/v1/uploads/*
+app.include_router(uploads_router, prefix="/api/v1", tags=["업로드"])
 
 # 나라장터(G2B) 공공입찰 — 라우터 자체 prefix="/g2b" → 최종 /api/v1/g2b/*
 if g2b_router is not None:
