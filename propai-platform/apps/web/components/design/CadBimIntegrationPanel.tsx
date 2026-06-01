@@ -168,12 +168,25 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
     [projectId, svgMap],
   );
 
-  // 2D 뷰 진입 시 도면 세트 1회 로드
+  // 2D 뷰 진입 시 도면 세트 1회 로드 + AI 설계해석(3D 미진입 시에도 표시)
   useEffect(() => {
     if (viewMode === "cad_2d" && !editMode && drawingCodes.length === 0 && !drawingLoading && !drawingError) {
       loadDrawingSet();
     }
-  }, [viewMode, editMode, drawingCodes.length, drawingLoading, drawingError, loadDrawingSet]);
+    // 2D만 보는 경우에도 AI 해석을 가져온다(designAi 없을 때 1회)
+    if (viewMode === "cad_2d" && !editMode && !designAi) {
+      const base = designApiBase();
+      fetch(`${base}/design/${encodeURIComponent(projectId)}/bim/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ floor_height_m: 3.0 }),
+        signal: AbortSignal.timeout(90000),
+      })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => { if (d?.ai_interpretation) setDesignAi(d.ai_interpretation); })
+        .catch(() => { /* 무시 */ });
+    }
+  }, [viewMode, editMode, drawingCodes.length, drawingLoading, drawingError, loadDrawingSet, designAi, projectId]);
 
   // 활성 도면 SVG 로드
   useEffect(() => {
@@ -310,6 +323,30 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
                 <div className="h-10 w-10 animate-spin rounded-full border-4 border-[var(--accent-strong)] border-t-transparent" />
               )}
             </div>
+
+            {/* 2D 도면 AI 해석(평면효율·동선코어 — 평면도 관련 섹션) */}
+            {designAi && (designAi.floor_efficiency || designAi.circulation_core) && (
+              <div className="border-t border-white/5 px-6 py-4 max-h-[180px] overflow-y-auto">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="h-1.5 w-1.5 rounded-full bg-indigo-400 animate-pulse" />
+                  <p className="text-[9px] font-black uppercase tracking-[0.3em] text-indigo-300">AI 도면 해석 · Claude</p>
+                </div>
+                <div className="space-y-2">
+                  {designAi.floor_efficiency && (
+                    <div>
+                      <p className="text-[9px] font-bold text-indigo-300/80 mb-0.5">평면 효율</p>
+                      <p className="text-[11px] leading-relaxed text-slate-300">{designAi.floor_efficiency}</p>
+                    </div>
+                  )}
+                  {designAi.circulation_core && (
+                    <div>
+                      <p className="text-[9px] font-bold text-indigo-300/80 mb-0.5">동선·코어</p>
+                      <p className="text-[11px] leading-relaxed text-slate-300">{designAi.circulation_core}</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
