@@ -123,6 +123,63 @@ export default function CADEditor({
   const [buildingHeight, setBuildingHeight] = useState(15);
   const [isReady, setIsReady] = useState(false);
   const [rk, setRK] = useState<any>(null);
+  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [loadedVersion, setLoadedVersion] = useState<number | null>(null);
+
+  // 편집 도면 저장(design_versions 영속화)
+  const handleSave = useCallback(async () => {
+    setSaveStatus("saving");
+    try {
+      const res = await fetch(
+        `${apiBaseUrl}/api/v1/design/${encodeURIComponent(projectId)}/drawings/save`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            drawing_code: "CAD-EDIT",
+            drawing_type: "평면도",
+            points: points.map((p) => ({ id: p.id, x: p.x, y: p.y })),
+            lines,
+            surfaces,
+            floor_count: floorCount,
+            building_height_m: buildingHeight,
+          }),
+          signal: AbortSignal.timeout(30000),
+        }
+      );
+      if (!res.ok) throw new Error(`저장 실패 ${res.status}`);
+      const d = await res.json();
+      setSaveStatus("saved");
+      const m = /v(\d+)/.exec(d?.status || "");
+      if (m) setLoadedVersion(Number(m[1]));
+      setTimeout(() => setSaveStatus("idle"), 2500);
+    } catch {
+      setSaveStatus("error");
+      setTimeout(() => setSaveStatus("idle"), 3000);
+    }
+  }, [apiBaseUrl, projectId, points, lines, surfaces, floorCount, buildingHeight]);
+
+  // 마운트 시 저장된 편집본 로드(있으면 좌표 복원)
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(
+          `${apiBaseUrl}/api/v1/design/${encodeURIComponent(projectId)}/drawings/load`,
+          { signal: AbortSignal.timeout(20000) }
+        );
+        if (!res.ok) return;
+        const d = await res.json();
+        if (!cancelled && d?.saved && Array.isArray(d.data?.points) && d.data.points.length >= 3) {
+          setPoints(d.data.points.map((p: any) => ({ id: String(p.id), x: Number(p.x), y: Number(p.y) })));
+          setLoadedVersion(d.version ?? null);
+        }
+      } catch {
+        /* 로드 실패 무시 — 기본 도형 사용 */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [apiBaseUrl, projectId]);
 
   useEffect(() => {
     applyShim();
@@ -466,6 +523,24 @@ export default function CADEditor({
               </button>
             ))}
          </div>
+
+         {/* 저장 버튼 — 편집한 도면을 design_versions에 영속화 */}
+         <button
+           onClick={handleSave}
+           disabled={saveStatus === "saving"}
+           className={`h-12 w-full rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all disabled:opacity-60 ${
+             saveStatus === "saved"
+               ? "bg-emerald-500 text-white"
+               : saveStatus === "error"
+                 ? "bg-red-500/80 text-white"
+                 : "bg-teal-500 text-white hover:bg-teal-400"
+           }`}
+         >
+           {saveStatus === "saving" ? "저장 중..."
+             : saveStatus === "saved" ? `✓ 저장됨${loadedVersion ? ` (v${loadedVersion})` : ""}`
+             : saveStatus === "error" ? "저장 실패 — 재시도"
+             : `편집 도면 저장${loadedVersion ? ` (현재 v${loadedVersion})` : ""}`}
+         </button>
       </div>
 
       {/* ── Bottom HUD: Coordinate System ── */}

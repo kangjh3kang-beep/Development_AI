@@ -7,12 +7,14 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.drawing.design_alternative_selector import DesignAlternativeSelector
 from app.services.drawing.svg_drawing_service import SVGDrawingService
+from apps.api.database.session import get_db
 
 router = APIRouter(prefix="/api/v1/design", tags=["v61 설계도면"])
 svg_service = SVGDrawingService()
@@ -38,13 +40,19 @@ class DrawingSetRequest(BaseModel):
 
 
 class CADSaveRequest(BaseModel):
-    """도면 저장 요청."""
-    drawing_code: str
-    drawing_type: str
+    """도면 저장 요청. 편집된 CAD 좌표(points/lines/surfaces)를 영속화한다."""
+    drawing_code: str = "CAD-EDIT"
+    drawing_type: str = "평면도"
     drawing_name: Optional[str] = None
-    svg_content: str
+    svg_content: str = ""
     layers: list[dict[str, Any]] = Field(default_factory=list)
     vector_data: dict[str, Any] = Field(default_factory=dict)
+    # CADEditor 편집 데이터
+    points: list[dict[str, Any]] = Field(default_factory=list)
+    lines: list[dict[str, Any]] = Field(default_factory=list)
+    surfaces: list[dict[str, Any]] = Field(default_factory=list)
+    floor_count: Optional[int] = None
+    building_height_m: Optional[float] = None
 
 
 class AltSelectionRequest(BaseModel):
@@ -141,16 +149,120 @@ async def get_drawing_svg(project_id: str, code: str):
 
 
 @router.post("/{project_id}/drawings/save", response_model=DrawingSaveResponse)
-async def save_drawing(project_id: str, req: CADSaveRequest):
-    """도면+레이어를 DB에 저장한다."""
-    return {
-        "project_id": project_id,
-        "drawing_code": req.drawing_code,
-        "drawing_type": req.drawing_type,
-        "svg_length": len(req.svg_content),
-        "layer_count": len(req.layers),
-        "status": "saved",
-    }
+async def save_drawing(
+    project_id: str,
+    req: CADSaveRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """편집된 CAD 도면을 design_versions 테이블에 영속화한다.
+
+    CADEditor가 드래그 편집한 points/lines/surfaces를 design_data_json에 저장.
+    프로젝트별 버전 자동 증가. project_id가 UUID가 아니면(데모) 저장 스킵·echo.
+    """
+    import uuid as _uuid
+
+    from sqlalchemy import select
+
+    # project_id UUID 검증 — 데모/임시 ID면 저장 없이 echo(graceful)
+    try:
+        pid = _uuid.UUID(project_id)
+    except (ValueError, AttributeError):
+        return {
+            "project_id": project_id, "drawing_code": req.drawing_code,
+            "drawing_type": req.drawing_type, "svg_length": len(req.svg_content),
+            "layer_count": len(req.layers), "status": "echo(비영속:UUID아님)",
+        }
+
+    try:
+        from apps.api.database.models.design_version import DesignVersion
+        from apps.api.database.models.project import Project
+
+        # tenant_id 조회(프로젝트 소속)
+        proj = (await db.execute(select(Project).where(Project.id == pid))).scalar_one_or_none()
+        if proj is None:
+            return {
+                "project_id": project_id, "drawing_code": req.drawing_code,
+                "drawing_type": req.drawing_type, "svg_length": len(req.svg_content),
+                "layer_count": len(req.layers), "status": "echo(프로젝트없음)",
+            }
+        tenant_id = proj.tenant_id
+
+        # 현재 최대 버전 +1
+        existing = (await db.execute(
+            select(DesignVersion).where(DesignVersion.project_id == pid)
+            .order_by(DesignVersion.version_number.desc())
+        )).scalars().first()
+        next_ver = (existing.version_number + 1) if existing else 1
+
+        dv = DesignVersion(
+            tenant_id=tenant_id,
+            project_id=pid,
+            version_number=next_ver,
+            design_type="cad_2d",
+            floor_count=req.floor_count,
+            max_height_m=req.building_height_m,
+            design_data_json={
+                "drawing_code": req.drawing_code,
+                "drawing_type": req.drawing_type,
+                "drawing_name": req.drawing_name,
+                "points": req.points,
+                "lines": req.lines,
+                "surfaces": req.surfaces,
+                "svg_content": req.svg_content[:50000],  # 과대 SVG 방어
+                "layers": req.layers,
+                "vector_data": req.vector_data,
+            },
+            notes=f"CAD 편집 저장 v{next_ver}",
+        )
+        db.add(dv)
+        await db.commit()
+        return {
+            "project_id": project_id, "drawing_code": req.drawing_code,
+            "drawing_type": req.drawing_type, "svg_length": len(req.svg_content),
+            "layer_count": len(req.layers), "status": f"saved(v{next_ver})",
+        }
+    except Exception as e:  # noqa: BLE001
+        await db.rollback()
+        import structlog
+
+        structlog.get_logger().warning("CAD 저장 실패", error=str(e)[:150])
+        raise HTTPException(status_code=500, detail=f"저장 실패: {str(e)[:120]}") from e
+
+
+@router.get("/{project_id}/drawings/load")
+async def load_drawing(project_id: str, db: AsyncSession = Depends(get_db)):
+    """저장된 최신 CAD 편집본을 불러온다. 없으면 saved=false."""
+    import uuid as _uuid
+
+    from sqlalchemy import select
+
+    try:
+        pid = _uuid.UUID(project_id)
+    except (ValueError, AttributeError):
+        return {"saved": False, "reason": "UUID 아님"}
+
+    try:
+        from apps.api.database.models.design_version import DesignVersion
+
+        dv = (await db.execute(
+            select(DesignVersion).where(
+                DesignVersion.project_id == pid,
+                DesignVersion.design_type == "cad_2d",
+            ).order_by(DesignVersion.version_number.desc())
+        )).scalars().first()
+        if dv is None:
+            return {"saved": False}
+        return {
+            "saved": True,
+            "version": dv.version_number,
+            "data": dv.design_data_json or {},
+            "updated_at": str(dv.updated_at) if dv.updated_at else None,
+        }
+    except Exception as e:  # noqa: BLE001
+        import structlog
+
+        structlog.get_logger().warning("CAD 로드 실패", error=str(e)[:150])
+        return {"saved": False, "reason": str(e)[:80]}
 
 
 @router.post("/{project_id}/drawings/export-dxf", response_class=Response)
