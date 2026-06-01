@@ -195,6 +195,17 @@ def _enrich_interior(mass: dict[str, Any], building_use: str = "공동주택") -
         mass["windows_per_side"] = max(2, min(8, int(bw / 5)))
         # 세대 분할: 공동주택 표준 세대폭 ~8m(폭이 좁으면 폭의 절반으로 최소 2분할)
         mass["unit_width_m"] = 8.0 if bw >= 16.0 else max(4.0, bw / 2)
+        # 평형별 가변 세대 배치(compute_unit_layout) + 발코니/현관문
+        unit_types = ["59A", "84A"] if building_use == "공동주택" else ["일반"]
+        ul = AutoDesignEngineService.compute_unit_layout(mass, core, unit_types, building_use)
+        # 한 zone(전면)을 채울 평형 시퀀스: count_per_floor만큼 평형 반복
+        seq: list[dict[str, Any]] = []
+        for u in ul.get("units", []):
+            seq.extend([{"type": u["type"], "area_sqm": u["area_sqm"]}] * max(1, u.get("count_per_floor", 1) // 2))
+        if seq:
+            mass["unit_sequence"] = seq
+        mass["balconies"] = building_use == "공동주택"
+        mass["unit_doors"] = True
     except Exception:  # noqa: BLE001
         pass
     return mass

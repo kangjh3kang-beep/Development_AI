@@ -101,6 +101,8 @@ class IfcToGltfService:
     def _group_of(ifc_type: str) -> str:
         """IFC 타입을 색상 그룹으로 매핑."""
         t = ifc_type.lower()
+        if "door" in t:
+            return "door"
         if "window" in t:
             return "window"
         if "wallstandardcase" in t:  # 세대 분할 내벽
@@ -120,6 +122,7 @@ class IfcToGltfService:
         "slab": [0.55, 0.58, 0.62, 1.0],       # 진회색(슬래브)
         "core": [0.95, 0.62, 0.20, 0.95],      # 주황(코어)
         "window": [0.40, 0.70, 0.95, 0.55],    # 반투명 청색(창호)
+        "door": [0.45, 0.30, 0.18, 1.0],       # 갈색(현관문)
         "other": [0.60, 0.65, 0.70, 1.0],
     }
 

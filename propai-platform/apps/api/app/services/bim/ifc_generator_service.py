@@ -40,6 +40,9 @@ class IfcGeneratorService:
         corridor_width_m: float = 0.0,
         windows_per_side: int = 0,
         unit_width_m: float = 0.0,
+        unit_sequence: list[dict[str, Any]] | None = None,
+        balconies: bool = False,
+        unit_doors: bool = False,
     ) -> bytes:
         """IFC4 모델을 생성해 직렬화된 bytes로 반환한다.
 
@@ -152,33 +155,55 @@ class IfcGeneratorService:
                         self._place_z(model, win, elev + slab_thickness_m + sill)
                         run("spatial.assign_container", model, products=[win], relating_structure=storey)
 
-            # 세대 분할 내벽: 복도 기준 전면/배면 zone을 unit_width로 나누는 수직 칸막이.
-            # 1층 제외(상가/로비). 내벽 높이는 층고-슬래브(천장까지).
-            if unit_width_m and unit_width_m > 0 and i > 0:
-                pwt = 0.15  # 세대 칸막이 두께
-                inner_w = bw - 2 * wall_thickness_m
-                units = max(1, int(inner_w / unit_width_m))
-                act_uw = inner_w / units
-                # 복도 영역 y범위
-                cw = min(corridor_width_m, bd) if corridor_width_m > 0 else 0.0
-                corr_y0 = (bd - cw) / 2
-                corr_y1 = corr_y0 + cw
-                # 전면 zone(y: wt~corr_y0), 배면 zone(y: corr_y1~bd-wt)
-                zones = [
-                    (wall_thickness_m, max(wall_thickness_m, corr_y0)),
-                    (min(bd - wall_thickness_m, corr_y1), bd - wall_thickness_m),
-                ]
-                for zi, (zy0, zy1) in enumerate(zones):
-                    zd = zy1 - zy0
-                    if zd <= 0.3:
-                        continue
-                    for ui in range(1, units):  # 세대 사이마다 칸막이(양끝은 외벽)
-                        px = wall_thickness_m + ui * act_uw - pwt / 2
-                        part = run("root.create_entity", model, ifc_class="IfcWallStandardCase", name=f"{i + 1}F-Part-{zi}-{ui}")
-                        part_solid = self._extrude_rect(model, body, px, zy0, pwt, zd, fh - slab_thickness_m)
-                        run("geometry.assign_representation", model, product=part, representation=part_solid)
-                        self._place_z(model, part, elev + slab_thickness_m)
-                        run("spatial.assign_container", model, products=[part], relating_structure=storey)
+            # 세대 분할 내벽 + 발코니 + 현관문: 복도 기준 전면/배면 zone에 세대를 배치.
+            # unit_sequence가 있으면 평형별 가변 폭(면적/zone깊이), 없으면 unit_width 균등.
+            # 1층 제외(상가/로비).
+            if (unit_width_m and unit_width_m > 0) or unit_sequence:
+                if i > 0:
+                    pwt = 0.15  # 세대 칸막이 두께
+                    inner_w = bw - 2 * wall_thickness_m
+                    cw = min(corridor_width_m, bd) if corridor_width_m > 0 else 0.0
+                    corr_y0 = (bd - cw) / 2
+                    corr_y1 = corr_y0 + cw
+                    # 전면(face=F, 발코니 있음), 배면(face=B)
+                    zones = [
+                        ("F", wall_thickness_m, max(wall_thickness_m, corr_y0)),
+                        ("B", min(bd - wall_thickness_m, corr_y1), bd - wall_thickness_m),
+                    ]
+                    for zi, (face, zy0, zy1) in enumerate(zones):
+                        zd = zy1 - zy0
+                        if zd <= 0.3:
+                            continue
+                        # 평형 시퀀스로 세대 폭 산출(면적/깊이). 없으면 균등.
+                        widths = self._unit_widths(inner_w, zd, unit_sequence, unit_width_m)
+                        cursor = wall_thickness_m
+                        for ui, uw in enumerate(widths):
+                            # 세대 사이 칸막이(첫 세대 앞은 외벽이라 생략)
+                            if ui > 0:
+                                part = run("root.create_entity", model, ifc_class="IfcWallStandardCase", name=f"{i + 1}F-Part-{face}-{ui}")
+                                part_solid = self._extrude_rect(model, body, cursor - pwt / 2, zy0, pwt, zd, fh - slab_thickness_m)
+                                run("geometry.assign_representation", model, product=part, representation=part_solid)
+                                self._place_z(model, part, elev + slab_thickness_m)
+                                run("spatial.assign_container", model, products=[part], relating_structure=storey)
+                            # 발코니: 전면 세대 외부(외벽 밖 1.5m 캔틸레버 슬래브)
+                            if balconies and face == "F":
+                                bal_d = 1.5
+                                bal = run("root.create_entity", model, ifc_class="IfcSlab", name=f"{i + 1}F-Balcony-{ui}")
+                                bal_solid = self._extrude_rect(model, body, cursor + 0.3, -bal_d, max(0.5, uw - 0.6), bal_d, 0.12)
+                                run("geometry.assign_representation", model, product=bal, representation=bal_solid)
+                                self._place_z(model, bal, elev + slab_thickness_m)
+                                run("spatial.assign_container", model, products=[bal], relating_structure=storey)
+                            # 현관문: 복도 쪽 개구부(zone 안쪽 모서리)
+                            if unit_doors and cw > 0:
+                                door_w, door_h = 0.9, 2.1
+                                door_y = zy1 if face == "F" else zy0 - wall_thickness_m
+                                dx = cursor + uw / 2 - door_w / 2
+                                door = run("root.create_entity", model, ifc_class="IfcDoor", name=f"{i + 1}F-Door-{face}-{ui}")
+                                door_solid = self._extrude_rect(model, body, dx, door_y, door_w, wall_thickness_m, door_h)
+                                run("geometry.assign_representation", model, product=door, representation=door_solid)
+                                self._place_z(model, door, elev + slab_thickness_m)
+                                run("spatial.assign_container", model, products=[door], relating_structure=storey)
+                            cursor += uw
 
         logger.info(
             "IFC 생성 완료",
@@ -188,6 +213,36 @@ class IfcGeneratorService:
         return model.to_string().encode("utf-8")
 
     # ── 내부 헬퍼 ──
+
+    @staticmethod
+    def _unit_widths(
+        inner_w: float,
+        zone_depth: float,
+        unit_sequence: list[dict[str, Any]] | None,
+        unit_width_m: float,
+    ) -> list[float]:
+        """zone(inner_w 폭)을 채울 세대 폭 리스트를 산출.
+
+        unit_sequence(평형별 area_sqm)가 있으면 폭=면적/깊이로 가변 산출 후 inner_w에
+        맞게 비례 스케일(합=inner_w). 없으면 unit_width_m 균등 분할.
+        """
+        if unit_sequence and zone_depth > 0.5:
+            raw = []
+            for u in unit_sequence:
+                area = float(u.get("area_sqm", 84.0))
+                w = max(3.0, area / zone_depth)  # 최소 3m
+                raw.append(w)
+            # zone에 들어갈 만큼만 누적(넘치면 컷), 남으면 비례 확장
+            total = sum(raw)
+            if total <= 0:
+                return []
+            scale = inner_w / total
+            return [w * scale for w in raw]
+        # 균등 분할 폴백
+        if unit_width_m and unit_width_m > 0:
+            n = max(1, int(inner_w / unit_width_m))
+            return [inner_w / n] * n
+        return [inner_w]
 
     def _extrude_rect(self, model, body, x0, y0, w, d, height):
         """(x0,y0) 기준 w×d 사각형을 height만큼 +Z 압출한 Body representation 반환."""
@@ -261,4 +316,7 @@ def build_ifc_from_mass(mass: dict[str, Any], project_name: str = "PropAI Projec
         corridor_width_m=float(mass.get("corridor_width_m", 0.0)),
         windows_per_side=int(mass.get("windows_per_side", 0)),
         unit_width_m=float(mass.get("unit_width_m", 0.0)),
+        unit_sequence=mass.get("unit_sequence"),
+        balconies=bool(mass.get("balconies", False)),
+        unit_doors=bool(mass.get("unit_doors", False)),
     )
