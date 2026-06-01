@@ -4,7 +4,7 @@ import structlog
 
 try:
     from langchain_openai import ChatOpenAI, OpenAIEmbeddings
-    from langchain.vectorstores import FAISS
+    from langchain_community.vectorstores import FAISS
     from langchain.text_splitter import RecursiveCharacterTextSplitter
     from langchain.schema import Document
 except ImportError:

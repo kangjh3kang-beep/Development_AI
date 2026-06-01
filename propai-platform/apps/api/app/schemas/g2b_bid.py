@@ -119,6 +119,8 @@ class G2BAwardStatsResponse(BaseModel):
 class G2BBidAnalyzeRequest(BaseModel):
     """입찰 AI 분석 요청."""
 
+    model_config = ConfigDict(protected_namespaces=())
+
     simulation_iterations: int = Field(10000, ge=1000, le=100000, description="몬테카를로 반복 횟수")
     cost_volatility_pct: float = Field(10.0, ge=0.0, le=50.0, description="공사비 변동성(%)")
 
@@ -235,6 +237,8 @@ class BidInterpretation(BaseModel):
     규칙기반 6엔진 수치를 입력으로, 입찰 의사결정에 필요한 5개 관점을
     전문가 내러티브로 생성한다. LLM 호출 실패 시 None으로 폴백한다.
     """
+
+    model_config = ConfigDict(protected_namespaces=())
 
     bid_strategy: str = Field(description="투찰 전략 — 적정 투찰가율 근거, 시장 대비 포지셔닝")
     feasibility_view: str = Field(description="사업성 진단 — NPV/ROI/수익확률 해석, 수주 매력도")
