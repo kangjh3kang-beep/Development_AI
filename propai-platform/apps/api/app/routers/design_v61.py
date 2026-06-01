@@ -11,8 +11,8 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
-from app.services.drawing.svg_drawing_service import SVGDrawingService
 from app.services.drawing.design_alternative_selector import DesignAlternativeSelector
+from app.services.drawing.svg_drawing_service import SVGDrawingService
 
 router = APIRouter(prefix="/api/v1/design", tags=["v61 설계도면"])
 svg_service = SVGDrawingService()
@@ -248,11 +248,29 @@ def _resolve_mass(req: "BimGenerateRequest") -> dict[str, Any]:
 
 @router.post("/{project_id}/bim/generate")
 async def generate_bim_model(project_id: str, req: BimGenerateRequest):
-    """3D BIM(IFC) 모델을 생성하고 요약 메타를 반환한다(IFC 자체는 캐시/재생성)."""
+    """3D BIM(IFC) 모델을 생성하고 요약 메타 + AI 설계해석을 반환한다."""
     from app.services.bim.ifc_generator_service import build_ifc_from_mass
 
     mass = _resolve_mass(req)
     ifc_bytes = build_ifc_from_mass(mass, project_name=req.project_name)
+
+    # ── DesignInterpreter(Claude) 설계 AI 해석 — 실패해도 모델은 정상 반환 ──
+    ai_interpretation = None
+    try:
+        from app.services.ai.design_interpreter import DesignInterpreter
+
+        interp = await DesignInterpreter().generate_interpretation({
+            **mass,
+            "zone_code": req.zone_code,
+            "building_use": "공동주택",
+        })
+        if isinstance(interp, dict) and interp:
+            ai_interpretation = interp
+    except Exception as e:  # noqa: BLE001
+        import structlog
+
+        structlog.get_logger().warning("설계 AI 해석 스킵", error=str(e)[:120])
+
     return {
         "project_id": project_id,
         "mass": {
@@ -261,7 +279,11 @@ async def generate_bim_model(project_id: str, req: BimGenerateRequest):
             "num_floors": int(mass["num_floors"]),
             "floor_height_m": mass.get("floor_height_m", req.floor_height_m),
             "building_height_m": round(int(mass["num_floors"]) * mass.get("floor_height_m", req.floor_height_m), 2),
+            "bcr_pct": mass.get("bcr_pct"),
+            "far_pct": mass.get("far_pct"),
+            "total_units": mass.get("total_units"),
         },
+        "ai_interpretation": ai_interpretation,
         "ifc_bytes": len(ifc_bytes),
         "glb_url": f"/api/v1/design/{project_id}/bim/model.glb",
     }

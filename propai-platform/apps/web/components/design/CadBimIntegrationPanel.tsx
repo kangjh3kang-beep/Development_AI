@@ -66,25 +66,42 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
   const [bimScene, setBimScene] = useState<THREE.Group | null>(null);
   const [bimLoading, setBimLoading] = useState(false);
   const [bimError, setBimError] = useState<string | null>(null);
+  // AI 설계 해석(DesignInterpreter 6섹션) + 매스 메타
+  const [designAi, setDesignAi] = useState<Record<string, string> | null>(null);
+  const [bimMass, setBimMass] = useState<Record<string, unknown> | null>(null);
 
   const loadBimModel = useCallback(async () => {
     setBimLoading(true);
     setBimError(null);
+    const base = designApiBase();
+    const reqBody = JSON.stringify({ floor_height_m: 3.0 });
+
+    // (1) AI 설계해석 + 메타는 병렬로(실패해도 3D는 표시)
+    fetch(`${base}/design/${encodeURIComponent(projectId)}/bim/generate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: reqBody,
+      signal: AbortSignal.timeout(90000),
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d?.ai_interpretation) setDesignAi(d.ai_interpretation);
+        if (d?.mass) setBimMass(d.mass);
+      })
+      .catch(() => { /* 해석 실패는 무시 — 3D 모델은 별도로 로드됨 */ });
+
+    // (2) 3D glb 모델 로드
     try {
-      const base = designApiBase();
       const res = await fetch(`${base}/design/${encodeURIComponent(projectId)}/bim/model.glb`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        // 매스 미지정 → 백엔드가 대지정보/기본값으로 자동 산출
-        body: JSON.stringify({ floor_height_m: 3.0 }),
+        body: reqBody,
         signal: AbortSignal.timeout(60000),
       });
       if (!res.ok) throw new Error(`3D 모델 생성 실패 (${res.status})`);
       const buf = await res.arrayBuffer();
       const loader = new GLTFLoader();
       const gltf = await loader.parseAsync(buf, "");
-      // 백엔드 glb는 요소(벽/슬래브/코어/창호)별 색상 머티리얼을 이미 포함.
-      // 그림자 수신/투사만 켜서 품질을 높인다(색상은 보존).
       gltf.scene.traverse((obj) => {
         if ((obj as THREE.Mesh).isMesh) {
           (obj as THREE.Mesh).castShadow = true;
@@ -299,28 +316,65 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
         {/* Overlay Tools (only for 3D) */}
         {viewMode === "bim_3d" && (
           <>
-            <div className="absolute right-10 top-10 flex flex-col gap-4 z-20">
-              <motion.div 
-                initial={{ opacity: 0, x: 20 }}
-                animate={{ opacity: 1, x: 0 }}
-                className="rounded-[2.5rem] border border-white/5 bg-black/60 p-8 text-white backdrop-blur-2xl shadow-2xl"
-              >
-                <div className="flex items-center gap-3 mb-4">
-                  <div className="h-1.5 w-1.5 rounded-full bg-[var(--success)] shadow-[0_0_10px_var(--success)] animate-pulse" />
-                  <p className="text-[10px] font-black uppercase tracking-[0.4em] opacity-50">{t.legalCheck || "BIM CHECKLIST"}</p>
+            <div className="absolute right-6 top-6 flex max-h-[88%] w-[340px] flex-col gap-3 z-20 overflow-y-auto">
+              {/* 매스 메타(실측) */}
+              {bimMass && (
+                <motion.div
+                  initial={{ opacity: 0, x: 20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  className="rounded-2xl border border-white/10 bg-black/70 p-5 text-white backdrop-blur-2xl shadow-2xl"
+                >
+                  <p className="text-[9px] font-black uppercase tracking-[0.3em] text-[var(--accent-strong)] mb-2">AI 자동 매스</p>
+                  <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]">
+                    <span className="opacity-50">규모</span>
+                    <span className="font-bold text-right">{String(bimMass.building_width_m)}×{String(bimMass.building_depth_m)}m</span>
+                    <span className="opacity-50">층수</span>
+                    <span className="font-bold text-right">{String(bimMass.num_floors)}F / {String(bimMass.building_height_m)}m</span>
+                    {bimMass.bcr_pct != null && (<><span className="opacity-50">건폐율</span><span className="font-bold text-right">{String(bimMass.bcr_pct)}%</span></>)}
+                    {bimMass.far_pct != null && (<><span className="opacity-50">용적률</span><span className="font-bold text-right">{String(bimMass.far_pct)}%</span></>)}
+                    {bimMass.total_units != null && (<><span className="opacity-50">세대수</span><span className="font-bold text-right">{String(bimMass.total_units)}세대</span></>)}
+                  </div>
+                </motion.div>
+              )}
+
+              {/* AI 설계 해석(DesignInterpreter 6섹션) */}
+              {designAi && (
+                <motion.div
+                  initial={{ opacity: 0, x: 20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  className="rounded-2xl border border-indigo-400/20 bg-black/70 p-5 text-white backdrop-blur-2xl shadow-2xl"
+                >
+                  <div className="flex items-center gap-2 mb-3">
+                    <span className="h-1.5 w-1.5 rounded-full bg-indigo-400 animate-pulse" />
+                    <p className="text-[9px] font-black uppercase tracking-[0.3em] text-indigo-300">AI 설계 해석 · Claude</p>
+                  </div>
+                  <div className="space-y-2.5">
+                    {([
+                      ["design_overview", "설계 개요"],
+                      ["mass_strategy", "매스 전략"],
+                      ["floor_efficiency", "평면 효율"],
+                      ["compliance_review", "법규 준수"],
+                      ["circulation_core", "동선·코어"],
+                      ["improvement", "개선 제안"],
+                    ] as [string, string][])
+                      .filter(([k]) => designAi[k])
+                      .map(([k, label]) => (
+                        <div key={k}>
+                          <p className="text-[9px] font-bold text-indigo-300/80 mb-0.5">{label}</p>
+                          <p className="text-[11px] leading-relaxed text-slate-200 whitespace-pre-wrap">{designAi[k]}</p>
+                        </div>
+                      ))}
+                  </div>
+                  <p className="mt-3 text-[8px] text-white/30">AI 생성 · 참고용</p>
+                </motion.div>
+              )}
+
+              {/* 해석 로딩 표시 */}
+              {!designAi && bimLoading && (
+                <div className="rounded-2xl border border-white/10 bg-black/60 p-4 text-white/50 backdrop-blur-xl text-[10px] font-bold">
+                  AI 설계 해석 생성 중...
                 </div>
-                <div className="space-y-2">
-                  <span className="block text-xl font-[1000] tracking-tighter italic">{t.compliant || "법규 적합성 통과"}</span>
-                  <p className="text-[10px] font-bold opacity-40 italic underline decoration-white/20 underline-offset-4">{t.autoCorrected || "AI 자동 보정 기능 활성화됨"}</p>
-                </div>
-              </motion.div>
-              
-              <button className="group relative overflow-hidden rounded-[2rem] bg-white px-10 py-5 text-xs font-black text-[#0d1520] uppercase tracking-widest shadow-[var(--shadow-glow)] transition-all hover:scale-105 hover:bg-[var(--accent-strong)] hover:text-white active:scale-95">
-                <span className="relative z-10 flex items-center gap-3">
-                  {t.exportBtn || "3D 모델 데이터 내보내기"}
-                  <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M7 17L17 7M17 7H7M17 7V17"/></svg>
-                </span>
-              </button>
+              )}
             </div>
             
             {/* HUD Bottom Left */}
