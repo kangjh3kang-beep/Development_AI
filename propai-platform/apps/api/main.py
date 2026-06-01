@@ -344,7 +344,7 @@ try:
 
     app.include_router(app_esg_router, tags=["ESG·탄소(LCA/EPD)"])
 except Exception as e:
-    structlog.get_logger().warning("app/routers/esg 로드 실패", error=str(e))
+    logger.warning("app/routers/esg 로드 실패", error=str(e))
 
 # 프로젝트 대시보드: /projects/{id}/bim-takeoff·simulate-feasibility (자체 prefix=/projects).
 try:
@@ -352,7 +352,7 @@ try:
 
     app.include_router(project_dashboard_router, prefix="/api/v1", tags=["프로젝트 대시보드"])
 except Exception as e:
-    structlog.get_logger().warning("app/routers/project_dashboard 로드 실패", error=str(e))
+    logger.warning("app/routers/project_dashboard 로드 실패", error=str(e))
 
 # ──────────────────────────────────────
 # API v2 라우터

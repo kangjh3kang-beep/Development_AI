@@ -114,20 +114,35 @@ async def check_compliance(
         design = req.design.model_dump()
 
         # P3 법규 근거 주입: 용도지역 법정 한도(국토계획법 시행령)를 evidence로 부착.
-        # zone_limits는 sync·외부키 불필요·단일출처라 라우터에서 직접 조회해도 안전.
+        # ZONE_LIMITS(building_compliance_service 모듈상수, sync·외부키불필요·단일출처).
+        # 키는 코드(1R/2R/3R/GC/NC/QI/QR)·필드는 비율(0~1)/배수라 한글명→코드 매핑 후
+        # %로 환산한다. zone_type을 못 맞추면 evidence 미부착(graceful).
         permit_evidence = None
         zone_type = design.get("zone_type")
         if zone_type:
             try:
-                from app.services.zoning.zone_limits import get_zone_limits
+                from apps.api.services.building_compliance_service import ZONE_LIMITS
 
-                limits = get_zone_limits(zone_type)
-                if limits:
+                _ZONE_NAME_TO_CODE = {
+                    "제1종일반주거": "1R",
+                    "제2종일반주거": "2R",
+                    "제3종일반주거": "3R",
+                    "일반상업": "GC",
+                    "근린상업": "NC",
+                    "준공업": "QI",
+                    "준주거": "QR",
+                }
+                code = zone_type if zone_type in ZONE_LIMITS else next(
+                    (c for name, c in _ZONE_NAME_TO_CODE.items() if name in zone_type),
+                    None,
+                )
+                lim = ZONE_LIMITS.get(code) if code else None
+                if lim:
                     permit_evidence = (
-                        f"- 용도지역 법정 한도({zone_type}, "
-                        f"{limits.get('legal_basis', '국토계획법 시행령')}): "
-                        f"건폐율 상한 {limits.get('max_bcr_pct')}%, "
-                        f"용적률 상한 {limits.get('max_far_pct')}%. "
+                        f"- 용도지역 법정 한도({zone_type}, 국토계획법 시행령): "
+                        f"건폐율 상한 {lim.building_coverage_ratio * 100:.0f}%, "
+                        f"용적률 상한 {lim.floor_area_ratio * 100:.0f}%, "
+                        f"최고높이 {lim.max_height_m:.0f}m. "
                         "이 법정 한도를 기준으로 위반·완화 가능성을 판단할 것."
                     )
             except Exception:  # noqa: BLE001
