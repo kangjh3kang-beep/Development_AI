@@ -88,7 +88,7 @@ export default function NewProjectPage() {
 
       {/* ── 단일 입력 카드 ── */}
       <section className="relative overflow-hidden rounded-[2rem] border border-[var(--line-strong)] bg-[var(--surface-soft)] p-8 shadow-[var(--shadow-xl)] backdrop-blur-xl transition-all focus-within:border-[var(--accent-strong)]/50 focus-within:shadow-[0_0_30px_rgba(45,212,191,0.1)]">
-        <div className="absolute top-0 left-0 w-1 h-full bg-gradient-to-b from-[var(--accent-strong)] to-transparent opacity-50" />
+        <div className="absolute top-0 left-0 w-1 h-full bg-gradient-to-b from-[var(--accent-strong)] to-transparent opacity-50 pointer-events-none" />
 
         <div className="flex items-center gap-4 mb-8">
           <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--surface)] border border-[var(--line-strong)] text-[var(--text-secondary)] font-black">
@@ -105,11 +105,11 @@ export default function NewProjectPage() {
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="예: 성수 IT밸리 복합개발"
-              className="w-full rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-muted)] py-4 px-5 text-sm font-bold placeholder:text-[var(--text-hint)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-strong)]/30 focus:border-[var(--accent-strong)] transition-all text-[var(--text-primary)]"
+              className="w-full rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-muted)] py-4 px-5 text-sm font-bold placeholder:text-[var(--text-hint)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-strong)]/30 focus:border-[var(--accent-strong)] transition-all text-[var(--text-primary)] relative z-10"
             />
           </div>
 
-          <div className="grid gap-2">
+          <div className="grid gap-2 relative z-10">
             <label className="text-xs font-bold uppercase tracking-widest text-[var(--text-tertiary)]">소재지 (주소 검색)</label>
             <GlobalAddressSearch
               onChange={handleAddressChange}
@@ -120,7 +120,7 @@ export default function NewProjectPage() {
             </p>
           </div>
 
-          <div className="grid gap-2 mt-4">
+          <div className="grid gap-2 mt-4 relative z-10">
             <label className="text-xs font-bold uppercase tracking-widest text-[var(--text-tertiary)]">현장(부지) 이미지 등록</label>
             <ImageUpload 
               value={siteImageUrl}
@@ -133,7 +133,7 @@ export default function NewProjectPage() {
 
       {/* ── 요약 + 시작 ── */}
       <section className="rounded-[2rem] border border-[var(--line-strong)] bg-[var(--surface-soft)] p-8 shadow-[var(--shadow-xl)] backdrop-blur-xl relative overflow-hidden">
-        <div className="absolute top-0 right-0 w-32 h-32 bg-[var(--accent-strong)]/10 blur-[50px] rounded-full" />
+        <div className="absolute top-0 right-0 w-32 h-32 bg-[var(--accent-strong)]/10 blur-[50px] rounded-full pointer-events-none" />
 
         <div className="flex flex-col gap-6 sm:flex-row sm:items-end sm:justify-between">
           <div className="space-y-3">
