@@ -372,6 +372,7 @@ class ProjectPipeline:
                 "pnu_codes": pnu_codes,
                 "source": "pre_collected+comprehensive",
             }
+            await self._attach_site_ai(state)
             return
 
         # 외부 API 호출 (프론트에서 데이터를 전달하지 않은 경우)
@@ -542,6 +543,8 @@ class ProjectPipeline:
             "comprehensive_report": comprehensive_report if comprehensive_report else None,
         }
 
+        await self._attach_site_ai(state)
+
         # ProjectLandData 자동 저장: 분석 결과를 Project 모델에 반영
         await self._save_site_analysis_to_project(state)
 
@@ -706,6 +709,48 @@ class ProjectPipeline:
         if geom_type == "Polygon":
             return shoelace(coordinates[0])
         return 0.0
+
+    async def _attach_site_ai(self, state: PipelineState) -> None:
+        """부지분석 stage data에 SiteAnalysisInterpreter(LLM) 해석을 부착한다.
+
+        프론트 SiteAnalysisDetail이 ai_interpretation 10개 섹션을 렌더한다.
+        LLM 실패 시에도 구조화 데이터는 정상 — 해석만 생략(graceful).
+        """
+        try:
+            data = state.stages["site_analysis"].data
+            if not isinstance(data, dict):
+                return
+            zoning = data.get("zoning") or {}
+            pricing = data.get("pricing") or {}
+            regulations = data.get("regulations") or {}
+            interp_input = {
+                "address": state.address,
+                "zone_type": data.get("zone_type"),
+                "land_area_sqm": data.get("land_area_sqm"),
+                "effective_far": {
+                    "effective_far_pct": zoning.get("effective_far"),
+                    "effective_bcr_pct": zoning.get("effective_bcr"),
+                },
+                "land_prices": {
+                    "official_price_per_sqm": pricing.get("official_price_per_sqm"),
+                },
+                "transaction_prices": pricing.get("nearby_transactions") or {},
+                "development_plans": {
+                    "land_use_plan": regulations.get("land_use_plan"),
+                    "special_districts": regulations.get("special_districts", []),
+                },
+            }
+            from app.services.ai.site_analysis_interpreter import SiteAnalysisInterpreter
+
+            interp = await SiteAnalysisInterpreter().generate_interpretation(interp_input)
+            if isinstance(interp, dict) and interp:
+                data["ai_interpretation"] = interp
+        except Exception as e:  # noqa: BLE001
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "부지분석 AI 해석 스킵: %s", str(e)[:120]
+            )
 
     async def _save_site_analysis_to_project(self, state: PipelineState):
         """부지분석 결과를 Project 테이블의 컬럼에 자동 저장.

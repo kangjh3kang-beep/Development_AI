@@ -45,9 +45,43 @@ def _build_pnu_from_bcode(bcode: str, jibun_address: str) -> str | None:
 
 @router.post("/analyze")
 async def analyze_zoning(req: ZoningAnalyzeRequest):
-    """주소 기반 자동 용도지역 감지 및 법적 한도 매핑."""
+    """주소 기반 자동 용도지역 감지 및 법적 한도 매핑.
+
+    구조화 분석 결과에 SiteAnalysisInterpreter(LLM) 해석을 ai_interpretation으로
+    덧붙인다. LLM 실패 시에도 구조화 결과는 정상 반환(graceful fallback).
+    """
     service = AutoZoningService()
-    return await service.analyze_by_address(req.address)
+    result = await service.analyze_by_address(req.address)
+
+    # ── SiteAnalysisInterpreter(Claude) 자연어 해석 부착 ──
+    try:
+        from app.services.ai.site_analysis_interpreter import SiteAnalysisInterpreter
+
+        zone_limits = result.get("zone_limits") or {}
+        interp_input = {
+            "address": result.get("address"),
+            "zone_type": result.get("zone_type"),
+            "land_area_sqm": result.get("land_area_sqm"),
+            "effective_far": {
+                "effective_far_pct": zone_limits.get("max_far_pct"),
+                "effective_bcr_pct": zone_limits.get("max_bcr_pct"),
+            },
+            "land_prices": {
+                "official_price_per_sqm": result.get("official_price_per_sqm"),
+            },
+            "development_plans": {
+                "special_districts": result.get("special_districts", []),
+            },
+        }
+        interp = await SiteAnalysisInterpreter().generate_interpretation(interp_input)
+        if isinstance(interp, dict) and interp:
+            result["ai_interpretation"] = interp
+    except Exception as e:  # noqa: BLE001
+        import structlog
+
+        structlog.get_logger().warning("부지분석 AI 해석 스킵", error=str(e)[:120])
+
+    return result
 
 
 @router.post("/comprehensive")

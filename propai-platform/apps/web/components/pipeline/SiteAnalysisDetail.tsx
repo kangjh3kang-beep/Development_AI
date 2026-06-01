@@ -165,6 +165,12 @@ const IconWarning = (
   </svg>
 );
 
+const IconSparkle = (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .962 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.962 0z" />
+  </svg>
+);
+
 /* ── Progress Bar ── */
 
 function FarProgressBar({ base, allowed, cap }: { base: number; allowed: number; cap: number }) {
@@ -285,6 +291,23 @@ export function SiteAnalysisDetail({ data }: SiteAnalysisDetailProps) {
     Boolean(s(building.buildingName || building.building_name) || n(building.totalAreaSqm ?? building.total_area_sqm));
   const hasInfra = Object.keys(infra).length > 0;
   const hasRegulations = specialDistricts.length > 0 || landUseRegs.length > 0 || warnings.length > 0;
+
+  // 8. AI 해석 (SiteAnalysisInterpreter, 10개 섹션)
+  const aiInterp = obj(data.ai_interpretation);
+  const AI_SECTIONS: Array<[string, string]> = [
+    ["overall_summary", "종합 요약"],
+    ["effective_far_interpretation", "실효 용적률 해석"],
+    ["land_price_interpretation", "공시지가 해석"],
+    ["transaction_interpretation", "실거래 해석"],
+    ["location_interpretation", "입지 해석"],
+    ["development_plan_interpretation", "개발계획 해석"],
+    ["supply_area_interpretation", "공급면적 해석"],
+    ["sale_price_interpretation", "분양가 해석"],
+    ["opportunity_factors", "기회 요인"],
+    ["risk_factors", "리스크 요인"],
+  ];
+  const aiRows = AI_SECTIONS.filter(([k]) => s(aiInterp[k]));
+  const hasAi = aiRows.length > 0;
 
   return (
     <div className="space-y-2">
@@ -560,6 +583,23 @@ export function SiteAnalysisDetail({ data }: SiteAnalysisDetailProps) {
           <NoData />
         )}
       </CategoryCard>
+
+      {/* 8. AI 부지분석 해석 (Claude) */}
+      {hasAi && (
+        <CategoryCard title="AI 부지분석 해석" icon={IconSparkle} defaultOpen={true}>
+          <div className="space-y-3">
+            {aiRows.map(([key, label]) => (
+              <div key={key} className="rounded-lg bg-indigo-500/5 border border-indigo-500/15 p-3">
+                <p className="text-[10px] font-bold text-indigo-300 mb-1">{label}</p>
+                <p className="text-[12px] leading-relaxed text-slate-300 whitespace-pre-wrap">
+                  {s(aiInterp[key])}
+                </p>
+              </div>
+            ))}
+            <p className="text-[10px] text-slate-500">AI 생성 · Claude · 참고용</p>
+          </div>
+        </CategoryCard>
+      )}
     </div>
   );
 }
