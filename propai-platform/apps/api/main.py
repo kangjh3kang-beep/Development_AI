@@ -336,6 +336,24 @@ app.include_router(bank_report_router, prefix="/api/v1", tags=["은행제출용 
 if g2b_router is not None:
     app.include_router(g2b_router, prefix="/api/v1", tags=["공공입찰(G2B)"])
 
+# ── 프론트 호출하나 미마운트였던 app/routers (404 위험 해소). 각각 독립 try로 격리 ──
+# ESG LCA/EPD: app/routers/esg.py(자체 prefix=/api/v1/esg). /esg/assessment는 위
+# routers/esg.py(선등록)와 중복이나 first-match라 무해(라이브 충돌 0 확인).
+try:
+    from apps.api.app.routers.esg import router as app_esg_router
+
+    app.include_router(app_esg_router, tags=["ESG·탄소(LCA/EPD)"])
+except Exception as e:
+    structlog.get_logger().warning("app/routers/esg 로드 실패", error=str(e))
+
+# 프로젝트 대시보드: /projects/{id}/bim-takeoff·simulate-feasibility (자체 prefix=/projects).
+try:
+    from apps.api.app.routers.project_dashboard import router as project_dashboard_router
+
+    app.include_router(project_dashboard_router, prefix="/api/v1", tags=["프로젝트 대시보드"])
+except Exception as e:
+    structlog.get_logger().warning("app/routers/project_dashboard 로드 실패", error=str(e))
+
 # ──────────────────────────────────────
 # API v2 라우터
 # ──────────────────────────────────────
