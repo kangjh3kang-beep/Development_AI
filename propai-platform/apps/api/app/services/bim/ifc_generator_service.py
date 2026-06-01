@@ -116,20 +116,41 @@ class IfcGeneratorService:
                 self._place_z(model, wall, elev + slab_thickness_m)
                 run("spatial.assign_container", model, products=[wall], relating_structure=storey)
 
-            # 코어(계단+EV): 각 중심좌표에 정사각 박스를 층고만큼 압출 → IfcSpace
+            # 코어(계단실+EV): 외곽벽 4면(코어벽) + 층참 슬래브 + 계단 경사판.
+            # 단순 솔리드 대신 실제 계단실 형상으로 표현.
             if cores:
                 cs = core_size_m
+                cwt = 0.2  # 코어 벽 두께
                 for ci, c in enumerate(cores):
                     cx = float(c.get("x", bw / 2)) - cs / 2
                     cy = float(c.get("y", bd / 2)) - cs / 2
-                    # 건물 경계 내로 클램프
                     cx = max(wall_thickness_m, min(cx, bw - cs - wall_thickness_m))
                     cy = max(wall_thickness_m, min(cy, bd - cs - wall_thickness_m))
-                    core = run("root.create_entity", model, ifc_class="IfcColumn", name=f"{i + 1}F-Core-{ci + 1}")
-                    core_solid = self._extrude_rect(model, body, cx, cy, cs, cs, fh)
-                    run("geometry.assign_representation", model, product=core, representation=core_solid)
-                    self._place_z(model, core, elev + slab_thickness_m)
-                    run("spatial.assign_container", model, products=[core], relating_structure=storey)
+                    # 코어 외곽벽 4면(IfcColumn으로 그룹=core 유지)
+                    core_walls = [
+                        (cx, cy, cs, cwt),                    # 하
+                        (cx, cy + cs - cwt, cs, cwt),         # 상
+                        (cx, cy, cwt, cs),                    # 좌
+                        (cx + cs - cwt, cy, cwt, cs),         # 우
+                    ]
+                    for wpi, (wx, wy, ww, wd) in enumerate(core_walls):
+                        cwl = run("root.create_entity", model, ifc_class="IfcColumn", name=f"{i + 1}F-CoreWall-{ci + 1}-{wpi}")
+                        cwl_solid = self._extrude_rect(model, body, wx, wy, ww, wd, fh)
+                        run("geometry.assign_representation", model, product=cwl, representation=cwl_solid)
+                        self._place_z(model, cwl, elev + slab_thickness_m)
+                        run("spatial.assign_container", model, products=[cwl], relating_structure=storey)
+                    # 계단 경사판: 코어 내부를 가로지르는 2개 계단참(half-flight) 슬래브
+                    inset = cwt + 0.05
+                    half_w = (cs - 2 * inset) / 2
+                    for sp in range(2):
+                        sx = cx + inset + sp * half_w
+                        stair = run("root.create_entity", model, ifc_class="IfcStair", name=f"{i + 1}F-Stair-{ci + 1}-{sp}")
+                        # 계단참: 층 중간 높이의 얇은 슬래브(경사 대용 — glTF에서 단 표현)
+                        st_z = sp * (fh / 2)
+                        stair_solid = self._extrude_rect(model, body, sx, cy + inset, half_w - 0.05, cs - 2 * inset, 0.15)
+                        run("geometry.assign_representation", model, product=stair, representation=stair_solid)
+                        self._place_z(model, stair, elev + slab_thickness_m + st_z)
+                        run("spatial.assign_container", model, products=[stair], relating_structure=storey)
 
             # 중복도: 건물 중앙 수평 스트립 슬래브(얇게) — 동선 시각화
             if corridor_width_m and corridor_width_m > 0:
