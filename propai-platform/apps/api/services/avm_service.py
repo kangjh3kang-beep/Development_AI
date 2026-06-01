@@ -125,6 +125,43 @@ class AVMService:
         await molit.close()
         return comparables
 
+    def _build_comparable_evidence(
+        self,
+        comparables: list[dict[str, Any]],
+    ) -> str | None:
+        """P3: MOLIT 실거래 비교 사례를 LLM 근거 문자열로 변환.
+
+        실거래 상위 5건을 평당가와 함께 요약한다. 합성(synthetic) 사례는 환각
+        방지를 위해 제외하고 실거래만 인용한다. 실거래가 없으면 None.
+        """
+        if not comparables:
+            return None
+        rows: list[str] = []
+        for c in comparables[:5]:
+            if c.get("synthetic"):
+                continue
+            price = c.get("price_10k_won")
+            area = c.get("area_m2")
+            if not price or not area:
+                continue
+            try:
+                per_pyeong = int(price / (area / 3.305785))
+            except (ZeroDivisionError, TypeError):
+                continue
+            name = c.get("building_name", "")
+            date = c.get("deal_date", "")
+            rows.append(
+                f"  · {name} {area}㎡ {price:,}만원"
+                f"(평당 약 {per_pyeong:,}만원, {date})"
+            )
+        if not rows:
+            return None
+        body = "\n".join(rows)
+        return (
+            f"- MOLIT 실거래 비교 사례(실거래 {len(rows)}건):\n{body}\n"
+            "  위 실거래가와 추정 시세를 비교해 적정성을 평가할 것."
+        )
+
     # ── V-World 공간 데이터 조회 ──
 
     async def _fetch_spatial_data(

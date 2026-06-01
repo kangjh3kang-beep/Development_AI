@@ -119,7 +119,9 @@ class PermitInterpreter(BaseInterpreter):
             permit_json=json.dumps(compact, ensure_ascii=False, indent=2),
         )
 
-        return await self._invoke(user_prompt, cache_data=compact)
+        return await self._invoke(
+            user_prompt, cache_data=compact, evidence_text=evidence_text
+        )
 
     def _extract_compact_data(self, data: dict) -> dict[str, Any]:
         """인허가 검증 결과에서 LLM에 필요한 핵심 데이터만 추출."""
