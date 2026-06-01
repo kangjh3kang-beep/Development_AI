@@ -39,14 +39,23 @@ _RENT_ENDPOINTS: dict[str, str] = {
     "officetel": "getRTMSDataSvcOffiRent",
 }
 
-_BASE_PATH = "/OpenAPI_ToolInstallPackage/service/rest/RTMSOBJSvc"
+# 공공데이터포털 신 엔드포인트(apis.data.go.kr/1613000). 구 openapi.molit.go.kr는 폐기됨.
+# operation 'getRTMSDataSvc...' → 경로 '/1613000/{service}/{operation}' (service = operation[3:]).
+# 응답은 _type=json 파라미터로 JSON, 필드명은 영문(dealAmount/excluUseAr/aptNm/umdNm 등).
+_RTMS_HOST_PATH = "/1613000"
+
+
+def _rtms_path(operation: str) -> str:
+    """RTMS operation명을 신 엔드포인트 경로로 변환한다."""
+    service = operation[3:] if operation.startswith("get") else operation
+    return f"{_RTMS_HOST_PATH}/{service}/{operation}"
 
 
 class MolitClient(BaseAPIClient):
     """국토부 실거래가 API 클라이언트."""
 
     service_name = "molit"
-    base_url = "http://openapi.molit.go.kr"
+    base_url = "https://apis.data.go.kr"
 
     # ── 통합 조회 (표준화 파싱 포함) ──
 
@@ -68,13 +77,14 @@ class MolitClient(BaseAPIClient):
         endpoint = _TRADE_ENDPOINTS.get(prop_type, _TRADE_ENDPOINTS["apt"])
         data = await self._request(
             "GET",
-            f"{_BASE_PATH}/{endpoint}",
+            _rtms_path(endpoint),
             params={
                 "serviceKey": self.settings.molit_api_key,
                 "LAWD_CD": lawd_cd,
                 "DEAL_YMD": deal_ymd,
                 "pageNo": "1",
                 "numOfRows": str(num_rows),
+                "_type": "json",
             },
             cache_key=f"molit:trade:{prop_type}:{lawd_cd}:{deal_ymd}",
             cache_ttl=86400,
@@ -92,13 +102,14 @@ class MolitClient(BaseAPIClient):
         endpoint = _RENT_ENDPOINTS.get(prop_type, _RENT_ENDPOINTS["apt"])
         data = await self._request(
             "GET",
-            f"{_BASE_PATH}/{endpoint}",
+            _rtms_path(endpoint),
             params={
                 "serviceKey": self.settings.molit_api_key,
                 "LAWD_CD": lawd_cd,
                 "DEAL_YMD": deal_ymd,
                 "pageNo": "1",
                 "numOfRows": str(num_rows),
+                "_type": "json",
             },
             cache_key=f"molit:rent:{prop_type}:{lawd_cd}:{deal_ymd}",
             cache_ttl=86400,
@@ -111,13 +122,14 @@ class MolitClient(BaseAPIClient):
         """아파트 매매 실거래가를 조회한다."""
         return await self._request(
             "GET",
-            f"{_BASE_PATH}/getRTMSDataSvcAptTradeDev",
+            _rtms_path("getRTMSDataSvcAptTradeDev"),
             params={
                 "serviceKey": self.settings.molit_api_key,
                 "LAWD_CD": lawd_cd,
                 "DEAL_YMD": deal_ymd,
                 "pageNo": "1",
                 "numOfRows": "100",
+                "_type": "json",
             },
             cache_key=f"molit:apt_trade:{lawd_cd}:{deal_ymd}",
             cache_ttl=86400,
@@ -127,13 +139,14 @@ class MolitClient(BaseAPIClient):
         """아파트 전월세 실거래가를 조회한다."""
         return await self._request(
             "GET",
-            f"{_BASE_PATH}/getRTMSDataSvcAptRent",
+            _rtms_path("getRTMSDataSvcAptRent"),
             params={
                 "serviceKey": self.settings.molit_api_key,
                 "LAWD_CD": lawd_cd,
                 "DEAL_YMD": deal_ymd,
                 "pageNo": "1",
                 "numOfRows": "100",
+                "_type": "json",
             },
             cache_key=f"molit:apt_rent:{lawd_cd}:{deal_ymd}",
             cache_ttl=86400,
@@ -143,7 +156,7 @@ class MolitClient(BaseAPIClient):
         """개별공시지가를 조회한다."""
         return await self._request(
             "GET",
-            f"{_BASE_PATH}/getIndvdLandPriceAttr",
+            "/1611000/nsdi/IndvdLandPriceService/attr/getIndvdLandPriceAttr",
             params={
                 "serviceKey": self.settings.molit_api_key,
                 "pnu": pnu,
@@ -177,7 +190,7 @@ class MolitClient(BaseAPIClient):
         try:
             response = await client.request(
                 "GET",
-                f"{_BASE_PATH}/getBrBasisOulnInfo",
+                "/1613000/BldRgstService_v2/getBrBasisOulnInfo",
                 params={
                     "serviceKey": self.settings.molit_api_key,
                     "sigunguCd": sigungu_cd,
@@ -316,29 +329,36 @@ class MolitClient(BaseAPIClient):
     def _parse_trade_items(
         self, data: dict, prop_type: str,
     ) -> list[dict[str, Any]]:
-        """실거래 응답을 표준화된 거래 목록으로 변환한다."""
+        """실거래 응답을 표준화된 거래 목록으로 변환한다.
+
+        신 JSON API는 영문 필드명(dealAmount/excluUseAr/aptNm/umdNm…),
+        구 XML/테스트는 한글 필드명(거래금액/전용면적…) → 영문 우선·한글 폴백.
+        """
         try:
             items = self._extract_items(data)
             result: list[dict[str, Any]] = []
             for item in items:
-                price_str = str(item.get("거래금액", "0")).replace(",", "").strip()
+                def g(en: str, ko: str, default: Any = "") -> Any:
+                    v = item.get(en)
+                    return v if v not in (None, "") else item.get(ko, default)
+
+                price_str = str(g("dealAmount", "거래금액", "0")).replace(",", "").strip()
+                year = g("dealYear", "년", "")
+                month = g("dealMonth", "월", "")
+                day = g("dealDay", "일", "")
                 result.append({
                     "prop_type": prop_type,
-                    "deal_date": (
-                        f"{item.get('년', '')}년 "
-                        f"{item.get('월', '')}월 "
-                        f"{item.get('일', '')}일"
-                    ),
+                    "deal_date": f"{year}년 {month}월 {day}일",
                     "price_10k_won": int(price_str or 0),
-                    "area_m2": float(item.get("전용면적", 0) or 0),
-                    "floor": int(item.get("층", 0) or 0),
+                    "area_m2": float(g("excluUseAr", "전용면적", 0) or 0),
+                    "floor": int(g("floor", "층", 0) or 0),
                     "building_name": str(
-                        item.get("아파트", item.get("연립다세대", ""))
+                        g("aptNm", "아파트", "") or item.get("연립다세대", "")
                     ),
-                    "sigungu": str(item.get("시군구", "")),
-                    "dong": str(item.get("법정동", "")),
-                    "jibun": str(item.get("지번", "")),
-                    "build_year": int(item.get("건축년도", 0) or 0),
+                    "sigungu": str(g("estateAgentSggNm", "시군구", "")),
+                    "dong": str(g("umdNm", "법정동", "")),
+                    "jibun": str(g("jibun", "지번", "")),
+                    "build_year": int(g("buildYear", "건축년도", 0) or 0),
                 })
             return result
         except Exception:
@@ -346,25 +366,28 @@ class MolitClient(BaseAPIClient):
             return []
 
     def _parse_rent_items(self, data: dict) -> list[dict[str, Any]]:
-        """전월세 응답을 표준화한다."""
+        """전월세 응답을 표준화한다. (영문 필드 우선·한글 폴백)"""
         try:
             items = self._extract_items(data)
             result: list[dict[str, Any]] = []
             for item in items:
-                deposit_str = str(item.get("보증금액", "0")).replace(",", "").strip()
-                monthly_str = str(item.get("월세금액", "0")).replace(",", "").strip()
+                def g(en: str, ko: str, default: Any = "") -> Any:
+                    v = item.get(en)
+                    return v if v not in (None, "") else item.get(ko, default)
+
+                deposit_str = str(g("deposit", "보증금액", "0")).replace(",", "").strip()
+                monthly_str = str(g("monthlyRent", "월세금액", "0")).replace(",", "").strip()
+                year = g("dealYear", "년", "")
+                month = g("dealMonth", "월", "")
+                day = g("dealDay", "일", "")
                 result.append({
-                    "deal_date": (
-                        f"{item.get('년', '')}년 "
-                        f"{item.get('월', '')}월 "
-                        f"{item.get('일', '')}일"
-                    ),
+                    "deal_date": f"{year}년 {month}월 {day}일",
                     "deposit_10k_won": int(deposit_str or 0),
                     "monthly_rent_10k_won": int(monthly_str or 0),
-                    "area_m2": float(item.get("전용면적", 0) or 0),
-                    "floor": int(item.get("층", 0) or 0),
-                    "building_name": str(item.get("아파트", "")),
-                    "dong": str(item.get("법정동", "")),
+                    "area_m2": float(g("excluUseAr", "전용면적", 0) or 0),
+                    "floor": int(g("floor", "층", 0) or 0),
+                    "building_name": str(g("aptNm", "아파트", "")),
+                    "dong": str(g("umdNm", "법정동", "")),
                 })
             return result
         except Exception:
