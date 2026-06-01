@@ -5,6 +5,7 @@ prefix: /api/v1/design
 
 from __future__ import annotations
 
+import json
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -161,8 +162,6 @@ async def save_drawing(
     """
     import uuid as _uuid
 
-    from sqlalchemy import select
-
     # project_id UUID 검증 — 데모/임시 ID면 저장 없이 echo(graceful)
     try:
         pid = _uuid.UUID(project_id)
@@ -174,47 +173,54 @@ async def save_drawing(
         }
 
     try:
-        from apps.api.database.models.design_version import DesignVersion
-        from apps.api.database.models.project import Project
+        from sqlalchemy import text
 
-        # tenant_id 조회(프로젝트 소속)
-        proj = (await db.execute(select(Project).where(Project.id == pid))).scalar_one_or_none()
-        if proj is None:
+        # tenant_id만 raw SQL로 조회(Project ORM은 DB 컬럼과 불일치 위험 — 우회)
+        row = (await db.execute(
+            text("SELECT tenant_id FROM projects WHERE id = :pid"), {"pid": str(pid)}
+        )).first()
+        if row is None:
             return {
                 "project_id": project_id, "drawing_code": req.drawing_code,
                 "drawing_type": req.drawing_type, "svg_length": len(req.svg_content),
                 "layer_count": len(req.layers), "status": "echo(프로젝트없음)",
             }
-        tenant_id = proj.tenant_id
+        tenant_id = row[0]
 
-        # 현재 최대 버전 +1
-        existing = (await db.execute(
-            select(DesignVersion).where(DesignVersion.project_id == pid)
-            .order_by(DesignVersion.version_number.desc())
-        )).scalars().first()
-        next_ver = (existing.version_number + 1) if existing else 1
+        # 현재 최대 버전 +1 (raw — ORM 컬럼 불일치 우회)
+        ver_row = (await db.execute(
+            text("SELECT COALESCE(MAX(version_number),0) FROM design_versions "
+                 "WHERE project_id = :pid AND design_type = 'cad_2d'"),
+            {"pid": str(pid)},
+        )).first()
+        next_ver = int(ver_row[0]) + 1 if ver_row else 1
 
-        dv = DesignVersion(
-            tenant_id=tenant_id,
-            project_id=pid,
-            version_number=next_ver,
-            design_type="cad_2d",
-            floor_count=req.floor_count,
-            max_height_m=req.building_height_m,
-            design_data_json={
-                "drawing_code": req.drawing_code,
-                "drawing_type": req.drawing_type,
-                "drawing_name": req.drawing_name,
-                "points": req.points,
-                "lines": req.lines,
-                "surfaces": req.surfaces,
-                "svg_content": req.svg_content[:50000],  # 과대 SVG 방어
-                "layers": req.layers,
-                "vector_data": req.vector_data,
-            },
-            notes=f"CAD 편집 저장 v{next_ver}",
+        design_json = json.dumps({
+            "drawing_code": req.drawing_code,
+            "drawing_type": req.drawing_type,
+            "drawing_name": req.drawing_name,
+            "points": req.points,
+            "lines": req.lines,
+            "surfaces": req.surfaces,
+            "svg_content": req.svg_content[:50000],
+            "layers": req.layers,
+            "vector_data": req.vector_data,
+        }, ensure_ascii=False)
+
+        await db.execute(
+            text("""
+                INSERT INTO design_versions
+                  (id, tenant_id, project_id, version_number, design_type,
+                   floor_count, max_height_m, design_data_json, notes,
+                   created_at, updated_at)
+                VALUES
+                  (gen_random_uuid(), :tid, :pid, :ver, 'cad_2d',
+                   :fc, :mh, CAST(:dj AS json), :notes, now(), now())
+            """),
+            {"tid": str(tenant_id), "pid": str(pid), "ver": next_ver,
+             "fc": req.floor_count, "mh": req.building_height_m,
+             "dj": design_json, "notes": f"CAD 편집 저장 v{next_ver}"},
         )
-        db.add(dv)
         await db.commit()
         return {
             "project_id": project_id, "drawing_code": req.drawing_code,
@@ -234,7 +240,7 @@ async def load_drawing(project_id: str, db: AsyncSession = Depends(get_db)):
     """저장된 최신 CAD 편집본을 불러온다. 없으면 saved=false."""
     import uuid as _uuid
 
-    from sqlalchemy import select
+    from sqlalchemy import text
 
     try:
         pid = _uuid.UUID(project_id)
@@ -242,21 +248,25 @@ async def load_drawing(project_id: str, db: AsyncSession = Depends(get_db)):
         return {"saved": False, "reason": "UUID 아님"}
 
     try:
-        from apps.api.database.models.design_version import DesignVersion
-
-        dv = (await db.execute(
-            select(DesignVersion).where(
-                DesignVersion.project_id == pid,
-                DesignVersion.design_type == "cad_2d",
-            ).order_by(DesignVersion.version_number.desc())
-        )).scalars().first()
-        if dv is None:
+        row = (await db.execute(
+            text("""
+                SELECT version_number, design_data_json, updated_at
+                FROM design_versions
+                WHERE project_id = :pid AND design_type = 'cad_2d'
+                ORDER BY version_number DESC LIMIT 1
+            """),
+            {"pid": str(pid)},
+        )).first()
+        if row is None:
             return {"saved": False}
+        data = row[1]
+        if isinstance(data, str):
+            data = json.loads(data)
         return {
             "saved": True,
-            "version": dv.version_number,
-            "data": dv.design_data_json or {},
-            "updated_at": str(dv.updated_at) if dv.updated_at else None,
+            "version": row[0],
+            "data": data or {},
+            "updated_at": str(row[2]) if row[2] else None,
         }
     except Exception as e:  # noqa: BLE001
         import structlog
