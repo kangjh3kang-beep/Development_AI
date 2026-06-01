@@ -364,6 +364,22 @@ try:
 except Exception as e:
     logger.warning("app/routers/design_v61 로드 실패", error=str(e))
 
+# 프론트가 호출하나 미마운트였던 app/routers 4종(자체 prefix 보유, 기존 라우트와 경로
+# 충돌 0·대상경로 미존재 라이브확인). 프론트 호출 없는 agents/cost/rates/v2_tax는
+# 표면 확대 방지로 미마운트(필요시 추후). 각각 독립 try로 격리.
+for _mod, _attr, _tag in [
+    ("apps.api.app.routers.avm", "router", "AVM 시세추정(estimate)"),
+    ("apps.api.app.routers.external_api", "router", "외부 공공데이터"),
+    ("apps.api.app.routers.finance", "router", "재무(몬테카를로)"),
+    ("apps.api.app.routers.lifecycle", "router", "프로젝트 라이프사이클"),
+]:
+    try:
+        import importlib as _il
+
+        app.include_router(getattr(_il.import_module(_mod), _attr), tags=[_tag])
+    except Exception as e:
+        logger.warning("app/routers 로드 실패", module=_mod, error=str(e))
+
 # ──────────────────────────────────────
 # API v2 라우터
 # ──────────────────────────────────────
