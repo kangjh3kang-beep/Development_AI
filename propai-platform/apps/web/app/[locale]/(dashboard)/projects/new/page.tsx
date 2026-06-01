@@ -36,11 +36,13 @@ export default function NewProjectPage() {
     if (!name.trim() || !location.trim()) return;
     setIsSubmitting(true);
 
-    try {
-      // 주소 선택 시 store에 이미 채워진 부지분석 데이터를 보존한다.
-      const currentSiteAnalysis = useProjectContextStore.getState().siteAnalysis;
+    const currentSiteAnalysis = useProjectContextStore.getState().siteAnalysis;
+    let projectId = "";
 
-      const projectId = addProject({
+    // store 저장은 localStorage 용량초과(QuotaExceededError) 등으로 실패할 수 있으나
+    // 그래도 프로젝트 생성·이동은 반드시 진행되도록 각 단계를 개별 try로 격리한다.
+    try {
+      projectId = addProject({
         name,
         address: location,
         pnu: currentSiteAnalysis?.pnu ?? "",
@@ -48,28 +50,27 @@ export default function NewProjectPage() {
         type: "mixed",
         siteImageUrl: siteImageUrl || undefined,
       });
+    } catch (err) {
+      console.error("프로젝트 저장 경고(이동은 계속):", err);
+    }
 
-      // setProject는 프로젝트 전환 시 cross-module 데이터를 초기화하므로
-      // 부지분석 데이터를 복원한다. 최소한 주소는 항상 전달되도록 보장.
-      setProject(projectId, name, "draft");
+    try {
+      setProject(projectId || crypto.randomUUID(), name, "draft");
       const restored = currentSiteAnalysis ?? {
-        estimatedValue: null,
-        landAreaSqm: null,
-        zoneCode: null,
-        address: location,
-        pnu: null,
+        estimatedValue: null, landAreaSqm: null, zoneCode: null, address: location, pnu: null,
       };
       if (!restored.address) restored.address = location;
       useProjectContextStore.getState().updateSiteAnalysis(restored);
-
-      // 프로젝트 상세 허브로 이동 — ?new=1로 부지분석 자동 시작을 알린다.
-      // router.push는 await하지 않으므로 즉시 이동을 시작한다(1.2초 지연 제거 —
-      // 과거 지연이 "분석 시작 중"이 멈춘 것처럼 보이게 했음).
-      router.push(`/${locale}/projects/${projectId}?new=1`);
     } catch (err) {
-      // store 저장/이동 실패 시 버튼을 풀어 사용자가 재시도할 수 있게 한다
-      // (영원히 "분석 시작 중..."에 갇히는 것 방지).
-      console.error("프로젝트 생성 실패:", err);
+      console.error("컨텍스트 저장 경고(이동은 계속):", err);
+    }
+
+    // 이동: projectId가 없으면(저장 실패) 임시 ID로라도 진입해 부지분석 시작.
+    const targetId = projectId || `tmp-${Date.now()}`;
+    try {
+      router.push(`/${locale}/projects/${targetId}?new=1`);
+    } catch (err) {
+      console.error("이동 실패:", err);
       setIsSubmitting(false);
     }
   };
