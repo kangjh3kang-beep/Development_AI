@@ -537,7 +537,12 @@ class AVMService:
                 "address": request.address,
                 "area_sqm": request.area_sqm,
             }
-            interp = await AvmInterpreter().generate_interpretation(interp_input)
+            # P3: 이미 조회한 MOLIT 실거래 비교사례를 LLM 근거로 주입(키·async는
+            # 이 서비스 책임). 합성 폴백 사례는 근거에서 제외(실거래만 인용).
+            evidence_text = self._build_comparable_evidence(top_comparables)
+            interp = await AvmInterpreter().generate_interpretation(
+                interp_input, evidence_text=evidence_text
+            )
             if isinstance(interp, dict):
                 narrative = interp
         except Exception as e:  # noqa: BLE001
