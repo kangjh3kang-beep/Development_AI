@@ -193,6 +193,8 @@ def _enrich_interior(mass: dict[str, Any], building_use: str = "공동주택") -
         # 창호: 건물 폭 5m당 1개(최소2·최대8)
         bw = mass.get("building_width_m", 12.0)
         mass["windows_per_side"] = max(2, min(8, int(bw / 5)))
+        # 세대 분할: 공동주택 표준 세대폭 ~8m(폭이 좁으면 폭의 절반으로 최소 2분할)
+        mass["unit_width_m"] = 8.0 if bw >= 16.0 else max(4.0, bw / 2)
     except Exception:  # noqa: BLE001
         pass
     return mass

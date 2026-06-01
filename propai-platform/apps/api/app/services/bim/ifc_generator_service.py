@@ -39,6 +39,7 @@ class IfcGeneratorService:
         core_size_m: float = 5.0,
         corridor_width_m: float = 0.0,
         windows_per_side: int = 0,
+        unit_width_m: float = 0.0,
     ) -> bytes:
         """IFC4 모델을 생성해 직렬화된 bytes로 반환한다.
 
@@ -151,6 +152,34 @@ class IfcGeneratorService:
                         self._place_z(model, win, elev + slab_thickness_m + sill)
                         run("spatial.assign_container", model, products=[win], relating_structure=storey)
 
+            # 세대 분할 내벽: 복도 기준 전면/배면 zone을 unit_width로 나누는 수직 칸막이.
+            # 1층 제외(상가/로비). 내벽 높이는 층고-슬래브(천장까지).
+            if unit_width_m and unit_width_m > 0 and i > 0:
+                pwt = 0.15  # 세대 칸막이 두께
+                inner_w = bw - 2 * wall_thickness_m
+                units = max(1, int(inner_w / unit_width_m))
+                act_uw = inner_w / units
+                # 복도 영역 y범위
+                cw = min(corridor_width_m, bd) if corridor_width_m > 0 else 0.0
+                corr_y0 = (bd - cw) / 2
+                corr_y1 = corr_y0 + cw
+                # 전면 zone(y: wt~corr_y0), 배면 zone(y: corr_y1~bd-wt)
+                zones = [
+                    (wall_thickness_m, max(wall_thickness_m, corr_y0)),
+                    (min(bd - wall_thickness_m, corr_y1), bd - wall_thickness_m),
+                ]
+                for zi, (zy0, zy1) in enumerate(zones):
+                    zd = zy1 - zy0
+                    if zd <= 0.3:
+                        continue
+                    for ui in range(1, units):  # 세대 사이마다 칸막이(양끝은 외벽)
+                        px = wall_thickness_m + ui * act_uw - pwt / 2
+                        part = run("root.create_entity", model, ifc_class="IfcWallStandardCase", name=f"{i + 1}F-Part-{zi}-{ui}")
+                        part_solid = self._extrude_rect(model, body, px, zy0, pwt, zd, fh - slab_thickness_m)
+                        run("geometry.assign_representation", model, product=part, representation=part_solid)
+                        self._place_z(model, part, elev + slab_thickness_m)
+                        run("spatial.assign_container", model, products=[part], relating_structure=storey)
+
         logger.info(
             "IFC 생성 완료",
             floors=n, width=bw, depth=bd, height=round(n * fh, 1),
@@ -231,4 +260,5 @@ def build_ifc_from_mass(mass: dict[str, Any], project_name: str = "PropAI Projec
         core_size_m=float(mass.get("core_size_m", 5.0)),
         corridor_width_m=float(mass.get("corridor_width_m", 0.0)),
         windows_per_side=int(mass.get("windows_per_side", 0)),
+        unit_width_m=float(mass.get("unit_width_m", 0.0)),
     )

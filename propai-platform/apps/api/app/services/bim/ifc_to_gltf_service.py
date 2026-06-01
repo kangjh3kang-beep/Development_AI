@@ -103,6 +103,8 @@ class IfcToGltfService:
         t = ifc_type.lower()
         if "window" in t:
             return "window"
+        if "wallstandardcase" in t:  # 세대 분할 내벽
+            return "partition"
         if "wall" in t:
             return "wall"
         if "column" in t or "space" in t:  # 코어(IfcColumn)
@@ -113,10 +115,11 @@ class IfcToGltfService:
 
     # 요소 그룹별 색상(RGBA, 0~1) — 프론트 색 구분
     _GROUP_COLORS = {
-        "wall": [0.78, 0.78, 0.80, 1.0],     # 회색(외벽)
-        "slab": [0.55, 0.58, 0.62, 1.0],     # 진회색(슬래브)
-        "core": [0.95, 0.62, 0.20, 0.95],    # 주황(코어)
-        "window": [0.40, 0.70, 0.95, 0.55],  # 반투명 청색(창호)
+        "wall": [0.78, 0.78, 0.80, 1.0],       # 회색(외벽)
+        "partition": [0.88, 0.84, 0.74, 1.0],  # 베이지(세대 분할 내벽)
+        "slab": [0.55, 0.58, 0.62, 1.0],       # 진회색(슬래브)
+        "core": [0.95, 0.62, 0.20, 0.95],      # 주황(코어)
+        "window": [0.40, 0.70, 0.95, 0.55],    # 반투명 청색(창호)
         "other": [0.60, 0.65, 0.70, 1.0],
     }
 
