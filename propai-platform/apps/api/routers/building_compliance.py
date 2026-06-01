@@ -112,11 +112,33 @@ async def check_compliance(
         from app.services.ai.permit_interpreter import PermitInterpreter
 
         design = req.design.model_dump()
+
+        # P3 법규 근거 주입: 용도지역 법정 한도(국토계획법 시행령)를 evidence로 부착.
+        # zone_limits는 sync·외부키 불필요·단일출처라 라우터에서 직접 조회해도 안전.
+        permit_evidence = None
+        zone_type = design.get("zone_type")
+        if zone_type:
+            try:
+                from app.services.zoning.zone_limits import get_zone_limits
+
+                limits = get_zone_limits(zone_type)
+                if limits:
+                    permit_evidence = (
+                        f"- 용도지역 법정 한도({zone_type}, "
+                        f"{limits.get('legal_basis', '국토계획법 시행령')}): "
+                        f"건폐율 상한 {limits.get('max_bcr_pct')}%, "
+                        f"용적률 상한 {limits.get('max_far_pct')}%. "
+                        "이 법정 한도를 기준으로 위반·완화 가능성을 판단할 것."
+                    )
+            except Exception:  # noqa: BLE001
+                permit_evidence = None
+
         interp = await PermitInterpreter().generate_interpretation({
             "overall_feasibility": overall_status,
             "violation_count": sum(1 for c in checks if c["status"] == "fail"),
             "warning_count": sum(1 for c in checks if c["status"] == "warning"),
             "total_gfa_sqm": None,
+            "zone_type": zone_type,
             "violations": [
                 {
                     "rule_name": v.get("type"),
@@ -130,7 +152,7 @@ async def check_compliance(
             ],
             "floor_count": design.get("floor_count"),
             "building_height_m": design.get("building_height_m"),
-        })
+        }, evidence_text=permit_evidence)
         if isinstance(interp, dict) and interp:
             _labels = {
                 "permit_assessment": "인허가 난이도",
