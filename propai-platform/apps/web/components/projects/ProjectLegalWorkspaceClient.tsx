@@ -4,6 +4,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Button, Card, CardContent, CardTitle, Input } from "@propai/ui";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
+import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import { ApiClientError, apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
@@ -455,14 +456,10 @@ export function ProjectLegalWorkspaceClient({
                 {labels.formTitle}
               </p>
               <form className="mt-4 grid gap-3" onSubmit={handleSubmit}>
-                <Input
+                <ProjectAddressInput
                   value={form.address}
-                  onChange={(event) =>
-                    setForm((current) => ({
-                      ...current,
-                      address: event.target.value,
-                    }))
-                  }
+                  onChange={(address) => setForm((current) => ({ ...current, address }))}
+                  label={labels.addressLabel}
                   placeholder={labels.addressLabel}
                 />
                 <Input

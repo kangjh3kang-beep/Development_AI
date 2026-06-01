@@ -4,6 +4,7 @@ import { useState, type FormEvent } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Button, Card, CardContent, CardTitle, Input } from "@propai/ui";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
+import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import { ApiClientError, apiClient } from "@/lib/api-client";
 import type { Locale } from "@/i18n/config";
@@ -269,11 +270,10 @@ export function PermitsWorkspaceClient({
             {labels.formTitle}
           </p>
           <form className="mt-4 grid gap-3" onSubmit={handleSubmit}>
-            <Input
+            <ProjectAddressInput
               value={form.address}
-              onChange={(e) =>
-                setForm((c) => ({ ...c, address: e.target.value }))
-              }
+              onChange={(address) => setForm((c) => ({ ...c, address }))}
+              label={labels.addressLabel}
               placeholder={labels.addressLabel}
             />
             <div className="grid gap-3 md:grid-cols-3">

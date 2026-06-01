@@ -4,6 +4,7 @@ import { useState, type FormEvent } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Button, Card, CardContent, Input } from "@propai/ui";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
+import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import { ApiClientError, apiClient } from "@/lib/api-client";
 import type { Locale } from "@/i18n/config";
@@ -374,14 +375,13 @@ export function ApprovalsWorkspaceClient({
             {labels.formTitle}
           </p>
           <form className="mt-4 grid gap-3" onSubmit={handleSubmit}>
+            <ProjectAddressInput
+              value={form.address}
+              onChange={(address) => setForm((c) => ({ ...c, address }))}
+              label={labels.addressLabel}
+              placeholder={labels.addressLabel}
+            />
             <div className="grid gap-3 md:grid-cols-2">
-              <Input
-                value={form.address}
-                onChange={(e) =>
-                  setForm((c) => ({ ...c, address: e.target.value }))
-                }
-                placeholder={labels.addressLabel}
-              />
               <Input
                 value={form.zoning}
                 onChange={(e) =>

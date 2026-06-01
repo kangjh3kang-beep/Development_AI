@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button, Card, CardContent, Input } from "@propai/ui";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
+import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import { ApiClientError, apiClient } from "@/lib/api-client";
 import type { Locale } from "@/i18n/config";
@@ -439,16 +440,11 @@ export function AuctionWorkspaceClient({
                 </div>
               </div>
               <div className="space-y-2">
-                <label className="text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)] ml-4">{labels.addressLabel}</label>
-                <Input
+                <ProjectAddressInput
                   value={analysisForm.address}
-                  className="h-16 rounded-[2rem] border-[var(--line-strong)] bg-[var(--surface-soft)] px-8 text-sm font-bold text-[var(--text-primary)]"
-                  onChange={(event) =>
-                    setAnalysisForm((current) => ({
-                      ...current,
-                      address: event.target.value,
-                    }))
-                  }
+                  onChange={(address) => setAnalysisForm((current) => ({ ...current, address }))}
+                  label={labels.addressLabel}
+                  placeholder={labels.addressLabel}
                 />
               </div>
               <div className="grid gap-6 md:grid-cols-2">

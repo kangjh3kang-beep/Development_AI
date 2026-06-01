@@ -3,6 +3,7 @@
 import { useState, type FormEvent } from "react";
 import { Button, Card, CardContent, Input } from "@propai/ui";
 import { ApiClientError, apiClient } from "@/lib/api-client";
+import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import type { Locale } from "@/i18n/config";
 
 /* ------------------------------------------------------------------ */
@@ -246,11 +247,10 @@ export function RegulationsWorkspaceClient({
             {labels.formTitle}
           </p>
           <form className="mt-4 grid gap-3" onSubmit={handleSubmit}>
-            <Input
+            <ProjectAddressInput
               value={form.address}
-              onChange={(e) =>
-                setForm((c) => ({ ...c, address: e.target.value }))
-              }
+              onChange={(address) => setForm((c) => ({ ...c, address }))}
+              label={labels.addressLabel}
               placeholder={labels.addressLabel}
             />
             <div className="grid gap-3 md:grid-cols-2">

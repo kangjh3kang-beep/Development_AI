@@ -3,6 +3,7 @@
 import React, { useState } from "react";
 import { motion } from "framer-motion";
 import { useAIAnalyze, useAIReady } from "@/lib/ai-analyze-client";
+import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 
 type AuctionResult = {
   propertyType?: string;
@@ -63,13 +64,12 @@ export default function AuctionPage() {
       >
         <h2 className="text-lg font-black text-[var(--text-primary)] mb-6">물건 정보 입력</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label className="text-xs font-bold uppercase tracking-widest text-[var(--text-tertiary)] mb-2 block">물건 소재지</label>
-            <input type="text" placeholder="서울시 강남구 역삼동 123-4" value={form.address}
-              onChange={e => setForm(f => ({ ...f, address: e.target.value }))}
-              className="w-full rounded-xl border border-[var(--line)] bg-[var(--surface-muted)] px-4 py-3 text-sm text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-strong)]/50"
-            />
-          </div>
+          <ProjectAddressInput
+            value={form.address}
+            onChange={(address) => setForm(f => ({ ...f, address }))}
+            label="물건 소재지"
+            placeholder="물건 소재지를 검색하세요"
+          />
           <div>
             <label className="text-xs font-bold uppercase tracking-widest text-[var(--text-tertiary)] mb-2 block">감정가 (만원)</label>
             <input type="number" placeholder="50000" value={form.appraisalValue}
