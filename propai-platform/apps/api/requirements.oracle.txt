@@ -74,3 +74,8 @@ casbin-async-sqlalchemy-adapter==1.17.0
 
 # Vector DB (경량)
 qdrant-client==1.11.3
+
+# 3D BIM (IFC 생성 + glTF 변환) — v62. ifcopenshell ~174MB로 이미지가 커지나
+# 3D BIM 풀스택(IFC4 모델→glb 뷰어)에 필수. pygltflib는 순수파이썬 경량.
+ifcopenshell==0.8.0
+pygltflib==1.16.5

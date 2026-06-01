@@ -54,6 +54,22 @@ class AltSelectionRequest(BaseModel):
     noise_pct: float = Field(0.10, ge=0.01, le=0.50)
 
 
+class BimGenerateRequest(BaseModel):
+    """3D BIM 모델 생성 요청.
+
+    매스(building_width/depth, floor_count)를 직접 주거나, 미입력 시
+    대지정보(land_area_sqm + zone_code)로 AutoDesignEngine이 자동 산출한다.
+    """
+    building_width_m: float | None = Field(None, gt=0)
+    building_depth_m: float | None = Field(None, gt=0)
+    floor_count: int | None = Field(None, ge=1, le=200)
+    floor_height_m: float = Field(3.0, gt=2.0)
+    # 자동 매스 산출용(매스 미입력 시)
+    land_area_sqm: float | None = Field(None, gt=0)
+    zone_code: str = "2R"
+    project_name: str = "PropAI"
+
+
 # ── 응답 스키마 ──
 
 
@@ -154,6 +170,108 @@ async def export_dxf(project_id: str, req: DrawingSetRequest):
         )
     except (ImportError, ValueError):
         return Response(content=b"DXF_PLACEHOLDER", media_type="application/dxf")
+
+
+def _resolve_mass(req: "BimGenerateRequest") -> dict[str, Any]:
+    """요청에서 건축 매스를 확정한다. 매스 직접입력 우선, 없으면 대지정보로 자동산출."""
+    if req.building_width_m and req.building_depth_m and req.floor_count:
+        return {
+            "building_width_m": req.building_width_m,
+            "building_depth_m": req.building_depth_m,
+            "num_floors": req.floor_count,
+            "floor_height_m": req.floor_height_m,
+        }
+    # 자동 산출: AutoDesignEngine(대지면적+용도지역 → 최적 매스)
+    if req.land_area_sqm:
+        from app.services.cad.auto_design_engine import AutoDesignEngineService, SiteInput
+
+        svc = AutoDesignEngineService()
+        site = SiteInput(
+            site_area_sqm=req.land_area_sqm,
+            zone_code=req.zone_code,
+            floor_height_m=req.floor_height_m,
+        )
+        legal = svc.get_legal_limits(req.zone_code)
+        eff = svc.compute_effective_site(site)
+        mass = svc.compute_optimal_mass(site, eff, legal)
+        return mass
+    # 최종 폴백: 합리적 기본값
+    return {
+        "building_width_m": 12.0, "building_depth_m": 9.0,
+        "num_floors": req.floor_count or 5, "floor_height_m": req.floor_height_m,
+    }
+
+
+@router.post("/{project_id}/bim/generate")
+async def generate_bim_model(project_id: str, req: BimGenerateRequest):
+    """3D BIM(IFC) 모델을 생성하고 요약 메타를 반환한다(IFC 자체는 캐시/재생성)."""
+    from app.services.bim.ifc_generator_service import IfcGeneratorService
+
+    mass = _resolve_mass(req)
+    ifc_bytes = IfcGeneratorService().generate(
+        building_width_m=mass["building_width_m"],
+        building_depth_m=mass["building_depth_m"],
+        num_floors=int(mass["num_floors"]),
+        floor_height_m=mass.get("floor_height_m", req.floor_height_m),
+        project_name=req.project_name,
+    )
+    return {
+        "project_id": project_id,
+        "mass": {
+            "building_width_m": round(mass["building_width_m"], 2),
+            "building_depth_m": round(mass["building_depth_m"], 2),
+            "num_floors": int(mass["num_floors"]),
+            "floor_height_m": mass.get("floor_height_m", req.floor_height_m),
+            "building_height_m": round(int(mass["num_floors"]) * mass.get("floor_height_m", req.floor_height_m), 2),
+        },
+        "ifc_bytes": len(ifc_bytes),
+        "glb_url": f"/api/v1/design/{project_id}/bim/model.glb",
+    }
+
+
+@router.post("/{project_id}/bim/model.glb", response_class=Response)
+async def get_bim_glb(project_id: str, req: BimGenerateRequest):
+    """3D BIM 모델을 glTF binary(.glb)로 반환한다 — 프론트 useGLTF가 직접 로드."""
+    from app.services.bim.ifc_generator_service import IfcGeneratorService
+    from app.services.bim.ifc_to_gltf_service import IfcToGltfService
+
+    mass = _resolve_mass(req)
+    try:
+        ifc_bytes = IfcGeneratorService().generate(
+            building_width_m=mass["building_width_m"],
+            building_depth_m=mass["building_depth_m"],
+            num_floors=int(mass["num_floors"]),
+            floor_height_m=mass.get("floor_height_m", req.floor_height_m),
+            project_name=req.project_name,
+        )
+        glb = IfcToGltfService().convert(ifc_bytes)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"BIM 모델 생성 실패: {str(e)[:120]}") from e
+    return Response(
+        content=glb,
+        media_type="model/gltf-binary",
+        headers={"Content-Disposition": f"inline; filename={project_id}.glb"},
+    )
+
+
+@router.post("/{project_id}/bim/export-ifc", response_class=Response)
+async def export_bim_ifc(project_id: str, req: BimGenerateRequest):
+    """3D BIM 모델을 IFC4 파일로 내보낸다(BIM 표준 교환)."""
+    from app.services.bim.ifc_generator_service import IfcGeneratorService
+
+    mass = _resolve_mass(req)
+    ifc_bytes = IfcGeneratorService().generate(
+        building_width_m=mass["building_width_m"],
+        building_depth_m=mass["building_depth_m"],
+        num_floors=int(mass["num_floors"]),
+        floor_height_m=mass.get("floor_height_m", req.floor_height_m),
+        project_name=req.project_name,
+    )
+    return Response(
+        content=ifc_bytes,
+        media_type="application/x-step",
+        headers={"Content-Disposition": f"attachment; filename={project_id}.ifc"},
+    )
 
 
 @router.post("/{project_id}/select-alternative", response_model=AlternativeSelectionResponse)

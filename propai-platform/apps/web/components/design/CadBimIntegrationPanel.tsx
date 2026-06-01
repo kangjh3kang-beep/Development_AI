@@ -2,7 +2,9 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { Canvas } from "@react-three/fiber";
-import { OrbitControls, Environment, Grid, Float } from "@react-three/drei";
+import { OrbitControls, Environment, Grid } from "@react-three/drei";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import * as THREE from "three";
 import { motion } from "framer-motion";
 import CADEditor from "./CADEditor";
 
@@ -29,31 +31,19 @@ function designApiBase(): string {
   return "http://localhost:8000/api/v1";
 }
 
-function BuildingModel() {
+// 백엔드가 생성한 IFC→glTF 모델을 렌더. scene이 없으면 격자만(로딩/실패 graceful).
+function BuildingModel({ scene }: { scene: THREE.Group | null }) {
   return (
-    <group position={[0, -2, 0]}>
-      <Float speed={1.5} rotationIntensity={0.2} floatIntensity={0.5}>
-        <mesh position={[0, 1, 0]}>
-          <boxGeometry args={[5, 2, 5]} />
-          <meshStandardMaterial color="var(--line-strong)" wireframe={true} opacity={0.2} transparent />
-        </mesh>
-        <mesh position={[-1, 5, -1]}>
-          <boxGeometry args={[1.5, 6, 1.5]} />
-          <meshStandardMaterial color="var(--info)" transparent opacity={0.6} metalness={0.9} roughness={0.1} />
-        </mesh>
-        <mesh position={[1, 6, 1]}>
-          <boxGeometry args={[1.8, 8, 1.8]} />
-          <meshStandardMaterial color="var(--accent-strong)" transparent opacity={0.7} metalness={0.8} roughness={0.05} />
-        </mesh>
-      </Float>
-      <Grid 
-        infiniteGrid 
-        fadeDistance={50} 
-        sectionColor="var(--accent-strong)" 
-        cellColor="var(--line-strong)" 
-        cellThickness={0.5} 
+    <group position={[0, 0, 0]}>
+      {scene && <primitive object={scene} />}
+      <Grid
+        infiniteGrid
+        fadeDistance={50}
+        sectionColor="var(--accent-strong)"
+        cellColor="var(--line-strong)"
+        cellThickness={0.5}
         sectionThickness={1.5}
-        position={[0, 0, 0]} 
+        position={[0, 0, 0]}
         opacity={0.2}
       />
     </group>
@@ -71,6 +61,54 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
   const [drawingLoading, setDrawingLoading] = useState(false);
   const [drawingError, setDrawingError] = useState<string | null>(null);
   const [editMode, setEditMode] = useState(false);
+
+  // ── 3D BIM 모델(IFC→glTF) 로딩 — 백엔드가 생성한 실제 매스 모델 ──
+  const [bimScene, setBimScene] = useState<THREE.Group | null>(null);
+  const [bimLoading, setBimLoading] = useState(false);
+  const [bimError, setBimError] = useState<string | null>(null);
+
+  const loadBimModel = useCallback(async () => {
+    setBimLoading(true);
+    setBimError(null);
+    try {
+      const base = designApiBase();
+      const res = await fetch(`${base}/design/${encodeURIComponent(projectId)}/bim/model.glb`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        // 매스 미지정 → 백엔드가 대지정보/기본값으로 자동 산출
+        body: JSON.stringify({ floor_height_m: 3.0 }),
+        signal: AbortSignal.timeout(60000),
+      });
+      if (!res.ok) throw new Error(`3D 모델 생성 실패 (${res.status})`);
+      const buf = await res.arrayBuffer();
+      const loader = new GLTFLoader();
+      const gltf = await loader.parseAsync(buf, "");
+      // 머티리얼 부여(백엔드 glb는 지오메트리만) + 중심 정렬
+      gltf.scene.traverse((obj) => {
+        if ((obj as THREE.Mesh).isMesh) {
+          (obj as THREE.Mesh).material = new THREE.MeshStandardMaterial({
+            color: "#5b9bd5",
+            metalness: 0.3,
+            roughness: 0.55,
+            transparent: true,
+            opacity: 0.92,
+          });
+        }
+      });
+      setBimScene(gltf.scene);
+    } catch (err) {
+      setBimError(err instanceof Error ? err.message : "3D 모델을 불러오지 못했습니다.");
+    } finally {
+      setBimLoading(false);
+    }
+  }, [projectId]);
+
+  // 3D 뷰 진입 시 모델 1회 로드
+  useEffect(() => {
+    if (viewMode === "bim_3d" && !bimScene && !bimLoading && !bimError) {
+      loadBimModel();
+    }
+  }, [viewMode, bimScene, bimLoading, bimError, loadBimModel]);
 
   // 도면 세트 목록 조회
   const loadDrawingSet = useCallback(async () => {
@@ -168,14 +206,35 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
         {/* 3D Canvas or 2D SVG */}
         {viewMode === "bim_3d" ? (
           <div className="absolute inset-0">
-            <Canvas camera={{ position: [15, 12, 15], fov: 40 }}>
-              <ambientLight intensity={0.4} />
-              <pointLight position={[10, 15, 10]} intensity={1.5} color="var(--accent-strong)" />
-              <pointLight position={[-10, 10, -10]} intensity={1} color="var(--info)" />
-              <Environment preset="night" />
-              <OrbitControls makeDefault autoRotate autoRotateSpeed={0.3} enableDamping dampingFactor={0.05} />
-              <BuildingModel />
+            <Canvas camera={{ position: [25, 20, 25], fov: 40 }}>
+              <ambientLight intensity={0.6} />
+              <directionalLight position={[10, 20, 10]} intensity={1.2} />
+              <pointLight position={[-10, 10, -10]} intensity={0.6} color="var(--info)" />
+              <Environment preset="city" />
+              <OrbitControls makeDefault autoRotate={!bimScene} autoRotateSpeed={0.3} enableDamping dampingFactor={0.05} />
+              <BuildingModel scene={bimScene} />
             </Canvas>
+            {/* 로딩/에러 오버레이 */}
+            {(bimLoading || bimError) && (
+              <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/30 pointer-events-none">
+                {bimLoading ? (
+                  <div className="flex flex-col items-center gap-4">
+                    <div className="h-12 w-12 animate-spin rounded-full border-4 border-[var(--accent-strong)] border-t-transparent" />
+                    <p className="text-[11px] font-bold uppercase tracking-widest text-white/60">3D BIM 모델 생성 중...</p>
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center gap-3 text-center pointer-events-auto">
+                    <p className="text-sm font-bold text-red-300">{bimError}</p>
+                    <button
+                      onClick={() => { setBimError(null); loadBimModel(); }}
+                      className="rounded-full bg-white/10 px-6 py-2 text-[11px] font-black uppercase tracking-widest text-white hover:bg-white/20"
+                    >
+                      다시 시도
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         ) : editMode ? (
           <div className="absolute inset-0 z-30 bg-[#0a0f14] flex flex-col overflow-hidden [&>div]:h-full [&>div]:rounded-none [&>div]:border-none">
