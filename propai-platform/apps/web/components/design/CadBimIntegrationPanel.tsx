@@ -1,10 +1,33 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Canvas } from "@react-three/fiber";
 import { OrbitControls, Environment, Grid, Float } from "@react-three/drei";
 import { motion } from "framer-motion";
 import CADEditor from "./CADEditor";
+
+// 도면 코드 → 한글 명칭 (SVGDrawingService.generate_full_drawing_set 기준)
+const DRAWING_LABELS: Record<string, string> = {
+  "B-01": "배치도",
+  "B-02-STD": "기준층 평면도",
+  "B-03": "단면도",
+  "B-04-F": "정면도",
+  "B-04-S": "측면도",
+  "C-01": "투시도",
+  "C-02": "음영 분석",
+  "C-03": "상세도",
+};
+
+// v1 API base URL (apiClient와 동일 규칙). SVG는 텍스트라 직접 fetch.
+function designApiBase(): string {
+  if (typeof window !== "undefined") {
+    const host = window.location.hostname;
+    if (host === "4t8t.net" || host === "www.4t8t.net" || host.endsWith(".pages.dev") || host === "propai.kr") {
+      return "https://api.4t8t.net/api/v1";
+    }
+  }
+  return "http://localhost:8000/api/v1";
+}
 
 function BuildingModel() {
   return (
@@ -40,6 +63,71 @@ function BuildingModel() {
 export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: string; dictionary: Record<string, string> }) {
   const [viewMode, setViewMode] = useState<"cad_2d" | "bim_3d">("bim_3d");
   const t = dictionary;
+
+  // ── AI 생성 도면(SVG) 로딩 — 2D 뷰에서 실제 백엔드 도면을 표시 ──
+  const [drawingCodes, setDrawingCodes] = useState<string[]>([]);
+  const [activeCode, setActiveCode] = useState<string | null>(null);
+  const [svgMap, setSvgMap] = useState<Record<string, string>>({});
+  const [drawingLoading, setDrawingLoading] = useState(false);
+  const [drawingError, setDrawingError] = useState<string | null>(null);
+  const [editMode, setEditMode] = useState(false);
+
+  // 도면 세트 목록 조회
+  const loadDrawingSet = useCallback(async () => {
+    setDrawingLoading(true);
+    setDrawingError(null);
+    try {
+      const base = designApiBase();
+      const res = await fetch(`${base}/design/${encodeURIComponent(projectId)}/generate-full-set`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ floor_count: 5, floor_height_m: 3.0, basement_floors: 1 }),
+        signal: AbortSignal.timeout(60000),
+      });
+      if (!res.ok) throw new Error(`도면 생성 실패 (${res.status})`);
+      const data = await res.json();
+      const codes: string[] = Object.keys(data?.drawings ?? {}).filter(
+        (c) => data.drawings[c]?.has_content,
+      );
+      setDrawingCodes(codes);
+      setActiveCode((prev) => prev ?? codes[0] ?? null);
+    } catch (err) {
+      setDrawingError(err instanceof Error ? err.message : "도면을 불러오지 못했습니다.");
+    } finally {
+      setDrawingLoading(false);
+    }
+  }, [projectId]);
+
+  // 개별 도면 SVG 조회(캐시)
+  const loadSvg = useCallback(
+    async (code: string) => {
+      if (svgMap[code]) return;
+      try {
+        const base = designApiBase();
+        const res = await fetch(`${base}/design/${encodeURIComponent(projectId)}/drawings/${code}/svg`, {
+          signal: AbortSignal.timeout(60000),
+        });
+        if (!res.ok) return;
+        const svg = await res.text();
+        setSvgMap((m) => ({ ...m, [code]: svg }));
+      } catch {
+        // 개별 도면 실패는 무시(다른 도면은 정상 표시)
+      }
+    },
+    [projectId, svgMap],
+  );
+
+  // 2D 뷰 진입 시 도면 세트 1회 로드
+  useEffect(() => {
+    if (viewMode === "cad_2d" && !editMode && drawingCodes.length === 0 && !drawingLoading && !drawingError) {
+      loadDrawingSet();
+    }
+  }, [viewMode, editMode, drawingCodes.length, drawingLoading, drawingError, loadDrawingSet]);
+
+  // 활성 도면 SVG 로드
+  useEffect(() => {
+    if (activeCode) loadSvg(activeCode);
+  }, [activeCode, loadSvg]);
 
   return (
     <div className="flex flex-col gap-10">
@@ -89,9 +177,67 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
               <BuildingModel />
             </Canvas>
           </div>
-        ) : (
+        ) : editMode ? (
           <div className="absolute inset-0 z-30 bg-[#0a0f14] flex flex-col overflow-hidden [&>div]:h-full [&>div]:rounded-none [&>div]:border-none">
             <CADEditor projectId={projectId} />
+          </div>
+        ) : (
+          <div className="absolute inset-0 z-30 bg-[#0a0f14] flex flex-col">
+            {/* 상단 바: 도면 탭 + 편집모드 전환 */}
+            <div className="flex items-center justify-between gap-3 border-b border-white/5 px-6 py-3 overflow-x-auto">
+              <div className="flex gap-2">
+                {drawingCodes.map((code) => (
+                  <button
+                    key={code}
+                    onClick={() => setActiveCode(code)}
+                    className={`whitespace-nowrap rounded-full px-4 py-2 text-[10px] font-black uppercase tracking-widest transition-all ${
+                      activeCode === code
+                        ? "bg-[var(--accent-strong)] text-white shadow-lg"
+                        : "bg-white/5 text-white/50 hover:text-white"
+                    }`}
+                  >
+                    {DRAWING_LABELS[code] || code}
+                  </button>
+                ))}
+              </div>
+              <button
+                onClick={() => setEditMode(true)}
+                className="shrink-0 rounded-full border border-white/10 px-4 py-2 text-[10px] font-black uppercase tracking-widest text-[var(--accent-strong)] hover:bg-white/5"
+              >
+                편집 모드
+              </button>
+            </div>
+
+            {/* 도면 표시 영역 */}
+            <div className="relative flex-1 flex items-center justify-center overflow-auto p-8">
+              {drawingLoading && (
+                <div className="flex flex-col items-center gap-4">
+                  <div className="h-12 w-12 animate-spin rounded-full border-4 border-[var(--accent-strong)] border-t-transparent" />
+                  <p className="text-[11px] font-bold uppercase tracking-widest text-white/40">AI 도면 생성 중...</p>
+                </div>
+              )}
+              {!drawingLoading && drawingError && (
+                <div className="flex flex-col items-center gap-4 text-center">
+                  <p className="text-sm font-bold text-red-400">{drawingError}</p>
+                  <button
+                    onClick={() => { setDrawingError(null); setDrawingCodes([]); }}
+                    className="rounded-full bg-white/10 px-6 py-2 text-[11px] font-black uppercase tracking-widest text-white hover:bg-white/20"
+                  >
+                    다시 시도
+                  </button>
+                </div>
+              )}
+              {!drawingLoading && !drawingError && activeCode && svgMap[activeCode] && (
+                <div
+                  className="max-h-full max-w-full rounded-2xl bg-white p-4 shadow-2xl [&>svg]:h-auto [&>svg]:max-h-[480px] [&>svg]:w-auto [&>svg]:max-w-full"
+                  // SVG는 백엔드 SVGDrawingService가 생성한 신뢰 가능한 자체 컨텐츠
+                  dangerouslySetInnerHTML={{ __html: svgMap[activeCode] }}
+                />
+              )}
+              {!drawingLoading && !drawingError && activeCode && !svgMap[activeCode] && (
+                <div className="h-10 w-10 animate-spin rounded-full border-4 border-[var(--accent-strong)] border-t-transparent" />
+              )}
+            </div>
           </div>
         )}
 
