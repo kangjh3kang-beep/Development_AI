@@ -35,6 +35,10 @@ class IfcGeneratorService:
         project_name: str = "PropAI Project",
         wall_thickness_m: float = 0.2,
         slab_thickness_m: float = 0.2,
+        cores: list[dict[str, float]] | None = None,
+        core_size_m: float = 5.0,
+        corridor_width_m: float = 0.0,
+        windows_per_side: int = 0,
     ) -> bytes:
         """IFC4 모델을 생성해 직렬화된 bytes로 반환한다.
 
@@ -46,6 +50,10 @@ class IfcGeneratorService:
             project_name: IfcProject 이름
             wall_thickness_m: 외벽 두께
             slab_thickness_m: 슬래브 두께
+            cores: 코어 중심 좌표 [{x, y}, ...]. 각 층에 수직 코어(계단·EV) 압출.
+            core_size_m: 코어 한 변 길이(정사각 가정).
+            corridor_width_m: 중복도 폭(>0이면 각 층 중앙 수평 복도 슬래브 추가).
+            windows_per_side: 외벽 변당 창호 개수(>0이면 창 개구부 박스 추가).
 
         Returns:
             IFC SPF(STEP Physical File) 텍스트의 utf-8 bytes.
@@ -103,6 +111,45 @@ class IfcGeneratorService:
                 run("geometry.assign_representation", model, product=wall, representation=wall_solid)
                 self._place_z(model, wall, elev + slab_thickness_m)
                 run("spatial.assign_container", model, products=[wall], relating_structure=storey)
+
+            # 코어(계단+EV): 각 중심좌표에 정사각 박스를 층고만큼 압출 → IfcSpace
+            if cores:
+                cs = core_size_m
+                for ci, c in enumerate(cores):
+                    cx = float(c.get("x", bw / 2)) - cs / 2
+                    cy = float(c.get("y", bd / 2)) - cs / 2
+                    # 건물 경계 내로 클램프
+                    cx = max(wall_thickness_m, min(cx, bw - cs - wall_thickness_m))
+                    cy = max(wall_thickness_m, min(cy, bd - cs - wall_thickness_m))
+                    core = run("root.create_entity", model, ifc_class="IfcColumn", name=f"{i + 1}F-Core-{ci + 1}")
+                    core_solid = self._extrude_rect(model, body, cx, cy, cs, cs, fh)
+                    run("geometry.assign_representation", model, product=core, representation=core_solid)
+                    self._place_z(model, core, elev + slab_thickness_m)
+                    run("spatial.assign_container", model, products=[core], relating_structure=storey)
+
+            # 중복도: 건물 중앙 수평 스트립 슬래브(얇게) — 동선 시각화
+            if corridor_width_m and corridor_width_m > 0:
+                cw = min(corridor_width_m, bd)
+                cy = (bd - cw) / 2
+                corr = run("root.create_entity", model, ifc_class="IfcSlab", name=f"{i + 1}F-Corridor")
+                corr_solid = self._extrude_rect(model, body, wall_thickness_m, cy, bw - 2 * wall_thickness_m, cw, 0.05)
+                run("geometry.assign_representation", model, product=corr, representation=corr_solid)
+                self._place_z(model, corr, elev + slab_thickness_m)
+                run("spatial.assign_container", model, products=[corr], relating_structure=storey)
+
+            # 창호: 정면/배면 외벽에 등간격 개구부 박스(IfcWindow) — 1층 제외(상가/필로티)
+            if windows_per_side and windows_per_side > 0 and i > 0:
+                win_w, win_h, sill = 1.5, 1.2, 0.9
+                step = bw / (windows_per_side + 1)
+                for side_y, side in [(0.0, "F"), (bd - wall_thickness_m, "B")]:
+                    for wj in range(windows_per_side):
+                        wx = step * (wj + 1) - win_w / 2
+                        wx = max(wall_thickness_m, min(wx, bw - win_w - wall_thickness_m))
+                        win = run("root.create_entity", model, ifc_class="IfcWindow", name=f"{i + 1}F-Win-{side}{wj + 1}")
+                        win_solid = self._extrude_rect(model, body, wx, side_y, win_w, wall_thickness_m, win_h)
+                        run("geometry.assign_representation", model, product=win, representation=win_solid)
+                        self._place_z(model, win, elev + slab_thickness_m + sill)
+                        run("spatial.assign_container", model, products=[win], relating_structure=storey)
 
         logger.info(
             "IFC 생성 완료",
@@ -170,11 +217,18 @@ class IfcGeneratorService:
 
 
 def build_ifc_from_mass(mass: dict[str, Any], project_name: str = "PropAI Project") -> bytes:
-    """AutoDesignEngine.compute_optimal_mass() 결과 dict로 IFC를 생성하는 편의 함수."""
+    """AutoDesignEngine 매스(+선택 core_layout) dict로 IFC를 생성하는 편의 함수.
+
+    mass에 core_positions·corridor_width_m·windows_per_side가 있으면 실내 요소도 압출.
+    """
     return IfcGeneratorService().generate(
         building_width_m=float(mass.get("building_width_m", 10.0)),
         building_depth_m=float(mass.get("building_depth_m", 10.0)),
         num_floors=int(mass.get("num_floors", 5)),
         floor_height_m=float(mass.get("floor_height_m", 3.0)),
         project_name=project_name,
+        cores=mass.get("core_positions"),
+        core_size_m=float(mass.get("core_size_m", 5.0)),
+        corridor_width_m=float(mass.get("corridor_width_m", 0.0)),
+        windows_per_side=int(mass.get("windows_per_side", 0)),
     )

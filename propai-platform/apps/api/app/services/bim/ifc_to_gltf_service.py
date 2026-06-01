@@ -36,30 +36,35 @@ class IfcToGltfService:
             tf.write(ifc_bytes)
             path = tf.name
 
+        # IFC 요소 타입 → 그룹(색상 구분용). 그룹별 verts/indices 누적.
+        groups: dict[str, dict] = {}
+
         try:
             f = ifcopenshell.open(path)
             settings = ifcopenshell.geom.settings()
             settings.set(settings.USE_WORLD_COORDS, True)
 
-            all_verts: list[float] = []
-            all_indices: list[int] = []
-            vert_offset = 0
-
             it = ifcopenshell.geom.iterator(settings, f)
             if it.initialize():
                 while True:
-                    geom = it.get().geometry
-                    verts = geom.verts  # [x0,y0,z0, x1,y1,z1, ...] (IFC: +Z up)
-                    faces = geom.faces  # [i0,i1,i2, ...]
+                    shape = it.get()
+                    geom = shape.geometry
+                    # 요소 타입 분류(prefix로 그룹핑)
+                    try:
+                        ifc_type = f.by_id(shape.id).is_a()
+                    except Exception:  # noqa: BLE001
+                        ifc_type = "IfcBuildingElement"
+                    grp = self._group_of(ifc_type)
+                    g = groups.setdefault(grp, {"verts": [], "indices": [], "offset": 0})
+
+                    verts = geom.verts
+                    faces = geom.faces
                     n_v = len(verts) // 3
                     # 축 변환: IFC(x,y,z) → glTF(x, z, -y)  (+Z up → +Y up)
                     for vi in range(n_v):
-                        x = verts[vi * 3]
-                        y = verts[vi * 3 + 1]
-                        z = verts[vi * 3 + 2]
-                        all_verts.extend([x, z, -y])
-                    all_indices.extend(idx + vert_offset for idx in faces)
-                    vert_offset += n_v
+                        g["verts"].extend([verts[vi * 3], verts[vi * 3 + 2], -verts[vi * 3 + 1]])
+                    g["indices"].extend(idx + g["offset"] for idx in faces)
+                    g["offset"] += n_v
                     if not it.next():
                         break
         finally:
@@ -67,79 +72,125 @@ class IfcToGltfService:
 
             os.unlink(path)
 
-        if not all_verts or not all_indices:
+        if not groups:
             raise ValueError("IFC에서 추출된 mesh가 없습니다.")
 
-        positions = np.array(all_verts, dtype=np.float32).reshape(-1, 3)
-        indices = np.array(all_indices, dtype=np.uint32)
+        # 전체 중심 계산(모든 그룹 공통 이동 — 상대 위치 보존)
+        all_pos = np.concatenate(
+            [np.array(g["verts"], dtype=np.float32).reshape(-1, 3) for g in groups.values()]
+        )
+        center = all_pos.mean(axis=0)
 
-        # 모델 중심을 원점으로 이동(뷰어 카메라 정렬 용이)
-        center = positions.mean(axis=0)
-        positions = positions - center
+        prims = []
+        total_v = total_t = 0
+        for name, g in groups.items():
+            pos = np.array(g["verts"], dtype=np.float32).reshape(-1, 3) - center
+            idx = np.array(g["indices"], dtype=np.uint32)
+            prims.append((name, pos, idx))
+            total_v += len(pos)
+            total_t += len(idx) // 3
 
-        glb = self._pack_glb(positions, indices)
+        glb = self._pack_glb_multi(prims)
         logger.info(
             "IFC→glTF 변환 완료",
-            verts=len(positions), tris=len(indices) // 3, glb_bytes=len(glb),
+            groups=list(groups.keys()), verts=total_v, tris=total_t, glb_bytes=len(glb),
         )
         return glb
 
-    def _pack_glb(self, positions, indices) -> bytes:
-        """positions(Nx3 float32) + indices(uint32) → glTF binary(.glb)."""
+    @staticmethod
+    def _group_of(ifc_type: str) -> str:
+        """IFC 타입을 색상 그룹으로 매핑."""
+        t = ifc_type.lower()
+        if "window" in t:
+            return "window"
+        if "wall" in t:
+            return "wall"
+        if "column" in t or "space" in t:  # 코어(IfcColumn)
+            return "core"
+        if "slab" in t:
+            return "slab"
+        return "other"
+
+    # 요소 그룹별 색상(RGBA, 0~1) — 프론트 색 구분
+    _GROUP_COLORS = {
+        "wall": [0.78, 0.78, 0.80, 1.0],     # 회색(외벽)
+        "slab": [0.55, 0.58, 0.62, 1.0],     # 진회색(슬래브)
+        "core": [0.95, 0.62, 0.20, 0.95],    # 주황(코어)
+        "window": [0.40, 0.70, 0.95, 0.55],  # 반투명 청색(창호)
+        "other": [0.60, 0.65, 0.70, 1.0],
+    }
+
+    def _pack_glb_multi(self, prims: list) -> bytes:
+        """[(group_name, positions Nx3, indices)] → 그룹별 색상 머티리얼 glTF(.glb)."""
         import numpy as np
         import pygltflib
 
-        idx_bytes = indices.astype(np.uint32).tobytes()
-        pos_bytes = positions.astype(np.float32).tobytes()
-        # 4바이트 정렬
-        idx_pad = (4 - len(idx_bytes) % 4) % 4
-        blob = idx_bytes + b"\x00" * idx_pad + pos_bytes
+        blob = b""
+        buffer_views = []
+        accessors = []
+        materials = []
+        primitives = []
+
+        def _append(data: bytes) -> tuple[int, int]:
+            nonlocal blob
+            offset = len(blob)
+            pad = (4 - len(data) % 4) % 4
+            blob += data + b"\x00" * pad
+            return offset, len(data)
+
+        for name, pos, idx in prims:
+            if len(pos) == 0 or len(idx) == 0:
+                continue
+            # indices
+            idx_off, idx_len = _append(idx.astype(np.uint32).tobytes())
+            bv_idx = len(buffer_views)
+            buffer_views.append(pygltflib.BufferView(
+                buffer=0, byteOffset=idx_off, byteLength=idx_len,
+                target=pygltflib.ELEMENT_ARRAY_BUFFER,
+            ))
+            acc_idx = len(accessors)
+            accessors.append(pygltflib.Accessor(
+                bufferView=bv_idx, componentType=pygltflib.UNSIGNED_INT,
+                count=int(idx.size), type=pygltflib.SCALAR,
+                max=[int(idx.max())], min=[int(idx.min())],
+            ))
+            # positions
+            pos_off, pos_len = _append(pos.astype(np.float32).tobytes())
+            bv_pos = len(buffer_views)
+            buffer_views.append(pygltflib.BufferView(
+                buffer=0, byteOffset=pos_off, byteLength=pos_len,
+                target=pygltflib.ARRAY_BUFFER,
+            ))
+            acc_pos = len(accessors)
+            accessors.append(pygltflib.Accessor(
+                bufferView=bv_pos, componentType=pygltflib.FLOAT,
+                count=int(pos.shape[0]), type=pygltflib.VEC3,
+                max=pos.max(axis=0).tolist(), min=pos.min(axis=0).tolist(),
+            ))
+            # material(그룹 색상)
+            color = self._GROUP_COLORS.get(name, self._GROUP_COLORS["other"])
+            mat_idx = len(materials)
+            materials.append(pygltflib.Material(
+                name=name,
+                pbrMetallicRoughness=pygltflib.PbrMetallicRoughness(
+                    baseColorFactor=color, metallicFactor=0.1, roughnessFactor=0.7,
+                ),
+                alphaMode="BLEND" if color[3] < 1.0 else "OPAQUE",
+                doubleSided=True,
+            ))
+            primitives.append(pygltflib.Primitive(
+                attributes=pygltflib.Attributes(POSITION=acc_pos),
+                indices=acc_idx, material=mat_idx, mode=4,
+            ))
 
         gltf = pygltflib.GLTF2(
             scene=0,
             scenes=[pygltflib.Scene(nodes=[0])],
             nodes=[pygltflib.Node(mesh=0)],
-            meshes=[
-                pygltflib.Mesh(
-                    primitives=[
-                        pygltflib.Primitive(
-                            attributes=pygltflib.Attributes(POSITION=1),
-                            indices=0,
-                            mode=4,  # TRIANGLES
-                        )
-                    ]
-                )
-            ],
-            accessors=[
-                # 0: indices
-                pygltflib.Accessor(
-                    bufferView=0,
-                    componentType=pygltflib.UNSIGNED_INT,
-                    count=int(indices.size),
-                    type=pygltflib.SCALAR,
-                    max=[int(indices.max())],
-                    min=[int(indices.min())],
-                ),
-                # 1: positions
-                pygltflib.Accessor(
-                    bufferView=1,
-                    componentType=pygltflib.FLOAT,
-                    count=int(positions.shape[0]),
-                    type=pygltflib.VEC3,
-                    max=positions.max(axis=0).tolist(),
-                    min=positions.min(axis=0).tolist(),
-                ),
-            ],
-            bufferViews=[
-                pygltflib.BufferView(
-                    buffer=0, byteOffset=0, byteLength=len(idx_bytes),
-                    target=pygltflib.ELEMENT_ARRAY_BUFFER,
-                ),
-                pygltflib.BufferView(
-                    buffer=0, byteOffset=len(idx_bytes) + idx_pad, byteLength=len(pos_bytes),
-                    target=pygltflib.ARRAY_BUFFER,
-                ),
-            ],
+            meshes=[pygltflib.Mesh(primitives=primitives)],
+            materials=materials,
+            accessors=accessors,
+            bufferViews=buffer_views,
             buffers=[pygltflib.Buffer(byteLength=len(blob))],
         )
         gltf.set_binary_blob(blob)

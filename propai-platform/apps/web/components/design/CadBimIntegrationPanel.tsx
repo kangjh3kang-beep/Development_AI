@@ -83,16 +83,12 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
       const buf = await res.arrayBuffer();
       const loader = new GLTFLoader();
       const gltf = await loader.parseAsync(buf, "");
-      // 머티리얼 부여(백엔드 glb는 지오메트리만) + 중심 정렬
+      // 백엔드 glb는 요소(벽/슬래브/코어/창호)별 색상 머티리얼을 이미 포함.
+      // 그림자 수신/투사만 켜서 품질을 높인다(색상은 보존).
       gltf.scene.traverse((obj) => {
         if ((obj as THREE.Mesh).isMesh) {
-          (obj as THREE.Mesh).material = new THREE.MeshStandardMaterial({
-            color: "#5b9bd5",
-            metalness: 0.3,
-            roughness: 0.55,
-            transparent: true,
-            opacity: 0.92,
-          });
+          (obj as THREE.Mesh).castShadow = true;
+          (obj as THREE.Mesh).receiveShadow = true;
         }
       });
       setBimScene(gltf.scene);
