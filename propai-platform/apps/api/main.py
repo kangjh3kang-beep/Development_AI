@@ -354,6 +354,16 @@ try:
 except Exception as e:
     logger.warning("app/routers/project_dashboard 로드 실패", error=str(e))
 
+# v61 설계도면: /design/{id}/generate-full-set·drawings/* (CadExportPanel/ExportPanel
+# 호출, 자체 prefix=/api/v1/design). 기존 design.py와 하위경로 분리라 충돌0(라이브확인).
+# import·의존(svg_drawing/parametric_cad/seed) 정상 로드 확인 후 마운트.
+try:
+    from apps.api.app.routers.design_v61 import router as design_v61_router
+
+    app.include_router(design_v61_router, tags=["v61 설계도면"])
+except Exception as e:
+    logger.warning("app/routers/design_v61 로드 실패", error=str(e))
+
 # ──────────────────────────────────────
 # API v2 라우터
 # ──────────────────────────────────────
