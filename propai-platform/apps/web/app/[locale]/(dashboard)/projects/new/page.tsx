@@ -36,35 +36,42 @@ export default function NewProjectPage() {
     if (!name.trim() || !location.trim()) return;
     setIsSubmitting(true);
 
-    // 주소 선택 시 store에 이미 채워진 부지분석 데이터를 보존한다.
-    const currentSiteAnalysis = useProjectContextStore.getState().siteAnalysis;
+    try {
+      // 주소 선택 시 store에 이미 채워진 부지분석 데이터를 보존한다.
+      const currentSiteAnalysis = useProjectContextStore.getState().siteAnalysis;
 
-    const projectId = addProject({
-      name,
-      address: location,
-      pnu: currentSiteAnalysis?.pnu ?? "",
-      area: currentSiteAnalysis?.landAreaSqm ? String(currentSiteAnalysis.landAreaSqm) : "0",
-      type: "mixed",
-      siteImageUrl: siteImageUrl || undefined,
-    });
+      const projectId = addProject({
+        name,
+        address: location,
+        pnu: currentSiteAnalysis?.pnu ?? "",
+        area: currentSiteAnalysis?.landAreaSqm ? String(currentSiteAnalysis.landAreaSqm) : "0",
+        type: "mixed",
+        siteImageUrl: siteImageUrl || undefined,
+      });
 
-    // setProject는 프로젝트 전환 시 cross-module 데이터를 초기화하므로
-    // 부지분석 데이터를 복원한다. 최소한 주소는 항상 전달되도록 보장.
-    setProject(projectId, name, "draft");
-    const restored = currentSiteAnalysis ?? {
-      estimatedValue: null,
-      landAreaSqm: null,
-      zoneCode: null,
-      address: location,
-      pnu: null,
-    };
-    if (!restored.address) restored.address = location;
-    useProjectContextStore.getState().updateSiteAnalysis(restored);
+      // setProject는 프로젝트 전환 시 cross-module 데이터를 초기화하므로
+      // 부지분석 데이터를 복원한다. 최소한 주소는 항상 전달되도록 보장.
+      setProject(projectId, name, "draft");
+      const restored = currentSiteAnalysis ?? {
+        estimatedValue: null,
+        landAreaSqm: null,
+        zoneCode: null,
+        address: location,
+        pnu: null,
+      };
+      if (!restored.address) restored.address = location;
+      useProjectContextStore.getState().updateSiteAnalysis(restored);
 
-    // 프로젝트 상세 허브로 이동 — ?new=1로 부지분석 자동 시작을 알린다.
-    setTimeout(() => {
+      // 프로젝트 상세 허브로 이동 — ?new=1로 부지분석 자동 시작을 알린다.
+      // router.push는 await하지 않으므로 즉시 이동을 시작한다(1.2초 지연 제거 —
+      // 과거 지연이 "분석 시작 중"이 멈춘 것처럼 보이게 했음).
       router.push(`/${locale}/projects/${projectId}?new=1`);
-    }, 1200);
+    } catch (err) {
+      // store 저장/이동 실패 시 버튼을 풀어 사용자가 재시도할 수 있게 한다
+      // (영원히 "분석 시작 중..."에 갇히는 것 방지).
+      console.error("프로젝트 생성 실패:", err);
+      setIsSubmitting(false);
+    }
   };
 
   return (

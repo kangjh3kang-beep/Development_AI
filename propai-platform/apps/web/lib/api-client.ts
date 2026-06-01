@@ -37,7 +37,13 @@ export class ApiClientError extends Error {
 export type ApiRequestOptions = Omit<RequestInit, "body"> & {
   body?: BodyInit | Record<string, unknown> | null;
   useMock?: boolean;
+  /** 요청 타임아웃(ms). 미지정 시 기본값. 0이면 무제한. */
+  timeoutMs?: number;
 };
+
+// 백엔드 무응답 시 프론트가 영원히 대기("분석 중...")하는 것을 막는 기본 타임아웃.
+// LLM·파이프라인 단계가 길 수 있어 넉넉히 두되, 무한대기는 차단한다.
+const DEFAULT_TIMEOUT_MS = 120_000;
 
 function isAbsoluteUrl(path: string) {
   return /^https?:\/\//.test(path);
@@ -132,19 +138,42 @@ async function request<T>(path: string, options: ApiRequestOptions = {}) {
     }
   }
 
-  const response = await fetch(getRequestUrl(path), {
-    ...options,
-    method,
-    body: createRequestBody(options.body),
-    headers: {
-      Accept: "application/json",
-      ...(shouldSetJsonContentType(options.body)
-        ? { "Content-Type": "application/json" }
-        : {}),
-      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
-      ...options.headers,
-    },
-  });
+  // 무한 대기 차단: AbortController로 타임아웃. timeoutMs=0이면 무제한.
+  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const controller = timeoutMs > 0 && !options.signal ? new AbortController() : null;
+  const timer =
+    controller != null
+      ? setTimeout(() => controller.abort(), timeoutMs)
+      : null;
+
+  let response: Response;
+  try {
+    response = await fetch(getRequestUrl(path), {
+      ...options,
+      method,
+      body: createRequestBody(options.body),
+      signal: options.signal ?? controller?.signal,
+      headers: {
+        Accept: "application/json",
+        ...(shouldSetJsonContentType(options.body)
+          ? { "Content-Type": "application/json" }
+          : {}),
+        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+        ...options.headers,
+      },
+    });
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new ApiClientError(
+        `요청 시간이 초과되었습니다(${Math.round(timeoutMs / 1000)}초). 서버 응답이 지연되고 있습니다.`,
+        408,
+        null,
+      );
+    }
+    throw err;
+  } finally {
+    if (timer != null) clearTimeout(timer);
+  }
 
   const payload = await parseResponse(response);
 
