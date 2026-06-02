@@ -146,25 +146,27 @@ export default async function DashboardLayout({
       ? dictionary.workspace.modeLive
       : dictionary.workspace.modeMock;
 
-  // I. 프로젝트 전주기 (핵심 개발 매니지먼트)
+  // ── IA 전면 재편(B안): 중복·깨진 링크 제거, 기능군 명확화 ──
+  // 프로젝트 상세 전용(설계/BIM/공사비/수지/세금/ESG/인허가/계약/시공/운영 등)은
+  // '프로젝트 관리'→프로젝트 선택 후 탭으로 진입. 최상위에는 독립 진입점만 둔다.
+
+  // I. 프로젝트 분석 (핵심 워크플로우)
   const lifecycleNavigation = [
     { href: `/${locale}`, label: "대시보드", icon: <IconDashboard /> },
     { href: `/${locale}/projects`, label: "프로젝트 관리", icon: <IconProject /> },
-    { href: `/${locale}/projects/site-analysis`, label: "입지 및 사업성 분석", icon: <IconSiteAnalysis /> },
     { href: `/${locale}/market-insights`, label: "마켓 인텔리전스", icon: <IconMarket /> },
-    { href: `/${locale}/projects/design`, label: "AI 설계 & BIM", icon: <IconDesign /> },
     { href: `/${locale}/permits`, label: "인허가 자동화", icon: <IconPermit /> },
     { href: `/${locale}/regulations`, label: "부동산 규제 연동", icon: <IconRegulation /> },
   ];
 
-  // II. 전략 분석 (수익성 및 ESG)
+  // II. 수익·비용·ESG
   const analyticsNavigation = [
     { href: `/${locale}/analytics/investment`, label: "투자 수익성 (ROI)", icon: <IconROI /> },
-    { href: `/${locale}/analytics/esg`, label: "ESG / 탄소 경영", icon: <IconESG /> },
     { href: `/${locale}/analytics/cost`, label: "공사비 정밀 분석", icon: <IconCost /> },
+    { href: `/${locale}/analytics/esg`, label: "ESG / 탄소 경영", icon: <IconESG /> },
   ];
 
-  // III. 자산 운영 (운영 및 물권)
+  // III. 입찰·자산 운영
   const operationsNavigation = [
     { href: `/${locale}/auction`, label: "경공매 AI 분석", icon: <IconAuction /> },
     { href: `/${locale}/g2b`, label: "공공입찰 (나라장터)", icon: <IconAuction /> },
@@ -175,7 +177,7 @@ export default async function DashboardLayout({
     { href: `/${locale}/dashboard/kdx`, label: "국가 데이터 거점 (KDX)", icon: <IconKDX /> },
   ];
 
-  // IV. 엔터프라이즈 지원 (AI/협업/보안)
+  // IV. 시스템·지원
   const enterpriseNavigation = [
     { href: `/${locale}/agent`, label: "AI 오케스트레이터", icon: <IconAI /> },
     { href: `/${locale}/webrtc`, label: "실시간 협업", icon: <IconWebRTC /> },
@@ -193,10 +195,10 @@ export default async function DashboardLayout({
   ];
 
   const sections = [
-    { title: "개발 전주기 매니지먼트", items: lifecycleNavigation },
-    { title: "수익성 및 ESG 분석", items: analyticsNavigation },
-    { title: "자산 운영 및 물권", items: operationsNavigation },
-    { title: "엔터프라이즈 지원", items: enterpriseNavigation },
+    { title: "프로젝트 분석", items: lifecycleNavigation },
+    { title: "수익·비용·ESG", items: analyticsNavigation },
+    { title: "입찰·자산 운영", items: operationsNavigation },
+    { title: "시스템·지원", items: enterpriseNavigation },
     { title: "관리", items: adminNavigation, adminOnly: true },
   ];
 
