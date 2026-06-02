@@ -65,9 +65,9 @@ const SECTIONS: SectionDef[] = [
     sourceStage: "site_analysis",
     fields: [
       { key: "land_area_sqm", label: "대지면적", unit: "m\u00B2", editable: true, format: fmtArea },
-      { key: "zone_code", label: "용도지역", unit: "", editable: false },
-      { key: "pnu", label: "PNU 코드", unit: "", editable: false },
-      { key: "estimated_value", label: "추정 지가", unit: "", editable: true, format: fmtNum },
+      { key: "basic.zone_type", label: "용도지역", unit: "", editable: false },
+      { key: "basic.pnu", label: "PNU 코드", unit: "", editable: false },
+      { key: "pricing.official_price_per_sqm", label: "추정 지가(㎡당)", unit: "원", editable: false, format: fmtNum },
     ],
   },
   {
@@ -75,14 +75,14 @@ const SECTIONS: SectionDef[] = [
     label: "2. 입지분석",
     sourceStage: "site_analysis",
     fields: [
-      { key: "distance_subway_m", label: "지하철 거리", unit: "m", editable: false, format: fmtNum },
-      { key: "distance_school_m", label: "학교 거리", unit: "m", editable: false, format: fmtNum },
-      { key: "nearby_amenities", label: "주변 편의시설", unit: "개", editable: false },
-      { key: "road_width_m", label: "접도 너비", unit: "m", editable: false },
-      { key: "location_grade", label: "입지 등급", unit: "", editable: false },
-      { key: "location_score", label: "입지 점수", unit: "점", editable: false },
-      { key: "commercial_grade", label: "상권 등급", unit: "", editable: false },
-      { key: "commercial_stores", label: "반경 500m 점포수", unit: "개", editable: false },
+      { key: "infrastructure.nearest_subway.name", label: "최근접 지하철", unit: "", editable: false },
+      { key: "infrastructure.nearest_subway.distance_m", label: "지하철 거리", unit: "m", editable: false, format: fmtNum },
+      { key: "infrastructure.schools.0.name", label: "최근접 학교", unit: "", editable: false },
+      { key: "infrastructure.schools.0.distance_m", label: "학교 거리", unit: "m", editable: false, format: fmtNum },
+      { key: "basic.land_category", label: "지목", unit: "", editable: false },
+      { key: "basic.owner_type", label: "소유구분", unit: "", editable: false },
+      { key: "max_bcr", label: "건폐율 한도", unit: "%", editable: false, format: fmtPct },
+      { key: "max_far", label: "용적률 한도", unit: "%", editable: false, format: fmtPct },
     ],
   },
   {
@@ -113,7 +113,7 @@ const SECTIONS: SectionDef[] = [
     sourceStage: "cost",
     fields: [
       { key: "total_construction_cost", label: "총공사비", unit: "", editable: true, format: fmtNum },
-      { key: "cost_per_sqm", label: "m\u00B2당 공사비", unit: "원/m\u00B2", editable: false, format: fmtNum },
+      { key: "cost_per_pyeong", label: "평당 공사비", unit: "원/평", editable: false, format: fmtNum },
       { key: "direct_cost", label: "직접공사비", unit: "", editable: false, format: fmtNum },
       { key: "construction_months", label: "공사기간", unit: "개월", editable: false },
     ],
@@ -304,7 +304,16 @@ export function PipelineResultDetail({ result, onRerun }: PipelineResultDetailPr
     (sourceStage: string, fieldKey: string) => {
       const ov = overrides[sourceStage]?.[fieldKey];
       if (ov !== undefined) return ov;
-      return stageDataMap[sourceStage]?.[fieldKey];
+      const root = stageDataMap[sourceStage];
+      if (!root) return undefined;
+      // 점(.) 경로 + 배열 인덱스 지원 (site_analysis 등 중첩 구조 대응)
+      if (!fieldKey.includes(".")) return root[fieldKey];
+      let cur: unknown = root;
+      for (const part of fieldKey.split(".")) {
+        if (cur == null) return undefined;
+        cur = Array.isArray(cur) ? (cur as unknown[])[Number(part)] : (cur as Record<string, unknown>)[part];
+      }
+      return cur;
     },
     [stageDataMap, overrides],
   );

@@ -494,6 +494,7 @@ export function ProjectPipelinePanel({
         setWorkflowPhase("site_review");
         setExpandedStage("site_analysis");
         saveToStore(result);
+        addToHistory(result, address.trim());  // 부지분석 단독 실행도 이력 저장
       } else {
         setError("부지분석에 실패했습니다. 주소를 확인해주세요.");
       }
@@ -508,7 +509,7 @@ export function ProjectPipelinePanel({
     } finally {
       setIsRunning(false);
     }
-  }, [address, projectId, siteAnalysis, saveToStore]);
+  }, [address, projectId, siteAnalysis, saveToStore, addToHistory]);
 
   // STEP 2: 나머지 단계 진행 (부지분석 결과 확인 후)
   const runRemainingStages = useCallback(async () => {
