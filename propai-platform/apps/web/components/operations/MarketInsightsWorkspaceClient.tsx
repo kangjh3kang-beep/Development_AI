@@ -157,6 +157,7 @@ export function MarketInsightsWorkspaceClient() {
   const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
   const [report, setReport] = useState<any | null>(null);
   const [genState, setGenState] = useState<"" | "report" | "pdf" | "pptx">("");
+  const [useLlm, setUseLlm] = useState(true); // LLM AI 분석 포함 여부(사용자 선택)
 
   // 시장조사보고서: 구조화 미리보기
   const generateReport = useCallback(async () => {
@@ -165,7 +166,7 @@ export function MarketInsightsWorkspaceClient() {
     setGenState("report");
     try {
       const r = await apiClient.post<any>("/market/report", {
-        body: { address: addr, pnu: siteAnalysis?.pnu || undefined },
+        body: { address: addr, pnu: siteAnalysis?.pnu || undefined, use_llm: useLlm },
         useMock: false, timeoutMs: 120000,
       });
       setReport(r);
@@ -174,7 +175,7 @@ export function MarketInsightsWorkspaceClient() {
     } finally {
       setGenState("");
     }
-  }, [siteAnalysis, searchAddr]);
+  }, [siteAnalysis, searchAddr, useLlm]);
 
   // PDF/PPTX 다운로드(바이너리)
   const downloadReport = useCallback(async (fmt: "pdf" | "pptx") => {
@@ -186,7 +187,7 @@ export function MarketInsightsWorkspaceClient() {
       const res = await fetch(`${marketApiBase()}/market/report/${fmt}`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-        body: JSON.stringify({ address: addr, pnu: siteAnalysis?.pnu || undefined }),
+        body: JSON.stringify({ address: addr, pnu: siteAnalysis?.pnu || undefined, use_llm: useLlm }),
       });
       if (!res.ok) throw new Error(String(res.status));
       const blob = await res.blob();
@@ -201,7 +202,7 @@ export function MarketInsightsWorkspaceClient() {
     } finally {
       setGenState("");
     }
-  }, [siteAnalysis, searchAddr]);
+  }, [siteAnalysis, searchAddr, useLlm]);
 
   // 검색입력(카카오) 주소 선택 시: AVM 시세추정 조회(지도는 store 주소로 자동 갱신)
   const onAddress = useCallback(async (addr: string) => {
@@ -312,7 +313,12 @@ export function MarketInsightsWorkspaceClient() {
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <p className="text-sm font-bold text-[var(--text-primary)]">📑 시장조사보고서</p>
-                <p className="mt-0.5 text-xs text-[var(--text-secondary)]">주변 실거래·시세·입지·AI 해석을 통합한 심층 보고서를 PDF/PPT로 생성합니다.</p>
+                <p className="mt-0.5 text-xs text-[var(--text-secondary)]">주변 실거래·시세·입지를 통합한 심층 보고서를 PDF/PPT로 생성합니다.</p>
+                <label className="mt-2 inline-flex cursor-pointer items-center gap-2 text-xs font-semibold text-[var(--text-secondary)]">
+                  <input type="checkbox" checked={useLlm} onChange={(e) => setUseLlm(e.target.checked)}
+                    className="h-4 w-4 accent-[var(--accent-strong)]" disabled={!!genState} />
+                  🤖 AI 분석 포함 <span className="font-normal text-[var(--text-tertiary)]">(LLM이 시장요약·기회·리스크·가격동향을 작성)</span>
+                </label>
               </div>
               <div className="flex flex-wrap gap-2">
                 <button onClick={generateReport} disabled={!!genState}

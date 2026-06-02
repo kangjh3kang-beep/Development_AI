@@ -188,3 +188,21 @@ async def get_permit_status(
             detail="Permit submission was not found",
         )
     return PermitStatusResponse.model_validate(result)
+
+
+class AIPermitAnalysisRequest(BaseModel):
+    """인.허가 AI 분석 요청."""
+
+    address: str
+    pnu: str | None = None
+    site: dict[str, Any] | None = None  # 부지분석 결과(있으면 재수집 생략)
+
+
+@router.post("/ai-analysis")
+async def ai_permit_analysis(req: AIPermitAnalysisRequest) -> dict[str, Any]:
+    """부지분석+조례+상위법령을 종합해 개발방식별 인허가 가능성·문제점·해결방안을 AI 분석."""
+    from app.services.permit.permit_analysis_service import PermitAnalysisService
+
+    if not req.address or not req.address.strip():
+        raise HTTPException(status_code=400, detail="주소가 필요합니다.")
+    return await PermitAnalysisService().analyze(req.address.strip(), req.site or {})

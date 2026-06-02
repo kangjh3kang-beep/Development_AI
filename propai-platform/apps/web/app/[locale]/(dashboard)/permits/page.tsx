@@ -1,5 +1,5 @@
+import { PermitAiWorkspaceClient } from "@/components/operations/PermitAiWorkspaceClient";
 import { PermitsWorkspaceClient } from "@/components/operations/PermitsWorkspaceClient";
-import { getDictionary } from "@/i18n/get-dictionary";
 import { isValidLocale, type Locale } from "@/i18n/config";
 
 type PermitsPageProps = {
@@ -15,6 +15,7 @@ export default async function PermitsPage({ params }: PermitsPageProps) {
 
   return (
     <div className="grid gap-6">
+      <PermitAiWorkspaceClient locale={locale as Locale} />
       <PermitsWorkspaceClient locale={locale as Locale} />
     </div>
   );

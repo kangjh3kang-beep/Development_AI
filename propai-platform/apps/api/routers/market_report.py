@@ -16,6 +16,7 @@ class MarketReportRequest(BaseModel):
     pnu: str | None = None
     bcode: str | None = None
     jibun_address: str | None = None
+    use_llm: bool = True  # AI 내러티브 분석 포함 여부(사용자 선택)
 
 
 def _pnu_from_bcode(bcode: str, jibun: str) -> str | None:
@@ -40,14 +41,14 @@ def _resolve(req: MarketReportRequest) -> tuple[str, str | None]:
 @router.post("/report")
 async def market_report(req: MarketReportRequest):
     lawd_cd, pnu = _resolve(req)
-    return await MarketReportService().build_report(req.address, lawd_cd, pnu)
+    return await MarketReportService().build_report(req.address, lawd_cd, pnu, use_llm=req.use_llm)
 
 
 @router.post("/report/pdf")
 async def market_report_pdf(req: MarketReportRequest):
     lawd_cd, pnu = _resolve(req)
     svc = MarketReportService()
-    rep = await svc.build_report(req.address, lawd_cd, pnu)
+    rep = await svc.build_report(req.address, lawd_cd, pnu, use_llm=req.use_llm)
     pdf = svc.to_pdf(rep)
     return StreamingResponse(
         iter([pdf]), media_type="application/pdf",
@@ -59,7 +60,7 @@ async def market_report_pdf(req: MarketReportRequest):
 async def market_report_pptx(req: MarketReportRequest):
     lawd_cd, pnu = _resolve(req)
     svc = MarketReportService()
-    rep = await svc.build_report(req.address, lawd_cd, pnu)
+    rep = await svc.build_report(req.address, lawd_cd, pnu, use_llm=req.use_llm)
     pptx = svc.to_pptx(rep)
     return StreamingResponse(
         iter([pptx]),

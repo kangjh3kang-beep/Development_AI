@@ -97,7 +97,7 @@ class MarketReportService:
         trend_sorted = sorted(trend, key=lambda t: t["ym"])
         return {"months": months, "trade": trade, "rent": rent, "apt_trend": trend_sorted}
 
-    async def _narrative(self, ctx: dict[str, Any]) -> dict[str, str]:
+    async def _narrative(self, ctx: dict[str, Any]) -> dict[str, Any]:
         """AI 시장 해석(요약·기회·리스크). 실패 시 구조화 폴백."""
         try:
             from app.services.ai.llm_provider import get_llm
@@ -119,7 +119,7 @@ class MarketReportService:
             logger.warning("시장 내러티브 생성 실패, 구조화 폴백", err=str(e)[:80])
             return {"summary": "수집된 실거래·시세 데이터를 기반으로 한 시장 현황입니다.", "opportunities": [], "risks": [], "price_trend": ""}
 
-    async def build_report(self, address: str, lawd_cd: str, pnu: str | None = None) -> dict[str, Any]:
+    async def build_report(self, address: str, lawd_cd: str, pnu: str | None = None, use_llm: bool = True) -> dict[str, Any]:
         from app.services.land_intelligence.land_info_service import LandInfoService
 
         comp = {}
@@ -164,7 +164,10 @@ class MarketReportService:
             "apt_trend": stats.get("apt_trend"),
             "subway": (infra.get("nearest_subway") or {}).get("name") if isinstance(infra, dict) else None,
         }
-        narrative = await self._narrative(ctx)
+        narrative = await self._narrative(ctx) if use_llm else {
+            "summary": "수집된 실거래·시세 데이터 기반 시장 현황입니다. (AI 분석 미포함)",
+            "opportunities": [], "risks": [], "price_trend": "",
+        }
 
         return {
             "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
