@@ -14,8 +14,11 @@ from uuid import UUID
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.g2b_bid import G2BAwardStat, G2BBid
+from app.models.g2b_bid import G2BAwardStat, G2BBid, G2BBidAnalysis
 from app.schemas.g2b_bid import (
+    G2BAnalysisHistoryDetail,
+    G2BAnalysisHistoryItem,
+    G2BAnalysisHistoryResponse,
     G2BAwardStatsResponse,
     G2BAwardStatResponse,
     G2BBidFilter,
@@ -104,20 +107,48 @@ INCLUDE_ORG_KEYWORDS: list[str] = [
     "재개발조합", "재건축조합", "정비사업조합", "주택재개발", "주택재건축",
 ]
 
+# ── 소분류 태그(개발사업 관점 세분화) ──
+# 각 태그는 대분류(CATEGORY_GROUPS)에 묶여 프론트에서 대/소분류로 노출된다.
 CATEGORY_MAP: dict[str, list[str]] = {
-    "재개발·재건축": [
-        "재개발", "재건축", "정비사업", "주택정비", "도시정비", "도시재생",
-        "가로주택", "소규모재건축", "지역주택", "재정비촉진", "뉴타운",
-        "주거환경개선", "도시개발", "택지개발",
-    ],
-    "건축설계": [
+    # 설계·감리(엔지니어링)
+    "설계": [
         "건축설계", "실시설계", "기본설계", "설계용역", "설계", "턴키",
-        "구조계산", "도시설계", "경관",
+        "구조계산", "도시설계", "경관설계", "계획설계", "BIM",
     ],
-    "건축시공": [
-        "신축", "증축", "개축", "대수선", "건설", "시공", "공사", "건축공사",
+    "감리": [
+        "감리", "건설사업관리", "책임감리", "CM", "공사감독",
+    ],
+    "측량·진단": [
+        "측량", "지적", "안전진단", "구조안전", "정밀안전", "내진",
+        "엔지니어링", "지질조사", "지반조사", "교통영향", "환경영향", "타당성",
+    ],
+    # 정비·도시개발(개발방식)
+    "재개발": [
+        "재개발", "주택재개발", "도시정비", "재정비촉진", "뉴타운",
+        "주거환경개선", "주거환경정비",
+    ],
+    "재건축": [
+        "재건축", "주택재건축", "소규모재건축", "공동주택재건축",
+    ],
+    "모아주택": [
+        "모아주택", "모아타운", "소규모주택정비", "자율주택", "소규모정비",
+    ],
+    "가로주택": [
+        "가로주택",
+    ],
+    "역세권": [
+        "역세권", "역세권개발", "역세권청년주택", "역세권활성화", "역세권시프트",
+        "고밀복합", "복합환승",
+    ],
+    "도시개발·택지": [
+        "도시개발", "택지개발", "지구단위", "도시재생", "공공주택지구",
+        "산업단지", "도시첨단",
+    ],
+    # 시공(공종)
+    "건축공사": [
+        "신축", "증축", "개축", "대수선", "건설", "시공", "건축공사",
         "종합공사", "골조", "마감", "철거", "해체", "강구조", "철골",
-        "철근콘크리트", "구조물",
+        "철근콘크리트", "구조물", "공사",
     ],
     "토목·조경": [
         "토목", "조경", "지반", "터파기", "흙막이", "토공", "굴착", "옹벽",
@@ -129,16 +160,6 @@ CATEGORY_MAP: dict[str, list[str]] = {
         "냉난방", "공조", "급배수", "소방", "소방시설", "스프링클러",
         "정보통신", "통신공사", "승강기", "엘리베이터", "방수", "단열",
     ],
-    "건설자재": [
-        "건설자재", "건축자재", "콘크리트", "철근", "레미콘", "골재",
-        "시멘트", "아스콘", "창호", "커튼월", "외벽", "단열재", "방수재",
-        "관급자재", "관급", "PHC",
-    ],
-    "감리·측량": [
-        "감리", "건설사업관리", "CM", "측량", "지적", "안전진단", "구조안전",
-        "정밀안전", "내진", "엔지니어링", "지질조사", "지반조사",
-        "교통영향", "환경영향", "타당성",
-    ],
     "인테리어·실내건축": [
         "인테리어", "실내건축", "내장", "가구", "집기", "사인", "도배",
         "도장", "타일",
@@ -147,19 +168,33 @@ CATEGORY_MAP: dict[str, list[str]] = {
         "리모델링", "그린리모델링", "보수", "보강", "유지관리", "유지보수",
         "개보수", "환경개선", "노후", "에너지효율", "제로에너지",
     ],
+    # 자재·산업시설
+    "건설자재": [
+        "건설자재", "건축자재", "콘크리트", "철근", "레미콘", "골재",
+        "시멘트", "아스콘", "창호", "커튼월", "외벽", "단열재", "방수재",
+        "관급자재", "관급", "PHC",
+    ],
     "물류·산업시설": [
         "물류센터", "물류창고", "창고", "공장", "지식산업센터", "데이터센터",
     ],
 }
 
+# 대분류 → 소분류 매핑(프론트 노출용 참조; 응답에는 소분류 태그만 저장).
+CATEGORY_GROUPS: dict[str, list[str]] = {
+    "설계·감리": ["설계", "감리", "측량·진단"],
+    "정비·도시개발": ["재개발", "재건축", "모아주택", "가로주택", "역세권", "도시개발·택지"],
+    "시공": ["건축공사", "토목·조경", "설비·전기", "인테리어·실내건축", "유지보수·리모델링"],
+    "자재·산업": ["건설자재", "물류·산업시설"],
+}
+
 
 def _classify_tags(text: str) -> list[str]:
-    """공고명에서 AI 분류 태그를 추출한다."""
+    """공고명에서 개발사업 세분류 태그를 추출한다."""
     tags: list[str] = []
     text_lower = text.lower()
     for tag, keywords in CATEGORY_MAP.items():
         for kw in keywords:
-            if kw in text_lower:
+            if kw.lower() in text_lower:
                 tags.append(tag)
                 break
     return tags
@@ -405,6 +440,17 @@ class G2BBidService:
             conditions.append(G2BBid.estimated_price <= f.max_price)
         if f.org_type:
             conditions.append(G2BBid.org_type == f.org_type)
+        if f.closing_days is not None:
+            now = datetime.utcnow()
+            soon = now + timedelta(days=f.closing_days)
+            conditions.append(
+                and_(
+                    G2BBid.status == "active",
+                    G2BBid.bid_close_dt.isnot(None),
+                    G2BBid.bid_close_dt > now,
+                    G2BBid.bid_close_dt <= soon,
+                )
+            )
         if f.date_from:
             conditions.append(G2BBid.notice_dt >= f.date_from)
         if f.date_to:
@@ -441,7 +487,7 @@ class G2BBidService:
     async def get_dashboard_stats(self) -> G2BDashboardStats:
         """대시보드 요약 통계를 반환한다."""
         now = datetime.utcnow()
-        soon = now + timedelta(hours=48)
+        soon = now + timedelta(days=7)  # 마감 임박 = 7일 이내
 
         total_active = (await self.db.execute(
             select(func.count()).where(G2BBid.status == "active")
@@ -496,6 +542,74 @@ class G2BBidService:
             items=[G2BAwardStatResponse.model_validate(s) for s in stats],
             total=len(stats),
         )
+
+    # ──────────────────────────────────────────
+    # 분석 히스토리 (영속화·재조회·재분석·삭제)
+    # ──────────────────────────────────────────
+
+    async def save_analysis(
+        self, bid: G2BBid, params: dict[str, Any], result: dict[str, Any]
+    ) -> G2BBidAnalysis:
+        """입찰 AI 분석 결과를 히스토리로 저장한다."""
+        rec = G2BBidAnalysis(
+            bid_id=bid.id,
+            bid_notice_no=bid.bid_notice_no,
+            bid_notice_nm=bid.bid_notice_nm,
+            params=params or {},
+            recommended_bid_rate=result.get("recommended_bid_rate_mid"),
+            risk_score=result.get("risk_score_total"),
+            expected_roi=result.get("expected_roi"),
+            summary=result.get("ai_summary"),
+            result=result or {},
+        )
+        self.db.add(rec)
+        await self.db.commit()
+        await self.db.refresh(rec)
+        return rec
+
+    async def list_analyses(
+        self, bid_id: Optional[UUID] = None, page: int = 1, page_size: int = 20
+    ) -> G2BAnalysisHistoryResponse:
+        """분석 히스토리 목록(최신순). bid_id 지정 시 해당 공고만."""
+        query = select(G2BBidAnalysis)
+        if bid_id:
+            query = query.where(G2BBidAnalysis.bid_id == bid_id)
+
+        total = (await self.db.execute(
+            select(func.count()).select_from(query.subquery())
+        )).scalar() or 0
+
+        query = query.order_by(G2BBidAnalysis.created_at.desc().nullslast())
+        query = query.offset((page - 1) * page_size).limit(page_size)
+        rows = (await self.db.execute(query)).scalars().all()
+
+        return G2BAnalysisHistoryResponse(
+            items=[G2BAnalysisHistoryItem.model_validate(r) for r in rows],
+            total=total,
+            page=page,
+            page_size=page_size,
+            total_pages=max(1, (total + page_size - 1) // page_size),
+        )
+
+    async def get_analysis(self, analysis_id: UUID) -> Optional[G2BAnalysisHistoryDetail]:
+        """분석 히스토리 단건(전체 결과 포함)."""
+        rec = (await self.db.execute(
+            select(G2BBidAnalysis).where(G2BBidAnalysis.id == analysis_id)
+        )).scalar_one_or_none()
+        if not rec:
+            return None
+        return G2BAnalysisHistoryDetail.model_validate(rec)
+
+    async def delete_analysis(self, analysis_id: UUID) -> bool:
+        """분석 히스토리 삭제."""
+        rec = (await self.db.execute(
+            select(G2BBidAnalysis).where(G2BBidAnalysis.id == analysis_id)
+        )).scalar_one_or_none()
+        if not rec:
+            return False
+        await self.db.delete(rec)
+        await self.db.commit()
+        return True
 
     # ──────────────────────────────────────────
     # 유틸리티

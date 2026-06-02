@@ -10,6 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.schemas.g2b_bid import (
+    G2BAnalysisHistoryDetail,
+    G2BAnalysisHistoryResponse,
     G2BAwardStatsResponse,
     G2BBidAnalyzeRequest,
     G2BBidAnalyzeResponse,
@@ -101,6 +103,7 @@ async def list_bids(
     min_price: Optional[int] = Query(None, description="최소 추정가격"),
     max_price: Optional[int] = Query(None, description="최대 추정가격"),
     org_type: Optional[str] = Query(None, description="기관유형"),
+    closing_days: Optional[int] = Query(None, ge=1, le=90, description="마감 N일 이내(7=마감임박)"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     service: G2BBidService = Depends(_get_service),
@@ -116,10 +119,19 @@ async def list_bids(
         min_price=min_price,
         max_price=max_price,
         org_type=org_type,
+        closing_days=closing_days,
         page=page,
         page_size=page_size,
     )
     return await service.list_bids(f)
+
+
+@router.get("/categories", summary="개발사업 대분류·소분류 카테고리")
+async def list_categories():
+    """프론트 대/소분류 필터 구성을 위한 카테고리 트리를 반환한다."""
+    from app.services.g2b_bid_service import CATEGORY_GROUPS
+
+    return {"groups": CATEGORY_GROUPS}
 
 
 @router.get("/bids/{bid_id}", response_model=G2BBidResponse, summary="입찰 공고 상세 조회")
@@ -196,7 +208,48 @@ async def analyze_bid_feasibility(
     from app.services.ai_services.bid_analyzer import BidAnalyzer
 
     analyzer = BidAnalyzer(db)
-    return await analyzer.analyze_feasibility(bid, req)
+    result = await analyzer.analyze_feasibility(bid, req)
+
+    # 분석 히스토리 영속화(실패해도 분석 결과는 반환)
+    try:
+        params = req.model_dump(exclude_none=True)
+        await service.save_analysis(bid, params, result.model_dump(mode="json"))
+    except Exception:  # noqa: BLE001
+        pass
+    return result
+
+
+# ──────────────────────────────────────────
+# 분석 히스토리 (재조회·재분석·삭제)
+# ──────────────────────────────────────────
+
+@router.get("/analyses", response_model=G2BAnalysisHistoryResponse, summary="입찰 분석 히스토리 목록")
+async def list_analyses(
+    bid_id: Optional[UUID] = Query(None, description="특정 공고의 분석만"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    service: G2BBidService = Depends(_get_service),
+):
+    """저장된 입찰 AI 분석 히스토리를 최신순으로 조회한다."""
+    return await service.list_analyses(bid_id=bid_id, page=page, page_size=page_size)
+
+
+@router.get("/analyses/{analysis_id}", response_model=G2BAnalysisHistoryDetail, summary="분석 히스토리 상세")
+async def get_analysis(analysis_id: UUID, service: G2BBidService = Depends(_get_service)):
+    """저장된 분석 결과 전체를 반환한다(재조회용)."""
+    detail = await service.get_analysis(analysis_id)
+    if not detail:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="분석 내역을 찾을 수 없습니다.")
+    return detail
+
+
+@router.delete("/analyses/{analysis_id}", response_model=dict, summary="분석 히스토리 삭제")
+async def delete_analysis(analysis_id: UUID, service: G2BBidService = Depends(_get_service)):
+    """분석 히스토리 항목을 삭제한다."""
+    ok = await service.delete_analysis(analysis_id)
+    if not ok:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="분석 내역을 찾을 수 없습니다.")
+    return {"status": "deleted", "id": str(analysis_id)}
 
 
 # ──────────────────────────────────────────

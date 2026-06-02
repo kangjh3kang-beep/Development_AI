@@ -92,6 +92,37 @@ class G2BBid(Base):
     )
 
 
+class G2BBidAnalysis(Base):
+    """입찰 AI 정밀분석 히스토리 — 분석 결과를 영속화해 재조회·재분석·삭제한다."""
+
+    __tablename__ = "g2b_bid_analyses"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    bid_id = Column(UUID(as_uuid=True), nullable=False, comment="대상 입찰 공고 id")
+    bid_notice_no = Column(String(50), nullable=True, comment="입찰공고번호(스냅샷)")
+    bid_notice_nm = Column(Text, nullable=True, comment="입찰공고명(스냅샷)")
+
+    # ── 분석 입력(편집 재분석용) ──
+    params = Column(JSON, default={}, comment="분석 입력 파라미터(연면적/층수/구조/유형/마진 등)")
+
+    # ── 요약 지표(목록 표시용) ──
+    recommended_bid_rate = Column(Numeric(6, 3), nullable=True, comment="추천 투찰가율(%)")
+    risk_score = Column(Numeric(5, 2), nullable=True, comment="리스크 스코어")
+    expected_roi = Column(Numeric(8, 3), nullable=True, comment="예상 ROI(%)")
+    summary = Column(Text, nullable=True, comment="AI 요약")
+
+    # ── 전체 결과(재조회용) ──
+    result = Column(JSON, default={}, comment="G2BBidAnalyzeResponse 전체 JSON")
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        Index("ix_g2b_bid_analyses_bid_id", "bid_id"),
+        Index("ix_g2b_bid_analyses_created_at", "created_at"),
+    )
+
+
 class G2BAwardStat(Base):
     """낙찰가율 집계 통계 (지역별/공종별 사전 계산)."""
 

@@ -84,6 +84,7 @@ class G2BBidFilter(BaseModel):
     min_price: Optional[int] = Field(None, description="최소 추정가격")
     max_price: Optional[int] = Field(None, description="최대 추정가격")
     org_type: Optional[str] = Field(None, description="기관유형")
+    closing_days: Optional[int] = Field(None, description="마감 N일 이내(예: 7=마감임박)")
     date_from: Optional[datetime] = Field(None, description="공고일 시작")
     date_to: Optional[datetime] = Field(None, description="공고일 종료")
     page: int = Field(1, ge=1)
@@ -300,11 +301,44 @@ class G2BBidAnalyzeResponse(BaseModel):
 
 # ── 대시보드 통계 ──
 
+class G2BAnalysisHistoryItem(BaseModel):
+    """입찰 분석 히스토리 목록 항목."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    bid_id: UUID
+    bid_notice_no: Optional[str] = None
+    bid_notice_nm: Optional[str] = None
+    params: dict = Field(default_factory=dict)
+    recommended_bid_rate: Optional[float] = None
+    risk_score: Optional[float] = None
+    expected_roi: Optional[float] = None
+    summary: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+
+class G2BAnalysisHistoryDetail(G2BAnalysisHistoryItem):
+    """분석 히스토리 상세(전체 결과 포함)."""
+
+    result: dict = Field(default_factory=dict)
+
+
+class G2BAnalysisHistoryResponse(BaseModel):
+    """분석 히스토리 목록 응답."""
+
+    items: list[G2BAnalysisHistoryItem]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+
+
 class G2BDashboardStats(BaseModel):
     """대시보드 요약 통계."""
 
     total_active: int = Field(description="현재 진행 중 공고 수")
-    closing_soon: int = Field(description="마감 임박(48시간 내) 공고 수")
+    closing_soon: int = Field(description="마감 임박(7일 내) 공고 수")
     avg_award_rate: Optional[float] = Field(None, description="최근 30일 평균 낙찰가율")
     ai_recommended_count: int = Field(description="AI 추천 입찰 건수")
     total_estimated_value: Optional[int] = Field(None, description="진행 중 공고 총 추정가격")
