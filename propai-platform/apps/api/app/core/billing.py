@@ -19,6 +19,14 @@ logger = structlog.get_logger(__name__)
 
 BUDGET_RATIO = 0.5  # 구독료의 50%를 LLM 포함한도로
 
+# ── 서비스 사용료(LLM 과금과 별개로 누적) ──
+# 행위별 기본 차감액(원). 토지분석은 등급별로 단가가 다름(아래 분기).
+SERVICE_FEE_PROJECT_CREATE_KRW = 2000  # 프로젝트 생성 건당(구독자)
+SERVICE_FEE_LAND_ANALYSIS_KRW = 2000   # 토지분석 건당(구독자)
+# 비구독 등급: 무료 횟수 소진 후 토지분석 건당 단가
+FREE_TIER_ANALYSIS_FEE_KRW = {"free": 5000, "guest": 10000}
+FREE_TIER_ANALYSIS_QUOTA = {"free": 3, "guest": 1}  # 무료 토지분석 횟수
+
 # 구독 등급별 요금(원) + 할증배수
 TIER_BILLING: dict[str, dict[str, Any]] = {
     "power": {"fee_krw": 24500, "multiplier": 2.0, "label": "파워"},
@@ -125,4 +133,9 @@ def public_status(status: dict[str, Any]) -> dict[str, Any]:
         "remaining_krw": status.get("remaining_krw"),
         "usage_pct": status.get("usage_pct"),
         "blocked": status.get("blocked"),
+        # 서비스 사용료(LLM 별개) — 실지급액(원)만
+        "service_fee_krw": status.get("service_fee_krw"),
+        "free_analysis_quota": status.get("free_analysis_quota"),
+        "free_analysis_used": status.get("free_analysis_used"),
+        "free_analysis_remaining": status.get("free_analysis_remaining"),
     }
