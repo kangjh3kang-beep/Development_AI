@@ -350,10 +350,16 @@ class MolitClient(BaseAPIClient):
                     "prop_type": prop_type,
                     "deal_date": f"{year}년 {month}월 {day}일",
                     "price_10k_won": int(price_str or 0),
-                    "area_m2": float(g("excluUseAr", "전용면적", 0) or 0),
+                    "area_m2": float(
+                        g("excluUseAr", "전용면적", 0) or item.get("totalFloorAr", 0) or 0
+                    ),
                     "floor": int(g("floor", "층", 0) or 0),
                     "building_name": str(
-                        g("aptNm", "아파트", "") or item.get("연립다세대", "")
+                        g("aptNm", "아파트", "")
+                        or item.get("mhouseNm")  # 연립·다세대
+                        or item.get("offiNm")  # 오피스텔
+                        or item.get("연립다세대", "")
+                        or ""
                     ),
                     "sigungu": str(g("estateAgentSggNm", "시군구", "")),
                     "dong": str(g("umdNm", "법정동", "")),
@@ -384,9 +390,16 @@ class MolitClient(BaseAPIClient):
                     "deal_date": f"{year}년 {month}월 {day}일",
                     "deposit_10k_won": int(deposit_str or 0),
                     "monthly_rent_10k_won": int(monthly_str or 0),
-                    "area_m2": float(g("excluUseAr", "전용면적", 0) or 0),
+                    "area_m2": float(
+                        g("excluUseAr", "전용면적", 0) or item.get("totalFloorAr", 0) or 0
+                    ),
                     "floor": int(g("floor", "층", 0) or 0),
-                    "building_name": str(g("aptNm", "아파트", "")),
+                    "building_name": str(
+                        g("aptNm", "아파트", "")
+                        or item.get("mhouseNm")  # 연립·다세대
+                        or item.get("offiNm")  # 오피스텔
+                        or ""
+                    ),
                     "dong": str(g("umdNm", "법정동", "")),
                 })
             return result
