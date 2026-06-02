@@ -12,6 +12,7 @@
 
 import asyncio
 import logging
+import time
 from datetime import datetime
 from typing import Any
 
@@ -23,6 +24,26 @@ from ..zoning.auto_zoning_service import AutoZoningService
 from .ordinance_service import OrdinanceService
 
 logger = logging.getLogger(__name__)
+
+# ── 종합 토지정보 인프로세스 TTL 캐시(Redis 비의존, 중복 외부호출 제거) ──
+_COMP_CACHE: dict[str, tuple[float, dict]] = {}
+_COMP_CACHE_TTL = 300.0  # 5분
+
+
+def _comp_cache_get(key: str) -> dict | None:
+    entry = _COMP_CACHE.get(key)
+    if entry and (time.time() - entry[0]) < _COMP_CACHE_TTL:
+        return entry[1]
+    if entry:
+        _COMP_CACHE.pop(key, None)
+    return None
+
+
+def _comp_cache_set(key: str, value: dict) -> None:
+    _COMP_CACHE[key] = (time.time(), value)
+    if len(_COMP_CACHE) > 64:  # 단순 상한
+        oldest = min(_COMP_CACHE, key=lambda k: _COMP_CACHE[k][0])
+        _COMP_CACHE.pop(oldest, None)
 
 
 # 조례 데이터: OrdinanceService가 법제처 API → 캐시DB → 법정상한 순으로 실시간 조회
@@ -272,6 +293,21 @@ class LandInfoService:
         self.commercial = CommercialAreaService()
 
     async def collect_comprehensive(self, address: str, pnu: str | None = None) -> dict[str, Any]:
+        """종합 토지정보 수집 — 인프로세스 TTL 캐시(Redis 비의존)로 중복 호출 제거.
+
+        한 번의 부지분석에서 동일 주소가 여러 번 수집되거나(파이프라인 이중호출) Redis가
+        다운된 환경에서도 외부 API 중복 호출을 막아 지연을 크게 줄인다.
+        """
+        key = f"{(address or '').strip()}|{pnu or ''}"
+        hit = _comp_cache_get(key)
+        if hit is not None:
+            return hit
+        result = await self._collect_comprehensive_impl(address, pnu)
+        if isinstance(result, dict) and result:
+            _comp_cache_set(key, result)
+        return result
+
+    async def _collect_comprehensive_impl(self, address: str, pnu: str | None = None) -> dict[str, Any]:
         """주소로부터 종합 토지정보를 수집한다.
 
         반환 구조:
@@ -585,22 +621,23 @@ class LandInfoService:
         now = datetime.now()
         result: dict[str, Any] = {}
 
-        # 최근 12개월 거래를 수집 (최근 3개월만 조회하여 API 부하 절감)
+        # 최근 3개월 거래를 수집 — 월별 호출을 병렬화(asyncio.gather)하여 지연 단축
+        def _ymd(off: int) -> str:
+            y, m = now.year, now.month - off
+            if m <= 0:
+                m += 12
+                y -= 1
+            return f"{y}{m:02d}"
+
         for prop_type, label in [("apt", "apt"), ("land", "land")]:
             all_items: list[dict[str, Any]] = []
-            for month_offset in range(3):
-                year = now.year
-                month = now.month - month_offset
-                if month <= 0:
-                    month += 12
-                    year -= 1
-                deal_ymd = f"{year}{month:02d}"
-                try:
-                    items = await self.molit.get_apt_transactions(lawd_cd, deal_ymd)
-                    if isinstance(items, list):
-                        all_items.extend(items)
-                except Exception as e:
-                    logger.debug("실거래 조회 (%s/%s): %s", prop_type, deal_ymd, str(e))
+            month_results = await asyncio.gather(
+                *[self.molit.get_apt_transactions(lawd_cd, _ymd(off)) for off in range(3)],
+                return_exceptions=True,
+            )
+            for items in month_results:
+                if isinstance(items, list):
+                    all_items.extend(items)
 
             if not all_items:
                 result[label] = {
