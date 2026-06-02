@@ -159,6 +159,7 @@ export default async function DashboardLayout({
     { href: `/${locale}/market-insights`, label: "마켓 인텔리전스", icon: <IconMarket /> },
     { href: `/${locale}/permits`, label: "인.허가분석 자동화", icon: <IconPermit /> },
     { href: `/${locale}/regulations`, label: "부동산 규제 연동", icon: <IconRegulation /> },
+    { href: `/${locale}/registry-analysis`, label: "부동산등기 정보분석", icon: <IconPermit /> },
   ];
 
   // II. 수익·비용·ESG
