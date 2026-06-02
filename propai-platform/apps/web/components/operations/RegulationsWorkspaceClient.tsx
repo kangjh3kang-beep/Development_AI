@@ -1,428 +1,280 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
-import { Button, Card, CardContent, Input } from "@propai/ui";
-import { ApiClientError, apiClient } from "@/lib/api-client";
+/**
+ * 부동산 규제 연동 — 규제 계층 대시보드.
+ *
+ * 부지에 적용되는 상위법령 → 도시·군계획/지구단위 → 지자체 조례 → 개별 적용규제를
+ * 계층으로 시각화하고, 정량 한도(건폐/용적/높이/주차) 법정·조례·실효 비교와
+ * AI 통합 해석, 필지 구획도를 함께 제공한다. (POST /regulation/analyze)
+ */
+
+import { useCallback, useState } from "react";
+import { Card, CardContent, Input } from "@propai/ui";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
+import { ParcelBoundaryMap } from "@/components/map/ParcelBoundaryMap";
+import { apiClient } from "@/lib/api-client";
+import { useProjectContextStore } from "@/store/useProjectContextStore";
 import type { Locale } from "@/i18n/config";
 
-/* ------------------------------------------------------------------ */
-/*  Types                                                             */
-/* ------------------------------------------------------------------ */
-
-type RegulationAnalysisResponse = {
-  address?: string;
-  zoning_district?: string;
-  building_coverage_ratio?: { max: number; unit: string };
-  floor_area_ratio?: { max: number; unit: string };
-  height_limit?: { value: number; unit: string };
-  parking_standard?: { description: string };
-  applicable_laws?: Array<{
-    law: string;
-    article: string;
-    impact: string;
-    level: string;
-  }>;
-  special_zones?: string[];
-  recommendations?: string[];
+type LimitTrio = { legal: number | null; ordinance: number | null; effective: number | null; unit: string };
+type HierItem = { name: string; ref?: string; desc?: string };
+type HierLevel = { level: string; items: HierItem[] };
+type District = { name: string; code?: string; impact: "상" | "중" | "하" | string; status?: string; register_date?: string };
+type RegAI = {
+  generated?: boolean;
   summary?: string;
+  key_constraints?: string[];
+  dev_impact?: string;
+  strategies?: string[];
+  opportunities?: string[];
+  risks?: string[];
+};
+type RegResult = {
+  address: string;
+  pnu: string | null;
+  zone_type: string | null;
+  zone_type_secondary: string | null;
+  land_area_sqm: number | null;
+  land_category: string | null;
+  land_use_situation: string | null;
+  limits: { bcr: LimitTrio; far: LimitTrio; height: { value: number | null; unit: string }; parking: { description: string } };
+  hierarchy: HierLevel[];
+  districts: District[];
+  ai: RegAI | null;
 };
 
-/* ------------------------------------------------------------------ */
-/*  Labels                                                            */
-/* ------------------------------------------------------------------ */
-
-type Labels = {
-  heroTitle: string;
-  heroDescription: string;
-  heroHint: string;
-  tokenHint: string;
-  authError: string;
-  formTitle: string;
-  addressLabel: string;
-  pnuLabel: string;
-  zoningLabel: string;
-  submitAction: string;
-  missingAddressError: string;
-  restrictionsTitle: string;
-  buildingCoverageLabel: string;
-  floorAreaRatioLabel: string;
-  heightLimitLabel: string;
-  parkingStandardLabel: string;
-  lawsTitle: string;
-  specialZonesTitle: string;
-  recommendationsTitle: string;
-  summaryTitle: string;
-  placeholder: string;
+const IMPACT_STYLE: Record<string, string> = {
+  상: "bg-rose-500/15 text-rose-400 border-rose-500/30",
+  중: "bg-amber-500/15 text-amber-400 border-amber-500/30",
+  하: "bg-emerald-500/12 text-emerald-400 border-emerald-500/25",
+};
+const LEVEL_META: Record<string, { color: string; icon: string }> = {
+  "상위법령": { color: "var(--accent-strong)", icon: "⚖️" },
+  "도시·군계획 / 지구단위계획": { color: "#8b5cf6", icon: "🗺️" },
+  "지자체 조례": { color: "#3b82f6", icon: "📋" },
+  "개별 적용 규제·지구·구역": { color: "#f59e0b", icon: "🚧" },
 };
 
-const KO_LABELS: Labels = {
-  heroTitle: "규제 분석 라이브 워크스페이스",
-  heroDescription:
-    "해당 토지에 적용되는 건축 규제(건폐율, 용적률, 높이 제한, 주차 기준)를 AI로 분석합니다.",
-  heroHint:
-    "",
-  tokenHint:
-    "분석을 위해 로그인이 필요합니다.",
-  authError: "라이브 워크스페이스 호출을 위해 API 인증이 필요합니다.",
-  formTitle: "규제 분석 입력",
-  addressLabel: "주소",
-  pnuLabel: "PNU 코드 (선택)",
-  zoningLabel: "용도지역",
-  submitAction: "규제 분석 실행",
-  missingAddressError: "주소를 입력해 주세요.",
-  restrictionsTitle: "건축 제한 요약",
-  buildingCoverageLabel: "건폐율 한도",
-  floorAreaRatioLabel: "용적률 한도",
-  heightLimitLabel: "높이 제한",
-  parkingStandardLabel: "주차 기준",
-  lawsTitle: "적용 법규",
-  specialZonesTitle: "해당 특별구역",
-  recommendationsTitle: "규제 대응 전략",
-  summaryTitle: "AI 규제 종합 분석",
-  placeholder: "양식을 제출하면 규제 분석 결과가 표시됩니다.",
-};
-
-const EN_LABELS: Labels = {
-  heroTitle: "Regulations Live Workspace",
-  heroDescription:
-    "Analyze building regulations (coverage ratio, FAR, height limit, parking standards) via AI.",
-  heroHint:
-    "Calls POST /building-compliance/check to return regulation analysis.",
-  tokenHint:
-    "분석을 위해 로그인이 필요합니다.",
-  authError: "API authentication is required for live workspace calls.",
-  formTitle: "Regulation analysis input",
-  addressLabel: "Address",
-  pnuLabel: "PNU code (optional)",
-  zoningLabel: "Zoning district",
-  submitAction: "Run regulation analysis",
-  missingAddressError: "Address is required.",
-  restrictionsTitle: "Building restriction summary",
-  buildingCoverageLabel: "Building coverage limit",
-  floorAreaRatioLabel: "Floor area ratio limit",
-  heightLimitLabel: "Height limit",
-  parkingStandardLabel: "Parking standard",
-  lawsTitle: "Applicable laws",
-  specialZonesTitle: "Special zones",
-  recommendationsTitle: "Regulatory response strategies",
-  summaryTitle: "AI regulation analysis",
-  placeholder: "Submit the form to see regulation analysis results.",
-};
-
-const LABELS: Record<Locale, Labels> = {
-  ko: KO_LABELS,
-  en: EN_LABELS,
-  "zh-CN": KO_LABELS,
-};
-
-/* ------------------------------------------------------------------ */
-/*  Helpers                                                           */
-/* ------------------------------------------------------------------ */
-
-function extractErrorMessage(error: unknown, authMessage: string) {
-  if (error instanceof ApiClientError) {
-    if (error.status === 401 || error.status === 403) return authMessage;
-    return `API 요청이 상태 ${error.status}(으)로 실패했습니다.`;
-  }
-  if (error instanceof Error) return error.message;
-  return "요청에 실패했습니다.";
+function pyeong(sqm: number | null): string {
+  return sqm ? `${Math.round(sqm / 3.305785).toLocaleString()}평` : "";
 }
 
-function levelBadge(level: string) {
-  const l = level.toLowerCase();
-  if (l === "high") return "bg-red-500/15 text-red-500";
-  if (l === "medium") return "bg-amber-500/15 text-amber-500";
-  return "bg-emerald-500/15 text-emerald-500";
-}
+export function RegulationsWorkspaceClient({ locale: _locale }: { locale: Locale }) {
+  const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
+  const [addr, setAddr] = useState("");
+  const [pnu, setPnu] = useState("");
+  const [useLlm, setUseLlm] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [result, setResult] = useState<RegResult | null>(null);
 
-function MetricTile({ label, value }: { label: string; value: string }) {
+  const run = useCallback(async () => {
+    const target = addr || siteAnalysis?.address || "";
+    if (!target) { setError("주소를 먼저 선택하거나 입력하세요."); return; }
+    setLoading(true); setError(""); setResult(null);
+    try {
+      const r = await apiClient.post<RegResult>("/regulation/analyze", {
+        body: { address: target, pnu: pnu.trim() || siteAnalysis?.pnu || undefined, use_llm: useLlm },
+        useMock: false, timeoutMs: 120000,
+      });
+      setResult(r);
+    } catch {
+      setError("규제 분석에 실패했습니다. 잠시 후 다시 시도하세요.");
+    } finally {
+      setLoading(false);
+    }
+  }, [addr, pnu, useLlm, siteAnalysis]);
+
   return (
-    <div className="rounded-[var(--radius-xl)] bg-[var(--surface)] p-4">
-      <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
-        {label}
-      </p>
-      <p className="mt-2 text-lg font-bold text-[var(--text-primary)]">
-        {value}
-      </p>
+    <div className="grid gap-6">
+      {/* Hero + 입력 */}
+      <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
+        <CardContent className="p-6">
+          <div className="flex items-center gap-3">
+            <span className="text-2xl">🏛️</span>
+            <div>
+              <h1 className="text-lg font-black text-[var(--text-primary)]">부동산 규제 연동</h1>
+              <p className="mt-0.5 text-xs text-[var(--text-secondary)]">
+                해당 토지에 적용되는 상위법령·도시·군계획·지자체 조례·개별 규제를 계층으로 정리하고,
+                건폐율·용적률·높이·주차 한도와 AI 통합 해석을 제공합니다.
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-5">
+            <ProjectAddressInput
+              value={addr}
+              onChange={setAddr}
+              label="분석 대상지 주소"
+              placeholder="프로젝트를 선택하거나 주소를 검색/입력하세요"
+              pickerLabel="분석 히스토리"
+              disabled={loading}
+            />
+          </div>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            <Input value={pnu} onChange={(e) => setPnu(e.target.value)} placeholder="PNU 코드 (선택)" disabled={loading} />
+            <label className="flex items-center gap-2 text-xs font-semibold text-[var(--text-secondary)]">
+              <input type="checkbox" checked={useLlm} onChange={(e) => setUseLlm(e.target.checked)}
+                className="h-4 w-4 accent-[var(--accent-strong)]" disabled={loading} />
+              🤖 AI 통합 해석 포함
+            </label>
+          </div>
+          <div className="mt-4 flex items-center gap-3">
+            <button onClick={run} disabled={loading}
+              className="rounded-xl bg-[var(--accent-strong)] px-5 py-2.5 text-sm font-black text-white hover:opacity-90 disabled:opacity-50">
+              {loading ? "규제 분석 중…" : "🔎 규제 분석 실행"}
+            </button>
+            {error && <span className="text-xs font-semibold text-rose-500">{error}</span>}
+          </div>
+        </CardContent>
+      </Card>
+
+      {result && (
+        <>
+          {/* 부지 요약 + 정량 한도 */}
+          <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
+            <CardContent className="p-6">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="rounded-lg bg-[var(--accent-soft)] px-2.5 py-1 text-xs font-black text-[var(--accent-strong)]">
+                  {result.zone_type || "용도미상"}
+                </span>
+                {result.zone_type_secondary && (
+                  <span className="rounded-lg bg-violet-500/15 px-2.5 py-1 text-xs font-black text-violet-400">
+                    + {result.zone_type_secondary}
+                  </span>
+                )}
+                <span className="text-xs text-[var(--text-secondary)]">
+                  {result.land_area_sqm ? `${result.land_area_sqm.toLocaleString()}㎡ (${pyeong(result.land_area_sqm)})` : ""}
+                  {result.land_category ? ` · 지목 ${result.land_category}` : ""}
+                  {result.land_use_situation ? ` · ${result.land_use_situation}` : ""}
+                </span>
+              </div>
+
+              <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+                <LimitCard label="건폐율" trio={result.limits.bcr} />
+                <LimitCard label="용적률" trio={result.limits.far} />
+                <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-3.5">
+                  <p className="text-[11px] font-bold text-[var(--text-secondary)]">높이 제한</p>
+                  <p className="mt-1 text-lg font-black text-[var(--text-primary)]">
+                    {result.limits.height.value != null ? `${result.limits.height.value}${result.limits.height.unit}` : "제한 없음"}
+                  </p>
+                </div>
+                <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-3.5">
+                  <p className="text-[11px] font-bold text-[var(--text-secondary)]">주차 기준</p>
+                  <p className="mt-1 text-xs font-semibold leading-snug text-[var(--text-primary)]">{result.limits.parking.description}</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* AI 통합 해석 */}
+          {result.ai && (
+            <Card className="rounded-[var(--radius-2xl)] border-[var(--accent-strong)]/30 bg-[var(--accent-strong)]/5 shadow-[var(--shadow-md)]">
+              <CardContent className="p-6">
+                <div className="flex items-center justify-between">
+                  <p className="text-sm font-black text-[var(--accent-strong)]">🧠 AI 통합 규제 해석</p>
+                  <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${result.ai.generated ? "border-[var(--accent-strong)]/30 text-[var(--accent-strong)]" : "border-[var(--line-strong)] text-[var(--text-tertiary)]"}`}>
+                    {result.ai.generated ? "AI 분석" : "규칙기반"}
+                  </span>
+                </div>
+                {result.ai.summary && <p className="mt-2 text-sm leading-relaxed text-[var(--text-primary)]">{result.ai.summary}</p>}
+                {result.ai.dev_impact && (
+                  <p className="mt-2 text-xs leading-relaxed text-[var(--text-secondary)]"><b className="text-[var(--text-primary)]">개발 영향 ·</b> {result.ai.dev_impact}</p>
+                )}
+                <div className="mt-4 grid gap-3 md:grid-cols-2">
+                  <AiList title="🎯 핵심 제약" items={result.ai.key_constraints} tone="rose" />
+                  <AiList title="🛠 대응 전략" items={result.ai.strategies} tone="emerald" />
+                  <AiList title="✨ 기회 요인" items={result.ai.opportunities} tone="sky" />
+                  <AiList title="⚠ 리스크" items={result.ai.risks} tone="amber" />
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* 규제 계층 스택 */}
+          <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
+            <CardContent className="p-6">
+              <p className="text-sm font-black text-[var(--text-primary)]">📚 적용 규제 계층 (상위계획 → 개별규제)</p>
+              <div className="mt-4 space-y-3">
+                {result.hierarchy.map((lv, i) => {
+                  const meta = LEVEL_META[lv.level] || { color: "var(--text-secondary)", icon: "•" };
+                  return (
+                    <div key={lv.level} className="relative rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-4"
+                      style={{ marginLeft: `${i * 14}px`, borderLeftColor: meta.color, borderLeftWidth: 3 }}>
+                      <p className="text-xs font-black" style={{ color: meta.color }}>
+                        {meta.icon} {lv.level} <span className="text-[var(--text-hint)]">({lv.items.length})</span>
+                      </p>
+                      <div className="mt-2 grid gap-1.5">
+                        {lv.items.map((it, j) => (
+                          <div key={j} className="flex flex-wrap items-baseline gap-x-2 text-xs">
+                            <span className="font-bold text-[var(--text-primary)]">{it.name}</span>
+                            {it.ref && it.ref !== "-" && <span className="text-[var(--accent-strong)]">{it.ref}</span>}
+                            {it.desc && <span className="text-[var(--text-secondary)]">— {it.desc}</span>}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* 적용 규제·지구·구역 전수 (영향도) */}
+          {result.districts.length > 0 && (
+            <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
+              <CardContent className="p-6">
+                <p className="text-sm font-black text-[var(--text-primary)]">
+                  🚧 적용 규제·지구·구역 전수 <span className="text-[var(--text-hint)]">({result.districts.length})</span>
+                </p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {result.districts.map((d, i) => (
+                    <span key={i} className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px] font-bold ${IMPACT_STYLE[d.impact] || "border-[var(--line)] text-[var(--text-secondary)]"}`}>
+                      {d.name}
+                      <span className="opacity-70">{d.impact}</span>
+                    </span>
+                  ))}
+                </div>
+                <p className="mt-3 text-[11px] text-[var(--text-hint)]">영향도: <span className="text-rose-400">상</span>(개발 결정적) · <span className="text-amber-400">중</span>(밀도·절차 영향) · <span className="text-emerald-400">하</span>(일반)</p>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* 필지 구획도 */}
+          <ParcelBoundaryMap parcels={[result.address]} />
+        </>
+      )}
     </div>
   );
 }
 
-/* ------------------------------------------------------------------ */
-/*  Component                                                         */
-/* ------------------------------------------------------------------ */
-
-export function RegulationsWorkspaceClient({
-  locale,
-}: {
-  locale: Locale;
-}) {
-  const labels = LABELS[locale] || LABELS["ko"];
-  const runtimeConfig = apiClient.getRuntimeConfig();
-  const canUseLiveApi =
-    runtimeConfig.mode === "live" || runtimeConfig.hasAccessToken;
-
-  const [workspaceError, setWorkspaceError] = useState("");
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [result, setResult] = useState<RegulationAnalysisResponse | null>(null);
-
-  const [form, setForm] = useState({
-    address: "",
-    pnu: "",
-    zoning: "제2종일반주거지역",
-  });
-
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setWorkspaceError("");
-
-    const address = form.address.trim();
-    if (!address) {
-      setWorkspaceError(labels.missingAddressError);
-      return;
-    }
-
-    setIsSubmitting(true);
-    try {
-      const res = await apiClient.post<RegulationAnalysisResponse>(
-        "/building-compliance/check",
-        {
-          useMock: false,
-          body: {
-            address,
-            pnu: form.pnu.trim() || undefined,
-            zoning_district: form.zoning,
-            analysis_type: "regulation",
-          },
-        },
-      );
-      setResult(res);
-    } catch (error) {
-      setWorkspaceError(extractErrorMessage(error, labels.authError));
-    } finally {
-      setIsSubmitting(false);
-    }
-  }
-
+function LimitCard({ label, trio }: { label: string; trio: LimitTrio }) {
+  const eff = trio.effective;
+  const tightened = trio.legal != null && trio.ordinance != null && trio.ordinance < trio.legal;
   return (
-    <section className="grid gap-6">
-      {/* Hero */}
-      <Card className="rounded-[var(--radius-2xl)] bg-[var(--surface-strong)] shadow-[var(--shadow-lg)]">
-        <CardContent className="p-8">
-          <div className="flex flex-wrap items-center gap-3">
-            <span className="rounded-full bg-[rgba(14,116,144,0.1)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--accent-strong)]">
-              {labels.heroTitle}
-            </span>
-            <span className="rounded-full border border-[var(--line)] px-4 py-2 text-xs font-medium text-[var(--text-secondary)]">
-              {runtimeConfig.mode === "live" ? "LIVE" : "HYBRID"}
-            </span>
-          </div>
-          <h3 className="mt-5 text-3xl font-bold text-[var(--text-primary)]">
-            {labels.heroDescription}
-          </h3>
-          <p className="mt-4 max-w-3xl text-sm leading-8 text-[var(--text-secondary)]">
-            {labels.heroHint}
-          </p>
-          <p className="mt-3 max-w-3xl text-sm leading-8 text-[var(--text-tertiary)]">
-            {labels.tokenHint}
-          </p>
-          {!canUseLiveApi && (
-            <div className="mt-6 rounded-[var(--radius-xl)] border border-dashed border-[var(--line)] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[var(--text-secondary)]">
-              {labels.authError}
-            </div>
-          )}
-          {workspaceError && (
-            <div className="mt-6 rounded-[var(--radius-xl)] border border-[rgba(217,119,6,0.28)] bg-[rgba(217,119,6,0.08)] p-5 text-sm leading-7 text-[var(--spot)]">
-              {workspaceError}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+    <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-3.5">
+      <p className="text-[11px] font-bold text-[var(--text-secondary)]">{label} 한도</p>
+      <p className="mt-1 text-lg font-black text-[var(--accent-strong)]">{eff != null ? `${eff}${trio.unit}` : "-"}</p>
+      <div className="mt-1.5 space-y-0.5 text-[10px] text-[var(--text-hint)]">
+        <div className="flex justify-between"><span>법정</span><span>{trio.legal != null ? `${trio.legal}${trio.unit}` : "-"}</span></div>
+        <div className="flex justify-between"><span>조례</span><span className={tightened ? "text-amber-400 font-bold" : ""}>{trio.ordinance != null ? `${trio.ordinance}${trio.unit}` : "-"}</span></div>
+      </div>
+      {tightened && <p className="mt-1 text-[10px] font-bold text-amber-400">조례 강화 ↓</p>}
+    </div>
+  );
+}
 
-      {/* Form */}
-      <Card>
-        <CardContent className="p-6">
-          <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
-            {labels.formTitle}
-          </p>
-          <form className="mt-4 grid gap-3" onSubmit={handleSubmit}>
-            <ProjectAddressInput
-              value={form.address}
-              onChange={(address) => setForm((c) => ({ ...c, address }))}
-              label={labels.addressLabel}
-              placeholder={labels.addressLabel}
-            />
-            <div className="grid gap-3 md:grid-cols-2">
-              <Input
-                value={form.pnu}
-                onChange={(e) =>
-                  setForm((c) => ({ ...c, pnu: e.target.value }))
-                }
-                placeholder={labels.pnuLabel}
-              />
-              <Input
-                value={form.zoning}
-                onChange={(e) =>
-                  setForm((c) => ({ ...c, zoning: e.target.value }))
-                }
-                placeholder={labels.zoningLabel}
-              />
-            </div>
-            <Button type="submit" disabled={!canUseLiveApi || isSubmitting}>
-              {isSubmitting
-                ? `${labels.submitAction}...`
-                : labels.submitAction}
-            </Button>
-          </form>
-        </CardContent>
-      </Card>
-
-      {/* Restrictions grid */}
-      {result ? (
-        <>
-          <div className="grid gap-4 md:grid-cols-4">
-            <MetricTile
-              label={labels.buildingCoverageLabel}
-              value={
-                result.building_coverage_ratio
-                  ? `${result.building_coverage_ratio.max}${result.building_coverage_ratio.unit}`
-                  : "-"
-              }
-            />
-            <MetricTile
-              label={labels.floorAreaRatioLabel}
-              value={
-                result.floor_area_ratio
-                  ? `${result.floor_area_ratio.max}${result.floor_area_ratio.unit}`
-                  : "-"
-              }
-            />
-            <MetricTile
-              label={labels.heightLimitLabel}
-              value={
-                result.height_limit
-                  ? `${result.height_limit.value}${result.height_limit.unit}`
-                  : "-"
-              }
-            />
-            <MetricTile
-              label={labels.parkingStandardLabel}
-              value={result.parking_standard?.description ?? "-"}
-            />
-          </div>
-
-          {/* Applicable laws */}
-          {result.applicable_laws && result.applicable_laws.length > 0 && (
-            <Card>
-              <CardContent className="p-6">
-                <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
-                  {labels.lawsTitle}
-                </p>
-                <div className="mt-4 overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="text-left text-xs font-bold uppercase tracking-widest text-[var(--text-tertiary)]">
-                        <th className="pb-3 pr-4">법률</th>
-                        <th className="pb-3 pr-4">조항</th>
-                        <th className="pb-3 pr-4">영향</th>
-                        <th className="pb-3">영향도</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {result.applicable_laws.map((law, idx) => (
-                        <tr
-                          key={`${law.law}-${idx}`}
-                          className="border-t border-[var(--line)]"
-                        >
-                          <td className="py-3 pr-4 font-semibold text-[var(--text-primary)]">
-                            {law.law}
-                          </td>
-                          <td className="py-3 pr-4 text-[var(--text-secondary)]">
-                            {law.article}
-                          </td>
-                          <td className="py-3 pr-4 text-[var(--text-secondary)]">
-                            {law.impact}
-                          </td>
-                          <td className="py-3">
-                            <span
-                              className={`rounded-full px-2 py-1 text-[10px] font-bold ${levelBadge(law.level)}`}
-                            >
-                              {law.level.toUpperCase()}
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </CardContent>
-            </Card>
-          )}
-
-          {/* Special zones */}
-          {result.special_zones && result.special_zones.length > 0 && (
-            <Card>
-              <CardContent className="p-6">
-                <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
-                  {labels.specialZonesTitle}
-                </p>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {result.special_zones.map((zone, idx) => (
-                    <span
-                      key={idx}
-                      className="rounded-full border border-amber-500/20 bg-amber-500/10 px-3 py-1.5 text-xs font-bold text-amber-500"
-                    >
-                      {zone}
-                    </span>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          )}
-
-          {/* Recommendations */}
-          {result.recommendations && result.recommendations.length > 0 && (
-            <Card>
-              <CardContent className="p-6">
-                <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
-                  {labels.recommendationsTitle}
-                </p>
-                <ul className="mt-3 space-y-2 text-sm leading-7 text-[var(--text-secondary)]">
-                  {result.recommendations.map((r, idx) => (
-                    <li key={idx} className="flex items-start gap-2">
-                      <span className="mt-1 text-emerald-500">-</span>
-                      {r}
-                    </li>
-                  ))}
-                </ul>
-              </CardContent>
-            </Card>
-          )}
-
-          {/* AI summary */}
-          {result.summary && (
-            <Card className="border-[var(--accent-strong)]/20 bg-[var(--accent-strong)]/5">
-              <CardContent className="p-6">
-                <p className="text-xs uppercase tracking-[0.24em] text-[var(--accent-strong)]">
-                  {labels.summaryTitle}
-                </p>
-                <p className="mt-3 text-sm leading-7 text-[var(--text-secondary)]">
-                  {result.summary}
-                </p>
-              </CardContent>
-            </Card>
-          )}
-        </>
-      ) : (
-        <Card>
-          <CardContent className="p-6">
-            <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[var(--text-secondary)]">
-              {labels.placeholder}
-            </div>
-          </CardContent>
-        </Card>
-      )}
-    </section>
+function AiList({ title, items, tone }: { title: string; items?: string[]; tone: string }) {
+  if (!items || items.length === 0) return null;
+  const color: Record<string, string> = {
+    rose: "text-rose-400", emerald: "text-emerald-400", sky: "text-sky-400", amber: "text-amber-400",
+  };
+  return (
+    <div>
+      <p className={`text-xs font-bold ${color[tone] || "text-[var(--text-primary)]"}`}>{title}</p>
+      <ul className="mt-1 space-y-0.5 text-xs text-[var(--text-secondary)]">
+        {items.map((it, i) => <li key={i}>· {it}</li>)}
+      </ul>
+    </div>
   );
 }
