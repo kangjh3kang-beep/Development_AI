@@ -20,7 +20,7 @@ logger = structlog.get_logger(__name__)
 BUDGET_RATIO = 0.5  # 구독료의 50%를 LLM 포함한도로
 
 # 구독 등급별 요금(원) + 할증배수
-TIER_BILLING: dict[str, dict[str, float]] = {
+TIER_BILLING: dict[str, dict[str, Any]] = {
     "power": {"fee_krw": 24500, "multiplier": 2.0, "label": "파워"},
     "superpower": {"fee_krw": 49900, "multiplier": 1.4, "label": "슈퍼파워"},
     "master": {"fee_krw": 99000, "multiplier": 1.3, "label": "마스터"},
@@ -94,13 +94,35 @@ def billed_krw(real_cost_usd: float, tier: str, rate: float) -> float:
     return real_cost_usd * rate * tier_multiplier(tier)
 
 
-def markup_quote(real_cost_usd: float, tier: str, rate: float) -> dict[str, Any]:
-    """추가결제 견적: 실원가 대비 등급 할증 적용 청구액(시뮬레이션 표시용)."""
-    billed = billed_krw(real_cost_usd, tier, rate)
+def markup_quote(real_cost_usd: float, tier: str, rate: float, *, internal: bool = False) -> dict[str, Any]:
+    """추가결제 견적.
+
+    ★할증배수(50/40/30%)·실원가·환율은 **내부 정책**이므로 기본은 노출하지 않고
+    사용자/외부에는 **실지급액(원)만** 반환한다. internal=True(관리자/감사)일 때만 상세 포함.
+    """
+    billed = round(billed_krw(real_cost_usd, tier, rate))
+    out: dict[str, Any] = {"amount_krw": billed}  # 실지급액(원)
+    if internal:
+        out.update({
+            "real_cost_usd": round(real_cost_usd, 4),
+            "real_cost_krw": round(real_cost_usd * rate),
+            "multiplier": tier_multiplier(tier),
+            "exchange_rate": round(rate, 2),
+        })
+    return out
+
+
+def public_status(status: dict[str, Any]) -> dict[str, Any]:
+    """사용자/외부 노출용 과금 현황 — 내부 정책(배수·환율) 제거, 실지급액(원)만."""
     return {
-        "real_cost_usd": round(real_cost_usd, 4),
-        "real_cost_krw": round(real_cost_usd * rate),
-        "multiplier": tier_multiplier(tier),
-        "billed_krw": round(billed),
-        "exchange_rate": round(rate, 2),
+        "tier": status.get("tier"),
+        "tier_label": status.get("tier_label"),
+        "metered": status.get("metered"),
+        "fee_krw": status.get("fee_krw"),
+        "included_budget_krw": status.get("included_budget_krw"),
+        "budget_krw": status.get("budget_krw"),
+        "billed_krw": status.get("billed_krw"),
+        "remaining_krw": status.get("remaining_krw"),
+        "usage_pct": status.get("usage_pct"),
+        "blocked": status.get("blocked"),
     }

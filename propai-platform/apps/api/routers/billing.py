@@ -6,7 +6,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.api.auth.jwt_handler import CurrentUser, get_current_user
 from apps.api.database.session import get_db
-from app.core.billing import TIER_BILLING, get_usd_krw_rate, markup_quote
+from app.core.billing import (
+    TIER_BILLING,
+    get_usd_krw_rate,
+    markup_quote,
+    public_status,
+    tier_included_budget_krw,
+)
 from app.services.billing import billing_service
 
 router = APIRouter(prefix="/api/v1/billing", tags=["구독·과금"])
@@ -14,9 +20,10 @@ router = APIRouter(prefix="/api/v1/billing", tags=["구독·과금"])
 
 @router.get("/plans")
 async def list_plans():
-    """등급별 요금·포함한도·할증 안내."""
-    from app.core.billing import tier_included_budget_krw
+    """등급별 요금·포함 사용량 안내.
 
+    ★할증배수(50/40/30%)는 내부 정책 → 외부 미노출. 사용자에겐 요금·포함 사용량(원)만.
+    """
     return {
         "plans": [
             {
@@ -24,8 +31,6 @@ async def list_plans():
                 "label": info["label"],
                 "fee_krw": info["fee_krw"],
                 "included_budget_krw": tier_included_budget_krw(t),
-                "surcharge_pct": round((info["multiplier"] - 1) * 100),
-                "multiplier": info["multiplier"],
             }
             for t, info in TIER_BILLING.items()
         ],
@@ -37,7 +42,9 @@ async def billing_status(
     current: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    return await billing_service.get_status(db, current.user_id)
+    """사용자 과금 현황 — 실지급액(원)만 노출(내부 배수·환율 제외)."""
+    status = await billing_service.get_status(db, current.user_id)
+    return public_status(status)
 
 
 class TopupRequest(BaseModel):
@@ -67,10 +74,10 @@ async def quote(
     current: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """추가결제 견적(등급 할증 적용 청구액 표시)."""
+    """추가결제 견적 — 실지급액(원)만 반환. (할증·실원가·환율은 내부 비노출)"""
     st = await billing_service.get_status(db, current.user_id)
     rate = await get_usd_krw_rate()
-    return markup_quote(req.real_cost_usd, st["tier"], rate)
+    return markup_quote(req.real_cost_usd, st["tier"], rate, internal=False)
 
 
 class SetTierRequest(BaseModel):
