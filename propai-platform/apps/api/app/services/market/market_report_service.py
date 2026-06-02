@@ -181,6 +181,62 @@ class MarketReportService:
             "narrative": narrative,
         }
 
+    # ── 정적 지도 이미지(OSM 타일 합성, Pillow) ──
+    @staticmethod
+    def static_map_png(lat: float, lon: float, radius_m: int = 1000, zoom: int = 15,
+                       w: int = 720, h: int = 440) -> bytes | None:
+        """대상 좌표 중심 OSM 정적 지도 PNG(중심핀 + 반경원). 실패 시 None."""
+        try:
+            import math
+            import httpx
+            from PIL import Image, ImageDraw
+
+            n = 2 ** zoom
+            xf = (lon + 180.0) / 360.0 * n
+            lat_r = math.radians(lat)
+            yf = (1.0 - math.asinh(math.tan(lat_r)) / math.pi) / 2.0 * n
+            cols = w // 256 + 2
+            rows = h // 256 + 2
+            x0 = int(xf) - cols // 2
+            y0 = int(yf) - rows // 2
+            canvas = Image.new("RGB", (cols * 256, rows * 256), (235, 235, 235))
+            headers = {"User-Agent": "PropAI/1.0 (market report)"}
+            with httpx.Client(timeout=8.0, headers=headers) as client:
+                for cx in range(cols):
+                    for cy in range(rows):
+                        tx, ty = x0 + cx, y0 + cy
+                        if tx < 0 or ty < 0 or tx >= n or ty >= n:
+                            continue
+                        try:
+                            r = client.get(f"https://a.tile.openstreetmap.org/{zoom}/{tx}/{ty}.png")
+                            if r.status_code == 200:
+                                tile = Image.open(io.BytesIO(r.content)).convert("RGB")
+                                canvas.paste(tile, (cx * 256, cy * 256))
+                        except Exception:  # noqa: BLE001
+                            continue
+            # 중심 픽셀
+            cpx = int((xf - x0) * 256)
+            cpy = int((yf - y0) * 256)
+            # 목표 크기로 중심 크롭
+            left = max(0, cpx - w // 2)
+            top = max(0, cpy - h // 2)
+            img = canvas.crop((left, top, left + w, top + h))
+            d = ImageDraw.Draw(img, "RGBA")
+            ox, oy = cpx - left, cpy - top
+            # 반경 원
+            mpp = 156543.03392 * math.cos(lat_r) / n
+            rpx = int(radius_m / mpp)
+            d.ellipse([ox - rpx, oy - rpx, ox + rpx, oy + rpx], outline=(20, 184, 166, 220), width=3)
+            d.ellipse([ox - rpx, oy - rpx, ox + rpx, oy + rpx], fill=(20, 184, 166, 30))
+            # 중심 핀
+            d.ellipse([ox - 9, oy - 9, ox + 9, oy + 9], fill=(239, 68, 68, 255), outline=(255, 255, 255, 255), width=3)
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            return buf.getvalue()
+        except Exception as e:  # noqa: BLE001
+            logger.warning("정적 지도 생성 실패", err=str(e)[:80])
+            return None
+
     # ── PDF (reportlab) ──
     def to_pdf(self, rep: dict[str, Any]) -> bytes:
         from reportlab.lib import colors
@@ -207,6 +263,17 @@ class MarketReportService:
         story.append(Paragraph("시장조사보고서", h1))
         story.append(Paragraph(f"{rep['address']} · 생성 {rep['generated_at']} · 최근 {len(rep['months'])}개월", body))
         story.append(Spacer(1, 8))
+
+        # 대상지 지도 캡처
+        coords = rep.get("coordinates") or {}
+        if coords.get("lat") and coords.get("lon"):
+            png = self.static_map_png(coords["lat"], coords["lon"], 1000)
+            if png:
+                from reportlab.platypus import Image as RLImage
+
+                story.append(Paragraph("대상지 위치 (반경 1km)", h2))
+                story.append(RLImage(io.BytesIO(png), width=165 * mm, height=101 * mm))
+                story.append(Spacer(1, 8))
 
         nar = rep.get("narrative") or {}
         story.append(Paragraph("1. 시장 요약", h2))
@@ -276,67 +343,120 @@ class MarketReportService:
         from pptx.util import Inches, Pt
         from pptx.dml.color import RGBColor
 
+        from pptx.enum.shapes import MSO_SHAPE
+
         prs = Presentation()
         prs.slide_width = Inches(13.33)
         prs.slide_height = Inches(7.5)
         accent = RGBColor(0x0E, 0x74, 0x90)
+        ink = RGBColor(0x0F, 0x17, 0x2A)
+        WHITE = RGBColor(0xFF, 0xFF, 0xFF)
+
+        def _fill(shape, rgb):
+            shape.fill.solid()
+            shape.fill.fore_color.rgb = rgb
+            shape.line.fill.background()
+
+        def brand_footer(s):
+            bar = s.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, Inches(7.1), Inches(13.33), Inches(0.4))
+            _fill(bar, accent)
+            tf = bar.text_frame
+            tf.margin_top = Pt(2)
+            tf.text = "사통팔땅 · AI 부동산 인텔리전스   |   시장조사보고서"
+            tf.paragraphs[0].font.size = Pt(10)
+            tf.paragraphs[0].font.color.rgb = WHITE
+
+        def header_bar(s, title: str):
+            bar = s.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, Inches(13.33), Inches(1.1))
+            _fill(bar, accent)
+            tf = bar.text_frame
+            tf.margin_left = Inches(0.6)
+            tf.word_wrap = True
+            tf.text = title
+            tf.paragraphs[0].font.size = Pt(26)
+            tf.paragraphs[0].font.bold = True
+            tf.paragraphs[0].font.color.rgb = WHITE
 
         def title_slide():
             s = prs.slides.add_slide(prs.slide_layouts[6])
-            tb = s.shapes.add_textbox(Inches(0.8), Inches(2.4), Inches(11.7), Inches(2.5)).text_frame
+            # 브랜드 풀블리드 배경
+            bg = s.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, Inches(13.33), Inches(7.5))
+            _fill(bg, ink)
+            band = s.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, Inches(2.0), Inches(13.33), Inches(0.12))
+            _fill(band, accent)
+            brand = s.shapes.add_textbox(Inches(0.9), Inches(0.7), Inches(11), Inches(0.6)).text_frame
+            brand.text = "사통팔땅  ·  AI 부동산 인텔리전스"
+            brand.paragraphs[0].font.size = Pt(16); brand.paragraphs[0].font.color.rgb = accent; brand.paragraphs[0].font.bold = True
+            tb = s.shapes.add_textbox(Inches(0.9), Inches(2.5), Inches(11.7), Inches(2.5)).text_frame
             tb.text = "시장조사보고서"
-            tb.paragraphs[0].font.size = Pt(44)
-            tb.paragraphs[0].font.bold = True
-            tb.paragraphs[0].font.color.rgb = accent
+            tb.paragraphs[0].font.size = Pt(52); tb.paragraphs[0].font.bold = True; tb.paragraphs[0].font.color.rgb = WHITE
             p = tb.add_paragraph()
-            p.text = f"{rep['address']}\n생성 {rep['generated_at']} · 최근 {len(rep['months'])}개월"
-            p.font.size = Pt(18)
+            p.text = f"{rep['address']}"
+            p.font.size = Pt(22); p.font.color.rgb = WHITE
+            p2 = tb.add_paragraph()
+            p2.text = f"생성 {rep['generated_at']} · 최근 {len(rep['months'])}개월 · 실거래 기반"
+            p2.font.size = Pt(14); p2.font.color.rgb = RGBColor(0x94, 0xA3, 0xB8)
+
+        def map_slide():
+            coords = rep.get("coordinates") or {}
+            if not (coords.get("lat") and coords.get("lon")):
+                return
+            png = self.static_map_png(coords["lat"], coords["lon"], 1000)
+            if not png:
+                return
+            s = prs.slides.add_slide(prs.slide_layouts[6])
+            header_bar(s, "대상지 위치 (반경 1km)")
+            s.shapes.add_picture(io.BytesIO(png), Inches(2.6), Inches(1.4), height=Inches(5.4))
+            brand_footer(s)
 
         def text_slide(title: str, lines: list[str]):
             s = prs.slides.add_slide(prs.slide_layouts[6])
-            t = s.shapes.add_textbox(Inches(0.7), Inches(0.5), Inches(12), Inches(0.9)).text_frame
-            t.text = title
-            t.paragraphs[0].font.size = Pt(28); t.paragraphs[0].font.bold = True; t.paragraphs[0].font.color.rgb = accent
-            bodytf = s.shapes.add_textbox(Inches(0.8), Inches(1.6), Inches(11.7), Inches(5.2)).text_frame
+            header_bar(s, title)
+            bodytf = s.shapes.add_textbox(Inches(0.8), Inches(1.5), Inches(11.7), Inches(5.2)).text_frame
             bodytf.word_wrap = True
             for i, ln in enumerate(lines or ["-"]):
                 para = bodytf.paragraphs[0] if i == 0 else bodytf.add_paragraph()
                 para.text = ln
-                para.font.size = Pt(16)
+                para.font.size = Pt(16); para.font.color.rgb = ink
+                para.space_after = Pt(8)
+            brand_footer(s)
 
         def table_slide(title: str, data: dict):
             s = prs.slides.add_slide(prs.slide_layouts[6])
-            t = s.shapes.add_textbox(Inches(0.7), Inches(0.5), Inches(12), Inches(0.9)).text_frame
-            t.text = title
-            t.paragraphs[0].font.size = Pt(28); t.paragraphs[0].font.bold = True; t.paragraphs[0].font.color.rgb = accent
+            header_bar(s, title)
             rows = len(data) + 1
-            tbl = s.shapes.add_table(rows, 5, Inches(0.8), Inches(1.6), Inches(11.7), Inches(0.5 * rows)).table
+            tbl = s.shapes.add_table(rows, 5, Inches(0.8), Inches(1.5), Inches(11.7), Inches(0.5 * rows)).table
             hdr = ["유형", "건수", "평균", "최저", "최고"]
             for c, h in enumerate(hdr):
-                tbl.cell(0, c).text = h
+                cell = tbl.cell(0, c)
+                cell.text = h
+                cell.fill.solid(); cell.fill.fore_color.rgb = accent
+                cell.text_frame.paragraphs[0].font.color.rgb = WHITE
+                cell.text_frame.paragraphs[0].font.bold = True
             for r, (label, st) in enumerate(data.items(), start=1):
                 tbl.cell(r, 0).text = label
                 tbl.cell(r, 1).text = str(st.get("count", 0))
                 tbl.cell(r, 2).text = _eok(st.get("avg", 0))
                 tbl.cell(r, 3).text = _eok(st.get("min", 0))
                 tbl.cell(r, 4).text = _eok(st.get("max", 0))
+            brand_footer(s)
 
         def chart_slide(title: str, trend: list[dict[str, Any]]):
             from pptx.chart.data import CategoryChartData
             from pptx.enum.chart import XL_CHART_TYPE
 
             s = prs.slides.add_slide(prs.slide_layouts[6])
-            t = s.shapes.add_textbox(Inches(0.7), Inches(0.5), Inches(12), Inches(0.9)).text_frame
-            t.text = title
-            t.paragraphs[0].font.size = Pt(28); t.paragraphs[0].font.bold = True; t.paragraphs[0].font.color.rgb = accent
+            header_bar(s, title)
             cd = CategoryChartData()
             cd.categories = [f"{int(x['ym'][4:6])}월" for x in trend]
             cd.add_series("아파트 평균(만원)", [int(x["avg"]) for x in trend])
-            s.shapes.add_chart(XL_CHART_TYPE.COLUMN_CLUSTERED, Inches(0.8), Inches(1.6), Inches(11.7), Inches(5), cd)
+            s.shapes.add_chart(XL_CHART_TYPE.COLUMN_CLUSTERED, Inches(0.8), Inches(1.5), Inches(11.7), Inches(5), cd)
+            brand_footer(s)
 
         nar = rep.get("narrative") or {}
         trend = [x for x in (rep.get("apt_trend") or []) if x.get("avg")]
         title_slide()
+        map_slide()
         text_slide("1. 시장 요약", [nar.get("summary") or "-", f"용도지역: {rep.get('zone_type') or '-'}"])
         table_slide("2. 매매 시세 (유형별)", rep.get("trade") or {})
         table_slide("3. 전월세 보증금 (유형별)", rep.get("rent") or {})
