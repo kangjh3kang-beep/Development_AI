@@ -82,6 +82,21 @@ async def analyze_zoning(req: ZoningAnalyzeRequest):
 
         structlog.get_logger().warning("부지분석 AI 해석 스킵", error=str(e)[:120])
 
+    # 서비스 사용료(LLM 별개): 토지분석 1건 차감(로그인 사용자, best-effort)
+    try:
+        from app.core.request_context import get_current_user_id
+
+        uid = get_current_user_id()
+        if uid:
+            from app.core.database import async_session_factory
+            from app.services.billing import billing_service
+
+            async with async_session_factory() as _db:
+                charge = await billing_service.charge_service(_db, uid, "land_analysis")
+            result["service_charge"] = charge  # 프론트 표시용(차감/무료/잔여)
+    except Exception:  # noqa: BLE001
+        pass
+
     return result
 
 

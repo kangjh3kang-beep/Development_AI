@@ -22,6 +22,8 @@ type Status = {
   remaining_krw: number;
   usage_pct: number;
   blocked: boolean;
+  service_fee_krw?: number;
+  free_analysis_remaining?: number;
 };
 
 const TOPUP_PRESETS = [10000, 30000, 50000, 100000];
@@ -90,11 +92,17 @@ export function BillingMeter({ compact = false }: { compact?: boolean }) {
           <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, backgroundColor: barColor }} />
         </div>
         <div className="mt-1.5 flex items-center justify-between text-[10px] text-[var(--text-hint)]">
-          <span>사용 {won(status.billed_krw)} / {won(status.budget_krw)}</span>
+          <span>LLM {won(status.billed_krw)} / {won(status.budget_krw)}</span>
           <span className={status.blocked ? "text-red-500 font-bold" : ""}>
-            {status.blocked ? "한도 소진 · 추가결제 필요" : `잔여 ${won(status.remaining_krw)}`}
+            {status.blocked ? "한도 소진 · 추가결제" : `잔여 ${won(status.remaining_krw)}`}
           </span>
         </div>
+        {(status.service_fee_krw ?? 0) > 0 && (
+          <div className="mt-1 flex items-center justify-between text-[10px] text-[var(--text-hint)] border-t border-[var(--line)] pt-1">
+            <span>서비스 사용료(분석·생성)</span>
+            <span className="font-bold text-[var(--text-secondary)]">{won(status.service_fee_krw)}</span>
+          </div>
+        )}
       </div>
 
       {modalOpen && (

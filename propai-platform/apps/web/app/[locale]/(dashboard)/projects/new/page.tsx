@@ -6,6 +6,7 @@ import { useProjectStore } from "@/store/useProjectStore";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { GlobalAddressSearch, type AddressEntry } from "@/components/common/GlobalAddressSearch";
 import { ImageUpload } from "@/components/ui/ImageUpload";
+import { apiClient } from "@/lib/api-client";
 
 export default function NewProjectPage() {
   const router = useRouter();
@@ -53,6 +54,11 @@ export default function NewProjectPage() {
     } catch (err) {
       console.error("프로젝트 저장 경고(이동은 계속):", err);
     }
+
+    // 서비스 사용료: 프로젝트 생성 1건 차감(로그인 구독자, best-effort — 실패해도 진행)
+    try {
+      await apiClient.post("/billing/charge", { body: { action: "project_create" }, useMock: false });
+    } catch { /* 비로그인/실패 무시 */ }
 
     try {
       setProject(projectId || crypto.randomUUID(), name, "draft");
