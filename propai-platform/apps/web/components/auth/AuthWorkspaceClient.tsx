@@ -511,9 +511,9 @@ export function AuthWorkspaceClient({
         setSession({ user, expiresIn, source });
         setStoredTokenPresent(true);
 
-        // 로그인 성공 → 대시보드로 자동 이동
+        // 로그인 성공 → 대시보드 홈으로 자동 이동 (홈은 /{locale}, /dashboard 라우트는 없음=404)
         if (source === "login" || source === "register") {
-          router.push(`/${locale}/dashboard`);
+          router.push(`/${locale}`);
           return;
         }
       } catch (error) {
