@@ -195,6 +195,26 @@ app = FastAPI(
 setup_middlewares(app)
 app.add_middleware(VersionHeaderMiddleware)
 
+
+# 인증 사용자 ID를 요청 컨텍스트에 주입 (LLM 과금 누적·한도 차단용, best-effort)
+@app.middleware("http")
+async def _inject_user_context(request, call_next):
+    from app.core.request_context import set_current_user_id
+
+    set_current_user_id(None)
+    auth = request.headers.get("authorization") or request.headers.get("Authorization")
+    if auth and auth.lower().startswith("bearer "):
+        try:
+            from apps.api.auth.jwt_handler import decode_token
+
+            payload = decode_token(auth.split(" ", 1)[1].strip())
+            if getattr(payload, "sub", None):
+                set_current_user_id(str(payload.sub))
+        except Exception:  # noqa: BLE001 — 토큰 없음/무효는 무시(비로그인 허용)
+            pass
+    return await call_next(request)
+
+
 # 예외 핸들러 등록
 register_exception_handlers(app)
 

@@ -2,11 +2,12 @@
 
 import re
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from apps.api.app.services.zoning.auto_zoning_service import AutoZoningService
 from apps.api.app.services.land_intelligence.land_info_service import LandInfoService
+from app.core.billing_deps import enforce_llm_quota
 
 router = APIRouter()
 
@@ -43,7 +44,7 @@ def _build_pnu_from_bcode(bcode: str, jibun_address: str) -> str | None:
     return f"{bcode}{is_mountain}{main_num}{sub_num}"
 
 
-@router.post("/analyze")
+@router.post("/analyze", dependencies=[Depends(enforce_llm_quota)])
 async def analyze_zoning(req: ZoningAnalyzeRequest):
     """주소 기반 자동 용도지역 감지 및 법적 한도 매핑.
 

@@ -129,6 +129,31 @@ async def _redis_set(key: str | None, value: dict[str, str], ttl: int = _CACHE_T
         pass
 
 
+async def _record_llm_billing(model: str, input_tokens: int, output_tokens: int) -> None:
+    """로그인 구독자(metered)의 LLM 사용량을 청구에 누적한다(best-effort).
+
+    요청 컨텍스트(미들웨어가 주입)의 user_id가 있을 때만 동작. 실패는 무시.
+    """
+    try:
+        from app.core.request_context import get_current_user_id
+
+        uid = get_current_user_id()
+        if not uid:
+            return
+        from app.core.billing import model_cost_usd
+
+        usd = model_cost_usd(model, input_tokens, output_tokens)
+        if usd <= 0:
+            return
+        from app.core.database import async_session_factory
+        from app.services.billing import billing_service
+
+        async with async_session_factory() as db:
+            await billing_service.record_usage_usd(db, uid, usd)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 class BaseInterpreter:
     """LLM 해석 인터프리터의 공통 기반."""
 
@@ -294,15 +319,19 @@ class BaseInterpreter:
 
         # P4-b: prompt caching 효과 모니터링 — cache_read 비율 로깅.
         # langchain usage_metadata.input_token_details.{cache_read,cache_creation}
-        cache_read = cache_creation = input_tokens = 0
+        cache_read = cache_creation = input_tokens = output_tokens = 0
         try:
             meta = getattr(response, "usage_metadata", None) or {}
             details = meta.get("input_token_details", {}) if isinstance(meta, dict) else {}
             cache_read = int(details.get("cache_read", 0) or 0)
             cache_creation = int(details.get("cache_creation", 0) or 0)
             input_tokens = int(meta.get("input_tokens", 0) or 0) if isinstance(meta, dict) else 0
+            output_tokens = int(meta.get("output_tokens", 0) or 0) if isinstance(meta, dict) else 0
         except Exception:  # noqa: BLE001
             pass
+
+        # 과금: 로그인 구독자면 이번 LLM 사용량을 청구에 누적(best-effort, 실패 무시).
+        await _record_llm_billing(getattr(llm, "model", ""), input_tokens, output_tokens)
         cached_total = cache_read + cache_creation
         cache_hit_ratio = round(cache_read / cached_total, 3) if cached_total else 0.0
         logger.info(
