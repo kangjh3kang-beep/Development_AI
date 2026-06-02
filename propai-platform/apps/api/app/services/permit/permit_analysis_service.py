@@ -203,6 +203,19 @@ class PermitAnalysisService:
         return {"parcels": enriched, **llm}
 
     @staticmethod
+    def _num(v: Any) -> float | None:
+        """숫자/숫자형 문자열만 float로, 그 외('데이터 없음' 등)는 None."""
+        if isinstance(v, (int, float)):
+            return float(v)
+        if isinstance(v, str):
+            import re
+
+            m = re.search(r"-?\d+(?:\.\d+)?", v.replace(",", ""))
+            if m:
+                return float(m.group())
+        return None
+
+    @staticmethod
     def _blended_far(parcels: list[dict[str, Any]]) -> float | None:
         """면적가중평균 용적률(국토계획법 시행령 제84조). 면적 누락 시 단순평균."""
         weighted = [(p["land_area_sqm"], p["max_far"]) for p in parcels if p.get("max_far")]
@@ -298,8 +311,11 @@ class PermitAnalysisService:
                 raw = raw.strip()
             data = json.loads(raw)
             data["ai"] = True
+            # 용적률 3종은 숫자 또는 None으로 정규화(LLM이 "데이터 없음" 등 문자열 반환 대비)
+            for k in ("blended_far", "optimal_far", "max_far"):
+                data[k] = self._num(data.get(k))
             # 산정 누락 시 가중평균으로 보정
-            if not data.get("blended_far") and blended is not None:
+            if data.get("blended_far") is None and blended is not None:
                 data["blended_far"] = blended
             return data
         except Exception as e:  # noqa: BLE001
