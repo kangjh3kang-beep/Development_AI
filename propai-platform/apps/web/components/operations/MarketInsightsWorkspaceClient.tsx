@@ -9,6 +9,19 @@ import {
 import { apiClient, ApiClientError } from "@/lib/api-client";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { NearbyTransactionsMap } from "@/components/map/NearbyTransactionsMap";
+import { useProjectContextStore } from "@/store/useProjectContextStore";
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+// PDF/PPTX 바이너리 다운로드용 API 베이스 (api-client 로직 미러)
+function marketApiBase(): string {
+  if (typeof window !== "undefined") {
+    const h = window.location.hostname;
+    if (h === "4t8t.net" || h === "www.4t8t.net" || h.endsWith(".pages.dev") || h === "propai.kr") {
+      return "https://api.4t8t.net/api/v1";
+    }
+  }
+  return "/api/proxy";
+}
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                             */
@@ -141,6 +154,54 @@ export function MarketInsightsWorkspaceClient() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [searchAddr, setSearchAddr] = useState("");
+  const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
+  const [report, setReport] = useState<any | null>(null);
+  const [genState, setGenState] = useState<"" | "report" | "pdf" | "pptx">("");
+
+  // 시장조사보고서: 구조화 미리보기
+  const generateReport = useCallback(async () => {
+    const addr = siteAnalysis?.address || searchAddr;
+    if (!addr) return;
+    setGenState("report");
+    try {
+      const r = await apiClient.post<any>("/market/report", {
+        body: { address: addr, pnu: siteAnalysis?.pnu || undefined },
+        useMock: false, timeoutMs: 120000,
+      });
+      setReport(r);
+    } catch {
+      setError("보고서 생성에 실패했습니다.");
+    } finally {
+      setGenState("");
+    }
+  }, [siteAnalysis, searchAddr]);
+
+  // PDF/PPTX 다운로드(바이너리)
+  const downloadReport = useCallback(async (fmt: "pdf" | "pptx") => {
+    const addr = siteAnalysis?.address || searchAddr;
+    if (!addr) return;
+    setGenState(fmt);
+    try {
+      const token = (typeof window !== "undefined" && localStorage.getItem("propai_access_token")) || "";
+      const res = await fetch(`${marketApiBase()}/market/report/${fmt}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ address: addr, pnu: siteAnalysis?.pnu || undefined }),
+      });
+      if (!res.ok) throw new Error(String(res.status));
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `시장조사보고서_${addr}.${fmt}`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      setError(`${fmt.toUpperCase()} 다운로드에 실패했습니다.`);
+    } finally {
+      setGenState("");
+    }
+  }, [siteAnalysis, searchAddr]);
 
   // 검색입력(카카오) 주소 선택 시: AVM 시세추정 조회(지도는 store 주소로 자동 갱신)
   const onAddress = useCallback(async (addr: string) => {
@@ -243,6 +304,63 @@ export function MarketInsightsWorkspaceClient() {
 
       {/* 주변 실거래 지도 — 대상지 강조(깜빡임)·반경·유형별 시세 */}
       <NearbyTransactionsMap />
+
+      {/* 시장조사보고서 생성 (PDF / PPT) */}
+      {(siteAnalysis?.address || searchAddr) && (
+        <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
+          <CardContent className="p-6">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-bold text-[var(--text-primary)]">📑 시장조사보고서</p>
+                <p className="mt-0.5 text-xs text-[var(--text-secondary)]">주변 실거래·시세·입지·AI 해석을 통합한 심층 보고서를 PDF/PPT로 생성합니다.</p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button onClick={generateReport} disabled={!!genState}
+                  className="rounded-xl border border-[var(--line-strong)] px-4 py-2 text-xs font-bold text-[var(--text-secondary)] hover:border-[var(--accent-strong)] disabled:opacity-50">
+                  {genState === "report" ? "생성 중…" : "미리보기 생성"}
+                </button>
+                <button onClick={() => downloadReport("pdf")} disabled={!!genState}
+                  className="rounded-xl bg-[var(--accent-strong)] px-4 py-2 text-xs font-black text-white hover:opacity-90 disabled:opacity-50">
+                  {genState === "pdf" ? "PDF 생성 중…" : "PDF 다운로드"}
+                </button>
+                <button onClick={() => downloadReport("pptx")} disabled={!!genState}
+                  className="rounded-xl bg-gradient-to-r from-[var(--accent-strong)] to-[#085d73] px-4 py-2 text-xs font-black text-white hover:opacity-90 disabled:opacity-50">
+                  {genState === "pptx" ? "PPT 생성 중…" : "PPT 다운로드"}
+                </button>
+              </div>
+            </div>
+
+            {report && (
+              <div className="mt-5 space-y-3 border-t border-[var(--line)] pt-4">
+                <div>
+                  <p className="text-xs font-bold text-[var(--accent-strong)]">시장 요약</p>
+                  <p className="mt-1 text-sm leading-relaxed text-[var(--text-secondary)]">{report.narrative?.summary || "-"}</p>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <p className="text-xs font-bold text-[var(--accent-strong)]">기회 요인</p>
+                    <ul className="mt-1 space-y-0.5 text-xs text-[var(--text-secondary)]">
+                      {(report.narrative?.opportunities || []).map((o: string, i: number) => <li key={i}>· {o}</li>)}
+                    </ul>
+                  </div>
+                  <div>
+                    <p className="text-xs font-bold text-amber-500">리스크 요인</p>
+                    <ul className="mt-1 space-y-0.5 text-xs text-[var(--text-secondary)]">
+                      {(report.narrative?.risks || []).map((r: string, i: number) => <li key={i}>· {r}</li>)}
+                    </ul>
+                  </div>
+                </div>
+                {report.narrative?.price_trend && (
+                  <div>
+                    <p className="text-xs font-bold text-[var(--accent-strong)]">가격 동향</p>
+                    <p className="mt-1 text-sm leading-relaxed text-[var(--text-secondary)]">{report.narrative.price_trend}</p>
+                  </div>
+                )}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {/* 에러 */}
       {error && (

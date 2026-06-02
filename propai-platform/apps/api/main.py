@@ -34,6 +34,7 @@ from apps.api.routers import (
     auth,
     auto_zoning,
     billing,
+    market_report,
     avm,
     bim,
     blockchain,
@@ -282,6 +283,7 @@ async def health_check() -> HealthResponse:
 
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["인증"])
 app.include_router(billing.router, tags=["구독·과금"])  # 자체 prefix=/api/v1/billing
+app.include_router(market_report.router, tags=["시장조사보고서"])  # 자체 prefix=/api/v1/market
 app.include_router(projects.router, prefix="/api/v1/projects", tags=["프로젝트"])
 app.include_router(avm.router, prefix="/api/v1/avm", tags=["AVM 시세추정"])
 app.include_router(regulation.router, prefix="/api/v1/regulation", tags=["법규 검토"])
