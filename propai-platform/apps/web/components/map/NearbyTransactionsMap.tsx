@@ -182,11 +182,20 @@ export function NearbyTransactionsMap() {
     groups.forEach((g) => {
       if (!g.lat || !g.lon) return;
       pts.push([g.lat, g.lon]);
+      // 평당가(만원/평) = 평균거래가 / (평균면적/3.305785)
+      const ppyeong =
+        kind === "trade" && g.avg_price_10k && g.avg_area_m2 > 0
+          ? Math.round(g.avg_price_10k / (g.avg_area_m2 / 3.305785))
+          : 0;
       const priceLine = kind === "trade"
-        ? `평균 <b>${won(g.avg_price_10k)}</b> <span style="color:#94a3b8">(${won(g.min_price_10k)}~${won(g.max_price_10k)})</span>`
+        ? `평당 <b>${ppyeong ? `${ppyeong.toLocaleString()}만원/평` : "-"}</b>` +
+          ` <span style="color:#94a3b8">· 총액 평균 ${won(g.avg_price_10k)}</span>`
         : `보증금 <b>${won(g.avg_deposit_10k)}</b>${g.avg_monthly_10k ? ` / 월 ${g.avg_monthly_10k.toLocaleString()}만` : ""}`;
       const dealsHtml = g.deals.slice(0, 5).map((d) => {
-        const p = kind === "trade" ? won(d.price_10k_won)
+        const dpp = kind === "trade" && d.price_10k_won && d.area_m2 && d.area_m2 > 0
+          ? `${Math.round(d.price_10k_won / (d.area_m2 / 3.305785)).toLocaleString()}만/평`
+          : "";
+        const p = kind === "trade" ? (dpp || won(d.price_10k_won))
           : `${won(d.deposit_10k_won)}${d.monthly_rent_10k_won ? `/${d.monthly_rent_10k_won}만` : ""}`;
         return `<div style="font-size:11px;color:#475569;">· ${d.deal_date || ""} ${p} · ${pyeong(d.area_m2)} ${d.floor ? `${d.floor}층` : ""}</div>`;
       }).join("");

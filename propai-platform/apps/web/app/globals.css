@@ -259,3 +259,17 @@ textarea {
     --text-tertiary: #333333;
   }
 }
+
+/* Leaflet 지도 z-index 격리 — 지도 panes/controls(z 400~1000)가 sticky 헤더(z-50)·
+   사이드바 위로 떠오르는 문제 방지. 컨테이너를 독립 스택 컨텍스트로 묶고 낮은 층에 고정. */
+.leaflet-container {
+  isolation: isolate;
+  position: relative;
+  z-index: 0;
+}
+.leaflet-pane,
+.leaflet-top,
+.leaflet-bottom,
+.leaflet-control {
+  z-index: 1 !important;
+}

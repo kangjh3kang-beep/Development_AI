@@ -24,11 +24,27 @@ DISCLAIMER_TEXT = (
 )
 
 
+PYEONG_SQM = 3.305785  # 1평 = 3.305785㎡
+
+
 def _stat(values: list[float]) -> dict[str, Any]:
     vals = [v for v in values if v and v > 0]
     if not vals:
         return {"count": 0, "avg": 0, "min": 0, "max": 0}
     return {"count": len(vals), "avg": round(sum(vals) / len(vals)), "min": min(vals), "max": max(vals)}
+
+
+def _per_pyeong_stat(rows: list) -> dict[str, Any]:
+    """거래 행에서 평당 단가(만원/평) 통계. price_10k_won(만원) / (area_m2/3.305785)."""
+    vals: list[float] = []
+    for x in rows:
+        p = float(x.get("price_10k_won") or 0)
+        a = float(x.get("area_m2") or 0)
+        if p > 0 and a > 0:
+            vals.append(p / (a / PYEONG_SQM))
+    s = _stat(vals)
+    # 평당가는 만원 단위 정수로 반올림
+    return {"count": s["count"], "avg": round(s["avg"]), "min": round(s["min"]), "max": round(s["max"])}
 
 
 def _eok(man: float) -> str:
@@ -75,7 +91,11 @@ class MarketReportService:
                     rows.extend(r)
             prices = [float(x.get("price_10k_won") or 0) for x in rows]
             areas = [float(x.get("area_m2") or 0) for x in rows]
-            return label, {**_stat(prices), "avg_area_m2": round(sum(a for a in areas if a > 0) / max(1, len([a for a in areas if a > 0])), 1) if areas else 0}
+            return label, {
+                **_stat(prices),
+                "avg_area_m2": round(sum(a for a in areas if a > 0) / max(1, len([a for a in areas if a > 0])), 1) if areas else 0,
+                "per_pyeong": _per_pyeong_stat(rows),  # 평당가(만원/평) — 면적 정규화 시세
+            }
 
         async def rent_one(pt: str, label: str):
             rows: list = []
@@ -93,7 +113,13 @@ class MarketReportService:
             except Exception:  # noqa: BLE001
                 rows = []
             prices = [float(x.get("price_10k_won") or 0) for x in rows if (x.get("price_10k_won") or 0) > 0]
-            return {"ym": ym, "avg": round(sum(prices) / len(prices)) if prices else 0, "count": len(prices)}
+            pp = _per_pyeong_stat(rows)
+            return {
+                "ym": ym,
+                "avg": round(sum(prices) / len(prices)) if prices else 0,  # 총액 평균(만원)
+                "avg_per_pyeong": pp["avg"],  # 평당가(만원/평) — 추이 기준
+                "count": len(prices),
+            }
 
         tr = await asyncio.gather(*[trade_one(pt, lb) for pt, lb in _TRADE])
         rr = await asyncio.gather(*[rent_one(pt, lb) for pt, lb in _RENT])
@@ -113,7 +139,10 @@ class MarketReportService:
             llm = get_llm(timeout=40, max_tokens=1500)
             sys = ("당신은 부동산 시장분석 전문가다. 제공된 실거래·시세·입지 데이터만 근거로 "
                    "한국어 JSON으로 답하라. 키: summary(시장요약 3~4문장), opportunities(기회 2~3개 배열), "
-                   "risks(리스크 2~3개 배열), price_trend(가격동향 2문장). 데이터에 없는 수치는 만들지 말 것.")
+                   "risks(리스크 2~3개 배열), price_trend(가격동향 2문장). "
+                   "★모든 거래시세·분양가는 반드시 평당가(만원/평) 기준으로 서술하라. 총액(억원)이 아닌 "
+                   "평당 단가를 사용한다. 예: '아파트 평당 약 1,800만원'. 데이터 단위는 만원/평이다. "
+                   "데이터에 없는 수치는 만들지 말 것.")
             usr = f"## 시장 데이터\n{json.dumps(ctx, ensure_ascii=False)[:3500]}"
             resp = await llm.ainvoke([SystemMessage(content=sys), HumanMessage(content=usr)])
             raw = resp.content if hasattr(resp, "content") else str(resp)
@@ -147,6 +176,9 @@ class MarketReportService:
             zone.get("zone_type") or land_use.get("zone_type")
             or basic.get("zone_type") or comp.get("zone_type")
         )
+        official_price = None
+        if comp.get("official_prices"):
+            official_price = (comp["official_prices"][0] or {}).get("price_per_sqm")
         # 폴백: AutoZoningService(파이프라인 용도지역 감지기)로 보강
         if not zone_type:
             try:
@@ -158,17 +190,26 @@ class MarketReportService:
                     official_price = az.get("official_price_per_sqm")
             except Exception:  # noqa: BLE001
                 pass
-        official_price = None
-        if comp.get("official_prices"):
-            official_price = (comp["official_prices"][0] or {}).get("price_per_sqm")
 
+        # 평당가(만원/평) 요약 — 모든 시세는 면적 정규화된 평당가 기준으로 서술
+        pp_by_type = {
+            label: (v.get("per_pyeong") or {}).get("avg")
+            for label, v in stats["trade"].items()
+            if (v.get("per_pyeong") or {}).get("avg")
+        }
+        apt_pp = ((stats["trade"].get("아파트") or {}).get("per_pyeong") or {}).get("avg")
         ctx = {
             "address": address,
             "zone_type": zone_type,
-            "official_price": official_price,
-            "trade_stats": stats["trade"],
-            "rent_stats": stats["rent"],
-            "apt_trend": stats.get("apt_trend"),
+            "official_price_per_sqm": official_price,
+            "price_basis": "평당가(만원/평) 기준으로 서술할 것",
+            "apt_avg_per_pyeong_manwon": apt_pp,
+            "avg_per_pyeong_by_type_manwon": pp_by_type,
+            "apt_trend_per_pyeong": [
+                {"ym": t["ym"], "per_pyeong_manwon": t.get("avg_per_pyeong")}
+                for t in (stats.get("apt_trend") or [])
+            ],
+            "rent_stats_manwon": stats["rent"],
             "subway": (infra.get("nearest_subway") or {}).get("name") if isinstance(infra, dict) else None,
         }
         narrative = await self._narrative(ctx) if use_llm else {
@@ -183,7 +224,7 @@ class MarketReportService:
             "coordinates": coords,
             "months": stats["months"],
             "zone_type": ctx["zone_type"],
-            "official_price_per_sqm": ctx["official_price"],
+            "official_price_per_sqm": official_price,
             "trade": stats["trade"],
             "rent": stats["rent"],
             "apt_trend": stats.get("apt_trend") or [],
@@ -309,20 +350,45 @@ class MarketReportService:
             story.append(t)
             story.append(Spacer(1, 8))
 
-        stat_table("2. 매매 시세 (유형별)", rep.get("trade") or {}, "만원")
+        # 매매 시세: 평당가(만원/평) 중심 + 총액 평균 병기
+        def trade_table(title: str, data: dict):
+            story.append(Paragraph(title, h2))
+            rows = [["유형", "건수", "평당가(만원/평)", "총액 평균", "평균면적"]]
+            for label, s in data.items():
+                pp = (s.get("per_pyeong") or {}).get("avg", 0)
+                area = s.get("avg_area_m2", 0)
+                rows.append([
+                    label, str(s.get("count", 0)),
+                    f"{int(pp):,}만원/평" if pp else "-",
+                    _eok(s.get("avg", 0)),
+                    f"{area:.1f}㎡({round(area / PYEONG_SQM)}평)" if area else "-",
+                ])
+            t = Table(rows, colWidths=[40 * mm, 20 * mm, 42 * mm, 35 * mm, 38 * mm])
+            t.setStyle(TableStyle([
+                ("FONTNAME", (0, 0), (-1, -1), font), ("FONTSIZE", (0, 0), (-1, -1), 9),
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0e7490")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#cbd5e1")),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f1f5f9")]),
+                ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
+            ]))
+            story.append(t)
+            story.append(Spacer(1, 8))
+
+        trade_table("2. 매매 시세 (유형별 · 평당가 기준)", rep.get("trade") or {})
         stat_table("3. 전월세 보증금 (유형별)", rep.get("rent") or {}, "만원")
 
-        # 시세 추이 차트(아파트 월별 평균)
-        trend = [t for t in (rep.get("apt_trend") or []) if t.get("avg")]
+        # 시세 추이 차트(아파트 월별 평당가)
+        trend = [t for t in (rep.get("apt_trend") or []) if t.get("avg_per_pyeong") or t.get("avg")]
         if trend:
             from reportlab.graphics.shapes import Drawing
             from reportlab.graphics.charts.barcharts import VerticalBarChart
 
-            story.append(Paragraph("4. 매매 시세 추이 (아파트 월별 평균, 만원)", h2))
+            story.append(Paragraph("4. 매매 시세 추이 (아파트 월별 평당가, 만원/평)", h2))
             d = Drawing(440, 170)
             bc = VerticalBarChart()
             bc.x = 40; bc.y = 25; bc.width = 360; bc.height = 120
-            bc.data = [[int(t["avg"]) for t in trend]]
+            bc.data = [[int(t.get("avg_per_pyeong") or t.get("avg") or 0) for t in trend]]
             bc.categoryAxis.categoryNames = [f"{int(t['ym'][4:6])}월" for t in trend]
             bc.categoryAxis.labels.fontName = font
             bc.valueAxis.labels.fontName = font
@@ -441,12 +507,13 @@ class MarketReportService:
                 para.space_after = Pt(8)
             brand_footer(s)
 
-        def table_slide(title: str, data: dict):
+        def table_slide(title: str, data: dict, pp: bool = False):
             s = prs.slides.add_slide(prs.slide_layouts[6])
             header_bar(s, title)
             rows = len(data) + 1
-            tbl = s.shapes.add_table(rows, 5, Inches(0.8), Inches(1.5), Inches(11.7), Inches(0.5 * rows)).table
-            hdr = ["유형", "건수", "평균", "최저", "최고"]
+            ncol = 4 if pp else 5
+            tbl = s.shapes.add_table(rows, ncol, Inches(0.8), Inches(1.5), Inches(11.7), Inches(0.5 * rows)).table
+            hdr = ["유형", "건수", "평당가(만원/평)", "총액 평균"] if pp else ["유형", "건수", "평균", "최저", "최고"]
             for c, h in enumerate(hdr):
                 cell = tbl.cell(0, c)
                 cell.text = h
@@ -456,9 +523,14 @@ class MarketReportService:
             for r, (label, st) in enumerate(data.items(), start=1):
                 tbl.cell(r, 0).text = label
                 tbl.cell(r, 1).text = str(st.get("count", 0))
-                tbl.cell(r, 2).text = _eok(st.get("avg", 0))
-                tbl.cell(r, 3).text = _eok(st.get("min", 0))
-                tbl.cell(r, 4).text = _eok(st.get("max", 0))
+                if pp:
+                    ppv = (st.get("per_pyeong") or {}).get("avg", 0)
+                    tbl.cell(r, 2).text = f"{int(ppv):,}만원/평" if ppv else "-"
+                    tbl.cell(r, 3).text = _eok(st.get("avg", 0))
+                else:
+                    tbl.cell(r, 2).text = _eok(st.get("avg", 0))
+                    tbl.cell(r, 3).text = _eok(st.get("min", 0))
+                    tbl.cell(r, 4).text = _eok(st.get("max", 0))
             brand_footer(s)
 
         def chart_slide(title: str, trend: list[dict[str, Any]]):
@@ -469,19 +541,19 @@ class MarketReportService:
             header_bar(s, title)
             cd = CategoryChartData()
             cd.categories = [f"{int(x['ym'][4:6])}월" for x in trend]
-            cd.add_series("아파트 평균(만원)", [int(x["avg"]) for x in trend])
+            cd.add_series("아파트 평당가(만원/평)", [int(x.get("avg_per_pyeong") or x.get("avg") or 0) for x in trend])
             s.shapes.add_chart(XL_CHART_TYPE.COLUMN_CLUSTERED, Inches(0.8), Inches(1.5), Inches(11.7), Inches(5), cd)
             brand_footer(s)
 
         nar = rep.get("narrative") or {}
-        trend = [x for x in (rep.get("apt_trend") or []) if x.get("avg")]
+        trend = [x for x in (rep.get("apt_trend") or []) if x.get("avg_per_pyeong") or x.get("avg")]
         title_slide()
         map_slide()
         text_slide("1. 시장 요약", [nar.get("summary") or "-", f"용도지역: {rep.get('zone_type') or '-'}"])
-        table_slide("2. 매매 시세 (유형별)", rep.get("trade") or {})
+        table_slide("2. 매매 시세 (유형별 · 평당가)", rep.get("trade") or {}, pp=True)
         table_slide("3. 전월세 보증금 (유형별)", rep.get("rent") or {})
         if trend:
-            chart_slide("4. 매매 시세 추이 (아파트 월별 평균)", trend)
+            chart_slide("4. 매매 시세 추이 (아파트 월별 평당가)", trend)
         text_slide("5. 기회 요인", [f"· {o}" for o in (nar.get("opportunities") or ["-"])])
         text_slide("6. 리스크 요인", [f"· {r}" for r in (nar.get("risks") or ["-"])])
         text_slide("7. 가격 동향", [nar.get("price_trend") or "-"])
