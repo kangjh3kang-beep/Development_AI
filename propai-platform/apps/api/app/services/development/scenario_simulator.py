@@ -52,12 +52,19 @@ class DevelopmentScenarioSimulator:
             "역세권" in (p.get("zone") or "") for p in enriched
         )
 
+        # 인접성: 통합개발(합필/일단지)은 필지가 맞닿아야 가능
+        adjacency = self._adjacency(enriched) if multi else {"contiguous": True, "components": 1, "note": "단일 필지"}
+        integration_ok = adjacency.get("contiguous") is not False  # None(미상)은 허용하되 주의
+
         ctx = {
             "address": address, "multi": multi, "parcel_count": len(addrs),
             "total_area_sqm": round(total_area, 1) if total_area else None,
             "primary_zone": primary_zone, "zones": zones,
             "far_legal_blended": far_legal,
             "near_station_m": subway_m, "near_station": near_station,
+            "adjacency": adjacency, "integration_feasible": integration_ok,
+            "parcels": [{"address": p.get("address"), "zone": p.get("zone"),
+                         "area": p.get("area"), "max_far": p.get("max_far")} for p in enriched],
         }
 
         scenarios = self._scenarios(ctx)
@@ -97,6 +104,10 @@ class DevelopmentScenarioSimulator:
 
         az = AutoZoningService()
 
+        from app.services.external_api.vworld_service import VWorldService
+
+        vworld = VWorldService()
+
         async def one(a: str) -> dict:
             try:
                 r = await az.analyze_by_address(a)
@@ -105,10 +116,23 @@ class DevelopmentScenarioSimulator:
                 if not far and r.get("zone_type"):
                     lim = ZONE_LIMITS.get((r["zone_type"] or "").replace(" ", ""))
                     far = lim.get("max_far") if lim else None
+                pnu = r.get("pnu")
+                coords = r.get("coordinates") or {}
+                geometry = None
+                try:
+                    if pnu:
+                        li = await vworld.get_land_info(pnu)
+                        geometry = li.get("geometry") if li else None
+                    if geometry is None and coords.get("lat") and coords.get("lon"):
+                        pp = await vworld.get_parcel_by_point(coords["lat"], coords["lon"])
+                        geometry = pp.get("geometry") if pp else None
+                except Exception:  # noqa: BLE001
+                    pass
                 return {"address": a, "zone": r.get("zone_type"),
-                        "area": r.get("land_area_sqm"), "max_far": far}
+                        "area": r.get("land_area_sqm"), "max_far": far,
+                        "pnu": pnu, "geometry": geometry}
             except Exception:  # noqa: BLE001
-                return {"address": a, "zone": None, "area": None, "max_far": None}
+                return {"address": a, "zone": None, "area": None, "max_far": None, "geometry": None}
 
         enriched = await asyncio.gather(*[one(a) for a in addrs])
         enriched = list(enriched)
@@ -132,6 +156,58 @@ class DevelopmentScenarioSimulator:
         return enriched, subway_m
 
     @staticmethod
+    def _adjacency(parcels: list[dict]) -> dict[str, Any]:
+        """필지 인접성 판정 — 통합개발(합필/일단지)은 필지가 맞닿아야 가능.
+
+        shapely로 각 필지 폴리곤 간 거리를 계산해 연결요소(그룹) 수를 구한다.
+        contiguous=True면 모든 필지가 하나로 연결(통합개발 가능).
+        """
+        geoms = [p.get("geometry") for p in parcels]
+        present = [g for g in geoms if g]
+        if len(present) < 2:
+            return {"contiguous": True, "components": 1, "checked": len(present),
+                    "note": "단일 필지"}
+        try:
+            from shapely.geometry import shape
+
+            polys = []
+            for g in geoms:
+                try:
+                    polys.append(shape(g).buffer(0) if g else None)
+                except Exception:  # noqa: BLE001
+                    polys.append(None)
+            idx = [i for i, p in enumerate(polys) if p is not None]
+            if len(idx) < 2:
+                return {"contiguous": None, "components": None, "checked": len(idx),
+                        "note": "필지 형상 데이터 부족 — 인접성 확인 불가(현장 확인 필요)"}
+            TOL_DEG = 0.00006  # 약 6m(공유경계 정밀오차·세도로 허용)
+            n = len(idx)
+            parent = list(range(n))
+
+            def find(x: int) -> int:
+                while parent[x] != x:
+                    parent[x] = parent[parent[x]]
+                    x = parent[x]
+                return x
+
+            for a in range(n):
+                for b in range(a + 1, n):
+                    if polys[idx[a]].distance(polys[idx[b]]) <= TOL_DEG:
+                        parent[find(a)] = find(b)
+            comps = len({find(i) for i in range(n)})
+            return {
+                "contiguous": comps == 1,
+                "components": comps,
+                "checked": n,
+                "note": "모든 필지가 맞닿아 통합개발 가능" if comps == 1
+                else f"{comps}개 그룹으로 분리 — 비인접 필지는 통합개발(합필/일단지) 불가",
+            }
+        except Exception as e:  # noqa: BLE001
+            logger.warning("인접성 분석 실패", err=str(e)[:80])
+            return {"contiguous": None, "components": None, "checked": len(present),
+                    "note": "인접성 분석 실패 — 현장/지적도 확인 필요"}
+
+    @staticmethod
     def _blended_far(parcels: list[dict]) -> float | None:
         w = [(p.get("area"), p.get("max_far")) for p in parcels if p.get("max_far")]
         if not w:
@@ -149,11 +225,25 @@ class DevelopmentScenarioSimulator:
         far = c.get("far_legal_blended") or 0
         multi = c.get("multi")
         station = c.get("near_station")
+        integration_ok = c.get("integration_feasible", True)
+        adj_note = (c.get("adjacency") or {}).get("note", "")
         res = _is_residential(zone)
         com = _is_commercial(zone)
         S: list[dict] = []
 
+        # 통합개발(합필/일단지)이 필요한 정책은 다필지 비인접 시 불가
+        INTEGRATION_SCHEMES = {
+            "지구단위계획 연계", "도시개발사업(도시개발법)", "가로주택정비사업",
+            "모아주택/모아타운", "재개발·재건축(정비사업)", "역세권 활성화사업",
+            "역세권 장기전세주택(시프트)",
+        }
+
         def add(scheme, applicable, est_far, contrib, requirements, pros, cons, notes):
+            # 다필지인데 비인접이면 통합개발 정책은 불가로 강등
+            if multi and not integration_ok and scheme in INTEGRATION_SCHEMES and applicable != "불가":
+                applicable = "불가"
+                cons = [*(cons or []), "필지 비인접 — 통합개발 불가"]
+                notes = f"⚠ {adj_note}. 통합개발 불가 — 필지별 개별개발 검토"
             S.append({"scheme": scheme, "applicable": applicable,
                       "est_far": round(est_far) if est_far else None,
                       "contribution_pct": contrib, "requirements": requirements,

@@ -248,12 +248,58 @@ async def parcel_boundaries(req: ParcelBoundariesRequest):
             except Exception:  # noqa: BLE001
                 continue
 
+    # 인접성: 통합개발(합필/일단지)은 필지가 맞닿아야 가능
+    adjacency = _parcel_adjacency([f.get("geometry") for f in features]) if len(features) >= 2 else \
+        {"contiguous": True, "components": 1, "note": "단일 필지"}
+
     return {
         "features": features,
         "center": center,
         "total_area_sqm": round(total_area, 1),
         "parcel_count": len(features),
+        "adjacency": adjacency,
     }
+
+
+def _parcel_adjacency(geoms: list) -> dict:
+    """필지 폴리곤 인접성(연결요소) 판정 — shapely."""
+    present = [g for g in geoms if g]
+    if len(present) < 2:
+        return {"contiguous": True, "components": 1, "note": "단일 필지"}
+    try:
+        from shapely.geometry import shape
+
+        polys = []
+        for g in geoms:
+            try:
+                polys.append(shape(g).buffer(0) if g else None)
+            except Exception:  # noqa: BLE001
+                polys.append(None)
+        idx = [i for i, p in enumerate(polys) if p is not None]
+        if len(idx) < 2:
+            return {"contiguous": None, "components": None, "note": "형상 데이터 부족 — 인접성 확인 불가"}
+        tol = 0.00006  # ~6m
+        n = len(idx)
+        parent = list(range(n))
+
+        def find(x: int) -> int:
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        for a in range(n):
+            for b in range(a + 1, n):
+                if polys[idx[a]].distance(polys[idx[b]]) <= tol:
+                    parent[find(a)] = find(b)
+        comps = len({find(i) for i in range(n)})
+        return {
+            "contiguous": comps == 1, "components": comps,
+            "note": "모든 필지가 맞닿아 통합개발 가능" if comps == 1
+            else f"{comps}개 그룹으로 분리 — 비인접 필지는 통합개발 불가",
+        }
+    except Exception:  # noqa: BLE001
+        return {"contiguous": None, "components": None, "note": "인접성 분석 실패"}
 
 
 class NearbyMapRequest(BaseModel):
