@@ -28,6 +28,7 @@ export function G2BAwardStats({
 }) {
   const [stats, setStats] = useState<AwardStat[]>([]);
   const [loading, setLoading] = useState(true);
+  const [count, setCount] = useState(20); // 표시 개수(10~100)
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -62,20 +63,35 @@ export function G2BAwardStats({
     );
   }
 
-  const maxRate = Math.max(...stats.map((s) => s.avg_award_rate || 0), 1);
+  const shown = stats.slice(0, count);
+  const maxRate = Math.max(...shown.map((s) => s.avg_award_rate || 0), 1);
 
   return (
-    <div className="rounded-2xl border border-[var(--border)] p-4">
-      <h3 className="text-sm font-black text-[var(--text-primary)] mb-3">
-        낙찰가율 시장동향 {regionSido ? `· ${regionSido}` : ""} {bidType ? `· ${bidType}` : ""}
-      </h3>
+    <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-5">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <h3 className="text-sm font-black text-[var(--text-primary)]">
+          낙찰가율 시장동향 {regionSido ? `· ${regionSido}` : ""} {bidType ? `· ${bidType}` : ""}
+        </h3>
+        <label className="flex items-center gap-1.5 text-[11px] font-semibold text-[var(--text-secondary)]">
+          표시
+          <select
+            value={count}
+            onChange={(e) => setCount(Number(e.target.value))}
+            className="rounded-lg border border-[var(--line)] bg-[var(--surface-strong)] px-2 py-1 text-[11px] font-bold text-[var(--text-primary)] outline-none"
+          >
+            {[10, 20, 30, 50, 100].map((n) => (
+              <option key={n} value={n}>{n}개</option>
+            ))}
+          </select>
+        </label>
+      </div>
       <div className="space-y-2">
-        {stats.map((s, i) => (
+        {shown.map((s, i) => (
           <div key={i} className="flex items-center gap-3">
-            <span className="text-xs text-[var(--text-secondary)] w-16 shrink-0">
+            <span className="text-xs font-semibold text-[var(--text-secondary)] w-16 shrink-0">
               {s.stat_period}
             </span>
-            <div className="flex-1 h-3 rounded-full bg-[var(--surface-muted)]">
+            <div className="flex-1 h-3 rounded-full bg-[var(--surface-strong)]">
               <div
                 className="h-3 rounded-full bg-[var(--accent-strong)]"
                 style={{ width: `${((s.avg_award_rate || 0) / maxRate) * 100}%` }}
@@ -84,7 +100,7 @@ export function G2BAwardStats({
             <span className="text-xs font-bold text-[var(--text-primary)] w-14 text-right">
               {s.avg_award_rate != null ? `${s.avg_award_rate.toFixed(1)}%` : "-"}
             </span>
-            <span className="text-[10px] text-[var(--text-hint)] w-12 text-right">
+            <span className="text-[10px] text-[var(--text-secondary)] w-12 text-right">
               {s.bid_count}건
             </span>
           </div>

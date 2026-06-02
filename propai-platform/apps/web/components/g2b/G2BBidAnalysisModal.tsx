@@ -123,21 +123,27 @@ type ManualForm = {
 export function G2BBidAnalysisModal({
   bidId,
   bidName,
+  initialResult,
+  initialForm,
   onClose,
 }: {
   bidId: string;
   bidName?: string;
+  /** 히스토리에서 저장된 결과를 바로 표시(재조회) */
+  initialResult?: AnalysisResult | null;
+  /** 편집 재분석 시 입력 폼 프리필 */
+  initialForm?: Partial<ManualForm>;
   onClose: () => void;
 }) {
-  const [result, setResult] = useState<AnalysisResult | null>(null);
+  const [result, setResult] = useState<AnalysisResult | null>(initialResult ?? null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [form, setForm] = useState<ManualForm>({
-    total_gfa_sqm: "",
-    floor_count_above: "",
-    structure_type: "",
-    building_type_override: "",
-    target_margin_pct: "5",
+    total_gfa_sqm: initialForm?.total_gfa_sqm ?? "",
+    floor_count_above: initialForm?.floor_count_above ?? "",
+    structure_type: initialForm?.structure_type ?? "",
+    building_type_override: initialForm?.building_type_override ?? "",
+    target_margin_pct: initialForm?.target_margin_pct ?? "5",
   });
 
   const runAnalysis = useCallback(async () => {
@@ -170,13 +176,13 @@ export function G2BBidAnalysisModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-md p-4"
       onClick={onClose}
     >
       <motion.div
         initial={{ opacity: 0, y: 24 }}
         animate={{ opacity: 1, y: 0 }}
-        className="w-full max-w-3xl max-h-[90vh] overflow-y-auto rounded-2xl bg-[var(--surface)] border border-[var(--border)] p-6 shadow-2xl"
+        className="w-full max-w-3xl max-h-[90vh] overflow-y-auto rounded-2xl bg-[var(--surface-strong)] border-2 border-[var(--line-strong)] p-6 shadow-2xl ring-1 ring-black/40"
         onClick={(e) => e.stopPropagation()}
       >
         {/* 헤더 */}
@@ -196,7 +202,7 @@ export function G2BBidAnalysisModal({
         </div>
 
         {/* 수동 보정 폼 */}
-        <div className="rounded-xl border border-[var(--border)] p-4 mb-4 bg-[var(--surface-muted)]/30">
+        <div className="rounded-xl border border-[var(--line)] p-4 mb-4 bg-[var(--surface-soft)]/30">
           <p className="text-xs font-bold text-[var(--text-secondary)] mb-3">
             건축 개요 보정 (비워두면 추정가격으로 자동 역산)
           </p>
@@ -205,18 +211,18 @@ export function G2BBidAnalysisModal({
               placeholder="연면적(㎡)"
               value={form.total_gfa_sqm}
               onChange={(e) => setForm({ ...form, total_gfa_sqm: e.target.value })}
-              className="h-9 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-2 text-sm text-[var(--text-primary)]"
+              className="h-9 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-2 text-sm text-[var(--text-primary)]"
             />
             <input
               placeholder="지상 층수"
               value={form.floor_count_above}
               onChange={(e) => setForm({ ...form, floor_count_above: e.target.value })}
-              className="h-9 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-2 text-sm text-[var(--text-primary)]"
+              className="h-9 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-2 text-sm text-[var(--text-primary)]"
             />
             <select
               value={form.structure_type}
               onChange={(e) => setForm({ ...form, structure_type: e.target.value })}
-              className="h-9 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-2 text-sm text-[var(--text-primary)]"
+              className="h-9 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-2 text-sm text-[var(--text-primary)]"
             >
               <option value="">구조 자동</option>
               <option value="RC">RC</option>
@@ -227,7 +233,7 @@ export function G2BBidAnalysisModal({
             <select
               value={form.building_type_override}
               onChange={(e) => setForm({ ...form, building_type_override: e.target.value })}
-              className="h-9 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-2 text-sm text-[var(--text-primary)]"
+              className="h-9 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-2 text-sm text-[var(--text-primary)]"
             >
               <option value="">유형 자동</option>
               <option value="아파트">아파트</option>
@@ -240,7 +246,7 @@ export function G2BBidAnalysisModal({
               placeholder="목표마진(%)"
               value={form.target_margin_pct}
               onChange={(e) => setForm({ ...form, target_margin_pct: e.target.value })}
-              className="h-9 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-2 text-sm text-[var(--text-primary)]"
+              className="h-9 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-2 text-sm text-[var(--text-primary)]"
             />
             <button
               onClick={runAnalysis}
@@ -275,7 +281,7 @@ export function G2BBidAnalysisModal({
             )}
 
             {/* 적정 투찰가 */}
-            <section className="rounded-xl border border-[var(--border)] p-4">
+            <section className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-4">
               <h3 className="text-sm font-black text-[var(--text-primary)] mb-2">적정 투찰가</h3>
               <div className="flex items-baseline gap-2">
                 <span className="text-2xl font-black text-[var(--accent-strong)]">
@@ -301,7 +307,7 @@ export function G2BBidAnalysisModal({
             </section>
 
             {/* 리스크 3축 */}
-            <section className="rounded-xl border border-[var(--border)] p-4">
+            <section className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-4">
               <h3 className="text-sm font-black text-[var(--text-primary)] mb-2">
                 리스크 <span className={riskColor(result.risk_score_total)}>{result.risk_score_total.toFixed(0)}점</span>
               </h3>
@@ -312,7 +318,7 @@ export function G2BBidAnalysisModal({
 
             {/* QTO 원가 */}
             {result.cost_breakdown && (
-              <section className="rounded-xl border border-[var(--border)] p-4">
+              <section className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-4">
                 <h3 className="text-sm font-black text-[var(--text-primary)] mb-2">
                   추정 공사원가 (QTO 기반)
                 </h3>
@@ -384,7 +390,7 @@ export function G2BBidAnalysisModal({
 
             {/* AI 요약 (규칙기반 한줄 요약) */}
             {result.ai_summary && (
-              <section className="rounded-xl border border-[var(--border)] p-4">
+              <section className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-4">
                 <h3 className="text-sm font-black text-[var(--text-primary)] mb-2">AI 종합 의견</h3>
                 <pre className="whitespace-pre-wrap text-sm text-[var(--text-secondary)] font-sans">
                   {result.ai_summary}
@@ -437,7 +443,7 @@ export function G2BBidAnalysisModal({
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-xl border border-[var(--border)] p-3 text-center">
+    <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-3 text-center">
       <p className="text-[10px] text-[var(--text-hint)]">{label}</p>
       <p className="text-base font-black text-[var(--text-primary)] mt-1">{value}</p>
     </div>
@@ -446,7 +452,7 @@ function Stat({ label, value }: { label: string; value: string }) {
 
 function MiniCard({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="rounded-xl border border-[var(--border)] p-3">
+    <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-3">
       <p className="text-[10px] text-[var(--text-hint)] mb-1">{title}</p>
       <div className="text-sm font-bold text-[var(--text-primary)]">{children}</div>
     </div>
@@ -458,7 +464,7 @@ function RiskBar({ label, v }: { label: string; v: number }) {
   return (
     <div className="flex items-center gap-2 mt-1">
       <span className="text-xs text-[var(--text-secondary)] w-24 shrink-0">{label}</span>
-      <div className="flex-1 h-2 rounded-full bg-[var(--surface-muted)]">
+      <div className="flex-1 h-2 rounded-full bg-[var(--surface-soft)]">
         <div className={`h-2 rounded-full ${color}`} style={{ width: `${Math.min(100, v)}%` }} />
       </div>
       <span className="text-xs text-[var(--text-hint)] w-8 text-right">{v.toFixed(0)}</span>
@@ -484,7 +490,7 @@ function AiSection({
       className={`rounded-lg p-3 ${
         emphasis
           ? "bg-blue-500/10 border border-blue-500/30"
-          : "bg-[var(--surface-muted)]/40"
+          : "bg-[var(--surface-soft)]/40"
       }`}
     >
       <div className="flex items-center gap-1.5 mb-1">
