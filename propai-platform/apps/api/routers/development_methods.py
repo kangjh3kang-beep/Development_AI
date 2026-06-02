@@ -143,3 +143,30 @@ async def evaluate_development_methods(
         ahp_weights=ahp_weights,
         analysis_summary=result.analysis_summary,
     )
+
+
+# ── 다각도 개발 시나리오 시뮬레이션 (정책 적용판정 + 최적안 + 단순건축 폴백) ──
+
+class ScenarioSimRequest(BaseModel):
+    """개발 시나리오 시뮬레이션 요청 (인증 불필요·부지 공개데이터 기반)."""
+
+    address: str
+    parcels: list[str] | None = None  # 다필지 통합 시뮬레이션
+    site: dict[str, Any] | None = None
+    use_llm: bool = True
+
+
+@router.post("/scenarios", summary="다각도 개발방식 시뮬레이션(정책별 적용판정·최적안)")
+async def development_scenarios(body: ScenarioSimRequest) -> dict[str, Any]:
+    """단일/다필지에 대해 도시개발법·지구단위·가로주택·모아주택·역세권 등 정책
+    적용요건을 판정하고 정책별 예상 용적률·기부채납·실현성을 산정해 최적 사업방안을
+    제안한다(미적용 시 단순 건축 폴백)."""
+    from fastapi import HTTPException
+
+    from app.services.development.scenario_simulator import DevelopmentScenarioSimulator
+
+    if not body.address or not body.address.strip():
+        raise HTTPException(status_code=400, detail="주소가 필요합니다.")
+    return await DevelopmentScenarioSimulator().simulate(
+        body.address.strip(), parcels=body.parcels, site=body.site or {}, use_llm=body.use_llm
+    )
