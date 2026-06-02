@@ -51,6 +51,24 @@ def _rtms_path(operation: str) -> str:
     return f"{_RTMS_HOST_PATH}/{service}/{operation}"
 
 
+def _to_int(v: Any, default: int = 0) -> int:
+    """공백/빈값/콤마 방어 정수 변환. (상업 floor=' ' 등으로 인한 파싱 전체 실패 방지)"""
+    try:
+        s = str(v).replace(",", "").strip()
+        return int(float(s)) if s else default
+    except (ValueError, TypeError):
+        return default
+
+
+def _to_float(v: Any, default: float = 0.0) -> float:
+    """공백/빈값/콤마 방어 실수 변환."""
+    try:
+        s = str(v).replace(",", "").strip()
+        return float(s) if s else default
+    except (ValueError, TypeError):
+        return default
+
+
 class MolitClient(BaseAPIClient):
     """국토부 실거래가 API 클라이언트."""
 
@@ -342,18 +360,24 @@ class MolitClient(BaseAPIClient):
                     v = item.get(en)
                     return v if v not in (None, "") else item.get(ko, default)
 
-                price_str = str(g("dealAmount", "거래금액", "0")).replace(",", "").strip()
                 year = g("dealYear", "년", "")
                 month = g("dealMonth", "월", "")
                 day = g("dealDay", "일", "")
+                # 면적: 유형별 상이 — 아파트/연립/오피=전용, 단독=연면적, 상업=건물,
+                #       토지=거래면적, 차선책으로 대지면적.
+                area = (
+                    _to_float(g("excluUseAr", "전용면적"))
+                    or _to_float(item.get("totalFloorAr"))
+                    or _to_float(item.get("buildingAr"))
+                    or _to_float(item.get("dealArea"))
+                    or _to_float(item.get("plottageAr"))
+                )
                 result.append({
                     "prop_type": prop_type,
                     "deal_date": f"{year}년 {month}월 {day}일",
-                    "price_10k_won": int(price_str or 0),
-                    "area_m2": float(
-                        g("excluUseAr", "전용면적", 0) or item.get("totalFloorAr", 0) or 0
-                    ),
-                    "floor": int(g("floor", "층", 0) or 0),
+                    "price_10k_won": _to_int(g("dealAmount", "거래금액", "0")),
+                    "area_m2": area,
+                    "floor": _to_int(g("floor", "층", 0)),
                     "building_name": str(
                         g("aptNm", "아파트", "")
                         or item.get("mhouseNm")  # 연립·다세대
@@ -364,7 +388,7 @@ class MolitClient(BaseAPIClient):
                     "sigungu": str(g("estateAgentSggNm", "시군구", "")),
                     "dong": str(g("umdNm", "법정동", "")),
                     "jibun": str(g("jibun", "지번", "")),
-                    "build_year": int(g("buildYear", "건축년도", 0) or 0),
+                    "build_year": _to_int(g("buildYear", "건축년도", 0)),
                 })
             return result
         except Exception:
@@ -381,19 +405,19 @@ class MolitClient(BaseAPIClient):
                     v = item.get(en)
                     return v if v not in (None, "") else item.get(ko, default)
 
-                deposit_str = str(g("deposit", "보증금액", "0")).replace(",", "").strip()
-                monthly_str = str(g("monthlyRent", "월세금액", "0")).replace(",", "").strip()
                 year = g("dealYear", "년", "")
                 month = g("dealMonth", "월", "")
                 day = g("dealDay", "일", "")
+                area = (
+                    _to_float(g("excluUseAr", "전용면적"))
+                    or _to_float(item.get("totalFloorAr"))
+                )
                 result.append({
                     "deal_date": f"{year}년 {month}월 {day}일",
-                    "deposit_10k_won": int(deposit_str or 0),
-                    "monthly_rent_10k_won": int(monthly_str or 0),
-                    "area_m2": float(
-                        g("excluUseAr", "전용면적", 0) or item.get("totalFloorAr", 0) or 0
-                    ),
-                    "floor": int(g("floor", "층", 0) or 0),
+                    "deposit_10k_won": _to_int(g("deposit", "보증금액", "0")),
+                    "monthly_rent_10k_won": _to_int(g("monthlyRent", "월세금액", "0")),
+                    "area_m2": area,
+                    "floor": _to_int(g("floor", "층", 0)),
                     "building_name": str(
                         g("aptNm", "아파트", "")
                         or item.get("mhouseNm")  # 연립·다세대
