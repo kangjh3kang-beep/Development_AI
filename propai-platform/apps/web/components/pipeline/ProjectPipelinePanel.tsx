@@ -400,6 +400,30 @@ export function ProjectPipelinePanel({
     [history],
   );
 
+  // 이력 삭제
+  const removeFromHistory = useCallback(
+    (id: string) => {
+      const updated = history.filter((h) => h.id !== id);
+      setHistory(updated);
+      saveHistory(updated);
+      setCompareSelection((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+    },
+    [history],
+  );
+
+  // 이력 클릭 → 이전 분석 상세 재조회
+  const openHistory = useCallback((entry: HistoryEntry) => {
+    setLastResult(entry.result);
+    setAddress(entry.address);
+    setStages(entry.result.stages);
+    setSummary(entry.result.summary ?? {});
+    setViewMode("detail");
+  }, []);
+
   // 주소 검색 콜백 (다필지 지원)
   const handleAddressChange = useCallback((entries: AddressEntry[]) => {
     setAllAddresses(entries);
@@ -1041,13 +1065,18 @@ export function ProjectPipelinePanel({
                       )}
                     </button>
 
-                    {/* Address */}
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs font-bold text-[var(--text-primary)] truncate">
+                    {/* Address — 클릭 시 이전 분석 재조회 */}
+                    <button
+                      type="button"
+                      onClick={() => openHistory(entry)}
+                      className="flex-1 min-w-0 text-left cursor-pointer group/hist"
+                      title="클릭하여 이 분석 결과 다시 보기"
+                    >
+                      <p className="text-xs font-bold text-[var(--text-primary)] truncate group-hover/hist:text-[var(--accent-strong)] transition-colors">
                         {entry.address}
                       </p>
                       <p className="text-[10px] text-[var(--text-hint)]">{dateStr}</p>
-                    </div>
+                    </button>
 
                     {/* Profit rate badge */}
                     {typeof profitRate === "number" && (
@@ -1059,16 +1088,23 @@ export function ProjectPipelinePanel({
                     {/* View detail button */}
                     <button
                       type="button"
-                      onClick={() => {
-                        setLastResult(entry.result);
-                        setAddress(entry.address);
-                        setStages(entry.result.stages);
-                        setSummary(entry.result.summary ?? {});
-                        setViewMode("detail");
-                      }}
-                      className="text-[10px] font-bold text-[var(--text-secondary)] hover:text-[var(--accent-strong)] transition-colors shrink-0"
+                      onClick={() => openHistory(entry)}
+                      className="text-[10px] font-bold text-[var(--text-secondary)] hover:text-[var(--accent-strong)] transition-colors shrink-0 cursor-pointer"
                     >
                       상세
+                    </button>
+
+                    {/* Delete button */}
+                    <button
+                      type="button"
+                      onClick={() => removeFromHistory(entry.id)}
+                      className="shrink-0 rounded-md p-1 text-[var(--text-hint)] hover:text-red-500 hover:bg-red-500/10 transition-colors cursor-pointer"
+                      title="이력 삭제"
+                      aria-label="이력 삭제"
+                    >
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M3 6h18" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                      </svg>
                     </button>
                   </div>
                 );
