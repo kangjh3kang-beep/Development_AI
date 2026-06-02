@@ -38,9 +38,9 @@ _RENT_TYPES = [
 ]
 
 _MAX_GROUPS_PER_CAT = 40  # 카테고리별 마커 상한(건물 수)
-_GEOCODE_CONCURRENCY = 8
-_KAKAO_ADDR_URL = "https://dapi.kakao.com/v2/local/search/address.json"
-_KAKAO_KEYWORD_URL = "https://dapi.kakao.com/v2/local/search/keyword.json"
+_GEOCODE_CONCURRENCY = 6
+# VWorld 지오코딩(서버에 키 설정·운영중). 지번주소=PARCEL, 도로명=ROAD.
+_VWORLD_GEOCODE_URL = "https://api.vworld.kr/req/address"
 
 
 class NearbyMapService:
@@ -49,7 +49,7 @@ class NearbyMapService:
     def __init__(self) -> None:
         self.settings = get_settings()
         self.molit = MolitClient()
-        self._kakao_key = getattr(self.settings, "kakao_client_id", "") or ""
+        self._geo_key = getattr(self.settings, "vworld_api_key", "") or ""
 
     # ── 공개 진입점 ──
     async def build(
@@ -240,10 +240,10 @@ class NearbyMapService:
             return None
 
     async def _geocode_many(self, queries: list[str]) -> dict[str, dict]:
-        if not queries or not self._kakao_key:
+        if not queries or not self._geo_key:
             return {}
         sem = asyncio.Semaphore(_GEOCODE_CONCURRENCY)
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=12.0) as client:
             async def run(q):
                 async with sem:
                     return q, await self._geocode_one(q, client)
@@ -251,9 +251,9 @@ class NearbyMapService:
         return {q: c for q, c in pairs if c}
 
     async def _geocode_one(self, query: str, client: httpx.AsyncClient | None = None) -> dict | None:
-        if not query or not self._kakao_key:
+        if not query or not self._geo_key:
             return None
-        cache_key = f"kakao:geo:{query}"
+        cache_key = f"geo:vworld:{query}"
         r = await self._redis()
         if r is not None:
             try:
@@ -264,21 +264,27 @@ class NearbyMapService:
                     return val or None
             except Exception:
                 pass
-        headers = {"Authorization": f"KakaoAK {self._kakao_key}"}
         own = client is None
         if own:
-            client = httpx.AsyncClient(timeout=10.0)
+            client = httpx.AsyncClient(timeout=12.0)
         coord = None
         try:
-            for url, key in ((_KAKAO_ADDR_URL, "address"), (_KAKAO_KEYWORD_URL, "keyword")):
+            base = {
+                "key": self._geo_key, "service": "address",
+                "request": "getcoord", "format": "json",
+            }
+            # 지번주소=PARCEL 우선, 도로명=ROAD 폴백
+            for addr_type in ("PARCEL", "ROAD"):
                 try:
-                    resp = await client.get(url, params={"query": query}, headers=headers)
+                    resp = await client.get(
+                        _VWORLD_GEOCODE_URL, params={**base, "address": query, "type": addr_type}
+                    )
                     if resp.status_code != 200:
                         continue
-                    docs = resp.json().get("documents") or []
-                    if docs:
-                        d = docs[0]
-                        coord = {"lat": float(d["y"]), "lon": float(d["x"])}
+                    j = resp.json()
+                    if j.get("response", {}).get("status") == "OK":
+                        pt = j["response"]["result"]["point"]
+                        coord = {"lat": float(pt["y"]), "lon": float(pt["x"])}
                         break
                 except Exception:
                     continue
