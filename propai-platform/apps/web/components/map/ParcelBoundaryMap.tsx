@@ -24,11 +24,13 @@ type Feature = {
   zone_limits: { max_bcr_pct?: number; max_far_pct?: number } | null;
   geometry: any;
 };
+type Adjacency = { contiguous: boolean | null; components: number | null; note: string };
 type Boundaries = {
   features: Feature[];
   center: { lat: number; lon: number } | null;
   total_area_sqm: number;
   parcel_count: number;
+  adjacency?: Adjacency;
 };
 
 let leafletLoading: Promise<void> | null = null;
@@ -137,6 +139,19 @@ export function ParcelBoundaryMap({ parcels }: { parcels: string[] }) {
         {loading && <span className="text-xs text-[var(--text-hint)]">불러오는 중…</span>}
       </div>
       {error && <p className="mb-2 text-xs text-rose-500">{error}</p>}
+      {/* 다필지 인접성(통합개발 가능 여부) */}
+      {data && data.parcel_count >= 2 && data.adjacency && (
+        <div className={`mb-2 rounded-lg border px-3 py-2 text-[11px] font-semibold ${
+          data.adjacency.contiguous === true
+            ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400"
+            : data.adjacency.contiguous === false
+              ? "border-rose-500/30 bg-rose-500/10 text-rose-400"
+              : "border-amber-500/30 bg-amber-500/10 text-amber-400"
+        }`}>
+          {data.adjacency.contiguous === true ? "🔗 통합개발 가능 — " : data.adjacency.contiguous === false ? "✂ 통합개발 불가 — " : "❔ 인접성 미상 — "}
+          {data.adjacency.note}
+        </div>
+      )}
       <div ref={mapEl} className="h-[340px] w-full overflow-hidden rounded-xl border border-[var(--line)]" />
       {data && data.features.length > 0 && (
         <div className="mt-3 flex flex-wrap gap-2">

@@ -15,6 +15,7 @@ import { GlobalAddressSearch, type AddressEntry } from "@/components/common/Glob
 import { ParcelBoundaryMap } from "@/components/map/ParcelBoundaryMap";
 import { ExpertPanelCard } from "@/components/common/ExpertPanelCard";
 import { VerificationBadge } from "@/components/common/VerificationBadge";
+import { DevelopmentScenarioCard } from "@/components/common/DevelopmentScenarioCard";
 import { apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import type { Locale } from "@/i18n/config";
@@ -195,8 +196,16 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
         </CardContent>
       </Card>
 
-      {/* 필지 구획도 (단/다필지 경계 + 용도지역) */}
+      {/* 필지 구획도 (단/다필지 경계 + 용도지역 + 인접성) */}
       <ParcelBoundaryMap parcels={[addr || siteAnalysis?.address || "", ...extra]} />
+
+      {/* 다각도 개발방식 시뮬레이션 (정책 적용판정 + 최적안 + 인접성) */}
+      {(addr || siteAnalysis?.address) && (
+        <DevelopmentScenarioCard
+          address={addr || siteAnalysis?.address || undefined}
+          parcels={[addr || siteAnalysis?.address || "", ...extra].filter(Boolean)}
+        />
+      )}
 
       {/* 부지 요약 + 종합 */}
       {result && (
