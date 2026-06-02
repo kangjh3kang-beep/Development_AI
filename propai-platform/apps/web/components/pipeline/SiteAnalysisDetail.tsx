@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { NearbyTransactionsMap } from "@/components/map/NearbyTransactionsMap";
 
 /* ── Types ── */
 
@@ -325,6 +326,9 @@ export function SiteAnalysisDetail({ data }: SiteAnalysisDetailProps) {
           <NoData />
         )}
       </CategoryCard>
+
+      {/* 1-1. 주변 실거래 지도 */}
+      <NearbyTransactionsMap />
 
       {/* 2. 용도지역/법규한도 */}
       <CategoryCard title="용도지역 · 법규한도" icon={IconRuler} defaultOpen={true}>

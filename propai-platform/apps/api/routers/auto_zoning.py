@@ -98,3 +98,42 @@ async def comprehensive_land_analysis(req: ZoningAnalyzeRequest):
 
     service = LandInfoService()
     return await service.collect_comprehensive(req.address, pnu=pnu)
+
+
+class NearbyMapRequest(BaseModel):
+    """주변 실거래 지도 요청."""
+
+    address: str
+    pnu: str | None = None
+    bcode: str | None = None
+    jibun_address: str | None = None
+    radius_m: int = 1000
+    months: int = 3
+
+
+@router.post("/nearby-map")
+async def nearby_transactions_map(req: NearbyMapRequest):
+    """대상 지번 주변 실거래를 카테고리별·건물단위로 지오코딩하여 지도 페이로드 반환.
+
+    center(중심좌표)+radius_m+categories(매매6·전월세4, 건물별 좌표·집계·거래목록).
+    """
+    from apps.api.app.services.land_intelligence.nearby_map_service import NearbyMapService
+
+    # lawd_cd 결정: pnu[:5] > bcode[:5]
+    pnu = req.pnu
+    if not pnu and req.bcode and req.jibun_address:
+        pnu = _build_pnu_from_bcode(req.bcode, req.jibun_address)
+    lawd_cd = (pnu or "")[:5] if pnu else (req.bcode or "")[:5]
+    if not lawd_cd or len(lawd_cd) < 5:
+        return {"error": "법정동코드(LAWD_CD) 결정 불가 — bcode 또는 pnu 필요",
+                "center": None, "categories": {}}
+
+    # sigungu 힌트(지오코딩 폴백용): 주소 앞 2토큰
+    parts = (req.address or "").split()
+    sigungu_hint = " ".join(parts[:2]) if len(parts) >= 2 else (parts[0] if parts else "")
+
+    service = NearbyMapService()
+    return await service.build(
+        address=req.address, lawd_cd=lawd_cd,
+        months=req.months, radius_m=req.radius_m, sigungu_hint=sigungu_hint,
+    )

@@ -104,7 +104,7 @@ class MolitClient(BaseAPIClient):
                 "numOfRows": str(num_rows),
                 "_type": "json",
             },
-            cache_key=f"molit:trade:{prop_type}:{lawd_cd}:{deal_ymd}",
+            cache_key=f"molit:trade:{prop_type}:{lawd_cd}:{deal_ymd}:{num_rows}",
             cache_ttl=86400,
         )
         return self._parse_trade_items(data, prop_type)
@@ -129,7 +129,7 @@ class MolitClient(BaseAPIClient):
                 "numOfRows": str(num_rows),
                 "_type": "json",
             },
-            cache_key=f"molit:rent:{prop_type}:{lawd_cd}:{deal_ymd}",
+            cache_key=f"molit:rent:{prop_type}:{lawd_cd}:{deal_ymd}:{num_rows}",
             cache_ttl=86400,
         )
         return self._parse_rent_items(data)
@@ -424,7 +424,9 @@ class MolitClient(BaseAPIClient):
                         or item.get("offiNm")  # 오피스텔
                         or ""
                     ),
+                    "sigungu": str(g("estateAgentSggNm", "시군구", "") or g("sggNm", "", "")),
                     "dong": str(g("umdNm", "법정동", "")),
+                    "jibun": str(g("jibun", "지번", "")),
                 })
             return result
         except Exception:
