@@ -41,6 +41,11 @@ type SimResult = {
     total_area_sqm?: number | null; near_station?: boolean; near_station_m?: number | null;
     integration_feasible?: boolean;
     adjacency?: { contiguous: boolean | null; components: number | null; note: string };
+    buildings?: {
+      buildings_found?: number; old_count?: number; old_ratio?: number | null;
+      avg_age?: number | null; oldest_age?: number | null; total_units?: number | null;
+      owner_types?: string[] | null;
+    } | null;
   };
   scenarios: Scenario[];
   recommended: { scheme: string; est_far?: number | null; reason?: string };
@@ -129,6 +134,14 @@ export function DevelopmentScenarioCard({
             {site.multi && adj && (
               <span className={`rounded-lg border px-2 py-0.5 font-bold ${adj.contiguous === true ? "border-emerald-500/30 text-emerald-400" : adj.contiguous === false ? "border-rose-500/30 text-rose-400" : "border-amber-500/30 text-amber-400"}`}>
                 {adj.contiguous === true ? "🔗 통합개발 가능" : adj.contiguous === false ? "✂ 통합개발 불가" : "❔ 인접성 미상"}
+              </span>
+            )}
+            {site.buildings && (site.buildings.buildings_found ?? 0) > 0 && (
+              <span className="text-[var(--text-secondary)]">
+                노후도 {site.buildings.old_ratio != null ? `${Math.round(site.buildings.old_ratio * 100)}%` : "-"}
+                {site.buildings.avg_age != null ? ` · 평균 ${site.buildings.avg_age}년` : ""}
+                {site.buildings.total_units ? ` · ${site.buildings.total_units}세대` : ""}
+                {site.buildings.owner_types?.length ? ` · ${site.buildings.owner_types.join("/")}` : ""}
               </span>
             )}
           </div>

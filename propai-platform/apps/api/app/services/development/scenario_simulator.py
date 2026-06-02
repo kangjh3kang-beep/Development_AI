@@ -118,6 +118,9 @@ class DevelopmentScenarioSimulator:
         adjacency = self._adjacency(enriched) if multi else {"contiguous": True, "components": 1, "note": "단일 필지"}
         integration_ok = adjacency.get("contiguous") is not False  # None(미상)은 허용하되 주의
 
+        # 건축물 노후도·세대수·소유구분(실데이터)
+        buildings = self._buildings(enriched)
+
         ctx = {
             "address": address, "multi": multi, "parcel_count": len(addrs),
             "total_area_sqm": round(total_area, 1) if total_area else None,
@@ -125,8 +128,11 @@ class DevelopmentScenarioSimulator:
             "far_legal_blended": far_legal,
             "near_station_m": subway_m, "near_station": near_station,
             "adjacency": adjacency, "integration_feasible": integration_ok,
+            "buildings": buildings,
             "parcels": [{"address": p.get("address"), "zone": p.get("zone"),
-                         "area": p.get("area"), "max_far": p.get("max_far")} for p in enriched],
+                         "area": p.get("area"), "max_far": p.get("max_far"),
+                         "owner_type": p.get("owner_type"), "bldg_year": p.get("bldg_year"),
+                         "units": p.get("units")} for p in enriched],
         }
 
         scenarios = self._scenarios(ctx)
@@ -170,9 +176,11 @@ class DevelopmentScenarioSimulator:
 
         az = AutoZoningService()
 
+        from app.services.external_api.building_registry_service import BuildingRegistryService
         from app.services.external_api.vworld_service import VWorldService
 
         vworld = VWorldService()
+        breg = BuildingRegistryService()
 
         async def one(a: str) -> dict:
             try:
@@ -185,18 +193,35 @@ class DevelopmentScenarioSimulator:
                 pnu = r.get("pnu")
                 coords = r.get("coordinates") or {}
                 geometry = None
+                owner_type = None
                 try:
                     if pnu:
                         li = await vworld.get_land_info(pnu)
-                        geometry = li.get("geometry") if li else None
+                        if li:
+                            geometry = li.get("geometry")
+                            owner_type = (li.get("properties") or {}).get("owner_type")
                     if geometry is None and coords.get("lat") and coords.get("lon"):
                         pp = await vworld.get_parcel_by_point(coords["lat"], coords["lon"])
                         geometry = pp.get("geometry") if pp else None
                 except Exception:  # noqa: BLE001
                     pass
+                # 건축물대장(노후도·세대수)
+                bldg_year = units = None
+                structure = None
+                try:
+                    if pnu:
+                        b = await breg.get_building_by_pnu(pnu)
+                        if b:
+                            ud = (b.get("use_approval_date") or "")[:4]
+                            bldg_year = int(ud) if ud.isdigit() else None
+                            units = b.get("household_count") or b.get("ho_count") or 0
+                            structure = b.get("structure")
+                except Exception:  # noqa: BLE001
+                    pass
                 return {"address": a, "zone": r.get("zone_type"),
                         "area": r.get("land_area_sqm"), "max_far": far,
-                        "pnu": pnu, "geometry": geometry}
+                        "pnu": pnu, "geometry": geometry, "owner_type": owner_type,
+                        "bldg_year": bldg_year, "units": units, "structure": structure}
             except Exception:  # noqa: BLE001
                 return {"address": a, "zone": None, "area": None, "max_far": None, "geometry": None}
 
@@ -274,6 +299,36 @@ class DevelopmentScenarioSimulator:
                     "note": "인접성 분석 실패 — 현장/지적도 확인 필요"}
 
     @staticmethod
+    def _buildings(parcels: list[dict]) -> dict[str, Any]:
+        """건축물 노후도·세대수·소유구분 집계(실데이터). 노후 기준: RC/철골 30년, 그 외 20년."""
+        from datetime import datetime
+
+        year_now = datetime.now().year
+        with_b = [p for p in parcels if p.get("bldg_year")]
+        old = 0
+        ages: list[int] = []
+        for p in with_b:
+            yr = p.get("bldg_year")
+            age = year_now - int(yr)
+            ages.append(age)
+            st = p.get("structure") or ""
+            thr = 30 if any(k in st for k in ("철근", "철골", "RC", "SRC", "콘크리트")) else 20
+            if age >= thr:
+                old += 1
+        total_units = sum(int(p.get("units") or 0) for p in with_b)
+        owner_types = sorted({p.get("owner_type") for p in parcels if p.get("owner_type")})
+        return {
+            "buildings_found": len(with_b),
+            "old_count": old,
+            "old_ratio": round(old / len(with_b), 2) if with_b else None,
+            "avg_age": round(sum(ages) / len(ages)) if ages else None,
+            "oldest_age": max(ages) if ages else None,
+            "total_units": total_units or None,
+            "owner_types": owner_types or None,
+            "note": "1필지=1대표건축물 기준(블록 전체 노후도는 현장확인 필요)",
+        }
+
+    @staticmethod
     def _magdo_summary(recommended: dict, ctx: dict) -> dict[str, Any] | None:
         """추천 사업방안 기준 매도청구 요약 + 다필지 잔여 매도청구 추정."""
         m = recommended.get("magdo")
@@ -331,6 +386,20 @@ class DevelopmentScenarioSimulator:
         adj_note = (c.get("adjacency") or {}).get("note", "")
         res = _is_residential(zone)
         com = _is_commercial(zone)
+        # 건축물 실데이터(노후도·세대수)
+        b = c.get("buildings") or {}
+        old_ratio = b.get("old_ratio")
+        oldest = b.get("oldest_age")
+        units = b.get("total_units")
+
+        def reno_note() -> str:
+            parts = []
+            if old_ratio is not None:
+                parts.append(f"노후도 {int(old_ratio * 100)}%(노후·불량 2/3=67% 기준)")
+            if units:
+                parts.append(f"세대수 {units}")
+            return (" · 실데이터: " + ", ".join(parts)) if parts else ""
+
         S: list[dict] = []
 
         # 통합개발(합필/일단지)이 필요한 정책은 다필지 비인접 시 불가
@@ -391,7 +460,7 @@ class DevelopmentScenarioSimulator:
                  "기존 주택 단독10/공동20세대 이상", "면적 1만㎡ 미만"],
                 ["소규모·신속(정비계획 생략)", "용적률 법적상한까지 완화 가능", "공공임대 시 추가 인센티브"],
                 ["노후도·세대수 요건 충족 필요", "주민 동의 필요"],
-                "노후 저층주거지 소규모 통합정비에 적합 — 요건 현장확인 필요")
+                "노후 저층주거지 소규모 통합정비에 적합 — 요건 현장확인 필요" + reno_note())
         else:
             add("가로주택정비사업", "불가", None, None,
                 ["주거지역·면적1만㎡ 미만·노후2/3·가로구역 필요"], [], ["요건 미해당"],
@@ -403,7 +472,7 @@ class DevelopmentScenarioSimulator:
                 ["소규모주택정비 관리지역(모아타운) 지정", "노후·불량 2/3 이상", "면적 1,500㎡~"],
                 ["블록단위 통합·지하주차 공유", "용적률·층수 완화", "기반시설 국비 지원"],
                 ["관리지역 지정 필요(서울 등)", "주민 합의"],
-                "다세대·연립 밀집지 블록 통합개발 — 모아타운 지정 여부 확인")
+                "다세대·연립 밀집지 블록 통합개발 — 모아타운 지정 여부 확인" + reno_note())
         else:
             add("모아주택/모아타운", "불가", None, None,
                 ["주거지역·면적 1,500㎡ 이상·노후 필요"], [], ["요건 미해당"], "")
@@ -432,7 +501,9 @@ class DevelopmentScenarioSimulator:
                 ["정비구역 지정", "노후·불량건축물 2/3 이상", "면적 1만㎡ 이상"],
                 ["대규모 정비·기반시설 확보", "용적률 상향"],
                 ["정비구역 지정·조합설립 등 장기", "분담금·분쟁 리스크"],
-                "노후 시가지 대규모 정비 — 노후도 요건 확인")
+                ("노후 시가지 대규모 정비 — 노후도 요건 확인"
+                 + reno_note()
+                 + (f" · 최고건물연령 {oldest}년" if oldest is not None else "")))
         else:
             add("재개발·재건축(정비사업)", "불가", None, None,
                 ["면적 1만㎡ 이상·노후 필요"], [], ["면적 미달"], "")

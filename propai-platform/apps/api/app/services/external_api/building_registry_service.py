@@ -73,6 +73,9 @@ class BuildingRegistryService:
                 "underground_floors": int(item.get("ugrndFlrCnt", 0) or 0),
                 "structure": item.get("strctCdNm", ""),
                 "use_approval_date": item.get("useAprDay", ""),
+                "household_count": int(item.get("hhldCnt", 0) or 0),  # 세대수
+                "family_count": int(item.get("fmlyCnt", 0) or 0),  # 가구수
+                "ho_count": int(item.get("hoCnt", 0) or 0),  # 호수
                 "new_old_code": item.get("newOldRegstrGbCdNm", ""),
                 "address": item.get("platPlc", ""),
                 "road_address": item.get("newPlatPlc", ""),
