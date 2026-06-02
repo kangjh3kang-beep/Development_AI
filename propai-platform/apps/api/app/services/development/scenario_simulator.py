@@ -121,6 +121,12 @@ class DevelopmentScenarioSimulator:
         # 건축물 노후도·세대수·소유구분(실데이터)
         buildings = self._buildings(enriched)
 
+        # 블록(주변 필지 일괄) 노후도 — 주거지역에서만(가로주택/모아/정비 노후요건)
+        block = None
+        if _is_residential(primary_zone):
+            primary_coords = (enriched[0] or {}).get("coords") if enriched else None
+            block = await self._block_aging(primary_coords, radius_m=100)
+
         ctx = {
             "address": address, "multi": multi, "parcel_count": len(addrs),
             "total_area_sqm": round(total_area, 1) if total_area else None,
@@ -128,7 +134,7 @@ class DevelopmentScenarioSimulator:
             "far_legal_blended": far_legal,
             "near_station_m": subway_m, "near_station": near_station,
             "adjacency": adjacency, "integration_feasible": integration_ok,
-            "buildings": buildings,
+            "buildings": buildings, "block_aging": block,
             "parcels": [{"address": p.get("address"), "zone": p.get("zone"),
                          "area": p.get("area"), "max_far": p.get("max_far"),
                          "owner_type": p.get("owner_type"), "bldg_year": p.get("bldg_year"),
@@ -221,7 +227,8 @@ class DevelopmentScenarioSimulator:
                 return {"address": a, "zone": r.get("zone_type"),
                         "area": r.get("land_area_sqm"), "max_far": far,
                         "pnu": pnu, "geometry": geometry, "owner_type": owner_type,
-                        "bldg_year": bldg_year, "units": units, "structure": structure}
+                        "bldg_year": bldg_year, "units": units, "structure": structure,
+                        "coords": coords}
             except Exception:  # noqa: BLE001
                 return {"address": a, "zone": None, "area": None, "max_far": None, "geometry": None}
 
@@ -329,6 +336,75 @@ class DevelopmentScenarioSimulator:
         }
 
     @staticmethod
+    async def _block_aging(coords: dict | None, radius_m: int = 100, max_parcels: int = 40) -> dict[str, Any] | None:
+        """블록(주변 필지 일괄) 노후도 집계 — 가로주택/모아/정비 노후·불량 2/3 요건 판정용.
+
+        대상 좌표 중심 bbox 내 필지(VWorld)를 가져와 각 필지 건축물 사용승인일로
+        노후건물 비율을 산정한다(API 부하 제한: 반경·필지수 상한).
+        """
+        if not coords or not coords.get("lat") or not coords.get("lon"):
+            return None
+        import asyncio
+        from datetime import datetime
+
+        from app.services.external_api.building_registry_service import BuildingRegistryService
+        from app.services.external_api.vworld_service import VWorldService
+
+        lat, lon = coords["lat"], coords["lon"]
+        dlat = radius_m / 111000.0
+        import math as _m
+
+        dlon = radius_m / (111000.0 * max(0.3, _m.cos(_m.radians(lat))))
+        vworld = VWorldService()
+        try:
+            parcels = await vworld.get_parcels_in_bbox(
+                lon - dlon, lat - dlat, lon + dlon, lat + dlat, max_count=max_parcels
+            )
+        except Exception:  # noqa: BLE001
+            return None
+        pnus = [p.get("pnu") for p in (parcels or []) if p.get("pnu")][:max_parcels]
+        if not pnus:
+            return None
+
+        breg = BuildingRegistryService()
+        sem = asyncio.Semaphore(8)
+        year_now = datetime.now().year
+
+        async def age_of(pnu: str):
+            async with sem:
+                try:
+                    b = await breg.get_title_by_pnu(pnu)
+                except Exception:  # noqa: BLE001
+                    return None
+                if not b:
+                    return None
+                ud = (b.get("use_approval_date") or "")[:4]
+                if not ud.isdigit():
+                    return None
+                st = b.get("structure") or ""
+                thr = 30 if any(k in st for k in ("철근", "철골", "RC", "SRC", "콘크리트")) else 20
+                return {"age": year_now - int(ud), "old": (year_now - int(ud)) >= thr,
+                        "units": int(b.get("household_count") or b.get("ho_count") or 0)}
+
+        results = [r for r in await asyncio.gather(*[age_of(p) for p in pnus]) if r]
+        if not results:
+            return {"parcels_scanned": len(pnus), "buildings_found": 0, "old_ratio": None,
+                    "note": "주변 건축물대장 데이터 부족 — 현장 확인 필요"}
+        old = sum(1 for r in results if r["old"])
+        ages = [r["age"] for r in results]
+        return {
+            "parcels_scanned": len(pnus),
+            "buildings_found": len(results),
+            "old_count": old,
+            "old_ratio": round(old / len(results), 2),
+            "avg_age": round(sum(ages) / len(ages)),
+            "total_units": sum(r["units"] for r in results) or None,
+            "meets_2_3": (old / len(results)) >= 2 / 3,
+            "radius_m": radius_m,
+            "note": f"중심 반경 {radius_m}m 내 {len(results)}개 건축물 기준 노후도(가로주택/모아/정비 2/3 요건 참고)",
+        }
+
+    @staticmethod
     def _magdo_summary(recommended: dict, ctx: dict) -> dict[str, Any] | None:
         """추천 사업방안 기준 매도청구 요약 + 다필지 잔여 매도청구 추정."""
         m = recommended.get("magdo")
@@ -386,16 +462,22 @@ class DevelopmentScenarioSimulator:
         adj_note = (c.get("adjacency") or {}).get("note", "")
         res = _is_residential(zone)
         com = _is_commercial(zone)
-        # 건축물 실데이터(노후도·세대수)
+        # 건축물 실데이터(노후도·세대수) — 블록(주변) 우선, 없으면 입력필지
         b = c.get("buildings") or {}
-        old_ratio = b.get("old_ratio")
+        blk = c.get("block_aging") or {}
+        block_ratio = blk.get("old_ratio")
+        block_units = blk.get("total_units")
+        parcel_ratio = b.get("old_ratio")
         oldest = b.get("oldest_age")
-        units = b.get("total_units")
+        units = block_units or b.get("total_units")
 
         def reno_note() -> str:
             parts = []
-            if old_ratio is not None:
-                parts.append(f"노후도 {int(old_ratio * 100)}%(노후·불량 2/3=67% 기준)")
+            if block_ratio is not None:
+                meets = " · 2/3 충족" if blk.get("meets_2_3") else " · 2/3 미달"
+                parts.append(f"블록 노후도 {int(block_ratio * 100)}%(반경{blk.get('radius_m', 100)}m·{blk.get('buildings_found')}동{meets})")
+            elif parcel_ratio is not None:
+                parts.append(f"필지 노후도 {int(parcel_ratio * 100)}%")
             if units:
                 parts.append(f"세대수 {units}")
             return (" · 실데이터: " + ", ".join(parts)) if parts else ""

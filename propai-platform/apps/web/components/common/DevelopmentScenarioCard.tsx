@@ -46,6 +46,11 @@ type SimResult = {
       avg_age?: number | null; oldest_age?: number | null; total_units?: number | null;
       owner_types?: string[] | null;
     } | null;
+    block_aging?: {
+      parcels_scanned?: number; buildings_found?: number; old_ratio?: number | null;
+      avg_age?: number | null; total_units?: number | null; meets_2_3?: boolean;
+      radius_m?: number; note?: string;
+    } | null;
   };
   scenarios: Scenario[];
   recommended: { scheme: string; est_far?: number | null; reason?: string };
@@ -138,10 +143,16 @@ export function DevelopmentScenarioCard({
             )}
             {site.buildings && (site.buildings.buildings_found ?? 0) > 0 && (
               <span className="text-[var(--text-secondary)]">
-                노후도 {site.buildings.old_ratio != null ? `${Math.round(site.buildings.old_ratio * 100)}%` : "-"}
+                필지노후 {site.buildings.old_ratio != null ? `${Math.round(site.buildings.old_ratio * 100)}%` : "-"}
                 {site.buildings.avg_age != null ? ` · 평균 ${site.buildings.avg_age}년` : ""}
                 {site.buildings.total_units ? ` · ${site.buildings.total_units}세대` : ""}
                 {site.buildings.owner_types?.length ? ` · ${site.buildings.owner_types.join("/")}` : ""}
+              </span>
+            )}
+            {site.block_aging && (site.block_aging.buildings_found ?? 0) > 0 && (
+              <span className={`rounded-lg border px-2 py-0.5 font-bold ${site.block_aging.meets_2_3 ? "border-rose-500/30 text-rose-400" : "border-[var(--line-strong)] text-[var(--text-secondary)]"}`}>
+                🏚 블록노후 {Math.round((site.block_aging.old_ratio ?? 0) * 100)}%
+                {` (반경${site.block_aging.radius_m}m·${site.block_aging.buildings_found}동${site.block_aging.meets_2_3 ? "·2/3충족" : ""})`}
               </span>
             )}
           </div>

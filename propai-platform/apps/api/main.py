@@ -76,6 +76,7 @@ from apps.api.routers import (
     portals,
     projects,
     re100,
+    registry,
     regulation,
     reports,
     risk,
@@ -291,6 +292,7 @@ app.include_router(projects.router, prefix="/api/v1/projects", tags=["프로젝�
 app.include_router(user_store.router, prefix="/api/v1", tags=["사용자 저장소"])
 app.include_router(expert_panel.router, prefix="/api/v1", tags=["전문가 패널"])
 app.include_router(verification.router, prefix="/api/v1", tags=["분석 검증"])
+app.include_router(registry.router, prefix="/api/v1", tags=["부동산 등기부"])
 app.include_router(avm.router, prefix="/api/v1/avm", tags=["AVM 시세추정"])
 app.include_router(regulation.router, prefix="/api/v1/regulation", tags=["법규 검토"])
 app.include_router(tax.router, prefix="/api/v1/tax", tags=["세금 계산"])

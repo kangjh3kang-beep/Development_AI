@@ -16,6 +16,7 @@ import { ParcelBoundaryMap } from "@/components/map/ParcelBoundaryMap";
 import { ExpertPanelCard } from "@/components/common/ExpertPanelCard";
 import { VerificationBadge } from "@/components/common/VerificationBadge";
 import { DevelopmentScenarioCard } from "@/components/common/DevelopmentScenarioCard";
+import { RegistryBulkButton } from "@/components/common/RegistryBulkButton";
 import { apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import type { Locale } from "@/i18n/config";
@@ -205,6 +206,11 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
           address={addr || siteAnalysis?.address || undefined}
           parcels={[addr || siteAnalysis?.address || "", ...extra].filter(Boolean)}
         />
+      )}
+
+      {/* 등기부 일괄 조회/다운로드 (단/다필지 소유관계) */}
+      {(addr || siteAnalysis?.address) && (
+        <RegistryBulkButton addresses={[addr || siteAnalysis?.address || "", ...extra].filter(Boolean)} />
       )}
 
       {/* 부지 요약 + 종합 */}
