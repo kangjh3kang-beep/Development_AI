@@ -139,8 +139,18 @@ class MarketReportService:
         zone_type = (
             zone.get("zone_type") or land_use.get("zone_type")
             or basic.get("zone_type") or comp.get("zone_type")
-            or (land_use.get("districts") or [{}])[0].get("name")
         )
+        # 폴백: AutoZoningService(파이프라인 용도지역 감지기)로 보강
+        if not zone_type:
+            try:
+                from app.services.zoning.auto_zoning_service import AutoZoningService
+
+                az = await AutoZoningService().analyze_by_address(address)
+                zone_type = az.get("zone_type")
+                if not official_price and az.get("official_price_per_sqm"):
+                    official_price = az.get("official_price_per_sqm")
+            except Exception:  # noqa: BLE001
+                pass
         official_price = None
         if comp.get("official_prices"):
             official_price = (comp["official_prices"][0] or {}).get("price_per_sqm")
