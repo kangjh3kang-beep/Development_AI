@@ -24,7 +24,40 @@ type Status = {
   blocked: boolean;
   service_fee_krw?: number;
   free_analysis_remaining?: number;
+  free_analysis_quota?: number;
 };
+
+type Plan = { tier: string; label: string; fee_krw: number; included_budget_krw: number };
+
+function PlansModal({ onClose }: { onClose: () => void }) {
+  const [plans, setPlans] = useState<Plan[]>([]);
+  useEffect(() => {
+    apiClient.get<{ plans: Plan[] }>("/billing/plans", { useMock: false })
+      .then((r) => setPlans(r.plans || [])).catch(() => { /* noop */ });
+  }, []);
+  const won2 = (n: number) => n.toLocaleString("ko-KR") + "원";
+  return (
+    <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={onClose}>
+      <div className="w-full max-w-md rounded-2xl border border-[var(--line-strong)] bg-[var(--surface)] p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <h3 className="text-lg font-bold text-[var(--text-primary)]">구독 요금제</h3>
+        <p className="mt-1 text-xs text-[var(--text-secondary)]">구독하면 토지분석·프로젝트 생성을 제한 없이 이용할 수 있습니다.</p>
+        <div className="mt-4 space-y-2">
+          {plans.map((p) => (
+            <div key={p.tier} className="flex items-center justify-between rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-3">
+              <div>
+                <p className="text-sm font-bold text-[var(--text-primary)]">{p.label}</p>
+                <p className="text-[10px] text-[var(--text-hint)]">LLM 포함 {won2(p.included_budget_krw)}</p>
+              </div>
+              <span className="text-base font-black text-[var(--accent-strong)]">{won2(p.fee_krw)}<span className="text-[10px] text-[var(--text-hint)]">/월</span></span>
+            </div>
+          ))}
+        </div>
+        <p className="mt-4 text-center text-[11px] text-[var(--text-hint)]">구독 신청은 관리자에게 문의해 주세요. (등급 부여 후 즉시 적용)</p>
+        <button onClick={onClose} className="mt-3 w-full rounded-xl border border-[var(--line-strong)] py-2.5 text-sm font-bold text-[var(--text-secondary)]">닫기</button>
+      </div>
+    </div>
+  );
+}
 
 const TOPUP_PRESETS = [10000, 30000, 50000, 100000];
 const won = (n?: number) => (n ?? 0).toLocaleString("ko-KR") + "원";
@@ -69,7 +102,40 @@ export function BillingMeter({ compact = false }: { compact?: boolean }) {
   };
 
   // 비로그인 또는 비구독(metered 아님)이면 미터 숨김
-  if (!authed || loading || !status || !status.metered) return null;
+  if (!authed || loading || !status) return null;
+
+  // 일반회원(무료 등급): 무료 토지분석 잔여 + 소진 시 구독 유도
+  const isFreeTier = !status.metered && (status.free_analysis_quota ?? 0) > 0;
+  if (!status.metered && !isFreeTier) return null;
+
+  if (isFreeTier) {
+    const quota = status.free_analysis_quota ?? 0;
+    const remaining = status.free_analysis_remaining ?? 0;
+    const used = Math.max(0, quota - remaining);
+    const soaked = remaining <= 0;
+    return (
+      <>
+        <div className={`rounded-xl border ${soaked ? "border-amber-500/40" : "border-[var(--line-strong)]"} bg-[var(--surface-soft)] ${compact ? "p-3" : "p-4"}`}>
+          <div className="flex items-center justify-between gap-2 mb-2">
+            <span className="text-xs font-bold text-[var(--text-secondary)]">● 일반회원 (무료)</span>
+            <button onClick={() => setModalOpen(true)}
+              className="rounded-lg bg-[var(--accent-strong)] px-2.5 py-1 text-[10px] font-bold text-white hover:opacity-90">
+              {soaked ? "구독하기" : "요금제 보기"}
+            </button>
+          </div>
+          <div className="h-2 w-full rounded-full bg-[var(--surface-muted)] overflow-hidden">
+            <div className="h-full rounded-full transition-all" style={{ width: `${quota ? (used / quota) * 100 : 100}%`, backgroundColor: soaked ? "#f59e0b" : "var(--accent-strong)" }} />
+          </div>
+          <div className="mt-1.5 text-[10px] text-[var(--text-hint)]">
+            {soaked
+              ? <span className="text-amber-500 font-bold">무료 토지분석을 모두 사용했습니다 · 구독 시 계속 이용</span>
+              : <span>무료 토지분석 잔여 <b className="text-[var(--text-secondary)]">{remaining}</b> / {quota}회</span>}
+          </div>
+        </div>
+        {modalOpen && <PlansModal onClose={() => setModalOpen(false)} />}
+      </>
+    );
+  }
 
   const pct = Math.min(100, status.usage_pct || 0);
   const barColor = status.blocked ? "#ef4444" : pct >= 80 ? "#f59e0b" : "var(--accent-strong)";
