@@ -11,7 +11,10 @@
 요청 본문은 {pnu, address}를 전송하고, 응답에서 owner/summary/pdf_url 등을 표준화한다.
 """
 
+import base64
 import os
+import time
+import urllib.parse
 from typing import Any
 
 import structlog
@@ -27,13 +30,105 @@ def _config() -> dict[str, str]:
     }
 
 
+def _codef_cfg() -> dict[str, str]:
+    return {
+        "cid": (os.getenv("CODEF_CLIENT_ID") or "").strip(),
+        "secret": (os.getenv("CODEF_CLIENT_SECRET") or "").strip(),
+        "pubkey": (os.getenv("CODEF_PUBLIC_KEY") or "").strip(),
+        "host": (os.getenv("CODEF_API_HOST") or "https://development.codef.io").strip(),
+        "path": (os.getenv("CODEF_REGISTER_PATH") or "/v1/kr/public/ck/real-estate-register/status").strip(),
+    }
+
+
+def _is_codef() -> bool:
+    c = _codef_cfg()
+    return bool(c["cid"] and c["secret"])
+
+
 def is_configured() -> bool:
     c = _config()
-    return bool(c["url"] and c["key"])
+    return bool(c["url"] and c["key"]) or _is_codef()
+
+
+# ── CODEF OAuth 토큰(모듈 캐시, 7일 유효) ──
+_codef_token_cache: dict[str, Any] = {"token": None, "exp": 0.0}
+
+
+async def _codef_token() -> str | None:
+    import httpx
+
+    c = _codef_cfg()
+    if not (c["cid"] and c["secret"]):
+        return None
+    now = time.time()
+    if _codef_token_cache["token"] and _codef_token_cache["exp"] > now + 120:
+        return _codef_token_cache["token"]
+    basic = base64.b64encode(f"{c['cid']}:{c['secret']}".encode()).decode()
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        resp = await client.post(
+            "https://oauth.codef.io/oauth/token",
+            params={"grant_type": "client_credentials", "scope": "read"},
+            headers={"Authorization": f"Basic {basic}",
+                     "Content-Type": "application/x-www-form-urlencoded"},
+        )
+        resp.raise_for_status()
+        d = resp.json()
+    tok = d.get("access_token")
+    _codef_token_cache["token"] = tok
+    _codef_token_cache["exp"] = now + int(d.get("expires_in", 600))
+    return tok
+
+
+def _codef_encrypt(plain: str) -> str | None:
+    """CODEF 민감필드 RSA 암호화(공개키 PKCS1 v1.5 → base64). 필요 시 사용."""
+    c = _codef_cfg()
+    if not c["pubkey"] or not plain:
+        return None
+    try:
+        from cryptography.hazmat.primitives.asymmetric import padding
+        from cryptography.hazmat.primitives.serialization import load_der_public_key
+
+        key = load_der_public_key(base64.b64decode(c["pubkey"]))
+        enc = key.encrypt(plain.encode("utf-8"), padding.PKCS1v15())  # type: ignore[arg-type]
+        return base64.b64encode(enc).decode()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("CODEF RSA 암호화 실패", err=str(e)[:80])
+        return None
+
+
+async def _codef_request(path: str, body: dict[str, Any]) -> dict[str, Any]:
+    """CODEF API 호출 — Bearer 토큰 + URL인코딩 응답 디코드."""
+    import httpx
+
+    tok = await _codef_token()
+    if not tok:
+        return {"result": {"code": "TOKEN_FAIL", "message": "OAuth 토큰 발급 실패"}}
+    c = _codef_cfg()
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        resp = await client.post(
+            f"{c['host']}{path}",
+            headers={"Authorization": f"Bearer {tok}", "Content-Type": "application/json"},
+            content=__import__("json").dumps(body, ensure_ascii=False).encode("utf-8"),
+        )
+    text = resp.text or ""
+    # CODEF 응답은 URL 인코딩된 JSON 문자열
+    try:
+        decoded = urllib.parse.unquote_plus(text)
+        return __import__("json").loads(decoded)
+    except Exception:  # noqa: BLE001
+        try:
+            return resp.json()
+        except Exception:  # noqa: BLE001
+            return {"result": {"code": "PARSE_FAIL", "message": text[:300]}}
 
 
 class RegistryService:
     def status(self) -> dict[str, Any]:
+        if _is_codef():
+            cc = _codef_cfg()
+            return {"configured": True, "provider": "codef",
+                    "host": cc["host"], "register_path": cc["path"],
+                    "message": f"CODEF 등기부 API 연결됨(host={cc['host']})"}
         c = _config()
         return {
             "configured": is_configured(),
@@ -41,15 +136,17 @@ class RegistryService:
             "message": (
                 f"등기부 발급 API 연결됨({c['provider']})"
                 if is_configured()
-                else "등기부 발급 API 미설정 — REGISTRY_API_URL·REGISTRY_API_KEY 설정 시 활성화. "
+                else "등기부 발급 API 미설정 — REGISTRY_API_URL·REGISTRY_API_KEY 또는 CODEF_* 설정 시 활성화. "
                      "(대법원 IROS는 공개 API 없음 → CODEF 등 상용 등기부 API 키 필요, 발급 건당 과금)"
             ),
         }
 
     async def get_one(self, pnu: str | None = None, address: str | None = None) -> dict[str, Any]:
         """단건 등기부 조회/발급. 미설정 시 not_configured."""
-        c = _config()
         item = {"pnu": pnu, "address": address}
+        if _is_codef():
+            return await self._codef_one(pnu, address)
+        c = _config()
         if not is_configured():
             return {**item, "status": "not_configured",
                     "message": "등기부 발급 API 키 미설정"}
@@ -80,6 +177,45 @@ class RegistryService:
             logger.warning("등기부 조회 실패", err=str(e)[:120])
             return {**item, "status": "error", "message": str(e)[:200]}
 
+    async def _codef_one(self, pnu: str | None, address: str | None) -> dict[str, Any]:
+        """CODEF 부동산등기부 단건 조회. 제품 path/params는 CODEF 콘솔 스펙에 맞춰 설정."""
+        item = {"pnu": pnu, "address": address}
+        c = _codef_cfg()
+        # CODEF 부동산등기 요청 본문(주소 기반). 제품별 필수 파라미터는 환경변수로 보강 가능.
+        body: dict[str, Any] = {
+            "organization": os.getenv("CODEF_ORG", "0002"),
+            "inquiryType": os.getenv("CODEF_INQUIRY_TYPE", "0"),
+            "address": address or "",
+        }
+        if pnu:
+            body["uniqueNo"] = pnu
+        extra = os.getenv("CODEF_EXTRA_PARAMS")
+        if extra:
+            try:
+                body.update(__import__("json").loads(extra))
+            except Exception:  # noqa: BLE001
+                pass
+        try:
+            data = await _codef_request(c["path"], body)
+        except Exception as e:  # noqa: BLE001
+            return {**item, "status": "error", "message": str(e)[:200]}
+        result = data.get("result") or {}
+        code = result.get("code")
+        d = data.get("data") or {}
+        if code not in ("CF-00000", "CF-03002", None):  # 정상/추가인증 외
+            return {**item, "status": "provider_error",
+                    "code": code, "message": result.get("message"), "raw": d or None}
+        # CODEF 응답 표준화(필드명은 제품 응답 스펙에 맞춰 매핑)
+        return {
+            **item, "status": "ok", "code": code,
+            "owner": d.get("resOwner") or d.get("commOwnerName") or d.get("소유자"),
+            "share": d.get("resOwnershipStake") or d.get("지분"),
+            "mortgage": d.get("resMaximumClaim") or d.get("근저당"),
+            "summary": result.get("message"),
+            "pdf_url": d.get("resOriGinalData") or d.get("resPdfUrl") or d.get("pdf_url"),
+            "raw": d if len(str(d)) < 4000 else None,
+        }
+
     async def bulk(self, items: list[dict[str, Any]]) -> dict[str, Any]:
         """다필지 일괄 등기부 조회/발급."""
         import asyncio
@@ -101,5 +237,6 @@ class RegistryService:
                 return await self.get_one(pnu=it.get("pnu"), address=it.get("address"))
 
         results = await asyncio.gather(*[one(it) for it in items])
-        return {"configured": True, "provider": _config()["provider"],
+        provider = "codef" if _is_codef() else _config()["provider"]
+        return {"configured": True, "provider": provider,
                 "count": len(results), "results": list(results)}
