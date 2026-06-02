@@ -122,6 +122,20 @@ const LIFECYCLE_STAGES = [
 
 export type LifecycleStage = (typeof LIFECYCLE_STAGES)[number];
 
+/* ── Per-project snapshot ──
+   프로젝트별 분석 상태를 보관해, 프로젝트 전환/재선택 시 이전 분석을 복원한다.
+   (이전 버그: setProject가 전환 시 모든 분석을 초기화 → 불러오기 시 0/없음으로 표시) */
+interface ProjectSnapshot {
+  siteAnalysis: SiteAnalysisData | null;
+  designData: DesignData | null;
+  feasibilityData: FeasibilityData | null;
+  esgData: EsgData | null;
+  complianceData: ComplianceData | null;
+  completedStages: string[];
+  currentStage: string | null;
+  analysisResults: AnalysisResult[];
+}
+
 /* ── State interface ── */
 
 export interface ProjectContextState {
@@ -143,6 +157,9 @@ export interface ProjectContextState {
 
   // Analysis history
   analysisResults: AnalysisResult[];
+
+  // 프로젝트별 분석 스냅샷(영속) — 전환/재선택 시 복원
+  snapshots: Record<string, ProjectSnapshot>;
 
   // Actions
   setProject: (id: string, name: string, status: string) => void;
@@ -172,6 +189,33 @@ const INITIAL_CROSS_MODULE = {
   complianceData: null as ComplianceData | null,
 };
 
+/** 현재 cross-module 상태를 스냅샷으로 추출 */
+function snapOf(s: ProjectContextState): ProjectSnapshot {
+  return {
+    siteAnalysis: s.siteAnalysis,
+    designData: s.designData,
+    feasibilityData: s.feasibilityData,
+    esgData: s.esgData,
+    complianceData: s.complianceData,
+    completedStages: s.completedStages,
+    currentStage: s.currentStage,
+    analysisResults: s.analysisResults,
+  };
+}
+
+/** patch 적용 결과를 현재 프로젝트 스냅샷에도 함께 영속화한다. */
+function withSnap(
+  state: ProjectContextState,
+  patch: Partial<ProjectContextState>,
+): Partial<ProjectContextState> {
+  if (!state.projectId) return patch;
+  const merged = { ...state, ...patch } as ProjectContextState;
+  return {
+    ...patch,
+    snapshots: { ...state.snapshots, [state.projectId]: snapOf(merged) },
+  };
+}
+
 /* ── Store ── */
 
 export const useProjectContextStore = create<ProjectContextState>()(
@@ -192,27 +236,54 @@ export const useProjectContextStore = create<ProjectContextState>()(
       // Analysis history
       analysisResults: [],
 
+      // 프로젝트별 스냅샷
+      snapshots: {},
+
       /* ── Actions ── */
 
       setProject: (id, name, status) => {
         const prev = get();
-        // If switching projects, reset cross-module data
-        if (prev.projectId !== id) {
-          set({
-            projectId: id,
-            projectName: name,
-            projectStatus: status,
-            completedStages: [],
-            currentStage: null,
-            analysisResults: [],
-            ...INITIAL_CROSS_MODULE,
-          });
-        } else {
+        if (prev.projectId === id) {
           set({ projectId: id, projectName: name, projectStatus: status });
+          return;
         }
+        // 전환 전, 현재 프로젝트 상태를 스냅샷에 보존
+        const snapshots = prev.projectId
+          ? { ...prev.snapshots, [prev.projectId]: snapOf(prev) }
+          : prev.snapshots;
+        // 대상 프로젝트의 이전 분석이 있으면 복원, 없으면 초기화
+        const snap = snapshots[id];
+        set({
+          projectId: id,
+          projectName: name,
+          projectStatus: status,
+          snapshots,
+          ...(snap
+            ? {
+                siteAnalysis: snap.siteAnalysis,
+                designData: snap.designData,
+                feasibilityData: snap.feasibilityData,
+                esgData: snap.esgData,
+                complianceData: snap.complianceData,
+                completedStages: snap.completedStages ?? [],
+                currentStage: snap.currentStage ?? null,
+                analysisResults: snap.analysisResults ?? [],
+              }
+            : {
+                completedStages: [],
+                currentStage: null,
+                analysisResults: [],
+                ...INITIAL_CROSS_MODULE,
+              }),
+        });
       },
 
       clearProject: () => {
+        const prev = get();
+        // 현재 분석을 스냅샷에 보존(나중에 같은 프로젝트 재선택 시 복원)
+        const snapshots = prev.projectId
+          ? { ...prev.snapshots, [prev.projectId]: snapOf(prev) }
+          : prev.snapshots;
         set({
           projectId: null,
           projectName: "",
@@ -220,57 +291,58 @@ export const useProjectContextStore = create<ProjectContextState>()(
           completedStages: [],
           currentStage: null,
           analysisResults: [],
+          snapshots,
           ...INITIAL_CROSS_MODULE,
         });
       },
 
       updateSiteAnalysis: (data) => {
-        set((state) => ({
-          siteAnalysis: {
-            ...(state.siteAnalysis ?? {
-              estimatedValue: null,
-              landAreaSqm: null,
-              zoneCode: null,
-              address: null,
-              pnu: null,
-            }),
-            ...data,
-          } as SiteAnalysisData,
-        }));
+        set((state) =>
+          withSnap(state, {
+            siteAnalysis: {
+              ...(state.siteAnalysis ?? {
+                estimatedValue: null,
+                landAreaSqm: null,
+                zoneCode: null,
+                address: null,
+                pnu: null,
+              }),
+              ...data,
+            } as SiteAnalysisData,
+          }),
+        );
       },
 
       updateDesignData: (data) => {
-        set({ designData: data });
+        set((state) => withSnap(state, { designData: data }));
       },
 
       updateFeasibilityData: (data) => {
-        set({ feasibilityData: data });
+        set((state) => withSnap(state, { feasibilityData: data }));
       },
 
       updateEsgData: (data) => {
-        set({ esgData: data });
+        set((state) => withSnap(state, { esgData: data }));
       },
 
       updateComplianceData: (data) => {
-        set({ complianceData: data });
+        set((state) => withSnap(state, { complianceData: data }));
       },
 
       markStageComplete: (stage) => {
         const prev = get();
         if (prev.completedStages.includes(stage)) return;
-        set({
-          completedStages: [...prev.completedStages, stage],
-        });
+        set(withSnap(prev, { completedStages: [...prev.completedStages, stage] }));
       },
 
       setCurrentStage: (stage) => {
-        set({ currentStage: stage });
+        set((state) => withSnap(state, { currentStage: stage }));
       },
 
       addAnalysisResult: (result) => {
-        set((state) => ({
-          analysisResults: [...state.analysisResults, result],
-        }));
+        set((state) =>
+          withSnap(state, { analysisResults: [...state.analysisResults, result] }),
+        );
       },
 
       getNextRecommendedStage: () => {

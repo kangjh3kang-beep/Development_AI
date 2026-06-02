@@ -59,13 +59,20 @@ export function ProjectAddressInput({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ctxAddress]);
 
-  // 이전 프로젝트 선택 → 컨텍스트 전환 + 주소 로드 (이어서 분석)
+  // 이전 프로젝트 선택 → 컨텍스트 전환 + 분석 복원 (이어서 분석)
   const handleSelectProject = (id: string) => {
     if (!id) return;
     const p = projects.find((x) => x.id === id);
     if (!p) return;
+    // setProject가 해당 프로젝트의 이전 분석 스냅샷을 복원한다.
     setProject(p.id, p.name, p.status);
-    updateSiteAnalysis({ address: p.address, pnu: p.pnu || null });
+    // 스냅샷이 없거나(미분석) 비어 있는 항목은 프로젝트 레코드 값으로 보강.
+    const areaNum = p.area ? Number(String(p.area).replace(/[^0-9.]/g, "")) : null;
+    updateSiteAnalysis({
+      address: p.address,
+      pnu: p.pnu || null,
+      ...(areaNum && areaNum > 0 ? { landAreaSqm: areaNum } : {}),
+    });
     onChange(p.address);
   };
 
