@@ -177,6 +177,36 @@ class VWorldService:
                 logger.error("VWORLD 토지정보 조회 실패", pnu=pnu, error=str(e))
                 return None
 
+    async def get_parcel_by_point(self, lat: float, lon: float) -> Optional[Dict]:
+        """좌표(점)가 포함된 필지를 조회 (도로명주소 등 PNU 미확보 시 폴백).
+
+        VWORLD 지적도 LP_PA_CBND_BUBUN에 geomFilter=POINT 질의 → pnu+geometry 반환.
+        """
+        if not settings.VWORLD_API_KEY or not lat or not lon:
+            return None
+        params = {
+            "service": "data", "request": "GetFeature", "data": "LP_PA_CBND_BUBUN",
+            "key": settings.VWORLD_API_KEY, "format": "json", "crs": "EPSG:4326",
+            "geomFilter": f"POINT({lon} {lat})", "geometry": "true", "attribute": "true",
+        }
+        async with httpx.AsyncClient(timeout=30.0, headers=self.HEADERS) as client:
+            try:
+                resp = await client.get(f"{self.BASE_URL}/data", params=params)
+                resp.raise_for_status()
+                feats = (resp.json().get("response", {}).get("result", {})
+                         .get("featureCollection", {}).get("features", []))
+                if not feats:
+                    return None
+                props = feats[0].get("properties", {})
+                return {
+                    "pnu": props.get("pnu"),
+                    "address": props.get("addr", ""),
+                    "geometry": feats[0].get("geometry"),
+                }
+            except Exception as e:  # noqa: BLE001
+                logger.error("VWORLD 점 기반 필지 조회 실패: %s,%s (%s)", lat, lon, str(e))
+                return None
+
     async def get_parcels_in_bbox(
         self,
         min_lon: float, min_lat: float, max_lon: float, max_lat: float,

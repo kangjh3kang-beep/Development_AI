@@ -168,6 +168,7 @@ async def parcel_boundaries(req: ParcelBoundariesRequest):
         if not pnu and it.get("bcode") and it.get("jibun_address"):
             pnu = _build_pnu_from_bcode(it["bcode"], it["jibun_address"])
         coords = None
+        point_geom = None
         # PNU가 없으면 주소 지오코딩
         if not pnu and address:
             try:
@@ -177,17 +178,27 @@ async def parcel_boundaries(req: ParcelBoundariesRequest):
                     coords = {"lat": geo.get("lat"), "lon": geo.get("lon")}
             except Exception:  # noqa: BLE001
                 pass
+        # 도로명주소 등 PNU 미확보 시: 좌표로 필지 직접 조회(점 기반)
+        if not pnu and coords and coords.get("lat") and coords.get("lon"):
+            try:
+                pp = await vworld.get_parcel_by_point(coords["lat"], coords["lon"])
+                if pp:
+                    pnu = pp.get("pnu")
+                    point_geom = pp.get("geometry")
+            except Exception:  # noqa: BLE001
+                pass
         if not pnu:
             continue
 
-        geometry = None
+        geometry = point_geom
         area_sqm = 0.0
         zone_type = zone_type_2 = None
         try:
-            li = await vworld.get_land_info(pnu)
-            if li:
-                geometry = li.get("geometry")
-                area_sqm = float((li.get("properties") or {}).get("area") or 0)
+            if geometry is None:
+                li = await vworld.get_land_info(pnu)
+                if li:
+                    geometry = li.get("geometry")
+                    area_sqm = float((li.get("properties") or {}).get("area") or 0)
         except Exception:  # noqa: BLE001
             pass
         try:
