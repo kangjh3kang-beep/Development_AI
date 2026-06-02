@@ -7,8 +7,15 @@
  * 토글(opt-in)로 실행해 비용·속도를 통제하고, '정밀 모드'(deep)는 다중 에이전트 토론.
  */
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiClient } from "@/lib/api-client";
+
+/** 안정적 캐시키용 경량 해시 */
+function hashStr(s: string): string {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(36);
+}
 
 type Expert = { role: string; opinion: string; key_points?: string[]; concerns?: string[] };
 type Debate = { issue: string; positions: string; resolution: string };
@@ -38,22 +45,41 @@ export function ExpertPanelCard({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<PanelResult | null>(null);
+  const [cached, setCached] = useState(false);
+
+  // 캐시키: 유형+주소+모드+맥락 해시 (single/deep 별도 저장)
+  const cacheKey = useMemo(() => {
+    try {
+      return `propai_panel_${analysisType}_${deep ? "deep" : "single"}_${hashStr((address || "") + JSON.stringify(context || {}))}`;
+    } catch { return ""; }
+  }, [analysisType, address, context, deep]);
+
+  // 저장된 패널 결과 자동 복원 (재실행·재방문 시 비용 절감)
+  useEffect(() => {
+    if (!cacheKey || typeof window === "undefined") { setResult(null); setCached(false); return; }
+    try {
+      const raw = window.localStorage.getItem(cacheKey);
+      if (raw) { setResult(JSON.parse(raw)); setCached(true); return; }
+    } catch { /* noop */ }
+    setResult(null); setCached(false);
+  }, [cacheKey]);
 
   const run = useCallback(async () => {
     if (!context) { setError("먼저 분석을 실행하세요."); return; }
-    setLoading(true); setError(""); setResult(null);
+    setLoading(true); setError(""); setResult(null); setCached(false);
     try {
       const r = await apiClient.post<PanelResult>("/expert-panel/analyze", {
         body: { analysis_type: analysisType, address: address || "", context, mode: deep ? "deep" : "single" },
         useMock: false, timeoutMs: deep ? 180000 : 120000,
       });
       setResult(r);
+      try { if (cacheKey) window.localStorage.setItem(cacheKey, JSON.stringify(r)); } catch { /* quota */ }
     } catch {
       setError("전문가 패널 분석에 실패했습니다. 잠시 후 다시 시도하세요.");
     } finally {
       setLoading(false);
     }
-  }, [analysisType, address, context, deep]);
+  }, [analysisType, address, context, deep, cacheKey]);
 
   const conf = result?.verification?.confidence;
 
@@ -61,7 +87,10 @@ export function ExpertPanelCard({
     <div className={`rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-5 ${className}`}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <p className="text-sm font-black text-[var(--text-primary)]">🧑‍⚖️ 전문가 패널 검증</p>
+          <p className="text-sm font-black text-[var(--text-primary)]">
+            🧑‍⚖️ 전문가 패널 검증
+            {cached && <span className="ml-2 rounded bg-[var(--surface-strong)] px-1.5 py-0.5 text-[10px] font-bold text-[var(--text-tertiary)]">저장된 결과</span>}
+          </p>
           <p className="mt-0.5 text-[11px] text-[var(--text-secondary)]">
             관련 전문가(설계사·디벨로퍼·공무원·법률가·도시계획 등)가 다관점에서 분석·토론하고 통합 의견·검증을 제시합니다.
           </p>
@@ -74,7 +103,7 @@ export function ExpertPanelCard({
           </label>
           <button onClick={run} disabled={loading || !context}
             className="rounded-xl bg-[var(--accent-strong)] px-4 py-2 text-xs font-black text-white hover:opacity-90 disabled:opacity-50">
-            {loading ? (deep ? "패널 토론 중… (최대 3분)" : "패널 분석 중…") : "패널 검증 실행"}
+            {loading ? (deep ? "패널 토론 중… (최대 3분)" : "패널 분석 중…") : result ? "다시 분석" : "패널 검증 실행"}
           </button>
         </div>
       </div>

@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { motion } from "framer-motion";
 import { useAIAnalyze, useAIReady } from "@/lib/ai-analyze-client";
 import { InvestmentAnalyticsWorkspaceClient } from "@/components/analytics/InvestmentAnalyticsWorkspaceClient";
+import { ExpertPanelCard } from "@/components/common/ExpertPanelCard";
 import { isValidLocale, type Locale } from "@/i18n/config";
 
 type FeasibilityResult = {
@@ -217,6 +218,22 @@ export default function InvestmentPage() {
             </div>
           )}
         </motion.div>
+      )}
+
+      {/* ── 전문가 패널 검증 (계산/AI 결과가 있을 때) ── */}
+      {(localCalc || ai) && (
+        <div className="px-0">
+          <ExpertPanelCard
+            analysisType="feasibility"
+            context={{
+              inputs: {
+                investment_eok: form.investmentAmount, purchase_eok: form.purchasePrice,
+                monthly_rent_manwon: form.expectedRent, holding_years: form.holdingPeriod, ltv_pct: form.ltvRatio,
+              },
+              calc: localCalc, ai_result: ai,
+            }}
+          />
+        </div>
       )}
 
       {/* ── Live Workspace Client ── */}
