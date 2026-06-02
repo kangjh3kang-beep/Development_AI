@@ -12,6 +12,7 @@ import { MobileSidebarToggle } from "@/components/layout/MobileSidebarToggle";
 import { AuthButton } from "@/components/auth/AuthButton";
 import { AuthGuard } from "@/components/auth/AuthGuard";
 import { Disclaimer } from "@/components/common/Disclaimer";
+import { ProjectSyncProvider } from "@/components/common/ProjectSyncProvider";
 type DashboardLayoutProps = Readonly<{
   children: React.ReactNode;
   params: Promise<{
@@ -205,6 +206,7 @@ export default async function DashboardLayout({
 
   return (
     <div className="mx-auto flex min-h-screen max-w-7xl flex-col gap-6 px-4 py-5 md:px-6">
+      <ProjectSyncProvider />
       <AIAssistant />
       
       {/* 헤더 */}
