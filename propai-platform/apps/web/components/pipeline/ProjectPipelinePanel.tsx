@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useParams } from "next/navigation";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { apiClient } from "@/lib/api-client";
 import { GlobalAddressSearch, type AddressEntry } from "@/components/common/GlobalAddressSearch";
@@ -51,6 +52,24 @@ function loadHistory(): HistoryEntry[] {
 function saveHistory(entries: HistoryEntry[]) {
   if (typeof window === "undefined") return;
   localStorage.setItem(HISTORY_KEY, JSON.stringify(entries.slice(0, MAX_HISTORY)));
+}
+
+/* ── 비회원(미로그인) 브라우저 기반 무료 1회 게이트 ── */
+const GUEST_KEY = "propai_guest_analysis_count";
+const GUEST_FREE_QUOTA = 1;
+
+function isGuest(): boolean {
+  // 로그인 토큰이 없으면 비회원으로 간주
+  if (typeof window === "undefined") return false;
+  return !(localStorage.getItem("propai_access_token") || "").trim();
+}
+function guestUsed(): number {
+  if (typeof window === "undefined") return 0;
+  return Number(localStorage.getItem(GUEST_KEY) || 0);
+}
+function bumpGuest() {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(GUEST_KEY, String(guestUsed() + 1));
 }
 
 /* ── Constants ── */
@@ -285,6 +304,8 @@ export function ProjectPipelinePanel({
   const [isRunning, setIsRunning] = useState(false);
   const [expandedStage, setExpandedStage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [guestGateOpen, setGuestGateOpen] = useState(false);  // 비회원 무료소진 게이트
+  const { locale } = (useParams() as { locale?: string }) || {};
 
   // 단계별 워크플로우
   const [workflowPhase, setWorkflowPhase] = useState<WorkflowPhase>("input");
@@ -439,6 +460,12 @@ export function ProjectPipelinePanel({
   const runSiteAnalysis = useCallback(async () => {
     if (!address.trim()) return;
 
+    // 비회원 무료 1회 게이트: 소진 시 분석 차단 + 가입/구독 유도
+    if (isGuest() && guestUsed() >= GUEST_FREE_QUOTA) {
+      setGuestGateOpen(true);
+      return;
+    }
+
     setError(null);
     setStages(DEFAULT_STAGES.map((s) => ({ ...s })));
     setSummary({});
@@ -495,6 +522,7 @@ export function ProjectPipelinePanel({
         setExpandedStage("site_analysis");
         saveToStore(result);
         addToHistory(result, address.trim());  // 부지분석 단독 실행도 이력 저장
+        if (isGuest()) bumpGuest();  // 비회원 무료 사용 횟수 증가
       } else {
         setError("부지분석에 실패했습니다. 주소를 확인해주세요.");
       }
@@ -1116,6 +1144,30 @@ export function ProjectPipelinePanel({
                 비교하려면 2개 이상 선택하세요 (최대 3개)
               </p>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* 비회원 무료 1회 소진 — 가입/구독 유도 모달 */}
+      {guestGateOpen && (
+        <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={() => setGuestGateOpen(false)}>
+          <div className="w-full max-w-sm rounded-2xl border border-[var(--line-strong)] bg-[var(--surface)] p-6 shadow-2xl text-center" onClick={(e) => e.stopPropagation()}>
+            <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-[var(--accent-soft)] text-2xl">🔒</div>
+            <h3 className="text-lg font-bold text-[var(--text-primary)]">무료 체험을 모두 사용했어요</h3>
+            <p className="mt-2 text-sm leading-relaxed text-[var(--text-secondary)]">
+              비회원은 토지분석을 <b>1회</b> 무료로 이용할 수 있습니다.<br />
+              가입하면 추가로 무료 분석을, 구독하면 제한 없이 이용할 수 있습니다.
+            </p>
+            <div className="mt-5 flex flex-col gap-2">
+              <a href={`/${locale || "ko"}/login`}
+                className="rounded-xl bg-gradient-to-r from-[var(--accent-strong)] to-[#085d73] py-3 text-sm font-black text-white">
+                로그인 / 회원가입
+              </a>
+              <button onClick={() => setGuestGateOpen(false)}
+                className="rounded-xl border border-[var(--line-strong)] py-2.5 text-sm font-bold text-[var(--text-secondary)]">
+                닫기
+              </button>
+            </div>
           </div>
         </div>
       )}
