@@ -12,10 +12,22 @@ import { apiClient } from "@/lib/api-client";
 
 type RegItem = {
   pnu?: string | null; address?: string | null; status: string;
-  owner?: string; owner_count?: number; share?: string; mortgage?: string;
-  summary?: string; pdf_url?: string; message?: string;
+  owner?: string; registry_office?: string; doc_title?: string; issued?: string;
+  pdf_base64?: string; has_pdf?: boolean; summary?: string; pdf_url?: string; message?: string;
 };
 type RegResult = { configured: boolean; provider?: string; count: number; results: RegItem[]; message?: string };
+
+function downloadBase64Pdf(b64: string, name: string) {
+  try {
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const url = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
+    const a = document.createElement("a");
+    a.href = url; a.download = name; a.click();
+    URL.revokeObjectURL(url);
+  } catch { /* noop */ }
+}
 
 export function RegistryBulkButton({ addresses, className = "" }: { addresses: string[]; className?: string }) {
   const list = addresses.map((s) => s.trim()).filter(Boolean);
@@ -65,18 +77,23 @@ export function RegistryBulkButton({ addresses, className = "" }: { addresses: s
             <div key={i} className="rounded-lg border border-[var(--line)] bg-[var(--surface-strong)] p-3 text-xs">
               <div className="flex items-center justify-between gap-2">
                 <span className="font-bold text-[var(--text-primary)]">{i + 1}. {it.address || it.pnu}</span>
-                {it.pdf_url ? (
-                  <a href={it.pdf_url} target="_blank" rel="noopener noreferrer" className="rounded-md bg-[var(--accent-strong)] px-2 py-0.5 text-[10px] font-bold text-white">PDF 다운로드 ↗</a>
+                {it.has_pdf && it.pdf_base64 ? (
+                  <button onClick={() => downloadBase64Pdf(it.pdf_base64!, `등기부_${it.address || i + 1}.pdf`)}
+                    className="rounded-md bg-[var(--accent-strong)] px-2 py-0.5 text-[10px] font-bold text-white">등기부 PDF 다운로드 ↓</button>
+                ) : it.pdf_url ? (
+                  <a href={it.pdf_url} target="_blank" rel="noopener noreferrer" className="rounded-md bg-[var(--accent-strong)] px-2 py-0.5 text-[10px] font-bold text-white">PDF ↗</a>
                 ) : it.status !== "ok" ? (
-                  <span className="text-[10px] text-rose-400">{it.status}</span>
+                  <span className="text-[10px] text-amber-400">{it.status}</span>
                 ) : null}
               </div>
               {it.status === "ok" && (
                 <p className="mt-1 text-[var(--text-secondary)]">
-                  소유자 {it.owner || "-"}{it.owner_count ? `(${it.owner_count}인)` : ""}
-                  {it.share ? ` · 지분 ${it.share}` : ""}
-                  {it.mortgage ? ` · 근저당 ${it.mortgage}` : ""}
+                  {it.doc_title ? `${it.doc_title} · ` : ""}소유자 {it.owner || "-"}
+                  {it.registry_office ? ` · ${it.registry_office}` : ""}
                 </p>
+              )}
+              {it.status !== "ok" && it.message && (
+                <p className="mt-1 text-[11px] text-[var(--text-tertiary)]">{it.message}</p>
               )}
             </div>
           ))}

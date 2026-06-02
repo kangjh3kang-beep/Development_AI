@@ -37,7 +37,33 @@ def _codef_cfg() -> dict[str, str]:
         "pubkey": (os.getenv("CODEF_PUBLIC_KEY") or "").strip(),
         "host": (os.getenv("CODEF_API_HOST") or "https://development.codef.io").strip(),
         "path": (os.getenv("CODEF_REGISTER_PATH") or "/v1/kr/public/ck/real-estate-register/status").strip(),
+        # 부동산등기 열람/발급 필수 값
+        "phone": (os.getenv("CODEF_PHONE_NO") or "").strip(),
+        "password": (os.getenv("CODEF_PASSWORD") or "").strip(),  # 4자리 숫자(RSA 암호화됨)
+        "eprepay_no": (os.getenv("CODEF_EPREPAY_NO") or "").strip(),  # 전자선납금 12자리
+        "eprepay_pass": (os.getenv("CODEF_EPREPAY_PASS") or "").strip(),
+        "issue_type": (os.getenv("CODEF_ISSUE_TYPE") or "1").strip(),  # 0발급 1열람
+        "realty_type": (os.getenv("CODEF_REALTY_TYPE") or "").strip(),
     }
+
+
+def _codef_register_ready() -> tuple[bool, list[str]]:
+    """부동산등기 열람/발급에 필요한 설정 충족 여부 + 누락 목록."""
+    c = _codef_cfg()
+    missing = []
+    if not c["pubkey"]:
+        missing.append("CODEF_PUBLIC_KEY(비밀번호 RSA 암호화용)")
+    if not c["password"]:
+        missing.append("CODEF_PASSWORD(4자리 숫자)")
+    if not c["phone"]:
+        missing.append("CODEF_PHONE_NO(전화번호)")
+    # issueType<2(발급/열람)는 전자선납금 필수
+    if c["issue_type"] in ("0", "1"):
+        if not c["eprepay_no"]:
+            missing.append("CODEF_EPREPAY_NO(전자선납금 번호)")
+        if not c["eprepay_pass"]:
+            missing.append("CODEF_EPREPAY_PASS(전자선납금 비밀번호)")
+    return (len(missing) == 0, missing)
 
 
 def _is_codef() -> bool:
@@ -126,9 +152,13 @@ class RegistryService:
     def status(self) -> dict[str, Any]:
         if _is_codef():
             cc = _codef_cfg()
+            ready, missing = _codef_register_ready()
             return {"configured": True, "provider": "codef",
                     "host": cc["host"], "register_path": cc["path"],
-                    "message": f"CODEF 등기부 API 연결됨(host={cc['host']})"}
+                    "auth_ok": True, "register_ready": ready, "missing": missing,
+                    "message": (f"CODEF 등기부 API 연결됨(host={cc['host']})"
+                                if ready else
+                                "CODEF 인증은 연결됨 — 부동산등기 발급에 추가 설정 필요: " + ", ".join(missing))}
         c = _config()
         return {
             "configured": is_configured(),
@@ -178,42 +208,91 @@ class RegistryService:
             return {**item, "status": "error", "message": str(e)[:200]}
 
     async def _codef_one(self, pnu: str | None, address: str | None) -> dict[str, Any]:
-        """CODEF 부동산등기부 단건 조회. 제품 path/params는 CODEF 콘솔 스펙에 맞춰 설정."""
+        """CODEF 부동산등기부등본 열람/발급 — 2-way(추가인증) 비동기 흐름.
+
+        1차: 간편검색(주소) → CF-03002(continue2Way)+주소목록 →
+        2차: is2Way+twoWayInfo+선택 uniqueNo → 최종(PDF BASE64+등기내용).
+        ★전자선납금·열람/발급은 건당 과금. 필수 설정 미충족 시 호출하지 않음.
+        """
         item = {"pnu": pnu, "address": address}
+        ready, missing = _codef_register_ready()
+        if not ready:
+            return {**item, "status": "config_incomplete",
+                    "message": "부동산등기 발급 설정 미완료 — 다음 값 필요: " + ", ".join(missing)}
         c = _codef_cfg()
-        # CODEF 부동산등기 요청 본문(주소 기반). 제품별 필수 파라미터는 환경변수로 보강 가능.
-        body: dict[str, Any] = {
-            "organization": os.getenv("CODEF_ORG", "0002"),
-            "inquiryType": os.getenv("CODEF_INQUIRY_TYPE", "0"),
+        enc_pw = _codef_encrypt(c["password"])
+        if not enc_pw:
+            return {**item, "status": "config_incomplete", "message": "비밀번호 RSA 암호화 실패(CODEF_PUBLIC_KEY 확인)"}
+
+        # 1차 요청(간편검색): 주소 문자열로 검색
+        base: dict[str, Any] = {
+            "organization": "0002",
+            "phoneNo": c["phone"],
+            "password": enc_pw,
+            "inquiryType": "1",          # 간편검색
             "address": address or "",
+            "issueType": c["issue_type"],  # 1:열람(기본)
+            "ePrepayNo": c["eprepay_no"],
+            "ePrepayPass": c["eprepay_pass"],
+            "registerSummaryYN": "1",     # 등기사항 요약 출력
+            "jointMortgageJeonseYN": "0",
+            "tradingYN": "0",
         }
-        if pnu:
-            body["uniqueNo"] = pnu
-        extra = os.getenv("CODEF_EXTRA_PARAMS")
-        if extra:
-            try:
-                body.update(__import__("json").loads(extra))
-            except Exception:  # noqa: BLE001
-                pass
+        if c["realty_type"]:
+            base["realtyType"] = c["realty_type"]
+
         try:
-            data = await _codef_request(c["path"], body)
+            data = await _codef_request(c["path"], base)
         except Exception as e:  # noqa: BLE001
             return {**item, "status": "error", "message": str(e)[:200]}
+
         result = data.get("result") or {}
         code = result.get("code")
         d = data.get("data") or {}
-        if code not in ("CF-00000", "CF-03002", None):  # 정상/추가인증 외
-            return {**item, "status": "provider_error",
-                    "code": code, "message": result.get("message"), "raw": d or None}
-        # CODEF 응답 표준화(필드명은 제품 응답 스펙에 맞춰 매핑)
+
+        # 추가인증(2-way) 필요 시: 주소목록에서 첫 부동산 고유번호 선택해 2차 요청
+        if code == "CF-03002" or d.get("continue2Way"):
+            addr_list = ((d.get("extraInfo") or {}).get("resAddrList")) or d.get("resAddrList") or []
+            if not addr_list:
+                return {**item, "status": "no_match",
+                        "message": "해당 주소의 부동산을 찾지 못했습니다(주소 정밀화 필요)."}
+            chosen = addr_list[0]
+            unique_no = chosen.get("commUniqueNo")
+            two = {
+                "jobIndex": d.get("jobIndex"), "threadIndex": d.get("threadIndex"),
+                "jti": d.get("jti"), "twoWayTimestamp": d.get("twoWayTimestamp"),
+            }
+            second = {**base, "is2Way": True, "twoWayInfo": two, "uniqueNo": unique_no}
+            try:
+                data = await _codef_request(c["path"], second)
+            except Exception as e:  # noqa: BLE001
+                return {**item, "status": "error", "message": f"2차 요청 실패: {str(e)[:160]}"}
+            result = data.get("result") or {}
+            code = result.get("code")
+            d = data.get("data") or {}
+
+        if code not in ("CF-00000", None):
+            return {**item, "status": "provider_error", "code": code,
+                    "message": result.get("message")}
+
+        # 응답 표준화
+        rows = d if isinstance(d, list) else [d]
+        first = rows[0] if rows else {}
+        owner = (first.get("resAddrList") or [{}])[0].get("resUserNm") if first.get("resAddrList") else None
+        summary_office = None
+        entries = first.get("resRegisterEntriesList") or []
+        if entries:
+            owner = owner or entries[0].get("resRealty")
+            summary_office = entries[0].get("commCompetentRegistryOffice")
         return {
             **item, "status": "ok", "code": code,
-            "owner": d.get("resOwner") or d.get("commOwnerName") or d.get("소유자"),
-            "share": d.get("resOwnershipStake") or d.get("지분"),
-            "mortgage": d.get("resMaximumClaim") or d.get("근저당"),
+            "issued": first.get("resIssueYN"),
+            "owner": owner,
+            "registry_office": summary_office,
+            "doc_title": (entries[0].get("resDocTitle") if entries else None),
+            "pdf_base64": first.get("resOriGinalData") or None,  # PDF BASE64
+            "has_pdf": bool(first.get("resOriGinalData")),
             "summary": result.get("message"),
-            "pdf_url": d.get("resOriGinalData") or d.get("resPdfUrl") or d.get("pdf_url"),
-            "raw": d if len(str(d)) < 4000 else None,
         }
 
     async def bulk(self, items: list[dict[str, Any]]) -> dict[str, Any]:
