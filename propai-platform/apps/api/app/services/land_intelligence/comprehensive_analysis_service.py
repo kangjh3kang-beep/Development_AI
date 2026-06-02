@@ -627,7 +627,11 @@ class ComprehensiveAnalysisService:
                     result[key] = {"count": 0, "items": []}
                     continue
                 items = raw[:10]
-                amounts = [int(item.get("거래금액", "0").replace(",", "").strip() or 0) for item in raw if item.get("거래금액")]
+                amounts = [
+                    int(item.get("price_10k_won") or str(item.get("거래금액", "0")).replace(",", "").strip() or 0)
+                    for item in raw
+                    if item.get("price_10k_won") or item.get("거래금액")
+                ]
                 result[key] = {
                     "count": len(raw),
                     "avg_price_10k": int(sum(amounts) / len(amounts)) if amounts else 0,

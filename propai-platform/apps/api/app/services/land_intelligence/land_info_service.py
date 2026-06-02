@@ -637,7 +637,7 @@ class LandInfoService:
                                 item.get("거래금액", item.get("price_10k_won", "0"))
                             ).replace(",", "").strip(),
                             "area_sqm": item.get("전용면적", item.get("area_m2", "")),
-                            "deal_date": f"{item.get('년', '')}.{item.get('월', '')}.{item.get('일', '')}",
+                            "deal_date": item.get("deal_date") or f"{item.get('년', '')}.{item.get('월', '')}.{item.get('일', '')}",
                             "name": item.get("아파트", item.get("building_name", "")),
                             "floor": item.get("층", item.get("floor", "")),
                         }
