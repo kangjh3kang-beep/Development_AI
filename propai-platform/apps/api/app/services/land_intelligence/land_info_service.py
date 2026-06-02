@@ -387,18 +387,62 @@ class LandInfoService:
                 self._fetch_land_use_plan(effective_pnu),
                 self._fetch_official_price(effective_pnu),
                 self._fetch_building_info(effective_pnu),
+                self._fetch_land_characteristics(effective_pnu),
             ]
-            land_reg, land_use, price_data, bldg = await asyncio.gather(*tasks, return_exceptions=True)
+            land_reg, land_use, price_data, bldg, land_char = await asyncio.gather(
+                *tasks, return_exceptions=True
+            )
 
-            # 토지대장 정보
+            # 토지특성(NED getLandCharacteristics) — 면적·지목·용도지역의 권위 소스.
+            # 지적도(get_land_info)가 면적 0을 주거나 주소키워드 감지가 용도지역을
+            # 놓친 필지를 정확히 보완한다.
+            if isinstance(land_char, dict) and land_char:
+                # 용도지역: AutoZoning이 못 찾았으면 토지특성으로 채움
+                if not result.get("zone_type") and land_char.get("zone_type"):
+                    result["zone_type"] = land_char["zone_type"]
+                    result["zone_limits"] = self._zone_limits_for(land_char["zone_type"])
+                # 다용도(둘 이상 용도지역) 필지 표기
+                if land_char.get("zone_type_2"):
+                    result["zone_type_secondary"] = land_char["zone_type_2"]
+                result["land_characteristics"] = land_char
+
+            # 토지대장 정보 (지적도 기반)
             if isinstance(land_reg, dict) and land_reg:
                 result["land_register"] = land_reg
 
+            # 토지대장 면적/지목이 비었으면 토지특성으로 보강
+            if isinstance(land_char, dict) and land_char:
+                lr = result.get("land_register")
+                if not isinstance(lr, dict):
+                    lr = {}
+                if not lr.get("area_sqm"):
+                    lr["area_sqm"] = land_char.get("area_sqm", 0)
+                if not lr.get("land_category"):
+                    lr["land_category"] = land_char.get("land_category", "")
+                if not lr.get("land_use_situation"):
+                    lr["land_use_situation"] = land_char.get("land_use_situation", "")
+                if not lr.get("road_side"):
+                    lr["road_side"] = land_char.get("road_side", "")
+                if not lr.get("terrain"):
+                    lr["terrain"] = land_char.get("terrain_form", "")
+                if not lr.get("official_price_per_sqm"):
+                    lr["official_price_per_sqm"] = land_char.get("official_price_per_sqm", 0)
+                lr.setdefault("address", address)
+                result["land_register"] = lr
+                # 최상위 land_area_sqm도 채움(프론트 표시 일원화)
+                if not result.get("land_area_sqm") and land_char.get("area_sqm"):
+                    result["land_area_sqm"] = land_char["area_sqm"]
+
             # 토지이용계획 (VWORLD NED — 중첩 규제 전부 포함)
             if isinstance(land_use, list) and land_use:
+                # land_use_plan.zone_type도 districts에서 확정된 용도지역으로 채움
+                lup_zone = result.get("zone_type") or self._zone_from_districts(land_use)
+                if lup_zone and not result.get("zone_type"):
+                    result["zone_type"] = lup_zone
+                    result["zone_limits"] = self._zone_limits_for(lup_zone)
                 result["land_use_plan"] = {
-                    "zone_type": result["zone_type"],
-                    "zone_limits": result["zone_limits"],
+                    "zone_type": lup_zone,
+                    "zone_limits": result.get("zone_limits"),
                     "districts": land_use,
                     "regulations": self._extract_regulations_from_land_use(land_use),
                 }
@@ -529,6 +573,53 @@ class LandInfoService:
         except Exception as e:
             logger.warning("토지이용계획 조회 실패: %s (%s)", pnu, str(e))
             return []
+
+    async def _fetch_land_characteristics(self, pnu: str) -> dict[str, Any] | None:
+        """토지특성 조회 (VWORLD NED — 면적·지목·용도지역·이용상황)."""
+        try:
+            return await self.vworld.get_land_characteristics(pnu)
+        except Exception as e:
+            logger.warning("토지특성 조회 실패: %s (%s)", pnu, str(e))
+            return None
+
+    @staticmethod
+    def _zone_limits_for(zone_type: str) -> dict[str, Any] | None:
+        """용도지역명 → 법정 건폐율/용적률 한도(국토계획법 시행령 ZONE_LIMITS)."""
+        if not zone_type:
+            return None
+        from app.services.zoning.auto_zoning_service import ZONE_LIMITS
+
+        key = zone_type.replace(" ", "").strip()
+        limits = ZONE_LIMITS.get(key)
+        if not limits:
+            for k, v in ZONE_LIMITS.items():
+                if k in key or key in k:
+                    limits = v
+                    break
+        if not limits:
+            return None
+        return {
+            "max_bcr_pct": limits.get("max_bcr"),
+            "max_far_pct": limits.get("max_far"),
+            "max_height_m": limits.get("max_height_m"),
+        }
+
+    @staticmethod
+    def _zone_from_districts(districts: list[dict[str, Any]]) -> str | None:
+        """토지이용계획 districts에서 용도지역(주거/상업/공업/녹지/관리 등)을 추출."""
+        from app.services.zoning.auto_zoning_service import ZONE_LIMITS
+
+        names = [(d.get("district_name") or "").replace(" ", "") for d in districts]
+        # ZONE_LIMITS에 정의된 정식 용도지역명과 매칭(가장 구체적인 것 우선)
+        for zone_name in ZONE_LIMITS:
+            for n in names:
+                if zone_name in n or n in zone_name:
+                    return zone_name
+        # 일반 '○○지역' 패턴 폴백
+        for n in names:
+            if n.endswith("지역") and n not in ("도시지역", "관리지역", "농림지역"):
+                return n
+        return None
 
     async def _fetch_official_price(self, pnu: str) -> dict[str, Any] | None:
         """개별공시지가 조회 (VWORLD NED)."""

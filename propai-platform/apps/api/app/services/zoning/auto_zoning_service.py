@@ -96,6 +96,25 @@ class AutoZoningService:
         except Exception as e:
             result["warnings"].append(f"필지 정보 조회 실패: {str(e)}")
 
+        # Step 2-B: 토지특성(NED) — 면적/용도지역/지목의 권위 소스로 보강.
+        # 지적도(get_land_info)가 면적 0·용도지역 공란을 주는 필지를 정확히 채운다.
+        if not result.get("land_area_sqm") or not result.get("zone_type"):
+            try:
+                lc = await self.vworld.get_land_characteristics(result["pnu"])
+                if lc:
+                    if not result.get("land_area_sqm") and lc.get("area_sqm"):
+                        result["land_area_sqm"] = lc["area_sqm"]
+                    if not result.get("zone_type") and lc.get("zone_type"):
+                        result["zone_type"] = lc["zone_type"]
+                    if not result.get("land_category") and lc.get("land_category"):
+                        result["land_category"] = lc["land_category"]
+                    if not result.get("official_price_per_sqm") and lc.get("official_price_per_sqm"):
+                        result["official_price_per_sqm"] = lc["official_price_per_sqm"]
+                    if lc.get("zone_type_2"):
+                        result["zone_type_secondary"] = lc["zone_type_2"]
+            except Exception as e:  # noqa: BLE001
+                result["warnings"].append(f"토지특성 조회 실패: {str(e)}")
+
         # Step 3: 용도지역 -> 법적 한도 매핑
         if result["zone_type"]:
             zone_key = self._normalize_zone_name(result["zone_type"])

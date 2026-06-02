@@ -328,6 +328,56 @@ class VWorldService:
             logger.error("개별공시지가 조회 실패: %s (%s)", pnu, str(e))
             return None
 
+    async def get_land_characteristics(self, pnu: str, year: int = 2025) -> Optional[Dict]:
+        """PNU 기반 토지특성정보 조회 (NED getLandCharacteristics).
+
+        면적·지목·용도지역(1·2)·이용상황·도로접면·지형·공시지가를 한 번에 반환.
+        기존 get_land_info(지적도 LP_PA_CBND_BUBUN)가 면적 0을 주는 필지를 보완하고,
+        주소 키워드 감지로 누락되던 용도지역(prposArea1Nm)을 정확히 채운다.
+        """
+        if not settings.VWORLD_API_KEY:
+            return None
+        try:
+            async with httpx.AsyncClient(timeout=15.0, headers=self.HEADERS) as client:
+                resp = await client.get(
+                    f"{self.NED_BASE_URL}/getLandCharacteristics",
+                    params={
+                        "key": settings.VWORLD_API_KEY,
+                        "pnu": pnu,
+                        "stdrYear": str(year),
+                        "format": "json",
+                        "numOfRows": "1",
+                    },
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                fields = data.get("landCharacteristicss", {}).get("field", [])
+                if not fields:
+                    return None
+                item = fields[0] if isinstance(fields, list) else fields
+
+                def _nm(v: str | None) -> str:
+                    """'지정되지않음'/'해당없음' 등은 빈값 처리."""
+                    s = (v or "").strip()
+                    return "" if s in ("지정되지않음", "해당없음", "0") else s
+
+                return {
+                    "pnu": item.get("pnu", pnu),
+                    "year": int(item.get("stdrYear", year) or year),
+                    "area_sqm": float(item.get("lndpclAr", 0) or 0),
+                    "land_category": item.get("lndcgrCodeNm", "") or "",
+                    "zone_type": _nm(item.get("prposArea1Nm")),
+                    "zone_type_2": _nm(item.get("prposArea2Nm")),
+                    "land_use_situation": item.get("ladUseSittnNm", "") or "",
+                    "road_side": item.get("roadSideCodeNm", "") or "",
+                    "terrain_height": item.get("tpgrphHgCodeNm", "") or "",
+                    "terrain_form": item.get("tpgrphFrmCodeNm", "") or "",
+                    "official_price_per_sqm": int(item.get("pblntfPclnd", 0) or 0),
+                }
+        except Exception as e:
+            logger.error("토지특성 조회 실패: %s (%s)", pnu, str(e))
+            return None
+
     async def get_land_use_plan(self, pnu: str) -> List[Dict]:
         """PNU 기반 토지이용계획 조회 (용도지역/지구/구역 + 기타 규제 전부).
 
