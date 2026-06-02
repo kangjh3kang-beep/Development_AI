@@ -6,6 +6,7 @@ import { motion } from "framer-motion";
 import { useAIAnalyze, useAIReady } from "@/lib/ai-analyze-client";
 import { InvestmentAnalyticsWorkspaceClient } from "@/components/analytics/InvestmentAnalyticsWorkspaceClient";
 import { ExpertPanelCard } from "@/components/common/ExpertPanelCard";
+import { VerificationBadge } from "@/components/common/VerificationBadge";
 import { isValidLocale, type Locale } from "@/i18n/config";
 
 type FeasibilityResult = {
@@ -220,7 +221,13 @@ export default function InvestmentPage() {
         </motion.div>
       )}
 
-      {/* ── 전문가 패널 검증 (계산/AI 결과가 있을 때) ── */}
+      {/* ── AI 검증 + 전문가 패널 (계산/AI 결과가 있을 때) ── */}
+      {(localCalc || ai) && (
+        <VerificationBadge
+          analysisType="feasibility"
+          context={{ inputs: form, calc: localCalc, ai_result: ai }}
+        />
+      )}
       {(localCalc || ai) && (
         <div className="px-0">
           <ExpertPanelCard

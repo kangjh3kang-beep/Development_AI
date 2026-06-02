@@ -13,6 +13,7 @@ import { Card, CardContent, Input } from "@propai/ui";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { ParcelBoundaryMap } from "@/components/map/ParcelBoundaryMap";
 import { ExpertPanelCard } from "@/components/common/ExpertPanelCard";
+import { VerificationBadge } from "@/components/common/VerificationBadge";
 import { apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import type { Locale } from "@/i18n/config";
@@ -132,6 +133,7 @@ export function RegulationsWorkspaceClient({ locale: _locale }: { locale: Locale
 
       {result && (
         <>
+          <VerificationBadge analysisType="regulation" context={result as unknown as Record<string, unknown>} />
           {/* 부지 요약 + 정량 한도 */}
           <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
             <CardContent className="p-6">

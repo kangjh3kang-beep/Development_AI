@@ -11,6 +11,7 @@ import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { NearbyTransactionsMap } from "@/components/map/NearbyTransactionsMap";
 import { ParcelBoundaryMap } from "@/components/map/ParcelBoundaryMap";
 import { ExpertPanelCard } from "@/components/common/ExpertPanelCard";
+import { VerificationBadge } from "@/components/common/VerificationBadge";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -375,7 +376,10 @@ export function MarketInsightsWorkspaceClient() {
         </Card>
       )}
 
-      {/* 전문가 패널 검증 (보고서 생성 시) */}
+      {/* AI 검증 + 전문가 패널 (보고서 생성 시) */}
+      {report && (
+        <VerificationBadge analysisType="market" context={report as unknown as Record<string, unknown>} />
+      )}
       {report && (
         <ExpertPanelCard
           analysisType="market"

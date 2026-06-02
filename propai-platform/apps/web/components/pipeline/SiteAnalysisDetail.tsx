@@ -4,6 +4,7 @@ import { useState } from "react";
 import { NearbyTransactionsMap } from "@/components/map/NearbyTransactionsMap";
 import { ParcelBoundaryMap } from "@/components/map/ParcelBoundaryMap";
 import { ExpertPanelCard } from "@/components/common/ExpertPanelCard";
+import { VerificationBadge } from "@/components/common/VerificationBadge";
 
 /* ── Types ── */
 
@@ -328,6 +329,14 @@ export function SiteAnalysisDetail({ data }: SiteAnalysisDetailProps) {
           <NoData />
         )}
       </CategoryCard>
+
+      {/* 1-0. AI 검증(오류·할루시네이션) */}
+      {(hasBasic || hasZoning) && (
+        <VerificationBadge
+          analysisType="site"
+          context={{ basic, zoning, pricing, zone_type: zoneType, land_area_sqm: landAreaSqm, ai_interpretation: aiInterp }}
+        />
+      )}
 
       {/* 1-1. 필지 구획도 (경계·용도지역·면적) */}
       {landAddress && <ParcelBoundaryMap parcels={[landAddress]} />}

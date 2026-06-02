@@ -14,6 +14,7 @@ import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { GlobalAddressSearch, type AddressEntry } from "@/components/common/GlobalAddressSearch";
 import { ParcelBoundaryMap } from "@/components/map/ParcelBoundaryMap";
 import { ExpertPanelCard } from "@/components/common/ExpertPanelCard";
+import { VerificationBadge } from "@/components/common/VerificationBadge";
 import { apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import type { Locale } from "@/i18n/config";
@@ -200,6 +201,7 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
       {/* 부지 요약 + 종합 */}
       {result && (
         <>
+          <VerificationBadge analysisType="permit" context={result as unknown as Record<string, unknown>} />
           <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
