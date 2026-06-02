@@ -21,6 +21,21 @@ class ZoningAnalyzeRequest(BaseModel):
     jibun_address: str | None = None  # 카카오 지번 주소
 
 
+def _zone_limits_compact(zone_type: str | None) -> dict | None:
+    """용도지역명 → 법정 건폐율/용적률 한도(간략)."""
+    if not zone_type:
+        return None
+    from apps.api.app.services.zoning.auto_zoning_service import ZONE_LIMITS
+
+    key = zone_type.replace(" ", "").strip()
+    limits = ZONE_LIMITS.get(key) or next(
+        (v for k, v in ZONE_LIMITS.items() if k in key or key in k), None
+    )
+    if not limits:
+        return None
+    return {"max_bcr_pct": limits.get("max_bcr"), "max_far_pct": limits.get("max_far")}
+
+
 def _build_pnu_from_bcode(bcode: str, jibun_address: str) -> str | None:
     """법정동 코드(10자리) + 지번 주소에서 PNU(19자리)를 구성한다.
 
@@ -114,6 +129,120 @@ async def comprehensive_land_analysis(req: ZoningAnalyzeRequest):
 
     service = LandInfoService()
     return await service.collect_comprehensive(req.address, pnu=pnu)
+
+
+class ParcelBoundariesRequest(BaseModel):
+    """필지 경계(구획도) 요청 — 단필지/다필지."""
+
+    parcels: list[dict] = []  # [{pnu?, address?, bcode?, jibun_address?}]
+    address: str | None = None  # 단일 주소 단축 입력
+    pnu: str | None = None
+
+
+@router.post("/parcel-boundaries")
+async def parcel_boundaries(req: ParcelBoundariesRequest):
+    """단/다필지의 경계 폴리곤(GeoJSON)+면적+용도지역을 지도용으로 반환.
+
+    각 필지에 대해 VWORLD 지적도(geometry)와 토지특성(면적·용도지역)을 조회.
+    반환: {features:[{pnu, address, area_sqm, zone_type, zone_type_2, geometry}],
+           center:{lat,lon}, total_area_sqm}
+    """
+    from apps.api.app.services.external_api.vworld_service import VWorldService
+
+    # 입력 정규화: parcels 배열 우선, 없으면 단일(address/pnu)
+    items: list[dict] = list(req.parcels or [])
+    if not items and (req.address or req.pnu):
+        items = [{"address": req.address, "pnu": req.pnu}]
+    if not items:
+        return {"features": [], "center": None, "total_area_sqm": 0}
+
+    vworld = VWorldService()
+    features: list[dict] = []
+    total_area = 0.0
+    lat_sum = lon_sum = 0.0
+    coord_n = 0
+
+    for it in items:
+        pnu = it.get("pnu")
+        address = it.get("address") or ""
+        if not pnu and it.get("bcode") and it.get("jibun_address"):
+            pnu = _build_pnu_from_bcode(it["bcode"], it["jibun_address"])
+        coords = None
+        # PNU가 없으면 주소 지오코딩
+        if not pnu and address:
+            try:
+                geo = await vworld.geocode_address(address)
+                if geo:
+                    pnu = geo.get("pnu")
+                    coords = {"lat": geo.get("lat"), "lon": geo.get("lon")}
+            except Exception:  # noqa: BLE001
+                pass
+        if not pnu:
+            continue
+
+        geometry = None
+        area_sqm = 0.0
+        zone_type = zone_type_2 = None
+        try:
+            li = await vworld.get_land_info(pnu)
+            if li:
+                geometry = li.get("geometry")
+                area_sqm = float((li.get("properties") or {}).get("area") or 0)
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            lc = await vworld.get_land_characteristics(pnu)
+            if lc:
+                area_sqm = area_sqm or float(lc.get("area_sqm") or 0)
+                zone_type = lc.get("zone_type") or None
+                zone_type_2 = lc.get("zone_type_2") or None
+        except Exception:  # noqa: BLE001
+            pass
+
+        # 좌표(중심) 보강
+        if not coords:
+            try:
+                geo = await vworld.geocode_address(address) if address else None
+                if geo:
+                    coords = {"lat": geo.get("lat"), "lon": geo.get("lon")}
+            except Exception:  # noqa: BLE001
+                pass
+        if coords and coords.get("lat") and coords.get("lon"):
+            lat_sum += coords["lat"]; lon_sum += coords["lon"]; coord_n += 1
+
+        total_area += area_sqm
+        features.append({
+            "pnu": pnu,
+            "address": address,
+            "area_sqm": round(area_sqm, 1),
+            "zone_type": zone_type,
+            "zone_type_2": zone_type_2,
+            "zone_limits": _zone_limits_compact(zone_type),
+            "geometry": geometry,
+        })
+
+    center = {"lat": lat_sum / coord_n, "lon": lon_sum / coord_n} if coord_n else None
+    # 중심 폴백: 첫 폴리곤 첫 좌표
+    if not center:
+        for f in features:
+            g = f.get("geometry") or {}
+            c = g.get("coordinates")
+            try:
+                pt = c
+                while isinstance(pt, list) and pt and isinstance(pt[0], list):
+                    pt = pt[0]
+                if isinstance(pt, list) and len(pt) >= 2:
+                    center = {"lat": pt[1], "lon": pt[0]}
+                    break
+            except Exception:  # noqa: BLE001
+                continue
+
+    return {
+        "features": features,
+        "center": center,
+        "total_area_sqm": round(total_area, 1),
+        "parcel_count": len(features),
+    }
 
 
 class NearbyMapRequest(BaseModel):
