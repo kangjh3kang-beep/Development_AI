@@ -9,6 +9,7 @@ import { ApiClientError, apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { GlobalAddressSearch } from "@/components/common/GlobalAddressSearch";
 import { AutoZoningBadge } from "@/components/projects/AutoZoningBadge";
+import { ParcelBoundaryMap } from "@/components/map/ParcelBoundaryMap";
 import type { Locale } from "@/i18n/config";
 
 /* ── Response types ── */
@@ -590,6 +591,9 @@ export function ProjectSiteAnalysisWorkspaceClient({
           </CardContent>
         </Card>
       )}
+
+      {/* 필지 구획도 (경계·용도지역·면적) */}
+      {form.address.trim().length >= 3 && <ParcelBoundaryMap parcels={[form.address.trim()]} />}
 
       {/* Results */}
       <div className="grid gap-6 xl:grid-cols-2">

@@ -9,6 +9,7 @@ import {
 import { apiClient, ApiClientError } from "@/lib/api-client";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { NearbyTransactionsMap } from "@/components/map/NearbyTransactionsMap";
+import { ParcelBoundaryMap } from "@/components/map/ParcelBoundaryMap";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -302,6 +303,11 @@ export function MarketInsightsWorkspaceClient() {
         label="시장 분석 주소"
         placeholder="주소를 검색하세요 (예: 서울 강남구 역삼동)"
       />
+
+      {/* 필지 구획도 (경계·용도지역·면적) */}
+      {(siteAnalysis?.address || searchAddr) && (
+        <ParcelBoundaryMap parcels={[siteAnalysis?.address || searchAddr]} />
+      )}
 
       {/* 주변 실거래 지도 — 대상지 강조(깜빡임)·반경·유형별 시세 */}
       <NearbyTransactionsMap />

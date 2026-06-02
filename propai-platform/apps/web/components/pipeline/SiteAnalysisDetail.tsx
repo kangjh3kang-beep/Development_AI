@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { NearbyTransactionsMap } from "@/components/map/NearbyTransactionsMap";
+import { ParcelBoundaryMap } from "@/components/map/ParcelBoundaryMap";
 
 /* ── Types ── */
 
@@ -327,7 +328,10 @@ export function SiteAnalysisDetail({ data }: SiteAnalysisDetailProps) {
         )}
       </CategoryCard>
 
-      {/* 1-1. 주변 실거래 지도 */}
+      {/* 1-1. 필지 구획도 (경계·용도지역·면적) */}
+      {landAddress && <ParcelBoundaryMap parcels={[landAddress]} />}
+
+      {/* 1-2. 주변 실거래 지도 */}
       <NearbyTransactionsMap />
 
       {/* 2. 용도지역/법규한도 */}
