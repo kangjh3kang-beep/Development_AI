@@ -197,7 +197,7 @@ export default async function DashboardLayout({
     { title: "수익성 및 ESG 분석", items: analyticsNavigation },
     { title: "자산 운영 및 물권", items: operationsNavigation },
     { title: "엔터프라이즈 지원", items: enterpriseNavigation },
-    { title: "관리", items: adminNavigation },
+    { title: "관리", items: adminNavigation, adminOnly: true },
   ];
 
   return (

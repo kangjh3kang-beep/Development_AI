@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion } from "framer-motion";
+import { useEffect, useState } from "react";
+import { apiClient } from "@/lib/api-client";
 
 type NavItem = {
   href: string;
@@ -13,6 +15,7 @@ type NavItem = {
 type NavSection = {
   title: string;
   items: NavItem[];
+  adminOnly?: boolean;  // 관리자(admin/manager)에게만 노출
 };
 
 type SidebarNavProps = {
@@ -21,10 +24,22 @@ type SidebarNavProps = {
 
 export function SidebarNav({ sections }: SidebarNavProps) {
   const pathname = usePathname();
+  // 역할 확인(클라이언트): 관리자 전용 섹션 노출 제어
+  const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
+  useEffect(() => {
+    let alive = true;
+    apiClient.get<{ role?: string }>("/auth/me", { useMock: false })
+      .then((u) => { if (alive) setIsAdmin(["admin", "manager"].includes(u?.role || "")); })
+      .catch(() => { if (alive) setIsAdmin(false); });
+    return () => { alive = false; };
+  }, []);
+
+  // adminOnly 섹션은 관리자 확인 전/비관리자면 숨김
+  const visibleSections = sections.filter((s) => !s.adminOnly || isAdmin === true);
 
   return (
     <>
-      {sections.map((section, sectionIdx) => (
+      {visibleSections.map((section, sectionIdx) => (
         <div key={section.title}>
           {sectionIdx > 0 && (
             <div className="h-px bg-[var(--line)] opacity-50 mb-5" aria-hidden="true" />
