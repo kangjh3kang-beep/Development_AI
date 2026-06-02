@@ -13,6 +13,7 @@ import { Card, CardContent } from "@propai/ui";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { GlobalAddressSearch, type AddressEntry } from "@/components/common/GlobalAddressSearch";
 import { ParcelBoundaryMap } from "@/components/map/ParcelBoundaryMap";
+import { ExpertPanelCard } from "@/components/common/ExpertPanelCard";
 import { apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import type { Locale } from "@/i18n/config";
@@ -416,6 +417,13 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
               </CardContent>
             </Card>
           )}
+
+          {/* 전문가 패널 검증 */}
+          <ExpertPanelCard
+            analysisType="permit"
+            address={result.site?.address || addr || siteAnalysis?.address || undefined}
+            context={result as unknown as Record<string, unknown>}
+          />
         </>
       )}
     </div>

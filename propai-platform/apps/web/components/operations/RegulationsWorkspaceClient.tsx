@@ -12,6 +12,7 @@ import { useCallback, useState } from "react";
 import { Card, CardContent, Input } from "@propai/ui";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { ParcelBoundaryMap } from "@/components/map/ParcelBoundaryMap";
+import { ExpertPanelCard } from "@/components/common/ExpertPanelCard";
 import { apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import type { Locale } from "@/i18n/config";
@@ -242,6 +243,13 @@ export function RegulationsWorkspaceClient({ locale: _locale }: { locale: Locale
 
           {/* 필지 구획도 */}
           <ParcelBoundaryMap parcels={[result.address]} />
+
+          {/* 전문가 패널 검증 */}
+          <ExpertPanelCard
+            analysisType="regulation"
+            address={result.address}
+            context={result as unknown as Record<string, unknown>}
+          />
         </>
       )}
     </div>

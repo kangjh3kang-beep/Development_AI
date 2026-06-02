@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { NearbyTransactionsMap } from "@/components/map/NearbyTransactionsMap";
 import { ParcelBoundaryMap } from "@/components/map/ParcelBoundaryMap";
+import { ExpertPanelCard } from "@/components/common/ExpertPanelCard";
 
 /* ── Types ── */
 
@@ -607,6 +608,19 @@ export function SiteAnalysisDetail({ data }: SiteAnalysisDetailProps) {
             <p className="text-[10px] text-slate-500">AI 생성 · Claude · 참고용</p>
           </div>
         </CategoryCard>
+      )}
+
+      {/* 9. 전문가 패널 검증 */}
+      {landAddress && (
+        <ExpertPanelCard
+          analysisType="site"
+          address={landAddress}
+          context={{
+            zone_type: zoneType, land_area_sqm: landAreaSqm, pnu,
+            effective_bcr: effectiveBcr, effective_far: effectiveFar,
+            official_price: officialPrice, dev_types: devTypes,
+          }}
+        />
       )}
     </div>
   );
