@@ -87,7 +87,7 @@ const FIELD_LABELS: Record<string, string> = {
   estimated_value: "추정가치(원)",
   building_info: "기존 건축물 정보",
   coordinates: "좌표",
-  
+
   // design
   building_type: "건축물 용도",
   total_gfa_sqm: "연면적(m²)",
@@ -458,6 +458,7 @@ export function ProjectPipelinePanel({
           },
         },
         useMock: false,
+        timeoutMs: 170000,  // 부지분석은 데이터수집+LLM으로 ~60초 소요 → 넉넉히
       });
 
       setStages(result.stages);
@@ -473,8 +474,13 @@ export function ProjectPipelinePanel({
         setError("부지분석에 실패했습니다. 주소를 확인해주세요.");
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "알 수 없는 오류가 발생했습니다.";
+      let msg = err instanceof Error ? err.message : "알 수 없는 오류가 발생했습니다.";
+      if (/fetch|network|timeout|시간|abort|load failed/i.test(msg)) {
+        msg = "부지분석 연결이 지연되거나 중단되었습니다(분석은 다소 시간이 걸립니다). '부지분석 재실행'을 눌러 다시 시도해 주세요.";
+      }
       setError(msg);
+      // 멈춤 방지: 진행 중이던 단계를 '실패'로 되돌려 무한 '진행 중' 표시를 해소
+      setStages((prev) => prev.map((s, i) => (i === 0 ? { ...s, status: "failed" } : s)));
     } finally {
       setIsRunning(false);
     }
@@ -702,7 +708,7 @@ export function ProjectPipelinePanel({
                 </>
               ) : (
                 <>
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0"/><circle cx="12" cy="10" r="3"/></svg>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0" /><circle cx="12" cy="10" r="3" /></svg>
                   부지분석 시작
                 </>
               )}
@@ -724,7 +730,7 @@ export function ProjectPipelinePanel({
       {projectMode && (
         <div className="px-6 py-4 sm:px-8 border-b border-[var(--line)] flex flex-wrap items-center gap-3">
           <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--accent-soft)] text-[var(--accent-strong)]">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0"/><circle cx="12" cy="10" r="3"/></svg>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0" /><circle cx="12" cy="10" r="3" /></svg>
           </span>
           <div className="flex-1 min-w-0">
             <p className="text-[10px] font-bold uppercase tracking-widest text-[var(--text-hint)]">분석 대상 주소</p>
@@ -843,9 +849,8 @@ export function ProjectPipelinePanel({
               <button
                 type="button"
                 onClick={() => hasData && toggleStage(stage.stage)}
-                className={`w-full flex items-center gap-3 px-4 py-3 text-left transition-colors ${
-                  hasData ? "cursor-pointer hover:bg-[var(--surface-strong)]" : "cursor-default"
-                } ${stage.status === "running" ? "bg-[var(--accent-strong)]/5" : "bg-transparent"}`}
+                className={`w-full flex items-center gap-3 px-4 py-3 text-left transition-colors ${hasData ? "cursor-pointer hover:bg-[var(--surface-strong)]" : "cursor-default"
+                  } ${stage.status === "running" ? "bg-[var(--accent-strong)]/5" : "bg-transparent"}`}
               >
                 {/* Number */}
                 <span className="text-sm font-bold text-[var(--text-tertiary)] w-5 shrink-0">
@@ -856,22 +861,20 @@ export function ProjectPipelinePanel({
                 {statusIcon(stage.status)}
 
                 {/* Label */}
-                <span className={`flex-1 text-sm font-bold tracking-tight ${
-                  stage.status === "completed" ? "text-[var(--text-primary)]" :
-                  stage.status === "running" ? "text-[var(--accent-strong)]" :
-                  stage.status === "failed" ? "text-red-400" :
-                  "text-[var(--text-tertiary)]"
-                }`}>
+                <span className={`flex-1 text-sm font-bold tracking-tight ${stage.status === "completed" ? "text-[var(--text-primary)]" :
+                    stage.status === "running" ? "text-[var(--accent-strong)]" :
+                      stage.status === "failed" ? "text-red-400" :
+                        "text-[var(--text-tertiary)]"
+                  }`}>
                   {STAGE_LABELS[stage.stage] ?? stage.stage}
                 </span>
 
                 {/* Status */}
-                <span className={`text-xs font-medium ${
-                  stage.status === "completed" ? "text-emerald-400" :
-                  stage.status === "running" ? "text-[var(--accent-strong)]" :
-                  stage.status === "failed" ? "text-red-400" :
-                  "text-[var(--text-hint)]"
-                }`}>
+                <span className={`text-xs font-medium ${stage.status === "completed" ? "text-emerald-400" :
+                    stage.status === "running" ? "text-[var(--accent-strong)]" :
+                      stage.status === "failed" ? "text-red-400" :
+                        "text-[var(--text-hint)]"
+                  }`}>
                   {statusLabel(stage.status)} {formatDuration(stage.duration_ms)}
                 </span>
 
@@ -1016,21 +1019,19 @@ export function ProjectPipelinePanel({
                 return (
                   <div
                     key={entry.id}
-                    className={`flex items-center gap-3 rounded-xl border px-4 py-2.5 transition-all ${
-                      isSelected
+                    className={`flex items-center gap-3 rounded-xl border px-4 py-2.5 transition-all ${isSelected
                         ? "border-[var(--accent-strong)]/50 bg-[var(--accent-strong)]/5 ring-1 ring-[var(--accent-strong)]/20"
                         : "border-[var(--line)] bg-[var(--surface)] hover:bg-[var(--surface-strong)]"
-                    }`}
+                      }`}
                   >
                     {/* Compare checkbox */}
                     <button
                       type="button"
                       onClick={() => toggleCompareSelect(entry.id)}
-                      className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border-2 transition-all ${
-                        isSelected
+                      className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border-2 transition-all ${isSelected
                           ? "border-[var(--accent-strong)] bg-[var(--accent-strong)] text-white"
                           : "border-[var(--line-strong)] bg-transparent hover:border-[var(--accent-strong)]/50"
-                      }`}
+                        }`}
                       title="비교 대상 선택"
                     >
                       {isSelected && (

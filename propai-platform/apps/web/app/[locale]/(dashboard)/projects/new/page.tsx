@@ -158,8 +158,8 @@ export default function NewProjectPage() {
             onClick={handleSubmit}
             disabled={!name.trim() || !location.trim() || isSubmitting}
             className="w-full sm:w-auto relative overflow-hidden rounded-2xl py-4 px-10 text-sm font-black transition-all shadow-[var(--shadow-md)] flex items-center justify-center gap-2
-            disabled:opacity-50 disabled:cursor-not-allowed
-            bg-gradient-to-r from-[var(--accent-strong)] to-[#085d73] text-white hover:shadow-[0_0_20px_rgba(45,212,191,0.4)]"
+            cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed
+            bg-gradient-to-r from-[var(--accent-strong)] to-[#085d73] text-white hover:shadow-[0_0_20px_rgba(45,212,191,0.4)] hover:-translate-y-0.5"
           >
             {isSubmitting ? (
               <>
