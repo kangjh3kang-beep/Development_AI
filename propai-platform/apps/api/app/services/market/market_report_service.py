@@ -16,6 +16,13 @@ logger = structlog.get_logger(__name__)
 _TRADE = [("apt", "아파트"), ("villa", "연립·다세대"), ("officetel", "오피스텔"), ("house", "단독·다가구")]
 _RENT = [("apt", "아파트"), ("villa", "연립·다세대"), ("officetel", "오피스텔")]
 
+# 면책 고지 — 모든 분석 산출물(보고서) 공통
+DISCLAIMER_TEXT = (
+    "본 분석결과는 참고용이며, 오류가 있을 수 있습니다. "
+    "이와 관련해 사통팔땅은 어떠한 책임도 지지 않습니다. "
+    "최종판단은 사용자가 최종 결정하는 것입니다."
+)
+
 
 def _stat(values: list[float]) -> dict[str, Any]:
     vals = [v for v in values if v and v > 0]
@@ -337,6 +344,11 @@ class MarketReportService:
         story.append(Paragraph("7. 가격 동향", h2))
         story.append(Paragraph(nar.get("price_trend") or "-", body))
 
+        # 면책 고지
+        story.append(Spacer(1, 14))
+        disc = ParagraphStyle("disc", parent=body, fontSize=7.5, textColor=colors.HexColor("#888888"), leading=11)
+        story.append(Paragraph(DISCLAIMER_TEXT, disc))
+
         doc.build(story)
         return buf.getvalue()
 
@@ -399,6 +411,11 @@ class MarketReportService:
             p2 = tb.add_paragraph()
             p2.text = f"생성 {rep['generated_at']} · 최근 {len(rep['months'])}개월 · 실거래 기반"
             p2.font.size = Pt(14); p2.font.color.rgb = RGBColor(0x94, 0xA3, 0xB8)
+            # 면책 고지
+            disc = s.shapes.add_textbox(Inches(0.9), Inches(6.7), Inches(11.7), Inches(0.6)).text_frame
+            disc.word_wrap = True
+            disc.text = DISCLAIMER_TEXT
+            disc.paragraphs[0].font.size = Pt(9); disc.paragraphs[0].font.color.rgb = RGBColor(0x94, 0xA3, 0xB8)
 
         def map_slide():
             coords = rep.get("coordinates") or {}

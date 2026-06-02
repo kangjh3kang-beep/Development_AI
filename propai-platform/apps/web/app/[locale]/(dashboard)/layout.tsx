@@ -11,6 +11,7 @@ import { BillingMeter } from "@/components/billing/BillingMeter";
 import { MobileSidebarToggle } from "@/components/layout/MobileSidebarToggle";
 import { AuthButton } from "@/components/auth/AuthButton";
 import { AuthGuard } from "@/components/auth/AuthGuard";
+import { Disclaimer } from "@/components/common/Disclaimer";
 type DashboardLayoutProps = Readonly<{
   children: React.ReactNode;
   params: Promise<{
@@ -242,8 +243,10 @@ export default async function DashboardLayout({
         </aside>
 
         {/* 콘텐츠 영역 — AuthGuard로 미인증 접근 차단 */}
-        <main className="min-w-0">
+        <main className="min-w-0 space-y-6">
           <AuthGuard>{children}</AuthGuard>
+          {/* 면책 고지 — 모든 페이지·분석결과 하단 공통 노출 */}
+          <Disclaimer />
         </main>
       </div>
 
