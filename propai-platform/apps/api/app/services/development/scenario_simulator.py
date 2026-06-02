@@ -210,7 +210,7 @@ class DevelopmentScenarioSimulator:
                 structure = None
                 try:
                     if pnu:
-                        b = await breg.get_building_by_pnu(pnu)
+                        b = await breg.get_title_by_pnu(pnu) or await breg.get_building_by_pnu(pnu)
                         if b:
                             ud = (b.get("use_approval_date") or "")[:4]
                             bldg_year = int(ud) if ud.isdigit() else None

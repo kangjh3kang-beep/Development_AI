@@ -96,3 +96,49 @@ class BuildingRegistryService:
         ji = pnu[15:19]
 
         return await self.get_building_info(sigungu_cd, bjdong_cd, bun, ji)
+
+    async def get_title_by_pnu(self, pnu: str) -> dict[str, Any] | None:
+        """PNU 기반 표제부(getBrTitleInfo) 조회 — 사용승인일·구조·세대수가 충실.
+
+        총괄표제부(getBrBasisOulnInfo)가 사용승인일을 비워두는 경우가 많아,
+        노후도·세대수 산정에는 표제부를 사용한다.
+        """
+        if len(pnu) < 19 or not settings.MOLIT_API_KEY:
+            return None
+        params = {
+            "serviceKey": settings.MOLIT_API_KEY,
+            "sigunguCd": pnu[:5], "bjdongCd": pnu[5:10],
+            "bun": pnu[11:15], "ji": pnu[15:19],
+            "numOfRows": "10", "pageNo": "1", "_type": "json",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                resp = await client.get(f"{BASE_URL}/getBrTitleInfo", params=params)
+                resp.raise_for_status()
+                items = (resp.json().get("response", {}).get("body", {})
+                         .get("items", {}) or {}).get("item")
+            if not items:
+                return None
+            rows = items if isinstance(items, list) else [items]
+            # 주된 동(연면적 최대) 선택
+            def _f(x, k):
+                try:
+                    return float(x.get(k, 0) or 0)
+                except (TypeError, ValueError):
+                    return 0.0
+            main = max(rows, key=lambda x: _f(x, "totArea"))
+            return {
+                "building_name": main.get("bldNm", ""),
+                "use_approval_date": str(main.get("useAprDay", "") or ""),
+                "structure": main.get("strctCdNm", ""),
+                "main_purpose": main.get("mainPurpsCdNm", ""),
+                "ground_floors": int(_f(main, "grndFlrCnt")),
+                "total_area_sqm": _f(main, "totArea"),
+                "household_count": int(_f(main, "hhldCnt")),
+                "ho_count": int(_f(main, "hoCnt")),
+                "family_count": int(_f(main, "fmlyCnt")),
+                "dong_count": len(rows),
+            }
+        except Exception as e:  # noqa: BLE001
+            logger.warning("표제부 조회 실패: %s (%s)", pnu, str(e))
+            return None
