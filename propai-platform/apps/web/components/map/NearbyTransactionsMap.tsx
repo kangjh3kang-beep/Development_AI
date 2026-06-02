@@ -140,9 +140,23 @@ export function NearbyTransactionsMap() {
     }).addTo(map);
     mapRef.current = map;
     layerRef.current = L.layerGroup().addTo(map);
-    centerRef.current = L.circleMarker([payload.center.lat, payload.center.lon], {
-      radius: 9, color: "#fff", weight: 3, fillColor: "#ef4444", fillOpacity: 1,
-    }).addTo(map).bindPopup(`<b>분석 대상지</b><br/>${payload.center.address || address}`);
+    // 깜빡이는 펄스 중심 마커(대상 지번 강조) — divIcon + CSS keyframes
+    if (typeof document !== "undefined" && !document.getElementById("propai-pulse-style")) {
+      const st = document.createElement("style");
+      st.id = "propai-pulse-style";
+      st.textContent = `@keyframes propaiPulse{0%{transform:scale(.6);opacity:.9}70%{transform:scale(2.4);opacity:0}100%{opacity:0}}
+.propai-pin{position:relative}
+.propai-pin .core{position:absolute;left:50%;top:50%;width:16px;height:16px;margin:-8px 0 0 -8px;border-radius:50%;background:#ef4444;border:3px solid #fff;box-shadow:0 0 6px rgba(0,0,0,.4);z-index:2}
+.propai-pin .ring{position:absolute;left:50%;top:50%;width:16px;height:16px;margin:-8px 0 0 -8px;border-radius:50%;background:rgba(239,68,68,.6);animation:propaiPulse 1.6s ease-out infinite;z-index:1}`;
+      document.head.appendChild(st);
+    }
+    const pulseIcon = L.divIcon({
+      className: "",
+      html: '<div class="propai-pin"><div class="ring"></div><div class="core"></div></div>',
+      iconSize: [16, 16], iconAnchor: [8, 8],
+    });
+    centerRef.current = L.marker([payload.center.lat, payload.center.lon], { icon: pulseIcon, zIndexOffset: 1000 })
+      .addTo(map).bindPopup(`<b>분석 대상지</b><br/>${payload.center.address || address}`);
     circleRef.current = L.circle([payload.center.lat, payload.center.lon], {
       radius: payload.radius_m, color: "#14b8a6", weight: 2, dashArray: "6",
       fillColor: "#14b8a6", fillOpacity: 0.05,

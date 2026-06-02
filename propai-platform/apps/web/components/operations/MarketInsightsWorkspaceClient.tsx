@@ -7,6 +7,8 @@ import {
   type AddressSearchResult,
 } from "@/components/ui/AddressSearchWithRadius";
 import { apiClient, ApiClientError } from "@/lib/api-client";
+import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
+import { NearbyTransactionsMap } from "@/components/map/NearbyTransactionsMap";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                             */
@@ -138,6 +140,21 @@ export function MarketInsightsWorkspaceClient() {
   const [results, setResults] = useState<SearchResults | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [searchAddr, setSearchAddr] = useState("");
+
+  // 검색입력(카카오) 주소 선택 시: AVM 시세추정 조회(지도는 store 주소로 자동 갱신)
+  const onAddress = useCallback(async (addr: string) => {
+    setSearchAddr(addr);
+    if (!addr) return;
+    try {
+      const avm = await apiClient.post<AVMEstimateResponse>("/avm/estimate", {
+        body: { address: addr, area_sqm: 84 }, useMock: false,
+      });
+      setResults({ avm, transactions: [], totalCount: 0, searchAddress: addr, months: 6, radius: 1000 });
+    } catch {
+      setResults({ avm: null, transactions: [], totalCount: 0, searchAddress: addr, months: 6, radius: 1000 });
+    }
+  }, []);
 
   const handleSearch = useCallback(
     async ({ address, lawdCd, radius, period }: AddressSearchResult) => {
@@ -216,8 +233,16 @@ export function MarketInsightsWorkspaceClient() {
         </p>
       </div>
 
-      {/* 검색 */}
-      <AddressSearchWithRadius onSearch={handleSearch} isLoading={loading} />
+      {/* 검색입력(카카오) — 직접입력 → 주소 검색으로 보강 */}
+      <ProjectAddressInput
+        value={searchAddr}
+        onChange={onAddress}
+        label="시장 분석 주소"
+        placeholder="주소를 검색하세요 (예: 서울 강남구 역삼동)"
+      />
+
+      {/* 주변 실거래 지도 — 대상지 강조(깜빡임)·반경·유형별 시세 */}
+      <NearbyTransactionsMap />
 
       {/* 에러 */}
       {error && (
