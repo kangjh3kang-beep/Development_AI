@@ -21,6 +21,68 @@ logger = structlog.get_logger(__name__)
 
 PYEONG_SQM = 3.305785
 
+# 정책별 매도청구권 — 동의요건 충족 시 미동의자(잔여)에 매도청구 가능.
+# consent_pct=사업 추진 동의 임계, claimable_remainder=임계 충족 시 매도청구 가능한 잔여(=100-임계),
+# basis=근거 법령. (실제 적용은 소유관계·동의현황·보유기간 등 현장확인 필요)
+MAGDO_RULES: dict[str, dict[str, Any]] = {
+    "재개발·재건축(정비사업)": {
+        "consent_required": "조합설립: 토지등소유자 3/4 이상 + 토지면적 1/2 이상(재건축은 각 동 과반·전체 3/4·면적 3/4)",
+        "consent_pct": 75,
+        "basis": "도시 및 주거환경정비법 제64조(매도청구)",
+        "note": "조합설립 동의 후 미동의 조합원·토지등소유자에게 매도청구",
+    },
+    "가로주택정비사업": {
+        "consent_required": "토지등소유자 80% 이상 + 토지면적 2/3 이상(공동주택 각 동 과반)",
+        "consent_pct": 80,
+        "basis": "빈집 및 소규모주택 정비에 관한 특례법 제35조(매도청구)",
+        "note": "사업시행 동의요건 충족 후 미동의자에게 매도청구",
+    },
+    "모아주택/모아타운": {
+        "consent_required": "소규모재건축: 전체 3/4 이상 + 각 동 과반 + 토지면적 3/4 이상",
+        "consent_pct": 75,
+        "basis": "빈집 및 소규모주택 정비에 관한 특례법 제35조(매도청구)",
+        "note": "동의요건 충족 후 미동의자 매도청구(모아타운 내 개별 소규모정비)",
+    },
+    "도시개발사업(도시개발법)": {
+        "consent_required": "수용·사용방식: 토지면적 2/3 이상 + 토지소유자 총수 1/2 이상 동의",
+        "consent_pct": 67,
+        "basis": "도시개발법 제22조(토지등의 수용·사용) · 토지보상법",
+        "note": "수용방식은 미동의 토지 수용(매도청구에 준함). 환지방식은 환지처분으로 갈음",
+    },
+    "역세권 장기전세주택(시프트)": {
+        "consent_required": "대지 사용권원 95% 이상 확보(주택건설사업)",
+        "consent_pct": 95,
+        "basis": "주택법 제22조·제23조(매도청구)",
+        "note": "95%↑ 확보→잔여 전부 매도청구 / 80~95%→10년 미만 보유 토지에 매도청구",
+    },
+    "지구단위계획 연계": {
+        "consent_required": "주택건설사업: 대지 사용권원 95% 이상 확보",
+        "consent_pct": 95,
+        "basis": "주택법 제22조(매도청구)",
+        "note": "지구단위 내 주택건설사업 시 95%↑ 확보→잔여 매도청구(80~95%는 10년 미만 보유분)",
+    },
+    "역세권 활성화사업": {
+        "consent_required": "주택건설사업 준용: 대지 사용권원 95% 이상 확보",
+        "consent_pct": 95,
+        "basis": "주택법 제22조(매도청구) — 사업방식에 따라 정비/소규모정비 준용",
+        "note": "용도상향 복합개발. 주택 포함 시 95%↑ 확보→잔여 매도청구",
+    },
+}
+
+
+def _magdo(scheme: str) -> dict[str, Any] | None:
+    """정책별 매도청구권 분석(동의요건·매도청구 가능 잔여 비율·근거)."""
+    r = MAGDO_RULES.get(scheme)
+    if not r:
+        return None  # 단순건축 등 단일 사업주체/소유 → 매도청구 불요
+    return {
+        "consent_required": r["consent_required"],
+        "consent_threshold_pct": r["consent_pct"],
+        "claimable_remainder_pct": round(100 - r["consent_pct"], 1),
+        "basis": r["basis"],
+        "note": r["note"],
+    }
+
 
 def _is_residential(zone: str) -> bool:
     return "주거" in (zone or "")
@@ -76,12 +138,16 @@ class DevelopmentScenarioSimulator:
             s for s in scenarios if s["scheme"] == "단순 건축"
         )
 
+        # 매도청구 요약(추천안 기준 + 다필지 잔여 추정)
+        magdo_summary = self._magdo_summary(recommended, ctx)
+
         result = {
             "site": ctx,
             "scenarios": scenarios,
             "recommended": {"scheme": recommended["scheme"], "est_far": recommended.get("est_far"),
                             "reason": recommended.get("notes") or recommended.get("pros", [""])[0]},
             "fallback_simple_build": next(s for s in scenarios if s["scheme"] == "단순 건축"),
+            "magdo_summary": magdo_summary,
         }
         if use_llm:
             result["ai"] = await self._llm(ctx, scenarios)
@@ -208,6 +274,42 @@ class DevelopmentScenarioSimulator:
                     "note": "인접성 분석 실패 — 현장/지적도 확인 필요"}
 
     @staticmethod
+    def _magdo_summary(recommended: dict, ctx: dict) -> dict[str, Any] | None:
+        """추천 사업방안 기준 매도청구 요약 + 다필지 잔여 매도청구 추정."""
+        m = recommended.get("magdo")
+        if not m:
+            return {
+                "applicable": False,
+                "scheme": recommended.get("scheme"),
+                "note": "단일 사업주체/단독 소유 또는 단순건축 — 매도청구 불요(전 토지 사용권원 확보 전제)",
+            }
+        n = ctx.get("parcel_count") or 1
+        thr = m.get("consent_threshold_pct")
+        remainder = m.get("claimable_remainder_pct")
+        # 다필지(소유자=필지 가정)일 때 동의 필요 필지수·매도청구 가능 필지수 추정
+        parcel_est = None
+        if n >= 2 and thr:
+            import math
+
+            need = math.ceil(n * thr / 100.0)
+            parcel_est = {
+                "total_parcels": n,
+                "consent_needed_parcels": min(need, n),
+                "claimable_parcels_max": max(0, n - need),
+                "assumption": "1필지=1소유자 가정(실제 소유관계·지분 확인 필요)",
+            }
+        return {
+            "applicable": True,
+            "scheme": recommended.get("scheme"),
+            "consent_required": m.get("consent_required"),
+            "consent_threshold_pct": thr,
+            "claimable_remainder_pct": remainder,
+            "basis": m.get("basis"),
+            "note": m.get("note"),
+            "parcel_estimate": parcel_est,
+        }
+
+    @staticmethod
     def _blended_far(parcels: list[dict]) -> float | None:
         w = [(p.get("area"), p.get("max_far")) for p in parcels if p.get("max_far")]
         if not w:
@@ -247,7 +349,8 @@ class DevelopmentScenarioSimulator:
             S.append({"scheme": scheme, "applicable": applicable,
                       "est_far": round(est_far) if est_far else None,
                       "contribution_pct": contrib, "requirements": requirements,
-                      "pros": pros, "cons": cons, "notes": notes})
+                      "pros": pros, "cons": cons, "notes": notes,
+                      "magdo": _magdo(scheme)})  # 매도청구권 분석(해당 시)
 
         # 1) 단순 건축 (항상 가능 — 폴백 기준)
         add("단순 건축", "가능", far or None, 0,

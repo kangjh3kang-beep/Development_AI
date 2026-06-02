@@ -17,10 +17,23 @@ function hashStr(s: string): string {
   return (h >>> 0).toString(36);
 }
 
+type Magdo = {
+  consent_required?: string; consent_threshold_pct?: number;
+  claimable_remainder_pct?: number; basis?: string; note?: string;
+};
+type MagdoSummary = {
+  applicable: boolean; scheme?: string; consent_required?: string;
+  consent_threshold_pct?: number; claimable_remainder_pct?: number;
+  basis?: string; note?: string;
+  parcel_estimate?: {
+    total_parcels: number; consent_needed_parcels: number;
+    claimable_parcels_max: number; assumption: string;
+  } | null;
+};
 type Scenario = {
   scheme: string; applicable: string; est_far: number | null;
   contribution_pct: number | null; requirements?: string[];
-  pros?: string[]; cons?: string[]; notes?: string;
+  pros?: string[]; cons?: string[]; notes?: string; magdo?: Magdo | null;
 };
 type SimResult = {
   site: {
@@ -31,6 +44,7 @@ type SimResult = {
   };
   scenarios: Scenario[];
   recommended: { scheme: string; est_far?: number | null; reason?: string };
+  magdo_summary?: MagdoSummary | null;
   ai?: { generated?: boolean; summary?: string; best_scheme?: string; why?: string; alternatives?: string[]; cautions?: string[] } | null;
 };
 
@@ -133,6 +147,32 @@ export function DevelopmentScenarioCard({
             )}
           </div>
 
+          {/* 매도청구 요약 */}
+          {result.magdo_summary && (
+            <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-strong)] p-4">
+              <p className="text-xs font-black text-[var(--text-primary)]">⚖ 매도청구 분석 {result.magdo_summary.scheme ? `· ${result.magdo_summary.scheme}` : ""}</p>
+              {result.magdo_summary.applicable ? (
+                <div className="mt-2 space-y-1.5 text-xs text-[var(--text-secondary)]">
+                  <p>동의 요건: <b className="text-[var(--text-primary)]">{result.magdo_summary.consent_required}</b></p>
+                  <p>
+                    동의 임계 <b className="text-[var(--accent-strong)]">{result.magdo_summary.consent_threshold_pct}%</b> 충족 시
+                    {" "}미동의 잔여 <b className="text-rose-400">~{result.magdo_summary.claimable_remainder_pct}%</b> 매도청구 가능
+                  </p>
+                  {result.magdo_summary.parcel_estimate && (
+                    <p className="text-[11px] text-[var(--text-tertiary)]">
+                      다필지 추정: 총 {result.magdo_summary.parcel_estimate.total_parcels}필지 중 동의 필요 ~{result.magdo_summary.parcel_estimate.consent_needed_parcels}필지,
+                      매도청구 가능 최대 {result.magdo_summary.parcel_estimate.claimable_parcels_max}필지
+                      <span className="block opacity-70">({result.magdo_summary.parcel_estimate.assumption})</span>
+                    </p>
+                  )}
+                  <p className="text-[11px] text-[var(--text-tertiary)]">근거: {result.magdo_summary.basis} · {result.magdo_summary.note}</p>
+                </div>
+              ) : (
+                <p className="mt-1 text-xs text-[var(--text-secondary)]">{result.magdo_summary.note}</p>
+              )}
+            </div>
+          )}
+
           {/* 시나리오 목록 */}
           <div className="space-y-2">
             {result.scenarios.map((s, i) => (
@@ -153,6 +193,11 @@ export function DevelopmentScenarioCard({
                     )}
                     {(s.pros?.length ?? 0) > 0 && (
                       <p className="text-emerald-500">장점: {s.pros!.join(" · ")}</p>
+                    )}
+                    {s.magdo && (
+                      <p className="text-rose-400 md:col-span-2">
+                        ⚖ 매도청구: 동의 {s.magdo.consent_threshold_pct}% 충족 시 잔여 ~{s.magdo.claimable_remainder_pct}% 청구 가능 ({s.magdo.basis})
+                      </p>
                     )}
                   </div>
                 )}
