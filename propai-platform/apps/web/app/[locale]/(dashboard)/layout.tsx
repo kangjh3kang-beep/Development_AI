@@ -188,6 +188,8 @@ export default async function DashboardLayout({
   // V. 관리자
   const adminNavigation = [
     { href: `/${locale}/settings`, label: "⚙️ 관리자 설정", icon: <IconSRE /> },
+    { href: `/${locale}/settings/users`, label: "👤 사용자 관리", icon: <IconSRE /> },
+    { href: `/${locale}/settings/billing`, label: "💳 과금 금액 설정", icon: <IconSRE /> },
   ];
 
   const sections = [
