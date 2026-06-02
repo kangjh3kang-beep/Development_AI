@@ -12,6 +12,7 @@ import { useCallback, useState } from "react";
 import { Card, CardContent } from "@propai/ui";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { GlobalAddressSearch, type AddressEntry } from "@/components/common/GlobalAddressSearch";
+import { ParcelBoundaryMap } from "@/components/map/ParcelBoundaryMap";
 import { apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import type { Locale } from "@/i18n/config";
@@ -191,6 +192,9 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
           </div>
         </CardContent>
       </Card>
+
+      {/* 필지 구획도 (단/다필지 경계 + 용도지역) */}
+      <ParcelBoundaryMap parcels={[addr || siteAnalysis?.address || "", ...extra]} />
 
       {/* 부지 요약 + 종합 */}
       {result && (
