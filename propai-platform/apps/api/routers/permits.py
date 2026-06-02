@@ -196,13 +196,20 @@ class AIPermitAnalysisRequest(BaseModel):
     address: str
     pnu: str | None = None
     site: dict[str, Any] | None = None  # 부지분석 결과(있으면 재수집 생략)
+    parcels: list[str] | None = None  # 다필지 통합 개발 시 추가 필지 주소(2개 이상이면 통합 용적률 산정)
 
 
 @router.post("/ai-analysis")
 async def ai_permit_analysis(req: AIPermitAnalysisRequest) -> dict[str, Any]:
-    """부지분석+조례+상위법령을 종합해 개발방식별 인허가 가능성·문제점·해결방안을 AI 분석."""
+    """부지분석+조례+상위법령을 종합해 개발방식별 인허가 가능성·문제점·해결방안을 AI 분석.
+
+    parcels에 2개 이상의 필지 주소가 오면 용도지역이 다른 토지를 통합 개발할 때의
+    면적가중평균(법정)·최적·최고 용적률을 관련법규와 함께 산정한다.
+    """
     from app.services.permit.permit_analysis_service import PermitAnalysisService
 
     if not req.address or not req.address.strip():
         raise HTTPException(status_code=400, detail="주소가 필요합니다.")
-    return await PermitAnalysisService().analyze(req.address.strip(), req.site or {})
+    return await PermitAnalysisService().analyze(
+        req.address.strip(), req.site or {}, parcels=req.parcels
+    )

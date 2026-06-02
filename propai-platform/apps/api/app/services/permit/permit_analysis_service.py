@@ -69,42 +69,52 @@ _USER_TMPL = """\
 분석할 개발방식: {methods}
 """
 
+# 다필지(여러 필지) 통합 개발 — 최적/최고 용적률 산정 프롬프트
+_MULTI_SYSTEM = """\
+당신은 한국 도시계획·건축 인허가 및 용적률 산정 전문가입니다.
+용도지역이 서로 다른 둘 이상의 필지를 하나의 대지로 통합(합필)해 개발할 때의
+법정 용적률과 최적·최고 용적률을 정확히 산정합니다.
+
+핵심 법리:
+1. 국토계획법 시행령 제84조(둘 이상 용도지역 걸친 대지): 가장 작은 부분이 330㎡ 이하이면
+   과반 또는 가중 큰 용도지역 기준 적용 가능. 그 외에는 각 용도지역 면적비율에 따른
+   '가중평균 용적률'을 적용한다. (법정 통합 용적률 = Σ(필지면적×용적률한도)/Σ필지면적)
+2. 최고 용적률 상향 수단: 지구단위계획(용적률 인센티브), 결합건축(건축법 제77조의4),
+   특별건축구역(건축법 제69조), 공공기여(기부채납) 연동 상향, 용도지역 변경(종상향),
+   역세권·도시정비형 재개발 등. 각 수단의 적용 가능성·전제조건을 명시.
+3. 데이터에 있는 수치만 사용. 가정은 명시. 과장·허위 금지. JSON만 출력."""
+
+_MULTI_TMPL = """\
+아래 여러 필지를 하나의 대지로 통합 개발할 때 최적·최고 용적률을 산정하고 JSON으로만 답하세요.
+
+## 통합 대상 필지 ({n}개 필지, 총면적 {total_area}㎡)
+{parcel_lines}
+
+## 참고: 면적가중평균 용적률(법정 통합 용적률) 사전계산값 = {blended_far}%
+(데이터 누락 필지가 있으면 이 값은 부정확할 수 있으니 보정 의견을 제시하세요.)
+
+## 출력 JSON 스키마
+{{
+  "blended_far": 면적가중평균 용적률(%) 숫자,
+  "optimal_far": "현실적으로 인허가 가능한 최적 용적률(%) — 법정+통상 인센티브 반영" 숫자,
+  "max_far": "모든 상향수단 적용 시 이론적 최고 용적률(%)" 숫자,
+  "far_rationale": "최적·최고 용적률 산정 근거(가중평균 계산 + 상향수단별 적용가능성, 4~6문장)",
+  "far_key_laws": ["근거 법령/조문 3~5개(국토계획법 시행령 제84조, 건축법 제77조의4 결합건축 등)"],
+  "integration_issues": ["다필지 통합개발 인허가 문제점 2~4개(합필요건·용도지역 경계·조례 등)"],
+  "integration_solutions": ["해결방안 2~4개"]
+}}
+"""
+
 
 class PermitAnalysisService:
-    async def analyze(self, address: str, site: dict[str, Any] | None = None) -> dict[str, Any]:
-        site = site or {}
-        # 부지정보 보강(미제공 시 AutoZoningService)
-        if not site.get("zone_type"):
-            try:
-                from app.services.zoning.auto_zoning_service import AutoZoningService
-
-                az = await AutoZoningService().analyze_by_address(address)
-                zl = az.get("zone_limits") or {}
-                site = {
-                    "zone_type": az.get("zone_type"),
-                    "max_bcr": zl.get("max_bcr_pct") or zl.get("max_bcr"),
-                    "max_far": zl.get("max_far_pct") or zl.get("max_far"),
-                    "land_area_sqm": az.get("land_area_sqm"),
-                    "special_districts": az.get("special_districts"),
-                    **site,
-                }
-            except Exception as e:  # noqa: BLE001
-                logger.warning("부지정보 수집 실패", err=str(e)[:80])
-
-        # 조례(선택)
-        ordinance_txt = "-"
-        try:
-            from app.services.land_intelligence.ordinance_service import OrdinanceService
-
-            ordn = await OrdinanceService().get_ordinance_limits(address, site.get("zone_type") or "")
-            if isinstance(ordn, dict) and ordn:
-                ordinance_txt = (
-                    f"건폐율 {ordn.get('effective_bcr') or ordn.get('ordinance_bcr') or '-'}%, "
-                    f"용적률 {ordn.get('effective_far') or ordn.get('ordinance_far') or '-'}% "
-                    f"(출처 {ordn.get('source', '-')})"
-                )
-        except Exception:  # noqa: BLE001
-            pass
+    async def analyze(
+        self,
+        address: str,
+        site: dict[str, Any] | None = None,
+        parcels: list[str] | None = None,
+    ) -> dict[str, Any]:
+        site = await self._enrich_site(address, site or {})
+        ordinance_txt = await self._ordinance_text(address, site)
 
         result = await self._llm_analyze(address, site, ordinance_txt)
         result["site"] = {
@@ -114,7 +124,96 @@ class PermitAnalysisService:
             "max_far": site.get("max_far"),
             "land_area_sqm": site.get("land_area_sqm"),
         }
+
+        # 다필지(2개 이상) 통합 개발 → 최적/최고 용적률 산정
+        addrs = [a.strip() for a in (parcels or []) if a and a.strip()]
+        # 주 주소를 1번 필지로 포함(중복 제거)
+        merged: list[str] = []
+        for a in [address, *addrs]:
+            if a and a.strip() and a.strip() not in merged:
+                merged.append(a.strip())
+        if len(merged) >= 2:
+            result["multi_parcel"] = await self._analyze_multi_parcel(merged, primary_site=site)
+
         return result
+
+    async def _enrich_site(self, address: str, site: dict[str, Any]) -> dict[str, Any]:
+        """부지정보 보강(미제공 시 AutoZoningService)."""
+        if site.get("zone_type") and site.get("max_far"):
+            return site
+        try:
+            from app.services.zoning.auto_zoning_service import AutoZoningService
+
+            az = await AutoZoningService().analyze_by_address(address)
+            zl = az.get("zone_limits") or {}
+            site = {
+                "zone_type": az.get("zone_type"),
+                "max_bcr": zl.get("max_bcr_pct") or zl.get("max_bcr"),
+                "max_far": zl.get("max_far_pct") or zl.get("max_far"),
+                "land_area_sqm": az.get("land_area_sqm"),
+                "special_districts": az.get("special_districts"),
+                **{k: v for k, v in site.items() if v is not None},
+            }
+        except Exception as e:  # noqa: BLE001
+            logger.warning("부지정보 수집 실패", err=str(e)[:80], address=address[:40])
+        return site
+
+    @staticmethod
+    async def _ordinance_text(address: str, site: dict[str, Any]) -> str:
+        try:
+            from app.services.land_intelligence.ordinance_service import OrdinanceService
+
+            ordn = await OrdinanceService().get_ordinance_limits(address, site.get("zone_type") or "")
+            if isinstance(ordn, dict) and ordn:
+                return (
+                    f"건폐율 {ordn.get('effective_bcr') or ordn.get('ordinance_bcr') or '-'}%, "
+                    f"용적률 {ordn.get('effective_far') or ordn.get('ordinance_far') or '-'}% "
+                    f"(출처 {ordn.get('source', '-')})"
+                )
+        except Exception:  # noqa: BLE001
+            pass
+        return "-"
+
+    async def _analyze_multi_parcel(
+        self, addresses: list[str], primary_site: dict[str, Any]
+    ) -> dict[str, Any]:
+        """용도지역이 다른 여러 필지를 통합 개발할 때 최적·최고 용적률 산정."""
+        import asyncio
+
+        # 각 필지 부지정보 보강(주 필지는 재사용)
+        enriched: list[dict[str, Any]] = []
+        sites = await asyncio.gather(
+            *[self._enrich_site(a, {}) for a in addresses[1:]], return_exceptions=True
+        )
+        site_list = [primary_site, *[(s if isinstance(s, dict) else {}) for s in sites]]
+        for addr, s in zip(addresses, site_list):
+            area = s.get("land_area_sqm")
+            far = s.get("max_far")
+            enriched.append({
+                "address": addr,
+                "zone_type": s.get("zone_type"),
+                "max_far": far,
+                "max_bcr": s.get("max_bcr"),
+                "land_area_sqm": area,
+            })
+
+        blended = self._blended_far(enriched)
+        total_area = sum(p["land_area_sqm"] or 0 for p in enriched)
+        llm = await self._llm_multi_parcel(enriched, blended, total_area)
+        return {"parcels": enriched, **llm}
+
+    @staticmethod
+    def _blended_far(parcels: list[dict[str, Any]]) -> float | None:
+        """면적가중평균 용적률(국토계획법 시행령 제84조). 면적 누락 시 단순평균."""
+        weighted = [(p["land_area_sqm"], p["max_far"]) for p in parcels if p.get("max_far")]
+        if not weighted:
+            return None
+        if all(a for a, _ in weighted):
+            tot = sum(a for a, _ in weighted)
+            return round(sum(a * f for a, f in weighted) / tot, 1) if tot else None
+        # 면적 일부/전부 누락 → 단순평균(근사)
+        fars = [f for _, f in weighted]
+        return round(sum(fars) / len(fars), 1)
 
     async def _llm_analyze(self, address: str, site: dict, ordinance: str) -> dict[str, Any]:
         try:
@@ -167,3 +266,57 @@ class PermitAnalysisService:
             "methods": methods,
             "recommendation": "용도지역 허용용도와 조례를 우선 확인하세요.",
         }
+
+    async def _llm_multi_parcel(
+        self, parcels: list[dict[str, Any]], blended: float | None, total_area: float
+    ) -> dict[str, Any]:
+        """다필지 통합 개발 최적·최고 용적률 LLM 산정. 실패 시 가중평균 기반 폴백."""
+        parcel_lines = "\n".join(
+            f"- {i + 1}) {p['address']} | 용도지역 {p.get('zone_type') or '미상'} | "
+            f"용적률한도 {p.get('max_far') or '-'}% | 면적 {round(p['land_area_sqm']) if p.get('land_area_sqm') else '-'}㎡"
+            for i, p in enumerate(parcels)
+        )
+        try:
+            from app.services.ai.llm_provider import get_llm
+            from app.services.ai.base_interpreter import GROUNDING_RULE
+            from langchain_core.messages import HumanMessage, SystemMessage
+
+            llm = get_llm(timeout=70, max_tokens=2500)
+            user = _MULTI_TMPL.format(
+                n=len(parcels),
+                total_area=round(total_area) if total_area else "-",
+                parcel_lines=parcel_lines,
+                blended_far=blended if blended is not None else "-",
+            )
+            resp = await llm.ainvoke(
+                [SystemMessage(content=_MULTI_SYSTEM + GROUNDING_RULE), HumanMessage(content=user)]
+            )
+            raw = (resp.content if hasattr(resp, "content") else str(resp)).strip()
+            if raw.startswith("```"):
+                raw = raw.split("```")[1]
+                raw = raw[4:] if raw.lower().startswith("json") else raw
+                raw = raw.strip()
+            data = json.loads(raw)
+            data["ai"] = True
+            # 산정 누락 시 가중평균으로 보정
+            if not data.get("blended_far") and blended is not None:
+                data["blended_far"] = blended
+            return data
+        except Exception as e:  # noqa: BLE001
+            logger.warning("다필지 용적률 LLM 산정 실패, 폴백", err=str(e)[:100])
+            return {
+                "ai": False,
+                "blended_far": blended,
+                "optimal_far": blended,
+                "max_far": None,
+                "far_rationale": (
+                    "용도지역이 다른 필지를 통합 개발 시 국토계획법 시행령 제84조에 따라 면적가중평균 "
+                    "용적률이 기본 적용됩니다. 지구단위계획·결합건축·종상향 등 상향수단은 AI 연결 후 상세 제시됩니다."
+                ),
+                "far_key_laws": [
+                    "국토의 계획 및 이용에 관한 법률 시행령 제84조(둘 이상 용도지역 걸친 대지)",
+                    "건축법 제77조의4(결합건축)",
+                ],
+                "integration_issues": ["합필 요건·용도지역 경계 정합·조례 확인 필요"],
+                "integration_solutions": ["지구단위계획 수립 검토 후 통합 용적률 상향 협의"],
+            }

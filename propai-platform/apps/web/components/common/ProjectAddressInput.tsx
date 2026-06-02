@@ -31,6 +31,8 @@ interface ProjectAddressInputProps {
   disabled?: boolean;
   /** 프로젝트 선택 드롭다운 숨김 (기본 표시) */
   hideProjectPicker?: boolean;
+  /** 프로젝트 선택 드롭다운 앞 라벨 (기본 없음) */
+  pickerLabel?: string;
 }
 
 export function ProjectAddressInput({
@@ -41,6 +43,7 @@ export function ProjectAddressInput({
   className = "",
   disabled = false,
   hideProjectPicker = false,
+  pickerLabel,
 }: ProjectAddressInputProps) {
   const projects = useProjectStore((s) => s.projects);
   const setProject = useProjectContextStore((s) => s.setProject);
@@ -77,11 +80,15 @@ export function ProjectAddressInput({
           {label}
         </span>
         {!hideProjectPicker && projects.length > 0 && (
+          <div className="flex max-w-[60%] items-center gap-2">
+            {pickerLabel && (
+              <span className="shrink-0 text-[11px] font-bold text-[var(--text-tertiary)]">{pickerLabel}</span>
+            )}
           <select
             value={ctxProjectId ?? ""}
             disabled={disabled}
             onChange={(e) => handleSelectProject(e.target.value)}
-            className="max-w-[55%] truncate rounded-lg border border-[var(--line-strong)] bg-[var(--surface-muted)] px-2.5 py-1.5 text-[11px] font-semibold text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-strong)] disabled:opacity-50"
+            className="min-w-0 flex-1 truncate rounded-lg border border-[var(--line-strong)] bg-[var(--surface-muted)] px-2.5 py-1.5 text-[11px] font-semibold text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-strong)] disabled:opacity-50"
             title="이전에 분석한 프로젝트를 선택해 이어서 분석"
           >
             <option value="">분석한 프로젝트 불러오기…</option>
@@ -91,6 +98,7 @@ export function ProjectAddressInput({
               </option>
             ))}
           </select>
+          </div>
         )}
       </div>
 
