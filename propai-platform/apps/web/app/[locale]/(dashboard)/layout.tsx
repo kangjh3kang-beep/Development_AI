@@ -7,6 +7,7 @@ import { isValidLocale, type Locale } from "@/i18n/config";
 import { AIAssistant } from "@/components/common/AIAssistant";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
 import { SidebarNav } from "@/components/layout/SidebarNav";
+import { BillingMeter } from "@/components/billing/BillingMeter";
 import { MobileSidebarToggle } from "@/components/layout/MobileSidebarToggle";
 import { AuthButton } from "@/components/auth/AuthButton";
 import { AuthGuard } from "@/components/auth/AuthGuard";
@@ -232,6 +233,7 @@ export default async function DashboardLayout({
       <div className="grid gap-6 lg:grid-cols-[260px_minmax(0,1fr)]">
         {/* 사이드바 — 모바일에서 숨김, lg 이상에서 표시 */}
         <aside className="hidden lg:block glass space-y-5 rounded-[var(--radius-xl)] border border-[var(--line)] bg-[var(--surface-secondary)] p-5 shadow-[var(--shadow-md)] sticky top-[88px] h-[calc(100vh-100px)] overflow-y-auto custom-scrollbar">
+          <BillingMeter compact />
           <SidebarNav sections={sections} />
         </aside>
 
