@@ -17,22 +17,97 @@ import structlog
 
 logger = structlog.get_logger(__name__)
 
-BUDGET_RATIO = 0.5  # 구독료의 50%를 LLM 포함한도로
+# ── 과금 설정(관리자 수정 가능). 기본값 → DB(billing_config) 오버라이드 ──
+# 파이프라인 7단계: site_analysis/design/cost/feasibility/tax/esg/report
+_PIPELINE_STAGES = ["site_analysis", "design", "cost", "feasibility", "tax", "esg", "report"]
 
-# ── 서비스 사용료(LLM 과금과 별개로 누적) ──
-# 행위별 기본 차감액(원). 토지분석은 등급별로 단가가 다름(아래 분기).
-SERVICE_FEE_PROJECT_CREATE_KRW = 2000  # 프로젝트 생성 건당(구독자)
-SERVICE_FEE_LAND_ANALYSIS_KRW = 2000   # 토지분석 건당(구독자)
-# 비구독 등급: 무료 횟수 소진 후 토지분석 건당 단가
-FREE_TIER_ANALYSIS_FEE_KRW = {"free": 5000, "guest": 10000}
-FREE_TIER_ANALYSIS_QUOTA = {"free": 3, "guest": 1}  # 무료 토지분석 횟수
-
-# 구독 등급별 요금(원) + 할증배수
-TIER_BILLING: dict[str, dict[str, Any]] = {
-    "power": {"fee_krw": 24500, "multiplier": 2.0, "label": "파워"},
-    "superpower": {"fee_krw": 49900, "multiplier": 1.4, "label": "슈퍼파워"},
-    "master": {"fee_krw": 99000, "multiplier": 1.3, "label": "마스터"},
+_DEFAULT_CONFIG: dict[str, Any] = {
+    "budget_ratio": 0.5,  # 구독료의 N%를 LLM 포함한도로
+    "tiers": {
+        "power": {"fee_krw": 24500, "multiplier": 2.0, "label": "파워"},
+        "superpower": {"fee_krw": 49900, "multiplier": 1.4, "label": "슈퍼파워"},
+        "master": {"fee_krw": 99000, "multiplier": 1.3, "label": "마스터"},
+    },
+    "service_fees": {
+        "project_create": 2000,           # 프로젝트 생성 건당
+        "land_analysis": 2000,            # 토지분석(구독자) 건당
+        "stages": {s: 2000 for s in _PIPELINE_STAGES},  # 파이프라인 단계별 건당
+    },
+    "free_tier": {
+        "analysis_fee": {"free": 5000, "guest": 10000},  # 무료 소진 후 토지분석 단가
+        "analysis_quota": {"free": 3, "guest": 1},        # 무료 토지분석 횟수
+    },
 }
+
+# 런타임 설정(기본 복제). apply_config로 in-place 갱신(별칭 유지).
+_CONFIG: dict[str, Any] = {
+    "budget_ratio": _DEFAULT_CONFIG["budget_ratio"],
+    "tiers": {k: dict(v) for k, v in _DEFAULT_CONFIG["tiers"].items()},
+    "service_fees": {
+        "project_create": _DEFAULT_CONFIG["service_fees"]["project_create"],
+        "land_analysis": _DEFAULT_CONFIG["service_fees"]["land_analysis"],
+        "stages": dict(_DEFAULT_CONFIG["service_fees"]["stages"]),
+    },
+    "free_tier": {
+        "analysis_fee": dict(_DEFAULT_CONFIG["free_tier"]["analysis_fee"]),
+        "analysis_quota": dict(_DEFAULT_CONFIG["free_tier"]["analysis_quota"]),
+    },
+}
+
+# 하위호환 별칭(같은 객체 참조 — apply_config는 in-place 갱신하므로 유효 유지)
+TIER_BILLING: dict[str, dict[str, Any]] = _CONFIG["tiers"]
+
+
+def get_config() -> dict[str, Any]:
+    return _CONFIG
+
+
+def apply_config(override: dict[str, Any]) -> None:
+    """관리자 수정값을 런타임 설정에 병합(in-place, 별칭 유지)."""
+    if not isinstance(override, dict):
+        return
+    if "budget_ratio" in override:
+        try:
+            _CONFIG["budget_ratio"] = float(override["budget_ratio"])
+        except (ValueError, TypeError):
+            pass
+    for tier, vals in (override.get("tiers") or {}).items():
+        if tier in _CONFIG["tiers"] and isinstance(vals, dict):
+            for k in ("fee_krw", "multiplier", "label"):
+                if k in vals:
+                    _CONFIG["tiers"][tier][k] = vals[k]
+    sf = override.get("service_fees") or {}
+    for k in ("project_create", "land_analysis"):
+        if k in sf:
+            _CONFIG["service_fees"][k] = sf[k]
+    for s, v in (sf.get("stages") or {}).items():
+        if s in _CONFIG["service_fees"]["stages"]:
+            _CONFIG["service_fees"]["stages"][s] = v
+    ft = override.get("free_tier") or {}
+    for sub in ("analysis_fee", "analysis_quota"):
+        for t, v in (ft.get(sub) or {}).items():
+            _CONFIG["free_tier"][sub][t] = v
+
+
+# ── 서비스 사용료 접근자(설정 기반) ──
+def service_fee_project_create() -> float:
+    return float(_CONFIG["service_fees"].get("project_create", 0))
+
+
+def service_fee_land_analysis() -> float:
+    return float(_CONFIG["service_fees"].get("land_analysis", 0))
+
+
+def service_fee_stage(stage: str) -> float:
+    return float(_CONFIG["service_fees"].get("stages", {}).get(stage, 0))
+
+
+def free_tier_analysis_fee(tier: str) -> float:
+    return float(_CONFIG["free_tier"]["analysis_fee"].get(tier, _CONFIG["free_tier"]["analysis_fee"].get("free", 0)))
+
+
+def free_tier_analysis_quota(tier: str) -> int:
+    return int(_CONFIG["free_tier"]["analysis_quota"].get(tier, 0))
 
 # LLM 모델 단가(USD / 1M tokens) — 청구계산용. 키는 모델명 부분일치.
 MODEL_PRICING_USD_PER_MTOK: dict[str, dict[str, float]] = {
@@ -56,8 +131,8 @@ def tier_multiplier(tier: str) -> float:
 
 
 def tier_included_budget_krw(tier: str) -> float:
-    """등급 월 포함 LLM 한도(원) = 구독료 × 0.5."""
-    return round(tier_fee_krw(tier) * BUDGET_RATIO)
+    """등급 월 포함 LLM 한도(원) = 구독료 × budget_ratio."""
+    return round(tier_fee_krw(tier) * float(_CONFIG.get("budget_ratio", 0.5)))
 
 
 def is_metered_tier(tier: str) -> bool:

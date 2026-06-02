@@ -10,15 +10,20 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import json
+
 from app.core.billing import (
-    FREE_TIER_ANALYSIS_FEE_KRW,
-    FREE_TIER_ANALYSIS_QUOTA,
-    SERVICE_FEE_LAND_ANALYSIS_KRW,
-    SERVICE_FEE_PROJECT_CREATE_KRW,
     TIER_BILLING,
+    apply_config,
     billed_krw,
+    get_config,
+    free_tier_analysis_fee,
+    free_tier_analysis_quota,
     get_usd_krw_rate,
     is_metered_tier,
+    service_fee_land_analysis,
+    service_fee_project_create,
+    service_fee_stage,
     tier_fee_krw,
     tier_included_budget_krw,
     tier_multiplier,
@@ -54,6 +59,7 @@ async def ensure_cycle(db: AsyncSession, user_id: Any):
 
 
 async def get_status(db: AsyncSession, user_id: Any) -> dict[str, Any]:
+    await load_config(db)
     await ensure_cycle(db, user_id)
     row = await _row(db, user_id)
     if not row:
@@ -65,7 +71,7 @@ async def get_status(db: AsyncSession, user_id: Any) -> dict[str, Any]:
     meta = await _meta(db, user_id)
     acount = int(meta[1]) if meta else 0
     sfee = float(meta[2]) if meta else 0.0
-    free_quota = FREE_TIER_ANALYSIS_QUOTA.get(tier, 0) if not metered else 0
+    free_quota = free_tier_analysis_quota(tier) if not metered else 0
     return {
         "tier": tier,
         "tier_label": TIER_BILLING.get(tier, {}).get("label", tier),
@@ -123,6 +129,41 @@ async def topup(db: AsyncSession, user_id: Any, amount_krw: float) -> None:
     await db.commit()
 
 
+_CONFIG_DDL = "CREATE TABLE IF NOT EXISTS billing_config (id int PRIMARY KEY, config jsonb, updated_at timestamptz)"
+_config_loaded = False
+
+
+async def load_config(db: AsyncSession, force: bool = False) -> None:
+    """billing_config(DB)에서 관리자 설정을 읽어 런타임 설정에 반영(최초 1회/강제)."""
+    global _config_loaded
+    if _config_loaded and not force:
+        return
+    try:
+        await db.execute(text(_CONFIG_DDL))
+        await db.commit()
+        row = (await db.execute(text("SELECT config FROM billing_config WHERE id=1"))).first()
+        if row and row[0]:
+            cfg = row[0] if isinstance(row[0], dict) else json.loads(row[0])
+            apply_config(cfg)
+        _config_loaded = True
+    except Exception:  # noqa: BLE001
+        pass
+
+
+async def save_config(db: AsyncSession, override: dict[str, Any]) -> dict[str, Any]:
+    """관리자 설정 저장(DB 영속 + 런타임 반영)."""
+    await db.execute(text(_CONFIG_DDL))
+    apply_config(override)
+    cfg = json.dumps(get_config(), ensure_ascii=False)
+    await db.execute(
+        text("INSERT INTO billing_config(id, config, updated_at) VALUES (1, CAST(:c AS jsonb), now()) "
+             "ON CONFLICT (id) DO UPDATE SET config=CAST(:c AS jsonb), updated_at=now()"),
+        {"c": cfg},
+    )
+    await db.commit()
+    return get_config()
+
+
 async def _meta(db: AsyncSession, user_id: Any):
     """tier, analysis_count, service_fee_krw 조회."""
     r = (await db.execute(
@@ -140,15 +181,17 @@ def compute_service_fee(tier: str, action: str, analysis_count: int) -> dict[str
     - 토지분석: 구독자 2,000원 / 일반회원 무료 N회후 5,000원 / 비회원 무료 N회후 10,000원
     """
     if action == "project_create":
-        return {"fee_krw": SERVICE_FEE_PROJECT_CREATE_KRW, "free": False, "free_remaining": 0}
+        return {"fee_krw": service_fee_project_create(), "free": False, "free_remaining": 0}
+    # 파이프라인 단계별 과금 (stage:<name>)
+    if action.startswith("stage:"):
+        return {"fee_krw": service_fee_stage(action.split(":", 1)[1]), "free": False, "free_remaining": 0}
     # land_analysis
     if is_metered_tier(tier):  # 구독자
-        return {"fee_krw": SERVICE_FEE_LAND_ANALYSIS_KRW, "free": False, "free_remaining": 0}
-    quota = FREE_TIER_ANALYSIS_QUOTA.get(tier, FREE_TIER_ANALYSIS_QUOTA.get("free", 0))
+        return {"fee_krw": service_fee_land_analysis(), "free": False, "free_remaining": 0}
+    quota = free_tier_analysis_quota(tier)
     if analysis_count < quota:
         return {"fee_krw": 0, "free": True, "free_remaining": quota - analysis_count - 1}
-    fee = FREE_TIER_ANALYSIS_FEE_KRW.get(tier, FREE_TIER_ANALYSIS_FEE_KRW.get("free", 0))
-    return {"fee_krw": fee, "free": False, "free_remaining": 0}
+    return {"fee_krw": free_tier_analysis_fee(tier), "free": False, "free_remaining": 0}
 
 
 async def preview_service_fee(db: AsyncSession, user_id: Any, action: str) -> dict[str, Any]:

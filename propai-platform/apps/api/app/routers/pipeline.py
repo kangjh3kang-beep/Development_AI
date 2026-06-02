@@ -95,6 +95,24 @@ async def run_pipeline(req: PipelineRunRequest):
 
     stages = _build_stages_response(result)
 
+    # 서비스 사용료(LLM 별개): 이번 실행에서 실제로 수행된 단계마다 과금(로그인, best-effort).
+    # duration_ms가 있는(=이번에 실행된) completed 단계만 → 재사용 단계 중복과금 방지.
+    try:
+        from app.core.request_context import get_current_user_id
+
+        uid = get_current_user_id()
+        if uid:
+            ran = [s.stage for s in stages if s.status == "completed" and (s.duration_ms or 0) > 0]
+            if ran:
+                from app.core.database import async_session_factory
+                from app.services.billing import billing_service
+
+                async with async_session_factory() as _db:
+                    for stage_name in ran:
+                        await billing_service.charge_service(_db, uid, f"stage:{stage_name}")
+    except Exception:  # noqa: BLE001
+        pass
+
     # 최종 요약
     summary = {}
     report_data = result.stages.get("report")

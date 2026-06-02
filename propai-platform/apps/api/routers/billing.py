@@ -113,6 +113,32 @@ class SetTierRequest(BaseModel):
     tier: str
 
 
+@router.get("/admin/config")
+async def get_billing_config(
+    current: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """관리자 전용: 현재 과금 설정(등급요금·할증·서비스료·단계별·무료횟수) 조회."""
+    if current.role not in ("admin", "manager"):
+        raise HTTPException(status_code=403, detail="관리자 권한이 필요합니다.")
+    from app.core.billing import get_config
+
+    await billing_service.load_config(db, force=True)
+    return get_config()
+
+
+@router.put("/admin/config")
+async def update_billing_config(
+    override: dict,
+    current: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """관리자 전용: 과금 금액 설정 수정/변경(DB 영속 + 즉시 반영)."""
+    if current.role not in ("admin", "manager"):
+        raise HTTPException(status_code=403, detail="관리자 권한이 필요합니다.")
+    return await billing_service.save_config(db, override or {})
+
+
 @router.post("/admin/set-tier")
 async def admin_set_tier(
     req: SetTierRequest,
