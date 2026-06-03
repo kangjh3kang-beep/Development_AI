@@ -170,7 +170,7 @@ export default async function DashboardLayout({
   // I-3. 분양관리 ERP (v62 — 현장별 분양 운영 + 모델하우스 데스크)
   const salesNavigation = [
     { href: `/${locale}/sales`, label: "분양 현장 관리", icon: <IconProject /> },
-    { href: `/${locale}/sales/projection`, label: "└ 시행사 투영뷰", icon: <IconMarket /> },
+    { href: `/${locale}/sales/projection`, label: "└ 시행사 요약 현황", icon: <IconMarket /> },
   ];
 
   // II. 수익·비용·ESG

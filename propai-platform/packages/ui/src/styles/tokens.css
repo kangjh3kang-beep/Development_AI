@@ -109,9 +109,9 @@
   --text-hint: #828aa0;
 
   /* ── Borders & Dividers ── */
-  --line: rgba(255, 255, 255, 0.12);
-  --line-strong: #282e39;
-  --line-subtle: rgba(255, 255, 255, 0.06);
+  --line: rgba(255, 255, 255, 0.18);
+  --line-strong: #3a4254;
+  --line-subtle: rgba(255, 255, 255, 0.10);
 
   /* ── Brand Accent ── */
   --accent: #135bec;

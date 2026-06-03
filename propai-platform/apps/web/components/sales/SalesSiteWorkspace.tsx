@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { salesApi } from "@/lib/salesApi";
+import { salesApi, salesGlobal } from "@/lib/salesApi";
 import type { Locale } from "@/i18n/config";
 import UnitGrid from "@/components/sales/UnitGrid";
 import Unit360Panel from "@/components/sales/Unit360Panel";
@@ -19,33 +19,37 @@ import TaxPanel from "@/components/sales/TaxPanel";
 
 type Tab = "units" | "pricing" | "subscription" | "payments" | "loan" | "resale" | "tax" | "org" | "commission" | "desk";
 const TABS: { key: Tab; label: string }[] = [
-  { key: "units", label: "동호 배치도" },
+  { key: "units", label: "세대 배치도" },
   { key: "pricing", label: "분양가" },
-  { key: "subscription", label: "청약" },
-  { key: "payments", label: "수납" },
-  { key: "loan", label: "중도금대출" },
-  { key: "resale", label: "전매/실거래" },
-  { key: "tax", label: "세무/보증" },
+  { key: "subscription", label: "청약·당첨" },
+  { key: "payments", label: "수납·납부" },
+  { key: "loan", label: "중도금 대출" },
+  { key: "resale", label: "전매·실거래신고" },
+  { key: "tax", label: "세금·보증" },
   { key: "org", label: "조직도" },
   { key: "commission", label: "수수료" },
-  { key: "desk", label: "데스크" },
+  { key: "desk", label: "방문 안내데스크" },
 ];
 
 export default function SalesSiteWorkspace({ siteCode, locale }: { siteCode: string; locale: Locale }) {
   const [tab, setTab] = useState<Tab>("units");
   const [rounds, setRounds] = useState<{ id: string; name: string }[]>([]);
   const [rid, setRid] = useState("");
+  const [siteName, setSiteName] = useState("");
   const [genBusy, setGenBusy] = useState(false);
 
   useEffect(() => {
     salesApi(siteCode).get<{ id: string; name: string }[]>("/rounds")
       .then((r) => { setRounds(r || []); if (r?.[0]) setRid(r[0].id); })
       .catch(() => setRounds([]));
+    salesGlobal.get<{ site_code: string; site_name: string }[]>("/sites")
+      .then((ss) => setSiteName((ss || []).find((x) => x.site_code === siteCode)?.site_name || ""))
+      .catch(() => {});
   }, [siteCode]);
 
   const generateUnits = async () => {
-    const floors = Number(prompt("동호 생성(건축개요) — 층수?", "10") || 0);
-    const upf = Number(prompt("층당 세대수?", "4") || 0);
+    const floors = Number(prompt("세대 만들기 (건축 개요로 자동 생성) — 층수를 입력하세요", "10") || 0);
+    const upf = Number(prompt("한 층에 들어가는 세대 수", "4") || 0);
     if (!floors || !upf) return;
     setGenBusy(true);
     try {
@@ -54,7 +58,7 @@ export default function SalesSiteWorkspace({ siteCode, locale }: { siteCode: str
         params: { blocks: [{ name: "101", floors, units_per_floor: upf, types: [{ name: "84A" }] }] },
       });
       window.location.reload();
-    } catch { alert("동호 생성 실패 (권한 확인)"); }
+    } catch { alert("세대 만들기에 실패했습니다 (권한을 확인하세요)"); }
     finally { setGenBusy(false); }
   };
 
@@ -62,11 +66,11 @@ export default function SalesSiteWorkspace({ siteCode, locale }: { siteCode: str
     <div className="space-y-5">
       <div className="flex items-center gap-3">
         <Link href={`/${locale}/sales`} className="text-sm text-[var(--text-tertiary)] hover:text-[var(--text-primary)]">← 현장 목록</Link>
-        <h1 className="text-lg font-black text-[var(--text-primary)]">현장: {siteCode}</h1>
+        <h1 className="text-lg font-black text-[var(--text-primary)]">{siteName || "분양 현장"}</h1>
         {tab === "units" && (
           <button onClick={generateUnits} disabled={genBusy}
             className="ml-auto rounded-lg bg-[var(--accent-strong)] px-3 py-1.5 text-xs font-black text-white disabled:opacity-50">
-            {genBusy ? "생성 중…" : "+ 동호 생성"}
+            {genBusy ? "만드는 중…" : "+ 세대 만들기"}
           </button>
         )}
       </div>
