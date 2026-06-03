@@ -11,11 +11,21 @@ import OrgTree from "@/components/sales/OrgTree";
 import CommissionBoard from "@/components/sales/CommissionBoard";
 import DeskCheckin from "@/components/desk/DeskCheckin";
 import VisitorStats from "@/components/desk/VisitorStats";
+import SubscriptionPanel from "@/components/sales/SubscriptionPanel";
+import PaymentsPanel from "@/components/sales/PaymentsPanel";
+import LoanPanel from "@/components/sales/LoanPanel";
+import ResalePanel from "@/components/sales/ResalePanel";
+import TaxPanel from "@/components/sales/TaxPanel";
 
-type Tab = "units" | "pricing" | "org" | "commission" | "desk";
+type Tab = "units" | "pricing" | "subscription" | "payments" | "loan" | "resale" | "tax" | "org" | "commission" | "desk";
 const TABS: { key: Tab; label: string }[] = [
   { key: "units", label: "동호 배치도" },
   { key: "pricing", label: "분양가" },
+  { key: "subscription", label: "청약" },
+  { key: "payments", label: "수납" },
+  { key: "loan", label: "중도금대출" },
+  { key: "resale", label: "전매/실거래" },
+  { key: "tax", label: "세무/보증" },
   { key: "org", label: "조직도" },
   { key: "commission", label: "수수료" },
   { key: "desk", label: "데스크" },
@@ -82,6 +92,11 @@ export default function SalesSiteWorkspace({ siteCode, locale }: { siteCode: str
           {rid ? <PriceTableEditor siteCode={siteCode} roundId={rid} /> : <p className="text-sm text-[var(--text-secondary)]">차수가 없습니다.</p>}
         </div>
       )}
+      {tab === "subscription" && <SubscriptionPanel siteCode={siteCode} />}
+      {tab === "payments" && <PaymentsPanel siteCode={siteCode} />}
+      {tab === "loan" && <LoanPanel siteCode={siteCode} />}
+      {tab === "resale" && <ResalePanel siteCode={siteCode} />}
+      {tab === "tax" && <TaxPanel siteCode={siteCode} />}
       {tab === "org" && <OrgTree siteCode={siteCode} />}
       {tab === "commission" && <CommissionBoard siteCode={siteCode} />}
       {tab === "desk" && (<div className="grid gap-6 lg:grid-cols-2"><DeskCheckin siteCode={siteCode} /><VisitorStats siteCode={siteCode} /></div>)}
