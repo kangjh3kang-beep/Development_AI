@@ -266,7 +266,7 @@ export function G2BBidAnalysisModal({
 
         {!result && !loading && !error && (
           <p className="text-center text-sm text-[var(--text-hint)] py-8">
-            [분석 실행]을 누르면 QTO·수지·법규·ESG를 통합 분석합니다.
+            [분석 실행]을 누르면 물량산출·수지·법규·ESG를 통합 분석합니다.
           </p>
         )}
 
@@ -320,7 +320,7 @@ export function G2BBidAnalysisModal({
             {result.cost_breakdown && (
               <section className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-4">
                 <h3 className="text-sm font-black text-[var(--text-primary)] mb-2">
-                  추정 공사원가 (QTO 기반)
+                  추정 공사원가 (물량산출 기반)
                 </h3>
                 <div className="text-sm text-[var(--text-secondary)]">
                   총 원가 <b className="text-[var(--text-primary)]">{fmtKRW(result.cost_breakdown.total_project_cost)}</b>
