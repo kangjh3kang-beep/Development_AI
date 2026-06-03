@@ -9,7 +9,7 @@
  * @see https://postcode.map.kakao.com/guide
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 /* ── 카카오 주소 검색 결과 타입 ── */
 interface DaumPostcodeData {
@@ -103,46 +103,55 @@ export function KakaoAddressSearch({
   disabled = false,
 }: KakaoAddressSearchProps) {
   const [displayValue, setDisplayValue] = useState(value);
+  const [open, setOpen] = useState(false);
+  const boxRef = useRef<HTMLDivElement | null>(null);
 
   // 외부 value 변경 시 동기화
   useEffect(() => {
     setDisplayValue(value);
   }, [value]);
 
-  /* ── 카카오 주소 검색 팝업 열기 (새 창 팝업 방식 — 페이지 스크롤 방지) ── */
-  const openSearch = useCallback(async () => {
-    if (disabled) return;
+  const openSearch = useCallback(() => {
+    if (!disabled) setOpen(true);
+  }, [disabled]);
 
-    await loadDaumPostcodeScript();
-
-    const daum = (window as any).daum;
-    if (!daum?.Postcode) return;
-
-    new daum.Postcode({
-      oncomplete: (data: DaumPostcodeData) => {
-        let fullAddress = data.userSelectedType === "R" ? data.roadAddress : data.jibunAddress;
-
-        if (data.buildingName) {
-          fullAddress += ` (${data.buildingName})`;
-        }
-
-        const result: KakaoAddressResult = {
-          fullAddress,
-          roadAddress: data.roadAddress,
-          jibunAddress: data.jibunAddress,
-          zonecode: data.zonecode,
-          sido: data.sido,
-          sigungu: data.sigungu,
-          bname: data.bname || data.bname2,
-          buildingName: data.buildingName,
-          bcode: data.bcode ?? "",
-        };
-
-        setDisplayValue(fullAddress);
-        onSelect(result);
-      },
-    }).open(); // embed 대신 open() — 별도 팝업 창으로 열림
-  }, [disabled, onSelect]);
+  /* ── 모바일 안전: 별도 팝업(.open) 대신 인라인 임베드(.embed).
+        .open() 은 모바일에서 oncomplete 콜백이 원래 페이지로 안정적으로 돌아오지 않아
+        선택값이 입력에 반영되지 않는다. embed 는 같은 페이지 컨텍스트에서 동작. ── */
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    (async () => {
+      await loadDaumPostcodeScript();
+      if (cancelled || !boxRef.current) return;
+      const daum = (window as any).daum;
+      if (!daum?.Postcode) return;
+      boxRef.current.innerHTML = "";
+      new daum.Postcode({
+        oncomplete: (data: DaumPostcodeData) => {
+          let fullAddress = data.userSelectedType === "R" ? data.roadAddress : data.jibunAddress;
+          if (data.buildingName) fullAddress += ` (${data.buildingName})`;
+          const result: KakaoAddressResult = {
+            fullAddress,
+            roadAddress: data.roadAddress,
+            jibunAddress: data.jibunAddress,
+            zonecode: data.zonecode,
+            sido: data.sido,
+            sigungu: data.sigungu,
+            bname: data.bname || data.bname2,
+            buildingName: data.buildingName,
+            bcode: data.bcode ?? "",
+          };
+          setDisplayValue(fullAddress);
+          onSelect(result);
+          setOpen(false);
+        },
+        width: "100%",
+        height: "100%",
+      }).embed(boxRef.current, { autoClose: false });
+    })();
+    return () => { cancelled = true; };
+  }, [open, onSelect]);
 
   return (
     <div className="space-y-2">
@@ -191,6 +200,31 @@ export function KakaoAddressSearch({
         )}
       </div>
 
+      {/* 주소 검색 인라인 오버레이 (모바일 안전) */}
+      {open && (
+        <div
+          className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/60 p-4"
+          onClick={() => setOpen(false)}
+        >
+          <div
+            className="flex h-[80vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-[var(--line)] bg-[var(--surface)] shadow-[var(--shadow-lg)]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-[var(--line)] px-4 py-3">
+              <span className="text-sm font-bold text-[var(--text-primary)]">주소 검색</span>
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                className="text-[var(--text-tertiary)] hover:text-[var(--text-primary)]"
+                aria-label="닫기"
+              >
+                ✕
+              </button>
+            </div>
+            <div ref={boxRef} className="min-h-0 flex-1" />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
