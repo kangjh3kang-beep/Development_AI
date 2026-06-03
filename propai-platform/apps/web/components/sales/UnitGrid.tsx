@@ -52,8 +52,34 @@ export default function UnitGrid({ siteCode }: { siteCode: string }) {
     return g;
   }, [units]);
 
+  const stats = useMemo(() => {
+    const c: Record<string, number> = { AVAILABLE: 0, HOLD: 0, APPLIED: 0, CONTRACTED: 0, CANCELLED: 0 };
+    for (const u of units) c[u.status] = (c[u.status] ?? 0) + 1;
+    const total = units.length;
+    const active = total - (c.CANCELLED || 0);
+    const soldRatio = active ? Math.round(((c.CONTRACTED || 0) / active) * 1000) / 10 : 0;
+    return { c, total, soldRatio };
+  }, [units]);
+
   return (
     <div className="space-y-4">
+      {units.length > 0 && (
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-6">
+          {[
+            ["총 세대", `${stats.total}`],
+            ["분양률", `${stats.soldRatio}%`],
+            ["분양가능", `${stats.c.AVAILABLE}`],
+            ["보류", `${stats.c.HOLD}`],
+            ["청약", `${stats.c.APPLIED}`],
+            ["계약", `${stats.c.CONTRACTED}`],
+          ].map(([k, v]) => (
+            <div key={k} className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-2.5 text-center">
+              <p className="text-[10px] text-[var(--text-tertiary)]">{k}</p>
+              <p className="text-base font-black text-[var(--text-primary)]">{v}</p>
+            </div>
+          ))}
+        </div>
+      )}
       <div className="flex flex-wrap items-center gap-2">
         {(["2D", "3D"] as const).map((v) => (
           <button key={v} onClick={() => setView(v)}

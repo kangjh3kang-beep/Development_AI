@@ -7,6 +7,7 @@ import type { Locale } from "@/i18n/config";
 import UnitGrid from "@/components/sales/UnitGrid";
 import Unit360Panel from "@/components/sales/Unit360Panel";
 import PriceTableEditor from "@/components/sales/PriceTableEditor";
+import PricingConfigPanel from "@/components/sales/PricingConfigPanel";
 import OrgTree from "@/components/sales/OrgTree";
 import CommissionBoard from "@/components/sales/CommissionBoard";
 import DeskCheckin from "@/components/desk/DeskCheckin";
@@ -38,6 +39,7 @@ export default function SalesSiteWorkspace({ siteCode, locale }: { siteCode: str
   const [rid, setRid] = useState("");
   const [siteName, setSiteName] = useState("");
   const [builderOpen, setBuilderOpen] = useState(false);
+  const [priceRefresh, setPriceRefresh] = useState(0);
 
   useEffect(() => {
     salesApi(siteCode).get<{ id: string; name: string }[]>("/rounds")
@@ -90,7 +92,12 @@ export default function SalesSiteWorkspace({ siteCode, locale }: { siteCode: str
               {rounds.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
             </select>
           )}
-          {rid ? <PriceTableEditor siteCode={siteCode} roundId={rid} /> : <p className="text-sm text-[var(--text-secondary)]">차수가 없습니다.</p>}
+          {rid ? (
+            <>
+              <PricingConfigPanel siteCode={siteCode} roundId={rid} onChanged={() => setPriceRefresh((n) => n + 1)} />
+              <PriceTableEditor key={priceRefresh} siteCode={siteCode} roundId={rid} />
+            </>
+          ) : <p className="text-sm text-[var(--text-secondary)]">차수가 없습니다.</p>}
         </div>
       )}
       {tab === "subscription" && <SubscriptionPanel siteCode={siteCode} />}
