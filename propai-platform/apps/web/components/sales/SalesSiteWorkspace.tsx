@@ -16,6 +16,7 @@ import PaymentsPanel from "@/components/sales/PaymentsPanel";
 import LoanPanel from "@/components/sales/LoanPanel";
 import ResalePanel from "@/components/sales/ResalePanel";
 import TaxPanel from "@/components/sales/TaxPanel";
+import { UnitOutlineBuilder } from "@/components/sales/UnitOutlineBuilder";
 
 type Tab = "units" | "pricing" | "subscription" | "payments" | "loan" | "resale" | "tax" | "org" | "commission" | "desk";
 const TABS: { key: Tab; label: string }[] = [
@@ -36,7 +37,7 @@ export default function SalesSiteWorkspace({ siteCode, locale }: { siteCode: str
   const [rounds, setRounds] = useState<{ id: string; name: string }[]>([]);
   const [rid, setRid] = useState("");
   const [siteName, setSiteName] = useState("");
-  const [genBusy, setGenBusy] = useState(false);
+  const [builderOpen, setBuilderOpen] = useState(false);
 
   useEffect(() => {
     salesApi(siteCode).get<{ id: string; name: string }[]>("/rounds")
@@ -47,33 +48,25 @@ export default function SalesSiteWorkspace({ siteCode, locale }: { siteCode: str
       .catch(() => {});
   }, [siteCode]);
 
-  const generateUnits = async () => {
-    const floors = Number(prompt("동·호표 생성 (건축 개요로 자동 생성) — 층수를 입력하세요", "10") || 0);
-    const upf = Number(prompt("한 층에 들어가는 세대 수", "4") || 0);
-    if (!floors || !upf) return;
-    setGenBusy(true);
-    try {
-      await salesApi(siteCode).post("/units/generate", {
-        source_type: "OUTLINE",
-        params: { blocks: [{ name: "101", floors, units_per_floor: upf, types: [{ name: "84A" }] }] },
-      });
-      window.location.reload();
-    } catch { alert("동·호표 생성에 실패했습니다 (권한을 확인하세요)"); }
-    finally { setGenBusy(false); }
-  };
-
   return (
     <div className="space-y-5">
       <div className="flex items-center gap-3">
         <Link href={`/${locale}/sales`} className="text-sm text-[var(--text-tertiary)] hover:text-[var(--text-primary)]">← 현장 목록</Link>
         <h1 className="text-lg font-black text-[var(--text-primary)]">{siteName || "분양 현장"}</h1>
         {tab === "units" && (
-          <button onClick={generateUnits} disabled={genBusy}
-            className="ml-auto rounded-lg bg-[var(--accent-strong)] px-3 py-1.5 text-xs font-black text-white disabled:opacity-50">
-            {genBusy ? "만드는 중…" : "+ 동·호표 생성"}
+          <button onClick={() => setBuilderOpen(true)}
+            className="ml-auto rounded-lg bg-[var(--accent-strong)] px-3 py-1.5 text-xs font-black text-white">
+            + 동·호표 생성
           </button>
         )}
       </div>
+
+      <UnitOutlineBuilder
+        siteCode={siteCode}
+        open={builderOpen}
+        onClose={() => setBuilderOpen(false)}
+        onDone={() => { setBuilderOpen(false); window.location.reload(); }}
+      />
 
       <div className="flex flex-wrap gap-2 border-b border-[var(--line)] pb-3">
         {TABS.map((t) => (

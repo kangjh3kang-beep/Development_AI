@@ -24,12 +24,26 @@ def _pick_type(b: dict, u: int) -> str:
 def expand_outline(params: dict) -> list[dict]:
     rows: list[dict] = []
     for b in (params or {}).get("blocks", []):
-        for f in range(1, int(b["floors"]) + 1):
-            for u in range(1, int(b["units_per_floor"]) + 1):
-                rows.append({
-                    "dong": b["name"], "ho": f"{f * 100 + u}", "floor": f, "line": f"{u:02d}",
-                    "aspect": b.get("aspect"), "type_name": _pick_type(b, u),
-                })
+        floors_spec = b.get("floors_spec")
+        if floors_spec:
+            # 상가 등 층별 가변 호수: [{floor, units, type_name?}]
+            for fs in floors_spec:
+                f = int(fs["floor"])
+                units = int(fs.get("units") or 0)
+                tname = fs.get("type_name") or b.get("type_name")
+                for u in range(1, units + 1):
+                    rows.append({
+                        "dong": b["name"], "ho": f"{f * 100 + u}", "floor": f, "line": f"{u:02d}",
+                        "aspect": b.get("aspect"), "type_name": tname or _pick_type(b, u),
+                    })
+        else:
+            # 균일 그리드(아파트/오피스텔/지산): floors × units_per_floor
+            for f in range(1, int(b["floors"]) + 1):
+                for u in range(1, int(b["units_per_floor"]) + 1):
+                    rows.append({
+                        "dong": b["name"], "ho": f"{f * 100 + u}", "floor": f, "line": f"{u:02d}",
+                        "aspect": b.get("aspect"), "type_name": _pick_type(b, u),
+                    })
     return rows
 
 
