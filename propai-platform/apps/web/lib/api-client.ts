@@ -83,6 +83,64 @@ function getAccessToken(): string {
   return "";
 }
 
+function getRefreshToken(): string {
+  if (typeof window !== "undefined") {
+    try {
+      return window.localStorage.getItem("propai_refresh_token")?.trim() ?? "";
+    } catch {
+      /* noop */
+    }
+  }
+  return "";
+}
+
+function setStoredTokens(access?: string, refresh?: string) {
+  if (typeof window === "undefined") return;
+  try {
+    if (access) window.localStorage.setItem("propai_access_token", access);
+    if (refresh) window.localStorage.setItem("propai_refresh_token", refresh);
+  } catch {
+    /* noop */
+  }
+}
+
+// 동시 401 다발 시 갱신 호출을 1개로 묶는다(중복 refresh 방지).
+let _refreshInFlight: Promise<boolean> | null = null;
+
+function isAuthPath(path: string): boolean {
+  return /\/auth\/(login|refresh|register|logout)/.test(path);
+}
+
+/** 만료된 access token을 refresh token으로 갱신. 성공 시 새 토큰 저장. */
+function refreshAccessToken(): Promise<boolean> {
+  if (_refreshInFlight) return _refreshInFlight;
+  const refreshToken = getRefreshToken();
+  if (!refreshToken) return Promise.resolve(false);
+
+  _refreshInFlight = (async () => {
+    try {
+      const res = await fetch(getRequestUrl("/auth/refresh"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ refresh_token: refreshToken }),
+      });
+      if (!res.ok) return false;
+      const data = (await res.json()) as { access_token?: string; refresh_token?: string };
+      if (data?.access_token) {
+        setStoredTokens(data.access_token, data.refresh_token);
+        return true;
+      }
+      return false;
+    } catch {
+      return false;
+    }
+  })().finally(() => {
+    _refreshInFlight = null;
+  });
+
+  return _refreshInFlight;
+}
+
 function createRequestBody(body: ApiRequestOptions["body"]) {
   if (
     body == null ||
@@ -125,19 +183,11 @@ async function parseResponse(response: Response) {
   return text ? { message: text } : null;
 }
 
-async function request<T>(path: string, options: ApiRequestOptions = {}) {
-  const method = options.method ?? "GET";
-  const useMock = options.useMock ?? useMocksByDefault;
-  const accessToken = getAccessToken();
-
-  if (useMock) {
-    const mockResponse = await resolveMockRequest<T>(method, path);
-
-    if (mockResponse !== undefined) {
-      return mockResponse;
-    }
-  }
-
+async function executeFetch(
+  path: string,
+  method: string,
+  options: ApiRequestOptions,
+): Promise<Response> {
   // 무한 대기 차단: AbortController로 타임아웃. timeoutMs=0이면 무제한.
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const controller = timeoutMs > 0 && !options.signal ? new AbortController() : null;
@@ -146,9 +196,9 @@ async function request<T>(path: string, options: ApiRequestOptions = {}) {
       ? setTimeout(() => controller.abort(), timeoutMs)
       : null;
 
-  let response: Response;
+  const accessToken = getAccessToken();
   try {
-    response = await fetch(getRequestUrl(path), {
+    return await fetch(getRequestUrl(path), {
       ...options,
       method,
       body: createRequestBody(options.body),
@@ -173,6 +223,35 @@ async function request<T>(path: string, options: ApiRequestOptions = {}) {
     throw err;
   } finally {
     if (timer != null) clearTimeout(timer);
+  }
+}
+
+async function request<T>(path: string, options: ApiRequestOptions = {}) {
+  const method = options.method ?? "GET";
+  const useMock = options.useMock ?? useMocksByDefault;
+
+  if (useMock) {
+    const mockResponse = await resolveMockRequest<T>(method, path);
+
+    if (mockResponse !== undefined) {
+      return mockResponse;
+    }
+  }
+
+  let response = await executeFetch(path, method, options);
+
+  // 토큰 만료(401) → refresh token으로 자동 갱신 후 1회 재시도(인증 엔드포인트 제외).
+  // 액세스 토큰 60분 만료 후 모든 인증 호출이 실패하던 문제의 근본 해결.
+  if (
+    response.status === 401 &&
+    typeof window !== "undefined" &&
+    !isAuthPath(path) &&
+    getRefreshToken()
+  ) {
+    const refreshed = await refreshAccessToken();
+    if (refreshed) {
+      response = await executeFetch(path, method, options);
+    }
   }
 
   const payload = await parseResponse(response);

@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { salesGlobal } from "@/lib/salesApi";
-import { apiClient } from "@/lib/api-client";
+import { useProjectStore } from "@/store/useProjectStore";
 import type { Locale } from "@/i18n/config";
 
 interface Site { id: string; site_code: string; site_name: string; development_type: string; status: string }
@@ -31,18 +31,20 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 
 export default function SalesSiteList({ locale }: { locale: Locale }) {
   const [sites, setSites] = useState<Site[]>([]);
-  const [projects, setProjects] = useState<Project[]>([]);
   const [form, setForm] = useState({ site_name: "", development_type: "APT", project_id: "" });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
+  // 연결할 프로젝트: 프로젝트 목록 단일출처(백엔드 동기화 스토어) 사용 — 드롭다운/프로젝트관리와 일치
+  const storeProjects = useProjectStore((s) => s.projects);
+  const syncFromBackend = useProjectStore((s) => s.syncFromBackend);
+  const projects: Project[] = storeProjects.map((p) => ({ id: p.id, name: p.name || p.address || "(이름 없음)" }));
+
   const load = () => salesGlobal.get<Site[]>("/sites").then(setSites).catch(() => setSites([]));
   useEffect(() => {
     load();
-    apiClient.get<{ projects?: Project[] }>("/projects")
-      .then((r) => setProjects(r.projects || []))
-      .catch(() => setProjects([]));
-  }, []);
+    void syncFromBackend();
+  }, [syncFromBackend]);
 
   const createSite = async () => {
     if (!form.site_name || !form.project_id) { setErr("현장 이름과 프로젝트 번호를 입력하세요."); return; }
