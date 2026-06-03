@@ -30,7 +30,13 @@ class ConstructionStartService:
             "safety_plan_basis": "건설기술진흥법 제62조 (50억원 이상)",
             "required_items": required, "optional_items": optional,
             "total_checklist_count": len(CONSTRUCTION_START_CHECKLIST),
-            "estimated_preparation_days": 14
+            "estimated_preparation_days": 14,
+            # 프론트(시공 체크리스트) 호환 키
+            "checklist": [
+                {"category": i.get("law", "법정"), "item": i["item"], "required": i["required"]}
+                for i in CONSTRUCTION_START_CHECKLIST
+            ],
+            "total_items": len(CONSTRUCTION_START_CHECKLIST),
         }
 
     def auto_generate_safety_plan(self, project_id: str, project_name: str,

@@ -207,3 +207,81 @@ async def auto_correct(
         design_raw=req.design.model_dump(),
         violation_type=req.violation_type,
     )
+
+
+# ── 주소·용도지역 기반 법규 검토(파이프라인 법규 단계 전용) ──
+# CAD design 기반 /check 와 분리. 부지분석의 용도지역(zone_code)을 받아 법정 상한(국토계획법
+# 시행령 일반값, 조례 별도 확인)과 계획값을 대조한다. 법정수치는 참고용·운영 조정 가능.
+_LEGAL_LIMITS_PCT: dict[str, tuple[float, float, float]] = {
+    # 용도지역 키(부분일치): (건폐율% 상한, 용적률% 상한, 높이m 상한 0=별도규정)
+    "제1종전용주거": (50, 100, 0), "제2종전용주거": (50, 150, 0),
+    "제1종일반주거": (60, 200, 0), "제2종일반주거": (60, 250, 0), "제3종일반주거": (50, 300, 0),
+    "준주거": (70, 500, 0),
+    "중심상업": (90, 1500, 0), "일반상업": (80, 1300, 0), "근린상업": (70, 900, 0), "유통상업": (80, 1100, 0),
+    "전용공업": (70, 300, 0), "일반공업": (70, 350, 0), "준공업": (70, 400, 0),
+    "보전녹지": (20, 80, 0), "생산녹지": (20, 100, 0), "자연녹지": (20, 100, 0),
+    "계획관리": (40, 100, 0), "생산관리": (20, 80, 0), "보전관리": (20, 80, 0),
+    "농림": (20, 80, 0), "자연환경보전": (20, 80, 0),
+}
+
+
+class LegalCheckRequest(BaseModel):
+    address: str | None = None
+    zone_code: str | None = None          # 용도지역명(부지분석 zoneCode) 또는 코드
+    planned_bcr: float = 0                 # 계획 건폐율(%)
+    planned_far: float = 0                 # 계획 용적률(%)
+    planned_height_m: float = 0            # 계획 높이(m)
+    planned_floors: int = 0
+
+
+class LegalCheckResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    address: str | None = None
+    zone_code: str | None = None
+    zone_name: str | None = None
+    bcr_limit: float = 0
+    bcr_planned: float = 0
+    bcr_pass: bool = True
+    far_limit: float = 0
+    far_planned: float = 0
+    far_pass: bool = True
+    height_limit_m: float = 0
+    height_planned_m: float = 0
+    height_pass: bool = True
+    overall_pass: bool = True
+    remarks: str | None = None
+
+
+@router.post("/legal-check", response_model=LegalCheckResponse)
+async def legal_check(req: LegalCheckRequest) -> LegalCheckResponse:
+    """부지분석 용도지역 기반 건축 법규(건폐율/용적률/높이) 적합성 검토."""
+    zone = (req.zone_code or "").strip()
+    matched = next((name for name in _LEGAL_LIMITS_PCT if name in zone), None)
+    if not matched:
+        return LegalCheckResponse(
+            address=req.address, zone_code=req.zone_code,
+            bcr_planned=req.planned_bcr, far_planned=req.planned_far, height_planned_m=req.planned_height_m,
+            overall_pass=True,
+            remarks=f"용도지역('{zone or '미상'}') 법정 상한 미등록 — 조례·실제 한도 수동 확인 필요.",
+        )
+    bcr_lim, far_lim, h_lim = _LEGAL_LIMITS_PCT[matched]
+    bcr_pass = req.planned_bcr <= bcr_lim if req.planned_bcr > 0 else True
+    far_pass = req.planned_far <= far_lim if req.planned_far > 0 else True
+    height_pass = True if h_lim == 0 else (req.planned_height_m <= h_lim)
+    overall = bcr_pass and far_pass and height_pass
+    notes = []
+    if not bcr_pass:
+        notes.append(f"건폐율 {req.planned_bcr}% > 상한 {bcr_lim}%")
+    if not far_pass:
+        notes.append(f"용적률 {req.planned_far}% > 상한 {far_lim}%")
+    if not height_pass:
+        notes.append(f"높이 {req.planned_height_m}m > 상한 {h_lim}m")
+    return LegalCheckResponse(
+        address=req.address, zone_code=req.zone_code, zone_name=matched,
+        bcr_limit=bcr_lim, bcr_planned=req.planned_bcr, bcr_pass=bcr_pass,
+        far_limit=far_lim, far_planned=req.planned_far, far_pass=far_pass,
+        height_limit_m=h_lim, height_planned_m=req.planned_height_m, height_pass=height_pass,
+        overall_pass=overall,
+        remarks=("적합 — 법정 상한 이내(조례 별도 확인)." if overall else " / ".join(notes)),
+    )
+

@@ -312,7 +312,7 @@ export function ProjectLegalWorkspaceClient({
 
     try {
       const result = await apiClient.post<ComplianceCheckResponse>(
-        "/building-compliance/check",
+        "/building-compliance/legal-check",
         {
           useMock: false,
           body: {

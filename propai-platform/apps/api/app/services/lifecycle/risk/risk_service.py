@@ -30,9 +30,19 @@ class RiskService:
                 "risk_score": round(score, 3), "risk_level": level,
             })
         risks.sort(key=lambda x: x["risk_score"], reverse=True)
+        avg = round(sum(r["risk_score"] for r in risks) / len(risks), 3) if risks else 0.0
+        overall_level = ("critical" if avg > 0.6 else "high" if avg > 0.4
+                         else "medium" if avg > 0.2 else "low")
         return {
             "total_risks": len(risks),
             "critical_count": len([r for r in risks if r["risk_level"] == "critical"]),
             "high_count": len([r for r in risks if r["risk_level"] == "high"]),
-            "risks": risks, "standard": "ISO 31000:2018"
+            "risks": risks, "standard": "ISO 31000:2018",
+            "overall_score": round(avg * 100, 1),
+            "overall_level": overall_level,
+            "factors": [
+                {"category": r["category"], "name": r["risk_name"],
+                 "score": r["risk_score"], "level": r["risk_level"]}
+                for r in risks
+            ],
         }
