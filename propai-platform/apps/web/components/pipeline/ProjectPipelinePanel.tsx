@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { useProjectStore as useProjectListStore } from "@/store/useProjectStore";
 import { apiClient } from "@/lib/api-client";
 import { GlobalAddressSearch, type AddressEntry } from "@/components/common/GlobalAddressSearch";
 import { PipelineResultDetail } from "./PipelineResultDetail";
@@ -316,9 +317,10 @@ export function ProjectPipelinePanel({
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [compareSelection, setCompareSelection] = useState<Set<string>>(new Set());
 
-  // Load history on mount
+  // Load history on mount + 프로젝트 목록 백엔드 동기화(드롭다운/프로젝트관리 단일출처 일치)
   useEffect(() => {
     setHistory(loadHistory());
+    void useProjectListStore.getState().syncFromBackend();
   }, []);
 
   const projectId = useProjectContextStore((s) => s.projectId);

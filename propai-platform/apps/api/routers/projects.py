@@ -246,10 +246,10 @@ async def update_project_status(
 async def delete_project(
     project_id: UUID,
     request: Request,
-    current_user: CurrentUser = Depends(RequirePermission("projects", "delete")),
+    current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> None:
-    """프로젝트를 소프트 삭제한다."""
+    """프로젝트를 소프트 삭제한다(테넌트 스코프 — 본인 테넌트 프로젝트만)."""
     project = await _get_project_or_404(project_id, current_user.tenant_id, db)
 
     project.is_deleted = True

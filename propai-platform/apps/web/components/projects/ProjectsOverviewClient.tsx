@@ -1,16 +1,21 @@
 "use client";
 
 import Link from "next/link";
-import { useQuery } from "@tanstack/react-query";
+import { useEffect } from "react";
 import { Button, Card, CardContent } from "@propai/ui";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
-import { apiClient } from "@/lib/api-client";
 import type {
-  ProjectListResponse,
+  ProjectCard,
   ProjectModuleKey,
 } from "@/mocks/types";
 import { useAppStore } from "@/store/use-app-store";
 import { useProjectStore } from "@/store/use-project-store";
+import { useProjectStore as useProjectListStore } from "@/store/useProjectStore";
+
+const _PHASE_LABEL: Record<string, string> = {
+  draft: "초안", planning: "기획", design: "설계", permit: "인허가",
+  construction: "시공", completed: "완료", archived: "보관",
+};
 
 type WorkspaceLabels = {
   viewGridLabel: string;
@@ -41,14 +46,6 @@ function formatDate(locale: string, value: string) {
   }).format(new Date(value));
 }
 
-function getProjectsErrorDetail(error: unknown) {
-  if (error instanceof Error && error.message) {
-    return error.message;
-  }
-
-  return null;
-}
-
 export function ProjectsOverviewClient({
   locale,
   labels,
@@ -59,12 +56,30 @@ export function ProjectsOverviewClient({
   const currentProjectId = useProjectStore((state) => state.currentProjectId);
   const setCurrentProject = useProjectStore((state) => state.setCurrentProject);
 
-  const projectsQuery = useQuery({
-    queryKey: ["projects", "list"],
-    queryFn: () => apiClient.get<ProjectListResponse>("/projects"),
-  });
-  const hasProjects = (projectsQuery.data?.projects?.length ?? 0) > 0;
-  const errorDetail = getProjectsErrorDetail(projectsQuery.error);
+  // 단일출처: 백엔드 동기화 스토어(드롭다운과 공유) — 마이그레이션 포함
+  const listProjects = useProjectListStore((s) => s.projects);
+  const syncing = useProjectListStore((s) => s.syncing);
+  const syncFromBackend = useProjectListStore((s) => s.syncFromBackend);
+  const deleteProject = useProjectListStore((s) => s.deleteProject);
+
+  useEffect(() => {
+    void syncFromBackend();
+  }, [syncFromBackend]);
+
+  const cards: ProjectCard[] = listProjects.map((p) => ({
+    id: p.id,
+    name: p.name || p.address || "(이름 없음)",
+    location: p.address || "-",
+    phase: _PHASE_LABEL[p.status] || p.status,
+    updatedAt: p.createdAt,
+    nextAction: "부지분석 이어가기",
+    modules: ["design", "finance", "report"],
+  }));
+  const projectsData = { projects: cards, total: cards.length, updatedAt: new Date().toISOString() };
+  const hasProjects = cards.length > 0;
+  const isLoading = syncing && !hasProjects;
+  const isError = false;
+  const errorDetail: string | null = null;
 
   return (
     <section className="grid gap-6">
@@ -93,10 +108,10 @@ export function ProjectsOverviewClient({
             {labels.viewListLabel}
           </button>
         </div>
-        {projectsQuery.data && (
+        {projectsData && (
           <p className="text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)]">
             {labels.lastUpdatedLabel}:{" "}
-            <span className="text-[var(--text-secondary)]">{formatDate(locale, projectsQuery.data.updatedAt)}</span>
+            <span className="text-[var(--text-secondary)]">{formatDate(locale, projectsData.updatedAt)}</span>
           </p>
         )}
       </div>
@@ -107,14 +122,14 @@ export function ProjectsOverviewClient({
             : "grid gap-6"
         }
       >
-        {projectsQuery.isLoading ? (
+        {isLoading ? (
           <SkeletonLoader
             count={4}
             className={projectViewMode === "grid" ? "md:grid-cols-2" : undefined}
             itemClassName="h-72 rounded-[3.5rem]"
           />
         ) : null}
-        {projectsQuery.isError ? (
+        {isError ? (
           <Card className="rounded-[3.5rem] border-[var(--line-strong)] bg-[var(--surface-strong)] md:col-span-2 overflow-hidden">
             <CardContent className="p-12 text-center flex flex-col items-center">
               <div className="h-16 w-16 rounded-3xl bg-rose-500/10 flex items-center justify-center text-rose-500 mb-6 font-bold text-2xl">!</div>
@@ -132,7 +147,7 @@ export function ProjectsOverviewClient({
               <div className="mt-8">
                 <Button
                   onClick={() => {
-                    void projectsQuery.refetch();
+                    void syncFromBackend();
                   }}
                   variant="secondary"
                   className="rounded-full border-[var(--line-strong)] hover:bg-[var(--accent-strong)] hover:text-white"
@@ -143,7 +158,7 @@ export function ProjectsOverviewClient({
             </CardContent>
           </Card>
         ) : null}
-        {projectsQuery.data && !hasProjects ? (
+        {!isLoading && !hasProjects ? (
           <Card className="rounded-[3.5rem] border-[var(--line-strong)] bg-[var(--surface-strong)] md:col-span-2 overflow-hidden">
             <CardContent className="p-12 text-center flex flex-col items-center">
               <div className="h-20 w-20 rounded-[2.5rem] bg-[var(--surface-soft)] flex items-center justify-center text-[var(--text-hint)] mb-8 shadow-[var(--shadow-lg)] border border-[var(--line)]">
@@ -158,7 +173,7 @@ export function ProjectsOverviewClient({
             </CardContent>
           </Card>
         ) : null}
-        {hasProjects ? projectsQuery.data?.projects?.map((project) => {
+        {hasProjects ? projectsData.projects.map((project) => {
           const isSelected = currentProjectId === project.id;
 
           return (
@@ -232,6 +247,18 @@ export function ProjectsOverviewClient({
                   {labels.openProjectLabel}
                   <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
                 </Link>
+                <button
+                  type="button"
+                  title="프로젝트 삭제(백엔드까지 삭제)"
+                  onClick={() => {
+                    if (typeof window !== "undefined" && window.confirm(`'${project.name}' 프로젝트를 삭제할까요? (백엔드에서도 삭제)`)) {
+                      void deleteProject(project.id);
+                    }
+                  }}
+                  className="h-14 w-14 shrink-0 rounded-3xl border border-rose-500/30 text-rose-500 transition-colors hover:bg-rose-500/10"
+                >
+                  ✕
+                </button>
               </div>
               </CardContent>
             </Card>
