@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Button, Card, CardContent } from "@propai/ui";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import type {
@@ -11,6 +11,7 @@ import type {
 import { useAppStore } from "@/store/use-app-store";
 import { useProjectStore } from "@/store/use-project-store";
 import { useProjectStore as useProjectListStore } from "@/store/useProjectStore";
+import { ConfirmDeleteModal } from "@/components/common/ConfirmDeleteModal";
 
 const _PHASE_LABEL: Record<string, string> = {
   draft: "초안", planning: "기획", design: "설계", permit: "인허가",
@@ -61,6 +62,8 @@ export function ProjectsOverviewClient({
   const syncing = useProjectListStore((s) => s.syncing);
   const syncFromBackend = useProjectListStore((s) => s.syncFromBackend);
   const deleteProject = useProjectListStore((s) => s.deleteProject);
+
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
 
   useEffect(() => {
     void syncFromBackend();
@@ -249,12 +252,8 @@ export function ProjectsOverviewClient({
                 </Link>
                 <button
                   type="button"
-                  title="프로젝트 삭제(백엔드까지 삭제)"
-                  onClick={() => {
-                    if (typeof window !== "undefined" && window.confirm(`'${project.name}' 프로젝트를 삭제할까요? (백엔드에서도 삭제)`)) {
-                      void deleteProject(project.id);
-                    }
-                  }}
+                  title="프로젝트 삭제(이름 입력 확인 필요)"
+                  onClick={() => setDeleteTarget({ id: project.id, name: project.name })}
                   className="h-14 w-14 shrink-0 rounded-3xl border border-rose-500/30 text-rose-500 transition-colors hover:bg-rose-500/10"
                 >
                   ✕
@@ -265,6 +264,21 @@ export function ProjectsOverviewClient({
           );
         }) : null}
       </div>
+
+      <ConfirmDeleteModal
+        open={deleteTarget !== null}
+        name={deleteTarget?.name ?? ""}
+        title="프로젝트 삭제"
+        description="삭제 시 백엔드에서도 제거되며 복구할 수 없습니다. 아래 프로젝트명을 그대로 입력해야 삭제됩니다."
+        onCancel={() => setDeleteTarget(null)}
+        onConfirm={() => {
+          if (deleteTarget) {
+            void deleteProject(deleteTarget.id);
+            if (currentProjectId === deleteTarget.id) setCurrentProject("");
+          }
+          setDeleteTarget(null);
+        }}
+      />
     </section>
   );
 }

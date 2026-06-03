@@ -54,7 +54,10 @@ export default function AiPortfolioPage() {
         const res = await apiClient.get<ProjectsResponse | Project[]>("/projects");
         if (cancelled) return;
 
-        const list = Array.isArray(res) ? res : res.projects ?? [];
+        // 백엔드 PaginatedResponse는 items, 일부 mock은 projects — 둘 다 수용
+        const list = Array.isArray(res)
+          ? res
+          : ((res as { items?: Project[] }).items ?? (res as ProjectsResponse).projects ?? []);
         setProjects(
           list.map((p: any) => ({
             id: p.id ?? p.project_id ?? "",
