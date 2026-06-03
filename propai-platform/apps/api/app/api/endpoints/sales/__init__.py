@@ -12,11 +12,15 @@ from app.api.endpoints.sales.actions import actions_router
 from app.api.endpoints.sales.mh import mh_router
 from app.api.endpoints.sales.views import views_router
 from app.api.endpoints.sales.lifecycle_p5 import r5
+from app.api.endpoints.sales.lifecycle_p6 import r6
 from apps.api.database.models.sales import (
     commission_mh_harness as cm, contract_crm_ad as cc, site_org as so, staff as st, units_pricing as up,
 )
 from apps.api.database.models.sales import (
     loan as ln, options as opn, payment as pm, subscription as sub,
+)
+from apps.api.database.models.sales import (
+    commission_ext as ce, guarantee as gu, resale as rs, tax as tx,
 )
 
 sales_router = APIRouter()
@@ -50,6 +54,12 @@ REGISTRY = [
     (opn.SalesOptionCatalog, "options/catalog"),
     (ln.SalesLoanProgram, "loan/programs"), (ln.SalesLoanAgreement, "loan/agreements"),
     (pm.SalesOverdueInterest, "payments/overdue"),
+    # Part6 [T]보증/신탁 [V]실거래/전매 [W]수수료확장 [X]세무
+    (gu.SalesGuaranteePolicy, "guarantee/policies"), (gu.SalesTrustAccount, "trust/accounts"),
+    (rs.SalesRealtxReport, "realtx/reports"), (rs.SalesResaleRestriction, "resale/restrictions"),
+    (rs.SalesResaleTransfer, "resale/transfers"),
+    (ce.SalesCommissionPayoutSchedule, "commission/schedule"), (ce.SalesCommissionHoldback, "commission/holdback-list"),
+    (tx.SalesTaxInvoice, "tax/invoices-list"), (tx.SalesWithholdingStatement, "tax/withholding-list"),
 ]
 
 for _model, _prefix in REGISTRY:
@@ -66,3 +76,4 @@ sales_router.include_router(actions_router)
 sales_router.include_router(mh_router)
 sales_router.include_router(views_router)
 sales_router.include_router(r5)
+sales_router.include_router(r6)

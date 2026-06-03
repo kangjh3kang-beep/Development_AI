@@ -37,6 +37,13 @@ from apps.api.database.models.sales.subscription import (
 from apps.api.database.models.sales.options import SalesOptionCatalog, SalesContractOption
 from apps.api.database.models.sales.loan import SalesLoanProgram, SalesLoanAgreement, SalesLoanDisbursement
 from apps.api.database.models.sales.payment import SalesVirtualAccount, SalesPayment, SalesOverdueInterest
+# v62 Part6 — [T]보증/신탁 [V]실거래/전매 [W]수수료확장 [X]세무 (9)
+from apps.api.database.models.sales.guarantee import SalesGuaranteePolicy, SalesTrustAccount
+from apps.api.database.models.sales.resale import (
+    SalesRealtxReport, SalesResaleRestriction, SalesResaleTransfer,
+)
+from apps.api.database.models.sales.commission_ext import SalesCommissionPayoutSchedule, SalesCommissionHoldback
+from apps.api.database.models.sales.tax import SalesTaxInvoice, SalesWithholdingStatement
 
 __all__ = [
     # [A] 현장/조직 (8)
@@ -67,4 +74,9 @@ __all__ = [
     "SalesOptionCatalog", "SalesContractOption",
     "SalesLoanProgram", "SalesLoanAgreement", "SalesLoanDisbursement",
     "SalesVirtualAccount", "SalesPayment", "SalesOverdueInterest",
+    # Part6 [T]보증/신탁(2) [V]실거래/전매(3) [W]수수료확장(2) [X]세무(2)
+    "SalesGuaranteePolicy", "SalesTrustAccount",
+    "SalesRealtxReport", "SalesResaleRestriction", "SalesResaleTransfer",
+    "SalesCommissionPayoutSchedule", "SalesCommissionHoldback",
+    "SalesTaxInvoice", "SalesWithholdingStatement",
 ]

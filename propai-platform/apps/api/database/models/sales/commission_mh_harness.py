@@ -75,7 +75,8 @@ class SalesCommissionApproval(Base, PKMixin):
 
 class SalesCommissionPayout(Base, PKMixin):
     __tablename__ = "sales_commission_payouts"
-    claim_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("sales_commission_claims.id"))
+    # claim_id nullable: 지급은 claim 승인 또는 마일스톤 스케줄(claim 없음) 2소스
+    claim_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("sales_commission_claims.id"), nullable=True)
     gross: Mapped[int | None] = mapped_column(Numeric(16, 0))
     withholding: Mapped[int | None] = mapped_column(Numeric(16, 0))
     net: Mapped[int | None] = mapped_column(Numeric(16, 0))
