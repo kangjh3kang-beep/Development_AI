@@ -43,7 +43,9 @@ async def get_current_user(
             algorithms=[settings.JWT_ALGORITHM]
         )
         user_id: str = payload.get("sub")
-        if not user_id or payload.get("type") != "access":
+        # 로그인은 jwt_handler(token_type 클레임)로 토큰 발급 → type/token_type 둘 다 허용(이중 인증체계 호환)
+        token_kind = payload.get("type") or payload.get("token_type")
+        if not user_id or token_kind != "access":
             raise HTTPException(status_code=401, detail="유효하지 않은 토큰")
     except JWTError:
         raise HTTPException(status_code=401, detail="토큰 검증 실패")
