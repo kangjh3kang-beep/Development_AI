@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_db
+from app.api.deps import get_current_user, get_db
 from app.api.deps_sales import SalesCtx, require_role, sales_ctx
 from apps.api.database.models.sales.units_pricing import SalesUnitGeneration, SalesUnitHold, SalesUnitPriceTable
 from app.services.sales.contract.service import cancel_contract, sign_contract
@@ -100,6 +100,22 @@ async def contract_cancel(contract_id: uuid.UUID, body: dict, db: AsyncSession =
     c = await cancel_contract(db, ctx.site_id, contract_id, body.get("reason", ""), by=ctx.user.id)
     await db.commit()
     return {"id": str(c.id), "status": c.status}
+
+
+@actions_router.post("/provision")
+async def provision(body: dict, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
+    """현장 ERP 프로비저닝(신규 site 생성). 신규 현장이라 sales_ctx 미사용 — 인증+역할로 게이트."""
+    from fastapi import HTTPException
+
+    from app.services.sales.provision import provision_site
+
+    role = (getattr(user, "role", "") or "").lower()
+    if role not in {"admin", "superadmin", "owner", "총괄관리자", "developer", "시행사", "dev"}:
+        raise HTTPException(403, "프로비저닝 권한 없음")
+    res = await provision_site(db, uuid.UUID(body["project_id"]), user.tenant_id,
+                               body["site_name"], body.get("development_type", "APT"))
+    await db.commit()
+    return res
 
 
 @actions_router.post("/commission/distribution/validate")

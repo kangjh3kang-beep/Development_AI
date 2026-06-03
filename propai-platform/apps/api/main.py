@@ -382,6 +382,11 @@ if g2b_router is not None:
     app.include_router(g2b_router, prefix="/api/v1", tags=["공공입찰(G2B)"])
 if sales_router is not None:
     app.include_router(sales_router, prefix="/api/v1/sales", tags=["분양관리(sales)"])
+    try:
+        from apps.api.app.api.endpoints.sales.ws_routes import ws_router as sales_ws_router
+    except ImportError:
+        from app.api.endpoints.sales.ws_routes import ws_router as sales_ws_router
+    app.include_router(sales_ws_router, tags=["분양관리(sales-ws)"])
 
 # ── 프론트 호출하나 미마운트였던 app/routers (404 위험 해소). 각각 독립 try로 격리 ──
 # ESG LCA/EPD: app/routers/esg.py(자체 prefix=/api/v1/esg). /esg/assessment는 위
