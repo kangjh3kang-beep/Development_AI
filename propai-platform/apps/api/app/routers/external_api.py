@@ -11,14 +11,18 @@ vworld = VWorldService()
 molit = MOLITService()
 
 class PNURequest(BaseModel):
-    pnu_code: str
+    pnu: str | None = None       # 프론트 표준 필드
+    pnu_code: str | None = None  # 하위호환
 
 class MergeRequest(BaseModel):
     pnu_codes: List[str]
 
 @router.post("/parcel/info")
 async def get_parcel_info(req: PNURequest, current_user: User = Depends(get_current_user)):
-    result = await vworld.get_parcel_by_pnu(req.pnu_code)
+    code = req.pnu or req.pnu_code
+    if not code:
+        raise HTTPException(status_code=422, detail="pnu 필드가 필요합니다")
+    result = await vworld.get_parcel_by_pnu(code)
     if not result:
         raise HTTPException(status_code=404, detail="필지 정보를 찾을 수 없음")
     return result
