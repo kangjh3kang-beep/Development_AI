@@ -191,7 +191,7 @@ export function UnitMixOptimizerPanel() {
         units: units.filter((u) => u.count > 0),
       });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "유닛믹스 최적화 실패");
+      setError(err instanceof Error ? err.message : "평형 구성 최적화 실패");
     } finally {
       setLoading(false);
     }
@@ -222,7 +222,7 @@ export function UnitMixOptimizerPanel() {
     <Card>
       <CardContent className="p-6">
         <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
-          유닛믹스 최적화
+          평형 구성 최적화
         </p>
         <CardTitle className="mt-2 text-xl">
           수익 극대화 평형 배분 계산
@@ -323,7 +323,7 @@ export function UnitMixOptimizerPanel() {
         {/* Action */}
         <div className="mt-5">
           <Button onClick={handleOptimize} disabled={loading}>
-            {loading ? "최적화 계산 중..." : "최적 유닛믹스 계산"}
+            {loading ? "최적화 계산 중..." : "최적 평형 구성 계산"}
           </Button>
         </div>
 

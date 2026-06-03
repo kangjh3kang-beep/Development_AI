@@ -75,14 +75,14 @@ type Labels = {
 };
 
 const KO_LABELS: Labels = {
-  heroTitle: "안전 관리 라이브 워크스페이스",
+  heroTitle: "안전 관리 라이브 작업 공간",
   heroDescription:
     "공사현장 안전 계획과 재해 위험도를 AI가 분석하여 안전 항목 및 위험 매트릭스를 제공합니다.",
   heroHint:
     "",
   tokenHint:
     "분석을 위해 로그인이 필요합니다.",
-  authError: "라이브 워크스페이스 호출을 위해 API 인증이 필요합니다.",
+  authError: "라이브 작업 공간 호출을 위해 API 인증이 필요합니다.",
   safetyFormTitle: "안전 계획 분석 입력",
   projectIdLabel: "프로젝트 ID",
   projectTypeLabel: "프로젝트 유형",

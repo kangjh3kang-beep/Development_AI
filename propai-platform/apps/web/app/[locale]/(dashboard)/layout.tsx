@@ -156,7 +156,7 @@ export default async function DashboardLayout({
   const lifecycleNavigation = [
     { href: `/${locale}`, label: "대시보드", icon: <IconDashboard /> },
     { href: `/${locale}/projects`, label: "프로젝트 관리", icon: <IconProject /> },
-    { href: `/${locale}/market-insights`, label: "마켓 인텔리전스", icon: <IconMarket /> },
+    { href: `/${locale}/market-insights`, label: "마켓 분석", icon: <IconMarket /> },
     { href: `/${locale}/permits`, label: "인.허가분석 자동화", icon: <IconPermit /> },
     { href: `/${locale}/regulations`, label: "부동산 규제 연동", icon: <IconRegulation /> },
   ];

@@ -97,14 +97,14 @@ type Labels = {
 };
 
 const KO_LABELS: Labels = {
-  heroTitle: "투자 수익성 분석 라이브 워크스페이스",
+  heroTitle: "투자 수익성 분석 라이브 작업 공간",
   heroDescription:
     "몬테카를로 시뮬레이션 기반 NPV 분포, IRR 통계, 민감도 분석을 실시간으로 실행합니다.",
   heroHint:
     "",
   tokenHint:
     "분석을 위해 로그인이 필요합니다.",
-  authError: "라이브 워크스페이스 호출에 API 인증이 필요합니다.",
+  authError: "라이브 작업 공간 호출에 API 인증이 필요합니다.",
   formTitle: "투자 시뮬레이션 입력",
   totalCostLabel: "총 사업비 (억원)",
   expectedRevenueLabel: "예상 수익 (억원)",

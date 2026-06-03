@@ -89,14 +89,14 @@ const EN_LABELS: Labels = {
 };
 
 const KO_LABELS: Labels = {
-  heroTitle: "프로젝트 드론 점검 라이브 워크스페이스",
+  heroTitle: "프로젝트 드론 점검 라이브 작업 공간",
   heroDescription:
     "드론 촬영 이미지를 업로드하여 하자를 AI로 자동 탐지합니다.",
   heroHint:
     "현재 프로젝트 ID를 기반으로 이미지 URL을 드론 점검 API에 제출합니다.",
   tokenHint:
     "분석을 위해 로그인이 필요합니다.",
-  authError: "라이브 워크스페이스 호출에 API 인증이 필요합니다.",
+  authError: "라이브 작업 공간 호출에 API 인증이 필요합니다.",
   contextTitle: "프로젝트 컨텍스트",
   contextHint:
     "점검은 현재 프로젝트 ID에 바인딩됩니다. 실제 이미지 URL과 선택적 비행 ID를 입력하세요.",

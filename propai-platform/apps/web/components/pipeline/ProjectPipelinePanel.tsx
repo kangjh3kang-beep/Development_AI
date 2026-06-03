@@ -473,7 +473,7 @@ export function ProjectPipelinePanel({
     setViewMode("pipeline");
     setLastResult(null);
 
-    // 항상 백엔드 파이프라인 API를 호출하여 실제 데이터를 수집
+    // 항상 백엔드 진행 단계 API를 호출하여 실제 데이터를 수집
     // (siteAnalysis 캐시는 불완전할 수 있으므로 신뢰하지 않음)
     setIsRunning(true);
     setWorkflowPhase("input");
@@ -498,7 +498,7 @@ export function ProjectPipelinePanel({
         land_use_districts: siteAnalysis.landUseDistricts ?? [],
       } : undefined;
 
-      // 백엔드 파이프라인 호출 (부지분석만)
+      // 백엔드 진행 단계 호출 (부지분석만)
       const result = await apiClient.postV2<PipelineRunResponse>("/pipeline/run", {
         body: {
           address: address.trim(),
@@ -685,7 +685,7 @@ export function ProjectPipelinePanel({
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
             <path d="m15 18-6-6 6-6" />
           </svg>
-          파이프라인으로 돌아가기
+          진행 단계으로 돌아가기
         </button>
         <PipelineResultDetail result={lastResult} onRerun={handleRerun} />
       </div>
@@ -707,7 +707,7 @@ export function ProjectPipelinePanel({
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
             <path d="m15 18-6-6 6-6" />
           </svg>
-          파이프라인으로 돌아가기
+          진행 단계으로 돌아가기
         </button>
         <ProjectCompareView results={compareResults} />
       </div>
@@ -726,7 +726,7 @@ export function ProjectPipelinePanel({
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent-strong)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 3v18h18" /><path d="m19 9-5 5-4-4-3 3" /></svg>
           </div>
           <h2 className="text-lg sm:text-xl font-[800] tracking-tight text-[var(--text-primary)]">
-            프로젝트 자동 분석 파이프라인
+            프로젝트 자동 분석 진행 단계
           </h2>
         </div>
         <p className="text-sm font-medium text-[var(--text-secondary)] tracking-tight ml-11">

@@ -91,7 +91,7 @@ type Labels = {
 const LABELS: Record<Locale, Labels> = {
   ko: {
     heroBadge: "PROJECT / CONTRACTS",
-    heroTitle: "자동 계약초안 및 전자서명 워크스페이스",
+    heroTitle: "자동 계약초안 및 전자서명 작업 공간",
     heroDescription:
       "프로젝트 컨텍스트를 기준으로 계약 초안을 생성하고, 최신 초안을 다시 불러온 뒤 곧바로 전자서명 요청으로 넘깁니다.",
     tokenHint:

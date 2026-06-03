@@ -82,14 +82,14 @@ type Labels = {
 };
 
 const KO_LABELS: Labels = {
-  heroTitle: "법규 검토 라이브 워크스페이스",
+  heroTitle: "법규 검토 라이브 작업 공간",
   heroDescription:
     "현재 프로젝트의 건축 법규 적합성을 실시간으로 검토합니다.",
   heroHint:
     "건폐율, 용적률, 높이 제한 등 건축 규제 사항을 API를 통해 자동 검증합니다.",
   tokenHint:
     "분석을 위해 로그인이 필요합니다.",
-  authError: "라이브 워크스페이스 호출을 위해 API 인증이 필요합니다.",
+  authError: "라이브 작업 공간 호출을 위해 API 인증이 필요합니다.",
   contextTitle: "프로젝트 컨텍스트",
   contextHint:
     "현재 라우트에서 프로젝트 ID를 가져옵니다. 주소와 용도지역은 제출 전 수정 가능합니다.",

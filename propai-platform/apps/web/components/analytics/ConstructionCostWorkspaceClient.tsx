@@ -114,7 +114,7 @@ type Labels = {
 
 const LABELS: Record<Locale, Labels> = {
   ko: {
-    heroTitle: "비용 리서치 인텔리전스",
+    heroTitle: "비용 리서치 분석",
     heroDescription: "KCCI 자재가와 PPI 공사비 보정 시뮬레이션",
     heroHint: "프로젝트별 자재 노출액과 최신 공사비 보정안을 실 API 기준으로 확인합니다.",
     projectTitle: "비용 추적 대상 프로젝트",
@@ -144,7 +144,7 @@ const LABELS: Record<Locale, Labels> = {
     deltaLabel: "Delta",
     impactLabel: "Impact",
     projectLoadErrorTitle: "프로젝트 목록 로드 실패",
-    projectLoadErrorDetail: "비용 인텔리전스 대상 프로젝트를 불러오지 못했습니다.",
+    projectLoadErrorDetail: "비용 분석 대상 프로젝트를 불러오지 못했습니다.",
     materialLoadErrorTitle: "자재가 조회 실패",
     materialLoadErrorDetail: "최신 자재가 추이를 가져오지 못했습니다.",
     escalationLoadErrorTitle: "공사비 보정안 조회 실패",

@@ -105,14 +105,14 @@ const EN_LABELS: Labels = {
 };
 
 const KO_LABELS: Labels = {
-  heroTitle: "프로젝트 BIM 라이브 워크스페이스",
+  heroTitle: "프로젝트 BIM 라이브 작업 공간",
   heroDescription:
     "현재 프로젝트의 BIM 물량을 산출하고 3D 형상 요약을 불러옵니다.",
   heroHint:
     "프로젝트 ID를 기반으로 IFC 생성 및 Three.js 형상 데이터를 조회합니다.",
   tokenHint:
     "분석을 위해 로그인이 필요합니다.",
-  authError: "라이브 워크스페이스 호출에 API 인증이 필요합니다.",
+  authError: "라이브 작업 공간 호출에 API 인증이 필요합니다.",
   contextTitle: "프로젝트 컨텍스트",
   contextHint:
     "프로젝트 메타데이터가 라이브 API에서 로드되어 BIM 생성 설정에 자동 반영됩니다.",

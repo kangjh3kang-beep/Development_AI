@@ -91,14 +91,14 @@ type Labels = {
 };
 
 const KO_LABELS: Labels = {
-  heroTitle: "ESG 분석 라이브 워크스페이스",
+  heroTitle: "ESG 분석 라이브 작업 공간",
   heroDescription:
     "전과정 탄소 배출 분석(LCA), EPD 탄소 발자국, 저탄소 대안을 실시간으로 산출합니다.",
   heroHint:
     "LCA 탄소 산출, EPD 기반 탄소 발자국 계산, 저탄소 대체 자재 추천을 연계 수행합니다.",
   tokenHint:
     "분석을 위해 로그인이 필요합니다.",
-  authError: "라이브 워크스페이스 호출을 위해 API 인증이 필요합니다.",
+  authError: "라이브 작업 공간 호출을 위해 API 인증이 필요합니다.",
   lcaFormTitle: "LCA 탄소 산출 입력",
   floorAreaLabel: "연면적 (m2)",
   materialNameLabel: "자재명",

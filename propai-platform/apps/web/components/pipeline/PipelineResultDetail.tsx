@@ -99,7 +99,7 @@ const SECTIONS: SectionDef[] = [
   },
   {
     id: "unit_mix",
-    label: "4. 유닛믹스",
+    label: "4. 평형 구성",
     sourceStage: "design",
     fields: [
       { key: "unit_count", label: "세대수", unit: "세대", editable: true },

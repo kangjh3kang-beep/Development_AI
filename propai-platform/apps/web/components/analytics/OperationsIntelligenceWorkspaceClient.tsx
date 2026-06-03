@@ -133,11 +133,11 @@ type Labels = {
 
 const LABELS: Record<Locale, Labels> = {
   ko: {
-    heroTitle: "운영 인텔리전스 워크스페이스",
+    heroTitle: "운영 분석 작업 공간",
     heroDescription:
-      "예지정비, 테넌트 경험, 자산 인텔리전스를 실제 운영 API 체인으로 검증합니다.",
+      "예지정비, 테넌트 경험, 자산 분석를 실제 운영 API 체인으로 검증합니다.",
     heroHint:
-      "자산 인텔리전스는 같은 프로젝트의 최신 maintenance/tenant 신호를 자동으로 다시 읽습니다.",
+      "자산 분석는 같은 프로젝트의 최신 maintenance/tenant 신호를 자동으로 다시 읽습니다.",
     tokenHint:
       "분석을 위해 로그인이 필요합니다.",
     projectTitle: "운영 대상 프로젝트",
@@ -169,7 +169,7 @@ const LABELS: Record<Locale, Labels> = {
     occupancyLabel: "점유율",
     arrearsLabel: "연체율",
     calculateSatisfactionAction: "건전성 계산",
-    assetTitle: "자산 인텔리전스",
+    assetTitle: "자산 분석",
     baseValueLabel: "기준 가치(원)",
     analyzeAssetAction: "자산 분석 실행",
     chainHint:

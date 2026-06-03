@@ -80,14 +80,14 @@ type Labels = {
 };
 
 const KO_LABELS: Labels = {
-  heroTitle: "결재 관리 라이브 워크스페이스",
+  heroTitle: "결재 관리 라이브 작업 공간",
   heroDescription:
     "프로젝트 목록과 건축법규 준수 점검을 결합하여 결재 워크플로 현황을 추적합니다.",
   heroHint:
     "",
   tokenHint:
     "분석을 위해 로그인이 필요합니다.",
-  authError: "라이브 워크스페이스 호출을 위해 API 인증이 필요합니다.",
+  authError: "라이브 작업 공간 호출을 위해 API 인증이 필요합니다.",
   formTitle: "결재 점검 입력",
   addressLabel: "대지 주소",
   zoningLabel: "용도지역",

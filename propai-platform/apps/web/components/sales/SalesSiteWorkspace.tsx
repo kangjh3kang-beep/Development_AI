@@ -48,7 +48,7 @@ export default function SalesSiteWorkspace({ siteCode, locale }: { siteCode: str
   }, [siteCode]);
 
   const generateUnits = async () => {
-    const floors = Number(prompt("세대 만들기 (건축 개요로 자동 생성) — 층수를 입력하세요", "10") || 0);
+    const floors = Number(prompt("동·호표 생성 (건축 개요로 자동 생성) — 층수를 입력하세요", "10") || 0);
     const upf = Number(prompt("한 층에 들어가는 세대 수", "4") || 0);
     if (!floors || !upf) return;
     setGenBusy(true);
@@ -58,7 +58,7 @@ export default function SalesSiteWorkspace({ siteCode, locale }: { siteCode: str
         params: { blocks: [{ name: "101", floors, units_per_floor: upf, types: [{ name: "84A" }] }] },
       });
       window.location.reload();
-    } catch { alert("세대 만들기에 실패했습니다 (권한을 확인하세요)"); }
+    } catch { alert("동·호표 생성에 실패했습니다 (권한을 확인하세요)"); }
     finally { setGenBusy(false); }
   };
 
@@ -70,7 +70,7 @@ export default function SalesSiteWorkspace({ siteCode, locale }: { siteCode: str
         {tab === "units" && (
           <button onClick={generateUnits} disabled={genBusy}
             className="ml-auto rounded-lg bg-[var(--accent-strong)] px-3 py-1.5 text-xs font-black text-white disabled:opacity-50">
-            {genBusy ? "만드는 중…" : "+ 세대 만들기"}
+            {genBusy ? "만드는 중…" : "+ 동·호표 생성"}
           </button>
         )}
       </div>

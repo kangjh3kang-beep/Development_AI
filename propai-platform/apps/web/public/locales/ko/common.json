@@ -2,7 +2,7 @@
   "meta": {
     "title": "사통팔땅 (Sa-Tong-Pal-Ttang)",
     "siteName": "사통팔땅",
-    "description": "세상 모든 곳을 연결하고 개발사업 전주기를 자동화하는 프리미엄 부동산 인텔리전스 플랫폼입니다."
+    "description": "세상 모든 곳을 연결하고 개발사업 전주기를 자동화하는 프리미엄 부동산 분석 플랫폼입니다."
   },
   "hero": {
     "badge": "Next.js 프론트엔드 환경",
@@ -86,7 +86,7 @@
         "third": "상태 요약 패널"
       },
       "summary": {
-        "hub": "사통팔땅 인텔리전스 허브 / ID:",
+        "hub": "사통팔땅 분석 허브 / ID:",
         "name": "강남 스마트 플라자 신축공사",
         "pnu": "고유번호(PNU): 1168010100104120002",
         "zone": "용도지역: 일반상업지역",
@@ -221,7 +221,7 @@
     "approvalCenter": {
       "eyebrow": "승인 관제 / 라이브 모드",
       "title": "전자 승인 운영 센터",
-      "description": "진행 중인 결재, 테넌트 전체 감사 필터, 사유 검토, 프로젝트 단위 일괄 결정을 하나의 라이브 워크스페이스에서 운영합니다.",
+      "description": "진행 중인 결재, 테넌트 전체 감사 필터, 사유 검토, 프로젝트 단위 일괄 결정을 하나의 라이브 작업 공간에서 운영합니다.",
       "items": {
         "first": "테넌트 단위 승인 대기열 및 완료 결정",
         "second": "결재자 역할 및 상태 필터링",
@@ -320,7 +320,7 @@
   "pwa": {
     "eyebrow": "G163 / PWA",
     "title": "오프라인 셸, 설치 프롬프트, 푸시 기준선",
-    "description": "서비스 워커를 등록하고, 대시보드 셸을 오프라인으로 유지하며, 현장 기기에 워크스페이스를 설치하고, 실웹푸시 연동 전 알림 권한까지 검증합니다.",
+    "description": "서비스 워커를 등록하고, 대시보드 셸을 오프라인으로 유지하며, 현장 기기에 작업 공간를 설치하고, 실웹푸시 연동 전 알림 권한까지 검증합니다.",
     "runtimeLabel": "서비스 워커",
     "runtimeReady": "준비 완료",
     "runtimeRegistering": "등록 중",
@@ -341,14 +341,14 @@
     "cacheUnsupported": "사용 불가",
     "updateTitle": "대기 중인 오프라인 업데이트가 있습니다.",
     "updateDescription": "대기 중인 서비스 워커를 적용해 최신 오프라인 자산으로 셸을 새로고침합니다.",
-    "installAction": "워크스페이스 설치",
+    "installAction": "작업 공간 설치",
     "enableNotificationsAction": "알림 허용",
     "testNotificationAction": "테스트 알림 보내기",
     "refreshAction": "PWA 새로고침",
     "offlineAction": "오프라인 페이지 열기",
     "errorTitle": "PWA 런타임 오류",
     "testNotificationTitle": "사통팔땅 현장 동기화",
-    "testNotificationBody": "오프라인 워크스페이스가 점검과 현장 보고에 준비되었습니다."
+    "testNotificationBody": "오프라인 작업 공간가 점검과 현장 보고에 준비되었습니다."
   },
   "a11y": {
     "screenReaderRegion": "화면 변경 알림 영역",
@@ -526,7 +526,7 @@
     },
     "projects": {
       "eyebrow": "PROP / PROJECTS",
-      "title": "전체 프로젝트 파이프라인",
+      "title": "전체 프로젝트 진행 단계",
       "description": "권한이 부여된 모든 부동산 개발 프로젝트들의 통합 진행률을 관제합니다.",
       "items": [
         "✓ 데이터 실시간 연동 대기",

@@ -212,11 +212,11 @@ vi.mock("@/i18n/get-dictionary", () => ({
       projects: { title: "Projects overview", eyebrow: "PROJECTS", description: "Desc", items: [] },
       tax: { title: "세금 라이브 센터", eyebrow: "TAX", description: "Desc", items: [] },
       inspection: { title: "현장 점검 라이브 센터", eyebrow: "INSPECTION", description: "Desc", items: [] },
-      energy: { title: "에너지 인증 워크스페이스", eyebrow: "ENERGY", description: "Desc", items: [] },
-      esg: { title: "에너지 인증 워크스페이스", eyebrow: "ENERGY", description: "Desc", items: [] },
-      cost: { title: "공사비 인텔리전스 허브", eyebrow: "COST", description: "Desc", items: [] },
+      energy: { title: "에너지 인증 작업 공간", eyebrow: "ENERGY", description: "Desc", items: [] },
+      esg: { title: "에너지 인증 작업 공간", eyebrow: "ENERGY", description: "Desc", items: [] },
+      cost: { title: "공사비 분석 허브", eyebrow: "COST", description: "Desc", items: [] },
       investment: { title: "투자 운영 컨트롤타워", eyebrow: "INVESTMENT", description: "Desc", items: [] },
-      iot: { title: "운영 인텔리전스 워크스페이스", eyebrow: "IOT", description: "Desc", items: [] },
+      iot: { title: "운영 분석 작업 공간", eyebrow: "IOT", description: "Desc", items: [] },
       sre: { title: "SRE", eyebrow: "SRE", description: "Desc", items: [] },
       webrtc: { title: "WebRTC", eyebrow: "WEBRTC", description: "Desc", items: [] },
       safety: { title: "Safety", eyebrow: "SAFETY", description: "Desc", items: [] },
@@ -418,7 +418,7 @@ describe("Dashboard route shells", () => {
   it("renders the ESG analytics shell with the energy workspace", async () => {
     render(<ESGPage />);
 
-    expect(screen.getByText("에너지 인증 워크스페이스")).toBeInTheDocument();
+    expect(screen.getByText("에너지 인증 작업 공간")).toBeInTheDocument();
     expect(screen.getByText("실연동")).toBeInTheDocument();
     expect(screen.getByTestId("energy-workspace")).toHaveTextContent("en");
   });
@@ -426,7 +426,7 @@ describe("Dashboard route shells", () => {
   it("renders the cost analytics shell with the cost workspace", async () => {
     render(<CostPage />);
 
-    expect(screen.getByText("공사비 인텔리전스 허브")).toBeInTheDocument();
+    expect(screen.getByText("공사비 분석 허브")).toBeInTheDocument();
     expect(screen.getByText("실연동")).toBeInTheDocument();
     expect(screen.getByTestId("cost-workspace")).toHaveTextContent("en");
   });
@@ -435,7 +435,7 @@ describe("Dashboard route shells", () => {
     render(await IoTPage({ params: Promise.resolve({ locale: "en" }) }));
 
     expect(
-      screen.getByText("운영 인텔리전스 워크스페이스"),
+      screen.getByText("운영 분석 작업 공간"),
     ).toBeInTheDocument();
     expect(screen.getByText("실연동")).toBeInTheDocument();
     expect(screen.getByTestId("ops-intelligence-workspace")).toHaveTextContent(

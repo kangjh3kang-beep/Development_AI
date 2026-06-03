@@ -62,7 +62,7 @@ export function Logo({ className = "", size = "md", showText = true }: { classNa
             <span className="text-[var(--accent-strong)] ml-px">.</span>
           </span>
           <span className={`${current.sub} font-bold tracking-[0.25em] text-[var(--text-tertiary)] uppercase mt-1 opacity-80 leading-none`}>
-            AI 부동산 인텔리전스
+            AI 부동산 분석
           </span>
         </div>
       )}

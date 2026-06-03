@@ -77,7 +77,7 @@ type Labels = {
 
 const LABELS: Record<Locale, Labels> = {
   ko: {
-    heroTitle: "현장 점검 라이브 워크스페이스",
+    heroTitle: "현장 점검 라이브 작업 공간",
     heroDescription:
       "실제 `drone` API로 이미지 기반 하자 탐지와 심각도 집계를 검증합니다.",
     heroHint:

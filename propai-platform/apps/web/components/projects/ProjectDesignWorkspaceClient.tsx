@@ -93,11 +93,11 @@ const COMMON_LABELS: Labels = {
 
 const LABELS: Record<Locale, Labels> = {
   ko: {
-    heroTitle: "설계 AI 및 BIM 라이브 워크스페이스",
+    heroTitle: "설계 AI 및 BIM 라이브 작업 공간",
     heroDescription: "현재 프로젝트의 평면도 생성 및 자동 IFC 분석을 AI 엔진을 통해 실시간으로 수행합니다.",
     heroHint: "본 화면은 프로젝트 ID를 기반으로 프로젝트 생성세트에 맞춰 AI 평면 설계, BIM 합성, 탄소 분석을 통합 구동합니다.",
     tokenHint: "분석을 위해 로그인이 필요합니다.",
-    authError: "라이브 워크스페이스 기능을 사용하기 위해 API 인증이 필요합니다.",
+    authError: "라이브 작업 공간 기능을 사용하기 위해 API 인증이 필요합니다.",
     contextTitle: "프로젝트 컨텍스트",
     contextHint: "라이브 API에서 로드된 프로젝트 메타데이터를 기반으로 최적화된 설계 설정을 자동으로 제안합니다.",
     projectFallback: "라이브 API에서 프로젝트 메타데이터를 불러오지 못했습니다.",

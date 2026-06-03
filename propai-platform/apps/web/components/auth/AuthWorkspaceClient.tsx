@@ -113,7 +113,7 @@ const STORAGE_KEYS = {
 const LABELS: Record<Locale, Labels> = {
   ko: {
     eyebrow: "AUTH / LIVE",
-    title: "실사용 인증 워크스페이스",
+    title: "실사용 인증 작업 공간",
     description:
       "이제 로그인과 테넌트 관리자 등록이 placeholder가 아니라 실제 `/auth` API에 연결됩니다.",
     modeLabels: {
@@ -139,7 +139,7 @@ const LABELS: Record<Locale, Labels> = {
     runtimeTitle: "런타임 연결 상태",
     runtimeDescription:
       "auth 화면은 mock fallback 없이 실제 API를 우선 호출하고, 성공 시 브라우저 토큰을 즉시 갱신합니다.",
-    runtimeMode: "워크스페이스 모드",
+    runtimeMode: "작업 공간 모드",
     runtimeApiBase: "API Base URL",
     runtimeToken: "저장된 액세스 토큰",
     runtimeRefreshToken: "저장된 리프레시 토큰",

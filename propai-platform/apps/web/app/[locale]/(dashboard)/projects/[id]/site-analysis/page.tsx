@@ -69,8 +69,8 @@ function L3EnhancedCards({
   l3Data: L3SiteData | null;
   siteAnalysis: SiteAnalysisData | null;
 }) {
-  // l3Data를 우선 사용, siteAnalysis는 향후 파이프라인 데이터 연동 시 활용
-  const _storeRef = siteAnalysis; // 향후 파이프라인 스토어 데이터 연동용
+  // l3Data를 우선 사용, siteAnalysis는 향후 진행 단계 데이터 연동 시 활용
+  const _storeRef = siteAnalysis; // 향후 진행 단계 스토어 데이터 연동용
   void _storeRef;
   const tx = l3Data?.nearby_transactions;
   const infra = l3Data?.infrastructure;

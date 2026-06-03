@@ -97,14 +97,14 @@ type Labels = {
 };
 
 const KO_LABELS: Labels = {
-  heroTitle: "공사비 분석 라이브 워크스페이스",
+  heroTitle: "공사비 분석 라이브 작업 공간",
   heroDescription:
     "정밀 공사비 산출과 몬테카를로 리스크 시뮬레이션을 실시간으로 실행합니다.",
   heroHint:
     "",
   tokenHint:
     "분석을 위해 로그인이 필요합니다.",
-  authError: "라이브 워크스페이스 호출에 API 인증이 필요합니다.",
+  authError: "라이브 작업 공간 호출에 API 인증이 필요합니다.",
   formTitle: "공사비 분석 입력",
   projectIdLabel: "프로젝트 ID",
   buildingTypeLabel: "건물 유형",

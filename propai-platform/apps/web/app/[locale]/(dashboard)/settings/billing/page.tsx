@@ -3,7 +3,7 @@
 /**
  * 관리자 — 과금 금액 설정 수정/변경.
  * GET/PUT /api/v1/billing/admin/config (관리자 권한). 등급요금·할증·서비스료·
- * 파이프라인 단계별·무료횟수 단가를 화면에서 직접 수정한다.
+ * 진행 단계 단계별·무료횟수 단가를 화면에서 직접 수정한다.
  */
 
 import { useCallback, useEffect, useState } from "react";
@@ -109,9 +109,9 @@ export default function BillingConfigPage() {
         </div>
       </section>
 
-      {/* 파이프라인 단계별 */}
+      {/* 진행 단계 단계별 */}
       <section className="rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-soft)] p-5">
-        <h2 className="text-sm font-bold text-[var(--text-primary)] mb-3">파이프라인 단계별 과금</h2>
+        <h2 className="text-sm font-bold text-[var(--text-primary)] mb-3">진행 단계 단계별 과금</h2>
         <div className="grid gap-2 md:grid-cols-2">
           {Object.keys(cfg.service_fees.stages).map((s) => (
             <Field key={s} label={STAGE_LABELS[s] || s} value={cfg.service_fees.stages[s]} onChange={(v) => setStage(s, v)} />

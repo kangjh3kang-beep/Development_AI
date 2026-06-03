@@ -144,14 +144,14 @@ const EN_LABELS: Labels = {
 };
 
 const KO_LABELS: Labels = {
-  heroTitle: "프로젝트 금융분석 라이브 워크스페이스",
+  heroTitle: "프로젝트 금융분석 라이브 작업 공간",
   heroDescription:
     "AVM 시세 추정과 전세 위험도 분석을 실행합니다.",
   heroHint:
     "현재 프로젝트 ID를 기반으로 AVM 시세 추정 및 전세 위험도 분석을 연쇄 실행합니다.",
   tokenHint:
     "분석을 위해 로그인이 필요합니다.",
-  authError: "라이브 워크스페이스 호출에 API 인증이 필요합니다.",
+  authError: "라이브 작업 공간 호출에 API 인증이 필요합니다.",
   contextTitle: "프로젝트 컨텍스트",
   contextHint:
     "프로젝트 ID는 현재 경로에서 가져옵니다. 주소와 면적은 제출 전 수정할 수 있습니다.",

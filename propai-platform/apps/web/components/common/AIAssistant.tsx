@@ -48,7 +48,7 @@ export function AIAssistant() {
     if (pathname.includes("/sre")) {
       initialText = "SRE 관제 모드 활성화. 시스템 가용성과 빌드 품질 데이터를 분석할 수 있습니다. 어떤 지표가 궁금하신가요?";
     } else if (pathname.includes("/projects/")) {
-      initialText = "프로젝트 인텔리전스 가동. 현재 부지의 용적률 상향 포인트와 법규 리스크를 실시간으로 스캔하고 있습니다.";
+      initialText = "프로젝트 분석 가동. 현재 부지의 용적률 상향 포인트와 법규 리스크를 실시간으로 스캔하고 있습니다.";
     } else if (pathname.includes("/auction")) {
       initialText = "경공매 분석 엔진 연결 완료. 해당 물건의 권리 관계와 예상 낙찰가 시뮬레이션을 보조해 드립니다.";
     } else if (pathname.includes("/digital-twin")) {

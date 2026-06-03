@@ -73,7 +73,7 @@ export default function UnitGrid({ siteCode }: { siteCode: string }) {
       {loading && <p className="text-sm text-[var(--text-tertiary)]">세대 정보를 불러오는 중…</p>}
       {!loading && units.length === 0 && (
         <p className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-6 text-sm text-[var(--text-secondary)]">
-          아직 세대가 없습니다. 상단 <b className="text-[var(--accent-strong)]">‘+ 세대 만들기’</b> 버튼으로 동·호를 자동 생성하세요.
+          아직 세대가 없습니다. 상단 <b className="text-[var(--accent-strong)]">‘+ 동·호표 생성’</b> 버튼으로 동·호를 자동 생성하세요.
         </p>
       )}
 

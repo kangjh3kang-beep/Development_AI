@@ -51,7 +51,7 @@ export default async function DashboardPage({ params }: DashboardPageProps) {
 
   return (
     <div className="flex flex-col gap-3 pb-12">
-      {/* ── 온보딩 위자드 (최초 방문 시에만 표시) ── */}
+      {/* ── 시작 안내 위자드 (최초 방문 시에만 표시) ── */}
       <OnboardingWizard />
 
       {/* ── 프리미엄 히어로 섹션: AI 커맨드 센터 ── */}
@@ -147,7 +147,7 @@ export default async function DashboardPage({ params }: DashboardPageProps) {
       {/* ── 사통팔땅 홍보 배너 ── */}
       <PromoBanner />
 
-      {/* ── 자동 분석 파이프라인 ── */}
+      {/* ── 자동 분석 진행 단계 ── */}
       <ProjectPipelinePanel />
 
       {/* ── 마케팅 홍보 벤토(Bento) 패널 ── */}
@@ -159,10 +159,10 @@ export default async function DashboardPage({ params }: DashboardPageProps) {
       {/* ── 대시보드 콘텐츠 레이아웃 ── */}
       <div className="grid gap-4 lg:grid-cols-[1fr_420px]">
         
-        {/* 메인 콘텐츠: 파이프라인 모니터링 */}
+        {/* 메인 콘텐츠: 진행 단계 모니터링 */}
         <div className="space-y-8">
            <div className="flex items-center justify-between px-4">
-              <h2 className="text-2xl font-bold tracking-tight text-[var(--text-primary)]">활성 파이프라인 <span className="text-[var(--accent)]">_</span></h2>
+              <h2 className="text-2xl font-bold tracking-tight text-[var(--text-primary)]">활성 진행 단계 <span className="text-[var(--accent)]">_</span></h2>
               <Link href={`/${locale}/projects`} className="text-xs font-bold text-[var(--accent-strong)] tracking-wider hover:underline underline-offset-8">전체 보기</Link>
            </div>
 
@@ -177,7 +177,7 @@ export default async function DashboardPage({ params }: DashboardPageProps) {
                         <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2v20"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
                      </div>
                      <div>
-                        <h3 className="text-lg font-bold text-[var(--text-primary)] tracking-tight">AI 포트폴리오 인텔리전스 맵</h3>
+                        <h3 className="text-lg font-bold text-[var(--text-primary)] tracking-tight">AI 포트폴리오 분석 맵</h3>
                         <p className="text-xs font-medium text-[var(--text-tertiary)] tracking-wider mt-1">글로벌 자산 시각화 활성</p>
                      </div>
                   </div>
@@ -220,7 +220,7 @@ export default async function DashboardPage({ params }: DashboardPageProps) {
               </div>
            </div>
 
-           {/* 사용자 온보딩 카드 */}
+           {/* 사용자 시작 안내 카드 */}
            <div className="rounded-[2rem] bg-gradient-to-br from-[var(--accent-soft)] to-[var(--status-info)]/10 p-1 border border-[var(--line)] group overflow-hidden">
               <div className="rounded-[2rem] bg-[var(--surface)] p-10 space-y-6 transition-all group-hover:bg-[var(--surface-strong)]">
                  <h4 className="text-lg font-bold text-[var(--text-primary)] leading-tight tracking-tight">전문 가이드가<br/>필요하신가요?</h4>
@@ -228,7 +228,7 @@ export default async function DashboardPage({ params }: DashboardPageProps) {
                     사통팔땅의 168종 데이터 맵과<br/>AI 엔진을 활용하는 방법을 확인하세요.
                  </p>
                  <Link href={`/${locale}/guide`} className="inline-flex h-12 items-center justify-center rounded-2xl bg-[var(--accent-strong)] px-8 text-[12px] font-bold text-white tracking-wider transition-all hover:scale-105 active:scale-95">
-                    온보딩 시작하기
+                    시작 안내 시작하기
                  </Link>
               </div>
            </div>

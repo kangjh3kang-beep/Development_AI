@@ -50,14 +50,14 @@ type Labels = {
 };
 
 const KO_LABELS: Labels = {
-  heroTitle: "임차인 관리 라이브 워크스페이스",
+  heroTitle: "임차인 관리 라이브 작업 공간",
   heroDescription:
     "프로젝트 기반 임차인 목록을 조회하고 임대 현황 및 결제 개요를 확인합니다.",
   heroHint:
     "",
   tokenHint:
     "분석을 위해 로그인이 필요합니다.",
-  authError: "라이브 워크스페이스 호출을 위해 API 인증이 필요합니다.",
+  authError: "라이브 작업 공간 호출을 위해 API 인증이 필요합니다.",
   tenantsTitle: "임차인 목록",
   projectNameLabel: "프로젝트명",
   addressLabel: "주소",

@@ -53,7 +53,7 @@ const PLAN_DEFINITIONS: Record<PlanTier, Omit<PlanInfo, "usage">> = {
       "API 호출 월 10,000회",
       "AI 분석 월 500회",
       "은행제출용 보고서",
-      "유닛믹스 최적화",
+      "평형 구성 최적화",
       "GRESB ESG 스코어링",
       "우선 기술 지원",
     ],

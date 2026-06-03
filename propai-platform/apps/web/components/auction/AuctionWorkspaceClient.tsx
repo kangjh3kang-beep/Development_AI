@@ -74,7 +74,7 @@ type Labels = {
 
 const LABELS: Record<Locale, Labels> = {
   ko: {
-    connectionTitle: "실시간 경공매 워크스페이스",
+    connectionTitle: "실시간 경공매 작업 공간",
     connectionDescription:
       "G95 백엔드와 직접 연결해 경공매 분석 및 전략 자문 흐름을 통합 검증합니다.",
     connectionHint:

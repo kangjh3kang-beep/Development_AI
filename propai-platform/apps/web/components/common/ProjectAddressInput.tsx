@@ -7,7 +7,7 @@
  * 2) 카카오 주소 검색(GlobalAddressSearch)으로 신규/변경 입력
  * 3) 프로젝트 생성 시 입력한 주소(ProjectContextStore.siteAnalysis.address)를 자동 로드
  *
- * 각 워크스페이스의 일반 텍스트 주소 입력(<Input value={form.address} />)을
+ * 각 작업 공간의 일반 텍스트 주소 입력(<Input value={form.address} />)을
  * 이 컴포넌트로 일괄 대체하여 주소 입력 UX를 단일화한다.
  */
 

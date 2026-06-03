@@ -90,7 +90,7 @@ type Labels = {
 
 const LABELS: Record<Locale, Labels> = {
   ko: {
-    heroTitle: "에너지 인증 워크스페이스",
+    heroTitle: "에너지 인증 작업 공간",
     heroDescription:
       "KEPCO 요금 계산과 프로젝트 연동 에너지 인증을 실제 `energy` API로 검증합니다.",
     heroHint:

@@ -164,7 +164,7 @@ export default function G2BBidDashboard() {
       <div className="flex items-center gap-3">
         <div className="h-11 w-11 rounded-2xl bg-gradient-to-br from-[var(--accent-strong)] to-blue-600 flex items-center justify-center text-white text-lg">🏛</div>
         <div>
-          <h1 className="text-2xl font-[1000] tracking-tight text-[var(--text-primary)]">공공입찰 인텔리전스</h1>
+          <h1 className="text-2xl font-[1000] tracking-tight text-[var(--text-primary)]">공공입찰 분석</h1>
           <p className="text-xs text-[var(--text-secondary)]">나라장터(G2B) 부동산·건설 입찰/낙찰 AI 분석</p>
         </div>
       </div>

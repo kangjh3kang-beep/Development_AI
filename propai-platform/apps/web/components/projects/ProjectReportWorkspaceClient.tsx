@@ -110,14 +110,14 @@ const EN_LABELS: Labels = {
 };
 
 const KO_LABELS: Labels = {
-  heroTitle: "프로젝트 보고서 라이브 워크스페이스",
+  heroTitle: "프로젝트 보고서 라이브 작업 공간",
   heroDescription:
     "투자자 보고서를 자동 생성합니다.",
   heroHint:
     "현재 프로젝트 ID를 기반으로 다국어 투자자 보고서를 생성하고 결과를 화면에 표시합니다.",
   tokenHint:
     "분석을 위해 로그인이 필요합니다.",
-  authError: "라이브 워크스페이스 호출에 API 인증이 필요합니다.",
+  authError: "라이브 작업 공간 호출에 API 인증이 필요합니다.",
   contextTitle: "프로젝트 컨텍스트",
   contextHint:
     "보고서 요청은 현재 프로젝트 ID를 사용합니다. 프로젝트명과 내용은 생성 전 수정할 수 있습니다.",

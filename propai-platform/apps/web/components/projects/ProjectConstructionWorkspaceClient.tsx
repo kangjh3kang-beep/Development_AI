@@ -97,14 +97,14 @@ type Labels = {
 };
 
 const KO_LABELS: Labels = {
-  heroTitle: "시공관리 라이브 워크스페이스",
+  heroTitle: "시공관리 라이브 작업 공간",
   heroDescription:
     "공사비 산출, 시공 체크리스트, 리스크 평가를 실시간으로 수행합니다.",
   heroHint:
     "원가 산출 API, 시공 체크리스트 생성, 리스크 평가를 연계하여 종합 시공관리를 지원합니다.",
   tokenHint:
     "분석을 위해 로그인이 필요합니다.",
-  authError: "라이브 워크스페이스 호출을 위해 API 인증이 필요합니다.",
+  authError: "라이브 작업 공간 호출을 위해 API 인증이 필요합니다.",
   formTitle: "공사비 항목 입력",
   costTitle: "공사비 산출 결과",
   costWorkCodeLabel: "공종 코드",

@@ -826,7 +826,7 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
                     <Icons.AlertCircle />
                     <p className="text-[10px] text-[var(--text-hint)] text-center">
                       {txError}<br />
-                      부지분석 워크스페이스에서 AVM 분석을 실행하세요.
+                      부지분석 작업 공간에서 AVM 분석을 실행하세요.
                     </p>
                   </div>
                 ) : txData?.items && txData.items.length > 0 ? (
@@ -849,7 +849,7 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
                 ) : (
                   <div className="flex flex-col items-center gap-2 py-3">
                     <p className="text-[10px] text-[var(--text-hint)] text-center">
-                      실거래 데이터를 조회하려면 부지분석 워크스페이스에서 AVM 분석을 실행하세요.
+                      실거래 데이터를 조회하려면 부지분석 작업 공간에서 AVM 분석을 실행하세요.
                     </p>
                   </div>
                 )}

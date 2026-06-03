@@ -42,7 +42,7 @@ const ALL_SECTIONS = [
   { id: "market", title: "2. 시장분석", required: true, module: "site-analysis" },
   { id: "legal", title: "3. 법규검토", required: true, module: "legal" },
   { id: "design", title: "4. 설계개요", required: false, module: "design" },
-  { id: "unit_mix", title: "5. 유닛믹스 분석", required: false, module: "design" },
+  { id: "unit_mix", title: "5. 평형 구성 분석", required: false, module: "design" },
   { id: "feasibility", title: "6. 사업수지분석", required: true, module: "feasibility" },
   { id: "finance", title: "7. 자금조달계획", required: true, module: "finance" },
   { id: "risk", title: "8. 리스크분석", required: true, module: "feasibility" },

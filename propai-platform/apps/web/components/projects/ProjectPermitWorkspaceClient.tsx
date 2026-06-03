@@ -117,14 +117,14 @@ type Labels = {
 };
 
 const KO_LABELS: Labels = {
-  heroTitle: "인허가 관리 라이브 워크스페이스",
+  heroTitle: "인허가 관리 라이브 작업 공간",
   heroDescription:
     "건축 인허가 진행 현황, 법규 적합성 검사 및 제출 서류 체크리스트를 실시간으로 관리합니다.",
   heroHint:
     "",
   tokenHint:
     "분석을 위해 로그인이 필요합니다.",
-  authError: "라이브 워크스페이스 호출에 API 인증이 필요합니다.",
+  authError: "라이브 작업 공간 호출에 API 인증이 필요합니다.",
   contextTitle: "프로젝트 컨텍스트",
   contextHint:
     "프로젝트 ID는 현재 라우트에서 가져옵니다. 건물 유형과 면적은 제출 전 수정할 수 있습니다.",

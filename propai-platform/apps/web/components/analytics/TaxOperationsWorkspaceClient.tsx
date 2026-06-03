@@ -72,7 +72,7 @@ type Labels = {
 
 const LABELS: Record<Locale, Labels> = {
   ko: {
-    heroTitle: "세금 라이브 워크스페이스",
+    heroTitle: "세금 라이브 작업 공간",
     heroDescription:
       "실제 `tax` API로 취득세, 보유세, 양도세 시나리오를 계산합니다.",
     heroHint:
