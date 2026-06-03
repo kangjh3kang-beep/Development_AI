@@ -65,6 +65,14 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
           registry_text: text.trim() || undefined,
           realty_type: realty, dong: realty === "1" ? dong || undefined : undefined,
           ho: realty === "1" ? ho || undefined : undefined,
+          // 부지분석에서 확보한 토지정보 동봉 → 백엔드 재조회(~31s) 생략
+          land_hint: siteAnalysis
+            ? {
+                pnu: siteAnalysis.pnu || undefined,
+                zone_type: siteAnalysis.zoneCode || undefined,
+                land_area_sqm: siteAnalysis.landAreaSqm || undefined,
+              }
+            : undefined,
         },
         useMock: false, timeoutMs: 120000,
       });

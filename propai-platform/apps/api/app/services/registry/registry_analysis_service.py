@@ -135,22 +135,41 @@ class RegistryAnalysisService:
         realty_type: str | None = None,
         dong: str | None = None,
         ho: str | None = None,
+        land_hint: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        import asyncio
+
         origin = None
         source = None
         fetched_meta = None
-        # 토지 소유구분·특성(항상 제공)
-        land = await self._land_info(address, pnu)
+
+        async def _resolve_land() -> dict[str, Any] | None:
+            # 부지분석에서 이미 확보한 토지정보가 오면 재조회 생략(중복 외부호출 ~31s 제거)
+            if land_hint and (land_hint.get("land_area_sqm") or land_hint.get("zone_type")):
+                return {
+                    "pnu": land_hint.get("pnu") or pnu,
+                    "owner_type": land_hint.get("owner_type"),
+                    "land_category": land_hint.get("land_category"),
+                    "land_area_sqm": land_hint.get("land_area_sqm"),
+                    "official_price_per_sqm": land_hint.get("official_price_per_sqm"),
+                    "zone_type": land_hint.get("zone_type"),
+                    "note": "부지분석에서 전달된 토지정보(재조회 생략).",
+                }
+            return await self._land_info(address, pnu)
 
         if registry_text and registry_text.strip():
+            land = await _resolve_land()
             source = registry_text.strip()[:8000]
             origin = "manual"
         else:
-            # CODEF 등 연동 조회 시도
+            # CODEF 등 연동 조회 시도 — 토지정보 조회와 병렬 실행(독립적, 지연 단축)
             from app.services.registry.registry_service import RegistryService
 
-            reg = await RegistryService().get_one(
-                pnu=pnu, address=address, realty_type=realty_type, dong=dong, ho=ho
+            land, reg = await asyncio.gather(
+                _resolve_land(),
+                RegistryService().get_one(
+                    pnu=pnu, address=address, realty_type=realty_type, dong=dong, ho=ho
+                ),
             )
             st = reg.get("status")
             if st == "ok":

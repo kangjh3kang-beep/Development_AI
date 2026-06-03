@@ -42,6 +42,8 @@ class RegistryAnalyzeRequest(BaseModel):
     realty_type: str | None = None    # 0토지+건물 1집합건물 2토지 3건물(기본=env)
     dong: str | None = None           # 집합건물 동
     ho: str | None = None             # 집합건물 호
+    # 부지분석에서 이미 확보한 토지정보(전달 시 백엔드 재조회 생략 → 지연 단축)
+    land_hint: dict[str, Any] | None = None
 
 
 @router.post("/analyze", summary="부동산 등기정보 권리분석(법무사·변호사 AI)")
@@ -57,6 +59,7 @@ async def registry_analyze(
     return await RegistryAnalysisService().analyze(
         address=req.address, pnu=req.pnu, registry_text=req.registry_text,
         realty_type=req.realty_type, dong=req.dong, ho=req.ho,
+        land_hint=req.land_hint,
     )
 
 
