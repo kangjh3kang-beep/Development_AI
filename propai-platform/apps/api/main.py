@@ -29,11 +29,13 @@ from apps.api.rate_limit import limiter, rate_limit_exceeded_handler
 from apps.api.routers import (
     agents,
     ai_costs,
+    analytics,
     api_keys,
     auction,
     auth,
     auto_zoning,
     billing,
+    integration,
     market_report,
     avm,
     bim,
@@ -321,6 +323,8 @@ app.include_router(expert_panel.router, prefix="/api/v1", tags=["전문가 패�
 app.include_router(verification.router, prefix="/api/v1", tags=["분석 검증"])
 app.include_router(registry.router, prefix="/api/v1", tags=["부동산 등기부"])
 app.include_router(avm.router, prefix="/api/v1/avm", tags=["AVM 시세추정"])
+app.include_router(analytics.router, prefix="/api/v1/analytics", tags=["분석 대시보드"])
+app.include_router(integration.router, prefix="/api/v1/integration", tags=["연동 상태"])
 app.include_router(regulation.router, prefix="/api/v1/regulation", tags=["법규 검토"])
 app.include_router(tax.router, prefix="/api/v1/tax", tags=["세금 계산"])
 app.include_router(design.router, prefix="/api/v1/design", tags=["설계"])
@@ -467,3 +471,5 @@ if pipeline_router is not None:
     app.include_router(pipeline_router)  # 자체 prefix: /api/v2/pipeline
 if comprehensive_analysis_router is not None:
     app.include_router(comprehensive_analysis_router, prefix="/api/v2/analysis", tags=["종합 부지분석"])
+    # 프론트(apiClient)는 /api/v1 접두 → v1 별칭 등록(404 해소: /analysis/llm-providers·/analysis/comprehensive)
+    app.include_router(comprehensive_analysis_router, prefix="/api/v1/analysis", tags=["종합 부지분석 v1"])

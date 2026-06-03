@@ -102,3 +102,53 @@ async def analyze_asset_intelligence(
         ],
         created_at=snapshot.created_at,
     )
+
+
+@router.get("/anomalies")
+async def get_digital_twin_anomalies(
+    project_id: UUID | None = None,
+    current_user: CurrentUser = Depends(RequirePermission("digital_twin_status", "read")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """최근 30일 디지털트윈 이상탐지 시계열 + 요약(프론트 DigitalTwinDashboardData 형태)."""
+    from datetime import datetime, timedelta, timezone
+
+    from sqlalchemy import select
+
+    from apps.api.database.models.digital_twin_anomaly import DigitalTwinAnomaly
+
+    utc = timezone.utc
+    since = datetime.now(utc) - timedelta(days=30)
+    query = select(DigitalTwinAnomaly).where(
+        DigitalTwinAnomaly.tenant_id == current_user.tenant_id,
+        DigitalTwinAnomaly.detected_at >= since,
+    )
+    if project_id:
+        query = query.where(DigitalTwinAnomaly.project_id == project_id)
+    query = query.order_by(DigitalTwinAnomaly.detected_at.asc())
+
+    rows = list((await db.execute(query)).scalars().all())
+
+    anomalies = [
+        {
+            "timestamp": r.detected_at.isoformat(),
+            "sensor_type": r.sensor_type,
+            "value": float(next(iter((r.feature_values_json or {}).values()), r.anomaly_score)),
+            "anomaly_score": r.anomaly_score,
+            "is_anomaly": r.is_anomaly,
+            "severity": r.severity,
+        }
+        for r in rows
+    ]
+    detected = [r for r in rows if r.is_anomaly]
+    last_scan = max((r.detected_at for r in rows), default=datetime.now(utc))
+    return {
+        "anomalies": anomalies,
+        "summary": {
+            "total_sensors": len({r.sensor_type for r in rows}),
+            "anomalies_detected": len(detected),
+            "critical_count": sum(1 for r in detected if r.severity == "critical"),
+            "warning_count": sum(1 for r in detected if r.severity == "warning"),
+            "last_scan_at": last_scan.isoformat(),
+        },
+    }

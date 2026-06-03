@@ -65,6 +65,8 @@ class Settings(BaseSettings):
     db_max_overflow: int = 10
     db_pool_timeout: int = 30
     db_pool_recycle: int = 1800
+    rate_limit_per_minute: int = 120  # SRE 대시보드 메트릭 참조(누락 시 AttributeError→500)
+    grafana_embed_url: str = ""  # SRE 대시보드 임베드 URL(선택)
     db_use_pgbouncer: bool = Field(
         default=False,
         description="Supabase pgBouncer 사용 시 True (prepared statements 비활성화)",

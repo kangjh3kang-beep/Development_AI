@@ -15,6 +15,7 @@ router = APIRouter()
 
 
 @router.post("", response_model=AVMValuationResponse)
+@router.post("/estimate", response_model=AVMValuationResponse)  # 프론트 표준 경로(/avm/estimate)
 @limiter.limit(ai_limiter)
 async def estimate_value(
     request: Request,

@@ -283,6 +283,24 @@ _DEFAULT_POLICIES = [
     ("analyst", "sre", "read"),
     ("analyst", "sre", "write"),
     ("viewer", "sre", "read"),
+    # ── 감사 보강(2026-06): 구독자(viewer)가 분석·계산·생성 기능을 쓸 수 있도록 write 부여.
+    #    삭제/사용자관리/시스템변경 등 관리자 전용은 제외(부여하지 않음). ──
+    ("viewer", "avm", "write"),                  # /avm/estimate 시세추정
+    ("viewer", "tax", "write"),                  # /tax/calculate 세금계산
+    ("viewer", "risk_engine", "write"),          # /risk/unified/analyze 리스크분석
+    ("viewer", "design", "write"),               # /bim/generate-ifc 등 설계·BIM 생성
+    ("viewer", "permits", "write"),              # /permits/submit 인허가 제출
+    ("viewer", "digital_twin_status", "write"),  # /digital-twin/status/snapshot
+    ("viewer", "chatbot", "read"),               # /chatbot/sessions 조회
+    ("viewer", "chatbot", "write"),              # 챗봇 세션·메시지 작성
+    # ── 신규 자원: 분석 대시보드(IoT/투자/ESG 종합). 전 역할 read, write는 운영진. ──
+    ("admin", "analytics", "read"),
+    ("admin", "analytics", "write"),
+    ("manager", "analytics", "read"),
+    ("manager", "analytics", "write"),
+    ("analyst", "analytics", "read"),
+    ("analyst", "analytics", "write"),
+    ("viewer", "analytics", "read"),             # /analytics/investment·esg·iot
 ]
 
 
