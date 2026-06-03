@@ -167,6 +167,12 @@ export default async function DashboardLayout({
     { href: `/${locale}/registry-analysis`, label: "└ 부동산등기 열람/분석", icon: <IconPermit /> },
   ];
 
+  // I-3. 분양관리 ERP (v62 — 현장별 분양 운영 + 모델하우스 데스크)
+  const salesNavigation = [
+    { href: `/${locale}/sales`, label: "분양 현장 관리", icon: <IconProject /> },
+    { href: `/${locale}/sales/projection`, label: "└ 시행사 투영뷰", icon: <IconMarket /> },
+  ];
+
   // II. 수익·비용·ESG
   const analyticsNavigation = [
     { href: `/${locale}/analytics/investment`, label: "투자 수익성 (ROI)", icon: <IconROI /> },
@@ -205,6 +211,7 @@ export default async function DashboardLayout({
   const sections = [
     { title: "프로젝트 분석", items: lifecycleNavigation },
     { title: "토지조서 관리", items: landNavigation },
+    { title: "분양관리 ERP", items: salesNavigation },
     { title: "수익·비용·ESG", items: analyticsNavigation },
     { title: "입찰·자산 운영", items: operationsNavigation },
     { title: "시스템·지원", items: enterpriseNavigation },

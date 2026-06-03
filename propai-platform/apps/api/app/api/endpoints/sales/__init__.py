@@ -10,6 +10,7 @@ import app.schemas.sales as S
 from app.api.crud_router import make_crud_router
 from app.api.endpoints.sales.actions import actions_router
 from app.api.endpoints.sales.mh import mh_router
+from app.api.endpoints.sales.views import views_router
 from apps.api.database.models.sales import (
     commission_mh_harness as cm, contract_crm_ad as cc, site_org as so, staff as st, units_pricing as up,
 )
@@ -52,3 +53,4 @@ for _model, _prefix in REGISTRY:
 
 sales_router.include_router(actions_router)
 sales_router.include_router(mh_router)
+sales_router.include_router(views_router)
