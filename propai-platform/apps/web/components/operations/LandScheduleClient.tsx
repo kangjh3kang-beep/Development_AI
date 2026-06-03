@@ -10,7 +10,7 @@ import { useParams, useRouter } from "next/navigation";
 import { Card, CardContent } from "@propai/ui";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { ParcelBoundaryMap } from "@/components/map/ParcelBoundaryMap";
-import { apiClient } from "@/lib/api-client";
+import { analyzeRegistry } from "@/lib/registry-analyze";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { useLandScheduleStore, type LandRow } from "@/store/useLandScheduleStore";
 import type { Locale } from "@/i18n/config";
@@ -158,11 +158,11 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
     if (!r.jibun.trim()) return;
     setBusy(r.id);
     try {
-      const res = await apiClient.post<{
+      const res = await analyzeRegistry<{
         land?: { owner_type?: string; land_area_sqm?: number };
         ai?: { ownership?: { current_owner?: string; share?: string } };
         fetched?: { pdf_url?: string | null };
-      }>("/registry/analyze", { body: { address: r.jibun.trim() }, useMock: false, timeoutMs: 120000 });
+      }>({ address: r.jibun.trim() });
       const own = res.ai?.ownership || {};
       const land = res.land || {};
       // 등기분석정보 우선: 소유자·지분·소유구분은 등기 결과로 덮어쓰기(부지분석 추정값보다 우선).

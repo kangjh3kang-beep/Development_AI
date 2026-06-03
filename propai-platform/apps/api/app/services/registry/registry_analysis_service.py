@@ -18,6 +18,20 @@ logger = structlog.get_logger(__name__)
 _ANALYZE_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
 _ANALYZE_TTL = 6 * 3600.0
 
+
+def peek_analyze_cache(
+    address: str | None = None, pnu: str | None = None, realty_type: str | None = None,
+    dong: str | None = None, ho: str | None = None, registry_text: str | None = None,
+) -> dict[str, Any] | None:
+    """동일 필지 분석 결과가 캐시에 있으면 반환(비동기 작업 제출 전 즉시반환용)."""
+    if registry_text and registry_text.strip():
+        return None
+    key = f"{pnu or address}|{realty_type}|{dong}|{ho}"
+    hit = _ANALYZE_CACHE.get(key)
+    if hit and (time.time() - hit[0]) < _ANALYZE_TTL:
+        return {**hit[1], "cached": True}
+    return None
+
 _SYSTEM = """\
 당신은 부동산 등기·권리분석 전문가 패널(법무사 20년 + 부동산 전문 변호사)입니다.
 제시된 부동산등기부등본 내용만 근거로 권리관계를 정확히 분석합니다.

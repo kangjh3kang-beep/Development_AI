@@ -1,9 +1,12 @@
 """부동산 등기부(소유관계) 라우터 — 단건/다필지 일괄 조회·다운로드 + 토지조서."""
 
+import asyncio
 import io
+import time
+import uuid
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -11,6 +14,26 @@ from app.services.registry.registry_service import RegistryService
 from apps.api.auth.jwt_handler import CurrentUser, get_current_user
 
 router = APIRouter(prefix="/registry", tags=["부동산 등기부"])
+
+# ── 비동기 등기분석 작업 저장소(모바일 안정: 긴 동기요청 대신 제출+폴링) ──
+_JOBS: dict[str, dict[str, Any]] = {}
+_JOB_TTL = 3600.0
+
+
+def _prune_jobs() -> None:
+    now = time.time()
+    for k in [k for k, v in _JOBS.items() if now - v.get("ts", 0) > _JOB_TTL]:
+        _JOBS.pop(k, None)
+
+
+async def _run_registry_job(job_id: str, params: dict[str, Any]) -> None:
+    try:
+        from app.services.registry.registry_analysis_service import RegistryAnalysisService
+
+        res = await RegistryAnalysisService().analyze(**params)
+        _JOBS[job_id] = {"status": "done", "result": res, "ts": time.time()}
+    except Exception as e:  # noqa: BLE001
+        _JOBS[job_id] = {"status": "error", "error": str(e)[:200], "ts": time.time()}
 
 
 class RegistryBulkRequest(BaseModel):
@@ -61,6 +84,45 @@ async def registry_analyze(
         realty_type=req.realty_type, dong=req.dong, ho=req.ho,
         land_hint=req.land_hint,
     )
+
+
+@router.post("/analyze/jobs", summary="등기 권리분석 비동기 작업 제출(모바일 안정)")
+async def registry_analyze_submit(
+    req: RegistryAnalyzeRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    """긴 동기요청(CODEF ~50s) 대신 작업을 제출하고 즉시 job_id 반환.
+    캐시 적중 시 즉시 결과 반환(작업 생략). 진행은 GET /analyze/jobs/{id}로 폴링."""
+    from app.services.registry.registry_analysis_service import peek_analyze_cache
+
+    cached = peek_analyze_cache(
+        address=req.address, pnu=req.pnu, realty_type=req.realty_type,
+        dong=req.dong, ho=req.ho, registry_text=req.registry_text,
+    )
+    if cached is not None:
+        return {"job_id": None, "status": "done", "result": cached}
+
+    _prune_jobs()
+    job_id = uuid.uuid4().hex
+    _JOBS[job_id] = {"status": "pending", "ts": time.time()}
+    params = dict(
+        address=req.address, pnu=req.pnu, registry_text=req.registry_text,
+        realty_type=req.realty_type, dong=req.dong, ho=req.ho, land_hint=req.land_hint,
+    )
+    asyncio.create_task(_run_registry_job(job_id, params))
+    return {"job_id": job_id, "status": "pending"}
+
+
+@router.get("/analyze/jobs/{job_id}", summary="등기 권리분석 작업 상태/결과 조회")
+async def registry_analyze_status(
+    job_id: str,
+    current_user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    """작업 상태(pending/done/error)와 완료 시 결과를 반환."""
+    j = _JOBS.get(job_id)
+    if not j:
+        raise HTTPException(404, "작업을 찾을 수 없습니다(만료되었거나 잘못된 ID).")
+    return {"status": j["status"], "result": j.get("result"), "error": j.get("error")}
 
 
 @router.post("/cleanup", summary="등기부 PDF TTL 자동삭제(경과분 정리)")

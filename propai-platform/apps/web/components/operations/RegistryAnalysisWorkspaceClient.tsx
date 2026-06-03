@@ -12,7 +12,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Card, CardContent } from "@propai/ui";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
-import { apiClient } from "@/lib/api-client";
+import { analyzeRegistry } from "@/lib/registry-analyze";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { useLandScheduleStore, type LandRow } from "@/store/useLandScheduleStore";
 import type { Locale } from "@/i18n/config";
@@ -64,6 +64,7 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
   const [ho, setHo] = useState("");
   const [loading, setLoading] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null); // 지번별 분석 중
+  const [progress, setProgress] = useState("");
   const [error, setError] = useState("");
   const [result, setResult] = useState<Result | null>(null);
   const [newJibun, setNewJibun] = useState("");
@@ -72,25 +73,23 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
     const target = (typeof overrideAddr === "string" ? overrideAddr : addr) || siteAnalysis?.address || "";
     if (!target && !text.trim()) { setError("주소를 선택하거나 등기부 내용을 입력하세요."); return; }
     if (rowId) setBusyId(rowId); else setLoading(true);
-    setError(""); setResult(null);
+    setError(""); setResult(null); setProgress("");
     try {
-      const r = await apiClient.post<Result>("/registry/analyze", {
-        body: {
-          address: target || undefined, pnu: siteAnalysis?.pnu || undefined,
-          registry_text: text.trim() || undefined,
-          realty_type: realty, dong: realty === "1" ? dong || undefined : undefined,
-          ho: realty === "1" ? ho || undefined : undefined,
-          // 부지분석에서 확보한 토지정보 동봉 → 백엔드 재조회(~31s) 생략
-          land_hint: siteAnalysis
-            ? {
-                pnu: siteAnalysis.pnu || undefined,
-                zone_type: siteAnalysis.zoneCode || undefined,
-                land_area_sqm: siteAnalysis.landAreaSqm || undefined,
-              }
-            : undefined,
-        },
-        useMock: false, timeoutMs: 120000,
-      });
+      // 비동기 작업 제출+폴링(모바일 안정) — 화면 전환/잠금 후 복귀해도 결과 유지
+      const r = await analyzeRegistry<Result>({
+        address: target || undefined, pnu: siteAnalysis?.pnu || undefined,
+        registry_text: text.trim() || undefined,
+        realty_type: realty, dong: realty === "1" ? dong || undefined : undefined,
+        ho: realty === "1" ? ho || undefined : undefined,
+        // 부지분석에서 확보한 토지정보 동봉 → 백엔드 재조회(~31s) 생략
+        land_hint: siteAnalysis
+          ? {
+              pnu: siteAnalysis.pnu || undefined,
+              zone_type: siteAnalysis.zoneCode || undefined,
+              land_area_sqm: siteAnalysis.landAreaSqm || undefined,
+            }
+          : undefined,
+      }, setProgress);
       setResult(r);
       // 등기분석정보 우선: 프로젝트 필지 행에 소유자·지분·소유구분·면적·PDF write-back
       // (정의된 값만 patch — undefined 전달 시 기존 값이 지워지는 것 방지)
@@ -106,10 +105,11 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
         if (r.fetched?.pdf_url) patch.pdf_url = r.fetched.pdf_url;
         if (Object.keys(patch).length) updateRow(projectId, rowId, patch);
       }
-    } catch {
-      setError("등기 분석에 실패했습니다. 잠시 후 다시 시도하세요.");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "등기 분석에 실패했습니다. 잠시 후 다시 시도하세요.");
     } finally {
       if (rowId) setBusyId(null); else setLoading(false);
+      setProgress("");
     }
   }, [addr, text, siteAnalysis, realty, dong, ho, projectId, updateRow]);
 
@@ -197,6 +197,7 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
               className="rounded-xl bg-[var(--accent-strong)] px-5 py-2.5 text-sm font-black text-white hover:opacity-90 disabled:opacity-50">
               {loading ? "등기 분석 중…" : "⚖ 등기 권리분석 실행"}
             </button>
+            {loading && progress && <span className="text-xs text-[var(--text-secondary)]">{progress}</span>}
             {error && <span className="text-xs font-semibold text-rose-500">{error}</span>}
           </div>
         </CardContent>
