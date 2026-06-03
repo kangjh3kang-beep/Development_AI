@@ -8,6 +8,7 @@
  */
 
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 
 type ConfirmDeleteModalProps = {
   open: boolean;
@@ -40,7 +41,7 @@ export function ConfirmDeleteModal({
     }
   }, [open, name]);
 
-  if (!open) return null;
+  if (!open || typeof document === "undefined") return null;
 
   const match = input.trim() === (name ?? "").trim() && name.trim().length > 0;
 
@@ -63,7 +64,7 @@ export function ConfirmDeleteModal({
     }
   };
 
-  return (
+  return createPortal(
     <div
       className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/60 p-4"
       onClick={onCancel}
@@ -128,6 +129,7 @@ export function ConfirmDeleteModal({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

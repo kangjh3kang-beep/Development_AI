@@ -10,6 +10,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 /* ── 카카오 주소 검색 결과 타입 ── */
 interface DaumPostcodeData {
@@ -200,14 +201,16 @@ export function KakaoAddressSearch({
         )}
       </div>
 
-      {/* 주소 검색 인라인 오버레이 (모바일 안전) */}
-      {open && (
+      {/* 주소 검색 오버레이 — Portal로 body에 렌더.
+          (backdrop-blur/transform 조상이 있으면 fixed가 그 안에 갇혀 검색창이
+           프레임에 클립되던 문제 근본 해결: 조상 컨테이닝블록 탈출) */}
+      {open && typeof document !== "undefined" && createPortal(
         <div
           className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/60 p-4"
           onClick={() => setOpen(false)}
         >
           <div
-            className="flex h-[80vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-[var(--line)] bg-[var(--surface)] shadow-[var(--shadow-lg)]"
+            className="flex w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-[var(--line)] bg-[var(--surface)] shadow-[var(--shadow-lg)]"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between border-b border-[var(--line)] px-4 py-3">
@@ -221,9 +224,16 @@ export function KakaoAddressSearch({
                 ✕
               </button>
             </div>
-            <div ref={boxRef} className="min-h-0 flex-1" />
+            {/* Kakao embed는 height:100%를 쓰므로 컨테이너에 '명시적 높이'가 있어야
+                검색창이 잘리지 않는다(flex-1만으론 퍼센트 높이 미해소). */}
+            <div
+              ref={boxRef}
+              className="w-full"
+              style={{ height: "min(70vh, 520px)" }}
+            />
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );
