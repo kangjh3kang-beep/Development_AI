@@ -82,6 +82,7 @@ class ProjectResponse(BaseModel):
     latitude: float | None = None
     longitude: float | None = None
     total_area_sqm: float | None = None
+    building_type: str | None = None
     created_at: datetime
     updated_at: datetime
 

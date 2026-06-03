@@ -142,6 +142,15 @@ except ImportError:
         from app.api.endpoints.sales import sales_router
     except ImportError:
         sales_router = None
+
+# v61 공사비(QTO) 라우터 — 시공관리 단계가 호출(자체 prefix=/api/v1/cost)
+try:
+    from apps.api.app.routers.cost import router as cost_router
+except ImportError:
+    try:
+        from app.routers.cost import router as cost_router
+    except ImportError:
+        cost_router = None
 from apps.api.versioning import VersionHeaderMiddleware, create_latest_redirect_router
 
 settings = get_settings()
@@ -380,6 +389,8 @@ app.include_router(uploads_router, prefix="/api/v1", tags=["업로드"])
 # 나라장터(G2B) 공공입찰 — 라우터 자체 prefix="/g2b" → 최종 /api/v1/g2b/*
 if g2b_router is not None:
     app.include_router(g2b_router, prefix="/api/v1", tags=["공공입찰(G2B)"])
+if cost_router is not None:
+    app.include_router(cost_router, tags=["v61 공사비"])  # 자체 prefix=/api/v1/cost
 if sales_router is not None:
     app.include_router(sales_router, prefix="/api/v1/sales", tags=["분양관리(sales)"])
     try:

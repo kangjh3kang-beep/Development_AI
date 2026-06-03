@@ -278,7 +278,7 @@ export default function SiteAnalysisPage() {
           nearby_transactions?: L3SiteData["nearby_transactions"];
           infrastructure?: L3SiteData["infrastructure"];
           building_detail?: L3SiteData["building_detail"];
-        }>("/land-intelligence/comprehensive", {
+        }>("/zoning/comprehensive", {
           useMock: false,
           body: { address, pnu: zoningResult.pnu },
         });

@@ -60,8 +60,23 @@ export default function NewProjectPage() {
       await apiClient.post("/billing/charge", { body: { action: "project_create" }, useMock: false });
     } catch { /* 비로그인/실패 무시 */ }
 
+    // 백엔드 영속화: 실제 projects row 생성 → 파이프라인 메타데이터(GET /projects/{id}) 로드 가능.
+    // 부지분석 면적을 시드로 전달(점진 강화의 출발점). best-effort — 실패해도 로컬 ID로 진행.
+    let backendId = "";
     try {
-      setProject(projectId || crypto.randomUUID(), name, "draft");
+      const areaNum = currentSiteAnalysis?.landAreaSqm ? Number(currentSiteAnalysis.landAreaSqm) : 0;
+      const res = await apiClient.post<{ id: string }>("/projects", {
+        body: { name, address: location || undefined, ...(areaNum > 0 ? { total_area_sqm: areaNum } : {}) },
+        useMock: false,
+      });
+      backendId = res?.id || "";
+    } catch (err) {
+      console.error("백엔드 프로젝트 생성 경고(로컬로 진행):", err);
+    }
+    const targetId = backendId || projectId || `tmp-${Date.now()}`;
+
+    try {
+      setProject(targetId, name, "draft");
       const restored = currentSiteAnalysis ?? {
         estimatedValue: null, landAreaSqm: null, zoneCode: null, address: location, pnu: null,
       };
@@ -71,8 +86,7 @@ export default function NewProjectPage() {
       console.error("컨텍스트 저장 경고(이동은 계속):", err);
     }
 
-    // 이동: projectId가 없으면(저장 실패) 임시 ID로라도 진입해 부지분석 시작.
-    const targetId = projectId || `tmp-${Date.now()}`;
+    // 이동: 백엔드 UUID 우선(targetId는 위에서 계산). 실패 시 로컬/임시 ID로 진입.
     try {
       router.push(`/${locale}/projects/${targetId}?new=1`);
     } catch (err) {

@@ -51,6 +51,7 @@ def _to_response(project: Project) -> ProjectResponse:
         latitude=project.latitude,
         longitude=project.longitude,
         total_area_sqm=project.total_area_sqm,
+        building_type=getattr(project, "building_type", None) or "공동주택",
         created_at=project.created_at,
         updated_at=project.updated_at,
     )
