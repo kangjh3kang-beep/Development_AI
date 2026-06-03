@@ -42,8 +42,22 @@ body {
 
 /* ── Fix Placeholder Contrast ── */
 ::placeholder {
-  color: var(--text-hint);
+  color: var(--text-tertiary); /* 입력 필드 placeholder 가독성 상향 */
   opacity: 1; /* Target browsers that lower opacity by default */
+}
+
+/* ── 폼 컨트롤 포커스 가독성(전역) ── */
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--accent-soft);
+  outline-offset: 1px;
+  border-color: var(--accent-strong);
+}
+/* 다크: select 드롭다운 옵션 가독성 */
+.dark select option {
+  background-color: var(--surface-strong);
+  color: var(--text-primary);
 }
 
 /* ── Typography Hierarchy ── */

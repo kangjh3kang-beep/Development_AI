@@ -5,7 +5,7 @@ import { salesApi } from "@/lib/salesApi";
 
 interface Report { id: string; status: string; due_date?: string }
 interface Transfer { id: string; transfer_type?: string; allowed?: boolean; reason?: string; decided_at?: string }
-const IN = "rounded-lg border border-[var(--line)] bg-[var(--surface-strong)] px-3 py-2 text-sm text-[var(--text-primary)]";
+const IN = "rounded-lg border border-[var(--line-strong)] bg-[var(--surface-strong)] px-3 py-2 text-sm text-[var(--text-primary)]";
 const BTN = "rounded-lg bg-[var(--accent-strong)] px-3 py-1.5 text-sm font-bold text-white disabled:opacity-50";
 
 export default function ResalePanel({ siteCode }: { siteCode: string }) {

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { salesApi, won } from "@/lib/salesApi";
 
 interface Overdue { id: string; overdue_days?: number; amount?: number }
-const IN = "rounded-lg border border-[var(--line)] bg-[var(--surface-strong)] px-3 py-2 text-sm text-[var(--text-primary)]";
+const IN = "rounded-lg border border-[var(--line-strong)] bg-[var(--surface-strong)] px-3 py-2 text-sm text-[var(--text-primary)]";
 const BTN = "rounded-lg bg-[var(--accent-strong)] px-3 py-1.5 text-sm font-bold text-white disabled:opacity-50";
 
 export default function PaymentsPanel({ siteCode }: { siteCode: string }) {

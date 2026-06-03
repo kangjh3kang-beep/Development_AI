@@ -71,10 +71,14 @@ export default function SalesSiteWorkspace({ siteCode, locale }: { siteCode: str
         )}
       </div>
 
-      <div className="flex flex-wrap gap-2 border-b border-[var(--line)] pb-2">
+      <div className="flex flex-wrap gap-2 border-b border-[var(--line)] pb-3">
         {TABS.map((t) => (
           <button key={t.key} onClick={() => setTab(t.key)}
-            className={`rounded-lg px-3 py-1.5 text-sm font-bold ${tab === t.key ? "bg-[var(--accent-strong)] text-white" : "text-[var(--text-secondary)] hover:bg-[var(--surface-strong)]"}`}>
+            className={`rounded-lg px-3.5 py-1.5 text-sm font-bold transition ${
+              tab === t.key
+                ? "bg-[var(--accent-strong)] text-white shadow-[var(--shadow-sm)]"
+                : "border border-[var(--line)] bg-[var(--surface-strong)] text-[var(--text-secondary)] hover:border-[var(--accent-strong)] hover:text-[var(--text-primary)]"
+            }`}>
             {t.label}
           </button>
         ))}

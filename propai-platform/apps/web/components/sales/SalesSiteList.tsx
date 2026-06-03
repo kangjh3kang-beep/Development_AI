@@ -7,6 +7,16 @@ import type { Locale } from "@/i18n/config";
 
 interface Site { id: string; site_code: string; site_name: string; development_type: string; status: string }
 const DEV_TYPES = ["APT", "OFFICETEL", "KNOWLEDGE_CENTER", "HOTEL", "RETAIL"];
+const FIELD_CLS = "rounded-lg border border-[var(--line-strong)] bg-[var(--surface-strong)] px-3 py-2 text-sm text-[var(--text-primary)]";
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <label className="flex flex-col gap-1">
+      <span className="text-[11px] font-semibold text-[var(--text-tertiary)]">{label}</span>
+      {children}
+    </label>
+  );
+}
 
 export default function SalesSiteList({ locale }: { locale: Locale }) {
   const [sites, setSites] = useState<Site[]>([]);
@@ -46,17 +56,23 @@ export default function SalesSiteList({ locale }: { locale: Locale }) {
       {/* 프로비저닝 */}
       <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-5">
         <h2 className="mb-3 text-sm font-bold text-[var(--text-primary)]">새 현장 프로비저닝</h2>
-        <div className="flex flex-wrap items-end gap-2">
-          <input value={form.site_name} onChange={(e) => setForm({ ...form, site_name: e.target.value })}
-            placeholder="현장명" className="rounded-lg border border-[var(--line)] bg-[var(--surface-strong)] px-3 py-2 text-sm text-[var(--text-primary)]" />
-          <select value={form.development_type} onChange={(e) => setForm({ ...form, development_type: e.target.value })}
-            className="rounded-lg border border-[var(--line)] bg-[var(--surface-strong)] px-3 py-2 text-sm text-[var(--text-primary)]">
-            {DEV_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
-          </select>
-          <input value={form.project_id} onChange={(e) => setForm({ ...form, project_id: e.target.value })}
-            placeholder="프로젝트 ID (UUID)" className="w-72 rounded-lg border border-[var(--line)] bg-[var(--surface-strong)] px-3 py-2 text-sm text-[var(--text-primary)]" />
+        <div className="flex flex-wrap items-end gap-3">
+          <Field label="현장명">
+            <input value={form.site_name} onChange={(e) => setForm({ ...form, site_name: e.target.value })}
+              placeholder="예: 강남 더샵 1차" className={FIELD_CLS + " w-56"} />
+          </Field>
+          <Field label="개발 유형">
+            <select value={form.development_type} onChange={(e) => setForm({ ...form, development_type: e.target.value })}
+              className={FIELD_CLS + " w-44"}>
+              {DEV_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </Field>
+          <Field label="프로젝트 ID">
+            <input value={form.project_id} onChange={(e) => setForm({ ...form, project_id: e.target.value })}
+              placeholder="프로젝트 UUID" className={FIELD_CLS + " w-72"} />
+          </Field>
           <button onClick={provision} disabled={busy}
-            className="rounded-lg bg-[var(--accent-strong)] px-4 py-2 text-sm font-black text-white disabled:opacity-50">
+            className="rounded-lg bg-[var(--accent-strong)] px-5 py-2.5 text-sm font-black text-white shadow-[var(--shadow-sm)] transition hover:opacity-90 disabled:opacity-50">
             {busy ? "생성 중…" : "프로비저닝"}
           </button>
         </div>

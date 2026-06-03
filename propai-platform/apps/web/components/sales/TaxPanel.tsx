@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { salesApi, won } from "@/lib/salesApi";
 
 interface Invoice { id: string; direction?: string; supply_amount?: number; vat_amount?: number; status?: string; item?: string }
-const IN = "rounded-lg border border-[var(--line)] bg-[var(--surface-strong)] px-3 py-2 text-sm text-[var(--text-primary)]";
+const IN = "rounded-lg border border-[var(--line-strong)] bg-[var(--surface-strong)] px-3 py-2 text-sm text-[var(--text-primary)]";
 const BTN = "rounded-lg bg-[var(--accent-strong)] px-3 py-1.5 text-sm font-bold text-white disabled:opacity-50";
 
 export default function TaxPanel({ siteCode }: { siteCode: string }) {
