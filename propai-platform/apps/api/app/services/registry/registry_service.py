@@ -290,6 +290,8 @@ class RegistryService:
             "owner": owner,
             "registry_office": summary_office,
             "doc_title": (entries[0].get("resDocTitle") if entries else None),
+            "entries": entries,  # 등기사항 전체(갑구·을구·요약) — 권리분석용
+            "addr_list": first.get("resAddrList") or [],
             "pdf_base64": first.get("resOriGinalData") or None,  # PDF BASE64
             "has_pdf": bool(first.get("resOriGinalData")),
             "summary": result.get("message"),

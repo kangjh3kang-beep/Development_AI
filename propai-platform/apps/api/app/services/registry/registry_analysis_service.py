@@ -58,9 +58,14 @@ def _registry_text_from_codef(reg: dict[str, Any]) -> str:
         parts.append(f"소유자(요약): {reg['owner']}")
     if reg.get("registry_office"):
         parts.append(f"관할등기소: {reg['registry_office']}")
+    # 주소목록 소유자(있으면)
+    for a in (reg.get("addr_list") or []):
+        if a.get("resUserNm"):
+            parts.append(f"[소유자(주소목록)] {a.get('resUserNm')} / 고유번호 {a.get('commUniqueNo','')}")
     raw = reg.get("raw") or reg
+    entries = reg.get("entries") or (raw.get("resRegisterEntriesList") if isinstance(raw, dict) else None) or []
     # 등기사항 요약/내용 직렬화(있는 만큼)
-    for entry in (raw.get("resRegisterEntriesList") or []):
+    for entry in entries:
         for sm in (entry.get("resRegistrationSumList") or []):
             t = sm.get("resType", "")
             for cl in (sm.get("resContentsList") or []):
