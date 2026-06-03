@@ -3,20 +3,23 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { salesGlobal } from "@/lib/salesApi";
+import { apiClient } from "@/lib/api-client";
 import { useProjectStore } from "@/store/useProjectStore";
 import type { Locale } from "@/i18n/config";
+
+type DevType = { value: string; label: string };
 
 interface Site { id: string; site_code: string; site_name: string; development_type: string; status: string }
 interface Project { id: string; name: string }
 // 개발 유형 — 코드(값)와 일반인이 이해하는 한글 표기
-const DEV_TYPES: { value: string; label: string }[] = [
+// 기본 현장유형(관리자 편집 목록 미설정 시 폴백). 운영값은 /admin/option-lists/sales_site_types.
+const DEFAULT_DEV_TYPES: DevType[] = [
   { value: "APT", label: "아파트" },
   { value: "OFFICETEL", label: "오피스텔" },
   { value: "KNOWLEDGE_CENTER", label: "지식산업센터" },
   { value: "HOTEL", label: "생활숙박시설/호텔" },
   { value: "RETAIL", label: "상가" },
 ];
-const DEV_LABEL: Record<string, string> = Object.fromEntries(DEV_TYPES.map((d) => [d.value, d.label]));
 const STATUS_LABEL: Record<string, string> = { PREP: "준비중", OPEN: "분양중", CLOSED: "분양종료" };
 const FIELD_CLS = "rounded-lg border border-[var(--line-strong)] bg-[var(--surface-strong)] px-3 py-2.5 text-sm text-[var(--text-primary)]";
 
@@ -31,9 +34,12 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 
 export default function SalesSiteList({ locale }: { locale: Locale }) {
   const [sites, setSites] = useState<Site[]>([]);
+  const [devTypes, setDevTypes] = useState<DevType[]>(DEFAULT_DEV_TYPES);
   const [form, setForm] = useState({ site_name: "", development_type: "APT", project_id: "" });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+
+  const devLabel = (v: string) => devTypes.find((d) => d.value === v)?.label ?? v;
 
   // 연결할 프로젝트: 프로젝트 목록 단일출처(백엔드 동기화 스토어) 사용 — 드롭다운/프로젝트관리와 일치
   const storeProjects = useProjectStore((s) => s.projects);
@@ -44,6 +50,11 @@ export default function SalesSiteList({ locale }: { locale: Locale }) {
   useEffect(() => {
     load();
     void syncFromBackend();
+    // 현장유형: 관리자 편집 목록 로드(미설정 시 기본값 유지)
+    apiClient
+      .get<{ items?: DevType[] }>("/admin/option-lists/sales_site_types", { useMock: false })
+      .then((r) => { if (r.items && r.items.length) setDevTypes(r.items); })
+      .catch(() => {});
   }, [syncFromBackend]);
 
   const createSite = async () => {
@@ -87,7 +98,7 @@ export default function SalesSiteList({ locale }: { locale: Locale }) {
           <Field label="현장 유형">
             <select value={form.development_type} onChange={(e) => setForm({ ...form, development_type: e.target.value })}
               className={FIELD_CLS + " w-44"}>
-              {DEV_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+              {devTypes.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
             </select>
           </Field>
           <Field label="연결할 프로젝트">
@@ -129,7 +140,7 @@ export default function SalesSiteList({ locale }: { locale: Locale }) {
                   <h3 className="font-bold text-[var(--text-primary)]">{s.site_name}</h3>
                   <span className="rounded-full bg-[var(--surface-strong)] px-2 py-0.5 text-[11px] font-bold text-[var(--accent-strong)]">{STATUS_LABEL[s.status] ?? s.status}</span>
                 </div>
-                <p className="mt-1 text-xs text-[var(--text-tertiary)]">{DEV_LABEL[s.development_type] ?? s.development_type}</p>
+                <p className="mt-1 text-xs text-[var(--text-tertiary)]">{devLabel(s.development_type)}</p>
               </Link>
             ))}
           </div>

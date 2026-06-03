@@ -27,6 +27,7 @@ from apps.api.metrics import DB_POOL_SIZE
 from apps.api.middleware import setup_middlewares
 from apps.api.rate_limit import limiter, rate_limit_exceeded_handler
 from apps.api.routers import (
+    admin_lists,
     agents,
     ai_costs,
     analytics,
@@ -325,6 +326,7 @@ app.include_router(registry.router, prefix="/api/v1", tags=["부동산 등기부
 app.include_router(avm.router, prefix="/api/v1/avm", tags=["AVM 시세추정"])
 app.include_router(analytics.router, prefix="/api/v1/analytics", tags=["분석 대시보드"])
 app.include_router(integration.router, prefix="/api/v1/integration", tags=["연동 상태"])
+app.include_router(admin_lists.router, prefix="/api/v1", tags=["관리자 편집목록"])
 app.include_router(regulation.router, prefix="/api/v1/regulation", tags=["법규 검토"])
 app.include_router(tax.router, prefix="/api/v1/tax", tags=["세금 계산"])
 app.include_router(design.router, prefix="/api/v1/design", tags=["설계"])
