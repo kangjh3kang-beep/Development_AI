@@ -133,6 +133,15 @@ except ImportError:
         from app.routers.g2b_bid import router as g2b_router
     except ImportError:
         g2b_router = None
+
+# v62 분양관리 ERP + 모델하우스 데스크 (자체 내부 prefix, /api/v1/sales 하위)
+try:
+    from apps.api.app.api.endpoints.sales import sales_router
+except ImportError:
+    try:
+        from app.api.endpoints.sales import sales_router
+    except ImportError:
+        sales_router = None
 from apps.api.versioning import VersionHeaderMiddleware, create_latest_redirect_router
 
 settings = get_settings()
@@ -371,6 +380,8 @@ app.include_router(uploads_router, prefix="/api/v1", tags=["업로드"])
 # 나라장터(G2B) 공공입찰 — 라우터 자체 prefix="/g2b" → 최종 /api/v1/g2b/*
 if g2b_router is not None:
     app.include_router(g2b_router, prefix="/api/v1", tags=["공공입찰(G2B)"])
+if sales_router is not None:
+    app.include_router(sales_router, prefix="/api/v1/sales", tags=["분양관리(sales)"])
 
 # ── 프론트 호출하나 미마운트였던 app/routers (404 위험 해소). 각각 독립 try로 격리 ──
 # ESG LCA/EPD: app/routers/esg.py(자체 prefix=/api/v1/esg). /esg/assessment는 위
