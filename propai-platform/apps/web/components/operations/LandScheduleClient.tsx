@@ -56,6 +56,7 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
   const [addr, setAddr] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [highlight, setHighlight] = useState("");
+  const [notice, setNotice] = useState("");
   const fileRef = useRef<HTMLInputElement | null>(null);
 
   // 필지 상태(계약/동의) → 색상·라벨 (지도·표 강조)
@@ -153,27 +154,38 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, siteAnalysis]);
 
-  // 등기분석으로 행 자동채움(소유자·지분·소유구분·면적)
+  // 등기분석으로 행 자동채움(소유자·지분·소유구분·면적). 등기 실패 시에도 공부정보는 채움.
   const autofill = useCallback(async (r: LandRow) => {
     if (!r.jibun.trim()) return;
-    setBusy(r.id);
+    setBusy(r.id); setNotice("");
     try {
       const res = await analyzeRegistry<{
-        land?: { owner_type?: string; land_area_sqm?: number };
+        status?: string; message?: string;
+        land?: { owner_type?: string; land_area_sqm?: number; ownership_form?: string };
         ai?: { ownership?: { current_owner?: string; share?: string } };
         fetched?: { pdf_url?: string | null };
       }>({ address: r.jibun.trim() });
       const own = res.ai?.ownership || {};
       const land = res.land || {};
-      // 등기분석정보 우선: 소유자·지분·소유구분은 등기 결과로 덮어쓰기(부지분석 추정값보다 우선).
+      const ownerStr = own.current_owner && own.current_owner !== "데이터 없음" ? own.current_owner : "";
+      // 공부 토지정보(면적/소유구분)는 항상 반영. 소유자·지분은 등기 성공 시 반영.
       updateRow(projectId, r.id, {
-        owner: own.current_owner && own.current_owner !== "데이터 없음" ? own.current_owner : r.owner,
+        owner: ownerStr || r.owner,
         share: own.share && own.share !== "데이터 없음" ? own.share : r.share,
         area_sqm: land.land_area_sqm ?? r.area_sqm,
-        owner_type: toOwnerType(land.owner_type) || r.owner_type,
+        owner_type: toOwnerType(land.owner_type) || (land.ownership_form ? "사유지" : r.owner_type),
         pdf_url: res.fetched?.pdf_url ?? r.pdf_url,
       });
-    } catch { /* noop */ } finally { setBusy(null); }
+      if (res.status !== "ok" || !ownerStr) {
+        setNotice(
+          `「${r.jibun}」 공부 토지정보는 채웠으나, 소유자·지분(등기)은 가져오지 못했습니다` +
+          (res.message ? ` — ${res.message}` : "(등기 발급 연동 확인 필요)") +
+          ". 등기부등본 내용을 직접 입력하면 권리분석이 가능합니다.",
+        );
+      }
+    } catch {
+      setNotice(`「${r.jibun}」 등기 분석에 실패했습니다. 잠시 후 다시 시도하세요.`);
+    } finally { setBusy(null); }
   }, [projectId, updateRow]);
 
   const openAnalysis = (jibun: string) => {
@@ -235,6 +247,13 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
           </div>
         </CardContent>
       </Card>
+
+      {notice && (
+        <div className="flex items-start justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-300">
+          <span>⚠ {notice}</span>
+          <button onClick={() => setNotice("")} className="shrink-0 text-amber-400">✕</button>
+        </div>
+      )}
 
       {rows.length > 0 && (
         <>
