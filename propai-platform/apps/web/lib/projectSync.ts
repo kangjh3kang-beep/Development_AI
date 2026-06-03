@@ -9,6 +9,7 @@
 import { apiClient } from "@/lib/api-client";
 import { useProjectStore } from "@/store/useProjectStore";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { useLandScheduleStore } from "@/store/useLandScheduleStore";
 
 const CTX_KEYS = [
   "projectId", "projectName", "projectStatus",
@@ -42,6 +43,10 @@ export async function syncDown(): Promise<void> {
       }
       useProjectContextStore.setState(patch as never);
     }
+    const ls = (data as { landSchedule?: { byProject?: unknown } }).landSchedule;
+    if (ls && typeof ls === "object" && ls.byProject) {
+      useLandScheduleStore.setState({ byProject: ls.byProject as never });
+    }
   } catch {
     /* 오프라인/미인증 → 로컬 유지 */
   } finally {
@@ -70,8 +75,9 @@ export async function syncUp(): Promise<void> {
       siteImageUrl:
         p.siteImageUrl && !p.siteImageUrl.startsWith("data:") ? p.siteImageUrl : undefined,
     }));
+    const landSchedule = { byProject: useLandScheduleStore.getState().byProject };
     await apiClient.put("/store/projects", {
-      body: { data: { projectStore: { projects }, contextStore } },
+      body: { data: { projectStore: { projects }, contextStore, landSchedule } },
       useMock: false,
     });
   } catch {

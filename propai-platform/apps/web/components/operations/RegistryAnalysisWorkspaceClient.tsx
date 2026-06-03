@@ -8,7 +8,8 @@
  * 토지 소유구분·특성(공부)도 함께 제공.
  */
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { Card, CardContent } from "@propai/ui";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { apiClient } from "@/lib/api-client";
@@ -41,7 +42,7 @@ const GRADE: Record<string, string> = {
   위험: "border-rose-500/30 bg-rose-500/10 text-rose-400",
 };
 
-export function RegistryAnalysisWorkspaceClient({ locale: _locale }: { locale: Locale }) {
+export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) {
   const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
   const [addr, setAddr] = useState("");
   const [text, setText] = useState("");
@@ -50,8 +51,8 @@ export function RegistryAnalysisWorkspaceClient({ locale: _locale }: { locale: L
   const [error, setError] = useState("");
   const [result, setResult] = useState<Result | null>(null);
 
-  const run = useCallback(async () => {
-    const target = addr || siteAnalysis?.address || "";
+  const run = useCallback(async (overrideAddr?: string) => {
+    const target = (typeof overrideAddr === "string" ? overrideAddr : addr) || siteAnalysis?.address || "";
     if (!target && !text.trim()) { setError("주소를 선택하거나 등기부 내용을 입력하세요."); return; }
     setLoading(true); setError(""); setResult(null);
     try {
@@ -66,6 +67,15 @@ export function RegistryAnalysisWorkspaceClient({ locale: _locale }: { locale: L
       setLoading(false);
     }
   }, [addr, text, siteAnalysis]);
+
+  // 토지조서 등에서 ?addr= 로 진입 시 자동 프리필 + 1회 실행
+  const autoRan = useRef(false);
+  useEffect(() => {
+    if (autoRan.current || typeof window === "undefined") return;
+    const p = new URLSearchParams(window.location.search).get("addr");
+    if (p) { autoRan.current = true; setAddr(p); void run(p); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const ai = result?.ai;
   const land = result?.land;
@@ -99,7 +109,7 @@ export function RegistryAnalysisWorkspaceClient({ locale: _locale }: { locale: L
             )}
           </div>
           <div className="mt-4 flex items-center gap-3">
-            <button onClick={run} disabled={loading}
+            <button onClick={() => run()} disabled={loading}
               className="rounded-xl bg-[var(--accent-strong)] px-5 py-2.5 text-sm font-black text-white hover:opacity-90 disabled:opacity-50">
               {loading ? "등기 분석 중…" : "⚖ 등기 권리분석 실행"}
             </button>
@@ -208,6 +218,16 @@ export function RegistryAnalysisWorkspaceClient({ locale: _locale }: { locale: L
           )}
         </>
       )}
+
+      {/* 하단 서브메뉴: 토지조서 연동 */}
+      <Card className="rounded-[var(--radius-2xl)] border-[var(--line)] shadow-[var(--shadow-sm)]">
+        <CardContent className="flex flex-wrap items-center justify-between gap-3 p-5">
+          <p className="text-xs text-[var(--text-secondary)]">📋 여러 필지의 소유·지분·매입가·계약/동의를 한눈에 관리하려면 토지조서로 이동하세요.</p>
+          <Link href={`/${locale}/land-schedule`} className="rounded-xl bg-[var(--accent-strong)] px-4 py-2 text-xs font-black text-white hover:opacity-90">
+            토지조서 바로가기 →
+          </Link>
+        </CardContent>
+      </Card>
     </div>
   );
 }

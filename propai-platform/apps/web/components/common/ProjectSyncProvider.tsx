@@ -8,6 +8,7 @@
 import { useEffect } from "react";
 import { useProjectStore } from "@/store/useProjectStore";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { useLandScheduleStore } from "@/store/useLandScheduleStore";
 import { syncDown, scheduleSyncUp } from "@/lib/projectSync";
 
 export function ProjectSyncProvider() {
@@ -17,7 +18,8 @@ export function ProjectSyncProvider() {
     // 2) 로컬 변경 → 서버 (debounced)
     const unsubA = useProjectStore.subscribe(() => scheduleSyncUp());
     const unsubB = useProjectContextStore.subscribe(() => scheduleSyncUp());
-    return () => { unsubA(); unsubB(); };
+    const unsubC = useLandScheduleStore.subscribe(() => scheduleSyncUp());
+    return () => { unsubA(); unsubB(); unsubC(); };
   }, []);
   return null;
 }

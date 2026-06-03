@@ -160,6 +160,7 @@ export default async function DashboardLayout({
     { href: `/${locale}/permits`, label: "인.허가분석 자동화", icon: <IconPermit /> },
     { href: `/${locale}/regulations`, label: "부동산 규제 연동", icon: <IconRegulation /> },
     { href: `/${locale}/registry-analysis`, label: "부동산등기 정보분석", icon: <IconPermit /> },
+    { href: `/${locale}/land-schedule`, label: "토지조서 (편입토지)", icon: <IconProject /> },
   ];
 
   // II. 수익·비용·ESG
