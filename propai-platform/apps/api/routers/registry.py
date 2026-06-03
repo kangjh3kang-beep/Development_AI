@@ -95,7 +95,7 @@ async def registry_analyze_submit(
     캐시 적중 시 즉시 결과 반환(작업 생략). 진행은 GET /analyze/jobs/{id}로 폴링."""
     from app.services.registry.registry_analysis_service import peek_analyze_cache
 
-    cached = peek_analyze_cache(
+    cached = await peek_analyze_cache(
         address=req.address, pnu=req.pnu, realty_type=req.realty_type,
         dong=req.dong, ho=req.ho, registry_text=req.registry_text,
     )

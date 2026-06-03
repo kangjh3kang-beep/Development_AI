@@ -16,20 +16,73 @@ logger = structlog.get_logger(__name__)
 # 등기 분석 결과 캐시(모듈) — CODEF 발급은 느리고(약 40~50s) 유료라 동일 필지 재분석을
 # 즉시 응답하고 비용을 절약한다. 키=(pnu|address, realty_type, dong, ho). TTL 6시간.
 _ANALYZE_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
-_ANALYZE_TTL = 6 * 3600.0
+_ANALYZE_TTL = 6 * 3600.0          # 인메모리(프로세스) 캐시
+_ANALYZE_DB_TTL = 7 * 24 * 3600    # DB 영속 공유 캐시(7일) — 재분석은 선납금 소모라 길게 보관
+_ANALYZE_DDL = (
+    "CREATE TABLE IF NOT EXISTS registry_analysis_cache ("
+    "key text PRIMARY KEY, result jsonb NOT NULL, created_at timestamptz DEFAULT now())"
+)
 
 
-def peek_analyze_cache(
+def _norm_addr(s: str | None) -> str:
+    return " ".join((s or "").split()).strip()
+
+
+def _cache_key(address: str | None, pnu: str | None, realty_type: str | None,
+               dong: str | None, ho: str | None) -> str:
+    """페이지·호출부와 무관하게 동일 필지는 동일 키. 주소(정규화) 우선, realty 기본 토지(2)."""
+    base = _norm_addr(address) or (pnu or "")
+    return f"{base}|{realty_type or '2'}|{dong or ''}|{ho or ''}"
+
+
+async def _db_cache_get(key: str) -> dict[str, Any] | None:
+    try:
+        from sqlalchemy import text
+        from app.core.database import async_session_factory
+        async with async_session_factory() as db:
+            await db.execute(text(_ANALYZE_DDL)); await db.commit()
+            row = (await db.execute(
+                text("SELECT result, extract(epoch from created_at) AS ts "
+                     "FROM registry_analysis_cache WHERE key = :k"), {"k": key})).first()
+            if row and row[0] and (time.time() - float(row[1] or 0)) < _ANALYZE_DB_TTL:
+                return row[0]
+    except Exception as e:  # noqa: BLE001
+        logger.warning("등기분석 DB캐시 조회 실패", err=str(e)[:80])
+    return None
+
+
+async def _db_cache_put(key: str, result: dict[str, Any]) -> None:
+    try:
+        import json as _json
+        from sqlalchemy import text
+        from app.core.database import async_session_factory
+        async with async_session_factory() as db:
+            await db.execute(text(_ANALYZE_DDL))
+            await db.execute(text(
+                "INSERT INTO registry_analysis_cache(key, result, created_at) "
+                "VALUES (:k, CAST(:v AS jsonb), now()) "
+                "ON CONFLICT (key) DO UPDATE SET result = EXCLUDED.result, created_at = now()"),
+                {"k": key, "v": _json.dumps(result, ensure_ascii=False, default=str)})
+            await db.commit()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("등기분석 DB캐시 저장 실패", err=str(e)[:80])
+
+
+async def peek_analyze_cache(
     address: str | None = None, pnu: str | None = None, realty_type: str | None = None,
     dong: str | None = None, ho: str | None = None, registry_text: str | None = None,
 ) -> dict[str, Any] | None:
-    """동일 필지 분석 결과가 캐시에 있으면 반환(비동기 작업 제출 전 즉시반환용)."""
+    """동일 필지의 성공 분석이 인메모리 또는 DB(영속·공유)에 있으면 반환(작업 제출 전 즉시반환)."""
     if registry_text and registry_text.strip():
         return None
-    key = f"{pnu or address}|{realty_type}|{dong}|{ho}"
+    key = _cache_key(address, pnu, realty_type, dong, ho)
     hit = _ANALYZE_CACHE.get(key)
     if hit and (time.time() - hit[0]) < _ANALYZE_TTL:
         return {**hit[1], "cached": True}
+    db_hit = await _db_cache_get(key)
+    if db_hit:
+        _ANALYZE_CACHE[key] = (time.time(), db_hit)  # 인메모리 승격
+        return {**db_hit, "cached": True}
     return None
 
 _SYSTEM = """\
@@ -182,13 +235,17 @@ class RegistryAnalysisService:
     ) -> dict[str, Any]:
         import asyncio
 
-        # 캐시 조회(직접 입력 텍스트는 매번 다를 수 있어 캐시 제외)
+        # 캐시 조회(직접 입력 텍스트는 매번 다를 수 있어 캐시 제외) — 정규화 키 + DB 영속 공유
         cache_key = None
         if not (registry_text and registry_text.strip()):
-            cache_key = f"{pnu or address}|{realty_type}|{dong}|{ho}"
+            cache_key = _cache_key(address, pnu, realty_type, dong, ho)
             hit = _ANALYZE_CACHE.get(cache_key)
             if hit and (time.time() - hit[0]) < _ANALYZE_TTL:
                 return {**hit[1], "cached": True}
+            db_hit = await _db_cache_get(cache_key)
+            if db_hit:
+                _ANALYZE_CACHE[cache_key] = (time.time(), db_hit)
+                return {**db_hit, "cached": True}
 
         origin = None
         source = None
@@ -271,6 +328,7 @@ class RegistryAnalysisService:
         out = {"status": "ok", "origin": origin, "land": land, "fetched": fetched_meta, "ai": ai}
         if cache_key:
             _ANALYZE_CACHE[cache_key] = (time.time(), out)
+            await _db_cache_put(cache_key, out)  # 영속·공유(페이지·배포 무관 재사용)
         return out
 
     async def _llm(self, address: str | None, registry: str) -> dict[str, Any]:
