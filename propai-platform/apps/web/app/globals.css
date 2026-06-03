@@ -73,6 +73,18 @@ a[aria-disabled="true"],
   cursor: not-allowed;
 }
 
+/* ── 클릭 가능 컨트롤 손모양 커서 ──
+   Tailwind preflight가 button 기본 cursor:pointer 를 제거해 전역에서 화살표로 보여
+   링크/버튼임을 인지하기 어렵다. 활성 컨트롤에 pointer 를 복원(자동채움/분석 등 포함). */
+button:not(:disabled),
+[role="button"]:not([aria-disabled="true"]),
+a[href],
+label[for],
+select:not(:disabled),
+summary {
+  cursor: pointer;
+}
+
 /* ── Typography Hierarchy ── */
 h1, h2, h3, h4, h5, h6 { font-family: var(--font-display), "Space Grotesk", sans-serif; }
 h1 { font-weight: 700; letter-spacing: -0.03em; line-height: 1.1; }

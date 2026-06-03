@@ -21,6 +21,7 @@ export type LandRow = {
   contracted: boolean; // 매입계약 확정여부
   land_use_consent: boolean; // 토지사용동의서
   district_consent: boolean; // 지구단위(정비) 동의서
+  pdf_url?: string | null; // 발급 등기부등본 PDF(서버 저장, TTL)
   note?: string;
 };
 

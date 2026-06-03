@@ -5,7 +5,7 @@
  * 등기정보분석과 상호 연동(행별 자동채움/링크). 프로젝트별 영속 + 서버 동기화.
  */
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { Card, CardContent } from "@propai/ui";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
@@ -47,6 +47,7 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
   const { locale: rl } = (useParams() as { locale?: string }) || {};
   const projectId = useProjectContextStore((s) => s.projectId);
   const projectName = useProjectContextStore((s) => s.projectName);
+  const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
   const rows = useLandScheduleStore((s) => s.byProject[projectId || "_default"] ?? EMPTY_ROWS);
   const addRow = useLandScheduleStore((s) => s.addRow);
   const updateRow = useLandScheduleStore((s) => s.updateRow);
@@ -123,20 +124,54 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
     setAddr("");
   }, [addr, projectId, addRow]);
 
+  // 소유구분 문자열 → 사유지/국공유지 매핑
+  const toOwnerType = (s?: string | null): LandRow["owner_type"] =>
+    s?.includes("국") || s?.includes("공") ? "국공유지" : s ? "사유지" : "";
+
+  // 부지분석(프로젝트) → 토지조서 행 시드. 다필지면 전부, 단일이면 1행. (#1·#2·#4)
+  const loadFromProject = useCallback(() => {
+    const mk = (jibun: string, area: number | null, ot: string): LandRow => ({
+      id: Math.random().toString(36).slice(2, 9),
+      jibun, owner: "", share: "", area_sqm: area, owner_type: toOwnerType(ot),
+      expected_price: null, purchase_price: null,
+      contracted: false, land_use_consent: false, district_consent: false, pdf_url: null,
+    });
+    const parcels = siteAnalysis?.parcels;
+    if (parcels && parcels.length) {
+      setRows(projectId, parcels.map((p) => mk(p.address, p.areaSqm ?? null, p.ownerType)));
+    } else if (siteAnalysis?.address) {
+      setRows(projectId, [mk(siteAnalysis.address, siteAnalysis.landAreaSqm ?? null, "")]);
+    }
+  }, [projectId, siteAnalysis, setRows]);
+
+  // 프로젝트 전환 시 토지조서가 비어있으면 부지분석 필지로 자동 시드(기존 작업은 보존)
+  useEffect(() => {
+    if (!projectId) return;
+    if (rows.length > 0) return;
+    if (!siteAnalysis?.parcels?.length && !siteAnalysis?.address) return;
+    loadFromProject();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, siteAnalysis]);
+
   // 등기분석으로 행 자동채움(소유자·지분·소유구분·면적)
   const autofill = useCallback(async (r: LandRow) => {
     if (!r.jibun.trim()) return;
     setBusy(r.id);
     try {
-      const res = await apiClient.post<{ land?: { owner_type?: string; land_area_sqm?: number }; ai?: { ownership?: { current_owner?: string; share?: string } } }>(
-        "/registry/analyze", { body: { address: r.jibun.trim() }, useMock: false, timeoutMs: 120000 });
+      const res = await apiClient.post<{
+        land?: { owner_type?: string; land_area_sqm?: number };
+        ai?: { ownership?: { current_owner?: string; share?: string } };
+        fetched?: { pdf_url?: string | null };
+      }>("/registry/analyze", { body: { address: r.jibun.trim() }, useMock: false, timeoutMs: 120000 });
       const own = res.ai?.ownership || {};
       const land = res.land || {};
+      // 등기분석정보 우선: 소유자·지분·소유구분은 등기 결과로 덮어쓰기(부지분석 추정값보다 우선).
       updateRow(projectId, r.id, {
         owner: own.current_owner && own.current_owner !== "데이터 없음" ? own.current_owner : r.owner,
         share: own.share && own.share !== "데이터 없음" ? own.share : r.share,
         area_sqm: land.land_area_sqm ?? r.area_sqm,
-        owner_type: r.owner_type || (land.owner_type?.includes("국") || land.owner_type?.includes("공") ? "국공유지" : land.owner_type ? "사유지" : ""),
+        owner_type: toOwnerType(land.owner_type) || r.owner_type,
+        pdf_url: res.fetched?.pdf_url ?? r.pdf_url,
       });
     } catch { /* noop */ } finally { setBusy(null); }
   }, [projectId, updateRow]);
@@ -181,6 +216,12 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
               <ProjectAddressInput value={addr} onChange={setAddr} label="필지 추가(지번)" placeholder="지번 주소 검색" pickerLabel="분석 히스토리" />
             </div>
             <button onClick={add} className="rounded-xl border border-dashed border-[var(--line-strong)] px-3.5 py-2 text-xs font-bold text-[var(--text-secondary)] hover:border-[var(--accent-strong)]">＋ 필지 추가</button>
+            {(siteAnalysis?.parcels?.length || siteAnalysis?.address) && (
+              <button onClick={loadFromProject} title="프로젝트 부지분석의 필지(다필지 포함)를 토지조서로 불러옵니다"
+                className="rounded-xl border border-[var(--line-strong)] px-3.5 py-2 text-xs font-bold text-[var(--accent-strong)] hover:border-[var(--accent-strong)]">
+                ⤵ 프로젝트 필지 불러오기{siteAnalysis?.parcels?.length ? ` (${siteAnalysis.parcels.length})` : ""}
+              </button>
+            )}
             <input ref={fileRef} type="file" accept=".xlsx,.xls" className="hidden"
               onChange={(e) => { const f = e.target.files?.[0]; if (f) void importExcel(f); }} />
             <button onClick={() => fileRef.current?.click()} disabled={busy === "import"}
@@ -232,8 +273,11 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
                       <td className="px-1.5 py-1 text-center"><input type="checkbox" checked={r.land_use_consent} onChange={(e) => updateRow(projectId, r.id, { land_use_consent: e.target.checked })} /></td>
                       <td className="px-1.5 py-1 text-center"><input type="checkbox" checked={r.district_consent} onChange={(e) => updateRow(projectId, r.id, { district_consent: e.target.checked })} /></td>
                       <td className="px-1.5 py-1 whitespace-nowrap">
-                        <button onClick={() => autofill(r)} disabled={busy === r.id} className="mr-1 rounded bg-[var(--surface-strong)] px-1.5 py-0.5 text-[10px] font-bold text-[var(--accent-strong)] disabled:opacity-50">{busy === r.id ? "…" : "자동채움"}</button>
-                        <button onClick={() => openAnalysis(r.jibun)} className="rounded bg-[var(--accent-soft)] px-1.5 py-0.5 text-[10px] font-bold text-[var(--accent-strong)]">분석 ↗</button>
+                        <button onClick={() => autofill(r)} disabled={busy === r.id} title="등기 권리분석으로 소유자·지분·면적 자동채움" className="mr-1 cursor-pointer rounded bg-[var(--surface-strong)] px-1.5 py-0.5 text-[10px] font-bold text-[var(--accent-strong)] disabled:opacity-50">{busy === r.id ? "…" : "자동채움"}</button>
+                        <button onClick={() => openAnalysis(r.jibun)} title="등기 권리분석 상세 페이지로 이동" className="cursor-pointer rounded bg-[var(--accent-soft)] px-1.5 py-0.5 text-[10px] font-bold text-[var(--accent-strong)]">분석 ↗</button>
+                        {r.pdf_url && (
+                          <a href={r.pdf_url} target="_blank" rel="noopener noreferrer" title="발급 등기부등본 PDF" className="ml-1 cursor-pointer rounded border border-[var(--accent-strong)]/40 px-1.5 py-0.5 text-[10px] font-bold text-[var(--accent-strong)]">PDF ↓</a>
+                        )}
                       </td>
                       <td className="px-1.5 py-1"><button onClick={() => removeRow(projectId, r.id)} className="text-rose-500">✕</button></td>
                     </tr>
