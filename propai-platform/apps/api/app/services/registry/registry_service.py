@@ -171,11 +171,13 @@ class RegistryService:
             ),
         }
 
-    async def get_one(self, pnu: str | None = None, address: str | None = None) -> dict[str, Any]:
-        """단건 등기부 조회/발급. 미설정 시 not_configured."""
+    async def get_one(self, pnu: str | None = None, address: str | None = None,
+                      realty_type: str | None = None, dong: str | None = None,
+                      ho: str | None = None) -> dict[str, Any]:
+        """단건 등기부 조회/발급. 미설정 시 not_configured. 집합건물은 realty_type=1+dong/ho."""
         item = {"pnu": pnu, "address": address}
         if _is_codef():
-            return await self._codef_one(pnu, address)
+            return await self._codef_one(pnu, address, realty_type, dong, ho)
         c = _config()
         if not is_configured():
             return {**item, "status": "not_configured",
@@ -207,7 +209,9 @@ class RegistryService:
             logger.warning("등기부 조회 실패", err=str(e)[:120])
             return {**item, "status": "error", "message": str(e)[:200]}
 
-    async def _codef_one(self, pnu: str | None, address: str | None) -> dict[str, Any]:
+    async def _codef_one(self, pnu: str | None, address: str | None,
+                         realty_type: str | None = None, dong: str | None = None,
+                         ho: str | None = None) -> dict[str, Any]:
         """CODEF 부동산등기부등본 열람/발급 — 2-way(추가인증) 비동기 흐름.
 
         1차: 간편검색(주소) → CF-03002(continue2Way)+주소목록 →
@@ -238,8 +242,16 @@ class RegistryService:
             "jointMortgageJeonseYN": "0",
             "tradingYN": "0",
         }
-        if c["realty_type"]:
-            base["realtyType"] = c["realty_type"]
+        # 부동산 구분: 요청값 > env 기본
+        rt = realty_type or c["realty_type"]
+        if rt:
+            base["realtyType"] = rt
+        # 집합건물(realtyType=1)은 동/호로 특정 호 등기 조회
+        if rt == "1":
+            if dong:
+                base["dong"] = dong
+            if ho:
+                base["ho"] = ho
 
         try:
             data = await _codef_request(c["path"], base)

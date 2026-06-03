@@ -5,7 +5,7 @@
  * 등기정보분석과 상호 연동(행별 자동채움/링크). 프로젝트별 영속 + 서버 동기화.
  */
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { Card, CardContent } from "@propai/ui";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
@@ -49,8 +49,38 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
   const addRow = useLandScheduleStore((s) => s.addRow);
   const updateRow = useLandScheduleStore((s) => s.updateRow);
   const removeRow = useLandScheduleStore((s) => s.removeRow);
+  const setRows = useLandScheduleStore((s) => s.setRows);
   const [addr, setAddr] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement | null>(null);
+
+  // 엑셀 업로드(대량 지번 일괄 입력)
+  const importExcel = useCallback(async (file: File) => {
+    setBusy("import");
+    try {
+      const token = (typeof window !== "undefined" && localStorage.getItem("propai_access_token")) || "";
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch(`${apiBase()}/registry/land-schedule/import`, {
+        method: "POST", headers: token ? { Authorization: `Bearer ${token}` } : {}, body: fd,
+      });
+      const data = await res.json();
+      const imported: LandRow[] = (data.rows || []).map((r: Partial<LandRow>) => ({
+        id: Math.random().toString(36).slice(2, 9),
+        jibun: r.jibun || "", owner: r.owner || "", share: r.share || "",
+        area_sqm: r.area_sqm ?? null, owner_type: (r.owner_type as LandRow["owner_type"]) || "",
+        expected_price: r.expected_price ?? null, purchase_price: r.purchase_price ?? null,
+        contracted: !!r.contracted, land_use_consent: !!r.land_use_consent, district_consent: !!r.district_consent,
+      }));
+      if (imported.length) setRows(projectId, [...rows, ...imported]);
+      else alert("가져올 행이 없습니다. '지번' 컬럼이 있는 엑셀인지 확인하세요.");
+    } catch {
+      alert("엑셀 업로드에 실패했습니다.");
+    } finally {
+      setBusy(null);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  }, [projectId, rows, setRows]);
 
   const agg = useMemo(() => {
     const n = rows.length;
@@ -130,6 +160,12 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
               <ProjectAddressInput value={addr} onChange={setAddr} label="필지 추가(지번)" placeholder="지번 주소 검색" pickerLabel="분석 히스토리" />
             </div>
             <button onClick={add} className="rounded-xl border border-dashed border-[var(--line-strong)] px-3.5 py-2 text-xs font-bold text-[var(--text-secondary)] hover:border-[var(--accent-strong)]">＋ 필지 추가</button>
+            <input ref={fileRef} type="file" accept=".xlsx,.xls" className="hidden"
+              onChange={(e) => { const f = e.target.files?.[0]; if (f) void importExcel(f); }} />
+            <button onClick={() => fileRef.current?.click()} disabled={busy === "import"}
+              className="rounded-xl border border-[var(--line-strong)] px-4 py-2 text-xs font-bold text-[var(--text-secondary)] hover:border-[var(--accent-strong)] disabled:opacity-50">
+              {busy === "import" ? "업로드 중…" : "⬆ 엑셀 업로드"}
+            </button>
             <button onClick={downloadExcel} disabled={busy === "excel" || rows.length === 0}
               className="rounded-xl bg-[var(--accent-strong)] px-4 py-2 text-xs font-black text-white hover:opacity-90 disabled:opacity-50">
               {busy === "excel" ? "생성 중…" : "📊 토지조서 엑셀"}

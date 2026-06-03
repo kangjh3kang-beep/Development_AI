@@ -159,8 +159,12 @@ export default async function DashboardLayout({
     { href: `/${locale}/market-insights`, label: "마켓 인텔리전스", icon: <IconMarket /> },
     { href: `/${locale}/permits`, label: "인.허가분석 자동화", icon: <IconPermit /> },
     { href: `/${locale}/regulations`, label: "부동산 규제 연동", icon: <IconRegulation /> },
-    { href: `/${locale}/registry-analysis`, label: "부동산등기 정보분석", icon: <IconPermit /> },
+  ];
+
+  // I-2. 토지조서 관리 (편입토지) — 등기 열람/분석을 하위로
+  const landNavigation = [
     { href: `/${locale}/land-schedule`, label: "토지조서 (편입토지)", icon: <IconProject /> },
+    { href: `/${locale}/registry-analysis`, label: "└ 부동산등기 열람/분석", icon: <IconPermit /> },
   ];
 
   // II. 수익·비용·ESG
@@ -200,6 +204,7 @@ export default async function DashboardLayout({
 
   const sections = [
     { title: "프로젝트 분석", items: lifecycleNavigation },
+    { title: "토지조서 관리", items: landNavigation },
     { title: "수익·비용·ESG", items: analyticsNavigation },
     { title: "입찰·자산 운영", items: operationsNavigation },
     { title: "시스템·지원", items: enterpriseNavigation },

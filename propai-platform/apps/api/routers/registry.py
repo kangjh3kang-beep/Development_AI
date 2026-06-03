@@ -3,7 +3,7 @@
 import io
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, File, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -35,17 +35,34 @@ class RegistryAnalyzeRequest(BaseModel):
     address: str | None = None
     pnu: str | None = None
     registry_text: str | None = None  # 등기부등본 내용 직접 입력(연동 미설정 시)
+    realty_type: str | None = None    # 0토지+건물 1집합건물 2토지 3건물(기본=env)
+    dong: str | None = None           # 집합건물 동
+    ho: str | None = None             # 집합건물 호
 
 
 @router.post("/analyze", summary="부동산 등기정보 권리분석(법무사·변호사 AI)")
 async def registry_analyze(req: RegistryAnalyzeRequest) -> dict[str, Any]:
     """등기부(연동 조회 또는 직접 입력)를 법무사·변호사 관점에서 분석해 소유정보·소유기간·
-    매입금액·보유지분·가등기·압류·근저당·매도청구 가능여부 등 권리관계를 제공한다."""
+    매입금액·보유지분·가등기·압류·근저당·매도청구 가능여부 등 권리관계를 제공한다.
+    집합건물은 realty_type=1 + dong/ho로 특정 호 등기를 조회한다."""
     from app.services.registry.registry_analysis_service import RegistryAnalysisService
 
     return await RegistryAnalysisService().analyze(
-        address=req.address, pnu=req.pnu, registry_text=req.registry_text
+        address=req.address, pnu=req.pnu, registry_text=req.registry_text,
+        realty_type=req.realty_type, dong=req.dong, ho=req.ho,
     )
+
+
+@router.post("/cleanup", summary="등기부 PDF TTL 자동삭제(경과분 정리)")
+async def registry_cleanup(days: int = 30) -> dict[str, Any]:
+    """비공개 버킷의 등기부 PDF 중 days 경과분을 삭제한다(워커 cron/수동 호출용)."""
+    from apps.api.services.storage_service import cleanup_registry_pdfs
+
+    try:
+        deleted = await cleanup_registry_pdfs(days=days)
+        return {"status": "ok", "deleted": deleted, "days": days}
+    except Exception as e:  # noqa: BLE001
+        return {"status": "error", "message": str(e)[:200]}
 
 
 # ── 토지조서 엑셀 ──
@@ -148,3 +165,64 @@ async def land_schedule_excel(req: LandScheduleExcelRequest):
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": 'attachment; filename="land_schedule.xlsx"'},
     )
+
+
+@router.post("/land-schedule/import", summary="토지조서 엑셀 업로드(대량 지번 일괄 입력)")
+async def land_schedule_import(file: UploadFile = File(...)) -> dict[str, Any]:
+    """토지조서 엑셀(.xlsx)을 업로드해 행으로 파싱한다. 헤더에 '지번' 포함 행을 기준으로
+    소유자/지분/면적/소유구분/매입예정가/매입가/계약/동의 컬럼을 유연 매핑한다."""
+    from openpyxl import load_workbook
+
+    raw = await file.read()
+    try:
+        wb = load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
+    except Exception as e:  # noqa: BLE001
+        return {"status": "error", "message": f"엑셀 읽기 실패: {str(e)[:120]}", "rows": []}
+    ws = wb.active
+
+    def _num(v: Any) -> float | None:
+        if v is None:
+            return None
+        try:
+            return float(str(v).replace(",", "").replace("원", "").strip())
+        except (TypeError, ValueError):
+            return None
+
+    def _bool(v: Any) -> bool:
+        s = str(v or "").strip().lower()
+        return s in ("○", "o", "y", "yes", "true", "1", "예", "완료", "v")
+
+    headers: list[str] = []
+    out: list[dict[str, Any]] = []
+    for row in ws.iter_rows(values_only=True):
+        cells = [("" if c is None else str(c)).strip() for c in row]
+        if not headers:
+            if any("지번" in c for c in cells):
+                headers = cells
+            continue
+        rd = {headers[i]: (cells[i] if i < len(cells) else "") for i in range(len(headers))}
+
+        def pick(*keys: str) -> str:
+            for k, v in rd.items():
+                if any(key in k for key in keys):
+                    return v
+            return ""
+
+        jibun = pick("지번", "주소")
+        if not jibun:
+            continue
+        ot = pick("소유구분")
+        owner_type = "국공유지" if ("국" in ot or "공" in ot) else ("사유지" if ot else "")
+        out.append({
+            "jibun": jibun,
+            "owner": pick("소유자"),
+            "share": pick("지분"),
+            "area_sqm": _num(pick("면적")),
+            "owner_type": owner_type,
+            "expected_price": _num(pick("매입예정")),
+            "purchase_price": _num(pick("매입가")),
+            "contracted": _bool(pick("계약")),
+            "land_use_consent": _bool(pick("토지사용")),
+            "district_consent": _bool(pick("지구단위")),
+        })
+    return {"status": "ok", "count": len(out), "rows": out}

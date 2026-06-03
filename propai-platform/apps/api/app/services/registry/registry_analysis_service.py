@@ -132,6 +132,9 @@ class RegistryAnalysisService:
         address: str | None = None,
         pnu: str | None = None,
         registry_text: str | None = None,
+        realty_type: str | None = None,
+        dong: str | None = None,
+        ho: str | None = None,
     ) -> dict[str, Any]:
         origin = None
         source = None
@@ -146,15 +149,30 @@ class RegistryAnalysisService:
             # CODEF 등 연동 조회 시도
             from app.services.registry.registry_service import RegistryService
 
-            reg = await RegistryService().get_one(pnu=pnu, address=address)
+            reg = await RegistryService().get_one(
+                pnu=pnu, address=address, realty_type=realty_type, dong=dong, ho=ho
+            )
             st = reg.get("status")
             if st == "ok":
                 source = _registry_text_from_codef(reg)
-                origin = reg.get("code") and "codef" or "codef"
+                origin = "codef"
+                # 발급 PDF는 서버(비공개 버킷)에 저장하고 만료 URL로 전달(TTL 자동삭제)
+                pdf_url = None
+                b64 = reg.get("pdf_base64")
+                if b64:
+                    try:
+                        import base64 as _b64
+
+                        from apps.api.services.storage_service import upload_registry_pdf
+
+                        up = await upload_registry_pdf(_b64.b64decode(b64), ttl_days=30)
+                        pdf_url = up.get("url")
+                    except Exception as e:  # noqa: BLE001
+                        logger.warning("등기부 PDF 저장 실패", err=str(e)[:80])
                 fetched_meta = {
                     "owner": reg.get("owner"), "registry_office": reg.get("registry_office"),
                     "doc_title": reg.get("doc_title"), "has_pdf": reg.get("has_pdf"),
-                    "pdf_base64": reg.get("pdf_base64"),
+                    "pdf_url": pdf_url,
                 }
             else:
                 # 등기부 데이터 미확보 — 토지정보는 제공 + 직접 입력 유도

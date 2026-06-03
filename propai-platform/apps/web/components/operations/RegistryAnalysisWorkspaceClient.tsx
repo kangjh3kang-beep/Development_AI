@@ -34,7 +34,7 @@ type AI = {
   summary?: string;
 };
 type Result = { status: string; origin?: string; land?: Land | null; message?: string; ai?: AI | null;
-  fetched?: { owner?: string; registry_office?: string; doc_title?: string; has_pdf?: boolean } | null };
+  fetched?: { owner?: string; registry_office?: string; doc_title?: string; has_pdf?: boolean; pdf_url?: string | null } | null };
 
 const GRADE: Record<string, string> = {
   안전: "border-emerald-500/30 bg-emerald-500/10 text-emerald-400",
@@ -47,6 +47,9 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
   const [addr, setAddr] = useState("");
   const [text, setText] = useState("");
   const [showText, setShowText] = useState(false);
+  const [realty, setRealty] = useState<"2" | "1" | "3" | "0">("2"); // 2토지(기본)·1집합건물·3건물
+  const [dong, setDong] = useState("");
+  const [ho, setHo] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<Result | null>(null);
@@ -57,7 +60,12 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
     setLoading(true); setError(""); setResult(null);
     try {
       const r = await apiClient.post<Result>("/registry/analyze", {
-        body: { address: target || undefined, pnu: siteAnalysis?.pnu || undefined, registry_text: text.trim() || undefined },
+        body: {
+          address: target || undefined, pnu: siteAnalysis?.pnu || undefined,
+          registry_text: text.trim() || undefined,
+          realty_type: realty, dong: realty === "1" ? dong || undefined : undefined,
+          ho: realty === "1" ? ho || undefined : undefined,
+        },
         useMock: false, timeoutMs: 120000,
       });
       setResult(r);
@@ -66,7 +74,7 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
     } finally {
       setLoading(false);
     }
-  }, [addr, text, siteAnalysis]);
+  }, [addr, text, siteAnalysis, realty, dong, ho]);
 
   // 토지조서 등에서 ?addr= 로 진입 시 자동 프리필 + 1회 실행
   const autoRan = useRef(false);
@@ -98,6 +106,24 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
             <ProjectAddressInput value={addr} onChange={setAddr} label="분석 대상지 주소"
               placeholder="프로젝트를 선택하거나 주소를 검색/입력하세요" pickerLabel="분석 히스토리" disabled={loading} />
           </div>
+          {/* 부동산 구분(토지/집합건물/건물) + 집합건물 동/호 */}
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <span className="text-[11px] font-semibold text-[var(--text-tertiary)]">부동산 구분</span>
+            {([["2", "토지"], ["1", "집합건물(아파트/오피스텔)"], ["3", "건물"]] as const).map(([v, label]) => (
+              <button key={v} onClick={() => setRealty(v)} disabled={loading}
+                className={`rounded-lg px-3 py-1.5 text-[11px] font-bold ${realty === v ? "bg-[var(--accent-strong)] text-white" : "bg-[var(--surface-strong)] text-[var(--text-secondary)] border border-[var(--line)]"}`}>
+                {label}
+              </button>
+            ))}
+            {realty === "1" && (
+              <>
+                <input value={dong} onChange={(e) => setDong(e.target.value)} placeholder="동(예:101)" disabled={loading}
+                  className="w-24 rounded-lg border border-[var(--line)] bg-[var(--surface-strong)] px-2 py-1.5 text-[11px] text-[var(--text-primary)]" />
+                <input value={ho} onChange={(e) => setHo(e.target.value)} placeholder="호(예:1203)" disabled={loading}
+                  className="w-24 rounded-lg border border-[var(--line)] bg-[var(--surface-strong)] px-2 py-1.5 text-[11px] text-[var(--text-primary)]" />
+              </>
+            )}
+          </div>
           <div className="mt-3">
             <button onClick={() => setShowText((v) => !v)} className="text-[11px] font-semibold text-[var(--accent-strong)] hover:underline">
               {showText ? "− 등기부 직접 입력 닫기" : "+ 등기부등본 내용 직접 입력 (연동 미설정 시)"}
@@ -120,6 +146,21 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
 
       {result && (
         <>
+          {/* 발급 등기부 PDF (서버 저장, 만료 후 자동삭제) */}
+          {result.fetched?.pdf_url && (
+            <Card className="rounded-[var(--radius-2xl)] border-[var(--accent-strong)]/30 bg-[var(--accent-strong)]/5 shadow-[var(--shadow-md)]">
+              <CardContent className="flex flex-wrap items-center justify-between gap-3 p-5">
+                <p className="text-xs text-[var(--text-secondary)]">📄 발급된 등기부등본 원본(PDF) — 서버 저장(30일 후 자동삭제)</p>
+                <div className="flex gap-2">
+                  <a href={result.fetched.pdf_url} target="_blank" rel="noopener noreferrer"
+                    className="rounded-xl border border-[var(--accent-strong)] px-4 py-2 text-xs font-black text-[var(--accent-strong)] hover:bg-[var(--accent-soft)]">PDF 보기 ↗</a>
+                  <a href={result.fetched.pdf_url} download
+                    className="rounded-xl bg-[var(--accent-strong)] px-4 py-2 text-xs font-black text-white hover:opacity-90">다운로드 ↓</a>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
           {/* 토지 소유구분·특성(공부) — 항상 제공 */}
           {land && (
             <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">

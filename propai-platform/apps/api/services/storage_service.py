@@ -91,3 +91,92 @@ async def upload_image(
     public_url = f"{base}/storage/v1/object/public/{bucket}/{path}"
     logger.info("이미지 업로드 완료", path=path, bytes=len(data))
     return public_url
+
+
+# ── 등기부 PDF: 비공개 버킷 + 서명 URL(만료=TTL) ──
+
+_REGISTRY_BUCKET = "propai-registry"
+
+
+def _sb_conf() -> tuple[str, str]:
+    settings = get_settings()
+    base = (getattr(settings, "supabase_url", "") or "").rstrip("/")
+    key = getattr(settings, "supabase_service_role_key", "") or ""
+    if not base or not key:
+        raise StorageError("Supabase Storage 미설정(SUPABASE_URL/SERVICE_ROLE_KEY)")
+    return base, key
+
+
+async def _ensure_private_bucket(client: httpx.AsyncClient, base: str, bucket: str, headers: dict) -> None:
+    resp = await client.get(f"{base}/storage/v1/bucket/{bucket}", headers=headers)
+    if resp.status_code == 200:
+        return
+    create = await client.post(
+        f"{base}/storage/v1/bucket", headers=headers,
+        json={"id": bucket, "name": bucket, "public": False},
+    )
+    if create.status_code in (200, 201) or "already exists" in create.text.lower() or create.status_code == 409:
+        return
+    raise StorageError(f"버킷 생성 실패: {create.status_code} {create.text[:160]}")
+
+
+async def upload_registry_pdf(data: bytes, ttl_days: int = 30) -> dict[str, str]:
+    """등기부 PDF를 비공개 버킷에 저장하고 만료 서명 URL을 반환한다(TTL=ttl_days)."""
+    import datetime as _dt
+
+    base, key = _sb_conf()
+    auth = {"Authorization": f"Bearer {key}", "apikey": key}
+    day = _dt.datetime.utcnow().strftime("%Y%m%d")
+    path = f"registry/{day}/{uuid.uuid4().hex}.pdf"
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        await _ensure_private_bucket(client, base, _REGISTRY_BUCKET, auth)
+        up = await client.post(
+            f"{base}/storage/v1/object/{_REGISTRY_BUCKET}/{path}",
+            headers={**auth, "Content-Type": "application/pdf", "x-upsert": "true"},
+            content=data,
+        )
+        if up.status_code not in (200, 201):
+            raise StorageError(f"PDF 업로드 실패: {up.status_code} {up.text[:160]}")
+        sign = await client.post(
+            f"{base}/storage/v1/object/sign/{_REGISTRY_BUCKET}/{path}",
+            headers=auth, json={"expiresIn": ttl_days * 86400},
+        )
+        if sign.status_code != 200:
+            raise StorageError(f"서명URL 실패: {sign.status_code} {sign.text[:160]}")
+        signed = (sign.json() or {}).get("signedURL") or ""
+        url = f"{base}/storage/v1{signed}" if signed.startswith("/") else f"{base}/storage/v1/{signed}"
+    logger.info("등기부 PDF 저장", path=path, bytes=len(data))
+    return {"path": path, "url": url}
+
+
+async def cleanup_registry_pdfs(days: int = 30) -> int:
+    """registry/ 하위 날짜폴더 중 days 경과분을 삭제(TTL 자동삭제)."""
+    import datetime as _dt
+
+    base, key = _sb_conf()
+    auth = {"Authorization": f"Bearer {key}", "apikey": key}
+    cutoff = (_dt.datetime.utcnow() - _dt.timedelta(days=days)).strftime("%Y%m%d")
+    deleted = 0
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        folders = await client.post(
+            f"{base}/storage/v1/object/list/{_REGISTRY_BUCKET}",
+            headers=auth, json={"prefix": "registry/", "limit": 1000},
+        )
+        if folders.status_code != 200:
+            return 0
+        for f in folders.json() or []:
+            name = f.get("name", "")
+            if name and name.isdigit() and name < cutoff:
+                objs = await client.post(
+                    f"{base}/storage/v1/object/list/{_REGISTRY_BUCKET}",
+                    headers=auth, json={"prefix": f"registry/{name}/", "limit": 1000},
+                )
+                paths = [f"registry/{name}/{o.get('name')}" for o in (objs.json() or []) if o.get("name")]
+                if paths:
+                    await client.request(
+                        "DELETE", f"{base}/storage/v1/object/{_REGISTRY_BUCKET}",
+                        headers=auth, json={"prefixes": paths},
+                    )
+                    deleted += len(paths)
+    logger.info("등기부 PDF TTL 정리", deleted=deleted, days=days)
+    return deleted
