@@ -51,6 +51,8 @@ _TMPL = """\
   "ownership": {{
     "current_owner": "현재 소유자(공동소유면 전원)",
     "share": "보유 지분(예: 단독, 1/2 등)",
+    "ownership_form": "단독소유|공동소유 (소유자 수 기준)",
+    "owners": [{{"name": "소유자명", "share": "지분(예: 1/2, 1388분의 1387.08, 99.934%)", "acquisition_date": "취득일", "acquisition_cause": "취득원인", "acquisition_price": "거래가액(있으면)"}}],
     "acquisition_date": "소유권 취득일(등기원인일/접수일)",
     "acquisition_cause": "취득 원인(매매·상속·증여 등)",
     "acquisition_price": "거래가액(매매시, 기재 있으면)",
@@ -67,6 +69,27 @@ _TMPL = """\
   "summary": "한줄 요약"
 }}
 """
+
+
+def _derive_ownership(ai: dict[str, Any] | None) -> dict[str, Any]:
+    """등기 분석(ai.ownership)에서 소유형태(단독/공동)·소유자수·소유자목록을 도출.
+    AI가 구조화 owners를 주면 그대로, 없으면 current_owner/share 문자열을 파싱."""
+    own = (ai or {}).get("ownership") or {}
+    owners = own.get("owners") if isinstance(own.get("owners"), list) else None
+    if not owners:
+        # 폴백: "이차희(1388분의 0.92), 주식회사더플라우(...)" / share "A 0.066%, B 99.934%"
+        import re
+        names = [s.strip() for s in re.split(r"\s*,\s*", str(own.get("current_owner") or "")) if s.strip()]
+        shares = [s.strip() for s in re.split(r"\s*,\s*", str(own.get("share") or "")) if s.strip()]
+        owners = []
+        for i, n in enumerate(names):
+            nm = re.sub(r"\(.*?\)", "", n).strip()
+            owners.append({"name": nm or n, "share": shares[i] if i < len(shares) else None})
+    owners = [o for o in (owners or []) if (o.get("name") or "").strip() and o.get("name") != "데이터 없음"]
+    if not owners:
+        return {}
+    form = own.get("ownership_form") or ("공동소유" if len(owners) >= 2 else "단독소유")
+    return {"ownership_form": form, "owner_count": len(owners), "owners": owners}
 
 
 def _registry_text_from_codef(reg: dict[str, Any]) -> str:
@@ -172,18 +195,16 @@ class RegistryAnalysisService:
         fetched_meta = None
 
         async def _resolve_land() -> dict[str, Any] | None:
-            # 부지분석에서 이미 확보한 토지정보가 오면 재조회 생략(중복 외부호출 ~31s 제거)
-            if land_hint and (land_hint.get("land_area_sqm") or land_hint.get("zone_type")):
-                return {
-                    "pnu": land_hint.get("pnu") or pnu,
-                    "owner_type": land_hint.get("owner_type"),
-                    "land_category": land_hint.get("land_category"),
-                    "land_area_sqm": land_hint.get("land_area_sqm"),
-                    "official_price_per_sqm": land_hint.get("official_price_per_sqm"),
-                    "zone_type": land_hint.get("zone_type"),
-                    "note": "부지분석에서 전달된 토지정보(재조회 생략).",
-                }
-            return await self._land_info(address, pnu)
+            # 공부(지목/용도지역/공시지가/소유구분/면적)는 항상 조회하고,
+            # 부지분석 hint는 '빈칸 보강용'으로만 사용(이전엔 hint 있으면 공부조회를
+            # 통째로 건너뛰어 지목/공시지가/소유구분이 비던 버그). CODEF와 병렬이라 지연 영향 적음.
+            base = await self._land_info(address, pnu) or {}
+            if land_hint:
+                for k in ("pnu", "owner_type", "land_category", "land_area_sqm",
+                          "official_price_per_sqm", "zone_type"):
+                    if not base.get(k) and land_hint.get(k) is not None:
+                        base[k] = land_hint.get(k)
+            return base or None
 
         if registry_text and registry_text.strip():
             land = await _resolve_land()
@@ -238,6 +259,15 @@ class RegistryAnalysisService:
                     "message": "분석할 등기부 내용이 없습니다.", "ai": None}
 
         ai = await self._llm(address, source)
+        # 등기 기반 소유형태(공동/단독)·소유자목록을 공부 카드(land)에 보강
+        deriv = _derive_ownership(ai)
+        if deriv:
+            land = land or {}
+            land.update(deriv)
+            land["registry_owner"] = ((ai or {}).get("ownership") or {}).get("current_owner")
+            if not land.get("owner_type"):
+                # 공부 소유구분이 비면 등기 소유형태로 대체 표기
+                land["owner_type"] = deriv["ownership_form"]
         out = {"status": "ok", "origin": origin, "land": land, "fetched": fetched_meta, "ai": ai}
         if cache_key:
             _ANALYZE_CACHE[cache_key] = (time.time(), out)

@@ -21,9 +21,11 @@ const EMPTY_ROWS: LandRow[] = [];
 const toOwnerType = (s?: string | null): LandRow["owner_type"] =>
   s?.includes("국") || s?.includes("공") ? "국공유지" : s ? "사유지" : "";
 
+type Owner = { name?: string; share?: string | null; acquisition_date?: string | null };
 type Land = {
   pnu?: string | null; owner_type?: string | null; land_category?: string | null;
   land_area_sqm?: number | null; official_price_per_sqm?: number | null; zone_type?: string | null;
+  ownership_form?: string | null; owner_count?: number | null; owners?: Owner[]; registry_owner?: string | null;
 };
 type AI = {
   generated?: boolean;
@@ -264,13 +266,15 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
           {land && (
             <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
               <CardContent className="p-6">
-                <p className="text-sm font-black text-[var(--accent-strong)]">🟫 토지 소유·특성 정보 (공부)</p>
-                <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+                <p className="text-sm font-black text-[var(--accent-strong)]">🟫 토지 소유·특성 정보 (공부 + 등기)</p>
+                <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
                   {[
-                    ["소유구분", land.owner_type || "-"],
+                    ["소유형태", land.ownership_form || "-"],
+                    ["소유자수", land.owner_count != null ? `${land.owner_count}인` : "-"],
+                    ["소유구분(공부)", land.owner_type || "-"],
                     ["지목", land.land_category || "-"],
                     ["용도지역", land.zone_type || "-"],
-                    ["면적", land.land_area_sqm != null ? `${Math.round(land.land_area_sqm)}㎡` : "-"],
+                    ["면적", land.land_area_sqm != null ? `${Math.round(land.land_area_sqm).toLocaleString()}㎡` : "-"],
                     ["공시지가(㎡)", land.official_price_per_sqm ? `${Math.round(land.official_price_per_sqm).toLocaleString()}원` : "-"],
                   ].map(([k, v]) => (
                     <div key={k} className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-3">
@@ -279,7 +283,23 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
                     </div>
                   ))}
                 </div>
-                <p className="mt-2 text-[11px] text-[var(--text-hint)]">※ 소유자 성명·지분 등은 등기부 분석 결과를 참조하세요(공부상 소유구분만 표기).</p>
+                {/* 소유자별 지분(공동소유 등) */}
+                {land.owners && land.owners.length > 0 && (
+                  <div className="mt-3 rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-3">
+                    <p className="text-[11px] font-bold text-[var(--text-secondary)]">소유자별 지분 ({land.ownership_form || "-"})</p>
+                    <div className="mt-1.5 space-y-1">
+                      {land.owners.map((o, i) => (
+                        <div key={i} className="flex flex-wrap items-center justify-between gap-2 text-sm">
+                          <span className="font-semibold text-[var(--text-primary)]">{o.name || "-"}</span>
+                          <span className="text-[var(--text-secondary)]">
+                            {o.share || "-"}{o.acquisition_date ? ` · 취득 ${o.acquisition_date}` : ""}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                <p className="mt-2 text-[11px] text-[var(--text-hint)]">※ 소유형태·소유자·지분은 등기부 분석 기반, 지목·용도지역·공시지가는 공부(토지대장/이용계획) 기반입니다.</p>
               </CardContent>
             </Card>
           )}
