@@ -208,7 +208,7 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
         <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
           <CardContent className="p-5">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="text-sm font-black text-[var(--accent-strong)]">🧾 프로젝트 필지 ({rows.length}) — 단일/다필지 일관 분석</p>
+              <p className="text-sm font-black text-[var(--accent-strong)]">🧾 프로젝트 필지 ({rows.length}) — 단일/다필지 일괄 분석</p>
               <button onClick={() => void analyzeAll()} disabled={loading || !!busyId || rows.length === 0}
                 className="rounded-xl bg-[var(--accent-strong)] px-3.5 py-1.5 text-xs font-black text-white hover:opacity-90 disabled:opacity-50">
                 {busyId ? "분석 중…" : "⚖ 전체 분석"}
