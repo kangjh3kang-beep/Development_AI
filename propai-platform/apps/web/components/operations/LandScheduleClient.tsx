@@ -52,7 +52,26 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
   const setRows = useLandScheduleStore((s) => s.setRows);
   const [addr, setAddr] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
+  const [highlight, setHighlight] = useState("");
   const fileRef = useRef<HTMLInputElement | null>(null);
+
+  // 필지 상태(계약/동의) → 색상·라벨 (지도·표 강조)
+  const rowStatus = useCallback((r: LandRow): { color: string; label: string } => {
+    if (r.contracted) return { color: "#10b981", label: "계약완료" };
+    if (r.land_use_consent || r.district_consent) return { color: "#f59e0b", label: "동의(미계약)" };
+    return { color: "#ef4444", label: "미동의·미계약" };
+  }, []);
+  const { statusColors, statusLabels } = useMemo(() => {
+    const colors: Record<string, string> = {};
+    const labels: Record<string, string> = {};
+    for (const r of rows) {
+      if (!r.jibun) continue;
+      const s = rowStatus(r);
+      colors[r.jibun] = s.color;
+      labels[r.jibun] = s.label;
+    }
+    return { statusColors: colors, statusLabels: labels };
+  }, [rows, rowStatus]);
 
   // 엑셀 업로드(대량 지번 일괄 입력)
   const importExcel = useCallback(async (file: File) => {
@@ -189,8 +208,13 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
                 </thead>
                 <tbody>
                   {rows.map((r, i) => (
-                    <tr key={r.id} className="border-b border-[var(--line)]/50">
-                      <td className="px-1.5 py-1 text-[var(--text-tertiary)]">{i + 1}</td>
+                    <tr key={r.id} className={`border-b border-[var(--line)]/50 ${highlight && highlight === r.jibun ? "bg-[var(--accent-soft)]" : ""}`}>
+                      <td className="px-1.5 py-1">
+                        <button onClick={() => setHighlight(r.jibun)} title="지도에서 강조" className="flex items-center gap-1">
+                          <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: rowStatus(r).color }} />
+                          <span className="text-[var(--text-tertiary)]">{i + 1}</span>
+                        </button>
+                      </td>
                       <td className="px-1.5 py-1 min-w-[160px]"><input className={inputCls} value={r.jibun} onChange={(e) => updateRow(projectId, r.id, { jibun: e.target.value })} /></td>
                       <td className="px-1.5 py-1 min-w-[90px]"><input className={inputCls} value={r.owner} onChange={(e) => updateRow(projectId, r.id, { owner: e.target.value })} /></td>
                       <td className="px-1.5 py-1 w-16"><input className={inputCls} value={r.share} onChange={(e) => updateRow(projectId, r.id, { share: e.target.value })} /></td>
@@ -246,8 +270,22 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
             </CardContent>
           </Card>
 
-          {/* 구획도 (필지 전체) */}
-          <ParcelBoundaryMap parcels={rows.map((r) => r.jibun).filter(Boolean)} />
+          {/* 구획도 (필지 전체) — 계약/동의 상태색상 + 행 클릭 하이라이트 */}
+          <div>
+            <div className="mb-2 flex flex-wrap gap-3 text-[11px]">
+              <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-full bg-emerald-500" />계약완료</span>
+              <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-full bg-amber-500" />동의(미계약)</span>
+              <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-full bg-rose-500" />미동의·미계약</span>
+              <span className="text-[var(--text-hint)]">· 표의 번호/지도 필지 클릭 시 상호 강조</span>
+            </div>
+            <ParcelBoundaryMap
+              parcels={rows.map((r) => r.jibun).filter(Boolean)}
+              statusColors={statusColors}
+              statusLabels={statusLabels}
+              highlight={highlight}
+              onParcelClick={(a) => setHighlight(a)}
+            />
+          </div>
         </>
       )}
     </div>

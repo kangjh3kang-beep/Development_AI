@@ -69,7 +69,19 @@ function pyeong(sqm: number): string {
   return sqm ? `${Math.round(sqm / 3.305785).toLocaleString()}평` : "-";
 }
 
-export function ParcelBoundaryMap({ parcels }: { parcels: string[] }) {
+export function ParcelBoundaryMap({
+  parcels,
+  statusColors,
+  statusLabels,
+  highlight,
+  onParcelClick,
+}: {
+  parcels: string[];
+  statusColors?: Record<string, string>; // 주소 → 채움색(계약/동의 상태강조)
+  statusLabels?: Record<string, string>; // 주소 → 상태 라벨(팝업)
+  highlight?: string; // 강조할 주소(토지조서 행 클릭)
+  onParcelClick?: (address: string) => void;
+}) {
   const list = useMemo(() => parcels.map((s) => s.trim()).filter(Boolean), [parcels]);
   const key = list.join("||");
   const [data, setData] = useState<Boundaries | null>(null);
@@ -109,24 +121,33 @@ export function ParcelBoundaryMap({ parcels }: { parcels: string[] }) {
         maxZoom: 19, attribution: "© OpenStreetMap",
       }).addTo(map);
       const group = L.featureGroup().addTo(map);
+      let hiLayer: any = null;
       data.features.forEach((f, i) => {
         if (!f.geometry) return;
-        const color = zoneColor(f.zone_type, i);
+        const sc = statusColors?.[f.address || ""];
+        const color = sc || zoneColor(f.zone_type, i);
+        const isHi = highlight && f.address === highlight;
         const layer = L.geoJSON(f.geometry, {
-          style: { color, weight: 2, fillColor: color, fillOpacity: 0.28 },
+          style: { color: isHi ? "#ef4444" : color, weight: isHi ? 4 : 2, fillColor: color, fillOpacity: isHi ? 0.5 : 0.28 },
         }).addTo(group);
         const z2 = f.zone_type_2 ? ` / ${f.zone_type_2}` : "";
+        const stat = statusLabels?.[f.address || ""];
         layer.bindPopup(
-          `<b>${i + 1}. ${f.address || f.pnu}</b><br/>용도지역: ${f.zone_type || "-"}${z2}<br/>` +
-          `면적: ${f.area_sqm?.toLocaleString()}㎡ (${pyeong(f.area_sqm)})` +
-          (f.zone_limits ? `<br/>건폐율 ${f.zone_limits.max_bcr_pct ?? "-"}% · 용적률 ${f.zone_limits.max_far_pct ?? "-"}%` : ""),
+          `<b>${i + 1}. ${f.address || f.pnu}</b>` + (stat ? ` <span style="color:#0e7490">[${stat}]</span>` : "") +
+          `<br/>용도지역: ${f.zone_type || "-"}${z2}<br/>` +
+          `면적: ${f.area_sqm?.toLocaleString()}㎡ (${pyeong(f.area_sqm)})`,
         );
+        if (onParcelClick) layer.on("click", () => onParcelClick(f.address || ""));
+        if (isHi) hiLayer = layer;
       });
-      try { map.fitBounds(group.getBounds().pad(0.25)); }
-      catch { if (data.center) map.setView([data.center.lat, data.center.lon], 16); }
+      try {
+        if (hiLayer) map.fitBounds(hiLayer.getBounds().pad(0.4));
+        else map.fitBounds(group.getBounds().pad(0.25));
+      } catch { if (data.center) map.setView([data.center.lat, data.center.lon], 16); }
     });
     return () => { alive = false; if (mapRef.current) { mapRef.current.remove(); mapRef.current = null; } };
-  }, [data]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, highlight, JSON.stringify(statusColors)]);
 
   if (!list.length) return null;
 
