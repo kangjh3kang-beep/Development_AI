@@ -273,3 +273,36 @@ textarea {
 .leaflet-control {
   z-index: 1 !important;
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   가독성 근본 보정 레이어 (다크 기본 테마)
+   디자인 토큰을 우회해 하드코딩된 저대비 텍스트/아이콘 색상을
+   토큰 기반 가독 색으로 일괄 상향한다. (텍스트 color만 조정 →
+   배경/레이아웃 불변, stroke="currentColor" SVG 아이콘도 함께 밝아짐)
+
+   명시도 설계: :where(.dark)는 0 기여 → 규칙 명시도 = (0,1,0)으로
+   Tailwind 기본 유틸(.text-slate-400 등 0,1,0)과 동일하되 소스순서상
+   뒤에 와서 base는 덮고, hover/focus 변형(:hover 0,2,0)은 우선권을
+   유지 → 인터랙션 회귀 없음. 라이트(:root)에는 미적용(흰 배경 대비 양호).
+   ═══════════════════════════════════════════════════════════════ */
+@layer utilities {
+  /* 중간 밝기 회색(400·500) → tertiary(#a3a7ba) */
+  :where(.dark) :is(
+    .text-slate-400, .text-gray-400, .text-zinc-400, .text-neutral-400,
+    .text-slate-500, .text-gray-500, .text-zinc-500, .text-neutral-500
+  ) { color: var(--text-tertiary); }
+
+  /* 어두운 회색(600, 다크 배경에서 가장 안 보임) → secondary(#c3c5d8) */
+  :where(.dark) :is(
+    .text-slate-600, .text-gray-600, .text-zinc-600, .text-neutral-600
+  ) { color: var(--text-secondary); }
+
+  /* 하드코딩 hex 어두운 회색(다크 배경에서 흐림) → secondary/tertiary */
+  :where(.dark) .text-\[\#586173\] { color: var(--text-tertiary); }
+
+  /* 저투명 흰색 텍스트/아이콘 → 가독 임계 이상으로 상향 */
+  :where(.dark) .text-white\/20 { color: rgba(255, 255, 255, 0.62); }
+  :where(.dark) .text-white\/30 { color: rgba(255, 255, 255, 0.68); }
+  :where(.dark) .text-white\/40 { color: rgba(255, 255, 255, 0.76); }
+  :where(.dark) .text-white\/50 { color: rgba(255, 255, 255, 0.82); }
+}
