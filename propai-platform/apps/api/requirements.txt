@@ -86,3 +86,9 @@ langchain-anthropic==0.3.0
 casbin==1.43.0
 casbin-async-sqlalchemy-adapter==1.17.0
 passlib==1.7.4
+
+# v62 분양관리 ERP / 모델하우스 데스크 (Part2~3 사용: 지명매칭/명함OCR/푸시/도면파싱)
+phonenumbers==8.13.48
+rapidfuzz==3.10.1
+firebase-admin==6.5.0
+PyMuPDF==1.24.10

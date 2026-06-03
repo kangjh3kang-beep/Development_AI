@@ -266,3 +266,7 @@ __all__ = [
     "LegalRateHistory",
     "StandardPriceUpdate",
 ]
+
+# v62 분양관리 ERP + 모델하우스 데스크 (66 테이블) — Base.metadata / Alembic 등록
+from apps.api.database.models import sales  # noqa: E402,F401
+
