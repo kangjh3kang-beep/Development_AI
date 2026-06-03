@@ -14,7 +14,12 @@ import { Card, CardContent } from "@propai/ui";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { useLandScheduleStore, type LandRow } from "@/store/useLandScheduleStore";
 import type { Locale } from "@/i18n/config";
+
+const EMPTY_ROWS: LandRow[] = [];
+const toOwnerType = (s?: string | null): LandRow["owner_type"] =>
+  s?.includes("국") || s?.includes("공") ? "국공유지" : s ? "사유지" : "";
 
 type Land = {
   pnu?: string | null; owner_type?: string | null; land_category?: string | null;
@@ -44,6 +49,13 @@ const GRADE: Record<string, string> = {
 
 export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) {
   const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
+  const projectId = useProjectContextStore((s) => s.projectId);
+  // 토지조서와 동일 스토어 공유(프로젝트 단일 출처) — 지번 추가/삭제·분석결과가 양 페이지에 반영
+  const rows = useLandScheduleStore((s) => s.byProject[projectId || "_default"] ?? EMPTY_ROWS);
+  const addRow = useLandScheduleStore((s) => s.addRow);
+  const removeRow = useLandScheduleStore((s) => s.removeRow);
+  const updateRow = useLandScheduleStore((s) => s.updateRow);
+  const setRows = useLandScheduleStore((s) => s.setRows);
   const [addr, setAddr] = useState("");
   const [text, setText] = useState("");
   const [showText, setShowText] = useState(false);
@@ -51,13 +63,16 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
   const [dong, setDong] = useState("");
   const [ho, setHo] = useState("");
   const [loading, setLoading] = useState(false);
+  const [busyId, setBusyId] = useState<string | null>(null); // 지번별 분석 중
   const [error, setError] = useState("");
   const [result, setResult] = useState<Result | null>(null);
+  const [newJibun, setNewJibun] = useState("");
 
-  const run = useCallback(async (overrideAddr?: string) => {
+  const run = useCallback(async (overrideAddr?: string, rowId?: string) => {
     const target = (typeof overrideAddr === "string" ? overrideAddr : addr) || siteAnalysis?.address || "";
     if (!target && !text.trim()) { setError("주소를 선택하거나 등기부 내용을 입력하세요."); return; }
-    setLoading(true); setError(""); setResult(null);
+    if (rowId) setBusyId(rowId); else setLoading(true);
+    setError(""); setResult(null);
     try {
       const r = await apiClient.post<Result>("/registry/analyze", {
         body: {
@@ -77,12 +92,47 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
         useMock: false, timeoutMs: 120000,
       });
       setResult(r);
+      // 등기분석정보 우선: 프로젝트 필지 행에 소유자·지분·소유구분·면적·PDF write-back
+      // (정의된 값만 patch — undefined 전달 시 기존 값이 지워지는 것 방지)
+      if (rowId) {
+        const own = r.ai?.ownership || {};
+        const ld = r.land || {};
+        const patch: Partial<LandRow> = {};
+        if (own.current_owner && own.current_owner !== "데이터 없음") patch.owner = own.current_owner;
+        if (own.share && own.share !== "데이터 없음") patch.share = own.share;
+        if (ld.land_area_sqm != null) patch.area_sqm = ld.land_area_sqm;
+        const ot = toOwnerType(ld.owner_type);
+        if (ot) patch.owner_type = ot;
+        if (r.fetched?.pdf_url) patch.pdf_url = r.fetched.pdf_url;
+        if (Object.keys(patch).length) updateRow(projectId, rowId, patch);
+      }
     } catch {
       setError("등기 분석에 실패했습니다. 잠시 후 다시 시도하세요.");
     } finally {
-      setLoading(false);
+      if (rowId) setBusyId(null); else setLoading(false);
     }
-  }, [addr, text, siteAnalysis, realty, dong, ho]);
+  }, [addr, text, siteAnalysis, realty, dong, ho, projectId, updateRow]);
+
+  // 프로젝트 선택 시 필지 목록이 비어있으면 부지분석 필지로 시드(토지조서와 동일 규칙)
+  useEffect(() => {
+    if (!projectId || rows.length > 0) return;
+    const parcels = siteAnalysis?.parcels;
+    const mk = (jibun: string, area: number | null, ot: string): LandRow => ({
+      id: Math.random().toString(36).slice(2, 9), jibun, owner: "", share: "",
+      area_sqm: area, owner_type: toOwnerType(ot), expected_price: null, purchase_price: null,
+      contracted: false, land_use_consent: false, district_consent: false, pdf_url: null,
+    });
+    if (parcels && parcels.length) setRows(projectId, parcels.map((p) => mk(p.address, p.areaSqm ?? null, p.ownerType)));
+    else if (siteAnalysis?.address) setRows(projectId, [mk(siteAnalysis.address, siteAnalysis.landAreaSqm ?? null, "")]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, siteAnalysis]);
+
+  // 다필지 일괄 분석(순차 — CODEF 과부하 방지)
+  const analyzeAll = useCallback(async () => {
+    for (const r of rows) {
+      if (r.jibun.trim()) await run(r.jibun.trim(), r.id);
+    }
+  }, [rows, run]);
 
   // 토지조서 등에서 ?addr= 로 진입 시 자동 프리필 + 1회 실행
   const autoRan = useRef(false);
@@ -151,6 +201,46 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
           </div>
         </CardContent>
       </Card>
+
+      {/* 프로젝트 필지 목록 — 토지조서와 동일 데이터(공유). 지번 추가/삭제·지번별 분석·PDF */}
+      {projectId && (
+        <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
+          <CardContent className="p-5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-sm font-black text-[var(--accent-strong)]">🧾 프로젝트 필지 ({rows.length}) — 단일/다필지 일관 분석</p>
+              <button onClick={() => void analyzeAll()} disabled={loading || !!busyId || rows.length === 0}
+                className="rounded-xl bg-[var(--accent-strong)] px-3.5 py-1.5 text-xs font-black text-white hover:opacity-90 disabled:opacity-50">
+                {busyId ? "분석 중…" : "⚖ 전체 분석"}
+              </button>
+            </div>
+            <div className="mt-3 space-y-1.5">
+              {rows.map((r) => (
+                <div key={r.id} className="flex flex-wrap items-center gap-2 rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] px-3 py-2">
+                  <span className="min-w-[160px] flex-1 truncate text-xs font-semibold text-[var(--text-primary)]" title={r.jibun}>{r.jibun || "(지번 미입력)"}</span>
+                  {r.owner && <span className="truncate text-[11px] text-[var(--text-secondary)]">소유 {r.owner}{r.share ? ` · ${r.share}` : ""}</span>}
+                  {r.area_sqm != null && <span className="text-[11px] text-[var(--text-tertiary)]">{Math.round(r.area_sqm).toLocaleString()}㎡</span>}
+                  <button onClick={() => { setAddr(r.jibun); void run(r.jibun, r.id); }} disabled={!r.jibun.trim() || busyId === r.id}
+                    className="rounded-lg bg-[var(--surface-strong)] px-2.5 py-1 text-[11px] font-bold text-[var(--accent-strong)] disabled:opacity-50">
+                    {busyId === r.id ? "…" : "분석"}
+                  </button>
+                  {r.pdf_url && (
+                    <a href={r.pdf_url} target="_blank" rel="noopener noreferrer"
+                      className="rounded-lg border border-[var(--accent-strong)]/40 px-2.5 py-1 text-[11px] font-bold text-[var(--accent-strong)]">PDF ↓</a>
+                  )}
+                  <button onClick={() => removeRow(projectId, r.id)} title="지번 삭제" className="text-rose-500">✕</button>
+                </div>
+              ))}
+            </div>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <input value={newJibun} onChange={(e) => setNewJibun(e.target.value)} placeholder="지번 주소 추가(예: …동 56-20)"
+                onKeyDown={(e) => { if (e.key === "Enter" && newJibun.trim()) { addRow(projectId, { jibun: newJibun.trim() }); setNewJibun(""); } }}
+                className="min-w-[200px] flex-1 rounded-lg border border-[var(--line)] bg-[var(--surface-strong)] px-2.5 py-1.5 text-xs text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]" />
+              <button onClick={() => { if (newJibun.trim()) { addRow(projectId, { jibun: newJibun.trim() }); setNewJibun(""); } }}
+                className="rounded-lg border border-dashed border-[var(--line-strong)] px-3 py-1.5 text-xs font-bold text-[var(--text-secondary)] hover:border-[var(--accent-strong)]">＋ 지번 추가</button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {result && (
         <>
