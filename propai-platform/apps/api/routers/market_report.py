@@ -2,11 +2,12 @@
 
 import re
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from app.services.market.market_report_service import MarketReportService
+from apps.api.auth.jwt_handler import CurrentUser, get_current_user
 
 router = APIRouter(prefix="/api/v1/market", tags=["시장조사보고서"])
 
@@ -39,13 +40,19 @@ def _resolve(req: MarketReportRequest) -> tuple[str, str | None]:
 
 
 @router.post("/report")
-async def market_report(req: MarketReportRequest):
+async def market_report(
+    req: MarketReportRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+):
     lawd_cd, pnu = _resolve(req)
     return await MarketReportService().build_report(req.address, lawd_cd, pnu, use_llm=req.use_llm)
 
 
 @router.post("/report/pdf")
-async def market_report_pdf(req: MarketReportRequest):
+async def market_report_pdf(
+    req: MarketReportRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+):
     lawd_cd, pnu = _resolve(req)
     svc = MarketReportService()
     rep = await svc.build_report(req.address, lawd_cd, pnu, use_llm=req.use_llm)
@@ -57,7 +64,10 @@ async def market_report_pdf(req: MarketReportRequest):
 
 
 @router.post("/report/pptx")
-async def market_report_pptx(req: MarketReportRequest):
+async def market_report_pptx(
+    req: MarketReportRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+):
     lawd_cd, pnu = _resolve(req)
     svc = MarketReportService()
     rep = await svc.build_report(req.address, lawd_cd, pnu, use_llm=req.use_llm)

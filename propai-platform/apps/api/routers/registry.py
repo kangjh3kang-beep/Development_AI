@@ -3,11 +3,12 @@
 import io
 from typing import Any
 
-from fastapi import APIRouter, File, UploadFile
+from fastapi import APIRouter, Depends, File, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.services.registry.registry_service import RegistryService
+from apps.api.auth.jwt_handler import CurrentUser, get_current_user
 
 router = APIRouter(prefix="/registry", tags=["부동산 등기부"])
 
@@ -23,7 +24,10 @@ async def registry_status() -> dict[str, Any]:
 
 
 @router.post("/bulk", summary="다필지 등기부 일괄 조회/다운로드")
-async def registry_bulk(req: RegistryBulkRequest) -> dict[str, Any]:
+async def registry_bulk(
+    req: RegistryBulkRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
     """여러 필지의 등기부를 일괄 조회/발급한다(공급자 키 설정 시). 미설정 시 안내 반환."""
     items = list(req.items or [])
     if not items and req.addresses:
@@ -41,7 +45,10 @@ class RegistryAnalyzeRequest(BaseModel):
 
 
 @router.post("/analyze", summary="부동산 등기정보 권리분석(법무사·변호사 AI)")
-async def registry_analyze(req: RegistryAnalyzeRequest) -> dict[str, Any]:
+async def registry_analyze(
+    req: RegistryAnalyzeRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
     """등기부(연동 조회 또는 직접 입력)를 법무사·변호사 관점에서 분석해 소유정보·소유기간·
     매입금액·보유지분·가등기·압류·근저당·매도청구 가능여부 등 권리관계를 제공한다.
     집합건물은 realty_type=1 + dong/ho로 특정 호 등기를 조회한다."""

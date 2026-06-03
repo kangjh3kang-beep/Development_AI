@@ -200,7 +200,10 @@ class AIPermitAnalysisRequest(BaseModel):
 
 
 @router.post("/ai-analysis")
-async def ai_permit_analysis(req: AIPermitAnalysisRequest) -> dict[str, Any]:
+async def ai_permit_analysis(
+    req: AIPermitAnalysisRequest,
+    current_user: CurrentUser = Depends(RequirePermission("permits", "read")),
+) -> dict[str, Any]:
     """부지분석+조례+상위법령을 종합해 개발방식별 인허가 가능성·문제점·해결방안을 AI 분석.
 
     parcels에 2개 이상의 필지 주소가 오면 용도지역이 다른 토지를 통합 개발할 때의
