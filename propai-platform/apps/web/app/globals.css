@@ -60,6 +60,19 @@ textarea:focus-visible {
   color: var(--text-primary);
 }
 
+/* ── 비활성 버튼/컨트롤 가독성 ──
+   disabled:opacity-50 은 그라데이션/글래스 배경과 텍스트를 함께 반투명화해 페이지 배경에
+   묻혀 글자가 사라져 보인다. opacity 대신 filter(어둡게+탈채도)로 처리해 텍스트 대비를 보존.
+   (언레이어드 규칙이라 Tailwind disabled:opacity-* 유틸보다 우선) */
+button:disabled,
+button[disabled],
+a[aria-disabled="true"],
+[role="button"][aria-disabled="true"] {
+  opacity: 1;
+  filter: grayscale(0.35) brightness(0.72);
+  cursor: not-allowed;
+}
+
 /* ── Typography Hierarchy ── */
 h1, h2, h3, h4, h5, h6 { font-family: var(--font-display), "Space Grotesk", sans-serif; }
 h1 { font-weight: 700; letter-spacing: -0.03em; line-height: 1.1; }
