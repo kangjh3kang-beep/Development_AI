@@ -6,11 +6,17 @@
 """
 
 import json
+import time
 from typing import Any
 
 import structlog
 
 logger = structlog.get_logger(__name__)
+
+# 등기 분석 결과 캐시(모듈) — CODEF 발급은 느리고(약 40~50s) 유료라 동일 필지 재분석을
+# 즉시 응답하고 비용을 절약한다. 키=(pnu|address, realty_type, dong, ho). TTL 6시간.
+_ANALYZE_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+_ANALYZE_TTL = 6 * 3600.0
 
 _SYSTEM = """\
 당신은 부동산 등기·권리분석 전문가 패널(법무사 20년 + 부동산 전문 변호사)입니다.
@@ -139,6 +145,14 @@ class RegistryAnalysisService:
     ) -> dict[str, Any]:
         import asyncio
 
+        # 캐시 조회(직접 입력 텍스트는 매번 다를 수 있어 캐시 제외)
+        cache_key = None
+        if not (registry_text and registry_text.strip()):
+            cache_key = f"{pnu or address}|{realty_type}|{dong}|{ho}"
+            hit = _ANALYZE_CACHE.get(cache_key)
+            if hit and (time.time() - hit[0]) < _ANALYZE_TTL:
+                return {**hit[1], "cached": True}
+
         origin = None
         source = None
         fetched_meta = None
@@ -210,7 +224,10 @@ class RegistryAnalysisService:
                     "message": "분석할 등기부 내용이 없습니다.", "ai": None}
 
         ai = await self._llm(address, source)
-        return {"status": "ok", "origin": origin, "land": land, "fetched": fetched_meta, "ai": ai}
+        out = {"status": "ok", "origin": origin, "land": land, "fetched": fetched_meta, "ai": ai}
+        if cache_key:
+            _ANALYZE_CACHE[cache_key] = (time.time(), out)
+        return out
 
     async def _llm(self, address: str | None, registry: str) -> dict[str, Any]:
         try:
