@@ -3,9 +3,11 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { salesGlobal } from "@/lib/salesApi";
+import { apiClient } from "@/lib/api-client";
 import type { Locale } from "@/i18n/config";
 
 interface Site { id: string; site_code: string; site_name: string; development_type: string; status: string }
+interface Project { id: string; name: string }
 // 개발 유형 — 코드(값)와 일반인이 이해하는 한글 표기
 const DEV_TYPES: { value: string; label: string }[] = [
   { value: "APT", label: "아파트" },
@@ -29,12 +31,18 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 
 export default function SalesSiteList({ locale }: { locale: Locale }) {
   const [sites, setSites] = useState<Site[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
   const [form, setForm] = useState({ site_name: "", development_type: "APT", project_id: "" });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
   const load = () => salesGlobal.get<Site[]>("/sites").then(setSites).catch(() => setSites([]));
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+    apiClient.get<{ projects?: Project[] }>("/projects")
+      .then((r) => setProjects(r.projects || []))
+      .catch(() => setProjects([]));
+  }, []);
 
   const createSite = async () => {
     if (!form.site_name || !form.project_id) { setErr("현장 이름과 프로젝트 번호를 입력하세요."); return; }
@@ -80,9 +88,19 @@ export default function SalesSiteList({ locale }: { locale: Locale }) {
               {DEV_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
             </select>
           </Field>
-          <Field label="연결할 프로젝트 번호">
-            <input value={form.project_id} onChange={(e) => setForm({ ...form, project_id: e.target.value })}
-              placeholder="프로젝트 번호(분석에서 만든 프로젝트)" className={FIELD_CLS + " w-80"} />
+          <Field label="연결할 프로젝트">
+            {projects.length > 0 ? (
+              <select value={form.project_id} onChange={(e) => setForm({ ...form, project_id: e.target.value })}
+                className={FIELD_CLS + " w-72"}>
+                <option value="">프로젝트 선택…</option>
+                {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+            ) : (
+              <div className={FIELD_CLS + " w-72 flex items-center text-[var(--text-tertiary)]"}>
+                <Link href={`/${locale}/projects`} className="text-[var(--accent-strong)] underline">프로젝트 관리</Link>
+                <span className="ml-1">에서 먼저 프로젝트를 만드세요</span>
+              </div>
+            )}
           </Field>
           <button onClick={createSite} disabled={busy}
             className="rounded-xl bg-[var(--accent-strong)] px-6 py-2.5 text-sm font-black text-white shadow-[var(--shadow-sm)] transition hover:opacity-90 disabled:opacity-50">
