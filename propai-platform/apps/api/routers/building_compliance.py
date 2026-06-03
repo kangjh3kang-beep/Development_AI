@@ -29,7 +29,16 @@ class DesignPayload(BaseModel):
 
 class CheckRequest(BaseModel):
     project_id: str
-    design: DesignPayload
+    design: DesignPayload | None = None  # 있으면 설계단계 정합 검증, 없으면 설계 전 검토
+    # ── 설계 전 검토 입력(부지분석 기반) ──
+    building_type: str | None = None
+    address: str | None = None
+    area_sqm: float | None = None      # 대지면적
+    floors: int | None = None
+    zone_code: str | None = None       # 부지분석 용도지역(siteAnalysis.zoneCode)
+    planned_bcr: float | None = None   # 설계값 있으면 비교(designData.bcr, %)
+    planned_far: float | None = None   # designData.far, %
+    planned_height_m: float | None = None
 
 
 class AutoCorrectRequest(BaseModel):
@@ -67,12 +76,136 @@ def _severity_to_status(severity: str) -> str:
     return "warning"
 
 
+async def _pre_design_review(req: "CheckRequest") -> dict[str, Any]:
+    """설계 전 인허가 검토 — 부지분석(용도지역·대지면적) 기반.
+
+    설계 산출물이 아직 없을 때, 법정 한도와 가능 규모(건축면적·연면적)를 산정하고
+    개발방식별 인허가 가능성을 AI로 요약한다. 설계 정합 검증과 병행되는 첫 단계.
+    """
+    zone = (req.zone_code or "").strip()
+    matched = next((name for name in _LEGAL_LIMITS_PCT if name in zone), None)
+    area = float(req.area_sqm or 0)
+    checks: list[dict[str, Any]] = []
+
+    if matched:
+        bcr_lim, far_lim, h_lim = _LEGAL_LIMITS_PCT[matched]
+        # 가능 규모 산정
+        max_build_area = area * bcr_lim / 100 if area else 0
+        max_gfa = area * far_lim / 100 if area else 0
+
+        def _limit_check(name: str, planned: float | None, limit: float, unit: str) -> dict[str, Any]:
+            if planned and planned > 0:
+                ok = planned <= limit
+                return {
+                    "rule_code": name, "rule_name": name,
+                    "status": "pass" if ok else "fail",
+                    "detail": f"계획 {planned}{unit} / 법정 상한 {limit}{unit}"
+                    + ("" if ok else " — 상한 초과"),
+                    "regulation_ref": "국토계획법 시행령",
+                }
+            return {
+                "rule_code": name, "rule_name": name, "status": "info",
+                "detail": f"법정 상한 {limit}{unit} (설계값 미입력)",
+                "regulation_ref": "국토계획법 시행령",
+            }
+
+        checks.append(_limit_check("건폐율 상한", req.planned_bcr, bcr_lim, "%"))
+        checks.append(_limit_check("용적률 상한", req.planned_far, far_lim, "%"))
+        if h_lim > 0:
+            checks.append(_limit_check("최고 높이", req.planned_height_m, h_lim, "m"))
+        if area:
+            checks.append({
+                "rule_code": "buildable_scale", "rule_name": "가능 규모(추정)",
+                "status": "info",
+                "detail": (
+                    f"대지 {area:,.0f}㎡ → 최대 건축면적 약 {max_build_area:,.0f}㎡, "
+                    f"최대 연면적 약 {max_gfa:,.0f}㎡ (법정 상한 기준, 조례 별도)"
+                ),
+                "regulation_ref": "국토계획법 시행령",
+            })
+        zone_name: str | None = matched
+    else:
+        zone_name = None
+        checks.append({
+            "rule_code": "zone_unknown", "rule_name": "용도지역 확인 필요",
+            "status": "warning",
+            "detail": f"용도지역('{zone or '미상'}') 법정 상한 미등록 — 부지분석에서 용도지역 확정 후 재검토 권장.",
+            "regulation_ref": "",
+        })
+
+    has_fail = any(c["status"] == "fail" for c in checks)
+    overall_status = "fail" if has_fail else ("warning" if not matched else "pass")
+    summary = (
+        f"[설계 전 인허가 검토] 용도지역 {zone_name} 기준 법정 한도 내 가능 규모를 산정했습니다. "
+        "설계가 확정되면 설계 정합 검증으로 자동 정밀화됩니다."
+        if matched else
+        "[설계 전 인허가 검토] 용도지역이 확정되지 않아 부지분석을 먼저 완료해 주세요."
+    )
+
+    # ── AI 인허가 가능성 요약(graceful) ──
+    if matched and area:
+        try:
+            from app.services.ai.permit_interpreter import PermitInterpreter
+
+            bcr_lim, far_lim, h_lim = _LEGAL_LIMITS_PCT[matched]
+            evidence = (
+                f"- 용도지역 법정 한도({zone_name}, 국토계획법 시행령): "
+                f"건폐율 상한 {bcr_lim}%, 용적률 상한 {far_lim}%, 최고높이 {h_lim}m. "
+                f"- 대지면적 {area:,.0f}㎡, 건물유형 {req.building_type or '미정'}, "
+                f"계획층수 {req.floors or '미정'}. 설계 전 단계이므로 가능성·전략 위주로 판단."
+            )
+            interp = await PermitInterpreter().generate_interpretation({
+                "overall_feasibility": overall_status,
+                "violation_count": sum(1 for c in checks if c["status"] == "fail"),
+                "warning_count": sum(1 for c in checks if c["status"] == "warning"),
+                "total_gfa_sqm": area * far_lim / 100,
+                "zone_type": zone_name,
+                "violations": [],
+                "floor_count": req.floors,
+                "building_height_m": req.planned_height_m,
+            }, evidence_text=evidence)
+            if isinstance(interp, dict) and interp:
+                _labels = {
+                    "permit_assessment": "인허가 난이도",
+                    "exception_analysis": "예외 조항",
+                    "relaxation_options": "완화 가능성",
+                    "timeline_estimate": "소요 기간",
+                    "risk_factors": "리스크 요인",
+                    "strategy_recommendation": "전략 제안",
+                }
+                sections = [f"[{_labels[k]}] {interp[k]}" for k in _labels if interp.get(k)]
+                if sections:
+                    summary = summary + "\n\n" + "\n\n".join(sections)
+        except Exception:
+            pass
+
+    return {
+        "project_id": req.project_id,
+        "phase": "pre_design",
+        "violations": [c for c in checks if c["status"] == "fail"],
+        "compliant": not has_fail,
+        "overall_status": overall_status,
+        "checks": checks,
+        "summary": summary,
+    }
+
+
 @router.post("/check", response_model=ComplianceCheckResult)
 async def check_compliance(
     req: CheckRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """설계 데이터의 건축 법규 준수 여부를 검증한다."""
+    """건축 법규 준수 여부를 검증한다.
+
+    설계 기하(design.points/surfaces)가 있으면 설계단계 정합 검증을,
+    없으면 부지분석(용도지역·면적) 기반 설계 전 인허가 검토를 수행한다(병행 구조).
+    """
+    _has_geometry = bool(
+        req.design and (req.design.points or req.design.surfaces or req.design.lines)
+    )
+    if not _has_geometry:
+        return await _pre_design_review(req)
+
     svc = BuildingComplianceService(db=db)
     raw = await svc.check_compliance(
         project_id=req.project_id,

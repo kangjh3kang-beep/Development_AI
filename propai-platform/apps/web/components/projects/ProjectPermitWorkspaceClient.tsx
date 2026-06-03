@@ -7,6 +7,7 @@ import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryEr
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import { ApiClientError, apiClient } from "@/lib/api-client";
+import { useProjectContextStore } from "@/store/useProjectContextStore";
 import type { Locale } from "@/i18n/config";
 
 /* ── Response types ── */
@@ -109,6 +110,7 @@ type Labels = {
   passText: string;
   failText: string;
   warningText: string;
+  infoText: string;
   placeholder: string;
   projectFallback: string;
   projectLoadErrorTitle: string;
@@ -162,6 +164,7 @@ const KO_LABELS: Labels = {
   passText: "적합",
   failText: "부적합",
   warningText: "주의",
+  infoText: "참고",
   placeholder:
     "입력 양식을 제출하면 법규 적합성 검사 및 서류 체크리스트가 표시됩니다.",
   projectFallback: "라이브 API에서 프로젝트 메타데이터를 로드하지 못했습니다.",
@@ -217,6 +220,7 @@ const EN_LABELS: Labels = {
   passText: "Pass",
   failText: "Fail",
   warningText: "Warning",
+  infoText: "Info",
   placeholder:
     "Submit the form to view compliance results and the document checklist.",
   projectFallback: "Project metadata could not be loaded from the live API.",
@@ -299,6 +303,9 @@ export function ProjectPermitWorkspaceClient({
     floors: "15",
   });
 
+  const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
+  const designData = useProjectContextStore((s) => s.designData);
+
   const projectQuery = useQuery({
     queryKey: ["projects", "detail", projectId, "permit-live"],
     enabled: canUseLiveApi,
@@ -357,6 +364,10 @@ export function ProjectPermitWorkspaceClient({
             address,
             area_sqm: areaSqm,
             floors: Number(form.floors) || undefined,
+            // 부지분석 용도지역 + (있으면) 설계값 → 설계 전 검토/설계 정합 검증 자동 분기
+            zone_code: siteAnalysis?.zoneCode || undefined,
+            planned_bcr: designData?.bcr ?? undefined,
+            planned_far: designData?.far ?? undefined,
           },
         }),
         apiClient.post<LifecycleChecklistResponse>(
@@ -418,6 +429,8 @@ export function ProjectPermitWorkspaceClient({
         return labels.failText;
       case "warning":
         return labels.warningText;
+      case "info":
+        return labels.infoText;
       default:
         return status;
     }
