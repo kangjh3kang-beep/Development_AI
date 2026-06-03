@@ -11,8 +11,12 @@ from app.api.crud_router import make_crud_router
 from app.api.endpoints.sales.actions import actions_router
 from app.api.endpoints.sales.mh import mh_router
 from app.api.endpoints.sales.views import views_router
+from app.api.endpoints.sales.lifecycle_p5 import r5
 from apps.api.database.models.sales import (
     commission_mh_harness as cm, contract_crm_ad as cc, site_org as so, staff as st, units_pricing as up,
+)
+from apps.api.database.models.sales import (
+    loan as ln, options as opn, payment as pm, subscription as sub,
 )
 
 sales_router = APIRouter()
@@ -39,6 +43,13 @@ REGISTRY = [
     (cm.SalesCommissionMaster, "commission-master"), (cm.SalesCommissionDistribution, "commission-distribution"),
     (cm.SalesCommissionClaim, "commission-claims"), (cm.SalesCommissionSettlement, "commission-settlements"),
     (cm.SalesWorkLog, "work-logs"),
+    # Part5 [Q]청약 [R]옵션 [S]대출 [U]수납 — VA(민감)는 CRUD 미노출(액션 /payments/va/issue 사용)
+    (sub.SalesSubscriptionAnnouncement, "subscription/announcements"),
+    (sub.SalesSubscriptionApplication, "subscription/applications"),
+    (sub.SalesSubscriptionWinner, "subscription/winners"),
+    (opn.SalesOptionCatalog, "options/catalog"),
+    (ln.SalesLoanProgram, "loan/programs"), (ln.SalesLoanAgreement, "loan/agreements"),
+    (pm.SalesOverdueInterest, "payments/overdue"),
 ]
 
 for _model, _prefix in REGISTRY:
@@ -54,3 +65,4 @@ for _model, _prefix in REGISTRY:
 sales_router.include_router(actions_router)
 sales_router.include_router(mh_router)
 sales_router.include_router(views_router)
+sales_router.include_router(r5)

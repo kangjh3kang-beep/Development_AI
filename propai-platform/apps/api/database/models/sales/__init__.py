@@ -29,6 +29,14 @@ from apps.api.database.models.sales.commission_mh_harness import (
     MhVisitStat, MhInventoryItem, MhInventoryTxn, SalesWorkLog,
     SalesHarnessOutbox, SalesHarnessSubscription,
 )
+# v62 Part5 — [Q]청약 [R]옵션 [S]대출 [U]수납 (13)
+from apps.api.database.models.sales.subscription import (
+    SalesSubscriptionAnnouncement, SalesSubscriptionApplication, SalesSubscriptionWinner,
+    SalesSubscriptionReserveQueue, SalesUnrankedOffer,
+)
+from apps.api.database.models.sales.options import SalesOptionCatalog, SalesContractOption
+from apps.api.database.models.sales.loan import SalesLoanProgram, SalesLoanAgreement, SalesLoanDisbursement
+from apps.api.database.models.sales.payment import SalesVirtualAccount, SalesPayment, SalesOverdueInterest
 
 __all__ = [
     # [A] 현장/조직 (8)
@@ -52,4 +60,11 @@ __all__ = [
     "SalesCommissionSettlement", "MhDesk", "MhVisitor", "MhVisitConsent", "MhStaffMatch", "MhNotification",
     "MhVisitStat", "MhInventoryItem", "MhInventoryTxn", "SalesWorkLog",
     "SalesHarnessOutbox", "SalesHarnessSubscription",
+    # [Q] 청약 (5)
+    "SalesSubscriptionAnnouncement", "SalesSubscriptionApplication", "SalesSubscriptionWinner",
+    "SalesSubscriptionReserveQueue", "SalesUnrankedOffer",
+    # [R] 옵션 (2) + [S] 대출 (3) + [U] 수납 (3)
+    "SalesOptionCatalog", "SalesContractOption",
+    "SalesLoanProgram", "SalesLoanAgreement", "SalesLoanDisbursement",
+    "SalesVirtualAccount", "SalesPayment", "SalesOverdueInterest",
 ]
