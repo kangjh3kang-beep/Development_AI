@@ -49,8 +49,10 @@ async def get_current_user(
             raise HTTPException(status_code=401, detail="유효하지 않은 토큰")
     except JWTError:
         raise HTTPException(status_code=401, detail="토큰 검증 실패")
+    # 정식 User 모델(tenant_id) 사용 — app.models.auth.User(stale, organization_id)는 실 스키마와 불일치(500).
+    from apps.api.database.models.user import User as DBUser
     result = await db.execute(
-        select(User).where(User.id == user_id, User.is_active == "true")
+        select(DBUser).where(DBUser.id == user_id, DBUser.is_active.is_(True))
     )
     user = result.scalar_one_or_none()
     if not user:
