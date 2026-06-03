@@ -19,8 +19,8 @@ from packages.schemas.models import (
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apps.api.auth.jwt_handler import CurrentUser
-from apps.api.auth.rbac import RequirePermission
+from apps.api.auth.jwt_handler import CurrentUser, get_current_user
+from apps.api.auth.rbac import RequirePermission  # noqa: F401 (다른 자원에서 사용 가능)
 from apps.api.database.models.project import Project
 from apps.api.database.session import get_db
 from apps.api.metrics import PROJECT_CREATED
@@ -99,7 +99,7 @@ async def get_operations_status(project_id: UUID) -> dict:
 async def list_projects(
     page: int = 1,
     page_size: int = 20,
-    current_user: CurrentUser = Depends(RequirePermission("projects", "read")),
+    current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> PaginatedResponse:
     """프로젝트 목록을 조회한다."""
@@ -126,7 +126,7 @@ async def list_projects(
 async def create_project(
     body: ProjectCreateRequest,
     request: Request,
-    current_user: CurrentUser = Depends(RequirePermission("projects", "write")),
+    current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> ProjectResponse:
     """프로젝트를 생성한다."""
@@ -161,7 +161,7 @@ async def create_project(
 @router.get("/{project_id}", response_model=ProjectResponse)
 async def get_project(
     project_id: UUID,
-    current_user: CurrentUser = Depends(RequirePermission("projects", "read")),
+    current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> ProjectResponse:
     """프로젝트 상세 정보를 조회한다."""
@@ -174,7 +174,7 @@ async def update_project(
     project_id: UUID,
     body: ProjectUpdateRequest,
     request: Request,
-    current_user: CurrentUser = Depends(RequirePermission("projects", "write")),
+    current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> ProjectResponse:
     """프로젝트를 수정한다."""
@@ -207,7 +207,7 @@ async def update_project_status(
     project_id: UUID,
     body: ProjectStatusUpdateRequest,
     request: Request,
-    current_user: CurrentUser = Depends(RequirePermission("projects", "write")),
+    current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> ProjectResponse:
     """프로젝트 상태를 전환한다."""
