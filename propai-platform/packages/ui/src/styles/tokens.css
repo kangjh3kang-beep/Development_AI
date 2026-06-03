@@ -105,8 +105,8 @@
   /* ── Text Hierarchy ── */
   --text-primary: #e1e1ee;
   --text-secondary: #c3c5d8;
-  --text-tertiary: #8d90a1;
-  --text-hint: #434655;
+  --text-tertiary: #a3a7ba;
+  --text-hint: #828aa0;
 
   /* ── Borders & Dividers ── */
   --line: rgba(255, 255, 255, 0.12);

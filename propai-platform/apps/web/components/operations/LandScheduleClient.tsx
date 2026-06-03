@@ -15,6 +15,8 @@ import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { useLandScheduleStore, type LandRow } from "@/store/useLandScheduleStore";
 import type { Locale } from "@/i18n/config";
 
+const EMPTY_ROWS: LandRow[] = []; // zustand v5: 안정적 참조(매 렌더 새 [] 반환→무한루프 방지)
+
 function apiBase(): string {
   if (typeof window !== "undefined") {
     const h = window.location.hostname;
@@ -45,7 +47,7 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
   const { locale: rl } = (useParams() as { locale?: string }) || {};
   const projectId = useProjectContextStore((s) => s.projectId);
   const projectName = useProjectContextStore((s) => s.projectName);
-  const rows = useLandScheduleStore((s) => s.byProject[projectId || "_default"] || []);
+  const rows = useLandScheduleStore((s) => s.byProject[projectId || "_default"] ?? EMPTY_ROWS);
   const addRow = useLandScheduleStore((s) => s.addRow);
   const updateRow = useLandScheduleStore((s) => s.updateRow);
   const removeRow = useLandScheduleStore((s) => s.removeRow);
