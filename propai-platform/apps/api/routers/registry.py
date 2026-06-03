@@ -200,6 +200,8 @@ async def land_schedule_import(file: UploadFile = File(...)) -> dict[str, Any]:
             if any("지번" in c for c in cells):
                 headers = cells
             continue
+        if not any(cells):  # 빈 행 → 데이터 끝(집계 푸터 앞에서 중단)
+            break
         rd = {headers[i]: (cells[i] if i < len(cells) else "") for i in range(len(headers))}
 
         def pick(*keys: str) -> str:
@@ -209,7 +211,8 @@ async def land_schedule_import(file: UploadFile = File(...)) -> dict[str, Any]:
             return ""
 
         jibun = pick("지번", "주소")
-        if not jibun:
+        # 집계 푸터 잔재(필지수·면적·비율·금액 등) 방어적 스킵
+        if not jibun or any(t in jibun for t in ("필지", "㎡", "%", "원", "평")):
             continue
         ot = pick("소유구분")
         owner_type = "국공유지" if ("국" in ot or "공" in ot) else ("사유지" if ot else "")
