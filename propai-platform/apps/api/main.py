@@ -151,6 +151,15 @@ except ImportError:
         from app.routers.cost import router as cost_router
     except ImportError:
         cost_router = None
+
+# 범용 AI 프록시 — 설계 AI 등 공통 LLM 키 일원화(자체 prefix=/api/v1/ai)
+try:
+    from apps.api.app.routers.ai_analyze import router as ai_analyze_router
+except ImportError:
+    try:
+        from app.routers.ai_analyze import router as ai_analyze_router
+    except ImportError:
+        ai_analyze_router = None
 from apps.api.versioning import VersionHeaderMiddleware, create_latest_redirect_router
 
 settings = get_settings()
@@ -391,6 +400,8 @@ if g2b_router is not None:
     app.include_router(g2b_router, prefix="/api/v1", tags=["공공입찰(G2B)"])
 if cost_router is not None:
     app.include_router(cost_router, tags=["v61 공사비"])  # 자체 prefix=/api/v1/cost
+if ai_analyze_router is not None:
+    app.include_router(ai_analyze_router, tags=["ai"])  # 자체 prefix=/api/v1/ai
 if sales_router is not None:
     app.include_router(sales_router, prefix="/api/v1/sales", tags=["분양관리(sales)"])
     try:
