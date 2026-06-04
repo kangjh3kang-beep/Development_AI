@@ -264,3 +264,28 @@ async def get_award_stats(
 ):
     """지역별/공종별 낙찰가율 통계를 조회한다."""
     return await service.get_award_stats(bid_type=bid_type, region_sido=region_sido)
+
+
+# ── 적격심사 사정율 시뮬레이터(베팅) ──────────────────────────────
+from pydantic import BaseModel as _BaseModel  # noqa: E402
+
+
+class EstimateSimRequest(_BaseModel):
+    base_price: float                 # 기초금액(원)
+    bid_type: str = "공사"
+    variation: float | None = None    # 복수예비가 변동폭(소수, 예 0.02)
+    floor_rate: float | None = None   # 낙찰하한율(소수, 예 0.87745)
+    target_win_prob: float = 0.85
+    iterations: int = 10000
+
+
+@router.post("/estimate-simulation", summary="적격심사 사정율(복수예비가 추첨) 시뮬레이션")
+async def estimate_simulation(req: EstimateSimRequest):
+    """기초금액에서 예정가격 분포·적격확률 곡선·적정 투찰가를 몬테카를로로 산출."""
+    from app.services.ai_services.g2b_estimate_simulator import simulate_estimate
+
+    return simulate_estimate(
+        req.base_price, bid_type=req.bid_type, variation=req.variation,
+        floor_rate=req.floor_rate, target_win_prob=req.target_win_prob,
+        iterations=req.iterations,
+    )
