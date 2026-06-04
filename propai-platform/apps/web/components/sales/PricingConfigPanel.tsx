@@ -65,8 +65,8 @@ export default function PricingConfigPanel({
     setAiBusy(true); setMsg("");
     try {
       const ctx = {
-        용도지역: sa?.zoneCode || "미상", 대지면적_㎡: sa?.landAreaSqm || null,
-        주소: sa?.address || "", 타입: types.map((t) => t.type_name),
+        zone: sa?.zoneCode || "미상", land_area_sqm: sa?.landAreaSqm || null,
+        address: sa?.address || "", types: types.map((t) => t.type_name),
       };
       const system = "너는 한국 분양가 산정 전문가다. 입지·용도지역·평형을 고려해 보수적·현실적 기준가와 층별 가중치를 제안한다. 반드시 JSON만 출력.";
       const prompt =
