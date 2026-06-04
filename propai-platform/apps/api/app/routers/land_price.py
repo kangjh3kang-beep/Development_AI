@@ -56,6 +56,48 @@ async def land_desk_appraisal(req: DeskAppraisalRequest):
     )
 
 
+@router.get("/rone-status")
+async def rone_status(keyword: str = "지가변동"):
+    """R-ONE 부동산통계정보 API 연동 상태 점검 + 통계표(STATBL_ID) 자동 탐색.
+
+    - 인증키만 입력된 경우: 통계표 목록에서 '지가변동' 통계표 후보를 찾아 STATBL_ID 제시.
+    - 둘 다 입력된 경우: 실제 지가변동률을 조회해 누적 시점수정계수를 계산(서울 기준 검증).
+    """
+    from app.services.external_api import reb_client as reb
+
+    key_set = bool(reb.reb_key())
+    statbl_set = bool(reb.reb_statbl_id())
+    out: dict = {
+        "key_set": key_set,
+        "statbl_id_set": statbl_set,
+        "ready": reb.reb_ready(),
+    }
+    if not key_set:
+        out["message"] = "RONE_API_KEY가 설정되지 않았습니다. 관리자 화면에서 인증키를 입력하세요."
+        return out
+
+    # 통계표 후보 탐색(STATBL_ID 미설정 시 도움)
+    candidates = await reb.discover_statbl_ids(keyword=keyword)
+    if candidates is not None:
+        out["statbl_candidates"] = candidates[:30]
+        out["candidate_count"] = len(candidates)
+
+    # 둘 다 설정 시 실데이터 검증
+    if statbl_set:
+        rows = await reb.fetch_land_price_changes(months=24)
+        out["rows_fetched"] = len(rows) if rows else 0
+        if rows:
+            factor = reb.cumulative_factor_from_rows(rows, "서울")
+            out["seoul_cumulative_factor_24m"] = factor
+            out["sample_row"] = rows[0]
+            out["message"] = "R-ONE 실데이터 연동 정상 — 시점수정이 실데이터로 동작합니다."
+        else:
+            out["message"] = "STATBL_ID로 데이터를 가져오지 못했습니다. 통계표 후보(statbl_candidates)에서 올바른 ID를 확인하세요."
+    else:
+        out["message"] = "인증키는 정상입니다. 아래 statbl_candidates에서 '지가변동률' STATBL_ID를 RONE_LANDPRICE_STATBL_ID에 입력하세요."
+    return out
+
+
 @router.post("/desk-appraisal/pdf")
 async def land_desk_appraisal_pdf(req: DeskAppraisalRequest):
     """예상 탁상감정서 PDF 다운로드."""

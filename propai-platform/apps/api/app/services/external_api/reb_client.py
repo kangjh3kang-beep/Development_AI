@@ -17,6 +17,7 @@ import structlog
 logger = structlog.get_logger(__name__)
 
 _HOST = "https://www.reb.or.kr/r-one/openapi/SttsApiTblData.do"
+_TBL_LIST_HOST = "https://www.reb.or.kr/r-one/openapi/SttsApiTbl.do"
 
 
 def reb_key() -> str:
@@ -29,6 +30,57 @@ def reb_statbl_id() -> str:
 
 def reb_ready() -> bool:
     return bool(reb_key() and reb_statbl_id())
+
+
+def _rows_from_payload(data: Any, row_block: str) -> list[dict[str, Any]]:
+    """R-ONE 응답({block:[{head},{row:[...]}]} 또는 {row:[...]})에서 row 리스트 방어적 추출."""
+    rows: list[dict[str, Any]] = []
+    container = data.get(row_block) if isinstance(data, dict) else None
+    if isinstance(container, list):
+        for blk in container:
+            if isinstance(blk, dict) and isinstance(blk.get("row"), list):
+                return blk["row"]
+    if isinstance(data, dict) and isinstance(data.get("row"), list):
+        rows = data["row"]
+    return rows
+
+
+async def discover_statbl_ids(keyword: str = "지가변동", max_pages: int = 6) -> list[dict[str, Any]] | None:
+    """통계표 목록(SttsApiTbl.do)에서 키워드 포함 통계표를 탐색해 후보(STATBL_ID·명) 반환."""
+    key = reb_key()
+    if not key:
+        return None
+    try:
+        import httpx
+
+        out: list[dict[str, Any]] = []
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            for page in range(1, max_pages + 1):
+                params = {"KEY": key, "Type": "json", "pIndex": str(page), "pSize": "100"}
+                r = await client.get(_TBL_LIST_HOST, params=params)
+                r.raise_for_status()
+                rows = _rows_from_payload(r.json(), "SttsApiTbl")
+                if not rows:
+                    break
+                for row in rows:
+                    if not isinstance(row, dict):
+                        continue
+                    name = " ".join(
+                        str(row.get(k, "")) for k in ("STATBL_NM", "STAT_NM", "GRP_NM", "TBL_NM")
+                    )
+                    if keyword in name:
+                        out.append({
+                            "STATBL_ID": row.get("STATBL_ID") or row.get("TBL_ID"),
+                            "STATBL_NM": row.get("STATBL_NM") or row.get("TBL_NM"),
+                            "STAT_NM": row.get("STAT_NM"),
+                            "DTACYCLE_CD": row.get("DTACYCLE_CD"),
+                        })
+                if len(rows) < 100:
+                    break
+        return out
+    except Exception as e:  # noqa: BLE001
+        logger.warning("R-ONE 통계표 목록 조회 실패", err=str(e)[:140])
+        return None
 
 
 async def fetch_land_price_changes(months: int = 24) -> list[dict[str, Any]] | None:
