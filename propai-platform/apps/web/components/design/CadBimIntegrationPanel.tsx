@@ -388,9 +388,23 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
             ))}
           </div>
         )}
-        {!designData?.totalGfaSqm && (
-          <span className="ml-auto text-[10px] text-[var(--text-hint)]">※ 사업모델 추천에서 개요 선택 시 정밀 반영(현재 대지·용도지역 자동산출)</span>
-        )}
+        <div className="ml-auto flex items-center gap-3">
+          {!designData?.totalGfaSqm && (
+            <span className="text-[10px] text-[var(--text-hint)]">※ 사업모델 추천에서 개요 선택 시 정밀 반영(현재 대지·용도지역 자동산출)</span>
+          )}
+          <button
+            type="button"
+            onClick={() => {
+              setSpec(null); setBimScene(null); setBimError(null); setBimMass(null);
+              setDesignAi(null); setDrawingCodes([]); setSvgMap({}); setActiveCode(null);
+            }}
+            disabled={specLoading}
+            className="rounded-lg border border-[var(--line-strong)] px-3 py-1 text-[10px] font-bold text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-strong)] disabled:opacity-50"
+            title="선택한 건축개요를 다시 불러와 도면·모델을 재생성"
+          >
+            ↻ 개요 재적용
+          </button>
+        </div>
       </div>
 
       <div className="relative h-[650px] w-full overflow-hidden rounded-[4rem] border border-[var(--line-strong)] bg-[#0d1520] shadow-[var(--shadow-2xl)] group">

@@ -321,6 +321,21 @@ export function AutoRecommendPanel({ onClose, isModal = false, embedded = false 
         grade: selectedModel.grade,
       });
 
+      // ── 선택한 건축개요를 설계 스토어에 저장 → 설계 스튜디오(CAD/BIM)가 동일 개요로 생성(정합) ──
+      // 층수는 용적률/건폐율로 추정(far/bcr). 면적은 정밀화 모달에서 확정한 연면적 사용.
+      const ord = ctxStore.siteAnalysis?.ordinance;
+      const bcr = ord?.effectiveBcr ?? ord?.nationalBcr ?? null;
+      const far = ord?.effectiveFar ?? ord?.nationalFar ?? null;
+      const floors = far && bcr ? Math.max(1, Math.round(far / bcr)) : null;
+      ctxStore.updateDesignData({
+        totalGfaSqm: refined.total_gfa_sqm || selectedModel.total_gfa_sqm || null,
+        floorCount: floors,
+        buildingType: selectedModel.type_name,
+        bcr,
+        far,
+      });
+      ctxStore.markStageComplete("design");
+
       // Save to feasibility store
       feasibilityStore.setSelectedModule(selectedModel.type_code);
       feasibilityStore.setInput({
