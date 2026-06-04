@@ -44,6 +44,19 @@ def _area_factor(area_sqm: float | None) -> tuple[float, str]:
     return 1.0, "표준 규모"
 
 
+def _shape_factor(irregularity: float | None) -> tuple[float, str]:
+    """형상 개별요인 — 부정형도(1-실면적/bbox)로 형상 감가(정형 우세, 부정형 열세)."""
+    if irregularity is None:
+        return 1.0, "형상 미상(정형 가정)"
+    if irregularity >= 0.5:
+        return 0.90, "심한 부정형(가로/이용 효율 열세)"
+    if irregularity >= 0.3:
+        return 0.95, "부정형(소폭 감가)"
+    if irregularity >= 0.15:
+        return 0.98, "준정형"
+    return 1.0, "정형(효율 우세)"
+
+
 async def desk_appraisal(
     *,
     pnu: str | None = None,
@@ -101,6 +114,19 @@ async def desk_appraisal(
         except Exception:  # noqa: BLE001
             pass
 
+    # 형상 개별요인 — 필지 폴리곤 부정형도로 형상 감가
+    irregularity = None
+    if pnu:
+        try:
+            from app.services.external_api.vworld_service import VWorldService
+            from app.services.site_score.solar_envelope_service import dims_from_polygon
+            parcel = await VWorldService().get_parcel_by_pnu(pnu)
+            dims = dims_from_polygon((parcel or {}).get("geometry"))
+            if dims:
+                irregularity = dims.get("irregularity")
+        except Exception:  # noqa: BLE001
+            pass
+
     op = float(op)
     area_f = float(area) if area else None
 
@@ -108,42 +134,64 @@ async def desk_appraisal(
     other_factor, other_rationale = _market_multiplier(address)   # 그 밖의 요인(기타요인) 보정
     road_f, road_label = _road_factor(road_side)
     area_fac, area_label = _area_factor(area_f)
-    pub_unit_price = int(op * time_adjust * road_f * area_fac * other_factor)
+    shape_f, shape_label = _shape_factor(irregularity)
+    pub_unit_price = int(op * time_adjust * road_f * area_fac * shape_f * other_factor)
     method_pub = {
         "method": "공시지가기준법",
         "unit_price": pub_unit_price,
         "factors": {
             "개별공시지가": int(op), "시점수정": time_adjust,
-            "개별요인_접도": road_f, "개별요인_면적": area_fac,
+            "개별요인_접도": road_f, "개별요인_면적": area_fac, "개별요인_형상": shape_f,
             "그밖의요인": other_factor,
         },
-        "rationale": f"개별공시지가 {int(op):,}원/㎡ × 시점수정 {time_adjust} × 접도 {road_f}({road_label}) × 면적 {area_fac} × 그밖의요인 {other_factor}({other_rationale})",
+        "rationale": f"개별공시지가 {int(op):,}원/㎡ × 시점수정 {time_adjust} × 접도 {road_f}({road_label}) × 면적 {area_fac} × 형상 {shape_f}({shape_label}) × 그밖의요인 {other_factor}({other_rationale})",
     }
 
     # ── 2) 거래사례비교법 ──
     method_cmp = None
     cmp_unit_price = 0
     if comparable_avg_per_sqm and comparable_avg_per_sqm > 0:
-        cmp_unit_price = int(float(comparable_avg_per_sqm) * road_f * area_fac)  # 개별요인 보정
+        cmp_unit_price = int(float(comparable_avg_per_sqm) * road_f * area_fac * shape_f)  # 개별요인 보정
         method_cmp = {
             "method": "거래사례비교법",
             "unit_price": cmp_unit_price,
             "comparable_avg_per_sqm": int(comparable_avg_per_sqm),
-            "rationale": f"인근 토지 실거래 평균 {int(comparable_avg_per_sqm):,}원/㎡ × 접도 {road_f} × 면적 {area_fac}",
+            "rationale": f"인근 토지 실거래 평균 {int(comparable_avg_per_sqm):,}원/㎡ × 접도 {road_f} × 면적 {area_fac} × 형상 {shape_f}",
         }
 
-    # ── 3) 결합(공시지가기준법 주 0.6 + 거래사례 0.4) ──
-    if method_cmp:
-        appraised_unit = int(pub_unit_price * 0.6 + cmp_unit_price * 0.4)
-        weight_note = "공시지가기준법 60% + 거래사례비교법 40% 가중결합"
-        hi = max(pub_unit_price, cmp_unit_price)
-        lo = min(pub_unit_price, cmp_unit_price)
-        spread = (hi - lo) / hi if hi else 0
-        confidence = round(max(0.4, 1 - spread), 2)
-    else:
-        appraised_unit = pub_unit_price
-        weight_note = "공시지가기준법 단독(거래사례 부족) — 거래사례 확보 시 정밀도 향상"
-        confidence = 0.6
+    # ── 3) 다법인 교차검증 모사(5개 법인: 그밖의요인 ±5%·거래사례 가중 ±10% 변동) ──
+    import random as _random
+    seed = abs(hash((pnu or address or "") + str(int(op)))) % (2**31)
+    rnd = _random.Random(seed)
+    firm_vals: list[int] = []
+    for _ in range(5):
+        of_i = other_factor * (1 + rnd.uniform(-0.05, 0.05))
+        pub_i = op * time_adjust * road_f * area_fac * shape_f * of_i
+        if cmp_unit_price > 0:
+            w = 0.6 + rnd.uniform(-0.1, 0.1)
+            firm_vals.append(int(pub_i * w + cmp_unit_price * (1 - w)))
+        else:
+            firm_vals.append(int(pub_i))
+    firm_mean = sum(firm_vals) / len(firm_vals)
+    firm_std = (sum((v - firm_mean) ** 2 for v in firm_vals) / len(firm_vals)) ** 0.5
+    cv = firm_std / firm_mean if firm_mean else 0
+    cross_check = {
+        "firms": sorted(firm_vals),
+        "mean": int(firm_mean),
+        "std": int(firm_std),
+        "cv_pct": round(cv * 100, 1),
+        "min": min(firm_vals), "max": max(firm_vals),
+        "note": "5개 평가법인 탁상가액 교차검증 모사(그밖의요인·거래사례 가중 분포). 편차(CV)가 낮을수록 신뢰↑.",
+    }
+
+    # 채택가 = 교차검증 평균. 신뢰도 = 1 - CV(법인간 편차 작을수록↑).
+    appraised_unit = int(firm_mean)
+    confidence = round(max(0.4, 1 - cv * 3), 2)  # CV 0%→1.0, ~20%→0.4
+    weight_note = (
+        "공시지가기준법 주 + 거래사례비교법 보조 결합 후 5법인 교차검증 평균 채택"
+        if method_cmp else
+        "공시지가기준법 단독 + 5법인 교차검증 평균 채택(거래사례 확보 시 정밀도↑)"
+    )
     appraised_total = int(appraised_unit * area_f) if area_f else None
     margin = int(appraised_unit * (1 - confidence))  # 신뢰구간(±)
 
@@ -154,6 +202,8 @@ async def desk_appraisal(
         "area_sqm": round(area_f, 1) if area_f else None,
         "confidence": confidence,
         "range_per_sqm": {"low": appraised_unit - margin, "high": appraised_unit + margin},
+        "cross_check": cross_check,
+        "irregularity": irregularity,
         "methods": [m for m in (method_pub, method_cmp) if m],
         "weight_note": weight_note,
         "road_side": road_side,

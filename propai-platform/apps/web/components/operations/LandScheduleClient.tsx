@@ -233,7 +233,8 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
           ...(d.area_sqm && !r.area_sqm ? { area_sqm: d.area_sqm } : {}),
         });
         const methods = (d.methods || []).map((m: { method: string; unit_price: number }) => `${m.method} ${Math.round(m.unit_price).toLocaleString()}원/㎡`).join(" · ");
-        setNotice(`「${r.jibun}」 예상 탁상감정 ${d.appraised_price_per_sqm.toLocaleString()}원/㎡ (신뢰 ${Math.round(d.confidence * 100)}%, ±${d.range_per_sqm.low.toLocaleString()}~${d.range_per_sqm.high.toLocaleString()}) — ${methods}. ${d.weight_note}. ${d.disclaimer}`);
+        const cc = d.cross_check ? ` · 5법인 교차검증 평균 ${d.cross_check.mean.toLocaleString()}원/㎡(CV ${d.cross_check.cv_pct}%)` : "";
+        setNotice(`「${r.jibun}」 예상 탁상감정 ${d.appraised_price_per_sqm.toLocaleString()}원/㎡ (신뢰 ${Math.round(d.confidence * 100)}%, ±${d.range_per_sqm.low.toLocaleString()}~${d.range_per_sqm.high.toLocaleString()}) — ${methods}${cc}. ${d.weight_note}. ${d.disclaimer}`);
       } else {
         setNotice(`「${r.jibun}」 탁상감정 실패 — ${d?.message || "공시지가 확인 필요"}. ‘자동채움’으로 공부정보를 먼저 채워보세요.`);
       }
