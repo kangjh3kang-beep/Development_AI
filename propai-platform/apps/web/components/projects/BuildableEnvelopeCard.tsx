@@ -17,6 +17,10 @@ type Envelope = {
   daylight_ceiling_floors?: number; geometry_source?: string;
   min_building_spacing_m?: number; min_building_spacing_blank_wall_m?: number;
   road_side?: string; note?: string; error?: string;
+  shadow_analysis?: {
+    winter_solstice?: Record<string, { solar_altitude_deg: number; shadow_len_m: number | null }>;
+    noon_altitude_deg?: number; max_shadow_len_m?: number; latitude?: number; note?: string;
+  };
 };
 
 const eok = (sqm: number) => `${sqm.toLocaleString()}㎡`;
@@ -76,6 +80,30 @@ export function BuildableEnvelopeCard() {
           현재 설계 연면적 {eok(Math.round(design.totalGfaSqm))} / 건축가능 {eok(res.effective_gfa_sqm)}
           {design.totalGfaSqm > res.effective_gfa_sqm ? " — ⚠ 한도 초과 검토" : " — 한도 내"}
         </p>
+      )}
+      {res.shadow_analysis?.winter_solstice && (
+        <div className="mt-3 rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-3">
+          <div className="flex items-center justify-between">
+            <p className="text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)]">동지 일영(그림자)</p>
+            <p className="text-[10px] text-[var(--text-secondary)]">
+              정오 태양고도 {res.shadow_analysis.noon_altitude_deg}° · 최대 그림자 {res.shadow_analysis.max_shadow_len_m}m
+            </p>
+          </div>
+          <div className="mt-2 grid grid-cols-3 gap-2">
+            {Object.entries(res.shadow_analysis.winter_solstice).map(([t, v]) => (
+              <div key={t} className="rounded-lg bg-[var(--surface)] px-3 py-2 text-center">
+                <p className="text-[10px] text-[var(--text-secondary)]">{t}</p>
+                <p className="text-sm font-[1000] text-[var(--text-primary)]">
+                  {v.shadow_len_m != null ? `${v.shadow_len_m}m` : "—"}
+                </p>
+                <p className="text-[9px] text-[var(--text-hint)]">고도 {v.solar_altitude_deg}°</p>
+              </div>
+            ))}
+          </div>
+          {res.shadow_analysis.note && (
+            <p className="mt-2 text-[10px] text-[var(--text-hint)]">{res.shadow_analysis.note}</p>
+          )}
+        </div>
       )}
       {res.note && <p className="mt-2 text-[10px] text-[var(--text-hint)]">{res.note}</p>}
     </div>
