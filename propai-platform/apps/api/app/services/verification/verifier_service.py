@@ -90,8 +90,11 @@ class VerifierService:
 
         # ── 결정론 수치-원장(Calc Ledger): LLM과 무관하게 산식 재계산으로 계산환각 적발 ──
         from app.services.verification.calc_ledger import run_calc_checks
+        from app.services.verification.range_rules import run_range_checks
         calc = run_calc_checks(source, output)
-        pre = pre + calc["issues"]  # 계산오류(high)는 두 경로 모두에 반영
+        # 모듈별 범위 sanity 규칙(산식은 맞아도 값이 비현실/법정범위 이탈)
+        range_issues = run_range_checks(analysis_type, source, output)
+        pre = pre + calc["issues"] + range_issues  # 계산오류·범위위반(high)은 두 경로 모두 반영
 
         src = source if isinstance(source, str) else json.dumps(source, ensure_ascii=False)
         out = output if isinstance(output, str) else json.dumps(output, ensure_ascii=False)
