@@ -87,6 +87,12 @@ class VerifierService:
         output: dict[str, Any] | str,
     ) -> dict[str, Any]:
         pre = _prescan(source if isinstance(source, dict) else {})
+
+        # ── 결정론 수치-원장(Calc Ledger): LLM과 무관하게 산식 재계산으로 계산환각 적발 ──
+        from app.services.verification.calc_ledger import run_calc_checks
+        calc = run_calc_checks(source, output)
+        pre = pre + calc["issues"]  # 계산오류(high)는 두 경로 모두에 반영
+
         src = source if isinstance(source, str) else json.dumps(source, ensure_ascii=False)
         out = output if isinstance(output, str) else json.dumps(output, ensure_ascii=False)
 
@@ -112,6 +118,8 @@ class VerifierService:
                 "grounded_score": data.get("grounded_score"),
                 "issues": issues,
                 "summary": data.get("summary") or "검증 완료.",
+                "calc_checks": calc["checks"],
+                "calc_pass_rate": calc["pass_rate"],
             }
         except Exception as e:  # noqa: BLE001
             logger.warning("검증 LLM 실패, 규칙기반 폴백", err=str(e)[:100])
@@ -120,5 +128,11 @@ class VerifierService:
                 "verdict": "fail" if any(i["severity"] == "high" for i in pre) else ("warn" if pre else "pass"),
                 "grounded_score": None,
                 "issues": pre,
-                "summary": "AI 검증은 일시적으로 제공되지 않습니다. 규칙기반 사전검사만 적용되었습니다.",
+                "summary": (
+                    "AI 검증은 일시적으로 제공되지 않습니다. 규칙기반 사전검사 + 결정론 재계산만 적용되었습니다."
+                    if calc["total"] else
+                    "AI 검증은 일시적으로 제공되지 않습니다. 규칙기반 사전검사만 적용되었습니다."
+                ),
+                "calc_checks": calc["checks"],
+                "calc_pass_rate": calc["pass_rate"],
             }

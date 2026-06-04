@@ -18,12 +18,15 @@ function hashStr(s: string): string {
 }
 
 type Issue = { type: string; claim: string; severity: "high" | "medium" | "low" | string; note: string };
+type CalcCheck = { name: string; formula: string; claimed: number; recomputed: number; diff_pct: number; ok: boolean };
 type VerifyResult = {
   generated?: boolean;
   verdict: "pass" | "warn" | "fail" | string;
   grounded_score?: number | null;
   issues: Issue[];
   summary: string;
+  calc_checks?: CalcCheck[];
+  calc_pass_rate?: number | null;
 };
 
 const VERDICT_META: Record<string, { label: string; cls: string; icon: string }> = {
@@ -97,10 +100,12 @@ export function VerificationBadge({
               {meta.icon} {meta.label}
               {(result?.issues?.length ?? 0) > 0 && ` · ${result!.issues.length}건`}
               {result?.grounded_score != null && ` · 근거 ${result.grounded_score}%`}
+              {(result?.calc_checks?.length ?? 0) > 0 &&
+                ` · 계산 ${result!.calc_checks!.filter((c) => c.ok).length}/${result!.calc_checks!.length}`}
             </span>
           )}
         </div>
-        {result && (result.issues.length > 0 || result.summary) && (
+        {result && (result.issues.length > 0 || result.summary || (result.calc_checks?.length ?? 0) > 0) && (
           <button onClick={() => setOpen((v) => !v)} className="text-[11px] font-semibold text-[var(--accent-strong)] hover:underline">
             {open ? "접기" : "상세"}
           </button>
@@ -117,7 +122,22 @@ export function VerificationBadge({
               <span className="text-[var(--text-tertiary)]"> — {it.note}</span>
             </div>
           ))}
-          {!result.generated && <p className="text-[10px] text-[var(--text-hint)]">규칙기반 사전검사만 적용됨</p>}
+          {(result.calc_checks?.length ?? 0) > 0 && (
+            <div className="mt-1.5 border-t border-[var(--line)] pt-1.5">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-hint)]">결정론 계산검증</p>
+              {result.calc_checks!.map((c, i) => (
+                <div key={i} className="flex items-center justify-between text-[11px]">
+                  <span className="text-[var(--text-secondary)]">
+                    {c.ok ? "✅" : "❌"} {c.name} <span className="text-[var(--text-tertiary)]">({c.formula})</span>
+                  </span>
+                  {!c.ok && (
+                    <span className="text-red-500">출력 {c.claimed.toLocaleString()} ≠ 계산 {c.recomputed.toLocaleString()}</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+          {!result.generated && <p className="text-[10px] text-[var(--text-hint)]">규칙기반 사전검사 + 결정론 재계산 적용됨</p>}
         </div>
       )}
     </div>
