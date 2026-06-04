@@ -1,400 +1,237 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { Card, CardContent } from "@propai/ui";
+import { apiClient } from "@/lib/api-client";
 
 /* ------------------------------------------------------------------ */
-/*  API Service definitions                                           */
+/*  서버 연동 — 관리자 API 키 관리(분류별·항목별 + 사용자 임의추가)        */
+/*  값은 서버(DB)에 Fernet 암호화 저장, 평문은 절대 내려오지 않음.         */
 /* ------------------------------------------------------------------ */
 
-type ApiService = {
-  id: string;
+type SecretItem = {
   name: string;
-  description: string;
-  required: boolean;
-  envKey: string;
-  guide: string[];
-  guideUrl: string;
-  placeholder: string;
-  icon: string;
+  label: string;
+  group: string;
+  secret: boolean;
+  kind: "text" | "textarea" | "select";
+  options?: string[] | null;
+  desc?: string | null;
+  guide_url?: string | null;
+  custom?: boolean;
+  is_set: boolean;
+  source: "db" | "env" | "none";
+  masked: string;
+  updated_at?: string | null;
+  updated_by?: string | null;
 };
 
-const API_SERVICES: ApiService[] = [
-  {
-    id: "vworld",
-    name: "국토지리정보원 (V-World)",
-    description:
-      "부지분석, 용도지역 조회, 필지정보, 공시지가 등 핵심 부동산 데이터를 제공합니다.",
-    required: true,
-    envKey: "VWORLD_API_KEY",
-    guide: [
-      "1. https://www.vworld.kr 접속",
-      "2. 회원가입 후 로그인",
-      "3. 상단 메뉴 '인증키 발급' 클릭",
-      "4. '일반 인증키' 신청 — 용도: '부동산 개발 분석'",
-      "5. 발급된 인증키를 아래에 입력하세요",
-    ],
-    guideUrl: "https://www.vworld.kr",
-    placeholder: "V-World 인증키 입력",
-    icon: "globe",
-  },
-  {
-    id: "molit",
-    name: "국토교통부 실거래가",
-    description:
-      "아파트, 연립, 단독주택 등의 실거래가 데이터를 조회합니다. 시장분석과 AVM에 사용됩니다.",
-    required: true,
-    envKey: "MOLIT_API_KEY",
-    guide: [
-      "1. https://www.data.go.kr 접속",
-      "2. 회원가입 후 로그인",
-      "3. '국토교통부 아파트매매 실거래자료' 검색",
-      "4. '활용신청' 클릭 — 용도 입력 후 신청",
-      "5. 승인 후 (즉시~1일) 마이페이지에서 인증키 복사",
-      "6. 발급된 인증키를 아래에 입력하세요",
-    ],
-    guideUrl: "https://www.data.go.kr",
-    placeholder: "공공데이터포털 인증키 입력",
-    icon: "building",
-  },
-  {
-    id: "openai",
-    name: "OpenAI (GPT-4)",
-    description:
-      "AI 설계 분석, 법규 검토, 보고서 생성 등 AI 기능에 사용됩니다.",
-    required: false,
-    envKey: "OPENAI_API_KEY",
-    guide: [
-      "1. https://platform.openai.com 접속",
-      "2. 계정 생성 또는 로그인",
-      "3. 좌측 메뉴 'API keys' 클릭",
-      "4. 'Create new secret key' 클릭",
-      "5. 생성된 키(sk-...)를 아래에 입력하세요",
-      "※ 유료 서비스: 사용량에 따라 과금됩니다",
-    ],
-    guideUrl: "https://platform.openai.com/api-keys",
-    placeholder: "sk-...",
-    icon: "sparkles",
-  },
-  {
-    id: "anthropic",
-    name: "Anthropic (Claude)",
-    description:
-      "AI 심층 분석, 법규 RAG 검토 등에 사용됩니다. OpenAI 대안으로 사용 가능합니다.",
-    required: false,
-    envKey: "ANTHROPIC_API_KEY",
-    guide: [
-      "1. https://console.anthropic.com 접속",
-      "2. 계정 생성 또는 로그인",
-      "3. 'API Keys' 메뉴 클릭",
-      "4. 'Create Key' 클릭",
-      "5. 생성된 키(sk-ant-...)를 아래에 입력하세요",
-    ],
-    guideUrl: "https://console.anthropic.com",
-    placeholder: "sk-ant-...",
-    icon: "brain",
-  },
-  {
-    id: "supabase",
-    name: "Supabase (데이터베이스)",
-    description:
-      "프로젝트 데이터, 사용자 정보, 분석 결과를 저장하는 데이터베이스입니다.",
-    required: true,
-    envKey: "SUPABASE_URL",
-    guide: [
-      "1. https://supabase.com 접속",
-      "2. 프로젝트 생성 또는 기존 프로젝트 선택",
-      "3. Settings > API 에서 URL과 키를 확인",
-      "4. 이미 설정되어 있다면 수정하지 마세요",
-    ],
-    guideUrl: "https://supabase.com/dashboard",
-    placeholder: "https://xxx.supabase.co",
-    icon: "database",
-  },
-];
+type ListResponse = { groups: string[]; items: SecretItem[] };
 
 /* ------------------------------------------------------------------ */
-/*  LocalStorage key                                                  */
+/*  단일 키 카드                                                       */
 /* ------------------------------------------------------------------ */
 
-const STORAGE_KEY = "propai_api_keys";
-
-type SavedKeys = Record<string, string>;
-
-function loadKeys(): SavedKeys {
-  if (typeof window === "undefined") return {};
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : {};
-  } catch {
-    return {};
-  }
-}
-
-function persistKeys(keys: SavedKeys) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(keys));
-}
-
-/* ------------------------------------------------------------------ */
-/*  Icon helper                                                       */
-/* ------------------------------------------------------------------ */
-
-function ServiceIcon({ type }: { type: string }) {
-  const cls = "w-5 h-5";
-  switch (type) {
-    case "globe":
-      return (
-        <svg xmlns="http://www.w3.org/2000/svg" className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <circle cx="12" cy="12" r="10" />
-          <path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" />
-          <path d="M2 12h20" />
-        </svg>
-      );
-    case "building":
-      return (
-        <svg xmlns="http://www.w3.org/2000/svg" className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <rect width="16" height="20" x="4" y="2" rx="2" ry="2" />
-          <path d="M9 22v-4h6v4" />
-          <path d="M8 6h.01" /><path d="M16 6h.01" />
-          <path d="M12 6h.01" /><path d="M12 10h.01" />
-          <path d="M12 14h.01" /><path d="M16 10h.01" />
-          <path d="M16 14h.01" /><path d="M8 10h.01" />
-          <path d="M8 14h.01" />
-        </svg>
-      );
-    case "sparkles":
-      return (
-        <svg xmlns="http://www.w3.org/2000/svg" className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z" />
-        </svg>
-      );
-    case "brain":
-      return (
-        <svg xmlns="http://www.w3.org/2000/svg" className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z" />
-          <path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z" />
-          <path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4" />
-          <path d="M17.599 6.5a3 3 0 0 0 .399-1.375" />
-          <path d="M6.003 5.125A3 3 0 0 0 6.401 6.5" />
-          <path d="M3.477 10.896a4 4 0 0 1 .585-.396" />
-          <path d="M19.938 10.5a4 4 0 0 1 .585.396" />
-          <path d="M6 18a4 4 0 0 1-1.967-.516" />
-          <path d="M19.967 17.484A4 4 0 0 1 18 18" />
-        </svg>
-      );
-    case "database":
-      return (
-        <svg xmlns="http://www.w3.org/2000/svg" className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <ellipse cx="12" cy="5" rx="9" ry="3" />
-          <path d="M3 5V19A9 3 0 0 0 21 19V5" />
-          <path d="M3 12A9 3 0 0 0 21 12" />
-        </svg>
-      );
-    default:
-      return null;
-  }
-}
-
-/* ------------------------------------------------------------------ */
-/*  Single service card                                               */
-/* ------------------------------------------------------------------ */
-
-function ApiServiceCard({
-  service,
-  savedKey,
-  onSave,
+function SecretCard({
+  item,
+  onSaved,
 }: {
-  service: ApiService;
-  savedKey: string;
-  onSave: (id: string, key: string) => void;
+  item: SecretItem;
+  onSaved: () => void;
 }) {
-  const [inputValue, setInputValue] = useState(savedKey);
-  const [showKey, setShowKey] = useState(false);
-  const [expanded, setExpanded] = useState(false);
-  const [testStatus, setTestStatus] = useState<
-    "idle" | "testing" | "success" | "failed"
-  >("idle");
-  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved">(
-    "idle",
+  const [value, setValue] = useState(item.kind === "select" ? (item.masked || "") : "");
+  const [show, setShow] = useState(false);
+  const [busy, setBusy] = useState<"" | "save" | "del" | "test">("");
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const canTest = useMemo(
+    () =>
+      [
+        "APICK_CL_AUTH_KEY",
+        "REGISTRY_PROVIDER",
+        "CODEF_CLIENT_ID",
+        "CODEF_CLIENT_SECRET",
+        "TILKO_API_KEY",
+      ].includes(item.name),
+    [item.name],
   );
 
-  const isRegistered = savedKey.trim().length > 0;
+  const save = useCallback(async () => {
+    const v = value.trim();
+    if (!v) return;
+    setBusy("save");
+    setMsg(null);
+    try {
+      await apiClient.put(`/api/v1/admin/secrets/${item.name}`, {
+        body: { value: v },
+      });
+      setMsg({ ok: true, text: "저장됨 (즉시 반영)" });
+      if (item.kind !== "select") setValue("");
+      onSaved();
+    } catch (e) {
+      setMsg({ ok: false, text: e instanceof Error ? e.message : "저장 실패" });
+    } finally {
+      setBusy("");
+    }
+  }, [value, item.name, item.kind, onSaved]);
 
-  const handleSave = useCallback(() => {
-    if (!inputValue.trim()) return;
-    setSaveStatus("saving");
-    onSave(service.id, inputValue.trim());
-    setTimeout(() => {
-      setSaveStatus("saved");
-      setTimeout(() => setSaveStatus("idle"), 2000);
-    }, 400);
-  }, [inputValue, onSave, service.id]);
+  const remove = useCallback(async () => {
+    if (!confirm(`'${item.label}' 키를 삭제할까요? (.env 원본값이 있으면 복원됩니다)`)) return;
+    setBusy("del");
+    setMsg(null);
+    try {
+      await apiClient.delete(`/api/v1/admin/secrets/${item.name}`);
+      setMsg({ ok: true, text: "삭제됨" });
+      onSaved();
+    } catch (e) {
+      setMsg({ ok: false, text: e instanceof Error ? e.message : "삭제 실패" });
+    } finally {
+      setBusy("");
+    }
+  }, [item.name, item.label, onSaved]);
 
-  const handleTest = useCallback(() => {
-    if (!inputValue.trim()) return;
-    setTestStatus("testing");
-    // Simulated test -- in production, call backend /api/keys/test
-    setTimeout(() => {
-      setTestStatus(inputValue.trim().length >= 8 ? "success" : "failed");
-      setTimeout(() => setTestStatus("idle"), 3000);
-    }, 1200);
-  }, [inputValue]);
+  const test = useCallback(async () => {
+    setBusy("test");
+    setMsg(null);
+    try {
+      const r = await apiClient.post<{ ok: boolean; message: string }>(
+        `/api/v1/admin/secrets/${item.name}/test`,
+      );
+      setMsg({ ok: !!r.ok, text: r.message || (r.ok ? "연결 성공" : "연결 실패") });
+    } catch (e) {
+      setMsg({ ok: false, text: e instanceof Error ? e.message : "테스트 실패" });
+    } finally {
+      setBusy("");
+    }
+  }, [item.name]);
 
   return (
-    <Card className="group transition-all hover:shadow-[var(--shadow-lg)]">
-      <CardContent className="p-0">
-        {/* Header */}
-        <button
-          type="button"
-          onClick={() => setExpanded(!expanded)}
-          className="flex w-full items-center gap-4 p-5 text-left"
-        >
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-[var(--accent-soft)] text-[var(--accent-strong)] border border-[var(--accent-strong)]/20">
-            <ServiceIcon type={service.icon} />
-          </div>
-
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2.5">
-              <h3 className="text-sm font-bold text-[var(--text-primary)]">
-                {service.name}
-              </h3>
-              {service.required && (
-                <span className="rounded-md bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-bold text-amber-600">
-                  필수
+    <Card>
+      <CardContent className="p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h4 className="text-sm font-bold text-[var(--text-primary)]">{item.label}</h4>
+              {item.custom && (
+                <span className="rounded-md bg-[var(--accent-soft)] px-1.5 py-0.5 text-[10px] font-bold text-[var(--accent-strong)]">
+                  사용자 추가
+                </span>
+              )}
+              {item.is_set ? (
+                <span className="flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[11px] font-bold text-emerald-600">
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                  설정됨{item.source === "env" ? " (.env)" : ""}
+                </span>
+              ) : (
+                <span className="rounded-full bg-red-500/10 px-2 py-0.5 text-[11px] font-bold text-red-500">
+                  미설정
                 </span>
               )}
             </div>
-            <p className="mt-0.5 text-xs text-[var(--text-secondary)] line-clamp-1">
-              {service.description}
-            </p>
-          </div>
-
-          <div className="flex shrink-0 items-center gap-3">
-            {isRegistered ? (
-              <span className="flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-3 py-1 text-xs font-bold text-emerald-600">
-                <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-                등록됨
-              </span>
-            ) : (
-              <span className="flex items-center gap-1.5 rounded-full bg-red-500/10 px-3 py-1 text-xs font-bold text-red-500">
-                <span className="h-2 w-2 rounded-full bg-red-500" />
-                미등록
-              </span>
+            <p className="mt-0.5 font-mono text-[11px] text-[var(--text-tertiary)]">{item.name}</p>
+            {item.desc && (
+              <p className="mt-1 text-xs text-[var(--text-secondary)]">{item.desc}</p>
             )}
-
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              className={`text-[var(--text-hint)] transition-transform duration-200 ${expanded ? "rotate-180" : ""}`}
-            >
-              <path d="m6 9 6 6 6-6" />
-            </svg>
-          </div>
-        </button>
-
-        {/* Expandable body */}
-        {expanded && (
-          <div className="border-t border-[var(--line)] px-5 pb-5 pt-4 space-y-4">
-            {/* Guide */}
-            <div className="rounded-xl bg-[var(--surface-soft)] p-4 space-y-2">
-              <p className="text-xs font-bold text-[var(--text-tertiary)] uppercase tracking-widest">
-                발급 방법
+            {item.is_set && item.masked && item.kind !== "select" && (
+              <p className="mt-1 font-mono text-xs text-[var(--text-secondary)]">
+                현재값: {item.masked}
               </p>
-              <ol className="space-y-1">
-                {service.guide.map((step, i) => (
-                  <li
-                    key={i}
-                    className="text-sm text-[var(--text-secondary)] leading-relaxed"
-                  >
-                    {step}
-                  </li>
-                ))}
-              </ol>
-              <a
-                href={service.guideUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 text-xs font-semibold text-[var(--accent-strong)] hover:underline mt-2"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M15 3h6v6" />
-                  <path d="M10 14 21 3" />
-                  <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
-                </svg>
-                발급 사이트 열기
-              </a>
-            </div>
+            )}
+          </div>
+          {item.guide_url && (
+            <a
+              href={item.guide_url}
+              target="_blank"
+              rel="noreferrer"
+              className="shrink-0 whitespace-nowrap text-xs font-semibold text-[var(--accent-strong)] hover:underline"
+            >
+              발급 사이트 ↗
+            </a>
+          )}
+        </div>
 
-            {/* Input + actions */}
-            <div className="flex gap-2">
-              <div className="relative flex-1">
-                <input
-                  type={showKey ? "text" : "password"}
-                  value={inputValue}
-                  onChange={(e) => setInputValue(e.target.value)}
-                  placeholder={service.placeholder}
-                  className="w-full rounded-xl border border-[var(--line-strong)] bg-[var(--surface-muted)] py-3 pl-4 pr-10 text-sm font-mono placeholder:text-[var(--text-hint)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-strong)]/50 focus:border-[var(--accent-strong)] transition-all text-[var(--text-primary)]"
-                />
+        {/* 입력 영역 */}
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          {item.kind === "select" ? (
+            <select
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              className="h-9 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm text-[var(--text-primary)]"
+            >
+              <option value="">선택…</option>
+              {(item.options || []).map((o) => (
+                <option key={o} value={o}>
+                  {o}
+                </option>
+              ))}
+            </select>
+          ) : item.kind === "textarea" ? (
+            <textarea
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              placeholder={item.is_set ? "새 값 입력 시 교체" : "값 입력"}
+              rows={2}
+              className="min-w-[260px] flex-1 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 font-mono text-xs text-[var(--text-primary)]"
+            />
+          ) : (
+            <div className="relative flex-1 min-w-[220px]">
+              <input
+                type={show ? "text" : "password"}
+                value={value}
+                onChange={(e) => setValue(e.target.value)}
+                placeholder={item.is_set ? "새 값 입력 시 교체" : "값 입력"}
+                className="h-9 w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 pr-16 text-sm text-[var(--text-primary)]"
+              />
+              {item.secret && (
                 <button
                   type="button"
-                  onClick={() => setShowKey(!showKey)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--text-hint)] hover:text-[var(--text-primary)] transition-colors"
+                  onClick={() => setShow((s) => !s)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-[11px] font-semibold text-[var(--text-tertiary)]"
                 >
-                  {showKey ? (
-                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M9.88 9.88a3 3 0 1 0 4.24 4.24" />
-                      <path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68" />
-                      <path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61" />
-                      <line x1="2" x2="22" y1="2" y2="22" />
-                    </svg>
-                  ) : (
-                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" />
-                      <circle cx="12" cy="12" r="3" />
-                    </svg>
-                  )}
+                  {show ? "숨김" : "표시"}
                 </button>
-              </div>
-
-              <button
-                onClick={handleSave}
-                disabled={!inputValue.trim() || saveStatus === "saving"}
-                className={`shrink-0 rounded-xl px-5 py-3 text-sm font-bold transition-all ${
-                  saveStatus === "saved"
-                    ? "bg-emerald-500 text-white"
-                    : "bg-[var(--accent-strong)] text-white hover:opacity-90 disabled:opacity-40"
-                }`}
-              >
-                {saveStatus === "idle" && "저장"}
-                {saveStatus === "saving" && "저장 중..."}
-                {saveStatus === "saved" && "저장 완료"}
-              </button>
-
-              <button
-                onClick={handleTest}
-                disabled={!inputValue.trim() || testStatus === "testing"}
-                className={`shrink-0 rounded-xl px-5 py-3 text-sm font-bold border transition-all ${
-                  testStatus === "success"
-                    ? "border-emerald-500 bg-emerald-500/10 text-emerald-600"
-                    : testStatus === "failed"
-                      ? "border-red-500 bg-red-500/10 text-red-500"
-                      : "border-[var(--line-strong)] bg-[var(--surface-muted)] text-[var(--text-secondary)] hover:border-[var(--text-tertiary)] disabled:opacity-40"
-                }`}
-              >
-                {testStatus === "idle" && "테스트"}
-                {testStatus === "testing" && "확인 중..."}
-                {testStatus === "success" && "연결 성공"}
-                {testStatus === "failed" && "연결 실패"}
-              </button>
+              )}
             </div>
-          </div>
+          )}
+
+          <button
+            type="button"
+            onClick={save}
+            disabled={!value.trim() || busy !== ""}
+            className="h-9 whitespace-nowrap rounded-lg bg-[var(--accent-strong)] px-3 text-sm font-bold text-white disabled:opacity-50"
+          >
+            {busy === "save" ? "저장 중…" : "저장"}
+          </button>
+          {canTest && (
+            <button
+              type="button"
+              onClick={test}
+              disabled={busy !== ""}
+              className="h-9 whitespace-nowrap rounded-lg border border-[var(--border)] px-3 text-sm font-semibold text-[var(--text-primary)] disabled:opacity-50"
+            >
+              {busy === "test" ? "확인 중…" : "테스트"}
+            </button>
+          )}
+          {item.is_set && (
+            <button
+              type="button"
+              onClick={remove}
+              disabled={busy !== ""}
+              className="h-9 whitespace-nowrap rounded-lg border border-red-500/30 px-3 text-sm font-semibold text-red-500 disabled:opacity-50"
+            >
+              {busy === "del" ? "삭제 중…" : "삭제"}
+            </button>
+          )}
+        </div>
+
+        {msg && (
+          <p
+            className={`mt-2 text-xs font-semibold ${
+              msg.ok ? "text-emerald-600" : "text-red-500"
+            }`}
+          >
+            {msg.text}
+          </p>
         )}
       </CardContent>
     </Card>
@@ -402,124 +239,224 @@ function ApiServiceCard({
 }
 
 /* ------------------------------------------------------------------ */
-/*  Main panel                                                        */
+/*  사용자 임의추가 폼                                                 */
 /* ------------------------------------------------------------------ */
 
-export function ApiKeyManagementPanel() {
-  const [keys, setKeys] = useState<SavedKeys>({});
-  const [isLoaded, setIsLoaded] = useState(false);
+function AddCustomKey({ onAdded }: { onAdded: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState("");
+  const [label, setLabel] = useState("");
+  const [group, setGroup] = useState("");
+  const [value, setValue] = useState("");
+  const [secret, setSecret] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
-  useEffect(() => {
-    setKeys(loadKeys());
-    setIsLoaded(true);
-  }, []);
+  const submit = useCallback(async () => {
+    const n = name.trim().toUpperCase();
+    if (!n || !value.trim()) {
+      setMsg({ ok: false, text: "키 이름과 값을 입력하세요." });
+      return;
+    }
+    setBusy(true);
+    setMsg(null);
+    try {
+      await apiClient.post(`/api/v1/admin/secrets`, {
+        body: {
+          name: n,
+          value: value.trim(),
+          label: label.trim() || undefined,
+          group: group.trim() || undefined,
+          secret,
+        },
+      });
+      setMsg({ ok: true, text: `'${n}' 추가됨` });
+      setName("");
+      setLabel("");
+      setGroup("");
+      setValue("");
+      onAdded();
+    } catch (e) {
+      setMsg({ ok: false, text: e instanceof Error ? e.message : "추가 실패" });
+    } finally {
+      setBusy(false);
+    }
+  }, [name, label, group, value, secret, onAdded]);
 
-  const handleSave = useCallback(
-    (serviceId: string, value: string) => {
-      const next = { ...keys, [serviceId]: value };
-      setKeys(next);
-      persistKeys(next);
-
-      // AI 키는 useSystemStore에도 동기화 (AI 분석 기능에서 사용)
-      try {
-        const { useSystemStore } = require("@/store/useSystemStore");
-        const store = useSystemStore.getState();
-        if (serviceId === "openai" && value) {
-          store.setOpenAIApiKey(value);
-          store.setLLMProvider("openai");
-        } else if (serviceId === "anthropic" && value) {
-          store.setAnthropicApiKey(value);
-          store.setLLMProvider("anthropic");
-        }
-      } catch { /* useSystemStore 미로드 시 무시 */ }
-    },
-    [keys],
-  );
-
-  if (!isLoaded) {
+  if (!open) {
     return (
-      <div className="space-y-4">
-        {[1, 2, 3].map((n) => (
-          <div
-            key={n}
-            className="h-20 animate-pulse rounded-2xl bg-[var(--surface-soft)]"
-          />
-        ))}
-      </div>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="w-full rounded-xl border border-dashed border-[var(--border)] py-3 text-sm font-semibold text-[var(--accent-strong)] hover:bg-[var(--accent-soft)]"
+      >
+        + 새 API 키 추가 (네임·값 직접 입력)
+      </button>
     );
   }
 
-  const registeredCount = API_SERVICES.filter(
-    (s) => (keys[s.id] ?? "").trim().length > 0,
-  ).length;
-  const requiredMissing = API_SERVICES.filter(
-    (s) => s.required && !(keys[s.id] ?? "").trim(),
+  return (
+    <Card>
+      <CardContent className="p-4">
+        <div className="flex items-center justify-between">
+          <h4 className="text-sm font-bold text-[var(--text-primary)]">새 API 키 추가</h4>
+          <button
+            type="button"
+            onClick={() => setOpen(false)}
+            className="text-xs text-[var(--text-tertiary)]"
+          >
+            닫기
+          </button>
+        </div>
+        <p className="mt-1 text-xs text-[var(--text-secondary)]">
+          향후 새 연동에 필요한 키를 코드 수정 없이 추가합니다. 이름은 영대문자·숫자·_ (예:{" "}
+          <span className="font-mono">NAVER_MAP_API_KEY</span>). 위험 인프라 키(DB·시크릿키)는
+          차단됩니다.
+        </p>
+        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="키 이름 (NAVER_MAP_API_KEY)"
+            className="h-9 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 font-mono text-sm text-[var(--text-primary)]"
+          />
+          <input
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+            placeholder="표시 이름 (선택)"
+            className="h-9 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm text-[var(--text-primary)]"
+          />
+          <input
+            value={group}
+            onChange={(e) => setGroup(e.target.value)}
+            placeholder="분류 (선택, 기본 '사용자 추가')"
+            className="h-9 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm text-[var(--text-primary)]"
+          />
+          <input
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            placeholder="키 값"
+            type={secret ? "password" : "text"}
+            className="h-9 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm text-[var(--text-primary)]"
+          />
+        </div>
+        <div className="mt-3 flex items-center justify-between">
+          <label className="flex items-center gap-2 text-xs text-[var(--text-secondary)]">
+            <input
+              type="checkbox"
+              checked={secret}
+              onChange={(e) => setSecret(e.target.checked)}
+            />
+            비밀값(마스킹)
+          </label>
+          <button
+            type="button"
+            onClick={submit}
+            disabled={busy}
+            className="h-9 rounded-lg bg-[var(--accent-strong)] px-4 text-sm font-bold text-white disabled:opacity-50"
+          >
+            {busy ? "추가 중…" : "추가"}
+          </button>
+        </div>
+        {msg && (
+          <p
+            className={`mt-2 text-xs font-semibold ${
+              msg.ok ? "text-emerald-600" : "text-red-500"
+            }`}
+          >
+            {msg.text}
+          </p>
+        )}
+      </CardContent>
+    </Card>
   );
+}
+
+/* ------------------------------------------------------------------ */
+/*  메인 패널                                                          */
+/* ------------------------------------------------------------------ */
+
+export function ApiKeyManagementPanel() {
+  const [data, setData] = useState<ListResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const r = await apiClient.get<ListResponse>(`/api/v1/admin/secrets`);
+      setData(r);
+    } catch (e) {
+      const m = e instanceof Error ? e.message : "불러오기 실패";
+      setError(m.includes("403") ? "관리자만 접근할 수 있습니다." : m);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const byGroup = useMemo(() => {
+    const m = new Map<string, SecretItem[]>();
+    (data?.items || []).forEach((it) => {
+      const arr = m.get(it.group) || [];
+      arr.push(it);
+      m.set(it.group, arr);
+    });
+    return m;
+  }, [data]);
+
+  const setCount = (data?.items || []).filter((i) => i.is_set).length;
 
   return (
-    <div className="space-y-6">
-      {/* Summary bar */}
-      <div className="flex items-center justify-between rounded-2xl bg-[var(--surface-soft)] border border-[var(--line)] p-4">
-        <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--accent-soft)] text-[var(--accent-strong)]">
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="m15.5 7.5 2.3 2.3a1 1 0 0 0 1.4 0l2.1-2.1a1 1 0 0 0 0-1.4L19 4" />
-              <path d="m21 2-9.6 9.6" />
-              <circle cx="7.5" cy="15.5" r="5.5" />
-            </svg>
-          </div>
-          <div>
-            <p className="text-sm font-bold text-[var(--text-primary)]">
-              {registeredCount}/{API_SERVICES.length}개 서비스 연결됨
-            </p>
-            {requiredMissing.length > 0 ? (
-              <p className="text-xs text-amber-600 mt-0.5">
-                필수 키 {requiredMissing.length}개 미등록:{" "}
-                {requiredMissing.map((s) => s.name).join(", ")}
-              </p>
-            ) : (
-              <p className="text-xs text-emerald-600 mt-0.5">
-                모든 필수 키가 등록되었습니다
-              </p>
-            )}
-          </div>
-        </div>
-
-        <div className="overflow-hidden rounded-full bg-[var(--surface-muted)] h-2.5 w-32">
-          <div
-            className="h-full rounded-full bg-[var(--accent-strong)] transition-all duration-500"
-            style={{
-              width: `${(registeredCount / API_SERVICES.length) * 100}%`,
-            }}
-          />
-        </div>
-      </div>
-
-      {/* Service cards */}
-      <div className="space-y-3">
-        {API_SERVICES.map((service) => (
-          <ApiServiceCard
-            key={service.id}
-            service={service}
-            savedKey={keys[service.id] ?? ""}
-            onSave={handleSave}
-          />
-        ))}
-      </div>
-
-      {/* Security note */}
-      <div className="rounded-xl bg-blue-500/5 border border-blue-500/20 p-4 flex items-start gap-3">
-        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-blue-500 mt-0.5 shrink-0">
-          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10" />
-        </svg>
+    <div className="space-y-5">
+      <div className="flex items-center justify-between">
         <div>
-          <p className="text-xs font-bold text-blue-600">보안 안내</p>
-          <p className="text-xs text-[var(--text-secondary)] mt-0.5 leading-relaxed">
-            API 키는 브라우저의 로컬 스토리지에 저장됩니다. 공용 컴퓨터에서는 사용을 피해 주세요.
-            프로덕션 환경에서는 서버 측 환경변수(.env) 설정을 권장합니다.
+          <h2 className="text-lg font-bold text-[var(--text-primary)]">API 키 관리</h2>
+          <p className="mt-0.5 text-xs text-[var(--text-secondary)]">
+            서버에 암호화 저장되며 즉시 반영됩니다(재배포 불필요).{" "}
+            {data && (
+              <span className="font-semibold text-[var(--text-primary)]">
+                {setCount}/{data.items.length} 설정됨
+              </span>
+            )}
           </p>
         </div>
+        <button
+          type="button"
+          onClick={load}
+          className="h-9 rounded-lg border border-[var(--border)] px-3 text-sm font-semibold text-[var(--text-primary)]"
+        >
+          새로고침
+        </button>
       </div>
+
+      {loading && <p className="text-sm text-[var(--text-secondary)]">불러오는 중…</p>}
+      {error && (
+        <Card>
+          <CardContent className="p-4">
+            <p className="text-sm font-semibold text-red-500">{error}</p>
+          </CardContent>
+        </Card>
+      )}
+
+      {!loading &&
+        !error &&
+        (data?.groups || []).map((g) => (
+          <section key={g} className="space-y-2">
+            <h3 className="text-sm font-bold text-[var(--text-secondary)]">{g}</h3>
+            <div className="space-y-2">
+              {(byGroup.get(g) || []).map((it) => (
+                <SecretCard key={it.name} item={it} onSaved={load} />
+              ))}
+            </div>
+          </section>
+        ))}
+
+      {!loading && !error && <AddCustomKey onAdded={load} />}
     </div>
   );
 }

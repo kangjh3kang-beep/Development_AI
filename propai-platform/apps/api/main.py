@@ -209,6 +209,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # DB 풀 크기 메트릭 설정
     DB_POOL_SIZE.set(settings.db_pool_size)
 
+    # 관리자 화면에서 입력한 연동 API 키(platform_secrets)를 os.environ에 오버레이
+    try:
+        from apps.api.database.session import AsyncSessionLocal
+        from app.services.secrets import secret_store
+        async with AsyncSessionLocal() as _s:
+            await secret_store.load_into_env(_s)
+    except Exception:
+        logger.warning("플랫폼 시크릿 env 로드 실패 — .env 값으로 시작")
+
     yield
 
     # ── 종료 ──
@@ -400,6 +409,13 @@ app.include_router(bank_report_router, prefix="/api/v1", tags=["은행제출용 
 
 # 파일 업로드(현장 이미지 등) → /api/v1/uploads/*
 app.include_router(uploads_router, prefix="/api/v1", tags=["업로드"])
+
+# 관리자 — 연동 API 키 관리(입력/수정/삭제/사용자추가) → /api/v1/admin/secrets/*
+try:
+    from apps.api.app.routers.admin_secrets import router as admin_secrets_router
+    app.include_router(admin_secrets_router, tags=["관리자·API키"])  # 자체 prefix
+except Exception as _e:  # noqa: BLE001
+    logger.warning("admin_secrets 라우터 등록 실패", err=str(_e)[:160])
 
 # 나라장터(G2B) 공공입찰 — 라우터 자체 prefix="/g2b" → 최종 /api/v1/g2b/*
 if g2b_router is not None:
