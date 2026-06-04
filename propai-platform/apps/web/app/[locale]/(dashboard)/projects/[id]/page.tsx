@@ -11,6 +11,7 @@ import { useDictionary } from "@/hooks/use-dictionary";
 import { formatCurrencyKRW } from "@/lib/formatters";
 import { apiClient } from "@/lib/api-client";
 import { useProjectStore } from "@/store/useProjectStore";
+import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { ImageUpload } from "@/components/ui/ImageUpload";
 
 type ProjectMeta = {
@@ -36,6 +37,13 @@ export default function ProjectDetailPage() {
 
   const [meta, setMeta] = useState<ProjectMeta | null>(null);
   const [metaLoading, setMetaLoading] = useState(true);
+
+  // 프로젝트 진입 시 컨텍스트를 이 프로젝트로 전환 → 분석 스냅샷(부지·상세분석 등) 복원.
+  // (이것이 없으면 직전 프로젝트/빈 컨텍스트가 표시되고, 새 분석도 잘못된 키로 저장됨)
+  useEffect(() => {
+    const p = useProjectStore.getState().getProjectById(id);
+    useProjectContextStore.getState().setProject(id, p?.name || "", (p?.status as string) || "draft");
+  }, [id]);
 
   useEffect(() => {
     let cancelled = false;
