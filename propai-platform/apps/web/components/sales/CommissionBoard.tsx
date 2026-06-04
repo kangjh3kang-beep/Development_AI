@@ -39,7 +39,10 @@ export default function CommissionBoard({ siteCode }: { siteCode: string }) {
   const [sample, setSample] = useState<number>(500000000);
 
   const load = useCallback(() => {
-    api.get<Master[]>("/commission-master").then((m) => setMaster(m?.[0] ?? null)).catch(() => setMaster(null));
+    // 최신(활성) 마스터 사용 — 백엔드 _active_master(effective_at 최신)와 일치. provision 자동생성분과
+    // 사용자 설정분이 공존할 수 있어 마지막 항목(가장 최근 삽입)을 활성으로 본다.
+    api.get<Master[]>("/commission-master")
+      .then((m) => setMaster(m && m.length ? m[m.length - 1] : null)).catch(() => setMaster(null));
     api.get<Dist[]>("/commission-distribution").then((d) => setDist(d || [])).catch(() => setDist([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [siteCode]);
@@ -110,7 +113,7 @@ export default function CommissionBoard({ siteCode }: { siteCode: string }) {
           <thead><tr className="border-b border-[var(--line)] text-left text-[var(--text-secondary)]">
             <th className="py-1">대상</th><th>기준</th><th className="text-right">값</th><th /></tr></thead>
           <tbody>
-            {dist.map((d) => (
+            {dist.filter((d) => !master?.id || !d.master_id || d.master_id === master.id).map((d) => (
               <tr key={d.id} className="border-b border-[var(--line)] text-[var(--text-primary)]">
                 <td className="py-1">{d.target_node_type ? (NT[d.target_node_type] ?? d.target_node_type) : "지정노드"}</td>
                 <td>{d.basis === "FIXED" ? "정액" : "%"}</td>
