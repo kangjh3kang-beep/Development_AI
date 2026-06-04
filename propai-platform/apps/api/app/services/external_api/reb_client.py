@@ -45,7 +45,7 @@ def _rows_from_payload(data: Any, row_block: str) -> list[dict[str, Any]]:
     return rows
 
 
-async def discover_statbl_ids(keyword: str = "지가변동", max_pages: int = 6) -> list[dict[str, Any]] | None:
+async def discover_statbl_ids(keyword: str = "지가변동", max_pages: int = 15) -> list[dict[str, Any]] | None:
     """통계표 목록(SttsApiTbl.do)에서 키워드 포함 통계표를 탐색해 후보(STATBL_ID·명) 반환."""
     key = reb_key()
     if not key:
