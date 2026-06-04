@@ -5,6 +5,7 @@ import { Button, Card, CardContent, CardTitle, Input } from "@propai/ui";
 import { ApiClientError, apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { VerificationBadge } from "@/components/common/VerificationBadge";
+import { ExpertPanelCard } from "@/components/common/ExpertPanelCard";
 import type { Locale } from "@/i18n/config";
 
 /* ── Response Types ── */
@@ -490,6 +491,10 @@ export function ProjectEsgWorkspaceClient({
             <div className="mt-4 space-y-4">
               {/* 할루시네이션·오류 검증(ESG/탄소) */}
               <VerificationBadge
+                analysisType="esg"
+                context={{ lca: lcaResult, epd: epdResult } as unknown as Record<string, unknown>}
+              />
+              <ExpertPanelCard
                 analysisType="esg"
                 context={{ lca: lcaResult, epd: epdResult } as unknown as Record<string, unknown>}
               />

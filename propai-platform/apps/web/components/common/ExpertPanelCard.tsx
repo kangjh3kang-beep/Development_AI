@@ -36,7 +36,7 @@ export function ExpertPanelCard({
   context,
   className = "",
 }: {
-  analysisType: "permit" | "regulation" | "market" | "feasibility" | "site";
+  analysisType: "permit" | "regulation" | "market" | "feasibility" | "site" | "cost" | "tax" | "esg" | "design";
   address?: string;
   context: Record<string, unknown> | null;
   className?: string;

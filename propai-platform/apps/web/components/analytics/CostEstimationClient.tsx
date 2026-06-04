@@ -16,6 +16,7 @@ import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { VerificationBadge } from "@/components/common/VerificationBadge";
+import { ExpertPanelCard } from "@/components/common/ExpertPanelCard";
 
 interface Overview {
   building_type: string; structure_type: string;
@@ -172,6 +173,10 @@ export function CostEstimationClient() {
         <>
           {/* 할루시네이션·오류 검증(공사비) */}
           <VerificationBadge
+            analysisType="cost"
+            context={{ inputs: { bt, gfa, floorsAbove, floorsBelow, structure }, result } as unknown as Record<string, unknown>}
+          />
+          <ExpertPanelCard
             analysisType="cost"
             context={{ inputs: { bt, gfa, floorsAbove, floorsBelow, structure }, result } as unknown as Record<string, unknown>}
           />
