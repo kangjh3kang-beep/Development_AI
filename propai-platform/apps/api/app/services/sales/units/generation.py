@@ -55,9 +55,56 @@ def parse_drawing(source_ref: str) -> list[dict]:
     raise ValueError(f"unsupported drawing: {ext}")
 
 
-async def map_from_design(db: AsyncSession, source_ref: str) -> list[dict]:
-    """설계 AI 산출물(layout/floor_plan/3d/quantity)에서 세대 메타 매핑(후속 보강)."""
-    return []
+async def map_from_design(db: AsyncSession, site_id: uuid.UUID, source_ref: str | None) -> list[dict]:
+    """설계 AI 산출물(AutoDesignEngine compute_unit_layout) → 동·호표 그리드.
+
+    현장의 project_id로 최신 DesignVersion(design_data_json)을 읽어 num_floors·세대평형배분
+    (units[{type,count_per_floor}])·동수로 그리드를 구성. 구조 미흡 시 floor_count+면적 폴백.
+    """
+    from sqlalchemy import text
+
+    from apps.api.database.models.sales.site_org import SalesSite
+
+    site = (await db.execute(select(SalesSite).where(SalesSite.id == site_id))).scalar_one_or_none()
+    project_id = source_ref or (str(site.project_id) if site and site.project_id else None)
+    if not project_id:
+        return []
+    row = (await db.execute(text(
+        "SELECT floor_count, total_floor_area_sqm, design_data_json FROM design_versions "
+        "WHERE project_id = :pid ORDER BY version_number DESC LIMIT 1"),
+        {"pid": project_id})).first()
+    if not row:
+        return []
+    floor_count, total_area, dj = int(row[0] or 0), float(row[1] or 0), (row[2] or {})
+    mass = dj.get("mass") or {}
+    num_floors = int(mass.get("num_floors") or floor_count or 0)
+    building_count = int(dj.get("building_count") or mass.get("building_count") or 1)
+    # 세대 평형 배분: design_data_json.unit_layout/units 또는 mass 하위
+    layout = dj.get("unit_layout") or dj.get("units") or (dj.get("unit_layout") if isinstance(dj.get("unit_layout"), list) else None)
+    units_spec = layout if isinstance(layout, list) else (layout.get("units") if isinstance(layout, dict) else None)
+
+    # 층당 (type,count) 시퀀스 구성
+    seq: list[str] = []
+    if units_spec:
+        for u in units_spec:
+            t = u.get("type") or u.get("type_name") or "TYPE_A"
+            cpf = int(u.get("count_per_floor") or u.get("count") or 1)
+            seq.extend([t] * max(1, cpf))
+    if not seq:
+        # 폴백: 기준층 순면적/84㎡ 추정
+        per_floor = max(1, int((total_area / max(1, num_floors) / 84))) if (total_area and num_floors) else 4
+        seq = ["84A"] * per_floor
+    if not num_floors:
+        return []
+
+    rows: list[dict] = []
+    for b in range(building_count):
+        dong = str(101 + b)
+        for f in range(1, num_floors + 1):
+            for i, t in enumerate(seq, start=1):
+                rows.append({"dong": dong, "ho": f"{f * 100 + i}", "floor": f,
+                             "line": f"{i:02d}", "aspect": None, "type_name": t})
+    return rows
 
 
 async def generate_units(db: AsyncSession, site_id: uuid.UUID, gen: SalesUnitGeneration) -> int:
@@ -67,7 +114,7 @@ async def generate_units(db: AsyncSession, site_id: uuid.UUID, gen: SalesUnitGen
     elif st == "DRAWING_UPLOAD":
         grid = parse_drawing(gen.source_ref)
     else:
-        grid = await map_from_design(db, gen.source_ref)
+        grid = await map_from_design(db, site_id, gen.source_ref)
 
     # 타입 upsert
     type_ids: dict[str, uuid.UUID] = {}

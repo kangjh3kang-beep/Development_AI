@@ -75,6 +75,18 @@ export function UnitOutlineBuilder({
       ),
     );
 
+  // 🏗 설계(BIM)에서 자동 생성 — 프로젝트 최신 설계의 층수·평형배분으로 동·호표 생성
+  const submitFromDesign = async () => {
+    setBusy(true); setErr("");
+    try {
+      const r = await salesApi(siteCode).post<{ generated: number }>("/units/generate", { source_type: "DESIGN_AI" });
+      if ((r?.generated ?? 0) > 0) onDone();
+      else setErr("설계 데이터가 없습니다. 먼저 프로젝트에서 건축설계(BIM)를 생성하세요.");
+    } catch {
+      setErr("설계 자동 생성 실패(설계 데이터/권한 확인).");
+    } finally { setBusy(false); }
+  };
+
   const submit = async () => {
     if (total <= 0) { setErr("생성할 세대가 없습니다. 동·층·호수를 입력하세요."); return; }
     setBusy(true); setErr("");
@@ -199,8 +211,12 @@ export function UnitOutlineBuilder({
             <b className="text-[var(--accent-strong)]">{total.toLocaleString()}세대/호실</b>
             {err && <span className="ml-3 text-xs font-semibold text-rose-500">{err}</span>}
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <button onClick={onClose} className="rounded-xl border border-[var(--line-strong)] px-4 py-2 text-sm font-bold text-[var(--text-secondary)]">취소</button>
+            <button onClick={submitFromDesign} disabled={busy} title="프로젝트 최신 건축설계(BIM)의 층수·평형배분으로 자동 생성"
+              className="rounded-xl border border-[var(--accent-strong)] px-4 py-2 text-sm font-black text-[var(--accent-strong)] hover:bg-[var(--accent-soft)] disabled:opacity-50">
+              🏗 설계(BIM)에서 자동
+            </button>
             <button onClick={submit} disabled={busy} className="rounded-xl bg-[var(--accent-strong)] px-5 py-2 text-sm font-black text-white hover:opacity-90 disabled:opacity-50">
               {busy ? "생성 중…" : "동·호표 생성"}
             </button>
