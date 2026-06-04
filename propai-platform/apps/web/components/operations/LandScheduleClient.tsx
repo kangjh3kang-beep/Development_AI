@@ -10,6 +10,7 @@ import { useParams, useRouter } from "next/navigation";
 import { Card, CardContent } from "@propai/ui";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { ParcelBoundaryMap } from "@/components/map/ParcelBoundaryMap";
+import { NearbyTransactionsMap } from "@/components/map/NearbyTransactionsMap";
 import { analyzeRegistry } from "@/lib/registry-analyze";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { useLandScheduleStore, type LandRow } from "@/store/useLandScheduleStore";
@@ -382,6 +383,16 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
               onParcelClick={(a) => setHighlight(a)}
             />
           </div>
+
+          {/* 구획도 주변 토지 실거래·시세(공시지가는 '적정' 분석으로 확인) */}
+          {(highlight || rows.find((r) => r.jibun.trim())?.jibun) && (
+            <div>
+              <p className="mb-2 text-sm font-bold text-[var(--text-primary)]">
+                📈 주변 토지 실거래·시세 <span className="text-[11px] font-normal text-[var(--text-secondary)]">— {highlight || rows.find((r) => r.jibun.trim())?.jibun} 기준 반경 1km</span>
+              </p>
+              <NearbyTransactionsMap address={highlight || rows.find((r) => r.jibun.trim())?.jibun || ""} />
+            </div>
+          )}
         </>
       )}
     </div>
