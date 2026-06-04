@@ -6,6 +6,7 @@ import { Button, Card, CardContent, CardTitle, Input, Select } from "@propai/ui"
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import { ApiClientError, apiClient } from "@/lib/api-client";
+import { VerificationBadge } from "@/components/common/VerificationBadge";
 import type { Locale } from "@/i18n/config";
 
 type ProjectResponse = {
@@ -472,6 +473,11 @@ export function ProjectReportWorkspaceClient({
           </p>
           {result ? (
             <div className="mt-4 space-y-4">
+              {/* 할루시네이션·오류 검증(보고서) */}
+              <VerificationBadge
+                analysisType="report"
+                context={{ inputs: form, result } as unknown as Record<string, unknown>}
+              />
               <div className="grid gap-4 md:grid-cols-2">
                 <MetricTile label={labels.reportTypeLabel} value={result.report_type} />
                 <MetricTile

@@ -4,6 +4,7 @@ import { useState, type FormEvent } from "react";
 import { Button, Card, CardContent, CardTitle, Input } from "@propai/ui";
 import { ApiClientError, apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { VerificationBadge } from "@/components/common/VerificationBadge";
 import type { Locale } from "@/i18n/config";
 
 /* ── Response Types ── */
@@ -487,6 +488,11 @@ export function ProjectEsgWorkspaceClient({
           </p>
           {lcaResult ? (
             <div className="mt-4 space-y-4">
+              {/* 할루시네이션·오류 검증(ESG/탄소) */}
+              <VerificationBadge
+                analysisType="esg"
+                context={{ lca: lcaResult, epd: epdResult } as unknown as Record<string, unknown>}
+              />
               <div className="grid gap-4 md:grid-cols-4">
                 <MetricTile
                   label={labels.embodiedCarbonLabel}

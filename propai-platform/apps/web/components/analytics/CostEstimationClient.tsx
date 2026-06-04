@@ -15,6 +15,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { VerificationBadge } from "@/components/common/VerificationBadge";
 
 interface Overview {
   building_type: string; structure_type: string;
@@ -169,6 +170,11 @@ export function CostEstimationClient() {
 
       {result && (
         <>
+          {/* 할루시네이션·오류 검증(공사비) */}
+          <VerificationBadge
+            analysisType="cost"
+            context={{ inputs: { bt, gfa, floorsAbove, floorsBelow, structure }, result } as unknown as Record<string, unknown>}
+          />
           {/* 총공사비 + range */}
           <div className="grid gap-4 sm:grid-cols-3">
             <div className="rounded-2xl border border-[var(--accent-strong)]/30 bg-[var(--accent-soft)] p-5">

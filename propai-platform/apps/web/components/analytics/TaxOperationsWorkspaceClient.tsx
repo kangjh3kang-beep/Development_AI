@@ -12,6 +12,7 @@ import {
 } from "@propai/ui";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
+import { VerificationBadge } from "@/components/common/VerificationBadge";
 import type { Locale } from "@/i18n/config";
 
 type ProjectSummary = {
@@ -495,6 +496,11 @@ export function TaxOperationsWorkspaceClient({
           <CardContent className="p-6">
             {result ? (
               <div className="space-y-4">
+                {/* 할루시네이션·오류 검증(세금) */}
+                <VerificationBadge
+                  analysisType="tax"
+                  context={{ result } as unknown as Record<string, unknown>}
+                />
                 <div className="grid gap-4 md:grid-cols-2">
                   <MetricTile
                     label={labels.amountLabel}
