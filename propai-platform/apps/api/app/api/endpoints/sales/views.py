@@ -13,8 +13,83 @@ from apps.api.database.models.sales.site_org import SalesOrgNode, SalesSite, Sal
 from apps.api.database.models.sales.units_pricing import (
     SalesUnitInventory, SalesUnitPriceBreakdown, SalesUnitPriceTable, SalesUnitStatusLog,
 )
+from apps.api.database.models.sales.commission_mh_harness import (
+    SalesCommissionMaster, SalesCommissionDistribution,
+)
 
 views_router = APIRouter(tags=["sales-views"])
+
+
+@views_router.get("/integrity/check")
+async def integrity_check(db: AsyncSession = Depends(get_db), ctx: SalesCtx = Depends(sales_ctx)):
+    """무결성 가드 — 1호1계약·배분초과·미보증·미가격 등 위반 실시간 적발."""
+    site = ctx.site_id
+    findings: list[dict] = []
+
+    # 1) 중복 동·호(1호1계약 위반 소지)
+    dup = (await db.execute(
+        select(SalesUnitInventory.dong, SalesUnitInventory.ho, func.count().label("c"))
+        .where(SalesUnitInventory.site_id == site, SalesUnitInventory.deleted_at.is_(None))
+        .group_by(SalesUnitInventory.dong, SalesUnitInventory.ho).having(func.count() > 1))).all()
+    if dup:
+        findings.append({"key": "dup_unit", "severity": "critical", "count": len(dup),
+                         "title": "중복 동·호",
+                         "detail": ", ".join(f"{d.dong}-{d.ho}({d.c})" for d in dup[:10])})
+
+    # 2) 한 세대 다중 활성계약
+    multi = (await db.execute(
+        select(SalesContractExt.unit_id, func.count().label("c"))
+        .where(SalesContractExt.site_id == site, SalesContractExt.status == "ACTIVE")
+        .group_by(SalesContractExt.unit_id).having(func.count() > 1))).all()
+    if multi:
+        findings.append({"key": "multi_contract", "severity": "critical", "count": len(multi),
+                         "title": "한 세대 다중 활성계약", "detail": f"{len(multi)}개 세대"})
+
+    # 3) 수수료 배분 초과(활성 마스터)
+    master = (await db.execute(select(SalesCommissionMaster).where(
+        SalesCommissionMaster.site_id == site)
+        .order_by(SalesCommissionMaster.effective_at.desc()).limit(1))).scalar_one_or_none()
+    if master:
+        dists = list((await db.execute(select(SalesCommissionDistribution).where(
+            SalesCommissionDistribution.site_id == site,
+            SalesCommissionDistribution.master_id == master.id))).scalars())
+        rate_sum = sum(float(d.value or 0) for d in dists if d.basis == "RATE")
+        fixed_sum = sum(float(d.value or 0) for d in dists if d.basis == "FIXED")
+        over = False; note = ""
+        if rate_sum > 1.0:
+            over = True; note = f"배분 비율 합 {rate_sum * 100:.0f}% > 100%"
+        total = float(master.fixed_amount or master.pool_total or 0) if master.basis != "RATE_OF_PRICE" else 0
+        if total and fixed_sum > total:
+            over = True; note = (note + " · " if note else "") + f"정액 배분 {fixed_sum:,.0f} > 총액 {total:,.0f}"
+        if over:
+            findings.append({"key": "comm_over", "severity": "high", "count": 1,
+                             "title": "수수료 배분 초과(Σ>총액)", "detail": note})
+
+    # 4) 미보증 계약(서명 이상인데 활성 보증 없음)
+    try:
+        from apps.api.database.models.sales.guarantee import SalesGuaranteePolicy
+        signed = (await db.execute(select(func.count()).select_from(SalesContractExt).where(
+            SalesContractExt.site_id == site, SalesContractExt.status == "ACTIVE",
+            SalesContractExt.stage.in_(["SIGNED", "MIDDLE", "BALANCE"])))).scalar() or 0
+        has_g = (await db.execute(select(func.count()).select_from(SalesGuaranteePolicy).where(
+            SalesGuaranteePolicy.site_id == site, SalesGuaranteePolicy.status == "ACTIVE"))).scalar() or 0
+        if signed > 0 and has_g == 0:
+            findings.append({"key": "no_guarantee", "severity": "high", "count": int(signed),
+                             "title": "미보증 계약", "detail": f"서명 이상 계약 {signed}건, 활성 분양보증/신탁 0"})
+    except Exception:  # noqa: BLE001
+        pass
+
+    # 5) 미가격 세대(분양가능인데 가격표 없음)
+    priced = select(SalesUnitPriceTable.unit_id).where(
+        SalesUnitPriceTable.site_id == site).distinct().scalar_subquery()
+    unpriced = (await db.execute(select(func.count()).select_from(SalesUnitInventory).where(
+        SalesUnitInventory.site_id == site, SalesUnitInventory.deleted_at.is_(None),
+        SalesUnitInventory.status == "AVAILABLE", SalesUnitInventory.id.not_in(priced)))).scalar() or 0
+    if unpriced > 0:
+        findings.append({"key": "unpriced", "severity": "medium", "count": int(unpriced),
+                         "title": "미가격 세대", "detail": f"분양가능 {unpriced}세대 분양가 미산정"})
+
+    return {"ok": len(findings) == 0, "findings": findings}
 
 
 @views_router.get("/sites")

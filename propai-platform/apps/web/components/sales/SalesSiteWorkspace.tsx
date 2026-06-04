@@ -18,8 +18,9 @@ import LoanPanel from "@/components/sales/LoanPanel";
 import ResalePanel from "@/components/sales/ResalePanel";
 import TaxPanel from "@/components/sales/TaxPanel";
 import { UnitOutlineBuilder } from "@/components/sales/UnitOutlineBuilder";
+import IntegrityGuard from "@/components/sales/IntegrityGuard";
 
-type Tab = "units" | "pricing" | "subscription" | "payments" | "loan" | "resale" | "tax" | "org" | "commission" | "desk";
+type Tab = "units" | "pricing" | "subscription" | "payments" | "loan" | "resale" | "tax" | "org" | "commission" | "desk" | "integrity";
 const TABS: { key: Tab; label: string }[] = [
   { key: "units", label: "세대 배치도" },
   { key: "pricing", label: "분양가" },
@@ -31,6 +32,7 @@ const TABS: { key: Tab; label: string }[] = [
   { key: "org", label: "조직도" },
   { key: "commission", label: "수수료" },
   { key: "desk", label: "방문 안내데스크" },
+  { key: "integrity", label: "🛡 무결성 가드" },
 ];
 
 export default function SalesSiteWorkspace({ siteCode, locale }: { siteCode: string; locale: Locale }) {
@@ -108,6 +110,7 @@ export default function SalesSiteWorkspace({ siteCode, locale }: { siteCode: str
       {tab === "org" && <OrgTree siteCode={siteCode} />}
       {tab === "commission" && <CommissionBoard siteCode={siteCode} />}
       {tab === "desk" && (<div className="grid gap-6 lg:grid-cols-2"><DeskCheckin siteCode={siteCode} /><VisitorStats siteCode={siteCode} /></div>)}
+      {tab === "integrity" && <IntegrityGuard siteCode={siteCode} />}
     </div>
   );
 }
