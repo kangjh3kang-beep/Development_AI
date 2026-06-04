@@ -4,6 +4,7 @@ import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { LifecycleStageViews } from "@/components/projects/LifecycleStageViews";
+import { ProjectAnalysisSummary } from "@/components/projects/ProjectAnalysisSummary";
 import { ProjectLifecyclePipeline } from "@/components/projects/ProjectLifecyclePipeline";
 import { ProjectAnalysisFlow } from "@/components/projects/ProjectAnalysisFlow";
 import { isValidLocale, type Locale } from "@/i18n/config";
@@ -268,8 +269,11 @@ export default function ProjectDetailPage() {
         </div>
       </section>
 
+      {/* ── 보고서식 분석 요약(복원된 단일 데이터원) ── */}
+      <ProjectAnalysisSummary />
+
       {/* ── Deep Integration Lifecycle Hub ── */}
-      <motion.div 
+      <motion.div
         initial={{ opacity: 0, y: 40 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.5 }}
