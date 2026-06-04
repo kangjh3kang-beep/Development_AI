@@ -44,6 +44,40 @@ def _area_factor(area_sqm: float | None) -> tuple[float, str]:
     return 1.0, "표준 규모"
 
 
+# 건물 재조달원가(원/㎡, 2026 근사)·내용연수 — 원가법 건물가치 산정용
+_REPLACEMENT_COST = {
+    "SRC": (2_500_000, 50), "철골철근콘크리트": (2_500_000, 50),
+    "RC": (2_000_000, 50), "철근콘크리트": (2_000_000, 50),
+    "철골": (1_800_000, 40), "S조": (1_800_000, 40),
+    "조적": (1_500_000, 45), "벽돌": (1_500_000, 45),
+    "목조": (1_400_000, 40), "목": (1_400_000, 40),
+}
+_RESIDUAL_FLOOR = 0.2  # 잔가율 하한(잔존가치 20%)
+
+
+def _building_value(gfa: float | None, structure: str | None, year_built: int | None, now_year: int) -> dict[str, Any] | None:
+    """원가법 건물가치 = 재조달원가 × 연면적 × 잔가율(1 − 경과/내용연수, 하한 20%)."""
+    if not gfa or gfa <= 0:
+        return None
+    rc, life = 1_800_000, 45
+    matched = "기본(RC 가정)"
+    for key, (cost, yrs) in _REPLACEMENT_COST.items():
+        if structure and key in structure:
+            rc, life, matched = cost, yrs, key
+            break
+    age = max(0, now_year - year_built) if year_built else 0
+    residual = max(_RESIDUAL_FLOOR, 1 - age / life) if life else _RESIDUAL_FLOOR
+    value = int(rc * gfa * residual)
+    return {
+        "method": "원가법(건물)",
+        "replacement_cost_per_sqm": rc,
+        "structure": matched, "useful_life_yrs": life,
+        "age_yrs": age, "residual_ratio": round(residual, 3),
+        "building_value_won": value,
+        "rationale": f"재조달원가 {rc:,}원/㎡ × 연면적 {gfa:,.0f}㎡ × 잔가율 {residual:.2f}(경과 {age}년/내용 {life}년) = {value:,}원",
+    }
+
+
 def _shape_factor(irregularity: float | None) -> tuple[float, str]:
     """형상 개별요인 — 부정형도(1-실면적/bbox)로 형상 감가(정형 우세, 부정형 열세)."""
     if irregularity is None:
@@ -66,6 +100,9 @@ async def desk_appraisal(
     comparable_avg_per_sqm: float | None = None,   # 거래사례 평균단가(주변 토지 실거래)
     time_adjust: float | None = None,                # 시점수정(미지정 시 지가변동률로 산정)
     base_year: int = 2025,
+    building_gfa_sqm: float | None = None,           # 건물 연면적(주면 토지+건물 복합 추정)
+    building_structure: str | None = None,           # 구조(RC/SRC/철골/조적/목조)
+    building_year_built: int | None = None,          # 준공연도(감가상각)
 ) -> dict[str, Any]:
     """예상 탁상감정가 산출(공시지가기준법 + 거래사례비교법 결합)."""
     op = official_price_per_sqm
@@ -200,10 +237,18 @@ async def desk_appraisal(
     appraised_total = int(appraised_unit * area_f) if area_f else None
     margin = int(appraised_unit * (1 - confidence))  # 신뢰구간(±)
 
+    # ── 토지+건물 복합 추정(건물 입력 시): 토지가치 + 원가법 건물가치 ──
+    building = _building_value(building_gfa_sqm, building_structure, building_year_built, base_year + 1)
+    complex_total = None
+    if building and appraised_total is not None:
+        complex_total = appraised_total + building["building_value_won"]
+
     return {
         "ok": True,
         "appraised_price_per_sqm": appraised_unit,
         "appraised_total_won": appraised_total,
+        "building": building,
+        "complex_total_won": complex_total,   # 토지+건물 복합 예상가치(건물 입력 시)
         "area_sqm": round(area_f, 1) if area_f else None,
         "confidence": confidence,
         "range_per_sqm": {"low": appraised_unit - margin, "high": appraised_unit + margin},

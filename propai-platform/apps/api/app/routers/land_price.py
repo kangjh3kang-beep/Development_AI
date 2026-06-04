@@ -34,6 +34,9 @@ class DeskAppraisalRequest(BaseModel):
     area_sqm: float | None = None
     official_price_per_sqm: float | None = None
     comparable_avg_per_sqm: float | None = None   # 주변 토지 실거래 평균단가(선택)
+    building_gfa_sqm: float | None = None          # 건물 연면적(주면 토지+건물 복합)
+    building_structure: str | None = None
+    building_year_built: int | None = None
 
 
 @router.post("/desk-appraisal")
@@ -43,6 +46,8 @@ async def land_desk_appraisal(req: DeskAppraisalRequest):
         pnu=req.pnu, address=req.address, area_sqm=req.area_sqm,
         official_price_per_sqm=req.official_price_per_sqm,
         comparable_avg_per_sqm=req.comparable_avg_per_sqm,
+        building_gfa_sqm=req.building_gfa_sqm, building_structure=req.building_structure,
+        building_year_built=req.building_year_built,
     )
 
 
