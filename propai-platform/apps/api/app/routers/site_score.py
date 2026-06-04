@@ -34,6 +34,7 @@ class EnvelopeRequest(BaseModel):
     far_limit_pct: float | None = None
     pnu: str | None = None                 # 주면 VWorld 실측 폴리곤으로 치수 정밀화
     geometry: dict | None = None           # 직접 GeoJSON geometry 입력(선택)
+    latitude: float | None = None          # 위도(동지 일영 계산, 미지정 시 37.5)
 
 
 @router.post("/envelope")
@@ -78,6 +79,7 @@ async def buildable_envelope(req: EnvelopeRequest):
         land_width_m=width, land_depth_m=depth,
         floor_height_m=req.floor_height_m,
         bcr_limit_pct=req.bcr_limit_pct, far_limit_pct=req.far_limit_pct,
+        latitude=req.latitude if req.latitude is not None else 37.5,
     )
     result["geometry_source"] = geom_source
     if road_side:

@@ -57,6 +57,54 @@ def dims_from_polygon(geometry: dict[str, Any] | None) -> dict[str, Any] | None:
         return None
 
 
+# 시도별 대표 위도(동지 일영 계산용)
+_LAT_BY_SIDO = {
+    "서울": 37.55, "경기": 37.4, "인천": 37.45, "강원": 37.8,
+    "충북": 36.8, "충남": 36.5, "대전": 36.35, "세종": 36.5,
+    "전북": 35.8, "전남": 34.9, "광주": 35.16, "경북": 36.4,
+    "대구": 35.87, "경남": 35.2, "부산": 35.18, "울산": 35.54, "제주": 33.5,
+}
+
+
+def _latitude(address: str, fallback: float = 37.5) -> float:
+    for sido, lat in _LAT_BY_SIDO.items():
+        if sido in (address or ""):
+            return lat
+    return fallback
+
+
+def shadow_analysis(height_m: float, latitude: float = 37.5) -> dict[str, Any]:
+    """동지(δ=-23.44°) 9·12·15시 태양고도→그림자 길이(L=H/tanθ). 일조권 영향 정량.
+
+    태양고도 sin(alt)=sinφ·sinδ + cosφ·cosδ·cos(h), h=시각각(정오 0, ±15°/h).
+    """
+    if height_m <= 0:
+        return {}
+    decl = math.radians(-23.44)
+    lat = math.radians(latitude)
+    out: dict[str, Any] = {}
+    hours = {"09시": -45.0, "정오": 0.0, "15시": 45.0}
+    for label, ha_deg in hours.items():
+        ha = math.radians(ha_deg)
+        sin_alt = math.sin(lat) * math.sin(decl) + math.cos(lat) * math.cos(decl) * math.cos(ha)
+        alt = math.degrees(math.asin(max(-1.0, min(1.0, sin_alt))))
+        if alt <= 0.5:
+            out[label] = {"solar_altitude_deg": round(alt, 1), "shadow_len_m": None}
+        else:
+            L = height_m / math.tan(math.radians(alt))
+            out[label] = {"solar_altitude_deg": round(alt, 1), "shadow_len_m": round(L, 1)}
+    noon_alt = out["정오"]["solar_altitude_deg"]
+    max_shadow = max((v["shadow_len_m"] or 0) for v in out.values())
+    return {
+        "winter_solstice": out,
+        "noon_altitude_deg": noon_alt,
+        "max_shadow_len_m": round(max_shadow, 1),
+        "latitude": latitude,
+        "note": f"동지 정오 태양고도 {noon_alt}° 기준 그림자 최대 {round(max_shadow,1)}m. "
+                "인접대지 일조 영향·인동간격 검토에 활용(정밀 3D 일영은 BIM 매스 결합 시).",
+    }
+
+
 def _zone_limits(zone: str) -> dict[str, Any]:
     for k, v in ZONE_DEFAULTS.items():
         if k in (zone or "") or (zone or "") in k:
@@ -74,6 +122,7 @@ def compute_buildable_envelope(
     bcr_limit_pct: float | None = None,
     far_limit_pct: float | None = None,
     side_setback_m: float = 0.5,
+    latitude: float = 37.5,
 ) -> dict[str, Any]:
     """정북일조 인벨로프 기반 최대 건축가능 연면적·층수·볼륨과 용적률 대비 손실 산정."""
     if land_area_sqm <= 0:
@@ -139,11 +188,13 @@ def compute_buildable_envelope(
     realistic_height = realistic_floors * fh
     min_spacing_080 = round(0.8 * realistic_height, 1)
     min_spacing_050 = round(0.5 * realistic_height, 1)
+    shadow = shadow_analysis(realistic_height, latitude)  # 동지 일영(그림자) 분석
 
     return {
         "applies_north_light": True,
         "min_building_spacing_m": min_spacing_080,        # 동간 채광거리 권고(0.8H)
         "min_building_spacing_blank_wall_m": min_spacing_050,  # 무창벽 0.5H
+        "shadow_analysis": shadow,                         # 동지 9·12·15시 그림자 길이
         "row_distance_rule": "건축법 시행령 §86② 채광 인동간격 0.8H(무창벽 0.5H) — 공동주택 다동 배치 시 적용",
         "zone": zone, "bcr_pct": round(bcr * 100, 1), "far_pct": round(far * 100, 1),
         "lot_width_m": round(W, 1), "lot_depth_m": round(D, 1),
