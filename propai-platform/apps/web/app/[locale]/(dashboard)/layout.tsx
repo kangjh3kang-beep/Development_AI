@@ -76,29 +76,9 @@ function IconAuction() {
     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m14 12-8.5 8.5a2.12 2.12 0 1 1-3-3L11 9"/><path d="M15 13 9 7l4-4 6 6-4 4z"/><path d="m18 15 3 3"/><path d="M21 11V5a2 2 0 0 0-2-2H5"/></svg>
   );
 }
-function IconAI() {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>
-  );
-}
-function IconWebRTC() {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-  );
-}
-function IconApprovals() {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="m9 11 3 3L22 4"/></svg>
-  );
-}
 function IconSRE() {
   return (
     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.268 21a2 2 0 0 0 3.464 0"/><path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"/></svg>
-  );
-}
-function IconTenant() {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
   );
 }
 function IconGuide() {
@@ -163,13 +143,11 @@ export default async function DashboardLayout({
     { href: `/${locale}/g2b`, label: "공공입찰 (나라장터)", icon: <IconAuction /> },
   ];
 
-  // IV. 시스템·지원
+  // IV. 지원
+  // 내부 개발/운영 도구(AI 오케스트레이터·실시간 협업·전자 승인·SRE·테넌트 통합 관리)는
+  // 일반 사용자(디벨로퍼·구독자)에게 불필요·복잡하고 일부 오류(전자승인 k.map)라 사이드바에서 제외.
+  // 추후 관리자 전용 영역으로 복원 가능.
   const enterpriseNavigation = [
-    { href: `/${locale}/agent`, label: "AI 오케스트레이터", icon: <IconAI /> },
-    { href: `/${locale}/webrtc`, label: "실시간 협업", icon: <IconWebRTC /> },
-    { href: `/${locale}/approvals`, label: "전자 승인 시스템", icon: <IconApprovals /> },
-    { href: `/${locale}/sre`, label: "시스템 신뢰성 (SRE)", icon: <IconSRE /> },
-    { href: `/${locale}/tenant`, label: "테넌트 통합 관리", icon: <IconTenant /> },
     { href: `/${locale}/guide`, label: "이용 가이드", icon: <IconGuide /> },
   ];
 
@@ -187,7 +165,7 @@ export default async function DashboardLayout({
     { title: "분양관리 ERP", items: salesNavigation },
     { title: "수익·비용·ESG", items: analyticsNavigation },
     { title: "입찰·자산 운영", items: operationsNavigation },
-    { title: "시스템·지원", items: enterpriseNavigation },
+    { title: "지원", items: enterpriseNavigation },
     { title: "관리", items: adminNavigation, adminOnly: true },
   ];
 
