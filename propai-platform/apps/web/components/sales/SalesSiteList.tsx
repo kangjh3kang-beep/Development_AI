@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { salesGlobal } from "@/lib/salesApi";
-import { apiClient } from "@/lib/api-client";
+import { apiClient, ApiClientError } from "@/lib/api-client";
 import { useProjectStore } from "@/store/useProjectStore";
 import type { Locale } from "@/i18n/config";
 
@@ -38,6 +38,7 @@ export default function SalesSiteList({ locale }: { locale: Locale }) {
   const [form, setForm] = useState({ site_name: "", development_type: "APT", project_id: "" });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [fee, setFee] = useState<number | null>(null); // 분양현장 생성 사용료(관리자 책정)
 
   const devLabel = (v: string) => devTypes.find((d) => d.value === v)?.label ?? v;
 
@@ -55,6 +56,11 @@ export default function SalesSiteList({ locale }: { locale: Locale }) {
       .get<{ items?: DevType[] }>("/admin/option-lists/sales_site_types", { useMock: false })
       .then((r) => { if (r.items && r.items.length) setDevTypes(r.items); })
       .catch(() => {});
+    // 분양현장 생성 사용료 미리보기(관리자 책정 금액)
+    apiClient
+      .post<{ fee_krw?: number }>("/billing/preview-charge", { body: { action: "sales_provision" }, useMock: false })
+      .then((r) => setFee(typeof r.fee_krw === "number" ? r.fee_krw : null))
+      .catch(() => setFee(null));
   }, [syncFromBackend]);
 
   const createSite = async () => {
@@ -64,8 +70,16 @@ export default function SalesSiteList({ locale }: { locale: Locale }) {
       await salesGlobal.post("/provision", form);
       setForm({ site_name: "", development_type: "APT", project_id: "" });
       load();
-    } catch {
-      setErr("현장을 만들지 못했습니다. 권한 또는 프로젝트 번호를 확인하세요.");
+    } catch (e) {
+      // 백엔드 detail(권한·프로젝트 번호 등)을 그대로 노출 — 원인 진단 가능
+      let msg = "현장을 만들지 못했습니다. 잠시 후 다시 시도해 주세요.";
+      if (e instanceof ApiClientError) {
+        const detail = (e.payload as { detail?: string } | null)?.detail;
+        if (typeof detail === "string" && detail) msg = detail;
+        else if (e.status === 403) msg = "분양현장 생성 권한이 없습니다.";
+        else if (e.status === 400) msg = "현장 이름과 저장된 프로젝트를 확인하세요.";
+      }
+      setErr(msg);
     } finally { setBusy(false); }
   };
 
@@ -89,7 +103,13 @@ export default function SalesSiteList({ locale }: { locale: Locale }) {
           <span className="text-xl">➕</span>
           <h2 className="text-base font-black text-[var(--text-primary)]">새 분양 현장 만들기</h2>
         </div>
-        <p className="mb-4 text-xs text-[var(--text-secondary)]">현장 이름과 유형을 정하고, 연결할 프로젝트 번호를 입력하면 현장이 자동 구성됩니다(세대·차수·데스크 등).</p>
+        <p className="mb-1 text-xs text-[var(--text-secondary)]">현장 이름과 유형을 정하고, 연결할 프로젝트를 선택하면 현장이 자동 구성됩니다(세대·차수·데스크 등).</p>
+        {fee != null && fee > 0 && (
+          <p className="mb-4 text-xs font-semibold text-[var(--accent-strong)]">
+            💳 현장 생성 시 사용료 <b>{fee.toLocaleString()}원</b>이 부과됩니다(관리자 책정).
+          </p>
+        )}
+        {(fee == null || fee === 0) && <div className="mb-4" />}
         <div className="flex flex-wrap items-end gap-3">
           <Field label="현장 이름">
             <input value={form.site_name} onChange={(e) => setForm({ ...form, site_name: e.target.value })}

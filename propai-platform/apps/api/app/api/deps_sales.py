@@ -27,7 +27,7 @@ class SalesCtx:
         self.user = user
 
 
-async def resolve_site(request: Request, db: AsyncSession) -> uuid.UUID:
+async def resolve_site(request: Request, db: AsyncSession) -> SalesSite:
     """우선순위: 경로변수 site_id → 헤더 X-Site-Code → 서브도메인(host). site_code 또는 UUID 허용."""
     site_code = request.path_params.get("site_id") or request.headers.get("x-site-code")
     if not site_code:
@@ -46,12 +46,13 @@ async def resolve_site(request: Request, db: AsyncSession) -> uuid.UUID:
         site = (await db.execute(select(SalesSite).where(SalesSite.site_code == str(site_code)))).scalar_one_or_none()
     if not site:
         raise HTTPException(404, "site not found")
-    return site.id
+    return site
 
 
 async def sales_ctx(request: Request, db: AsyncSession = Depends(get_db),
                     user=Depends(get_current_user)) -> SalesCtx:
-    site_id = await resolve_site(request, db)
+    site = await resolve_site(request, db)
+    site_id = site.id
     node = (await db.execute(
         select(SalesOrgNode).where(
             SalesOrgNode.site_id == site_id,
@@ -61,11 +62,16 @@ async def sales_ctx(request: Request, db: AsyncSession = Depends(get_db),
     )).scalar_one_or_none()
 
     role_lower = (getattr(user, "role", "") or "").lower()
+    user_tenant = getattr(user, "tenant_id", None)
+    owns_site = bool(user_tenant) and str(getattr(site, "tenant_id", "") or "") == str(user_tenant)
     if node:
         org_path, role = str(node.path), node.node_type
     elif role_lower in _SUPERADMIN_ROLES:
         org_path, role = "", "SUPERADMIN"
     elif role_lower in _DEVELOPER_ROLES:
+        org_path, role = "", "DEVELOPER"
+    elif owns_site:
+        # 본인 테넌트가 소유한 현장 → 시행사(DEVELOPER)로 인정(구독자가 만든 현장을 운영 가능)
         org_path, role = "", "DEVELOPER"
     else:
         raise HTTPException(403, "이 현장에 대한 분양(sales) 권한이 없습니다")

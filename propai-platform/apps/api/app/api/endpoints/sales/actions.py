@@ -104,17 +104,41 @@ async def contract_cancel(contract_id: uuid.UUID, body: dict, db: AsyncSession =
 
 @actions_router.post("/provision")
 async def provision(body: dict, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
-    """현장 ERP 프로비저닝(신규 site 생성). 신규 현장이라 sales_ctx 미사용 — 인증+역할로 게이트."""
+    """현장 ERP 프로비저닝(신규 site 생성).
+
+    구독자 포함 인증 사용자 누구나 본인 테넌트에 현장을 만들 수 있고, 생성 시
+    관리자 책정 '분양현장 생성 사용료'(billing service_fees.sales_provision)가 부과된다.
+    생성한 현장은 본인 테넌트 소유 → sales_ctx가 DEVELOPER로 인정(운영까지 일관 동작)."""
     from fastapi import HTTPException
 
+    from app.services.billing import billing_service
     from app.services.sales.provision import provision_site
 
-    role = (getattr(user, "role", "") or "").lower()
-    if role not in {"admin", "superadmin", "owner", "총괄관리자", "developer", "시행사", "dev"}:
-        raise HTTPException(403, "프로비저닝 권한 없음")
-    res = await provision_site(db, uuid.UUID(body["project_id"]), user.tenant_id,
+    # 프로젝트 번호 검증 — 로컬(비-UUID) id면 500 대신 명확한 안내
+    pid_raw = str(body.get("project_id") or "").strip()
+    try:
+        pid = uuid.UUID(pid_raw)
+    except (ValueError, AttributeError, TypeError):
+        raise HTTPException(400, "유효한 프로젝트 번호가 아닙니다. 프로젝트 관리에서 저장(동기화)된 프로젝트를 선택하세요.")
+    if not str(body.get("site_name") or "").strip():
+        raise HTTPException(400, "현장 이름을 입력하세요.")
+    if not getattr(user, "tenant_id", None):
+        raise HTTPException(403, "테넌트 정보가 없어 현장을 만들 수 없습니다. 다시 로그인해 주세요.")
+
+    res = await provision_site(db, pid, user.tenant_id,
                                body["site_name"], body.get("development_type", "APT"))
     await db.commit()
+
+    # 분양현장 생성 사용료(관리자 책정) 부과 — best-effort(실패해도 현장 생성 유지, 후불 누적)
+    fee_krw = None
+    try:
+        await billing_service.load_config(db)
+        charged = await billing_service.charge_service(db, user.id, "sales_provision")
+        fee_krw = charged.get("charged_krw")
+    except Exception:  # noqa: BLE001
+        pass
+    if isinstance(res, dict):
+        res = {**res, "service_fee_krw": fee_krw}
     return res
 
 

@@ -106,6 +106,7 @@ export default function BillingConfigPage() {
         <div className="grid gap-2 md:grid-cols-2">
           <Field label="프로젝트 생성" value={cfg.service_fees.project_create} onChange={(v) => setSvc("project_create", v)} />
           <Field label="토지분석(구독자)" value={cfg.service_fees.land_analysis} onChange={(v) => setSvc("land_analysis", v)} />
+          <Field label="분양현장 생성" value={cfg.service_fees.sales_provision ?? 0} onChange={(v) => setSvc("sales_provision", v)} />
         </div>
       </section>
 
