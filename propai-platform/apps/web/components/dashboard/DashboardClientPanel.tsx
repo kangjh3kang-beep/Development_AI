@@ -391,7 +391,7 @@ export function DashboardClientPanel({
             </p>
             <Link
               href={`/${locale}/projects/${featuredProjectId}`}
-              className="rounded-full border border-[var(--line)] bg-white px-4 py-2 text-sm font-semibold text-[var(--text-primary)] shadow-[var(--shadow-md)]"
+              className="shrink-0 whitespace-nowrap rounded-full bg-[var(--accent-strong)] px-5 py-2 text-sm font-bold text-white shadow-[var(--shadow-md)] transition-all hover:brightness-110"
             >
               {labels.openProjectLabel}
             </Link>
