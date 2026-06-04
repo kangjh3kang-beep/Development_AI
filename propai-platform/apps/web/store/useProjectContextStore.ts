@@ -92,6 +92,21 @@ interface FeasibilityData {
   grade: string | null;
 }
 
+// 공사비 분석 결과(건축개요 기반) — 수지·사업성과 단일 데이터원으로 연동.
+interface CostData {
+  totalConstructionCostWon: number | null;
+  perSqmWon: number | null;
+  perPyeongWon: number | null;
+  abovegroundWon: number | null;
+  undergroundWon: number | null;
+  landscapeWon: number | null;
+  directWon: number | null;
+  indirectWon: number | null;
+  rangeMinWon: number | null;
+  rangeMaxWon: number | null;
+  source: string | null; // overview | bim
+}
+
 interface EsgData {
   embodiedCarbonKg: number | null;
   operationalCarbonKg: number | null;
@@ -129,6 +144,7 @@ interface ProjectSnapshot {
   siteAnalysis: SiteAnalysisData | null;
   designData: DesignData | null;
   feasibilityData: FeasibilityData | null;
+  costData: CostData | null;
   esgData: EsgData | null;
   complianceData: ComplianceData | null;
   completedStages: string[];
@@ -152,6 +168,7 @@ export interface ProjectContextState {
   siteAnalysis: SiteAnalysisData | null;
   designData: DesignData | null;
   feasibilityData: FeasibilityData | null;
+  costData: CostData | null;
   esgData: EsgData | null;
   complianceData: ComplianceData | null;
 
@@ -168,6 +185,7 @@ export interface ProjectContextState {
   updateSiteAnalysis: (data: Partial<SiteAnalysisData>) => void;
   updateDesignData: (data: DesignData) => void;
   updateFeasibilityData: (data: FeasibilityData) => void;
+  updateCostData: (data: CostData) => void;
   updateEsgData: (data: EsgData) => void;
   updateComplianceData: (data: ComplianceData) => void;
 
@@ -185,6 +203,7 @@ const INITIAL_CROSS_MODULE = {
   siteAnalysis: null as SiteAnalysisData | null,
   designData: null as DesignData | null,
   feasibilityData: null as FeasibilityData | null,
+  costData: null as CostData | null,
   esgData: null as EsgData | null,
   complianceData: null as ComplianceData | null,
 };
@@ -195,6 +214,7 @@ function snapOf(s: ProjectContextState): ProjectSnapshot {
     siteAnalysis: s.siteAnalysis,
     designData: s.designData,
     feasibilityData: s.feasibilityData,
+    costData: s.costData,
     esgData: s.esgData,
     complianceData: s.complianceData,
     completedStages: s.completedStages,
@@ -263,6 +283,7 @@ export const useProjectContextStore = create<ProjectContextState>()(
                 siteAnalysis: snap.siteAnalysis,
                 designData: snap.designData,
                 feasibilityData: snap.feasibilityData,
+                costData: snap.costData,
                 esgData: snap.esgData,
                 complianceData: snap.complianceData,
                 completedStages: snap.completedStages ?? [],
@@ -320,6 +341,9 @@ export const useProjectContextStore = create<ProjectContextState>()(
       updateFeasibilityData: (data) => {
         set((state) => withSnap(state, { feasibilityData: data }));
       },
+      updateCostData: (data) => {
+        set((state) => withSnap(state, { costData: data }));
+      },
 
       updateEsgData: (data) => {
         set((state) => withSnap(state, { esgData: data }));
@@ -367,6 +391,7 @@ export type {
   SiteAnalysisData,
   DesignData,
   FeasibilityData,
+  CostData,
   EsgData,
   ComplianceData,
 };

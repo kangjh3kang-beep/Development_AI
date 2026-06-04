@@ -19,6 +19,68 @@ router = APIRouter(prefix="/api/v1/cost", tags=["v61 공사비"])
 cost_calc = OriginCostCalculator()
 bim_service = BIMService()
 
+# ── 건축개요 기반 공사비 추정(수지·사업성과 단일 데이터원 연동) ──
+_STRUCT_FACTOR = {"RC": 1.0, "RC조": 1.0, "SRC": 1.15, "SRC조": 1.15, "SC": 1.10, "철골": 1.10, "철골조": 1.10, "PC": 0.95, "목구조": 0.85}
+
+
+class OverviewCostRequest(BaseModel):
+    """건축개요(연면적·지상/지하 층수·구조·용도) 기반 공사비 추정 요청."""
+    building_type: str = "apartment"
+    total_gfa_sqm: float = Field(gt=0)
+    floor_count_above: int = Field(1, ge=1)
+    floor_count_below: int = Field(0, ge=0)
+    structure_type: str = "RC"
+    unit_cost_per_sqm: Optional[int] = None  # 직접공사비 단가 override(원/㎡)
+
+
+@router.post("/estimate-overview", summary="건축개요 기반 공사비 추정(지상/지하/조경/간접·최저~최대)")
+async def estimate_overview(req: OverviewCostRequest) -> dict[str, Any]:
+    """선택한 건축개요로 지상·지하·조경 직접공사비 + 간접비(설계·감리·예비·일반관리)를
+    산정하고, 건설물가 변동을 반영한 최저~최대 예상 공사비 레인지를 반환한다.
+    (도면/BIM 완성 프로젝트는 향후 항목별 정밀 적산으로 대체) — 수지·사업성과 동일 개요 사용."""
+    from app.services.feasibility.construction_cost_engine import (
+        DEFAULT_DIRECT_COST_PER_SQM, calculate_indirect_cost,
+    )
+    PY = 3.305785
+    base_unit = req.unit_cost_per_sqm or DEFAULT_DIRECT_COST_PER_SQM.get(
+        req.building_type, DEFAULT_DIRECT_COST_PER_SQM["apartment"])
+    unit = base_unit * _STRUCT_FACTOR.get(req.structure_type, 1.0)
+    gfa = req.total_gfa_sqm
+    gfa_below = min(gfa * 0.4, gfa * req.floor_count_below * 0.12)  # 지하 면적 추정
+    gfa_above = max(0.0, gfa - gfa_below)
+
+    def scenario(factor: float) -> dict[str, Any]:
+        u = int(unit * factor)
+        above = int(gfa_above * u)
+        below = int(gfa_below * u * 1.3)  # 지하 30% 할증
+        landscape = int((above + below) * 0.015)  # 조경 1.5%
+        direct = above + below + landscape
+        ind = calculate_indirect_cost(direct_cost_won=direct)
+        total = direct + ind["total_indirect_cost_won"]
+        return {
+            "unit_cost_per_sqm": u,
+            "aboveground_won": above, "underground_won": below, "landscape_won": landscape,
+            "direct_won": direct,
+            "design_fee_won": ind["design_fee_won"], "supervision_fee_won": ind["supervision_fee_won"],
+            "contingency_won": ind["contingency_won"], "general_expense_won": ind["general_expense_won"],
+            "indirect_won": ind["total_indirect_cost_won"],
+            "total_won": total,
+            "per_pyeong_won": int(total / (gfa / PY)) if gfa > 0 else 0,
+        }
+
+    expected = scenario(1.0)
+    return {
+        "building_type": req.building_type, "structure_type": req.structure_type,
+        "total_gfa_sqm": gfa, "gfa_above_sqm": round(gfa_above, 1), "gfa_below_sqm": round(gfa_below, 1),
+        **expected,
+        "range": {
+            "min_won": scenario(0.92)["total_won"],
+            "expected_won": expected["total_won"],
+            "max_won": scenario(1.12)["total_won"],
+        },
+        "note": "건축개요 기반 표준 추정(지상/지하/조경/간접). 도면·BIM 완성 시 항목별 정밀 적산으로 정확도 향상.",
+    }
+
 
 # ── 요청 스키마 ──
 

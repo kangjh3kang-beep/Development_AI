@@ -132,6 +132,7 @@ function NumRow({ label, unit, value, auto, edited, onChange, step }: {
 export function InvestmentFeasibilityClient() {
   const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
   const designData = useProjectContextStore((s) => s.designData);
+  const costData = useProjectContextStore((s) => s.costData);
   const projectId = useProjectContextStore((s) => s.projectId);
 
   const [form, setForm] = useState<Form>(EMPTY);
@@ -327,6 +328,15 @@ export function InvestmentFeasibilityClient() {
                 );
               })}
             </div>
+            {/* 공사비 분석 연동(단일 데이터원) */}
+            {costData?.totalConstructionCostWon != null && (
+              <div className="mt-3 rounded-lg bg-[var(--surface-strong)] px-3 py-2 text-[11px] text-[var(--accent-strong)]">
+                🔗 공사비 정밀 분석 연동 — 정밀 총공사비 <b>{fmtKrw(costData.totalConstructionCostWon)}</b>
+                {costData.rangeMinWon != null && costData.rangeMaxWon != null && <span className="text-[var(--text-tertiary)]"> (범위 {fmtKrw(costData.rangeMinWon)}~{fmtKrw(costData.rangeMaxWon)})</span>}
+                <span className="text-[var(--text-tertiary)]"> · 위 엔진 공사비({fmtKrw(breakdown.construction || 0)})와 동일 건축개요 기준</span>
+              </div>
+            )}
+
             {/* 금융 레버리지 */}
             <div className="mt-4 flex flex-wrap gap-x-8 gap-y-2 border-t border-[var(--line)] pt-4 text-xs">
               <span><b className="text-[var(--text-secondary)]">자기자본</b> <span className="text-[var(--text-primary)] font-bold">{fmtKrw(derived.equity)}</span></span>
