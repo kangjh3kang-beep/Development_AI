@@ -83,36 +83,63 @@ async def discover_statbl_ids(keyword: str = "지가변동", max_pages: int = 6)
         return None
 
 
-async def fetch_land_price_changes(months: int = 24) -> list[dict[str, Any]] | None:
-    """지가변동률 월별 행을 원형으로 반환(지역·시점·값). 미설정/실패 시 None."""
-    key, statbl = reb_key(), reb_statbl_id()
-    if not key or not statbl:
+async def fetch_statbl_rows(
+    statbl_id: str, dtacycle: str = "MM", size: int = 240
+) -> list[dict[str, Any]] | None:
+    """임의 통계표(STATBL_ID) 데이터 행을 원형 반환 — 범용 R-ONE 조회. 실패 시 None."""
+    key = reb_key()
+    if not key or not statbl_id:
         return None
     try:
         import httpx
 
         params = {
-            "KEY": key, "STATBL_ID": statbl, "DTACYCLE_CD": "MM",
-            "Type": "json", "pIndex": "1", "pSize": str(max(50, months * 20)),
+            "KEY": key, "STATBL_ID": statbl_id, "DTACYCLE_CD": dtacycle,
+            "Type": "json", "pIndex": "1", "pSize": str(max(50, size)),
         }
         async with httpx.AsyncClient(timeout=20.0) as client:
             r = await client.get(_HOST, params=params)
             r.raise_for_status()
             data = r.json()
-        # R-ONE 응답: {"SttsApiTblData":[{"head":...},{"row":[...]}]} 또는 유사. 방어적 파싱.
-        rows: list[dict[str, Any]] = []
-        container = data.get("SttsApiTblData") if isinstance(data, dict) else None
-        if isinstance(container, list):
-            for blk in container:
-                if isinstance(blk, dict) and isinstance(blk.get("row"), list):
-                    rows = blk["row"]
-                    break
-        elif isinstance(data, dict) and isinstance(data.get("row"), list):
-            rows = data["row"]
-        return rows or None
+        return _rows_from_payload(data, "SttsApiTblData") or None
     except Exception as e:  # noqa: BLE001
-        logger.warning("R-ONE 지가변동률 조회 실패", err=str(e)[:140])
+        logger.warning("R-ONE 통계표 조회 실패", statbl=statbl_id, err=str(e)[:140])
         return None
+
+
+async def fetch_land_price_changes(months: int = 24) -> list[dict[str, Any]] | None:
+    """지가변동률 월별 행을 원형으로 반환(지역·시점·값). 미설정/실패 시 None."""
+    statbl = reb_statbl_id()
+    if not statbl:
+        return None
+    return await fetch_statbl_rows(statbl, "MM", size=max(50, months * 20))
+
+
+def latest_value_from_rows(
+    rows: list[dict[str, Any]], region_sido: str = ""
+) -> tuple[float, str] | None:
+    """월/분기 행에서 지역 매칭 최신 시점의 값(%)·작성시점을 반환. 값 필드 방어적 탐색."""
+    if not rows:
+        return None
+    region_keys = ("CLS_NM", "CLS_FULLNM", "REGION_NM", "REGION", "ITM_NM")
+    val_keys = ("DTA_VAL", "VALUE", "DATA_VALUE", "dtaVal")
+    time_keys = ("WRTTIME_IDTFR_ID", "WRTTIME_DESC", "WRTTIME", "PRD_DE")
+    best: tuple[str, float] | None = None
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        region_txt = " ".join(str(row.get(k, "")) for k in region_keys)
+        if region_sido and region_sido not in region_txt and region_txt.strip():
+            continue
+        raw = next((row.get(k) for k in val_keys if row.get(k) not in (None, "")), None)
+        try:
+            val = float(raw)
+        except (TypeError, ValueError):
+            continue
+        tval = str(next((row.get(k) for k in time_keys if row.get(k) not in (None, "")), ""))
+        if best is None or tval >= best[0]:
+            best = (tval, val)
+    return (round(best[1], 4), best[0]) if best else None
 
 
 def cumulative_factor_from_rows(rows: list[dict[str, Any]], region_sido: str) -> float | None:

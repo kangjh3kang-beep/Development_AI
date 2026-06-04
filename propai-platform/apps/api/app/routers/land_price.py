@@ -76,7 +76,25 @@ async def rone_status(keyword: str = "지가변동"):
         out["message"] = "RONE_API_KEY가 설정되지 않았습니다. 관리자 화면에서 인증키를 입력하세요."
         return out
 
-    # 통계표 후보 탐색(STATBL_ID 미설정 시 도움)
+    # 통계표 후보 탐색(STATBL_ID 미설정 시 도움) — 4종 통계 키워드별
+    import os as _os
+    stat_envs = {
+        "지가변동률": "RONE_LANDPRICE_STATBL_ID",
+        "주택종합 매매가격지수": "RONE_HOUSING_STATBL_ID",
+        "상업용부동산 투자수익률": "RONE_COMMYIELD_STATBL_ID",
+        "전월세전환율": "RONE_JEONSE_CONV_STATBL_ID",
+    }
+    discovery: dict = {}
+    for kw, env_name in stat_envs.items():
+        cands = await reb.discover_statbl_ids(keyword=kw)
+        discovery[kw] = {
+            "env": env_name,
+            "set": bool((_os.getenv(env_name) or "").strip()),
+            "candidates": (cands or [])[:8],
+        }
+    out["statistics_discovery"] = discovery
+
+    # 단일 키워드 후보(하위호환)
     candidates = await reb.discover_statbl_ids(keyword=keyword)
     if candidates is not None:
         out["statbl_candidates"] = candidates[:30]

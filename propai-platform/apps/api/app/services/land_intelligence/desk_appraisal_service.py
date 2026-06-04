@@ -81,25 +81,28 @@ def _building_value(gfa: float | None, structure: str | None, year_built: int | 
 def _income_value(
     monthly_rent_won: float | None, deposit_won: float | None,
     vacancy_rate: float, opex_ratio: float, cap_rate: float,
+    deposit_conv_rate: float = 0.055, cap_source: str = "기본", conv_source: str = "기본",
 ) -> dict[str, Any] | None:
     """수익환원법 — 부동산 가치 = 순영업소득(NOI) / 자본환원율.
 
     NOI = (월임대료 + 보증금 운용수익) × 12 × (1−공실률) × (1−운영경비율).
-    보증금은 전월세전환율(연 5.5%)로 운용수익 환산.
+    보증금은 전월세전환율로 운용수익 환산(R-ONE 실측 가용 시 실데이터).
     """
     if not monthly_rent_won or monthly_rent_won <= 0:
         return None
-    deposit_monthly = (deposit_won or 0) * 0.055 / 12  # 보증금 월 운용수익
+    conv = deposit_conv_rate if deposit_conv_rate and deposit_conv_rate > 0 else 0.055
+    deposit_monthly = (deposit_won or 0) * conv / 12  # 보증금 월 운용수익
     pgi = (monthly_rent_won + deposit_monthly) * 12      # 가능총수익(연)
     noi = pgi * (1 - vacancy_rate) * (1 - opex_ratio)    # 순영업소득
     cap = cap_rate if cap_rate > 0 else 0.045
     value = int(noi / cap)
     return {
         "method": "수익환원법",
-        "noi_won": int(noi), "cap_rate": cap,
+        "noi_won": int(noi), "cap_rate": cap, "cap_rate_source": cap_source,
+        "deposit_conv_rate": round(conv, 4), "deposit_conv_source": conv_source,
         "vacancy_rate": vacancy_rate, "opex_ratio": opex_ratio,
         "income_value_won": value,
-        "rationale": f"NOI {int(noi):,}원(월임대 {int(monthly_rent_won):,}×12, 공실 {vacancy_rate*100:.0f}%·경비 {opex_ratio*100:.0f}% 차감) ÷ 자본환원율 {cap*100:.1f}% = {value:,}원",
+        "rationale": f"NOI {int(noi):,}원(월임대 {int(monthly_rent_won):,}×12, 보증금 전환율 {conv*100:.1f}%[{conv_source}], 공실 {vacancy_rate*100:.0f}%·경비 {opex_ratio*100:.0f}% 차감) ÷ 자본환원율 {cap*100:.1f}%[{cap_source}] = {value:,}원",
     }
 
 
@@ -132,7 +135,7 @@ async def desk_appraisal(
     deposit_won: float | None = None,                # 보증금
     vacancy_rate: float = 0.05,                      # 공실률
     opex_ratio: float = 0.25,                        # 운영경비율
-    cap_rate: float = 0.045,                         # 자본환원율
+    cap_rate: float | None = None,                   # 자본환원율(미지정 시 R-ONE 실측→0.045)
 ) -> dict[str, Any]:
     """예상 탁상감정가 산출(공시지가기준법 + 거래사례비교법 결합)."""
     op = official_price_per_sqm
@@ -201,6 +204,25 @@ async def desk_appraisal(
     from app.services.land_intelligence.land_price_index import time_adjust_factor_async
     ta = await time_adjust_factor_async(address, base_year)
     time_adjust = float(time_adjust) if time_adjust is not None else ta["factor"]
+
+    # R-ONE 부동산통계 인제스션: cap rate·전월세전환율 실데이터 주입(가용 시)
+    cap_source, conv_source = "기본", "기본"
+    cap_resolved = float(cap_rate) if cap_rate is not None else 0.045
+    if cap_rate is not None:
+        cap_source = "사용자"
+    deposit_conv = 0.055
+    market_stats: dict[str, Any] = {}
+    try:
+        from app.services.land_intelligence.reb_statistics_service import get_market_stats
+        market_stats = await get_market_stats(address)
+        if cap_rate is None and (market_stats.get("cap_rate") or {}).get("cap_rate"):
+            cap_resolved = market_stats["cap_rate"]["cap_rate"]
+            cap_source = "R-ONE"
+        if (market_stats.get("jeonse_conversion_rate") or {}).get("rate"):
+            deposit_conv = market_stats["jeonse_conversion_rate"]["rate"]
+            conv_source = "R-ONE"
+    except Exception:  # noqa: BLE001
+        market_stats = {}
 
     # ── 1) 공시지가기준법 ──
     other_factor, other_rationale = _market_multiplier(address)   # 그 밖의 요인(기타요인) 보정
@@ -274,7 +296,10 @@ async def desk_appraisal(
         complex_total = appraised_total + building["building_value_won"]
 
     # ── 수익환원법(임대료 입력 시): 부동산 전체 수익가치(원가법 복합과 병행 제시) ──
-    income = _income_value(monthly_rent_won, deposit_won, vacancy_rate, opex_ratio, cap_rate)
+    income = _income_value(
+        monthly_rent_won, deposit_won, vacancy_rate, opex_ratio, cap_resolved,
+        deposit_conv_rate=deposit_conv, cap_source=cap_source, conv_source=conv_source,
+    )
     income_total = income["income_value_won"] if income else None
     complex_note = None
     if complex_total is not None and income_total is not None:
@@ -304,6 +329,7 @@ async def desk_appraisal(
         "base_year": base_year,
         "time_adjust": round(time_adjust, 4),
         "time_adjust_basis": ta["rationale"],
+        "market_stats": market_stats,   # R-ONE 부동산통계(시점수정·cap rate·전환율) 출처 투명화
         "disclaimer": "본 추정치는 「감정평가 및 감정평가사에 관한 법률」상 감정평가가 아니며, "
                       "공시지가·실거래 등 공개데이터에 기반한 참고용 예상 시세 추정입니다. "
                       "법적 효력이 있는 가치 산정은 감정평가법인에 의뢰해야 하며, 본 값은 사용자가 수정할 수 있습니다.",
