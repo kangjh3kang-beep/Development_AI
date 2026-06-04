@@ -215,7 +215,7 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
     } finally { setBusy(null); }
   }, [projectId, updateRow]);
 
-  // 예상 탁상감정(공시지가기준법+거래사례비교법). 정식감정 아님, 매입예정가 채움(수정가능).
+  // 예상 시세 추정(공시지가 기준+실거래 비교). 감정평가 아님, 매입예정가 채움(수정가능).
   const deskAppraise = useCallback(async (r: LandRow) => {
     if (!r.jibun.trim()) return;
     setBusy(r.id); setNotice("");
@@ -233,17 +233,17 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
           ...(d.area_sqm && !r.area_sqm ? { area_sqm: d.area_sqm } : {}),
         });
         const methods = (d.methods || []).map((m: { method: string; unit_price: number }) => `${m.method} ${Math.round(m.unit_price).toLocaleString()}원/㎡`).join(" · ");
-        const cc = d.cross_check ? ` · 5법인 교차검증 평균 ${d.cross_check.mean.toLocaleString()}원/㎡(CV ${d.cross_check.cv_pct}%)` : "";
-        setNotice(`「${r.jibun}」 예상 탁상감정 ${d.appraised_price_per_sqm.toLocaleString()}원/㎡ (신뢰 ${Math.round(d.confidence * 100)}%, ±${d.range_per_sqm.low.toLocaleString()}~${d.range_per_sqm.high.toLocaleString()}) — ${methods}${cc}. ${d.weight_note}. ${d.disclaimer}`);
+        const cc = d.cross_check ? ` · 복수 시나리오 교차검증 평균 ${d.cross_check.mean.toLocaleString()}원/㎡(CV ${d.cross_check.cv_pct}%)` : "";
+        setNotice(`「${r.jibun}」 예상 시세 추정 ${d.appraised_price_per_sqm.toLocaleString()}원/㎡ (신뢰 ${Math.round(d.confidence * 100)}%, ±${d.range_per_sqm.low.toLocaleString()}~${d.range_per_sqm.high.toLocaleString()}) — ${methods}${cc}. ${d.weight_note}. ${d.disclaimer}`);
       } else {
-        setNotice(`「${r.jibun}」 탁상감정 실패 — ${d?.message || "공시지가 확인 필요"}. ‘자동채움’으로 공부정보를 먼저 채워보세요.`);
+        setNotice(`「${r.jibun}」 예상 시세 추정 실패 — ${d?.message || "공시지가 확인 필요"}. ‘자동채움’으로 공부정보를 먼저 채워보세요.`);
       }
     } catch {
-      setNotice(`「${r.jibun}」 탁상감정에 실패했습니다.`);
+      setNotice(`「${r.jibun}」 예상 시세 추정에 실패했습니다.`);
     } finally { setBusy(null); }
   }, [projectId, updateRow]);
 
-  // 예상 탁상감정서 PDF 다운로드
+  // 토지 예상가치 추정 리포트 PDF 다운로드(감정평가서 아님)
   const deskAppraisalPdf = useCallback(async (r: LandRow) => {
     if (!r.jibun.trim()) return;
     setBusy(r.id); setNotice("");
@@ -257,17 +257,17 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
       const ct = res.headers.get("content-type") || "";
       if (!res.ok || !ct.includes("pdf")) {
         const j = await res.json().catch(() => ({}));
-        setNotice(`「${r.jibun}」 감정서 생성 실패 — ${j?.message || "공시지가 확인 필요"}`);
+        setNotice(`「${r.jibun}」 추정 리포트 생성 실패 — ${j?.message || "공시지가 확인 필요"}`);
         return;
       }
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
-      a.href = url; a.download = `탁상감정서_${r.jibun.trim()}.pdf`;
+      a.href = url; a.download = `토지예상가치추정_${r.jibun.trim()}.pdf`;
       document.body.appendChild(a); a.click(); a.remove();
       URL.revokeObjectURL(url);
     } catch {
-      setNotice(`「${r.jibun}」 감정서 PDF 생성에 실패했습니다.`);
+      setNotice(`「${r.jibun}」 추정 리포트 PDF 생성에 실패했습니다.`);
     } finally { setBusy(null); }
   }, []);
 
@@ -373,8 +373,8 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
                         <input title={r.expected_price ? `${r.expected_price.toLocaleString()}원` : "매입예정가"} className={inputCls} type="number" value={r.expected_price ?? ""} onChange={(e) => updateRow(projectId, r.id, { expected_price: e.target.value ? Number(e.target.value) : null })} />
                         <div className="mt-0.5 flex flex-wrap items-center gap-1">
                           <button onClick={() => estimatePrice(r)} disabled={busy === r.id} title="공시지가×지역 시세보정 기반 적정 매입가(수정가능)" className="cursor-pointer rounded bg-[var(--accent-soft)] px-1 py-0.5 text-[9px] font-bold text-[var(--accent-strong)] disabled:opacity-50">적정</button>
-                          <button onClick={() => deskAppraise(r)} disabled={busy === r.id} title="예상 탁상감정(공시지가기준법+거래사례비교법+5법인 교차검증) — 정식감정 아님, 수정가능" className="cursor-pointer rounded border border-[var(--accent-strong)]/40 px-1 py-0.5 text-[9px] font-bold text-[var(--accent-strong)] disabled:opacity-50">탁상</button>
-                          <button onClick={() => deskAppraisalPdf(r)} disabled={busy === r.id} title="예상 탁상감정서 PDF 다운로드" className="cursor-pointer rounded border border-[var(--line)] px-1 py-0.5 text-[9px] font-bold text-[var(--text-secondary)] disabled:opacity-50">감정서↓</button>
+                          <button onClick={() => deskAppraise(r)} disabled={busy === r.id} title="예상 시세 추정(공시지가 기준+실거래 비교+복수 시나리오 교차검증) — 감정평가 아님, 참고용·수정가능" className="cursor-pointer rounded border border-[var(--accent-strong)]/40 px-1 py-0.5 text-[9px] font-bold text-[var(--accent-strong)] disabled:opacity-50">예상시세</button>
+                          <button onClick={() => deskAppraisalPdf(r)} disabled={busy === r.id} title="토지 예상가치 추정 리포트 PDF(감정평가서 아님)" className="cursor-pointer rounded border border-[var(--line)] px-1 py-0.5 text-[9px] font-bold text-[var(--text-secondary)] disabled:opacity-50">리포트↓</button>
                         </div>
                       </td>
                       <td className="px-1.5 py-1 w-28"><input className={inputCls} type="number" value={r.purchase_price ?? ""} onChange={(e) => updateRow(projectId, r.id, { purchase_price: e.target.value ? Number(e.target.value) : null })} /></td>

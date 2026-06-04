@@ -137,7 +137,7 @@ async def desk_appraisal(
     shape_f, shape_label = _shape_factor(irregularity)
     pub_unit_price = int(op * time_adjust * road_f * area_fac * shape_f * other_factor)
     method_pub = {
-        "method": "공시지가기준법",
+        "method": "공시지가 기준 추정",
         "unit_price": pub_unit_price,
         "factors": {
             "개별공시지가": int(op), "시점수정": time_adjust,
@@ -153,7 +153,7 @@ async def desk_appraisal(
     if comparable_avg_per_sqm and comparable_avg_per_sqm > 0:
         cmp_unit_price = int(float(comparable_avg_per_sqm) * road_f * area_fac * shape_f)  # 개별요인 보정
         method_cmp = {
-            "method": "거래사례비교법",
+            "method": "실거래 비교 추정",
             "unit_price": cmp_unit_price,
             "comparable_avg_per_sqm": int(comparable_avg_per_sqm),
             "rationale": f"인근 토지 실거래 평균 {int(comparable_avg_per_sqm):,}원/㎡ × 접도 {road_f} × 면적 {area_fac} × 형상 {shape_f}",
@@ -181,16 +181,16 @@ async def desk_appraisal(
         "std": int(firm_std),
         "cv_pct": round(cv * 100, 1),
         "min": min(firm_vals), "max": max(firm_vals),
-        "note": "5개 평가법인 탁상가액 교차검증 모사(그밖의요인·거래사례 가중 분포). 편차(CV)가 낮을수록 신뢰↑.",
+        "note": "복수 시나리오(보정계수·실거래 가중 분포) 교차검증. 편차(CV)가 낮을수록 추정 안정성↑.",
     }
 
     # 채택가 = 교차검증 평균. 신뢰도 = 1 - CV(법인간 편차 작을수록↑).
     appraised_unit = int(firm_mean)
     confidence = round(max(0.4, 1 - cv * 3), 2)  # CV 0%→1.0, ~20%→0.4
     weight_note = (
-        "공시지가기준법 주 + 거래사례비교법 보조 결합 후 5법인 교차검증 평균 채택"
+        "공시지가 기준 + 실거래 비교 결합 후 복수 시나리오 교차검증 평균 채택"
         if method_cmp else
-        "공시지가기준법 단독 + 5법인 교차검증 평균 채택(거래사례 확보 시 정밀도↑)"
+        "공시지가 기준 + 복수 시나리오 교차검증 평균 채택(실거래 확보 시 정밀도↑)"
     )
     appraised_total = int(appraised_unit * area_f) if area_f else None
     margin = int(appraised_unit * (1 - confidence))  # 신뢰구간(±)
@@ -209,6 +209,7 @@ async def desk_appraisal(
         "road_side": road_side,
         "source": src,
         "base_year": base_year,
-        "disclaimer": "본 결과는 정식 감정평가가 아닌 참고용 예상 탁상감정치입니다(은행 탁상가액 성격). "
-                      "실제 가치는 감정평가사 정식 평가가 필요하며, 사용자가 수정할 수 있습니다.",
+        "disclaimer": "본 추정치는 「감정평가 및 감정평가사에 관한 법률」상 감정평가가 아니며, "
+                      "공시지가·실거래 등 공개데이터에 기반한 참고용 예상 시세 추정입니다. "
+                      "법적 효력이 있는 가치 산정은 감정평가법인에 의뢰해야 하며, 본 값은 사용자가 수정할 수 있습니다.",
     }

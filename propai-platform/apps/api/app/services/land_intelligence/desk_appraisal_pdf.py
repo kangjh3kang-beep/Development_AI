@@ -38,8 +38,8 @@ def build_desk_appraisal_pdf(result: dict[str, Any], *, address: str = "") -> by
     doc = SimpleDocTemplate(buf, pagesize=A4, topMargin=18 * mm, bottomMargin=18 * mm, leftMargin=18 * mm, rightMargin=18 * mm)
     el: list[Any] = []
 
-    el.append(Paragraph("예상 탁상감정서", title))
-    el.append(Paragraph("PropAI 사통팔땅 — 참고용 사전 추정(정식 감정평가서 아님)", small))
+    el.append(Paragraph("토지 예상가치 추정 리포트", title))
+    el.append(Paragraph("PropAI 사통팔땅 — 공시지가·실거래 기반 참고용 시세 추정 (감정평가 아님)", small))
     el.append(Spacer(1, 8))
 
     cc = result.get("cross_check") or {}
@@ -50,12 +50,12 @@ def build_desk_appraisal_pdf(result: dict[str, Any], *, address: str = "") -> by
     summary_rows = [
         ["소재지", address or "-"],
         ["대지면적", f"{area:,}㎡" if area else "-"],
-        ["채택 단가", won(result.get("appraised_price_per_sqm")) + "/㎡"],
-        ["채택 감정가(총액)", won(result.get("appraised_total_won"))],
+        ["채택 추정단가", won(result.get("appraised_price_per_sqm")) + "/㎡"],
+        ["채택 추정가(총액)", won(result.get("appraised_total_won"))],
         ["신뢰도", f"{int((result.get('confidence') or 0) * 100)}%"],
         ["신뢰구간(/㎡)", f"{won(rng.get('low'))} ~ {won(rng.get('high'))}"],
     ]
-    el.append(Paragraph("1. 감정 요약", h))
+    el.append(Paragraph("1. 추정 요약", h))
     t1 = Table(summary_rows, colWidths=[40 * mm, 130 * mm])
     t1.setStyle(TableStyle([
         ("FONTNAME", (0, 0), (-1, -1), font), ("FONTSIZE", (0, 0), (-1, -1), 9.5),
@@ -68,8 +68,8 @@ def build_desk_appraisal_pdf(result: dict[str, Any], *, address: str = "") -> by
     el.append(t1)
 
     # 2. 방법별 산출
-    el.append(Paragraph("2. 평가방법별 산출", h))
-    mrows = [["평가방법", "산출 단가(/㎡)", "근거"]]
+    el.append(Paragraph("2. 산정방법별 추정", h))
+    mrows = [["산정방법", "추정 단가(/㎡)", "근거"]]
     for m in result.get("methods", []):
         mrows.append([m.get("method", "-"), won(m.get("unit_price")) , Paragraph(str(m.get("rationale", "")), small)])
     t2 = Table(mrows, colWidths=[35 * mm, 35 * mm, 100 * mm])
@@ -84,9 +84,9 @@ def build_desk_appraisal_pdf(result: dict[str, Any], *, address: str = "") -> by
 
     # 3. 다법인 교차검증
     if cc.get("firms"):
-        el.append(Paragraph("3. 다법인 교차검증(모사)", h))
+        el.append(Paragraph("3. 복수 시나리오 교차검증", h))
         firms = cc["firms"]
-        frows = [["법인" + str(i + 1) for i in range(len(firms))] + ["평균", "편차(CV)"]]
+        frows = [["시나리오" + str(i + 1) for i in range(len(firms))] + ["평균", "편차(CV)"]]
         frows.append([won(v) for v in firms] + [won(cc.get("mean")), f"{cc.get('cv_pct')}%"])
         t3 = Table(frows)
         t3.setStyle(TableStyle([
@@ -101,7 +101,7 @@ def build_desk_appraisal_pdf(result: dict[str, Any], *, address: str = "") -> by
 
     # 4. 면책
     el.append(Spacer(1, 10))
-    el.append(Paragraph("※ 면책", h))
+    el.append(Paragraph("※ 면책 (본 문서는 감정평가서가 아님)", h))
     el.append(Paragraph(result.get("disclaimer", ""), small))
 
     doc.build(el)
