@@ -49,11 +49,16 @@ async def buildable_envelope(req: EnvelopeRequest):
     geom_source = "입력값/근사"
     geometry = req.geometry
 
+    road_side = None
     if req.pnu and geometry is None:
         try:
             from app.services.external_api.vworld_service import VWorldService
-            parcel = await VWorldService().get_parcel_by_pnu(req.pnu)
+            vw = VWorldService()
+            parcel = await vw.get_parcel_by_pnu(req.pnu)
             geometry = (parcel or {}).get("geometry")
+            lc = await vw.get_land_characteristics(req.pnu)
+            if lc:
+                road_side = lc.get("road_side") or None  # 접도 유형(광대로/중로/세로 등)
         except Exception:  # noqa: BLE001
             geometry = None
 
@@ -75,4 +80,6 @@ async def buildable_envelope(req: EnvelopeRequest):
         bcr_limit_pct=req.bcr_limit_pct, far_limit_pct=req.far_limit_pct,
     )
     result["geometry_source"] = geom_source
+    if road_side:
+        result["road_side"] = road_side   # 접도 유형(가로구역 최고높이·개발여건 참고)
     return result

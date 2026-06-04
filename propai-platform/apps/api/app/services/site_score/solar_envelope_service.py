@@ -135,8 +135,16 @@ def compute_buildable_envelope(
     realistic_floors = max(1, round(effective_gfa / bcr_footprint)) if bcr_footprint > 0 else 1
     daylight_ceiling_floors = max(1, int(max_h / fh))
 
+    # 공동주택 인동간격(채광 방향): 건축법 시행령 §86② — 통상 0.8H(무창벽 0.5H).
+    realistic_height = realistic_floors * fh
+    min_spacing_080 = round(0.8 * realistic_height, 1)
+    min_spacing_050 = round(0.5 * realistic_height, 1)
+
     return {
         "applies_north_light": True,
+        "min_building_spacing_m": min_spacing_080,        # 동간 채광거리 권고(0.8H)
+        "min_building_spacing_blank_wall_m": min_spacing_050,  # 무창벽 0.5H
+        "row_distance_rule": "건축법 시행령 §86② 채광 인동간격 0.8H(무창벽 0.5H) — 공동주택 다동 배치 시 적용",
         "zone": zone, "bcr_pct": round(bcr * 100, 1), "far_pct": round(far * 100, 1),
         "lot_width_m": round(W, 1), "lot_depth_m": round(D, 1),
         "far_gfa_sqm": round(far_gfa),
@@ -151,8 +159,10 @@ def compute_buildable_envelope(
         "max_height_m": round(realistic_floors * fh, 1),
         "bcr_footprint_sqm": round(bcr_footprint),
         "note": (
-            "정북일조 사선(9m↓ 1.5m·9m↑ H/2 이격)을 남북깊이 적분한 최대 건축가능 연면적. "
-            "직사각형 대지 근사(v1) — 부정형 필지는 VWorld 폴리곤 정밀화 예정."
+            "정북일조 사선(9m↓ 1.5m·9m↑ H/2 이격) 남북깊이 적분 최대 연면적. "
+            f"공동주택 다동 배치 시 동간 채광거리 {min_spacing_080}m(0.8H) 확보 필요. "
+            "도로사선제한은 2015년 폐지(가로구역별 최고높이로 대체)되어 미적용. "
+            "직사각형 대지 근사(v1)."
             + (f" 일조로 용적률 대비 약 {round(loss,1)}% 건축면적 손실." if binding == "정북일조" else " 용적률이 한도(일조 여유).")
         ),
     }

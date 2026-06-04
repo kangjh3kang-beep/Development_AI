@@ -14,7 +14,9 @@ type Envelope = {
   applies_north_light: boolean; binding: string; daylight_loss_pct: number;
   far_gfa_sqm: number; effective_gfa_sqm: number; envelope_gfa_sqm?: number;
   max_floors: number; max_height_m: number; daylight_ceiling_m?: number;
-  daylight_ceiling_floors?: number; geometry_source?: string; note?: string; error?: string;
+  daylight_ceiling_floors?: number; geometry_source?: string;
+  min_building_spacing_m?: number; min_building_spacing_blank_wall_m?: number;
+  road_side?: string; note?: string; error?: string;
 };
 
 const eok = (sqm: number) => `${sqm.toLocaleString()}㎡`;
@@ -63,6 +65,12 @@ export function BuildableEnvelopeCard() {
         <Tile label="일조 손실률" value={`${res.daylight_loss_pct}%`} sub={lossBinding ? "용적률 대비 손실" : "여유"} accent={lossBinding} />
       </div>
 
+      {(res.min_building_spacing_m || res.road_side) && (
+        <p className="mt-2 text-[11px] text-[var(--text-secondary)]">
+          {res.min_building_spacing_m ? `동간 채광거리(공동주택) 권고 ${res.min_building_spacing_m}m(0.8H)·무창벽 ${res.min_building_spacing_blank_wall_m}m` : ""}
+          {res.road_side ? `${res.min_building_spacing_m ? " · " : ""}접도: ${res.road_side}` : ""}
+        </p>
+      )}
       {design?.totalGfaSqm != null && (
         <p className="mt-3 text-[11px] text-[var(--text-secondary)]">
           현재 설계 연면적 {eok(Math.round(design.totalGfaSqm))} / 건축가능 {eok(res.effective_gfa_sqm)}
