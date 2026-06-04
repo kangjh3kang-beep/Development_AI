@@ -114,8 +114,11 @@
   --line-subtle: rgba(255, 255, 255, 0.10);
 
   /* ── Brand Accent ── */
+  /* accent-strong: 버튼 배경(흰 글자)·강조 텍스트 양쪽으로 쓰이므로
+     옅은 파스텔(#b4c5ff)은 흰 글자 버튼을 안 보이게 만들었음(대비 ~1.6:1).
+     선명한 블루로 교체 → 흰 글자 버튼 또렷(AA-large) + 다크 배경 강조 텍스트도 readable. */
   --accent: #135bec;
-  --accent-strong: #b4c5ff;
+  --accent-strong: #3b82f6;
   --accent-soft: rgba(19, 91, 236, 0.15);
 
   /* ── Elevation Shadows (Deep Depth) ── */

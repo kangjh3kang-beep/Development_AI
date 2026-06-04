@@ -46,13 +46,28 @@ body {
   opacity: 1; /* Target browsers that lower opacity by default */
 }
 
-/* ── 폼 컨트롤 포커스 가독성(전역) ── */
+/* ── 폼 컨트롤 가독성 기본(전역) ──
+   텍스트박스 글자색을 토큰 기반 고대비로 보장(컴포넌트가 명시한 색은 유지).
+   element 선택자(0,0,1)라 Tailwind 유틸(0,1,0)이 지정되면 그쪽이 우선. */
+input,
+textarea,
+select {
+  color: var(--text-primary);
+}
+
+/* ── 폼 컨트롤 포커스 — 세련된 액센트 글로우 링(눈에 띄게) ── */
+input:focus,
+select:focus,
+textarea:focus,
 input:focus-visible,
 select:focus-visible,
 textarea:focus-visible {
-  outline: 2px solid var(--accent-soft);
-  outline-offset: 1px;
+  outline: none;
   border-color: var(--accent-strong);
+  box-shadow:
+    0 0 0 3px var(--accent-soft),
+    0 0 0 1px var(--accent-strong),
+    var(--shadow-sm);
 }
 /* 다크: select 드롭다운 옵션 가독성 */
 .dark select option {
