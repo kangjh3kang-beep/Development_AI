@@ -1,0 +1,1411 @@
+[
+ {
+  "module": "부지·입지 인텔리전스 (Site & Location Intelligence)",
+  "our_assessment": "강점: (1) 한국 공공데이터 권위 소스 다중연동이 탄탄하다 — VWorld 지오코딩/지적도 + NED 토지특성(getLandCharacteristics: prposArea1Nm 용도지역, lndpclAr 면적, 공시지가)을 폴백 체인으로 묶어 면적0·용도지역 공란 필지를 보강하는 설계는 실무적으로 견고하다(auto_zoning_service.py). (2) PNU→용도지역→법정 BCR/FAR/높이 자동매핑(ZONE_LIMITS 18종 + 국계법 제78조 근거 명시), 특수구역(역세권·도시재생·지구단위) 감지, SEMAS 상권(단일호출 numOfRows 5000), 주변 실거래 인터랙티브 지도(nearby_map_service 359건 실데이터), 필지구획 GeoJSON, 종합분석(7카테고리·개발방식15종 전용율/평형/주차 룰)까지 '주소 한 줄→다차원 리포트' 파이프라인이 실제로 작동한다. (3) LLM 인터프리터(site_analysis_interpreter)로 정량결과에 서술 해석을 입힌다. \n\n한계: (1) 용도지역 폴백이 주소 키워드 휴리스틱('역'→일반상업, 기본값 제2종일반주거)이라 PNU 실패 시 정확도가 낮고 할루시네이션 위험. (2) 입지 점수화가 규칙기반(접도 pass/fail, POI 단순 거리)이며 ML 적합성 모델·MCDA(AHP/엔트로피 가중)·공간 회귀가 전무 — 경쟁사의 핵심 차별점인 '학습된 입지점수/가치예측'이 없다. (3) 접근성이 직선거리 기반 — 도로망 isochrone·보행 reachability·15분도시 점수 미구현. (4) 위험/제약 레이어(침수위험지도, 산사태위험, 단층/지반, 일조권 정밀 사선제한, 토지이음 행위제한 전문) 미연동 — 가장 큰 데이터 갭. (5) AVM(자동가치추정)이 공시지가/주변실거래 단순참조 수준이고 신뢰구간·MdAPE 같은 정확도 지표가 없다. (6) 위성/항공 컴퓨터비전(현황·건물·식생·그림자) 미적용.",
+  "sota_summary": "SOTA는 세 축으로 수렴: (1) 환경/성능 실시간 시뮬레이션 — Autodesk Forma(구 Spacemaker)는 일조·바람·소음·미기후·탄소를 클라우드 GPU로 초단위 평가하고 Site Automation(생성설계)으로 수천 배치안을 자동생성·성능채점. TestFit Site Solver는 'plug in an address→즉시 매싱+타당성+자동물량산출(주차/토목/earthwork)+일조 히트맵'. (2) 데이터·AVM 정밀화 — HouseCanary AVM은 MdAPE 2.8%에 신뢰점수 동반, 이미지 기반 가치추정(CV로 컨디션 판독), 과거시점 AVM, ARV(수선후가치); Cherre는 공공·사설·내부데이터를 부동산 지식그래프로 통합. (3) 학술 SOTA — GIS-MCDA에 ML(RF/XGBoost/SVM)로 기준가중 학습, CNN/MLP 다모델 앙상블 입지적합성, 보행 sidewalk-network 기반 isochrone·15분도시 점수(지수적 거리감쇠 가중), 산사태/침수 susceptibility를 RF/DL로 예측. 한국 프롭테크: 스페이스워크 랜드북은 심층강화학습(Deep RL) 기반 AI 자동건축설계로 필지 선택→추정가·투자가치·최적설계·개발후수익을 일괄 제시; 부동산플래닛은 LLM 결합 대화형 '플래닛AI'+동호수별 매매가 예측 AI; 밸류맵은 실거래 시각화+AI 건축설계+개발잠재력 분석.",
+  "key_methods_papers": [
+   {
+    "title": "Machine Learning for Criteria Weighting in GIS-Based Multi-Criteria Evaluation (MDPI Land 2024)",
+    "insight": "RF/XGBoost/SVM로 입지평가 기준가중치를 데이터에서 학습 → 전문가 임의 AHP 가중을 대체. 우리 규칙기반 접도/POI 점수를 학습형 적합성 점수로 승격하는 직접적 방법론."
+   },
+   {
+    "title": "The inclusive 15-minute city: Walkability with sidewalk networks (ScienceDirect 2023)",
+    "insight": "보도망 그래프 위 분당 isochrone 15개 생성, 편의시설을 지수적 거리감쇠로 가중. 직선거리 POI를 도로/보행망 reachability 점수로 대체하는 표준 기법."
+   },
+   {
+    "title": "Land suitability modeling integrating geospatial data and AI (ScienceDirect 2024)",
+    "insight": "다출처 지오데이터+AI 적합성 매핑. 부지 후보지 자동 스코어링/랭킹 파이프라인 설계 참고."
+   },
+   {
+    "title": "Selection of contributing factors for landslide susceptibility using ML/DL (arXiv 2309.06062)",
+    "insight": "산사태/사면 위험을 RF·DL로 susceptibility 예측. 한국 산지·경사지 부지의 위험레이어 산출에 적용 가능."
+   },
+   {
+    "title": "HouseCanary AVM (MdAPE 2.8% + confidence score, 2025)",
+    "insight": "AVM은 반드시 신뢰구간/오차지표를 동반해야 신뢰. 우리 가치추정에 신뢰점수·comp 가중·이미지 컨디션 반영 도입 근거."
+   },
+   {
+    "title": "Autodesk Forma Site Automation + 미기후 분석 (2025)",
+    "insight": "파라미터(높이/이격/밀도/typology)→다배치안 생성→환경성능 동시채점이 조기설계 표준. 우리 매싱(AutoDesignEngine)에 일조·바람·소음 성능 루프를 결합할 청사진."
+   },
+   {
+    "title": "토지이음(eum.go.kr) 토지이용계획·행위제한",
+    "insight": "필지별 지역지구 지정·행위제한 전문이 한국 인허가 타당성의 1차 진실원천. 키워드 추정 대신 행위제한 텍스트 파싱이 필수."
+   }
+  ],
+  "leading_platforms": [
+   {
+    "name": "Autodesk Forma (Site Design)",
+    "what": "클라우드 AI 조기설계: 일조·바람·소음·미기후·탄소 실시간 분석 + Site Automation 생성설계",
+    "edge": "환경성능을 매싱과 동시 채점하는 폐루프, Esri/ACC 연동 지오데이터 교환"
+   },
+   {
+    "name": "TestFit Site Solver",
+    "what": "주소 입력→즉시 매싱·유닛믹스·주차·타당성+자동 물량산출(주차/토목/earthwork)+일조 히트맵",
+    "edge": "수천 변형을 pro-forma+설계제약 동시 만족으로 생성, 실시간 비용 인사이트"
+   },
+   {
+    "name": "HouseCanary / CanaryAI",
+    "what": "AVM(MdAPE 2.8%·신뢰점수), 이미지기반 가치추정(CV), 과거시점 AVM, ARV, 생성AI 예측",
+    "edge": "오차지표 동반 신뢰성 + 114M 물건·35년 히스토리, 사진 컨디션 판독"
+   },
+   {
+    "name": "Cherre",
+    "what": "공공·사설·내부 데이터를 부동산 지식그래프로 통합",
+    "edge": "엔터티 해상도·그래프로 공급망/원가 리스크 조기 포착"
+   },
+   {
+    "name": "스페이스워크 랜드북",
+    "what": "AI 자동건축설계로 필지→추정가·투자가치·최적설계·개발후수익 일괄",
+    "edge": "심층강화학습(Deep RL) 기반 설계엔진, 정비사업 솔루션(LBDeveloper)까지 확장"
+   },
+   {
+    "name": "부동산플래닛 (플래닛AI)",
+    "what": "전국 전유형 실거래+자체 AI 시세 모델에 LLM 결합 대화형 에이전트, 동호수별 매매가 예측",
+    "edge": "대화형 UX + 세대단위 가치예측 모델 검증완료"
+   },
+   {
+    "name": "밸류맵",
+    "what": "토지·건물 실거래 지도 시각화 + AI 건축설계 + 개발잠재력/적정가치 분석",
+    "edge": "국토부 실거래 데이터 시각화 강점, 토지 거래 특화 필터링"
+   }
+  ],
+  "gaps": [
+   "입지 점수화가 규칙기반(접도 pass/fail·직선거리 POI) — RF/XGBoost·GIS-MCDA(엔트로피/AHP 학습가중) 기반 학습형 적합성/가치 모델 부재",
+   "접근성이 직선거리 — 도로/보행망 isochrone·15분도시 점수·대중교통 reachability 미구현 (Forma/15분도시 SOTA 대비)",
+   "위험·제약 레이어 전무: 침수위험지도·산사태위험·단층/지반·정밀 일조 사선제한·토지이음 행위제한 전문 미연동 (한국 인허가 타당성의 핵심)",
+   "AVM이 공시지가/주변실거래 단순참조 — 신뢰구간·MdAPE·comp 가중·세대단위 예측 없음 (HouseCanary/부동산플래닛 대비)",
+   "환경성능 시뮬레이션(일조·바람·소음·미기후) 매싱 연동 부재 — Forma/TestFit이 표준화한 성능채점 폐루프 없음",
+   "위성/항공 컴퓨터비전(현황·건물·식생·그림자·도로접면 자동판독) 미적용",
+   "용도지역 폴백이 키워드 휴리스틱(기본 제2종일반주거)이라 PNU 실패 시 할루시네이션 위험 — 토지이음 PNU 직조회로 대체 필요"
+  ],
+  "innovations": [
+   "한국형 학습 입지점수 'PropAI Site Score': SEMAS상권+실거래+POI도로망거리+공시지가추세+용도지역+위험레이어를 XGBoost/엔트로피-MCDA로 0~100 통합점수+SHAP 설명(왜 높/낮은지). 경쟁사가 못 주는 '설명가능 점수'",
+   "도로/보행망 isochrone 엔진: OSM+OSRM/r5로 5/10/15분 도달권 폴리곤 생성→권역내 편의시설을 지수감쇠 가중 '15분 생활권 점수'. 부지마다 도보·차량 도달권 시각화",
+   "위험 레이어 통합 대시보드: 행안부 침수위험지도+산림청 산사태위험+지질자원연 단층/지반+토지이음 행위제한을 한 화면 신호등(녹/황/적)으로. PF대출 심사 직결 차별점",
+   "RL 매싱 + 환경성능 폐루프: 기존 AutoDesignEngine 매싱에 일조(사선제한 정밀)·향·소음 채점을 붙여 Forma식 '성능 동반 다배치안 Top3'. 랜드북 Deep RL과 정면승부",
+   "신뢰구간 동반 한국 AVM: 주변 comp 거리/시점/유형 가중 회귀+공시지가 캘리브레이션으로 추정가±신뢰점수 산출, MdAPE 자기측정 노출(공시지가/실거래 양면 검증)",
+   "항공/위성 CV 부지컨텍스트: VWorld 정사영상+분할모델로 건물점유·식생·접도면·인접용도 자동추출하여 접도 unknown 자동해소·현황 요약",
+   "대화형 입지 에이전트: 부동산플래닛 플래닛AI 대응 — '강남 200평 근생 가능 부지 점수 비교해줘'를 우리 SiteScore/위험/실거래 데이터로 자연어 응답"
+  ],
+  "refactor": [
+   "auto_zoning_service: 키워드 휴리스틱 _detect_zone_from_address 제거→토지이음/NED PNU 직조회로 대체, 폴백시 confidence 플래그+'추정' 라벨로 할루시네이션 차단",
+   "입지 점수 로직을 site_scoring 서비스로 분리(현재 규칙이 dev_feasibility_validator·comprehensive에 산재) — 단일 SiteScore 엔진으로 통합, 가중치 설정 외부화",
+   "ZONE_LIMITS 하드코딩 18종을 zoning_registry(조례 오버레이·시점버전 포함)로 승격 — 지자체 조례 FAR 가중이 현재 누락",
+   "접근성/POI를 직선거리→isochrone 추상화 인터페이스로 교체, distance_decay 가중 도입",
+   "공통 부지 데이터모델(SiteFacts) 정의: 다출처(VWorld/NED/SEMAS/실거래/위험)를 한 스키마로 정규화하여 Cherre식 지식그래프 기반 마련, 인터프리터·AVM·매싱이 동일 출처 참조",
+   "AVM 산출에 confidence/comp_weight/error_metric 필드 추가 — 현재 수치만 반환되어 신뢰성 검증 불가"
+  ],
+  "priority": "P1 (High) — 부지·입지는 전체 파이프라인의 진입점이자 PF심사·수지·인허가의 1차 입력. 위험레이어+학습 SiteScore+isochrone이 경쟁사 추월의 직접 레버리지이며, 후속 모듈 신뢰성을 좌우",
+  "sources": [
+   "https://blogs.autodesk.com/forma/2025/04/24/how-to-use-generative-design-ai-and-3d-modeling-for-improved-site-planning/",
+   "https://www.autodesk.com/products/forma/overview",
+   "https://www.testfit.io/product/site-solver",
+   "https://www.testfit.io/blog/2025-testfit-year-in-review",
+   "https://www.housecanary.com/resources/our-avm",
+   "https://www.housecanary.com/blog/h1-2025-housecanary-product-highlights-innovation-in-action",
+   "https://www.mdpi.com/2073-445X/13/8/1288",
+   "https://www.sciencedirect.com/science/article/abs/pii/S0308521X24003470",
+   "https://www.sciencedirect.com/science/article/pii/S0198971522001806",
+   "https://arxiv.org/pdf/2309.06062",
+   "https://www.geoapify.com/isochrone-maps/",
+   "https://spacewalk.tech/19",
+   "https://www.venturesquare.net/788840",
+   "https://www.fnnews.com/news/202509230827186233",
+   "https://www.unicornfactory.co.kr/article/2026011216583199910",
+   "https://www.valueupmap.com/introduce",
+   "https://www.eum.go.kr/"
+  ]
+ },
+ {
+  "module": "용도지역·법규 컴플라이언스 (Zoning & Regulatory Compliance)",
+  "our_assessment": "강점: (1) 한국 규제 계층(상위법령→도시·군계획→조례→개별규제)을 명시적으로 모델링한 점은 글로벌 도구(대부분 단일 zone code 평면 모델)보다 한국 맥락에 부합한다. (2) 법정/조례/실효 한도 트리오 분리(_limits trio)는 실무적으로 정확한 설계 — 한국은 조례 강화 한도가 핵심인데 이를 명시적으로 구분. (3) 할루시네이션 방지를 위해 법조문 인용은 정적 큐레이션 매핑, 서술만 LLM으로 분리한 GROUNDING_RULE 구조는 건전. (4) 기부채납 용적률 인센티브 계산기, 개발방식 시뮬레이터(AHP), shapely 다필지 인접성은 경쟁사 대비 차별적 자산.\\n\\n한계(냉정히): (1) 규제 영향도(_impact)가 단순 키워드 매칭(_HIGH/_MID 하드코딩 리스트)이라 신규·복합 규제명에 취약하고 정량적 영향 추정이 없다. (2) 핵심 SOTA인 '규제→3D 빌더블 인벨로프(buildable envelope) 자동 산출'이 부재 — 일조권 정북사선·도로사선·인접대지경계 이격을 정량 기하로 검증하지 않는다(BCR/FAR 수치만). 우리 BIM은 GFA 역산 박스 수준. (3) 허용용도(permitted/conditional use) 룰엔진이 없다 — 용도지역별 건축 가능 용도를 구조화된 규칙으로 판정하지 못함(국토계획법 시행령 별표 2~22 미구조화). (4) ZONE_LIMITS가 코드 하드코딩 상수라 245개 기초자치단체 조례 차이를 담지 못하고, far_incentive alpha계수(주거1.5 등)는 근거 약한 휴리스틱. (5) 조항 단위 추적성(provenance) 부재 — 어느 조문이 어떤 한도를 만들었는지 클릭 추적 불가. (6) zone_code 한글명 매핑 폴백 부정확(메모리에 기록된 기존 이슈).",
+  "sota_summary": "세계 최고수준은 '규제의 기계가독화(machine-readable codification) + 규제반응형 3D 빌더블 인벨로프 자동생성 + 도메인 특화 RAG/룰엔진의 결합'으로 수렴한다. (1) Autodesk Forma×Zoneomics는 setback·height·lot coverage·max FA를 실시간 조회→편집가능한 3D Building Envelope를 생성, 매싱 타당성을 즉시 검증(미·캐나다 22,000+ 관할). (2) Zoneomics/Regrid는 NLP로 수천 개 분절된 조례 문서를 추출·표준화해 전국 통일 zone schema(zone code, permitted uses, lot area, height)와 API 제공 — '데이터 표준화'가 해자. (3) BIM 자동 컴플라이언스는 RASE(Requirement/Applicability/Selection/Exception) 방법론으로 법조문을 4논리연산자로 형식화→DROOLS/JESS 룰엔진 실행, 2024~25년에는 RoBERTa(ACCORD-NLP)로 규제 엔티티·관계 자동추출. (4) 건축규제 QA는 dual-stage fine-tuned LLM + RAG(Open-Book Exam 프레임워크)로 환각 저감, 법률 도메인은 CBR-RAG(판례기반추론)로 근거 인용 강화. (5) 매싱/일조는 reverse solar envelope·다목적 진화알고리즘(NSGA-II류)으로 채광·밀도·구조 동시최적. 한국에선 스페이스워크(랜드북)·밸류맵이 규제(용적/건폐/일조사선/주차)를 자동 반영해 3초 가설계 + 수익률 동시 산출, LH·SH가 채택 — 한국 SOTA의 핵심은 '규제판정→가설계→수익률'의 원클릭 파이프라인.",
+  "gaps": [
+   "빌더블 인벨로프 미산출: 일조권 정북방향 사선제한(건축법 제61조)·도로사선·인접대지경계 이격을 정량 3D 기하로 계산하지 않음. 경쟁사(Forma/랜드북/밸류맵)는 사선제한 반영 3D 매스를 즉시 생성",
+   "허용용도 룰엔진 부재: 국토계획법 시행령 별표 2~22의 용도지역별 허용/조건부/금지 용도를 구조화 규칙으로 판정 못함. 단순 BCR/FAR만 산출",
+   "규제 데이터가 코드 하드코딩(ZONE_LIMITS dict): Zoneomics식 NLP 추출·표준화 파이프라인 없음. 245개 기초지자체 조례 한도를 DB로 관리하지 않아 신선도·커버리지 한계",
+   "영향도 분류가 키워드 매칭(_HIGH/_MID): RASE식 형식화나 RoBERTa식 규제 엔티티 추출 없음. 정량 영향(예: 용적률 -50%p) 추정 불가",
+   "조항 단위 추적성(provenance/citation) 미흡: 각 한도가 어느 조문에서 왔는지 클릭-투-소스 불가. SOTA RAG는 근거 조문 인용 필수",
+   "기부채납 alpha계수가 약근거 휴리스틱: 실제는 지자체별 지구단위계획 운영기준·공공기여 산정식이 다름. 데이터 기반 보정 없음",
+   "규제 변경 모니터링→영향 알림 자동화 부재: Zoneomics는 zoning change tracking 제공. 우리는 정적 스냅샷"
+  ],
+  "innovations": [
+   "규제반응형 빌더블 인벨로프 엔진(한국 특화): 정북일조사선(건축법 제61조 9m초과 인접대지경계 0.5H 이격 등)·도로사선·이격거리를 shapely+numpy로 3D 솔리드 차감 연산→실제 최대 빌더블 볼륨 산출. 이미 보유한 IfcGenerator/매스 파이프라인에 '규제 차감 레이어'로 결합하면 Forma×Zoneomics를 한국 일조규제까지 포함해 추월",
+   "허용용도 RASE 룰엔진: 국토계획법 시행령 별표를 Requirement/Applicability/Selection/Exception JSON 규칙으로 1회 구조화→DROOLS류 경량 파이썬 룰엔진으로 '이 부지에 근린생활시설/공동주택 가능?' 결정론적 판정 + 근거 조문 자동인용. LLM은 해석만, 판정은 룰엔진(환각0)",
+   "조례 규제 코퍼스 자동수집·표준화 파이프라인: 국가법령정보센터/자치법규정보시스템(ELIS) 조례 텍스트를 RoBERTa/KLUE 기반 추출모델로 BCR/FAR/높이/이격 한도 파싱→regulation DB 적재(Zoneomics 한국판). 코드 하드코딩 ZONE_LIMITS를 DB+신선도 메타로 대체",
+   "Dual-stage RAG 규제 QA + CBR(인허가 사례기반추론): 과거 인허가/심의 사례를 벡터DB로 인덱싱, 유사 부지·규제 조합 사례를 근거로 제시하는 Case-Based RAG. '유사 지구단위 부지에서 이렇게 완화받음' 같은 실무 인사이트 — 경쟁사 대비 차별적",
+   "규제→가설계→수익률 원클릭 파이프라인 완성: 랜드북/밸류맵식. 우리는 unit_mix_optimizer·수지·ROI를 이미 보유 — 빌더블 인벨로프를 입력으로 연결하면 '규제 정량판정→최적 매스 N안→평형배분→ROI' 단일 흐름으로 한국 SOTA 동급+초과(은행제출 보고서까지)",
+   "규제 변경 영향 알림: regulation_monitor를 확장해 조례·지구단위 변경 공고를 모니터링→보유 부지 영향 자동 재계산·푸시(용적률 상향 등 기회 포착)"
+  ],
+  "refactor": [
+   "ZONE_LIMITS·far_incentive 휴리스틱 상수를 regulation DB 테이블로 이관: zone_limits(zone_code, sigungu_code, bcr, far, height, 근거조문, source_url, effective_date) 정규화. auto_zoning_service·regulation_analysis_service·far_incentive_calculator가 동일 단일출처 참조(현재 3곳 중복 상수)",
+   "_impact 키워드 하드코딩을 규칙 테이블+가중치 모델로 분리: 규제명→영향도 매핑을 설정 데이터화하고 정량 영향(용적/높이 감소율) 필드 추가",
+   "허용용도 판정을 별도 use_permission_engine 모듈로 신설: regulation_analysis_service에서 분리, 룰엔진 단독 테스트 가능 구조",
+   "provenance 필드 전파: limits/hierarchy 각 항목에 source(law_article, ordinance_ref, retrieved_at) 메타 추가해 프론트 클릭-투-소스 지원. 할루시네이션 검증에이전트(/verify)와 연계",
+   "빌더블 인벨로프 계산을 design 파이프라인의 buildable_envelope_service로 신설하고 IfcGenerator 입력으로 주입(현재 GFA 역산 박스를 규제 차감 솔리드로 대체)",
+   "regulation_service.py / building_compliance_service.py / compliance_service.py 3중 컴플라이언스 서비스 책임 경계 정리(중복 로직 통합, 단일 ComplianceEngine 파사드)"
+  ],
+  "priority": "P1 (High) — 빌더블 인벨로프 엔진과 허용용도 룰엔진은 경쟁사 대비 가장 큰 격차이자 차별화 레버리지. 규제 DB 이관은 선행 인프라로 P2.",
+  "key_methods_papers": [
+   {
+    "title": "RASE methodology (Requirement/Applicability/Selection/Exception) + DROOLS/JESS rule engine for automated code compliance",
+    "insight": "법조문을 4논리연산자로 형식화→결정론적 룰엔진 실행. 우리 허용용도/한도 판정을 LLM이 아닌 룰엔진으로 환각0 달성하는 청사진"
+   },
+   {
+    "title": "ACCORD-NLP / RoBERTa fine-tuned for regulatory entity & relation extraction (2024)",
+    "insight": "규제 텍스트에서 한도·이격·용도 엔티티 자동추출. 한국 조례 코퍼스 표준화 파이프라인(Zoneomics 한국판)의 핵심 기법"
+   },
+   {
+    "title": "Building regulation QA via dual-stage fine-tuned LLM + RAG (Open-Book Exam), ScienceDirect 2025",
+    "insight": "도메인 특화 SFT+RAG로 환각 저감. 우리 LLM 해석을 근거 인용형 RAG로 격상하는 방향"
+   },
+   {
+    "title": "CBR-RAG: Case-Based Reasoning for RAG in Legal QA (arXiv 2404.04302)",
+    "insight": "판례/사례 기반 검색으로 근거 강화. 인허가 심의 사례 기반 추론 차별화 기능의 이론적 토대"
+   },
+   {
+    "title": "Reverse Solar Envelope Method + multi-objective massing optimization (NSGA-II류, Nature Sci.Rep. 2025)",
+    "insight": "규제·일조 제약을 만족하는 최대 빌더블 매스 form-finding. 한국 정북일조사선 적용 인벨로프 엔진 설계 근거"
+   },
+   {
+    "title": "Autodesk Forma × Zoneomics 3D Building Envelope (2024~25)",
+    "insight": "setback/height/coverage/maxFA 실시간 조회→편집가능 3D 인벨로프. 우리가 한국 일조규제 포함으로 추월할 벤치마크 표준"
+   }
+  ],
+  "leading_platforms": [
+   {
+    "name": "Autodesk Forma + Zoneomics 3D Envelope",
+    "what": "규제(이격·높이·건폐·최대연면적) 실시간 반영 편집가능 3D 빌더블 인벨로프 생성, 매싱 타당성 즉시 검증",
+    "edge": "22,000+ 관할 표준화 zoning 데이터와 생성설계의 결합, Architectural Record 2025 수상"
+   },
+   {
+    "name": "Zoneomics",
+    "what": "NLP+지오이미지 처리로 분절 조례를 추출·표준화, zoneDetail API(점/폴리곤)로 zone code·permitted uses·setback·height 제공",
+    "edge": "전국 통일 zone schema와 zoning change tracking — 데이터 표준화 자체가 해자"
+   },
+   {
+    "name": "Regrid",
+    "what": "전국 표준화 zoning + 파셀 데이터, 토지이용 규제 가이드",
+    "edge": "파셀×zoning 결합 커버리지"
+   },
+   {
+    "name": "스페이스워크 랜드북",
+    "what": "용적/건폐/일조사선/주차 규제 자동반영 3초 가설계 + 수익률 동시 산출, 실거래·건축물대장·인허가·법규·도시계획변경 학습",
+    "edge": "규제판정→가설계→수익률 원클릭, LH·SH·경기도시공사 공공 채택 레퍼런스"
+   },
+   {
+    "name": "밸류맵 AI건축설계",
+    "what": "필지 선택→법규(용적/건폐/일조권) 분석→최적 3D 가설계안 자동생성(최대 10안), 주차대수 산정, 최대 3300㎡ 다필지 합필 설계",
+    "edge": "실거래 시각화 플랫폼과 규제반영 가설계의 통합, 다필지 합필 설계"
+   },
+   {
+    "name": "Cherre / HouseCanary",
+    "what": "부동산 데이터 통합·AVM, Zoneomics 등 zoning 데이터 벤더 연동",
+    "edge": "데이터 오케스트레이션 레이어로 zoning을 분석에 결합"
+   }
+  ],
+  "sources": [
+   "https://blogs.autodesk.com/forma/2024/08/19/autodesk-and-zoneomics-partner-to-bring-zoning-responsive-building-envelopes-to-forma/",
+   "https://www.zoneomics.com/product/api",
+   "https://stream.estate/blog/zoneomics-revolutionizing-real-estate-with-ai-powered-zoning-insights",
+   "https://regrid.com/zoning",
+   "https://par.nsf.gov/servlets/purl/10347911",
+   "https://arxiv.org/pdf/2506.20551",
+   "https://www.mdpi.com/2075-5309/14/7/1983",
+   "https://www.sciencedirect.com/science/article/abs/pii/S1474034625009826",
+   "https://arxiv.org/abs/2404.04302",
+   "https://www.nature.com/articles/s41598-025-12165-6",
+   "https://www.sciencedirect.com/science/article/pii/S2666651025000191",
+   "https://spacewalk.tech/19",
+   "https://www.venturesquare.net/788840",
+   "https://www.sedaily.com/NewsView/269WR2ODMG",
+   "https://www.hankyung.com/article/2021042730341"
+  ]
+ },
+ {
+  "module": "생성형 설계·CAD·BIM (Generative Design / CAD / BIM)",
+  "our_assessment": "현재 구현은 \"법규 한도 → 직사각형 매스 역산 → 코어/복도/세대 격자 배치 → IFC4 절차생성 → glTF → Three.js 뷰\" 풀스택을 일관되게 연결한 점이 강점이다. AutoDesignEngine은 건폐율·용적률·정북일조사선·층수·주차대수를 결정론적으로 계산하고, 위반 시 20회 반복 축소 보정까지 내장한다. CAD 드래그편집의 design_versions 영속화와 DesignInterpreter LLM 해석, 자동 대안 3종(밸런스/최대세대/최적일조) 생성도 SOTA 상용툴의 워크플로 골격을 모방하고 있어 한국 소규모 개발 시장(스페이스워크 랜드북 영역)에는 즉시 실용적이다.\n\n그러나 핵심 한계가 명확하다. (1) 매스 생성이 site_area의 sqrt를 쓴 '정사각형/직사각형 단일 박스' 가정에 갇혀 있어 실제 부정형 필지·L자/ㄷ자 배치·다동(多棟) 배치·셋백 사선의 정밀 폴리곤 연산이 없다(shapely 미사용). (2) 일조사선이 정북 north_setback 단일값에만 의존하고 인접대지경계·도로사선·채광사선·인동간격(공동주택 0.5H 등)을 반영 못 한다. (3) 'AI 생성'이라 명명했으나 실제로는 규칙기반 격자 분할이며 최적화 알고리즘(유전·SLSQP·RL·diffusion)이 없다 — design_ai_service는 LLM 보고서 생성만 담당하고 형상 생성과 분리돼 있다. (4) BIM 물량은 ifcopenshell geom으로 추출하나 generate시 wall/slab 부피를 수식으로 근사할 뿐 실제 IfcExtrudedAreaSolid 기하와 물량이 분리될 위험이 있고, MEP·구조부재·철근물량·IFC4.3은 없다. (5) 환경분석(일조·바람·소음·조망·탄소) 정량 시뮬레이션이 전무하다 — 이것이 Forma/Spacemaker의 핵심 해자인데 미구현.",
+  "sota_summary": "2024-2025 SOTA는 두 축으로 갈린다. (A) 상용 실시간 솔버: TestFit(Site Solver)은 필지경계·층수·유닛믹스·주차비율을 입력하면 수 초 내 코어·복도·주차·유닛평면·프로포마(임대가능면적·세대수·원가)를 동시 생성하고, 2024년 'Generative Design'으로 다수 변형을 자동 탐색한다. Autodesk Forma(구 Spacemaker)는 클라우드 GPU로 일조·바람·소음·조망·운영탄소 7종 환경분석을 수 초에 산출하고 Rhino/Revit 양방향 연동한다. Hypar는 설계 규칙을 코드 함수로 캡슐화해 구조·파사드·MEP까지 절차생성한다. (B) 학술: 평면 생성은 GAN(HouseGAN)→Transformer→Diffusion으로 이동, HouseDiffusion(CVPR'23, 벡터 평면 이산/연속 디노이징), Cons2Plan(ACM MM'24, 조건부 diffusion 벡터 평면), Floorplan-Diffusion(ICMR'25, 사전학습 LDM) 등이 그래프(인접관계)·윤곽·실 개수 조건을 받아 평면을 생성한다. 매스/도시블록 최적화는 다목적 진화알고리즘(NSGA-II)+ML 대리모델(surrogate)로 에너지·일조·조망·열쾌적을 동시 최적화하고, RL로 재생에너지·형상을 실시간 결정한다. 코드검토는 BIM-ACCC(Solibri/CORENET/ICC SMARTcodes)에서 시맨틱웹+IFC 룰체킹, 최근 LLM 기반 코드 컴플라이언스 체킹(MDPI Electronics 2025)으로 진화 중. 표준은 IFC4.3(ISO16739, 인프라 포함)과 openBIM, 웹뷰어는 That Open Engine(web-ifc)·Speckle이 사실상 표준.",
+  "gaps": [
+   "부정형 필지·다동 배치 부재: 매스가 sqrt 기반 단일 직사각형 박스로 고정 — shapely 폴리곤 연산, 셋백 buffer, L/ㄷ/탑상형·판상형, 다동 배치, 부정형 대응 전무 (TestFit/Forma는 임의 폴리곤 필지를 솔버로 처리)",
+   "환경분석 시뮬레이션 부재(최대 해자): 일조시간·동지일영·인동간격·바람·소음·조망·일사·운영탄소 정량분석 없음 — Forma의 핵심 차별점. Honeybee/Ladybug/pvlib 또는 자체 ray-cast 일조 시뮬레이터 필요",
+   "진짜 최적화 알고리즘 부재: '자동 대안 3종'은 하드코딩된 파라미터 프리셋일 뿐. NSGA-II 다목적 최적화(수익·일조·주차효율·공사비 파레토 프론트)나 ML 대리모델 탐색이 없음",
+   "일조사선 정밀도 부족: 정북 north_setback 단일값 의존. 건축법 시행령 정북일조(높이 9m 이하 1.5m, 초과 0.5H), 채광사선, 도로사선, 공동주택 인동간격(0.8H~), 채광창 이격을 폴리곤/단면으로 검증 못 함",
+   "유닛믹스가 형상과 분리: unit_mix_optimizer(SLSQP)가 별도 존재하나 AutoDesignEngine 격자분할과 미연동 — 수익최적 평형배분이 실제 평면에 반영 안 됨",
+   "AI 평면 생성 미적용: HouseDiffusion/Cons2Plan류 그래프조건 평면생성 미도입. 실내 동선·실배치·채광은 균등 격자분할로 비현실적 (방·거실·주방·발코니 인접관계 무시)",
+   "BIM-ACCC 자동 룰체킹 부재: IFC 모델을 IDS/시맨틱 룰로 검증하는 체계 없음. 한국 세움터(e-AIS) KBIMS·개방형BIM 표준, 건축법 자동검토(피난거리·계단폭·복도폭·방화구획) 미연동",
+   "IFC4.3·MEP·구조 부재: 외벽·슬래브·코어·창호·발코니까지만. 기둥·보·기초·철근물량·설비·IfcSpace(면적검증용)·IfcZone 없음. 물량 ≤2% 목표 대비 RC 골조 근사치 한계",
+   "양방향 BIM 연동 부재: Revit/Rhino/ArchiCAD round-trip, Speckle, IFC import(역방향 파싱→편집→재생성) 없음. CAD편집이 design_versions JSON에만 갇힘",
+   "웹 뷰어 표준 미채택: GLTFLoader 단방향. That Open(web-ifc)로 IFC 직접 스트리밍·요소선택·속성조회·BCF 코멘트·단면 미지원"
+  ],
+  "innovations": [
+   "한국 법규 폴리곤 일조 엔진(차별 1순위): shapely+numpy로 정북일조사선·도로사선·인동간격·채광사선을 필지 단면에서 정밀 계산하고, 동지 9:00~15:00 ray-cast 일영 시뮬레이션으로 세대별 일조시간을 산출. Forma는 한국 정북일조·인동간격 룰을 모르므로 '한국형 일조 SOTA'로 추월 가능",
+   "VWorld 실측 폴리곤 직결 자동설계: PNU→지적도 PARCEL GeoJSON(이미 nearby-map/parcel-boundaries 보유)을 곧장 site_shape로 주입해 부정형 필지 실제 경계로 셋백 buffer·매스 생성. 한국 필지 데이터 직결은 글로벌 툴이 못하는 로컬 해자",
+   "수익최적 다목적 솔버: NSGA-II로 (분양수익·공사비·일조세대비율·주차효율·용적률소진)을 동시 최적화한 파레토 대안 N개 생성 후, 기존 수지/ROI 엔진·unit_mix_optimizer(SLSQP)·G2B원가모델과 연결 → '설계가 곧 사업성'인 TestFit식 실시간 프로포마를 한국 PF심사 맥락으로 구현",
+   "그래프조건 AI 평면생성 도입: Cons2Plan/HouseDiffusion 오픈모델을 한국 표준평면(방-거실-주방-욕실-발코니 인접그래프)으로 파인튜닝해 세대 내부평면을 생성, 균등격자 대체. 입력은 평형+향+코어위치 조건",
+   "LLM 기반 건축법 자동검토(ACCC): DesignInterpreter를 확장해 IFC 요소+법규RAG로 피난거리·직통계단2개소·복도폭·방화구획·장애인편의를 자동 판정하고 위반요소를 3D에서 하이라이트(MDPI 2025 LLM-ACCC 방식). 세움터 제출 전 사전검증 가치",
+   "That Open(web-ifc) 뷰어 전환 + BCF 협업: glTF 단방향을 IFC 직접 스트리밍으로 교체해 요소 클릭→속성/물량/법규근거 조회, 단면, 협업 코멘트(BCF). 발주처·심사역 공유용 openBIM 협업 플랫폼화",
+   "대리모델(surrogate) 즉시평가: 일조·에너지 시뮬을 XGBoost 대리모델로 학습해 슬라이더 조작 시 <100ms 실시간 피드백 — Forma 수준 인터랙티브 UX를 저비용으로 재현"
+  ],
+  "refactor": [
+   "형상 코어를 shapely Geometry로 통일: sqrt 직사각형 가정을 제거하고 SiteInput.site_shape(Polygon)→setback buffer→building footprint를 모두 shapely로 처리. AutoDesignEngine 2~5단계 전면 폴리곤화",
+   "기하 단일출처(SSOT) 강제: AutoDesignEngine 매스→IfcGenerator→glTF→2D CAD payload가 각각 좌표를 재산출하는 구조를 단일 BuildingMass 도메인모델로 통합해 2D/3D/IFC/물량이 동일 기하에서 파생되도록(현재 mass 엔드포인트 역산 폴백 제거)",
+   "설계 생성과 LLM해석 통합: design_ai_service(LLM 보고서)와 auto_design_engine(형상)이 분리돼 있음 — DesignResult를 DesignInterpreter 입력으로 직결하는 파이프라인 일원화",
+   "IFC 물량을 기하에서 직접 산출: generate_ifc_from_design의 수식 부피 근사(side*side*0.2)를 제거하고 ifcopenshell geom로 실제 IfcElementQuantity를 부여, analyze_ifc와 동일 경로로 검증(물량 ≤2% 목표 달성)",
+   "환경분석 서비스 신설: services/design/environment_analysis.py(일조/일영/인동/조망) 모듈로 분리하고 대리모델 캐싱 계층 추가",
+   "최적화 레이어 추가: services/design/optimizer.py(NSGA-II, pymoo)를 도입해 generate_alternatives의 하드코딩 프리셋을 다목적 탐색으로 교체",
+   "테스트 정합: test_auto_design_engine는 직사각형 가정에 묶여 있어 폴리곤 리팩토링 시 부정형 필지·다동·일조 회귀 테스트 픽스처(VWorld 실측 PNU) 추가 필요"
+  ],
+  "leading_platforms": [
+   {
+    "name": "Autodesk Forma (구 Spacemaker)",
+    "what": "클라우드 AI 초기단계 사이트플래닝·매스생성 + 일조/바람/소음/조망/탄소 환경분석, Revit/Rhino 연동",
+    "edge": "GPU 클라우드 환경분석 7종을 수 초에 산출하는 시뮬레이션 해자 + Autodesk BIM 생태계 통합"
+   },
+   {
+    "name": "TestFit",
+    "what": "부동산 피저빌리티 실시간 솔버 — 필지+유닛믹스+주차 입력→매스/코어/주차/유닛평면/프로포마 즉시 생성",
+    "edge": "멀티패밀리/주차 특화 실시간 솔버 + 2024 Generative Design 변형 자동탐색 + 사업성 동시 산출(설계=프로포마)"
+   },
+   {
+    "name": "Hypar",
+    "what": "설계 규칙을 코드함수로 캡슐화해 구조·파사드·MEP까지 절차생성하는 컴퓨테이셔널 플랫폼",
+    "edge": "기업 설계표준을 재사용 가능한 함수로 자산화, 개발자 친화 API/SDK"
+   },
+   {
+    "name": "Solibri / ICC SMARTcodes",
+    "what": "IFC 모델 자동 코드검토(ACCC) — 룰셋 기반 법규/품질 검증",
+    "edge": "성숙한 IFC 룰체킹 엔진과 검증된 룰라이브러리(피난·간섭·품질)"
+   },
+   {
+    "name": "That Open Engine (web-ifc) / Speckle",
+    "what": "오픈소스 웹 IFC 파서·뷰어 / openBIM 데이터 허브·버전관리",
+    "edge": "브라우저 네이티브 IFC 스트리밍·요소선택·BCF, 벤더중립 openBIM 표준"
+   },
+   {
+    "name": "스페이스워크(랜드북)",
+    "what": "한국 소규모 토지(440㎡ 이하) AI 자동 가설계·최대규모 산출·수익률 분석",
+    "edge": "2016년부터 SH 가로주택 적용한 한국 법규 기반 AI 건축설계 + 토지 사업성 분석 통합, 국내 데이터·조례 축적"
+   },
+   {
+    "name": "빌드잇(Buildit)",
+    "what": "AI 기반 간편 건축설계 솔루션(국내)",
+    "edge": "건축주 대상 가설계 자동화·접근성"
+   },
+   {
+    "name": "부동산플래닛",
+    "what": "전국 집합 상업용 AVM 추정가 등 평가 중심 프롭테크",
+    "edge": "상업용 자동평가모델·국내 실거래 데이터"
+   }
+  ],
+  "key_methods_papers": [
+   {
+    "title": "HouseDiffusion (CVPR 2023)",
+    "insight": "벡터 평면을 이산+연속 디노이징으로 생성 — 균등격자 대신 인접관계 그래프 조건의 실배치 생성 도입 근거"
+   },
+   {
+    "title": "Cons2Plan: Vector Floorplan Generation via Conditional Diffusion (ACM MM 2024)",
+    "insight": "다양한 조건(윤곽·실개수·인접)으로 벡터 평면 생성. 한국 표준평면 파인튜닝의 베이스 모델 후보"
+   },
+   {
+    "title": "Floorplan-Diffusion: Pre-trained Large Latent Diffusion (ICMR 2025)",
+    "insight": "사전학습 LDM으로 평면 이미지 생성 — 소량 한국 데이터로 전이학습 가능성"
+   },
+   {
+    "title": "Evolving multi-objective optimization for early-stage building design (Building Simulation, Springer 2024)",
+    "insight": "에너지·일조·조망·열쾌적 동시 최적화 진화프레임워크 — generate_alternatives를 NSGA-II로 대체하는 설계 청사진"
+   },
+   {
+    "title": "ML surrogate for energy-efficient urban block forms (Building Simulation, Springer 2024)",
+    "insight": "ML 대리모델로 시뮬레이션 가속 — Forma식 실시간 피드백을 저비용 재현하는 핵심 기법"
+   },
+   {
+    "title": "LLM-Driven Code Compliance Checking in BIM (MDPI Electronics 2025)",
+    "insight": "LLM으로 IFC 기반 건축법 자동검토 — DesignInterpreter+법규RAG 확장으로 한국형 ACCC 구현 방향"
+   },
+   {
+    "title": "Semantic Web & IFC-Based Automated BIM Compliance (MDPI Buildings 2025)",
+    "insight": "시맨틱 룰+IFC로 법규검증 — IDS/룰셋 기반 정밀 검토의 표준 접근"
+   },
+   {
+    "title": "IFC 4.3 (ISO 16739) / openBIM, buildingSMART",
+    "insight": "인프라 포함 최신 IFC 표준 — 현재 IFC4 골조 모델을 4.3·IDS·IfcSpace 검증으로 고도화할 표준 기준"
+   }
+  ],
+  "priority": "P1 (High) — 형상 폴리곤화 + 한국형 일조엔진 + 환경분석/다목적최적화가 SOTA 대비 가장 큰 격차이자 한국시장 차별 해자. VWorld 실측 폴리곤 직결과 기존 수지/유닛믹스/G2B 엔진 연동으로 '설계=사업성' 통합이 단기 최고 임팩트.",
+  "sources": [
+   "https://www.testfit.io/product/site-solver",
+   "https://www.testfit.io/news/testfit-launches-groundbreaking-generative-design-for-better-building-optimization",
+   "https://www.creativetoolsai.com/ai-tools/autodesk-forma-site-planning/",
+   "https://hypar.io/",
+   "https://stru.ai/blog/best-generative-design-2025",
+   "https://dl.acm.org/doi/10.1145/3731715.3733343",
+   "https://www.sciencedirect.com/science/article/abs/pii/S0926580524001109",
+   "https://generativeaiandhci.github.io/papers/2025/genaichi2025_6.pdf",
+   "https://link.springer.com/article/10.1007/s12273-024-1178-6",
+   "https://link.springer.com/article/10.1007/s12273-024-1174-x",
+   "https://www.mdpi.com/2079-9292/14/11/2146",
+   "https://www.mdpi.com/2075-5309/15/15/2633",
+   "https://ifc43-docs.standards.buildingsmart.org/",
+   "https://www.buildingsmart.org/about/openbim/",
+   "https://thevc.kr/SPACEWALK",
+   "https://spacewalk.tech/19",
+   "https://www.buildit.co.kr/",
+   "https://www.fnnews.com/news/202504290941129539",
+   "https://www.nature.com/articles/s41598-025-12165-6"
+  ]
+ },
+ {
+  "module": "공사비·적산(QTO) — Construction Cost & Quantity Takeoff",
+  "our_assessment": "강점: (1) 단일 데이터원(건축개요·매스) 일관성 — /cost/estimate-overview가 수지·ROI 엔진과 동일 GFA·층수·구조를 override로 공유하여 모듈간 정합성이 높다. (2) 3단계 정밀도 계층(연면적×표준물량 → geometry_qto 매스 표면적/체적 기반 콘크리트·철근·거푸집 → 설계 design_versions 실치수 자동 승격)이 AACE Class 5→4 진화 개념과 구조적으로 일치. (3) 구조형식 보정계수, 지하 30% 할증, 고층 보정, 간접비(설계·감리·예비·일반관리) 분리, 몬테카를로 P10/P50/P90, EVM(SPI/CPI) 기성, Excel 내보내기, CostInterpreter LLM 해석까지 파이프라인이 end-to-end로 연결되어 있다.\n\n한계(냉정히): (1) 단가가 코드에 하드코딩된 정적 상수(UNIT_PRICES_2026, DEFAULT_DIRECT_COST_PER_SQM)다 — 국토부 표준품셈/표준시장단가·KICT 건설공사비지수·실시간 자재가(레미콘/철근 PPI)와 연동이 전무하여 시점·지역 escalation이 불가능. 이것이 가장 큰 약점. (2) 표준물량 계수(0.45 m³/㎡ 등)와 geometry_qto의 환산두께(_SLAB_T=0.21, _WALL_RATIO=0.55, _FORMWORK_PER_M3=8.0)가 출처 불명의 단일 점추정치 — 실거래/실적 사업 학습이 없어 ML 보정이 없다. (3) 공종이 8개로 협소(레미콘·철근·거푸집·조적·방수·창호·기계일식·전기일식). 토공·기초파일·마감(타일/도장/석재)·승강기·외장(커튼월/석재)·토목·가설·해체가 누락. 기계/전기는 '식' 비율로 뭉뚱그려 적산이 아니라 비례추정. (4) IFC 업로드 경로(upload-ifc)가 BIMService.extract_quantities_with_work_codes에 의존하나 IfcBaseQuantities(IfcQuantityArea/Volume) 표준 파싱·OmniClass/MasterFormat 매핑이 없어 5D BIM 표준과 단절. (5) 불확실성 계수(0.92~1.12)가 임의 고정값 — reference class forecasting이나 신뢰구간 기반이 아님. (6) billing/summary가 stub(전부 0 반환), 기성·계산 결과가 DB 영속화되지 않음.",
+  "sota_summary": "세계 최고 수준은 4축으로 수렴한다. (1) 5D BIM 자동 QTO: IFC BaseQuantities(IfcQuantityArea/Volume/Length/Count)를 표준 분류체계(Uniformat/MasterFormat/OmniClass/UniClass)에 자동 매핑하고, 설계 변경이 물량·단가에 실시간 전파(Navisworks Quantification, TestFit 5.5, Kreo). (2) ML 기반 원가예측: XGBoost/CatBoost가 RSMeans급 데이터로 R²≈0.988 달성, SHAP로 설명가능성(XAI) 제공 — 단순 단가×물량을 보정·검증. (3) 불확실성 정량화: Monte Carlo + reference class forecasting + MC-dropout/부트스트랩 신뢰구간으로 AACE Class별 정확도밴드(Class5 −50~+100%) 제시, 전통대비 cost 예측 60~70% 개선. (4) LLM-BIM 통합: MCP로 LLM이 Revit BIM과 cost DB(Craftsman Manual, RSMeans, ZIP 위치계수)를 직접 질의해 완전자동 견적(MDPI 2026). 상용: Kreo는 자재 DB(치수·단가·공급사)+지역 실시간 시장가+자재/스코프 변경 즉시 cost impact; TestFit은 가설계(massing)→자동 QTO→개념견적을 피저빌리티 초기단계에 통합. 한국: 국토부 표준품셈은 2025년 '수요응답형'으로 전환(노무=시중노임, 자재·경비=건설공사비지수, 표준시장단가=실거래 반영), KICT 공사비원가관리센터가 지수·단가 제공. 랜드북(스페이스워크)은 AI 가설계 엔진이 법규반영 매스→개발비·수익 자동추정으로 토지개발 의사결정 제공.",
+  "key_methods_papers": [
+   {
+    "title": "AI-Driven Automation of Construction Cost Estimation: Integrating BIM with LLMs (MDPI Buildings 2026, 16/3/485)",
+    "insight": "MCP 서버로 LLM이 Revit BIM 모델과 cost DB(2025 Craftsman National Building Cost Manual)+ZIP 위치계수를 직접 질의해 완전자동 견적. 우리 CostInterpreter를 단순 해설→BIM·단가DB 직접 질의 에이전트로 격상하는 청사진."
+   },
+   {
+    "title": "Transparent and reliable construction cost prediction using advanced ML and explainable AI (ScienceDirect 2025, S2215098625002149)",
+    "insight": "ML 예측 + Confidence Interval(불확실성) + SHAP(설명가능성)의 3종 결합. XGBoost R²≈0.988. 우리 점추정 단가에 ML 보정층+SHAP 근거제시를 얹으면 할루시네이션 가드와 시너지."
+   },
+   {
+    "title": "Combinatorial ML approaches for high-rise building cost prediction with interpretability (Taylor&Francis 2024)",
+    "insight": "고층 빌딩 특화 — 우리 height_factor 같은 선형 계수를 학습기반으로 대체. 고층(30층+) 구조비 비선형성을 데이터로 포착."
+   },
+   {
+    "title": "AACE 18R-97 Cost Estimate Classification (PGD-01)",
+    "insight": "Class5(0~2% 정의, −50~+100%)→Class3(투자결정 최소요건)로 정확도밴드를 명시. 우리 3단계 정밀도 계층에 Class 라벨+정확도밴드를 부여해 사용자에게 신뢰수준을 정직하게 표시하는 표준."
+   },
+   {
+    "title": "국토부 2025 건설공사 표준품셈(수요응답형) + 표준시장단가 + KICT 건설공사비지수",
+    "insight": "노무=시중노임단가, 자재·경비=건설공사비지수 escalation, 표준시장단가=실거래 반영. 우리 하드코딩 단가를 이 공식·지수 API로 교체해야 시점·지역 정합 확보. 한국 공공발주 예정가격 산정의 법적 기준이라 PF심사 신뢰성 직결."
+   },
+   {
+    "title": "Automated system for high-accuracy QTO using BIM (Automation in Construction, S0926580523004156) / 5D BIM ITcon 2024 24",
+    "insight": "IfcBaseQuantities를 ModelVolume/Area/Length/Count로 추출해 분류체계 매핑. IFC export-import의 무손실성 한계도 경고 — 우리 geometry_qto를 IFC BaseQuantity 표준 스키마로 정규화할 근거."
+   }
+  ],
+  "leading_platforms": [
+   {
+    "name": "Kreo",
+    "what": "AI 클라우드 적산·견적(2D/BIM takeoff)",
+    "edge": "자재 DB(치수·단가·공급사)로 도면→물량·금액 자동산출, 지역 실시간 시장가 제안, 자재/스코프 변경 시 cost impact 실시간, AI 에이전틱 워크플로우. 우리에겐 없는 '단가 DB+실시간 지역가'가 핵심 격차."
+   },
+   {
+    "name": "TestFit",
+    "what": "AI 부동산 피저빌리티 가설계",
+    "edge": "5.5에서 자동 QTO 도입 — massing 가설계와 cost model을 연동해 기획 최초단계에 개념견적 생성. 우리 매스→QTO 흐름과 가장 직접 경쟁. 다만 우리는 한국 법규·수지 연동 우위 가능."
+   },
+   {
+    "name": "Autodesk(Navisworks Quantification/Takeoff)",
+    "what": "5D BIM 적산",
+    "edge": "IFC/Revit BaseQuantities 표준 추출, WBS(Uniformat/MasterFormat) 매핑. UX는 약점으로 평가되나 표준 정합성·생태계는 압도적."
+   },
+   {
+    "name": "Northspyre / Deepblocks / Feasibly",
+    "what": "개발 예산·피저빌리티",
+    "edge": "Northspyre는 과거 실적 프로젝트 비용 벤치마킹·예측, anomaly 감지. 실적 DB 기반 reference class 추정이 강점 — 우리 점추정 대비 격차."
+   },
+   {
+    "name": "랜드북(스페이스워크)",
+    "what": "한국 AI 가설계+개발수익 추정",
+    "edge": "법규반영 AI 가설계 엔진이 매스→개발비·수익 자동추정, SH·GH 등 7개 공공기관 채택. 국내 직접경쟁자 — 우리는 적산 공종 정밀도·QTO 투명성·수지 3자연동으로 차별화 필요."
+   },
+   {
+    "name": "빅밸류/부동산플래닛/직방",
+    "what": "한국 AVM·부동산 데이터",
+    "edge": "실거래·시세 데이터 자산. 공사비 적산 직접경쟁은 아니나, 우리가 분양가·실거래를 수지에 연동하는 데이터원으로 활용 가능."
+   }
+  ],
+  "gaps": [
+   "단가 데이터 정적 하드코딩: 국토부 표준품셈/표준시장단가·KICT 건설공사비지수·실시간 자재가(레미콘·철근 PPI) 미연동 → 시점·지역 escalation 불가. SOTA(Kreo 실시간 지역가, 국토부 수요응답형 지수)와 근본 격차.",
+   "ML 보정/검증 부재: 우리는 순수 결정론적 점추정. SOTA는 XGBoost/CatBoost(R²≈0.988)+SHAP로 예측·검증·설명. 실적 사업 학습 데이터 파이프라인이 없다.",
+   "공종 커버리지 협소(8공종) + 기계/전기 '식' 비율추정: 토공·파일기초·마감(타일/도장/석재)·외장(커튼월)·승강기·가설·해체 누락. MEP는 적산이 아니라 비례추정 → 정밀 QTO 미달.",
+   "5D BIM 표준 단절: IfcBaseQuantities(Area/Volume/Length/Count) 표준 파싱·Uniformat/MasterFormat/OmniClass WBS 매핑 부재. upload-ifc가 표준 스키마 비준수 → BIM 생태계 상호운용 불가.",
+   "불확실성이 임의계수(0.92~1.12): AACE Class별 정확도밴드·reference class forecasting·신뢰구간 미적용. 몬테카를로는 있으나 입력 분산이 데이터 기반이 아님.",
+   "영속성·추적성 결여: billing/summary stub(0 반환), 계산·기성 결과 DB 미저장, 단가 출처/지수 시점 메타데이터 없음 → PF대출 심사용 감사추적 불가."
+  ],
+  "innovations": [
+   "라이브 단가 엔진(LiveUnitPriceService): 국토부 표준시장단가 + KICT 건설공사비지수 + 조달청 자재 단가/실거래(나라장터 G2B는 이미 연동됨)를 합성해 '시점·지역(VWorld 행정구역)·구조형식'별 단가를 동적 산출. 모든 단가에 source+as_of+index_base 메타데이터 첨부 → 할루시네이션 가드와 결합해 PF심사용 감사추적. 경쟁사 Kreo의 '실시간 지역가'를 한국 공공데이터로 재현.",
+   "ML 보정 + SHAP 신뢰밴드 하이브리드: 결정론적 표준물량을 기준선으로 두고, 학습 가능해질 때 G2B 낙찰가·실적 사업으로 XGBoost 잔차보정 모델을 얹어 '표준 vs ML 예측' 2중 표시 + SHAP로 차이 근거 제시. 데이터 부족 초기엔 reference class(유사 G2B 공고 군집) 평균으로 cold-start.",
+   "AACE Class 자동 라벨링 + 정직한 정확도밴드: 입력 정밀도(개요만/매스/BIM)에 따라 Class5→Class3을 자동 판정하고 −50~+100% → −10~+15% 밴드와 신뢰수준을 UI에 명시. '정직한 불확실성'은 한국 프롭테크에 없는 차별화 — PF 대주단 신뢰 확보.",
+   "수지·G2B 적정투찰가 역연동(우리만의 폐쇄루프): 우리는 이미 G2B 6엔진(QTO 포함)+수지+ROI가 단일컨텍스트로 연결됨. 적산→적정투찰가→낙찰가율 실적→단가 재보정의 자기학습 루프를 닫으면 경쟁사가 못 가진 '입찰 실거래로 학습하는 적산'이 된다.",
+   "IFC BaseQuantity 표준 정규화 + 한국 공종코드 브리지: geometry_qto/IFC 물량을 IfcQuantityArea/Volume 표준으로 정규화하고 Uniformat↔한국 표준품셈 공종코드 매핑 테이블 구축 → 글로벌 BIM 상호운용 + 국내 적산 동시 충족.",
+   "LLM 적산 에이전트(MCP 패턴): CostInterpreter를 단순 해설에서 '매스·단가DB·법규를 질의하는 에이전트'로 격상 — VE(가치공학) 대안과 절감액을 정량 제시하고 자재변경 cost impact를 즉시 재계산(Kreo 대응)."
+  ],
+  "refactor": [
+   "단가 분리: UNIT_PRICES_2026/DEFAULT_DIRECT_COST_PER_SQM 하드코딩 상수를 UnitPriceRepository(DB+캐시) 인터페이스로 추출. geometry_qto·standard_quantity_estimator·construction_cost_engine이 동일 단가원을 주입받도록 DI화(현재 3곳 중복·불일치 위험).",
+   "QTO 도메인 표준화: 물량 결과를 {classification(Uniformat/품셈코드), quantity, unit, base_quantity_type(Area/Volume/Length/Count), source(derived/bim/std)} 공통 스키마로 통일. geometry_qto·standard·IFC 3경로가 같은 스키마로 합류 → 항목 중복(레미콘 두 번 산출) 정합 정리.",
+   "환산계수 외부화: geometry_qto의 매직넘버(_SLAB_T, _WALL_RATIO, _FORMWORK_PER_M3, _REBAR_KG_PER_M3 등)를 구조형식·건물유형·층수별 계수 테이블(YAML/DB)로 분리해 학습·튜닝·출처추적 가능하게.",
+   "영속성·메타데이터: 계산·기성 결과를 cost_estimates/cost_billings 테이블에 저장(billing/summary stub 제거), 각 추정에 calculation_metadata(단가시점·지수base·Class·source) 첨부 — 기존 calculation_metadata.py/validator.py 재사용.",
+   "estimate_overview 슬림화: 라우터 함수에 산식이 비대(scenario/geometry/QTO 혼재). CostEstimationService로 비즈니스로직 추출, 라우터는 검증·DI·응답만 담당.",
+   "불확실성 입력 데이터화: 몬테카를로 입력 분산을 임의 0.92~1.12 대신 단가 변동성(지수 표준편차)·Class밴드에서 도출하도록 CostMonteCarlo 입력 계약 변경."
+  ],
+  "priority": "P1 (단가 라이브 연동 + 영속성·메타데이터가 PF심사 신뢰성과 직결되어 최우선; ML 보정·5D BIM 표준화는 P2~P3)",
+  "sources": [
+   "https://www.mdpi.com/2075-5309/16/3/485",
+   "https://www.tandfonline.com/doi/full/10.1080/15623599.2025.2558070",
+   "https://www.tandfonline.com/doi/full/10.1080/10095020.2026.2651578",
+   "https://www.sciencedirect.com/science/article/abs/pii/S0926580523004156",
+   "https://www.mdpi.com/2075-5309/15/21/3942",
+   "https://www.sciencedirect.com/science/article/pii/S2215098625002149",
+   "https://www.tandfonline.com/doi/full/10.1080/13467581.2024.2378001",
+   "https://itcon.org/papers/2024_24-ITcon-Pishdad.pdf",
+   "https://library.aacei.org/pgd01/pgd01.shtml",
+   "https://cenex.au/aace/estimate-classification.html",
+   "https://cost.kict.re.kr/",
+   "https://www.kseis.co.kr/bbs/data/dataDetail.do?bbs_seq=527499479701",
+   "https://www.sankun.com/blog/detail/1105",
+   "https://www.kreo.net/",
+   "https://www.testfit.io/blog/testfit-5-5-automatic-quantity-takeoffs",
+   "https://spacewalk.tech/",
+   "https://www.venturesquare.net/788840",
+   "https://www.mdpi.com/2076-3417/15/17/9371"
+  ]
+ },
+ {
+  "module": "수지·사업성·ROI (Feasibility / Investment Analysis) — /api/v2/feasibility 15모델 + 4엔진 + 몬테카를로",
+  "our_assessment": "강점: (1) 한국 개발맥락에 특화된 4엔진(토지/공사/금융/세금) 분리 + 15개 개발유형 모듈화(module_assembler)로 확장성 양호. (2) 공사비 override(construction_cost_override_won)로 정밀공사비-수지-ROI 단일 데이터원 정합을 강제한 설계는 모범적(cost_blocks.py L33-41). (3) auto_recommend_top3가 주소→용도지역(조례 실효 FAR/BCR)→인허가필터→수지→복합점수→AI해석까지 자동 파이프라인을 갖춤 — 이 end-to-end 자동화는 글로벌 상용툴(TestFit/Deepblocks)도 부분만 제공. (4) 도급현실모델(낙찰가율·실원가율 절대비율)로 ROI 할루시네이션을 교정한 이력은 신뢰도 측면 우수.\n\n치명적 한계: (1) NPV가 '단일기간' 근사다 — aggregation_engine.aggregate_feasibility는 net_profit을 project_months/12로 한 번만 할인(L88-90). 즉 진정한 다기간 DCF/IRR이 아니라 단순 만기 일시 현금흐름 가정. 실제 IRR은 v2 경로에서 산출조차 안 됨(feasibility_service.py의 IRR 이분탐색은 구버전 v1 경로). (2) Monte Carlo가 '벡터화'라고 주석에 적혀있으나 실제로는 for i in range(n) 파이썬 루프로 calculate_fn을 1만번 호출(monte_carlo_engine.py L59-61) — 느리고, 변수간 상관(분양가↔cap rate) 미반영, 분포가 normal/uniform/triangular뿐(꼬리리스크용 lognormal/PERT 없음). (3) 금융비가 브릿지/본PF/중도금 각각 단순이자(원금×이율×개월) 평면계산 — 인출(draw)스케줄·S-curve 기반 이자자본화(capitalized interest)·LTV/LTC 동적 한도·DSCR 없음. (4) 등급이 수익률 단일 임계값(A~F) — 위험조정수익·확률적 등급(P(NPV>0)) 미반영. (5) 지분구조(LP/GP, preferred return, promote waterfall) 전무 — equity_won은 ROI 분모로만 쓰임.",
+  "sota_summary": "SOTA 개발수지 분석의 핵심은 5가지다. (1) 월단위 시간상 현금흐름(time-phased monthly cash flow): 토지비·공사비를 S-curve(베타/로지스틱 분포)로 시계열 분산하고, 차입금 인출을 그에 연동하여 이자를 '자본화'(capitalized interest)한 뒤 XIRR/MIRR을 산출(ARGUS Developer, A.CRE 표준). (2) 확률적 위험평가: 핵심 변수(분양가·공실·exit cap rate·공사비)에 경험적 분포 + 변수간 상관(Cholesky)을 부여한 Monte Carlo로 P(IRR>목표)·VaR·CVaR 산출(Hoesli/Bender SSRN, Cornell CRE). (3) 자동 사이트솔빙: 필지데이터→3D매싱→실시간 pro forma 동시최적화(TestFit Site Solver, Autodesk Forma, Deepblocks). (4) AVM/예측: 1000+피처 ML로 분양가·exit value·cap rate를 추정해 입력의 신뢰구간 제공(HouseCanary MdAPE 2.8%, CanaryAI 생성형). (5) 지분 워터폴: return of capital→preferred return(6~10%)→promote 다단계 IRR/equity-multiple hurdle로 LP/GP 분배 모델링(A.CRE, JPM). 한국 맥락 추가: 2024.11 부동산PF 제도개선(자기자본비율 강화·사업성평가 분기등급·책임준공 실효성)을 수지에 반영하는 것이 현 SOTA 규제기준.",
+  "key_methods_papers": [
+   {
+    "title": "Monte Carlo Simulations for Real Estate Valuation (Hoesli, Jani, Bender — SSRN 770766)",
+    "insight": "미래현금흐름·할인율·터미널밸류에 경험적 확률분포를 부여해 가치의 확률분포를 산출. 단순 상하방 민감도가 아니라 전 결과범위와 발생확률을 다룬다 — 우리 MC를 P(IRR>hurdle)·VaR/CVaR 산출로 격상시킬 근거."
+   },
+   {
+    "title": "Simulation-based excess return model for real estate development (ResearchGate 235270495)",
+    "insight": "고층오피스 사례로 MC 기반 정량 리스크관리+프로젝트 가치평가의 실무 프레임. 개발수지의 '초과수익(excess return)'을 리스크조정으로 산출 — 우리 등급체계를 위험조정수익 기반으로 재설계할 모델."
+   },
+   {
+    "title": "A.CRE Construction Draw Schedule with S-Curve / Equity Waterfall Model",
+    "insight": "공사비를 S-curve로 월분산→인출연동→이자자본화→XIRR. 워터폴은 ROC→pref(6~10%)→multi-tier promote(IRR/equity-multiple hurdle). 우리 평면 금융비·단일기간 NPV를 시간상 현금흐름+XIRR+워터폴로 교체하는 직접 청사진."
+   },
+   {
+    "title": "국토부 부동산PF 제도개선방안(2024.11.14) + FSC 사업성평가 분기등급",
+    "insight": "자기자본비율 강화, 책임준공 실효성, 분기별 PF 사업성 등급(양호/보통/유의/부실우려). 우리 수지가 PF심사 관점의 'PF적정성 점수'·자기자본비율·DSCR을 출력하면 은행제출용으로 차별화."
+   },
+   {
+    "title": "HouseCanary AVM (MdAPE 2.8%) / CanaryAI",
+    "insight": "1000+피처 ML로 가치·예측에 신뢰구간 제공. 우리 분양가/exit value 입력을 regional_pricing 고정테이블이 아닌 실거래(MOLIT)+POI 기반 ML 추정치+신뢰구간으로 대체하면 입력 할루시네이션 근절."
+   }
+  ],
+  "leading_platforms": [
+   {
+    "name": "ARGUS Developer / EstateMaster (Altus)",
+    "what": "개발수지·DCF·프로젝트 현금흐름관리 기관표준",
+    "edge": "월단위 시간상 현금흐름, 정밀 이자자본화, 다단계 시나리오·민감도, 기관신뢰 감사가능 모델"
+   },
+   {
+    "name": "TestFit Site Solver",
+    "what": "필지선택→AI 사이트플랜→실시간 pro forma 동시최적화",
+    "edge": "설계(매싱)와 수지를 한 화면에서 동시최적화, 딜평가를 주 단위→시간 단위로 단축"
+   },
+   {
+    "name": "Autodesk Forma",
+    "what": "초기단계 디자인+환경+개략 수지 클라우드",
+    "edge": "일조·바람·소음 등 환경분석과 개략 사업성을 결합한 조기 의사결정"
+   },
+   {
+    "name": "Deepblocks",
+    "what": "파라미터→3D+심층 재무분석",
+    "edge": "용도지역 규제 파라미터화→3D매싱→재무분석 통합, 우리 auto_recommend와 가장 직접 경쟁"
+   },
+   {
+    "name": "Northspyre",
+    "what": "개발 실행단계 예산·요청서·리포트 자동화",
+    "edge": "실시간 예산 추적+자동 월간리포트(예측 대비 실적), 예측-실행 피드백 루프"
+   },
+   {
+    "name": "HouseCanary (CanaryAI)",
+    "what": "AI AVM·예측 데이터플랫폼",
+    "edge": "MdAPE 2.8% 기관급 밸류에이션, 생성형 AI로 가치·예측 신뢰구간 제공"
+   },
+   {
+    "name": "랜드북/스페이스워크(한국)",
+    "what": "AI 건축설계엔진으로 소형주택 개발 시나리오 자동생성+개발비/수익 추정",
+    "edge": "법규반영 자동설계→가치예측 결합, 가로주택정비(LBDeveloper) 등 한국 정비사업 특화"
+   },
+   {
+    "name": "빅밸류(한국)",
+    "what": "AI 기반 시세·상권 분석, 사용자 플로우 설정형 분석",
+    "edge": "전국 주택·상권 데이터 자동분석, 연립/다세대 등 비정형 시세 추정 강점"
+   }
+  ],
+  "gaps": [
+   "진정한 다기간 DCF 부재: NPV가 project_months/12 단일할인(aggregation_engine L88) — 월단위 시간상 현금흐름·실제 IRR/XIRR/MIRR 미산출",
+   "Monte Carlo 미벡터화(파이썬 1만 루프 L59-61) + 변수간 상관(Cholesky) 없음 + lognormal/PERT 등 꼬리분포 없음 → P(IRR>hurdle)·VaR/CVaR 같은 SOTA 리스크지표 부재",
+   "금융비가 단순이자 평면계산 — 인출(draw)스케줄·S-curve 연동 이자자본화·동적 LTV/LTC·DSCR 없음. 한국 본PF/브릿지 전환구조 미반영",
+   "지분 워터폴(LP/GP, preferred return 6~10%, multi-tier promote, IRR/equity-multiple hurdle) 전무 — 투자유치·PF심사 시나리오 분석 불가",
+   "입력값(분양가·exit value·cap rate)이 regional_pricing 고정테이블 의존 — ML 추정치·신뢰구간 없음(HouseCanary 대비). exit cap rate 개념 자체가 임대형(M14/M15)에 미정립",
+   "등급이 수익률 단일임계 A~F뿐 — 위험조정수익·확률적 등급·민감도 토네이도 차트 같은 의사결정 정보 부족",
+   "2024.11 PF제도개선 규제(자기자본비율·분기 사업성등급·책임준공 실효성)를 수지 출력에 미반영 — 은행제출용 신뢰성 갭",
+   "설계(매싱/GFA)와 수지의 동시최적화 부재 — TestFit식 site-solving 대비 단방향(설계→수지)만 존재"
+  ],
+  "innovations": [
+   "시간상(time-phased) 월단위 현금흐름 엔진 신설: 공사비/토지비를 S-curve(베타분포 파라미터화)로 월분산→차입 인출연동→이자자본화→numpy_financial로 XIRR/MIRR/NPV/DSCR 산출. 단일기간 근사를 폐기하고 ARGUS급 정밀도 확보",
+   "상관 몬테카를로(Correlated MC) 격상: numpy 완전벡터화(루프 제거) + Cholesky로 분양가↔cap rate↔공사비 상관 부여 + lognormal/PERT 분포 + 출력에 P(IRR>목표)·VaR95·CVaR·토네이도 민감도 자동 → 등급을 '확률적 위험조정 등급'으로 재정의",
+   "한국형 PF 적정성 스코어: 2024.11 제도개선 기준으로 자기자본비율·DSCR·책임준공 리스크·분기 사업성등급(양호/보통/유의/부실우려)을 자동판정해 '은행제출용 PF 심사카드' 출력 — 글로벌툴엔 없는 한국 차별화",
+   "지분 워터폴 모듈: ROC→preferred return→multi-tier promote(IRR/equity-multiple hurdle) LP/GP 분배 시뮬 + 시행사 promote·LP IRR 동시 출력. PF·리츠(M15)·펀드형 투자유치 시나리오 지원",
+   "ML 기반 입력 신뢰구간: regional_pricing 고정값을 MOLIT 실거래+POI+상권 피처 ML(XGBoost) 추정치+95% 신뢰구간으로 대체하고, 그 분포를 그대로 MC 입력으로 연결 — 입력 할루시네이션 차단(propai-ai-ml 스킬 활용)",
+   "설계↔수지 양방향 최적화: AutoDesignEngine 매스(용적률·세대구성)를 SLSQP/베이지안 최적화로 수지(NPV/IRR) 목적함수에 연동 — 기존 unit_mix_optimizer를 GFA·층수·평형까지 확장한 TestFit식 site-solving",
+   "LLM 수지 내러티브 + 가정 출처 추적: FeasibilityInterpreter를 확장해 각 핵심 가정(분양가/공사비/이율)의 데이터출처·신선도·근거를 인용한 감사가능(auditable) 리포트 생성 — verify 에이전트와 연동해 비현실 가정 자동경보"
+  ],
+  "refactor": [
+   "aggregation_engine를 두 계층으로 분리: (a)정적 요약(현행), (b)신설 cashflow_engine(월단위 시계열) — NPV/IRR을 후자가 책임지게 하고 단일기간 근사는 'quick-estimate' 폴백으로만 유지",
+   "monte_carlo_engine.py의 for-loop(L59-61) 제거 → calculate_fn을 벡터화 가능한 형태(numpy array in/out)로 리팩토링하거나 모듈 계산을 순수함수 벡터연산으로 분해. 1만회를 100ms대로",
+   "v1 feasibility_service.py(구 IRR 이분탐색)와 v2 경로 이원화 정리 — IRR 로직을 신규 cashflow_engine 단일 출처로 통합해 중복·혼선 제거",
+   "finance_cost_engine를 draw-schedule 기반으로 재작성: 평면 단순이자→인출잔액×일할이자 누적, 이자자본화 분리. ModuleInput에 draw_schedule/ltv/ltc/dscr 필드 추가",
+   "ModuleInput/ModuleOutput에 시계열·확률·워터폴 필드 확장(monthly_cashflows, irr, mirr, dscr, var95, prob_target_irr, waterfall_tiers) — 스키마 변경은 feasibility_v2.py와 TS 타입 동시 갱신(propai-qa 교차검증)",
+   "regional_pricing 고정테이블을 인터페이스화해 ML 추정 provider로 교체 가능하게 추상화(전략패턴) — 테이블은 ML 미가동시 폴백",
+   "grade 판정을 profit_rate 단일축에서 다축(수익률·확률·DSCR) 복합 스코어카드로 분리, GRADE_THRESHOLDS를 설정주입식으로"
+  ],
+  "priority": "P1 (High) — 다기간 현금흐름/XIRR 엔진과 상관 MC 격상이 신뢰성·차별화의 핵심 병목. PF 적정성 스코어·워터폴은 P2, ML 입력·설계연동은 P3.",
+  "sources": [
+   "https://www.altusgroup.com/solutions/argus-developer/",
+   "https://www.altusgroup.com/solutions/argus-estatemaster/",
+   "https://www.testfit.io/product/site-solver",
+   "https://www.northspyre.com/blog/best-real-estate-development-software",
+   "https://papers.ssrn.com/sol3/papers.cfm?abstract_id=770766",
+   "https://blog.realestate.cornell.edu/2022/01/30/the-case-for-monte-carlo-simulation-in-commercial-real-estate-modeling/",
+   "https://www.researchgate.net/publication/235270495_Simulation-based_excess_return_model_for_real_estate_development",
+   "https://www.adventuresincre.com/real-estate-equity-waterfall-model/",
+   "https://www.adventuresincre.com/actual-forecast-construction-draw-schedule-with-s-curve/",
+   "https://www.procore.com/library/s-curve-modeling-construction",
+   "https://www.housecanary.com/",
+   "https://www.housecanary.com/products/canary-ai",
+   "https://www.fsc.go.kr/no010101/82272",
+   "https://assets.kpmg.com/content/dam/kpmg/kr/pdf/2024/issue-monitor/kpmg-korea-real-estate-pf-20240424.pdf",
+   "https://www.landbook.net/",
+   "https://spacewalk.tech/",
+   "https://zdnet.co.kr/view/?no=20250124091633",
+   "https://www.jpmorgan.com/insights/real-estate/investing/equity-waterfall-in-commercial-real-estate-explained"
+  ]
+ },
+ {
+  "module": "부동산 조세 (취득세·양도세·종합부동산세 + 개발 전주기 38종)",
+  "our_assessment": "강점: (1) 개발 전주기 4단계(취득 A01~10 / 공사 B / 분양 C / 양도 D) 38종 세목을 하나의 오케스트레이터로 일괄 산출하는 구조는 단순 '세금계산기' 수준의 국내 경쟁사(부동산계산기·홈택스)보다 범위가 넓다. 개발부담금(지가상승분 역산), 농지·산지전용부담금, 광역교통/상하수도 원인자부담금, 학교용지부담금까지 디벨로퍼 관점 부담금을 포함한 점이 차별적. (2) 시군구 오버라이드→시도→전국 폴백의 3단 계층 데이터 조회, 계산 메타데이터(CalculationMetadata)와 LLM 해석(TaxInterpreter 6섹션) 결합은 양호. (3) 양도세 누진 8구간 + 장기보유특별공제 표는 정확.\\n\\n치명적 한계: (1) 엔진 이원화 — app/services/tax/* (만원 단위) 와 app/services/tax/tax_ai_service.py(원 단위)가 세율·로직이 서로 다르게 중복 구현되어 단일 진실원(SSOT)이 없다. 취득세율조차 두 곳이 불일치(매트릭스는 6억/9억 구간 누진 1~3% 누락, 조정2주택 8%·비조정3주택 8% 누락, '조정2주택=12%'는 실제 3주택 세율로 오기). (2) 종합부동산세가 disposal_stage_engine에서 assessed_value×0.5%×보유연수 플랫 계산 — 공정시장가액비율(60%), 12억/9억 기본공제, 누진구간, 다주택 중과, 세부담상한(150%)을 전부 무시. tax_ai_service쪽은 구간은 있으나 공정시장가액비율·세부담상한·연령/장기보유 세액공제 누락. (3) 양도세 다주택 중과(조정 2주택 +20%p, 3주택 +30%p)와 2026-05-09까지의 한시적 중과배제 날짜 로직, 1세대1주택 거주요건(조정지역 2년) 분기가 stage engine에 없음. (4) 전 세율 하드코딩 + 법령 시행일 버전관리 부재 — 2025~2026 잦은 세법개정(지방 저가주택 중과기준 1억→2억, 종부세율 완화) 반영이 수동.",
+  "sota_summary": "글로벌 SOTA는 '세금 산출'이 아니라 '세후 의사결정 엔진'으로 진화. ARGUS Enterprise는 감가상각·부채·세금을 통합한 세후 현금흐름 DCF로 세후 IRR/NPV/Equity Multiple을 산출하고 자본구조·법인형태별 시나리오를 stress-test한다. 미국 디벨로퍼 best practice는 '대체 자본스택별 세후 현금흐름 side-by-side 시나리오 테이블'과 엔티티(개인/LLC/S-Corp/REIT)별 세부담 비교를 표준 산출물로 본다. 한국 SOTA는 택스아이(뉴아이): 930만+ 사용자 케이스를 세법 특례와 매칭하는 룰엔진으로 AI 과세유형 자동판단(특허), 양도세·상속세·증여세·취득세·보유세 시뮬레이션, 전년대비 보유세 변화 비교, 예상환급액 분석을 제공하며 국토부 창업대회 대상·KB부동산/우리은행 제휴. 즉 SOTA의 핵심은 (a)세후 IRR 통합, (b)엔티티/시나리오 최적화, (c)룰엔진 기반 과세유형 자동 판정+절세, (d)법령 버전관리·실시간 세율 갱신이다.",
+  "gaps": [
+   "종합부동산세 정밀화 부재: 공정시장가액비율(60%), 1세대1주택 12억/다주택 9억 기본공제, 누진 6구간(0.5~2.7%/0.6~6.0%, 2025완화 0.35~1.5%/0.5~4.0%), 다주택 중과, 세부담상한(150%), 고령·장기보유 세액공제 미반영 — 현재 flat 0.5%로 실세액과 수배 오차",
+   "양도세 다주택 중과 미구현: 조정대상지역 2주택 기본세율+20%p, 3주택 이상 +30%p, 2026-05-09까지 한시적 중과배제 날짜 분기, 1세대1주택 거주요건(조정 2년)·12억 비과세 안분이 stage engine에 없음",
+   "엔진 이원화로 SSOT 부재: tax/* 와 tax_ai_service 세율·단위(만원 vs 원)·로직 불일치, 취득세 매트릭스 자체 오류(6억/9억 누진 누락, 조정2주택 8% 누락, 중과율 오기)",
+   "세후 IRR 통합 부재: 38종 세액을 합산만 할 뿐 수지/ROI 엔진(/api/v2/feasibility)과 결합한 세후 현금흐름·세후 IRR/NPV가 없음 — ARGUS 핵심 기능 미보유",
+   "엔티티 구조 최적화 부재: 개인 vs 법인 vs 조합 vs 리츠/펀드 세부담 정량 비교가 LLM 텍스트로만 제시, 실제 병렬 계산 엔진 없음(택스아이/ARGUS는 정량 비교)",
+   "법령 시행일 버전관리·실시간 세율 갱신 부재: 모든 세율 하드코딩, 위택스/data.go.kr/홈택스 연동 없음, 개정 추적은 LawChangeMonitor UI만 존재(엔진 미연동)",
+   "과세유형 자동 판정 룰엔진 부재: 택스아이의 케이스 매칭(주택수·취득시점·조정지역·임대등록·일시적2주택 등 특례 자동 분기)이 없음 — 사용자가 파라미터를 직접 지정해야 함",
+   "할루시네이션/정확성 검증 미연동: tax는 verify-agent·실거래/공시가 데이터원 검증 루프가 약함(공시가격 alladdr·기준시가 API 미연동)"
+  ],
+  "innovations": [
+   "세후 통합 디시전 엔진(After-Tax Decision Engine): 38종 세금을 수지/ROI(/api/v2/feasibility)·공사비·현금흐름 타임라인에 시점별로 주입해 세후 IRR/NPV/세후 ROE를 산출. 한국 프롭테크 중 디벨로퍼 전주기 세후 IRR을 제공하는 곳은 사실상 전무 — ARGUS급 기능을 한국 세제로 재현하는 즉각적 차별화",
+   "엔티티 구조 옵티마이저: 동일 프로젝트를 개인/공동/법인/지역주택조합/리츠/PFV·부동산펀드 6구조로 병렬 세무계산(취득~분양~청산 배당까지)해 총세부담·세후수익 Top 추천. 기존 unit_mix_optimizer(SLSQP)·G2B 6엔진과 동일 패턴으로 구현 가능",
+   "법령 버전드 룰엔진(effective-dated rules): 세율·구간·특례를 (시행일,종료일) 메타 가진 데이터로 외부화하고 거래일 기준 자동 선택. 2026-05-09 양도세 중과배제 종료, 지방 저가주택 1억→2억 등 한시조항을 코드수정 없이 반영. LawChangeMonitor와 실연동",
+   "과세유형 자동판단 결정트리: 주소→PNU→공시가격(자동 용도지역 감지 auto_zoning과 동일 데이터원)+주택수·취득시점·조정지역·임대등록·일시적2주택·상생임대 특례를 분기하는 룰트리로 '입력 최소화' 자동 판정. 택스아이 특허영역을 디벨로퍼 맥락으로 차별화",
+   "절세 시나리오 What-if 시뮬레이터: 보유기간·매각시점·증여분할·법인전환·임대등록을 슬라이더로 바꿔 세액 민감도/최적 매각시점 곡선 산출(현 monte_carlo_tax_simulation 확장). '최적 매각연도' 1줄 추천",
+   "공시가격·기준시가 자동 연동: NED 토지특성/공동주택 공시가격 API를 종부세·재산세 과세표준에 직결해 사용자 수기입력 제거 + verify-agent로 산출 검증(할루시네이션 가드)",
+   "은행제출용 세무 부록 자동생성: bank_ready_report에 세후 IRR·세목별 근거(법령 조문·시행일)·민감도표를 PDF 섹션으로 추가 — PF심사 차별화"
+  ],
+  "refactor": [
+   "엔진 일원화(P1): tax_ai_service.py와 app/services/tax/* 를 단일 SSOT로 통합. 내부 계산은 원(KRW) 정수 단위로 통일하고 만원 변환은 표현계층에서만. 중복 세율표 제거",
+   "취득세 매트릭스 전면 교정(P1): 주택가액 6억/9억 누진(1/2/3%), 조정 2주택 8%·3주택 12%·법인/4주택 12%, 비조정 3주택 8%·4주택 12%, 지방 저가주택(공시 2억이하) 중과배제, 85㎡ 농특세 면제, 1세대1주택 무주택 분기 정합화",
+   "세율/구간/특례를 데이터 외부화(P1): rates.yaml 또는 DB 테이블에 (tax_code, effective_from, effective_to, bracket, rate, surcharge, cap) 스키마로 분리 — 하드코딩 상수 제거, 시행일 기준 조회 함수 도입",
+   "종부세 엔진 신설(P2): 공정시장가액비율→기본공제(주택수 분기)→누진세율→재산세 중복분 공제→세부담상한→고령/장기보유 세액공제 파이프라인을 정식 함수로. disposal의 flat 0.5% 제거",
+   "양도세 중과/특례 분기 추가(P2): 다주택 중과 가산(+20/+30%p), 한시 중과배제 날짜 로직, 1세대1주택 12억 비과세 안분+거주요건, 단기보유(1년미만 70%/2년미만 60%) 세율을 stage engine에 통합",
+   "세후 현금흐름 결합 레이어(P2): integrated_tax_engine 결과를 ProjectContext costData/feasibility에 시점 매핑하는 어댑터 추가, 세후 IRR 계산기 신설",
+   "검증·데이터원 연동(P3): 공시가격/기준시가 API 어댑터 + verify-agent 세무 룰체크(세율범위·구간연속성·합계정합) 자동 실행, _metadata에 법령 조문/시행일 필수화"
+  ],
+  "priority": "P1 (취득세 매트릭스 오류·엔진 이원화는 정확성 신뢰를 훼손하는 즉시 수정 대상; 종부세·양도세 중과 정밀화 및 세후 IRR 통합이 SOTA 추격의 핵심)",
+  "key_methods_papers": [
+   {
+    "title": "ARGUS Enterprise Calculation Manual (after-tax DCF: depreciation·debt·tax 통합 IRR/NPV)",
+    "insight": "세금을 독립 산출물이 아니라 세후 현금흐름의 한 입력으로 다뤄 세후 IRR/Equity Multiple을 내는 것이 상용 SOTA의 본질. 우리는 38종 합산에 머물러 있어 이 통합 레이어가 최우선 차별화 포인트."
+   },
+   {
+    "title": "택스아이(뉴아이) AI 과세유형 자동판단 기술특허 (930만+ 케이스×세법특례 매칭 룰엔진)",
+    "insight": "한국 양도세의 복잡성은 '계산'이 아니라 '과세유형 판정'에 있다. 케이스 결정트리+특례 매칭을 룰엔진화해 사용자 입력을 최소화하는 것이 국내 SOTA의 핵심 해자."
+   },
+   {
+    "title": "Forecasting After-Tax Cash Flow in Real Estate (Adventures in CRE)",
+    "insight": "감가상각·이자비용·세후 매각차익을 타임라인에 배치한 side-by-side 시나리오 테이블이 표준 산출물. 자본스택·엔티티별 세후 비교를 정량 표로 제공해야 디벨로퍼 의사결정에 쓰임."
+   },
+   {
+    "title": "지방세법·종합부동산세법 2025 개정(공정시장가액비율·기본공제 12억/9억·세부담상한 150%·세율 완화)",
+    "insight": "종부세는 공시가×공정시장가액비율(60%)→공제→누진→세부담상한 다단계. 우리의 flat 0.5%는 근본적으로 부정확. 시행일 버전드 데이터로 외부화 필수."
+   },
+   {
+    "title": "국토부 다주택 양도세 중과 한시배제(2022-05-10~2026-05-09) 및 취득세 중과 완화 검토",
+    "insight": "한시조항·일몰규정이 잦아 effective-dated 룰엔진이 아니면 정확성 유지 불가. 거래일 기준 자동 룰선택이 구조적 요구사항."
+   }
+  ],
+  "leading_platforms": [
+   {
+    "name": "택스아이(TAX AI / 뉴아이)",
+    "what": "양도세·상속세·증여세·취득세·보유세 AI 시뮬레이션 + 과세유형 자동판단 + 예상환급액 분석",
+    "edge": "930만+ 케이스 룰엔진 기술특허, AI 과세유형 자동판단, 전년대비 보유세 변화 비교, KB부동산·우리은행 제휴, 국토부 창업대회 대상"
+   },
+   {
+    "name": "ARGUS Enterprise (Altus)",
+    "what": "상업용 부동산 세후 DCF 밸류에이션·자산관리, 감가상각·부채·세금 통합 세후 IRR/NPV",
+    "edge": "세후 현금흐름 stress-test·민감도 분석, 자본구조·시나리오별 세후 수익 비교의 글로벌 표준"
+   },
+   {
+    "name": "부동산계산기.com / 아파트취득세계산기 / 홈택스 계산기",
+    "what": "취득세·양도세·종부세·재산세 단건 계산기(2025 지방세법 반영)",
+    "edge": "무료·접근성·국세청 공식 데이터 신뢰성. 단 디벨로퍼 전주기·세후IRR·엔티티 비교는 부재 — 우리가 범위로 추월 가능"
+   },
+   {
+    "name": "Avalara Property Tax / OpenGov",
+    "what": "재산세 컴플라이언스 자동화(고지·납부·이의신청·기한 워크플로우)",
+    "edge": "관할별 세율 DB·캘린더 자동화·AVM 기반 과표 검증 — '세율 데이터 외부화+기한관리' best practice 참고"
+   },
+   {
+    "name": "삼일PwC/대형회계법인 세무자문",
+    "what": "다주택·법인전환·리츠 구조 세무 컨설팅",
+    "edge": "엔티티 구조별 정성 자문 — 우리는 이를 정량 옵티마이저로 자동화해 차별화 가능"
+   }
+  ],
+  "sources": [
+   "https://taxai.kr/",
+   "https://taxai.kr/tax/inform/light",
+   "https://www.khan.co.kr/article/202601130855028",
+   "https://magazine.hankyung.com/business/article/202507252697b",
+   "https://www.springbord.com/blog/mastering-argus-financial-modeling-a-comprehensive-guide/",
+   "https://www.capterra.com/p/276457/ARGUS-Enterprise/",
+   "https://www.adventuresincre.com/tax-analysis-real-estate/",
+   "https://www.mgocpa.com/perspective/tax-planning-strategies-real-estate-owners/",
+   "https://www.avalara.com/us/en/products/property-tax.html",
+   "https://opengov.com/products/tax-and-revenue/property-tax-software/",
+   "https://www.pwc.com/kr/ko/insights/issue-brief/one-point-tax-05.html",
+   "https://www.hankyung.com/article/202501019868i",
+   "https://www.mstoday.co.kr/news/articleView.html?idxno=98158",
+   "https://www.molit.go.kr/policy/stable/sta_b_01.jsp",
+   "https://www.nts.go.kr/nts/cm/cntnts/cntntsView.do?mi=2312&cntntsId=7711",
+   "https://xn--989a00af8jnslv3dba.com/transfer",
+   "https://apt.calculate.kr/"
+  ]
+ },
+ {
+  "module": "ESG·탄소 (Carbon / ESG Scoring)",
+  "our_assessment": "강점: (1) 전생애 모듈 구조의 골격은 갖춤 — LCA(A1-A3 자재생산 + B6 운영), GRESB 2025 자동스코어링, BEEC/ZEB 등급, G-SEED 등급예측, 저탄소 자재 대체 시나리오, EPD 한국DB 재export, RE100/LCC 서비스, ESG interpreter(LLM 6섹션)까지 모듈이 풍부하게 분산 구현됨. (2) 한국 현지화 진지함 — 한국 전력배출계수 0.4781, G-SEED kgCO2eq/㎡ 임계값, 녹색건축물법 제12조 법적근거, 건물유형별 ㎡당 자재 원단위(아파트/오피스텔/근생) 내재. (3) GRESB 벤치마크 파일 외부화 + 캐시 refresh로 데이터 갱신 가능.\n한계(냉정): (1) LCA가 EN 15978 전체 모듈(A4-A5 운송·시공, B1-B5 사용·교체·수선, C1-C4 해체·폐기, D 재이용)을 누락 — A1-A3+B6만 산출하므로 'whole-life carbon' 미달. 영국 RICS 2nd ed/LETI 대비 반쪽. (2) 배출계수가 ICE v3.0/IPCC AR6 글로벌 평균 하드코딩 — 제품수준 EPD(KEITI 환경성적표지·EC3 동적조회) 미연동, 동일 시멘트라도 제조사·고로슬래그 치환율 반영 못함. carbon_material_db의 EF가 lca_service의 EF와 단위·값이 불일치(예: 철근 1.99 vs 1.46, EPS 3.29 단일값 등) — 두 출처의 진실원천(SSOT) 분리. (3) GRESB 스코어링이 절대임계값 프록시(energy_ratio≤0.5→15점)로 단순화 — 실제 GRESB 2025는 quintile 기반 상대점수+like-for-like+포트폴리오 가중인데 미반영, 점수가 실측치와 괴리 가능. (4) ML/예측 전무 — 전부 결정론적 원단위 곱셈. 초기설계 단계 불확실성·신뢰구간·BIM 물량 자동연동 없음. (5) 운영탄소가 grid factor 고정 50년(혹은 30년) — 전력망 탈탄소 경로(KPX 시나리오) 미반영해 과대추정. (6) 모듈 중복·분산(esg/ 루트 vs esg/lca/ vs esg/epd/ 재export)으로 유지보수 리스크.",
+  "sota_summary": "건축·부동산 탄소 SOTA는 4축으로 수렴: (1) Whole-Life Carbon 전체 EN 15978 모듈(A1-A5, B1-B7, C1-C4, D)을 RICS WLCA 2nd ed(2023)·EN 17472 기준으로 산출. 운영탄소는 그리드 탈탄소 경로를 시간가중 적용. (2) 제품수준 동적 EPD — One Click LCA(300k+ 데이터포인트, 글로벌 EPD 통합)·EC3(Building Transparency, 무료 3rd-party EPD DB)가 BIM 물량(Revit/Rhino/IFC)→자재별 실제 EPD 매칭→GWP. (3) 초기설계 의사결정 — Autodesk Forma Carbon Insights(EHDD 데이터모델, 매싱단계 embodied+operational 동시, gbXML EAM)가 설계 비용리스크 최저 시점에 탄소 피드백. (4) ML 대리모델(surrogate) — XGBoost가 구조물량/embodied carbon 예측에서 R²0.917·MAPE0.038 달성, 파라메트릭 LCA로 합성데이터 생성→ANN/RF/GBM 학습으로 시뮬레이션 없이 즉시 추정. GRESB 2025는 정적+상대(quintile) 자동스코어링·like-for-like·재생E/embodied carbon/생물다양성 신규 데이터필드 도입. 한국은 2025년 건축물에너지효율등급제+ZEB 인증제 통합, 공공건축물 ZEB 최저등급 5→4 상향, G-SEED 7개 부문 전생애 평가.",
+  "gaps": [
+   "EN 15978 전체 모듈 미구현: A4-A5(운송·시공), B1-B5(교체·수선·개보수), C1-C4(해체·폐기), D(재이용/순환경제 크레딧) 전부 누락 — RICS WLCA 2nd ed 대비 A1-A3+B6만 산출하여 whole-life 미달",
+   "제품수준 EPD 동적연동 부재: KEITI 환경성적표지(EPD) DB·EC3 API 미연동. 배출계수가 ICE v3.0/IPCC AR6 글로벌 평균 하드코딩이라 제조사별·치환율별 실제 EPD 반영 불가",
+   "배출계수 SSOT 분열: lca_service.py(철근 1.46)와 carbon_material_db.py(철근 1.99)의 EF/단위 불일치 — 동일 자재 두 값 공존으로 산출 신뢰성·감사추적성 훼손",
+   "전력망 탈탄소 경로 미반영: B6를 grid factor 0.4781 고정×50년 곱셈 — KPX/제11차 전기본 배출계수 하향경로(2030/2040 시나리오) 미적용해 운영탄소 과대추정",
+   "ML/예측·불확실성 전무: 전부 결정론적 원단위 곱. 초기설계 단계 surrogate 모델(XGBoost), 신뢰구간, BIM/IFC 물량 자동 추출 연동 없음 — 우리 플랫폼이 이미 보유한 IFC 파이프라인과 단절",
+   "GRESB 스코어링 단순화: 절대임계값 프록시이며 GRESB 2025 quintile 상대점수·like-for-like·포트폴리오 자산가중·신규 데이터필드(embodied carbon/biodiversity) 미반영",
+   "동적 EPD 기반 자재 비교·최적화 부재: 저탄소 시나리오가 콘크리트·철근 2종 고정 치환만 — One Click LCA식 자재별 대안 마켓플레이스·비용 트레이드오프(저탄소 프리미엄 vs ROI) 없음",
+   "K-택소노미·녹색금융 연계 부재: 건축물 탄소가 PF대출 녹색채권·K-택소노미 적합성 판정으로 이어지지 않음 — 한국 부동산개발 금융 맥락 미연결"
+  ],
+  "innovations": [
+   "IFC→EPD 자동매칭 whole-life 엔진: 우리가 이미 보유한 IfcGenerator/IfcToGltf 파이프라인에서 자재물량(QTO)을 자동 추출→KEITI EPD+EC3 매칭→EN 15978 전모듈(A-C-D) 산출. 경쟁사는 BIM 임포트가 별도 작업인데 우리는 설계AI 내재로 '주소입력→자동설계→자동 whole-life carbon'을 무중단 연결",
+   "한국형 그리드 탈탄소 시간가중 B6: KPX/전기본 연도별 배출계수 하향곡선을 적분해 운영탄소를 동적 산출 — Forma/One Click도 고정계수 위주라 한국시장 정밀도에서 추월. 건물 준공연도부터 60년 grid decarb path 적용",
+   "XGBoost 초기설계 surrogate + 신뢰구간: 파라메트릭 LCA로 합성데이터 생성→XGBoost(목표 R²0.9+) 학습. 매싱단계에서 즉시 embodied carbon ±신뢰구간 제공. propai-ai-ml 스킬(MLflow)로 운영. 설계 변수(층수·평형믹스·구조형식) 슬라이더에 실시간 탄소 반응",
+   "탄소→금융 브리지(K-택소노미·녹색채권): whole-life carbon + ZEB/G-SEED 등급 → K-택소노미 적합성 자동판정 → PF대출 금리우대·녹색채권 발행가능성을 bank_ready_report에 통합. 글로벌 플랫폼이 못하는 한국 녹색금융 연결이 차별화",
+   "탄소-수익 통합 최적화: 기존 unit_mix_optimizer(SLSQP)에 탄소 제약/목적함수 추가 — 저탄소 자재 프리미엄 vs 분양가/ROI를 동시 최적화하는 멀티목적(Pareto front) 솔버. '탄소 1톤 감축당 비용'과 '녹색금융 절감액' 순현가 비교",
+   "동적 EPD 자재 마켓플레이스: 자재별 실제 EPD를 GWP 오름차순 정렬, 한국 조달가능 제품(레미콘사·고로슬래그 치환율)과 단가를 연결해 설계자에게 '저탄소 대안 + 비용영향 + 조달처' 원클릭 제시",
+   "GRESB 2025 정합 재구현: quintile 상대점수 시뮬레이터 + like-for-like 추적 + 신규 데이터필드(embodied/biodiversity) 입력 — 자산운용사 대상 'GRESB 제출 전 점수 예측·갭분석' SaaS로 상품화"
+  ],
+  "refactor": [
+   "배출계수 SSOT 단일화: lca_service.py와 carbon_material_db.py의 EF를 단일 carbon_factor_registry로 통합. 출처·버전·단위·불확실성을 메타데이터로 부착(이미 있는 calculation_metadata.py 패턴 재사용), 동일자재 이중값 제거",
+   "EN 15978 모듈 인터페이스 정규화: LCAService를 module별(A1-A3/A4/A5/B/C/D) 플러그형 계산기로 재설계. 현재 A1-A3+B6 하드코딩을 모듈 레지스트리로 추상화해 점진 확장 가능하게",
+   "ESG 서비스 디렉터리 정리: esg/(루트)·esg/lca/·esg/epd/ 재export 중복 제거, 단일 패키지 구조로 통합하고 router 진입점 일원화(routers/esg.py vs app/routers/esg.py 이중화 해소)",
+   "GRESB 스코어링을 데이터드리븐으로: 절대임계값 하드코딩을 benchmark payload 기반 quintile/relative 함수로 교체, GRESB_COMPONENTS 가중치를 2025 공식 구조와 정합",
+   "EPD/grid factor 외부 데이터원 어댑터화: public_data_registry.py 패턴으로 KEITI EPD·KPX 배출계수·EC3를 fetch+캐시+freshness 검증하는 어댑터 신설(validator.py 연계로 할루시네이션 방지)",
+   "IFC 물량→LCA 자동 브리지 모듈 신설: 기존 IfcGeneratorService 산출 QTO를 calculate_material_carbon의 custom_quantities로 주입하는 어댑터 — 표준 원단위 폴백은 유지하되 실물량 우선"
+  ],
+  "key_methods_papers": [
+   {
+    "title": "RICS Whole Life Carbon Assessment for the Built Environment, 2nd edition (2023)",
+    "insight": "EN 15978·EN 17472 정합 의무원칙. Module D를 D1(자재 재이용)·D2(전력 등 유틸리티)로 세분. retrofit/fit-out 포함 — 우리가 A1-A3+B6만 하는 갭의 기준선"
+   },
+   {
+    "title": "EN 15978 / EN 15804 건축물 LCA 모듈 표준",
+    "insight": "A1-A5/B1-B7/C1-C4/D 전생애 모듈 정의. EPD(EN 15804)가 모듈별 GWP를 제품수준으로 제공 — 동적 EPD 연동의 표준 골격"
+   },
+   {
+    "title": "Predictive models of embodied carbon in building design phases (ScienceDirect, 2024)",
+    "insight": "예비설계 단계 XGBoost(건물특징+자재강도)가 R²0.917/MAPE0.038. 합성 파라메트릭 LCA 데이터로 ML 학습 — 우리 surrogate 모델 설계 직접 청사진"
+   },
+   {
+    "title": "BIM-based ML Surrogate for Energy/Carbon to support LEED (UCF 2024)",
+    "insight": "BIM→시뮬레이션 데이터셋→ML 대리모델로 반복 시뮬 제거. RF/ANN로 구조질량 예측 후 EC 산출 2단 접근 — IFC 연동 전략과 정합"
+   },
+   {
+    "title": "GRESB 2025 Real Estate Scoring Document",
+    "insight": "100점 만점, 정적+상대(quintile) 자동스코어링, like-for-like, EN1 운영효율 가산, 신규 데이터필드(renewable/embodied carbon/biodiversity). 5-star=상위20% — 우리 프록시 스코어링 교체 기준"
+   },
+   {
+    "title": "EC3 (Building Transparency) + One Click LCA EPD 생태계",
+    "insight": "무료 3rd-party EPD DB + 300k+ 데이터포인트. BIM 물량→실제 제품 EPD 매칭으로 제조사·치환율 반영 — 우리 글로벌평균 하드코딩 대비 SOTA"
+   },
+   {
+    "title": "한국 ZEB 인증제 통합(2025) + G-SEED",
+    "insight": "건축물에너지효율등급제+ZEB 통합, 공공 ZEB 최저 5→4등급 상향. G-SEED 7부문 전생애 평가 — 우리 ZEB/G-SEED 모듈의 2025 기준 갱신 필요"
+   }
+  ],
+  "leading_platforms": [
+   {
+    "name": "One Click LCA",
+    "what": "전생애 LCA+LCC, EN 15978 전모듈, BIM 연동(Revit/Rhino/IFC/Excel)",
+    "edge": "세계최대 건설제품 DB(300k+ 데이터포인트), 글로벌 EPD 통합, AI 자동매칭, 200+ 인증(LEED v5/BREEAM/Future Homes) 자동리포트"
+   },
+   {
+    "name": "EC3 (Building Transparency)",
+    "what": "무료 내재탄소 계산기, 3rd-party EPD DB",
+    "edge": "무료 개방형 EPD DB+One Click LCA 통합, BIM/견적 물량 임포트, 자재 조달단계 저탄소 의사결정 특화"
+   },
+   {
+    "name": "Autodesk Forma Carbon Insights",
+    "what": "초기설계 매싱단계 embodied+operational(total) carbon, gbXML EAM",
+    "edge": "EHDD 데이터모델, 설계 비용리스크 최저 시점 피드백, 공유 대시보드 협업, Autodesk AEC 생태계(Revit/Insight) 통합"
+   },
+   {
+    "name": "GRESB",
+    "what": "부동산 ESG 벤치마크·스코어링 표준 자체",
+    "edge": "전세계 자산운용사 사실상 표준, quintile 상대평가, 투자자 의사결정 직결 — 우리는 이걸 '제출 전 예측' 도구로 보완 가능"
+   },
+   {
+    "name": "cove.tool / Sefaira",
+    "what": "초기설계 에너지·탄소·비용 동시 최적화(autodesk/트림블)",
+    "edge": "멀티변수 파라메트릭 최적화, 비용-탄소-에너지 트레이드오프 시각화"
+   },
+   {
+    "name": "스페이스워크 (한국)",
+    "what": "AI 토지·건축 설계 자동화(랜드북)",
+    "edge": "한국 필지·법규 기반 자동설계 — 탄소 특화는 아니나 우리의 '설계AI→탄소' 자동연결 모델의 국내 벤치마크/경쟁 포인트"
+   },
+   {
+    "name": "한국 KEITI 환경성적표지(EPD) / KCL",
+    "what": "국가 EPD 인증·제품 탄소 DB",
+    "edge": "한국 조달가능 자재의 공식 제품수준 EPD — 우리가 글로벌평균 대신 연동하면 국내 정밀도에서 글로벌 플랫폼 추월 가능"
+   }
+  ],
+  "priority": "P1 (High) — 탄소가 PF녹색금융·GRESB·ZEB의무화로 한국시장 의사결정에 직결되며, 우리의 IFC/설계AI 자산과 결합 시 가장 큰 차별화 레버리지를 가짐",
+  "sources": [
+   "https://www.buildingtransparency.org/tools/ec3/",
+   "https://oneclicklca.com/en-us/resources/articles/building-lca-software",
+   "https://oneclicklca.com/",
+   "https://documents.gresb.com/generated_files/real_estate/2025/real_estate/scoring_document/complete.html",
+   "https://www.gresb.com/real-estate-assessment/",
+   "https://sigearth.com/how-2025-gresb-updates-shaped-scores-and-whats-next/",
+   "https://zeb.energy.or.kr/",
+   "https://www.gseed.or.kr/",
+   "https://www.energy.or.kr/front/conts/105002002003000.do",
+   "https://www.rics.org/profession-standards/rics-standards-and-guidance/sector-standards/construction-standards/whole-life-carbon-assessment",
+   "https://www.bcis.co.uk/insight/rics-whole-life-carbon-assessment-standard-how-does-it-support-the-industry/",
+   "https://blogs.autodesk.com/forma/2024/04/02/embodied-carbon-analysis/",
+   "https://www.autodesk.com/products/forma-carbon-insights/overview",
+   "https://www.sciencedirect.com/science/article/abs/pii/S0360132324004372",
+   "https://stars.library.ucf.edu/etd2024/475/",
+   "https://www.sciencedirect.com/science/article/pii/S0378778826004226"
+  ]
+ },
+ {
+  "module": "시장분석·AVM (Market Analysis & Automated Valuation)",
+  "our_assessment": "강점: (1) 실데이터 파이프라인이 실재한다 — MOLIT apis.data.go.kr 실거래(아파트/연립/오피스텔/단독 유형별), nearby-map 359건 단일출처 통합, 평당가 통계, 월별 차트. (2) 시장보고서 PDF/PPT 자동생성(reportlab/python-pptx)과 AI 내러티브, 면책고지 일관. (3) AVM이 IDW(역거리 가중)+ML 앙상블 구조를 갖추고 MLflow 모델 로딩 훅까지 설계됨.\n\n치명적 한계: (1) AVM의 R²=0.94는 하드코딩 상수다(avm_service.py:136). MLflow에 등록 모델이 없으면 _load_model이 '학습되지 않은' XGBRegressor를 생성하고, estimate_value는 학습 안 된 모델 예측 또는 IDW로 폴백한다 → 실제로는 IDW 단순가중평균이 산출되는데 R²0.94를 표기하는 할루시네이션 위험. (2) ML+IDW 0.6/0.4 가중치가 고정 상수 — 데이터 밀도·신뢰도와 무관한 블렌딩. (3) comparables를 호출자가 넘겨줘야 함 — 비교사례 자동선정(공간·시점·물건유형 매칭) 로직 부재. (4) 신뢰구간/예측불확실성(FSD·confidence score) 전혀 없음 — 기관급 AVM의 필수요소. (5) conversational_market_ai는 LLM이 아니라 정규식 키워드 매칭(시/구 15개 하드코딩 lawd_cd) — 진짜 NL2SQL/tool-calling 에이전트가 아님. (6) 토지·빌라·상가 등 한국 비표준 물건(밸류맵·빅밸류의 핵심 시장) 미대응. (7) 시계열 가격지수(반복매매·헤도닉) 부재로 '시점보정'이 없음 — 6개월치 단순평균은 추세왜곡.",
+  "sota_summary": "2025 SOTA AVM은 (1) Gradient Boosting(XGBoost/LightGBM/CatBoost)을 핵심 학습기로, 헤도닉+공간계량(GWR/공간자기상관)을 결합한 하이브리드. (2) 멀티모달 — 매물 텍스트(NLP), 위성/스트리트뷰 이미지(상위10 피처 중 절반이 이미지 피처라는 PLOS One 결과), LLM으로 비정형 정보 통합. (3) 불확실성 정량화 필수 — Spatially/Locally Weighted Conformal Prediction으로 분포가정 없이 커버리지 보장된 신뢰구간 산출(공간 이질성·이분산 대응). (4) 기관급(HouseCanary/CoreLogic/Cotality)은 cascade/ensemble — 여러 모델을 조건부로 선택·블렌딩하고 confidence score를 함께 출력, 아웃라이어 자동제거, AI 기반 물건상태 감지. (5) 검증은 out-of-time/out-of-area, 데이터 누수 차단, PE10(10%이내 비율)·median APE·FSD 등 표준 성능지표(IAAO/유럽 EAA 가이드라인). (6) 가격지수는 반복매매(Case-Shiller류)+공간강화 헤도닉 결합, 데이터 희소시 spatio-temporal regularization+PCA. (7) 정확도 벤치마크: Zillow on-market 1.74% / off-market 7.20% median error.",
+  "gaps": [
+   "AVM 모델이 실제로 학습되지 않음 — MLflow 등록모델 부재시 미학습 XGBRegressor로 폴백, R²0.94는 검증되지 않은 하드코딩 상수(avm_service.py:136). 실제 학습 데이터셋·재학습 DAG의 라이브 가동 증거 없음",
+   "신뢰구간/불확실성 정량화 전무 — SOTA의 Conformal Prediction(spatially weighted) 미적용. 기관급 AVM은 confidence score가 필수인데 우리는 점추정만 반환",
+   "비교사례 자동선정(comp selection) 로직 부재 — comparables를 외부에서 주입받음. 공간·시점·물건유형·면적·층 유사도 기반 자동 매칭 없음",
+   "시점보정(time adjustment)·가격지수 부재 — 반복매매지수/공간헤도닉 없이 6개월 단순평균 → 상승/하락장에서 체계적 편향",
+   "멀티모달 부재 — 위성/로드뷰 이미지, 매물 텍스트 NLP, 입지 POI를 가격에 반영하는 피처엔지니어링 없음(SOTA 핵심 차별점)",
+   "conversational_market_ai가 LLM tool-calling이 아닌 정규식 — 지역 15개 하드코딩, NL2SQL/function-calling 미구현(Deepblocks ChatDB 벤치마크 미달)",
+   "물건유형 커버리지 협소 — 토지/빌라/상가/단독(밸류맵·빅밸류의 3세대 AVM 핵심영역) 모델 부재. 한국은 비아파트 시세산정이 진짜 난제",
+   "표준 성능지표·모델 가버넌스 부재 — PE10/median APE/FSD/out-of-time 검증 리포트, 모델 카드, 드리프트 모니터링 없음",
+   "공간자기상관 미반영 — IDW는 단순 거리역수, GWR/Kriging 등 공간계량 미적용으로 국지적 가격패턴 손실"
+  ],
+  "innovations": [
+   "한국형 멀티모달 토지·빌라 AVM: 국토부 실거래 + VWorld 지적도(접도·형상·용도지역) + 표준지공시지가 + NED 토지특성 + 카카오/구글 로드뷰 이미지 CNN 피처 + 단지/매물 텍스트 임베딩을 LightGBM/CatBoost로 결합. 밸류맵 '3세대 AVM' 대비 비정형(이미지·텍스트) 통합으로 차별화",
+   "Spatially Weighted Conformal Prediction 신뢰구간을 모든 시세에 부착(예: '평당 4,200만원, 90% 구간 3,900~4,500, FSD 7%'). 한국 프롭테크 어디도 분포가정 없는 보장된 신뢰구간을 안 줌 → PF대출 심사·은행제출 보고서 신뢰도 압도",
+   "자동 비교사례 추천 엔진: 공간(haversine)+시점(반복매매 지수로 보정)+물건유사도(면적/층/준공년/브랜드) 가중 점수로 Top-N comp를 자동선정·근거표시. 감정평가사식 '사정보정' 설명을 LLM이 내러티브화",
+   "데이터 밀도 적응형 블렌딩: 고정 0.6/0.4 대신 비교사례 수·공간밀도·시점신선도로 ML/IDW/헤도닉 가중을 동적 산출(cascade AVM). 데이터 희소 지방(파주·평창)에서 IDW↑, 밀집 강남에서 ML↑",
+   "진짜 LLM tool-calling 대화형 분석: Claude function-calling으로 MOLIT/공시지가/수급/인구 API를 동적 호출하고 결과를 차트+내러티브로. 정규식 제거, 임의 지역·복합질의('강남 vs 분당 전용84 6개월 추이') 대응 → Deepblocks ChatDB 추월",
+   "분양가 역산·수지 직결 AVM: 시세→적정 분양가→수지/ROI/PF 한도를 한 흐름으로 연결(기존 수지·G2B 엔진과 결합). 평가가 아니라 '개발 의사결정'으로 확장 — HouseCanary/CoreLogic이 안 하는 개발사 관점",
+   "한국형 가격지수 자체 산출: 반복매매+공간강화 헤도닉으로 동/단지 단위 PropAI 시세지수 발행, 데이터 희소시 spatio-temporal regularization+PCA. 시계열 보고서·시장타이밍 신호로 차별화"
+  ],
+  "refactor": [
+   "avm_service.py: 하드코딩 R²0.94 제거 → 실제 검증지표를 모델 메타데이터(MLflow run metrics)에서 동적 로딩. 미학습 폴백 시 model_type='IDW_only'로 정직하게 표기하고 validation_r2=None 반환(할루시네이션 차단)",
+   "AVM 학습 파이프라인 실가동: dag_avm_retrain.py를 MOLIT 누적 실거래로 out-of-time split 학습→MLflow 등록→staging 승격. 학습 안 된 XGBRegressor 인스턴스 즉시 predict 경로 제거",
+   "comp 자동선정 서비스 신설(comp_selector.py): nearby-map 데이터원을 재사용해 features만 받으면 comparables를 서버가 자동 구성 — 현재 호출자 의존 인터페이스 개선",
+   "conversational_market_ai를 LLM tool-calling 아키텍처로 재작성: 정규식 _parse_intent/_extract_params 제거, get_llm function-calling으로 도구 디스패치. lawd_cd 하드코딩 15개를 행정동코드 전체 룩업/지오코딩으로 대체",
+   "불확실성 모듈 분리(conformal_avm.py): 학습 잔차로 캘리브레이션, 공간가중 비적합성 점수로 구간 산출 — estimate_value 응답에 confidence_interval/fsd 추가",
+   "시점보정 유틸 도입: 단순평균 대신 PropAI 가격지수로 과거 거래를 평가시점으로 보정 후 통계 산출(market_report_service _per_pyeong_stat 개선)",
+   "AVM 성능 가버넌스: PE10/median APE/FSD 자동 산출 테스트(test_avm_mape.py 확장)와 모델카드·드리프트 모니터링 추가, IAAO 지표 표준 채택"
+  ],
+  "priority": "P1 (High) — AVM은 수지·분양가·PF·은행보고서 전 모듈의 단일 진실원이며, 현재 검증 안 된 R²0.94 표기는 할루시네이션·신뢰성 리스크가 가장 큼. 학습 실가동+신뢰구간+comp자동선정이 최우선.",
+  "key_methods_papers": [
+   {
+    "title": "Towards a Better Uncertainty Quantification in Automated Valuation Models (J. Real Estate Finance & Economics, 2024; SSRN 4706470)",
+    "insight": "AVM 점추정에 conformal 캘리브레이션으로 보장 커버리지 신뢰구간을 부여 — 우리 estimate_value에 즉시 적용할 confidence score 설계 청사진"
+   },
+   {
+    "title": "Uncertainty Quantification in AVMs with Spatially/Locally Weighted Conformal Prediction (arXiv 2312.06531; Springer IJDSA 2025)",
+    "insight": "공간 이웃에 비적합성 점수를 가중해 국지 공간패턴에 적응하는 구간 — 한국처럼 지역별 가격편차 큰 시장에 최적, IDW만 쓰는 우리 구조를 공간계량으로 승급"
+   },
+   {
+    "title": "Real estate valuation with multi-source image fusion and enhanced ML pipeline (PLOS One 2025, PMC12088074)",
+    "insight": "상위10 유의 피처 중 절반이 이미지 피처 — 로드뷰/위성 CNN 피처를 넣으면 정확도 큰 폭 개선, 멀티모달 차별화 근거"
+   },
+   {
+    "title": "Incorporating Large Language Models in Automated Real Estate Valuation (Taylor&Francis 2025)",
+    "insight": "매물 텍스트를 XGBoost에 융합 — 단지설명·매물공고 임베딩을 피처화하는 한국형 적용 가능"
+   },
+   {
+    "title": "Combining Repeat Sales and Spatially Enhanced Hedonic Regressions (Springer JREFE 2020)",
+    "insight": "반복매매+공간헤도닉 결합으로 시점보정 가격지수 — 우리 6개월 단순평균을 대체할 가격지수 방법론"
+   },
+   {
+    "title": "Boosted Tree Ensembles for AI-AVM (PMC8568682) / Global vs Locally Weighted AVM (Springer AOR)",
+    "insight": "부스팅 앙상블+국지가중 비교 — 데이터밀도 적응형 cascade 블렌딩의 학술 근거(고정0.6/0.4 대체)"
+   },
+   {
+    "title": "IAAO Standard on AVMs / An Exposition of AVM Performance Metrics (Taylor&Francis)",
+    "insight": "PE10·median APE·FSD·COD 등 표준 성능지표와 out-of-time/out-of-area 검증 규약 — 모델 가버넌스 도입 기준"
+   }
+  ],
+  "leading_platforms": [
+   {
+    "name": "HouseCanary (Cotality 연계)",
+    "what": "40년 데이터 기반 B2B AVM, 가치+미래변동 예측",
+    "edge": "모든 추정에 측정가능한 confidence score/구간, 멀티모델 자동 아웃라이어 제거, AI 물건상태 감지 — 우리는 신뢰구간 0"
+   },
+   {
+    "name": "CoreLogic/Cotality",
+    "what": "기관 표준 cascade AVM, 대량 물건 평가",
+    "edge": "여러 모델 조건부 선택·블렌딩, 규제 가버넌스(소비자 고지)·드리프트 관리"
+   },
+   {
+    "name": "Zillow Zestimate",
+    "what": "전국 소비자 AVM",
+    "edge": "on-market median error 1.74%로 공개 벤치마크 투명성, 지속 재학습 — 우리는 검증지표 자체가 비공개·하드코딩"
+   },
+   {
+    "name": "밸류맵(Valuemap)",
+    "what": "토지·건물·상가·주택 지도기반 AVM, KCB 부동산채권 자동평가 공급",
+    "edge": "국내 유일 3세대 AVM(개별토지 대량평가), 비아파트 토지/상가 강점 — 우리의 최대 한국 경쟁자"
+   },
+   {
+    "name": "빅밸류(BigValue/로빅)",
+    "what": "연립·다세대 빌라 시세 AVM",
+    "edge": "금융위 혁신금융서비스 지정, 비아파트 담보가치 산정 금융권 채택 — 우리 빌라 모델 부재 영역"
+   },
+   {
+    "name": "부동산플래닛",
+    "what": "전국 실거래·노후도·토지/건물 통합 시세",
+    "edge": "전국 필지단위 시각화·노후도 분석 데이터 폭"
+   },
+   {
+    "name": "Deepblocks",
+    "what": "개발 타당성+대화형 시장분석(ChatDB)",
+    "edge": "진짜 자연어→DB질의 분석 — 우리 conversational AI(정규식)가 추격해야 할 기준선"
+   },
+   {
+    "name": "스페이스워크(랜드북)",
+    "what": "AI 토지 시세·최적 건축 추천",
+    "edge": "AVM을 설계/사업성으로 연결 — 우리가 수지·G2B와 결합해 추월 가능한 접점"
+   }
+  ],
+  "sources": [
+   "https://link.springer.com/article/10.1007/s11146-024-10002-7",
+   "https://papers.ssrn.com/sol3/papers.cfm?abstract_id=4706470",
+   "https://arxiv.org/html/2312.06531v2",
+   "https://link.springer.com/article/10.1007/s41060-025-00862-4",
+   "https://journals.plos.org/plosone/article?id=10.1371/journal.pone.0321951",
+   "https://pmc.ncbi.nlm.nih.gov/articles/PMC12088074/",
+   "https://www.tandfonline.com/doi/full/10.1080/08965803.2025.2587313",
+   "https://link.springer.com/article/10.1007/s11146-019-09723-x",
+   "https://pmc.ncbi.nlm.nih.gov/articles/PMC8568682/",
+   "https://link.springer.com/article/10.1007/s10479-020-03556-1",
+   "https://journals.plos.org/plosone/article?id=10.1371/journal.pone.0318701",
+   "https://www.housecanary.com/blog/automated-valuation-model",
+   "https://www.cotality.com/legal/avm-consumer-assistance",
+   "https://www.zillow.com/zestimate/",
+   "https://www.valueupmap.com/tech",
+   "https://www.unicornfactory.co.kr/article/2024092309554891288",
+   "https://www.kapanet.or.kr/kapawebzine/data/138/sub/sub2_01.html",
+   "https://www.tandfonline.com/doi/full/10.1080/15214842.2020.1757352",
+   "https://www.brookings.edu/wp-content/uploads/2023/10/BR-AVM_report_Finalx2.pdf"
+  ]
+ },
+ {
+  "module": "인허가 자동화 (Permit / Entitlement Automation)",
+  "our_assessment": "강점: (1) 한국 법체계 정합성이 높다 — 국토계획법 시행령 제84조(둘 이상 용도지역 가중평균 용적률), 제46조(기부채납 인센티브), 건축법 제77조의4(결합건축) 등 실제 조문을 프롬프트·규칙에 반영. (2) LLM 실패 시 규칙기반 graceful fallback 일관 적용(permit_analysis_service, permit_interpreter, far_incentive_calculator 모두). (3) AutoZoning→Ordinance→상위법령→LLM해석으로 데이터 파이프라인이 연결되어 있고 다필지 통합개발 용적률 산정까지 커버. (4) GROUNDING_RULE로 할루시네이션 가드. (5) Top3 자동추천 파이프라인(permit_validator)과 결합되어 사업모델 추천과 유기 연동.\n\n한계(냉정): (1) 핵심 판정 로직이 LLM 자유생성(JSON)에 의존 — 동일 입력에 비결정적 출력. 세계 SOTA(Archistar)는 '결정적 룰엔진 + CV/ML 보조' 하이브리드로 hallucination/variance 0을 보장하는데, 우리는 score 0-100을 LLM이 임의 산출. (2) ZONE_PERMIT_MATRIX가 하드코딩 19개 용도지역×고정 M코드 매트릭스 — 국토계획법 별표(용도지역별 건축 가능 건축물)의 실제 '조례 위임' 구조를 반영 못함. 지자체 도시계획조례 차이를 흡수 못하고 부분문자열 매칭(`key in zone_type`) 오탐 위험. (3) 도면(CAD/BIM/IFC) 기반 정량 컴플라이언스 체크 부재 — 일조권 사선제한, 인동거리, 대지안의공지, 주차대수, 피난계단 등 '계산 가능한' 규정을 도면에서 검증하지 않음(텍스트 분석에 머묾). (4) 법규를 machine-readable rule로 구조화한 자산이 없음(RASE/IDS 미적용) — 법 개정 시 프롬프트 수동 수정. (5) 세움터(EAIS) 실제 인허가 제출 워크플로 미연동 — 분석은 하지만 제출/사전검토 자동화 루프 없음. (6) 인허가 소요기간·리스크가 LLM 추정 문자열일 뿐 과거 처리이력 데이터 기반이 아님.",
+  "sota_summary": "세계 SOTA는 '하이브리드 결정적 컴플라이언스 엔진'이 핵심이다. Archistar AI PreCheck/CodeComply는 ① 법규를 machine-readable 룰로 구조화(ICC SMARTcodes, RASE 마크업: Requirement/Applicability/Selection/Exception)하고 ② Computer Vision으로 CAD/BIM/PDF 도면에서 객체·치수를 추출해 ③ 결정적 룰엔진으로 pass/fail 판정 + 어떤 조문이 왜 걸렸는지 auditable 리포트를 생성한다. LLM/생성형은 자유판정이 아니라 법문→룰 변환·설명·보조에만 쓴다(hallucination 0 보장). 학술 SOTA는 NLP→logic 자동변환(Zhang&El-Gohary 의미파싱+CFG, 정밀도 93%+), RASE+IDS(openBIM IDS 스키마) 정합, 그리고 규제QA에서 KG+RAG 하이브리드(GraphCompliance, RAGulating: 규제 triplet 지식그래프+다중에이전트로 scope/exception 다홉 추론·검증가능성 확보)가 주류다. 상용 entitlement 쪽은 TestFit/Forma/Deepblocks가 zoning profile(FAR·DU/acre·setback·parking)을 코드화해 generative하게 수천 안을 탐색하고 density bonus/FAR offset 잔여용량까지 발굴(Deepblocks 1,640만 필지 디지털화). 정부측은 Honolulu·Seattle이 AI 사전심사로 심사기간 6개월→수일, first-submission 품질 90%, 심사 사이클 최대 55% 단축을 달성.",
+  "gaps": [
+   "결정적 룰엔진 부재: 핵심 인허가 판정(가능/불가, score)을 LLM 자유생성에 의존 → 비결정성·검증불가. SOTA(Archistar/CodeComply)는 deterministic rules + ML 보조로 동일입력 동일출력 보장",
+   "Machine-readable 법규 자산 부재: RASE(Requirement/Applicability/Selection/Exception) 마크업·IDS 스키마 같은 구조화 룰셋이 없어 법 개정 시 프롬프트 수동 수정, 조문 단위 추적·감사 불가",
+   "도면 기반 정량 컴플라이언스 미구현: 일조사선·인동거리·대지안의공지·주차대수·피난거리 등 IFC/BIM에서 계산 가능한 규정을 CAD/BIM과 연계 검증하지 않음(우리는 IFC 생성 자산이 있는데 컴플라이언스 체크에 미활용)",
+   "용도지역 허용용도 매트릭스가 하드코딩+부분문자열 매칭: 국토계획법 별표의 '조례 위임' 구조와 지자체 도시계획조례 편차를 반영 못함, 오탐 위험",
+   "지식그래프+Graph RAG 미적용: 상위법→도시계획→조례→개별규제의 계층·예외(scope/exception) 다홉 추론을 LLM 단발 호출로 처리 → SOTA 대비 verifiability·multi-hop 추론 부족",
+   "세움터(EAIS) 인허가 제출/사전검토 워크플로 미연동: 분석은 하되 실제 제출 패키지 자동생성·접수 루프 없음(permit_package_service 존재하나 EAIS 직결 아님)",
+   "인허가 소요기간·인용/반려 확률이 데이터 기반이 아님: 지자체별 과거 처리이력·심의결과 코퍼스 부재, LLM 추정 문자열에 그침",
+   "first-submission quality 측정·개선 루프 부재: SOTA는 사전검사로 1차통과율 90% 달성, 우리는 정량 KPI·피드백 학습 없음"
+  ],
+  "innovations": [
+   "하이브리드 결정적 룰엔진(한국판 RASE): 국토계획법 별표·건축법·지자체 도시계획조례를 RASE+IDS 구조 JSON 룰셋으로 인코딩하고, 정량규정(건폐율·용적률·일조사선·인동거리·주차·대지안의공지)은 deterministic 계산으로 pass/fail, 정성규정만 LLM 보조. 각 판정에 '조문 단서'를 부착해 Archistar식 auditable 리포트 생성 — 비결정성 제거가 우리 신뢰도의 차별점",
+   "IFC/BIM 직결 자동 컴플라이언스 체크: 우리는 이미 IfcGeneratorService(IFC4)+glTF 풀스택 자산 보유 → AutoDesignEngine 매스/IFC에서 객체·치수를 추출해 일조사선·인동거리·주차대수·피난계단을 도면 위에서 정량 검증하고 위반부위를 3D로 하이라이트. 한국 SOTA(스페이스워크·랜드북도 규모검토는 하나 법규 도면검증·3D 위반표시는 약함) 추월 포인트",
+   "용적률 인센티브 최대화 솔버(Deepblocks FAR-offset의 한국화): 기부채납·지구단위계획·결합건축·특별건축구역·역세권/모아주택·종상향을 의사결정변수로 두고 '잔여 용적률 용량'과 인허가 난이도를 동시 최적화. 이미 보유한 far_incentive_calculator·far_optimization_simulator·development_type_analyzer를 단일 솔버로 통합",
+   "규제 계층 Graph RAG: 상위법령→도시·군관리계획→지구단위계획→조례→개별규제를 triplet 지식그래프로 구축(GraphCompliance/RAGulating 기법), scope/exception 다홉 추론으로 '이 부지에 실제 적용되는 한도'를 출처 추적가능하게 도출. 우리 regulation RAG(20+조문)를 KG로 승격",
+   "세움터(EAIS) 사전검토→제출 자동화 루프: 컴플라이언스 통과안을 세움터 제출 도서 형식으로 자동 패키징하고 1차통과율(first-submission quality) KPI를 트래킹·학습. Honolulu/Seattle 정부 사례를 한국 인허가청 대상 B2G로 확장",
+   "지자체별 인허가 처리이력 코퍼스 기반 기간/인용확률 예측: 세움터 공개 인허가 통계+지자체 심의결과로 ML(생존분석/그래디언트부스팅) 학습해 소요기간·반려확률을 데이터 근거로 제시(현 LLM 추정 대체)"
+  ],
+  "refactor": [
+   "판정-해석 책임 분리: permit_validator(결정적 규칙)와 permit_analysis_service/permit_interpreter(LLM 해석)를 명확히 계층화. score·가능/불가 등 '판정'은 결정적 엔진으로 이관하고 LLM은 설명·전략·예외분석만 담당",
+   "ZONE_PERMIT_MATRIX를 데이터화: 하드코딩 매트릭스를 국토계획법 별표 기반 구조화 룰셋(용도지역×건축물용도, 조례 위임 플래그)으로 외부화하고 부분문자열 매칭 제거(정규화된 zone_code 키로 정합)",
+   "법규 룰셋 단일 소스화: 건축법·국토계획법·조례 한도를 RASE/IDS 형식 룰 레지스트리로 통합하고 building_code_rules.py·regulation_service·far_incentive를 이 레지스트리 참조로 리팩토링(법 개정 시 데이터만 수정)",
+   "용적률 산정 로직 통합: _blended_far·far_incentive_calculator·far_optimization_simulator에 흩어진 용적률 계산을 단일 FAR 엔진으로 합치고 LLM은 검증·서술만",
+   "IFC 컴플라이언스 어댑터 신설: 기존 IfcGeneratorService 산출물을 입력받아 정량 규정을 체크하는 compliance_check(ifc)→violations 모듈을 zoning/permit 서비스에 연결",
+   "규제 RAG를 KG-RAG로 승격: regulation triplet 스키마·Qdrant+그래프 인덱스 정비, multi-hop 검색 인터페이스 표준화",
+   "출력 스키마에 audit_trail/legal_citation 필수화: 모든 판정에 조문ID·근거값·계산식·데이터출처(public_data_registry 연동)를 첨부해 검증가능성 표준 적용"
+  ],
+  "priority": "P1 (High) — 결정적 룰엔진+IFC 컴플라이언스 체크가 신뢰도/차별화의 핵심이며 우리 기존 IFC 자산으로 단기 추월 가능",
+  "key_methods_papers": [
+   {
+    "title": "ICC SMARTcodes + RASE methodology (Requirement/Applicability/Selection/Exception)",
+    "insight": "법문을 RASE 4요소로 마크업해 machine-readable 룰로 변환하는 산업표준. IDS(openBIM Information Delivery Spec) 스키마와 정합 가능 → 우리 법규 룰셋 구조화의 표준 채택안"
+   },
+   {
+    "title": "Zhang & El-Gohary, NLP+logic 기반 건축법 자동 추출/BIM 정합",
+    "insight": "의미파싱+논리추론으로 법문에서 요구사항 자동추출, 구문·의미요소 정밀도 93%+. 우리 법규→룰 자동변환 파이프라인의 학술 레퍼런스"
+   },
+   {
+    "title": "NLP+Context-Free Grammar 규칙 해석(자동 pseudocode 변환)",
+    "insight": "딥러닝+CFG로 규제 룰을 pseudocode로 자동변환해 일반성·해석가능성 확보 → 결정적 룰엔진 자동 구축 기법"
+   },
+   {
+    "title": "GraphCompliance / RAGulating Compliance (규제 KG + 다중에이전트 RAG)",
+    "insight": "규제 triplet 지식그래프로 scope/exception 다홉 추론, RAG로 출처 추적·할루시네이션 억제 → 상위법→조례 계층 추론 고도화 설계"
+   },
+   {
+    "title": "Fine-tuning LLM for building code compliance + RAG (ScienceDirect 2025)",
+    "insight": "외부 code knowledge base로 RAG 그라운딩 시 비-RAG 대비 CodeBERTScore 향상 → 우리 GROUNDING_RULE을 RAG 코드베이스 그라운딩으로 강화"
+   },
+   {
+    "title": "Archistar AI PreCheck 아키텍처(CV+ML+deterministic rules)",
+    "insight": "생성형은 변환·설명에만, 판정은 결정적 룰로 → hallucination/variance 0, 심사 사이클 55%↓·1차통과율 90% 달성. 우리 판정-해석 분리 리팩토링의 청사진"
+   }
+  ],
+  "leading_platforms": [
+   {
+    "name": "Archistar (AI PreCheck) / CodeComply.ai",
+    "what": "지자체·설계자용 AI 도면 사전검토(CAD/BIM/PDF→코드·존ing 자동검증, pass/fail)",
+    "edge": "CV+ML+결정적 룰엔진 하이브리드로 hallucination 0, 조문 단위 auditable 리포트, 심사 55%↓·1차통과율 90%"
+   },
+   {
+    "name": "TestFit (Site Solver/Urban Planner)",
+    "what": "zoning profile(FAR·DU/acre·setback·parking) 코드화→generative 사이트 배치 수천안 탐색",
+    "edge": "pro forma+설계의도 동시 최적화, 지자체/정부 솔루션까지 확장"
+   },
+   {
+    "name": "Autodesk Forma (구 Spacemaker)",
+    "what": "클라우드 생성형 도시/부지 설계, Revit 워크플로 정합",
+    "edge": "환경시뮬(일조·바람·소음)+생성설계를 BIM 파이프라인에 직결"
+   },
+   {
+    "name": "Deepblocks",
+    "what": "zoning 데이터+금융모델 결합 개발 타당성",
+    "edge": "1,640만 필지 zoning 디지털화, FAR offset 최적화로 간과된 용적 용량 발굴"
+   },
+   {
+    "name": "세움터/EAIS (한국부동산원·국토부)",
+    "what": "전국 건축 인허가 표준 전자행정시스템(허가→착공→사용승인→대장)",
+    "edge": "국가 인허가 제출 단일창구(처리 60일→9.3일). 우리가 제출 자동화로 연동해야 할 사실상 표준 채널"
+   },
+   {
+    "name": "스페이스워크 랜드북 / 랜드북 아키텍처",
+    "what": "AI 토지가치·건축 규모검토·추정수익 시뮬(지번 선택→평형·세대·층수·용적률 입력)",
+    "edge": "한국 필지/실거래 빅데이터 기반 규모검토 자동화. 단 법규 도면 정량검증·3D 위반표시는 약함=우리 추월 여지"
+   },
+   {
+    "name": "밸류맵/디스코/부동산플래닛",
+    "what": "실거래·토지 정보 플랫폼(용도지역·공시지가·실거래 시각화)",
+    "edge": "필지 단위 데이터 커버리지·UX. 인허가 가능성 판정 깊이는 제한적"
+   }
+  ],
+  "sources": [
+   "https://www.archistar.ai/aiprecheck/",
+   "https://www.archistar.ai/blog/ai-for-building-code-compliance/",
+   "https://www.archistar.ai/blog/digital-transformation-of-building-codes/",
+   "https://codecomply.ai/",
+   "https://www.testfit.io/product/site-solver",
+   "https://www.testfit.io/solutions/municipalities",
+   "https://archiwise.ai/solutions/feasibility-analysis/",
+   "https://datagrid.com/blog/ai-automate-zoning-permit-compliance",
+   "https://www.theaiconsultingnetwork.com/blog/ai-automated-zoning-compliance-permitting-cre-2026",
+   "https://itc.scix.net/pdfs/w78-2024-paper_21.pdf",
+   "https://par.nsf.gov/servlets/purl/10347911",
+   "https://www.mdpi.com/2075-5309/15/15/2633",
+   "https://arxiv.org/html/2510.26309v1",
+   "https://arxiv.org/pdf/2508.09893",
+   "https://47billion.com/blog/graph-rag-for-legal-reasoning-multi-hop-knowledge-graphs-llms/",
+   "https://www.sciencedirect.com/science/article/abs/pii/S1474034625005695",
+   "https://www.sciencedirect.com/science/article/abs/pii/S0166361522001439",
+   "https://www.eais.go.kr/",
+   "https://thevc.kr/spacewalk",
+   "https://kiss.kstudy.com/Detail/Ar?key=3770562"
+  ]
+ },
+ {
+  "module": "등기·권리분석 (Real Estate Registry & Rights Analysis)",
+  "our_assessment": "강점: (1) 공급자 추상화가 견고하다 — CODEF/apick/Tilko/커스텀 어댑터를 env로 전환하며, CODEF의 2-way(continue2Way, CF-03002) 추가인증·전자선납금·RSA(PKCS1v15) 비밀번호 암호화·집합건물 realtyType/dong/ho까지 실제 발급 플로우를 구현했다. (2) 비용·지연 대응이 현실적 — CODEF 발급이 40~50s/유료라는 점을 인지하고 인메모리(6h)+DB영속(7d) 정규화 캐시, 비동기 job 제출+폴링, 토지정보 조회와 등기조회의 asyncio.gather 병렬화를 갖췄다. (3) 등기부 외 공부(VWorld/NED 토지특성: 지목·면적·공시지가·용도지역·소유구분)를 등기와 합성하고, 토지조서 다필지 엑셀 입출력/집계(사유지·국공유지·동의율·보상비)가 실무적이다. (4) GROUNDING_RULE로 할루시네이션을 억제하고 _derive_ownership으로 공동/단독 소유형태를 파싱 폴백한다.\n한계(냉정히): (1) 권리분석이 LLM 프리텍스트 단건 추론 1패스에 전적으로 의존한다 — CODEF의 구조화 JSON(resRegistrationSumList/resRegistrationHisList)을 단순 문자열로 평탄화(_registry_text_from_codef)해 LLM에 넘기므로, 접수번호·순위번호·일자·금액의 결정론적 보존이 없다. (2) 권리분석의 핵심인 '말소기준권리 산정 → 선순위/후순위 인수·소멸 판정 → 임차인 대항력·배당순위'를 전혀 계산하지 않는다(스키마에 right_to_demand_sale만 있고 lien priority 타임라인 없음). (3) 신탁등기(처분신탁/담보신탁), 공동담보목록, 가등기 본등기 가능성, 변경/말소선(취소선) 구분이 모델링되지 않아 PF·개발 매입 리스크의 결정적 항목을 놓친다. (4) 검증에이전트가 등기 분석에 특화 적용되지 않고, 채권최고액 합계 대비 시세 LTV 같은 정량 리스크 산식이 없다. (5) PDF 원문을 BASE64로 받아 저장만 하고 OCR/레이아웃 파싱으로 LLM 입력을 교차검증하지 않는다.",
+  "sota_summary": "글로벌 SOTA는 '문서 추출 → 결정론적 권리 그래프/타임라인 구성 → 룰엔진 + LLM 하이브리드 판정 → 인용근거(citation) 강제' 4단계 파이프라인이다. (1) 추출층: layout-aware 모델(LayoutLMv3/Donut/Textract)로 표제부·갑구·을구의 표 구조를 보존 추출하고, 도메인 NER(접수일·접수번호·순위번호·권리자·금액)을 LLM과 룰 하이브리드로 뽑는다(Granite/spaCy+LLM 하이브리드가 복합 엔티티에서 우수). (2) 정규화층: 모든 등기사항을 (순위번호, 접수일, 권리종류, 권리자, 금액, 말소여부) 튜플로 결정론적 정규화 → 시간순 권리 타임라인 + 권리 그래프(소유권 이전 체인, 담보-피담보 관계). (3) 판정층: 한국 경매 도메인에서는 '말소기준권리(근저당·(가)압류·담보가등기·경매개시 중 최선순위)'를 코드로 산정하고 선순위 인수/후순위 소멸/임차인 대항력(전입+점유 vs 말소기준권리 시점)을 규칙으로 결정한 뒤, LLM은 설명·엣지케이스만 담당. Qualia Clear(예비 title exam 자동화, 처리시간 35~50% 단축), First American AgentNet Assist Title Intelligence(title search package 추출+섹션 인용), Doma/Spruce(ML로 title exception 식별·지연 예측)가 이 패턴. (4) 신뢰층: 모든 결론에 원문 섹션 인용을 강제하고 agentic 검증(엔티티 검증·교차확인)으로 허위·누락을 잡는다. 핵심은 'LLM 단독 추론 금지, 룰로 계산 가능한 것은 결정론, LLM은 추출·설명·엣지에 한정'이다.",
+  "gaps": [
+   "말소기준권리 자동산정·선순위/후순위 인수·소멸 판정 부재 — 한국 권리분석의 본질인 lien priority 룰엔진이 없음(LLM 산문 추론만)",
+   "임차인 대항력·배당순위 계산 미구현 — 전입일/확정일자/점유 vs 말소기준권리 시점 비교 로직 없음(주임법·상임법)",
+   "신탁등기(담보신탁/처분신탁) 미모델링 — 신탁 시 수탁자(신탁사) 동의 필요·위탁자 처분불가라는 PF/개발 매입의 결정적 리스크를 놓침",
+   "공동담보목록·채권최고액 합계 대비 시세 LTV 부재 — 과담보·말소부담 추정 불가",
+   "결정론적 구조화 부재 — CODEF JSON(순위번호/접수번호/일자/금액)을 LLM용 문자열로 평탄화해 금액·일자 보존성과 재현성이 LLM에 좌우됨",
+   "변경/말소선(취소선) 미구분 — 현행 유효 권리와 말소된 권리를 분리하지 않아 유효 권리관계 오판 가능",
+   "PDF 원문 OCR/레이아웃 교차검증 부재 — BASE64 저장만 하고 추출 정확도를 원문으로 검증하지 않음",
+   "인용근거(citation) 강제 부재 — 각 결론이 등기 어느 항목 근거인지 추적 불가 → 할루시네이션 적발 곤란",
+   "등기 변동 시계열·이상거래 탐지 부재 — 단기 소유권 반복이전·직전 근저당 급증 등 사기/리스크 신호 미감지",
+   "다필지 권리 종합(통합개발 관점) 부재 — 토지조서는 집계만, 필지별 권리 충돌·동의 난이도 점수화 없음"
+  ],
+  "innovations": [
+   "'말소기준권리 룰엔진' 신설(deterministic_rights_engine.py) — CODEF 구조화 JSON을 (순위번호,접수일,접수번호,권리종류,금액,말소여부) 튜플로 정규화하고, 근저당·(가)압류·담보가등기·경매개시 중 최선순위를 말소기준권리로 코드 산정 → 선순위 인수/후순위 소멸/임차인 대항력을 결정론적으로 판정. LLM은 설명·엣지만 담당(SOTA의 rule-first 패턴, 재현성 100%)",
+   "신탁등기 자동탐지 + PF/개발 매입 리스크 게이트 — 갑구 신탁(담보/처분) 감지 시 '수탁자(신탁사) 동의 필수·위탁자 단독계약 무효 위험' 경고와 신탁원부 별도열람 안내를 자동 발화(한국 PF신탁 공시 한계 반영, 경쟁사 대비 개발사업 특화 차별점)",
+   "채권최고액 합계 vs AVM 시세 LTV·매입후 말소부담 자동산식 — 우리 AVM/실거래(nearby-map)와 연동해 잔존 담보부담률을 정량화하고 '매도청구·매입 협상가'에 반영(밸류맵/디스코는 등기 표시만, 우리는 수지연동)",
+   "인용근거 강제(grounded citation) — 모든 권리분석 결론에 (entry_id, 순위번호, 원문 스니펫) 출처를 부착하고 검증에이전트가 '근거 없는 주장'을 자동 fail 처리(First American AgentNet Assist 인용 패턴 + 우리 기존 /verify 재사용)",
+   "등기 변동 타임라인 시각화 + 이상거래 스코어 — 소유권 이전 체인을 타임라인으로 렌더링하고 단기 반복이전·직전 담보 급증·가압류 군집을 룰로 점수화해 사기/부실 신호 카드 제공",
+   "다필지 '권리 난이도 히트맵' — 토지조서 각 필지에 권리복잡도(공동소유 인원·신탁·담보건수·압류)를 점수화해 통합개발 매입 우선순위·협상난이도를 색으로 표시(스페이스워크/랜드북이 못하는 매입실무 레이어)",
+   "OCR 교차검증 폴백 — apick/직접PDF 입력 시 LayoutLMv3/Upstage Document Parse로 표제부·갑을구 표 추출 → CODEF 경로와 동일 정규화 스키마로 합류, 추출치 불일치 시 confidence 하향·재확인 유도"
+  ],
+  "refactor": [
+   "registry_analysis_service의 LLM 단일패스를 3계층(extract→normalize→adjudicate)으로 분리 — _registry_text_from_codef를 결정론 normalizer(구조화 dict 산출)로 교체하고 LLM은 설명층으로 강등",
+   "권리분석 출력 스키마에 rights_timeline[], lien_priority{말소기준권리,인수목록,소멸목록}, tenant_opposability, trust{type,trustee,consent_required}, collateral_total, citations[] 필드 추가 → 프론트(RegistryAnalysisWorkspaceClient) 타임라인·인용 렌더 동기 추가",
+   "CODEF resRegistrationSumList/HisList 파서를 별도 모듈(codef_register_parser.py)로 추출해 단위테스트 가능하게 분리 — 현재 _registry_text_from_codef 안에 중첩루프로 매몰됨",
+   "변경/말소선 처리: resType/말소표시 필드로 유효권리만 필터하는 effective_rights 게이트 추가",
+   "검증에이전트를 등기 도메인 특화 룰(채권최고액 합계 산술검증·말소기준권리 단일성·소유지분 합 100% 검증)로 확장해 /verify에 registry 프로파일 추가",
+   "캐시 키에 어댑터 버전·스키마 버전 포함 — 파서 개선 시 stale 결과 무효화(현재 key가 주소|realty|dong|ho만이라 로직 변경 후에도 구버전 결과 반환 위험)",
+   "토지조서 LandRow에 rights_complexity_score·trust_flag·lien_count 컬럼 추가하고 등기 분석 결과를 자동 시드(현재 수기 입력 의존)"
+  ],
+  "priority": "P1 (High) — 권리분석은 토지매입·PF심사의 의사결정 핵심이며 현재 LLM 단일추론은 결정론 결여로 신뢰성·법적 안전성 리스크가 큼. 말소기준권리 룰엔진+신탁탐지+인용강제는 즉시 차별화 효과",
+  "key_methods_papers": [
+   {
+    "title": "한국 경매 권리분석: 말소기준권리 4단계 (찾기쉬운 생활법령정보)",
+    "insight": "말소기준권리=근저당·(가)압류·담보가등기·경매개시 중 최선순위. 이보다 선순위는 매수인 인수, 후순위는 말소. 임차인 대항력은 대항요건(주민등록+점유) 취득시점이 말소기준권리보다 빠른지로 결정 — 이 규칙은 결정론 코드로 구현 가능하며 우리 LLM 산문 추론을 대체해야 함"
+   },
+   {
+    "title": "Extracting Complex Named Entities in Legal Documents via Weakly Supervised Object Detection (arXiv:2305.05836)",
+    "insight": "법률문서의 불연속·복합 엔티티는 레이아웃(표 구조) 인식이 NER 정확도를 좌우 — 등기부 갑구/을구 표를 평탄화하지 말고 layout-aware 추출로 순위번호·접수번호·금액 컬럼 관계를 보존해야 함"
+   },
+   {
+    "title": "Unlocking Legal Documents with Small Language Models (Granite 4 NER, 2025)",
+    "insight": "룰/딥러닝 NER + LLM 하이브리드가 복합 의미 엔티티에서 최적. LLM은 보완재로, 결정론 추출과 병행하라는 결론 → 우리의 'LLM 단독' 구조를 하이브리드로 전환할 근거"
+   },
+   {
+    "title": "PF신탁의 신탁등기 개선방안 (KCI, 한국)",
+    "insight": "PF신탁은 수익자·우선수익자 권리가 표준 등기부에 안 나타나 신탁원부 별도열람 필요. 신탁등기 발견 시 위탁자 단독계약 무효·신탁사 동의 필수를 자동경고하고 신탁원부 열람을 유도해야 개발 매입 리스크를 잡음"
+   },
+   {
+    "title": "Qualia Clear / First American AgentNet Assist Title Intelligence (2026)",
+    "insight": "예비 권리조사 자동화로 처리시간 35~50% 단축, title search package에서 핵심정보 추출+특정 섹션 인용 제공. 'agentic 추출 + 섹션 인용'이 업계 표준 — 우리도 결론마다 원문 인용을 부착해야 함"
+   },
+   {
+    "title": "Doma/Spruce ML title exception 식별·지연 예측",
+    "insight": "ML로 해소 필요한 예외(exception)를 식별하고 지연 가능성을 예측 — 우리는 신탁·가압류·공동담보·다수공동소유를 '매입 장애 예외'로 분류·스코어링하는 형태로 차용 가능"
+   }
+  ],
+  "leading_platforms": [
+   {
+    "name": "디스코 (Disco)",
+    "what": "전국 부동산 실거래가+토지대장+건축물대장+등기부 통합 제공 앱",
+    "edge": "공부 통합 원스톱 열람 UX와 방대한 거래 DB. 단, 권리분석(말소기준·대항력) 자동판정은 약함 — 우리가 룰엔진으로 추월 가능"
+   },
+   {
+    "name": "밸류맵 (ValueMap)",
+    "what": "토지·건물 실거래가/매물+소유주 자산관리+사업성검토",
+    "edge": "위치정보 정제 특허(지번 비공개 거래데이터 지도화)와 사업성 연계. 권리분석 깊이는 제한적이라 우리의 권리타임라인+수지연동이 차별점"
+   },
+   {
+    "name": "빅밸류 (BigValue)",
+    "what": "빌라·연립 AVM·담보가치 자동산정(금융권 납품)",
+    "edge": "담보가치 ML 강점 — 우리의 채권최고액 vs AVM LTV 산식과 결합 시 시너지(벤치마크 대상)"
+   },
+   {
+    "name": "Qualia (Clear)",
+    "what": "미국 title/escrow 워크플로우 + agentic AI 예비 title exam 자동화",
+    "edge": "처리시간 35~50% 단축, 사전 데이터검증·사기방지 에이전트. 결정론 워크플로우+AI 결합 패턴이 우리 목표 아키텍처"
+   },
+   {
+    "name": "First American (AgentNet Assist: Title Intelligence)",
+    "what": "title search package AI 추출·정리·섹션 인용",
+    "edge": "파일당 30분 단축, 결론마다 특정 섹션 참조 제공 — 인용강제(citation) 표준 벤치마크"
+   },
+   {
+    "name": "Doma / Spruce",
+    "what": "ML 기반 title commitment 분석·exception 식별·지연 예측",
+    "edge": "예외 식별과 closing 지연 예측 ML — 우리의 매입장애 예외 스코어링 모델 벤치마크"
+   },
+   {
+    "name": "V7 Go (Deed Analysis Agent)",
+    "what": "증서/등기 문서 자동 추상화(abstraction) 에이전트",
+    "edge": "문서→구조화 필드 자동추출 에이전트 — 우리 extract층 설계 참고"
+   }
+  ],
+  "sources": [
+   "https://www.lawtimes.co.kr/news/146685",
+   "https://easylaw.go.kr/CSP/CnpClsMain.laf?popMenu=ov&csmSeq=306&ccfNo=2&cciNo=1&cnpClsNo=2",
+   "https://realscasenote.com/%EB%A7%90%EC%86%8C%EA%B8%B0%EC%A4%80%EA%B6%8C%EB%A6%AC%EB%A1%9C-%EA%B6%8C%EB%A6%AC%EB%B6%84%EC%84%9D-%EC%89%BD%EA%B2%8C-%ED%95%98%EB%8A%94%EB%B2%95/",
+   "https://moneystyle.co.kr/2025/05/27/auction-rights-analysis/",
+   "https://www.disco.re/",
+   "https://www.valueupmap.com/",
+   "https://www.econovill.com/news/articleView.html?idxno=631585",
+   "https://blog.qualia.com/get-started-with-ai/",
+   "https://www.housingwire.com/articles/qualia-launches-agentic-ai-tool-qualia-clear-title-insurance/",
+   "https://www.firstam.com/news/2026/first-am-agentnet-assist-title-intelligence-20260429.html",
+   "https://www.v7labs.com/agents/deed-analysis-agent",
+   "https://arxiv.org/pdf/2305.05836",
+   "https://schneiderandreas.net/2025/11/17/unlocking-legal-documents-with-small-language-models-named-entity-recognition-powered-by-granite-4/",
+   "https://www.kci.go.kr/kciportal/ci/sereArticleSearch/ciSereArtiView.kci?sereArticleSearchBean.artiId=ART002180384",
+   "https://www.jipyong.com/kr/board/news_view.php?seq=10321",
+   "https://www.khug.or.kr/jeonse/web/s03/s030105.jsp",
+   "https://platum.kr/archives/284145"
+  ]
+ },
+ {
+  "module": "공공입찰(나라장터/G2B) — 입찰분석·적정투찰가·낙찰예측",
+  "our_assessment": "강점: (1) 입찰/낙찰 수집(BidPublicInfo/ScsbidInfo) 라이브 연동 + 멱등 upsert가 안정적이고, (2) 입찰 1건을 QTO→원가→수지MC→민감도→용도지역→인허가→ESG→시장 8엔진에 연결하는 \"수직 통합\" 아키텍처는 경쟁사(고비드/디마툴즈는 순수 투찰가 예측기)에 없는 차별점이다. (3) 도급 현실모델(매출=추정가×낙찰가율, 원가=추정가×절대원가율0.87, 손익분기=원가율×100)로 ROI 할루시네이션을 교정한 점은 우수.\n\n치명적 한계: 우리 \"AI 입찰분석\"의 핵심인 적정투찰가 예측이 사실상 통계 기술(descriptive statistics)에 불과하다. _predict_bid_rate는 과거 낙찰가율의 avg±std를 그대로 구간으로 반환할 뿐, 머신러닝도 예측 모델도 아니다. 더 결정적으로 한국 적격심사 입찰의 작동 원리 자체(기초금액→복수예비가격 15개 중 4개 추첨→예정가격→사정율±2~3%→낙찰하한율)를 데이터 모델·로직에서 완전히 누락했다. G2BBid 테이블에 기초금액/예비가격/예정가격/낙찰하한율/사정율 컬럼이 없고(estimated_price·award_rate만), _run_monte_carlo는 seed=42 고정 + 단일 random.gauss로 사실상 결정론적이며 cost_ratio 0.87은 모든 공종에 동일 적용된다. 즉 우리는 \"낙찰가율 평균을 보여주는 대시보드\"이지, 디마툴즈처럼 \"1위 밑을 노리는 킬러 투찰가를 예측하는 엔진\"이 아니다.",
+  "sota_summary": "한국 적격심사(추정가 100억 미만 공사/대다수 용역·물품)의 SOTA는 '사정율 예측'이다. 낙찰자=예정가격×낙찰하한율(법정 고정율, 2026.1.30부 공사 전구간 +2%p 상향: 10억 미만 89.745% 등)에 가장 근접하게 투찰한 적격자. 예정가격은 기초금액 대비 복수예비가격 15개 중 4개 추첨 산술평균(국가계약 ±2%, 지방계약 ±3%)이라 본질이 확률분포다. 따라서 선도사(고비드: 100만건+300대 GCP 서버 학습, 디마툴즈: 100만건+공사/용역/물품 전용 모델+하한선위반·1위초과 비대칭 패널티 학습)는 예정가격 추첨분포를 추정하고 '1위보다 살짝 낮은' 킬러가를 노린다. 종합심사낙찰제(100억 이상)는 가격+공사수행능력+사회적책임 종합평가라 별도 모델. 글로벌 학술 SOTA: 낙찰가/투찰자수 예측에 XGBoost·LightGBM·CatBoost·TabNet(비선형 캡처 우수)·스태킹 앙상블, 의사결정엔 Friedman/Gates 마크업 모델 + bid/no-bid 다요인(투찰자수가 2위 중요변수) + 설명가능 ML(SHAP). 조달청 OpenAPI는 낙찰정보서비스에서 복수예비가·예비가격·개찰순위까지 실제 제공하므로 사정율 학습 데이터 확보가 가능하다.",
+  "gaps": [
+   "[치명] 적격심사 메커니즘 부재: 기초금액·복수예비가격(15개)·예정가격·낙찰하한율·사정율 컬럼이 G2BBid에 전혀 없음. 한국 입찰의 80%를 차지하는 적격심사를 '낙찰가율 평균'으로 근사 — 본질을 못 다룸",
+   "[치명] 진짜 예측 모델 부재: _predict_bid_rate는 avg±std 통계, _run_monte_carlo는 seed=42 고정·단일 gauss로 결정론적. 디마툴즈/고비드의 100만건 학습 ML(XGBoost/CatBoost/TabNet) 대비 학습 자체가 없음",
+   "예정가격 추첨분포 미모델링: 복수예비가격 4개 추첨 산술평균이라는 확률 메커니즘(±2~3% 균등→삼각/정규 근사)을 시뮬레이션하지 않아 사정율 분포·당첨확률 산출 불가",
+   "낙찰하한율 법정값 미반영: 2026.1.30 개정(공사 +2%p) 같은 구간별 법정 하한율 테이블이 없어 손익분기·적정투찰가가 법령과 어긋날 수 있음",
+   "비대칭 손실함수 부재: 디마툴즈는 '하한선 위반=실격(큰 패널티)·1위 초과=낙찰실패' 비대칭 패널티로 학습. 우리는 대칭 평균이라 실격위험·근소차 탈락을 정량화 못함",
+   "낙찰확률(P-win) 미산출: 투찰자수·경쟁분포 기반 승률 곡선이 없음. bid_count는 사후값만 저장, 사전 경쟁강도 예측 모델 없음",
+   "조달청 낙찰정보서비스 복수예비가/예비가격/개찰순위 필드 미수집: 사정율 학습의 정답 라벨을 버리고 있음(award_rate만 저장)",
+   "공종 일률 cost_ratio 0.87: 토목/건축/전기/기계 공종별·규모별 실원가율 차이 무시. 공사/용역/물품 전용 모델(디마툴즈) 대비 단일 가정",
+   "PQ/적격심사 정량심사 부재: 경영상태·시공경험·기술능력 배점 시뮬레이터 없음(permit_check는 용도지역 가능여부만). 적격통과선 자가진단 불가",
+   "설명가능성(SHAP/근거) 부재: '왜 이 투찰가인가'를 변수기여도로 제시 못함 — 입찰 실무자 신뢰 확보 어려움"
+  ],
+  "innovations": [
+   "사정율 분포 시뮬레이터(킬러 기능): 복수예비가격 15개 중 4개 추첨을 ±2/±3% 메커니즘대로 몬테카를로(수만 회)로 재현→예정가격 분포→낙찰하한율 적용→'당첨확률 최대 사정율 구간' 역산. 이것이 한국 적격심사의 정답이며 경쟁사 핵심을 우리 8엔진 위에 얹는 것",
+   "비대칭 손실 학습 투찰가 추천: 조달청 낙찰정보서비스 복수예비가/개찰순위를 라벨로 LightGBM/CatBoost quantile + custom asymmetric loss(하한위반 큰 페널티·1위초과 페널티)로 '1위 밑 킬러가' 직접 예측. 디마툴즈 방법론을 공개표준 위에 재현+공종전용 모델",
+   "낙찰확률 곡선(P-win vs 투찰률): 과거 동일공종·금액대 분포로 투찰률→예상순위→낙찰확률 곡선 제시. 사용자가 '안전형/공격형' 슬라이더로 기대수익 곡선과 trade-off",
+   "유일 차별점 — 입찰-개발 수직통합 강화: 경쟁사는 투찰가만, 우리는 낙찰 가정 하에 QTO·실원가·용도지역·인허가·ESG·PF수지까지 한 화면. '낙찰 후 실제 마진' 시뮬을 투찰가 추천과 결합(낙찰가율별 마진 토네이도)",
+   "적격심사 통과 자가진단기: 경영상태(신용평가)·동일실적·기술자보유 입력→배점 시뮬→적격통과선 대비 여유/부족 진단. PPS 배점표 룰엔진화",
+   "사정율 예측 + 설명(SHAP): 추천가의 변수기여도(공종/지역/발주처유형/추정가구간/계절성)를 SHAP로 시각화해 실무자 신뢰 확보. 학술 SOTA(설명가능 ML)를 상용화",
+   "발주처별·시기별 사정율 편향 학습: 기관마다 예비가격 추첨 결과의 미세 편향이 있음. 발주기관·월별 사정율 잔차를 학습해 보정(고비드 비공개 노하우의 데이터드리븐 대체)"
+  ],
+  "refactor": [
+   "G2BBid 스키마 확장(P1): base_amount(기초금액)·reserve_prices(복수예비가격 15개 JSON)·decided_price(예정가격)·lower_limit_rate(낙찰하한율)·adjustment_rate(사정율)·opening_rank(개찰순위) 컬럼 추가 + 조달청 낙찰정보서비스 수집기에서 매핑. 사정율 학습데이터 파이프라인의 전제",
+   "BidAnalyzer 책임 분리(P2): 현재 통계+MC+리스크+요약+8엔진통합이 한 클래스. (a)PriceModel(사정율/투찰가 예측) (b)WinProbability (c)FeasibilityIntegrator (d)Explainer 로 분리. 예측 모델 교체(통계→ML) 가능하게 인터페이스화",
+   "결정론 MC 제거(P2): _run_monte_carlo의 seed=42 고정·단일 gauss를 실제 분포 샘플링으로 교체하거나, 경량 analyze에서 삭제하고 feasibility MC로 일원화(중복 계산 제거)",
+   "낙찰하한율 법정 테이블 모듈화(P2): 구간별·연도별(2026.1.30 개정 포함) 하한율을 config/룰파일로 분리. 손익분기·적정가 계산이 이를 단일 출처로 참조",
+   "공종별 cost_ratio 테이블화(P3): 0.87 하드코딩을 공사/용역/물품×세부공종 실원가율 테이블로. CONSTRUCTION_COST_PER_PYEONG와 동일 패턴으로 외부화",
+   "ML 모델 서빙 분리(P3): propai-ai-ml 스킬 영역에 학습 파이프라인(피처스토어→학습→MLflow→추론 엔드포인트) 신설, 백엔드는 호출만. _classify_from_notice 정규식 분류도 학습형 텍스트분류로 승격 여지"
+  ],
+  "priority": "P1",
+  "key_methods_papers": [
+   {
+    "title": "Predicting the number of bidders in construction competitive bidding using explainable ML (Construction Innovation, 2025)",
+    "insight": "XGBoost가 선형회귀 대비 R² 2배. 투찰자수 예측+SHAP 설명가능성. 우리 P-win 곡선·설명가능 추천의 학술 근거"
+   },
+   {
+    "title": "Award Price Estimator for Public Procurement Auctions using ML (Spain tenders case)",
+    "insight": "공공조달 낙찰가 추정에 ML 적용 사례. 조달청 OpenAPI 라벨로 동일 접근 재현 가능"
+   },
+   {
+    "title": "디마툴즈 방법론(하한선위반·1위초과 비대칭 패널티 학습)",
+    "insight": "대칭 평균이 아닌 비대칭 손실로 '1위 밑 킬러가' 학습 — quantile/custom loss로 우리가 재현해야 할 핵심"
+   },
+   {
+    "title": "Friedman(1956)·Gates(1967) 마크업 입찰모델 + bid/no-bid 22요인(Buildings 2024)",
+    "insight": "기대수익 최대화 마크업·go/no-go 의사결정 프레임. 투찰자수가 2위 중요변수 → P-win 모델 입력 우선순위"
+   },
+   {
+    "title": "조달청 나라장터 낙찰정보서비스/입찰공고정보서비스 OpenAPI 명세",
+    "insight": "복수예비가·예비가격·개찰순위·기초금액 실제 제공 → 사정율 예측 학습데이터 정답 라벨 확보 경로"
+   },
+   {
+    "title": "국가/지방계약법 적격심사 낙찰하한율·사정율(±2/±3%) 제도, 2026.1.30 공사 하한율 +2%p 개정",
+    "insight": "예정가격×법정하한율=낙찰선. 사정율 분포 시뮬레이션이 한국 입찰분석의 정답. 법령 개정 추적 필수"
+   }
+  ],
+  "leading_platforms": [
+   {
+    "name": "고비드(GOBID.AI / 헬로에이아이시스템즈)",
+    "what": "공공공사 입찰 AI 솔루션. 100만건 낙찰데이터를 300여대 GCP 서버로 학습해 낙찰확률 높은 투찰가 제안",
+    "edge": "대규모 클라우드 학습 인프라+9년 축적 데이터, 건설사 특화 투찰가 적중률"
+   },
+   {
+    "name": "디마툴즈(g2b.dima.tools)",
+    "what": "100만건+ 실데이터 학습 자체 ML, 공사/용역/물품 전용 모델. 월 8,266건 1위 적중 주장",
+    "edge": "하한선위반·1위초과 비대칭 패널티 학습으로 '1위 밑 킬러 투찰가' 예측 — 수백 변수 동시분석"
+   },
+   {
+    "name": "비드메이트/입찰메이트(bidmate.co.kr)",
+    "what": "낙찰확률 높은 투찰금액 계산·통계분석·입찰일정 알림",
+    "edge": "프리미엄 입찰정보+알림 통합 워크플로, 실무자 리텐션"
+   },
+   {
+    "name": "AI 비딩이(bidding2.kr)·비딩톰(biddingtom)",
+    "what": "입찰공고 자동분류+참가신청~투찰 자동화/모니터링",
+    "edge": "공고탐색→참가→투찰 풀퍼널 자동화(우리의 8엔진 통합 분석은 없음)"
+   },
+   {
+    "name": "글로벌: Northspyre / ARGUS(개발수지)",
+    "what": "부동산개발 비용·수지 예측 플랫폼(입찰특화는 아님)",
+    "edge": "실데이터 기반 비용 예측·예측정확도. 우리의 입찰-개발 수직통합이 한국시장에서 이들+G2B예측사를 동시 추월할 포지션"
+   }
+  ],
+  "sources": [
+   "https://www.emerald.com/insight/content/doi/10.1108/ci-10-2024-0325/full/html",
+   "https://www.academia.edu/89703087/Award_Price_Estimator_for_Public_Procurement_Auctions_Using_Machine_Learning_Algorithms_Case_Study_with_Tenders_from_Spain",
+   "https://www.mdpi.com/2075-5309/14/10/3114",
+   "https://ascelibrary.org/doi/10.1061/(ASCE)0733-9364(1990)116:4(595)",
+   "https://arxiv.org/pdf/2506.15817",
+   "https://g2b.dima.tools/",
+   "https://support.gobid.ai",
+   "https://www.tech42.co.kr/ai%EB%A1%9C-%EB%82%98%EB%9D%BC%EC%9E%A5%ED%84%B0-%EC%9E%85%EC%B0%B0-%EB%8D%B0%EC%9D%B4%ED%84%B0%EB%A5%BC-%EB%B6%84%EC%84%9D%ED%96%88%EB%8D%94%EB%8B%88-%EB%82%99%EC%B0%A8%EB%A5%A0-%EA%BB%91/",
+   "https://bidmate.co.kr/",
+   "https://bidding2.kr/",
+   "https://brunch.co.kr/@just-try-him/98",
+   "https://www.data.go.kr/data/15129397/openapi.do",
+   "https://www.data.go.kr/data/15129394/openapi.do",
+   "https://www.pps.go.kr/kor/content.do?key=00729",
+   "https://easylaw.go.kr/CSP/CnpClsMain.laf?popMenu=ov&csmSeq=519&ccfNo=2&cciNo=5&cnpClsNo=2",
+   "https://farmarketer.com/나라장터-입찰-용어-정리-기초금액부터-예정가격-투/"
+  ]
+ },
+ {
+  "module": "검증·할루시네이션 방지 AI (Verification & Anti-Hallucination)",
+  "our_assessment": "강점: (1) /verify/analysis가 \"규칙 prescan + LLM 근거검증(grounded_score, pass/warn/fail)\"의 2단 구조로 LLM 실패 시 규칙 폴백까지 갖춰 운영 견고성이 높음. (2) 10개 interpreter에 GROUNDING_RULE(데이터에 없는 수치 금지, '추정/약' 명시, 근거수치 동반)을 시스템 프롬프트에 주입해 생성 단계 예방. (3) public_data_registry/calculation_metadata/FreshnessChecker로 '하드코딩 데이터 자동경고 + confidence_level 강등 + 신선도 일수' 메타데이터를 결과에 첨부 — EU AI Act식 감사추적/투명성 best practice와 방향이 일치. (4) Pydantic validator로 실거래가/공시지가/PNU/용도지역 도메인 범위검증 + IQR 이상치 탐지 + 전문가패널 다관점.\n한계(냉정): (1) verifier가 source/output을 각 4000자 truncate한 단일 LLM-as-judge 1-pass 구조 — claim 단위 분해도, self-consistency도, 근거 span 매칭도 없음. SOTA(FaithJudge/SAFE/REFIND) 대비 검출력·재현성이 낮고 verdict가 흔들릴 수 있음. (2) verifier가 산수를 직접 다시 하지 않음 — 수치불일치를 결정론적 재계산으로 잡지 않고 LLM 판단에 의존 → 부동산 수지/세금/용적률처럼 계산이 핵심인 도메인의 가장 위험한 곳을 가장 약하게 검증. (3) grounded_score 보정·임계가 휴리스틱(high→fail)이며 calibration·정량 신뢰도 미산출. (4) AVM/추정가에 오차범위(FSD)·confidence interval·conformal prediction 부재 — 빅밸류/밸류맵식 '예측력 90%/오차범위' 정량지표 없음. (5) prescan 규칙이 far/area 2종에 그쳐 도메인 규칙 커버리지 빈약. (6) 검증 메트릭의 회귀 추적·골든셋·오프라인 eval·임계 알림이 없어 검증 품질 자체가 측정되지 않음.",
+  "sota_summary": "2025-2026 SOTA는 \"단일 LLM 판단\"에서 \"구조화된 다단계 검증\"으로 이동. 핵심: (1) Claim Decomposition + Span-level Attribution — 출력을 atomic claim으로 분해해 각 주장을 근거 span에 매칭, 미지지 주장 플래그(SAFE, REFIND SemEval-2025, FActScore). (2) Chain-of-Verification(CoVe) — 초안→검증질문 계획→독립 질의→교정 4단계로 환각 대폭 감소. (3) Self-Consistency/SelfCheckGPT — 다중 샘플 일관성으로 환각 신호 포착. (4) LLM-as-Judge 고도화 — FaithJudge(few-shot 인간주석 가이드, o3-mini-high 기준 balanced acc 84%/F1 82.1%). (5) 내부활성화 기반 — RAGLens(Sparse Autoencoder), CLAP(Cross-Layer Attention Probing). (6) 결정론적 수치검증 — 'Zero Mental Math'/Neuro-Symbolic Fact Ledger: LLM은 무엇을 계산할지만 식별, 계산은 Python 결정론 코드가 수행, LLM은 citation copy machine으로 강등. (7) Multi-Agent Debate — 지지/반박 교차심문+모더레이터 판정으로 factuality·설명 충실도 향상(MADR, Tool-MAD). (8) 운영 표준 — RAGAS/TruLens 'RAG Triad'(Context Relevance·Groundedness·Answer Relevance) 정량측정+임계 알림+골든셋 회귀. (9) AVM — conformal prediction(공간가중 SWCP)·AVMU로 점추정이 아닌 신뢰집합/오차범위(FSD) 제공.",
+  "gaps": [
+   "claim 단위 분해·근거 span 매칭 부재: source/output 통짜(4000자 truncate)를 1-pass 평가 → SOTA의 atomic-claim×evidence-span 매칭(SAFE/REFIND) 대비 미지지 주장 검출력·위치추적 불가",
+   "결정론적 수치 재계산 검증 부재: verifier LLM이 직접 용적률/수지/세금/QTO를 재계산하지 않음 → 'Zero Mental Math/Neuro-Symbolic Fact Ledger' SOTA처럼 산식을 Python으로 재실행해 출력수치와 대조하는 절대 검증이 없음(가장 치명적 격차)",
+   "self-consistency/다중샘플 부재: 단일 호출 verdict라 재현성·안정성 낮음. SelfCheckGPT식 N-샘플 일관성 신호 미적용",
+   "Chain-of-Verification 4단계(검증질문 계획→독립질의→교정) 미구현 — 검증 후 자동 교정 루프 없음",
+   "신뢰도 정량화·보정 부재: grounded_score가 비보정 휴리스틱, AVM/추정가에 conformal prediction·오차범위(FSD)·신뢰구간 없음(빅밸류/밸류맵 '예측력90%' 정량지표 대비 열위)",
+   "검증 품질 측정·회귀 부재: RAGAS/TruLens식 faithfulness 메트릭·골든셋 오프라인 eval·임계 알림·검증로그 추적 없음 → 검증 자체 정확도를 모름",
+   "prescan 도메인 규칙 빈약(far/area 2종): 건폐율>법정한도, 연면적=대지×용적률 정합, 분양가-원가-수익 항등식, 세율 구간, 접도·이격거리 등 한국 부동산 결정론 규칙 미탑재",
+   "다관점 검증이 expert-panel과 분리: 지지/반박 교차심문(MADR/Tool-MAD)식 적대적 검증 루프 아님 — 단일 판정관 구조"
+  ],
+  "innovations": [
+   "결정론적 수치-원장(Deterministic Calc Ledger) 검증: interpreter가 수치를 낼 때 '값+산식+입력변수' 트리플을 구조화 emit → verifier가 동일 산식을 Python으로 재실행(용적률=연면적/대지×100, 수지 매출-원가=이익 항등식, 취득세=과표×세율구간)해 출력값과 ε오차 대조. 불일치 시 fail+정확값 자동제시. 한국 부동산 산식은 결정론적이라 적중률이 매우 높음 — 경쟁사가 못 잡는 '계산 환각'을 0으로",
+   "근거 span 하이라이트 UI(Evidence Pinning): atomic claim 분해 후 각 주장을 원본(VWorld/실거래/조례)의 정확한 필드·출처로 매핑, VerificationBadge 클릭 시 근거 원문 하이라이트 — 'AI가 어디서 가져왔는지' 추적가능성으로 PF심사·은행제출 신뢰 확보(EU AI Act 투명성 + 국토부 데이터 출처표기 best practice)",
+   "한국형 법규 결정론 룰엔진(K-RegRules): 용도지역별 건폐율·용적률 법정한도, 조례 가산/감산, 접도·일조·이격, 종부세·양도세 구간을 룰DB로 코드화 → LLM 출력이 법정한도 초과 시 즉시 fail. 조례 개정일·시행일을 calculation_metadata와 결합해 '법령 신선도 위반'까지 탐지",
+   "Conformal Prediction 기반 추정가 신뢰구간: AVM/수지/낙찰가 추정에 공간가중 conformal prediction(SWCP) 적용해 점추정 대신 [하한~상한] 신뢰집합+신뢰도% 제공. 빅밸류/밸류맵의 '예측력' 마케팅을 넘어 통계적으로 보증된 오차범위를 PF보고서에 명기",
+   "적대적 2-에이전트 검증(Red/Blue Debate): 'Skeptic(반박)'이 출력의 약점·미지지 주장·과장을 공격, 'Defender'가 근거로 방어, Moderator가 최종 verdict — MADR/Tool-MAD식 교차심문을 정밀모드 옵션으로. 단일 판정관보다 환각 적발률↑",
+   "검증 신뢰지수(Trust Score)+골든셋 회귀: faithfulness/groundedness/calc-pass-rate를 합성한 단일 Trust Score를 모든 분석에 노출 + 한국 부동산 골든셋(검증된 사례 N건)으로 verifier 자체 정확도를 RAGAS식 오프라인 측정·CI 게이트화 → 검증의 검증"
+  ],
+  "refactor": [
+   "verifier_service를 파이프라인화: extract_claims → ground(span match) → recompute(deterministic) → judge(LLM/debate) → calibrate(score) 단계로 분리, 각 단계 독립 테스트·교체 가능하게(현재 단일 verify() 메서드 모놀리식)",
+   "결정론 검증 모듈 신설(app/services/verification/calc_verifier.py): 도메인 산식 레지스트리(용적률/수지/세금/QTO)+Python 재계산+ε 비교. interpreter가 emit하는 구조화 수치 스키마(value/formula/inputs) 표준화",
+   "prescan 룰 데이터화: 하드코딩된 far/area 검사를 K-RegRules 룰DB(YAML/DB)로 분리해 용도지역·조례·세율 규칙을 비개발자도 갱신 가능하게. public_data_registry와 연동해 룰 신선도 관리",
+   "grounded_score 보정 레이어 추가: 비보정 휴리스틱을 conformal/Platt 보정으로 교체, calc-pass·span-coverage·freshness 가중합 Trust Score 단일 지표로 통합 노출(VerificationBadge 확장)",
+   "검증 관측성 도입: 모든 verify 호출의 입력·verdict·issues·latency 로깅 + 골든셋 오프라인 eval 스크립트 + faithfulness 임계 알림(RAGAS/TruLens 패턴) — CI 회귀 게이트",
+   "expert-panel과 verifier의 다관점 로직 통합: 적대적 debate 검증을 공용 디베이트 코어로 추출해 중복 제거, 정밀모드에서 재사용",
+   "truncation 제거/청킹: 4000자 통짜 truncate를 claim 단위 검증으로 대체해 긴 분석 후반부 미검증 사각 해소"
+  ],
+  "priority": "P1 (최우선 — 결정론적 수치검증·근거 span 매칭은 부동산 PF/은행제출 신뢰의 핵심이며 경쟁사 미보유 차별점)",
+  "key_methods_papers": [
+   {
+    "title": "Chain-of-Verification Reduces Hallucination in LLMs (CoVe, ACL Findings 2024)",
+    "insight": "초안→검증질문 계획→독립 질의→교정 4단계 파이프라인으로 환각 대폭 감소. 우리 1-pass verifier를 검증질문 생성+독립검증+자동교정 루프로 재설계하는 직접 청사진"
+   },
+   {
+    "title": "SAFE / FActScore — atomic claim decomposition + evidence verification",
+    "insight": "출력을 원자적 주장으로 분해해 각각을 근거에 대조. 우리의 통짜 4000자 검증을 claim×span 매칭으로 바꾸는 핵심 기법"
+   },
+   {
+    "title": "REFIND (SemEval-2025) span-level RAG hallucination detection",
+    "insight": "생성 주장을 검색 근거에 span 단위로 매칭해 미지지 부분만 플래그. Evidence Pinning UI의 알고리즘 기반"
+   },
+   {
+    "title": "FaithBench / FaithJudge — LLM-as-judge with few-shot human annotations",
+    "insight": "few-shot 인간주석으로 판정관을 가이드하면 balanced acc 84%/F1 82.1% 달성. 우리 판정 프롬프트에 한국 부동산 환각 few-shot 예시 주입으로 검출력 상승"
+   },
+   {
+    "title": "Neuro-Symbolic Financial Reasoning via Deterministic Fact Ledgers / 'Zero Mental Math' Architecture",
+    "insight": "LLM은 무엇을 계산할지만 식별, 계산은 결정론 코드가 수행, LLM은 citation copy machine으로 강등. 부동산 수지·세금·용적률 검증의 정답 — calc_verifier 설계 근거"
+   },
+   {
+    "title": "Uncertainty Quantification in AVMs with Spatially Weighted Conformal Prediction (arXiv 2312.06531)",
+    "insight": "공간가중 conformal prediction으로 지역 패턴에 적응하는 신뢰집합 생성. 우리 추정가·낙찰가에 통계적 오차범위(FSD) 부여 방법"
+   },
+   {
+    "title": "Improving Factuality through Multiagent Debate / MADR / Tool-MAD (2024-2026)",
+    "insight": "지지·반박 에이전트 교차심문+모더레이터 판정이 factuality와 설명 충실도를 동시 향상. Red/Blue Debate 정밀검증 모드 근거"
+   },
+   {
+    "title": "SelfCheckGPT — sampling-based self-consistency hallucination detection",
+    "insight": "다중 샘플 일관성으로 환각 신호 포착(근거 없이도). verdict 안정성·재현성 보강용 보조 신호"
+   },
+   {
+    "title": "RAGAS / TruLens 'RAG Triad' (Context Relevance·Groundedness·Answer Relevance)",
+    "insight": "faithfulness/groundedness 정량 메트릭+골든셋 오프라인 eval 표준. 검증 품질을 측정·회귀하는 운영 프레임"
+   }
+  ],
+  "leading_platforms": [
+   {
+    "name": "빅밸류(BigValue)",
+    "what": "AI 추정가 + 1000종 이상 공간·인구·상업 데이터 실시간 분석 SaaS, 분석도구 11종",
+    "edge": "방대한 멀티소스 데이터로 추정 근거를 다각 교차검증, 데이터 폭 자체가 신뢰 기반"
+   },
+   {
+    "name": "밸류맵(ValueMap)",
+    "what": "국내 3세대 AVM 기반 토지·건물 추정가, 실거래가 예측력 90%+ 표방",
+    "edge": "정량 예측력(90%) 수치를 신뢰지표로 마케팅 — 우리도 Trust Score/오차범위 정량화 필요성의 근거"
+   },
+   {
+    "name": "부동산플래닛",
+    "what": "동·호수별 AI 추정가 제공, '정확성 미보증' 명시적 면책고지",
+    "edge": "추정 한계를 명시적 disclaimer로 투명 고지 — 책임·신뢰 관리 best practice"
+   },
+   {
+    "name": "KB부동산 AI맵 / 공간의가치(VOS)",
+    "what": "아파트·오피스텔·토지 AI 추정가, AI 부동산금융 서비스",
+    "edge": "금융기관 신뢰 기반 + PF/대출 연계 — 은행제출용 검증된 추정에 강점"
+   },
+   {
+    "name": "HouseCanary (글로벌)",
+    "what": "property별 confidence score를 ML 불확실성 모델로 산출, 추정에 신뢰범위 동반",
+    "edge": "모든 추정에 측정가능한 불확실성(confidence score+range) 부여 표준 — conformal prediction 도입의 벤치마크"
+   },
+   {
+    "name": "CoreLogic / ATTOM (글로벌 AVM)",
+    "what": "대규모 AVM + FSD(Forecast Standard Deviation) 등 오차지표 제공",
+    "edge": "산업표준 오차지표(FSD)로 점추정이 아닌 신뢰구간 제공 — 통계적 검증 산업표준"
+   },
+   {
+    "name": "RAGAS / TruLens / DeepEval (검증 인프라)",
+    "what": "RAG faithfulness·groundedness·context relevance 정량 평가 + 가드레일·모니터링",
+    "edge": "검증 자체를 측정·회귀·알림하는 운영 표준 — 우리 검증 관측성 부재를 메우는 도구"
+   }
+  ],
+  "sources": [
+   "https://arxiv.org/pdf/2505.04847",
+   "https://github.com/EdinburghNLP/awesome-hallucination-detection",
+   "https://www.lakera.ai/blog/guide-to-hallucinations-in-large-language-models",
+   "https://aclanthology.org/2024.findings-acl.212.pdf",
+   "https://arxiv.org/pdf/2309.11495",
+   "https://arxiv.org/pdf/2509.05741",
+   "https://arxiv.org/pdf/2505.12348",
+   "https://link.springer.com/article/10.1007/s11146-024-10002-7",
+   "https://arxiv.org/html/2312.06531v2",
+   "https://www.housecanary.com/blog/avms-reshape-real-estate",
+   "https://www.attomdata.com/data/property-valuation-data/avm/",
+   "https://bigvalue.ai/",
+   "https://www.valueupmap.com/tech",
+   "https://www.bdsplanet.com/etc/assumeReadme.ytp",
+   "https://economychosun.com/site/data/html_dir/2025/06/20/2025062000032.html",
+   "https://data.kbland.kr/aimap",
+   "https://vos.land/",
+   "https://atlan.com/know/llm-evaluation-frameworks-compared/",
+   "https://deepchecks.com/rag-evaluation-metrics-answer-relevancy-faithfulness-accuracy/",
+   "https://www.getmaxim.ai/articles/rag-evaluation-a-complete-guide-for-2025/",
+   "https://arxiv.org/pdf/2603.04663",
+   "https://dev.to/nodefiend/trust-the-server-not-the-llm-a-deterministic-approach-to-llm-accuracy-20ag",
+   "https://arxiv.org/html/2506.05828",
+   "https://openreview.net/pdf?id=zj7YuTE4t8",
+   "https://www.arxiv.org/pdf/2601.04742",
+   "https://arxiv.org/pdf/2402.07401"
+  ]
+ }
+]
