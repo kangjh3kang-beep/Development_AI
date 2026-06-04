@@ -65,6 +65,12 @@ CATALOG: list[dict[str, Any]] = [
     {"name": "KAKAO_REST_API_KEY", "label": "카카오 REST API 키", "group": "공공데이터·지도",
      "secret": True, "kind": "text", "guide_url": "https://developers.kakao.com",
      "desc": "지도/주소 지오코딩(선택)."},
+    {"name": "RONE_API_KEY", "label": "한국부동산원 R-ONE 인증키", "group": "공공데이터·지도",
+     "secret": True, "kind": "text", "guide_url": "https://www.reb.or.kr/r-one/portal/openapi/openApiIntroPage.do",
+     "desc": "지가변동률 등 부동산통계 OpenAPI. 시점수정 실데이터에 사용."},
+    {"name": "RONE_LANDPRICE_STATBL_ID", "label": "R-ONE 지가변동률 통계표ID(STATBL_ID)", "group": "공공데이터·지도",
+     "secret": False, "kind": "text",
+     "desc": "R-ONE 통계표 목록에서 '지가변동률' 통계표 ID. 설정 시 시점수정에 실데이터 적용."},
     # LLM
     {"name": "ANTHROPIC_API_KEY", "label": "Anthropic(Claude) API Key", "group": "AI(LLM)",
      "secret": True, "kind": "text", "guide_url": "https://console.anthropic.com"},

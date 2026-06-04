@@ -29,6 +29,33 @@ def _lookup_rate(address: str) -> tuple[float, str]:
     return _DEFAULT_RATE, f"전국 평균 지가변동률 {_DEFAULT_RATE*100:.1f}% 적용"
 
 
+def _sido_of(address: str) -> str:
+    for sido in _ANNUAL_RATE:
+        if sido in (address or ""):
+            return sido
+    return ""
+
+
+async def time_adjust_factor_async(address: str = "", base_year: int = 2025) -> dict[str, Any]:
+    """R-ONE 지가변동률 실데이터로 시점수정(가용 시), 실패 시 근사 테이블 폴백."""
+    try:
+        from app.services.external_api.reb_client import (
+            reb_ready, fetch_land_price_changes, cumulative_factor_from_rows,
+        )
+        if reb_ready():
+            rows = await fetch_land_price_changes(months=24)
+            if rows:
+                f = cumulative_factor_from_rows(rows, _sido_of(address))
+                if f and f > 0:
+                    return {"factor": f, "annual_rate": None, "elapsed_years": None,
+                            "rationale": f"R-ONE 지가변동률 실데이터 누적 시점수정 {f}", "source": "R-ONE"}
+    except Exception:  # noqa: BLE001
+        pass
+    out = time_adjust_factor(address, base_year)
+    out["source"] = "근사테이블"
+    return out
+
+
 def time_adjust_factor(address: str = "", base_year: int = 2025, now: datetime | None = None) -> dict[str, Any]:
     """공시기준일(base_year-01-01)→가격시점 지가변동률 누적 시점수정계수."""
     rate, rationale = _lookup_rate(address)

@@ -197,9 +197,9 @@ async def desk_appraisal(
     op = float(op)
     area_f = float(area) if area else None
 
-    # 시점수정: 미지정 시 지가변동률(시도별 연율) 누적계수로 산정
-    from app.services.land_intelligence.land_price_index import time_adjust_factor
-    ta = time_adjust_factor(address, base_year)
+    # 시점수정: 미지정 시 R-ONE 지가변동률 실데이터(가용 시)→근사 폴백
+    from app.services.land_intelligence.land_price_index import time_adjust_factor_async
+    ta = await time_adjust_factor_async(address, base_year)
     time_adjust = float(time_adjust) if time_adjust is not None else ta["factor"]
 
     # ── 1) 공시지가기준법 ──

@@ -1,0 +1,88 @@
+"""한국부동산원 R-ONE OpenAPI 클라이언트 — 지가변동률 실데이터.
+
+엔드포인트: GET https://www.reb.or.kr/r-one/openapi/SttsApiTblData.do
+파라미터: KEY(인증키), STATBL_ID(통계표ID, 지가변동률), DTACYCLE_CD=MM(월), Type=json,
+          (선택) WRTTIME_IDTFR_ID(작성시점), Start_INDEX/End_INDEX.
+키: RONE_API_KEY(시크릿 스토어/.env), 통계표ID: RONE_LANDPRICE_STATBL_ID(env, 사용자 설정).
+미설정/실패 시 None 반환 → land_price_index가 근사 테이블로 폴백(graceful).
+"""
+
+from __future__ import annotations
+
+import os
+from typing import Any
+
+import structlog
+
+logger = structlog.get_logger(__name__)
+
+_HOST = "https://www.reb.or.kr/r-one/openapi/SttsApiTblData.do"
+
+
+def reb_key() -> str:
+    return (os.getenv("RONE_API_KEY") or os.getenv("REB_API_KEY") or "").strip()
+
+
+def reb_statbl_id() -> str:
+    return (os.getenv("RONE_LANDPRICE_STATBL_ID") or "").strip()
+
+
+def reb_ready() -> bool:
+    return bool(reb_key() and reb_statbl_id())
+
+
+async def fetch_land_price_changes(months: int = 24) -> list[dict[str, Any]] | None:
+    """지가변동률 월별 행을 원형으로 반환(지역·시점·값). 미설정/실패 시 None."""
+    key, statbl = reb_key(), reb_statbl_id()
+    if not key or not statbl:
+        return None
+    try:
+        import httpx
+
+        params = {
+            "KEY": key, "STATBL_ID": statbl, "DTACYCLE_CD": "MM",
+            "Type": "json", "pIndex": "1", "pSize": str(max(50, months * 20)),
+        }
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            r = await client.get(_HOST, params=params)
+            r.raise_for_status()
+            data = r.json()
+        # R-ONE 응답: {"SttsApiTblData":[{"head":...},{"row":[...]}]} 또는 유사. 방어적 파싱.
+        rows: list[dict[str, Any]] = []
+        container = data.get("SttsApiTblData") if isinstance(data, dict) else None
+        if isinstance(container, list):
+            for blk in container:
+                if isinstance(blk, dict) and isinstance(blk.get("row"), list):
+                    rows = blk["row"]
+                    break
+        elif isinstance(data, dict) and isinstance(data.get("row"), list):
+            rows = data["row"]
+        return rows or None
+    except Exception as e:  # noqa: BLE001
+        logger.warning("R-ONE 지가변동률 조회 실패", err=str(e)[:140])
+        return None
+
+
+def cumulative_factor_from_rows(rows: list[dict[str, Any]], region_sido: str) -> float | None:
+    """월별 지가변동률(%) 행 → 지역 누적 변동계수(∏(1+r/100)). 값 필드는 방어적 탐색."""
+    if not rows:
+        return None
+    # 지역 매칭 키 후보(R-ONE 표마다 상이) + 값 필드 후보
+    region_keys = ("CLS_NM", "CLS_FULLNM", "REGION_NM", "REGION", "ITM_NM")
+    val_keys = ("DTA_VAL", "VALUE", "DATA_VALUE", "dtaVal")
+    factor = 1.0
+    used = 0
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        region_txt = " ".join(str(row.get(k, "")) for k in region_keys)
+        if region_sido and region_sido not in region_txt and region_txt.strip():
+            continue
+        raw = next((row.get(k) for k in val_keys if row.get(k) not in (None, "")), None)
+        try:
+            rate = float(raw)
+        except (TypeError, ValueError):
+            continue
+        factor *= (1 + rate / 100.0)
+        used += 1
+    return round(factor, 4) if used else None
