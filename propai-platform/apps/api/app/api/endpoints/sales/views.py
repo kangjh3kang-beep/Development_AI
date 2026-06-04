@@ -92,6 +92,58 @@ async def integrity_check(db: AsyncSession = Depends(get_db), ctx: SalesCtx = De
     return {"ok": len(findings) == 0, "findings": findings}
 
 
+@views_router.get("/crm/grade-suggestions")
+async def crm_grade_suggestions(db: AsyncSession = Depends(get_db), ctx: SalesCtx = Depends(sales_ctx)):
+    """AI 가망고객 예측 — 상담·통화·재방문·마케팅동의·최근성 가중 점수로 등급(A/B/C)·다음액션 제안."""
+    from datetime import datetime, timezone
+    from apps.api.database.models.sales.contract_crm_ad import (
+        SalesCustomer, SalesCustomerCall, SalesCustomerConsent, SalesCustomerConsultation,
+    )
+
+    now = datetime.now(timezone.utc)
+    customers = list((await db.execute(select(SalesCustomer).where(
+        SalesCustomer.site_id == ctx.site_id, SalesCustomer.deleted_at.is_(None)))).scalars())
+    out = []
+    for c in customers:
+        consults = list((await db.execute(select(SalesCustomerConsultation).where(
+            SalesCustomerConsultation.customer_id == c.id))).scalars())
+        call_sec = (await db.execute(select(func.coalesce(func.sum(SalesCustomerCall.duration), 0)).where(
+            SalesCustomerCall.customer_id == c.id))).scalar() or 0
+        mkt = (await db.execute(select(func.count()).select_from(SalesCustomerConsent).where(
+            SalesCustomerConsent.customer_id == c.id, SalesCustomerConsent.consent_type == "MARKETING",
+            SalesCustomerConsent.agreed.is_(True)))).scalar() or 0
+
+        score = 0; reasons = []
+        n = len(consults)
+        if n:
+            score += min(n * 20, 40); reasons.append(f"상담 {n}회")
+        if call_sec:
+            score += 15; reasons.append(f"통화 {int(call_sec)//60}분")
+        if mkt:
+            score += 15; reasons.append("마케팅 수신동의")
+        last = max((x.consulted_at for x in consults if x.consulted_at), default=None)
+        if last:
+            days = (now - (last if last.tzinfo else last.replace(tzinfo=timezone.utc))).days
+            if days <= 7:
+                score += 20; reasons.append("최근 7일 내 상담")
+            elif days <= 30:
+                score += 10; reasons.append("최근 30일 내 상담")
+        if c.first_visit_at:
+            score += 10; reasons.append("방문 이력")
+
+        grade = "A" if score >= 60 else "B" if score >= 30 else "C"
+        next_action = next((x.next_action for x in consults if x.next_action), None) or (
+            "계약 권유·잔여 혜택 안내" if grade == "A" else
+            "재상담 예약·관심 평형 제안" if grade == "B" else "정보 발송·관심 환기")
+        out.append({
+            "customer_id": str(c.id), "name": c.name, "phone": c.phone_e164,
+            "status": c.status, "current_grade": c.grade,
+            "score": score, "suggested_grade": grade, "reasons": reasons, "next_action": next_action,
+        })
+    out.sort(key=lambda x: -x["score"])
+    return {"count": len(out), "customers": out}
+
+
 @views_router.get("/sites")
 async def list_sites(db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
     """현재 테넌트(조직)의 분양 현장 목록 + 프로비저닝 진입점."""
