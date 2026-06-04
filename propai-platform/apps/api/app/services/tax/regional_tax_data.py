@@ -258,3 +258,46 @@ LTDC_RATES_PRIMARY_RESIDENCE: dict[int, float] = {
 
 # 법인 추가세 (주택만)
 CORP_ADDON_RATE_RESIDENTIAL = 0.10  # 10%
+
+
+# ── 종합부동산세: 종합합산 토지(나대지) 기준 (2024) ──
+# 개발사업은 착공 전 토지가 통상 '나대지=종합합산' → 공제 5억, 누진 1/2/3%.
+# (주택건설사업용 토지는 종부세 비과세 특례가 있을 수 있어 별도 적용 — note 명시)
+LAND_COMPREHENSIVE_DEDUCTION_WON = 500_000_000   # 종합합산 토지 공제(공시가격 기준)
+LAND_FAIR_MARKET_RATIO = 1.0                       # 토지 공정시장가액비율(2024)
+# (과세표준 한도, 세율, 누진공제) — 종합합산토지
+LAND_COMPREHENSIVE_TAX_BRACKETS: list[tuple[float, float, int]] = [
+    (1_500_000_000, 0.010, 0),
+    (4_500_000_000, 0.020, 15_000_000),
+    (float("inf"),  0.030, 60_000_000),
+]
+
+
+def calc_land_comprehensive_property_tax(
+    assessed_value_won: int,
+    *,
+    deduction_won: int = LAND_COMPREHENSIVE_DEDUCTION_WON,
+    fair_market_ratio: float = LAND_FAIR_MARKET_RATIO,
+    holding_years: int = 1,
+) -> dict[str, Any]:
+    """종합합산 토지 종합부동산세(연간·합산). 공제 이하면 0(구조적 정확).
+
+    과세표준 = max(0, 공시가격합산 − 공제) × 공정시장가액비율 → 누진세율 적용.
+    """
+    taxable = max(0.0, (assessed_value_won - deduction_won)) * fair_market_ratio
+    annual = 0
+    rate_applied = 0.0
+    for limit, rate, prog in LAND_COMPREHENSIVE_TAX_BRACKETS:
+        if taxable <= limit:
+            annual = max(0, int(taxable * rate - prog))
+            rate_applied = rate
+            break
+    total = annual * max(1, holding_years)
+    return {
+        "annual_won": annual,
+        "total_won": total,
+        "taxable_won": int(taxable),
+        "rate": rate_applied,
+        "deduction_won": deduction_won,
+        "fair_market_ratio": fair_market_ratio,
+    }

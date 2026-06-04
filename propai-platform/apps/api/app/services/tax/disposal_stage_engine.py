@@ -170,17 +170,36 @@ def calculate_d05_reconstruction_levy(
 def calculate_d06_comprehensive_property_tax(
     *,
     assessed_value_won: int,
-    rate: float = 0.005,
     holding_years: int = 1,
+    deduction_won: int | None = None,
+    fair_market_ratio: float | None = None,
 ) -> dict[str, Any]:
-    """D06 종합부동산세 (보유 기간 합산)."""
-    annual = int(assessed_value_won * rate)
-    total = annual * holding_years
+    """D06 종합부동산세 (보유 기간 합산) — 종합합산 토지 누진세율+공제 적용.
+
+    (이전: 전체가액×flat 0.5%·공제無 → 구조적 과대계상. 교정: 공제 5억·공정시장가액·
+     누진 1/2/3% → 공제 이하 토지는 0원으로 정확.)
+    """
+    from app.services.tax.regional_tax_data import (
+        calc_land_comprehensive_property_tax,
+        LAND_COMPREHENSIVE_DEDUCTION_WON,
+        LAND_FAIR_MARKET_RATIO,
+    )
+
+    r = calc_land_comprehensive_property_tax(
+        assessed_value_won,
+        deduction_won=deduction_won if deduction_won is not None else LAND_COMPREHENSIVE_DEDUCTION_WON,
+        fair_market_ratio=fair_market_ratio if fair_market_ratio is not None else LAND_FAIR_MARKET_RATIO,
+        holding_years=holding_years,
+    )
     return {
         "code": "D06", "name": "종합부동산세",
-        "base_won": assessed_value_won, "rate": rate,
-        "amount_won": total,
-        "detail": {"annual_won": annual, "holding_years": holding_years},
+        "base_won": r["taxable_won"], "rate": r["rate"],
+        "amount_won": r["total_won"],
+        "detail": {
+            "annual_won": r["annual_won"], "holding_years": holding_years,
+            "deduction_won": r["deduction_won"], "fair_market_ratio": r["fair_market_ratio"],
+            "note": "종합합산 토지(나대지) 기준. 주택건설사업용 토지는 종부세 비과세 특례 적용 가능(별도).",
+        },
     }
 
 
