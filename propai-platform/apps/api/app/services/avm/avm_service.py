@@ -49,8 +49,9 @@ def _ensure_mlflow():
 class AVMService:
     """
     AVM (Automated Valuation Model) 자동 시세 산출 서비스
-    XGBoost 앙상블 + 거리 가중 평균 (IDW) 복합 모델
-    검증 지표: R^2 = 0.94
+    XGBoost 앙상블 + 거리 가중 평균 (IDW) 복합 모델.
+    정확도(R²/MAE)는 train_model 시점에 실측·MLflow 기록하며, 추정 응답에는
+    comparable 표본수·가격분산 기반 신뢰도/범위만 제공(고정 정확도값 미표기).
     """
 
     def __init__(self):
@@ -125,15 +126,35 @@ class AVMService:
                 ml_price = float(self.model.predict(feature_df)[0])
             except Exception:
                 ml_price = idw_price
-        final_price = (ml_price * 0.6 + idw_price * 0.4)
+        model_used = bool(self.model and features and pd is not None and ml_price != idw_price)
+        final_price = (ml_price * 0.6 + idw_price * 0.4) if model_used else idw_price
+
+        # 신뢰도·가격범위 — comparable 표본수·가격분산 기반(실측). 고정 R² 제거(할루시네이션 방지).
+        import statistics as _st
+        comp_prices = [c.get("price_per_sqm") for c in comparables if c.get("price_per_sqm")]
+        n = len(comp_prices)
+        mean_p = (sum(comp_prices) / n) if n else 0.0
+        cov = (_st.pstdev(comp_prices) / mean_p) if n >= 2 and mean_p else None  # 변동계수
+        confidence = None
+        if n >= 1:
+            sample_term = min(1.0, n / 8.0)            # 표본 충분도(8건 이상이면 만점)
+            disp_term = max(0.0, 1.0 - cov) if cov is not None else 0.6  # 분산 낮을수록↑
+            confidence = round(0.4 * sample_term + 0.6 * sample_term * disp_term, 3)
+        margin = (final_price * cov) if cov is not None else None  # ±1σ 변동계수 환산
         return {
             "estimated_price_per_sqm": round(final_price),
             "estimated_value_per_sqm": round(final_price),
             "ml_estimate": round(ml_price),
             "idw_estimate": round(idw_price),
-            "comparable_count": len(comparables),
-            "model_type": "XGBoost_IDW_ensemble",
-            "validation_r2": 0.94
+            "comparable_count": n,
+            "model_type": "XGBoost_IDW_ensemble" if model_used else "IDW(comparable-weighted)",
+            "model_used": model_used,
+            "confidence": confidence,                  # 0~1, 표본수·가격분산 기반(실측)
+            "price_range_per_sqm": (
+                {"low": round(final_price - margin), "high": round(final_price + margin)}
+                if margin is not None else None
+            ),
+            "method_note": "신뢰도·범위는 comparable 표본수·가격분산 기반 실측치. 학습 R²는 train_model 시에만 산출하며 추정 응답에 고정값을 넣지 않음.",
         }
 
     def train_model(self, X_train: Any, y_train: Any) -> Dict:

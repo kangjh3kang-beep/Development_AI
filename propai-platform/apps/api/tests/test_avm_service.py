@@ -72,8 +72,12 @@ class TestEstimateValue:
         assert "estimated_price_per_sqm" in result
         assert "ml_estimate" in result
         assert "idw_estimate" in result
-        assert result["model_type"] == "XGBoost_IDW_ensemble"
-        assert result["validation_r2"] == 0.94
+        # 정직 표기: 실제 사용 모델 반영 + 고정 R² 미표기
+        assert "model_used" in result
+        assert result["model_type"] in ("XGBoost_IDW_ensemble", "IDW(comparable-weighted)")
+        assert "validation_r2" not in result          # 가짜 정확도 제거
+        assert "confidence" in result                 # 표본·분산 기반 실측 신뢰도
+        assert "price_range_per_sqm" in result
 
     def test_blend_ratio_60_40(self, sample_comparables):
         """ML 60% + IDW 40% 혼합 비율 확인."""
