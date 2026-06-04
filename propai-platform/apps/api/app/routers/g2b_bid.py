@@ -273,19 +273,40 @@ from pydantic import BaseModel as _BaseModel  # noqa: E402
 class EstimateSimRequest(_BaseModel):
     base_price: float                 # 기초금액(원)
     bid_type: str = "공사"
+    region_sido: Optional[str] = None  # 주면 해당 지역 실적으로 보정
     variation: float | None = None    # 복수예비가 변동폭(소수, 예 0.02)
     floor_rate: float | None = None   # 낙찰하한율(소수, 예 0.87745)
     target_win_prob: float = 0.85
     iterations: int = 10000
+    calibrate: bool = True            # 실적(g2b_award_stats) 보정 사용
 
 
-@router.post("/estimate-simulation", summary="적격심사 사정율(복수예비가 추첨) 시뮬레이션")
-async def estimate_simulation(req: EstimateSimRequest):
-    """기초금액에서 예정가격 분포·적격확률 곡선·적정 투찰가를 몬테카를로로 산출."""
+@router.post("/estimate-simulation", summary="적격심사 사정율 시뮬 + 실적 낙찰가율 보정")
+async def estimate_simulation(req: EstimateSimRequest, service: G2BBidService = Depends(_get_service)):
+    """기초금액→예정가격 분포·적격확률·적정 투찰가 몬테카를로. calibrate=True면 실제
+    낙찰가율 통계(g2b_award_stats)로 적정투찰율을 추가 보정한다."""
     from app.services.ai_services.g2b_estimate_simulator import simulate_estimate
+
+    e_mean = e_min = e_max = None
+    e_count = None
+    if req.calibrate:
+        try:
+            stats = await service.get_award_stats(bid_type=req.bid_type, region_sido=req.region_sido)
+            items = getattr(stats, "items", []) or []
+            avgs = [float(s.avg_award_rate) for s in items if getattr(s, "avg_award_rate", None) is not None]
+            mins = [float(s.min_award_rate) for s in items if getattr(s, "min_award_rate", None) is not None]
+            maxs = [float(s.max_award_rate) for s in items if getattr(s, "max_award_rate", None) is not None]
+            if avgs:
+                e_mean = sum(avgs) / len(avgs)
+                e_min = min(mins) if mins else None
+                e_max = max(maxs) if maxs else None
+                e_count = sum(int(getattr(s, "bid_count", 0) or 0) for s in items)
+        except Exception:  # noqa: BLE001
+            pass
 
     return simulate_estimate(
         req.base_price, bid_type=req.bid_type, variation=req.variation,
         floor_rate=req.floor_rate, target_win_prob=req.target_win_prob,
         iterations=req.iterations,
+        empirical_mean=e_mean, empirical_min=e_min, empirical_max=e_max, empirical_count=e_count,
     )

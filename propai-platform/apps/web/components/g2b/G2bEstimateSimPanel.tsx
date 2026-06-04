@@ -8,10 +8,15 @@
 import { useState } from "react";
 import { apiClient } from "@/lib/api-client";
 
+type Calibrated = {
+  empirical_band: { min_pct: number; avg_pct: number; max_pct: number; count?: number };
+  calibrated_bid_rate_pct: number; calibrated_bid_price: number; calibrated_win_prob: number; basis?: string;
+};
 type SimResult = {
   base_price: number; floor_rate_pct: number; variation_pct: number;
   yega_p10_rate: number; yega_p50_rate: number; yega_p90_rate: number;
   recommended_bid_rate_pct: number; recommended_bid_price: number; target_win_prob: number;
+  calibrated?: Calibrated | null;
   curve: Array<{ bid_rate: number; bid_price: number; p_valid: number }>;
   note?: string; error?: string;
 };
@@ -30,7 +35,7 @@ export function G2bEstimateSimPanel() {
     setBusy(true); setErr(null);
     try {
       const r = await apiClient.post<SimResult>("/g2b/estimate-simulation", {
-        body: { base_price: baseEok * 1e8, bid_type: bidType, target_win_prob: target / 100 },
+        body: { base_price: baseEok * 1e8, bid_type: bidType, target_win_prob: target / 100, calibrate: true },
       });
       if (r.error) setErr(r.error); else setRes(r);
     } catch (e) {
@@ -71,11 +76,21 @@ export function G2bEstimateSimPanel() {
       {res && (
         <div className="mt-5 space-y-4">
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-            <Tile label="적정 투찰율" value={`${res.recommended_bid_rate_pct}%`} accent />
-            <Tile label="적정 투찰가" value={won(res.recommended_bid_price)} sub={`적격확률 ${Math.round(res.target_win_prob * 100)}%`} />
+            {res.calibrated ? (
+              <Tile label="실적보정 적정율" value={`${res.calibrated.calibrated_bid_rate_pct}%`} sub={`${won(res.calibrated.calibrated_bid_price)} · 적격 ${Math.round(res.calibrated.calibrated_win_prob * 100)}%`} accent />
+            ) : (
+              <Tile label="적정 투찰율" value={`${res.recommended_bid_rate_pct}%`} accent />
+            )}
+            <Tile label="메커니즘 적정율" value={`${res.recommended_bid_rate_pct}%`} sub={won(res.recommended_bid_price)} />
             <Tile label="낙찰하한율" value={`${res.floor_rate_pct}%`} />
             <Tile label="예정가격(중앙)" value={`${(res.yega_p50_rate * 100).toFixed(1)}%`} sub={`p10~p90 ${(res.yega_p10_rate * 100).toFixed(1)}~${(res.yega_p90_rate * 100).toFixed(1)}%`} />
           </div>
+          {res.calibrated && (
+            <p className="text-[11px] text-[var(--text-secondary)]">
+              실적 낙찰가율(최저 {res.calibrated.empirical_band.min_pct}% · 평균 {res.calibrated.empirical_band.avg_pct}% · 최고 {res.calibrated.empirical_band.max_pct}%
+              {res.calibrated.empirical_band.count ? `, ${res.calibrated.empirical_band.count}건` : ""}) 기반 보정 — 메커니즘 적정율과 실적 분포를 결합.
+            </p>
+          )}
 
           <div>
             <p className="mb-2 text-xs font-bold text-[var(--text-secondary)]">투찰율별 적격(낙찰가능) 확률</p>

@@ -25,6 +25,13 @@ DEFAULT_FLOOR_RATE = {
 DEFAULT_VARIATION = {"공사": 0.02, "용역": 0.03, "물품": 0.03}
 
 
+def _as_rate(v: float | None) -> float | None:
+    """낙찰가율 입력을 소수비율로 정규화(90.82 → 0.9082, 0.9082 → 0.9082)."""
+    if v is None:
+        return None
+    return v / 100.0 if v > 2 else v
+
+
 def simulate_estimate(
     base_price: float,
     *,
@@ -35,6 +42,10 @@ def simulate_estimate(
     floor_rate: float | None = None,
     target_win_prob: float = 0.85,
     iterations: int = 10000,
+    empirical_mean: float | None = None,   # 실적 평균 낙찰가율(% 또는 소수)
+    empirical_min: float | None = None,
+    empirical_max: float | None = None,
+    empirical_count: int | None = None,
 ) -> dict[str, Any]:
     """복수예비가 추첨 시뮬 → 예정가격 분포·적격확률 곡선·적정 투찰가 산출."""
     if base_price <= 0:
@@ -77,6 +88,28 @@ def simulate_estimate(
 
     ymean = statistics.mean(yega)
     ystd = statistics.pstdev(yega)
+
+    # ── 실적(낙찰가율) 보정: 실제 낙찰자 투찰 분포로 적정투찰율 재조정 ──
+    calibrated: dict[str, Any] | None = None
+    e_avg = _as_rate(empirical_mean)
+    if e_avg is not None:
+        e_min = _as_rate(empirical_min) or e_avg
+        e_max = _as_rate(empirical_max) or e_avg
+        # 경쟁력: 평균보다 약간 낮게(min 쪽 40%) — 단 적격하한(메커니즘 적정율) 이상 유지
+        competitive = e_avg - 0.4 * max(0.0, e_avg - e_min)
+        cal_rate = max(competitive, rec_rate)
+        # 실적 분포 내 위치(적격확률은 메커니즘 곡선에서 조회)
+        cal_p = sum(1 for f in floors if f <= base_price * cal_rate) / n
+        calibrated = {
+            "empirical_band": {"min_pct": round(e_min * 100, 2), "avg_pct": round(e_avg * 100, 2),
+                               "max_pct": round(e_max * 100, 2), "count": empirical_count},
+            "calibrated_bid_rate": round(cal_rate, 4),
+            "calibrated_bid_rate_pct": round(cal_rate * 100, 3),
+            "calibrated_bid_price": round(base_price * cal_rate),
+            "calibrated_win_prob": round(cal_p, 3),
+            "basis": "실적 낙찰가율(g2b_award_stats) 보정 — 평균보다 경쟁적, 적격하한 이상 유지",
+        }
+
     return {
         "bid_type": bid_type,
         "base_price": round(base_price),
@@ -92,6 +125,7 @@ def simulate_estimate(
         "recommended_bid_price": round(rec_bid),
         "recommended_bid_rate": round(rec_rate, 4),
         "recommended_bid_rate_pct": round(rec_rate * 100, 3),
+        "calibrated": calibrated,   # 실적 낙찰가율 보정(있을 때)
         "curve": curve,
         "note": (
             f"기초금액 ±{round(var*100,1)}% 복수예비가 {prelim_count}개 중 {draw_count}개 추첨 평균=예정가격, "
