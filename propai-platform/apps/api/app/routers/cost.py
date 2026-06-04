@@ -69,6 +69,29 @@ async def estimate_overview(req: OverviewCostRequest) -> dict[str, Any]:
         }
 
     expected = scenario(1.0)
+
+    # 항목별 정밀 적산(QTO) — 레미콘·철근·거푸집·조적·방수·창호·기계·전기(물량×단가).
+    # 건축개요(연면적·층수·구조) 기반. 설계/BIM 완성 시 실 매스로 정밀화 가능.
+    items_qto: list[dict[str, Any]] = []
+    try:
+        from app.services.cost.standard_quantity_estimator import StandardQuantityEstimator
+        _BT_KR = {"apartment": "공동주택", "officetel": "오피스텔", "office": "근린생활시설",
+                  "townhouse": "다세대주택", "single_house": "다세대주택", "warehouse": "근린생활시설"}
+        raw = StandardQuantityEstimator().estimate(
+            building_type=_BT_KR.get(req.building_type, "공동주택"),
+            total_gfa_sqm=gfa, floor_count_above=req.floor_count_above,
+            floor_count_below=req.floor_count_below, structure_type=req.structure_type,
+        )
+        for it in raw:
+            unit_sum = float(it.get("mat_unit", 0)) + float(it.get("labor_unit", 0)) + float(it.get("exp_unit", 0))
+            items_qto.append({
+                "name": it.get("item_name"), "spec": it.get("spec"), "unit": it.get("unit"),
+                "quantity": it.get("quantity"), "unit_cost_won": int(unit_sum),
+                "cost_won": int(float(it.get("quantity", 0)) * unit_sum),
+            })
+    except Exception:  # noqa: BLE001
+        items_qto = []
+
     return {
         "building_type": req.building_type, "structure_type": req.structure_type,
         "total_gfa_sqm": gfa, "gfa_above_sqm": round(gfa_above, 1), "gfa_below_sqm": round(gfa_below, 1),
@@ -78,6 +101,7 @@ async def estimate_overview(req: OverviewCostRequest) -> dict[str, Any]:
             "expected_won": expected["total_won"],
             "max_won": scenario(1.12)["total_won"],
         },
+        "items": items_qto,
         "note": "건축개요 기반 표준 추정(지상/지하/조경/간접). 도면·BIM 완성 시 항목별 정밀 적산으로 정확도 향상.",
     }
 

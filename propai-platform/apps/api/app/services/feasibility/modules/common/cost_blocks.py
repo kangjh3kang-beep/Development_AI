@@ -25,7 +25,20 @@ def compute_land_cost(inp: ModuleInput) -> dict[str, Any]:
 
 
 def compute_construction_cost(inp: ModuleInput) -> dict[str, Any]:
-    """표준 공사비 계산."""
+    """표준 공사비 계산.
+
+    공사비 정밀 분석 결과를 params.construction_cost_override_won 로 주입하면
+    수지·사업성(ROI)이 그 공사비를 그대로 사용한다(3자 단일 데이터원 정합).
+    """
+    override = inp.params.get("construction_cost_override_won")
+    if override and float(override) > 0:
+        total = int(float(override))
+        return {
+            "direct": {"total_direct_cost_won": total},
+            "indirect": {"total_indirect_cost_won": 0},
+            "total_construction_cost_won": total,
+            "source": "cost_analysis_override",
+        }
     return calculate_total_construction_cost(
         total_gfa_sqm=inp.total_gfa_sqm,
         building_type=inp.building_type,

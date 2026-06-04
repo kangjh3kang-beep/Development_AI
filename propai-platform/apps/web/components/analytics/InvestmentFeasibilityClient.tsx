@@ -183,7 +183,13 @@ export function InvestmentFeasibilityClient() {
     setLoading(true); setErr("");
     try {
       const r = await apiClient.postV2<CalcResult>("/feasibility/calculate", {
-        body: { ...form, project_name: pickerAddr || siteAnalysis?.address || "투자분석", land_category: "land" },
+        body: {
+          ...form, project_name: pickerAddr || siteAnalysis?.address || "투자분석", land_category: "land",
+          // 공사비 정밀 분석 결과가 있으면 수지엔진에 그대로 주입(3자 수치 정합)
+          params: costData?.totalConstructionCostWon
+            ? { construction_cost_override_won: costData.totalConstructionCostWon }
+            : {},
+        },
         useMock: false, timeoutMs: 90000,
       });
       setResult(r);
