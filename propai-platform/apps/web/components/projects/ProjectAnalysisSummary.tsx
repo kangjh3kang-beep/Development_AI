@@ -8,6 +8,7 @@
 
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { SiteScoreCard } from "@/components/projects/SiteScoreCard";
+import { BuildableEnvelopeCard } from "@/components/projects/BuildableEnvelopeCard";
 
 const eok = (won: number | null | undefined): string | null =>
   won != null ? `${(won / 1e8).toLocaleString(undefined, { maximumFractionDigits: 1 })}억` : null;
@@ -96,9 +97,10 @@ export function ProjectAnalysisSummary() {
         <Tile label="법규준수" value={violations != null ? (violations === 0 ? "적합" : `위반 ${violations}건`) : "—"} />
       </div>
 
-      {/* 입지점수(SiteScore) */}
-      <div className="mt-5">
+      {/* 입지점수(SiteScore) + 빌더블 인벨로프(정북일조) */}
+      <div className="mt-5 space-y-3">
         <SiteScoreCard />
+        <BuildableEnvelopeCard />
       </div>
 
       {/* 섹션 카드 */}
