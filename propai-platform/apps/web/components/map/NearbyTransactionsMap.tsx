@@ -36,11 +36,12 @@ type Group = {
   avg_deposit_10k?: number; avg_monthly_10k?: number; deals: Deal[];
 };
 type Category = { label: string; type: string; kind: string; count: number; groups: Group[] };
-type MapPayload = {
+export type NearbyMapPayload = {
   center: { lat: number | null; lon: number | null; address?: string } | null;
   radius_m: number; lawd_cd: string; months: string[];
   categories: Record<string, Category>;
 };
+type MapPayload = NearbyMapPayload;
 
 const TRADE_TYPES = [
   { key: "apt", label: "아파트", color: "#14b8a6" },
@@ -86,7 +87,14 @@ function loadLeaflet(): Promise<void> {
   return leafletLoading;
 }
 
-export function NearbyTransactionsMap() {
+export function NearbyTransactionsMap({
+  onPayload,
+  onLoading,
+}: {
+  /** 동일 nearby-map 데이터를 부모와 공유(중복 fetch 방지). 부지분석 등은 미전달=내부 사용만. */
+  onPayload?: (p: NearbyMapPayload | null) => void;
+  onLoading?: (b: boolean) => void;
+} = {}) {
   const siteAnalysis = useProjectContextStore((st) => st.siteAnalysis);
   const address = siteAnalysis?.address || "";
   const pnu = (siteAnalysis?.pnu as string) || "";
@@ -113,6 +121,7 @@ export function NearbyTransactionsMap() {
   const fetchData = useCallback(async () => {
     if (!address) return;
     setLoading(true);
+    onLoading?.(true);
     setError("");
     try {
       const res = await apiClient.post<MapPayload>("/zoning/nearby-map", {
@@ -121,12 +130,15 @@ export function NearbyTransactionsMap() {
         timeoutMs: 90000,
       });
       setPayload(res);
+      onPayload?.(res); // 부모(마켓분석)가 동일 데이터로 실거래 현황·시세 산출
     } catch (e: any) {
       setError(e?.message || "주변 실거래 조회 실패");
+      onPayload?.(null);
     } finally {
       setLoading(false);
+      onLoading?.(false);
     }
-  }, [address, pnu]);
+  }, [address, pnu, onPayload, onLoading]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 

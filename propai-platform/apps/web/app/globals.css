@@ -88,6 +88,14 @@ a[aria-disabled="true"],
   cursor: not-allowed;
 }
 
+/* ── CTA 버튼 라벨 줄바꿈 방지(가독성) ──
+   버튼/역할버튼의 텍스트 라벨이 좁은 컨테이너에서 두 줄로 깨지는 것을 방지.
+   (블록 자식을 가진 버튼·카드형 버튼은 inline 텍스트가 없어 영향 없음 → 안전) */
+button,
+[role="button"] {
+  white-space: nowrap;
+}
+
 /* ── 클릭 가능 컨트롤 손모양 커서 ──
    Tailwind preflight가 button 기본 cursor:pointer 를 제거해 전역에서 화살표로 보여
    링크/버튼임을 인지하기 어렵다. 활성 컨트롤에 pointer 를 복원(자동채움/분석 등 포함). */
