@@ -16,6 +16,28 @@ _NAME_ALIAS = {
     "rebar_sd400": "steel_rebar",
 }
 
+# 자재키 → 한국 EPD DB(한글명) 매핑(동적 EPD 우선 조회용)
+_EPD_ALIAS = {
+    "concrete_35mpa": "레미콘_35MPa", "concrete_C35": "고강도 콘크리트 (C35)",
+    "concrete_C25": "일반 콘크리트 (C25)", "concrete_25mpa": "일반 콘크리트 (C25)",
+    "rebar": "철근_SD400", "rebar_sd400": "철근_SD400", "steel_rebar": "철근_SD400",
+    "steel_structural": "구조용강재_H형강", "insulation_eps": "EPS단열재",
+    "insulation_mineral_wool": "단열재 (미네랄울)", "glass": "로이유리",
+}
+
+
+def _resolve_ef(material: str) -> tuple[float, str]:
+    """배출계수(kgCO2e/kg)·출처 계층 조회: EPD-KR → IPCC AR6 → 기본추정."""
+    from app.services.esg.epd_carbon_service import EPD_KOREA_DATABASE
+    epd = EPD_KOREA_DATABASE.get(material) or EPD_KOREA_DATABASE.get(_EPD_ALIAS.get(material, ""))
+    if epd and "epd_kgco2e" in epd:
+        return float(epd["epd_kgco2e"]), "EPD-KR"
+    key = _NAME_ALIAS.get(material, material)
+    if key in IPCC_AR6_EMISSION_FACTORS:
+        return IPCC_AR6_EMISSION_FACTORS[key], "IPCC-AR6"
+    return 0.5, "기본추정"
+
+
 class LCAService:
     """LCA 탄소 자동 계산 (ISO 14040:2006, IPCC AR6)"""
 
@@ -28,14 +50,17 @@ class LCAService:
             }
         total_gwp = 0.0
         breakdown = {}
+        epd_covered = 0
         for material, quantity_kg in material_quantities.items():
-            key = _NAME_ALIAS.get(material, material)
-            ef = IPCC_AR6_EMISSION_FACTORS.get(key, 0.5)
+            ef, src = _resolve_ef(material)
+            if src == "EPD-KR":
+                epd_covered += 1
             gwp = quantity_kg * ef
             total_gwp += gwp
             breakdown[material] = {
                 "quantity_kg": quantity_kg,
                 "emission_factor_kgco2e_per_kg": ef,
+                "ef_source": src,
                 "gwp_kgco2e": round(gwp, 2)
             }
         total_rounded = round(total_gwp, 2)
@@ -43,7 +68,8 @@ class LCAService:
             "phase": "A1-A3", "total_gwp_kgco2e": total_rounded,
             "total_gwp_kgco2eq": total_rounded,
             "breakdown": breakdown, "standard": "ISO 14040:2006",
-            "gwp_basis": "IPCC AR6 2021"
+            "gwp_basis": "EPD-KR(한국 EPD) 우선 + IPCC AR6 폴백",
+            "epd_coverage": f"{epd_covered}/{len(material_quantities)}",
         }
 
     def calculate_b6_operational_energy(self, floor_area_sqm: float,

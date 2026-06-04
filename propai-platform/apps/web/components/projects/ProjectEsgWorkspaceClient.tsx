@@ -30,6 +30,8 @@ type LcaCalculationResponse = {
     standard?: string;
     basis?: string;
   };
+  epd_coverage?: string;
+  gwp_basis?: string;
   ai_analysis?: string;
 };
 
@@ -570,6 +572,11 @@ export function ProjectEsgWorkspaceClient({
                     = 전생애 {((lcaResult.whole_life.whole_life_total_kgco2e ?? 0) / 1000).toLocaleString(undefined, { maximumFractionDigits: 1 })} tCO₂e
                   </p>
                   {lcaResult.whole_life.basis && <p className="mt-1 text-[10px] text-[var(--text-hint)]">{lcaResult.whole_life.basis}</p>}
+                  {lcaResult.epd_coverage && (
+                    <p className="mt-1 text-[10px] text-[var(--text-hint)]">
+                      배출계수: {lcaResult.gwp_basis || "EPD-KR 우선"} · 한국 EPD 적용 자재 {lcaResult.epd_coverage}
+                    </p>
+                  )}
                 </div>
               )}
               {lcaResult.ai_analysis ? (

@@ -63,6 +63,8 @@ async def calculate_lca(req: LCARequest, current_user: User = Depends(get_curren
         "floor_area_sqm": req.floor_area_sqm,
         "material_breakdown": material_breakdown,
         "whole_life": whole,   # EN 15978 단계별(A4·A5·B1-B5·C·D) + 전생애 총계
+        "epd_coverage": a1a3.get("epd_coverage"),   # 한국 EPD 적용 자재 비율
+        "gwp_basis": a1a3.get("gwp_basis"),
         "ai_analysis": None,
     }
 
