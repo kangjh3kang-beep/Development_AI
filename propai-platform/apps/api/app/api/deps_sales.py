@@ -63,7 +63,8 @@ async def sales_ctx(request: Request, db: AsyncSession = Depends(get_db),
 
     role_lower = (getattr(user, "role", "") or "").lower()
     user_tenant = getattr(user, "tenant_id", None)
-    owns_site = bool(user_tenant) and str(getattr(site, "tenant_id", "") or "") == str(user_tenant)
+    # SalesSite의 소유 테넌트는 organization_id 컬럼(=provision 시 user.tenant_id) 으로 저장됨.
+    owns_site = bool(user_tenant) and str(getattr(site, "organization_id", "") or "") == str(user_tenant)
     if node:
         org_path, role = str(node.path), node.node_type
     elif role_lower in _SUPERADMIN_ROLES:
