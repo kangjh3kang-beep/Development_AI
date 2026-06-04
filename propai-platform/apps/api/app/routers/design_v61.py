@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -138,10 +138,35 @@ async def generate_full_drawing_set(project_id: str, req: DrawingSetRequest):
 
 
 @router.get("/{project_id}/drawings/{code}/svg", response_class=Response)
-async def get_drawing_svg(project_id: str, code: str):
-    """특정 도면의 SVG를 반환한다 (메모리 캐시 기반)."""
-    # 실제 구현 시 DB에서 조회; 여기서는 즉석 생성
-    project_data = {"project_name": f"Project-{project_id}"}
+async def get_drawing_svg(
+    project_id: str,
+    code: str,
+    site_width_m: float = Query(60.0, gt=0),
+    site_depth_m: float = Query(40.0, gt=0),
+    building_width_m: float = Query(40.0, gt=0),
+    building_depth_m: float = Query(20.0, gt=0),
+    floor_count: int = Query(5, ge=1, le=200),
+    floor_height_m: float = Query(3.0, gt=2.0),
+    basement_floors: int = Query(1, ge=0),
+    unit_width_m: float = Query(8.0, gt=0),
+    setback_m: float = Query(3.0, ge=0),
+    parking_count: int = Query(50, ge=0),
+    project_name: str = Query("PropAI"),
+):
+    """특정 도면의 SVG를 반환한다.
+
+    선택한 건축개요(부지·건물 치수·층수)를 쿼리로 받아 실제 기하로 도면을 생성한다.
+    파라미터 미전달 시 기존 기본값(부지 60×40 / 건물 40×20 / 5층)으로 폴백.
+    이로써 동일 기하를 3D BIM과 공유 → CAD↔BIM 정합.
+    """
+    project_data = {
+        "site_width_m": site_width_m, "site_depth_m": site_depth_m,
+        "building_width_m": building_width_m, "building_depth_m": building_depth_m,
+        "floor_count": floor_count, "floor_height_m": floor_height_m,
+        "basement_floors": basement_floors, "unit_width_m": unit_width_m,
+        "setback_m": setback_m, "parking_count": parking_count,
+        "project_name": project_name,
+    }
     drawings = svg_service.generate_full_drawing_set(project_data)
     svg = drawings.get(code)
     if not svg:
@@ -408,6 +433,37 @@ async def generate_bim_model(project_id: str, req: BimGenerateRequest):
         "ai_interpretation": ai_interpretation,
         "ifc_bytes": len(ifc_bytes),
         "glb_url": f"/api/v1/design/{project_id}/bim/model.glb",
+    }
+
+
+@router.post("/{project_id}/mass")
+async def compute_design_mass(project_id: str, req: BimGenerateRequest):
+    """선택한 건축개요로 표준 건축 매스를 산출한다 (LLM 미호출, 경량).
+
+    CAD 2D·3D BIM이 동일한 기하를 공유하도록 하는 단일 출처.
+    매스 직접입력 우선 → 대지정보(land_area+zone) AutoDesignEngine → 폴백.
+    """
+    mass = _resolve_mass(req)
+    bw = float(mass["building_width_m"])
+    bd = float(mass["building_depth_m"])
+    nf = int(mass["num_floors"])
+    fh = float(mass.get("floor_height_m", req.floor_height_m))
+    setback = 3.0
+    return {
+        "project_id": project_id,
+        "building_width_m": round(bw, 2),
+        "building_depth_m": round(bd, 2),
+        "num_floors": nf,
+        "floor_height_m": fh,
+        "building_height_m": round(nf * fh, 2),
+        # 도면 프레임용 부지 치수(건물 + 이격거리)
+        "site_width_m": round(bw + setback * 2, 2),
+        "site_depth_m": round(bd + setback * 2, 2),
+        "setback_m": setback,
+        "bcr_pct": mass.get("bcr_pct"),
+        "far_pct": mass.get("far_pct"),
+        "total_units": mass.get("total_units"),
+        "unit_width_m": round(float(mass.get("unit_width_m", 8.0)), 2),
     }
 
 
