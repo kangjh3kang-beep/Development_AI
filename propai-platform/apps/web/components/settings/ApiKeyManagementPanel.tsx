@@ -2,7 +2,17 @@
 
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { Card, CardContent } from "@propai/ui";
-import { apiClient } from "@/lib/api-client";
+import { apiClient, ApiClientError } from "@/lib/api-client";
+
+/** ApiClientError → 사람이 읽는 메시지(백엔드 detail 우선, 상태코드 포함). */
+function errText(e: unknown, fallback: string): string {
+  if (e instanceof ApiClientError) {
+    if (e.status === 403) return "관리자만 접근할 수 있습니다.";
+    const detail = (e.payload as { detail?: string } | null)?.detail;
+    return detail || `${fallback} (${e.status})`;
+  }
+  return e instanceof Error ? e.message : fallback;
+}
 
 /* ------------------------------------------------------------------ */
 /*  서버 연동 — 관리자 API 키 관리(분류별·항목별 + 사용자 임의추가)        */
@@ -62,14 +72,14 @@ function SecretCard({
     setBusy("save");
     setMsg(null);
     try {
-      await apiClient.put(`/api/v1/admin/secrets/${item.name}`, {
+      await apiClient.put(`/admin/secrets/${item.name}`, {
         body: { value: v },
       });
       setMsg({ ok: true, text: "저장됨 (즉시 반영)" });
       if (item.kind !== "select") setValue("");
       onSaved();
     } catch (e) {
-      setMsg({ ok: false, text: e instanceof Error ? e.message : "저장 실패" });
+      setMsg({ ok: false, text: errText(e, "저장 실패") });
     } finally {
       setBusy("");
     }
@@ -80,11 +90,11 @@ function SecretCard({
     setBusy("del");
     setMsg(null);
     try {
-      await apiClient.delete(`/api/v1/admin/secrets/${item.name}`);
+      await apiClient.delete(`/admin/secrets/${item.name}`);
       setMsg({ ok: true, text: "삭제됨" });
       onSaved();
     } catch (e) {
-      setMsg({ ok: false, text: e instanceof Error ? e.message : "삭제 실패" });
+      setMsg({ ok: false, text: errText(e, "삭제 실패") });
     } finally {
       setBusy("");
     }
@@ -95,11 +105,11 @@ function SecretCard({
     setMsg(null);
     try {
       const r = await apiClient.post<{ ok: boolean; message: string }>(
-        `/api/v1/admin/secrets/${item.name}/test`,
+        `/admin/secrets/${item.name}/test`,
       );
       setMsg({ ok: !!r.ok, text: r.message || (r.ok ? "연결 성공" : "연결 실패") });
     } catch (e) {
-      setMsg({ ok: false, text: e instanceof Error ? e.message : "테스트 실패" });
+      setMsg({ ok: false, text: errText(e, "테스트 실패") });
     } finally {
       setBusy("");
     }
@@ -261,7 +271,7 @@ function AddCustomKey({ onAdded }: { onAdded: () => void }) {
     setBusy(true);
     setMsg(null);
     try {
-      await apiClient.post(`/api/v1/admin/secrets`, {
+      await apiClient.post(`/admin/secrets`, {
         body: {
           name: n,
           value: value.trim(),
@@ -277,7 +287,7 @@ function AddCustomKey({ onAdded }: { onAdded: () => void }) {
       setValue("");
       onAdded();
     } catch (e) {
-      setMsg({ ok: false, text: e instanceof Error ? e.message : "추가 실패" });
+      setMsg({ ok: false, text: errText(e, "추가 실패") });
     } finally {
       setBusy(false);
     }
@@ -385,11 +395,10 @@ export function ApiKeyManagementPanel() {
     setLoading(true);
     setError(null);
     try {
-      const r = await apiClient.get<ListResponse>(`/api/v1/admin/secrets`);
+      const r = await apiClient.get<ListResponse>(`/admin/secrets`);
       setData(r);
     } catch (e) {
-      const m = e instanceof Error ? e.message : "불러오기 실패";
-      setError(m.includes("403") ? "관리자만 접근할 수 있습니다." : m);
+      setError(errText(e, "불러오기 실패"));
     } finally {
       setLoading(false);
     }
