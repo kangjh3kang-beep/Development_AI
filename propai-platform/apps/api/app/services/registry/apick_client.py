@@ -1,0 +1,114 @@
+"""apick(에이픽) 부동산등기부등본 어댑터 — 스크래핑 중개사(주소 직접·MD5 키).
+
+흐름: ① /rest/iros/1(열람) 주소→ic_id  ② /rest/iros_download/1(다운로드) ic_id→PDF/Excel.
+Excel(xlsx)을 openpyxl로 텍스트 추출해 기존 등기 분석 파이프라인(registry_text)에 투입하고,
+PDF는 base64로 받아 보관용 URL 생성에 사용한다.
+
+장점: 고객 인터넷등기소 ID/PW 불필요(apick 자체 계정 스크래핑) → 계정 노출 0, 월 고정비 0.
+한계: 구조화 JSON 미제공 → Excel/PDF 텍스트 추출 후 LLM 분석(CODEF는 구조화 JSON 직접).
+"""
+
+from __future__ import annotations
+
+import base64
+import io
+import os
+from typing import Any
+
+import structlog
+
+logger = structlog.get_logger()
+
+_HOST = (os.getenv("APICK_HOST") or "https://apick.app").rstrip("/")
+
+# CODEF realty_type 의미 → apick type 매핑(0토지+건물,1집합건물,2토지,3건물)
+_TYPE_MAP = {"0": "집합건물", "1": "집합건물", "2": "토지", "3": "건물"}
+
+
+def apick_key() -> str:
+    return (os.getenv("APICK_CL_AUTH_KEY") or os.getenv("APICK_API_KEY") or "").strip()
+
+
+def apick_ready() -> bool:
+    return bool(apick_key())
+
+
+def _xlsx_to_text(content: bytes) -> str:
+    """apick Excel(xlsx) 등기부를 줄 단위 텍스트로 평탄화(LLM 분석 입력용)."""
+    try:
+        from openpyxl import load_workbook
+
+        wb = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+        lines: list[str] = []
+        for ws in wb.worksheets:
+            for row in ws.iter_rows(values_only=True):
+                cells = [str(c).strip() for c in row if c is not None and str(c).strip()]
+                if cells:
+                    lines.append(" ".join(cells))
+        return "\n".join(lines)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("apick Excel 파싱 실패", err=str(e)[:120])
+        return ""
+
+
+async def fetch_registry(
+    *, address: str | None = None, unique_num: str | None = None,
+    realty_type: str | None = None,
+) -> dict[str, Any]:
+    """apick 등기부 열람+다운로드 → 표준 결과(registry_text·pdf_base64 포함)."""
+    item: dict[str, Any] = {"address": address}
+    key = apick_key()
+    if not key:
+        return {**item, "status": "not_configured", "message": "apick 인증키(APICK_CL_AUTH_KEY) 미설정"}
+    if not (address or unique_num):
+        return {**item, "status": "error", "message": "주소 또는 부동산 고유번호가 필요합니다."}
+
+    import httpx
+
+    headers = {"CL_AUTH_KEY": key}
+    rtype = _TYPE_MAP.get((realty_type or "").strip(), "집합건물")
+    form: dict[str, str] = {"type": rtype}
+    if unique_num:
+        form["unique_num"] = unique_num
+    elif address:
+        form["address"] = address
+
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            # ① 열람 요청 → ic_id
+            r1 = await client.post(f"{_HOST}/rest/iros/1", headers=headers, data=form)
+            r1.raise_for_status()
+            j1 = r1.json()
+            data = j1.get("data") or {}
+            ic_id = data.get("ic_id")
+            if not ic_id or int(data.get("success") or 0) != 1:
+                return {**item, "status": "provider_error",
+                        "message": j1.get("api", {}).get("message") or "apick 등기 열람 실패(주소/잔액 확인)",
+                        "raw": j1}
+
+            # ② 다운로드 — Excel(분석용 텍스트) + PDF(보관용)
+            async def _download(fmt: str) -> bytes | None:
+                rr = await client.post(f"{_HOST}/rest/iros_download/1", headers=headers,
+                                       data={"ic_id": str(ic_id), "format": fmt})
+                if rr.status_code != 200 or not rr.content:
+                    return None
+                return rr.content
+
+            xlsx = await _download("excel")
+            pdf = await _download("pdf")
+
+        registry_text = _xlsx_to_text(xlsx) if xlsx else ""
+        pdf_b64 = base64.b64encode(pdf).decode() if pdf else None
+        if not registry_text and not pdf_b64:
+            return {**item, "status": "provider_error", "message": "apick 다운로드 결과가 비어 있습니다.", "ic_id": ic_id}
+
+        return {
+            **item, "status": "ok", "origin": "apick", "ic_id": ic_id,
+            "registry_text": registry_text or None,   # LLM 분석 입력(없으면 PDF만)
+            "pdf_base64": pdf_b64,
+            "has_pdf": bool(pdf_b64),
+            "owner": None,  # 구조화 미제공 → LLM이 registry_text에서 추출
+        }
+    except Exception as e:  # noqa: BLE001
+        logger.warning("apick 등기 조회 실패", err=str(e)[:150])
+        return {**item, "status": "error", "message": str(e)[:200]}

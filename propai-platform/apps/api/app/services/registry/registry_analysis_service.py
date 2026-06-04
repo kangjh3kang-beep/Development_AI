@@ -279,8 +279,14 @@ class RegistryAnalysisService:
             )
             st = reg.get("status")
             if st == "ok":
-                source = _registry_text_from_codef(reg)
-                origin = "codef"
+                # apick 등은 추출 텍스트(registry_text)를 직접 제공 → 그대로 LLM 분석.
+                # CODEF는 구조화 JSON → _registry_text_from_codef로 텍스트 구성.
+                if reg.get("registry_text"):
+                    source = reg["registry_text"]
+                    origin = reg.get("origin") or "apick"
+                else:
+                    source = _registry_text_from_codef(reg)
+                    origin = "codef"
                 # 발급 PDF는 서버(비공개 버킷)에 저장하고 만료 URL로 전달(TTL 자동삭제)
                 pdf_url = None
                 b64 = reg.get("pdf_base64")

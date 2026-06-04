@@ -150,6 +150,12 @@ async def _codef_request(path: str, body: dict[str, Any]) -> dict[str, Any]:
 
 class RegistryService:
     def status(self) -> dict[str, Any]:
+        if (os.getenv("REGISTRY_PROVIDER") or "").strip().lower() == "apick":
+            from app.services.registry.apick_client import apick_ready
+            ok = apick_ready()
+            return {"configured": ok, "provider": "apick", "register_ready": ok,
+                    "message": ("apick 등기부 API 연결됨(주소 직접·고객 등기소 계정 불필요)" if ok
+                                else "apick 미설정 — APICK_CL_AUTH_KEY 필요")}
         if _is_codef():
             cc = _codef_cfg()
             ready, missing = _codef_register_ready()
@@ -176,6 +182,12 @@ class RegistryService:
                       ho: str | None = None) -> dict[str, Any]:
         """단건 등기부 조회/발급. 미설정 시 not_configured. 집합건물은 realty_type=1+dong/ho."""
         item = {"pnu": pnu, "address": address}
+        # apick 공급자(REGISTRY_PROVIDER=apick) — 주소 직접·고객 등기소 계정 불필요.
+        if (os.getenv("REGISTRY_PROVIDER") or "").strip().lower() == "apick":
+            from app.services.registry.apick_client import apick_ready, fetch_registry
+            if apick_ready():
+                return await fetch_registry(address=address, realty_type=realty_type)
+            return {**item, "status": "not_configured", "message": "apick 인증키(APICK_CL_AUTH_KEY) 미설정"}
         if _is_codef():
             return await self._codef_one(pnu, address, realty_type, dong, ho)
         c = _config()
