@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter
+from fastapi.responses import Response
 from pydantic import BaseModel
 
 from app.services.land_intelligence.land_price_estimator import estimate_land_price
@@ -42,4 +43,23 @@ async def land_desk_appraisal(req: DeskAppraisalRequest):
         pnu=req.pnu, address=req.address, area_sqm=req.area_sqm,
         official_price_per_sqm=req.official_price_per_sqm,
         comparable_avg_per_sqm=req.comparable_avg_per_sqm,
+    )
+
+
+@router.post("/desk-appraisal/pdf")
+async def land_desk_appraisal_pdf(req: DeskAppraisalRequest):
+    """예상 탁상감정서 PDF 다운로드."""
+    from app.services.land_intelligence.desk_appraisal_pdf import build_desk_appraisal_pdf
+
+    result = await desk_appraisal(
+        pnu=req.pnu, address=req.address, area_sqm=req.area_sqm,
+        official_price_per_sqm=req.official_price_per_sqm,
+        comparable_avg_per_sqm=req.comparable_avg_per_sqm,
+    )
+    if not result.get("ok"):
+        return result  # 공시지가 미확인 등 — JSON 오류 반환
+    pdf = build_desk_appraisal_pdf(result, address=req.address)
+    return Response(
+        content=pdf, media_type="application/pdf",
+        headers={"Content-Disposition": "attachment; filename=propai_desk_appraisal.pdf"},
     )
