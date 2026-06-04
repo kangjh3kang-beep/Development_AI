@@ -215,6 +215,33 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
     } finally { setBusy(null); }
   }, [projectId, updateRow]);
 
+  // 예상 탁상감정(공시지가기준법+거래사례비교법). 정식감정 아님, 매입예정가 채움(수정가능).
+  const deskAppraise = useCallback(async (r: LandRow) => {
+    if (!r.jibun.trim()) return;
+    setBusy(r.id); setNotice("");
+    try {
+      const token = (typeof window !== "undefined" && localStorage.getItem("propai_access_token")) || "";
+      const res = await fetch(`${apiBase()}/land-price/desk-appraisal`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ address: r.jibun.trim(), area_sqm: r.area_sqm ?? undefined }),
+      });
+      const d = await res.json();
+      if (d?.ok && d.appraised_total_won) {
+        updateRow(projectId, r.id, {
+          expected_price: d.appraised_total_won,
+          ...(d.area_sqm && !r.area_sqm ? { area_sqm: d.area_sqm } : {}),
+        });
+        const methods = (d.methods || []).map((m: { method: string; unit_price: number }) => `${m.method} ${Math.round(m.unit_price).toLocaleString()}원/㎡`).join(" · ");
+        setNotice(`「${r.jibun}」 예상 탁상감정 ${d.appraised_price_per_sqm.toLocaleString()}원/㎡ (신뢰 ${Math.round(d.confidence * 100)}%, ±${d.range_per_sqm.low.toLocaleString()}~${d.range_per_sqm.high.toLocaleString()}) — ${methods}. ${d.weight_note}. ${d.disclaimer}`);
+      } else {
+        setNotice(`「${r.jibun}」 탁상감정 실패 — ${d?.message || "공시지가 확인 필요"}. ‘자동채움’으로 공부정보를 먼저 채워보세요.`);
+      }
+    } catch {
+      setNotice(`「${r.jibun}」 탁상감정에 실패했습니다.`);
+    } finally { setBusy(null); }
+  }, [projectId, updateRow]);
+
   const openAnalysis = (jibun: string) => {
     router.push(`/${rl || locale}/registry-analysis?addr=${encodeURIComponent(jibun)}`);
   };
@@ -313,10 +340,11 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
                           <option value="">-</option><option value="사유지">사유지</option><option value="국공유지">국공유지</option>
                         </select>
                       </td>
-                      <td className="px-1.5 py-1 w-32">
+                      <td className="px-1.5 py-1 w-40">
                         <div className="flex items-center gap-1">
                           <input title={r.expected_price ? `${r.expected_price.toLocaleString()}원` : "매입예정가"} className={inputCls} type="number" value={r.expected_price ?? ""} onChange={(e) => updateRow(projectId, r.id, { expected_price: e.target.value ? Number(e.target.value) : null })} />
-                          <button onClick={() => estimatePrice(r)} disabled={busy === r.id} title="주변 공시지가·시세 기반 적정 매입가 분석(수정가능)" className="shrink-0 cursor-pointer rounded bg-[var(--accent-soft)] px-1 py-0.5 text-[9px] font-bold text-[var(--accent-strong)] disabled:opacity-50">적정</button>
+                          <button onClick={() => estimatePrice(r)} disabled={busy === r.id} title="공시지가×지역 시세보정 기반 적정 매입가(수정가능)" className="shrink-0 cursor-pointer rounded bg-[var(--accent-soft)] px-1 py-0.5 text-[9px] font-bold text-[var(--accent-strong)] disabled:opacity-50">적정</button>
+                          <button onClick={() => deskAppraise(r)} disabled={busy === r.id} title="예상 탁상감정(공시지가기준법+거래사례비교법) — 정식감정 아님, 수정가능" className="shrink-0 cursor-pointer rounded border border-[var(--accent-strong)]/40 px-1 py-0.5 text-[9px] font-bold text-[var(--accent-strong)] disabled:opacity-50">탁상</button>
                         </div>
                       </td>
                       <td className="px-1.5 py-1 w-28"><input className={inputCls} type="number" value={r.purchase_price ?? ""} onChange={(e) => updateRow(projectId, r.id, { purchase_price: e.target.value ? Number(e.target.value) : null })} /></td>

@@ -6,6 +6,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from app.services.land_intelligence.land_price_estimator import estimate_land_price
+from app.services.land_intelligence.desk_appraisal_service import desk_appraisal
 
 router = APIRouter(prefix="/api/v1/land-price", tags=["토지 적정가"])
 
@@ -23,4 +24,22 @@ async def land_price_estimate(req: LandPriceRequest):
     return await estimate_land_price(
         pnu=req.pnu, address=req.address,
         area_sqm=req.area_sqm, official_price_per_sqm=req.official_price_per_sqm,
+    )
+
+
+class DeskAppraisalRequest(BaseModel):
+    pnu: str | None = None
+    address: str = ""
+    area_sqm: float | None = None
+    official_price_per_sqm: float | None = None
+    comparable_avg_per_sqm: float | None = None   # 주변 토지 실거래 평균단가(선택)
+
+
+@router.post("/desk-appraisal")
+async def land_desk_appraisal(req: DeskAppraisalRequest):
+    """예상 탁상감정 — 공시지가기준법 + 거래사례비교법 결합(정식감정 아님, 참고용)."""
+    return await desk_appraisal(
+        pnu=req.pnu, address=req.address, area_sqm=req.area_sqm,
+        official_price_per_sqm=req.official_price_per_sqm,
+        comparable_avg_per_sqm=req.comparable_avg_per_sqm,
     )
