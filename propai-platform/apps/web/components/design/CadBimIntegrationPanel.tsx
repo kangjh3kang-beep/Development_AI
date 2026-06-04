@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { Canvas } from "@react-three/fiber";
-import { OrbitControls, Environment, Grid } from "@react-three/drei";
+import { OrbitControls, Grid } from "@react-three/drei";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import * as THREE from "three";
 import { motion } from "framer-motion";
@@ -233,11 +233,12 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
         {viewMode === "bim_3d" ? (
           <div className="absolute inset-0">
             <Canvas camera={{ position: [25, 20, 25], fov: 40 }}>
-              <ambientLight intensity={0.6} />
-              <directionalLight position={[10, 20, 10]} intensity={1.2} />
-              <pointLight position={[-10, 10, -10]} intensity={0.6} color="var(--info)" />
-              <Environment preset="city" />
-              <OrbitControls makeDefault autoRotate={!bimScene} autoRotateSpeed={0.3} enableDamping dampingFactor={0.05} />
+              <ambientLight intensity={0.8} />
+              <directionalLight position={[10, 20, 10]} intensity={1.4} castShadow />
+              <directionalLight position={[-10, 10, -10]} intensity={0.5} />
+              <pointLight position={[-10, 10, -10]} intensity={0.5} color="#60a5fa" />
+              {/* 무거운 HDR Environment 제거(네트워크 다운로드·GPU 부하). 모델 있을 때만 완만 회전. */}
+              <OrbitControls makeDefault autoRotate={!!bimScene} autoRotateSpeed={0.3} enableDamping dampingFactor={0.05} />
               <BuildingModel scene={bimScene} />
             </Canvas>
             {/* 로딩/에러 오버레이 */}

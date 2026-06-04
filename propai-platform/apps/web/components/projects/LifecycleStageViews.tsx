@@ -44,7 +44,10 @@ interface LifecycleStageViewsProps {
 }
 
 export function LifecycleStageViews({ projectId, dictionary }: LifecycleStageViewsProps) {
-  const [activeStage, setActiveStage] = useState<StageType>("design_ai");
+  // 기본 탭은 가벼운 입지분석. 설계(CAD/BIM)는 자동 마운트하지 않아 진입 시 멈춤/무거움을 방지.
+  const [activeStage, setActiveStage] = useState<StageType>("site_analysis");
+  // 설계 스튜디오(무거운 WebGL CAD/BIM)는 사용자가 명시적으로 열 때만 로드.
+  const [designStudioOpen, setDesignStudioOpen] = useState(false);
   const params = useParams();
   const locale = params.locale as string;
   const t = dictionary.lifecycle;
@@ -119,7 +122,33 @@ export function LifecycleStageViews({ projectId, dictionary }: LifecycleStageVie
           >
             <div className="relative z-10 h-full flex flex-col gap-10">
               <div className="flex-1">
-                {activeStage === "design_ai" && <CadBimIntegrationPanel projectId={projectId} dictionary={dictionary.cadBim} />}
+                {activeStage === "design_ai" && (
+                  designStudioOpen ? (
+                    <CadBimIntegrationPanel projectId={projectId} dictionary={dictionary.cadBim} />
+                  ) : (
+                    <div className="flex min-h-[420px] flex-col items-center justify-center gap-8 rounded-[3rem] border border-dashed border-[var(--line-strong)] bg-[var(--surface-soft)] p-12 text-center">
+                      <div className="flex h-20 w-20 items-center justify-center rounded-3xl bg-[var(--accent-soft)] text-4xl shadow-[var(--shadow-glow)]">🎨</div>
+                      <div className="space-y-3 max-w-xl">
+                        <h4 className="text-2xl font-[1000] tracking-tight text-[var(--text-primary)]">설계 AI 스튜디오 (CAD / BIM)</h4>
+                        <p className="text-sm leading-relaxed text-[var(--text-secondary)]">
+                          2D CAD 도면과 3D BIM 모델을 실시간 생성하는 고사양 엔진입니다. 불필요한 로딩으로 화면이 느려지지 않도록,
+                          <b className="text-[var(--text-primary)]"> 필요할 때만 </b>
+                          아래 버튼으로 직접 실행합니다.
+                        </p>
+                        <p className="text-xs text-[var(--text-hint)]">
+                          ※ 정밀 도면·모델은 선택한 건축개요(개발종목)를 기준으로 생성됩니다.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setDesignStudioOpen(true)}
+                        className="group inline-flex h-16 items-center justify-center gap-4 rounded-full bg-[var(--accent-strong)] px-12 text-xs font-black uppercase tracking-[0.3em] text-white shadow-[var(--shadow-glow)] transition-all hover:scale-105 active:scale-95"
+                      >
+                        설계 스튜디오 열기 ↗
+                      </button>
+                    </div>
+                  )
+                )}
                 {activeStage === "feasibility" && <FeasibilitySimulationWidget projectId={projectId} dictionary={dictionary.feasibility} />}
                 {activeStage === "construction" && (
                   <div className="flex flex-col gap-16">
