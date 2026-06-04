@@ -64,7 +64,7 @@ async def desk_appraisal(
     area_sqm: float | None = None,
     official_price_per_sqm: float | None = None,
     comparable_avg_per_sqm: float | None = None,   # 거래사례 평균단가(주변 토지 실거래)
-    time_adjust: float = 1.02,                       # 시점수정(공시기준일→현재, 기본 +2%)
+    time_adjust: float | None = None,                # 시점수정(미지정 시 지가변동률로 산정)
     base_year: int = 2025,
 ) -> dict[str, Any]:
     """예상 탁상감정가 산출(공시지가기준법 + 거래사례비교법 결합)."""
@@ -129,6 +129,11 @@ async def desk_appraisal(
 
     op = float(op)
     area_f = float(area) if area else None
+
+    # 시점수정: 미지정 시 지가변동률(시도별 연율) 누적계수로 산정
+    from app.services.land_intelligence.land_price_index import time_adjust_factor
+    ta = time_adjust_factor(address, base_year)
+    time_adjust = float(time_adjust) if time_adjust is not None else ta["factor"]
 
     # ── 1) 공시지가기준법 ──
     other_factor, other_rationale = _market_multiplier(address)   # 그 밖의 요인(기타요인) 보정
@@ -209,6 +214,8 @@ async def desk_appraisal(
         "road_side": road_side,
         "source": src,
         "base_year": base_year,
+        "time_adjust": round(time_adjust, 4),
+        "time_adjust_basis": ta["rationale"],
         "disclaimer": "본 추정치는 「감정평가 및 감정평가사에 관한 법률」상 감정평가가 아니며, "
                       "공시지가·실거래 등 공개데이터에 기반한 참고용 예상 시세 추정입니다. "
                       "법적 효력이 있는 가치 산정은 감정평가법인에 의뢰해야 하며, 본 값은 사용자가 수정할 수 있습니다.",
