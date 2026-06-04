@@ -176,8 +176,10 @@ function MetricTile({ label, value }: { label: string; value: string }) {
 /* ------------------------------------------------------------------ */
 
 export function MarketInsightsWorkspaceClient() {
-  const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
-  const updateSiteAnalysis = useProjectContextStore((s) => s.updateSiteAnalysis);
+  // 활성 프로젝트(projectId)가 있을 때만 컨텍스트를 사용 — 약식 검색이 타 페이지로 새지 않도록.
+  const projectId = useProjectContextStore((s) => s.projectId);
+  const rawSite = useProjectContextStore((s) => s.siteAnalysis);
+  const siteAnalysis = projectId ? rawSite : null;
   const [searchAddr, setSearchAddr] = useState("");
   const [mapPayload, setMapPayload] = useState<NearbyMapPayload | null>(null);
   const [mapLoading, setMapLoading] = useState(false);
@@ -186,17 +188,17 @@ export function MarketInsightsWorkspaceClient() {
   const [useLlm, setUseLlm] = useState(true);
   const [error, setError] = useState("");
 
-  const address = siteAnalysis?.address || searchAddr;
+  // 주소: 이 페이지의 검색을 최우선 → 없으면 활성 프로젝트 주소(약식검색은 store로 전파 안 함)
+  const address = searchAddr || siteAnalysis?.address || "";
+  // 지도/보고서용 pnu: GlobalAddressSearch가 현재 검색의 pnu를 store에 기록 → 현재 검색분 사용
+  const mapPnu = (rawSite?.pnu as string) || "";
   const results = useMemo(() => deriveResults(mapPayload, address), [mapPayload, address]);
 
-  // 주소 선택/변경 → store 주소 갱신(지도·산출 단일화). 지도가 nearby-map을 재조회한다.
+  // 주소 변경 → 로컬 검색 갱신 + 지도/산출 재조회. 전역 store에는 기록하지 않음(누수 차단).
   const onAddress = useCallback((addr: string) => {
     setSearchAddr(addr);
-    if (addr && addr !== siteAnalysis?.address) {
-      setMapPayload(null);
-      updateSiteAnalysis({ address: addr });
-    }
-  }, [siteAnalysis?.address, updateSiteAnalysis]);
+    setMapPayload(null);
+  }, []);
 
   // 시장조사보고서: 구조화 미리보기
   const generateReport = useCallback(async () => {
@@ -262,8 +264,8 @@ export function MarketInsightsWorkspaceClient() {
       {/* 필지 구획도 (경계·용도지역·면적) */}
       {address && <ParcelBoundaryMap parcels={[address]} />}
 
-      {/* 주변 실거래 지도 — 단일 데이터원(payload를 부모와 공유) */}
-      <NearbyTransactionsMap onPayload={setMapPayload} onLoading={setMapLoading} />
+      {/* 주변 실거래 지도 — 단일 데이터원(payload를 부모와 공유), 주소/pnu 직접 주입 */}
+      <NearbyTransactionsMap address={address} pnu={mapPnu} onPayload={setMapPayload} onLoading={setMapLoading} />
 
       {/* 시장조사보고서 생성 (PDF / PPT) */}
       {address && (

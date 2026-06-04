@@ -46,18 +46,28 @@ export function ProjectAddressInput({
   pickerLabel,
 }: ProjectAddressInputProps) {
   const projects = useProjectStore((s) => s.projects);
+  const snapshots = useProjectContextStore((s) => s.snapshots);
   const setProject = useProjectContextStore((s) => s.setProject);
   const updateSiteAnalysis = useProjectContextStore((s) => s.updateSiteAnalysis);
   const ctxAddress = useProjectContextStore((s) => s.siteAnalysis?.address);
   const ctxProjectId = useProjectContextStore((s) => s.projectId);
 
-  // 프로젝트 생성/직전 분석에서 입력한 주소를 자동 반영 (호스트 값이 비어있을 때만)
+  // 드롭다운은 "분석을 실행한" 프로젝트만 노출(단순 생성/약식 검색 제외).
+  // 분석 신호: status가 draft가 아니거나, 컨텍스트 스냅샷에 완료 단계가 기록됨.
+  // (아직 분석된 게 하나도 없으면 로더 기능 보존을 위해 전체 노출)
+  const analyzedProjects = projects.filter(
+    (p) => p.status !== "draft" || (snapshots?.[p.id]?.completedStages?.length ?? 0) > 0,
+  );
+  const pickerProjects = analyzedProjects.length > 0 ? analyzedProjects : projects;
+
+  // 활성 프로젝트가 있을 때만 컨텍스트 주소를 자동 반영.
+  // (약식 검색 결과가 모든 페이지의 주소 필드로 새는 것을 차단 — 프로젝트 분석본만 전파)
   useEffect(() => {
-    if (!value && ctxAddress) {
+    if (!value && ctxAddress && ctxProjectId) {
       onChange(ctxAddress);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ctxAddress]);
+  }, [ctxAddress, ctxProjectId]);
 
   // 이전 프로젝트 선택 → 컨텍스트 전환 + 분석 복원 (이어서 분석)
   const handleSelectProject = (id: string) => {
@@ -86,7 +96,7 @@ export function ProjectAddressInput({
         <span className="text-xs font-bold uppercase tracking-widest text-[var(--text-tertiary)]">
           {label}
         </span>
-        {!hideProjectPicker && projects.length > 0 && (
+        {!hideProjectPicker && pickerProjects.length > 0 && (
           <div className="flex max-w-[60%] items-center gap-2">
             {pickerLabel && (
               <span className="shrink-0 text-[11px] font-bold text-[var(--text-tertiary)]">{pickerLabel}</span>
@@ -99,7 +109,7 @@ export function ProjectAddressInput({
             title="이전에 분석한 프로젝트를 선택해 이어서 분석"
           >
             <option value="">분석한 프로젝트 불러오기…</option>
-            {projects.map((p) => (
+            {pickerProjects.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.name}{p.address ? ` — ${p.address}` : ""}
               </option>

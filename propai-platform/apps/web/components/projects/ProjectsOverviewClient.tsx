@@ -72,7 +72,10 @@ export function ProjectsOverviewClient({
   const cards: ProjectCard[] = listProjects.map((p) => ({
     id: p.id,
     name: p.name || p.address || "(이름 없음)",
-    location: p.address || "-",
+    // 다필지 통합 프로젝트: "대표지번 외 N필지" 표기(단일/미설정이면 대표지번만)
+    location: p.address
+      ? (p.parcelCount && p.parcelCount > 1 ? `${p.address} 외 ${p.parcelCount - 1}필지` : p.address)
+      : "-",
     phase: _PHASE_LABEL[p.status] || p.status,
     updatedAt: p.createdAt,
     nextAction: "부지분석 이어가기",

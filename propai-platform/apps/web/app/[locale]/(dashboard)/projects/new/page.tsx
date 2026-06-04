@@ -50,6 +50,8 @@ export default function NewProjectPage() {
         area: currentSiteAnalysis?.landAreaSqm ? String(currentSiteAnalysis.landAreaSqm) : "0",
         type: "mixed",
         siteImageUrl: siteImageUrl || undefined,
+        // 다필지 통합 분석으로 생성된 경우 필지 수 캡처(대표지번 외 N필지 표기용)
+        parcelCount: currentSiteAnalysis?.parcels?.length || undefined,
       });
     } catch (err) {
       console.error("프로젝트 저장 경고(이동은 계속):", err);

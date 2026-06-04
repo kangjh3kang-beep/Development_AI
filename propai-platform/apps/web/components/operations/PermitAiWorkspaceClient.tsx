@@ -72,7 +72,10 @@ const POSSIBILITY_STYLE: Record<string, string> = {
 };
 
 export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale }) {
-  const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
+  // 활성 프로젝트(projectId)가 있을 때만 컨텍스트 부지정보 사용 — 약식 검색 누수 차단.
+  const _projectId = useProjectContextStore((s) => s.projectId);
+  const _rawSite = useProjectContextStore((s) => s.siteAnalysis);
+  const siteAnalysis = _projectId ? _rawSite : null;
   const [addr, setAddr] = useState("");
   const [extra, setExtra] = useState<string[]>([]); // 다필지 추가 주소
   const [loading, setLoading] = useState(false);

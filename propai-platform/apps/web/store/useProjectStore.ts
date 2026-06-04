@@ -14,6 +14,8 @@ export type Project = {
   status: ProjectStatus;
   createdAt: string;
   siteImageUrl?: string;
+  /** 다필지 통합 프로젝트의 총 필지 수(대표지번 + 외 N필지 표기용). 단일필지면 1/미설정. */
+  parcelCount?: number;
 };
 
 type BackendProject = {

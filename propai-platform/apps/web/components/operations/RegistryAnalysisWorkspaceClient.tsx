@@ -50,8 +50,10 @@ const GRADE: Record<string, string> = {
 };
 
 export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) {
-  const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
   const projectId = useProjectContextStore((s) => s.projectId);
+  const _rawSite = useProjectContextStore((s) => s.siteAnalysis);
+  // 활성 프로젝트일 때만 컨텍스트 부지정보 사용 — 약식 검색이 등기/토지조서로 새지 않도록.
+  const siteAnalysis = projectId ? _rawSite : null;
   // 토지조서와 동일 스토어 공유(프로젝트 단일 출처) — 지번 추가/삭제·분석결과가 양 페이지에 반영
   const rows = useLandScheduleStore((s) => s.byProject[projectId || "_default"] ?? EMPTY_ROWS);
   const addRow = useLandScheduleStore((s) => s.addRow);

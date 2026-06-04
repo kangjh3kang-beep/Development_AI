@@ -90,14 +90,20 @@ function loadLeaflet(): Promise<void> {
 export function NearbyTransactionsMap({
   onPayload,
   onLoading,
+  address: addressProp,
+  pnu: pnuProp,
 }: {
   /** 동일 nearby-map 데이터를 부모와 공유(중복 fetch 방지). 부지분석 등은 미전달=내부 사용만. */
   onPayload?: (p: NearbyMapPayload | null) => void;
   onLoading?: (b: boolean) => void;
+  /** 주소/pnu 직접 주입(마켓 약식검색 등). 미전달 시 활성 프로젝트 store 사용. */
+  address?: string;
+  pnu?: string;
 } = {}) {
   const siteAnalysis = useProjectContextStore((st) => st.siteAnalysis);
-  const address = siteAnalysis?.address || "";
-  const pnu = (siteAnalysis?.pnu as string) || "";
+  // prop 우선(약식 검색 페이지) → 없으면 활성 프로젝트 store
+  const address = addressProp !== undefined ? addressProp : siteAnalysis?.address || "";
+  const pnu = pnuProp !== undefined ? pnuProp : (siteAnalysis?.pnu as string) || "";
 
   const [payload, setPayload] = useState<MapPayload | null>(null);
   const [loading, setLoading] = useState(false);
