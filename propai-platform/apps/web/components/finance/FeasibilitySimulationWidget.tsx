@@ -17,9 +17,11 @@ interface SimulationResult {
 export function FeasibilitySimulationWidget({ projectId, dictionary }: { projectId: string; dictionary: Record<string, string> }) {
   const [isMounted, setIsMounted] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
-  const [npv, setNpv] = useState(1250000000);
-  const [var5, setVar5] = useState(-210000000);
-  const [profitIndex, setProfitIndex] = useState(1.18);
+  // 실행 전엔 결과값 없음(가짜 초기값 표시 금지). 실행 후 실제 시뮬 결과로 채움.
+  const [npv, setNpv] = useState<number | null>(null);
+  const [var5, setVar5] = useState<number | null>(null);
+  const [profitIndex, setProfitIndex] = useState<number | null>(null);
+  const hasResult = npv != null;
 
   useEffect(() => {
     setIsMounted(true);
@@ -27,17 +29,22 @@ export function FeasibilitySimulationWidget({ projectId, dictionary }: { project
 
   const t = dictionary;
 
+  // 분포 곡선은 실제 평균(npv)·표준편차에서 파생. 실행 전엔 빈 배열.
   const data = useMemo(() => {
-    const arr = [];
-    const mean = 1250000000;
-    const stdDev = 150000000;
-    for (let i = 500000000; i <= 2000000000; i += 50000000) {
+    if (npv == null) return [] as { x: number; y: number }[];
+    const mean = npv;
+    const stdDev = Math.max(Math.abs(npv) * 0.15, 1);
+    const lo = mean - 4 * stdDev;
+    const hi = mean + 4 * stdDev;
+    const step = (hi - lo) / 30;
+    const arr: { x: number; y: number }[] = [];
+    for (let i = lo; i <= hi; i += step) {
       const exponent = Math.exp(-Math.pow(i - mean, 2) / (2 * Math.pow(stdDev, 2)));
       const value = (1 / (stdDev * Math.sqrt(2 * Math.PI))) * exponent;
-      arr.push({ x: i, y: Number((value * 10000000000).toFixed(0)) });
+      arr.push({ x: Math.round(i), y: Number((value * 1e10).toFixed(0)) });
     }
     return arr;
-  }, []);
+  }, [npv]);
 
   const runSimulation = async () => {
     setIsRunning(true);
@@ -126,23 +133,23 @@ export function FeasibilitySimulationWidget({ projectId, dictionary }: { project
                {t.outputTitle || "AI PREDICTION OVERVIEW"}
              </h5>
              <div className="flex h-10 items-center gap-3 rounded-full bg-[var(--accent-soft)] px-5">
-               <div className="h-1.5 w-1.5 rounded-full bg-[var(--accent-strong)] animate-pulse" />
-               <span className="text-[9px] font-black uppercase tracking-widest text-[var(--accent-strong)]">Live Simulation Data</span>
+               <div className={`h-1.5 w-1.5 rounded-full bg-[var(--accent-strong)] ${hasResult ? "animate-pulse" : "opacity-40"}`} />
+               <span className="text-[9px] font-black uppercase tracking-widest text-[var(--accent-strong)]">{hasResult ? "Simulation Result" : "실행 전"}</span>
              </div>
           </div>
 
           <div className="grid grid-cols-2 gap-10 md:grid-cols-3">
              <div className="md:col-span-1">
                 <p className="text-[9px] font-black uppercase tracking-[0.3em] text-[var(--success)] mb-2 italic">{t.meanNpv || "평균 NPV"}</p>
-                <p className="text-5xl font-[1000] tracking-tighter text-[var(--text-primary)] italic">{formatCurrencyCompact(npv)}</p>
+                <p className="text-5xl font-[1000] tracking-tighter text-[var(--text-primary)] italic">{hasResult ? formatCurrencyCompact(npv) : "실행 전"}</p>
              </div>
              <div>
                 <p className="text-[9px] font-black uppercase tracking-[0.3em] text-[var(--spot)] mb-2 italic">{t.var5 || "하위 5% 리스크 (VaR)"}</p>
-                <p className="text-2xl font-black text-[var(--text-secondary)] tracking-tight">{formatCurrencyCompact(var5)}</p>
+                <p className="text-2xl font-black text-[var(--text-secondary)] tracking-tight">{var5 != null ? formatCurrencyCompact(var5) : "—"}</p>
              </div>
              <div>
                 <p className="text-[9px] font-black uppercase tracking-[0.3em] text-[var(--info)] mb-2 italic">{t.profitIndex || "수익성 지수 (PI)"}</p>
-                <p className="text-2xl font-black text-[var(--text-secondary)] tracking-tight">{profitIndex}</p>
+                <p className="text-2xl font-black text-[var(--text-secondary)] tracking-tight">{profitIndex != null ? profitIndex : "—"}</p>
              </div>
           </div>
           
@@ -155,6 +162,13 @@ export function FeasibilitySimulationWidget({ projectId, dictionary }: { project
                  </div>
               </div>
             )}
+            {!hasResult ? (
+              <div className="flex h-full min-h-[280px] flex-col items-center justify-center gap-3 rounded-[2.5rem] border border-dashed border-[var(--line-strong)] text-center">
+                <span className="text-4xl opacity-50">📈</span>
+                <p className="text-sm font-bold text-[var(--text-secondary)]">시뮬레이션 실행 전</p>
+                <p className="text-xs text-[var(--text-hint)]">‘시뮬레이션 실행’을 누르면 몬테카를로 기반 NPV 분포·VaR가 표시됩니다.</p>
+              </div>
+            ) : (
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={data} margin={{ top: 20, right: 20, left: -20, bottom: 0 }}>
                 <defs>
@@ -163,17 +177,17 @@ export function FeasibilitySimulationWidget({ projectId, dictionary }: { project
                     <stop offset="95%" stopColor="var(--accent-strong)" stopOpacity={0}/>
                   </linearGradient>
                 </defs>
-                <XAxis 
-                  dataKey="x" 
-                  tick={{ fontSize: 10, fontWeight: 900, fill: "var(--text-hint)" }} 
-                  axisLine={false} 
-                  tickLine={false} 
+                <XAxis
+                  dataKey="x"
+                  tick={{ fontSize: 10, fontWeight: 900, fill: "var(--text-hint)" }}
+                  axisLine={false}
+                  tickLine={false}
                   tickFormatter={(v) => formatCurrencyCompact(Number(v))}
                 />
-                <Tooltip 
-                  contentStyle={{ 
-                    backgroundColor: "var(--surface-strong)", 
-                    borderRadius: "2rem", 
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: "var(--surface-strong)",
+                    borderRadius: "2rem",
                     border: "1px solid var(--line-strong)",
                     boxShadow: "var(--shadow-2xl)",
                     padding: "1.5rem"
@@ -182,31 +196,36 @@ export function FeasibilitySimulationWidget({ projectId, dictionary }: { project
                   labelStyle={{ fontWeight: "900", marginBottom: "0.5rem", color: "var(--text-primary)" }}
                   labelFormatter={(val) => formatCurrencyKRW(Number(val))}
                 />
-                <ReferenceLine 
-                  x={1050000000} 
-                  stroke="var(--spot)" 
-                  strokeWidth={2}
-                  strokeDasharray="10 10" 
-                  label={{ position: 'top', value: 'VALUE AT RISK (5%)', fill: 'var(--spot)', fontSize: 9, fontWeight: 900 }} 
-                />
-                <ReferenceLine 
-                  x={1250000000} 
-                  stroke="var(--success)" 
-                  strokeWidth={2}
-                  strokeDasharray="10 10" 
-                  label={{ position: 'top', value: 'EXPECTED MEAN', fill: 'var(--success)', fontSize: 9, fontWeight: 900 }} 
-                />
-                <Area 
-                  type="monotone" 
-                  dataKey="y" 
-                  stroke="var(--accent-strong)" 
-                  strokeWidth={5} 
-                  fillOpacity={1} 
-                  fill="url(#colorSimulation)" 
+                {var5 != null && (
+                  <ReferenceLine
+                    x={var5}
+                    stroke="var(--spot)"
+                    strokeWidth={2}
+                    strokeDasharray="10 10"
+                    label={{ position: 'top', value: 'VALUE AT RISK (5%)', fill: 'var(--spot)', fontSize: 9, fontWeight: 900 }}
+                  />
+                )}
+                {npv != null && (
+                  <ReferenceLine
+                    x={npv}
+                    stroke="var(--success)"
+                    strokeWidth={2}
+                    strokeDasharray="10 10"
+                    label={{ position: 'top', value: 'EXPECTED MEAN', fill: 'var(--success)', fontSize: 9, fontWeight: 900 }}
+                  />
+                )}
+                <Area
+                  type="monotone"
+                  dataKey="y"
+                  stroke="var(--accent-strong)"
+                  strokeWidth={5}
+                  fillOpacity={1}
+                  fill="url(#colorSimulation)"
                   animationDuration={2000}
                 />
               </AreaChart>
             </ResponsiveContainer>
+            )}
           </div>
         </div>
       </div>
