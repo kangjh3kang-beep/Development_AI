@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
-from typing import List, Dict
+from typing import List, Dict, Union
 from app.services.esg.lca_service import LCAService
 from app.services.esg.lcc_service import LCCService
 from app.services.esg.epd_carbon_service import EPDCarbonService
@@ -12,9 +12,16 @@ lca_service = LCAService()
 lcc_service = LCCService()
 epd_service = EPDCarbonService()
 
+class LCAMaterialItem(BaseModel):
+    name: str
+    quantity_kg: float
+    epd_kgco2e: float | None = None   # 제품수준 실측 EPD(있으면 우선 적용)
+
+
 class LCARequest(BaseModel):
     project_id: str
-    material_quantities: Dict[str, float]
+    # 자재별 수량(dict) 또는 제품 EPD 포함 리스트(제품수준 EPD)
+    material_quantities: Union[Dict[str, float], List[LCAMaterialItem]]
     floor_area_sqm: float
 
 class LCCRequest(BaseModel):
@@ -29,7 +36,11 @@ class EPDRequest(BaseModel):
 
 @router.post("/lca/calculate")
 async def calculate_lca(req: LCARequest, current_user: User = Depends(get_current_user)):
-    raw = lca_service.calculate_total_lca(req.material_quantities, req.floor_area_sqm)
+    # 제품 EPD 리스트는 dict 리스트로 변환(서비스 입력 규격)
+    mq = req.material_quantities
+    if isinstance(mq, list):
+        mq = [it.model_dump() for it in mq]
+    raw = lca_service.calculate_total_lca(mq, req.floor_area_sqm)
 
     # ── 프론트(LcaCalculationResponse) 계약에 맞춰 변환 ──
     a1a3 = raw.get("a1_a3", {})

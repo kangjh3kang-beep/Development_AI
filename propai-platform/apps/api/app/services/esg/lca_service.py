@@ -42,19 +42,38 @@ class LCAService:
     """LCA 탄소 자동 계산 (ISO 14040:2006, IPCC AR6)"""
 
     def calculate_a1_a3(self, material_quantities) -> Dict:
-        """A1-A3 자재 생산 단계 GWP = sum(m_i * EF_i)"""
+        """A1-A3 자재 생산 단계 GWP = sum(m_i × EF_i).
+
+        제품수준 EPD: 입력이 리스트이고 각 항목에 epd_kgco2e(제품별 실측 EPD)가 있으면
+        그 값을 우선 사용(제품 EPD > 한국 EPD-KR 평균 > IPCC AR6 > 기본).
+        """
+        # (자재명, 수량kg, 제품EPD|None) 정규화
+        items: list[tuple[str, float, float | None]] = []
         if isinstance(material_quantities, list):
-            material_quantities = {
-                item.get("name", ""): item.get("quantity_kg", 0)
-                for item in material_quantities
-            }
+            for it in material_quantities:
+                pe = it.get("epd_kgco2e")
+                try:
+                    pe = float(pe) if pe not in (None, "", 0) else None
+                except (TypeError, ValueError):
+                    pe = None
+                items.append((it.get("name", ""), it.get("quantity_kg", 0) or 0, pe))
+        else:
+            for name, qty in material_quantities.items():
+                items.append((name, qty or 0, None))
+
         total_gwp = 0.0
         breakdown = {}
         epd_covered = 0
-        for material, quantity_kg in material_quantities.items():
-            ef, src = _resolve_ef(material)
-            if src == "EPD-KR":
+        product_epd_count = 0
+        for material, quantity_kg, product_epd in items:
+            if product_epd is not None:
+                ef, src = product_epd, "EPD-제품"
+                product_epd_count += 1
                 epd_covered += 1
+            else:
+                ef, src = _resolve_ef(material)
+                if src == "EPD-KR":
+                    epd_covered += 1
             gwp = quantity_kg * ef
             total_gwp += gwp
             breakdown[material] = {
@@ -68,8 +87,9 @@ class LCAService:
             "phase": "A1-A3", "total_gwp_kgco2e": total_rounded,
             "total_gwp_kgco2eq": total_rounded,
             "breakdown": breakdown, "standard": "ISO 14040:2006",
-            "gwp_basis": "EPD-KR(한국 EPD) 우선 + IPCC AR6 폴백",
-            "epd_coverage": f"{epd_covered}/{len(material_quantities)}",
+            "gwp_basis": "제품 EPD > 한국 EPD-KR > IPCC AR6 폴백",
+            "epd_coverage": f"{epd_covered}/{len(items)}",
+            "product_epd_count": product_epd_count,
         }
 
     def calculate_b6_operational_energy(self, floor_area_sqm: float,
