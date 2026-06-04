@@ -34,7 +34,10 @@ async def calculate_lca(req: LCARequest, current_user: User = Depends(get_curren
     # ── 프론트(LcaCalculationResponse) 계약에 맞춰 변환 ──
     a1a3 = raw.get("a1_a3", {})
     b6 = raw.get("b6", {})
-    embodied = float(a1a3.get("total_gwp_kgco2e", 0) or 0)
+    whole = raw.get("whole_life", {}) or {}
+    a1a3_only = float(a1a3.get("total_gwp_kgco2e", 0) or 0)
+    # 체화(embodied) = 전생애 내재(A1-A3+A4+A5+B1-B5+C). 없으면 A1-A3 폴백.
+    embodied = float(whole.get("embodied_total_kgco2e", a1a3_only) or a1a3_only)
     operational = float(b6.get("lifecycle_gwp_50yr_kgco2e", 0) or 0)
     total = float(raw.get("total_gwp_kgco2e", embodied + operational) or 0)
     breakdown_src = a1a3.get("breakdown", {}) or {}
@@ -43,8 +46,8 @@ async def calculate_lca(req: LCARequest, current_user: User = Depends(get_curren
             "material": name,
             "carbon_kgco2e": float(info.get("gwp_kgco2e", 0) or 0),
             "percentage": (
-                round(float(info.get("gwp_kgco2e", 0) or 0) / embodied * 100, 1)
-                if embodied else 0.0
+                round(float(info.get("gwp_kgco2e", 0) or 0) / a1a3_only * 100, 1)
+                if a1a3_only else 0.0
             ),
         }
         for name, info in breakdown_src.items()
@@ -59,6 +62,7 @@ async def calculate_lca(req: LCARequest, current_user: User = Depends(get_curren
         "carbon_per_sqm_kgco2e": float(raw.get("gwp_per_sqm_kgco2e", 0) or 0),
         "floor_area_sqm": req.floor_area_sqm,
         "material_breakdown": material_breakdown,
+        "whole_life": whole,   # EN 15978 단계별(A4·A5·B1-B5·C·D) + 전생애 총계
         "ai_analysis": None,
     }
 

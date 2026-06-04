@@ -22,6 +22,14 @@ type LcaCalculationResponse = {
     carbon_kgco2e: number;
     percentage: number;
   }>;
+  whole_life?: {
+    stages?: Record<string, { gwp_kgco2e: number; label: string; excluded_from_total?: boolean }>;
+    embodied_total_kgco2e?: number;
+    operational_b6_kgco2e?: number;
+    whole_life_total_kgco2e?: number;
+    standard?: string;
+    basis?: string;
+  };
   ai_analysis?: string;
 };
 
@@ -541,6 +549,27 @@ export function ProjectEsgWorkspaceClient({
                       </div>
                     ))}
                   </div>
+                </div>
+              )}
+              {lcaResult.whole_life?.stages && (
+                <div className="rounded-[var(--radius-xl)] border border-[var(--line)] bg-[var(--surface)] p-5">
+                  <p className="text-sm font-bold text-[var(--text-primary)]">전생애 탄소 (EN 15978)</p>
+                  <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-3">
+                    {Object.entries(lcaResult.whole_life.stages).map(([code, st]) => (
+                      <div key={code} className="flex items-center justify-between rounded-lg bg-[var(--surface-soft)] px-3 py-2 text-[11px]">
+                        <span className="text-[var(--text-secondary)]">{code} <span className="text-[var(--text-tertiary)]">{st.label}</span></span>
+                        <span className={`font-semibold ${st.gwp_kgco2e < 0 ? "text-emerald-600" : "text-[var(--text-primary)]"}`}>
+                          {(st.gwp_kgco2e / 1000).toLocaleString(undefined, { maximumFractionDigits: 1 })} t
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="mt-3 text-[11px] text-[var(--text-secondary)]">
+                    내재 {((lcaResult.whole_life.embodied_total_kgco2e ?? 0) / 1000).toLocaleString(undefined, { maximumFractionDigits: 1 })} t
+                    + 운영(B6) {((lcaResult.whole_life.operational_b6_kgco2e ?? 0) / 1000).toLocaleString(undefined, { maximumFractionDigits: 1 })} t
+                    = 전생애 {((lcaResult.whole_life.whole_life_total_kgco2e ?? 0) / 1000).toLocaleString(undefined, { maximumFractionDigits: 1 })} tCO₂e
+                  </p>
+                  {lcaResult.whole_life.basis && <p className="mt-1 text-[10px] text-[var(--text-hint)]">{lcaResult.whole_life.basis}</p>}
                 </div>
               )}
               {lcaResult.ai_analysis ? (

@@ -61,15 +61,54 @@ class LCAService:
             "standard": "ISO 14040:2006 Phase B6"
         }
 
+    # EN 15978 단계별 비율(A1-A3 대비) — v1 비율기반 추정(EPD 확보 시 정밀화).
+    # 근거: 건축물 LCA 일반 비율(운송·시공·교체·해체). D(재활용 크레딧)는 보고만(총계 제외).
+    _STAGE_RATIOS = {
+        "A4": (0.04, "자재 운송"),
+        "A5": (0.06, "시공(폐기물·에너지)"),
+        "B1_B5": (0.12, "사용·유지·교체(50년)"),
+        "C1_C4": (0.06, "해체·폐기"),
+    }
+    _STAGE_D_RATIO = (-0.08, "재활용·재사용 크레딧(시스템 경계 외, 총계 제외)")
+
+    def calculate_whole_life(self, a1a3_total: float, b6_lifecycle: float) -> Dict:
+        """EN 15978 전생애(whole-life) 단계 — A1-A3·B6 외 단계를 비율기반 추정."""
+        stages = {}
+        embodied_extra = 0.0
+        for code, (ratio, label) in self._STAGE_RATIOS.items():
+            gwp = round(a1a3_total * ratio, 1)
+            stages[code] = {"gwp_kgco2e": gwp, "label": label, "ratio_of_a1a3": ratio}
+            embodied_extra += gwp
+        d_gwp = round(a1a3_total * self._STAGE_D_RATIO[0], 1)
+        stages["D"] = {"gwp_kgco2e": d_gwp, "label": self._STAGE_D_RATIO[1],
+                       "ratio_of_a1a3": self._STAGE_D_RATIO[0], "excluded_from_total": True}
+        # 내재(embodied) = A1-A3 + A4 + A5 + B1-B5 + C1-C4 (운영 B6 제외)
+        embodied_total = round(a1a3_total + embodied_extra, 1)
+        whole_life_total = round(embodied_total + b6_lifecycle, 1)
+        return {
+            "stages": stages,
+            "embodied_total_kgco2e": embodied_total,   # 내재탄소(운영 제외)
+            "operational_b6_kgco2e": round(b6_lifecycle, 1),
+            "whole_life_total_kgco2e": whole_life_total,
+            "recycling_credit_kgco2e": d_gwp,
+            "standard": "EN 15978 (A1-A3·A4·A5·B1-B5·B6·C1-C4, D 별도)",
+            "basis": "A4/A5/B1-B5/C는 A1-A3 대비 비율기반 추정 — EPD 확보 시 정밀화",
+        }
+
     def calculate_total_lca(self, material_quantities: Dict[str, float],
                             floor_area_sqm: float) -> Dict:
         a1a3 = self.calculate_a1_a3(material_quantities)
         b6 = self.calculate_b6_operational_energy(floor_area_sqm)
-        total_gwp = a1a3["total_gwp_kgco2e"] + b6["lifecycle_gwp_50yr_kgco2e"]
+        whole = self.calculate_whole_life(
+            a1a3["total_gwp_kgco2e"], b6["lifecycle_gwp_50yr_kgco2e"])
+        total_gwp = whole["whole_life_total_kgco2e"]  # 전생애 총계로 격상
         gwp_per_sqm = total_gwp / floor_area_sqm if floor_area_sqm > 0 else 0
+        embodied_per_sqm = whole["embodied_total_kgco2e"] / floor_area_sqm if floor_area_sqm > 0 else 0
         return {
-            "total_gwp_kgco2e": round(total_gwp, 1),
+            "total_gwp_kgco2e": round(total_gwp, 1),               # = 전생애(whole-life)
             "gwp_per_sqm_kgco2e": round(gwp_per_sqm, 2),
+            "embodied_per_sqm_kgco2e": round(embodied_per_sqm, 2),
             "a1_a3": a1a3, "b6": b6,
-            "standard": "ISO 14040:2006", "ipcc_version": "AR6 2021"
+            "whole_life": whole,
+            "standard": "EN 15978 / ISO 14040", "ipcc_version": "AR6 2021"
         }
