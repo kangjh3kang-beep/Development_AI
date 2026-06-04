@@ -78,6 +78,31 @@ def _building_value(gfa: float | None, structure: str | None, year_built: int | 
     }
 
 
+def _income_value(
+    monthly_rent_won: float | None, deposit_won: float | None,
+    vacancy_rate: float, opex_ratio: float, cap_rate: float,
+) -> dict[str, Any] | None:
+    """수익환원법 — 부동산 가치 = 순영업소득(NOI) / 자본환원율.
+
+    NOI = (월임대료 + 보증금 운용수익) × 12 × (1−공실률) × (1−운영경비율).
+    보증금은 전월세전환율(연 5.5%)로 운용수익 환산.
+    """
+    if not monthly_rent_won or monthly_rent_won <= 0:
+        return None
+    deposit_monthly = (deposit_won or 0) * 0.055 / 12  # 보증금 월 운용수익
+    pgi = (monthly_rent_won + deposit_monthly) * 12      # 가능총수익(연)
+    noi = pgi * (1 - vacancy_rate) * (1 - opex_ratio)    # 순영업소득
+    cap = cap_rate if cap_rate > 0 else 0.045
+    value = int(noi / cap)
+    return {
+        "method": "수익환원법",
+        "noi_won": int(noi), "cap_rate": cap,
+        "vacancy_rate": vacancy_rate, "opex_ratio": opex_ratio,
+        "income_value_won": value,
+        "rationale": f"NOI {int(noi):,}원(월임대 {int(monthly_rent_won):,}×12, 공실 {vacancy_rate*100:.0f}%·경비 {opex_ratio*100:.0f}% 차감) ÷ 자본환원율 {cap*100:.1f}% = {value:,}원",
+    }
+
+
 def _shape_factor(irregularity: float | None) -> tuple[float, str]:
     """형상 개별요인 — 부정형도(1-실면적/bbox)로 형상 감가(정형 우세, 부정형 열세)."""
     if irregularity is None:
@@ -103,6 +128,11 @@ async def desk_appraisal(
     building_gfa_sqm: float | None = None,           # 건물 연면적(주면 토지+건물 복합 추정)
     building_structure: str | None = None,           # 구조(RC/SRC/철골/조적/목조)
     building_year_built: int | None = None,          # 준공연도(감가상각)
+    monthly_rent_won: float | None = None,           # 월 임대료(주면 수익환원법 병행)
+    deposit_won: float | None = None,                # 보증금
+    vacancy_rate: float = 0.05,                      # 공실률
+    opex_ratio: float = 0.25,                        # 운영경비율
+    cap_rate: float = 0.045,                         # 자본환원율
 ) -> dict[str, Any]:
     """예상 탁상감정가 산출(공시지가기준법 + 거래사례비교법 결합)."""
     op = official_price_per_sqm
@@ -243,12 +273,25 @@ async def desk_appraisal(
     if building and appraised_total is not None:
         complex_total = appraised_total + building["building_value_won"]
 
+    # ── 수익환원법(임대료 입력 시): 부동산 전체 수익가치(원가법 복합과 병행 제시) ──
+    income = _income_value(monthly_rent_won, deposit_won, vacancy_rate, opex_ratio, cap_rate)
+    income_total = income["income_value_won"] if income else None
+    complex_note = None
+    if complex_total is not None and income_total is not None:
+        complex_note = (
+            f"원가법 복합 {complex_total:,}원 vs 수익환원법 {income_total:,}원 — "
+            "수익형은 임대수익 기준, 원가법은 토지+건물 재조달 기준. 용도·임대안정성에 따라 채택."
+        )
+
     return {
         "ok": True,
         "appraised_price_per_sqm": appraised_unit,
         "appraised_total_won": appraised_total,
         "building": building,
-        "complex_total_won": complex_total,   # 토지+건물 복합 예상가치(건물 입력 시)
+        "complex_total_won": complex_total,   # 토지+건물 복합 예상가치(원가법, 건물 입력 시)
+        "income": income,                      # 수익환원법(임대료 입력 시)
+        "income_total_won": income_total,
+        "complex_note": complex_note,
         "area_sqm": round(area_f, 1) if area_f else None,
         "confidence": confidence,
         "range_per_sqm": {"low": appraised_unit - margin, "high": appraised_unit + margin},

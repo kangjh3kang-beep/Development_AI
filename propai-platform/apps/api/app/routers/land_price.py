@@ -37,6 +37,9 @@ class DeskAppraisalRequest(BaseModel):
     building_gfa_sqm: float | None = None          # 건물 연면적(주면 토지+건물 복합)
     building_structure: str | None = None
     building_year_built: int | None = None
+    monthly_rent_won: float | None = None          # 월 임대료(주면 수익환원법 병행)
+    deposit_won: float | None = None
+    cap_rate: float | None = None
 
 
 @router.post("/desk-appraisal")
@@ -48,6 +51,8 @@ async def land_desk_appraisal(req: DeskAppraisalRequest):
         comparable_avg_per_sqm=req.comparable_avg_per_sqm,
         building_gfa_sqm=req.building_gfa_sqm, building_structure=req.building_structure,
         building_year_built=req.building_year_built,
+        monthly_rent_won=req.monthly_rent_won, deposit_won=req.deposit_won,
+        **({"cap_rate": req.cap_rate} if req.cap_rate is not None else {}),
     )
 
 
