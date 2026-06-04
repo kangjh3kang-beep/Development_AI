@@ -7,9 +7,12 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from apps.api.database.session import get_db
 
 from app.services.cost.origin_cost_calculator import OriginCostCalculator, CostItem
 from app.services.cost.cost_monte_carlo import CostMonteCarlo
@@ -31,10 +34,44 @@ class OverviewCostRequest(BaseModel):
     floor_count_below: int = Field(0, ge=0)
     structure_type: str = "RC"
     unit_cost_per_sqm: Optional[int] = None  # 직접공사비 단가 override(원/㎡)
+    # 기하(geometry) 정밀 적산용 — 설계 매스 치수(있으면 실치수, 없으면 연면적·층수로 역산)
+    project_id: Optional[str] = None
+    building_width_m: Optional[float] = None
+    building_depth_m: Optional[float] = None
+    floor_height_m: float = 3.0
 
 
-@router.post("/estimate-overview", summary="건축개요 기반 공사비 추정(지상/지하/조경/간접·최저~최대)")
-async def estimate_overview(req: OverviewCostRequest) -> dict[str, Any]:
+async def _resolve_design_mass(db: AsyncSession, project_id: str) -> dict[str, Any] | None:
+    """프로젝트 최신 design_versions의 매스 치수(폭·깊이·층수)를 조회(없으면 None)."""
+    import uuid as _uuid
+
+    from sqlalchemy import text
+
+    try:
+        pid = _uuid.UUID(str(project_id))
+    except (ValueError, AttributeError, TypeError):
+        return None
+    try:
+        row = (await db.execute(text(
+            "SELECT floor_count, total_floor_area_sqm, design_data_json FROM design_versions "
+            "WHERE project_id = :pid ORDER BY version_number DESC LIMIT 1"), {"pid": str(pid)})).first()
+        if not row:
+            return None
+        dj = row[2] or {}
+        mass = dj.get("mass") if isinstance(dj, dict) else {}
+        mass = mass or {}
+        return {
+            "building_width_m": mass.get("building_width_m"),
+            "building_depth_m": mass.get("building_depth_m"),
+            "num_floors": mass.get("num_floors") or row[0],
+            "floor_height_m": mass.get("floor_height_m"),
+        }
+    except Exception:  # noqa: BLE001
+        return None
+
+
+@router.post("/estimate-overview", summary="건축개요 기반 공사비 추정(지상/지하/조경/간접·최저~최대 + 기하 QTO)")
+async def estimate_overview(req: OverviewCostRequest, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
     """선택한 건축개요로 지상·지하·조경 직접공사비 + 간접비(설계·감리·예비·일반관리)를
     산정하고, 건설물가 변동을 반영한 최저~최대 예상 공사비 레인지를 반환한다.
     (도면/BIM 완성 프로젝트는 향후 항목별 정밀 적산으로 대체) — 수지·사업성과 동일 개요 사용."""
@@ -70,6 +107,28 @@ async def estimate_overview(req: OverviewCostRequest) -> dict[str, Any]:
 
     expected = scenario(1.0)
 
+    # ── 기하(geometry) 기반 정밀 적산 — 설계 매스 실치수 우선, 없으면 연면적·층수로 역산 ──
+    from app.services.cost.geometry_qto import derive_dims_from_gfa, geometry_takeoff
+    qto_source = "derived"
+    W, Dd, Hh = req.building_width_m, req.building_depth_m, req.floor_height_m
+    nf_above = req.floor_count_above
+    if req.project_id:
+        m = await _resolve_design_mass(db, req.project_id)
+        if m and m.get("building_width_m") and m.get("building_depth_m"):
+            W, Dd = float(m["building_width_m"]), float(m["building_depth_m"])
+            if m.get("num_floors"):
+                nf_above = int(m["num_floors"])
+            if m.get("floor_height_m"):
+                Hh = float(m["floor_height_m"])
+            qto_source = "bim"
+    if not (W and Dd):
+        W, Dd = derive_dims_from_gfa(gfa_above, nf_above)
+    geometry = geometry_takeoff(
+        width_m=W, depth_m=Dd, floors_above=nf_above, floors_below=req.floor_count_below,
+        floor_height_m=Hh, structure_type=req.structure_type,
+    )
+    geometry["source"] = qto_source
+
     # 항목별 정밀 적산(QTO) — 레미콘·철근·거푸집·조적·방수·창호·기계·전기(물량×단가).
     # 건축개요(연면적·층수·구조) 기반. 설계/BIM 완성 시 실 매스로 정밀화 가능.
     items_qto: list[dict[str, Any]] = []
@@ -102,7 +161,9 @@ async def estimate_overview(req: OverviewCostRequest) -> dict[str, Any]:
             "max_won": scenario(1.12)["total_won"],
         },
         "items": items_qto,
-        "note": "건축개요 기반 표준 추정(지상/지하/조경/간접). 도면·BIM 완성 시 항목별 정밀 적산으로 정확도 향상.",
+        "geometry": geometry,
+        "qto_source": qto_source,
+        "note": "건축개요 기반 표준 추정(지상/지하/조경/간접) + 기하(geometry) 정밀 적산. 설계 매스(BIM) 있으면 실치수로 자동 정밀화.",
     }
 
 

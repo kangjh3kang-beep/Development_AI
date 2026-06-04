@@ -25,6 +25,13 @@ interface Overview {
   indirect_won: number; total_won: number; per_pyeong_won: number;
   range: { min_won: number; expected_won: number; max_won: number };
   items?: { name: string; spec?: string; unit?: string; quantity: number; unit_cost_won: number; cost_won: number }[];
+  qto_source?: string; // bim | derived
+  geometry?: {
+    source: string; width_m: number; depth_m: number; floors_above: number; floors_below: number;
+    footprint_sqm: number; perimeter_m: number; concrete_m3: number; rebar_ton: number; formwork_m2: number;
+    structural_direct_won: number;
+    items: { name: string; spec?: string; unit?: string; quantity: number; cost_won: number }[];
+  };
 }
 
 const BUILDING_TYPES = [
@@ -88,7 +95,7 @@ export function CostEstimationClient() {
     setLoading(true); setErr("");
     try {
       const r = await apiClient.post<Overview>("/cost/estimate-overview", {
-        body: { building_type: bt, total_gfa_sqm: gfa, floor_count_above: floorsAbove, floor_count_below: floorsBelow, structure_type: structure },
+        body: { building_type: bt, total_gfa_sqm: gfa, floor_count_above: floorsAbove, floor_count_below: floorsBelow, structure_type: structure, project_id: projectId || undefined },
         useMock: false, timeoutMs: 30000,
       });
       setResult(r);
@@ -225,6 +232,46 @@ export function CostEstimationClient() {
                   </tbody>
                 </table>
               </div>
+            </div>
+          )}
+
+          {/* 기하(geometry) 기반 정밀 적산 — 매스 치수에서 체적·표면적 산출 */}
+          {result.geometry && (
+            <div className="rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-soft)] p-5">
+              <div className="mb-2 flex items-center gap-2">
+                <h3 className="text-sm font-black text-[var(--text-primary)]">기하(Geometry) 정밀 적산</h3>
+                {result.geometry.source === "bim"
+                  ? <span className="rounded bg-emerald-500/15 px-2 py-0.5 text-[10px] font-bold text-emerald-400">🏗 BIM 매스 실치수</span>
+                  : <span className="rounded bg-[var(--surface-muted)] px-2 py-0.5 text-[10px] font-bold text-[var(--text-tertiary)]">개요 역산</span>}
+              </div>
+              <p className="mb-3 text-[11px] text-[var(--text-hint)]">
+                매스 {result.geometry.width_m}×{result.geometry.depth_m}m · 기준층 {result.geometry.footprint_sqm.toLocaleString()}㎡ · 둘레 {result.geometry.perimeter_m}m · 지상 {result.geometry.floors_above}/지하 {result.geometry.floors_below}층
+              </p>
+              <div className="grid gap-3 sm:grid-cols-3">
+                {[
+                  ["콘크리트(체적)", `${result.geometry.concrete_m3.toLocaleString()} m³`],
+                  ["철근(중량)", `${result.geometry.rebar_ton.toLocaleString()} ton`],
+                  ["거푸집(면적)", `${result.geometry.formwork_m2.toLocaleString()} m²`],
+                ].map(([k, v]) => (
+                  <div key={k} className="rounded-xl border border-[var(--line)] bg-[var(--surface-strong)] p-3">
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-[var(--text-hint)]">{k}</p>
+                    <p className="mt-1 text-base font-[1000] text-[var(--text-primary)]">{v}</p>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-3 space-y-1.5">
+                {result.geometry.items.map((it, i) => (
+                  <div key={i} className="flex items-center justify-between text-xs">
+                    <span className="text-[var(--text-secondary)]">{it.name} <span className="text-[var(--text-tertiary)]">{it.quantity?.toLocaleString()}{it.unit}</span></span>
+                    <span className="font-bold text-[var(--text-primary)]">{fmtKrw(it.cost_won)}</span>
+                  </div>
+                ))}
+                <div className="flex items-center justify-between border-t border-[var(--line)] pt-1.5 text-xs">
+                  <span className="font-bold text-[var(--text-secondary)]">구조 직접공사비(기하)</span>
+                  <span className="font-[1000] text-[var(--accent-strong)]">{fmtKrw(result.geometry.structural_direct_won)}</span>
+                </div>
+              </div>
+              <p className="mt-3 text-[11px] text-[var(--text-hint)]">※ 슬래브 체적·기둥보 환산·둘레×층고 외벽·지하 매트기초를 분리 산출. 설계(BIM) 매스가 있으면 실치수로 자동 정밀화됩니다.</p>
             </div>
           )}
         </>
