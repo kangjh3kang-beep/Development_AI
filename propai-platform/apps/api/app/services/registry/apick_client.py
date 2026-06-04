@@ -79,11 +79,14 @@ async def fetch_registry(
             r1 = await client.post(f"{_HOST}/rest/iros/1", headers=headers, data=form)
             r1.raise_for_status()
             j1 = r1.json()
+            # 성공: {"data":{"ic_id":N,"success":1},"api":{...}} / 에러: {"result":{"error":..}}
             data = j1.get("data") or {}
             ic_id = data.get("ic_id")
             if not ic_id or int(data.get("success") or 0) != 1:
+                apick_err = (j1.get("result") or {}).get("error")
                 return {**item, "status": "provider_error",
-                        "message": j1.get("api", {}).get("message") or "apick 등기 열람 실패(주소/잔액 확인)",
+                        "message": apick_err
+                        or "apick 등기 열람 실패(주소/고유번호 확인 또는 계정 결제 필요)",
                         "raw": j1}
 
             # ② 다운로드 — Excel(분석용 텍스트) + PDF(보관용)
