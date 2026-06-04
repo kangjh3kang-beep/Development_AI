@@ -14,7 +14,7 @@ type Envelope = {
   applies_north_light: boolean; binding: string; daylight_loss_pct: number;
   far_gfa_sqm: number; effective_gfa_sqm: number; envelope_gfa_sqm?: number;
   max_floors: number; max_height_m: number; daylight_ceiling_m?: number;
-  daylight_ceiling_floors?: number; note?: string; error?: string;
+  daylight_ceiling_floors?: number; geometry_source?: string; note?: string; error?: string;
 };
 
 const eok = (sqm: number) => `${sqm.toLocaleString()}㎡`;
@@ -26,17 +26,18 @@ export function BuildableEnvelopeCard() {
 
   const area = site?.landAreaSqm ?? null;
   const zone = site?.zoneCode ?? "";
+  const pnu = site?.pnu ?? null;
 
   useEffect(() => {
-    if (!area || area <= 0) { setRes(null); return; }
+    if ((!area || area <= 0) && !pnu) { setRes(null); return; }
     let cancelled = false;
     apiClient.post<Envelope>("/site-score/envelope", {
-      body: { land_area_sqm: area, zone, floor_height_m: 3.0 },
+      body: { land_area_sqm: area ?? 0, zone, pnu: pnu ?? undefined, floor_height_m: 3.0 },
     }).then((r) => { if (!cancelled) setRes(r); }).catch(() => { if (!cancelled) setRes(null); });
     return () => { cancelled = true; };
-  }, [area, zone]);
+  }, [area, zone, pnu]);
 
-  if (!area || !res || res.error) return null;
+  if ((!area && !pnu) || !res || res.error) return null;
 
   const lossBinding = res.binding === "정북일조";
 
@@ -45,7 +46,10 @@ export function BuildableEnvelopeCard() {
       <div className="flex items-center justify-between">
         <div>
           <h4 className="text-sm font-bold text-[var(--text-primary)]">빌더블 인벨로프 (정북일조)</h4>
-          <p className="text-[11px] text-[var(--text-secondary)]">{zone || "용도지역 미상"} · 대지 {eok(area)}</p>
+          <p className="text-[11px] text-[var(--text-secondary)]">
+            {zone || "용도지역 미상"}{area ? ` · 대지 ${eok(area)}` : ""}
+            {res.geometry_source ? ` · ${res.geometry_source}` : ""}
+          </p>
         </div>
         <span className={`rounded-full px-2.5 py-1 text-xs font-black ${lossBinding ? "bg-amber-500/10 text-amber-600" : "bg-emerald-500/10 text-emerald-600"}`}>
           한도: {res.binding}

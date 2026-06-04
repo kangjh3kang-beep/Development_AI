@@ -22,6 +22,41 @@ from app.services.permit.building_code_rules import ZONE_DEFAULTS
 _NORTH_LIGHT_ZONES = ("전용주거", "일반주거", "1종", "2종", "3종", "제1종", "제2종", "제3종")
 
 
+def dims_from_polygon(geometry: dict[str, Any] | None) -> dict[str, Any] | None:
+    """VWorld 필지 GeoJSON(geometry)에서 실측 남북깊이·동서폭·면적 도출.
+
+    경위도(EPSG:4326)를 중심위도 기준 등거리 근사로 미터 변환 →
+    bbox로 N-S 깊이(정북일조 핵심축)·E-W 폭, shapely로 실면적 산출.
+    """
+    if not geometry:
+        return None
+    try:
+        from shapely.geometry import shape
+
+        geom = shape(geometry)
+        if geom.is_empty:
+            return None
+        minx, miny, maxx, maxy = geom.bounds  # lon/lat
+        lat0 = (miny + maxy) / 2.0
+        m_per_deg_lat = 110540.0
+        m_per_deg_lon = 111320.0 * math.cos(math.radians(lat0))
+        width_m = (maxx - minx) * m_per_deg_lon     # 동서(E-W)
+        depth_m = (maxy - miny) * m_per_deg_lat      # 남북(N-S) — 정북일조 축
+        # 실면적: 경위도 폴리곤을 미터 평면으로 스케일 후 area
+        from shapely.affinity import scale as _scale
+        geom_m = _scale(geom, xfact=m_per_deg_lon, yfact=m_per_deg_lat, origin=(minx, miny))
+        area_sqm = abs(geom_m.area)
+        if depth_m <= 0 or width_m <= 0:
+            return None
+        return {
+            "width_m": round(width_m, 2), "depth_m": round(depth_m, 2),
+            "area_sqm": round(area_sqm, 1),
+            "irregularity": round(1 - area_sqm / (width_m * depth_m), 3) if width_m * depth_m else 0,
+        }
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _zone_limits(zone: str) -> dict[str, Any]:
     for k, v in ZONE_DEFAULTS.items():
         if k in (zone or "") or (zone or "") in k:

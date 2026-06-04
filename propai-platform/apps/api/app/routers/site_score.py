@@ -25,21 +25,54 @@ async def site_score(req: SiteScoreRequest):
 
 
 class EnvelopeRequest(BaseModel):
-    land_area_sqm: float
+    land_area_sqm: float = 0
     zone: str = ""
     land_width_m: float | None = None
     land_depth_m: float | None = None
     floor_height_m: float = 3.0
     bcr_limit_pct: float | None = None
     far_limit_pct: float | None = None
+    pnu: str | None = None                 # 주면 VWorld 실측 폴리곤으로 치수 정밀화
+    geometry: dict | None = None           # 직접 GeoJSON geometry 입력(선택)
 
 
 @router.post("/envelope")
 async def buildable_envelope(req: EnvelopeRequest):
-    """한국 정북일조 빌더블 인벨로프 — 건축가능 최대 연면적·층수·일조 손실률."""
-    return compute_buildable_envelope(
-        land_area_sqm=req.land_area_sqm, zone=req.zone,
-        land_width_m=req.land_width_m, land_depth_m=req.land_depth_m,
+    """한국 정북일조 빌더블 인벨로프 — 건축가능 최대 연면적·층수·일조 손실률.
+
+    PNU(또는 geometry) 제공 시 VWorld 실측 필지 폴리곤으로 남북깊이·동서폭·면적을
+    정밀 도출(√면적 정사각 근사 대체). 부정형 필지도 실측 반영.
+    """
+    from app.services.site_score.solar_envelope_service import dims_from_polygon
+
+    width, depth, area = req.land_width_m, req.land_depth_m, req.land_area_sqm
+    geom_source = "입력값/근사"
+    geometry = req.geometry
+
+    if req.pnu and geometry is None:
+        try:
+            from app.services.external_api.vworld_service import VWorldService
+            parcel = await VWorldService().get_parcel_by_pnu(req.pnu)
+            geometry = (parcel or {}).get("geometry")
+        except Exception:  # noqa: BLE001
+            geometry = None
+
+    if geometry is not None:
+        dims = dims_from_polygon(geometry)
+        if dims:
+            width, depth = dims["width_m"], dims["depth_m"]
+            if not area or area <= 0:
+                area = dims["area_sqm"]
+            geom_source = f"VWorld 실측 폴리곤(부정형도 {round(dims['irregularity']*100,1)}%)"
+
+    if not area or area <= 0:
+        return {"error": "대지면적 또는 PNU/geometry가 필요합니다."}
+
+    result = compute_buildable_envelope(
+        land_area_sqm=area, zone=req.zone,
+        land_width_m=width, land_depth_m=depth,
         floor_height_m=req.floor_height_m,
         bcr_limit_pct=req.bcr_limit_pct, far_limit_pct=req.far_limit_pct,
     )
+    result["geometry_source"] = geom_source
+    return result
