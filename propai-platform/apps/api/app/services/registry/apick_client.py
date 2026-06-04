@@ -10,6 +10,7 @@ PDF는 base64로 받아 보관용 URL 생성에 사용한다.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import io
 import os
@@ -75,27 +76,37 @@ async def fetch_registry(
 
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
-            # ① 열람 요청 → ic_id
+            # ① 열람 요청 → ic_id (성공:{"data":{"ic_id":N,"success":1}} / 에러:data.error 또는 result.error)
             r1 = await client.post(f"{_HOST}/rest/iros/1", headers=headers, data=form)
-            r1.raise_for_status()
-            j1 = r1.json()
-            # 성공: {"data":{"ic_id":N,"success":1},"api":{...}} / 에러: {"result":{"error":..}}
+            try:
+                j1 = r1.json()
+            except Exception:  # noqa: BLE001
+                return {**item, "status": "provider_error",
+                        "message": f"apick 응답 파싱 실패(HTTP {r1.status_code})"}
             data = j1.get("data") or {}
             ic_id = data.get("ic_id")
             if not ic_id or int(data.get("success") or 0) != 1:
-                apick_err = (j1.get("result") or {}).get("error")
+                # 401 등에도 raise하지 않고 apick 실제 사유 노출(예: "아이디 로그인")
+                apick_err = data.get("error") or (j1.get("result") or {}).get("error")
                 return {**item, "status": "provider_error",
                         "message": apick_err
                         or "apick 등기 열람 실패(주소/고유번호 확인 또는 계정 결제 필요)",
                         "raw": j1}
 
-            # ② 다운로드 — Excel(분석용 텍스트) + PDF(보관용)
+            # ② 다운로드 — 발급 PDF/Excel 생성에 20~30초 소요 → 처리중(헤더 result=2)이면 폴링
             async def _download(fmt: str) -> bytes | None:
-                rr = await client.post(f"{_HOST}/rest/iros_download/1", headers=headers,
-                                       data={"ic_id": str(ic_id), "format": fmt})
-                if rr.status_code != 200 or not rr.content:
+                for _ in range(12):  # 최대 ~36초
+                    rr = await client.post(f"{_HOST}/rest/iros_download/1", headers=headers,
+                                           data={"ic_id": str(ic_id), "format": fmt})
+                    res = rr.headers.get("result")
+                    ctype = (rr.headers.get("content-type") or "").lower()
+                    if rr.status_code == 200 and rr.content and "json" not in ctype and res != "2":
+                        return rr.content  # 바이너리(PDF/xlsx)
+                    if res == "2" or rr.status_code == 202:  # 처리중 → 대기 후 재시도
+                        await asyncio.sleep(3)
+                        continue
                     return None
-                return rr.content
+                return None
 
             xlsx = await _download("excel")
             pdf = await _download("pdf")
