@@ -7,6 +7,7 @@ import dynamic from "next/dynamic";
 import { motion, AnimatePresence } from "framer-motion";
 import { useQuery } from "@tanstack/react-query";
 import { apiClient } from "@/lib/api-client";
+import { useProjectContextStore } from "@/store/useProjectContextStore";
 
 const FeasibilitySimulationWidget = dynamic(
   () => import("../finance/FeasibilitySimulationWidget").then(mod => mod.FeasibilitySimulationWidget),
@@ -58,6 +59,79 @@ export function LifecycleStageViews({ projectId, dictionary }: LifecycleStageVie
   });
 
   const p = projectQuery.data || {};
+
+  // 저장된 실제 분석(프로젝트별 스냅샷에서 복원됨) — 단일 데이터원. 백엔드 메타(p)로 폴백.
+  const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
+  const designData = useProjectContextStore((s) => s.designData);
+  const esgData = useProjectContextStore((s) => s.esgData);
+
+  const fmtArea = (v: number | null | undefined) =>
+    v != null ? `${Math.round(v).toLocaleString()} m²` : null;
+  const officialPrice =
+    siteAnalysis?.officialPrices?.[0]?.pricePerSqm ?? null;
+  const bcrLimit = siteAnalysis?.ordinance?.effectiveBcr ?? null;
+  const farLimit = siteAnalysis?.ordinance?.effectiveFar ?? null;
+  const NA = "분석 전";
+
+  // 부지분석 탭 — 저장 분석 → 백엔드 메타 → '분석 전'(하드코딩 제거)
+  const siteRows = [
+    {
+      label: "필지번호 (PNU)",
+      value: siteAnalysis?.pnu || p.pnu_codes?.[0] || p.pnu || NA,
+    },
+    {
+      label: "면적",
+      value: fmtArea(siteAnalysis?.landAreaSqm) || fmtArea(p.total_area_sqm) || NA,
+    },
+    {
+      label: "공시지가",
+      value: officialPrice != null
+        ? `${Math.round(officialPrice).toLocaleString()} 원/m²`
+        : NA,
+    },
+    {
+      label: "용도지역",
+      value: siteAnalysis?.zoneCode || p.zone_type || NA,
+    },
+    {
+      label: "건폐율 / 용적률",
+      value: bcrLimit != null && farLimit != null ? `${bcrLimit}% / ${farLimit}%` : NA,
+    },
+  ];
+
+  // 법규 탭 건축 한도 — 한도=조례/법정 상한, 현재=설계값(없으면 '분석 전')
+  const pct = (cur: number | null, lim: number | null) =>
+    cur != null && lim ? Math.min(100, Math.round((cur / lim) * 100)) : 0;
+  const legalLimits = [
+    {
+      label: "건폐율",
+      limit: bcrLimit != null ? `${bcrLimit}%` : "—",
+      current: designData?.bcr != null ? `${designData.bcr}%` : NA,
+      progress: pct(designData?.bcr ?? null, bcrLimit),
+      color: "var(--success)",
+    },
+    {
+      label: "용적률",
+      limit: farLimit != null ? `${farLimit}%` : "—",
+      current: designData?.far != null ? `${designData.far}%` : NA,
+      progress: pct(designData?.far ?? null, farLimit),
+      color: "var(--accent-strong)",
+    },
+  ];
+
+  // ESG 탄소 — context esgData(있으면 실값). tCO₂e = kg/1000.
+  const tco2e = (kg: number | null | undefined) =>
+    kg != null ? `${(kg / 1000).toLocaleString(undefined, { maximumFractionDigits: 1 })} tCO₂e` : NA;
+  const esgHasData = !!esgData && (esgData.embodiedCarbonKg != null || esgData.operationalCarbonKg != null || esgData.totalCarbonPerSqm != null);
+  const carbonRows = [
+    { label: "내재 탄소(자재)", value: tco2e(esgData?.embodiedCarbonKg) },
+    { label: "운영 탄소(연간)", value: tco2e(esgData?.operationalCarbonKg) },
+    {
+      label: "단위면적당",
+      value: esgData?.totalCarbonPerSqm != null ? `${esgData.totalCarbonPerSqm.toLocaleString(undefined, { maximumFractionDigits: 1 })} kgCO₂/m²` : NA,
+      highlight: true,
+    },
+  ];
 
   const stages = [
     { id: "site_analysis", name: t.stageSite || "입지 분석", icon: "🗺️", path: "site-analysis" },
@@ -168,13 +242,7 @@ export function LifecycleStageViews({ projectId, dictionary }: LifecycleStageVie
                       </div>
                     </div>
                     <div className="flex flex-col justify-center gap-4">
-                      {[
-                        { label: "필지번호 (PNU)", value: p.pnu || "1168010100100010001" },
-                        { label: "면적", value: p.total_area_sqm ? `${p.total_area_sqm.toLocaleString()} m²` : "4,500 m²" },
-                        { label: "공시지가", value: "12,500,000 원/m²" },
-                        { label: "용도지역", value: p.status === "active" ? "일반상업지역" : "준주거지역" },
-                        { label: "건폐율 / 용적률", value: "60% / 300%" },
-                      ].map((item, i) => (
+                      {siteRows.map((item, i) => (
                         <motion.div 
                           key={item.label} 
                           initial={{ opacity: 0, x: 20 }}
@@ -194,12 +262,7 @@ export function LifecycleStageViews({ projectId, dictionary }: LifecycleStageVie
                   <div className="grid gap-14 md:grid-cols-2">
                     <div className="space-y-8">
                       <h4 className="text-[10px] font-black text-[var(--text-hint)] uppercase tracking-[0.5em] px-4">건축 제한 현황 (MAX LIMITS)</h4>
-                      {[
-                        { label: "건폐율", limit: "60%", current: "58.2%", progress: 97, color: "var(--success)" },
-                        { label: "용적률", limit: "300%", current: "298.5%", progress: 99, color: "var(--accent-strong)" },
-                        { label: "높이제한", limit: "80m", current: "75.2m", progress: 94, color: "var(--info)" },
-                        { label: "일조권", limit: "적용", current: "충족", progress: 100, color: "var(--success)" },
-                      ].map((item, i) => (
+                      {legalLimits.map((item, i) => (
                         <div key={item.label} className="rounded-[2.5rem] bg-[var(--surface-soft)] p-8 border border-[var(--line)] group/stat shadow-sm">
                           <div className="flex items-center justify-between mb-5">
                             <span className="text-[11px] font-black uppercase tracking-[0.2em] text-[var(--text-secondary)]">{item.label}</span>
@@ -253,32 +316,19 @@ export function LifecycleStageViews({ projectId, dictionary }: LifecycleStageVie
 
                 {activeStage === "esg_dashboard" && (
                   <div className="flex flex-col gap-12">
-                     <div className="grid gap-10 md:grid-cols-3">
-                      {[
-                        { label: "Environment", score: 84, grade: "A", color: "from-emerald-500 to-teal-500" },
-                        { label: "Social", score: 76, grade: "B+", color: "from-blue-500 to-indigo-500" },
-                        { label: "Governance", score: 92, grade: "A+", color: "from-indigo-400 to-indigo-600" },
-                      ].map((item, i) => (
-                        <motion.div 
-                          key={item.label} 
-                          initial={{ opacity: 0, y: 20 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          transition={{ delay: i * 0.1 }}
-                          className="rounded-[3.5rem] bg-[var(--surface-soft)] p-10 border border-[var(--line)] text-center group/card transition-all hover:-translate-y-3 shadow-lg"
-                        >
-                          <div className={`mx-auto flex h-24 w-24 items-center justify-center rounded-[2rem] bg-gradient-to-br ${item.color} text-white shadow-2xl transition-transform group-hover/card:scale-110`}>
-                            <span className="text-4xl font-[1000] italic">{item.score}</span>
-                          </div>
-                          <p className="mt-8 text-[11px] font-black uppercase tracking-[0.4em] text-[var(--text-hint)]">{item.label}</p>
-                          <p className="mt-2 text-2xl font-[1000] text-[var(--text-primary)] underline decoration-[var(--accent-strong)] decoration-4 underline-offset-8">Rank: {item.grade}</p>
-                        </motion.div>
-                      ))}
-                    </div>
+                    {!esgHasData && (
+                      <div className="flex flex-col items-center gap-4 rounded-[3rem] border border-dashed border-[var(--line-strong)] bg-[var(--surface-soft)] p-10 text-center">
+                        <span className="text-4xl">🌿</span>
+                        <p className="text-sm font-black text-[var(--text-primary)]">ESG/탄소 분석 전</p>
+                        <p className="text-xs text-[var(--text-secondary)] max-w-md">이 프로젝트의 ESG·탄소 데이터가 아직 없습니다. ‘ESG/탄소 경영’ 모듈에서 분석을 실행하면 내재·운영 탄소가 여기에 연동됩니다.</p>
+                        <Link href={`/${locale}/esg`} className="rounded-full bg-[var(--accent-strong)] px-6 py-3 text-xs font-black uppercase tracking-[0.2em] text-white">ESG 분석 실행 ↗</Link>
+                      </div>
+                    )}
                     <div className="grid gap-10 md:grid-cols-2">
                        <div className="rounded-[3rem] bg-[var(--surface-soft)] p-10 border border-[var(--line)] shadow-sm">
                           <h4 className="text-[10px] font-black text-[var(--text-hint)] uppercase tracking-[0.5em] mb-8">CARBON INTELLIGENCE (CO₂)</h4>
                           <div className="space-y-5">
-                            {[ { label: "저감 목표 수치", value: "450 tCO₂e" }, { label: "현재 배출량 추정", value: "412 tCO₂e" }, { label: "최종 저감율", value: "8.4 %", highlight: true } ].map((item) => (
+                            {carbonRows.map((item) => (
                               <div key={item.label} className="flex items-center justify-between border-b border-[var(--line)] pb-4">
                                 <span className="text-[12px] font-black text-[var(--text-secondary)] uppercase tracking-widest">{item.label}</span>
                                 <span className={`text-lg font-black tracking-tighter italic ${item.highlight ? 'text-[var(--accent-strong)]' : 'text-[var(--text-primary)]'}`}>{item.value}</span>
@@ -289,10 +339,10 @@ export function LifecycleStageViews({ projectId, dictionary }: LifecycleStageVie
                        <div className="rounded-[3rem] bg-[var(--surface-soft)] p-10 border border-[var(--line)] shadow-sm">
                           <h4 className="text-[10px] font-black text-[var(--text-hint)] uppercase tracking-[0.5em] mb-8">GREEN CERTIFICATION FLOW</h4>
                           <div className="space-y-5">
-                            {[ { label: "에너지효율등급", value: "1++ 등급" }, { label: "녹색건축인증 (G-SEED)", value: "최우수" }, { label: "LEED 글로벌 평가", value: "Gold (예비)" } ].map((item) => (
-                              <div key={item.label} className="flex items-center justify-between border-b border-[var(--line)] pb-4">
-                                <span className="text-[12px] font-black text-[var(--text-secondary)] uppercase tracking-widest">{item.label}</span>
-                                <span className="text-lg font-black text-[var(--text-primary)] tracking-tighter italic">{item.value}</span>
+                            {[ "에너지효율등급", "녹색건축인증 (G-SEED)", "LEED 글로벌 평가" ].map((label) => (
+                              <div key={label} className="flex items-center justify-between border-b border-[var(--line)] pb-4">
+                                <span className="text-[12px] font-black text-[var(--text-secondary)] uppercase tracking-widest">{label}</span>
+                                <span className="text-lg font-black text-[var(--text-hint)] tracking-tighter italic">{NA}</span>
                               </div>
                             ))}
                           </div>

@@ -336,7 +336,8 @@ export function ProjectPipelinePanel({
   const markStageComplete = useProjectContextStore((s) => s.markStageComplete);
 
   const saveToStore = useCallback(
-    (result: PipelineRunResponse) => {
+    (result: PipelineRunResponse, addr?: string) => {
+      const effectiveAddr = addr ?? address;
       // site_analysis — summary 우선, 없으면 stages[0].data에서 직접 추출
       // partial merge로 기존 데이터 유지하면서 새 값만 덮어쓰기
       const site = result.summary?.site_analysis;
@@ -352,7 +353,7 @@ export function ProjectPipelinePanel({
           ...(newEstValue != null ? { estimatedValue: newEstValue } : {}),
           ...(newLandArea != null && newLandArea > 0 ? { landAreaSqm: newLandArea } : {}),
           ...(newZoneCode ? { zoneCode: newZoneCode } : {}),
-          ...(address ? { address } : {}),
+          ...(effectiveAddr ? { address: effectiveAddr } : {}),
           ...(newPnu ? { pnu: newPnu } : {}),
         });
         markStageComplete("site-analysis");
@@ -438,14 +439,16 @@ export function ProjectPipelinePanel({
     [history],
   );
 
-  // 이력 클릭 → 이전 분석 상세 재조회
+  // 이력 클릭 → 이전 분석 상세 재조회 + 프로젝트 컨텍스트(스냅샷)로 복원
+  // (이력은 전역이라, 선택 시 현재 프로젝트 스냅샷에 저장해야 재진입·타 모듈에서 일관 표시)
   const openHistory = useCallback((entry: HistoryEntry) => {
     setLastResult(entry.result);
     setAddress(entry.address);
     setStages(entry.result.stages);
     setSummary(entry.result.summary ?? {});
     setViewMode("detail");
-  }, []);
+    saveToStore(entry.result, entry.address);
+  }, [saveToStore]);
 
   // 주소 검색 콜백 (다필지 지원)
   const handleAddressChange = useCallback((entries: AddressEntry[]) => {
