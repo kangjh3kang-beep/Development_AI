@@ -348,3 +348,131 @@ async def finalize_business_model(req: FinalizeRequest):
         },
         "finalized_at": datetime.now().isoformat(),
     }
+
+
+# ── 다기간 DCF 월별 현금흐름(베팅 B) ──────────────────────────────
+class CashflowRequest(BaseModel):
+    land_cost_won: float
+    construction_cost_won: float
+    construction_months: int = 24
+    total_revenue_won: float
+    sale_start_month: int = 6          # 시공 개시 기준 분양 시작(월)
+    sale_duration_months: int = 6
+    bridge_loan_rate: float = 0.08
+    pf_loan_rate: float = 0.065
+    equity_ratio: float = 0.3
+    design_months: int = 3
+    design_cost_ratio: float = 0.03
+    discount_rate_annual: float = 0.06  # NPV 할인율(연)
+
+
+def _build_cashflow(req: "CashflowRequest") -> dict:
+    from app.services.feasibility.cashflow_generator import CashflowGenerator
+
+    cf = CashflowGenerator().generate_monthly_cashflow(
+        land_cost=req.land_cost_won,
+        construction_cost=req.construction_cost_won,
+        construction_months=max(1, req.construction_months),
+        total_revenue=req.total_revenue_won,
+        sale_start_month=max(0, req.sale_start_month),
+        sale_duration_months=max(1, req.sale_duration_months),
+        bridge_loan_rate=req.bridge_loan_rate,
+        pf_loan_rate=req.pf_loan_rate,
+        equity_ratio=req.equity_ratio,
+        design_months=max(0, req.design_months),
+        design_cost_ratio=req.design_cost_ratio,
+    )
+    # 월 할인율로 NPV 재계산(엔진 IRR과 별개로 사용자 지정 할인율 반영)
+    rmonthly = (1 + req.discount_rate_annual) ** (1 / 12) - 1
+    npv = 0.0
+    for r in cf["rows"]:
+        net = (r.get("inflow", 0) or 0) - (r.get("outflow", 0) or 0)
+        m = r.get("month", 0) or 0
+        npv += net / ((1 + rmonthly) ** m)
+    cf["summary"]["npv_won"] = round(npv)
+    cf["summary"]["discount_rate_annual_pct"] = round(req.discount_rate_annual * 100, 2)
+    return cf
+
+
+@router.post("/cashflow")
+async def cashflow(req: CashflowRequest):
+    """다기간(월별) DCF 현금흐름 + IRR·NPV·peak 자금소요. (은행제출용 정밀 사업성)"""
+    try:
+        return _build_cashflow(req)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=422, detail=f"현금흐름 산정 실패: {str(e)[:160]}")
+
+
+@router.post("/cashflow/excel")
+async def cashflow_excel(req: CashflowRequest):
+    """월별 현금흐름을 Excel(xlsx)로 다운로드."""
+    try:
+        cf = _build_cashflow(req)
+        from io import BytesIO
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill, Alignment
+
+        wb = Workbook()
+        ws = wb.active or wb.create_sheet()
+        ws.title = "월별 현금흐름(DCF)"
+
+        # 요약
+        s = cf["summary"]
+        ws.append(["■ 사업성 요약 (DCF)"])
+        ws["A1"].font = Font(bold=True, size=13)
+        summary_rows = [
+            ("총 분양수입(원)", s.get("total_inflow")),
+            ("총 사업비(원)", s.get("total_outflow")),
+            ("순이익(원)", s.get("net_profit")),
+            ("수익률(%)", s.get("profit_rate_pct")),
+            ("IRR(연,%)", s.get("irr_annual_pct")),
+            ("NPV(원)", s.get("npv_won")),
+            ("할인율(연,%)", s.get("discount_rate_annual_pct")),
+            ("최대 자금소요(peak, 원)", s.get("peak_negative_cashflow")),
+            ("자기자본(원)", s.get("equity_amount")),
+            ("브릿지론(원)", s.get("bridge_loan_amount")),
+            ("PF론(원)", s.get("pf_loan_amount")),
+        ]
+        for k, v in summary_rows:
+            ws.append([k, v])
+        ws.append([])
+
+        # 월별 표 헤더
+        hdr_row = ws.max_row + 1
+        headers = ["월", "단계", "유입(원)", "유출(원)", "순현금(원)", "누적현금(원)"]
+        ws.append(headers)
+        head_fill = PatternFill("solid", fgColor="1F2937")
+        for c in range(1, len(headers) + 1):
+            cell = ws.cell(row=hdr_row, column=c)
+            cell.font = Font(bold=True, color="FFFFFF")
+            cell.fill = head_fill
+            cell.alignment = Alignment(horizontal="center")
+
+        for r in cf["rows"]:
+            net = (r.get("inflow", 0) or 0) - (r.get("outflow", 0) or 0)
+            ws.append([
+                r.get("month"), r.get("phase", ""),
+                round(r.get("inflow", 0) or 0), round(r.get("outflow", 0) or 0),
+                round(net), round(r.get("cumulative", 0) or 0),
+            ])
+
+        # 숫자 포맷·열너비
+        for col in ("C", "D", "E", "F"):
+            for cell in ws[col]:
+                if isinstance(cell.value, (int, float)):
+                    cell.number_format = "#,##0"
+        ws.column_dimensions["A"].width = 8
+        ws.column_dimensions["B"].width = 16
+        for col in ("C", "D", "E", "F"):
+            ws.column_dimensions[col].width = 18
+
+        buf = BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        return Response(
+            content=buf.getvalue(),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": "attachment; filename=propai_cashflow_dcf.xlsx"},
+        )
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=422, detail=f"엑셀 생성 실패: {str(e)[:160]}")

@@ -206,7 +206,23 @@ class CashflowGenerator:
 
         # ── 요약 ──
         net_profit = cumulative_inflow - cumulative_outflow
-        irr = self._calc_irr(rows)
+
+        # 언레버리지(금융 제외) 프로젝트 IRR — 토지·설계·공사 지출 vs 분양수입만으로 산정.
+        # (rows의 net은 대출 드로/상환·자기자본 포함이라 IRR 폭증 → 의미있는 사업 IRR은 무차입 기준)
+        unlevered = [0.0] * total_months
+        unlevered[0] -= land_cost
+        for m in range(1, design_months + 1):
+            if m < total_months:
+                unlevered[m] -= design_cost / max(1, design_months)
+        for ci in range(len(monthly_construction)):
+            m = construction_start + ci
+            if m < total_months:
+                unlevered[m] -= monthly_construction[ci]
+        for ri in range(len(monthly_revenue)):
+            m = sale_abs_start + ri
+            if m < total_months:
+                unlevered[m] += monthly_revenue[ri]
+        irr = self._irr_from_netflows(unlevered)
 
         summary = {
             "total_months": total_months,
@@ -303,29 +319,50 @@ class CashflowGenerator:
             return "시공"
         return "정산"
 
-    def _calc_irr(self, rows: list[dict[str, Any]]) -> float | None:
-        """월별 현금흐름에서 연환산 IRR을 계산한다."""
+    def _irr_from_netflows(self, cashflows: list[float]) -> float | None:
+        """월별 순현금흐름 리스트에서 연환산 IRR을 이분법으로 계산한다(순수 파이썬)."""
         try:
-            import numpy as np
-            from numpy import npv as _  # noqa: F401
+            # 부호 변화(유출→유입)가 없으면 IRR 정의 불가
+            if not any(c < 0 for c in cashflows) or not any(c > 0 for c in cashflows):
+                return None
 
-            cashflows = [r["net"] for r in rows]
-
-            # Newton-Raphson 방식 IRR 근사
-            def npv_at_rate(rate: float) -> float:
+            def npv_at(rate: float) -> float:
                 return sum(cf / (1 + rate) ** i for i, cf in enumerate(cashflows))
 
-            # 이분법으로 IRR 탐색
-            lo, hi = -0.5, 5.0
-            for _ in range(100):
+            # npv(0)=순현금합. 부호 기준으로 0에서 bracket을 키워 주근(主根)만 탐색
+            # (극단 음수 rate에서 말기 현금흐름이 발산해 가짜 근을 잡는 문제 회피).
+            base = npv_at(0.0)
+            if abs(base) < 1.0:
+                return 0.0
+            if base > 0:  # IRR>0: 0에서 위로
+                lo, hi = 0.0, 0.01
+                ok = False
+                for _ in range(80):
+                    if npv_at(hi) < 0:
+                        ok = True
+                        break
+                    hi = min(hi * 1.5, 10.0)
+                if not ok:
+                    return None  # 월 IRR>1000% 수준 — 비정상
+            else:  # IRR<0: 0에서 아래로
+                lo, hi = -0.01, 0.0
+                ok = False
+                for _ in range(80):
+                    if npv_at(lo) > 0:
+                        ok = True
+                        break
+                    lo = max(lo * 1.5, -0.99)
+                if not ok:
+                    return None
+            # lo: npv>0, hi: npv<0 → 이분법
+            for _ in range(200):
                 mid = (lo + hi) / 2
-                if npv_at_rate(mid) > 0:
+                if npv_at(mid) > 0:
                     lo = mid
                 else:
                     hi = mid
-
             monthly_irr = (lo + hi) / 2
             annual_irr = (1 + monthly_irr) ** 12 - 1
             return round(annual_irr * 100, 2)
-        except Exception:
+        except Exception:  # noqa: BLE001
             return None
