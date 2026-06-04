@@ -79,18 +79,18 @@ async def rone_status(keyword: str = "지가변동"):
     # 통계표 후보 탐색(STATBL_ID 미설정 시 도움) — 4종 통계 키워드별
     import os as _os
     stat_envs = {
-        "지가변동률": "RONE_LANDPRICE_STATBL_ID",
-        "주택종합 매매가격지수": "RONE_HOUSING_STATBL_ID",
-        "상업용부동산 투자수익률": "RONE_COMMYIELD_STATBL_ID",
-        "전월세전환율": "RONE_JEONSE_CONV_STATBL_ID",
+        "지가변동률": ("RONE_LANDPRICE_STATBL_ID", "지가변동률"),
+        "주택 매매가격지수": ("RONE_HOUSING_STATBL_ID", "매매가격지수"),
+        "상업용 투자수익률": ("RONE_COMMYIELD_STATBL_ID", "투자수익률"),
+        "전월세전환율": ("RONE_JEONSE_CONV_STATBL_ID", "전월세전환율"),
     }
     discovery: dict = {}
-    for kw, env_name in stat_envs.items():
-        cands = await reb.discover_statbl_ids(keyword=kw)
-        discovery[kw] = {
+    for label, (env_name, search_kw) in stat_envs.items():
+        cands = await reb.discover_statbl_ids(keyword=search_kw)
+        discovery[label] = {
             "env": env_name,
             "set": bool((_os.getenv(env_name) or "").strip()),
-            "candidates": (cands or [])[:8],
+            "candidates": (cands or [])[:10],
         }
     out["statistics_discovery"] = discovery
 
