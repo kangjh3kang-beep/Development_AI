@@ -23,6 +23,8 @@ export function AnimatedCounter({
   decimals = 0,
   className,
 }: AnimatedCounterProps) {
+  // NaN/undefined 방어 — 비유한 값은 0으로(대시보드 'NaN' 표기 차단)
+  const safeValue = Number.isFinite(value) ? value : 0;
   const [display, setDisplay] = useState("0");
   const rafRef = useRef<number | null>(null);
   const startTimeRef = useRef<number | null>(null);
@@ -36,7 +38,7 @@ export function AnimatedCounter({
 
   useEffect(() => {
     if (prefersReducedMotion.current) {
-      setDisplay(value.toLocaleString("ko-KR", {
+      setDisplay(safeValue.toLocaleString("ko-KR", {
         minimumFractionDigits: decimals,
         maximumFractionDigits: decimals,
       }));
@@ -50,7 +52,7 @@ export function AnimatedCounter({
       const elapsed = timestamp - startTimeRef.current;
       const progress = Math.min(elapsed / duration, 1);
       const easedProgress = easeOutExpo(progress);
-      const current = easedProgress * value;
+      const current = easedProgress * safeValue;
 
       setDisplay(
         current.toLocaleString("ko-KR", {
@@ -69,7 +71,7 @@ export function AnimatedCounter({
     return () => {
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
     };
-  }, [value, duration, decimals]);
+  }, [safeValue, duration, decimals]);
 
   return (
     <span className={className}>

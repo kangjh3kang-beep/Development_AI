@@ -35,11 +35,13 @@ export function KpiGrid({ items }: { items: KpiItem[] }) {
             <span className="text-xs font-bold tracking-[0.1em] text-[var(--text-tertiary)]">
               {item.label}
             </span>
-            <span
-              className={`text-[11px] font-bold ${item.color} px-2.5 py-1 rounded-full bg-white/10 dark:bg-black/20`}
-            >
-              {item.trend}
-            </span>
+            {item.trend ? (
+              <span
+                className={`text-[11px] font-bold ${item.color} px-2.5 py-1 rounded-full bg-white/10 dark:bg-black/20`}
+              >
+                {item.trend}
+              </span>
+            ) : null}
           </div>
           <div className="mt-6 flex items-baseline gap-2">
             <AnimatedCounter

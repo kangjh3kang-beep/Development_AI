@@ -4,26 +4,32 @@ import { useEffect, useState } from "react";
 import { apiClient } from "@/lib/api-client";
 import { KpiGrid } from "@/components/dashboard/DashboardDynamicElements";
 
-type DashboardOverview = {
+// 백엔드 /dashboard/overview 실제 응답 필드(가짜 폴백·트렌드 제거)
+type DashboardOverviewApi = {
+  total_projects?: number;
+  active_projects?: number;
+  total_investment_billion?: number;
+  avg_roi_pct?: number;
+  carbon_reduction_pct?: number;
+  portfolio_count?: number;
+};
+
+type DashboardKpi = {
   total_assets: number;
   avg_roi: number;
   carbon_reduction: number;
-  total_assets_trend?: string;
-  avg_roi_trend?: string;
-  carbon_reduction_trend?: string;
+  total_projects: number;
+  has_carbon: boolean;
 };
 
-const FALLBACK: DashboardOverview = {
-  total_assets: 3500.2,
-  avg_roi: 18.4,
-  carbon_reduction: 24.9,
-  total_assets_trend: "+12.5%",
-  avg_roi_trend: "+2.1%",
-  carbon_reduction_trend: "-1.5%",
+const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+
+const ZERO: DashboardKpi = {
+  total_assets: 0, avg_roi: 0, carbon_reduction: 0, total_projects: 0, has_carbon: false,
 };
 
 export function DashboardKpiLoader() {
-  const [data, setData] = useState<DashboardOverview | null>(null);
+  const [data, setData] = useState<DashboardKpi | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -31,10 +37,18 @@ export function DashboardKpiLoader() {
 
     async function fetchOverview() {
       try {
-        const res = await apiClient.get<DashboardOverview>("/dashboard/overview");
-        if (!cancelled) setData(res);
+        const res = await apiClient.get<DashboardOverviewApi>("/dashboard/overview");
+        if (!cancelled) {
+          setData({
+            total_assets: num(res.total_investment_billion),
+            avg_roi: num(res.avg_roi_pct),
+            carbon_reduction: num(res.carbon_reduction_pct),
+            total_projects: num(res.total_projects),
+            has_carbon: typeof res.carbon_reduction_pct === "number",
+          });
+        }
       } catch {
-        if (!cancelled) setData(FALLBACK);
+        if (!cancelled) setData(ZERO);
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -57,18 +71,18 @@ export function DashboardKpiLoader() {
     );
   }
 
-  const d = data ?? FALLBACK;
+  const d = data ?? ZERO;
 
   return (
     <KpiGrid
       items={[
         {
-          label: "전체 포트폴리오 자산",
+          label: "전체 포트폴리오 자산(추정 총사업비)",
           value: d.total_assets,
           decimals: 1,
           unit: "B",
-          trend: d.total_assets_trend ?? "+12.5%",
-          sub: "Total Assets Under Management",
+          trend: "",
+          sub: `프로젝트 ${d.total_projects}건 합산`,
           color: "text-[var(--chart-1)]",
           bg: "bg-[var(--chart-1)]/5",
           border: "border-[var(--chart-1)]/20",
@@ -78,8 +92,8 @@ export function DashboardKpiLoader() {
           value: d.avg_roi,
           decimals: 1,
           unit: "%",
-          trend: d.avg_roi_trend ?? "+2.1%",
-          sub: "12개 주요 프로젝트 기준",
+          trend: "",
+          sub: "수지분석 완료 프로젝트 평균",
           color: "text-[var(--status-info)]",
           bg: "bg-[var(--status-info)]/5",
           border: "border-[var(--status-info)]/20",
@@ -89,8 +103,8 @@ export function DashboardKpiLoader() {
           value: d.carbon_reduction,
           decimals: 1,
           unit: "%",
-          trend: d.carbon_reduction_trend ?? "-1.5%",
-          sub: "전과정평가 (LCA) 기반",
+          trend: "",
+          sub: d.has_carbon ? "전과정평가 (LCA) 기반" : "LCA 분석 데이터 없음",
           color: "text-[var(--status-success)]",
           bg: "bg-[var(--status-success)]/5",
           border: "border-[var(--status-success)]/20",

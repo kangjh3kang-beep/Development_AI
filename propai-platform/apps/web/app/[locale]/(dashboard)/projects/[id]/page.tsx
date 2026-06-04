@@ -25,6 +25,8 @@ type ProjectMeta = {
   roi?: number;
   pnu?: string;
   zone?: string;
+  pnu_codes?: string[];   // 백엔드 실제 필드
+  zone_type?: string;     // 백엔드 실제 필드
 };
 
 export default function ProjectDetailPage() {
@@ -37,6 +39,10 @@ export default function ProjectDetailPage() {
 
   const [meta, setMeta] = useState<ProjectMeta | null>(null);
   const [metaLoading, setMetaLoading] = useState(true);
+
+  // 복원된 분석(스냅샷) 구독 — 히어로 PNU/용도지역/ROI를 실데이터로 표시
+  const ctxSite = useProjectContextStore((s) => s.siteAnalysis);
+  const ctxFeas = useProjectContextStore((s) => s.feasibilityData);
 
   // 프로젝트 진입 시 컨텍스트를 이 프로젝트로 전환 → 분석 스냅샷(부지·상세분석 등) 복원.
   // (이것이 없으면 직전 프로젝트/빈 컨텍스트가 표시되고, 새 분석도 잘못된 키로 저장됨)
@@ -60,6 +66,43 @@ export default function ProjectDetailPage() {
     fetchMeta();
     return () => { cancelled = true; };
   }, [id]);
+
+  // 분석 이력(전역)에서 이 프로젝트 주소와 일치하는 분석을 찾아 컨텍스트(스냅샷)로 복원.
+  // (이력은 파이프라인 런 단위 전역 저장이라, 프로젝트 스냅샷이 비어 있으면 주소 매칭으로 되살림)
+  useEffect(() => {
+    const addr = meta?.address || projectFromStore?.address;
+    if (!addr) return;
+    const st = useProjectContextStore.getState();
+    if (st.projectId !== id || st.siteAnalysis) return; // 이미 복원/분석 있음
+    try {
+      const hist = JSON.parse(localStorage.getItem("propai_pipeline_history") || "[]") as Array<{
+        address?: string; result?: { summary?: Record<string, any>; stages?: Array<{ stage: string; status: string; data?: any }> };
+      }>;
+      const norm = (s: string) => s.replace(/\s+/g, "");
+      const match = hist.find((h) => h.address && (norm(h.address) === norm(addr) || norm(addr).includes(norm(h.address)) || norm(h.address).includes(norm(addr))));
+      const r = match?.result;
+      if (!r) return;
+      const site = r.summary?.site_analysis;
+      const basic = (r.stages?.find((s) => s.stage === "site_analysis")?.data?.basic) ?? {};
+      if (site || basic) {
+        st.updateSiteAnalysis({
+          ...(site?.estimated_value != null ? { estimatedValue: site.estimated_value } : {}),
+          ...((site?.land_area_sqm ?? basic.land_area_sqm) ? { landAreaSqm: site?.land_area_sqm ?? basic.land_area_sqm } : {}),
+          ...((site?.zone_code ?? basic.zone_type) ? { zoneCode: site?.zone_code ?? basic.zone_type } : {}),
+          ...((site?.pnu ?? basic.pnu) ? { pnu: site?.pnu ?? basic.pnu } : {}),
+          address: addr,
+        });
+      }
+      const design = r.summary?.design;
+      if (design) st.updateDesignData({ totalGfaSqm: design.total_gfa_sqm ?? null, floorCount: design.floor_count ?? null, buildingType: design.building_type ?? null, bcr: design.bcr ?? null, far: design.far ?? null });
+      const feas = r.summary?.feasibility;
+      if (feas) st.updateFeasibilityData({ totalCostWon: feas.total_cost_won ?? null, totalRevenueWon: feas.total_revenue_won ?? null, profitRatePct: feas.profit_rate_pct ?? null, grade: feas.grade ?? null });
+      const esg = r.summary?.esg_carbon;
+      if (esg) st.updateEsgData({ embodiedCarbonKg: esg.embodied_carbon_kg ?? null, operationalCarbonKg: esg.operational_carbon_kg ?? null, totalCarbonPerSqm: esg.total_carbon_per_sqm ?? null });
+    } catch {
+      /* 복원 실패는 무시 — 사용자가 재분석 가능 */
+    }
+  }, [meta?.address, projectFromStore?.address, id]);
 
   if (isLoading || !dictionary) {
     return (
@@ -192,10 +235,10 @@ export default function ProjectDetailPage() {
               </h1>
               <div className="flex flex-wrap gap-6">
                 <span className="rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-soft)] px-6 py-2.5 text-[11px] font-black uppercase tracking-widest text-[var(--text-secondary)] backdrop-blur-md shadow-[var(--shadow-sm)]">
-                  {meta?.pnu ?? "PNU 미상"}
+                  {ctxSite?.pnu ?? meta?.pnu_codes?.[0] ?? meta?.pnu ?? "PNU 미상"}
                 </span>
                 <span className="rounded-2xl border border-[var(--accent-strong)]/30 bg-[var(--accent-soft)] px-6 py-2.5 text-[11px] font-black uppercase tracking-widest text-[var(--accent-strong)] backdrop-blur-md shadow-[var(--shadow-sm)]">
-                  {meta?.zone ?? "용도지역 미상"}
+                  {ctxSite?.zoneCode ?? meta?.zone_type ?? meta?.zone ?? "용도지역 미상"}
                 </span>
               </div>
             </motion.div>
@@ -209,7 +252,7 @@ export default function ProjectDetailPage() {
           >
             {[
               { label: d.summary.npv, value: meta?.npv ? formatCurrencyKRW(meta.npv) : "분석 전", color: "text-[var(--text-primary)]" },
-              { label: d.summary.roi, value: meta?.roi ? `${meta.roi.toFixed(1)}%` : "분석 전", color: "text-[var(--accent-strong)]" },
+              { label: d.summary.roi, value: ctxFeas?.profitRatePct != null ? `${ctxFeas.profitRatePct.toFixed(1)}%` : (meta?.roi ? `${meta.roi.toFixed(1)}%` : "분석 전"), color: "text-[var(--accent-strong)]" },
             ].map((stat, i) => (
               <div key={i} className="relative min-w-[240px] rounded-[3rem] border border-[var(--line-strong)] bg-[var(--surface-strong)]/50 p-10 backdrop-blur-3xl shadow-[var(--shadow-xl)] transition-all hover:-translate-y-2 hover:bg-[var(--surface-soft)] group/stat border-2 border-transparent hover:border-[var(--accent-strong)]/20">
                 <p className="text-[10px] font-black uppercase tracking-[0.4em] text-[var(--text-hint)] mb-4">{stat.label}</p>
