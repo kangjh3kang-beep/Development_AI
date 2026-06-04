@@ -100,7 +100,7 @@ export function CostAndQuantityDashboard({ projectId, dictionary }: { projectId:
              </div>
              <div className="flex items-baseline gap-2">
                 <span className="text-5xl font-[1000] tracking-tighter text-[var(--text-primary)] italic">
-                  {formatCurrencyKRW(mockData.reduce((acc, curr) => acc + curr.total, 0) || 3920000000)}
+                  {mockData.length ? formatCurrencyKRW(mockData.reduce((acc, curr) => acc + curr.total, 0)) : "—"}
                 </span>
              </div>
          </div>
