@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { LandIntelligencePanel } from "@/components/projects/LandIntelligencePanel";
 import { SiteInitiator } from "@/components/projects/SiteInitiator";
 import { ProjectSiteAnalysisWorkspaceClient } from "@/components/projects/ProjectSiteAnalysisWorkspaceClient";
+import { TerrainAnalysisPanel } from "@/components/terrain/TerrainAnalysisPanel";
 import { isValidLocale, type Locale } from "@/i18n/config";
 import { useDictionary } from "@/hooks/use-dictionary";
 import { apiClient } from "@/lib/api-client";
@@ -459,6 +460,9 @@ export default function SiteAnalysisPage() {
 
             {/* ── L3 Enhanced Cards: 실거래가, 건축물대장, 인프라 ── */}
             <L3EnhancedCards l3Data={l3Data} siteAnalysis={siteAnalysis} />
+
+            {/* ── Flagship C-1: 지형분석(경사도·토공량·지형단면) ── */}
+            <TerrainAnalysisPanel address={siteData.address} pnu={siteData.pnu} />
           </motion.div>
         )}
       </AnimatePresence>
