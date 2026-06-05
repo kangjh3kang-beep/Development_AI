@@ -38,8 +38,8 @@ logger = structlog.get_logger(__name__)
 CATALOG: list[dict[str, Any]] = [
     # 등기/부동산 연동
     {"name": "REGISTRY_PROVIDER", "label": "등기 공급자 선택", "group": "등기(부동산등기부)",
-     "secret": False, "kind": "select", "options": ["codef", "apick"],
-     "desc": "등기부등본 조회에 사용할 공급자. apick=건당과금·간편, codef=구조화JSON."},
+     "secret": False, "kind": "select", "options": ["codef", "apick", "tilko"],
+     "desc": "등기부등본 조회에 사용할 공급자. apick=건당과금·간편, codef=구조화JSON, tilko=IROS ID로그인·PDF/XML."},
     {"name": "APICK_CL_AUTH_KEY", "label": "apick 인증키(CL_AUTH_KEY)", "group": "등기(부동산등기부)",
      "secret": True, "kind": "text", "guide_url": "https://apick.app",
      "desc": "apick 등기부 열람/다운로드 API 인증키. 마이페이지에서 발급."},
@@ -55,6 +55,14 @@ CATALOG: list[dict[str, Any]] = [
      "secret": False, "kind": "text"},
     {"name": "IROS_USER_PW", "label": "인터넷등기소 비밀번호", "group": "등기(부동산등기부)",
      "secret": True, "kind": "text"},
+    {"name": "IROS_EMONEY_NO1", "label": "인터넷등기소 전자지급 번호1(틸코)", "group": "등기(부동산등기부)",
+     "secret": True, "kind": "text", "desc": "틸코 등기 발급 수수료 결제용 선불전자지급수단 번호1."},
+    {"name": "IROS_EMONEY_NO2", "label": "인터넷등기소 전자지급 번호2(틸코)", "group": "등기(부동산등기부)",
+     "secret": True, "kind": "text", "desc": "선불전자지급수단 번호2(있을 경우)."},
+    {"name": "IROS_EMONEY_PWD", "label": "인터넷등기소 전자지급 비밀번호(틸코)", "group": "등기(부동산등기부)",
+     "secret": True, "kind": "text", "desc": "선불전자지급수단 비밀번호."},
+    {"name": "IROS_PIN", "label": "인터넷등기소 PIN(틸코, 선택)", "group": "등기(부동산등기부)",
+     "secret": True, "kind": "text", "desc": "필요 시 PIN(평문 전송 필드)."},
     # 공공데이터/지도
     {"name": "VWORLD_API_KEY", "label": "V-World 인증키", "group": "공공데이터·지도",
      "secret": True, "kind": "text", "guide_url": "https://www.vworld.kr",

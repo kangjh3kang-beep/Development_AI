@@ -46,6 +46,44 @@ async def registry_status() -> dict[str, Any]:
     return RegistryService().status()
 
 
+@router.get("/tilko/status", summary="틸코(Tilko) 등기 연동 상태 점검")
+async def tilko_status() -> dict[str, Any]:
+    """TILKO_API_KEY·IROS 자격 설정 여부 + 공개키 도달성 점검(키 입력 후 검증용)."""
+    from app.services.registry import tilko_client as tk
+
+    out = {"key_set": tk.tilko_ready(), "iros_set": tk.iros_ready(), "public_key_ok": False}
+    if tk.tilko_ready():
+        pub = await tk.get_public_key()
+        out["public_key_ok"] = bool(pub)
+        out["message"] = (
+            "틸코 API키 정상(공개키 수신). IROS 자격까지 설정되면 등기 조회 가능."
+            if pub else "공개키 조회 실패 — TILKO_API_KEY 확인 필요."
+        )
+    else:
+        out["message"] = "TILKO_API_KEY 미설정(관리자 키화면 입력 필요)."
+    return out
+
+
+@router.post("/tilko/realty", summary="틸코 등기부등본 조회/발급(IROS ID로그인)")
+async def tilko_realty(
+    req: dict[str, Any],
+    current_user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    """틸코로 등기부등본 조회/발급. req.property_params에 부동산 식별 필드(소재지/고유번호 등) 주입.
+
+    ⚠ 발급 수수료가 IROS 전자지급수단에서 차감됨(실호출). 명세 확정된 property_params 필요.
+    """
+    from app.services.registry import tilko_client as tk
+
+    return await tk.fetch_realty_registry(
+        property_params=req.get("property_params") or {},
+        cmort_flag=str(req.get("cmort_flag", "0")),
+        trade_seq_flag=str(req.get("trade_seq_flag", "0")),
+        abs_cls=str(req.get("abs_cls", "0")),
+        rgs_mttr_smry=str(req.get("rgs_mttr_smry", "0")),
+    )
+
+
 @router.post("/bulk", summary="다필지 등기부 일괄 조회/다운로드")
 async def registry_bulk(
     req: RegistryBulkRequest,
