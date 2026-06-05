@@ -25,6 +25,8 @@ lightgbm==4.5.0
 numpy==1.26.4
 pandas==2.2.3
 scipy==1.14.1
+# 이미지융합 AVM(Flagship B) — 항공 정사영상 특징추출(HSV 식생/에지 강도). headless=GUI 의존 없음.
+opencv-python-headless==4.10.0.84
 
 # LLM / Agents
 langchain==0.3.7
