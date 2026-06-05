@@ -84,9 +84,12 @@ async def discover_statbl_ids(keyword: str = "지가변동", max_pages: int = 15
 
 
 async def fetch_statbl_rows(
-    statbl_id: str, dtacycle: str = "MM", size: int = 240
+    statbl_id: str, dtacycle: str = "MM", size: int = 240, wrttime: str | None = None
 ) -> list[dict[str, Any]] | None:
-    """임의 통계표(STATBL_ID) 데이터 행을 원형 반환 — 범용 R-ONE 조회. 실패 시 None."""
+    """임의 통계표(STATBL_ID) 데이터 행을 원형 반환 — 범용 R-ONE 조회. 실패 시 None.
+
+    wrttime 지정 시 해당 작성시점(YYYYMM/YYYY)만 조회(대용량 표에서 최근 시점만 효율 추출).
+    """
     key = reb_key()
     if not key or not statbl_id:
         return None
@@ -97,6 +100,8 @@ async def fetch_statbl_rows(
             "KEY": key, "STATBL_ID": statbl_id, "DTACYCLE_CD": dtacycle,
             "Type": "json", "pIndex": "1", "pSize": str(max(50, size)),
         }
+        if wrttime:
+            params["WRTTIME_IDTFR_ID"] = wrttime
         async with httpx.AsyncClient(timeout=20.0) as client:
             r = await client.get(_HOST, params=params)
             r.raise_for_status()
@@ -107,12 +112,54 @@ async def fetch_statbl_rows(
         return None
 
 
+# 월 지가변동률 최근행 캐시(대용량 표 반복조회 방지). 키=(statbl, 기준월), TTL 6h.
+_LANDPRICE_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
+
+
+async def fetch_recent_monthly_rows(statbl: str, months: int = 24) -> list[dict[str, Any]] | None:
+    """대용량 월 통계표의 '최근 N개월' 행을 WRTTIME별 병렬 조회로 수집(각 호출=해당월 전 지역).
+
+    A_2024_00903 등은 2005년~·지역블록·오래된순이라 pSize로는 최신이 안 잡힘 →
+    최근 월(YYYYMM)을 직접 지정해 실시간 최신 데이터 확보. 6h 캐시."""
+    if not statbl:
+        return None
+    import asyncio
+    from datetime import datetime
+
+    now = datetime.now()
+    ym: list[str] = []
+    y, m = now.year, now.month
+    for _ in range(max(1, months) + 3):   # 공표 지연 고려 여유 +3개월
+        m -= 1
+        if m == 0:
+            y -= 1; m = 12
+        ym.append(f"{y}{m:02d}")
+    cache_key = f"{statbl}|{ym[0]}|{months}"
+    hit = _LANDPRICE_CACHE.get(cache_key)
+    if hit and (now.timestamp() - hit[0]) < 6 * 3600:
+        return hit[1]
+
+    async def _one(t: str) -> list[dict[str, Any]]:
+        rows = await fetch_statbl_rows(statbl, "MM", size=400, wrttime=t)
+        return rows or []
+
+    results = await asyncio.gather(*[_one(t) for t in ym], return_exceptions=True)
+    rows: list[dict[str, Any]] = []
+    for res in results:
+        if isinstance(res, list):
+            rows.extend(res)
+    if not rows:
+        return None
+    _LANDPRICE_CACHE[cache_key] = (now.timestamp(), rows)
+    return rows
+
+
 async def fetch_land_price_changes(months: int = 24) -> list[dict[str, Any]] | None:
-    """지가변동률 월별 행을 원형으로 반환(지역·시점·값). 미설정/실패 시 None."""
+    """지가변동률 '최근 N개월' 행(env STATBL_ID 기준). 미설정/실패 시 None."""
     statbl = reb_statbl_id()
     if not statbl:
         return None
-    return await fetch_statbl_rows(statbl, "MM", size=max(50, months * 20))
+    return await fetch_recent_monthly_rows(statbl, months)
 
 
 def latest_value_from_rows(
@@ -142,26 +189,49 @@ def latest_value_from_rows(
     return (round(best[1], 4), best[0]) if best else None
 
 
-def cumulative_factor_from_rows(rows: list[dict[str, Any]], region_sido: str) -> float | None:
-    """월별 지가변동률(%) 행 → 지역 누적 변동계수(∏(1+r/100)). 값 필드는 방어적 탐색."""
+def cumulative_factor_from_rows(
+    rows: list[dict[str, Any]], region_sido: str, months: int = 24
+) -> float | None:
+    """월별 지가변동률(%) 행 → 지역 최근 N개월 누적 변동계수(∏(1+r/100)).
+
+    A_2024_00903 구조: ITM_NM∈{변동률, 누계}, CLS_NM=지역(전국·시군구), WRTTIME=YYYYMM.
+    ① ITM_NM='변동률'만(누계 제외, 이중계산 방지) ② 지역=sido 매칭 행, 없으면 '전국' 폴백
+    ③ WRTTIME 내림차순 최근 N개월만 누적. 데이터 정렬(오래된순)·혼합 대응.
+    """
     if not rows:
         return None
-    # 지역 매칭 키 후보(R-ONE 표마다 상이) + 값 필드 후보
-    region_keys = ("CLS_NM", "CLS_FULLNM", "REGION_NM", "REGION", "ITM_NM")
+    region_keys = ("CLS_NM", "CLS_FULLNM", "REGION_NM", "REGION")
     val_keys = ("DTA_VAL", "VALUE", "DATA_VALUE", "dtaVal")
+    time_keys = ("WRTTIME_IDTFR_ID", "WRTTIME", "PRD_DE")
+
+    def _collect(region_filter: str | None) -> list[tuple[str, float]]:
+        out: list[tuple[str, float]] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            itm = str(row.get("ITM_NM") or "")
+            if itm and "변동" not in itm:   # '누계' 등 제외, 변동률만
+                continue
+            region_txt = " ".join(str(row.get(k, "")) for k in region_keys)
+            if region_filter and region_filter not in region_txt:
+                continue
+            raw = next((row.get(k) for k in val_keys if row.get(k) not in (None, "")), None)
+            try:
+                rate = float(raw)
+            except (TypeError, ValueError):
+                continue
+            tval = str(next((row.get(k) for k in time_keys if row.get(k) not in (None, "")), ""))
+            out.append((tval, rate))
+        return out
+
+    series = _collect(region_sido) if region_sido else []
+    if not series:
+        series = _collect("전국") or _collect(None)
+    if not series:
+        return None
+    series.sort(key=lambda x: x[0])          # 시점 오름차순
+    recent = series[-months:] if months > 0 else series
     factor = 1.0
-    used = 0
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        region_txt = " ".join(str(row.get(k, "")) for k in region_keys)
-        if region_sido and region_sido not in region_txt and region_txt.strip():
-            continue
-        raw = next((row.get(k) for k in val_keys if row.get(k) not in (None, "")), None)
-        try:
-            rate = float(raw)
-        except (TypeError, ValueError):
-            continue
+    for _t, rate in recent:
         factor *= (1 + rate / 100.0)
-        used += 1
-    return round(factor, 4) if used else None
+    return round(factor, 4)

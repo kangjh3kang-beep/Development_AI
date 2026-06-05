@@ -46,9 +46,10 @@ async def time_adjust_factor_async(address: str = "", base_year: int = 2025) -> 
             rows = await fetch_land_price_changes(months=24)
             if rows:
                 f = cumulative_factor_from_rows(rows, _sido_of(address))
-                if f and f > 0:
+                # sane-range(24개월 누적 ±30% 이내)만 채택, 벗어나면 근사 폴백
+                if f and 0.7 < f < 1.3:
                     return {"factor": f, "annual_rate": None, "elapsed_years": None,
-                            "rationale": f"R-ONE 지가변동률 실데이터 누적 시점수정 {f}", "source": "R-ONE"}
+                            "rationale": f"R-ONE 지가변동률 실데이터 최근 24개월 누적 시점수정 {f}", "source": "R-ONE"}
     except Exception:  # noqa: BLE001
         pass
     out = time_adjust_factor(address, base_year)

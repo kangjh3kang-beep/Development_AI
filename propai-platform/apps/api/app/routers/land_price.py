@@ -63,7 +63,11 @@ async def rone_test(statbl_id: str, cycle: str = "MM", region: str = "서울", l
 
     if not reb.reb_key():
         return {"ok": False, "message": "RONE_API_KEY 미설정"}
-    rows = await reb.fetch_statbl_rows(statbl_id, cycle, size=300)
+    # 월 변동률 대용량 표는 최근월 직접조회(실시간 최신), 그 외는 일반 조회
+    if cycle == "MM":
+        rows = await reb.fetch_recent_monthly_rows(statbl_id, months=24)
+    else:
+        rows = await reb.fetch_statbl_rows(statbl_id, cycle, size=300)
     if not rows:
         return {"ok": False, "statbl_id": statbl_id, "cycle": cycle, "message": "행 없음(통계표ID/주기 확인)"}
     # 변동률 누적계수 + 최신값(레벨형)
