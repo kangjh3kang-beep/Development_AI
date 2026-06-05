@@ -15,6 +15,7 @@ import { useProjectStore } from "@/store/useProjectStore";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { ImageUpload } from "@/components/ui/ImageUpload";
 import { latestLedger } from "@/lib/analysis-ledger";
+import { PipelineResultDetail } from "@/components/pipeline/PipelineResultDetail";
 
 type ProjectMeta = {
   id: string;
@@ -45,6 +46,9 @@ export default function ProjectDetailPage() {
   // 복원된 분석(스냅샷) 구독 — 히어로 PNU/용도지역/ROI를 실데이터로 표시
   const ctxSite = useProjectContextStore((s) => s.siteAnalysis);
   const ctxFeas = useProjectContextStore((s) => s.feasibilityData);
+
+  // 원장의 통합 분석 보고서(payload) — 있으면 대시보드 분석이력과 동일한 보고서형 상세 렌더
+  const [ledgerReport, setLedgerReport] = useState<{ summary?: Record<string, any>; stages?: any[]; pipeline_id?: string } | null>(null);
 
   // 프로젝트 진입 시 컨텍스트를 이 프로젝트로 전환 → 분석 스냅샷(부지·상세분석 등) 복원.
   // (이것이 없으면 직전 프로젝트/빈 컨텍스트가 표시되고, 새 분석도 잘못된 키로 저장됨)
@@ -131,6 +135,21 @@ export default function ProjectDetailPage() {
       } catch { /* 무시 */ }
     })();
 
+    return () => { cancelled = true; };
+  }, [meta?.address, projectFromStore?.address, id]);
+
+  // 원장 통합보고서 로드(컨텍스트 복원과 별개로 항상) — 프로젝트 상세에 보고서형 상세 표시
+  useEffect(() => {
+    const addr = meta?.address || projectFromStore?.address;
+    if (!addr) return;
+    let cancelled = false;
+    (async () => {
+      const pick = (d: any) => (d && d.payload ? d.payload : null);
+      let res = await latestLedger("pipeline", { address: addr, projectId: id });
+      let payload = pick(res?.data);
+      if (!payload) { res = await latestLedger("pipeline", { address: addr }); payload = pick(res?.data); }
+      if (!cancelled && payload?.stages?.length) setLedgerReport(payload);
+    })();
     return () => { cancelled = true; };
   }, [meta?.address, projectFromStore?.address, id]);
 
@@ -300,6 +319,13 @@ export default function ProjectDetailPage() {
 
       {/* ── 보고서식 분석 요약(복원된 단일 데이터원) ── */}
       <ProjectAnalysisSummary />
+
+      {/* ── 통합 분석 보고서(원장 기반) — 대시보드 분석이력과 동일한 보고서형 상세 ── */}
+      {ledgerReport && (
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.4 }}>
+          <PipelineResultDetail result={ledgerReport as never} />
+        </motion.div>
+      )}
 
       {/* ── Deep Integration Lifecycle Hub ── */}
       <motion.div
