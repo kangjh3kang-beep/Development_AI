@@ -25,6 +25,7 @@ type Method = { method: string; unit_price: number; rationale: string };
 type Result = {
   ok: boolean; message?: string;
   appraised_price_per_sqm: number; appraised_total_won: number | null; area_sqm: number | null;
+  official_price_per_sqm?: number; pnu?: string | null;
   confidence: number; range_per_sqm: { low: number; high: number };
   cross_check?: { firms: number[]; mean: number; cv_pct: number; min: number; max: number; note: string };
   irregularity?: number | null; methods: Method[]; weight_note: string;
@@ -104,9 +105,16 @@ export function DeskAppraisalModal({
     setBusy("pdf"); setErr(null);
     try {
       const token = (typeof window !== "undefined" && localStorage.getItem("propai_access_token")) || "";
+      // 화면에 확보된 공시지가·PNU·면적을 넘겨 PDF 재지오코딩 의존 제거(신뢰성)
+      const pdfBody = {
+        ...body(),
+        pnu: res?.pnu ?? undefined,
+        official_price_per_sqm: official ? Number(official) : (res?.official_price_per_sqm ?? undefined),
+        area_sqm: areaSqm ?? res?.area_sqm ?? undefined,
+      };
       const r = await fetch(`${apiBase()}/land-price/desk-appraisal/pdf`, {
         method: "POST", headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-        body: JSON.stringify(body()),
+        body: JSON.stringify(pdfBody),
       });
       if (!r.ok || !(r.headers.get("content-type") || "").includes("pdf")) { setErr("리포트 생성 실패"); return; }
       const blob = await r.blob(); const url = URL.createObjectURL(blob);

@@ -138,16 +138,23 @@ export function DeskAppraisalReportClient({ locale }: { locale: Locale }) {
     setBusy("pdf"); setErr(null);
     try {
       const token = (typeof window !== "undefined" && localStorage.getItem("propai_access_token")) || "";
+      // 이미 화면에 확보된 공시지가·면적·PNU를 넘겨 PDF가 재지오코딩에 의존하지 않게(신뢰성)
+      const pdfBody = {
+        ...body(),
+        pnu: res?.pnu ?? undefined,
+        official_price_per_sqm: official ?? res?.official_price_per_sqm ?? undefined,
+        area_sqm: res?.area_sqm ?? undefined,
+      };
       const r = await fetch(`${apiBase()}/land-price/desk-appraisal/pdf`, {
         method: "POST", headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-        body: JSON.stringify(body()),
+        body: JSON.stringify(pdfBody),
       });
       if (!r.ok || !(r.headers.get("content-type") || "").includes("pdf")) { setErr("리포트 PDF 생성 실패"); return; }
       const blob = await r.blob(); const url = URL.createObjectURL(blob);
       const a = document.createElement("a"); a.href = url; a.download = `예상시세추정보고서_${ranAddr || addr}.pdf`;
       document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
     } catch { setErr("리포트 다운로드 실패"); } finally { setBusy(""); }
-  }, [body, addr, ranAddr]);
+  }, [body, addr, ranAddr, res, official]);
 
   // 프로젝트 부지 주소가 있으면 진입 시 자동 채움(실행은 사용자 클릭)
   useEffect(() => {

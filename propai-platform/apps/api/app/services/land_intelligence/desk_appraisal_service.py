@@ -146,13 +146,24 @@ async def desk_appraisal(
 
     if op is None or not area or pnu:
         try:
+            import asyncio as _asyncio
             from app.services.external_api.vworld_service import VWorldService
             vw = VWorldService()
             if not pnu and address:
-                geo = await vw.geocode_address(address)
-                pnu = (geo or {}).get("pnu") or pnu
+                # VWorld 지오코딩 간헐 실패 대비 최대 3회 재시도(공시지가 미조회 빈도↓)
+                for _attempt in range(3):
+                    geo = await vw.geocode_address(address)
+                    pnu = (geo or {}).get("pnu") or pnu
+                    if pnu:
+                        break
+                    await _asyncio.sleep(0.4)
+            lc = None
             if pnu:
-                lc = await vw.get_land_characteristics(pnu)
+                for _attempt in range(3):
+                    lc = await vw.get_land_characteristics(pnu)
+                    if lc and lc.get("official_price_per_sqm"):
+                        break
+                    await _asyncio.sleep(0.4)
                 if lc:
                     op = op if op is not None else lc.get("official_price_per_sqm")
                     area = area or lc.get("area_sqm")
