@@ -1,20 +1,50 @@
 import { resolveMockRequest } from "@/mocks/handlers";
 
-const apiBaseUrl = (() => {
-  // 1) 빌드 타임 환경변수 (Vercel/로컬 등)
-  if (process.env.NEXT_PUBLIC_API_BASE_URL) {
-    return process.env.NEXT_PUBLIC_API_BASE_URL;
-  }
-  // 2) 브라우저 런타임: 도메인 기반 자동 감지
-  if (typeof window !== "undefined") {
-    const host = window.location.hostname;
-    // 프로덕션 도메인들
-    if (host === "4t8t.net" || host === "www.4t8t.net" || host.endsWith(".pages.dev") || host === "propai.kr") {
-      return "https://api.4t8t.net/api/v1";
-    }
-  }
-  return "/api/proxy";
+/* ── API base 해석 (단일 source of truth) ──
+   v1·v2가 호스트 화이트리스트를 각각 중복 유지하던 결함을 단일 헬퍼로 통합한다.
+   폴백 규칙:
+     1) NEXT_PUBLIC_API_BASE_URL(빌드 환경변수)이 있으면 최우선.
+     2) 로컬 개발(localhost/127.0.0.1)만 localhost:8000 직타격.
+     3) 그 외 알 수 없는 브라우저 호스트는 프로덕션 API 베이스로 폴백
+        (이전: localhost:8000 직타격 → 화이트리스트 밖 호스트에서 전 API 실패). */
+
+// 프로덕션 백엔드 오리진 (api 버전 prefix 제외)
+const PROD_API_ORIGIN = "https://api.4t8t.net";
+
+// 환경변수 오버라이드: 명시되면 모든 도메인 감지보다 우선한다.
+// 끝의 슬래시와 "/api/v1"·"/api/v2" 꼬리를 떼어 순수 오리진으로 정규화.
+const ENV_API_ORIGIN = (() => {
+  const raw = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
+  if (!raw) return null;
+  return raw.replace(/\/+$/, "").replace(/\/api\/v[12]$/, "");
 })();
+
+/** 로컬 개발 호스트(브라우저)인지 판정. */
+function isLocalHost(host: string): boolean {
+  return host === "localhost" || host === "127.0.0.1" || host === "[::1]";
+}
+
+/**
+ * 요청에 사용할 API 오리진(버전 prefix 제외)을 단일 규칙으로 해석.
+ * @returns 예) "https://api.4t8t.net" | "http://localhost:8000" | "http://api:8000"
+ */
+function resolveApiOrigin(): string {
+  // 1) 환경변수 최우선
+  if (ENV_API_ORIGIN) return ENV_API_ORIGIN;
+
+  // 2) SSR(Node.js): Docker 내부 DNS
+  if (typeof window === "undefined") return "http://api:8000";
+
+  // 3) 브라우저: 로컬 개발만 localhost 직타격
+  if (isLocalHost(window.location.hostname)) return "http://localhost:8000";
+
+  // 4) 그 외 모든 호스트(프로덕션·프리뷰·커스텀·스테이징)는 프로덕션 API로 폴백.
+  //    (이전엔 localhost:8000을 직타격해 화이트리스트 밖 호스트에서 전 API 실패)
+  return PROD_API_ORIGIN;
+}
+
+// 런타임 진단/표시용 베이스(v1) — getRuntimeConfig에서 노출.
+const apiBaseUrl = `${resolveApiOrigin()}/api/v1`;
 
 const useMocksByDefault = process.env.NEXT_PUBLIC_USE_MOCKS === "true";
 // 보안: NEXT_PUBLIC_* 환경변수는 빌드 시 클라이언트 번들에 포함되므로
@@ -55,20 +85,7 @@ function getRequestUrl(path: string) {
   }
 
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
-
-  // 환경변수에 API URL이 설정된 경우 (프로덕션: Railway 등)
-  if (apiBaseUrl && apiBaseUrl !== "/api/proxy") {
-    return `${apiBaseUrl}${normalizedPath}`;
-  }
-
-  // If executing in Node.js (Server Component), use Docker internal DNS.
-  if (typeof window === "undefined") {
-    return `http://api:8000/api/v1${normalizedPath}`;
-  }
-
-  // In Browser, Next.js Proxy throws internal 500 network errors due to IPv6 DNS bugs in Node 18+.
-  // We completely bypass Next.js rewrites and hit the exposed host port directly!
-  return `http://localhost:8000/api/v1${normalizedPath}`;
+  return `${resolveApiOrigin()}/api/v1${normalizedPath}`;
 }
 
 function getAccessToken(): string {
@@ -270,21 +287,8 @@ async function request<T>(path: string, options: ApiRequestOptions = {}) {
 function getV2RequestUrl(path: string) {
   if (isAbsoluteUrl(path)) return path;
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
-
-  // 프로덕션: Railway 백엔드
-  if (typeof window !== "undefined") {
-    const host = window.location.hostname;
-    if (host === "4t8t.net" || host === "www.4t8t.net" || host.endsWith(".pages.dev") || host === "propai.kr") {
-      return `https://api.4t8t.net/api/v2${normalizedPath}`;
-    }
-  }
-
-  // SSR (Docker)
-  if (typeof window === "undefined") {
-    return `http://api:8000/api/v2${normalizedPath}`;
-  }
-  // 로컬 개발
-  return `http://localhost:8000/api/v2${normalizedPath}`;
+  // v1과 동일한 단일 오리진 해석을 공유한다(화이트리스트 이중 유지 제거).
+  return `${resolveApiOrigin()}/api/v2${normalizedPath}`;
 }
 
 export const apiClient = {
