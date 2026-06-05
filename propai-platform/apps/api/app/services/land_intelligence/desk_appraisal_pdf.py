@@ -55,7 +55,7 @@ def build_desk_appraisal_pdf(result: dict[str, Any], *, address: str = "") -> by
         ["신뢰도", f"{int((result.get('confidence') or 0) * 100)}%"],
         ["신뢰구간(/㎡)", f"{won(rng.get('low'))} ~ {won(rng.get('high'))}"],
     ]
-    el.append(Paragraph("1. 추정 요약", h))
+    el.append(Paragraph("1. 추정 요약 (결론)", h))
     t1 = Table(summary_rows, colWidths=[40 * mm, 130 * mm])
     t1.setStyle(TableStyle([
         ("FONTNAME", (0, 0), (-1, -1), font), ("FONTSIZE", (0, 0), (-1, -1), 9.5),
@@ -66,6 +66,26 @@ def build_desk_appraisal_pdf(result: dict[str, Any], *, address: str = "") -> by
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("TOPPADDING", (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
     ]))
     el.append(t1)
+
+    # 1-2. 대상물건 표시(지목·용도지역·이용상황 등)
+    subj = result.get("subject") or {}
+    if subj or result.get("official_price_per_sqm"):
+        el.append(Paragraph("1-2. 대상물건 표시", h))
+        subj_rows = [
+            ["지목", subj.get("land_category") or "-", "용도지역", subj.get("zone_type") or "-"],
+            ["이용상황", subj.get("land_use_situation") or "-", "지세/형상",
+             f"{subj.get('terrain_height') or '-'} / {subj.get('terrain_form') or '-'}"],
+            ["개별공시지가", won(result.get("official_price_per_sqm")) + "/㎡",
+             "공시기준", f"{subj.get('official_price_year') or result.get('base_year') or '-'}"],
+        ]
+        ts = Table(subj_rows, colWidths=[28 * mm, 57 * mm, 28 * mm, 57 * mm])
+        ts.setStyle(TableStyle([
+            ("FONTNAME", (0, 0), (-1, -1), font), ("FONTSIZE", (0, 0), (-1, -1), 9),
+            ("GRID", (0, 0), (-1, -1), 0.4, colors.lightgrey),
+            ("BACKGROUND", (0, 0), (0, -1), colors.whitesmoke), ("BACKGROUND", (2, 0), (2, -1), colors.whitesmoke),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ]))
+        el.append(ts)
 
     # 2. 방법별 산출
     el.append(Paragraph("2. 산정방법별 추정", h))
@@ -99,7 +119,46 @@ def build_desk_appraisal_pdf(result: dict[str, Any], *, address: str = "") -> by
         el.append(t3)
         el.append(Paragraph(cc.get("note", ""), small))
 
-    # 4. 면책
+    # 4. 원가법 복합 / 수익환원법(입력 시)
+    building = result.get("building") or {}
+    income = result.get("income") or {}
+    if building or income:
+        el.append(Paragraph("4. 복합·수익 가치(참고)", h))
+        cm_rows: list[list[Any]] = [["구분", "가치", "근거"]]
+        if building:
+            cm_rows.append(["원가법 복합(토지+건물)", won(result.get("complex_total_won")),
+                            Paragraph(str(building.get("rationale", "")), small)])
+        if income:
+            cm_rows.append(["수익환원법", won(result.get("income_total_won")),
+                            Paragraph(str(income.get("rationale", "")), small)])
+        t4 = Table(cm_rows, colWidths=[40 * mm, 35 * mm, 95 * mm])
+        t4.setStyle(TableStyle([
+            ("FONTNAME", (0, 0), (-1, -1), font), ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+            ("GRID", (0, 0), (-1, -1), 0.4, colors.lightgrey),
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1f2937")), ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ]))
+        el.append(t4)
+        if result.get("complex_note"):
+            el.append(Paragraph(str(result["complex_note"]), small))
+
+    # 5. 시점수정·시장통계 근거
+    ms = result.get("market_stats") or {}
+    el.append(Paragraph("5. 시점수정·시장통계 근거", h))
+    basis_lines = []
+    if result.get("time_adjust_basis"):
+        basis_lines.append(f"· 시점수정: {result['time_adjust_basis']}")
+    cap = (ms.get("cap_rate") or {})
+    if cap.get("source") == "R-ONE":
+        basis_lines.append(f"· 자본환원율(R-ONE 실측): {cap.get('pct')}% ({cap.get('basis','')})")
+    jc = (ms.get("jeonse_conversion_rate") or {})
+    if jc.get("source") == "R-ONE":
+        basis_lines.append(f"· 전월세전환율(R-ONE 실측): {jc.get('pct')}%")
+    if not ms.get("rone_available"):
+        basis_lines.append("· 시장통계: R-ONE 통계표 미설정 구간은 근사값 적용(설정 시 실데이터 전환).")
+    el.append(Paragraph("<br/>".join(basis_lines) if basis_lines else "근거 데이터 없음", small))
+
+    # 6. 면책
     el.append(Spacer(1, 10))
     el.append(Paragraph("※ 면책 (본 문서는 감정평가서가 아님)", h))
     el.append(Paragraph(result.get("disclaimer", ""), small))

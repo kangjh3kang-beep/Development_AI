@@ -120,6 +120,7 @@ export default async function DashboardLayout({
   const landNavigation = [
     { href: `/${locale}/land-schedule`, label: "토지조서 (편입토지)", icon: <IconProject /> },
     { href: `/${locale}/registry-analysis`, label: "└ 부동산등기 열람/분석", icon: <IconPermit /> },
+    { href: `/${locale}/desk-appraisal`, label: "└ 예상 시세 추정 보고서", icon: <IconPermit /> },
   ];
 
   // I-3. 분양관리 ERP (v62 — 현장별 분양 운영 + 모델하우스 데스크)

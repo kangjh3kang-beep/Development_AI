@@ -142,6 +142,7 @@ async def desk_appraisal(
     area = area_sqm
     road_side = None
     src = "입력값"
+    subject: dict[str, Any] = {}   # 대상물건 표시(지목·용도지역·이용상황 등)
 
     if op is None or not area or pnu:
         try:
@@ -157,6 +158,15 @@ async def desk_appraisal(
                     area = area or lc.get("area_sqm")
                     road_side = lc.get("road_side") or None
                     src = "NED 토지특성(주소→PNU)"
+                    subject = {
+                        "land_category": lc.get("land_category") or None,      # 지목
+                        "zone_type": lc.get("zone_type") or None,              # 용도지역
+                        "zone_type_2": lc.get("zone_type_2") or None,
+                        "land_use_situation": lc.get("land_use_situation") or None,  # 이용상황
+                        "terrain_height": lc.get("terrain_height") or None,
+                        "terrain_form": lc.get("terrain_form") or None,
+                        "official_price_year": lc.get("year") or None,
+                    }
         except Exception:  # noqa: BLE001
             pass
 
@@ -312,6 +322,9 @@ async def desk_appraisal(
         "ok": True,
         "appraised_price_per_sqm": appraised_unit,
         "appraised_total_won": appraised_total,
+        "subject": subject,                              # 대상물건 표시(지목·용도지역·이용상황 등)
+        "official_price_per_sqm": int(op),               # 적용 개별공시지가(원/㎡)
+        "pnu": pnu,
         "building": building,
         "complex_total_won": complex_total,   # 토지+건물 복합 예상가치(원가법, 건물 입력 시)
         "income": income,                      # 수익환원법(임대료 입력 시)
