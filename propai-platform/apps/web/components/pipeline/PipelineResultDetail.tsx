@@ -357,43 +357,51 @@ export function PipelineResultDetail({ result, onRerun }: PipelineResultDetailPr
     [stageDataMap],
   );
 
-  // 활성 탭에 저장된 AI 해석이 없으면 온디맨드로 단건 생성(타임아웃 안전).
+  // 단계 해석 단건 fetch(온디맨드/프리페치 공용). showLoading=활성탭만 로딩표시.
+  const fetchNarr = useCallback(
+    (stg: string, showLoading: boolean) => {
+      if (getNarratives(stg).length > 0 || lazyNarr[stg] || narrLoading === stg) return;
+      const data = stageDataMap[stg];
+      if (!data || typeof data !== "object" || !Object.keys(data).length) return;
+      const site = (stageDataMap.site_analysis || {}) as Record<string, any>;
+      const dsn = (stageDataMap.design || {}) as Record<string, any>;
+      const context: Record<string, unknown> = {
+        address: site.address ?? site.juso,
+        zone_type: site.zone_type ?? site.basic?.zone_type,
+        land_area_sqm: site.land_area_sqm ?? site.basic?.land_area_sqm,
+        total_gfa_sqm: dsn.total_gfa_sqm, building_type: dsn.building_type, floor_count: dsn.floor_count,
+      };
+      if (showLoading) setNarrLoading(stg);
+      apiClient
+        .postV2<{ ok?: boolean; sections?: Record<string, string> }>("/pipeline/interpret", {
+          body: { stage: stg, data, context }, useMock: false,
+        })
+        .then((r) => {
+          const secs = (r?.sections || {}) as Record<string, string>;
+          const arr = Object.entries(secs)
+            .filter(([, v]) => typeof v === "string" && v.trim().length > 12)
+            .map(([k, v]) => ({ label: NARR_LABELS[k] || k, text: String(v).trim() }));
+          setLazyNarr((p) => ({ ...p, [stg]: arr }));
+        })
+        .catch(() => setLazyNarr((p) => ({ ...p, [stg]: [] })))
+        .finally(() => setNarrLoading((c) => (c === stg ? null : c)));
+    },
+    [getNarratives, stageDataMap, lazyNarr, narrLoading],
+  );
+
+  // 활성 탭 온디맨드 로드(로딩 표시)
   useEffect(() => {
     const sec = SECTIONS.find((s) => s.id === activeTab);
-    if (!sec) return;
-    const stg = sec.sourceStage;
-    if (getNarratives(stg).length > 0 || lazyNarr[stg] || narrLoading === stg) return;
-    const data = stageDataMap[stg];
-    if (!data || typeof data !== "object" || !Object.keys(data).length) return;
-    // 공통 맥락(주소·용도지역·면적·연면적·건축유형) — 해석 품질 향상
-    const site = (stageDataMap.site_analysis || {}) as Record<string, unknown>;
-    const dsn = (stageDataMap.design || {}) as Record<string, unknown>;
-    const context: Record<string, unknown> = {
-      address: site.address ?? site.juso,
-      zone_type: site.zone_type ?? (site.basic as any)?.zone_type,
-      land_area_sqm: site.land_area_sqm ?? (site.basic as any)?.land_area_sqm,
-      total_gfa_sqm: dsn.total_gfa_sqm,
-      building_type: dsn.building_type,
-      floor_count: dsn.floor_count,
-    };
-    let alive = true;
-    setNarrLoading(stg);
-    apiClient
-      .postV2<{ ok?: boolean; sections?: Record<string, string> }>("/pipeline/interpret", {
-        body: { stage: stg, data, context }, useMock: false,
-      })
-      .then((r) => {
-        if (!alive) return;
-        const secs = (r?.sections || {}) as Record<string, string>;
-        const arr = Object.entries(secs)
-          .filter(([, v]) => typeof v === "string" && v.trim().length > 12)
-          .map(([k, v]) => ({ label: NARR_LABELS[k] || k, text: String(v).trim() }));
-        setLazyNarr((p) => ({ ...p, [stg]: arr }));
-      })
-      .catch(() => { if (alive) setLazyNarr((p) => ({ ...p, [stg]: [] })); })
-      .finally(() => { if (alive) setNarrLoading((c) => (c === stg ? null : c)); });
-    return () => { alive = false; };
-  }, [activeTab, getNarratives, stageDataMap, lazyNarr, narrLoading]);
+    if (sec) fetchNarr(sec.sourceStage, true);
+  }, [activeTab, fetchNarr]);
+
+  // ② 선(先)생성 프리페치 — 진입 시 주요 단계 해석을 백그라운드로 미리 생성(캐시 워밍, 순차).
+  useEffect(() => {
+    const priority = ["site_analysis", "feasibility", "design", "esg"];
+    const timers = priority.map((stg, i) => setTimeout(() => fetchNarr(stg, false), 800 + i * 1500));
+    return () => timers.forEach(clearTimeout);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const setFieldOverride = useCallback((sourceStage: string, fieldKey: string, value: unknown) => {
     setOverrides((prev) => ({
