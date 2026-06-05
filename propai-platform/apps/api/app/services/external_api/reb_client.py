@@ -189,17 +189,10 @@ def latest_value_from_rows(
     return (round(best[1], 4), best[0]) if best else None
 
 
-def cumulative_factor_from_rows(
-    rows: list[dict[str, Any]], region_sido: str, months: int = 24
-) -> float | None:
-    """월별 지가변동률(%) 행 → 지역 최근 N개월 누적 변동계수(∏(1+r/100)).
-
-    A_2024_00903 구조: ITM_NM∈{변동률, 누계}, CLS_NM=지역(전국·시군구), WRTTIME=YYYYMM.
-    ① ITM_NM='변동률'만(누계 제외, 이중계산 방지) ② 지역=sido 매칭 행, 없으면 '전국' 폴백
-    ③ WRTTIME 내림차순 최근 N개월만 누적. 데이터 정렬(오래된순)·혼합 대응.
-    """
+def rate_series_from_rows(rows: list[dict[str, Any]], region_sido: str) -> list[tuple[str, float]]:
+    """변동률(%) 시계열 [(YYYYMM, rate)] 추출 — ITM='변동률'만, 지역(sido→전국 폴백), 시점 오름차순."""
     if not rows:
-        return None
+        return []
     region_keys = ("CLS_NM", "CLS_FULLNM", "REGION_NM", "REGION")
     val_keys = ("DTA_VAL", "VALUE", "DATA_VALUE", "dtaVal")
     time_keys = ("WRTTIME_IDTFR_ID", "WRTTIME", "PRD_DE")
@@ -227,11 +220,34 @@ def cumulative_factor_from_rows(
     series = _collect(region_sido) if region_sido else []
     if not series:
         series = _collect("전국") or _collect(None)
+    series.sort(key=lambda x: x[0])
+    return series
+
+
+def cumulative_factor_from_rows(
+    rows: list[dict[str, Any]], region_sido: str, months: int = 24
+) -> float | None:
+    """월별 지가변동률(%) → 지역 최근 N개월 누적 변동계수(∏(1+r/100))."""
+    series = rate_series_from_rows(rows, region_sido)
     if not series:
         return None
-    series.sort(key=lambda x: x[0])          # 시점 오름차순
     recent = series[-months:] if months > 0 else series
     factor = 1.0
     for _t, rate in recent:
         factor *= (1 + rate / 100.0)
     return round(factor, 4)
+
+
+def trend_from_rows(rows: list[dict[str, Any]], region_sido: str, months: int = 24) -> dict[str, Any]:
+    """월별·연도별 지가변동률 통계 — 최근 N개월 시계열 + 연도별 합계(연간 변동률 근사)."""
+    series = rate_series_from_rows(rows, region_sido)
+    if not series:
+        return {}
+    monthly = [{"period": t, "rate": round(r, 3)} for t, r in series[-months:]]
+    yearly_map: dict[str, float] = {}
+    for t, r in series:
+        yr = t[:4]
+        if len(yr) == 4 and yr.isdigit():
+            yearly_map[yr] = yearly_map.get(yr, 0.0) + r   # 월 변동률 합 ≈ 연간 변동률
+    yearly = [{"year": y, "rate": round(v, 2)} for y, v in sorted(yearly_map.items())][-10:]
+    return {"monthly": monthly, "yearly": yearly}

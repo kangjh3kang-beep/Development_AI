@@ -56,6 +56,16 @@ async def land_desk_appraisal(req: DeskAppraisalRequest):
     )
 
 
+@router.get("/price-trend")
+async def price_trend(address: str = ""):
+    """지가변동률 월별·연도별 통계분석(시계열) — 차트/추이 표시용. R-ONE 실데이터."""
+    from app.services.land_intelligence.reb_statistics_service import land_price_trend, _sido_of
+    t = await land_price_trend(address)
+    if not t:
+        return {"ok": False, "message": "R-ONE 지가변동률 통계표(RONE_LANDPRICE_STATBL_ID) 미설정 또는 데이터 없음"}
+    return {"ok": True, "region": _sido_of(address) or "전국", "source": "R-ONE", **t}
+
+
 @router.get("/rone-test")
 async def rone_test(statbl_id: str, cycle: str = "MM", region: str = "서울", limit: int = 8):
     """특정 STATBL_ID를 실조회해 파싱·시점수정 계산 검증(env 설정 전 사전검증용)."""

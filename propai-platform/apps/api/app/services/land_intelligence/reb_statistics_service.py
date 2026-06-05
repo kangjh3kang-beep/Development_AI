@@ -118,6 +118,16 @@ async def jeonse_conversion_rate(address: str = "") -> dict[str, Any] | None:
     return None
 
 
+async def land_price_trend(address: str = "") -> dict[str, Any] | None:
+    """월별·연도별 지가변동률 통계 시계열(최근 24개월 + 연도별). 미가용 시 None."""
+    from app.services.external_api.reb_client import fetch_land_price_changes, trend_from_rows
+    rows = await fetch_land_price_changes(months=36)
+    if not rows:
+        return None
+    t = trend_from_rows(rows, _sido_of(address), months=24)
+    return t or None
+
+
 async def get_market_stats(address: str = "") -> dict[str, Any]:
     """지역 부동산 시장 통계 묶음(시점수정·cap rate·전환율) — 모세혈관 주입용 단일 출처.
 
@@ -129,13 +139,15 @@ async def get_market_stats(address: str = "") -> dict[str, Any]:
     housing = await housing_time_adjust(address)
     cap = await commercial_cap_rate(address)
     jeonse = await jeonse_conversion_rate(address)
+    trend = await land_price_trend(address)          # 월별·연도별 지가변동률 추이
     return {
         "region": _sido_of(address) or "전국",
         "land_time_adjust": land_ta,                 # 토지 시점수정(지가변동률)
+        "land_price_trend": trend,                   # 월별/연도별 통계분석(시계열)
         "housing_time_adjust": housing,              # 건물/주택 시점수정(주택가격지수)
         "cap_rate": cap,                             # 상업용 투자수익률(자본환원율)
         "jeonse_conversion_rate": jeonse,            # 전월세전환율
         "rone_available": any([
-            (land_ta or {}).get("source") == "R-ONE", housing, cap, jeonse,
+            (land_ta or {}).get("source") == "R-ONE", housing, cap, jeonse, trend,
         ]),
     }

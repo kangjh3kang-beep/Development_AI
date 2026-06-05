@@ -44,7 +44,11 @@ type Result = {
   building?: { building_value_won: number; rationale: string } | null; complex_total_won?: number | null;
   income?: { income_value_won: number; rationale: string } | null; income_total_won?: number | null;
   complex_note?: string | null;
-  market_stats?: { rone_available?: boolean; cap_rate?: Stat; jeonse_conversion_rate?: Stat; housing_time_adjust?: Stat };
+  market_stats?: {
+    region?: string;
+    rone_available?: boolean; cap_rate?: Stat; jeonse_conversion_rate?: Stat; housing_time_adjust?: Stat;
+    land_price_trend?: { monthly?: { period: string; rate: number }[]; yearly?: { year: string; rate: number }[] } | null;
+  };
   disclaimer: string;
 };
 
@@ -339,6 +343,51 @@ export function DeskAppraisalReportClient({ locale }: { locale: Locale }) {
                 {ms.housing_time_adjust?.source === "R-ONE" && <li>· 주택가격지수 누적변동: {ms.housing_time_adjust.factor}</li>}
                 {!ms.rone_available && <li className="text-[var(--text-hint)]">· 시장통계: R-ONE 통계표 미설정 구간은 근사값 적용(관리자 설정 시 실데이터 전환).</li>}
               </ul>
+
+              {/* 월별·연도별 지가변동률 통계분석 */}
+              {(() => {
+                const tr = ms.land_price_trend;
+                const monthly = tr?.monthly || [];
+                const yearly = tr?.yearly || [];
+                if (!monthly.length && !yearly.length) return null;
+                const mMax = Math.max(0.01, ...monthly.map((m) => Math.abs(m.rate)));
+                const yMax = Math.max(0.01, ...yearly.map((y) => Math.abs(y.rate)));
+                const bar = (v: number, max: number) => Math.max(2, Math.round((Math.abs(v) / max) * 38));
+                const col = (v: number) => (v >= 0 ? "#10b981" : "#ef4444");
+                return (
+                  <div className="mt-3 rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-3">
+                    <p className="mb-2 text-[11px] font-bold text-[var(--text-tertiary)]">지가변동률 추이 ({ms.region || "전국"}) — R-ONE 실데이터</p>
+                    {!!monthly.length && (
+                      <div>
+                        <p className="text-[10px] text-[var(--text-hint)]">월별(최근 {monthly.length}개월, %)</p>
+                        <div className="mt-1 flex items-end gap-[2px]" style={{ height: 46 }}>
+                          {monthly.map((m) => (
+                            <div key={m.period} className="group relative flex-1" title={`${m.period}: ${m.rate}%`}>
+                              <div className="mx-auto w-full rounded-sm" style={{ height: bar(m.rate, mMax), background: col(m.rate) }} />
+                            </div>
+                          ))}
+                        </div>
+                        <div className="mt-0.5 flex justify-between text-[9px] text-[var(--text-hint)]">
+                          <span>{monthly[0]?.period}</span><span>{monthly[monthly.length - 1]?.period}</span>
+                        </div>
+                      </div>
+                    )}
+                    {!!yearly.length && (
+                      <div className="mt-3">
+                        <p className="text-[10px] text-[var(--text-hint)]">연도별(연간 변동률 합, %)</p>
+                        <div className="mt-1 grid grid-cols-5 gap-1 sm:grid-cols-10">
+                          {yearly.map((y) => (
+                            <div key={y.year} className="rounded bg-[var(--surface)] px-1 py-1 text-center">
+                              <p className="text-[9px] text-[var(--text-hint)]">{y.year}</p>
+                              <p className="text-[11px] font-bold" style={{ color: col(y.rate) }}>{y.rate > 0 ? "+" : ""}{y.rate}</p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
             </Section>
 
             {/* VII. 면책 */}
