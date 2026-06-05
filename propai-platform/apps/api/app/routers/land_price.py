@@ -56,6 +56,33 @@ async def land_desk_appraisal(req: DeskAppraisalRequest):
     )
 
 
+@router.get("/rone-test")
+async def rone_test(statbl_id: str, cycle: str = "MM", region: str = "서울", limit: int = 8):
+    """특정 STATBL_ID를 실조회해 파싱·시점수정 계산 검증(env 설정 전 사전검증용)."""
+    from app.services.external_api import reb_client as reb
+
+    if not reb.reb_key():
+        return {"ok": False, "message": "RONE_API_KEY 미설정"}
+    rows = await reb.fetch_statbl_rows(statbl_id, cycle, size=300)
+    if not rows:
+        return {"ok": False, "statbl_id": statbl_id, "cycle": cycle, "message": "행 없음(통계표ID/주기 확인)"}
+    # 변동률 누적계수 + 최신값(레벨형)
+    factor = reb.cumulative_factor_from_rows(rows, region)
+    latest = reb.latest_value_from_rows(rows, region)
+    # 구조 파악용 distinct CLS_NM/ITM_NM 샘플
+    cls_set = sorted({str(r.get("CLS_NM") or r.get("CLS_FULLNM") or "") for r in rows if isinstance(r, dict)})[:20]
+    itm_set = sorted({str(r.get("ITM_NM") or "") for r in rows if isinstance(r, dict)})[:20]
+    return {
+        "ok": True, "statbl_id": statbl_id, "cycle": cycle, "region": region,
+        "row_count": len(rows),
+        "cumulative_factor_(변동률용)": factor,
+        "latest_value_(레벨형)": latest,
+        "distinct_CLS_NM": cls_set,
+        "distinct_ITM_NM": itm_set,
+        "sample_rows": rows[:limit],
+    }
+
+
 @router.get("/rone-status")
 async def rone_status(keyword: str = "지가변동"):
     """R-ONE 부동산통계정보 API 연동 상태 점검 + 통계표(STATBL_ID) 자동 탐색.
