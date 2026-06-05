@@ -27,11 +27,11 @@
     "auction": "竞公拍分析",
     "inspection": "现场检查",
     "tax": "税务模拟",
-    "tenant": "租户管理",
+    "tenant": "承租人管理",
     "webrtc": "实时协作",
-    "analytics_investment": "投资/估值 (AVM)",
+    "analytics_investment": "投资 / AI估价(AVM)",
     "analytics_esg": "ESG 仪表盘",
-    "analytics_carbon": "碳排放/LCA",
+    "analytics_carbon": "碳排放 / 全生命周期评估(LCA)",
     "analytics_cost": "成本/价格指数",
     "analytics_iot": "IoT/能源控制",
     "feasibility": "可行性模拟",
@@ -62,7 +62,7 @@
     "registerEyebrow": "注册路由",
     "registerTitle": "注册页面占位",
     "registerDescription": "先准备多语言通用的注册布局，再按 API 契约继续接线。",
-    "registerPlaceholder": "用户类型、租户绑定和条款流程会在 API 契约确定后接入。"
+    "registerPlaceholder": "用户类型、承租人绑定和条款流程会在 API 契约确定后接入。"
   },
   "pages": {
     "projects": {
@@ -115,10 +115,10 @@
     },
     "finance": {
       "eyebrow": "金融模块",
-      "title": "可行性、AVM 与租赁风险",
+      "title": "可行性、AI估价(AVM) 与租赁风险",
       "description": "本页面将金融分析卡片和估值组件统一到一个布局中。",
       "items": {
-        "first": "AVM 结果卡片",
+        "first": "AI估价(AVM) 结果卡片",
         "second": "租赁风险卡片",
         "third": "可行性分析区域"
       }
@@ -213,16 +213,16 @@
       "costVol": "建筑成本波动 (±%)",
       "interestRate": "目标利率",
       "salesDelay": "销售回笼延迟",
-      "meanNpv": "预计平均 NPV",
-      "var5": "在险价值 (下位 5%)",
-      "profitIndex": "获利指数 (PI)"
+      "meanNpv": "预计平均净现值 (NPV)",
+      "var5": "最坏情景损失 (VaR, 下位 5%)",
+      "profitIndex": "获利指数 (PI, 大于1=盈利)"
     },
     "approvalCenter": {
       "eyebrow": "审批操作 / 实时模式",
       "title": "电子审批运营中心",
-      "description": "在一个实时工作区中操作待处理审批、全租户审计过滤器、理由审查以及项目范围内的批量决策。",
+      "description": "在一个实时工作区中操作待处理审批、全承租人审计过滤器、理由审查以及项目范围内的批量决策。",
       "items": {
-        "first": "全租户审批队列和已决定的决策",
+        "first": "全承租人审批队列和已决定的决策",
         "second": "审批者角色和状态过滤",
         "third": "项目范围内的批量批准和拒绝操作"
       },
@@ -231,7 +231,7 @@
       "liveProjectLabel": "实时项目",
       "manualUuidLabel": "手动项目 UUID",
       "auditFilters": "审计过滤器",
-      "auditFiltersDesc": "在活动项目和全租户视图之间切换，然后按状态或审批者角色缩小队列范围。",
+      "auditFiltersDesc": "在活动项目和全承租人视图之间切换，然后按状态或审批者角色缩小队列范围。",
       "scopeLabel": "范围",
       "statusLabel": "审批状态",
       "roleLabel": "审批者角色",
@@ -256,7 +256,7 @@
       "resultsTitle": "AI整合设计与分析产出",
       "estimatedCost": "预计总工程造价",
       "feasibilityScore": "项目可行性指数",
-      "carbonFootprint": "LCA 碳足迹",
+      "carbonFootprint": "全生命周期碳足迹(LCA)",
       "reductionTips": "AI 成本与碳排放减量建议",
       "unitsLabel": "目标户数",
       "parkingLabel": "车位比",
@@ -391,8 +391,8 @@
       "salesDelay": "销售延迟概率",
       "outputTitle": "模拟结果报告",
       "meanNpv": "预计平均净现值 (NPV)",
-      "var5": "5% 极端风险 (VaR)",
-      "profitIndex": "获利指数 (PI)"
+      "var5": "最坏情景损失 (VaR, 下位 5%)",
+      "profitIndex": "获利指数 (PI, 大于1=盈利)"
     },
     "feasibilityV2": {
       "title": "收支分析 v2",
@@ -410,7 +410,7 @@
       "netProfit": "净利润",
       "profitRate": "利润率",
       "roi": "投资回报率",
-      "npv": "净现值",
+      "npv": "净现值 (NPV)",
       "costBreakdown": "成本构成",
       "commit": "提交",
       "commitHistory": "提交历史",
@@ -475,8 +475,8 @@
     },
     "tenant": {
       "eyebrow": "PROP / TENANT",
-      "title": "테넌트 통합 관리",
-      "description": "임대차 계약, CS 요청 처리 및 테넌트 포괄 운용 상태를 시각화합니다.",
+      "title": "임차인 통합 관리",
+      "description": "임대차 계약, CS 요청 처리 및 임차인 포괄 운용 상태를 시각화합니다.",
       "items": [
         "✓ 데이터 실시간 연동 대기",
         "✓ 보안 컴플라이언스 통과",
@@ -545,7 +545,7 @@
     },
     "investment": {
       "eyebrow": "PROP / INVESTMENT",
-      "title": "투자 가치 산정 (AVM)",
+      "title": "AI 자산가치 추정(AVM)",
       "description": "지역 데이터와 거시경제 지표를 결합하여 해당 물건의 최종 자산 가치를 환산합니다.",
       "items": [
         "✓ 데이터 실시간 연동 대기",
@@ -555,7 +555,7 @@
     },
     "carbon": {
       "eyebrow": "PROP / CARBON",
-      "title": "탄소 배출 (LCA) 전과정 평가",
+      "title": "생애주기 탄소배출(LCA) 전과정 평가",
       "description": "설계, 시공, 운영의 전체 사이클에서 발생하는 탄소 발자국을 추적/절감합니다.",
       "items": [
         "✓ 데이터 실시간 연동 대기",
@@ -670,7 +670,7 @@
       "items": [
         "✓ 시설 관리(FM) 에셋 추명 엔진 활성",
         "✓ 에너지 소비 효율(BEMS) 최적화 트랙킹",
-        "✓ 테넌트(임차인) 경험 지수(TX) 모니터링"
+        "✓ 임차인 경험 지수(TX) 모니터링"
       ]
     },
     "drone": {
@@ -685,10 +685,10 @@
     },
     "blockchain": {
       "eyebrow": "PROP / BLOCKCHAIN",
-      "title": "STO 블록체인 펀딩",
+      "title": "부동산 조각투자(STO) 블록체인 펀딩",
       "description": "부동산 조각 투자 및 블록체인(Tokenization) 기반의 자본 조달 원장을 모니터링합니다.",
       "items": [
-        "✓ STO 기반 조각 투자 원장 라이브",
+        "✓ 부동산 조각투자(STO) 기반 원장 라이브",
         "✓ 스마트 계약(Smart Contract) 실시간 검증",
         "✓ ESG 투자 공시 시스템(Global Standard)"
       ]

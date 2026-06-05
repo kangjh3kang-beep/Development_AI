@@ -29,9 +29,9 @@
     "tax": "Tax Simulation",
     "tenant": "Tenant Management",
     "webrtc": "Real-time Collab",
-    "analytics_investment": "Investment/AVM",
+    "analytics_investment": "Investment / AI Valuation (AVM)",
     "analytics_esg": "ESG Dashboard",
-    "analytics_carbon": "Carbon/LCA",
+    "analytics_carbon": "Carbon / Life-Cycle Assessment (LCA)",
     "analytics_cost": "Cost/Indices",
     "analytics_iot": "IoT/Energy",
     "feasibility": "Feasibility Sim",
@@ -90,7 +90,7 @@
         "name": "Gangnam Smart Plaza Construction",
         "pnu": "PNU: 1168010100104120002",
         "zone": "Zone: General Commercial",
-        "npv": "Expected NPV",
+        "npv": "Expected Net Present Value (NPV)",
         "roi": "Project ROI"
       }
     },
@@ -116,10 +116,10 @@
     },
     "finance": {
       "eyebrow": "Finance module",
-      "title": "Feasibility, AVM, and jeonse risk",
+      "title": "Feasibility, AI Valuation (AVM), and jeonse risk",
       "description": "This layout groups finance cards and valuation widgets in one shell.",
       "items": {
-        "first": "AVM result card",
+        "first": "AI Valuation (AVM) result card",
         "second": "Jeonse risk card",
         "third": "Feasibility slot"
       }
@@ -214,9 +214,9 @@
       "costVol": "Construction Cost Volatility (±%)",
       "interestRate": "Target Interest Rate",
       "salesDelay": "Sales Absorption Delay",
-      "meanNpv": "Expected Mean NPV",
-      "var5": "Value-at-Risk (Lower 5%)",
-      "profitIndex": "Profitability Index (PI)"
+      "meanNpv": "Expected Mean Net Present Value (NPV)",
+      "var5": "Worst-Case Loss (VaR, Lower 5%)",
+      "profitIndex": "Profitability Index (PI, >1 = profitable)"
     },
     "approvalCenter": {
       "eyebrow": "APPROVAL OPS / LIVE",
@@ -257,7 +257,7 @@
       "resultsTitle": "AI Synthesized Deliverables",
       "estimatedCost": "Est. Construction Cost",
       "feasibilityScore": "Feasibility Score",
-      "carbonFootprint": "LCA Carbon Footprint",
+      "carbonFootprint": "Life-Cycle Carbon Footprint (LCA)",
       "reductionTips": "AI Cost & Carbon Optimization Tips",
       "unitsLabel": "Target Units",
       "parkingLabel": "Parking Ratio",
@@ -390,9 +390,9 @@
       "interestRate": "Interest Rate (Mean)",
       "salesDelay": "Sales Rate Delay Prob.",
       "outputTitle": "Simulation Results Output",
-      "meanNpv": "Mean Expected NPV",
-      "var5": "Value at Risk (5%)",
-      "profitIndex": "Profitability Index"
+      "meanNpv": "Mean Expected Net Present Value (NPV)",
+      "var5": "Worst-Case Loss (VaR, Lower 5%)",
+      "profitIndex": "Profitability Index (PI, >1 = profitable)"
     },
     "feasibilityV2": {
       "title": "Feasibility Analysis v2",
@@ -410,7 +410,7 @@
       "netProfit": "Net Profit",
       "profitRate": "Profit Rate",
       "roi": "ROI",
-      "npv": "NPV",
+      "npv": "Net Present Value (NPV)",
       "costBreakdown": "Cost Breakdown",
       "commit": "Commit",
       "commitHistory": "Commit History",
@@ -433,7 +433,7 @@
     "cost": {
       "title": "Construction Cost QTO",
       "description": "Automated Quantity Takeoff linked to 3D BIM and real-time material price indices.",
-      "exportBtn": "Export Excel Bill of Quantities",
+      "exportBtn": "Export Bill of Quantities (BOQ) Excel",
       "colCode": "Work Item Code",
       "colDesc": "Description",
       "colUnit": "Unit",
@@ -459,9 +459,9 @@
       "mcNotConverged": "Not Converged",
       "riskContributions": "Risk Contributions",
       "exportExcel": "Export Excel",
-      "billing": "Progress Billing",
-      "spi": "SPI (Schedule Performance)",
-      "cpi": "CPI (Cost Performance)"
+      "billing": "Progress & Payment (Billing)",
+      "spi": "Schedule Performance (SPI)",
+      "cpi": "Cost Performance (CPI)"
     },
     "schedule": {
       "title": "Schedule & AI Supervision",
@@ -496,8 +496,8 @@
     },
     "tenant": {
       "eyebrow": "PROP / TENANT",
-      "title": "테넌트 통합 관리",
-      "description": "임대차 계약, CS 요청 처리 및 테넌트 포괄 운용 상태를 시각화합니다.",
+      "title": "임차인 통합 관리",
+      "description": "임대차 계약, CS 요청 처리 및 임차인 포괄 운용 상태를 시각화합니다.",
       "items": [
         "✓ 데이터 실시간 연동 대기",
         "✓ 보안 컴플라이언스 통과",
@@ -566,7 +566,7 @@
     },
     "investment": {
       "eyebrow": "PROP / INVESTMENT",
-      "title": "투자 가치 산정 (AVM)",
+      "title": "AI 자산가치 추정(AVM)",
       "description": "지역 데이터와 거시경제 지표를 결합하여 해당 물건의 최종 자산 가치를 환산합니다.",
       "items": [
         "✓ 데이터 실시간 연동 대기",
@@ -576,7 +576,7 @@
     },
     "carbon": {
       "eyebrow": "PROP / CARBON",
-      "title": "탄소 배출 (LCA) 전과정 평가",
+      "title": "생애주기 탄소배출(LCA) 전과정 평가",
       "description": "설계, 시공, 운영의 전체 사이클에서 발생하는 탄소 발자국을 추적/절감합니다.",
       "items": [
         "✓ 데이터 실시간 연동 대기",
@@ -691,7 +691,7 @@
       "items": [
         "✓ 시설 관리(FM) 에셋 추명 엔진 활성",
         "✓ 에너지 소비 효율(BEMS) 최적화 트랙킹",
-        "✓ 테넌트(임차인) 경험 지수(TX) 모니터링"
+        "✓ 임차인 경험 지수(TX) 모니터링"
       ]
     },
     "drone": {
@@ -706,10 +706,10 @@
     },
     "blockchain": {
       "eyebrow": "PROP / BLOCKCHAIN",
-      "title": "STO 블록체인 펀딩",
+      "title": "부동산 조각투자(STO) 블록체인 펀딩",
       "description": "부동산 조각 투자 및 블록체인(Tokenization) 기반의 자본 조달 원장을 모니터링합니다.",
       "items": [
-        "✓ STO 기반 조각 투자 원장 라이브",
+        "✓ 부동산 조각투자(STO) 기반 원장 라이브",
         "✓ 스마트 계약(Smart Contract) 실시간 검증",
         "✓ ESG 투자 공시 시스템(Global Standard)"
       ]

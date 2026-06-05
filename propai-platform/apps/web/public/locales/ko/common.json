@@ -27,7 +27,7 @@
     "auction": "경공매 분석",
     "inspection": "현장 점검",
     "tax": "세금 시뮬레이션",
-    "tenant": "테넌트 관리",
+    "tenant": "임차인 관리",
     "webrtc": "실시간 협업",
     "analytics_investment": "투자/자동가치산정",
     "analytics_esg": "ESG 대시보드",
@@ -63,7 +63,7 @@
     "registerEyebrow": "가입 라우트",
     "registerTitle": "회원가입 화면 준비",
     "registerDescription": "다국어 환경에서 동일한 가입 흐름을 제공할 수 있도록 기본 구조를 먼저 구성합니다.",
-    "registerPlaceholder": "사용자 유형, 테넌트 연결, 약관 흐름은 이후 API 계약에 맞춰 연결합니다."
+    "registerPlaceholder": "사용자 유형, 임차인 연결, 약관 흐름은 이후 API 계약에 맞춰 연결합니다."
   },
   "pages": {
     "projects": {
@@ -90,7 +90,7 @@
         "name": "강남 스마트 플라자 신축공사",
         "pnu": "고유번호(PNU): 1168010100104120002",
         "zone": "용도지역: 일반상업지역",
-        "npv": "예상 수익치 (NPV)",
+        "npv": "예상 순현재가치(NPV)",
         "roi": "프로젝트 ROI"
       }
     },
@@ -111,15 +111,15 @@
       "items": {
         "first": "IFC 업로드 흐름",
         "second": "3D 뷰어 영역",
-        "third": "물량산출 테이블"
+        "third": "자동 산출 물량 테이블"
       }
     },
     "finance": {
       "eyebrow": "금융 모듈",
-      "title": "사업성·AVM·전세 리스크",
+      "title": "사업성·AI 시세추정(AVM)·전세 리스크",
       "description": "금융 분석 카드와 시세 결과 위젯을 묶는 기본 레이아웃입니다.",
       "items": {
-        "first": "AVM 결과 카드",
+        "first": "AI 시세추정(AVM) 결과 카드",
         "second": "전세 리스크 카드",
         "third": "사업성 분석 슬롯"
       }
@@ -215,15 +215,15 @@
       "interestRate": "목표 이자율",
       "salesDelay": "분양/임대 지연율",
       "meanNpv": "기대 NPV (평균)",
-      "var5": "Value-at-Risk (하위 5%)",
-      "profitIndex": "수익성 지수 (PI)"
+      "var5": "최악 시나리오 손실(VaR, 하위 5%)",
+      "profitIndex": "수익성 지수(PI, 1 초과=수익)"
     },
     "approvalCenter": {
       "eyebrow": "승인 관제 / 라이브 모드",
       "title": "전자 승인 운영 센터",
-      "description": "진행 중인 결재, 테넌트 전체 감사 필터, 사유 검토, 프로젝트 단위 일괄 결정을 하나의 라이브 작업 공간에서 운영합니다.",
+      "description": "진행 중인 결재, 임차인 전체 감사 필터, 사유 검토, 프로젝트 단위 일괄 결정을 하나의 라이브 작업 공간에서 운영합니다.",
       "items": {
-        "first": "테넌트 단위 승인 대기열 및 완료 결정",
+        "first": "임차인 단위 승인 대기열 및 완료 결정",
         "second": "결재자 역할 및 상태 필터링",
         "third": "프로젝트 단위 일괄 승인/반려 액션"
       },
@@ -232,7 +232,7 @@
       "liveProjectLabel": "라이브 프로젝트",
       "manualUuidLabel": "수동 프로젝트 UUID",
       "auditFilters": "감사 필터",
-      "auditFiltersDesc": "활성 프로젝트와 테넌트 전체 뷰를 전환하고, 상태나 결재자 역할에 따라 대기열을 좁힙니다.",
+      "auditFiltersDesc": "활성 프로젝트와 임차인 전체 뷰를 전환하고, 상태나 결재자 역할에 따라 대기열을 좁힙니다.",
       "scopeLabel": "범위",
       "statusLabel": "승인 상태",
       "roleLabel": "결재자 역할",
@@ -257,7 +257,7 @@
       "resultsTitle": "AI 통합 설계 및 분석 산출물",
       "estimatedCost": "예상 총공사비",
       "feasibilityScore": "사업 타당성 지수",
-      "carbonFootprint": "LCA 탄소 발자국",
+      "carbonFootprint": "생애주기 탄소배출(LCA) 발자국",
       "reductionTips": "AI 탄소 및 비용 절감 권고",
       "unitsLabel": "목표 세대수",
       "parkingLabel": "주차대수 비율",
@@ -391,8 +391,8 @@
       "salesDelay": "분양 지연 확률",
       "outputTitle": "시뮬레이션 결과 리포트",
       "meanNpv": "예상되는 평균 순현재가치(NPV)",
-      "var5": "5% 극단 리스크 (VaR)",
-      "profitIndex": "수익성 지수 (PI)"
+      "var5": "최악 시나리오 손실(VaR, 하위 5%)",
+      "profitIndex": "수익성 지수(PI, 1 초과=수익)"
     },
     "feasibilityV2": {
       "title": "수지분석 v2",
@@ -410,7 +410,7 @@
       "netProfit": "순이익",
       "profitRate": "수익률",
       "roi": "ROI",
-      "npv": "NPV",
+      "npv": "순현재가치(NPV)",
       "costBreakdown": "비용 구성",
       "commit": "커밋",
       "commitHistory": "커밋 이력",
@@ -433,7 +433,7 @@
     "cost": {
       "title": "건설 원가 및 물량 산출",
       "description": "연계된 3D BIM 객체에서 자동 스캔된 수량 및 조달청 자재 단가가 실시간 결합된 내역서입니다.",
-      "exportBtn": "엑셀(BOQ) 내보내기",
+      "exportBtn": "공사내역서(BOQ) 엑셀 받기",
       "colCode": "공종 코드",
       "colDesc": "공사 설명 내용",
       "colUnit": "단위",
@@ -453,15 +453,15 @@
       "directExpense": "직접경비",
       "indirectLabor": "간접노무비",
       "netConstruction": "순공사원가",
-      "totalWithVat": "도급액(VAT 포함)",
+      "totalWithVat": "총 공사비(부가세 포함)",
       "categoryBreakdown": "공종별 원가 구성",
       "mcConverged": "수렴 완료",
       "mcNotConverged": "미수렴",
       "riskContributions": "리스크 기여도",
       "exportExcel": "엑셀 내보내기",
-      "billing": "기성 현황",
-      "spi": "SPI (일정성과지수)",
-      "cpi": "CPI (원가성과지수)"
+      "billing": "공정·대금 지급 현황(기성)",
+      "spi": "일정성과(SPI)",
+      "cpi": "원가성과(CPI)"
     },
     "schedule": {
       "title": "공정 관리 및 AI 자동 감리",
@@ -496,8 +496,8 @@
     },
     "tenant": {
       "eyebrow": "PROP / TENANT",
-      "title": "테넌트 통합 관리",
-      "description": "임대차 계약, CS 요청 처리 및 테넌트 포괄 운용 상태를 시각화합니다.",
+      "title": "임차인 통합 관리",
+      "description": "임대차 계약, CS 요청 처리 및 임차인 포괄 운용 상태를 시각화합니다.",
       "items": [
         "✓ 데이터 실시간 연동 대기",
         "✓ 보안 컴플라이언스 통과",
@@ -566,7 +566,7 @@
     },
     "investment": {
       "eyebrow": "PROP / INVESTMENT",
-      "title": "투자 가치 산정 (AVM)",
+      "title": "AI 자산가치 추정(AVM)",
       "description": "지역 데이터와 거시경제 지표를 결합하여 해당 물건의 최종 자산 가치를 환산합니다.",
       "items": [
         "✓ 데이터 실시간 연동 대기",
@@ -576,7 +576,7 @@
     },
     "carbon": {
       "eyebrow": "PROP / CARBON",
-      "title": "탄소 배출 (LCA) 전과정 평가",
+      "title": "생애주기 탄소배출(LCA) 전과정 평가",
       "description": "설계, 시공, 운영의 전체 사이클에서 발생하는 탄소 발자국을 추적/절감합니다.",
       "items": [
         "✓ 데이터 실시간 연동 대기",
@@ -649,7 +649,7 @@
       "title": "BIM 수량 산출",
       "description": "생성된 IFC 파일에서 골조, 마감재 등 3D 물량을 자동 산출하고 매핑합니다.",
       "items": [
-        "✓ 3D 물량산출 엔진 (물량 자동 산출)",
+        "✓ 3D 자동 산출 물량 엔진 (물량 자동 산출)",
         "✓ IFC 4.x 기반 표준 준수 상호운용성",
         "✓ 부재별 단위 중량 및 단가 매핑 완료"
       ]
@@ -691,7 +691,7 @@
       "items": [
         "✓ 시설 관리(FM) 에셋 추명 엔진 활성",
         "✓ 에너지 소비 효율(BEMS) 최적화 트랙킹",
-        "✓ 테넌트(임차인) 경험 지수(TX) 모니터링"
+        "✓ 임차인 경험 지수(TX) 모니터링"
       ]
     },
     "drone": {
@@ -706,10 +706,10 @@
     },
     "blockchain": {
       "eyebrow": "PROP / BLOCKCHAIN",
-      "title": "STO 블록체인 펀딩",
+      "title": "부동산 조각투자(STO) 블록체인 펀딩",
       "description": "부동산 조각 투자 및 블록체인(Tokenization) 기반의 자본 조달 원장을 모니터링합니다.",
       "items": [
-        "✓ STO 기반 조각 투자 원장 라이브",
+        "✓ 부동산 조각투자(STO) 기반 원장 라이브",
         "✓ 스마트 계약(Smart Contract) 실시간 검증",
         "✓ ESG 투자 공시 시스템(Global Standard)"
       ]
