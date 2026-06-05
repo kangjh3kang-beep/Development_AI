@@ -148,6 +148,19 @@ def _normalize_for_interpreter(stage: str, data: dict[str, Any]) -> dict[str, An
         setdefault_from("max_far_pct", "max_far")
         setdefault_from("zone_code", "zone_type")
         setdefault_from("building_footprint_sqm", "building_area_sqm")
+    elif stage in ("appraisal", "avm"):
+        # 예상시세 추정(desk_appraisal) 결과 → avm_interpreter 입력(estimated_value 등) 매핑.
+        if not isinstance(d.get("estimated_value"), dict):
+            rng = d.get("range_per_sqm") or {}
+            d["estimated_value"] = {
+                "value_won": d.get("appraised_total_won"),
+                "value_per_sqm_won": d.get("appraised_price_per_sqm"),
+                "confidence_score": d.get("confidence"),
+                "confidence_interval_low": rng.get("low"),
+                "confidence_interval_high": rng.get("high"),
+            }
+        if not isinstance(d.get("market_statistics"), dict) and isinstance(d.get("market_stats"), dict):
+            d["market_statistics"] = d["market_stats"]
     elif stage == "esg":
         # esg_interpreter는 carbon_emissions 중첩을 기대 — 가용 탄소값으로 구성.
         if not isinstance(d.get("carbon_emissions"), dict):
@@ -207,6 +220,9 @@ async def interpret_stage(req: InterpretRequest) -> dict[str, Any]:
         elif stage == "esg":
             from app.services.ai.esg_interpreter import EsgInterpreter
             sections = await EsgInterpreter().generate_interpretation(data)
+        elif stage in ("appraisal", "avm"):
+            from app.services.ai.avm_interpreter import AvmInterpreter
+            sections = await AvmInterpreter().generate_interpretation(data)
         elif stage == "report":
             from app.services.ai.report_interpreter import ReportInterpreter
             sections = await ReportInterpreter().generate_report_narrative(data)

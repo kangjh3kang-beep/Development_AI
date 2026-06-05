@@ -10,8 +10,24 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Card, CardContent } from "@propai/ui";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { NumberInput } from "@/components/common/NumberInput";
+import { VerificationBadge } from "@/components/common/VerificationBadge";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import type { Locale } from "@/i18n/config";
+
+const APPR_LABELS: Record<string, string> = {
+  valuation_assessment: "추정 평가", value_drivers: "가치 요인", comparable_analysis: "사례 비교",
+  market_context: "시장 맥락", risk_caveats: "유의·리스크", confidence_note: "신뢰도",
+  summary: "요약", analysis: "분석", recommendation: "권고",
+};
+
+function apiV2Base(): string {
+  if (typeof window !== "undefined") {
+    const h = window.location.hostname;
+    if (h === "4t8t.net" || h === "www.4t8t.net" || h.endsWith(".pages.dev") || h === "propai.kr")
+      return "https://api.4t8t.net/api/v2";
+  }
+  return "/api/proxy/v2";
+}
 
 function apiBase(): string {
   if (typeof window !== "undefined") {
@@ -104,6 +120,28 @@ export function DeskAppraisalReportClient({ locale }: { locale: Locale }) {
   const [busy, setBusy] = useState<"" | "run" | "pdf">("");
   const [err, setErr] = useState<string | null>(null);
   const [ranAddr, setRanAddr] = useState("");
+  // AI 해석(온디맨드, avm 인터프리터)
+  const [apprNarr, setApprNarr] = useState<{ label: string; text: string }[] | null>(null);
+  const [narrLoading, setNarrLoading] = useState(false);
+
+  // 추정 결과가 생기면 AI 해석 자동 생성(온디맨드·캐시)
+  useEffect(() => {
+    if (!res?.ok) { setApprNarr(null); return; }
+    let alive = true;
+    setApprNarr(null); setNarrLoading(true);
+    const token = (typeof window !== "undefined" && localStorage.getItem("propai_access_token")) || "";
+    fetch(`${apiV2Base()}/pipeline/interpret`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      body: JSON.stringify({ stage: "appraisal", context: { address: ranAddr }, data: res }),
+    }).then((r) => r.json()).then((d) => {
+      if (!alive) return;
+      const secs = (d?.sections || {}) as Record<string, string>;
+      setApprNarr(Object.entries(secs).filter(([, v]) => typeof v === "string" && v.trim().length > 12)
+        .map(([k, v]) => ({ label: APPR_LABELS[k] || k, text: String(v).trim() })));
+    }).catch(() => { if (alive) setApprNarr([]); }).finally(() => { if (alive) setNarrLoading(false); });
+    return () => { alive = false; };
+  }, [res, ranAddr]);
 
   const today = useRef<string>("");
   if (!today.current) {
@@ -390,8 +428,30 @@ export function DeskAppraisalReportClient({ locale }: { locale: Locale }) {
               })()}
             </Section>
 
-            {/* VII. 면책 */}
-            <Section no="Ⅶ" title="면책">
+            {/* AI 상세 해석(avm) + 신뢰도 검증 */}
+            <Section no="Ⅶ" title="AI 상세 해석 · 검증">
+              <VerificationBadge analysisType="desk_appraisal" context={res as unknown as Record<string, unknown>} />
+              {narrLoading && (
+                <div className="mt-3 rounded-xl border border-[var(--accent-strong)]/15 bg-[var(--accent-soft)]/20 p-4">
+                  <p className="mb-2 text-[11px] text-[var(--text-hint)]">AI 해석 생성 중…</p>
+                  <div className="h-3 w-2/3 animate-pulse rounded bg-[var(--line-strong)]" />
+                  <div className="mt-2 h-3 w-full animate-pulse rounded bg-[var(--line)]" />
+                </div>
+              )}
+              {apprNarr && apprNarr.length > 0 && (
+                <div className="mt-3 space-y-2">
+                  {apprNarr.map((n, i) => (
+                    <div key={i} className="rounded-xl border border-[var(--accent-strong)]/15 bg-[var(--accent-soft)]/30 p-4">
+                      <p className="mb-1 text-[11px] font-black uppercase tracking-widest text-[var(--accent-strong)]">{n.label}</p>
+                      <p className="whitespace-pre-wrap text-sm leading-relaxed text-[var(--text-secondary)]">{n.text}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Section>
+
+            {/* VIII. 면책 */}
+            <Section no="Ⅷ" title="면책">
               <p className="text-[11px] leading-relaxed text-[var(--text-hint)]">{res.disclaimer}</p>
             </Section>
 
