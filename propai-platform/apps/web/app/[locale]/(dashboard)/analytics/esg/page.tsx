@@ -4,6 +4,7 @@ import React, { useState } from "react";
 import { motion } from "framer-motion";
 import { useAIAnalyze, useAIReady } from "@/lib/ai-analyze-client";
 import { NumberInput } from "@/components/common/NumberInput";
+import { VerificationBadge } from "@/components/common/VerificationBadge";
 
 type ESGResult = {
   carbonFootprint?: { construction: number; operation: number; total: number; unit: string };
@@ -121,10 +122,12 @@ export default function ESGPage() {
 
           {ai.summary && (
             <div className="glass rounded-2xl p-6 border border-emerald-500/20 bg-emerald-500/5">
-              <h3 className="text-lg font-black text-emerald-400 mb-2">🤖 AI ESG 종합 평가</h3>
+              <h3 className="text-lg font-black text-emerald-400 mb-2">AI ESG 종합 평가</h3>
               <p className="text-sm text-[var(--text-secondary)] leading-relaxed">{ai.summary}</p>
             </div>
           )}
+          {/* 신뢰도·할루시네이션 검증 */}
+          <VerificationBadge analysisType="esg" context={ai as unknown as Record<string, unknown>} />
         </motion.div>
       )}
 
