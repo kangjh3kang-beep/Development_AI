@@ -672,7 +672,7 @@ export function AuthWorkspaceClient({
           <CardContent className="p-8 md:p-10">
             <div className="space-y-3 mb-6">
               <h1 className="text-3xl font-bold text-[var(--text-primary)] md:text-4xl">
-                PropAI 로그인
+                사통팔땅 로그인
               </h1>
               <p className="text-sm leading-7 text-[var(--text-secondary)] md:text-base">
                 서비스 이용을 위해 계정에 로그인해 주세요.

@@ -218,9 +218,9 @@ export default async function DashboardLayout({
           <SidebarNav sections={sections} />
         </aside>
 
-        {/* 콘텐츠 영역 — AuthGuard로 미인증 접근 차단 */}
+        {/* 콘텐츠 영역 — 메인 페이지는 미인증 접근 허용 (기능 사용 시 로그인 요구) */}
         <main className="min-w-0 space-y-6">
-          <AuthGuard>{children}</AuthGuard>
+          {children}
           {/* 면책 고지 — 모든 페이지·분석결과 하단 공통 노출 */}
           <Disclaimer />
         </main>
