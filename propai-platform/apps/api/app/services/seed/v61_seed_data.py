@@ -68,6 +68,15 @@ def seed_standard_prices_2026() -> list[dict[str, Any]]:
         {"material_code": "TMP-001", "material_name": "비계 (강관)", "spec": "강관비계 외부", "unit": "m²", "material_price": 3000, "labor_price": 12000, "expense_price": 2000},
         {"material_code": "TMP-002", "material_name": "가설울타리", "spec": "C형강 + 샌드위치패널", "unit": "m", "material_price": 35000, "labor_price": 25000, "expense_price": 5000},
         {"material_code": "TMP-003", "material_name": "타워크레인", "spec": "T/C 10ton급", "unit": "월", "material_price": 0, "labor_price": 0, "expense_price": 8500000},
+        # 수지경로 ₩/㎡ 개산단가 SSOT(construction_cost_engine 일원화 — DEFAULT_DIRECT_COST_PER_SQM 동일값).
+        # material_price 에 ₩/㎡ 단가 적재. DB에 없어도 엔진은 동기 fallback으로 동일값(회귀 0).
+        {"material_code": "DIRECT_SQM_apartment", "material_name": "개산단가(공동주택) ₩/㎡", "spec": "수지 직접공사비 개산", "unit": "㎡", "material_price": 2400000, "labor_price": 0, "expense_price": 0},
+        {"material_code": "DIRECT_SQM_officetel", "material_name": "개산단가(오피스텔) ₩/㎡", "spec": "수지 직접공사비 개산", "unit": "㎡", "material_price": 2600000, "labor_price": 0, "expense_price": 0},
+        {"material_code": "DIRECT_SQM_commercial", "material_name": "개산단가(상업시설) ₩/㎡", "spec": "수지 직접공사비 개산", "unit": "㎡", "material_price": 2200000, "labor_price": 0, "expense_price": 0},
+        {"material_code": "DIRECT_SQM_office", "material_name": "개산단가(업무시설) ₩/㎡", "spec": "수지 직접공사비 개산", "unit": "㎡", "material_price": 2500000, "labor_price": 0, "expense_price": 0},
+        {"material_code": "DIRECT_SQM_warehouse", "material_name": "개산단가(창고) ₩/㎡", "spec": "수지 직접공사비 개산", "unit": "㎡", "material_price": 1200000, "labor_price": 0, "expense_price": 0},
+        {"material_code": "DIRECT_SQM_townhouse", "material_name": "개산단가(타운하우스) ₩/㎡", "spec": "수지 직접공사비 개산", "unit": "㎡", "material_price": 2000000, "labor_price": 0, "expense_price": 0},
+        {"material_code": "DIRECT_SQM_single_house", "material_name": "개산단가(단독주택) ₩/㎡", "spec": "수지 직접공사비 개산", "unit": "㎡", "material_price": 2100000, "labor_price": 0, "expense_price": 0},
     ]
 
 

@@ -36,6 +36,40 @@ _FALLBACK_BASIS_YEAR = 2026
 _FALLBACK_SOURCE = "fallback"
 _FALLBACK_REGION = "경기도"
 
+# ── 수지경로 ₩/㎡ 개산단가 SSOT(construction_cost_engine 일원화) ──
+# 적산경로(자재별 단가)와 별개로, 수지경로는 건물유형별 ₩/㎡ 개산단가를 쓴다.
+# 이를 단일 출처(이 모듈)로 일원화한다. 값은 기존 상수와 100% 동일(회귀 0).
+# code = "DIRECT_SQM_<building_type>"(material_unit_prices.material_code 호환).
+_DIRECT_SQM_FALLBACK: dict[str, int] = {
+    "apartment": 2_400_000,
+    "officetel": 2_600_000,
+    "commercial": 2_200_000,
+    "office": 2_500_000,
+    "warehouse": 1_200_000,
+    "townhouse": 2_000_000,
+    "single_house": 2_100_000,
+}
+_DIRECT_SQM_DEFAULT_TYPE = "apartment"
+
+
+def direct_sqm_fallback(building_type: str) -> int:
+    """수지경로 ₩/㎡ 개산단가 fallback — 기존 DEFAULT_DIRECT_COST_PER_SQM 동일값.
+
+    미존재 유형은 apartment 단가로 폴백(기존 동작과 동일).
+    """
+    return _DIRECT_SQM_FALLBACK.get(
+        building_type, _DIRECT_SQM_FALLBACK[_DIRECT_SQM_DEFAULT_TYPE]
+    )
+
+
+def resolve_direct_sqm_sync(building_type: str) -> int:
+    """DB 비의존(동기) 경로용 ₩/㎡ 개산단가 — 항상 fallback(회귀 0).
+
+    construction_cost_engine 은 순수 함수(동기·무DB)이므로 전환 전과 동일한
+    하드코딩값을 이 단일 출처에서 가져온다. DB·repo가 비어도 100% 동일값.
+    """
+    return direct_sqm_fallback(building_type)
+
 
 def fallback_price(key: str) -> dict[str, Any] | None:
     """하드코딩 fallback 단가(UNIT_PRICES_2026) — 출처/기준연도/지역 부착."""
@@ -117,6 +151,23 @@ class UnitPriceRepository:
             "price_basis_year": row["price_basis_year"],
             "region": row["region"],
         }
+
+    async def get_direct_sqm(self, building_type: str) -> int:
+        """수지경로 ₩/㎡ 개산단가 — DB(material_code=DIRECT_SQM_<type>) 우선, 미존재 시 fallback.
+
+        ★DB가 비어 있으면 fallback(기존 상수)을 그대로 반환 → 회귀 0.
+        material_price 컬럼에 ₩/㎡ 단가를 적재한다(자재별 단가와 동일 테이블 공유).
+        """
+        fb = direct_sqm_fallback(building_type)
+        try:
+            db = await self._load_db()
+        except Exception:  # noqa: BLE001
+            return fb
+        for code in (f"DIRECT_SQM_{building_type}", f"DIRECT_SQM_{_DIRECT_SQM_DEFAULT_TYPE}"):
+            row = db.get(code)
+            if row and row.get("mat_unit"):
+                return int(row["mat_unit"])
+        return fb
 
     async def get_prices(self) -> dict[str, dict[str, Any]]:
         """전체 fallback 키의 단가 묶음(DB 우선)."""

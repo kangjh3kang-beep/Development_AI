@@ -11,6 +11,10 @@ from typing import Any
 PYEONG_TO_SQM = 3.305785
 
 # 기본 공사비 단가 (원/m², 2025년 기준)
+# ★SSOT: 이 상수는 unit_price_repository(_DIRECT_SQM_FALLBACK)와 동일값으로 일원화됨.
+#   엔진은 repository.resolve_direct_sqm_sync() 로 단가를 조회하되, import/조회 실패 시
+#   아래 상수로 fallback → repo·DB가 비어도 전환 전과 100% 동일값(회귀 0).
+#   호환을 위해 상수는 유지(routers/cost.py 등 기존 참조처 무파괴).
 DEFAULT_DIRECT_COST_PER_SQM: dict[str, int] = {
     "apartment": 2_400_000,
     "officetel": 2_600_000,
@@ -20,6 +24,21 @@ DEFAULT_DIRECT_COST_PER_SQM: dict[str, int] = {
     "townhouse": 2_000_000,
     "single_house": 2_100_000,
 }
+
+
+def _resolve_direct_unit_cost(building_type: str) -> int:
+    """건물유형 ₩/㎡ 개산단가를 SSOT(unit_price_repository)에서 조회.
+
+    조회/임포트 실패 시 DEFAULT_DIRECT_COST_PER_SQM 로 fallback(회귀 0).
+    """
+    try:
+        from app.services.cost.unit_price_repository import resolve_direct_sqm_sync
+
+        return resolve_direct_sqm_sync(building_type)
+    except Exception:  # noqa: BLE001 — SSOT 미가용 시 기존 상수로 안전 폴백
+        return DEFAULT_DIRECT_COST_PER_SQM.get(
+            building_type, DEFAULT_DIRECT_COST_PER_SQM["apartment"]
+        )
 
 # 간접공사비 비율 기본값
 DEFAULT_INDIRECT_RATIOS: dict[str, float] = {
@@ -87,9 +106,7 @@ def calculate_direct_cost(
         {'total_gfa_sqm', 'unit_cost_per_sqm', 'cost_index_factor', 'total_direct_cost_won'}
     """
     if unit_cost_per_sqm is None:
-        unit_cost_per_sqm = DEFAULT_DIRECT_COST_PER_SQM.get(
-            building_type, DEFAULT_DIRECT_COST_PER_SQM["apartment"]
-        )
+        unit_cost_per_sqm = _resolve_direct_unit_cost(building_type)
 
     adjusted_unit = int(unit_cost_per_sqm * cost_index_factor)
     total = int(total_gfa_sqm * adjusted_unit)
