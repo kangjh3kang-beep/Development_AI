@@ -88,6 +88,14 @@ async def fetch_registry(
             if not ic_id or int(data.get("success") or 0) != 1:
                 # 401 등에도 raise하지 않고 apick 실제 사유 노출(예: "아이디 로그인")
                 apick_err = data.get("error") or (j1.get("result") or {}).get("error")
+                # 대법원 인터넷등기소 점검/일시중단은 제공사(에이픽/텔코) 공통 영향 → 별도 분류
+                err_txt = str(apick_err or "")
+                is_maint = any(k in err_txt for k in ("점검", "유지보수", "일시", "중단", "maintenance", "unavailable"))
+                if is_maint:
+                    return {**item, "status": "provider_maintenance",
+                            "message": f"대법원 인터넷등기소 점검·일시중단으로 등기 발급이 일시 불가합니다 — {err_txt} "
+                                       "(에이픽/텔코 등 발급 연동은 인터넷등기소에 의존). 점검 종료 후 재시도하세요.",
+                            "raw": j1}
                 return {**item, "status": "provider_error",
                         "message": apick_err
                         or "apick 등기 열람 실패(주소/고유번호 확인 또는 계정 결제 필요)",
