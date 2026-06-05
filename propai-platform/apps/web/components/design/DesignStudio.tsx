@@ -11,6 +11,18 @@ import { useAIAnalyze, useAIReady } from "@/lib/ai-analyze-client";
 import { getZoningSpec, calcMaxGrossArea, calcParkingRequired } from "@/lib/kr-building-regulations";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { NumberInput } from "@/components/common/NumberInput";
+import { SolarEnvelopeCard } from "@/components/projects/SolarEnvelopeCard";
+
+// 일반인용 쉬운 설명(용어 풀이) — '쉬운 설명' 토글 시 표시
+const EASY: Record<string, string> = {
+  건폐율: "땅 면적 중 건물 1층이 덮을 수 있는 비율. 높을수록 넓게 지음.",
+  용적률: "땅 면적 대비 전체 층 바닥면적 합의 비율. 높을수록 많이(높이) 지음.",
+  "예상 층수": "용적률·높이제한으로 지을 수 있는 대략의 층수.",
+  "주차 대수": "법으로 확보해야 하는 최소 주차 칸 수.",
+  "최대 연면적": "모든 층 바닥면적을 합한 최대 건축 가능 면적(분양·사업성의 기준).",
+  매싱: "건물 덩어리의 배치 모양(판상형=일자, 타워형=고층 1동 등).",
+  일조: "겨울에도 햇빛이 드는지(정북일조)·그림자 길이. 인접 대지·민원과 직결.",
+};
 
 type DesignResult = {
   buildingCoverage?: { value: number; max: number; unit: string };
@@ -28,6 +40,7 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
   const { isReady } = useAIReady();
   const { mutate, data: aiResult, isPending, error } = useAIAnalyze<DesignResult>();
   const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
+  const [easy, setEasy] = useState(false);   // 일반인용 쉬운 설명 토글
 
   const [form, setForm] = useState({ landArea: "500", zoning: "제2종일반주거지역", buildingUse: "공동주택" });
 
@@ -75,9 +88,17 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
 
   return (
     <div className="space-y-8">
-      <motion.div initial={{ y: -20, opacity: 0 }} animate={{ y: 0, opacity: 1 }}>
+      <motion.div initial={{ y: -20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} className="flex flex-wrap items-start justify-between gap-3">
+        <div>
         <h1 className="text-3xl font-black tracking-tight text-[var(--text-primary)]">AI 건축 설계</h1>
         <p className="text-sm text-[var(--text-secondary)] mt-1">한국 건축법 기반 즉시 계산 + AI 심층 분석</p>
+        </div>
+        <button onClick={() => setEasy((v) => !v)}
+          className={`shrink-0 rounded-full border px-3.5 py-1.5 text-xs font-bold transition-colors ${easy ? "border-[var(--accent-strong)] bg-[var(--accent-soft)] text-[var(--accent-strong)]" : "border-[var(--line-strong)] text-[var(--text-secondary)]"}`}>
+          {easy ? "🟢 쉬운 설명 켜짐" : "💡 쉬운 설명"}
+        </button>
+      </motion.div>
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
         {siteAnalysis?.address && (
           <p className="text-xs text-emerald-500 mt-2 flex items-center gap-1.5">
             <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500" />
@@ -135,9 +156,46 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
                 <p className={`text-xs font-bold uppercase tracking-widest ${k.color} mb-2`}>{k.label}</p>
                 <p className="text-2xl font-black text-[var(--text-primary)]">{k.val}</p>
                 <p className="text-[10px] text-[var(--text-hint)]">{k.sub}</p>
+                {easy && EASY[k.label] && <p className="mt-1.5 text-[10px] leading-snug text-[var(--accent-strong)]">{EASY[k.label]}</p>}
               </div>
             ))}
           </div>
+
+          {/* 법규 적합 체크리스트 — 적용값이 법정 한도 이내인지 한눈에 */}
+          <div className="glass rounded-2xl p-6 border border-[var(--line)]">
+            <h3 className="text-sm font-black text-[var(--text-primary)] mb-3">✅ 법규 적합 체크리스트</h3>
+            {easy && <p className="mb-2 text-[11px] text-[var(--accent-strong)]">적용 설계값이 법으로 정한 한도 안에 들어오는지 확인합니다. ✓면 통과예요.</p>}
+            <div className="space-y-1.5">
+              {[
+                { k: "건폐율", v: ai?.buildingCoverage?.value ?? calc.buildingCoverage, max: ai?.buildingCoverage?.max ?? calc.buildingCoverage, u: "%" },
+                { k: "용적률", v: ai?.floorAreaRatio?.value ?? calc.floorAreaRatio, max: ai?.floorAreaRatio?.max ?? calc.floorAreaRatio, u: "%" },
+                { k: "높이", v: ai?.maxHeight?.value ?? calc.maxHeight, max: calc.maxHeight, u: "m" },
+                { k: "주차", v: ai?.parkingRequired ?? calc.parking, max: ai?.parkingRequired ?? calc.parking, u: "대" },
+              ].map((row) => {
+                const ok = Number(row.v) <= Number(row.max) + 1e-6;
+                return (
+                  <div key={row.k} className="flex items-center justify-between rounded-lg bg-[var(--surface-muted)] px-3 py-2 text-xs">
+                    <span className="font-bold text-[var(--text-secondary)]">{row.k}</span>
+                    <span className="text-[var(--text-hint)]">적용 {row.v}{row.u} / 한도 {row.max}{row.u}</span>
+                    <span className={`font-black ${ok ? "text-emerald-500" : "text-rose-500"}`}>{ok ? "✓ 적합" : "⚠ 초과"}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* 일조 · 건축가능 볼륨(정북일조 + 동지 일영) — 부지분석 연동 시 */}
+          {(siteAnalysis?.pnu || siteAnalysis?.landAreaSqm) && (
+            <div>
+              {easy && <p className="mb-2 text-[11px] text-[var(--accent-strong)]">{EASY["일조"]}</p>}
+              <SolarEnvelopeCard
+                address={siteAnalysis?.address || undefined}
+                pnu={siteAnalysis?.pnu || undefined}
+                zone={siteAnalysis?.zoneCode || form.zoning}
+                landAreaSqm={siteAnalysis?.landAreaSqm ?? (form.landArea ? Number(form.landArea) : undefined)}
+              />
+            </div>
+          )}
 
           <div className="grid grid-cols-2 gap-4">
             <div className="glass rounded-2xl p-5 border border-[var(--line)]">
