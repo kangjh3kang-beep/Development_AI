@@ -205,6 +205,45 @@ async def generate_report(req: PipelineRunRequest):
     return report
 
 
+class ReportPdfRequest(BaseModel):
+    """통합 보고서 PDF 요청 — 이미 계산된 결과(result)를 보내면 재실행 없이 즉시 PDF."""
+    address: str | None = None
+    project_id: str | None = None
+    result: dict[str, Any] | None = None   # {summary, stages} (프론트 보유분)
+
+
+def _normalize_result(result: dict[str, Any]) -> dict[str, Any]:
+    """프론트 result(stages=list) → PipelineReportService 기대형(stages=dict) 정규화."""
+    out = dict(result or {})
+    stages = out.get("stages")
+    if isinstance(stages, list):
+        out["stages"] = {s.get("stage"): s for s in stages if isinstance(s, dict) and s.get("stage")}
+    return out
+
+
+@router.post("/report/pdf", summary="통합 보고서 PDF 다운로드(결과 제공 시 재실행 없음)")
+async def generate_report_pdf(req: ReportPdfRequest):
+    """통합 분석 보고서를 PDF로 생성. result가 있으면 그것으로(즉시), 없으면 파이프라인 실행."""
+    from fastapi.responses import Response
+    from app.services.report.pipeline_report_pdf import build_pipeline_report_pdf
+
+    if req.result:
+        result_dict = _normalize_result(req.result)
+        if req.address and not result_dict.get("address"):
+            result_dict["address"] = req.address
+    else:
+        pipeline = ProjectPipeline()
+        state = await pipeline.run(address=req.address or "", project_id=req.project_id, options=None)
+        result_dict = state.model_dump()
+
+    report = PipelineReportService().generate(result_dict)
+    pdf = build_pipeline_report_pdf(report.model_dump())
+    return Response(
+        content=pdf, media_type="application/pdf",
+        headers={"Content-Disposition": "attachment; filename=propai_report.pdf"},
+    )
+
+
 @router.post("/rerun-stage")
 async def rerun_stage(req: StageRerunRequest):
     """특정 단계만 재실행.

@@ -452,26 +452,35 @@ export function PipelineResultDetail({ result, onRerun }: PipelineResultDetailPr
   const handleDownload = useCallback(async () => {
     setDownloading(true);
     try {
-      const data = await apiClient.postV2("/pipeline/report", {
-        body: {
-          pipeline_id: result.pipeline_id,
-          project_id: result.project_id,
-        },
-        useMock: false,
+      // 실제 PDF 생성(reportlab) — 이미 계산된 result를 보내 재실행 없이 즉시 생성.
+      const base = (() => {
+        if (typeof window !== "undefined") {
+          const h = window.location.hostname;
+          if (h === "4t8t.net" || h === "www.4t8t.net" || h.endsWith(".pages.dev") || h === "propai.kr")
+            return "https://api.4t8t.net/api/v2";
+        }
+        return "/api/proxy/v2";
+      })();
+      const token = (typeof window !== "undefined" && localStorage.getItem("propai_access_token")) || "";
+      const r = await fetch(`${base}/pipeline/report/pdf`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ result: { summary: result.summary, stages: result.stages }, project_id: result.project_id }),
       });
-      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+      if (!r.ok || !(r.headers.get("content-type") || "").includes("pdf")) {
+        alert("보고서 PDF 생성에 실패했습니다."); return;
+      }
+      const blob = await r.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
-      a.href = url;
-      a.download = `PropAI_Report_${result.project_id}.pdf`;
-      a.click();
-      URL.revokeObjectURL(url);
+      a.href = url; a.download = `PropAI_통합보고서_${result.project_id || "report"}.pdf`;
+      document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
     } catch {
       alert("보고서 다운로드에 실패했습니다.");
     } finally {
       setDownloading(false);
     }
-  }, [result.pipeline_id, result.project_id]);
+  }, [result.summary, result.stages, result.project_id]);
 
   const activeSection = SECTIONS.find((s) => s.id === activeTab)!;
   const address =
