@@ -7,7 +7,7 @@ FROM base AS builder
 WORKDIR /app
 COPY . .
 RUN pnpm install --frozen-lockfile
-RUN pnpm turbo run build --filter=@propai/web
+RUN pnpm --filter=@propai/web run build
 
 FROM base AS runner
 WORKDIR /app
