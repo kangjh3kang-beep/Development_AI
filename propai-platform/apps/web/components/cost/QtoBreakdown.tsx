@@ -61,6 +61,12 @@ export function QtoBreakdown({ projectId }: { projectId: string }) {
 
   return (
     <div className="grid gap-4">
+      <div className="flex items-center justify-end">
+        <button onClick={() => void run()} disabled={loading}
+          className="rounded-lg border border-[var(--line-strong)] px-3 py-1.5 text-[11px] font-bold text-[var(--text-secondary)] hover:border-[var(--accent-strong)] disabled:opacity-50">
+          ↻ 모델 반영 재계산
+        </button>
+      </div>
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Tile label="연면적" value={`${Math.round(res.total_gfa_sqm ?? gfa).toLocaleString()}㎡`} />
         <Tile label="공사비(예상)" value={eok(res.range?.expected_won)} sub={`${eok(res.range?.min_won)} ~ ${eok(res.range?.max_won)}`} accent />

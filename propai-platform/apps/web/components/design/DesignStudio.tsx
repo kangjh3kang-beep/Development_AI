@@ -36,6 +36,30 @@ type DesignResult = {
   summary?: string;
 };
 
+// 매싱 유형별 간이 3D 도식(SVG) — 일반인 직관용(판상/타워/ㄱ자/중정 등)
+function MassingDiagram({ name, active }: { name: string; active?: boolean }) {
+  const c = active ? "var(--accent-strong)" : "var(--text-tertiary)";
+  const fill = active ? "var(--accent-soft)" : "var(--surface-muted)";
+  const n = name || "";
+  const blocks =
+    n.includes("타워") ? [{ x: 40, y: 14, w: 20, h: 46 }]
+    : n.includes("ㄱ") || n.includes("L") ? [{ x: 18, y: 34, w: 44, h: 16 }, { x: 18, y: 18, w: 16, h: 32 }]
+    : n.includes("중정") || n.includes("ㅁ") ? [{ x: 16, y: 18, w: 14, h: 40 }, { x: 70, y: 18, w: 14, h: 40 }, { x: 16, y: 18, w: 68, h: 12 }, { x: 16, y: 46, w: 68, h: 12 }]
+    : [{ x: 14, y: 22, w: 30, h: 38 }, { x: 56, y: 22, w: 30, h: 38 }]; // 판상형(기본)
+  return (
+    <svg viewBox="0 0 100 70" className="h-16 w-full">
+      <line x1="6" y1="62" x2="94" y2="62" stroke={c} strokeWidth="1" opacity="0.4" />
+      {blocks.map((b, i) => (
+        <g key={i}>
+          <rect x={b.x} y={b.y} width={b.w} height={b.h} rx="1.5" fill={fill} stroke={c} strokeWidth="1.4" />
+          <polygon points={`${b.x},${b.y} ${b.x + 5},${b.y - 5} ${b.x + b.w + 5},${b.y - 5} ${b.x + b.w},${b.y}`} fill={c} opacity="0.25" />
+          <polygon points={`${b.x + b.w},${b.y} ${b.x + b.w + 5},${b.y - 5} ${b.x + b.w + 5},${b.y + b.h - 5} ${b.x + b.w},${b.y + b.h}`} fill={c} opacity="0.4" />
+        </g>
+      ))}
+    </svg>
+  );
+}
+
 export function DesignStudio({ projectId }: { projectId?: string }) {
   const { isReady } = useAIReady();
   const { mutate, data: aiResult, isPending, error } = useAIAnalyze<DesignResult>();
@@ -225,19 +249,35 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
           </div>
 
           <div className="glass rounded-2xl p-6 border border-[var(--line)]">
-            <h3 className="text-lg font-black text-[var(--text-primary)] mb-4">📐 매싱 옵션</h3>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              {(ai?.massingOptions || calc.massingOptions).map((m, i) => (
-                <div key={i} className="rounded-xl bg-[var(--surface-muted)] border border-[var(--line)] p-4">
-                  <p className="text-sm font-bold text-[var(--text-primary)]">{m.name}</p>
-                  <p className="text-xs text-[var(--text-secondary)] mt-1">{m.description}</p>
-                  <div className="mt-2 flex items-center gap-2">
-                    <div className="h-2 flex-1 rounded-full bg-[var(--line)]"><div className="h-2 rounded-full bg-blue-400" style={{ width: `${m.efficiency}%` }} /></div>
-                    <span className="text-xs font-bold text-blue-400">{m.efficiency}%</span>
-                  </div>
+            <h3 className="text-lg font-black text-[var(--text-primary)] mb-1">📐 매싱 대안 비교</h3>
+            {easy && <p className="mb-3 text-[11px] text-[var(--accent-strong)]">{EASY["매싱"]} 효율(전용률)이 높을수록 같은 면적에서 분양·임대 면적이 많아 유리합니다. ★가 추천안.</p>}
+            {(() => {
+              const opts = ai?.massingOptions || calc.massingOptions;
+              const best = Math.max(...opts.map((o) => o.efficiency || 0));
+              return (
+                <div className="mt-2 grid grid-cols-1 gap-3 md:grid-cols-3">
+                  {opts.map((m, i) => {
+                    const isBest = (m.efficiency || 0) === best;
+                    const estGfa = calc.maxGrossArea ? Math.round(calc.maxGrossArea * (m.efficiency / 100)) : null;
+                    return (
+                      <div key={i} className={`relative rounded-xl border p-4 ${isBest ? "border-[var(--accent-strong)]/50 bg-[var(--accent-soft)]" : "border-[var(--line)] bg-[var(--surface-muted)]"}`}>
+                        {isBest && <span className="absolute right-3 top-3 rounded-full bg-[var(--accent-strong)] px-2 py-0.5 text-[9px] font-black text-white">★ 추천</span>}
+                        <MassingDiagram name={m.name} active={isBest} />
+                        <p className="mt-1 text-sm font-bold text-[var(--text-primary)]">{m.name}</p>
+                        <p className="mt-0.5 text-[11px] leading-snug text-[var(--text-secondary)]">{m.description}</p>
+                        <div className="mt-2 flex items-center gap-2">
+                          <div className="h-2 flex-1 rounded-full bg-[var(--line)]"><div className="h-2 rounded-full" style={{ width: `${m.efficiency}%`, background: isBest ? "var(--accent-strong)" : "#60a5fa" }} /></div>
+                          <span className={`text-xs font-black ${isBest ? "text-[var(--accent-strong)]" : "text-blue-400"}`}>{m.efficiency}%</span>
+                        </div>
+                        {estGfa != null && (
+                          <p className="mt-1.5 text-[10px] text-[var(--text-hint)]">예상 전용 연면적 약 {estGfa.toLocaleString()}㎡</p>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
-              ))}
-            </div>
+              );
+            })()}
           </div>
 
           {ai?.summary && (
