@@ -13,6 +13,7 @@ import { apiClient } from "@/lib/api-client";
 import { useProjectStore } from "@/store/useProjectStore";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { ImageUpload } from "@/components/ui/ImageUpload";
+import { DataLineageTooltip } from "@/components/common/DataLineageTooltip";
 import { latestLedger } from "@/lib/analysis-ledger";
 
 // 무거운 패널은 클라이언트 전용(ssr:false)으로 코드분할 — Cloudflare Worker SSR 부하(1102) 완화
@@ -288,12 +289,14 @@ export default function ProjectDetailPage() {
               <h1 className="text-6xl font-[1000] tracking-tighter text-[var(--text-primary)] leading-[0.9] sm:text-7xl lg:text-8xl">
                 {meta?.name ?? "알 수 없는 프로젝트"}<span className="text-[var(--accent-strong)]">.</span>
               </h1>
-              <div className="flex flex-wrap gap-6">
-                <span className="rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-soft)] px-6 py-2.5 text-[11px] font-black uppercase tracking-widest text-[var(--text-secondary)] backdrop-blur-md shadow-[var(--shadow-sm)]">
+              <div className="flex flex-wrap items-center gap-6">
+                <span className="inline-flex items-center gap-1.5 rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-soft)] px-6 py-2.5 text-[11px] font-black uppercase tracking-widest text-[var(--text-secondary)] backdrop-blur-md shadow-[var(--shadow-sm)]">
                   {ctxSite?.pnu ?? meta?.pnu_codes?.[0] ?? meta?.pnu ?? "PNU 미상"}
+                  {ctxSite?.pnu && <DataLineageTooltip dataSource={ctxSite?.dataSource} fetchedAt={ctxSite?.fetchedAt} />}
                 </span>
-                <span className="rounded-2xl border border-[var(--accent-strong)]/30 bg-[var(--accent-soft)] px-6 py-2.5 text-[11px] font-black uppercase tracking-widest text-[var(--accent-strong)] backdrop-blur-md shadow-[var(--shadow-sm)]">
+                <span className="inline-flex items-center gap-1.5 rounded-2xl border border-[var(--accent-strong)]/30 bg-[var(--accent-soft)] px-6 py-2.5 text-[11px] font-black uppercase tracking-widest text-[var(--accent-strong)] backdrop-blur-md shadow-[var(--shadow-sm)]">
                   {ctxSite?.zoneCode ?? meta?.zone_type ?? meta?.zone ?? "용도지역 미상"}
+                  {ctxSite?.zoneCode && <DataLineageTooltip dataSource={ctxSite?.dataSource} fetchedAt={ctxSite?.fetchedAt} />}
                 </span>
               </div>
             </motion.div>

@@ -11,6 +11,7 @@ import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { verifyLedger } from "@/lib/analysis-ledger";
 import { SiteScoreCard } from "@/components/projects/SiteScoreCard";
 import { BuildableEnvelopeCard } from "@/components/projects/BuildableEnvelopeCard";
+import { DataLineageTooltip } from "@/components/common/DataLineageTooltip";
 
 const eok = (won: number | null | undefined): string | null =>
   won != null ? `${(won / 1e8).toLocaleString(undefined, { maximumFractionDigits: 1 })}억` : null;
@@ -28,12 +29,25 @@ function Tile({ label, value, sub, accent }: { label: string; value: string; sub
   );
 }
 
-function Section({ title, rows }: { title: string; rows: Array<[string, string]> }) {
+function Section({
+  title,
+  rows,
+  dataSource,
+  fetchedAt,
+}: {
+  title: string;
+  rows: Array<[string, string]>;
+  dataSource?: string | null;
+  fetchedAt?: string | null;
+}) {
   const empty = rows.every(([, v]) => v === "—" || v === "분석 전");
   return (
     <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-5">
       <div className="flex items-center justify-between">
-        <h4 className="text-sm font-bold text-[var(--text-primary)]">{title}</h4>
+        <h4 className="flex items-center gap-1.5 text-sm font-bold text-[var(--text-primary)]">
+          {title}
+          <DataLineageTooltip dataSource={dataSource} fetchedAt={fetchedAt} />
+        </h4>
         {empty ? <span className="text-[10px] font-bold text-[var(--text-hint)]">분석 전</span> : null}
       </div>
       <dl className="mt-3 divide-y divide-[var(--line)]">
@@ -136,6 +150,8 @@ export function ProjectAnalysisSummary() {
       <div className="mt-5 grid gap-3 md:grid-cols-2">
         <Section
           title="1. 사업개요·입지"
+          dataSource={site?.dataSource}
+          fetchedAt={site?.fetchedAt}
           rows={[
             ["주소", site?.address ?? "—"],
             ["PNU", site?.pnu ?? "—"],
@@ -159,6 +175,8 @@ export function ProjectAnalysisSummary() {
         />
         <Section
           title="3. 공사비"
+          dataSource={cost?.source ? `공사비 산정(${cost.source})` : undefined}
+          fetchedAt={site?.fetchedAt}
           rows={[
             ["총공사비", eok(cost?.totalConstructionCostWon) ?? "—"],
             ["평당", cost?.perPyeongWon != null ? num(cost.perPyeongWon, " 원") : "—"],

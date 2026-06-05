@@ -9,6 +9,7 @@ import { NumberInput } from "@/components/common/NumberInput";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import { ApiClientError, apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { AnalysisVerdict } from "@/components/analysis/AnalysisVerdict";
 import type { Locale } from "@/i18n/config";
 
 type ProjectResponse = {
@@ -621,16 +622,22 @@ export function ProjectFinanceWorkspaceClient({
                   value={formatDate(locale, avmResult.created_at)}
                 />
               </div>
-              {(avmResult.valuation_narrative || avmResult.investment_recommendation) && (
-                <div className="mt-4 rounded-2xl border border-blue-500/30 bg-blue-500/5 p-5 space-y-3">
-                  <p className="text-sm font-black text-blue-400">🧠 AI 가치평가 해석</p>
-                  <AvmNarr label="추정 근거" text={avmResult.valuation_narrative} />
-                  <AvmNarr label="비교 사례 분석" text={avmResult.comparable_explanation} />
-                  <AvmNarr label="시장 포지셔닝" text={avmResult.market_position} />
-                  <AvmNarr label="가치 전망" text={avmResult.appreciation_outlook} />
-                  <AvmNarr label="투자 의견" text={avmResult.investment_recommendation} emphasis />
-                </div>
-              )}
+              {/* AI 가치평가 해석 + 검증 통합 카드(AnalysisVerdict) — 해석만 있던 화면에 검증 추가 노출 */}
+              <div className="mt-4">
+                <AnalysisVerdict
+                  analysisType="avm"
+                  context={{ avm: avmResult } as unknown as Record<string, unknown>}
+                  interpretation={[
+                    { label: "추정 근거", text: avmResult.valuation_narrative ?? "" },
+                    { label: "비교 사례 분석", text: avmResult.comparable_explanation ?? "" },
+                    { label: "시장 포지셔닝", text: avmResult.market_position ?? "" },
+                    { label: "가치 전망", text: avmResult.appreciation_outlook ?? "" },
+                    { label: "투자 의견", text: avmResult.investment_recommendation ?? "" },
+                  ]}
+                  interpretationTitle="AI 가치평가 해석"
+                  defaultOpen
+                />
+              </div>
               </>
             ) : (
               <div className="mt-4 rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[var(--text-secondary)]">
@@ -795,28 +802,6 @@ function JeonseRiskPatterns({
           );
         })}
       </div>
-    </div>
-  );
-}
-
-function AvmNarr({
-  label,
-  text,
-  emphasis = false,
-}: {
-  label: string;
-  text?: string | null;
-  emphasis?: boolean;
-}) {
-  if (!text) return null;
-  return (
-    <div className={emphasis ? "rounded-lg bg-blue-500/10 border border-blue-500/30 p-3" : ""}>
-      <p className={`text-[11px] font-bold mb-0.5 ${emphasis ? "text-blue-300" : "text-blue-400"}`}>
-        {label}
-      </p>
-      <p className="text-[11px] text-[var(--text-secondary)] leading-relaxed whitespace-pre-line">
-        {text}
-      </p>
     </div>
   );
 }
