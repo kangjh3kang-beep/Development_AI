@@ -404,6 +404,63 @@ async def billing_summary(project_id: str):
     }
 
 
+# ── D2: 기성고 EVM 실구현 — PV/EV/AC·SPI/CPI·과다청구 이상탐지·해시체인 ──
+
+
+class BillingRegisterRequest(BaseModel):
+    """회차별 기성 등록(progress_billings 영속)."""
+    round: int = Field(..., ge=1, description="기성 회차")
+    work_type: Optional[str] = Field(None, description="공종(표준단가 대조 키)")
+    contract_amount: float = Field(0, ge=0, description="해당 공종 계약액(원)")
+    claimed_amount: float = Field(0, ge=0, description="청구액(원)")
+    claimed_qty: Optional[float] = Field(None, description="청구 물량")
+    unit_price: Optional[float] = Field(None, description="청구 단가(원/단위)")
+    contract_unit_price: Optional[float] = Field(None, description="계약 단가(원/단위, 단가이탈 기준)")
+    progress_pct: float = Field(0, ge=0, le=100, description="누적 계획 공정률(%)")
+    period_from: Optional[str] = None
+    period_to: Optional[str] = None
+    contract_total: Optional[float] = Field(None, description="전체 계약총액(없으면 회차 계약액 합)")
+
+
+@router.post("/{project_id}/billing", summary="D2 기성 등록(영속+EVM 누적+과다청구 이상탐지+해시체인)")
+async def register_billing_d2(project_id: str, req: BillingRegisterRequest) -> dict[str, Any]:
+    """회차별 기성을 영속하고, 등록 즉시 트리거된 과다청구 경고를 반환한다."""
+    from app.services.cost import billing_service
+
+    return await billing_service.register_billing(
+        project_id=project_id,
+        billing_no=req.round,
+        work_type=req.work_type,
+        contract_amount=req.contract_amount,
+        claimed_amount=req.claimed_amount,
+        claimed_qty=req.claimed_qty,
+        unit_price=req.unit_price,
+        contract_unit_price=req.contract_unit_price,
+        progress_pct=req.progress_pct,
+        period_from=req.period_from,
+        period_to=req.period_to,
+        contract_total=req.contract_total,
+    )
+
+
+@router.get("/{project_id}/billing", summary="D2 기성 목록+EVM summary+곡선+이상경고")
+async def get_billing_d2(project_id: str, contract_total: Optional[float] = None) -> dict[str, Any]:
+    """기성 회차 목록 + EVM(PV/EV/AC·SPI/CPI·누적곡선) + 과다청구 이상경고."""
+    from app.services.cost import billing_service
+
+    return await billing_service.get_billing_summary(
+        project_id=project_id, contract_total=contract_total)
+
+
+@router.get("/{project_id}/billing/anomaly", summary="D2 과다청구 이상탐지(단독)")
+async def get_billing_anomaly_d2(project_id: str, contract_total: Optional[float] = None) -> dict[str, Any]:
+    """과다청구 이상탐지 단독 조회(단가이탈·누적초과·SPI/CPI·급증)."""
+    from app.services.cost import billing_service
+
+    return await billing_service.get_anomalies(
+        project_id=project_id, contract_total=contract_total)
+
+
 @router.post("/{project_id}/feasibility", response_model=FeasibilityResultResponse)
 async def cost_to_feasibility(project_id: str, req: FeasibilityRequest):
     """원가계산서→수지분석 연동."""
