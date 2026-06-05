@@ -230,9 +230,10 @@ function EditableCell({
   };
 
   if (!fieldDef.editable) {
+    const empty = value == null || value === "" || display === "-" || display === "—" || display === "NaN";
     return (
-      <p className="text-sm font-bold text-[var(--text-primary)] truncate">
-        {display}
+      <p className={`text-sm font-bold truncate ${empty ? "text-[var(--text-hint)] font-medium" : "text-[var(--text-primary)]"}`}>
+        {empty ? "분석 전" : display}
       </p>
     );
   }
@@ -316,6 +317,35 @@ export function PipelineResultDetail({ result, onRerun }: PipelineResultDetailPr
       return cur;
     },
     [stageDataMap, overrides],
+  );
+
+  // AI 서술 해석 추출 — 스테이지 데이터에서 분석 narrative(인터프리터 텍스트)를 찾아 보고서에 노출.
+  const getNarratives = useCallback(
+    (sourceStage: string): { label: string; text: string }[] => {
+      const root = stageDataMap[sourceStage];
+      if (!root || typeof root !== "object") return [];
+      const out: { label: string; text: string }[] = [];
+      const LABELS: Record<string, string> = {
+        ai_analysis: "AI 분석", interpretation: "AI 해석", analysis: "분석", narrative: "해설",
+        opinion: "AI 의견", ai_opinion: "AI 의견", recommendation: "권고", summary_text: "요약",
+        explanation: "설명", ai_summary: "AI 요약", comment: "코멘트", review: "검토의견",
+        risk_assessment: "리스크 평가", insight: "인사이트",
+      };
+      const pushText = (label: string, v: unknown) => {
+        if (typeof v === "string" && v.trim().length > 12) out.push({ label, text: v.trim() });
+      };
+      for (const [k, v] of Object.entries(root)) {
+        if (LABELS[k]) pushText(LABELS[k], v);
+        // 인터프리터가 {ai:{section:text}} / {interpretation:{...}} 형태로 줄 수도 있음
+        else if ((k === "ai" || k === "interpretation" || k === "llm") && v && typeof v === "object") {
+          for (const [sk, sv] of Object.entries(v as Record<string, unknown>)) {
+            pushText(LABELS[sk] || sk, sv);
+          }
+        }
+      }
+      return out.slice(0, 8);
+    },
+    [stageDataMap],
   );
 
   const setFieldOverride = useCallback((sourceStage: string, fieldKey: string, value: unknown) => {
@@ -438,6 +468,23 @@ export function PipelineResultDetail({ result, onRerun }: PipelineResultDetailPr
               );
             })}
           </div>
+          {/* 종합 의견·리스크 — report 스테이지 서술이 있으면 노출 */}
+          {(() => {
+            const rec = getFieldValue("report", "recommendation") ?? getFieldValue("summary", "recommendation");
+            const risk = getFieldValue("report", "risk_level") ?? getFieldValue("summary", "risk_level");
+            const og = getFieldValue("report", "overall_grade") ?? getFieldValue("feasibility", "grade");
+            if (!rec && !risk && !og) return null;
+            return (
+              <div className="mt-3 rounded-xl border border-[var(--line-strong)] bg-[var(--surface)] p-4">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-[11px] font-black uppercase tracking-widest text-[var(--accent-strong)]">📌 종합 의견</span>
+                  {og ? <span className="rounded-full bg-[var(--accent-soft)] px-2.5 py-0.5 text-[11px] font-black text-[var(--accent-strong)]">종합등급 {String(og)}</span> : null}
+                  {risk ? <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-0.5 text-[11px] font-bold text-amber-500">리스크 {String(risk)}</span> : null}
+                </div>
+                {rec ? <p className="mt-2 text-sm leading-relaxed text-[var(--text-primary)]">{String(rec)}</p> : null}
+              </div>
+            );
+          })()}
         </div>
       </div>
 
@@ -500,6 +547,26 @@ export function PipelineResultDetail({ result, onRerun }: PipelineResultDetailPr
             );
           })}
         </div>
+
+        {/* ── AI 상세 해석(보고서형 서술) ── */}
+        {(() => {
+          const narr = getNarratives(activeSection.sourceStage);
+          if (!narr.length) return null;
+          return (
+            <div className="mt-5 space-y-3">
+              <div className="flex items-center gap-2">
+                <span className="text-sm">🤖</span>
+                <h4 className="text-sm font-bold text-[var(--accent-strong)]">AI 상세 해석</h4>
+              </div>
+              {narr.map((n, i) => (
+                <div key={i} className="rounded-xl border border-[var(--accent-strong)]/15 bg-[var(--accent-soft)]/30 p-4">
+                  <p className="mb-1 text-[11px] font-black uppercase tracking-widest text-[var(--accent-strong)]">{n.label}</p>
+                  <p className="whitespace-pre-wrap text-sm leading-relaxed text-[var(--text-secondary)]">{n.text}</p>
+                </div>
+              ))}
+            </div>
+          );
+        })()}
       </div>
 
       {/* ── Action Bar ── */}
