@@ -24,8 +24,12 @@ services:
     restart: always
     expose:
       - "8000"
-    env_file: 
+    env_file:
       - .env
+    environment:
+      # 이중 임포트 루트(app.* / apps.api.*) 해소 — A1 코로케이션 크래시(No module named 'app') 방지.
+      # Micro(.env)와 동일값을 compose에 박아 호스트 .env 의존 없이 재현 보장.
+      - PYTHONPATH=/app:/app/apps/api
     volumes:
       - ./uploads:/app/uploads
     networks:
