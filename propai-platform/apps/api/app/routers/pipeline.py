@@ -145,6 +145,12 @@ async def interpret_stage(req: InterpretRequest) -> dict[str, Any]:
     stage = (req.stage or "").strip()
     # 맥락(context) → 데이터 병합(단계 data 우선). 인터프리터 공통 키 보강.
     data = {**(req.context or {}), **(req.data or {})}
+    # ② 캐시: 동일 입력은 즉시 반환(LLM 재호출·비용 절감, 재열람 즉시 표시)
+    from app.services.ai.interpretation_cache import cache_key, get_cached, put_cached
+    ckey = cache_key(stage, data)
+    cached = await get_cached(ckey)
+    if cached:
+        return {"ok": True, "stage": stage, "sections": cached, "cached": True}
     try:
         if stage == "site_analysis":
             from app.services.ai.site_analysis_interpreter import SiteAnalysisInterpreter
@@ -169,8 +175,10 @@ async def interpret_stage(req: InterpretRequest) -> dict[str, Any]:
             sections = await ReportInterpreter().generate_report_narrative(data)
         else:
             return {"ok": False, "stage": stage, "message": "지원하지 않는 단계입니다.", "sections": {}}
-        return {"ok": isinstance(sections, dict) and bool(sections), "stage": stage,
-                "sections": sections if isinstance(sections, dict) else {}}
+        ok = isinstance(sections, dict) and bool(sections)
+        if ok:
+            await put_cached(ckey, stage, sections)   # 생성 결과 영속(다음 열람 즉시)
+        return {"ok": ok, "stage": stage, "sections": sections if isinstance(sections, dict) else {}}
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "stage": stage, "message": str(e)[:160], "sections": {}}
 
