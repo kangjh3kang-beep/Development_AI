@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiClient } from "@/lib/api-client";
+import { VerificationBadge } from "@/components/common/VerificationBadge";
 
 // 세련된 인라인 아이콘(lucide 스타일) — 이모지 대체
 function IconSparkle() {
@@ -515,6 +516,14 @@ export function PipelineResultDetail({ result, onRerun }: PipelineResultDetailPr
             )}
           </div>
         </div>
+      </div>
+
+      {/* ── 신뢰도·할루시네이션 검증 배지(보고서 전체) ── */}
+      <div className="px-6 pt-4 sm:px-8">
+        <VerificationBadge
+          analysisType="pipeline_report"
+          context={(result.summary || {}) as Record<string, unknown>}
+        />
       </div>
 
       {/* ── Executive Summary ── */}
