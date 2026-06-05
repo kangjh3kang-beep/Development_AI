@@ -39,6 +39,7 @@ from apps.api.routers import (
     integration,
     market_report,
     avm,
+    avm_vision,
     bim,
     blockchain,
     building_compliance,
@@ -334,6 +335,7 @@ app.include_router(expert_panel.router, prefix="/api/v1", tags=["전문가 패�
 app.include_router(verification.router, prefix="/api/v1", tags=["분석 검증"])
 app.include_router(registry.router, prefix="/api/v1", tags=["부동산 등기부"])
 app.include_router(avm.router, prefix="/api/v1/avm", tags=["AVM 시세추정"])
+app.include_router(avm_vision.router, prefix="/api/v1/avm-vision", tags=["이미지융합 AVM"])
 app.include_router(analytics.router, prefix="/api/v1/analytics", tags=["분석 대시보드"])
 app.include_router(integration.router, prefix="/api/v1/integration", tags=["연동 상태"])
 app.include_router(admin_lists.router, prefix="/api/v1", tags=["관리자 편집목록"])

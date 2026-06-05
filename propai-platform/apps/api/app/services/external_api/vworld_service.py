@@ -448,3 +448,65 @@ class VWorldService:
         except Exception as e:
             logger.error("토지이용계획 조회 실패: %s (%s)", pnu, str(e))
             return []
+
+    # ── VWORLD 정적 영상(항공/위성 정사영상) ──
+    IMAGE_URL = "https://api.vworld.kr/req/image"
+
+    async def get_aerial_image(
+        self,
+        lat: float,
+        lon: float,
+        zoom: int = 18,
+        size: int = 512,
+        basemap: str = "PHOTO",
+    ) -> Optional[Dict]:
+        """좌표 중심 정사영상(항공/위성) PNG 취득 (VWorld static image getmap).
+
+        라이브 검증 결과: service=image&request=getmap, center=lon,lat(필수),
+        zoom=7~18, basemap=PHOTO(항공)·PHOTO_HYBRID, size=512,512, format=png →
+        image/png bytes 반환. 키 권한/도메인(Referer) 불일치 시 JSON 오류 응답.
+
+        반환: {"bytes": <png>, "source": "VWorld-PHOTO", "center": [lon,lat],
+               "zoom": int, "size": int} 또는 None(미취득/폴백).
+        """
+        if not settings.VWORLD_API_KEY or not lat or not lon:
+            return None
+        # zoom은 7~18 범위(라이브 확인). 범위 밖이면 클램프.
+        zoom = max(7, min(18, zoom))
+        params = {
+            "service": "image",
+            "request": "getmap",
+            "key": settings.VWORLD_API_KEY,
+            "format": "png",
+            "basemap": basemap,
+            "crs": "EPSG:4326",
+            "center": f"{lon},{lat}",
+            "zoom": str(zoom),
+            "size": f"{size},{size}",
+            "version": "2.0",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=20.0, headers=self.HEADERS) as client:
+                resp = await client.get(self.IMAGE_URL, params=params)
+                ct = resp.headers.get("content-type", "")
+                # 정상 취득: PNG 매직넘버 또는 image/* content-type
+                if resp.status_code == 200 and (
+                    resp.content[:4] == b"\x89PNG" or ct.startswith("image")
+                ):
+                    return {
+                        "bytes": resp.content,
+                        "source": f"VWorld-{basemap}",
+                        "center": [lon, lat],
+                        "zoom": zoom,
+                        "size": size,
+                        "content_type": ct or "image/png",
+                    }
+                # 키 권한/파라미터 오류는 JSON으로 응답 → 폴백
+                logger.warning(
+                    "VWORLD 정사영상 미취득: status=%s ct=%s body=%s",
+                    resp.status_code, ct, resp.text[:200],
+                )
+                return None
+        except Exception as e:  # noqa: BLE001
+            logger.error("VWORLD 정사영상 취득 실패: %s,%s (%s)", lat, lon, str(e)[:200])
+            return None
