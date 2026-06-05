@@ -68,6 +68,10 @@ class Settings(BaseSettings):
     DRAWING_EXPORT_PATH: str = "/tmp/propai/drawings"
     CODIL_API_BASE: str = "https://www.codil.or.kr/api"
 
+    # 공개 API 베이스(프론트가 직접 호출하는 절대 오리진). 설정 시 디지털트윈 항공
+    # 프록시 URL을 절대화(예: https://api.4t8t.net). 미설정 시 상대 경로 유지(프론트 절대화).
+    PUBLIC_API_BASE: str = ""
+
     # RBAC
     RBAC_ENABLED: bool = True
     RBAC_DEFAULT_ROLE: str = "user"

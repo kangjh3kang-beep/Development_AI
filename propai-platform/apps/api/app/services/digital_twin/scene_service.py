@@ -84,9 +84,18 @@ def _aerial_proxy_url(lat: float, lon: float, zoom: int) -> str:
     """디지털트윈 항공 프록시 GET URL(라우터의 /aerial-image 스트리밍 엔드포인트).
 
     프론트는 이 URL을 텍스처로 직접 로드한다(키 비노출 — 서버가 VWorld 대리 호출).
+    PUBLIC_API_BASE 설정 시 절대 URL 반환(Cloudflare 프론트 오리진→api 오리진 정합·
+    WARN-1). 미설정이면 상대 경로 유지(프론트가 resolveApiOrigin으로 방어적 절대화).
     """
     qs = urlencode({"lat": f"{lat:.6f}", "lon": f"{lon:.6f}", "zoom": str(int(zoom))})
-    return f"/api/v1/digital-twin/aerial-image?{qs}"
+    path = f"/api/v1/digital-twin/aerial-image?{qs}"
+    try:
+        from app.core.config import settings
+
+        base = (getattr(settings, "PUBLIC_API_BASE", "") or "").strip().rstrip("/")
+    except Exception:  # noqa: BLE001 — 설정 미가용 시 상대 경로 폴백
+        base = ""
+    return f"{base}{path}" if base else path
 
 
 def _aerial_cover_m(lat: float, zoom: int, size: int = 512) -> float:

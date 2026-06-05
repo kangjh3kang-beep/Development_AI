@@ -455,6 +455,7 @@ async def build_terrain_mesh(
             "x_min": round(-half_m, 1), "x_max": round(half_m, 1),
             "z_min": round(-half_m, 1), "z_max": round(half_m, 1),
             "half_m": round(half_m, 1),
+            "size_m": round(half_m * 2.0, 1),
         },
         "min_elev_m": round(float(np.min(grid)), 2),
         "max_elev_m": round(float(np.max(grid)), 2),
