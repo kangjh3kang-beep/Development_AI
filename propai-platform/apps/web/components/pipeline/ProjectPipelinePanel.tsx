@@ -35,10 +35,11 @@ interface HistoryEntry {
   address: string;
   completedAt: string;
   result: PipelineRunResponse;
+  projectId?: string;   // 프로젝트별 이력 격리(대시보드=전역, 프로젝트=해당 프로젝트만)
 }
 
 const HISTORY_KEY = "propai_pipeline_history";
-const MAX_HISTORY = 5;
+const MAX_HISTORY = 20;   // 전역 보관 확대(프로젝트별 필터링 후 표시)
 
 function loadHistory(): HistoryEntry[] {
   if (typeof window === "undefined") return [];
@@ -416,12 +417,13 @@ export function ProjectPipelinePanel({
         address: addr,
         completedAt: new Date().toISOString(),
         result,
+        projectId: projectId || undefined,   // 현재 프로젝트 태깅(이력 격리용)
       };
       const updated = [entry, ...history.filter((h) => h.id !== entry.id)].slice(0, MAX_HISTORY);
       setHistory(updated);
       saveHistory(updated);
     },
-    [history],
+    [history, projectId],
   );
 
   // 이력 삭제
@@ -671,7 +673,19 @@ export function ProjectPipelinePanel({
     }
   };
 
-  const compareResults = history
+  // 프로젝트별 이력 격리: projectMode면 현재 프로젝트 이력만(레거시 무태깅은 주소매칭 폴백), 대시보드면 전역.
+  const visibleHistory = (() => {
+    if (!projectMode || !projectId) return history;
+    const norm = (s: string) => (s || "").replace(/\s+/g, "");
+    const projAddr = norm(storeAddress);
+    return history.filter((h) =>
+      h.projectId === projectId ||
+      (!h.projectId && projAddr && h.address &&
+        (norm(h.address) === projAddr || norm(h.address).includes(projAddr) || projAddr.includes(norm(h.address)))),
+    );
+  })();
+
+  const compareResults = visibleHistory
     .filter((h) => compareSelection.has(h.id))
     .map((h) => h.result);
 
@@ -1039,8 +1053,8 @@ export function ProjectPipelinePanel({
         </div>
       )}
 
-      {/* ── Analysis History ── */}
-      {history.length > 0 && (
+      {/* ── Analysis History (프로젝트별 격리) ── */}
+      {visibleHistory.length > 0 && (
         <div className="px-6 pb-6 sm:px-8 sm:pb-8">
           <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-strong)]/30 p-4 sm:p-5">
             <div className="flex items-center justify-between mb-3">
@@ -1068,7 +1082,7 @@ export function ProjectPipelinePanel({
               )}
             </div>
             <div className="space-y-1.5">
-              {history.map((entry) => {
+              {visibleHistory.map((entry) => {
                 const isSelected = compareSelection.has(entry.id);
                 const profitRate = entry.result.summary?.feasibility?.profit_rate_pct;
                 const date = new Date(entry.completedAt);
