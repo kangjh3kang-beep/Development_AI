@@ -40,11 +40,14 @@ type StageType =
 interface LifecycleStageViewsProps {
   projectId: string;
   dictionary: Record<string, any>;
+  /** 통합보고서가 위에 표시될 때(compact): 보고서와 중복되는 입지·법규·사업성·ESG 탭은 숨기고
+   *  보고서가 다루지 않는 전방 단계(설계·인허가·시공·운영)만 노출 → 옛 화면 중복 제거. */
+  compact?: boolean;
 }
 
-export function LifecycleStageViews({ projectId, dictionary }: LifecycleStageViewsProps) {
-  // 기본 탭은 가벼운 입지분석. 설계(CAD/BIM)는 자동 마운트하지 않아 진입 시 멈춤/무거움을 방지.
-  const [activeStage, setActiveStage] = useState<StageType>("site_analysis");
+export function LifecycleStageViews({ projectId, dictionary, compact = false }: LifecycleStageViewsProps) {
+  // compact면 보고서 미포함 단계부터(설계), 아니면 입지분석부터.
+  const [activeStage, setActiveStage] = useState<StageType>(compact ? "design_ai" : "site_analysis");
   // 설계 스튜디오(무거운 WebGL CAD/BIM)는 사용자가 명시적으로 열 때만 로드.
   const params = useParams();
   const locale = params.locale as string;
@@ -130,16 +133,19 @@ export function LifecycleStageViews({ projectId, dictionary }: LifecycleStageVie
     },
   ];
 
-  const stages = [
-    { id: "site_analysis", name: t.stageSite || "입지 분석", icon: "🗺️", path: "site-analysis" },
-    { id: "legal_compliance", name: t.stageLegal || "법규 검토", icon: "⚖️", path: "legal" },
-    { id: "design_ai", name: t.stageDesignAI || "AI 설계", icon: "🎨", path: "cad" },
-    { id: "feasibility", name: t.stageFeasibility || "사업성 분석", icon: "📈", path: "feasibility" },
-    { id: "esg_dashboard", name: t.stageESG || "ESG 컨설팅", icon: "🌿", path: "esg" },
-    { id: "permit_portal", name: t.stagePermits || "인허가 포털", icon: "📝", path: "permit" },
-    { id: "construction", name: t.stageConstruction || "스마트 시공", icon: "🏗️", path: "construction" },
-    { id: "operations", name: t.stageOperations || "자산 관리", icon: "⚙️", path: "operations" },
+  const allStages = [
+    { id: "site_analysis", name: t.stageSite || "입지 분석", path: "site-analysis" },
+    { id: "legal_compliance", name: t.stageLegal || "법규 검토", path: "legal" },
+    { id: "design_ai", name: t.stageDesignAI || "AI 설계", path: "cad" },
+    { id: "feasibility", name: t.stageFeasibility || "사업성 분석", path: "feasibility" },
+    { id: "esg_dashboard", name: t.stageESG || "ESG 컨설팅", path: "esg" },
+    { id: "permit_portal", name: t.stagePermits || "인허가 포털", path: "permit" },
+    { id: "construction", name: t.stageConstruction || "스마트 시공", path: "construction" },
+    { id: "operations", name: t.stageOperations || "자산 관리", path: "operations" },
   ];
+  // compact(보고서 동시표시): 보고서와 중복되는 입지·법규·사업성·ESG 제외.
+  const REPORT_COVERED = new Set(["site_analysis", "legal_compliance", "feasibility", "esg_dashboard"]);
+  const stages = compact ? allStages.filter((s) => !REPORT_COVERED.has(s.id)) : allStages;
 
   return (
     <div className="mt-20 flex flex-col gap-10">
@@ -152,13 +158,13 @@ export function LifecycleStageViews({ projectId, dictionary }: LifecycleStageVie
         </div>
         
         <div className="relative group/nav">
-          <div className="flex gap-2 overflow-x-auto pb-4 scrollbar-hide px-2 -mx-2">
-            <div className="flex gap-2 min-w-max rounded-[2.5rem] bg-[var(--surface-strong)] p-2 border border-[var(--line-strong)] shadow-[var(--shadow-2xl)] backdrop-blur-3xl">
+          <div className="px-2 -mx-2 pb-2">
+            <div className="flex flex-wrap gap-2 rounded-[2rem] bg-[var(--surface-strong)] p-2 border border-[var(--line-strong)] shadow-[var(--shadow-2xl)] backdrop-blur-3xl">
               {stages.map((stage) => (
                 <button
                   key={stage.id}
                   onClick={() => setActiveStage(stage.id as StageType)}
-                  className={`relative flex items-center gap-3 whitespace-nowrap rounded-full px-7 py-4 text-[11px] font-black uppercase tracking-[0.2em] transition-all duration-500 ${
+                  className={`relative flex items-center gap-2.5 whitespace-nowrap rounded-full px-5 py-3 text-[11px] font-black uppercase tracking-[0.15em] transition-all duration-500 ${
                     activeStage === stage.id
                       ? "text-white"
                       : "text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-soft)]"

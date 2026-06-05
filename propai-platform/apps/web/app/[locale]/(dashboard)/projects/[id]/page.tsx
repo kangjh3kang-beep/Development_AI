@@ -339,7 +339,7 @@ export default function ProjectDetailPage() {
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.5 }}
       >
-        <LifecycleStageViews projectId={id} dictionary={dictionary.deepIntegration} />
+        <LifecycleStageViews projectId={id} dictionary={dictionary.deepIntegration} compact={!!ledgerReport} />
       </motion.div>
     </div>
   );
