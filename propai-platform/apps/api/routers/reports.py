@@ -4,20 +4,56 @@ SSE 스트리밍 보고서 생성.
 """
 
 from collections.abc import AsyncIterator
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends
+from fastapi.responses import Response
+from pydantic import BaseModel
 from packages.schemas.models import InvestorReportRequest, InvestorReportResponse, InvestorReportVariantResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
-from apps.api.auth.jwt_handler import CurrentUser
+from apps.api.auth.jwt_handler import CurrentUser, get_current_user
 from apps.api.auth.rbac import RequirePermission
 from apps.api.database.session import get_db
 from apps.api.services.design_ai_service import DesignAIService
 from apps.api.services.investor_report_service import InvestorReportService
 
 router = APIRouter()
+
+
+class ReportGenerateRequest(BaseModel):
+    project_id: str
+    format: str = "pdf"
+
+
+@router.post("/generate", summary="프로젝트 통합 보고서 PDF — 분석 원장 기반(재실행 없음)")
+async def generate_report_pdf(
+    req: ReportGenerateRequest,
+    current: CurrentUser = Depends(get_current_user),
+) -> Response:
+    """프로젝트의 최신 통합 분석(원장)으로 PDF 생성. 분석 이력이 없으면 안내."""
+    from app.services.ledger import analysis_ledger_service as ledger
+    from app.services.report.pipeline_report_service import PipelineReportService
+    from app.services.report.pipeline_report_pdf import build_pipeline_report_pdf
+
+    tid = str(getattr(current, "tenant_id", "") or "") or None
+    latest = await ledger.get_latest(analysis_type="pipeline", tenant_id=tid, project_id=req.project_id)
+    payload = (latest or {}).get("payload") if isinstance(latest, dict) else None
+    if not payload or not isinstance(payload, dict):
+        return Response(
+            content='{"ok":false,"message":"통합 분석 결과가 없습니다. 프로젝트에서 전체 분석을 먼저 실행하세요."}',
+            media_type="application/json", status_code=404,
+        )
+    result_dict: dict[str, Any] = dict(payload)
+    stages = result_dict.get("stages")
+    if isinstance(stages, list):
+        result_dict["stages"] = {s.get("stage"): s for s in stages if isinstance(s, dict) and s.get("stage")}
+    report = PipelineReportService().generate(result_dict)
+    pdf = build_pipeline_report_pdf(report.model_dump())
+    return Response(content=pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": f"attachment; filename=propai_report_{req.project_id}.pdf"})
 
 
 @router.get("/stream/{project_id}")
