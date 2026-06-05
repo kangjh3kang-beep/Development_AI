@@ -422,6 +422,197 @@ async def cost_to_feasibility(project_id: str, req: FeasibilityRequest):
     }
 
 
+# ── CM 상세적산(MVP): BOQ 영속화 · 대안설계 원가비교(D1) · 시장가 3중(D4) ──
+
+
+class BoqRequest(BaseModel):
+    """BOQ(상세적산) 생성·영속화 요청 — 건축개요 기반."""
+    building_type: str = "apartment"
+    total_gfa_sqm: float = Field(gt=0)
+    floor_count_above: int = Field(1, ge=1)
+    floor_count_below: int = Field(0, ge=0)
+    structure_type: str = "RC"
+    tenant_id: Optional[str] = None
+    persist: bool = True
+
+
+class AlternativeVariant(BaseModel):
+    """대안설계 변형 — base 대비 override(구조/층수 등)."""
+    label: str
+    overrides: dict[str, Any] = Field(default_factory=dict)
+
+
+class AlternativesRequest(BaseModel):
+    """D1 대안설계 A/B 원가비교 요청."""
+    base_params: dict[str, Any] = Field(default_factory=dict)
+    variants: list[AlternativeVariant] = Field(default_factory=list)
+
+
+def _merge_params(base: dict[str, Any], overrides: dict[str, Any]) -> dict[str, Any]:
+    """base_params + overrides 병합(허용 키만)."""
+    allowed = {"building_type", "total_gfa_sqm", "floor_count_above",
+               "floor_count_below", "structure_type"}
+    out = {
+        "building_type": base.get("building_type", "apartment"),
+        "total_gfa_sqm": float(base.get("total_gfa_sqm", 0) or 0),
+        "floor_count_above": int(base.get("floor_count_above", 1) or 1),
+        "floor_count_below": int(base.get("floor_count_below", 0) or 0),
+        "structure_type": base.get("structure_type", "RC"),
+    }
+    for k, v in (overrides or {}).items():
+        if k in allowed and v is not None:
+            out[k] = v
+    out["total_gfa_sqm"] = float(out["total_gfa_sqm"])
+    out["floor_count_above"] = int(out["floor_count_above"])
+    out["floor_count_below"] = int(out["floor_count_below"])
+    return out
+
+
+@router.post("/{project_id}/boq", summary="상세적산 BOQ 생성·영속화(D4 시장가 3중·정직성 표기)")
+async def create_boq(project_id: str, req: BoqRequest) -> dict[str, Any]:
+    """건축개요로 BOQ(공종별 물량·단가·금액)를 생성하고 cost_estimate(+item)에 영속화한다.
+    각 항목에 standard/market(KCCI)/actual:null 3중 단가(D4)와 출처·신뢰구간을 부착한다."""
+    from app.services.cost.boq_builder import build_boq
+    from app.services.cost.cost_estimate_repository import save_estimate
+
+    boq = await build_boq(
+        building_type=req.building_type, total_gfa_sqm=req.total_gfa_sqm,
+        floor_count_above=req.floor_count_above, floor_count_below=req.floor_count_below,
+        structure_type=req.structure_type, qto_source="derived",
+    )
+    estimate_id: Optional[str] = None
+    if req.persist:
+        saved = await save_estimate(
+            project_id=project_id, tenant_id=req.tenant_id,
+            header=boq["header"], items=boq["items"],
+            summary=boq["summary"], badges=boq["badges"],
+        )
+        estimate_id = saved.get("estimate_id")
+
+    # D6 AI 해석(BOQ) — 실패해도 결과는 정상 반환(graceful)
+    ai_analysis: Optional[str] = None
+    try:
+        from app.services.ai.cost_interpreter import CostInterpreter
+        calc = boq.get("_calc", {})
+        interp = await CostInterpreter().generate_interpretation({
+            "project_name": project_id,
+            "building_type": req.building_type,
+            "total_gfa_sqm": req.total_gfa_sqm,
+            "floor_count": req.floor_count_above,
+            "total_cost": calc.get("total_project_cost", 0),
+            "cost_per_sqm": round(calc.get("total_project_cost", 0) / req.total_gfa_sqm)
+            if req.total_gfa_sqm else 0,
+            "cost_items": [
+                {"category": it["name"], "amount": it["amount"]} for it in boq["items"]
+            ],
+        })
+        if isinstance(interp, dict):
+            ai_analysis = interp.get("cost_analysis")
+    except Exception:  # noqa: BLE001
+        ai_analysis = None
+
+    return {
+        "ok": True,
+        "estimate_id": estimate_id,
+        "items": boq["items"],
+        "summary": boq["summary"],
+        "badges": boq["badges"],
+        "ai_cost_analysis": ai_analysis,
+    }
+
+
+@router.get("/estimate/{estimate_id}", summary="BOQ 단건 조회(영속화된 원가계산서)")
+async def get_boq(estimate_id: str) -> dict[str, Any]:
+    """영속화된 BOQ(헤더+항목)를 조회한다."""
+    from app.services.cost.cost_estimate_repository import get_estimate
+    est = await get_estimate(estimate_id)
+    if not est:
+        raise HTTPException(status_code=404, detail="estimate not found")
+    return {"ok": True, **est}
+
+
+@router.get("/{project_id}/estimates", summary="프로젝트 BOQ 목록(최신순)")
+async def list_boq(project_id: str) -> dict[str, Any]:
+    """프로젝트의 영속화된 BOQ 목록을 반환한다."""
+    from app.services.cost.cost_estimate_repository import list_estimates
+    return {"ok": True, "items": await list_estimates(project_id)}
+
+
+@router.post("/{project_id}/alternatives", summary="D1 대안설계 A/B 원가비교(변형별 델타·영향공종)")
+async def cost_alternatives(project_id: str, req: AlternativesRequest) -> dict[str, Any]:
+    """base_params 대비 각 변형(구조/층수 등 override)의 원가를 재산정하여
+    총액 델타·델타%·영향공종을 반환한다(추정)."""
+    from app.services.cost.boq_builder import build_boq
+
+    bp = _merge_params(req.base_params, {})
+    if bp["total_gfa_sqm"] <= 0:
+        raise HTTPException(status_code=422, detail="base_params.total_gfa_sqm > 0 필요")
+
+    base_boq = await build_boq(
+        building_type=bp["building_type"], total_gfa_sqm=bp["total_gfa_sqm"],
+        floor_count_above=bp["floor_count_above"], floor_count_below=bp["floor_count_below"],
+        structure_type=bp["structure_type"], qto_source="derived",
+    )
+    base_total = int(base_boq["summary"]["total"])
+    base_by_code = {it["code"]: it["amount"] for it in base_boq["items"]}
+
+    variants_out: list[dict[str, Any]] = []
+    for v in req.variants:
+        vp = _merge_params(req.base_params, v.overrides)
+        vb = await build_boq(
+            building_type=vp["building_type"], total_gfa_sqm=vp["total_gfa_sqm"],
+            floor_count_above=vp["floor_count_above"], floor_count_below=vp["floor_count_below"],
+            structure_type=vp["structure_type"], qto_source="derived",
+        )
+        v_total = int(vb["summary"]["total"])
+        delta = v_total - base_total
+        # 영향공종: 항목별 금액 변화 큰 순.
+        affected: list[str] = []
+        for it in vb["items"]:
+            b_amt = base_by_code.get(it["code"], 0)
+            if abs(it["amount"] - b_amt) > max(1, base_total * 0.005):
+                affected.append(it["name"])
+        rationale = ", ".join(
+            f"{k}={vp[k]}" for k in ("structure_type", "floor_count_above", "floor_count_below",
+                                     "total_gfa_sqm") if vp[k] != bp[k]
+        ) or "변경 없음"
+        variants_out.append({
+            "label": v.label, "total": v_total,
+            "delta": delta, "delta_pct": round(delta / base_total * 100, 2) if base_total else 0,
+            "affected_work_types": affected[:8], "rationale": rationale,
+        })
+
+    return {
+        "ok": True,
+        "base": {"total": base_total},
+        "variants": variants_out,
+        "note": "대안별 원가는 건축개요 기반 추정(±12%) — 전문 적산사 검토 권장.",
+    }
+
+
+@router.get("/unit-prices", summary="단가 SSOT 조회(D4 standard/market/actual 3중)")
+async def get_unit_prices() -> dict[str, Any]:
+    """단가 SSOT(material_unit_prices DB 우선·fallback) 목록 — standard/market/actual 3중."""
+    from app.services.cost.boq_builder import _KEY_TO_KCCI, _kcci_market_unit
+    from app.services.cost.unit_price_repository import UnitPriceRepository
+
+    prices = await UnitPriceRepository().get_prices()
+    items: list[dict[str, Any]] = []
+    for key, p in prices.items():
+        std = int(p["mat_unit"] + p["labor_unit"] + p["exp_unit"])
+        market = _kcci_market_unit(key) if key in _KEY_TO_KCCI else None
+        items.append({
+            "code": key, "name": p["spec"], "unit": p["unit"],
+            "standard": std, "market": market, "actual": None,
+            "source": p["price_source"], "basis_year": p["price_basis_year"],
+            "region": p.get("region"),
+        })
+    return {
+        "ok": True, "items": items,
+        "note": "standard=표준품셈/단가DB, market=KCCI 변동모델, actual=실적 데이터 없음. 참고용·전문 적산사 검토 권장.",
+    }
+
+
 @router.get("/{project_id}/export-excel", response_class=Response)
 async def export_excel(project_id: str):
     """원가계산서 샘플을 Excel 파일로 내보낸다."""

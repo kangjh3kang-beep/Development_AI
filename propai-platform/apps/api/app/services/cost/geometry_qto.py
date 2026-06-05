@@ -12,7 +12,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from app.services.cost.standard_quantity_estimator import UNIT_PRICES_2026
+from app.services.cost.unit_price_repository import resolve_unit_price_sync
 
 # 구조형식별 콘크리트 물량 계수(철골조는 콘크리트↓·철골 별도)
 _CONCRETE_STRUCT_FACTOR = {"RC": 1.0, "SRC": 1.05, "SC": 0.45, "철골": 0.45, "PC": 0.95, "목구조": 0.30}
@@ -61,7 +61,10 @@ def geometry_takeoff(
     rebar_ton = concrete_m3 * _REBAR_KG_PER_M3.get(structure_type, 130.0) / 1000.0
     formwork_m2 = concrete_m3 * _FORMWORK_PER_M3
 
-    c, r, f = UNIT_PRICES_2026["concrete"], UNIT_PRICES_2026["rebar"], UNIT_PRICES_2026["formwork"]
+    # 단가 SSOT(동기 fallback 경로 — 회귀 0: UNIT_PRICES_2026 동일값).
+    c = resolve_unit_price_sync("concrete")
+    r = resolve_unit_price_sync("rebar")
+    f = resolve_unit_price_sync("formwork")
     items = [
         {"name": "레미콘 타설(기하산출)", "spec": c["spec"], "unit": "m3",
          "quantity": round(concrete_m3, 1), "cost_won": _cost(c, concrete_m3)},

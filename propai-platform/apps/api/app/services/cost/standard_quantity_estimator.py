@@ -105,6 +105,9 @@ STRUCTURE_FACTORS: dict[str, float] = {
 }
 
 # ── 2026년 기준 자재 단가 (원) ──
+# ★단가 SSOT(하드코딩 fallback의 단일 출처): unit_price_repository.resolve_unit_price_sync /
+#   UnitPriceRepository.get_price 가 이 상수를 fallback 으로 사용한다. DB(material_unit_prices)가
+#   비었을 때 전환 전과 동일값을 보장(회귀 0). 신규 단가 추가/수정은 DB 또는 이 상수에서.
 
 UNIT_PRICES_2026: dict[str, dict[str, float]] = {
     "concrete": {
@@ -199,9 +202,12 @@ class StandardQuantityEstimator:
         # 5. 공종별 물량 산출
         items: list[dict[str, Any]] = []
 
+        # 단가 SSOT — 동기 fallback 경로(회귀 0: UNIT_PRICES_2026 동일값).
+        from app.services.cost.unit_price_repository import resolve_unit_price_sync
+
         # 5-1. 콘크리트
         concrete_qty = effective_area * std["concrete_m3_per_sqm"] * struct_factor * height_factor
-        prices = UNIT_PRICES_2026["concrete"]
+        prices = resolve_unit_price_sync("concrete")
         items.append(QuantityItem(
             work_code="01-콘크리트",
             item_name="레미콘 타설",
@@ -216,7 +222,7 @@ class StandardQuantityEstimator:
         # 5-2. 철근
         rebar_qty_kg = effective_area * std["rebar_kg_per_sqm"] * struct_factor * height_factor
         rebar_qty_ton = rebar_qty_kg / 1000
-        prices = UNIT_PRICES_2026["rebar"]
+        prices = resolve_unit_price_sync("rebar")
         items.append(QuantityItem(
             work_code="02-철근",
             item_name="철근 가공 및 조립",
@@ -230,7 +236,7 @@ class StandardQuantityEstimator:
 
         # 5-3. 거푸집
         formwork_qty = effective_area * std["formwork_sqm_per_sqm"] * struct_factor
-        prices = UNIT_PRICES_2026["formwork"]
+        prices = resolve_unit_price_sync("formwork")
         items.append(QuantityItem(
             work_code="03-거푸집",
             item_name="거푸집 설치 및 해체",
@@ -244,7 +250,7 @@ class StandardQuantityEstimator:
 
         # 5-4. 조적
         masonry_qty = total_gfa_sqm * std["masonry_sqm_per_sqm"]
-        prices = UNIT_PRICES_2026["masonry"]
+        prices = resolve_unit_price_sync("masonry")
         items.append(QuantityItem(
             work_code="04-조적",
             item_name="벽돌 쌓기",
@@ -258,7 +264,7 @@ class StandardQuantityEstimator:
 
         # 5-5. 방수
         waterproof_qty = total_gfa_sqm * std["waterproof_sqm_per_sqm"]
-        prices = UNIT_PRICES_2026["waterproof"]
+        prices = resolve_unit_price_sync("waterproof")
         items.append(QuantityItem(
             work_code="05-방수",
             item_name="우레탄 방수",
@@ -272,7 +278,7 @@ class StandardQuantityEstimator:
 
         # 5-6. 창호
         window_qty = total_gfa_sqm * std["window_sqm_per_sqm"]
-        prices = UNIT_PRICES_2026["window"]
+        prices = resolve_unit_price_sync("window")
         items.append(QuantityItem(
             work_code="06-창호",
             item_name="알루미늄 이중창",

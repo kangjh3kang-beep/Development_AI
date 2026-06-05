@@ -13,6 +13,9 @@ from apps.api.database.models.material_price_history import MaterialPriceHistory
 from apps.api.database.models.project import Project
 from apps.api.database.models.quantity_takeoff import QuantityTakeoff
 
+# ★시장단가 SSOT(D4 market_unit_price 출처): KCCI 변동모델(성장률·변동성·위상)의 기준값.
+#   품셈 표준단가(standard_quantity_estimator.UNIT_PRICES_2026 / material_unit_prices DB)와는
+#   별개 도메인(시장 변동 시세). 단가 3중비교에서 market 축으로 사용된다.
 _MATERIAL_LIBRARY: dict[str, dict[str, float | str | list[str]]] = {
     "ready_mix_concrete": {
         "name": "Ready-mix concrete 25-240-15",
