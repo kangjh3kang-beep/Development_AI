@@ -6,6 +6,7 @@ import { CostEstimationClient } from "@/components/analytics/CostEstimationClien
 import { CostAnalyticsWorkspaceClient } from "@/components/analytics/CostAnalyticsWorkspaceClient";
 import { CostAlternativesPanel } from "@/components/cost/CostAlternativesPanel";
 import { BoqDetailTable } from "@/components/cost/BoqDetailTable";
+import { BillingDashboard } from "@/components/cost/BillingDashboard";
 import { isValidLocale, type Locale } from "@/i18n/config";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 
@@ -13,6 +14,7 @@ const TABS = [
   ["overview", "개요 기반 분석"],
   ["boq", "상세 내역서(BOQ)·단가"],
   ["alternatives", "대안설계 원가비교"],
+  ["billing", "기성·EVM"],
 ] as const;
 type TabKey = (typeof TABS)[number][0];
 
@@ -54,6 +56,9 @@ export default function CostPage() {
 
       {/* CM Phase1 — 대안설계 원가비교(D1) */}
       {tab === "alternatives" && <CostAlternativesPanel />}
+
+      {/* CM — D2 기성고 EVM + 과다청구 이상탐지 */}
+      {tab === "billing" && <BillingDashboard />}
     </div>
   );
 }

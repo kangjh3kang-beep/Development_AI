@@ -87,6 +87,88 @@ export interface AlternativesResponse {
   note?: string;
 }
 
+/* ── D2 — 기성고 EVM + 과다청구 이상탐지 ────────────────────────────────── */
+
+/** 회차별 기성 청구 1건(영속 + 해시체인). */
+export interface BillingClaim {
+  round: number;
+  work_type: string;
+  contract_amount: number;
+  claimed_amount: number;
+  claimed_qty?: number | null;
+  unit_price?: number | null;
+  contract_unit_price?: number | null;
+  progress_pct: number;
+  period: string;
+  ledger_hash?: string | null;
+}
+
+/** EVM 누적 곡선 1포인트. */
+export interface EvmCurvePoint {
+  round: number;
+  pv: number;
+  ev: number;
+  ac: number;
+}
+
+/** EVM 요약(spi/cpi는 PV/AC=0 시 null). */
+export interface EvmSummary {
+  pv: number;
+  ev: number;
+  ac: number;
+  spi: number | null;
+  cpi: number | null;
+  curve: EvmCurvePoint[];
+}
+
+/** 과다청구 이상탐지 경고. */
+export interface BillingAnomaly {
+  level: string; // high | warn
+  type: string;
+  detail: string;
+  evidence?: Record<string, unknown> | string | number | null;
+}
+
+/** 정직성 배지(검토 권장·확정 아님 + 출처·임계치). */
+export interface BillingBadges {
+  note?: string;
+  unit_price_source?: string;
+  thresholds?: Record<string, unknown>;
+  data?: string; // no_data 등
+}
+
+/** GET /{pid}/billing 응답. */
+export interface BillingSummaryResponse {
+  ok: boolean;
+  status?: string;
+  contract_total: number;
+  claims: BillingClaim[];
+  evm: EvmSummary;
+  anomalies: BillingAnomaly[];
+  badges: BillingBadges;
+}
+
+/** POST /{pid}/billing 응답. */
+export interface BillingRegisterResponse {
+  ok: boolean;
+  claim_id?: string;
+  ledger_hash?: string | null;
+  anomalies_triggered: BillingAnomaly[];
+}
+
+/** POST /{pid}/billing 요청. */
+export interface BillingRegisterRequest {
+  round: number;
+  work_type: string;
+  contract_amount: number;
+  claimed_amount: number;
+  claimed_qty?: number;
+  unit_price?: number;
+  contract_unit_price?: number;
+  progress_pct: number;
+  period: string;
+}
+
 /** 대안설계 요청 변형 입력. */
 export interface AlternativeVariantInput {
   label: string;
