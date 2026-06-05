@@ -5,7 +5,7 @@
  * 감정평가 아님(참고용). /api/v1/land-price/desk-appraisal(/pdf).
  */
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 function apiBase(): string {
   if (typeof window !== "undefined") {
@@ -75,6 +75,7 @@ export function DeskAppraisalModal({
   });
 
   const run = async () => {
+    if (!jibun.trim()) { setErr("지번이 없습니다. 토지조서에서 지번을 입력하세요."); return; }
     setBusy("run"); setErr(null);
     try {
       const token = (typeof window !== "undefined" && localStorage.getItem("propai_access_token")) || "";
@@ -82,11 +83,21 @@ export function DeskAppraisalModal({
         method: "POST", headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         body: JSON.stringify(body()),
       });
+      if (!r.ok) { setErr(`서버 오류(${r.status}) — 잠시 후 다시 시도하세요.`); return; }
       const d = await r.json();
       if (d?.ok) setRes(d);
-      else setErr(d?.message || "추정 실패 — 공시지가/PNU 확인 필요");
-    } catch { setErr("추정 요청 실패"); } finally { setBusy(""); }
+      else setErr((d?.message || "추정 실패") + " — 공시지가가 자동조회되지 않으면 위 ‘공시지가(원/㎡)’에 직접 입력 후 다시 실행하세요.");
+    } catch { setErr("추정 요청 실패 — 네트워크 확인 후 다시 시도하세요."); } finally { setBusy(""); }
   };
+
+  // 모달 진입 시 1회 자동 조회(지번 기반 실데이터). 실패 시 사용자가 공시지가 직접 입력 가능.
+  const autoRan = useRef(false);
+  useEffect(() => {
+    if (autoRan.current) return;
+    autoRan.current = true;
+    void run();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const downloadPdf = async () => {
     setBusy("pdf"); setErr(null);
@@ -129,6 +140,7 @@ export function DeskAppraisalModal({
         </div>
 
         {err && <p className="mt-3 text-xs font-semibold text-red-500">{err}</p>}
+        {busy === "run" && !res && <p className="mt-3 text-xs text-[var(--text-secondary)]">실데이터 조회 중… (공시지가·실거래·시점수정)</p>}
 
         {res && (
           <div className="mt-5 space-y-4">

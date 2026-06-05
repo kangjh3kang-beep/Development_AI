@@ -32,6 +32,13 @@ function apiBase(): string {
 const won = (v: number | null | undefined) =>
   v == null || v === 0 ? "-" : v >= 1e8 ? `${(v / 1e8).toFixed(2)}억` : `${Math.round(v / 1e4).toLocaleString()}만`;
 
+// 금액 입력: 쉼표 포맷 표시 + 숫자만 파싱
+const fmtNum = (v: number | null | undefined) => (v == null ? "" : v.toLocaleString());
+const parseNum = (s: string): number | null => {
+  const digits = s.replace(/[^0-9]/g, "");
+  return digits === "" ? null : Number(digits);
+};
+
 function Bar({ label, ratio, color }: { label: string; ratio: number; color: string }) {
   const pct = Math.round(ratio * 100);
   return (
@@ -208,7 +215,8 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
           expected_price: d.estimated_total_won,
           ...(d.area_sqm && !r.area_sqm ? { area_sqm: d.area_sqm } : {}),
         });
-        setNotice(`「${r.jibun}」 ${d.rationale}`);
+        // 간소 메시지: 결과 금액만. 상세 근거는 '상세추정'에서 확인.
+        setNotice(`「${r.jibun}」 적정 매입가 약 ${d.estimated_total_won.toLocaleString()}원 (공시지가 기반·수정가능)`);
       } else {
         setNotice(`「${r.jibun}」 적정가 추정 실패 — ${d?.message || "공시지가 확인 필요"}. ‘자동채움’으로 면적·공부정보를 먼저 채워보세요.`);
       }
@@ -309,20 +317,20 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
                       <td className="px-1.5 py-1 min-w-[160px]"><input title={r.jibun || "지번"} className={inputCls} value={r.jibun} onChange={(e) => updateRow(projectId, r.id, { jibun: e.target.value })} /></td>
                       <td className="px-1.5 py-1 min-w-[90px]"><input title={r.owner || "소유자"} className={inputCls} value={r.owner} onChange={(e) => updateRow(projectId, r.id, { owner: e.target.value })} /></td>
                       <td className="px-1.5 py-1 w-16"><input title={r.share || "지분"} className={inputCls} value={r.share} onChange={(e) => updateRow(projectId, r.id, { share: e.target.value })} /></td>
-                      <td className="px-1.5 py-1 w-20"><input className={inputCls} type="number" value={r.area_sqm ?? ""} onChange={(e) => updateRow(projectId, r.id, { area_sqm: e.target.value ? Number(e.target.value) : null })} /></td>
+                      <td className="px-1.5 py-1 w-20"><input title={r.area_sqm != null ? `${r.area_sqm.toLocaleString()}㎡` : "면적"} className={inputCls} type="number" value={r.area_sqm ?? ""} onChange={(e) => updateRow(projectId, r.id, { area_sqm: e.target.value ? Number(e.target.value) : null })} /></td>
                       <td className="px-1.5 py-1 w-24">
-                        <select className={inputCls} value={r.owner_type} onChange={(e) => updateRow(projectId, r.id, { owner_type: e.target.value as LandRow["owner_type"] })}>
+                        <select title={r.owner_type || "소유구분"} className={inputCls} value={r.owner_type} onChange={(e) => updateRow(projectId, r.id, { owner_type: e.target.value as LandRow["owner_type"] })}>
                           <option value="">-</option><option value="사유지">사유지</option><option value="국공유지">국공유지</option>
                         </select>
                       </td>
                       <td className="px-1.5 py-1 w-36">
-                        <input title={r.expected_price ? `${r.expected_price.toLocaleString()}원` : "매입예정가"} className={inputCls} type="number" value={r.expected_price ?? ""} onChange={(e) => updateRow(projectId, r.id, { expected_price: e.target.value ? Number(e.target.value) : null })} />
+                        <input title={r.expected_price ? `${r.expected_price.toLocaleString()}원` : "매입예정가"} className={`${inputCls} text-right`} inputMode="numeric" value={fmtNum(r.expected_price)} onChange={(e) => updateRow(projectId, r.id, { expected_price: parseNum(e.target.value) })} />
                         <div className="mt-0.5 flex flex-wrap items-center gap-1">
                           <button onClick={() => estimatePrice(r)} disabled={busy === r.id} title="공시지가×지역 시세보정 기반 적정 매입가(수정가능)" className="cursor-pointer rounded bg-[var(--accent-soft)] px-1 py-0.5 text-[9px] font-bold text-[var(--accent-strong)] disabled:opacity-50">적정</button>
                           <button onClick={() => setModalRow(r)} title="예상 시세 추정 상세(5방법 비교·건물/임대·신뢰도 게이지·리포트 PDF) — 감정평가 아님" className="cursor-pointer rounded border border-[var(--accent-strong)]/40 px-1 py-0.5 text-[9px] font-bold text-[var(--accent-strong)] disabled:opacity-50">상세추정</button>
                         </div>
                       </td>
-                      <td className="px-1.5 py-1 w-28"><input className={inputCls} type="number" value={r.purchase_price ?? ""} onChange={(e) => updateRow(projectId, r.id, { purchase_price: e.target.value ? Number(e.target.value) : null })} /></td>
+                      <td className="px-1.5 py-1 w-28"><input title={r.purchase_price ? `${r.purchase_price.toLocaleString()}원` : "매입가"} className={`${inputCls} text-right`} inputMode="numeric" value={fmtNum(r.purchase_price)} onChange={(e) => updateRow(projectId, r.id, { purchase_price: parseNum(e.target.value) })} /></td>
                       <td className="px-1.5 py-1 text-center"><input type="checkbox" checked={r.contracted} onChange={(e) => updateRow(projectId, r.id, { contracted: e.target.checked })} /></td>
                       <td className="px-1.5 py-1 text-center"><input type="checkbox" checked={r.land_use_consent} onChange={(e) => updateRow(projectId, r.id, { land_use_consent: e.target.checked })} /></td>
                       <td className="px-1.5 py-1 text-center"><input type="checkbox" checked={r.district_consent} onChange={(e) => updateRow(projectId, r.id, { district_consent: e.target.checked })} /></td>
