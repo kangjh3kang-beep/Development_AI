@@ -11,6 +11,7 @@ import { Card, CardContent } from "@propai/ui";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { NumberInput } from "@/components/common/NumberInput";
 import { VerificationBadge } from "@/components/common/VerificationBadge";
+import { AvmVisionPanel } from "@/components/avm-vision/AvmVisionPanel";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import type { Locale } from "@/i18n/config";
 
@@ -469,6 +470,16 @@ export function DeskAppraisalReportClient({ locale }: { locale: Locale }) {
             </div>
           </CardContent>
         </Card>
+      )}
+
+      {/* 이미지융합 AVM (PoC) — 항공특징 기반 실험적 보정. 추정 결과의 기준값을 시드. */}
+      {res?.ok && (
+        <AvmVisionPanel
+          address={ranAddr || addr}
+          baseValueWon={res.appraised_total_won}
+          baseValuePerSqmWon={res.appraised_price_per_sqm}
+          pnu={res.pnu ?? null}
+        />
       )}
     </div>
   );
