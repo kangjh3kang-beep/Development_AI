@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
+import dynamic from "next/dynamic";
 import { motion, AnimatePresence } from "framer-motion";
 import { LandIntelligencePanel } from "@/components/projects/LandIntelligencePanel";
 import { SiteInitiator } from "@/components/projects/SiteInitiator";
@@ -11,6 +12,16 @@ import { isValidLocale, type Locale } from "@/i18n/config";
 import { useDictionary } from "@/hooks/use-dictionary";
 import { apiClient } from "@/lib/api-client";
 import { useProjectContextStore, type SiteAnalysisData } from "@/store/useProjectContextStore";
+
+// 가상준공 3D 디지털트윈 씬 — @react-three/fiber. SSR/1102 회피 위해 ssr:false 동적 마운트.
+const DigitalTwinScene = dynamic(() => import("@/components/digital-twin/DigitalTwinScene"), {
+  ssr: false,
+  loading: () => (
+    <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-8 text-center text-sm text-[var(--text-hint)]">
+      가상준공 3D 트윈 불러오는 중…
+    </div>
+  ),
+});
 
 type IconProps = React.SVGAttributes<SVGElement>;
 
@@ -463,6 +474,9 @@ export default function SiteAnalysisPage() {
 
             {/* ── Flagship C-1: 지형분석(경사도·토공량·지형단면) ── */}
             <TerrainAnalysisPanel address={siteData.address} pnu={siteData.pnu} />
+
+            {/* ── 가상준공 3D 디지털트윈(지형·필지·건물·주변 합성 뷰) ── */}
+            <DigitalTwinScene address={siteData.address} pnu={siteData.pnu} />
           </motion.div>
         )}
       </AnimatePresence>
