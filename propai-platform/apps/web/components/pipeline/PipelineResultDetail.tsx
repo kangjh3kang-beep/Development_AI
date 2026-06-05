@@ -1,7 +1,13 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiClient } from "@/lib/api-client";
+
+const NARR_LABELS: Record<string, string> = {
+  carbon_assessment: "탄소 평가", reduction_strategy: "저감 전략", certification_pathway: "인증 경로",
+  zeb_roadmap: "ZEB 로드맵", esg_investment_impact: "투자 영향", regulatory_outlook: "규제 전망",
+  summary: "요약", analysis: "분석", recommendation: "권고", opinion: "의견", risk: "리스크",
+};
 
 /* ── Types ── */
 
@@ -284,6 +290,9 @@ export function PipelineResultDetail({ result, onRerun }: PipelineResultDetailPr
   const [activeTab, setActiveTab] = useState("overview");
   const [overrides, setOverrides] = useState<Record<string, Record<string, unknown>>>({});
   const [downloading, setDownloading] = useState(false);
+  // 온디맨드 AI 해석(섹션 열람 시 단건 생성) — 저장 payload에 없을 때만
+  const [lazyNarr, setLazyNarr] = useState<Record<string, { label: string; text: string }[]>>({});
+  const [narrLoading, setNarrLoading] = useState<string | null>(null);
 
   // Merge stage data + summary data for lookup
   const stageDataMap = useMemo(() => {
@@ -347,6 +356,33 @@ export function PipelineResultDetail({ result, onRerun }: PipelineResultDetailPr
     },
     [stageDataMap],
   );
+
+  // 활성 탭에 저장된 AI 해석이 없으면 온디맨드로 단건 생성(타임아웃 안전).
+  useEffect(() => {
+    const sec = SECTIONS.find((s) => s.id === activeTab);
+    if (!sec) return;
+    const stg = sec.sourceStage;
+    if (getNarratives(stg).length > 0 || lazyNarr[stg] || narrLoading === stg) return;
+    const data = stageDataMap[stg];
+    if (!data || typeof data !== "object" || !Object.keys(data).length) return;
+    let alive = true;
+    setNarrLoading(stg);
+    apiClient
+      .postV2<{ ok?: boolean; sections?: Record<string, string> }>("/pipeline/interpret", {
+        body: { stage: stg, data }, useMock: false,
+      })
+      .then((r) => {
+        if (!alive) return;
+        const secs = (r?.sections || {}) as Record<string, string>;
+        const arr = Object.entries(secs)
+          .filter(([, v]) => typeof v === "string" && v.trim().length > 12)
+          .map(([k, v]) => ({ label: NARR_LABELS[k] || k, text: String(v).trim() }));
+        setLazyNarr((p) => ({ ...p, [stg]: arr }));
+      })
+      .catch(() => { if (alive) setLazyNarr((p) => ({ ...p, [stg]: [] })); })
+      .finally(() => { if (alive) setNarrLoading((c) => (c === stg ? null : c)); });
+    return () => { alive = false; };
+  }, [activeTab, getNarratives, stageDataMap, lazyNarr, narrLoading]);
 
   const setFieldOverride = useCallback((sourceStage: string, fieldKey: string, value: unknown) => {
     setOverrides((prev) => ({
@@ -548,15 +584,18 @@ export function PipelineResultDetail({ result, onRerun }: PipelineResultDetailPr
           })}
         </div>
 
-        {/* ── AI 상세 해석(보고서형 서술) ── */}
+        {/* ── AI 상세 해석(저장 + 온디맨드 생성) ── */}
         {(() => {
-          const narr = getNarratives(activeSection.sourceStage);
-          if (!narr.length) return null;
+          const stg = activeSection.sourceStage;
+          const narr = [...getNarratives(stg), ...(lazyNarr[stg] || [])];
+          const isLoading = narrLoading === stg && narr.length === 0;
+          if (!narr.length && !isLoading) return null;
           return (
             <div className="mt-5 space-y-3">
               <div className="flex items-center gap-2">
                 <span className="text-sm">🤖</span>
                 <h4 className="text-sm font-bold text-[var(--accent-strong)]">AI 상세 해석</h4>
+                {isLoading && <span className="text-[11px] text-[var(--text-hint)]">생성 중… (약 10초)</span>}
               </div>
               {narr.map((n, i) => (
                 <div key={i} className="rounded-xl border border-[var(--accent-strong)]/15 bg-[var(--accent-soft)]/30 p-4">
@@ -564,6 +603,13 @@ export function PipelineResultDetail({ result, onRerun }: PipelineResultDetailPr
                   <p className="whitespace-pre-wrap text-sm leading-relaxed text-[var(--text-secondary)]">{n.text}</p>
                 </div>
               ))}
+              {isLoading && (
+                <div className="rounded-xl border border-[var(--accent-strong)]/15 bg-[var(--accent-soft)]/20 p-4">
+                  <div className="h-3 w-2/3 animate-pulse rounded bg-[var(--line-strong)]" />
+                  <div className="mt-2 h-3 w-full animate-pulse rounded bg-[var(--line)]" />
+                  <div className="mt-2 h-3 w-5/6 animate-pulse rounded bg-[var(--line)]" />
+                </div>
+              )}
             </div>
           );
         })()}

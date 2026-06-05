@@ -128,6 +128,50 @@ async def run_pipeline(req: PipelineRunRequest):
     )
 
 
+class InterpretRequest(BaseModel):
+    """단계별 AI 해석(온디맨드) 요청 — 보고서 섹션 열람 시 호출."""
+    stage: str
+    data: dict[str, Any] = Field(default_factory=dict)
+
+
+@router.post("/interpret", summary="단계 AI 해석 온디맨드 생성(타임아웃 안전)")
+async def interpret_stage(req: InterpretRequest) -> dict[str, Any]:
+    """한 단계의 인터프리터를 단건 호출해 섹션별 서술 해석을 반환한다.
+
+    파이프라인 동기 실행을 막지 않도록 보고서가 섹션을 볼 때 개별 호출(각 ~10초).
+    """
+    stage = (req.stage or "").strip()
+    data = req.data or {}
+    try:
+        if stage == "site_analysis":
+            from app.services.ai.site_analysis_interpreter import SiteAnalysisInterpreter
+            sections = await SiteAnalysisInterpreter().generate_interpretation(data)
+        elif stage == "design":
+            from app.services.ai.design_interpreter import DesignInterpreter
+            sections = await DesignInterpreter().generate_interpretation(data)
+        elif stage == "cost":
+            from app.services.ai.cost_interpreter import CostInterpreter
+            sections = await CostInterpreter().generate_interpretation(data)
+        elif stage == "feasibility":
+            from app.services.ai.feasibility_interpreter import FeasibilityInterpreter
+            sections = await FeasibilityInterpreter().generate_interpretation(data)
+        elif stage == "tax":
+            from app.services.ai.tax_interpreter import TaxInterpreter
+            sections = await TaxInterpreter().generate_interpretation(data)
+        elif stage == "esg":
+            from app.services.ai.esg_interpreter import EsgInterpreter
+            sections = await EsgInterpreter().generate_interpretation(data)
+        elif stage == "report":
+            from app.services.ai.report_interpreter import ReportInterpreter
+            sections = await ReportInterpreter().generate_report_narrative(data)
+        else:
+            return {"ok": False, "stage": stage, "message": "지원하지 않는 단계입니다.", "sections": {}}
+        return {"ok": isinstance(sections, dict) and bool(sections), "stage": stage,
+                "sections": sections if isinstance(sections, dict) else {}}
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "stage": stage, "message": str(e)[:160], "sections": {}}
+
+
 @router.post("/report", response_model=PipelineReport)
 async def generate_report(req: PipelineRunRequest):
     """파이프라인 실행 + 통합 보고서 생성.
