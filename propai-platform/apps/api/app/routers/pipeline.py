@@ -179,47 +179,157 @@ def _normalize_for_interpreter(stage: str, data: dict[str, Any]) -> dict[str, An
     return d
 
 
-async def _interpret_stage(stage: str, data: dict[str, Any]) -> dict[str, Any]:
-    """단계 AI 해석(정규화+캐시+인터프리터). interpret 엔드포인트·PDF 생성 공용."""
+def _make_interpreter(stage: str):
+    """stage → 인터프리터 인스턴스. (재생성 피드백 주입을 위해 인스턴스 생성을 분리)
+
+    report만 generate_report_narrative를, 나머지는 generate_interpretation을 쓰므로
+    호출처가 hasattr로 분기한다. 미지원 stage는 None.
+    """
+    if stage == "site_analysis":
+        from app.services.ai.site_analysis_interpreter import SiteAnalysisInterpreter
+        return SiteAnalysisInterpreter()
+    if stage == "design":
+        from app.services.ai.design_interpreter import DesignInterpreter
+        return DesignInterpreter()
+    if stage == "cost":
+        from app.services.ai.cost_interpreter import CostInterpreter
+        return CostInterpreter()
+    if stage == "feasibility":
+        from app.services.ai.feasibility_interpreter import FeasibilityInterpreter
+        return FeasibilityInterpreter()
+    if stage == "tax":
+        from app.services.ai.tax_interpreter import TaxInterpreter
+        return TaxInterpreter()
+    if stage == "esg":
+        from app.services.ai.esg_interpreter import EsgInterpreter
+        return EsgInterpreter()
+    if stage in ("appraisal", "avm"):
+        from app.services.ai.avm_interpreter import AvmInterpreter
+        return AvmInterpreter()
+    if stage == "report":
+        from app.services.ai.report_interpreter import ReportInterpreter
+        return ReportInterpreter()
+    return None
+
+
+async def _run_interpreter(interp, data: dict[str, Any]) -> dict[str, str]:
+    """인터프리터 1회 실행(report/일반 분기)."""
+    if hasattr(interp, "generate_report_narrative"):
+        return await interp.generate_report_narrative(data)
+    return await interp.generate_interpretation(data)
+
+
+def _issues_text(verdict: dict[str, Any]) -> str:
+    """검증 결과(verdict dict) → 재생성 프롬프트에 주입할 이슈 요약 문자열."""
+    lines: list[str] = []
+    for it in (verdict.get("issues") or [])[:8]:
+        if not isinstance(it, dict):
+            continue
+        sev = it.get("severity", "?")
+        typ = it.get("type", "이슈")
+        claim = str(it.get("claim", ""))[:120]
+        note = str(it.get("note", ""))[:160]
+        lines.append(f"- [{sev}] {typ}: {claim} — {note}")
+    summary = str(verdict.get("summary", ""))[:200]
+    head = f"검증 요약: {summary}" if summary else ""
+    return (head + "\n" + "\n".join(lines)).strip()
+
+
+def _needs_retry(verdict: dict[str, Any]) -> bool:
+    """fail 또는 high 심각도 이슈가 있으면 재생성 대상."""
+    if not isinstance(verdict, dict):
+        return False
+    if verdict.get("verdict") == "fail":
+        return True
+    return any(
+        isinstance(i, dict) and i.get("severity") == "high"
+        for i in (verdict.get("issues") or [])
+    )
+
+
+async def _interpret_stage(
+    stage: str, data: dict[str, Any], *, use_verification_retry: bool = False
+) -> dict[str, Any]:
+    """단계 AI 해석(정규화+캐시+인터프리터). interpret 엔드포인트·PDF 생성 공용.
+
+    use_verification_retry=True면, 1차 생성 결과를 검증관(VerifierService)으로
+    검증하여 fail(또는 high 이슈)일 때 이슈를 프롬프트에 주입해 **1회만** 재생성한다.
+    재검증이 pass/warn이면 재생성본을 채택, 여전히 실패면 원본 + 경고배지를 반환한다.
+    기본값(False)은 기존 동작과 완전히 동일(무파괴).
+    """
     data = _normalize_for_interpreter(stage, data)
     from app.services.ai.interpretation_cache import cache_key, get_cached, put_cached
     ckey = cache_key(stage, data)
     cached = await get_cached(ckey)
     if cached:
         return {"ok": True, "stage": stage, "sections": cached, "cached": True}
+    interp = _make_interpreter(stage)
+    if interp is None:
+        return {"ok": False, "stage": stage, "message": "지원하지 않는 단계입니다.", "sections": {}}
     try:
-        if stage == "site_analysis":
-            from app.services.ai.site_analysis_interpreter import SiteAnalysisInterpreter
-            sections = await SiteAnalysisInterpreter().generate_interpretation(data)
-        elif stage == "design":
-            from app.services.ai.design_interpreter import DesignInterpreter
-            sections = await DesignInterpreter().generate_interpretation(data)
-        elif stage == "cost":
-            from app.services.ai.cost_interpreter import CostInterpreter
-            sections = await CostInterpreter().generate_interpretation(data)
-        elif stage == "feasibility":
-            from app.services.ai.feasibility_interpreter import FeasibilityInterpreter
-            sections = await FeasibilityInterpreter().generate_interpretation(data)
-        elif stage == "tax":
-            from app.services.ai.tax_interpreter import TaxInterpreter
-            sections = await TaxInterpreter().generate_interpretation(data)
-        elif stage == "esg":
-            from app.services.ai.esg_interpreter import EsgInterpreter
-            sections = await EsgInterpreter().generate_interpretation(data)
-        elif stage in ("appraisal", "avm"):
-            from app.services.ai.avm_interpreter import AvmInterpreter
-            sections = await AvmInterpreter().generate_interpretation(data)
-        elif stage == "report":
-            from app.services.ai.report_interpreter import ReportInterpreter
-            sections = await ReportInterpreter().generate_report_narrative(data)
-        else:
-            return {"ok": False, "stage": stage, "message": "지원하지 않는 단계입니다.", "sections": {}}
+        sections = await _run_interpreter(interp, data)
         ok = isinstance(sections, dict) and bool(sections)
-        if ok:
-            await put_cached(ckey, stage, sections)
-        return {"ok": ok, "stage": stage, "sections": sections if isinstance(sections, dict) else {}}
+        if not ok:
+            return {"ok": False, "stage": stage, "sections": {}}
+
+        if use_verification_retry:
+            retry_result = await _verify_and_maybe_retry(stage, data, interp, sections)
+            sections = retry_result["sections"]
+            extra = {k: retry_result[k] for k in ("verification", "regenerated", "verification_warning") if k in retry_result}
+        else:
+            extra = {}
+
+        await put_cached(ckey, stage, sections)
+        return {"ok": True, "stage": stage, "sections": sections, **extra}
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "stage": stage, "message": str(e)[:160], "sections": {}}
+
+
+async def _verify_and_maybe_retry(
+    stage: str, data: dict[str, Any], interp, sections: dict[str, str]
+) -> dict[str, Any]:
+    """검증 → fail시 이슈주입 1회 재생성 → 재검증. 상한 1회(무한루프 금지).
+
+    LLM 추가 호출은 1차 검증이 fail일 때만 발생(비용통제). 모든 실패는 best-effort로
+    무중단(원본 채택). 반환 dict: sections + (verification, regenerated, verification_warning).
+    """
+    try:
+        from app.services.verification.verifier_service import VerifierService
+        verifier = VerifierService()
+        v1 = await verifier.verify(stage, data, sections)
+    except Exception:  # noqa: BLE001
+        return {"sections": sections}
+
+    if not _needs_retry(v1):
+        return {"sections": sections, "verification": v1, "regenerated": False}
+
+    # ── 재생성(상한 1) ── 이슈를 프롬프트에 주입해 1회만 재호출.
+    try:
+        interp.set_retry_feedback(_issues_text(v1))
+        regen = await _run_interpreter(interp, data)
+        interp.set_retry_feedback(None)
+    except Exception:  # noqa: BLE001
+        return {"sections": sections, "verification": v1, "regenerated": False,
+                "verification_warning": "검증 실패 — 재생성 중 오류로 원본을 유지합니다."}
+
+    if not (isinstance(regen, dict) and regen):
+        return {"sections": sections, "verification": v1, "regenerated": False,
+                "verification_warning": "검증 실패 — 재생성 결과가 비어 원본을 유지합니다."}
+
+    # 재검증(2차) — 통과하면 채택, 여전히 실패면 원본 + 경고배지.
+    try:
+        v2 = await verifier.verify(stage, data, regen)
+    except Exception:  # noqa: BLE001
+        # 재검증 자체 실패 시: 재생성본은 채택하되 경고 표기.
+        return {"sections": regen, "verification": v1, "regenerated": True,
+                "verification_warning": "재생성본을 적용했으나 재검증은 일시적으로 수행되지 않았습니다."}
+
+    if _needs_retry(v2):
+        # 1회 상한 — 여전히 실패면 원본 + 경고배지 반환(무한루프 금지).
+        return {"sections": sections, "verification": v2, "regenerated": False,
+                "verification_warning": "검증에 실패했고 1회 재생성 후에도 통과하지 못해 원본을 유지합니다."}
+
+    return {"sections": regen, "verification": v2, "regenerated": True}
 
 
 async def _gather_report_narratives(result_dict: dict[str, Any], timeout: float = 28.0) -> dict[str, dict[str, str]]:
@@ -263,6 +373,50 @@ class InterpretRequest(BaseModel):
     stage: str
     data: dict[str, Any] = Field(default_factory=dict)
     context: dict[str, Any] = Field(default_factory=dict)  # 공통 맥락(주소·용도지역·면적·연면적 등)
+    # 검증 실패 시 1회 재생성 피드백루프(기본 False=보수적·기존동작). True면 fail/high시 LLM 1회 추가호출.
+    use_verification_retry: bool = False
+
+
+async def _autoload_ledger(stage: str, data: dict[str, Any], sections: dict[str, Any]) -> None:
+    """채택된 인터프리터 출력을 분석 원장에 자동 적재(best-effort, 무중단).
+
+    tenant_id는 요청 컨텍스트의 user_id로 해소(없으면 None=익명 체인). pnu/address는
+    data에서 가용분만 사용. content_hash 멱등이라 동일 출력은 버전을 늘리지 않는다.
+    어떤 실패도 본 해석 흐름을 막지 않는다(try/except 전체 감쌈).
+    """
+    if not (isinstance(sections, dict) and sections):
+        return
+    try:
+        pnu = data.get("pnu") or data.get("PNU")
+        address = data.get("address")
+        if not (pnu or address):
+            return  # 체인 식별자가 없으면 적재 스킵(무의미한 익명 누적 방지)
+        tenant_id = None
+        try:
+            from app.core.request_context import get_current_user_id
+            uid = get_current_user_id()
+            if uid:
+                from app.core.database import async_session_factory
+                from sqlalchemy import text
+                async with async_session_factory() as db:
+                    row = (await db.execute(
+                        text("SELECT tenant_id FROM public.users WHERE id = :uid"),
+                        {"uid": uid})).first()
+                    if row and row[0]:
+                        tenant_id = str(row[0])
+        except Exception:  # noqa: BLE001
+            pass
+        await ledger.append_analysis(
+            analysis_type=stage,
+            payload=sections,
+            tenant_id=tenant_id,
+            pnu=str(pnu) if pnu else None,
+            address=str(address) if address else None,
+            project_id=str(data.get("project_id")) if data.get("project_id") else None,
+            source="interpreter",
+        )
+    except Exception:  # noqa: BLE001 — 자동적재 실패는 무시(본 흐름 무중단)
+        pass
 
 
 @router.post("/interpret", summary="단계 AI 해석 온디맨드 생성(타임아웃 안전)")
@@ -275,7 +429,10 @@ async def interpret_stage(req: InterpretRequest) -> dict[str, Any]:
     stage = (req.stage or "").strip()
     # 맥락(context) → 데이터 병합(단계 data 우선). 인터프리터 공통 키 보강.
     data = {**(req.context or {}), **(req.data or {})}
-    out = await _interpret_stage(stage, data)
+    out = await _interpret_stage(stage, data, use_verification_retry=req.use_verification_retry)
+    # B2(a): 채택된 출력 원장 자동적재(best-effort, 무중단).
+    if isinstance(out, dict) and out.get("ok"):
+        await _autoload_ledger(stage, data, out.get("sections") or {})
     return out
 
 

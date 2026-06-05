@@ -167,6 +167,17 @@ class BaseInterpreter:
     def __init__(self, *, timeout_sec: float = 90.0) -> None:
         self._timeout_sec = timeout_sec
         self._llm: Any = None
+        # 검증 실패 피드백(재생성 1회용). set_retry_feedback로 주입하면
+        # _invoke가 user_prompt 뒤에 부착하고 캐시 키에 반영해 재생성을 강제한다.
+        self._retry_feedback: str | None = None
+
+    def set_retry_feedback(self, feedback: str | None) -> None:
+        """검증관 이슈를 다음 1회 생성에 주입(재생성 피드백 루프).
+
+        부착된 피드백은 프롬프트에 더해지고 캐시 키에 반영되므로, 같은 입력이라도
+        피드백이 있으면 캐시를 우회해 LLM을 다시 호출한다(상한은 호출처가 통제).
+        """
+        self._retry_feedback = (feedback or "").strip() or None
 
     # ── P2: LLM 지연 생성(키 정상화 경유, ImportError 폴백) ──
     def _get_llm(self) -> Any:
@@ -252,6 +263,9 @@ class BaseInterpreter:
         # P4: evidence_text는 결과를 바꾸므로 캐시 키에 포함(근거 다르면 캐시 분리).
         if cache_data is not None and evidence_text:
             cache_data = {"_data": cache_data, "_evidence": evidence_text}
+        # 검증 재생성 피드백도 결과를 바꾸므로 캐시 키에 포함 → 기존 캐시 우회(재호출 강제).
+        if cache_data is not None and self._retry_feedback:
+            cache_data = {"_data": cache_data, "_retry": self._retry_feedback}
 
         # P4: L1(in-process) → L2(Redis) 순으로 조회. 적중 시 LLM 스킵.
         cache_key = self._cache_key(cache_data) if cache_data is not None else None
@@ -279,6 +293,15 @@ class BaseInterpreter:
         if evidences:
             joined = "\n".join(evidences)
             user_prompt = f"{user_prompt}\n\n## 추가 근거 자료\n{joined}"
+        # 검증 재생성 피드백 부착 — 직전 출력의 결함(할루시네이션·수치불일치 등)을
+        # 교정하도록 강한 지시를 프롬프트 말미에 추가(1회 재생성용).
+        if self._retry_feedback:
+            user_prompt = (
+                f"{user_prompt}\n\n## 검증 실패 — 재작성 필수\n"
+                f"직전 응답이 아래 사유로 검증에 실패했습니다. 반드시 교정해 다시 작성하세요.\n"
+                f"제공된 데이터에 근거하지 않은 수치·사실을 제거하고, 모든 값은 원본 데이터에서만 "
+                f"인용하세요(없으면 '데이터 없음'으로 명시).\n{self._retry_feedback}"
+            )
 
         try:
             llm = self._get_llm()
