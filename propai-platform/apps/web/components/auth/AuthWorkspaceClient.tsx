@@ -670,42 +670,16 @@ export function AuthWorkspaceClient({
       <section className="mx-auto w-full max-w-lg">
         <Card className="rounded-[var(--radius-2xl)] border border-[var(--line)] bg-[var(--surface-strong)] shadow-[var(--shadow-lg)]">
           <CardContent className="p-8 md:p-10">
-            <div className="space-y-4">
-              <span className="inline-flex rounded-full bg-[rgba(14,116,144,0.12)] px-4 py-2 text-sm font-semibold text-[var(--accent-strong)]">
-                {labels.eyebrow}
-              </span>
-              <div className="space-y-3">
-                <h1 className="text-3xl font-bold text-[var(--text-primary)] md:text-4xl">
-                  {labels.title}
-                </h1>
-                <p className="text-sm leading-7 text-[var(--text-secondary)] md:text-base">
-                  {labels.description}
-                </p>
-              </div>
+            <div className="space-y-3 mb-6">
+              <h1 className="text-3xl font-bold text-[var(--text-primary)] md:text-4xl">
+                PropAI 로그인
+              </h1>
+              <p className="text-sm leading-7 text-[var(--text-secondary)] md:text-base">
+                서비스 이용을 위해 계정에 로그인해 주세요.
+              </p>
             </div>
 
-            <div className="mt-8 flex flex-wrap gap-3">
-              {(["login", "register"] as const).map((nextMode) => (
-                <Button
-                  key={nextMode}
-                  variant={mode === nextMode ? "primary" : "secondary"}
-                  onClick={() => setMode(nextMode)}
-                  aria-pressed={mode === nextMode}
-                >
-                  {labels.modeLabels[nextMode]}
-                </Button>
-              ))}
-            </div>
-
-            <div className="mt-6 rounded-[var(--radius-xl)] border border-[var(--line)] bg-[var(--surface)] p-5">
-              <div className="space-y-2">
-                <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-hint)]">
-                  {labels.modeLabels[mode]}
-                </p>
-                <p className="text-sm leading-7 text-[var(--text-secondary)]">
-                  {labels.modeDescriptions[mode]}
-                </p>
-              </div>
+            <div className="rounded-[var(--radius-xl)] border border-[var(--line)] bg-[var(--surface)] p-5">
 
               <form className="mt-6 grid gap-4" onSubmit={handleSubmit}>
                 {mode === "register" ? (
@@ -880,15 +854,7 @@ export function AuthWorkspaceClient({
               ) : null}
             </div>
 
-            <div className="mt-6 flex flex-wrap items-center gap-3 text-sm">
-              <span className="text-[var(--text-tertiary)]">{labels.switchLabel}</span>
-              <Link
-                href={`/${locale}/${mode === "login" ? "register" : "login"}`}
-                className="rounded-full border border-[var(--line)] px-4 py-2 font-semibold text-[var(--text-primary)] transition hover:bg-white"
-              >
-                {labels.switchLinks[mode === "login" ? "register" : "login"]}
-              </Link>
-            </div>
+
           </CardContent>
         </Card>
 
