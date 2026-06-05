@@ -15,9 +15,10 @@ import { useProjectContextStore } from "@/store/useProjectContextStore";
 import type { Locale } from "@/i18n/config";
 
 const APPR_LABELS: Record<string, string> = {
-  valuation_assessment: "추정 평가", value_drivers: "가치 요인", comparable_analysis: "사례 비교",
-  market_context: "시장 맥락", risk_caveats: "유의·리스크", confidence_note: "신뢰도",
-  summary: "요약", analysis: "분석", recommendation: "권고",
+  valuation_narrative: "추정 평가", comparable_explanation: "사례 비교", market_position: "시장 포지션",
+  appreciation_outlook: "가치 전망", investment_recommendation: "투자 의견",
+  valuation_assessment: "추정 평가", value_drivers: "가치 요인", market_context: "시장 맥락",
+  risk_caveats: "유의·리스크", confidence_note: "신뢰도", summary: "요약", recommendation: "권고",
 };
 
 function apiV2Base(): string {
