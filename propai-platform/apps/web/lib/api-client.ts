@@ -28,7 +28,7 @@ function isLocalHost(host: string): boolean {
  * 요청에 사용할 API 오리진(버전 prefix 제외)을 단일 규칙으로 해석.
  * @returns 예) "https://api.4t8t.net" | "http://localhost:8000" | "http://api:8000"
  */
-function resolveApiOrigin(): string {
+export function resolveApiOrigin(): string {
   // 1) 환경변수 최우선
   if (ENV_API_ORIGIN) return ENV_API_ORIGIN;
 

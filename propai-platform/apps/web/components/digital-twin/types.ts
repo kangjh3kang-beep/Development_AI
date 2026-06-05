@@ -16,6 +16,12 @@ export interface DigitalTwinParcel {
   center_enu: Enu2;
 }
 
+/** 지형 메시 bbox(미터). size_m = half_m*2(가용 시). */
+export interface DigitalTwinBbox {
+  size_m?: number;
+  [key: string]: number | undefined;
+}
+
 /** 지형 메시(verts/indices). */
 export interface DigitalTwinTerrain {
   verts: Enu3[];
@@ -23,7 +29,7 @@ export interface DigitalTwinTerrain {
   elev0: number;
   nx: number;
   nz: number;
-  bbox_m: Record<string, number>;
+  bbox_m: DigitalTwinBbox;
 }
 
 /** 지면 항공 텍스처(VWorld PHOTO 프록시). */
@@ -71,6 +77,24 @@ export interface DigitalTwinScenePayload {
   building?: DigitalTwinBuilding;
   badges?: DigitalTwinBadges;
   sources?: string[];
+}
+
+/** POST /api/v1/digital-twin/interpret 응답(가상준공 AI 해설). */
+export interface DigitalTwinInterpretSections {
+  design_rationale: string;
+  context_fit: string;
+  view_sunlight: string;
+  development_implication: string;
+  marketing_highlight: string;
+}
+
+export interface DigitalTwinInterpretResponse {
+  ok: boolean;
+  sections?: DigitalTwinInterpretSections;
+  cached?: boolean;
+  grounding?: { used_fields: string[] };
+  note?: string;
+  message?: string;
 }
 
 /** 레이어 토글 상태. */

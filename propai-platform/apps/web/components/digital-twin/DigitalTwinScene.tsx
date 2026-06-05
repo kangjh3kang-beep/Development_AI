@@ -11,12 +11,12 @@
  */
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Canvas, useLoader } from "@react-three/fiber";
+import { Canvas } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { TextureLoader } from "three";
 import * as THREE from "three";
-import { apiClient } from "@/lib/api-client";
+import { apiClient, resolveApiOrigin } from "@/lib/api-client";
 import type {
   DigitalTwinScenePayload,
   DigitalTwinTerrain,
@@ -26,8 +26,17 @@ import type {
   DigitalTwinBuilding,
   DigitalTwinLayers,
 } from "./types";
+import { DigitalTwinAiCard } from "./DigitalTwinAiCard";
 
 const ACCENT = "#3b82f6";
+
+/** 항공 프록시 URL 절대화 — 백엔드가 상대경로(/api/...)를 주면 API 오리진과 결합.
+ *  절대 URL이면 그대로. Cloudflare 프론트 오리진에서 api.4t8t.net로 보내기 위함(WARN-1). */
+function absolutizeAerialUrl(url: string): string {
+  if (/^https?:\/\//.test(url)) return url;
+  const origin = resolveApiOrigin();
+  return url.startsWith("/") ? `${origin}${url}` : `${origin}/${url}`;
+}
 
 /** 표고 그라데이션(저→고): 청록 → 초록 → 황 → 적갈. */
 function elevationColor(t: number): THREE.Color {
@@ -117,7 +126,7 @@ function TerrainMesh({
     <mesh geometry={geometry} receiveShadow>
       {useAerial && aerial?.image_proxy_url ? (
         <Suspense fallback={<meshStandardMaterial color="#1e293b" roughness={1} metalness={0} />}>
-          <AerialMaterial url={aerial.image_proxy_url} />
+          <AerialMaterial url={absolutizeAerialUrl(aerial.image_proxy_url)} />
         </Suspense>
       ) : (
         <meshStandardMaterial vertexColors flatShading roughness={0.95} metalness={0} />
@@ -126,9 +135,37 @@ function TerrainMesh({
   );
 }
 
-/** 항공 텍스처 머티리얼(프록시 URL). useLoader는 Suspense로 처리. */
+/** 항공 텍스처 머티리얼(절대 프록시 URL). 로드 실패(404/CORS) 시 회색 폴백 유지. */
 function AerialMaterial({ url }: { url: string }) {
-  const texture = useLoader(TextureLoader, url);
+  const [texture, setTexture] = useState<THREE.Texture | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loader = new TextureLoader();
+    // three TextureLoader 기본 crossOrigin=anonymous(CORS 응답 필요).
+    loader.setCrossOrigin("anonymous");
+    loader.load(
+      url,
+      (tex) => {
+        if (cancelled) {
+          tex.dispose();
+          return;
+        }
+        setTexture(tex);
+      },
+      undefined,
+      () => {
+        /* 로드 실패는 무시 — 회색 폴백 유지 */
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [url]);
+
+  if (!texture) {
+    return <meshStandardMaterial color="#1e293b" roughness={1} metalness={0} />;
+  }
   return <meshStandardMaterial map={texture} roughness={0.95} metalness={0} />;
 }
 
@@ -400,6 +437,8 @@ export default function DigitalTwinScene({
   const inp =
     "h-9 w-full rounded-lg border border-[var(--line)] bg-[var(--surface-strong)] px-3 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]";
   const hasBuildingGlb = !!payload?.building?.glb_url;
+  // 카메라 거리 기준 폭: size_m 우선 → cover_m → 200(SceneContent와 동일 규칙).
+  const camSpan = payload?.terrain?.bbox_m?.size_m ?? payload?.aerial?.cover_m ?? 200;
 
   return (
     <div className="flex flex-col gap-6 rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-strong)]/60 p-6 shadow-[var(--shadow-xl)] backdrop-blur-xl">
@@ -468,15 +507,15 @@ export default function DigitalTwinScene({
           {/* 정직성 배지 */}
           <HonestyBadges payload={payload} />
 
-          {/* 3D 캔버스 */}
+          {/* 3D 캔버스 — 카메라 거리는 size_m 우선(없으면 cover_m→200) */}
           <div className="relative h-[560px] w-full overflow-hidden rounded-3xl border border-[var(--line-strong)] bg-[#0d1520]">
             <Canvas
               shadows
               camera={{
                 position: [
-                  (payload.terrain?.bbox_m?.size_m ?? 200) * 0.7,
-                  (payload.terrain?.bbox_m?.size_m ?? 200) * 0.6 + (payload.terrain?.elev0 ?? 0),
-                  (payload.terrain?.bbox_m?.size_m ?? 200) * 0.7,
+                  camSpan * 0.7,
+                  camSpan * 0.6 + (payload.terrain?.elev0 ?? 0),
+                  camSpan * 0.7,
                 ],
                 fov: 45,
                 near: 0.5,
@@ -505,6 +544,13 @@ export default function DigitalTwinScene({
           {payload.sources && payload.sources.length > 0 && (
             <p className="text-[10px] text-[var(--text-hint)]">출처: {payload.sources.join(" · ")}</p>
           )}
+
+          {/* 가상준공 AI 해설 */}
+          <DigitalTwinAiCard
+            address={addr || address}
+            pnu={pnu}
+            scenePayload={payload}
+          />
         </>
       )}
     </div>
