@@ -72,8 +72,9 @@ export function QtoBreakdown({ projectId }: { projectId: string }) {
         <Tile label="공사비(예상)" value={eok(res.range?.expected_won)} sub={`${eok(res.range?.min_won)} ~ ${eok(res.range?.max_won)}`} accent />
         <Tile label="지상/지하" value={`${Math.round(res.gfa_above_sqm ?? 0).toLocaleString()} / ${Math.round(res.gfa_below_sqm ?? 0).toLocaleString()}㎡`} />
         <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-3">
-          <p className="text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)]">물량 출처</p>
+          <p className="text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)]">물량 출처 · 신뢰도</p>
           <p className={`mt-1 text-sm font-[1000] ${isBim ? "text-emerald-500" : "text-[var(--text-secondary)]"}`}>{isBim ? "🧩 BIM 모델 실치수" : "📐 기하 추정"}</p>
+          <p className="mt-0.5 text-[10px] text-[var(--text-secondary)]">{isBim ? "신뢰도 높음 (±5% · IFC 실물량)" : "신뢰도 보통 (±12% · 연면적·층수 역산)"}</p>
         </div>
       </div>
 
