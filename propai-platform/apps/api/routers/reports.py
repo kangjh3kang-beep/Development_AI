@@ -51,7 +51,14 @@ async def generate_report_pdf(
     if isinstance(stages, list):
         result_dict["stages"] = {s.get("stage"): s for s in stages if isinstance(s, dict) and s.get("stage")}
     report = PipelineReportService().generate(result_dict)
-    pdf = build_pipeline_report_pdf(report.model_dump())
+    # AI 상세 해석 포함(캐시 우선, 미스는 생성 — 타임아웃 내 완료분)
+    narratives: dict[str, Any] = {}
+    try:
+        from app.routers.pipeline import _gather_report_narratives
+        narratives = await _gather_report_narratives(result_dict)
+    except Exception:  # noqa: BLE001
+        narratives = {}
+    pdf = build_pipeline_report_pdf(report.model_dump(), narratives=narratives)
     return Response(content=pdf, media_type="application/pdf",
                     headers={"Content-Disposition": f"attachment; filename=propai_report_{req.project_id}.pdf"})
 

@@ -177,25 +177,9 @@ def _normalize_for_interpreter(stage: str, data: dict[str, Any]) -> dict[str, An
     return d
 
 
-class InterpretRequest(BaseModel):
-    """단계별 AI 해석(온디맨드) 요청 — 보고서 섹션 열람 시 호출."""
-    stage: str
-    data: dict[str, Any] = Field(default_factory=dict)
-    context: dict[str, Any] = Field(default_factory=dict)  # 공통 맥락(주소·용도지역·면적·연면적 등)
-
-
-@router.post("/interpret", summary="단계 AI 해석 온디맨드 생성(타임아웃 안전)")
-async def interpret_stage(req: InterpretRequest) -> dict[str, Any]:
-    """한 단계의 인터프리터를 단건 호출해 섹션별 서술 해석을 반환한다.
-
-    파이프라인 동기 실행을 막지 않도록 보고서가 섹션을 볼 때 개별 호출(각 ~10초).
-    공통 맥락(주소·용도지역·면적·연면적)을 단계 데이터에 병합해 해석 품질을 높인다.
-    """
-    stage = (req.stage or "").strip()
-    # 맥락(context) → 데이터 병합(단계 data 우선). 인터프리터 공통 키 보강.
-    data = {**(req.context or {}), **(req.data or {})}
+async def _interpret_stage(stage: str, data: dict[str, Any]) -> dict[str, Any]:
+    """단계 AI 해석(정규화+캐시+인터프리터). interpret 엔드포인트·PDF 생성 공용."""
     data = _normalize_for_interpreter(stage, data)
-    # ② 캐시: 동일 입력은 즉시 반환(LLM 재호출·비용 절감, 재열람 즉시 표시)
     from app.services.ai.interpretation_cache import cache_key, get_cached, put_cached
     ckey = cache_key(stage, data)
     cached = await get_cached(ckey)
@@ -230,10 +214,67 @@ async def interpret_stage(req: InterpretRequest) -> dict[str, Any]:
             return {"ok": False, "stage": stage, "message": "지원하지 않는 단계입니다.", "sections": {}}
         ok = isinstance(sections, dict) and bool(sections)
         if ok:
-            await put_cached(ckey, stage, sections)   # 생성 결과 영속(다음 열람 즉시)
+            await put_cached(ckey, stage, sections)
         return {"ok": ok, "stage": stage, "sections": sections if isinstance(sections, dict) else {}}
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "stage": stage, "message": str(e)[:160], "sections": {}}
+
+
+async def _gather_report_narratives(result_dict: dict[str, Any], timeout: float = 28.0) -> dict[str, dict[str, str]]:
+    """보고서 PDF용 — 단계별 AI 해석을 병렬 수집(캐시 우선, 미스는 생성). 타임아웃 내 완료분만."""
+    import asyncio
+
+    stages_map = result_dict.get("stages") or {}
+    summary = result_dict.get("summary") or {}
+    site = (stages_map.get("site_analysis") or {})
+    site_data = site.get("data") if isinstance(site, dict) else {}
+    ctx = {
+        "address": result_dict.get("address") or (site_data or {}).get("address"),
+        "zone_type": (site_data or {}).get("zone_type") or ((site_data or {}).get("basic") or {}).get("zone_type"),
+    }
+    targets = ["site_analysis", "design", "cost", "feasibility", "tax", "esg"]
+    jobs = []
+    for stg in targets:
+        s = stages_map.get(stg)
+        d = s.get("data") if isinstance(s, dict) else None
+        if not isinstance(d, dict) or not d:
+            # summary 폴백
+            d = summary.get(stg) if isinstance(summary.get(stg), dict) else None
+        if isinstance(d, dict) and d:
+            jobs.append((stg, _interpret_stage(stg, {**ctx, **d})))
+    if not jobs:
+        return {}
+    out: dict[str, dict[str, str]] = {}
+    try:
+        results = await asyncio.wait_for(
+            asyncio.gather(*[j for _, j in jobs], return_exceptions=True), timeout=timeout)
+        for (stg, _), r in zip(jobs, results):
+            if isinstance(r, dict) and r.get("ok") and isinstance(r.get("sections"), dict):
+                out[stg] = r["sections"]
+    except asyncio.TimeoutError:
+        pass
+    return out
+
+
+class InterpretRequest(BaseModel):
+    """단계별 AI 해석(온디맨드) 요청 — 보고서 섹션 열람 시 호출."""
+    stage: str
+    data: dict[str, Any] = Field(default_factory=dict)
+    context: dict[str, Any] = Field(default_factory=dict)  # 공통 맥락(주소·용도지역·면적·연면적 등)
+
+
+@router.post("/interpret", summary="단계 AI 해석 온디맨드 생성(타임아웃 안전)")
+async def interpret_stage(req: InterpretRequest) -> dict[str, Any]:
+    """한 단계의 인터프리터를 단건 호출해 섹션별 서술 해석을 반환한다.
+
+    파이프라인 동기 실행을 막지 않도록 보고서가 섹션을 볼 때 개별 호출(각 ~10초).
+    공통 맥락(주소·용도지역·면적·연면적)을 단계 데이터에 병합해 해석 품질을 높인다.
+    """
+    stage = (req.stage or "").strip()
+    # 맥락(context) → 데이터 병합(단계 data 우선). 인터프리터 공통 키 보강.
+    data = {**(req.context or {}), **(req.data or {})}
+    out = await _interpret_stage(stage, data)
+    return out
 
 
 @router.post("/report", response_model=PipelineReport)
@@ -290,7 +331,8 @@ async def generate_report_pdf(req: ReportPdfRequest):
         result_dict = state.model_dump()
 
     report = PipelineReportService().generate(result_dict)
-    pdf = build_pipeline_report_pdf(report.model_dump())
+    narratives = await _gather_report_narratives(result_dict)
+    pdf = build_pipeline_report_pdf(report.model_dump(), narratives=narratives)
     return Response(
         content=pdf, media_type="application/pdf",
         headers={"Content-Disposition": "attachment; filename=propai_report.pdf"},

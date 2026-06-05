@@ -19,8 +19,15 @@ def _fmt(v: Any) -> str:
     return str(v)
 
 
-def build_pipeline_report_pdf(report: dict[str, Any]) -> bytes:
-    """통합 분석 보고서(dict) → PDF(bytes). report=PipelineReport.model_dump() 형태."""
+_STAGE_LABEL = {
+    "site_analysis": "입지 분석", "design": "건축 계획", "cost": "공사비",
+    "feasibility": "사업성·수지", "tax": "세금", "esg": "ESG·탄소",
+}
+
+
+def build_pipeline_report_pdf(report: dict[str, Any], narratives: dict[str, Any] | None = None) -> bytes:
+    """통합 분석 보고서(dict) → PDF(bytes). report=PipelineReport.model_dump() 형태.
+    narratives={stage:{section:text}} 제공 시 'AI 상세 해석' 섹션 추가."""
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.units import mm
     from reportlab.lib import colors
@@ -98,6 +105,18 @@ def build_pipeline_report_pdf(report: dict[str, Any]) -> bytes:
             ("BACKGROUND", (0, 0), (0, -1), colors.whitesmoke),
         ]))
         el.append(t)
+
+    # AI 상세 해석(narratives 제공 시)
+    if narratives:
+        el.append(Paragraph("AI 상세 해석", h))
+        for stg, secs in narratives.items():
+            if not isinstance(secs, dict) or not secs:
+                continue
+            el.append(Paragraph(_STAGE_LABEL.get(stg, stg), ParagraphStyle(
+                "sub", parent=body, fontName=font, fontSize=10, spaceBefore=6, spaceAfter=2, textColor=colors.HexColor("#1f2937"))))
+            for k, v in secs.items():
+                if isinstance(v, str) and v.strip():
+                    el.append(Paragraph(f"<b>· {k}</b> {v.strip()}", body))
 
     el.append(Spacer(1, 10))
     el.append(Paragraph("※ 본 보고서는 공개데이터·AI 분석 기반 참고 자료이며, 최종 판단은 사용자가 결정합니다.", small))
