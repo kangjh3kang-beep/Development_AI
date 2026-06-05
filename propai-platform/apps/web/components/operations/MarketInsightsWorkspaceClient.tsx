@@ -247,7 +247,7 @@ export function MarketInsightsWorkspaceClient() {
     <section className="grid gap-6">
       {/* 헤더 */}
       <div>
-        <h2 className="text-2xl font-black text-[var(--text-primary)]">시장 동향 분석</h2>
+        <h2 className="text-2xl font-black text-[var(--text-primary)]">시장·시세 분석</h2>
         <p className="mt-1 text-sm text-[var(--text-secondary)]">
           주소를 입력하면 주변 실거래가·시세 추이·시장 동향을 <b className="text-[var(--text-primary)]">자동으로 분석</b>합니다. (별도 실행 버튼 없이 주소 기준 즉시 분석)
         </p>

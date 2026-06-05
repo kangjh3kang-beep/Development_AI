@@ -110,38 +110,38 @@ export default async function DashboardLayout({
   // I. 프로젝트 분석 (핵심 워크플로우)
   const lifecycleNavigation = [
     { href: `/${locale}`, label: "대시보드", icon: <IconDashboard /> },
-    { href: `/${locale}/precheck`, label: "90초 AI PreCheck", icon: <IconPermit /> },
+    { href: `/${locale}/precheck`, label: "90초 사업성 진단", icon: <IconPermit /> },
     { href: `/${locale}/projects`, label: "프로젝트 관리", icon: <IconProject /> },
-    { href: `/${locale}/market-insights`, label: "마켓 분석", icon: <IconMarket /> },
-    { href: `/${locale}/permits`, label: "인.허가분석 자동화", icon: <IconPermit /> },
-    { href: `/${locale}/regulations`, label: "부동산 규제 연동", icon: <IconRegulation /> },
+    { href: `/${locale}/market-insights`, label: "시장·시세 분석", icon: <IconMarket /> },
+    { href: `/${locale}/permits`, label: "인허가 가능성 분석", icon: <IconPermit /> },
+    { href: `/${locale}/regulations`, label: "개발 규제 한눈에 보기", icon: <IconRegulation /> },
   ];
 
   // I-2. 토지조서 관리 (편입토지) — 등기 열람/분석을 하위로
   const landNavigation = [
-    { href: `/${locale}/land-schedule`, label: "토지조서 (편입토지)", icon: <IconProject /> },
-    { href: `/${locale}/registry-analysis`, label: "└ 부동산등기 열람/분석", icon: <IconPermit /> },
-    { href: `/${locale}/desk-appraisal`, label: "└ 예상 시세 추정 보고서", icon: <IconPermit /> },
+    { href: `/${locale}/land-schedule`, label: "토지조서(매입 대상 토지)", icon: <IconProject /> },
+    { href: `/${locale}/registry-analysis`, label: "└ 등기부등본 열람·권리분석", icon: <IconPermit /> },
+    { href: `/${locale}/desk-appraisal`, label: "└ AI 시세추정 보고서", icon: <IconPermit /> },
   ];
 
   // I-3. 분양관리 ERP (v62 — 현장별 분양 운영 + 모델하우스 데스크)
   const salesNavigation = [
     { href: `/${locale}/sales`, label: "분양 현장 관리", icon: <IconProject /> },
-    { href: `/${locale}/sales/projection`, label: "└ 시행사 요약 현황", icon: <IconMarket /> },
+    { href: `/${locale}/sales/projection`, label: "└ 분양 요약(경영진용)", icon: <IconMarket /> },
   ];
 
   // II. 수익·비용·ESG
   const analyticsNavigation = [
     { href: `/${locale}/analytics/investment`, label: "투자 수익성 (ROI)", icon: <IconROI /> },
     { href: `/${locale}/analytics/cost`, label: "공사비 정밀 분석", icon: <IconCost /> },
-    { href: `/${locale}/analytics/esg`, label: "ESG / 탄소 경영", icon: <IconESG /> },
+    { href: `/${locale}/analytics/esg`, label: "ESG·탄소 평가(친환경 점수)", icon: <IconESG /> },
   ];
 
   // III. 입찰·자산 운영
   // 미작동/리소스초과(Cloudflare 1102) 메뉴 제거: 데이터허브(IoT)·디지털트윈(FM)·
   // 시설관리점검·현장안전관제·국가데이터거점(KDX). 추후 실구현 시 복원.
   const operationsNavigation = [
-    { href: `/${locale}/auction`, label: "경공매 AI 분석", icon: <IconAuction /> },
+    { href: `/${locale}/auction`, label: "경매·공매 AI 분석", icon: <IconAuction /> },
     { href: `/${locale}/g2b`, label: "공공입찰 (나라장터)", icon: <IconAuction /> },
   ];
 
@@ -163,8 +163,8 @@ export default async function DashboardLayout({
 
   // I-4. 설계 스튜디오 (CAD 자동설계 / BIM·적산 분리)
   const designNavigation = [
-    { href: `/${locale}/design-studio`, label: "AI 자동설계 (CAD)", icon: <IconProject /> },
-    { href: `/${locale}/bim-studio`, label: "BIM · 적산", icon: <IconCost /> },
+    { href: `/${locale}/design-studio`, label: "AI 설계도면(CAD)", icon: <IconProject /> },
+    { href: `/${locale}/bim-studio`, label: "3D 모델·공사물량(BIM·적산)", icon: <IconCost /> },
   ];
 
   const sections = [
@@ -173,7 +173,7 @@ export default async function DashboardLayout({
     { title: "토지조서 관리", items: landNavigation },
     { title: "분양관리 ERP", items: salesNavigation },
     { title: "수익·비용·ESG", items: analyticsNavigation },
-    { title: "입찰·자산 운영", items: operationsNavigation },
+    { title: "공공입찰·경공매", items: operationsNavigation },
     { title: "지원", items: enterpriseNavigation },
     { title: "관리", items: adminNavigation, adminOnly: true },
   ];

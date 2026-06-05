@@ -158,7 +158,7 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
           <div className="flex items-center gap-3">
             <span className="text-2xl">📜</span>
             <div>
-              <h1 className="text-lg font-black text-[var(--text-primary)]">부동산 등기정보 분석</h1>
+              <h1 className="text-lg font-black text-[var(--text-primary)]">등기부등본 열람·분석</h1>
               <p className="mt-0.5 text-xs text-[var(--text-secondary)]">
                 법무사·변호사 AI가 등기부등본을 분석해 소유정보·소유기간·매입금액·지분·가등기·압류·근저당·매도청구 가능여부를 제공합니다.
               </p>

@@ -161,7 +161,7 @@ export function PreCheckWorkspace() {
           <span className="rounded-lg border border-[var(--accent-strong)]/30 bg-[var(--accent-soft)] px-2 py-0.5 text-[11px] font-bold text-[var(--accent-strong)]">
             90초 PreCheck
           </span>
-          <h1 className="text-lg font-bold text-[var(--text-primary)]">AI 즉시 진단</h1>
+          <h1 className="text-lg font-bold text-[var(--text-primary)]">90초 사업성 진단</h1>
         </div>
         <p className="mb-4 text-[13px] text-[var(--text-secondary)]">
           주소만 입력하면 용도지역을 판독해 개발방식별 인허가 신호등과 주변 조닝 기회 시그널을
@@ -203,7 +203,7 @@ export function PreCheckWorkspace() {
               disabled={!canRun}
               className="h-[42px] whitespace-nowrap rounded-xl bg-[var(--accent-strong)] px-5 text-sm font-bold text-white shadow-[var(--shadow-glow)] transition-opacity disabled:cursor-not-allowed disabled:opacity-40"
             >
-              {instantLoading || zoningLoading ? "진단 중…" : "90초 즉시 진단"}
+              {instantLoading || zoningLoading ? "진단 중…" : "90초 사업성 진단"}
             </button>
           </div>
         </div>
