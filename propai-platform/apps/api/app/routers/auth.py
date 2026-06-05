@@ -78,11 +78,17 @@ async def refresh(req: RefreshRequest):
     except JWTError:
         raise HTTPException(status_code=401, detail="토큰 검증 실패")
 
+# 관리자군 role(관리자 시크릿/설정 메뉴 노출 기준 — admin_secrets._ADMIN_ROLES와 동기화)
+_ADMIN_ROLES = {"admin", "manager", "superadmin", "super_admin", "owner", "총괄관리자", "platform_admin"}
+
+
 class MeResponse(BaseModel):
     """현재 사용자 정보."""
     id: str
     email: str
     full_name: str
+    role: str = "viewer"
+    is_admin: bool = False
 
 
 class AdminUserItem(BaseModel):
@@ -94,7 +100,13 @@ class AdminUserItem(BaseModel):
 
 @router.get("/me", response_model=MeResponse)
 async def me(current_user: User = Depends(get_current_user)):
-    return {"id": str(current_user.id), "email": current_user.email, "full_name": current_user.full_name}
+    role = (getattr(current_user, "role", None) or "viewer")
+    return {
+        "id": str(current_user.id), "email": current_user.email,
+        "full_name": getattr(current_user, "full_name", "") or "",
+        "role": role,
+        "is_admin": role.strip().lower() in {r.lower() for r in _ADMIN_ROLES},
+    }
 
 @router.get("/admin/users", response_model=list[AdminUserItem])
 async def admin_list_users(

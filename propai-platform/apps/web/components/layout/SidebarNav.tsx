@@ -28,8 +28,13 @@ export function SidebarNav({ sections }: SidebarNavProps) {
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
   useEffect(() => {
     let alive = true;
-    apiClient.get<{ role?: string }>("/auth/me", { useMock: false })
-      .then((u) => { if (alive) setIsAdmin(["admin", "manager"].includes(u?.role || "")); })
+    apiClient.get<{ role?: string; is_admin?: boolean }>("/auth/me", { useMock: false })
+      .then((u) => {
+        if (alive) setIsAdmin(
+          u?.is_admin === true ||
+          ["admin", "manager", "총괄관리자", "owner", "platform_admin"].includes(u?.role || ""),
+        );
+      })
       .catch(() => { if (alive) setIsAdmin(false); });
     return () => { alive = false; };
   }, []);
