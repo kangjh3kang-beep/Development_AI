@@ -160,8 +160,15 @@ export default async function DashboardLayout({
     { href: `/${locale}/settings/lists`, label: "📋 편집 목록 관리", icon: <IconSRE /> },
   ];
 
+  // I-4. 설계 스튜디오 (CAD 자동설계 / BIM·적산 분리)
+  const designNavigation = [
+    { href: `/${locale}/design-studio`, label: "AI 자동설계 (CAD)", icon: <IconProject /> },
+    { href: `/${locale}/bim-studio`, label: "BIM · 적산", icon: <IconCost /> },
+  ];
+
   const sections = [
     { title: "프로젝트 분석", items: lifecycleNavigation },
+    { title: "설계 스튜디오", items: designNavigation },
     { title: "토지조서 관리", items: landNavigation },
     { title: "분양관리 ERP", items: salesNavigation },
     { title: "수익·비용·ESG", items: analyticsNavigation },
