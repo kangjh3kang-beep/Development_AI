@@ -7,6 +7,7 @@ import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { GlobalAddressSearch, type AddressEntry } from "@/components/common/GlobalAddressSearch";
 import { ImageUpload } from "@/components/ui/ImageUpload";
 import { apiClient } from "@/lib/api-client";
+import { consumePreCheckHandoff, type PreCheckHandoff } from "@/components/precheck/handoff";
 
 export default function NewProjectPage() {
   const router = useRouter();
@@ -14,12 +15,26 @@ export default function NewProjectPage() {
   const addProject = useProjectStore(state => state.addProject);
   const clearProject = useProjectContextStore(state => state.clearProject);
   const setProject = useProjectContextStore(state => state.setProject);
+  const updateSiteAnalysis = useProjectContextStore(state => state.updateSiteAnalysis);
 
-  // 새 프로젝트 진입 시 이전 데이터 초기화 (mount 1회)
-  useState(() => { clearProject(); });
+  // 새 프로젝트 진입 시 이전 데이터 초기화 후 PreCheck 핸드오프(있으면) 1회 소비 (mount 1회)
+  const [handoff] = useState<PreCheckHandoff | null>(() => {
+    clearProject();
+    const h = consumePreCheckHandoff();
+    // PreCheck 결과를 부지분석 컨텍스트에 시드(주소 선택 시 GlobalAddressSearch가 정밀 보강).
+    if (h) {
+      updateSiteAnalysis({
+        address: h.address,
+        zoneCode: h.zoneType,
+        landAreaSqm: h.areaSqm,
+        pnu: h.pnu,
+      });
+    }
+    return h;
+  });
 
   const [name, setName] = useState("");
-  const [location, setLocation] = useState("");
+  const [location, setLocation] = useState(handoff?.address ?? "");
   const [siteImageUrl, setSiteImageUrl] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -136,11 +151,19 @@ export default function NewProjectPage() {
             <label className="text-xs font-bold uppercase tracking-widest text-[var(--text-tertiary)]">소재지 (주소 검색)</label>
             <GlobalAddressSearch
               onChange={handleAddressChange}
+              initialAddress={handoff?.address}
               placeholder="주소를 검색하세요 (다필지 입력 가능)"
             />
             <p className="text-[11px] font-medium text-[var(--text-hint)] mt-1">
               주소를 선택하면 용도지역·대지면적·공시지가·지자체 조례를 자동 조회합니다.
             </p>
+            {handoff && (
+              <p className="mt-1 inline-flex w-fit items-center gap-1.5 rounded-lg border border-[var(--accent-strong)]/30 bg-[var(--accent-soft)] px-2.5 py-1 text-[11px] font-semibold text-[var(--accent-strong)]">
+                ✦ 90초 PreCheck 결과 승계됨
+                {handoff.zoneType ? ` · ${handoff.zoneType}` : ""}
+                {handoff.bestMethodName ? ` · 추천 ${handoff.bestMethodName}` : ""}
+              </p>
+            )}
           </div>
 
           <div className="grid gap-2 mt-4 relative z-10">

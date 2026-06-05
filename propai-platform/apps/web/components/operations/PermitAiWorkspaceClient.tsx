@@ -15,7 +15,7 @@ import { GlobalAddressSearch, type AddressEntry } from "@/components/common/Glob
 import { ParcelBoundaryMap } from "@/components/map/ParcelBoundaryMap";
 import { SolarEnvelopeCard } from "@/components/projects/SolarEnvelopeCard";
 import { ExpertPanelCard } from "@/components/common/ExpertPanelCard";
-import { VerificationBadge } from "@/components/common/VerificationBadge";
+import { AnalysisVerdict } from "@/components/analysis/AnalysisVerdict";
 import { DevelopmentScenarioCard } from "@/components/common/DevelopmentScenarioCard";
 import { RegistryBulkButton } from "@/components/common/RegistryBulkButton";
 import { apiClient } from "@/lib/api-client";
@@ -249,7 +249,13 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
             );
           })()}
 
-          <VerificationBadge analysisType="permit" context={result as unknown as Record<string, unknown>} />
+          {/* 검증 배지 + AI 인허가 해석 요약 통합 카드(상세 환경 카드는 아래 유지). */}
+          <AnalysisVerdict
+            analysisType="permit"
+            context={result as unknown as Record<string, unknown>}
+            interpretation={result.summary}
+            interpretationTitle="AI 인허가 해석"
+          />
           <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
             <CardContent className="p-6">
               <div className="flex items-center justify-between">

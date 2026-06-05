@@ -13,8 +13,10 @@
 
 import { useState } from "react";
 import dynamic from "next/dynamic";
+import { useParams, useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { apiClient, ApiClientError } from "@/lib/api-client";
+import { PRECHECK_HANDOFF_KEY, type PreCheckHandoff } from "./handoff";
 import { NumberInput } from "@/components/common/NumberInput";
 import { AnimatedCounter } from "@/components/ui/AnimatedCounter";
 import type {
@@ -75,6 +77,9 @@ const LEVEL_LABEL: Record<string, string> = { high: "높음", mid: "중간", low
 type TabKey = "instant" | "zoning";
 
 export function PreCheckWorkspace() {
+  const router = useRouter();
+  const { locale } = useParams() as { locale: string };
+
   const [address, setAddress] = useState("");
   const [areaSqm, setAreaSqm] = useState<number | null>(null);
   const [useLlm, setUseLlm] = useState(false);
@@ -151,6 +156,25 @@ export function PreCheckWorkspace() {
     setTab("instant");
     // 두 진단 병렬 — 90초 SLA 내 동시 실행
     await Promise.allSettled([runInstant(), runZoning()]);
+  }
+
+  /** PreCheck 결과를 프로젝트 생성 화면으로 승계(sessionStorage 단일 출처 → projects/new 선채움). */
+  function startProject(data: InstantPreCheckResponse) {
+    const best = data.methods.find((m) => m.code === data.summary.best);
+    const handoff: PreCheckHandoff = {
+      address: data.address || address.trim(),
+      zoneType: data.zone_type || null,
+      areaSqm: data.area_sqm ?? areaSqm,
+      pnu: data.pnu ?? null,
+      bestMethod: data.summary.best ?? null,
+      bestMethodName: best?.name ?? null,
+    };
+    try {
+      window.sessionStorage.setItem(PRECHECK_HANDOFF_KEY, JSON.stringify(handoff));
+    } catch {
+      /* sessionStorage 불가 시에도 이동은 진행(주소 미선채움 fallback) */
+    }
+    router.push(`/${locale}/projects/new`);
   }
 
   return (
@@ -250,7 +274,12 @@ export function PreCheckWorkspace() {
             exit={{ opacity: 0, y: -8 }}
             transition={{ duration: 0.2 }}
           >
-            <InstantPanel loading={instantLoading} error={instantError} data={instant} />
+            <InstantPanel
+              loading={instantLoading}
+              error={instantError}
+              data={instant}
+              onStartProject={startProject}
+            />
           </motion.div>
         ) : (
           <motion.div
@@ -274,10 +303,12 @@ function InstantPanel({
   loading,
   error,
   data,
+  onStartProject,
 }: {
   loading: boolean;
   error: string;
   data: InstantPreCheckResponse | null;
+  onStartProject: (data: InstantPreCheckResponse) => void;
 }) {
   if (loading) {
     return (
@@ -323,6 +354,25 @@ function InstantPanel({
           <Meta label="추천 개발방식" value={bestName(methods, summary.best)} accent />
           <Meta label="소요" value={`${data.elapsed_ms.toLocaleString()}ms`} />
         </div>
+      </section>
+
+      {/* 프로젝트 생성 핸드오프 — 진단 결과를 그대로 승계해 사업화 여정으로 연결 */}
+      <section className="flex flex-col gap-3 rounded-2xl border border-[var(--accent-strong)]/30 bg-[var(--accent-soft)] p-5 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <p className="text-sm font-bold text-[var(--text-primary)]">이 부지로 프로젝트를 시작할까요?</p>
+          <p className="mt-0.5 text-[12px] text-[var(--text-secondary)]">
+            진단한 주소{data.zone_type ? ` · ${data.zone_type}` : ""}
+            {summary.best ? ` · 추천 ${bestName(methods, summary.best)}` : ""}을(를) 그대로 가져가
+            프로젝트 생성으로 이어집니다.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => onStartProject(data)}
+          className="h-[42px] shrink-0 whitespace-nowrap rounded-xl bg-[var(--accent-strong)] px-5 text-sm font-bold text-white shadow-[var(--shadow-glow)] transition-opacity hover:opacity-90"
+        >
+          이 부지로 프로젝트 시작 →
+        </button>
       </section>
 
       {/* 법정 한도 */}

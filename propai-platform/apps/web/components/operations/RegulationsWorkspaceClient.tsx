@@ -13,7 +13,7 @@ import { Card, CardContent, Input } from "@propai/ui";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { ParcelBoundaryMap } from "@/components/map/ParcelBoundaryMap";
 import { ExpertPanelCard } from "@/components/common/ExpertPanelCard";
-import { VerificationBadge } from "@/components/common/VerificationBadge";
+import { AnalysisVerdict } from "@/components/analysis/AnalysisVerdict";
 import { apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import type { Locale } from "@/i18n/config";
@@ -133,7 +133,13 @@ export function RegulationsWorkspaceClient({ locale: _locale }: { locale: Locale
 
       {result && (
         <>
-          <VerificationBadge analysisType="regulation" context={result as unknown as Record<string, unknown>} />
+          {/* 검증 배지 + AI 규제 해석 요약 통합 카드(상세 해석 카드는 아래 유지). */}
+          <AnalysisVerdict
+            analysisType="regulation"
+            context={result as unknown as Record<string, unknown>}
+            interpretation={result.ai?.summary}
+            interpretationTitle="AI 규제 해석"
+          />
           {/* 부지 요약 + 정량 한도 */}
           <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
             <CardContent className="p-6">

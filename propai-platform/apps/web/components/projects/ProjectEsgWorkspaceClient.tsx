@@ -4,7 +4,7 @@ import { useState, type FormEvent } from "react";
 import { Button, Card, CardContent, CardTitle, Input } from "@propai/ui";
 import { ApiClientError, apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
-import { VerificationBadge } from "@/components/common/VerificationBadge";
+import { AnalysisVerdict } from "@/components/analysis/AnalysisVerdict";
 import { ExpertPanelCard } from "@/components/common/ExpertPanelCard";
 import { NumberInput } from "@/components/common/NumberInput";
 import type { Locale } from "@/i18n/config";
@@ -502,10 +502,13 @@ export function ProjectEsgWorkspaceClient({
           </p>
           {lcaResult ? (
             <div className="mt-4 space-y-4">
-              {/* 할루시네이션·오류 검증(ESG/탄소) */}
-              <VerificationBadge
+              {/* 검증 배지 + AI 탄소 해석 통합 카드(AnalysisVerdict) — 해석만 하단에 있던 것을 검증과 동일 카드로 노출 */}
+              <AnalysisVerdict
                 analysisType="esg"
                 context={{ lca: lcaResult, epd: epdResult } as unknown as Record<string, unknown>}
+                interpretation={lcaResult.ai_analysis}
+                interpretationTitle="AI 탄소 해석"
+                defaultOpen
               />
               <ExpertPanelCard
                 analysisType="esg"
