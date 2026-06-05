@@ -38,14 +38,14 @@ export default function BimStudioPage() {
           <ProjectBimWorkspaceClient locale={loc} projectId={projectId} />
           {/* BIM-적산 연동: 모델 물량(QTO) → 부위별 → 단가 → 5D 공사비 */}
           <section>
-            <h2 className="mb-1 text-lg font-black text-[var(--text-primary)]">📐 BIM 기반 적산 (5D · 부위별 물량)</h2>
+            <h2 className="mb-1 text-lg font-black text-[var(--text-primary)]">BIM 기반 적산 (5D · 부위별 물량)</h2>
             <p className="mb-3 text-xs text-[var(--text-secondary)]">BIM 매스 실치수(또는 연면적·층수 역산)로 콘크리트·철근·거푸집·마감 등 부위별 물량을 산출해 공사비로 직결합니다.</p>
             <QtoBreakdown projectId={projectId} />
           </section>
 
           {/* 상세 적산 대시보드(몬테카를로 등) */}
           <section>
-            <h2 className="mb-3 text-lg font-black text-[var(--text-primary)]">📊 적산 상세·리스크</h2>
+            <h2 className="mb-3 text-lg font-black text-[var(--text-primary)]">적산 상세·리스크</h2>
             <BimCostDashboard projectId={projectId} />
           </section>
         </div>

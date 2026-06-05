@@ -44,7 +44,7 @@ export function SolarEnvelopeCard({
   if (loading) {
     return (
       <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-5 text-xs text-[var(--text-hint)]">
-        ☀️ 일조권·건축가능 볼륨 분석 중…
+        일조권·건축가능 볼륨 분석 중…
       </div>
     );
   }
@@ -55,7 +55,7 @@ export function SolarEnvelopeCard({
     <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-5">
       <div className="flex items-center justify-between">
         <div>
-          <h4 className="text-sm font-bold text-[var(--text-primary)]">☀️ 일조권 · 건축가능 볼륨 (정북일조)</h4>
+          <h4 className="text-sm font-bold text-[var(--text-primary)]">일조권 · 건축가능 볼륨 (정북일조)</h4>
           <p className="text-[11px] text-[var(--text-secondary)]">
             {zone || "용도지역 미상"}{landAreaSqm ? ` · 대지 ${sqm(landAreaSqm)}` : ""}
             {res.geometry_source ? ` · ${res.geometry_source}` : ""}

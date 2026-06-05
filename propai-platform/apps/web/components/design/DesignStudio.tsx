@@ -156,7 +156,7 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
         </div>
         <button onClick={handleAIAnalyze} disabled={isPending || !isReady || !form.landArea}
           className="mt-6 w-full rounded-2xl bg-gradient-to-r from-blue-600 to-cyan-600 py-4 font-black text-white shadow-lg transition-all hover:scale-[1.01] active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed">
-          {isPending ? "🔄 AI 심층 분석 중..." : !isReady ? "⚙️ API 키를 먼저 등록하세요 (아래 법규 계산은 즉시 가능)" : "🤖 AI 심층 설계 분석 실행"}
+          {isPending ? "AI 심층 분석 중…" : !isReady ? "API 키를 먼저 등록하세요 (아래 법규 계산은 즉시 가능)" : "AI 심층 설계 분석 실행"}
         </button>
       </motion.div>
 
@@ -233,7 +233,7 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
           </div>
 
           <div className="glass rounded-2xl p-6 border border-[var(--line)]">
-            <h3 className="text-sm font-black text-[var(--text-primary)] mb-3">📏 건축선 이격거리</h3>
+            <h3 className="text-sm font-black text-[var(--text-primary)] mb-3">건축선 이격거리</h3>
             <div className="grid grid-cols-3 gap-4 text-center">
               {[
                 { label: "전면", val: ai?.setbacks?.front ?? calc.setbacks.front },
@@ -249,7 +249,7 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
           </div>
 
           <div className="glass rounded-2xl p-6 border border-[var(--line)]">
-            <h3 className="text-lg font-black text-[var(--text-primary)] mb-1">📐 매싱 대안 비교</h3>
+            <h3 className="text-lg font-black text-[var(--text-primary)] mb-1">매싱 대안 비교</h3>
             {easy && <p className="mb-3 text-[11px] text-[var(--accent-strong)]">{EASY["매싱"]} 효율(전용률)이 높을수록 같은 면적에서 분양·임대 면적이 많아 유리합니다. ★가 추천안.</p>}
             {(() => {
               const opts = ai?.massingOptions || calc.massingOptions;
@@ -282,7 +282,7 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
 
           {ai?.summary && (
             <div className="glass rounded-2xl p-6 border border-blue-500/20 bg-blue-500/5">
-              <h3 className="text-lg font-black text-blue-400 mb-2">🤖 AI 설계 의견</h3>
+              <h3 className="text-lg font-black text-blue-400 mb-2">AI 설계 의견</h3>
               <p className="text-sm text-[var(--text-secondary)] leading-relaxed">{ai.summary}</p>
             </div>
           )}

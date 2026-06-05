@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { StageIcon } from "@/components/common/StageIcon";
 import { useParams } from "next/navigation";
 import dynamic from "next/dynamic";
 import { motion, AnimatePresence } from "framer-motion";
@@ -172,7 +173,7 @@ export function LifecycleStageViews({ projectId, dictionary }: LifecycleStageVie
                       <div className="absolute inset-0 rounded-full bg-white/10 opacity-50 backdrop-blur-sm" />
                     </motion.div>
                   )}
-                  <span className="relative z-10 text-xl">{stage.icon}</span>
+                  <span className="relative z-10">{<StageIcon id={stage.id} />}</span>
                   <span className="relative z-10">{stage.name}</span>
                 </button>
               ))}
