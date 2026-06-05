@@ -374,6 +374,97 @@ async def _resolve_location(
     }
 
 
+async def build_terrain_mesh(
+    lat: float,
+    lon: float,
+    half_m: float = 150.0,
+    n: int = 21,
+) -> Optional[dict[str, Any]]:
+    """중심(lat,lon) 기준 ±half_m 정사각 영역의 DEM 격자 → ENU 삼각 메시.
+
+    가상준공 3D 디지털트윈의 지면(terrain) 재료. 기존 SRTM 30m DEM 질의(_fetch_dem)와
+    ENU 평면 수식(111320*cos)을 재사용한다. 반환은 Three.js BufferGeometry 친화 형태:
+      verts: [[x,y,z], ...]  (x=동, y=표고, z=남(-북). ENU, 단위 m, 원점=중심)
+      indices: [...]          (삼각형 3개 인덱스 평탄 배열, 2*(n-1)^2 삼각형)
+      elev0: 중심 셀 표고(m), nx/nz: 격자 점 수(=n), bbox_m: 평면 범위
+
+    n=21(권장) → 441점 > 100점/req → _fetch_dem 분할(1req/s) 사용.
+    표고 전부 실패시 None. 정직성(해상도/소스/confidence)은 호출측 badges에 위임.
+    """
+    n = max(3, int(n))
+    half_m = float(half_m)
+    m_per_deg_lat = 111_320.0
+    m_per_deg_lon = 111_320.0 * math.cos(math.radians(lat))
+
+    # ENU x(동), z(남=-북) 축 → 위경도 격자. y는 표고.
+    xs = np.linspace(-half_m, half_m, n)          # 동(+동), m
+    zs = np.linspace(-half_m, half_m, n)          # 남(+남), m
+    # 표고 질의 좌표: x=동→lon+, z=남→lat-
+    grid_pts: list[tuple[float, float]] = []
+    for zv in zs:                                  # row: 북→남 진행(z 증가=남쪽)
+        la = lat - (zv / m_per_deg_lat)
+        for xv in xs:                              # col: 서→동 진행(x 증가=동쪽)
+            lo = lon + (xv / m_per_deg_lon)
+            grid_pts.append((float(la), float(lo)))
+
+    elevs = await _fetch_dem(grid_pts)
+    if elevs is None or all(e is None for e in elevs):
+        return None
+
+    grid = np.full((n, n), np.nan, dtype=float)
+    for idx, e in enumerate(elevs):
+        r, c = divmod(idx, n)
+        if e is not None:
+            grid[r, c] = e
+    # 결측 보간: 유효 표고 평균으로 채움(메시 연속성 보장)
+    finite = np.isfinite(grid)
+    valid_pts = int(np.sum(finite))
+    if valid_pts == 0:
+        return None
+    fill = float(np.mean(grid[finite]))
+    grid = np.where(finite, grid, fill)
+
+    elev0 = float(grid[n // 2, n // 2])
+
+    # ENU 정점: (x, y=표고, z). numpy 벡터화 후 평탄 리스트.
+    xx, zz = np.meshgrid(xs, zs)                   # shape (n,n): zz=row(남), xx=col(동)
+    verts_arr = np.stack([xx, grid, zz], axis=-1).reshape(-1, 3)
+    verts = [[round(float(p[0]), 3), round(float(p[1]), 3), round(float(p[2]), 3)] for p in verts_arr]
+
+    # 삼각 인덱스(2 tri/cell). 정점 인덱스 = row*n + col.
+    rows = np.arange(n - 1)
+    cols = np.arange(n - 1)
+    cc, rr = np.meshgrid(cols, rows)
+    tl = (rr * n + cc).ravel()
+    tr = tl + 1
+    bl = tl + n
+    br = bl + 1
+    tri = np.empty((tl.size * 6,), dtype=np.int64)
+    tri[0::6] = tl; tri[1::6] = bl; tri[2::6] = tr
+    tri[3::6] = tr; tri[4::6] = bl; tri[5::6] = br
+    indices = tri.tolist()
+
+    relief = float(np.max(grid) - np.min(grid))
+    return {
+        "verts": verts,
+        "indices": indices,
+        "elev0": round(elev0, 2),
+        "nx": n,
+        "nz": n,
+        "bbox_m": {
+            "x_min": round(-half_m, 1), "x_max": round(half_m, 1),
+            "z_min": round(-half_m, 1), "z_max": round(half_m, 1),
+            "half_m": round(half_m, 1),
+        },
+        "min_elev_m": round(float(np.min(grid)), 2),
+        "max_elev_m": round(float(np.max(grid)), 2),
+        "relief_m": round(relief, 2),
+        "valid_ratio": round(valid_pts / (n * n), 3),
+        "source": ELEVATION_SOURCE,
+        "resolution_m": DEM_RESOLUTION_M,
+    }
+
+
 async def analyze_terrain(
     address: str | None,
     pnu: str | None,

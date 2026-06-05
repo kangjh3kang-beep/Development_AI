@@ -1,8 +1,14 @@
-"""Digital twin router for G90 and v53 status operations."""
+"""Digital twin router for G90 and v53 status operations.
+
+가상준공 3D 디지털트윈 씬(MVP, 공개): POST /scene + GET /aerial-image(항공 프록시).
+산정/합성 로직은 app/services/digital_twin/scene_service.py에 있고 본 라우터는 얇게 위임한다.
+표고=SRTM 30m·주변건물=footprint 추정·매스=AI 절차생성(실측/인허가도면 아님) — badges에 명시.
+"""
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from pydantic import BaseModel
 from packages.schemas.models import (
     AssetIntelligenceRequest,
     AssetIntelligenceResponse,
@@ -152,3 +158,51 @@ async def get_digital_twin_anomalies(
             "last_scan_at": last_scan.isoformat(),
         },
     }
+
+
+# ── 가상준공 3D 디지털트윈 씬(MVP, 공개) ──
+
+class DigitalTwinSceneRequest(BaseModel):
+    """씬 요청 — address/pnu 중 최소 1개 필수. design_version_id 있으면 건물 glb 포함."""
+
+    address: str | None = None
+    pnu: str | None = None
+    design_version_id: str | None = None
+
+
+@router.post("/scene", summary="가상준공 3D 씬 — 필지·지형메시·항공·주변·건물 ENU 정합")
+async def build_digital_twin_scene(req: DigitalTwinSceneRequest) -> dict:
+    """주소/PNU → ENU 로컬평면 단일 원점으로 정합된 3D 씬 페이로드를 반환한다.
+
+    parcel(필지 ring)·terrain(SRTM 30m DEM 삼각메시)·aerial(항공 프록시 URL)·
+    neighbors(주변 footprint 압출 추정)·building(있으면 glb)·badges(정직성)를 합성한다.
+    """
+    if not (req.address and req.address.strip()) and not (req.pnu and req.pnu.strip()):
+        raise HTTPException(status_code=422, detail="address 또는 pnu 중 하나는 필수입니다.")
+
+    from app.services.digital_twin.scene_service import build_scene
+
+    return await build_scene(
+        address=(req.address or "").strip() or None,
+        pnu=(req.pnu or "").strip() or None,
+        design_version_id=(req.design_version_id or "").strip() or None,
+    )
+
+
+@router.get("/aerial-image", summary="항공 정사영상 프록시(키 비노출, 지면 텍스처)")
+async def digital_twin_aerial_image(
+    lat: float = Query(..., description="중심 위도(WGS84)"),
+    lon: float = Query(..., description="중심 경도(WGS84)"),
+    zoom: int = Query(18, ge=7, le=18, description="VWorld getmap 줌(7~18)"),
+) -> Response:
+    """VWorld 항공 정사영상(PHOTO) PNG를 서버가 대리 취득해 스트리밍한다(키 비노출)."""
+    from app.services.external_api.vworld_service import VWorldService
+
+    acq = await VWorldService().get_aerial_image(lat, lon, zoom=zoom, basemap="PHOTO")
+    if not acq or not acq.get("bytes"):
+        raise HTTPException(status_code=502, detail="항공 정사영상을 취득하지 못했습니다.")
+    return Response(
+        content=acq["bytes"],
+        media_type=acq.get("content_type", "image/png"),
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
