@@ -24,10 +24,7 @@ const ScheduleSupervisionPanel = dynamic(
   { ssr: false }
 );
 
-const CadBimIntegrationPanel = dynamic(
-  () => import("../design/CadBimIntegrationPanel").then(mod => mod.CadBimIntegrationPanel),
-  { ssr: false, loading: () => <div className="h-[600px] w-full animate-pulse rounded-[2rem] bg-white/5 flex items-center justify-center"><p className="text-white/20 font-black uppercase tracking-[0.3em] text-xs text-center">BIM 3D 엔진 활성화 중...</p></div> }
-);
+// 설계(CAD/BIM)는 전용 스튜디오(/design-studio·/bim-studio)로 분리 — 여기선 임베드하지 않음.
 
 type StageType =
   | "site_analysis"
@@ -48,7 +45,6 @@ export function LifecycleStageViews({ projectId, dictionary }: LifecycleStageVie
   // 기본 탭은 가벼운 입지분석. 설계(CAD/BIM)는 자동 마운트하지 않아 진입 시 멈춤/무거움을 방지.
   const [activeStage, setActiveStage] = useState<StageType>("site_analysis");
   // 설계 스튜디오(무거운 WebGL CAD/BIM)는 사용자가 명시적으로 열 때만 로드.
-  const [designStudioOpen, setDesignStudioOpen] = useState(false);
   const params = useParams();
   const locale = params.locale as string;
   const t = dictionary.lifecycle;
@@ -197,31 +193,30 @@ export function LifecycleStageViews({ projectId, dictionary }: LifecycleStageVie
             <div className="relative z-10 h-full flex flex-col gap-10">
               <div className="flex-1">
                 {activeStage === "design_ai" && (
-                  designStudioOpen ? (
-                    <CadBimIntegrationPanel projectId={projectId} dictionary={dictionary.cadBim} />
-                  ) : (
-                    <div className="flex min-h-[420px] flex-col items-center justify-center gap-8 rounded-[3rem] border border-dashed border-[var(--line-strong)] bg-[var(--surface-soft)] p-12 text-center">
-                      <div className="flex h-20 w-20 items-center justify-center rounded-3xl bg-[var(--accent-soft)] text-4xl shadow-[var(--shadow-glow)]">🎨</div>
-                      <div className="space-y-3 max-w-xl">
-                        <h4 className="text-2xl font-[1000] tracking-tight text-[var(--text-primary)]">설계 AI 스튜디오 (CAD / BIM)</h4>
-                        <p className="text-sm leading-relaxed text-[var(--text-secondary)]">
-                          2D CAD 도면과 3D BIM 모델을 실시간 생성하는 고사양 엔진입니다. 불필요한 로딩으로 화면이 느려지지 않도록,
-                          <b className="text-[var(--text-primary)]"> 필요할 때만 </b>
-                          아래 버튼으로 직접 실행합니다.
-                        </p>
-                        <p className="text-xs text-[var(--text-hint)]">
-                          ※ 정밀 도면·모델은 선택한 건축개요(개발종목)를 기준으로 생성됩니다.
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setDesignStudioOpen(true)}
-                        className="group inline-flex h-16 items-center justify-center gap-4 rounded-full bg-[var(--accent-strong)] px-12 text-xs font-black uppercase tracking-[0.3em] text-white shadow-[var(--shadow-glow)] transition-all hover:scale-105 active:scale-95"
-                      >
-                        설계 스튜디오 열기 ↗
-                      </button>
+                  <div className="flex min-h-[420px] flex-col items-center justify-center gap-8 rounded-[3rem] border border-dashed border-[var(--line-strong)] bg-[var(--surface-soft)] p-12 text-center">
+                    <div className="flex h-16 w-16 items-center justify-center rounded-3xl bg-[var(--accent-soft)] text-[var(--accent-strong)] shadow-[var(--shadow-glow)]">
+                      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m2 12 5-3 5 3 5-3 5 3"/><path d="m2 17 5-3 5 3 5-3 5 3"/><path d="m2 7 5-3 5 3 5-3 5 3"/></svg>
                     </div>
-                  )
+                    <div className="space-y-3 max-w-xl">
+                      <h4 className="text-2xl font-[1000] tracking-tight text-[var(--text-primary)]">설계 스튜디오</h4>
+                      <p className="text-sm leading-relaxed text-[var(--text-secondary)]">
+                        CAD 자동설계와 BIM·적산은 <b className="text-[var(--text-primary)]">전용 스튜디오</b>에서 운영합니다. 고사양 WebGL 엔진을
+                        별도 화면으로 분리해 이 페이지의 속도·안정성을 유지합니다(선택한 프로젝트 기준으로 자동 연동).
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap items-center justify-center gap-3">
+                      <Link href={`/${locale}/design-studio`}
+                        className="inline-flex h-14 items-center gap-3 rounded-full bg-[var(--accent-strong)] px-9 text-xs font-black uppercase tracking-[0.2em] text-white shadow-[var(--shadow-glow)] transition-all hover:scale-105">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 3v18h18"/><path d="m7 14 4-4 3 3 5-5"/></svg>
+                        AI 자동설계 (CAD)
+                      </Link>
+                      <Link href={`/${locale}/bim-studio`}
+                        className="inline-flex h-14 items-center gap-3 rounded-full border border-[var(--accent-strong)]/40 px-9 text-xs font-black uppercase tracking-[0.2em] text-[var(--accent-strong)] transition-all hover:scale-105">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg>
+                        BIM · 적산
+                      </Link>
+                    </div>
+                  </div>
                 )}
                 {activeStage === "feasibility" && <FeasibilitySimulationWidget projectId={projectId} dictionary={dictionary.feasibility} />}
                 {activeStage === "construction" && (
