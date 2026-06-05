@@ -197,8 +197,9 @@ class ProjectPipeline:
             if stop_after and stage.value == stop_after:
                 break
 
-        # 전 단계 AI 해석(인터프리터) 병렬 부착 — 보고서에 서술형 분석 노출(best-effort)
-        if not opts.get("skip_ai_interpretation"):
+        # 전 단계 AI 해석은 기본 OFF(동기 실행 타임아웃 방지) — 보고서가 온디맨드로 지연 로드.
+        # opts.with_ai_interpretation=True일 때만 인라인 부착(배치/비동기 경로용).
+        if opts.get("with_ai_interpretation"):
             await self._attach_all_ai(state)
 
         state.status = PipelineStatus.COMPLETED

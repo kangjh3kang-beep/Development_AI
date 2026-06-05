@@ -5,7 +5,7 @@ import { DashboardProjectLoader } from "@/components/dashboard/DashboardProjectL
 import { MarketingPanels } from "@/components/dashboard/MarketingPanels";
 import { PromoBanner } from "@/components/dashboard/PromoBanner";
 import { OnboardingWizard } from "@/components/onboarding/OnboardingWizard";
-import { ProjectPipelinePanel } from "@/components/pipeline/ProjectPipelinePanel";
+import { PipelinePanelClient } from "@/components/pipeline/PipelinePanelClient";
 import { Logo } from "@/components/ui/Logo";
 import { getDictionary } from "@/i18n/get-dictionary";
 import { isValidLocale, type Locale } from "@/i18n/config";
@@ -148,7 +148,7 @@ export default async function DashboardPage({ params }: DashboardPageProps) {
       <PromoBanner />
 
       {/* ── 자동 분석 진행 단계 ── */}
-      <ProjectPipelinePanel />
+      <PipelinePanelClient />
 
       {/* ── 마케팅 홍보 벤토(Bento) 패널 ── */}
       <MarketingPanels />
