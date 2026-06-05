@@ -14,6 +14,7 @@ import { apiClient } from "@/lib/api-client";
 import { useProjectStore } from "@/store/useProjectStore";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { ImageUpload } from "@/components/ui/ImageUpload";
+import { latestLedger } from "@/lib/analysis-ledger";
 
 type ProjectMeta = {
   id: string;
@@ -68,21 +69,17 @@ export default function ProjectDetailPage() {
     return () => { cancelled = true; };
   }, [id]);
 
-  // 분석 이력(전역)에서 이 프로젝트 주소와 일치하는 분석을 찾아 컨텍스트(스냅샷)로 복원.
-  // (이력은 파이프라인 런 단위 전역 저장이라, 프로젝트 스냅샷이 비어 있으면 주소 매칭으로 되살림)
+  // 분석 스냅샷 복원 — ★분석 원장(서버·기기간 공유·무결성) 우선, 없으면 localStorage 폴백.
+  // 원장: 이 프로젝트 체인 → 없으면 같은 주소 간편분석(quick) 체인 승계(계보 연결).
   useEffect(() => {
     const addr = meta?.address || projectFromStore?.address;
     if (!addr) return;
     const st = useProjectContextStore.getState();
     if (st.projectId !== id || st.siteAnalysis) return; // 이미 복원/분석 있음
-    try {
-      const hist = JSON.parse(localStorage.getItem("propai_pipeline_history") || "[]") as Array<{
-        address?: string; result?: { summary?: Record<string, any>; stages?: Array<{ stage: string; status: string; data?: any }> };
-      }>;
-      const norm = (s: string) => s.replace(/\s+/g, "");
-      const match = hist.find((h) => h.address && (norm(h.address) === norm(addr) || norm(addr).includes(norm(h.address)) || norm(h.address).includes(norm(addr))));
-      const r = match?.result;
-      if (!r) return;
+    let cancelled = false;
+
+    const applyResult = (r: { summary?: Record<string, any>; stages?: Array<{ stage: string; status?: string; data?: any }> } | null | undefined) => {
+      if (!r || cancelled) return false;
       const site = r.summary?.site_analysis;
       const basic = (r.stages?.find((s) => s.stage === "site_analysis")?.data?.basic) ?? {};
       if (site || basic) {
@@ -100,9 +97,41 @@ export default function ProjectDetailPage() {
       if (feas) st.updateFeasibilityData({ totalCostWon: feas.total_cost_won ?? null, totalRevenueWon: feas.total_revenue_won ?? null, profitRatePct: feas.profit_rate_pct ?? null, grade: feas.grade ?? null });
       const esg = r.summary?.esg_carbon;
       if (esg) st.updateEsgData({ embodiedCarbonKg: esg.embodied_carbon_kg ?? null, operationalCarbonKg: esg.operational_carbon_kg ?? null, totalCarbonPerSqm: esg.total_carbon_per_sqm ?? null });
-    } catch {
-      /* 복원 실패는 무시 — 사용자가 재분석 가능 */
-    }
+      return !!(site || basic || design || feas || esg);
+    };
+
+    const extractPayload = (data: any): any => {
+      if (!data) return null;
+      // /latest 단일(타입지정) 또는 타입별 묶음 모두 대응
+      if (data.payload) return data.payload;
+      if (data.pipeline?.payload) return data.pipeline.payload;
+      return null;
+    };
+
+    (async () => {
+      try {
+        // 1) 프로젝트 체인 → 2) 같은 주소 간편분석(quick) 체인 승계
+        let res = await latestLedger("pipeline", { address: addr, projectId: id });
+        let payload = extractPayload(res?.data);
+        if (!payload) {
+          res = await latestLedger("pipeline", { address: addr });
+          payload = extractPayload(res?.data);
+        }
+        if (payload && applyResult(payload)) return;
+      } catch { /* 원장 실패 → localStorage 폴백 */ }
+
+      // 3) localStorage 폴백(레거시·오프라인)
+      try {
+        const hist = JSON.parse(localStorage.getItem("propai_pipeline_history") || "[]") as Array<{
+          address?: string; result?: { summary?: Record<string, any>; stages?: Array<{ stage: string; status: string; data?: any }> };
+        }>;
+        const norm = (s: string) => s.replace(/\s+/g, "");
+        const match = hist.find((h) => h.address && (norm(h.address) === norm(addr) || norm(addr).includes(norm(h.address)) || norm(h.address).includes(norm(addr))));
+        applyResult(match?.result);
+      } catch { /* 무시 */ }
+    })();
+
+    return () => { cancelled = true; };
   }, [meta?.address, projectFromStore?.address, id]);
 
   if (isLoading || !dictionary) {

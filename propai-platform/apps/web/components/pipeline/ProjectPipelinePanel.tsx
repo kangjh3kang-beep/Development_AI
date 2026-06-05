@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { appendLedger } from "@/lib/analysis-ledger";
 import { useProjectStore as useProjectListStore } from "@/store/useProjectStore";
 import { apiClient } from "@/lib/api-client";
 import { GlobalAddressSearch, type AddressEntry } from "@/components/common/GlobalAddressSearch";
@@ -422,8 +423,19 @@ export function ProjectPipelinePanel({
       const updated = [entry, ...history.filter((h) => h.id !== entry.id)].slice(0, MAX_HISTORY);
       setHistory(updated);
       saveHistory(updated);
+      // 분석 원장 write-through(서버 영속·기기간 공유·무결성). best-effort.
+      const r = result as unknown as { summary?: Record<string, any>; stages?: Array<{ stage: string; data?: any }> };
+      const pnu = r.summary?.site_analysis?.pnu
+        || r.stages?.find((s) => s.stage === "site_analysis")?.data?.basic?.pnu
+        || undefined;
+      void appendLedger(
+        "pipeline",
+        { summary: result.summary, stages: result.stages, pipeline_id: result.pipeline_id },
+        { pnu, address: addr, projectId: projectId || undefined },
+        projectMode ? "project" : "quick",
+      );
     },
-    [history, projectId],
+    [history, projectId, projectMode],
   );
 
   // 이력 삭제

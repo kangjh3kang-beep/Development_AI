@@ -6,7 +6,9 @@
  * (거대 타이포·목업 상수 없이 실데이터 중심의 정보밀도·가독성 우선)
  */
 
+import { useEffect, useState } from "react";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { verifyLedger } from "@/lib/analysis-ledger";
 import { SiteScoreCard } from "@/components/projects/SiteScoreCard";
 import { BuildableEnvelopeCard } from "@/components/projects/BuildableEnvelopeCard";
 
@@ -53,6 +55,19 @@ export function ProjectAnalysisSummary() {
   const feas = useProjectContextStore((s) => s.feasibilityData);
   const esg = useProjectContextStore((s) => s.esgData);
   const comp = useProjectContextStore((s) => s.complianceData);
+  const projectId = useProjectContextStore((s) => s.projectId);
+
+  // 분석 원장 무결성 배지(변조방지 해시체인 검증)
+  const [integrity, setIntegrity] = useState<{ verified: boolean; version?: number } | null>(null);
+  useEffect(() => {
+    const addr = site?.address;
+    if (!addr) { setIntegrity(null); return; }
+    let alive = true;
+    void verifyLedger("pipeline", { address: addr, projectId: projectId || undefined }).then((v) => {
+      if (alive && v?.ok && v.length) setIntegrity({ verified: !!v.verified, version: v.head_version });
+    });
+    return () => { alive = false; };
+  }, [site?.address, projectId]);
 
   const hasAny = !!(site || design || cost || feas || esg);
   if (!hasAny) return null; // 분석 전 프로젝트는 표시하지 않음(아래 파이프라인이 실행 CTA 담당)
@@ -81,11 +96,25 @@ export function ProjectAnalysisSummary() {
             <p className="text-[11px] text-[var(--text-secondary)]">저장된 분석 결과(단일 데이터원) — 모든 모듈에서 동일하게 활용됩니다.</p>
           </div>
         </div>
-        {feas?.grade ? (
-          <span className="rounded-full bg-[var(--accent-soft)] px-3 py-1 text-xs font-black text-[var(--accent-strong)]">
-            수익률 {pct(feas?.profitRatePct)} ({feas.grade})
-          </span>
-        ) : null}
+        <div className="flex items-center gap-2">
+          {integrity && (
+            <span
+              title={`분석 원장 해시체인 검증 — 버전 v${integrity.version}`}
+              className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${
+                integrity.verified
+                  ? "bg-emerald-500/10 text-emerald-500 border border-emerald-500/30"
+                  : "bg-rose-500/10 text-rose-500 border border-rose-500/30"
+              }`}
+            >
+              {integrity.verified ? `🔒 원장 검증됨 · v${integrity.version}` : "⚠ 무결성 이상"}
+            </span>
+          )}
+          {feas?.grade ? (
+            <span className="rounded-full bg-[var(--accent-soft)] px-3 py-1 text-xs font-black text-[var(--accent-strong)]">
+              수익률 {pct(feas?.profitRatePct)} ({feas.grade})
+            </span>
+          ) : null}
+        </div>
       </div>
 
       {/* 핵심 요약 */}
