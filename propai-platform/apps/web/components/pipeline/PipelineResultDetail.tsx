@@ -3,6 +3,23 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiClient } from "@/lib/api-client";
 
+// 세련된 인라인 아이콘(lucide 스타일) — 이모지 대체
+function IconSparkle() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 3l1.6 4.6L18 9.2l-4.4 1.6L12 15l-1.6-4.2L6 9.2l4.4-1.6L12 3z" />
+      <path d="M5 16l.8 2.2L8 19l-2.2.8L5 22l-.8-2.2L2 19l2.2-.8L5 16z" />
+    </svg>
+  );
+}
+function IconPin() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 17v5" /><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z" />
+    </svg>
+  );
+}
+
 const NARR_LABELS: Record<string, string> = {
   carbon_assessment: "탄소 평가", reduction_strategy: "저감 전략", certification_pathway: "인증 경로",
   zeb_roadmap: "ZEB 로드맵", esg_investment_impact: "투자 영향", regulatory_outlook: "규제 전망",
@@ -293,6 +310,7 @@ export function PipelineResultDetail({ result, onRerun }: PipelineResultDetailPr
   // 온디맨드 AI 해석(섹션 열람 시 단건 생성) — 저장 payload에 없을 때만
   const [lazyNarr, setLazyNarr] = useState<Record<string, { label: string; text: string }[]>>({});
   const [narrLoading, setNarrLoading] = useState<string | null>(null);
+  const [narrError, setNarrError] = useState<Record<string, boolean>>({});
 
   // Merge stage data + summary data for lookup
   const stageDataMap = useMemo(() => {
@@ -359,8 +377,8 @@ export function PipelineResultDetail({ result, onRerun }: PipelineResultDetailPr
 
   // 단계 해석 단건 fetch(온디맨드/프리페치 공용). showLoading=활성탭만 로딩표시.
   const fetchNarr = useCallback(
-    (stg: string, showLoading: boolean) => {
-      if (getNarratives(stg).length > 0 || lazyNarr[stg] || narrLoading === stg) return;
+    (stg: string, showLoading: boolean, force = false) => {
+      if (!force && (getNarratives(stg).length > 0 || lazyNarr[stg] || narrLoading === stg)) return;
       const data = stageDataMap[stg];
       if (!data || typeof data !== "object" || !Object.keys(data).length) return;
       const site = (stageDataMap.site_analysis || {}) as Record<string, any>;
@@ -371,19 +389,21 @@ export function PipelineResultDetail({ result, onRerun }: PipelineResultDetailPr
         land_area_sqm: site.land_area_sqm ?? site.basic?.land_area_sqm,
         total_gfa_sqm: dsn.total_gfa_sqm, building_type: dsn.building_type, floor_count: dsn.floor_count,
       };
+      setNarrError((p) => ({ ...p, [stg]: false }));
       if (showLoading) setNarrLoading(stg);
       apiClient
         .postV2<{ ok?: boolean; sections?: Record<string, string> }>("/pipeline/interpret", {
-          body: { stage: stg, data, context }, useMock: false,
+          body: { stage: stg, data, context }, useMock: false, timeoutMs: 35000,
         })
         .then((r) => {
           const secs = (r?.sections || {}) as Record<string, string>;
           const arr = Object.entries(secs)
             .filter(([, v]) => typeof v === "string" && v.trim().length > 12)
             .map(([k, v]) => ({ label: NARR_LABELS[k] || k, text: String(v).trim() }));
-          setLazyNarr((p) => ({ ...p, [stg]: arr }));
+          if (arr.length) setLazyNarr((p) => ({ ...p, [stg]: arr }));
+          else setNarrError((p) => ({ ...p, [stg]: true }));   // 빈 결과=실패 취급(재시도 유도)
         })
-        .catch(() => setLazyNarr((p) => ({ ...p, [stg]: [] })))
+        .catch(() => setNarrError((p) => ({ ...p, [stg]: true })))
         .finally(() => setNarrLoading((c) => (c === stg ? null : c)));
     },
     [getNarratives, stageDataMap, lazyNarr, narrLoading],
@@ -395,10 +415,10 @@ export function PipelineResultDetail({ result, onRerun }: PipelineResultDetailPr
     if (sec) fetchNarr(sec.sourceStage, true);
   }, [activeTab, fetchNarr]);
 
-  // ② 선(先)생성 프리페치 — 진입 시 주요 단계 해석을 백그라운드로 미리 생성(캐시 워밍, 순차).
+  // ② 선(先)생성 프리페치 — 진입 시 핵심 단계만 경량 워밍(과부하 방지, 나머지는 탭 클릭 시).
   useEffect(() => {
-    const priority = ["site_analysis", "feasibility", "design", "esg"];
-    const timers = priority.map((stg, i) => setTimeout(() => fetchNarr(stg, false), 800 + i * 1500));
+    const priority = ["site_analysis", "feasibility"];
+    const timers = priority.map((stg, i) => setTimeout(() => fetchNarr(stg, false), 1000 + i * 2500));
     return () => timers.forEach(clearTimeout);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -532,7 +552,7 @@ export function PipelineResultDetail({ result, onRerun }: PipelineResultDetailPr
             return (
               <div className="mt-3 rounded-xl border border-[var(--line-strong)] bg-[var(--surface)] p-4">
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-[11px] font-black uppercase tracking-widest text-[var(--accent-strong)]">📌 종합 의견</span>
+                  <span className="inline-flex items-center gap-1.5 text-[11px] font-black uppercase tracking-widest text-[var(--accent-strong)]"><IconPin /> 종합 의견</span>
                   {og ? <span className="rounded-full bg-[var(--accent-soft)] px-2.5 py-0.5 text-[11px] font-black text-[var(--accent-strong)]">종합등급 {String(og)}</span> : null}
                   {risk ? <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-0.5 text-[11px] font-bold text-amber-500">리스크 {String(risk)}</span> : null}
                 </div>
@@ -608,13 +628,26 @@ export function PipelineResultDetail({ result, onRerun }: PipelineResultDetailPr
           const stg = activeSection.sourceStage;
           const narr = [...getNarratives(stg), ...(lazyNarr[stg] || [])];
           const isLoading = narrLoading === stg && narr.length === 0;
-          if (!narr.length && !isLoading) return null;
+          const hasErr = narrError[stg] && narr.length === 0;
+          const hasData = stageDataMap[stg] && Object.keys(stageDataMap[stg]).length > 0;
+          if (!narr.length && !isLoading && !hasErr) {
+            // 데이터는 있으나 아직 미생성 → 수동 생성 버튼 제공(자동 미트리거 시)
+            if (!hasData) return null;
+            return (
+              <div className="mt-5">
+                <button onClick={() => fetchNarr(stg, true, true)}
+                  className="inline-flex items-center gap-2 rounded-lg border border-[var(--accent-strong)]/40 bg-[var(--accent-soft)] px-3.5 py-2 text-xs font-bold text-[var(--accent-strong)] hover:opacity-90">
+                  <IconSparkle /> AI 상세 해석 생성
+                </button>
+              </div>
+            );
+          }
           return (
             <div className="mt-5 space-y-3">
               <div className="flex items-center gap-2">
-                <span className="text-sm">🤖</span>
+                <span className="text-[var(--accent-strong)]"><IconSparkle /></span>
                 <h4 className="text-sm font-bold text-[var(--accent-strong)]">AI 상세 해석</h4>
-                {isLoading && <span className="text-[11px] text-[var(--text-hint)]">생성 중… (약 10초)</span>}
+                {isLoading && <span className="text-[11px] text-[var(--text-hint)]">생성 중…</span>}
               </div>
               {narr.map((n, i) => (
                 <div key={i} className="rounded-xl border border-[var(--accent-strong)]/15 bg-[var(--accent-soft)]/30 p-4">
@@ -627,6 +660,12 @@ export function PipelineResultDetail({ result, onRerun }: PipelineResultDetailPr
                   <div className="h-3 w-2/3 animate-pulse rounded bg-[var(--line-strong)]" />
                   <div className="mt-2 h-3 w-full animate-pulse rounded bg-[var(--line)]" />
                   <div className="mt-2 h-3 w-5/6 animate-pulse rounded bg-[var(--line)]" />
+                </div>
+              )}
+              {hasErr && (
+                <div className="flex items-center gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-400">
+                  <span>해석 생성이 지연되었습니다.</span>
+                  <button onClick={() => fetchNarr(stg, true, true)} className="rounded-md border border-amber-500/40 px-2.5 py-1 font-bold hover:bg-amber-500/10">↻ 재시도</button>
                 </div>
               )}
             </div>
