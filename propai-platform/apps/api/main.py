@@ -77,6 +77,7 @@ from apps.api.routers import (
     parking,
     permits,
     portals,
+    precheck,
     projects,
     re100,
     registry,
@@ -398,6 +399,8 @@ app.include_router(data_integrity.router, prefix="/api/v1", tags=["데이터 무
 
 # 자동 용도지역 + 유닛믹스 최적화 라우터
 app.include_router(auto_zoning.router, prefix="/api/v1/zoning", tags=["자동 용도지역"])
+# 90초 AI PreCheck(Flagship A) — 즉시 룰체크 + 조닝 시그널
+app.include_router(precheck.router, prefix="/api/v1/precheck", tags=["AI PreCheck"])
 app.include_router(unit_mix.router, prefix="/api/v1/unit-mix", tags=["유닛믹스 최적화"])
 
 # 대화형 시장분석 AI + GRESB ESG 스코어링 라우터

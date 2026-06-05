@@ -1,0 +1,578 @@
+"use client";
+
+/**
+ * Flagship A — 90초 AI PreCheck 워크스페이스.
+ *
+ * 입력(주소+선택 면적) → 두 가지 즉시 진단을 호출/렌더:
+ *  A. /precheck/instant     — 개발방식 신호등 그리드 + 법정한도 + 요약
+ *  B. /precheck/zoning-signals — 조닝 기회 시그널(지도 + 카드)
+ *
+ * 디자인 토큰 사용(surface/line/text). 신호등은 의미색(emerald/amber/rose).
+ * apiClient v1 POST(lib/api-client.ts) 패턴, Leaflet은 dynamic ssr:false.
+ */
+
+import { useState } from "react";
+import dynamic from "next/dynamic";
+import { motion, AnimatePresence } from "framer-motion";
+import { apiClient, ApiClientError } from "@/lib/api-client";
+import { NumberInput } from "@/components/common/NumberInput";
+import { AnimatedCounter } from "@/components/ui/AnimatedCounter";
+import type {
+  InstantPreCheckRequest,
+  InstantPreCheckResponse,
+  PreCheckMethod,
+  PreCheckSignal,
+  ZoningSignal,
+  ZoningSignalsRequest,
+  ZoningSignalsResponse,
+} from "./types";
+
+const ZoningSignalMap = dynamic(
+  () => import("./ZoningSignalMap").then((m) => m.ZoningSignalMap),
+  { ssr: false, loading: () => <MapSkeleton /> },
+);
+
+function MapSkeleton() {
+  return (
+    <div className="flex h-[360px] w-full items-center justify-center rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] text-xs text-[var(--text-hint)]">
+      지도 불러오는 중…
+    </div>
+  );
+}
+
+/* ── 신호등 의미색(토큰 일관 팔레트) ── */
+const SIGNAL_STYLE: Record<
+  PreCheckSignal,
+  { ring: string; chip: string; dot: string; label: string }
+> = {
+  pass: {
+    ring: "border-emerald-500/40 bg-emerald-500/[0.06]",
+    chip: "border-emerald-500/40 bg-emerald-500/15 text-emerald-400",
+    dot: "bg-emerald-500",
+    label: "가능",
+  },
+  warn: {
+    ring: "border-amber-500/40 bg-amber-500/[0.06]",
+    chip: "border-amber-500/40 bg-amber-500/15 text-amber-400",
+    dot: "bg-amber-500",
+    label: "심의/조건부",
+  },
+  fail: {
+    ring: "border-rose-500/40 bg-rose-500/[0.06]",
+    chip: "border-rose-500/40 bg-rose-500/15 text-rose-400",
+    dot: "bg-rose-500",
+    label: "불가",
+  },
+};
+
+const LEVEL_CHIP: Record<string, string> = {
+  high: "border-emerald-500/40 bg-emerald-500/15 text-emerald-400",
+  mid: "border-amber-500/40 bg-amber-500/15 text-amber-400",
+  low: "border-slate-500/40 bg-slate-500/15 text-slate-300",
+};
+const LEVEL_LABEL: Record<string, string> = { high: "높음", mid: "중간", low: "낮음" };
+
+type TabKey = "instant" | "zoning";
+
+export function PreCheckWorkspace() {
+  const [address, setAddress] = useState("");
+  const [areaSqm, setAreaSqm] = useState<number | null>(null);
+  const [useLlm, setUseLlm] = useState(false);
+
+  const [tab, setTab] = useState<TabKey>("instant");
+
+  const [instant, setInstant] = useState<InstantPreCheckResponse | null>(null);
+  const [instantLoading, setInstantLoading] = useState(false);
+  const [instantError, setInstantError] = useState("");
+
+  const [zoning, setZoning] = useState<ZoningSignalsResponse | null>(null);
+  const [zoningLoading, setZoningLoading] = useState(false);
+  const [zoningError, setZoningError] = useState("");
+
+  const canRun = address.trim().length > 0 && !instantLoading;
+
+  function readError(e: unknown, fallback: string): string {
+    if (e instanceof ApiClientError) {
+      const p = e.payload as { message?: string; detail?: string } | null;
+      return p?.message || p?.detail || `${fallback} (${e.status})`;
+    }
+    return fallback;
+  }
+
+  async function runInstant() {
+    if (!address.trim()) return;
+    setInstantLoading(true);
+    setInstantError("");
+    setInstant(null);
+    const body: InstantPreCheckRequest = {
+      address: address.trim(),
+      area_sqm: areaSqm,
+      use_llm: useLlm,
+    };
+    try {
+      const res = await apiClient.post<InstantPreCheckResponse>("/precheck/instant", {
+        body: body as unknown as Record<string, unknown>,
+        useMock: false,
+        timeoutMs: 90_000,
+      });
+      setInstant(res);
+    } catch (e) {
+      setInstantError(readError(e, "즉시 진단을 불러오지 못했습니다."));
+    } finally {
+      setInstantLoading(false);
+    }
+  }
+
+  async function runZoning() {
+    if (!address.trim()) return;
+    setZoningLoading(true);
+    setZoningError("");
+    setZoning(null);
+    const body: ZoningSignalsRequest = {
+      address: address.trim(),
+      pnu: instant?.pnu ?? null,
+      radius_m: 300,
+    };
+    try {
+      const res = await apiClient.post<ZoningSignalsResponse>("/precheck/zoning-signals", {
+        body: body as unknown as Record<string, unknown>,
+        useMock: false,
+        timeoutMs: 90_000,
+      });
+      setZoning(res);
+    } catch (e) {
+      setZoningError(readError(e, "조닝 시그널을 불러오지 못했습니다."));
+    } finally {
+      setZoningLoading(false);
+    }
+  }
+
+  async function runAll() {
+    setTab("instant");
+    // 두 진단 병렬 — 90초 SLA 내 동시 실행
+    await Promise.allSettled([runInstant(), runZoning()]);
+  }
+
+  return (
+    <div className="grid gap-6">
+      {/* ── 입력 바 ── */}
+      <section className="rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-5">
+        <div className="mb-1 flex items-center gap-2">
+          <span className="rounded-lg border border-[var(--accent-strong)]/30 bg-[var(--accent-soft)] px-2 py-0.5 text-[11px] font-bold text-[var(--accent-strong)]">
+            90초 PreCheck
+          </span>
+          <h1 className="text-lg font-bold text-[var(--text-primary)]">AI 즉시 진단</h1>
+        </div>
+        <p className="mb-4 text-[13px] text-[var(--text-secondary)]">
+          주소만 입력하면 용도지역을 판독해 개발방식별 인허가 신호등과 주변 조닝 기회 시그널을
+          즉시 진단합니다.
+        </p>
+        <div className="grid gap-3 sm:grid-cols-[1fr_180px_auto]">
+          <div className="grid gap-1">
+            <label htmlFor="precheck-address" className="text-[11px] font-semibold text-[var(--text-tertiary)]">
+              주소 <span className="text-rose-400">*</span>
+            </label>
+            <input
+              id="precheck-address"
+              value={address}
+              onChange={(e) => setAddress(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && canRun) void runAll();
+              }}
+              placeholder="예) 서울특별시 강남구 테헤란로 152"
+              className="w-full rounded-xl border border-[var(--line)] bg-[var(--surface-strong)] px-3 py-2.5 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
+            />
+          </div>
+          <div className="grid gap-1">
+            <label htmlFor="precheck-area" className="text-[11px] font-semibold text-[var(--text-tertiary)]">
+              대지면적(㎡, 선택)
+            </label>
+            <NumberInput
+              id="precheck-area"
+              value={areaSqm}
+              onChange={setAreaSqm}
+              allowDecimal
+              placeholder="미입력 시 토지특성 자동"
+              className="w-full rounded-xl border border-[var(--line)] bg-[var(--surface-strong)] px-3 py-2.5 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
+            />
+          </div>
+          <div className="flex items-end">
+            <button
+              type="button"
+              onClick={() => void runAll()}
+              disabled={!canRun}
+              className="h-[42px] whitespace-nowrap rounded-xl bg-[var(--accent-strong)] px-5 text-sm font-bold text-white shadow-[var(--shadow-glow)] transition-opacity disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {instantLoading || zoningLoading ? "진단 중…" : "90초 즉시 진단"}
+            </button>
+          </div>
+        </div>
+        <label className="mt-3 flex w-fit cursor-pointer items-center gap-2 text-[12px] text-[var(--text-secondary)]">
+          <input
+            type="checkbox"
+            checked={useLlm}
+            onChange={(e) => setUseLlm(e.target.checked)}
+            className="accent-[var(--accent-strong)]"
+          />
+          AI 한 줄 요약 포함(소폭 지연)
+        </label>
+      </section>
+
+      {/* ── 탭 ── */}
+      {(instant || zoning || instantLoading || zoningLoading || instantError || zoningError) && (
+        <div className="flex gap-2">
+          {([
+            { key: "instant", label: "개발방식 신호등" },
+            { key: "zoning", label: "조닝 기회 시그널" },
+          ] as { key: TabKey; label: string }[]).map((t) => (
+            <button
+              key={t.key}
+              type="button"
+              onClick={() => setTab(t.key)}
+              className={`rounded-xl border px-4 py-2 text-[13px] font-semibold transition-colors ${
+                tab === t.key
+                  ? "border-[var(--accent-strong)]/40 bg-[var(--accent-soft)] text-[var(--accent-strong)]"
+                  : "border-[var(--line)] bg-[var(--surface-soft)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      <AnimatePresence mode="wait">
+        {tab === "instant" ? (
+          <motion.div
+            key="instant"
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            transition={{ duration: 0.2 }}
+          >
+            <InstantPanel loading={instantLoading} error={instantError} data={instant} />
+          </motion.div>
+        ) : (
+          <motion.div
+            key="zoning"
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            transition={{ duration: 0.2 }}
+          >
+            <ZoningPanel loading={zoningLoading} error={zoningError} data={zoning} />
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+/* ════════════════════ A. 즉시 룰체크 패널 ════════════════════ */
+
+function InstantPanel({
+  loading,
+  error,
+  data,
+}: {
+  loading: boolean;
+  error: string;
+  data: InstantPreCheckResponse | null;
+}) {
+  if (loading) {
+    return (
+      <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-8 text-center text-sm text-[var(--text-hint)]">
+        용도지역 판독 + 개발방식 인허가 룰체크 중…
+      </div>
+    );
+  }
+  if (error) {
+    return (
+      <div className="rounded-2xl border border-rose-500/40 bg-rose-500/[0.06] p-5 text-sm text-rose-400">
+        {error}
+      </div>
+    );
+  }
+  if (!data) return null;
+
+  // 빈/오류 경로: 용도지역 미확인
+  if (!data.ok) {
+    return (
+      <div className="rounded-2xl border border-amber-500/40 bg-amber-500/[0.06] p-5 text-sm text-amber-300">
+        {data.message || "용도지역을 확인하지 못했습니다. 주소(지번)를 다시 확인해 주세요."}
+      </div>
+    );
+  }
+
+  const { summary, legal_limits, methods } = data;
+
+  return (
+    <div className="grid gap-5">
+      {/* 요약 바 */}
+      <section className="grid gap-4 rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-5 sm:grid-cols-[auto_1fr]">
+        <div className="grid grid-cols-3 gap-3">
+          <SummaryStat label="가능" value={summary.pass} tone="emerald" />
+          <SummaryStat label="심의" value={summary.warn} tone="amber" />
+          <SummaryStat label="불가" value={summary.fail} tone="rose" />
+        </div>
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-[var(--line)] pt-3 text-[13px] sm:border-l sm:border-t-0 sm:pl-5 sm:pt-0">
+          <Meta label="용도지역" value={data.zone_type || "-"} />
+          {data.area_sqm != null && (
+            <Meta label="대지면적" value={`${Math.round(data.area_sqm).toLocaleString()}㎡`} />
+          )}
+          <Meta label="추천 개발방식" value={bestName(methods, summary.best)} accent />
+          <Meta label="소요" value={`${data.elapsed_ms.toLocaleString()}ms`} />
+        </div>
+      </section>
+
+      {/* 법정 한도 */}
+      <section className="rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-4">
+        <p className="mb-2 text-[11px] font-bold uppercase tracking-wider text-[var(--text-tertiary)]">
+          법정 한도 · {legal_limits.source || "출처 미상"}
+        </p>
+        <div className="flex flex-wrap gap-2">
+          <LimitChip label="건폐율" value={legal_limits.bcr_pct} suffix="%" />
+          <LimitChip label="용적률" value={legal_limits.far_pct} suffix="%" />
+          <LimitChip label="높이" value={legal_limits.height_m} suffix="m" />
+        </div>
+      </section>
+
+      {/* LLM 요약 */}
+      {summary.llm_note && (
+        <div className="rounded-2xl border border-[var(--accent-strong)]/25 bg-[var(--accent-soft)] p-4 text-[13px] text-[var(--text-primary)]">
+          <span className="mr-2 font-bold text-[var(--accent-strong)]">AI 요약</span>
+          {summary.llm_note}
+        </div>
+      )}
+
+      {/* 신호등 그리드 */}
+      <section>
+        <p className="mb-3 text-[11px] font-bold uppercase tracking-wider text-[var(--text-tertiary)]">
+          개발방식 인허가 신호등 ({methods.length})
+        </p>
+        {methods.length === 0 ? (
+          <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-5 text-sm text-[var(--text-hint)]">
+            해당 용도지역의 후보 개발방식이 없습니다.
+          </div>
+        ) : (
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {methods.map((m) => (
+              <MethodCard key={m.code} method={m} isBest={m.code === summary.best} />
+            ))}
+          </div>
+        )}
+      </section>
+
+      {!!data.sources?.length && (
+        <p className="text-[11px] text-[var(--text-hint)]">출처: {data.sources.join(" · ")}</p>
+      )}
+    </div>
+  );
+}
+
+function bestName(methods: PreCheckMethod[], best: string | null): string {
+  if (!best) return "-";
+  const m = methods.find((x) => x.code === best);
+  return m ? `${m.name} (${m.code})` : best;
+}
+
+function SummaryStat({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: number;
+  tone: "emerald" | "amber" | "rose";
+}) {
+  const color =
+    tone === "emerald" ? "text-emerald-400" : tone === "amber" ? "text-amber-400" : "text-rose-400";
+  return (
+    <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-strong)] px-3 py-2 text-center">
+      <AnimatedCounter value={value} className={`block text-2xl font-extrabold ${color}`} />
+      <span className="text-[11px] font-semibold text-[var(--text-tertiary)]">{label}</span>
+    </div>
+  );
+}
+
+function Meta({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
+  return (
+    <span className="inline-flex items-baseline gap-1.5">
+      <span className="text-[11px] font-semibold text-[var(--text-tertiary)]">{label}</span>
+      <span className={`font-bold ${accent ? "text-[var(--accent-strong)]" : "text-[var(--text-primary)]"}`}>
+        {value}
+      </span>
+    </span>
+  );
+}
+
+function LimitChip({
+  label,
+  value,
+  suffix,
+}: {
+  label: string;
+  value: number | null;
+  suffix: string;
+}) {
+  return (
+    <span className="inline-flex items-baseline gap-1.5 rounded-lg border border-[var(--line)] bg-[var(--surface-strong)] px-3 py-1.5">
+      <span className="text-[11px] font-semibold text-[var(--text-tertiary)]">{label}</span>
+      <span className="text-sm font-bold text-[var(--text-primary)]">
+        {value != null ? `${value.toLocaleString()}${suffix}` : "—"}
+      </span>
+    </span>
+  );
+}
+
+function MethodCard({ method, isBest }: { method: PreCheckMethod; isBest: boolean }) {
+  const s = SIGNAL_STYLE[method.signal];
+  return (
+    <div className={`relative rounded-2xl border p-4 ${s.ring}`}>
+      {isBest && (
+        <span className="absolute right-3 top-3 rounded-md border border-[var(--accent-strong)]/40 bg-[var(--accent-soft)] px-1.5 py-0.5 text-[10px] font-bold text-[var(--accent-strong)]">
+          추천
+        </span>
+      )}
+      <div className="mb-2 flex items-center gap-2">
+        <span className={`h-2.5 w-2.5 rounded-full ${s.dot}`} aria-hidden="true" />
+        <span className="text-[11px] font-bold text-[var(--text-tertiary)]">{method.code}</span>
+        <span className="text-sm font-bold text-[var(--text-primary)]">{method.name}</span>
+      </div>
+      <div className="mb-2 flex flex-wrap gap-1.5">
+        <span className={`rounded-md border px-2 py-0.5 text-[10px] font-bold ${s.chip}`}>{s.label}</span>
+        <span className="rounded-md border border-[var(--line)] bg-[var(--surface-strong)] px-2 py-0.5 text-[10px] font-semibold text-[var(--text-secondary)]">
+          복잡도 {method.complexity}/5 · {method.complexity_label}
+        </span>
+      </div>
+      {method.reason && (
+        <p className="mb-2.5 text-[12px] leading-relaxed text-[var(--text-secondary)]">{method.reason}</p>
+      )}
+      {method.checks?.length > 0 && (
+        <ul className="grid gap-1">
+          {method.checks.map((c, i) => {
+            const cs = SIGNAL_STYLE[c.status];
+            return (
+              <li key={`${c.rule}-${i}`} className="flex items-start gap-2 text-[12px]">
+                <span className={`mt-1 h-1.5 w-1.5 shrink-0 rounded-full ${cs.dot}`} aria-hidden="true" />
+                <span className="font-semibold text-[var(--text-secondary)]">{c.rule}</span>
+                <span className="text-[var(--text-hint)]">{c.detail}</span>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/* ════════════════════ B. 조닝 시그널 패널 ════════════════════ */
+
+function ZoningPanel({
+  loading,
+  error,
+  data,
+}: {
+  loading: boolean;
+  error: string;
+  data: ZoningSignalsResponse | null;
+}) {
+  if (loading) {
+    return (
+      <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-8 text-center text-sm text-[var(--text-hint)]">
+        주변 필지 인접성 + 조닝 기회 분석 중…
+      </div>
+    );
+  }
+  if (error) {
+    return (
+      <div className="rounded-2xl border border-rose-500/40 bg-rose-500/[0.06] p-5 text-sm text-rose-400">
+        {error}
+      </div>
+    );
+  }
+  if (!data) return null;
+
+  if (!data.ok) {
+    return (
+      <div className="rounded-2xl border border-amber-500/40 bg-amber-500/[0.06] p-5 text-sm text-amber-300">
+        {data.message || "조닝 시그널을 산출하지 못했습니다."}
+      </div>
+    );
+  }
+
+  const signals = data.signals ?? [];
+
+  return (
+    <div className="grid gap-5 lg:grid-cols-[1.1fr_1fr]">
+      <section className="rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-4">
+        <div className="mb-2 flex items-center justify-between">
+          <p className="text-sm font-bold text-[var(--text-primary)]">조닝 기회 지도</p>
+          <span className="text-[11px] text-[var(--text-hint)]">
+            대상: {data.target?.zone_type || "-"} · {data.target?.address || data.target?.pnu || ""}
+          </span>
+        </div>
+        <ZoningSignalMap geojson={data.geojson} signals={signals} />
+      </section>
+
+      <section className="grid gap-3">
+        <p className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-tertiary)]">
+          기회 시그널 ({signals.length})
+        </p>
+        {signals.length === 0 ? (
+          <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-5 text-sm text-[var(--text-hint)]">
+            {data.note || "주변 필지에서 유의미한 조닝 기회 시그널을 찾지 못했습니다."}
+          </div>
+        ) : (
+          signals.map((sig, i) => <SignalCard key={`${sig.type}-${i}`} signal={sig} />)
+        )}
+        {!!data.sources?.length && (
+          <p className="text-[11px] text-[var(--text-hint)]">출처: {data.sources.join(" · ")}</p>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function SignalCard({ signal }: { signal: ZoningSignal }) {
+  const levelChip = LEVEL_CHIP[signal.level] || LEVEL_CHIP.low;
+  return (
+    <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-4">
+      <div className="mb-2 flex flex-wrap items-center gap-2">
+        <span className="rounded-md border border-[var(--accent-strong)]/30 bg-[var(--accent-soft)] px-2 py-0.5 text-[11px] font-bold text-[var(--accent-strong)]">
+          {signal.type}
+        </span>
+        <span className={`rounded-md border px-2 py-0.5 text-[10px] font-bold ${levelChip}`}>
+          {LEVEL_LABEL[signal.level] || signal.level}
+        </span>
+        <span className="ml-auto text-sm font-extrabold text-[var(--text-primary)]">
+          {Math.round(signal.score)}
+          <span className="text-[11px] font-semibold text-[var(--text-hint)]">/100</span>
+        </span>
+      </div>
+      {signal.rationale && (
+        <p className="mb-2.5 text-[12px] leading-relaxed text-[var(--text-secondary)]">{signal.rationale}</p>
+      )}
+      {signal.parcels?.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {signal.parcels.map((p, i) => (
+            <span
+              key={`${p.pnu}-${i}`}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--line)] bg-[var(--surface-strong)] px-2 py-1 text-[11px]"
+              title={p.pnu}
+            >
+              <span
+                className={`inline-block h-2 w-2 rounded-sm ${p.adjacent ? "bg-emerald-500" : "bg-slate-500"}`}
+                aria-hidden="true"
+              />
+              <span className="font-semibold text-[var(--text-secondary)]">{p.zone_type || "용도미상"}</span>
+              {p.adjacent && <span className="text-emerald-400">인접</span>}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default PreCheckWorkspace;

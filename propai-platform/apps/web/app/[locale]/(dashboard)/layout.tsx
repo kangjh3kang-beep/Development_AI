@@ -110,6 +110,7 @@ export default async function DashboardLayout({
   // I. 프로젝트 분석 (핵심 워크플로우)
   const lifecycleNavigation = [
     { href: `/${locale}`, label: "대시보드", icon: <IconDashboard /> },
+    { href: `/${locale}/precheck`, label: "90초 AI PreCheck", icon: <IconPermit /> },
     { href: `/${locale}/projects`, label: "프로젝트 관리", icon: <IconProject /> },
     { href: `/${locale}/market-insights`, label: "마켓 분석", icon: <IconMarket /> },
     { href: `/${locale}/permits`, label: "인.허가분석 자동화", icon: <IconPermit /> },
