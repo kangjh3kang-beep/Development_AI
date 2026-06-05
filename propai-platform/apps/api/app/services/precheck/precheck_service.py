@@ -189,6 +189,18 @@ async def run_instant_precheck(
             "sources": sources,
         }
 
+    # PNU 미확인(지오코딩 실패) 시 용도지역은 주소 키워드 추론 기본값이라 정량 진단을 신뢰할 수 없음.
+    # 할루시네이션 방지: 실제 필지가 확인되지 않으면 차단(빈 결과 금지 원칙과 동일선상).
+    if not resolved_pnu:
+        return {
+            "ok": False,
+            "message": "입력하신 주소를 실제 필지(PNU)로 확인하지 못했습니다. 정확한 지번 주소를 입력하거나 PNU를 함께 제공해 주세요. (필지 미확인 상태에서는 정량 진단을 제공하지 않습니다.)",
+            "address": address,
+            "pnu": None,
+            "elapsed_ms": int((time.perf_counter() - t0) * 1000),
+            "sources": sources,
+        }
+
     # ── 2) 법정 한도 + 후보 개발방식 ──
     legal = _legal_limits(zone_type)
     permitted_codes = get_permitted_types(zone_type)
