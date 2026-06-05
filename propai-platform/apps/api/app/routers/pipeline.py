@@ -128,6 +128,42 @@ async def run_pipeline(req: PipelineRunRequest):
     )
 
 
+def _normalize_for_interpreter(stage: str, data: dict[str, Any]) -> dict[str, Any]:
+    """파이프라인 stage 데이터 키 → 인터프리터 기대 키로 보강(해석 품질↑). 원본 키도 보존."""
+    d = dict(data)
+
+    def setdefault_from(target: str, *sources: str) -> None:
+        if d.get(target) in (None, "") :
+            for s in sources:
+                if d.get(s) not in (None, ""):
+                    d[target] = d[s]; return
+
+    if stage == "design":
+        setdefault_from("total_floor_area_sqm", "total_gfa_sqm")
+        setdefault_from("num_floors", "floor_count", "floor_count_above")
+        setdefault_from("building_use", "building_type")
+        setdefault_from("bcr_pct", "bcr_used_pct", "bcr")
+        setdefault_from("far_pct", "far_used_pct", "far")
+        setdefault_from("max_bcr_pct", "max_bcr")
+        setdefault_from("max_far_pct", "max_far")
+        setdefault_from("zone_code", "zone_type")
+        setdefault_from("building_footprint_sqm", "building_area_sqm")
+    elif stage == "esg":
+        # esg_interpreter는 carbon_emissions 중첩을 기대 — 가용 탄소값으로 구성.
+        if not isinstance(d.get("carbon_emissions"), dict):
+            emb = d.get("embodied_carbon_kg"); op = d.get("operational_carbon_kg")
+            per = d.get("total_carbon_per_sqm")
+            if any(v is not None for v in (emb, op, per)):
+                tot = ((emb or 0) + (op or 0)) / 1000 or None
+                d["carbon_emissions"] = {
+                    "total_emissions_tco2": round(tot, 2) if tot else None,
+                    "emissions_per_sqm": per,
+                    "scope1": round((emb or 0) / 1000, 2) if emb else None,
+                    "scope3": round((op or 0) / 1000, 2) if op else None,
+                }
+    return d
+
+
 class InterpretRequest(BaseModel):
     """단계별 AI 해석(온디맨드) 요청 — 보고서 섹션 열람 시 호출."""
     stage: str
@@ -145,6 +181,7 @@ async def interpret_stage(req: InterpretRequest) -> dict[str, Any]:
     stage = (req.stage or "").strip()
     # 맥락(context) → 데이터 병합(단계 data 우선). 인터프리터 공통 키 보강.
     data = {**(req.context or {}), **(req.data or {})}
+    data = _normalize_for_interpreter(stage, data)
     # ② 캐시: 동일 입력은 즉시 반환(LLM 재호출·비용 절감, 재열람 즉시 표시)
     from app.services.ai.interpretation_cache import cache_key, get_cached, put_cached
     ckey = cache_key(stage, data)
