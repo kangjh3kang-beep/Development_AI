@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from apps.api.auth.jwt_handler import CurrentUser, get_current_user
+from app.services.ledger import analysis_ledger_service as ledger
 from app.services.pipeline.project_pipeline import (
     ProjectPipeline,
     PipelineStage,
@@ -336,6 +338,101 @@ async def generate_report_pdf(req: ReportPdfRequest):
     return Response(
         content=pdf, media_type="application/pdf",
         headers={"Content-Disposition": "attachment; filename=propai_report.pdf"},
+    )
+
+
+# ── 원장(ledger) 단일출처 직접 렌더 ──────────────────────────
+
+# 원장 analysis_type → 파이프라인 stage 키 매핑.
+# PipelineReportService.generate / _gather_report_narratives 가 읽는 stage 키
+# (site_analysis, design, cost, feasibility, tax, esg)와 일치시킨다.
+# appraisal/avm은 보고서 본문에서 직접 소비하지 않으나 계보 보존용으로 통과시킨다.
+_LEDGER_TYPE_TO_STAGE: dict[str, str] = {
+    "avm": "appraisal",
+    "appraisal": "appraisal",
+    "site_analysis": "site_analysis",
+    "design": "design",
+    "cost": "cost",
+    "feasibility": "feasibility",
+    "tax": "tax",
+    "esg": "esg",
+    "permit": "permit",
+}
+
+
+class ReportFromLedgerRequest(BaseModel):
+    """원장(ledger) 최신 버전 묶음을 단일출처로 통합 보고서 PDF를 직접 렌더."""
+    pnu: str | None = None
+    address: str | None = None
+    project_id: str | None = None
+
+
+@router.post("/report/pdf-from-ledger", summary="통합 보고서 PDF(분석 원장 단일출처 직접 렌더)")
+async def generate_report_pdf_from_ledger(
+    req: ReportFromLedgerRequest,
+    current: CurrentUser = Depends(get_current_user),
+):
+    """분석 원장에 적재된 각 분석타입의 최신 버전 payload를 단일출처로
+    PF 심사용 통합 보고서 PDF를 직접 생성한다(프론트 컨텍스트 경유 없이).
+
+    pnu/address/project_id 중 하나로 체인을 식별하며, 원장이 비어 있으면
+    빈 PDF 대신 안내 JSON을 반환한다.
+    """
+    from fastapi.responses import JSONResponse, Response
+    from app.services.report.pipeline_report_pdf import build_pipeline_report_pdf
+
+    if not (req.pnu or req.address or req.project_id):
+        return JSONResponse(
+            status_code=422,
+            content={"ok": False, "message": "pnu/address/project_id 중 하나는 필수입니다."},
+        )
+
+    tid = str(getattr(current, "tenant_id", "") or "") or None
+    bundle = await ledger.get_latest(
+        analysis_type=None, tenant_id=tid,
+        pnu=req.pnu, address=req.address, project_id=req.project_id,
+    )
+    if not bundle:
+        return JSONResponse(
+            status_code=200,
+            content={"ok": False, "message": "원장에 분석 데이터가 없습니다. 먼저 분석을 실행/저장하세요."},
+        )
+
+    # 원장 묶음 → result_dict 조립(stages=dict). PipelineReportService 기대형.
+    stages: dict[str, Any] = {}
+    version_parts: list[str] = []
+    for atype, entry in bundle.items():
+        if not isinstance(entry, dict):
+            continue
+        stage = _LEDGER_TYPE_TO_STAGE.get(atype, atype)
+        payload = entry.get("payload")
+        stages[stage] = {
+            "stage": stage,
+            "data": payload if isinstance(payload, dict) else {},
+            "ledger_version": entry.get("version"),
+            "content_hash": entry.get("content_hash"),
+        }
+        version_parts.append(f"{stage}:v{entry.get('version')}")
+
+    site_payload = (stages.get("site_analysis") or {}).get("data") or {}
+    address = req.address or (site_payload.get("address") if isinstance(site_payload, dict) else None) or ""
+
+    result_dict: dict[str, Any] = {"address": address, "stages": stages}
+
+    report = PipelineReportService().generate(result_dict)
+    narratives = await _gather_report_narratives(result_dict)
+    pdf = build_pipeline_report_pdf(
+        report.model_dump() if hasattr(report, "model_dump") else report,
+        narratives=narratives,
+    )
+    # 헤더값은 ASCII 안전(콜론/쉼표만, 한글 금지).
+    versions_header = ",".join(version_parts)[:300] or "none"
+    return Response(
+        content=pdf, media_type="application/pdf",
+        headers={
+            "Content-Disposition": "attachment; filename=propai_report_ledger.pdf",
+            "X-Ledger-Versions": versions_header,
+        },
     )
 
 
