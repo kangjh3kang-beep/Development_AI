@@ -13,6 +13,7 @@ import { Card, CardContent } from "@propai/ui";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { GlobalAddressSearch, type AddressEntry } from "@/components/common/GlobalAddressSearch";
 import { ParcelBoundaryMap } from "@/components/map/ParcelBoundaryMap";
+import { SolarEnvelopeCard } from "@/components/projects/SolarEnvelopeCard";
 import { ExpertPanelCard } from "@/components/common/ExpertPanelCard";
 import { VerificationBadge } from "@/components/common/VerificationBadge";
 import { DevelopmentScenarioCard } from "@/components/common/DevelopmentScenarioCard";
@@ -200,8 +201,10 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
         </CardContent>
       </Card>
 
-      {/* 필지 구획도 (단/다필지 경계 + 용도지역 + 인접성) */}
-      <ParcelBoundaryMap parcels={[addr || siteAnalysis?.address || "", ...extra]} />
+      {/* 필지 구획도 (단/다필지 경계 + 용도지역 + 인접성) — 주소 확정 시에만 */}
+      {(addr || siteAnalysis?.address) && (
+        <ParcelBoundaryMap parcels={[addr || siteAnalysis?.address || "", ...extra].filter(Boolean)} />
+      )}
 
       {/* 다각도 개발방식 시뮬레이션 (정책 적용판정 + 최적안 + 인접성) */}
       {(addr || siteAnalysis?.address) && (
@@ -219,6 +222,33 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
       {/* 부지 요약 + 종합 */}
       {result && (
         <>
+          {/* 한눈 요약(at-a-glance) — 최적 개발방식·핵심 규제 지표 */}
+          {(() => {
+            const top = [...result.methods].sort((a, b) => (b.score || 0) - (a.score || 0))[0];
+            const s = result.site;
+            const kpis: [string, string][] = [
+              ["추천 개발방식", top ? top.method : "—"],
+              ["인허가 가능성", top ? `${top.possibility} · ${top.score}점` : "—"],
+              ["용도지역", s?.zone_type || "—"],
+              ["용적률 한도", s?.max_far != null ? `${s.max_far}%` : "—"],
+            ];
+            return (
+              <Card className="rounded-[var(--radius-2xl)] border-[var(--accent-strong)]/30 bg-[var(--accent-strong)]/5 shadow-[var(--shadow-md)]">
+                <CardContent className="p-5">
+                  <p className="text-[11px] font-black uppercase tracking-widest text-[var(--accent-strong)]">한눈 요약 · 인허가 진단</p>
+                  <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-4">
+                    {kpis.map(([k, v], i) => (
+                      <div key={k} className={`rounded-xl border p-3 ${i === 0 ? "border-[var(--accent-strong)]/40 bg-[var(--accent-strong)]/10" : "border-[var(--line)] bg-[var(--surface-2)]"}`}>
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-hint)]">{k}</p>
+                        <p className={`mt-1 text-base font-[1000] ${i === 0 ? "text-[var(--accent-strong)]" : "text-[var(--text-primary)]"}`}>{v}</p>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })()}
+
           <VerificationBadge analysisType="permit" context={result as unknown as Record<string, unknown>} />
           <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
             <CardContent className="p-6">
@@ -252,6 +282,14 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
               )}
             </CardContent>
           </Card>
+
+          {/* 일조권 · 건축가능 볼륨(정북일조 + 동지 일영) — 인허가 핵심 규제 정량화 */}
+          <SolarEnvelopeCard
+            address={site?.address || addr || siteAnalysis?.address || undefined}
+            pnu={siteAnalysis?.pnu || undefined}
+            zone={site?.zone_type || undefined}
+            landAreaSqm={site?.land_area_sqm ?? siteAnalysis?.landAreaSqm ?? undefined}
+          />
 
           {/* 다필지 통합 개발 — 최적·최고 용적률 산정 */}
           {result.multi_parcel && (

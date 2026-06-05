@@ -98,7 +98,7 @@ export function ParcelBoundaryMap({
     apiClient
       .post<Boundaries>("/zoning/parcel-boundaries", {
         body: { parcels: list.map((a) => ({ address: a })) },
-        useMock: false, timeoutMs: 90000,
+        useMock: false, timeoutMs: 45000,
       })
       .then((d) => { if (alive) setData(d); })
       .catch(() => { if (alive) setError("필지 경계를 불러오지 못했습니다."); })
@@ -173,7 +173,17 @@ export function ParcelBoundaryMap({
           {data.adjacency.note}
         </div>
       )}
-      <div ref={mapEl} className="h-[340px] w-full overflow-hidden rounded-xl border border-[var(--line)]" />
+      <div className="relative">
+        <div ref={mapEl} className="h-[340px] w-full overflow-hidden rounded-xl border border-[var(--line)]" />
+        {/* 로딩/빈결과 오버레이 — 무한 '불러오는 중' 방지 */}
+        {(loading || (!loading && !error && (!data || !data.features?.length))) && (
+          <div className="absolute inset-0 flex items-center justify-center rounded-xl bg-[var(--surface-soft)]/70 text-xs text-[var(--text-hint)]">
+            {loading
+              ? "지적도 경계 불러오는 중…"
+              : "필지 경계를 찾지 못했습니다 (지번 정확도·VWorld 지적도 미제공 가능). 주소를 확인하세요."}
+          </div>
+        )}
+      </div>
       {data && data.features.length > 0 && (
         <div className="mt-3 flex flex-wrap gap-2">
           {data.features.map((f, i) => (
