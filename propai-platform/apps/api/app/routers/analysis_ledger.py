@@ -8,13 +8,25 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from apps.api.auth.jwt_handler import CurrentUser, get_current_user
 from app.services.ledger import analysis_ledger_service as ledger
 
 router = APIRouter(prefix="/api/v1/analysis-ledger", tags=["분석원장(해시체인)"])
+
+# 관리자군 role(빌링/시크릿과 동기화 — 단일 기준)
+_ADMIN_ROLES = {"admin", "manager", "owner", "superadmin", "super_admin", "총괄관리자", "platform_admin"}
+
+
+def _tid(current: CurrentUser) -> str | None:
+    return str(getattr(current, "tenant_id", "") or "") or None
+
+
+def _require_admin(current: CurrentUser) -> None:
+    if (getattr(current, "role", "") or "").strip().lower() not in {r.lower() for r in _ADMIN_ROLES}:
+        raise HTTPException(status_code=403, detail="관리자 권한이 필요합니다.")
 
 
 class AppendRequest(BaseModel):
@@ -72,6 +84,50 @@ async def verify(
 ) -> dict[str, Any]:
     return await ledger.verify_chain(
         analysis_type=analysis_type,
-        tenant_id=str(getattr(current, "tenant_id", "") or "") or None,
+        tenant_id=_tid(current),
         pnu=pnu, address=address, project_id=project_id,
     )
+
+
+# ── 사용 용량(구독자별) 제한·삭제·상향 ──
+@router.get("/usage", summary="저장 사용량/한도 조회")
+async def usage(current: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
+    return await ledger.get_usage(_tid(current))
+
+
+class DeleteChainRequest(BaseModel):
+    analysis_type: str
+    pnu: str | None = None
+    address: str | None = None
+    project_id: str | None = None
+
+
+@router.post("/delete-chain", summary="특정 분석 체인 삭제(용량 확보)")
+async def delete_chain(req: DeleteChainRequest, current: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
+    return await ledger.delete_chain(
+        analysis_type=req.analysis_type, tenant_id=_tid(current),
+        pnu=req.pnu, address=req.address, project_id=req.project_id,
+    )
+
+
+@router.post("/prune", summary="체인별 최신 N개만 남기고 정리(용량 확보)")
+async def prune(keep_per_chain: int = 5, current: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
+    return await ledger.prune_old_versions(_tid(current), keep_per_chain=max(1, keep_per_chain))
+
+
+class SetQuotaRequest(BaseModel):
+    tenant_id: str
+    max_entries: int
+
+
+@router.post("/admin/set-quota", summary="관리자: 테넌트 용량 한도 상향/조정")
+async def admin_set_quota(req: SetQuotaRequest, current: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
+    _require_admin(current)
+    result = await ledger.set_quota(req.tenant_id, req.max_entries)
+    from app.core.audit import audit_admin_action
+    await audit_admin_action(
+        actor_id=str(getattr(current, "user_id", "") or ""), actor_role=getattr(current, "role", ""),
+        action="ledger.set_quota", target=req.tenant_id, tenant_id=_tid(current),
+        detail={"max_entries": req.max_entries},
+    )
+    return result

@@ -44,6 +44,13 @@ _IDX = (
     "ON analysis_ledger(tenant_id, address_norm, analysis_type, version DESC)",
 )
 
+# 구독자(테넌트)별 저장 용량 쿼터 — 기본값 + 관리자 상향(override) 테이블
+_QUOTA_DDL = (
+    "CREATE TABLE IF NOT EXISTS analysis_ledger_quota ("
+    "  tenant_id text PRIMARY KEY, max_entries int NOT NULL, updated_at timestamptz DEFAULT now())"
+)
+_DEFAULT_QUOTA = 300         # 무설정 테넌트 기본 보관 한도(분석 버전 행 수)
+
 
 def _norm_addr(s: str | None) -> str:
     return " ".join((s or "").split()).strip()
@@ -78,8 +85,104 @@ def _chain_where(pnu: str | None, address_norm: str, project_id: str | None) -> 
 async def _ensure(db) -> None:
     from sqlalchemy import text
     await db.execute(text(_DDL))
+    await db.execute(text(_QUOTA_DDL))
     for ix in _IDX:
         await db.execute(text(ix))
+
+
+async def _count_entries(db, tenant_id: str | None) -> int:
+    from sqlalchemy import text
+    tenant_sql = "tenant_id = :tid" if tenant_id else "tenant_id IS NULL"
+    row = (await db.execute(text(
+        f"SELECT count(*) FROM analysis_ledger WHERE {tenant_sql}"), {"tid": tenant_id})).first()
+    return int(row[0]) if row else 0
+
+
+async def _quota(db, tenant_id: str | None) -> int:
+    from sqlalchemy import text
+    if not tenant_id:
+        return _DEFAULT_QUOTA
+    row = (await db.execute(text(
+        "SELECT max_entries FROM analysis_ledger_quota WHERE tenant_id = :tid"),
+        {"tid": tenant_id})).first()
+    return int(row[0]) if row else _DEFAULT_QUOTA
+
+
+async def get_usage(tenant_id: str | None) -> dict[str, Any]:
+    """테넌트 저장 사용량/한도 조회."""
+    try:
+        from app.core.database import async_session_factory
+        async with async_session_factory() as db:
+            await _ensure(db)
+            used = await _count_entries(db, tenant_id)
+            quota = await _quota(db, tenant_id)
+            return {"ok": True, "used": used, "quota": quota,
+                    "remaining": max(0, quota - used),
+                    "usage_pct": round(used / quota * 100, 1) if quota else 0}
+    except Exception as e:  # noqa: BLE001
+        logger.warning("원장 사용량 조회 실패", err=str(e)[:160])
+        return {"ok": False, "message": str(e)[:160]}
+
+
+async def set_quota(tenant_id: str, max_entries: int) -> dict[str, Any]:
+    """관리자: 테넌트 용량 한도 상향/조정(override)."""
+    try:
+        from sqlalchemy import text
+        from app.core.database import async_session_factory
+        async with async_session_factory() as db:
+            await _ensure(db)
+            await db.execute(text(
+                "INSERT INTO analysis_ledger_quota(tenant_id, max_entries, updated_at) "
+                "VALUES (:tid, :mx, now()) "
+                "ON CONFLICT (tenant_id) DO UPDATE SET max_entries = EXCLUDED.max_entries, updated_at = now()"),
+                {"tid": tenant_id, "mx": int(max_entries)})
+            await db.commit()
+            return {"ok": True, "tenant_id": tenant_id, "max_entries": int(max_entries)}
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "message": str(e)[:160]}
+
+
+async def delete_chain(
+    *, analysis_type: str, tenant_id: str | None = None,
+    pnu: str | None = None, address: str | None = None, project_id: str | None = None,
+) -> dict[str, Any]:
+    """체인(특정 PNU/주소·프로젝트·타입) 전체 버전 삭제 — 용량 확보."""
+    address_norm = _norm_addr(address)
+    try:
+        from sqlalchemy import text
+        from app.core.database import async_session_factory
+        async with async_session_factory() as db:
+            await _ensure(db)
+            key_sql, params = _chain_where(pnu, address_norm, project_id)
+            params.update({"tid": tenant_id, "atype": analysis_type})
+            tenant_sql = "tenant_id = :tid" if tenant_id else "tenant_id IS NULL"
+            res = await db.execute(text(
+                f"DELETE FROM analysis_ledger WHERE {tenant_sql} AND {key_sql} AND analysis_type = :atype"), params)
+            await db.commit()
+            return {"ok": True, "deleted": res.rowcount}
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "message": str(e)[:160]}
+
+
+async def prune_old_versions(tenant_id: str | None, keep_per_chain: int = 5) -> dict[str, Any]:
+    """체인별 최신 N개만 남기고 옛 버전 삭제 — 용량 확보(최신·계보 유지)."""
+    try:
+        from sqlalchemy import text
+        from app.core.database import async_session_factory
+        async with async_session_factory() as db:
+            await _ensure(db)
+            tenant_sql = "tenant_id = :tid" if tenant_id else "tenant_id IS NULL"
+            res = await db.execute(text(
+                f"DELETE FROM analysis_ledger a USING ("
+                f"  SELECT id, row_number() OVER ("
+                f"    PARTITION BY tenant_id, pnu, address_norm, project_id, analysis_type "
+                f"    ORDER BY version DESC) AS rn "
+                f"  FROM analysis_ledger WHERE {tenant_sql}) r "
+                f"WHERE a.id = r.id AND r.rn > :keep"), {"tid": tenant_id, "keep": keep_per_chain})
+            await db.commit()
+            return {"ok": True, "pruned": res.rowcount, "kept_per_chain": keep_per_chain}
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "message": str(e)[:160]}
 
 
 async def append_analysis(
@@ -114,6 +217,13 @@ async def append_analysis(
                 # 변경 없음 — 중복 버전 생성 방지(멱등)
                 return {"ok": True, "unchanged": True, "version": int(prev[0]),
                         "content_hash": chash, "analysis_type": analysis_type}
+
+            # 용량 쿼터 — 신규 버전 적재 전 한도 확인(초과 시 삭제·상향 안내)
+            used = await _count_entries(db, tenant_id)
+            quota = await _quota(db, tenant_id)
+            if used >= quota:
+                return {"ok": False, "quota_exceeded": True, "used": used, "quota": quota,
+                        "message": f"저장 용량 한도({quota}건) 초과 — 오래된 분석을 삭제하거나 관리자에게 용량 상향을 요청하세요."}
 
             version = (int(prev[0]) + 1) if prev else 1
             prev_hash = prev[1] if prev else None

@@ -146,7 +146,16 @@ async def admin_set_tier(
     db: AsyncSession = Depends(get_db),
 ):
     """관리자 전용: 사용자 등급 변경."""
-    if current.role not in ("admin", "manager"):
+    if current.role not in ("admin", "manager", "owner", "super_admin", "총괄관리자", "platform_admin"):
         raise HTTPException(status_code=403, detail="관리자 권한이 필요합니다.")
     await billing_service.set_tier(db, req.user_id, req.tier)
+    try:
+        from app.core.audit import audit_admin_action
+        await audit_admin_action(
+            actor_id=str(getattr(current, "user_id", "") or ""), actor_role=getattr(current, "role", ""),
+            action="billing.set_tier", target=req.user_id,
+            tenant_id=str(getattr(current, "tenant_id", "") or ""), detail={"tier": req.tier},
+        )
+    except Exception:  # noqa: BLE001
+        pass
     return {"ok": True, "user_id": req.user_id, "tier": req.tier}
