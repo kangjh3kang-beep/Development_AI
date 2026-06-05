@@ -9,10 +9,14 @@ import { useParams } from "next/navigation";
 import dynamic from "next/dynamic";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { ProjectSwitcher } from "@/components/common/ProjectSwitcher";
-import { ProjectBimWorkspaceClient } from "@/components/projects/ProjectBimWorkspaceClient";
 import { QtoBreakdown } from "@/components/cost/QtoBreakdown";
 import { isValidLocale, type Locale } from "@/i18n/config";
 
+// 3D/적산 무거운 컴포넌트는 클라이언트 전용(ssr:false) — Worker SSR 부하(1102) 완화
+const ProjectBimWorkspaceClient = dynamic(
+  () => import("@/components/projects/ProjectBimWorkspaceClient").then((m) => m.ProjectBimWorkspaceClient),
+  { ssr: false, loading: () => <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-8 text-center text-sm text-[var(--text-hint)]">3D BIM 뷰어 불러오는 중…</div> },
+);
 const BimCostDashboard = dynamic(() => import("@/components/cost/BimCostDashboard"), { ssr: false });
 
 export default function BimStudioPage() {

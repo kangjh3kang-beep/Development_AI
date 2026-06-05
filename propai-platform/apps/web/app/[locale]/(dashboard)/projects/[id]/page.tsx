@@ -2,11 +2,10 @@
 
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
+import dynamic from "next/dynamic";
 import { motion } from "framer-motion";
-import { LifecycleStageViews } from "@/components/projects/LifecycleStageViews";
 import { ProjectAnalysisSummary } from "@/components/projects/ProjectAnalysisSummary";
 import { ProjectLifecyclePipeline } from "@/components/projects/ProjectLifecyclePipeline";
-import { ProjectAnalysisFlow } from "@/components/projects/ProjectAnalysisFlow";
 import { isValidLocale, type Locale } from "@/i18n/config";
 import { useDictionary } from "@/hooks/use-dictionary";
 import { formatCurrencyKRW } from "@/lib/formatters";
@@ -15,7 +14,14 @@ import { useProjectStore } from "@/store/useProjectStore";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { ImageUpload } from "@/components/ui/ImageUpload";
 import { latestLedger } from "@/lib/analysis-ledger";
-import { PipelineResultDetail } from "@/components/pipeline/PipelineResultDetail";
+
+// 무거운 패널은 클라이언트 전용(ssr:false)으로 코드분할 — Cloudflare Worker SSR 부하(1102) 완화
+const _loading = (label: string) => () => (
+  <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-8 text-center text-sm text-[var(--text-hint)]">{label}</div>
+);
+const LifecycleStageViews = dynamic(() => import("@/components/projects/LifecycleStageViews").then((m) => m.LifecycleStageViews), { ssr: false, loading: _loading("라이프사이클 뷰 불러오는 중…") });
+const ProjectAnalysisFlow = dynamic(() => import("@/components/projects/ProjectAnalysisFlow").then((m) => m.ProjectAnalysisFlow), { ssr: false, loading: _loading("분석 흐름 불러오는 중…") });
+const PipelineResultDetail = dynamic(() => import("@/components/pipeline/PipelineResultDetail").then((m) => m.PipelineResultDetail), { ssr: false, loading: _loading("통합 보고서 불러오는 중…") });
 
 type ProjectMeta = {
   id: string;
