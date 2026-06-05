@@ -488,6 +488,15 @@ try:
 except Exception as e:
     logger.warning("app/routers/design_v61 로드 실패", error=str(e))
 
+# D3 설계변경 사전예측: /api/v1/design-risk/predict (착공 전 법규초과·누락·정합 예측 +
+# 보완방안). 룰기반 우선·AI 보조(use_llm). 자체 prefix=/api/v1/design-risk(충돌0).
+try:
+    from apps.api.app.routers.design_risk import router as design_risk_router
+
+    app.include_router(design_risk_router, tags=["설계변경 사전예측(D3)"])
+except Exception as e:
+    logger.warning("app/routers/design_risk 로드 실패", error=str(e))
+
 # 프론트가 호출하나 미마운트였던 app/routers 4종(자체 prefix 보유, 기존 라우트와 경로
 # 충돌 0·대상경로 미존재 라이브확인). 프론트 호출 없는 agents/cost/rates/v2_tax는
 # 표면 확대 방지로 미마운트(필요시 추후). 각각 독립 try로 격리.
