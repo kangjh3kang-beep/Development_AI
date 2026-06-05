@@ -40,6 +40,7 @@ class DeskAppraisalRequest(BaseModel):
     monthly_rent_won: float | None = None          # 월 임대료(주면 수익환원법 병행)
     deposit_won: float | None = None
     cap_rate: float | None = None
+    include_ai: bool = True                          # PDF에 AI 상세 해석(avm) 포함 여부
 
 
 @router.post("/desk-appraisal")
@@ -169,7 +170,23 @@ async def land_desk_appraisal_pdf(req: DeskAppraisalRequest):
     )
     if not result.get("ok"):
         return result  # 공시지가 미확인 등 — JSON 오류 반환
-    pdf = build_desk_appraisal_pdf(result, address=req.address)
+
+    ai_sections: dict | None = None
+    if req.include_ai:
+        # 통합보고서와 동일 패턴: avm 인터프리터(정규화+캐시) 산출을 PDF에 결합.
+        import asyncio
+
+        from app.routers.pipeline import _interpret_stage
+
+        try:
+            interp = await asyncio.wait_for(
+                _interpret_stage("avm", {"address": req.address, **result}), timeout=30.0)
+            if isinstance(interp, dict) and interp.get("ok") and isinstance(interp.get("sections"), dict):
+                ai_sections = interp["sections"]
+        except Exception:  # noqa: BLE001 — 타임아웃/해석 실패해도 PDF는 생성
+            ai_sections = None
+
+    pdf = build_desk_appraisal_pdf(result, address=req.address, ai_sections=ai_sections)
     return Response(
         content=pdf, media_type="application/pdf",
         headers={"Content-Disposition": "attachment; filename=propai_desk_appraisal.pdf"},

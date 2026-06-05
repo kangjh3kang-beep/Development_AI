@@ -6,8 +6,22 @@ import io
 from typing import Any
 
 
-def build_desk_appraisal_pdf(result: dict[str, Any], *, address: str = "") -> bytes:
-    """desk_appraisal 결과 dict → 탁상감정서 PDF(bytes)."""
+# avm_interpreter 섹션 키 → 한글 라벨(통합보고서 'AI 상세 해석'과 동일 톤).
+_AVM_SECTION_LABELS: dict[str, str] = {
+    "valuation_narrative": "추정 근거·신뢰도",
+    "comparable_explanation": "비교 사례 분석",
+    "market_position": "시장 내 포지셔닝",
+    "appreciation_outlook": "향후 가치 전망",
+    "investment_recommendation": "투자 종합 의견",
+}
+
+
+def build_desk_appraisal_pdf(
+    result: dict[str, Any], *, address: str = "", ai_sections: dict[str, Any] | None = None
+) -> bytes:
+    """desk_appraisal 결과 dict → 탁상감정서 PDF(bytes).
+
+    ai_sections={section:text} 제공 시 'AI 상세 해석' 섹션을 추가(avm_interpreter 산출)."""
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.units import mm
     from reportlab.lib import colors
@@ -158,7 +172,21 @@ def build_desk_appraisal_pdf(result: dict[str, Any], *, address: str = "") -> by
         basis_lines.append("· 시장통계: R-ONE 통계표 미설정 구간은 근사값 적용(설정 시 실데이터 전환).")
     el.append(Paragraph("<br/>".join(basis_lines) if basis_lines else "근거 데이터 없음", small))
 
-    # 6. 면책
+    # 6. AI 상세 해석(ai_sections 제공 시 — avm_interpreter 산출)
+    if isinstance(ai_sections, dict) and any(
+        isinstance(v, str) and v.strip() for v in ai_sections.values()
+    ):
+        el.append(Paragraph("6. AI 상세 해석", h))
+        for key, label in _AVM_SECTION_LABELS.items():
+            v = ai_sections.get(key)
+            if isinstance(v, str) and v.strip():
+                el.append(Paragraph(f"<b>· {label}</b><br/>{v.strip()}", body))
+        # 라벨 미정의 추가 섹션도 누락 없이 출력
+        for key, v in ai_sections.items():
+            if key not in _AVM_SECTION_LABELS and isinstance(v, str) and v.strip():
+                el.append(Paragraph(f"<b>· {key}</b><br/>{v.strip()}", body))
+
+    # 7. 면책
     el.append(Spacer(1, 10))
     el.append(Paragraph("※ 면책 (본 문서는 감정평가서가 아님)", h))
     el.append(Paragraph(result.get("disclaimer", ""), small))
