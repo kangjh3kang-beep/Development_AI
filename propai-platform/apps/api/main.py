@@ -431,6 +431,12 @@ try:
 except Exception as _e:  # noqa: BLE001
     logger.warning("land_price 라우터 등록 실패", err=str(_e)[:160])
 
+try:
+    from apps.api.app.routers.analysis_ledger import router as analysis_ledger_router
+    app.include_router(analysis_ledger_router, tags=["분석원장(해시체인)"])  # 자체 prefix
+except Exception as _e:  # noqa: BLE001
+    logger.warning("analysis_ledger 라우터 등록 실패", err=str(_e)[:160])
+
 # 나라장터(G2B) 공공입찰 — 라우터 자체 prefix="/g2b" → 최종 /api/v1/g2b/*
 if g2b_router is not None:
     app.include_router(g2b_router, prefix="/api/v1", tags=["공공입찰(G2B)"])
