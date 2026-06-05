@@ -9,6 +9,7 @@ const nextConfig = {
     NEXT_PUBLIC_USE_MOCKS: process.env.NEXT_PUBLIC_USE_MOCKS || "false",
   },
   reactStrictMode: true,
+  output: "standalone",
   transpilePackages: ["@propai/ui"],
   turbopack: {
     root: path.join(__dirname, "../../"),

@@ -1,0 +1,61 @@
+version: '3.8'
+
+services:
+  web:
+    build: 
+      context: .
+      dockerfile: Dockerfile.web
+    image: propai-web:oracle
+    restart: always
+    expose:
+      - "3000"
+    env_file: 
+      - .env
+    networks:
+      - propai-network
+    depends_on:
+      - api
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.oracle
+    image: propai-api:oracle
+    restart: always
+    expose:
+      - "8000"
+    env_file: 
+      - .env
+    volumes:
+      - ./uploads:/app/uploads
+    networks:
+      - propai-network
+    depends_on:
+      - qdrant
+
+  qdrant:
+    image: qdrant/qdrant:v1.18.1
+    restart: always
+    ports:
+      - "6333:6333"
+    volumes:
+      - ./qdrant_storage:/qdrant/storage
+    networks:
+      - propai-network
+
+  nginx:
+    image: nginx:alpine
+    restart: always
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      - propai-network
+    depends_on:
+      - web
+      - api
+
+networks:
+  propai-network:
+    driver: bridge

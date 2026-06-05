@@ -1,0 +1,25 @@
+FROM node:20-slim AS base
+ENV PNPM_HOME="/pnpm"
+ENV PATH="$PNPM_HOME:$PATH"
+RUN corepack enable
+
+FROM base AS builder
+WORKDIR /app
+COPY . .
+RUN pnpm install --frozen-lockfile
+RUN pnpm turbo run build --filter=web
+
+FROM base AS runner
+WORKDIR /app
+
+ENV NODE_ENV production
+
+# Standalone 산출물 복사 (Monorepo 구조 유지)
+COPY --from=builder /app/apps/web/.next/standalone ./
+COPY --from=builder /app/apps/web/.next/static ./apps/web/.next/static
+COPY --from=builder /app/apps/web/public ./apps/web/public
+
+EXPOSE 3000
+ENV PORT 3000
+# Standalone 파일 안의 server.js를 실행
+CMD ["node", "apps/web/server.js"]
