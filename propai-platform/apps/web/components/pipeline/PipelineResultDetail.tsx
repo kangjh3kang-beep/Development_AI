@@ -365,11 +365,22 @@ export function PipelineResultDetail({ result, onRerun }: PipelineResultDetailPr
     if (getNarratives(stg).length > 0 || lazyNarr[stg] || narrLoading === stg) return;
     const data = stageDataMap[stg];
     if (!data || typeof data !== "object" || !Object.keys(data).length) return;
+    // 공통 맥락(주소·용도지역·면적·연면적·건축유형) — 해석 품질 향상
+    const site = (stageDataMap.site_analysis || {}) as Record<string, unknown>;
+    const dsn = (stageDataMap.design || {}) as Record<string, unknown>;
+    const context: Record<string, unknown> = {
+      address: site.address ?? site.juso,
+      zone_type: site.zone_type ?? (site.basic as any)?.zone_type,
+      land_area_sqm: site.land_area_sqm ?? (site.basic as any)?.land_area_sqm,
+      total_gfa_sqm: dsn.total_gfa_sqm,
+      building_type: dsn.building_type,
+      floor_count: dsn.floor_count,
+    };
     let alive = true;
     setNarrLoading(stg);
     apiClient
       .postV2<{ ok?: boolean; sections?: Record<string, string> }>("/pipeline/interpret", {
-        body: { stage: stg, data }, useMock: false,
+        body: { stage: stg, data, context }, useMock: false,
       })
       .then((r) => {
         if (!alive) return;

@@ -132,6 +132,7 @@ class InterpretRequest(BaseModel):
     """단계별 AI 해석(온디맨드) 요청 — 보고서 섹션 열람 시 호출."""
     stage: str
     data: dict[str, Any] = Field(default_factory=dict)
+    context: dict[str, Any] = Field(default_factory=dict)  # 공통 맥락(주소·용도지역·면적·연면적 등)
 
 
 @router.post("/interpret", summary="단계 AI 해석 온디맨드 생성(타임아웃 안전)")
@@ -139,9 +140,11 @@ async def interpret_stage(req: InterpretRequest) -> dict[str, Any]:
     """한 단계의 인터프리터를 단건 호출해 섹션별 서술 해석을 반환한다.
 
     파이프라인 동기 실행을 막지 않도록 보고서가 섹션을 볼 때 개별 호출(각 ~10초).
+    공통 맥락(주소·용도지역·면적·연면적)을 단계 데이터에 병합해 해석 품질을 높인다.
     """
     stage = (req.stage or "").strip()
-    data = req.data or {}
+    # 맥락(context) → 데이터 병합(단계 data 우선). 인터프리터 공통 키 보강.
+    data = {**(req.context or {}), **(req.data or {})}
     try:
         if stage == "site_analysis":
             from app.services.ai.site_analysis_interpreter import SiteAnalysisInterpreter
