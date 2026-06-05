@@ -197,9 +197,51 @@ class ProjectPipeline:
             if stop_after and stage.value == stop_after:
                 break
 
+        # 전 단계 AI 해석(인터프리터) 병렬 부착 — 보고서에 서술형 분석 노출(best-effort)
+        if not opts.get("skip_ai_interpretation"):
+            await self._attach_all_ai(state)
+
         state.status = PipelineStatus.COMPLETED
         state.current_stage = None
         return state
+
+    async def _attach_all_ai(self, state: PipelineState) -> None:
+        """design·cost·feasibility·tax·esg 단계 데이터에 인터프리터 해석을 병렬 부착.
+
+        site_analysis는 _attach_site_ai에서 이미 부착. 각 stage.data["ai_interpretation"]에
+        섹션별 서술 텍스트를 담아 통합보고서가 'AI 상세 해석'으로 렌더한다. LLM 실패는 graceful.
+        """
+        import asyncio
+
+        jobs: list[tuple[str, Any]] = []
+        try:
+            from app.services.ai.design_interpreter import DesignInterpreter
+            from app.services.ai.cost_interpreter import CostInterpreter
+            from app.services.ai.feasibility_interpreter import FeasibilityInterpreter
+            from app.services.ai.tax_interpreter import TaxInterpreter
+            from app.services.ai.esg_interpreter import EsgInterpreter
+
+            specs = [
+                ("design", DesignInterpreter),
+                ("cost", CostInterpreter),
+                ("feasibility", FeasibilityInterpreter),
+                ("tax", TaxInterpreter),
+                ("esg", EsgInterpreter),
+            ]
+            for key, cls in specs:
+                sr = state.stages.get(key)
+                if sr and isinstance(sr.data, dict) and sr.status == PipelineStatus.COMPLETED \
+                        and "ai_interpretation" not in sr.data:
+                    jobs.append((key, cls().generate_interpretation(dict(sr.data))))
+            if not jobs:
+                return
+            results = await asyncio.gather(*[c for _, c in jobs], return_exceptions=True)
+            for (key, _), res in zip(jobs, results):
+                if isinstance(res, dict) and res:
+                    state.stages[key].data["ai_interpretation"] = res
+        except Exception as e:  # noqa: BLE001
+            import logging
+            logging.getLogger(__name__).warning("단계 AI 해석 부착 스킵: %s", str(e)[:140])
 
     async def _run_site_analysis(self, state: PipelineState, opts: dict):
         """STEP 1: 부지분석 — 프론트에서 전달한 데이터 우선, 없으면 외부 API 호출."""

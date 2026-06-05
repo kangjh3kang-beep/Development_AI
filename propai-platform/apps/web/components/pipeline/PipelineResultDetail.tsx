@@ -336,8 +336,8 @@ export function PipelineResultDetail({ result, onRerun }: PipelineResultDetailPr
       };
       for (const [k, v] of Object.entries(root)) {
         if (LABELS[k]) pushText(LABELS[k], v);
-        // 인터프리터가 {ai:{section:text}} / {interpretation:{...}} 형태로 줄 수도 있음
-        else if ((k === "ai" || k === "interpretation" || k === "llm") && v && typeof v === "object") {
+        // 인터프리터가 {ai_interpretation:{section:text}} / {ai:{...}} 형태로 줄 수도 있음
+        else if ((k === "ai" || k === "interpretation" || k === "llm" || k === "ai_interpretation") && v && typeof v === "object") {
           for (const [sk, sv] of Object.entries(v as Record<string, unknown>)) {
             pushText(LABELS[sk] || sk, sv);
           }
