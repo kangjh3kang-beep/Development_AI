@@ -818,6 +818,24 @@ export function AuthWorkspaceClient({
                     <Button type="submit" disabled={isSubmitting}>
                       {isSubmitting ? labels.submitting : labels.loginFields.submit}
                     </Button>
+                    <div className="relative my-4 flex items-center">
+                      <div className="flex-grow border-t border-[var(--line)]"></div>
+                      <span className="mx-4 text-xs font-bold text-[var(--text-hint)]">SNS 간편 로그인</span>
+                      <div className="flex-grow border-t border-[var(--line)]"></div>
+                    </div>
+                    <button
+                      type="button"
+                      className="flex w-full items-center justify-center gap-2 rounded-[var(--radius-md)] px-4 py-2.5 text-sm font-semibold transition-all hover:brightness-95 active:scale-[0.98]"
+                      style={{ backgroundColor: "#FEE500", color: "#000000" }}
+                      onClick={() => {
+                        window.location.href = `${process.env.NEXT_PUBLIC_API_URL || ""}/api/auth/kakao/login`;
+                      }}
+                    >
+                      <svg viewBox="0 0 24 24" className="h-5 w-5" fill="currentColor">
+                        <path d="M12 3C6.477 3 2 6.556 2 10.944c0 2.825 1.848 5.292 4.673 6.643-.24 1.144-1.127 4.148-1.18 4.402-.066.315.11.312.243.224.103-.069 3.528-2.324 4.887-3.216.44.062.89.096 1.349.096 5.523 0 10-3.556 10-7.944C22 6.556 17.523 3 12 3z"/>
+                      </svg>
+                      카카오 로그인
+                    </button>
                   </>
                 )}
               </form>
