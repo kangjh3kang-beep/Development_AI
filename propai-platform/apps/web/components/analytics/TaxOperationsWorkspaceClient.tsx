@@ -11,6 +11,7 @@ import {
   Select,
 } from "@propai/ui";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
+import { NumberInput } from "@/components/common/NumberInput";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import { VerificationBadge } from "@/components/common/VerificationBadge";
 import { ExpertPanelCard } from "@/components/common/ExpertPanelCard";
@@ -218,9 +219,14 @@ export function TaxOperationsWorkspaceClient({
   const [workspaceError, setWorkspaceError] = useState("");
   const [result, setResult] = useState<TaxCalculationResponse | null>(null);
   const [isCalculating, setIsCalculating] = useState(false);
-  const [form, setForm] = useState({
+  const [form, setForm] = useState<{
+    taxType: string;
+    taxableValue: number | null;
+    isFirstHome: boolean;
+    holdingYears: string;
+  }>({
     taxType: "acquisition",
-    taxableValue: "1200000000",
+    taxableValue: 1200000000,
     isFirstHome: false,
     holdingYears: "5",
   });
@@ -253,7 +259,7 @@ export function TaxOperationsWorkspaceClient({
 
     try {
       const { calculateCapitalGainsTax, calculateAcquisitionTax, calculateComprehensivePropertyTax } = await import("@/lib/kr-tax-calculator");
-      const taxableValue = Number(form.taxableValue);
+      const taxableValue = form.taxableValue ?? 0;
       const holdingYears = Number(form.holdingYears);
 
       let amount = 0;
@@ -445,18 +451,16 @@ export function TaxOperationsWorkspaceClient({
                 }
                 options={TAX_TYPE_OPTIONS}
               />
-              <Input
-                type="number"
-                min="1"
-                step="1"
+              <NumberInput
                 value={form.taxableValue}
-                onChange={(event) =>
+                onChange={(n) =>
                   setForm((current) => ({
                     ...current,
-                    taxableValue: event.target.value,
+                    taxableValue: n,
                   }))
                 }
                 placeholder={labels.taxableValueLabel}
+                className="flex h-11 w-full rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] px-4 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
               />
               <Input
                 type="number"

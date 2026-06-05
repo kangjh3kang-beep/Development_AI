@@ -12,6 +12,7 @@ import {
 } from "@propai/ui";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
+import { NumberInput } from "@/components/common/NumberInput";
 import type { Locale } from "@/i18n/config";
 
 type ProjectSummary = {
@@ -405,8 +406,8 @@ export function OperationsIntelligenceWorkspaceClient({
     occupancyRate: "0.91",
     arrearsRatio: "0.03",
   });
-  const [assetForm, setAssetForm] = useState({
-    baseValueKrw: "18800000000",
+  const [assetForm, setAssetForm] = useState<{ baseValueKrw: number | null }>({
+    baseValueKrw: 18800000000,
   });
 
   const projectsQuery = useQuery({
@@ -517,7 +518,7 @@ export function OperationsIntelligenceWorkspaceClient({
     setIsAnalyzingAsset(true);
     try {
       await new Promise((r) => setTimeout(r, 300));
-      const baseVal = Number(assetForm.baseValueKrw) || 10000000000;
+      const baseVal = assetForm.baseValueKrw || 10000000000;
       const maintScore = maintenanceResult?.anomaly_score ?? 0.3;
       const nps = satisfactionResult?.nps ?? 30;
       const capRateAdj = (1 - maintScore * 0.1) * (1 + nps / 500);
@@ -1025,18 +1026,16 @@ export function OperationsIntelligenceWorkspaceClient({
                   </div>
 
                   <form className="mt-5 grid gap-3" onSubmit={handleAsset}>
-                    <Input
-                      type="number"
-                      min="1"
-                      step="1"
+                    <NumberInput
                       value={assetForm.baseValueKrw}
-                      onChange={(event) =>
+                      onChange={(n) =>
                         setAssetForm((current) => ({
                           ...current,
-                          baseValueKrw: event.target.value,
+                          baseValueKrw: n,
                         }))
                       }
                       placeholder={labels.baseValueLabel}
+                      className="flex h-11 w-full rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] px-4 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
                     />
                     <Button
                       type="submit"

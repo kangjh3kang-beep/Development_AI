@@ -6,6 +6,7 @@ import { useParams } from "next/navigation";
 import { useAIAnalyze, useAIReady } from "@/lib/ai-analyze-client";
 import { getZoningSpec, calcMaxGrossArea, calcParkingRequired } from "@/lib/kr-building-regulations";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { NumberInput } from "@/components/common/NumberInput";
 
 type DesignResult = {
   buildingCoverage?: { value: number; max: number; unit: string };
@@ -108,7 +109,7 @@ export default function DesignPage() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div>
             <label className="text-xs font-bold uppercase tracking-widest text-[var(--text-tertiary)] mb-2 block">대지면적 (㎡)</label>
-            <input type="number" placeholder="500" value={form.landArea} onChange={e => setForm(f => ({ ...f, landArea: e.target.value }))}
+            <NumberInput allowDecimal placeholder="500" value={form.landArea === "" ? null : Number(form.landArea)} onChange={n => setForm(f => ({ ...f, landArea: n != null ? String(n) : "" }))}
               className="w-full rounded-xl border border-[var(--line)] bg-[var(--surface-muted)] px-4 py-3 text-sm text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-strong)]/50" />
           </div>
           <div>

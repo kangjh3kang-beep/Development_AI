@@ -1,5 +1,27 @@
 // apps/web/lib/formatters.ts
 
+/** 천단위 쉼표 표시(정수부만). null/빈값→"". 소수 허용(keepDecimal). */
+export function withCommas(value: number | string | null | undefined, keepDecimal = false): string {
+  if (value == null || value === "") return "";
+  const s = String(value);
+  const neg = s.trim().startsWith("-");
+  const cleaned = s.replace(/[^0-9.]/g, "");
+  if (cleaned === "" || cleaned === ".") return neg ? "-" : "";
+  const [intPart, ...rest] = cleaned.split(".");
+  const intFmt = intPart.replace(/^0+(?=\d)/, "").replace(/\B(?=(\d{3})+(?!\d))/g, ",") || "0";
+  const dec = keepDecimal && rest.length ? "." + rest.join("") : "";
+  return `${neg ? "-" : ""}${intFmt}${dec}`;
+}
+
+/** 쉼표 포함 문자열 → number|null. 빈값→null. */
+export function parseCommaNumber(s: string, allowDecimal = false): number | null {
+  if (s == null) return null;
+  const cleaned = String(s).replace(allowDecimal ? /[^0-9.\-]/g : /[^0-9\-]/g, "");
+  if (cleaned === "" || cleaned === "-" || cleaned === ".") return null;
+  const n = Number(cleaned);
+  return Number.isFinite(n) ? n : null;
+}
+
 /**
  * Formats a number into native Korean currency units (만원, 억원, 조원).
  * Example: 1250000000 -> "12억 5,000만 원"

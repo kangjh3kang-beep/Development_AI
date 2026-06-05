@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Button, Card, CardContent, CardTitle, Input } from "@propai/ui";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
+import { NumberInput } from "@/components/common/NumberInput";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import { ApiClientError, apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
@@ -553,16 +554,17 @@ export function ProjectPermitWorkspaceClient({
                   placeholder={labels.addressLabel}
                 />
                 <div className="grid gap-3 md:grid-cols-2">
-                  <Input
-                    type="number"
-                    value={form.areaSqm}
-                    onChange={(event) =>
+                  <NumberInput
+                    allowDecimal
+                    value={form.areaSqm === "" ? null : Number(form.areaSqm)}
+                    onChange={(n) =>
                       setForm((current) => ({
                         ...current,
-                        areaSqm: event.target.value,
+                        areaSqm: n != null ? String(n) : "",
                       }))
                     }
                     placeholder={labels.areaLabel}
+                    className="flex h-11 w-full rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] px-4 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
                   />
                   <Input
                     type="number"

@@ -6,6 +6,7 @@ import { useFeasibilityV2Store } from "@/store/use-feasibility-v2-store";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { useCadStore } from "@/store/use-cad-store";
 import { motion } from "framer-motion";
+import { NumberInput as CommaInput } from "@/components/common/NumberInput";
 
 const LAND_CATEGORIES = [
   { value: "land", label: "대지" },
@@ -26,22 +27,35 @@ function NumberInput({
   value,
   unit,
   onChange,
+  comma = false,
+  decimal = false,
 }: {
   label: string;
   value: number | undefined;
   unit?: string;
   onChange: (v: number) => void;
+  comma?: boolean;
+  decimal?: boolean;
 }) {
   return (
     <label className="grid gap-1.5 text-sm">
       <span className="font-medium text-slate-700 dark:text-slate-200">{label}</span>
       <div className="relative">
-        <Input
-          type="number"
-          value={value ?? 0}
-          onChange={(e) => onChange(Number(e.target.value))}
-          className="pr-12"
-        />
+        {comma ? (
+          <CommaInput
+            allowDecimal={decimal}
+            value={value ?? null}
+            onChange={(n) => onChange(n ?? 0)}
+            className="pr-12 flex h-11 w-full rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] px-4 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
+          />
+        ) : (
+          <Input
+            type="number"
+            value={value ?? 0}
+            onChange={(e) => onChange(Number(e.target.value))}
+            className="pr-12"
+          />
+        )}
         {unit && (
           <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400">
             {unit}
@@ -185,15 +199,15 @@ export function ModuleInputForm() {
           </label>
 
           {/* 면적/규모 */}
-          <NumberInput label="대지면적" value={input.total_land_area_sqm} unit="m²"
+          <NumberInput label="대지면적" value={input.total_land_area_sqm} unit="m²" comma decimal
             onChange={(v) => setInput({ total_land_area_sqm: v })} />
-          <NumberInput label="연면적" value={input.total_gfa_sqm} unit="m²"
+          <NumberInput label="연면적" value={input.total_gfa_sqm} unit="m²" comma decimal
             onChange={(v) => setInput({ total_gfa_sqm: v })} />
-          <NumberInput label="총 세대수" value={input.total_households} unit="세대"
+          <NumberInput label="총 세대수" value={input.total_households} unit="세대" comma
             onChange={(v) => setInput({ total_households: v })} />
 
           {/* 분양 (핵심 수정 항목 — 변경 시 자동 히스토리) */}
-          <NumberInput label="평당 분양가" value={input.avg_sale_price_per_pyeong} unit="원/평"
+          <NumberInput label="평당 분양가" value={input.avg_sale_price_per_pyeong} unit="원/평" comma
             onChange={(v) => handleInputChange({ avg_sale_price_per_pyeong: v })} />
           <NumberInput label="평균 전용면적" value={input.avg_area_pyeong} unit="평"
             onChange={(v) => handleInputChange({ avg_area_pyeong: v })} />
@@ -201,17 +215,17 @@ export function ModuleInputForm() {
             onChange={(v) => handleInputChange({ sale_ratio: v })} />
 
           {/* 토지비 (핵심 수정 항목) */}
-          <NumberInput label="공시지가" value={input.official_price_per_sqm} unit="원/m²"
+          <NumberInput label="공시지가" value={input.official_price_per_sqm} unit="원/m²" comma
             onChange={(v) => handleInputChange({ official_price_per_sqm: v })} />
           <NumberInput label="시가반영배율" value={input.price_multiplier}
             onChange={(v) => handleInputChange({ price_multiplier: v })} />
 
           {/* 금융 (핵심 수정 항목) */}
-          <NumberInput label="브릿지론" value={input.bridge_amount_won} unit="원"
+          <NumberInput label="브릿지론" value={input.bridge_amount_won} unit="원" comma
             onChange={(v) => handleInputChange({ bridge_amount_won: v })} />
-          <NumberInput label="본PF" value={input.pf_amount_won} unit="원"
+          <NumberInput label="본PF" value={input.pf_amount_won} unit="원" comma
             onChange={(v) => handleInputChange({ pf_amount_won: v })} />
-          <NumberInput label="중도금대출" value={input.midpay_amount_won} unit="원"
+          <NumberInput label="중도금대출" value={input.midpay_amount_won} unit="원" comma
             onChange={(v) => handleInputChange({ midpay_amount_won: v })} />
 
           {/* 지역 */}
@@ -237,7 +251,7 @@ export function ModuleInputForm() {
             onChange={(v) => setInput({ project_months: v })} />
           <NumberInput label="할인율" value={input.discount_rate}
             onChange={(v) => setInput({ discount_rate: v })} />
-          <NumberInput label="자기자본" value={input.equity_won} unit="원"
+          <NumberInput label="자기자본" value={input.equity_won} unit="원" comma
             onChange={(v) => setInput({ equity_won: v })} />
         </div>
       </CardContent>

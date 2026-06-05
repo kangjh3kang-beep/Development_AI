@@ -12,6 +12,7 @@ import {
 } from "@propai/ui";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
+import { NumberInput } from "@/components/common/NumberInput";
 import type { Locale } from "@/i18n/config";
 
 type ProjectSummary = {
@@ -436,9 +437,13 @@ export function InvestmentOperationsWorkspaceClient({
   const [isGeneratingReport, setIsGeneratingReport] = useState(false);
   const [isPublishing, setIsPublishing] = useState(false);
 
-  const [budgetForm, setBudgetForm] = useState({
+  const [budgetForm, setBudgetForm] = useState<{
+    endpoint: string;
+    monthlyBudgetUsd: number | null;
+    alertThresholdRatio: string;
+  }>({
     endpoint: "reports/investor/generate",
-    monthlyBudgetUsd: "150",
+    monthlyBudgetUsd: 150,
     alertThresholdRatio: "0.8",
   });
   const [reportForm, setReportForm] = useState({
@@ -448,11 +453,19 @@ export function InvestmentOperationsWorkspaceClient({
     risks: "공사비 상승, 인허가 지연",
     includeSections: "executive-summary,market,financials,esg,risks",
   });
-  const [portalForm, setPortalForm] = useState({
+  const [portalForm, setPortalForm] = useState<{
+    regionCode: string;
+    propertyType: string;
+    priceKrw: number | null;
+    areaSqm: number | null;
+    title: string;
+    description: string;
+    portals: string;
+  }>({
     regionCode: "11-680",
     propertyType: "mixed_use",
-    priceKrw: "12500000000",
-    areaSqm: "",
+    priceKrw: 12500000000,
+    areaSqm: null,
     title: "홍대 복합자산 투자 기회",
     description:
       "핵심 상권 접근성과 리포지셔닝 여력이 높은 복합 개발 자산입니다.",
@@ -494,7 +507,7 @@ export function InvestmentOperationsWorkspaceClient({
     if (selectedProject?.total_area_sqm && !portalForm.areaSqm) {
       setPortalForm((current) => ({
         ...current,
-        areaSqm: String(selectedProject.total_area_sqm),
+        areaSqm: selectedProject.total_area_sqm,
       }));
     }
   }, [portalForm.areaSqm, selectedProject]);
@@ -519,7 +532,7 @@ export function InvestmentOperationsWorkspaceClient({
     const endpoint = budgetForm.endpoint.trim().replace(/^\/+/, "");
     try {
       await new Promise((r) => setTimeout(r, 250));
-      const budgetUsd = Number(budgetForm.monthlyBudgetUsd) || 150;
+      const budgetUsd = budgetForm.monthlyBudgetUsd || 150;
       const threshold = Number(budgetForm.alertThresholdRatio) || 0.8;
       const currentCost = Math.round(budgetUsd * 0.35 * 100) / 100;
       setSavedBudget({
@@ -842,18 +855,17 @@ export function InvestmentOperationsWorkspaceClient({
                 placeholder={labels.budgetEndpointLabel}
               />
               <div className="grid gap-3 md:grid-cols-2">
-                <Input
-                  type="number"
-                  min="1"
-                  step="0.01"
+                <NumberInput
+                  allowDecimal
                   value={budgetForm.monthlyBudgetUsd}
-                  onChange={(event) =>
+                  onChange={(n) =>
                     setBudgetForm((current) => ({
                       ...current,
-                      monthlyBudgetUsd: event.target.value,
+                      monthlyBudgetUsd: n,
                     }))
                   }
                   placeholder={labels.budgetAmountLabel}
+                  className="flex h-11 w-full rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] px-4 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
                 />
                 <Input
                   type="number"
@@ -1089,31 +1101,28 @@ export function InvestmentOperationsWorkspaceClient({
                   />
                 </div>
                 <div className="grid gap-3 md:grid-cols-2">
-                  <Input
-                    type="number"
-                    min="1"
-                    step="1"
+                  <NumberInput
                     value={portalForm.priceKrw}
-                    onChange={(event) =>
+                    onChange={(n) =>
                       setPortalForm((current) => ({
                         ...current,
-                        priceKrw: event.target.value,
+                        priceKrw: n,
                       }))
                     }
                     placeholder={labels.priceLabel}
+                    className="flex h-11 w-full rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] px-4 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
                   />
-                  <Input
-                    type="number"
-                    min="1"
-                    step="0.1"
+                  <NumberInput
+                    allowDecimal
                     value={portalForm.areaSqm}
-                    onChange={(event) =>
+                    onChange={(n) =>
                       setPortalForm((current) => ({
                         ...current,
-                        areaSqm: event.target.value,
+                        areaSqm: n,
                       }))
                     }
                     placeholder={labels.areaLabel}
+                    className="flex h-11 w-full rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] px-4 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
                   />
                 </div>
                 <Input

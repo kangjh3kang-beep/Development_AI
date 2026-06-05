@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Button, Card, CardContent, CardTitle, Input } from "@propai/ui";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
+import { NumberInput } from "@/components/common/NumberInput";
 
 import type { Locale } from "@/i18n/config";
 
@@ -232,19 +233,25 @@ export function CostAnalyticsWorkspaceClient({
     null,
   );
   const [mcResult, setMcResult] = useState<MonteCarloResponse | null>(null);
-  const [form, setForm] = useState({
+  const [form, setForm] = useState<{
+    buildingType: string;
+    areaSqm: number | null;
+    floors: string;
+    structure: string;
+    iterations: number | null;
+  }>({
     buildingType: "공동주택",
-    areaSqm: "5000",
+    areaSqm: 5000,
     floors: "15",
     structure: "RC조",
-    iterations: "10000",
+    iterations: 10000,
   });
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setWorkspaceError("");
 
-    const areaSqm = Number(form.areaSqm);
+    const areaSqm = form.areaSqm ?? 0;
 
     if (!Number.isFinite(areaSqm) || areaSqm <= 0) {
       setWorkspaceError(labels.missingAreaError);
@@ -276,7 +283,7 @@ export function CostAnalyticsWorkspaceClient({
       setCostResult(costRes);
 
       // 로컬 몬테카를로 시뮬레이션
-      const iters = Number(form.iterations) || 10000;
+      const iters = form.iterations || 10000;
       const samples: number[] = [];
       for (let i = 0; i < iters; i++) {
         const factor = 0.85 + Math.random() * 0.30;
@@ -384,16 +391,17 @@ export function CostAnalyticsWorkspaceClient({
               />
             </div>
             <div className="grid gap-3 md:grid-cols-3">
-              <Input
-                type="number"
+              <NumberInput
+                allowDecimal
                 value={form.areaSqm}
-                onChange={(event) =>
+                onChange={(n) =>
                   setForm((current) => ({
                     ...current,
-                    areaSqm: event.target.value,
+                    areaSqm: n,
                   }))
                 }
                 placeholder={labels.areaLabel}
+                className="flex h-11 w-full rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] px-4 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
               />
               <Input
                 type="number"
@@ -417,16 +425,16 @@ export function CostAnalyticsWorkspaceClient({
                 placeholder={labels.structureLabel}
               />
             </div>
-            <Input
-              type="number"
+            <NumberInput
               value={form.iterations}
-              onChange={(event) =>
+              onChange={(n) =>
                 setForm((current) => ({
                   ...current,
-                  iterations: event.target.value,
+                  iterations: n,
                 }))
               }
               placeholder={labels.iterationsLabel}
+              className="flex h-11 w-full rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] px-4 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
             />
             <Button type="submit" disabled={isSubmitting}>
               {isSubmitting

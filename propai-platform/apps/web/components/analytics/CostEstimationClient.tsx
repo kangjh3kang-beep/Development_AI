@@ -13,6 +13,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
+import { NumberInput } from "@/components/common/NumberInput";
 import { apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { VerificationBadge } from "@/components/common/VerificationBadge";
@@ -146,7 +147,7 @@ export function CostEstimationClient() {
         </label>
         <label className="flex flex-col gap-1">
           <span className="flex items-center gap-1.5 text-[11px] font-semibold text-[var(--text-secondary)]">연면적(GFA) {autoGfa && !editedGfa && <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-bold text-emerald-400">자동</span>}{editedGfa && <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-bold text-amber-400">수정됨</span>}</span>
-          <div className="flex items-center gap-1.5"><input type="number" value={gfa} onChange={(e) => { setGfa(Number(e.target.value)); setEditedGfa(true); }} className={fcls} /><span className="text-[11px] text-[var(--text-tertiary)]">㎡</span></div>
+          <div className="flex items-center gap-1.5"><NumberInput allowDecimal value={gfa} onChange={(n) => { setGfa(n ?? 0); setEditedGfa(true); }} className={fcls} /><span className="text-[11px] text-[var(--text-tertiary)]">㎡</span></div>
         </label>
         <label className="flex flex-col gap-1">
           <span className="text-[11px] font-semibold text-[var(--text-secondary)]">구조</span>

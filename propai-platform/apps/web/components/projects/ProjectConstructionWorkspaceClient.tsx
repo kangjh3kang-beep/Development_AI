@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Button, Card, CardContent, CardTitle, Input } from "@propai/ui";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
+import { NumberInput } from "@/components/common/NumberInput";
 import { ApiClientError, apiClient } from "@/lib/api-client";
 import type { Locale } from "@/i18n/config";
 
@@ -416,23 +417,23 @@ export function ProjectConstructionWorkspaceClient({
                   }
                   placeholder={labels.costUnitLabel}
                 />
-                <Input
-                  type="number"
-                  value={item.quantity}
-                  onChange={(e) =>
-                    updateCostItem(index, "quantity", e.target.value)
+                <NumberInput
+                  allowDecimal
+                  value={item.quantity === "" ? null : Number(item.quantity)}
+                  onChange={(n) =>
+                    updateCostItem(index, "quantity", n != null ? String(n) : "")
                   }
                   placeholder={labels.costQtyLabel}
+                  className="flex h-11 w-full rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] px-4 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
                 />
                 <div className="flex gap-2">
-                  <Input
-                    type="number"
-                    value={item.unit_rate_krw}
-                    onChange={(e) =>
-                      updateCostItem(index, "unit_rate_krw", e.target.value)
+                  <NumberInput
+                    value={item.unit_rate_krw === "" ? null : Number(item.unit_rate_krw)}
+                    onChange={(n) =>
+                      updateCostItem(index, "unit_rate_krw", n != null ? String(n) : "")
                     }
                     placeholder={labels.costRateLabel}
-                    className="flex-1"
+                    className="flex-1 flex h-11 w-full rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] px-4 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
                   />
                   {costItems.length > 1 && (
                     <Button
@@ -569,16 +570,16 @@ export function ProjectConstructionWorkspaceClient({
                 placeholder={labels.projectTypeLabel}
               />
               <div className="grid gap-3 md:grid-cols-3">
-                <Input
-                  type="number"
-                  value={checklistForm.projectCost}
-                  onChange={(e) =>
+                <NumberInput
+                  value={checklistForm.projectCost === "" ? null : Number(checklistForm.projectCost)}
+                  onChange={(n) =>
                     setChecklistForm((c) => ({
                       ...c,
-                      projectCost: e.target.value,
+                      projectCost: n != null ? String(n) : "",
                     }))
                   }
                   placeholder={labels.projectCostLabel}
+                  className="flex h-11 w-full rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] px-4 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
                 />
                 <Input
                   type="number"

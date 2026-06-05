@@ -9,6 +9,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { Card, CardContent } from "@propai/ui";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
+import { NumberInput } from "@/components/common/NumberInput";
 import { ParcelBoundaryMap } from "@/components/map/ParcelBoundaryMap";
 import { NearbyTransactionsMap } from "@/components/map/NearbyTransactionsMap";
 import { DeskAppraisalModal } from "@/components/operations/DeskAppraisalModal";
@@ -65,7 +66,8 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
   const [addr, setAddr] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [highlight, setHighlight] = useState("");
-  const [notice, setNotice] = useState("");
+  // 안내 메시지: kind=info(설명·결과, 비경고)·warn(주의·실패). 충실한 설명을 비경고 톤으로.
+  const [notice, setNotice] = useState<{ kind: "info" | "warn"; text: string } | null>(null);
   const [modalRow, setModalRow] = useState<LandRow | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
 
@@ -167,7 +169,7 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
   // 등기분석으로 행 자동채움(소유자·지분·소유구분·면적). 등기 실패 시에도 공부정보는 채움.
   const autofill = useCallback(async (r: LandRow) => {
     if (!r.jibun.trim()) return;
-    setBusy(r.id); setNotice("");
+    setBusy(r.id); setNotice(null);
     try {
       const res = await analyzeRegistry<{
         status?: string; message?: string;
@@ -187,21 +189,29 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
         pdf_url: res.fetched?.pdf_url ?? r.pdf_url,
       });
       if (res.status !== "ok" || !ownerStr) {
-        setNotice(
-          `「${r.jibun}」 공부 토지정보는 채웠으나, 소유자·지분(등기)은 가져오지 못했습니다` +
-          (res.message ? ` — ${res.message}` : "(등기 발급 연동 확인 필요)") +
-          ". 등기부등본 내용을 직접 입력하면 권리분석이 가능합니다.",
-        );
+        setNotice({
+          kind: "warn",
+          text:
+            `「${r.jibun}」 공부 토지정보(면적·소유구분)는 채웠으나, 소유자·지분(등기)은 가져오지 못했습니다` +
+            (res.message ? ` — ${res.message}` : "") +
+            ". 등기 발급 기관(대법원 인터넷등기소) 점검·일시 지연이거나, 발급 연동(에이픽/텔코)이 동시 영향을 받았을 수 있습니다. " +
+            "잠시 후 ‘자동채움’을 다시 시도하거나, 등기부등본 내용을 직접 입력하면 권리분석이 가능합니다.",
+        });
       }
     } catch {
-      setNotice(`「${r.jibun}」 등기 분석에 실패했습니다. 잠시 후 다시 시도하세요.`);
+      setNotice({
+        kind: "warn",
+        text:
+          `「${r.jibun}」 등기 분석에 실패했습니다. 대법원 인터넷등기소 점검·일시 지연이 원인일 수 있습니다` +
+          "(등기 발급 연동 에이픽/텔코는 인터넷등기소에 의존). 잠시 후 다시 시도하세요.",
+      });
     } finally { setBusy(null); }
   }, [projectId, updateRow]);
 
   // 매입예정가 적정가 분석(주소→PNU 공시지가 × 지역 시세보정). 결과는 수정 가능.
   const estimatePrice = useCallback(async (r: LandRow) => {
     if (!r.jibun.trim()) return;
-    setBusy(r.id); setNotice("");
+    setBusy(r.id); setNotice(null);
     try {
       const token = (typeof window !== "undefined" && localStorage.getItem("propai_access_token")) || "";
       const res = await fetch(`${apiBase()}/land-price/estimate`, {
@@ -215,13 +225,22 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
           expected_price: d.estimated_total_won,
           ...(d.area_sqm && !r.area_sqm ? { area_sqm: d.area_sqm } : {}),
         });
-        // 간소 메시지: 결과 금액만. 상세 근거는 '상세추정'에서 확인.
-        setNotice(`「${r.jibun}」 적정 매입가 약 ${d.estimated_total_won.toLocaleString()}원 (공시지가 기반·수정가능)`);
+        // 충실한 산정 근거를 비경고(info) 톤으로 안내. 결과 금액 + 산정식 + 출처/주의.
+        setNotice({
+          kind: "info",
+          text:
+            `「${r.jibun}」 적정 매입가 약 ${d.estimated_total_won.toLocaleString()}원` +
+            (d.rationale ? ` · 산정근거: ${d.rationale}` : " (개별공시지가 × 지역 시세보정 × 면적)") +
+            ". 공개데이터 기반 참고 추정치이며 직접 수정할 수 있습니다. 5방법 비교·신뢰도·리포트는 ‘상세추정’에서 확인하세요.",
+        });
       } else {
-        setNotice(`「${r.jibun}」 적정가 추정 실패 — ${d?.message || "공시지가 확인 필요"}. ‘자동채움’으로 면적·공부정보를 먼저 채워보세요.`);
+        setNotice({
+          kind: "warn",
+          text: `「${r.jibun}」 적정가 추정 실패 — ${d?.message || "공시지가 확인 필요"}. ‘자동채움’으로 면적·공부정보를 먼저 채워보세요.`,
+        });
       }
     } catch {
-      setNotice(`「${r.jibun}」 적정가 추정에 실패했습니다.`);
+      setNotice({ kind: "warn", text: `「${r.jibun}」 적정가 추정에 실패했습니다. 잠시 후 다시 시도하세요.` });
     } finally { setBusy(null); }
   }, [projectId, updateRow]);
 
@@ -286,9 +305,16 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
       </Card>
 
       {notice && (
-        <div className="flex items-start justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-300">
-          <span>⚠ {notice}</span>
-          <button onClick={() => setNotice("")} className="shrink-0 text-amber-400">✕</button>
+        <div className={`flex items-start justify-between gap-3 rounded-xl border px-4 py-3 text-xs leading-relaxed ${
+          notice.kind === "info"
+            ? "border-[var(--accent-strong)]/25 bg-[var(--accent-soft)] text-[var(--text-secondary)]"
+            : "border-amber-500/30 bg-amber-500/10 text-amber-300"
+        }`}>
+          <span className="flex gap-2">
+            <span className="shrink-0">{notice.kind === "info" ? "ℹ️" : "⚠"}</span>
+            <span>{notice.text}</span>
+          </span>
+          <button onClick={() => setNotice(null)} className={`shrink-0 ${notice.kind === "info" ? "text-[var(--accent-strong)]" : "text-amber-400"}`}>✕</button>
         </div>
       )}
 
@@ -317,7 +343,7 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
                       <td className="px-1.5 py-1 min-w-[160px]"><input title={r.jibun || "지번"} className={inputCls} value={r.jibun} onChange={(e) => updateRow(projectId, r.id, { jibun: e.target.value })} /></td>
                       <td className="px-1.5 py-1 min-w-[90px]"><input title={r.owner || "소유자"} className={inputCls} value={r.owner} onChange={(e) => updateRow(projectId, r.id, { owner: e.target.value })} /></td>
                       <td className="px-1.5 py-1 w-16"><input title={r.share || "지분"} className={inputCls} value={r.share} onChange={(e) => updateRow(projectId, r.id, { share: e.target.value })} /></td>
-                      <td className="px-1.5 py-1 w-20"><input title={r.area_sqm != null ? `${r.area_sqm.toLocaleString()}㎡` : "면적"} className={inputCls} type="number" value={r.area_sqm ?? ""} onChange={(e) => updateRow(projectId, r.id, { area_sqm: e.target.value ? Number(e.target.value) : null })} /></td>
+                      <td className="px-1.5 py-1 w-20"><NumberInput allowDecimal title={r.area_sqm != null ? `${r.area_sqm.toLocaleString()}㎡` : "면적"} className={inputCls} value={r.area_sqm} onChange={(n) => updateRow(projectId, r.id, { area_sqm: n })} /></td>
                       <td className="px-1.5 py-1 w-24">
                         <select title={r.owner_type || "소유구분"} className={inputCls} value={r.owner_type} onChange={(e) => updateRow(projectId, r.id, { owner_type: e.target.value as LandRow["owner_type"] })}>
                           <option value="">-</option><option value="사유지">사유지</option><option value="국공유지">국공유지</option>

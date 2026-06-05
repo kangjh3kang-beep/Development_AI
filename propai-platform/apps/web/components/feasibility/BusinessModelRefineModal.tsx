@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { motion } from "framer-motion";
+import { NumberInput } from "@/components/common/NumberInput";
 import type { RecommendedModel } from "./AutoRecommendPanel";
 
 /* ── Types ── */
@@ -92,21 +93,22 @@ export function BusinessModelRefineModal({
                 value={totalGfa}
                 onChange={setTotalGfa}
                 unit="m\u00B2"
-                type="number"
+                comma
+                decimal
               />
               <FieldInput
                 label="총세대수"
                 value={totalHouseholds}
                 onChange={setTotalHouseholds}
                 unit="세대"
-                type="number"
+                comma
               />
               <FieldInput
                 label="평균분양가"
                 value={avgSalePrice}
                 onChange={setAvgSalePrice}
                 unit="만원/평"
-                type="number"
+                comma
                 className="sm:col-span-2"
               />
             </div>
@@ -123,7 +125,8 @@ export function BusinessModelRefineModal({
                 value={equityEok}
                 onChange={setEquityEok}
                 unit="억원"
-                type="number"
+                comma
+                decimal
               />
               <FieldInput
                 label="사업기간"
@@ -186,6 +189,8 @@ function FieldInput({
   unit,
   type = "text",
   className = "",
+  comma = false,
+  decimal = false,
 }: {
   label: string;
   value: string;
@@ -193,19 +198,32 @@ function FieldInput({
   unit: string;
   type?: string;
   className?: string;
+  comma?: boolean;
+  decimal?: boolean;
 }) {
+  const inputCls =
+    "w-full rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-2.5 pr-16 text-sm font-[700] text-[var(--text-primary)] focus:border-[var(--accent-strong)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-strong)]/20 transition-all tabular-nums";
   return (
     <div className={className}>
       <label className="mb-1.5 block text-[10px] font-[800] text-[var(--text-hint)] tracking-wider">
         {label}
       </label>
       <div className="relative">
-        <input
-          type={type}
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          className="w-full rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-2.5 pr-16 text-sm font-[700] text-[var(--text-primary)] focus:border-[var(--accent-strong)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-strong)]/20 transition-all tabular-nums"
-        />
+        {comma ? (
+          <NumberInput
+            allowDecimal={decimal}
+            value={value === "" ? null : Number(value)}
+            onChange={(n) => onChange(n != null ? String(n) : "")}
+            className={inputCls}
+          />
+        ) : (
+          <input
+            type={type}
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            className={inputCls}
+          />
+        )}
         <span className="absolute right-4 top-1/2 -translate-y-1/2 text-xs font-bold text-[var(--text-hint)]">
           {unit}
         </span>

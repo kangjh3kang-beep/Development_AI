@@ -4,6 +4,7 @@ import React, { useState } from "react";
 import { motion } from "framer-motion";
 import { useAIAnalyze, useAIReady } from "@/lib/ai-analyze-client";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
+import { NumberInput } from "@/components/common/NumberInput";
 
 type AuctionResult = {
   propertyType?: string;
@@ -72,8 +73,8 @@ export default function AuctionPage() {
           />
           <div>
             <label className="text-xs font-bold uppercase tracking-widest text-[var(--text-tertiary)] mb-2 block">감정가 (만원)</label>
-            <input type="number" placeholder="50000" value={form.appraisalValue}
-              onChange={e => setForm(f => ({ ...f, appraisalValue: e.target.value }))}
+            <NumberInput placeholder="50000" value={form.appraisalValue === "" ? null : Number(form.appraisalValue)}
+              onChange={n => setForm(f => ({ ...f, appraisalValue: n != null ? String(n) : "" }))}
               className="w-full rounded-xl border border-[var(--line)] bg-[var(--surface-muted)] px-4 py-3 text-sm text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-strong)]/50"
             />
           </div>

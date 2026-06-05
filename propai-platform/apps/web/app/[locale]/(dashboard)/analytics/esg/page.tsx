@@ -3,6 +3,7 @@
 import React, { useState } from "react";
 import { motion } from "framer-motion";
 import { useAIAnalyze, useAIReady } from "@/lib/ai-analyze-client";
+import { NumberInput } from "@/components/common/NumberInput";
 
 type ESGResult = {
   carbonFootprint?: { construction: number; operation: number; total: number; unit: string };
@@ -45,7 +46,7 @@ export default function ESGPage() {
           </div>
           <div>
             <label className="text-xs font-bold uppercase tracking-widest text-[var(--text-tertiary)] mb-2 block">연면적 (㎡)</label>
-            <input type="number" placeholder="3000" value={form.grossArea} onChange={e => setForm(f => ({ ...f, grossArea: e.target.value }))}
+            <NumberInput allowDecimal placeholder="3000" value={form.grossArea === "" ? null : Number(form.grossArea)} onChange={n => setForm(f => ({ ...f, grossArea: n != null ? String(n) : "" }))}
               className="w-full rounded-xl border border-[var(--line)] bg-[var(--surface-muted)] px-4 py-3 text-sm text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-strong)]/50" />
           </div>
           <div>

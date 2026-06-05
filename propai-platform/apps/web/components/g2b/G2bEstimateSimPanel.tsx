@@ -7,6 +7,7 @@
 
 import { useState } from "react";
 import { apiClient } from "@/lib/api-client";
+import { NumberInput } from "@/components/common/NumberInput";
 
 type Calibrated = {
   empirical_band: { min_pct: number; avg_pct: number; max_pct: number; count?: number };
@@ -52,7 +53,7 @@ export function G2bEstimateSimPanel() {
 
       <div className="mt-4 flex flex-wrap items-end gap-3">
         <label className="text-xs text-[var(--text-secondary)]">기초금액(억)
-          <input type="number" value={baseEok} onChange={(e) => setBaseEok(Number(e.target.value))}
+          <NumberInput allowDecimal value={baseEok} onChange={(n) => setBaseEok(n ?? 0)}
             className="mt-1 h-9 w-28 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm text-[var(--text-primary)]" />
         </label>
         <label className="text-xs text-[var(--text-secondary)]">공종

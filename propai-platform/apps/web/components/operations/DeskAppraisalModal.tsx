@@ -6,6 +6,7 @@
  */
 
 import { useEffect, useRef, useState } from "react";
+import { NumberInput } from "@/components/common/NumberInput";
 
 function apiBase(): string {
   if (typeof window !== "undefined") {
@@ -129,12 +130,12 @@ export function DeskAppraisalModal({
 
         {/* 입력 */}
         <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
-          <label className="text-xs text-[var(--text-secondary)]">공시지가(원/㎡, 선택)<input className={`${inp} mt-1`} type="number" value={official} onChange={(e) => setOfficial(e.target.value)} placeholder="자동조회" /></label>
-          <label className="text-xs text-[var(--text-secondary)]">건물 연면적(㎡)<input className={`${inp} mt-1`} type="number" value={gfa} onChange={(e) => setGfa(e.target.value)} placeholder="복합 시" /></label>
+          <label className="text-xs text-[var(--text-secondary)]">공시지가(원/㎡, 선택)<NumberInput className={`${inp} mt-1`} value={official === "" ? null : Number(official)} onChange={(n) => setOfficial(n != null ? String(n) : "")} placeholder="자동조회" /></label>
+          <label className="text-xs text-[var(--text-secondary)]">건물 연면적(㎡)<NumberInput allowDecimal className={`${inp} mt-1`} value={gfa === "" ? null : Number(gfa)} onChange={(n) => setGfa(n != null ? String(n) : "")} placeholder="복합 시" /></label>
           <label className="text-xs text-[var(--text-secondary)]">구조<select className={`${inp} mt-1`} value={structure} onChange={(e) => setStructure(e.target.value)}>{["RC", "SRC", "철골", "조적", "목조"].map((s) => <option key={s} value={s}>{s}</option>)}</select></label>
           <label className="text-xs text-[var(--text-secondary)]">준공연도<input className={`${inp} mt-1`} type="number" value={year} onChange={(e) => setYear(e.target.value)} placeholder="예 2010" /></label>
-          <label className="text-xs text-[var(--text-secondary)]">월 임대료(원)<input className={`${inp} mt-1`} type="number" value={rent} onChange={(e) => setRent(e.target.value)} placeholder="수익환원 시" /></label>
-          <label className="text-xs text-[var(--text-secondary)]">보증금(원)<input className={`${inp} mt-1`} type="number" value={deposit} onChange={(e) => setDeposit(e.target.value)} /></label>
+          <label className="text-xs text-[var(--text-secondary)]">월 임대료(원)<NumberInput className={`${inp} mt-1`} value={rent === "" ? null : Number(rent)} onChange={(n) => setRent(n != null ? String(n) : "")} placeholder="수익환원 시" /></label>
+          <label className="text-xs text-[var(--text-secondary)]">보증금(원)<NumberInput className={`${inp} mt-1`} value={deposit === "" ? null : Number(deposit)} onChange={(n) => setDeposit(n != null ? String(n) : "")} /></label>
           <label className="text-xs text-[var(--text-secondary)]">자본환원율(%)<input className={`${inp} mt-1`} type="number" value={cap} onChange={(e) => setCap(e.target.value)} /></label>
           <div className="flex items-end"><button onClick={run} disabled={busy !== ""} className="h-9 w-full rounded-lg bg-[var(--accent-strong)] text-sm font-bold text-white disabled:opacity-50">{busy === "run" ? "분석 중…" : "분석 실행"}</button></div>
         </div>

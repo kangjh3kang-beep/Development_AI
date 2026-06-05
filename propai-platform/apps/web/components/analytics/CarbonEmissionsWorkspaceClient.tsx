@@ -3,6 +3,7 @@
 import { useState, useMemo } from "react";
 import { Card, CardContent, Button } from "@propai/ui";
 import { formatCurrencyCompact } from "@/lib/formatters";
+import { NumberInput } from "@/components/common/NumberInput";
 
 const EPD_DB: Record<string, { gwp: number; category: string }> = {
   "보통 포틀랜드 시멘트": { gwp: 0.93, category: "A1-A3" },
@@ -127,16 +128,16 @@ export function CarbonEmissionsWorkspaceClient({
 
   const [materials, setMaterials] = useState<{ name: string; quantity_kg: number }[]>([]);
   const [newName, setNewName] = useState("");
-  const [newQty, setNewQty] = useState("");
+  const [newQty, setNewQty] = useState<number | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [result, setResult] = useState<CarbonResult | null>(null);
   const [alternatives, setAlternatives] = useState<Record<string, AlternativesResult>>({});
 
   const addMaterial = () => {
     if (!newName || !newQty) return;
-    setMaterials((prev) => [...prev, { name: newName, quantity_kg: Number(newQty) }]);
+    setMaterials((prev) => [...prev, { name: newName, quantity_kg: newQty }]);
     setNewName("");
-    setNewQty("");
+    setNewQty(null);
   };
 
   const loadPresets = () => {
@@ -282,10 +283,10 @@ export function CarbonEmissionsWorkspaceClient({
             </div>
             <div className="w-40">
               <label className="text-xs font-bold text-[var(--text-secondary)] mb-1 block">{t.quantityLabel}</label>
-              <input
-                type="number"
+              <NumberInput
+                allowDecimal
                 value={newQty}
-                onChange={(e) => setNewQty(e.target.value)}
+                onChange={(n) => setNewQty(n)}
                 placeholder="10000"
                 className="w-full rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-2.5 text-sm font-medium"
               />

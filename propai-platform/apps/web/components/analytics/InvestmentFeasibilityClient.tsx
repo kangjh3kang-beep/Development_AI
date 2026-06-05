@@ -13,6 +13,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
+import { NumberInput } from "@/components/common/NumberInput";
 import { ExpertPanelCard } from "@/components/common/ExpertPanelCard";
 import { VerificationBadge } from "@/components/common/VerificationBadge";
 import { apiClient } from "@/lib/api-client";
@@ -108,9 +109,9 @@ const EMPTY: Form = {
 const fcls = "w-full rounded-lg border border-[var(--line-strong)] bg-[var(--surface-strong)] px-3 py-2 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]";
 
 /* ── 입력 행(자동/입력 배지 + 전부 수정가능) ── */
-function NumRow({ label, unit, value, auto, edited, onChange, step }: {
+function NumRow({ label, unit, value, auto, edited, onChange, step, comma, decimal }: {
   label: string; unit?: string; value: number; auto: boolean; edited: boolean;
-  onChange: (v: number) => void; step?: number;
+  onChange: (v: number) => void; step?: number; comma?: boolean; decimal?: boolean;
 }) {
   return (
     <label className="flex flex-col gap-1">
@@ -121,8 +122,13 @@ function NumRow({ label, unit, value, auto, edited, onChange, step }: {
         {!auto && <span className="rounded bg-[var(--surface-muted)] px-1.5 py-0.5 text-[9px] font-bold text-[var(--text-tertiary)]">입력</span>}
       </span>
       <div className="flex items-center gap-1.5">
-        <input type="number" step={step} value={Number.isFinite(value) ? value : 0}
-          onChange={(e) => onChange(Number(e.target.value))} className={fcls} />
+        {comma ? (
+          <NumberInput allowDecimal={decimal} value={Number.isFinite(value) ? value : 0}
+            onChange={(n) => onChange(n ?? 0)} className={fcls} />
+        ) : (
+          <input type="number" step={step} value={Number.isFinite(value) ? value : 0}
+            onChange={(e) => onChange(Number(e.target.value))} className={fcls} />
+        )}
         {unit && <span className="shrink-0 text-[11px] text-[var(--text-tertiary)]">{unit}</span>}
       </div>
     </label>
@@ -237,8 +243,8 @@ export function InvestmentFeasibilityClient() {
         {/* 토지 */}
         <div className="space-y-3">
           <h3 className="text-xs font-black uppercase tracking-widest text-[var(--accent-strong)]">① 토지</h3>
-          <NumRow label="대지면적" unit="㎡" value={form.total_land_area_sqm} auto={isAuto("total_land_area_sqm")} edited={isEdited("total_land_area_sqm")} onChange={(v) => set("total_land_area_sqm", v)} />
-          <NumRow label="공시지가" unit="원/㎡" value={form.official_price_per_sqm} auto={isAuto("official_price_per_sqm")} edited={isEdited("official_price_per_sqm")} onChange={(v) => set("official_price_per_sqm", v)} />
+          <NumRow label="대지면적" unit="㎡" comma decimal value={form.total_land_area_sqm} auto={isAuto("total_land_area_sqm")} edited={isEdited("total_land_area_sqm")} onChange={(v) => set("total_land_area_sqm", v)} />
+          <NumRow label="공시지가" unit="원/㎡" comma value={form.official_price_per_sqm} auto={isAuto("official_price_per_sqm")} edited={isEdited("official_price_per_sqm")} onChange={(v) => set("official_price_per_sqm", v)} />
           <NumRow label="감정/매입 배율" value={form.price_multiplier} step={0.05} auto={false} edited={false} onChange={(v) => set("price_multiplier", v)} />
         </div>
         {/* 건축 */}
@@ -256,13 +262,13 @@ export function InvestmentFeasibilityClient() {
               {BUILDING_TYPES.map(([c, n]) => <option key={c} value={c}>{n}</option>)}
             </select>
           </label>
-          <NumRow label="연면적(GFA)" unit="㎡" value={form.total_gfa_sqm} auto={isAuto("total_gfa_sqm")} edited={isEdited("total_gfa_sqm")} onChange={(v) => set("total_gfa_sqm", v)} />
-          <NumRow label="총 세대/호실수" unit="세대" value={form.total_households} auto={false} edited={false} onChange={(v) => set("total_households", v)} />
+          <NumRow label="연면적(GFA)" unit="㎡" comma decimal value={form.total_gfa_sqm} auto={isAuto("total_gfa_sqm")} edited={isEdited("total_gfa_sqm")} onChange={(v) => set("total_gfa_sqm", v)} />
+          <NumRow label="총 세대/호실수" unit="세대" comma value={form.total_households} auto={false} edited={false} onChange={(v) => set("total_households", v)} />
         </div>
         {/* 분양 */}
         <div className="space-y-3">
           <h3 className="text-xs font-black uppercase tracking-widest text-[var(--accent-strong)]">③ 분양(공급)</h3>
-          <NumRow label="평균 분양가" unit="원/평" value={form.avg_sale_price_per_pyeong} auto={false} edited={false} onChange={(v) => set("avg_sale_price_per_pyeong", v)} />
+          <NumRow label="평균 분양가" unit="원/평" comma value={form.avg_sale_price_per_pyeong} auto={false} edited={false} onChange={(v) => set("avg_sale_price_per_pyeong", v)} />
           <NumRow label="평균 전용면적" unit="평" value={form.avg_area_pyeong} auto={false} edited={false} onChange={(v) => set("avg_area_pyeong", v)} />
           <NumRow label="분양률" unit="0~1" value={form.sale_ratio} step={0.05} auto={false} edited={false} onChange={(v) => set("sale_ratio", v)} />
           <label className="flex flex-col gap-1">
@@ -276,9 +282,9 @@ export function InvestmentFeasibilityClient() {
         {/* 금융·기간 */}
         <div className="space-y-3">
           <h3 className="text-xs font-black uppercase tracking-widest text-[var(--accent-strong)]">④ 금융 레버리지·기간</h3>
-          <NumRow label="자기자본(자부담)" unit="원" value={form.equity_won} auto={false} edited={false} onChange={(v) => set("equity_won", v)} />
-          <NumRow label="본PF 대출액" unit="원" value={form.pf_amount_won} auto={false} edited={false} onChange={(v) => set("pf_amount_won", v)} />
-          <NumRow label="브릿지론" unit="원" value={form.bridge_amount_won} auto={false} edited={false} onChange={(v) => set("bridge_amount_won", v)} />
+          <NumRow label="자기자본(자부담)" unit="원" comma value={form.equity_won} auto={false} edited={false} onChange={(v) => set("equity_won", v)} />
+          <NumRow label="본PF 대출액" unit="원" comma value={form.pf_amount_won} auto={false} edited={false} onChange={(v) => set("pf_amount_won", v)} />
+          <NumRow label="브릿지론" unit="원" comma value={form.bridge_amount_won} auto={false} edited={false} onChange={(v) => set("bridge_amount_won", v)} />
           <div className="grid grid-cols-2 gap-2">
             <NumRow label="사업기간" unit="개월" value={form.project_months} auto={false} edited={false} onChange={(v) => set("project_months", v)} />
             <NumRow label="할인율" unit="0~1" value={form.discount_rate} step={0.01} auto={false} edited={false} onChange={(v) => set("discount_rate", v)} />

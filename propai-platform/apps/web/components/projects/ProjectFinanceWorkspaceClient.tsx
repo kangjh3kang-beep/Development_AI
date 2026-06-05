@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Button, Card, CardContent, CardTitle, Input } from "@propai/ui";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
+import { NumberInput } from "@/components/common/NumberInput";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import { ApiClientError, apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
@@ -253,15 +254,24 @@ export function ProjectFinanceWorkspaceClient({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [avmResult, setAvmResult] = useState<AVMValuationResponse | null>(null);
   const [riskResult, setRiskResult] = useState<JeonseRiskResponse | null>(null);
-  const [form, setForm] = useState({
+  const [form, setForm] = useState<{
+    address: string;
+    areaSqm: number | null;
+    buildingAgeYears: string;
+    floor: string;
+    totalFloors: string;
+    lawdCd: string;
+    pnu: string;
+    jeonsePrice: number | null;
+  }>({
     address: "",
-    areaSqm: "",
+    areaSqm: null,
     buildingAgeYears: "5",
     floor: "8",
     totalFloors: "18",
     lawdCd: "",
     pnu: "",
-    jeonsePrice: "1800000000",
+    jeonsePrice: 1800000000,
   });
 
   const projectQuery = useQuery({
@@ -282,10 +292,10 @@ export function ProjectFinanceWorkspaceClient({
       ...current,
       address: current.address || projectQuery.data.address || "",
       areaSqm:
-        current.areaSqm ||
+        current.areaSqm ??
         (projectQuery.data.total_area_sqm != null
-          ? String(projectQuery.data.total_area_sqm)
-          : ""),
+          ? projectQuery.data.total_area_sqm
+          : null),
     }));
   }, [projectQuery.data]);
 
@@ -296,10 +306,10 @@ export function ProjectFinanceWorkspaceClient({
       ...current,
       address: current.address || siteAnalysis.address || "",
       areaSqm:
-        current.areaSqm ||
+        current.areaSqm ??
         (siteAnalysis.landAreaSqm != null
-          ? String(siteAnalysis.landAreaSqm)
-          : ""),
+          ? siteAnalysis.landAreaSqm
+          : null),
       pnu: current.pnu || siteAnalysis.pnu || "",
     }));
   }, [siteAnalysis]);
@@ -313,8 +323,8 @@ export function ProjectFinanceWorkspaceClient({
     setWorkspaceError("");
 
     const address = form.address.trim();
-    const areaSqm = Number(form.areaSqm);
-    const jeonsePrice = Number(form.jeonsePrice);
+    const areaSqm = form.areaSqm ?? 0;
+    const jeonsePrice = form.jeonsePrice ?? 0;
 
     if (!address) {
       setWorkspaceError(labels.missingAddressError);
@@ -485,27 +495,28 @@ export function ProjectFinanceWorkspaceClient({
                   placeholder={labels.addressLabel}
                 />
                 <div className="grid gap-3 md:grid-cols-2">
-                  <Input
-                    type="number"
+                  <NumberInput
+                    allowDecimal
                     value={form.areaSqm}
-                    onChange={(event) =>
+                    onChange={(n) =>
                       setForm((current) => ({
                         ...current,
-                        areaSqm: event.target.value,
+                        areaSqm: n,
                       }))
                     }
                     placeholder={labels.areaLabel}
+                    className="flex h-11 w-full rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] px-4 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
                   />
-                  <Input
-                    type="number"
+                  <NumberInput
                     value={form.jeonsePrice}
-                    onChange={(event) =>
+                    onChange={(n) =>
                       setForm((current) => ({
                         ...current,
-                        jeonsePrice: event.target.value,
+                        jeonsePrice: n,
                       }))
                     }
                     placeholder={labels.jeonsePriceLabel}
+                    className="flex h-11 w-full rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] px-4 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
                   />
                 </div>
                 <div className="grid gap-3 md:grid-cols-3">

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Button, Card, CardContent } from "@propai/ui";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { NumberInput } from "@/components/common/NumberInput";
 
 /* ── Types ── */
 
@@ -366,10 +367,10 @@ export default function GresbScoreCard() {
           {/* Floor Area */}
           <div>
             <label className="mb-1 block text-xs font-medium text-gray-600">연면적 (m&sup2;)</label>
-            <input
-              type="number"
-              value={form.floor_area_sqm}
-              onChange={(e) => updateField("floor_area_sqm", e.target.value)}
+            <NumberInput
+              allowDecimal
+              value={form.floor_area_sqm === "" ? null : Number(form.floor_area_sqm)}
+              onChange={(n) => updateField("floor_area_sqm", n != null ? String(n) : "")}
               className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
             />
           </div>

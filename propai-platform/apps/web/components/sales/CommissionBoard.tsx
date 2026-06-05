@@ -7,6 +7,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { salesApi, won } from "@/lib/salesApi";
+import { NumberInput } from "@/components/common/NumberInput";
 
 interface Master { id?: string; basis: string; fixed_amount?: number | null; rate?: number | null; locked?: boolean }
 interface Dist { id: string; master_id?: string; target_node_type?: string | null; target_node_id?: string | null; basis: string; value: number }
@@ -89,7 +90,7 @@ export default function CommissionBoard({ siteCode }: { siteCode: string }) {
           {mBasis === "RATE_OF_PRICE" ? (
             <input type="number" step="0.001" value={mRate} onChange={(e) => setMRate(Number(e.target.value))} placeholder="0.02 = 2%" className={`${fcls} w-32`} />
           ) : (
-            <input type="number" value={mFixed} onChange={(e) => setMFixed(Number(e.target.value))} placeholder="금액(원)" className={`${fcls} w-40`} />
+            <NumberInput value={mFixed} onChange={(n) => setMFixed(n ?? 0)} placeholder="금액(원)" className={`${fcls} w-40`} />
           )}
           <button onClick={saveMaster} className="rounded-lg bg-[var(--accent-strong)] px-4 py-2 text-sm font-black text-white">총액 기준 저장</button>
         </div>
@@ -126,7 +127,7 @@ export default function CommissionBoard({ siteCode }: { siteCode: string }) {
         </table>
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <span className="text-xs text-[var(--text-tertiary)]">검증 샘플 분양가</span>
-          <input type="number" value={sample} onChange={(e) => setSample(Number(e.target.value))} className={`${fcls} w-40`} />
+          <NumberInput value={sample} onChange={(n) => setSample(n ?? 0)} className={`${fcls} w-40`} />
           <button onClick={check} className="rounded-lg bg-[var(--accent-strong)] px-3 py-1.5 text-xs font-bold text-white">Σ≤총액 검증</button>
           {valid && (
             <span className={`text-sm font-semibold ${valid.valid ? "text-emerald-400" : "text-rose-400"}`}>

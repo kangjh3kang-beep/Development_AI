@@ -8,6 +8,7 @@ import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import { ApiClientError, apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { GlobalAddressSearch } from "@/components/common/GlobalAddressSearch";
+import { NumberInput } from "@/components/common/NumberInput";
 import { AutoZoningBadge } from "@/components/projects/AutoZoningBadge";
 import { ParcelBoundaryMap } from "@/components/map/ParcelBoundaryMap";
 import type { Locale } from "@/i18n/config";
@@ -282,9 +283,17 @@ export function ProjectSiteAnalysisWorkspaceClient({
   const [parcelResult, setParcelResult] = useState<ParcelInfoResponse | null>(
     null,
   );
-  const [form, setForm] = useState({
+  const [form, setForm] = useState<{
+    address: string;
+    areaSqm: number | null;
+    buildingAgeYears: string;
+    floor: string;
+    totalFloors: string;
+    lawdCd: string;
+    pnu: string;
+  }>({
     address: "",
-    areaSqm: "",
+    areaSqm: null,
     buildingAgeYears: "5",
     floor: "1",
     totalFloors: "5",
@@ -309,10 +318,10 @@ export function ProjectSiteAnalysisWorkspaceClient({
       ...current,
       address: current.address || projectQuery.data.address || "",
       areaSqm:
-        current.areaSqm ||
+        current.areaSqm ??
         (projectQuery.data.total_area_sqm != null
-          ? String(projectQuery.data.total_area_sqm)
-          : ""),
+          ? projectQuery.data.total_area_sqm
+          : null),
     }));
   }, [projectQuery.data]);
 
@@ -325,7 +334,7 @@ export function ProjectSiteAnalysisWorkspaceClient({
     setWorkspaceError("");
 
     const address = form.address.trim();
-    const areaSqm = Number(form.areaSqm);
+    const areaSqm = form.areaSqm ?? 0;
     const pnu = form.pnu.trim();
 
     if (!address) {
@@ -502,16 +511,17 @@ export function ProjectSiteAnalysisWorkspaceClient({
                   placeholder={labels.addressLabel}
                 />
                 <div className="grid gap-3 md:grid-cols-2">
-                  <Input
-                    type="number"
+                  <NumberInput
+                    allowDecimal
                     value={form.areaSqm}
-                    onChange={(event) =>
+                    onChange={(n) =>
                       setForm((current) => ({
                         ...current,
-                        areaSqm: event.target.value,
+                        areaSqm: n,
                       }))
                     }
                     placeholder={labels.areaLabel}
+                    className="flex h-11 w-full rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] px-4 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
                   />
                   <Input
                     value={form.pnu}

@@ -2,6 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 import { Button, Card, CardContent, CardTitle, Input } from "@propai/ui";
+import { NumberInput } from "@/components/common/NumberInput";
 import type { Locale } from "@/i18n/config";
 
 /* ── Response types ── */
@@ -237,21 +238,28 @@ export function InvestmentAnalyticsWorkspaceClient({
   const [workspaceError, setWorkspaceError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [result, setResult] = useState<MonteCarloFinanceResponse | null>(null);
-  const [form, setForm] = useState({
-    totalCost: "300",
-    expectedRevenue: "450",
+  const [form, setForm] = useState<{
+    totalCost: number | null;
+    expectedRevenue: number | null;
+    constructionPeriod: string;
+    discountRate: string;
+    revenueUncertainty: string;
+    simulations: number | null;
+  }>({
+    totalCost: 300,
+    expectedRevenue: 450,
     constructionPeriod: "24",
     discountRate: "8",
     revenueUncertainty: "15",
-    simulations: "10000",
+    simulations: 10000,
   });
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setWorkspaceError("");
 
-    const totalCost = Number(form.totalCost);
-    const expectedRevenue = Number(form.expectedRevenue);
+    const totalCost = form.totalCost ?? 0;
+    const expectedRevenue = form.expectedRevenue ?? 0;
 
     if (!Number.isFinite(totalCost) || totalCost <= 0) {
       setWorkspaceError(labels.missingCostError);
@@ -266,7 +274,7 @@ export function InvestmentAnalyticsWorkspaceClient({
 
     try {
       await new Promise((r) => setTimeout(r, 400));
-      const n = Number(form.simulations) || 10000;
+      const n = form.simulations || 10000;
       const cost = totalCost * 1e8;
       const rev = expectedRevenue * 1e8;
       const months = Number(form.constructionPeriod) || 24;
@@ -397,27 +405,29 @@ export function InvestmentAnalyticsWorkspaceClient({
           </p>
           <form className="mt-4 grid gap-3" onSubmit={handleSubmit}>
             <div className="grid gap-3 md:grid-cols-2">
-              <Input
-                type="number"
+              <NumberInput
+                allowDecimal
                 value={form.totalCost}
-                onChange={(event) =>
+                onChange={(n) =>
                   setForm((current) => ({
                     ...current,
-                    totalCost: event.target.value,
+                    totalCost: n,
                   }))
                 }
                 placeholder={labels.totalCostLabel}
+                className="flex h-11 w-full rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] px-4 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
               />
-              <Input
-                type="number"
+              <NumberInput
+                allowDecimal
                 value={form.expectedRevenue}
-                onChange={(event) =>
+                onChange={(n) =>
                   setForm((current) => ({
                     ...current,
-                    expectedRevenue: event.target.value,
+                    expectedRevenue: n,
                   }))
                 }
                 placeholder={labels.expectedRevenueLabel}
+                className="flex h-11 w-full rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] px-4 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
               />
             </div>
             <div className="grid gap-3 md:grid-cols-2">
@@ -456,16 +466,16 @@ export function InvestmentAnalyticsWorkspaceClient({
                 }
                 placeholder={labels.revenueUncertaintyLabel}
               />
-              <Input
-                type="number"
+              <NumberInput
                 value={form.simulations}
-                onChange={(event) =>
+                onChange={(n) =>
                   setForm((current) => ({
                     ...current,
-                    simulations: event.target.value,
+                    simulations: n,
                   }))
                 }
                 placeholder={labels.simulationsLabel}
+                className="flex h-11 w-full rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] px-4 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
               />
             </div>
             <Button type="submit" disabled={isSubmitting}>

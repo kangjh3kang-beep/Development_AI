@@ -12,6 +12,7 @@ import {
 } from "@propai/ui";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
+import { NumberInput } from "@/components/common/NumberInput";
 import type { Locale } from "@/i18n/config";
 
 type ProjectSummary = {
@@ -267,13 +268,23 @@ export function EnergyOperationsWorkspaceClient({
   const [isCalculating, setIsCalculating] = useState(false);
   const [isCertifying, setIsCertifying] = useState(false);
 
-  const [kepcoForm, setKepcoForm] = useState({
-    usageKwh: "184000",
-    demandKw: "480",
+  const [kepcoForm, setKepcoForm] = useState<{
+    usageKwh: number | null;
+    demandKw: number | null;
+    contractType: string;
+  }>({
+    usageKwh: 184000,
+    demandKw: 480,
     contractType: "general",
   });
-  const [certificationForm, setCertificationForm] = useState({
-    totalAreaSqm: "",
+  const [certificationForm, setCertificationForm] = useState<{
+    totalAreaSqm: number | null;
+    floors: string;
+    windowWallRatio: string;
+    insulationGrade: string;
+    bemsSavingRate: string;
+  }>({
+    totalAreaSqm: null,
     floors: "12",
     windowWallRatio: "0.34",
     insulationGrade: "premium",
@@ -301,7 +312,7 @@ export function EnergyOperationsWorkspaceClient({
     if (selectedProject?.total_area_sqm && !certificationForm.totalAreaSqm) {
       setCertificationForm((current) => ({
         ...current,
-        totalAreaSqm: String(selectedProject.total_area_sqm),
+        totalAreaSqm: selectedProject.total_area_sqm,
       }));
     }
   }, [certificationForm.totalAreaSqm, selectedProject]);
@@ -319,8 +330,8 @@ export function EnergyOperationsWorkspaceClient({
     setIsCalculating(true);
     try {
       await new Promise((r) => setTimeout(r, 200));
-      const usage = Number(kepcoForm.usageKwh) || 0;
-      const demand = Number(kepcoForm.demandKw) || 0;
+      const usage = kepcoForm.usageKwh || 0;
+      const demand = kepcoForm.demandKw || 0;
       const type = kepcoForm.contractType;
       const ratePerKwh = type === "industrial" ? 110 : type === "education" ? 100 : 130;
       const basePer = type === "industrial" ? 7220 : type === "education" ? 5550 : 6160;
@@ -354,7 +365,7 @@ export function EnergyOperationsWorkspaceClient({
     setIsCertifying(true);
     try {
       await new Promise((r) => setTimeout(r, 200));
-      const area = Number(certificationForm.totalAreaSqm) || 10000;
+      const area = certificationForm.totalAreaSqm || 10000;
       const floors = Number(certificationForm.floors) || 10;
       const wwr = Number(certificationForm.windowWallRatio) || 0.3;
       const bems = Number(certificationForm.bemsSavingRate) || 0.08;
@@ -523,31 +534,29 @@ export function EnergyOperationsWorkspaceClient({
             </p>
             <form className="mt-5 grid gap-3" onSubmit={handleCalculateKepco}>
               <div className="grid gap-3 md:grid-cols-2">
-                <Input
-                  type="number"
-                  min="1"
-                  step="0.1"
+                <NumberInput
+                  allowDecimal
                   value={kepcoForm.usageKwh}
-                  onChange={(event) =>
+                  onChange={(n) =>
                     setKepcoForm((current) => ({
                       ...current,
-                      usageKwh: event.target.value,
+                      usageKwh: n,
                     }))
                   }
                   placeholder={labels.usageLabel}
+                  className="flex h-11 w-full rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] px-4 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
                 />
-                <Input
-                  type="number"
-                  min="1"
-                  step="0.1"
+                <NumberInput
+                  allowDecimal
                   value={kepcoForm.demandKw}
-                  onChange={(event) =>
+                  onChange={(n) =>
                     setKepcoForm((current) => ({
                       ...current,
-                      demandKw: event.target.value,
+                      demandKw: n,
                     }))
                   }
                   placeholder={labels.demandLabel}
+                  className="flex h-11 w-full rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] px-4 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
                 />
               </div>
               <Select
@@ -609,18 +618,17 @@ export function EnergyOperationsWorkspaceClient({
               onSubmit={handleEstimateCertification}
             >
               <div className="grid gap-3 md:grid-cols-2">
-                <Input
-                  type="number"
-                  min="1"
-                  step="0.1"
+                <NumberInput
+                  allowDecimal
                   value={certificationForm.totalAreaSqm}
-                  onChange={(event) =>
+                  onChange={(n) =>
                     setCertificationForm((current) => ({
                       ...current,
-                      totalAreaSqm: event.target.value,
+                      totalAreaSqm: n,
                     }))
                   }
                   placeholder={labels.areaLabel}
+                  className="flex h-11 w-full rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] px-4 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
                 />
                 <Input
                   type="number"

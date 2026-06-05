@@ -8,6 +8,7 @@ import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { useFeasibilityV2Store } from "@/store/use-feasibility-v2-store";
 import { apiClient } from "@/lib/api-client";
 import { GlobalAddressSearch } from "@/components/common/GlobalAddressSearch";
+import { NumberInput } from "@/components/common/NumberInput";
 import { BusinessModelRefineModal } from "./BusinessModelRefineModal";
 
 /* ── Types ── */
@@ -471,10 +472,10 @@ export function AutoRecommendPanel({ onClose, isModal = false, embedded = false 
               <label className="mb-2 block text-[10px] font-[900] uppercase tracking-[0.3em] text-[var(--text-hint)]">
                 대지면적 (m{"\u00B2"})
               </label>
-              <input
-                type="number"
-                value={landArea}
-                onChange={(e) => setLandArea(e.target.value)}
+              <NumberInput
+                allowDecimal
+                value={landArea === "" ? null : Number(landArea)}
+                onChange={(n) => setLandArea(n != null ? String(n) : "")}
                 placeholder="1,500"
                 className="w-full rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] px-5 py-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-hint)] focus:border-[var(--accent-strong)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-strong)]/20 transition-all"
               />

@@ -2,6 +2,7 @@
 
 import { useCallback, useState } from "react";
 import { useCadStore } from "@/store/use-cad-store";
+import { NumberInput } from "@/components/common/NumberInput";
 import type {
   AutoDesignRequest,
   AutoDesignResponse,
@@ -104,13 +105,11 @@ export function AutoDesignPanel({ projectId }: AutoDesignPanelProps) {
       <div className="grid gap-2 text-xs">
         <label className="flex items-center justify-between gap-2">
           <span className="text-[var(--text-secondary)]">대지면적 (m²)</span>
-          <input
-            type="number"
-            min={10}
+          <NumberInput
+            allowDecimal
             value={siteArea}
-            onChange={(e) => setSiteArea(Number(e.target.value))}
+            onChange={(n) => setSiteArea(n ?? 0)}
             className="w-20 rounded-lg border border-[var(--line)] bg-[var(--surface-soft)] px-2 py-1 text-right text-sm"
-            aria-label="대지면적"
           />
         </label>
 

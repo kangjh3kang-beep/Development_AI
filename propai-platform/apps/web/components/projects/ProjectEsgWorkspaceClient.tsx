@@ -6,6 +6,7 @@ import { ApiClientError, apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { VerificationBadge } from "@/components/common/VerificationBadge";
 import { ExpertPanelCard } from "@/components/common/ExpertPanelCard";
+import { NumberInput } from "@/components/common/NumberInput";
 import type { Locale } from "@/i18n/config";
 
 /* ── Response Types ── */
@@ -435,11 +436,12 @@ export function ProjectEsgWorkspaceClient({
             {labels.lcaFormTitle}
           </p>
           <form className="mt-4 grid gap-4" onSubmit={handleLcaSubmit}>
-            <Input
-              type="number"
-              value={floorArea}
-              onChange={(e) => setFloorArea(e.target.value)}
+            <NumberInput
+              allowDecimal
+              value={floorArea === "" ? null : Number(floorArea)}
+              onChange={(n) => setFloorArea(n != null ? String(n) : "")}
               placeholder={labels.floorAreaLabel}
+              className="flex h-11 w-full rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] px-4 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
             />
             {lcaMaterials.map((mat, index) => (
               <div
@@ -453,13 +455,14 @@ export function ProjectEsgWorkspaceClient({
                   }
                   placeholder={labels.materialNameLabel}
                 />
-                <Input
-                  type="number"
-                  value={mat.quantity}
-                  onChange={(e) =>
-                    updateLcaMaterial(index, "quantity", e.target.value)
+                <NumberInput
+                  allowDecimal
+                  value={mat.quantity === "" ? null : Number(mat.quantity)}
+                  onChange={(n) =>
+                    updateLcaMaterial(index, "quantity", n != null ? String(n) : "")
                   }
                   placeholder={labels.materialQtyLabel}
+                  className="flex h-11 w-full rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] px-4 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
                 />
                 <div className="flex items-center gap-2">
                   {lcaMaterials.length > 1 && (
@@ -619,14 +622,14 @@ export function ProjectEsgWorkspaceClient({
                     }
                     placeholder={labels.epdMaterialNameLabel}
                   />
-                  <Input
-                    type="number"
-                    value={mat.quantity_kg}
-                    onChange={(e) =>
+                  <NumberInput
+                    allowDecimal
+                    value={mat.quantity_kg === "" ? null : Number(mat.quantity_kg)}
+                    onChange={(n) =>
                       setEpdMaterials((c) =>
                         c.map((m, i) =>
                           i === index
-                            ? { ...m, quantity_kg: e.target.value }
+                            ? { ...m, quantity_kg: n != null ? String(n) : "" }
                             : m,
                         ),
                       )
@@ -740,13 +743,14 @@ export function ProjectEsgWorkspaceClient({
                 }
                 placeholder={labels.altMaterialLabel}
               />
-              <Input
-                type="number"
-                value={altForm.quantityKg}
-                onChange={(e) =>
-                  setAltForm((c) => ({ ...c, quantityKg: e.target.value }))
+              <NumberInput
+                allowDecimal
+                value={altForm.quantityKg === "" ? null : Number(altForm.quantityKg)}
+                onChange={(n) =>
+                  setAltForm((c) => ({ ...c, quantityKg: n != null ? String(n) : "" }))
                 }
                 placeholder={labels.altQuantityLabel}
+                className="flex h-11 w-full rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] px-4 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
               />
               <Button
                 type="submit"

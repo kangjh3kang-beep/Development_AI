@@ -3,6 +3,7 @@
 import { useState, type FormEvent } from "react";
 import { Button, Card, CardContent, Input } from "@propai/ui";
 import { ApiClientError, apiClient } from "@/lib/api-client";
+import { NumberInput } from "@/components/common/NumberInput";
 import type { Locale } from "@/i18n/config";
 
 /* ------------------------------------------------------------------ */
@@ -356,16 +357,17 @@ export function SafetyWorkspaceClient({
                 placeholder={labels.projectTypeLabel}
               />
               <div className="grid gap-3 md:grid-cols-3">
-                <Input
-                  type="number"
-                  value={safetyForm.projectCostKrw}
-                  onChange={(e) =>
+                <NumberInput
+                  allowDecimal
+                  value={safetyForm.projectCostKrw === "" ? null : Number(safetyForm.projectCostKrw)}
+                  onChange={(n) =>
                     setSafetyForm((c) => ({
                       ...c,
-                      projectCostKrw: e.target.value,
+                      projectCostKrw: n != null ? String(n) : "",
                     }))
                   }
                   placeholder={labels.projectCostLabel}
+                  className="flex h-11 w-full rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] px-4 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
                 />
                 <Input
                   type="number"

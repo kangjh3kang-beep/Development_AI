@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Button, Card, CardContent, CardTitle, Input, Select } from "@propai/ui";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
+import { NumberInput } from "@/components/common/NumberInput";
 import { ApiClientError, apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import type { Locale } from "@/i18n/config";
@@ -428,16 +429,17 @@ export function ProjectBimWorkspaceClient({
               </p>
               <form className="mt-4 grid gap-3" onSubmit={handleGenerate}>
                 <div className="grid gap-3 md:grid-cols-2">
-                  <Input
-                    type="number"
-                    value={form.totalAreaSqm}
-                    onChange={(event) =>
+                  <NumberInput
+                    allowDecimal
+                    value={form.totalAreaSqm === "" ? null : Number(form.totalAreaSqm)}
+                    onChange={(n) =>
                       setForm((current) => ({
                         ...current,
-                        totalAreaSqm: event.target.value,
+                        totalAreaSqm: n != null ? String(n) : "",
                       }))
                     }
                     placeholder={labels.totalAreaLabel}
+                    className="flex h-11 w-full rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] px-4 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
                   />
                   <Input
                     type="number"

@@ -4,6 +4,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button, Card, CardContent, CardTitle, Input, Select } from "@propai/ui";
+import { NumberInput } from "@/components/common/NumberInput";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
 import { ApiClientError, apiClient } from "@/lib/api-client";
 import type { Locale } from "@/i18n/config";
@@ -336,8 +337,8 @@ export function DigitalTwinControlTowerWorkspaceClient({
             
             <form className="mt-8 grid gap-4" onSubmit={handleStatus}>
               <Select label="Building type" value={statusForm.buildingType} onValueChange={(value) => setStatusForm((current) => ({ ...current, buildingType: value }))} options={buildingTypes} className="h-14 rounded-2xl border-[var(--line)] bg-[var(--surface-soft)]" />
-              <Input type="number" value={statusForm.grossFloorArea} onChange={(event) => setStatusForm((current) => ({ ...current, grossFloorArea: event.target.value }))} placeholder="Gross floor area (sqm)" className="h-14 rounded-2xl border-[var(--line)] bg-[var(--surface-soft)]" />
-              <Input type="number" value={statusForm.annualEnergy} onChange={(event) => setStatusForm((current) => ({ ...current, annualEnergy: event.target.value }))} placeholder="Annual energy use (kWh)" className="h-14 rounded-2xl border-[var(--line)] bg-[var(--surface-soft)]" />
+              <NumberInput allowDecimal value={statusForm.grossFloorArea === "" ? null : Number(statusForm.grossFloorArea)} onChange={(n) => setStatusForm((current) => ({ ...current, grossFloorArea: n != null ? String(n) : "" }))} placeholder="Gross floor area (sqm)" className="h-14 w-full rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] px-4 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]" />
+              <NumberInput allowDecimal value={statusForm.annualEnergy === "" ? null : Number(statusForm.annualEnergy)} onChange={(n) => setStatusForm((current) => ({ ...current, annualEnergy: n != null ? String(n) : "" }))} placeholder="Annual energy use (kWh)" className="h-14 w-full rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] px-4 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]" />
               <div className="grid gap-3 grid-cols-3">
                 <Input type="number" value={statusForm.occupancyRate} onChange={(event) => setStatusForm((current) => ({ ...current, occupancyRate: event.target.value }))} placeholder="Occ %" className="h-14 rounded-2xl px-2 text-center border-[var(--line)] bg-[var(--surface-soft)] font-mono" />
                 <Input type="number" value={statusForm.sensorCount} onChange={(event) => setStatusForm((current) => ({ ...current, sensorCount: event.target.value }))} placeholder="Sens" className="h-14 rounded-2xl px-2 text-center border-[var(--line)] bg-[var(--surface-soft)] font-mono" />
@@ -378,7 +379,7 @@ export function DigitalTwinControlTowerWorkspaceClient({
             <CardTitle className="mt-3 text-2xl font-[1000] tracking-tighter italic text-[var(--text-primary)]">Unified Risk Engine<span className="text-[var(--accent-strong)]">.</span></CardTitle>
             
             <form className="mt-8 grid gap-4" onSubmit={handleRisk}>
-              <Input type="number" value={riskForm.baseProjectCost} onChange={(event) => setRiskForm((current) => ({ ...current, baseProjectCost: event.target.value }))} placeholder="Base cost (KRW)" className="h-14 rounded-2xl border-[var(--line)] bg-[var(--surface-soft)]" />
+              <NumberInput value={riskForm.baseProjectCost === "" ? null : Number(riskForm.baseProjectCost)} onChange={(n) => setRiskForm((current) => ({ ...current, baseProjectCost: n != null ? String(n) : "" }))} placeholder="Base cost (KRW)" className="h-14 w-full rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] px-4 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]" />
               <div className="grid gap-3 grid-cols-2">
                 <Input type="number" value={riskForm.marketRiskScore} onChange={(event) => setRiskForm((current) => ({ ...current, marketRiskScore: event.target.value }))} placeholder="Market" className="h-14 rounded-2xl border-[var(--line)] bg-[var(--surface-soft)]" />
                 <Input type="number" value={riskForm.climateRiskScore} onChange={(event) => setRiskForm((current) => ({ ...current, climateRiskScore: event.target.value }))} placeholder="Climate" className="h-14 rounded-2xl border-[var(--line)] bg-[var(--surface-soft)]" />
@@ -427,7 +428,7 @@ export function DigitalTwinControlTowerWorkspaceClient({
             <form className="mt-8 grid gap-4" onSubmit={handlePermit}>
               <Select label="Permit type" value={permitForm.permitType} onValueChange={(value) => setPermitForm((current) => ({ ...current, permitType: value }))} options={permitTypes} className="h-14 rounded-2xl border-[var(--line)] bg-[var(--surface-soft)]" />
               <Select label="Region" value={permitForm.region} onValueChange={(value) => setPermitForm((current) => ({ ...current, region: value }))} options={regions} className="h-14 rounded-2xl border-[var(--line)] bg-[var(--surface-soft)]" />
-              <Input type="number" value={permitForm.buildingArea} onChange={(event) => setPermitForm((current) => ({ ...current, buildingArea: event.target.value }))} placeholder="Building area (sqm)" className="h-14 rounded-2xl border-[var(--line)] bg-[var(--surface-soft)]" />
+              <NumberInput allowDecimal value={permitForm.buildingArea === "" ? null : Number(permitForm.buildingArea)} onChange={(n) => setPermitForm((current) => ({ ...current, buildingArea: n != null ? String(n) : "" }))} placeholder="Building area (sqm)" className="h-14 w-full rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] px-4 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]" />
               <div className="grid gap-3 grid-cols-3">
                 <Select label="Pb" value={permitForm.isPublic} onValueChange={(value) => setPermitForm((current) => ({ ...current, isPublic: value }))} options={yesNo} className="h-14 rounded-2xl border-[var(--line)] bg-[var(--surface-soft)]" />
                 <Select label="Ag" value={permitForm.isAgricultural} onValueChange={(value) => setPermitForm((current) => ({ ...current, isAgricultural: value }))} options={yesNo} className="h-14 rounded-2xl border-[var(--line)] bg-[var(--surface-soft)]" />

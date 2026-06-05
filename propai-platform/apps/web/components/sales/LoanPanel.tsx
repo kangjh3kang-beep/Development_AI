@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { salesApi, won } from "@/lib/salesApi";
+import { NumberInput } from "@/components/common/NumberInput";
 
 interface Program { id: string; bank_name?: string; guarantee_type?: string; status: string }
 interface Agreement { id: string; approved_amount?: number; status: string; program_id?: string }
@@ -13,8 +14,8 @@ export default function LoanPanel({ siteCode }: { siteCode: string }) {
   const [programs, setPrograms] = useState<Program[]>([]);
   const [agreements, setAgreements] = useState<Agreement[]>([]);
   const [prog, setProg] = useState({ bank_name: "", guarantee_type: "HUG" });
-  const [ag, setAg] = useState({ contract_ext_id: "", program_id: "", approved_amount: "" });
-  const [dis, setDis] = useState({ agreement_id: "", installment_seq: "", amount: "" });
+  const [ag, setAg] = useState<{ contract_ext_id: string; program_id: string; approved_amount: number | null }>({ contract_ext_id: "", program_id: "", approved_amount: null });
+  const [dis, setDis] = useState<{ agreement_id: string; installment_seq: string; amount: number | null }>({ agreement_id: "", installment_seq: "", amount: null });
   const [msg, setMsg] = useState("");
 
   const load = useCallback(() => {
@@ -25,11 +26,11 @@ export default function LoanPanel({ siteCode }: { siteCode: string }) {
   useEffect(() => { load(); }, [load]);
 
   const addProg = async () => { if (!prog.bank_name) return; await api.post("/loan/programs", { ...prog, status: "ACTIVE" }); setProg({ bank_name: "", guarantee_type: "HUG" }); load(); };
-  const addAg = async () => { if (!ag.contract_ext_id || !ag.program_id) return; await api.post("/loan/agreements", { contract_ext_id: ag.contract_ext_id, program_id: ag.program_id, approved_amount: Number(ag.approved_amount || 0), status: "APPROVED" }); setAg({ contract_ext_id: "", program_id: "", approved_amount: "" }); load(); };
+  const addAg = async () => { if (!ag.contract_ext_id || !ag.program_id) return; await api.post("/loan/agreements", { contract_ext_id: ag.contract_ext_id, program_id: ag.program_id, approved_amount: ag.approved_amount ?? 0, status: "APPROVED" }); setAg({ contract_ext_id: "", program_id: "", approved_amount: null }); load(); };
   const disburse = async () => {
     if (!dis.agreement_id) return;
-    await api.post("/loan/disburse", { agreement_id: dis.agreement_id, installment_seq: Number(dis.installment_seq), amount: Number(dis.amount) });
-    setMsg("실행 기록 완료(회차 납입처리)"); setDis({ agreement_id: "", installment_seq: "", amount: "" }); load();
+    await api.post("/loan/disburse", { agreement_id: dis.agreement_id, installment_seq: Number(dis.installment_seq), amount: dis.amount ?? 0 });
+    setMsg("실행 기록 완료(회차 납입처리)"); setDis({ agreement_id: "", installment_seq: "", amount: null }); load();
   };
 
   return (
@@ -53,7 +54,7 @@ export default function LoanPanel({ siteCode }: { siteCode: string }) {
           <div className="flex flex-col gap-2">
             <input value={ag.contract_ext_id} onChange={(e) => setAg({ ...ag, contract_ext_id: e.target.value })} placeholder="계약 ID" className={IN} />
             <input value={ag.program_id} onChange={(e) => setAg({ ...ag, program_id: e.target.value })} placeholder="협약 ID" className={IN} />
-            <input value={ag.approved_amount} onChange={(e) => setAg({ ...ag, approved_amount: e.target.value })} type="number" placeholder="승인액(원)" className={IN} />
+            <NumberInput value={ag.approved_amount} onChange={(n) => setAg({ ...ag, approved_amount: n })} placeholder="승인액(원)" className={IN} />
             <button onClick={addAg} className={BTN}>약정 추가</button>
           </div>
           <ul className="mt-3 space-y-1 text-sm text-[var(--text-secondary)]">
@@ -66,7 +67,7 @@ export default function LoanPanel({ siteCode }: { siteCode: string }) {
         <div className="flex flex-wrap items-end gap-2">
           <input value={dis.agreement_id} onChange={(e) => setDis({ ...dis, agreement_id: e.target.value })} placeholder="약정 ID" className={IN} />
           <input value={dis.installment_seq} onChange={(e) => setDis({ ...dis, installment_seq: e.target.value })} type="number" placeholder="회차" className={`${IN} w-20`} />
-          <input value={dis.amount} onChange={(e) => setDis({ ...dis, amount: e.target.value })} type="number" placeholder="금액(원)" className={IN} />
+          <NumberInput value={dis.amount} onChange={(n) => setDis({ ...dis, amount: n })} placeholder="금액(원)" className={IN} />
           <button onClick={disburse} className={BTN}>실행 기록</button>
         </div>
         {msg && <p className="mt-2 text-sm font-semibold text-emerald-400">{msg}</p>}

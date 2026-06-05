@@ -12,6 +12,7 @@ import {
   YAxis,
 } from "recharts";
 import { useFeasibilityV2Store } from "@/store/use-feasibility-v2-store";
+import { NumberInput } from "@/components/common/NumberInput";
 
 const DEFAULT_VARIABLES = [
   { name: "revenue", mean: 1000, std: 100 },
@@ -78,11 +79,10 @@ export function MonteCarloPanel() {
           <div className="mt-4 flex items-center gap-4">
             <label className="text-sm">
               <span className="text-xs text-slate-500">시뮬레이션 횟수</span>
-              <Input
-                type="number"
+              <NumberInput
                 value={nSim}
-                onChange={(e) => setNSim(Number(e.target.value))}
-                className="mt-1 w-32"
+                onChange={(n) => setNSim(n ?? 0)}
+                className="mt-1 w-32 flex h-11 rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] px-4 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
               />
             </label>
             <Button

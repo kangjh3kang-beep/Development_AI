@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Button, Card, CardContent, CardTitle, Input } from "@propai/ui";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { NumberInput } from "@/components/common/NumberInput";
 
 /* ── Types ── */
 
@@ -230,17 +231,19 @@ export function UnitMixOptimizerPanel() {
 
         {/* Inputs */}
         <div className="mt-5 grid gap-3 md:grid-cols-3">
-          <Input
-            type="number"
-            value={totalGfa}
-            onChange={(e) => setTotalGfa(e.target.value)}
+          <NumberInput
+            allowDecimal
+            value={totalGfa === "" ? null : Number(totalGfa)}
+            onChange={(n) => setTotalGfa(n != null ? String(n) : "")}
             placeholder="총 연면적 (m2)"
+            className="flex h-11 w-full rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] px-4 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
           />
-          <Input
-            type="number"
-            value={landArea}
-            onChange={(e) => setLandArea(e.target.value)}
+          <NumberInput
+            allowDecimal
+            value={landArea === "" ? null : Number(landArea)}
+            onChange={(n) => setLandArea(n != null ? String(n) : "")}
             placeholder="대지면적 (m2)"
+            className="flex h-11 w-full rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] px-4 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
           />
           <Input
             value={region}
