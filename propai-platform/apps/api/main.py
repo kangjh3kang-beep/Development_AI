@@ -476,6 +476,19 @@ if ai_analyze_router is not None:
 if market_router is not None:
     # PUBLIC 마켓(구인구직·프로필·홍보) — 자체 prefix=/api/v1/market, 현장 격리 없음
     app.include_router(market_router, tags=["구인구직 마켓(public)"])
+
+# Phase1-H 소셜 네트워크 — 친구·단톡·푸시·다중톡 (PUBLIC 전역, 자체 prefix=/api/v1/social)
+try:
+    from apps.api.app.api.endpoints.sales.social import social_router
+except ImportError:
+    try:
+        from app.api.endpoints.sales.social import social_router
+    except ImportError:
+        social_router = None
+
+if social_router is not None:
+    # PUBLIC 소셜(친구 소셜그래프·단톡·WS·FCM 푸시) — 현장 격리 없음. WS(/api/v1/social/ws)도 내장.
+    app.include_router(social_router, tags=["소셜 네트워크(public)"])
 if sales_router is not None:
     app.include_router(sales_router, prefix="/api/v1/sales", tags=["분양관리(sales)"])
     try:
