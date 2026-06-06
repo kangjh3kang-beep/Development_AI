@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v66-auction-3tab";
+const CACHE_NAME = "propai-v67-cost-workflow";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",
