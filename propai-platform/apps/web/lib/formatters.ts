@@ -99,3 +99,22 @@ export function formatArea(m2: number): string {
   const pyeong = m2 / 3.305785;
   return `${m2.toLocaleString("en-US", { maximumFractionDigits: 1 })} m² (약 ${pyeong.toLocaleString("en-US", { maximumFractionDigits: 0 })}평)`;
 }
+
+/**
+ * 분석값 단일 표기 헬퍼 — 빈/null/NaN은 "분석 전"으로 통일한다.
+ * 숫자면 천단위 쉼표 + (선택)단위, 문자열이면 그대로 사용한다.
+ * (프로젝트 전반의 "—"/빈칸 혼용을 "분석 전"으로 일원화하기 위한 단일 출처)
+ */
+export function formatAnalysisValue(
+  value: number | string | null | undefined,
+  suffix = "",
+): string {
+  if (value == null) return "분석 전";
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) return "분석 전";
+    return `${Math.round(value).toLocaleString()}${suffix}`;
+  }
+  const trimmed = String(value).trim();
+  if (trimmed === "") return "분석 전";
+  return `${trimmed}${suffix}`;
+}

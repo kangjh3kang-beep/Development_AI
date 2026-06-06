@@ -616,7 +616,31 @@ export default function SiteAnalysisPage() {
   const [siteData, setSiteData] = useState<Record<string, string | undefined> | null>(null);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [l3Data, setL3Data] = useState<L3SiteData | null>(null);
+  // 사용자 명시 액션(새 분석/분석 시작) 추적 — 컨텍스트 자동진입이 사용자 의도를 덮어쓰지 않게 한다.
+  const [userInitiated, setUserInitiated] = useState(false);
   const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
+  const ctxProjectId = useProjectContextStore((s) => s.projectId);
+  // ProjectContextBinder가 이 프로젝트를 바인딩 완료했는지(레이아웃에서 동기 바인딩).
+  const isBound = ctxProjectId === id;
+
+  // 주소 단일화: 바인딩 완료 후 컨텍스트에 주소가 있으면 재입력 없이 결과로 자동진입하고
+  // 컨텍스트 데이터를 siteData로 시드한다. 사용자가 직접 '새 분석'을 누른 경우(userInitiated)는 예외.
+  useEffect(() => {
+    if (!isBound || userInitiated) return;
+    const addr = siteAnalysis?.address?.trim();
+    if (!addr) return;
+    setSiteData((prev) => {
+      // 이미 결과 데이터가 있으면(분석 진행 중/완료) 덮어쓰지 않는다.
+      if (prev?.address) return prev;
+      return {
+        address: addr,
+        pnu: siteAnalysis?.pnu ?? undefined,
+        zoneType: siteAnalysis?.zoneCode ?? undefined,
+        landAreaSqm: siteAnalysis?.landAreaSqm != null ? String(siteAnalysis.landAreaSqm) : undefined,
+      };
+    });
+    setStage((prev) => (prev === "init" ? "result" : prev));
+  }, [isBound, userInitiated, siteAnalysis?.address, siteAnalysis?.pnu, siteAnalysis?.zoneCode, siteAnalysis?.landAreaSqm]);
 
   if (isLoading || !dictionary) {
     return (
@@ -630,6 +654,7 @@ export default function SiteAnalysisPage() {
     const address = data.address?.trim();
     if (!address) return;
 
+    setUserInitiated(true);
     setStage("analyzing");
     setAnalysisError(null);
     setSiteData({ address });
@@ -739,7 +764,19 @@ export default function SiteAnalysisPage() {
 
       {/* ── Dynamic Content Stages ── */}
       <AnimatePresence mode="wait">
-        {stage === "init" && (
+        {stage === "init" && !isBound && (
+          // 컨텍스트 바인딩(ProjectContextBinder) 완료 전 — 주소 프롬프트를 섣불리 띄우지 않는다.
+          <motion.div
+            key="init-binding"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="flex items-center justify-center py-32"
+          >
+            <div className="h-12 w-12 animate-spin rounded-full border-4 border-[var(--accent-strong)] border-t-transparent shadow-[var(--shadow-glow)]" />
+          </motion.div>
+        )}
+        {stage === "init" && isBound && (
           <motion.div
             key="init"
             initial={{ opacity: 0, scale: 0.95, y: 40 }}
@@ -832,7 +869,7 @@ export default function SiteAnalysisPage() {
                   </div>
                </div>
                <button
-                onClick={() => { setStage("init"); setSiteData(null); setAnalysisError(null); }}
+                onClick={() => { setUserInitiated(true); setStage("init"); setSiteData(null); setAnalysisError(null); }}
                 className="group flex h-16 items-center justify-center gap-4 rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-soft)] px-10 text-[11px] font-black text-[var(--text-primary)] hover:text-white uppercase tracking-[0.3em] transition-all hover:bg-[var(--accent-strong)] hover:border-[var(--accent-strong)] active:scale-95 shadow-[var(--shadow-lg)]"
                >
                  <span>새 분석</span>

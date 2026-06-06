@@ -12,12 +12,13 @@ import { verifyLedger } from "@/lib/analysis-ledger";
 import { SiteScoreCard } from "@/components/projects/SiteScoreCard";
 import { BuildableEnvelopeCard } from "@/components/projects/BuildableEnvelopeCard";
 import { DataLineageTooltip } from "@/components/common/DataLineageTooltip";
+import { formatAnalysisValue } from "@/lib/formatters";
 
 const eok = (won: number | null | undefined): string | null =>
   won != null ? `${(won / 1e8).toLocaleString(undefined, { maximumFractionDigits: 1 })}억` : null;
-const num = (v: number | null | undefined, unit = ""): string =>
-  v != null ? `${Math.round(v).toLocaleString()}${unit}` : "—";
-const pct = (v: number | null | undefined): string => (v != null ? `${v.toLocaleString(undefined, { maximumFractionDigits: 1 })}%` : "—");
+const num = (v: number | null | undefined, unit = ""): string => formatAnalysisValue(v, unit);
+const pct = (v: number | null | undefined): string =>
+  v != null ? `${v.toLocaleString(undefined, { maximumFractionDigits: 1 })}%` : "분석 전";
 
 function Tile({ label, value, sub, accent }: { label: string; value: string; sub?: string; accent?: boolean }) {
   return (
@@ -54,7 +55,7 @@ function Section({
         {rows.map(([k, v]) => (
           <div key={k} className="flex items-center justify-between py-2">
             <dt className="text-xs text-[var(--text-secondary)]">{k}</dt>
-            <dd className={`text-sm font-semibold ${v === "—" ? "text-[var(--text-hint)]" : "text-[var(--text-primary)]"}`}>{v}</dd>
+            <dd className={`text-sm font-semibold ${v === "—" || v === "분석 전" ? "text-[var(--text-hint)]" : "text-[var(--text-primary)]"}`}>{v}</dd>
           </div>
         ))}
       </dl>
@@ -198,9 +199,9 @@ export function ProjectAnalysisSummary() {
         <Section
           title="5. ESG·탄소"
           rows={[
-            ["내재 탄소", esg?.embodiedCarbonKg != null ? `${(esg.embodiedCarbonKg / 1000).toLocaleString(undefined, { maximumFractionDigits: 1 })} tCO₂e` : "—"],
-            ["운영 탄소(연)", esg?.operationalCarbonKg != null ? `${(esg.operationalCarbonKg / 1000).toLocaleString(undefined, { maximumFractionDigits: 1 })} tCO₂e` : "—"],
-            ["단위면적당", esg?.totalCarbonPerSqm != null ? `${num(esg.totalCarbonPerSqm)} kgCO₂/㎡` : "—"],
+            ["내재 탄소", esg?.embodiedCarbonKg != null ? `${(esg.embodiedCarbonKg / 1000).toLocaleString(undefined, { maximumFractionDigits: 1 })} tCO₂e` : "분석 전"],
+            ["운영 탄소(연)", esg?.operationalCarbonKg != null ? `${(esg.operationalCarbonKg / 1000).toLocaleString(undefined, { maximumFractionDigits: 1 })} tCO₂e` : "분석 전"],
+            ["단위면적당", esg?.totalCarbonPerSqm != null ? `${num(esg.totalCarbonPerSqm)} kgCO₂/㎡` : "분석 전"],
           ]}
         />
         <Section

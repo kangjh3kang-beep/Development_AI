@@ -136,7 +136,7 @@ export function LifecycleStageViews({ projectId, dictionary, compact = false }: 
   const allStages = [
     { id: "site_analysis", name: t.stageSite || "입지 분석", path: "site-analysis" },
     { id: "legal_compliance", name: t.stageLegal || "법규 검토", path: "legal" },
-    { id: "design_ai", name: t.stageDesignAI || "AI 설계", path: "cad" },
+    { id: "design_ai", name: t.stageDesignAI || "AI 설계", path: "design" },
     { id: "feasibility", name: t.stageFeasibility || "사업성 분석", path: "feasibility" },
     { id: "esg_dashboard", name: t.stageESG || "ESG 컨설팅", path: "esg" },
     { id: "permit_portal", name: t.stagePermits || "인허가 포털", path: "permit" },
@@ -146,6 +146,12 @@ export function LifecycleStageViews({ projectId, dictionary, compact = false }: 
   // compact(보고서 동시표시): 보고서와 중복되는 입지·법규·사업성·ESG 제외.
   const REPORT_COVERED = new Set(["site_analysis", "legal_compliance", "feasibility", "esg_dashboard"]);
   const stages = compact ? allStages.filter((s) => !REPORT_COVERED.has(s.id)) : allStages;
+
+  // 활성 스테이지 메타(없으면 안전 폴백). path가 undefined면 /projects/{id}/undefined 404가 발생하므로
+  // 항상 유효한 세그먼트("site-analysis")로 폴백한다.
+  const activeStageMeta = stages.find((s) => s.id === activeStage);
+  const activeStageSeg = activeStageMeta?.path ?? "site-analysis";
+  const activeStageName = activeStageMeta?.name ?? "입지 분석";
 
   return (
     <div className="mt-20 flex flex-col gap-10">
@@ -440,10 +446,10 @@ export function LifecycleStageViews({ projectId, dictionary, compact = false }: 
 
               <div className="flex justify-end pt-10">
                 <Link
-                  href={`/${locale}/projects/${projectId}/${stages.find(s => s.id === activeStage)?.path}`}
+                  href={`/${locale}/projects/${projectId}/${activeStageSeg}`}
                   className="group relative inline-flex h-20 items-center justify-center gap-6 rounded-full bg-[var(--accent-strong)] px-14 text-xs font-black text-white uppercase tracking-[0.3em] shadow-[var(--shadow-glow)] transition-all hover:scale-105 active:scale-95"
                 >
-                  <span className="relative z-10">{stages.find(s => s.id === activeStage)?.name} 정밀 분석 모듈 진입 ↗</span>
+                  <span className="relative z-10">{activeStageName} 정밀 분석 모듈 진입 ↗</span>
                   <div className="absolute inset-0 rounded-full bg-white opacity-0 group-hover:opacity-10 transition-opacity" />
                 </Link>
               </div>

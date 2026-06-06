@@ -12,12 +12,14 @@ interface GenerationMonitorConsoleProps {
 export function GenerationMonitorConsole({ dictionary }: GenerationMonitorConsoleProps) {
   const t = dictionary.pages.generation;
   const { steps, isGenerating, status, results } = useGenerationStore();
-  const terminalEndRef = useRef<HTMLDivElement>(null);
+  const terminalScrollRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll terminal log to bottom
+  // Auto-scroll terminal log to bottom — 컨테이너 내부 스크롤만 조정(전역 스크롤 점프 금지).
+  // scrollIntoView는 페이지 전체를 하단으로 점프시키므로 컨테이너 scrollTop만 갱신한다.
   useEffect(() => {
-    if (isGenerating && terminalEndRef.current) {
-      terminalEndRef.current.scrollIntoView({ behavior: "smooth" });
+    if (isGenerating && terminalScrollRef.current) {
+      const el = terminalScrollRef.current;
+      el.scrollTop = el.scrollHeight;
     }
   }, [steps, isGenerating]);
 
@@ -56,7 +58,7 @@ export function GenerationMonitorConsole({ dictionary }: GenerationMonitorConsol
           <span className="h-2 w-2 rounded-full bg-emerald-500/80" />
         </div>
 
-        <div className="h-[280px] overflow-y-auto font-mono text-[11px] leading-relaxed text-emerald-400/90 space-y-3.5 scrollbar-thin scrollbar-thumb-neutral-800">
+        <div ref={terminalScrollRef} className="h-[280px] overflow-y-auto font-mono text-[11px] leading-relaxed text-emerald-400/90 space-y-3.5 scrollbar-thin scrollbar-thumb-neutral-800">
           {logs.length === 0 ? (
             <div className="flex h-full items-center justify-center text-[var(--text-hint)] italic select-none">
               {t.terminalReady}
@@ -91,7 +93,6 @@ export function GenerationMonitorConsole({ dictionary }: GenerationMonitorConsol
                   </motion.div>
                 );
               })}
-              <div ref={terminalEndRef} />
             </>
           )}
         </div>

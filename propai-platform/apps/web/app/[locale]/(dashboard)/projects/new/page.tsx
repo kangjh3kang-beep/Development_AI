@@ -105,7 +105,7 @@ export default function NewProjectPage() {
 
     // 이동: 백엔드 UUID 우선(targetId는 위에서 계산). 실패 시 로컬/임시 ID로 진입.
     try {
-      router.push(`/${locale}/projects/${targetId}?new=1`);
+      router.push(`/${locale}/projects/${targetId}`);
     } catch (err) {
       console.error("이동 실패:", err);
       setIsSubmitting(false);

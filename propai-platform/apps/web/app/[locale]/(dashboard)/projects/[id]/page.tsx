@@ -275,7 +275,7 @@ export default function ProjectDetailPage() {
               transition={{ delay: 0.1 }}
               className="space-y-6"
             >
-              <h1 className="text-6xl font-[1000] tracking-tighter text-[var(--text-primary)] leading-[0.9] sm:text-7xl lg:text-8xl">
+              <h1 className="text-3xl font-[1000] tracking-tighter text-[var(--text-primary)] leading-[0.95] break-keep sm:text-5xl md:text-6xl lg:text-7xl">
                 {meta?.name ?? "알 수 없는 프로젝트"}<span className="text-[var(--accent-strong)]">.</span>
               </h1>
               <div className="flex flex-wrap items-center gap-6">
