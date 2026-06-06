@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v72-workflow-p0";
+const CACHE_NAME = "propai-v73-workflow-p1";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",
