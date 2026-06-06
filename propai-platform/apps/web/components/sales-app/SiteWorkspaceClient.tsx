@@ -44,6 +44,8 @@ import TerminationCertPanel from "@/components/sales-app/TerminationCertPanel";
 import MarketProfilePanel from "@/components/sales-app/MarketProfilePanel";
 import JobMarketPanel from "@/components/sales-app/JobMarketPanel";
 import StaffOverviewPanel from "@/components/sales-app/StaffOverviewPanel";
+// Phase 1-H — 소셜(친구·단톡·다중톡·푸시). 전역 토큰 기반(현장 무관).
+import SocialPanel from "@/components/sales-app/SocialPanel";
 
 interface RoleResponse {
   site_id?: string;
@@ -260,6 +262,8 @@ export default function SiteWorkspaceClient({ locale, siteId }: { locale: Locale
           {/* Phase 1-E — 공통(PUBLIC) 마켓·프로필·직원관리 집계. 데이터는 전역(현장 무관). */}
           {tab === "market" && <JobMarketPanel />}
           {tab === "profile" && <MarketProfilePanel />}
+          {/* Phase 1-H — 소셜·채팅(친구·단톡·다중톡·푸시). 전역(현장 무관). */}
+          {tab === "social" && <SocialPanel />}
           {tab === "staff" && canStaff && <StaffOverviewPanel siteId={siteId} />}
         </>
       )}

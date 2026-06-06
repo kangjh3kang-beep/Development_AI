@@ -61,6 +61,8 @@ export const SALES_TABS: SalesTabDef[] = [
   // Phase 1-E — 공통(PUBLIC) 마켓·프로필. 현장 무관 전역 컨텐츠라 features와 무관하게 전원 공통(alwaysOn).
   { key: "market", label: "구인구직", feature: "market", alwaysOn: true },
   { key: "profile", label: "내 프로필", feature: "profile", alwaysOn: true },
+  // Phase 1-H — 소셜(친구·단톡·다중톡). 전역 토큰 기반(현장 무관)이라 전원 공통(alwaysOn).
+  { key: "social", label: "소셜·채팅", feature: "social", alwaysOn: true },
   // 직원관리(집계): 관리역할 전용(STAFF_OVERVIEW_ROLES). 비관리역할엔 미노출.
   { key: "staff", label: "직원관리", feature: "staff" },
 ];
