@@ -1,5 +1,4 @@
 import { MarketInsightsWorkspaceClient } from "@/components/operations/MarketInsightsWorkspaceClient";
-import { ModulePlaceholder } from "@/components/layout/ModulePlaceholder";
 import { getDictionary } from "@/i18n/get-dictionary";
 import { isValidLocale, type Locale } from "@/i18n/config";
 
@@ -15,21 +14,22 @@ export default async function MarketInsightsPage({ params }: MarketInsightsPageP
   }
 
   const dictionary = await getDictionary(locale as Locale);
-  const runtimeMode =
-    process.env.NEXT_PUBLIC_USE_MOCKS === "false"
-      ? dictionary.workspace.modeLive
-      : dictionary.workspace.modeMock;
+  const meta = dictionary.modulePlaceholders["market-insights"];
 
   return (
     <div className="grid gap-6">
-      <ModulePlaceholder
-        eyebrow={dictionary.modulePlaceholders["market-insights"].eyebrow}
-        title={dictionary.modulePlaceholders["market-insights"].title}
-        description={dictionary.modulePlaceholders["market-insights"].description}
-        statusLabel={runtimeMode}
-        localeLabel={locale}
-        items={dictionary.modulePlaceholders["market-insights"].items}
-      />
+      {/* 실 시장분석 화면 헤더 — 목업 배너 제거(무목업), 제목만 유지. 본문은 실데이터(실거래·AI시세·보고서). */}
+      <header className="space-y-1.5 px-2">
+        <p className="text-[11px] font-black uppercase tracking-[0.2em] text-[var(--accent-strong)]">
+          {meta.eyebrow}
+        </p>
+        <h1 className="text-3xl font-[900] tracking-tighter text-[var(--text-primary)] sm:text-4xl">
+          {meta.title}
+        </h1>
+        <p className="max-w-2xl text-sm font-medium text-[var(--text-secondary)]">
+          {meta.description}
+        </p>
+      </header>
       <MarketInsightsWorkspaceClient />
     </div>
   );

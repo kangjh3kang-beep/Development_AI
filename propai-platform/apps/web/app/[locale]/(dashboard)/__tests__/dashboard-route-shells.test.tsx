@@ -351,8 +351,11 @@ describe("Dashboard route shells", () => {
   it("renders the projects list page with the overview client", async () => {
     render(await ProjectsPage({ params: Promise.resolve({ locale: "en" }) }));
 
+    // 목업 배너 제거(무목업): 실 목록 헤더(제목) + 생성 CTA + 오버뷰 클라이언트만 노출
     expect(screen.getByText("Projects overview")).toBeInTheDocument();
-    expect(screen.getByText("실연동")).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: /새 프로젝트/ }),
+    ).toHaveAttribute("href", "/en/projects/new");
     expect(screen.getByTestId("projects-overview-client")).toHaveTextContent(
       "en",
     );
