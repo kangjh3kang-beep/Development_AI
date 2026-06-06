@@ -1,7 +1,7 @@
 """sales 도메인 전용 액션 — 조직/동호생성/분양가/계약/홀드/수수료검증."""
 
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import select
@@ -77,13 +77,39 @@ async def set_unit_price_mode(unit_id: uuid.UUID, body: dict, db: AsyncSession =
 
 
 @actions_router.post("/units/{unit_id}/hold")
-async def hold_unit(unit_id: uuid.UUID, body: dict, db: AsyncSession = Depends(get_db),
+async def hold_unit(unit_id: uuid.UUID, body: dict | None = None, db: AsyncSession = Depends(get_db),
                     ctx: SalesCtx = Depends(sales_ctx)):
+    """동호 임시선점 — Phase1-C 원자 선점(DB-SSOT)으로 위임(동시성 0충돌 보장).
+
+    이전 구현은 무조건 INSERT라 race를 막지 못했다. 이제 atomic_hold 의 단일행 조건부
+    UPDATE 로 정확히 1명만 선점, 부가로 SalesUnitHold 감사행을 남긴다.
+    """
+    from fastapi import HTTPException
+
+    from app.services.sales.units.concurrency import (
+        HOLD_TTL_MINUTES, atomic_hold, current_status, ensure_unit_concurrency_columns,
+    )
+    from app.api.endpoints.sales.units_live import _broadcast
+
+    await ensure_unit_concurrency_columns(db)
+    body = body or {}
+    ttl = int(body.get("minutes") or HOLD_TTL_MINUTES)
+    me = ctx.user.id
+    row = await atomic_hold(db, ctx.site_id, unit_id, me, ttl_minutes=ttl)
+    if row is None:
+        cur = await current_status(db, ctx.site_id, unit_id)
+        await db.rollback()
+        if cur is None:
+            raise HTTPException(404, "세대를 찾을 수 없습니다")
+        held_by_me = str(cur["held_by"]) == str(me) if cur["held_by"] else False
+        raise HTTPException(409, detail={"message": "이미 다른 직원이 선점했거나 계약된 세대입니다",
+                                         "current_status": cur["status"], "held_by_me": held_by_me})
     db.add(SalesUnitHold(site_id=ctx.site_id, unit_id=unit_id, staff_id=body.get("staff_id"),
-           customer_id=body.get("customer_id"),
-           expires_at=datetime.now(timezone.utc) + timedelta(minutes=int(body.get("minutes", 30)))))
+           customer_id=body.get("customer_id"), expires_at=row["hold_expires_at"]))
     await db.commit()
-    return {"ok": True}
+    await _broadcast(ctx.site_id, "HOLD", unit_id, "HOLD", held_by=me, expires_at=row["hold_expires_at"])
+    return {"ok": True, "hold_token": row["hold_token"],
+            "expires_at": row["hold_expires_at"].isoformat() if row["hold_expires_at"] else None}
 
 
 @actions_router.post("/contracts/{contract_id}/sign")

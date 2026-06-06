@@ -15,6 +15,7 @@ from app.api.endpoints.sales.termination_cert import termination_cert_router
 from app.api.endpoints.sales.site_auth import site_auth_router
 from app.api.endpoints.sales.mh import mh_router
 from app.api.endpoints.sales.views import views_router
+from app.api.endpoints.sales.units_live import units_live_router
 from app.api.endpoints.sales.lifecycle_p5 import r5
 from app.api.endpoints.sales.lifecycle_p6 import r6
 from apps.api.database.models.sales import (
@@ -83,5 +84,6 @@ sales_router.include_router(termination_cert_router)
 sales_router.include_router(site_auth_router)
 sales_router.include_router(mh_router)
 sales_router.include_router(views_router)
+sales_router.include_router(units_live_router)
 sales_router.include_router(r5)
 sales_router.include_router(r6)
