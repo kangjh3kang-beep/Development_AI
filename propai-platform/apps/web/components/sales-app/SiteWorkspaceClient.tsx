@@ -37,6 +37,7 @@ import DeveloperProjection from "@/components/sales/DeveloperProjection";
 import { UnitOutlineBuilder } from "@/components/sales/UnitOutlineBuilder";
 import DeskCheckin from "@/components/desk/DeskCheckin";
 import VisitorStats from "@/components/desk/VisitorStats";
+import CommissionDutchPay from "@/components/sales-app/CommissionDutchPay";
 
 interface RoleResponse {
   site_id?: string;
@@ -228,7 +229,14 @@ export default function SiteWorkspaceClient({ locale, siteId }: { locale: Locale
           {tab === "resale" && <ResalePanel siteCode={siteId} />}
           {tab === "tax" && <TaxPanel siteCode={siteId} />}
           {tab === "org" && <OrgTree siteCode={siteId} />}
-          {tab === "commission" && <CommissionBoard siteCode={siteId} />}
+          {tab === "commission" && (
+            <div className="space-y-6">
+              <CommissionBoard siteCode={siteId} />
+              <div className="border-t border-[var(--line)] pt-6">
+                <CommissionDutchPay siteCode={siteId} />
+              </div>
+            </div>
+          )}
           {tab === "desk" && (
             <div className="grid gap-6 lg:grid-cols-2">
               <DeskCheckin siteCode={siteId} />
