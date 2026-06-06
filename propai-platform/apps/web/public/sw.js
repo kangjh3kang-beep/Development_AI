@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v69-auction-monitor";
+const CACHE_NAME = "propai-v70-report-auctionux";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",
