@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v59-siteanalysis";
+const CACHE_NAME = "propai-v60-workflow-consistency";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",
