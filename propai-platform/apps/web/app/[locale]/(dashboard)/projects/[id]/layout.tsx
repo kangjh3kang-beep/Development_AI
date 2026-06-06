@@ -3,6 +3,7 @@ import { LifecycleNavigator } from "@/components/projects/LifecycleNavigator";
 import { ProjectLifecyclePipelineWrapper } from "@/components/projects/ProjectLifecyclePipelineWrapper";
 import { ProjectAddressBar } from "@/components/projects/ProjectAddressBar";
 import { LifecycleProgressRail } from "@/components/lifecycle/LifecycleProgressRail";
+import { ProjectContextBinder } from "@/components/projects/ProjectContextBinder";
 import React from "react";
 
 export const dynamicParams = true;
@@ -27,6 +28,8 @@ export default async function ProjectLayout({
 
   return (
     <div className="flex flex-col gap-8">
+      {/* 컨텍스트 단일 writer — 모든 서브라우트에서 URL projectId를 store에 바인딩(SSOT). */}
+      <ProjectContextBinder projectId={id} />
       <LifecycleNavigator locale={locale} projectId={id} />
       {/* 라이프사이클 진행 레일 — 활성 프로젝트 컨텍스트가 있을 때만 렌더(다음 단계 유도). */}
       <LifecycleProgressRail locale={locale} />

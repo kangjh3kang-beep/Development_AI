@@ -179,7 +179,9 @@ export interface ProjectContextState {
   snapshots: Record<string, ProjectSnapshot>;
 
   // Actions
-  setProject: (id: string, name: string, status: string) => void;
+  // projectId 단일 SSOT writer. name/status를 원자 저장하고, address가 주어지면
+  // (스냅샷 복원이 우선이되) 신규/주소 미설정 프로젝트에 한해 siteAnalysis.address를 시드한다.
+  setProject: (id: string, name: string, status: string, address?: string) => void;
   clearProject: () => void;
 
   updateSiteAnalysis: (data: Partial<SiteAnalysisData>) => void;
@@ -261,18 +263,46 @@ export const useProjectContextStore = create<ProjectContextState>()(
 
       /* ── Actions ── */
 
-      setProject: (id, name, status) => {
+      setProject: (id, name, status, address) => {
         const prev = get();
+        // projectId가 동일하면 cross-module 데이터를 리셋하지 않는다(회귀 방지).
+        // name/status만 원자 갱신하고, address가 주어졌고 아직 없으면 보조 시드.
         if (prev.projectId === id) {
-          set({ projectId: id, projectName: name, projectStatus: status });
+          const patch: Partial<ProjectContextState> = {
+            projectId: id,
+            projectName: name,
+            projectStatus: status,
+          };
+          if (address && !prev.siteAnalysis?.address) {
+            patch.siteAnalysis = {
+              ...(prev.siteAnalysis ?? {
+                estimatedValue: null,
+                landAreaSqm: null,
+                zoneCode: null,
+                pnu: null,
+              }),
+              address,
+            } as SiteAnalysisData;
+          }
+          set(withSnap(prev, patch));
           return;
         }
         // 전환 전, 현재 프로젝트 상태를 스냅샷에 보존
         const snapshots = prev.projectId
           ? { ...prev.snapshots, [prev.projectId]: snapOf(prev) }
           : prev.snapshots;
-        // 대상 프로젝트의 이전 분석이 있으면 복원, 없으면 초기화
+        // 대상 프로젝트의 이전 분석이 있으면 복원, 없으면 초기화.
+        // 구 hydrated 스냅샷 shape 호환을 위해 모든 필드에 ?? 폴백을 둔다.
         const snap = snapshots[id];
+        const seededSite: SiteAnalysisData | null = address
+          ? {
+              estimatedValue: null,
+              landAreaSqm: null,
+              zoneCode: null,
+              pnu: null,
+              address,
+            }
+          : null;
         set({
           projectId: id,
           projectName: name,
@@ -280,12 +310,16 @@ export const useProjectContextStore = create<ProjectContextState>()(
           snapshots,
           ...(snap
             ? {
-                siteAnalysis: snap.siteAnalysis,
-                designData: snap.designData,
-                feasibilityData: snap.feasibilityData,
-                costData: snap.costData,
-                esgData: snap.esgData,
-                complianceData: snap.complianceData,
+                // 복원 우선. 단, 복원 스냅샷에 주소가 없고 시드 주소가 있으면 보조 주입.
+                siteAnalysis:
+                  snap.siteAnalysis ??
+                  (seededSite as SiteAnalysisData | null) ??
+                  null,
+                designData: snap.designData ?? null,
+                feasibilityData: snap.feasibilityData ?? null,
+                costData: snap.costData ?? null,
+                esgData: snap.esgData ?? null,
+                complianceData: snap.complianceData ?? null,
                 completedStages: snap.completedStages ?? [],
                 currentStage: snap.currentStage ?? null,
                 analysisResults: snap.analysisResults ?? [],
@@ -295,6 +329,7 @@ export const useProjectContextStore = create<ProjectContextState>()(
                 currentStage: null,
                 analysisResults: [],
                 ...INITIAL_CROSS_MODULE,
+                siteAnalysis: seededSite,
               }),
         });
       },

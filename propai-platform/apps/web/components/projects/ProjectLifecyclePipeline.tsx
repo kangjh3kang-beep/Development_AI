@@ -293,7 +293,7 @@ function CompactPipeline({
   nextStage: string | null;
 }) {
   return (
-    <div className="flex items-center gap-1.5 overflow-x-auto rounded-[var(--radius-lg)] border border-[var(--line-subtle)] bg-[var(--surface-muted)] p-1.5 scrollbar-hide">
+    <div className="flex flex-wrap items-center gap-1.5 rounded-[var(--radius-lg)] border border-[var(--line-subtle)] bg-[var(--surface-muted)] p-1.5">
       {stages.map((stage, index) => {
         const status = getStageStatus(stage.id);
 

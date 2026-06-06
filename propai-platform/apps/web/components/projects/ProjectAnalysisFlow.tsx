@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { ProjectPipelinePanel } from "@/components/pipeline/ProjectPipelinePanel";
@@ -27,18 +27,10 @@ export function ProjectAnalysisFlow({
   const storeAddress = useProjectContextStore((s) => s.siteAnalysis?.address ?? "");
 
   const [showRecommend, setShowRecommend] = useState(false);
-  const boundRef = useRef(false);
 
-  // 현재 URL의 프로젝트와 store 컨텍스트를 동기화한다.
-  // (다른 프로젝트의 cross-module 데이터가 남아있지 않도록 보장)
-  useEffect(() => {
-    if (boundRef.current) return;
-    const state = useProjectContextStore.getState();
-    if (state.projectId !== projectId) {
-      state.setProject(projectId, projectName, "draft");
-    }
-    boundRef.current = true;
-  }, [projectId, projectName]);
+  // 컨텍스트 바인딩(setProject)은 layout의 ProjectContextBinder가 단일 writer로 수행한다.
+  // (이전: 여기서도 setProject 호출 → 중복 writer로 출처 불일치 발생)
+  void projectName;
 
   // store 컨텍스트가 현재 프로젝트와 일치할 때만 저장된 주소를 신뢰한다.
   const contextMatches = storeProjectId === projectId;

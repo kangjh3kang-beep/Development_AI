@@ -109,7 +109,8 @@ export function LifecycleProgressRail({
         className={
           isVertical
             ? "flex flex-col gap-1.5"
-            : "flex items-center gap-1 overflow-x-auto pb-1 scrollbar-hide"
+            : // 10단계를 모두 보이게 — 잘림(scrollbar-hide+overflow) 대신 wrap 어포던스.
+              "flex flex-wrap items-center gap-y-2 gap-x-1"
         }
       >
         {LIFECYCLE_STAGES.map((id, index) => {

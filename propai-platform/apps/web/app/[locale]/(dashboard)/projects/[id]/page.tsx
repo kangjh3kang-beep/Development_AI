@@ -5,7 +5,6 @@ import { useEffect, useState } from "react";
 import dynamic from "next/dynamic";
 import { motion } from "framer-motion";
 import { ProjectAnalysisSummary } from "@/components/projects/ProjectAnalysisSummary";
-import { ProjectLifecyclePipeline } from "@/components/projects/ProjectLifecyclePipeline";
 import { isValidLocale, type Locale } from "@/i18n/config";
 import { useDictionary } from "@/hooks/use-dictionary";
 import { formatCurrencyKRW } from "@/lib/formatters";
@@ -17,9 +16,12 @@ import { DataLineageTooltip } from "@/components/common/DataLineageTooltip";
 import { latestLedger } from "@/lib/analysis-ledger";
 
 // 무거운 패널은 클라이언트 전용(ssr:false)으로 코드분할 — Cloudflare Worker SSR 부하(1102) 완화
-const _loading = (label: string) => () => (
-  <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-8 text-center text-sm text-[var(--text-hint)]">{label}</div>
-);
+const _loading = (label: string) => {
+  const LoadingFallback = () => (
+    <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-8 text-center text-sm text-[var(--text-hint)]">{label}</div>
+  );
+  return LoadingFallback;
+};
 const LifecycleStageViews = dynamic(() => import("@/components/projects/LifecycleStageViews").then((m) => m.LifecycleStageViews), { ssr: false, loading: _loading("라이프사이클 뷰 불러오는 중…") });
 const ProjectAnalysisFlow = dynamic(() => import("@/components/projects/ProjectAnalysisFlow").then((m) => m.ProjectAnalysisFlow), { ssr: false, loading: _loading("분석 흐름 불러오는 중…") });
 const PipelineResultDetail = dynamic(() => import("@/components/pipeline/PipelineResultDetail").then((m) => m.PipelineResultDetail), { ssr: false, loading: _loading("통합 보고서 불러오는 중…") });
@@ -57,12 +59,8 @@ export default function ProjectDetailPage() {
   // 원장의 통합 분석 보고서(payload) — 있으면 대시보드 분석이력과 동일한 보고서형 상세 렌더
   const [ledgerReport, setLedgerReport] = useState<{ summary?: Record<string, any>; stages?: any[]; pipeline_id?: string } | null>(null);
 
-  // 프로젝트 진입 시 컨텍스트를 이 프로젝트로 전환 → 분석 스냅샷(부지·상세분석 등) 복원.
-  // (이것이 없으면 직전 프로젝트/빈 컨텍스트가 표시되고, 새 분석도 잘못된 키로 저장됨)
-  useEffect(() => {
-    const p = useProjectStore.getState().getProjectById(id);
-    useProjectContextStore.getState().setProject(id, p?.name || "", (p?.status as string) || "draft");
-  }, [id]);
+  // 컨텍스트 바인딩(setProject)은 layout의 ProjectContextBinder가 단일 writer로 수행한다.
+  // (이전: 여기서도 setProject 호출 → 중복 writer. 서브라우트 직접진입 누락도 함께 해소)
 
   useEffect(() => {
     let cancelled = false;
@@ -121,13 +119,10 @@ export default function ProjectDetailPage() {
 
     (async () => {
       try {
-        // 1) 프로젝트 체인 → 2) 같은 주소 간편분석(quick) 체인 승계
-        let res = await latestLedger("pipeline", { address: addr, projectId: id });
-        let payload = extractPayload(res?.data);
-        if (!payload) {
-          res = await latestLedger("pipeline", { address: addr });
-          payload = extractPayload(res?.data);
-        }
+        // ★projectId 기준 복원만 신뢰한다. address는 보조 필터(같은 주소 quick 체인 승계)로만 사용.
+        // (이전: projectId 없이 address 단독 latestLedger 폴백 → 다른 프로젝트 분석이 오염 주입됨)
+        const res = await latestLedger("pipeline", { address: addr, projectId: id });
+        const payload = extractPayload(res?.data);
         if (payload && applyResult(payload)) return;
       } catch { /* 원장 실패 → localStorage 폴백 */ }
 
@@ -151,10 +146,10 @@ export default function ProjectDetailPage() {
     if (!addr) return;
     let cancelled = false;
     (async () => {
+      // ★projectId 기준 보고서만 로드(다른 프로젝트 보고서 오염 방지). address는 체인 키 보조용.
       const pick = (d: any) => (d && d.payload ? d.payload : null);
-      let res = await latestLedger("pipeline", { address: addr, projectId: id });
-      let payload = pick(res?.data);
-      if (!payload) { res = await latestLedger("pipeline", { address: addr }); payload = pick(res?.data); }
+      const res = await latestLedger("pipeline", { address: addr, projectId: id });
+      const payload = pick(res?.data);
       if (!cancelled && payload?.stages?.length) setLedgerReport(payload);
     })();
     return () => { cancelled = true; };
@@ -179,14 +174,8 @@ export default function ProjectDetailPage() {
 
   return (
     <div className="flex flex-col gap-16 pb-20 font-sans">
-      {/* ── Lifecycle Pipeline ── */}
-      <motion.div
-        initial={{ opacity: 0, y: -10 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.05 }}
-      >
-        <ProjectLifecyclePipeline locale={locale} projectId={id} />
-      </motion.div>
+      {/* 진행 단계 표시는 layout(LifecycleProgressRail + 컴팩트 파이프라인)에서 단일 렌더한다.
+          (이전: 여기서도 ProjectLifecyclePipeline 풀버전을 렌더 → 진행바 중복) */}
 
       {/* ── 통합 분석 흐름: 부지분석(자동) → 사업모델 추천 ── */}
       <motion.div

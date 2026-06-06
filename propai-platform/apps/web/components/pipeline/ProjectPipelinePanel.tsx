@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, usePathname } from "next/navigation";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { appendLedger } from "@/lib/analysis-ledger";
 import { useProjectStore as useProjectListStore } from "@/store/useProjectStore";
@@ -309,6 +309,7 @@ export function ProjectPipelinePanel({
   const [error, setError] = useState<string | null>(null);
   const [guestGateOpen, setGuestGateOpen] = useState(false);  // 비회원 무료소진 게이트
   const { locale } = (useParams() as { locale?: string }) || {};
+  const pathname = usePathname();
 
   // 단계별 워크플로우
   const [workflowPhase, setWorkflowPhase] = useState<WorkflowPhase>("input");
@@ -324,6 +325,13 @@ export function ProjectPipelinePanel({
     setHistory(loadHistory());
     void useProjectListStore.getState().syncFromBackend();
   }, []);
+
+  // 경로 변경(대시보드 복귀/프로젝트 전환) 시 항상 첫 단계(진행 단계 뷰)로 리셋.
+  // (이전: detail/compare 뷰가 남아 재진입 시 다른 분석 상세가 그대로 표시됨)
+  useEffect(() => {
+    setViewMode("pipeline");
+    setCompareSelection(new Set());
+  }, [pathname]);
 
   const projectId = useProjectContextStore((s) => s.projectId);
   const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
@@ -453,16 +461,18 @@ export function ProjectPipelinePanel({
     [history],
   );
 
-  // 이력 클릭 → 이전 분석 상세 재조회 + 프로젝트 컨텍스트(스냅샷)로 복원
-  // (이력은 전역이라, 선택 시 현재 프로젝트 스냅샷에 저장해야 재진입·타 모듈에서 일관 표시)
+  // 이력 클릭 → 읽기전용 상세 뷰어. 로컬 상태만 갱신하고 전역 프로젝트 컨텍스트는 건드리지 않는다.
+  // (이전 버그: 대시보드 이력 클릭이 saveToStore로 "현재 projectId" 슬롯을 오염 주입 →
+  //  "신봉동 선택인데 중곡동 헤더" 발생). 프로젝트 컨텍스트 변경은 projectMode에서만 허용.
   const openHistory = useCallback((entry: HistoryEntry) => {
     setLastResult(entry.result);
     setAddress(entry.address);
     setStages(entry.result.stages);
     setSummary(entry.result.summary ?? {});
     setViewMode("detail");
-    saveToStore(entry.result, entry.address);
-  }, [saveToStore]);
+    // projectMode(프로젝트 상세 허브)에서만 스냅샷에 복원. 대시보드(전역)는 읽기전용.
+    if (projectMode) saveToStore(entry.result, entry.address);
+  }, [saveToStore, projectMode]);
 
   // 주소 검색 콜백 (다필지 지원)
   const handleAddressChange = useCallback((entries: AddressEntry[]) => {
