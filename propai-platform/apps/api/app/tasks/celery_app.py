@@ -59,6 +59,11 @@ def _create_app() -> "Celery":
             "schedule": crontab(hour=3, minute=0, day_of_month=1),
             "options": {"queue": "rates"},
         },
+        "sync-onbid-auctions-daily": {
+            "task": "app.tasks.auction_sync_task.sync_onbid_auctions",
+            "schedule": crontab(hour=4, minute=0),
+            "options": {"queue": "auction"},
+        },
     }
 
     _app.autodiscover_tasks(["app.tasks"])
@@ -77,6 +82,7 @@ BEAT_SCHEDULE_NAMES = [
     "check-legal-rates-daily",
     "check-standard-prices-weekly",
     "check-pension-increase-monthly",
+    "sync-onbid-auctions-daily",
 ]
 
 TASK_NAMES = [
@@ -84,4 +90,5 @@ TASK_NAMES = [
     "app.tasks.rate_tasks.check_standard_prices",
     "app.tasks.rate_tasks.check_pension_increase",
     "app.tasks.cost_tasks.recalculate_project_cost",
+    "app.tasks.auction_sync_task.sync_onbid_auctions",
 ]

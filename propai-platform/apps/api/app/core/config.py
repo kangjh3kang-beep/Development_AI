@@ -55,6 +55,10 @@ class Settings(BaseSettings):
     # data.go.kr 인증키는 계정당 1개 공용 → 미설정 시 MOLIT_API_KEY로 폴백(get_settings)
     G2B_SERVICE_KEY: str = ""
 
+    # 한국자산관리공사 온비드(공매) OpenAPI (data.go.kr)
+    # 미설정 시 G2B/MOLIT 공용키 폴백(get_settings) → 그래도 없으면 mock 폴백.
+    ONBID_SERVICE_KEY: str = ""
+
     AWS_ACCESS_KEY_ID: str = ""
     AWS_SECRET_ACCESS_KEY: str = ""
     AWS_S3_BUCKET: str = "propai-files"
@@ -115,6 +119,11 @@ def get_settings() -> Settings:
     # 나라장터(G2B) 키 미설정 시 동일 계정의 MOLIT 키로 폴백(data.go.kr 키 공용)
     if not s.G2B_SERVICE_KEY and s.MOLIT_API_KEY:
         object.__setattr__(s, "G2B_SERVICE_KEY", s.MOLIT_API_KEY)
+    # 온비드(공매) 키 미설정 시 G2B/MOLIT 공용키로 폴백(data.go.kr 키 공용)
+    if not s.ONBID_SERVICE_KEY:
+        fallback = s.G2B_SERVICE_KEY or s.MOLIT_API_KEY
+        if fallback:
+            object.__setattr__(s, "ONBID_SERVICE_KEY", fallback)
     return s
 
 settings = get_settings()
