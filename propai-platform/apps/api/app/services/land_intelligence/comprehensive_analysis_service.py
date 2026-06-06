@@ -268,6 +268,38 @@ class ComprehensiveAnalysisService:
         effective_bcr = min(national_bcr, ordinance_bcr)
         effective_far = min(national_far, ordinance_far)
 
+        # ── 완화근거(basis) 인지: effective는 '법정값을 기본'으로 하되, 페이로드에 명시적
+        #    완화근거/완화율이 있을 때만 상향을 반영한다(근거 없으면 법정값 유지).
+        #    interpreter·검증기가 활용하도록 basis 메타를 동봉한다.
+        from app.services.zoning.legal_zone_limits import (
+            _has_relaxation_basis,
+            SANITY_MULTIPLIER,
+        )
+        relaxation_ratio = (
+            ordinance.get("relaxation_ratio_pct")
+            or ordinance.get("완화율")
+            or base.get("relaxation_ratio_pct")
+        )
+        basis_present = (
+            relaxation_ratio is not None
+            or _has_relaxation_basis(ordinance)
+            or _has_relaxation_basis(base.get("special_districts"))
+        )
+        far_basis = "법정/조례"  # 기본: 법정값(조례 가감 반영)
+        if basis_present and relaxation_ratio is not None:
+            try:
+                ratio = float(relaxation_ratio)
+                # 완화율(%)을 법정 용적률에 반영하되 합리성 절대 상한(법정×배수) 내로 제한.
+                relaxed = national_far * (1.0 + ratio / 100.0)
+                cap = national_far * SANITY_MULTIPLIER
+                effective_far = min(max(effective_far, relaxed), cap)
+                far_basis = f"완화근거(완화율 {ratio:g}%) 반영"
+            except (TypeError, ValueError):
+                pass
+        elif basis_present:
+            # 근거 키워드는 있으나 정량 완화율 미제시 → 법정값 유지(가능성만 안내).
+            far_basis = "완화근거 명시(정량 완화율 미제시 — 별도 검토 필요)"
+
         incentive: dict[str, Any] = {}
         try:
             incentive = calc_far_incentive(
@@ -342,6 +374,8 @@ class ComprehensiveAnalysisService:
             "ordinance_far_pct": ordinance_far,
             "effective_bcr_pct": effective_bcr,
             "effective_far_pct": effective_far,
+            "far_basis": far_basis,
+            "relaxation_present": basis_present,
             "far_incentive": incentive,
             "source": source,
             "annotations": annotations,

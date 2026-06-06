@@ -74,12 +74,20 @@ def run_range_checks(analysis_type: str, source: Any, output: Any) -> list[dict[
         ("zone_type", "zone", "use_zone", "용도지역", "zone_name", "zone_type_name"),
     )
     if zone_type:
-        from app.services.zoning.legal_zone_limits import check_against_legal
+        from app.services.zoning.legal_zone_limits import (
+            _has_relaxation_basis,
+            check_against_legal,
+        )
 
         # 실효(effective)/적용(applied)/최대(max) 건폐율·용적률을 우선 대조.
         eff_bcr = _find(source, output, ("effective_bcr_pct", "effective_bcr", "applied_bcr_pct", "bcr"))
         eff_far = _find(source, output, ("effective_far_pct", "effective_far", "applied_far_pct", "far"))
-        for it in check_against_legal(zone_type, bcr_pct=eff_bcr, far_pct=eff_far):
+        # 근거기반 판정: 페이로드(output·source) 전체에서 완화근거(기부채납/친환경/역세권/
+        # 공공임대/지구단위계획 등) 신호를 탐색해 '근거 없는 법정초과'만 high로 적발한다.
+        has_basis = _has_relaxation_basis(output) or _has_relaxation_basis(source)
+        for it in check_against_legal(
+            zone_type, bcr_pct=eff_bcr, far_pct=eff_far, has_basis=has_basis,
+        ):
             issues.append(it)
 
     # ── 수익률(비현실 범위) ──

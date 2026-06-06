@@ -107,3 +107,88 @@ def test_range_checks_zone_in_nested_payload():
     output = {"effective_far": {"effective_far_pct": 200}}
     issues = run_range_checks("site", source, output)
     assert any(i["severity"] == "high" for i in issues)
+
+
+# ── 인센티브 완화 인지(basis-aware) 3단 판정 ──
+def test_basis_natural_green_200_no_basis_stays_high():
+    # 자연녹지 200% 근거없음 → high(fail) 유지(원 사고 재현 방지)
+    issues = check_against_legal("자연녹지지역", far_pct=200, has_basis=False)
+    assert len(issues) == 1
+    assert issues[0]["severity"] == "high"
+
+
+def test_basis_natural_green_200_with_basis_non_incentive_zone_warn():
+    # 자연녹지 200%(법정100×2) + 근거 → 인센티브 비대상 + sanity초과 → warn(fail 아님)
+    issues = check_against_legal("자연녹지지역", far_pct=200, has_basis=True)
+    assert len(issues) == 1
+    assert issues[0]["severity"] == "warn"
+    assert issues[0]["severity"] != "high"
+
+
+def test_basis_natural_green_payload_keyword_donation():
+    # 페이로드에 "기부채납 30%" 키워드 → 근거 인정. 자연녹지 200%는 sanity로 warn.
+    payload = {"notes": "기부채납 30% 적용 가능"}
+    issues = check_against_legal("자연녹지지역", far_pct=200, payload=payload)
+    assert issues[0]["severity"] == "warn"
+
+
+def test_basis_first_general_200_passes():
+    # 1종일반 200% → 법정内 pass(근거 무관)
+    assert check_against_legal("제1종일반주거지역", far_pct=200, has_basis=False) == []
+    assert check_against_legal("제1종일반주거지역", far_pct=200, has_basis=True) == []
+
+
+def test_basis_junjugeo_600_no_basis_high():
+    # 준주거 600%(법정500 초과) 근거없음 → high
+    issues = check_against_legal("준주거지역", far_pct=600, has_basis=False)
+    assert len(issues) == 1
+    assert issues[0]["severity"] == "high"
+
+
+def test_basis_junjugeo_600_district_plan_basis_info():
+    # 준주거 600% + "지구단위계획 상한용적률" 근거 → info(정당, fail 아님, sanity 内)
+    payload = {"zoning": {"detail": "지구단위계획 상한용적률 적용"}}
+    issues = check_against_legal("준주거지역", far_pct=600, payload=payload)
+    assert len(issues) == 1
+    assert issues[0]["severity"] == "info"
+    assert issues[0]["severity"] != "high"
+
+
+def test_basis_third_general_350_no_basis_high():
+    # 3종 350%(법정300 초과) 근거없음 → high
+    issues = check_against_legal("제3종일반주거지역", far_pct=350, has_basis=False)
+    assert len(issues) == 1
+    assert issues[0]["severity"] == "high"
+
+
+def test_basis_third_general_350_public_rental_info():
+    # 3종 350% + "공공임대 건립" 근거 → info(정당)
+    payload = {"plan": "공공임대 건립으로 용적률 완화"}
+    issues = check_against_legal("제3종일반주거지역", far_pct=350, payload=payload)
+    assert len(issues) == 1
+    assert issues[0]["severity"] == "info"
+
+
+def test_basis_relaxation_structured_field():
+    # 구조화 필드(완화율)로도 근거 인정
+    payload = {"local_ordinance": {"relaxation_ratio_pct": 20}}
+    issues = check_against_legal("제3종일반주거지역", far_pct=350, payload=payload)
+    assert issues[0]["severity"] == "info"
+
+
+def test_basis_run_range_checks_with_basis_info():
+    # run_range_checks 경유: 페이로드에 역세권 근거 → info(준주거 600%)
+    source = {"zone_type": "준주거지역", "notes": "역세권 활성화 시프트 대상"}
+    output = {"effective_far_pct": 600}
+    issues = run_range_checks("site", source, output)
+    far_issues = [i for i in issues if "용적률" in i["claim"]]
+    assert far_issues and far_issues[0]["severity"] == "info"
+    assert not any(i["severity"] == "high" for i in far_issues)
+
+
+def test_basis_run_range_checks_no_basis_high():
+    # run_range_checks 경유: 근거 없으면 3종 350% → high
+    source = {"zone_type": "제3종일반주거지역"}
+    output = {"effective_far_pct": 350}
+    issues = run_range_checks("site", source, output)
+    assert any(i["severity"] == "high" and "용적률" in i["claim"] for i in issues)

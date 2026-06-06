@@ -106,3 +106,86 @@ range 규칙이 법정초과를 high로 잡아주기만 하면 배지가 자동 
 - `app/services/ai/site_analysis_interpreter.py` (그라운딩 블록 + _legal_limits_block)
 - `app/services/verification/range_rules.py` (법정대조 하드규칙 + 문자열 깊이탐색)
 - `tests/test_legal_zone_limits.py` (신설, 14 테스트)
+
+---
+
+# 67-B. 후속 정밀화 — 인센티브 완화 인지(basis-aware) 3단 판정
+
+## 배경(직전 3d4b727의 한계)
+3d4b727은 "법정 상한 초과 = 무조건 high(할루시네이션)"로 처리. 그러나 현실에서 법정 상한은
+**기본값**이며 합법적 인센티브로 상향 가능: 기부채납/공공기여(국토계획법 제52조의2),
+친환경(녹색건축·제로에너지·신재생, 녹색건축물법 제15조/건축법 제65조의2, 최대 ~15%),
+역세권 시프트/장기전세/청년주택/역세권 활성화(조례), 공공임대/임대주택(민특법·도정법),
+지구단위계획 상한용적률 체계(기준→허용(인센티브)→상한). 따라서 무조건 fail은 **거짓양성**
+(정당한 인센티브 상향 오적발)을 낸다. → "수치가 아니라 **근거(basis)**"로 판정하도록 정밀화.
+
+## A. 검증기(legal_zone_limits / range_rules) 근거기반 3단
+`legal_zone_limits.py`:
+- 신규 상수: `RELAXATION_KEYWORDS`(기부채납·공공기여·친환경·녹색건축·제로에너지·신재생·역세권·
+  시프트·장기전세·청년주택·활성화·공공임대·임대주택·지구단위계획·상한용적률·허용용적률·종상향·
+  완화·인센티브), `RELAXATION_FIELDS`(relaxation/incentive/완화근거/완화율/relaxation_ratio_pct/
+  donation_ratio_pct/far_incentive…), `SANITY_MULTIPLIER=2.0`(합리성 절대 상한 배수, 관대),
+  `_NON_INCENTIVE_ZONE_TOKENS`(녹지·관리지역·농림·자연환경보전).
+- `_has_relaxation_basis(payload)`: 중첩 dict/list/str 깊이탐색 — 키워드 또는 truthy 구조화 필드.
+- `_is_non_incentive_zone(zone)`: 자연녹지 등 인센티브 비대상 판정.
+- `_judge_excess()` 신규 — 초과 1건의 3단 판정:
+  1. **근거 없음** → `high`(할루시네이션 의심, "완화근거 미제시 — 근거 확인 필요").
+  2. **근거 있음 + sanity 内 + 인센티브 대상** → `info`(정당, fail 아님; "완화근거 명시됨, 검토 필요").
+  3. **근거 있음 + (sanity(법정×2) 초과 OR 인센티브 비대상)** → `warn`(완화 상한 초과 가능성/과도 상향 주의, 재확인).
+- `check_against_legal(...)` 시그니처 확장: `payload`(근거 탐색용)/`has_basis`(외부 직접 주입) 추가.
+  기존 인자만 쓰면 `has_basis=False` 기본 → **하위호환**(기존 14 테스트 무변경 통과).
+
+`range_rules.py`:
+- 법정대조 블록에서 `_has_relaxation_basis(output)|_has_relaxation_basis(source)`로 근거 산출 →
+  `check_against_legal(..., has_basis=...)` 호출. 근거 없는 법정초과만 high.
+
+## B. `_calc_effective_far` basis 처리
+- effective는 **법정값을 기본**으로 유지. 페이로드에 **명시적 완화율**(relaxation_ratio_pct/완화율)이
+  있을 때만 `national_far×(1+ratio/100)`로 상향하되 `national×SANITY_MULTIPLIER`로 캡.
+- 근거 키워드만 있고 정량 완화율 없으면 법정값 유지 + "가능성만 안내".
+- 반환 dict에 `far_basis`("법정/조례" | "완화근거(완화율 X%) 반영" | "완화근거 명시(정량 미제시…)") +
+  `relaxation_present`(bool) 메타 동봉 → interpreter·검증기가 활용.
+- 검증: 자연녹지 근거없음 eff=100/basis=법정·조례, 준주거+완화율20% eff=600, 3종+공공임대(정량없음) eff=300.
+
+## C. interpreter 그라운딩 교정문(교체)
+"법정 건폐율/용적률 상한은 **기본값**이다. 단 기부채납(공공기여)·친환경(녹색건축/제로에너지/신재생)·
+역세권 시프트/청년주택·공공임대·지구단위계획(상한용적률) 등 합법적 인센티브로 법정 상한을 초과해
+상향받을 수 있음을 반드시 함께 설명하라. 다만 구체 상향 수치는 페이로드에 근거(완화율·지구단위계획·
+조례·인증)가 있을 때만 제시하고 근거를 명시하라. 근거가 없으면 '완화 적용 시 상향 가능성(별도 검토
+필요)'로 가능성은 안내하되 특정 수치를 단정하지 말라. 출처 없는 수치 단정 금지." (`_legal_limits_block`
+말미도 "상한은 기본값…인센티브로 상향 가능, 수치는 근거 있을 때만" 으로 교정).
+
+## 단위테스트 결과 (`tests/test_legal_zone_limits.py`, 25 passed = 14 기존 + 11 신규)
+| 시나리오 | 근거 | verdict |
+|---|---|---|
+| 자연녹지 200% | 없음 | **high**(원 사고 재현 유지) |
+| 자연녹지 200% | 있음(기부채납30%) | **warn**(인센티브 비대상+경계, fail 아님) |
+| 1종일반 200%(법정内) | 무관 | **clean**(pass) |
+| 준주거 600%(법정500초과) | 없음 | **high** |
+| 준주거 600% | 있음(지구단위계획) | **info**(정당, fail 아님) |
+| 3종 350%(법정300초과) | 없음 | **high** |
+| 3종 350% | 있음(공공임대/완화율) | **info** |
+- run_range_checks 경유(역세권 근거→info, 무근거→high)도 검증.
+
+## sanity 상한
+`SANITY_MULTIPLIER=2.0`(법정×2). 근거가 있어도 법정×2 초과면 warn("완화 상한 초과 가능성").
+거짓양성 최소화 위해 관대. 단 인센티브 비대상(녹지 등)은 근거 있어도 warn, 근거 없으면 high 유지.
+
+## 라이브 재검증 시나리오(근거유무별 기대 verdict)
+`POST /api/v1/verify/analysis` (analysis_type=site):
+- `{zone_type:자연녹지지역, effective_far_pct:200}` 근거없음 → `fail`(high 용적률200%).
+- 위 + output/source에 "기부채납 30%" → high 아님(warn, 비대상 경고).
+- `{zone_type:준주거지역, effective_far_pct:600}` 근거없음 → fail; + "지구단위계획 상한용적률" → info(통과/경고).
+- `{zone_type:제3종일반주거지역, effective_far_pct:350}` 근거없음 → fail; + "공공임대 건립" → info.
+- `{zone_type:제1종일반주거지역, effective_far_pct:200}` → 통과(법정内).
+
+## 변경 파일(후속)
+- `app/services/zoning/legal_zone_limits.py` (근거탐색·3단 _judge_excess·시그니처 확장)
+- `app/services/verification/range_rules.py` (has_basis 전달)
+- `app/services/land_intelligence/comprehensive_analysis_service.py` (_calc_effective_far basis 메타)
+- `app/services/ai/site_analysis_interpreter.py` (그라운딩 교정문)
+- `tests/test_legal_zone_limits.py` (11 테스트 추가 → 총 25)
+
+## 커밋(후속)
+- 메시지: `fix(site-analysis): 할루시네이션 검증 정밀화 — 인센티브 완화(기부채납/친환경/시프트/공공임대) 근거기반 3단판정(근거없는 법정초과만 적발)`
+- (해시는 커밋 후 하단 기록)
