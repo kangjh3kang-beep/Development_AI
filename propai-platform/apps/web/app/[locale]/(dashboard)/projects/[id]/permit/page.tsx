@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { apiClient } from "@/lib/api-client";
 import { ProjectPermitWorkspaceClient } from "@/components/projects/ProjectPermitWorkspaceClient";
+import { DesignChangePredictPanel } from "@/components/design-risk/DesignChangePredictPanel";
 import { isValidLocale, type Locale } from "@/i18n/config";
 
 export default function PermitPage() {
@@ -114,6 +115,13 @@ export default function PermitPage() {
            </button>
         </div>
       </div>
+
+      {/* ── 설계변경 사전예측 (D3) ── */}
+      <div className="flex flex-col gap-2">
+        <h2 className="text-2xl font-black tracking-tight text-[var(--text-primary)]">설계변경 리스크 사전예측</h2>
+        <p className="text-[var(--text-secondary)]">착공 전 법규초과·필수요소 누락·정합 모순을 미리 잡아내고 저비용 보완방안을 제시합니다.</p>
+      </div>
+      <DesignChangePredictPanel projectId={id} />
 
       {/* ── Live Workspace Client ── */}
       <ProjectPermitWorkspaceClient locale={safeLocale} projectId={id} />
