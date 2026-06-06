@@ -70,18 +70,44 @@ async def analyze_zoning(req: ZoningAnalyzeRequest):
     result = await service.analyze_by_address(req.address)
 
     # ── SiteAnalysisInterpreter(Claude) 자연어 해석 부착 ──
+    # 그라운딩: 법정한도 + 실효용적률 계층(far_tier_service 단일출처) + 종상향 잠재
+    #          컨텍스트를 인터프리터에 주입한다. (zone_type만 전달 → 200% 무근거 차단)
     try:
         from app.services.ai.site_analysis_interpreter import SiteAnalysisInterpreter
+        from app.services.land_intelligence import far_tier_service
 
         zone_limits = result.get("zone_limits") or {}
+        zt = result.get("zone_type") or ""
+        la = float(result.get("land_area_sqm") or 0)
+
+        # 실효용적률 계층 + 종상향: AutoZoning 결과(zone_type·zone_limits·special_districts)를
+        # base로 사용해 법정범위·far_basis_detail·종상향 시나리오를 산출(외부 LLM 무호출).
+        effective_far_tier: dict = {
+            "effective_far_pct": zone_limits.get("max_far_pct"),
+            "effective_bcr_pct": zone_limits.get("max_bcr_pct"),
+        }
+        upzoning: dict = {}
+        if zt:
+            try:
+                effective_far_tier = far_tier_service.calc_effective_far(result, zt, la)
+                upzoning = far_tier_service.calc_upzoning(result, zt, la, None, None)
+            except Exception:  # noqa: BLE001
+                pass
+
         interp_input = {
             "address": result.get("address"),
-            "zone_type": result.get("zone_type"),
+            "zone_type": zt,
             "land_area_sqm": result.get("land_area_sqm"),
-            "effective_far": {
-                "effective_far_pct": zone_limits.get("max_far_pct"),
-                "effective_bcr_pct": zone_limits.get("max_bcr_pct"),
+            # 법정한도(그라운딩): 인터프리터가 무근거 상향 서술을 못 하도록 명시.
+            "zone_limits": {
+                "max_far_pct": zone_limits.get("max_far_pct"),
+                "max_bcr_pct": zone_limits.get("max_bcr_pct"),
+                "legal_basis": zone_limits.get("legal_basis"),
             },
+            "effective_far": effective_far_tier,
+            "upzoning": upzoning,
+            "upzoning_scenarios": upzoning.get("scenarios", []),
+            "potential_far_range": upzoning.get("potential_far_range"),
             "land_prices": {
                 "official_price_per_sqm": result.get("official_price_per_sqm"),
             },
@@ -89,6 +115,13 @@ async def analyze_zoning(req: ZoningAnalyzeRequest):
                 "special_districts": result.get("special_districts", []),
             },
         }
+        # 화면 경로에서도 계층/종상향을 캡처하도록 응답에 동봉(프론트 옵셔널 렌더).
+        result.setdefault("effective_far", effective_far_tier)
+        if upzoning:
+            result.setdefault("upzoning", upzoning)
+            result.setdefault("upzoning_scenarios", upzoning.get("scenarios", []))
+            result.setdefault("potential_far_range", upzoning.get("potential_far_range"))
+
         interp = await SiteAnalysisInterpreter().generate_interpretation(interp_input)
         if isinstance(interp, dict) and interp:
             result["ai_interpretation"] = interp

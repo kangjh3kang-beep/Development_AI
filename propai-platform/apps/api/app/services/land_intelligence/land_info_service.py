@@ -551,6 +551,31 @@ class LandInfoService:
                 logger.warning("조례 분석 실패: %s (%s)", address, str(e))
                 result["local_ordinance"] = None
 
+        # Phase 4: 실효용적률 계층 + 종상향 잠재 시나리오 (화면경로 반영 — 단일출처 far_tier_service)
+        # /zoning/comprehensive·/zoning/analyze가 이 결과를 그대로 사용한다(중복계산 없음).
+        try:
+            from app.services.land_intelligence import far_tier_service
+
+            zt = result.get("zone_type") or ""
+            la = 0.0
+            lr = result.get("land_register")
+            if isinstance(lr, dict):
+                la = float(lr.get("area_sqm", 0) or 0)
+            if la <= 0 and result.get("land_area_sqm"):
+                la = float(result.get("land_area_sqm") or 0)
+
+            if zt:
+                eff = far_tier_service.calc_effective_far(result, zt, la)
+                result["effective_far"] = eff
+                up = far_tier_service.calc_upzoning(
+                    result, zt, la, result.get("infrastructure"), None
+                )
+                result["upzoning"] = up
+                result["upzoning_scenarios"] = up.get("scenarios", [])
+                result["potential_far_range"] = up.get("potential_far_range")
+        except Exception as e:
+            logger.warning("실효용적률/종상향 산정 스킵: %s (%s)", address, str(e))
+
         return result
 
     async def _fetch_land_register(self, pnu: str) -> dict[str, Any] | None:
