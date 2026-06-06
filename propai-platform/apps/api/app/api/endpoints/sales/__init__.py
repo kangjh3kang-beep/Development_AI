@@ -11,6 +11,7 @@ from app.api.crud_router import make_crud_router
 from app.api.endpoints.sales.actions import actions_router
 from app.api.endpoints.sales.commission_agreement import commission_agreement_router
 from app.api.endpoints.sales.crm_enhance import crm_enhance_router
+from app.api.endpoints.sales.referral import referral_router
 from app.api.endpoints.sales.termination_cert import termination_cert_router
 from app.api.endpoints.sales.site_auth import site_auth_router
 from app.api.endpoints.sales.mh import mh_router
@@ -80,6 +81,7 @@ for _model, _prefix in REGISTRY:
 sales_router.include_router(actions_router)
 sales_router.include_router(commission_agreement_router)
 sales_router.include_router(crm_enhance_router)
+sales_router.include_router(referral_router)
 sales_router.include_router(termination_cert_router)
 sales_router.include_router(site_auth_router)
 sales_router.include_router(mh_router)

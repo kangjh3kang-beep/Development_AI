@@ -660,7 +660,8 @@ async def _link_membership_on_accept(db: AsyncSession, site_id, applicant_user_i
             " VALUES (:id, :sid, 'MEMBER', :path::ltree, :uid, :nm, true)"),
             {"id": str(node_id), "sid": str(site_id), "path": label,
              "uid": str(applicant_user_id), "nm": display})
-        # TODO: 추천코드(MGM) 귀속·소셜그래프 연결은 해당 로직 도입 시 여기서 호출(현재 noop).
+        # MGM 추천코드 귀속은 Phase1-C referral 모듈로 구현됨(고객 방문/계약 경로에서 귀속).
+        # 채용(B2B)은 고객귀속과 별개 흐름이므로 여기서는 멤버십 연결만 수행한다.
         return True
     except Exception:  # noqa: BLE001 — 멤버십 연결 실패는 채용결정을 막지 않음(best-effort)
         return False

@@ -37,6 +37,12 @@ async def desk_consent_template(_ctx: SalesCtx = Depends(sales_ctx)):
 async def desk_checkin(body: dict, request: Request, db: AsyncSession = Depends(get_db),
                        ctx: SalesCtx = Depends(sales_ctx)):
     v = await checkin(db, ctx.site_id, body.get("desk_id"), body, consent_ip=_client_ip(request))
+    # MGM 추천코드 경유 방문이면(랜딩 ?ref=code 가 전달됨) visit 퍼널 이벤트를 무파괴로 기록.
+    # 유효하지 않은 코드는 record_event 가 조용히 무시 → 체크인 본흐름을 막지 않는다.
+    ref = body.get("ref")
+    if ref:
+        from app.api.endpoints.sales.referral import record_event  # 지연 import(순환 방지)
+        await record_event(db, str(ref), "visit", visitor_ref=str(v.id), customer_id=None)
     await db.commit()
     return {"visitor_id": str(v.id)}
 
