@@ -10,6 +10,12 @@ import { AnalysisVerdict } from "@/components/analysis/AnalysisVerdict";
 
 interface SiteAnalysisDetailProps {
   data: Record<string, unknown>;
+  /**
+   * 보고서 임베드 모드 — 자체 "AI 부지분석 해석" 텍스트를 숨기고
+   * 지도(필지 구획도·주변 실거래) + 기본 토지정보만 렌더한다.
+   * (보고서에는 이미 한글 라벨 해석이 별도로 있어 중복 방지)
+   */
+  hideInterpretation?: boolean;
 }
 
 /* ── Helpers ── */
@@ -230,7 +236,7 @@ function DonationSimTable({ baseFar, capFar }: { baseFar: number; capFar: number
 
 /* ── Main Component ── */
 
-export function SiteAnalysisDetail({ data }: SiteAnalysisDetailProps) {
+export function SiteAnalysisDetail({ data, hideInterpretation = false }: SiteAnalysisDetailProps) {
   // 1. 기본 토지정보
   const basic = obj(data.basic);
   const landAddress = s(basic.address || data.address);
@@ -324,12 +330,13 @@ export function SiteAnalysisDetail({ data }: SiteAnalysisDetailProps) {
         )}
       </CategoryCard>
 
-      {/* 1-0. AI 검증 + 해석 통합 카드(AnalysisVerdict) — 검증·해석 동일 카드 노출 */}
+      {/* 1-0. AI 검증 + 해석 통합 카드(AnalysisVerdict) — 검증·해석 동일 카드 노출.
+          hideInterpretation(보고서 임베드)에서는 자체 AI 해석 텍스트를 숨김(보고서 한글 해석과 중복 방지). */}
       {(hasBasic || hasZoning) && (
         <AnalysisVerdict
           analysisType="site"
           context={{ basic, zoning, pricing, zone_type: zoneType, land_area_sqm: landAreaSqm, ai_interpretation: aiInterp }}
-          interpretation={hasAi ? aiInterp : undefined}
+          interpretation={hideInterpretation ? undefined : hasAi ? aiInterp : undefined}
           sectionLabels={AI_SECTIONS}
           interpretationTitle="AI 부지분석 해석"
         />

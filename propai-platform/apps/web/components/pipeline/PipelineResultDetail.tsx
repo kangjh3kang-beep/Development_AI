@@ -544,6 +544,10 @@ export function PipelineResultDetail({ result, onRerun }: PipelineResultDetailPr
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
             {EXEC_KPIS.map((kpi) => {
               const val = getFieldValue(kpi.source, kpi.key);
+              const formatted = kpi.format(val);
+              // 미분석 상태 명확화 — 값 없음("-"/빈/NaN)일 때 "분석 전"으로 표기(핵심요약 카드 한정).
+              const empty =
+                val == null || val === "" || formatted === "-" || formatted === "—" || formatted === "NaN";
               return (
                 <div
                   key={kpi.key}
@@ -552,10 +556,14 @@ export function PipelineResultDetail({ result, onRerun }: PipelineResultDetailPr
                   <p className="text-[10px] font-bold text-[var(--text-hint)] tracking-[0.12em] uppercase mb-1">
                     {kpi.label}
                   </p>
-                  <p className={`text-lg sm:text-xl font-[900] tracking-tight leading-none ${kpi.color}`}>
-                    {kpi.format(val)}
+                  <p
+                    className={`text-lg sm:text-xl font-[900] tracking-tight leading-none ${
+                      empty ? "text-[var(--text-hint)] text-sm sm:text-base font-bold" : kpi.color
+                    }`}
+                  >
+                    {empty ? "분석 전" : formatted}
                   </p>
-                  {kpi.unit && (
+                  {kpi.unit && !empty && (
                     <p className="text-[10px] font-medium text-[var(--text-tertiary)] mt-0.5">{kpi.unit}</p>
                   )}
                 </div>
@@ -582,9 +590,9 @@ export function PipelineResultDetail({ result, onRerun }: PipelineResultDetailPr
         </div>
       </div>
 
-      {/* ── Tab Navigation ── */}
-      <div className="px-6 sm:px-8 border-b border-[var(--line)] overflow-x-auto">
-        <div className="flex gap-1 py-2 min-w-max">
+      {/* ── Tab Navigation (반응형 wrap — 좌우 스크롤 제거, 모든 탭 한눈에) ── */}
+      <div className="px-6 sm:px-8 border-b border-[var(--line)]">
+        <div className="flex flex-wrap gap-1.5 py-2">
           {SECTIONS.map((sec) => (
             <button
               key={sec.id}
@@ -608,9 +616,10 @@ export function PipelineResultDetail({ result, onRerun }: PipelineResultDetailPr
           {activeSection.label}
         </h3>
 
-        {/* ── 부지분석 풍부 보고서(첫 분석과 동일) — 지도(필지구획도·주변실거래)·기본토지정보·AI해석 ── */}
-        {/* site_analysis 단계 소스 섹션(사업개요·입지분석)은 첫 분석 완료뷰와 동일한 SiteAnalysisDetail을 마운트해 일관화. */}
-        {activeSection.sourceStage === "site_analysis" &&
+        {/* ── 부지분석 풍부 보고서(첫 분석과 동일) — 지도(필지구획도·주변실거래)·기본토지정보 ── */}
+        {/* '입지분석' 탭에서만 1회 마운트(사업개요 탭 중복 제거). 자체 AI 해석은 hideInterpretation으로 숨김
+            — 보고서 하단의 한글 라벨 "AI 상세 해석"과 중복되므로 지도+기본 토지정보만 노출한다. */}
+        {activeSection.id === "location" &&
           (() => {
             const siteData = stageDataMap.site_analysis;
             const hasSiteData = siteData && Object.keys(siteData).length > 0;
@@ -623,7 +632,7 @@ export function PipelineResultDetail({ result, onRerun }: PipelineResultDetailPr
             }
             return (
               <div className="mb-5">
-                <SiteAnalysisDetail data={siteData} />
+                <SiteAnalysisDetail data={siteData} hideInterpretation />
               </div>
             );
           })()}

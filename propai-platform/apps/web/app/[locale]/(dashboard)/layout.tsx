@@ -183,8 +183,9 @@ export default async function DashboardLayout({
 
       {/* 메인 그리드 */}
       <div className="grid gap-6 lg:grid-cols-[260px_minmax(0,1fr)]">
-        {/* 사이드바 — 모바일에서 숨김, lg 이상에서 표시 */}
-        <aside className="hidden lg:block glass space-y-5 rounded-[var(--radius-xl)] border border-[var(--line)] bg-[var(--surface-secondary)] p-5 shadow-[var(--shadow-md)] sticky top-[88px] h-[calc(100vh-100px)] overflow-y-auto custom-scrollbar">
+        {/* 사이드바 — 모바일에서 숨김, lg 이상에서 표시.
+            전체 메뉴가 스크롤 없이 보이도록 컴팩트 간격 + max-height 안전장치(초과 시에만 스크롤). */}
+        <aside className="hidden lg:block glass space-y-3.5 rounded-[var(--radius-xl)] border border-[var(--line)] bg-[var(--surface-secondary)] p-4 shadow-[var(--shadow-md)] sticky top-[88px] max-h-[calc(100vh-100px)] overflow-y-auto custom-scrollbar">
           <BillingMeter compact />
           <SidebarNav sections={sections} />
         </aside>

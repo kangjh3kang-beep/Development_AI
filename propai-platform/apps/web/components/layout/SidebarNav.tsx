@@ -60,12 +60,12 @@ export function SidebarNav({ sections }: SidebarNavProps) {
       {visibleSections.map((section, sectionIdx) => (
         <div key={section.title}>
           {sectionIdx > 0 && (
-            <div className="h-px bg-[var(--line)] opacity-50 mb-5" aria-hidden="true" />
+            <div className="h-px bg-[var(--line)] opacity-50 mb-3" aria-hidden="true" />
           )}
-          <p className="px-3 pb-2.5 text-[11px] font-bold tracking-[0.12em] text-[var(--text-tertiary)] uppercase">
+          <p className="px-3 pb-1.5 text-[11px] font-bold tracking-[0.12em] text-[var(--text-tertiary)] uppercase">
             {section.title}
           </p>
-          <nav className="grid gap-1.5">
+          <nav className="grid gap-1">
             {section.items.map((item) => {
               const isActive = pathname === item.href;
               
@@ -73,7 +73,7 @@ export function SidebarNav({ sections }: SidebarNavProps) {
                 <Link
                   key={item.href}
                   href={item.href}
-                  className={`group relative flex items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] font-semibold transition-all duration-300 overflow-hidden ${
+                  className={`group relative flex items-center gap-2.5 rounded-xl px-3 py-2 text-[13px] font-semibold transition-all duration-300 overflow-hidden ${
                     isActive
                       ? "text-[var(--accent-strong)] bg-[var(--accent-soft)] shadow-[inset_0_0_20px_var(--accent-soft)] border border-[var(--accent-strong)]/20"
                       : "text-[var(--text-secondary)] hover:bg-[var(--surface-muted)] hover:text-white"
