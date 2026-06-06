@@ -1,6 +1,5 @@
 import { isValidLocale } from "@/i18n/config";
 import { LifecycleNavigator } from "@/components/projects/LifecycleNavigator";
-import { ProjectLifecyclePipelineWrapper } from "@/components/projects/ProjectLifecyclePipelineWrapper";
 import { ProjectAddressBar } from "@/components/projects/ProjectAddressBar";
 import { LifecycleProgressRail } from "@/components/lifecycle/LifecycleProgressRail";
 import { ProjectContextBinder } from "@/components/projects/ProjectContextBinder";
@@ -31,9 +30,9 @@ export default async function ProjectLayout({
       {/* 컨텍스트 단일 writer — 모든 서브라우트에서 URL projectId를 store에 바인딩(SSOT). */}
       <ProjectContextBinder projectId={id} />
       <LifecycleNavigator locale={locale} projectId={id} />
-      {/* 라이프사이클 진행 레일 — 활성 프로젝트 컨텍스트가 있을 때만 렌더(다음 단계 유도). */}
+      {/* 라이프사이클 진행 레일 — 활성 프로젝트 컨텍스트가 있을 때만 렌더(다음 단계 유도).
+          P1: 컴팩트 파이프라인(ProjectLifecyclePipelineWrapper)은 진행바와 100% 중복이라 제거. */}
       <LifecycleProgressRail locale={locale} />
-      <ProjectLifecyclePipelineWrapper locale={locale} projectId={id} />
       <ProjectAddressBar />
       <div className="min-w-0 transition-all duration-500 animate-in fade-in slide-in-from-bottom-4">
         {children}

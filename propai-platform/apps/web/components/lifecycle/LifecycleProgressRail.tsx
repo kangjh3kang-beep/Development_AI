@@ -14,28 +14,15 @@
 
 import Link from "next/link";
 import { motion } from "framer-motion";
+import { useProjectContextStore } from "@/store/useProjectContextStore";
 import {
-  useProjectContextStore,
   LIFECYCLE_STAGES,
+  STAGE_META,
   type LifecycleStage,
-} from "@/store/useProjectContextStore";
+} from "@/lib/lifecycle-stages";
 import { StageIcon } from "@/components/common/StageIcon";
 
 type StageStatus = "completed" | "current" | "next" | "pending";
-
-/** 스토어 단계 id → 프로젝트 상세 라우트 세그먼트 + StageIcon 아이콘 키 + 라벨 */
-const STAGE_META: Record<LifecycleStage, { route: string; icon: string; label: string }> = {
-  "site-analysis": { route: "site-analysis", icon: "site_analysis", label: "부지분석" },
-  legal: { route: "legal", icon: "legal_compliance", label: "법규검토" },
-  design: { route: "design", icon: "design_ai", label: "설계" },
-  bim: { route: "bim", icon: "design_ai", label: "BIM" },
-  construction: { route: "construction", icon: "construction", label: "시공계획" },
-  feasibility: { route: "feasibility", icon: "feasibility", label: "수지분석" },
-  finance: { route: "finance", icon: "feasibility", label: "금융분석" },
-  esg: { route: "esg", icon: "esg_dashboard", label: "ESG" },
-  permit: { route: "permit", icon: "permit_portal", label: "인허가" },
-  report: { route: "report", icon: "permit_portal", label: "보고서" },
-};
 
 const STATUS_NODE: Record<StageStatus, string> = {
   completed:

@@ -3,12 +3,11 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion } from "framer-motion";
-import {
-  useProjectContextStore,
-  LIFECYCLE_STAGES,
-} from "@/store/useProjectContextStore";
+import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { LIFECYCLE_STAGES, STAGE_META } from "@/lib/lifecycle-stages";
+import { StageIcon } from "@/components/common/StageIcon";
 
-/* ── Stage metadata ── */
+/* ── Stage metadata (SSOT: lib/lifecycle-stages) ── */
 
 interface StageDefinition {
   id: string;
@@ -19,18 +18,15 @@ interface StageDefinition {
 
 function getStages(locale: string, projectId: string): StageDefinition[] {
   const base = `/${locale}/projects/${projectId}`;
-  return [
-    { id: "site-analysis", label: "부지분석", icon: <MapPinIcon />, route: `${base}/site-analysis` },
-    { id: "legal", label: "법규검토", icon: <ScaleIcon />, route: `${base}/legal` },
-    { id: "design", label: "설계", icon: <PencilRulerIcon />, route: `${base}/design` },
-    { id: "bim", label: "BIM", icon: <CubeIcon />, route: `${base}/bim` },
-    { id: "construction", label: "시공계획", icon: <HardHatIcon />, route: `${base}/construction` },
-    { id: "feasibility", label: "수지분석", icon: <TrendUpIcon />, route: `${base}/feasibility` },
-    { id: "finance", label: "금융분석", icon: <BanknoteIcon />, route: `${base}/finance` },
-    { id: "esg", label: "ESG", icon: <LeafIcon />, route: `${base}/esg` },
-    { id: "permit", label: "인허가", icon: <FileCheckIcon />, route: `${base}/permit` },
-    { id: "report", label: "보고서", icon: <FileTextIcon />, route: `${base}/report` },
-  ];
+  return LIFECYCLE_STAGES.map((id) => {
+    const meta = STAGE_META[id];
+    return {
+      id,
+      label: meta.label,
+      icon: <StageIcon id={meta.icon} size={20} />,
+      route: `${base}/${meta.route}`,
+    };
+  });
 }
 
 /* ── Pipeline Component ── */
@@ -348,110 +344,6 @@ function CompactPipeline({
 }
 
 /* ── SVG Icons (inline, no external deps) ── */
-
-function MapPinIcon() {
-  return (
-    <svg className="h-full w-full" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z" />
-      <circle cx="12" cy="10" r="3" />
-    </svg>
-  );
-}
-
-function ScaleIcon() {
-  return (
-    <svg className="h-full w-full" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="m16 16 3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1Z" />
-      <path d="m2 16 3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1Z" />
-      <path d="M7 21h10" />
-      <path d="M12 3v18" />
-      <path d="M3 7h2c2 0 5-1 7-2 2 1 5 2 7 2h2" />
-    </svg>
-  );
-}
-
-function PencilRulerIcon() {
-  return (
-    <svg className="h-full w-full" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="m15 5 4 4" />
-      <path d="M13 7 8.7 2.7a2.41 2.41 0 0 0-3.4 0L2.7 5.3a2.41 2.41 0 0 0 0 3.4L7 13" />
-      <path d="m8 6 2-2" />
-      <path d="m2 22 5.5-1.5L21.17 6.83a2.82 2.82 0 0 0-4-4L3.5 16.5Z" />
-      <path d="m18 16 2-2" />
-      <path d="m17 11 4.3 4.3c.94.94.94 2.46 0 3.4l-2.6 2.6c-.94.94-2.46.94-3.4 0L11 17" />
-    </svg>
-  );
-}
-
-function CubeIcon() {
-  return (
-    <svg className="h-full w-full" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
-      <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
-      <line x1="12" y1="22.08" x2="12" y2="12" />
-    </svg>
-  );
-}
-
-function HardHatIcon() {
-  return (
-    <svg className="h-full w-full" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M2 18a1 1 0 0 0 1 1h18a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1H3a1 1 0 0 0-1 1v2z" />
-      <path d="M10 15V6.5a3.5 3.5 0 0 1 7 0v0a3 3 0 0 1 3 3V15" />
-      <path d="M4 15v-3a6 6 0 0 1 6-6" />
-    </svg>
-  );
-}
-
-function TrendUpIcon() {
-  return (
-    <svg className="h-full w-full" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <polyline points="22 7 13.5 15.5 8.5 10.5 2 17" />
-      <polyline points="16 7 22 7 22 13" />
-    </svg>
-  );
-}
-
-function BanknoteIcon() {
-  return (
-    <svg className="h-full w-full" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <rect width="20" height="12" x="2" y="6" rx="2" />
-      <circle cx="12" cy="12" r="2" />
-      <path d="M6 12h.01M18 12h.01" />
-    </svg>
-  );
-}
-
-function LeafIcon() {
-  return (
-    <svg className="h-full w-full" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M11 20A7 7 0 0 1 9.8 6.9C15.5 4.9 17 3.5 19 2c1 2 2 4.5 2 8 0 5.5-4.78 10-10 10Z" />
-      <path d="M2 21c0-3 1.85-5.36 5.08-6C9.5 14.52 12 13 13 12" />
-    </svg>
-  );
-}
-
-function FileCheckIcon() {
-  return (
-    <svg className="h-full w-full" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
-      <path d="M14 2v4a2 2 0 0 0 2 2h4" />
-      <path d="m9 15 2 2 4-4" />
-    </svg>
-  );
-}
-
-function FileTextIcon() {
-  return (
-    <svg className="h-full w-full" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
-      <path d="M14 2v4a2 2 0 0 0 2 2h4" />
-      <path d="M10 9H8" />
-      <path d="M16 13H8" />
-      <path d="M16 17H8" />
-    </svg>
-  );
-}
 
 function CheckCircleIcon() {
   return (

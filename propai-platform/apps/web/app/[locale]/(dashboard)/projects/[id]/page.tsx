@@ -22,7 +22,9 @@ const _loading = (label: string) => {
   );
   return LoadingFallback;
 };
-const LifecycleStageViews = dynamic(() => import("@/components/projects/LifecycleStageViews").then((m) => m.LifecycleStageViews), { ssr: false, loading: _loading("라이프사이클 뷰 불러오는 중…") });
+// P1: 딥인티 8탭 허브(LifecycleStageViews)는 상단탭·진행바와 진입 중복이라 개요에서 강등.
+// 각 단계 위젯은 해당 서브페이지에 이미 존재 — 개요는 다음단계 CTA로 순수 진입만 유도.
+const NextStageCta = dynamic(() => import("@/components/projects/NextStageCta").then((m) => m.NextStageCta), { ssr: false, loading: _loading("다음 단계 안내 불러오는 중…") });
 const ProjectAnalysisFlow = dynamic(() => import("@/components/projects/ProjectAnalysisFlow").then((m) => m.ProjectAnalysisFlow), { ssr: false, loading: _loading("분석 흐름 불러오는 중…") });
 const PipelineResultDetail = dynamic(() => import("@/components/pipeline/PipelineResultDetail").then((m) => m.PipelineResultDetail), { ssr: false, loading: _loading("통합 보고서 불러오는 중…") });
 
@@ -325,13 +327,13 @@ export default function ProjectDetailPage() {
         </motion.div>
       )}
 
-      {/* ── Deep Integration Lifecycle Hub ── */}
+      {/* ── 다음 단계 CTA(개요 순수화) ── */}
       <motion.div
         initial={{ opacity: 0, y: 40 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.5 }}
       >
-        <LifecycleStageViews projectId={id} dictionary={dictionary.deepIntegration} compact={!!ledgerReport} />
+        <NextStageCta locale={locale} />
       </motion.div>
     </div>
   );
