@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v62-capillary-auto";
+const CACHE_NAME = "propai-v63-dashboard-projects";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",
