@@ -151,6 +151,15 @@ except ImportError:
     except ImportError:
         sales_router = None
 
+# Phase1-E 공통 구인구직 마켓 + 재사용 프로필 (PUBLIC 컨텐츠, 자체 prefix=/api/v1/market)
+try:
+    from apps.api.app.api.endpoints.sales.market import market_router
+except ImportError:
+    try:
+        from app.api.endpoints.sales.market import market_router
+    except ImportError:
+        market_router = None
+
 # v61 공사비(QTO) 라우터 — 시공관리 단계가 호출(자체 prefix=/api/v1/cost)
 try:
     from apps.api.app.routers.cost import router as cost_router
@@ -464,6 +473,9 @@ if cost_router is not None:
     app.include_router(cost_router, tags=["v61 공사비"])  # 자체 prefix=/api/v1/cost
 if ai_analyze_router is not None:
     app.include_router(ai_analyze_router, tags=["ai"])  # 자체 prefix=/api/v1/ai
+if market_router is not None:
+    # PUBLIC 마켓(구인구직·프로필·홍보) — 자체 prefix=/api/v1/market, 현장 격리 없음
+    app.include_router(market_router, tags=["구인구직 마켓(public)"])
 if sales_router is not None:
     app.include_router(sales_router, prefix="/api/v1/sales", tags=["분양관리(sales)"])
     try:
