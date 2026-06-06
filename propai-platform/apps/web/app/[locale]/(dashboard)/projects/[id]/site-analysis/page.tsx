@@ -8,6 +8,7 @@ import { LandIntelligencePanel } from "@/components/projects/LandIntelligencePan
 import { SiteInitiator } from "@/components/projects/SiteInitiator";
 import { ProjectSiteAnalysisWorkspaceClient } from "@/components/projects/ProjectSiteAnalysisWorkspaceClient";
 import { TerrainAnalysisPanel } from "@/components/terrain/TerrainAnalysisPanel";
+import { EnvironmentAnalysisPanel } from "@/components/environment/EnvironmentAnalysisPanel";
 import { isValidLocale, type Locale } from "@/i18n/config";
 import { useDictionary } from "@/hooks/use-dictionary";
 import { apiClient } from "@/lib/api-client";
@@ -474,6 +475,9 @@ export default function SiteAnalysisPage() {
 
             {/* ── Flagship C-1: 지형분석(경사도·토공량·지형단면) ── */}
             <TerrainAnalysisPanel address={siteData.address} pnu={siteData.pnu} />
+
+            {/* ── Flagship C-2: 환경분석(일조·조망·스카이라인) ── */}
+            <EnvironmentAnalysisPanel address={siteData.address} pnu={siteData.pnu} />
 
             {/* ── 가상준공 3D 디지털트윈(지형·필지·건물·주변 합성 뷰) ── */}
             <DigitalTwinScene address={siteData.address} pnu={siteData.pnu} />
