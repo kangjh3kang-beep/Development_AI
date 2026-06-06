@@ -7,7 +7,7 @@
 from typing import Any, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, UploadFile
 from packages.schemas.models import AuctionAnalysisRequest, AuctionListingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -315,3 +315,111 @@ async def auction_item_detail(
     if not item:
         raise HTTPException(status_code=404, detail="물건을 찾을 수 없습니다.")
     return item
+
+
+# ══════════════════════════════════════════════════════════════════════
+# 경공매 모니터링 — 관심대상 3입력(토지조서 보유토지 / Excel업로드 / 지도구획)
+# ══════════════════════════════════════════════════════════════════════
+
+
+@router.post("/watchlist/upload", summary="(b) 관심대상 Excel/CSV 업로드(컬럼 자동감지)")
+async def auction_watchlist_upload(
+    file: UploadFile = File(..., description="xlsx/xls/csv (PNU/주소/소재지 등 헤더 자동감지)"),
+    current_user: CurrentUser = Depends(RequirePermission("auction", "write")),
+    service=Depends(_step1_service),
+) -> dict[str, Any]:
+    """업로드 파일을 파싱해 행별 관심대상(source=excel)을 등록한다(무목업).
+
+    PNU/지번/주소/소재지 등 다양한 헤더명을 자동감지한다. 잘못된 파일/빈 컬럼/미인식
+    헤더는 400으로 정직하게 거부한다. 반환: 등록건수·파싱건수·인식컬럼·미인식행·예시.
+    """
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="빈 파일입니다.")
+    try:
+        return await service.upload_watchlist_excel(
+            user_id=str(current_user.user_id), raw=raw, filename=file.filename or "",
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@router.post("/regions", summary="(c) 지도 구획(Polygon) 관심대상 저장")
+async def auction_create_region(
+    name: str = Body(..., embed=True),
+    geojson: dict[str, Any] = Body(..., embed=True),
+    current_user: CurrentUser = Depends(RequirePermission("auction", "write")),
+    service=Depends(_step1_service),
+) -> dict[str, Any]:
+    """지도에서 그린 구획(GeoJSON Polygon/MultiPolygon)을 관심대상으로 저장한다."""
+    try:
+        return await service.create_region(
+            user_id=str(current_user.user_id), name=name, geojson=geojson,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@router.get("/regions", summary="(c) 내 지도 구획 목록")
+async def auction_list_regions(
+    current_user: CurrentUser = Depends(RequirePermission("auction", "read")),
+    service=Depends(_step1_service),
+) -> dict[str, Any]:
+    items = await service.list_regions(user_id=str(current_user.user_id))
+    return {"items": items, "total": len(items)}
+
+
+@router.delete("/regions/{region_id}", summary="(c) 지도 구획 삭제")
+async def auction_delete_region(
+    region_id: int,
+    current_user: CurrentUser = Depends(RequirePermission("auction", "write")),
+    service=Depends(_step1_service),
+) -> dict[str, Any]:
+    ok = await service.delete_region(user_id=str(current_user.user_id), region_id=region_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="구획을 찾을 수 없습니다.")
+    return {"status": "deleted", "id": region_id}
+
+
+@router.get("/watchlist", summary="관심대상 통합 목록(보유토지/Excel/구획)")
+async def auction_watchlist(
+    current_user: CurrentUser = Depends(RequirePermission("auction", "read")),
+    service=Depends(_step1_service),
+) -> dict[str, Any]:
+    """3입력 통합 관심대상 조회. 보유토지(landschedule)는 호출 시 자동 최신화한다."""
+    await service.sync_landschedule_targets(
+        user_id=str(current_user.user_id), tenant_id=str(current_user.tenant_id),
+    )
+    items = await service.list_watch_targets(user_id=str(current_user.user_id))
+    return {"items": items, "total": len(items)}
+
+
+@router.get("/monitor", summary="관심대상별 매칭된 경공매 물건(보유토지/업로드/구획)")
+async def auction_monitor(
+    group_by: str = Query("source", pattern="^(source)$"),
+    current_user: CurrentUser = Depends(RequirePermission("auction", "read")),
+    service=Depends(_step1_service),
+) -> dict[str, Any]:
+    """관심대상 ↔ 캐시 경공매 물건 매칭 결과를 source별(보유토지/Excel/구획)로 반환한다.
+
+    PNU/주소 직접매칭은 즉시, 폴리곤(구획)은 물건 주소 지오코딩(캐시) 후 매칭한다.
+    각 물건엔 est_win(낙찰가능가)을 포함하며 data_source를 정직 표기한다(무목업).
+    """
+    return await service.monitor(
+        user_id=str(current_user.user_id),
+        tenant_id=str(current_user.tenant_id),
+        group_by=group_by,
+    )
+
+
+@router.post("/monitor/run", summary="(관리/cron) 온비드 동기화+매칭+신규 알림")
+async def auction_monitor_run(
+    current_user: CurrentUser = Depends(RequirePermission("auction", "write")),
+    service=Depends(_step1_service),
+) -> dict[str, Any]:
+    """온비드 실데이터를 적재하고 관심대상과 매칭한 뒤 신규 매칭을 알림 기록한다(무목업)."""
+    return await service.monitor_run(
+        user_id=str(current_user.user_id),
+        tenant_id=str(current_user.tenant_id),
+        service_key=_onbid_service_key(),
+    )

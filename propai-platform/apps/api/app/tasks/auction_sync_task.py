@@ -78,14 +78,40 @@ async def _sync_all_regions() -> dict:
                 logger.warning("법원경매 스크래핑 실패(%s): %s", sido, str(e)[:120])
             time.sleep(_COURT_REGION_DELAY_SEC)  # ★시/도 배치 사이 예의 지연.
 
+        # ③ 모니터링 매칭+신규 알림: 관심대상을 등록한 사용자별로 매칭 실행(무목업).
+        monitored_users = 0
+        new_matches = 0
+        try:
+            from sqlalchemy import text
+
+            await service.ensure_tables()
+            uid_rows = (await db.execute(text(
+                "SELECT DISTINCT user_id FROM auction_watch_target"
+            ))).all()
+            for (uid,) in uid_rows:
+                if not uid:
+                    continue
+                try:
+                    res = await service.monitor_run(
+                        user_id=str(uid), tenant_id=None, service_key=service_key,
+                    )
+                    monitored_users += 1
+                    new_matches += int(res.get("new_matches", 0))
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("모니터링 매칭 실패(user=%s): %s", uid, str(e)[:120])
+        except Exception as e:  # noqa: BLE001
+            logger.warning("모니터링 대상 사용자 조회 실패: %s", str(e)[:120])
+
     logger.info(
-        "경공매 동기화 완료: 온비드 %d건(%s) / 법원경매 %d건(%s)",
+        "경공매 동기화 완료: 온비드 %d건(%s) / 법원경매 %d건(%s) / 모니터링 %d명·신규%d건",
         onbid_saved, onbid_source, court_saved, court_source,
+        monitored_users, new_matches,
     )
     return {
         "status": "ok",
         "onbid": {"saved": onbid_saved, "data_source": onbid_source},
         "court": {"saved": court_saved, "data_source": court_source},
+        "monitor": {"users": monitored_users, "new_matches": new_matches},
     }
 
 

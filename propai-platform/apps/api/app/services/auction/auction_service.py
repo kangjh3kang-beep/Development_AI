@@ -54,6 +54,10 @@ _DDL = [
     "CREATE INDEX IF NOT EXISTS ix_auction_items_kind ON auction_items(kind)",
     "CREATE INDEX IF NOT EXISTS ix_auction_items_pnu ON auction_items(pnu)",
     "CREATE INDEX IF NOT EXISTS ix_auction_items_minbid ON auction_items(min_bid_price)",
+    # ★폴리곤 매칭용 지오코딩 좌표 캐시(멱등 추가, 기존 행 보존).
+    "ALTER TABLE auction_items ADD COLUMN IF NOT EXISTS lat DOUBLE PRECISION",
+    "ALTER TABLE auction_items ADD COLUMN IF NOT EXISTS lng DOUBLE PRECISION",
+    "ALTER TABLE auction_items ADD COLUMN IF NOT EXISTS geocode_status TEXT",
     # 사용자별 저장 조건(알림 대상).
     """
     CREATE TABLE IF NOT EXISTS auction_saved_filters (
@@ -81,6 +85,25 @@ _DDL = [
     """,
     "CREATE INDEX IF NOT EXISTS ix_auction_watch_user ON auction_watch(user_id)",
     "CREATE INDEX IF NOT EXISTS ix_auction_watch_project ON auction_watch(project_id)",
+    # ★관심대상(watch_target): 3입력(landschedule/excel/region) 통합 등록 대상.
+    # auction_watch는 "물건↔관심대상 매칭결과"인 반면, 본 테이블은 "사용자가 등록한
+    # 관심 자체"(아직 매칭 전일 수 있음)를 보관한다.
+    """
+    CREATE TABLE IF NOT EXISTS auction_watch_target (
+        id              BIGSERIAL PRIMARY KEY,
+        user_id         TEXT NOT NULL,
+        watch_source    TEXT NOT NULL DEFAULT 'landschedule',
+        pnu             TEXT,
+        address         TEXT,
+        region_geojson  JSONB,
+        project_id      TEXT,
+        label           TEXT,
+        created_at      TIMESTAMP DEFAULT now()
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS ix_watch_target_user ON auction_watch_target(user_id)",
+    "CREATE INDEX IF NOT EXISTS ix_watch_target_source ON auction_watch_target(watch_source)",
+    "CREATE INDEX IF NOT EXISTS ix_watch_target_pnu ON auction_watch_target(pnu)",
 ]
 
 
@@ -581,6 +604,339 @@ class AuctionStep1Service:
         except Exception as e:  # noqa: BLE001
             logger.warning("PNU→project 매핑 조회 실패: %s", str(e)[:120])
         return mapping
+
+    # ──────────────────────────────────────────
+    # 경공매 모니터링 — 관심대상 3입력(토지조서/Excel업로드/지도구획) 통합
+    # ──────────────────────────────────────────
+
+    async def sync_landschedule_targets(
+        self, *, user_id: str, tenant_id: Optional[str],
+    ) -> int:
+        """(a) 토지조서/프로젝트 보유토지 PNU를 auction_watch_target(source=landschedule)에 등록.
+
+        멱등: 동일 (user_id, pnu, landschedule) 중복은 INSERT 전 존재확인으로 회피.
+        반환: 신규 등록 건수.
+        """
+        await self.ensure_tables()
+        pnus = await self._my_pnus(tenant_id)
+        if not pnus:
+            return 0
+        pnu_to_proj = await self._pnu_project_map(tenant_id)
+        created = 0
+        for pnu in pnus:
+            exists = (await self.db.execute(text(
+                "SELECT 1 FROM auction_watch_target"
+                " WHERE user_id = :uid AND watch_source = 'landschedule' AND pnu = :pnu"
+            ), {"uid": user_id, "pnu": pnu})).first()
+            if exists:
+                continue
+            await self.db.execute(text(
+                "INSERT INTO auction_watch_target(user_id,watch_source,pnu,project_id,label)"
+                " VALUES (:uid,'landschedule',:pnu,:pid,:label)"
+            ), {
+                "uid": user_id, "pnu": pnu,
+                "pid": pnu_to_proj.get(pnu),
+                "label": f"보유토지 {pnu}",
+            })
+            created += 1
+        await self.db.commit()
+        return created
+
+    async def upload_watchlist_excel(
+        self, *, user_id: str, raw: bytes, filename: str,
+    ) -> dict[str, Any]:
+        """(b) Excel/CSV 업로드 → 컬럼 자동감지 → 행별 watch_target(source=excel) 생성.
+
+        반환: 파싱건수·인식컬럼·미인식행·예시 + 등록건수. 파싱 실패는 호출부에서 400 처리.
+        """
+        from app.services.auction.monitor import parse_watchlist_excel
+
+        await self.ensure_tables()
+        parsed = parse_watchlist_excel(raw, filename=filename)
+        created = 0
+        for row in parsed["rows"]:
+            await self.db.execute(text(
+                "INSERT INTO auction_watch_target(user_id,watch_source,pnu,address,label)"
+                " VALUES (:uid,'excel',:pnu,:addr,:label)"
+            ), {
+                "uid": user_id,
+                "pnu": row.get("pnu"),
+                "addr": row.get("address"),
+                "label": row.get("label"),
+            })
+            created += 1
+        await self.db.commit()
+        return {
+            "created": created,
+            "parsed_count": parsed["parsed_count"],
+            "skipped_rows": parsed["skipped_rows"],
+            "total_rows": parsed["total_rows"],
+            "detected_columns": parsed["detected_columns"],
+            "examples": parsed["examples"],
+        }
+
+    async def create_region(
+        self, *, user_id: str, name: str, geojson: dict[str, Any],
+    ) -> dict[str, Any]:
+        """(c) 지도 구획(Polygon GeoJSON)을 watch_target(source=region)으로 저장."""
+        await self.ensure_tables()
+        gtype = str((geojson or {}).get("type") or "")
+        if gtype not in ("Polygon", "MultiPolygon"):
+            raise ValueError("geojson.type은 Polygon 또는 MultiPolygon이어야 합니다.")
+        if not (geojson or {}).get("coordinates"):
+            raise ValueError("geojson.coordinates가 비어 있습니다.")
+        row = (await self.db.execute(text(
+            "INSERT INTO auction_watch_target(user_id,watch_source,region_geojson,label)"
+            " VALUES (:uid,'region',CAST(:gj AS JSONB),:label) RETURNING id,created_at"
+        ), {
+            "uid": user_id,
+            "gj": json.dumps(geojson, ensure_ascii=False, default=str),
+            "label": name,
+        })).first()
+        await self.db.commit()
+        return {
+            "id": row[0], "user_id": user_id, "watch_source": "region",
+            "label": name, "geojson": geojson, "created_at": self._iso(row[1]),
+        }
+
+    async def list_regions(self, *, user_id: str) -> list[dict[str, Any]]:
+        await self.ensure_tables()
+        result = await self.db.execute(text(
+            "SELECT id,label,region_geojson,created_at FROM auction_watch_target"
+            " WHERE user_id = :uid AND watch_source = 'region' ORDER BY created_at DESC"
+        ), {"uid": user_id})
+        return [{
+            "id": r["id"], "label": r["label"], "geojson": r["region_geojson"],
+            "created_at": self._iso(r["created_at"]),
+        } for r in result.mappings().all()]
+
+    async def delete_region(self, *, user_id: str, region_id: int) -> bool:
+        await self.ensure_tables()
+        result = await self.db.execute(text(
+            "DELETE FROM auction_watch_target"
+            " WHERE id = :id AND user_id = :uid AND watch_source = 'region'"
+        ), {"id": region_id, "uid": user_id})
+        await self.db.commit()
+        return (result.rowcount or 0) > 0
+
+    async def list_watch_targets(self, *, user_id: str) -> list[dict[str, Any]]:
+        """사용자의 모든 관심대상(3입력 통합) 조회."""
+        await self.ensure_tables()
+        result = await self.db.execute(text(
+            "SELECT id,watch_source,pnu,address,region_geojson,project_id,label,created_at"
+            " FROM auction_watch_target WHERE user_id = :uid ORDER BY created_at DESC"
+        ), {"uid": user_id})
+        return [{
+            "id": r["id"], "watch_source": r["watch_source"], "pnu": r["pnu"],
+            "address": r["address"], "geojson": r["region_geojson"],
+            "project_id": r["project_id"], "label": r["label"],
+            "created_at": self._iso(r["created_at"]),
+        } for r in result.mappings().all()]
+
+    async def _geocode_item(
+        self, *, item_id: int, address: str, vworld,
+    ) -> Optional[tuple[float, float]]:
+        """폴리곤 매칭 대상 물건만 지오코딩(VWorld)하고 좌표를 캐시한다(멱등).
+
+        성공 시 (lat,lng) 반환·캐시. 실패/무자료는 None + geocode_status='failed' 기록
+        (★가짜좌표 금지, 다음 실행 시 'failed'는 재시도 안 함 = 폭주 방지).
+        """
+        try:
+            res = await vworld.geocode_address(address)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("물건 지오코딩 실패 item=%s: %s", item_id, str(e)[:120])
+            res = None
+        if not res or not res.get("lat"):
+            await self.db.execute(text(
+                "UPDATE auction_items SET geocode_status='failed' WHERE id = :id"
+            ), {"id": item_id})
+            return None
+        lat, lng = float(res["lat"]), float(res["lon"])
+        await self.db.execute(text(
+            "UPDATE auction_items SET lat=:lat, lng=:lng, geocode_status='ok' WHERE id=:id"
+        ), {"lat": lat, "lng": lng, "id": item_id})
+        return lat, lng
+
+    async def monitor(
+        self, *, user_id: str, tenant_id: Optional[str], group_by: str = "source",
+        max_geocode: int = 60,
+    ) -> dict[str, Any]:
+        """관심대상(보유토지/Excel/구획) ↔ 캐시 물건 매칭 결과를 그룹핑해 반환한다.
+
+        - landschedule/excel: PNU 직접매칭 + 주소 텍스트 부분매칭(지오코딩 불필요).
+        - region: 물건 주소 → VWorld 지오코딩(캐시) → shapely point-in-polygon.
+          ★지오코딩은 좌표 미캐시 물건에 한해 max_geocode건까지만(폭주 방지).
+        매칭 물건엔 est_win(낙찰가능가)을 부착한다(무목업: 실물건만 대상).
+        """
+        from app.services.auction.monitor import address_matches, point_in_polygon
+
+        await self.ensure_tables()
+        # 보유토지 관심대상 최신화(자동 등록).
+        await self.sync_landschedule_targets(user_id=user_id, tenant_id=tenant_id)
+        targets = await self.list_watch_targets(user_id=user_id)
+        if not targets:
+            return {
+                "group_by": group_by, "groups": {}, "total_matched": 0,
+                "targets": 0, "data_source": "unavailable",
+                "note": "등록된 관심대상이 없습니다(보유토지/Excel업로드/지도구획).",
+            }
+
+        # 캐시 물건 전량 로드(매칭용 최소 컬럼 + 좌표).
+        items_rows = (await self.db.execute(text(
+            "SELECT id,source,item_no,kind,region_sido,region_sigungu,pnu,address,"
+            " appraisal_price,min_bid_price,fail_count,status,bid_start,bid_end,"
+            " data_source,lat,lng,geocode_status FROM auction_items"
+        ))).mappings().all()
+        items: list[dict[str, Any]] = [dict(r) for r in items_rows]
+
+        # source별 그룹 초기화.
+        groups: dict[str, list[dict[str, Any]]] = {
+            "landschedule": [], "excel": [], "region": [],
+        }
+        matched_ids: set[tuple[str, int]] = set()  # (source, item_id) 중복 방지.
+
+        # ── 1) PNU/주소 직접매칭(landschedule, excel) ──
+        pnu_index: dict[str, list[dict[str, Any]]] = {}
+        for it in items:
+            if it.get("pnu"):
+                pnu_index.setdefault(str(it["pnu"]), []).append(it)
+
+        for tgt in targets:
+            src = tgt["watch_source"]
+            if src not in ("landschedule", "excel"):
+                continue
+            tgt_pnu = tgt.get("pnu")
+            tgt_addr = tgt.get("address")
+            for it in items:
+                hit = False
+                if tgt_pnu and it.get("pnu") and str(it["pnu"]) == str(tgt_pnu):
+                    hit = True
+                elif tgt_addr and address_matches(tgt_addr, it.get("address")):
+                    hit = True
+                if hit:
+                    key = (src, int(it["id"]))
+                    if key in matched_ids:
+                        continue
+                    matched_ids.add(key)
+                    groups[src].append(self._monitor_row(it, tgt))
+
+        # ── 2) 폴리곤 매칭(region) — 좌표 캐시 우선, 부족분만 지오코딩 ──
+        region_targets = [t for t in targets if t["watch_source"] == "region" and t.get("geojson")]
+        if region_targets:
+            vworld = None
+            geocoded = 0
+            for it in items:
+                lat, lng = it.get("lat"), it.get("lng")
+                if (lat is None or lng is None) and it.get("geocode_status") != "failed":
+                    # 폴리곤 매칭 대상만(=region이 있을 때만) 지오코딩, 상한 적용.
+                    if geocoded < max_geocode and it.get("address"):
+                        if vworld is None:
+                            from app.services.external_api.vworld_service import VWorldService
+                            vworld = VWorldService()
+                        coords = await self._geocode_item(
+                            item_id=int(it["id"]), address=str(it["address"]),
+                            vworld=vworld,
+                        )
+                        geocoded += 1
+                        if coords:
+                            lat, lng = coords
+                if lat is None or lng is None:
+                    continue
+                for tgt in region_targets:
+                    if point_in_polygon(float(lat), float(lng), tgt["geojson"]):
+                        key = ("region", int(it["id"]))
+                        if key in matched_ids:
+                            continue
+                        matched_ids.add(key)
+                        groups["region"].append(self._monitor_row(it, tgt))
+            await self.db.commit()
+
+        total_matched = sum(len(v) for v in groups.values())
+        data_source = "onbid_live" if items else "unavailable"
+        out: dict[str, Any] = {
+            "group_by": "source",
+            "groups": groups,
+            "total_matched": total_matched,
+            "targets": len(targets),
+            "data_source": data_source,
+        }
+        if not items:
+            out["note"] = (
+                "캐시된 경공매 물건이 없습니다. /auction/sync 또는 /auction/monitor/run으로"
+                " 온비드 동기화 후 매칭됩니다(무목업)."
+            )
+        return out
+
+    def _monitor_row(
+        self, it: dict[str, Any], tgt: dict[str, Any],
+    ) -> dict[str, Any]:
+        """매칭 물건 1건을 응답용으로 정규화(+est_win +매칭근거)."""
+        row = {
+            "id": it.get("id"),
+            "source": it.get("source"),
+            "item_no": it.get("item_no"),
+            "kind": it.get("kind"),
+            "region_sido": it.get("region_sido"),
+            "region_sigungu": it.get("region_sigungu"),
+            "pnu": it.get("pnu"),
+            "address": it.get("address"),
+            "appraisal_price": it.get("appraisal_price"),
+            "min_bid_price": it.get("min_bid_price"),
+            "fail_count": it.get("fail_count"),
+            "status": it.get("status"),
+            "bid_start": self._iso(it.get("bid_start")),
+            "bid_end": self._iso(it.get("bid_end")),
+            "data_source": it.get("data_source"),
+            "watch_target_id": tgt.get("id"),
+            "watch_label": tgt.get("label"),
+            "project_id": tgt.get("project_id"),
+        }
+        return self._attach_est_win(row)
+
+    async def monitor_run(
+        self, *, user_id: str, tenant_id: Optional[str],
+        service_key: Optional[str],
+    ) -> dict[str, Any]:
+        """(cron/관리) 온비드 동기화 → 매칭 → 신규 물건 알림. 무목업.
+
+        키 기반 전국 조회수 순위(getInqRnkClg)로 캐시를 채운다(빠른 매칭용).
+        신규 매칭(이번 실행에 처음 매칭된 물건)은 _notify_match로 알림 기록(키 없으면 로깅).
+        """
+        await self.ensure_tables()
+        synced = 0
+        data_source = "unavailable"
+        # 캐시 적재: 조회수 순위(getInqRnkClg)는 감정가·주소 실데이터를 빠르게 제공.
+        client = OnbidClient(service_key)
+        try:
+            res = await client.fetch_ranking(rows=100)
+            items = res.get("items", [])
+            data_source = res.get("data_source", "unavailable")
+            if items:
+                synced = await self._upsert_items(items, data_source)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("monitor_run 온비드 적재 실패: %s", str(e)[:120])
+        finally:
+            await client.close()
+
+        # 기존 매칭 스냅샷(신규 판별용).
+        before = await self.monitor(user_id=user_id, tenant_id=tenant_id)
+        before_ids = {
+            int(r["id"]) for grp in before["groups"].values() for r in grp
+        }
+        after = await self.monitor(user_id=user_id, tenant_id=tenant_id)
+        after_rows = [r for grp in after["groups"].values() for r in grp]
+        new_rows = [r for r in after_rows if int(r["id"]) not in before_ids]
+        for r in new_rows:
+            self._notify_match(user_id, r.get("address"))
+
+        return {
+            "status": "ok",
+            "synced": synced,
+            "data_source": data_source,
+            "total_matched": after["total_matched"],
+            "new_matches": len(new_rows),
+            "groups_count": {k: len(v) for k, v in after["groups"].items()},
+        }
 
     # ──────────────────────────────────────────
     # 헬퍼
