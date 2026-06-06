@@ -70,6 +70,7 @@ from apps.api.routers import (
     gresb,
     kdx,
     lcc,
+    lease_ops,
     leases,
     maintenance,
     market_ai,
@@ -366,6 +367,7 @@ app.include_router(underwriting.router, prefix="/api/v1/underwriting", tags=["un
 app.include_router(climate.router, prefix="/api/v1/climate", tags=["climate"])
 app.include_router(compliance.router, prefix="/api/v1/compliance", tags=["compliance"])
 app.include_router(leases.router, prefix="/api/v1/leases", tags=["leases"])
+app.include_router(lease_ops.router, prefix="/api/v1/lease-ops", tags=["lease-ops"])
 app.include_router(esg.router, prefix="/api/v1/esg", tags=["esg"])
 app.include_router(marketing.router, prefix="/api/v1/marketing", tags=["marketing"])
 app.include_router(domain_agents.router, prefix="/api/v1/agents/domain", tags=["domain-agents"])
