@@ -70,6 +70,7 @@ class PublicDataRegistry:
             ("mois_disaster_risk", "api", "monthly"),     # 재해위험
             ("court_registry", "api", "daily"),           # 등기정보
             ("kepco_energy", "api", "monthly"),           # 전력사용량
+            ("molit_building_register", "api", "daily"),  # 건축HUB 건축물대장(표제부·세대/동/호·멸실/미준공)
 
             # 하드코딩 (수동 갱신 — 위험!)
             ("tax_acquisition_rates", "hardcoded", "yearly"),   # 취득세율

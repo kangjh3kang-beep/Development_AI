@@ -350,6 +350,14 @@ class LandInfoService:
             "zone_limits": None,
             "special_districts": [],
             "warnings": [],
+            # 분묘대장: 전국 단위 무료 공공API 미제공 → 정직 표기(가짜데이터 생성 금지)
+            # TODO(후속): 디지털트윈 항공/위성 레이어 판독으로 분묘 후보지 시각 식별 연계
+            "grave_registry": {
+                "available": False,
+                "reason": "전국 단위 무료 공공API 미제공",
+                "suggestion": "현장조사·항공/위성 판독(디지털트윈 항공레이어) 또는 지자체 개별 확인 권장",
+                "data_source": "unavailable",
+            },
         }
 
         # Phase 1: 기본 용도지역 분석 (기존 서비스 활용)
@@ -648,9 +656,20 @@ class LandInfoService:
         데이터 부재를 명확히 전달한다.
         """
         try:
+            # 총괄표제부(getBrBasisOulnInfo) — 면적·건폐율·용적률 권위 소스
             raw = await self.building.get_building_by_pnu(pnu)
-            if not raw:
+            # 표제부(getBrTitleInfo) — 세대수·동수·호수 정확 + 멸실/미준공 best-effort
+            title: dict[str, Any] | None = None
+            try:
+                title = await self.building.get_title_by_pnu(pnu)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("표제부 조회 실패(상세 통합): %s (%s)", pnu, str(e))
+                title = None
+
+            if not raw and not title:
                 return None
+            raw = raw or {}
+            title_present = bool(title)
 
             total_area = float(raw.get("total_area_sqm", 0) or 0)
             building_area = float(raw.get("building_area_sqm", 0) or 0)
@@ -662,6 +681,45 @@ class LandInfoService:
             structure = raw.get("structure", "") or ""
             use_approval_date = raw.get("use_approval_date", "") or ""
             building_name = raw.get("building_name", "") or ""
+            # 세대/가구/호/동: 총괄표제부 기본값
+            household_count = int(raw.get("household_count", 0) or 0)
+            family_count = int(raw.get("family_count", 0) or 0)
+            ho_count = int(raw.get("ho_count", 0) or 0)
+            dong_count = 0
+
+            # 표제부 우선 병합 (세대·동·호·사용승인일은 표제부가 더 정확)
+            is_demolished = False
+            demolition_date = ""
+            demolition_basis = ""
+            is_uncompleted = False
+            uncompleted_basis = ""
+            if title:
+                household_count = int(title.get("household_count", 0) or 0) or household_count
+                family_count = int(title.get("family_count", 0) or 0) or family_count
+                ho_count = int(title.get("ho_count", 0) or 0) or ho_count
+                dong_count = int(title.get("dong_count", 0) or 0)
+                if not ground_floors:
+                    ground_floors = int(title.get("ground_floors", 0) or 0)
+                if not underground_floors:
+                    underground_floors = int(title.get("underground_floors", 0) or 0)
+                if not total_area:
+                    total_area = float(title.get("total_area_sqm", 0) or 0)
+                if not main_purpose:
+                    main_purpose = title.get("main_purpose", "") or ""
+                if not structure:
+                    structure = title.get("structure", "") or ""
+                # 사용승인일: 표제부가 권위(총괄표제부는 공란 빈번)
+                title_use_apr = str(title.get("use_approval_date", "") or "")
+                if title_use_apr:
+                    use_approval_date = title_use_apr
+                if not building_name:
+                    building_name = title.get("building_name", "") or ""
+                # 멸실/미준공 (best-effort, 추정·확인필요)
+                is_demolished = bool(title.get("is_demolished", False))
+                demolition_date = str(title.get("demolition_date", "") or "")
+                demolition_basis = str(title.get("demolition_basis", "") or "")
+                is_uncompleted = bool(title.get("is_uncompleted", False))
+                uncompleted_basis = str(title.get("uncompleted_basis", "") or "")
 
             # 건축물대장에 건물명만 있고 상세 데이터가 모두 0인 경우 처리
             has_detail = (total_area > 0 or ground_floors > 0 or main_purpose)
@@ -690,6 +748,24 @@ class LandInfoService:
                 "address": raw.get("address", ""),
                 "road_address": raw.get("road_address", ""),
                 "data_status": data_status,
+                # ── 표제부 배선 신규 필드 (세대·가구·호·동) ──
+                "household_count": household_count,  # 세대수
+                "household_count_display": f"{household_count:,}세대" if household_count > 0 else "정보 미등록",
+                "family_count": family_count,  # 가구수
+                "ho_count": ho_count,  # 호수
+                "ho_count_display": f"{ho_count:,}호" if ho_count > 0 else "정보 미등록",
+                "dong_count": dong_count,  # 동수
+                "dong_count_display": f"{dong_count}개동" if dong_count > 0 else "정보 미등록",
+                "title_status": "정상" if title_present else "표제부 미조회",
+                # ── 멸실 (best-effort, 추정·확인필요) ──
+                "is_demolished": is_demolished,
+                "demolition_date": demolition_date,
+                "demolition_basis": demolition_basis,
+                # ── 미준공/공사중 (best-effort, 추정·확인필요) ──
+                "is_uncompleted": is_uncompleted,
+                "uncompleted_basis": uncompleted_basis,
+                # 데이터 출처: 실제 공공API 호출 결과 여부 (무목업)
+                "data_source": "molit_live" if (raw or title_present) else "unavailable",
             }
             return result
         except Exception as e:

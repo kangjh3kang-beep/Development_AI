@@ -102,6 +102,9 @@ class BuildingRegistryService:
 
         총괄표제부(getBrBasisOulnInfo)가 사용승인일을 비워두는 경우가 많아,
         노후도·세대수 산정에는 표제부를 사용한다.
+
+        멸실여부·미준공(공사중) 여부도 표제부 상태 필드로 best-effort 판정한다.
+        키 미설정/호출실패/무자료 시 None(가짜데이터 생성 금지).
         """
         if len(pnu) < 19 or not settings.MOLIT_API_KEY:
             return None
@@ -117,28 +120,70 @@ class BuildingRegistryService:
                 resp.raise_for_status()
                 items = (resp.json().get("response", {}).get("body", {})
                          .get("items", {}) or {}).get("item")
-            if not items:
-                return None
-            rows = items if isinstance(items, list) else [items]
-            # 주된 동(연면적 최대) 선택
-            def _f(x, k):
-                try:
-                    return float(x.get(k, 0) or 0)
-                except (TypeError, ValueError):
-                    return 0.0
-            main = max(rows, key=lambda x: _f(x, "totArea"))
-            return {
-                "building_name": main.get("bldNm", ""),
-                "use_approval_date": str(main.get("useAprDay", "") or ""),
-                "structure": main.get("strctCdNm", ""),
-                "main_purpose": main.get("mainPurpsCdNm", ""),
-                "ground_floors": int(_f(main, "grndFlrCnt")),
-                "total_area_sqm": _f(main, "totArea"),
-                "household_count": int(_f(main, "hhldCnt")),
-                "ho_count": int(_f(main, "hoCnt")),
-                "family_count": int(_f(main, "fmlyCnt")),
-                "dong_count": len(rows),
-            }
+            return self._parse_title_items(items)
         except Exception as e:  # noqa: BLE001
             logger.warning("표제부 조회 실패: %s (%s)", pnu, str(e))
             return None
+
+    @staticmethod
+    def _parse_title_items(items: Any) -> dict[str, Any] | None:
+        """getBrTitleInfo item(s)를 표제부 상세 dict로 파싱(순수함수, 외부호출 없음).
+
+        멸실여부·미준공여부를 확실히 제공되는 필드만으로 best-effort 판정한다.
+        - 멸실: regstrKindCdNm/regstrGbCdNm 등에 '멸실' 포함, 또는 별도 상태표기.
+          건축HUB 표제부는 멸실 전용 불리언을 제공하지 않으므로 텍스트 기반 추정.
+        - 미준공: 사용승인일(useAprDay) 공란 = 사용승인 미완료(공사중/미준공) 추정.
+        무자료(items 없음) → None.
+        """
+        if not items:
+            return None
+        rows = items if isinstance(items, list) else [items]
+
+        def _f(x: dict, k: str) -> float:
+            try:
+                return float(x.get(k, 0) or 0)
+            except (TypeError, ValueError):
+                return 0.0
+
+        # 주된 동(연면적 최대) 선택
+        main = max(rows, key=lambda x: _f(x, "totArea"))
+        use_approval_date = str(main.get("useAprDay", "") or "").strip()
+
+        # 멸실 best-effort: 상태/대장종류 텍스트에 '멸실' 포함 여부
+        status_text = " ".join(
+            str(main.get(k, "") or "")
+            for k in ("regstrKindCdNm", "regstrGbCdNm", "bldNm", "etcPurps")
+        )
+        is_demolished = "멸실" in status_text
+        # 멸실일: 건축HUB 표제부에 전용 필드가 없어 best-effort(불명 시 빈값)
+        demolition_date = str(main.get("crtnDay", "") or "").strip() if is_demolished else ""
+
+        # 미준공 best-effort: 사용승인일 공란 → 사용승인 미완료(공사중/미준공) 추정
+        is_uncompleted = (not use_approval_date) and (not is_demolished)
+
+        return {
+            "building_name": main.get("bldNm", ""),
+            "use_approval_date": use_approval_date,
+            "structure": main.get("strctCdNm", ""),
+            "main_purpose": main.get("mainPurpsCdNm", ""),
+            "ground_floors": int(_f(main, "grndFlrCnt")),
+            "underground_floors": int(_f(main, "ugrndFlrCnt")),
+            "total_area_sqm": _f(main, "totArea"),
+            "household_count": int(_f(main, "hhldCnt")),
+            "ho_count": int(_f(main, "hoCnt")),
+            "family_count": int(_f(main, "fmlyCnt")),
+            "dong_count": len(rows),
+            # 멸실(best-effort, 표제부 텍스트 기반 추정 — 확인필요)
+            "is_demolished": is_demolished,
+            "demolition_date": demolition_date,
+            "demolition_basis": (
+                "표제부 상태텍스트 '멸실' 감지(추정·확인필요)"
+                if is_demolished else ""
+            ),
+            # 미준공(best-effort, 사용승인일 부재 기반 추정 — 확인필요)
+            "is_uncompleted": is_uncompleted,
+            "uncompleted_basis": (
+                "표제부 사용승인일 부재 → 미준공(공사중) 추정·확인필요"
+                if is_uncompleted else ""
+            ),
+        }
