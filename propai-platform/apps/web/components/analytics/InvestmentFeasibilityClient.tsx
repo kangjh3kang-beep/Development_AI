@@ -140,6 +140,7 @@ export function InvestmentFeasibilityClient() {
   const designData = useProjectContextStore((s) => s.designData);
   const costData = useProjectContextStore((s) => s.costData);
   const projectId = useProjectContextStore((s) => s.projectId);
+  const isStale = useProjectContextStore((s) => s.isStale);
 
   const [form, setForm] = useState<Form>(EMPTY);
   const [autoFields, setAutoFields] = useState<Set<keyof Form>>(new Set());
@@ -148,6 +149,8 @@ export function InvestmentFeasibilityClient() {
   const [result, setResult] = useState<CalcResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
+  // 마지막 계산에 사용한 공사비(원) — 공사비 변경 감지(stale)용
+  const [costAtCalc, setCostAtCalc] = useState<number | null>(null);
 
   const set = useCallback((k: keyof Form, v: number | string) => {
     setForm((f) => ({ ...f, [k]: v }));
@@ -199,10 +202,30 @@ export function InvestmentFeasibilityClient() {
         useMock: false, timeoutMs: 90000,
       });
       setResult(r);
+      // 이번 계산에 반영된 공사비를 기록(이후 공사비 변경 시 stale 감지)
+      setCostAtCalc(costData?.totalConstructionCostWon ?? null);
     } catch {
       setErr("수지 계산에 실패했습니다. 입력값을 확인 후 다시 시도하세요.");
     } finally { setLoading(false); }
-  }, [form, pickerAddr, siteAnalysis]);
+  }, [form, pickerAddr, siteAnalysis, costData]);
+
+  // 공사비→수지 stale 판정: 이미 계산된 결과가 있고, 공사비가 수지보다 최신이거나
+  // 직전 계산에 쓰인 공사비와 현재 공사비가 다르면 재계산 필요.
+  const costStale = useMemo(() => {
+    if (!result) return false;
+    const cur = costData?.totalConstructionCostWon ?? null;
+    if (cur == null) return false;
+    if (isStale("feasibility")) return true;
+    return costAtCalc != null && cur !== costAtCalc;
+  }, [result, costData, costAtCalc, isStale]);
+
+  // 마운트 상태에서 공사비가 변경되면 1회 자동 재계산(무한루프 방지: costStale가 곧 false가 됨).
+  useEffect(() => {
+    if (costStale && !loading) {
+      void calc();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [costStale]);
 
   // 파생 지표: 자기자본수익률(ROE), 타인자본, 실효 LTV
   const derived = useMemo(() => {
@@ -291,6 +314,13 @@ export function InvestmentFeasibilityClient() {
           </div>
         </div>
       </div>
+
+      {costStale && (
+        <button onClick={calc} disabled={loading}
+          className="flex items-center gap-2 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-2.5 text-left text-xs font-bold text-amber-400 hover:bg-amber-500/15 disabled:opacity-50">
+          🔄 공사비가 변경되었습니다 — 클릭하면 변경된 공사비({fmtKrw(costData?.totalConstructionCostWon ?? 0)})로 수지를 재계산합니다.
+        </button>
+      )}
 
       <div className="flex items-center gap-3">
         <button onClick={calc} disabled={loading}

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
+import { useMemo } from "react";
 import { apiClient } from "@/lib/api-client";
 import { useCadStore } from "@/store/use-cad-store";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
@@ -81,8 +82,10 @@ export function CadCompliancePanel({ projectId }: CadCompliancePanelProps) {
   const floorCount = useCadStore((s) => s.floorCount);
   const buildingHeightM = useCadStore((s) => s.buildingHeightM);
 
-  // 부지분석 데이터에서 대지면적/용도지역 가져오기
+  // 부지분석 데이터에서 대지면적/용도지역 가져오기(컨텍스트 SSOT 우선)
   const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
+  const updateComplianceData = useProjectContextStore((s) => s.updateComplianceData);
+  const isStale = useProjectContextStore((s) => s.isStale);
   const siteAreaFromContext = siteAnalysis?.landAreaSqm ?? null;
   const zoneCodeFromContext = siteAnalysis?.zoneCode ?? null;
 
@@ -142,12 +145,19 @@ export function CadCompliancePanel({ projectId }: CadCompliancePanelProps) {
       });
       setCheckResult(result);
       setCorrection(null);
+      // write-back: 규제 검토 결과를 컨텍스트(SSOT)에 저장 → 다운스트림 전파
+      updateComplianceData({
+        bcrCompliant: !result.violations.some((v) => v.item.includes("건폐율") || v.item.includes("bcr")),
+        farCompliant: !result.violations.some((v) => v.item.includes("용적률") || v.item.includes("far")),
+        heightCompliant: !result.violations.some((v) => v.item.includes("높이") || v.item.includes("height")),
+        violations: result.violations.map((v) => `${v.item}: ${v.current_value.toFixed(1)} (한도 ${v.limit_value.toFixed(1)})`),
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : "법규 검증에 실패했습니다.");
     } finally {
       setChecking(false);
     }
-  }, [calculateBuildingFootprint, getSiteArea, floorCount, buildingHeightM, maxBcr, maxFar, maxHeightM]);
+  }, [calculateBuildingFootprint, getSiteArea, floorCount, buildingHeightM, maxBcr, maxFar, maxHeightM, updateComplianceData]);
 
   const handleAutoCorrect = useCallback(async () => {
     if (!checkResult || checkResult.is_compliant) return;
@@ -188,6 +198,11 @@ export function CadCompliancePanel({ projectId }: CadCompliancePanelProps) {
   }, [correction]);
 
   const hasViolations = checkResult && !checkResult.is_compliant;
+  // 설계/부지 변경 후 규제 검토가 갱신 안 됐으면 재검토 필요(stale).
+  const complianceStale = useMemo(
+    () => !!checkResult && isStale("compliance"),
+    [checkResult, isStale],
+  );
 
   return (
     <Card className="border-[var(--line)] bg-[var(--surface)]">
@@ -206,8 +221,13 @@ export function CadCompliancePanel({ projectId }: CadCompliancePanelProps) {
 
         <div className="flex flex-col gap-2">
           <h3 className="text-sm font-bold text-[var(--text-primary)]">법규 검증</h3>
+          {complianceStale && (
+            <p className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] font-semibold text-amber-500">
+              🔄 설계/부지가 변경되었습니다 — 법규 검증을 다시 실행해 최신 설계로 재검토하세요.
+            </p>
+          )}
           <Button onClick={handleCheck} disabled={checking} className="w-full justify-center">
-            {checking ? "검증 중..." : "법규 검증 실행"}
+            {checking ? "검증 중..." : complianceStale ? "법규 재검증 실행" : "법규 검증 실행"}
           </Button>
         </div>
 

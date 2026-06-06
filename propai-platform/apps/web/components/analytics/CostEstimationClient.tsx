@@ -16,6 +16,7 @@ import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { NumberInput } from "@/components/common/NumberInput";
 import { apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { getZoningSpec } from "@/lib/kr-building-regulations";
 import { VerificationBadge } from "@/components/common/VerificationBadge";
 import { ExpertPanelCard } from "@/components/common/ExpertPanelCard";
 
@@ -83,15 +84,30 @@ export function CostEstimationClient() {
   const [editedGfa, setEditedGfa] = useState(false);
 
   const hasDesign = !!designData?.totalGfaSqm;
+  const [gfaFromSite, setGfaFromSite] = useState(false);
 
-  // 건축개요 자동 로드(수정한 GFA는 보존)
+  // 부지면적 + 용적률로 GFA 폴백 추정(설계 미완 시 초기값 제안)
+  const estimatedGfaFromSite = useMemo(() => {
+    const land = siteAnalysis?.landAreaSqm ?? 0;
+    if (land <= 0) return 0;
+    const spec = siteAnalysis?.zoneCode ? getZoningSpec(siteAnalysis.zoneCode) : null;
+    const far = spec?.floorAreaRatioMax ?? 0;
+    if (far <= 0) return 0;
+    return Math.round((land * far) / 100);
+  }, [siteAnalysis?.landAreaSqm, siteAnalysis?.zoneCode]);
+
+  // 건축개요 자동 로드(수정한 GFA는 보존). 설계가 있으면 설계 GFA, 없으면 부지×용적률 폴백.
   useEffect(() => {
     if (!projectId) return;
-    if (designData?.totalGfaSqm && !editedGfa) { setGfa(Math.round(designData.totalGfaSqm)); setAutoGfa(true); }
+    if (designData?.totalGfaSqm && !editedGfa) {
+      setGfa(Math.round(designData.totalGfaSqm)); setAutoGfa(true); setGfaFromSite(false);
+    } else if (!designData?.totalGfaSqm && estimatedGfaFromSite > 0 && !editedGfa) {
+      setGfa(estimatedGfaFromSite); setAutoGfa(true); setGfaFromSite(true);
+    }
     if (designData?.floorCount) setFloorsAbove(designData.floorCount);
     if (designData?.buildingType) { setBt(mapBuildingType(designData.buildingType)); setAutoBt(true); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId, designData]);
+  }, [projectId, designData, estimatedGfaFromSite]);
 
   const calc = useCallback(async () => {
     if (!gfa || gfa <= 0) { setErr("연면적(GFA)을 입력하세요(프로젝트 선택 시 자동 반영)."); return; }
@@ -137,6 +153,9 @@ export function CostEstimationClient() {
 
       {hasDesign && (
         <p className="-mt-3 text-[11px] text-emerald-400">🏗 설계(건축개요) 연동됨 — 도면/BIM 완성 시 항목별 정밀 적산으로 정확도가 향상됩니다.</p>
+      )}
+      {!hasDesign && gfaFromSite && !editedGfa && (
+        <p className="-mt-3 text-[11px] text-amber-400">📐 설계 미완 — 부지면적 × 용적률로 연면적(GFA)을 추정해 초기값으로 제안합니다. 설계 완료 시 정밀 적산으로 자동 정확화됩니다.</p>
       )}
 
       {/* 건축개요 입력 */}

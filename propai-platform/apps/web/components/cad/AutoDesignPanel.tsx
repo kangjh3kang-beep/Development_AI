@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useCadStore } from "@/store/use-cad-store";
+import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { NumberInput } from "@/components/common/NumberInput";
 import type {
   AutoDesignRequest,
@@ -24,6 +25,22 @@ const UNIT_TYPE_OPTIONS = ["59A", "74A", "84A", "114A"];
 
 const BUILDING_USE_OPTIONS = ["공동주택", "근린생활시설", "업무시설", "오피스텔"];
 
+/** 컨텍스트 용도지역명(한글) → 로컬 엔진 단축코드 매핑(SSOT 우선 읽기). */
+function mapZoneToCode(zone?: string | null): string | null {
+  const s = (zone || "").toString();
+  if (!s) return null;
+  if (/제1종일반주거/.test(s)) return "1R";
+  if (/제2종일반주거/.test(s)) return "2R";
+  if (/제3종일반주거/.test(s)) return "3R";
+  if (/준주거/.test(s)) return "QR";
+  if (/일반상업/.test(s)) return "GC";
+  if (/근린상업/.test(s)) return "NC";
+  if (/준공업/.test(s)) return "QI";
+  // 이미 단축코드면 그대로 통과
+  if (/^(1R|2R|3R|GC|NC|QI|QR)$/.test(s)) return s;
+  return null;
+}
+
 type AutoDesignPanelProps = {
   projectId: string;
 };
@@ -31,9 +48,20 @@ type AutoDesignPanelProps = {
 export function AutoDesignPanel({ projectId }: AutoDesignPanelProps) {
   const loadDesignPayload = useCadStore((s) => s.loadDesignPayload);
 
+  // 컨텍스트(SSOT) 우선 읽기 — 같은 필지 다른 용도지역/면적 방지
+  const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
+  const updateDesignData = useProjectContextStore((s) => s.updateDesignData);
+  const markStageComplete = useProjectContextStore((s) => s.markStageComplete);
+  const ctxArea = siteAnalysis?.landAreaSqm ?? null;
+  const ctxZone = mapZoneToCode(siteAnalysis?.zoneCode);
+
   // 폼 상태
   const [siteArea, setSiteArea] = useState(500);
   const [zoneCode, setZoneCode] = useState("2R");
+  const [editedArea, setEditedArea] = useState(false);
+  const [editedZone, setEditedZone] = useState(false);
+  const [autoArea, setAutoArea] = useState(false);
+  const [autoZone, setAutoZone] = useState(false);
   const [buildingUse, setBuildingUse] = useState("공동주택");
   const [unitTypes, setUnitTypes] = useState<string[]>(["84A"]);
   const [floorHeight, setFloorHeight] = useState(3.0);
@@ -43,6 +71,16 @@ export function AutoDesignPanel({ projectId }: AutoDesignPanelProps) {
     east: 1.5,
     west: 1.5,
   });
+
+  // 컨텍스트값을 폼에 우선 주입(사용자가 수정한 값은 보존).
+  useEffect(() => {
+    if (ctxArea != null && ctxArea > 0 && !editedArea) {
+      setSiteArea(Math.round(ctxArea)); setAutoArea(true);
+    }
+    if (ctxZone && !editedZone) {
+      setZoneCode(ctxZone); setAutoZone(true);
+    }
+  }, [ctxArea, ctxZone, editedArea, editedZone]);
 
   // 결과 상태
   const [result, setResult] = useState<AutoDesignResponse | null>(null);
@@ -73,12 +111,21 @@ export function AutoDesignPanel({ projectId }: AutoDesignPanelProps) {
       setResult(data);
       // 자동으로 캔버스에 적용
       loadDesignPayload(data.design_payload);
+      // write-back: 설계 결과를 컨텍스트(SSOT)에 저장 → 공사비·수지·규제 다운스트림 전파
+      updateDesignData({
+        totalGfaSqm: data.summary.total_floor_area_sqm,
+        floorCount: data.summary.num_floors,
+        buildingType: buildingUse,
+        bcr: data.summary.bcr_percent,
+        far: data.summary.far_percent,
+      });
+      markStageComplete("design");
     } catch (e) {
       setError(e instanceof Error ? e.message : "설계 생성 실패");
     } finally {
       setLoading(false);
     }
-  }, [siteArea, zoneCode, buildingUse, unitTypes, floorHeight, setback, loadDesignPayload]);
+  }, [siteArea, zoneCode, buildingUse, unitTypes, floorHeight, setback, loadDesignPayload, updateDesignData, markStageComplete]);
 
   const handleApply = useCallback(() => {
     if (!result) return;
@@ -104,20 +151,24 @@ export function AutoDesignPanel({ projectId }: AutoDesignPanelProps) {
       {/* 입력 폼 */}
       <div className="grid gap-2 text-xs">
         <label className="flex items-center justify-between gap-2">
-          <span className="text-[var(--text-secondary)]">대지면적 (m²)</span>
+          <span className="flex items-center gap-1 text-[var(--text-secondary)]">대지면적 (m²)
+            {autoArea && !editedArea && <span className="rounded bg-emerald-500/15 px-1 text-[9px] font-bold text-emerald-400">자동</span>}
+          </span>
           <NumberInput
             allowDecimal
             value={siteArea}
-            onChange={(n) => setSiteArea(n ?? 0)}
+            onChange={(n) => { setSiteArea(n ?? 0); setEditedArea(true); }}
             className="w-20 rounded-lg border border-[var(--line)] bg-[var(--surface-soft)] px-2 py-1 text-right text-sm"
           />
         </label>
 
         <label className="flex items-center justify-between gap-2">
-          <span className="text-[var(--text-secondary)]">용도지역</span>
+          <span className="flex items-center gap-1 text-[var(--text-secondary)]">용도지역
+            {autoZone && !editedZone && <span className="rounded bg-emerald-500/15 px-1 text-[9px] font-bold text-emerald-400">자동</span>}
+          </span>
           <select
             value={zoneCode}
-            onChange={(e) => setZoneCode(e.target.value)}
+            onChange={(e) => { setZoneCode(e.target.value); setEditedZone(true); }}
             className="rounded-lg border border-[var(--line)] bg-[var(--surface-soft)] px-2 py-1 text-sm"
             aria-label="용도지역"
           >
