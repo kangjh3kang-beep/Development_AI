@@ -57,12 +57,82 @@ type BuildingDetail = {
   underground_floors: number;
   use_approval_date: string;
   building_name: string;
+  // 표제부 대장 데이터(표시 전용, 백엔드 building_detail에 동봉되면 자동 노출)
+  household_count?: number;
+  household_count_display?: string;
+  family_count?: number;
+  ho_count?: number;
+  ho_count_display?: string;
+  dong_count?: number;
+  dong_count_display?: string;
+  title_status?: string;
+  is_demolished?: boolean;
+  demolition_date?: string;
+  demolition_basis?: string;
+  is_uncompleted?: boolean;
+  uncompleted_basis?: string;
+  data_source?: string;
 };
+
+// 실효용적률 계층(법정범위→조례→계획상한→인센티브) 상세 메타
+type FarBasisDetail = {
+  법정범위?: { min_far_pct?: number | null; max_far_pct?: number | null; max_bcr_pct?: number | null } | null;
+  조례값?: { far_pct?: number | null; bcr_pct?: number | null; confirmed?: boolean } | null;
+  계획상한?: { far_pct?: number | null; bcr_pct?: number | null } | null;
+  인센티브?: { relaxation_ratio_pct?: number | null } | null;
+  최종근거?: string | null;
+  데이터출처?: string[] | null;
+  조례확인필요?: boolean;
+};
+
+type EffectiveFarData = {
+  effective_far_pct?: number | null;
+  effective_bcr_pct?: number | null;
+  far_basis?: string | null;
+  far_basis_detail?: FarBasisDetail | null;
+  ordinance_confirmed?: boolean;
+  legal_min_far_pct?: number | null;
+  legal_max_far_pct?: number | null;
+};
+
+// 종상향/종변경 잠재 시나리오(예상치 — 현행과 분리)
+type UpzoningScenario = {
+  path?: string;
+  target_zone?: string;
+  expected_far_pct_low?: number | null;
+  expected_far_pct_high?: number | null;
+  expected_far_source?: string;
+  conditions?: string[];
+  feasibility?: string;
+  feasibility_reason?: string;
+  legal_basis?: string;
+  timeline_est?: string;
+  caveats?: string[];
+  is_estimate?: boolean;
+};
+
+type PotentialFarRange = { min_pct?: number | null; max_pct?: number | null; note?: string } | null;
+
+type UpzoningData = {
+  current_zone?: string;
+  scenarios?: UpzoningScenario[];
+  potential_far_range?: PotentialFarRange;
+  summary?: string;
+  disclaimer?: string;
+} | null;
 
 type L3SiteData = {
   nearby_transactions?: { apt?: NearbyTransactionSummary; land?: NearbyTransactionSummary } | null;
   infrastructure?: InfrastructureData | null;
   building_detail?: BuildingDetail | null;
+  // 실효용적률 계층 / 종상향 / 분묘 (백엔드 종합응답에 포함 시 자동 노출, 없으면 정직 미표시)
+  effective_far?: EffectiveFarData | null;
+  zone_limits?: Record<string, unknown> | null;
+  upzoning?: UpzoningData;
+  upzoning_scenarios?: UpzoningScenario[] | null;
+  potential_far_range?: PotentialFarRange;
+  upzoning_interpretation?: string | null;
+  grave_registry?: { available?: boolean; reason?: string; suggestion?: string; data_source?: string } | null;
 };
 
 function formatPriceKr(amount10k: number): string {
@@ -88,17 +158,258 @@ function L3EnhancedCards({
   const tx = l3Data?.nearby_transactions;
   const infra = l3Data?.infrastructure;
   const bldg = l3Data?.building_detail;
+  const effFar = l3Data?.effective_far;
+  const zoneLimits = l3Data?.zone_limits;
+  const upzoning = l3Data?.upzoning;
+  const upScenarios = upzoning?.scenarios ?? l3Data?.upzoning_scenarios ?? [];
+  const potentialRange = upzoning?.potential_far_range ?? l3Data?.potential_far_range ?? null;
+  const upInterp = l3Data?.upzoning_interpretation;
+  const grave = l3Data?.grave_registry;
 
-  const hasAnyData = tx || infra || bldg;
+  // 실효용적률 계층 카드 노출 조건: 실효용적률 메타 또는 zone_limits 보유
+  const hasFarTier = Boolean(effFar?.far_basis_detail || effFar?.effective_far_pct != null || zoneLimits);
+  const hasUpzoning = upScenarios.length > 0 || Boolean(upInterp) || Boolean(potentialRange);
+  const hasGraveInfo = grave != null && grave.available === false;
+
+  const hasAnyData = tx || infra || bldg || hasFarTier || hasUpzoning || hasGraveInfo;
   if (!hasAnyData) return null;
+
+  // 헬퍼: 용적률 퍼센트 안전 포맷
+  const pct = (v: number | null | undefined): string => (v == null ? "—" : `${Math.round(v)}%`);
+  // far_basis_detail에서 zone_limits로 폴백한 법정/조례 추출(데이터·호출 무변경, 표시만)
+  const fbd = effFar?.far_basis_detail;
+  const legalMin = fbd?.법정범위?.min_far_pct ?? effFar?.legal_min_far_pct ?? null;
+  const legalMax =
+    fbd?.법정범위?.max_far_pct ??
+    effFar?.legal_max_far_pct ??
+    (typeof zoneLimits?.["max_far_pct"] === "number" ? (zoneLimits["max_far_pct"] as number) : null);
+  const ordinanceFarVal =
+    fbd?.조례값?.far_pct ??
+    (typeof zoneLimits?.["ordinance_far_pct"] === "number" ? (zoneLimits["ordinance_far_pct"] as number) : null);
+  const planCeil = fbd?.계획상한?.far_pct ?? null;
+  const incentiveRatio = fbd?.인센티브?.relaxation_ratio_pct ?? null;
+  const ordinanceConfirmed =
+    effFar?.ordinance_confirmed ?? fbd?.조례값?.confirmed ?? (ordinanceFarVal != null);
+  const farFinalBasis =
+    fbd?.최종근거 ??
+    effFar?.far_basis ??
+    (typeof zoneLimits?.["ordinance_source"] === "string" ? (zoneLimits["ordinance_source"] as string) : null);
+  const farSources =
+    fbd?.데이터출처 ??
+    (typeof zoneLimits?.["ordinance_legal_basis"] === "string" && zoneLimits["ordinance_legal_basis"]
+      ? [zoneLimits["ordinance_legal_basis"] as string]
+      : null);
+  const ordinanceNeedCheck = fbd?.조례확인필요 ?? !ordinanceConfirmed;
+  // 가능성 등급 → 의미색(상=success/중=warning/하=muted)
+  const feasibilityStyle = (f?: string): string => {
+    if (f === "상") return "bg-emerald-500/10 text-emerald-400 border-emerald-500/30";
+    if (f === "중") return "bg-amber-500/10 text-amber-400 border-amber-500/30";
+    return "bg-[var(--surface-muted)] text-[var(--text-hint)] border-[var(--line)]";
+  };
 
   return (
     <motion.div
       initial={{ opacity: 0, y: 30 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: 0.4 }}
-      className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"
+      className="flex flex-col gap-6"
     >
+      {/* ① 실효용적률 계층 카드 (법정범위 → 조례 적용 → 계획상한 → 인센티브) */}
+      {hasFarTier && (
+        <div className="rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-strong)] p-6 shadow-[var(--shadow-xl)]">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-500/10 text-indigo-400">
+              <Icons.Search width={20} height={20} />
+            </div>
+            <div className="flex-1">
+              <h4 className="text-sm font-black text-[var(--text-primary)]">실효 용적률 산정 계층</h4>
+              <p className="text-[9px] font-bold text-indigo-400 uppercase tracking-widest">법정범위 → 조례 → 계획상한 → 인센티브</p>
+            </div>
+            {ordinanceNeedCheck && (
+              <span className="shrink-0 rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-[8px] font-black uppercase tracking-wider text-amber-400">
+                조례 확인 필요
+              </span>
+            )}
+          </div>
+
+          {/* 계층 흐름 */}
+          <div className="flex flex-col sm:flex-row sm:items-stretch gap-2">
+            {/* 법정범위 */}
+            <div className="flex-1 rounded-xl border border-[var(--line)] bg-[var(--surface-muted)] p-4">
+              <p className="text-[8px] font-black text-[var(--text-hint)] uppercase tracking-wider mb-1">① 법정범위 (국토계획법)</p>
+              <p className="text-base font-black text-[var(--text-primary)]">
+                {legalMin != null && legalMax != null ? `${pct(legalMin)} ~ ${pct(legalMax)}` : pct(legalMax)}
+              </p>
+            </div>
+            <div className="hidden sm:flex items-center text-[var(--text-hint)] font-black">→</div>
+            {/* 조례 적용값 */}
+            <div className={`flex-1 rounded-xl border p-4 ${ordinanceConfirmed ? "border-emerald-500/30 bg-emerald-500/5" : "border-dashed border-[var(--line)] bg-[var(--surface-muted)]"}`}>
+              <p className="text-[8px] font-black text-[var(--text-hint)] uppercase tracking-wider mb-1">② 조례 적용 (지자체)</p>
+              <p className={`text-base font-black ${ordinanceConfirmed ? "text-emerald-400" : "text-[var(--text-hint)] italic"}`}>
+                {ordinanceConfirmed && ordinanceFarVal != null ? pct(ordinanceFarVal) : "확인 필요"}
+              </p>
+            </div>
+            {/* 계획상한(있을 때만) */}
+            {planCeil != null && (
+              <>
+                <div className="hidden sm:flex items-center text-[var(--text-hint)] font-black">→</div>
+                <div className="flex-1 rounded-xl border border-blue-500/30 bg-blue-500/5 p-4">
+                  <p className="text-[8px] font-black text-[var(--text-hint)] uppercase tracking-wider mb-1">③ 계획상한 (지구단위/도시군관리)</p>
+                  <p className="text-base font-black text-blue-400">{pct(planCeil)}</p>
+                </div>
+              </>
+            )}
+            {/* 인센티브(있을 때만) */}
+            {incentiveRatio != null && (
+              <>
+                <div className="hidden sm:flex items-center text-[var(--text-hint)] font-black">→</div>
+                <div className="flex-1 rounded-xl border border-purple-500/30 bg-purple-500/5 p-4">
+                  <p className="text-[8px] font-black text-[var(--text-hint)] uppercase tracking-wider mb-1">④ 인센티브 완화율</p>
+                  <p className="text-base font-black text-purple-400">+{Math.round(incentiveRatio)}%</p>
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* 최종 실효용적률 + 근거/출처 */}
+          <div className="mt-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 rounded-xl border border-[var(--accent-strong)]/20 bg-[var(--accent-soft)] p-4">
+            <div>
+              <p className="text-[8px] font-black text-[var(--text-hint)] uppercase tracking-wider mb-0.5">최종 실효 용적률</p>
+              <p className="text-xl font-black text-[var(--accent-strong)]">
+                {effFar?.effective_far_pct != null ? pct(effFar.effective_far_pct) : (ordinanceConfirmed && ordinanceFarVal != null ? pct(ordinanceFarVal) : pct(legalMax))}
+              </p>
+            </div>
+            {farFinalBasis && (
+              <p className="text-[10px] font-bold text-[var(--text-secondary)] sm:text-right max-w-md">근거: {farFinalBasis}</p>
+            )}
+          </div>
+          {farSources && farSources.length > 0 && (
+            <p className="mt-2 text-[9px] text-[var(--text-hint)]">데이터 출처: {farSources.join(" · ")}</p>
+          )}
+        </div>
+      )}
+
+      {/* ② 종상향/종변경 잠재 시나리오 카드 (현행 vs 잠재 — 예상치 명확 분리) */}
+      {hasUpzoning && (
+        <div className="rounded-2xl border border-purple-500/20 bg-[var(--surface-strong)] p-6 shadow-[var(--shadow-xl)]">
+          <div className="flex items-center gap-3 mb-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-purple-500/10 text-purple-400">
+              <Icons.Sparkles width={20} height={20} />
+            </div>
+            <div>
+              <h4 className="text-sm font-black text-[var(--text-primary)]">종상향 · 종변경 잠재 시나리오</h4>
+              <p className="text-[9px] font-bold text-purple-400 uppercase tracking-widest">현행과 분리된 예상치</p>
+            </div>
+          </div>
+
+          {/* ★예상치 고지 */}
+          <div className="mb-4 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3">
+            <p className="text-[11px] font-black text-amber-400 leading-relaxed">
+              예상치 — 도시·군관리계획 결정 및 인허가를 전제로 한 잠재 시나리오이며, 실현을 보장하지 않습니다.
+            </p>
+          </div>
+
+          {/* 현행 vs 잠재 2계층 시각분리 */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+            <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-muted)] p-4">
+              <p className="text-[8px] font-black text-[var(--text-hint)] uppercase tracking-wider mb-1">현행 (확정)</p>
+              <p className="text-sm font-black text-[var(--text-primary)]">{upzoning?.current_zone || "현행 용도지역"}</p>
+              <p className="text-xs font-bold text-[var(--text-secondary)] mt-0.5">
+                실효 용적률 {effFar?.effective_far_pct != null ? pct(effFar.effective_far_pct) : (legalMax != null ? `~${pct(legalMax)}` : "—")}
+              </p>
+            </div>
+            <div className="rounded-xl border border-dashed border-purple-500/40 bg-purple-500/5 p-4">
+              <p className="text-[8px] font-black text-purple-400/70 uppercase tracking-wider mb-1">잠재 (예상치 · 미확정)</p>
+              <p className="text-sm font-black text-purple-400">
+                {potentialRange?.min_pct != null && potentialRange?.max_pct != null
+                  ? `예상 용적률 ${pct(potentialRange.min_pct)} ~ ${pct(potentialRange.max_pct)}`
+                  : "잠재 시나리오 검토"}
+              </p>
+              {potentialRange?.note && (
+                <p className="text-[10px] font-bold text-[var(--text-secondary)] mt-0.5">{potentialRange.note}</p>
+              )}
+            </div>
+          </div>
+
+          {/* 시나리오 리스트 */}
+          {upScenarios.length > 0 && (
+            <div className="space-y-2">
+              {upScenarios.map((sc, i) => (
+                <div key={i} className="rounded-xl border border-[var(--line)] bg-[var(--surface-muted)] p-4">
+                  <div className="flex items-start justify-between gap-3 mb-2">
+                    <div className="flex-1">
+                      <p className="text-xs font-black text-[var(--text-primary)]">{sc.path || "잠재 경로"}</p>
+                      {sc.target_zone && (
+                        <p className="text-[10px] font-bold text-purple-400 mt-0.5">→ {sc.target_zone}</p>
+                      )}
+                    </div>
+                    <span className={`shrink-0 rounded-full border px-2.5 py-1 text-[9px] font-black ${feasibilityStyle(sc.feasibility)}`}>
+                      가능성 {sc.feasibility || "—"}
+                    </span>
+                  </div>
+                  {(sc.expected_far_pct_low != null || sc.expected_far_pct_high != null) && (
+                    <p className="text-[11px] font-bold text-[var(--text-secondary)] mb-1">
+                      예상 용적률 {sc.expected_far_pct_low != null ? pct(sc.expected_far_pct_low) : ""}{sc.expected_far_pct_high != null ? ` ~ ${pct(sc.expected_far_pct_high)}` : ""}
+                      {sc.expected_far_source ? ` (${sc.expected_far_source})` : ""}
+                    </p>
+                  )}
+                  {sc.feasibility_reason && (
+                    <p className="text-[10px] text-[var(--text-hint)] mb-1">사유: {sc.feasibility_reason}</p>
+                  )}
+                  {sc.conditions && sc.conditions.length > 0 && (
+                    <div className="flex flex-wrap gap-1 mt-1.5">
+                      {sc.conditions.map((c, ci) => (
+                        <span key={ci} className="rounded-md bg-[var(--surface-strong)] border border-[var(--line)] px-2 py-0.5 text-[9px] font-bold text-[var(--text-secondary)]">{c}</span>
+                      ))}
+                    </div>
+                  )}
+                  <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-[9px] text-[var(--text-hint)]">
+                    {sc.legal_basis && <span>근거법령: {sc.legal_basis}</span>}
+                    {sc.timeline_est && <span>예상 기간: {sc.timeline_est}</span>}
+                  </div>
+                  {sc.caveats && sc.caveats.length > 0 && (
+                    <p className="mt-1.5 text-[9px] text-amber-400/80 italic">전제: {sc.caveats.join(" / ")}</p>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* LLM 해석 */}
+          {upInterp && (
+            <div className="mt-4 rounded-xl border border-[var(--accent-strong)]/20 bg-[var(--accent-soft)] p-4">
+              <div className="flex items-center gap-2 mb-1.5">
+                <Icons.Brain width={14} height={14} className="text-[var(--accent-strong)]" />
+                <p className="text-[10px] font-black text-[var(--accent-strong)] uppercase tracking-wider">AI 종상향 해석 (예상치)</p>
+              </div>
+              <p className="text-xs leading-relaxed text-[var(--text-secondary)] whitespace-pre-line">{upInterp}</p>
+            </div>
+          )}
+          {upScenarios.length === 0 && upzoning?.summary && (
+            <p className="text-xs text-[var(--text-hint)] italic mt-2">{upzoning.summary}</p>
+          )}
+        </div>
+      )}
+
+      {/* ③ 분묘 정보 — 무자료 정직 안내 (가짜 표시 금지) */}
+      {hasGraveInfo && (
+        <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-5">
+          <div className="flex items-start gap-3">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[var(--surface-muted)] text-[var(--text-hint)]">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22V8"/><path d="M5 12H2a10 10 0 0 0 20 0h-3"/><path d="M12 8a4 4 0 0 0-4-4V2h8v2a4 4 0 0 0-4 4Z"/></svg>
+            </div>
+            <div className="flex-1">
+              <p className="text-xs font-black text-[var(--text-primary)] mb-1">분묘 정보: 데이터 없음</p>
+              <p className="text-[11px] text-[var(--text-secondary)] leading-relaxed">
+                {grave?.reason || "전국 단위 무료 공공API 미제공"} — {grave?.suggestion || "현장조사·항공/위성 판독(디지털트윈 항공레이어) 또는 지자체 개별 확인 권장"}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 하단 3종 카드 그리드 (실거래가 · 건축물대장 · 인프라) */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
       {/* 실거래가 요약 카드 */}
       {tx?.apt && tx.apt.count > 0 && (
         <div className="rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-strong)] p-6 shadow-[var(--shadow-xl)]">
@@ -141,18 +452,47 @@ function L3EnhancedCards({
         </div>
       )}
 
-      {/* 건축물대장 카드 */}
-      {bldg && bldg.main_purpose && (
+      {/* 건축물대장 카드 — 표제부(세대·동·호·가구) + 멸실/미준공 정직표기 */}
+      {bldg && (bldg.main_purpose || bldg.title_status) && (
         <div className="rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-strong)] p-6 shadow-[var(--shadow-xl)]">
           <div className="flex items-center gap-3 mb-4">
             <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-500/10 text-blue-400">
               <Icons.Database width={20} height={20} />
             </div>
-            <div>
+            <div className="flex-1">
               <h4 className="text-sm font-black text-[var(--text-primary)]">기존 건축물 현황</h4>
-              <p className="text-[9px] font-bold text-blue-400 uppercase tracking-widest">건축물대장 조회</p>
+              <p className="text-[9px] font-bold text-blue-400 uppercase tracking-widest">건축물대장 표제부</p>
             </div>
+            {/* 출처 배지 */}
+            {bldg.data_source && (
+              <span className={`shrink-0 rounded-full px-2.5 py-1 text-[8px] font-black uppercase tracking-wider border ${
+                bldg.data_source === "molit_live"
+                  ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                  : "bg-[var(--surface-muted)] text-[var(--text-hint)] border-[var(--line)]"
+              }`}>
+                {bldg.data_source === "molit_live" ? "실시간 조회" : "조회 불가"}
+              </span>
+            )}
           </div>
+
+          {/* 멸실/미준공 경고 배지 */}
+          {(bldg.is_demolished || bldg.is_uncompleted) && (
+            <div className="mb-3 flex flex-wrap gap-2">
+              {bldg.is_demolished && (
+                <span className="inline-flex items-center gap-1.5 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-1.5 text-[10px] font-black text-red-400">
+                  <span className="h-1.5 w-1.5 rounded-full bg-red-400" />
+                  멸실 건축물(확인 필요){bldg.demolition_date ? ` · ${bldg.demolition_date}` : ""}
+                </span>
+              )}
+              {bldg.is_uncompleted && (
+                <span className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-[10px] font-black text-amber-400">
+                  <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+                  미준공/공사중 추정
+                </span>
+              )}
+            </div>
+          )}
+
           <div className="grid grid-cols-2 gap-2">
             <div className="rounded-lg bg-[var(--surface-muted)] p-3 border border-[var(--line)]">
               <p className="text-[8px] font-black text-[var(--text-hint)] uppercase mb-1">용도</p>
@@ -172,10 +512,41 @@ function L3EnhancedCards({
                 지상 {bldg.ground_floors}층{bldg.underground_floors ? ` / 지하 ${bldg.underground_floors}층` : ""}
               </p>
             </div>
+            {/* 표제부 세대·동·호·가구 (_display 우선) */}
+            {(bldg.dong_count_display || (bldg.dong_count ?? 0) > 0) && (
+              <div className="rounded-lg bg-[var(--surface-muted)] p-3 border border-[var(--line)]">
+                <p className="text-[8px] font-black text-[var(--text-hint)] uppercase mb-1">동수</p>
+                <p className="text-xs font-bold text-[var(--text-primary)]">{bldg.dong_count_display || `${bldg.dong_count}개동`}</p>
+              </div>
+            )}
+            {(bldg.household_count_display || (bldg.household_count ?? 0) > 0) && (
+              <div className="rounded-lg bg-[var(--surface-muted)] p-3 border border-[var(--line)]">
+                <p className="text-[8px] font-black text-[var(--text-hint)] uppercase mb-1">세대수</p>
+                <p className="text-xs font-bold text-[var(--text-primary)]">{bldg.household_count_display || `${bldg.household_count?.toLocaleString()}세대`}</p>
+              </div>
+            )}
+            {(bldg.ho_count_display || (bldg.ho_count ?? 0) > 0) && (
+              <div className="rounded-lg bg-[var(--surface-muted)] p-3 border border-[var(--line)]">
+                <p className="text-[8px] font-black text-[var(--text-hint)] uppercase mb-1">호수</p>
+                <p className="text-xs font-bold text-[var(--text-primary)]">{bldg.ho_count_display || `${bldg.ho_count?.toLocaleString()}호`}</p>
+              </div>
+            )}
+            {(bldg.family_count ?? 0) > 0 && (
+              <div className="rounded-lg bg-[var(--surface-muted)] p-3 border border-[var(--line)]">
+                <p className="text-[8px] font-black text-[var(--text-hint)] uppercase mb-1">가구수</p>
+                <p className="text-xs font-bold text-[var(--text-primary)]">{bldg.family_count?.toLocaleString()}가구</p>
+              </div>
+            )}
             {bldg.use_approval_date && (
               <div className="rounded-lg bg-[var(--surface-muted)] p-3 border border-[var(--line)] col-span-2">
                 <p className="text-[8px] font-black text-[var(--text-hint)] uppercase mb-1">사용승인일</p>
                 <p className="text-xs font-bold text-[var(--text-primary)]">{bldg.use_approval_date}</p>
+              </div>
+            )}
+            {bldg.title_status && bldg.title_status !== "정상" && (
+              <div className="rounded-lg bg-[var(--surface-muted)] p-3 border border-[var(--line)] col-span-2">
+                <p className="text-[8px] font-black text-[var(--text-hint)] uppercase mb-1">표제부 상태</p>
+                <p className="text-xs font-bold text-[var(--text-hint)] italic">{bldg.title_status}</p>
               </div>
             )}
           </div>
@@ -233,6 +604,7 @@ function L3EnhancedCards({
           </div>
         </div>
       )}
+      </div>
     </motion.div>
   );
 }
@@ -291,6 +663,13 @@ export default function SiteAnalysisPage() {
           nearby_transactions?: L3SiteData["nearby_transactions"];
           infrastructure?: L3SiteData["infrastructure"];
           building_detail?: L3SiteData["building_detail"];
+          effective_far?: L3SiteData["effective_far"];
+          zone_limits?: L3SiteData["zone_limits"];
+          upzoning?: L3SiteData["upzoning"];
+          upzoning_scenarios?: L3SiteData["upzoning_scenarios"];
+          potential_far_range?: L3SiteData["potential_far_range"];
+          upzoning_interpretation?: L3SiteData["upzoning_interpretation"];
+          grave_registry?: L3SiteData["grave_registry"];
         }>("/zoning/comprehensive", {
           useMock: false,
           body: { address, pnu: zoningResult.pnu },
@@ -299,6 +678,13 @@ export default function SiteAnalysisPage() {
           nearby_transactions: landResult.nearby_transactions ?? null,
           infrastructure: landResult.infrastructure ?? null,
           building_detail: landResult.building_detail ?? null,
+          effective_far: landResult.effective_far ?? null,
+          zone_limits: landResult.zone_limits ?? null,
+          upzoning: landResult.upzoning ?? null,
+          upzoning_scenarios: landResult.upzoning_scenarios ?? null,
+          potential_far_range: landResult.potential_far_range ?? null,
+          upzoning_interpretation: landResult.upzoning_interpretation ?? null,
+          grave_registry: landResult.grave_registry ?? null,
         });
       } catch {
         // L3 데이터 실패는 무시 — 기본 분석만 표시
