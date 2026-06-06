@@ -1,19 +1,11 @@
 import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import AgentPage from "../agent/page";
 import CostPage from "../analytics/cost/page";
 import ESGPage from "../analytics/esg/page";
 import InvestmentPage from "../analytics/investment/page";
-import IoTPage from "../analytics/iot/page";
-import ApprovalsPage from "../approvals/page";
 import AuctionPage from "../auction/page";
 import DashboardPage from "../page";
-import InspectionPage from "../inspection/page";
 import ProjectsPage from "../projects/page";
-import SafetyPage from "../safety/page";
-import SREPage from "../sre/page";
-import TaxPage from "../tax/page";
-import WebRTCPage from "../webrtc/page";
 
 vi.mock("@/components/layout/ModulePlaceholder", () => ({
   ModulePlaceholder: ({
@@ -366,45 +358,12 @@ describe("Dashboard route shells", () => {
     );
   });
 
-  it("renders the agent live page with the orchestration workspace", async () => {
-    render(await AgentPage({ params: Promise.resolve({ locale: "en" }) }));
-
-    expect(screen.getByText("Agent orchestration center")).toBeInTheDocument();
-    expect(screen.getByText("실연동")).toBeInTheDocument();
-    expect(screen.getByTestId("agent-workspace")).toHaveTextContent("en");
-  });
-
   it("renders the auction route shell with the live workspace", async () => {
     render(<AuctionPage />);
 
     expect(screen.getByText("Auction live center")).toBeInTheDocument();
     expect(screen.getByText("실연동")).toBeInTheDocument();
     expect(screen.getByTestId("auction-workspace")).toHaveTextContent("en");
-  });
-
-  it("renders the approval operations route shell with the live workspace", async () => {
-    render(await ApprovalsPage({ params: Promise.resolve({ locale: "en" }) }));
-
-    expect(screen.queryByTestId("module-placeholder")).not.toBeInTheDocument();
-    expect(screen.getByText("Approval operations center")).toBeInTheDocument();
-    expect(screen.getByText("실연동")).toBeInTheDocument();
-    expect(screen.getByTestId("approval-ops-workspace")).toHaveTextContent("en");
-  });
-
-  it("renders the tax route shell with the live workspace", async () => {
-    render(await TaxPage({ params: Promise.resolve({ locale: "en" }) }));
-
-    expect(screen.getByText("세금 라이브 센터")).toBeInTheDocument();
-    expect(screen.getByText("실연동")).toBeInTheDocument();
-    expect(screen.getByTestId("tax-workspace")).toHaveTextContent("en");
-  });
-
-  it("renders the inspection route shell with the live workspace", async () => {
-    render(await InspectionPage({ params: Promise.resolve({ locale: "en" }) }));
-
-    expect(screen.getByText("현장 점검 라이브 센터")).toBeInTheDocument();
-    expect(screen.getByText("실연동")).toBeInTheDocument();
-    expect(screen.getByTestId("inspection-workspace")).toHaveTextContent("en");
   });
 
   it("renders the investment analytics shell with the live workspace", async () => {
@@ -431,39 +390,4 @@ describe("Dashboard route shells", () => {
     expect(screen.getByTestId("cost-workspace")).toHaveTextContent("en");
   });
 
-  it("renders the IoT analytics shell with the operations workspace", async () => {
-    render(await IoTPage({ params: Promise.resolve({ locale: "en" }) }));
-
-    expect(
-      screen.getByText("운영 분석 작업 공간"),
-    ).toBeInTheDocument();
-    expect(screen.getByText("실연동")).toBeInTheDocument();
-    expect(screen.getByTestId("ops-intelligence-workspace")).toHaveTextContent(
-      "en",
-    );
-  });
-  it("renders the safety route shell with the live safety and parking modules", async () => {
-    render(await SafetyPage({ params: Promise.resolve({ locale: "en" }) }));
-
-    expect(screen.queryByTestId("module-placeholder")).not.toBeInTheDocument();
-    expect(screen.getAllByText("READY")[0]).toBeInTheDocument();
-    expect(screen.getByTestId("safety-cctv-dashboard")).toBeInTheDocument();
-    expect(screen.getByTestId("parking-log-view")).toBeInTheDocument();
-  });
-
-  it("renders the WebRTC route shell with the live supervision room", async () => {
-    render(await WebRTCPage({ params: Promise.resolve({ locale: "en" }) }));
-
-    expect(screen.queryByTestId("module-placeholder")).not.toBeInTheDocument();
-    expect(screen.getAllByText("READY")[0]).toBeInTheDocument();
-    expect(screen.getByTestId("remote-supervision-room")).toBeInTheDocument();
-  });
-
-  it("renders the SRE route shell with the live operations dashboard", async () => {
-    render(await SREPage({ params: Promise.resolve({ locale: "en" }) }));
-
-    expect(screen.queryByTestId("module-placeholder")).not.toBeInTheDocument();
-    expect(screen.getAllByText("READY")[0]).toBeInTheDocument();
-    expect(screen.getByTestId("sre-dashboard")).toBeInTheDocument();
-  });
 });

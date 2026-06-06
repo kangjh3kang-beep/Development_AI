@@ -1,15 +1,8 @@
 import type { ReactNode } from "react";
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import KdxPage from "../[locale]/(dashboard)/dashboard/kdx/page";
 import FeasibilityPage from "../[locale]/(dashboard)/projects/[id]/feasibility/page";
 import OfflinePage from "../offline/page";
-
-vi.mock("@/components/dashboard/kdx/KdxMonitoringWorkspaceClient", () => ({
-  KdxMonitoringWorkspaceClient: () => (
-    <div>KDX monitoring workspace</div>
-  ),
-}));
 
 vi.mock("@/components/feasibility/FeasibilityEditorV2", () => ({
   FeasibilityEditorV2: () => (
@@ -33,12 +26,6 @@ vi.mock("recharts", () => ({
 }));
 
 describe("Auxiliary route shells", () => {
-  it("renders the KDX monitoring route shell", async () => {
-    render(await KdxPage({ params: Promise.resolve({ locale: "en" }) }));
-
-    expect(screen.getByTestId("kdx-monitoring-workspace")).toBeInTheDocument();
-  });
-
   it("renders the feasibility live route shell", async () => {
     render(await FeasibilityPage({ params: Promise.resolve({ locale: "en", id: "p001" }) }));
 
@@ -54,7 +41,7 @@ describe("Auxiliary route shells", () => {
       "/ko",
     );
     expect(
-      screen.getByRole("link", { name: "Open inspection workspace" }),
-    ).toHaveAttribute("href", "/ko/inspection");
+      screen.getByRole("link", { name: "Open precheck workspace" }),
+    ).toHaveAttribute("href", "/ko/precheck");
   });
 });

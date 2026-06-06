@@ -15,7 +15,8 @@ type NavItem = {
 type NavSection = {
   title: string;
   items: NavItem[];
-  adminOnly?: boolean;  // 관리자(admin/manager)에게만 노출
+  adminOnly?: boolean;     // 관리자(admin/manager)에게만 노출
+  assetOpsOnly?: boolean;  // 자산운용/운영권한(admin/manager/owner/총괄관리자/asset_manager)에게만 노출
 };
 
 type SidebarNavProps = {
@@ -26,21 +27,33 @@ export function SidebarNav({ sections }: SidebarNavProps) {
   const pathname = usePathname();
   // 역할 확인(클라이언트): 관리자 전용 섹션 노출 제어
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
+  // 자산 운영(임대·임차인 등) 노출 권한: 운영/관리자 역할만. 역할 미확인 시 보수적으로 숨김.
+  const [isAssetOps, setIsAssetOps] = useState<boolean | null>(null);
   useEffect(() => {
     let alive = true;
     apiClient.get<{ role?: string; is_admin?: boolean }>("/auth/me", { useMock: false })
       .then((u) => {
-        if (alive) setIsAdmin(
+        if (!alive) return;
+        const role = u?.role || "";
+        const admin =
           u?.is_admin === true ||
-          ["admin", "manager", "총괄관리자", "owner", "platform_admin"].includes(u?.role || ""),
+          ["admin", "manager", "총괄관리자", "owner", "platform_admin"].includes(role);
+        setIsAdmin(admin);
+        // 운영권한 = 관리자 ∪ 자산운용 역할. 시행사/시공사 기본(developer/viewer/구독자)은 제외.
+        setIsAssetOps(
+          admin ||
+          ["asset_manager", "operations", "운영관리자", "자산운용"].includes(role),
         );
       })
-      .catch(() => { if (alive) setIsAdmin(false); });
+      .catch(() => { if (alive) { setIsAdmin(false); setIsAssetOps(false); } });
     return () => { alive = false; };
   }, []);
 
-  // adminOnly 섹션은 관리자 확인 전/비관리자면 숨김
-  const visibleSections = sections.filter((s) => !s.adminOnly || isAdmin === true);
+  // adminOnly/assetOpsOnly 섹션은 해당 권한 확인 전/무권한이면 숨김
+  const visibleSections = sections.filter((s) =>
+    (!s.adminOnly || isAdmin === true) &&
+    (!s.assetOpsOnly || isAssetOps === true),
+  );
 
   return (
     <>

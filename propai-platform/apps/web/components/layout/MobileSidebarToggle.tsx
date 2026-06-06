@@ -12,6 +12,8 @@ type NavItem = {
 type NavSection = {
   title: string;
   items: NavItem[];
+  adminOnly?: boolean;
+  assetOpsOnly?: boolean;
 };
 
 export function MobileSidebarToggle({ sections }: { sections: NavSection[] }) {

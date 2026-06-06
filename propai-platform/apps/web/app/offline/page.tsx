@@ -26,10 +26,10 @@ export default function OfflinePage() {
             Open dashboard
           </Link>
           <Link
-            href={`/${defaultLocale}/inspection`}
+            href={`/${defaultLocale}/precheck`}
             className="rounded-full border border-[var(--line)] bg-[var(--surface-soft)] px-5 py-3 text-sm font-semibold text-[var(--text-primary)]"
           >
-            Open inspection workspace
+            Open precheck workspace
           </Link>
         </div>
       </div>

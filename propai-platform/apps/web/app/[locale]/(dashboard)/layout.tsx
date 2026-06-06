@@ -31,11 +31,6 @@ function IconProject() {
     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>
   );
 }
-function IconSiteAnalysis() {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0"/><circle cx="12" cy="10" r="3"/></svg>
-  );
-}
 function IconMarket() {
   return (
     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="m19 9-5 5-4-4-3 3"/></svg>
@@ -61,11 +56,6 @@ function IconROI() {
     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8"/><path d="M12 18V6"/></svg>
   );
 }
-function IconESG() {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M7 20h10"/><path d="M10 20c5.5-2.5.8-6.4 3-10"/><path d="M9.5 9.4c1.1.8 1.8 2.2 2.3 3.7-2 .4-3.5.4-4.8-.3-1.2-.6-2.3-1.9-3-4.2 2.8-.5 4.4 0 5.5.8z"/><path d="M14.1 6a7 7 0 0 0-1.1 4c1.9-.1 3.3-.6 4.3-1.4 1-1 1.6-2.3 1.7-4.6-2.7.1-4 1-4.9 2z"/></svg>
-  );
-}
 function IconCost() {
   return (
     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2 12h20"/><path d="M20 12v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-8"/><path d="m4 8 16-4"/><path d="m8.86 6.78-.45-1.81a2 2 0 0 1 1.45-2.43l1.94-.48a2 2 0 0 1 2.43 1.46l.45 1.8"/></svg>
@@ -79,11 +69,6 @@ function IconAuction() {
 function IconSRE() {
   return (
     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.268 21a2 2 0 0 0 3.464 0"/><path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"/></svg>
-  );
-}
-function IconGuide() {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H19a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H6.5a1 1 0 0 1 0-5H20"/></svg>
   );
 }
 
@@ -103,57 +88,50 @@ export default async function DashboardLayout({
       ? dictionary.workspace.modeLive
       : dictionary.workspace.modeMock;
 
-  // ── IA 전면 재편(B안): 중복·깨진 링크 제거, 기능군 명확화 ──
-  // 프로젝트 상세 전용(설계/BIM/공사비/수지/세금/ESG/인허가/계약/시공/운영 등)은
-  // '프로젝트 관리'→프로젝트 선택 후 탭으로 진입. 최상위에는 독립 진입점만 둔다.
+  // ── IA 재편(9→4섹션): 핵심 워크플로 순서로 군살빼기. 라벨 직관화 유지 ──
+  // 프로젝트 상세 전용(수지/세금/계약/시공/운영 등)은 '프로젝트 관리'→선택 후 탭으로 진입.
+  // 최상위에는 독립 진입점만 둔다. 운영/트윈/환경/블록체인은 페르소나(역할) 게이팅.
 
-  // I. 프로젝트 분석 (핵심 워크플로우)
-  const lifecycleNavigation = [
+  // 1. 사업 검토 — 사업성·시장·인허가·규제 (핵심 깔때기 진입)
+  const reviewNavigation = [
     { href: `/${locale}`, label: "대시보드", icon: <IconDashboard /> },
     { href: `/${locale}/precheck`, label: "90초 사업성 진단", icon: <IconPermit /> },
     { href: `/${locale}/projects`, label: "프로젝트 관리", icon: <IconProject /> },
     { href: `/${locale}/market-insights`, label: "시장·시세 분석", icon: <IconMarket /> },
-    { href: `/${locale}/permits`, label: "인허가 가능성 분석", icon: <IconPermit /> },
-    { href: `/${locale}/regulations`, label: "개발 규제 한눈에 보기", icon: <IconRegulation /> },
+    { href: `/${locale}/permits`, label: "인허가 가능성", icon: <IconPermit /> },
+    { href: `/${locale}/regulations`, label: "개발 규제", icon: <IconRegulation /> },
   ];
 
-  // I-2. 토지조서 관리 (편입토지) — 등기 열람/분석을 하위로
-  const landNavigation = [
-    { href: `/${locale}/land-schedule`, label: "토지조서(매입 대상 토지)", icon: <IconProject /> },
-    { href: `/${locale}/registry-analysis`, label: "└ 등기부등본 열람·권리분석", icon: <IconPermit /> },
+  // 2. 토지·자금 — 토지조서·등기·AI시세 + 투자수익성·공사비
+  //    ESG·탄소는 사업성/투자수익 결과 내로 흡수(메뉴 제외, 독립 라우트는 게이팅으로 보존)
+  const landFinanceNavigation = [
+    { href: `/${locale}/land-schedule`, label: "토지조서", icon: <IconProject /> },
+    { href: `/${locale}/registry-analysis`, label: "└ 등기부등본 열람", icon: <IconPermit /> },
     { href: `/${locale}/desk-appraisal`, label: "└ AI 시세추정 보고서", icon: <IconPermit /> },
+    { href: `/${locale}/analytics/investment`, label: "투자 수익성 (ROI)", icon: <IconROI /> },
+    { href: `/${locale}/analytics/cost`, label: "공사비 분석", icon: <IconCost /> },
   ];
 
-  // I-3. 분양관리 ERP (v62 — 현장별 분양 운영 + 모델하우스 데스크)
-  const salesNavigation = [
+  // 3. 실행 — 분양·공공입찰·경공매
+  const executionNavigation = [
     { href: `/${locale}/sales`, label: "분양 현장 관리", icon: <IconProject /> },
     { href: `/${locale}/sales/projection`, label: "└ 분양 요약(경영진용)", icon: <IconMarket /> },
-  ];
-
-  // II. 수익·비용·ESG
-  const analyticsNavigation = [
-    { href: `/${locale}/analytics/investment`, label: "투자 수익성 (ROI)", icon: <IconROI /> },
-    { href: `/${locale}/analytics/cost`, label: "공사비 정밀 분석", icon: <IconCost /> },
-    { href: `/${locale}/analytics/esg`, label: "ESG·탄소 평가(친환경 점수)", icon: <IconESG /> },
-  ];
-
-  // III. 입찰·자산 운영
-  // 미작동/리소스초과(Cloudflare 1102) 메뉴 제거: 데이터허브(IoT)·디지털트윈(FM)·
-  // 시설관리점검·현장안전관제·국가데이터거점(KDX). 추후 실구현 시 복원.
-  const operationsNavigation = [
-    { href: `/${locale}/auction`, label: "경매·공매 AI 분석", icon: <IconAuction /> },
     { href: `/${locale}/g2b`, label: "공공입찰 (나라장터)", icon: <IconAuction /> },
+    { href: `/${locale}/auction`, label: "경매·공매", icon: <IconAuction /> },
   ];
 
-  // IV. 지원
-  // 내부 개발/운영 도구(AI 오케스트레이터·실시간 협업·전자 승인·SRE·테넌트 통합 관리)는
-  // 일반 사용자(디벨로퍼·구독자)에게 불필요·복잡하고 일부 오류(전자승인 k.map)라 사이드바에서 제외.
-  // 추후 관리자 전용 영역으로 복원 가능.
-  const enterpriseNavigation = [
-    { href: `/${locale}/guide`, label: "이용 가이드", icon: <IconGuide /> },
+  // 4. 설계 참고 — CAD 자동설계 / BIM·적산
+  const designNavigation = [
+    { href: `/${locale}/design-studio`, label: "AI 설계도면(CAD)", icon: <IconDesign /> },
+    { href: `/${locale}/bim-studio`, label: "3D 모델·공사물량(BIM·적산)", icon: <IconCost /> },
   ];
 
-  // V. 관리자
+  // 자산 운영 (준공 후 임대·임차인) — 페르소나 게이팅(운영/관리자 역할만)
+  const assetOpsNavigation = [
+    { href: `/${locale}/operations/lease`, label: "임대·임차인 관리", icon: <IconProject /> },
+  ];
+
+  // 관리자 — 기존 role 게이팅 유지
   const adminNavigation = [
     { href: `/${locale}/settings`, label: "⚙️ 관리자 설정", icon: <IconSRE /> },
     { href: `/${locale}/settings/users`, label: "👤 사용자 관리", icon: <IconSRE /> },
@@ -161,26 +139,12 @@ export default async function DashboardLayout({
     { href: `/${locale}/settings/lists`, label: "📋 편집 목록 관리", icon: <IconSRE /> },
   ];
 
-  // III-2. 자산 운영 (준공 후 임대·임차인 운영)
-  const assetOpsNavigation = [
-    { href: `/${locale}/operations/lease`, label: "임대·임차인 관리", icon: <IconProject /> },
-  ];
-
-  // I-4. 설계 스튜디오 (CAD 자동설계 / BIM·적산 분리)
-  const designNavigation = [
-    { href: `/${locale}/design-studio`, label: "AI 설계도면(CAD)", icon: <IconProject /> },
-    { href: `/${locale}/bim-studio`, label: "3D 모델·공사물량(BIM·적산)", icon: <IconCost /> },
-  ];
-
   const sections = [
-    { title: "프로젝트 분석", items: lifecycleNavigation },
-    { title: "설계 스튜디오", items: designNavigation },
-    { title: "토지조서 관리", items: landNavigation },
-    { title: "분양관리 ERP", items: salesNavigation },
-    { title: "수익·비용·ESG", items: analyticsNavigation },
-    { title: "공공입찰·경공매", items: operationsNavigation },
-    { title: "자산 운영", items: assetOpsNavigation },
-    { title: "지원", items: enterpriseNavigation },
+    { title: "사업 검토", items: reviewNavigation },
+    { title: "토지·자금", items: landFinanceNavigation },
+    { title: "실행", items: executionNavigation },
+    { title: "설계 참고", items: designNavigation },
+    { title: "자산 운영", items: assetOpsNavigation, assetOpsOnly: true },
     { title: "관리", items: adminNavigation, adminOnly: true },
   ];
 
