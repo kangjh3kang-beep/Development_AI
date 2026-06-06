@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v55-declutter-1";
+const CACHE_NAME = "propai-v56-swfix-1";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",
@@ -81,6 +81,11 @@ self.addEventListener("fetch", (event) => {
 
   const url = new URL(request.url);
 
+  // http(s)만 처리 — chrome-extension://, ws:// 등은 SW 캐시 대상 아님(put 에러 방지)
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    return;
+  }
+
   if (request.mode === "navigate") {
     event.respondWith(navigationNetworkFirst(request));
     return;
@@ -99,11 +104,21 @@ self.addEventListener("fetch", (event) => {
   event.respondWith(cacheFirst(request));
 });
 
+// 응답을 안전하게 캐시 — 클론을 즉시 떠서 본문 중복사용/스킴미지원 에러를 흡수.
+function safePut(request, response) {
+  try {
+    if (!response || !response.ok || response.type === "opaque") return;
+    const copy = response.clone();
+    caches.open(CACHE_NAME).then((cache) => cache.put(request, copy)).catch(() => {});
+  } catch {
+    /* clone/put 실패는 무해하게 무시 */
+  }
+}
+
 async function navigationNetworkFirst(request) {
   try {
     const response = await fetch(request);
-    const cache = await caches.open(CACHE_NAME);
-    cache.put(request, response.clone());
+    safePut(request, response);
     return response;
   } catch {
     return (await caches.match(OFFLINE_URL)) || Response.error();
@@ -118,10 +133,7 @@ async function cacheFirst(request) {
 
   try {
     const response = await fetch(request);
-    if (response.ok) {
-      const cache = await caches.open(CACHE_NAME);
-      cache.put(request, response.clone());
-    }
+    safePut(request, response);
     return response;
   } catch {
     return (await caches.match(OFFLINE_URL)) || Response.error();
@@ -131,10 +143,7 @@ async function cacheFirst(request) {
 async function apiNetworkFirst(request) {
   try {
     const response = await fetch(request);
-    if (response.ok) {
-      const cache = await caches.open(CACHE_NAME);
-      cache.put(request, response.clone());
-    }
+    safePut(request, response);
     return response;
   } catch {
     const cached = await caches.match(request);
@@ -154,9 +163,7 @@ async function staleWhileRevalidate(request) {
 
   const fetchPromise = fetch(request)
     .then((response) => {
-      if (response.ok) {
-        caches.open(CACHE_NAME).then((cache) => cache.put(request, response.clone()));
-      }
+      safePut(request, response);
       return response;
     })
     .catch(() => cached);
