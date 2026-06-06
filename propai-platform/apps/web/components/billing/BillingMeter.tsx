@@ -27,6 +27,18 @@ type Status = {
   free_analysis_quota?: number;
 };
 
+type Balance = {
+  tier: string;
+  tier_label: string;
+  monthly_base_krw: number;
+  monthly_base_remaining: number;
+  topup_krw: number;
+  topup_remaining: number;
+  used_this_cycle_krw: number;
+  markup_pct: number;
+  cycle_start: string | null;
+};
+
 type Plan = { tier: string; label: string; fee_krw: number; included_budget_krw: number };
 
 function PlansModal({ onClose }: { onClose: () => void }) {
@@ -64,6 +76,7 @@ const won = (n?: number) => (n ?? 0).toLocaleString("ko-KR") + "원";
 
 export function BillingMeter({ compact = false }: { compact?: boolean }) {
   const [status, setStatus] = useState<Status | null>(null);
+  const [balance, setBalance] = useState<Balance | null>(null);
   const [loading, setLoading] = useState(true);
   const [authed, setAuthed] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
@@ -73,8 +86,12 @@ export function BillingMeter({ compact = false }: { compact?: boolean }) {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const s = await apiClient.get<Status>("/billing/status", { useMock: false });
+      const [s, b] = await Promise.all([
+        apiClient.get<Status>("/billing/status", { useMock: false }),
+        apiClient.get<Balance>("/billing/balance", { useMock: false }).catch(() => null),
+      ]);
       setStatus(s);
+      setBalance(b);
       setAuthed(true);
     } catch (e) {
       if (e instanceof ApiClientError && (e.status === 401 || e.status === 403)) setAuthed(false);
@@ -93,6 +110,8 @@ export function BillingMeter({ compact = false }: { compact?: boolean }) {
         useMock: false,
       });
       setStatus(s);
+      // 충전 후 잔액(월기본/충전) 갱신
+      apiClient.get<Balance>("/billing/balance", { useMock: false }).then(setBalance).catch(() => { /* noop */ });
       setModalOpen(false);
     } catch {
       /* noop */
@@ -139,13 +158,23 @@ export function BillingMeter({ compact = false }: { compact?: boolean }) {
 
   const pct = Math.min(100, status.usage_pct || 0);
   const barColor = status.blocked ? "#ef4444" : pct >= 80 ? "#f59e0b" : "var(--accent-strong)";
+  // 코인 잔액(월기본 + 충전) — /billing/balance 실데이터. 소진 임박(85%+) 경고.
+  const totalRemaining = balance
+    ? (balance.monthly_base_remaining || 0) + (balance.topup_remaining || 0)
+    : status.remaining_krw;
+  const lowBalance = !status.blocked && pct >= 85;
 
   return (
     <>
-      <div className={`rounded-xl border border-[var(--line-strong)] bg-[var(--surface-soft)] ${compact ? "p-3" : "p-4"}`}>
+      <div className={`rounded-xl border ${status.blocked || lowBalance ? "border-amber-500/40" : "border-[var(--line-strong)]"} bg-[var(--surface-soft)] ${compact ? "p-3" : "p-4"}`}>
         <div className="flex items-center justify-between gap-2 mb-2">
-          <span className="text-xs font-bold text-[var(--text-secondary)]">
+          <span className="flex items-center gap-1.5 text-xs font-bold text-[var(--text-secondary)]">
             <span className="text-[var(--accent-strong)]">●</span> {status.tier_label} 구독
+            {balance && balance.markup_pct > 0 && (
+              <span className="rounded-md bg-[var(--accent-soft)] px-1.5 py-0.5 text-[9px] font-bold text-[var(--accent-strong)]">
+                마진 +{balance.markup_pct}%
+              </span>
+            )}
           </span>
           <button
             onClick={() => setModalOpen(true)}
@@ -158,11 +187,20 @@ export function BillingMeter({ compact = false }: { compact?: boolean }) {
           <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, backgroundColor: barColor }} />
         </div>
         <div className="mt-1.5 flex items-center justify-between text-[10px] text-[var(--text-hint)]">
-          <span>LLM {won(status.billed_krw)} / {won(status.budget_krw)}</span>
-          <span className={status.blocked ? "text-red-500 font-bold" : ""}>
-            {status.blocked ? "한도 소진 · 추가결제" : `잔여 ${won(status.remaining_krw)}`}
+          <span>코인 {won(status.billed_krw)} 사용 / {won(status.budget_krw)}</span>
+          <span className={status.blocked ? "text-red-500 font-bold" : lowBalance ? "text-amber-500 font-bold" : ""}>
+            {status.blocked ? "코인 소진 · 추가결제" : `잔여 ${won(totalRemaining)}`}
           </span>
         </div>
+        {balance && (
+          <div className="mt-1 flex items-center justify-between text-[10px] text-[var(--text-hint)]">
+            <span>월기본 잔여 {won(balance.monthly_base_remaining)}</span>
+            <span>충전 잔여 {won(balance.topup_remaining)}</span>
+          </div>
+        )}
+        {lowBalance && (
+          <p className="mt-1 text-[10px] font-bold text-amber-500">코인 소진 임박 · 충전을 권장합니다</p>
+        )}
         {(status.service_fee_krw ?? 0) > 0 && (
           <div className="mt-1 flex items-center justify-between text-[10px] text-[var(--text-hint)] border-t border-[var(--line)] pt-1">
             <span>서비스 사용료(분석·생성)</span>

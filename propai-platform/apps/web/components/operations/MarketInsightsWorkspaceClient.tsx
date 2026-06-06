@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Card, CardContent } from "@propai/ui";
-import { apiClient } from "@/lib/api-client";
+import { apiClient, ApiClientError } from "@/lib/api-client";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { NearbyTransactionsMap, type NearbyMapPayload } from "@/components/map/NearbyTransactionsMap";
 import { ParcelBoundaryMap } from "@/components/map/ParcelBoundaryMap";
@@ -162,6 +162,15 @@ function deriveResults(payload: NearbyMapPayload | null, fallbackAddr: string): 
   };
 }
 
+type Balance = {
+  tier_label: string;
+  monthly_base_remaining: number;
+  topup_remaining: number;
+  markup_pct: number;
+};
+
+const won = (n: number) => (n ?? 0).toLocaleString("ko-KR") + "원";
+
 function MetricTile({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-[var(--radius-xl)] bg-[var(--surface)] p-4">
@@ -181,24 +190,53 @@ export function MarketInsightsWorkspaceClient() {
   const rawSite = useProjectContextStore((s) => s.siteAnalysis);
   const siteAnalysis = projectId ? rawSite : null;
   const [searchAddr, setSearchAddr] = useState("");
+  // 명시실행: 주소 입력만으로는 분석하지 않고, "분석 실행" 클릭 시에만 runAddress를 확정한다.
+  const [runAddress, setRunAddress] = useState("");
   const [mapPayload, setMapPayload] = useState<NearbyMapPayload | null>(null);
   const [mapLoading, setMapLoading] = useState(false);
   const [report, setReport] = useState<any | null>(null);
   const [genState, setGenState] = useState<"" | "report" | "pdf" | "pptx">("");
   const [useLlm, setUseLlm] = useState(true);
   const [error, setError] = useState("");
+  const [balance, setBalance] = useState<Balance | null>(null);
 
-  // 주소: 이 페이지의 검색을 최우선 → 없으면 활성 프로젝트 주소(약식검색은 store로 전파 안 함)
-  const address = searchAddr || siteAnalysis?.address || "";
+  // 입력 후보 주소(실행 전): 검색 → 없으면 활성 프로젝트 주소.
+  const inputAddress = searchAddr || siteAnalysis?.address || "";
+  // 실제 분석 대상 주소 — 버튼 클릭으로 확정된 값만 지도/산출에 전달.
+  const address = runAddress;
   // 지도/보고서용 pnu: GlobalAddressSearch가 현재 검색의 pnu를 store에 기록 → 현재 검색분 사용
   const mapPnu = (rawSite?.pnu as string) || "";
   const results = useMemo(() => deriveResults(mapPayload, address), [mapPayload, address]);
 
-  // 주소 변경 → 로컬 검색 갱신 + 지도/산출 재조회. 전역 store에는 기록하지 않음(누수 차단).
+  const totalRemaining = balance
+    ? (balance.monthly_base_remaining || 0) + (balance.topup_remaining || 0)
+    : null;
+  const insufficient = totalRemaining !== null && totalRemaining <= 0;
+
+  // 코인 잔액(월기본+충전) 안내용 — 차감은 백엔드(BaseInterpreter)가 LLM 호출 시 자동 처리.
+  useEffect(() => {
+    apiClient.get<Balance>("/billing/balance", { useMock: false })
+      .then(setBalance)
+      .catch((e) => { if (!(e instanceof ApiClientError)) setBalance(null); });
+  }, []);
+
+  // 주소 변경 → 입력 후보만 갱신(자동 분석/조회 없음). 전역 store에는 기록하지 않음.
   const onAddress = useCallback((addr: string) => {
     setSearchAddr(addr);
-    setMapPayload(null);
   }, []);
+
+  // 명시 실행: 버튼 클릭 시에만 분석 대상 주소를 확정하고 지도/산출을 트리거한다.
+  const runAnalysis = useCallback(() => {
+    if (!inputAddress) return;
+    setError("");
+    setReport(null);
+    setMapPayload(null);
+    setRunAddress(inputAddress);
+    // 실행 후 잔액 갱신(차감 반영) — 약간 지연 후 재조회.
+    setTimeout(() => {
+      apiClient.get<Balance>("/billing/balance", { useMock: false }).then(setBalance).catch(() => { /* noop */ });
+    }, 1500);
+  }, [inputAddress]);
 
   // 시장조사보고서: 구조화 미리보기
   const generateReport = useCallback(async () => {
@@ -210,6 +248,10 @@ export function MarketInsightsWorkspaceClient() {
         useMock: false, timeoutMs: 120000,
       });
       setReport(r);
+      // LLM 분석 후 코인 차감 반영 — 잔액 재조회.
+      if (useLlm) {
+        apiClient.get<Balance>("/billing/balance", { useMock: false }).then(setBalance).catch(() => { /* noop */ });
+      }
     } catch {
       setError("보고서 생성에 실패했습니다.");
     } finally {
@@ -249,7 +291,7 @@ export function MarketInsightsWorkspaceClient() {
       <div>
         <h2 className="text-2xl font-black text-[var(--text-primary)]">시장·시세 분석</h2>
         <p className="mt-1 text-sm text-[var(--text-secondary)]">
-          주소를 입력하면 주변 실거래가·시세 추이·시장 동향을 <b className="text-[var(--text-primary)]">자동으로 분석</b>합니다. (별도 실행 버튼 없이 주소 기준 즉시 분석)
+          주소를 입력하고 <b className="text-[var(--text-primary)]">「분석 실행」</b> 버튼을 누르면 주변 실거래가·시세 추이·시장 동향을 분석합니다.
         </p>
       </div>
 
@@ -260,6 +302,46 @@ export function MarketInsightsWorkspaceClient() {
         label="시장 분석 주소"
         placeholder="주소를 검색하세요 (예: 서울 강남구 역삼동)"
       />
+
+      {/* 명시 실행 패널 — 자동 실행 제거. 코인 차감 안내 + 잔액 부족 시 충전 유도. */}
+      <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
+        <CardContent className="p-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-sm font-bold text-[var(--text-primary)]">분석 실행</p>
+              <p className="mt-0.5 text-xs text-[var(--text-secondary)]">
+                분석 시 사용한 LLM 사용량만큼 코인이 자동 차감됩니다
+                {totalRemaining !== null && (
+                  <> · 코인 잔여 <b className="text-[var(--text-primary)]">{won(totalRemaining)}</b></>
+                )}
+                {balance && balance.markup_pct > 0 && (
+                  <span className="ml-1 rounded-md bg-[var(--accent-soft)] px-1.5 py-0.5 text-[10px] font-bold text-[var(--accent-strong)]">마진 +{balance.markup_pct}%</span>
+                )}
+              </p>
+            </div>
+            <button
+              onClick={runAnalysis}
+              disabled={!inputAddress || insufficient}
+              className="whitespace-nowrap rounded-xl bg-[var(--accent-strong)] px-5 py-2.5 text-sm font-black text-white hover:opacity-90 disabled:opacity-50"
+            >
+              분석 실행
+            </button>
+          </div>
+          {insufficient && (
+            <p className="mt-2 text-xs font-bold text-amber-500">
+              코인 잔액이 부족합니다. 좌측 코인 미터의 「추가결제」로 충전 후 다시 실행해 주세요.
+            </p>
+          )}
+          {!inputAddress && (
+            <p className="mt-2 text-xs text-[var(--text-hint)]">먼저 위에서 분석할 주소를 입력하세요.</p>
+          )}
+          {address && (
+            <p className="mt-2 text-xs text-[var(--text-hint)]">
+              분석 대상: <b className="text-[var(--text-secondary)]">{address}</b> · 실행 후 사용량은 설정 &gt; AI 사용량에서 확인할 수 있습니다.
+            </p>
+          )}
+        </CardContent>
+      </Card>
 
       {/* 필지 구획도 (경계·용도지역·면적) */}
       {address && <ParcelBoundaryMap parcels={[address]} />}
@@ -357,7 +439,7 @@ export function MarketInsightsWorkspaceClient() {
             <p className="mt-4 text-sm text-[var(--text-secondary)]">주변 실거래를 수집해 시세를 추정하는 중…</p>
           ) : (
             <p className="mt-4 text-sm text-[var(--text-secondary)]">
-              {address ? "주변 아파트 실거래가 없어 시세를 추정할 수 없습니다." : "주소를 입력하면 AI 시세가 표시됩니다."}
+              {address ? "주변 아파트 실거래가 없어 시세를 추정할 수 없습니다." : "주소 입력 후 「분석 실행」을 누르면 AI 시세가 표시됩니다."}
             </p>
           )}
           {results?.avm && (
@@ -401,7 +483,7 @@ export function MarketInsightsWorkspaceClient() {
               )}
             </>
           ) : (
-            <p className="mt-4 text-sm text-[var(--text-secondary)]">주소를 입력하면 주변 실거래 현황이 표시됩니다.</p>
+            <p className="mt-4 text-sm text-[var(--text-secondary)]">주소 입력 후 「분석 실행」을 누르면 주변 실거래 현황이 표시됩니다.</p>
           )}
         </CardContent>
       </Card>
