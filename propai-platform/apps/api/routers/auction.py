@@ -305,6 +305,31 @@ async def auction_sync(
     )
 
 
+@router.get("/detail", summary="물건상세 입찰정보(getCltrBidInf2: 유찰누적·면적·이미지·이전입찰)")
+async def auction_detail(
+    cltr_mng_no: str = Query(..., description="물건관리번호(cltrMngNo)"),
+    pbct_cdtn_no: str = Query(..., description="공매조건번호(pbctCdtnNo)"),
+    current_user: CurrentUser = Depends(RequirePermission("auction", "read")),
+    service=Depends(_step1_service),
+) -> dict[str, Any]:
+    """순위/목록 아이템의 cltrMngNo+pbctCdtnNo로 온비드 물건상세 입찰정보를 조회한다.
+
+    유찰누적횟수·면적·이미지URL·이전입찰내역·낙찰가율(병합) 등을 정규화해 반환한다.
+    무자료/비공개/이미지없음은 null(가짜 금지), 키 미설정/실패는 unavailable+reason.
+    """
+    try:
+        return await service.detail_live(
+            service_key=_onbid_service_key(),
+            cltr_mng_no=cltr_mng_no, pbct_cdtn_no=pbct_cdtn_no,
+        )
+    except Exception as e:  # noqa: BLE001
+        return {
+            "item": None,
+            "data_source": "unavailable",
+            "reason": f"물건상세 조회 실패: {str(e)[:160]}",
+        }
+
+
 @router.get("/items/{item_id}", summary="공매 물건 상세(+권리/감정 raw +낙찰가능가)")
 async def auction_item_detail(
     item_id: int,
@@ -404,12 +429,26 @@ async def auction_monitor(
 
     PNU/주소 직접매칭은 즉시, 폴리곤(구획)은 물건 주소 지오코딩(캐시) 후 매칭한다.
     각 물건엔 est_win(낙찰가능가)을 포함하며 data_source를 정직 표기한다(무목업).
+
+    ★관심대상 미등록·온비드 미가용·내부오류 시에도 5xx 대신 200 + 빈결과 + note 로
+    graceful 반환한다(가짜데이터 금지).
     """
-    return await service.monitor(
-        user_id=str(current_user.user_id),
-        tenant_id=str(current_user.tenant_id),
-        group_by=group_by,
-    )
+    try:
+        return await service.monitor(
+            user_id=str(current_user.user_id),
+            tenant_id=str(current_user.tenant_id),
+            group_by=group_by,
+        )
+    except Exception as e:  # noqa: BLE001
+        return {
+            "group_by": "source",
+            "groups": {},
+            "total_matched": 0,
+            "targets": 0,
+            "data_source": "unavailable",
+            "note": "관심대상을 등록하면 매칭 결과를 지속 모니터링해 제공합니다."
+            f" (일시 조회 실패: {str(e)[:120]})",
+        }
 
 
 @router.post("/monitor/run", summary="(관리/cron) 온비드 동기화+매칭+신규 알림")
@@ -417,9 +456,24 @@ async def auction_monitor_run(
     current_user: CurrentUser = Depends(RequirePermission("auction", "write")),
     service=Depends(_step1_service),
 ) -> dict[str, Any]:
-    """온비드 실데이터를 적재하고 관심대상과 매칭한 뒤 신규 매칭을 알림 기록한다(무목업)."""
-    return await service.monitor_run(
-        user_id=str(current_user.user_id),
-        tenant_id=str(current_user.tenant_id),
-        service_key=_onbid_service_key(),
-    )
+    """온비드 실데이터를 적재하고 관심대상과 매칭한 뒤 신규 매칭을 알림 기록한다(무목업).
+
+    ★온비드 미가용·관심대상 미등록·내부오류 시에도 5xx 대신 200 + 빈결과 + note.
+    """
+    try:
+        return await service.monitor_run(
+            user_id=str(current_user.user_id),
+            tenant_id=str(current_user.tenant_id),
+            service_key=_onbid_service_key(),
+        )
+    except Exception as e:  # noqa: BLE001
+        return {
+            "status": "ok",
+            "synced": 0,
+            "data_source": "unavailable",
+            "total_matched": 0,
+            "new_matches": 0,
+            "groups_count": {},
+            "note": "관심대상을 등록하면 매칭 결과를 지속 모니터링해 제공합니다."
+            f" (일시 동기화 실패: {str(e)[:120]})",
+        }

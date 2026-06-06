@@ -249,8 +249,8 @@ class AuctionStep1Service:
             # ★감정가 미연동 물건은 est_win_mid=None → 필터 통과시키지 않음(정직).
             enriched = [
                 e for e in enriched
-                if e["est_win"].get("est_win_mid") is not None
-                and e["est_win"]["est_win_mid"] <= est_win_max
+                if e.get("est_win") is not None
+                and e["est_win"] <= est_win_max
             ]
         result: dict[str, Any] = {
             "items": enriched,
@@ -347,6 +347,75 @@ class AuctionStep1Service:
         if res.get("reason"):
             out["reason"] = res["reason"]
         return out
+
+    async def detail_live(
+        self, *, service_key: Optional[str], cltr_mng_no: str, pbct_cdtn_no: str,
+    ) -> dict[str, Any]:
+        """물건상세 입찰정보(getCltrBidInf2)로 유찰누적횟수·면적·이미지·이전입찰내역을 조회한다.
+
+        순위 목록(getInqRnkClg) 아이템엔 없는 상세필드를 cltrMngNo+pbctCdtnNo로 보강한다.
+        가능하면 물건입찰결과상세(getCltrBidRsltDtl2)를 병합한다(낙찰가율 등).
+        실패/무자료/비공개 → unavailable + reason(가짜 금지). est_win(낙찰가능가) 부착.
+        """
+        client = OnbidClient(service_key)
+        try:
+            info = await client.get_cltr_bid_info(cltr_mng_no, pbct_cdtn_no)
+            if info.get("data_source") != "onbid_live":
+                # 상세 입찰정보가 무자료/실패면 결과상세로 보강 시도(있으면).
+                fallback = await client.get_bid_result_detail(cltr_mng_no, pbct_cdtn_no)
+                if fallback.get("item") is None:
+                    return {
+                        "item": None,
+                        "data_source": "unavailable",
+                        "reason": info.get("reason") or fallback.get("reason")
+                        or "온비드 물건상세 무자료",
+                    }
+                raw = fallback["item"]
+                info = {
+                    "cltr_mng_no": cltr_mng_no,
+                    "pbct_cdtn_no": pbct_cdtn_no,
+                    "fail_count": None,
+                    "land_area": None,
+                    "bld_area": None,
+                    "appraisal_price": None,
+                    "min_bid_price": None,
+                    "win_rate": None,
+                    "win_price": None,
+                    "image_url": None,
+                    "usage": None,
+                    "address": None,
+                    "restriction": None,
+                    "status": None,
+                    "round_count": 0,
+                    "prev_bids": [],
+                    "raw": [raw],
+                    "data_source": "onbid_live",
+                }
+            else:
+                # 결과상세(낙찰가율/낙찰가) 병합 — 비어있는 값만 채움(실패 무시).
+                try:
+                    result = await client.get_bid_result_detail(cltr_mng_no, pbct_cdtn_no)
+                    rd = result.get("item") if result.get("item") else None
+                    if rd:
+                        from app.services.auction.onbid_client import (
+                            _parse_amount, _parse_rate,
+                        )
+                        if info.get("win_rate") is None:
+                            info["win_rate"] = _parse_rate(
+                                rd.get("scsbidRate") or rd.get("scsbidPrcRate")
+                            )
+                        if info.get("win_price") is None:
+                            info["win_price"] = _parse_amount(
+                                rd.get("scsbidAmt") or rd.get("scsbidPrc")
+                            )
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("getCltrBidRsltDtl2 병합 실패(무시): %s", str(e)[:120])
+        finally:
+            await client.close()
+
+        # est_win 부착(감정가+유찰횟수 실데이터 사용).
+        enriched = self._attach_est_win(dict(info))
+        return {"item": enriched, "data_source": "onbid_live"}
 
     async def search_bid_results(
         self, *, service_key: Optional[str], filters: dict[str, Any],
@@ -972,13 +1041,18 @@ class AuctionStep1Service:
 
     @staticmethod
     def _attach_est_win(d: dict[str, Any]) -> dict[str, Any]:
-        d["est_win"] = estimate_win_price(
+        est = estimate_win_price(
             appraisal_price=d.get("appraisal_price"),
             min_bid_price=d.get("min_bid_price"),
             kind=d.get("kind") or "etc",
             region_sido=d.get("region_sido"),
             fail_count=d.get("fail_count") or 0,
         )
+        # ★프론트 계약: est_win 은 숫자(중앙값, NaN 방지) — 범위/메타는 별도 키.
+        d["est_win"] = est.get("est_win_mid")           # 숫자(원) | None
+        d["est_win_low"] = est.get("est_win_low")        # 숫자(원) | None
+        d["est_win_high"] = est.get("est_win_high")      # 숫자(원) | None
+        d["est_win_detail"] = est                         # 신뢰도·가정·낙찰가율 등 원본.
         return d
 
     @staticmethod

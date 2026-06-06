@@ -522,6 +522,107 @@ class OnbidClient:
         url = f"{ONBID_BASE_URL}/{ONBID_BID_RESULT_OP}"
         return await self._fetch_single(url, params)
 
+    async def get_cltr_bid_info(
+        self, cltr_mng_no: str, pbct_cdtn_no: str,
+    ) -> dict[str, Any]:
+        """물건상세 입찰정보(getCltrBidInf2). 필수 cltrMngNo + pbctCdtnNo.
+
+        순위/공고 목록에 없는 유찰누적횟수·면적·이미지URL·이전입찰내역 등을 보강한다.
+        실패/무자료 시 {"item": None, "data_source": "unavailable", "reason": ...}.
+        """
+        if not self._service_key:
+            return {"item": None, "data_source": "unavailable", "reason": "온비드 인증키 미설정"}
+        if not cltr_mng_no or not pbct_cdtn_no:
+            return {"item": None, "data_source": "unavailable",
+                    "reason": "cltrMngNo/pbctCdtnNo 누락"}
+        params = {
+            "serviceKey": self._service_key,
+            "resultType": "json",
+            "cltrMngNo": cltr_mng_no,
+            "pbctCdtnNo": pbct_cdtn_no,
+        }
+        url = f"{ONBID_BASE_URL}/{ONBID_BID_INF_OP}"
+        res = await self._fetch_single(url, params)
+        if res.get("item") is None:
+            return res
+        items = res.get("raw_items") or [res["item"]]
+        normalized = self._normalize_bid_info(items, cltr_mng_no, pbct_cdtn_no)
+        normalized["data_source"] = "onbid_live"
+        return normalized
+
+    @staticmethod
+    def _normalize_bid_info(
+        rows: list[dict[str, Any]], cltr_mng_no: str, pbct_cdtn_no: str,
+    ) -> dict[str, Any]:
+        """getCltrBidInf2 응답(회차별 입찰정보 N행)을 물건 상세로 정규화한다(방어적).
+
+        - 여러 회차가 오면 유찰누적횟수(usbdNcumNft 최대)·이전입찰내역(prev_bids)을 집계.
+        - 면적·이미지URL은 채워진 첫 값 우선. 무자료/비공개/이미지없음은 None(가짜 금지).
+        """
+        first = rows[0] if rows else {}
+
+        def _first(*keys: str):
+            for r in rows:
+                for k in keys:
+                    v = r.get(k)
+                    if v not in (None, ""):
+                        return v
+            return None
+
+        # 유찰누적횟수: usbdNcumNft(누적유찰) 우선, 없으면 usbdNft 최대값.
+        fail_counts = [
+            v for r in rows
+            for v in (_parse_int(r.get("usbdNcumNft") or r.get("usbdNft")),)
+            if v is not None
+        ]
+        fail_count = max(fail_counts) if fail_counts else None
+
+        # 이전 입찰내역(회차/최저입찰가/개찰일/결과) — 채워진 행만.
+        prev_bids: list[dict[str, Any]] = []
+        for r in rows:
+            entry = {
+                "round_no": _parse_int(r.get("pbctNo") or r.get("rcnRtNo")),
+                "min_bid_price": _parse_amount(r.get("lowstBidPrc") or r.get("minBidPrc")),
+                "opbd_dt": _parse_dt(r.get("opbdDt") or r.get("cltrOpbdDt")),
+                "status": str(r.get("pbctStatNm") or "").strip() or None,
+                "win_price": _parse_amount(r.get("scsbidAmt") or r.get("scsbidPrc")),
+                "win_rate": _parse_rate(r.get("scsbidRate") or r.get("scsbidPrcRate")),
+            }
+            if any(v is not None for v in entry.values()):
+                prev_bids.append(entry)
+
+        image_url = _first("cltrImgUrlAdr", "thnlImgUrlAdr", "imageUrl", "imgUrl")
+
+        kind_src = str(_first("cltrUsgSclsCtgrNm", "cltrUsgMclsCtgrNm",
+                              "cltrUsgLclsCtgrNm", "prptDivNm") or "")
+
+        return {
+            "source": "onbid",
+            "cltr_mng_no": cltr_mng_no,
+            "pbct_cdtn_no": pbct_cdtn_no,
+            "kind": normalize_kind(kind_src),
+            "kind_name": kind_src.strip() or None,
+            "region_sido": _sido_from_address(
+                str(_first("onbidCltrNm", "cltrNm", "ldnmAdrs") or "")
+            ),
+            "fail_count": fail_count,
+            "land_area": _parse_rate(_first("ldaQ", "landSqms", "lndArea")),
+            "bld_area": _parse_rate(_first("bldSqms", "bldgSqms", "buldArea")),
+            "appraisal_price": _parse_amount(_first("apslEvlAmt", "apslAmt")),
+            "min_bid_price": _parse_amount(_first("lowstBidPrc", "minBidPrc")),
+            "win_rate": _parse_rate(_first("scsbidRate", "scsbidPrcRate")),
+            "win_price": _parse_amount(_first("scsbidAmt", "scsbidPrc")),
+            "image_url": str(image_url).strip() if image_url else None,
+            "usage": str(_first("cltrUsgSclsCtgrNm", "cltrUsgMclsCtgrNm",
+                                "cltrUsgLclsCtgrNm", "prptDivNm") or "").strip() or None,
+            "address": str(_first("onbidCltrNm", "cltrNm", "ldnmAdrs") or "").strip() or None,
+            "restriction": str(_first("rstrLmtCmptCont", "bidLmtCont") or "").strip() or None,
+            "status": str(first.get("pbctStatNm") or "").strip() or None,
+            "round_count": len(prev_bids),
+            "prev_bids": prev_bids,
+            "raw": rows,
+        }
+
     async def _fetch_single(self, url: str, params: dict[str, Any]) -> dict[str, Any]:
         """단건 상세 응답을 정직하게 반환한다(가짜 생성 금지)."""
         try:
@@ -535,7 +636,8 @@ class OnbidClient:
             if not raw_items:
                 return {"item": None, "data_source": "unavailable",
                         "reason": "온비드 응답 무자료"}
-            return {"item": raw_items[0], "data_source": "onbid_live"}
+            return {"item": raw_items[0], "raw_items": raw_items,
+                    "data_source": "onbid_live"}
         except Exception as e:  # noqa: BLE001
             logger.warning("온비드 상세 호출 실패(무목업): %s", str(e)[:160])
             return {"item": None, "data_source": "unavailable",
