@@ -38,6 +38,7 @@ import { UnitOutlineBuilder } from "@/components/sales/UnitOutlineBuilder";
 import DeskCheckin from "@/components/desk/DeskCheckin";
 import VisitorStats from "@/components/desk/VisitorStats";
 import CommissionDutchPay from "@/components/sales-app/CommissionDutchPay";
+import TerminationCertPanel from "@/components/sales-app/TerminationCertPanel";
 
 interface RoleResponse {
   site_id?: string;
@@ -243,6 +244,7 @@ export default function SiteWorkspaceClient({ locale, siteId }: { locale: Locale
               <VisitorStats siteCode={siteId} />
             </div>
           )}
+          {tab === "cert" && <TerminationCertPanel siteCode={siteId} role={role.role} />}
           {tab === "integrity" && <IntegrityGuard siteCode={siteId} />}
           {tab === "projection" && <DeveloperProjection />}
         </>

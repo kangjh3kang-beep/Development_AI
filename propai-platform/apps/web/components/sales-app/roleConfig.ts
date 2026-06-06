@@ -53,6 +53,9 @@ export const SALES_TABS: SalesTabDef[] = [
   { key: "desk", label: "방문 데스크", feature: "customers" },
   { key: "integrity", label: "무결성 가드", feature: "settings" },
   { key: "projection", label: "시행사 통합", feature: "reports" },
+  // 해촉증명서: 프리랜서뷰(내 증명서)는 현장 멤버 전원 공통(alwaysOn). 발급주체뷰는
+  // 패널 내부에서 역할(시행/대행 본부장↑·admin)로 차등 노출한다.
+  { key: "cert", label: "해촉증명서", feature: "cert", alwaysOn: true },
 ];
 
 /** features[]로 노출 탭 필터링. alwaysOn 탭은 항상 포함. */
