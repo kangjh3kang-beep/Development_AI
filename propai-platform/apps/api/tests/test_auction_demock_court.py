@@ -80,18 +80,20 @@ async def test_onbid_no_key_returns_unavailable():
     assert "미설정" in res["reason"]
 
 
-# ── 2) 온비드 _extract_items: 무자료/오류 → 빈 리스트 ──
+# ── 2) 온비드 _extract_items: 무자료/오류 → 빈 리스트 + (err) ──
 
 def test_onbid_extract_items_empty_and_error():
-    assert OnbidClient._extract_items("") == []
-    assert OnbidClient._extract_items("not-json-not-xml") == []
-    # 에러 바디(JSON, items 없음) → 빈 리스트
-    err = '{"response":{"header":{"resultCode":"99"},"body":{}}}'
-    assert OnbidClient._extract_items(err) == []
-    # 정상 단건(dict) → 1건 리스트화
-    ok = '{"response":{"body":{"items":{"item":{"CLTR_NO":"1"}}}}}'
-    parsed = OnbidClient._extract_items(ok)
-    assert len(parsed) == 1 and parsed[0]["CLTR_NO"] == "1"
+    # 반환은 (items, error_reason) 튜플.
+    assert OnbidClient._extract_items("") == ([], None)
+    assert OnbidClient._extract_items("not-json-not-xml") == ([], None)
+    # 에러 바디(JSON, resultCode!=00) → 빈 리스트 + error_reason.
+    err = '{"response":{"header":{"resultCode":"99","resultMsg":"ERR"},"body":{}}}'
+    items, reason = OnbidClient._extract_items(err)
+    assert items == [] and reason and "99" in reason
+    # 정상 단건(dict) → 1건 리스트화.
+    ok = '{"response":{"header":{"resultCode":"00"},"body":{"items":{"item":{"pbancMngNo":"1"}}}}}'
+    items, reason = OnbidClient._extract_items(ok)
+    assert reason is None and len(items) == 1 and items[0]["pbancMngNo"] == "1"
 
 
 # ── 3) 법원경매 목록 파서 ──

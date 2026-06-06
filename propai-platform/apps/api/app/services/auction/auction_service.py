@@ -185,7 +185,8 @@ class AuctionStep1Service:
                 "address": it.get("address"),
                 "appraisal": it.get("appraisal_price"),
                 "minbid": it.get("min_bid_price"),
-                "fail": it.get("fail_count") or 0,
+                # ★물건목록 미연동 시 유찰횟수는 None(가짜 0 금지). court는 실값.
+                "fail": it.get("fail_count"),
                 "status": it.get("status"),
                 "bid_start": it.get("bid_start"),
                 "bid_end": it.get("bid_end"),
@@ -222,17 +223,29 @@ class AuctionStep1Service:
 
         enriched = [self._attach_est_win(r) for r in rows]
         if est_win_max is not None:
+            # ★감정가 미연동 물건은 est_win_mid=None → 필터 통과시키지 않음(정직).
             enriched = [
                 e for e in enriched
-                if (e["est_win"].get("est_win_mid") or 0) <= est_win_max
+                if e["est_win"].get("est_win_mid") is not None
+                and e["est_win"]["est_win_mid"] <= est_win_max
             ]
-        return {
+        result: dict[str, Any] = {
             "items": enriched,
             "total": total,
             "page": page,
             "page_size": page_size,
             "data_source": data_source,
         }
+        # ★온비드 공고목록은 현재 감정가/최저입찰가/유찰횟수 미연동(가짜 금지) — 정직 안내.
+        if enriched and any(
+            e.get("source") == "onbid" and e.get("appraisal_price") is None
+            for e in enriched
+        ):
+            result["price_note"] = (
+                "온비드 공고목록 기반(감정가·최저입찰가·유찰횟수는 물건목록 엔드포인트"
+                " 연동 후 제공). 현재는 공고·주소·입찰기간·개찰일시만 실연동."
+            )
+        return result
 
     async def ranking(
         self, *, region: Optional[str] = None, kind: Optional[str] = None,
@@ -272,7 +285,14 @@ class AuctionStep1Service:
             e["discount_rate"] = (
                 round((1.0 - mb / ap) * 100, 1) if ap and mb else None
             )
-        return {"items": enriched, "by": by, "total": len(enriched)}
+        out: dict[str, Any] = {"items": enriched, "by": by, "total": len(enriched)}
+        if not enriched:
+            # ★온비드 공고목록엔 최저입찰가/감정가 미연동 → 순위 데이터 없을 수 있음(정직).
+            out["note"] = (
+                "최저입찰가/감정가 데이터가 있는 물건이 없습니다. 온비드 부동산"
+                " 물건목록 엔드포인트 연동 후 순위가 채워집니다(현재 공고목록만 실연동)."
+            )
+        return out
 
     async def get_item(self, item_id: int) -> Optional[dict[str, Any]]:
         """물건 상세(+raw +est_win)."""
