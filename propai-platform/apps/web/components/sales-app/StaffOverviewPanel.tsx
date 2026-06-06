@@ -74,16 +74,15 @@ export default function StaffOverviewPanel({ siteId }: { siteId: string }) {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-2">
+      <div className="sa-seg" role="tablist" aria-label="집계 범위">
         {(["site", "all"] as const).map((s) => (
           <button
             key={s}
+            role="tab"
+            aria-selected={scope === s}
+            data-active={scope === s}
             onClick={() => setScope(s)}
-            className={`rounded-lg px-3.5 py-1.5 text-sm font-bold transition ${
-              scope === s
-                ? "bg-[var(--accent-strong)] text-white"
-                : "border border-[var(--line)] bg-[var(--surface-strong)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
-            }`}
+            className="sa-seg__item"
           >
             {s === "site" ? "현장별" : "종합(전 현장)"}
           </button>
@@ -96,12 +95,12 @@ export default function StaffOverviewPanel({ siteId }: { siteId: string }) {
         </p>
       )}
 
-      {err && <p className="text-sm font-semibold text-rose-300">{err}</p>}
+      {err && <p className="text-sm font-semibold text-[var(--status-error)]">{err}</p>}
 
       {loading ? (
         <div className="grid gap-2 sm:grid-cols-4">
           {[0, 1, 2, 3].map((i) => (
-            <div key={i} className="h-20 animate-pulse rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)]" />
+            <div key={i} className="sa-skeleton h-20 rounded-2xl" />
           ))}
         </div>
       ) : data ? (

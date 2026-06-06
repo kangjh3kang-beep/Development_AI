@@ -60,9 +60,9 @@ export default function SiteListClient({ locale }: { locale: Locale }) {
   return (
     <div className="space-y-5">
       <div className="flex items-center gap-3">
-        <span className="text-2xl">🏗️</span>
+        <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-[var(--accent-soft)] text-2xl">🏗️</span>
         <div>
-          <h1 className="text-lg font-black text-[var(--text-primary)]">내 분양 현장</h1>
+          <h1 className="text-xl font-black tracking-tight text-[var(--text-primary)]">내 분양 현장</h1>
           <p className="mt-0.5 text-xs text-[var(--text-secondary)]">
             내가 소속된 현장만 표시됩니다. 현장을 선택하고 2차 비밀번호로 진입하세요.
           </p>
@@ -70,7 +70,7 @@ export default function SiteListClient({ locale }: { locale: Locale }) {
       </div>
 
       {err && (
-        <div className="rounded-xl border border-rose-400/40 bg-rose-500/10 px-4 py-3 text-sm font-semibold text-rose-300">
+        <div className="rounded-xl border border-[color:color-mix(in_srgb,var(--status-error)_40%,transparent)] bg-[color:color-mix(in_srgb,var(--status-error)_12%,transparent)] px-4 py-3 text-sm font-semibold text-[var(--status-error)]">
           {err}
         </div>
       )}
@@ -78,39 +78,46 @@ export default function SiteListClient({ locale }: { locale: Locale }) {
       {loading ? (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {[0, 1, 2].map((i) => (
-            <div key={i} className="h-24 animate-pulse rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)]" />
+            <div key={i} className="sa-skeleton h-28 rounded-2xl" />
           ))}
         </div>
       ) : sites.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-[var(--line-strong)] bg-[var(--surface-soft)] p-10 text-center">
-          <p className="text-sm text-[var(--text-secondary)]">소속된 현장이 없습니다.</p>
-          <p className="mt-1 text-xs text-[var(--text-tertiary)]">현장 관리자가 조직도에 추가하면 여기에 표시됩니다.</p>
+        <div className="sa-empty">
+          <span className="sa-empty__icon" aria-hidden>🏚️</span>
+          <p className="text-sm font-semibold text-[var(--text-secondary)]">소속된 현장이 없습니다.</p>
+          <p className="text-xs text-[var(--text-tertiary)]">현장 관리자가 조직도에 추가하면 여기에 표시됩니다.</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {sites.map((s) => {
             const entered = Boolean(getStoredSiteToken(s.site_id));
+            const statusTone =
+              s.status === "OPEN" ? "sa-chip--success" : s.status === "CLOSED" ? "sa-chip--muted" : "sa-chip--warning";
             return (
               <button
                 key={s.site_id}
                 onClick={() => onCardClick(s)}
-                className="block w-full rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-4 text-left shadow-[var(--shadow-sm)] transition hover:border-[var(--accent-strong)] active:scale-[0.99]"
+                className="sa-card group block w-full rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-4 text-left shadow-[var(--shadow-sm)]"
               >
                 <div className="flex items-start justify-between gap-2">
-                  <h3 className="font-bold text-[var(--text-primary)]">{s.site_name}</h3>
-                  <span className="shrink-0 rounded-full bg-[var(--surface-strong)] px-2 py-0.5 text-[11px] font-bold text-[var(--accent-strong)]">
-                    {STATUS_LABEL[s.status] ?? s.status}
-                  </span>
+                  <h3 className="text-[15px] font-bold leading-snug text-[var(--text-primary)]">{s.site_name}</h3>
+                  <span className={`sa-chip shrink-0 ${statusTone}`}>{STATUS_LABEL[s.status] ?? s.status}</span>
                 </div>
-                <div className="mt-2 flex items-center gap-2">
-                  <span className="rounded-md bg-[var(--accent-soft)] px-2 py-0.5 text-[11px] font-bold text-[var(--accent-strong)]">
-                    {s.role_label ?? ROLE_LABEL[s.role] ?? s.role}
-                  </span>
+                {s.development_type && (
+                  <p className="mt-1 text-xs text-[var(--text-tertiary)]">{s.development_type}</p>
+                )}
+                <div className="mt-3 flex items-center gap-2">
+                  <span className="sa-chip sa-chip--accent">{s.role_label ?? ROLE_LABEL[s.role] ?? s.role}</span>
                   {entered ? (
-                    <span className="text-[11px] font-semibold text-emerald-400">● 진입됨</span>
+                    <span className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--status-success)]">
+                      <span className="sa-dot sa-dot--success" aria-hidden /> 진입됨
+                    </span>
                   ) : (
-                    <span className="text-[11px] font-semibold text-[var(--text-tertiary)]">🔐 2차 비번 필요</span>
+                    <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-[var(--text-tertiary)]">🔐 2차 비번</span>
                   )}
+                  <span className="ml-auto text-[13px] font-bold text-[var(--accent-strong)] transition-transform group-hover:translate-x-0.5">
+                    진입 →
+                  </span>
                 </div>
               </button>
             );

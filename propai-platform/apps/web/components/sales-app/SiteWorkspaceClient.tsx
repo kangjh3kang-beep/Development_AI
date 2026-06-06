@@ -153,7 +153,7 @@ export default function SiteWorkspaceClient({ locale, siteId }: { locale: Locale
         {!loading && role && tab === "units" && (
           <button
             onClick={() => setBuilderOpen(true)}
-            className="rounded-lg bg-[var(--accent-strong)] px-3 py-1.5 text-xs font-black text-white"
+            className="inline-flex min-h-[40px] items-center rounded-lg bg-[var(--accent-strong)] px-3.5 text-xs font-black text-white transition hover:opacity-90 active:scale-95"
           >
             ＋ 동·호표 생성
           </button>
@@ -161,7 +161,7 @@ export default function SiteWorkspaceClient({ locale, siteId }: { locale: Locale
         {canManage && (
           <button
             onClick={() => setPwOpen(true)}
-            className="ml-auto rounded-lg border border-[var(--accent-strong)] px-3 py-1.5 text-xs font-black text-[var(--accent-strong)] transition hover:bg-[var(--accent-soft)]"
+            className="ml-auto inline-flex min-h-[40px] items-center rounded-lg border border-[var(--accent-strong)] px-3.5 text-xs font-black text-[var(--accent-strong)] transition hover:bg-[var(--accent-soft)] active:scale-95"
           >
             🛠 현장 비밀번호 설정
           </button>
@@ -169,30 +169,33 @@ export default function SiteWorkspaceClient({ locale, siteId }: { locale: Locale
       </div>
 
       {err && (
-        <div className="rounded-xl border border-rose-400/40 bg-rose-500/10 px-4 py-3 text-sm font-semibold text-rose-300">
+        <div className="rounded-xl border border-[color:color-mix(in_srgb,var(--status-error)_40%,transparent)] bg-[color:color-mix(in_srgb,var(--status-error)_12%,transparent)] px-4 py-3 text-sm font-semibold text-[var(--status-error)]">
           {err}
         </div>
       )}
 
-      {loading && <div className="h-20 animate-pulse rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)]" />}
+      {loading && <div className="sa-skeleton h-20 rounded-2xl" />}
 
       {!loading && role && (
         <>
-          {/* 역할 기반 탭 — features[]에 포함된 메뉴만 노출 */}
-          <div className="flex flex-wrap gap-2 border-b border-[var(--line)] pb-3">
-            {tabs.map((t) => (
-              <button
-                key={t.key}
-                onClick={() => setTab(t.key)}
-                className={`rounded-lg px-3.5 py-1.5 text-sm font-bold transition ${
-                  tab === t.key
-                    ? "bg-[var(--accent-strong)] text-white shadow-[var(--shadow-sm)]"
-                    : "border border-[var(--line)] bg-[var(--surface-strong)] text-[var(--text-secondary)] hover:border-[var(--accent-strong)] hover:text-[var(--text-primary)]"
-                }`}
-              >
-                {t.label}
-              </button>
-            ))}
+          {/* 역할 기반 탭 — features[]에 포함된 메뉴만 노출.
+              모바일: 가로 스크롤 탭바(스냅·페이드·터치타깃 ≥44px)+아이콘으로 직관화. */}
+          <div className="sticky top-0 z-20 -mx-1 border-b border-[var(--line)] bg-[var(--background)]/85 px-1 backdrop-blur">
+            <div className="sa-tabbar" role="tablist" aria-label="현장 메뉴">
+              {tabs.map((t) => (
+                <button
+                  key={t.key}
+                  role="tab"
+                  aria-selected={tab === t.key}
+                  data-active={tab === t.key}
+                  onClick={() => setTab(t.key)}
+                  className="sa-tab"
+                >
+                  {t.icon && <span className="sa-tab__icon" aria-hidden>{t.icon}</span>}
+                  {t.label}
+                </button>
+              ))}
+            </div>
           </div>
 
           {/* 동·호표 생성 모달(세대 탭) — 기존 빌더 재사용 */}

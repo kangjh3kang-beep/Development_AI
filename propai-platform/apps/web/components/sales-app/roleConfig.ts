@@ -34,39 +34,41 @@ export interface SalesTabDef {
   /** features[]에 이 키가 있어야 노출. 모든 멤버 공통 탭은 alwaysOn. */
   feature: string;
   alwaysOn?: boolean;
+  /** 모바일 가로 스크롤 탭바 가독성용 아이콘(직관). 순수 표시용. */
+  icon?: string;
 }
 
 // 탭 ↔ 기능키(feature) 매핑. feature는 백엔드 _FEATURE_KEYS(site_auth.py §_FEATURE_KEYS)와 정합:
 //   dashboard·org·pricing·units·contracts·commission·customers·ads·reports·settings·site_password.
 // 계약 후속 업무(청약/수납/대출/전매/세금)는 백엔드 'contracts' 기능키로 게이팅한다(별도 키 미정의).
 export const SALES_TABS: SalesTabDef[] = [
-  { key: "units", label: "세대 배치도", feature: "units" },
-  { key: "customers", label: "고객·상담", feature: "customers" },
+  { key: "units", label: "세대 배치도", feature: "units", icon: "🏢" },
+  { key: "customers", label: "고객·상담", feature: "customers", icon: "🧑‍🤝‍🧑" },
   // Phase 1-D — 업무일지. 현장 멤버 전원 공통(alwaysOn): 일자별 작성·실적집계.
-  { key: "worklog", label: "업무일지", feature: "worklog", alwaysOn: true },
-  { key: "pricing", label: "분양가", feature: "pricing" },
-  { key: "subscription", label: "청약·당첨", feature: "contracts" },
-  { key: "payments", label: "수납·납부", feature: "contracts" },
-  { key: "loan", label: "중도금 대출", feature: "contracts" },
-  { key: "resale", label: "전매·실거래", feature: "contracts" },
-  { key: "tax", label: "세금·보증", feature: "contracts" },
-  { key: "org", label: "조직도", feature: "org" },
-  { key: "commission", label: "수수료", feature: "commission" },
-  { key: "desk", label: "방문 데스크", feature: "customers" },
-  { key: "integrity", label: "무결성 가드", feature: "settings" },
-  { key: "projection", label: "시행사 통합", feature: "reports" },
+  { key: "worklog", label: "업무일지", feature: "worklog", alwaysOn: true, icon: "📒" },
+  { key: "pricing", label: "분양가", feature: "pricing", icon: "💰" },
+  { key: "subscription", label: "청약·당첨", feature: "contracts", icon: "🎟️" },
+  { key: "payments", label: "수납·납부", feature: "contracts", icon: "🧾" },
+  { key: "loan", label: "중도금 대출", feature: "contracts", icon: "🏦" },
+  { key: "resale", label: "전매·실거래", feature: "contracts", icon: "🔄" },
+  { key: "tax", label: "세금·보증", feature: "contracts", icon: "📊" },
+  { key: "org", label: "조직도", feature: "org", icon: "🗂️" },
+  { key: "commission", label: "수수료", feature: "commission", icon: "💵" },
+  { key: "desk", label: "방문 데스크", feature: "customers", icon: "🛎️" },
+  { key: "integrity", label: "무결성 가드", feature: "settings", icon: "🛡️" },
+  { key: "projection", label: "시행사 통합", feature: "reports", icon: "📈" },
   // 해촉증명서: 프리랜서뷰(내 증명서)는 현장 멤버 전원 공통(alwaysOn). 발급주체뷰는
   // 패널 내부에서 역할(시행/대행 본부장↑·admin)로 차등 노출한다.
-  { key: "cert", label: "해촉증명서", feature: "cert", alwaysOn: true },
+  { key: "cert", label: "해촉증명서", feature: "cert", alwaysOn: true, icon: "📄" },
   // Phase 1-E — 공통(PUBLIC) 마켓·프로필. 현장 무관 전역 컨텐츠라 features와 무관하게 전원 공통(alwaysOn).
-  { key: "market", label: "구인구직", feature: "market", alwaysOn: true },
-  { key: "profile", label: "내 프로필", feature: "profile", alwaysOn: true },
+  { key: "market", label: "구인구직", feature: "market", alwaysOn: true, icon: "💼" },
+  { key: "profile", label: "내 프로필", feature: "profile", alwaysOn: true, icon: "👤" },
   // Phase 1-H — 소셜(친구·단톡·다중톡). 전역 토큰 기반(현장 무관)이라 전원 공통(alwaysOn).
-  { key: "social", label: "소셜·채팅", feature: "social", alwaysOn: true },
+  { key: "social", label: "소셜·채팅", feature: "social", alwaysOn: true, icon: "💬" },
   // Phase C — 공유·바이럴(MGM 추천코드·공유링크/QR·Web Share·퍼널통계). 실적 귀속은 개인별이라 전원 공통(alwaysOn).
-  { key: "referral", label: "공유·홍보", feature: "referral", alwaysOn: true },
+  { key: "referral", label: "공유·홍보", feature: "referral", alwaysOn: true, icon: "🔗" },
   // 직원관리(집계): 관리역할 전용(STAFF_OVERVIEW_ROLES). 비관리역할엔 미노출.
-  { key: "staff", label: "직원관리", feature: "staff" },
+  { key: "staff", label: "직원관리", feature: "staff", icon: "👥" },
 ];
 
 // Phase 1-E 직원관리(집계) 노출 역할 — 관리역할(대행본사·본부장·이사·팀장↑·시행·관리자).

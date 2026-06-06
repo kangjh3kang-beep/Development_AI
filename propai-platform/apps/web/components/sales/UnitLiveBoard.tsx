@@ -381,27 +381,37 @@ export default function UnitLiveBoard({ siteCode }: { siteCode: string }) {
 
   return (
     <div className="space-y-4">
-      {/* 통계 + WS 상태 */}
+      {/* 통계 + WS 상태 — 분양률을 주지표로 강조, 나머지는 의미색 도트로 구분 */}
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
         {[
-          ["총 세대", `${stats.total}`],
-          ["분양률", `${stats.ratio}%`],
-          ["분양가능", `${stats.c.AVAILABLE ?? 0}`],
-          ["선점중", `${stats.c.HOLD ?? 0}`],
-          ["계약", `${stats.c.CONTRACTED ?? 0}`],
-        ].map(([k, v]) => (
-          <div key={k} className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-2.5 text-center">
-            <p className="text-[10px] text-[var(--text-tertiary)]">{k}</p>
-            <p className="text-base font-black text-[var(--text-primary)]">{v}</p>
+          ["총 세대", `${stats.total}`, null],
+          ["분양률", `${stats.ratio}%`, "accent"],
+          ["분양가능", `${stats.c.AVAILABLE ?? 0}`, "success"],
+          ["선점중", `${stats.c.HOLD ?? 0}`, "warning"],
+          ["계약", `${stats.c.CONTRACTED ?? 0}`, "error"],
+        ].map(([k, v, tone]) => (
+          <div
+            key={k as string}
+            className={`rounded-xl border bg-[var(--surface-soft)] p-2.5 text-center ${
+              tone === "accent"
+                ? "border-[color:color-mix(in_srgb,var(--accent-strong)_45%,transparent)] bg-[var(--accent-soft)]"
+                : "border-[var(--line)]"
+            }`}
+          >
+            <p className="flex items-center justify-center gap-1 text-[10px] font-semibold text-[var(--text-tertiary)]">
+              {tone && tone !== "accent" && <span className={`sa-dot sa-dot--${tone} !h-1.5 !w-1.5`} aria-hidden />}
+              {k}
+            </p>
+            <p className={`text-lg font-black ${tone === "accent" ? "text-[var(--accent-strong)]" : "text-[var(--text-primary)]"}`}>{v}</p>
           </div>
         ))}
       </div>
 
-      <div className="flex flex-wrap items-center gap-3">
+      <div className="sticky top-12 z-10 flex flex-wrap items-center gap-3 rounded-xl border border-[var(--line)] bg-[var(--surface)]/85 px-3 py-2 backdrop-blur">
         <span className="flex items-center gap-1.5 text-xs font-semibold">
           <i
             className={`inline-block h-2.5 w-2.5 rounded-full ${
-              wsStatus === "open" ? "bg-emerald-400" : wsStatus === "connecting" ? "bg-amber-400 animate-pulse" : "bg-zinc-500"
+              wsStatus === "open" ? "bg-[var(--status-success)]" : wsStatus === "connecting" ? "animate-pulse bg-[var(--status-warning)]" : "bg-[var(--text-hint)]"
             }`}
           />
           <span className="text-[var(--text-secondary)]">
@@ -410,9 +420,9 @@ export default function UnitLiveBoard({ siteCode }: { siteCode: string }) {
         </span>
         <button
           onClick={() => loadBoard()}
-          className="rounded-lg border border-[var(--line)] bg-[var(--surface-strong)] px-2.5 py-1 text-xs font-bold text-[var(--text-secondary)]"
+          className="rounded-lg border border-[var(--line)] bg-[var(--surface-strong)] px-2.5 py-1.5 text-xs font-bold text-[var(--text-secondary)] transition hover:border-[var(--accent-strong)] hover:text-[var(--text-primary)]"
         >
-          새로고침
+          ↻ 새로고침
         </button>
         <div className="ml-auto flex flex-wrap gap-3 text-xs">
           {Object.entries(LABELS).map(([k, v]) => (
@@ -427,24 +437,37 @@ export default function UnitLiveBoard({ siteCode }: { siteCode: string }) {
       {toast && (
         <div
           role="status"
-          className={`rounded-lg border px-3 py-2 text-xs font-semibold ${
+          aria-live="polite"
+          className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-semibold shadow-[var(--shadow-sm)] ${
             toast.tone === "ok"
-              ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
+              ? "border-[color:color-mix(in_srgb,var(--status-success)_40%,transparent)] bg-[color:color-mix(in_srgb,var(--status-success)_12%,transparent)] text-[var(--status-success)]"
               : toast.tone === "warn"
-                ? "border-amber-500/40 bg-amber-500/10 text-amber-300"
-                : "border-rose-500/40 bg-rose-500/10 text-rose-300"
+                ? "border-[color:color-mix(in_srgb,var(--status-warning)_40%,transparent)] bg-[color:color-mix(in_srgb,var(--status-warning)_12%,transparent)] text-[var(--status-warning)]"
+                : "border-[color:color-mix(in_srgb,var(--status-error)_40%,transparent)] bg-[color:color-mix(in_srgb,var(--status-error)_12%,transparent)] text-[var(--status-error)]"
           }`}
         >
+          <span aria-hidden>{toast.tone === "ok" ? "✓" : toast.tone === "warn" ? "⚠" : "✕"}</span>
           {toast.text}
         </div>
       )}
 
-      {err && <p className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-3 text-sm text-rose-300">{err}</p>}
-      {loading && <p className="text-sm text-[var(--text-tertiary)]">세대 보드를 불러오는 중…</p>}
-      {!loading && !err && units.length === 0 && (
-        <p className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-6 text-sm text-[var(--text-secondary)]">
-          아직 세대가 없습니다. 동·호표를 먼저 생성하세요.
+      {err && (
+        <p className="rounded-xl border border-[color:color-mix(in_srgb,var(--status-error)_40%,transparent)] bg-[color:color-mix(in_srgb,var(--status-error)_10%,transparent)] p-3 text-sm text-[var(--status-error)]">
+          {err}
         </p>
+      )}
+      {loading && (
+        <div className="space-y-2">
+          <div className="sa-skeleton h-9 rounded-xl" />
+          <div className="sa-skeleton h-40 rounded-xl" />
+        </div>
+      )}
+      {!loading && !err && units.length === 0 && (
+        <div className="sa-empty">
+          <span className="sa-empty__icon" aria-hidden>🧱</span>
+          <p className="text-sm font-semibold text-[var(--text-secondary)]">아직 세대가 없습니다.</p>
+          <p className="text-xs text-[var(--text-tertiary)]">상단의 동·호표 생성으로 배치도를 먼저 만들어 주세요.</p>
+        </div>
       )}
 
       {/* 보드 그리드 */}

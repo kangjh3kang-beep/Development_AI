@@ -124,14 +124,15 @@ export default function CrmPanel({ siteCode }: { siteCode: string }) {
       {/* Phase 1-D — 현장별/통합 토글 + 단계/키워드 필터 + 고객 목록(카드 → 상세 드로어) */}
       <section className="space-y-3 rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-3">
         <div className="flex flex-wrap items-center gap-2">
-          <div className="flex overflow-hidden rounded-lg border border-[var(--line)]">
+          <div className="sa-seg" role="tablist" aria-label="고객 범위">
             {(["site", "all"] as const).map((s) => (
               <button
                 key={s}
+                role="tab"
+                aria-selected={scope === s}
+                data-active={scope === s}
                 onClick={() => setScope(s)}
-                className={`px-3 py-1.5 text-xs font-bold transition ${
-                  scope === s ? "bg-[var(--accent-strong)] text-white" : "text-[var(--text-secondary)]"
-                }`}
+                className="sa-seg__item"
               >
                 {s === "site" ? "현장별" : "통합"}
               </button>

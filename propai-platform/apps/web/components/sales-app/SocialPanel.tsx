@@ -804,8 +804,10 @@ function ChatRoom({
               return (
                 <div key={m.id} className={`flex ${mine ? "justify-end" : "justify-start"}`}>
                   <div
-                    className={`max-w-[78%] rounded-2xl px-3 py-2 ${
-                      mine ? "bg-[var(--accent-strong)] text-white" : "border border-[var(--line)] bg-[var(--surface-strong)] text-[var(--text-primary)]"
+                    className={`max-w-[78%] px-3 py-2 ${
+                      mine
+                        ? "sa-bubble-me rounded-2xl rounded-br-md bg-[var(--accent-strong)] text-white"
+                        : "rounded-2xl rounded-bl-md border border-[var(--line)] bg-[var(--surface-strong)] text-[var(--text-primary)]"
                     }`}
                   >
                     {(m.media_urls?.length ?? 0) > 0 && (
@@ -853,12 +855,13 @@ function ChatRoom({
 
       {sendErr && <p className="text-sm font-semibold text-rose-300">{sendErr}</p>}
 
-      {/* 입력 */}
-      <div className="flex items-center gap-2">
+      {/* 입력 — 모바일 하단 고정(세이프에어리어)·터치타깃 ≥44px */}
+      <div className="sa-chatbar flex items-center gap-2 pt-1">
         <button
           onClick={() => setMediaOpen((v) => !v)}
-          className="shrink-0 rounded-lg border border-[var(--line)] px-3 py-2 text-lg text-[var(--text-secondary)] transition hover:text-[var(--text-primary)]"
+          className="grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-[var(--line)] text-lg text-[var(--text-secondary)] transition hover:border-[var(--accent-strong)] hover:text-[var(--text-primary)]"
           title="사진 첨부"
+          aria-label="사진 첨부"
         >
           📷
         </button>
@@ -872,12 +875,13 @@ function ChatRoom({
             }
           }}
           placeholder="메시지 입력"
+          aria-label="메시지 입력"
           className={INPUT_CLS}
         />
         <button
           onClick={sendText}
           disabled={sending || !text.trim()}
-          className="shrink-0 rounded-lg bg-[var(--accent-strong)] px-4 py-2 text-sm font-black text-white transition hover:opacity-90 disabled:opacity-50"
+          className="grid h-11 shrink-0 place-items-center rounded-xl bg-[var(--accent-strong)] px-4 text-sm font-black text-white transition hover:opacity-90 disabled:opacity-50"
         >
           전송
         </button>
