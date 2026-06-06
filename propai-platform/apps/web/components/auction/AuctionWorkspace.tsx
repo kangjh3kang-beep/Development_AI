@@ -5,6 +5,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
+import { AuctionMonitorPanel } from "@/components/auction/AuctionMonitorPanel";
 import { ApiClientError, apiClient } from "@/lib/api-client";
 import type { Locale } from "@/i18n/config";
 
@@ -363,9 +364,17 @@ export function AuctionWorkspace({ locale }: AuctionWorkspaceProps) {
       {/* --- 탭 A: 내 경공매 --- */}
       {activeTab === "my" ? (
         <div className="space-y-5">
-          <p className="rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)]/40 px-4 py-3 text-xs leading-relaxed text-[var(--text-secondary)]">
-            📡 토지조서에 등록된 내 토지가 경·공매로 나오는지 정기적으로 <strong className="text-[var(--text-primary)]">자동 모니터링</strong>하고, 진행 중인 물건을 프로젝트별로 모아 보여줍니다.
-          </p>
+          {/* 경·공매 모니터링 센터: 관심대상 3방법 등록 + 관심대상별 매칭결과 + 수동실행 */}
+          <AuctionMonitorPanel locale={locale} canUseLiveApi={canUseLiveApi} />
+
+          {/* 프로젝트 연동 보드(기존): 관리 토지·프로젝트와 온비드 물건 매칭 */}
+          <div className="border-t border-[var(--line)] pt-5">
+            <h2 className="mb-1 text-lg font-black tracking-tight text-[var(--text-primary)]">
+              프로젝트 연동 물건
+            </h2>
+            <p className="mb-4 text-xs text-[var(--text-hint)]">
+              관리 중인 프로젝트·토지와 연동된 진행 물건을 프로젝트별로 모아 보여줍니다.
+            </p>
           {myQuery.isLoading ? (
             <SkeletonLoader count={2} itemClassName="h-40 rounded-3xl" />
           ) : null}
@@ -430,6 +439,7 @@ export function AuctionWorkspace({ locale }: AuctionWorkspaceProps) {
               ) : null}
             </>
           ) : null}
+          </div>
         </div>
       ) : null}
 
