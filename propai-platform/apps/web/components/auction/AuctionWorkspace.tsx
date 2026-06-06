@@ -104,9 +104,9 @@ type TabId = "my" | "search" | "ranking";
 type RankingBy = "views" | "interest" | "min_bid" | "discount_rate";
 
 const TABS: { id: TabId; label: string; hint: string }[] = [
-  { id: "my", label: "내 경공매", hint: "관리 토지·프로젝트와 연동된 물건" },
-  { id: "search", label: "조건검색", hint: "지역·종류·유찰·금액 조건 검색" },
   { id: "ranking", label: "전국 순위", hint: "조회수·관심·최저가·할인율 정렬" },
+  { id: "search", label: "조건검색", hint: "지역·종류·유찰·금액 조건 검색" },
+  { id: "my", label: "내 경공매", hint: "관리 토지·프로젝트와 연동된 물건" },
 ];
 
 const RANKING_OPTIONS: { id: RankingBy; label: string }[] = [
@@ -196,7 +196,7 @@ export function AuctionWorkspace({ locale }: AuctionWorkspaceProps) {
   const runtimeConfig = apiClient.getRuntimeConfig();
   const canUseLiveApi = runtimeConfig.mode === "live" || runtimeConfig.hasAccessToken;
 
-  const [activeTab, setActiveTab] = useState<TabId>("my");
+  const [activeTab, setActiveTab] = useState<TabId>("ranking");
   const [rankingBy, setRankingBy] = useState<RankingBy>("views");
 
   // 조건검색: 입력 폼과 실제 적용 필터를 분리(검색 버튼 클릭 시 적용).
@@ -363,6 +363,9 @@ export function AuctionWorkspace({ locale }: AuctionWorkspaceProps) {
       {/* --- 탭 A: 내 경공매 --- */}
       {activeTab === "my" ? (
         <div className="space-y-5">
+          <p className="rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)]/40 px-4 py-3 text-xs leading-relaxed text-[var(--text-secondary)]">
+            📡 토지조서에 등록된 내 토지가 경·공매로 나오는지 정기적으로 <strong className="text-[var(--text-primary)]">자동 모니터링</strong>하고, 진행 중인 물건을 프로젝트별로 모아 보여줍니다.
+          </p>
           {myQuery.isLoading ? (
             <SkeletonLoader count={2} itemClassName="h-40 rounded-3xl" />
           ) : null}
@@ -384,13 +387,13 @@ export function AuctionWorkspace({ locale }: AuctionWorkspaceProps) {
                 </p>
               ) : null}
 
-              {myQuery.data.combined.length ? (
+              {(myQuery.data.combined ?? []).length ? (
                 <div className="rounded-3xl border border-[var(--accent-strong)]/30 bg-[var(--surface-strong)] p-6">
                   <p className="mb-4 text-[10px] font-black uppercase tracking-[0.3em] text-[var(--text-hint)]">
-                    통합 보드 · 전체 {myQuery.data.combined.length}건
+                    통합 보드 · 전체 {(myQuery.data.combined ?? []).length}건
                   </p>
                   <AuctionTable
-                    items={myQuery.data.combined}
+                    items={myQuery.data.combined ?? []}
                     locale={locale}
                     variant="results"
                     onSelect={setSelected}
@@ -398,9 +401,9 @@ export function AuctionWorkspace({ locale }: AuctionWorkspaceProps) {
                 </div>
               ) : null}
 
-              {myQuery.data.projects.length ? (
+              {(myQuery.data.projects ?? []).length ? (
                 <div className="space-y-4">
-                  {myQuery.data.projects.map((project, idx) => (
+                  {(myQuery.data.projects ?? []).map((project, idx) => (
                     <div
                       key={project.project_id ?? `project-${idx}`}
                       className="rounded-3xl border border-[var(--line-strong)] bg-[var(--surface-soft)]/40 p-6"
@@ -422,8 +425,8 @@ export function AuctionWorkspace({ locale }: AuctionWorkspaceProps) {
                     </div>
                   ))}
                 </div>
-              ) : !myQuery.data.combined.length ? (
-                <EmptyState message="관리 토지 중 경공매 진행 물건이 없습니다." />
+              ) : !(myQuery.data.combined ?? []).length ? (
+                <EmptyState message="관리 토지 중 경공매 진행 물건이 없습니다. 토지조서에 토지를 등록하면 자동 모니터링됩니다." />
               ) : null}
             </>
           ) : null}
@@ -433,6 +436,9 @@ export function AuctionWorkspace({ locale }: AuctionWorkspaceProps) {
       {/* --- 탭 B: 조건검색 --- */}
       {activeTab === "search" ? (
         <div className="space-y-6">
+          <p className="rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)]/40 px-4 py-3 text-xs leading-relaxed text-[var(--text-secondary)]">
+            🔎 내 조건(지역·종류·유찰횟수·감정가·최저입찰가·면적)에 부합하는 경·공매 물건을 <strong className="text-[var(--text-primary)]">실시간으로 찾아</strong> 제공합니다. 조건을 저장하면 매칭 물건을 지속 추적합니다.
+          </p>
           <form
             onSubmit={handleSearch}
             className="rounded-3xl border border-[var(--line-strong)] bg-[var(--surface-soft)]/40 p-6"
@@ -542,7 +548,7 @@ export function AuctionWorkspace({ locale }: AuctionWorkspaceProps) {
           </form>
 
           {/* 저장 조건 목록 */}
-          {filtersQuery.data?.length ? (
+          {Array.isArray(filtersQuery.data) && filtersQuery.data.length ? (
             <div className="flex flex-wrap gap-2">
               {filtersQuery.data.map((filter) => (
                 <span
@@ -589,9 +595,9 @@ export function AuctionWorkspace({ locale }: AuctionWorkspaceProps) {
                   {bidResultsQuery.data.note}
                 </p>
               ) : null}
-              {bidResultsQuery.data.items.length ? (
+              {(bidResultsQuery.data.items ?? []).length ? (
                 <AuctionTable
-                  items={bidResultsQuery.data.items}
+                  items={bidResultsQuery.data.items ?? []}
                   locale={locale}
                   variant="results"
                   onSelect={setSelected}
@@ -607,6 +613,9 @@ export function AuctionWorkspace({ locale }: AuctionWorkspaceProps) {
       {/* --- 탭 C: 전국 순위 --- */}
       {activeTab === "ranking" ? (
         <div className="space-y-5">
+          <p className="rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)]/40 px-4 py-3 text-xs leading-relaxed text-[var(--text-secondary)]">
+            🏆 전국 공매 부동산을 <strong className="text-[var(--text-primary)]">조회수·관심·최저가·할인율</strong> 순으로 보여줍니다. 감정가 대비 저가 기회를 한눈에 파악하세요.
+          </p>
           <div className="flex flex-wrap gap-2">
             {RANKING_OPTIONS.map((opt) => (
               <button
@@ -637,9 +646,9 @@ export function AuctionWorkspace({ locale }: AuctionWorkspaceProps) {
             />
           ) : null}
           {rankingQuery.data ? (
-            rankingQuery.data.items.length ? (
+            (rankingQuery.data.items ?? []).length ? (
               <div className="space-y-3">
-                {rankingQuery.data.items.map((item, idx) => (
+                {(rankingQuery.data.items ?? []).map((item, idx) => (
                   <button
                     type="button"
                     key={item.cltrMngNo ?? `rank-${idx}`}
