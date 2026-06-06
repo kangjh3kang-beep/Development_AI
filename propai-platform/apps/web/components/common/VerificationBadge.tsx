@@ -38,6 +38,17 @@ const SEV_CLS: Record<string, string> = {
   high: "text-rose-400", medium: "text-amber-400", low: "text-[var(--text-tertiary)]",
 };
 
+// 검증 플래그 유형 → 일반인이 이해하기 쉬운 한국어 라벨(과거 "할루시네이션" 캐시도 친화 표기)
+const TYPE_LABEL: Record<string, string> = {
+  "할루시네이션": "데이터 오류 감지",
+  "데이터오류감지": "데이터 오류 감지",
+  "데이터 오류 감지": "데이터 오류 감지",
+  "수치불일치": "수치 불일치",
+  "내부모순": "내부 모순",
+  "과장": "과장·단정",
+};
+const typeLabel = (t: string) => TYPE_LABEL[t?.trim?.() ?? t] || t;
+
 export function VerificationBadge({
   analysisType,
   context,
@@ -117,7 +128,7 @@ export function VerificationBadge({
           {result.summary && <p className="text-[11px] text-[var(--text-secondary)]">{result.summary}</p>}
           {result.issues.map((it, i) => (
             <div key={i} className="text-[11px]">
-              <span className={`font-bold ${SEV_CLS[it.severity] || ""}`}>[{it.type}]</span>{" "}
+              <span className={`font-bold ${SEV_CLS[it.severity] || ""}`}>[{typeLabel(it.type)}]</span>{" "}
               <span className="text-[var(--text-primary)]">{it.claim}</span>
               <span className="text-[var(--text-tertiary)]"> — {it.note}</span>
             </div>

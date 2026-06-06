@@ -8,6 +8,7 @@
 """
 
 import json
+from datetime import datetime
 from typing import Any
 
 import structlog
@@ -17,13 +18,23 @@ logger = structlog.get_logger(__name__)
 _SYSTEM = """\
 당신은 부동산개발 분석의 '검증관'입니다. 아래 [분석 출력]이 [원본 데이터]에 실제로
 근거하는지 엄격히 검증합니다. 다음을 탐지하세요:
-1) 할루시네이션: 원본 데이터에 없는 수치·사실·법조문을 지어낸 주장
+1) 데이터 오류 감지: 원본 데이터에 없는 수치·사실·법조문을 지어낸(근거 미확인) 주장
 2) 수치 불일치: 원본과 다른 값, 단위 오류, 계산 모순
 3) 내부 모순: 분석 내 앞뒤가 안 맞는 서술
 4) 과장/단정: 데이터로 뒷받침되지 않는 확정적 단정
-검증관은 관대하지 않게, 그러나 근거가 충분하면 통과시킵니다. JSON만 출력."""
+검증관은 관대하지 않게, 그러나 근거가 충분하면 통과시킵니다. JSON만 출력.
+
+[날짜 기준 — 매우 중요]
+'기준 날짜'에 명시된 오늘 날짜를 절대 기준으로 삼으세요. 오늘이 속한 해와 그 이전의
+거래일·날짜는 모두 '정상(과거/현재)'이며 절대로 '미래 날짜'·'불가능한 데이터'로
+판정하지 마세요. 오직 기준 날짜보다 뒤(이후)인 날짜만 미래입니다.
+당신의 사전 지식상 연도가 과거처럼 느껴지더라도, 반드시 제공된 기준 날짜를 따르세요."""
 
 _TMPL = """\
+## 기준 날짜(오늘)
+오늘은 {today}입니다. {this_year}년 및 그 이전의 거래·날짜는 정상(과거/현재)이며
+'미래 날짜'로 판정하지 마세요. {this_year}년보다 이후 연도만 미래입니다.
+
 ## 분석 유형: {analysis_type}
 
 ## 원본 데이터(근거 자료)
@@ -37,7 +48,7 @@ _TMPL = """\
   "verdict": "pass|warn|fail",
   "grounded_score": 0-100 정수(원본 근거 충실도),
   "issues": [
-    {{"type": "할루시네이션|수치불일치|내부모순|과장",
+    {{"type": "데이터오류감지|수치불일치|내부모순|과장",
       "claim": "문제된 주장(짧게 인용)",
       "severity": "high|medium|low",
       "note": "왜 문제인지 + 원본과의 차이"}}
@@ -103,7 +114,14 @@ class VerifierService:
             from app.services.ai.llm_provider import get_llm
             from langchain_core.messages import HumanMessage, SystemMessage
 
-            user = _TMPL.format(analysis_type=analysis_type, source=src[:4000], output=out[:4000])
+            _now = datetime.now()
+            user = _TMPL.format(
+                today=_now.strftime("%Y-%m-%d"),
+                this_year=_now.year,
+                analysis_type=analysis_type,
+                source=src[:4000],
+                output=out[:4000],
+            )
             llm = get_llm(timeout=50, max_tokens=1500)
             resp = await llm.ainvoke([SystemMessage(content=_SYSTEM), HumanMessage(content=user)])
             data = json.loads(_strip_json(resp.content if hasattr(resp, "content") else str(resp)))

@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v63-dashboard-projects";
+const CACHE_NAME = "propai-v64-verify-terms";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",
