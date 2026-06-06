@@ -9,6 +9,7 @@ from fastapi import APIRouter
 import app.schemas.sales as S
 from app.api.crud_router import make_crud_router
 from app.api.endpoints.sales.actions import actions_router
+from app.api.endpoints.sales.commission_agreement import commission_agreement_router
 from app.api.endpoints.sales.site_auth import site_auth_router
 from app.api.endpoints.sales.mh import mh_router
 from app.api.endpoints.sales.views import views_router
@@ -74,6 +75,7 @@ for _model, _prefix in REGISTRY:
     ))
 
 sales_router.include_router(actions_router)
+sales_router.include_router(commission_agreement_router)
 sales_router.include_router(site_auth_router)
 sales_router.include_router(mh_router)
 sales_router.include_router(views_router)
