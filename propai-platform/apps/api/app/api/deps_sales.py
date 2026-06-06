@@ -49,33 +49,60 @@ async def resolve_site(request: Request, db: AsyncSession) -> SalesSite:
     return site
 
 
+def _site_token_ctx(request: Request, user, site_id):
+    """X-Site-Token(현장 세션토큰)이 있고 site_id가 일치하면 (org_path, role) 을 반환, 아니면 None.
+
+    Phase1-A 현장 2차인증으로 발급된 단기 토큰. 검증된 멤버십·역할을 담고 있어
+    진입 후 매 요청 멤버십 재조회 없이 토큰 우선으로 컨텍스트를 세팅한다.
+    """
+    raw = request.headers.get("x-site-token")
+    if not raw:
+        return None
+    from app.api.endpoints.sales.site_auth import decode_site_token  # 지연 import(순환 방지)
+    payload = decode_site_token(raw)
+    if not payload:
+        return None
+    # 토큰의 site/사용자 정합 — 다른 현장·다른 사용자 토큰 차단
+    if str(payload.get("site_id")) != str(site_id):
+        return None
+    if str(payload.get("sub")) != str(getattr(user, "id", "")):
+        return None
+    return (payload.get("org_path") or "", payload.get("site_role") or "")
+
+
 async def sales_ctx(request: Request, db: AsyncSession = Depends(get_db),
                     user=Depends(get_current_user)) -> SalesCtx:
     site = await resolve_site(request, db)
     site_id = site.id
-    node = (await db.execute(
-        select(SalesOrgNode).where(
-            SalesOrgNode.site_id == site_id,
-            SalesOrgNode.user_id == user.id,
-            SalesOrgNode.active.is_(True),
-        )
-    )).scalar_one_or_none()
 
-    role_lower = (getattr(user, "role", "") or "").lower()
-    user_tenant = getattr(user, "tenant_id", None)
-    # SalesSite의 소유 테넌트는 organization_id 컬럼(=provision 시 user.tenant_id) 으로 저장됨.
-    owns_site = bool(user_tenant) and str(getattr(site, "organization_id", "") or "") == str(user_tenant)
-    if node:
-        org_path, role = str(node.path), node.node_type
-    elif role_lower in _SUPERADMIN_ROLES:
-        org_path, role = "", "SUPERADMIN"
-    elif role_lower in _DEVELOPER_ROLES:
-        org_path, role = "", "DEVELOPER"
-    elif owns_site:
-        # 본인 테넌트가 소유한 현장 → 시행사(DEVELOPER)로 인정(구독자가 만든 현장을 운영 가능)
-        org_path, role = "", "DEVELOPER"
+    # ── 토큰 우선: 현장 세션토큰(X-Site-Token)이 유효하면 멤버십 재조회 없이 컨텍스트 세팅 ──
+    tok = _site_token_ctx(request, user, site_id)
+    if tok is not None:
+        org_path, role = tok
     else:
-        raise HTTPException(403, "이 현장에 대한 분양(sales) 권한이 없습니다")
+        node = (await db.execute(
+            select(SalesOrgNode).where(
+                SalesOrgNode.site_id == site_id,
+                SalesOrgNode.user_id == user.id,
+                SalesOrgNode.active.is_(True),
+            )
+        )).scalar_one_or_none()
+
+        role_lower = (getattr(user, "role", "") or "").lower()
+        user_tenant = getattr(user, "tenant_id", None)
+        # SalesSite의 소유 테넌트는 organization_id 컬럼(=provision 시 user.tenant_id) 으로 저장됨.
+        owns_site = bool(user_tenant) and str(getattr(site, "organization_id", "") or "") == str(user_tenant)
+        if node:
+            org_path, role = str(node.path), node.node_type
+        elif role_lower in _SUPERADMIN_ROLES:
+            org_path, role = "", "SUPERADMIN"
+        elif role_lower in _DEVELOPER_ROLES:
+            org_path, role = "", "DEVELOPER"
+        elif owns_site:
+            # 본인 테넌트가 소유한 현장 → 시행사(DEVELOPER)로 인정(구독자가 만든 현장을 운영 가능)
+            org_path, role = "", "DEVELOPER"
+        else:
+            raise HTTPException(403, "이 현장에 대한 분양(sales) 권한이 없습니다")
 
     # RLS 세션변수 주입(트랜잭션 로컬) — 활성화 시 즉시 적용
     await db.execute(text("SELECT set_config('app.site_id', :s, true)"), {"s": str(site_id)})
