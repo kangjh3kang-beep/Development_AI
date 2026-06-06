@@ -89,10 +89,14 @@ export default function SalesSiteList({ locale }: { locale: Locale }) {
         <span className="text-2xl">🏗️</span>
         <div>
           <h1 className="text-lg font-black text-[var(--text-primary)]">분양 현장 관리</h1>
-          <p className="mt-0.5 text-xs text-[var(--text-secondary)]">분양 현장을 새로 만들고 세대·분양가·계약·수수료·안내데스크를 한곳에서 운영합니다.</p>
+          <p className="mt-0.5 text-xs text-[var(--text-secondary)]">시행·관리자 경로입니다. 현장을 만들고 설정·요약을 운영합니다. 현장 직원처럼 역할별 앱 화면을 쓰려면 <b className="text-[var(--accent-strong)]">‘현장앱 진입’</b>(2차 비밀번호)을 사용하세요.</p>
         </div>
+        <Link href={`/${locale}/sales/sites`}
+          className="ml-auto rounded-xl border border-[var(--line-strong)] px-4 py-2 text-xs font-black text-[var(--text-secondary)] hover:border-[var(--accent-strong)] hover:text-[var(--accent-strong)]">
+          내 현장(앱) →
+        </Link>
         <Link href={`/${locale}/sales/projection`}
-          className="ml-auto rounded-xl border border-[var(--accent-strong)] px-4 py-2 text-xs font-black text-[var(--accent-strong)] hover:bg-[var(--accent-soft)]">
+          className="rounded-xl border border-[var(--accent-strong)] px-4 py-2 text-xs font-black text-[var(--accent-strong)] hover:bg-[var(--accent-soft)]">
           시행사 요약 보기 →
         </Link>
       </div>
@@ -154,14 +158,26 @@ export default function SalesSiteList({ locale }: { locale: Locale }) {
         ) : (
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
             {sites.map((s) => (
-              <Link key={s.id} href={`/${locale}/sales/${s.site_code}`}
-                className="block rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-4 shadow-[var(--shadow-sm)] transition hover:border-[var(--accent-strong)]">
+              <div key={s.id}
+                className="flex flex-col rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-4 shadow-[var(--shadow-sm)] transition hover:border-[var(--accent-strong)]">
                 <div className="flex items-center justify-between">
                   <h3 className="font-bold text-[var(--text-primary)]">{s.site_name}</h3>
                   <span className="rounded-full bg-[var(--surface-strong)] px-2 py-0.5 text-[11px] font-bold text-[var(--accent-strong)]">{STATUS_LABEL[s.status] ?? s.status}</span>
                 </div>
                 <p className="mt-1 text-xs text-[var(--text-tertiary)]">{devLabel(s.development_type)}</p>
-              </Link>
+                {/* 관리(설정·요약) vs 현장앱 진입(2차비번 게이트) 명확 분리 */}
+                <div className="mt-3 flex items-center gap-2">
+                  <Link href={`/${locale}/sales/${s.site_code}`}
+                    className="flex-1 rounded-lg border border-[var(--line-strong)] px-3 py-2 text-center text-xs font-bold text-[var(--text-secondary)] transition hover:border-[var(--accent-strong)] hover:text-[var(--accent-strong)]">
+                    🛠 관리·설정
+                  </Link>
+                  {/* 현장앱 진입은 UUID(s.id)로 2차비번 게이트(/sales/sites/{id}/workspace)로 이동 */}
+                  <Link href={`/${locale}/sales/sites/${s.id}/workspace`}
+                    className="flex-1 rounded-lg bg-[var(--accent-strong)] px-3 py-2 text-center text-xs font-black text-white transition hover:opacity-90">
+                    🔐 현장앱 진입
+                  </Link>
+                </div>
+              </div>
             ))}
           </div>
         )}

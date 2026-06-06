@@ -158,10 +158,22 @@ export default function SiteWorkspaceClient({ locale, siteId }: { locale: Locale
             ＋ 동·호표 생성
           </button>
         )}
+        {/* 앱으로 열기 — 별도 창(앱 모드). 서브도메인(*.4t8t.net) 배선 전이라 현재 경로를 새 창으로.
+            서브도메인 준비 시: window.open(`https://${siteCode}.4t8t.net`, ...)로 자동 연결 가능. */}
+        <button
+          onClick={() => {
+            if (typeof window !== "undefined") {
+              window.open(window.location.href, "_blank", "noopener,noreferrer");
+            }
+          }}
+          className="ml-auto inline-flex min-h-[40px] items-center rounded-lg border border-[var(--line-strong)] px-3.5 text-xs font-black text-[var(--text-secondary)] transition hover:border-[var(--accent-strong)] hover:text-[var(--accent-strong)] active:scale-95"
+        >
+          🪟 앱으로 열기
+        </button>
         {canManage && (
           <button
             onClick={() => setPwOpen(true)}
-            className="ml-auto inline-flex min-h-[40px] items-center rounded-lg border border-[var(--accent-strong)] px-3.5 text-xs font-black text-[var(--accent-strong)] transition hover:bg-[var(--accent-soft)] active:scale-95"
+            className="inline-flex min-h-[40px] items-center rounded-lg border border-[var(--accent-strong)] px-3.5 text-xs font-black text-[var(--accent-strong)] transition hover:bg-[var(--accent-soft)] active:scale-95"
           >
             🛠 현장 비밀번호 설정
           </button>

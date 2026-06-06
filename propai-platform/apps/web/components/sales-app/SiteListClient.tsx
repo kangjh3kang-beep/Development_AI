@@ -10,6 +10,7 @@ import { useRouter } from "next/navigation";
 import { apiClient } from "@/lib/api-client";
 import { getStoredSiteToken } from "@/lib/salesApi";
 import SiteEnterModal from "@/components/sales-app/SiteEnterModal";
+import InstallGuide from "@/components/sales-app/InstallGuide";
 import { ROLE_LABEL, STATUS_LABEL } from "@/components/sales-app/roleConfig";
 import type { Locale } from "@/i18n/config";
 
@@ -25,6 +26,14 @@ interface MySite {
   membership?: string;
 }
 
+// membership(소속 유형) → 사람이 이해하는 한글 배지. 백엔드 my-sites가 부여:
+//   org=조직도 멤버, owner=소유(시행), admin=관리자(전체 현장 가시).
+const MEMBERSHIP_LABEL: Record<string, string> = {
+  org: "멤버",
+  owner: "소유",
+  admin: "관리",
+};
+
 export default function SiteListClient({ locale }: { locale: Locale }) {
   const router = useRouter();
   const [sites, setSites] = useState<MySite[]>([]);
@@ -33,10 +42,16 @@ export default function SiteListClient({ locale }: { locale: Locale }) {
   const [enterSite, setEnterSite] = useState<MySite | null>(null);
 
   const load = useCallback(() => {
+    // ★계약버그 방어: 백엔드 /my-sites는 배열을 그대로 반환(list(out.values()))한다.
+    //   과거 r?.sites로 읽어 항상 빈 목록("소속된 현장이 없습니다")이 되던 근본원인.
+    //   배열/래핑(sites/items/data) 양쪽을 모두 수용해 멤버·소유·관리자(전체) 모두 표시되게 한다.
     apiClient
-      .get<{ ok?: boolean; sites?: MySite[] }>("/sales/my-sites")
+      .get<MySite[] | { ok?: boolean; sites?: MySite[]; items?: MySite[]; data?: MySite[] }>("/sales/my-sites")
       .then((r) => {
-        setSites(r?.sites ?? []);
+        const list = Array.isArray(r)
+          ? r
+          : (r?.sites ?? r?.items ?? r?.data ?? []);
+        setSites(list);
         setErr("");
       })
       .catch(() => setErr("현장 목록을 불러오지 못했습니다. 로그인 상태를 확인하세요."))
@@ -64,10 +79,31 @@ export default function SiteListClient({ locale }: { locale: Locale }) {
         <div>
           <h1 className="text-xl font-black tracking-tight text-[var(--text-primary)]">내 분양 현장</h1>
           <p className="mt-0.5 text-xs text-[var(--text-secondary)]">
-            내가 소속된 현장만 표시됩니다. 현장을 선택하고 2차 비밀번호로 진입하세요.
+            현장 앱 진입점입니다. 현장을 선택하고 2차 비밀번호로 진입하면 내 역할에 맞는 메뉴가 열립니다.
           </p>
         </div>
       </div>
+
+      {/* 단계 안내 — 처음 사용자가 진입 흐름(①현장→②2차비번→③역할메뉴)을 이해하도록. */}
+      <ol className="flex flex-wrap items-center gap-2 text-[11px] font-semibold text-[var(--text-secondary)]">
+        {[
+          { n: "1", t: "현장 선택", d: "내 역할 배지 확인" },
+          { n: "2", t: "2차 비밀번호", d: "현장별 진입 인증" },
+          { n: "3", t: "역할별 메뉴", d: "권한에 맞는 워크스페이스" },
+        ].map((s, i) => (
+          <li key={s.n} className="flex items-center gap-2">
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-[var(--line)] bg-[var(--surface-soft)] px-2.5 py-1">
+              <span className="grid h-4 w-4 place-items-center rounded-full bg-[var(--accent-strong)] text-[10px] font-black text-white">{s.n}</span>
+              <b className="text-[var(--text-primary)]">{s.t}</b>
+              <span className="text-[var(--text-tertiary)]">{s.d}</span>
+            </span>
+            {i < 2 && <span aria-hidden className="text-[var(--text-tertiary)]">→</span>}
+          </li>
+        ))}
+      </ol>
+
+      {/* 앱 실행/설치 affordance — 홈 화면에 추가하면 주소 입력 없이 한 번에 접속. */}
+      <InstallGuide />
 
       {err && (
         <div className="rounded-xl border border-[color:color-mix(in_srgb,var(--status-error)_40%,transparent)] bg-[color:color-mix(in_srgb,var(--status-error)_12%,transparent)] px-4 py-3 text-sm font-semibold text-[var(--status-error)]">
@@ -106,8 +142,11 @@ export default function SiteListClient({ locale }: { locale: Locale }) {
                 {s.development_type && (
                   <p className="mt-1 text-xs text-[var(--text-tertiary)]">{s.development_type}</p>
                 )}
-                <div className="mt-3 flex items-center gap-2">
+                <div className="mt-3 flex flex-wrap items-center gap-2">
                   <span className="sa-chip sa-chip--accent">{s.role_label ?? ROLE_LABEL[s.role] ?? s.role}</span>
+                  {s.membership && MEMBERSHIP_LABEL[s.membership] && (
+                    <span className="sa-chip sa-chip--muted">{MEMBERSHIP_LABEL[s.membership]}</span>
+                  )}
                   {entered ? (
                     <span className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--status-success)]">
                       <span className="sa-dot sa-dot--success" aria-hidden /> 진입됨
