@@ -264,6 +264,10 @@ export function AuctionMonitorPanel({ locale, canUseLiveApi }: { locale: Locale;
   const [drawing, setDrawing] = useState(false);
   const [draftCount, setDraftCount] = useState(0); // 현재 그리는 폴리곤 정점 수
 
+  // 편집 모드 상태(저장 구역 점 드래그 수정)
+  const [editing, setEditing] = useState<Region | null>(null);
+  const [editPointCount, setEditPointCount] = useState(0);
+
   const mapEl = useRef<HTMLDivElement>(null);
   const mapRef = useRef<any>(null);
   const savedLayerRef = useRef<any>(null); // 저장된 구역 레이어
@@ -272,9 +276,20 @@ export function AuctionMonitorPanel({ locale, canUseLiveApi }: { locale: Locale;
   const draftPointsRef = useRef<[number, number][]>([]); // [lat,lng]
   const drawingRef = useRef(false);
 
+  // 편집 레이어 refs
+  const editLayerRef = useRef<any>(null); // 편집용 layerGroup(드래그 마커+폴리곤)
+  const editMarkersRef = useRef<any[]>([]); // 드래그 가능 정점 마커
+  const editPolygonRef = useRef<any>(null); // 편집 중 폴리곤
+  const editPointsRef = useRef<[number, number][]>([]); // [lat,lng]
+  const editingRef = useRef<Region | null>(null);
+
   useEffect(() => {
     drawingRef.current = drawing;
   }, [drawing]);
+
+  useEffect(() => {
+    editingRef.current = editing;
+  }, [editing]);
 
   const clearDraft = useCallback(() => {
     const L = window.L;
@@ -288,6 +303,36 @@ export function AuctionMonitorPanel({ locale, canUseLiveApi }: { locale: Locale;
     setDraftCount(0);
   }, [setDraftCount]);
 
+  const clearEdit = useCallback(() => {
+    if (editLayerRef.current) editLayerRef.current.clearLayers();
+    editMarkersRef.current = [];
+    editPolygonRef.current = null;
+    editPointsRef.current = [];
+    setEditPointCount(0);
+  }, [setEditPointCount]);
+
+  // 그리는 중 마지막 정점 1개 취소(undo) — 시각 갱신.
+  const undoLastVertex = useCallback(() => {
+    const L = window.L;
+    if (!L || !mapRef.current) return;
+    if (!draftPointsRef.current.length) return;
+    draftPointsRef.current.pop();
+    const lastMarker = draftMarkersRef.current.pop();
+    if (lastMarker) mapRef.current.removeLayer(lastMarker);
+    if (draftLineRef.current) {
+      mapRef.current.removeLayer(draftLineRef.current);
+      draftLineRef.current = null;
+    }
+    if (draftPointsRef.current.length >= 2) {
+      draftLineRef.current = L.polyline(draftPointsRef.current, {
+        color: "#ef4444",
+        weight: 2,
+        dashArray: "6",
+      }).addTo(mapRef.current);
+    }
+    setDraftCount(draftPointsRef.current.length);
+  }, [setDraftCount]);
+
   useEffect(() => {
     let alive = true;
     loadLeaflet()
@@ -297,6 +342,19 @@ export function AuctionMonitorPanel({ locale, canUseLiveApi }: { locale: Locale;
       alive = false;
     };
   }, []);
+
+  // Ctrl+Z / ⌘+Z: 그리는 중 마지막 정점 취소(undo). 그리기 모드일 때만 활성, cleanup 필수.
+  useEffect(() => {
+    if (!drawing) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && (e.key === "z" || e.key === "Z")) {
+        e.preventDefault();
+        undoLastVertex();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [drawing, undoLastVertex]);
 
   // 지도 초기화 (서울 중심 기본 — 구역은 사용자가 직접 그림)
   useEffect(() => {
@@ -308,9 +366,11 @@ export function AuctionMonitorPanel({ locale, canUseLiveApi }: { locale: Locale;
       attribution: "&copy; OpenStreetMap",
     }).addTo(map);
     savedLayerRef.current = L.layerGroup().addTo(map);
+    editLayerRef.current = L.layerGroup().addTo(map);
 
     // 지도 클릭 → 그리는 중이면 정점 추가
     map.on("click", (ev: any) => {
+      if (editingRef.current) return; // 편집 중에는 새 정점 추가 금지
       if (!drawingRef.current) return;
       const pt: [number, number] = [ev.latlng.lat, ev.latlng.lng];
       draftPointsRef.current.push(pt);
@@ -332,12 +392,41 @@ export function AuctionMonitorPanel({ locale, canUseLiveApi }: { locale: Locale;
     });
 
     mapRef.current = map;
-    setTimeout(() => map.invalidateSize(), 100);
+    const sizeTimer = setTimeout(() => map.invalidateSize(), 100);
+
+    // 언마운트 시 지도·리스너·레이어 제거(메모리릭 방지).
+    return () => {
+      clearTimeout(sizeTimer);
+      map.off();
+      map.remove();
+      mapRef.current = null;
+      savedLayerRef.current = null;
+      editLayerRef.current = null;
+      draftMarkersRef.current = [];
+      draftLineRef.current = null;
+      editMarkersRef.current = [];
+      editPolygonRef.current = null;
+    };
   }, [sdkReady]);
 
-  // 저장된 구역 렌더
+  // 구역 bounds로 확대 이동
+  const zoomToRegion = useCallback((region: Region) => {
+    const L = window.L;
+    if (!L || !mapRef.current) return;
+    const coords = region.geojson?.coordinates?.[0];
+    if (!Array.isArray(coords) || coords.length < 3) return;
+    const latlngs = coords.map((c) => [c[1], c[0]] as [number, number]);
+    try {
+      mapRef.current.fitBounds(L.latLngBounds(latlngs), { padding: [40, 40], maxZoom: 16 });
+    } catch {
+      /* noop */
+    }
+  }, []);
+
+  // 저장된 구역 렌더 (편집 중에는 재렌더 생략 — 드래그 상태 보존)
   useEffect(() => {
     if (!sdkReady || !mapRef.current || !window.L || !savedLayerRef.current) return;
+    if (editing) return;
     const L = window.L;
     savedLayerRef.current.clearLayers();
     const bounds: [number, number][] = [];
@@ -347,14 +436,18 @@ export function AuctionMonitorPanel({ locale, canUseLiveApi }: { locale: Locale;
       // geojson은 [lng,lat] → leaflet은 [lat,lng]
       const latlngs = coords.map((c) => [c[1], c[0]] as [number, number]);
       latlngs.forEach((p) => bounds.push(p));
-      L.polygon(latlngs, {
+      const poly = L.polygon(latlngs, {
         color: "#14b8a6",
         weight: 2,
         fillColor: "#14b8a6",
         fillOpacity: 0.12,
-      })
-        .addTo(savedLayerRef.current)
-        .bindPopup(`<b>${(r.label || "관심 구역").replace(/</g, "")}</b>`);
+      }).addTo(savedLayerRef.current);
+      // 폴리곤 클릭 → 해당 구역으로 확대(그리기 중이 아닐 때).
+      poly.on("click", (ev: any) => {
+        if (drawingRef.current || editingRef.current) return;
+        if (ev?.originalEvent) L.DomEvent.stopPropagation(ev.originalEvent);
+        zoomToRegion(r);
+      });
     });
     if (bounds.length > 1 && !drawingRef.current) {
       try {
@@ -363,7 +456,7 @@ export function AuctionMonitorPanel({ locale, canUseLiveApi }: { locale: Locale;
         /* noop */
       }
     }
-  }, [regions, sdkReady]);
+  }, [regions, sdkReady, zoomToRegion, editing]);
 
   function startDrawing() {
     setRegionError("");
@@ -404,6 +497,135 @@ export function AuctionMonitorPanel({ locale, canUseLiveApi }: { locale: Locale;
     const ring: number[][] = pts.map((p) => [p[1], p[0]]);
     ring.push([pts[0][1], pts[0][0]]);
     saveRegionMutation.mutate({
+      name: regionName.trim(),
+      geojson: { type: "Polygon", coordinates: [ring] },
+    });
+  }
+
+  // 편집 중 폴리곤 시각 갱신(드래그 시).
+  const refreshEditPolygon = useCallback(() => {
+    const L = window.L;
+    if (!L || !mapRef.current || !editLayerRef.current) return;
+    if (editPolygonRef.current) {
+      editLayerRef.current.removeLayer(editPolygonRef.current);
+      editPolygonRef.current = null;
+    }
+    if (editPointsRef.current.length >= 2) {
+      editPolygonRef.current = L.polygon(editPointsRef.current, {
+        color: "#f59e0b",
+        weight: 2,
+        fillColor: "#f59e0b",
+        fillOpacity: 0.15,
+      }).addTo(editLayerRef.current);
+    }
+  }, []);
+
+  // 저장 구역 → 편집 모드 진입(각 정점 드래그 마커 + 폴리곤).
+  const enterEdit = useCallback(
+    (region: Region) => {
+      const L = window.L;
+      if (!L || !mapRef.current || !editLayerRef.current) return;
+      const coords = region.geojson?.coordinates?.[0];
+      if (!Array.isArray(coords) || coords.length < 3) return;
+      // 그리기 모드 해제·draft 정리
+      setDrawing(false);
+      clearDraft();
+      clearEdit();
+      setRegionError("");
+
+      // 닫힘점(마지막=시작) 제거 후 [lat,lng] 정점 배열
+      const ring = coords.slice();
+      const first = ring[0];
+      const last = ring[ring.length - 1];
+      if (ring.length > 3 && first && last && first[0] === last[0] && first[1] === last[1]) {
+        ring.pop();
+      }
+      const pts: [number, number][] = ring.map((c) => [c[1], c[0]]);
+      editPointsRef.current = pts;
+
+      pts.forEach((pt, idx) => {
+        const marker = L.marker(pt, {
+          draggable: true,
+          icon: L.divIcon({
+            className: "",
+            html: '<span style="display:block;width:14px;height:14px;border-radius:9999px;background:#f59e0b;border:2px solid #fff;box-shadow:0 0 0 1px rgba(0,0,0,.3)"></span>',
+            iconSize: [14, 14],
+            iconAnchor: [7, 7],
+          }),
+        }).addTo(editLayerRef.current);
+        marker.on("drag", (ev: any) => {
+          const ll = ev.target.getLatLng();
+          editPointsRef.current[idx] = [ll.lat, ll.lng];
+          refreshEditPolygon();
+        });
+        editMarkersRef.current.push(marker);
+      });
+
+      refreshEditPolygon();
+      setEditPointCount(pts.length);
+      setEditing(region);
+      setRegionName(region.label ?? "");
+      zoomToRegion(region);
+    },
+    [
+      clearDraft,
+      clearEdit,
+      refreshEditPolygon,
+      zoomToRegion,
+      setDrawing,
+      setEditPointCount,
+      setEditing,
+      setRegionError,
+      setRegionName,
+    ],
+  );
+
+  const cancelEdit = useCallback(() => {
+    clearEdit();
+    setEditing(null);
+    setRegionName("");
+    setRegionError("");
+  }, [clearEdit, setEditing, setRegionName, setRegionError]);
+
+  // 편집 저장: PUT 없음 → DELETE 기존 + POST 신규(같은 이름).
+  const editSaveMutation = useMutation({
+    mutationFn: async (payload: {
+      id: number | string;
+      name: string;
+      geojson: RegionGeoJson;
+    }) => {
+      await apiClient.delete<void>(`/auction/regions/${payload.id}`);
+      return apiClient.post<Region>("/auction/regions", {
+        body: { name: payload.name, geojson: payload.geojson },
+      });
+    },
+    onSuccess: () => {
+      clearEdit();
+      setEditing(null);
+      setRegionName("");
+      setRegionError("");
+      void queryClient.invalidateQueries({ queryKey: ["auction", "regions"] });
+      void queryClient.invalidateQueries({ queryKey: ["auction", "monitor"] });
+    },
+    onError: (error) => setRegionError(extractErrorMessage(error)),
+  });
+
+  function handleSaveEdit() {
+    if (!editing) return;
+    if (!regionName.trim()) {
+      setRegionError("구역 이름을 입력하세요.");
+      return;
+    }
+    const pts = editPointsRef.current;
+    if (pts.length < 3) {
+      setRegionError("폴리곤은 최소 3개 정점이 필요합니다.");
+      return;
+    }
+    // leaflet [lat,lng] → geojson [lng,lat], 시작점으로 닫기
+    const ring: number[][] = pts.map((p) => [p[1], p[0]]);
+    ring.push([pts[0][1], pts[0][0]]);
+    editSaveMutation.mutate({
+      id: editing.id,
       name: regionName.trim(),
       geojson: { type: "Polygon", coordinates: [ring] },
     });
@@ -563,13 +785,28 @@ export function AuctionMonitorPanel({ locale, canUseLiveApi }: { locale: Locale;
               <span>🗺️</span> 지도에서 관심 구역 그리기
             </h3>
             <p className="mt-0.5 text-[11px] text-[var(--text-hint)]">
-              {drawing
-                ? `지도를 클릭해 구역 경계를 찍으세요 (정점 ${draftCount}개). 3개 이상 찍고 "구역 완료"를 누르세요.`
-                : "‘구역 그리기 시작’ → 지도 클릭으로 경계를 찍고 ‘구역 완료’ → 이름 입력 후 저장하면 자동 모니터링됩니다."}
+              {editing
+                ? `편집 모드 — "${formatText(editing.label)}" 구역의 정점(${editPointCount}개)을 드래그해 수정한 뒤 "수정 저장"을 누르세요.`
+                : drawing
+                  ? `그리기 모드 — 지도를 클릭해 경계를 찍으세요 (정점 ${draftCount}개). Ctrl+Z(⌘+Z)로 마지막 정점 취소. 3개 이상 찍고 "구역 완료".`
+                  : "‘구역 그리기 시작’ → 지도 클릭으로 경계를 찍고(Ctrl+Z 취소) ‘구역 완료’ → 이름 입력 후 저장. 저장 구역 클릭 시 확대·편집할 수 있습니다."}
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
-            {!drawing ? (
+            {editing ? (
+              <>
+                <span className="inline-flex items-center rounded-xl bg-[#f59e0b]/15 px-3 py-2 text-xs font-black text-[#f59e0b]">
+                  편집 중 ({editPointCount})
+                </span>
+                <button
+                  type="button"
+                  onClick={cancelEdit}
+                  className="rounded-xl border border-[var(--line-strong)] px-4 py-2 text-xs font-bold text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                >
+                  편집 취소
+                </button>
+              </>
+            ) : !drawing ? (
               <button
                 type="button"
                 onClick={startDrawing}
@@ -587,17 +824,19 @@ export function AuctionMonitorPanel({ locale, canUseLiveApi }: { locale: Locale;
                 구역 완료 ({draftCount})
               </button>
             )}
-            <button
-              type="button"
-              onClick={() => {
-                clearDraft();
-                setDrawing(false);
-                setRegionError("");
-              }}
-              className="rounded-xl border border-[var(--line-strong)] px-4 py-2 text-xs font-bold text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
-            >
-              지우기
-            </button>
+            {!editing ? (
+              <button
+                type="button"
+                onClick={() => {
+                  clearDraft();
+                  setDrawing(false);
+                  setRegionError("");
+                }}
+                className="rounded-xl border border-[var(--line-strong)] px-4 py-2 text-xs font-bold text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+              >
+                지우기
+              </button>
+            ) : null}
           </div>
         </div>
 
@@ -630,14 +869,25 @@ export function AuctionMonitorPanel({ locale, canUseLiveApi }: { locale: Locale;
             placeholder="구역 이름 (예: 강남 재개발 관심구역)"
             className="w-60 max-w-full rounded-xl border border-[var(--line)] bg-[var(--surface-muted)] px-3 py-2 text-sm text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-strong)]/50"
           />
-          <button
-            type="button"
-            onClick={handleSaveRegion}
-            disabled={saveRegionMutation.isPending || draftCount < 3}
-            className="rounded-xl border border-[var(--accent-strong)]/40 bg-[var(--accent-soft)] px-4 py-2 text-sm font-bold text-[var(--accent-strong)] transition-colors hover:bg-[var(--accent-soft)]/70 disabled:opacity-50"
-          >
-            {saveRegionMutation.isPending ? "저장 중…" : "구역 저장"}
-          </button>
+          {editing ? (
+            <button
+              type="button"
+              onClick={handleSaveEdit}
+              disabled={editSaveMutation.isPending || editPointCount < 3}
+              className="rounded-xl border border-[#f59e0b]/50 bg-[#f59e0b]/15 px-4 py-2 text-sm font-bold text-[#f59e0b] transition-colors hover:bg-[#f59e0b]/25 disabled:opacity-50"
+            >
+              {editSaveMutation.isPending ? "수정 저장 중…" : "수정 저장"}
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={handleSaveRegion}
+              disabled={saveRegionMutation.isPending || draftCount < 3}
+              className="rounded-xl border border-[var(--accent-strong)]/40 bg-[var(--accent-soft)] px-4 py-2 text-sm font-bold text-[var(--accent-strong)] transition-colors hover:bg-[var(--accent-soft)]/70 disabled:opacity-50"
+            >
+              {saveRegionMutation.isPending ? "저장 중…" : "구역 저장"}
+            </button>
+          )}
           {regionError ? (
             <span className="text-xs font-bold text-[var(--spot)]">{regionError}</span>
           ) : null}
@@ -653,9 +903,28 @@ export function AuctionMonitorPanel({ locale, canUseLiveApi }: { locale: Locale;
             {regions.map((r) => (
               <span
                 key={r.id}
-                className="inline-flex items-center gap-2 rounded-full border border-[var(--line-strong)] bg-[var(--surface-soft)] px-4 py-2 text-xs font-bold text-[var(--text-secondary)]"
+                className={`inline-flex items-center gap-2 rounded-full border bg-[var(--surface-soft)] px-4 py-2 text-xs font-bold text-[var(--text-secondary)] ${
+                  editing?.id === r.id
+                    ? "border-[#f59e0b]/60"
+                    : "border-[var(--line-strong)]"
+                }`}
               >
-                🗺️ {formatText(r.label)}
+                <button
+                  type="button"
+                  aria-label={`${r.label ?? "구역"} 확대`}
+                  onClick={() => zoomToRegion(r)}
+                  className="hover:text-[var(--accent-strong)]"
+                >
+                  🗺️ {formatText(r.label)}
+                </button>
+                <button
+                  type="button"
+                  aria-label={`${r.label ?? "구역"} 편집`}
+                  onClick={() => enterEdit(r)}
+                  className="text-[var(--text-hint)] hover:text-[#f59e0b]"
+                >
+                  편집
+                </button>
                 <button
                   type="button"
                   aria-label={`${r.label ?? "구역"} 삭제`}

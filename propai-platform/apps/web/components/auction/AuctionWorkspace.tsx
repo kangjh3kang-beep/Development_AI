@@ -15,6 +15,9 @@ import type { Locale } from "@/i18n/config";
 type AuctionItem = {
   rank?: number | null;
   cltrMngNo?: string | null;
+  // 상세조회 키(getInqRnkClg/검색 목록 제공) — snake_case
+  cltr_mng_no?: string | null;
+  pbct_cdtn_no?: string | null;
   address?: string | null;
   usage?: string | null;
   appraisal_price?: number | null;
@@ -32,6 +35,42 @@ type AuctionItem = {
   valid_bidder_count?: number | null;
   land_area?: number | null;
   bld_area?: number | null;
+};
+
+// 상세 엔드포인트(GET /auction/detail) 응답
+type AuctionPrevBid = {
+  round?: number | null;
+  min_bid?: number | null;
+  opbd_dt?: string | null;
+  result?: string | null;
+  win_price?: number | null;
+  win_rate?: number | null;
+};
+
+type AuctionDetail = {
+  cltr_mng_no?: string | null;
+  fail_count?: number | null;
+  land_area?: number | null;
+  bld_area?: number | null;
+  win_rate?: number | null;
+  win_price?: number | null;
+  appraisal_price?: number | null;
+  min_bid_price?: number | null;
+  image_url?: string | null;
+  prev_bids?: AuctionPrevBid[] | null;
+  usage?: string | null;
+  address?: string | null;
+  status?: string | null;
+  est_win?: number | null;
+  est_win_low?: number | null;
+  est_win_high?: number | null;
+  est_win_detail?: string | null;
+};
+
+type AuctionDetailResponse = {
+  item: AuctionDetail | null;
+  data_source?: "onbid_live" | "unavailable" | string | null;
+  reason?: string | null;
 };
 
 type RankingResponse = {
@@ -794,6 +833,12 @@ function AuctionTable({
   );
 }
 
+// 숫자 가드: 유한 숫자만 통과(NaN/Infinity/문자 → null).
+function safeNumber(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  return value;
+}
+
 function DetailModal({
   item,
   locale,
@@ -803,36 +848,88 @@ function DetailModal({
   locale: Locale;
   onClose: () => void;
 }) {
+  // 목록 아이템에 상세조회 키가 있으면 /auction/detail 실조회로 보강.
+  const cltrMngNo = item.cltr_mng_no ?? item.cltrMngNo ?? null;
+  const pbctCdtnNo = item.pbct_cdtn_no ?? null;
+  const canFetchDetail = Boolean(cltrMngNo && pbctCdtnNo);
+
+  const detailQuery = useQuery({
+    queryKey: ["auction", "detail", cltrMngNo, pbctCdtnNo],
+    enabled: canFetchDetail,
+    queryFn: () =>
+      apiClient.get<AuctionDetailResponse>(
+        `/auction/detail${buildSearchParams({
+          cltr_mng_no: cltrMngNo ?? "",
+          pbct_cdtn_no: pbctCdtnNo ?? "",
+        })}`,
+      ),
+  });
+
+  const detail = detailQuery.data?.item ?? null;
+  const detailUnavailable =
+    detailQuery.data != null && detailQuery.data.data_source === "unavailable";
+
+  // 목록값 우선 + 상세로 보강(상세 우선, 없으면 목록값).
+  const pick = <T,>(detailVal: T | null | undefined, listVal: T | null | undefined): T | null =>
+    detailVal != null ? detailVal : listVal ?? null;
+
+  const cltrMngNoVal = pick(detail?.cltr_mng_no, cltrMngNo);
+  const addressVal = pick(detail?.address, item.address);
+  const usageVal = pick(detail?.usage, item.usage);
+  const statusVal = pick(detail?.status, item.status);
+  const appraisalVal = pick(safeNumber(detail?.appraisal_price), item.appraisal_price);
+  const minBidVal = pick(safeNumber(detail?.min_bid_price), item.min_bid_price);
+  const failCountVal = pick(safeNumber(detail?.fail_count), item.fail_count);
+  const winRateVal = pick(safeNumber(detail?.win_rate), item.win_rate);
+  const winPriceVal = pick(safeNumber(detail?.win_price), item.win_price);
+  const landAreaVal = pick(safeNumber(detail?.land_area), item.land_area);
+  const bldAreaVal = pick(safeNumber(detail?.bld_area), item.bld_area);
+
+  // est_win: 숫자 가드 → NaN 방지. 상세 우선, 목록 폴백, 둘 다 없으면 null(추정 불가).
+  const estWinVal = pick(safeNumber(detail?.est_win), safeNumber(item.est_win));
+  const estWinLow = safeNumber(detail?.est_win_low);
+  const estWinHigh = safeNumber(detail?.est_win_high);
+  const imageUrl = detail?.image_url && detail.image_url.trim() ? detail.image_url : null;
+  const prevBids = Array.isArray(detail?.prev_bids) ? detail!.prev_bids! : [];
+
   const rows: { label: string; value: string }[] = [
-    { label: "물건관리번호", value: formatText(item.cltrMngNo) },
-    { label: "주소", value: formatText(item.address) },
-    { label: "용도", value: formatText(item.usage) },
-    { label: "감정가", value: formatCurrency(locale, item.appraisal_price) },
-    { label: "최저입찰가", value: formatBidPrice(item.min_bid_price, locale) },
+    { label: "물건관리번호", value: formatText(cltrMngNoVal) },
+    { label: "주소", value: formatText(addressVal) },
+    { label: "용도", value: formatText(usageVal) },
+    { label: "감정가", value: formatCurrency(locale, appraisalVal) },
+    { label: "최저입찰가", value: formatBidPrice(minBidVal, locale) },
     { label: "할인율", value: formatPercent(item.discount_rate) },
     {
       label: "유찰횟수",
-      value: item.fail_count == null ? "-" : `${item.fail_count}회`,
+      value: failCountVal == null ? "-" : `${failCountVal}회`,
     },
-    { label: "낙찰가율", value: formatPercent(item.win_rate) },
-    { label: "낙찰가격", value: formatBidPrice(item.win_price, locale) },
+    { label: "낙찰가율", value: formatPercent(winRateVal) },
+    { label: "낙찰가격", value: formatBidPrice(winPriceVal, locale) },
     {
       label: "유효입찰자수",
       value: item.valid_bidder_count == null ? "-" : `${item.valid_bidder_count}명`,
     },
     {
       label: "토지면적",
-      value: item.land_area == null ? "-" : `${item.land_area}㎡`,
+      value: landAreaVal == null ? "-" : `${landAreaVal}㎡`,
     },
     {
       label: "건물면적",
-      value: item.bld_area == null ? "-" : `${item.bld_area}㎡`,
+      value: bldAreaVal == null ? "-" : `${bldAreaVal}㎡`,
     },
     {
       label: "낙찰가능가(추정)",
-      value: item.est_win == null ? "-" : `${formatCurrency(locale, item.est_win)} (예상)`,
+      value:
+        estWinVal == null
+          ? "추정 불가"
+          : estWinLow != null && estWinHigh != null
+            ? `${formatCurrency(locale, estWinVal)} (예상 · ${formatCurrency(
+                locale,
+                estWinLow,
+              )}~${formatCurrency(locale, estWinHigh)})`
+            : `${formatCurrency(locale, estWinVal)} (예상)`,
     },
-    { label: "입찰상태", value: formatText(item.status) },
+    { label: "입찰상태", value: formatText(statusVal) },
     { label: "입찰기간", value: `${formatText(item.bid_start)} ~ ${formatText(item.bid_end)}` },
   ];
 
@@ -860,6 +957,40 @@ function DetailModal({
             ✕
           </button>
         </div>
+
+        {/* 물건 이미지 (온비드 image_url 있으면 표시, 없으면 정직 플레이스홀더) */}
+        <div className="mb-4 flex h-44 w-full items-center justify-center overflow-hidden rounded-2xl border border-[var(--line)] bg-[var(--surface-muted)]">
+          {imageUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={imageUrl} alt="물건 이미지" className="h-full w-full object-cover" />
+          ) : (
+            <span className="text-xs font-bold text-[var(--text-hint)]">
+              {detailQuery.isLoading
+                ? "이미지 불러오는 중…"
+                : "이미지 없음 (온비드 미제공)"}
+            </span>
+          )}
+        </div>
+
+        {/* 상세조회 상태 안내(정직) */}
+        {canFetchDetail && detailQuery.isLoading ? (
+          <p className="mb-3 rounded-xl bg-[var(--surface-soft)] px-4 py-2 text-[11px] font-bold text-[var(--text-hint)]">
+            온비드 상세 정보를 불러오는 중…
+          </p>
+        ) : null}
+        {canFetchDetail && detailQuery.isError ? (
+          <p className="mb-3 rounded-xl bg-[var(--surface-soft)] px-4 py-2 text-[11px] font-bold text-[var(--spot)]">
+            상세 불러오기 실패 — 목록 기준 정보만 표시합니다. (
+            {extractErrorMessage(detailQuery.error)})
+          </p>
+        ) : null}
+        {detailUnavailable ? (
+          <p className="mb-3 rounded-xl bg-[var(--surface-soft)] px-4 py-2 text-[11px] font-bold text-[var(--text-hint)]">
+            온비드 상세 미제공{detailQuery.data?.reason ? ` — ${detailQuery.data.reason}` : ""}. 목록
+            기준 정보만 표시합니다.
+          </p>
+        ) : null}
+
         <dl className="space-y-2">
           {rows.map((row) => (
             <div
@@ -873,6 +1004,57 @@ function DetailModal({
             </div>
           ))}
         </dl>
+
+        {/* 회차별 입찰내역(prev_bids) */}
+        {prevBids.length ? (
+          <div className="mt-5">
+            <p className="mb-2 text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)]">
+              회차별 입찰내역
+            </p>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[460px] border-collapse text-xs">
+                <thead>
+                  <tr className="border-b border-[var(--line)] text-left font-black uppercase tracking-widest text-[var(--text-hint)]">
+                    <th className="py-2 pr-3">회차</th>
+                    <th className="py-2 pr-3">개찰일</th>
+                    <th className="py-2 pr-3 text-right">최저입찰가</th>
+                    <th className="py-2 pr-3">결과</th>
+                    <th className="py-2 pr-3 text-right">낙찰가</th>
+                    <th className="py-2 pr-3 text-right">낙찰가율</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {prevBids.map((b, idx) => (
+                    <tr
+                      key={`${b.round ?? idx}-${b.opbd_dt ?? idx}`}
+                      className="border-b border-[var(--line)]/60"
+                    >
+                      <td className="py-2 pr-3 font-bold text-[var(--text-primary)]">
+                        {b.round == null ? "-" : `${b.round}회`}
+                      </td>
+                      <td className="py-2 pr-3 text-[var(--text-secondary)]">
+                        {formatText(b.opbd_dt)}
+                      </td>
+                      <td className="py-2 pr-3 text-right text-[var(--text-primary)]">
+                        {formatBidPrice(safeNumber(b.min_bid), locale)}
+                      </td>
+                      <td className="py-2 pr-3 text-[var(--text-secondary)]">
+                        {formatText(b.result)}
+                      </td>
+                      <td className="py-2 pr-3 text-right text-[var(--text-primary)]">
+                        {formatBidPrice(safeNumber(b.win_price), locale)}
+                      </td>
+                      <td className="py-2 pr-3 text-right text-[var(--text-secondary)]">
+                        {formatPercent(safeNumber(b.win_rate))}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ) : null}
+
         <p className="mt-4 text-[10px] text-[var(--text-hint)]">
           감정가·낙찰가능가는 추정치이며 가정이 포함됩니다. 온비드 비공개 항목은
           &quot;비공개&quot;로 표기합니다.
