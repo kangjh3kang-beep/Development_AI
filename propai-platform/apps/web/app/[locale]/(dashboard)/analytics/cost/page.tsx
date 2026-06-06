@@ -1,27 +1,20 @@
 "use client";
 
 import { useState } from "react";
-import { useParams } from "next/navigation";
 import { CostEstimationClient } from "@/components/analytics/CostEstimationClient";
-import { CostAnalyticsWorkspaceClient } from "@/components/analytics/CostAnalyticsWorkspaceClient";
 import { CostAlternativesPanel } from "@/components/cost/CostAlternativesPanel";
 import { BoqDetailTable } from "@/components/cost/BoqDetailTable";
 import { BillingDashboard } from "@/components/cost/BillingDashboard";
-import { isValidLocale, type Locale } from "@/i18n/config";
-import { useProjectContextStore } from "@/store/useProjectContextStore";
 
 const TABS = [
-  ["overview", "개요 기반 분석"],
-  ["boq", "상세 내역서(BOQ)·단가"],
-  ["alternatives", "대안설계 원가비교"],
-  ["billing", "기성·EVM"],
+  ["overview", "단계별 분석"],
+  ["boq", "상세 내역서(BOQ)"],
+  ["alternatives", "대안 설계 원가비교"],
+  ["billing", "기성·실적관리(EVM)"],
 ] as const;
 type TabKey = (typeof TABS)[number][0];
 
 export default function CostPage() {
-  const { locale } = useParams() as { locale: string };
-  const projectId = useProjectContextStore((s) => s.projectId);
-  const safeLocale: Locale = isValidLocale(locale) ? locale : "ko";
   const [tab, setTab] = useState<TabKey>("overview");
 
   return (
@@ -43,12 +36,8 @@ export default function CostPage() {
       </div>
 
       {tab === "overview" && (
-        <div className="space-y-10">
-          {/* 건축개요 기반 공사비 정밀 분석(프로젝트 연동 · 수지·사업성 단일 데이터원) */}
-          <CostEstimationClient />
-          {/* 정밀 적산(QTO) + 몬테카를로 리스크 라이브 워크스페이스 */}
-          <CostAnalyticsWorkspaceClient locale={safeLocale} projectId={projectId ?? "default"} />
-        </div>
+        /* 단계별 통합 워크플로우: 프로젝트정보(자동연동)→개략산정→리스크시뮬레이션→BIM정밀적산 연계 */
+        <CostEstimationClient />
       )}
 
       {/* CM Phase1 — 상세 내역서(BOQ)·단가 3중(D4)·AI 해설 */}
