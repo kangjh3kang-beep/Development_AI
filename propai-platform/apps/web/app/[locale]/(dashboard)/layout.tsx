@@ -161,6 +161,11 @@ export default async function DashboardLayout({
     { href: `/${locale}/settings/lists`, label: "📋 편집 목록 관리", icon: <IconSRE /> },
   ];
 
+  // III-2. 자산 운영 (준공 후 임대·임차인 운영)
+  const assetOpsNavigation = [
+    { href: `/${locale}/operations/lease`, label: "임대·임차인 관리", icon: <IconProject /> },
+  ];
+
   // I-4. 설계 스튜디오 (CAD 자동설계 / BIM·적산 분리)
   const designNavigation = [
     { href: `/${locale}/design-studio`, label: "AI 설계도면(CAD)", icon: <IconProject /> },
@@ -174,6 +179,7 @@ export default async function DashboardLayout({
     { title: "분양관리 ERP", items: salesNavigation },
     { title: "수익·비용·ESG", items: analyticsNavigation },
     { title: "공공입찰·경공매", items: operationsNavigation },
+    { title: "자산 운영", items: assetOpsNavigation },
     { title: "지원", items: enterpriseNavigation },
     { title: "관리", items: adminNavigation, adminOnly: true },
   ];
