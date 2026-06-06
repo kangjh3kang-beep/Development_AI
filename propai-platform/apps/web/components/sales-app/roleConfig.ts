@@ -63,6 +63,8 @@ export const SALES_TABS: SalesTabDef[] = [
   { key: "profile", label: "내 프로필", feature: "profile", alwaysOn: true },
   // Phase 1-H — 소셜(친구·단톡·다중톡). 전역 토큰 기반(현장 무관)이라 전원 공통(alwaysOn).
   { key: "social", label: "소셜·채팅", feature: "social", alwaysOn: true },
+  // Phase C — 공유·바이럴(MGM 추천코드·공유링크/QR·Web Share·퍼널통계). 실적 귀속은 개인별이라 전원 공통(alwaysOn).
+  { key: "referral", label: "공유·홍보", feature: "referral", alwaysOn: true },
   // 직원관리(집계): 관리역할 전용(STAFF_OVERVIEW_ROLES). 비관리역할엔 미노출.
   { key: "staff", label: "직원관리", feature: "staff" },
 ];

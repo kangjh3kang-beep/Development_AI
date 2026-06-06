@@ -48,6 +48,10 @@ import JobMarketPanel from "@/components/sales-app/JobMarketPanel";
 import StaffOverviewPanel from "@/components/sales-app/StaffOverviewPanel";
 // Phase 1-H — 소셜(친구·단톡·다중톡·푸시). 전역 토큰 기반(현장 무관).
 import SocialPanel from "@/components/sales-app/SocialPanel";
+// Phase C — 공유·바이럴(추천코드·공유링크/QR·Web Share·퍼널통계) + 앱 설치 안내.
+import ReferralSharePanel from "@/components/sales-app/ReferralSharePanel";
+import InstallGuide from "@/components/sales-app/InstallGuide";
+import { captureLandingRef } from "@/lib/referralRef";
 
 interface RoleResponse {
   site_id?: string;
@@ -106,6 +110,11 @@ export default function SiteWorkspaceClient({ locale, siteId }: { locale: Locale
   useEffect(() => {
     loadRole();
   }, [loadRole]);
+
+  // Phase C — 공유링크(?ref=)로 진입한 방문자 추적(click). best-effort·무파괴(실패 무해).
+  useEffect(() => {
+    captureLandingRef();
+  }, []);
 
   // 분양가 탭 진입 시 차수 로딩(role 확정 후 1회). siteId를 siteCode로 전달(UUID 해석).
   useEffect(() => {
@@ -268,6 +277,13 @@ export default function SiteWorkspaceClient({ locale, siteId }: { locale: Locale
           {tab === "profile" && <MarketProfilePanel />}
           {/* Phase 1-H — 소셜·채팅(친구·단톡·다중톡·푸시). 전역(현장 무관). */}
           {tab === "social" && <SocialPanel />}
+          {/* Phase C — 공유·홍보(추천코드·공유링크/QR·Web Share·퍼널통계) + 앱 설치 안내. */}
+          {tab === "referral" && (
+            <div className="space-y-5">
+              <InstallGuide />
+              <ReferralSharePanel siteId={siteId} />
+            </div>
+          )}
           {tab === "staff" && canStaff && <StaffOverviewPanel siteId={siteId} />}
         </>
       )}

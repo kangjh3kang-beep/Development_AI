@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { salesApi } from "@/lib/salesApi";
 import { apiClient } from "@/lib/api-client";
 import ConsentModal, { type ConsentResult, type ConsentTemplate } from "@/components/desk/ConsentModal";
+import { getStoredRefCode } from "@/lib/referralRef";
 
 type MatchType = "PHONE" | "NAME" | "CARD";
 
@@ -54,8 +55,10 @@ export default function DeskCheckin({ siteCode }: { siteCode: string }) {
     const esign = sig.current?.toDataURL("image/png");
     const payload = consents.map((c) => ({ ...c, esign_uri: esign }));
     try {
+      // Phase C — 공유링크(?ref=)로 진입한 방문자면 추천코드를 동봉(백엔드가 자동 visit 퍼널 기록·무파괴).
+      const refCode = getStoredRefCode();
       const r = await api.post<{ visitor_id: string }>("/mh/visitors/checkin",
-        { name, phone_e164: phone, party_size: 1, consents: payload });
+        { name, phone_e164: phone, party_size: 1, consents: payload, ...(refCode ? { ref: refCode } : {}) });
       setResult({ visitor_id: r.visitor_id });
       alert("체크인 완료");
     } catch {
