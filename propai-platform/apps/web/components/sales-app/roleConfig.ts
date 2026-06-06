@@ -42,6 +42,8 @@ export interface SalesTabDef {
 export const SALES_TABS: SalesTabDef[] = [
   { key: "units", label: "세대 배치도", feature: "units" },
   { key: "customers", label: "고객·상담", feature: "customers" },
+  // Phase 1-D — 업무일지. 현장 멤버 전원 공통(alwaysOn): 일자별 작성·실적집계.
+  { key: "worklog", label: "업무일지", feature: "worklog", alwaysOn: true },
   { key: "pricing", label: "분양가", feature: "pricing" },
   { key: "subscription", label: "청약·당첨", feature: "contracts" },
   { key: "payments", label: "수납·납부", feature: "contracts" },

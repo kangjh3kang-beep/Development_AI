@@ -32,6 +32,7 @@ import TaxPanel from "@/components/sales/TaxPanel";
 import OrgTree from "@/components/sales/OrgTree";
 import CommissionBoard from "@/components/sales/CommissionBoard";
 import CrmPanel from "@/components/sales/CrmPanel";
+import WorkLogPanel from "@/components/sales/WorkLogPanel";
 import IntegrityGuard from "@/components/sales/IntegrityGuard";
 import DeveloperProjection from "@/components/sales/DeveloperProjection";
 import { UnitOutlineBuilder } from "@/components/sales/UnitOutlineBuilder";
@@ -201,6 +202,7 @@ export default function SiteWorkspaceClient({ locale, siteId }: { locale: Locale
           )}
 
           {tab === "customers" && <CrmPanel siteCode={siteId} />}
+          {tab === "worklog" && <WorkLogPanel siteCode={siteId} />}
 
           {tab === "pricing" && (
             <div className="space-y-3">

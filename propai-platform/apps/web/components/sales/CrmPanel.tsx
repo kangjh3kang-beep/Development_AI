@@ -7,10 +7,26 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { salesApi } from "@/lib/salesApi";
+import { apiClient } from "@/lib/api-client";
+import CustomerCardDrawer from "@/components/sales/CustomerCardDrawer";
 
 interface Pred {
   customer_id: string; name?: string | null; phone?: string | null; status?: string;
   current_grade?: string | null; score: number; suggested_grade: string; reasons: string[]; next_action: string;
+}
+
+// Phase 1-D — 현장별/통합(union) 고객 목록 행. 통합뷰는 masked=true(연락처 phone_masked만)·sites[] 현장칩.
+interface MyCustomer {
+  id: string;
+  name?: string | null;
+  phone?: string | null;
+  phone_masked?: string | null;
+  status?: string | null; // 단계
+  grade?: string | null; // 온도(A/B/C)
+  masked?: boolean;
+  sites?: { id?: string; name?: string }[] | null;
+  site_id?: string | null;
+  site_name?: string | null;
 }
 
 const GRADE: Record<string, string> = {
@@ -21,6 +37,20 @@ const GRADE: Record<string, string> = {
 const GLABEL: Record<string, string> = { A: "핫(A)", B: "웜(B)", C: "콜드(C)" };
 const fcls = "rounded-lg border border-[var(--line)] bg-[var(--surface-strong)] px-2 py-1.5 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]";
 
+// 단계(status) 라벨 — 백엔드 _STAGES 정합(목록 필터·칩 표시용).
+const STAGE_OPTS: { key: string; label: string }[] = [
+  { key: "", label: "전체 단계" },
+  { key: "LEAD", label: "리드" },
+  { key: "CONSULT", label: "상담" },
+  { key: "VISIT", label: "방문" },
+  { key: "RESERVED", label: "예약" },
+  { key: "SIGNED", label: "계약" },
+  { key: "MIDDLE", label: "중도금" },
+  { key: "BALANCE", label: "잔금" },
+  { key: "LOST", label: "이탈" },
+];
+const STAGE_LABEL: Record<string, string> = { LEAD: "리드", CONSULT: "상담", VISIT: "방문", RESERVED: "예약", SIGNED: "계약", MIDDLE: "중도금", BALANCE: "잔금", LOST: "이탈" };
+
 export default function CrmPanel({ siteCode }: { siteCode: string }) {
   const api = salesApi(siteCode);
   const [preds, setPreds] = useState<Pred[]>([]);
@@ -28,11 +58,44 @@ export default function CrmPanel({ siteCode }: { siteCode: string }) {
   const [phone, setPhone] = useState("");
   const [busy, setBusy] = useState(false);
 
+  // Phase 1-D — 현장별/통합 토글 + 단계/키워드 필터 + 카드 드로어.
+  const [scope, setScope] = useState<"site" | "all">("site");
+  const [stage, setStage] = useState("");
+  const [q, setQ] = useState("");
+  const [customers, setCustomers] = useState<MyCustomer[]>([]);
+  const [listLoading, setListLoading] = useState(true);
+  const [listErr, setListErr] = useState("");
+  const [drawer, setDrawer] = useState<{ id: string; name?: string | null } | null>(null);
+
   const load = useCallback(() => {
     api.get<{ customers: Pred[] }>("/crm/grade-suggestions").then((r) => setPreds(r.customers || [])).catch(() => setPreds([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [siteCode]);
   useEffect(() => { load(); }, [load]);
+
+  // 고객 목록 로딩. scope=site → salesApi(X-Site-Token), scope=all → apiClient(전역토큰·union·마스킹).
+  const loadCustomers = useCallback(() => {
+    setListLoading(true);
+    setListErr("");
+    const qs = new URLSearchParams({ scope });
+    if (scope === "site") qs.set("site_id", siteCode);
+    if (stage) qs.set("stage", stage);
+    if (q.trim()) qs.set("q", q.trim());
+    const path = `/sales/my-customers?${qs.toString()}`;
+    const req =
+      scope === "site"
+        ? api.get<{ customers?: MyCustomer[]; items?: MyCustomer[] }>(`/my-customers?${qs.toString()}`)
+        : apiClient.get<{ customers?: MyCustomer[]; items?: MyCustomer[] }>(path);
+    req
+      .then((r) => setCustomers(r.customers ?? r.items ?? []))
+      .catch(() => {
+        setCustomers([]);
+        setListErr("고객 목록을 불러오지 못했습니다.");
+      })
+      .finally(() => setListLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [siteCode, scope, stage, q]);
+  useEffect(() => { loadCustomers(); }, [loadCustomers]);
 
   const addCustomer = async () => {
     if (!name.trim()) return;
@@ -57,6 +120,94 @@ export default function CrmPanel({ siteCode }: { siteCode: string }) {
           <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="01012345678" className={`${fcls} min-w-[120px]`} /></label>
         <button onClick={addCustomer} disabled={busy} className="rounded-lg bg-[var(--accent-strong)] px-4 py-2 text-sm font-black text-white disabled:opacity-50">＋ 고객 추가</button>
       </div>
+
+      {/* Phase 1-D — 현장별/통합 토글 + 단계/키워드 필터 + 고객 목록(카드 → 상세 드로어) */}
+      <section className="space-y-3 rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex overflow-hidden rounded-lg border border-[var(--line)]">
+            {(["site", "all"] as const).map((s) => (
+              <button
+                key={s}
+                onClick={() => setScope(s)}
+                className={`px-3 py-1.5 text-xs font-bold transition ${
+                  scope === s ? "bg-[var(--accent-strong)] text-white" : "text-[var(--text-secondary)]"
+                }`}
+              >
+                {s === "site" ? "현장별" : "통합"}
+              </button>
+            ))}
+          </div>
+          <select value={stage} onChange={(e) => setStage(e.target.value)} className={fcls}>
+            {STAGE_OPTS.map((o) => (
+              <option key={o.key} value={o.key}>{o.label}</option>
+            ))}
+          </select>
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="이름·연락처 검색"
+            className={`${fcls} min-w-[120px] flex-1`}
+          />
+          <button onClick={loadCustomers} className="rounded-lg border border-[var(--line-strong)] px-3 py-1.5 text-xs font-bold text-[var(--text-secondary)]">조회</button>
+        </div>
+
+        {scope === "all" && (
+          <p className="rounded-lg border border-amber-400/30 bg-amber-500/10 px-3 py-1.5 text-[11px] text-amber-300">
+            통합뷰는 요약·마스킹(010****5678)만 표시됩니다. 연락처 등 민감상세는 해당 현장 진입(2차인증) 후 열람하세요.
+          </p>
+        )}
+
+        {listLoading ? (
+          <div className="h-14 animate-pulse rounded-xl border border-[var(--line)] bg-[var(--surface-strong)]" />
+        ) : listErr ? (
+          <p className="rounded-xl border border-rose-400/40 bg-rose-500/10 px-3 py-2 text-xs font-semibold text-rose-300">{listErr}</p>
+        ) : customers.length === 0 ? (
+          <p className="rounded-xl border border-[var(--line)] bg-[var(--surface-strong)] px-3 py-4 text-xs text-[var(--text-secondary)]">고객이 없습니다.</p>
+        ) : (
+          <ul className="space-y-2">
+            {customers.map((c) => {
+              const masked = c.masked || scope === "all";
+              const clickable = !masked && !!c.id;
+              return (
+                <li key={c.id}>
+                  <button
+                    type="button"
+                    disabled={!clickable}
+                    onClick={() => clickable && setDrawer({ id: c.id, name: c.name })}
+                    className={`flex w-full flex-wrap items-center gap-2 rounded-xl border border-[var(--line)] bg-[var(--surface-strong)] p-2.5 text-left transition ${
+                      clickable ? "hover:border-[var(--accent-strong)]" : "cursor-default"
+                    }`}
+                  >
+                    {c.grade && (
+                      <span className={`rounded-full border px-2 py-0.5 text-[10px] font-black ${GRADE[c.grade] ?? ""}`}>
+                        {GLABEL[c.grade] ?? c.grade}
+                      </span>
+                    )}
+                    <span className="font-bold text-[var(--text-primary)]">{c.name || "-"}</span>
+                    <span className="text-xs text-[var(--text-tertiary)]">{masked ? (c.phone_masked || "010****") : (c.phone || "")}</span>
+                    {c.status && (
+                      <span className="rounded-md bg-[var(--surface-soft)] px-1.5 py-0.5 text-[10px] font-bold text-[var(--text-secondary)]">
+                        {STAGE_LABEL[c.status] ?? c.status}
+                      </span>
+                    )}
+                    {scope === "all" && Array.isArray(c.sites) && c.sites.length > 0 && (
+                      <span className="flex flex-wrap gap-1">
+                        {c.sites.map((s, i) => (
+                          <span key={s.id ?? i} className="rounded-md bg-[var(--accent-soft)] px-1.5 py-0.5 text-[10px] font-bold text-[var(--accent-strong)]">
+                            {s.name || s.id}
+                          </span>
+                        ))}
+                      </span>
+                    )}
+                    {clickable && <span className="ml-auto text-[11px] font-bold text-[var(--accent-strong)]">상세 →</span>}
+                    {masked && <span className="ml-auto text-[10px] text-[var(--text-hint)]">현장 진입 후 열람</span>}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </section>
 
       <div className="flex items-center justify-between">
         <h2 className="font-black text-[var(--text-primary)]">🤖 AI 가망고객 예측 ({preds.length})</h2>
@@ -88,6 +239,16 @@ export default function CrmPanel({ siteCode }: { siteCode: string }) {
         </div>
       )}
       <p className="text-[11px] text-[var(--text-hint)]">예측 가중: 상담횟수·통화시간·마케팅수신동의·최근상담·방문이력 → A(핫)/B(웜)/C(콜드). 상담 기록 시 점수·등급이 갱신됩니다.</p>
+
+      {drawer && (
+        <CustomerCardDrawer
+          siteCode={siteCode}
+          customerId={drawer.id}
+          customerName={drawer.name}
+          onClose={() => setDrawer(null)}
+          onChanged={() => { loadCustomers(); load(); }}
+        />
+      )}
     </div>
   );
 }
