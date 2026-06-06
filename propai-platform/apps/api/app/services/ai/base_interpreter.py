@@ -129,10 +129,17 @@ async def _redis_set(key: str | None, value: dict[str, str], ttl: int = _CACHE_T
         pass
 
 
-async def _record_llm_billing(model: str, input_tokens: int, output_tokens: int) -> None:
-    """로그인 구독자(metered)의 LLM 사용량을 청구에 누적한다(best-effort).
+async def _record_llm_billing(
+    model: str,
+    input_tokens: int,
+    output_tokens: int,
+    service: str | None = None,
+) -> None:
+    """로그인 구독자(metered)의 LLM 사용량을 청구에 누적 + llm_usage_log 실계측(best-effort).
 
     요청 컨텍스트(미들웨어가 주입)의 user_id가 있을 때만 동작. 실패는 무시.
+    service: 사용량 귀속 서비스명(인터프리터 self.name = site_analysis/market/... 등).
+    토큰이 0이면(캐시 적중·계측 누락) 정직하게 미기록.
     """
     try:
         from app.core.request_context import get_current_user_id
@@ -140,6 +147,8 @@ async def _record_llm_billing(model: str, input_tokens: int, output_tokens: int)
         uid = get_current_user_id()
         if not uid:
             return
+        if (input_tokens or 0) <= 0 and (output_tokens or 0) <= 0:
+            return  # 토큰 미계측(캐시 등) — 정직하게 미기록
         from app.core.billing import model_cost_usd
 
         usd = model_cost_usd(model, input_tokens, output_tokens)
@@ -149,7 +158,13 @@ async def _record_llm_billing(model: str, input_tokens: int, output_tokens: int)
         from app.services.billing import billing_service
 
         async with async_session_factory() as db:
-            await billing_service.record_usage_usd(db, uid, usd)
+            await billing_service.record_usage_usd(
+                db, uid, usd,
+                service=service or "llm",
+                model=model,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+            )
     except Exception:  # noqa: BLE001
         pass
 
@@ -353,8 +368,10 @@ class BaseInterpreter:
         except Exception:  # noqa: BLE001
             pass
 
-        # 과금: 로그인 구독자면 이번 LLM 사용량을 청구에 누적(best-effort, 실패 무시).
-        await _record_llm_billing(getattr(llm, "model", ""), input_tokens, output_tokens)
+        # 과금: 로그인 구독자면 이번 LLM 사용량을 청구에 누적 + service 귀속 실계측(best-effort).
+        await _record_llm_billing(
+            getattr(llm, "model", ""), input_tokens, output_tokens, service=self.name
+        )
         cached_total = cache_read + cache_creation
         cache_hit_ratio = round(cache_read / cached_total, 3) if cached_total else 0.0
         logger.info(

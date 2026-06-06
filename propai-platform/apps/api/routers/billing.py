@@ -47,6 +47,25 @@ async def billing_status(
     return public_status(status)
 
 
+@router.get("/token-usage")
+async def token_usage(
+    days: int = 30,
+    current: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """본인 LLM 실계측 사용량(llm_usage_log) — 총 토큰·청구액(원)·service별·일별 집계."""
+    return await billing_service.token_usage(db, current.user_id, days)
+
+
+@router.get("/balance")
+async def balance(
+    current: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """월기본/충전 코인 잔액 — 등급·마진율·사이클 시작."""
+    return await billing_service.get_balance(db, current.user_id)
+
+
 class TopupRequest(BaseModel):
     amount_krw: float
 

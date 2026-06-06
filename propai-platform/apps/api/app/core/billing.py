@@ -5,8 +5,8 @@
 - 월 포함한도(원) = 구독료 × 0.5  (이 한도까지 무료, 초과 시 서비스 중단)
 - 한도 소진 시 추가결제(시뮬레이션)로 한도 충전. 할증은 기본·추가 동일 적용.
 
-등급(할증배수): 파워 ×2.0(+100%) / 슈퍼파워 ×1.4(+40%) / 마스터 ×1.3(+30%).
-상위 등급일수록 추가 단가가 저렴.
+등급(할증배수, 낮은등급 높은마진): 파워 ×1.5(+50%) / 슈퍼파워 ×1.4(+40%) / 마스터 ×1.3(+30%).
+비구독(free/guest)은 무료횟수 소진 후 과금 시 ×1.5(+50%). 상위 등급일수록 추가 단가가 저렴.
 """
 
 import time
@@ -24,7 +24,7 @@ _PIPELINE_STAGES = ["site_analysis", "design", "cost", "feasibility", "tax", "es
 _DEFAULT_CONFIG: dict[str, Any] = {
     "budget_ratio": 0.5,  # 구독료의 N%를 LLM 포함한도로
     "tiers": {
-        "power": {"fee_krw": 24500, "multiplier": 2.0, "label": "파워"},
+        "power": {"fee_krw": 24500, "multiplier": 1.5, "label": "파워"},
         "superpower": {"fee_krw": 49900, "multiplier": 1.4, "label": "슈퍼파워"},
         "master": {"fee_krw": 99000, "multiplier": 1.3, "label": "마스터"},
     },
@@ -132,8 +132,15 @@ def tier_fee_krw(tier: str) -> float:
     return float(TIER_BILLING.get(tier, {}).get("fee_krw", 0.0))
 
 
+# 비구독(free/guest) 할증배수 — 무료횟수 소진 후 과금 시 적용(낮은등급 높은마진).
+_NON_SUB_MULTIPLIER = 1.5
+
+
 def tier_multiplier(tier: str) -> float:
-    return float(TIER_BILLING.get(tier, {}).get("multiplier", 1.0))
+    """등급 할증배수. 구독 등급은 설정값, 비구독(free/guest 등)은 1.5(+50%)."""
+    if tier in TIER_BILLING:
+        return float(TIER_BILLING[tier].get("multiplier", 1.0))
+    return _NON_SUB_MULTIPLIER
 
 
 def tier_included_budget_krw(tier: str) -> float:
