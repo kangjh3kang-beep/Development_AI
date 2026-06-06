@@ -21,6 +21,8 @@ import type { Locale } from "@/i18n/config";
 
 // 기존 분양 모듈 패널(재사용). 모두 { siteCode } 시그니처 — siteId(UUID)를 그대로 전달한다.
 import UnitGrid from "@/components/sales/UnitGrid";
+// Phase 1-C — 세대배치도 실시간 선점 보드(hold/release/reserve·TTL·WS).
+import UnitLiveBoard from "@/components/sales/UnitLiveBoard";
 import Unit360Panel from "@/components/sales/Unit360Panel";
 import PriceTableEditor from "@/components/sales/PriceTableEditor";
 import PricingConfigPanel from "@/components/sales/PricingConfigPanel";
@@ -198,6 +200,8 @@ export default function SiteWorkspaceClient({ locale, siteId }: { locale: Locale
           {/* 탭 ↔ 기존 패널 연결. siteCode 자리에 현장 UUID(siteId) 전달. */}
           {tab === "units" && (
             <>
+              {/* Phase 1-C — 실시간 동호수 선점(hold/release/reserve)·TTL 카운트다운·WS 동기화. */}
+              <UnitLiveBoard siteCode={siteId} />
               <UnitGrid siteCode={siteId} />
               <Unit360Panel siteCode={siteId} />
             </>
