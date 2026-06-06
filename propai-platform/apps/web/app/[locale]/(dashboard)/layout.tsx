@@ -115,6 +115,7 @@ export default async function DashboardLayout({
   // 3. 실행 — 분양·공공입찰·경공매
   const executionNavigation = [
     { href: `/${locale}/sales`, label: "분양 현장 관리", icon: <IconProject /> },
+    { href: `/${locale}/sales/sites`, label: "└ 내 분양 현장(현장앱)", icon: <IconProject /> },
     { href: `/${locale}/sales/projection`, label: "└ 분양 요약(경영진용)", icon: <IconMarket /> },
     { href: `/${locale}/g2b`, label: "공공입찰 (나라장터)", icon: <IconAuction /> },
     { href: `/${locale}/auction`, label: "경매·공매", icon: <IconAuction /> },

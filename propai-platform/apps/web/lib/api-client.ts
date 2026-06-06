@@ -100,6 +100,36 @@ function getAccessToken(): string {
   return "";
 }
 
+// ── 현장 진입 토큰(site_token) 자동첨부 ─────────────────────────────
+// Phase 1-A: sales 현장 경로(/sales/sites/{id}/...) 호출 시 sessionStorage에 저장된
+// 현장 진입 토큰(site_token)을 X-Site-Token 헤더로 자동 주입한다.
+// ★무파괴 원칙: sales 현장 경로 + 저장 토큰이 있을 때만 첨부하며, 호출자가 명시한
+//   X-Site-Token 헤더가 있으면 그것을 우선한다(salesApi.ts와 동일 키 규약).
+const SITE_TOKEN_PREFIX = "propai_site_token:";
+
+/** /sales/sites/{site_id}/... 경로에서 site_id 추출(절대/상대 경로 모두). */
+function extractSalesSiteId(path: string): string | null {
+  const m = path.match(/\/sales\/sites\/([^/?#]+)/);
+  return m ? decodeURIComponent(m[1]) : null;
+}
+
+/** 저장된 현장 진입 토큰(미만료) 조회. */
+function getActiveSiteToken(siteId: string): string {
+  if (typeof window === "undefined" || !siteId) return "";
+  try {
+    const raw = window.sessionStorage.getItem(SITE_TOKEN_PREFIX + siteId);
+    if (!raw) return "";
+    const parsed = JSON.parse(raw) as { token?: string; expiresAt?: number };
+    if (!parsed?.token || typeof parsed.expiresAt !== "number" || parsed.expiresAt <= Date.now()) {
+      window.sessionStorage.removeItem(SITE_TOKEN_PREFIX + siteId);
+      return "";
+    }
+    return parsed.token;
+  } catch {
+    return "";
+  }
+}
+
 function getRefreshToken(): string {
   if (typeof window !== "undefined") {
     try {
@@ -214,6 +244,9 @@ async function executeFetch(
       : null;
 
   const accessToken = getAccessToken();
+  // sales 현장 경로면 저장된 현장 진입 토큰을 X-Site-Token으로 자동첨부(무파괴: 경로+토큰 존재시만).
+  const salesSiteId = extractSalesSiteId(path);
+  const siteToken = salesSiteId ? getActiveSiteToken(salesSiteId) : "";
   try {
     return await fetch(getRequestUrl(path), {
       ...options,
@@ -226,6 +259,8 @@ async function executeFetch(
           ? { "Content-Type": "application/json" }
           : {}),
         ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+        ...(siteToken ? { "X-Site-Token": siteToken } : {}),
+        // 호출자가 명시한 헤더(명시적 X-Site-Token 포함)는 자동첨부보다 우선.
         ...options.headers,
       },
     });
