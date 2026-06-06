@@ -155,17 +155,84 @@ async def auction_search(
     )
 
 
-@router.get("/ranking", summary="③ 전국 최저입찰가/할인율 순위")
+@router.get("/ranking", summary="③ 전국 순위(조회수/관심 실데이터, 최저입찰가/할인율 캐시)")
 async def auction_ranking(
-    region: Optional[str] = Query(None, description="시/도"),
-    kind: Optional[str] = Query(None, description="종류"),
-    by: str = Query("min_bid", pattern="^(min_bid|discount_rate)$"),
-    limit: int = Query(20, ge=1, le=100),
+    region: Optional[str] = Query(None, description="시/도(min_bid/discount_rate 캐시순위 전용)"),
+    kind: Optional[str] = Query(None, description="종류(min_bid/discount_rate 캐시순위 전용)"),
+    by: str = Query("views", pattern="^(views|interest|min_bid|discount_rate)$",
+                    description="views=조회수실데이터 / interest=관심실데이터 / "
+                                "min_bid·discount_rate=캐시순위"),
+    limit: int = Query(50, ge=1, le=100),
     current_user: CurrentUser = Depends(RequirePermission("auction", "read")),
     service=Depends(_step1_service),
 ) -> dict[str, Any]:
-    """전국 최저입찰가(by=min_bid) 또는 할인율(by=discount_rate) 순위."""
+    """전국 순위.
+
+    - by=views(기본) → 온비드 조회수 순위(getInqRnkClg 실데이터: 감정가·할인율·순위·주소·상태).
+    - by=interest → 온비드 관심 순위(getItrsCltrRnkClg 실데이터).
+    - by=min_bid / discount_rate → 캐시(auction_items) 기반 최저입찰가/할인율 순위.
+    각 물건엔 est_win(낙찰가능가 범위·신뢰도·가정)을 포함한다(무목업).
+    """
+    if by in ("views", "interest"):
+        return await service.ranking_live(
+            service_key=_onbid_service_key(), by=by, limit=limit,
+        )
     return await service.ranking(region=region, kind=kind, by=by, limit=limit)
+
+
+@router.get("/bid-results", summary="④ 물건 입찰결과 조건검색(유찰·낙찰가율·감정가)")
+async def auction_bid_results(
+    sido: Optional[str] = Query(None, description="소재지 시/도(lctnSdnm)"),
+    sigungu: Optional[str] = Query(None, description="소재지 시/군/구(lctnSggnm)"),
+    emd: Optional[str] = Query(None, description="소재지 읍/면/동(lctnEmdNm)"),
+    prpt_div_cd: Optional[str] = Query(None, description="재산구분코드(prptDivCd)"),
+    pbct_stat: Optional[str] = Query(None, pattern="^(win|fail)$",
+                                     description="win=낙찰(0010) / fail=유찰(0011)"),
+    fail_min: Optional[int] = Query(None, ge=0, description="최소 유찰횟수"),
+    fail_max: Optional[int] = Query(None, ge=0, description="최대 유찰횟수"),
+    apsl_min: Optional[int] = Query(None, ge=0, description="최소 감정가(원)"),
+    apsl_max: Optional[int] = Query(None, ge=0, description="최대 감정가(원)"),
+    minbid_min: Optional[int] = Query(None, ge=0, description="최소 최저입찰가(원)"),
+    minbid_max: Optional[int] = Query(None, ge=0, description="최대 최저입찰가(원)"),
+    land_min: Optional[float] = Query(None, ge=0, description="최소 토지면적(㎡)"),
+    land_max: Optional[float] = Query(None, ge=0, description="최대 토지면적(㎡)"),
+    bld_min: Optional[float] = Query(None, ge=0, description="최소 건물면적(㎡)"),
+    bld_max: Optional[float] = Query(None, ge=0, description="최대 건물면적(㎡)"),
+    opbd_start: Optional[str] = Query(None, description="개찰일 시작(yyyyMMdd)"),
+    opbd_end: Optional[str] = Query(None, description="개찰일 종료(yyyyMMdd)"),
+    cltr_nm: Optional[str] = Query(None, description="물건명 키워드"),
+    org_nm: Optional[str] = Query(None, description="처분기관명"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=100),
+    current_user: CurrentUser = Depends(RequirePermission("auction", "read")),
+    service=Depends(_step1_service),
+) -> dict[str, Any]:
+    """getCltrBidRsltList2로 물건 입찰결과를 조건검색한다(유찰횟수·낙찰가율·감정가 실데이터).
+
+    무자료 시 전국 조회수 순위(getInqRnkClg)로 폴백하고 정직 표기한다. 각 물건엔
+    est_win(낙찰가능가)을 부착한다(무목업).
+    """
+    pbct_stat_cd = None
+    if pbct_stat == "win":
+        pbct_stat_cd = "0010"
+    elif pbct_stat == "fail":
+        pbct_stat_cd = "0011"
+    filters = {
+        "sido": sido, "sigungu": sigungu, "emd": emd,
+        "prpt_div_cd": prpt_div_cd, "pbct_stat_cd": pbct_stat_cd,
+        "fail_min": fail_min, "fail_max": fail_max,
+        "apsl_min": apsl_min, "apsl_max": apsl_max,
+        "minbid_min": minbid_min, "minbid_max": minbid_max,
+        "land_min": land_min, "land_max": land_max,
+        "bld_min": bld_min, "bld_max": bld_max,
+        "opbd_start": opbd_start, "opbd_end": opbd_end,
+        "cltr_nm": cltr_nm, "org_nm": org_nm,
+    }
+    filters = {k: v for k, v in filters.items() if v is not None}
+    return await service.search_bid_results(
+        service_key=_onbid_service_key(), filters=filters,
+        page=page, page_size=page_size,
+    )
 
 
 @router.get("/my", summary="① 내 관리토지 중 경공매 연동분(프로젝트별+통합)")

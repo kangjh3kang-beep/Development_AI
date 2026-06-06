@@ -294,6 +294,83 @@ class AuctionStep1Service:
             )
         return out
 
+    async def ranking_live(
+        self, *, service_key: Optional[str], by: str = "views",
+        kind: str = "부동산", limit: int = 50,
+    ) -> dict[str, Any]:
+        """온비드 순위(조회수/관심)를 실 API로 직접 조회한다(getInqRnkClg/getItrsCltrRnkClg).
+
+        실데이터(감정가·할인율·순위·주소·상태)를 그대로 반환하며, 감정가가 있는 물건엔
+        est_win(낙찰가능가 범위)을 부착한다. 키 미설정/무자료 시 정직 빈+reason.
+        """
+        client = OnbidClient(service_key)
+        try:
+            res = await client.fetch_ranking(
+                kind=kind, interest=(by == "interest"), rows=limit,
+            )
+        finally:
+            await client.close()
+
+        items = res.get("items", [])
+        enriched = [self._attach_est_win(it) for it in items]
+        out: dict[str, Any] = {
+            "items": enriched,
+            "by": "interest" if by == "interest" else "views",
+            "total": len(enriched),
+            "data_source": res.get("data_source", "unavailable"),
+        }
+        if res.get("note"):
+            out["note"] = res["note"]
+        if res.get("reason"):
+            out["reason"] = res["reason"]
+        return out
+
+    async def search_bid_results(
+        self, *, service_key: Optional[str], filters: dict[str, Any],
+        page: int = 1, page_size: int = 50, service_key_for_fallback: bool = True,
+    ) -> dict[str, Any]:
+        """물건 입찰결과목록(getCltrBidRsltList2)으로 조건검색한다(유찰·낙찰가율·감정가).
+
+        결과가 비면 전국 조회수 순위(getInqRnkClg)로 폴백하고 정직하게 표기한다.
+        각 물건에 est_win(낙찰가능가)을 부착한다(감정가·유찰횟수 실데이터 사용).
+        """
+        client = OnbidClient(service_key)
+        try:
+            res = await client.fetch_bid_result_list(
+                filters=filters, page=page, rows=page_size,
+            )
+            data_source = res.get("data_source", "unavailable")
+            items = res.get("items", [])
+            fallback = False
+            if not items and service_key_for_fallback:
+                # 무자료 → 전국 조회수 순위 폴백(정직 표기).
+                fb = await client.fetch_ranking(rows=page_size)
+                if fb.get("items"):
+                    items = fb["items"]
+                    data_source = fb.get("data_source", data_source)
+                    fallback = True
+        finally:
+            await client.close()
+
+        enriched = [self._attach_est_win(it) for it in items]
+        out: dict[str, Any] = {
+            "items": enriched,
+            "total": len(enriched),
+            "page": page,
+            "page_size": page_size,
+            "data_source": data_source,
+            "engine": "getCltrBidRsltList2",
+        }
+        if fallback:
+            out["engine"] = "getInqRnkClg(fallback)"
+            out["note"] = (
+                "조건에 맞는 입찰결과 물건이 없어 전국 조회수 순위(getInqRnkClg)로"
+                " 폴백했습니다(실데이터)."
+            )
+        if not enriched and res.get("reason"):
+            out["reason"] = res["reason"]
+        return out
+
     async def get_item(self, item_id: int) -> Optional[dict[str, Any]]:
         """물건 상세(+raw +est_win)."""
         await self.ensure_tables()

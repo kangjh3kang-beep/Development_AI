@@ -40,9 +40,23 @@ logger = logging.getLogger(__name__)
 ONBID_BASE_URL = "https://apis.data.go.kr/B010003"
 # ★라이브 확정 엔드포인트(공고목록).
 ONBID_LIST_OP = "OnbidPbancListSrvc2/getPbancList2"
+# ★라이브 확정 엔드포인트(순위: 조회수/관심).
+ONBID_INQ_RANK_OP = "OnbidInqRnkClgSrvc/getInqRnkClg"          # 조회수 순위.
+ONBID_ITRS_RANK_OP = "OnbidItrsCltrRnkClgSrvc/getItrsCltrRnkClg"  # 관심 순위.
+# ★라이브 확정 엔드포인트(물건 입찰결과목록: 유찰·낙찰가율·조건검색).
+ONBID_BID_RESULT_LIST_OP = "OnbidCltrBidRsltListSrvc2/getCltrBidRsltList2"
 # 보조 엔드포인트.
 ONBID_PBANC_DETAIL_OP = "OnbidPbancDtlInfSrvc2/getPbancDtlInf2"
 ONBID_BID_RESULT_OP = "OnbidCltrBidRsltDtlSrvc2/getCltrBidRsltDtl2"
+ONBID_BID_INF_OP = "OnbidCltrBidDtlSrvc2/getCltrBidInf2"
+
+# 순위 조회 물건구분(라이브 확정: cltrDivNm="부동산"만 필요).
+CLTR_DIV_REAL_ESTATE = "부동산"
+
+# 입찰결과목록 코드(라이브 확정).
+BID_DIV_GENERAL = "0001"  # 입찰구분=일반경쟁.
+PBCT_STAT_WIN = "0010"    # 낙찰.
+PBCT_STAT_FAIL = "0011"   # 유찰.
 
 # 기본 조회 코드(라이브 확정).
 CLTR_TYPE_REAL_ESTATE = "0001"   # 물건종류=부동산.
@@ -102,6 +116,78 @@ def _parse_dt(raw: Any) -> Optional[str]:
         except ValueError:
             continue
     return None
+
+
+def _parse_amount(raw: Any) -> Optional[int]:
+    """금액 문자열을 정수(원)로 파싱한다.
+
+    "비공개"·빈값·숫자 없음 → None(가짜 금지). "1,200,000원" 등 통화/콤마 제거.
+    """
+    if raw is None:
+        return None
+    if isinstance(raw, (int, float)):
+        v = int(raw)
+        return v if v > 0 else None
+    s = str(raw).strip()
+    if not s or "비공개" in s or "미정" in s:
+        return None
+    digits = "".join(ch for ch in s if ch.isdigit())
+    if not digits:
+        return None
+    v = int(digits)
+    return v if v > 0 else None
+
+
+def _parse_int(raw: Any) -> Optional[int]:
+    """정수 파싱(유찰횟수·회차·입찰자수 등). 숫자 없으면 None."""
+    if raw is None:
+        return None
+    if isinstance(raw, (int, float)):
+        return int(raw)
+    s = str(raw).strip()
+    if not s:
+        return None
+    neg = s.startswith("-")
+    digits = "".join(ch for ch in s if ch.isdigit())
+    if not digits:
+        return None
+    return -int(digits) if neg else int(digits)
+
+
+def _parse_rate(raw: Any) -> Optional[float]:
+    """낙찰가율/할인율 등 퍼센트 실수 파싱. 숫자 없으면 None."""
+    if raw is None:
+        return None
+    if isinstance(raw, (int, float)):
+        return float(raw)
+    s = str(raw).strip().replace("%", "").replace(",", "")
+    if not s:
+        return None
+    try:
+        return float(s)
+    except ValueError:
+        return None
+
+
+def _sido_from_address(address: str) -> str:
+    """주소 문자열 선두에서 시/도(region_sido)를 추출한다(매칭 실패 시 빈 문자열)."""
+    s = (address or "").strip()
+    if not s:
+        return ""
+    first = s.split()[0] if s.split() else ""
+    # 광역시/특별시/도 표기 정규화(예: "서울특별시"→"서울", "경기도"→"경기").
+    for full, short in (
+        ("서울특별시", "서울"), ("부산광역시", "부산"), ("대구광역시", "대구"),
+        ("인천광역시", "인천"), ("광주광역시", "광주"), ("대전광역시", "대전"),
+        ("울산광역시", "울산"), ("세종특별자치시", "세종"), ("경기도", "경기"),
+        ("강원특별자치도", "강원"), ("강원도", "강원"), ("충청북도", "충북"),
+        ("충청남도", "충남"), ("전라북도", "전북"), ("전북특별자치도", "전북"),
+        ("전라남도", "전남"), ("경상북도", "경북"), ("경상남도", "경남"),
+        ("제주특별자치도", "제주"), ("제주도", "제주"),
+    ):
+        if first.startswith(full):
+            return short
+    return first[:2] if first else ""
 
 
 class OnbidClient:
@@ -223,6 +309,176 @@ class OnbidClient:
         except Exception as e:  # noqa: BLE001
             logger.warning("온비드 호출 실패(무목업, 빈 결과 반환): %s", str(e)[:160])
             return self._unavailable(f"온비드 호출 실패: {str(e)[:120]}")
+
+    # ──────────────────────────────────────────
+    # 순위 (실호출 전용 — getInqRnkClg / getItrsCltrRnkClg)
+    # ──────────────────────────────────────────
+
+    async def fetch_ranking(
+        self, *, kind: str = CLTR_DIV_REAL_ESTATE, interest: bool = False,
+        page: int = 1, rows: int = 50,
+    ) -> dict[str, Any]:
+        """온비드 부동산 순위를 실 API 조회한다(resultType=json, 무목업).
+
+        - interest=False → 조회수 순위(getInqRnkClg).
+        - interest=True  → 관심 순위(getItrsCltrRnkClg).
+        파라미터는 매우 단순: cltrDivNm="부동산"만 필요(날짜 불필요·라이브 확정).
+        키 미설정/호출실패/무자료 → 빈 결과 + data_source="unavailable" + reason.
+        """
+        if not self._service_key:
+            return self._unavailable("온비드 인증키 미설정(공공데이터포털 활용신청 필요)")
+
+        op = ONBID_ITRS_RANK_OP if interest else ONBID_INQ_RANK_OP
+        params: dict[str, Any] = {
+            "serviceKey": self._service_key,
+            "pageNo": page,
+            "numOfRows": rows,
+            "resultType": "json",
+            "cltrDivNm": kind or CLTR_DIV_REAL_ESTATE,
+        }
+        url = f"{ONBID_BASE_URL}/{op}"
+        try:
+            client = await self._get_client()
+            resp = await client.get(url, params=params)
+            resp.raise_for_status()
+            raw_items, err = self._extract_items(resp.text)
+            if err:
+                return self._unavailable(f"온비드 응답 오류: {err}")
+            items = [self._normalize_ranking(it) for it in raw_items]
+            items = [it for it in items if it is not None]
+            if not items:
+                return self._unavailable("온비드 순위 응답 무자료")
+            return {
+                "items": items,
+                "data_source": "onbid_live",
+                "total": len(items),
+                "by": "interest" if interest else "views",
+                "note": (
+                    "온비드 OpenAPI "
+                    + ("getItrsCltrRnkClg(관심순위)" if interest else "getInqRnkClg(조회수순위)")
+                    + " 실연동(resultType=json)"
+                ),
+            }
+        except Exception as e:  # noqa: BLE001
+            logger.warning("온비드 순위 호출 실패(무목업, 빈 결과): %s", str(e)[:160])
+            return self._unavailable(f"온비드 순위 호출 실패: {str(e)[:120]}")
+
+    # ──────────────────────────────────────────
+    # 물건 입찰결과목록 (실호출 전용 — getCltrBidRsltList2)
+    # ──────────────────────────────────────────
+
+    async def fetch_bid_result_list(
+        self, *, filters: Optional[dict[str, Any]] = None, page: int = 1, rows: int = 50,
+    ) -> dict[str, Any]:
+        """물건 입찰결과목록을 getCltrBidRsltList2로 실 API 조회한다(resultType=json).
+
+        지역·용도·유찰횟수·감정가·최저입찰가·면적·개찰일·낙찰/유찰 상태 필터를
+        파라미터로 매핑한다. getPbancList2처럼 필수 조합(cltrTypeCd=부동산 +
+        dspsMthodCd=매각 + 최근 개찰일범위)을 채워 NO_MANDATORY_* 오류를 회피한다.
+
+        키 미설정/호출실패/무자료 → 빈 결과 + data_source="unavailable" + reason.
+        """
+        if not self._service_key:
+            return self._unavailable("온비드 인증키 미설정(공공데이터포털 활용신청 필요)")
+
+        f = dict(filters or {})
+        params: dict[str, Any] = {
+            "serviceKey": self._service_key,
+            "pageNo": page,
+            "numOfRows": rows,
+            "resultType": "json",
+            # mandatory 충족용 기본 조합(부동산·매각·일반경쟁).
+            "cltrTypeCd": CLTR_TYPE_REAL_ESTATE,
+            "dspsMthodCd": DSPS_MTHOD_SALE,
+            "bidDivCd": BID_DIV_GENERAL,
+        }
+        # 개찰일 범위(없으면 mandatory 충족용 기본 최근범위).
+        opbd_start = f.get("opbd_start")
+        opbd_end = f.get("opbd_end")
+        if not opbd_start or not opbd_end:
+            win = self._default_date_window()
+            now = datetime.now()
+            opbd_start = opbd_start or (now - timedelta(days=LOOKBACK_PBANC_DAYS)).strftime("%Y%m%d")
+            opbd_end = opbd_end or win["pbancYmdEnd"]
+        params["opbdDtStart"] = opbd_start
+        params["opbdDtEnd"] = opbd_end
+
+        # 지역(시도/시군구/읍면동).
+        if f.get("sido"):
+            params["lctnSdnm"] = f["sido"]
+        if f.get("sigungu"):
+            params["lctnSggnm"] = f["sigungu"]
+        if f.get("emd"):
+            params["lctnEmdNm"] = f["emd"]
+        # 용도(대/중/소 분류 ID).
+        if f.get("usg_lcls_id"):
+            params["cltrUsgLclsCtgrId"] = f["usg_lcls_id"]
+        if f.get("usg_mcls_id"):
+            params["cltrUsgMclsCtgrId"] = f["usg_mcls_id"]
+        if f.get("usg_scls_id"):
+            params["cltrUsgSclsCtgrId"] = f["usg_scls_id"]
+        # 재산구분.
+        if f.get("prpt_div_cd"):
+            params["prptDivCd"] = f["prpt_div_cd"]
+        # 처분방식 명시 override.
+        if f.get("dsps_mthod_cd"):
+            params["dspsMthodCd"] = f["dsps_mthod_cd"]
+        # 낙찰/유찰 상태.
+        if f.get("pbct_stat_cd"):
+            params["pbctStatCd"] = f["pbct_stat_cd"]
+        # 유찰횟수 범위.
+        if f.get("fail_min") is not None:
+            params["usbdNftStart"] = f["fail_min"]
+        if f.get("fail_max") is not None:
+            params["usbdNftEnd"] = f["fail_max"]
+        # 감정가 범위.
+        if f.get("apsl_min") is not None:
+            params["apslEvlAmtStart"] = f["apsl_min"]
+        if f.get("apsl_max") is not None:
+            params["apslEvlAmtEnd"] = f["apsl_max"]
+        # 최저입찰가 범위.
+        if f.get("minbid_min") is not None:
+            params["lowstBidPrcStart"] = f["minbid_min"]
+        if f.get("minbid_max") is not None:
+            params["lowstBidPrcEnd"] = f["minbid_max"]
+        # 면적 범위.
+        if f.get("land_min") is not None:
+            params["landSqmsStart"] = f["land_min"]
+        if f.get("land_max") is not None:
+            params["landSqmsEnd"] = f["land_max"]
+        if f.get("bld_min") is not None:
+            params["bldSqmsStart"] = f["bld_min"]
+        if f.get("bld_max") is not None:
+            params["bldSqmsEnd"] = f["bld_max"]
+        # 물건명/관리번호/기관.
+        if f.get("cltr_nm"):
+            params["onbidCltrNm"] = f["cltr_nm"]
+        if f.get("cltr_mng_no"):
+            params["cltrMngNo"] = f["cltr_mng_no"]
+        if f.get("org_nm"):
+            params["orgNm"] = f["org_nm"]
+
+        url = f"{ONBID_BASE_URL}/{ONBID_BID_RESULT_LIST_OP}"
+        try:
+            client = await self._get_client()
+            resp = await client.get(url, params=params)
+            resp.raise_for_status()
+            raw_items, err = self._extract_items(resp.text)
+            if err:
+                return self._unavailable(f"온비드 응답 오류: {err}")
+            items = [self._normalize_bid_result(it) for it in raw_items]
+            items = [it for it in items if it is not None]
+            if not items:
+                return self._unavailable("온비드 입찰결과목록 무자료(해당 조건의 물건 없음)")
+            return {
+                "items": items,
+                "data_source": "onbid_live",
+                "total": len(items),
+                "note": "온비드 OpenAPI getCltrBidRsltList2 실연동(resultType=json)",
+            }
+        except Exception as e:  # noqa: BLE001
+            logger.warning("온비드 입찰결과목록 호출 실패(무목업, 빈 결과): %s", str(e)[:160])
+            return self._unavailable(f"온비드 입찰결과목록 호출 실패: {str(e)[:120]}")
 
     # ──────────────────────────────────────────
     # 보조 상세 (실호출 전용 — 실패 시 정직 빈값)
@@ -379,5 +635,123 @@ class OnbidClient:
             "opbd_dt": _parse_dt(it.get("cltrOpbdDt")),
             "org": str(it.get("orgNm") or "").strip() or None,
             "pbanc_ymd": _parse_dt(it.get("pbancYmd")),
+            "raw": it,
+        }
+
+    @staticmethod
+    def _normalize_ranking(it: dict[str, Any]) -> Optional[dict[str, Any]]:
+        """온비드 순위(getInqRnkClg/getItrsCltrRnkClg item)를 내부 스키마로 정규화.
+
+        ★실데이터 채움: 감정가(apslEvlAmt)·순위(sn)·할인율(feeRate)·상태(pbctStatNm)·
+        용도(cltrUsgLclsCtgrNm)·주소(onbidCltrNm). 최저입찰가는 "비공개"면 None(정직).
+        취소/무효 상태는 필터링하지 않고 상태 그대로 노출(순위 자체가 진행물건 위주).
+        """
+        cltr_mng_no = str(it.get("cltrMngNo") or "").strip()
+        pbct_cdtn_no = str(it.get("pbctCdtnNo") or "").strip()
+        item_no = cltr_mng_no
+        if pbct_cdtn_no:
+            item_no = f"{cltr_mng_no}-{pbct_cdtn_no}" if cltr_mng_no else pbct_cdtn_no
+        if not item_no:
+            return None
+
+        address = str(it.get("onbidCltrNm") or "").strip()
+        # 용도: 대>중>소 중 가장 구체적인 명칭 우선.
+        usage = (
+            str(it.get("cltrUsgSclsCtgrNm") or "").strip()
+            or str(it.get("cltrUsgMclsCtgrNm") or "").strip()
+            or str(it.get("cltrUsgLclsCtgrNm") or "").strip()
+            or str(it.get("prptDivNm") or "").strip()
+        )
+        kind_src = (
+            str(it.get("cltrUsgSclsCtgrNm") or "")
+            + str(it.get("cltrUsgMclsCtgrNm") or "")
+            + str(it.get("prptDivNm") or "")
+        )
+
+        return {
+            "source": "onbid",
+            "item_no": item_no,
+            "cltr_mng_no": cltr_mng_no or None,
+            "pbct_cdtn_no": pbct_cdtn_no or None,
+            "rank": _parse_int(it.get("sn")),
+            "kind": normalize_kind(kind_src),
+            "kind_name": usage or None,
+            "usage": usage or None,
+            "region_sido": _sido_from_address(address),
+            "region_sigungu": "",
+            "bjd_code": "",
+            "pnu": "",
+            "address": address,
+            "appraisal_price": _parse_amount(it.get("apslEvlAmt")),
+            # "비공개"면 None(가짜 금지).
+            "min_bid_price": _parse_amount(it.get("lowstBidPrcIndctCont")),
+            "fail_count": None,
+            "discount_rate": _parse_rate(it.get("feeRate")),
+            "status": str(it.get("pbctStatNm") or it.get("dspsMthodNm") or "").strip() or None,
+            "disposal_method": str(it.get("dspsMthodNm") or "").strip() or None,
+            "thumbnail": str(it.get("thnlImgUrlAdr") or "").strip() or None,
+            "bid_start": _parse_dt(it.get("cltrBidBgngDt")),
+            "bid_end": _parse_dt(it.get("cltrBidEndDt")),
+            "opbd_dt": None,
+            "raw": it,
+        }
+
+    @staticmethod
+    def _normalize_bid_result(it: dict[str, Any]) -> Optional[dict[str, Any]]:
+        """온비드 입찰결과목록(getCltrBidRsltList2 item)을 내부 스키마로 정규화.
+
+        ★실데이터 채움: 유찰횟수(usbdNft)·감정가(apslEvlAmt)·최저입찰가(lowstBidPrc)·
+        낙찰가율(%)·낙찰가격·입찰결과(pbctStatNm)·면적·개찰일시·회차.
+        최저입찰가 "비공개"면 None(정직).
+        """
+        cltr_mng_no = str(it.get("cltrMngNo") or "").strip()
+        pbct_cdtn_no = str(it.get("pbctCdtnNo") or it.get("pbctNo") or "").strip()
+        item_no = cltr_mng_no
+        if pbct_cdtn_no:
+            item_no = f"{cltr_mng_no}-{pbct_cdtn_no}" if cltr_mng_no else pbct_cdtn_no
+        if not item_no:
+            return None
+
+        address = str(it.get("onbidCltrNm") or it.get("cltrNm") or "").strip()
+        usage = (
+            str(it.get("cltrUsgSclsCtgrNm") or "").strip()
+            or str(it.get("cltrUsgMclsCtgrNm") or "").strip()
+            or str(it.get("cltrUsgLclsCtgrNm") or "").strip()
+            or str(it.get("prptDivNm") or "").strip()
+        )
+        kind_src = (
+            str(it.get("cltrUsgSclsCtgrNm") or "")
+            + str(it.get("cltrUsgMclsCtgrNm") or "")
+            + str(it.get("prptDivNm") or "")
+        )
+
+        return {
+            "source": "onbid",
+            "item_no": item_no,
+            "cltr_mng_no": cltr_mng_no or None,
+            "pbct_cdtn_no": pbct_cdtn_no or None,
+            "kind": normalize_kind(kind_src),
+            "kind_name": usage or None,
+            "usage": usage or None,
+            "region_sido": _sido_from_address(address),
+            "region_sigungu": "",
+            "bjd_code": "",
+            "pnu": "",
+            "address": address,
+            "appraisal_price": _parse_amount(it.get("apslEvlAmt")),
+            "min_bid_price": _parse_amount(it.get("lowstBidPrc")),
+            "fail_count": _parse_int(it.get("usbdNft")),
+            "round_no": _parse_int(it.get("pbctNo") or it.get("rcnRtNo")),
+            "land_area": _parse_rate(it.get("ldaQ") or it.get("landSqms")),
+            "bld_area": _parse_rate(it.get("bldSqms") or it.get("bldgSqms")),
+            "status": str(it.get("pbctStatNm") or "").strip() or None,
+            "disposal_method": str(it.get("dspsMthodNm") or "").strip() or None,
+            # 낙찰 실데이터.
+            "win_rate": _parse_rate(it.get("scsbidRate") or it.get("scsbidPrcRate")),
+            "win_price": _parse_amount(it.get("scsbidAmt") or it.get("scsbidPrc")),
+            "valid_bidder_count": _parse_int(it.get("vldBidrCnt") or it.get("validBidrCnt")),
+            "bid_start": _parse_dt(it.get("cltrBidBgngDt")),
+            "bid_end": _parse_dt(it.get("cltrBidEndDt")),
+            "opbd_dt": _parse_dt(it.get("opbdDt") or it.get("cltrOpbdDt")),
             "raw": it,
         }
