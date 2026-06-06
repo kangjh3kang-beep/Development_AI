@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiClient } from "@/lib/api-client";
 import { VerificationBadge } from "@/components/common/VerificationBadge";
+import { SiteAnalysisDetail } from "./SiteAnalysisDetail";
 
 // 세련된 인라인 아이콘(lucide 스타일) — 이모지 대체
 function IconSparkle() {
@@ -606,6 +607,27 @@ export function PipelineResultDetail({ result, onRerun }: PipelineResultDetailPr
         <h3 className="text-sm font-bold text-[var(--text-primary)] tracking-[0.08em] mb-4">
           {activeSection.label}
         </h3>
+
+        {/* ── 부지분석 풍부 보고서(첫 분석과 동일) — 지도(필지구획도·주변실거래)·기본토지정보·AI해석 ── */}
+        {/* site_analysis 단계 소스 섹션(사업개요·입지분석)은 첫 분석 완료뷰와 동일한 SiteAnalysisDetail을 마운트해 일관화. */}
+        {activeSection.sourceStage === "site_analysis" &&
+          (() => {
+            const siteData = stageDataMap.site_analysis;
+            const hasSiteData = siteData && Object.keys(siteData).length > 0;
+            if (!hasSiteData) {
+              return (
+                <div className="mb-5 rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-4 text-xs text-[var(--text-hint)]">
+                  지도 데이터 없음 — 이 분석은 지도용 부지 데이터가 저장되지 않았습니다. 재분석 시 필지 구획도·주변 실거래 지도가 표시됩니다.
+                </div>
+              );
+            }
+            return (
+              <div className="mb-5">
+                <SiteAnalysisDetail data={siteData} />
+              </div>
+            );
+          })()}
+
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
           {activeSection.fields.map((field) => {
             const val = getFieldValue(activeSection.sourceStage, field.key);
