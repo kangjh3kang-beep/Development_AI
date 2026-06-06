@@ -6,7 +6,6 @@ import { MarketingPanels } from "@/components/dashboard/MarketingPanels";
 import { PromoBanner } from "@/components/dashboard/PromoBanner";
 import { OnboardingWizard } from "@/components/onboarding/OnboardingWizard";
 import { PipelinePanelClient } from "@/components/pipeline/PipelinePanelClient";
-import { LifecycleProgressRail } from "@/components/lifecycle/LifecycleProgressRail";
 import { Logo } from "@/components/ui/Logo";
 import { getDictionary } from "@/i18n/get-dictionary";
 import { isValidLocale, type Locale } from "@/i18n/config";
@@ -147,9 +146,6 @@ export default async function DashboardPage({ params }: DashboardPageProps) {
 
       {/* ── 사통팔땅 홍보 배너 ── */}
       <PromoBanner />
-
-      {/* ── 라이프사이클 진행 레일 (활성 프로젝트가 있을 때만 표시) ── */}
-      <LifecycleProgressRail locale={locale} />
 
       {/* ── 자동 분석 진행 단계 ── */}
       <PipelinePanelClient />

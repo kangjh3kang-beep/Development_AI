@@ -1,60 +1,50 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import Link from "next/link";
-import { apiClient } from "@/lib/api-client";
+import { useProjectStore } from "@/store/useProjectStore";
 import { ProjectCardGrid } from "@/components/dashboard/DashboardDynamicElements";
 
-type ProjectSummary = {
-  id: string;
-  name: string;
-  status: string;
-  value: string;
-  tag: string;
-  progress: number;
+// 프로젝트 단계 → 표시 라벨/진행률 매핑(관리목록 ProjectsOverviewClient와 동일 단계 체계).
+const _PHASE_LABEL: Record<string, string> = {
+  draft: "초안", planning: "기획", design: "설계", permit: "인허가",
+  construction: "시공", completed: "완료", archived: "보관",
 };
-
-type ProjectsResponse = {
-  projects?: ProjectSummary[];
-  items?: ProjectSummary[];
+const _PHASE_PROGRESS: Record<string, number> = {
+  draft: 5, planning: 20, design: 45, permit: 65,
+  construction: 85, completed: 100, archived: 100,
 };
+// 삭제/보관 상태는 대시보드 활성 진행 단계에서 제외(이중 방어).
+const _HIDDEN_STATUS = new Set(["archived", "deleted"]);
 
 export function DashboardProjectLoader({ locale }: { locale: string }) {
-  const [projects, setProjects] = useState<readonly ProjectSummary[]>([]);
-  const [loading, setLoading] = useState(true);
+  const projects = useProjectStore((s) => s.projects);
+  const syncing = useProjectStore((s) => s.syncing);
+  const syncFromBackend = useProjectStore((s) => s.syncFromBackend);
 
+  // 관리목록과 동일 권위 소스(백엔드 /projects, is_deleted 필터)로 재동기화.
+  // 삭제는 deleteProject가 백엔드 소프트삭제 + 로컬 제거를 일관 처리하므로,
+  // 동일 스토어를 구독하면 삭제분이 대시보드에서도 즉시 제외된다.
   useEffect(() => {
-    let cancelled = false;
+    void syncFromBackend();
+  }, [syncFromBackend]);
 
-    async function fetchProjects() {
-      try {
-        const res = await apiClient.get<ProjectsResponse>("/projects");
-        const list = res.projects ?? res.items ?? [];
-        if (!cancelled) {
-          // 목업(강남/송도) 제거 — 실제 프로젝트가 없으면 빈상태를 표시한다.
-          setProjects(
-            list.map((p: any) => ({
-              id: p.id ?? p.project_id ?? "",
-              name: p.name ?? p.project_name ?? "Untitled",
-              status: p.status ?? "진행중",
-              value: p.value ?? "0",
-              tag: p.tag ?? p.type ?? "CORE",
-              progress: p.progress ?? 0,
-            })),
-          );
-        }
-      } catch {
-        if (!cancelled) setProjects([]);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    }
+  // 방어적 삭제필터 → 최신순(createdAt desc) → 상위 6개.
+  const cards = projects
+    .filter((p) => !_HIDDEN_STATUS.has(p.status))
+    .slice()
+    .sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""))
+    .slice(0, 6)
+    .map((p) => ({
+      id: p.id,
+      name: p.name || "Untitled",
+      status: _PHASE_LABEL[p.status] || p.status || "진행중",
+      value: p.area || "0",
+      tag: p.type || "CORE",
+      progress: _PHASE_PROGRESS[p.status] ?? 0,
+    }));
 
-    fetchProjects();
-    return () => { cancelled = true; };
-  }, []);
-
-  if (loading) {
+  if (syncing && projects.length === 0) {
     return (
       <div className="grid gap-6 sm:grid-cols-2">
         {[1, 2].map((i) => (
@@ -68,7 +58,7 @@ export function DashboardProjectLoader({ locale }: { locale: string }) {
   }
 
   // 빈상태 — 진행 중 프로젝트가 없을 때 프로젝트 생성 유도(목업 대체).
-  if (projects.length === 0) {
+  if (cards.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center gap-4 rounded-[2rem] border border-dashed border-[var(--line-strong)] bg-[var(--surface-soft)] px-8 py-14 text-center">
         <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[var(--accent-soft)] text-[var(--accent-strong)]">
@@ -89,5 +79,5 @@ export function DashboardProjectLoader({ locale }: { locale: string }) {
     );
   }
 
-  return <ProjectCardGrid locale={locale} projects={projects} />;
+  return <ProjectCardGrid locale={locale} projects={cards} />;
 }
