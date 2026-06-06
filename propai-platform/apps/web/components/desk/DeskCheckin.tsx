@@ -1,22 +1,18 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { salesApi } from "@/lib/salesApi";
 import { apiClient } from "@/lib/api-client";
+import ConsentModal, { type ConsentResult, type ConsentTemplate } from "@/components/desk/ConsentModal";
 
 type MatchType = "PHONE" | "NAME" | "CARD";
-
-const CONSENTS = [
-  { type: "REQUIRED", label: "[필수] 방문/상담 관리 목적 개인정보 수집·이용" },
-  { type: "MARKETING", label: "[선택] 분양 정보 마케팅 활용" },
-  { type: "THIRD_PARTY", label: "[선택] 시행사/대행사 제3자 제공" },
-];
 
 export default function DeskCheckin({ siteCode }: { siteCode: string }) {
   const api = salesApi(siteCode);
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
-  const [agree, setAgree] = useState<Record<string, boolean>>({ REQUIRED: false });
+  const [consentTpl, setConsentTpl] = useState<ConsentTemplate | null>(null);
+  const [showConsent, setShowConsent] = useState(false);
   const [matchInput, setMatchInput] = useState("");
   const [matchType, setMatchType] = useState<MatchType>("PHONE");
   const [matchBusy, setMatchBusy] = useState(false);
@@ -36,13 +32,35 @@ export default function DeskCheckin({ siteCode }: { siteCode: string }) {
   const start = (e: React.PointerEvent) => { drawing.current = true; draw(e); };
   const end = () => { drawing.current = false; sig.current?.getContext("2d")?.beginPath(); };
 
-  const submit = async () => {
-    if (!agree.REQUIRED) { alert("필수 동의가 필요합니다."); return; }
+  // 동의 고지문(수집항목·이용목적·보유기간) 사전 로드. 실패 시 모달이 폴백 고지문 사용.
+  useEffect(() => {
+    let alive = true;
+    api.get<ConsentTemplate>("/mh/consent-template")
+      .then((t) => { if (alive) setConsentTpl(t); })
+      .catch(() => { /* 폴백 고지문 사용 */ });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [siteCode]);
+
+  // 체크인 버튼 → 입력 검증 후 동의팝업 오픈(필수 미동의 시 모달에서 등록 비활성).
+  const openConsent = () => {
+    if (!name.trim() || !phone.trim()) { alert("성함과 연락처를 입력해 주세요."); return; }
+    setShowConsent(true);
+  };
+
+  // 동의팝업 확인 → 서명 결합 후 실제 등록 호출(직원매칭·알림은 기존 흐름 유지).
+  const submitWithConsent = async (consents: ConsentResult[]) => {
+    setShowConsent(false);
     const esign = sig.current?.toDataURL("image/png");
-    const consents = CONSENTS.map((c) => ({ type: c.type, agreed: !!agree[c.type], esign_uri: esign, agreed_at: new Date().toISOString() }));
-    const r = await api.post<{ visitor_id: string }>("/mh/visitors/checkin", { name, phone_e164: phone, party_size: 1, consents });
-    setResult({ visitor_id: r.visitor_id });
-    alert("체크인 완료");
+    const payload = consents.map((c) => ({ ...c, esign_uri: esign }));
+    try {
+      const r = await api.post<{ visitor_id: string }>("/mh/visitors/checkin",
+        { name, phone_e164: phone, party_size: 1, consents: payload });
+      setResult({ visitor_id: r.visitor_id });
+      alert("체크인 완료");
+    } catch {
+      alert("체크인에 실패했습니다. 필수 동의 여부를 확인해 주세요.");
+    }
   };
   const runMatch = async (input_type: MatchType, raw: string) => {
     if (!result?.visitor_id || !raw) return;
@@ -74,21 +92,20 @@ export default function DeskCheckin({ siteCode }: { siteCode: string }) {
         className="w-full rounded-lg border border-[var(--line)] bg-[var(--surface-strong)] px-3 py-2 text-[var(--text-primary)]" />
       <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="연락처 (01012345678)"
         className="w-full rounded-lg border border-[var(--line)] bg-[var(--surface-strong)] px-3 py-2 text-[var(--text-primary)]" />
-      <div className="space-y-2">
-        {CONSENTS.map((c) => (
-          <label key={c.type} className="flex items-start gap-2 text-sm text-[var(--text-secondary)]">
-            <input type="checkbox" checked={!!agree[c.type]} onChange={(e) => setAgree({ ...agree, [c.type]: e.target.checked })} className="mt-1" />
-            <span>{c.label}</span>
-          </label>
-        ))}
-      </div>
       <div>
         <p className="mb-1 text-sm text-[var(--text-tertiary)]">서명</p>
         <canvas ref={sig} width={380} height={120}
           className="w-full touch-none rounded-lg border border-[var(--line)] bg-white"
           onPointerDown={start} onPointerUp={end} onPointerMove={draw} onPointerLeave={end} />
       </div>
-      <button onClick={submit} className="w-full rounded-lg bg-[var(--accent-strong)] py-2.5 font-black text-white">체크인</button>
+      <button onClick={openConsent} className="w-full rounded-lg bg-[var(--accent-strong)] py-2.5 font-black text-white">체크인 (개인정보 동의)</button>
+      {showConsent && (
+        <ConsentModal
+          template={consentTpl}
+          onConfirm={(c) => void submitWithConsent(c)}
+          onCancel={() => setShowConsent(false)}
+        />
+      )}
       {result?.visitor_id && (
         <div className="space-y-2 border-t border-[var(--line)] pt-4">
           <p className="text-sm font-bold text-[var(--text-primary)]">지명 직원 매칭</p>

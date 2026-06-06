@@ -124,11 +124,17 @@ class MhVisitor(Base, PKMixin, SiteMixin):
 class MhVisitConsent(Base, PKMixin):
     __tablename__ = "mh_visit_consents"
     visitor_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("mh_visitors.id"))
-    consent_type: Mapped[str | None] = mapped_column(String(20))
-    items: Mapped[dict | None] = mapped_column(JSONB)
+    consent_type: Mapped[str | None] = mapped_column(String(20))  # REQUIRED/MARKETING/THIRD_PARTY
+    items: Mapped[dict | None] = mapped_column(JSONB)  # 수집항목(이름·연락처·방문목적 등)
     agreed: Mapped[bool | None] = mapped_column(Boolean)
     esign_uri: Mapped[str | None] = mapped_column(String)
     agreed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # F-2: 개인정보보호법 제15·22조 고지이력(수집항목은 items, 이용목적·보유기간·버전·IP)
+    site_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    purpose: Mapped[str | None] = mapped_column(String)  # 이용목적 고지문
+    retention: Mapped[str | None] = mapped_column(String(120))  # 보유기간(예: "상담종료 후 1년")
+    version: Mapped[str | None] = mapped_column(String(20))  # 동의서 버전
+    consent_ip: Mapped[str | None] = mapped_column(String(64))  # 동의 시점 클라이언트 IP
 
 
 class MhStaffMatch(Base, PKMixin):

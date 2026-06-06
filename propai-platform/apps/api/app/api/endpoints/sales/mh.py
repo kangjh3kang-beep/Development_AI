@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,6 +11,7 @@ from app.api.deps import get_db
 from app.api.deps_sales import SalesCtx, sales_ctx
 from apps.api.database.models.sales.site_org import SalesSiteConfig
 from app.services.sales.mh.checkin import checkin
+from app.services.sales.mh.consent import template as consent_template
 from app.services.sales.mh.match import match_staff
 from app.services.sales.mh.notify import notify_designated
 from app.services.sales.mh.ops import attendance_check, inventory_txn, visit_stats
@@ -18,9 +19,24 @@ from app.services.sales.mh.ops import attendance_check, inventory_txn, visit_sta
 mh_router = APIRouter(prefix="/mh", tags=["model-house"])
 
 
+def _client_ip(request: Request) -> str | None:
+    """동의 IP(고지이력). 프록시 환경은 X-Forwarded-For 첫 IP 우선."""
+    xff = request.headers.get("x-forwarded-for")
+    if xff:
+        return xff.split(",")[0].strip()
+    return request.client.host if request.client else None
+
+
+@mh_router.get("/consent-template")
+async def desk_consent_template(_ctx: SalesCtx = Depends(sales_ctx)):
+    """방문객 동의 고지문(수집항목·이용목적·보유기간 + 필수/선택 분리). 동의팝업이 렌더."""
+    return consent_template()
+
+
 @mh_router.post("/visitors/checkin")
-async def desk_checkin(body: dict, db: AsyncSession = Depends(get_db), ctx: SalesCtx = Depends(sales_ctx)):
-    v = await checkin(db, ctx.site_id, body.get("desk_id"), body)
+async def desk_checkin(body: dict, request: Request, db: AsyncSession = Depends(get_db),
+                       ctx: SalesCtx = Depends(sales_ctx)):
+    v = await checkin(db, ctx.site_id, body.get("desk_id"), body, consent_ip=_client_ip(request))
     await db.commit()
     return {"visitor_id": str(v.id)}
 
