@@ -56,7 +56,24 @@ export const SALES_TABS: SalesTabDef[] = [
   // 해촉증명서: 프리랜서뷰(내 증명서)는 현장 멤버 전원 공통(alwaysOn). 발급주체뷰는
   // 패널 내부에서 역할(시행/대행 본부장↑·admin)로 차등 노출한다.
   { key: "cert", label: "해촉증명서", feature: "cert", alwaysOn: true },
+  // Phase 1-E — 공통(PUBLIC) 마켓·프로필. 현장 무관 전역 컨텐츠라 features와 무관하게 전원 공통(alwaysOn).
+  { key: "market", label: "구인구직", feature: "market", alwaysOn: true },
+  { key: "profile", label: "내 프로필", feature: "profile", alwaysOn: true },
+  // 직원관리(집계): 관리역할 전용(STAFF_OVERVIEW_ROLES). 비관리역할엔 미노출.
+  { key: "staff", label: "직원관리", feature: "staff" },
 ];
+
+// Phase 1-E 직원관리(집계) 노출 역할 — 관리역할(대행본사·본부장·이사·팀장↑·시행·관리자).
+// 백엔드 staff overview는 관리 권한 검증으로 추가 게이팅한다(여기선 메뉴 노출만 차등).
+export const STAFF_OVERVIEW_ROLES = new Set([
+  "SUPERADMIN",
+  "DEVELOPER",
+  "AGENCY",
+  "SUBAGENCY",
+  "GM_DIRECTOR",
+  "DIRECTOR",
+  "TEAM_LEADER",
+]);
 
 /** features[]로 노출 탭 필터링. alwaysOn 탭은 항상 포함. */
 export function visibleTabs(features: string[]): SalesTabDef[] {

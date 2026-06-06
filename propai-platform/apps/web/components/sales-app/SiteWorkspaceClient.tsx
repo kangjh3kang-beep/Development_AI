@@ -16,7 +16,7 @@ import { apiClient, ApiClientError } from "@/lib/api-client";
 import { getStoredSiteToken, clearSiteToken, salesApi } from "@/lib/salesApi";
 import SiteEnterModal from "@/components/sales-app/SiteEnterModal";
 import SitePasswordModal from "@/components/sales-app/SitePasswordModal";
-import { ROLE_LABEL, MANAGE_ROLES, visibleTabs } from "@/components/sales-app/roleConfig";
+import { ROLE_LABEL, MANAGE_ROLES, STAFF_OVERVIEW_ROLES, visibleTabs } from "@/components/sales-app/roleConfig";
 import type { Locale } from "@/i18n/config";
 
 // 기존 분양 모듈 패널(재사용). 모두 { siteCode } 시그니처 — siteId(UUID)를 그대로 전달한다.
@@ -39,6 +39,10 @@ import DeskCheckin from "@/components/desk/DeskCheckin";
 import VisitorStats from "@/components/desk/VisitorStats";
 import CommissionDutchPay from "@/components/sales-app/CommissionDutchPay";
 import TerminationCertPanel from "@/components/sales-app/TerminationCertPanel";
+// Phase 1-E — 공통(PUBLIC) 마켓·프로필·직원관리 집계.
+import MarketProfilePanel from "@/components/sales-app/MarketProfilePanel";
+import JobMarketPanel from "@/components/sales-app/JobMarketPanel";
+import StaffOverviewPanel from "@/components/sales-app/StaffOverviewPanel";
 
 interface RoleResponse {
   site_id?: string;
@@ -110,7 +114,11 @@ export default function SiteWorkspaceClient({ locale, siteId }: { locale: Locale
       .catch(() => setRounds([]));
   }, [role, siteId]);
 
-  const tabs = role ? visibleTabs(role.features) : [];
+  // Phase 1-E — 직원관리(staff) 탭은 관리역할에만 노출. 마켓·프로필은 alwaysOn으로 전원 노출.
+  const canStaff = role ? STAFF_OVERVIEW_ROLES.has(role.role) : false;
+  const tabs = role
+    ? visibleTabs(role.features).filter((t) => t.key !== "staff" || canStaff)
+    : [];
   const canManage = role ? (role.can_manage ?? MANAGE_ROLES.has(role.role)) : false;
 
   return (
@@ -247,6 +255,10 @@ export default function SiteWorkspaceClient({ locale, siteId }: { locale: Locale
           {tab === "cert" && <TerminationCertPanel siteCode={siteId} role={role.role} />}
           {tab === "integrity" && <IntegrityGuard siteCode={siteId} />}
           {tab === "projection" && <DeveloperProjection />}
+          {/* Phase 1-E — 공통(PUBLIC) 마켓·프로필·직원관리 집계. 데이터는 전역(현장 무관). */}
+          {tab === "market" && <JobMarketPanel />}
+          {tab === "profile" && <MarketProfilePanel />}
+          {tab === "staff" && canStaff && <StaffOverviewPanel siteId={siteId} />}
         </>
       )}
 
