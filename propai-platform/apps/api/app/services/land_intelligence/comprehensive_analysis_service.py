@@ -246,10 +246,23 @@ class ComprehensiveAnalysisService:
 
         # 법정상한 SSOT: zone_limits가 비어/누락이어도 용도지역명으로 법정값을 도출한다.
         # (과거 폴백 60/200은 자연녹지(법정 20/100)에 200%/60%를 지어내는 할루시네이션 원인이었음)
-        from app.services.zoning.legal_zone_limits import legal_limits_for
+        from app.services.zoning.legal_zone_limits import (
+            applicable_limits_for,
+            legal_limits_for,
+        )
         legal = legal_limits_for(zone_type) or {}
         legal_bcr = legal.get("max_bcr_pct")
         legal_far = legal.get("max_far_pct")
+        legal_min_far = legal.get("min_far_pct")
+
+        # ── 계층 적용 한도 산정: 법정범위 → 조례 적용값 → 도시·군관리계획/지구단위계획 상한.
+        # base(local_ordinance/zone_limits)와 special_districts(계획 상한용적률)를 페이로드로 전달.
+        applied = applicable_limits_for(
+            zone_type,
+            sigungu=(ordinance.get("sigungu") if isinstance(base.get("local_ordinance"), dict) else None),
+            regulation_payload=base,
+            plan_payload=base.get("special_districts"),
+        ) or {}
 
         national_bcr = float(
             zone_limits.get("max_bcr_pct")
@@ -286,19 +299,63 @@ class ComprehensiveAnalysisService:
             or _has_relaxation_basis(base.get("special_districts"))
         )
         far_basis = "법정/조례"  # 기본: 법정값(조례 가감 반영)
+
+        # ── 산정 계층: 1)법정범위 → 2)조례 적용값 → 3)도시·군관리계획/지구단위계획 상한 → 4)인센티브.
+        ordinance_confirmed = bool(applied.get("ordinance_confirmed"))
+        plan_far_ceiling = applied.get("plan_far_pct")
+        # 기준 용적률(상한): 조례 적용값(있으면) > 법정범위 max(없으면, 확인필요 플래그).
+        if ordinance_confirmed:
+            far_basis = f"조례 적용값({applied.get('far_source') or '지자체 도시계획조례'})"
+        # 도시·군관리계획/지구단위계획 상한용적률이 있으면 최우선(조례·법정 초과 정당).
+        if plan_far_ceiling is not None:
+            effective_far = max(effective_far, float(plan_far_ceiling))
+            far_basis = "도시·군관리계획/지구단위계획 상한용적률(최우선 적용)"
+
+        # 4) 인센티브 완화율(근거 있을 때만) — 상한용적률 cap.
         if basis_present and relaxation_ratio is not None:
             try:
                 ratio = float(relaxation_ratio)
-                # 완화율(%)을 법정 용적률에 반영하되 합리성 절대 상한(법정×배수) 내로 제한.
+                # 완화율(%)을 기준 용적률에 반영하되 합리성 절대 상한(법정×배수) 내로 제한.
                 relaxed = national_far * (1.0 + ratio / 100.0)
                 cap = national_far * SANITY_MULTIPLIER
                 effective_far = min(max(effective_far, relaxed), cap)
                 far_basis = f"완화근거(완화율 {ratio:g}%) 반영"
             except (TypeError, ValueError):
                 pass
-        elif basis_present:
-            # 근거 키워드는 있으나 정량 완화율 미제시 → 법정값 유지(가능성만 안내).
+        elif basis_present and plan_far_ceiling is None and not ordinance_confirmed:
+            # 근거 키워드는 있으나 정량 완화율·조례·계획 미제시 → 법정값 유지(가능성만 안내).
             far_basis = "완화근거 명시(정량 완화율 미제시 — 별도 검토 필요)"
+
+        # ── far_basis 상세 메타: 산정 계층·데이터출처를 그라운딩/검증기가 활용하도록 동봉.
+        far_basis_detail: dict[str, Any] = {
+            "법정범위": {
+                "min_far_pct": legal_min_far if legal_min_far is not None else national_far,
+                "max_far_pct": legal_far if legal_far is not None else national_far,
+                "max_bcr_pct": legal_bcr,
+            },
+            "조례값": (
+                {
+                    "far_pct": applied.get("ordinance_far_pct"),
+                    "bcr_pct": applied.get("ordinance_bcr_pct"),
+                    "confirmed": ordinance_confirmed,
+                }
+                if ordinance_confirmed
+                else None
+            ),
+            "계획상한": (
+                {"far_pct": plan_far_ceiling, "bcr_pct": applied.get("plan_bcr_pct")}
+                if plan_far_ceiling is not None
+                else None
+            ),
+            "인센티브": (
+                {"relaxation_ratio_pct": float(relaxation_ratio)}
+                if (relaxation_ratio is not None)
+                else None
+            ),
+            "최종근거": far_basis,
+            "데이터출처": applied.get("sources") or ["법정범위"],
+            "조례확인필요": not ordinance_confirmed and plan_far_ceiling is None,
+        }
 
         incentive: dict[str, Any] = {}
         try:
@@ -375,6 +432,10 @@ class ComprehensiveAnalysisService:
             "effective_bcr_pct": effective_bcr,
             "effective_far_pct": effective_far,
             "far_basis": far_basis,
+            "far_basis_detail": far_basis_detail,
+            "ordinance_confirmed": ordinance_confirmed,
+            "legal_min_far_pct": legal_min_far if legal_min_far is not None else national_far,
+            "legal_max_far_pct": legal_far if legal_far is not None else national_far,
             "relaxation_present": basis_present,
             "far_incentive": incentive,
             "source": source,

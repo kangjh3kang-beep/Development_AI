@@ -7,6 +7,7 @@ LLM 미호출 경로(한도표·검증기)만 검증하므로 외부 API 없이 
 
 from app.services.verification.range_rules import run_range_checks
 from app.services.zoning.legal_zone_limits import (
+    applicable_limits_for,
     check_against_legal,
     legal_limits_for,
     normalize_zone_name,
@@ -192,3 +193,125 @@ def test_basis_run_range_checks_no_basis_high():
     output = {"effective_far_pct": 350}
     issues = run_range_checks("site", source, output)
     assert any(i["severity"] == "high" and "용적률" in i["claim"] for i in issues)
+
+
+# ── 계층 산정(법정범위 → 조례 → 도시군관리계획 → 인센티브) ──
+def test_legal_limits_far_range_natural_green():
+    # 자연녹지: 법정 용적률 '범위' 50~100%(시행령 제85조).
+    limits = legal_limits_for("자연녹지지역")
+    assert limits["min_far_pct"] == 50
+    assert limits["max_far_pct"] == 100
+
+
+def test_applicable_limits_legal_range_only_when_no_ordinance():
+    # 조례·계획 미보유 → 법정범위 반환 + 조례확인필요(False).
+    a = applicable_limits_for("자연녹지지역")
+    assert a["legal_min_far_pct"] == 50
+    assert a["legal_max_far_pct"] == 100
+    assert a["applied_far_pct"] == 100  # 기준은 법정범위 max
+    assert a["ordinance_confirmed"] is False
+    assert "법정범위" in a["sources"]
+
+
+def test_applicable_limits_ordinance_value_becomes_applied():
+    # 조례 적용값(자연녹지 80%, 법정범위 内) → 적용 법정값으로 반영.
+    reg = {"local_ordinance": {"effective_far": 80, "source": "지자체 조례"}}
+    a = applicable_limits_for("자연녹지지역", regulation_payload=reg)
+    assert a["ordinance_far_pct"] == 80
+    assert a["applied_far_pct"] == 80
+    assert a["ordinance_confirmed"] is True
+
+
+def test_applicable_limits_plan_ceiling_overrides():
+    # 도시·군관리계획/지구단위계획 상한용적률이 있으면 최우선(법정상한 초과 정당).
+    plan = {"districts": [{"district_name": "지구단위계획구역", "plan_far_pct": 200}]}
+    a = applicable_limits_for("자연녹지지역", plan_payload=plan)
+    assert a["plan_far_pct"] == 200
+    assert a["applied_far_pct"] == 200
+
+
+# ── 검증기: 조례값·계획상한 반영(정당한 상향 오적발 방지 / 무근거 적발 유지) ──
+def test_check_natural_green_far_100_within_range_clean():
+    # 자연녹지 용적률 100%(법정범위 내) → clean.
+    assert check_against_legal("자연녹지지역", far_pct=100) == []
+
+
+def test_check_natural_green_far_80_ordinance_clean():
+    # 자연녹지 80%(조례값 가정) → clean(법정범위 내, 초과 아님 → 빈 결과).
+    reg = {"ordinance_far_pct": 80}
+    assert check_against_legal("자연녹지지역", far_pct=80, regulation_payload=reg) == []
+
+
+def test_check_natural_green_far_200_no_basis_high():
+    # 자연녹지 200% 무근거 → high(할루시네이션 유지).
+    issues = check_against_legal("자연녹지지역", far_pct=200)
+    assert issues and issues[0]["severity"] == "high"
+
+
+def test_check_natural_green_far_200_with_plan_ceiling_info():
+    # 자연녹지 200% + 도시·군관리계획/지구단위계획 상한 200% → info(정당, high 아님).
+    plan = {"districts": [{"district_name": "지구단위계획구역", "plan_far_pct": 200}]}
+    issues = check_against_legal("자연녹지지역", far_pct=200, plan_payload=plan)
+    assert len(issues) == 1
+    assert issues[0]["severity"] == "info"
+    assert issues[0]["severity"] != "high"
+
+
+def test_check_junjugeo_600_plan_basis_info():
+    # 준주거 600% + 지구단위계획 상한 600% → info(정당).
+    plan = {"plan_far_pct": 600, "name": "지구단위계획"}
+    issues = check_against_legal("준주거지역", far_pct=600, plan_payload=plan)
+    assert len(issues) == 1
+    assert issues[0]["severity"] == "info"
+
+
+def test_check_junjugeo_600_no_basis_high():
+    # 준주거 600% 무근거 → high.
+    issues = check_against_legal("준주거지역", far_pct=600)
+    assert issues and issues[0]["severity"] == "high"
+
+
+def test_range_checks_natural_green_far_200_plan_payload_info():
+    # run_range_checks 경유: special_districts에 지구단위계획 상한 → info(정당).
+    source = {
+        "zone_type": "자연녹지지역",
+        "special_districts": [{"district_name": "지구단위계획구역", "plan_far_pct": 200}],
+    }
+    output = {"effective_far_pct": 200}
+    issues = run_range_checks("site", source, output)
+    far_issues = [i for i in issues if "용적률" in i["claim"]]
+    assert far_issues and far_issues[0]["severity"] == "info"
+    assert not any(i["severity"] == "high" for i in far_issues)
+
+
+def test_far_basis_detail_meta_present():
+    # _calc_effective_far far_basis_detail에 법정범위·데이터출처가 담기는지(조례 미보유).
+    from app.services.land_intelligence.comprehensive_analysis_service import (
+        ComprehensiveAnalysisService,
+    )
+    svc = ComprehensiveAnalysisService()
+    base = {"zone_type": "자연녹지지역", "zone_limits": {}}
+    sec = svc._calc_effective_far(base, "자연녹지지역", land_area=1000)
+    detail = sec["far_basis_detail"]
+    assert detail["법정범위"]["min_far_pct"] == 50
+    assert detail["법정범위"]["max_far_pct"] == 100
+    assert detail["데이터출처"]
+    assert sec["ordinance_confirmed"] is False
+    assert detail["조례확인필요"] is True
+
+
+def test_far_basis_detail_ordinance_confirmed():
+    # 조례 적용값(local_ordinance) 주입 시 far_basis_detail.조례값·ordinance_confirmed 반영.
+    from app.services.land_intelligence.comprehensive_analysis_service import (
+        ComprehensiveAnalysisService,
+    )
+    svc = ComprehensiveAnalysisService()
+    base = {
+        "zone_type": "자연녹지지역",
+        "zone_limits": {},
+        "local_ordinance": {"effective_far": 80, "effective_bcr": 20, "source": "지자체 조례"},
+    }
+    sec = svc._calc_effective_far(base, "자연녹지지역", land_area=1000)
+    assert sec["ordinance_confirmed"] is True
+    assert sec["far_basis_detail"]["조례값"] is not None
+    assert sec["far_basis_detail"]["조례값"]["far_pct"] == 80

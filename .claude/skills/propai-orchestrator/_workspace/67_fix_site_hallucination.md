@@ -189,3 +189,64 @@ range 규칙이 법정초과를 high로 잡아주기만 하면 배지가 자동 
 ## 커밋(후속)
 - 메시지: `fix(site-analysis): 할루시네이션 검증 정밀화 — 인센티브 완화(기부채납/친환경/시프트/공공임대) 근거기반 3단판정(근거없는 법정초과만 적발)`
 - (해시는 커밋 후 하단 기록)
+
+---
+
+# 3차: 실효용적률 계층화 (3d4b727·0d57add 위)
+
+## 사용자 핵심 지적
+실효용적률 기준은 **지자체 조례 + 도시·군관리계획 + 관련 법규**를 분석해 산정해야 함. 기존은 법정 단일상한 비교에 그침.
+- 국토계획법 시행령 = 용도지역별 건폐율/용적률 **범위**(예: 자연녹지 용적률 50~100%).
+- **지자체 도시계획조례** = 그 범위 내 구체 적용값(실제 적용 법정값).
+- **도시·군관리계획/지구단위계획** = 부지별 상한용적률(조례보다 우선).
+- 인센티브 = 근거기반 상향(2차 반영됨).
+
+## 조사결과 — 조례/계획 데이터 보유처(정직)
+- ★조례 데이터 **보유함**: `app/services/land_intelligence/ordinance_service.py` (OrdinanceService).
+  - `NATIONAL_LIMITS`(법정범위 max) + `ORDINANCE_CACHE`(전국 ~30개 시군구 실제 조례 건폐율/용적률, 2025~2026 기준) + **법제처 API 실시간 파싱**(MOLEG_API_KEY 있을 때 도시계획조례 본문 건폐율/용적률 추출).
+  - 호출경로: `land_info_service.collect_comprehensive` → `local_ordinance{effective_far/ordinance_far}` + `zone_limits.ordinance_far_pct`로 주입.
+  - `RegulationAnalysisService`(/regulation/analyze)는 `limits.far{legal/ordinance/effective}` 형태로 동일 데이터 노출(별도 조례DB 아님, ordinance_service 산출값 재사용).
+- ★도시·군관리계획/지구단위계획 **상한용적률 구조화 데이터는 미보유**: `special_districts`/`landuse.districts`는 구역명·키워드만 제공(plan_far_pct 같은 정량 상한용적률 필드 없음). → 페이로드에 plan_far_pct가 있을 때만 계획상한 적용, 없으면 "확인필요"로 정직 처리.
+
+## 산정 계층 구현(범위→조례→계획→인센티브)
+`legal_zone_limits.py`:
+- `ZONE_FAR_MIN`(시행령 제85조 용적률 하한) 신설 → `legal_limits_for`가 `min_far_pct`/`max_far_pct`(범위) 반환. 건폐율 `min_bcr_pct=0`.
+- `applicable_limits_for(zone_type, sigungu, regulation_payload, plan_payload)` 신설: 법정범위 → 조례 적용값(법정범위 내 클램프) → 도시·군관리계획/지구단위계획 상한(최우선). 조례 미보유→`ordinance_confirmed=False`+`far_source="법정범위 상한(조례·도시군관리계획 확인 필요)"`. 허위 조례값 생성 없음.
+- `_extract_ordinance_far`(local_ordinance/zone_limits/limits/평탄·중첩 깊이탐색), `_extract_plan_limit`(상한용적률/plan_far_pct 키 딥스캔).
+
+`comprehensive_analysis_service._calc_effective_far`:
+- `applicable_limits_for(regulation_payload=base, plan_payload=base.special_districts)` 호출 → 조례확인/계획상한 반영. plan_far_pct 있으면 effective_far 그 값으로 상향(법정초과 정당).
+- **`far_basis_detail`** 신설: `{법정범위{min/max/max_bcr}, 조례값?, 계획상한?, 인센티브?, 최종근거, 데이터출처, 조례확인필요}`. + `ordinance_confirmed`/`legal_min_far_pct`/`legal_max_far_pct` 반환.
+
+## 검증기 기준 변경·basis 확장
+`check_against_legal`: `regulation_payload`/`plan_payload` 인자 추가. 비교 기준을 단일상한이 아니라 **계층 적용한도**로. `_judge_excess`에 `plan_ceiling` 추가 — 도시군관리계획/지구단위계획 상한 이내면 인센티브 비대상 용도지역(자연녹지)이라도 **info**(정당). ★단 페이로드를 넘긴 사실만으로 면죄 금지: `ordinance_confirmed` 또는 plan_ceiling이 실제 발견됐을 때만 has_basis=True(무근거 200% high 유지).
+`RELAXATION_KEYWORDS` 확장: 도시계획조례·도시·군관리계획·도시군관리계획·도시·군계획·종세분·특별계획구역·특별구역.
+`range_rules.run_range_checks`: `regulation_payload=[output,source]`/`plan_payload=[output,source]` 전달.
+
+## 그라운딩 교정
+`site_analysis_interpreter`: 그라운딩 규칙을 **①법정범위 → ②지자체 도시계획조례 구체값 → ③도시·군관리계획/지구단위계획(상한용적률·종세분·특별구역) → ④인센티브** 4계층 순서로 명시. 조례·계획 근거 있으면 출처 명시해 수치 제시, 없으면 법정범위 제시+"구체 용적률은 OO시 도시계획조례·도시·군관리계획 확인 필요". `_legal_limits_block`은 용적률을 범위(min~max)로 표기.
+
+## 단위테스트 결과
+`tests/test_legal_zone_limits.py` 13개 추가 → **총 38 통과**(기존 25 무파괴). 신규: 법정범위(min50~max100), applicable_limits(조례80 적용/계획상한200 override/법정범위only), 자연녹지100 clean·80조례 clean·200무근거 high·200+계획상한 info, 준주거600 무근거 high·600지구단위 info, far_basis_detail 메타(법정범위·데이터출처·조례확인필요)·조례확인.
+- py_compile OK. 앱부팅 OK(735 routes). 외부 LLM/프로덕션DB/외부호출 없음.
+
+## 라이브 재검증 시나리오
+`POST /api/v1/verify/analysis`(site) 또는 부지분석 effective_far:
+- 자연녹지 100%(법정범위 내) → clean.
+- 자연녹지 80%(조례값) → clean(법정범위 내).
+- 자연녹지 200% 무근거 → high(할루시네이션 유지).
+- 자연녹지 200% + special_districts.plan_far_pct=200(도시군관리/지구단위 상한) → info(정당).
+- 준주거 600% + 지구단위 상한 → info / 무근거 → high.
+- far_basis_detail에 법정범위·조례값·계획상한·데이터출처·조례확인필요 동봉.
+
+## ★조례/계획 미보유분 — 후속 연동 권고
+- **조례**: 이미 OrdinanceService 보유(캐시 ~30시군구 + 법제처 API). 권고: ① `MOLEG_API_KEY` 운영설정으로 캐시 미보유 시군구도 실시간 파싱 활성화, ② ORDINANCE_CACHE를 DB(예: ordinance_limits 테이블)로 이관해 전국 229개 시군구 점진 채움.
+- **도시·군관리계획/지구단위계획 상한용적률(정량)**: 현재 미보유. 후속 연동 소스 권고:
+  - 국토부 **토지이음(eum.go.kr)** 도시계획 열람 / **VWorld 도시계획(LandUse)** API의 지구단위계획구역 속성에서 상한용적률·허용용적률 추출.
+  - **도시계획정보서비스(UPIS)** / 지자체 도시계획 고시문(지구단위계획 결정도서)에서 종세분·상한용적률 구조화.
+  - 추출값을 `special_districts[].plan_far_pct`(또는 plan_payload)로 주입하면 본 계층(applicable_limits_for→effective_far→검증기 info)이 자동 반영.
+
+## 커밋(3차)
+- 메시지: `fix(site-analysis): 실효용적률 계층화 — 법정범위→지자체 조례→도시군관리계획→인센티브 산정·검증(조례/계획 근거 반영)`
+- 변경 파일: legal_zone_limits.py / comprehensive_analysis_service.py / range_rules.py / site_analysis_interpreter.py / tests/test_legal_zone_limits.py
+- (해시는 커밋 후 기록)

@@ -85,8 +85,13 @@ def run_range_checks(analysis_type: str, source: Any, output: Any) -> list[dict[
         # 근거기반 판정: 페이로드(output·source) 전체에서 완화근거(기부채납/친환경/역세권/
         # 공공임대/지구단위계획 등) 신호를 탐색해 '근거 없는 법정초과'만 high로 적발한다.
         has_basis = _has_relaxation_basis(output) or _has_relaxation_basis(source)
+        # 계층 적용 한도(조례 적용값·도시군관리계획/지구단위계획 상한)도 비교 기준에 반영한다.
+        # source/output에 local_ordinance·zone_limits·상한용적률 등이 있으면 정당한 상향을
+        # 할루시네이션으로 오적발하지 않는다(자연녹지 200%+계획상한 → info).
         for it in check_against_legal(
             zone_type, bcr_pct=eff_bcr, far_pct=eff_far, has_basis=has_basis,
+            regulation_payload=[output, source],
+            plan_payload=[output, source],
         ):
             issues.append(it)
 
