@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v54-a1cutover-1";
+const CACHE_NAME = "propai-v55-declutter-1";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",
