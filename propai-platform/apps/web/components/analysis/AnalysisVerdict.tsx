@@ -77,6 +77,11 @@ export function AnalysisVerdict({
   const [open, setOpen] = useState(defaultOpen);
 
   const hasInterp = rows.length > 0;
+  // 접힘 상태 프리뷰: 첫 섹션 본문 일부(line-clamp로 2줄 노출).
+  const firstPreview = useMemo(() => {
+    const first = rows[0]?.text ?? "";
+    return first.replace(/\s+/g, " ").trim().slice(0, 160);
+  }, [rows]);
   if (!context && !hasInterp) return null;
 
   return (
@@ -96,38 +101,83 @@ export function AnalysisVerdict({
 
       {/* AI 해석부 (접기/펼치기) */}
       {hasInterp && (
-        <div className="px-4 py-2.5">
-          <button
-            type="button"
-            onClick={() => setOpen((v) => !v)}
-            aria-expanded={open}
-            className="flex w-full items-center justify-between gap-2 text-left"
-          >
-            <span className="flex items-center gap-2">
-              <span className="text-[11px] font-bold text-[var(--accent-strong)]">✦ {interpretationTitle}</span>
-              <span className="rounded-full border border-[var(--line)] bg-[var(--surface-muted)] px-2 py-0.5 text-[10px] font-bold text-[var(--text-secondary)]">
-                {rows.length}개 섹션
+        <div className="p-3 sm:p-4">
+          {/* 접힘: 눈에 띄는 CTA 카드 — "클릭하면 AI 해석을 본다"를 즉시 유추 */}
+          {!open ? (
+            <button
+              type="button"
+              onClick={() => setOpen(true)}
+              aria-expanded={false}
+              className="group flex min-h-[64px] w-full items-center gap-3 rounded-xl border border-[var(--accent-strong)]/40 bg-[var(--accent-soft)] p-3 text-left shadow-[var(--shadow-sm)] transition-colors hover:border-[var(--accent-strong)] hover:bg-[color-mix(in_srgb,var(--accent-strong)_14%,var(--surface-soft))] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-strong)] sm:p-4"
+            >
+              {/* 아이콘 배지 (펄스로 주목 유도 — prefers-reduced-motion 시 전역 비활성) */}
+              <span className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-[var(--accent-strong)] text-[18px] text-white shadow-[var(--shadow-glow)]">
+                <span className="pointer-events-none absolute inset-0 animate-ping rounded-lg bg-[var(--accent-strong)] opacity-20" />
+                <span className="relative">✨</span>
               </span>
-            </span>
-            <span className="text-[11px] font-semibold text-[var(--accent-strong)] hover:underline">
-              {open ? "접기" : "해석 보기"}
-            </span>
-          </button>
 
-          {open && (
-            <div className="mt-2.5 space-y-2 border-t border-[var(--line)] pt-2.5">
-              {rows.map((r, i) => (
-                <div
-                  key={`${r.label}-${i}`}
-                  className="rounded-lg border border-[var(--accent-strong)]/15 bg-[var(--accent-soft)] p-3"
-                >
-                  <p className="mb-1 text-[10px] font-bold text-[var(--accent-strong)]">{r.label}</p>
-                  <p className="whitespace-pre-wrap text-[12px] leading-relaxed text-[var(--text-secondary)]">
-                    {r.text}
-                  </p>
-                </div>
-              ))}
-              <p className="text-[10px] text-[var(--text-hint)]">AI 생성 · Claude · 참고용</p>
+              <span className="min-w-0 flex-1">
+                <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <span className="text-[13px] font-bold text-[var(--text-primary)] sm:text-[14px]">
+                    {interpretationTitle}
+                  </span>
+                  <span className="rounded-full border border-[var(--accent-strong)]/40 bg-[var(--surface-soft)] px-2 py-0.5 text-[10px] font-bold text-[var(--accent-strong)]">
+                    {rows.length}개 섹션
+                  </span>
+                </span>
+                {/* 첫 섹션 프리뷰 — "내용이 더 있다"를 시각적으로 암시 */}
+                {firstPreview ? (
+                  <span className="mt-1 line-clamp-2 block text-[12px] leading-relaxed text-[var(--text-secondary)]">
+                    {firstPreview}
+                  </span>
+                ) : (
+                  <span className="mt-1 block text-[12px] text-[var(--text-secondary)]">
+                    종합요약 · 용적 · 시세 · 입지 · 개발계획 등
+                  </span>
+                )}
+                <span className="mt-1.5 inline-flex items-center gap-1 text-[11px] font-semibold text-[var(--accent-strong)]">
+                  탭하여 AI 상세 해석 보기
+                  <span className="transition-transform group-hover:translate-y-0.5" aria-hidden>
+                    ▾
+                  </span>
+                </span>
+              </span>
+            </button>
+          ) : (
+            /* 펼침: 기존 10섹션 + 접기 버튼 */
+            <div>
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                aria-expanded
+                className="flex w-full items-center justify-between gap-2 rounded-lg px-1 py-1 text-left transition-colors hover:bg-[var(--surface-muted)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-strong)]"
+              >
+                <span className="flex items-center gap-2">
+                  <span className="text-[13px] font-bold text-[var(--accent-strong)]">✨ {interpretationTitle}</span>
+                  <span className="rounded-full border border-[var(--line)] bg-[var(--surface-muted)] px-2 py-0.5 text-[10px] font-bold text-[var(--text-secondary)]">
+                    {rows.length}개 섹션
+                  </span>
+                </span>
+                <span className="inline-flex items-center gap-1 text-[12px] font-semibold text-[var(--accent-strong)]">
+                  접기
+                  <span aria-hidden>▴</span>
+                </span>
+              </button>
+
+              <div className="mt-2.5 space-y-2 border-t border-[var(--line)] pt-2.5">
+                {rows.map((r, i) => (
+                  <div
+                    key={`${r.label}-${i}`}
+                    className="rounded-lg border border-[var(--accent-strong)]/15 bg-[var(--accent-soft)] p-3"
+                  >
+                    <p className="mb-1 text-[11px] font-bold text-[var(--accent-strong)]">{r.label}</p>
+                    <p className="whitespace-pre-wrap text-[12px] leading-relaxed text-[var(--text-secondary)]">
+                      {r.text}
+                    </p>
+                  </div>
+                ))}
+                <p className="text-[10px] text-[var(--text-hint)]">AI 생성 · Claude · 참고용</p>
+              </div>
             </div>
           )}
         </div>
