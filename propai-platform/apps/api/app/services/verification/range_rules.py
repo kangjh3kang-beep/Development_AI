@@ -20,6 +20,33 @@ def _find(source: Any, output: Any, keys: tuple[str, ...]) -> float | None:
     return None
 
 
+def _deep_find_str(obj: Any, keys: tuple[str, ...]) -> str | None:
+    """중첩 dict/list에서 후보 키들 중 최초로 발견되는 비어있지 않은 문자열(깊이우선)."""
+    if isinstance(obj, dict):
+        for k in keys:
+            v = obj.get(k)
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+        for v in obj.values():
+            r = _deep_find_str(v, keys)
+            if r is not None:
+                return r
+    elif isinstance(obj, list):
+        for v in obj:
+            r = _deep_find_str(v, keys)
+            if r is not None:
+                return r
+    return None
+
+
+def _find_str(source: Any, output: Any, keys: tuple[str, ...]) -> str | None:
+    for h in (output, source):
+        v = _deep_find_str(h, keys)
+        if v is not None:
+            return v
+    return None
+
+
 def run_range_checks(analysis_type: str, source: Any, output: Any) -> list[dict[str, str]]:
     """모듈별 범위 sanity 검증. 위반 이슈 목록 반환."""
     issues: list[dict[str, str]] = []
@@ -38,6 +65,22 @@ def run_range_checks(analysis_type: str, source: Any, output: Any) -> list[dict[
     area = _find(source, output, ("land_area_sqm", "land_area", "lot_area_sqm"))
     if area is not None and area < 0:
         add("high", f"면적 {area}㎡", "면적이 음수")
+
+    # ── 법정 한도 대조(할루시네이션 핵심 차단) ──
+    # 용도지역을 알면 일반 범위(0~2000%)가 아니라 '용도지역별 법정 상한'과 대조한다.
+    # 자연녹지(법정 100%)에 200%가 제시되는 무출처 완화/추측을 high(fail)로 적발한다.
+    zone_type = _find_str(
+        source, output,
+        ("zone_type", "zone", "use_zone", "용도지역", "zone_name", "zone_type_name"),
+    )
+    if zone_type:
+        from app.services.zoning.legal_zone_limits import check_against_legal
+
+        # 실효(effective)/적용(applied)/최대(max) 건폐율·용적률을 우선 대조.
+        eff_bcr = _find(source, output, ("effective_bcr_pct", "effective_bcr", "applied_bcr_pct", "bcr"))
+        eff_far = _find(source, output, ("effective_far_pct", "effective_far", "applied_far_pct", "far"))
+        for it in check_against_legal(zone_type, bcr_pct=eff_bcr, far_pct=eff_far):
+            issues.append(it)
 
     # ── 수익률(비현실 범위) ──
     roi = _find(source, output, ("profit_rate_pct", "roi", "roi_pct", "profit_rate"))

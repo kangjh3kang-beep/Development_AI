@@ -50,6 +50,17 @@ USER_PROMPT_TEMPLATE = """\
 - 용도지역: {zone_type}
 - 대지면적: {land_area_sqm}m² ({land_area_pyeong}평)
 
+## 법정 한도(국토계획법 시행령 제84·85조 — 절대 준수)
+{legal_limits_block}
+
+## 그라운딩 규칙(위반 금지)
+1. 위 법정 건폐율/용적률 상한을 초과하는 건폐율/용적률을 임의로 생성하지 마십시오.
+2. "실효(effective)/완화" 수치는 페이로드의 신뢰가능한 출처
+   (지구단위계획·도시계획조례·특별구역 데이터, local_ordinance/special_districts 등)가
+   실제로 있을 때만 제시하고, 반드시 그 출처를 함께 표기하십시오.
+3. 출처가 없으면 법정 상한값을 사용하고 "완화 여부는 별도 확인 필요"라고 서술하십시오.
+4. 페이로드(analysis_json)에 없는 수치를 단정하지 마십시오. 데이터에 근거한 값만 인용합니다.
+
 ## 분석 데이터
 {analysis_json}
 
@@ -116,11 +127,34 @@ class SiteAnalysisInterpreter(BaseInterpreter):
             zone_type=zone_type,
             land_area_sqm=land_area_sqm,
             land_area_pyeong=land_area_pyeong,
+            legal_limits_block=self._legal_limits_block(zone_type),
             analysis_json=json.dumps(compact, ensure_ascii=False, indent=2),
         )
 
         return await self._invoke(
             user_prompt, cache_data=compact, evidence_data=analysis_data
+        )
+
+    @staticmethod
+    def _legal_limits_block(zone_type: str) -> str:
+        """탐지된 용도지역의 법정 건폐율/용적률 상한을 프롬프트용 텍스트로 변환.
+
+        법정 한도를 명시 주입하여 LLM이 상한을 초과하는 수치를 지어내지 못하게 그라운딩한다.
+        """
+        from app.services.zoning.legal_zone_limits import legal_limits_for
+
+        legal = legal_limits_for(zone_type)
+        if not legal:
+            return (
+                f"- 용도지역('{zone_type}')의 법정 한도를 표에서 확정할 수 없습니다. "
+                "건폐율/용적률을 임의로 단정하지 말고 페이로드의 명시값만 인용하십시오."
+            )
+        return (
+            f"- 용도지역: {legal['zone_type']}\n"
+            f"- 법정 건폐율 상한: {legal['max_bcr_pct']}%\n"
+            f"- 법정 용적률 상한: {legal['max_far_pct']}%\n"
+            f"- 근거: {legal['legal_basis']}\n"
+            "- 위 상한을 초과하는 건폐율/용적률은 페이로드에 정당한 출처가 없는 한 제시 금지."
         )
 
     def _evidence(self, data: dict) -> str | None:

@@ -244,8 +244,25 @@ class ComprehensiveAnalysisService:
         ordinance = base.get("local_ordinance") or {}
         zone_limits = base.get("zone_limits") or {}
 
-        national_bcr = float(zone_limits.get("max_bcr_pct", zone_limits.get("bcr", 60)))
-        national_far = float(zone_limits.get("max_far_pct", zone_limits.get("far", 200)))
+        # 법정상한 SSOT: zone_limits가 비어/누락이어도 용도지역명으로 법정값을 도출한다.
+        # (과거 폴백 60/200은 자연녹지(법정 20/100)에 200%/60%를 지어내는 할루시네이션 원인이었음)
+        from app.services.zoning.legal_zone_limits import legal_limits_for
+        legal = legal_limits_for(zone_type) or {}
+        legal_bcr = legal.get("max_bcr_pct")
+        legal_far = legal.get("max_far_pct")
+
+        national_bcr = float(
+            zone_limits.get("max_bcr_pct")
+            or zone_limits.get("bcr")
+            or legal_bcr
+            or 60
+        )
+        national_far = float(
+            zone_limits.get("max_far_pct")
+            or zone_limits.get("far")
+            or legal_far
+            or 200
+        )
         ordinance_bcr = float(ordinance.get("effective_bcr") or ordinance.get("ordinance_bcr") or national_bcr)
         ordinance_far = float(ordinance.get("effective_far") or ordinance.get("ordinance_far") or national_far)
         effective_bcr = min(national_bcr, ordinance_bcr)
