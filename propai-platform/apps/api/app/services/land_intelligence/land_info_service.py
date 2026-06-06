@@ -372,10 +372,13 @@ class LandInfoService:
 
             # 기본 토지정보가 zoning에서 이미 조회됨
             if zoning_result.get("land_area_sqm"):
+                # owner_type(소유구분)은 권위 소스인 토지대장(_fetch_land_register,
+                # VWORLD LP_PA_CBND_BUBUN own_gbn_nm)이 Phase 2에서 채운다. 여기서는
+                # zoning이 제공하면 사용하고, 없으면 정직하게 빈값 유지(무목업).
                 result["land_register"] = {
                     "land_category": zoning_result.get("land_category", ""),
                     "area_sqm": zoning_result.get("land_area_sqm"),
-                    "owner_type": "",
+                    "owner_type": zoning_result.get("owner_type", ""),
                     "land_use_situation": "",
                     "road_side": "",
                     "terrain": "",

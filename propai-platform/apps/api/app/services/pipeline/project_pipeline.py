@@ -280,6 +280,22 @@ class ProjectPipeline:
                 _clr = comprehensive.get("land_register") or {}
                 if isinstance(_clr, dict) and float(_clr.get("area_sqm", 0) or 0) > 0:
                     pre_collected["land_area_sqm"] = float(_clr["area_sqm"])
+                # 지목(land_category)·소유구분(owner_type): land_register 우선,
+                # 비면 토지특성(land_characteristics)으로 백필(land_info_service:428-429 패턴 일관).
+                # 무목업: 실제 수집값만 사용, 없으면 빈값 유지(가짜 소유구분 생성 금지).
+                _lchar = comprehensive.get("land_characteristics") or {}
+                _land_category = ""
+                if isinstance(_clr, dict):
+                    _land_category = (_clr.get("land_category") or "").strip()
+                if not _land_category and isinstance(_lchar, dict):
+                    _land_category = (_lchar.get("land_category") or "").strip()
+                if _land_category:
+                    pre_collected["land_category"] = _land_category
+                _owner_type = ""
+                if isinstance(_clr, dict):
+                    _owner_type = (_clr.get("owner_type") or "").strip()
+                if _owner_type:
+                    pre_collected["owner_type"] = _owner_type
                 if comprehensive.get("infrastructure"):
                     pre_collected["infrastructure"] = comprehensive["infrastructure"]
                 if comprehensive.get("coordinates"):
