@@ -47,6 +47,40 @@ def _find_str(source: Any, output: Any, keys: tuple[str, ...]) -> str | None:
     return None
 
 
+# 종상향/잠재 시나리오 컨텍스트를 식별하는 마커·키.
+# (현행 검증은 이 서브트리를 제외한다 — 잠재 시나리오의 완화근거 키워드가
+#  현행 실효 용적률의 '근거기반' 판정을 오염시키지 않도록 분리한다.)
+_SCENARIO_MARKER = "potential_upzoning_scenario"
+_SCENARIO_KEYS = ("upzoning", "upzoning_scenarios", "potential_far_range", "scenarios")
+
+
+def _strip_scenarios(obj: Any) -> Any:
+    """현행 검증용으로 종상향/잠재 시나리오 서브트리를 제거한 사본을 반환.
+
+    - dict에 마커(potential_upzoning_scenario)·is_estimate=True가 있으면 통째 제거.
+    - upzoning/upzoning_scenarios/potential_far_range 같은 잠재 컨테이너 키를 제거.
+    잠재 시나리오의 target_zone·legal_basis(지구단위계획/종상향/역세권 등) 문자열이
+    현행 zone의 has_basis(완화근거) 판정에 새지 않도록 한다.
+    """
+    if isinstance(obj, dict):
+        if obj.get("marker") == _SCENARIO_MARKER or (
+            obj.get("is_estimate") is True and "target_zone" in obj
+        ):
+            return None
+        out: dict[str, Any] = {}
+        for k, v in obj.items():
+            if k in _SCENARIO_KEYS:
+                continue
+            cleaned = _strip_scenarios(v)
+            if cleaned is not None or v is None:
+                out[k] = cleaned
+        return out
+    if isinstance(obj, list):
+        cleaned_list = [_strip_scenarios(v) for v in obj]
+        return [v for v in cleaned_list if v is not None]
+    return obj
+
+
 def run_range_checks(analysis_type: str, source: Any, output: Any) -> list[dict[str, str]]:
     """모듈별 범위 sanity 검증. 위반 이슈 목록 반환."""
     issues: list[dict[str, str]] = []
@@ -79,19 +113,27 @@ def run_range_checks(analysis_type: str, source: Any, output: Any) -> list[dict[
             check_against_legal,
         )
 
+        # ★현행/잠재 2계층 분리: 현행 실효 용적률 검증은 종상향/잠재 시나리오 서브트리를
+        # 제외한 페이로드(stripped)에서만 수행한다. 잠재 시나리오의 expected_far(예: 목표
+        # 2종일반 250%)나 그 legal_basis(지구단위계획/종상향/역세권) 키워드가 현행 zone의
+        # 'far·effective_far·완화근거' 판정에 새지 않도록 한다.
+        s_source = _strip_scenarios(source)
+        s_output = _strip_scenarios(output)
+
         # 실효(effective)/적용(applied)/최대(max) 건폐율·용적률을 우선 대조.
-        eff_bcr = _find(source, output, ("effective_bcr_pct", "effective_bcr", "applied_bcr_pct", "bcr"))
-        eff_far = _find(source, output, ("effective_far_pct", "effective_far", "applied_far_pct", "far"))
+        eff_bcr = _find(s_source, s_output, ("effective_bcr_pct", "effective_bcr", "applied_bcr_pct", "bcr"))
+        eff_far = _find(s_source, s_output, ("effective_far_pct", "effective_far", "applied_far_pct", "far"))
         # 근거기반 판정: 페이로드(output·source) 전체에서 완화근거(기부채납/친환경/역세권/
         # 공공임대/지구단위계획 등) 신호를 탐색해 '근거 없는 법정초과'만 high로 적발한다.
-        has_basis = _has_relaxation_basis(output) or _has_relaxation_basis(source)
+        # (잠재 시나리오 서브트리 제외 후 탐색 → 현행 무근거 초과는 여전히 high.)
+        has_basis = _has_relaxation_basis(s_output) or _has_relaxation_basis(s_source)
         # 계층 적용 한도(조례 적용값·도시군관리계획/지구단위계획 상한)도 비교 기준에 반영한다.
         # source/output에 local_ordinance·zone_limits·상한용적률 등이 있으면 정당한 상향을
         # 할루시네이션으로 오적발하지 않는다(자연녹지 200%+계획상한 → info).
         for it in check_against_legal(
             zone_type, bcr_pct=eff_bcr, far_pct=eff_far, has_basis=has_basis,
-            regulation_payload=[output, source],
-            plan_payload=[output, source],
+            regulation_payload=[s_output, s_source],
+            plan_payload=[s_output, s_source],
         ):
             issues.append(it)
 

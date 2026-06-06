@@ -174,6 +174,9 @@ class ComprehensiveAnalysisService:
 
         sec7 = self._research_dev_plans(base)
 
+        # Section 8: 종상향/종변경 잠재력(예상치 — 현행 실효 용적률과 분리)
+        sec8 = self._calc_upzoning(base, zone_type, land_area, sec6, sec7)
+
         result = {
             "address": address,
             "pnu": base.get("pnu"),
@@ -186,6 +189,9 @@ class ComprehensiveAnalysisService:
             "sale_prices": sec5,
             "location": sec6,
             "development_plans": sec7,
+            "upzoning": sec8,
+            "upzoning_scenarios": sec8.get("scenarios", []),
+            "potential_far_range": sec8.get("potential_far_range"),
             "analyzed_at": datetime.now().isoformat(),
             "llm_config": {
                 "provider": llm_provider or "anthropic",
@@ -992,3 +998,86 @@ class ComprehensiveAnalysisService:
             "risk_factors": risk_factors,
             "source": "VWORLD 토지이용계획",
         }
+
+    # ────────────────────────────────────────────
+    # Section 8: 종상향/종변경 잠재력(예상치)
+    # ────────────────────────────────────────────
+    def _calc_upzoning(
+        self,
+        base: dict,
+        zone_type: str,
+        land_area: float,
+        location: Any = None,
+        dev_plans: Any = None,
+    ) -> dict[str, Any]:
+        """현행 실효 용적률과 **분리된** 종상향/종변경 잠재 시나리오(예상치)를 산출.
+
+        규칙엔진(UpzoningPotentialAnalyzer)에 수집 데이터(면적·역세권·특수구역·시군구)를
+        전달한다. 목표 용도지역의 조례 용적률은 OrdinanceService 캐시를 동기 resolver로 주입한다.
+        """
+        try:
+            from app.services.zoning.upzoning_potential import UpzoningPotentialAnalyzer
+
+            ordinance = base.get("local_ordinance") or {}
+            sigungu = ordinance.get("sigungu") if isinstance(ordinance, dict) else None
+
+            # 역세권 여부(location 섹션의 nearest_subway)
+            near_station = False
+            near_station_m: float | None = None
+            if isinstance(location, dict):
+                subway = (location.get("transportation") or {}).get("nearest_subway")
+                if isinstance(subway, dict):
+                    near_station_m = subway.get("distance_m")
+                    if near_station_m is not None and near_station_m <= 500:
+                        near_station = True
+
+            special_districts = base.get("special_districts") or (
+                dev_plans.get("special_districts") if isinstance(dev_plans, dict) else []
+            )
+
+            analyzer = UpzoningPotentialAnalyzer()
+            return analyzer.analyze(
+                zone_type=zone_type,
+                land_area_sqm=land_area,
+                sigungu=sigungu,
+                near_station=near_station,
+                near_station_m=near_station_m,
+                adjacency_contiguous=None,
+                parcel_count=1,
+                special_districts=special_districts,
+                ordinance_far_resolver=self._ordinance_far_cache_resolver,
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("종상향 잠재력 분석 스킵", error=str(e))
+            return {
+                "current_zone": zone_type,
+                "scenarios": [],
+                "potential_far_range": None,
+                "summary": "종상향 잠재력 분석을 일시적으로 산출하지 못했습니다.",
+                "disclaimer": "예상치 미산출",
+            }
+
+    @staticmethod
+    def _ordinance_far_cache_resolver(sigungu: str, zone_type: str) -> float | None:
+        """목표 용도지역의 조례 용적률(%)을 OrdinanceService 정적 캐시에서 동기 조회.
+
+        외부 API 없이 캐시(ORDINANCE_CACHE)만 사용한다(없으면 None → 법정범위 폴백).
+        """
+        try:
+            from app.services.land_intelligence.ordinance_service import ORDINANCE_CACHE
+
+            sig = sigungu or ""
+            # 1) 시·군·구 키워드가 매칭되는 시·도 블록 우선.
+            for sido, sido_block in ORDINANCE_CACHE.items():
+                if sig and (sig in sido or sido in sig):
+                    z = sido_block.get(zone_type)
+                    if z and z.get("far"):
+                        return float(z["far"])
+            # 2) 폴백: 캐시에 해당 용도지역 조례가 있는 첫 블록.
+            for sido_block in ORDINANCE_CACHE.values():
+                z = sido_block.get(zone_type)
+                if z and z.get("far"):
+                    return float(z["far"])
+            return None
+        except Exception:  # noqa: BLE001
+            return None

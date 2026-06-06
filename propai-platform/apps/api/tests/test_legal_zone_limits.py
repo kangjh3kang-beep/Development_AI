@@ -315,3 +315,138 @@ def test_far_basis_detail_ordinance_confirmed():
     assert sec["ordinance_confirmed"] is True
     assert sec["far_basis_detail"]["조례값"] is not None
     assert sec["far_basis_detail"]["조례값"]["far_pct"] == 80
+
+
+# ════════════════════════════════════════════════════════════════════
+# 종상향/종변경 잠재력(upzoning) — 현행/잠재 2계층 분리 검증
+# ════════════════════════════════════════════════════════════════════
+from app.services.zoning.upzoning_potential import UpzoningPotentialAnalyzer
+
+
+def test_upzoning_natural_green_sufficient_area_scenarios():
+    # 자연녹지(충분면적) → 종상향 시나리오 산출, target=일반주거, expected_far=목표지역 범위.
+    a = UpzoningPotentialAnalyzer()
+    r = a.analyze("자연녹지지역", land_area_sqm=20000, sigungu="서울특별시 강남구")
+    assert r["scenarios"], "충분면적 자연녹지는 종상향 시나리오가 있어야 함"
+    s = r["scenarios"][0]
+    assert s["target_zone"] in ("제1종일반주거지역", "제2종일반주거지역")
+    assert s["expected_far_pct_high"] is not None and s["expected_far_pct_high"] > 100
+    assert s["is_estimate"] is True
+    assert s["legal_basis"]
+    assert s["feasibility"] in ("상", "중", "하")
+    # 면적 충족 → 최소 1건은 가능성 '상'
+    assert any(x["feasibility"] == "상" for x in r["scenarios"])
+    assert r["potential_far_range"] is not None
+    assert "예상치" in r["disclaimer"]
+
+
+def test_upzoning_target_far_from_ordinance_resolver():
+    # 목표 용도지역 조례 용적률 resolver 주입 → expected_far가 조례 기준으로 도출.
+    from app.services.land_intelligence.ordinance_service import ORDINANCE_CACHE
+
+    def resolver(sigungu: str, zone_type: str):
+        for sido, block in ORDINANCE_CACHE.items():
+            if sigungu and (sigungu in sido or sido in sigungu):
+                z = block.get(zone_type)
+                if z and z.get("far"):
+                    return float(z["far"])
+        return None
+
+    a = UpzoningPotentialAnalyzer()
+    r = a.analyze(
+        "자연녹지지역", land_area_sqm=20000, sigungu="서울특별시",
+        ordinance_far_resolver=resolver,
+    )
+    s = r["scenarios"][0]
+    # 서울 1종일반 조례 150% → min(150, 법정상한200)=150.
+    assert s["target_zone"] == "제1종일반주거지역"
+    assert s["expected_far_pct_high"] == 150
+    assert "조례" in s["expected_far_source"]
+
+
+def test_upzoning_small_parcel_low_feasibility():
+    # 소형 자연녹지(면적 미달) → 면적요건 미달로 feasibility '하'.
+    a = UpzoningPotentialAnalyzer()
+    r = a.analyze("자연녹지지역", land_area_sqm=300)
+    assert r["scenarios"]
+    assert all(s["feasibility"] == "하" for s in r["scenarios"])
+    assert any("미달" in s["feasibility_reason"] for s in r["scenarios"])
+
+
+def test_upzoning_unmapped_zone_no_scenarios():
+    # 정형 경로 미매핑 용도지역(농림) → 시나리오 없음(예상치 미산출, 단정 금지).
+    a = UpzoningPotentialAnalyzer()
+    r = a.analyze("농림지역", land_area_sqm=20000)
+    assert r["scenarios"] == []
+    assert r["potential_far_range"] is None
+    assert "확인" in r["summary"]
+
+
+def test_upzoning_regulation_blocker_lowers_feasibility():
+    # 규제구역(개발제한) → 종상향 제약 → feasibility 하향, caveat에 해제 선행 명시.
+    a = UpzoningPotentialAnalyzer()
+    base = a.analyze("자연녹지지역", land_area_sqm=20000)
+    blocked = a.analyze("자연녹지지역", land_area_sqm=20000, special_districts=["개발제한구역"])
+    # 동일 면적인데 블로커가 있으면 최상위 가능성이 같거나 더 낮아야 함.
+    rank = {"상": 0, "중": 1, "하": 2}
+    assert rank[blocked["scenarios"][0]["feasibility"]] >= rank[base["scenarios"][0]["feasibility"]]
+    assert any("규제구역" in c for s in blocked["scenarios"] for c in s["caveats"])
+
+
+# ── ★검증기 정합: 현행/잠재 2계층 분리 ──
+def test_verifier_upzoning_expected_far_not_flagged_current():
+    # 종상향 잠재 expected_far(목표 250%)는 현행 위법수치로 오적발되지 않아야 함.
+    source = {
+        "zone_type": "자연녹지지역",
+        "effective_far_pct": 100,  # 현행 실효(정상, 법정 内)
+        "upzoning": {
+            "current_zone": "자연녹지지역",
+            "scenarios": [
+                {
+                    "path": "도시개발사업(도시개발법)",
+                    "target_zone": "제2종일반주거지역",
+                    "expected_far_pct_low": 100,
+                    "expected_far_pct_high": 250,
+                    "feasibility": "상",
+                    "legal_basis": "도시개발법 · 국토계획법",
+                    "is_estimate": True,
+                    "marker": "potential_upzoning_scenario",
+                }
+            ],
+            "potential_far_range": {"min_pct": 250, "max_pct": 250},
+            "marker": "potential_upzoning_scenario",
+        },
+    }
+    output = {"effective_far_pct": 100}
+    issues = run_range_checks("site", source, output)
+    # 현행 100%는 법정 内 → 법정초과 high 없음.
+    assert not any(i.get("type") == "법정한도초과" and i["severity"] == "high" for i in issues)
+
+
+def test_verifier_current_baseless_far_still_high_despite_upzoning():
+    # ★핵심: 현행 200%(무근거)는 종상향 섹션이 있어도 여전히 high로 적발.
+    # (잠재 시나리오의 완화근거 키워드가 현행 판정을 오염시키면 안 됨.)
+    source = {
+        "zone_type": "자연녹지지역",
+        "effective_far_pct": 200,  # 현행 무근거 초과(법정 100%)
+        "upzoning": {
+            "current_zone": "자연녹지지역",
+            "scenarios": [
+                {
+                    "path": "지구단위계획 수립",
+                    "target_zone": "제2종일반주거지역",
+                    "expected_far_pct_high": 250,
+                    "feasibility": "상",
+                    "legal_basis": "국토계획법 제52조(지구단위계획) · 종상향 · 역세권 활성화",
+                    "is_estimate": True,
+                    "marker": "potential_upzoning_scenario",
+                }
+            ],
+            "marker": "potential_upzoning_scenario",
+        },
+    }
+    output = {"effective_far_pct": 200}
+    issues = run_range_checks("site", source, output)
+    far_issues = [i for i in issues if i.get("type") == "법정한도초과" and "용적률" in i["claim"]]
+    assert far_issues, "현행 200%는 종상향 섹션과 무관하게 적발되어야 함"
+    assert far_issues[0]["severity"] == "high", "잠재 시나리오 키워드가 현행 판정을 오염시키면 안 됨"
