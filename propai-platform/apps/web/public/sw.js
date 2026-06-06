@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v56-swfix-1";
+const CACHE_NAME = "propai-v57-phase1-salesapp";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",
