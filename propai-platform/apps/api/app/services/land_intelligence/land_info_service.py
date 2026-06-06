@@ -824,23 +824,39 @@ class LandInfoService:
                 y -= 1
             return f"{y}{m:02d}"
 
-        for prop_type, label in [("apt", "apt"), ("land", "land")]:
+        # ★label별 올바른 API 매핑(무목업): apt→아파트(getRTMSDataSvcAptTradeDev),
+        #   land→토지 매매(getRTMSDataSvcLandTrade). 과거 land 버킷이 아파트 API를
+        #   호출해 아파트 거래가 토지로 잘못 채워지던 버그를 교정.
+        fetchers = {
+            "apt": (self.molit.get_apt_transactions, "molit_apt_live"),
+            "land": (self.molit.get_land_transactions, "molit_land_live"),
+        }
+
+        for label, (fetcher, live_source) in fetchers.items():
             all_items: list[dict[str, Any]] = []
             month_results = await asyncio.gather(
-                *[self.molit.get_apt_transactions(lawd_cd, _ymd(off)) for off in range(3)],
+                *[fetcher(lawd_cd, _ymd(off)) for off in range(3)],
                 return_exceptions=True,
             )
             for items in month_results:
                 if isinstance(items, list):
                     all_items.extend(items)
+                elif isinstance(items, Exception):
+                    # 키 미승인(403)·네트워크 등 — 정직 로깅, 다른 유형으로 대체 금지
+                    logger.warning(
+                        "인근 실거래 조회 실패: label=%s lawd_cd=%s (%s)",
+                        label, lawd_cd, str(items),
+                    )
 
             if not all_items:
+                # 무자료/키미승인/오류 → 빈값 + 사유(아파트 데이터 복제 절대 금지)
                 result[label] = {
                     "avg_price_10k": 0,
                     "max_price_10k": 0,
                     "min_price_10k": 0,
                     "count": 0,
                     "items": [],
+                    "data_source": "unavailable",
                 }
                 continue
 
@@ -863,6 +879,7 @@ class LandInfoService:
                     "max_price_10k": max(prices),
                     "min_price_10k": min(prices),
                     "count": len(prices),
+                    "data_source": live_source,
                     "items": [
                         {
                             "price_10k": str(
@@ -870,8 +887,16 @@ class LandInfoService:
                             ).replace(",", "").strip(),
                             "area_sqm": item.get("전용면적", item.get("area_m2", "")),
                             "deal_date": item.get("deal_date") or f"{item.get('년', '')}.{item.get('월', '')}.{item.get('일', '')}",
-                            "name": item.get("아파트", item.get("building_name", "")),
+                            # 토지는 건물명/층이 없음 → 지목(또는 용도지역)을 표시명으로 사용
+                            "name": (
+                                item.get("아파트", item.get("building_name", ""))
+                                or item.get("jimok", "")
+                                or item.get("land_use", "")
+                            ),
                             "floor": item.get("층", item.get("floor", "")),
+                            # 토지 전용 부가정보(아파트는 빈값)
+                            "jimok": item.get("jimok", ""),
+                            "land_use": item.get("land_use", ""),
                         }
                         for item in all_items[:10]  # 상위 10건만
                     ],
@@ -883,6 +908,7 @@ class LandInfoService:
                     "min_price_10k": 0,
                     "count": 0,
                     "items": [],
+                    "data_source": "unavailable",
                 }
 
         return result if any(v.get("count", 0) > 0 for v in result.values()) else None

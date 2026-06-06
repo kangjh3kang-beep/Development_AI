@@ -389,6 +389,9 @@ class MolitClient(BaseAPIClient):
                     "dong": str(g("umdNm", "법정동", "")),
                     "jibun": str(g("jibun", "지번", "")),
                     "build_year": _to_int(g("buildYear", "건축년도", 0)),
+                    # 토지 매매(getRTMSDataSvcLandTrade) 전용 — 지목/용도지역(없으면 빈값)
+                    "jimok": str(g("jimok", "지목", "")),
+                    "land_use": str(g("landUse", "용도지역", "")),
                 })
             return result
         except Exception:

@@ -35,6 +35,15 @@ class MOLITService:
         """상업/업무용 부동산 매매 실거래가 조회 (정규화)."""
         return await self._client.get_transactions(region_code, year_month, prop_type="commercial")
 
+    async def get_land_transactions(self, region_code: str, year_month: str) -> List[Dict]:
+        """토지 매매 실거래가 조회 (정규화).
+
+        아파트(getRTMSDataSvcAptTradeDev)와 별개 오퍼레이션인
+        getRTMSDataSvcLandTrade(토지 매매 신고 자료)를 호출한다.
+        ★무목업: 키 미승인(403)·무자료·오류 시 빈 list 반환(아파트 데이터로 대체 금지).
+        """
+        return await self._client.get_transactions(region_code, year_month, prop_type="land")
+
     async def get_official_land_price(self, pnu_code: str) -> Optional[Dict]:
         """표준 공시지가 조회"""
         params = {
