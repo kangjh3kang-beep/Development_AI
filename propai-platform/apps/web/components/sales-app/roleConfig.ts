@@ -36,16 +36,23 @@ export interface SalesTabDef {
   alwaysOn?: boolean;
 }
 
+// 탭 ↔ 기능키(feature) 매핑. feature는 백엔드 _FEATURE_KEYS(site_auth.py §_FEATURE_KEYS)와 정합:
+//   dashboard·org·pricing·units·contracts·commission·customers·ads·reports·settings·site_password.
+// 계약 후속 업무(청약/수납/대출/전매/세금)는 백엔드 'contracts' 기능키로 게이팅한다(별도 키 미정의).
 export const SALES_TABS: SalesTabDef[] = [
-  { key: "dashboard", label: "현장 요약", feature: "dashboard", alwaysOn: true },
   { key: "units", label: "세대 배치도", feature: "units" },
   { key: "customers", label: "고객·상담", feature: "customers" },
   { key: "pricing", label: "분양가", feature: "pricing" },
-  { key: "subscription", label: "청약·당첨", feature: "subscription" },
-  { key: "payments", label: "수납·납부", feature: "payments" },
-  { key: "commission", label: "수수료", feature: "commission" },
+  { key: "subscription", label: "청약·당첨", feature: "contracts" },
+  { key: "payments", label: "수납·납부", feature: "contracts" },
+  { key: "loan", label: "중도금 대출", feature: "contracts" },
+  { key: "resale", label: "전매·실거래", feature: "contracts" },
+  { key: "tax", label: "세금·보증", feature: "contracts" },
   { key: "org", label: "조직도", feature: "org" },
-  { key: "settings", label: "현장 설정", feature: "manage" },
+  { key: "commission", label: "수수료", feature: "commission" },
+  { key: "desk", label: "방문 데스크", feature: "customers" },
+  { key: "integrity", label: "무결성 가드", feature: "settings" },
+  { key: "projection", label: "시행사 통합", feature: "reports" },
 ];
 
 /** features[]로 노출 탭 필터링. alwaysOn 탭은 항상 포함. */

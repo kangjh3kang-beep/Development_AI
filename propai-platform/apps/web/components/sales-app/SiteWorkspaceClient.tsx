@@ -1,20 +1,42 @@
 "use client";
 
 /**
- * Phase 1-A — 현장 워크스페이스(역할 기반 메뉴 게이팅).
- * 진입 토큰(site_token) 검증 → 없으면 진입 모달. GET /sales/sites/{id}/role 의 features[]/role로
- * 탭(메뉴)을 차등 노출. can_manage면 "현장 비밀번호 설정" 노출.
+ * Phase 1-A/1-B — 현장 워크스페이스(역할 기반 메뉴 게이팅 + 분양 모듈 패널 연결).
  *
- * Phase 1-A 범위: 진입·게이팅·관리 UI 골격. 각 탭의 상세 패널은 후속 단계에서 연결한다.
+ * 1-A: 진입 토큰(site_token) 검증 → 없으면 진입 모달. GET /sales/sites/{id}/role 의 features[]/role로
+ *       탭(메뉴)을 차등 노출. can_manage면 "현장 비밀번호 설정" 노출.
+ * 1-B: features[]로 노출된 각 탭에 기존 components/sales 패널을 그대로 렌더한다(재구현 금지).
+ *       기존 패널은 siteCode prop + salesApi(siteCode)를 쓰므로, 현장 UUID(siteId)를 siteCode로 전달한다.
+ *       salesApi는 저장된 site_token이 있으면 X-Site-Token을 함께 첨부(백엔드 토큰 우선 컨텍스트).
+ *       기존 SalesSiteWorkspace(/sales 흐름)는 무파괴 보존하며, 본 화면은 sales-app 진입 흐름 전용이다.
  */
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { apiClient, ApiClientError } from "@/lib/api-client";
-import { getStoredSiteToken, clearSiteToken } from "@/lib/salesApi";
+import { getStoredSiteToken, clearSiteToken, salesApi } from "@/lib/salesApi";
 import SiteEnterModal from "@/components/sales-app/SiteEnterModal";
 import SitePasswordModal from "@/components/sales-app/SitePasswordModal";
 import { ROLE_LABEL, MANAGE_ROLES, visibleTabs } from "@/components/sales-app/roleConfig";
 import type { Locale } from "@/i18n/config";
+
+// 기존 분양 모듈 패널(재사용). 모두 { siteCode } 시그니처 — siteId(UUID)를 그대로 전달한다.
+import UnitGrid from "@/components/sales/UnitGrid";
+import Unit360Panel from "@/components/sales/Unit360Panel";
+import PriceTableEditor from "@/components/sales/PriceTableEditor";
+import PricingConfigPanel from "@/components/sales/PricingConfigPanel";
+import SubscriptionPanel from "@/components/sales/SubscriptionPanel";
+import PaymentsPanel from "@/components/sales/PaymentsPanel";
+import LoanPanel from "@/components/sales/LoanPanel";
+import ResalePanel from "@/components/sales/ResalePanel";
+import TaxPanel from "@/components/sales/TaxPanel";
+import OrgTree from "@/components/sales/OrgTree";
+import CommissionBoard from "@/components/sales/CommissionBoard";
+import CrmPanel from "@/components/sales/CrmPanel";
+import IntegrityGuard from "@/components/sales/IntegrityGuard";
+import DeveloperProjection from "@/components/sales/DeveloperProjection";
+import { UnitOutlineBuilder } from "@/components/sales/UnitOutlineBuilder";
+import DeskCheckin from "@/components/desk/DeskCheckin";
+import VisitorStats from "@/components/desk/VisitorStats";
 
 interface RoleResponse {
   site_id?: string;
@@ -31,8 +53,14 @@ export default function SiteWorkspaceClient({ locale, siteId }: { locale: Locale
   const [loading, setLoading] = useState(true);
   const [needEnter, setNeedEnter] = useState(false);
   const [pwOpen, setPwOpen] = useState(false);
-  const [tab, setTab] = useState<string>("dashboard");
+  const [tab, setTab] = useState<string>("units");
   const [err, setErr] = useState("");
+
+  // 분양가 탭용 차수(round) 로딩 — 기존 SalesSiteWorkspace 동일 방식.
+  const [rounds, setRounds] = useState<{ id: string; name: string }[]>([]);
+  const [rid, setRid] = useState("");
+  const [priceRefresh, setPriceRefresh] = useState(0);
+  const [builderOpen, setBuilderOpen] = useState(false);
 
   const loadRole = useCallback(() => {
     // 진입 토큰이 없으면 역할 조회 없이 재진입 모달만(동기 setState는 fetch 콜백 외에선 회피).
@@ -68,6 +96,18 @@ export default function SiteWorkspaceClient({ locale, siteId }: { locale: Locale
     loadRole();
   }, [loadRole]);
 
+  // 분양가 탭 진입 시 차수 로딩(role 확정 후 1회). siteId를 siteCode로 전달(UUID 해석).
+  useEffect(() => {
+    if (!role) return;
+    salesApi(siteId)
+      .get<{ id: string; name: string }[]>("/rounds")
+      .then((r) => {
+        setRounds(r || []);
+        if (r?.[0]) setRid(r[0].id);
+      })
+      .catch(() => setRounds([]));
+  }, [role, siteId]);
+
   const tabs = role ? visibleTabs(role.features) : [];
   const canManage = role ? (role.can_manage ?? MANAGE_ROLES.has(role.role)) : false;
 
@@ -85,6 +125,14 @@ export default function SiteWorkspaceClient({ locale, siteId }: { locale: Locale
           <span className="rounded-md bg-[var(--accent-soft)] px-2 py-0.5 text-[11px] font-bold text-[var(--accent-strong)]">
             {role.role_label ?? ROLE_LABEL[role.role] ?? role.role}
           </span>
+        )}
+        {!loading && role && tab === "units" && (
+          <button
+            onClick={() => setBuilderOpen(true)}
+            className="rounded-lg bg-[var(--accent-strong)] px-3 py-1.5 text-xs font-black text-white"
+          >
+            ＋ 동·호표 생성
+          </button>
         )}
         {canManage && (
           <button
@@ -123,17 +171,72 @@ export default function SiteWorkspaceClient({ locale, siteId }: { locale: Locale
             ))}
           </div>
 
-          <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-6">
-            <p className="text-sm font-bold text-[var(--text-primary)]">
-              {tabs.find((t) => t.key === tab)?.label ?? "현장"}
-            </p>
-            <p className="mt-1 text-xs text-[var(--text-secondary)]">
-              내 권한으로 접근 가능한 메뉴 {tabs.length}개가 노출됩니다. 상세 기능은 단계적으로 연결됩니다.
-            </p>
-            <p className="mt-3 text-[11px] text-[var(--text-tertiary)]">
-              기능키: {role.features.length ? role.features.join(", ") : "(없음)"}
-            </p>
-          </div>
+          {/* 동·호표 생성 모달(세대 탭) — 기존 빌더 재사용 */}
+          <UnitOutlineBuilder
+            siteCode={siteId}
+            open={builderOpen}
+            onClose={() => setBuilderOpen(false)}
+            onDone={() => {
+              setBuilderOpen(false);
+              window.location.reload();
+            }}
+          />
+
+          {/* 탭 ↔ 기존 패널 연결. siteCode 자리에 현장 UUID(siteId) 전달. */}
+          {tab === "units" && (
+            <>
+              <UnitGrid siteCode={siteId} />
+              <Unit360Panel siteCode={siteId} />
+            </>
+          )}
+
+          {tab === "customers" && <CrmPanel siteCode={siteId} />}
+
+          {tab === "pricing" && (
+            <div className="space-y-3">
+              {rounds.length > 1 && (
+                <select
+                  value={rid}
+                  onChange={(e) => setRid(e.target.value)}
+                  className="rounded-lg border border-[var(--line)] bg-[var(--surface-strong)] px-2 py-1 text-sm text-[var(--text-primary)]"
+                >
+                  {rounds.map((r) => (
+                    <option key={r.id} value={r.id}>
+                      {r.name}
+                    </option>
+                  ))}
+                </select>
+              )}
+              {rid ? (
+                <>
+                  <PricingConfigPanel
+                    siteCode={siteId}
+                    roundId={rid}
+                    onChanged={() => setPriceRefresh((n) => n + 1)}
+                  />
+                  <PriceTableEditor key={priceRefresh} siteCode={siteId} roundId={rid} />
+                </>
+              ) : (
+                <p className="text-sm text-[var(--text-secondary)]">차수가 없습니다.</p>
+              )}
+            </div>
+          )}
+
+          {tab === "subscription" && <SubscriptionPanel siteCode={siteId} />}
+          {tab === "payments" && <PaymentsPanel siteCode={siteId} />}
+          {tab === "loan" && <LoanPanel siteCode={siteId} />}
+          {tab === "resale" && <ResalePanel siteCode={siteId} />}
+          {tab === "tax" && <TaxPanel siteCode={siteId} />}
+          {tab === "org" && <OrgTree siteCode={siteId} />}
+          {tab === "commission" && <CommissionBoard siteCode={siteId} />}
+          {tab === "desk" && (
+            <div className="grid gap-6 lg:grid-cols-2">
+              <DeskCheckin siteCode={siteId} />
+              <VisitorStats siteCode={siteId} />
+            </div>
+          )}
+          {tab === "integrity" && <IntegrityGuard siteCode={siteId} />}
+          {tab === "projection" && <DeveloperProjection />}
         </>
       )}
 

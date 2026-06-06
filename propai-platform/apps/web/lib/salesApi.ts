@@ -74,12 +74,18 @@ export function activeSiteTokenValue(siteId: string): string {
 }
 
 export function salesApi(siteCode: string) {
-  const headers = { "X-Site-Code": siteCode };
+  // X-Site-Code(현장 식별)는 기존 그대로 유지. 추가로, Phase 1-B 현장앱 진입(site_token) 흐름에서는
+  // siteCode 자리에 현장 UUID(site_id)를 넘기므로, 저장된 site_token이 있으면 X-Site-Token도 함께
+  // 첨부한다(백엔드 sales_ctx 토큰 우선 컨텍스트). 토큰 없으면 기존 X-Site-Code 멤버십 경로로 동작(무파괴).
+  const headers = (): Record<string, string> => {
+    const token = activeSiteTokenValue(siteCode);
+    return token ? { "X-Site-Code": siteCode, "X-Site-Token": token } : { "X-Site-Code": siteCode };
+  };
   return {
-    get: <T,>(p: string) => apiClient.get<T>(`/sales${p}`, { headers }),
-    post: <T,>(p: string, body?: Body) => apiClient.post<T>(`/sales${p}`, { body, headers }),
-    patch: <T,>(p: string, body?: Body) => apiClient.patch<T>(`/sales${p}`, { body, headers }),
-    del: <T,>(p: string) => apiClient.delete<T>(`/sales${p}`, { headers }),
+    get: <T,>(p: string) => apiClient.get<T>(`/sales${p}`, { headers: headers() }),
+    post: <T,>(p: string, body?: Body) => apiClient.post<T>(`/sales${p}`, { body, headers: headers() }),
+    patch: <T,>(p: string, body?: Body) => apiClient.patch<T>(`/sales${p}`, { body, headers: headers() }),
+    del: <T,>(p: string) => apiClient.delete<T>(`/sales${p}`, { headers: headers() }),
   };
 }
 
