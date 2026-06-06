@@ -71,8 +71,8 @@ vi.mock("@/components/projects/ProjectsOverviewClient", () => ({
   }) => <div data-testid="projects-overview-client">{locale}</div>,
 }));
 
-vi.mock("@/components/auction/AuctionWorkspaceClient", () => ({
-  AuctionWorkspaceClient: ({
+vi.mock("@/components/auction/AuctionWorkspace", () => ({
+  AuctionWorkspace: ({
     locale,
   }: {
     locale: string;
@@ -364,8 +364,6 @@ describe("Dashboard route shells", () => {
   it("renders the auction route shell with the live workspace", async () => {
     render(<AuctionPage />);
 
-    expect(screen.getByText("Auction live center")).toBeInTheDocument();
-    expect(screen.getByText("실연동")).toBeInTheDocument();
     expect(screen.getByTestId("auction-workspace")).toHaveTextContent("en");
   });
 

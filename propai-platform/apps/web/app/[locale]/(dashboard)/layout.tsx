@@ -100,6 +100,7 @@ export default async function DashboardLayout({
     { href: `/${locale}/market-insights`, label: "시장·시세 분석", icon: <IconMarket /> },
     { href: `/${locale}/permits`, label: "인허가 가능성", icon: <IconPermit /> },
     { href: `/${locale}/regulations`, label: "개발 규제", icon: <IconRegulation /> },
+    { href: `/${locale}/analytics/cost`, label: "공사비 분석", icon: <IconCost /> },
   ];
 
   // 2. 토지·자금 — 토지조서·등기·AI시세 + 투자수익성·공사비
@@ -109,16 +110,15 @@ export default async function DashboardLayout({
     { href: `/${locale}/registry-analysis`, label: "└ 등기부등본 열람", icon: <IconPermit /> },
     { href: `/${locale}/desk-appraisal`, label: "└ AI 시세추정 보고서", icon: <IconPermit /> },
     { href: `/${locale}/analytics/investment`, label: "투자 수익성 (ROI)", icon: <IconROI /> },
-    { href: `/${locale}/analytics/cost`, label: "공사비 분석", icon: <IconCost /> },
+    { href: `/${locale}/auction`, label: "경매·공매", icon: <IconAuction /> },
   ];
 
-  // 3. 실행 — 분양·공공입찰·경공매
+  // 3. 실행 — 분양·공공입찰
   const executionNavigation = [
     { href: `/${locale}/sales`, label: "분양 현장 관리", icon: <IconProject /> },
     { href: `/${locale}/sales/sites`, label: "└ 내 분양 현장(현장앱)", icon: <IconProject /> },
     { href: `/${locale}/sales/projection`, label: "└ 분양 요약(경영진용)", icon: <IconMarket /> },
     { href: `/${locale}/g2b`, label: "공공입찰 (나라장터)", icon: <IconAuction /> },
-    { href: `/${locale}/auction`, label: "경매·공매", icon: <IconAuction /> },
   ];
 
   // 4. 설계 참고 — CAD 자동설계 / BIM·적산
