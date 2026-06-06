@@ -430,6 +430,13 @@ try:
 except Exception as _e:  # noqa: BLE001
     logger.warning("admin_secrets 라우터 등록 실패", err=str(_e)[:160])
 
+# 관리자 — 분양(sales) RLS 부트스트랩(적용/상태/롤백) → /api/v1/admin/sales-rls/*
+try:
+    from apps.api.app.routers.admin_sales_rls import router as admin_sales_rls_router
+    app.include_router(admin_sales_rls_router, tags=["관리자·분양RLS"])  # 자체 prefix
+except Exception as _e:  # noqa: BLE001
+    logger.warning("admin_sales_rls 라우터 등록 실패", err=str(_e)[:160])
+
 # SiteScore — 설명가능 학습형 입지 점수 → /api/v1/site-score
 try:
     from apps.api.app.routers.site_score import router as site_score_router
