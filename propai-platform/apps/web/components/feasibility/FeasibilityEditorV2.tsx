@@ -11,6 +11,8 @@ import { VersionHistoryView } from "./VersionHistoryView";
 import { AIRecommendationPanel } from "./AIRecommendationPanel";
 import { ExcelExportButton } from "./ExcelExportButton";
 import { AutoRecommendPanel } from "./AutoRecommendPanel";
+import { EnvironmentSummaryCard } from "@/components/environment/EnvironmentSummaryCard";
+import { useProjectContextStore } from "@/store/useProjectContextStore";
 
 interface Props {
   projectId: string;
@@ -35,6 +37,7 @@ export function FeasibilityEditorV2({ projectId }: Props) {
   } = useFeasibilityV2Store();
 
   const [showAutoRecommend, setShowAutoRecommend] = useState(false);
+  const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
 
   useEffect(() => {
     fetchModules();
@@ -178,6 +181,14 @@ export function FeasibilityEditorV2({ projectId }: Props) {
               className="space-y-10"
             >
               <FeasibilityResultView />
+              {/* 조망·스카이라인 보조카드(분양가치 근거 — 환경3D 녹여내기) */}
+              {(siteAnalysis?.address || siteAnalysis?.pnu) && (
+                <EnvironmentSummaryCard
+                  address={siteAnalysis?.address}
+                  pnu={siteAnalysis?.pnu}
+                  focus="view"
+                />
+              )}
               <div className="glass rounded-[3rem] p-1 border border-[var(--line)] bg-[var(--surface-soft)] overflow-hidden shadow-[var(--shadow-xl)]">
                 <div className="rounded-[3rem] p-12 bg-[var(--surface-strong)] backdrop-blur-3xl">
                   <AIRecommendationPanel />

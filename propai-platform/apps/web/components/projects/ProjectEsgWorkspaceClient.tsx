@@ -112,25 +112,25 @@ const KO_LABELS: Labels = {
   tokenHint:
     "분석을 위해 로그인이 필요합니다.",
   authError: "라이브 작업 공간 호출을 위해 API 인증이 필요합니다.",
-  lcaFormTitle: "LCA 탄소 산출 입력",
+  lcaFormTitle: "전과정 탄소산출(LCA) 입력",
   floorAreaLabel: "연면적 (m2)",
   materialNameLabel: "자재명",
   materialQtyLabel: "수량 (kg)",
   addMaterialAction: "자재 추가",
   removeMaterialAction: "삭제",
-  submitLcaAction: "LCA 산출 실행",
-  lcaResultTitle: "LCA 탄소 산출 결과",
+  submitLcaAction: "전과정 탄소산출(LCA) 실행",
+  lcaResultTitle: "전과정 탄소산출(LCA) 결과",
   embodiedCarbonLabel: "체화 탄소",
   operationalCarbonLabel: "운영 탄소",
   totalCarbonLabel: "총 탄소",
   carbonPerSqmLabel: "m2당 탄소",
   materialBreakdownLabel: "자재별 탄소 배출",
-  epdFormTitle: "EPD 탄소 발자국 입력",
+  epdFormTitle: "자재 환경성적(EPD) 탄소 발자국 입력",
   epdMaterialNameLabel: "자재명",
   epdQuantityLabel: "수량 (kg)",
   epdUnitLabel: "단위",
-  submitEpdAction: "EPD 탄소 발자국 산출",
-  epdResultTitle: "EPD 탄소 발자국 결과",
+  submitEpdAction: "자재 환경성적(EPD) 탄소 발자국 산출",
+  epdResultTitle: "자재 환경성적(EPD) 탄소 발자국 결과",
   epdTotalLabel: "총 탄소 발자국",
   alternativesFormTitle: "저탄소 대안 검색",
   altMaterialLabel: "대상 자재명",
@@ -508,7 +508,6 @@ export function ProjectEsgWorkspaceClient({
                 context={{ lca: lcaResult, epd: epdResult } as unknown as Record<string, unknown>}
                 interpretation={lcaResult.ai_analysis}
                 interpretationTitle="AI 탄소 해석"
-                defaultOpen
               />
               <ExpertPanelCard
                 analysisType="esg"

@@ -1,5 +1,6 @@
 import { isValidLocale } from "@/i18n/config";
 import { FeasibilityEditorV2 } from "@/components/feasibility/FeasibilityEditorV2";
+import { TrustBadge } from "@/components/common/TrustBadge";
 
 type Props = {
   params: Promise<{ locale: string; id: string }>;
@@ -35,6 +36,8 @@ export default async function FeasibilityPage({ params }: Props) {
             <p className="max-w-xl text-lg font-bold leading-relaxed text-[var(--text-secondary)] italic tracking-tight underline decoration-[var(--line)] underline-offset-8">
               &quot;15개 개발유형, 38종 세무 알고리즘, 전국 229개 시군구 조례를 실시간 통합 분석하여 최적의 투자의사결정을 지원합니다.&quot;
             </p>
+
+            <TrustBadge />
           </div>
 
           <div className="hidden lg:block">

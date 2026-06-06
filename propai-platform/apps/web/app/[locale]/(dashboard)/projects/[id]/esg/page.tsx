@@ -117,7 +117,7 @@ export default function ESGPage() {
             <div className="h-10 w-10 rounded-2xl bg-[var(--info-soft)] flex items-center justify-center text-[var(--info)]">
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
             </div>
-            <h3 className="text-[10px] font-black text-[var(--text-tertiary)] uppercase tracking-[0.4em]">Carbon Life-Cycle Analysis</h3>
+            <h3 className="text-[10px] font-black text-[var(--text-tertiary)] uppercase tracking-[0.4em]">전과정 탄소분석 (LCA · Life-Cycle Analysis)</h3>
           </div>
 
           <div className="grid gap-4">

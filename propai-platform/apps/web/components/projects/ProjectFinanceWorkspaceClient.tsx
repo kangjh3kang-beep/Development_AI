@@ -635,7 +635,6 @@ export function ProjectFinanceWorkspaceClient({
                     { label: "투자 의견", text: avmResult.investment_recommendation ?? "" },
                   ]}
                   interpretationTitle="AI 가치평가 해석"
-                  defaultOpen
                 />
               </div>
               </>

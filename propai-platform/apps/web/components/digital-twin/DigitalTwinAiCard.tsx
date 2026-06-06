@@ -170,7 +170,6 @@ export function DigitalTwinAiCard({
             interpretation={res.sections as unknown as Record<string, unknown>}
             sectionLabels={SECTION_LABELS}
             interpretationTitle="가상준공 AI 해설"
-            defaultOpen
             autoRunVerification
           />
 

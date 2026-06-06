@@ -5,6 +5,8 @@ import { useParams } from "next/navigation";
 import { apiClient } from "@/lib/api-client";
 import { ProjectPermitWorkspaceClient } from "@/components/projects/ProjectPermitWorkspaceClient";
 import { DesignChangePredictPanel } from "@/components/design-risk/DesignChangePredictPanel";
+import { EnvironmentSummaryCard } from "@/components/environment/EnvironmentSummaryCard";
+import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { isValidLocale, type Locale } from "@/i18n/config";
 
 export default function PermitPage() {
@@ -14,6 +16,7 @@ export default function PermitPage() {
 
   const [data, setData] = useState<{ stages: any[], documents: any[] } | null>(null);
   const [loading, setLoading] = useState(true);
+  const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
 
   useEffect(() => {
     async function fetchStatus() {
@@ -115,6 +118,15 @@ export default function PermitPage() {
            </button>
         </div>
       </div>
+
+      {/* ── 일조 환경 보조카드(정북 일조사선·동지 일조시간 = 법정 요건) ── */}
+      {(siteAnalysis?.address || siteAnalysis?.pnu) && (
+        <EnvironmentSummaryCard
+          address={siteAnalysis?.address}
+          pnu={siteAnalysis?.pnu}
+          focus="solar"
+        />
+      )}
 
       {/* ── 설계변경 사전예측 (D3) ── */}
       <div className="flex flex-col gap-2">

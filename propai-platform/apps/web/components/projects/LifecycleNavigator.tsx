@@ -17,15 +17,11 @@ const Icons = {
   Feasibility: (p: IconProps) => <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...p}><path d="M22 12h-2.5a2 2 0 0 0 0 4H21a2 2 0 0 1 0 4h-2.5M7 5v14M2 5h10M2 19h10"/><path d="M18 5v14"/></svg>,
   Permit: (p: IconProps) => <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...p}><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="m9 15 2 2 4-4"/></svg>,
   Construction: (p: IconProps) => <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...p}><rect width="16" height="20" x="4" y="2" rx="2"/><path d="M9 22v-4h6v4"/><path d="M8 6h.01"/><path d="M16 6h.01"/><path d="M12 6h.01"/><path d="M12 10h.01"/><path d="M8 10h.01"/><path d="M16 10h.01"/><path d="M8 14h.01"/><path d="M12 14h.01"/><path d="M16 14h.01"/></svg>,
-  Operations: (p: IconProps) => <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...p}><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>,
   // Sub-icons
-  Cad: (p: IconProps) => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...p}><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>,
   Bim: (p: IconProps) => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...p}><path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m22.54 12.43-1.42-.65-8.28 3.78a2 2 0 0 1-1.66 0l-8.29-3.78-1.42.65a1 1 0 0 0 0 1.84l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.85Z"/></svg>,
   Finance: (p: IconProps) => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...p}><line x1="12" x2="12" y1="2" y2="22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>,
   Esg: (p: IconProps) => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...p}><path d="M11 20A7 7 0 0 1 9.8 6.9C15.5 4.9 17 3.5 17 3.5s1.5 2.5 2.5 6.5"/><path d="M11.7 10.5c.9.3 1.5 1.3 1.5 2.5 0 1.7-1.3 3-3 3s-3-1.3-3-3c0-1.2.7-2.2 1.6-2.7"/></svg>,
-  Chain: (p: IconProps) => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...p}><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>,
   Contract: (p: IconProps) => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...p}><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>,
-  Drone: (p: IconProps) => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...p}><path d="M5 22h14"/><path d="M5 2h14"/><path d="M17 22v-4.172a2 2 0 0 0-.586-1.414L12 12l-4.414 4.414A2 2 0 0 0 7 17.828V22"/><path d="M7 2v4.172a2 2 0 0 0 .586 1.414L12 12l4.414-4.414A2 2 0 0 0 17 6.172V2"/></svg>,
   Report: (p: IconProps) => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...p}><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H19a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H6.5a1 1 0 0 1 0-5H20"/></svg>,
 };
 
@@ -70,40 +66,42 @@ export function LifecycleNavigator({
       links: [{ href: `${base}/legal`, label: "법규 검토", icon: <Icons.Legal /> }],
     },
     {
+      // 설계 3탭(설계AI+도면+BIM) → 2탭(설계AI / BIM·도면 통합)으로 축약
       id: "architecture", label: "건축 설계", icon: <Icons.Design />,
       links: [
         { href: `${base}/design`, label: "설계 AI", icon: <Icons.Design /> },
-        { href: `${base}/cad`, label: "도면 편집", icon: <Icons.Cad /> },
-        { href: `${base}/bim`, label: "BIM 모델", icon: <Icons.Bim /> },
+        { href: `${base}/bim`, label: "BIM·도면", icon: <Icons.Bim /> },
       ],
     },
     {
+      // ESG/LCA 2탭 → ESG 단일(LCA는 ESG 화면에 흡수). 라벨 한글 병기.
       id: "feasibility", label: "사업성 검토", icon: <Icons.Feasibility />,
       links: [
         { href: `${base}/feasibility`, label: "수지분석", icon: <Icons.Feasibility /> },
         { href: `${base}/finance`, label: "재무 모델링", icon: <Icons.Finance /> },
-        { href: `${base}/esg`, label: "ESG / LCA", icon: <Icons.Esg /> },
+        { href: `${base}/esg`, label: "ESG(친환경)", icon: <Icons.Esg /> },
       ],
     },
     {
+      // 블록체인 탭 제거(보고서 "위변조 방지 신뢰검증"으로 녹여냄).
+      // 계약은 인허가 단계에 통합(전자계약 라우트는 보존, 탭만 비노출).
       id: "permit", label: "인허가/계약", icon: <Icons.Permit />,
       links: [
         { href: `${base}/permit`, label: "인허가 관리", icon: <Icons.Permit /> },
-        { href: `${base}/blockchain`, label: "블록체인", icon: <Icons.Chain /> },
         { href: `${base}/contracts`, label: "전자 계약", icon: <Icons.Contract /> },
       ],
     },
     {
+      // 드론 측량 탭 숨김(라우트 보존, 탭만 비노출).
       id: "execution", label: "시공 관리", icon: <Icons.Construction />,
       links: [
         { href: `${base}/construction`, label: "시공 원가", icon: <Icons.Construction /> },
-        { href: `${base}/drone`, label: "드론 측량", icon: <Icons.Drone /> },
       ],
     },
     {
-      id: "management", label: "운영", icon: <Icons.Operations />,
+      // 자산 운영은 보고서 단계에 통합(운영 라우트는 보존, 단독 탭 비노출).
+      id: "management", label: "보고서", icon: <Icons.Report />,
       links: [
-        { href: `${base}/operations`, label: "자산 운영", icon: <Icons.Operations /> },
         { href: `${base}/report`, label: "최종 보고서", icon: <Icons.Report /> },
       ],
     },

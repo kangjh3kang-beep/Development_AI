@@ -3,6 +3,7 @@
 import { useState, useCallback } from "react";
 import { Button, Card, CardContent, CardTitle } from "@propai/ui";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { TrustBadge } from "@/components/common/TrustBadge";
 
 /* ── Types ── */
 
@@ -463,6 +464,7 @@ export function BankReadyReportBuilder() {
                   프로젝트: {projectName}
                 </p>
               )}
+              <TrustBadge className="mt-3" />
             </div>
             <div className="flex flex-col items-center gap-1">
               <CompletenessRing pct={Math.round((filledCount / ALL_SECTIONS.length) * 100)} />

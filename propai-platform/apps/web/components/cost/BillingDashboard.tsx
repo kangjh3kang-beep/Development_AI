@@ -255,7 +255,7 @@ export function BillingDashboard({ projectId: projectIdProp }: { projectId?: str
   return (
     <section className="grid gap-5">
       <div>
-        <h2 className="text-xl font-black text-[var(--text-primary)]">기성·EVM (기성고 관리 + 과다청구 탐지)</h2>
+        <h2 className="text-xl font-black text-[var(--text-primary)]">기성·성과측정(EVM) (기성고 관리 + 과다청구 탐지)</h2>
         <p className="mt-1 text-sm text-[var(--text-secondary)]">
           회차별 기성 청구를 등록하면 <b className="text-[var(--text-primary)]">PV·EV·AC 누적 곡선</b>과{" "}
           <b className="text-[var(--text-primary)]">SPI·CPI</b>로 일정·원가 성과를 추적하고, 청구단가 이탈·계약초과 등{" "}
