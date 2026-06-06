@@ -1,34 +1,41 @@
-"""온비드(KAMCO 공매) OpenAPI 커넥터.
+"""온비드(KAMCO 공매) OpenAPI 커넥터 — 실연동 전용(무목업).
 
-data.go.kr 한국자산관리공사 온비드 물건정보 서비스(서비스ID 1410000 계열)를 호출해
-전국 공매 물건 목록·상세를 수집한다. 키 미설정/호출실패 시 구조화 mock으로 폴백하며
-응답에 data_source(onbid_live|mock)를 정직 표기한다(공공데이터 폴백 패턴 준수).
+data.go.kr 차세대 온비드 OpenAPI를 호출해 전국 공매 부동산 물건 목록/상세를
+수집한다. 본 모듈은 ★목업(mock)을 생성하지 않는다:
 
-경매(법원)는 무료 API가 빈약해 이번 범위에서 제외하되, source 필드(onbid/court)로
-향후 확장 지점을 남긴다. 본 모듈은 외부 실호출을 강제하지 않으며, 호출 실패는
-graceful 폴백으로 흡수한다(과설계 금지 — 단일 목록/상세 엔드포인트만 사용).
+- 인증키 미설정 → 빈 결과 + data_source="unavailable" + reason(활용신청 필요).
+- 호출 실패/무자료 → 빈 결과 + data_source="unavailable" + reason(실패 사유).
+- 키가 있고 호출 성공 → 실데이터 정규화 + data_source="onbid_live".
+
+대상 OpenAPI(data.go.kr):
+  - 차세대 온비드 부동산 물건목록 조회 (서비스 15157207)
+  - 차세대 온비드 부동산 물건 상세(입찰정보) 조회 (서비스 15157251)
+실엔드포인트 오퍼레이션명/필드명은 활용신청 승인 후 확정되며, 응답이 예상과
+다르면 _extract_items / _normalize 의 방어적 파서가 가능한 범위에서 흡수한다.
+무자료/스키마 불일치 시에도 가짜데이터를 만들지 않고 빈 결과를 반환한다.
+
+경매(법원)는 court_scraper.py(스크래핑)로 별도 수집하며, 본 모듈은 공매(온비드)만
+담당한다(source="onbid").
 """
 
 from __future__ import annotations
 
 import logging
-import random
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any, Optional
 
 import httpx
 
 logger = logging.getLogger(__name__)
 
-# ── 온비드 공매물건 OpenAPI(공공데이터포털) ──
-# 통합 물건/감정/입찰 정보 조회. 실엔드포인트는 키 승인 후 확정되며, 미설정 시 mock.
-ONBID_BASE_URL = "http://openapi.onbid.co.kr/openapi/services"
-ONBID_THING_PATH = "/KamcoPblsalThingInqireSvc"
-# 대표 오퍼레이션: 공매물건 목록(getKamcoPbctCltrList) — 지역/종류/기간 필터 지원.
-ONBID_LIST_OP = "getKamcoPbctCltrList"
-ONBID_DETAIL_OP = "getKamcoPbctCltrDetailInfo"
+# ── 차세대 온비드 부동산 OpenAPI(공공데이터포털 apis.data.go.kr) ──
+# 서비스 15157207(물건목록) / 15157251(물건상세 입찰정보).
+ONBID_BASE_URL = "https://apis.data.go.kr/1611000/nadOpenApi"
+# 대표 오퍼레이션(승인 후 확정 — 응답 미스매치는 방어적 파서로 흡수).
+ONBID_LIST_OP = "getRealEstAuctnList"
+ONBID_DETAIL_OP = "getRealEstAuctnDtl"
 
-# 공매 물건종류 코드(온비드 분류 → 내부 kind 매핑).
+# 공매 물건종류명(온비드) → 내부 kind 코드.
 KIND_MAP: dict[str, str] = {
     "토지": "land",
     "대지": "land",
@@ -42,11 +49,6 @@ KIND_MAP: dict[str, str] = {
     "오피스텔": "officetel",
     "공장": "factory",
 }
-
-_SIDO_LIST = [
-    "서울", "부산", "대구", "인천", "광주", "대전", "울산", "세종",
-    "경기", "강원", "충북", "충남", "전북", "전남", "경북", "경남", "제주",
-]
 
 
 def normalize_kind(raw: Any) -> str:
@@ -81,7 +83,11 @@ def _parse_dt(raw: Any) -> Optional[str]:
 
 
 class OnbidClient:
-    """온비드 공매 OpenAPI REST 클라이언트(키 폴백 내장)."""
+    """온비드 공매 OpenAPI REST 클라이언트 — 실호출 전용(무목업).
+
+    키가 없거나 호출이 실패하면 가짜데이터 대신 빈 결과 + data_source="unavailable"
+    + reason 을 반환한다.
+    """
 
     def __init__(self, service_key: Optional[str], timeout: float = 20.0):
         self._service_key = service_key or ""
@@ -101,8 +107,13 @@ class OnbidClient:
         if self._client and not self._client.is_closed:
             await self._client.aclose()
 
+    @staticmethod
+    def _unavailable(reason: str) -> dict[str, Any]:
+        """무목업: 가짜데이터 없이 빈 결과 + 사유를 반환한다."""
+        return {"items": [], "data_source": "unavailable", "total": 0, "reason": reason}
+
     # ──────────────────────────────────────────
-    # 공매 물건 목록
+    # 공매 물건 목록 (실호출 전용)
     # ──────────────────────────────────────────
 
     async def fetch_items(
@@ -113,25 +124,24 @@ class OnbidClient:
         page: int = 1,
         rows: int = 50,
     ) -> dict[str, Any]:
-        """공매 물건 목록을 조회한다.
+        """공매 물건 목록을 실 API로 조회한다.
 
-        반환: {"items": [정규화 dict...], "data_source": "onbid_live"|"mock",
-               "total": int, "note": str}
-        키 미설정/호출실패는 mock으로 graceful 폴백한다(정직 표기).
+        반환: {"items": [정규화 dict...], "data_source": "onbid_live"|"unavailable",
+               "total": int, "note"|"reason": str}
+        키 미설정/호출실패/무자료는 ★가짜데이터 없이 빈 결과 + reason 으로 반환한다.
         """
         if not self._service_key:
-            return self._mock_items(region=region, kind=kind, rows=rows,
-                                    note="ONBID 서비스 키 미설정 — 구조화 더미(개발/검증용)")
+            return self._unavailable("온비드 인증키 미설정(공공데이터포털 활용신청 필요)")
 
         params = {
             "serviceKey": self._service_key,
             "numOfRows": rows,
             "pageNo": page,
-            "DPSL_MTD_CD": "0001",  # 매각방법: 공매(매각)
+            "type": "json",
         }
         if region:
-            params["SIDO"] = region
-        url = f"{ONBID_BASE_URL}{ONBID_THING_PATH}/{ONBID_LIST_OP}"
+            params["sido"] = region
+        url = f"{ONBID_BASE_URL}/{ONBID_LIST_OP}"
         try:
             client = await self._get_client()
             resp = await client.get(url, params=params)
@@ -140,6 +150,8 @@ class OnbidClient:
             items = [self._normalize(it) for it in raw_items]
             if kind:
                 items = [it for it in items if it.get("kind") == kind]
+            if not items:
+                return self._unavailable("온비드 응답 무자료(해당 조건의 물건 없음)")
             return {
                 "items": items,
                 "data_source": "onbid_live",
@@ -147,13 +159,15 @@ class OnbidClient:
                 "note": "온비드 OpenAPI 실연동",
             }
         except Exception as e:  # noqa: BLE001
-            logger.warning("온비드 호출 실패 — mock 폴백: %s", str(e)[:160])
-            return self._mock_items(region=region, kind=kind, rows=rows,
-                                    note=f"온비드 호출 실패 폴백: {str(e)[:80]}")
+            logger.warning("온비드 호출 실패(무목업, 빈 결과 반환): %s", str(e)[:160])
+            return self._unavailable(f"온비드 호출 실패: {str(e)[:120]}")
 
     @staticmethod
     def _extract_items(text: str) -> list[dict[str, Any]]:
-        """온비드 XML/JSON 응답에서 item 리스트를 추출한다(방어적)."""
+        """온비드 XML/JSON 응답에서 item 리스트를 추출한다(방어적).
+
+        무자료/에러 응답이면 빈 리스트(가짜데이터 생성 금지).
+        """
         import json as _json
         import xml.etree.ElementTree as ET
 
@@ -211,44 +225,3 @@ class OnbidClient:
             "bid_end": _parse_dt(it.get("PBCT_CLS_DTM") or it.get("bid_end")),
             "raw": it,
         }
-
-    # ──────────────────────────────────────────
-    # Mock 폴백(구조화 더미 — 개발/검증용, 정직 표기)
-    # ──────────────────────────────────────────
-
-    def _mock_items(
-        self, *, region: Optional[str], kind: Optional[str], rows: int, note: str
-    ) -> dict[str, Any]:
-        """키 없음/실패 시 결정적이지 않은 구조화 더미 생성(필터 반영)."""
-        rng = random.Random(f"{region}-{kind}-{rows}")
-        kinds = ["land", "building", "apt", "officetel", "factory"]
-        sidos = [region] if region else _SIDO_LIST
-        now = datetime.utcnow()
-        items: list[dict[str, Any]] = []
-        n = min(rows, 30)
-        for i in range(n):
-            k = kind or rng.choice(kinds)
-            sido = rng.choice(sidos)
-            appraisal = rng.randint(8, 120) * 10_000_000  # 8천만~12억
-            fail = rng.randint(0, 4)
-            # 유찰 1회당 통상 -10% 최저가 하락(온비드 공매 관행).
-            min_bid = int(appraisal * (0.9 ** fail))
-            start = now + timedelta(days=rng.randint(1, 20))
-            items.append({
-                "source": "onbid",
-                "item_no": f"MOCK-{sido}-{2026000000 + i}",
-                "kind": k,
-                "region_sido": sido,
-                "region_sigungu": "",
-                "bjd_code": "",
-                "pnu": "",
-                "address": f"{sido} 표본구 표본동 {rng.randint(1, 999)}-{rng.randint(1, 99)}",
-                "appraisal_price": appraisal,
-                "min_bid_price": min_bid,
-                "fail_count": fail,
-                "status": "open",
-                "bid_start": start.isoformat(),
-                "bid_end": (start + timedelta(days=2)).isoformat(),
-                "raw": {"_mock": True},
-            })
-        return {"items": items, "data_source": "mock", "total": len(items), "note": note}

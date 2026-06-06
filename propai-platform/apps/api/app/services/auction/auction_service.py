@@ -1,11 +1,12 @@
-"""경·공매(온비드 공매 우선) 전국 연동 서비스.
+"""경·공매(온비드 공매 + 법원경매 스크래핑) 전국 연동 서비스 — 무목업.
 
 멱등 _ensure 테이블(auction_items / auction_saved_filters / auction_watch)을 lazy 생성하고,
-온비드 동기화·조건검색·순위·저장조건 CRUD·내토지매칭을 처리한다.
+온비드(공매)·법원경매(스크래핑) 동기화·조건검색·순위·저장조건 CRUD·내토지매칭을 처리한다.
 analysis_ledger / cost_estimate 와 동일한 raw SQL + text() + _ensure 패턴을 따른다.
 
-정직성: 응답에 data_source(onbid_live|mock) 표기, est_win은 추정·가정 명시,
-저장조건/watch는 user_id 격리. public_data_registry로 신선도 기록.
+★정직성(무목업): 응답에 data_source(onbid_live|court_scrape|unavailable) 표기. 키 미설정/
+호출실패/무자료/스크래핑 불가 시 ★가짜데이터를 만들지 않고 빈 결과 + reason 을 반환한다.
+est_win은 추정·가정 명시. 저장조건/watch는 user_id 격리. public_data_registry로 신선도 기록.
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from typing import Any, Optional
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.auction.court_scraper import CourtAuctionScraper
 from app.services.auction.onbid_client import OnbidClient
 from app.services.auction.win_estimator import estimate_win_price
 
@@ -100,27 +102,52 @@ class AuctionStep1Service:
 
     async def sync_region(
         self, *, service_key: Optional[str], region: Optional[str] = None,
-        kind: Optional[str] = None, rows: int = 50,
+        kind: Optional[str] = None, rows: int = 50, source: str = "onbid",
     ) -> dict[str, Any]:
-        """온비드 목록을 조회해 auction_items에 멱등 upsert한다."""
+        """공매(온비드) 또는 경매(법원 스크래핑)를 조회해 auction_items에 멱등 upsert.
+
+        source="onbid" → 온비드 실 API(무목업). source="court" → 법원경매 스크래핑
+        (지연·예의 적용, 무목업). 무자료/실패 시 가짜 없이 빈 결과 + reason 반환.
+        """
         await self.ensure_tables()
-        client = OnbidClient(service_key)
-        try:
-            result = await client.fetch_items(region=region, kind=kind, rows=rows)
-        finally:
-            await client.close()
+        if source == "court":
+            result = await self._fetch_court(region=region, kind=kind)
+        else:
+            client = OnbidClient(service_key)
+            try:
+                result = await client.fetch_items(region=region, kind=kind, rows=rows)
+            finally:
+                await client.close()
 
         items = result.get("items", [])
-        data_source = result.get("data_source", "mock")
-        saved = await self._upsert_items(items, data_source)
+        data_source = result.get("data_source", "unavailable")
+        healthy_sources = {"onbid_live", "court_scrape"}
+        saved = await self._upsert_items(items, data_source) if items else 0
 
-        self._mark_registry(record_count=saved, healthy=(data_source == "onbid_live"))
+        self._mark_registry(
+            source=source, record_count=saved,
+            healthy=(data_source in healthy_sources),
+            reason=result.get("reason"),
+        )
         return {
+            "source": source,
             "data_source": data_source,
             "fetched": len(items),
             "saved": saved,
             "note": result.get("note"),
+            "reason": result.get("reason"),
         }
+
+    async def _fetch_court(
+        self, *, region: Optional[str], kind: Optional[str],
+    ) -> dict[str, Any]:
+        """법원경매 스크래핑(동기 requests)을 스레드 오프로드해 호출한다(무목업)."""
+        import asyncio
+
+        scraper = CourtAuctionScraper()
+        return await asyncio.to_thread(
+            scraper.fetch_items, region=region, kind=kind,
+        )
 
     async def _upsert_items(self, items: list[dict[str, Any]], data_source: str) -> int:
         """정규화 물건 리스트를 UNIQUE(source,item_no) 기준 멱등 upsert."""
@@ -187,7 +214,7 @@ class AuctionStep1Service:
         )
         if total == 0:
             sync = await self.sync_region(service_key=service_key, region=region, kind=kind)
-            data_source = sync.get("data_source", "mock")
+            data_source = sync.get("data_source", "unavailable")
             rows, total, _ = await self._query_items(
                 region=region, kind=kind, min_fail=min_fail, max_price=max_price,
                 page=page, page_size=page_size,
@@ -295,7 +322,7 @@ class AuctionStep1Service:
         )
         result = await self.db.execute(sql, params)
         rows = [self._row_to_dict(r) for r in result.mappings().all()]
-        data_source = rows[0]["data_source"] if rows else "mock"
+        data_source = rows[0]["data_source"] if rows else "unavailable"
         return rows, total, data_source
 
     # ──────────────────────────────────────────
@@ -508,18 +535,23 @@ class AuctionStep1Service:
                     user_id, address or "")
 
     @staticmethod
-    def _mark_registry(*, record_count: int, healthy: bool) -> None:
+    def _mark_registry(
+        *, source: str = "onbid", record_count: int = 0, healthy: bool,
+        reason: Optional[str] = None,
+    ) -> None:
         try:
             from app.services.data_validation.public_data_registry import PublicDataRegistry
             reg = PublicDataRegistry.get_instance()
-            src = reg.sources.get("onbid_auction")
+            key = "court_auction" if source == "court" else "onbid_auction"
+            src = reg.sources.get(key)
             if src is None:
                 from app.services.data_validation.public_data_registry import DataSourceStatus
-                src = DataSourceStatus("onbid_auction", "api", "daily")
-                reg.sources["onbid_auction"] = src
+                kind = "scrape" if source == "court" else "api"
+                src = DataSourceStatus(key, kind, "daily")
+                reg.sources[key] = src
             if healthy:
                 src.mark_updated(record_count)
             else:
-                src.mark_error("ONBID 키 미설정/실패 — mock 폴백")
+                src.mark_error(reason or "수집 불가(무목업, 빈 결과)")
         except Exception:  # noqa: BLE001
             pass

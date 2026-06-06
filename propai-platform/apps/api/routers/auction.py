@@ -26,7 +26,7 @@ def _step1_service(db: AsyncSession = Depends(get_db)):
 
 
 def _onbid_service_key() -> Optional[str]:
-    """온비드 서비스 키 해석: ONBID_SERVICE_KEY → settings 폴백(없으면 None=mock)."""
+    """온비드 서비스 키 해석: ONBID_SERVICE_KEY → settings 폴백(없으면 None=unavailable)."""
     import os
 
     key = os.getenv("ONBID_SERVICE_KEY")
@@ -146,7 +146,7 @@ async def auction_search(
     """전국 공매 물건을 조건검색한다. 캐시 우선, 비면 온비드 동기화 후 재조회.
 
     각 물건에 est_win(예상 낙찰가 범위·신뢰도·가정)을 포함하며, data_source로
-    실연동/mock 여부를 정직 표기한다.
+    실연동(onbid_live/court_scrape)/미가용(unavailable) 여부를 정직 표기한다(무목업).
     """
     return await service.search(
         region=region, kind=kind, min_fail=min_fail, max_price=max_price,
@@ -217,17 +217,24 @@ async def auction_delete_filter(
     return {"status": "deleted", "id": filter_id}
 
 
-@router.post("/sync", summary="온비드 공매 동기화(관리/cron)")
+@router.post("/sync", summary="경공매 동기화(관리/cron) — 온비드 공매 / 법원경매 스크래핑")
 async def auction_sync(
     region: Optional[str] = Query(None, description="시/도(미지정=전국 배치)"),
     kind: Optional[str] = Query(None, description="종류"),
     rows: int = Query(50, ge=1, le=200),
+    source: str = Query("onbid", pattern="^(onbid|court)$",
+                        description="onbid=공매 실API / court=법원경매 스크래핑"),
     current_user: CurrentUser = Depends(RequirePermission("auction", "write")),
     service=Depends(_step1_service),
 ) -> dict[str, Any]:
-    """온비드 공매 목록을 수집해 auction_items에 멱등 upsert한다(키 없으면 mock)."""
+    """공매(온비드 실API) 또는 경매(법원 스크래핑)를 수집해 멱등 upsert한다.
+
+    ★무목업: 키 미설정/호출실패/스크래핑 불가 시 가짜데이터 없이 빈 결과 + reason
+    (data_source=unavailable)을 반환한다.
+    """
     return await service.sync_region(
         service_key=_onbid_service_key(), region=region, kind=kind, rows=rows,
+        source=source,
     )
 
 
