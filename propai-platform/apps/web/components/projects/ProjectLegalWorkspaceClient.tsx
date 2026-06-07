@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Button, Card, CardContent, CardTitle, Input } from "@propai/ui";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
@@ -75,6 +75,9 @@ type Labels = {
   overallLabel: string;
   regulationTitle: string;
   placeholder: string;
+  autoLoading: string;
+  autoMissingZone: string;
+  limitsOnlyNote: string;
   projectFallback: string;
   projectLoadErrorTitle: string;
   projectLoadErrorDetail: string;
@@ -119,6 +122,11 @@ const KO_LABELS: Labels = {
   regulationTitle: "규제 체크리스트",
   placeholder:
     "폼을 제출하면 건축 법규 적합성 검토 결과가 표시됩니다.",
+  autoLoading: "용도지역 기준 법정 한도를 불러오는 중입니다...",
+  autoMissingZone:
+    "부지분석에서 용도지역이 확정되면 법정 한도가 자동으로 표시됩니다.",
+  limitsOnlyNote:
+    "용도지역 기준 법정 한도입니다. 계획값을 입력하고 검토를 실행하면 적합성까지 검증합니다.",
   projectFallback: "라이브 API에서 프로젝트 메타데이터를 불러올 수 없습니다.",
   projectLoadErrorTitle: "프로젝트 메타데이터 로드 실패",
   projectLoadErrorDetail:
@@ -164,6 +172,11 @@ const EN_LABELS: Labels = {
   regulationTitle: "Regulation checklist",
   placeholder:
     "Submit the form to validate the building compliance check results.",
+  autoLoading: "Loading statutory limits for the zone...",
+  autoMissingZone:
+    "Statutory limits will appear automatically once the zone is confirmed in site analysis.",
+  limitsOnlyNote:
+    "Statutory limits for the zone. Enter planned values and run the check to verify compliance.",
   projectFallback: "Project metadata could not be loaded from the live API.",
   projectLoadErrorTitle: "Project metadata unavailable",
   projectLoadErrorDetail:
@@ -225,8 +238,12 @@ export function ProjectLegalWorkspaceClient({
 
   const [workspaceError, setWorkspaceError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isAutoLoading, setIsAutoLoading] = useState(false);
+  const [limitsOnly, setLimitsOnly] = useState(false);
   const [complianceResult, setComplianceResult] =
     useState<ComplianceCheckResponse | null>(null);
+  // 자동 로드 1회 가드: 같은 (주소+용도지역) 조합엔 자동호출 1회만, 수동제출과 충돌 방지.
+  const autoLoadedKeyRef = useRef<string | null>(null);
   const [form, setForm] = useState({
     address: "",
     zoneCode: "",
@@ -268,6 +285,66 @@ export function ProjectLegalWorkspaceClient({
     }));
   }, [siteAnalysis, designData]);
 
+  // 자동 로드 입력값: 부지분석 컨텍스트에서 확정된 용도지역·주소.
+  const autoZoneCode = (siteAnalysis?.zoneCode ?? "").trim();
+  const autoAddress = (siteAnalysis?.address ?? "").trim();
+
+  // 자동 로드: 진입 시 용도지역+주소가 컨텍스트에 있고 라이브면, 계획값 0으로 보내
+  // 법정 한도만 1회 자동 호출한다. 결과 있거나 진행 중이면 skip(중복가드).
+  // 무목업 — 실패 시 graceful 에러만 표기. legal-check는 인증 불필요·규칙기반.
+  useEffect(() => {
+    if (!canUseLiveApi || !autoZoneCode || !autoAddress) {
+      return;
+    }
+    const key = `${autoAddress}::${autoZoneCode}`;
+    // 동일 조합 자동호출 1회만. 이미 결과/진행중/제출중이면 skip.
+    if (autoLoadedKeyRef.current === key || complianceResult || isSubmitting) {
+      return;
+    }
+    autoLoadedKeyRef.current = key;
+
+    let cancelled = false;
+    setWorkspaceError("");
+    setIsAutoLoading(true);
+
+    (async () => {
+      try {
+        const result = await apiClient.post<ComplianceCheckResponse>(
+          "/building-compliance/legal-check",
+          {
+            useMock: false,
+            body: {
+              address: autoAddress,
+              zone_code: autoZoneCode,
+              planned_bcr: 0,
+              planned_far: 0,
+              planned_height_m: 0,
+              planned_floors: 0,
+            },
+          },
+        );
+        if (cancelled) return;
+        setComplianceResult(result);
+        setLimitsOnly(true);
+      } catch (error) {
+        if (!cancelled) {
+          // 실패 시 다음 변경에서 재시도 가능하도록 가드 해제.
+          autoLoadedKeyRef.current = null;
+          setWorkspaceError(extractErrorMessage(error, labels.authError));
+        }
+      } finally {
+        if (!cancelled) {
+          setIsAutoLoading(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canUseLiveApi, autoZoneCode, autoAddress]);
+
   const projectError = projectQuery.error
     ? extractErrorMessage(projectQuery.error, labels.authError)
     : "";
@@ -306,6 +383,7 @@ export function ProjectLegalWorkspaceClient({
         },
       );
       setComplianceResult(result);
+      setLimitsOnly(false);
 
       // Update project context store (capillary network)
       const violations: string[] = [];
@@ -521,6 +599,11 @@ export function ProjectLegalWorkspaceClient({
             </p>
             {complianceResult ? (
               <div className="mt-4 space-y-4">
+                {limitsOnly ? (
+                  <div className="rounded-[var(--radius-xl)] border border-dashed border-[var(--line)] bg-[var(--surface-soft)] p-4 text-sm leading-7 text-[var(--text-secondary)]">
+                    {labels.limitsOnlyNote}
+                  </div>
+                ) : null}
                 <div className="grid gap-4 md:grid-cols-3">
                   <ComplianceMetric
                     label={labels.bcrLabel}
@@ -565,9 +648,16 @@ export function ProjectLegalWorkspaceClient({
                   </div>
                 ) : null}
               </div>
+            ) : isAutoLoading ? (
+              <div className="mt-4">
+                <SkeletonLoader count={1} itemClassName="h-28" />
+                <p className="mt-3 text-sm leading-7 text-[var(--text-secondary)]">
+                  {labels.autoLoading}
+                </p>
+              </div>
             ) : (
               <div className="mt-4 rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[var(--text-secondary)]">
-                {labels.placeholder}
+                {autoZoneCode ? labels.placeholder : labels.autoMissingZone}
               </div>
             )}
           </CardContent>
