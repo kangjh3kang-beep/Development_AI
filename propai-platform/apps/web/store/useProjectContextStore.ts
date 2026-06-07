@@ -162,15 +162,18 @@ type ModuleKey =
   | "design"
   | "cost"
   | "feasibility"
+  | "finance"
   | "esg"
   | "compliance";
 
-/** 다운스트림 모듈 → 직접 업스트림 의존성 */
+/** 다운스트림 모듈 → 직접 업스트림 의존성 (기존 키 불변, finance만 추가) */
 const MODULE_UPSTREAM: Record<ModuleKey, ModuleKey[]> = {
   siteAnalysis: [],
   design: ["siteAnalysis"],
   cost: ["siteAnalysis", "design"],
   feasibility: ["siteAnalysis", "design", "cost"],
+  // 개발금융(P3)은 수지·공사비가 갱신되면 정교화 필요 → 다운스트림으로 추적.
+  finance: ["feasibility", "cost"],
   esg: ["design"],
   compliance: ["siteAnalysis", "design"],
 };
@@ -216,6 +219,9 @@ export interface ProjectContextState {
   updateCostData: (data: CostData) => void;
   updateEsgData: (data: EsgData) => void;
   updateComplianceData: (data: ComplianceData) => void;
+  // 개발금융(finance) 갱신 stamp — 별도 데이터 필드 없이 updatedAt만 갱신해
+  // 수지·공사비 변경 대비 finance staleness 추적을 활성화한다(additive).
+  markFinanceUpdated: () => void;
 
   markStageComplete: (stage: string) => void;
   setCurrentStage: (stage: string) => void;
@@ -268,6 +274,58 @@ function snapOf(s: ProjectContextState): ProjectSnapshot {
     analysisResults: s.analysisResults,
     updatedAt: s.updatedAt,
   };
+}
+
+/** 실데이터 존재 판정(무목업): 부지/설계/공사비 채워짐 여부. */
+function hasSiteData(s: ProjectContextState): boolean {
+  return !!(
+    (s.siteAnalysis?.landAreaSqm && s.siteAnalysis.landAreaSqm > 0) ||
+    s.siteAnalysis?.address ||
+    s.siteAnalysis?.zoneCode
+  );
+}
+function hasDesignData(s: ProjectContextState): boolean {
+  return !!(s.designData?.totalGfaSqm && s.designData.totalGfaSqm > 0);
+}
+function hasCostData(s: ProjectContextState): boolean {
+  return !!(
+    s.costData?.totalConstructionCostWon &&
+    s.costData.totalConstructionCostWon > 0
+  );
+}
+function hasFeasibilityData(s: ProjectContextState): boolean {
+  return !!(
+    s.feasibilityData?.totalRevenueWon && s.feasibilityData.totalRevenueWon > 0
+  );
+}
+
+/**
+ * 라이프사이클 단계의 업스트림 데이터가 준비됐는지 판정(getNextRecommendedStage 보조).
+ * 무목업: 실제 cross-module 데이터 유무로 판정. 매핑되지 않은(업스트림 없는) 단계는
+ * 항상 ready(true)로 두어 막다른길을 만들지 않는다. */
+function isStageDataReady(
+  s: ProjectContextState,
+  stage: LifecycleStage,
+): boolean {
+  switch (stage) {
+    case "site-analysis":
+      return true; // 첫 단계 — 업스트림 없음
+    case "legal":
+    case "design":
+      return hasSiteData(s);
+    case "bim":
+    case "esg":
+    case "construction":
+      return hasDesignData(s);
+    case "feasibility":
+      return hasSiteData(s) && hasDesignData(s);
+    case "finance":
+      return hasCostData(s) || hasFeasibilityData(s);
+    case "permit":
+    case "report":
+    default:
+      return true; // 종합 단계 — 데이터 준비도와 무관하게 진입 허용
+  }
 }
 
 /** 모듈 갱신 타임스탬프를 현재 시각으로 stamp한 updatedAt 객체를 반환. */
@@ -473,6 +531,12 @@ export const useProjectContextStore = create<ProjectContextState>()(
         );
       },
 
+      markFinanceUpdated: () => {
+        set((state) =>
+          withSnap(state, { updatedAt: stampedAt(state, "finance") }),
+        );
+      },
+
       markStageComplete: (stage) => {
         const prev = get();
         if (prev.completedStages.includes(stage)) return;
@@ -490,13 +554,17 @@ export const useProjectContextStore = create<ProjectContextState>()(
       },
 
       getNextRecommendedStage: () => {
-        const { completedStages } = get();
-        for (const stage of LIFECYCLE_STAGES) {
-          if (!completedStages.includes(stage)) {
-            return stage;
-          }
-        }
-        return null;
+        const s = get();
+        const { completedStages } = s;
+        // 미완료 단계들을 순서대로 모으고, 그중 "업스트림 데이터가 준비된" 첫 단계를
+        // 우선 반환한다. 준비된 단계가 없으면(막다른길 방지) 순서상 첫 미완료 단계를
+        // 반환한다. 반환 타입/시그니처는 불변(string | null) — 기존 호출처 호환.
+        const pending = LIFECYCLE_STAGES.filter(
+          (stage) => !completedStages.includes(stage),
+        );
+        if (pending.length === 0) return null;
+        const ready = pending.find((stage) => isStageDataReady(s, stage));
+        return ready ?? pending[0];
       },
 
       isStale: (downstream) => {

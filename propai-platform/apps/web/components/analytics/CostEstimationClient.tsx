@@ -17,6 +17,7 @@ import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { NumberInput } from "@/components/common/NumberInput";
 import { apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { useStageAutoRecalc } from "@/hooks/useStageAutoRecalc";
 import { getZoningSpec } from "@/lib/kr-building-regulations";
 import { VerificationBadge } from "@/components/common/VerificationBadge";
 import { ExpertPanelCard } from "@/components/common/ExpertPanelCard";
@@ -188,6 +189,10 @@ export function CostEstimationClient() {
       setErr("공사비 산정에 실패했습니다. 입력값을 확인하세요.");
     } finally { setLoading(false); }
   }, [bt, gfa, floorsAbove, floorsBelow, structure, projectId, updateCostData]);
+
+  // 모세혈관: 부지·설계(업스트림)가 갱신되면 이미 산정된 공사비를 1회 자동 재계산.
+  // 백엔드 호출이라 과도호출 금지 — 결과가 있고(hasResult) 로딩 중이 아닐 때만(enabled).
+  useStageAutoRecalc("cost", calc, { enabled: !loading, hasResult: !!result });
 
   // Step3: 개략 산정 결과(Step2)의 기대공사비와 최저~최대 레인지를 근거로 몬테카를로 시뮬레이션.
   const runRisk = useCallback(() => {

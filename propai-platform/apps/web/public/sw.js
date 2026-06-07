@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v80-feasibility-progressive";
+const CACHE_NAME = "propai-v81-finance-capillary";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

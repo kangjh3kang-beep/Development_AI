@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useCadStore } from "@/store/use-cad-store";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { useStageAutoRecalc } from "@/hooks/useStageAutoRecalc";
 import { NumberInput } from "@/components/common/NumberInput";
 import type {
   AutoDesignRequest,
@@ -126,6 +127,14 @@ export function AutoDesignPanel({ projectId }: AutoDesignPanelProps) {
       setLoading(false);
     }
   }, [siteArea, zoneCode, buildingUse, unitTypes, floorHeight, setback, loadDesignPayload, updateDesignData, markStageComplete]);
+
+  // 모세혈관: 부지(업스트림)가 갱신되면 이미 생성된 설계를 1회 자동 재생성.
+  // 로컬 엔진 호출이지만 1회/stale·결과있을때만·로딩중 제외로 과도호출을 막고
+  // 사용자 입력값(면적·용도·세대유형 등)은 현재 state를 사용해 보존한다.
+  useStageAutoRecalc("design", handleGenerate, {
+    enabled: !loading,
+    hasResult: !!result,
+  });
 
   const handleApply = useCallback(() => {
     if (!result) return;

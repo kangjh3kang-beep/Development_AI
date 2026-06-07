@@ -10,6 +10,7 @@ import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import { ApiClientError, apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { AnalysisVerdict } from "@/components/analysis/AnalysisVerdict";
+import { DevelopmentFinancePanel } from "@/components/analytics/DevelopmentFinancePanel";
 import type { Locale } from "@/i18n/config";
 
 type ProjectResponse = {
@@ -439,6 +440,9 @@ export function ProjectFinanceWorkspaceClient({
           ) : null}
         </CardContent>
       </Card>
+
+      {/* 主: 개발금융(PF·이자·DSCR) — 수지 총사업비 자동주입·자동산출 */}
+      <DevelopmentFinancePanel />
 
       <Card>
         <CardContent className="grid gap-5 p-6 lg:grid-cols-[0.95fr_1.05fr]">

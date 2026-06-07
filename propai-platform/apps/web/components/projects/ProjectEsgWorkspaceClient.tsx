@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useCallback, useState, type FormEvent } from "react";
 import { Button, Card, CardContent, CardTitle, Input } from "@propai/ui";
 import { ApiClientError, apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { useStageAutoRecalc } from "@/hooks/useStageAutoRecalc";
 import { AnalysisVerdict } from "@/components/analysis/AnalysisVerdict";
 import { ExpertPanelCard } from "@/components/common/ExpertPanelCard";
 import { NumberInput } from "@/components/common/NumberInput";
@@ -284,8 +285,9 @@ export function ProjectEsgWorkspaceClient({
     );
   }
 
-  async function handleLcaSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  // LCA 핵심 산출(무인자) — 폼 제출과 모세혈관 자동재계산이 공유한다.
+  // 현재 입력 state(자재·연면적)를 사용하므로 사용자 수정값이 보존된다.
+  const runLca = useCallback(async () => {
     setWorkspaceError("");
     setIsSubmittingLca(true);
 
@@ -310,7 +312,8 @@ export function ProjectEsgWorkspaceClient({
       );
       setLcaResult(result);
 
-      // Update project context store (capillary network)
+      // Update project context store (capillary network) — esg updatedAt stamp로
+      // stale 해소(자동재계산 무한루프 차단).
       updateEsgData({
         embodiedCarbonKg: result.embodied_carbon_kgco2e,
         operationalCarbonKg: result.operational_carbon_kgco2e,
@@ -332,7 +335,28 @@ export function ProjectEsgWorkspaceClient({
     } finally {
       setIsSubmittingLca(false);
     }
+  }, [
+    lcaMaterials,
+    floorArea,
+    projectId,
+    updateEsgData,
+    markStageComplete,
+    addAnalysisResult,
+    labels.authError,
+  ]);
+
+  async function handleLcaSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await runLca();
   }
+
+  // 모세혈관: 설계(업스트림)가 갱신되면 이미 산출된 LCA를 1회 자동 재계산.
+  // 백엔드 호출이라 과도호출 금지 — 결과가 있고(hasResult) 제출 중이 아니며,
+  // 라이브 호출 가능할 때만(enabled). 사용자 입력값(자재·연면적)은 보존.
+  useStageAutoRecalc("esg", runLca, {
+    enabled: canUseLiveApi && !isSubmittingLca,
+    hasResult: !!lcaResult,
+  });
 
   /* EPD handlers */
   function addEpdMaterial() {

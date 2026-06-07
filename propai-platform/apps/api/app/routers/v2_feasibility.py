@@ -605,6 +605,115 @@ async def cashflow(req: CashflowRequest):
         raise HTTPException(status_code=422, detail=f"현금흐름 산정 실패: {str(e)[:160]}")
 
 
+# ── 개발금융(PF·브릿지·이자·LTV·DSCR) ────────────────────────────
+class DevelopmentFinanceRequest(BaseModel):
+    """수지(P2)에서 흘러온 총사업비·자기자본·토지/공사비를 입력받아 개발금융 산출."""
+
+    total_project_cost_won: float
+    equity_ratio: float | None = None       # 자기자본 비율(미입력 시 equity_won 사용, 둘 다 없으면 0.3)
+    equity_won: float | None = None         # 자기자본 절대액(있으면 비율보다 우선)
+    land_cost_won: float | None = None      # 미입력 시 총사업비의 30% 가정(브릿지 산정용)
+    construction_cost_won: float | None = None
+    annual_noi_won: float | None = None     # 연 순영업이익(DSCR 산정용, 없으면 분양형으로 간주)
+    credit_grade: str = "A"
+    presale_ratio: float = 0.0
+    bridge_months: int = 12
+    pf_months: int = 30
+
+
+def _build_development_finance(req: "DevelopmentFinanceRequest") -> dict:
+    """finance_cost_engine 재사용 — PF/브릿지/이자, LTV/DSCR(표준 비율식)."""
+    from app.services.feasibility.finance_cost_engine import (
+        calculate_bridge_loan,
+        calculate_pf_loan,
+    )
+
+    total_cost = max(0.0, float(req.total_project_cost_won))
+    if total_cost <= 0:
+        raise ValueError("total_project_cost_won must be > 0")
+
+    # ── 자기자본 결정(절대액 우선 → 비율 → 표준 0.3) ──
+    if req.equity_won is not None and req.equity_won > 0:
+        equity_won = float(req.equity_won)
+        equity_ratio = equity_won / total_cost
+    else:
+        equity_ratio = req.equity_ratio if req.equity_ratio is not None else 0.3
+        equity_ratio = min(max(equity_ratio, 0.0), 1.0)
+        equity_won = total_cost * equity_ratio
+
+    # ── 자금 구조(cashflow_generator 관례: 브릿지=토지비 중 타인자본, PF=나머지) ──
+    land_cost = float(req.land_cost_won) if req.land_cost_won else total_cost * 0.3
+    bridge_amount = int(max(0.0, land_cost * (1 - equity_ratio)))
+    pf_amount = int(max(0.0, total_cost - equity_won - bridge_amount))
+
+    # ── finance_cost_engine 재사용(이자·수수료) ──
+    bridge = calculate_bridge_loan(
+        amount_won=bridge_amount, months=max(1, req.bridge_months)
+    )
+    pf = calculate_pf_loan(
+        amount_won=pf_amount,
+        months=max(1, req.pf_months),
+        credit_grade=req.credit_grade,
+        presale_ratio=req.presale_ratio,
+    )
+
+    total_debt = bridge_amount + pf_amount
+    total_finance_cost = bridge["total_bridge_cost_won"] + pf["total_pf_cost_won"]
+
+    # ── LTV(총부채/총사업비), DSCR(연 NOI/연 부채상환액) — 표준 비율식 ──
+    ltv = round(total_debt / total_cost, 4) if total_cost > 0 else 0.0
+
+    # 연간 이자(부채상환액 근사): PF 잔액×PF금리 + 브릿지 잔액×브릿지금리
+    annual_debt_service = pf_amount * pf["rate"] + bridge_amount * bridge["rate"]
+    dscr: float | None = None
+    if req.annual_noi_won is not None and annual_debt_service > 0:
+        dscr = round(float(req.annual_noi_won) / annual_debt_service, 2)
+
+    return {
+        "total_project_cost_won": int(total_cost),
+        "equity_won": int(equity_won),
+        "equity_ratio": round(equity_ratio, 4),
+        "pf_loan": {
+            "amount_won": pf_amount,
+            "rate": pf["rate"],
+            "interest_won": pf["interest_won"],
+            "guarantee_fee_won": pf["guarantee_fee_won"],
+            "months": pf["months"],
+            "total_cost_won": pf["total_pf_cost_won"],
+        },
+        "bridge_loan": {
+            "amount_won": bridge_amount,
+            "rate": bridge["rate"],
+            "interest_won": bridge["interest_won"],
+            "arrangement_fee_won": bridge["arrangement_fee_won"],
+            "months": bridge["months"],
+            "total_cost_won": bridge["total_bridge_cost_won"],
+        },
+        "total_debt_won": total_debt,
+        "ltv": ltv,
+        "dscr": dscr,
+        "annual_debt_service_won": int(annual_debt_service),
+        "total_financing_cost_won": total_finance_cost,
+    }
+
+
+@router.post("/development-finance")
+async def development_finance(req: DevelopmentFinanceRequest):
+    """개발금융(PF·브릿지·이자·LTV·DSCR·자기자본비율) 산출.
+
+    수지분석(총사업비)·공사비·토지비를 입력으로 finance_cost_engine을 재사용해
+    PF대출·금리·총이자·LTV·DSCR을 반환. 새 금융계산 로직 미작성(엔진 재사용).
+    """
+    try:
+        return _build_development_finance(req)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(
+            status_code=422, detail=f"개발금융 산정 실패: {str(e)[:160]}"
+        )
+
+
 @router.post("/cashflow/excel")
 async def cashflow_excel(req: CashflowRequest):
     """월별 현금흐름을 Excel(xlsx)로 다운로드."""
