@@ -240,6 +240,7 @@ const LABELS: Record<Locale, Labels> = {
 /* ── Formatters ── */
 
 function formatCurrency(locale: string, value: number) {
+  if (value == null || !Number.isFinite(value)) return "—";
   return new Intl.NumberFormat(locale, {
     style: "currency",
     currency: "KRW",

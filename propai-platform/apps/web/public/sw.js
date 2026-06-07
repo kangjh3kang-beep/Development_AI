@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v93-array-guard-all";
+const CACHE_NAME = "propai-v94-avm-parcel-fix";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

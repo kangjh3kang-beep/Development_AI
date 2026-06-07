@@ -468,12 +468,19 @@ class AVMService:
         2순위: 공시지가 × 면적 × 보정계수
         3순위: 면적 × 500만원 (최종 폴백)
         """
-        # 1순위: 비교 사례 평균
-        if comparables:
-            prices = [c["price_10k_won"] for c in comparables if c.get("price_10k_won", 0) > 0]
-            if prices:
-                avg_price_10k = sum(prices) / len(prices)
-                return float(avg_price_10k * 10_000)  # 만원 → 원
+        # 1순위: 비교 사례 — 면적당 단가(원/㎡) 중앙값 × 대상 면적(단위 정합).
+        # (이전: 총액 평균을 그대로 반환 → 면적 다른 비교사례·세대총액을 부지면적으로 나눠 ㎡단가 왜곡)
+        if comparables and area_sqm > 0:
+            per_sqm: list[float] = []
+            for c in comparables:
+                p = c.get("price_10k_won", 0) or 0
+                a = c.get("area_m2", 0) or 0
+                if p > 0 and a > 0:
+                    per_sqm.append((p * 10_000) / a)  # 원/㎡
+            if per_sqm:
+                per_sqm.sort()
+                median_per_sqm = per_sqm[len(per_sqm) // 2]
+                return float(median_per_sqm * area_sqm)
 
         # 2순위: 공시지가 기반 (공시지가 × 면적 × 1.5 보정)
         official_price = features.get("land_official_price", 0)
