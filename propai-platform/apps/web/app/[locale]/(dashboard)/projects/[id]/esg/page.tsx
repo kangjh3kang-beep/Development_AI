@@ -7,6 +7,7 @@ import { isValidLocale, type Locale } from "@/i18n/config";
 import { useDictionary } from "@/hooks/use-dictionary";
 import { ProjectEsgWorkspaceClient } from "@/components/projects/ProjectEsgWorkspaceClient";
 import { NextStageCta } from "@/components/projects/NextStageCta";
+import GresbScoreCard from "@/components/esg/GresbScoreCard";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 
 export default function ESGPage() {
@@ -64,86 +65,66 @@ export default function ESGPage() {
             <h3 className="text-[10px] font-black text-[var(--text-tertiary)] uppercase tracking-[0.4em]">ESG Risk Matrix</h3>
           </div>
 
-          <div className="grid gap-6">
-            {(() => {
-              const hasData = esgData?.totalCarbonPerSqm != null;
-              const eScore = hasData ? Math.max(0, Math.min(100, 100 - (esgData.totalCarbonPerSqm ?? 0) / 10)) : 0;
-              const sScore = hasData ? Math.round(eScore * 0.85) : 0;
-              const gScore = hasData ? Math.round(eScore * 1.05) : 0;
-              const overall = hasData ? Math.round((eScore + sScore + gScore) / 3) : 0;
-              const grade = (s: number) => s >= 90 ? "S" : s >= 80 ? "A+" : s >= 70 ? "A" : s >= 60 ? "B" : "C";
-              return [
-                { label: "Environmental (E)", score: eScore, grade: grade(eScore), desc: hasData ? "탄소 분석 완료" : "분석 대기" },
-                { label: "Social (S)", score: sScore, grade: grade(sScore), desc: hasData ? "커뮤니티 영향" : "분석 대기" },
-                { label: "Governance (G)", score: gScore, grade: grade(gScore), desc: hasData ? "투명성 지표" : "분석 대기" },
-                { label: "Overall Rating", score: overall, grade: grade(overall), desc: hasData ? "종합 등급" : "ESG 분석을 실행하세요" },
-              ];
-            })().map((item, i) => (
-              <div key={item.label} className="relative rounded-[2rem] border border-[var(--line)] bg-[var(--surface-soft)] p-6 transition-all hover:bg-[var(--surface)] group/card">
-                <div className="flex items-center justify-between">
-                  <div className="space-y-1">
-                    <span className="text-[11px] font-black uppercase tracking-widest text-[var(--text-secondary)]">{item.label}</span>
-                    <p className="text-[9px] font-bold text-[var(--accent-strong)]/60 uppercase">{item.desc}</p>
+          {(() => {
+            const hasCarbon = esgData?.totalCarbonPerSqm != null;
+            // E(환경)만 실제 LCA 탄소 원단위(kgCO2e/㎡)에서 산출. S/G는 정량 평가 데이터가
+            // 없으므로 가짜 점수를 만들지 않고 정성 평가(GRESB 카드 참조)로 안내한다.
+            const eScore = hasCarbon
+              ? Math.max(0, Math.min(100, 100 - (esgData!.totalCarbonPerSqm ?? 0) / 10))
+              : null;
+            const grade = (s: number) =>
+              s >= 90 ? "S" : s >= 80 ? "A+" : s >= 70 ? "A" : s >= 60 ? "B" : "C";
+            return (
+              <div className="grid gap-6">
+                {/* E — 실 LCA 탄소 기반 */}
+                <div className="relative rounded-[2rem] border border-[var(--line)] bg-[var(--surface-soft)] p-6 transition-all hover:bg-[var(--surface)]">
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-1">
+                      <span className="text-[11px] font-black uppercase tracking-widest text-[var(--text-secondary)]">Environmental (E)</span>
+                      <p className="text-[9px] font-bold text-[var(--accent-strong)]/60 uppercase">
+                        {hasCarbon ? "LCA 탄소 원단위 기반" : "LCA 분석 대기"}
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <span className="block text-2xl font-[1000] text-[var(--text-primary)] leading-none mb-1 tracking-tighter">
+                        {eScore != null ? Math.round(eScore) : "—"}
+                        <span className="text-xs text-[var(--text-hint)] tracking-normal">/100</span>
+                      </span>
+                      {eScore != null && (
+                        <span className="inline-block rounded-lg bg-[var(--accent-soft)] px-3 py-1 text-[10px] font-black text-[var(--accent-strong)]">{grade(eScore)}</span>
+                      )}
+                    </div>
                   </div>
-                  <div className="text-right">
-                    <span className="block text-2xl font-[1000] text-[var(--text-primary)] leading-none mb-1 tracking-tighter">{item.score}<span className="text-xs text-[var(--text-hint)] tracking-normal">/100</span></span>
-                    <span className="inline-block rounded-lg bg-[var(--accent-soft)] px-3 py-1 text-[10px] font-black text-[var(--accent-strong)]">{item.grade}</span>
+                  <div className="mt-4 h-1.5 w-full rounded-full bg-[var(--line)] overflow-hidden">
+                    <motion.div
+                      initial={{ width: 0 }}
+                      animate={{ width: `${eScore ?? 0}%` }}
+                      transition={{ delay: 0.5, duration: 1 }}
+                      className="h-full bg-gradient-to-r from-[var(--accent-strong)] to-[var(--info)]"
+                    />
                   </div>
                 </div>
-                <div className="mt-4 h-1.5 w-full rounded-full bg-[var(--line)] overflow-hidden">
-                  <motion.div
-                    initial={{ width: 0 }}
-                    animate={{ width: `${item.score}%` }}
-                    transition={{ delay: 0.5 + i * 0.1, duration: 1 }}
-                    className="h-full bg-gradient-to-r from-[var(--accent-strong)] to-[var(--info)] shadow-[0_0_15px_var(--accent-strong)]/20"
-                  />
+
+                {/* S / G — 정량 데이터 없음(가짜 점수 금지). GRESB 스코어링으로 안내 */}
+                <div className="rounded-[2rem] border border-dashed border-[var(--line)] bg-[var(--surface-soft)] p-6">
+                  <span className="text-[11px] font-black uppercase tracking-widest text-[var(--text-secondary)]">Social (S) · Governance (G)</span>
+                  <p className="mt-2 text-xs font-medium text-[var(--text-tertiary)] leading-relaxed">
+                    본 단계는 LCA 탄소(E) 중심입니다. S/G는 정량 평가 데이터가 없어 점수를 표기하지 않습니다.
+                    아래 GRESB 스코어링에서 경영(G)·성과·개발 항목을 정량 산출하세요.
+                  </p>
                 </div>
               </div>
-            ))}
-          </div>
+            );
+          })()}
         </motion.div>
 
-        {/* Carbon Emission Intelligence */}
+        {/* GRESB ESG 스코어링 — 백엔드 /api/v1/gresb/score 실산식 */}
         <motion.div
           initial={{ opacity: 0, x: 30 }}
           animate={{ opacity: 1, x: 0 }}
           transition={{ delay: 0.3 }}
-          className="rounded-[3.5rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-12 shadow-[var(--shadow-2xl)] backdrop-blur-3xl overflow-hidden relative"
         >
-          <div className="absolute top-0 right-0 p-12 opacity-5 translate-x-1/4 -translate-y-1/4 text-[var(--text-primary)]">
-             <svg width="200" height="200" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1"><path d="M11 20A7 7 0 0 1 4 13a7 7 0 0 1 7-7 7 7 0 0 1 7 7c0 3.87-3.13 7-7 7z"/><path d="M17.5 19.5L22 24"/><path d="M22 17l-4.5 4.5"/></svg>
-          </div>
-
-           <div className="flex items-center gap-4 mb-10">
-            <div className="h-10 w-10 rounded-2xl bg-[var(--info-soft)] flex items-center justify-center text-[var(--info)]">
-              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
-            </div>
-            <h3 className="text-[10px] font-black text-[var(--text-tertiary)] uppercase tracking-[0.4em]">전과정 탄소분석 (LCA · Life-Cycle Analysis)</h3>
-          </div>
-
-          <div className="grid gap-4">
-            {[
-              { label: "전과정 탄소 배출 목표", value: "2,450", unit: "tCO2e", color: "text-[var(--text-primary)]" },
-              { label: "예상 건축 배출량", value: "3,120", unit: "tCO2e", color: "text-[var(--error)]" },
-              { label: "AI 기반 저감 대상량", value: "-670", unit: "tCO2e", color: "text-[var(--accent-strong)]" },
-              { label: "에너지 효율 등급", value: "1+++", unit: "Grade", color: "text-[var(--info)]" },
-            ].map((item) => (
-              <div key={item.label} className="flex items-center justify-between gap-6 rounded-[2rem] bg-[var(--surface-soft)] px-10 py-8 border border-[var(--line)] transition-all hover:bg-[var(--surface)] group/stat shadow-[var(--shadow-sm)]">
-                <span className="text-[11px] font-black uppercase tracking-widest text-[var(--text-tertiary)] group-hover/stat:text-[var(--text-secondary)] transition-colors max-w-[150px]">{item.label}</span>
-                <div className="text-right">
-                  <span className={`text-4xl font-[1000] tracking-[0.02em] ${item.color} leading-none block`}>{item.value}</span>
-                  <span className="text-[9px] font-black uppercase tracking-widest text-[var(--text-hint)]">{item.unit}</span>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          <div className="mt-8 rounded-3xl bg-[var(--accent-soft)] p-6 border border-[var(--accent-strong)]/10">
-            <p className="text-[10px] font-black text-[var(--accent-strong)] uppercase tracking-widest mb-2 italic">AI Insight</p>
-            <p className="text-xs font-bold text-[var(--text-secondary)] leading-relaxed italic">
-              &quot;고효율 단열재 및 BIPV 시스템 적용 시 저감 목표치의 82%를 달성할 수 있습니다.&quot;
-            </p>
-          </div>
+          <GresbScoreCard />
         </motion.div>
       </div>
 

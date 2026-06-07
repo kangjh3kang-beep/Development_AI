@@ -94,8 +94,13 @@ class LCAService:
 
     def calculate_b6_operational_energy(self, floor_area_sqm: float,
                                          energy_intensity_kwh_per_sqm: float = 120.0,
-                                         grid_emission_factor: float = 0.4781) -> Dict:
-        """B6 운영 에너지 GWP (한국 전력 배출계수 0.4781)"""
+                                         grid_emission_factor: float = 0.4781,
+                                         intensity_source: str = "기본추정(주거 1차에너지 120)") -> Dict:
+        """B6 운영 에너지 GWP (한국 전력 배출계수 0.4781).
+
+        energy_intensity_kwh_per_sqm은 BEEC 1차에너지 원단위(kWh/㎡·yr)를 받는다.
+        값이 없으면 기본 120을 쓰되 intensity_source로 출처를 명시한다.
+        """
         annual_energy_kwh = floor_area_sqm * energy_intensity_kwh_per_sqm
         annual_gwp = annual_energy_kwh * grid_emission_factor
         lifecycle_gwp = annual_gwp * 50
@@ -103,6 +108,8 @@ class LCAService:
             "phase": "B6", "annual_energy_kwh": round(annual_energy_kwh, 1),
             "annual_gwp_kgco2e": round(annual_gwp, 1),
             "lifecycle_gwp_50yr_kgco2e": round(lifecycle_gwp, 1),
+            "energy_intensity_kwh_per_sqm": energy_intensity_kwh_per_sqm,
+            "energy_intensity_source": intensity_source,
             "grid_emission_factor_kgco2e_per_kwh": grid_emission_factor,
             "standard": "ISO 14040:2006 Phase B6"
         }
@@ -141,10 +148,46 @@ class LCAService:
             "basis": "A4/A5/B1-B5/C는 A1-A3 대비 비율기반 추정 — EPD 확보 시 정밀화",
         }
 
+    @staticmethod
+    def _beec_intensity_for(building_type: str) -> tuple[float, str]:
+        """energy_service(BEEC)의 건물유형별 표준 1차에너지 원단위(3등급 기준)를 반환.
+
+        에너지 분석 입력이 없을 때의 명시적 기본값. 출처를 함께 표기한다.
+        """
+        try:
+            from app.services.energy.energy_service import EnergyService
+            intensity_map = EnergyService.ENERGY_INTENSITY_BY_TYPE.get(
+                building_type, EnergyService.ENERGY_INTENSITY_BY_TYPE["apartment"]
+            )
+            intensity = float(intensity_map.get("3", intensity_map.get("1", 130)))
+            return intensity, f"BEEC 3등급 표준원단위({building_type}, energy_service)"
+        except Exception:
+            return 120.0, "기본추정(주거 1차에너지 120)"
+
     def calculate_total_lca(self, material_quantities: Dict[str, float],
-                            floor_area_sqm: float) -> Dict:
+                            floor_area_sqm: float,
+                            building_type: str = "apartment",
+                            energy_intensity_kwh_per_sqm: float | None = None) -> Dict:
+        """전생애(whole-life) LCA.
+
+        B6 운영에너지는 energy_service(BEEC)의 1차에너지 원단위와 디커플링한다.
+        energy_intensity_kwh_per_sqm이 주어지면 그 값을 B6에 반영하고, 없으면
+        building_type 기준 BEEC '3등급' 표준 원단위를 출처와 함께 사용한다.
+        """
         a1a3 = self.calculate_a1_a3(material_quantities)
-        b6 = self.calculate_b6_operational_energy(floor_area_sqm)
+        if energy_intensity_kwh_per_sqm is not None and energy_intensity_kwh_per_sqm > 0:
+            b6 = self.calculate_b6_operational_energy(
+                floor_area_sqm,
+                energy_intensity_kwh_per_sqm=energy_intensity_kwh_per_sqm,
+                intensity_source="입력값(BEEC 1차에너지 원단위)",
+            )
+        else:
+            beec_intensity, beec_source = self._beec_intensity_for(building_type)
+            b6 = self.calculate_b6_operational_energy(
+                floor_area_sqm,
+                energy_intensity_kwh_per_sqm=beec_intensity,
+                intensity_source=beec_source,
+            )
         whole = self.calculate_whole_life(
             a1a3["total_gwp_kgco2e"], b6["lifecycle_gwp_50yr_kgco2e"])
         total_gwp = whole["whole_life_total_kgco2e"]  # 전생애 총계로 격상

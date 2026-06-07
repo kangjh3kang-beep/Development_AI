@@ -14,7 +14,7 @@ import { useLandScheduleStore } from "@/store/useLandScheduleStore";
 const CTX_KEYS = [
   "projectId", "projectName", "projectStatus",
   "completedStages", "currentStage",
-  "siteAnalysis", "designData", "feasibilityData", "esgData", "complianceData",
+  "siteAnalysis", "designData", "feasibilityData", "costData", "esgData", "complianceData",
   "analysisResults", "snapshots",
 ] as const;
 

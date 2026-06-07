@@ -4,6 +4,7 @@ import { useState, useCallback } from "react";
 import { Button, Card, CardContent, CardTitle } from "@propai/ui";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { TrustBadge } from "@/components/common/TrustBadge";
+import { apiClient, ApiClientError } from "@/lib/api-client";
 
 /* ── Types ── */
 
@@ -361,44 +362,40 @@ export function BankReadyReportBuilder() {
     setError(null);
     setReport(null);
     try {
-      // 로컬에서 보고서 생성 (백엔드 불필요)
-      await new Promise((r) => setTimeout(r, 500));
+      // 원장(ledger) 권위소스 병합 + 10섹션 종합은 백엔드 단일 출처에서 수행한다.
+      // 프론트 store는 식별자(project_id/pnu/address) 전달 + 미적재분 보조 입력으로만 사용한다.
       const pd = buildProjectData();
-      const selected = Array.from(selectedSections);
-      const sections: ReportSection[] = ALL_SECTIONS
-        .filter((s) => selected.includes(s.id))
-        .map((s) => {
-          const hasData = sectionHasData(s.id);
-          let content: Record<string, unknown> = {};
-          if (s.id === "summary") content = { project_name: pd.project_name, ...(pd.site_analysis || {}) };
-          else if (s.id === "market") content = pd.market_analysis || {};
-          else if (s.id === "legal") content = pd.compliance || {};
-          else if (s.id === "design") content = pd.design || {};
-          else if (s.id === "unit_mix") content = pd.unit_mix || {};
-          else if (s.id === "feasibility") content = pd.feasibility || {};
-          else if (s.id === "finance") content = pd.finance || {};
-          else if (s.id === "risk") content = pd.monte_carlo || {};
-          else if (s.id === "esg") content = { ...(pd.esg || {}), ...(pd.gresb || {}) };
-          else content = {};
-          return { id: s.id, title: s.title, has_data: hasData, content };
-        });
-      const filled = sections.filter((s) => s.has_data).length;
-      const result: BankReport = {
-        meta: {
-          title: `${pd.project_name || "프로젝트"} 사업성 분석 보고서`,
-          template: template === "bank" ? "금융기관 제출용" : "내부 검토용",
-          generated_at: new Date().toISOString(),
-          generated_by: "PropAI Platform",
-          legal_disclaimer: "본 보고서는 AI 기반 자동 분석 결과이며, 최종 투자 판단은 전문가 자문을 받으시기 바랍니다.",
-          data_basis_date: new Date().toLocaleDateString("ko-KR"),
+      const result = await apiClient.post<BankReport>("/bank-report/generate", {
+        body: {
+          project_data: pd,
+          selected_sections: Array.from(selectedSections),
+          template,
+          project_id: projectId || undefined,
+          pnu: siteAnalysis?.pnu || undefined,
+          address: siteAnalysis?.address || undefined,
         },
-        sections,
-        completeness: { total: sections.length, filled, empty: sections.length - filled, pct: sections.length > 0 ? Math.round((filled / sections.length) * 100) : 0 },
-      };
+        useMock: false,
+        timeoutMs: 90000,
+      });
+
+      if (!result || !Array.isArray(result.sections) || result.sections.length === 0) {
+        // 무목업: 원장·store 모두 비어 종합할 실데이터가 없으면 가짜 채움 없이 정직 안내.
+        setError(
+          "보고서로 종합할 분석 데이터가 없습니다. 부지분석·법규·수지 등 선행 분석을 먼저 실행해 주세요.",
+        );
+        return;
+      }
+
       setReport(result);
       setExpandedSections(new Set(result.sections.filter((s) => s.has_data).map((s) => s.id)));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "보고서 생성 중 오류가 발생했습니다.");
+      if (err instanceof ApiClientError && (err.status === 401 || err.status === 403)) {
+        setError("보고서 생성 권한이 없습니다. 로그인 또는 구독 상태를 확인해 주세요.");
+      } else if (err instanceof ApiClientError && err.status === 404) {
+        setError("선행 분석 데이터를 찾을 수 없습니다. 부지분석·수지 등 분석을 먼저 실행해 주세요.");
+      } else {
+        setError(err instanceof Error ? err.message : "보고서 생성 중 오류가 발생했습니다.");
+      }
     } finally {
       setLoading(false);
     }

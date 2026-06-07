@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v78-legal-rich";
+const CACHE_NAME = "propai-v79-p0p1-demock";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

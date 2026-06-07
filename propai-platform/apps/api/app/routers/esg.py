@@ -23,6 +23,9 @@ class LCARequest(BaseModel):
     # 자재별 수량(dict) 또는 제품 EPD 포함 리스트(제품수준 EPD)
     material_quantities: Union[Dict[str, float], List[LCAMaterialItem]]
     floor_area_sqm: float
+    building_type: str = "apartment"
+    # BEEC 1차에너지 원단위(kWh/㎡·yr) — 에너지 분석 결과 연동(없으면 표준 원단위)
+    energy_intensity_kwh_per_sqm: float | None = None
 
 class LCCRequest(BaseModel):
     construction_cost_krw: float
@@ -40,7 +43,12 @@ async def calculate_lca(req: LCARequest, current_user: User = Depends(get_curren
     mq = req.material_quantities
     if isinstance(mq, list):
         mq = [it.model_dump() for it in mq]
-    raw = lca_service.calculate_total_lca(mq, req.floor_area_sqm)
+    raw = lca_service.calculate_total_lca(
+        mq,
+        req.floor_area_sqm,
+        building_type=req.building_type,
+        energy_intensity_kwh_per_sqm=req.energy_intensity_kwh_per_sqm,
+    )
 
     # ── 프론트(LcaCalculationResponse) 계약에 맞춰 변환 ──
     a1a3 = raw.get("a1_a3", {})

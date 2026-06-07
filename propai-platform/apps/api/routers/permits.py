@@ -117,22 +117,62 @@ async def check_building_compliance(
     )
 
 
-@router.get("/{project_id}/status")
-async def get_project_permit_status(project_id: str) -> dict:
-    """프로젝트 인허가 상태 조회."""
-    return {
-        "project_id": project_id,
-        "stages": [
-            {"name": "사전검토", "status": "completed", "date": "2026-01-15"},
-            {"name": "건축허가", "status": "in_progress", "date": None},
-            {"name": "착공신고", "status": "pending", "date": None},
-            {"name": "사용승인", "status": "pending", "date": None},
-        ],
-        "current_stage": "건축허가",
-        "overall_progress_pct": 25,
-        "documents_submitted": 3,
-        "documents_required": 12,
-    }
+class PermitFeasibilityRequest(BaseModel):
+    """용도지역 기반 개발방식별 인허가 가능성(허용/불가/복잡도) 조회 요청."""
+
+    zone_type: str
+
+
+class PermitFeasibilityItem(BaseModel):
+    development_type: str = ""
+    type_name: str = ""
+    zone_type: str = ""
+    is_permitted: bool = False
+    permit_complexity: int = 3
+    complexity_label: str = ""
+    reason: str = ""
+
+
+class PermitFeasibilityResponse(BaseModel):
+    zone_type: str = ""
+    permitted_count: int = 0
+    total_count: int = 0
+    items: list[PermitFeasibilityItem] = Field(default_factory=list)
+    summary: str = ""
+
+
+@router.post("/feasibility-matrix", response_model=PermitFeasibilityResponse)
+async def get_permit_feasibility_matrix(
+    req: PermitFeasibilityRequest,
+) -> PermitFeasibilityResponse:
+    """용도지역(zone_type) 기준 개발방식별 인허가 가능/불가·복잡도를 산출한다.
+
+    permit_validator(ZONE_PERMIT_MATRIX·PERMIT_COMPLEXITY) 실엔진을 그대로 노출하여,
+    해당 용도지역에서 어떤 개발방식이 가능/불가/조건부인지를 프로젝트별로 제공한다.
+    """
+    from app.services.feasibility.permit_validator import (
+        DEVELOPMENT_TYPE_NAMES,
+        check_permit_feasibility,
+    )
+
+    zone = (req.zone_type or "").strip()
+    if not zone:
+        raise HTTPException(status_code=400, detail="용도지역(zone_type)이 필요합니다.")
+
+    items = [
+        PermitFeasibilityItem(**check_permit_feasibility(code, zone))
+        for code in DEVELOPMENT_TYPE_NAMES
+    ]
+    # 가능한 것 먼저, 그다음 복잡도 낮은 순
+    items.sort(key=lambda x: (not x.is_permitted, x.permit_complexity))
+    permitted = sum(1 for it in items if it.is_permitted)
+    return PermitFeasibilityResponse(
+        zone_type=zone,
+        permitted_count=permitted,
+        total_count=len(items),
+        items=items,
+        summary=f"{zone}에서 {permitted}/{len(items)}개 개발방식 인허가 가능",
+    )
 
 
 @router.post("/submit", response_model=PermitStatusResponse)

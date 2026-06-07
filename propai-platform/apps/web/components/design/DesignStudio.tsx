@@ -64,6 +64,8 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
   const { isReady } = useAIReady();
   const { mutate, data: aiResult, isPending, error } = useAIAnalyze<DesignResult>();
   const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
+  const updateDesignData = useProjectContextStore((s) => s.updateDesignData);
+  const markStageComplete = useProjectContextStore((s) => s.markStageComplete);
   const [easy, setEasy] = useState(false);   // 일반인용 쉬운 설명 토글
 
   const [form, setForm] = useState({ landArea: "500", zoning: "제2종일반주거지역", buildingUse: "공동주택" });
@@ -109,6 +111,41 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
 
   const ai = aiResult?.data;
   const calc = localCalc;
+
+  // 설계 산출값(연면적·층수·건폐율·용적률·용도)을 컨텍스트 store에 기록.
+  // BIM(ProjectBimWorkspaceClient)이 designData.totalGfaSqm을 쓰도록 하여
+  // 대지면적(siteAnalysis.landAreaSqm) 폴백 오용을 방지한다.
+  // 무한루프 가드: 산출 확정값만(calc 존재 시), 현재 store 값과 다를 때만 기록.
+  useEffect(() => {
+    if (!calc) return;
+    const next = {
+      totalGfaSqm: ai?.totalGrossArea?.value ?? calc.maxGrossArea,
+      floorCount: ai?.maxFloors ?? calc.maxFloors,
+      bcr: ai?.buildingCoverage?.value ?? calc.buildingCoverage,
+      far: ai?.floorAreaRatio?.value ?? calc.floorAreaRatio,
+      buildingType: form.buildingUse,
+    };
+    const cur = useProjectContextStore.getState().designData;
+    const unchanged =
+      cur != null &&
+      cur.totalGfaSqm === next.totalGfaSqm &&
+      cur.floorCount === next.floorCount &&
+      cur.bcr === next.bcr &&
+      cur.far === next.far &&
+      cur.buildingType === next.buildingType;
+    if (unchanged) return;
+    updateDesignData(next);
+    markStageComplete("design");
+  }, [
+    calc,
+    ai?.totalGrossArea?.value,
+    ai?.maxFloors,
+    ai?.buildingCoverage?.value,
+    ai?.floorAreaRatio?.value,
+    form.buildingUse,
+    updateDesignData,
+    markStageComplete,
+  ]);
 
   return (
     <div className="space-y-8">
