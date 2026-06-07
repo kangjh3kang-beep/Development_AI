@@ -350,6 +350,7 @@ class AuctionStep1Service:
 
     async def detail_live(
         self, *, service_key: Optional[str], cltr_mng_no: str, pbct_cdtn_no: str,
+        pnu: Optional[str] = None,
     ) -> dict[str, Any]:
         """물건상세 입찰정보(getCltrBidInf2)로 유찰누적횟수·면적·이미지·이전입찰내역을 조회한다.
 
@@ -358,40 +359,44 @@ class AuctionStep1Service:
         실패/무자료/비공개 → unavailable + reason(가짜 금지). est_win(낙찰가능가) 부착.
         """
         client = OnbidClient(service_key)
+        info: Optional[dict[str, Any]] = None
+        unavailable_reason: Optional[str] = None
         try:
-            info = await client.get_cltr_bid_info(cltr_mng_no, pbct_cdtn_no)
-            if info.get("data_source") != "onbid_live":
+            raw_info = await client.get_cltr_bid_info(cltr_mng_no, pbct_cdtn_no)
+            if raw_info.get("data_source") != "onbid_live":
                 # 상세 입찰정보가 무자료/실패면 결과상세로 보강 시도(있으면).
                 fallback = await client.get_bid_result_detail(cltr_mng_no, pbct_cdtn_no)
                 if fallback.get("item") is None:
-                    return {
-                        "item": None,
-                        "data_source": "unavailable",
-                        "reason": info.get("reason") or fallback.get("reason")
-                        or "온비드 물건상세 무자료",
+                    # ONBID 상세 무자료 — 즉시 unavailable 반환하지 않고, 아래에서 PNU 토지특성으로
+                    # 부분 보강(토지면적·용도지역·공시지가)을 시도한다(나대지·입찰진행중 등).
+                    unavailable_reason = (
+                        raw_info.get("reason") or fallback.get("reason")
+                        or "온비드 물건상세 무자료"
+                    )
+                    info = None
+                else:
+                    info = {
+                        "cltr_mng_no": cltr_mng_no,
+                        "pbct_cdtn_no": pbct_cdtn_no,
+                        "fail_count": None,
+                        "land_area": None,
+                        "bld_area": None,
+                        "appraisal_price": None,
+                        "min_bid_price": None,
+                        "win_rate": None,
+                        "win_price": None,
+                        "image_url": None,
+                        "usage": None,
+                        "address": None,
+                        "restriction": None,
+                        "status": None,
+                        "round_count": 0,
+                        "prev_bids": [],
+                        "raw": [fallback["item"]],
+                        "data_source": "onbid_live",
                     }
-                raw = fallback["item"]
-                info = {
-                    "cltr_mng_no": cltr_mng_no,
-                    "pbct_cdtn_no": pbct_cdtn_no,
-                    "fail_count": None,
-                    "land_area": None,
-                    "bld_area": None,
-                    "appraisal_price": None,
-                    "min_bid_price": None,
-                    "win_rate": None,
-                    "win_price": None,
-                    "image_url": None,
-                    "usage": None,
-                    "address": None,
-                    "restriction": None,
-                    "status": None,
-                    "round_count": 0,
-                    "prev_bids": [],
-                    "raw": [raw],
-                    "data_source": "onbid_live",
-                }
             else:
+                info = raw_info
                 # 결과상세(낙찰가율/낙찰가) 병합 — 비어있는 값만 채움(실패 무시).
                 try:
                     result = await client.get_bid_result_detail(cltr_mng_no, pbct_cdtn_no)
@@ -413,8 +418,93 @@ class AuctionStep1Service:
         finally:
             await client.close()
 
+        # ── PNU 토지특성 보강 — ONBID가 토지면적/용도지역을 안 주거나 상세 무자료여도,
+        #    PNU(순위 목록 제공)로 NED getLandCharacteristics를 호출해 토지면적·용도지역·
+        #    공시지가를 채운다(가짜 금지·실데이터). 나대지 등 "기본정보 누락" 해소.
+        land_extra: Optional[dict[str, Any]] = None
+        aerial: dict[str, Any] = {}
+        if pnu:
+            try:
+                from app.services.external_api.vworld_service import VWorldService
+
+                vw = VWorldService()
+                land_extra = await vw.get_land_characteristics(pnu)
+                # 항공뷰: ONBID가 물건사진을 안 주는 나대지·토지도 실제 항공 정사영상을 제공한다.
+                # PNU→필지 중심좌표→ digital-twin 항공 프록시(키 비노출) URL. (가짜 금지·실데이터)
+                try:
+                    from shapely.geometry import shape
+
+                    feat = await vw.get_parcel_by_pnu(pnu)
+                    if feat and feat.get("geometry"):
+                        c = shape(feat["geometry"]).centroid
+                        lat, lon = float(c.y), float(c.x)
+                        if lat and lon:
+                            aerial = {
+                                "lat": lat,
+                                "lon": lon,
+                                "aerial_image_url": (
+                                    f"/api/v1/digital-twin/aerial-image"
+                                    f"?lat={lat}&lon={lon}&zoom=17"
+                                ),
+                            }
+                except Exception as ge:  # noqa: BLE001
+                    logger.warning("PNU 항공뷰 좌표 보강 실패(무시): %s", str(ge)[:120])
+            except Exception as e:  # noqa: BLE001
+                logger.warning("PNU 토지특성 보강 실패(무시): %s", str(e)[:120])
+
+        if info is None:
+            # ONBID 상세 무자료 — PNU 보강분이 있으면 부분 제공, 없으면 정직하게 unavailable.
+            if land_extra and (land_extra.get("area_sqm") or land_extra.get("zone_type")):
+                item = {
+                    "cltr_mng_no": cltr_mng_no,
+                    "pbct_cdtn_no": pbct_cdtn_no,
+                    "land_area": land_extra.get("area_sqm") or None,
+                    "bld_area": None,
+                    "zone_type": land_extra.get("zone_type") or None,
+                    "land_category": land_extra.get("land_category") or None,
+                    "official_price_per_sqm": land_extra.get("official_price_per_sqm") or None,
+                    "land_area_source": "NED(getLandCharacteristics)",
+                    "fail_count": None,
+                    "appraisal_price": None,
+                    "min_bid_price": None,
+                    "win_rate": None,
+                    "win_price": None,
+                    "image_url": None,
+                    "prev_bids": [],
+                    "pnu": pnu,
+                    **aerial,
+                }
+                return {
+                    "item": self._attach_est_win(item),
+                    "data_source": "onbid_unavailable+ned_land",
+                    "reason": unavailable_reason,
+                }
+            return {
+                "item": None,
+                "data_source": "unavailable",
+                "reason": unavailable_reason or "온비드 물건상세 무자료",
+            }
+
         # est_win 부착(감정가+유찰횟수 실데이터 사용).
         enriched = self._attach_est_win(dict(info))
+        # ONBID가 토지면적/용도지역을 안 준 경우 NED 보강분으로 채움(있는 값은 보존).
+        if land_extra:
+            if not enriched.get("land_area") and land_extra.get("area_sqm"):
+                enriched["land_area"] = land_extra["area_sqm"]
+                enriched["land_area_source"] = "NED(getLandCharacteristics)"
+            if not enriched.get("zone_type") and land_extra.get("zone_type"):
+                enriched["zone_type"] = land_extra["zone_type"]
+            if not enriched.get("official_price_per_sqm") and land_extra.get("official_price_per_sqm"):
+                enriched["official_price_per_sqm"] = land_extra["official_price_per_sqm"]
+            if not enriched.get("land_category") and land_extra.get("land_category"):
+                enriched["land_category"] = land_extra["land_category"]
+            if pnu and not enriched.get("pnu"):
+                enriched["pnu"] = pnu
+        # 항공뷰: ONBID 물건사진이 없을 때 프론트가 대체 이미지로 사용(라벨 구분).
+        if aerial:
+            enriched.setdefault("lat", aerial.get("lat"))
+            enriched.setdefault("lon", aerial.get("lon"))
+            enriched.setdefault("aerial_image_url", aerial.get("aerial_image_url"))
         return {"item": enriched, "data_source": "onbid_live"}
 
     async def search_bid_results(

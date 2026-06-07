@@ -309,18 +309,21 @@ async def auction_sync(
 async def auction_detail(
     cltr_mng_no: str = Query(..., description="물건관리번호(cltrMngNo)"),
     pbct_cdtn_no: str = Query(..., description="공매조건번호(pbctCdtnNo)"),
+    pnu: str | None = Query(None, description="필지고유번호(19자리) — 토지면적·용도지역 NED 보강용"),
     current_user: CurrentUser = Depends(RequirePermission("auction", "read")),
     service=Depends(_step1_service),
 ) -> dict[str, Any]:
     """순위/목록 아이템의 cltrMngNo+pbctCdtnNo로 온비드 물건상세 입찰정보를 조회한다.
 
     유찰누적횟수·면적·이미지URL·이전입찰내역·낙찰가율(병합) 등을 정규화해 반환한다.
+    ONBID가 토지면적/용도지역을 안 주면 pnu로 NED 토지특성을 보강한다(나대지·입찰진행중 대응).
     무자료/비공개/이미지없음은 null(가짜 금지), 키 미설정/실패는 unavailable+reason.
     """
     try:
         return await service.detail_live(
             service_key=_onbid_service_key(),
             cltr_mng_no=cltr_mng_no, pbct_cdtn_no=pbct_cdtn_no,
+            pnu=(pnu or None),
         )
     except Exception as e:  # noqa: BLE001
         return {

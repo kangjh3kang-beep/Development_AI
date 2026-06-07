@@ -6,7 +6,9 @@ import { motion } from "framer-motion";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import { AuctionMonitorPanel } from "@/components/auction/AuctionMonitorPanel";
-import { ApiClientError, apiClient } from "@/lib/api-client";
+import { ApiClientError, apiClient, resolveApiOrigin } from "@/lib/api-client";
+import { analyzeRegistry } from "@/lib/registry-analyze";
+import { useRouter } from "next/navigation";
 import type { Locale } from "@/i18n/config";
 
 // 백엔드 계약(prefix /api/v1/auction, 메인 인증 apiClient) — 무목업.
@@ -35,6 +37,7 @@ type AuctionItem = {
   valid_bidder_count?: number | null;
   land_area?: number | null;
   bld_area?: number | null;
+  pnu?: string | null;
 };
 
 // 상세 엔드포인트(GET /auction/detail) 응답
@@ -65,12 +68,43 @@ type AuctionDetail = {
   est_win_low?: number | null;
   est_win_high?: number | null;
   est_win_detail?: string | null;
+  // PNU 토지특성·항공뷰 보강(NED + VWorld)
+  pnu?: string | null;
+  zone_type?: string | null;
+  land_category?: string | null;
+  official_price_per_sqm?: number | null;
+  land_area_source?: string | null;
+  aerial_image_url?: string | null;
+  lat?: number | null;
+  lon?: number | null;
 };
 
 type AuctionDetailResponse = {
   item: AuctionDetail | null;
   data_source?: "onbid_live" | "unavailable" | string | null;
   reason?: string | null;
+};
+
+// 등기부등본 권리분석 결과(/registry/analyze) — 경매 상세 인라인 표시용 부분 타입
+type RegistryAnalysisResult = {
+  status?: string;
+  message?: string;
+  ai?: {
+    ownership?: {
+      current_owner?: string;
+      share?: string;
+      acquisition_date?: string;
+      acquisition_price?: string;
+      ownership_period?: string;
+    };
+    provisional_registration?: { exists?: boolean | null; detail?: string };
+    seizure?: Array<{ type?: string; holder?: string; detail?: string; date?: string }>;
+    mortgage?: Array<{ max_claim?: string; mortgagee?: string; date?: string }>;
+    other_rights?: string[];
+    rights_analysis?: string;
+    risks?: string[];
+  } | null;
+  fetched?: { has_pdf?: boolean; pdf_url?: string | null } | null;
 };
 
 type RankingResponse = {
@@ -851,16 +885,19 @@ function DetailModal({
   // 목록 아이템에 상세조회 키가 있으면 /auction/detail 실조회로 보강.
   const cltrMngNo = item.cltr_mng_no ?? item.cltrMngNo ?? null;
   const pbctCdtnNo = item.pbct_cdtn_no ?? null;
+  const itemPnu = item.pnu ?? null;
   const canFetchDetail = Boolean(cltrMngNo && pbctCdtnNo);
 
   const detailQuery = useQuery({
-    queryKey: ["auction", "detail", cltrMngNo, pbctCdtnNo],
+    queryKey: ["auction", "detail", cltrMngNo, pbctCdtnNo, itemPnu],
     enabled: canFetchDetail,
     queryFn: () =>
       apiClient.get<AuctionDetailResponse>(
         `/auction/detail${buildSearchParams({
           cltr_mng_no: cltrMngNo ?? "",
           pbct_cdtn_no: pbctCdtnNo ?? "",
+          // ONBID가 토지면적/이미지를 안 주면 PNU로 NED 토지특성·항공뷰 보강.
+          ...(itemPnu ? { pnu: itemPnu } : {}),
         })}`,
       ),
   });
@@ -890,18 +927,81 @@ function DetailModal({
   const estWinLow = safeNumber(detail?.est_win_low);
   const estWinHigh = safeNumber(detail?.est_win_high);
   const imageUrl = detail?.image_url && detail.image_url.trim() ? detail.image_url : null;
+  // 온비드 물건사진이 없으면(나대지 등) PNU 기반 실제 항공뷰(VWorld)로 대체 제공.
+  const aerialUrl =
+    !imageUrl && detail?.aerial_image_url
+      ? `${resolveApiOrigin()}${detail.aerial_image_url}`
+      : null;
   const prevBids = Array.isArray(detail?.prev_bids) ? detail!.prev_bids! : [];
+
+  // ── 사안별 미제공 사유(데이터 신뢰도) ──
+  const isLandOnly = /대지|토지|임야|전|답|잡종지|나대지/.test(
+    `${usageVal ?? ""}${detail?.land_category ?? ""}`,
+  );
+  const inProgress = /진행|입찰중|예정/.test(statusVal ?? "");
+  const minBidText =
+    minBidVal != null
+      ? formatBidPrice(minBidVal, locale)
+      : inProgress
+        ? "비공개 (입찰 진행 중 — 온비드 미공개)"
+        : "비공개 (온비드 미제공)";
+  const discountText =
+    item.discount_rate != null
+      ? formatPercent(item.discount_rate)
+      : "유찰 이력 없음 / 온비드 미제공";
+  const landAreaText =
+    landAreaVal != null
+      ? `${landAreaVal}㎡${detail?.land_area_source ? " · 토지대장(NED)" : ""}`
+      : "온비드·공부 미제공";
+  const bldAreaText =
+    bldAreaVal != null
+      ? `${bldAreaVal}㎡`
+      : isLandOnly
+        ? "해당없음 (나대지·토지 — 건물 없음)"
+        : "온비드 미제공";
+
+  // ── 등기부등본 권리분석(경매↔등기 시너지) ──
+  const router = useRouter();
+  const [regBusy, setRegBusy] = useState(false);
+  const [regResult, setRegResult] = useState<RegistryAnalysisResult | null>(null);
+  const [regErr, setRegErr] = useState<string | null>(null);
+  const [regProgress, setRegProgress] = useState<string>("");
+  const runRegistry = async () => {
+    const addr = typeof addressVal === "string" ? addressVal.trim() : "";
+    if (!addr && !itemPnu) {
+      setRegErr("주소·PNU 정보가 없어 권리분석을 할 수 없습니다.");
+      return;
+    }
+    setRegBusy(true);
+    setRegErr(null);
+    setRegProgress("등기부 발급·분석을 시작합니다…");
+    try {
+      const r = await analyzeRegistry<RegistryAnalysisResult>(
+        { address: addr || undefined, pnu: itemPnu ?? undefined },
+        setRegProgress,
+      );
+      setRegResult(r);
+    } catch (e) {
+      setRegErr(extractErrorMessage(e));
+    } finally {
+      setRegBusy(false);
+    }
+  };
 
   const rows: { label: string; value: string }[] = [
     { label: "물건관리번호", value: formatText(cltrMngNoVal) },
     { label: "주소", value: formatText(addressVal) },
     { label: "용도", value: formatText(usageVal) },
     { label: "감정가", value: formatCurrency(locale, appraisalVal) },
-    { label: "최저입찰가", value: formatBidPrice(minBidVal, locale) },
-    { label: "할인율", value: formatPercent(item.discount_rate) },
+    { label: "최저입찰가", value: minBidText },
+    { label: "할인율", value: discountText },
+    ...(detail?.zone_type ? [{ label: "용도지역", value: detail.zone_type }] : []),
+    ...(detail?.official_price_per_sqm
+      ? [{ label: "공시지가(㎡당)", value: formatCurrency(locale, detail.official_price_per_sqm) }]
+      : []),
     {
       label: "유찰횟수",
-      value: failCountVal == null ? "-" : `${failCountVal}회`,
+      value: failCountVal == null ? "비공개 (온비드 미제공)" : `${failCountVal}회`,
     },
     { label: "낙찰가율", value: formatPercent(winRateVal) },
     { label: "낙찰가격", value: formatBidPrice(winPriceVal, locale) },
@@ -909,14 +1009,8 @@ function DetailModal({
       label: "유효입찰자수",
       value: item.valid_bidder_count == null ? "-" : `${item.valid_bidder_count}명`,
     },
-    {
-      label: "토지면적",
-      value: landAreaVal == null ? "-" : `${landAreaVal}㎡`,
-    },
-    {
-      label: "건물면적",
-      value: bldAreaVal == null ? "-" : `${bldAreaVal}㎡`,
-    },
+    { label: "토지면적", value: landAreaText },
+    { label: "건물면적", value: bldAreaText },
     {
       label: "낙찰가능가(추정)",
       value:
@@ -958,16 +1052,24 @@ function DetailModal({
           </button>
         </div>
 
-        {/* 물건 이미지 (온비드 image_url 있으면 표시, 없으면 정직 플레이스홀더) */}
-        <div className="mb-4 flex h-44 w-full items-center justify-center overflow-hidden rounded-2xl border border-[var(--line)] bg-[var(--surface-muted)]">
+        {/* 물건 이미지: 온비드 물건사진 우선 → 없으면 PNU 기반 실제 항공뷰(VWorld) 대체 */}
+        <div className="relative mb-4 flex h-44 w-full items-center justify-center overflow-hidden rounded-2xl border border-[var(--line)] bg-[var(--surface-muted)]">
           {imageUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img src={imageUrl} alt="물건 이미지" className="h-full w-full object-cover" />
+          ) : aerialUrl ? (
+            <>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={aerialUrl} alt="대상지 항공뷰" className="h-full w-full object-cover" />
+              <span className="absolute bottom-1.5 right-2 rounded bg-black/55 px-2 py-0.5 text-[10px] font-bold text-white">
+                항공뷰 (VWorld) · 온비드 물건사진 미제공
+              </span>
+            </>
           ) : (
             <span className="text-xs font-bold text-[var(--text-hint)]">
               {detailQuery.isLoading
                 ? "이미지 불러오는 중…"
-                : "이미지 없음 (온비드 미제공)"}
+                : "이미지 없음 (온비드·항공뷰 미제공)"}
             </span>
           )}
         </div>
@@ -1055,11 +1157,117 @@ function DetailModal({
           </div>
         ) : null}
 
+        {/* ── 등기부등본 권리분석(경매↔등기 시너지) ── */}
+        <div className="mt-5 rounded-2xl border border-[var(--accent-strong)]/25 bg-[var(--accent-strong)]/5 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="min-w-0">
+              <p className="text-sm font-black text-[var(--text-primary)]">🔍 등기부등본 권리분석</p>
+              <p className="mt-0.5 text-[11px] text-[var(--text-secondary)]">
+                말소기준권리·인수권리·근저당·압류·가등기를 AI(법무사·변호사 관점)가 분석합니다.
+              </p>
+            </div>
+            <div className="flex shrink-0 gap-2">
+              <button
+                type="button"
+                onClick={runRegistry}
+                disabled={regBusy}
+                className="h-9 rounded-lg bg-[var(--accent-strong)] px-4 text-xs font-black text-white hover:opacity-90 disabled:opacity-50"
+              >
+                {regBusy ? "분석 중…" : "권리분석 실행"}
+              </button>
+              <button
+                type="button"
+                onClick={() => router.push(`/${locale}/registry-analysis`)}
+                className="h-9 rounded-lg border border-[var(--line-strong)] px-3 text-xs font-bold text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+              >
+                등기부등본 열람
+              </button>
+            </div>
+          </div>
+
+          {regBusy && regProgress ? (
+            <p className="mt-3 text-[11px] font-bold text-[var(--text-hint)]">{regProgress}</p>
+          ) : null}
+          {regErr ? (
+            <p className="mt-3 rounded-lg bg-[var(--surface-soft)] px-3 py-2 text-[11px] font-bold text-[var(--spot)]">
+              {regErr}
+            </p>
+          ) : null}
+
+          {regResult?.ai ? (
+            <div className="mt-3 space-y-2 text-xs">
+              {regResult.ai.ownership?.current_owner ? (
+                <RegRow label="소유자" value={`${regResult.ai.ownership.current_owner}${regResult.ai.ownership.share ? ` (${regResult.ai.ownership.share})` : ""}`} />
+              ) : null}
+              {regResult.ai.mortgage?.length ? (
+                <RegRow
+                  label="근저당"
+                  value={regResult.ai.mortgage
+                    .map((m) => `${m.mortgagee ?? ""} ${m.max_claim ?? ""}`.trim())
+                    .filter(Boolean)
+                    .join(" · ")}
+                />
+              ) : null}
+              {regResult.ai.seizure?.length ? (
+                <RegRow
+                  label="압류·가압류"
+                  value={regResult.ai.seizure
+                    .map((s) => `${s.type ?? ""} ${s.holder ?? ""}`.trim())
+                    .filter(Boolean)
+                    .join(" · ")}
+                />
+              ) : null}
+              {regResult.ai.provisional_registration?.exists ? (
+                <RegRow label="가등기" value={regResult.ai.provisional_registration.detail || "있음"} />
+              ) : null}
+              {regResult.ai.rights_analysis ? (
+                <div className="rounded-lg bg-[var(--surface-soft)] px-3 py-2">
+                  <p className="mb-1 text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)]">권리분석</p>
+                  <p className="leading-5 text-[var(--text-primary)]">{regResult.ai.rights_analysis}</p>
+                </div>
+              ) : null}
+              {regResult.ai.risks?.length ? (
+                <div className="rounded-lg border border-[var(--spot)]/30 bg-[var(--spot)]/10 px-3 py-2">
+                  <p className="mb-1 text-[10px] font-black uppercase tracking-widest text-[var(--spot)]">위험요소</p>
+                  <ul className="list-disc space-y-0.5 pl-4 text-[var(--text-primary)]">
+                    {regResult.ai.risks.map((r, i) => (
+                      <li key={i}>{r}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+              {regResult.fetched?.pdf_url ? (
+                <a
+                  href={regResult.fetched.pdf_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-block text-[11px] font-bold text-[var(--accent-strong)] underline"
+                >
+                  등기부등본 PDF 열기
+                </a>
+              ) : null}
+            </div>
+          ) : regResult && !regResult.ai ? (
+            <p className="mt-3 text-[11px] text-[var(--text-hint)]">
+              {regResult.message || "등기 권리분석 결과가 없습니다(연동 미설정 또는 무자료)."}
+            </p>
+          ) : null}
+        </div>
+
         <p className="mt-4 text-[10px] text-[var(--text-hint)]">
           감정가·낙찰가능가는 추정치이며 가정이 포함됩니다. 온비드 비공개 항목은
           &quot;비공개&quot;로 표기합니다.
         </p>
       </div>
+    </div>
+  );
+}
+
+function RegRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-start justify-between gap-3 border-b border-[var(--line)]/50 py-1.5">
+      <span className="shrink-0 text-[var(--text-hint)]">{label}</span>
+      <span className="text-right font-medium text-[var(--text-primary)]">{value || "-"}</span>
     </div>
   );
 }
