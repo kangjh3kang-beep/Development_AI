@@ -475,7 +475,7 @@ async def vcs_commit(
     current_user: User = Depends(get_current_user),
 ):
     """수지분석 커밋."""
-    vcs = FeasibilityVCSDB(db, project_id=_parse_project_id(project_id), tenant_id=current_user.organization_id)
+    vcs = FeasibilityVCSDB(db, project_id=_parse_project_id(project_id), tenant_id=current_user.tenant_id)
     result = await vcs.commit(req.snapshot, req.message)
     return {"sha": result["sha"], "message": result["message"], "timestamp": result.get("timestamp", "")}
 
@@ -488,7 +488,7 @@ async def vcs_rollback(
     current_user: User = Depends(get_current_user),
 ):
     """수지분석 롤백."""
-    vcs = FeasibilityVCSDB(db, project_id=_parse_project_id(project_id), tenant_id=current_user.organization_id)
+    vcs = FeasibilityVCSDB(db, project_id=_parse_project_id(project_id), tenant_id=current_user.tenant_id)
     result = await vcs.rollback(req.target_sha)
     if not result:
         raise HTTPException(status_code=404, detail="커밋을 찾을 수 없습니다")
@@ -503,7 +503,7 @@ async def vcs_log(
     current_user: User = Depends(get_current_user),
 ):
     """커밋 이력."""
-    vcs = FeasibilityVCSDB(db, project_id=_parse_project_id(project_id), tenant_id=current_user.organization_id)
+    vcs = FeasibilityVCSDB(db, project_id=_parse_project_id(project_id), tenant_id=current_user.tenant_id)
     log_entries = await vcs.log(max_count)
     return {
         "commits": [
@@ -522,7 +522,7 @@ async def vcs_diff(
     current_user: User = Depends(get_current_user),
 ):
     """두 커밋 간 diff."""
-    vcs = FeasibilityVCSDB(db, project_id=_parse_project_id(project_id), tenant_id=current_user.organization_id)
+    vcs = FeasibilityVCSDB(db, project_id=_parse_project_id(project_id), tenant_id=current_user.tenant_id)
     return await vcs.diff(sha_a, sha_b)
 
 
