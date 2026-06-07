@@ -30,6 +30,7 @@ export function FeasibilityEditorV2({ projectId }: Props) {
     activeTab,
     setActiveTab,
     result,
+    input,
     isCalculating,
     error,
     baselineNeedsInput,
@@ -65,6 +66,10 @@ export function FeasibilityEditorV2({ projectId }: Props) {
       totalRevenueWon: result.total_revenue_won ?? null,
       profitRatePct: result.profit_rate_pct ?? null,
       grade: result.grade ?? null,
+      // 투자수익성(ROI 뷰, analytics/investment) 정합용 — A를 단일 진실원으로.
+      roiPct: result.roi_pct ?? null,
+      npvWon: result.npv_won ?? null,
+      equityWon: input.equity_won ?? null,
     });
     setCostAtCalc(costData?.totalConstructionCostWon ?? null);
     // costData는 의도적으로 제외(결과 변경 시에만 stamp, 무한루프 방지).

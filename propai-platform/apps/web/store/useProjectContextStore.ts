@@ -90,6 +90,10 @@ interface FeasibilityData {
   totalRevenueWon: number | null;
   profitRatePct: number | null;
   grade: string | null;
+  // 투자수익성(ROI 뷰) 정합용 — 옵셔널·하위호환. reader 무영향, persist round-trip 보존.
+  equityWon?: number | null;
+  roiPct?: number | null;
+  npvWon?: number | null;
 }
 
 // 공사비 분석 결과(건축개요 기반) — 수지·사업성과 단일 데이터원으로 연동.
@@ -215,7 +219,9 @@ export interface ProjectContextState {
 
   updateSiteAnalysis: (data: Partial<SiteAnalysisData>) => void;
   updateDesignData: (data: DesignData) => void;
-  updateFeasibilityData: (data: FeasibilityData) => void;
+  // merge 패치 — 부분 writer(UnitMix/AutoRecommend)가 기존 totalCostWon 등을 보존하도록
+  // 기존 feasibilityData 위에 병합한다. 전체 객체를 넘기던 기존 호출도 동일하게 동작.
+  updateFeasibilityData: (data: Partial<FeasibilityData>) => void;
   updateCostData: (data: CostData) => void;
   updateEsgData: (data: EsgData) => void;
   updateComplianceData: (data: ComplianceData) => void;
@@ -571,7 +577,15 @@ export const useProjectContextStore = create<ProjectContextState>()(
       updateFeasibilityData: (data) => {
         set((state) =>
           withSnap(state, {
-            feasibilityData: data,
+            // merge: 기존값 보존 후 patch 적용(부분 writer가 totalCostWon을 null로 덮지 않도록).
+            feasibilityData: {
+              totalCostWon: null,
+              totalRevenueWon: null,
+              profitRatePct: null,
+              grade: null,
+              ...(state.feasibilityData ?? {}),
+              ...data,
+            } as FeasibilityData,
             updatedAt: stampedAt(state, "feasibility"),
           }),
         );

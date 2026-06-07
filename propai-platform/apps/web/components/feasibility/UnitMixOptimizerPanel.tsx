@@ -201,11 +201,9 @@ export function UnitMixOptimizerPanel() {
   function handleApplyToFeasibility() {
     if (!result) return;
 
+    // merge 패치 — 기존 totalCostWon(수지/공사비 산출분)을 보존(null로 덮지 않음).
     updateFeasibilityData({
-      totalCostWon: null,
       totalRevenueWon: result.total_revenue_won,
-      profitRatePct: null,
-      grade: null,
     });
     addAnalysisResult({
       module: "unit-mix",

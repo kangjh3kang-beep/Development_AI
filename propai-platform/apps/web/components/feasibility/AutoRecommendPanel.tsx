@@ -314,9 +314,8 @@ export function AutoRecommendPanel({ onClose, isModal = false, embedded = false 
     }) => {
       if (!selectedModel) return;
 
-      // Save to project context store
+      // Save to project context store — merge 패치(기존 totalCostWon 보존, null로 덮지 않음).
       ctxStore.updateFeasibilityData({
-        totalCostWon: null,
         totalRevenueWon: selectedModel.total_revenue_won,
         profitRatePct: selectedModel.profit_rate_pct,
         grade: selectedModel.grade,

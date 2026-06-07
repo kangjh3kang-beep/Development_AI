@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v85-cascade-healthboard";
+const CACHE_NAME = "propai-v86-feasibility-roi-merge";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",
