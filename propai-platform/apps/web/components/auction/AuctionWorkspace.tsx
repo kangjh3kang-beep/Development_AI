@@ -77,6 +77,11 @@ type AuctionDetail = {
   aerial_image_url?: string | null;
   lat?: number | null;
   lon?: number | null;
+  // 공고 물건정보(getPbancCltrInf2) 보강
+  property_type?: string | null;
+  disposal_method?: string | null;
+  usage_category?: string | null;
+  pbanc_mng_no?: string | null;
 };
 
 type AuctionDetailResponse = {
@@ -991,7 +996,9 @@ function DetailModal({
   const rows: { label: string; value: string }[] = [
     { label: "물건관리번호", value: formatText(cltrMngNoVal) },
     { label: "주소", value: formatText(addressVal) },
-    { label: "용도", value: formatText(usageVal) },
+    { label: "용도", value: formatText(detail?.usage_category ?? usageVal) },
+    ...(detail?.property_type ? [{ label: "재산유형", value: detail.property_type }] : []),
+    ...(detail?.disposal_method ? [{ label: "처분방식", value: detail.disposal_method }] : []),
     { label: "감정가", value: formatCurrency(locale, appraisalVal) },
     { label: "최저입찰가", value: minBidText },
     { label: "할인율", value: discountText },

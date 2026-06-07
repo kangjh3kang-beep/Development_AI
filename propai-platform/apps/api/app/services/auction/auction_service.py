@@ -452,6 +452,44 @@ class AuctionStep1Service:
             except Exception as e:  # noqa: BLE001
                 logger.warning("PNU 토지특성 보강 실패(무시): %s", str(e)[:120])
 
+        # ── 공고 물건정보(getPbancCltrInf2) 보강 — 유찰횟수·재산유형·처분방식·용도분류 ──
+        # getCltrBidInf2 raw에서 공고관리번호(pbancMngNo)를 얻어 호출(활용신청 승인 서비스).
+        # ONBID 순위/입찰 피드가 비우는 유찰횟수 등을 실데이터로 채운다.
+        pbanc_extra: dict[str, Any] = {}
+        try:
+            raws = (info or {}).get("raw") if isinstance((info or {}).get("raw"), list) else []
+            pbanc_mng_no = None
+            if raws and isinstance(raws[0], dict):
+                pbanc_mng_no = raws[0].get("pbancMngNo") or raws[0].get("PBANC_MNG_NO")
+            if pbanc_mng_no:
+                from app.services.auction.onbid_client import _parse_amount, _parse_int
+
+                client2 = OnbidClient(service_key)
+                try:
+                    pl = await client2.get_pbanc_cltr_list(str(pbanc_mng_no))
+                finally:
+                    await client2.close()
+                for cinfo in pl.get("items", []):
+                    if str(cinfo.get("cltrMngNo")) == str(cltr_mng_no):
+                        usage = " > ".join(
+                            x for x in [
+                                cinfo.get("cltrUsgLclsCtgrNm"),
+                                cinfo.get("cltrUsgMclsCtgrNm"),
+                                cinfo.get("cltrUsgSclsCtgrNm"),
+                            ] if x
+                        )
+                        pbanc_extra = {
+                            "fail_count": _parse_int(cinfo.get("usbdNft")),
+                            "property_type": (cinfo.get("prptDivNm") or "").strip() or None,
+                            "disposal_method": (cinfo.get("dspsMthodNm") or "").strip() or None,
+                            "usage_category": usage or None,
+                            "appraisal_price": _parse_amount(cinfo.get("apslEvlAmt")),
+                            "pbanc_mng_no": str(pbanc_mng_no),
+                        }
+                        break
+        except Exception as e:  # noqa: BLE001
+            logger.warning("getPbancCltrInf2 보강 실패(무시): %s", str(e)[:120])
+
         if info is None:
             # ONBID 상세 무자료 — PNU 보강분이 있으면 부분 제공, 없으면 정직하게 unavailable.
             if land_extra and (land_extra.get("area_sqm") or land_extra.get("zone_type")):
@@ -505,6 +543,15 @@ class AuctionStep1Service:
             enriched.setdefault("lat", aerial.get("lat"))
             enriched.setdefault("lon", aerial.get("lon"))
             enriched.setdefault("aerial_image_url", aerial.get("aerial_image_url"))
+        # 공고 물건정보(getPbancCltrInf2) 보강 — 유찰횟수·재산유형·처분방식·용도분류(빈 값만 채움).
+        if pbanc_extra:
+            if not enriched.get("fail_count") and pbanc_extra.get("fail_count") is not None:
+                enriched["fail_count"] = pbanc_extra["fail_count"]
+            if not enriched.get("appraisal_price") and pbanc_extra.get("appraisal_price"):
+                enriched["appraisal_price"] = pbanc_extra["appraisal_price"]
+            for k in ("property_type", "disposal_method", "usage_category", "pbanc_mng_no"):
+                if pbanc_extra.get(k) and not enriched.get(k):
+                    enriched[k] = pbanc_extra[k]
         return {"item": enriched, "data_source": "onbid_live"}
 
     async def search_bid_results(
