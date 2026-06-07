@@ -88,6 +88,23 @@ type AuctionDetail = {
   location_desc?: string | null;
   org_name?: string | null;
   jibun_address?: string | null;
+  // 입찰정보(getCltrBidInf2) — 입찰방법·보증금·잔대금·제출서류·제한
+  bid_info?: {
+    joint_bid?: string | null;
+    proxy_bid?: string | null;
+    e_guarantee?: string | null;
+    deposit_alt_doc?: string | null;
+    next_rank?: string | null;
+    deposit?: string | null;
+    balance_pay_method?: string | null;
+    balance_pay_term?: string | null;
+    bid_valid_criteria?: string | null;
+    submit_docs?: string | null;
+    qlfc_limit?: string | null;
+    region_limit?: string | null;
+    etc_limit?: string | null;
+    notice?: string | null;
+  } | null;
 };
 
 type AuctionDetailResponse = {
@@ -1183,6 +1200,63 @@ function DetailModal({
           </div>
         ) : null}
 
+        {/* ── 입찰정보 (getCltrBidInf2) ── */}
+        {detail?.bid_info ? (
+          <div className="mt-5">
+            <p className="mb-2 text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)]">
+              입찰정보
+            </p>
+            {/* 입찰방법 칩 */}
+            <div className="mb-3 flex flex-wrap gap-1.5">
+              {([
+                ["공동입찰", detail.bid_info.joint_bid],
+                ["대리입찰", detail.bid_info.proxy_bid],
+                ["전자보증서", detail.bid_info.e_guarantee],
+                ["보증금 대체서류", detail.bid_info.deposit_alt_doc],
+                ["차순위 신청", detail.bid_info.next_rank],
+              ] as [string, string | null | undefined][])
+                .filter(([, v]) => v)
+                .map(([label, v]) => (
+                  <span
+                    key={label}
+                    className={`rounded-lg px-2.5 py-1 text-[11px] font-bold ${
+                      v === "가능"
+                        ? "bg-[rgba(14,116,144,0.12)] text-[var(--accent-strong)]"
+                        : "bg-[var(--surface-soft)] text-[var(--text-hint)]"
+                    }`}
+                  >
+                    {label} {v === "가능" ? "✓" : "✕"}
+                  </span>
+                ))}
+            </div>
+            <dl className="space-y-1.5 text-xs">
+              {([
+                ["입찰보증금", detail.bid_info.deposit],
+                ["잔대금 납부방법", detail.bid_info.balance_pay_method],
+                ["잔대금 납부기한", detail.bid_info.balance_pay_term],
+                ["입찰 성립기준", detail.bid_info.bid_valid_criteria],
+                ["제출서류", detail.bid_info.submit_docs],
+                ["자격 제한", detail.bid_info.qlfc_limit],
+                ["지역 제한", detail.bid_info.region_limit],
+                ["기타 제한", detail.bid_info.etc_limit],
+                ["유의사항", detail.bid_info.notice],
+              ] as [string, string | null | undefined][])
+                .filter(([, v]) => v)
+                .map(([label, v]) => (
+                  <div
+                    key={label}
+                    className="flex items-start justify-between gap-3 border-b border-[var(--line)]/50 py-1.5"
+                  >
+                    <dt className="shrink-0 text-[var(--text-hint)]">{label}</dt>
+                    <dd className="max-w-[68%] whitespace-pre-line text-right text-[var(--text-primary)]">
+                      {v}
+                    </dd>
+                  </div>
+                ))}
+            </dl>
+          </div>
+        ) : null}
+
         {/* ── 등기부등본 권리분석(경매↔등기 시너지) ── */}
         <div className="mt-5 rounded-2xl border border-[var(--accent-strong)]/25 bg-[var(--accent-strong)]/5 p-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1190,6 +1264,9 @@ function DetailModal({
               <p className="text-sm font-black text-[var(--text-primary)]">🔍 등기부등본 권리분석</p>
               <p className="mt-0.5 text-[11px] text-[var(--text-secondary)]">
                 말소기준권리·인수권리·근저당·압류·가등기를 AI(법무사·변호사 관점)가 분석합니다.
+              </p>
+              <p className="mt-0.5 text-[11px] font-bold text-[var(--accent-strong)]">
+                건당 1,200원 (동일 물건 재조회는 무료)
               </p>
             </div>
             <div className="flex shrink-0 gap-2">

@@ -110,7 +110,7 @@ async def preview_charge(
     db: AsyncSession = Depends(get_db),
 ):
     """서비스 사용료 사전 견적(차감 전 표시용). LLM 과금과 별개."""
-    if req.action not in ("project_create", "land_analysis", "sales_provision"):
+    if req.action not in ("project_create", "land_analysis", "sales_provision", "registry_analysis"):
         raise HTTPException(status_code=400, detail="알 수 없는 행위")
     return await billing_service.preview_service_fee(db, current.user_id, req.action)
 
@@ -122,7 +122,7 @@ async def charge(
     db: AsyncSession = Depends(get_db),
 ):
     """행위 발생 시 서비스 사용료 차감(프로젝트 생성·토지분석). LLM 과금과 별개."""
-    if req.action not in ("project_create", "land_analysis", "sales_provision"):
+    if req.action not in ("project_create", "land_analysis", "sales_provision", "registry_analysis"):
         raise HTTPException(status_code=400, detail="알 수 없는 행위")
     return await billing_service.charge_service(db, current.user_id, req.action)
 

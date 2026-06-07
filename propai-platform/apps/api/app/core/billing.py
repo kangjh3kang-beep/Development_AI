@@ -32,6 +32,7 @@ _DEFAULT_CONFIG: dict[str, Any] = {
         "project_create": 2000,           # 프로젝트 생성 건당
         "land_analysis": 2000,            # 토지분석(구독자) 건당
         "sales_provision": 50000,         # 분양현장 생성 건당(관리자 책정)
+        "registry_analysis": 1200,        # 등기부등본 권리분석/분석 건당
         "stages": {s: 2000 for s in _PIPELINE_STAGES},  # 파이프라인 단계별 건당
     },
     "free_tier": {
@@ -48,6 +49,7 @@ _CONFIG: dict[str, Any] = {
         "project_create": _DEFAULT_CONFIG["service_fees"]["project_create"],
         "land_analysis": _DEFAULT_CONFIG["service_fees"]["land_analysis"],
         "sales_provision": _DEFAULT_CONFIG["service_fees"]["sales_provision"],
+        "registry_analysis": _DEFAULT_CONFIG["service_fees"]["registry_analysis"],
         "stages": dict(_DEFAULT_CONFIG["service_fees"]["stages"]),
     },
     "free_tier": {
@@ -79,7 +81,7 @@ def apply_config(override: dict[str, Any]) -> None:
                 if k in vals:
                     _CONFIG["tiers"][tier][k] = vals[k]
     sf = override.get("service_fees") or {}
-    for k in ("project_create", "land_analysis", "sales_provision"):
+    for k in ("project_create", "land_analysis", "sales_provision", "registry_analysis"):
         if k in sf:
             _CONFIG["service_fees"][k] = sf[k]
     for s, v in (sf.get("stages") or {}).items():
@@ -102,6 +104,10 @@ def service_fee_land_analysis() -> float:
 
 def service_fee_sales_provision() -> float:
     return float(_CONFIG["service_fees"].get("sales_provision", 0))
+
+
+def service_fee_registry_analysis() -> float:
+    return float(_CONFIG["service_fees"].get("registry_analysis", 1200))
 
 
 def service_fee_stage(stage: str) -> float:

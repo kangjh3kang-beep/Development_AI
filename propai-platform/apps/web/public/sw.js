@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v99-auction-rlst-photo";
+const CACHE_NAME = "propai-v100-bidinfo-registry-fee";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

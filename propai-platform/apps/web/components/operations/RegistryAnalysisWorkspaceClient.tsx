@@ -161,6 +161,7 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
               <h1 className="text-lg font-black text-[var(--text-primary)]">등기부등본 열람·분석</h1>
               <p className="mt-0.5 text-xs text-[var(--text-secondary)]">
                 법무사·변호사 AI가 등기부등본을 분석해 소유정보·소유기간·매입금액·지분·가등기·압류·근저당·매도청구 가능여부를 제공합니다.
+                <span className="ml-1 font-bold text-[var(--accent-strong)]">건당 1,200원(동일 물건 재조회 무료).</span>
               </p>
             </div>
           </div>

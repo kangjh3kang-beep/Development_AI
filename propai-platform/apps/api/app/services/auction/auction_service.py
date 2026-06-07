@@ -616,6 +616,40 @@ class AuctionStep1Service:
             ):
                 if rlst_extra.get(k) and not enriched.get(k):
                     enriched[k] = rlst_extra[k]
+        # ── 입찰정보 섹션(getCltrBidInf2 raw 파싱) — 입찰방법·보증금·잔대금·제출서류·제한 ──
+        try:
+            braws = info.get("raw") if isinstance(info.get("raw"), list) else []
+            b = braws[0] if braws and isinstance(braws[0], dict) else None
+            if b:
+                def _yn(v: Any) -> Optional[str]:
+                    s = str(v or "").strip().upper()
+                    return "가능" if s == "Y" else ("불가" if s == "N" else None)
+
+                def _txt(v: Any) -> Optional[str]:
+                    s = str(v or "").strip()
+                    return s if s and s != "-" else None
+
+                bid_info = {
+                    "joint_bid": _yn(b.get("collbBidPsblYn")),        # 공동입찰
+                    "proxy_bid": _yn(b.get("subtBidPsblYn")),         # 대리입찰
+                    "e_guarantee": _yn(b.get("eltrGrprUseYn")),       # 전자보증서
+                    "deposit_alt_doc": _yn(b.get("tdpsSbtnDcmtYn")),  # 보증금 대체서류
+                    "next_rank": _yn(b.get("nrnkAplyPsblYn")),        # 차순위 신청
+                    "deposit": _txt(b.get("pbctTdpsCont")),           # 입찰보증금
+                    "balance_pay_method": _txt(b.get("pcmtPayMtdCont")),  # 잔대금 납부방법
+                    "balance_pay_term": _txt(b.get("pcmtPayTermCont")),   # 잔대금 납부기한
+                    "bid_valid_criteria": _txt(b.get("bidVldCrtrCont")),  # 입찰 성립기준
+                    "submit_docs": _txt(b.get("tdpsSbtnDcmtCont")),   # 제출서류
+                    "qlfc_limit": _txt(b.get("qlfcLmtCdtnCont")),     # 자격 제한
+                    "region_limit": _txt(b.get("rgnLmtCdtnCont")),    # 지역 제한
+                    "etc_limit": _txt(b.get("etcLmtCdtnCont")),       # 기타 제한
+                    "notice": _txt(b.get("pytnMtrsCont")),            # 유의사항
+                }
+                # 값이 하나라도 있으면 부착(전부 None이면 생략).
+                if any(v is not None for v in bid_info.values()):
+                    enriched["bid_info"] = bid_info
+        except Exception as e:  # noqa: BLE001
+            logger.warning("입찰정보 파싱 실패(무시): %s", str(e)[:120])
         return {"item": enriched, "data_source": "onbid_live"}
 
     async def search_bid_results(

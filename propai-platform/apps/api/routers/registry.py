@@ -117,11 +117,25 @@ async def registry_analyze(
     집합건물은 realty_type=1 + dong/ho로 특정 호 등기를 조회한다."""
     from app.services.registry.registry_analysis_service import RegistryAnalysisService
 
-    return await RegistryAnalysisService().analyze(
+    result = await RegistryAnalysisService().analyze(
         address=req.address, pnu=req.pnu, registry_text=req.registry_text,
         realty_type=req.realty_type, dong=req.dong, ho=req.ho,
         land_hint=req.land_hint,
     )
+    # 서비스 사용료: 등기부등본 권리분석 1건 1,200원(LLM 과금 별개, best-effort).
+    try:
+        from app.core.database import async_session_factory
+        from app.services.billing import billing_service
+
+        async with async_session_factory() as _db:
+            charge = await billing_service.charge_service(
+                _db, current_user.user_id, "registry_analysis"
+            )
+        if isinstance(result, dict):
+            result["service_charge"] = charge
+    except Exception:  # noqa: BLE001
+        pass
+    return result
 
 
 @router.post("/analyze/jobs", summary="등기 권리분석 비동기 작업 제출(모바일 안정)")
@@ -138,7 +152,20 @@ async def registry_analyze_submit(
         dong=req.dong, ho=req.ho, registry_text=req.registry_text,
     )
     if cached is not None:
+        # 캐시 적중 = 신규 분석 없음 → 과금 안 함(동일 입력 재조회 무료).
         return {"job_id": None, "status": "done", "result": cached}
+
+    # 캐시 미적중 → 신규 권리분석 수행 예정 → 1,200원 과금(best-effort, LLM 별개).
+    try:
+        from app.core.database import async_session_factory
+        from app.services.billing import billing_service
+
+        async with async_session_factory() as _db:
+            await billing_service.charge_service(
+                _db, current_user.user_id, "registry_analysis"
+            )
+    except Exception:  # noqa: BLE001
+        pass
 
     _prune_jobs()
     job_id = uuid.uuid4().hex
