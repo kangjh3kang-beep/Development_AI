@@ -94,7 +94,12 @@ class AVMService:
         from apps.api.integrations.molit_client import MolitClient
 
         if not lawd_cd:
-            lawd_cd = "11680"  # 서울 강남구 기본값
+            # ★강남 기본값(11680) 제거: LAWD_CD 미도출 시 타지역(예:의정부)을 강남 아파트
+            #   실거래로 비교 추정해 ㎡단가가 비상식적으로 폭등하던 버그. 비교사례 없이 반환 →
+            #   estimate()의 콜드스타트(면적기반 합성) 폴백으로 안전 처리.
+            logger.warning("LAWD_CD 미도출 — 비교사례 수집 생략(합성 폴백)", address=address)
+            await molit.close()
+            return []
 
         molit = MolitClient()
         now = datetime.now(tz=UTC)
@@ -499,10 +504,15 @@ class AVMService:
         await self._load_model()
 
         # 1. 비교 사례 수집
+        # 법정동코드(LAWD_CD, 5자리 시군구) 도출: 요청값 우선, 없으면 PNU 앞 5자리.
+        # (미도출 시 강남 폴백으로 타지역을 강남시세로 추정하던 버그 방지 — PNU=시도2+시군구3+…)
+        lawd_cd = (request.lawd_cd or "").strip()
+        if not lawd_cd and request.pnu and len(request.pnu) >= 5 and request.pnu[:5].isdigit():
+            lawd_cd = request.pnu[:5]
         comparables = await self._fetch_comparables(
             request.address,
             request.area_sqm,
-            lawd_cd=request.lawd_cd or "",
+            lawd_cd=lawd_cd,
         )
 
         # 1-1. 콜드스타트: 비교사례 3건 미만이면 CTGAN 합성 보강
