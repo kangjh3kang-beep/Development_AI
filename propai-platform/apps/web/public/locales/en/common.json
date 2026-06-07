@@ -614,6 +614,16 @@
         "✓ 워크플로우 상태 라우팅"
       ]
     },
+    "feasibility": {
+      "eyebrow": "PROP / FEASIBILITY",
+      "title": "AI Feasibility & Return Review",
+      "description": "Integrates 15 development types, 38 tax algorithms, and ordinances of 229 municipalities in real time to support optimal investment decisions.",
+      "items": [
+        "✓ Feasibility simulation per development type",
+        "✓ Automated tax & finance structuring",
+        "✓ ROI & break-even confidence verification"
+      ]
+    },
     "report": {
       "eyebrow": "PROP / REPORT",
       "title": "최종 사업성 리포트",

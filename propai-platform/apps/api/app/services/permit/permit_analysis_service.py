@@ -112,11 +112,17 @@ class PermitAnalysisService:
         address: str,
         site: dict[str, Any] | None = None,
         parcels: list[str] | None = None,
+        use_llm: bool = True,
     ) -> dict[str, Any]:
         site = await self._enrich_site(address, site or {})
         ordinance_txt = await self._ordinance_text(address, site)
 
-        result = await self._llm_analyze(address, site, ordinance_txt)
+        # 명시실행: use_llm=False면 LLM 내러티브를 건너뛰고 규칙기반 결과만 반환.
+        result = (
+            await self._llm_analyze(address, site, ordinance_txt)
+            if use_llm
+            else self._fallback(site)
+        )
         result["site"] = {
             "address": address,
             "zone_type": site.get("zone_type"),
@@ -133,7 +139,9 @@ class PermitAnalysisService:
             if a and a.strip() and a.strip() not in merged:
                 merged.append(a.strip())
         if len(merged) >= 2:
-            result["multi_parcel"] = await self._analyze_multi_parcel(merged, primary_site=site)
+            result["multi_parcel"] = await self._analyze_multi_parcel(
+                merged, primary_site=site, use_llm=use_llm
+            )
 
         return result
 
@@ -175,7 +183,7 @@ class PermitAnalysisService:
         return "-"
 
     async def _analyze_multi_parcel(
-        self, addresses: list[str], primary_site: dict[str, Any]
+        self, addresses: list[str], primary_site: dict[str, Any], use_llm: bool = True
     ) -> dict[str, Any]:
         """용도지역이 다른 여러 필지를 통합 개발할 때 최적·최고 용적률 산정."""
         import asyncio
@@ -199,7 +207,12 @@ class PermitAnalysisService:
 
         blended = self._blended_far(enriched)
         total_area = sum(p["land_area_sqm"] or 0 for p in enriched)
-        llm = await self._llm_multi_parcel(enriched, blended, total_area)
+        # 명시실행: use_llm=False면 규칙기반(가중평균) 폴백만 반환.
+        llm = (
+            await self._llm_multi_parcel(enriched, blended, total_area)
+            if use_llm
+            else self._multi_parcel_fallback(blended)
+        )
         return {"parcels": enriched, **llm}
 
     @staticmethod
@@ -320,19 +333,24 @@ class PermitAnalysisService:
             return data
         except Exception as e:  # noqa: BLE001
             logger.warning("다필지 용적률 LLM 산정 실패, 폴백", err=str(e)[:100])
-            return {
-                "ai": False,
-                "blended_far": blended,
-                "optimal_far": blended,
-                "max_far": None,
-                "far_rationale": (
-                    "용도지역이 다른 필지를 통합 개발 시 국토계획법 시행령 제84조에 따라 면적가중평균 "
-                    "용적률이 기본 적용됩니다. 지구단위계획·결합건축·종상향 등 상향수단은 AI 연결 후 상세 제시됩니다."
-                ),
-                "far_key_laws": [
-                    "국토의 계획 및 이용에 관한 법률 시행령 제84조(둘 이상 용도지역 걸친 대지)",
-                    "건축법 제77조의4(결합건축)",
-                ],
-                "integration_issues": ["합필 요건·용도지역 경계 정합·조례 확인 필요"],
-                "integration_solutions": ["지구단위계획 수립 검토 후 통합 용적률 상향 협의"],
-            }
+            return self._multi_parcel_fallback(blended)
+
+    @staticmethod
+    def _multi_parcel_fallback(blended: float | None) -> dict[str, Any]:
+        """다필지 통합 용적률 규칙기반(가중평균) 폴백. LLM 미사용/실패 공용."""
+        return {
+            "ai": False,
+            "blended_far": blended,
+            "optimal_far": blended,
+            "max_far": None,
+            "far_rationale": (
+                "용도지역이 다른 필지를 통합 개발 시 국토계획법 시행령 제84조에 따라 면적가중평균 "
+                "용적률이 기본 적용됩니다. 지구단위계획·결합건축·종상향 등 상향수단은 AI 연결 후 상세 제시됩니다."
+            ),
+            "far_key_laws": [
+                "국토의 계획 및 이용에 관한 법률 시행령 제84조(둘 이상 용도지역 걸친 대지)",
+                "건축법 제77조의4(결합건축)",
+            ],
+            "integration_issues": ["합필 요건·용도지역 경계 정합·조례 확인 필요"],
+            "integration_solutions": ["지구단위계획 수립 검토 후 통합 용적률 상향 협의"],
+        }

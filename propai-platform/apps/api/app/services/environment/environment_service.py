@@ -48,6 +48,13 @@ SOLSTICE_DATES = {
     "equinox": (3, 20),   # 춘분
 }
 
+# 계절 키 → 한글 라벨(요약·등급 표기 일관화)
+SEASON_LABELS = {
+    "winter": "동지",
+    "summer": "하지",
+    "equinox": "춘추분",
+}
+
 # 정북 일조사선 적용 용도지역(건축법 제61조: 전용·일반주거지역)
 _NORTH_SETBACK_ZONES = (
     "전용주거", "일반주거",
@@ -190,7 +197,7 @@ def _north_setback(zone_type: str | None, height_m: float) -> dict[str, Any]:
 
 
 def _solar_grade(sunlight_hours: float) -> str:
-    """동지 일조시간(9~15시·6시간 만점) 기준 정성 등급."""
+    """일조시간(9~15시·6시간 만점) 기준 정성 등급(동지=최악조건이 기준이나 선택 계절로 표기)."""
     if sunlight_hours >= 4.0:
         return "양호"
     if sunlight_hours >= 2.0:
@@ -201,8 +208,10 @@ def _solar_grade(sunlight_hours: float) -> str:
 def _compute_solar(lat: float, lon: float, zone_type: str | None,
                    subject_height_m: int, polar: list[dict[str, float]],
                    season: str) -> dict[str, Any]:
-    """태양궤적(매시 정시)·일조시간(동지 9~15시 약식)·정북사선 종합."""
-    month, day = SOLSTICE_DATES.get(season, SOLSTICE_DATES["winter"])
+    """태양궤적(매시 정시)·일조시간(선택 계절 9~15시 약식)·정북사선 종합."""
+    season_key = season if season in SOLSTICE_DATES else "winter"
+    month, day = SOLSTICE_DATES[season_key]
+    season_label = SEASON_LABELS[season_key]
     doy = _day_of_year(month, day)
 
     sun_positions: list[dict[str, float]] = []
@@ -229,15 +238,21 @@ def _compute_solar(lat: float, lon: float, zone_type: str | None,
     north = _north_setback(zone_type, float(subject_height_m))
     grade = _solar_grade(sunlight_hours)
     blocked = samples - sunny
+    max_alt = max(p["altitude_deg"] for p in sun_positions)
     summary = (
-        f"동지({month}/{day}) {WINTER_START_HOUR}~{WINTER_END_HOUR}시 기준 약 {sunlight_hours}시간 "
+        f"{season_label}({month}/{day}) {WINTER_START_HOUR}~{WINTER_END_HOUR}시 기준 약 {sunlight_hours}시간 "
         f"일조 추정(표본 {samples}개 중 가림 {blocked}개). "
-        f"태양 최대고도 약 {max(p['altitude_deg'] for p in sun_positions):.1f}°. "
+        f"태양 최대고도 약 {max_alt:.1f}°. "
         + ("정북 일조사선 적용 대상." if north["applies"] else "정북 일조사선 비적용/미상.")
     )
     return {
         "sun_positions": sun_positions,
+        "season": season_key,
+        "season_label": season_label,
+        "sunlight_hours": sunlight_hours,
+        # 하위호환: 기존 프론트(sunlight_hours_winter) 폴백 키 유지
         "sunlight_hours_winter": sunlight_hours,
+        "max_altitude_deg": round(max_alt, 1),
         "north_setback": north,
         "summary": summary,
         "grade": grade,

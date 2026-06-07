@@ -31,6 +31,7 @@ from app.services.feasibility.ai_recommendation import diagnose
 from app.services.feasibility.version_control_db import FeasibilityVCSDB
 from app.services.feasibility.sensitivity_engine import run_sensitivity_analysis
 from app.core.database import get_db
+from app.core.billing_deps import enforce_llm_quota
 from app.services.auth.auth_service import get_current_user
 from app.models.auth import User
 
@@ -73,7 +74,11 @@ def _request_to_input(req: FeasibilityCalculateRequest) -> ModuleInput:
     )
 
 
-@router.post("/calculate", response_model=FeasibilityResultResponse)
+@router.post(
+    "/calculate",
+    response_model=FeasibilityResultResponse,
+    dependencies=[Depends(enforce_llm_quota)],
+)
 async def calculate_feasibility(req: FeasibilityCalculateRequest):
     """단일 수지분석 계산."""
     try:
@@ -302,9 +307,10 @@ class AutoRecommendRequest(BaseModel):
     land_area_sqm: float | None = None
     region: str = "서울"
     equity_won: int = 10_000_000_000
+    use_llm: bool = True  # AI 내러티브(수지 해석) 포함 여부(사용자 선택)
 
 
-@router.post("/auto-recommend")
+@router.post("/auto-recommend", dependencies=[Depends(enforce_llm_quota)])
 async def auto_recommend_top3(req: AutoRecommendRequest):
     """부지 주소로부터 최적 사업모델 Top 3 자동 추천."""
     service = FeasibilityServiceV2()
@@ -313,6 +319,7 @@ async def auto_recommend_top3(req: AutoRecommendRequest):
         land_area_sqm=req.land_area_sqm,
         region=req.region,
         equity_won=req.equity_won,
+        use_llm=req.use_llm,
     )
 
 

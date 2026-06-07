@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from apps.api.auth.jwt_handler import CurrentUser, get_current_user
+from app.core.billing_deps import enforce_llm_quota
 from app.services.ledger import analysis_ledger_service as ledger
 from app.services.pipeline.project_pipeline import (
     ProjectPipeline,
@@ -85,7 +86,11 @@ def _build_stages_response(result) -> list[PipelineStageStatusResponse]:
 # ── 엔드포인트 ────────────────────────────────────────────
 
 
-@router.post("/run", response_model=PipelineRunResponse)
+@router.post(
+    "/run",
+    response_model=PipelineRunResponse,
+    dependencies=[Depends(enforce_llm_quota)],
+)
 async def run_pipeline(req: PipelineRunRequest):
     """주소 입력으로 전체 파이프라인 실행."""
     pipeline = ProjectPipeline()

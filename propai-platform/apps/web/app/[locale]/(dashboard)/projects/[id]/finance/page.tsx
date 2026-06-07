@@ -1,5 +1,6 @@
 import { ModulePlaceholder } from "@/components/layout/ModulePlaceholder";
 import { ProjectFinanceWorkspaceClient } from "@/components/projects/ProjectFinanceWorkspaceClient";
+import { NextStageCta } from "@/components/projects/NextStageCta";
 import { getDictionary } from "@/i18n/get-dictionary";
 import { isValidLocale, type Locale } from "@/i18n/config";
 
@@ -34,6 +35,7 @@ export default async function FinancePage({ params }: FinancePageProps) {
         items={dictionary.modulePlaceholders["finance"].items}
       />
       <ProjectFinanceWorkspaceClient locale={locale as Locale} projectId={id} />
+      <NextStageCta locale={locale} />
     </div>
   );
 }

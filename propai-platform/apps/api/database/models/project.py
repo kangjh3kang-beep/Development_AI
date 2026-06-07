@@ -46,6 +46,14 @@ class Project(Base, TenantMixin, TimestampMixin, SoftDeleteMixin):
     floor_above: Mapped[int | None] = mapped_column(Integer, nullable=True, comment="지상 층수")
     floor_below: Mapped[int | None] = mapped_column(Integer, nullable=True, comment="지하 층수")
 
+    # 분석 스냅샷(마이그레이션 024) — 프로젝트별 분석 결과 백엔드 단일출처.
+    # 프론트 useProjectContextStore의 ProjectSnapshot(siteAnalysis/designData/
+    # costData/feasibilityData/esgData/complianceData/completedStages 등) JSON blob.
+    # 기기간 동기화 목적. nullable, default None(기존 흐름 무파괴·additive).
+    analysis_snapshot: Mapped[dict | None] = mapped_column(
+        JSON, nullable=True, comment="프로젝트별 분석 스냅샷(기기무관 영속)"
+    )
+
     # 관계
     tenant = relationship("Tenant", back_populates="projects")
     parcels = relationship("Parcel", back_populates="project", lazy="selectin")

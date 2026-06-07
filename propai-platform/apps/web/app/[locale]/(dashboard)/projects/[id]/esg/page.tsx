@@ -6,6 +6,7 @@ import { ModulePlaceholder } from "@/components/layout/ModulePlaceholder";
 import { isValidLocale, type Locale } from "@/i18n/config";
 import { useDictionary } from "@/hooks/use-dictionary";
 import { ProjectEsgWorkspaceClient } from "@/components/projects/ProjectEsgWorkspaceClient";
+import { NextStageCta } from "@/components/projects/NextStageCta";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 
 export default function ESGPage() {
@@ -154,6 +155,8 @@ export default function ESGPage() {
       >
         <ProjectEsgWorkspaceClient locale={locale as Locale} projectId={id} />
       </motion.div>
+
+      <NextStageCta locale={locale} />
     </div>
   );
 }

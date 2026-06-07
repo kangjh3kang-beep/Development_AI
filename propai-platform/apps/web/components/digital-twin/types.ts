@@ -104,4 +104,12 @@ export interface DigitalTwinLayers {
   parcel: boolean;
   building: boolean;
   neighbors: boolean;
+  /** 지형색 모드: 표고 그라데이션 vs 경사도(상호배타). */
+  slopeColor: boolean;
+  /** 고도제한 평면(zone 절대높이 한도 있을 때만). */
+  heightLimit: boolean;
+  /** 정북 일조사선 envelope(주거지역만). */
+  northLight: boolean;
+  /** 태양궤적 일조(시각별 directionalLight 방향). */
+  sunPath: boolean;
 }

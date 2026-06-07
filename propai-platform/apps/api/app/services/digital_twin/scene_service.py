@@ -33,6 +33,10 @@ SCENE_TIMEOUT_S = 88.0      # 90초 가드 직전
 TERRAIN_TIMEOUT_S = 60.0
 AERIAL_TIMEOUT_S = 20.0
 NEIGHBOR_TIMEOUT_S = 20.0
+# 대상지 근접 상위 N동만 건축물대장 실높이 조회(병렬). 직렬 전수호출 금지(가드 준수).
+NEIGHBOR_REGISTRY_TOP_N = 14
+NEIGHBOR_REGISTRY_TIMEOUT_S = 8.0     # 개별 get_title_by_pnu 타임아웃
+NEIGHBOR_REGISTRY_BATCH_TIMEOUT_S = 14.0  # 전체 병렬 배치 상한(SCENE 가드 여유 내)
 
 SOURCES = [
     "좌표·필지·주변필지·항공: VWorld(국토교통부 공간정보 오픈플랫폼)",
@@ -99,9 +103,19 @@ def _aerial_proxy_url(lat: float, lon: float, zoom: int) -> str:
 
 
 def _aerial_cover_m(lat: float, zoom: int, size: int = 512) -> float:
-    """VWorld getmap(center+zoom) 커버 폭(m) 근사 — 지형 bbox 정합용.
+    """VWorld getmap(center+zoom) 커버 폭(m) 근사 — 지형/씬 bbox 드레이프 정합용.
 
-    웹메르카토르 해상도: m/px ≈ 156543.03392 * cos(lat) / 2^zoom. cover = m/px * size.
+    ★정합 위험(WARN): VWorld getmap은 crs=EPSG:4326(지리좌표)로 응답하지만 zoom은
+    웹메르카토르 타일 피라미드 레벨 스케일을 따른다. 여기 m/px는 중심위도 기준
+    웹메르카토르 지상해상도(156543.03392 * cos(lat) / 2^zoom)다.
+    EPSG:4326 정사각 이미지는 가로(경도)·세로(위도) "도(deg)" 폭이 동일하지만 그 도가
+    매핑되는 미터는 위도에서 더 길다(경도는 cos(lat)배 축소). 따라서 cos(lat) 보정을
+    적용한 이 값은 **가로(경도) 커버 폭**에 정합하며, 세로(위도) 커버 폭은 이보다
+    1/cos(lat)배 크다. 프론트가 항공 텍스처를 정사각 평면에 드레이프할 때 가로/세로
+    스케일을 동일하게 쓰면 위도방향이 약간 압축돼 보일 수 있다(고위도일수록 큼).
+    한국(lat≈37)에서 cos≈0.80 → 세로가 약 25% 더 넓음. 정밀 드레이프가 필요하면
+    프론트에서 cover_lat_m = cover_m / cos(lat)로 가로/세로 스케일을 분리할 것.
+    과도수정 방지를 위해 본 함수는 기존 가로폭 근사를 유지한다.
     """
     m_per_px = 156_543.033_92 * math.cos(math.radians(lat)) / (2 ** int(zoom))
     return round(m_per_px * size, 1)
@@ -157,25 +171,92 @@ async def _build_neighbors(
             "footprint_enu": fp,
             "height_m": NEIGHBOR_DEFAULT_HEIGHT_M,
             "estimated": True,
+            # 대상지 중심까지 거리(실높이 조회 우선순위 정렬용)
+            "_dist": math.hypot(cx, cz),
         })
         if len(out) >= 60:
             break
+
+    # 대상지 근접 상위 N동만 건축물대장 표제부로 실높이 보강(병렬·개별 timeout).
+    # 직렬 전수호출 금지 — asyncio.gather로 한 번에 발사, 배치 상한도 가드 내로 둔다.
+    await _enrich_neighbor_heights(out)
+
+    # 정렬 보조 필드 제거(페이로드 청결)
+    for n in out:
+        n.pop("_dist", None)
     return out
+
+
+async def _enrich_neighbor_heights(neighbors: list[dict[str, Any]]) -> None:
+    """근접 상위 N동의 ground_floors를 건축물대장 표제부에서 병렬 조회해 실높이로 치환.
+
+    - 거리순 상위 NEIGHBOR_REGISTRY_TOP_N개의 유효 PNU만 대상(전수호출 금지).
+    - get_title_by_pnu를 asyncio.gather로 동시 발사, 각 호출 개별 timeout.
+    - 성공: height_m = ground_floors × NEIGHBOR_FLOOR_HEIGHT_M, estimated=false.
+    - 실패/무자료/국외IP차단: 기존 9m 추정 유지(estimated=true). in-place 갱신.
+    """
+    candidates = [
+        n for n in neighbors if (n.get("pnu") or "") and len(str(n.get("pnu"))) >= 19
+    ]
+    candidates.sort(key=lambda n: n.get("_dist", 1e9))
+    targets = candidates[:NEIGHBOR_REGISTRY_TOP_N]
+    if not targets:
+        return
+
+    from app.services.external_api.building_registry_service import BuildingRegistryService
+
+    svc = BuildingRegistryService()
+
+    async def _one(pnu: str) -> dict[str, Any] | None:
+        try:
+            return await asyncio.wait_for(
+                svc.get_title_by_pnu(pnu), timeout=NEIGHBOR_REGISTRY_TIMEOUT_S
+            )
+        except Exception:  # noqa: BLE001 — 개별 실패는 폴백, 로그만 집계 후
+            return None
+
+    try:
+        results = await asyncio.wait_for(
+            asyncio.gather(*[_one(str(n["pnu"])) for n in targets]),
+            timeout=NEIGHBOR_REGISTRY_BATCH_TIMEOUT_S,
+        )
+    except Exception as e:  # noqa: BLE001 — 배치 전체 타임아웃이면 전부 9m 폴백
+        logger.info("주변 실높이 배치 조회 실패(폴백 9m): %s", str(e)[:120])
+        return
+
+    enriched = 0
+    for n, title in zip(targets, results):
+        if not isinstance(title, dict):
+            continue
+        gf = int(title.get("ground_floors") or 0)
+        if gf <= 0:
+            continue
+        n["height_m"] = round(gf * NEIGHBOR_FLOOR_HEIGHT_M, 1)
+        n["ground_floors"] = gf
+        n["estimated"] = False
+        enriched += 1
+    logger.info(
+        "주변 실높이 보강: %d/%d동 실측치환(나머지 9m 추정)", enriched, len(targets)
+    )
 
 
 async def _resolve_building_glb(
     design_version_id: str | None, project_id: str | None
 ) -> dict[str, Any]:
-    """design_version_id(또는 project_id) 있으면 glb URL 구성. glb 라우트는 POST이므로
-    URL만 노출하고 프론트가 매스 페이로드와 함께 POST 로드한다(없으면 building=null).
+    """design_version_id(또는 project_id) 있으면 GET 가능한 glb URL을 구성한다.
+
+    design_v61의 GET /{id}/bim/model.glb 라우트로 정합 — 프론트 BuildingGlb의
+    GLTFLoader.loadAsync(=GET)가 그대로 로드한다(과거 POST 전용→405 영구실패 해소).
+    design_version_id가 있으면 그걸로(서버가 design_versions에서 매스 복원), 없으면
+    project_id로 폴백 매스 절차생성. 둘 다 없으면 building=null.
     """
     if not design_version_id and not project_id:
         return {"glb_url": None, "place_at_enu": None}
-    pid = design_version_id or project_id
+    rid = design_version_id or project_id
     return {
-        "glb_url": f"/api/v1/design/{pid}/bim/model.glb",
-        "method": "POST",
-        "note": "POST(매스 페이로드 동봉)로 glb 로드. design_v61 /{id}/bim/model.glb.",
+        "glb_url": f"/api/v1/design/{rid}/bim/model.glb",
+        "method": "GET",
+        "note": "GET으로 glb 로드(GLTFLoader.loadAsync). design_v61 GET /{id}/bim/model.glb.",
     }
 
 
@@ -221,13 +302,22 @@ async def build_scene(
 
     elev0 = float(terrain["elev0"]) if terrain else 0.0
 
+    _cover_lon_m = _aerial_cover_m(lat0, AERIAL_ZOOM)
+    # EPSG:4326 정사각 이미지의 세로(위도) 커버 폭은 가로(경도) 폭 / cos(lat)
+    _cover_lat_m = round(_cover_lon_m / max(0.05, math.cos(math.radians(lat0))), 1)
     aerial = {
         "image_proxy_url": _aerial_proxy_url(lat0, lon0, AERIAL_ZOOM),
         "center": [round(lon0, 6), round(lat0, 6)],
         "zoom": AERIAL_ZOOM,
-        "cover_m": _aerial_cover_m(lat0, AERIAL_ZOOM),
+        "cover_m": _cover_lon_m,          # 가로(경도) 커버 폭(m) — 기존 호환
+        "cover_lon_m": _cover_lon_m,      # 명시적 가로 폭
+        "cover_lat_m": _cover_lat_m,      # 세로(위도) 커버 폭(m) — 정밀 드레이프용
+        "crs": "EPSG:4326",
         "basemap": "PHOTO",
-        "note": "VWorld 항공 정사영상 — 촬영시점이 현재와 다를 수 있음(드레이프 텍스처).",
+        "note": (
+            "VWorld 항공 정사영상(EPSG:4326) — 촬영시점이 현재와 다를 수 있음(드레이프 텍스처). "
+            "정밀 드레이프 시 가로=cover_lon_m·세로=cover_lat_m 분리 적용 권장."
+        ),
     }
 
     if building.get("glb_url"):
@@ -250,14 +340,20 @@ async def build_scene(
         terrain_src = "OpenTopoData SRTM 30m (미취득)"
         terrain_res = 30.0
 
+    # 주변건물 실측/추정 집계(실높이=건축물대장 ground_floors×3.3, 나머지=9m 추정)
+    n_real = sum(1 for n in neighbors if not n.get("estimated", True))
+    n_total = len(neighbors)
+
     badges = {
         "terrain_source": terrain_src,
         "terrain_resolution_m": terrain_res,
         "confidence": terrain_conf,
-        "neighbors_estimated": True,
+        "neighbors_estimated": n_real < n_total,
+        "neighbors_total": n_total,
+        "neighbors_real_height": n_real,
         "note": (
-            f"{terrain_note} 주변건물={len(neighbors)}동 footprint 압출 추정"
-            f"(기본 {NEIGHBOR_DEFAULT_HEIGHT_M:.0f}m, 실측 아님). "
+            f"{terrain_note} 주변건물={n_total}동(실높이 {n_real}동=건축물대장 층수×{NEIGHBOR_FLOOR_HEIGHT_M:.1f}m, "
+            f"나머지 {n_total - n_real}동=기본 {NEIGHBOR_DEFAULT_HEIGHT_M:.0f}m 추정). "
             f"건물 매스={'AI 절차생성(인허가도면 아님)' if building else '없음(지형·항공·필지만)'}. "
             f"실측=실선/채움, 추정=점선/반투명으로 시각 구분."
         ),

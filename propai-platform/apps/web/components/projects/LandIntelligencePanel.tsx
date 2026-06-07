@@ -813,46 +813,27 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
               </div>
             )}
 
-            {/* Transaction Tab */}
+            {/* Transaction Tab — 지도 기반 패널로 승격됨. 여기선 진입 CTA만 제공(중복 제거) */}
             {activeTab === "transaction" && (
-              <div className="text-xs">
-                {txLoading ? (
-                  <div className="flex items-center gap-2 py-4 justify-center">
-                    <Icons.Loader />
-                    <span className="text-[var(--text-secondary)]">실거래 데이터 조회 중...</span>
-                  </div>
-                ) : txError ? (
-                  <div className="flex flex-col items-center gap-2 py-3">
-                    <Icons.AlertCircle />
-                    <p className="text-[10px] text-[var(--text-hint)] text-center">
-                      {txError}<br />
-                      부지분석 작업 공간에서 AVM 분석을 실행하세요.
-                    </p>
-                  </div>
-                ) : txData?.items && txData.items.length > 0 ? (
-                  <>
-                    <p className="text-[9px] font-black text-teal-400 uppercase mb-2">
-                      인근 실거래가 (실시간 조회 · {txData.total_count ?? txData.items.length}건)
-                    </p>
-                    <div className="space-y-1.5">
-                      {txData.items.slice(0, 5).map((t, i) => (
-                        <div key={i} className="flex items-center justify-between text-[var(--text-secondary)] bg-[var(--surface-muted)] rounded-lg px-3 py-1.5">
-                          <span>{t.deal_year}.{t.deal_month?.padStart(2, "0")}</span>
-                          <span className="text-[var(--text-hint)]">
-                            {t.apt_name || t.dong || "—"} · {t.area_sqm ? `${t.area_sqm}m²` : "—"}
-                          </span>
-                          <span className="font-bold text-[var(--text-primary)]">{formatPrice(t.deal_amount)}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </>
-                ) : (
-                  <div className="flex flex-col items-center gap-2 py-3">
-                    <p className="text-[10px] text-[var(--text-hint)] text-center">
-                      실거래 데이터를 조회하려면 부지분석 작업 공간에서 AVM 분석을 실행하세요.
-                    </p>
-                  </div>
-                )}
+              <div className="flex flex-col items-center gap-3 py-5 text-center">
+                <p className="text-[11px] font-bold text-[var(--text-secondary)] leading-relaxed max-w-sm">
+                  인근 실거래가는 아래 <span className="text-[var(--accent-strong)] font-black">&ldquo;주변 실거래 지도&rdquo;</span> 패널에서
+                  반경·매매/전월세·부동산 유형별로 지도와 함께 확인할 수 있습니다.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (typeof document !== "undefined") {
+                      document
+                        .getElementById("nearby-transactions-map")
+                        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+                    }
+                  }}
+                  className="inline-flex items-center gap-2 rounded-xl bg-[var(--accent-strong)] px-5 py-2 text-xs font-black text-white whitespace-nowrap transition-all hover:brightness-110 active:scale-95"
+                >
+                  지도에서 보기
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9" /></svg>
+                </button>
               </div>
             )}
 

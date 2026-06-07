@@ -8,7 +8,7 @@
  *   (대기굴절·지형차폐·실측높이 미반영 — 할루시네이션 방지 철학).
  */
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Card, CardContent } from "@propai/ui";
 import {
   CartesianGrid,
@@ -52,6 +52,28 @@ const SEASONS: { key: EnvironmentSeason; label: string }[] = [
   { key: "summer", label: "하지" },
   { key: "equinox", label: "춘추분" },
 ];
+
+const SEASON_LABEL: Record<EnvironmentSeason, string> = {
+  winter: "동지",
+  summer: "하지",
+  equinox: "춘추분",
+};
+
+/** 지자체 조례 병행검토 결과(/regulation/analyze use_llm=false 부분 매핑). */
+type OrdinanceLimit = {
+  legal?: number | null;
+  ordinance?: number | null;
+  effective?: number | null;
+  unit?: string;
+};
+type OrdinanceResult = {
+  zone_type?: string | null;
+  limits?: { bcr?: OrdinanceLimit; far?: OrdinanceLimit };
+  hierarchy?: { level: string; items: { name: string; ref?: string; desc?: string }[] }[];
+};
+
+const lim0 = (v: number | null | undefined) =>
+  v == null ? "—" : `${Math.round(v)}`;
 
 /** 개방도 게이지(0~100). 반원형 SVG 아크. */
 function OpennessGauge({ score }: { score: number }) {
@@ -111,6 +133,73 @@ function HeightBar({ label, value, color, max }: { label: string; value: number;
   );
 }
 
+/** 지자체 조례 병행검토 섹션. 건폐율·용적률(법정 vs 조례)·조례확인필요 배지를 표시.
+ *  무자료/실패면 약식 안내 유지(무목업). */
+function OrdinanceSection({ data }: { data: OrdinanceResult | null }) {
+  const bcr = data?.limits?.bcr;
+  const far = data?.limits?.far;
+  const hasLimits =
+    bcr?.legal != null || bcr?.ordinance != null || far?.legal != null || far?.ordinance != null;
+  // 조례 강화(법정과 조례 한도가 다름)이면 조례확인필요
+  const needsCheck =
+    (bcr?.ordinance != null && bcr.ordinance !== bcr.legal) ||
+    (far?.ordinance != null && far.ordinance !== far.legal);
+  const ordHier = data?.hierarchy?.find((h) => h.level === "지자체 조례");
+
+  return (
+    <div className="mt-4 rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-4">
+      <div className="mb-2 flex items-center justify-between">
+        <p className="flex items-center gap-2 text-[11px] font-black uppercase tracking-widest text-[var(--text-tertiary)]">
+          🏛 지자체 조례 병행검토
+        </p>
+        {needsCheck && (
+          <span className="rounded-full border border-amber-500/40 bg-amber-500/15 px-2.5 py-1 text-[10px] font-black text-amber-300">
+            조례 확인 필요
+          </span>
+        )}
+      </div>
+
+      {hasLimits ? (
+        <>
+          <div className="grid grid-cols-2 gap-2">
+            <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-2.5">
+              <p className="text-[8px] font-black uppercase text-[var(--text-hint)]">건폐율 (법정 / 조례)</p>
+              <p className="text-sm font-black text-[var(--text-primary)]">
+                {lim0(bcr?.legal)}% <span className="text-[var(--text-hint)]">/</span>{" "}
+                <span className={needsCheck ? "text-amber-300" : undefined}>{lim0(bcr?.ordinance)}%</span>
+              </p>
+            </div>
+            <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-2.5">
+              <p className="text-[8px] font-black uppercase text-[var(--text-hint)]">용적률 (법정 / 조례)</p>
+              <p className="text-sm font-black text-[var(--text-primary)]">
+                {lim0(far?.legal)}% <span className="text-[var(--text-hint)]">/</span>{" "}
+                <span className={needsCheck ? "text-amber-300" : undefined}>{lim0(far?.ordinance)}%</span>
+              </p>
+            </div>
+          </div>
+          {ordHier?.items && ordHier.items.length > 0 && (
+            <ul className="mt-2 space-y-0.5">
+              {ordHier.items.map((it, i) => (
+                <li key={i} className="text-[10px] leading-relaxed text-[var(--text-hint)]">
+                  • <b className="text-[var(--text-secondary)]">{it.name}</b>
+                  {it.desc ? ` — ${it.desc}` : ""}
+                </li>
+              ))}
+            </ul>
+          )}
+          <p className="mt-2 text-[10px] leading-relaxed text-[var(--text-secondary)]">
+            정북 일조사선·높이 등은 본 환경분석의 약식 검토이며, 위 지자체 조례 한도와 병행 확인이 필요합니다.
+          </p>
+        </>
+      ) : (
+        <p className="text-[11px] leading-relaxed text-[var(--text-secondary)]">
+          조례 한도 자료를 확보하지 못했습니다. 본 환경분석(정북 일조사선 등)은 약식이며 지자체 조례·완화규정을 별도 확인하세요.
+        </p>
+      )}
+    </div>
+  );
+}
+
 export function EnvironmentAnalysisPanel({
   address,
   pnu,
@@ -124,8 +213,11 @@ export function EnvironmentAnalysisPanel({
   const [heightInput, setHeightInput] = useState("");
   const [season, setSeason] = useState<EnvironmentSeason>("winter");
   const [res, setRes] = useState<EnvironmentResult | null>(null);
+  const [ordinance, setOrdinance] = useState<OrdinanceResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // 계절 자동 재요청 시 무한루프 방지(직전 요청 계절 기록)
+  const lastSeasonRef = useRef<EnvironmentSeason | null>(null);
 
   const run = useCallback(async () => {
     const a = (addr || address || "").trim();
@@ -135,6 +227,7 @@ export function EnvironmentAnalysisPanel({
     }
     setBusy(true);
     setErr(null);
+    lastSeasonRef.current = season;
     try {
       const floors = floorsInput ? Number(floorsInput.replace(/[^0-9.\-]/g, "")) : null;
       const height = heightInput ? Number(heightInput.replace(/[^0-9.\-]/g, "")) : null;
@@ -153,9 +246,24 @@ export function EnvironmentAnalysisPanel({
           season,
         },
       });
-      if (d?.ok) setRes(d);
-      else {
+      if (d?.ok) {
+        setRes(d);
+        // 지자체 조례 병행검토(use_llm=false·동반 1회). 실패/무자료면 약식 안내 유지.
+        if (a) {
+          try {
+            const reg = await apiClient.post<OrdinanceResult>("/regulation/analyze", {
+              body: { address: a, pnu: pnu ?? null, use_llm: false },
+            });
+            setOrdinance(reg ?? null);
+          } catch {
+            setOrdinance(null);
+          }
+        } else {
+          setOrdinance(null);
+        }
+      } else {
         setRes(null);
+        setOrdinance(null);
         setErr(d?.message || "환경분석 실패 — 좌표·필지 또는 주변 데이터를 확보하지 못했습니다.");
       }
     } catch {
@@ -166,6 +274,14 @@ export function EnvironmentAnalysisPanel({
     }
   }, [addr, address, pnu, floorsInput, heightInput, season]);
 
+  // 계절 변경 자동 재요청: 이미 분석결과(res)가 있을 때만(첫 분석 전 자동실행 금지).
+  // lastSeasonRef로 직전 요청 계절과 비교해 중복/무한루프 방지.
+  useEffect(() => {
+    if (!res || busy) return;
+    if (lastSeasonRef.current === season) return;
+    void run();
+  }, [season, res, busy, run]);
+
   const inp =
     "h-9 w-full rounded-lg border border-[var(--line)] bg-[var(--surface-strong)] px-3 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]";
 
@@ -174,6 +290,11 @@ export function EnvironmentAnalysisPanel({
   const skyline = res?.skyline;
   const gradeMeta = solar ? GRADE_META[solar.grade] : null;
   const skyMeta = skyline ? SKYLINE_META[skyline.position] : null;
+  // 선택 계절 라벨/일조시간(백엔드 season_label·sunlight_hours 우선, 구버전 winter 폴백)
+  const solarSeasonLabel =
+    solar?.season_label ?? SEASON_LABEL[solar?.season ?? season];
+  const solarSunlightHours =
+    solar?.sunlight_hours ?? solar?.sunlight_hours_winter;
 
   // 태양궤적: 지평선 위(고도>0)만 표기
   const sunData =
@@ -361,9 +482,9 @@ export function EnvironmentAnalysisPanel({
 
                 <div className="mt-3 grid grid-cols-2 gap-2">
                   <div className="rounded-lg bg-[var(--surface-muted)] p-2.5 text-center border border-[var(--line)]">
-                    <p className="text-[8px] font-black uppercase text-[var(--text-hint)]">동지 일조시간</p>
+                    <p className="text-[8px] font-black uppercase text-[var(--text-hint)]">{solarSeasonLabel} 일조시간</p>
                     <p className="text-sm font-black text-[var(--text-primary)]">
-                      {n1(solar?.sunlight_hours_winter)} h
+                      {n1(solarSunlightHours)} h
                     </p>
                   </div>
                   <div className="rounded-lg bg-[var(--surface-muted)] p-2.5 text-center border border-[var(--line)]">
@@ -491,6 +612,9 @@ export function EnvironmentAnalysisPanel({
             {res.sources && res.sources.length > 0 && (
               <p className="mt-2 text-[10px] text-[var(--text-hint)]">출처: {res.sources.join(" · ")}</p>
             )}
+
+            {/* ── 지자체 조례 병행검토 ── */}
+            <OrdinanceSection data={ordinance} />
           </>
         )}
       </CardContent>

@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v74-entry-nav";
+const CACHE_NAME = "propai-v75-twin-billing";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

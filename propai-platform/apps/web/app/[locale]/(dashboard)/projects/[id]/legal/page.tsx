@@ -6,6 +6,7 @@ import { ModulePlaceholder } from "@/components/layout/ModulePlaceholder";
 import { isValidLocale, type Locale } from "@/i18n/config";
 import { useDictionary } from "@/hooks/use-dictionary";
 import { ProjectLegalWorkspaceClient } from "@/components/projects/ProjectLegalWorkspaceClient";
+import { NextStageCta } from "@/components/projects/NextStageCta";
 
 export default function LegalPage() {
   const { locale, id } = useParams() as { locale: string; id: string };
@@ -53,6 +54,8 @@ export default function LegalPage() {
       >
         <ProjectLegalWorkspaceClient locale={locale as Locale} projectId={id} />
       </motion.div>
+
+      <NextStageCta locale={locale} />
     </div>
   );
 }

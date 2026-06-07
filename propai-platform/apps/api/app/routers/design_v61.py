@@ -486,6 +486,120 @@ async def get_bim_glb(project_id: str, req: BimGenerateRequest):
     )
 
 
+async def _load_mass_from_design_version(
+    design_version_id: str, db: AsyncSession
+) -> dict[str, Any] | None:
+    """design_versions(UUID) 행에서 저장된 매스를 복원한다(없으면 None).
+
+    floor_count/max_height_m 컬럼 + design_data_json의 매스 필드를 사용해
+    _resolve_mass와 동일한 형태(building_width/depth_m, num_floors, floor_height_m)로
+    재구성한다. 폭/깊이가 저장돼 있지 않으면(예: cad_2d 편집본) 합리적 기본값으로 보완.
+    가짜 데이터 생성 금지 — 조회 실패/무자료 시 None.
+    """
+    import uuid as _uuid
+
+    from sqlalchemy import text
+
+    try:
+        vid = _uuid.UUID(design_version_id)
+    except (ValueError, AttributeError):
+        return None
+    try:
+        row = (await db.execute(
+            text("""
+                SELECT floor_count, max_height_m, design_data_json
+                FROM design_versions
+                WHERE id = :vid LIMIT 1
+            """),
+            {"vid": str(vid)},
+        )).first()
+    except Exception as e:  # noqa: BLE001
+        import structlog
+
+        structlog.get_logger().warning("design_version 조회 실패", error=str(e)[:120])
+        return None
+    if row is None:
+        return None
+
+    floor_count, max_height_m, ddj = row[0], row[1], row[2]
+    if isinstance(ddj, str):
+        try:
+            ddj = json.loads(ddj)
+        except (ValueError, TypeError):
+            ddj = {}
+    ddj = ddj or {}
+
+    nf = int(floor_count) if floor_count else int(ddj.get("num_floors") or ddj.get("floor_count") or 5)
+    fh = float(ddj.get("floor_height_m") or 3.0)
+    if max_height_m and nf:
+        fh = round(float(max_height_m) / nf, 3) if nf else fh
+    bw = float(ddj.get("building_width_m") or 0) or 12.0
+    bd = float(ddj.get("building_depth_m") or 0) or 9.0
+    mass = {
+        "building_width_m": bw,
+        "building_depth_m": bd,
+        "num_floors": nf,
+        "floor_height_m": fh,
+    }
+    return _enrich_interior(mass)
+
+
+@router.get("/{design_version_id}/bim/model.glb", response_class=Response)
+async def get_bim_glb_get(
+    design_version_id: str,
+    db: AsyncSession = Depends(get_db),
+    floor_count: int | None = Query(None, ge=1, le=200),
+    floor_height_m: float = Query(3.0, gt=2.0),
+    building_width_m: float | None = Query(None, gt=0),
+    building_depth_m: float | None = Query(None, gt=0),
+    land_area_sqm: float | None = Query(None, gt=0),
+    zone_code: str = Query("2R"),
+    project_name: str = Query("PropAI"),
+):
+    """3D BIM 모델을 glTF binary(.glb)로 GET 반환한다 — 프론트 GLTFLoader.loadAsync 직접 로드.
+
+    POST 라우트는 보존(회귀 0). 이 GET 라우트가 프론트 BuildingGlb의 기본 로드 경로.
+    design_version_id가 UUID면 design_versions 테이블에서 매스를 복원하고, 아니거나
+    행이 없으면 쿼리/기본 폴백 매스(_resolve_mass)로 절차생성한다(가짜 금지·정직한 매스).
+    ETag/Cache-Control로 동일 매스 재요청을 캐시한다.
+    """
+    from app.services.bim.ifc_generator_service import build_ifc_from_mass
+    from app.services.bim.ifc_to_gltf_service import IfcToGltfService
+
+    mass = await _load_mass_from_design_version(design_version_id, db)
+    if mass is None:
+        # UUID 아님/행 없음 → 쿼리·기본 폴백 매스로 정직 절차생성
+        fallback_req = BimGenerateRequest(
+            building_width_m=building_width_m,
+            building_depth_m=building_depth_m,
+            floor_count=floor_count,
+            floor_height_m=floor_height_m,
+            land_area_sqm=land_area_sqm,
+            zone_code=zone_code,
+            project_name=project_name,
+        )
+        mass = _resolve_mass(fallback_req)
+
+    try:
+        ifc_bytes = build_ifc_from_mass(mass, project_name=project_name)
+        glb = IfcToGltfService().convert(ifc_bytes)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"BIM 모델 생성 실패: {str(e)[:120]}") from e
+
+    import hashlib
+
+    etag = '"' + hashlib.sha1(glb).hexdigest()[:16] + '"'  # noqa: S324 — 캐시 검증용(비보안)
+    return Response(
+        content=glb,
+        media_type="model/gltf-binary",
+        headers={
+            "Content-Disposition": f"inline; filename={design_version_id}.glb",
+            "ETag": etag,
+            "Cache-Control": "public, max-age=300",
+        },
+    )
+
+
 @router.post("/{project_id}/bim/export-ifc", response_class=Response)
 async def export_bim_ifc(project_id: str, req: BimGenerateRequest):
     """3D BIM 모델을 IFC4 파일로 내보낸다(BIM 표준 교환)."""

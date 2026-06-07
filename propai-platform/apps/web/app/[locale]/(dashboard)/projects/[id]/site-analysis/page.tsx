@@ -4,6 +4,8 @@ import React, { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import dynamic from "next/dynamic";
 import { motion, AnimatePresence } from "framer-motion";
+import { ModulePlaceholder } from "@/components/layout/ModulePlaceholder";
+import { NextStageCta } from "@/components/projects/NextStageCta";
 import { LandIntelligencePanel } from "@/components/projects/LandIntelligencePanel";
 import { SiteInitiator } from "@/components/projects/SiteInitiator";
 import { ProjectSiteAnalysisWorkspaceClient } from "@/components/projects/ProjectSiteAnalysisWorkspaceClient";
@@ -23,6 +25,19 @@ const DigitalTwinScene = dynamic(() => import("@/components/digital-twin/Digital
     </div>
   ),
 });
+
+// 주변 실거래 지도(Leaflet) — window.L 동적 로드라 ssr:false 마운트.
+const NearbyTransactionsMap = dynamic(
+  () => import("@/components/map/NearbyTransactionsMap").then((m) => m.NearbyTransactionsMap),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-8 text-center text-sm text-[var(--text-hint)]">
+        주변 실거래 지도 불러오는 중…
+      </div>
+    ),
+  },
+);
 
 type IconProps = React.SVGAttributes<SVGElement>;
 
@@ -616,6 +631,9 @@ export default function SiteAnalysisPage() {
   const [siteData, setSiteData] = useState<Record<string, string | undefined> | null>(null);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [l3Data, setL3Data] = useState<L3SiteData | null>(null);
+  // 디지털트윈 건물 자동연결: 프로젝트에 저장된 설계(design_versions)가 있으면 design_version_id를 확보.
+  // 없으면 null → DigitalTwinScene이 안내 블록만 표시(가짜 건물 금지).
+  const [designVersionId, setDesignVersionId] = useState<string | null>(null);
   // 사용자 명시 액션(새 분석/분석 시작) 추적 — 컨텍스트 자동진입이 사용자 의도를 덮어쓰지 않게 한다.
   const [userInitiated, setUserInitiated] = useState(false);
   const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
@@ -641,6 +659,29 @@ export default function SiteAnalysisPage() {
     });
     setStage((prev) => (prev === "init" ? "result" : prev));
   }, [isBound, userInitiated, siteAnalysis?.address, siteAnalysis?.pnu, siteAnalysis?.zoneCode, siteAnalysis?.landAreaSqm]);
+
+  // 결과 단계 진입 시 프로젝트의 최신 설계(design_versions) 존재 여부를 조회.
+  // 백엔드 /digital-twin/scene은 design_version_id 경로로 glb URL(/design/{id}/bim/model.glb)을
+  // 구성하며, 해당 glb POST 라우트는 path를 project_id로 사용하므로 프로젝트 id를 전달한다.
+  // 설계가 없으면 designVersionId=null → 건물 미합성 + 안내 블록 표시(무목업).
+  useEffect(() => {
+    if (stage !== "result" || !id) return;
+    let alive = true;
+    (async () => {
+      try {
+        const res = await apiClient.get<{ saved?: boolean }>(
+          `/design/${encodeURIComponent(id)}/drawings/load`,
+          { useMock: false },
+        );
+        if (alive) setDesignVersionId(res?.saved ? id : null);
+      } catch {
+        if (alive) setDesignVersionId(null);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [stage, id]);
 
   if (isLoading || !dictionary) {
     return (
@@ -723,44 +764,28 @@ export default function SiteAnalysisPage() {
   };
 
   const safeLocale = (isValidLocale(locale) ? locale : "ko") as Locale;
+  const runtimeMode =
+    process.env.NEXT_PUBLIC_USE_MOCKS === "false"
+      ? dictionary.workspace.modeLive
+      : dictionary.workspace.modeMock;
+  const t = dictionary.modulePlaceholders["site-analysis"];
 
   return (
     <div className="flex flex-col gap-12 min-h-screen pb-20 font-sans">
-      {/* ── High-Fidelity Project Hero ── */}
-      <section className="relative overflow-hidden rounded-2xl sm:rounded-[2rem] lg:rounded-[4rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-6 sm:p-10 lg:p-20 shadow-[var(--shadow-2xl)] group">
-        <div className="absolute -right-20 -top-20 h-80 w-80 rounded-full bg-[var(--accent-strong)]/10 blur-[100px] transition-all duration-1000 group-hover:scale-125" />
-        <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-[0.03] dark:invert" />
-
-        <div className="relative z-10 flex flex-col gap-10 lg:flex-row lg:items-end lg:justify-between">
-          <div className="max-w-4xl space-y-8">
-            <div className="flex items-center gap-4">
-              <span className="inline-flex items-center gap-3 rounded-full border border-[var(--accent-strong)]/30 bg-[var(--accent-soft)] px-6 py-2 text-[10px] font-black uppercase tracking-[0.4em] text-[var(--accent-strong)] backdrop-blur-md">
-                <span className="h-2 w-2 rounded-full bg-[var(--accent-strong)] animate-ping shadow-[var(--shadow-glow)]" />
-                지능형 부지분석 시스템
-              </span>
-            </div>
-
-            <h1 className="text-3xl font-[1000] tracking-tighter text-[var(--text-primary)] sm:text-5xl md:text-6xl lg:text-8xl leading-[0.9]">
-              부지 분석 및<br/>
-              <span className="text-[var(--accent-strong)] italic">입지 전략 수집<span className="text-[var(--text-primary)]">.</span></span>
-            </h1>
-
-            <p className="max-w-2xl text-base sm:text-lg lg:text-xl font-medium leading-relaxed text-[var(--text-secondary)] italic tracking-tight underline decoration-[var(--line-strong)] decoration-2 underline-offset-8">
-              "사통팔땅의 AI 엔진이 공공 빅데이터와 정밀 GIS를 실시간 결합하여, 리스크는 최소화하고 개발 가치는 극대화하는 멀티레이어 지능형 보고서를 생성합니다."
-            </p>
-          </div>
-
-          <div className="hidden lg:block">
-            <motion.div
-              animate={{ y: [0, -20, 0] }}
-              transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
-              className="h-44 w-44 rounded-[3.5rem] bg-[var(--surface-soft)] border border-[var(--line-strong)] flex items-center justify-center text-[var(--accent-strong)] backdrop-blur-3xl shadow-[var(--shadow-2xl)]"
-            >
-               <Icons.Map width={72} height={72} strokeWidth={1} />
-            </motion.div>
-          </div>
-        </div>
-      </section>
+      {/* ① 컨텍스트 헤더 — 3구역 표준(ModulePlaceholder) */}
+      <motion.div
+        initial={{ opacity: 0, y: 30 }}
+        animate={{ opacity: 1, y: 0 }}
+      >
+        <ModulePlaceholder
+          eyebrow={t.eyebrow}
+          title={t.title}
+          description={t.description}
+          statusLabel={runtimeMode}
+          localeLabel={locale}
+          items={t.items}
+        />
+      </motion.div>
 
       {/* ── Dynamic Content Stages ── */}
       <AnimatePresence mode="wait">
@@ -896,6 +921,13 @@ export default function SiteAnalysisPage() {
             {/* ── L3 Enhanced Cards: 실거래가, 건축물대장, 인프라 ── */}
             <L3EnhancedCards l3Data={l3Data} siteAnalysis={siteAnalysis} />
 
+            {/* ── 주변 실거래가(지도) — 반경원·매매/전월세·유형필터·마커 상세 ── */}
+            {siteData.address && (
+              <div id="nearby-transactions-map" className="scroll-mt-24">
+                <NearbyTransactionsMap address={siteData.address} pnu={siteData.pnu} />
+              </div>
+            )}
+
             {/* ── Flagship C-1: 지형분석(경사도·토공량·지형단면) ── */}
             <TerrainAnalysisPanel address={siteData.address} pnu={siteData.pnu} />
 
@@ -903,13 +935,28 @@ export default function SiteAnalysisPage() {
             <EnvironmentAnalysisPanel address={siteData.address} pnu={siteData.pnu} />
 
             {/* ── 가상준공 3D 디지털트윈(지형·필지·건물·주변 합성 뷰) ── */}
-            <DigitalTwinScene address={siteData.address} pnu={siteData.pnu} />
+            <DigitalTwinScene
+              address={siteData.address}
+              pnu={siteData.pnu}
+              designVersionId={designVersionId}
+              designHref={`/${locale}/projects/${id}/design`}
+              zoneType={siteData.zoneType ?? siteAnalysis?.zoneCode ?? undefined}
+            />
+
+            {/* ── AVM ML 자동감정(상단이 확정한 주소/PNU/면적으로 자동실행, 입력폼 없음) ── */}
+            <ProjectSiteAnalysisWorkspaceClient
+              locale={safeLocale}
+              projectId={id}
+              address={siteData.address}
+              pnu={siteData.pnu}
+              areaSqm={siteData.landAreaSqm ? Number(siteData.landAreaSqm) : undefined}
+            />
           </motion.div>
         )}
       </AnimatePresence>
 
-      {/* ── Live Workspace Client ── */}
-      <ProjectSiteAnalysisWorkspaceClient locale={safeLocale} projectId={id} />
+      {/* ③ 다음 단계 CTA */}
+      <NextStageCta locale={locale} />
     </div>
   );
 }

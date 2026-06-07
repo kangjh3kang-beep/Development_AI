@@ -107,6 +107,7 @@ from apps.api.database.models.tax_calculation import TaxCalculation
 from apps.api.database.models.tenant import Tenant
 from apps.api.database.models.timeseries import DroneDetectionEvent, IoTCarbonSensor
 from apps.api.database.models.user import User
+from apps.api.database.models.user_subscription import UserSubscription
 from apps.api.database.models.webhook import Webhook
 from apps.api.database.models.webhook_delivery import WebhookDelivery
 from apps.api.database.models.webrtc_session import WebRTCSession
@@ -140,6 +141,7 @@ __all__ = [
     # 기본 엔티티
     "Tenant",
     "User",
+    "UserSubscription",
     "RefreshToken",
     "Project",
     "Parcel",

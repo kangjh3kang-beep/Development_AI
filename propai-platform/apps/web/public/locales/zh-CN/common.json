@@ -593,6 +593,16 @@
         "✓ 워크플로우 상태 라우팅"
       ]
     },
+    "feasibility": {
+      "eyebrow": "PROP / FEASIBILITY",
+      "title": "AI 可行性与收益分析",
+      "description": "实时整合 15 种开发类型、38 种税务算法及全国 229 个市郡区条例，支持最优投资决策。",
+      "items": [
+        "✓ 各开发类型的可行性模拟",
+        "✓ 税务与金融结构自动测算",
+        "✓ ROI 与盈亏平衡可信度验证"
+      ]
+    },
     "report": {
       "eyebrow": "PROP / REPORT",
       "title": "최종 사업성 리포트",

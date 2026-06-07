@@ -38,7 +38,16 @@ export type NorthSetback = {
 
 export type EnvironmentSolar = {
   sun_positions: SunPosition[];
-  sunlight_hours_winter: number;
+  /** 선택 계절 키(에코). 미제공 시 winter로 간주. */
+  season?: EnvironmentSeason;
+  /** 선택 계절 한글 라벨(예 "동지"/"하지"/"춘추분"). */
+  season_label?: string;
+  /** 선택 계절 9~15시 약식 일조시간(h). */
+  sunlight_hours?: number;
+  /** @deprecated 하위호환 폴백 키. sunlight_hours 우선. */
+  sunlight_hours_winter?: number;
+  /** 선택 계절 태양 최대고도(°). */
+  max_altitude_deg?: number;
   north_setback: NorthSetback;
   summary: string;
   grade: SolarGrade;

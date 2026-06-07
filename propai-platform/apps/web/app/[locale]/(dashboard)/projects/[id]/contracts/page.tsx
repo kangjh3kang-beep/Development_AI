@@ -1,5 +1,6 @@
 import { ModulePlaceholder } from "@/components/layout/ModulePlaceholder";
 import { ProjectContractWorkspaceClient } from "@/components/projects/ProjectContractWorkspaceClient";
+import { NextStageCta } from "@/components/projects/NextStageCta";
 import { getDictionary } from "@/i18n/get-dictionary";
 import { isValidLocale, type Locale } from "@/i18n/config";
 
@@ -36,6 +37,7 @@ export default async function ProjectContractsPage({
         items={dictionary.modulePlaceholders["contracts"].items}
       />
       <ProjectContractWorkspaceClient locale={locale as Locale} projectId={id} />
+      <NextStageCta locale={locale} />
     </div>
   );
 }

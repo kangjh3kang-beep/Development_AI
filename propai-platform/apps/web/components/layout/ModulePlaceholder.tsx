@@ -39,7 +39,7 @@ export function ModulePlaceholder({
           </div>
 
           <div className="space-y-4">
-            <h2 className="text-4xl font-[900] text-[var(--text-primary)] tracking-tighter sm:text-5xl lg:text-6xl leading-[1.1]">
+            <h2 className="max-w-2xl text-3xl font-[900] text-[var(--text-primary)] tracking-tighter sm:text-4xl lg:text-[40px] leading-[1.15]">
               {title}<span className="text-[var(--accent-strong)]">.</span>
             </h2>
             <p className="max-w-2xl text-lg font-medium leading-relaxed text-[var(--text-secondary)] tracking-tight">

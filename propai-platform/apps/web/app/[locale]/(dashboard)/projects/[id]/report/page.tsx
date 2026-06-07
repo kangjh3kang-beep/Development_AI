@@ -1,5 +1,6 @@
 import { ModulePlaceholder } from "@/components/layout/ModulePlaceholder";
 import { ProjectReportWorkspaceClient } from "@/components/projects/ProjectReportWorkspaceClient";
+import { NextStageCta } from "@/components/projects/NextStageCta";
 import { ReportPdfDownload } from "@/components/projects/ReportPdfDownload";
 import { BankReadyReportBuilder } from "@/components/report/BankReadyReportBuilder";
 import { getDictionary } from "@/i18n/get-dictionary";
@@ -58,6 +59,7 @@ export default async function ReportPage({ params }: ReportPageProps) {
         </div>
       </div>
       <ProjectReportWorkspaceClient locale={locale as Locale} projectId={id} />
+      <NextStageCta locale={locale} />
     </div>
   );
 }

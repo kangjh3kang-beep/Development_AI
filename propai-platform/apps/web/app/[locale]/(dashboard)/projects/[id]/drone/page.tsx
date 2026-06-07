@@ -1,5 +1,6 @@
 import { ModulePlaceholder } from "@/components/layout/ModulePlaceholder";
 import { ProjectDroneWorkspaceClient } from "@/components/projects/ProjectDroneWorkspaceClient";
+import { NextStageCta } from "@/components/projects/NextStageCta";
 import { getDictionary } from "@/i18n/get-dictionary";
 import { isValidLocale, type Locale } from "@/i18n/config";
 
@@ -34,6 +35,7 @@ export default async function DronePage({ params }: DronePageProps) {
         items={dictionary.modulePlaceholders["drone"].items}
       />
       <ProjectDroneWorkspaceClient locale={locale as Locale} projectId={id} />
+      <NextStageCta locale={locale} />
     </div>
   );
 }

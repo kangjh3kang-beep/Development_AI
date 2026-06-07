@@ -7,6 +7,7 @@ from packages.schemas.models import RegulationCheckResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.billing_deps import enforce_llm_quota
 from apps.api.auth.jwt_handler import CurrentUser
 from apps.api.auth.rbac import RequirePermission
 from apps.api.database.session import get_db
@@ -32,7 +33,11 @@ class RegulationAnalyzeRequest(BaseModel):
     use_llm: bool = True
 
 
-@router.post("/analyze", summary="부지 규제 종합 분석(계층 대시보드)")
+@router.post(
+    "/analyze",
+    summary="부지 규제 종합 분석(계층 대시보드)",
+    dependencies=[Depends(enforce_llm_quota)],
+)
 async def analyze_regulation(body: RegulationAnalyzeRequest) -> dict:
     """부지에 적용되는 상위법령·도시계획·조례·개별규제를 계층으로 정리하고
     정량 한도(건폐/용적/높이/주차)와 AI 통합 해석을 반환한다."""

@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { useProjectStore } from "@/store/useProjectStore";
 import { apiClient } from "@/lib/api-client";
+import { applyRemoteSnapshot } from "@/lib/projectSync";
 
 type ProjectMetaLite = {
   id: string;
@@ -13,6 +14,7 @@ type ProjectMetaLite = {
   total_area_sqm?: number | null;
   zone_type?: string | null;
   pnu_codes?: string[] | null;
+  analysis_snapshot?: Record<string, unknown> | null;
 };
 
 /**
@@ -62,6 +64,11 @@ export function ProjectContextBinder({ projectId }: { projectId: string }) {
           (meta.status as string) || (local?.status as string) || "draft",
           meta.address || local?.address || undefined,
         );
+
+        // 백엔드 analysis_snapshot 복원(기기무관 단일출처). 로컬이 더 최신이면 보존.
+        // setProject(step1)가 이미 localStorage 스냅샷을 복원한 뒤이므로,
+        // 백엔드가 더 최신일 때만 덮어써 기기간 동기화를 달성한다.
+        applyRemoteSnapshot(projectId, meta.analysis_snapshot);
 
         // 메타 병합(컨텍스트 우선, 빈 필드만 백엔드 meta로 보강).
         // 사용자 분석(컨텍스트)이 이미 채운 값은 절대 덮어쓰지 않는다.

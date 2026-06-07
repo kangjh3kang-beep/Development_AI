@@ -85,6 +85,8 @@ class ProjectResponse(BaseModel):
     building_type: str | None = None
     created_at: datetime
     updated_at: datetime
+    # 분석 스냅샷 — 상세 응답에만 포함(목록은 페이로드 절약 위해 None 유지).
+    analysis_snapshot: dict | None = None
 
 
 class ProjectCreateRequest(BaseModel):
@@ -104,6 +106,8 @@ class ProjectUpdateRequest(BaseModel):
     longitude: float | None = Field(default=None, ge=-180, le=180)
     total_area_sqm: float | None = Field(default=None, gt=0)
     description: str | None = None
+    # 분석 스냅샷(프로젝트별 분석 결과 blob) — 주어지면 그대로 저장(백엔드 단일출처).
+    analysis_snapshot: dict | None = None
 
 
 class ProjectStatusUpdateRequest(BaseModel):
@@ -925,6 +929,7 @@ class ESGAssessmentRequest(BaseModel):
     community_programs_count: int = Field(default=0, ge=0)
     board_independence_ratio: float = Field(default=0.0, ge=0, le=1)
     disclosures: list[dict] = Field(default_factory=list)
+    use_llm: bool = True  # AI 내러티브(ESG 해석) 포함 여부(사용자 선택)
 
 
 class ESGAssessmentResponse(BaseModel):

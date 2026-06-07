@@ -2,12 +2,16 @@
 
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
+import { motion } from "framer-motion";
 import { apiClient } from "@/lib/api-client";
+import { ModulePlaceholder } from "@/components/layout/ModulePlaceholder";
+import { NextStageCta } from "@/components/projects/NextStageCta";
 import { ProjectPermitWorkspaceClient } from "@/components/projects/ProjectPermitWorkspaceClient";
 import { DesignChangePredictPanel } from "@/components/design-risk/DesignChangePredictPanel";
 import { EnvironmentSummaryCard } from "@/components/environment/EnvironmentSummaryCard";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { isValidLocale, type Locale } from "@/i18n/config";
+import { useDictionary } from "@/hooks/use-dictionary";
 
 export default function PermitPage() {
   const params = useParams();
@@ -17,6 +21,7 @@ export default function PermitPage() {
   const [data, setData] = useState<{ stages: any[], documents: any[] } | null>(null);
   const [loading, setLoading] = useState(true);
   const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
+  const { dictionary } = useDictionary((isValidLocale(locale) ? locale : "ko") as Locale);
 
   useEffect(() => {
     async function fetchStatus() {
@@ -39,12 +44,27 @@ export default function PermitPage() {
   const permitStages = data?.stages || [];
   const documents = data?.documents || [];
 
+  const runtimeMode =
+    process.env.NEXT_PUBLIC_USE_MOCKS === "false"
+      ? dictionary?.workspace.modeLive ?? "LIVE"
+      : dictionary?.workspace.modeMock ?? "MOCK";
+  const t = dictionary?.modulePlaceholders["permit"];
+
   return (
     <div className="grid gap-8 p-6 lg:p-12">
-      <div className="flex flex-col gap-2">
-        <h2 className="text-3xl font-black tracking-tight text-[var(--text-primary)]">인허가 관리 포털</h2>
-        <p className="text-[var(--text-secondary)]">프로젝트 인허가 진행 현황 및 서류 제출 상태를 실시간으로 모니터링합니다.</p>
-      </div>
+      {/* ① 컨텍스트 헤더 — 3구역 표준(ModulePlaceholder) */}
+      {t && (
+        <motion.div initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }}>
+          <ModulePlaceholder
+            eyebrow={t.eyebrow}
+            title={t.title}
+            description={t.description}
+            statusLabel={runtimeMode}
+            localeLabel={locale}
+            items={t.items}
+          />
+        </motion.div>
+      )}
 
       <div className="rounded-[var(--radius-2xl)] border border-[var(--line)] bg-[var(--surface-strong)] p-10 shadow-xl">
         <h3 className="mb-10 text-xl font-bold text-[var(--text-primary)]">인허가 진행 프로세스</h3>
@@ -137,6 +157,9 @@ export default function PermitPage() {
 
       {/* ── Live Workspace Client ── */}
       <ProjectPermitWorkspaceClient locale={safeLocale} projectId={id} />
+
+      {/* ③ 다음 단계 CTA */}
+      <NextStageCta locale={locale} />
     </div>
   );
 }

@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from app.core.billing_deps import enforce_llm_quota
 from app.services.market.market_report_service import MarketReportService
 from apps.api.auth.jwt_handler import CurrentUser, get_current_user
 
@@ -39,7 +40,7 @@ def _resolve(req: MarketReportRequest) -> tuple[str, str | None]:
     return lawd_cd, pnu
 
 
-@router.post("/report")
+@router.post("/report", dependencies=[Depends(enforce_llm_quota)])
 async def market_report(
     req: MarketReportRequest,
     current_user: CurrentUser = Depends(get_current_user),
@@ -48,7 +49,7 @@ async def market_report(
     return await MarketReportService().build_report(req.address, lawd_cd, pnu, use_llm=req.use_llm)
 
 
-@router.post("/report/pdf")
+@router.post("/report/pdf", dependencies=[Depends(enforce_llm_quota)])
 async def market_report_pdf(
     req: MarketReportRequest,
     current_user: CurrentUser = Depends(get_current_user),
@@ -63,7 +64,7 @@ async def market_report_pdf(
     )
 
 
-@router.post("/report/pptx")
+@router.post("/report/pptx", dependencies=[Depends(enforce_llm_quota)])
 async def market_report_pptx(
     req: MarketReportRequest,
     current_user: CurrentUser = Depends(get_current_user),

@@ -92,6 +92,7 @@ class FeasibilityServiceV2:
         land_area_sqm: float | None = None,
         region: str = "서울",
         equity_won: int = 10_000_000_000,  # 자기자본 100억 기본
+        use_llm: bool = True,
     ) -> dict:
         """부지 주소로부터 최적 사업모델 Top 3 자동 추천."""
 
@@ -200,14 +201,17 @@ class FeasibilityServiceV2:
             "all_results": results,  # Full ranking for reference
         }
 
-        # Step 5: AI 해석 생성
-        try:
-            from app.services.ai.feasibility_interpreter import FeasibilityInterpreter
-            interpreter = FeasibilityInterpreter()
-            ai = await interpreter.generate_interpretation(result)
-            result["ai_interpretation"] = ai
-        except Exception:
-            logger.warning("수지분석 AI 해석 생성 실패 — 폴백 처리")
+        # Step 5: AI 해석 생성 — 명시실행(use_llm=False면 규칙기반 결과만, LLM 생략)
+        if use_llm:
+            try:
+                from app.services.ai.feasibility_interpreter import FeasibilityInterpreter
+                interpreter = FeasibilityInterpreter()
+                ai = await interpreter.generate_interpretation(result)
+                result["ai_interpretation"] = ai
+            except Exception:
+                logger.warning("수지분석 AI 해석 생성 실패 — 폴백 처리")
+                result["ai_interpretation"] = None
+        else:
             result["ai_interpretation"] = None
 
         return result

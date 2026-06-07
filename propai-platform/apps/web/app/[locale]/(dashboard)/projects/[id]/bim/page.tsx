@@ -1,5 +1,6 @@
 import { ModulePlaceholder } from "@/components/layout/ModulePlaceholder";
 import { ProjectBimWorkspaceClient } from "@/components/projects/ProjectBimWorkspaceClient";
+import { NextStageCta } from "@/components/projects/NextStageCta";
 import { isValidLocale, type Locale } from "@/i18n/config";
 import { getDictionary } from "@/i18n/get-dictionary";
 
@@ -34,6 +35,7 @@ export default async function BimPage({ params }: BimPageProps) {
         items={dictionary.modulePlaceholders["bim"].items}
       />
       <ProjectBimWorkspaceClient locale={locale as Locale} projectId={id} />
+      <NextStageCta locale={locale} />
     </div>
   );
 }

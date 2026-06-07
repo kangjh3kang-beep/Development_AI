@@ -31,6 +31,7 @@ class FeasibilityCalculateRequest(BaseModel):
     discount_rate: float = 0.08
     equity_won: int = 0
     params: dict[str, Any] = {}
+    use_llm: bool = True  # AI 내러티브(수지 해석) 포함 여부(사용자 선택). /calculate는 규칙기반이라 무영향.
 
 
 class FeasibilityMultiRequest(BaseModel):

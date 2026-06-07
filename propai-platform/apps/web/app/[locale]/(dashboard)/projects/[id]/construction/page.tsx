@@ -8,6 +8,7 @@ import { isValidLocale, type Locale } from "@/i18n/config";
 import { useDictionary } from "@/hooks/use-dictionary";
 import { ContractorIntelligence } from "@/components/construction/ContractorIntelligence";
 import { ProjectConstructionWorkspaceClient } from "@/components/projects/ProjectConstructionWorkspaceClient";
+import { NextStageCta } from "@/components/projects/NextStageCta";
 
 const CostAndQuantityDashboard = dynamic(
   () => import("@/components/construction/CostAndQuantityDashboard").then(mod => mod.CostAndQuantityDashboard)
@@ -117,6 +118,8 @@ export default function ConstructionPage() {
           <ScheduleSupervisionPanel projectId={id} dictionary={(dictionary as any).schedule ?? {}} />
         </motion.div>
       </div>
+
+      <NextStageCta locale={locale} />
     </div>
   );
 }

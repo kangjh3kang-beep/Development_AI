@@ -9,6 +9,7 @@ from packages.schemas.models import PermitStatusResponse, PermitSubmissionReques
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.billing_deps import enforce_llm_quota
 from apps.api.auth.jwt_handler import CurrentUser
 from apps.api.auth.rbac import RequirePermission
 from apps.api.database.session import get_db
@@ -44,7 +45,11 @@ class ComplianceCheckResponse(BaseModel):
     checked_at: str = ""
 
 
-@router.post("/compliance-check", response_model=ComplianceCheckResponse)
+@router.post(
+    "/compliance-check",
+    response_model=ComplianceCheckResponse,
+    dependencies=[Depends(enforce_llm_quota)],
+)
 async def check_building_compliance(
     req: ComplianceCheckRequest,
 ):
@@ -197,9 +202,10 @@ class AIPermitAnalysisRequest(BaseModel):
     pnu: str | None = None
     site: dict[str, Any] | None = None  # 부지분석 결과(있으면 재수집 생략)
     parcels: list[str] | None = None  # 다필지 통합 개발 시 추가 필지 주소(2개 이상이면 통합 용적률 산정)
+    use_llm: bool = True  # AI 내러티브(개발방식별 LLM 분석) 포함 여부(사용자 선택)
 
 
-@router.post("/ai-analysis")
+@router.post("/ai-analysis", dependencies=[Depends(enforce_llm_quota)])
 async def ai_permit_analysis(
     req: AIPermitAnalysisRequest,
     current_user: CurrentUser = Depends(RequirePermission("permits", "read")),
@@ -214,5 +220,5 @@ async def ai_permit_analysis(
     if not req.address or not req.address.strip():
         raise HTTPException(status_code=400, detail="주소가 필요합니다.")
     return await PermitAnalysisService().analyze(
-        req.address.strip(), req.site or {}, parcels=req.parcels
+        req.address.strip(), req.site or {}, parcels=req.parcels, use_llm=req.use_llm
     )

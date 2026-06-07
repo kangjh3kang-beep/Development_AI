@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends
 from packages.schemas.models import ESGAssessmentRequest, ESGAssessmentResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.billing_deps import enforce_llm_quota
 from apps.api.auth.jwt_handler import CurrentUser
 from apps.api.auth.rbac import RequirePermission
 from apps.api.database.session import get_db
@@ -12,7 +13,11 @@ from apps.api.services.esg_service import ESGService
 router = APIRouter()
 
 
-@router.post("/assessment", response_model=ESGAssessmentResponse)
+@router.post(
+    "/assessment",
+    response_model=ESGAssessmentResponse,
+    dependencies=[Depends(enforce_llm_quota)],
+)
 async def run_esg_assessment(
     body: ESGAssessmentRequest,
     current_user: CurrentUser = Depends(RequirePermission("esg", "write")),
@@ -37,9 +42,12 @@ async def run_esg_assessment(
     )
     carbon_total = footprint.scope1_tco2e + footprint.scope2_tco2e + footprint.scope3_tco2e
 
-    # LLM(Claude) ESG 해석 — 실패해도 평가 결과는 정상 반환(graceful fallback)
+    # LLM(Claude) ESG 해석 — 실패해도 평가 결과는 정상 반환(graceful fallback).
+    # use_llm=False면 LLM 내러티브를 건너뛰고 규칙기반 수치결과만 반환(명시실행).
     ai: dict = {}
     try:
+        if not body.use_llm:
+            raise RuntimeError("use_llm=False — AI 내러티브 생략")
         from app.services.ai.esg_interpreter import EsgInterpreter
 
         gfa = body.gross_floor_area_sqm or 0

@@ -9,7 +9,7 @@ import { useEffect } from "react";
 import { useProjectStore } from "@/store/useProjectStore";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { useLandScheduleStore } from "@/store/useLandScheduleStore";
-import { syncDown, scheduleSyncUp } from "@/lib/projectSync";
+import { syncDown, scheduleSyncUp, scheduleSnapshotSync } from "@/lib/projectSync";
 
 export function ProjectSyncProvider() {
   useEffect(() => {
@@ -17,7 +17,11 @@ export function ProjectSyncProvider() {
     void syncDown();
     // 2) 로컬 변경 → 서버 (debounced)
     const unsubA = useProjectStore.subscribe(() => scheduleSyncUp());
-    const unsubB = useProjectContextStore.subscribe(() => scheduleSyncUp());
+    const unsubB = useProjectContextStore.subscribe(() => {
+      scheduleSyncUp();
+      // 현재 프로젝트 분석을 /projects/{id}.analysis_snapshot에 직접 영속(UUID만).
+      scheduleSnapshotSync();
+    });
     const unsubC = useLandScheduleStore.subscribe(() => scheduleSyncUp());
     return () => { unsubA(); unsubB(); unsubC(); };
   }, []);

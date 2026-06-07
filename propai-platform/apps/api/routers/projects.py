@@ -40,8 +40,12 @@ _VALID_TRANSITIONS: dict[str, list[str]] = {
 }
 
 
-def _to_response(project: Project) -> ProjectResponse:
-    """Project ORM 인스턴스를 ProjectResponse로 변환한다."""
+def _to_response(project: Project, *, include_snapshot: bool = False) -> ProjectResponse:
+    """Project ORM 인스턴스를 ProjectResponse로 변환한다.
+
+    include_snapshot=True일 때만 analysis_snapshot을 포함한다(상세/수정 응답).
+    목록 응답은 페이로드 절약 위해 제외(None 유지).
+    """
     return ProjectResponse(
         id=project.id,
         tenant_id=project.tenant_id,
@@ -54,6 +58,9 @@ def _to_response(project: Project) -> ProjectResponse:
         building_type=getattr(project, "building_type", None) or "공동주택",
         created_at=project.created_at,
         updated_at=project.updated_at,
+        analysis_snapshot=(
+            getattr(project, "analysis_snapshot", None) if include_snapshot else None
+        ),
     )
 
 
@@ -166,7 +173,7 @@ async def get_project(
 ) -> ProjectResponse:
     """프로젝트 상세 정보를 조회한다."""
     project = await _get_project_or_404(project_id, current_user.tenant_id, db)
-    return _to_response(project)
+    return _to_response(project, include_snapshot=True)
 
 
 @router.put("/{project_id}", response_model=ProjectResponse)
@@ -185,6 +192,11 @@ async def update_project(
     for field, value in update_data.items():
         setattr(project, field, value)
 
+    # 감사 로그 after_state에는 분석 스냅샷 blob(대용량)을 싣지 않고 변경 여부만 기록.
+    audit_after = {k: v for k, v in update_data.items() if k != "analysis_snapshot"}
+    if "analysis_snapshot" in update_data:
+        audit_after["analysis_snapshot_updated"] = True
+
     await record_audit(
         db,
         tenant_id=current_user.tenant_id,
@@ -193,13 +205,13 @@ async def update_project(
         action="update",
         actor_id=current_user.user_id,
         before_state=before,
-        after_state=update_data,
+        after_state=audit_after,
         ip_address=request.client.host if request.client else None,
     )
 
     await db.commit()
     await db.refresh(project)
-    return _to_response(project)
+    return _to_response(project, include_snapshot=True)
 
 
 @router.patch("/{project_id}/status", response_model=ProjectResponse)

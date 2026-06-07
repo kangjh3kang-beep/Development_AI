@@ -82,6 +82,9 @@ type Labels = {
   missingAreaError: string;
   missingPnuError: string;
   avmTitle: string;
+  avmAutoHint: string;
+  autoMissingArea: string;
+  autoLoading: string;
   avmEstimateLabel: string;
   avmUnitPriceLabel: string;
   avmConfidenceLabel: string;
@@ -133,7 +136,11 @@ const KO_LABELS: Labels = {
   missingAddressError: "주소는 필수 입력 항목입니다.",
   missingAreaError: "양수의 면적 값이 필요합니다.",
   missingPnuError: "PNU는 필지 정보 조회에 필수입니다.",
-  avmTitle: "AVM 시세 추정",
+  avmTitle: "AVM 시세 추정 (ML 자동감정)",
+  avmAutoHint: "주변 실거래(상단)와 별개의 머신러닝 자동감정 추정치입니다.",
+  autoMissingArea:
+    "면적 정보가 있으면 AVM 자동감정이 표시됩니다.",
+  autoLoading: "AVM ML 자동감정을 분석하는 중입니다...",
   avmEstimateLabel: "추정 시세",
   avmUnitPriceLabel: "㎡당 단가",
   avmConfidenceLabel: "신뢰도",
@@ -190,7 +197,12 @@ const EN_LABELS: Labels = {
   missingAddressError: "Address is required.",
   missingAreaError: "A positive area value is required.",
   missingPnuError: "PNU is required for parcel info lookup.",
-  avmTitle: "AVM valuation",
+  avmTitle: "AVM valuation (ML auto-appraisal)",
+  avmAutoHint:
+    "An ML auto-appraisal estimate, distinct from the nearby actual transactions shown above.",
+  autoMissingArea:
+    "AVM auto-appraisal will appear when land area is available.",
+  autoLoading: "Running AVM ML auto-appraisal...",
   avmEstimateLabel: "Estimated price",
   avmUnitPriceLabel: "Price per sqm",
   avmConfidenceLabel: "Confidence",
@@ -264,14 +276,29 @@ function extractErrorMessage(error: unknown, authMessage: string) {
 export function ProjectSiteAnalysisWorkspaceClient({
   locale,
   projectId,
+  address,
+  pnu,
+  areaSqm,
 }: {
   locale: Locale;
   projectId: string;
+  /** auto 모드 — 상단 결과흐름이 확정한 주소가 주어지면 입력폼 없이 AVM 자동감정을 실행한다. */
+  address?: string;
+  pnu?: string;
+  areaSqm?: number;
 }) {
   const labels = LABELS[locale] || LABELS["ko"];
   const runtimeConfig = apiClient.getRuntimeConfig();
   const canUseLiveApi =
     runtimeConfig.mode === "live" || runtimeConfig.hasAccessToken;
+
+  // auto 모드 판정: 상단 흐름이 넘긴 주소가 있으면 입력폼·Hero·필지지도 없이 카드만 렌더한다.
+  const autoMode = Boolean(address && address.trim());
+  const autoAddress = (address ?? "").trim();
+  const autoPnu = (pnu ?? "").trim();
+  const autoArea = typeof areaSqm === "number" && Number.isFinite(areaSqm) && areaSqm > 0
+    ? areaSqm
+    : null;
 
   const updateSiteAnalysis = useProjectContextStore((s) => s.updateSiteAnalysis);
   const markStageComplete = useProjectContextStore((s) => s.markStageComplete);
@@ -279,6 +306,7 @@ export function ProjectSiteAnalysisWorkspaceClient({
 
   const [workspaceError, setWorkspaceError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isAutoLoading, setIsAutoLoading] = useState(false);
   const [avmResult, setAvmResult] = useState<AVMEstimateResponse | null>(null);
   const [parcelResult, setParcelResult] = useState<ParcelInfoResponse | null>(
     null,
@@ -328,6 +356,80 @@ export function ProjectSiteAnalysisWorkspaceClient({
   const projectError = projectQuery.error
     ? extractErrorMessage(projectQuery.error, labels.authError)
     : "";
+
+  // 결과 카드 플레이스홀더: auto 모드에선 로딩/안내, 수동 모드에선 폼 제출 안내.
+  const resultPlaceholder = autoMode
+    ? autoArea
+      ? labels.autoLoading
+      : labels.autoMissingArea
+    : labels.placeholder;
+
+  // auto 모드: 상단 흐름이 확정한 주소(+면적/PNU)로 AVM ML 자동감정·필지정보를 자동 호출한다.
+  // 면적이 없으면 호출 보류(정직 안내). 무목업 — 실패 시 graceful 에러만 표기.
+  useEffect(() => {
+    if (!autoMode || !canUseLiveApi || !autoArea) {
+      return;
+    }
+    let cancelled = false;
+    setWorkspaceError("");
+    setIsAutoLoading(true);
+
+    (async () => {
+      try {
+        const avm = await apiClient.post<AVMEstimateResponse>("/avm/estimate", {
+          useMock: false,
+          body: {
+            address: autoAddress,
+            area_sqm: autoArea,
+            pnu: autoPnu || undefined,
+          },
+        });
+        if (cancelled) return;
+        setAvmResult(avm);
+
+        let parcelZoning: string | null = null;
+        if (autoPnu) {
+          const parcel = await apiClient.post<ParcelInfoResponse>(
+            "/external/parcel/info",
+            { useMock: false, body: { pnu: autoPnu } },
+          );
+          if (cancelled) return;
+          setParcelResult(parcel);
+          parcelZoning = parcel.zoning || null;
+        }
+
+        updateSiteAnalysis({
+          estimatedValue: avm.estimated_price,
+          landAreaSqm: autoArea,
+          zoneCode: parcelZoning,
+          address: autoAddress,
+          pnu: autoPnu || null,
+        });
+        addAnalysisResult({
+          module: "site-analysis",
+          completedAt: new Date().toISOString(),
+          summary: {
+            estimatedPrice: avm.estimated_price,
+            confidence: avm.confidence_score,
+            address: autoAddress,
+          },
+        });
+      } catch (error) {
+        if (!cancelled) {
+          setWorkspaceError(extractErrorMessage(error, labels.authError));
+        }
+      } finally {
+        if (!cancelled) {
+          setIsAutoLoading(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoMode, canUseLiveApi, autoAddress, autoPnu, autoArea]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -403,6 +505,27 @@ export function ProjectSiteAnalysisWorkspaceClient({
 
   return (
     <section className="grid gap-6">
+      {/* auto 모드: 입력폼·Hero·필지지도 없이 상태 안내 + AVM/필지/비교거래 카드만 렌더 */}
+      {autoMode ? (
+        <>
+          {!autoArea ? (
+            <div className="rounded-[var(--radius-xl)] border border-dashed border-[var(--line)] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[var(--text-secondary)]">
+              {labels.autoMissingArea}
+            </div>
+          ) : null}
+          {isAutoLoading ? (
+            <div className="rounded-[var(--radius-xl)] border border-[var(--line)] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[var(--text-secondary)]">
+              {labels.autoLoading}
+            </div>
+          ) : null}
+          {workspaceError ? (
+            <div className="rounded-[var(--radius-xl)] border border-[rgba(217,119,6,0.28)] bg-[rgba(217,119,6,0.08)] p-5 text-sm leading-7 text-[var(--spot)]">
+              {workspaceError}
+            </div>
+          ) : null}
+        </>
+      ) : (
+        <>
       {/* Hero */}
       <Card className="rounded-[var(--radius-2xl)] bg-[var(--surface-strong)] shadow-[var(--shadow-lg)]">
         <CardContent className="p-8">
@@ -604,6 +727,8 @@ export function ProjectSiteAnalysisWorkspaceClient({
 
       {/* 필지 구획도 (경계·용도지역·면적) */}
       {form.address.trim().length >= 3 && <ParcelBoundaryMap parcels={[form.address.trim()]} />}
+        </>
+      )}
 
       {/* Results */}
       <div className="grid gap-6 xl:grid-cols-2">
@@ -612,6 +737,9 @@ export function ProjectSiteAnalysisWorkspaceClient({
           <CardContent className="p-6">
             <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
               {labels.avmTitle}
+            </p>
+            <p className="mt-1 text-[11px] leading-5 text-[var(--text-tertiary)]">
+              {labels.avmAutoHint}
             </p>
             {avmResult ? (
               <div className="mt-4 grid gap-4 md:grid-cols-2">
@@ -642,7 +770,7 @@ export function ProjectSiteAnalysisWorkspaceClient({
               </div>
             ) : (
               <div className="mt-4 rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[var(--text-secondary)]">
-                {labels.placeholder}
+                {resultPlaceholder}
               </div>
             )}
           </CardContent>
@@ -704,7 +832,7 @@ export function ProjectSiteAnalysisWorkspaceClient({
               </div>
             ) : (
               <div className="mt-4 rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[var(--text-secondary)]">
-                {labels.placeholder}
+                {resultPlaceholder}
               </div>
             )}
           </CardContent>
