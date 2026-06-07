@@ -225,6 +225,22 @@ export interface ProjectContextState {
   getNextRecommendedStage: () => string | null;
   // 다운스트림 모듈이 업스트림 갱신 이후로 재계산되지 않았으면 true.
   isStale: (downstream: ModuleKey) => boolean;
+  // 수지분석에 실제 반영된 업스트림 단계 완성도(0~100, 무목업: 실데이터 유무 기반).
+  feasibilityCompleteness: () => FeasibilityCompleteness;
+}
+
+/* ── 수지 완성도/신뢰도 파생 모델 ──
+   업스트림 단계(부지/설계/공사비/금융)별로 "수지에 반영 가능한 실데이터가 있는가"를
+   판정해 단계 칩과 반영도(%)를 산출한다. 무목업: 실데이터가 없으면 done=false. */
+export interface FeasibilityCompletenessStage {
+  key: "site" | "design" | "cost" | "finance";
+  label: string;
+  done: boolean;
+  weightPct: number; // 누적 가중치(부지30/설계60/공사비85/금융100)
+}
+export interface FeasibilityCompleteness {
+  stages: FeasibilityCompletenessStage[];
+  pct: number; // 반영도(%) — 완료된 마지막 단계의 누적 가중치
 }
 
 /* ── Initial cross-module state ── */
@@ -493,6 +509,39 @@ export const useProjectContextStore = create<ProjectContextState>()(
           const upAt = updatedAt[up];
           return upAt != null && upAt > own;
         });
+      },
+
+      feasibilityCompleteness: () => {
+        const s = get();
+        // 단계별 실데이터 반영 판정(무목업): 값이 존재해야 done.
+        const siteDone = !!(
+          (s.siteAnalysis?.landAreaSqm && s.siteAnalysis.landAreaSqm > 0) ||
+          s.siteAnalysis?.address
+        );
+        const designDone = !!(
+          s.designData?.totalGfaSqm && s.designData.totalGfaSqm > 0
+        );
+        const costDone = !!(
+          s.costData?.totalConstructionCostWon &&
+          s.costData.totalConstructionCostWon > 0
+        );
+        const financeDone = !!(
+          s.feasibilityData?.totalRevenueWon &&
+          s.feasibilityData.totalRevenueWon > 0
+        );
+        const stages: FeasibilityCompletenessStage[] = [
+          { key: "site", label: "부지", done: siteDone, weightPct: 30 },
+          { key: "design", label: "설계", done: designDone, weightPct: 60 },
+          { key: "cost", label: "공사비", done: costDone, weightPct: 85 },
+          { key: "finance", label: "금융", done: financeDone, weightPct: 100 },
+        ];
+        // 반영도 = 연속으로 완료된 마지막 단계의 누적 가중치(중간 누락 시 직전까지).
+        let pct = 0;
+        for (const st of stages) {
+          if (!st.done) break;
+          pct = st.weightPct;
+        }
+        return { stages, pct };
       },
     }),
     {

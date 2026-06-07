@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import datetime
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
@@ -12,6 +14,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.schemas.feasibility_v2 import (
     FeasibilityCalculateRequest,
+    FeasibilityBaselineRequest,
+    FeasibilityBaselineResponse,
     FeasibilityMultiRequest,
     FeasibilityResultResponse,
     FeasibilityMultiResponse,
@@ -36,6 +40,8 @@ from app.services.auth.auth_service import get_current_user
 from app.models.auth import User
 
 router = APIRouter(prefix="/api/v2/feasibility", tags=["feasibility-v2"])
+
+logger = logging.getLogger(__name__)
 
 _service = FeasibilityServiceV2()
 
@@ -100,6 +106,195 @@ async def calculate_feasibility(req: FeasibilityCalculateRequest):
         )
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
+
+
+@router.post(
+    "/baseline",
+    response_model=FeasibilityBaselineResponse,
+    dependencies=[Depends(enforce_llm_quota)],
+)
+async def baseline_feasibility(req: FeasibilityBaselineRequest):
+    """부지직후 시장표준 baseline 수지(설계·공사비 전 1차 산출).
+
+    부지 데이터(주소/용도지역/면적)만으로 GFA 역산·시장표준 분양가·표준 공사비를
+    시드해 기존 FeasibilityServiceV2 계산엔진으로 1차 수지를 산출한다.
+    응답은 /calculate 와 동일 구조 + baseline 메타필드(is_baseline/confidence/
+    sources/assumptions). 추정값은 정직하게 "시장표준/추정" 라벨, 실데이터 우선.
+    """
+    from app.services.feasibility.regional_pricing import (
+        get_regional_sale_price_per_pyeong,
+    )
+    from app.services.feasibility.permit_validator import (
+        get_permitted_types,
+        DEVELOPMENT_TYPE_NAMES,
+    )
+
+    # ── 1) 부지 데이터 확보(실데이터 우선) ──
+    zone_type = (req.zone_type or "").strip()
+    land_area = req.land_area_sqm or 0
+    official_price = req.official_price_per_sqm or 0
+    zone_limits: dict = {}
+    sources: dict[str, Any] = {}
+
+    need_autodetect = (not zone_type) or land_area <= 0 or official_price <= 0
+    if need_autodetect:
+        try:
+            from app.services.zoning.auto_zoning_service import AutoZoningService
+
+            zoning = await AutoZoningService().analyze_by_address(req.address)
+            if not zone_type and zoning.get("zone_type"):
+                zone_type = str(zoning["zone_type"]).strip()
+                sources["zone_type"] = "자동감지(공공데이터)"
+            if land_area <= 0 and zoning.get("land_area_sqm"):
+                land_area = float(zoning["land_area_sqm"])
+                sources["land_area_sqm"] = "자동감지(공공데이터)"
+            if official_price <= 0 and zoning.get("official_price_per_sqm"):
+                official_price = float(zoning["official_price_per_sqm"])
+                sources["official_price_per_sqm"] = "자동감지(공시지가)"
+            zone_limits = zoning.get("zone_limits") or {}
+        except Exception:  # noqa: BLE001 — 자동감지 실패 시 입력/표준으로 진행
+            logger.warning("baseline: 용도지역 자동감지 실패 — 입력/표준값으로 진행")
+
+    if req.zone_type:
+        sources.setdefault("zone_type", "사용자입력")
+    if req.land_area_sqm:
+        sources.setdefault("land_area_sqm", "사용자입력")
+    if req.official_price_per_sqm:
+        sources.setdefault("official_price_per_sqm", "사용자입력")
+
+    if land_area <= 0:
+        raise HTTPException(
+            status_code=422,
+            detail="부지면적(land_area_sqm)을 입력하거나, 주소로 자동감지 가능한 주소를 제공하세요.",
+        )
+
+    assumptions: dict[str, Any] = {}
+    confidence_penalty = 0
+
+    # ── 2) 개발유형 선택(용도지역 대표유형) ──
+    dev_type = (req.development_type or "").strip()
+    if not dev_type:
+        permitted = get_permitted_types(zone_type) if zone_type else []
+        if not permitted:
+            # 용도지역 미상/개발불가 → 가장 일반적 유형으로 보수적 baseline
+            dev_type = "M06"
+            assumptions["development_type"] = "용도지역 미상/개발제한 — 일반분양(M06) 표준 가정"
+            confidence_penalty += 1
+        else:
+            # 대표성·인허가 용이성 위해 일반분양(M06) 우선, 없으면 첫 허용유형
+            dev_type = "M06" if "M06" in permitted else permitted[0]
+            assumptions["development_type"] = (
+                f"{zone_type} 인허가 가능유형 중 대표({DEVELOPMENT_TYPE_NAMES.get(dev_type, dev_type)}) 자동선택"
+            )
+    else:
+        sources["development_type"] = "사용자입력"
+
+    # ── 3) GFA 역산(조례/법정 FAR·BCR) ──
+    ordinance_far = zone_limits.get("ordinance_far_pct") or 0
+    legal_far = zone_limits.get("max_far_pct") or 0
+    type_typical_far = float(_service._get_type_typical_far(dev_type))
+    if ordinance_far or legal_far:
+        zone_far = float(ordinance_far or legal_far)
+        applied_far = min(zone_far, type_typical_far)
+        far_source = "조례" if ordinance_far else "법정"
+        sources["far_pct"] = f"용도지역 {far_source} 상한"
+    else:
+        applied_far = type_typical_far
+        sources["far_pct"] = "개발유형 표준(추정)"
+        confidence_penalty += 1
+    total_gfa = land_area * applied_far / 100.0
+    assumptions["gfa_inversion"] = (
+        f"GFA={round(total_gfa)}㎡ = 부지 {round(land_area)}㎡ × 용적률 {round(applied_far)}%(적용)"
+    )
+    assumptions["applied_far_pct"] = round(applied_far, 1)
+
+    # BCR로 층수 가정(far/bcr 비율)
+    ordinance_bcr = zone_limits.get("ordinance_bcr_pct") or 0
+    legal_bcr = zone_limits.get("max_bcr_pct") or 0
+    applied_bcr = float(ordinance_bcr or legal_bcr or 60)
+    est_floors = max(1, round(applied_far / applied_bcr)) if applied_bcr else 0
+    assumptions["estimated_floors"] = est_floors
+    assumptions["applied_bcr_pct"] = round(applied_bcr, 1)
+
+    # ── 4) 세대수·평형 가정 ──
+    avg_unit_area_sqm = _service._get_type_avg_unit_area(dev_type)
+    total_hh = max(1, int(total_gfa / avg_unit_area_sqm))
+    avg_area_pyeong = avg_unit_area_sqm / 3.305785
+
+    # ── 5) 분양가 시드(시장표준 시세 테이블) ──
+    sale_price_per_pyeong = get_regional_sale_price_per_pyeong(
+        dev_type=dev_type, region=req.region, address=req.address
+    )
+    sources["avg_sale_price_per_pyeong"] = "지역 시세 테이블(시장표준)"
+    assumptions["avg_sale_price_per_pyeong"] = (
+        f"평당 {round(sale_price_per_pyeong / 10000)}만원(지역×유형 시장표준 시세)"
+    )
+
+    # ── 6) 토지비·공시지가 시드 ──
+    if official_price <= 0:
+        official_price = 1_500_000  # 표준 폴백(공시지가 미상)
+        sources["official_price_per_sqm"] = "표준 폴백(공시지가 미상)"
+        assumptions["official_price_per_sqm"] = "공시지가 미상 — 표준 150만원/㎡ 가정"
+        confidence_penalty += 1
+    price_multiplier = 1.1  # 공시지가→실거래 보수적 보정
+    assumptions["land_price_multiplier"] = price_multiplier
+
+    # ── 7) 자기자본 가정(미입력 시 토지비 기반) ──
+    equity = req.equity_won or int(official_price * price_multiplier * land_area)
+    if not req.equity_won:
+        assumptions["equity_won"] = "자기자본 미입력 — 토지비 추정액으로 가정"
+    else:
+        sources["equity_won"] = "사용자입력"
+
+    # ── 8) 공사비 표준단가 라벨(엔진은 SSOT 표준단가 자동적용) ──
+    building_type = _service._get_building_type(dev_type)
+    sources["construction_unit_cost"] = "표준 개산단가(DEFAULT_DIRECT_COST_PER_SQM, SSOT)"
+    assumptions["building_type"] = building_type
+
+    # ── 9) 기존 계산엔진 재사용 ──
+    inp = ModuleInput(
+        development_type=dev_type,
+        project_name="baseline",
+        total_land_area_sqm=land_area,
+        official_price_per_sqm=official_price,
+        price_multiplier=price_multiplier,
+        total_gfa_sqm=total_gfa,
+        building_type=building_type,
+        total_households=total_hh,
+        avg_sale_price_per_pyeong=sale_price_per_pyeong,
+        avg_area_pyeong=avg_area_pyeong,
+        sale_ratio=0.95,
+        sido_name=req.region,
+        project_months=_service._get_type_project_months(dev_type),
+        discount_rate=0.08,
+        equity_won=equity,
+    )
+    try:
+        output = _service.calculate(inp)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    # ── 10) 신뢰도 판정(추정 데이터 비중) ──
+    confidence = "보통" if confidence_penalty <= 1 else "낮음"
+
+    return FeasibilityBaselineResponse(
+        development_type=output.development_type,
+        module_name=output.module_name,
+        total_revenue_won=output.total_revenue_won,
+        total_cost_won=output.total_cost_won,
+        net_profit_won=output.net_profit_won,
+        profit_rate_pct=output.profit_rate_pct,
+        roi_pct=output.roi_pct,
+        npv_won=output.npv_won,
+        grade=output.grade,
+        cost_breakdown_won=output.cost_detail,
+        tax_detail=output.tax_detail,
+        special_detail=output.special_detail,
+        is_baseline=True,
+        confidence=confidence,
+        sources=sources,
+        assumptions=assumptions,
+    )
 
 
 @router.post("/compare", response_model=FeasibilityMultiResponse)

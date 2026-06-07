@@ -1,10 +1,9 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button, Card, CardContent, Input } from "@propai/ui";
-import { useFeasibilityV2Store } from "@/store/use-feasibility-v2-store";
+import { useFeasibilityV2Store, type FeasibilityInput } from "@/store/use-feasibility-v2-store";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
-import { useCadStore } from "@/store/use-cad-store";
 import { motion } from "framer-motion";
 import { NumberInput as CommaInput } from "@/components/common/NumberInput";
 
@@ -70,15 +69,49 @@ export function ModuleInputForm() {
   const { input, setInput, calculate, isCalculating, selectedModule, commitVersion } =
     useFeasibilityV2Store();
   const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
+  const designData = useProjectContextStore((s) => s.designData);
+  const costData = useProjectContextStore((s) => s.costData);
 
-  // 자동 산정값 (API에서 추천된 초기값) — 사용자가 수정하면 배지 표시
-  const [autoValues] = useState<Partial<Record<string, number>>>({});
+  // 사용자가 직접 수정한 필드 — 모세혈관 자동시드가 덮어쓰지 않도록 보존(editedFields 패턴).
+  const [editedFields, setEditedFields] = useState<Set<keyof FeasibilityInput>>(new Set());
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // 사용자 수정 시 자동 히스토리 저장 (디바운스 3초)
-  const handleInputChange = useCallback((patch: Partial<typeof input>) => {
+  // 설계 GFA(없으면 부지면적×용적률 역산). 모세혈관 우선, 데모 추정(폐기) 대신 실데이터.
+  const seededGfa = useCallback((): number => {
+    if (designData?.totalGfaSqm && designData.totalGfaSqm > 0) return designData.totalGfaSqm;
+    const land = siteAnalysis?.landAreaSqm ?? 0;
+    const farPct = designData?.far ?? siteAnalysis?.ordinance?.effectiveFar ?? 0;
+    if (land > 0 && farPct > 0) return Math.round((land * farPct) / 100);
+    return 0;
+  }, [designData, siteAnalysis]);
+
+  // 모세혈관 자동시드: 업스트림(부지/설계) 변경 시 미수정 필드만 채운다.
+  useEffect(() => {
+    const patch: Partial<FeasibilityInput> = {};
+    const put = (k: keyof FeasibilityInput, v: number | string, cond: boolean) => {
+      if (cond && !editedFields.has(k)) (patch as Record<string, unknown>)[k] = v;
+    };
+    const land = siteAnalysis?.landAreaSqm ?? 0;
+    const gfa = seededGfa();
+    const officialP = siteAnalysis?.officialPrices?.[0]?.pricePerSqm ?? 0;
+    const sido = siteAnalysis?.address ? siteAnalysis.address.split(" ")[0] : "";
+    put("total_land_area_sqm", land, land > 0);
+    put("total_gfa_sqm", gfa, gfa > 0);
+    put("official_price_per_sqm", officialP, officialP > 0);
+    put("sido_name", sido, !!sido);
+    if (Object.keys(patch).length > 0) setInput(patch);
+    // editedFields는 의도적으로 의존성에서 제외(최신값을 클로저로 참조, 자동시드 무한루프 방지).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [siteAnalysis, designData, seededGfa, setInput]);
+
+  // 사용자 수정 시: editedFields 등록 + 자동 히스토리 저장(디바운스 3초)
+  const handleInputChange = useCallback((patch: Partial<FeasibilityInput>) => {
+    setEditedFields((prev) => {
+      const n = new Set(prev);
+      (Object.keys(patch) as (keyof FeasibilityInput)[]).forEach((k) => n.add(k));
+      return n;
+    });
     setInput(patch);
-    // 3초 후 자동 커밋
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => {
       const changedKeys = Object.keys(patch).join(", ");
@@ -86,10 +119,10 @@ export function ModuleInputForm() {
     }, 3000);
   }, [setInput, commitVersion]);
 
-  // 부지분석 데이터에서 자동 반영
+  // 부지분석 데이터에서 자동 반영(수동 버튼)
   const loadFromSiteAnalysis = useCallback(() => {
     if (!siteAnalysis) return;
-    const patch: Partial<typeof input> = {};
+    const patch: Partial<FeasibilityInput> = {};
     if (siteAnalysis.landAreaSqm) patch.total_land_area_sqm = siteAnalysis.landAreaSqm;
     if (siteAnalysis.address) patch.sido_name = siteAnalysis.address.split(" ")[0] || "";
     if (siteAnalysis.officialPrices?.[0]?.pricePerSqm) {
@@ -98,18 +131,17 @@ export function ModuleInputForm() {
     setInput(patch);
   }, [siteAnalysis, setInput]);
 
-  const syncWithCAD = () => {
-    const cadState = useCadStore.getState();
-    // Simulate area calculation from polygons
-    const floorArea = cadState.polygons.length * 450 * cadState.floorCount; // Rough estimate for demo
-    if (floorArea > 0) {
-      setInput({ 
-        total_gfa_sqm: floorArea,
-        total_households: Math.floor(floorArea / 85) // 85sqm per household
+  // 설계(연면적) 모세혈관 가져오기 — 데모 추정(polygons×450) 폐기, 실데이터/역산만.
+  const syncFromDesign = () => {
+    const gfa = seededGfa();
+    if (gfa > 0) {
+      handleInputChange({
+        total_gfa_sqm: gfa,
+        total_households: Math.floor(gfa / 85), // 세대당 85㎡ 표준 가정
       });
-      alert("CAD 설계 데이터가 동기화되었습니다: 연면적 " + floorArea.toLocaleString() + "m²");
+      alert("설계 데이터가 반영되었습니다: 연면적 " + gfa.toLocaleString() + "m²");
     } else {
-      alert("동기화할 CAD 설계 데이터(면적)가 존재하지 않습니다. Stage 4에서 도면을 작성해 주세요.");
+      alert("반영할 설계 연면적이 없습니다. 설계 단계를 완료하거나 부지 용적률이 필요합니다.");
     }
   };
 
@@ -128,11 +160,11 @@ export function ModuleInputForm() {
                </div>
                <div>
                   <p className="text-xs font-black text-blue-600 uppercase tracking-widest">Cross-Stage Synergy</p>
-                  <p className="text-[11px] font-bold text-blue-800">Stage 4(설계)의 CAD 데이터와 Stage 5(수지분석)가 논리적으로 연결되어 있습니다.</p>
+                  <p className="text-[11px] font-bold text-blue-800">설계(연면적)·부지 데이터가 수지분석에 자동 반영됩니다. 사용자 수정값은 보존됩니다.</p>
                </div>
             </div>
-            <Button variant={"outline" as any} size="sm" onClick={syncWithCAD} className="bg-white border-blue-200 text-blue-700 hover:bg-blue-50 font-black">
-               CAD 설계 데이터 가져오기 (Sync)
+            <Button variant={"outline" as any} size="sm" onClick={syncFromDesign} className="bg-white border-blue-200 text-blue-700 hover:bg-blue-50 font-black">
+               설계 연면적 가져오기 (Sync)
             </Button>
          </motion.div>
 
@@ -146,7 +178,7 @@ export function ModuleInputForm() {
                 부지분석 데이터 반영
               </Button>
             )}
-            <Button onClick={() => calculate()}
+            <Button onClick={() => calculate({ constructionCostOverrideWon: costData?.totalConstructionCostWon })}
               disabled={isCalculating || !((input.total_land_area_sqm ?? 0) > 0) || !((input.total_gfa_sqm ?? 0) > 0)}
               title={((input.total_land_area_sqm ?? 0) > 0) && ((input.total_gfa_sqm ?? 0) > 0) ? undefined : "대지면적·연면적을 입력하세요(부지분석 데이터 반영 가능)"}
               className="bg-[var(--accent-strong)] text-white px-6">

@@ -104,6 +104,31 @@ class FeasibilityResultResponse(BaseModel):
     special_detail: dict[str, Any] = {}
 
 
+class FeasibilityBaselineRequest(BaseModel):
+    """부지직후 시장표준 baseline 수지분석 요청 — 부지 데이터만 입력."""
+    address: str = ""
+    zone_type: str = ""           # 용도지역명(예: 자연녹지지역). 미입력 시 주소로 자동감지.
+    zone_code: str = ""           # 용도지역 코드(있으면 라벨용).
+    land_area_sqm: float = 0      # 부지면적(㎡). 미입력 시 자동감지.
+    pnu: str = ""                 # 필지고유번호(있으면 자동감지 보조).
+    region: str = "서울"          # 시도명(분양가 시드 폴백용).
+    official_price_per_sqm: float = 0  # 공시지가(원/㎡). 미입력 시 자동감지/표준.
+    development_type: str = ""    # 강제 개발유형(미입력 시 용도지역 대표유형 자동선택).
+    equity_won: int = 0           # 자기자본(미입력 시 토지비 기반 가정).
+
+
+class FeasibilityBaselineResponse(FeasibilityResultResponse):
+    """baseline 응답 — /calculate 결과 구조 동일 + baseline 메타필드.
+
+    프론트가 /calculate 렌더를 그대로 재사용하되, is_baseline/confidence/sources/
+    assumptions 로 추정 여부·시장표준 출처·역산 가정을 정직하게 표기(무목업).
+    """
+    is_baseline: bool = True
+    confidence: str = "보통"      # 낮음/보통 — 추정 데이터 비중에 따라.
+    sources: dict[str, Any] = {}   # 각 입력값의 출처 라벨(실데이터/시장표준/추정).
+    assumptions: dict[str, Any] = {}  # 역산 GFA·표준단가 등 가정 명시.
+
+
 class FeasibilityMultiResponse(BaseModel):
     """복수 비교 응답."""
     results: list[FeasibilityResultResponse]

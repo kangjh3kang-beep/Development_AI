@@ -44,6 +44,22 @@ export interface FeasibilityResult {
   cost_breakdown_won: Record<string, number>;
   tax_detail: Record<string, unknown>;
   special_detail: Record<string, unknown>;
+  // baseline(추정) 응답에만 존재 — /calculate 결과는 미포함.
+  is_baseline?: boolean;
+  confidence?: string;
+  sources?: Record<string, unknown>;
+  assumptions?: Record<string, unknown>;
+}
+
+/** baseline(추정 수지) 요청 — 부지 데이터만으로 1차 산출 */
+export interface FeasibilityBaselineInput {
+  address?: string;
+  zone_type?: string;
+  zone_code?: string;
+  land_area_sqm?: number;
+  pnu?: string;
+  region?: string;
+  official_price_per_sqm?: number;
 }
 
 export interface MonteCarloResult {
@@ -97,7 +113,10 @@ interface FeasibilityV2State {
   setInput: (patch: Partial<FeasibilityInput>) => void;
   setSelectedModule: (code: string) => void;
   setActiveTab: (tab: FeasibilityV2State["activeTab"]) => void;
-  calculate: () => Promise<void>;
+  // opts.constructionCostOverrideWon: 공사비 정밀분석 결과를 엔진에 주입(3자 수치 정합).
+  calculate: (opts?: { constructionCostOverrideWon?: number | null }) => Promise<void>;
+  // 부지 데이터만으로 시장표준 추정(baseline) 수지를 1회 산출해 즉시 표시.
+  runBaseline: (input: FeasibilityBaselineInput) => Promise<void>;
   compareMulti: (inputs: FeasibilityInput[]) => Promise<void>;
   runMonteCarlo: (variables: Array<{ name: string; mean: number; std: number }>, n?: number) => Promise<void>;
   fetchRecommendations: () => Promise<void>;
@@ -161,14 +180,23 @@ export const useFeasibilityV2Store = create<FeasibilityV2State>()(
         s.activeTab = tab;
       }),
 
-    calculate: async () => {
+    calculate: async (opts) => {
       set((s) => {
         s.isCalculating = true;
         s.error = null;
       });
       try {
+        // 공사비 정밀분석 결과가 있으면 params.construction_cost_override_won로 주입.
+        const base = get().input;
+        const override = opts?.constructionCostOverrideWon;
+        const params = {
+          ...(base.params ?? {}),
+          ...(override != null && override > 0
+            ? { construction_cost_override_won: override }
+            : {}),
+        };
         const res = await apiClient.postV2<FeasibilityResult>("/feasibility/calculate", {
-          body: get().input as Record<string, unknown>,
+          body: { ...base, params } as Record<string, unknown>,
         });
         set((s) => {
           s.result = res;
@@ -179,6 +207,29 @@ export const useFeasibilityV2Store = create<FeasibilityV2State>()(
         set((s) => {
           s.error = e instanceof Error ? e.message : "계산 실패";
           s.isCalculating = false;
+        });
+      }
+    },
+
+    runBaseline: async (input) => {
+      set((s) => {
+        s.isCalculating = true;
+        s.error = null;
+      });
+      try {
+        const res = await apiClient.postV2<FeasibilityResult>("/feasibility/baseline", {
+          body: input as unknown as Record<string, unknown>,
+          timeoutMs: 90000,
+        });
+        set((s) => {
+          s.result = res;
+          s.isCalculating = false;
+        });
+      } catch (e: unknown) {
+        // baseline 실패는 치명적이지 않음 — 사용자 직접 계산 경로 유지.
+        set((s) => {
+          s.isCalculating = false;
+          s.error = e instanceof Error ? e.message : null;
         });
       }
     },

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useFeasibilityV2Store } from "@/store/use-feasibility-v2-store";
 import { ProjectTypeSelector } from "./ProjectTypeSelector";
@@ -34,18 +34,135 @@ export function FeasibilityEditorV2({ projectId }: Props) {
     error,
     fetchModules,
     fetchCommitLog,
+    calculate,
+    runBaseline,
   } = useFeasibilityV2Store();
 
   const [showAutoRecommend, setShowAutoRecommend] = useState(false);
   const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
+  const costData = useProjectContextStore((s) => s.costData);
+  const isStale = useProjectContextStore((s) => s.isStale);
+  const feasibilityCompleteness = useProjectContextStore((s) => s.feasibilityCompleteness);
+  const updateFeasibilityData = useProjectContextStore((s) => s.updateFeasibilityData);
+
+  // 마지막 계산에 반영된 공사비(원) — 업스트림 변경(stale) 감지용.
+  const [costAtCalc, setCostAtCalc] = useState<number | null>(null);
+  // baseline 자동호출 1회 가드(진입 시 부지 데이터만 있을 때).
+  const baselineTriedRef = useRef(false);
 
   useEffect(() => {
     fetchModules();
     fetchCommitLog(projectId);
   }, [fetchModules, fetchCommitLog, projectId]);
 
+  // 결과가 산출되면 모세혈관(feasibilityData)에 반영 — 완성도/금융단계·stale 타임스탬프 갱신.
+  useEffect(() => {
+    if (!result) return;
+    updateFeasibilityData({
+      totalCostWon: result.total_cost_won ?? null,
+      totalRevenueWon: result.total_revenue_won ?? null,
+      profitRatePct: result.profit_rate_pct ?? null,
+      grade: result.grade ?? null,
+    });
+    setCostAtCalc(costData?.totalConstructionCostWon ?? null);
+    // costData는 의도적으로 제외(결과 변경 시에만 stamp, 무한루프 방지).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [result, updateFeasibilityData]);
+
+  // baseline 자동 산출: 결과가 없고 부지 데이터(주소/면적)만 있을 때 1회 추정 수지.
+  useEffect(() => {
+    if (baselineTriedRef.current || result || isCalculating) return;
+    const hasSite = !!(siteAnalysis?.address || (siteAnalysis?.landAreaSqm ?? 0) > 0);
+    if (!hasSite) return;
+    baselineTriedRef.current = true;
+    void runBaseline({
+      address: siteAnalysis?.address ?? "",
+      zone_code: siteAnalysis?.zoneCode ?? "",
+      land_area_sqm: siteAnalysis?.landAreaSqm ?? 0,
+      pnu: siteAnalysis?.pnu ?? "",
+      official_price_per_sqm: siteAnalysis?.officialPrices?.[0]?.pricePerSqm ?? 0,
+    });
+  }, [result, isCalculating, siteAnalysis, runBaseline]);
+
+  // 업스트림(공사비) 변경 stale 판정: 결과가 있고, 공사비가 수지보다 최신이거나
+  // 직전 계산 공사비와 현재가 다르면 재계산 필요. baseline 결과는 stale 대상에서 제외.
+  const isFeasibilityStale = useMemo(() => {
+    if (!result || result.is_baseline) return false;
+    const cur = costData?.totalConstructionCostWon ?? null;
+    if (isStale("feasibility")) return true;
+    return cur != null && costAtCalc != null && cur !== costAtCalc;
+  }, [result, costData, costAtCalc, isStale]);
+
+  // stale 시 1회 자동 재계산(무한루프 방지: 재계산 후 costAtCalc 갱신 → stale=false).
+  useEffect(() => {
+    if (isFeasibilityStale && !isCalculating) {
+      void calculate({ constructionCostOverrideWon: costData?.totalConstructionCostWon });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isFeasibilityStale]);
+
+  const completeness = feasibilityCompleteness();
+
   return (
     <div className="flex flex-col gap-10">
+      {/* ── 완성도/신뢰도(모세혈관 반영도) ── */}
+      <div className="rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-soft)] px-5 py-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] font-[1000] uppercase tracking-[0.3em] text-[var(--text-hint)]">
+              데이터 반영도
+            </span>
+            {result?.is_baseline && (
+              <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-bold text-amber-400">
+                추정(시장표준){result.confidence ? ` · 신뢰도 ${result.confidence}` : ""}
+              </span>
+            )}
+          </div>
+          <span className="text-sm font-[900] text-[var(--accent-strong)]">{completeness.pct}%</span>
+        </div>
+        {/* 반영도 바 */}
+        <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-[var(--surface-muted)]">
+          <div
+            className="h-full rounded-full bg-[var(--accent-strong)] transition-all duration-500"
+            style={{ width: `${completeness.pct}%` }}
+          />
+        </div>
+        {/* 단계 칩 */}
+        <div className="mt-3 flex flex-wrap gap-2">
+          {completeness.stages.map((st) => (
+            <span
+              key={st.key}
+              className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-bold ${
+                st.done
+                  ? "bg-emerald-500/15 text-emerald-400"
+                  : "bg-[var(--surface-muted)] text-[var(--text-tertiary)]"
+              }`}
+            >
+              <span className={`inline-block h-1.5 w-1.5 rounded-full ${st.done ? "bg-emerald-400" : "bg-[var(--text-hint)]"}`} />
+              {st.label} {st.done ? "반영" : "대기"}
+            </span>
+          ))}
+        </div>
+        <p className="mt-2 text-[10px] text-[var(--text-hint)]">
+          단계가 완성될수록 수지분석이 자동으로 정교화됩니다(부지 30% → 설계 60% → 공사비 85% → 금융 100%).
+        </p>
+      </div>
+
+      {/* ── 업스트림 변경(stale) 자동 재계산 배너 ── */}
+      <AnimatePresence>
+        {isFeasibilityStale && (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            className="-mb-6 flex items-center gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-5 py-3 text-xs font-bold text-amber-400"
+          >
+            <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-amber-400" />
+            업스트림(공사비) 변경 감지 — 수지분석을 자동 재계산합니다.
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* ── Auto Recommend CTA ── */}
       <div className="flex items-center gap-4 px-2">
         <button
