@@ -67,17 +67,18 @@ type RecommendedModel = {
   rank: number;
   type_code: string;
   type_name: string;
-  profit_rate_pct: number;
-  roi_pct: number;
-  grade: string;
+  // 무목업: 부분 응답 시 가짜 0/—을 실분석결과처럼 렌더하지 않도록 nullable 유지.
+  profit_rate_pct: number | null;
+  roi_pct: number | null;
+  grade: string | null;
   permit_ease: string;
-  total_revenue_won: number;
-  net_profit_won: number;
+  total_revenue_won: number | null;
+  net_profit_won: number | null;
   project_months: number;
-  total_gfa_sqm: number;
-  total_households: number;
-  avg_sale_price_per_pyeong: number;
-  composite_score: number;
+  total_gfa_sqm: number | null;
+  total_households: number | null;
+  avg_sale_price_per_pyeong: number | null;
+  composite_score: number | null;
   ai_summary: string;
 };
 
@@ -109,19 +110,30 @@ function mapBackendToModel(item: BackendRecommendItem, rank: number): Recommende
     rank,
     type_code: item.development_type ?? "",
     type_name: typeName,
-    profit_rate_pct: fs.profit_rate_pct ?? 0,
-    roi_pct: fs.roi_pct ?? 0,
-    grade: fs.grade ?? "—",
+    // 무목업: 폴백을 0/—으로 강제하지 않고 null 유지 → 렌더부에서 "분석 데이터 없음"/"—" 빈상태 분기.
+    profit_rate_pct: fs.profit_rate_pct ?? null,
+    roi_pct: fs.roi_pct ?? null,
+    grade: fs.grade ?? null,
     permit_ease: pm.complexity_label ?? "—",
-    total_revenue_won: fs.total_revenue_won ?? 0,
-    net_profit_won: fs.net_profit_won ?? 0,
+    total_revenue_won: fs.total_revenue_won ?? null,
+    net_profit_won: fs.net_profit_won ?? null,
     project_months: item.input_used?.project_months ?? 36,
-    total_gfa_sqm: us.total_gfa_sqm ?? 0,
-    total_households: us.total_households ?? 0,
-    avg_sale_price_per_pyeong: item.input_used?.avg_sale_price_per_pyeong ?? 0,
-    composite_score: item.composite_score ?? 0,
+    total_gfa_sqm: us.total_gfa_sqm ?? null,
+    total_households: us.total_households ?? null,
+    avg_sale_price_per_pyeong: item.input_used?.avg_sale_price_per_pyeong ?? null,
+    composite_score: item.composite_score ?? null,
     ai_summary: `${typeName}: ${pm.reason ?? "분석 결과"}`,
   };
+}
+
+// 무목업: 수익률/등급이 누락(null)이면 가짜 "0.0%·—등급" 대신 빈상태 라벨로 정직 표기.
+function recommendReason(r: RecommendedModel): string {
+  const parts: string[] = [];
+  if (r.profit_rate_pct != null) parts.push(`수익률 ${r.profit_rate_pct.toFixed(1)}%`);
+  if (r.grade != null) parts.push(`${r.grade}등급`);
+  const summary = r.ai_summary?.slice(0, 40);
+  if (summary) parts.push(summary);
+  return parts.length > 0 ? parts.join(" · ") : "분석 데이터 없음";
 }
 
 interface LandIntelligencePanelProps {
@@ -430,8 +442,8 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
     if (deepAnalysisResult?.recommendations?.length) {
       return deepAnalysisResult.recommendations.slice(0, 3).map(r => ({
         title: r.type_name,
-        score: Math.round(r.composite_score),
-        reason: `수익률 ${r.profit_rate_pct.toFixed(1)}% · ${r.grade}등급 · ${r.ai_summary.slice(0, 40)}`,
+        score: r.composite_score != null ? Math.round(r.composite_score) : 0,
+        reason: recommendReason(r),
         isReal: true,
       }));
     }
@@ -439,8 +451,8 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
     if (scenarioData?.recommendations?.length) {
       return scenarioData.recommendations.slice(0, 3).map(r => ({
         title: r.type_name,
-        score: Math.round(r.composite_score),
-        reason: `수익률 ${r.profit_rate_pct.toFixed(1)}% · ${r.grade}등급 · ${r.ai_summary.slice(0, 40)}`,
+        score: r.composite_score != null ? Math.round(r.composite_score) : 0,
+        reason: recommendReason(r),
         isReal: true,
       }));
     }
@@ -615,7 +627,11 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
                 <p className="text-[9px] font-black text-emerald-400 mb-1 uppercase tracking-widest">AI 종합 분석</p>
                 <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
                   {aiData?.summary || (deepAnalysisResult?.recommendations?.[0]
-                    ? `최적 사업모델: ${deepAnalysisResult.recommendations[0].type_name} (수익률 ${deepAnalysisResult.recommendations[0].profit_rate_pct.toFixed(1)}%, ${deepAnalysisResult.recommendations[0].grade}등급)`
+                    ? (() => {
+                        const top = deepAnalysisResult.recommendations[0];
+                        const metrics = recommendReason(top);
+                        return `최적 사업모델: ${top.type_name}${metrics !== "분석 데이터 없음" ? ` (${metrics})` : ""}`;
+                      })()
                     : ""
                   )}
                 </p>

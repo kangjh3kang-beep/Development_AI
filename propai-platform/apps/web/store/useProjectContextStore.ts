@@ -29,12 +29,13 @@ interface LandUseDistrict {
 interface OrdinanceData {
   sido: string;
   sigungu: string | null;
-  nationalBcr: number;
-  nationalFar: number;
+  // 무목업: 미해결 한도를 0%로 강제하지 않고 null 유지(표시단 "—").
+  nationalBcr: number | null;
+  nationalFar: number | null;
   ordinanceBcr: number | null;
   ordinanceFar: number | null;
-  effectiveBcr: number;
-  effectiveFar: number;
+  effectiveBcr: number | null;
+  effectiveFar: number | null;
   source: string; // "법제처API" | "캐시DB" | "법정상한"
   legalBasis: string;
 }

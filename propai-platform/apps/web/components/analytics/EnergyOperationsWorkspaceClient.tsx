@@ -725,7 +725,7 @@ export function EnergyOperationsWorkspaceClient({
                     {labels.recommendationsLabel}
                   </p>
                   <ul className="mt-3 space-y-2 text-sm leading-7 text-[var(--text-secondary)]">
-                    {certificationResult.recommendations.map((item) => (
+                    {(certificationResult.recommendations ?? []).map((item) => (
                       <li key={item}>• {item}</li>
                     ))}
                   </ul>

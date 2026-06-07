@@ -37,6 +37,10 @@ from app.services.feasibility.sensitivity_engine import run_sensitivity_analysis
 from app.core.database import get_db
 from app.core.billing_deps import enforce_llm_quota
 from app.services.auth.auth_service import get_current_user
+# 주의(혼선 제거): 아래 current_user의 실제 런타임 타입은 get_current_user가 반환하는
+# apps.api.database.models.user.User(tenant_id 보유)다. 이 app.models.auth.User는
+# stale(organization_id) 모델로 타입 힌트 표기용일 뿐 — current_user.tenant_id 접근은 런타임 정상.
+# (from __future__ import annotations 활성 → 주석/힌트는 런타임 미평가, 동작 무영향.)
 from app.models.auth import User
 
 router = APIRouter(prefix="/api/v2/feasibility", tags=["feasibility-v2"])

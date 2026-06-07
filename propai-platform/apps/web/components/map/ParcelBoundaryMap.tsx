@@ -9,6 +9,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { apiClient } from "@/lib/api-client";
+import { normalizeZoning } from "@/lib/kr-building-regulations";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 declare global {
@@ -92,8 +93,10 @@ export function ParcelBoundaryMap({
   // 주소 정규화 비교로 첫 필지(분석 대상)에만 적용 — 다른 필지는 원래 토지특성 유지.
   const normAddr = (a?: string | null) => (a || "").replace(/\s+/g, "");
   const primaryAddr = normAddr(list[0]);
+  // 지도 라벨을 계산 측 표준 명칭과 정합("일반상업"→"일반상업지역"). 매칭 실패 시 원문 유지.
+  const primaryZoneLabel = primaryZone ? (normalizeZoning(primaryZone) ?? primaryZone) : primaryZone;
   const effZone = (f: Feature, i: number): string | null => {
-    if (primaryZone && (i === 0 || normAddr(f.address) === primaryAddr)) return primaryZone;
+    if (primaryZoneLabel && (i === 0 || normAddr(f.address) === primaryAddr)) return primaryZoneLabel;
     return f.zone_type;
   };
   const [data, setData] = useState<Boundaries | null>(null);

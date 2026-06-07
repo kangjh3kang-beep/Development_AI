@@ -870,7 +870,7 @@ export function ProjectLegalWorkspaceClient({
             </p>
             {ruleResult ? (
               <div className="mt-4 grid gap-3">
-                {ruleResult.results.map((item) => {
+                {(ruleResult.results ?? []).map((item) => {
                   const meta = ruleStatusMeta(item.status);
                   return (
                     <div

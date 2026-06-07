@@ -745,12 +745,13 @@ export default function SiteAnalysisPage() {
           ? {
               sido: resolvedAddress.split(" ")[0] || "",
               sigungu: resolvedAddress.split(" ")[1] || null,
-              nationalBcr: bcrFromZone ?? effBcrSeed ?? 0,
-              nationalFar: farFromZone ?? effFarSeed ?? 0,
+              // 무목업: bcr 미해결이면 0% 강제 금지 → null 유지(표시단 "—"). far만 해결돼도 bcr 0 강제 안 함.
+              nationalBcr: bcrFromZone ?? effBcrSeed ?? null,
+              nationalFar: farFromZone ?? effFarSeed ?? null,
               ordinanceBcr: null,
               ordinanceFar: null,
-              effectiveBcr: effBcrSeed ?? 0,
-              effectiveFar: effFarSeed ?? 0,
+              effectiveBcr: effBcrSeed ?? null,
+              effectiveFar: effFarSeed ?? null,
               source: zl?.max_far_pct != null ? "법정상한(zoning/analyze)" : "법정상한(용도지역 추정)",
               legalBasis: zl?.legal_basis || "국토계획법 시행령 제85조(용적률)",
             }
