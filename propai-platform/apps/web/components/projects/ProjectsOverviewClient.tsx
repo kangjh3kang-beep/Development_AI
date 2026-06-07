@@ -247,7 +247,7 @@ export function ProjectsOverviewClient({
                   {labels.selectProjectLabel}
                 </Button>
                 <Link
-                  href={`/${locale}/projects/${project.id}`}
+                  href={`/${locale}/projects/${project.id}/site-analysis`}
                   className="flex-[1.2] flex h-14 items-center justify-center gap-2 whitespace-nowrap rounded-3xl bg-[var(--accent-strong)] px-5 text-xs font-black uppercase tracking-wider text-white shadow-[var(--shadow-glow)] transition-all hover:scale-[1.02] active:scale-95"
                 >
                   {labels.openProjectLabel}

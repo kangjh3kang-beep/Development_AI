@@ -31,6 +31,12 @@ export function ProjectContextBinder({ projectId }: { projectId: string }) {
   useEffect(() => {
     let cancelled = false;
 
+    // 0) 프로젝트 진입 시 페이지 상단으로 스크롤(이력/프로젝트관리에서 들어올 때
+    //    입지분석 보고서 상단에서 시작 — 가독성·직관성).
+    if (typeof window !== "undefined") {
+      window.scrollTo({ top: 0, behavior: "auto" });
+    }
+
     // 1) 즉시 로컬 스토어 값으로 바인딩(헤더/주소바 stale 방지).
     const local = useProjectStore.getState().getProjectById(projectId);
     useProjectContextStore

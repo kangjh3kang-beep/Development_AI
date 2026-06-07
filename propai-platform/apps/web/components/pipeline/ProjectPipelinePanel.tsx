@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useParams, usePathname } from "next/navigation";
+import { useParams, usePathname, useRouter } from "next/navigation";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { appendLedger } from "@/lib/analysis-ledger";
 import { useProjectStore as useProjectListStore } from "@/store/useProjectStore";
@@ -310,6 +310,7 @@ export function ProjectPipelinePanel({
   const [guestGateOpen, setGuestGateOpen] = useState(false);  // 비회원 무료소진 게이트
   const { locale } = (useParams() as { locale?: string }) || {};
   const pathname = usePathname();
+  const router = useRouter();
 
   // 단계별 워크플로우
   const [workflowPhase, setWorkflowPhase] = useState<WorkflowPhase>("input");
@@ -465,6 +466,12 @@ export function ProjectPipelinePanel({
   // (이전 버그: 대시보드 이력 클릭이 saveToStore로 "현재 projectId" 슬롯을 오염 주입 →
   //  "신봉동 선택인데 중곡동 헤더" 발생). 프로젝트 컨텍스트 변경은 projectMode에서만 허용.
   const openHistory = useCallback((entry: HistoryEntry) => {
+    // 대시보드(전역)에서 이력 선택 → 인라인 상세로 머무르지 않고 해당 프로젝트의
+    // 입지분석 보고서 페이지로 이동(상단 진입). 대시보드는 항상 깨끗하게 유지된다.
+    if (!projectMode && entry.projectId && locale) {
+      router.push(`/${locale}/projects/${entry.projectId}/site-analysis`);
+      return;
+    }
     setLastResult(entry.result);
     setAddress(entry.address);
     setStages(entry.result.stages);
@@ -472,7 +479,7 @@ export function ProjectPipelinePanel({
     setViewMode("detail");
     // projectMode(프로젝트 상세 허브)에서만 스냅샷에 복원. 대시보드(전역)는 읽기전용.
     if (projectMode) saveToStore(entry.result, entry.address);
-  }, [saveToStore, projectMode]);
+  }, [saveToStore, projectMode, locale, router]);
 
   // 주소 검색 콜백 (다필지 지원)
   const handleAddressChange = useCallback((entries: AddressEntry[]) => {
