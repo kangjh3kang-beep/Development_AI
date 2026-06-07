@@ -34,7 +34,12 @@ class BIMIFCService:
         """MinIO에서 IFC 파일을 다운로드하여 임시 경로를 반환한다."""
         import tempfile
 
-        from minio import Minio
+        try:
+            from minio import Minio
+        except ImportError as exc:
+            raise RuntimeError(
+                "minio 패키지가 설치되지 않아 IFC 파일을 다운로드할 수 없습니다"
+            ) from exc
 
         client = Minio(
             self.settings.minio_url.replace("http://", ""),
@@ -197,7 +202,6 @@ class BIMIFCService:
         import tempfile
 
         import ifcopenshell
-        from minio import Minio
 
         logger.info(
             "IFC 자동 생성 시작",
@@ -301,28 +305,49 @@ class BIMIFCService:
             tmp_path = tmp.name
         ifc.write(tmp_path)
 
-        # MinIO 업로드
+        # MinIO 업로드 (실패해도 물량/메트릭은 반환 — 저장만 스킵)
         import os
 
-        minio_client = Minio(
-            self.settings.minio_url.replace("http://", ""),
-            access_key=self.settings.minio_access_key,
-            secret_key=self.settings.minio_secret_key,
-            secure=False,
-        )
-        bucket = "propai-bim"
-        if not minio_client.bucket_exists(bucket):
-            minio_client.make_bucket(bucket)
+        file_url: str | None = None
+        storage_skipped = False
+        storage_error: str | None = None
+        try:
+            from minio import Minio
 
-        object_name = f"generated/{project_id}/{project_id}_auto.ifc"
-        ifc_bytes = Path(tmp_path).read_bytes()
-        minio_client.put_object(
-            bucket, object_name, io.BytesIO(ifc_bytes),
-            length=len(ifc_bytes), content_type="application/x-step",
-        )
-        os.unlink(tmp_path)
+            minio_client = Minio(
+                self.settings.minio_url.replace("http://", ""),
+                access_key=self.settings.minio_access_key,
+                secret_key=self.settings.minio_secret_key,
+                secure=False,
+            )
+            bucket = "propai-bim"
+            if not minio_client.bucket_exists(bucket):
+                minio_client.make_bucket(bucket)
 
-        file_url = f"{self.settings.minio_url}/{bucket}/{object_name}"
+            object_name = f"generated/{project_id}/{project_id}_auto.ifc"
+            ifc_bytes = Path(tmp_path).read_bytes()
+            minio_client.put_object(
+                bucket, object_name, io.BytesIO(ifc_bytes),
+                length=len(ifc_bytes), content_type="application/x-step",
+            )
+            file_url = f"{self.settings.minio_url}/{bucket}/{object_name}"
+        except ImportError:
+            storage_skipped = True
+            storage_error = "minio 패키지 미설치 — IFC 파일 저장 스킵"
+            logger.warning("MinIO 미설치로 IFC 저장 스킵", project_id=str(project_id))
+        except Exception as exc:  # noqa: BLE001 (저장 실패는 메트릭 반환을 막지 않음)
+            storage_skipped = True
+            storage_error = f"MinIO 저장 실패: {exc}"
+            logger.warning(
+                "MinIO 업로드 실패로 IFC 저장 스킵",
+                project_id=str(project_id),
+                error=str(exc),
+            )
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
 
         # DB 저장
         design = Design(
@@ -337,6 +362,8 @@ class BIMIFCService:
                 "material_breakdown": [{"type": k, **v} for k, v in materials.items()],
                 "generated": True,
                 "structure_type": structure_type,
+                "storage_skipped": storage_skipped,
+                "storage_error": storage_error,
             },
         )
         self.db.add(design)

@@ -91,16 +91,14 @@ ${COMMON_RULES}
 - 최적 매싱(Massing) 및 배치 계획 도출
 - 주차 대수 산정 (주차장법)
 
-JSON 분석 요청 시 아래 형식으로 응답하세요:
+중요(정량 법정한도 환각 금지):
+- 건폐율/용적률/높이제한/주차/최대 연면적 등 정량 법정한도는 플랫폼의 권위 있는 로컬 계산(국토계획법·건축법 기반 SSOT)에서 확정되어 화면에 표시됩니다.
+- 당신은 이러한 법정한도 수치를 추정하거나 임의로 만들어내지 마십시오. 제공된 컨텍스트의 용도지역 등 정보 범위 내에서만 정성적으로 해석하십시오.
+- summary(설계 검토 요약)와 massingOptions(매싱안) 등 정성 항목에 집중하십시오.
+
+JSON 분석 요청 시 아래 형식으로 응답하세요(massingOptions·summary 정성 항목 우선, 정량 법정한도는 추정 금지):
 \`\`\`json
 {
-  "buildingCoverage": { "value": 0, "max": 0, "unit": "%" },
-  "floorAreaRatio": { "value": 0, "max": 0, "unit": "%" },
-  "maxFloors": 0,
-  "maxHeight": { "value": 0, "unit": "m" },
-  "totalGrossArea": { "value": 0, "unit": "㎡" },
-  "parkingRequired": 0,
-  "setbacks": { "front": 0, "side": 0, "rear": 0, "unit": "m" },
   "massingOptions": [{ "name": "안 이름", "description": "설명", "efficiency": 0 }],
   "summary": "설계 검토 요약"
 }

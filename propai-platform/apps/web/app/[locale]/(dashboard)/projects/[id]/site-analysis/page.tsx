@@ -150,7 +150,8 @@ type L3SiteData = {
   grave_registry?: { available?: boolean; reason?: string; suggestion?: string; data_source?: string } | null;
 };
 
-function formatPriceKr(amount10k: number): string {
+function formatPriceKr(amount10k: number | null | undefined): string {
+  if (amount10k == null || !Number.isFinite(amount10k)) return "—";
   if (amount10k >= 10000) {
     const eok = Math.floor(amount10k / 10000);
     const remain = amount10k % 10000;
@@ -592,8 +593,8 @@ function L3EnhancedCards({
                     <p className="text-xs font-bold text-[var(--text-primary)]">{infra.nearest_subway.name}</p>
                   </div>
                 </div>
-                <span className={`text-sm font-black ${infra.nearest_subway.distance_m <= 500 ? "text-emerald-400" : infra.nearest_subway.distance_m <= 1000 ? "text-amber-400" : "text-red-400"}`}>
-                  {infra.nearest_subway.distance_m.toLocaleString()}m
+                <span className={`text-sm font-black ${(infra.nearest_subway.distance_m ?? Infinity) <= 500 ? "text-emerald-400" : (infra.nearest_subway.distance_m ?? Infinity) <= 1000 ? "text-amber-400" : "text-red-400"}`}>
+                  {infra.nearest_subway.distance_m != null && Number.isFinite(infra.nearest_subway.distance_m) ? `${infra.nearest_subway.distance_m.toLocaleString()}m` : "—"}
                 </span>
               </div>
             )}

@@ -18,6 +18,7 @@ import { useFeasibilityV2Store } from "@/store/use-feasibility-v2-store";
 import { FeasibilitySimulationWidget } from "@/components/finance/FeasibilitySimulationWidget";
 
 function formatWon(value: number): string {
+  if (value == null || !Number.isFinite(value)) return "—";
   if (Math.abs(value) >= 1e12) return `${(value / 1e12).toFixed(1)}조`;
   if (Math.abs(value) >= 1e8) return `${(value / 1e8).toFixed(0)}억`;
   if (Math.abs(value) >= 1e4) return `${(value / 1e4).toFixed(0)}만`;

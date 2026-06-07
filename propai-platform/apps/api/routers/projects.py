@@ -16,7 +16,7 @@ from packages.schemas.models import (
     ProjectStatusUpdateRequest,
     ProjectUpdateRequest,
 )
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.api.auth.jwt_handler import CurrentUser, get_current_user
@@ -111,22 +111,32 @@ async def list_projects(
 ) -> PaginatedResponse:
     """프로젝트 목록을 조회한다."""
     offset = (page - 1) * page_size
+    base_where = (
+        Project.tenant_id == current_user.tenant_id,
+        Project.is_deleted == False,  # noqa: E712
+    )
+    total = (
+        await db.execute(
+            select(func.count()).select_from(Project).where(*base_where)
+        )
+    ).scalar_one()
+
     query = (
         select(Project)
-        .where(Project.tenant_id == current_user.tenant_id, Project.is_deleted == False)  # noqa: E712
+        .where(*base_where)
         .offset(offset)
-        .limit(page_size + 1)
+        .limit(page_size)
         .order_by(Project.created_at.desc())
     )
     result = await db.execute(query)
     projects = list(result.scalars().all())
 
-    has_next = len(projects) > page_size
-    if has_next:
-        projects = projects[:page_size]
+    has_next = offset + len(projects) < total
 
     items = [_to_response(p).model_dump() for p in projects]
-    return PaginatedResponse(items=items, page=page, page_size=page_size, has_next=has_next)
+    return PaginatedResponse(
+        items=items, total=total, page=page, page_size=page_size, has_next=has_next
+    )
 
 
 @router.post("", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED)

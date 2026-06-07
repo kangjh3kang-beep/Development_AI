@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v86-feasibility-roi-merge";
+const CACHE_NAME = "propai-v87-error-sweep-fixes";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

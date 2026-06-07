@@ -86,3 +86,7 @@ pygltflib==1.16.5
 # v62 분양관리 데스크 지명매칭 — 전화 정규화 + 이름 유사도(경량). FCM/PyMuPDF는 기능 활성화 시 추가.
 phonenumbers==8.13.48
 rapidfuzz==3.10.1
+
+# BIM IFC glb 저장(MinIO). bim_ifc_service.generate_ifc_from_design import 누락→500 해소.
+# ※ MinIO 서버 미가동 시에도 import 실패는 없어야 하므로 패키지는 설치(서비스는 graceful 폴백).
+minio==7.2.10

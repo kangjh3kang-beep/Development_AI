@@ -15,7 +15,7 @@ import { ParcelBoundaryMap } from "@/components/map/ParcelBoundaryMap";
 import { ExpertPanelCard } from "@/components/common/ExpertPanelCard";
 import { AnalysisVerdict } from "@/components/analysis/AnalysisVerdict";
 import { RegulationHierarchyView, type RegResult } from "@/components/regulation/RegulationHierarchyView";
-import { apiClient } from "@/lib/api-client";
+import { ApiClientError, apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import type { Locale } from "@/i18n/config";
 
@@ -26,17 +26,33 @@ export function RegulationsWorkspaceClient({ locale }: { locale: Locale }) {
   const [useLlm, setUseLlm] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [llmGated, setLlmGated] = useState(false);
   const [result, setResult] = useState<RegResult | null>(null);
 
   const run = useCallback(async () => {
     const target = addr || siteAnalysis?.address || "";
     if (!target) { setError("주소를 먼저 선택하거나 입력하세요."); return; }
-    setLoading(true); setError(""); setResult(null);
+    const targetPnu = pnu.trim() || siteAnalysis?.pnu || undefined;
+    setLoading(true); setError(""); setLlmGated(false); setResult(null);
     try {
-      const r = await apiClient.post<RegResult>("/regulation/analyze", {
-        body: { address: target, pnu: pnu.trim() || siteAnalysis?.pnu || undefined, use_llm: useLlm },
-        useMock: false, timeoutMs: 120000,
-      });
+      let r: RegResult;
+      try {
+        r = await apiClient.post<RegResult>("/regulation/analyze", {
+          body: { address: target, pnu: targetPnu, use_llm: useLlm },
+          useMock: false, timeoutMs: 120000,
+        });
+      } catch (llmError) {
+        // LLM 게이트(402): AI 통합 해석은 잔액/구독 필요. 계층·정량·영향도는 use_llm:false로 표시.
+        if (useLlm && llmError instanceof ApiClientError && llmError.status === 402) {
+          setLlmGated(true);
+          r = await apiClient.post<RegResult>("/regulation/analyze", {
+            body: { address: target, pnu: targetPnu, use_llm: false },
+            useMock: false, timeoutMs: 120000,
+          });
+        } else {
+          throw llmError;
+        }
+      }
       setResult(r);
     } catch {
       setError("규제 분석에 실패했습니다. 잠시 후 다시 시도하세요.");
@@ -85,6 +101,11 @@ export function RegulationsWorkspaceClient({ locale }: { locale: Locale }) {
               {loading ? "규제 분석 중…" : "🔎 규제 분석"}
             </button>
             {error && <span className="text-xs font-semibold text-rose-500">{error}</span>}
+            {llmGated && (
+              <span className="text-xs font-semibold text-amber-500">
+                AI 통합 해석은 잔액/구독 필요 — 계층·정량 한도·영향도는 표시됩니다.
+              </span>
+            )}
           </div>
         </CardContent>
       </Card>

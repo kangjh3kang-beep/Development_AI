@@ -118,11 +118,14 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
   // 무한루프 가드: 산출 확정값만(calc 존재 시), 현재 store 값과 다를 때만 기록.
   useEffect(() => {
     if (!calc) return;
+    // 정량 법정한도(연면적·층수·건폐율·용적률)는 로컬 SSOT(calc=kr-building-regulations)
+    // 단일 출처로 고정한다. AI 자유응답(용적률 환각 등)이 법정한도를 덮어 3D 일조볼륨과
+    // 어긋나는 것을 방지. AI는 summary·매싱안 등 정성 항목에만 사용.
     const next = {
-      totalGfaSqm: ai?.totalGrossArea?.value ?? calc.maxGrossArea,
-      floorCount: ai?.maxFloors ?? calc.maxFloors,
-      bcr: ai?.buildingCoverage?.value ?? calc.buildingCoverage,
-      far: ai?.floorAreaRatio?.value ?? calc.floorAreaRatio,
+      totalGfaSqm: calc.maxGrossArea,
+      floorCount: calc.maxFloors,
+      bcr: calc.buildingCoverage,
+      far: calc.floorAreaRatio,
       buildingType: form.buildingUse,
     };
     const cur = useProjectContextStore.getState().designData;
@@ -138,10 +141,6 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
     markStageComplete("design");
   }, [
     calc,
-    ai?.totalGrossArea?.value,
-    ai?.maxFloors,
-    ai?.buildingCoverage?.value,
-    ai?.floorAreaRatio?.value,
     form.buildingUse,
     updateDesignData,
     markStageComplete,
@@ -208,10 +207,10 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
 
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             {[
-              { label: "건폐율", val: `${ai?.buildingCoverage?.value ?? calc.buildingCoverage}%`, sub: `최대 ${ai?.buildingCoverage?.max ?? calc.buildingCoverage}%`, color: "text-blue-400" },
-              { label: "용적률", val: `${ai?.floorAreaRatio?.value ?? calc.floorAreaRatio}%`, sub: `최대 ${ai?.floorAreaRatio?.max ?? calc.floorAreaRatio}%`, color: "text-emerald-400" },
-              { label: "예상 층수", val: `${ai?.maxFloors ?? calc.maxFloors}층`, sub: `${ai?.maxHeight?.value ?? calc.maxHeight}m (${calc.heightNote})`, color: "text-purple-400" },
-              { label: "주차 대수", val: `${ai?.parkingRequired ?? calc.parking}대`, sub: "주차장법 기준", color: "text-amber-400" },
+              { label: "건폐율", val: `${calc.buildingCoverage}%`, sub: `최대 ${calc.buildingCoverage}%`, color: "text-blue-400" },
+              { label: "용적률", val: `${calc.floorAreaRatio}%`, sub: `최대 ${calc.floorAreaRatio}%`, color: "text-emerald-400" },
+              { label: "예상 층수", val: `${calc.maxFloors}층`, sub: `${calc.maxHeight}m (${calc.heightNote})`, color: "text-purple-400" },
+              { label: "주차 대수", val: `${calc.parking}대`, sub: "주차장법 기준", color: "text-amber-400" },
             ].map((k) => (
               <div key={k.label} className="glass rounded-2xl p-5 border border-[var(--line)] text-center">
                 <p className={`text-xs font-bold uppercase tracking-widest ${k.color} mb-2`}>{k.label}</p>
@@ -228,10 +227,10 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
             {easy && <p className="mb-2 text-[11px] text-[var(--accent-strong)]">적용 설계값이 법으로 정한 한도 안에 들어오는지 확인합니다. ✓면 통과예요.</p>}
             <div className="space-y-1.5">
               {[
-                { k: "건폐율", v: ai?.buildingCoverage?.value ?? calc.buildingCoverage, max: ai?.buildingCoverage?.max ?? calc.buildingCoverage, u: "%" },
-                { k: "용적률", v: ai?.floorAreaRatio?.value ?? calc.floorAreaRatio, max: ai?.floorAreaRatio?.max ?? calc.floorAreaRatio, u: "%" },
-                { k: "높이", v: ai?.maxHeight?.value ?? calc.maxHeight, max: calc.maxHeight, u: "m" },
-                { k: "주차", v: ai?.parkingRequired ?? calc.parking, max: ai?.parkingRequired ?? calc.parking, u: "대" },
+                { k: "건폐율", v: calc.buildingCoverage, max: calc.buildingCoverage, u: "%" },
+                { k: "용적률", v: calc.floorAreaRatio, max: calc.floorAreaRatio, u: "%" },
+                { k: "높이", v: calc.maxHeight, max: calc.maxHeight, u: "m" },
+                { k: "주차", v: calc.parking, max: calc.parking, u: "대" },
               ].map((row) => {
                 const ok = Number(row.v) <= Number(row.max) + 1e-6;
                 return (
@@ -261,7 +260,7 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
           <div className="grid grid-cols-2 gap-4">
             <div className="glass rounded-2xl p-5 border border-[var(--line)]">
               <p className="text-xs font-bold text-cyan-400 uppercase tracking-widest mb-1">최대 연면적</p>
-              <p className="text-3xl font-black text-[var(--text-primary)]">{(ai?.totalGrossArea?.value ?? calc.maxGrossArea).toLocaleString()} <span className="text-sm">㎡</span></p>
+              <p className="text-3xl font-black text-[var(--text-primary)]">{calc.maxGrossArea.toLocaleString()} <span className="text-sm">㎡</span></p>
             </div>
             <div className="glass rounded-2xl p-5 border border-[var(--line)]">
               <p className="text-xs font-bold text-orange-400 uppercase tracking-widest mb-1">건축가능면적</p>
