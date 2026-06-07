@@ -10,6 +10,11 @@ import { GlobalAddressSearch, type AddressEntry } from "@/components/common/Glob
 import { PipelineResultDetail } from "./PipelineResultDetail";
 import { ProjectCompareView } from "./ProjectCompareView";
 import { SiteAnalysisDetail } from "./SiteAnalysisDetail";
+import { writePreCheckHandoff } from "@/components/precheck/handoff";
+
+// 대시보드(비프로젝트) 체험 모드에서 노출/실행 가능한 단계 — 부지분석 + 약식 수지만.
+// 나머지(설계·공사비·세무·ESG·보고서)는 잠금 → 프로젝트 생성 시 제공(구독 전환 관문).
+const TEASER_STAGES = new Set(["site_analysis", "feasibility"]);
 
 /* ── Types ── */
 
@@ -662,6 +667,23 @@ export function ProjectPipelinePanel({
     runSiteAnalysis();
   }, [projectMode, autoStart, address, isRunning, workflowPhase, completedStages, runSiteAnalysis]);
 
+  // ③ 체험 → 프로젝트 승격: 대시보드 체험분석의 주소·부지결과를 핸드오프로 넘겨 프로젝트
+  // 생성 화면(전체 전주기 분석)으로 이동시킨다. 체험 이력은 대시보드에만 남고, 프로젝트화하면
+  // 전체 분석이 프로젝트 이력으로 축적된다(구독 전환 관문).
+  const promoteToProject = useCallback(() => {
+    const addr = (address || storeAddress || "").trim();
+    if (!addr) return;
+    writePreCheckHandoff({
+      address: addr,
+      zoneType: siteAnalysis?.zoneCode ?? null,
+      areaSqm: siteAnalysis?.landAreaSqm ?? null,
+      pnu: siteAnalysis?.pnu ?? null,
+      bestMethod: null,
+      bestMethodName: null,
+    });
+    router.push(`/${locale ?? "ko"}/projects/new`);
+  }, [address, storeAddress, siteAnalysis, router, locale]);
+
   const toggleStage = (stageKey: string) => {
     setExpandedStage((prev) => (prev === stageKey ? null : stageKey));
   };
@@ -716,9 +738,12 @@ export function ProjectPipelinePanel({
     }
   };
 
-  // 프로젝트별 이력 격리: projectMode면 현재 프로젝트 이력만(레거시 무태깅은 주소매칭 폴백), 대시보드면 전역.
+  // 이력 격리(차별화): 대시보드(체험) 모드는 프로젝트 미소속(무태깅) 체험 이력만 노출 →
+  // 프로젝트 생성으로 분석한 건(projectId 태깅)은 대시보드 이력에서 제외(중복 해소).
+  // 프로젝트 모드는 현재 projectId 이력만(레거시 무태깅은 주소매칭 폴백).
   const visibleHistory = (() => {
-    if (!projectMode || !projectId) return history;
+    if (!projectMode) return history.filter((h) => !h.projectId);
+    if (!projectId) return history;
     const norm = (s: string) => (s || "").replace(/\s+/g, "");
     const projAddr = norm(storeAddress);
     return history.filter((h) =>
@@ -921,14 +946,22 @@ export function ProjectPipelinePanel({
                       {isRunning ? (
                         <>
                           <svg className="animate-spin" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M21 12a9 9 0 1 1-6.219-8.56" /></svg>
-                          나머지 분석 진행 중...
+                          약식 수지분석 중...
                         </>
                       ) : (
                         <>
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polygon points="6 3 20 12 6 21 6 3" /></svg>
-                          다음 단계 진행 (설계→공사비→수지분석)
+                          약식 수지분석 체험 (시장표준)
                         </>
                       )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={promoteToProject}
+                      className="h-10 px-5 rounded-xl border border-[var(--accent-strong)]/50 bg-[var(--accent-strong)]/10 text-sm font-bold text-[var(--accent-strong)] hover:bg-[var(--accent-strong)]/20 transition-all flex items-center gap-2"
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14" /><path d="m12 5 7 7-7 7" /></svg>
+                      프로젝트로 저장 · 전체 분석
                     </button>
                     <button
                       type="button"
@@ -957,6 +990,37 @@ export function ProjectPipelinePanel({
         {stages.map((stage) => {
           const isExpanded = expandedStage === stage.stage;
           const hasData = Object.keys(stage.data).length > 0;
+
+          // ② 대시보드(체험) 모드: 부지·약식수지 외 단계는 잠금 행으로 표시(상세 비노출) →
+          //    프로젝트 생성 시 제공. 구독 전환 관문(차별화).
+          const dashboardLocked = !projectMode && !TEASER_STAGES.has(stage.stage);
+          if (dashboardLocked) {
+            return (
+              <div
+                key={stage.stage}
+                className="rounded-xl border border-dashed border-[var(--line)] overflow-hidden opacity-80"
+              >
+                <button
+                  type="button"
+                  onClick={promoteToProject}
+                  className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-[var(--surface-strong)] transition-colors"
+                >
+                  <span className="text-sm font-bold text-[var(--text-tertiary)] w-5 shrink-0">
+                    {STAGE_NUMBERS[stage.stage] ?? ""}
+                  </span>
+                  <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[var(--surface-strong)] text-[var(--text-hint)]">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></svg>
+                  </span>
+                  <span className="flex-1 text-sm font-bold tracking-tight text-[var(--text-tertiary)]">
+                    {STAGE_LABELS[stage.stage] ?? stage.stage}
+                  </span>
+                  <span className="text-[11px] font-bold text-[var(--accent-strong)] whitespace-nowrap">
+                    프로젝트 생성 시 제공 →
+                  </span>
+                </button>
+              </div>
+            );
+          }
 
           return (
             <div key={stage.stage} className="rounded-xl border border-[var(--line)] overflow-hidden transition-all">
@@ -1040,6 +1104,33 @@ export function ProjectPipelinePanel({
         })}
       </div>
 
+      {/* ── 대시보드(체험) 약식 분석 안내 — 상세는 프로젝트 생성 후 ── */}
+      {!projectMode && (
+        <div className="mx-6 sm:mx-8 mb-5 rounded-xl border border-[var(--accent-strong)]/25 bg-[var(--accent-strong)]/5 px-4 py-3">
+          <div className="flex items-start gap-2.5">
+            <span className="mt-0.5 text-[var(--accent-strong)]">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><path d="M12 16v-4" /><path d="M12 8h.01" /></svg>
+            </span>
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-bold text-[var(--text-primary)]">
+                본 대시보드는 <span className="text-[var(--accent-strong)]">부지분석·약식 수지분석(시장표준 기반)</span> 체험을 제공합니다.
+              </p>
+              <p className="mt-0.5 text-[11px] leading-5 text-[var(--text-secondary)]">
+                설계·공사비·금융·ESG·인허가·보고서 등 <b>상세 전주기 분석은 프로젝트를 생성</b>하면 단계별 데이터가 누적·고도화되어 제공됩니다.
+              </p>
+              <button
+                type="button"
+                onClick={promoteToProject}
+                className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-[var(--accent-strong)] px-3.5 py-1.5 text-[11px] font-black text-white hover:opacity-90 transition-all"
+              >
+                프로젝트 생성하고 전체 분석 시작
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14" /><path d="m12 5 7 7-7 7" /></svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Summary Cards + Detail Button ── */}
       {pipelineCompleted && hasSummary && (
         <div className="px-6 pb-6 sm:px-8 sm:pb-8">
@@ -1049,7 +1140,7 @@ export function ProjectPipelinePanel({
               핵심 지표 요약
             </h3>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              {SUMMARY_CARDS.map((card) => {
+              {SUMMARY_CARDS.filter((card) => projectMode || TEASER_STAGES.has(card.source)).map((card) => {
                 const stageData = summary[card.source];
                 const rawValue = stageData?.[card.key];
                 const displayValue = card.format ? card.format(rawValue) : formatNumber(rawValue);
@@ -1074,7 +1165,7 @@ export function ProjectPipelinePanel({
             </div>
 
             {/* Detail Report Button */}
-            {lastResult && (
+            {lastResult && projectMode && (
               <div className="mt-4 flex justify-center">
                 <button
                   type="button"

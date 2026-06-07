@@ -20,6 +20,16 @@ export interface PreCheckHandoff {
   bestMethodName: string | null;
 }
 
+/** 핸드오프를 sessionStorage에 기록한다(PreCheck·대시보드 체험분석 공용). 실패는 무시. */
+export function writePreCheckHandoff(h: PreCheckHandoff): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.setItem(PRECHECK_HANDOFF_KEY, JSON.stringify(h));
+  } catch {
+    /* 무시 */
+  }
+}
+
 /** projects/new에서 핸드오프를 1회 읽고 즉시 제거한다(consume). 실패는 무시. */
 export function consumePreCheckHandoff(): PreCheckHandoff | null {
   if (typeof window === "undefined") return null;
