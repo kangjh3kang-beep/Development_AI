@@ -12,7 +12,7 @@ async def _fetch_project_lite(db: AsyncSession, project_id: str) -> dict | None:
     try:
         row = (await db.execute(text(
             "SELECT building_type, total_area_sqm, floor_above, floor_below "
-            "FROM projects WHERE id = :pid::uuid"),
+            "FROM projects WHERE id = CAST(:pid AS uuid)"),
             {"pid": str(project_id)})).first()
     except Exception:  # noqa: BLE001 — 비-UUID 등
         return None
