@@ -81,15 +81,15 @@ type RecommendedModel = {
   ai_summary: string;
 };
 
-// 백엔드 실제 응답 타입
+// 백엔드 실제 응답 타입 — 중첩 객체는 에러/부분 응답 시 누락될 수 있어 옵셔널로 선언(런타임 가드와 일치).
 type BackendRecommendItem = {
-  development_type: string;
-  type_name: string;
-  feasibility: { total_revenue_won: number; net_profit_won: number; profit_rate_pct: number; roi_pct: number; grade: string };
-  permit: { complexity_label: string; reason: string };
-  unit_summary: { total_gfa_sqm: number; total_households: number; avg_area_pyeong: number };
-  composite_score: number;
-  input_used: { project_months: number; avg_sale_price_per_pyeong: number };
+  development_type?: string;
+  type_name?: string;
+  feasibility?: { total_revenue_won?: number; net_profit_won?: number; profit_rate_pct?: number; roi_pct?: number; grade?: string };
+  permit?: { complexity_label?: string; reason?: string };
+  unit_summary?: { total_gfa_sqm?: number; total_households?: number; avg_area_pyeong?: number };
+  composite_score?: number;
+  input_used?: { project_months?: number; avg_sale_price_per_pyeong?: number };
 };
 
 type AutoRecommendApiResponse = {
@@ -99,22 +99,28 @@ type AutoRecommendApiResponse = {
 };
 
 function mapBackendToModel(item: BackendRecommendItem, rank: number): RecommendedModel {
+  // 백엔드 응답의 중첩 객체(feasibility/unit_summary/permit)가 누락된 경우에도
+  // 렌더 경로에서 동기 throw(→ 전체 페이지 에러바운더리 크래시)가 나지 않도록 옵셔널/폴백 처리.
+  const fs = item.feasibility ?? {};
+  const us = item.unit_summary ?? {};
+  const pm = item.permit ?? {};
+  const typeName = item.type_name ?? item.development_type ?? "개발 유형";
   return {
     rank,
-    type_code: item.development_type,
-    type_name: item.type_name,
-    profit_rate_pct: item.feasibility.profit_rate_pct,
-    roi_pct: item.feasibility.roi_pct,
-    grade: item.feasibility.grade,
-    permit_ease: item.permit.complexity_label,
-    total_revenue_won: item.feasibility.total_revenue_won,
-    net_profit_won: item.feasibility.net_profit_won,
+    type_code: item.development_type ?? "",
+    type_name: typeName,
+    profit_rate_pct: fs.profit_rate_pct ?? 0,
+    roi_pct: fs.roi_pct ?? 0,
+    grade: fs.grade ?? "—",
+    permit_ease: pm.complexity_label ?? "—",
+    total_revenue_won: fs.total_revenue_won ?? 0,
+    net_profit_won: fs.net_profit_won ?? 0,
     project_months: item.input_used?.project_months ?? 36,
-    total_gfa_sqm: item.unit_summary.total_gfa_sqm,
-    total_households: item.unit_summary.total_households,
+    total_gfa_sqm: us.total_gfa_sqm ?? 0,
+    total_households: us.total_households ?? 0,
     avg_sale_price_per_pyeong: item.input_used?.avg_sale_price_per_pyeong ?? 0,
-    composite_score: item.composite_score,
-    ai_summary: `${item.type_name}: ${item.permit.reason}`,
+    composite_score: item.composite_score ?? 0,
+    ai_summary: `${typeName}: ${pm.reason ?? "분석 결과"}`,
   };
 }
 

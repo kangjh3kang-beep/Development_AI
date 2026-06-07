@@ -800,7 +800,7 @@ export function ProjectSiteAnalysisWorkspaceClient({
                   />
                   <MetricTile
                     label={labels.parcelAreaLabel}
-                    value={`${parcelResult.area_sqm.toLocaleString()} m2`}
+                    value={parcelResult.area_sqm != null && Number.isFinite(parcelResult.area_sqm) ? `${parcelResult.area_sqm.toLocaleString()} m2` : "—"}
                   />
                   <MetricTile
                     label={labels.parcelUseSituationLabel}
@@ -882,7 +882,7 @@ export function ProjectSiteAnalysisWorkspaceClient({
                         {formatCurrency(locale, comp.price)}
                       </td>
                       <td className="px-4 py-3 text-right text-[var(--text-secondary)]">
-                        {comp.area_sqm.toLocaleString()} m2
+                        {comp.area_sqm != null && Number.isFinite(comp.area_sqm) ? `${comp.area_sqm.toLocaleString()} m2` : "—"}
                       </td>
                       <td className="px-4 py-3 text-right text-[var(--text-secondary)]">
                         {comp.transaction_date}

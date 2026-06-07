@@ -155,6 +155,39 @@ const ZONING_DB: Record<string, ZoningSpec> = {
   },
 };
 
+// ── 용도지역명 정규화(SSOT) ──
+//
+// 부지분석(siteAnalysis.zoneCode)은 NED 토지특성(prposArea1Nm)·도시계획 등에서
+// "일반상업", "제2종일반주거", 공백/괄호 포함 등 변형 표기가 들어올 수 있다.
+// ZONING_DB 키는 정식 명칭("일반상업지역" 등)이라 변형 표기는 조회 실패 → 250%
+// 기본값 폴백(용적률 환각)으로 이어진다. 모든 조회의 단일 정규화 게이트.
+export function normalizeZoning(zoning?: string | null): string | null {
+  const raw = (zoning || "").toString().trim();
+  if (!raw) return null;
+  // 정식 키 직매칭(공백/괄호 잡음 제거 후 포함 검사)
+  const cleaned = raw.replace(/\s+/g, "");
+  for (const key of Object.keys(ZONING_DB)) {
+    if (cleaned === key || cleaned.includes(key)) return key;
+  }
+  // "지역" 접미사 누락 변형 보정(예: "일반상업"→"일반상업지역")
+  for (const key of Object.keys(ZONING_DB)) {
+    const stem = key.replace(/지역$/, "");
+    if (cleaned === stem || cleaned.includes(stem)) return key;
+  }
+  // 단축코드(AutoDesignPanel 계열) 보정
+  const codeMap: Record<string, string> = {
+    "1R": "제1종일반주거지역",
+    "2R": "제2종일반주거지역",
+    "3R": "제3종일반주거지역",
+    QR: "준주거지역",
+    GC: "일반상업지역",
+    NC: "근린상업지역",
+    QI: "준공업지역",
+  };
+  if (codeMap[cleaned]) return codeMap[cleaned];
+  return null;
+}
+
 // ── 주소에서 용도지역 추론 ──
 
 function inferZoningFromAddress(address: string): string {
@@ -261,7 +294,8 @@ export function analyzeLocally(address: string, pnu?: string): LocalAnalysisResu
  * 용적률 기반 최대 연면적 계산
  */
 export function calcMaxGrossArea(landArea: number, zoning: string): number {
-  const spec = ZONING_DB[zoning];
+  const key = normalizeZoning(zoning);
+  const spec = key ? ZONING_DB[key] : null;
   if (!spec) return landArea * 2.5; // 기본 250%
   return landArea * (spec.floorAreaRatioMax / 100);
 }
@@ -298,5 +332,6 @@ export function getZoningList(): Array<{ key: string; name: string; category: st
  * 용도지역 상세 정보 조회
  */
 export function getZoningSpec(zoning: string): ZoningSpec | null {
-  return ZONING_DB[zoning] || null;
+  const key = normalizeZoning(zoning);
+  return key ? ZONING_DB[key] || null : null;
 }

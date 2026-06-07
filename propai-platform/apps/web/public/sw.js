@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v87-error-sweep-fixes";
+const CACHE_NAME = "propai-v88-zone-ssot-crashguard";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

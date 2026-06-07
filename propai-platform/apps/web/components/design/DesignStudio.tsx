@@ -8,7 +8,7 @@
 import React, { useState, useMemo, useEffect } from "react";
 import { motion } from "framer-motion";
 import { useAIAnalyze, useAIReady } from "@/lib/ai-analyze-client";
-import { getZoningSpec, calcMaxGrossArea, calcParkingRequired } from "@/lib/kr-building-regulations";
+import { getZoningSpec, calcMaxGrossArea, calcParkingRequired, normalizeZoning } from "@/lib/kr-building-regulations";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { NumberInput } from "@/components/common/NumberInput";
 import { SolarEnvelopeCard } from "@/components/projects/SolarEnvelopeCard";
@@ -69,15 +69,21 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
   const [easy, setEasy] = useState(false);   // 일반인용 쉬운 설명 토글
 
   const [form, setForm] = useState({ landArea: "500", zoning: "제2종일반주거지역", buildingUse: "공동주택" });
+  // 사용자가 용도지역을 수동 변경하면 부지분석 SSOT 시드를 더 이상 덮어쓰지 않는다.
+  const [zoneEdited, setZoneEdited] = useState(false);
 
+  // 부지분석(SSOT)에서 대지면적·용도지역을 시드한다. 용도지역은 변형 표기
+  // (예: "일반상업", 공백/괄호 포함)를 정규화하여 calc 한도가 정식 키와 정합되게 한다.
+  // 정규화 실패 시 원문을 보존(드롭다운 표시·SolarEnvelope zone 폴백 유지).
   useEffect(() => {
     if (!siteAnalysis) return;
+    const seededZone = normalizeZoning(siteAnalysis.zoneCode) || siteAnalysis.zoneCode || null;
     setForm((prev) => ({
       ...prev,
       landArea: siteAnalysis.landAreaSqm ? String(siteAnalysis.landAreaSqm) : prev.landArea,
-      zoning: siteAnalysis.zoneCode || prev.zoning,
+      zoning: !zoneEdited && seededZone ? seededZone : prev.zoning,
     }));
-  }, [siteAnalysis]);
+  }, [siteAnalysis, zoneEdited]);
 
   const localCalc = useMemo(() => {
     const area = Number(form.landArea) || 0;
@@ -177,7 +183,7 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
           </div>
           <div>
             <label className="text-xs font-bold uppercase tracking-widest text-[var(--text-tertiary)] mb-2 block">용도지역</label>
-            <select value={form.zoning} onChange={(e) => setForm((f) => ({ ...f, zoning: e.target.value }))}
+            <select value={form.zoning} onChange={(e) => { setZoneEdited(true); setForm((f) => ({ ...f, zoning: e.target.value })); }}
               className="w-full rounded-xl border border-[var(--line)] bg-[var(--surface-muted)] px-4 py-3 text-sm text-[var(--text-primary)] appearance-none cursor-pointer">
               {["제1종전용주거지역","제2종전용주거지역","제1종일반주거지역","제2종일반주거지역","제3종일반주거지역","준주거지역","일반상업지역","근린상업지역","준공업지역"].map((z) => <option key={z} value={z}>{z}</option>)}
             </select>

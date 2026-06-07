@@ -65,35 +65,43 @@ export default function PermitPage() {
   const [matrix, setMatrix] = useState<FeasibilityMatrix | null>(null);
   const ranRef = useRef<string | null>(null); // 무한루프 가드(주소+pnu 1회)
 
-  const zoneType = siteAnalysis?.zoneCode || analysis?.site?.zone_type || null;
+  // 용도지역(zone_type) 전파 — 부지분석 확정 zoneCode 우선, 없으면 AI 진단 site.zone_type 폴백.
+  const siteAddress = siteAnalysis?.address ?? null;
+  const sitePnu = siteAnalysis?.pnu ?? null;
+  const siteZoneCode = siteAnalysis?.zoneCode ?? null;
+  const zoneType = siteZoneCode || analysis?.site?.zone_type || null;
 
   useEffect(() => {
-    const address = siteAnalysis?.address;
-    const key = `${id}:${address ?? ""}:${siteAnalysis?.pnu ?? ""}`;
+    const address = siteAddress;
+    const key = `${id}:${address ?? ""}:${sitePnu ?? ""}`;
     if (!address) {
       setAnalysisState("no-site");
       return;
     }
-    if (ranRef.current === key) return; // 동일 컨텍스트 재호출 방지
+    if (ranRef.current === key) return; // 동일 컨텍스트 재호출 방지(주소+pnu 1회)
     ranRef.current = key;
-    let cancelled = false;
+    // 무한로딩 근본 제거: 요청 토큰으로 "이 effect가 시작한 호출의 응답"만 state에 반영.
+    // (store siteAnalysis 객체 참조 변동으로 effect가 재실행/cleanup 돼도 진행중 요청의 결과는 유실되지 않음)
+    let active = true;
     (async () => {
       setAnalysisState("loading");
       try {
+        // site는 effect 시작 시점의 스냅샷을 직접 캡처(스토어 참조 변동 영향 차단)
+        const siteSnapshot = siteAnalysis && siteAnalysis.address === address ? siteAnalysis : undefined;
         const res = await apiClient.post<PermitAnalysis>("/permits/ai-analysis", {
           body: {
             address,
-            pnu: siteAnalysis?.pnu || undefined,
-            site: siteAnalysis?.address === address ? siteAnalysis : undefined,
+            pnu: sitePnu || undefined,
+            site: siteSnapshot,
           },
           useMock: false,
           timeoutMs: 150000,
         });
-        if (cancelled) return;
+        if (!active) return;
         setAnalysis(res);
         setAnalysisState("done");
       } catch (err) {
-        if (cancelled) return;
+        if (!active) return;
         // 402 = LLM 쿼터/과금 게이트 → graceful 안내(목업 금지)
         if (err instanceof ApiClientError && err.status === 402) {
           setAnalysisState("gated");
@@ -103,9 +111,13 @@ export default function PermitPage() {
       }
     })();
     return () => {
-      cancelled = true;
+      // ranRef가 동일 key 재실행을 막으므로, 이 cleanup이 도는 경우는 사실상
+      // 마운트 해제뿐. 진행중 요청은 active=false로 마킹돼 stale state set만 차단.
+      active = false;
     };
-  }, [id, siteAnalysis]);
+    // 원시값(주소·pnu)만 의존 — siteAnalysis 객체 참조 변동에 의한 불필요한 재실행/로딩 stranding 방지.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, siteAddress, sitePnu]);
 
   // 용도지역이 확보되면 개발방식 인허가 가능성 매트릭스 조회(LLM 미사용·실패 무관)
   useEffect(() => {
