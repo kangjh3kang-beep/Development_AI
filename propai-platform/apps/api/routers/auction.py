@@ -25,6 +25,33 @@ def _step1_service(db: AsyncSession = Depends(get_db)):
     return AuctionStep1Service(db)
 
 
+async def _is_subscriber(user_id: Any) -> bool:
+    """공·경매 모니터링 구독자 전용 게이트 — metered(구독자) tier만 True. 실패 시 보수적 False."""
+    try:
+        from app.core.database import async_session_factory
+        from app.services.billing import billing_service
+
+        async with async_session_factory() as _db:
+            st = await billing_service.get_status(_db, user_id)
+        return bool(st.get("metered"))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _subscriber_only_note() -> dict[str, Any]:
+    """비구독자에게 반환하는 graceful 안내(공·경매 모니터링 구독자 전용)."""
+    return {
+        "group_by": "source",
+        "groups": {},
+        "total_matched": 0,
+        "targets": 0,
+        "data_source": "subscriber_only",
+        "subscriber_only": True,
+        "note": "공·경매 모니터링은 구독자 전용 기능입니다. 구독 후 보유토지·관심물건을 "
+        "지속 모니터링하고 AI 분석(LLM 사용량 과금)을 이용하실 수 있습니다.",
+    }
+
+
 def _onbid_service_key() -> Optional[str]:
     """온비드 서비스 키 해석: ONBID_SERVICE_KEY → settings 폴백(없으면 None=unavailable)."""
     import os
@@ -434,8 +461,10 @@ async def auction_monitor(
     각 물건엔 est_win(낙찰가능가)을 포함하며 data_source를 정직 표기한다(무목업).
 
     ★관심대상 미등록·온비드 미가용·내부오류 시에도 5xx 대신 200 + 빈결과 + note 로
-    graceful 반환한다(가짜데이터 금지).
+    graceful 반환한다(가짜데이터 금지). ★구독자 전용(비구독자는 subscriber_only 안내).
     """
+    if not await _is_subscriber(current_user.user_id):
+        return _subscriber_only_note()
     try:
         return await service.monitor(
             user_id=str(current_user.user_id),
@@ -462,7 +491,10 @@ async def auction_monitor_run(
     """온비드 실데이터를 적재하고 관심대상과 매칭한 뒤 신규 매칭을 알림 기록한다(무목업).
 
     ★온비드 미가용·관심대상 미등록·내부오류 시에도 5xx 대신 200 + 빈결과 + note.
+    ★구독자 전용(비구독자는 subscriber_only 안내).
     """
+    if not await _is_subscriber(current_user.user_id):
+        return _subscriber_only_note()
     try:
         return await service.monitor_run(
             user_id=str(current_user.user_id),

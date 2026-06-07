@@ -1266,7 +1266,7 @@ function DetailModal({
                 말소기준권리·인수권리·근저당·압류·가등기를 AI(법무사·변호사 관점)가 분석합니다.
               </p>
               <p className="mt-0.5 text-[11px] font-bold text-[var(--accent-strong)]">
-                건당 1,200원 (동일 물건 재조회는 무료)
+                권리분석 건당 2,000원 (동일 물건 재조회는 무료)
               </p>
             </div>
             <div className="flex shrink-0 gap-2">

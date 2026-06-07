@@ -107,6 +107,7 @@ type MonitorResponse = {
   targets?: number | null;
   data_source?: string | null;
   note?: string | null;
+  subscriber_only?: boolean | null;
 };
 
 const SOURCE_META: { key: keyof MonitorGroups; label: string; icon: string; desc: string }[] = [
@@ -954,7 +955,15 @@ export function AuctionMonitorPanel({ locale, canUseLiveApi }: { locale: Locale;
           ) : null}
         </div>
 
-        {monitorQuery.data?.note ? (
+        {monitorQuery.data?.subscriber_only ? (
+          <div className="rounded-2xl border border-[var(--accent-strong)]/40 bg-[var(--accent-strong)]/10 px-5 py-4">
+            <p className="text-sm font-black text-[var(--text-primary)]">🔒 구독자 전용 기능</p>
+            <p className="mt-1 text-xs text-[var(--text-secondary)]">
+              공·경매 모니터링은 구독자만 이용할 수 있습니다. 구독 후 보유토지·관심물건을 지속
+              모니터링하고 AI 분석(LLM 사용량에 따라 과금)을 활용하세요.
+            </p>
+          </div>
+        ) : monitorQuery.data?.note ? (
           <p className="rounded-xl bg-[var(--surface-soft)] px-4 py-3 text-xs font-medium text-[var(--text-hint)]">
             {monitorQuery.data.note}
           </p>

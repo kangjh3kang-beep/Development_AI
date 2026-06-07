@@ -35,6 +35,7 @@ from app.core.billing import (
     service_fee_land_analysis,
     service_fee_project_create,
     service_fee_registry_analysis,
+    service_fee_registry_issue,
     service_fee_sales_provision,
     service_fee_stage,
     tier_fee_krw,
@@ -399,6 +400,8 @@ def compute_service_fee(tier: str, action: str, analysis_count: int) -> dict[str
         return {"fee_krw": service_fee_sales_provision(), "free": False, "free_remaining": 0}
     if action == "registry_analysis":
         return {"fee_krw": service_fee_registry_analysis(), "free": False, "free_remaining": 0}
+    if action == "registry_issue":
+        return {"fee_krw": service_fee_registry_issue(), "free": False, "free_remaining": 0}
     # 파이프라인 단계별 과금 (stage:<name>)
     if action.startswith("stage:"):
         return {"fee_krw": service_fee_stage(action.split(":", 1)[1]), "free": False, "free_remaining": 0}

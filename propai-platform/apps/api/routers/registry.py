@@ -26,6 +26,31 @@ def _prune_jobs() -> None:
         _JOBS.pop(k, None)
 
 
+def _issue_failed(result: Any) -> bool:
+    """발급 결과가 실패/미설정(미발급)인지 판정 — 실패면 과금하지 않는다."""
+    if not isinstance(result, dict):
+        return False
+    if result.get("error"):
+        return True
+    status = str(result.get("status", "")).lower()
+    return status in ("unavailable", "error", "failed")
+
+
+async def _charge_registry_issue(user_id: Any, result: Any, times: int = 1) -> None:
+    """등기부등본 발급·열람 사용료(건당) 누적(best-effort). 발급 실패/미설정은 과금 제외."""
+    if _issue_failed(result):
+        return
+    try:
+        from app.core.database import async_session_factory
+        from app.services.billing import billing_service
+
+        async with async_session_factory() as _db:
+            for _ in range(max(1, int(times))):
+                await billing_service.charge_service(_db, user_id, "registry_issue")
+    except Exception:  # noqa: BLE001
+        pass
+
+
 async def _run_registry_job(job_id: str, params: dict[str, Any]) -> None:
     try:
         from app.services.registry.registry_analysis_service import RegistryAnalysisService
@@ -75,13 +100,16 @@ async def tilko_realty(
     """
     from app.services.registry import tilko_client as tk
 
-    return await tk.fetch_realty_registry(
+    result = await tk.fetch_realty_registry(
         property_params=req.get("property_params") or {},
         cmort_flag=str(req.get("cmort_flag", "0")),
         trade_seq_flag=str(req.get("trade_seq_flag", "0")),
         abs_cls=str(req.get("abs_cls", "0")),
         rgs_mttr_smry=str(req.get("rgs_mttr_smry", "0")),
     )
+    # 등기부등본 발급·열람 1건 1,200원(발급 성공 시, best-effort).
+    await _charge_registry_issue(current_user.user_id, result, times=1)
+    return result
 
 
 @router.post("/bulk", summary="다필지 등기부 일괄 조회/다운로드")
@@ -93,7 +121,10 @@ async def registry_bulk(
     items = list(req.items or [])
     if not items and req.addresses:
         items = [{"address": a} for a in req.addresses if a and a.strip()]
-    return await RegistryService().bulk(items)
+    result = await RegistryService().bulk(items)
+    # 발급·열람 1건당 1,200원 × 필지수(발급 성공 시, best-effort).
+    await _charge_registry_issue(current_user.user_id, result, times=max(1, len(items)))
+    return result
 
 
 class RegistryAnalyzeRequest(BaseModel):
