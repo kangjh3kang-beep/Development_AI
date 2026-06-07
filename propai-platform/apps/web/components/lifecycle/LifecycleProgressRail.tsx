@@ -36,14 +36,19 @@ const STATUS_NODE: Record<StageStatus, string> = {
 
 export function LifecycleProgressRail({
   locale,
+  projectId: projectIdProp,
   orientation = "horizontal",
   className = "",
 }: {
   locale: string;
+  /** route param projectId — store 바인딩 레이스와 무관하게 즉시 렌더되도록 props 우선. */
+  projectId?: string;
   orientation?: "horizontal" | "vertical";
   className?: string;
 }) {
-  const projectId = useProjectContextStore((s) => s.projectId);
+  const storeProjectId = useProjectContextStore((s) => s.projectId);
+  // props가 주어지면 우선(레이아웃 route param), 없으면 store 폴백.
+  const projectId = projectIdProp ?? storeProjectId;
   const projectName = useProjectContextStore((s) => s.projectName);
   const completedStages = useProjectContextStore((s) => s.completedStages);
   const currentStage = useProjectContextStore((s) => s.currentStage);

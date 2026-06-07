@@ -54,6 +54,48 @@ def _parse_project_id(project_id: str) -> uuid.UUID:
         return uuid.uuid5(uuid.NAMESPACE_DNS, f"propai.feasibility.{project_id}")
 
 
+# 시도 약식명 → 정식 행정구역명(VWorld 지오코딩 성공률↑). 17개 광역시도.
+_SIDO_SHORT_TO_FULL = {
+    "서울": "서울특별시",
+    "부산": "부산광역시",
+    "대구": "대구광역시",
+    "인천": "인천광역시",
+    "광주": "광주광역시",
+    "대전": "대전광역시",
+    "울산": "울산광역시",
+    "세종": "세종특별자치시",
+    "경기": "경기도",
+    "강원": "강원특별자치도",
+    "충북": "충청북도",
+    "충남": "충청남도",
+    "전북": "전북특별자치도",
+    "전남": "전라남도",
+    "경북": "경상북도",
+    "경남": "경상남도",
+    "제주": "제주특별자치도",
+}
+
+
+def _normalize_address(address: str) -> str:
+    """약식 시도명("서울")을 정식 행정구역명("서울특별시")으로 보강해 지오코딩 성공률을 높인다.
+
+    이미 정식명(접미사 포함)이면 그대로 둔다. 시도명 접두만 보강하며, 구·동·번지가
+    누락된 경우는 보강할 수 없으므로 입력을 그대로 반환한다(무목업: 추정 생성 금지).
+    """
+    addr = (address or "").strip()
+    if not addr:
+        return addr
+    for short, full in _SIDO_SHORT_TO_FULL.items():
+        if addr.startswith(full):
+            return addr  # 이미 정식명
+        if addr.startswith(short):
+            rest = addr[len(short):].lstrip()
+            # "서울특별시"처럼 정식 접미사가 이미 붙은 경우는 위 분기에서 처리됨.
+            # "서울 강남구..." / "서울강남구..." → "서울특별시 강남구..."
+            return f"{full} {rest}" if rest else full
+    return addr
+
+
 def _request_to_input(req: FeasibilityCalculateRequest) -> ModuleInput:
     return ModuleInput(
         development_type=req.development_type,
@@ -130,20 +172,25 @@ async def baseline_feasibility(req: FeasibilityBaselineRequest):
     )
 
     # ── 1) 부지 데이터 확보(실데이터 우선) ──
-    zone_type = (req.zone_type or "").strip()
+    # 프론트는 용도지역을 zone_type(이름) 또는 zone_code(이름/코드)로 보낼 수 있다.
+    # 둘 다 수용해 단일 zone 변수로 통합(이전엔 zone_code가 항상 폐기되어 FAR 역산 미반영).
+    zone = ((req.zone_type or "").strip() or (req.zone_code or "").strip())
     land_area = req.land_area_sqm or 0
     official_price = req.official_price_per_sqm or 0
     zone_limits: dict = {}
     sources: dict[str, Any] = {}
 
-    need_autodetect = (not zone_type) or land_area <= 0 or official_price <= 0
+    # 약식 시도명("서울")을 정식명("서울특별시")으로 보강해 지오코딩 성공률↑
+    norm_address = _normalize_address(req.address)
+
+    need_autodetect = (not zone) or land_area <= 0 or official_price <= 0
     if need_autodetect:
         try:
             from app.services.zoning.auto_zoning_service import AutoZoningService
 
-            zoning = await AutoZoningService().analyze_by_address(req.address)
-            if not zone_type and zoning.get("zone_type"):
-                zone_type = str(zoning["zone_type"]).strip()
+            zoning = await AutoZoningService().analyze_by_address(norm_address)
+            if not zone and zoning.get("zone_type"):
+                zone = str(zoning["zone_type"]).strip()
                 sources["zone_type"] = "자동감지(공공데이터)"
             if land_area <= 0 and zoning.get("land_area_sqm"):
                 land_area = float(zoning["land_area_sqm"])
@@ -155,7 +202,29 @@ async def baseline_feasibility(req: FeasibilityBaselineRequest):
         except Exception:  # noqa: BLE001 — 자동감지 실패 시 입력/표준으로 진행
             logger.warning("baseline: 용도지역 자동감지 실패 — 입력/표준값으로 진행")
 
-    if req.zone_type:
+    # 자동감지로 zone_limits를 못 얻었으면(자동감지 미수행/실패), 사용자가 보낸
+    # 용도지역명(zone)으로 법정 상한 FAR/BCR을 정적 테이블에서 보강 → FAR 역산 반영.
+    if not zone_limits and zone:
+        try:
+            from app.services.zoning.auto_zoning_service import (
+                AutoZoningService,
+                ZONE_LIMITS,
+            )
+
+            zone_key = AutoZoningService()._normalize_zone_name(zone)
+            static_limits = ZONE_LIMITS.get(zone_key)
+            if static_limits:
+                zone_limits = {
+                    "max_bcr_pct": static_limits["max_bcr"],
+                    "max_far_pct": static_limits["max_far"],
+                    "max_height_m": static_limits.get("max_height_m"),
+                    "zone_key": zone_key,
+                    "legal_basis": "국토의 계획 및 이용에 관한 법률 제78조",
+                }
+        except Exception:  # noqa: BLE001 — 정적 보강 실패 시 유형 표준 FAR로 진행
+            logger.warning("baseline: 용도지역 정적 FAR/BCR 보강 실패")
+
+    if req.zone_type or req.zone_code:
         sources.setdefault("zone_type", "사용자입력")
     if req.land_area_sqm:
         sources.setdefault("land_area_sqm", "사용자입력")
@@ -165,7 +234,10 @@ async def baseline_feasibility(req: FeasibilityBaselineRequest):
     if land_area <= 0:
         raise HTTPException(
             status_code=422,
-            detail="부지면적(land_area_sqm)을 입력하거나, 주소로 자동감지 가능한 주소를 제공하세요.",
+            detail=(
+                "부지면적을 자동감지하지 못했습니다. "
+                "정확한 주소(시·구·동·번지) 또는 부지면적(land_area_sqm)을 입력하세요."
+            ),
         )
 
     assumptions: dict[str, Any] = {}
@@ -174,7 +246,7 @@ async def baseline_feasibility(req: FeasibilityBaselineRequest):
     # ── 2) 개발유형 선택(용도지역 대표유형) ──
     dev_type = (req.development_type or "").strip()
     if not dev_type:
-        permitted = get_permitted_types(zone_type) if zone_type else []
+        permitted = get_permitted_types(zone) if zone else []
         if not permitted:
             # 용도지역 미상/개발불가 → 가장 일반적 유형으로 보수적 baseline
             dev_type = "M06"
@@ -184,7 +256,7 @@ async def baseline_feasibility(req: FeasibilityBaselineRequest):
             # 대표성·인허가 용이성 위해 일반분양(M06) 우선, 없으면 첫 허용유형
             dev_type = "M06" if "M06" in permitted else permitted[0]
             assumptions["development_type"] = (
-                f"{zone_type} 인허가 가능유형 중 대표({DEVELOPMENT_TYPE_NAMES.get(dev_type, dev_type)}) 자동선택"
+                f"{zone} 인허가 가능유형 중 대표({DEVELOPMENT_TYPE_NAMES.get(dev_type, dev_type)}) 자동선택"
             )
     else:
         sources["development_type"] = "사용자입력"

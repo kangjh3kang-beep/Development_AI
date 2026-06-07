@@ -638,6 +638,7 @@ export default function SiteAnalysisPage() {
   const [userInitiated, setUserInitiated] = useState(false);
   const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
   const ctxProjectId = useProjectContextStore((s) => s.projectId);
+  const updateSiteAnalysis = useProjectContextStore((s) => s.updateSiteAnalysis);
   // ProjectContextBinder가 이 프로젝트를 바인딩 완료했는지(레이아웃에서 동기 바인딩).
   const isBound = ctxProjectId === id;
 
@@ -715,12 +716,42 @@ export default function SiteAnalysisPage() {
         body: { address },
       });
 
+      const resolvedAddress = zoningResult.address || address;
       setSiteData({
-        address: zoningResult.address || address,
+        address: resolvedAddress,
         pnu: zoningResult.pnu ?? undefined,
         zoneType: zoningResult.zone_type ?? undefined,
         landAreaSqm: zoningResult.land_area_sqm?.toString(),
         landCategory: zoningResult.land_category ?? undefined,
+      });
+
+      // ★부지 수치 영속화: 설계/공사비/수지 파이프라인의 출발점.
+      // 기존엔 setSiteData(로컬 state)만 했고 store 미반영 → 복원 시 landAreaSqm=null →
+      // 수지 baseline land_area_sqm=0 → 422 → 전 단계 0(SPOF). store에 수치를 박아 해소한다.
+      // SiteAnalysisData 필드(estimatedValue/landAreaSqm/zoneCode/address/pnu + officialPrices)만 반영.
+      const pricePerSqm = zoningResult.official_price_per_sqm;
+      updateSiteAnalysis({
+        address: resolvedAddress,
+        pnu: zoningResult.pnu ?? null,
+        zoneCode: zoningResult.zone_type ?? null,
+        landAreaSqm: zoningResult.land_area_sqm ?? null,
+        ...(pricePerSqm != null && zoningResult.pnu
+          ? {
+              officialPrices: [
+                {
+                  pnu: zoningResult.pnu,
+                  year: new Date().getFullYear(),
+                  pricePerSqm,
+                },
+              ],
+              // 공시지가×면적 = 토지 추정가(수지 토지비 baseline 보조). 면적 있을 때만.
+              ...(zoningResult.land_area_sqm
+                ? { estimatedValue: Math.round(pricePerSqm * zoningResult.land_area_sqm) }
+                : {}),
+            }
+          : {}),
+        fetchedAt: new Date().toISOString(),
+        dataSource: "zoning/analyze",
       });
 
       // L3: 종합 토지정보 비동기 수집 (실거래가, 건축물대장, 인프라)
@@ -752,6 +783,21 @@ export default function SiteAnalysisPage() {
           upzoning_interpretation: landResult.upzoning_interpretation ?? null,
           grave_registry: landResult.grave_registry ?? null,
         });
+
+        // 기존 건축물 현황(표제부)을 store에 영속(있을 때만, 과하지 않게) — 후속 단계 참조용.
+        const bd = landResult.building_detail;
+        if (bd && (bd.main_purpose || bd.total_area_sqm)) {
+          updateSiteAnalysis({
+            buildingInfo: {
+              buildingName: bd.building_name ?? "",
+              mainPurpose: bd.main_purpose ?? "",
+              totalAreaSqm: bd.total_area_sqm ?? 0,
+              groundFloors: bd.ground_floors ?? 0,
+              structure: bd.structure ?? "",
+              useApprovalDate: bd.use_approval_date ?? "",
+            },
+          });
+        }
       } catch {
         // L3 데이터 실패는 무시 — 기본 분석만 표시
       }

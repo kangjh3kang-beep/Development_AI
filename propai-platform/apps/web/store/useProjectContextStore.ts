@@ -242,6 +242,8 @@ export interface FeasibilityCompletenessStage {
   key: "site" | "design" | "cost" | "finance";
   label: string;
   done: boolean;
+  // 부분 반영(예: 주소만 있고 면적 미확보) — done=false이되 정직 표기용 보조 플래그.
+  partial?: boolean;
   weightPct: number; // 누적 가중치(부지30/설계60/공사비85/금융100)
 }
 export interface FeasibilityCompleteness {
@@ -582,10 +584,13 @@ export const useProjectContextStore = create<ProjectContextState>()(
       feasibilityCompleteness: () => {
         const s = get();
         // 단계별 실데이터 반영 판정(무목업): 값이 존재해야 done.
+        // ★부지 done은 "수치 확보(landAreaSqm>0)" 기준. 주소만 있고 면적이 없으면
+        // 수지 baseline이 0이라 실제로는 미반영 → done=false(거짓 30% 제거).
         const siteDone = !!(
-          (s.siteAnalysis?.landAreaSqm && s.siteAnalysis.landAreaSqm > 0) ||
-          s.siteAnalysis?.address
+          s.siteAnalysis?.landAreaSqm && s.siteAnalysis.landAreaSqm > 0
         );
+        // 주소만 확보된 부분 상태(면적 미확보) — 화면에서 "주소만(부분)"으로 정직 표시 가능.
+        const siteAddressOnly = !siteDone && !!s.siteAnalysis?.address;
         const designDone = !!(
           s.designData?.totalGfaSqm && s.designData.totalGfaSqm > 0
         );
@@ -598,7 +603,7 @@ export const useProjectContextStore = create<ProjectContextState>()(
           s.feasibilityData.totalRevenueWon > 0
         );
         const stages: FeasibilityCompletenessStage[] = [
-          { key: "site", label: "부지", done: siteDone, weightPct: 30 },
+          { key: "site", label: "부지", done: siteDone, partial: siteAddressOnly, weightPct: 30 },
           { key: "design", label: "설계", done: designDone, weightPct: 60 },
           { key: "cost", label: "공사비", done: costDone, weightPct: 85 },
           { key: "finance", label: "금융", done: financeDone, weightPct: 100 },

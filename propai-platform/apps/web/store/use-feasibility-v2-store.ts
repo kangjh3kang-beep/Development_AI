@@ -3,7 +3,7 @@
  */
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
-import { apiClient } from "@/lib/api-client";
+import { apiClient, ApiClientError } from "@/lib/api-client";
 
 // ── 타입 ──
 
@@ -108,6 +108,9 @@ interface FeasibilityV2State {
   selectedModule: string;
   isCalculating: boolean;
   error: string | null;
+  // baseline 추정 산출에 필요한 입력(부지면적/주소)이 부족(422)할 때 true.
+  // 빈 0 결과 대신 입력 유도 게이트를 띄우기 위한 신호(무목업).
+  baselineNeedsInput: boolean;
   activeTab: "input" | "result" | "montecarlo" | "version" | "tax";
   // 액션
   setInput: (patch: Partial<FeasibilityInput>) => void;
@@ -162,6 +165,7 @@ export const useFeasibilityV2Store = create<FeasibilityV2State>()(
     selectedModule: "M06",
     isCalculating: false,
     error: null,
+    baselineNeedsInput: false,
     activeTab: "input",
 
     setInput: (patch) =>
@@ -184,6 +188,7 @@ export const useFeasibilityV2Store = create<FeasibilityV2State>()(
       set((s) => {
         s.isCalculating = true;
         s.error = null;
+        s.baselineNeedsInput = false;
       });
       try {
         // 공사비 정밀분석 결과가 있으면 params.construction_cost_override_won로 주입.
@@ -215,6 +220,7 @@ export const useFeasibilityV2Store = create<FeasibilityV2State>()(
       set((s) => {
         s.isCalculating = true;
         s.error = null;
+        s.baselineNeedsInput = false;
       });
       try {
         const res = await apiClient.postV2<FeasibilityResult>("/feasibility/baseline", {
@@ -224,12 +230,20 @@ export const useFeasibilityV2Store = create<FeasibilityV2State>()(
         set((s) => {
           s.result = res;
           s.isCalculating = false;
+          s.baselineNeedsInput = false;
         });
       } catch (e: unknown) {
-        // baseline 실패는 치명적이지 않음 — 사용자 직접 계산 경로 유지.
+        // 422 = 부지면적/주소 등 산출 입력 부족 → 사일런트 금지, 입력 유도 게이트 노출.
+        // 그 외 실패는 치명적이지 않음(사용자 직접 계산 경로 유지)하되 에러는 표시.
+        const status = e instanceof ApiClientError ? e.status : null;
         set((s) => {
           s.isCalculating = false;
-          s.error = e instanceof Error ? e.message : null;
+          if (status === 422) {
+            s.baselineNeedsInput = true;
+            s.error = null;
+          } else {
+            s.error = e instanceof Error ? e.message : null;
+          }
         });
       }
     },
@@ -327,6 +341,7 @@ export const useFeasibilityV2Store = create<FeasibilityV2State>()(
         s.monteCarloResult = null;
         s.recommendations = [];
         s.error = null;
+        s.baselineNeedsInput = false;
         s.activeTab = "input";
       }),
   }))

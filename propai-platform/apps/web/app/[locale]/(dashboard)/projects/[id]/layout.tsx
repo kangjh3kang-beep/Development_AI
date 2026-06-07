@@ -32,7 +32,7 @@ export default async function ProjectLayout({
       <LifecycleNavigator locale={locale} projectId={id} />
       {/* 라이프사이클 진행 레일 — 활성 프로젝트 컨텍스트가 있을 때만 렌더(다음 단계 유도).
           P1: 컴팩트 파이프라인(ProjectLifecyclePipelineWrapper)은 진행바와 100% 중복이라 제거. */}
-      <LifecycleProgressRail locale={locale} />
+      <LifecycleProgressRail locale={locale} projectId={id} />
       <ProjectAddressBar />
       <div className="min-w-0 transition-all duration-500 animate-in fade-in slide-in-from-bottom-4">
         {children}

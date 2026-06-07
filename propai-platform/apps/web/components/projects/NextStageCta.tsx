@@ -32,12 +32,17 @@ function nextOf(currentStage: string): LifecycleStage | null | undefined {
 
 export function NextStageCta({
   locale,
+  projectId: projectIdProp,
   currentStage,
 }: {
   locale: string;
+  /** route param projectId — store 바인딩 레이스와 무관하게 즉시 렌더되도록 props 우선. */
+  projectId?: string;
   currentStage?: LifecycleStage | string;
 }) {
-  const projectId = useProjectContextStore((s) => s.projectId);
+  const storeProjectId = useProjectContextStore((s) => s.projectId);
+  // props가 주어지면 우선(레이아웃 route param), 없으면 store 폴백.
+  const projectId = projectIdProp ?? storeProjectId;
   const getNextRecommendedStage = useProjectContextStore((s) => s.getNextRecommendedStage);
 
   if (!projectId) return null;

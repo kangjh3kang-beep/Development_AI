@@ -32,6 +32,7 @@ export function FeasibilityEditorV2({ projectId }: Props) {
     result,
     isCalculating,
     error,
+    baselineNeedsInput,
     fetchModules,
     fetchCommitLog,
     calculate,
@@ -159,6 +160,29 @@ export function FeasibilityEditorV2({ projectId }: Props) {
           >
             <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-amber-400" />
             업스트림(공사비) 변경 감지 — 수지분석을 자동 재계산합니다.
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ── 추정 입력 부족(422) 안내 배너 — 사일런트 금지, 입력 유도 ── */}
+      <AnimatePresence>
+        {baselineNeedsInput && !result && (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            className="-mb-6 flex flex-wrap items-center gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-5 py-3 text-xs font-bold text-amber-400"
+          >
+            <span className="inline-block h-2 w-2 rounded-full bg-amber-400" />
+            부지면적 또는 정확한 주소(시·구·동·번지)를 입력하면 추정 수지가 자동 산출됩니다.
+            {activeTab !== "input" && (
+              <button
+                onClick={() => setActiveTab("input")}
+                className="ml-auto rounded-full bg-amber-500/20 px-3 py-1 font-[900] uppercase tracking-wider transition-colors hover:bg-amber-500/30"
+              >
+                입력 탭 →
+              </button>
+            )}
           </motion.div>
         )}
       </AnimatePresence>
@@ -297,7 +321,28 @@ export function FeasibilityEditorV2({ projectId }: Props) {
               exit={{ opacity: 0, y: -30, filter: "blur(10px)" }}
               className="space-y-10"
             >
-              <FeasibilityResultView />
+              {/* 결과 없음 + 추정 입력 부족(422): 빈 0 대신 입력 유도 게이트(무목업). */}
+              {!result && baselineNeedsInput ? (
+                <div className="glass rounded-[3rem] border border-amber-500/30 bg-amber-500/5 p-12 text-center shadow-[var(--shadow-xl)]">
+                  <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-amber-500/15 text-amber-400">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 9v4" /><path d="M12 17h.01" /><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" /></svg>
+                  </div>
+                  <p className="text-lg font-[900] text-[var(--text-primary)]">
+                    수지 추정에 필요한 정보가 부족합니다
+                  </p>
+                  <p className="mt-3 text-sm leading-relaxed text-[var(--text-secondary)]">
+                    부지면적 또는 정확한 주소(시·구·동·번지)를 입력하면 자동 산출됩니다.
+                  </p>
+                  <button
+                    onClick={() => setActiveTab("input")}
+                    className="mt-8 inline-flex items-center gap-2 rounded-full bg-[var(--accent-strong)] px-8 py-3 text-xs font-[900] uppercase tracking-[0.2em] text-white shadow-[var(--shadow-glow)] transition-all hover:scale-105"
+                  >
+                    입력 탭으로 이동 ↗
+                  </button>
+                </div>
+              ) : (
+                <FeasibilityResultView />
+              )}
               {/* 조망·스카이라인 보조카드(분양가치 근거 — 환경3D 녹여내기) */}
               {(siteAnalysis?.address || siteAnalysis?.pnu) && (
                 <EnvironmentSummaryCard
