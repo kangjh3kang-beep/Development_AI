@@ -20,7 +20,9 @@ router = APIRouter()
 async def estimate_value(
     request: Request,
     body: AVMRequest,
-    current_user: CurrentUser = Depends(RequirePermission("avm", "write")),
+    # AVM 시세 추정은 조회(읽기) 성격 — viewer(구독자)도 다른 부지분석 패널처럼 사용 가능해야 함.
+    # write 요구 시 viewer가 403→프론트 "로그인 필요" 오표기(부지분석 AVM·필지 카드 멈춤). read로 정정.
+    current_user: CurrentUser = Depends(RequirePermission("avm", "read")),
     db: AsyncSession = Depends(get_db),
 ) -> AVMValuationResponse:
     """AVM 시세를 추정한다."""

@@ -538,7 +538,9 @@ except Exception as e:
 # 충돌 0·대상경로 미존재 라이브확인). 프론트 호출 없는 agents/cost/rates/v2_tax는
 # 표면 확대 방지로 미마운트(필요시 추후). 각각 독립 try로 격리.
 for _mod, _attr, _tag in [
-    ("apps.api.app.routers.avm", "router", "AVM 시세추정(estimate)"),
+    # avm 제거: /api/v1/avm/estimate는 이미 routers/avm.py(line 349, RBAC avm:read)로 마운트됨.
+    # app/routers/avm.py(get_current_user, 권한체크 없음)를 중복 등록하면 경로 충돌 → 재정렬 시
+    # RBAC 우회 위험. 정본 하나만 유지.
     ("apps.api.app.routers.external_api", "router", "외부 공공데이터"),
     ("apps.api.app.routers.finance", "router", "재무(몬테카를로)"),
     ("apps.api.app.routers.lifecycle", "router", "프로젝트 라이프사이클"),
