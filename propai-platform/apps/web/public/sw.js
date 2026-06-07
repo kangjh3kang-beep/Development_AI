@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v84-phase1-spine";
+const CACHE_NAME = "propai-v85-cascade-healthboard";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

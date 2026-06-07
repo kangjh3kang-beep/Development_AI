@@ -25,6 +25,8 @@ const _loading = (label: string) => {
 // P1: 딥인티 8탭 허브(LifecycleStageViews)는 상단탭·진행바와 진입 중복이라 개요에서 강등.
 // 각 단계 위젯은 해당 서브페이지에 이미 존재 — 개요는 다음단계 CTA로 순수 진입만 유도.
 const NextStageCta = dynamic(() => import("@/components/projects/NextStageCta").then((m) => m.NextStageCta), { ssr: false, loading: _loading("다음 단계 안내 불러오는 중…") });
+// Phase3(additive): 완성도 헬스보드 — projectCompleteness 셀렉터 + 가이디드 next-action.
+const ProjectHealthBoard = dynamic(() => import("@/components/projects/ProjectHealthBoard").then((m) => m.ProjectHealthBoard), { ssr: false, loading: _loading("프로젝트 완성도 불러오는 중…") });
 const ProjectAnalysisFlow = dynamic(() => import("@/components/projects/ProjectAnalysisFlow").then((m) => m.ProjectAnalysisFlow), { ssr: false, loading: _loading("분석 흐름 불러오는 중…") });
 const PipelineResultDetail = dynamic(() => import("@/components/pipeline/PipelineResultDetail").then((m) => m.PipelineResultDetail), { ssr: false, loading: _loading("통합 보고서 불러오는 중…") });
 
@@ -316,6 +318,9 @@ export default function ProjectDetailPage() {
           </motion.div>
         </div>
       </section>
+
+      {/* ── 프로젝트 완성도 헬스보드(Phase3·additive) — 7단계 진행 + 가이디드 next-action ── */}
+      <ProjectHealthBoard locale={locale} />
 
       {/* ── 보고서식 분석 요약(복원된 단일 데이터원) ── */}
       <ProjectAnalysisSummary />

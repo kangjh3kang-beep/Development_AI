@@ -231,6 +231,11 @@ export interface ProjectContextState {
   getNextRecommendedStage: () => string | null;
   // 다운스트림 모듈이 업스트림 갱신 이후로 재계산되지 않았으면 true.
   isStale: (downstream: ModuleKey) => boolean;
+  // (additive) 모든 직접 업스트림이 "준비됨(실데이터 존재)"이고 다운스트림이 아직
+  // 한 번도 산출되지 않았을 때 true → 최초 1회 자동 산출 허용 신호.
+  // isStale의 "최초제외" 정책은 보존하고, 별도 경로로 업스트림 지연 채움 후의
+  // 다운스트림 자동 최초산출을 활성화한다(무한루프는 호출측 시그니처/busy 가드).
+  isReadyForFirstCompute: (downstream: ModuleKey) => boolean;
   // 수지분석에 실제 반영된 업스트림 단계 완성도(0~100, 무목업: 실데이터 유무 기반).
   feasibilityCompleteness: () => FeasibilityCompleteness;
   // 프로젝트 전체 완성도(부지·설계·공사비·법규·금융·ESG·인허가) — 감사 지적 반영.
@@ -329,6 +334,41 @@ function hasFeasibilityData(s: ProjectContextState): boolean {
   return !!(
     s.feasibilityData?.totalRevenueWon && s.feasibilityData.totalRevenueWon > 0
   );
+}
+
+/**
+ * 모듈 키별 "실데이터가 준비됐는가" 판정(무목업) — isReadyForFirstCompute 보조.
+ * finance/compliance/esg는 산출 결과(또는 stamp)가 곧 준비 신호이므로 그 기준을 쓴다.
+ * 다운스트림이 직접 업스트림의 준비 여부만 확인하면 되도록 단일 진실원으로 둔다. */
+function isModuleReady(s: ProjectContextState, key: ModuleKey): boolean {
+  switch (key) {
+    case "siteAnalysis":
+      return hasSiteData(s);
+    case "design":
+      return hasDesignData(s);
+    case "cost":
+      return hasCostData(s);
+    case "feasibility":
+      return hasFeasibilityData(s);
+    case "finance":
+      return !!s.updatedAt.finance;
+    case "esg":
+      return !!(
+        s.esgData &&
+        ((s.esgData.totalCarbonPerSqm ?? 0) > 0 ||
+          (s.esgData.embodiedCarbonKg ?? 0) > 0)
+      );
+    case "compliance":
+      return !!(
+        s.complianceData &&
+        (s.complianceData.bcrCompliant != null ||
+          s.complianceData.farCompliant != null ||
+          s.complianceData.heightCompliant != null ||
+          (s.complianceData.violations?.length ?? 0) > 0)
+      );
+    default:
+      return false;
+  }
 }
 
 /**
@@ -609,6 +649,17 @@ export const useProjectContextStore = create<ProjectContextState>()(
           const upAt = updatedAt[up];
           return upAt != null && upAt > own;
         });
+      },
+
+      isReadyForFirstCompute: (downstream) => {
+        const s = get();
+        // 이미 한 번이라도 산출됐으면 "최초"가 아님 → false(staleness 경로가 담당).
+        if (s.updatedAt[downstream] != null) return false;
+        const ups = MODULE_UPSTREAM[downstream];
+        // 업스트림이 없는 모듈(siteAnalysis)은 최초산출을 강제하지 않는다(사용자/로드 담당).
+        if (ups.length === 0) return false;
+        // 모든 직접 업스트림이 실데이터로 준비됐을 때만 최초 자동산출 허용.
+        return ups.every((up) => isModuleReady(s, up));
       },
 
       feasibilityCompleteness: () => {

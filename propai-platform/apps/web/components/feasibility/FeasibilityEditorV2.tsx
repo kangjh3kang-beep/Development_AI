@@ -48,8 +48,9 @@ export function FeasibilityEditorV2({ projectId }: Props) {
 
   // 마지막 계산에 반영된 공사비(원) — 업스트림 변경(stale) 감지용.
   const [costAtCalc, setCostAtCalc] = useState<number | null>(null);
-  // baseline 자동호출 1회 가드(진입 시 부지 데이터만 있을 때).
-  const baselineTriedRef = useRef(false);
+  // baseline 자동호출 시그니처 가드: 부지(주소+면적+PNU)가 바뀌면 1회 재시도 허용.
+  // (이전: boolean 1회 가드 → 면적이 늦게 채워져도 재호출 안 됨. 시그니처로 self-reset)
+  const baselineTriedSigRef = useRef<string | null>(null);
 
   useEffect(() => {
     fetchModules();
@@ -70,12 +71,16 @@ export function FeasibilityEditorV2({ projectId }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [result, updateFeasibilityData]);
 
-  // baseline 자동 산출: 결과가 없고 부지 데이터(주소/면적)만 있을 때 1회 추정 수지.
+  // baseline 자동 산출: 결과가 없고 부지 데이터(주소/면적)만 있을 때 추정 수지.
+  // 시그니처 가드 — 동일 부지 입력으로는 1회만, 면적/주소/PNU가 늦게 채워지면(시그니처
+  // 변경) 재시도 1회 허용. 무한루프 방지: 동일 시그니처면 skip, busy(isCalculating) 가드.
   useEffect(() => {
-    if (baselineTriedRef.current || result || isCalculating) return;
+    if (result || isCalculating) return;
     const hasSite = !!(siteAnalysis?.address || (siteAnalysis?.landAreaSqm ?? 0) > 0);
     if (!hasSite) return;
-    baselineTriedRef.current = true;
+    const sig = `${siteAnalysis?.address ?? ""}|${siteAnalysis?.landAreaSqm ?? 0}|${siteAnalysis?.pnu ?? ""}`;
+    if (baselineTriedSigRef.current === sig) return;
+    baselineTriedSigRef.current = sig;
     void runBaseline({
       address: siteAnalysis?.address ?? "",
       zone_code: siteAnalysis?.zoneCode ?? "",

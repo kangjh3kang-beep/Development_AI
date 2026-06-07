@@ -13,6 +13,8 @@ export function ProjectAddressBar() {
   const { locale, id } = useParams() as { locale: string; id: string };
   const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
   const complianceData = useProjectContextStore((s) => s.complianceData);
+  // Phase3(additive): 완성도% 칩 — projectCompleteness 셀렉터(Read-only)로 정직 표기.
+  const projectCompleteness = useProjectContextStore((s) => s.projectCompleteness);
 
   // 주소가 없으면 안내 메시지 표시
   if (!siteAnalysis?.address) {
@@ -40,6 +42,8 @@ export function ProjectAddressBar() {
       </Link>
     );
   }
+
+  const completenessPct = projectCompleteness().pct;
 
   return (
     <Link
@@ -90,8 +94,13 @@ export function ProjectAddressBar() {
         </span>
       )}
 
+      {/* 완성도% 칩(Phase3·additive) — 실데이터 기준 진행률 */}
+      <span className="ml-auto inline-flex items-center gap-1 rounded-full border border-[var(--accent-strong)]/40 bg-[var(--accent-soft)] px-2 py-0.5 text-[11px] font-bold text-[var(--accent-strong)]">
+        완성도 {completenessPct}%
+      </span>
+
       {/* 변경 힌트 */}
-      <span className="text-[10px] text-[var(--text-hint)] opacity-0 group-hover:opacity-100 transition-opacity ml-auto">
+      <span className="text-[10px] text-[var(--text-hint)] opacity-0 group-hover:opacity-100 transition-opacity">
         변경하기 &rarr;
       </span>
     </Link>
