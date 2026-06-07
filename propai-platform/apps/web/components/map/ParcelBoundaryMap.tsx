@@ -75,15 +75,27 @@ export function ParcelBoundaryMap({
   statusLabels,
   highlight,
   onParcelClick,
+  primaryZone,
 }: {
   parcels: string[];
   statusColors?: Record<string, string>; // 주소 → 채움색(계약/동의 상태강조)
   statusLabels?: Record<string, string>; // 주소 → 상태 라벨(팝업)
   highlight?: string; // 강조할 주소(토지조서 행 클릭)
   onParcelClick?: (address: string) => void;
+  // 부지분석 확정 용도지역(siteAnalysis.zoneCode) — 구획도·시나리오 용도지역 표기를 단일 출처로
+  // 정합시키기 위한 SSOT 오버레이. 주(첫) 필지에만 적용(지적도 토지특성 vs 확정값 불일치 해소).
+  primaryZone?: string | null;
 }) {
   const list = useMemo(() => parcels.map((s) => s.trim()).filter(Boolean), [parcels]);
   const key = list.join("||");
+  // 주 필지의 표시 용도지역 = 확정 SSOT(primaryZone) 우선, 없으면 지적도 토지특성(zone_type).
+  // 주소 정규화 비교로 첫 필지(분석 대상)에만 적용 — 다른 필지는 원래 토지특성 유지.
+  const normAddr = (a?: string | null) => (a || "").replace(/\s+/g, "");
+  const primaryAddr = normAddr(list[0]);
+  const effZone = (f: Feature, i: number): string | null => {
+    if (primaryZone && (i === 0 || normAddr(f.address) === primaryAddr)) return primaryZone;
+    return f.zone_type;
+  };
   const [data, setData] = useState<Boundaries | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -124,8 +136,9 @@ export function ParcelBoundaryMap({
       let hiLayer: any = null;
       data.features.forEach((f, i) => {
         if (!f.geometry) return;
+        const zoneDisp = effZone(f, i);
         const sc = statusColors?.[f.address || ""];
-        const color = sc || zoneColor(f.zone_type, i);
+        const color = sc || zoneColor(zoneDisp, i);
         const isHi = highlight && f.address === highlight;
         const layer = L.geoJSON(f.geometry, {
           style: { color: isHi ? "#ef4444" : color, weight: isHi ? 4 : 2, fillColor: color, fillOpacity: isHi ? 0.5 : 0.28 },
@@ -134,7 +147,7 @@ export function ParcelBoundaryMap({
         const stat = statusLabels?.[f.address || ""];
         layer.bindPopup(
           `<b>${i + 1}. ${f.address || f.pnu}</b>` + (stat ? ` <span style="color:#0e7490">[${stat}]</span>` : "") +
-          `<br/>용도지역: ${f.zone_type || "-"}${z2}<br/>` +
+          `<br/>용도지역: ${zoneDisp || "-"}${z2}<br/>` +
           `면적: ${f.area_sqm?.toLocaleString()}㎡ (${pyeong(f.area_sqm)})`,
         );
         if (onParcelClick) layer.on("click", () => onParcelClick(f.address || ""));
@@ -147,7 +160,7 @@ export function ParcelBoundaryMap({
     });
     return () => { alive = false; if (mapRef.current) { mapRef.current.remove(); mapRef.current = null; } };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, highlight, JSON.stringify(statusColors)]);
+  }, [data, highlight, primaryZone, JSON.stringify(statusColors)]);
 
   if (!list.length) return null;
 
@@ -188,8 +201,8 @@ export function ParcelBoundaryMap({
         <div className="mt-3 flex flex-wrap gap-2">
           {data.features.map((f, i) => (
             <span key={f.pnu + i} className="flex items-center gap-1.5 rounded-lg border border-[var(--line)] bg-[var(--surface-strong)] px-2.5 py-1 text-[11px]">
-              <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: zoneColor(f.zone_type, i) }} />
-              <span className="font-semibold text-[var(--text-secondary)]">{i + 1}. {f.zone_type || "용도미상"}{f.zone_type_2 ? `·${f.zone_type_2}` : ""}</span>
+              <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: zoneColor(effZone(f, i), i) }} />
+              <span className="font-semibold text-[var(--text-secondary)]">{i + 1}. {effZone(f, i) || "용도미상"}{f.zone_type_2 ? `·${f.zone_type_2}` : ""}</span>
               <span className="text-[var(--text-hint)]">{Math.round(f.area_sqm).toLocaleString()}㎡</span>
             </span>
           ))}

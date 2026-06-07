@@ -343,7 +343,7 @@ export function SiteAnalysisDetail({ data, hideInterpretation = false }: SiteAna
       )}
 
       {/* 1-1. 필지 구획도 (경계·용도지역·면적) */}
-      {landAddress && <ParcelBoundaryMap parcels={[landAddress]} />}
+      {landAddress && <ParcelBoundaryMap parcels={[landAddress]} primaryZone={zoneType || undefined} />}
 
       {/* 1-2. 주변 실거래 지도 — 이 분석의 주소/PNU를 직접 주입(이력 선택 시 store 오염 방지, 첫 분석은 동일값). */}
       {landAddress ? <NearbyTransactionsMap address={landAddress} pnu={pnu} /> : <NearbyTransactionsMap />}

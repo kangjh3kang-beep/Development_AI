@@ -15,6 +15,7 @@ import { isValidLocale, type Locale } from "@/i18n/config";
 import { useDictionary } from "@/hooks/use-dictionary";
 import { apiClient } from "@/lib/api-client";
 import { useProjectContextStore, type SiteAnalysisData } from "@/store/useProjectContextStore";
+import { farLimitForZone, bcrLimitForZone } from "@/lib/kr-building-regulations";
 
 // 가상준공 3D 디지털트윈 씬 — @react-three/fiber. SSR/1102 회피 위해 ssr:false 동적 마운트.
 const DigitalTwinScene = dynamic(() => import("@/components/digital-twin/DigitalTwinScene"), {
@@ -731,11 +732,35 @@ export default function SiteAnalysisPage() {
       // 수지 baseline land_area_sqm=0 → 422 → 전 단계 0(SPOF). store에 수치를 박아 해소한다.
       // SiteAnalysisData 필드(estimatedValue/landAreaSqm/zoneCode/address/pnu + officialPrices)만 반영.
       const pricePerSqm = zoningResult.official_price_per_sqm;
+      // ★초기 가용 용적률(zone FAR) 반영 — 파이프라인 실행 전에도 수지/빌더블 GFA가
+      // 보수적 100% 폴백이 아닌 용도지역 가용 용적률(예 일반상업 1300%)을 즉시 쓰도록
+      // ordinance를 시드한다. zone_limits(API) 우선, 없으면 zoneCode→법정상한 폴백(무목업).
+      const zl = zoningResult.zone_limits;
+      const farFromZone = farLimitForZone(zoningResult.zone_type);
+      const bcrFromZone = bcrLimitForZone(zoningResult.zone_type);
+      const effFarSeed = (zl?.max_far_pct ?? farFromZone) ?? null;
+      const effBcrSeed = (zl?.max_bcr_pct ?? bcrFromZone) ?? null;
+      const ordinanceSeed =
+        effFarSeed != null || effBcrSeed != null
+          ? {
+              sido: resolvedAddress.split(" ")[0] || "",
+              sigungu: resolvedAddress.split(" ")[1] || null,
+              nationalBcr: bcrFromZone ?? effBcrSeed ?? 0,
+              nationalFar: farFromZone ?? effFarSeed ?? 0,
+              ordinanceBcr: null,
+              ordinanceFar: null,
+              effectiveBcr: effBcrSeed ?? 0,
+              effectiveFar: effFarSeed ?? 0,
+              source: zl?.max_far_pct != null ? "법정상한(zoning/analyze)" : "법정상한(용도지역 추정)",
+              legalBasis: zl?.legal_basis || "국토계획법 시행령 제85조(용적률)",
+            }
+          : null;
       updateSiteAnalysis({
         address: resolvedAddress,
         pnu: zoningResult.pnu ?? null,
         zoneCode: zoningResult.zone_type ?? null,
         landAreaSqm: zoningResult.land_area_sqm ?? null,
+        ...(ordinanceSeed ? { ordinance: ordinanceSeed } : {}),
         ...(pricePerSqm != null && zoningResult.pnu
           ? {
               officialPrices: [
@@ -784,6 +809,28 @@ export default function SiteAnalysisPage() {
           upzoning_interpretation: landResult.upzoning_interpretation ?? null,
           grave_registry: landResult.grave_registry ?? null,
         });
+
+        // L3에서 확정 실효용적률이 오면 초기 시드 ordinance를 정밀값으로 승격(다른 필드 보존).
+        const ef = landResult.effective_far;
+        const efPct = ef?.effective_far_pct ?? ef?.legal_max_far_pct ?? null;
+        const ebPct = ef?.effective_bcr_pct ?? null;
+        if (efPct != null || ebPct != null) {
+          const prev = useProjectContextStore.getState().siteAnalysis?.ordinance ?? null;
+          updateSiteAnalysis({
+            ordinance: {
+              sido: prev?.sido ?? (resolvedAddress.split(" ")[0] || ""),
+              sigungu: prev?.sigungu ?? (resolvedAddress.split(" ")[1] || null),
+              nationalBcr: prev?.nationalBcr ?? 0,
+              nationalFar: prev?.nationalFar ?? 0,
+              ordinanceBcr: ef?.ordinance_confirmed ? (ebPct ?? prev?.ordinanceBcr ?? null) : (prev?.ordinanceBcr ?? null),
+              ordinanceFar: ef?.ordinance_confirmed ? (efPct ?? prev?.ordinanceFar ?? null) : (prev?.ordinanceFar ?? null),
+              effectiveBcr: ebPct ?? prev?.effectiveBcr ?? 0,
+              effectiveFar: efPct ?? prev?.effectiveFar ?? 0,
+              source: ef?.far_basis ?? (ef?.ordinance_confirmed ? "조례확정(zoning/comprehensive)" : (prev?.source ?? "실효용적률(zoning/comprehensive)")),
+              legalBasis: prev?.legalBasis ?? "국토계획법 시행령 제85조(용적률)",
+            },
+          });
+        }
 
         // 기존 건축물 현황(표제부)을 store에 영속(있을 때만, 과하지 않게) — 후속 단계 참조용.
         const bd = landResult.building_detail;

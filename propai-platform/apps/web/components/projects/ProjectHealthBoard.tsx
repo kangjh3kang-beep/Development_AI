@@ -47,6 +47,10 @@ export function ProjectHealthBoard({ locale }: { locale: string }) {
   const getNextRecommendedStage = useProjectContextStore(
     (s) => s.getNextRecommendedStage,
   );
+  // 단계 완료/부분완료는 selector(함수 ref·안정)라 데이터 변경만으로는 리렌더가 안 일어나
+  // 완성도가 실제 진행 대비 지연 표시될 수 있다. 모든 모듈 갱신 시 바뀌는 updatedAt을
+  // 구독해 변경 시 재계산되도록 한다(표시 정합, 데이터/호출 무변경).
+  useProjectContextStore((s) => s.updatedAt);
 
   if (!projectId) return null;
 

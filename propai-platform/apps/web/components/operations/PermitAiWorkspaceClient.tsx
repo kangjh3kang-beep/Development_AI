@@ -210,7 +210,7 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
 
       {/* 필지 구획도 (단/다필지 경계 + 용도지역 + 인접성) — 주소 확정 시에만 */}
       {(addr || siteAnalysis?.address) && (
-        <ParcelBoundaryMap parcels={[addr || siteAnalysis?.address || "", ...extra].filter(Boolean)} />
+        <ParcelBoundaryMap parcels={[addr || siteAnalysis?.address || "", ...extra].filter(Boolean)} primaryZone={siteAnalysis?.zoneCode ?? undefined} />
       )}
 
       {/* 다각도 개발방식 시뮬레이션 (정책 적용판정 + 최적안 + 인접성) */}

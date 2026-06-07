@@ -306,6 +306,7 @@ export function ProjectSiteAnalysisWorkspaceClient({
   const updateSiteAnalysis = useProjectContextStore((s) => s.updateSiteAnalysis);
   const markStageComplete = useProjectContextStore((s) => s.markStageComplete);
   const addAnalysisResult = useProjectContextStore((s) => s.addAnalysisResult);
+  const storeZoneCode = useProjectContextStore((s) => s.siteAnalysis?.zoneCode ?? null);
 
   const [workspaceError, setWorkspaceError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -731,7 +732,7 @@ export function ProjectSiteAnalysisWorkspaceClient({
       )}
 
       {/* 필지 구획도 (경계·용도지역·면적) */}
-      {form.address.trim().length >= 3 && <ParcelBoundaryMap parcels={[form.address.trim()]} />}
+      {form.address.trim().length >= 3 && <ParcelBoundaryMap parcels={[form.address.trim()]} primaryZone={storeZoneCode ?? undefined} />}
         </>
       )}
 

@@ -291,6 +291,25 @@ export function analyzeLocally(address: string, pnu?: string): LocalAnalysisResu
 }
 
 /**
+ * 용도지역별 법정 용적률 상한(%) 조회. 미상이면 null(폴백 환각 방지).
+ * 부지분석에서 zone_limits(API)가 없을 때만 보조 폴백으로 사용한다.
+ */
+export function farLimitForZone(zoning?: string | null): number | null {
+  const key = normalizeZoning(zoning);
+  const spec = key ? ZONING_DB[key] : null;
+  return spec ? spec.floorAreaRatioMax : null;
+}
+
+/**
+ * 용도지역별 법정 건폐율 상한(%) 조회. 미상이면 null.
+ */
+export function bcrLimitForZone(zoning?: string | null): number | null {
+  const key = normalizeZoning(zoning);
+  const spec = key ? ZONING_DB[key] : null;
+  return spec ? spec.buildingCoverageMax : null;
+}
+
+/**
  * 용적률 기반 최대 연면적 계산
  */
 export function calcMaxGrossArea(landArea: number, zoning: string): number {
