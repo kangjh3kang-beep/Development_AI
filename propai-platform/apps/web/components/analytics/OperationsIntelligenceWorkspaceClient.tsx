@@ -155,7 +155,7 @@ const LABELS: Record<Locale, Labels> = {
     vibrationLabel: "진동(mm/s)",
     temperatureLabel: "온도(℃)",
     efficiencyLabel: "효율비",
-    runMaintenanceAction: "정비 분석 실행",
+    runMaintenanceAction: "정비 분석",
     tenantTitle: "테넌트 경험 분석",
     feedbackTitle: "피드백 분석",
     unitLabel: "호실/존",
@@ -172,7 +172,7 @@ const LABELS: Record<Locale, Labels> = {
     calculateSatisfactionAction: "건전성 계산",
     assetTitle: "자산 분석",
     baseValueLabel: "기준 가치(원)",
-    analyzeAssetAction: "자산 분석 실행",
+    analyzeAssetAction: "자산 분석",
     chainHint:
       "먼저 maintenance와 tenant를 실행한 뒤 asset intelligence를 호출하면 최신 운영 신호가 반영됩니다.",
     anomalyLabel: "이상 점수",

@@ -291,7 +291,7 @@ export function MarketInsightsWorkspaceClient() {
       <div>
         <h2 className="text-2xl font-black text-[var(--text-primary)]">시장·시세 분석</h2>
         <p className="mt-1 text-sm text-[var(--text-secondary)]">
-          주소를 입력하고 <b className="text-[var(--text-primary)]">「분석 실행」</b> 버튼을 누르면 주변 실거래가·시세 추이·시장 동향을 분석합니다.
+          주소를 입력하고 <b className="text-[var(--text-primary)]">「분석 시작」</b> 버튼을 누르면 주변 실거래가·시세 추이·시장 동향을 분석합니다.
         </p>
       </div>
 
@@ -308,7 +308,7 @@ export function MarketInsightsWorkspaceClient() {
         <CardContent className="p-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="min-w-0">
-              <p className="text-sm font-bold text-[var(--text-primary)]">분석 실행</p>
+              <p className="text-sm font-bold text-[var(--text-primary)]">분석 시작</p>
               <p className="mt-0.5 text-xs text-[var(--text-secondary)]">
                 분석 시 사용한 LLM 사용량만큼 코인이 자동 차감됩니다
                 {totalRemaining !== null && (
@@ -324,7 +324,7 @@ export function MarketInsightsWorkspaceClient() {
               disabled={!inputAddress || insufficient}
               className="whitespace-nowrap rounded-xl bg-[var(--accent-strong)] px-5 py-2.5 text-sm font-black text-white hover:opacity-90 disabled:opacity-50"
             >
-              분석 실행
+              분석 시작
             </button>
           </div>
           {insufficient && (
@@ -439,7 +439,7 @@ export function MarketInsightsWorkspaceClient() {
             <p className="mt-4 text-sm text-[var(--text-secondary)]">주변 실거래를 수집해 시세를 추정하는 중…</p>
           ) : (
             <p className="mt-4 text-sm text-[var(--text-secondary)]">
-              {address ? "주변 아파트 실거래가 없어 시세를 추정할 수 없습니다." : "주소 입력 후 「분석 실행」을 누르면 AI 시세가 표시됩니다."}
+              {address ? "주변 아파트 실거래가 없어 시세를 추정할 수 없습니다." : "주소 입력 후 「분석 시작」을 누르면 AI 시세가 표시됩니다."}
             </p>
           )}
           {results?.avm && (
@@ -483,7 +483,7 @@ export function MarketInsightsWorkspaceClient() {
               )}
             </>
           ) : (
-            <p className="mt-4 text-sm text-[var(--text-secondary)]">주소 입력 후 「분석 실행」을 누르면 주변 실거래 현황이 표시됩니다.</p>
+            <p className="mt-4 text-sm text-[var(--text-secondary)]">주소 입력 후 「분석 시작」을 누르면 주변 실거래 현황이 표시됩니다.</p>
           )}
         </CardContent>
       </Card>

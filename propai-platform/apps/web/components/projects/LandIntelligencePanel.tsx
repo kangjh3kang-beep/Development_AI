@@ -617,7 +617,7 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
               disabled={deepAnalysisLoading || isAnalyzing || !data?.address}
               className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-teal-500 py-3.5 text-sm font-black text-[#0a0f14] shadow-[0_0_30px_rgba(45,212,191,0.3)] transition-all hover:scale-[1.02] hover:brightness-110 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {deepAnalysisLoading || isAnalyzing ? "AI 심층 분석 중..." : "AI 심층 분석 실행"}
+              {deepAnalysisLoading || isAnalyzing ? "심층 분석 중..." : "심층 분석"}
               <Icons.ArrowRight />
             </button>
           </motion.div>

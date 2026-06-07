@@ -325,7 +325,7 @@ export function InvestmentFeasibilityClient() {
       <div className="flex items-center gap-3">
         <button onClick={calc} disabled={loading}
           className="rounded-xl bg-[var(--accent-strong)] px-8 py-3 text-sm font-black text-white shadow-[var(--shadow-glow)] hover:opacity-90 disabled:opacity-50">
-          {loading ? "수지 계산 중…" : "수지·투자수익성 분석 실행"}
+          {loading ? "수지 계산 중…" : "수지·투자수익성 분석"}
         </button>
         {err && <span className="text-xs font-semibold text-rose-400">{err}</span>}
       </div>

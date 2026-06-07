@@ -64,7 +64,7 @@ export default function ESGPage() {
         </div>
         <button onClick={handleAnalyze} disabled={isPending || !isReady || !form.grossArea}
           className="mt-6 w-full rounded-2xl bg-gradient-to-r from-emerald-600 to-green-600 py-4 font-black text-white shadow-lg transition-all hover:scale-[1.01] active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed">
-          {isPending ? "🔄 ESG 분석 중..." : !isReady ? "⚙️ API 키를 먼저 등록하세요" : "🌿 ESG AI 분석 실행"}
+          {isPending ? "🔄 ESG 분석 중..." : !isReady ? "⚙️ API 키를 먼저 등록하세요" : "🌿 ESG 분석"}
         </button>
       </motion.div>
 

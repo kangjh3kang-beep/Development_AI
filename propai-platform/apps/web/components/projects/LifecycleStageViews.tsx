@@ -329,7 +329,7 @@ export function LifecycleStageViews({ projectId, dictionary, compact = false }: 
                         <span className="text-4xl">🌿</span>
                         <p className="text-sm font-black text-[var(--text-primary)]">ESG/탄소 분석 전</p>
                         <p className="text-xs text-[var(--text-secondary)] max-w-md">이 프로젝트의 ESG·탄소 데이터가 아직 없습니다. ‘ESG/탄소 경영’ 모듈에서 분석을 실행하면 내재·운영 탄소가 여기에 연동됩니다.</p>
-                        <Link href={`/${locale}/esg`} className="rounded-full bg-[var(--accent-strong)] px-6 py-3 text-xs font-black uppercase tracking-[0.2em] text-white">ESG 분석 실행 ↗</Link>
+                        <Link href={`/${locale}/esg`} className="rounded-full bg-[var(--accent-strong)] px-6 py-3 text-xs font-black uppercase tracking-[0.2em] text-white">ESG 분석 ↗</Link>
                       </div>
                     )}
                     <div className="grid gap-10 md:grid-cols-2">

@@ -96,38 +96,38 @@ export const STAGE_GROUPS: StageGroup[] = [
   },
   {
     id: "site",
-    label: "입지 분석",
+    label: "부지분석", // STAGE_META["site-analysis"].label과 1:1 정합(상단탭↔진행레일 라벨 통일)
     icon: "site_analysis",
     stages: ["site-analysis"],
   },
   {
     id: "legal",
-    label: "법규 검토",
+    label: "법규검토", // STAGE_META.legal.label과 1:1 정합
     icon: "legal_compliance",
     stages: ["legal"],
   },
   {
     id: "design",
-    label: "건축 설계",
+    label: "설계", // 다단계 그룹(설계+BIM) — 대표 단계 STAGE_META.design.label로 통일
     icon: "design_ai",
     stages: ["design", "bim"],
   },
   {
     id: "feasibility",
-    label: "사업성 검토",
+    label: "사업성", // 다단계 그룹(수지·금융·ESG) — 그룹 대표 라벨 유지(톤 통일)
     icon: "feasibility",
     stages: ["feasibility", "finance", "esg"],
   },
   {
     id: "permit",
-    label: "인허가/계약",
+    label: "인허가", // STAGE_META.permit.label과 1:1 정합(계약은 extraRoutes로 분리)
     icon: "permit_portal",
     stages: ["permit"],
     extraRoutes: [{ route: "contracts", label: "전자 계약", icon: "permit_portal" }],
   },
   {
     id: "construction",
-    label: "시공 관리",
+    label: "시공계획", // STAGE_META.construction.label과 1:1 정합
     icon: "construction",
     stages: ["construction"],
   },

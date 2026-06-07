@@ -132,7 +132,7 @@ const KO_LABELS: Labels = {
   totalFloorsLabel: "총 층수",
   lawdCodeLabel: "법정동 코드",
   pnuLabel: "PNU (필지 고유번호)",
-  submitAction: "부지 분석 실행",
+  submitAction: "부지 분석",
   missingAddressError: "주소는 필수 입력 항목입니다.",
   missingAreaError: "양수의 면적 값이 필요합니다.",
   missingPnuError: "PNU는 필지 정보 조회에 필수입니다.",

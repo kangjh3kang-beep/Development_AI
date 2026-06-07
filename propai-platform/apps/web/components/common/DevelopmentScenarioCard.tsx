@@ -124,7 +124,7 @@ export function DevelopmentScenarioCard({
         </div>
         <button onClick={run} disabled={loading || (!address && !list.length)}
           className="rounded-xl bg-[var(--accent-strong)] px-4 py-2 text-xs font-black text-white hover:opacity-90 disabled:opacity-50">
-          {loading ? "시뮬레이션 중…" : result ? "다시 분석" : "시나리오 분석 실행"}
+          {loading ? "시뮬레이션 중…" : result ? "다시 분석" : "시나리오 분석"}
         </button>
       </div>
       {error && <p className="mt-2 text-xs font-semibold text-rose-500">{error}</p>}

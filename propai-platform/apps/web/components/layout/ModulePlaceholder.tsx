@@ -55,7 +55,7 @@ export function ModulePlaceholder({
               <div className="h-10 w-10 rounded-2xl bg-[var(--accent-strong)]/10 flex items-center justify-center text-[var(--accent-strong)] ring-1 ring-[var(--accent-strong)]/20 shadow-inner">
                 <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="m12 3-1.912 5.813a2 2 0 0 0 1.275 1.275L21 12l-5.813 1.912a2 2 0 0 0-1.275 1.275L12 21l-1.912-5.813a2 2 0 0 0-1.275-1.275L3 12l5.813-1.912a2 2 0 0 0 1.275-1.275L12 3Z"/></svg>
               </div>
-              <p className="text-[11px] font-bold tracking-[0.3em] text-[var(--text-hint)]">범위 및 준비 상태</p>
+              <p className="text-[11px] font-bold tracking-[0.3em] text-[var(--text-hint)]">이 단계에서 하는 일</p>
             </div>
             
             <ul className="space-y-5">

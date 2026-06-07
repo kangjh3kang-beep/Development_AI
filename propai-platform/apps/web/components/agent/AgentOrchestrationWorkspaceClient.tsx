@@ -175,7 +175,7 @@ const LABELS: Record<Locale, Labels> = {
     scheduleBufferLabel: "일정 버퍼(월)",
     preLeasingLabel: "선임대 비율",
     orchestrationDomainsLabel: "멀티도메인 범위",
-    runFocusedAction: "단건 분석 실행",
+    runFocusedAction: "단건 분석",
     runOrchestrationAction: "오케스트레이션 실행",
     focusedTitle: "단건 분석 결과",
     focusedEmpty: "아직 단건 분석 결과가 없습니다.",

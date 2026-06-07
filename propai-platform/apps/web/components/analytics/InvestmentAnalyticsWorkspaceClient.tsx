@@ -113,7 +113,7 @@ const KO_LABELS: Labels = {
   discountRateLabel: "할인율 평균 (%)",
   revenueUncertaintyLabel: "수익 불확실성 (%)",
   simulationsLabel: "시뮬레이션 횟수",
-  submitAction: "투자 분석 실행",
+  submitAction: "투자 분석",
   missingCostError: "총 사업비는 양수여야 합니다.",
   missingRevenueError: "예상 수익은 양수여야 합니다.",
   npvTitle: "NPV 분포",

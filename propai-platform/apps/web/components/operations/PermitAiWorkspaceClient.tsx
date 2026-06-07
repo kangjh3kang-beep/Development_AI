@@ -194,7 +194,7 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
               disabled={loading}
               className="rounded-xl bg-[var(--accent-strong)] px-5 py-2.5 text-sm font-black text-white hover:opacity-90 disabled:opacity-50"
             >
-              {loading ? "AI 분석 중… (최대 1분)" : "🤖 인허가 AI 분석 실행"}
+              {loading ? "AI 분석 중… (최대 1분)" : "🤖 인허가 분석"}
             </button>
             {error && <span className="text-xs font-semibold text-rose-500">{error}</span>}
           </div>

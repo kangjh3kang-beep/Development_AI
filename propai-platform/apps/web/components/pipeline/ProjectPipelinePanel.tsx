@@ -565,7 +565,7 @@ export function ProjectPipelinePanel({
     } catch (err) {
       let msg = err instanceof Error ? err.message : "알 수 없는 오류가 발생했습니다.";
       if (/fetch|network|timeout|시간|abort|load failed/i.test(msg)) {
-        msg = "부지분석 연결이 지연되거나 중단되었습니다(분석은 다소 시간이 걸립니다). '부지분석 재실행'을 눌러 다시 시도해 주세요.";
+        msg = "부지분석 연결이 지연되거나 중단되었습니다(분석은 다소 시간이 걸립니다). '부지 분석 다시'를 눌러 다시 시도해 주세요.";
       }
       setError(msg);
       // 멈춤 방지: 진행 중이던 단계를 '실패'로 되돌려 무한 '진행 중' 표시를 해소
@@ -849,7 +849,7 @@ export function ProjectPipelinePanel({
                 부지분석 중...
               </>
             ) : (
-              "부지분석 재실행"
+              "부지 분석 다시"
             )}
           </button>
         </div>

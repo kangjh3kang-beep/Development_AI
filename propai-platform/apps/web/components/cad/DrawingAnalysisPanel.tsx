@@ -137,7 +137,7 @@ export function DrawingAnalysisPanel() {
           disabled={isAnalyzing}
           className="w-full rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition-opacity disabled:opacity-50"
         >
-          {isAnalyzing ? "분석 중..." : "도면 분석 실행"}
+          {isAnalyzing ? "분석 중..." : "도면 분석"}
         </button>
       </div>
 

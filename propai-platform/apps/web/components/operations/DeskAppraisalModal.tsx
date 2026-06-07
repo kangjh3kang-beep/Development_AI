@@ -145,7 +145,7 @@ export function DeskAppraisalModal({
           <label className="text-xs text-[var(--text-secondary)]">월 임대료(원)<NumberInput className={`${inp} mt-1`} value={rent === "" ? null : Number(rent)} onChange={(n) => setRent(n != null ? String(n) : "")} placeholder="수익환원 시" /></label>
           <label className="text-xs text-[var(--text-secondary)]">보증금(원)<NumberInput className={`${inp} mt-1`} value={deposit === "" ? null : Number(deposit)} onChange={(n) => setDeposit(n != null ? String(n) : "")} /></label>
           <label className="text-xs text-[var(--text-secondary)]">자본환원율(%)<input className={`${inp} mt-1`} type="number" value={cap} onChange={(e) => setCap(e.target.value)} /></label>
-          <div className="flex items-end"><button onClick={run} disabled={busy !== ""} className="h-9 w-full rounded-lg bg-[var(--accent-strong)] text-sm font-bold text-white disabled:opacity-50">{busy === "run" ? "분석 중…" : "분석 실행"}</button></div>
+          <div className="flex items-end"><button onClick={run} disabled={busy !== ""} className="h-9 w-full rounded-lg bg-[var(--accent-strong)] text-sm font-bold text-white disabled:opacity-50">{busy === "run" ? "분석 중…" : "분석 시작"}</button></div>
         </div>
 
         {err && <p className="mt-3 text-xs font-semibold text-red-500">{err}</p>}

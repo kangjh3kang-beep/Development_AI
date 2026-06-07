@@ -231,7 +231,7 @@ export function DeskAppraisalReportClient({ locale }: { locale: Locale }) {
             </div>
             <button onClick={() => void run()} disabled={busy !== ""}
               className="h-10 rounded-xl bg-[var(--accent-strong)] px-5 text-sm font-black text-white hover:opacity-90 disabled:opacity-50">
-              {busy === "run" ? "서칭·분석 중…" : "🔎 서칭·분석 실행"}
+              {busy === "run" ? "서칭·분석 중…" : "🔎 서칭·분석"}
             </button>
             <button onClick={() => setShowAdv((v) => !v)}
               className="h-10 rounded-xl border border-[var(--line-strong)] px-4 text-xs font-bold text-[var(--text-secondary)] hover:border-[var(--accent-strong)]">

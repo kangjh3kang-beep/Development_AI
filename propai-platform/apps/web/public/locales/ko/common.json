@@ -313,8 +313,8 @@
     "integrationRestLabel": "REST API",
     "integrationGraphqlLabel": "GraphQL",
     "integrationRealtimeLabel": "실시간 스트림",
-    "modeMock": "Mock",
-    "modeLive": "실연동",
+    "modeMock": "예시 데이터",
+    "modeLive": "실시간 연동",
     "modeWaiting": "대기"
   },
   "pwa": {

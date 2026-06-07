@@ -182,7 +182,7 @@ export function ModuleInputForm() {
               disabled={isCalculating || !((input.total_land_area_sqm ?? 0) > 0) || !((input.total_gfa_sqm ?? 0) > 0)}
               title={((input.total_land_area_sqm ?? 0) > 0) && ((input.total_gfa_sqm ?? 0) > 0) ? undefined : "대지면적·연면적을 입력하세요(부지분석 데이터 반영 가능)"}
               className="bg-[var(--accent-strong)] text-white px-6">
-              {isCalculating ? "계산 중..." : "수지분석 실행"}
+              {isCalculating ? "계산 중..." : "수지 분석"}
             </Button>
           </div>
         </div>

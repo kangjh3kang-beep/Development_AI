@@ -171,7 +171,7 @@ const KO_LABELS: Labels = {
   lawdCodeLabel: "법정동 코드",
   pnuLabel: "PNU",
   jeonsePriceLabel: "전세금 (원)",
-  submitAction: "AVM + 위험분석 실행",
+  submitAction: "AVM + 위험분석",
   missingAddressError: "주소를 입력해 주세요.",
   missingAreaError: "양수의 면적 값이 필요합니다.",
   missingJeonsePriceError: "양수의 전세금 값이 필요합니다.",

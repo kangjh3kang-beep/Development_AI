@@ -124,7 +124,7 @@ export default function BimCostDashboard({ projectId }: { projectId: string }) {
                 disabled={loading}
                 className="h-10 bg-[var(--accent)] hover:bg-[var(--accent-strong)] text-white text-[11px] font-black uppercase tracking-widest shadow-[var(--shadow-glow)]"
               >
-                {loading ? "CALCULATING..." : "공사비 정밀 분석 실행"}
+                {loading ? "분석 중..." : "공사비 정밀 분석"}
               </Button>
            </div>
         </div>

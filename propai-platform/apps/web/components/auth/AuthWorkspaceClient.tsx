@@ -127,7 +127,7 @@ const LABELS: Record<Locale, Labels> = {
     loginFields: {
       email: "이메일",
       password: "비밀번호",
-      submit: "로그인 실행",
+      submit: "로그인",
     },
     registerFields: {
       name: "담당자 이름",
@@ -144,8 +144,8 @@ const LABELS: Record<Locale, Labels> = {
     runtimeToken: "저장된 액세스 토큰",
     runtimeRefreshToken: "저장된 리프레시 토큰",
     runtimeModeLabels: {
-      live: "실연동",
-      mock: "모의",
+      live: "실시간 연동",
+      mock: "예시 데이터",
     },
     tokenPresent: "있음",
     tokenMissing: "없음",

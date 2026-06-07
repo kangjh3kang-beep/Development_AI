@@ -90,7 +90,7 @@ const KO_LABELS: Labels = {
   projectCostLabel: "공사비 (억원)",
   floorCountLabel: "층수",
   excavationDepthLabel: "굴착 깊이 (m)",
-  submitSafetyAction: "안전 계획 분석 실행",
+  submitSafetyAction: "안전 계획 분석",
   disasterFormTitle: "재해 위험 평가 입력",
   regionLabel: "지역",
   landUseLabel: "토지 용도",

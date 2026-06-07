@@ -103,7 +103,7 @@ const KO_LABELS: Labels = {
   inspectTitle: "드론 점검 입력",
   imageUrlsLabel: "이미지 URL (줄바꿈 또는 쉼표로 구분)",
   flightIdLabel: "비행 ID",
-  inspectAction: "드론 분석 실행",
+  inspectAction: "드론 분석",
   missingImagesError: "최소 하나의 이미지 URL이 필요합니다.",
   projectFallback: "라이브 API에서 프로젝트 메타데이터를 불러올 수 없습니다.",
   selectedProjectLabel: "현재 프로젝트",

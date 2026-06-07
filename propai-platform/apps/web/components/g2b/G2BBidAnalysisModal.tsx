@@ -253,7 +253,7 @@ export function G2BBidAnalysisModal({
               disabled={loading}
               className="h-9 rounded-lg bg-[var(--accent-strong)] text-white text-sm font-bold hover:opacity-90 disabled:opacity-50"
             >
-              {loading ? "분석 중…" : result ? "재분석" : "분석 실행"}
+              {loading ? "분석 중…" : result ? "다시 분석" : "분석 시작"}
             </button>
           </div>
         </div>
@@ -266,7 +266,7 @@ export function G2BBidAnalysisModal({
 
         {!result && !loading && !error && (
           <p className="text-center text-sm text-[var(--text-hint)] py-8">
-            [분석 실행]을 누르면 물량산출·수지·법규·ESG를 통합 분석합니다.
+            [분석 시작]을 누르면 물량산출·수지·법규·ESG를 통합 분석합니다.
           </p>
         )}
 

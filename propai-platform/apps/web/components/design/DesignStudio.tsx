@@ -193,7 +193,7 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
         </div>
         <button onClick={handleAIAnalyze} disabled={isPending || !isReady || !form.landArea}
           className="mt-6 w-full rounded-2xl bg-gradient-to-r from-blue-600 to-cyan-600 py-4 font-black text-white shadow-lg transition-all hover:scale-[1.01] active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed">
-          {isPending ? "AI 심층 분석 중…" : !isReady ? "API 키를 먼저 등록하세요 (아래 법규 계산은 즉시 가능)" : "AI 심층 설계 분석 실행"}
+          {isPending ? "심층 분석 중…" : !isReady ? "API 키를 먼저 등록하세요 (아래 법규 계산은 즉시 가능)" : "심층 설계 분석"}
         </button>
       </motion.div>
 

@@ -846,7 +846,7 @@ export function LeaseOpsWorkspace({ locale }: { locale: Locale }) {
               }}
               className="rounded-[var(--radius-lg)] border border-[var(--line-strong)] bg-[var(--surface)] px-5 py-2.5 text-sm font-semibold text-[var(--text-primary)] transition hover:bg-[var(--surface-soft)] disabled:opacity-60"
             >
-              {analyzeMutation.isPending ? "분석 중..." : "AI 분석 실행"}
+              {analyzeMutation.isPending ? "분석 중..." : "분석 시작"}
             </button>
           </div>
           {analyzeResult && (
