@@ -85,11 +85,20 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
     }));
   }, [siteAnalysis, zoneEdited]);
 
+  // 용도지역 단일출처(SSOT) 해소: 사용자가 직접 수정하지 않았으면 부지분석
+  // zoneCode를 정규화한 값을 GFA 계산의 진실원으로 사용한다. form.zoning은 비동기
+  // 시드(effect)라 초기 1프레임 동안 기본값(제2종)일 수 있는데, 그 사이 designData-write
+  // effect가 250% 기본 GFA를 store에 영속화하던 R1 회귀를 차단한다(과소 GFA→ROI 오염).
+  const effectiveZoning = useMemo(() => {
+    if (zoneEdited) return form.zoning;
+    return normalizeZoning(siteAnalysis?.zoneCode) || form.zoning;
+  }, [zoneEdited, form.zoning, siteAnalysis?.zoneCode]);
+
   const localCalc = useMemo(() => {
     const area = Number(form.landArea) || 0;
-    const spec = getZoningSpec(form.zoning);
+    const spec = getZoningSpec(effectiveZoning);
     if (!spec || area <= 0) return null;
-    const maxGross = calcMaxGrossArea(area, form.zoning);
+    const maxGross = calcMaxGrossArea(area, effectiveZoning);
     const parking = calcParkingRequired(maxGross, form.buildingUse);
     const buildableArea = area * (spec.buildingCoverageMax / 100);
     const minFloorsFromFar = spec.floorAreaRatioMax > 0 ? Math.ceil(maxGross / buildableArea) : 1;
@@ -109,7 +118,7 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
         { name: "ㄱ자형", description: `${maxFloors}층, 소음차폐 배치`, efficiency: 75 },
       ],
     };
-  }, [form.landArea, form.zoning, form.buildingUse]);
+  }, [form.landArea, effectiveZoning, form.buildingUse]);
 
   const handleAIAnalyze = () => {
     mutate({ domain: "design", context: { landArea: `${form.landArea}㎡`, zoningDistrict: form.zoning, buildingUse: form.buildingUse, projectId } });
@@ -168,7 +177,7 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
         {siteAnalysis?.address && (
           <p className="text-xs text-emerald-500 mt-2 flex items-center gap-1.5">
             <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500" />
-            부지분석 연동: {siteAnalysis.address} ({siteAnalysis.zoneCode || "용도지역 미확인"})
+            부지분석 연동: {siteAnalysis.address} ({siteAnalysis.zoneCode || effectiveZoning || "용도지역 미확인"})
           </p>
         )}
       </motion.div>
@@ -183,7 +192,7 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
           </div>
           <div>
             <label className="text-xs font-bold uppercase tracking-widest text-[var(--text-tertiary)] mb-2 block">용도지역</label>
-            <select value={form.zoning} onChange={(e) => { setZoneEdited(true); setForm((f) => ({ ...f, zoning: e.target.value })); }}
+            <select value={effectiveZoning} onChange={(e) => { setZoneEdited(true); setForm((f) => ({ ...f, zoning: e.target.value })); }}
               className="w-full rounded-xl border border-[var(--line)] bg-[var(--surface-muted)] px-4 py-3 text-sm text-[var(--text-primary)] appearance-none cursor-pointer">
               {["제1종전용주거지역","제2종전용주거지역","제1종일반주거지역","제2종일반주거지역","제3종일반주거지역","준주거지역","일반상업지역","근린상업지역","준공업지역"].map((z) => <option key={z} value={z}>{z}</option>)}
             </select>
@@ -257,7 +266,7 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
               <SolarEnvelopeCard
                 address={siteAnalysis?.address || undefined}
                 pnu={siteAnalysis?.pnu || undefined}
-                zone={siteAnalysis?.zoneCode || form.zoning}
+                zone={siteAnalysis?.zoneCode || effectiveZoning}
                 landAreaSqm={siteAnalysis?.landAreaSqm ?? (form.landArea ? Number(form.landArea) : undefined)}
               />
             </div>

@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v90-reliability";
+const CACHE_NAME = "propai-v91-design-roi-ssot";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

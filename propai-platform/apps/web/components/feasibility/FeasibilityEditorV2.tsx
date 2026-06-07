@@ -105,9 +105,28 @@ export function FeasibilityEditorV2({ projectId }: Props) {
   }, [result, costData, costAtCalc, isStale]);
 
   // stale 시 1회 자동 재계산(무한루프 방지: 재계산 후 costAtCalc 갱신 → stale=false).
+  // ★R2 가드(무목업): /feasibility/calculate는 매출입력(분양단가·세대수)이 비어 있으면
+  // revenue=0을 반환해 ROI -100%로 다운스트림(ROI 뷰)을 오염시킨다. 매출 파라미터가
+  // 없으면 자동재계산은 calculate 대신 baseline(zone역산: 실제 매출 추정)을 재실행해
+  // 매출 0/적자위험 위양성을 막고 정직한 추정값을 유지한다. 사용자가 실제 매출입력을
+  // 채운 경우에만 정밀 calculate로 재계산한다.
+  const hasRevenueInputs =
+    (input.avg_sale_price_per_pyeong ?? 0) > 0 &&
+    ((input.total_households ?? 0) > 0 || (input.avg_area_pyeong ?? 0) > 0);
   useEffect(() => {
-    if (isFeasibilityStale && !isCalculating) {
+    if (!isFeasibilityStale || isCalculating) return;
+    if (hasRevenueInputs) {
       void calculate({ constructionCostOverrideWon: costData?.totalConstructionCostWon });
+    } else {
+      // 면적 등 부지 시그니처를 self-reset해 baseline 재시도를 1회 허용.
+      baselineTriedSigRef.current = null;
+      void runBaseline({
+        address: siteAnalysis?.address ?? "",
+        zone_code: siteAnalysis?.zoneCode ?? "",
+        land_area_sqm: siteAnalysis?.landAreaSqm ?? 0,
+        pnu: siteAnalysis?.pnu ?? "",
+        official_price_per_sqm: siteAnalysis?.officialPrices?.[0]?.pricePerSqm ?? 0,
+      });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isFeasibilityStale]);
