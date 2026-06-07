@@ -147,10 +147,10 @@ export function CadCompliancePanel({ projectId }: CadCompliancePanelProps) {
       setCorrection(null);
       // write-back: 규제 검토 결과를 컨텍스트(SSOT)에 저장 → 다운스트림 전파
       updateComplianceData({
-        bcrCompliant: !result.violations.some((v) => v.item.includes("건폐율") || v.item.includes("bcr")),
-        farCompliant: !result.violations.some((v) => v.item.includes("용적률") || v.item.includes("far")),
-        heightCompliant: !result.violations.some((v) => v.item.includes("높이") || v.item.includes("height")),
-        violations: result.violations.map((v) => `${v.item}: ${v.current_value.toFixed(1)} (한도 ${v.limit_value.toFixed(1)})`),
+        bcrCompliant: !(result.violations ?? []).some((v) => v.item.includes("건폐율") || v.item.includes("bcr")),
+        farCompliant: !(result.violations ?? []).some((v) => v.item.includes("용적률") || v.item.includes("far")),
+        heightCompliant: !(result.violations ?? []).some((v) => v.item.includes("높이") || v.item.includes("height")),
+        violations: (result.violations ?? []).map((v) => `${v.item}: ${v.current_value.toFixed(1)} (한도 ${v.limit_value.toFixed(1)})`),
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : "법규 검증에 실패했습니다.");

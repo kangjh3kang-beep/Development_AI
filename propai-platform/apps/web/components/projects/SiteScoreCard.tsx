@@ -64,7 +64,7 @@ export function SiteScoreCard() {
       </div>
 
       <div className="mt-4 space-y-2">
-        {res.factors.map((f) => (
+        {(res.factors ?? []).map((f) => (
           <div key={f.key}>
             <div className="flex items-center justify-between text-[11px]">
               <span className="text-[var(--text-secondary)]">{f.name} <span className="text-[var(--text-tertiary)]">· {f.note}</span></span>

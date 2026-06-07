@@ -251,13 +251,13 @@ export function DashboardClientPanel({
       return;
     }
 
-    const restChannel = integrationQuery.data.channels.find(
+    const restChannel = integrationQuery.data.channels?.find(
       (channel) => channel.id === "rest",
     );
-    const graphqlChannel = integrationQuery.data.channels.find(
+    const graphqlChannel = integrationQuery.data.channels?.find(
       (channel) => channel.id === "graphql",
     );
-    const realtimeChannel = integrationQuery.data.channels.find(
+    const realtimeChannel = integrationQuery.data.channels?.find(
       (channel) => channel.id === "realtime",
     );
 
@@ -321,7 +321,7 @@ export function DashboardClientPanel({
               />
             </div>
           ) : null}
-          {overviewQuery.data?.metrics.map((metric) => (
+          {overviewQuery.data?.metrics?.map((metric) => (
             <Card
               key={metric.id}
               className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] shadow-none"
@@ -357,7 +357,7 @@ export function DashboardClientPanel({
               }}
             />
           ) : null}
-          {integrationQuery.data?.channels.map((channel) => (
+          {integrationQuery.data?.channels?.map((channel) => (
             <Card
               key={channel.id}
               className="rounded-[var(--radius-md)] bg-[var(--surface-soft)] shadow-none"

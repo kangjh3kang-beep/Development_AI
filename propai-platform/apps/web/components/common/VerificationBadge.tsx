@@ -116,7 +116,7 @@ export function VerificationBadge({
             </span>
           )}
         </div>
-        {result && (result.issues.length > 0 || result.summary || (result.calc_checks?.length ?? 0) > 0) && (
+        {result && ((result.issues?.length ?? 0) > 0 || result.summary || (result.calc_checks?.length ?? 0) > 0) && (
           <button onClick={() => setOpen((v) => !v)} className="text-[11px] font-semibold text-[var(--accent-strong)] hover:underline">
             {open ? "접기" : "상세"}
           </button>
@@ -126,7 +126,7 @@ export function VerificationBadge({
       {open && result && (
         <div className="mt-2 space-y-1.5 border-t border-[var(--line)] pt-2">
           {result.summary && <p className="text-[11px] text-[var(--text-secondary)]">{result.summary}</p>}
-          {result.issues.map((it, i) => (
+          {(result.issues ?? []).map((it, i) => (
             <div key={i} className="text-[11px]">
               <span className={`font-bold ${SEV_CLS[it.severity] || ""}`}>[{typeLabel(it.type)}]</span>{" "}
               <span className="text-[var(--text-primary)]">{it.claim}</span>

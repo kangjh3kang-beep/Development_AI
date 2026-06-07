@@ -199,7 +199,7 @@ export function DevelopmentScenarioCard({
 
           {/* 시나리오 목록 */}
           <div className="space-y-2">
-            {result.scenarios.map((s, i) => (
+            {(result.scenarios ?? []).map((s, i) => (
               <div key={i} className="rounded-xl border border-[var(--line)] bg-[var(--surface-strong)] p-3.5">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <p className="text-sm font-bold text-[var(--text-primary)]">{s.scheme}</p>

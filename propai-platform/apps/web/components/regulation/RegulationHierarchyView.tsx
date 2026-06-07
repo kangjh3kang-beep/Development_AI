@@ -132,7 +132,7 @@ export function RegulationHierarchyView({
         <CardContent className="p-6">
           <p className="text-sm font-black text-[var(--text-primary)]">📚 적용 규제 계층 (상위계획 → 개별규제)</p>
           <div className="mt-4 space-y-3">
-            {result.hierarchy.map((lv, i) => {
+            {(result.hierarchy ?? []).map((lv, i) => {
               const meta = LEVEL_META[lv.level] || { color: "var(--text-secondary)", icon: "•" };
               return (
                 <div key={lv.level} className="relative rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-4"
@@ -157,7 +157,7 @@ export function RegulationHierarchyView({
       </Card>
 
       {/* 적용 규제·지구·구역 전수 (영향도) */}
-      {result.districts.length > 0 && (
+      {(result.districts?.length ?? 0) > 0 && (
         <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
           <CardContent className="p-6">
             <p className="text-sm font-black text-[var(--text-primary)]">

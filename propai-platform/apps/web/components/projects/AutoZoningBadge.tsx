@@ -151,7 +151,7 @@ export function AutoZoningBadge({ address }: { address: string }) {
       </div>
 
       {/* Special districts */}
-      {result.special_districts.length > 0 && (
+      {(result.special_districts?.length ?? 0) > 0 && (
         <div className="flex flex-wrap gap-2">
           {result.special_districts.map((d, i) => (
             <span
@@ -166,7 +166,7 @@ export function AutoZoningBadge({ address }: { address: string }) {
       )}
 
       {/* Warnings */}
-      {result.warnings.length > 0 && (
+      {(result.warnings?.length ?? 0) > 0 && (
         <div className="space-y-1">
           {result.warnings.map((w, i) => (
             <p

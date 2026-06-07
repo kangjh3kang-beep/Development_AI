@@ -429,7 +429,7 @@ export function ApiKeyManagementPanel() {
             서버에 암호화 저장되며 즉시 반영됩니다(재배포 불필요).{" "}
             {data && (
               <span className="font-semibold text-[var(--text-primary)]">
-                {setCount}/{data.items.length} 설정됨
+                {setCount}/{data.items?.length ?? 0} 설정됨
               </span>
             )}
           </p>

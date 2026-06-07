@@ -3,6 +3,7 @@ import { LifecycleNavigator } from "@/components/projects/LifecycleNavigator";
 import { ProjectAddressBar } from "@/components/projects/ProjectAddressBar";
 import { LifecycleProgressRail } from "@/components/lifecycle/LifecycleProgressRail";
 import { ProjectContextBinder } from "@/components/projects/ProjectContextBinder";
+import { ProjectExistenceGuard } from "@/components/projects/ProjectExistenceGuard";
 import React from "react";
 
 export const dynamicParams = true;
@@ -35,7 +36,10 @@ export default async function ProjectLayout({
       <LifecycleProgressRail locale={locale} projectId={id} />
       <ProjectAddressBar />
       <div className="min-w-0 transition-all duration-500 animate-in fade-in slide-in-from-bottom-4">
-        {children}
+        {/* 존재하지 않는(404) 프로젝트 직접진입 시 graceful not-found(크래시·무한스피너 방지). */}
+        <ProjectExistenceGuard projectId={id} locale={locale}>
+          {children}
+        </ProjectExistenceGuard>
       </div>
     </div>
   );

@@ -482,11 +482,11 @@ export function ProjectReportWorkspaceClient({
                 <MetricTile label={labels.reportTypeLabel} value={result.report_type} />
                 <MetricTile
                   label={labels.generatedSectionsLabel}
-                  value={result.generated_sections.join(", ")}
+                  value={(result.generated_sections ?? []).join(", ")}
                 />
               </div>
               <div className="space-y-4">
-                {result.variants.map((variant) => (
+                {(result.variants ?? []).map((variant) => (
                   <div
                     key={variant.report_id}
                     className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5"

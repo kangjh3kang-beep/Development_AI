@@ -453,9 +453,9 @@ function L3EnhancedCards({
                 <p className="text-sm font-black text-blue-400">{formatPriceKr(tx.apt.min_price_10k)}</p>
               </div>
             </div>
-            {tx.apt.items.length > 0 && (
+            {(tx.apt.items?.length ?? 0) > 0 && (
               <div className="space-y-1 mt-2">
-                {tx.apt.items.slice(0, 3).map((item, i) => (
+                {(tx.apt.items ?? []).slice(0, 3).map((item, i) => (
                   <div key={i} className="flex items-center justify-between text-[10px] text-[var(--text-secondary)] bg-[var(--surface-muted)] rounded-lg px-3 py-1.5">
                     <span className="font-medium">{item.deal_date}</span>
                     <span className="text-[var(--text-hint)] truncate max-w-[120px]">{item.name}</span>
@@ -570,7 +570,7 @@ function L3EnhancedCards({
       )}
 
       {/* 주변 인프라 카드 */}
-      {infra && (infra.nearest_subway || infra.schools.length > 0) && (
+      {infra && (infra.nearest_subway || (infra.schools?.length ?? 0) > 0) && (
         <div className="rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-strong)] p-6 shadow-[var(--shadow-xl)]">
           <div className="flex items-center gap-3 mb-4">
             <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-purple-500/10 text-purple-400">
@@ -598,10 +598,10 @@ function L3EnhancedCards({
                 </span>
               </div>
             )}
-            {infra.schools.length > 0 && (
+            {(infra.schools?.length ?? 0) > 0 && (
               <div className="space-y-1.5">
                 <p className="text-[8px] font-black text-[var(--text-hint)] uppercase tracking-widest px-1">학군 (반경 500m)</p>
-                {infra.schools.slice(0, 4).map((school, i) => (
+                {(infra.schools ?? []).slice(0, 4).map((school, i) => (
                   <div key={i} className="flex items-center justify-between text-[10px] bg-[var(--surface-muted)] rounded-lg px-3 py-2 border border-[var(--line)]">
                     <div className="flex items-center gap-2">
                       <span className={`inline-block h-1.5 w-1.5 rounded-full ${

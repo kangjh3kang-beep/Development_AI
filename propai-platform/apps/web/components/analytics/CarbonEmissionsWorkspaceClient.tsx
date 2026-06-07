@@ -211,7 +211,7 @@ export function CarbonEmissionsWorkspaceClient({
 
   const maxBreakdownCarbon = useMemo(() => {
     if (!result) return 1;
-    return Math.max(...result.breakdown.map((b) => Math.abs(b.carbon_footprint_kgco2e)), 1);
+    return Math.max(...(result.breakdown ?? []).map((b) => Math.abs(b.carbon_footprint_kgco2e)), 1);
   }, [result]);
 
   return (
@@ -398,7 +398,7 @@ export function CarbonEmissionsWorkspaceClient({
             <CardContent className="p-8 space-y-6">
               <h3 className="text-xs font-black uppercase tracking-[0.3em] text-[var(--text-hint)]">{t.breakdownTitle}</h3>
               <div className="space-y-3">
-                {result.breakdown.map((b) => {
+                {(result.breakdown ?? []).map((b) => {
                   const isNeg = b.carbon_footprint_kgco2e < 0;
                   const pct = Math.abs(b.carbon_footprint_kgco2e) / maxBreakdownCarbon * 100;
                   return (

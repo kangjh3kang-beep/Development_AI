@@ -265,8 +265,8 @@ export function AutoRecommendPanel({ onClose, isModal = false, embedded = false 
       });
 
       // 백엔드 응답 → 프론트엔드 모델 변환
-      const mappedRecs = response.recommendations.map((item, i) => mapToRecommendedModel(item, i + 1));
-      const mappedAll = (response.all_results ?? response.recommendations).map((item, i) => mapToRecommendedModel(item, i + 1));
+      const mappedRecs = (response.recommendations ?? []).map((item, i) => mapToRecommendedModel(item, i + 1));
+      const mappedAll = (response.all_results ?? response.recommendations ?? []).map((item, i) => mapToRecommendedModel(item, i + 1));
 
       if (progressRef.current) clearInterval(progressRef.current);
       setProgress(100);

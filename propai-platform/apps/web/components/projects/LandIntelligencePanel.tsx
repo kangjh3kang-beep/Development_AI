@@ -310,11 +310,12 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
             region: data?.address?.includes("서울") ? "서울특별시" : "경기도",
           },
         });
-        // 백엔드 응답을 프론트엔드 타입으로 변환
+        // 백엔드 응답을 프론트엔드 타입으로 변환 (부분응답에서 recommendations 누락 시 빈배열 폴백)
+        const recs = raw.recommendations ?? [];
         const mapped = {
-          recommendations: raw.recommendations.map((item, i) => mapBackendToModel(item, i + 1)),
-          all_models: (raw.all_results ?? raw.recommendations).map((item, i) => mapBackendToModel(item, i + 1)),
-          analysis_count: raw.total_types_analyzed ?? raw.recommendations.length,
+          recommendations: recs.map((item, i) => mapBackendToModel(item, i + 1)),
+          all_models: (raw.all_results ?? recs).map((item, i) => mapBackendToModel(item, i + 1)),
+          analysis_count: raw.total_types_analyzed ?? recs.length,
         };
         if (!cancelled) setScenarioData(mapped);
       } catch (err) {
@@ -356,10 +357,11 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
           equity_won: 15_000_000_000,
         },
       });
+      const recs = raw.recommendations ?? [];
       const mapped = {
-        recommendations: raw.recommendations.map((item, i) => mapBackendToModel(item, i + 1)),
-        all_models: (raw.all_results ?? raw.recommendations).map((item, i) => mapBackendToModel(item, i + 1)),
-        analysis_count: raw.total_types_analyzed ?? raw.recommendations.length,
+        recommendations: recs.map((item, i) => mapBackendToModel(item, i + 1)),
+        all_models: (raw.all_results ?? recs).map((item, i) => mapBackendToModel(item, i + 1)),
+        analysis_count: raw.total_types_analyzed ?? recs.length,
       };
       setDeepAnalysisResult(mapped);
     } catch {
@@ -401,18 +403,21 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
       chars.push({ label: "높이 제한", value: "별도 제한 없음", status: "safe" });
     }
     // Fill up to 4 items with special district info
-    if (chars.length < 4 && zoningData.special_districts.length > 0) {
+    // (백엔드 부분응답·404 프로젝트에서 배열 필드가 누락될 수 있어 무가드 .length 크래시 방지)
+    const specialDistricts = zoningData.special_districts ?? [];
+    const zoningWarnings = zoningData.warnings ?? [];
+    if (chars.length < 4 && specialDistricts.length > 0) {
       chars.push({
         label: "특별구역",
-        value: zoningData.special_districts.map(d => d.name).join(", "),
+        value: specialDistricts.map(d => d.name).join(", "),
         status: "warning",
       });
     }
     // Pad with warnings from zoning data
-    if (chars.length < 4 && zoningData.warnings.length > 0) {
+    if (chars.length < 4 && zoningWarnings.length > 0) {
       chars.push({
         label: "주의사항",
-        value: zoningData.warnings[0].slice(0, 30),
+        value: zoningWarnings[0].slice(0, 30),
         status: "danger",
       });
     }

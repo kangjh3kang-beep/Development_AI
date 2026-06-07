@@ -18,7 +18,7 @@ import { ExpertPanelCard } from "@/components/common/ExpertPanelCard";
 import { AnalysisVerdict } from "@/components/analysis/AnalysisVerdict";
 import { DevelopmentScenarioCard } from "@/components/common/DevelopmentScenarioCard";
 import { RegistryBulkButton } from "@/components/common/RegistryBulkButton";
-import { apiClient } from "@/lib/api-client";
+import { apiClient, ApiClientError } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import type { Locale } from "@/i18n/config";
 
@@ -112,8 +112,15 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
         timeoutMs: 150000,
       });
       setResult(r);
-    } catch {
-      setError("인허가 AI 분석에 실패했습니다. 잠시 후 다시 시도하세요.");
+    } catch (err) {
+      // 무반응 방지: 실패 원인을 구체적으로 안내(인증/과금/기타). 401·403=로그인 필요, 402=코인.
+      if (err instanceof ApiClientError && (err.status === 401 || err.status === 403)) {
+        setError("인허가 AI 분석은 로그인이 필요합니다. 로그인 후 다시 시도하세요.");
+      } else if (err instanceof ApiClientError && err.status === 402) {
+        setError("AI 인허가 분석은 사용량(코인)이 필요합니다. 충전 후 다시 시도하세요.");
+      } else {
+        setError("인허가 AI 분석에 실패했습니다. 잠시 후 다시 시도하세요.");
+      }
     } finally {
       setLoading(false);
     }

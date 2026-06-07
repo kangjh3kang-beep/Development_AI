@@ -113,7 +113,7 @@ export function SREDashboard() {
 
   if (!data) return null;
 
-  const lastSuccessBackup = data.backup_logs.find((b) => b.status === "success");
+  const lastSuccessBackup = data.backup_logs?.find((b) => b.status === "success");
 
   return (
     <section className="grid gap-8" aria-label="SRE 시스템 성능 관제">
@@ -208,7 +208,7 @@ export function SREDashboard() {
              <span className="text-[12px] font-black uppercase tracking-[0.3em] text-[var(--text-primary)]">인프라 실시간 메트릭</span>
           </CardTitle>
           <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-            {data.metrics.map((metric, i) => {
+            {(data.metrics ?? []).map((metric, i) => {
               const statusStyle = STATUS_COLOR[metric.status];
               return (
                 <motion.div
@@ -286,7 +286,7 @@ export function SREDashboard() {
               <span className="text-[9px] font-black text-[var(--text-hint)] uppercase tracking-widest font-mono">DR REGION: AP-NORTHEAST-2</span>
             </CardTitle>
             <div className="space-y-3 flex-1 overflow-y-auto pr-2 custom-scrollbar" style={{ maxHeight: "400px" }}>
-              {data.backup_logs.map((log, i) => {
+              {(data.backup_logs ?? []).map((log, i) => {
                 const statusBadge = BACKUP_STATUS[log.status];
                 return (
                   <motion.div

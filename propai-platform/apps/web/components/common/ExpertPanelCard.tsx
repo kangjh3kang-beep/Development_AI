@@ -122,7 +122,7 @@ export function ExpertPanelCard({
                   </span>
                 )}
                 <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${result.generated ? "border-[var(--accent-strong)]/30 text-[var(--accent-strong)]" : "border-[var(--line-strong)] text-[var(--text-tertiary)]"}`}>
-                  {result.generated ? (result.roster ? `전문가 ${result.experts.length}인` : "AI") : "규칙기반"}
+                  {result.generated ? (result.roster ? `전문가 ${result.experts?.length ?? 0}인` : "AI") : "규칙기반"}
                 </span>
               </div>
             </div>
@@ -136,7 +136,7 @@ export function ExpertPanelCard({
 
           {/* 전문가별 관점 */}
           <div className="grid gap-3 md:grid-cols-2">
-            {result.experts.map((e, i) => (
+            {(result.experts ?? []).map((e, i) => (
               <div key={i} className="rounded-xl border border-[var(--line)] bg-[var(--surface-strong)] p-3.5">
                 <p className="text-xs font-black text-[var(--text-primary)]">👤 {e.role}</p>
                 <p className="mt-1 text-xs leading-relaxed text-[var(--text-secondary)]">{e.opinion}</p>

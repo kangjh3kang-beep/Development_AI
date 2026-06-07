@@ -707,9 +707,9 @@ export function ProjectConstructionWorkspaceClient({
                   <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
                     {labels.riskFactorsLabel}
                   </p>
-                  {riskQuery.data.factors.length ? (
+                  {riskQuery.data.factors?.length ? (
                     <div className="mt-3 grid gap-3">
-                      {riskQuery.data.factors.map((factor, i) => (
+                      {(riskQuery.data.factors ?? []).map((factor, i) => (
                         <div
                           key={`${factor.category}-${i}`}
                           className="flex items-center justify-between rounded-[var(--radius-xl)] bg-[var(--surface)] px-4 py-3"

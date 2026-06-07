@@ -116,7 +116,7 @@ export function CadBimSidePanel({ projectId }: CadBimSidePanelProps) {
             </div>
 
             {/* 자재 목록 */}
-            {result.materials.length > 0 && (
+            {(result.materials?.length ?? 0) > 0 && (
               <div className="flex flex-col gap-1">
                 <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-hint)]">
                   자재 목록

@@ -160,13 +160,13 @@ export function PreCheckWorkspace() {
 
   /** PreCheck 결과를 프로젝트 생성 화면으로 승계(sessionStorage 단일 출처 → projects/new 선채움). */
   function startProject(data: InstantPreCheckResponse) {
-    const best = data.methods.find((m) => m.code === data.summary.best);
+    const best = data.methods?.find((m) => m.code === data.summary?.best);
     const handoff: PreCheckHandoff = {
       address: data.address || address.trim(),
       zoneType: data.zone_type || null,
       areaSqm: data.area_sqm ?? areaSqm,
       pnu: data.pnu ?? null,
-      bestMethod: data.summary.best ?? null,
+      bestMethod: data.summary?.best ?? null,
       bestMethodName: best?.name ?? null,
     };
     try {

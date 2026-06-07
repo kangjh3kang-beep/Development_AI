@@ -70,7 +70,7 @@ export function RegionTaxSearchPanel() {
                 기본 취득세율: {pctFormat(result.base_acquisition_rate)}
               </span>
             </div>
-            {result.sigungu_overrides.length > 0 && (
+            {(result.sigungu_overrides?.length ?? 0) > 0 && (
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>

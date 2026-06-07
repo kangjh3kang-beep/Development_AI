@@ -381,9 +381,9 @@ export function ProjectDroneWorkspaceClient({
                 <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
                   {labels.detectedDefectsLabel}
                 </p>
-                {result.defects.length ? (
+                {result.defects?.length ? (
                   <ul className="mt-3 space-y-2 text-sm leading-7 text-[var(--text-secondary)]">
-                    {result.defects.map((item, index) => (
+                    {(result.defects ?? []).map((item, index) => (
                       <li key={`${item.defect_type ?? "defect"}-${index}`}>
                         {item.defect_type ?? "unknown"} / {item.severity ?? "n/a"} /{" "}
                         {typeof item.confidence === "number"

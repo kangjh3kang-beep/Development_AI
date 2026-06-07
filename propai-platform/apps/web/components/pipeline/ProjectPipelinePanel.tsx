@@ -603,6 +603,10 @@ export function ProjectPipelinePanel({
           options: { site_data: siteDataForBackend },
         },
         useMock: false,
+        // 전체 7단계 동기 실행은 부지분석 재수집(~40s)+설계~보고서를 포함해 가장 무거운 호출이다.
+        // 기본 120s로는 콜드 캐시/프록시 지연 시 중도 abort → "공사비 이후 정지"처럼 보이므로
+        // runSiteAnalysis와 동일하게 넉넉히 잡아 끝까지 응답을 받도록 한다.
+        timeoutMs: 170000,
       });
 
       setStages(result.stages);
@@ -613,12 +617,22 @@ export function ProjectPipelinePanel({
       saveToStore(result);
       addToHistory(result, address.trim());
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "알 수 없는 오류가 발생했습니다.";
+      let msg = err instanceof Error ? err.message : "알 수 없는 오류가 발생했습니다.";
+      if (/fetch|network|timeout|시간|abort|load failed/i.test(msg)) {
+        msg = "전체 분석 연결이 지연되거나 중단되었습니다(분석은 다소 시간이 걸립니다). '전체 7단계 분석 계속'을 다시 눌러 재시도해 주세요.";
+      }
       setError(msg);
+      // 스톨 방지: 미완료(대기/진행 중) 단계를 '실패'로 되돌려 "공사비 이후 정지"처럼
+      // 멈춘 듯 보이는 상태를 해소한다(부지분석 등 이미 완료된 단계는 보존).
+      setStages((prev) =>
+        prev.map((s) =>
+          s.status === "completed" || s.status === "skipped" ? s : { ...s, status: "failed" },
+        ),
+      );
     } finally {
       setIsRunning(false);
     }
-  }, [address, projectId, saveToStore, addToHistory]);
+  }, [address, projectId, siteAnalysis, saveToStore, addToHistory]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();

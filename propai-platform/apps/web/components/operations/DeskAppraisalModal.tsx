@@ -159,7 +159,7 @@ export function DeskAppraisalModal({
                 <span className="text-xs font-black uppercase tracking-widest text-[var(--text-hint)]">토지 예상 채택가</span>
                 <span className="text-2xl font-[1000] text-[var(--accent-strong)]">{eok(res.appraised_total_won)}</span>
               </div>
-              <p className="mt-0.5 text-xs text-[var(--text-secondary)]">{res.appraised_price_per_sqm.toLocaleString()}원/㎡ · 범위 {res.range_per_sqm.low.toLocaleString()}~{res.range_per_sqm.high.toLocaleString()}</p>
+              <p className="mt-0.5 text-xs text-[var(--text-secondary)]">{res.appraised_price_per_sqm?.toLocaleString()}원/㎡ · 범위 {res.range_per_sqm?.low?.toLocaleString()}~{res.range_per_sqm?.high?.toLocaleString()}</p>
               <div className="mt-2"><Gauge value={res.confidence} /></div>
             </div>
 
@@ -167,7 +167,7 @@ export function DeskAppraisalModal({
             <div>
               <p className="mb-1 text-xs font-bold text-[var(--text-secondary)]">산정방법별 추정</p>
               <div className="space-y-1.5">
-                {res.methods.map((m) => (
+                {(res.methods ?? []).map((m) => (
                   <div key={m.method} className="rounded-lg bg-[var(--surface-soft)] px-3 py-2 text-[11px]">
                     <span className="font-bold text-[var(--text-primary)]">{m.method} {Math.round(m.unit_price).toLocaleString()}원/㎡</span>
                     <span className="text-[var(--text-tertiary)]"> — {m.rationale}</span>
@@ -181,7 +181,7 @@ export function DeskAppraisalModal({
               <div>
                 <p className="mb-1 text-xs font-bold text-[var(--text-secondary)]">복수 시나리오 교차검증 (평균 {res.cross_check.mean.toLocaleString()}원/㎡ · CV {res.cross_check.cv_pct}%)</p>
                 <div className="flex gap-1">
-                  {res.cross_check.firms.map((v, i) => (
+                  {(res.cross_check.firms ?? []).map((v, i) => (
                     <div key={i} className="flex-1 rounded bg-[var(--surface-soft)] px-1 py-1 text-center text-[10px] text-[var(--text-secondary)]">{Math.round(v / 1e4).toLocaleString()}만</div>
                   ))}
                 </div>

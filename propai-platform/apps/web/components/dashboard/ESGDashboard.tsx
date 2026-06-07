@@ -106,7 +106,7 @@ export function ESGDashboard() {
 
       {/* KPI 카드 그리드 */}
       <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
-        {data.metrics.map((metric, i) => {
+        {(data.metrics ?? []).map((metric, i) => {
           const met = getTargetStatus(metric);
           const progress = Math.min(100, (metric.value / metric.target) * 100);
           return (
@@ -216,7 +216,7 @@ export function ESGDashboard() {
                   barSize={64} 
                   animationDuration={1500}
                 >
-                  {data.carbon_by_scope.map((entry, index) => (
+                  {(data.carbon_by_scope ?? []).map((entry, index) => (
                     <motion.rect
                       key={`cell-${index}`}
                       fill={index === 0 ? "var(--accent-strong)" : index === 1 ? "var(--info)" : "var(--success)"}

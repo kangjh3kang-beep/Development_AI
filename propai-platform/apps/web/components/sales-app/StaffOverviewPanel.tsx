@@ -106,13 +106,13 @@ export default function StaffOverviewPanel({ siteId }: { siteId: string }) {
       ) : data ? (
         <>
           <div className="grid gap-2 sm:grid-cols-4">
-            <StatCard label="멤버" value={`${data.totals.member_count.toLocaleString("ko-KR")}명`} />
-            <StatCard label="계약" value={`${data.totals.contract_count.toLocaleString("ko-KR")}건`} />
-            <StatCard label="출근" value={`${data.totals.attendance_count.toLocaleString("ko-KR")}회`} />
-            <StatCard label="수수료(gross)" value={won(data.totals.commission_gross)} />
+            <StatCard label="멤버" value={`${(data.totals?.member_count ?? 0).toLocaleString("ko-KR")}명`} />
+            <StatCard label="계약" value={`${(data.totals?.contract_count ?? 0).toLocaleString("ko-KR")}건`} />
+            <StatCard label="출근" value={`${(data.totals?.attendance_count ?? 0).toLocaleString("ko-KR")}회`} />
+            <StatCard label="수수료(gross)" value={won(data.totals?.commission_gross ?? 0)} />
           </div>
 
-          {data.sites.length === 0 ? (
+          {(data.sites?.length ?? 0) === 0 ? (
             <div className="rounded-2xl border border-dashed border-[var(--line)] bg-[var(--surface-soft)] px-4 py-10 text-center text-sm text-[var(--text-secondary)]">
               집계할 현장이 없습니다.
             </div>
@@ -129,7 +129,7 @@ export default function StaffOverviewPanel({ siteId }: { siteId: string }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {data.sites.map((s) => (
+                  {(data.sites ?? []).map((s) => (
                     <tr key={s.site_id} className="border-b border-[var(--line)] last:border-0">
                       <td className="px-3 py-2 font-semibold text-[var(--text-primary)]">{s.site_name || s.site_id}</td>
                       <td className="px-3 py-2 text-right text-[var(--text-secondary)]">{s.member_count.toLocaleString("ko-KR")}</td>

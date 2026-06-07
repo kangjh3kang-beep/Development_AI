@@ -1034,9 +1034,9 @@ export function ApprovalOperationsWorkspaceClient({
                 />
               </div>
             ) : null}
-            {historyQuery.data?.items.length ? (
+            {historyQuery.data?.items?.length ? (
               <ol className="mt-5 grid gap-3">
-                {historyQuery.data.items.map((item) => (
+                {(historyQuery.data.items ?? []).map((item) => (
                   <li
                     key={item.task_id}
                     className="rounded-[1.35rem] border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-4"

@@ -325,7 +325,7 @@ export function DeskAppraisalReportClient({ locale }: { locale: Locale }) {
                     <th className="px-3 py-2 text-left font-bold">근거</th>
                   </tr></thead>
                   <tbody>
-                    {res.methods.map((m) => (
+                    {(res.methods ?? []).map((m) => (
                       <tr key={m.method} className="border-t border-[var(--line)]/60 align-top">
                         <td className="px-3 py-2 font-bold text-[var(--text-primary)] whitespace-nowrap">{m.method}</td>
                         <td className="px-3 py-2 text-right font-bold text-[var(--accent-strong)] whitespace-nowrap">{Math.round(m.unit_price).toLocaleString()}</td>
@@ -342,7 +342,7 @@ export function DeskAppraisalReportClient({ locale }: { locale: Locale }) {
             {res.cross_check && (
               <Section no="Ⅳ" title={`복수 시나리오 교차검증 (평균 ${res.cross_check.mean.toLocaleString()}원/㎡ · 편차 CV ${res.cross_check.cv_pct}%)`}>
                 <div className="flex gap-1.5">
-                  {res.cross_check.firms.map((v, i) => (
+                  {(res.cross_check.firms ?? []).map((v, i) => (
                     <div key={i} className="flex-1 rounded-lg border border-[var(--line)] bg-[var(--surface-soft)] px-1 py-2 text-center">
                       <p className="text-[9px] text-[var(--text-hint)]">시나리오{i + 1}</p>
                       <p className="text-[11px] font-bold text-[var(--text-secondary)]">{Math.round(v / 1e4).toLocaleString()}만</p>

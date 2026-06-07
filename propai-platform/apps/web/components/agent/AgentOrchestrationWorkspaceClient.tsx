@@ -562,7 +562,7 @@ export function AgentOrchestrationWorkspaceClient({
   useEffect(() => {
     if (currentProjectId) {
       setSelectedProjectId(currentProjectId);
-    } else if (projectsQuery.data?.items.length && !selectedProjectId) {
+    } else if (projectsQuery.data?.items?.length && !selectedProjectId) {
       setSelectedProjectId(projectsQuery.data.items[0].id);
     }
   }, [currentProjectId, projectsQuery.data?.items, selectedProjectId]);
@@ -574,7 +574,7 @@ export function AgentOrchestrationWorkspaceClient({
   }, [manualProjectId, selectedProjectId, setCurrentProject]);
 
   const selectedProject =
-    projectsQuery.data?.items.find((project) => project.id === selectedProjectId) ??
+    projectsQuery.data?.items?.find((project) => project.id === selectedProjectId) ??
     null;
   const activeProjectId = manualProjectId.trim() || selectedProject?.id || "";
   const resolvedAuditProjectId = auditScope === "project" ? activeProjectId : "";
@@ -640,9 +640,9 @@ export function AgentOrchestrationWorkspaceClient({
     ? extractErrorMessage(approvalsQuery.error, labels.authError)
     : "";
   const pendingApprovalItems =
-    approvalsQuery.data?.items.filter((item) => item.status === "pending") ?? [];
+    approvalsQuery.data?.items?.filter((item) => item.status === "pending") ?? [];
   const requiredApprovals =
-    portfolioResult?.items.filter((item) => item.approval_required).length ?? 0;
+    portfolioResult?.items?.filter((item) => item.approval_required).length ?? 0;
   const projectQueryUi = PROJECT_QUERY_UI[locale] ?? PROJECT_QUERY_UI.en;
 
   const syncApprovalStatuses = (items: DomainAgentApprovalQueueItemResponse[]) => {
@@ -950,7 +950,7 @@ export function AgentOrchestrationWorkspaceClient({
                 options={[
                   {
                     label:
-                      projectsQuery.data?.items.length && canUseLiveApi
+                      projectsQuery.data?.items?.length && canUseLiveApi
                         ? labels.projectSelectLabel
                         : labels.noProjectsLabel,
                     value: "",
@@ -961,7 +961,7 @@ export function AgentOrchestrationWorkspaceClient({
                     value: project.id,
                   })),
                 ]}
-                disabled={!canUseLiveApi || !(projectsQuery.data?.items.length ?? 0)}
+                disabled={!canUseLiveApi || !(projectsQuery.data?.items?.length ?? 0)}
               />
               <div className="grid gap-2">
                 <label
@@ -1336,9 +1336,9 @@ export function AgentOrchestrationWorkspaceClient({
                 />
               </div>
             ) : null}
-            {historyQuery.data?.items.length ? (
+            {historyQuery.data?.items?.length ? (
               <ol className="mt-5 grid gap-3">
-                {historyQuery.data.items.map((item) => (
+                {(historyQuery.data.items ?? []).map((item) => (
                   <li
                     key={item.task_id}
                     className="rounded-[1.35rem] border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-4"
@@ -1462,9 +1462,9 @@ export function AgentOrchestrationWorkspaceClient({
                 </div>
               </div>
             ) : null}
-            {approvalsQuery.data?.items.length ? (
+            {approvalsQuery.data?.items?.length ? (
               <ol className="mt-5 grid gap-3">
-                {approvalsQuery.data.items.map((item) => (
+                {(approvalsQuery.data.items ?? []).map((item) => (
                   <li
                     key={item.approval_id}
                     className="rounded-[1.35rem] border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-4"

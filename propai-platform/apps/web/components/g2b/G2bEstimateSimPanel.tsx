@@ -96,7 +96,7 @@ export function G2bEstimateSimPanel() {
           <div>
             <p className="mb-2 text-xs font-bold text-[var(--text-secondary)]">투찰율별 적격(낙찰가능) 확률</p>
             <div className="flex items-end gap-0.5 h-28">
-              {res.curve.filter((_, i) => i % 2 === 0).map((c) => (
+              {(res.curve ?? []).filter((_, i) => i % 2 === 0).map((c) => (
                 <div key={c.bid_rate} className="group relative flex-1" title={`${(c.bid_rate * 100).toFixed(2)}% → ${(c.p_valid * 100).toFixed(0)}%`}>
                   <div className="w-full rounded-t bg-[var(--accent-strong)]"
                     style={{ height: `${(c.p_valid / maxP) * 100}%`, opacity: c.bid_rate * 100 >= res.recommended_bid_rate_pct ? 1 : 0.4 }} />

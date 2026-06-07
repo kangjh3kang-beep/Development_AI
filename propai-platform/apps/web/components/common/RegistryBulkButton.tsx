@@ -73,7 +73,7 @@ export function RegistryBulkButton({ addresses, className = "" }: { addresses: s
 
       {res && res.configured && (
         <div className="mt-3 space-y-2">
-          {res.results.map((it, i) => (
+          {(res.results ?? []).map((it, i) => (
             <div key={i} className="rounded-lg border border-[var(--line)] bg-[var(--surface-strong)] p-3 text-xs">
               <div className="flex items-center justify-between gap-2">
                 <span className="font-bold text-[var(--text-primary)]">{i + 1}. {it.address || it.pnu}</span>

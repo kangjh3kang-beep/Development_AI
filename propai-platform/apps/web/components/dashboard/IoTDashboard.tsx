@@ -52,7 +52,7 @@ export function IoTDashboard() {
   const chartData = useMemo(() => {
     if (!data) return [];
     const byTime = new Map<string, Record<string, number | string>>();
-    for (const s of data.sensors) {
+    for (const s of data.sensors ?? []) {
       const hour = new Date(s.timestamp).toLocaleTimeString("ko-KR", {
         hour: "2-digit",
         minute: "2-digit",
@@ -66,7 +66,7 @@ export function IoTDashboard() {
 
   const sensorTypes = useMemo(() => {
     if (!data) return [];
-    return [...new Set(data.sensors.map((s) => s.sensor_type))];
+    return [...new Set((data.sensors ?? []).map((s) => s.sensor_type))];
   }, [data]);
 
   if (isLoading) {
@@ -84,7 +84,7 @@ export function IoTDashboard() {
     <section className="grid gap-10 p-1 font-sans" aria-label="IoT/Proptech 대시보드">
       {/* 센서 요약 KPI */}
       <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
-        {data.sensor_summary.map((s, i) => (
+        {(data.sensor_summary ?? []).map((s, i) => (
           <motion.div
             key={s.type}
             initial={{ opacity: 0, y: 20 }}
@@ -191,7 +191,7 @@ export function IoTDashboard() {
             <CardTitle className="mt-3 text-2xl font-[1000] tracking-tighter italic text-[var(--text-primary)]">AI 정비 <span className="text-[var(--spot)]">알림.</span></CardTitle>
             
             <div className="mt-10 flex-grow space-y-6 overflow-y-auto pr-2 custom-scrollbar">
-              {data.alerts.map((alert, i) => {
+              {(data.alerts ?? []).map((alert, i) => {
                 const token = SEVERITY_TOKENS[alert.severity];
                 return (
                   <motion.div

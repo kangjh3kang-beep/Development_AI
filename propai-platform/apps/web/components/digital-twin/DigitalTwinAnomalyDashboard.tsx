@@ -47,7 +47,7 @@ export function DigitalTwinAnomalyDashboard() {
   // 선택된 센서 데이터만 필터링
   const chartData = useMemo(() => {
     if (!data) return [];
-    return data.anomalies
+    return (data.anomalies ?? [])
       .filter((a) => a.sensor_type === selectedSensor)
       .map((a) => ({
         time: new Date(a.timestamp).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" }),
@@ -69,7 +69,7 @@ export function DigitalTwinAnomalyDashboard() {
 
   const sensorTypes = useMemo(() => {
     if (!data) return [];
-    return [...new Set(data.anomalies.map((a) => a.sensor_type))];
+    return [...new Set((data.anomalies ?? []).map((a) => a.sensor_type))];
   }, [data]);
 
   if (isLoading) {

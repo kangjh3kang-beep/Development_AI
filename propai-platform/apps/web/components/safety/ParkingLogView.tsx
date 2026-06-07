@@ -25,8 +25,8 @@ export function ParkingLogView() {
   const filteredRecords = useMemo(() => {
     if (!data) return [];
     const records = filter === "all"
-      ? data.records
-      : data.records.filter((r) => r.event_type === filter);
+      ? (data.records ?? [])
+      : (data.records ?? []).filter((r) => r.event_type === filter);
     return [...records].sort(
       (a, b) => new Date(b.recorded_at).getTime() - new Date(a.recorded_at).getTime(),
     );

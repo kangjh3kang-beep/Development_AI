@@ -532,9 +532,9 @@ export function TaxOperationsWorkspaceClient({
                   <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
                     {labels.deductionsLabel}
                   </p>
-                  {result.deductions.length ? (
+                  {result.deductions?.length ? (
                     <ul className="mt-3 space-y-2 text-sm leading-7 text-[var(--text-secondary)]">
-                      {result.deductions.map((item, index) => (
+                      {(result.deductions ?? []).map((item, index) => (
                         <li key={`${index}-${JSON.stringify(item)}`}>
                           • {Object.entries(item)
                             .map(([key, value]) => `${key}: ${String(value)}`)
@@ -552,9 +552,9 @@ export function TaxOperationsWorkspaceClient({
                   <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
                     {labels.tipsLabel}
                   </p>
-                  {result.optimization_tips.length ? (
+                  {result.optimization_tips?.length ? (
                     <ul className="mt-3 space-y-2 text-sm leading-7 text-[var(--text-secondary)]">
-                      {result.optimization_tips.map((item) => (
+                      {(result.optimization_tips ?? []).map((item) => (
                         <li key={item}>• {item}</li>
                       ))}
                     </ul>

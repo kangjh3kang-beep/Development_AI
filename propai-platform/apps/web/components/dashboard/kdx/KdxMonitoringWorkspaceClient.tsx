@@ -180,8 +180,8 @@ export function KdxMonitoringWorkspaceClient() {
                     Recent pipeline logs
                   </CardTitle>
                   <div className="space-y-4 overflow-y-auto max-h-[600px] pr-2 custom-scrollbar">
-                    {overviewQuery.data.recent_logs.length > 0 ? (
-                      overviewQuery.data.recent_logs.map((log) => (
+                    {(overviewQuery.data.recent_logs?.length ?? 0) > 0 ? (
+                      (overviewQuery.data.recent_logs ?? []).map((log) => (
                         <div
                           key={log.id}
                           className="rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-5 transition-all hover:border-[var(--accent-strong)]/30 group"

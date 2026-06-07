@@ -129,7 +129,7 @@ export function CostAlternativesPanel({ projectId: projectIdProp }: { projectId?
     if (!result) return [];
     return [
       { name: "기준안", total: result.base.total, delta: 0, isBase: true },
-      ...result.variants.map((v) => ({
+      ...(result.variants ?? []).map((v) => ({
         name: v.label,
         total: v.total,
         delta: v.delta,
@@ -295,7 +295,7 @@ export function CostAlternativesPanel({ projectId: projectIdProp }: { projectId?
               <p className="mt-1.5 text-xl font-[1000] text-[var(--accent-strong)]">{fmtKrw(result.base.total)}</p>
               <p className="mt-1 text-[11px] text-[var(--text-secondary)]">{bt} · {structure}조 · {floorsAbove}F · {gfa}㎡</p>
             </div>
-            {result.variants.map((v, i) => {
+            {(result.variants ?? []).map((v, i) => {
               const better = v.delta < 0;
               return (
                 <div key={i} className="rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-strong)] p-4">

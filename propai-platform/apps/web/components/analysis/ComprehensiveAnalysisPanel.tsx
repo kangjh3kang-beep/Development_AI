@@ -147,8 +147,8 @@ export function ComprehensiveAnalysisPanel() {
   useEffect(() => {
     apiClient.get<{ providers: ProviderInfo[] }>("/analysis/llm-providers")
       .then(data => {
-        setProviders(data.providers);
-        if (data.providers.length > 0) {
+        setProviders(data.providers ?? []);
+        if ((data.providers?.length ?? 0) > 0) {
           setSelectedProvider(data.providers[0].provider);
           setSelectedModel(data.providers[0].default_model);
         }
