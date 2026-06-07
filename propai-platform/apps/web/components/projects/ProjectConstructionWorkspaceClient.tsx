@@ -7,6 +7,8 @@ import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryEr
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import { NumberInput } from "@/components/common/NumberInput";
 import { ApiClientError, apiClient } from "@/lib/api-client";
+import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { SiteDataGate } from "@/components/projects/SiteDataGate";
 import type { Locale } from "@/i18n/config";
 
 /* ── Response Types ── */
@@ -238,6 +240,13 @@ export function ProjectConstructionWorkspaceClient({
   const canUseLiveApi =
     runtimeConfig.mode === "live" || runtimeConfig.hasAccessToken;
 
+  // 부지 핵심 입력(면적/주소) 준비 여부 — 없으면 데모 시드 폼 대신 게이트로 유도(무목업).
+  const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
+  const hasSiteData = !!(
+    (siteAnalysis?.landAreaSqm && siteAnalysis.landAreaSqm > 0) ||
+    siteAnalysis?.address
+  );
+
   const [workspaceError, setWorkspaceError] = useState("");
   const [isSubmittingCost, setIsSubmittingCost] = useState(false);
   const [isSubmittingChecklist, setIsSubmittingChecklist] = useState(false);
@@ -383,6 +392,16 @@ export function ProjectConstructionWorkspaceClient({
         </CardContent>
       </Card>
 
+      {/* 부지 데이터준비 게이트(공용) — 부지 미입력 시 데모 시드 폼 대신 유도(무목업). */}
+      {!hasSiteData ? (
+        <SiteDataGate
+          locale={locale}
+          projectId={projectId}
+          title="시공계획 산출에 부지 데이터가 필요합니다"
+          description="부지면적 또는 정확한 주소(시·구·동·번지)를 입력하면 공사비·체크리스트·리스크가 정확히 산출됩니다."
+        />
+      ) : (
+      <>
       {/* Cost Calculation Form + Results */}
       <Card>
         <CardContent className="p-6">
@@ -741,6 +760,8 @@ export function ProjectConstructionWorkspaceClient({
           </CardContent>
         </Card>
       </div>
+      </>
+      )}
     </section>
   );
 }

@@ -125,7 +125,7 @@ export function DefectHeatmap({
                 (severity) => (
                   <span
                     key={severity}
-                    className="inline-flex items-center gap-2 rounded-full border border-[var(--line)] bg-white px-3 py-2 text-xs font-medium text-[var(--text-secondary)]"
+                    className="inline-flex items-center gap-2 rounded-full border border-[var(--line)] bg-[var(--surface)] px-3 py-2 text-xs font-medium text-[var(--text-secondary)]"
                   >
                     <span
                       className="h-2.5 w-2.5 rounded-full"

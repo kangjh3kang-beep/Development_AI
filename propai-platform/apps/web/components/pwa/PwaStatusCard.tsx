@@ -187,7 +187,7 @@ export function PwaStatusCard({ labels }: PwaStatusCardProps) {
             <button
               type="button"
               onClick={applyUpdate}
-              className="mt-4 rounded-full border border-[var(--line)] bg-white px-4 py-2 text-sm font-semibold text-[var(--text-primary)] transition hover:border-[var(--accent)] hover:text-[var(--accent-strong)]"
+              className="mt-4 rounded-full border border-[var(--line)] bg-[var(--surface)] px-4 py-2 text-sm font-semibold text-[var(--text-primary)] transition hover:border-[var(--accent)] hover:text-[var(--accent-strong)]"
             >
               {labels.refreshAction}
             </button>
@@ -211,7 +211,7 @@ export function PwaStatusCard({ labels }: PwaStatusCardProps) {
               onClick={() => {
                 void requestInstall();
               }}
-              className="rounded-full border border-[var(--line)] bg-white px-4 py-2 text-sm font-semibold text-[var(--text-primary)] shadow-[var(--shadow-md)]"
+              className="rounded-full border border-[var(--line)] bg-[var(--surface)] px-4 py-2 text-sm font-semibold text-[var(--text-primary)] shadow-[var(--shadow-md)]"
             >
               {labels.installAction}
             </button>

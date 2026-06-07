@@ -8,6 +8,7 @@ import { useStageAutoRecalc } from "@/hooks/useStageAutoRecalc";
 import { AnalysisVerdict } from "@/components/analysis/AnalysisVerdict";
 import { ExpertPanelCard } from "@/components/common/ExpertPanelCard";
 import { NumberInput } from "@/components/common/NumberInput";
+import { SiteDataGate } from "@/components/projects/SiteDataGate";
 import type { Locale } from "@/i18n/config";
 
 /* ── Response Types ── */
@@ -232,6 +233,12 @@ export function ProjectEsgWorkspaceClient({
   const updateEsgData = useProjectContextStore((s) => s.updateEsgData);
   const markStageComplete = useProjectContextStore((s) => s.markStageComplete);
   const addAnalysisResult = useProjectContextStore((s) => s.addAnalysisResult);
+  const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
+  // 부지 핵심 입력(면적/주소) 준비 여부 — 없으면 데모 자재값 폼 대신 게이트로 유도(무목업).
+  const hasSiteData = !!(
+    (siteAnalysis?.landAreaSqm && siteAnalysis.landAreaSqm > 0) ||
+    siteAnalysis?.address
+  );
 
   const [workspaceError, setWorkspaceError] = useState("");
 
@@ -453,6 +460,16 @@ export function ProjectEsgWorkspaceClient({
         </CardContent>
       </Card>
 
+      {/* 부지 데이터준비 게이트(공용) — 부지 미입력 시 데모 자재값 폼 대신 유도(무목업). */}
+      {!hasSiteData ? (
+        <SiteDataGate
+          locale={locale}
+          projectId={projectId}
+          title="ESG 분석에 부지 데이터가 필요합니다"
+          description="부지면적 또는 정확한 주소(시·구·동·번지)를 입력해 설계가 산출되면 전과정 탄소(LCA)·EPD가 정확히 산출됩니다."
+        />
+      ) : (
+      <>
       {/* ── LCA Section ── */}
       <Card>
         <CardContent className="p-6">
@@ -846,6 +863,8 @@ export function ProjectEsgWorkspaceClient({
           </CardContent>
         </Card>
       </div>
+      </>
+      )}
     </section>
   );
 }

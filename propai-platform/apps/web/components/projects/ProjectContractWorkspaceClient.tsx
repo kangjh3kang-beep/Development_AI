@@ -557,7 +557,7 @@ export function ProjectContractWorkspaceClient({
             <label className="grid gap-2 text-sm font-medium text-[var(--text-primary)]">
               <span>{labels.specialClausesLabel}</span>
               <textarea
-                className="min-h-28 rounded-[var(--radius-md)] border border-[var(--line)] bg-white px-4 py-3 text-sm text-[var(--text-primary)] outline-none transition focus:border-[var(--accent-strong)]"
+                className="min-h-28 rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] px-4 py-3 text-sm text-[var(--text-primary)] outline-none transition focus:border-[var(--accent-strong)]"
                 value={form.specialClauses}
                 onChange={(event) =>
                   setForm((current) => ({

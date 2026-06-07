@@ -97,7 +97,7 @@ export function AgentTimeline({
                   <p className="text-sm font-semibold text-[var(--text-primary)]">
                     {stage.title}
                   </p>
-                  <span className="rounded-full bg-white px-3 py-1 text-xs font-medium text-[var(--text-secondary)]">
+                  <span className="rounded-full bg-[var(--surface)] px-3 py-1 text-xs font-medium text-[var(--text-secondary)]">
                     {labels.statusLabels[stage.status]}
                   </span>
                 </div>

@@ -21,7 +21,7 @@ export default function OfflinePage() {
         <div className="mt-6 flex flex-wrap gap-3">
           <Link
             href={`/${defaultLocale}`}
-            className="rounded-full border border-[var(--line)] bg-white px-5 py-3 text-sm font-semibold text-[var(--text-primary)] shadow-[var(--shadow-md)]"
+            className="rounded-full border border-[var(--line)] bg-[var(--surface)] px-5 py-3 text-sm font-semibold text-[var(--text-primary)] shadow-[var(--shadow-md)]"
           >
             Open dashboard
           </Link>

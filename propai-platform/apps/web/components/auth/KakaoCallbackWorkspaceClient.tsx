@@ -201,7 +201,7 @@ export function KakaoCallbackWorkspaceClient({
             </Button>
             <Link
               href={`/${locale}/login`}
-              className="rounded-full border border-[var(--line)] px-4 py-2 text-sm font-semibold text-[var(--text-primary)] transition hover:bg-white"
+              className="rounded-full border border-[var(--line)] px-4 py-2 text-sm font-semibold text-[var(--text-primary)] transition hover:bg-[var(--surface-strong)]"
             >
               {labels.backToLogin}
             </Link>

@@ -21,7 +21,7 @@ export function ModulePlaceholder({
     <div className="relative overflow-hidden rounded-[var(--radius-2xl)] bg-[var(--surface-strong)] p-12 lg:p-20 shadow-[var(--shadow-2xl)] border border-[var(--line-strong)] group transition-colors duration-500">
       {/* 애니메이션 글로우 배경 */}
       <div className="absolute -right-20 -top-20 h-96 w-96 rounded-full bg-[var(--accent-strong)] opacity-[0.05] dark:opacity-10 blur-[100px] group-hover:opacity-20 transition-all duration-1000" />
-      <div className="absolute -left-20 -bottom-20 h-96 w-96 rounded-full bg-indigo-500 opacity-[0.05] dark:opacity-10 blur-[100px] group-hover:opacity-20 transition-all duration-1000" />
+      <div className="absolute -left-20 -bottom-20 h-96 w-96 rounded-full bg-[var(--chart-2)] opacity-[0.05] dark:opacity-10 blur-[100px] group-hover:opacity-20 transition-all duration-1000" />
       
       <div className="relative z-10 grid gap-12 lg:grid-cols-[1.2fr_0.8fr] items-center">
         <div className="space-y-8">
@@ -33,7 +33,7 @@ export function ModulePlaceholder({
             <span className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-2 text-[11px] font-bold tracking-wider text-[var(--text-hint)] backdrop-blur-md">
               {localeLabel}
             </span>
-            <span className="rounded-xl border border-indigo-500/30 bg-indigo-500/10 px-4 py-2 text-[11px] font-bold tracking-wider text-indigo-500 dark:text-indigo-400 backdrop-blur-md">
+            <span className="rounded-xl border border-[var(--chart-2)]/30 bg-[var(--chart-2)]/10 px-4 py-2 text-[11px] font-bold tracking-wider text-[var(--chart-2)] backdrop-blur-md">
               {statusLabel}
             </span>
           </div>
@@ -49,7 +49,7 @@ export function ModulePlaceholder({
         </div>
 
         <div className="relative">
-          <div className="absolute -inset-4 rounded-[var(--radius-2xl)] bg-gradient-to-tr from-[var(--accent-strong)]/10 via-transparent to-indigo-500/10 blur-3xl opacity-50" />
+          <div className="absolute -inset-4 rounded-[var(--radius-2xl)] bg-gradient-to-tr from-[var(--accent-strong)]/10 via-transparent to-[var(--chart-2)]/10 blur-3xl opacity-50" />
           <div className="relative rounded-[2rem] border border-[var(--line-strong)] bg-[var(--surface)] p-10 backdrop-blur-3xl shadow-[var(--shadow-xl)]">
             <div className="flex items-center gap-4 mb-8">
               <div className="h-10 w-10 rounded-2xl bg-[var(--accent-strong)]/10 flex items-center justify-center text-[var(--accent-strong)] ring-1 ring-[var(--accent-strong)]/20 shadow-inner">

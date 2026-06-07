@@ -233,6 +233,8 @@ export interface ProjectContextState {
   isStale: (downstream: ModuleKey) => boolean;
   // 수지분석에 실제 반영된 업스트림 단계 완성도(0~100, 무목업: 실데이터 유무 기반).
   feasibilityCompleteness: () => FeasibilityCompleteness;
+  // 프로젝트 전체 완성도(부지·설계·공사비·법규·금융·ESG·인허가) — 감사 지적 반영.
+  projectCompleteness: () => ProjectCompleteness;
 }
 
 /* ── 수지 완성도/신뢰도 파생 모델 ──
@@ -249,6 +251,34 @@ export interface FeasibilityCompletenessStage {
 export interface FeasibilityCompleteness {
   stages: FeasibilityCompletenessStage[];
   pct: number; // 반영도(%) — 완료된 마지막 단계의 누적 가중치
+}
+
+/* ── 프로젝트 전체 완성도 파생 모델 ──
+   수지 투입(부지/설계/공사비/금융)에 더해 감사 지적 단계(법규/ESG/인허가)까지 포함해
+   프로젝트 전주기 완성도를 산출한다. 무목업: 각 단계 done은 해당 store 데이터(또는
+   완료 단계 기록) 유무로만 판정. 가중치 균등(7단계, 각 1/7) → 완료 비율(%). */
+export type ProjectCompletenessKey =
+  | "site"
+  | "design"
+  | "cost"
+  | "compliance"
+  | "finance"
+  | "esg"
+  | "permit";
+export interface ProjectCompletenessStage {
+  key: ProjectCompletenessKey;
+  label: string;
+  done: boolean;
+  // 부분 반영(예: 주소만 있고 면적 미확보) — done=false이되 정직 표기용 보조 플래그.
+  partial?: boolean;
+}
+export interface ProjectCompleteness {
+  stages: ProjectCompletenessStage[];
+  // 완료 단계 수
+  doneCount: number;
+  total: number;
+  // 전체 완성도(%) — 완료 단계 / 전체 단계(균등 가중).
+  pct: number;
 }
 
 /* ── Initial cross-module state ── */
@@ -615,6 +645,55 @@ export const useProjectContextStore = create<ProjectContextState>()(
           pct = st.weightPct;
         }
         return { stages, pct };
+      },
+
+      projectCompleteness: () => {
+        const s = get();
+        // 무목업: 각 단계 done은 실데이터(또는 완료 단계 기록)로만 판정.
+        const siteDone = !!(
+          s.siteAnalysis?.landAreaSqm && s.siteAnalysis.landAreaSqm > 0
+        );
+        const siteAddressOnly = !siteDone && !!s.siteAnalysis?.address;
+        const designDone = !!(
+          s.designData?.totalGfaSqm && s.designData.totalGfaSqm > 0
+        );
+        const costDone = !!(
+          s.costData?.totalConstructionCostWon &&
+          s.costData.totalConstructionCostWon > 0
+        );
+        // 법규: 컴플라이언스 데이터(어느 판정이라도 존재)가 채워졌는가.
+        const complianceDone = !!(
+          s.complianceData &&
+          (s.complianceData.bcrCompliant != null ||
+            s.complianceData.farCompliant != null ||
+            s.complianceData.heightCompliant != null ||
+            (s.complianceData.violations?.length ?? 0) > 0)
+        );
+        // 금융: finance 단계가 산출(updatedAt stamp)되었는가. 별도 데이터 필드가
+        // 없으므로 staleness 타임스탬프를 done 신호로 사용(무목업: 실제 산출 시에만 stamp).
+        const financeDone = !!s.updatedAt.finance;
+        // ESG: 탄소 산출 결과가 채워졌는가.
+        const esgDone = !!(
+          s.esgData &&
+          ((s.esgData.totalCarbonPerSqm ?? 0) > 0 ||
+            (s.esgData.embodiedCarbonKg ?? 0) > 0)
+        );
+        // 인허가: 전용 데이터 필드가 없어 완료 단계 기록으로 판정(무목업).
+        const permitDone = s.completedStages.includes("permit");
+
+        const stages: ProjectCompletenessStage[] = [
+          { key: "site", label: "부지", done: siteDone, partial: siteAddressOnly },
+          { key: "design", label: "설계", done: designDone },
+          { key: "cost", label: "공사비", done: costDone },
+          { key: "compliance", label: "법규", done: complianceDone },
+          { key: "finance", label: "금융", done: financeDone },
+          { key: "esg", label: "ESG", done: esgDone },
+          { key: "permit", label: "인허가", done: permitDone },
+        ];
+        const total = stages.length;
+        const doneCount = stages.filter((st) => st.done).length;
+        const pct = total > 0 ? Math.round((doneCount / total) * 100) : 0;
+        return { stages, doneCount, total, pct };
       },
     }),
     {
