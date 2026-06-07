@@ -7,6 +7,12 @@ import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryEr
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import { ApiClientError, apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import {
+  useAnalysisCache,
+  analysisSignature,
+  relativeKoreanTime,
+} from "@/lib/use-analysis-cache";
+import { AnalysisCacheStatus } from "@/components/common/AnalysisCacheStatus";
 import { GlobalAddressSearch } from "@/components/common/GlobalAddressSearch";
 import { NumberInput } from "@/components/common/NumberInput";
 import { AutoZoningBadge } from "@/components/projects/AutoZoningBadge";
@@ -316,6 +322,21 @@ export function ProjectSiteAnalysisWorkspaceClient({
   const [parcelResult, setParcelResult] = useState<ParcelInfoResponse | null>(
     null,
   );
+
+  // 영속 캐시: 주소·PNU·면적 불변이면 검증된 AVM·필지 결과 재사용(매 방문 재호출 방지),
+  // 입력이 바뀌면 재분석 제안. auto 모드 자동호출을 캐시로 게이팅한다.
+  const avmSignature = analysisSignature(autoAddress, autoPnu, autoArea);
+  const {
+    cached: avmCached,
+    isFresh: avmFresh,
+    isStale: avmStale,
+    at: avmAt,
+    save: saveAvm,
+  } = useAnalysisCache<{ avm: AVMEstimateResponse; parcel: ParcelInfoResponse | null }>(
+    "avm",
+    avmSignature,
+  );
+  const [avmForceRun, setAvmForceRun] = useState(0);
   const [form, setForm] = useState<{
     address: string;
     areaSqm: number | null;
@@ -375,6 +396,13 @@ export function ProjectSiteAnalysisWorkspaceClient({
     if (!autoMode || !canUseLiveApi || !autoArea || !isUuidProject) {
       return;
     }
+    // 캐시 신선(입력 불변) & 강제재실행 아님 → 검증된 결과 즉시 재사용, 네트워크 호출 생략.
+    if (avmForceRun === 0 && avmFresh && avmCached?.avm) {
+      setAvmResult(avmCached.avm);
+      setParcelResult(avmCached.parcel ?? null);
+      setIsAutoLoading(false);
+      return;
+    }
     let cancelled = false;
     setWorkspaceError("");
     setIsAutoLoading(true);
@@ -394,15 +422,19 @@ export function ProjectSiteAnalysisWorkspaceClient({
         setAvmResult(avm);
 
         let parcelZoning: string | null = null;
+        let parcelData: ParcelInfoResponse | null = null;
         if (autoPnu) {
           const parcel = await apiClient.post<ParcelInfoResponse>(
             "/external/parcel/info",
             { useMock: false, body: { pnu: autoPnu } },
           );
           if (cancelled) return;
+          parcelData = parcel;
           setParcelResult(parcel);
           parcelZoning = parcel.zoning || null;
         }
+        // 검증된 결과 영속 → 재방문 시 재사용(입력 불변이면 재호출 안 함)
+        saveAvm({ avm, parcel: parcelData });
 
         updateSiteAnalysis({
           estimatedValue: avm.estimated_price,
@@ -435,7 +467,7 @@ export function ProjectSiteAnalysisWorkspaceClient({
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoMode, canUseLiveApi, autoAddress, autoPnu, autoArea]);
+  }, [autoMode, canUseLiveApi, autoAddress, autoPnu, autoArea, avmForceRun]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -748,6 +780,17 @@ export function ProjectSiteAnalysisWorkspaceClient({
             <p className="mt-1 text-[11px] leading-5 text-[var(--text-tertiary)]">
               {labels.avmAutoHint}
             </p>
+            {autoMode && (
+              <AnalysisCacheStatus
+                isFresh={avmFresh && !!avmResult}
+                isStale={avmStale && !!avmResult}
+                at={avmAt}
+                relativeLabel={relativeKoreanTime(avmAt)}
+                onRerun={() => setAvmForceRun((n) => n + 1)}
+                busy={isAutoLoading}
+                rerunLabel="↻ 재감정"
+              />
+            )}
             {avmResult ? (
               <div className="mt-4 grid gap-4 md:grid-cols-2">
                 <MetricTile

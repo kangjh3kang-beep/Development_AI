@@ -237,30 +237,46 @@ class BuildingCodeRuleEngine:
             required_parking = math.ceil(total_gfa / per_sqm)
             calc_basis = f"연면적 {total_gfa:.0f}㎡ ÷ {per_sqm}㎡"
 
+        # ── 법정 주차대수 하한·상한 산정 ──
+        #  · 하한(lower) = 「주차장법 시행령 §6」 별표1 기준 설치 최소대수(조례가 강화하면 실효 하한↑).
+        #  · 상한(upper): 「주차장법」상 부설주차장 *설치 상한 규정은 원칙적으로 없음*.
+        #    다만 ① 지자체가 도심·상업지에 '부설주차장 설치 상한제'를 두거나(과밀억제),
+        #         ② 친환경·교통수요관리로 완화(감면)할 수 있어 조례 별도 확인 필요.
+        #    실무 권장 운영 상한 = 법정 하한 + 여유 10%(회전·방문차 대비). 정직 표기.
+        lower_spaces = required_parking
+        upper_spaces = math.ceil(required_parking * 1.1)
+        bound_note = (
+            f"법정 하한 {lower_spaces}대(조례 강화 시 ↑) · 실무 권장 상한 {upper_spaces}대(여유 10%) · "
+            f"법정 설치 상한 규정 없음(지자체 상한제·완화 별도 확인) · {calc_basis}"
+        )
+
         # 주차대수 미입력 시 — 자동 추정치 표시 경고
         if actual_parking == 0:
             return RuleCheckResult(
                 rule_id="BL-005",
                 rule_name="주차대수 검증",
-                legal_basis="주차장법 시행령 제6조",
+                legal_basis="주차장법 시행령 제6조 별표1",
                 status=ComplianceStatus.WARNING,
-                required_value=f"최소 {required_parking}대 ({calc_basis})",
+                required_value=bound_note,
                 actual_value="미입력",
-                message=f"주차대수 미입력 — 법정 최소 {required_parking}대 확보 필요",
+                message=(
+                    f"주차대수 미입력 — 법정 최소(하한) {lower_spaces}대 확보 필요"
+                    f"(권장 상한 {upper_spaces}대)"
+                ),
             )
 
         status = ComplianceStatus.PASS if actual_parking >= required_parking else ComplianceStatus.FAIL
         return RuleCheckResult(
             rule_id="BL-005",
             rule_name="주차대수 검증",
-            legal_basis="주차장법 시행령 제6조",
+            legal_basis="주차장법 시행령 제6조 별표1",
             status=status,
-            required_value=f"최소 {required_parking}대 ({calc_basis})",
+            required_value=bound_note,
             actual_value=f"{actual_parking}대",
             message=(
-                f"주차 적합 ({actual_parking}대 ≥ {required_parking}대)"
+                f"주차 적합 ({actual_parking}대 ≥ 법정 하한 {lower_spaces}대 · 권장 상한 {upper_spaces}대 이내 권장)"
                 if status == ComplianceStatus.PASS
-                else f"주차 부족 ({actual_parking}대 < {required_parking}대) — {required_parking - actual_parking}대 추가 필요"
+                else f"주차 부족 ({actual_parking}대 < 법정 하한 {lower_spaces}대) — {lower_spaces - actual_parking}대 추가 필요"
             ),
         )
 

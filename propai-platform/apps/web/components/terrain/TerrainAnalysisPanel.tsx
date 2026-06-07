@@ -8,8 +8,14 @@
  *   소형필지+저해상도면 note로 한계를 명시한다(할루시네이션 방지 철학).
  */
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Card, CardContent } from "@propai/ui";
+import {
+  useAnalysisCache,
+  analysisSignature,
+  relativeKoreanTime,
+} from "@/lib/use-analysis-cache";
+import { AnalysisCacheStatus } from "@/components/common/AnalysisCacheStatus";
 import {
   Area,
   AreaChart,
@@ -113,6 +119,27 @@ export function TerrainAnalysisPanel({
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
+  // 영속 캐시: 입력 시그니처(주소·PNU·계획고·단면방위)가 같으면 검증된 결과 재사용,
+  // 바뀌면 재분석 제안. 매 방문 재실행을 막는다.
+  const signature = analysisSignature(
+    (addr || address || "").trim(),
+    pnu,
+    targetInput,
+    bearingInput,
+  );
+  const { cached, isFresh, isStale, at, save } = useAnalysisCache<TerrainResult>(
+    "terrain",
+    signature,
+  );
+  // 마운트/캐시 복원: 화면에 결과가 없고 캐시가 있으면 즉시 복원(재실행 없음).
+  const restoredRef = useRef(false);
+  useEffect(() => {
+    if (!res && cached && !restoredRef.current) {
+      restoredRef.current = true;
+      setRes(cached);
+    }
+  }, [res, cached]);
+
   const run = useCallback(async () => {
     const a = (addr || address || "").trim();
     if (!a && !pnu) {
@@ -132,8 +159,10 @@ export function TerrainAnalysisPanel({
           section_bearing_deg: bearing != null && !Number.isNaN(bearing) ? bearing : null,
         },
       });
-      if (d?.ok) setRes(d);
-      else {
+      if (d?.ok) {
+        setRes(d);
+        save(d); // 검증된 결과 영속 → 재방문 시 재사용
+      } else {
         setRes(null);
         setErr(d?.message || "지형분석 실패 — 좌표·필지 또는 표고 데이터를 확보하지 못했습니다.");
       }
@@ -143,7 +172,7 @@ export function TerrainAnalysisPanel({
     } finally {
       setBusy(false);
     }
-  }, [addr, address, pnu, targetInput, bearingInput]);
+  }, [addr, address, pnu, targetInput, bearingInput, save]);
 
   const inp =
     "h-9 w-full rounded-lg border border-[var(--line)] bg-[var(--surface-strong)] px-3 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]";
@@ -222,6 +251,16 @@ export function TerrainAnalysisPanel({
             ⚠ {err}
           </p>
         )}
+
+        <AnalysisCacheStatus
+          isFresh={isFresh && !!res}
+          isStale={isStale && !!res}
+          at={at}
+          relativeLabel={relativeKoreanTime(at)}
+          onRerun={() => void run()}
+          busy={busy}
+          rerunLabel="⛰️ 재분석"
+        />
 
         {res?.ok && (
           <>

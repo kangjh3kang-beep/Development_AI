@@ -21,6 +21,12 @@ import {
   YAxis,
 } from "recharts";
 import { apiClient } from "@/lib/api-client";
+import {
+  useAnalysisCache,
+  analysisSignature,
+  relativeKoreanTime,
+} from "@/lib/use-analysis-cache";
+import { AnalysisCacheStatus } from "@/components/common/AnalysisCacheStatus";
 import type {
   EnvironmentResult,
   EnvironmentSeason,
@@ -219,6 +225,35 @@ export function EnvironmentAnalysisPanel({
   // 계절 자동 재요청 시 무한루프 방지(직전 요청 계절 기록)
   const lastSeasonRef = useRef<EnvironmentSeason | null>(null);
 
+  // 영속 캐시: 주소·PNU·층수·높이·계절 불변이면 검증된 결과(환경+조례) 재사용,
+  // 바뀌면 재분석 제안. (계절 토글은 기존 자동재요청 유지 — 명시적 사용자 조작)
+  const signature = analysisSignature(
+    (addr || address || "").trim(),
+    pnu,
+    floorsInput,
+    heightInput,
+    season,
+  );
+  const {
+    cached,
+    isFresh,
+    isStale,
+    at,
+    save,
+  } = useAnalysisCache<{ res: EnvironmentResult; ordinance: OrdinanceResult | null }>(
+    "environment",
+    signature,
+  );
+  const restoredRef = useRef(false);
+  useEffect(() => {
+    if (!res && cached?.res && !restoredRef.current) {
+      restoredRef.current = true;
+      lastSeasonRef.current = season;
+      setRes(cached.res);
+      setOrdinance(cached.ordinance ?? null);
+    }
+  }, [res, cached, season]);
+
   const run = useCallback(async () => {
     const a = (addr || address || "").trim();
     if (!a && !pnu) {
@@ -249,18 +284,18 @@ export function EnvironmentAnalysisPanel({
       if (d?.ok) {
         setRes(d);
         // 지자체 조례 병행검토(use_llm=false·동반 1회). 실패/무자료면 약식 안내 유지.
+        let reg: OrdinanceResult | null = null;
         if (a) {
           try {
-            const reg = await apiClient.post<OrdinanceResult>("/regulation/analyze", {
+            reg = await apiClient.post<OrdinanceResult>("/regulation/analyze", {
               body: { address: a, pnu: pnu ?? null, use_llm: false },
             });
-            setOrdinance(reg ?? null);
           } catch {
-            setOrdinance(null);
+            reg = null;
           }
-        } else {
-          setOrdinance(null);
         }
+        setOrdinance(reg);
+        save({ res: d, ordinance: reg }); // 검증된 결과 영속 → 재방문 시 재사용
       } else {
         setRes(null);
         setOrdinance(null);
@@ -272,7 +307,7 @@ export function EnvironmentAnalysisPanel({
     } finally {
       setBusy(false);
     }
-  }, [addr, address, pnu, floorsInput, heightInput, season]);
+  }, [addr, address, pnu, floorsInput, heightInput, season, save]);
 
   // 계절 변경 자동 재요청: 이미 분석결과(res)가 있을 때만(첫 분석 전 자동실행 금지).
   // lastSeasonRef로 직전 요청 계절과 비교해 중복/무한루프 방지.
@@ -390,6 +425,16 @@ export function EnvironmentAnalysisPanel({
             ⚠ {err}
           </p>
         )}
+
+        <AnalysisCacheStatus
+          isFresh={isFresh && !!res}
+          isStale={isStale && !!res}
+          at={at}
+          relativeLabel={relativeKoreanTime(at)}
+          onRerun={() => void run()}
+          busy={busy}
+          rerunLabel="☀️ 재분석"
+        />
 
         {res?.ok && (
           <>

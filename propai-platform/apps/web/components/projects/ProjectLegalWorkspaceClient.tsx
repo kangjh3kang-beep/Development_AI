@@ -255,6 +255,38 @@ function formatDate(locale: string, value: string) {
   }).format(new Date(value));
 }
 
+// 프로젝트 상태 코드 → 일반 한국어(영문은 원어). DB enum(draft/active/…)을 사용자 친화 표기로.
+function projectStatusLabel(locale: string, status?: string | null): string {
+  if (!status) return "-";
+  const ko: Record<string, string> = {
+    draft: "작성 중",
+    active: "진행 중",
+    in_progress: "진행 중",
+    review: "검토 중",
+    completed: "완료",
+    done: "완료",
+    archived: "보관됨",
+    on_hold: "보류",
+    cancelled: "취소됨",
+    canceled: "취소됨",
+  };
+  const en: Record<string, string> = {
+    draft: "Draft",
+    active: "Active",
+    in_progress: "In progress",
+    review: "In review",
+    completed: "Completed",
+    done: "Completed",
+    archived: "Archived",
+    on_hold: "On hold",
+    cancelled: "Cancelled",
+    canceled: "Cancelled",
+  };
+  const key = status.toLowerCase();
+  const map = locale.startsWith("ko") ? ko : en;
+  return map[key] ?? status;
+}
+
 // rule-check status별 한글 라벨·색상(토큰 기반). 가짜 pass 금지 — 백엔드 status 그대로 매핑.
 function ruleStatusMeta(status: string): { label: string; className: string } {
   const s = (status || "").toLowerCase();
@@ -372,7 +404,11 @@ export function ProjectLegalWorkspaceClient({
       plannedBcr: current.plannedBcr || (designData?.bcr ? String(designData.bcr) : ""),
       plannedFar: current.plannedFar || (designData?.far ? String(designData.far) : ""),
       plannedFloors: current.plannedFloors || (designData?.floorCount ? String(designData.floorCount) : ""),
-      plannedHeight: current.plannedHeight || (designData?.floorCount ? String(designData.floorCount * 3.3) : ""),
+      plannedHeight:
+        current.plannedHeight ||
+        (designData?.floorCount
+          ? String(Math.round(designData.floorCount * 3.3 * 10) / 10)
+          : ""),
     }));
   }, [siteAnalysis, designData]);
 
@@ -712,7 +748,7 @@ export function ProjectLegalWorkspaceClient({
                 <div className="mt-4 grid gap-3 md:grid-cols-2">
                   <MetricTile
                     label={labels.projectStatusLabel}
-                    value={projectQuery.data?.status ?? "-"}
+                    value={projectStatusLabel(locale, projectQuery.data?.status)}
                   />
                   <MetricTile
                     label={labels.projectUpdatedLabel}
@@ -739,63 +775,83 @@ export function ProjectLegalWorkspaceClient({
                   label={labels.addressLabel}
                   placeholder={labels.addressLabel}
                 />
-                <Input
-                  value={form.zoneCode}
-                  onChange={(event) =>
-                    setForm((current) => ({
-                      ...current,
-                      zoneCode: event.target.value,
-                    }))
-                  }
-                  placeholder={labels.zoneCodeLabel}
-                />
+                <label className="block text-xs font-semibold text-[var(--text-secondary)]">
+                  {labels.zoneCodeLabel}
+                  <Input
+                    className="mt-1"
+                    value={form.zoneCode}
+                    onChange={(event) =>
+                      setForm((current) => ({
+                        ...current,
+                        zoneCode: event.target.value,
+                      }))
+                    }
+                    placeholder={labels.zoneCodeLabel}
+                  />
+                </label>
                 <div className="grid gap-3 md:grid-cols-2">
-                  <Input
-                    type="number"
-                    value={form.plannedBcr}
-                    onChange={(event) =>
-                      setForm((current) => ({
-                        ...current,
-                        plannedBcr: event.target.value,
-                      }))
-                    }
-                    placeholder={labels.plannedBcrLabel}
-                  />
-                  <Input
-                    type="number"
-                    value={form.plannedFar}
-                    onChange={(event) =>
-                      setForm((current) => ({
-                        ...current,
-                        plannedFar: event.target.value,
-                      }))
-                    }
-                    placeholder={labels.plannedFarLabel}
-                  />
+                  <label className="block text-xs font-semibold text-[var(--text-secondary)]">
+                    {labels.plannedBcrLabel}
+                    <Input
+                      className="mt-1"
+                      type="number"
+                      value={form.plannedBcr}
+                      onChange={(event) =>
+                        setForm((current) => ({
+                          ...current,
+                          plannedBcr: event.target.value,
+                        }))
+                      }
+                      placeholder={labels.plannedBcrLabel}
+                    />
+                  </label>
+                  <label className="block text-xs font-semibold text-[var(--text-secondary)]">
+                    {labels.plannedFarLabel}
+                    <Input
+                      className="mt-1"
+                      type="number"
+                      value={form.plannedFar}
+                      onChange={(event) =>
+                        setForm((current) => ({
+                          ...current,
+                          plannedFar: event.target.value,
+                        }))
+                      }
+                      placeholder={labels.plannedFarLabel}
+                    />
+                  </label>
                 </div>
                 <div className="grid gap-3 md:grid-cols-2">
-                  <Input
-                    type="number"
-                    value={form.plannedHeight}
-                    onChange={(event) =>
-                      setForm((current) => ({
-                        ...current,
-                        plannedHeight: event.target.value,
-                      }))
-                    }
-                    placeholder={labels.plannedHeightLabel}
-                  />
-                  <Input
-                    type="number"
-                    value={form.plannedFloors}
-                    onChange={(event) =>
-                      setForm((current) => ({
-                        ...current,
-                        plannedFloors: event.target.value,
-                      }))
-                    }
-                    placeholder={labels.plannedFloorsLabel}
-                  />
+                  <label className="block text-xs font-semibold text-[var(--text-secondary)]">
+                    {labels.plannedHeightLabel}
+                    <Input
+                      className="mt-1"
+                      type="number"
+                      value={form.plannedHeight}
+                      onChange={(event) =>
+                        setForm((current) => ({
+                          ...current,
+                          plannedHeight: event.target.value,
+                        }))
+                      }
+                      placeholder={labels.plannedHeightLabel}
+                    />
+                  </label>
+                  <label className="block text-xs font-semibold text-[var(--text-secondary)]">
+                    {labels.plannedFloorsLabel}
+                    <Input
+                      className="mt-1"
+                      type="number"
+                      value={form.plannedFloors}
+                      onChange={(event) =>
+                        setForm((current) => ({
+                          ...current,
+                          plannedFloors: event.target.value,
+                        }))
+                      }
+                      placeholder={labels.plannedFloorsLabel}
+                    />
+                  </label>
                 </div>
                 <Button type="submit" disabled={!canUseLiveApi || isSubmitting}>
                   {isSubmitting

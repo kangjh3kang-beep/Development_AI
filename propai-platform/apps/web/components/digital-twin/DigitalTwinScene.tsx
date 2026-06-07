@@ -17,6 +17,12 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { TextureLoader } from "three";
 import * as THREE from "three";
 import { apiClient, resolveApiOrigin } from "@/lib/api-client";
+import {
+  useAnalysisCache,
+  analysisSignature,
+  relativeKoreanTime,
+} from "@/lib/use-analysis-cache";
+import { AnalysisCacheStatus } from "@/components/common/AnalysisCacheStatus";
 import type {
   DigitalTwinScenePayload,
   DigitalTwinTerrain,
@@ -701,6 +707,32 @@ export default function DigitalTwinScene({
   const [analysisFetched, setAnalysisFetched] = useState(false);
   // 일조 시각 슬라이더(09~15시). sunPath ON 시 directionalLight 방향에 사용.
   const [sunHour, setSunHour] = useState(12);
+  // 영속 캐시: 주소·PNU·설계버전 불변이면 검증된 씬 재사용(재방문 시 재생성 방지),
+  // 입력 변경 시 재생성 제안.
+  const dtSignature = analysisSignature(
+    (addr || address || "").trim(),
+    pnu,
+    designVersionId,
+  );
+  const {
+    cached: dtCached,
+    isFresh: dtFresh,
+    isStale: dtStale,
+    at: dtAt,
+    save: saveDt,
+  } = useAnalysisCache<DigitalTwinScenePayload>("digitalTwin", dtSignature);
+  const dtRestoredRef = useRef(false);
+  useEffect(() => {
+    if (!payload && dtCached && !dtRestoredRef.current) {
+      dtRestoredRef.current = true;
+      setPayload(dtCached);
+      setLayers((prev) => ({
+        ...prev,
+        building: !!dtCached.building?.glb_url && prev.building,
+      }));
+    }
+  }, [payload, dtCached]);
+
   // zone은 prop 우선, 없으면 environment 응답 zone_type 폴백.
   const effectiveZone = zoneType ?? envData?.zone_type ?? null;
   const maxHeightM = zoneMaxHeightM(effectiveZone);
@@ -735,6 +767,7 @@ export default function DigitalTwinScene({
       });
       if (d?.ok) {
         setPayload(d);
+        saveDt(d); // 검증된 씬 영속 → 재방문 시 재사용(입력 불변이면 재생성 안 함)
         // 건물 glb 없으면 토글 비활성 표시
         setLayers((prev) => ({ ...prev, building: !!d.building?.glb_url && prev.building }));
       } else {
@@ -747,7 +780,7 @@ export default function DigitalTwinScene({
     } finally {
       setBusy(false);
     }
-  }, [addr, address, pnu, designVersionId]);
+  }, [addr, address, pnu, designVersionId, saveDt]);
 
   // 분석 레이어 데이터 lazy fetch — 토글/요약 진입 시 1회. 씬 POST와 분리(성능 가드).
   // /environment/analyze + /terrain/analyze 동일 엔드포인트 재사용, use_llm 미사용(비용·게이트 회피).
@@ -844,6 +877,16 @@ export default function DigitalTwinScene({
           {err}
         </div>
       )}
+
+      <AnalysisCacheStatus
+        isFresh={dtFresh && !!payload}
+        isStale={dtStale && !!payload}
+        at={dtAt}
+        relativeLabel={relativeKoreanTime(dtAt)}
+        onRerun={() => void run()}
+        busy={busy}
+        rerunLabel="↻ 재생성"
+      />
 
       {payload && (
         <>

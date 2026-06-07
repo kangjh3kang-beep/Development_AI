@@ -145,6 +145,22 @@ export type LifecycleStage = (typeof LIFECYCLE_STAGES)[number];
 /* ── Per-project snapshot ──
    프로젝트별 분석 상태를 보관해, 프로젝트 전환/재선택 시 이전 분석을 복원한다.
    (이전 버그: setProject가 전환 시 모든 분석을 초기화 → 불러오기 시 0/없음으로 표시) */
+/* ── 무거운 휘발성 분석(지형·환경·AVM·디지털트윈 등) 영속 캐시 ──
+   매 방문 재실행을 막기 위해, 분석종류(kind)별로 입력 시그니처와 결과를 보관한다.
+   재방문 시 시그니처가 같으면 검증된 결과를 즉시 재사용하고, 입력(원·첨부·보강 데이터)이
+   바뀌면 결과는 유지하되 stale=true로 "재분석 제안"을 띄운다(자동 재실행 안 함). */
+export type AnalysisCacheKind =
+  | "terrain"
+  | "environment"
+  | "avm"
+  | "digitalTwin"
+  | "l3";
+export interface AnalysisCacheEntry {
+  signature: string; // 재분석 트리거가 되는 입력값들의 결정적 문자열
+  data: unknown; // 분석 결과(패널이 캐스팅해 사용)
+  at: number; // 산출 시각(epoch ms)
+}
+
 interface ProjectSnapshot {
   siteAnalysis: SiteAnalysisData | null;
   designData: DesignData | null;
@@ -156,6 +172,7 @@ interface ProjectSnapshot {
   currentStage: string | null;
   analysisResults: AnalysisResult[];
   updatedAt: Partial<Record<ModuleKey, number>>;
+  analysisCache: Partial<Record<AnalysisCacheKind, AnalysisCacheEntry>>;
 }
 
 /* ── Staleness / 의존성 모델 ──
@@ -212,6 +229,9 @@ export interface ProjectContextState {
   // 모듈별 최종 갱신 타임스탬프(epoch ms) — staleness 판정용
   updatedAt: Partial<Record<ModuleKey, number>>;
 
+  // 무거운 휘발성 분석 영속 캐시(현재 프로젝트 기준)
+  analysisCache: Partial<Record<AnalysisCacheKind, AnalysisCacheEntry>>;
+
   // Actions
   // projectId 단일 SSOT writer. name/status를 원자 저장하고, address가 주어지면
   // (스냅샷 복원이 우선이되) 신규/주소 미설정 프로젝트에 한해 siteAnalysis.address를 시드한다.
@@ -233,6 +253,14 @@ export interface ProjectContextState {
   markStageComplete: (stage: string) => void;
   setCurrentStage: (stage: string) => void;
   addAnalysisResult: (result: AnalysisResult) => void;
+
+  // 분석캐시 — 현재 프로젝트의 kind별 캐시 조회/저장(저장은 스냅샷에 영속).
+  getAnalysisCache: (kind: AnalysisCacheKind) => AnalysisCacheEntry | null;
+  setAnalysisCache: (
+    kind: AnalysisCacheKind,
+    signature: string,
+    data: unknown,
+  ) => void;
 
   // Computed
   getNextRecommendedStage: () => string | null;
@@ -317,6 +345,7 @@ function snapOf(s: ProjectContextState): ProjectSnapshot {
     currentStage: s.currentStage,
     analysisResults: s.analysisResults,
     updatedAt: s.updatedAt,
+    analysisCache: s.analysisCache,
   };
 }
 
@@ -454,6 +483,9 @@ export const useProjectContextStore = create<ProjectContextState>()(
       // 모듈별 갱신 타임스탬프
       updatedAt: {},
 
+      // 분석캐시
+      analysisCache: {},
+
       /* ── Actions ── */
 
       setProject: (id, name, status, address) => {
@@ -517,12 +549,14 @@ export const useProjectContextStore = create<ProjectContextState>()(
                 currentStage: snap.currentStage ?? null,
                 analysisResults: snap.analysisResults ?? [],
                 updatedAt: snap.updatedAt ?? {},
+                analysisCache: snap.analysisCache ?? {},
               }
             : {
                 completedStages: [],
                 currentStage: null,
                 analysisResults: [],
                 updatedAt: {},
+                analysisCache: {},
                 ...INITIAL_CROSS_MODULE,
                 siteAnalysis: seededSite,
               }),
@@ -544,8 +578,24 @@ export const useProjectContextStore = create<ProjectContextState>()(
           analysisResults: [],
           snapshots,
           updatedAt: {},
+          analysisCache: {},
           ...INITIAL_CROSS_MODULE,
         });
+      },
+
+      getAnalysisCache: (kind) => {
+        const c = get().analysisCache?.[kind];
+        return c ?? null;
+      },
+      setAnalysisCache: (kind, signature, data) => {
+        set((state) =>
+          withSnap(state, {
+            analysisCache: {
+              ...(state.analysisCache ?? {}),
+              [kind]: { signature, data, at: Date.now() },
+            },
+          }),
+        );
       },
 
       updateSiteAnalysis: (data) => {
