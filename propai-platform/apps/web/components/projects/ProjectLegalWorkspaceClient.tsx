@@ -6,6 +6,7 @@ import { Button, Card, CardContent, CardTitle, Input } from "@propai/ui";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
+import { RegulationHierarchyView, type RegResult } from "@/components/regulation/RegulationHierarchyView";
 import { ApiClientError, apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import type { Locale } from "@/i18n/config";
@@ -38,6 +39,29 @@ type ComplianceCheckResponse = {
   overall_pass: boolean;
   remarks?: string;
   ai_analysis?: string;
+};
+
+// 규제 체크리스트(건축법 8항목): BuildingCodeRuleEngine.check_all 직렬화 응답.
+type RuleCheckItem = {
+  rule_id: string;
+  rule_name: string;
+  legal_basis: string;
+  status: string; // pass / fail / warning / n/a
+  required_value: string;
+  actual_value: string;
+  message: string;
+};
+
+type RuleCheckResponse = {
+  zone_code?: string | null;
+  zone_name?: string | null;
+  overall_status: string; // pass / fail / warning
+  pass_count: number;
+  fail_count: number;
+  warning_count: number;
+  na_count: number;
+  results: RuleCheckItem[];
+  summary?: string | null;
 };
 
 /* ── Labels ── */
@@ -74,6 +98,14 @@ type Labels = {
   failLabel: string;
   overallLabel: string;
   regulationTitle: string;
+  ruleCheckTitle: string;
+  ruleCheckHint: string;
+  ruleCheckEmpty: string;
+  ruleCheckLoading: string;
+  ruleLegalBasisLabel: string;
+  ruleRequiredLabel: string;
+  ruleActualLabel: string;
+  ruleSummaryFmt: string;
   placeholder: string;
   autoLoading: string;
   autoMissingZone: string;
@@ -120,6 +152,16 @@ const KO_LABELS: Labels = {
   failLabel: "부적합",
   overallLabel: "종합 판정",
   regulationTitle: "규제 체크리스트",
+  ruleCheckTitle: "규제 체크리스트 (건축법 항목별)",
+  ruleCheckHint:
+    "건폐율·용적률·높이·건축선후퇴·주차·일조·피난방화·장애인편의 8개 항목을 관련 조항과 함께 검토합니다. 설계값이 없는 항목은 검토필요/해당없음으로 정직 표기합니다.",
+  ruleCheckEmpty:
+    "부지분석에서 용도지역이 확정되면 건축법 8개 항목 체크리스트가 자동으로 표시됩니다.",
+  ruleCheckLoading: "건축법 8개 항목을 검토 중입니다...",
+  ruleLegalBasisLabel: "관련 조항",
+  ruleRequiredLabel: "기준",
+  ruleActualLabel: "현재(계획)",
+  ruleSummaryFmt: "적합 {pass} · 부적합 {fail} · 검토필요 {warning} · 해당없음 {na}",
   placeholder:
     "폼을 제출하면 건축 법규 적합성 검토 결과가 표시됩니다.",
   autoLoading: "용도지역 기준 법정 한도를 불러오는 중입니다...",
@@ -170,6 +212,16 @@ const EN_LABELS: Labels = {
   failLabel: "Fail",
   overallLabel: "Overall result",
   regulationTitle: "Regulation checklist",
+  ruleCheckTitle: "Regulation checklist (Building Act items)",
+  ruleCheckHint:
+    "Reviews 8 items (BCR, FAR, height, setback, parking, sunlight, evacuation/fire, accessibility) with their legal basis. Items without design values are honestly marked as review-needed / not-applicable.",
+  ruleCheckEmpty:
+    "The 8-item Building Act checklist appears automatically once the zone is confirmed in site analysis.",
+  ruleCheckLoading: "Reviewing the 8 Building Act items...",
+  ruleLegalBasisLabel: "Legal basis",
+  ruleRequiredLabel: "Required",
+  ruleActualLabel: "Actual (planned)",
+  ruleSummaryFmt: "Pass {pass} · Fail {fail} · Review {warning} · N/A {na}",
   placeholder:
     "Submit the form to validate the building compliance check results.",
   autoLoading: "Loading statutory limits for the zone...",
@@ -201,6 +253,34 @@ function formatDate(locale: string, value: string) {
     dateStyle: "medium",
     timeStyle: "short",
   }).format(new Date(value));
+}
+
+// rule-check status별 한글 라벨·색상(토큰 기반). 가짜 pass 금지 — 백엔드 status 그대로 매핑.
+function ruleStatusMeta(status: string): { label: string; className: string } {
+  const s = (status || "").toLowerCase();
+  if (s === "pass") {
+    return {
+      label: "적합",
+      className: "bg-[rgba(14,116,144,0.12)] text-[var(--accent-strong)]",
+    };
+  }
+  if (s === "fail") {
+    return {
+      label: "부적합",
+      className: "bg-[rgba(239,68,68,0.12)] text-[var(--error)]",
+    };
+  }
+  if (s === "n/a" || s === "na") {
+    return {
+      label: "해당없음",
+      className: "bg-[var(--surface)] text-[var(--text-tertiary)]",
+    };
+  }
+  // warning 및 기타
+  return {
+    label: "검토필요",
+    className: "bg-[rgba(217,119,6,0.12)] text-[var(--spot)]",
+  };
 }
 
 function extractErrorMessage(error: unknown, authMessage: string) {
@@ -242,8 +322,19 @@ export function ProjectLegalWorkspaceClient({
   const [limitsOnly, setLimitsOnly] = useState(false);
   const [complianceResult, setComplianceResult] =
     useState<ComplianceCheckResponse | null>(null);
+  // 종합 규제 분석(/regulation/analyze) — 화면 주(主) 분석. 계층·정량·영향도·LLM 통합 해석.
+  const [regResult, setRegResult] = useState<RegResult | null>(null);
+  const [regLoading, setRegLoading] = useState(false);
+  const [regError, setRegError] = useState("");
+  const [regLlmGated, setRegLlmGated] = useState(false);
+  // 규제 체크리스트(건축법 8항목, /building-compliance/rule-check) — 인증불필요·규칙기반.
+  const [ruleResult, setRuleResult] = useState<RuleCheckResponse | null>(null);
+  const [ruleLoading, setRuleLoading] = useState(false);
+  const [ruleError, setRuleError] = useState("");
   // 자동 로드 1회 가드: 같은 (주소+용도지역) 조합엔 자동호출 1회만, 수동제출과 충돌 방지.
   const autoLoadedKeyRef = useRef<string | null>(null);
+  const regLoadedKeyRef = useRef<string | null>(null);
+  const ruleLoadedKeyRef = useRef<string | null>(null);
   const [form, setForm] = useState({
     address: "",
     zoneCode: "",
@@ -344,6 +435,134 @@ export function ProjectLegalWorkspaceClient({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canUseLiveApi, autoZoneCode, autoAddress]);
+
+  // 종합 규제 분석 자동 로드: 부지분석 주소(용도지역 있으면 정확도↑)가 있으면 진입 시 1회 호출.
+  // /regulation/analyze는 인증 불필요. use_llm:true로 먼저 시도, 402(잔액/구독)면 use_llm:false 재호출.
+  // 무목업 — 실패 시 graceful 에러만 표기.
+  useEffect(() => {
+    if (!autoAddress) {
+      return;
+    }
+    const key = `${autoAddress}::${autoZoneCode}`;
+    if (regLoadedKeyRef.current === key || regResult || regLoading) {
+      return;
+    }
+    regLoadedKeyRef.current = key;
+
+    let cancelled = false;
+    setRegError("");
+    setRegLlmGated(false);
+    setRegLoading(true);
+
+    (async () => {
+      const reqBody = (useLlm: boolean) => ({
+        address: autoAddress,
+        pnu: (siteAnalysis?.pnu ?? "").trim() || undefined,
+        use_llm: useLlm,
+      });
+      try {
+        let result: RegResult;
+        try {
+          result = await apiClient.post<RegResult>("/regulation/analyze", {
+            useMock: false,
+            timeoutMs: 120000,
+            body: reqBody(true),
+          });
+        } catch (llmError) {
+          // LLM 게이트(402): AI 통합 해석은 잔액/구독 필요. 계층·정량·영향도는 표시.
+          if (llmError instanceof ApiClientError && llmError.status === 402) {
+            if (!cancelled) setRegLlmGated(true);
+            result = await apiClient.post<RegResult>("/regulation/analyze", {
+              useMock: false,
+              timeoutMs: 120000,
+              body: reqBody(false),
+            });
+          } else {
+            throw llmError;
+          }
+        }
+        if (cancelled) return;
+        setRegResult(result);
+      } catch (error) {
+        if (!cancelled) {
+          // 실패 시 다음 변경에서 재시도 가능하도록 가드 해제.
+          regLoadedKeyRef.current = null;
+          setRegError(extractErrorMessage(error, labels.authError));
+        }
+      } finally {
+        if (!cancelled) {
+          setRegLoading(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoAddress, autoZoneCode]);
+
+  // 규제 체크리스트 자동 로드: 부지분석 용도지역이 확정되면 진입 시 1회 호출.
+  // /building-compliance/rule-check는 인증 불필요. 부지(용도지역·대지면적·조례한도)+설계(있으면)를
+  // 전달하고, 설계값 없는 항목은 백엔드가 검토필요/해당없음으로 정직 반환(가짜 pass 없음).
+  // 동일 (주소+용도지역) 조합당 1회만(무한루프 가드).
+  useEffect(() => {
+    if (!autoZoneCode) {
+      return;
+    }
+    const key = `${autoAddress}::${autoZoneCode}`;
+    if (ruleLoadedKeyRef.current === key || ruleResult || ruleLoading) {
+      return;
+    }
+    ruleLoadedKeyRef.current = key;
+
+    let cancelled = false;
+    setRuleError("");
+    setRuleLoading(true);
+
+    const ordinance = siteAnalysis?.ordinance ?? null;
+    const floorCount = designData?.floorCount ?? 0;
+    (async () => {
+      try {
+        const result = await apiClient.post<RuleCheckResponse>(
+          "/building-compliance/rule-check",
+          {
+            useMock: false,
+            timeoutMs: 60000,
+            body: {
+              // 부지: 용도지역·대지면적·조례한도(있으면). 미입력은 백엔드가 zone_code로 보완.
+              zone_code: autoZoneCode,
+              land_area_sqm: siteAnalysis?.landAreaSqm ?? 0,
+              max_bcr: ordinance?.effectiveBcr ?? designData?.bcr ?? null,
+              max_far: ordinance?.effectiveFar ?? designData?.far ?? null,
+              // 설계: 컨텍스트에 있는 값만. 나머지는 백엔드 graceful(0).
+              building_type: designData?.buildingType ?? undefined,
+              total_gfa_sqm: designData?.totalGfaSqm ?? 0,
+              floor_count_above: floorCount,
+              building_height_m: floorCount ? floorCount * 3.3 : 0,
+            },
+          },
+        );
+        if (cancelled) return;
+        setRuleResult(result);
+      } catch (error) {
+        if (!cancelled) {
+          // 실패 시 다음 변경에서 재시도 가능하도록 가드 해제.
+          ruleLoadedKeyRef.current = null;
+          setRuleError(extractErrorMessage(error, labels.authError));
+        }
+      } finally {
+        if (!cancelled) {
+          setRuleLoading(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoAddress, autoZoneCode]);
 
   const projectError = projectQuery.error
     ? extractErrorMessage(projectQuery.error, labels.authError)
@@ -591,11 +810,141 @@ export function ProjectLegalWorkspaceClient({
 
       {/* Results */}
       <div className="grid gap-6">
-        {/* Compliance Results */}
+        {/* 종합 규제 분석 (주 분석): 계층·정량 한도(법정 vs 조례 vs 실효)·영향도·LLM 통합 해석 */}
+        <Card>
+          <CardContent className="p-6">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+                종합 규제 분석 (법령·조례·상/하위법령 + 항목별 이유·관련조항)
+              </p>
+              {regLlmGated ? (
+                <span className="rounded-full border border-[var(--line-strong)] px-2.5 py-0.5 text-[10px] font-bold text-[var(--text-tertiary)]">
+                  AI 통합 해석은 잔액/구독 필요
+                </span>
+              ) : null}
+            </div>
+            {regResult ? (
+              <div className="mt-4 grid gap-6">
+                <RegulationHierarchyView result={regResult} locale={locale} />
+              </div>
+            ) : regLoading ? (
+              <div className="mt-4">
+                <SkeletonLoader count={1} itemClassName="h-40" />
+                <p className="mt-3 text-sm leading-7 text-[var(--text-secondary)]">
+                  상위법령·도시계획·조례·개별 규제를 종합 분석 중입니다...
+                </p>
+              </div>
+            ) : regError ? (
+              <div className="mt-4 rounded-[var(--radius-xl)] border border-[rgba(217,119,6,0.28)] bg-[rgba(217,119,6,0.08)] p-5 text-sm leading-7 text-[var(--spot)]">
+                {regError}
+              </div>
+            ) : (
+              <div className="mt-4 rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[var(--text-secondary)]">
+                {autoAddress
+                  ? "부지 주소를 기준으로 종합 규제 분석을 준비합니다."
+                  : "부지분석에서 주소가 확정되면 적용 법령·조례·상/하위법령을 계층으로 종합 분석합니다."}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* 규제 체크리스트 (건축법 8항목): 항목별 상태·관련조항·이유·기준/현재 */}
+        <Card>
+          <CardContent className="p-6">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+                {labels.ruleCheckTitle}
+              </p>
+              {ruleResult ? (
+                <span className="rounded-full border border-[var(--line-strong)] px-2.5 py-0.5 text-[10px] font-bold text-[var(--text-secondary)]">
+                  {labels.ruleSummaryFmt
+                    .replace("{pass}", String(ruleResult.pass_count))
+                    .replace("{fail}", String(ruleResult.fail_count))
+                    .replace("{warning}", String(ruleResult.warning_count))
+                    .replace("{na}", String(ruleResult.na_count))}
+                </span>
+              ) : null}
+            </div>
+            <p className="mt-2 text-sm leading-7 text-[var(--text-secondary)]">
+              {labels.ruleCheckHint}
+            </p>
+            {ruleResult ? (
+              <div className="mt-4 grid gap-3">
+                {ruleResult.results.map((item) => {
+                  const meta = ruleStatusMeta(item.status);
+                  return (
+                    <div
+                      key={item.rule_id}
+                      className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-4"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-sm font-semibold text-[var(--text-primary)]">
+                          {item.rule_name}
+                        </p>
+                        <span
+                          className={`inline-block rounded-lg px-3 py-1 text-[10px] font-bold uppercase tracking-widest ${meta.className}`}
+                        >
+                          {meta.label}
+                        </span>
+                      </div>
+                      {item.legal_basis ? (
+                        <p className="mt-2 text-xs text-[var(--text-tertiary)]">
+                          {labels.ruleLegalBasisLabel}: {item.legal_basis}
+                        </p>
+                      ) : null}
+                      {item.message ? (
+                        <p className="mt-1.5 text-sm leading-7 text-[var(--text-secondary)]">
+                          {item.message}
+                        </p>
+                      ) : null}
+                      {item.required_value || item.actual_value ? (
+                        <div className="mt-2 flex flex-wrap gap-x-6 gap-y-1 text-xs text-[var(--text-secondary)]">
+                          {item.required_value ? (
+                            <span>
+                              {labels.ruleRequiredLabel}:{" "}
+                              <span className="font-semibold text-[var(--text-primary)]">
+                                {item.required_value}
+                              </span>
+                            </span>
+                          ) : null}
+                          {item.actual_value ? (
+                            <span>
+                              {labels.ruleActualLabel}:{" "}
+                              <span className="font-semibold text-[var(--text-primary)]">
+                                {item.actual_value}
+                              </span>
+                            </span>
+                          ) : null}
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : ruleLoading ? (
+              <div className="mt-4">
+                <SkeletonLoader count={1} itemClassName="h-40" />
+                <p className="mt-3 text-sm leading-7 text-[var(--text-secondary)]">
+                  {labels.ruleCheckLoading}
+                </p>
+              </div>
+            ) : ruleError ? (
+              <div className="mt-4 rounded-[var(--radius-xl)] border border-[rgba(217,119,6,0.28)] bg-[rgba(217,119,6,0.08)] p-5 text-sm leading-7 text-[var(--spot)]">
+                {ruleError}
+              </div>
+            ) : (
+              <div className="mt-4 rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[var(--text-secondary)]">
+                {labels.ruleCheckEmpty}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Compliance Results (보조): 계획값 대조용 정량 적합성 */}
         <Card>
           <CardContent className="p-6">
             <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
-              {labels.complianceTitle}
+              {labels.complianceTitle} · 계획값 대조 (보조)
             </p>
             {complianceResult ? (
               <div className="mt-4 space-y-4">

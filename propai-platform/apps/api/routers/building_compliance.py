@@ -385,6 +385,149 @@ class LegalCheckResponse(BaseModel):
     remarks: str | None = None
 
 
+# ── 항목별 정량 룰검토(BuildingCodeRuleEngine 8개 룰 노출) ──
+# legal-check가 건폐율/용적률/높이 3개만 보는 반면, rule-check는 이미 구현된
+# BuildingCodeRuleEngine.check_all(8개 룰·조문)을 그대로 직렬화한다. 새 룰 로직 작성 금지.
+# 입력 부족 시 엔진이 WARNING/N/A로 정직 반환(가짜 pass 금지).
+
+
+class RuleCheckRequest(BaseModel):
+    """부지분석·설계 컨텍스트(없으면 None/0으로 graceful)."""
+
+    # ── 부지(site_params) ──
+    zone_code: str | None = None        # 용도지역명(부지분석 zoneCode). ZONE_DEFAULTS 키와 매칭.
+    land_area_sqm: float = 0            # 대지면적(㎡)
+    max_bcr: float | None = None        # 허용 건폐율(%). 미입력 시 zone_code로 보완.
+    max_far: float | None = None        # 허용 용적률(%). 미입력 시 zone_code로 보완.
+    max_height_m: float | None = None   # 높이제한(m). 0/None=제한없음.
+    north_boundary_m: float = 0         # 정북방향 인접대지경계선까지 거리(m). 일조권용.
+
+    # ── 설계(design_params) ──
+    building_type: str | None = None    # 건물유형(아파트/공동주택/오피스텔/근린생활시설 등)
+    building_area_sqm: float = 0        # 건축면적(㎡)
+    total_gfa_sqm: float = 0            # 연면적(㎡)
+    floor_count_above: int = 0          # 지상 층수
+    floor_count_below: int = 0          # 지하 층수
+    building_height_m: float = 0        # 건물 높이(m). 0이면 층수×3.3 추정.
+    unit_count: int = 0                 # 세대/호수
+    setback_m: float | None = None      # 건축선 후퇴거리(m)
+    parking_count: int = 0              # 계획 주차대수
+    floor_area_per_floor_sqm: float = 0  # 층당 바닥면적(㎡)
+
+
+class RuleCheckItem(BaseModel):
+    rule_id: str
+    rule_name: str
+    legal_basis: str
+    status: str                         # pass / fail / warning / n/a
+    required_value: str
+    actual_value: str
+    message: str
+
+
+class RuleCheckResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    zone_code: str | None = None
+    zone_name: str | None = None
+    overall_status: str = "warning"     # pass / fail / warning
+    pass_count: int = 0
+    fail_count: int = 0
+    warning_count: int = 0
+    na_count: int = 0
+    results: list[RuleCheckItem] = Field(default_factory=list)
+    summary: str | None = None
+
+
+@router.post("/rule-check", response_model=RuleCheckResponse)
+async def rule_check(req: RuleCheckRequest) -> RuleCheckResponse:
+    """이미 구현된 BuildingCodeRuleEngine.check_all(8개 룰)을 항목별 정량검토로 노출.
+
+    건폐율·용적률·높이·건축선후퇴·주차·일조·피난방화·장애인편의 8개 항목을 조문과 함께
+    반환한다. 부지/설계 입력이 부족하면 엔진이 검토필요(warning)/해당없음(n/a)으로 정직 반환.
+    """
+    from app.services.permit.building_code_rules import (
+        ZONE_DEFAULTS,
+        BuildingCodeRuleEngine,
+    )
+
+    zone = (req.zone_code or "").strip()
+    # ZONE_DEFAULTS 키와 부분일치하는 용도지역명(엔진의 건축선후퇴/일조권 분기에 사용).
+    matched_zone = next((name for name in ZONE_DEFAULTS if name in zone), None)
+
+    # 법정 한도 보완: 미입력 시 zone_code 기반 _LEGAL_LIMITS_PCT(부분일치)로 채움(graceful).
+    max_bcr = req.max_bcr
+    max_far = req.max_far
+    max_height = req.max_height_m
+    if max_bcr is None or max_far is None or max_height is None:
+        limit_key = next((name for name in _LEGAL_LIMITS_PCT if name in zone), None)
+        if limit_key:
+            bcr_lim, far_lim, h_lim = _LEGAL_LIMITS_PCT[limit_key]
+            if max_bcr is None:
+                max_bcr = bcr_lim
+            if max_far is None:
+                max_far = far_lim
+            if max_height is None:
+                max_height = h_lim
+
+    site_params: dict[str, Any] = {
+        "land_area_sqm": req.land_area_sqm,
+        "max_bcr": max_bcr if max_bcr is not None else 60,
+        "max_far": max_far if max_far is not None else 200,
+        "max_height": max_height if max_height is not None else 0,
+        "zone_type": matched_zone or zone,
+        "north_boundary_m": req.north_boundary_m,
+    }
+    design_params: dict[str, Any] = {
+        "building_area_sqm": req.building_area_sqm,
+        "total_gfa_sqm": req.total_gfa_sqm,
+        "floor_count_above": req.floor_count_above or 1,
+        "floor_count_below": req.floor_count_below,
+        "building_height_m": req.building_height_m,
+        "unit_count": req.unit_count,
+        "building_type": req.building_type or "아파트",
+        "parking_count": req.parking_count,
+        "floor_area_per_floor_sqm": req.floor_area_per_floor_sqm,
+    }
+    if req.setback_m is not None:
+        design_params["setback_m"] = req.setback_m
+
+    raw_results = BuildingCodeRuleEngine().check_all(design_params, site_params)
+    results = [
+        RuleCheckItem(
+            rule_id=r.rule_id,
+            rule_name=r.rule_name,
+            legal_basis=r.legal_basis,
+            status=str(r.status),
+            required_value=r.required_value,
+            actual_value=r.actual_value,
+            message=r.message,
+        )
+        for r in raw_results
+    ]
+
+    fail_count = sum(1 for r in results if r.status == "fail")
+    warning_count = sum(1 for r in results if r.status == "warning")
+    na_count = sum(1 for r in results if r.status == "n/a")
+    pass_count = sum(1 for r in results if r.status == "pass")
+    overall = "fail" if fail_count else ("warning" if warning_count else "pass")
+    summary = (
+        f"법규 8개 항목 검토: 적합 {pass_count} / 부적합 {fail_count} / "
+        f"검토필요 {warning_count} / 해당없음 {na_count}."
+    )
+
+    return RuleCheckResponse(
+        zone_code=req.zone_code,
+        zone_name=matched_zone,
+        overall_status=overall,
+        pass_count=pass_count,
+        fail_count=fail_count,
+        warning_count=warning_count,
+        na_count=na_count,
+        results=results,
+        summary=summary,
+    )
+
+
 @router.post("/legal-check", response_model=LegalCheckResponse)
 async def legal_check(req: LegalCheckRequest) -> LegalCheckResponse:
     """부지분석 용도지역 기반 건축 법규(건폐율/용적률/높이) 적합성 검토."""
