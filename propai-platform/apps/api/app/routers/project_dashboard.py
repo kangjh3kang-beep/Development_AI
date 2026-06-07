@@ -1,10 +1,29 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import text
 from typing import Dict, Any
 from app.core.database import get_db
-from app.models.project import Project
 from app.services.agents.orchestrator import create_propai_graph, ProjectState, execute_run
+
+
+async def _fetch_project_lite(db: AsyncSession, project_id: str) -> dict | None:
+    """실제 projects 테이블 컬럼만 raw SQL로 조회(ORM 컬럼불일치 회피).
+    실 테이블: building_type/floor_above/floor_below/total_area_sqm (organization_id·project_type 없음)."""
+    try:
+        row = (await db.execute(text(
+            "SELECT building_type, total_area_sqm, floor_above, floor_below "
+            "FROM projects WHERE id = :pid::uuid"),
+            {"pid": str(project_id)})).first()
+    except Exception:  # noqa: BLE001 — 비-UUID 등
+        return None
+    if not row:
+        return None
+    return {
+        "building_type": row[0],
+        "total_area_sqm": float(row[1]) if row[1] else 0.0,
+        "floor_above": int(row[2]) if row[2] else 0,
+        "floor_below": int(row[3]) if row[3] else 0,
+    }
 
 router = APIRouter(
     prefix="/projects",
@@ -28,24 +47,23 @@ def _building_type_code(project_type: str | None) -> str:
     return "apartment"
 
 
-async def _resolve_overview(db: AsyncSession, project: "Project") -> dict | None:
-    """프로젝트(연면적·유형) + 최신 design_versions(매스·층수)에서 건축개요를 구성.
-    설계 연면적 우선, 없으면 Project.total_area_sqm 사용. 산출 불가면 None."""
+async def _resolve_overview(db: AsyncSession, project_id: str, proj: dict) -> dict | None:
+    """프로젝트(연면적·유형·층수) + 최신 design_versions(매스·층수)에서 건축개요를 구성.
+    설계 연면적 우선, 없으면 projects.total_area_sqm 사용. 산출 불가면 None."""
     from app.routers.cost import _resolve_design_mass
 
     gfa = 0.0
-    floors_above = 1
-    floors_below = 0
-    mass = await _resolve_design_mass(db, str(project.id))
+    floors_above = int(proj.get("floor_above") or 0) or 1
+    floors_below = int(proj.get("floor_below") or 0)
+    mass = await _resolve_design_mass(db, str(project_id))
     if mass and mass.get("num_floors"):
         floors_above = int(mass["num_floors"])
     # 설계 연면적(design_versions) 우선 조회
     try:
-        from sqlalchemy import text
         row = (await db.execute(text(
             "SELECT total_floor_area_sqm, floor_count FROM design_versions "
             "WHERE project_id = :pid ORDER BY version_number DESC LIMIT 1"),
-            {"pid": str(project.id)})).first()
+            {"pid": str(project_id)})).first()
         if row:
             if row[0]:
                 gfa = float(row[0])
@@ -53,12 +71,13 @@ async def _resolve_overview(db: AsyncSession, project: "Project") -> dict | None
                 floors_above = int(row[1])
     except Exception:  # noqa: BLE001
         pass
-    if gfa <= 0 and project.total_area_sqm:
-        gfa = float(project.total_area_sqm)
+    if gfa <= 0 and proj.get("total_area_sqm"):
+        gfa = float(proj["total_area_sqm"])
     if gfa <= 0:
         return None
+    bt = proj.get("building_type")
     return {
-        "building_type": _building_type_code(project.project_type),
+        "building_type": bt if bt else _building_type_code(None),
         "total_gfa_sqm": gfa,
         "floor_count_above": max(1, floors_above),
         "floor_count_below": floors_below,
@@ -70,13 +89,11 @@ async def _resolve_overview(db: AsyncSession, project: "Project") -> dict | None
 async def get_bim_takeoff(project_id: str, db: AsyncSession = Depends(get_db)) -> Dict[str, Any]:
     """실 QTO 엔진(/cost/estimate-overview)으로 프로젝트 건축개요 기반 항목별 물량·공사비 산출.
     (목업 고정배열 제거 — 프로젝트별 연면적·유형·설계 매스로 변별)"""
-    stmt = select(Project).where(Project.id == project_id)
-    result = await db.execute(stmt)
-    project = result.scalar_one_or_none()
-    if not project:
+    proj = await _fetch_project_lite(db, project_id)
+    if not proj:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    overview = await _resolve_overview(db, project)
+    overview = await _resolve_overview(db, project_id, proj)
     if not overview:
         # 건축개요 미확정 — 무목업 정직 표기(빈 항목)
         return {
@@ -190,13 +207,11 @@ def _estimate_schedule(gfa_sqm: float, floors_above: int, floors_below: int) -> 
 async def get_construction_schedule(project_id: str, db: AsyncSession = Depends(get_db)) -> Dict[str, Any]:
     """프로젝트 실데이터(연면적·층수·유형)로 결정론적 공정(공기) 추정.
     (목업 고정 task 제거 — 프로젝트별 변별. '추정(표준공기 기반)' 라벨)"""
-    stmt = select(Project).where(Project.id == project_id)
-    result = await db.execute(stmt)
-    project = result.scalar_one_or_none()
-    if not project:
+    proj = await _fetch_project_lite(db, project_id)
+    if not proj:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    overview = await _resolve_overview(db, project)
+    overview = await _resolve_overview(db, project_id, proj)
     if not overview:
         return {
             "status": "no_data",
