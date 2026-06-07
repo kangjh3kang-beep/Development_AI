@@ -46,7 +46,7 @@ export default async function FeasibilityPage({ params }: Props) {
       </div>
 
       {/* ③ 다음 단계 CTA */}
-      <NextStageCta locale={locale} />
+      <NextStageCta locale={locale} currentStage="feasibility" />
     </div>
   );
 }

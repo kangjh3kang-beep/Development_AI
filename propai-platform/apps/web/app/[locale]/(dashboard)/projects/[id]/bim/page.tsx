@@ -35,7 +35,7 @@ export default async function BimPage({ params }: BimPageProps) {
         items={dictionary.modulePlaceholders["bim"].items}
       />
       <ProjectBimWorkspaceClient locale={locale as Locale} projectId={id} />
-      <NextStageCta locale={locale} />
+      <NextStageCta locale={locale} currentStage="bim" />
     </div>
   );
 }

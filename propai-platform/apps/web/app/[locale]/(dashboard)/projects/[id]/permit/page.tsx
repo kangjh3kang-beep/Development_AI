@@ -159,7 +159,7 @@ export default function PermitPage() {
       <ProjectPermitWorkspaceClient locale={safeLocale} projectId={id} />
 
       {/* ③ 다음 단계 CTA */}
-      <NextStageCta locale={locale} />
+      <NextStageCta locale={locale} currentStage="permit" />
     </div>
   );
 }

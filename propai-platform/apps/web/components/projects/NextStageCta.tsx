@@ -14,20 +14,53 @@
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
-import { STAGE_META, type LifecycleStage } from "@/lib/lifecycle-stages";
+import { LIFECYCLE_STAGES, STAGE_META, type LifecycleStage } from "@/lib/lifecycle-stages";
 import { StageIcon } from "@/components/common/StageIcon";
 
-export function NextStageCta({ locale }: { locale: string }) {
+/**
+ * 현재 단계(currentStage) 기준 워크플로우상 "바로 다음 단계"를 계산한다.
+ * 완료 여부와 무관하게 SSOT(LIFECYCLE_STAGES) 순서의 다음 단계를 반환한다.
+ * 현재 단계가 마지막이면 null(=라이프사이클 완료). currentStage가 SSOT에
+ * 없는 단계(contracts 등)면 매칭 실패로 폴백 신호(undefined) 반환.
+ */
+function nextOf(currentStage: string): LifecycleStage | null | undefined {
+  const idx = LIFECYCLE_STAGES.indexOf(currentStage as LifecycleStage);
+  if (idx === -1) return undefined; // SSOT 외 단계 → 폴백
+  if (idx >= LIFECYCLE_STAGES.length - 1) return null; // 마지막 단계 → 완료
+  return LIFECYCLE_STAGES[idx + 1];
+}
+
+export function NextStageCta({
+  locale,
+  currentStage,
+}: {
+  locale: string;
+  currentStage?: LifecycleStage | string;
+}) {
   const projectId = useProjectContextStore((s) => s.projectId);
   const getNextRecommendedStage = useProjectContextStore((s) => s.getNextRecommendedStage);
 
   if (!projectId) return null;
 
-  const next = getNextRecommendedStage() as LifecycleStage | null;
-  // 모든 단계 완료 → 보고서로 마무리 유도.
-  const target: LifecycleStage = next ?? "report";
+  // 현재 단계가 전달되면 그 "바로 다음 단계"로 안내(자기참조 방지).
+  // 마지막 단계면 완료 처리. SSOT 외 단계(undefined)는 기존 추천 폴백.
+  let next: LifecycleStage | null;
+  if (currentStage !== undefined) {
+    const resolved = nextOf(currentStage);
+    if (resolved === undefined) {
+      next = getNextRecommendedStage() as LifecycleStage | null;
+    } else {
+      next = resolved;
+    }
+  } else {
+    next = getNextRecommendedStage() as LifecycleStage | null;
+  }
+
+  // 모든 단계 완료(또는 마지막 단계) → 완료 안내(CTA 숨김).
+  if (next === null) return null;
+
+  const target: LifecycleStage = next;
   const meta = STAGE_META[target];
-  const allDone = next === null;
 
   return (
     <motion.section
@@ -43,15 +76,13 @@ export function NextStageCta({ locale }: { locale: string }) {
         </div>
         <div className="min-w-0">
           <p className="text-[10px] font-black uppercase tracking-[0.3em] text-[var(--accent-strong)]">
-            {allDone ? "라이프사이클 완료" : "다음 추천 단계"}
+            다음 단계
           </p>
           <p className="mt-1 text-lg font-black tracking-tight text-[var(--text-primary)]">
             {meta.label}
           </p>
           <p className="mt-1 text-xs text-[var(--text-secondary)]">
-            {allDone
-              ? "모든 단계가 완료되었습니다. 최종 보고서를 확인하세요."
-              : "상단 탭 또는 진행바에서도 각 단계로 이동할 수 있습니다."}
+            상단 탭 또는 진행바에서도 각 단계로 이동할 수 있습니다.
           </p>
         </div>
       </div>

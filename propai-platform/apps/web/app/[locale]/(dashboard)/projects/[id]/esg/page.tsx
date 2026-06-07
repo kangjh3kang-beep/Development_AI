@@ -156,7 +156,7 @@ export default function ESGPage() {
         <ProjectEsgWorkspaceClient locale={locale as Locale} projectId={id} />
       </motion.div>
 
-      <NextStageCta locale={locale} />
+      <NextStageCta locale={locale} currentStage="esg" />
     </div>
   );
 }

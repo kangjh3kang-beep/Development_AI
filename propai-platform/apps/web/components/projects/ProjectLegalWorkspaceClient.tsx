@@ -203,26 +203,6 @@ function extractErrorMessage(error: unknown, authMessage: string) {
   return "Request failed.";
 }
 
-/* ── Fallback Data (from existing legal page) ── */
-
-const FALLBACK_COMPLIANCE = [
-  { label: "건폐율", limit: "60%", current: "58.2%", progress: 97 },
-  { label: "용적률", limit: "300%", current: "298.5%", progress: 99 },
-  { label: "높이제한", limit: "80m", current: "75.2m", progress: 94 },
-  { label: "일조권", limit: "적용", current: "충족", progress: 100 },
-  { label: "조경면적", limit: "15%", current: "15.4%", progress: 100 },
-];
-
-const FALLBACK_REGULATIONS = [
-  { label: "용도지역 조례 적합성 검토", checked: true, status: "Verified" },
-  { label: "건축법 제 21조 준수 여부", checked: true, status: "Verified" },
-  { label: "소방법 화재 안전 등급", checked: false, status: "Pending" },
-  { label: "환경영향평가 대상 여부", checked: true, status: "N/A" },
-  { label: "지능형 건축물 인증 요건", checked: false, status: "In Progress" },
-  { label: "주차장법 시행령 적합", checked: true, status: "Verified" },
-  { label: "과밀부담금 산정 완료", checked: false, status: "Pending" },
-];
-
 /* ── Component ── */
 
 export function ProjectLegalWorkspaceClient({
@@ -532,7 +512,7 @@ export function ProjectLegalWorkspaceClient({
       </Card>
 
       {/* Results */}
-      <div className="grid gap-6 xl:grid-cols-2">
+      <div className="grid gap-6">
         {/* Compliance Results */}
         <Card>
           <CardContent className="p-6">
@@ -586,96 +566,10 @@ export function ProjectLegalWorkspaceClient({
                 ) : null}
               </div>
             ) : (
-              <div className="mt-4 space-y-4">
-                <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[var(--text-secondary)]">
-                  {labels.placeholder}
-                </div>
-                {/* Fallback: hardcoded compliance data */}
-                <div className="grid gap-4">
-                  {FALLBACK_COMPLIANCE.map((item) => (
-                    <div
-                      key={item.label}
-                      className="flex items-center justify-between rounded-[var(--radius-xl)] bg-[var(--surface-soft)] px-5 py-4"
-                    >
-                      <span className="text-xs font-semibold uppercase tracking-widest text-[var(--text-secondary)]">
-                        {item.label}
-                      </span>
-                      <div className="flex gap-4 items-center">
-                        <span className="text-xs text-[var(--text-tertiary)]">
-                          {labels.limitLabel}: {item.limit}
-                        </span>
-                        <span className="text-sm font-bold text-[var(--text-primary)]">
-                          {item.current}
-                        </span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
+              <div className="mt-4 rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[var(--text-secondary)]">
+                {labels.placeholder}
               </div>
             )}
-          </CardContent>
-        </Card>
-
-        {/* Regulation Checklist */}
-        <Card>
-          <CardContent className="p-6">
-            <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
-              {labels.regulationTitle}
-            </p>
-            <div className="mt-4 grid gap-3">
-              {FALLBACK_REGULATIONS.map((item) => (
-                <div
-                  key={item.label}
-                  className="flex items-center justify-between gap-4 rounded-[var(--radius-xl)] bg-[var(--surface-soft)] px-5 py-4"
-                >
-                  <div className="flex items-center gap-4">
-                    <div
-                      className={`flex h-6 w-6 items-center justify-center rounded-md border-2 ${
-                        item.checked
-                          ? "border-[var(--accent-strong)] bg-[var(--accent-strong)] text-white"
-                          : "border-[var(--line)] text-transparent"
-                      }`}
-                    >
-                      {item.checked && (
-                        <svg
-                          xmlns="http://www.w3.org/2000/svg"
-                          width="14"
-                          height="14"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="4"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        >
-                          <polyline points="20 6 9 17 4 12" />
-                        </svg>
-                      )}
-                    </div>
-                    <span
-                      className={`text-sm font-medium ${
-                        item.checked
-                          ? "text-[var(--text-primary)]"
-                          : "text-[var(--text-tertiary)] italic"
-                      }`}
-                    >
-                      {item.label}
-                    </span>
-                  </div>
-                  <span
-                    className={`text-[10px] font-bold uppercase tracking-widest px-3 py-1 rounded-lg ${
-                      item.status === "Verified"
-                        ? "bg-[rgba(14,116,144,0.1)] text-[var(--accent-strong)]"
-                        : item.status === "Pending"
-                          ? "bg-[rgba(239,68,68,0.1)] text-[var(--error)]"
-                          : "bg-[var(--surface)] text-[var(--text-tertiary)]"
-                    }`}
-                  >
-                    {item.status}
-                  </span>
-                </div>
-              ))}
-            </div>
           </CardContent>
         </Card>
       </div>

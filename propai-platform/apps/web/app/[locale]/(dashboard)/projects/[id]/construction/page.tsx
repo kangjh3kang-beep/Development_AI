@@ -119,7 +119,7 @@ export default function ConstructionPage() {
         </motion.div>
       </div>
 
-      <NextStageCta locale={locale} />
+      <NextStageCta locale={locale} currentStage="construction" />
     </div>
   );
 }

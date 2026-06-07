@@ -291,6 +291,9 @@ export function ProjectSiteAnalysisWorkspaceClient({
   const runtimeConfig = apiClient.getRuntimeConfig();
   const canUseLiveApi =
     runtimeConfig.mode === "live" || runtimeConfig.hasAccessToken;
+  // AVMRequest.project_id는 필수(UUID). 비-UUID 로컬 프로젝트는 백엔드 422 방지를 위해 호출 보류.
+  const isUuidProject =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(projectId);
 
   // auto 모드 판정: 상단 흐름이 넘긴 주소가 있으면 입력폼·Hero·필지지도 없이 카드만 렌더한다.
   const autoMode = Boolean(address && address.trim());
@@ -367,7 +370,7 @@ export function ProjectSiteAnalysisWorkspaceClient({
   // auto 모드: 상단 흐름이 확정한 주소(+면적/PNU)로 AVM ML 자동감정·필지정보를 자동 호출한다.
   // 면적이 없으면 호출 보류(정직 안내). 무목업 — 실패 시 graceful 에러만 표기.
   useEffect(() => {
-    if (!autoMode || !canUseLiveApi || !autoArea) {
+    if (!autoMode || !canUseLiveApi || !autoArea || !isUuidProject) {
       return;
     }
     let cancelled = false;
@@ -379,6 +382,7 @@ export function ProjectSiteAnalysisWorkspaceClient({
         const avm = await apiClient.post<AVMEstimateResponse>("/avm/estimate", {
           useMock: false,
           body: {
+            project_id: projectId,
             address: autoAddress,
             area_sqm: autoArea,
             pnu: autoPnu || undefined,
@@ -454,6 +458,7 @@ export function ProjectSiteAnalysisWorkspaceClient({
       const avm = await apiClient.post<AVMEstimateResponse>("/avm/estimate", {
         useMock: false,
         body: {
+          project_id: projectId,
           address,
           area_sqm: areaSqm,
           building_age_years: Number(form.buildingAgeYears) || undefined,

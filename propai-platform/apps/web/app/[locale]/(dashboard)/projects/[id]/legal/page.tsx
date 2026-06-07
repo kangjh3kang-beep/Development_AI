@@ -55,7 +55,7 @@ export default function LegalPage() {
         <ProjectLegalWorkspaceClient locale={locale as Locale} projectId={id} />
       </motion.div>
 
-      <NextStageCta locale={locale} />
+      <NextStageCta locale={locale} currentStage="legal" />
     </div>
   );
 }

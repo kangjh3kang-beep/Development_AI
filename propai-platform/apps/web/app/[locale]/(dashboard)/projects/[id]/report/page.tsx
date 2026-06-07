@@ -59,7 +59,7 @@ export default async function ReportPage({ params }: ReportPageProps) {
         </div>
       </div>
       <ProjectReportWorkspaceClient locale={locale as Locale} projectId={id} />
-      <NextStageCta locale={locale} />
+      <NextStageCta locale={locale} currentStage="report" />
     </div>
   );
 }

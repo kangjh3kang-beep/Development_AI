@@ -956,7 +956,7 @@ export default function SiteAnalysisPage() {
       </AnimatePresence>
 
       {/* ③ 다음 단계 CTA */}
-      <NextStageCta locale={locale} />
+      <NextStageCta locale={locale} currentStage="site-analysis" />
     </div>
   );
 }

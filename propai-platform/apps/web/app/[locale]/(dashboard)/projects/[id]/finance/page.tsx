@@ -35,7 +35,7 @@ export default async function FinancePage({ params }: FinancePageProps) {
         items={dictionary.modulePlaceholders["finance"].items}
       />
       <ProjectFinanceWorkspaceClient locale={locale as Locale} projectId={id} />
-      <NextStageCta locale={locale} />
+      <NextStageCta locale={locale} currentStage="finance" />
     </div>
   );
 }
