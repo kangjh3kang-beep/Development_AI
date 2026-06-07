@@ -103,11 +103,11 @@ export default function ESGPage() {
           </div>
 
           {/* Recommendations */}
-          {ai.recommendations && ai.recommendations.length > 0 && (
+          {ai.recommendations && ai.recommendations?.length > 0 && (
             <div className="glass rounded-2xl p-6 border border-[var(--line)]">
               <h3 className="text-lg font-black text-[var(--text-primary)] mb-4">🌱 개선 권고사항</h3>
               <div className="space-y-3">
-                {ai.recommendations.map((r, i) => (
+                {(ai.recommendations ?? []).map((r, i) => (
                   <div key={i} className="rounded-xl bg-[var(--surface-muted)] border border-[var(--line)] p-4">
                     <p className="text-sm font-bold text-[var(--text-primary)]">{r.action}</p>
                     <div className="flex gap-4 mt-2">

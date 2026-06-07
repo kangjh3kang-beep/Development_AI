@@ -82,7 +82,7 @@ export default function GuidePage() {
                </p>
 
                <div className="flex flex-wrap gap-3">
-                 {step.tags.map(tag => (
+                 {(step.tags ?? []).map(tag => (
                    <span key={tag} className="relative z-10 rounded-xl border border-[var(--line-strong)] bg-[var(--surface-muted)] px-4 py-2 text-[10px] font-black uppercase tracking-widest text-[var(--accent-strong)] backdrop-blur-md shadow-sm">
                      #{tag}
                    </span>

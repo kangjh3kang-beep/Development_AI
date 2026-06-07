@@ -269,7 +269,7 @@ export function WebhookManagementPanel() {
 
                     {/* Events */}
                     <div className="flex flex-wrap gap-1.5">
-                      {wh.events.map((evt) => {
+                      {(wh.events ?? []).map((evt) => {
                         const label =
                           EVENT_OPTIONS.find((o) => o.value === evt)?.label ??
                           evt;

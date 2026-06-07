@@ -177,9 +177,9 @@ function OrdinanceSection({ data }: { data: OrdinanceResult | null }) {
               </p>
             </div>
           </div>
-          {ordHier?.items && ordHier.items.length > 0 && (
+          {ordHier?.items && ordHier.items?.length > 0 && (
             <ul className="mt-2 space-y-0.5">
-              {ordHier.items.map((it, i) => (
+              {(ordHier.items ?? []).map((it, i) => (
                 <li key={i} className="text-[10px] leading-relaxed text-[var(--text-hint)]">
                   • <b className="text-[var(--text-secondary)]">{it.name}</b>
                   {it.desc ? ` — ${it.desc}` : ""}
@@ -533,8 +533,8 @@ export function EnvironmentAnalysisPanel({
                 <div className="mt-3">
                   <p className="text-[8px] font-black uppercase text-[var(--text-hint)]">트인 방향</p>
                   <div className="mt-1.5 flex flex-wrap gap-1.5">
-                    {view?.best_directions && view.best_directions.length > 0 ? (
-                      view.best_directions.map((d, i) => (
+                    {view?.best_directions && view.best_directions?.length > 0 ? (
+                      (view.best_directions ?? []).map((d, i) => (
                         <span
                           key={`${d}-${i}`}
                           className="rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1 text-[11px] font-bold text-emerald-300"
@@ -600,16 +600,16 @@ export function EnvironmentAnalysisPanel({
                 ⚠ {res.badges.note}
               </p>
             )}
-            {res.badges?.basis && res.badges.basis.length > 0 && (
+            {res.badges?.basis && res.badges.basis?.length > 0 && (
               <ul className="mt-2 space-y-0.5">
-                {res.badges.basis.map((b, i) => (
+                {(res.badges.basis ?? []).map((b, i) => (
                   <li key={i} className="text-[10px] leading-relaxed text-[var(--text-hint)]">
                     • {b}
                   </li>
                 ))}
               </ul>
             )}
-            {res.sources && res.sources.length > 0 && (
+            {res.sources && res.sources?.length > 0 && (
               <p className="mt-2 text-[10px] text-[var(--text-hint)]">출처: {res.sources.join(" · ")}</p>
             )}
 

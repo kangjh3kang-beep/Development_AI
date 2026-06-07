@@ -157,7 +157,7 @@ export function ExpertPanelCard({
             <div>
               <p className="text-xs font-bold text-[var(--text-primary)]">💬 토론 쟁점</p>
               <div className="mt-2 space-y-2">
-                {result.debate.map((d, i) => (
+                {(result.debate ?? []).map((d, i) => (
                   <div key={i} className="rounded-lg border border-[var(--line)] bg-[var(--surface-strong)] p-3 text-xs">
                     <p className="font-bold text-[var(--text-primary)]">{d.issue}</p>
                     <p className="mt-0.5 text-[var(--text-secondary)]">이견: {d.positions}</p>

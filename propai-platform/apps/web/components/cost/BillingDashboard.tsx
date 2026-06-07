@@ -236,11 +236,11 @@ export function BillingDashboard({ projectId: projectIdProp }: { projectId?: str
     }
   }, [form, projectId, load]);
 
-  const noData = summary?.badges?.data === "no_data" || (summary?.ok && summary.claims.length === 0);
+  const noData = summary?.badges?.data === "no_data" || (summary?.ok && summary.claims?.length === 0);
 
   const evm = summary?.evm;
   const cumClaimed = useMemo(
-    () => (summary ? summary.claims.reduce((s, c) => s + (c.claimed_amount || 0), 0) : 0),
+    () => (summary ? (summary.claims ?? []).reduce((s, c) => s + (c.claimed_amount || 0), 0) : 0),
     [summary],
   );
   const overContract =
@@ -449,13 +449,13 @@ export function BillingDashboard({ projectId: projectIdProp }: { projectId?: str
           {/* 과다청구 이상탐지 */}
           <div className="grid gap-3 rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-soft)] p-5">
             <h3 className="text-sm font-black text-[var(--text-primary)]">과다청구 이상탐지</h3>
-            {summary.anomalies.length === 0 ? (
+            {summary.anomalies?.length === 0 ? (
               <p className="rounded-lg bg-emerald-500/10 px-3 py-2.5 text-[13px] font-semibold text-emerald-300">
                 ✓ 현재 탐지된 과다청구·이상 징후가 없습니다.
               </p>
             ) : (
               <div className="grid gap-2">
-                {summary.anomalies.map((a, i) => (
+                {(summary.anomalies ?? []).map((a, i) => (
                   <AnomalyRow key={i} a={a} />
                 ))}
               </div>
@@ -482,7 +482,7 @@ export function BillingDashboard({ projectId: projectIdProp }: { projectId?: str
                   </tr>
                 </thead>
                 <tbody>
-                  {summary.claims.map((c, i) => (
+                  {(summary.claims ?? []).map((c, i) => (
                     <tr key={i} className="border-b border-[var(--line)] last:border-0">
                       <td className="px-4 py-2 font-bold text-[var(--text-primary)]">{c.round}회</td>
                       <td className="px-4 py-2 text-[var(--text-secondary)]">{c.work_type}</td>

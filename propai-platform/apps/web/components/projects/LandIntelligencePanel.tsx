@@ -458,11 +458,11 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
     }
     // Priority 3: AI analyze client result
     if (aiData?.scenarios?.length) {
-      return aiData.scenarios.map(s => ({ ...s, isReal: true }));
+      return (aiData.scenarios ?? []).map(s => ({ ...s, isReal: true }));
     }
     // Priority 4: local fallback
     if (localResult?.scenarios?.length) {
-      return localResult.scenarios.map(s => ({ ...s, isReal: false }));
+      return (localResult.scenarios ?? []).map(s => ({ ...s, isReal: false }));
     }
     return [];
   }, [deepAnalysisResult, scenarioData, aiData, localResult]);

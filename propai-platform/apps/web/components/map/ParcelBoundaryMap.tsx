@@ -137,7 +137,7 @@ export function ParcelBoundaryMap({
       }).addTo(map);
       const group = L.featureGroup().addTo(map);
       let hiLayer: any = null;
-      data.features.forEach((f, i) => {
+      (data.features ?? []).forEach((f, i) => {
         if (!f.geometry) return;
         const zoneDisp = effZone(f, i);
         const sc = statusColors?.[f.address || ""];
@@ -200,9 +200,9 @@ export function ParcelBoundaryMap({
           </div>
         )}
       </div>
-      {data && data.features.length > 0 && (
+      {data && data.features?.length > 0 && (
         <div className="mt-3 flex flex-wrap gap-2">
-          {data.features.map((f, i) => (
+          {(data.features ?? []).map((f, i) => (
             <span key={f.pnu + i} className="flex items-center gap-1.5 rounded-lg border border-[var(--line)] bg-[var(--surface-strong)] px-2.5 py-1 text-[11px]">
               <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: zoneColor(effZone(f, i), i) }} />
               <span className="font-semibold text-[var(--text-secondary)]">{i + 1}. {effZone(f, i) || "용도미상"}{f.zone_type_2 ? `·${f.zone_type_2}` : ""}</span>

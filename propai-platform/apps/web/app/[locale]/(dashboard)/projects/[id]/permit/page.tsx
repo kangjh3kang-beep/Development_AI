@@ -234,9 +234,9 @@ export default function PermitPage() {
             </span>
           )}
         </div>
-        {matrix && matrix.items.length > 0 ? (
+        {matrix && matrix.items?.length > 0 ? (
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {matrix.items.map((it) => (
+            {(matrix.items ?? []).map((it) => (
               <div
                 key={it.development_type}
                 className={`rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-4 ${

@@ -306,9 +306,9 @@ export function CostAlternativesPanel({ projectId: projectIdProp }: { projectId?
                     {fmtDelta(v.delta)} ({v.delta_pct >= 0 ? "+" : ""}{v.delta_pct}%)
                   </p>
                   <p className="mt-1.5 text-[11px] text-[var(--text-tertiary)]">변경: {v.rationale}</p>
-                  {v.affected_work_types.length > 0 && (
+                  {v.affected_work_types?.length > 0 && (
                     <div className="mt-2 flex flex-wrap gap-1">
-                      {v.affected_work_types.map((w, j) => (
+                      {(v.affected_work_types ?? []).map((w, j) => (
                         <span key={j} className="rounded bg-[var(--surface-muted)] px-1.5 py-0.5 text-[9px] font-bold text-[var(--text-tertiary)]">
                           {w}
                         </span>

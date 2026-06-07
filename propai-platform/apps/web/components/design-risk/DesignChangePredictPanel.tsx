@@ -497,19 +497,19 @@ export function DesignChangePredictPanel({ projectId }: { projectId: string }) {
                 근거: {result.badges.data_basis}
               </p>
             ) : null}
-            {result.data_gaps && result.data_gaps.length > 0 ? (
+            {result.data_gaps && result.data_gaps?.length > 0 ? (
               <div className="mt-3">
                 <p className="text-xs font-semibold text-[var(--text-secondary)]">
                   부족·추정 데이터
                 </p>
                 <ul className="mt-1 list-disc pl-5 text-xs text-[var(--text-tertiary)]">
-                  {result.data_gaps.map((gap, i) => (
+                  {(result.data_gaps ?? []).map((gap, i) => (
                     <li key={`gap-${i}`}>{gap}</li>
                   ))}
                 </ul>
               </div>
             ) : null}
-            {result.sources && result.sources.length > 0 ? (
+            {result.sources && result.sources?.length > 0 ? (
               <p className="mt-3 text-[10px] text-[var(--text-tertiary)]">
                 출처: {result.sources.join(" · ")}
               </p>

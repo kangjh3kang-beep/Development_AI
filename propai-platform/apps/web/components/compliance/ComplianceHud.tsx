@@ -123,7 +123,7 @@ export function ComplianceHud({ projectId }: ComplianceHudProps) {
     }
   }, [projectId, stablePayload, loadDesignPayload]);
 
-  const hasElements = stablePayload.points.length > 0;
+  const hasElements = stablePayload.points?.length > 0;
 
   if (!hasElements) return null;
 

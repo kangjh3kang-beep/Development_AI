@@ -294,7 +294,7 @@ export function AuctionMonitorPanel({ locale, canUseLiveApi }: { locale: Locale;
   const clearDraft = useCallback(() => {
     const L = window.L;
     if (L && mapRef.current) {
-      draftMarkersRef.current.forEach((m) => mapRef.current.removeLayer(m));
+      (draftMarkersRef.current ?? []).forEach((m) => mapRef.current.removeLayer(m));
       if (draftLineRef.current) mapRef.current.removeLayer(draftLineRef.current);
     }
     draftMarkersRef.current = [];
@@ -315,7 +315,7 @@ export function AuctionMonitorPanel({ locale, canUseLiveApi }: { locale: Locale;
   const undoLastVertex = useCallback(() => {
     const L = window.L;
     if (!L || !mapRef.current) return;
-    if (!draftPointsRef.current.length) return;
+    if (!draftPointsRef.current?.length) return;
     draftPointsRef.current.pop();
     const lastMarker = draftMarkersRef.current.pop();
     if (lastMarker) mapRef.current.removeLayer(lastMarker);
@@ -323,14 +323,14 @@ export function AuctionMonitorPanel({ locale, canUseLiveApi }: { locale: Locale;
       mapRef.current.removeLayer(draftLineRef.current);
       draftLineRef.current = null;
     }
-    if (draftPointsRef.current.length >= 2) {
+    if (draftPointsRef.current?.length >= 2) {
       draftLineRef.current = L.polyline(draftPointsRef.current, {
         color: "#ef4444",
         weight: 2,
         dashArray: "6",
       }).addTo(mapRef.current);
     }
-    setDraftCount(draftPointsRef.current.length);
+    setDraftCount(draftPointsRef.current?.length);
   }, [setDraftCount]);
 
   useEffect(() => {
@@ -388,7 +388,7 @@ export function AuctionMonitorPanel({ locale, canUseLiveApi }: { locale: Locale;
         weight: 2,
         dashArray: "6",
       }).addTo(map);
-      setDraftCount(draftPointsRef.current.length);
+      setDraftCount(draftPointsRef.current?.length);
     });
 
     mapRef.current = map;
@@ -466,7 +466,7 @@ export function AuctionMonitorPanel({ locale, canUseLiveApi }: { locale: Locale;
 
   function finishDrawing() {
     setDrawing(false);
-    if (draftPointsRef.current.length < 3) {
+    if (draftPointsRef.current?.length < 3) {
       setRegionError("폴리곤은 최소 3개 정점이 필요합니다. 지도를 더 클릭하세요.");
       return;
     }
@@ -510,7 +510,7 @@ export function AuctionMonitorPanel({ locale, canUseLiveApi }: { locale: Locale;
       editLayerRef.current.removeLayer(editPolygonRef.current);
       editPolygonRef.current = null;
     }
-    if (editPointsRef.current.length >= 2) {
+    if (editPointsRef.current?.length >= 2) {
       editPolygonRef.current = L.polygon(editPointsRef.current, {
         color: "#f59e0b",
         weight: 2,
@@ -729,7 +729,7 @@ export function AuctionMonitorPanel({ locale, canUseLiveApi }: { locale: Locale;
                   {formatText(uploadResult.detected_columns.label)}
                 </p>
               ) : null}
-              {Array.isArray(uploadResult.examples) && uploadResult.examples.length ? (
+              {Array.isArray(uploadResult.examples) && uploadResult.examples?.length ? (
                 <p className="mt-1 truncate text-[var(--text-hint)]">
                   예시: {uploadResult.examples
                     .slice(0, 2)

@@ -238,13 +238,13 @@ export function CadCompliancePanel({ projectId }: CadCompliancePanelProps) {
             <span className={`text-xs font-bold ${checkResult.is_compliant ? "text-emerald-500" : "text-red-500"}`}>
               {checkResult.is_compliant ? "적합" : "부적합"}
             </span>
-            <ComplianceRow label="건폐율 (BCR)" planned={checkResult.building_info.bcr} limit={maxBcr} compliant={!checkResult.violations.some((v) => v.item.includes("건폐율") || v.item.includes("bcr"))} unit="%" />
-            <ComplianceRow label="용적률 (FAR)" planned={checkResult.building_info.far} limit={maxFar} compliant={!checkResult.violations.some((v) => v.item.includes("용적률") || v.item.includes("far"))} unit="%" />
-            <ComplianceRow label="높이" planned={checkResult.building_info.height_m} limit={maxHeightM || 999} compliant={!checkResult.violations.some((v) => v.item.includes("높이") || v.item.includes("height"))} unit="m" />
-            {checkResult.violations.length > 0 && (
+            <ComplianceRow label="건폐율 (BCR)" planned={checkResult.building_info.bcr} limit={maxBcr} compliant={!(checkResult.violations ?? []).some((v) => v.item.includes("건폐율") || v.item.includes("bcr"))} unit="%" />
+            <ComplianceRow label="용적률 (FAR)" planned={checkResult.building_info.far} limit={maxFar} compliant={!(checkResult.violations ?? []).some((v) => v.item.includes("용적률") || v.item.includes("far"))} unit="%" />
+            <ComplianceRow label="높이" planned={checkResult.building_info.height_m} limit={maxHeightM || 999} compliant={!(checkResult.violations ?? []).some((v) => v.item.includes("높이") || v.item.includes("height"))} unit="m" />
+            {checkResult.violations?.length > 0 && (
               <div className="mt-2 flex flex-col gap-1">
                 <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-hint)]">위반 사항</p>
-                {checkResult.violations.map((v, i) => (
+                {(checkResult.violations ?? []).map((v, i) => (
                   <div key={i} className="flex items-start gap-2 rounded-lg bg-[var(--surface)] p-2">
                     <Badge variant={severityVariant(severityFromExcess(v.excess))}>{severityLabel(severityFromExcess(v.excess))}</Badge>
                     <span className="text-xs text-[var(--text-secondary)]">{v.item}: {v.current_value.toFixed(1)} (한도 {v.limit_value.toFixed(1)}, 초과 {v.excess.toFixed(1)})</span>
@@ -268,9 +268,9 @@ export function CadCompliancePanel({ projectId }: CadCompliancePanelProps) {
             <CorrectionRow label="건폐율" before={correction.original?.bcr ?? 0} after={correction.corrected?.bcr ?? 0} unit="%" />
             <CorrectionRow label="용적률" before={correction.original?.far ?? 0} after={correction.corrected?.far ?? 0} unit="%" />
             <CorrectionRow label="높이" before={correction.original?.height_m ?? 0} after={correction.corrected?.height_m ?? 0} unit="m" />
-            {correction.corrections_applied.length > 0 && (
+            {correction.corrections_applied?.length > 0 && (
               <ul className="mt-1 list-inside list-disc text-xs text-[var(--text-secondary)]">
-                {correction.corrections_applied.map((desc, i) => <li key={i}>{desc}</li>)}
+                {(correction.corrections_applied ?? []).map((desc, i) => <li key={i}>{desc}</li>)}
               </ul>
             )}
             <span className={`text-xs font-bold ${correction.is_compliant ? "text-emerald-500" : "text-amber-500"}`}>

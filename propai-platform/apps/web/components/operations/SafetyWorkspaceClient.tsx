@@ -475,9 +475,9 @@ export function SafetyWorkspaceClient({
                 value={safetyResult.overall_risk_level ?? "-"}
               />
               {safetyResult.safety_items &&
-              safetyResult.safety_items.length > 0 ? (
+              safetyResult.safety_items?.length > 0 ? (
                 <div className="space-y-3">
-                  {safetyResult.safety_items.map((item, idx) => (
+                  {(safetyResult.safety_items ?? []).map((item, idx) => (
                     <div
                       key={`safety-${idx}`}
                       className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-4"
@@ -567,13 +567,13 @@ export function SafetyWorkspaceClient({
                 />
               </div>
               {disasterResult.recommendations &&
-                disasterResult.recommendations.length > 0 && (
+                disasterResult.recommendations?.length > 0 && (
                   <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
                     <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
                       {labels.recommendationsTitle}
                     </p>
                     <ul className="mt-3 space-y-2 text-sm leading-7 text-[var(--text-secondary)]">
-                      {disasterResult.recommendations.map((r, idx) => (
+                      {(disasterResult.recommendations ?? []).map((r, idx) => (
                         <li key={idx} className="flex items-start gap-2">
                           <span className="mt-1 text-emerald-500">-</span>
                           {r}

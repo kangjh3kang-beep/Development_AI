@@ -45,7 +45,7 @@ export function LifecycleNavigator({
         links: [{ href: base, label: "프로젝트 개요", icon: <StageIcon id={group.icon} size={16} /> }],
       };
     }
-    const links: SubLink[] = group.stages.map((stageId) => {
+    const links: SubLink[] = (group.stages ?? []).map((stageId) => {
       const meta = STAGE_META[stageId];
       return {
         href: `${base}/${meta.route}`,
@@ -70,7 +70,7 @@ export function LifecycleNavigator({
 
   // pathname 매칭 개선: 정확 매칭 + 서브경로 매칭
   const currentStage = stages.find((s) =>
-    s.links.some((l) => pathname === l.href || (l.href !== base && pathname.startsWith(l.href)))
+    (s.links ?? []).some((l) => pathname === l.href || (l.href !== base && pathname.startsWith(l.href)))
   ) || stages[0];
 
   return (
@@ -97,13 +97,13 @@ export function LifecycleNavigator({
       </nav>
 
       {/* 2차 서브탭 (멀티 링크 있을 때만) */}
-      {currentStage.links.length > 1 && (
+      {currentStage.links?.length > 1 && (
         <motion.div
           initial={{ opacity: 0, y: -8 }}
           animate={{ opacity: 1, y: 0 }}
           className="flex gap-1 rounded-xl bg-[var(--surface-muted)] p-1 border border-[var(--line-subtle)]"
         >
-          {currentStage.links.map((link) => {
+          {(currentStage.links ?? []).map((link) => {
             const isActive = pathname === link.href || (link.href !== base && pathname.startsWith(link.href));
             return (
               <Link

@@ -267,7 +267,7 @@ export default function CommissionDutchPay({ siteCode }: { siteCode: string }) {
     setBasis(a.basis);
     setTotalAmount(a.total_amount);
     setDrafts(
-      a.participants.map((p) => {
+      (a.participants ?? []).map((p) => {
         const node = p.node_id ? nodes.find((n) => n.id === p.node_id) : undefined;
         return {
           key: newDraftKey(),
@@ -729,7 +729,7 @@ export default function CommissionDutchPay({ siteCode }: { siteCode: string }) {
                 <div className="mt-4 space-y-3">
                   {/* 참여자별 동의 상태 */}
                   <div className="space-y-1.5">
-                    {view.participants.map((p) => {
+                    {(view.participants ?? []).map((p) => {
                       const cm = CONSENT_META[p.status];
                       const share =
                         view.basis === "RATIO"

@@ -59,7 +59,7 @@ export function AVMWidget({ locale, snapshot, labels }: AVMWidgetProps) {
             {labels.comparablesTitle}
           </p>
           <div className="mt-3 grid gap-3">
-            {snapshot.comparables.map((item) => (
+            {(snapshot.comparables ?? []).map((item) => (
               <div
                 key={item.id}
                 className="flex flex-wrap items-center justify-between gap-3 rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] px-4 py-4"

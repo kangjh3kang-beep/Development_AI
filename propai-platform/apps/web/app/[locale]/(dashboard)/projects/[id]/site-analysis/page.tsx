@@ -373,9 +373,9 @@ function L3EnhancedCards({
                   {sc.feasibility_reason && (
                     <p className="text-[10px] text-[var(--text-hint)] mb-1">사유: {sc.feasibility_reason}</p>
                   )}
-                  {sc.conditions && sc.conditions.length > 0 && (
+                  {sc.conditions && sc.conditions?.length > 0 && (
                     <div className="flex flex-wrap gap-1 mt-1.5">
-                      {sc.conditions.map((c, ci) => (
+                      {(sc.conditions ?? []).map((c, ci) => (
                         <span key={ci} className="rounded-md bg-[var(--surface-strong)] border border-[var(--line)] px-2 py-0.5 text-[9px] font-bold text-[var(--text-secondary)]">{c}</span>
                       ))}
                     </div>
@@ -384,7 +384,7 @@ function L3EnhancedCards({
                     {sc.legal_basis && <span>근거법령: {sc.legal_basis}</span>}
                     {sc.timeline_est && <span>예상 기간: {sc.timeline_est}</span>}
                   </div>
-                  {sc.caveats && sc.caveats.length > 0 && (
+                  {sc.caveats && sc.caveats?.length > 0 && (
                     <p className="mt-1.5 text-[9px] text-amber-400/80 italic">전제: {sc.caveats.join(" / ")}</p>
                   )}
                 </div>

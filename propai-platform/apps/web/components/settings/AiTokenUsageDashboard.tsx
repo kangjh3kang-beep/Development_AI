@@ -237,7 +237,7 @@ export function AiTokenUsageDashboard() {
                 서비스별 사용량 (마진 포함 비용)
               </p>
               <div className="mt-4 space-y-3">
-                {usage.by_service.map((svc) => {
+                {(usage.by_service ?? []).map((svc) => {
                   const pct = totalTokens ? (svc.tokens / totalTokens) * 100 : 0;
                   const colorClass = SERVICE_COLORS[svc.service] ?? "bg-[var(--accent)]";
                   return (
@@ -271,7 +271,7 @@ export function AiTokenUsageDashboard() {
                   일별 토큰 사용량 (최근 {usage.days}일)
                 </p>
                 <div className="mt-4 flex items-end gap-1.5" style={{ height: 160 }}>
-                  {usage.daily.map((day) => {
+                  {(usage.daily ?? []).map((day) => {
                     const heightPct = (day.tokens / maxDailyTokens) * 100;
                     return (
                       <div key={day.date} className="group relative flex-1" style={{ height: "100%" }}>

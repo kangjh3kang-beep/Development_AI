@@ -168,13 +168,13 @@ export function DrawingAnalysisPanel() {
               </div>
               <div className="flex-1 rounded-xl bg-[var(--surface-soft)] p-3 text-center">
                 <p className="text-[10px] font-bold text-[var(--text-hint)] uppercase">위반</p>
-                <p className="text-xl font-bold text-red-500">{analysisResult.issues.filter(i => i.severity === "high").length}</p>
+                <p className="text-xl font-bold text-red-500">{(analysisResult.issues ?? []).filter(i => i.severity === "high").length}</p>
               </div>
             </div>
 
             {/* 이슈 목록 */}
             <div className="flex flex-col gap-1.5">
-              {analysisResult.issues.map((issue) => (
+              {(analysisResult.issues ?? []).map((issue) => (
                 <div key={issue.id} className="flex items-start gap-2 rounded-lg bg-[var(--surface-soft)] p-2.5">
                   <div className={`mt-0.5 h-2 w-2 shrink-0 rounded-full ${
                     issue.severity === "high" ? "bg-red-500" : issue.severity === "med" ? "bg-amber-500" : "bg-emerald-500"

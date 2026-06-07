@@ -179,7 +179,7 @@ export function ProjectsOverviewClient({
             </CardContent>
           </Card>
         ) : null}
-        {hasProjects ? projectsData.projects.map((project) => {
+        {hasProjects ? (projectsData.projects ?? []).map((project) => {
           const isSelected = currentProjectId === project.id;
 
           return (
@@ -227,7 +227,7 @@ export function ProjectsOverviewClient({
                   {labels.modulesLabel}
                 </p>
                 <div className="flex flex-wrap gap-2">
-                  {project.modules.map((moduleKey) => (
+                  {(project.modules ?? []).map((moduleKey) => (
                     <span
                       key={moduleKey}
                       className="rounded-full border border-[var(--line)] bg-[var(--surface-soft)] px-3 py-1.5 text-[10px] font-black uppercase tracking-widest text-[var(--text-secondary)] group-hover:bg-[var(--surface)] transition-colors"

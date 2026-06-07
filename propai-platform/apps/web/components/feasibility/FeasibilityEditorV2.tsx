@@ -159,7 +159,7 @@ export function FeasibilityEditorV2({ projectId }: Props) {
         </div>
         {/* 단계 칩 */}
         <div className="mt-3 flex flex-wrap gap-2">
-          {completeness.stages.map((st) => (
+          {(completeness.stages ?? []).map((st) => (
             <span
               key={st.key}
               className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-bold ${

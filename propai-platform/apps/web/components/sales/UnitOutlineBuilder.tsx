@@ -58,7 +58,7 @@ export function UnitOutlineBuilder({
           a +
           (b.mode === "uniform"
             ? (b.floors || 0) * (b.units_per_floor || 0)
-            : b.floors_spec.reduce((s, f) => s + (f.units || 0), 0)),
+            : (b.floors_spec ?? []).reduce((s, f) => s + (f.units || 0), 0)),
         0,
       ),
     [blocks],
@@ -71,7 +71,7 @@ export function UnitOutlineBuilder({
   const patchFloor = (bi: number, fi: number, p: Partial<FloorSpec>) =>
     setBlocks((arr) =>
       arr.map((b, idx) =>
-        idx === bi ? { ...b, floors_spec: b.floors_spec.map((f, j) => (j === fi ? { ...f, ...p } : f)) } : b,
+        idx === bi ? { ...b, floors_spec: (b.floors_spec ?? []).map((f, j) => (j === fi ? { ...f, ...p } : f)) } : b,
       ),
     );
 
@@ -187,12 +187,12 @@ export function UnitOutlineBuilder({
                   <div className="flex gap-2 px-1 text-[10px] font-bold text-[var(--text-tertiary)]">
                     <span className="w-20">층</span><span className="w-24">호수</span><span className="flex-1">평형/명칭</span><span className="w-8" />
                   </div>
-                  {b.floors_spec.map((f, fi) => (
+                  {(b.floors_spec ?? []).map((f, fi) => (
                     <div key={fi} className="flex items-center gap-2">
                       <input type="number" className={`${fieldCls} w-20`} value={f.floor} onChange={(e) => patchFloor(i, fi, { floor: Number(e.target.value) })} />
                       <input type="number" className={`${fieldCls} w-24`} value={f.units} onChange={(e) => patchFloor(i, fi, { units: Number(e.target.value) })} />
                       <input className={`${fieldCls} flex-1`} value={f.type_name} onChange={(e) => patchFloor(i, fi, { type_name: e.target.value })} placeholder="예: 1F-30평" />
-                      <button onClick={() => patch(i, { floors_spec: b.floors_spec.filter((_, j) => j !== fi) })} className="h-8 w-8 rounded-lg border border-rose-500/30 text-rose-500 hover:bg-rose-500/10">✕</button>
+                      <button onClick={() => patch(i, { floors_spec: (b.floors_spec ?? []).filter((_, j) => j !== fi) })} className="h-8 w-8 rounded-lg border border-rose-500/30 text-rose-500 hover:bg-rose-500/10">✕</button>
                     </div>
                   ))}
                   <button onClick={() => patch(i, { floors_spec: [...b.floors_spec, { floor: (b.floors_spec.at(-1)?.floor ?? 0) + 1, units: 6, type_name: "" }] })}

@@ -306,9 +306,9 @@ export default function WorkLogPanel({ siteCode }: { siteCode: string }) {
                   {l.author && <span className="text-[10px] text-[var(--text-hint)]">{l.author}</span>}
                 </div>
                 {l.summary && <p className="whitespace-pre-wrap text-sm text-[var(--text-primary)]">{l.summary}</p>}
-                {Array.isArray(l.activities) && l.activities.length > 0 && (
+                {Array.isArray(l.activities) && l.activities?.length > 0 && (
                   <ul className="mt-1.5 space-y-1">
-                    {l.activities.map((a, j) => (
+                    {(l.activities ?? []).map((a, j) => (
                       <li key={j} className="text-[11px] text-[var(--text-secondary)]">
                         · {ACT_KINDS.find((k) => k.key === a.kind)?.label ?? a.kind}
                         {a.content ? ` — ${a.content}` : ""}

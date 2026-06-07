@@ -22,7 +22,7 @@ export function FloorPlanViewer({ plan, labels }: FloorPlanViewerProps) {
         <div className="grid gap-5 xl:grid-cols-[1.2fr_0.8fr]">
           <div className="rounded-[var(--radius-xl)] border border-[var(--line)] bg-[linear-gradient(180deg,rgba(19,33,47,0.05),rgba(14,116,144,0.08))] p-5">
             <div className="grid min-h-[300px] grid-cols-3 gap-3 rounded-[var(--radius-xl)] border border-white/80 bg-[var(--surface)] p-3">
-              {plan.rooms.map((room, index) => (
+              {(plan.rooms ?? []).map((room, index) => (
                 <div
                   key={room}
                   className={`rounded-[var(--radius-md)] border border-[var(--line)] px-4 py-4 text-sm font-medium text-[var(--text-secondary)] ${
@@ -60,7 +60,7 @@ export function FloorPlanViewer({ plan, labels }: FloorPlanViewerProps) {
                 {labels.roomsLabel}
               </p>
               <ul className="mt-3 grid gap-2">
-                {plan.rooms.map((room) => (
+                {(plan.rooms ?? []).map((room) => (
                   <li
                     key={room}
                     className="rounded-full bg-[rgba(19,33,47,0.05)] px-3 py-2 text-sm text-[var(--text-secondary)]"

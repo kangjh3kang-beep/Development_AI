@@ -60,7 +60,7 @@ export function LawChangeMonitor() {
                 </div>
                 <p className="text-sm text-slate-600 dark:text-slate-300">{change.summary}</p>
                 <div className="mt-1 flex gap-1">
-                  {change.affected_codes.map((code) => (
+                  {(change.affected_codes ?? []).map((code) => (
                     <span
                       key={code}
                       className="inline-block rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-700 dark:bg-amber-900 dark:text-amber-300"

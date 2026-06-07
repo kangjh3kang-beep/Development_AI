@@ -70,7 +70,7 @@ export function ImageUpload({ value, onChange, className, label = "클릭하거�
   const onDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(false);
-    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) handleFile(e.dataTransfer.files[0]);
+    if (e.dataTransfer.files && e.dataTransfer.files?.length > 0) handleFile(e.dataTransfer.files[0]);
   };
   const openPicker = () => inputRef.current?.click();
 

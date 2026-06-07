@@ -465,7 +465,7 @@ export function DigitalTwinControlTowerWorkspaceClient({
                   <div className="rounded-2xl bg-[var(--surface-soft)] p-4 border border-[var(--line-subtle)]">
                     <p className="text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)] mb-2">METADATA</p>
                     <p className="text-xs font-bold text-[var(--text-secondary)] italic truncate antialiased">REF: {permitQuery.data.submission_reference}</p>
-                    {permitQuery.data.missing_required_documents.length ? (
+                    {permitQuery.data.missing_required_documents?.length ? (
                       <p className="mt-2 text-[10px] font-black text-[var(--spot)] uppercase tracking-tight antialiased animate-pulse"> MISSING: {permitQuery.data.missing_required_documents.join(", ")}</p>
                     ) : null}
                   </div>

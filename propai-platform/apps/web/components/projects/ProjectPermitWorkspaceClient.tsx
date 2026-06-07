@@ -659,7 +659,7 @@ export function ProjectPermitWorkspaceClient({
                   </span>
                 </div>
                 <div className="space-y-3">
-                  {complianceResult.checks.map((check, i) => (
+                  {(complianceResult.checks ?? []).map((check, i) => (
                     <div
                       key={`check-${i}`}
                       className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-4"
@@ -713,7 +713,7 @@ export function ProjectPermitWorkspaceClient({
             </p>
             {checklistResult ? (
               <div className="mt-4 space-y-3">
-                {checklistResult.items.map((item) => (
+                {(checklistResult.items ?? []).map((item) => (
                   <div
                     key={item.id}
                     className="flex items-center justify-between rounded-[var(--radius-xl)] bg-[var(--surface-soft)] px-5 py-4 transition-all hover:bg-[var(--surface)]"

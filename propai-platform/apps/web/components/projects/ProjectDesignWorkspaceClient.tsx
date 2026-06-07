@@ -454,9 +454,9 @@ export function ProjectDesignWorkspaceClient({
                     <p className="text-[10px] font-black uppercase tracking-[0.2em] text-[var(--text-hint)]">
                       {labels.reductionTipsLabel}
                     </p>
-                    {results.reductionTips.length ? (
+                    {results.reductionTips?.length ? (
                       <ul className="mt-3.5 space-y-2.5 text-xs font-medium leading-relaxed text-[var(--text-secondary)] list-inside list-disc">
-                        {results.reductionTips.map((tip, i) => (
+                        {(results.reductionTips ?? []).map((tip, i) => (
                           <li key={i} className="hover:text-[var(--text-primary)] transition-colors">
                             {tip}
                           </li>

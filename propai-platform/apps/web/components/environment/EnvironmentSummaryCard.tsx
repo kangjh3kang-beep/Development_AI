@@ -159,9 +159,9 @@ export function EnvironmentSummaryCard({
         </div>
       </div>
 
-      {view?.best_directions && view.best_directions.length > 0 && (
+      {view?.best_directions && view.best_directions?.length > 0 && (
         <div className="mt-2 flex flex-wrap gap-1.5">
-          {view.best_directions.map((d, i) => (
+          {(view.best_directions ?? []).map((d, i) => (
             <span
               key={`${d}-${i}`}
               className="rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1 text-[11px] font-bold text-emerald-300"

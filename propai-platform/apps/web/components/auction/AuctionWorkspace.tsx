@@ -597,9 +597,9 @@ export function AuctionWorkspace({ locale }: AuctionWorkspaceProps) {
           </form>
 
           {/* 저장 조건 목록 */}
-          {Array.isArray(filtersQuery.data) && filtersQuery.data.length ? (
+          {Array.isArray(filtersQuery.data) && filtersQuery.data?.length ? (
             <div className="flex flex-wrap gap-2">
-              {filtersQuery.data.map((filter) => (
+              {(filtersQuery.data ?? []).map((filter) => (
                 <span
                   key={filter.filter_id}
                   className="inline-flex items-center gap-2 rounded-full border border-[var(--line-strong)] bg-[var(--surface-soft)] px-4 py-2 text-xs font-bold text-[var(--text-secondary)]"

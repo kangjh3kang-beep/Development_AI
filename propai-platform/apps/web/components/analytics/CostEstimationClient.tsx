@@ -372,7 +372,7 @@ export function CostEstimationClient() {
             </div>
 
             {/* 항목별 적산(QTO) 요약 — 부위별 정밀 물량은 BIM·적산(Step4)에 위임 */}
-            {result.items && result.items.length > 0 && (
+            {result.items && result.items?.length > 0 && (
               <div className="rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-strong)] p-5">
                 <h3 className="mb-1 flex items-center gap-1.5 text-sm font-black text-[var(--text-primary)]">
                   <Term label="개략 적산" hint="QTO(Quantity Take-Off, 물량 산출)의 개략 버전. 건축개요로 역산한 표준 물량입니다. 부위별 정밀 물량은 BIM·적산(Step4)에서 실치수로 산출합니다." />
@@ -386,7 +386,7 @@ export function CostEstimationClient() {
                       </tr>
                     </thead>
                     <tbody>
-                      {result.items.map((it, i) => (
+                      {(result.items ?? []).map((it, i) => (
                         <tr key={i} className="border-t border-[var(--line)]">
                           <td className="py-2 pr-4 font-semibold text-[var(--text-primary)]">{it.name}</td>
                           <td className="py-2 pr-4 text-[var(--text-tertiary)]">{it.spec || "-"}</td>
@@ -426,7 +426,7 @@ export function CostEstimationClient() {
                   ))}
                 </div>
                 <div className="mt-3 space-y-1.5">
-                  {result.geometry.items.map((it, i) => (
+                  {(result.geometry.items ?? []).map((it, i) => (
                     <div key={i} className="flex items-center justify-between text-xs">
                       <span className="text-[var(--text-secondary)]">{it.name} <span className="text-[var(--text-tertiary)]">{it.quantity?.toLocaleString()}{it.unit}</span></span>
                       <span className="font-bold text-[var(--text-primary)]">{fmtKrw(it.cost_won)}</span>
@@ -495,8 +495,8 @@ export function CostEstimationClient() {
                   <h3 className="mb-3 text-sm font-black text-[var(--text-primary)]">비용 분포 히스토그램</h3>
                   <div className="space-y-2">
                     {(() => {
-                      const maxCount = Math.max(...risk.histogram.map((h) => h.count));
-                      return risk.histogram.map((bin, i) => {
+                      const maxCount = Math.max(...(risk.histogram ?? []).map((h) => h.count));
+                      return (risk.histogram ?? []).map((bin, i) => {
                         const pct = maxCount > 0 ? (bin.count / maxCount) * 100 : 0;
                         return (
                           <div key={i} className="flex items-center gap-3">

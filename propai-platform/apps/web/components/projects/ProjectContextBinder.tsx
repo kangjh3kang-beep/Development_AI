@@ -80,7 +80,7 @@ export function ProjectContextBinder({ projectId }: { projectId: string }) {
         if (!site?.zoneCode && meta.zone_type) {
           patch.zoneCode = meta.zone_type;
         }
-        if (!site?.pnu && meta.pnu_codes && meta.pnu_codes.length > 0) {
+        if (!site?.pnu && meta.pnu_codes && meta.pnu_codes?.length > 0) {
           patch.pnu = meta.pnu_codes[0];
         }
         if (Object.keys(patch).length > 0) {

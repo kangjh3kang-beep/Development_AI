@@ -569,7 +569,7 @@ export function InvestmentAnalyticsWorkspaceClient({
                 </div>
 
                 {/* NPV Histogram */}
-                {result.npv_distribution.histogram.length > 0 && (
+                {result.npv_distribution.histogram?.length > 0 && (
                   <div className="mt-4 rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
                     <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
                       {labels.npvHistogramTitle}
@@ -577,11 +577,11 @@ export function InvestmentAnalyticsWorkspaceClient({
                     <div className="mt-3 space-y-2">
                       {(() => {
                         const maxCount = Math.max(
-                          ...result.npv_distribution.histogram.map(
+                          ...(result.npv_distribution.histogram ?? []).map(
                             (h) => h.count,
                           ),
                         );
-                        return result.npv_distribution.histogram.map(
+                        return (result.npv_distribution.histogram ?? []).map(
                           (bin, i) => {
                             const pct =
                               maxCount > 0 ? (bin.count / maxCount) * 100 : 0;
@@ -649,7 +649,7 @@ export function InvestmentAnalyticsWorkspaceClient({
           </div>
 
           {/* Sensitivity Tornado */}
-          {result.sensitivity.length > 0 && (
+          {result.sensitivity?.length > 0 && (
             <Card>
               <CardContent className="p-6">
                 <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
@@ -658,9 +658,9 @@ export function InvestmentAnalyticsWorkspaceClient({
                 <div className="mt-4 space-y-3">
                   {(() => {
                     const maxSwing = Math.max(
-                      ...result.sensitivity.map((s) => s.swing),
+                      ...(result.sensitivity ?? []).map((s) => s.swing),
                     );
-                    return result.sensitivity.map((s, i) => {
+                    return (result.sensitivity ?? []).map((s, i) => {
                       const lowPct =
                         maxSwing > 0
                           ? (Math.abs(s.base_npv - s.low_npv) / maxSwing) * 50

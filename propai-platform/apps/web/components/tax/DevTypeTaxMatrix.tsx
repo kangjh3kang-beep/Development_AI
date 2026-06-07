@@ -74,7 +74,7 @@ export function DevTypeTaxMatrix() {
                           {code}
                         </span>
                       ))}
-                      {entry.applicable_codes.length > 10 && (
+                      {entry.applicable_codes?.length > 10 && (
                         <span className="text-xs text-slate-400">
                           +{entry.applicable_codes.length - 10}
                         </span>

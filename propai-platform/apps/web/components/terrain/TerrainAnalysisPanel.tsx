@@ -416,7 +416,7 @@ export function TerrainAnalysisPanel({
                 ℹ {res.note}
               </p>
             )}
-            {res.sources && res.sources.length > 0 && (
+            {res.sources && res.sources?.length > 0 && (
               <p className="mt-2 text-[10px] text-[var(--text-hint)]">
                 출처: {res.sources.join(" · ")}
               </p>

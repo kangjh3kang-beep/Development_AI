@@ -353,9 +353,9 @@ export function PermitsWorkspaceClient({
             <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
               {labels.resultsTitle}
             </p>
-            {result?.results && result.results.length > 0 ? (
+            {result?.results && result.results?.length > 0 ? (
               <div className="mt-4 space-y-3">
-                {result.results.map((item, idx) => (
+                {(result.results ?? []).map((item, idx) => (
                   <div
                     key={`${item.category ?? "item"}-${idx}`}
                     className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-4"

@@ -466,9 +466,9 @@ export function MarketInsightsWorkspaceClient() {
                 )}
               </div>
 
-              {results.radiusGroups.length > 0 && (
+              {results.radiusGroups?.length > 0 && (
                 <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                  {results.radiusGroups.map((group) => (
+                  {(results.radiusGroups ?? []).map((group) => (
                     <div key={group.label} className="rounded-[var(--radius-xl)] border border-[var(--line)] bg-[var(--surface-soft)] p-4">
                       <p className="text-xs font-semibold text-[var(--text-tertiary)]">{group.label}</p>
                       <p className="mt-1 text-sm font-bold text-[var(--text-primary)]">{group.count.toLocaleString()}건</p>
@@ -489,7 +489,7 @@ export function MarketInsightsWorkspaceClient() {
       </Card>
 
       {/* 실거래 상세 내역 */}
-      {results && results.transactions.length > 0 && (
+      {results && results.transactions?.length > 0 && (
         <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
           <CardContent className="p-6">
             <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--text-tertiary)]">실거래 상세 내역</p>
@@ -518,8 +518,8 @@ export function MarketInsightsWorkspaceClient() {
                   ))}
                 </tbody>
               </table>
-              {results.transactions.length > 50 && (
-                <p className="mt-3 text-xs text-[var(--text-tertiary)]">상위 50건만 표시 (표본 {results.transactions.length}건 · 전체 {results.totalCount.toLocaleString()}건)</p>
+              {results.transactions?.length > 50 && (
+                <p className="mt-3 text-xs text-[var(--text-tertiary)]">상위 50건만 표시 (표본 {results.transactions?.length}건 · 전체 {results.totalCount.toLocaleString()}건)</p>
               )}
             </div>
           </CardContent>

@@ -21,7 +21,7 @@ export function BIMViewer3D({ snapshot, labels }: BIMViewer3DProps) {
 
   const selectedLayer = useMemo(
     () =>
-      snapshot.layers.find((layer) => layer.id === selectedLayerId) ??
+      (snapshot.layers ?? []).find((layer) => layer.id === selectedLayerId) ??
       snapshot.layers[0],
     [selectedLayerId, snapshot.layers],
   );
@@ -49,7 +49,7 @@ export function BIMViewer3D({ snapshot, labels }: BIMViewer3DProps) {
         <div className="rounded-[var(--radius-xl)] border border-[var(--line)] bg-[linear-gradient(180deg,#fffaf3_0%,#f1ece3_100%)] p-5">
           <div className="relative min-h-[360px] overflow-hidden rounded-[var(--radius-xl)] border border-[var(--line)] bg-[linear-gradient(180deg,#fffcf7_0%,#f4ede4_100%)] [perspective:1400px]">
             <div className="absolute inset-x-0 bottom-0 h-16 bg-[linear-gradient(180deg,rgba(19,33,47,0),rgba(19,33,47,0.08))]" />
-            {snapshot.layers.map((layer, index) => (
+            {(snapshot.layers ?? []).map((layer, index) => (
               <button
                 key={layer.id}
                 type="button"

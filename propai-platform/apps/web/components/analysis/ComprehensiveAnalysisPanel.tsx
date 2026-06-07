@@ -332,10 +332,10 @@ export function ComprehensiveAnalysisPanel() {
               <Field label="실효 용적률" value={`${ef.effective_far_pct ?? "-"}%`} />
             </div>
             {ef.source && <p className="text-[10px] text-[var(--text-hint)] mt-1">출처: {ef.source}</p>}
-            {Array.isArray(ef.annotations) && ef.annotations.length > 0 && (
+            {Array.isArray(ef.annotations) && ef.annotations?.length > 0 && (
               <div className="mt-3 rounded-lg bg-[var(--surface-soft)] border border-[var(--line)] p-3 space-y-1.5">
                 <p className="text-[10px] font-bold text-[var(--text-hint)] mb-1">분석 근거</p>
-                {ef.annotations.map((note: string, i: number) => (
+                {(ef.annotations ?? []).map((note: string, i: number) => (
                   <AnnotationLine key={i} text={note} />
                 ))}
               </div>
@@ -570,7 +570,7 @@ export function ComprehensiveAnalysisPanel() {
                   <div className="rounded-lg bg-[var(--surface-soft)] border border-[var(--line)] p-3">
                     <p className="text-[10px] font-bold text-[var(--text-hint)] mb-2">토지이용계획 규제</p>
                     <div className="space-y-1">
-                      {devPlans.land_use_regulations.map((reg: string, i: number) => (
+                      {(devPlans.land_use_regulations ?? []).map((reg: string, i: number) => (
                         <div key={i} className="flex items-center gap-2 text-[11px]">
                           <span className="h-1.5 w-1.5 rounded-full bg-amber-400 shrink-0" />
                           <span className="text-[var(--text-primary)]">{reg}</span>

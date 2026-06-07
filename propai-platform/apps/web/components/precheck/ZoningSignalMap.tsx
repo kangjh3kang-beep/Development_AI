@@ -63,7 +63,7 @@ export function ZoningSignalMap({
     const order: Record<string, number> = { low: 0, mid: 1, high: 2 };
     const m: Record<string, string> = {};
     signals.forEach((sig) => {
-      sig.parcels.forEach((p) => {
+      (sig.parcels ?? []).forEach((p) => {
         const prev = m[p.pnu];
         if (!prev || order[sig.level] > order[prev]) m[p.pnu] = sig.level;
       });

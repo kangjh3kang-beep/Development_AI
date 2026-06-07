@@ -680,9 +680,9 @@ export function ProjectFinanceWorkspaceClient({
                   <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
                     {labels.jeonseFactorsLabel}
                   </p>
-                  {riskResult.factors.length ? (
+                  {riskResult.factors?.length ? (
                     <ul className="mt-3 space-y-2 text-sm leading-7 text-[var(--text-secondary)]">
-                      {riskResult.factors.map((factor, index) => (
+                      {(riskResult.factors ?? []).map((factor, index) => (
                         <li key={`${factor.factor ?? "factor"}-${index}`}>
                           {factor.factor ?? "factor"}:{" "}
                           {factor.detail ?? JSON.stringify(factor)}

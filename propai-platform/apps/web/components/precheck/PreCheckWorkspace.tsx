@@ -500,7 +500,7 @@ function MethodCard({ method, isBest }: { method: PreCheckMethod; isBest: boolea
       )}
       {method.checks?.length > 0 && (
         <ul className="grid gap-1">
-          {method.checks.map((c, i) => {
+          {(method.checks ?? []).map((c, i) => {
             const cs = SIGNAL_STYLE[c.status];
             return (
               <li key={`${c.rule}-${i}`} className="flex items-start gap-2 text-[12px]">
@@ -605,7 +605,7 @@ function SignalCard({ signal }: { signal: ZoningSignal }) {
       )}
       {signal.parcels?.length > 0 && (
         <div className="flex flex-wrap gap-1.5">
-          {signal.parcels.map((p, i) => (
+          {(signal.parcels ?? []).map((p, i) => (
             <span
               key={`${p.pnu}-${i}`}
               className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--line)] bg-[var(--surface-strong)] px-2 py-1 text-[11px]"

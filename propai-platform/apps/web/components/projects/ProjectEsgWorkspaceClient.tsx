@@ -572,13 +572,13 @@ export function ProjectEsgWorkspaceClient({
                   value={formatCarbon(lcaResult.carbon_per_sqm_kgco2e)}
                 />
               </div>
-              {lcaResult.material_breakdown.length > 0 && (
+              {lcaResult.material_breakdown?.length > 0 && (
                 <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
                   <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
                     {labels.materialBreakdownLabel}
                   </p>
                   <div className="mt-3 grid gap-3">
-                    {lcaResult.material_breakdown.map((item, i) => (
+                    {(lcaResult.material_breakdown ?? []).map((item, i) => (
                       <div
                         key={`${item.material}-${i}`}
                         className="flex items-center justify-between rounded-[var(--radius-xl)] bg-[var(--surface)] px-4 py-3"
@@ -734,7 +734,7 @@ export function ProjectEsgWorkspaceClient({
                     value={formatCarbon(epdResult.total_carbon_kgco2e)}
                   />
                   <div className="grid gap-3">
-                    {epdResult.items.map((item, i) => (
+                    {(epdResult.items ?? []).map((item, i) => (
                       <div
                         key={`${item.name}-${i}`}
                         className="flex items-center justify-between rounded-[var(--radius-xl)] bg-[var(--surface-soft)] px-4 py-3"
@@ -817,7 +817,7 @@ export function ProjectEsgWorkspaceClient({
                     value={formatCarbon(altResult.original_carbon_kgco2e)}
                   />
                   <div className="grid gap-3">
-                    {altResult.alternatives.map((alt, i) => (
+                    {(altResult.alternatives ?? []).map((alt, i) => (
                       <div
                         key={`${alt.alternative_name}-${i}`}
                         className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] px-5 py-4 space-y-2"

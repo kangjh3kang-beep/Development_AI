@@ -391,9 +391,9 @@ export default function G2BBidDashboard() {
                 <InfoTile label="공고번호" value={selectedBid.bid_notice_no} />
               </div>
 
-              {selectedBid.category_tags.length > 0 && (
+              {selectedBid.category_tags?.length > 0 && (
                 <div className="flex flex-wrap gap-1.5 mb-5">
-                  {selectedBid.category_tags.map((t) => (
+                  {(selectedBid.category_tags ?? []).map((t) => (
                     <span key={t} className={`rounded-full border px-2.5 py-1 text-[11px] font-bold ${tagColor(t, groups)}`}>{t}</span>
                   ))}
                 </div>
@@ -487,7 +487,7 @@ function BidCard({ bid, groups, onClick }: { bid: G2BBid; groups: Record<string,
       </div>
 
       {/* 카테고리 태그(색상 구분) */}
-      {bid.category_tags.length > 0 && (
+      {bid.category_tags?.length > 0 && (
         <div className="flex flex-wrap gap-1 pt-3 border-t border-[var(--line)]">
           {bid.category_tags.slice(0, 4).map((tag) => (
             <span key={tag} className={`rounded-md border px-1.5 py-0.5 text-[10px] font-bold ${tagColor(tag, groups)}`}>{tag}</span>

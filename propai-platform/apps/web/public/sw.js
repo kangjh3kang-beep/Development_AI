@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v92-nomock-final";
+const CACHE_NAME = "propai-v93-array-guard-all";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

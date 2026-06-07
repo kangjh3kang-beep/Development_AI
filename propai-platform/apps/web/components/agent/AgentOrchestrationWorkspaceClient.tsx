@@ -666,7 +666,7 @@ export function AgentOrchestrationWorkspaceClient({
       current
         ? {
             ...current,
-            items: current.items.map((item) =>
+            items: (current.items ?? []).map((item) =>
               statusByTaskId.has(item.task_id)
                 ? {
                     ...item,
@@ -1229,8 +1229,8 @@ export function AgentOrchestrationWorkspaceClient({
                     {labels.findingsLabel}
                   </p>
                   <div className="mt-3 flex flex-wrap gap-2">
-                    {focusedResult.findings.length ? (
-                      focusedResult.findings.map((finding) => (
+                    {focusedResult.findings?.length ? (
+                      (focusedResult.findings ?? []).map((finding) => (
                         <span
                           key={`${finding.factor}-${finding.impact}`}
                           className="rounded-full border border-[var(--line)] px-3 py-1 text-xs font-medium text-[var(--text-secondary)]"
@@ -1263,7 +1263,7 @@ export function AgentOrchestrationWorkspaceClient({
                     {labels.portfolioSummaryLabel}: {portfolioResult.portfolio_summary}
                   </p>
                   <p>
-                    {labels.totalRunsLabel}: {portfolioResult.items.length}
+                    {labels.totalRunsLabel}: {portfolioResult.items?.length}
                   </p>
                   <p>
                     {labels.approvalsRequiredLabel}: {requiredApprovals}
@@ -1273,7 +1273,7 @@ export function AgentOrchestrationWorkspaceClient({
                   </p>
                 </div>
                 <ol className="grid gap-3">
-                  {portfolioResult.items.map((item) => (
+                  {(portfolioResult.items ?? []).map((item) => (
                     <li
                       key={item.task_id}
                       className="rounded-[1.35rem] border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-4"

@@ -54,7 +54,7 @@ export default function SalesSiteList({ locale }: { locale: Locale }) {
     // 현장유형: 관리자 편집 목록 로드(미설정 시 기본값 유지)
     apiClient
       .get<{ items?: DevType[] }>("/admin/option-lists/sales_site_types", { useMock: false })
-      .then((r) => { if (r.items && r.items.length) setDevTypes(r.items); })
+      .then((r) => { if (r.items && r.items?.length) setDevTypes(r.items); })
       .catch(() => {});
     // 분양현장 생성 사용료 미리보기(관리자 책정 금액)
     apiClient

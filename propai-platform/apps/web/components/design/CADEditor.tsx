@@ -170,16 +170,16 @@ export default function CADEditor({
         );
         if (!res.ok) return;
         const d = await res.json();
-        if (!cancelled && d?.saved && Array.isArray(d.data?.points) && d.data.points.length >= 3) {
-          setPoints(d.data.points.map((p: any) => ({ id: String(p.id), x: Number(p.x), y: Number(p.y) })));
+        if (!cancelled && d?.saved && Array.isArray(d.data?.points) && d.data.points?.length >= 3) {
+          setPoints((d.data.points ?? []).map((p: any) => ({ id: String(p.id), x: Number(p.x), y: Number(p.y) })));
           // lines/surfaces도 저장돼 있으면 복원(없으면 기존 유지 — 부분 호환)
-          if (Array.isArray(d.data.lines) && d.data.lines.length > 0) {
-            setLines(d.data.lines.map((l: any) => ({
+          if (Array.isArray(d.data.lines) && d.data.lines?.length > 0) {
+            setLines((d.data.lines ?? []).map((l: any) => ({
               id: String(l.id), start_point_id: String(l.start_point_id), end_point_id: String(l.end_point_id),
             })));
           }
-          if (Array.isArray(d.data.surfaces) && d.data.surfaces.length > 0) {
-            setSurfaces(d.data.surfaces.map((s: any) => ({
+          if (Array.isArray(d.data.surfaces) && d.data.surfaces?.length > 0) {
+            setSurfaces((d.data.surfaces ?? []).map((s: any) => ({
               id: String(s.id), point_ids: (s.point_ids || []).map(String),
             })));
           }

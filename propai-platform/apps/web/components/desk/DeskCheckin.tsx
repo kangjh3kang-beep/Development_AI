@@ -138,7 +138,7 @@ export default function DeskCheckin({ siteCode }: { siteCode: string }) {
           {result.match?.matched && <p className="text-sm font-semibold text-emerald-400">매칭: {result.match.matched.name} (호출 발송)</p>}
           {result.match?.candidates && (
             <ul className="space-y-1 text-sm text-[var(--text-secondary)]">
-              {result.match.candidates.map((c) => (
+              {(result.match.candidates ?? []).map((c) => (
                 <li key={c.staff_id} className="flex justify-between">
                   <span>{c.name}</span>
                   <button className="text-[var(--accent-strong)]" onClick={async () => {

@@ -39,7 +39,7 @@ export default function Unit360Panel({ siteCode }: { siteCode: string }) {
       </Section>
       {d?.price?.breakdown?.length ? (
         <Section title="분양가 구성">
-          {d.price.breakdown.map((b, i) => (
+          {(d.price.breakdown ?? []).map((b, i) => (
             <Row key={i} k={b.label} v={`${won(b.amount)}${b.vat_amount ? ` (+VAT ${won(b.vat_amount)})` : ""}`} />
           ))}
         </Section>
@@ -57,7 +57,7 @@ export default function Unit360Panel({ siteCode }: { siteCode: string }) {
       )}
       {d?.history?.length ? (
         <Section title="상태 이력">
-          {d.history.map((h, i) => (
+          {(d.history ?? []).map((h, i) => (
             <Row key={i} k={new Date(h.ts).toLocaleString("ko-KR")} v={`${h.from_status ?? "-"} → ${h.to_status}`} />
           ))}
         </Section>

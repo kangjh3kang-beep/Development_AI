@@ -66,7 +66,7 @@ export function SidebarNav({ sections }: SidebarNavProps) {
             {section.title}
           </p>
           <nav className="grid gap-1">
-            {section.items.map((item) => {
+            {(section.items ?? []).map((item) => {
               const isActive = pathname === item.href;
               
               return (

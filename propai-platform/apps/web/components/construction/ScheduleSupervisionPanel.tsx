@@ -26,7 +26,7 @@ export function ScheduleSupervisionPanel({ projectId, dictionary }: { projectId:
         const res = await apiClient.get<{ tasks: Array<{ task: string; dur: number; dur_months?: number; start?: string; complete: boolean }>; total_months?: number; method?: string; estimated?: boolean }>(`/projects/${projectId}/construction/schedule`);
         if (cancelled) return;
         if (res && res.tasks) {
-          const coloredTasks = res.tasks.map((task, i: number) => ({
+          const coloredTasks = (res.tasks ?? []).map((task, i: number) => ({
              ...task,
              color: ["var(--accent-strong)", "var(--info)", "var(--success)", "var(--warning)"][i % 4]
           }));

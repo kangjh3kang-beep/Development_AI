@@ -823,13 +823,13 @@ export function ProjectSiteAnalysisWorkspaceClient({
                     value={parcelResult.terrain}
                   />
                 </div>
-                {parcelResult.restrictions.length > 0 && (
+                {parcelResult.restrictions?.length > 0 && (
                   <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
                     <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
                       {labels.parcelRestrictionsLabel}
                     </p>
                     <ul className="mt-3 space-y-2 text-sm leading-7 text-[var(--text-secondary)]">
-                      {parcelResult.restrictions.map((r, i) => (
+                      {(parcelResult.restrictions ?? []).map((r, i) => (
                         <li key={`restriction-${i}`}>{r}</li>
                       ))}
                     </ul>
@@ -846,7 +846,7 @@ export function ProjectSiteAnalysisWorkspaceClient({
       </div>
 
       {/* Comparable Transactions */}
-      {avmResult && avmResult.comparables && avmResult.comparables.length > 0 && (
+      {avmResult && avmResult.comparables && avmResult.comparables?.length > 0 && (
         <Card>
           <CardContent className="p-6">
             <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
@@ -871,7 +871,7 @@ export function ProjectSiteAnalysisWorkspaceClient({
                   </tr>
                 </thead>
                 <tbody>
-                  {avmResult.comparables.map((comp, i) => (
+                  {(avmResult.comparables ?? []).map((comp, i) => (
                     <tr
                       key={`comp-${i}`}
                       className="border-b border-[var(--line)] last:border-0"

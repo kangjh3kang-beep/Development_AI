@@ -127,7 +127,7 @@ export function CadExportPanel({ projectId }: CadExportPanelProps) {
 
   // PDF 내보내기 (SVG들을 모아서)
   const handleExportPdf = useCallback(async () => {
-    if (!drawings || drawings.drawings.length === 0) return;
+    if (!drawings || drawings.drawings?.length === 0) return;
     setExportingPdf(true);
     setError(null);
     try {
@@ -198,13 +198,13 @@ export function CadExportPanel({ projectId }: CadExportPanelProps) {
         {error && <p className="text-xs text-red-500">{error}</p>}
 
         {/* 생성된 도면 미리보기 */}
-        {drawings && drawings.drawings.length > 0 && (
+        {drawings && drawings.drawings?.length > 0 && (
           <div className="flex flex-col gap-2">
             <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-hint)]">
               생성된 도면
             </p>
             <div className="grid grid-cols-2 gap-2">
-              {drawings.drawings.map((d, i) => (
+              {(drawings.drawings ?? []).map((d, i) => (
                 <SafeSvgPreview key={i} label={d.label} svg={d.svg} />
               ))}
             </div>

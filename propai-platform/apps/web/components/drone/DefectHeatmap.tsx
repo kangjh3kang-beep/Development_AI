@@ -43,7 +43,7 @@ export function DefectHeatmap({
 
   const selectedDefect = useMemo(
     () =>
-      snapshot.defects.find((defect) => defect.id === selectedDefectId) ??
+      (snapshot.defects ?? []).find((defect) => defect.id === selectedDefectId) ??
       snapshot.defects[0],
     [selectedDefectId, snapshot.defects],
   );
@@ -65,7 +65,7 @@ export function DefectHeatmap({
           <div className="relative min-h-[340px] overflow-hidden rounded-[1.35rem] border border-[var(--line)] bg-[radial-gradient(circle_at_top,rgba(14,116,144,0.12),transparent_28%),linear-gradient(180deg,#ffffff_0%,#f4ede4_100%)]">
             <div className="absolute inset-0 bg-[linear-gradient(rgba(19,33,47,0.04)_1px,transparent_1px),linear-gradient(90deg,rgba(19,33,47,0.04)_1px,transparent_1px)] bg-[size:40px_40px]" />
             <svg className="absolute inset-0 h-full w-full" viewBox="0 0 100 100">
-              {snapshot.defects.map((defect) => (
+              {(snapshot.defects ?? []).map((defect) => (
                 <g key={defect.id}>
                   <circle
                     cx={defect.x}
@@ -142,7 +142,7 @@ export function DefectHeatmap({
               {labels.defectsTitle}
             </p>
             <ul className="mt-3 grid gap-3">
-              {snapshot.defects.map((defect) => (
+              {(snapshot.defects ?? []).map((defect) => (
                 <li key={defect.id}>
                   <button
                     type="button"

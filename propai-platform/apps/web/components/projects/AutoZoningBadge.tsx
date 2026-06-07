@@ -153,7 +153,7 @@ export function AutoZoningBadge({ address }: { address: string }) {
       {/* Special districts */}
       {(result.special_districts?.length ?? 0) > 0 && (
         <div className="flex flex-wrap gap-2">
-          {result.special_districts.map((d, i) => (
+          {(result.special_districts ?? []).map((d, i) => (
             <span
               key={`district-${i}`}
               className="rounded-full border border-[rgba(14,116,144,0.2)] px-3 py-1 text-[10px] font-medium text-[var(--accent-strong)]"
@@ -168,7 +168,7 @@ export function AutoZoningBadge({ address }: { address: string }) {
       {/* Warnings */}
       {(result.warnings?.length ?? 0) > 0 && (
         <div className="space-y-1">
-          {result.warnings.map((w, i) => (
+          {(result.warnings ?? []).map((w, i) => (
             <p
               key={`warn-${i}`}
               className="text-[10px] leading-5 text-[var(--spot)]"

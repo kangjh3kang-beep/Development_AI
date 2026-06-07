@@ -1093,7 +1093,7 @@ export function OperationsIntelligenceWorkspaceClient({
                           {labels.recommendationsLabel}
                         </p>
                         <div className="mt-3 space-y-3">
-                          {assetResult.capex_recommendations.map((item, index) => (
+                          {(assetResult.capex_recommendations ?? []).map((item, index) => (
                             <div
                               key={`${item.strategy_name ?? item.strategy ?? "plan"}-${index}`}
                               className="rounded-[var(--radius-md)] bg-[var(--surface)] p-4"

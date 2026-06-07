@@ -81,7 +81,7 @@ export function RegionTaxSearchPanel() {
                     </tr>
                   </thead>
                   <tbody>
-                    {result.sigungu_overrides.map((o) => (
+                    {(result.sigungu_overrides ?? []).map((o) => (
                       <tr key={o.sigungu_name} className="border-b border-slate-100 dark:border-slate-800">
                         <td className="px-3 py-2 text-slate-900 dark:text-slate-100">{o.sigungu_name}</td>
                         <td className="px-3 py-2 text-right">

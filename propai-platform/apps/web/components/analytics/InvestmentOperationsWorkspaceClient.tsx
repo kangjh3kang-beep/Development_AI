@@ -813,7 +813,7 @@ export function InvestmentOperationsWorkspaceClient({
 
             {aiCostsQuery.data?.by_service?.length ? (
               <div className="mt-6 space-y-3">
-                {aiCostsQuery.data.by_service.map((item) => (
+                {(aiCostsQuery.data.by_service ?? []).map((item) => (
                   <div
                     key={`${item.service_name}-${item.model_name}`}
                     className="rounded-[var(--radius-md)] border border-[var(--line)] p-4"
@@ -986,7 +986,7 @@ export function InvestmentOperationsWorkspaceClient({
                     {labels.generatedSectionsLabel}:{" "}
                     {generatedReport.generated_sections.join(", ")}
                   </p>
-                  {generatedReport.variants.map((variant) => (
+                  {(generatedReport.variants ?? []).map((variant) => (
                     <div
                       key={variant.report_id}
                       className="rounded-[var(--radius-md)] border border-[var(--line)] p-4"
@@ -1165,7 +1165,7 @@ export function InvestmentOperationsWorkspaceClient({
 
               {marketDataQuery.data?.top_portals?.length ? (
                 <div className="mt-5 space-y-3">
-                  {marketDataQuery.data.top_portals.map((portal) => (
+                  {(marketDataQuery.data.top_portals ?? []).map((portal) => (
                     <div
                       key={portal.portal_name}
                       className="rounded-[var(--radius-md)] border border-[var(--line)] p-4"
@@ -1189,7 +1189,7 @@ export function InvestmentOperationsWorkspaceClient({
 
               {publishedListings ? (
                 <div className="mt-5 space-y-3">
-                  {publishedListings.items.map((listing) => (
+                  {(publishedListings.items ?? []).map((listing) => (
                     <div
                       key={listing.listing_id}
                       className="rounded-[var(--radius-md)] bg-[var(--surface-soft)] p-4"

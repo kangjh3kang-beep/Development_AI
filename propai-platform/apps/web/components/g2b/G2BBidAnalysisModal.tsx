@@ -274,7 +274,7 @@ export function G2BBidAnalysisModal({
           <div className="space-y-4">
             {result.analysis_warnings?.length > 0 && (
               <div className="rounded-lg bg-yellow-500/10 border border-yellow-500/30 p-2 text-xs text-yellow-400">
-                {result.analysis_warnings.map((w, i) => (
+                {(result.analysis_warnings ?? []).map((w, i) => (
                   <div key={i}>⚠ {w}</div>
                 ))}
               </div>
@@ -377,7 +377,7 @@ export function G2BBidAnalysisModal({
                   </div>
                 </MiniCard>
               )}
-              {result.sensitivity && result.sensitivity.tornado.length > 0 && (
+              {result.sensitivity && result.sensitivity.tornado?.length > 0 && (
                 <MiniCard title="민감도 (영향 큰 변수)">
                   {result.sensitivity.tornado.slice(0, 3).map((t, i) => (
                     <div key={i} className="text-xs text-[var(--text-secondary)]">

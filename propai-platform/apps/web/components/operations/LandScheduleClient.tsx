@@ -287,7 +287,7 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
             {(siteAnalysis?.parcels?.length || siteAnalysis?.address) && (
               <button onClick={loadFromProject} title="프로젝트 부지분석의 필지(다필지 포함)를 토지조서로 불러옵니다"
                 className="rounded-xl border border-[var(--line-strong)] px-3.5 py-2 text-xs font-bold text-[var(--accent-strong)] hover:border-[var(--accent-strong)]">
-                ⤵ 프로젝트 필지 불러오기{siteAnalysis?.parcels?.length ? ` (${siteAnalysis.parcels.length})` : ""}
+                ⤵ 프로젝트 필지 불러오기{siteAnalysis?.parcels?.length ? ` (${siteAnalysis.parcels?.length})` : ""}
               </button>
             )}
             <input ref={fileRef} type="file" accept=".xlsx,.xls" className="hidden"

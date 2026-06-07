@@ -290,7 +290,7 @@ export function NearbyTransactionsMap({
             <button onClick={fetchData} className="rounded-lg bg-[var(--accent-strong)] px-4 py-1.5 text-xs font-bold text-white">다시 시도</button>
           </div>
         )}
-        {payload && !loading && activeCategory && activeCategory.groups.length === 0 && (
+        {payload && !loading && activeCategory && activeCategory.groups?.length === 0 && (
           <div className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full bg-black/60 px-4 py-1.5 text-xs font-bold text-white z-[400]">
             해당 유형 최근 거래 없음
           </div>

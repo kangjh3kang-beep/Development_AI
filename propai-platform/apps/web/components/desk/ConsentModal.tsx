@@ -81,19 +81,19 @@ export default function ConsentModal({ template, onConfirm, onCancel }: Props) {
   // 동의상태는 모든 항목 false에서 시작(필수도 사용자가 명시 동의해야 함).
   // 모달은 열릴 때마다 새로 마운트되므로 초기화 effect 없이 lazy 초기값으로 충분하다.
   const [agree, setAgree] = useState<Record<string, boolean>>(() =>
-    Object.fromEntries(tpl.consents.map((c) => [c.type, false])),
+    Object.fromEntries((tpl.consents ?? []).map((c) => [c.type, false])),
   );
 
   // 필수 type 모두 동의해야 확인 활성(개인정보보호법 제15조 — 미동의 시 수집 불가).
   const requiredOk = useMemo(
-    () => tpl.consents.filter((c) => c.required).every((c) => agree[c.type]),
+    () => (tpl.consents ?? []).filter((c) => c.required).every((c) => agree[c.type]),
     [tpl, agree],
   );
 
   const confirm = () => {
     if (!requiredOk) return;
     const now = new Date().toISOString();
-    const out: ConsentResult[] = tpl.consents.map((c) => ({
+    const out: ConsentResult[] = (tpl.consents ?? []).map((c) => ({
       type: c.type,
       agreed: !!agree[c.type],
       items: c.items,
@@ -114,7 +114,7 @@ export default function ConsentModal({ template, onConfirm, onCancel }: Props) {
         </p>
 
         <div className="space-y-4">
-          {tpl.consents.map((c) => (
+          {(tpl.consents ?? []).map((c) => (
             <div key={c.type} className="rounded-xl border border-[var(--line)] bg-[var(--surface-strong)] p-3">
               <label className="flex items-start gap-2">
                 <input

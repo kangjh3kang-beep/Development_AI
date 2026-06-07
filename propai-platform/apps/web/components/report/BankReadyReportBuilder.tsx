@@ -378,7 +378,7 @@ export function BankReadyReportBuilder() {
         timeoutMs: 90000,
       });
 
-      if (!result || !Array.isArray(result.sections) || result.sections.length === 0) {
+      if (!result || !Array.isArray(result.sections) || result.sections?.length === 0) {
         // 무목업: 원장·store 모두 비어 종합할 실데이터가 없으면 가짜 채움 없이 정직 안내.
         setError(
           "보고서로 종합할 분석 데이터가 없습니다. 부지분석·법규·수지 등 선행 분석을 먼저 실행해 주세요.",
@@ -387,7 +387,7 @@ export function BankReadyReportBuilder() {
       }
 
       setReport(result);
-      setExpandedSections(new Set(result.sections.filter((s) => s.has_data).map((s) => s.id)));
+      setExpandedSections(new Set((result.sections ?? []).filter((s) => s.has_data).map((s) => s.id)));
     } catch (err) {
       if (err instanceof ApiClientError && (err.status === 401 || err.status === 403)) {
         setError("보고서 생성 권한이 없습니다. 로그인 또는 구독 상태를 확인해 주세요.");
@@ -572,7 +572,7 @@ export function BankReadyReportBuilder() {
           </Card>
 
           {/* Section Cards (Accordion) */}
-          {report.sections.map((section) => (
+          {(report.sections ?? []).map((section) => (
             <Card key={section.id}>
               <button
                 type="button"

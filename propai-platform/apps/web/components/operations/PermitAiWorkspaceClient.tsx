@@ -310,7 +310,7 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
               <CardContent className="p-6">
                 <div className="flex items-center justify-between">
                   <p className="text-sm font-black text-[var(--accent-strong)]">
-                    🧩 다필지 통합 개발 · 최적 용적률 산정 ({result.multi_parcel.parcels.length}개 필지)
+                    🧩 다필지 통합 개발 · 최적 용적률 산정 ({result.multi_parcel.parcels?.length}개 필지)
                   </p>
                   <span
                     className={`rounded-full border px-2.5 py-0.5 text-[11px] font-bold ${
@@ -359,7 +359,7 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
                       </tr>
                     </thead>
                     <tbody>
-                      {result.multi_parcel.parcels.map((p, i) => (
+                      {(result.multi_parcel.parcels ?? []).map((p, i) => (
                         <tr key={i} className="border-b border-[var(--line)]/50">
                           <td className="py-1.5 text-[var(--text-secondary)]">
                             {i + 1}. {p.address}
@@ -445,7 +445,7 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
                         <div>
                           <p className="font-bold text-[var(--accent-strong)]">근거 법령</p>
                           <div className="mt-1 flex flex-wrap gap-1.5">
-                            {m.key_laws.map((l, i) => (
+                            {(m.key_laws ?? []).map((l, i) => (
                               <span key={i} className="rounded-md bg-[var(--surface-2)] px-2 py-0.5 text-[var(--text-secondary)]">
                                 {l}
                               </span>
@@ -457,7 +457,7 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
                         <div>
                           <p className="font-bold text-rose-500">⚠ 문제점</p>
                           <ul className="mt-1 space-y-0.5 text-[var(--text-secondary)]">
-                            {m.issues.map((it, i) => (
+                            {(m.issues ?? []).map((it, i) => (
                               <li key={i}>· {it}</li>
                             ))}
                           </ul>
@@ -467,7 +467,7 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
                         <div>
                           <p className="font-bold text-emerald-600">✓ 해결방안</p>
                           <ul className="mt-1 space-y-0.5 text-[var(--text-secondary)]">
-                            {m.solutions.map((s, i) => (
+                            {(m.solutions ?? []).map((s, i) => (
                               <li key={i}>· {s}</li>
                             ))}
                           </ul>

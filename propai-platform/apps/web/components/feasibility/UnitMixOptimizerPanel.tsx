@@ -364,7 +364,7 @@ export function UnitMixOptimizerPanel() {
                 평형 배분 비율
               </p>
               <div className="flex h-8 w-full overflow-hidden rounded-[var(--radius-lg)]">
-                {result.units.map((u, i) => (
+                {(result.units ?? []).map((u, i) => (
                   <div
                     key={u.code}
                     style={{
@@ -385,7 +385,7 @@ export function UnitMixOptimizerPanel() {
               </div>
               {/* Legend */}
               <div className="mt-2 flex flex-wrap gap-3">
-                {result.units.map((u, i) => (
+                {(result.units ?? []).map((u, i) => (
                   <div key={u.code} className="flex items-center gap-1.5">
                     <span
                       className="inline-block h-2.5 w-2.5 rounded-sm"
@@ -428,7 +428,7 @@ export function UnitMixOptimizerPanel() {
                   </tr>
                 </thead>
                 <tbody>
-                  {result.units.map((u) => (
+                  {(result.units ?? []).map((u) => (
                     <tr
                       key={u.code}
                       className="border-b border-[var(--line)] last:border-0"

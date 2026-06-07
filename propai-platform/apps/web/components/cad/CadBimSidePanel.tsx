@@ -131,7 +131,7 @@ export function CadBimSidePanel({ projectId }: CadBimSidePanelProps) {
                       </tr>
                     </thead>
                     <tbody>
-                      {result.materials.map((mat, i) => (
+                      {(result.materials ?? []).map((mat, i) => (
                         <tr key={i} className="border-b border-[var(--line)]/50">
                           <td className="py-1 text-[var(--text-primary)]">{mat.name}</td>
                           <td className="py-1 text-right text-[var(--text-secondary)]">

@@ -505,7 +505,7 @@ export function ProjectBimWorkspaceClient({
                 />
                 <MetricTile
                   label="Materials"
-                  value={String(bimResult.material_breakdown.length)}
+                  value={String(bimResult.material_breakdown?.length)}
                 />
               </div>
             ) : (

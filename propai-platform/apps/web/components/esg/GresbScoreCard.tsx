@@ -454,7 +454,7 @@ export default function GresbScoreCard() {
             {(result.recommendations?.length ?? 0) > 0 && (
               <div className="space-y-2">
                 <p className="text-xs font-semibold text-gray-700">개선 권고사항</p>
-                {result.recommendations.map((rec, i) => {
+                {(result.recommendations ?? []).map((rec, i) => {
                   const cost = COST_LABELS[rec.cost_grade] || COST_LABELS.medium;
                   return (
                     <div

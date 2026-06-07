@@ -538,9 +538,9 @@ export function ConstructionCostWorkspaceClient({
                 <div className="rounded-[var(--radius-xl)] border border-[var(--line)] bg-[var(--surface-soft)] p-4 text-sm text-[var(--text-secondary)]">
                   <p>{labels.sourceLabel}: {materials.items[0]?.history.at(-1)?.source_name ?? "-"}</p>
                   <p className="mt-2">{new Date(materials.as_of).toLocaleString(locale)}</p>
-                  <p className="mt-2">{labels.alertsLabel}: {materials.alerts.length}</p>
+                  <p className="mt-2">{labels.alertsLabel}: {materials.alerts?.length}</p>
                 </div>
-                {materials.items.map((item) => (
+                {(materials.items ?? []).map((item) => (
                   <div
                     key={item.material_code}
                     className="rounded-[var(--radius-xl)] border border-[var(--line)] bg-white p-4"
@@ -681,7 +681,7 @@ export function ConstructionCostWorkspaceClient({
                     {escalation.summary}
                   </p>
                 </div>
-                {escalation.material_impacts.map((item) => (
+                {(escalation.material_impacts ?? []).map((item) => (
                   <div
                     key={item.material_code}
                     className="rounded-[var(--radius-xl)] border border-[var(--line)] bg-white p-4"

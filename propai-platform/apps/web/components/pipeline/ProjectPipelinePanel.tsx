@@ -552,7 +552,7 @@ export function ProjectPipelinePanel({
       setSummary(result.summary ?? {});
       setLastResult(result);
 
-      const siteStage = result.stages.find((s) => s.stage === "site_analysis");
+      const siteStage = (result.stages ?? []).find((s) => s.stage === "site_analysis");
       if (siteStage?.status === "completed") {
         setWorkflowPhase("site_review");
         setExpandedStage("site_analysis");

@@ -286,11 +286,11 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
                   ))}
                 </div>
                 {/* 소유자별 지분(공동소유 등) */}
-                {land.owners && land.owners.length > 0 && (
+                {land.owners && land.owners?.length > 0 && (
                   <div className="mt-3 rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-3">
                     <p className="text-[11px] font-bold text-[var(--text-secondary)]">소유자별 지분 ({land.ownership_form || "-"})</p>
                     <div className="mt-1.5 space-y-1">
-                      {land.owners.map((o, i) => (
+                      {(land.owners ?? []).map((o, i) => (
                         <div key={i} className="flex flex-wrap items-center justify-between gap-2 text-sm">
                           <span className="font-semibold text-[var(--text-primary)]">{o.name || "-"}</span>
                           <span className="text-[var(--text-secondary)]">

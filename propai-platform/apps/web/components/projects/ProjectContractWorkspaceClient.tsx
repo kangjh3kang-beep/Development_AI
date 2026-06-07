@@ -627,7 +627,7 @@ export function ProjectContractWorkspaceClient({
                     {labels.keyTermsLabel}
                   </p>
                   <div className="grid gap-2 md:grid-cols-2">
-                    {latestDraft.key_terms.map((term) => (
+                    {(latestDraft.key_terms ?? []).map((term) => (
                       <div
                         key={`${term.label}-${term.value}`}
                         className="rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-3 text-sm"
@@ -645,7 +645,7 @@ export function ProjectContractWorkspaceClient({
                     {labels.clausesLabel}
                   </p>
                   <div className="grid gap-3">
-                    {latestDraft.clauses.map((clause) => (
+                    {(latestDraft.clauses ?? []).map((clause) => (
                       <div
                         key={clause.title}
                         className="rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-4"

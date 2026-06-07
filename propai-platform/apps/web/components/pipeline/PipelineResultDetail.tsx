@@ -638,7 +638,7 @@ export function PipelineResultDetail({ result, onRerun }: PipelineResultDetailPr
           })()}
 
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-          {activeSection.fields.map((field) => {
+          {(activeSection.fields ?? []).map((field) => {
             const val = getFieldValue(activeSection.sourceStage, field.key);
             const isOverridden = overrides[activeSection.sourceStage]?.[field.key] !== undefined;
 

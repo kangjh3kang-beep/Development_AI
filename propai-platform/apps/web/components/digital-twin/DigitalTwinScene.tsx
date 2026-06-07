@@ -135,7 +135,7 @@ function TerrainMesh({
     let maxX = -Infinity;
     let minZ = Infinity;
     let maxZ = -Infinity;
-    terrain.verts.forEach((v, i) => {
+    (terrain.verts ?? []).forEach((v, i) => {
       positions[i * 3] = v[0];
       positions[i * 3 + 1] = v[1];
       positions[i * 3 + 2] = v[2];
@@ -167,7 +167,7 @@ function TerrainMesh({
     } else {
       // 표고 그라데이션 vertexColors
       const ySpan = maxY - minY || 1;
-      terrain.verts.forEach((v, i) => {
+      (terrain.verts ?? []).forEach((v, i) => {
         const c = elevationColor((v[1] - minY) / ySpan);
         colors[i * 3] = c.r;
         colors[i * 3 + 1] = c.g;
@@ -180,7 +180,7 @@ function TerrainMesh({
     const xSpan = maxX - minX || 1;
     const zSpan = maxZ - minZ || 1;
     const uvs = new Float32Array(terrain.verts.length * 2);
-    terrain.verts.forEach((v, i) => {
+    (terrain.verts ?? []).forEach((v, i) => {
       uvs[i * 2] = (v[0] - minX) / xSpan;
       uvs[i * 2 + 1] = 1 - (v[2] - minZ) / zSpan;
     });
@@ -239,7 +239,7 @@ function AerialMaterial({ url }: { url: string }) {
 /** 필지 경계: ring_enu → LineLoop(실선·강조색). y는 지형표고 근처. */
 function ParcelOutline({ parcel, baseY }: { parcel: DigitalTwinParcel; baseY: number }) {
   const geometry = useMemo(() => {
-    const pts = parcel.ring_enu.map((p) => new THREE.Vector3(p[0], baseY + 0.6, p[1]));
+    const pts = (parcel.ring_enu ?? []).map((p) => new THREE.Vector3(p[0], baseY + 0.6, p[1]));
     return new THREE.BufferGeometry().setFromPoints(pts);
   }, [parcel, baseY]);
   return (
@@ -254,7 +254,7 @@ function NeighborBuildings({ neighbors, baseY }: { neighbors: DigitalTwinNeighbo
   const meshes = useMemo(() => {
     return neighbors.map((nb) => {
       const shape = new THREE.Shape();
-      nb.footprint_enu.forEach((p, i) => {
+      (nb.footprint_enu ?? []).forEach((p, i) => {
         if (i === 0) shape.moveTo(p[0], p[1]);
         else shape.lineTo(p[0], p[1]);
       });
@@ -344,7 +344,7 @@ function parcelBboxEnu(parcel: DigitalTwinParcel): { minX: number; maxX: number;
   let maxX = -Infinity;
   let minZ = Infinity;
   let maxZ = -Infinity;
-  parcel.ring_enu.forEach((p) => {
+  (parcel.ring_enu ?? []).forEach((p) => {
     if (p[0] < minX) minX = p[0];
     if (p[0] > maxX) maxX = p[0];
     if (p[1] < minZ) minZ = p[1];

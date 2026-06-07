@@ -131,11 +131,11 @@ function AIResponseCard({ response }: { response: MarketResponse }) {
       {analysis.chart_data && <PriceBarChart data={analysis.chart_data} />}
 
       {/* Recommendations */}
-      {analysis.recommendations && analysis.recommendations.length > 0 && (
+      {analysis.recommendations && analysis.recommendations?.length > 0 && (
         <div className="rounded-lg border border-blue-100 bg-blue-50 p-3">
           <p className="mb-1 text-xs font-semibold text-blue-700">분석 제안</p>
           <ul className="space-y-1">
-            {analysis.recommendations.map((rec, i) => (
+            {(analysis.recommendations ?? []).map((rec, i) => (
               <li key={i} className="text-xs text-blue-800">
                 &bull; {rec}
               </li>

@@ -509,7 +509,7 @@ export function ProjectConstructionWorkspaceClient({
                     </tr>
                   </thead>
                   <tbody>
-                    {costResult.items.map((item, i) => (
+                    {(costResult.items ?? []).map((item, i) => (
                       <tr
                         key={`${item.work_code}-${i}`}
                         className="border-b border-[var(--line)]"
@@ -634,7 +634,7 @@ export function ProjectConstructionWorkspaceClient({
             </form>
             {checklistResult ? (
               <div className="mt-4 grid gap-3">
-                {checklistResult.checklist.map((item, i) => (
+                {(checklistResult.checklist ?? []).map((item, i) => (
                   <div
                     key={`${item.category}-${i}`}
                     className="flex items-center justify-between gap-4 rounded-[var(--radius-xl)] bg-[var(--surface-soft)] px-5 py-4"

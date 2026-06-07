@@ -138,10 +138,10 @@ export function RegulationHierarchyView({
                 <div key={lv.level} className="relative rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-4"
                   style={{ marginLeft: `${i * 14}px`, borderLeftColor: meta.color, borderLeftWidth: 3 }}>
                   <p className="text-xs font-black" style={{ color: meta.color }}>
-                    {meta.icon} {lv.level} <span className="text-[var(--text-hint)]">({lv.items.length})</span>
+                    {meta.icon} {lv.level} <span className="text-[var(--text-hint)]">({lv.items?.length})</span>
                   </p>
                   <div className="mt-2 grid gap-1.5">
-                    {lv.items.map((it, j) => (
+                    {(lv.items ?? []).map((it, j) => (
                       <div key={j} className="flex flex-wrap items-baseline gap-x-2 text-xs">
                         <span className="font-bold text-[var(--text-primary)]">{it.name}</span>
                         {it.ref && it.ref !== "-" && <span className="text-[var(--accent-strong)]">{it.ref}</span>}
@@ -161,10 +161,10 @@ export function RegulationHierarchyView({
         <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
           <CardContent className="p-6">
             <p className="text-sm font-black text-[var(--text-primary)]">
-              🚧 적용 규제·지구·구역 전수 <span className="text-[var(--text-hint)]">({result.districts.length})</span>
+              🚧 적용 규제·지구·구역 전수 <span className="text-[var(--text-hint)]">({result.districts?.length})</span>
             </p>
             <div className="mt-3 flex flex-wrap gap-2">
-              {result.districts.map((d, i) => (
+              {(result.districts ?? []).map((d, i) => (
                 <span key={i} className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px] font-bold ${IMPACT_STYLE[d.impact] || "border-[var(--line)] text-[var(--text-secondary)]"}`}>
                   {d.name}
                   <span className="opacity-70">{d.impact}</span>

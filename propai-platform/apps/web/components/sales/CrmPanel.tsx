@@ -191,9 +191,9 @@ export default function CrmPanel({ siteCode }: { siteCode: string }) {
                         {STAGE_LABEL[c.status] ?? c.status}
                       </span>
                     )}
-                    {scope === "all" && Array.isArray(c.sites) && c.sites.length > 0 && (
+                    {scope === "all" && Array.isArray(c.sites) && c.sites?.length > 0 && (
                       <span className="flex flex-wrap gap-1">
-                        {c.sites.map((s, i) => (
+                        {(c.sites ?? []).map((s, i) => (
                           <span key={s.id ?? i} className="rounded-md bg-[var(--accent-soft)] px-1.5 py-0.5 text-[10px] font-bold text-[var(--accent-strong)]">
                             {s.name || s.id}
                           </span>

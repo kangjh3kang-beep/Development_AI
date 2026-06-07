@@ -119,7 +119,7 @@ export function EscrowCard({ locale, snapshot, labels }: EscrowCardProps) {
             {labels.eventsTitle}
           </p>
           <ol className="mt-4 grid gap-3">
-            {snapshot.events.map((event, index) => (
+            {(snapshot.events ?? []).map((event, index) => (
               <li
                 key={event.id}
                 className="rounded-[1.15rem] border border-[var(--line)] bg-white px-4 py-4"

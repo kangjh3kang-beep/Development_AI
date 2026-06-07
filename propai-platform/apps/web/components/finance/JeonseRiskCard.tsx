@@ -58,7 +58,7 @@ export function JeonseRiskCard({
             {labels.factorsTitle}
           </p>
           <ul className="mt-3 grid gap-3">
-            {snapshot.factors.map((factor) => (
+            {(snapshot.factors ?? []).map((factor) => (
               <li
                 key={factor.id}
                 className="rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] px-4 py-4"
