@@ -490,31 +490,79 @@ class AuctionStep1Service:
         except Exception as e:  # noqa: BLE001
             logger.warning("getPbancCltrInf2 보강 실패(무시): %s", str(e)[:120])
 
+        # ── ★부동산 물건상세정보(getRlstDtlInf2) 보강 — 물건 사진·이용상태·위치·면적·등기 ──
+        # cltrMngNo+pbctCdtnNo(항상 보유)로 호출. 온비드 물건 사진의 정본 + 이용현황.
+        rlst_extra: dict[str, Any] = {}
+        try:
+            client3 = OnbidClient(service_key)
+            try:
+                rd = await client3.get_rlst_detail(cltr_mng_no, pbct_cdtn_no)
+            finally:
+                await client3.close()
+            ri = rd.get("item") if isinstance(rd.get("item"), dict) else None
+            if ri:
+                from app.services.auction.onbid_client import _parse_int, _parse_rate
+
+                # 사진 URL: potoUrlList = [{"urlAdr": "..."}] 첫 항목.
+                photo = None
+                plist = ri.get("potoUrlList")
+                if isinstance(plist, list) and plist:
+                    first = plist[0]
+                    photo = (first.get("urlAdr") if isinstance(first, dict) else str(first)) or None
+                vdo = ri.get("vdoUrlAdrList")
+                if isinstance(vdo, list):
+                    vdo = (vdo[0].get("urlAdr") if vdo and isinstance(vdo[0], dict) else None)
+                pnu_d = (ri.get("ltnoPnu") or ri.get("rdnmPnu") or "") or None
+                rlst_extra = {
+                    "image_url": (str(photo).strip() or None) if photo else None,
+                    "video_url": (str(vdo).strip() or None) if vdo else None,
+                    "land_area": _parse_rate(ri.get("landSqms")),
+                    "bld_area": _parse_rate(ri.get("bldSqms")),
+                    "fail_count": _parse_int(ri.get("usbdNft")),
+                    "property_type": (ri.get("prptDivNm") or "").strip() or None,
+                    "usage_status": (ri.get("utlzPscdCont") or "").strip() or None,
+                    "location_desc": (ri.get("locVntyPscdCont") or "").strip() or None,
+                    "org_name": (ri.get("orgNm") or "").strip() or None,
+                    "jibun_address": (ri.get("zadrNm") or "").strip() or None,
+                    "rlst_pnu": pnu_d,
+                }
+        except Exception as e:  # noqa: BLE001
+            logger.warning("getRlstDtlInf2 보강 실패(무시): %s", str(e)[:120])
+
         if info is None:
-            # ONBID 상세 무자료 — PNU 보강분이 있으면 부분 제공, 없으면 정직하게 unavailable.
-            if land_extra and (land_extra.get("area_sqm") or land_extra.get("zone_type")):
+            # ONBID 입찰정보 무자료여도 getRlstDtlInf2(사진·이용현황·면적)·NED 보강분이 있으면 제공.
+            has_rlst = bool(rlst_extra and (rlst_extra.get("image_url") or rlst_extra.get("land_area") or rlst_extra.get("usage_status")))
+            has_land = bool(land_extra and (land_extra.get("area_sqm") or land_extra.get("zone_type")))
+            if has_rlst or has_land:
                 item = {
                     "cltr_mng_no": cltr_mng_no,
                     "pbct_cdtn_no": pbct_cdtn_no,
-                    "land_area": land_extra.get("area_sqm") or None,
-                    "bld_area": None,
-                    "zone_type": land_extra.get("zone_type") or None,
-                    "land_category": land_extra.get("land_category") or None,
-                    "official_price_per_sqm": land_extra.get("official_price_per_sqm") or None,
-                    "land_area_source": "NED(getLandCharacteristics)",
-                    "fail_count": None,
+                    "land_area": (rlst_extra.get("land_area") if rlst_extra else None)
+                    or (land_extra.get("area_sqm") if land_extra else None),
+                    "bld_area": rlst_extra.get("bld_area") if rlst_extra else None,
+                    "zone_type": (land_extra.get("zone_type") if land_extra else None) or None,
+                    "land_category": (land_extra.get("land_category") if land_extra else None) or None,
+                    "official_price_per_sqm": (land_extra.get("official_price_per_sqm") if land_extra else None) or None,
+                    "land_area_source": "토지대장(NED)" if (land_extra and not (rlst_extra and rlst_extra.get("land_area"))) else None,
+                    "fail_count": rlst_extra.get("fail_count") if rlst_extra else None,
                     "appraisal_price": None,
                     "min_bid_price": None,
                     "win_rate": None,
                     "win_price": None,
-                    "image_url": None,
+                    "image_url": rlst_extra.get("image_url") if rlst_extra else None,
+                    "video_url": rlst_extra.get("video_url") if rlst_extra else None,
+                    "usage_status": rlst_extra.get("usage_status") if rlst_extra else None,
+                    "location_desc": rlst_extra.get("location_desc") if rlst_extra else None,
+                    "org_name": rlst_extra.get("org_name") if rlst_extra else None,
+                    "jibun_address": rlst_extra.get("jibun_address") if rlst_extra else None,
+                    "property_type": rlst_extra.get("property_type") if rlst_extra else None,
                     "prev_bids": [],
                     "pnu": pnu,
                     **aerial,
                 }
                 return {
                     "item": self._attach_est_win(item),
-                    "data_source": "onbid_unavailable+ned_land",
+                    "data_source": "onbid_rlst_detail",
                     "reason": unavailable_reason,
                 }
             return {
@@ -552,6 +600,22 @@ class AuctionStep1Service:
             for k in ("property_type", "disposal_method", "usage_category", "pbanc_mng_no"):
                 if pbanc_extra.get(k) and not enriched.get(k):
                     enriched[k] = pbanc_extra[k]
+        # ★getRlstDtlInf2 보강 — 물건 사진(정본)·이용상태·위치·면적(빈 값만 채움, 사진은 ONBID 우선).
+        if rlst_extra:
+            if not enriched.get("image_url") and rlst_extra.get("image_url"):
+                enriched["image_url"] = rlst_extra["image_url"]
+            if not enriched.get("land_area") and rlst_extra.get("land_area"):
+                enriched["land_area"] = rlst_extra["land_area"]
+            if not enriched.get("bld_area") and rlst_extra.get("bld_area"):
+                enriched["bld_area"] = rlst_extra["bld_area"]
+            if not enriched.get("fail_count") and rlst_extra.get("fail_count") is not None:
+                enriched["fail_count"] = rlst_extra["fail_count"]
+            for k in (
+                "video_url", "usage_status", "location_desc", "org_name",
+                "jibun_address", "property_type",
+            ):
+                if rlst_extra.get(k) and not enriched.get(k):
+                    enriched[k] = rlst_extra[k]
         return {"item": enriched, "data_source": "onbid_live"}
 
     async def search_bid_results(

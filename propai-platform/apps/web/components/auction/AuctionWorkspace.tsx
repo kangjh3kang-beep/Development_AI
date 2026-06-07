@@ -82,6 +82,12 @@ type AuctionDetail = {
   disposal_method?: string | null;
   usage_category?: string | null;
   pbanc_mng_no?: string | null;
+  // 부동산 물건상세정보(getRlstDtlInf2) 보강 — 사진·이용현황·동영상·공고기관
+  video_url?: string | null;
+  usage_status?: string | null;
+  location_desc?: string | null;
+  org_name?: string | null;
+  jibun_address?: string | null;
 };
 
 type AuctionDetailResponse = {
@@ -999,6 +1005,9 @@ function DetailModal({
     { label: "용도", value: formatText(detail?.usage_category ?? usageVal) },
     ...(detail?.property_type ? [{ label: "재산유형", value: detail.property_type }] : []),
     ...(detail?.disposal_method ? [{ label: "처분방식", value: detail.disposal_method }] : []),
+    ...(detail?.usage_status ? [{ label: "이용상태", value: detail.usage_status }] : []),
+    ...(detail?.location_desc ? [{ label: "위치·주위환경", value: detail.location_desc }] : []),
+    ...(detail?.org_name ? [{ label: "공고기관", value: detail.org_name }] : []),
     { label: "감정가", value: formatCurrency(locale, appraisalVal) },
     { label: "최저입찰가", value: minBidText },
     { label: "할인율", value: discountText },
@@ -1080,6 +1089,16 @@ function DetailModal({
             </span>
           )}
         </div>
+        {detail?.video_url ? (
+          <a
+            href={detail.video_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="mb-3 inline-flex items-center gap-1.5 text-[11px] font-bold text-[var(--accent-strong)] underline"
+          >
+            ▶ 물건 동영상 보기 (온비드)
+          </a>
+        ) : null}
 
         {/* 상세조회 상태 안내(정직) */}
         {canFetchDetail && detailQuery.isLoading ? (

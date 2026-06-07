@@ -50,6 +50,9 @@ ONBID_PBANC_DETAIL_OP = "OnbidPbancDtlInfSrvc2/getPbancDtlInf2"
 # 공고 물건정보(getPbancCltrInf2): 공고관리번호(pbancMngNo)로 공고 내 물건들의
 # 재산유형·처분방식·용도분류·유찰횟수·감정가·최저입찰가·입찰기간을 제공(활용신청 승인).
 ONBID_PBANC_CLTR_OP = "OnbidPbancCltrDtlSrvc2/getPbancCltrInf2"
+# ★부동산 물건상세정보(getRlstDtlInf2): cltrMngNo+pbctCdtnNo로 사진URL·이용상태·면적·
+#   감정평가·임대차·등기사항·동영상·위치도·PNU를 한 번에 제공(활용신청 승인). 물건 사진의 정본.
+ONBID_RLST_DETAIL_OP = "OnbidRlstDtlSrvc2/getRlstDtlInf2"
 ONBID_BID_RESULT_OP = "OnbidCltrBidRsltDtlSrvc2/getCltrBidRsltDtl2"
 ONBID_BID_INF_OP = "OnbidCltrBidDtlSrvc2/getCltrBidInf2"
 
@@ -534,6 +537,31 @@ class OnbidClient:
         except Exception as e:  # noqa: BLE001
             logger.warning("getPbancCltrInf2 호출 실패(무시): %s", str(e)[:140])
             return {"items": [], "data_source": "unavailable"}
+
+    async def get_rlst_detail(
+        self, cltr_mng_no: str, pbct_cdtn_no: str,
+    ) -> dict[str, Any]:
+        """부동산 물건상세정보(getRlstDtlInf2). 필수 cltrMngNo+pbctCdtnNo.
+
+        사진URL(potoUrlList)·이용상태(utlzPscdCont)·위치(locVntyPscdCont)·면적(landSqms/
+        bldSqms)·유찰(usbdNft)·재산유형(prptDivNm)·동영상(vdoUrlAdrList)·등기사항
+        (rgstPrmrInfList)·임대차(leasInfList)·점유관계(ocpyRelList)·PNU 등을 제공.
+        실패/무자료는 {"item": None, ...}(가짜 금지).
+        """
+        if not self._service_key:
+            return {"item": None, "data_source": "unavailable", "reason": "온비드 인증키 미설정"}
+        if not cltr_mng_no or not pbct_cdtn_no:
+            return {"item": None, "data_source": "unavailable", "reason": "cltrMngNo/pbctCdtnNo 누락"}
+        params = {
+            "serviceKey": self._service_key,
+            "resultType": "json",
+            "numOfRows": 5,
+            "pageNo": 1,
+            "cltrMngNo": cltr_mng_no,
+            "pbctCdtnNo": pbct_cdtn_no,
+        }
+        url = f"{ONBID_BASE_URL}/{ONBID_RLST_DETAIL_OP}"
+        return await self._fetch_single(url, params)
 
     async def get_bid_result_detail(
         self, cltr_mng_no: str, pbct_cdtn_no: str,
