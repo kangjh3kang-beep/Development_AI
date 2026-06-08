@@ -1043,49 +1043,70 @@ function DetailModal({
     }
   };
 
-  const rows: { label: string; value: string }[] = [
-    { label: "물건관리번호", value: formatText(cltrMngNoVal) },
-    { label: "주소", value: formatText(addressVal) },
-    { label: "용도", value: formatText(detail?.usage_category ?? usageVal) },
-    ...(detail?.property_type ? [{ label: "재산유형", value: detail.property_type }] : []),
-    ...(detail?.disposal_method ? [{ label: "처분방식", value: detail.disposal_method }] : []),
-    ...(detail?.usage_status ? [{ label: "이용상태", value: detail.usage_status }] : []),
-    ...(detail?.location_desc ? [{ label: "위치·주위환경", value: detail.location_desc }] : []),
-    ...(detail?.org_name ? [{ label: "공고기관", value: detail.org_name }] : []),
-    { label: "감정가", value: formatCurrency(locale, appraisalVal) },
-    { label: "최저입찰가", value: minBidText },
-    { label: "할인율", value: discountText },
-    ...(detail?.zone_type ? [{ label: "용도지역", value: detail.zone_type }] : []),
-    ...(detail?.official_price_per_sqm
-      ? [{ label: "공시지가(㎡당)", value: formatCurrency(locale, detail.official_price_per_sqm) }]
-      : []),
+  // ── 상세 속성을 '단락(섹션)'으로 분류한다 ──
+  // 예전엔 모든 항목이 한 덩어리로 나열돼 무엇이 어떤 묶음인지 알기 어려웠다.
+  // 이제 ①물건 개요 ②토지·건물 ③입찰·진행 3개 단락으로 나눠, 각 단락에 작은 제목(eyebrow)을 단다.
+  // (감정가·최저입찰가·유찰횟수·낙찰가능가는 위쪽 큰 숫자 타일에 이미 있으므로 여기선 중복 제외.)
+  type Row = { label: string; value: string };
+  const rowGroups: { key: string; eyebrow: string; title: string; rows: Row[] }[] = [
     {
-      label: "유찰횟수",
-      value: failCountVal == null ? "비공개 (온비드 미제공)" : `${failCountVal}회`,
+      key: "identity",
+      eyebrow: "OVERVIEW",
+      title: "물건 개요",
+      rows: [
+        { label: "물건관리번호", value: formatText(cltrMngNoVal) },
+        { label: "주소", value: formatText(addressVal) },
+        { label: "용도", value: formatText(detail?.usage_category ?? usageVal) },
+        ...(detail?.property_type ? [{ label: "재산유형", value: detail.property_type }] : []),
+        ...(detail?.disposal_method ? [{ label: "처분방식", value: detail.disposal_method }] : []),
+        ...(detail?.org_name ? [{ label: "공고기관", value: detail.org_name }] : []),
+      ],
     },
-    { label: "낙찰가율", value: formatPercent(winRateVal) },
-    { label: "낙찰가격", value: formatBidPrice(winPriceVal, locale) },
     {
-      label: "유효입찰자수",
-      value: item.valid_bidder_count == null ? "-" : `${item.valid_bidder_count}명`,
+      key: "land",
+      eyebrow: "LAND · BUILDING",
+      title: "토지·건물 현황",
+      rows: [
+        ...(detail?.zone_type ? [{ label: "용도지역", value: detail.zone_type }] : []),
+        ...(detail?.official_price_per_sqm
+          ? [{ label: "공시지가(㎡당)", value: formatCurrency(locale, detail.official_price_per_sqm) }]
+          : []),
+        { label: "토지면적", value: landAreaText },
+        { label: "건물면적", value: bldAreaText },
+        ...(detail?.usage_status ? [{ label: "이용상태", value: detail.usage_status }] : []),
+        ...(detail?.location_desc ? [{ label: "위치·주위환경", value: detail.location_desc }] : []),
+      ],
     },
-    { label: "토지면적", value: landAreaText },
-    { label: "건물면적", value: bldAreaText },
     {
-      label: "낙찰가능가(추정)",
-      value:
-        estWinVal == null
-          ? "추정 불가"
-          : estWinLow != null && estWinHigh != null
-            ? `${formatCurrency(locale, estWinVal)} (예상 · ${formatCurrency(
-                locale,
-                estWinLow,
-              )}~${formatCurrency(locale, estWinHigh)})`
-            : `${formatCurrency(locale, estWinVal)} (예상)`,
+      key: "bid",
+      eyebrow: "BID · PROGRESS",
+      title: "입찰·진행",
+      rows: [
+        { label: "할인율", value: discountText },
+        { label: "낙찰가율", value: formatPercent(winRateVal) },
+        { label: "낙찰가격", value: formatBidPrice(winPriceVal, locale) },
+        {
+          label: "유효입찰자수",
+          value: item.valid_bidder_count == null ? "-" : `${item.valid_bidder_count}명`,
+        },
+        {
+          label: "낙찰가능가(추정)",
+          value:
+            estWinVal == null
+              ? "추정 불가"
+              : estWinLow != null && estWinHigh != null
+                ? `${formatCurrency(locale, estWinVal)} (예상 · ${formatCurrency(
+                    locale,
+                    estWinLow,
+                  )}~${formatCurrency(locale, estWinHigh)})`
+                : `${formatCurrency(locale, estWinVal)} (예상)`,
+        },
+        { label: "입찰상태", value: formatText(statusVal) },
+        { label: "입찰기간", value: `${formatText(item.bid_start)} ~ ${formatText(item.bid_end)}` },
+      ],
     },
-    { label: "입찰상태", value: formatText(statusVal) },
-    { label: "입찰기간", value: `${formatText(item.bid_start)} ~ ${formatText(item.bid_end)}` },
-  ];
+  ].map((g) => ({ ...g, rows: g.rows.filter((r) => r.value && r.value !== "-") }))
+    .filter((g) => g.rows.length > 0);
 
   return (
     <div
@@ -1119,10 +1140,13 @@ function DetailModal({
             {mainImage ? (
               <>
                 {/* eslint-disable-next-line @next/next/no-img-element */}
+                {/* max-h/max-w로 '원본 크기까지만' 표시 — h-full w-full로 강제 채우면 지적도 같은
+                    저해상도 원본이 과하게 확대돼 뭉개진다(깨짐의 근본원인). 작은 이미지는 또렷하게
+                    가운데 정렬되고, 큰 이미지만 컨테이너에 맞춰 줄어든다(레터박스). */}
                 <img
                   src={mainImage}
                   alt={`물건 사진 ${safeImgIdx + 1}`}
-                  className="h-full w-full object-contain"
+                  className="max-h-full max-w-full object-contain"
                 />
                 {galleryImages.length > 1 ? (
                   <span className="absolute bottom-1.5 right-2 rounded bg-black/55 px-2 py-0.5 text-[10px] font-bold text-white">
@@ -1133,7 +1157,7 @@ function DetailModal({
             ) : aerialUrl ? (
               <>
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={aerialUrl} alt="대상지 항공뷰" className="h-full w-full object-contain" />
+                <img src={aerialUrl} alt="대상지 항공뷰" className="max-h-full max-w-full object-contain" />
                 <span className="absolute bottom-1.5 right-2 rounded bg-black/55 px-2 py-0.5 text-[10px] font-bold text-white">
                   항공뷰 (VWorld) · 온비드 물건사진 미제공
                 </span>
@@ -1154,15 +1178,17 @@ function DetailModal({
                   key={`${src}-${i}`}
                   type="button"
                   onClick={() => setImgIdx(i)}
-                  className={`h-14 w-16 shrink-0 overflow-hidden rounded-lg border-2 transition-all ${
+                  className={`flex h-14 w-16 shrink-0 items-center justify-center overflow-hidden rounded-lg border-2 bg-black/30 transition-all ${
                     i === safeImgIdx
                       ? "border-[var(--accent-strong)]"
                       : "border-[var(--line)] opacity-70 hover:opacity-100"
                   }`}
                   aria-label={`사진 ${i + 1} 보기`}
                 >
+                  {/* object-contain으로 썸네일도 잘리지 않게 전체를 보여준다(지적도 등 도면이 일부만
+                      잘려 보이던 문제 해결). 배경은 은은한 어둠으로 레터박스 처리. */}
                   {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={src} alt={`썸네일 ${i + 1}`} className="h-full w-full object-cover" />
+                  <img src={src} alt={`썸네일 ${i + 1}`} className="max-h-full max-w-full object-contain" />
                 </button>
               ))}
             </div>
@@ -1222,15 +1248,25 @@ function DetailModal({
           </div>
         </div>
 
-        {/* 상세 속성 → 라벨↔값 데이터 로우(표보다 가벼운 정렬) */}
-        <dl className="sa-di-rows">
-          {rows.map((row) => (
-            <div key={row.label} className="sa-di-row">
-              <dt className="sa-di-row__label">{row.label}</dt>
-              <dd className="sa-di-row__value">{row.value}</dd>
-            </div>
+        {/* 상세 속성 → '단락별'로 묶어 표시. 각 단락은 작은 제목(eyebrow) + 라벨↔값 로우. */}
+        <div className="space-y-4">
+          {rowGroups.map((group) => (
+            <section key={group.key} className="sa-di-sub">
+              <p className="sa-di-eyebrow mb-2">
+                {group.eyebrow}
+                <span className="ml-1.5 text-[var(--text-secondary)]">· {group.title}</span>
+              </p>
+              <dl className="sa-di-rows">
+                {group.rows.map((row) => (
+                  <div key={row.label} className="sa-di-row">
+                    <dt className="sa-di-row__label">{row.label}</dt>
+                    <dd className="sa-di-row__value">{row.value}</dd>
+                  </div>
+                ))}
+              </dl>
+            </section>
           ))}
-        </dl>
+        </div>
 
         {/* 회차별 입찰내역(prev_bids) */}
         {prevBids.length ? (

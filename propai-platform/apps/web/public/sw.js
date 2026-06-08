@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v119-market-auction-premium";
+const CACHE_NAME = "propai-v120-auction-detail-refine";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",
