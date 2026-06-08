@@ -423,10 +423,14 @@ export function ProjectSiteAnalysisWorkspaceClient({
 
         let parcelZoning: string | null = null;
         let parcelData: ParcelInfoResponse | null = null;
-        if (autoPnu) {
+        // PNU가 없어도 주소로 지오코딩 폴백되도록 address도 함께 전달(필지정보 누락 해소).
+        if (autoPnu || autoAddress) {
           const parcel = await apiClient.post<ParcelInfoResponse>(
             "/external/parcel/info",
-            { useMock: false, body: { pnu: autoPnu } },
+            {
+              useMock: false,
+              body: { pnu: autoPnu || undefined, address: autoAddress || undefined },
+            },
           );
           if (cancelled) return;
           parcelData = parcel;
@@ -505,12 +509,12 @@ export function ProjectSiteAnalysisWorkspaceClient({
       setAvmResult(avm);
 
       let parcelZoning: string | null = null;
-      if (pnu) {
+      if (pnu || address) {
         const parcel = await apiClient.post<ParcelInfoResponse>(
           "/external/parcel/info",
           {
             useMock: false,
-            body: { pnu },
+            body: { pnu: pnu || undefined, address: address || undefined },
           },
         );
         setParcelResult(parcel);

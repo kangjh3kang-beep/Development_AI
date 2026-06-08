@@ -13,19 +13,42 @@ molit = MOLITService()
 class PNURequest(BaseModel):
     pnu: str | None = None       # 프론트 표준 필드
     pnu_code: str | None = None  # 하위호환
+    address: str | None = None   # PNU 미보유 시 주소→PNU 지오코딩 폴백
 
 class MergeRequest(BaseModel):
     pnu_codes: List[str]
 
 @router.post("/parcel/info")
 async def get_parcel_info(req: PNURequest, current_user: User = Depends(get_current_user)):
+    """필지 정보(지목·용도지역·면적·이용상황·공시지가·도로접면·지형) 조회.
+
+    ★수정: 기존엔 get_parcel_by_pnu(기하정보만) 반환 → 프론트가 기대하는 토지특성 필드와
+    불일치해 전부 빈값이었음. NED getLandCharacteristics(지목·용도지역·공시지가 등)로 교정하고,
+    PNU 미보유 시 주소→PNU 지오코딩으로 폴백한다.
+    """
     code = req.pnu or req.pnu_code
+    # PNU 없고 주소 있으면 지오코딩으로 PNU 도출(필지정보 누락 해소).
+    if not code and req.address and req.address.strip():
+        geo = await vworld.geocode_address(req.address.strip())
+        code = (geo or {}).get("pnu")
     if not code:
-        raise HTTPException(status_code=422, detail="pnu 필드가 필요합니다")
-    result = await vworld.get_parcel_by_pnu(code)
-    if not result:
+        raise HTTPException(status_code=422, detail="pnu 또는 address가 필요합니다")
+
+    lc = await vworld.get_land_characteristics(code)
+    if not lc:
         raise HTTPException(status_code=404, detail="필지 정보를 찾을 수 없음")
-    return result
+    return {
+        "pnu": lc.get("pnu", code),
+        "address": req.address or "",
+        "land_category": lc.get("land_category", "") or "",
+        "zoning": lc.get("zone_type", "") or "",
+        "area_sqm": lc.get("area_sqm", 0) or 0,
+        "land_use_situation": lc.get("land_use_situation", "") or "",
+        "official_price_per_sqm": lc.get("official_price_per_sqm", 0) or 0,
+        "road_side": lc.get("road_side", "") or "",
+        "terrain": (lc.get("terrain_form") or lc.get("terrain_height") or "") or "",
+        "restrictions": [z for z in [lc.get("zone_type_2")] if z],
+    }
 
 @router.post("/parcel/merge")
 async def merge_parcels(req: MergeRequest, current_user: User = Depends(get_current_user)):

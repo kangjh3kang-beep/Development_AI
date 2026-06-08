@@ -130,7 +130,9 @@ export function ParcelBoundaryMap({
       if (!alive || !mapEl.current) return;
       const L = window.L;
       if (mapRef.current) { mapRef.current.remove(); mapRef.current = null; }
-      const map = L.map(mapEl.current, { scrollWheelZoom: false });
+      // 마우스 휠 확대/축소 활성화(사용자 요청). 페이지 스크롤 탈취 방지를 위해
+      // 지도에 포커스/호버 시에만 휠 줌이 동작하도록 Leaflet 기본 동작 사용.
+      const map = L.map(mapEl.current, { scrollWheelZoom: true });
       mapRef.current = map;
       L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
         maxZoom: 19, attribution: "© OpenStreetMap",

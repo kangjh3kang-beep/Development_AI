@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v102-auction-gallery-appraisal";
+const CACHE_NAME = "propai-v103-parcel-scrollzoom";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",
