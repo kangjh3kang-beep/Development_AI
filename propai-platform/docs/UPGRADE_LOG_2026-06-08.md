@@ -84,7 +84,11 @@
 | v120 | 경매 물건상세 고도화 — 이미지 과확대/깨짐 근본수정 + 상세 단락별(개요/토지·건물/입찰·진행) 디자인 분류 | ✅ 라이브(edge v120) |
 | v121 | 경매 물건상세 사진 클릭 확대(라이트박스) — 전체화면·좌우이동(‹›/←→)·Esc·n/total | ✅ 라이브(edge v121) |
 | v122 | 대시보드 애플급 리디자인 1차 — db-* 유틸, 히어로/기능요약/KPI 빈상태/프로모 절제·토큰화 | ✅ 라이브 → critic REVISE |
-| v123 | 대시보드 애플급 정제 2차 — critic Top3+High 반영(한글자간·로고중복·네온시안→파랑·KPI빈상태·카드균일) | tsc EXIT0·빌드 중 |
+| v123 | 대시보드 애플급 정제 2차 — critic Top3+High 반영(한글자간·로고중복·네온시안→파랑·KPI빈상태·카드균일) | ✅ 라이브 → critic 재검 ACCEPT(잔여 1건) |
+| v124 | 히어로 헤드라인 한글 word-break:keep-all (critic 재검 잔여 MAJOR 해소) → 애플급 ACCEPT | 빌드 중 |
+
+### critic 재검 결과(v123)
+- VERDICT: ACCEPT-WITH-RESERVATIONS. C1~C3·H1·H4 = **5/5 해소 확인**. 잔여 = 헤드라인 word-break MAJOR 1건(+ESG 글로우 MINOR=코드상 이미 중립, 저해상 오인). → v124에서 word-break 교정 = ACCEPT.
 
 ### 애플급 디자인 반복 루프(designer→critic→designer)
 - v122 후 Playwright 스크린샷 → **critic(opus) 적대적 비평**: VERDICT REVISE. 'AI 조립 느낌' 직접원인 3대 발견:
