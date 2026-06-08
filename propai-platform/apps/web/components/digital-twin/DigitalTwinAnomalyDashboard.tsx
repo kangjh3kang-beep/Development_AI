@@ -106,9 +106,9 @@ export function DigitalTwinAnomalyDashboard() {
             <Card className="rounded-[2.5rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-lg)] overflow-hidden group">
               <CardContent className="p-8 relative">
                  <div className="absolute top-4 right-6 text-2xl opacity-20 grayscale group-hover:grayscale-0 group-hover:opacity-100 transition-all duration-500">{kpi.icon}</div>
-                 <p className="text-[10px] font-[1000] uppercase tracking-[0.3em] text-[var(--text-hint)]">{kpi.label}</p>
+                 <p className="cc-label text-[var(--text-hint)]">{kpi.label}</p>
                  <div className="mt-4 flex items-baseline gap-2">
-                   <p className={`text-4xl font-[1000] tracking-tighter ${kpi.color}`}>
+                   <p className={`cc-num text-4xl font-[1000] tracking-tighter ${kpi.color}`}>
                      {kpi.value}
                    </p>
                    <span className="text-sm font-black text-[var(--text-hint)] uppercase tracking-widest">{kpi.unit}</span>

@@ -74,12 +74,12 @@ const BID_TYPES = ["전체", "공사", "용역", "물품"];
 const REGIONS = ["전체", "서울", "경기", "부산", "대구", "인천", "광주", "대전", "울산", "세종", "강원", "충북", "충남", "전북", "전남", "경북", "경남", "제주"];
 const PAGE_SIZES = [10, 20, 30, 50, 100];
 
-/* 대분류별 색상(소분류 칩·카드 태그 색상 통일) */
+/* 대분류별 색상(소분류 칩·카드 태그) — 차트 팔레트 토큰으로 카테고리 구분(하드코딩 색상 금지) */
 const GROUP_COLOR: Record<string, string> = {
-  "설계·감리": "text-sky-300 bg-sky-500/15 border-sky-500/30",
-  "정비·도시개발": "text-violet-300 bg-violet-500/15 border-violet-500/30",
-  "시공": "text-emerald-300 bg-emerald-500/15 border-emerald-500/30",
-  "자재·산업": "text-amber-300 bg-amber-500/15 border-amber-500/30",
+  "설계·감리": "text-[var(--chart-6)] bg-[var(--surface-strong)] border-[var(--line)]",
+  "정비·도시개발": "text-[var(--chart-5)] bg-[var(--surface-strong)] border-[var(--line)]",
+  "시공": "text-[var(--chart-1)] bg-[var(--surface-strong)] border-[var(--line)]",
+  "자재·산업": "text-[var(--chart-3)] bg-[var(--surface-strong)] border-[var(--line)]",
 };
 function tagColor(tag: string, groups: Record<string, string[]>): string {
   for (const [g, subs] of Object.entries(groups)) {
@@ -160,27 +160,36 @@ export default function G2BBidDashboard() {
 
   return (
     <div className="flex flex-col gap-6 pb-20">
-      {/* ── 헤더 ── */}
-      <div className="flex items-center gap-3">
-        <div className="h-11 w-11 rounded-2xl bg-gradient-to-br from-[var(--accent-strong)] to-blue-600 flex items-center justify-center text-white text-lg">🏛</div>
-        <div>
+      {/* ── 헤더 (커맨드센터) ── */}
+      <div className="cc-bracketed relative flex items-center gap-3 overflow-hidden rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface-soft)] px-5 py-4 shadow-[var(--shadow-inner)]">
+        <div className="cc-grid-bg opacity-50" />
+        <i className="cc-bracket cc-bracket--tl" />
+        <i className="cc-bracket cc-bracket--tr" />
+        <i className="cc-bracket cc-bracket--bl" />
+        <i className="cc-bracket cc-bracket--br" />
+        <div className="relative z-10 h-11 w-11 rounded-2xl bg-gradient-to-br from-[var(--accent-strong)] to-[var(--accent)] flex items-center justify-center text-white text-lg">🏛</div>
+        <div className="relative z-10">
+          <div className="mb-1 flex items-center gap-2">
+            <span className="cc-meta">G2B · PUBLIC BID CONTROL</span>
+            <span className="cc-live"><i />LIVE</span>
+          </div>
           <h1 className="text-2xl font-[1000] tracking-tight text-[var(--text-primary)]">공공입찰 분석</h1>
           <p className="text-xs text-[var(--text-secondary)]">나라장터(G2B) 부동산·건설 입찰/낙찰 AI 분석</p>
         </div>
       </div>
 
-      {/* ── 통계 카드 (compact) ── */}
+      {/* ── 통계 카드 (계기판 모듈) ── */}
       <div className="grid gap-3 grid-cols-2 lg:grid-cols-5">
         {[
           { label: "진행 중 공고", value: stats?.total_active ?? 0, suffix: "건", color: "text-[var(--accent-strong)]" },
-          { label: "마감 임박 (7일)", value: stats?.closing_soon ?? 0, suffix: "건", color: "text-amber-400" },
-          { label: "평균 낙찰가율", value: stats?.avg_award_rate ? `${stats.avg_award_rate.toFixed(1)}` : "-", suffix: "%", color: "text-blue-400" },
-          { label: "AI 추천 입찰", value: stats?.ai_recommended_count ?? 0, suffix: "건", color: "text-emerald-400" },
-          { label: "총 추정가격", value: stats?.total_estimated_value ? formatKRW(stats.total_estimated_value) : "-", suffix: "", color: "text-purple-400" },
+          { label: "마감 임박 (7일)", value: stats?.closing_soon ?? 0, suffix: "건", color: "text-[var(--status-warning)]" },
+          { label: "평균 낙찰가율", value: stats?.avg_award_rate ? `${stats.avg_award_rate.toFixed(1)}` : "-", suffix: "%", color: "text-[var(--data-accent)]" },
+          { label: "AI 추천 입찰", value: stats?.ai_recommended_count ?? 0, suffix: "건", color: "text-[var(--status-success)]" },
+          { label: "총 추정가격", value: stats?.total_estimated_value ? formatKRW(stats.total_estimated_value) : "-", suffix: "", color: "text-[var(--accent-strong)]" },
         ].map((s, i) => (
-          <div key={i} className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-3.5">
-            <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-secondary)] mb-1">{s.label}</p>
-            <p className={`text-xl font-[1000] tracking-tight ${s.color}`}>{s.value}<span className="text-xs font-bold ml-0.5">{s.suffix}</span></p>
+          <div key={i} className="cc-panel cc-interactive p-3.5">
+            <p className="cc-label mb-1.5">{s.label}</p>
+            <p className={`cc-num text-xl font-[1000] tracking-tight ${s.color}`}>{s.value}<span className="text-xs font-bold ml-0.5">{s.suffix}</span></p>
           </div>
         ))}
       </div>
@@ -237,7 +246,7 @@ export default function G2BBidDashboard() {
               <button
                 onClick={() => { setClosingSoon((v) => !v); resetPage(); }}
                 className={`rounded-lg px-3 py-2 text-xs font-bold transition-all ${
-                  closingSoon ? "bg-amber-500 text-white" : "bg-[var(--surface-strong)] text-amber-400 border border-amber-500/40"
+                  closingSoon ? "bg-[var(--status-warning)] text-white" : "bg-[var(--surface-strong)] text-[var(--status-warning)] border border-[var(--status-warning)]/40"
                 }`}
               >
                 ⏰ 마감임박
@@ -442,8 +451,8 @@ function BidCard({ bid, groups, onClick }: { bid: G2BBid; groups: Record<string,
   const ddayStyle =
     days == null ? "" :
     days < 0 ? "bg-[var(--surface-strong)] text-[var(--text-hint)]" :
-    days <= 3 ? "bg-red-500/20 text-red-400 animate-pulse" :
-    days <= 7 ? "bg-amber-500/20 text-amber-400" :
+    days <= 3 ? "bg-[var(--status-error)]/20 text-[var(--status-error)] animate-pulse" :
+    days <= 7 ? "bg-[var(--status-warning)]/20 text-[var(--status-warning)]" :
     "bg-[var(--surface-strong)] text-[var(--text-secondary)]";
   const isRecommended = bid.ai_risk_score != null && bid.ai_risk_score <= 30;
 
@@ -456,7 +465,7 @@ function BidCard({ bid, groups, onClick }: { bid: G2BBid; groups: Record<string,
       <div className="flex items-center justify-between mb-2.5">
         <span className="rounded-md bg-[var(--accent-soft)] px-2 py-0.5 text-[10px] font-black text-[var(--accent-strong)]">{bid.bid_type}</span>
         <div className="flex items-center gap-1.5">
-          {isRecommended && <span className="rounded-md bg-emerald-500/20 px-2 py-0.5 text-[10px] font-black text-emerald-400">AI추천</span>}
+          {isRecommended && <span className="rounded-md bg-[var(--status-success)]/20 px-2 py-0.5 text-[10px] font-black text-[var(--status-success)]">AI추천</span>}
           {dday && <span className={`rounded-md px-2 py-0.5 text-[10px] font-black ${ddayStyle}`}>{dday}</span>}
         </div>
       </div>
@@ -467,7 +476,7 @@ function BidCard({ bid, groups, onClick }: { bid: G2BBid; groups: Record<string,
       </h3>
 
       {/* 추정가격(강조) */}
-      <p className="text-xl font-[1000] text-[var(--accent-strong)] tracking-tight mb-3">
+      <p className="cc-num text-xl font-[1000] text-[var(--accent-strong)] tracking-tight mb-3">
         {formatKRW(bid.estimated_price)}
       </p>
 
@@ -588,7 +597,7 @@ function AnalysisHistory({
             <div className="flex shrink-0 gap-1.5">
               <button onClick={() => view(item)} disabled={busy === item.id} className="rounded-lg bg-[var(--accent-strong)] px-3 py-1.5 text-[11px] font-bold text-white hover:opacity-90 disabled:opacity-50">재조회</button>
               <button onClick={() => onReanalyze(item)} className="rounded-lg border border-[var(--accent-strong)] px-3 py-1.5 text-[11px] font-bold text-[var(--accent-strong)] hover:bg-[var(--accent-soft)]">편집 재분석</button>
-              <button onClick={() => remove(item)} disabled={busy === item.id} className="rounded-lg border border-rose-500/40 px-3 py-1.5 text-[11px] font-bold text-rose-400 hover:bg-rose-500/10 disabled:opacity-50">삭제</button>
+              <button onClick={() => remove(item)} disabled={busy === item.id} className="rounded-lg border border-[var(--status-error)]/40 px-3 py-1.5 text-[11px] font-bold text-[var(--status-error)] hover:bg-[var(--status-error)]/10 disabled:opacity-50">삭제</button>
             </div>
           </div>
           <div className="mt-3 grid grid-cols-3 gap-2">
@@ -606,7 +615,7 @@ function HistStat({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-strong)] p-2.5 text-center">
       <p className="text-[10px] text-[var(--text-hint)]">{label}</p>
-      <p className="text-sm font-black text-[var(--text-primary)] mt-0.5">{value}</p>
+      <p className="cc-num text-sm font-black text-[var(--text-primary)] mt-0.5">{value}</p>
     </div>
   );
 }

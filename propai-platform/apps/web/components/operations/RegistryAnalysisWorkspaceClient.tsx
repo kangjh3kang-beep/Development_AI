@@ -44,9 +44,9 @@ type Result = { status: string; origin?: string; land?: Land | null; message?: s
   fetched?: { owner?: string; registry_office?: string; doc_title?: string; has_pdf?: boolean; pdf_url?: string | null } | null };
 
 const GRADE: Record<string, string> = {
-  안전: "border-emerald-500/30 bg-emerald-500/10 text-emerald-400",
-  주의: "border-amber-500/30 bg-amber-500/10 text-amber-400",
-  위험: "border-rose-500/30 bg-rose-500/10 text-rose-400",
+  안전: "border-[var(--status-success)]/30 bg-[var(--status-success)]/10 text-[var(--status-success)]",
+  주의: "border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 text-[var(--status-warning)]",
+  위험: "border-[var(--status-error)]/30 bg-[var(--status-error)]/10 text-[var(--status-error)]",
 };
 
 export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) {
@@ -158,6 +158,10 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
           <div className="flex items-center gap-3">
             <span className="text-2xl">📜</span>
             <div>
+              <div className="mb-1 flex items-center gap-2">
+                <span className="cc-meta">REGISTRY · RIGHTS ANALYSIS</span>
+                <span className="cc-chip-data">법무 AI</span>
+              </div>
               <h1 className="text-lg font-black text-[var(--text-primary)]">등기부등본 열람·분석</h1>
               <p className="mt-0.5 text-xs text-[var(--text-secondary)]">
                 법무사·변호사 AI가 등기부등본을 분석해 소유정보·소유기간·매입금액·지분·가등기·압류·근저당·매도청구 가능여부를 제공합니다.
@@ -203,7 +207,7 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
               {loading ? "등기 분석 중…" : "⚖ 등기 권리분석"}
             </button>
             {loading && progress && <span className="text-xs text-[var(--text-secondary)]">{progress}</span>}
-            {error && <span className="text-xs font-semibold text-rose-500">{error}</span>}
+            {error && <span className="text-xs font-semibold text-[var(--status-error)]">{error}</span>}
           </div>
         </CardContent>
       </Card>
@@ -233,7 +237,7 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
                     <a href={r.pdf_url} target="_blank" rel="noopener noreferrer"
                       className="rounded-lg border border-[var(--accent-strong)]/40 px-2.5 py-1 text-[11px] font-bold text-[var(--accent-strong)]">PDF ↓</a>
                   )}
-                  <button onClick={() => removeRow(projectId, r.id)} title="지번 삭제" className="text-rose-500">✕</button>
+                  <button onClick={() => removeRow(projectId, r.id)} title="지번 삭제" className="text-[var(--status-error)]">✕</button>
                 </div>
               ))}
             </div>
@@ -282,7 +286,7 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
                   ].map(([k, v]) => (
                     <div key={k} className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-3">
                       <p className="text-[11px] text-[var(--text-tertiary)]">{k}</p>
-                      <p className="mt-0.5 text-sm font-bold text-[var(--text-primary)]">{v}</p>
+                      <p className="cc-num mt-0.5 text-sm font-bold text-[var(--text-primary)]">{v}</p>
                     </div>
                   ))}
                 </div>
@@ -309,9 +313,9 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
 
           {/* 등기부 미확보 안내 */}
           {result.status !== "ok" && (
-            <Card className="rounded-[var(--radius-2xl)] border-amber-500/30 bg-amber-500/5 shadow-[var(--shadow-md)]">
+            <Card className="rounded-[var(--radius-2xl)] border-[var(--status-warning)]/30 bg-[var(--status-warning)]/5 shadow-[var(--shadow-md)]">
               <CardContent className="p-6">
-                <p className="text-sm font-bold text-amber-400">⚙ 등기부 분석 안내</p>
+                <p className="text-sm font-bold text-[var(--status-warning)]">⚙ 등기부 분석 안내</p>
                 <p className="mt-1 text-sm text-[var(--text-secondary)]">{result.message}</p>
                 <p className="mt-2 text-[11px] text-[var(--text-hint)]">위의 "등기부등본 내용 직접 입력"으로 분석하거나, 등기부 API(CODEF) 설정을 완료하세요.</p>
               </CardContent>
@@ -369,7 +373,7 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
                 )}
                 {(ai.risks?.length ?? 0) > 0 && (
                   <div className="mt-3">
-                    <p className="text-xs font-bold text-rose-500">⚠ 권리 리스크</p>
+                    <p className="text-xs font-bold text-[var(--status-error)]">⚠ 권리 리스크</p>
                     <ul className="mt-1 space-y-0.5 text-xs text-[var(--text-secondary)]">
                       {ai.risks!.map((r, i) => <li key={i}>· {r}</li>)}
                     </ul>
@@ -397,8 +401,8 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
 
 function RightBlock({ title, body, tone }: { title: string; body: string; tone: string }) {
   const cls: Record<string, string> = {
-    rose: "border-rose-500/30 text-rose-400", amber: "border-amber-500/30 text-amber-400",
-    emerald: "border-emerald-500/30 text-emerald-400", sky: "border-sky-500/30 text-sky-400",
+    rose: "border-[var(--status-error)]/30 text-[var(--status-error)]", amber: "border-[var(--status-warning)]/30 text-[var(--status-warning)]",
+    emerald: "border-[var(--status-success)]/30 text-[var(--status-success)]", sky: "border-[var(--status-info)]/30 text-[var(--status-info)]",
   };
   return (
     <div className={`rounded-xl border bg-[var(--surface-soft)] p-3 ${cls[tone] || "border-[var(--line)]"}`}>

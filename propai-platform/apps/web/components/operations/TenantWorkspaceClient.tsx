@@ -131,19 +131,17 @@ function extractErrorMessage(error: unknown, authMessage: string) {
 function statusBadge(status: string) {
   const s = status.toLowerCase();
   if (s === "active" || s === "운영중" || s === "completed")
-    return "bg-emerald-500/15 text-emerald-500";
+    return "border border-[var(--status-success)]/30 bg-[color-mix(in_srgb,var(--status-success)_15%,transparent)] text-[var(--status-success)]";
   if (s === "planning" || s === "pending")
-    return "bg-amber-500/15 text-amber-500";
-  return "bg-[var(--surface-soft)] text-[var(--text-secondary)]";
+    return "border border-[var(--status-warning)]/30 bg-[color-mix(in_srgb,var(--status-warning)_15%,transparent)] text-[var(--status-warning)]";
+  return "border border-[var(--line)] bg-[var(--surface-soft)] text-[var(--text-secondary)]";
 }
 
 function MetricTile({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-[var(--radius-xl)] bg-[var(--surface)] p-4">
-      <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
-        {label}
-      </p>
-      <p className="mt-2 text-2xl font-bold text-[var(--text-primary)]">
+    <div className="rounded-[var(--radius-xl)] border border-[var(--line)] bg-[var(--surface)] p-4">
+      <p className="cc-label">{label}</p>
+      <p className="cc-num mt-2 text-2xl font-bold text-[var(--text-primary)]">
         {value}
       </p>
     </div>
@@ -183,33 +181,35 @@ export function TenantWorkspaceClient({
 
   return (
     <section className="grid gap-6">
-      {/* Hero */}
-      <Card className="rounded-[var(--radius-2xl)] bg-[var(--surface-strong)] shadow-[var(--shadow-lg)]">
-        <CardContent className="p-8">
-          <div className="flex flex-wrap items-center gap-3">
-            <span className="rounded-full bg-[rgba(14,116,144,0.1)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--accent-strong)]">
-              {labels.heroTitle}
-            </span>
-            <span className="rounded-full border border-[var(--line)] px-4 py-2 text-xs font-medium text-[var(--text-secondary)]">
-              {runtimeConfig.mode === "live" ? "LIVE" : "HYBRID"}
-            </span>
+      {/* Hero — 임차인 운영 관제 콘솔 헤더 */}
+      <Card className="cc-bracketed overflow-hidden rounded-[var(--radius-2xl)] bg-[var(--surface-strong)] shadow-[var(--shadow-lg)]">
+        <i className="cc-bracket cc-bracket--tl" />
+        <i className="cc-bracket cc-bracket--tr" />
+        <i className="cc-bracket cc-bracket--bl" />
+        <i className="cc-bracket cc-bracket--br" />
+        <CardContent className="relative p-8">
+          <div className="cc-grid-bg opacity-40" />
+          <div className="relative z-10 flex flex-wrap items-center gap-3">
+            <span className="cc-meta">TENANT · OPERATIONS DESK</span>
+            <span className="cc-chip-data">{runtimeConfig.mode === "live" ? "LIVE" : "HYBRID"}</span>
+            <span className="cc-live"><i />ONLINE</span>
           </div>
-          <h3 className="mt-5 text-3xl font-bold text-[var(--text-primary)]">
+          <h3 className="relative z-10 mt-5 text-3xl font-bold text-[var(--text-primary)]">
             {labels.heroDescription}
           </h3>
-          <p className="mt-4 max-w-3xl text-sm leading-8 text-[var(--text-secondary)]">
+          <p className="relative z-10 mt-4 max-w-3xl text-sm leading-8 text-[var(--text-secondary)]">
             {labels.heroHint}
           </p>
-          <p className="mt-3 max-w-3xl text-sm leading-8 text-[var(--text-tertiary)]">
+          <p className="relative z-10 mt-3 max-w-3xl text-sm leading-8 text-[var(--text-tertiary)]">
             {labels.tokenHint}
           </p>
           {!canUseLiveApi && (
-            <div className="mt-6 rounded-[var(--radius-xl)] border border-dashed border-[var(--line)] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[var(--text-secondary)]">
+            <div className="relative z-10 mt-6 rounded-[var(--radius-xl)] border border-dashed border-[var(--line)] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[var(--text-secondary)]">
               {labels.authError}
             </div>
           )}
           {queryError && (
-            <div className="mt-6">
+            <div className="relative z-10 mt-6">
               <WorkspaceQueryErrorCard
                 title={labels.loadErrorTitle}
                 description={labels.loadErrorDetail}
@@ -227,9 +227,10 @@ export function TenantWorkspaceClient({
       {/* Payment overview */}
       <Card>
         <CardContent className="p-6">
-          <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
-            {labels.paymentOverviewTitle}
-          </p>
+          <div className="flex items-center justify-between">
+            <p className="cc-label">{labels.paymentOverviewTitle}</p>
+            <span className="cc-chip-data">METRICS</span>
+          </div>
           {projectsQuery.isLoading ? (
             <SkeletonLoader count={1} itemClassName="h-20" />
           ) : (
@@ -254,9 +255,10 @@ export function TenantWorkspaceClient({
       {/* Tenant list */}
       <Card>
         <CardContent className="p-6">
-          <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
-            {labels.tenantsTitle}
-          </p>
+          <div className="flex items-center justify-between">
+            <p className="cc-label">{labels.tenantsTitle}</p>
+            <span className="cc-live"><i />LIVE</span>
+          </div>
           {projectsQuery.isLoading ? (
             <SkeletonLoader count={3} itemClassName="h-16" />
           ) : projects.length > 0 ? (
@@ -290,12 +292,12 @@ export function TenantWorkspaceClient({
                           {project.status}
                         </span>
                       </td>
-                      <td className="py-3 pr-4 text-[var(--text-secondary)]">
+                      <td className="cc-num py-3 pr-4 text-[var(--text-secondary)]">
                         {project.total_area_sqm != null
                           ? project.total_area_sqm.toLocaleString()
                           : "-"}
                       </td>
-                      <td className="py-3 text-[var(--text-secondary)]">
+                      <td className="cc-num py-3 text-[var(--text-secondary)]">
                         {formatDate(locale, project.updated_at)}
                       </td>
                     </tr>

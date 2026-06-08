@@ -66,10 +66,11 @@ type PermitAnalysis = {
   multi_parcel?: MultiParcel;
 };
 
+// 인허가 가능성 → 상태색(토큰). 하드코딩 색 금지 — color-mix로 표면/보더 파생.
 const POSSIBILITY_STYLE: Record<string, string> = {
-  상: "bg-emerald-500/15 text-emerald-600 border-emerald-500/30",
-  중: "bg-amber-500/15 text-amber-600 border-amber-500/30",
-  하: "bg-rose-500/15 text-rose-600 border-rose-500/30",
+  상: "border-[var(--status-success)]/30 bg-[color-mix(in_srgb,var(--status-success)_15%,transparent)] text-[var(--status-success)]",
+  중: "border-[var(--status-warning)]/30 bg-[color-mix(in_srgb,var(--status-warning)_15%,transparent)] text-[var(--status-warning)]",
+  하: "border-[var(--status-error)]/30 bg-[color-mix(in_srgb,var(--status-error)_15%,transparent)] text-[var(--status-error)]",
 };
 
 export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale }) {
@@ -130,10 +131,19 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
 
   return (
     <div className="grid gap-6">
-      {/* Hero */}
-      <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
-        <CardContent className="p-6">
-          <div className="flex items-center gap-3">
+      {/* Hero — 인허가 관제 콘솔 헤더 */}
+      <Card className="cc-bracketed overflow-hidden rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
+        <i className="cc-bracket cc-bracket--tl" />
+        <i className="cc-bracket cc-bracket--tr" />
+        <i className="cc-bracket cc-bracket--bl" />
+        <i className="cc-bracket cc-bracket--br" />
+        <CardContent className="relative p-6">
+          <div className="cc-grid-bg opacity-40" />
+          <div className="relative z-10 flex items-center justify-between gap-3">
+            <span className="cc-meta">PERMIT · ENTITLEMENT AI</span>
+            <span className="cc-live"><i />LIVE</span>
+          </div>
+          <div className="relative z-10 mt-3 flex items-center gap-3">
             <span className="text-2xl">⚖️</span>
             <div>
               <h1 className="text-lg font-black text-[var(--text-primary)]">인.허가분석 자동화</h1>
@@ -144,7 +154,7 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
             </div>
           </div>
 
-          <div className="mt-5">
+          <div className="relative z-10 mt-5">
             <ProjectAddressInput
               value={addr}
               onChange={setAddr}
@@ -157,7 +167,7 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
 
           {/* 다필지(여러 필지) 추가 — 용도지역이 다른 토지 통합 개발 분석 */}
           {extra.map((p, i) => (
-            <div key={i} className="mt-3">
+            <div key={i} className="relative z-10 mt-3">
               <div className="mb-1 flex items-center justify-between">
                 <span className="text-xs font-bold uppercase tracking-widest text-[var(--text-tertiary)]">
                   추가 필지 {i + 2}
@@ -165,7 +175,7 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
                 <button
                   onClick={() => removeParcel(i)}
                   disabled={loading}
-                  className="text-[11px] font-semibold text-rose-500 hover:underline disabled:opacity-50"
+                  className="text-[11px] font-semibold text-[var(--status-error)] hover:underline disabled:opacity-50"
                 >
                   ✕ 제거
                 </button>
@@ -180,7 +190,7 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
             </div>
           ))}
 
-          <div className="mt-3 flex flex-wrap items-center gap-3">
+          <div className="relative z-10 mt-3 flex flex-wrap items-center gap-3">
             <button
               onClick={addParcel}
               disabled={loading}
@@ -195,7 +205,7 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
             </span>
           </div>
 
-          <div className="mt-4 flex items-center gap-3">
+          <div className="relative z-10 mt-4 flex items-center gap-3">
             <button
               onClick={run}
               disabled={loading}
@@ -203,7 +213,7 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
             >
               {loading ? "AI 분석 중… (최대 1분)" : "🤖 인허가 분석"}
             </button>
-            {error && <span className="text-xs font-semibold text-rose-500">{error}</span>}
+            {error && <span className="text-xs font-semibold text-[var(--status-error)]">{error}</span>}
           </div>
         </CardContent>
       </Card>
@@ -240,14 +250,22 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
               ["용적률 한도", s?.max_far != null ? `${s.max_far}%` : "—"],
             ];
             return (
-              <Card className="rounded-[var(--radius-2xl)] border-[var(--accent-strong)]/30 bg-[var(--accent-strong)]/5 shadow-[var(--shadow-md)]">
-                <CardContent className="p-5">
-                  <p className="text-[11px] font-black uppercase tracking-widest text-[var(--accent-strong)]">한눈 요약 · 인허가 진단</p>
-                  <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-4">
+              <Card className="cc-bracketed overflow-hidden rounded-[var(--radius-2xl)] border-[var(--accent-strong)]/30 bg-[var(--accent-strong)]/5 shadow-[var(--shadow-md)]">
+                <i className="cc-bracket cc-bracket--tl" />
+                <i className="cc-bracket cc-bracket--tr" />
+                <i className="cc-bracket cc-bracket--bl" />
+                <i className="cc-bracket cc-bracket--br" />
+                <CardContent className="relative p-5">
+                  <div className="cc-grid-bg opacity-40" />
+                  <div className="relative z-10 flex items-center justify-between">
+                    <span className="cc-meta">DIAGNOSTIC · AT-A-GLANCE</span>
+                    <span className="cc-chip-data">PERMIT</span>
+                  </div>
+                  <div className="relative z-10 mt-3 grid grid-cols-2 gap-3 md:grid-cols-4">
                     {kpis.map(([k, v], i) => (
                       <div key={k} className={`rounded-xl border p-3 ${i === 0 ? "border-[var(--accent-strong)]/40 bg-[var(--accent-strong)]/10" : "border-[var(--line)] bg-[var(--surface-2)]"}`}>
-                        <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-hint)]">{k}</p>
-                        <p className={`mt-1 text-base font-[1000] ${i === 0 ? "text-[var(--accent-strong)]" : "text-[var(--text-primary)]"}`}>{v}</p>
+                        <p className="cc-label">{k}</p>
+                        <p className={`cc-num mt-1 text-base font-[1000] ${i === 0 ? "text-[var(--accent-strong)]" : "text-[var(--text-primary)]"}`}>{v}</p>
                       </div>
                     ))}
                   </div>
@@ -338,8 +356,8 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
                           : "border-[var(--line)] bg-[var(--surface-2)]"
                       }`}
                     >
-                      <p className="text-[11px] text-[var(--text-tertiary)]">{k as string}</p>
-                      <p className="mt-0.5 text-lg font-black text-[var(--text-primary)]">
+                      <p className="cc-label">{k as string}</p>
+                      <p className="cc-num mt-0.5 text-lg font-black text-[var(--text-primary)]">
                         {v != null ? `${v}%` : "-"}
                       </p>
                       <p className="mt-0.5 text-[10px] text-[var(--text-tertiary)]">{sub as string}</p>
@@ -386,7 +404,7 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
                 <div className="mt-4 grid gap-3 sm:grid-cols-2">
                   {(result.multi_parcel.integration_issues?.length ?? 0) > 0 && (
                     <div>
-                      <p className="text-xs font-bold text-rose-500">⚠ 통합 인허가 문제점</p>
+                      <p className="text-xs font-bold text-[var(--status-error)]">⚠ 통합 인허가 문제점</p>
                       <ul className="mt-1 space-y-0.5 text-xs text-[var(--text-secondary)]">
                         {result.multi_parcel.integration_issues!.map((it, i) => (
                           <li key={i}>· {it}</li>
@@ -396,7 +414,7 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
                   )}
                   {(result.multi_parcel.integration_solutions?.length ?? 0) > 0 && (
                     <div>
-                      <p className="text-xs font-bold text-emerald-600">✓ 해결방안</p>
+                      <p className="text-xs font-bold text-[var(--status-success)]">✓ 해결방안</p>
                       <ul className="mt-1 space-y-0.5 text-xs text-[var(--text-secondary)]">
                         {result.multi_parcel.integration_solutions!.map((s, i) => (
                           <li key={i}>· {s}</li>
@@ -455,7 +473,7 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
                       )}
                       {m.issues?.length > 0 && (
                         <div>
-                          <p className="font-bold text-rose-500">⚠ 문제점</p>
+                          <p className="font-bold text-[var(--status-error)]">⚠ 문제점</p>
                           <ul className="mt-1 space-y-0.5 text-[var(--text-secondary)]">
                             {(m.issues ?? []).map((it, i) => (
                               <li key={i}>· {it}</li>
@@ -465,7 +483,7 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
                       )}
                       {m.solutions?.length > 0 && (
                         <div>
-                          <p className="font-bold text-emerald-600">✓ 해결방안</p>
+                          <p className="font-bold text-[var(--status-success)]">✓ 해결방안</p>
                           <ul className="mt-1 space-y-0.5 text-[var(--text-secondary)]">
                             {(m.solutions ?? []).map((s, i) => (
                               <li key={i}>· {s}</li>

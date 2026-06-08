@@ -63,10 +63,19 @@ export function RegulationsWorkspaceClient({ locale }: { locale: Locale }) {
 
   return (
     <div className="grid gap-6">
-      {/* Hero + 입력 */}
-      <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
-        <CardContent className="p-6">
-          <div className="flex items-center gap-3">
+      {/* Hero + 입력 — 규제 관제 콘솔 헤더 */}
+      <Card className="cc-bracketed overflow-hidden rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
+        <i className="cc-bracket cc-bracket--tl" />
+        <i className="cc-bracket cc-bracket--tr" />
+        <i className="cc-bracket cc-bracket--bl" />
+        <i className="cc-bracket cc-bracket--br" />
+        <CardContent className="relative p-6">
+          <div className="cc-grid-bg opacity-40" />
+          <div className="relative z-10 flex items-center justify-between gap-3">
+            <span className="cc-meta">REGULATION · COMPLIANCE STACK</span>
+            <span className="cc-live"><i />LIVE</span>
+          </div>
+          <div className="relative z-10 mt-3 flex items-center gap-3">
             <span className="text-2xl">🏛️</span>
             <div>
               <h1 className="text-lg font-black text-[var(--text-primary)]">부동산 규제 연동</h1>
@@ -77,7 +86,7 @@ export function RegulationsWorkspaceClient({ locale }: { locale: Locale }) {
             </div>
           </div>
 
-          <div className="mt-5">
+          <div className="relative z-10 mt-5">
             <ProjectAddressInput
               value={addr}
               onChange={setAddr}
@@ -87,7 +96,7 @@ export function RegulationsWorkspaceClient({ locale }: { locale: Locale }) {
               disabled={loading}
             />
           </div>
-          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+          <div className="relative z-10 mt-3 grid gap-2 sm:grid-cols-2">
             <Input value={pnu} onChange={(e) => setPnu(e.target.value)} placeholder="PNU 코드 (선택)" disabled={loading} />
             <label className="flex items-center gap-2 text-xs font-semibold text-[var(--text-secondary)]">
               <input type="checkbox" checked={useLlm} onChange={(e) => setUseLlm(e.target.checked)}
@@ -95,14 +104,14 @@ export function RegulationsWorkspaceClient({ locale }: { locale: Locale }) {
               🤖 AI 통합 해석 포함
             </label>
           </div>
-          <div className="mt-4 flex items-center gap-3">
+          <div className="relative z-10 mt-4 flex items-center gap-3">
             <button onClick={run} disabled={loading}
               className="rounded-xl bg-[var(--accent-strong)] px-5 py-2.5 text-sm font-black text-white hover:opacity-90 disabled:opacity-50">
               {loading ? "규제 분석 중…" : "🔎 규제 분석"}
             </button>
-            {error && <span className="text-xs font-semibold text-rose-500">{error}</span>}
+            {error && <span className="text-xs font-semibold text-[var(--status-error)]">{error}</span>}
             {llmGated && (
-              <span className="text-xs font-semibold text-amber-500">
+              <span className="text-xs font-semibold text-[var(--status-warning)]">
                 AI 통합 해석은 잔액/구독 필요 — 계층·정량 한도·영향도는 표시됩니다.
               </span>
             )}

@@ -48,29 +48,29 @@ const SIGNAL_STYLE: Record<
   { ring: string; chip: string; dot: string; label: string }
 > = {
   pass: {
-    ring: "border-emerald-500/40 bg-emerald-500/[0.06]",
-    chip: "border-emerald-500/40 bg-emerald-500/15 text-emerald-400",
-    dot: "bg-emerald-500",
+    ring: "border-[var(--status-success)]/40 bg-[var(--status-success)]/[0.06]",
+    chip: "border-[var(--status-success)]/40 bg-[var(--status-success)]/15 text-[var(--status-success)]",
+    dot: "bg-[var(--status-success)]",
     label: "가능",
   },
   warn: {
-    ring: "border-amber-500/40 bg-amber-500/[0.06]",
-    chip: "border-amber-500/40 bg-amber-500/15 text-amber-400",
-    dot: "bg-amber-500",
+    ring: "border-[var(--status-warning)]/40 bg-[var(--status-warning)]/[0.06]",
+    chip: "border-[var(--status-warning)]/40 bg-[var(--status-warning)]/15 text-[var(--status-warning)]",
+    dot: "bg-[var(--status-warning)]",
     label: "심의/조건부",
   },
   fail: {
-    ring: "border-rose-500/40 bg-rose-500/[0.06]",
-    chip: "border-rose-500/40 bg-rose-500/15 text-rose-400",
-    dot: "bg-rose-500",
+    ring: "border-[var(--status-error)]/40 bg-[var(--status-error)]/[0.06]",
+    chip: "border-[var(--status-error)]/40 bg-[var(--status-error)]/15 text-[var(--status-error)]",
+    dot: "bg-[var(--status-error)]",
     label: "불가",
   },
 };
 
 const LEVEL_CHIP: Record<string, string> = {
-  high: "border-emerald-500/40 bg-emerald-500/15 text-emerald-400",
-  mid: "border-amber-500/40 bg-amber-500/15 text-amber-400",
-  low: "border-slate-500/40 bg-slate-500/15 text-slate-300",
+  high: "border-[var(--status-success)]/40 bg-[var(--status-success)]/15 text-[var(--status-success)]",
+  mid: "border-[var(--status-warning)]/40 bg-[var(--status-warning)]/15 text-[var(--status-warning)]",
+  low: "border-[var(--line-strong)] bg-[var(--surface-strong)] text-[var(--text-tertiary)]",
 };
 const LEVEL_LABEL: Record<string, string> = { high: "높음", mid: "중간", low: "낮음" };
 
@@ -179,9 +179,16 @@ export function PreCheckWorkspace() {
 
   return (
     <div className="grid gap-6">
-      {/* ── 입력 바 ── */}
-      <section className="rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-5">
-        <div className="mb-1 flex items-center gap-2">
+      {/* ── 입력 바 (커맨드센터) ── */}
+      <section className="cc-bracketed relative overflow-hidden rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-5">
+        <div className="cc-grid-bg opacity-40" />
+        <i className="cc-bracket cc-bracket--tl" />
+        <i className="cc-bracket cc-bracket--tr" />
+        <i className="cc-bracket cc-bracket--bl" />
+        <i className="cc-bracket cc-bracket--br" />
+        <div className="relative z-10 mb-1 flex items-center gap-2">
+          <span className="cc-meta">PRECHECK · 90s DIAGNOSIS</span>
+          <span className="cc-live"><i />READY</span>
           <span className="rounded-lg border border-[var(--accent-strong)]/30 bg-[var(--accent-soft)] px-2 py-0.5 text-[11px] font-bold text-[var(--accent-strong)]">
             90초 PreCheck
           </span>
@@ -194,7 +201,7 @@ export function PreCheckWorkspace() {
         <div className="grid gap-3 sm:grid-cols-[1fr_180px_auto]">
           <div className="grid gap-1">
             <label htmlFor="precheck-address" className="text-[11px] font-semibold text-[var(--text-tertiary)]">
-              주소 <span className="text-rose-400">*</span>
+              주소 <span className="text-[var(--status-error)]">*</span>
             </label>
             <input
               id="precheck-address"
@@ -319,7 +326,7 @@ function InstantPanel({
   }
   if (error) {
     return (
-      <div className="rounded-2xl border border-rose-500/40 bg-rose-500/[0.06] p-5 text-sm text-rose-400">
+      <div className="rounded-2xl border border-[var(--status-error)]/40 bg-[var(--status-error)]/[0.06] p-5 text-sm text-[var(--status-error)]">
         {error}
       </div>
     );
@@ -329,7 +336,7 @@ function InstantPanel({
   // 빈/오류 경로: 용도지역 미확인
   if (!data.ok) {
     return (
-      <div className="rounded-2xl border border-amber-500/40 bg-amber-500/[0.06] p-5 text-sm text-amber-300">
+      <div className="rounded-2xl border border-[var(--status-warning)]/40 bg-[var(--status-warning)]/[0.06] p-5 text-sm text-[var(--status-warning)]">
         {data.message || "용도지역을 확인하지 못했습니다. 주소(지번)를 다시 확인해 주세요."}
       </div>
     );
@@ -436,10 +443,10 @@ function SummaryStat({
   tone: "emerald" | "amber" | "rose";
 }) {
   const color =
-    tone === "emerald" ? "text-emerald-400" : tone === "amber" ? "text-amber-400" : "text-rose-400";
+    tone === "emerald" ? "text-[var(--status-success)]" : tone === "amber" ? "text-[var(--status-warning)]" : "text-[var(--status-error)]";
   return (
     <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-strong)] px-3 py-2 text-center">
-      <AnimatedCounter value={value} className={`block text-2xl font-extrabold ${color}`} />
+      <AnimatedCounter value={value} className={`cc-num block text-2xl font-extrabold ${color}`} />
       <span className="text-[11px] font-semibold text-[var(--text-tertiary)]">{label}</span>
     </div>
   );
@@ -468,7 +475,7 @@ function LimitChip({
   return (
     <span className="inline-flex items-baseline gap-1.5 rounded-lg border border-[var(--line)] bg-[var(--surface-strong)] px-3 py-1.5">
       <span className="text-[11px] font-semibold text-[var(--text-tertiary)]">{label}</span>
-      <span className="text-sm font-bold text-[var(--text-primary)]">
+      <span className="cc-num text-sm font-bold text-[var(--text-primary)]">
         {value != null ? `${value.toLocaleString()}${suffix}` : "—"}
       </span>
     </span>
@@ -536,7 +543,7 @@ function ZoningPanel({
   }
   if (error) {
     return (
-      <div className="rounded-2xl border border-rose-500/40 bg-rose-500/[0.06] p-5 text-sm text-rose-400">
+      <div className="rounded-2xl border border-[var(--status-error)]/40 bg-[var(--status-error)]/[0.06] p-5 text-sm text-[var(--status-error)]">
         {error}
       </div>
     );
@@ -545,7 +552,7 @@ function ZoningPanel({
 
   if (!data.ok) {
     return (
-      <div className="rounded-2xl border border-amber-500/40 bg-amber-500/[0.06] p-5 text-sm text-amber-300">
+      <div className="rounded-2xl border border-[var(--status-warning)]/40 bg-[var(--status-warning)]/[0.06] p-5 text-sm text-[var(--status-warning)]">
         {data.message || "조닝 시그널을 산출하지 못했습니다."}
       </div>
     );
@@ -595,7 +602,7 @@ function SignalCard({ signal }: { signal: ZoningSignal }) {
         <span className={`rounded-md border px-2 py-0.5 text-[10px] font-bold ${levelChip}`}>
           {LEVEL_LABEL[signal.level] || signal.level}
         </span>
-        <span className="ml-auto text-sm font-extrabold text-[var(--text-primary)]">
+        <span className="cc-num ml-auto text-sm font-extrabold text-[var(--text-primary)]">
           {Math.round(signal.score)}
           <span className="text-[11px] font-semibold text-[var(--text-hint)]">/100</span>
         </span>
@@ -612,11 +619,11 @@ function SignalCard({ signal }: { signal: ZoningSignal }) {
               title={p.pnu}
             >
               <span
-                className={`inline-block h-2 w-2 rounded-sm ${p.adjacent ? "bg-emerald-500" : "bg-slate-500"}`}
+                className={`inline-block h-2 w-2 rounded-sm ${p.adjacent ? "bg-[var(--status-success)]" : "bg-[var(--text-hint)]"}`}
                 aria-hidden="true"
               />
               <span className="font-semibold text-[var(--text-secondary)]">{p.zone_type || "용도미상"}</span>
-              {p.adjacent && <span className="text-emerald-400">인접</span>}
+              {p.adjacent && <span className="text-[var(--status-success)]">인접</span>}
             </span>
           ))}
         </div>

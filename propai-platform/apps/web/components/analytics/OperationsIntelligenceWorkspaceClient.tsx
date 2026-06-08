@@ -576,14 +576,14 @@ export function OperationsIntelligenceWorkspaceClient({
               </div>
             ) : null}
             {workspaceError ? (
-              <div className="mt-6 rounded-[var(--radius-xl)] border border-[rgba(217,119,6,0.28)] bg-[rgba(217,119,6,0.08)] p-5 text-sm leading-7 text-[var(--spot)]">
+              <div className="mt-6 rounded-[var(--radius-xl)] border border-[var(--status-warning)]/30 bg-[color-mix(in_srgb,var(--status-warning)_8%,transparent)] p-5 text-sm leading-7 text-[var(--status-warning)]">
                 {workspaceError}
               </div>
             ) : null}
           </CardContent>
         </Card>
       ) : workspaceError ? (
-        <div className="rounded-[var(--radius-xl)] border border-[rgba(217,119,6,0.28)] bg-[rgba(217,119,6,0.08)] p-5 text-sm leading-7 text-[var(--spot)]">
+        <div className="rounded-[var(--radius-xl)] border border-[var(--status-warning)]/30 bg-[color-mix(in_srgb,var(--status-warning)_8%,transparent)] p-5 text-sm leading-7 text-[var(--status-warning)]">
           {workspaceError}
         </div>
       ) : !canUseLiveApi ? (
@@ -678,12 +678,21 @@ export function OperationsIntelligenceWorkspaceClient({
         }
       >
         {showMaintenance ? (
-          <Card>
-            <CardContent className="p-6">
-              <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+          <Card className="cc-bracketed overflow-hidden">
+            <i className="cc-bracket cc-bracket--tl" />
+            <i className="cc-bracket cc-bracket--tr" />
+            <i className="cc-bracket cc-bracket--bl" />
+            <i className="cc-bracket cc-bracket--br" />
+            <CardContent className="relative p-6">
+              <div className="cc-grid-bg opacity-40" />
+              <div className="relative z-10 flex items-center justify-between">
+                <span className="cc-meta">MAINTENANCE · PREDICTIVE</span>
+                <span className="cc-live"><i />MONITOR</span>
+              </div>
+              <p className="relative z-10 mt-2 text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
                 {labels.maintenanceTitle}
               </p>
-              <form className="mt-5 grid gap-3" onSubmit={handleMaintenance}>
+              <form className="relative z-10 mt-5 grid gap-3" onSubmit={handleMaintenance}>
               <div className="grid gap-3 md:grid-cols-2">
                 <Input
                   value={maintenanceForm.equipmentName}
@@ -769,7 +778,7 @@ export function OperationsIntelligenceWorkspaceClient({
             </form>
 
             {maintenanceResult ? (
-              <div className="mt-5 grid gap-4 md:grid-cols-2">
+              <div className="relative z-10 mt-5 grid gap-4 md:grid-cols-2">
                 <MetricTile
                   label={labels.anomalyLabel}
                   value={maintenanceResult.anomaly_score.toFixed(2)}
@@ -802,7 +811,7 @@ export function OperationsIntelligenceWorkspaceClient({
             ) : null}
 
               {maintenanceResult ? (
-                <div className="mt-5 rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[var(--text-secondary)]">
+                <div className="relative z-10 mt-5 rounded-[var(--radius-xl)] border border-[var(--line)] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[var(--text-secondary)]">
                   {maintenanceResult.recommendation}
                 </div>
               ) : null}
@@ -1129,11 +1138,9 @@ function MetricTile({
   value: string;
 }) {
   return (
-    <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
-      <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
-        {label}
-      </p>
-      <p className="mt-3 text-xl font-semibold text-[var(--text-primary)]">
+    <div className="rounded-[var(--radius-xl)] border border-[var(--line)] bg-[var(--surface-soft)] p-5">
+      <p className="cc-label">{label}</p>
+      <p className="cc-num mt-3 text-xl font-semibold text-[var(--text-primary)]">
         {value}
       </p>
     </div>

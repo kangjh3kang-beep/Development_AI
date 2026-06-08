@@ -11,11 +11,12 @@ export function HarnessControlDashboard() {
 
   const formatNumber = (num: number) => new Intl.NumberFormat('en-US').format(num);
 
+  // 상태 → 토큰 색(하드코딩 색 금지). current(글자색) 기반 발광은 currentColor로 파생.
   const getStatusColor = (status: 'optimal' | 'degraded' | 'critical') => {
     switch (status) {
-      case 'optimal': return 'text-emerald-400 border-emerald-500/20 bg-emerald-500/10 shadow-[0_0_30px_rgba(16,185,129,0.15)]';
-      case 'degraded': return 'text-amber-400 border-amber-500/20 bg-amber-500/10 shadow-[0_0_30px_rgba(245,158,11,0.15)]';
-      case 'critical': return 'text-rose-400 border-rose-500/20 bg-rose-500/10 shadow-[0_0_30px_rgba(244,63,94,0.15)]';
+      case 'optimal': return 'text-[var(--status-success)] border-[var(--status-success)]/20 bg-[color-mix(in_srgb,var(--status-success)_10%,transparent)] shadow-[0_0_30px_color-mix(in_srgb,var(--status-success)_15%,transparent)]';
+      case 'degraded': return 'text-[var(--status-warning)] border-[var(--status-warning)]/20 bg-[color-mix(in_srgb,var(--status-warning)_10%,transparent)] shadow-[0_0_30px_color-mix(in_srgb,var(--status-warning)_15%,transparent)]';
+      case 'critical': return 'text-[var(--status-error)] border-[var(--status-error)]/20 bg-[color-mix(in_srgb,var(--status-error)_10%,transparent)] shadow-[0_0_30px_color-mix(in_srgb,var(--status-error)_15%,transparent)]';
     }
   };
 
@@ -39,7 +40,7 @@ export function HarnessControlDashboard() {
         >
           <div className="absolute -right-10 -top-10 h-32 w-32 rounded-full bg-current opacity-20 blur-[40px] group-hover:opacity-30 transition-opacity" />
           <div className="flex items-center justify-between relative z-10">
-            <span className="text-[10px] font-black uppercase tracking-[0.2em] opacity-80">Global Matrix Status</span>
+            <span className="cc-label !text-current opacity-80">Global Matrix Status</span>
             <div className="flex gap-1">
               <div className={`h-2 w-2 rounded-full bg-current ${globalStatus === 'optimal' ? 'animate-bounce' : 'animate-pulse'}`} />
               <div className={`h-2 w-2 rounded-full bg-current ${globalStatus === 'optimal' ? 'animate-bounce delay-75' : 'animate-pulse'}`} />
@@ -47,7 +48,7 @@ export function HarnessControlDashboard() {
             </div>
           </div>
           <div className="mt-6">
-            <h3 className="text-5xl font-[1000] tracking-tighter uppercase">{globalStatus}</h3>
+            <h3 className="cc-num text-5xl font-[1000] tracking-tighter uppercase">{globalStatus}</h3>
           </div>
           <p className="mt-4 text-[10px] font-bold uppercase tracking-widest opacity-80">System Health Indicator</p>
         </motion.div>
@@ -58,25 +59,25 @@ export function HarnessControlDashboard() {
           transition={{ delay: 0.1 }}
           className="rounded-[2.5rem] border border-[var(--line-strong)] bg-[var(--surface-muted)] p-8 shadow-[var(--shadow-lg)] relative overflow-hidden"
         >
-          <div className="absolute -right-10 -top-10 h-32 w-32 rounded-full bg-blue-500/10 blur-[40px]" />
-          <span className="text-[10px] font-black uppercase tracking-[0.2em] text-[var(--text-tertiary)]">Active Nodes</span>
+          <div className="absolute -right-10 -top-10 h-32 w-32 rounded-full bg-[var(--data-accent-soft)] blur-[40px]" />
+          <span className="cc-label">Active Nodes</span>
           <div className="mt-6 flex items-baseline gap-2">
-            <h3 className="text-5xl font-[1000] tracking-tighter text-[var(--text-primary)]">{metrics.activeNodes}</h3>
+            <h3 className="cc-num text-5xl font-[1000] tracking-tighter text-[var(--text-primary)]">{metrics.activeNodes}</h3>
             <span className="text-sm font-bold text-[var(--text-hint)] uppercase">/ Total Connected</span>
           </div>
-          <p className="mt-4 text-[10px] font-bold text-rose-400 uppercase tracking-widest">{metrics.suspendedNodes} Nodes Suspended</p>
+          <p className="cc-num mt-4 text-[10px] font-bold text-[var(--status-error)] uppercase tracking-widest">{metrics.suspendedNodes} Nodes Suspended</p>
         </motion.div>
 
         <motion.div 
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.2 }}
-          className="rounded-[2.5rem] border border-[var(--accent-strong)]/20 bg-[var(--accent-soft)] p-8 shadow-[0_0_30px_rgba(45,212,191,0.05)] relative overflow-hidden"
+          className="rounded-[2.5rem] border border-[var(--accent-strong)]/20 bg-[var(--accent-soft)] p-8 shadow-[var(--shadow-lg)] relative overflow-hidden"
         >
           <div className="absolute -right-10 -top-10 h-32 w-32 rounded-full bg-[var(--accent-strong)]/10 blur-[40px]" />
-          <span className="text-[10px] font-black uppercase tracking-[0.2em] text-[var(--accent-strong)]">Aggregated Telemetry</span>
+          <span className="cc-meta">Aggregated Telemetry</span>
           <div className="mt-6">
-            <h3 className="text-4xl font-[1000] tracking-tighter text-[var(--text-primary)]">{formatNumber(metrics.totalTokens)}</h3>
+            <h3 className="cc-num text-4xl font-[1000] tracking-tighter text-[var(--text-primary)]">{formatNumber(metrics.totalTokens)}</h3>
           </div>
           <p className="mt-4 text-[10px] font-bold text-[var(--text-tertiary)] uppercase tracking-widest">Total AI Tokens Routed</p>
         </motion.div>
@@ -89,30 +90,39 @@ export function HarnessControlDashboard() {
             <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--accent-strong)]"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></svg>
             Routing Control Matrix
           </h2>
-          <span className="text-xs font-mono font-bold text-[var(--text-tertiary)] uppercase tracking-widest bg-[var(--surface-strong)] px-4 py-2 rounded-xl border border-[var(--line)]">
-            Live Sync: Connected
+          <span className="cc-live bg-[var(--surface-strong)] px-4 py-2 rounded-xl border border-[var(--line)]">
+            <i />Live Sync
           </span>
         </div>
         <TenantRoutingTable />
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2 mt-4">
-         <Card className="rounded-[3rem] border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-lg)]">
+         <Card className="cc-bracketed rounded-[3rem] border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-lg)]">
+            <i className="cc-bracket cc-bracket--tl" />
+            <i className="cc-bracket cc-bracket--tr" />
+            <i className="cc-bracket cc-bracket--bl" />
+            <i className="cc-bracket cc-bracket--br" />
             <CardContent className="p-10 space-y-6">
-               <h3 className="text-xs font-black uppercase tracking-[0.4em] text-[var(--accent-strong)]">Access Log Trace</h3>
-               <div className="h-[200px] rounded-2xl bg-[#0a0f14] p-6 font-mono text-[11px] text-emerald-400 overflow-y-auto space-y-2 border border-emerald-500/10">
-                 <p className="opacity-70">&gt; Securing global data bus...</p>
-                 <p className="opacity-70">&gt; Validating super admin token...</p>
-                 <p className="text-emerald-300 font-bold">&gt; AUTH_SUCCESS: Permission L3 Granted.</p>
-                 <p className="opacity-70">&gt; Routing table loaded. 5 Nodes detected.</p>
-                 <p className="opacity-70 text-amber-400">&gt; WARNING: Node 'Weyland-Yutani' reaching token capacity.</p>
-                 <p className="animate-pulse">_</p>
+               <div className="flex items-center justify-between">
+                  <h3 className="cc-meta">Access Log Trace</h3>
+                  <span className="cc-chip-data">STANDBY</span>
+               </div>
+               {/* 실시간 접근 로그 스트림 미연동 — 가짜 로그 라인 제거(무목업), 정직 빈상태. */}
+               <div className="relative flex h-[200px] flex-col items-center justify-center gap-2 overflow-hidden rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-6 text-center">
+                 <div className="cc-grid-bg opacity-50" />
+                 <div className="cc-scanline" />
+                 <span className="relative z-10 cc-num text-xl text-[var(--text-tertiary)]">_</span>
+                 <p className="relative z-10 text-[13px] font-bold text-[var(--text-primary)]">접근 로그 스트림 연동 예정</p>
+                 <p className="relative z-10 text-[11px] font-medium text-[var(--text-tertiary)] leading-relaxed">
+                   실시간 라우팅 접근 로그를 연결하면<br />여기에 인증·라우팅 이벤트가 표시됩니다.
+                 </p>
                </div>
             </CardContent>
          </Card>
          <Card className="rounded-[3rem] border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-lg)]">
             <CardContent className="p-10 space-y-8">
-               <h3 className="text-xs font-black uppercase tracking-[0.4em] text-[var(--text-hint)]">Circuit Configuration</h3>
+               <h3 className="cc-label">Circuit Configuration</h3>
                <div className="space-y-4">
                   {[
                     { label: "Auto-Suspend (Abuse)", status: "Active" },
@@ -121,7 +131,7 @@ export function HarnessControlDashboard() {
                   ].map((item, i) => (
                     <div key={i} className="flex items-center justify-between p-4 rounded-2xl bg-[var(--surface-soft)] border border-[var(--line)]">
                        <span className="text-xs font-black uppercase text-[var(--text-primary)]">{item.label}</span>
-                       <span className="text-[10px] font-black uppercase tracking-widest text-emerald-400">[{item.status}]</span>
+                       <span className="text-[10px] font-black uppercase tracking-widest text-[var(--status-success)]">[{item.status}]</span>
                     </div>
                   ))}
                </div>

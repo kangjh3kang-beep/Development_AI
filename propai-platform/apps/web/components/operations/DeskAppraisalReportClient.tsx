@@ -218,6 +218,10 @@ export function DeskAppraisalReportClient({ locale }: { locale: Locale }) {
           <div className="flex items-center gap-3">
             <span className="text-2xl">📑</span>
             <div>
+              <div className="mb-1 flex items-center gap-2">
+                <span className="cc-meta">APPRAISAL · DESK VALUATION</span>
+                <span className="cc-chip-data">AVM</span>
+              </div>
               <h1 className="text-lg font-black text-[var(--text-primary)]">예상 시세 추정 보고서</h1>
               <p className="mt-0.5 text-xs text-[var(--text-secondary)]">
                 공시지가·실거래·R-ONE 통계를 자동 서칭해 4방법(공시지가기준·거래사례·원가·수익환원)으로 추정 → 보고서·PDF. <b>정식 감정평가 아님(참고용).</b>
@@ -251,7 +255,7 @@ export function DeskAppraisalReportClient({ locale }: { locale: Locale }) {
             </div>
           )}
 
-          {err && <p className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">⚠ {err}</p>}
+          {err && <p className="mt-3 rounded-lg border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 px-3 py-2 text-xs text-[var(--status-warning)]">⚠ {err}</p>}
         </CardContent>
       </Card>
 
@@ -267,7 +271,7 @@ export function DeskAppraisalReportClient({ locale }: { locale: Locale }) {
                 <p className="mt-1 text-xs text-[var(--text-secondary)]">{ranAddr}{res.area_sqm ? ` · ${res.area_sqm.toLocaleString()}㎡` : ""}{projectName ? ` · ${projectName}` : ""}</p>
               </div>
               <div className="text-right">
-                <span className="inline-block rounded-full border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-[10px] font-bold text-amber-400">참고용 · 감정평가 아님</span>
+                <span className="inline-block rounded-full border border-[var(--status-warning)]/40 bg-[var(--status-warning)]/10 px-2.5 py-1 text-[10px] font-bold text-[var(--status-warning)]">참고용 · 감정평가 아님</span>
                 <p className="mt-1 text-[11px] text-[var(--text-tertiary)]">작성일 {today.current}</p>
                 <p className="text-[11px] text-[var(--text-tertiary)]">출처 {res.source || "공개데이터"}</p>
               </div>
@@ -277,8 +281,8 @@ export function DeskAppraisalReportClient({ locale }: { locale: Locale }) {
             <Section no="Ⅰ" title="평가 결론">
               <div className="rounded-xl border border-[var(--accent-strong)]/30 bg-[var(--accent-soft)] p-5">
                 <div className="flex flex-wrap items-baseline justify-between gap-2">
-                  <span className="text-xs font-black uppercase tracking-widest text-[var(--text-hint)]">토지 예상 채택가</span>
-                  <span className="text-3xl font-[1000] text-[var(--accent-strong)]">{eok(res.appraised_total_won)}</span>
+                  <span className="cc-label text-[var(--text-hint)]">토지 예상 채택가</span>
+                  <span className="cc-num text-3xl font-[1000] text-[var(--accent-strong)]">{eok(res.appraised_total_won)}</span>
                 </div>
                 <p className="mt-1 text-xs text-[var(--text-secondary)]">
                   단가 {res.appraised_price_per_sqm.toLocaleString()}원/㎡ · 신뢰구간 {won(res.range_per_sqm.low)} ~ {won(res.range_per_sqm.high)}/㎡
@@ -328,7 +332,7 @@ export function DeskAppraisalReportClient({ locale }: { locale: Locale }) {
                     {(res.methods ?? []).map((m) => (
                       <tr key={m.method} className="border-t border-[var(--line)]/60 align-top">
                         <td className="px-3 py-2 font-bold text-[var(--text-primary)] whitespace-nowrap">{m.method}</td>
-                        <td className="px-3 py-2 text-right font-bold text-[var(--accent-strong)] whitespace-nowrap">{Math.round(m.unit_price).toLocaleString()}</td>
+                        <td className="cc-num px-3 py-2 text-right font-bold text-[var(--accent-strong)] whitespace-nowrap">{Math.round(m.unit_price).toLocaleString()}</td>
                         <td className="px-3 py-2 text-[var(--text-secondary)] leading-relaxed">{m.rationale}</td>
                       </tr>
                     ))}

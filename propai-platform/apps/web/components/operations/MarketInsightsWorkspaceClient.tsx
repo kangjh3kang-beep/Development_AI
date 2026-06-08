@@ -173,9 +173,9 @@ const won = (n: number) => (n ?? 0).toLocaleString("ko-KR") + "원";
 
 function MetricTile({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-[var(--radius-xl)] bg-[var(--surface)] p-4">
-      <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">{label}</p>
-      <p className="mt-2 text-lg font-bold text-[var(--text-primary)]">{value}</p>
+    <div className="rounded-[var(--radius-xl)] border border-[var(--line)] bg-[var(--surface)] p-4">
+      <p className="cc-label">{label}</p>
+      <p className="cc-num mt-2 text-lg font-bold text-[var(--text-primary)]">{value}</p>
     </div>
   );
 }
@@ -287,9 +287,13 @@ export function MarketInsightsWorkspaceClient() {
 
   return (
     <section className="grid gap-6">
-      {/* 헤더 */}
+      {/* 헤더 — 시장 인텔리전스 관제 콘솔 */}
       <div>
-        <h2 className="text-2xl font-black text-[var(--text-primary)]">시장·시세 분석</h2>
+        <div className="flex items-center gap-3">
+          <span className="cc-meta">MARKET · TRANSACTION INTEL</span>
+          <span className="cc-live"><i />LIVE</span>
+        </div>
+        <h2 className="mt-2 text-2xl font-black text-[var(--text-primary)]">시장·시세 분석</h2>
         <p className="mt-1 text-sm text-[var(--text-secondary)]">
           주소를 입력하고 <b className="text-[var(--text-primary)]">「분석 시작」</b> 버튼을 누르면 주변 실거래가·시세 추이·시장 동향을 분석합니다.
         </p>
@@ -328,7 +332,7 @@ export function MarketInsightsWorkspaceClient() {
             </button>
           </div>
           {insufficient && (
-            <p className="mt-2 text-xs font-bold text-amber-500">
+            <p className="mt-2 text-xs font-bold text-[var(--status-warning)]">
               코인 잔액이 부족합니다. 좌측 코인 미터의 「추가결제」로 충전 후 다시 실행해 주세요.
             </p>
           )}
@@ -393,7 +397,7 @@ export function MarketInsightsWorkspaceClient() {
                     </ul>
                   </div>
                   <div>
-                    <p className="text-xs font-bold text-amber-500">리스크 요인</p>
+                    <p className="text-xs font-bold text-[var(--status-warning)]">리스크 요인</p>
                     <ul className="mt-1 space-y-0.5 text-xs text-[var(--text-secondary)]">
                       {(report.narrative?.risks || []).map((r: string, i: number) => <li key={i}>· {r}</li>)}
                     </ul>
@@ -419,7 +423,7 @@ export function MarketInsightsWorkspaceClient() {
 
       {/* 에러 */}
       {error && (
-        <div className="rounded-[var(--radius-xl)] border border-[rgba(217,119,6,0.28)] bg-[rgba(217,119,6,0.08)] p-5 text-sm leading-7 text-[var(--spot)]">
+        <div className="rounded-[var(--radius-xl)] border border-[var(--status-warning)]/30 bg-[color-mix(in_srgb,var(--status-warning)_8%,transparent)] p-5 text-sm leading-7 text-[var(--status-warning)]">
           {error}
         </div>
       )}
@@ -427,7 +431,10 @@ export function MarketInsightsWorkspaceClient() {
       {/* AI 시세 추정 */}
       <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
         <CardContent className="p-6">
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--text-tertiary)]">AI 시세 추정</p>
+          <div className="flex items-center justify-between">
+            <p className="cc-label">AI 시세 추정</p>
+            <span className="cc-chip-data">AVM</span>
+          </div>
           {results?.avm ? (
             <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <MetricTile label="추정 시세 (84㎡)" value={formatCurrency(results.avm.estimated_price)} />
@@ -451,7 +458,10 @@ export function MarketInsightsWorkspaceClient() {
       {/* 주변 실거래 현황 */}
       <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
         <CardContent className="p-6">
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--text-tertiary)]">주변 실거래 현황</p>
+          <div className="flex items-center justify-between">
+            <p className="cc-label">주변 실거래 현황</p>
+            <span className="cc-live"><i />LIVE</span>
+          </div>
           {mapLoading || (address && !mapPayload) ? (
             <p className="mt-4 text-sm text-[var(--text-secondary)]">주변 실거래를 수집하는 중…</p>
           ) : results ? (
@@ -470,9 +480,9 @@ export function MarketInsightsWorkspaceClient() {
                 <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                   {(results.radiusGroups ?? []).map((group) => (
                     <div key={group.label} className="rounded-[var(--radius-xl)] border border-[var(--line)] bg-[var(--surface-soft)] p-4">
-                      <p className="text-xs font-semibold text-[var(--text-tertiary)]">{group.label}</p>
-                      <p className="mt-1 text-sm font-bold text-[var(--text-primary)]">{group.count.toLocaleString()}건</p>
-                      <p className="text-xs text-[var(--text-secondary)]">평균 {formatPrice(group.avgPrice)}</p>
+                      <p className="cc-label">{group.label}</p>
+                      <p className="cc-num mt-1 text-sm font-bold text-[var(--text-primary)]">{group.count.toLocaleString()}건</p>
+                      <p className="cc-num text-xs text-[var(--text-secondary)]">평균 {formatPrice(group.avgPrice)}</p>
                     </div>
                   ))}
                 </div>
@@ -492,7 +502,7 @@ export function MarketInsightsWorkspaceClient() {
       {results && results.transactions?.length > 0 && (
         <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
           <CardContent className="p-6">
-            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--text-tertiary)]">실거래 상세 내역</p>
+            <p className="cc-label">실거래 상세 내역</p>
             <div className="mt-4 overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
@@ -507,13 +517,13 @@ export function MarketInsightsWorkspaceClient() {
                 <tbody>
                   {results.transactions.slice(0, 50).map((tx, idx) => (
                     <tr key={idx} className="border-t border-[var(--line)]">
-                      <td className="py-3 pr-4 text-[var(--text-secondary)]">
+                      <td className="cc-num py-3 pr-4 text-[var(--text-secondary)]">
                         {tx.deal_year ?? ""}{tx.deal_month ? `.${tx.deal_month}` : ""}{tx.deal_day ? `.${tx.deal_day}` : ""}
                       </td>
                       <td className="py-3 pr-4 font-semibold text-[var(--text-primary)]">{tx.apt_name ?? "-"}</td>
-                      <td className="py-3 pr-4 text-[var(--text-secondary)]">{tx.area_sqm != null ? `${tx.area_sqm}㎡` : "-"}</td>
-                      <td className="py-3 pr-4 text-[var(--text-secondary)]">{tx.floor != null ? `${tx.floor}층` : "-"}</td>
-                      <td className="py-3 font-semibold text-[var(--text-primary)]">{tx.deal_amount != null ? formatPrice(tx.deal_amount) : "-"}</td>
+                      <td className="cc-num py-3 pr-4 text-[var(--text-secondary)]">{tx.area_sqm != null ? `${tx.area_sqm}㎡` : "-"}</td>
+                      <td className="cc-num py-3 pr-4 text-[var(--text-secondary)]">{tx.floor != null ? `${tx.floor}층` : "-"}</td>
+                      <td className="cc-num py-3 font-semibold text-[var(--text-primary)]">{tx.deal_amount != null ? formatPrice(tx.deal_amount) : "-"}</td>
                     </tr>
                   ))}
                 </tbody>

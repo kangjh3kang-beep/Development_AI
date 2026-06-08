@@ -418,16 +418,27 @@ export function AuctionWorkspace({ locale }: AuctionWorkspaceProps) {
       <motion.div
         initial={{ y: -16, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
-        className="space-y-1"
+        className="cc-bracketed relative overflow-hidden rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface-soft)] p-6 shadow-[var(--shadow-inner)]"
       >
-        <h1 className="text-3xl font-black tracking-tight text-[var(--text-primary)]">
-          경매·공매
-        </h1>
-        <p className="text-sm text-[var(--text-secondary)]">
-          온비드(getInqRnkClg·getCltrBidRsltList2) 실데이터 기반. 감정가·낙찰가능가는
-          추정치이며 가정이 포함됩니다. 온비드 비공개 항목은 정직하게 &quot;비공개&quot;로
-          표기합니다.
-        </p>
+        <div className="cc-grid-bg opacity-50" />
+        <i className="cc-bracket cc-bracket--tl" />
+        <i className="cc-bracket cc-bracket--tr" />
+        <i className="cc-bracket cc-bracket--bl" />
+        <i className="cc-bracket cc-bracket--br" />
+        <div className="relative z-10 space-y-1">
+          <div className="mb-1.5 flex items-center gap-2">
+            <span className="cc-meta">AUCTION · ONBID INTEL</span>
+            {canUseLiveApi ? <span className="cc-live"><i />LIVE</span> : <span className="cc-chip-data">STANDBY</span>}
+          </div>
+          <h1 className="text-3xl font-black tracking-tight text-[var(--text-primary)]">
+            경매·공매
+          </h1>
+          <p className="text-sm text-[var(--text-secondary)]">
+            온비드(getInqRnkClg·getCltrBidRsltList2) 실데이터 기반. 감정가·낙찰가능가는
+            추정치이며 가정이 포함됩니다. 온비드 비공개 항목은 정직하게 &quot;비공개&quot;로
+            표기합니다.
+          </p>
+        </div>
       </motion.div>
 
       {!canUseLiveApi ? (
@@ -870,19 +881,19 @@ function AuctionTable({
               <td className="py-3 pr-4 text-[var(--text-secondary)]">
                 {formatText(item.usage)}
               </td>
-              <td className="py-3 pr-4 text-right text-[var(--text-primary)]">
+              <td className="cc-num py-3 pr-4 text-right text-[var(--text-primary)]">
                 {formatCurrency(locale, item.appraisal_price)}
               </td>
-              <td className="py-3 pr-4 text-right text-[var(--text-primary)]">
+              <td className="cc-num py-3 pr-4 text-right text-[var(--text-primary)]">
                 {formatBidPrice(item.min_bid_price, locale)}
               </td>
-              <td className="py-3 pr-4 text-right text-[var(--text-secondary)]">
+              <td className="cc-num py-3 pr-4 text-right text-[var(--text-secondary)]">
                 {item.fail_count == null ? "-" : `${item.fail_count}회`}
               </td>
-              <td className="py-3 pr-4 text-right text-[var(--text-secondary)]">
+              <td className="cc-num py-3 pr-4 text-right text-[var(--text-secondary)]">
                 {formatPercent(item.win_rate)}
               </td>
-              <td className="py-3 pr-4 text-right font-bold text-[var(--accent-strong)]">
+              <td className="cc-num py-3 pr-4 text-right font-bold text-[var(--accent-strong)]">
                 {item.est_win == null ? "-" : `${formatCurrency(locale, item.est_win)}`}
               </td>
               <td className="py-3 pr-4 text-[var(--text-secondary)]">
@@ -1190,7 +1201,7 @@ function DetailModal({
               className="flex items-center justify-between gap-4 border-b border-[var(--line)]/50 py-2"
             >
               <dt className="text-xs font-bold text-[var(--text-hint)]">{row.label}</dt>
-              <dd className="text-right text-sm font-medium text-[var(--text-primary)]">
+              <dd className="cc-num text-right text-sm font-medium text-[var(--text-primary)]">
                 {row.value}
               </dd>
             </div>
@@ -1227,16 +1238,16 @@ function DetailModal({
                       <td className="py-2 pr-3 text-[var(--text-secondary)]">
                         {formatText(b.opbd_dt)}
                       </td>
-                      <td className="py-2 pr-3 text-right text-[var(--text-primary)]">
+                      <td className="cc-num py-2 pr-3 text-right text-[var(--text-primary)]">
                         {formatBidPrice(safeNumber(b.min_bid), locale)}
                       </td>
                       <td className="py-2 pr-3 text-[var(--text-secondary)]">
                         {formatText(b.result)}
                       </td>
-                      <td className="py-2 pr-3 text-right text-[var(--text-primary)]">
+                      <td className="cc-num py-2 pr-3 text-right text-[var(--text-primary)]">
                         {formatBidPrice(safeNumber(b.win_price), locale)}
                       </td>
-                      <td className="py-2 pr-3 text-right text-[var(--text-secondary)]">
+                      <td className="cc-num py-2 pr-3 text-right text-[var(--text-secondary)]">
                         {formatPercent(safeNumber(b.win_rate))}
                       </td>
                     </tr>

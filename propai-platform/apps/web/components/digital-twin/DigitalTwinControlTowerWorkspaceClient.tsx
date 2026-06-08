@@ -255,17 +255,21 @@ export function DigitalTwinControlTowerWorkspaceClient({
 
   return (
     <section className="grid gap-10 font-sans">
-      <Card className="rounded-[3.5rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-2xl)] overflow-hidden group">
+      <Card className="cc-bracketed rounded-[3.5rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-2xl)] overflow-hidden group">
         <CardContent className="p-10 lg:p-14 relative">
           <div className="absolute -right-20 -top-20 h-64 w-64 rounded-full bg-[var(--accent-strong)]/10 blur-[80px] transition-all duration-1000 group-hover:scale-150" />
-          
+          <div className="cc-grid-bg opacity-40" />
+          <i className="cc-bracket cc-bracket--tl" />
+          <i className="cc-bracket cc-bracket--tr" />
+          <i className="cc-bracket cc-bracket--bl" />
+          <i className="cc-bracket cc-bracket--br" />
+
           <div className="relative z-10 flex flex-wrap items-center gap-4">
+            <span className="cc-meta">DIGITAL TWIN · CONTROL TOWER</span>
+            {runtime.mode === "live" ? <span className="cc-live"><i />LIVE TELEMETRY</span> : <span className="cc-chip-data">HISTORICAL REPLAY</span>}
             <span className="rounded-full border border-[var(--accent-strong)]/30 bg-[var(--accent-soft)] px-5 py-2 text-[10px] font-black uppercase tracking-[0.3em] text-[var(--accent-strong)] backdrop-blur-md">
               <span className="mr-2 inline-block h-2 w-2 rounded-full bg-[var(--accent-strong)] animate-pulse" />
               v53.2 CONTROL TOWER
-            </span>
-            <span className="rounded-full border border-[var(--line-strong)] bg-[var(--surface-soft)] px-5 py-2 text-[10px] font-black uppercase tracking-[0.3em] text-[var(--text-hint)]">
-              {runtime.mode === "live" ? "ACTIVE TELEMETRY" : "HISTORICAL REPLAY"}
             </span>
           </div>
 

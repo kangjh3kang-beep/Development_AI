@@ -71,7 +71,8 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
   const [modalRow, setModalRow] = useState<LandRow | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
 
-  // 필지 상태(계약/동의) → 색상·라벨 (지도·표 강조)
+  // 필지 상태(계약/동의) → 색상·라벨 (Leaflet 지도 마커·표 강조).
+  // 지도 렌더러는 CSS 변수를 못 받으므로 리터럴 hex가 필요 — 값은 라이트모드 --status-* 토큰과 동일(success/warning/error).
   const rowStatus = useCallback((r: LandRow): { color: string; label: string } => {
     if (r.contracted) return { color: "#10b981", label: "계약완료" };
     if (r.land_use_consent || r.district_consent) return { color: "#f59e0b", label: "동의(미계약)" };
@@ -270,16 +271,25 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
 
   return (
     <div className="grid gap-6">
-      <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
-        <CardContent className="p-6">
-          <div className="flex items-center gap-3">
+      <Card className="cc-bracketed overflow-hidden rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
+        <i className="cc-bracket cc-bracket--tl" />
+        <i className="cc-bracket cc-bracket--tr" />
+        <i className="cc-bracket cc-bracket--bl" />
+        <i className="cc-bracket cc-bracket--br" />
+        <CardContent className="relative p-6">
+          <div className="cc-grid-bg opacity-40" />
+          <div className="relative z-10 flex items-center justify-between gap-3">
+            <span className="cc-meta">LAND · ACQUISITION SCHEDULE</span>
+            <span className="cc-live"><i />LIVE</span>
+          </div>
+          <div className="relative z-10 mt-3 flex items-center gap-3">
             <span className="text-2xl">🗂️</span>
             <div>
               <h1 className="text-lg font-black text-[var(--text-primary)]">토지조서 (편입토지 관리)</h1>
               <p className="mt-0.5 text-xs text-[var(--text-secondary)]">필지별 소유·지분·매입가·계약/동의 관리 + 집계 + 구획도 + 엑셀. 등기정보분석과 상호 연동.</p>
             </div>
           </div>
-          <div className="mt-4 flex flex-wrap items-end gap-2">
+          <div className="relative z-10 mt-4 flex flex-wrap items-end gap-2">
             <div className="min-w-[260px] flex-1">
               <ProjectAddressInput value={addr} onChange={setAddr} label="필지 추가(지번)" placeholder="지번 주소 검색" pickerLabel="분석 히스토리" />
             </div>
@@ -308,13 +318,13 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
         <div className={`flex items-start justify-between gap-3 rounded-xl border px-4 py-3 text-xs leading-relaxed ${
           notice.kind === "info"
             ? "border-[var(--accent-strong)]/25 bg-[var(--accent-soft)] text-[var(--text-secondary)]"
-            : "border-amber-500/30 bg-amber-500/10 text-amber-300"
+            : "border-[var(--status-warning)]/30 bg-[color-mix(in_srgb,var(--status-warning)_10%,transparent)] text-[var(--status-warning)]"
         }`}>
           <span className="flex gap-2">
             <span className="shrink-0">{notice.kind === "info" ? "ℹ️" : "⚠"}</span>
             <span>{notice.text}</span>
           </span>
-          <button onClick={() => setNotice(null)} className={`shrink-0 ${notice.kind === "info" ? "text-[var(--accent-strong)]" : "text-amber-400"}`}>✕</button>
+          <button onClick={() => setNotice(null)} className={`shrink-0 ${notice.kind === "info" ? "text-[var(--accent-strong)]" : "text-[var(--status-warning)]"}`}>✕</button>
         </div>
       )}
 
@@ -367,7 +377,7 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
                           <a href={r.pdf_url} target="_blank" rel="noopener noreferrer" title="발급 등기부등본 PDF" className="ml-1 cursor-pointer rounded border border-[var(--accent-strong)]/40 px-1.5 py-0.5 text-[10px] font-bold text-[var(--accent-strong)]">PDF ↓</a>
                         )}
                       </td>
-                      <td className="px-1.5 py-1"><button onClick={() => removeRow(projectId, r.id)} className="text-rose-500">✕</button></td>
+                      <td className="px-1.5 py-1"><button onClick={() => removeRow(projectId, r.id)} className="text-[var(--status-error)]">✕</button></td>
                     </tr>
                   ))}
                 </tbody>
@@ -378,7 +388,10 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
           {/* 집계 + 진행바 + 보상비 */}
           <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
             <CardContent className="p-6">
-              <p className="text-sm font-black text-[var(--accent-strong)]">📊 토지조서 집계</p>
+              <div className="flex items-center justify-between">
+                <p className="cc-label text-[var(--accent-strong)]">📊 토지조서 집계</p>
+                <span className="cc-chip-data">AGGREGATE</span>
+              </div>
               <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
                 {[
                   ["총 필지수", `${agg.n}필지`],
@@ -387,19 +400,19 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
                   ["매입예정가 합계", `${won(agg.expSum)}원`],
                 ].map(([k, v]) => (
                   <div key={k} className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-3">
-                    <p className="text-[11px] text-[var(--text-tertiary)]">{k}</p>
-                    <p className="mt-0.5 text-sm font-bold text-[var(--text-primary)]">{v}</p>
+                    <p className="cc-label">{k}</p>
+                    <p className="cc-num mt-0.5 text-sm font-bold text-[var(--text-primary)]">{v}</p>
                   </div>
                 ))}
               </div>
               <div className="mt-4 grid gap-3 sm:grid-cols-3">
-                <Bar label="확보비율(계약확정)" ratio={agg.contractRatio} color="#14b8a6" />
-                <Bar label="토지사용 동의율" ratio={agg.useRatio} color="#3b82f6" />
-                <Bar label="지구단위 동의율" ratio={agg.distRatio} color="#8b5cf6" />
+                <Bar label="확보비율(계약확정)" ratio={agg.contractRatio} color="var(--status-success)" />
+                <Bar label="토지사용 동의율" ratio={agg.useRatio} color="var(--status-info)" />
+                <Bar label="지구단위 동의율" ratio={agg.distRatio} color="var(--data-accent)" />
               </div>
               <div className="mt-4 flex flex-wrap gap-4 text-xs">
-                <span className="text-[var(--text-secondary)]">보상비(매입가) 합계: <b className="text-[var(--text-primary)]">{won(agg.purSum)}원</b></span>
-                <span className="text-[var(--text-secondary)]">미확보 잔여(예정−매입): <b className="text-amber-400">{won(agg.expSum - agg.purSum)}원</b></span>
+                <span className="text-[var(--text-secondary)]">보상비(매입가) 합계: <b className="cc-num text-[var(--text-primary)]">{won(agg.purSum)}원</b></span>
+                <span className="text-[var(--text-secondary)]">미확보 잔여(예정−매입): <b className="cc-num text-[var(--status-warning)]">{won(agg.expSum - agg.purSum)}원</b></span>
               </div>
             </CardContent>
           </Card>
@@ -407,9 +420,9 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
           {/* 구획도 (필지 전체) — 계약/동의 상태색상 + 행 클릭 하이라이트 */}
           <div>
             <div className="mb-2 flex flex-wrap gap-3 text-[11px]">
-              <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-full bg-emerald-500" />계약완료</span>
-              <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-full bg-amber-500" />동의(미계약)</span>
-              <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-full bg-rose-500" />미동의·미계약</span>
+              <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-full bg-[var(--status-success)]" />계약완료</span>
+              <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-full bg-[var(--status-warning)]" />동의(미계약)</span>
+              <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-full bg-[var(--status-error)]" />미동의·미계약</span>
               <span className="text-[var(--text-hint)]">· 표의 번호/지도 필지 클릭 시 상호 강조</span>
             </div>
             <ParcelBoundaryMap
@@ -424,8 +437,8 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
           {/* 구획도 주변 토지 실거래·시세(공시지가는 '적정' 분석으로 확인) */}
           {(highlight || rows.find((r) => r.jibun.trim())?.jibun) && (
             <div>
-              <p className="mb-2 text-sm font-bold text-[var(--text-primary)]">
-                📈 주변 토지 실거래·시세 <span className="text-[11px] font-normal text-[var(--text-secondary)]">— {highlight || rows.find((r) => r.jibun.trim())?.jibun} 기준 반경 1km</span>
+              <p className="mb-2 flex flex-wrap items-center gap-2 text-sm font-bold text-[var(--text-primary)]">
+                📈 주변 토지 실거래·시세 <span className="cc-chip-data">RADIUS 1KM</span> <span className="text-[11px] font-normal text-[var(--text-secondary)]">— {highlight || rows.find((r) => r.jibun.trim())?.jibun} 기준</span>
               </p>
               <NearbyTransactionsMap address={highlight || rows.find((r) => r.jibun.trim())?.jibun || ""} />
             </div>

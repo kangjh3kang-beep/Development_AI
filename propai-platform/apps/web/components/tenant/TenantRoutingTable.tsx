@@ -6,11 +6,12 @@ import { useHarnessStore, TenantNode, TenantStatus, UserRole } from "@/store/use
 export function TenantRoutingTable() {
   const { nodes, toggleNodeStatus, updateNodeRole } = useHarnessStore();
 
+  // 라우팅 상태 → 토큰 색(하드코딩 색 금지). 발광은 color-mix로 동일 상태색에서 파생.
   const getStatusColor = (status: TenantStatus) => {
     switch (status) {
-      case 'active': return 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20 shadow-[0_0_10px_rgba(16,185,129,0.2)]';
-      case 'throttled': return 'text-amber-400 bg-amber-500/10 border-amber-500/20 shadow-[0_0_10px_rgba(245,158,11,0.2)]';
-      case 'suspended': return 'text-rose-400 bg-rose-500/10 border-rose-500/20 shadow-[0_0_10px_rgba(244,63,94,0.2)]';
+      case 'active': return 'text-[var(--status-success)] bg-[color-mix(in_srgb,var(--status-success)_10%,transparent)] border-[var(--status-success)]/20 shadow-[0_0_10px_color-mix(in_srgb,var(--status-success)_20%,transparent)]';
+      case 'throttled': return 'text-[var(--status-warning)] bg-[color-mix(in_srgb,var(--status-warning)_10%,transparent)] border-[var(--status-warning)]/20 shadow-[0_0_10px_color-mix(in_srgb,var(--status-warning)_20%,transparent)]';
+      case 'suspended': return 'text-[var(--status-error)] bg-[color-mix(in_srgb,var(--status-error)_10%,transparent)] border-[var(--status-error)]/20 shadow-[0_0_10px_color-mix(in_srgb,var(--status-error)_20%,transparent)]';
     }
   };
 
@@ -43,12 +44,12 @@ export function TenantRoutingTable() {
                 <td className="px-8 py-6">
                   <div className="flex flex-col">
                     <span className="font-bold text-[var(--text-primary)] tracking-wide">{node.name}</span>
-                    <span className="font-mono text-[10px] text-[var(--text-hint)] uppercase tracking-widest">{node.id}</span>
+                    <span className="cc-num text-[10px] text-[var(--text-hint)] uppercase tracking-widest">{node.id}</span>
                   </div>
                 </td>
                 <td className="px-8 py-6">
                   <div className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 ${getStatusColor(node.status)}`}>
-                    <div className={`h-1.5 w-1.5 rounded-full ${node.status === 'active' ? 'bg-emerald-400 animate-pulse' : node.status === 'throttled' ? 'bg-amber-400' : 'bg-rose-400'}`} />
+                    <div className={`h-1.5 w-1.5 rounded-full ${node.status === 'active' ? 'bg-[var(--status-success)] animate-pulse' : node.status === 'throttled' ? 'bg-[var(--status-warning)]' : 'bg-[var(--status-error)]'}`} />
                     <span className="text-[10px] font-bold uppercase tracking-widest">{node.status}</span>
                   </div>
                 </td>
@@ -68,7 +69,7 @@ export function TenantRoutingTable() {
                 </td>
                 <td className="px-8 py-6">
                   <div className="flex flex-col">
-                    <span className="font-mono text-sm text-[var(--text-primary)] font-bold">{formatTokens(node.tokenUsage)}</span>
+                    <span className="cc-num text-sm text-[var(--text-primary)] font-bold">{formatTokens(node.tokenUsage)}</span>
                     <span className="text-[10px] text-[var(--text-hint)] uppercase tracking-widest">Last ping: {node.lastActive}</span>
                   </div>
                 </td>
@@ -77,7 +78,7 @@ export function TenantRoutingTable() {
                     onClick={() => toggleNodeStatus(node.id, node.status === 'active' ? 'throttled' : 'active')}
                     className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
                       node.status === 'throttled' 
-                        ? 'bg-[var(--accent-strong)] text-white shadow-[0_0_15px_rgba(45,212,191,0.4)] hover:bg-[var(--accent-strong)]/80' 
+                        ? 'bg-[var(--accent-strong)] text-white shadow-[0_0_15px_color-mix(in_srgb,var(--accent-strong)_40%,transparent)] hover:bg-[var(--accent-strong)]/80'
                         : 'bg-[var(--surface-strong)] text-[var(--text-tertiary)] hover:text-[var(--accent-strong)] hover:bg-[var(--accent-soft)]'
                     }`}
                   >
@@ -86,9 +87,9 @@ export function TenantRoutingTable() {
                   <button 
                     onClick={() => toggleNodeStatus(node.id, node.status === 'suspended' ? 'active' : 'suspended')}
                     className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
-                      node.status === 'suspended' 
-                        ? 'bg-rose-500 text-white shadow-[0_0_15px_rgba(244,63,94,0.4)] hover:bg-rose-600' 
-                        : 'bg-[var(--surface-strong)] text-[var(--text-tertiary)] hover:text-rose-400 hover:bg-rose-500/10 border border-transparent hover:border-rose-500/20'
+                      node.status === 'suspended'
+                        ? 'bg-[var(--status-error)] text-white shadow-[0_0_15px_color-mix(in_srgb,var(--status-error)_40%,transparent)] hover:opacity-90'
+                        : 'bg-[var(--surface-strong)] text-[var(--text-tertiary)] hover:text-[var(--status-error)] hover:bg-[color-mix(in_srgb,var(--status-error)_10%,transparent)] border border-transparent hover:border-[var(--status-error)]/20'
                     }`}
                   >
                     Suspend

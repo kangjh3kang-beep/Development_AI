@@ -47,24 +47,31 @@ export function G2bEstimateSimPanel() {
   const maxP = 1;
 
   return (
-    <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-6">
+    <div className="cc-panel cc-bracketed p-6">
+      <i className="cc-bracket cc-bracket--tl" />
+      <i className="cc-bracket cc-bracket--tr" />
+      <i className="cc-bracket cc-bracket--bl" />
+      <i className="cc-bracket cc-bracket--br" />
+      <div className="mb-1 flex items-center gap-2">
+        <span className="cc-meta">MONTE-CARLO · BID SIM</span>
+      </div>
       <h3 className="text-base font-bold text-[var(--text-primary)]">적격심사 사정율 시뮬레이터</h3>
       <p className="mt-0.5 text-xs text-[var(--text-secondary)]">복수예비가 15개 중 4개 추첨→예정가격 분포→낙찰하한율→적격확률 기반 적정 투찰가 산출.</p>
 
       <div className="mt-4 flex flex-wrap items-end gap-3">
         <label className="text-xs text-[var(--text-secondary)]">기초금액(억)
           <NumberInput allowDecimal value={baseEok} onChange={(n) => setBaseEok(n ?? 0)}
-            className="mt-1 h-9 w-28 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm text-[var(--text-primary)]" />
+            className="mt-1 h-9 w-28 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 text-sm text-[var(--text-primary)]" />
         </label>
         <label className="text-xs text-[var(--text-secondary)]">공종
           <select value={bidType} onChange={(e) => setBidType(e.target.value)}
-            className="mt-1 h-9 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm text-[var(--text-primary)]">
+            className="mt-1 h-9 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 text-sm text-[var(--text-primary)]">
             {["공사", "용역", "물품"].map((t) => <option key={t} value={t}>{t}</option>)}
           </select>
         </label>
         <label className="text-xs text-[var(--text-secondary)]">목표 적격확률(%)
           <input type="number" value={target} onChange={(e) => setTarget(Number(e.target.value))}
-            className="mt-1 h-9 w-24 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm text-[var(--text-primary)]" />
+            className="mt-1 h-9 w-24 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 text-sm text-[var(--text-primary)]" />
         </label>
         <button type="button" onClick={run} disabled={busy}
           className="h-9 rounded-lg bg-[var(--accent-strong)] px-4 text-sm font-bold text-white disabled:opacity-50">
@@ -72,7 +79,7 @@ export function G2bEstimateSimPanel() {
         </button>
       </div>
 
-      {err && <p className="mt-2 text-xs font-semibold text-red-500">{err}</p>}
+      {err && <p className="mt-2 text-xs font-semibold text-[var(--status-error)]">{err}</p>}
 
       {res && (
         <div className="mt-5 space-y-4">
@@ -118,9 +125,9 @@ export function G2bEstimateSimPanel() {
 
 function Tile({ label, value, sub, accent }: { label: string; value: string; sub?: string; accent?: boolean }) {
   return (
-    <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-3">
-      <p className="text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)]">{label}</p>
-      <p className={`mt-1 text-lg font-[1000] ${accent ? "text-[var(--accent-strong)]" : "text-[var(--text-primary)]"}`}>{value}</p>
+    <div className="cc-panel px-4 py-3">
+      <p className="cc-label">{label}</p>
+      <p className={`cc-num mt-1 text-lg font-[1000] ${accent ? "text-[var(--accent-strong)]" : "text-[var(--text-primary)]"}`}>{value}</p>
       {sub ? <p className="mt-0.5 text-[10px] text-[var(--text-secondary)]">{sub}</p> : null}
     </div>
   );
