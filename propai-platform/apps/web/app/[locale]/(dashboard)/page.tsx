@@ -67,7 +67,7 @@ export default async function DashboardPage({ params }: DashboardPageProps) {
             {/* C1: 히어로 중앙 대형 로고/태그라인 제거 → 가치제안 한 줄 헤드라인만.
                 로고는 사이드바 1곳에만 남긴다. */}
             <h1 className="db-hero__headline text-[var(--text-primary)]">
-              주소만 입력하면, 사업성·설계·수지 분석을 한 번에.
+              개발사업의 필수 플랫폼! 주소만 입력하면, 시장조사·사업성·수지 분석을 한 번에.
             </h1>
 
             <p className="max-w-xl text-lg leading-relaxed text-[var(--text-secondary)] sm:text-xl">
