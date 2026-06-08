@@ -195,11 +195,24 @@ function TerrainMesh({
     return g;
   }, [terrain, colorMode]);
 
+  // 항공 텍스처 정합: 실사 영상의 실제 지상 커버(가로 cover_lon_m·세로 cover_lat_m)를
+  // 지형 메시 폭(bbox)에 맞춰 UV repeat/offset으로 보정 → 늘어짐 없이 1:1 정렬.
+  const bboxM = terrain?.bbox_m?.size_m ?? aerial?.cover_m ?? 300;
+  const aerialAny = aerial as (DigitalTwinAerial & { cover_lon_m?: number; cover_lat_m?: number }) | null;
+  const coverLon = aerialAny?.cover_lon_m ?? aerial?.cover_m ?? bboxM;
+  const coverLat = aerialAny?.cover_lat_m ?? aerial?.cover_m ?? bboxM;
+  const repeatX = coverLon > 0 ? Math.min(1, bboxM / coverLon) : 1;
+  const repeatY = coverLat > 0 ? Math.min(1, bboxM / coverLat) : 1;
+
   return (
     <mesh geometry={geometry} receiveShadow>
       {useAerial && aerial?.image_proxy_url ? (
         <Suspense fallback={<meshStandardMaterial color="#1e293b" roughness={1} metalness={0} />}>
-          <AerialMaterial url={absolutizeAerialUrl(aerial.image_proxy_url)} />
+          <AerialMaterial
+            url={absolutizeAerialUrl(aerial.image_proxy_url)}
+            repeatX={repeatX}
+            repeatY={repeatY}
+          />
         </Suspense>
       ) : (
         <meshStandardMaterial vertexColors flatShading roughness={0.95} metalness={0} />
@@ -208,8 +221,17 @@ function TerrainMesh({
   );
 }
 
-/** 항공 텍스처 머티리얼(절대 프록시 URL). 로드 실패(404/CORS) 시 회색 폴백 유지. */
-function AerialMaterial({ url }: { url: string }) {
+/** 항공 텍스처 머티리얼(절대 프록시 URL). 로드 실패(404/CORS) 시 회색 폴백 유지.
+ *  repeatX/Y: 실사 커버리지 vs 지형 bbox 비율 — 텍스처를 중앙 기준으로 메시 실폭에 정합. */
+function AerialMaterial({
+  url,
+  repeatX = 1,
+  repeatY = 1,
+}: {
+  url: string;
+  repeatX?: number;
+  repeatY?: number;
+}) {
   const [texture, setTexture] = useState<THREE.Texture | null>(null);
 
   useEffect(() => {
@@ -235,6 +257,16 @@ function AerialMaterial({ url }: { url: string }) {
       cancelled = true;
     };
   }, [url]);
+
+  // 커버리지 정합: 텍스처의 실지상폭을 메시 폭에 맞춰 중앙 크롭(늘어짐 제거).
+  useEffect(() => {
+    if (!texture) return;
+    texture.wrapS = THREE.ClampToEdgeWrapping;
+    texture.wrapT = THREE.ClampToEdgeWrapping;
+    texture.repeat.set(repeatX, repeatY);
+    texture.offset.set((1 - repeatX) / 2, (1 - repeatY) / 2);
+    texture.needsUpdate = true;
+  }, [texture, repeatX, repeatY]);
 
   if (!texture) {
     return <meshStandardMaterial color="#1e293b" roughness={1} metalness={0} />;

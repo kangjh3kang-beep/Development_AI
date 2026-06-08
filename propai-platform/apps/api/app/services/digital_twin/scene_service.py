@@ -84,14 +84,17 @@ def _ring_to_enu(
     return out
 
 
-def _aerial_proxy_url(lat: float, lon: float, zoom: int) -> str:
+def _aerial_proxy_url(lat: float, lon: float, zoom: int, size: int = 512) -> str:
     """디지털트윈 항공 프록시 GET URL(라우터의 /aerial-image 스트리밍 엔드포인트).
 
     프론트는 이 URL을 텍스처로 직접 로드한다(키 비노출 — 서버가 VWorld 대리 호출).
     PUBLIC_API_BASE 설정 시 절대 URL 반환(Cloudflare 프론트 오리진→api 오리진 정합·
     WARN-1). 미설정이면 상대 경로 유지(프론트가 resolveApiOrigin으로 방어적 절대화).
     """
-    qs = urlencode({"lat": f"{lat:.6f}", "lon": f"{lon:.6f}", "zoom": str(int(zoom))})
+    qs = urlencode({
+        "lat": f"{lat:.6f}", "lon": f"{lon:.6f}",
+        "zoom": str(int(zoom)), "size": str(int(size)),
+    })
     path = f"/api/v1/digital-twin/aerial-image?{qs}"
     try:
         from app.core.config import settings
@@ -302,13 +305,19 @@ async def build_scene(
 
     elev0 = float(terrain["elev0"]) if terrain else 0.0
 
-    _cover_lon_m = _aerial_cover_m(lat0, AERIAL_ZOOM)
+    # ★정합: 항공영상을 지형 bbox(2×SCENE_HALF_M) 가로폭에 맞춰 픽셀 크기를 산출한다.
+    #  (기존 고정 512px는 zoom18·lat37에서 ~242m만 커버 → 300m 메시에 늘어나 어긋남)
+    _m_per_px = 156_543.033_92 * math.cos(math.radians(lat0)) / (2 ** AERIAL_ZOOM)
+    _scene_w_m = 2.0 * SCENE_HALF_M
+    _aerial_size = max(256, min(1024, round(_scene_w_m / max(0.01, _m_per_px))))
+    _cover_lon_m = round(_aerial_size * _m_per_px, 1)  # ≈ scene_w_m(가로 정합)
     # EPSG:4326 정사각 이미지의 세로(위도) 커버 폭은 가로(경도) 폭 / cos(lat)
     _cover_lat_m = round(_cover_lon_m / max(0.05, math.cos(math.radians(lat0))), 1)
     aerial = {
-        "image_proxy_url": _aerial_proxy_url(lat0, lon0, AERIAL_ZOOM),
+        "image_proxy_url": _aerial_proxy_url(lat0, lon0, AERIAL_ZOOM, size=_aerial_size),
         "center": [round(lon0, 6), round(lat0, 6)],
         "zoom": AERIAL_ZOOM,
+        "size_px": _aerial_size,
         "cover_m": _cover_lon_m,          # 가로(경도) 커버 폭(m) — 기존 호환
         "cover_lon_m": _cover_lon_m,      # 명시적 가로 폭
         "cover_lat_m": _cover_lat_m,      # 세로(위도) 커버 폭(m) — 정밀 드레이프용

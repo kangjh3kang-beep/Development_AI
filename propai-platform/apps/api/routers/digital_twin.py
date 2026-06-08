@@ -345,11 +345,12 @@ async def digital_twin_aerial_image(
     lat: float = Query(..., description="중심 위도(WGS84)"),
     lon: float = Query(..., description="중심 경도(WGS84)"),
     zoom: int = Query(18, ge=7, le=18, description="VWorld getmap 줌(7~18)"),
+    size: int = Query(512, ge=256, le=1024, description="이미지 한 변 px(지형 bbox 정합)"),
 ) -> Response:
     """VWorld 항공 정사영상(PHOTO) PNG를 서버가 대리 취득해 스트리밍한다(키 비노출)."""
     from app.services.external_api.vworld_service import VWorldService
 
-    acq = await VWorldService().get_aerial_image(lat, lon, zoom=zoom, basemap="PHOTO")
+    acq = await VWorldService().get_aerial_image(lat, lon, zoom=zoom, size=size, basemap="PHOTO")
     if not acq or not acq.get("bytes"):
         raise HTTPException(status_code=502, detail="항공 정사영상을 취득하지 못했습니다.")
     return Response(

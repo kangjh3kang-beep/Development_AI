@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v104-kakao-login";
+const CACHE_NAME = "propai-v105-twin-aerial-fit";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",
