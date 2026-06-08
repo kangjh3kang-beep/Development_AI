@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
@@ -26,6 +26,26 @@ async def add_node(body: dict, db: AsyncSession = Depends(get_db),
                              display_name=body.get("display_name"))
     await db.commit()
     return {"id": str(node.id), "path": str(node.path)}
+
+
+@actions_router.get("/contracts")
+async def list_contracts(db: AsyncSession = Depends(get_db),
+                         ctx: SalesCtx = Depends(sales_ctx)):
+    """현장 계약 목록(선택기용). 세대(동·호)·고객명·금액 라벨로 반환 — 원시 UUID 수기입력 대체."""
+    rows = (await db.execute(text(
+        "SELECT c.id::text AS id, c.total_price, c.status, u.dong, u.ho, cu.name AS customer_name "
+        "FROM sales_contracts_ext c "
+        "LEFT JOIN sales_unit_inventory u ON c.unit_id = u.id "
+        "LEFT JOIN sales_customers cu ON c.customer_id = cu.id "
+        "WHERE c.site_id = :sid ORDER BY c.created_at DESC LIMIT 500"
+    ), {"sid": str(ctx.site_id)})).mappings().all()
+    out = []
+    for r in rows:
+        unit_label = f"{r['dong']}동 {r['ho']}호" if (r["dong"] or r["ho"]) else "세대미지정"
+        price = f" · {float(r['total_price']) / 1e8:.2f}억" if r["total_price"] else ""
+        nm = f" · {r['customer_name']}" if r["customer_name"] else ""
+        out.append({"id": r["id"], "label": f"{unit_label}{nm}{price}", "status": r["status"]})
+    return out
 
 
 @actions_router.patch("/org/nodes/{node_id}/move")

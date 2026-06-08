@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v107-sales-overview-hub";
+const CACHE_NAME = "propai-v108-payments-contract-select";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",
