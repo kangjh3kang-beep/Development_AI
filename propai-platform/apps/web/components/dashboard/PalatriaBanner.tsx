@@ -18,16 +18,29 @@ export function PalatriaBanner() {
         className="palatria-banner group"
         aria-label="스카이게러지 팔라트리아 — 차세대 모빌리티 특허 시스템 (새 창)"
       >
-        {/* 배경 사진(있으면) + 어둠 오버레이(글자 가독성) */}
-        <div className="palatria-banner__bg" aria-hidden="true" />
+        {/* 배경 사진(스카이게러지 럭셔리 차고 거실) + 어둠 오버레이(글자 가독성).
+            이미지는 Supabase Storage에 호스팅된 실사진 URL을 사용한다. 우측에 차량이 보이도록
+            오른쪽 정렬, 좌측은 아래 veil로 어둡게 덮어 글자가 또렷하게 보이게 한다. */}
+        <div
+          className="palatria-banner__bg"
+          aria-hidden="true"
+          style={{
+            backgroundImage:
+              'url("https://ykmeconwqbathcdejalr.supabase.co/storage/v1/object/public/section-media/images/1778997596187_na152fkgwnp.png")',
+            backgroundPosition: "right center",
+          }}
+        />
         <div className="palatria-banner__veil" aria-hidden="true" />
 
-        {/* 좌측: 왕관 모티프 + 브랜드명 */}
+        {/* 좌측: 실제 골드 크라운 'P' 로고 + 브랜드명 */}
         <div className="palatria-banner__brand">
-          {/* 골드 왕관(브랜드 심볼) — 간결한 SVG */}
-          <svg className="palatria-banner__crown" width="34" height="26" viewBox="0 0 34 26" fill="none" aria-hidden="true">
-            <path d="M2 24h30M3 22 1 7l8 6 8-11 8 11 8-6-2 15H3Z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
-          </svg>
+          {/* 팔라트리아 공식 로고(투명 webp) — 다크 배경에 그대로 얹힌다. */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="https://www.skygarage.net/logo-palatria.webp"
+            alt="팔라트리아 로고"
+            className="palatria-banner__logo"
+          />
           <div className="palatria-banner__brandtext">
             <span className="palatria-banner__eyebrow">SKY GARAGE · 스카이게러지</span>
             <strong className="palatria-banner__name">팔라트리아</strong>

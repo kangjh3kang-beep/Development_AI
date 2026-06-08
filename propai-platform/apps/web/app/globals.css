@@ -1293,13 +1293,13 @@ textarea {
   .palatria-banner:hover { border-color: color-mix(in srgb, var(--pal-gold) 75%, transparent); }
   .palatria-banner:active { transform: scale(0.995); }
 
-  /* 배경 사진(있을 때만 보임) */
+  /* 배경 사진 — 실제 url/position은 컴포넌트에서 inline으로 주입(Supabase 실사진).
+     여기선 공통 속성만. opacity로 사진을 살짝 눌러 글자(좌측 veil)와 조화시킨다. */
   .palatria-banner__bg {
     position: absolute; inset: 0;
-    background-image: url("/images/palatria-hero.jpg");
     background-size: cover;
-    background-position: center 40%;
-    opacity: 0.5;            /* 글자 가독성 위해 은은하게 */
+    background-repeat: no-repeat;
+    opacity: 0.7;
   }
   /* 글자 쪽(좌측)을 어둡게 덮어 가독성 확보 */
   .palatria-banner__veil {
@@ -1310,7 +1310,11 @@ textarea {
 
   /* 좌측 브랜드(왕관 + 이름) */
   .palatria-banner__brand { display: flex; align-items: center; gap: 0.75rem; flex-shrink: 0; }
-  .palatria-banner__crown { color: var(--pal-gold); flex-shrink: 0; }
+  /* 실제 로고 이미지 — 높이 고정(48px), 비율 유지. 골드 글로우로 살짝 입체감. */
+  .palatria-banner__logo {
+    height: 48px; width: auto; flex-shrink: 0;
+    filter: drop-shadow(0 2px 6px color-mix(in srgb, var(--pal-gold) 35%, transparent));
+  }
   .palatria-banner__brandtext { display: flex; flex-direction: column; line-height: 1.1; }
   .palatria-banner__eyebrow {
     font-size: 0.625rem; font-weight: 700; letter-spacing: 0.14em;
