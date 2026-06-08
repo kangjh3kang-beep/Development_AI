@@ -26,6 +26,44 @@ async def _set_unit_status(db, unit_id, to_status, by=None):
     return u
 
 
+async def create_contract(db: AsyncSession, site_id, unit_id, customer_id=None, round_id=None, total_price=None, by=None):
+    """계약 체결(최초 생성) — 세대 1호에 계약 1건을 만든다.
+
+    이 함수가 없으면 '청약/세대 → 계약 → 수납/대출/전매'로 이어지는 전주기 흐름이 끊겨
+    수납·대출·전매 화면의 계약 선택 목록이 항상 비게 된다(연결성 핵심).
+
+    - total_price 미지정 시 해당 세대의 가격표(sales_unit_price_table)에서 자동으로 끌어온다.
+    - 세대 상태를 RESERVED(예약)로 바꾸고, 다른 화면들이 곧바로 이 계약을 선택할 수 있게 한다.
+    """
+    from sqlalchemy import desc
+
+    from apps.api.database.models.sales.units_pricing import SalesUnitPriceTable
+
+    unit = (await db.execute(select(SalesUnitInventory).where(SalesUnitInventory.id == unit_id))).scalar_one_or_none()
+    if unit is None:
+        raise ValueError("세대를 찾을 수 없습니다")
+    if unit.status == "CONTRACTED":
+        raise ValueError("이미 계약된 세대입니다")  # 1호 1계약(동호 유니크)
+
+    # 금액이 안 넘어오면 세대 가격표에서 최신 round의 총액을 가져온다.
+    price = total_price
+    if price is None:
+        q = select(SalesUnitPriceTable).where(SalesUnitPriceTable.unit_id == unit_id)
+        if round_id:
+            q = q.where(SalesUnitPriceTable.round_id == round_id)
+        pt = (await db.execute(q.order_by(desc(SalesUnitPriceTable.id)))).scalars().first()
+        if pt is not None:
+            price = int(pt.override_price or pt.total_price or pt.base_price or 0)
+
+    c = SalesContractExt(site_id=site_id, unit_id=unit_id, customer_id=customer_id,
+                         round_id=round_id, stage="RESERVED", status="ACTIVE",
+                         total_price=int(price) if price else None)
+    db.add(c)
+    await _set_unit_status(db, unit_id, "RESERVED", by)  # 예약 상태로 전환(청약·배치도와 동기화)
+    await db.flush()
+    return c
+
+
 async def sign_contract(db: AsyncSession, site_id, contract_id, by=None):
     c = (await db.execute(select(SalesContractExt).where(SalesContractExt.id == contract_id))).scalar_one()
     c.stage = "SIGNED"

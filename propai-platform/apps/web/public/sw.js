@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v112-sales-loading-rest";
+const CACHE_NAME = "propai-v113-sales-contract-create";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

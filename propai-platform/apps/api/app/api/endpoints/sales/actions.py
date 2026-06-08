@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_user, get_db
 from app.api.deps_sales import SalesCtx, require_role, sales_ctx
 from apps.api.database.models.sales.units_pricing import SalesUnitGeneration, SalesUnitHold, SalesUnitPriceTable
-from app.services.sales.contract.service import cancel_contract, sign_contract
+from app.services.sales.contract.service import cancel_contract, create_contract, sign_contract
 from app.services.sales.org.service import create_node, move_subtree
 from app.services.sales.pricing.engine import generate_price_table
 from app.services.sales.units.generation import generate_units
@@ -130,6 +130,34 @@ async def hold_unit(unit_id: uuid.UUID, body: dict | None = None, db: AsyncSessi
     await _broadcast(ctx.site_id, "HOLD", unit_id, "HOLD", held_by=me, expires_at=row["hold_expires_at"])
     return {"ok": True, "hold_token": row["hold_token"],
             "expires_at": row["hold_expires_at"].isoformat() if row["hold_expires_at"] else None}
+
+
+@actions_router.post("/contracts")
+async def contract_create(body: dict, db: AsyncSession = Depends(get_db),
+                          ctx: SalesCtx = Depends(require_role("MEMBER", "TEAM_LEADER", "DIRECTOR", "SUBAGENCY", "AGENCY", "DEVELOPER"))):
+    """계약 체결(최초 생성) — 세대+고객으로 계약 1건 생성(전주기 연결의 시작점).
+
+    body: { unit_id(필수), customer_id?, round_id?, total_price? }
+    금액 미지정 시 세대 가격표에서 자동 산출. 생성 후 수납/대출/전매 화면에서 즉시 선택 가능.
+    """
+    from fastapi import HTTPException
+    try:
+        unit_id = uuid.UUID(str(body["unit_id"]))
+    except (KeyError, ValueError, TypeError):
+        raise HTTPException(400, "세대(unit_id)를 선택하세요.")
+    cust = body.get("customer_id")
+    rnd = body.get("round_id")
+    try:
+        c = await create_contract(
+            db, ctx.site_id, unit_id,
+            customer_id=uuid.UUID(str(cust)) if cust else None,
+            round_id=uuid.UUID(str(rnd)) if rnd else None,
+            total_price=body.get("total_price"), by=ctx.user.id)
+    except ValueError as e:
+        await db.rollback()
+        raise HTTPException(409, str(e))
+    await db.commit()
+    return {"id": str(c.id), "stage": c.stage, "total_price": int(c.total_price or 0)}
 
 
 @actions_router.post("/contracts/{contract_id}/sign")
