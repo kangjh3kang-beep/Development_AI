@@ -19,12 +19,16 @@ from app.schemas.g2b_bid import (
     G2BAnalysisHistoryDetail,
     G2BAnalysisHistoryItem,
     G2BAnalysisHistoryResponse,
+    G2BAttachment,
     G2BAwardStatsResponse,
     G2BAwardStatResponse,
     G2BBidFilter,
     G2BBidListResponse,
     G2BBidResponse,
+    G2BContact,
     G2BDashboardStats,
+    G2BDetailSections,
+    LabeledItem,
 )
 
 logger = logging.getLogger(__name__)
@@ -293,6 +297,168 @@ def _extract_region(raw_item: dict[str, Any]) -> tuple[Optional[str], Optional[s
     if len(set(matches)) > 3:
         return "전국", None
     return matches[0], None
+
+
+# ──────────────────────────────────────────
+# 상세(raw_data → 한글 라벨) 빌더
+# ──────────────────────────────────────────
+
+# Y/N 코드 → 한글 의미값 매핑(필드마다 의미가 달라 별도 사전으로 분기).
+_YN_PERMIT = {"Y": "허용", "N": "불가"}  # 재입찰
+_YN_LIMIT = {"Y": "제한", "N": "제한없음"}  # 업종제한
+_YN_YESNO = {"Y": "예", "N": "아니오"}  # 일반 여부
+
+
+def _fmt_amount(raw: Any) -> Optional[str]:
+    """금액 문자열을 "65,870,000원" 형태로 포맷한다(비거나 0 이하·숫자아님은 None)."""
+    val = _safe_int(raw)
+    if val is None or val <= 0:
+        return None
+    return f"{val:,}원"
+
+
+def _fmt_datetime(raw: Any) -> Optional[str]:
+    """G2B 날짜를 "YYYY-MM-DD HH:MM" 형태로 포맷한다(파싱 실패 시 None)."""
+    dt = _parse_g2b_datetime(raw)
+    if dt is None:
+        return None
+    return dt.strftime("%Y-%m-%d %H:%M")
+
+
+def _fmt_rate(raw: Any) -> Optional[str]:
+    """낙찰하한율 같은 비율을 "89.745%" 형태로 포맷한다(비거나 0은 None)."""
+    val = _safe_float(raw)
+    if val is None or val == 0:
+        return None
+    # 불필요한 끝자리 0 제거(89.745 / 89.7 등 자연스럽게)
+    return f"{val:g}%"
+
+
+def _clean(raw: Any) -> Optional[str]:
+    """문자열 정리 — 비었거나 공백뿐이면 None(빈값은 노출하지 않는다)."""
+    if raw is None:
+        return None
+    s = str(raw).strip()
+    return s or None
+
+
+def _yn_label(raw: Any, mapping: dict[str, str]) -> Optional[str]:
+    """Y/N 코드를 의미값으로 변환한다(Y/N 외 값은 원문 유지, 빈값은 None)."""
+    s = _clean(raw)
+    if s is None:
+        return None
+    return mapping.get(s.upper(), s)
+
+
+def build_detail_sections(raw: dict[str, Any]) -> G2BDetailSections:
+    """raw_data(원본 144필드)를 코드→한글 라벨로 매핑해 상세 섹션을 만든다.
+
+    값이 비었거나 None인 항목은 넣지 않는다(정직: 없는 정보를 만들지 않음).
+    raw가 비면 빈 섹션 + 빈 연락처를 반환한다.
+    """
+    raw = raw or {}
+
+    def _push(items: list[LabeledItem], label: str, value: Optional[str]) -> None:
+        """값이 있을 때만 라벨-값 쌍을 목록에 추가한다."""
+        if value is not None and value != "":
+            items.append(LabeledItem(label=label, value=value))
+
+    # ── 일반 ──
+    general: list[LabeledItem] = []
+    _push(general, "공고종류", _clean(raw.get("ntceKindNm")))
+    _push(general, "참조번호", _clean(raw.get("refNo")))
+    _push(general, "입찰방식", _clean(raw.get("bidMethdNm")))
+    _push(general, "낙찰방법", _clean(raw.get("sucsfbidMthdNm")))
+    _push(general, "계약방법", _clean(raw.get("cntrctCnclsMthdNm")))
+    _push(general, "재입찰", _yn_label(raw.get("rbidPermsnYn"), _YN_PERMIT))
+    _push(general, "채권자명", _clean(raw.get("crdtrNm")))
+    _push(general, "건설산업기본법 적용업종", _clean(raw.get("mtltyAdvcPsblYnCnstwkNm")))
+    _push(general, "공사현장", _clean(raw.get("cnstrtsiteRgnNm")))
+    _push(general, "공동수급방식", _clean(raw.get("cmmnSpldmdMethdNm")))
+    _push(general, "공동수급협정서", _clean(raw.get("cmmnSpldmdAgrmntRcptdocMethd")))
+    _push(general, "내역입찰여부", _yn_label(raw.get("intrbidYn"), _YN_YESNO))
+    _push(general, "재공고여부", _yn_label(raw.get("reNtceYn"), _YN_YESNO))
+    _push(general, "등록유형", _clean(raw.get("rgstTyNm")))
+
+    # ── 참가 제한 ──
+    restriction: list[LabeledItem] = []
+    _push(restriction, "지역제한 판단기준", _clean(raw.get("rgnLmtBidLocplcJdgmBssNm")))
+    _push(restriction, "업종제한", _yn_label(raw.get("indstrytyLmtYn"), _YN_LIMIT))
+    _push(restriction, "입찰참가제한", _yn_label(raw.get("bidPrtcptLmtYn"), _YN_YESNO))
+    _push(restriction, "PQ심사", _clean(raw.get("pqEvalYn")))
+    _push(restriction, "실적경쟁", _yn_label(raw.get("arsltCmptYn"), _YN_YESNO))
+    _push(restriction, "지명경쟁", _yn_label(raw.get("dsgntCmptYn"), _YN_YESNO))
+    _push(restriction, "지역의무공동도급", _yn_label(raw.get("rgnDutyJntcontrctYn"), _YN_YESNO))
+    for i in range(1, 5):  # 인센티브지역 1~4(빈 것 제외)
+        _push(restriction, "인센티브지역", _clean(raw.get(f"incntvRgnNm{i}")))
+
+    # ── 일정 ──
+    schedule: list[LabeledItem] = []
+    _push(schedule, "공고게시", _fmt_datetime(raw.get("bidNtceDt")))
+    _push(schedule, "입찰참가자격등록 마감", _fmt_datetime(raw.get("bidQlfctRgstDt")))
+    _push(schedule, "입찰서제출 개시", _fmt_datetime(raw.get("bidBeginDt")))
+    _push(schedule, "입찰서제출 마감", _fmt_datetime(raw.get("bidClseDt")))
+    _push(schedule, "개찰", _fmt_datetime(raw.get("opengDt")))
+    _push(schedule, "재입찰 개찰", _fmt_datetime(raw.get("rbidOpengDt")))
+    _push(schedule, "입찰보증서 접수마감", _fmt_datetime(raw.get("bidWgrnteeRcptClseDt")))
+
+    # ── 금액 ──
+    price: list[LabeledItem] = []
+    # 예가방법 — 추첨/총 예비가 개수가 있으면 부가 설명을 덧붙인다.
+    prearng = _clean(raw.get("prearngPrceDcsnMthdNm"))
+    if prearng is not None:
+        drwt = _clean(raw.get("drwtPrdprcNum"))
+        tot = _clean(raw.get("totPrdprcNum"))
+        if drwt and tot:
+            prearng = f"{prearng} (추첨{drwt}/총{tot})"
+        _push(price, "예가방법", prearng)
+    _push(price, "추정가격(부가세 별도)", _fmt_amount(raw.get("presmptPrce")))
+    _push(price, "배정예산액", _fmt_amount(raw.get("bdgtAmt")))
+    _push(price, "부가가치세", _fmt_amount(raw.get("VAT")))
+    _push(price, "관급금액", _fmt_amount(raw.get("govsplyAmt")))
+    _push(price, "도급자설치 관급자재", _fmt_amount(raw.get("contrctrcnstrtnGovsplyMtrlAmt")))
+    _push(price, "관급자설치 관급자재", _fmt_amount(raw.get("govcnstrtnGovsplyMtrlAmt")))
+    _push(price, "낙찰하한율", _fmt_rate(raw.get("sucsfbidLwltRate")))
+
+    # ── 첨부문서 ──
+    attachments: list[G2BAttachment] = []
+    for i in range(1, 11):  # 공고규격서 파일 1~10(파일명+URL 둘 다 있어야 추가)
+        name = _clean(raw.get(f"ntceSpecFileNm{i}"))
+        url = _clean(raw.get(f"ntceSpecDocUrl{i}"))
+        if name and url:
+            attachments.append(G2BAttachment(name=name, url=url))
+    std_doc = _clean(raw.get("stdNtceDocUrl"))
+    if std_doc:
+        attachments.append(G2BAttachment(name="표준공고문서", url=std_doc))
+
+    # ── 담당자 연락처 ──
+    contact = G2BContact(
+        org=_clean(raw.get("ntceInsttNm")),
+        demand_org=_clean(raw.get("dminsttNm")),
+        name=_clean(raw.get("ntceInsttOfclNm")),
+        tel=_clean(raw.get("ntceInsttOfclTelNo")),
+        email=_clean(raw.get("ntceInsttOfclEmailAdrs")),
+        exec_name=_clean(raw.get("exctvNm")),
+        opening_place=_clean(raw.get("opengPlce")),
+    )
+
+    # ── 외부 링크(빈 것 제외) ──
+    links: dict[str, str] = {}
+    g2b_detail = _clean(raw.get("bidNtceDtlUrl"))
+    if g2b_detail:
+        links["g2b_detail"] = g2b_detail
+    if std_doc:
+        links["std_doc"] = std_doc
+
+    return G2BDetailSections(
+        general=general,
+        restriction=restriction,
+        schedule=schedule,
+        price=price,
+        attachments=attachments,
+        contact=contact,
+        links=links,
+    )
 
 
 class G2BBidService:

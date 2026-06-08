@@ -1,9 +1,9 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { motion, AnimatePresence } from "framer-motion";
 import { apiClient } from "@/lib/api-client";
 import { G2BBidAnalysisModal } from "./G2BBidAnalysisModal";
+import { G2BBidDetailModal } from "./G2BBidDetailModal";
 import { G2BAwardStats } from "./G2BAwardStats";
 
 /* ── 타입 ── */
@@ -370,64 +370,30 @@ export default function G2BBidDashboard() {
         <G2BAwardStats bidType={bidType !== "전체" ? bidType : undefined} regionSido={region !== "전체" ? region : undefined} />
       )}
 
-      {/* ── 상세 모달 ── */}
-      <AnimatePresence>
-        {selectedBid && (
-          <motion.div
-            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-md p-4"
-            onClick={() => setSelectedBid(null)}
-          >
-            <motion.div
-              initial={{ scale: 0.95, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.95, y: 20 }}
-              className="w-full max-w-2xl max-h-[85vh] overflow-y-auto rounded-2xl border-2 border-[var(--line-strong)] bg-[var(--surface-strong)] p-7 shadow-2xl ring-1 ring-black/40"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="flex items-start justify-between mb-5 gap-4">
-                <div className="space-y-2">
-                  <span className="inline-block rounded-lg bg-[var(--accent-soft)] px-2.5 py-1 text-[11px] font-black text-[var(--accent-strong)]">{selectedBid.bid_type}</span>
-                  <h2 className="text-lg font-[900] text-[var(--text-primary)] leading-snug">{selectedBid.bid_notice_nm}</h2>
-                </div>
-                <button onClick={() => setSelectedBid(null)} className="shrink-0 text-[var(--text-secondary)] hover:text-[var(--text-primary)] text-3xl leading-none">×</button>
-              </div>
-
-              <div className="grid gap-3 sm:grid-cols-2 mb-5">
-                <InfoTile label="발주기관" value={selectedBid.org_name} />
-                <InfoTile label="기관유형" value={selectedBid.org_type || "-"} />
-                <InfoTile label="추정가격" value={formatKRW(selectedBid.estimated_price)} accent />
-                <InfoTile label="지역" value={selectedBid.region_sido || "전국"} />
-                <InfoTile label="입찰마감" value={selectedBid.bid_close_dt ? new Date(selectedBid.bid_close_dt).toLocaleString("ko-KR") : "-"} />
-                <InfoTile label="공고번호" value={selectedBid.bid_notice_no} />
-              </div>
-
-              {selectedBid.category_tags?.length > 0 && (
-                <div className="flex flex-wrap gap-1.5 mb-5">
-                  {(selectedBid.category_tags ?? []).map((t) => (
-                    <span key={t} className={`rounded-full border px-2.5 py-1 text-[11px] font-bold ${tagColor(t, groups)}`}>{t}</span>
-                  ))}
-                </div>
-              )}
-
-              <div className="flex gap-3">
-                {selectedBid.g2b_url && (
-                  <a
-                    href={selectedBid.g2b_url} target="_blank" rel="noopener noreferrer"
-                    className="flex-1 rounded-xl bg-[var(--accent-strong)] py-3 text-center text-sm font-black text-white hover:opacity-90 transition"
-                  >
-                    나라장터에서 입찰하기 ↗
-                  </a>
-                )}
-                <button
-                  onClick={() => { setAnalysisCtx({ bidId: selectedBid.id, bidName: selectedBid.bid_notice_nm }); setSelectedBid(null); }}
-                  className="flex-1 rounded-xl border-2 border-[var(--accent-strong)] py-3 text-center text-sm font-black text-[var(--accent-strong)] hover:bg-[var(--accent-soft)] transition"
-                >
-                  🧠 AI 정밀분석
-                </button>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {/* ── 상세 모달 (풍부한 공식 상세페이지급 + 하단 AI CTA) ── */}
+      {selectedBid && (
+        <G2BBidDetailModal
+          seed={{
+            id: selectedBid.id,
+            bid_notice_no: selectedBid.bid_notice_no,
+            bid_notice_nm: selectedBid.bid_notice_nm,
+            bid_type: selectedBid.bid_type,
+            org_name: selectedBid.org_name,
+            org_type: selectedBid.org_type,
+            estimated_price: selectedBid.estimated_price,
+            bid_close_dt: selectedBid.bid_close_dt,
+            region_sido: selectedBid.region_sido,
+            status: selectedBid.status,
+            award_rate: selectedBid.award_rate,
+            g2b_url: selectedBid.g2b_url,
+          }}
+          onClose={() => setSelectedBid(null)}
+          onAnalyze={(bidId, bidName) => {
+            setAnalysisCtx({ bidId, bidName });
+            setSelectedBid(null);
+          }}
+        />
+      )}
 
       {/* ── AI 분석 모달 ── */}
       {analysisCtx && (
@@ -504,16 +470,6 @@ function BidCard({ bid, groups, onClick }: { bid: G2BBid; groups: Record<string,
         </div>
       )}
     </button>
-  );
-}
-
-/* ── 상세 정보 타일 ── */
-function InfoTile({ label, value, accent = false }: { label: string; value: string; accent?: boolean }) {
-  return (
-    <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-3.5">
-      <p className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-secondary)] mb-1">{label}</p>
-      <p className={`text-sm font-bold ${accent ? "text-[var(--accent-strong)]" : "text-[var(--text-primary)]"}`}>{value}</p>
-    </div>
   );
 }
 

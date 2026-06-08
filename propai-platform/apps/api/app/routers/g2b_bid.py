@@ -15,12 +15,13 @@ from app.schemas.g2b_bid import (
     G2BAwardStatsResponse,
     G2BBidAnalyzeRequest,
     G2BBidAnalyzeResponse,
+    G2BBidDetailResponse,
     G2BBidFilter,
     G2BBidListResponse,
     G2BBidResponse,
     G2BDashboardStats,
 )
-from app.services.g2b_bid_service import G2BBidService
+from app.services.g2b_bid_service import G2BBidService, build_detail_sections
 
 router = APIRouter(prefix="/g2b", tags=["공공입찰(G2B)"])
 
@@ -141,6 +142,25 @@ async def get_bid(bid_id: UUID, service: G2BBidService = Depends(_get_service)):
     if not bid:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="입찰 공고를 찾을 수 없습니다.")
     return G2BBidResponse.model_validate(bid)
+
+
+@router.get(
+    "/bids/{bid_id}/detail",
+    response_model=G2BBidDetailResponse,
+    summary="입찰 공고 상세(원본 144필드 한글 라벨 매핑)",
+)
+async def get_bid_detail(bid_id: UUID, service: G2BBidService = Depends(_get_service)):
+    """입찰 공고 단건을 raw_data(원본 144필드)까지 한글 라벨로 매핑해 반환한다.
+
+    기본 응답(~20필드)에 더해 일반/제한/일정/금액/첨부/연락처/링크 섹션을 제공한다.
+    빈 값 항목은 생략한다(정직). raw_data가 비면 detail은 빈 섹션이 된다.
+    """
+    bid = await service.get_bid(bid_id)
+    if not bid:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="입찰 공고를 찾을 수 없습니다.")
+    base = G2BBidResponse.model_validate(bid).model_dump()
+    detail = build_detail_sections(bid.raw_data or {})
+    return G2BBidDetailResponse(**base, detail=detail)
 
 
 @router.get(

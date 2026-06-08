@@ -70,6 +70,55 @@ class G2BBidListResponse(BaseModel):
     total_pages: int
 
 
+# ── 입찰 공고 상세(raw_data 한글 라벨 매핑) ──
+# 우리는 입찰공고 원본 API 응답 전체(144필드)를 raw_data에 저장하지만,
+# 기본 응답 스키마는 ~20필드뿐이다. 아래 구조는 raw_data를 코드→한글라벨로
+# 매핑해 "라벨+값" 형태로 구조적으로 노출한다(원본 통째 노출 금지).
+
+class LabeledItem(BaseModel):
+    """한글 라벨 + 표시값 한 쌍(예: 라벨="입찰방식", 값="일반경쟁")."""
+
+    label: str
+    value: str
+
+
+class G2BAttachment(BaseModel):
+    """공고 첨부문서(파일명 + 다운로드 URL)."""
+
+    name: str
+    url: str
+
+
+class G2BContact(BaseModel):
+    """발주/수요기관 담당자 연락처."""
+
+    org: Optional[str] = None  # 공고기관명
+    demand_org: Optional[str] = None  # 수요기관명
+    name: Optional[str] = None  # 담당자명
+    tel: Optional[str] = None  # 전화
+    email: Optional[str] = None  # 이메일
+    exec_name: Optional[str] = None  # 집행관명
+    opening_place: Optional[str] = None  # 개찰장소
+
+
+class G2BDetailSections(BaseModel):
+    """상세 화면용 섹션 묶음(일반/제한/일정/금액/첨부/연락처/링크)."""
+
+    general: list[LabeledItem] = []  # 일반 정보
+    restriction: list[LabeledItem] = []  # 참가 제한
+    schedule: list[LabeledItem] = []  # 일정
+    price: list[LabeledItem] = []  # 금액
+    attachments: list[G2BAttachment] = []  # 첨부문서
+    contact: G2BContact = G2BContact()  # 담당자 연락처
+    links: dict[str, str] = {}  # 외부 링크
+
+
+class G2BBidDetailResponse(G2BBidResponse):
+    """입찰 공고 상세 응답(기본 응답 + 한글 라벨 매핑 detail)."""
+
+    detail: G2BDetailSections
+
+
 # ── 목록 조회 필터 ──
 
 class G2BBidFilter(BaseModel):
