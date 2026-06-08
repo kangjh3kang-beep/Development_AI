@@ -68,24 +68,16 @@ REGISTRY = [
     (tx.SalesTaxInvoice, "tax/invoices-list"), (tx.SalesWithholdingStatement, "tax/withholding-list"),
 ]
 
-# 도메인 액션 라우터를 자동 CRUD보다 '먼저' 등록한다.
-# 이유: 자동 CRUD가 contracts 모델로 GET/POST /contracts 를 자동 생성하는데, 그게 먼저 잡히면
-# 우리가 만든 똑똑한 계약 체결(POST /contracts: 가격 자동산출·세대 RESERVED 전환)과
-# 선택기용 라벨 목록(GET /contracts: {id,label,status})을 가려버린다.
-# FastAPI는 먼저 등록된 경로가 우선이므로, 액션 라우터를 앞에 둬 같은 경로(/contracts)에서 우리 핸들러가 이긴다.
-# (/contracts/{id} 같은 다른 CRUD 경로는 그대로 유지 — 충돌하는 건 /contracts 하나뿐.)
+# ── 등록 순서 규칙(중요) ─────────────────────────────────────────────
+# '구체적인 업무 라우터'를 '자동 CRUD'보다 반드시 '먼저' 등록한다.
+# 왜? 자동 CRUD(make_crud_router)는 모델마다 GET/POST /<prefix>, GET/PATCH/DELETE /<prefix>/{id}
+# 같은 일반 경로를 찍어낸다. 그런데 우리가 따로 만든 똑똑한 핸들러가 같은 경로를 쓰는 경우가 있다.
+#   예) POST /contracts(가격 자동산출·세대 RESERVED 전환), GET /contracts(선택기 라벨 목록),
+#       GET /work-logs/summary(실적 집계), POST /work-logs(활동→고객 이력 연계).
+# FastAPI는 '먼저 등록된 경로'가 이기므로, CRUD가 앞서면 우리 핸들러가 가려져
+# 라벨이 비거나(선택기), "summary"가 UUID로 잘못 파싱돼 422가 나는 식으로 조용히 깨진다.
+# 따라서 업무 라우터를 전부 앞에 두고, 일반 CRUD는 맨 마지막에 '못 잡힌 경로의 기본값'으로만 둔다.
 sales_router.include_router(actions_router)
-
-for _model, _prefix in REGISTRY:
-    _name = _model.__name__
-    sales_router.include_router(make_crud_router(
-        model=_model,
-        create_schema=getattr(S, f"{_name}Create"),
-        update_schema=getattr(S, f"{_name}Update"),
-        read_schema=getattr(S, f"{_name}Read"),
-        prefix=f"/{_prefix}", tags=["sales"],
-    ))
-
 sales_router.include_router(commission_agreement_router)
 sales_router.include_router(crm_enhance_router)
 sales_router.include_router(referral_router)
@@ -96,3 +88,14 @@ sales_router.include_router(views_router)
 sales_router.include_router(units_live_router)
 sales_router.include_router(r5)
 sales_router.include_router(r6)
+
+# 일반 CRUD는 맨 마지막(위 업무 라우터가 못 잡은 경로만 처리 = 안전한 폴백).
+for _model, _prefix in REGISTRY:
+    _name = _model.__name__
+    sales_router.include_router(make_crud_router(
+        model=_model,
+        create_schema=getattr(S, f"{_name}Create"),
+        update_schema=getattr(S, f"{_name}Update"),
+        read_schema=getattr(S, f"{_name}Read"),
+        prefix=f"/{_prefix}", tags=["sales"],
+    ))
