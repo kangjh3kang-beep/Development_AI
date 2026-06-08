@@ -2,9 +2,12 @@
 
 import asyncio
 import io
+import logging
 import time
 import uuid
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
@@ -362,10 +365,14 @@ async def land_schedule_import(file: UploadFile = File(...)) -> dict[str, Any]:
 
     headers: list[str] = []
     out: list[dict[str, Any]] = []
+    # 모든 행을 보관(LLM 폴백용 그리드).
+    all_rows: list[list[str]] = []
     for row in ws.iter_rows(values_only=True):
         cells = [("" if c is None else str(c)).strip() for c in row]
+        all_rows.append(cells)
+        # 헤더 탐지: 공백 제거 후 '지번' 매칭(예 '지 번'도 인식).
         if not headers:
-            if any("지번" in c for c in cells):
+            if any("지번" in c.replace(" ", "") for c in cells):
                 headers = cells
             continue
         if not any(cells):  # 빈 행 → 데이터 끝(집계 푸터 앞에서 중단)
@@ -396,4 +403,94 @@ async def land_schedule_import(file: UploadFile = File(...)) -> dict[str, Any]:
             "land_use_consent": _bool(pick("토지사용")),
             "district_consent": _bool(pick("지구단위")),
         })
-    return {"status": "ok", "count": len(out), "rows": out}
+    if out:
+        return {"status": "ok", "count": len(out), "rows": out, "engine": "rule"}
+
+    # ── LLM 폴백 ── 규칙기반이 0행(병합셀·다층헤더·집계 혼재 등 복잡 레이아웃)일 때
+    # LLM이 시트 전체를 읽어 필지/소유자 행을 구조화 추출(원본 최대 복원, 무목업).
+    llm_rows = await _llm_extract_land_schedule(all_rows)
+    if llm_rows:
+        return {"status": "ok", "count": len(llm_rows), "rows": llm_rows, "engine": "llm"}
+    return {
+        "status": "ok", "count": 0, "rows": [],
+        "message": "지번을 인식하지 못했습니다. '지번/소재지'·소유자·면적이 포함된 토지조서인지 확인하세요.",
+    }
+
+
+async def _llm_extract_land_schedule(all_rows: list[list[str]]) -> list[dict[str, Any]]:
+    """복잡 레이아웃 토지조서를 LLM으로 구조화 추출(병합셀 지번 상속·집계행 제외)."""
+    # 그리드 텍스트화: 앞 90행, 셀 길이 제한, 빈 trailing 컬럼 제거.
+    lines: list[str] = []
+    for i, cells in enumerate(all_rows[:90]):
+        trimmed = [c[:40] for c in cells]
+        while trimmed and not trimmed[-1]:
+            trimmed.pop()
+        if trimmed:
+            lines.append(f"R{i + 1}: " + " | ".join(trimmed))
+    grid = "\n".join(lines)
+    if not grid.strip():
+        return []
+    try:
+        from app.services.ai.llm_provider import get_llm
+        from langchain_core.messages import HumanMessage, SystemMessage
+
+        llm = get_llm(timeout=60, max_tokens=4000)
+        sys = (
+            "너는 한국 부동산 토지조서(편입토지조서) 엑셀을 정확히 구조화하는 전문가다. "
+            "병합셀·다층헤더·집계행을 이해하고 각 소유자/필지 행을 추출한다. 근거 없는 값은 비운다."
+        )
+        human = (
+            "다음은 토지조서 엑셀 셀 내용이다(R행번호: 열1 | 열2 ...). 각 데이터 행을 JSON 배열로만 "
+            "출력하라(설명·코드펜스 금지).\n"
+            "스키마: [{\"jibun\":\"소재지+지번 예 '사당동 219-16'\",\"owner\":\"소유자명\","
+            "\"share\":\"지분 예 '1/2', 없으면 빈문자\",\"area_sqm\":편입면적㎡_숫자_또는_null,"
+            "\"owner_type\":\"사유지|국공유지|빈문자\"}]\n"
+            "규칙: ①병합셀로 지번이 빈 행은 바로 위 유효 지번을 상속 ②합계/소계/구성비/집계 행 제외 "
+            "③헤더 행 제외 ④면적은 편입면적 우선(없으면 지적면적), 숫자만 ⑤JSON 배열만 출력.\n\n"
+            f"[엑셀]\n{grid}"
+        )
+        resp = await llm.ainvoke(
+            [SystemMessage(content=sys), HumanMessage(content=human)]
+        )
+        text = resp.content if isinstance(resp.content, str) else str(resp.content)
+        import json
+        import re
+
+        m = re.search(r"\[.*\]", text, re.S)
+        if not m:
+            return []
+        data = json.loads(m.group(0))
+        rows: list[dict[str, Any]] = []
+        for r in data:
+            if not isinstance(r, dict):
+                continue
+            jb = str(r.get("jibun", "") or "").strip()
+            if not jb:
+                continue
+            ot = str(r.get("owner_type", "") or "").strip()
+            owner_type = (
+                "국공유지" if ("국" in ot or "공" in ot)
+                else ("사유지" if ot else "")
+            )
+            area = r.get("area_sqm")
+            try:
+                area = float(area) if area not in (None, "") else None
+            except (TypeError, ValueError):
+                area = None
+            rows.append({
+                "jibun": jb,
+                "owner": str(r.get("owner", "") or "").strip(),
+                "share": str(r.get("share", "") or "").strip(),
+                "area_sqm": area,
+                "owner_type": owner_type,
+                "expected_price": None,
+                "purchase_price": None,
+                "contracted": False,
+                "land_use_consent": False,
+                "district_consent": False,
+            })
+        logger.info("토지조서 LLM 파싱 성공: %d행", len(rows))
+        return rows
+    except Exception as e:  # noqa: BLE001
+        logger.warning("토지조서 LLM 파싱 실패: %s", str(e)[:160])
+        return []
