@@ -1267,6 +1267,91 @@ textarea {
     word-break: keep-all;
   }
 
+  /* ── 스카이게러지 '팔라트리아' 프리미엄 배너 ──────────────────────────
+     이 배너는 외부 브랜드(팔라트리아)의 고유 골드 아이덴티티를 쓴다. 그래서 골드 색은
+     이 블록 안에서만 로컬 변수로 정의한다(전역 디자인 토큰을 더럽히지 않음).
+     사진(첨부 이미지)은 배경 슬롯 url("/images/palatria-hero.jpg")로 들어가고,
+     파일이 없으면 아래 골드 그라데이션이 대신 보여 깨지지 않는다. */
+  .palatria-banner {
+    --pal-gold: #c9a45a;          /* 팔라트리아 골드(밝은) */
+    --pal-gold-deep: #9c7c34;     /* 골드(짙은) */
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 1.25rem;
+    overflow: hidden;
+    border: 1px solid color-mix(in srgb, var(--pal-gold) 45%, transparent);
+    border-radius: var(--radius-md, 1rem);
+    padding: 1.25rem 1.5rem;
+    min-height: 116px;
+    /* 사진이 없을 때의 기본 배경(짙은 야간 + 골드 글로우) */
+    background:
+      radial-gradient(120% 160% at 88% 12%, color-mix(in srgb, var(--pal-gold) 22%, transparent), transparent 60%),
+      linear-gradient(100deg, #0b0d12 0%, #141821 60%, #0b0d12 100%);
+    transition: border-color 200ms var(--ease-out-expo), transform 200ms var(--ease-out-expo);
+  }
+  .palatria-banner:hover { border-color: color-mix(in srgb, var(--pal-gold) 75%, transparent); }
+  .palatria-banner:active { transform: scale(0.995); }
+
+  /* 배경 사진(있을 때만 보임) */
+  .palatria-banner__bg {
+    position: absolute; inset: 0;
+    background-image: url("/images/palatria-hero.jpg");
+    background-size: cover;
+    background-position: center 40%;
+    opacity: 0.5;            /* 글자 가독성 위해 은은하게 */
+  }
+  /* 글자 쪽(좌측)을 어둡게 덮어 가독성 확보 */
+  .palatria-banner__veil {
+    position: absolute; inset: 0;
+    background: linear-gradient(90deg, rgba(7,9,13,0.92) 0%, rgba(7,9,13,0.66) 48%, rgba(7,9,13,0.28) 100%);
+  }
+  .palatria-banner > :not(.palatria-banner__bg):not(.palatria-banner__veil) { position: relative; z-index: 1; }
+
+  /* 좌측 브랜드(왕관 + 이름) */
+  .palatria-banner__brand { display: flex; align-items: center; gap: 0.75rem; flex-shrink: 0; }
+  .palatria-banner__crown { color: var(--pal-gold); flex-shrink: 0; }
+  .palatria-banner__brandtext { display: flex; flex-direction: column; line-height: 1.1; }
+  .palatria-banner__eyebrow {
+    font-size: 0.625rem; font-weight: 700; letter-spacing: 0.14em;
+    color: color-mix(in srgb, var(--pal-gold) 80%, #fff);
+  }
+  .palatria-banner__name {
+    font-size: 1.25rem; font-weight: 800; word-break: keep-all;
+    background: linear-gradient(92deg, var(--pal-gold) 0%, #f0dca0 50%, var(--pal-gold-deep) 100%);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+
+  /* 중앙 카피(타이포그래피) — 한글 단어 안 끊기게 keep-all */
+  .palatria-banner__copy { flex: 1; min-width: 0; word-break: keep-all; }
+  .palatria-banner__headline {
+    font-size: clamp(0.95rem, 1.6vw, 1.15rem); font-weight: 800; letter-spacing: -0.01em;
+    color: #f7f3ea;
+  }
+  .palatria-banner__sub {
+    margin-top: 0.15rem; font-size: 0.8125rem; font-weight: 600;
+    color: color-mix(in srgb, var(--pal-gold) 65%, #fff);
+  }
+  .palatria-banner__tagline {
+    margin-top: 0.35rem; font-size: 0.9375rem; font-weight: 800; letter-spacing: -0.01em;
+    color: #fff;
+  }
+
+  /* 우측 행동 */
+  .palatria-banner__cta {
+    display: inline-flex; align-items: center; gap: 0.4rem; flex-shrink: 0;
+    font-size: 0.8125rem; font-weight: 700; color: var(--pal-gold);
+    transition: transform 200ms var(--ease-out-expo);
+  }
+  .palatria-banner:hover .palatria-banner__cta { transform: translateX(2px); }
+
+  /* 모바일: 세로 정렬 + 중앙 정렬 */
+  @media (max-width: 640px) {
+    .palatria-banner { flex-direction: column; text-align: center; gap: 0.875rem; }
+    .palatria-banner__veil { background: linear-gradient(180deg, rgba(7,9,13,0.62) 0%, rgba(7,9,13,0.86) 100%); }
+    .palatria-banner__copy { width: 100%; }
+  }
+
   /* 실시간 표시 도트 — 네온 시안 대신 단일 파랑 펄스(C2), 한글이라 트래킹 0(C3) */
   .db-live {
     display: inline-flex;

@@ -4,6 +4,7 @@ import { DashboardEsgScore } from "@/components/dashboard/DashboardEsgScore";
 import { DashboardKpiLoader } from "@/components/dashboard/DashboardKpiLoader";
 import { DashboardProjectLoader } from "@/components/dashboard/DashboardProjectLoader";
 import { MarketingPanels } from "@/components/dashboard/MarketingPanels";
+import { PalatriaBanner } from "@/components/dashboard/PalatriaBanner";
 import { PromoBanner } from "@/components/dashboard/PromoBanner";
 import { OnboardingWizard } from "@/components/onboarding/OnboardingWizard";
 import { PipelinePanelClient } from "@/components/pipeline/PipelinePanelClient";
@@ -134,6 +135,9 @@ export default async function DashboardPage({ params }: DashboardPageProps) {
           ))}
         </div>
       </section>
+
+      {/* ── 스카이게러지 팔라트리아 배너(분양광고 배너 위) ── */}
+      <PalatriaBanner />
 
       {/* ── 사통팔땅 홍보 배너 ── */}
       <PromoBanner />

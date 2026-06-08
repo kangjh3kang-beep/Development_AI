@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v125-hero-copy";
+const CACHE_NAME = "propai-v126-palatria-banner";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",
