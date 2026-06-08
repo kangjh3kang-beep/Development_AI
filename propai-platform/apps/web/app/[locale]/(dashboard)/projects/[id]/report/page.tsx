@@ -1,4 +1,5 @@
 import { ModulePlaceholder } from "@/components/layout/ModulePlaceholder";
+import { ModuleCommandStrip } from "@/components/layout/ModuleCommandStrip";
 import { ProjectReportWorkspaceClient } from "@/components/projects/ProjectReportWorkspaceClient";
 import { NextStageCta } from "@/components/projects/NextStageCta";
 import { ReportPdfDownload } from "@/components/projects/ReportPdfDownload";
@@ -28,7 +29,8 @@ export default async function ReportPage({ params }: ReportPageProps) {
 
   return (
     <div className="grid gap-6">
-            <ModulePlaceholder
+      <ModuleCommandStrip label="REPORT · 통합 보고서" meta={runtimeMode} />
+      <ModulePlaceholder
         eyebrow={dictionary.modulePlaceholders["report"].eyebrow}
         title={dictionary.modulePlaceholders["report"].title}
         description={dictionary.modulePlaceholders["report"].description}

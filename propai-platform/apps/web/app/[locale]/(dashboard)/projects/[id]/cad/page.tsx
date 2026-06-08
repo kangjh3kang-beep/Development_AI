@@ -45,18 +45,21 @@ export default function CadPage() {
         initial={{ opacity: 0, y: 40 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.4 }}
-        className="rounded-[4rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-4 lg:p-8 shadow-[var(--shadow-2xl)] backdrop-blur-3xl overflow-hidden group"
+        className="cc-panel cc-bracketed rounded-[4rem] p-4 lg:p-8 shadow-[var(--shadow-2xl)] overflow-hidden group"
       >
+        <i className="cc-bracket cc-bracket--tl" aria-hidden /><i className="cc-bracket cc-bracket--tr" aria-hidden />
+        <i className="cc-bracket cc-bracket--bl" aria-hidden /><i className="cc-bracket cc-bracket--br" aria-hidden />
         <div className="mb-6 flex items-center justify-between px-8">
-            <h4 className="text-[10px] font-[1000] text-[var(--text-hint)] uppercase tracking-[0.5em]">High-Fidelity CAD Design Studio</h4>
             <div className="flex items-center gap-4">
-              <span className="text-[9px] font-bold text-[var(--text-hint)] uppercase tracking-widest">
-                Stage 2 — Enhanced
-              </span>
+              <span className="cc-meta">CAD DESIGN STUDIO · HI-FI</span>
+              <span className="cc-live"><i />STAGE 2</span>
+            </div>
+            <div className="flex items-center gap-4">
+              <span className="cc-label">Enhanced</span>
               <div className="flex gap-2">
-                  <div className="h-2 w-2 rounded-full bg-red-500/30 group-hover:bg-red-500 transition-colors" />
-                  <div className="h-2 w-2 rounded-full bg-yellow-500/30 group-hover:bg-yellow-500 transition-colors shadow-[var(--shadow-glow)] shadow-transparent group-hover:shadow-[var(--accent-strong)]/50" />
-                  <div className="h-2 w-2 rounded-full bg-green-500/30 group-hover:bg-green-500 transition-colors shadow-[0_0_10px_#22c55e] shadow-transparent group-hover:shadow-green-500/50" />
+                  <div className="h-2 w-2 rounded-full bg-[var(--status-error)]/30 group-hover:bg-[var(--status-error)] transition-colors" />
+                  <div className="h-2 w-2 rounded-full bg-[var(--status-warning)]/30 group-hover:bg-[var(--status-warning)] transition-colors" />
+                  <div className="h-2 w-2 rounded-full bg-[var(--status-success)]/30 group-hover:bg-[var(--status-success)] transition-colors" />
               </div>
             </div>
         </div>

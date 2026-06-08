@@ -182,15 +182,18 @@ export default function PermitPage() {
         </motion.div>
       )}
 
-      <div className="rounded-[var(--radius-2xl)] border border-[var(--line)] bg-[var(--surface-strong)] p-10 shadow-xl">
+      <div className="cc-bracketed relative rounded-[var(--radius-2xl)] border border-[var(--line)] bg-[var(--surface-strong)] p-10 shadow-xl">
+        <i className="cc-bracket cc-bracket--tl" aria-hidden /><i className="cc-bracket cc-bracket--tr" aria-hidden />
+        <i className="cc-bracket cc-bracket--bl" aria-hidden /><i className="cc-bracket cc-bracket--br" aria-hidden />
         <div className="mb-10 flex flex-wrap items-end justify-between gap-3">
           <div>
-            <h3 className="text-xl font-bold text-[var(--text-primary)]">개발 라이프사이클 진행 현황</h3>
+            <span className="cc-meta">LIFECYCLE · PROGRESS</span>
+            <h3 className="mt-1 text-xl font-bold text-[var(--text-primary)]">개발 라이프사이클 진행 현황</h3>
             <p className="mt-1 text-xs text-[var(--text-tertiary)]">
               프로젝트 단계 완료 상태(부지분석→보고서) 기준 · 인허가는 후반 단계입니다.
             </p>
           </div>
-          <span className="text-sm font-black text-[var(--accent-strong)]">진행률 {progressPct}%</span>
+          <span className="cc-num text-sm font-black text-[var(--accent-strong)]">진행률 {progressPct}%</span>
         </div>
         <div className="flex flex-wrap items-center justify-between gap-6">
           {permitStages.map((stage, i, arr) => (
@@ -218,10 +221,13 @@ export default function PermitPage() {
       </div>
 
       {/* ── 용도지역 기반 개발방식 인허가 가능성 매트릭스(permit_validator 실엔진) ── */}
-      <div className="rounded-[var(--radius-2xl)] border border-[var(--line)] bg-[var(--surface-strong)] p-8 shadow-lg">
+      <div className="cc-bracketed relative rounded-[var(--radius-2xl)] border border-[var(--line)] bg-[var(--surface-strong)] p-8 shadow-lg">
+        <i className="cc-bracket cc-bracket--tl" aria-hidden /><i className="cc-bracket cc-bracket--tr" aria-hidden />
+        <i className="cc-bracket cc-bracket--bl" aria-hidden /><i className="cc-bracket cc-bracket--br" aria-hidden />
         <div className="mb-6 flex flex-wrap items-end justify-between gap-2">
           <div>
-            <h3 className="text-xl font-bold text-[var(--text-primary)]">개발방식별 인허가 가능성</h3>
+            <span className="cc-meta">FEASIBILITY MATRIX · ZONING</span>
+            <h3 className="mt-1 text-xl font-bold text-[var(--text-primary)]">개발방식별 인허가 가능성</h3>
             <p className="mt-1 text-xs text-[var(--text-tertiary)]">
               {zoneType
                 ? `용도지역 「${zoneType}」 기준 허용·복잡도 (국토계획법 제76조 행위제한)`
@@ -229,7 +235,7 @@ export default function PermitPage() {
             </p>
           </div>
           {matrix && (
-            <span className="text-sm font-black text-[var(--accent-strong)]">
+            <span className="cc-num text-sm font-black text-[var(--accent-strong)]">
               {matrix.permitted_count}/{matrix.total_count}개 가능
             </span>
           )}
@@ -247,8 +253,8 @@ export default function PermitPage() {
                   <span className="text-sm font-bold text-[var(--text-primary)]">{it.type_name}</span>
                   <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${
                     it.is_permitted
-                      ? "border-emerald-500/30 bg-emerald-500/15 text-emerald-600"
-                      : "border-rose-500/30 bg-rose-500/15 text-rose-600"
+                      ? "border-[var(--status-success)]/30 bg-[var(--status-success)]/15 text-[var(--status-success)]"
+                      : "border-[var(--status-error)]/30 bg-[var(--status-error)]/15 text-[var(--status-error)]"
                   }`}>
                     {it.is_permitted ? "허가 가능" : "불가"}
                   </span>
@@ -269,9 +275,14 @@ export default function PermitPage() {
       </div>
 
       {/* ── AI 규제·인허가 진단(/permits/ai-analysis) — 진입 시 부지 컨텍스트로 자동 분석 ── */}
-      <div className="flex flex-col gap-6 rounded-[var(--radius-2xl)] border border-[var(--line)] bg-[var(--surface-soft)] p-8">
+      <div className="cc-bracketed relative flex flex-col gap-6 rounded-[var(--radius-2xl)] border border-[var(--line)] bg-[var(--surface-soft)] p-8">
+        <i className="cc-bracket cc-bracket--tl" aria-hidden /><i className="cc-bracket cc-bracket--tr" aria-hidden />
+        <i className="cc-bracket cc-bracket--bl" aria-hidden /><i className="cc-bracket cc-bracket--br" aria-hidden />
         <div className="flex items-center justify-between gap-3">
-          <h3 className="text-xl font-bold text-[var(--text-primary)]">AI 인허가 진단</h3>
+          <div>
+            <span className="cc-meta">AI DIAGNOSIS · PERMIT</span>
+            <h3 className="mt-1 text-xl font-bold text-[var(--text-primary)]">AI 인허가 진단</h3>
+          </div>
           {analysisState === "done" && (
             <span className={`rounded-full border px-2.5 py-0.5 text-[11px] font-bold ${
               analysis?.ai
@@ -301,7 +312,7 @@ export default function PermitPage() {
           </p>
         )}
         {analysisState === "error" && (
-          <p className="text-sm text-rose-500">인허가 AI 진단에 실패했습니다. 잠시 후 다시 시도하세요.</p>
+          <p className="text-sm text-[var(--status-error)]">인허가 AI 진단에 실패했습니다. 잠시 후 다시 시도하세요.</p>
         )}
 
         {analysisState === "done" && analysis && (
@@ -321,7 +332,7 @@ export default function PermitPage() {
                   </div>
                   {(top.issues?.length ?? 0) > 0 && (
                     <div>
-                      <p className="text-xs font-bold text-amber-600">인허가 문제점</p>
+                      <p className="text-xs font-bold text-[var(--status-warning)]">인허가 문제점</p>
                       <ul className="mt-1 space-y-0.5 text-sm text-[var(--text-secondary)]">
                         {top.issues!.map((it, i) => (
                           <li key={i}>· {it}</li>
@@ -331,7 +342,7 @@ export default function PermitPage() {
                   )}
                   {(top.solutions?.length ?? 0) > 0 && (
                     <div>
-                      <p className="text-xs font-bold text-emerald-600">해결방안</p>
+                      <p className="text-xs font-bold text-[var(--status-success)]">해결방안</p>
                       <ul className="mt-1 space-y-0.5 text-sm text-[var(--text-secondary)]">
                         {top.solutions!.map((s, i) => (
                           <li key={i}>· {s}</li>

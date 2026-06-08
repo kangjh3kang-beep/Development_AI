@@ -3,6 +3,7 @@
 import { useParams } from "next/navigation";
 import { motion } from "framer-motion";
 import { ModulePlaceholder } from "@/components/layout/ModulePlaceholder";
+import { ModuleCommandStrip } from "@/components/layout/ModuleCommandStrip";
 import { isValidLocale, type Locale } from "@/i18n/config";
 import { useDictionary } from "@/hooks/use-dictionary";
 import { ProjectEsgWorkspaceClient } from "@/components/projects/ProjectEsgWorkspaceClient";
@@ -36,6 +37,7 @@ export default function ESGPage() {
 
   return (
     <div className="flex flex-col gap-12 pb-20">
+      <ModuleCommandStrip label="ESG · 환경·사회·지배구조" meta={runtimeMode} />
       <motion.div
         initial={{ opacity: 0, y: 30 }}
         animate={{ opacity: 1, y: 0 }}
@@ -62,7 +64,7 @@ export default function ESGPage() {
             <div className="h-10 w-10 rounded-2xl bg-[var(--accent-soft)] flex items-center justify-center text-[var(--accent-strong)]">
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
             </div>
-            <h3 className="text-[10px] font-black text-[var(--text-tertiary)] uppercase tracking-[0.4em]">ESG Risk Matrix</h3>
+            <h3 className="cc-label tracking-[0.4em]">ESG Risk Matrix</h3>
           </div>
 
           {(() => {
@@ -86,7 +88,7 @@ export default function ESGPage() {
                       </p>
                     </div>
                     <div className="text-right">
-                      <span className="block text-2xl font-[1000] text-[var(--text-primary)] leading-none mb-1 tracking-tighter">
+                      <span className="block cc-num text-2xl font-[1000] leading-none mb-1">
                         {eScore != null ? Math.round(eScore) : "—"}
                         <span className="text-xs text-[var(--text-hint)] tracking-normal">/100</span>
                       </span>

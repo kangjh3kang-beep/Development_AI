@@ -1,6 +1,7 @@
 import { isValidLocale, type Locale } from "@/i18n/config";
 import { getDictionary } from "@/i18n/get-dictionary";
 import { ModulePlaceholder } from "@/components/layout/ModulePlaceholder";
+import { ModuleCommandStrip } from "@/components/layout/ModuleCommandStrip";
 import { NextStageCta } from "@/components/projects/NextStageCta";
 import { FeasibilityEditorV2 } from "@/components/feasibility/FeasibilityEditorV2";
 import { TrustBadge } from "@/components/common/TrustBadge";
@@ -25,6 +26,9 @@ export default async function FeasibilityPage({ params }: Props) {
 
   return (
     <div className="flex flex-col gap-12 min-h-screen pb-20 transition-colors duration-500">
+      {/* ⓪ 커맨드센터 HUD 스트립 — 모듈 식별·LIVE 상태(시각 전용, 데이터 무관) */}
+      <ModuleCommandStrip label="FEASIBILITY · 사업성 분석" meta={runtimeMode} />
+
       {/* ① 컨텍스트 헤더 — 3구역 표준(ModulePlaceholder) */}
       <ModulePlaceholder
         eyebrow={t.eyebrow}

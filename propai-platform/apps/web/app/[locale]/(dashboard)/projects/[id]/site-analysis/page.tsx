@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import dynamic from "next/dynamic";
 import { motion, AnimatePresence } from "framer-motion";
 import { ModulePlaceholder } from "@/components/layout/ModulePlaceholder";
+import { ModuleCommandStrip } from "@/components/layout/ModuleCommandStrip";
 import { NextStageCta } from "@/components/projects/NextStageCta";
 import { LandIntelligencePanel } from "@/components/projects/LandIntelligencePanel";
 import { SiteInitiator } from "@/components/projects/SiteInitiator";
@@ -219,8 +220,8 @@ function L3EnhancedCards({
   const ordinanceNeedCheck = fbd?.조례확인필요 ?? !ordinanceConfirmed;
   // 가능성 등급 → 의미색(상=success/중=warning/하=muted)
   const feasibilityStyle = (f?: string): string => {
-    if (f === "상") return "bg-emerald-500/10 text-emerald-400 border-emerald-500/30";
-    if (f === "중") return "bg-amber-500/10 text-amber-400 border-amber-500/30";
+    if (f === "상") return "sa-chip--success";
+    if (f === "중") return "sa-chip--warning";
     return "bg-[var(--surface-muted)] text-[var(--text-hint)] border-[var(--line)]";
   };
 
@@ -431,27 +432,27 @@ function L3EnhancedCards({
       {tx?.apt && tx.apt.count > 0 && (
         <div className="rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-strong)] p-6 shadow-[var(--shadow-xl)]">
           <div className="flex items-center gap-3 mb-4">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-400">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl" style={{ background: "color-mix(in srgb, var(--status-success) 12%, transparent)", color: "var(--status-success)" }}>
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" x2="12" y1="2" y2="22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
             </div>
             <div>
               <h4 className="text-sm font-black text-[var(--text-primary)]">인근 아파트 실거래가</h4>
-              <p className="text-[9px] font-bold text-emerald-400 uppercase tracking-widest">최근 3개월 · {tx.apt.count}건</p>
+              <p className="text-[9px] font-bold uppercase tracking-widest" style={{ color: "var(--status-success)" }}>최근 3개월 · {tx.apt.count}건</p>
             </div>
           </div>
           <div className="space-y-3">
             <div className="grid grid-cols-3 gap-2">
               <div className="rounded-lg bg-[var(--surface-muted)] p-3 text-center border border-[var(--line)]">
                 <p className="text-[8px] font-black text-[var(--text-hint)] uppercase mb-1">평균</p>
-                <p className="text-sm font-black text-[var(--text-primary)]">{formatPriceKr(tx.apt.avg_price_10k)}</p>
+                <p className="cc-num text-sm font-black text-[var(--text-primary)]">{formatPriceKr(tx.apt.avg_price_10k)}</p>
               </div>
               <div className="rounded-lg bg-[var(--surface-muted)] p-3 text-center border border-[var(--line)]">
                 <p className="text-[8px] font-black text-[var(--text-hint)] uppercase mb-1">최고</p>
-                <p className="text-sm font-black text-red-400">{formatPriceKr(tx.apt.max_price_10k)}</p>
+                <p className="cc-num text-sm font-black" style={{ color: "var(--status-error)" }}>{formatPriceKr(tx.apt.max_price_10k)}</p>
               </div>
               <div className="rounded-lg bg-[var(--surface-muted)] p-3 text-center border border-[var(--line)]">
                 <p className="text-[8px] font-black text-[var(--text-hint)] uppercase mb-1">최저</p>
-                <p className="text-sm font-black text-blue-400">{formatPriceKr(tx.apt.min_price_10k)}</p>
+                <p className="cc-num text-sm font-black" style={{ color: "var(--status-info)" }}>{formatPriceKr(tx.apt.min_price_10k)}</p>
               </div>
             </div>
             {(tx.apt.items?.length ?? 0) > 0 && (
@@ -473,18 +474,18 @@ function L3EnhancedCards({
       {bldg && (bldg.main_purpose || bldg.title_status) && (
         <div className="rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-strong)] p-6 shadow-[var(--shadow-xl)]">
           <div className="flex items-center gap-3 mb-4">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-500/10 text-blue-400">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl" style={{ background: "var(--data-accent-soft)", color: "var(--data-accent)" }}>
               <Icons.Database width={20} height={20} />
             </div>
             <div className="flex-1">
               <h4 className="text-sm font-black text-[var(--text-primary)]">기존 건축물 현황</h4>
-              <p className="text-[9px] font-bold text-blue-400 uppercase tracking-widest">건축물대장 표제부</p>
+              <p className="cc-label" style={{ color: "var(--data-accent)" }}>건축물대장 표제부</p>
             </div>
             {/* 출처 배지 */}
             {bldg.data_source && (
               <span className={`shrink-0 rounded-full px-2.5 py-1 text-[8px] font-black uppercase tracking-wider border ${
                 bldg.data_source === "molit_live"
-                  ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                  ? "sa-chip--success"
                   : "bg-[var(--surface-muted)] text-[var(--text-hint)] border-[var(--line)]"
               }`}>
                 {bldg.data_source === "molit_live" ? "실시간 조회" : "조회 불가"}
@@ -496,14 +497,14 @@ function L3EnhancedCards({
           {(bldg.is_demolished || bldg.is_uncompleted) && (
             <div className="mb-3 flex flex-wrap gap-2">
               {bldg.is_demolished && (
-                <span className="inline-flex items-center gap-1.5 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-1.5 text-[10px] font-black text-red-400">
-                  <span className="h-1.5 w-1.5 rounded-full bg-red-400" />
+                <span className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-[10px] font-black" style={{ color: "var(--status-error)", background: "color-mix(in srgb, var(--status-error) 10%, transparent)", borderColor: "color-mix(in srgb, var(--status-error) 30%, transparent)" }}>
+                  <span className="h-1.5 w-1.5 rounded-full" style={{ background: "var(--status-error)" }} />
                   멸실 건축물(확인 필요){bldg.demolition_date ? ` · ${bldg.demolition_date}` : ""}
                 </span>
               )}
               {bldg.is_uncompleted && (
-                <span className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-[10px] font-black text-amber-400">
-                  <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+                <span className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-[10px] font-black" style={{ color: "var(--status-warning)", background: "color-mix(in srgb, var(--status-warning) 10%, transparent)", borderColor: "color-mix(in srgb, var(--status-warning) 30%, transparent)" }}>
+                  <span className="h-1.5 w-1.5 rounded-full" style={{ background: "var(--status-warning)" }} />
                   미준공/공사중 추정
                 </span>
               )}
@@ -586,15 +587,18 @@ function L3EnhancedCards({
             {infra.nearest_subway && (
               <div className="rounded-lg bg-[var(--surface-muted)] p-3 border border-[var(--line)] flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <div className="h-6 w-6 rounded-full bg-blue-500/20 flex items-center justify-center">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-blue-400"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
+                  <div className="h-6 w-6 rounded-full flex items-center justify-center" style={{ background: "color-mix(in srgb, var(--status-info) 18%, transparent)" }}>
+                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ color: "var(--status-info)" }}><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
                   </div>
                   <div>
                     <p className="text-[8px] font-black text-[var(--text-hint)] uppercase">최근접 지하철</p>
                     <p className="text-xs font-bold text-[var(--text-primary)]">{infra.nearest_subway.name}</p>
                   </div>
                 </div>
-                <span className={`text-sm font-black ${(infra.nearest_subway.distance_m ?? Infinity) <= 500 ? "text-emerald-400" : (infra.nearest_subway.distance_m ?? Infinity) <= 1000 ? "text-amber-400" : "text-red-400"}`}>
+                <span
+                  className="cc-num text-sm font-black"
+                  style={{ color: (infra.nearest_subway.distance_m ?? Infinity) <= 500 ? "var(--status-success)" : (infra.nearest_subway.distance_m ?? Infinity) <= 1000 ? "var(--status-warning)" : "var(--status-error)" }}
+                >
                   {infra.nearest_subway.distance_m != null && Number.isFinite(infra.nearest_subway.distance_m) ? `${infra.nearest_subway.distance_m.toLocaleString()}m` : "—"}
                 </span>
               </div>
@@ -867,6 +871,9 @@ export default function SiteAnalysisPage() {
 
   return (
     <div className="flex flex-col gap-12 min-h-screen pb-20 font-sans">
+      {/* ⓪ 커맨드센터 HUD 스트립 — 모듈 식별·LIVE(시각 전용) */}
+      <ModuleCommandStrip label="SITE ANALYSIS · 부지 분석" meta={runtimeMode} />
+
       {/* ① 컨텍스트 헤더 — 3구역 표준(ModulePlaceholder) */}
       <motion.div
         initial={{ opacity: 0, y: 30 }}

@@ -1,4 +1,5 @@
 import { ModulePlaceholder } from "@/components/layout/ModulePlaceholder";
+import { ModuleCommandStrip } from "@/components/layout/ModuleCommandStrip";
 import { ProjectFinanceWorkspaceClient } from "@/components/projects/ProjectFinanceWorkspaceClient";
 import { NextStageCta } from "@/components/projects/NextStageCta";
 import { getDictionary } from "@/i18n/get-dictionary";
@@ -26,7 +27,8 @@ export default async function FinancePage({ params }: FinancePageProps) {
 
   return (
     <div className="grid gap-6">
-            <ModulePlaceholder
+      <ModuleCommandStrip label="FINANCE · 금융·자금조달" meta={runtimeMode} />
+      <ModulePlaceholder
         eyebrow={dictionary.modulePlaceholders["finance"].eyebrow}
         title={dictionary.modulePlaceholders["finance"].title}
         description={dictionary.modulePlaceholders["finance"].description}

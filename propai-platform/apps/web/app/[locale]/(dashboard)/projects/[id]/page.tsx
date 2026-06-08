@@ -13,6 +13,7 @@ import { useProjectStore } from "@/store/useProjectStore";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { ImageUpload } from "@/components/ui/ImageUpload";
 import { DataLineageTooltip } from "@/components/common/DataLineageTooltip";
+import { ModuleCommandStrip } from "@/components/layout/ModuleCommandStrip";
 import { latestLedger } from "@/lib/analysis-ledger";
 
 // 무거운 패널은 클라이언트 전용(ssr:false)으로 코드분할 — Cloudflare Worker SSR 부하(1102) 완화
@@ -178,6 +179,9 @@ export default function ProjectDetailPage() {
 
   return (
     <div className="flex flex-col gap-16 pb-20 font-sans">
+      {/* ⓪ 커맨드센터 HUD 스트립 — 프로젝트 허브 식별·LIVE(시각 전용) */}
+      <ModuleCommandStrip label="PROJECT HUB · 전략 허브" meta={`ID ${id}`} />
+
       {/* 진행 단계 표시는 layout(LifecycleProgressRail + 컴팩트 파이프라인)에서 단일 렌더한다.
           (이전: 여기서도 ProjectLifecyclePipeline 풀버전을 렌더 → 진행바 중복) */}
 
@@ -205,7 +209,7 @@ export default function ProjectDetailPage() {
         >
           <div className="flex flex-wrap items-start justify-between gap-6 mb-6">
             <div className="space-y-2">
-              <p className="text-[10px] font-black uppercase tracking-[0.3em] text-[var(--accent-strong)]">Project Metadata</p>
+              <p className="cc-meta tracking-[0.3em]">Project Metadata</p>
               <h2 className="text-2xl font-[900] tracking-tight text-[var(--text-primary)]">{projectFromStore?.name || meta.name}</h2>
               {(projectFromStore?.address || meta.address) && <p className="text-sm text-[var(--text-secondary)]">{projectFromStore?.address || meta.address}</p>}
             </div>
@@ -215,27 +219,35 @@ export default function ProjectDetailPage() {
           </div>
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             {meta.pnu && (
-              <div className="rounded-xl bg-[var(--surface-strong)] border border-[var(--line)] p-4">
-                <p className="text-[10px] font-bold uppercase tracking-widest text-[var(--text-hint)] mb-1">PNU</p>
-                <p className="text-sm font-bold text-[var(--text-primary)]">{meta.pnu}</p>
+              <div className="cc-bracketed relative rounded-xl bg-[var(--surface-strong)] border border-[var(--line)] p-4 overflow-hidden">
+                <i className="cc-bracket cc-bracket--tl" />
+                <i className="cc-bracket cc-bracket--br" />
+                <p className="cc-label mb-1">PNU</p>
+                <p className="cc-num text-sm font-bold">{meta.pnu}</p>
               </div>
             )}
             {meta.zone && (
-              <div className="rounded-xl bg-[var(--surface-strong)] border border-[var(--line)] p-4">
-                <p className="text-[10px] font-bold uppercase tracking-widest text-[var(--text-hint)] mb-1">용도지역</p>
+              <div className="cc-bracketed relative rounded-xl bg-[var(--surface-strong)] border border-[var(--line)] p-4 overflow-hidden">
+                <i className="cc-bracket cc-bracket--tl" />
+                <i className="cc-bracket cc-bracket--br" />
+                <p className="cc-label mb-1">용도지역</p>
                 <p className="text-sm font-bold text-[var(--text-primary)]">{meta.zone}</p>
               </div>
             )}
             {meta.created_at && (
-              <div className="rounded-xl bg-[var(--surface-strong)] border border-[var(--line)] p-4">
-                <p className="text-[10px] font-bold uppercase tracking-widest text-[var(--text-hint)] mb-1">생성일</p>
-                <p className="text-sm font-bold text-[var(--text-primary)]">{new Date(meta.created_at).toLocaleDateString("ko-KR")}</p>
+              <div className="cc-bracketed relative rounded-xl bg-[var(--surface-strong)] border border-[var(--line)] p-4 overflow-hidden">
+                <i className="cc-bracket cc-bracket--tl" />
+                <i className="cc-bracket cc-bracket--br" />
+                <p className="cc-label mb-1">생성일</p>
+                <p className="cc-num text-sm font-bold">{new Date(meta.created_at).toLocaleDateString("ko-KR")}</p>
               </div>
             )}
             {meta.updated_at && (
-              <div className="rounded-xl bg-[var(--surface-strong)] border border-[var(--line)] p-4">
-                <p className="text-[10px] font-bold uppercase tracking-widest text-[var(--text-hint)] mb-1">최종 수정</p>
-                <p className="text-sm font-bold text-[var(--text-primary)]">{new Date(meta.updated_at).toLocaleDateString("ko-KR")}</p>
+              <div className="cc-bracketed relative rounded-xl bg-[var(--surface-strong)] border border-[var(--line)] p-4 overflow-hidden">
+                <i className="cc-bracket cc-bracket--tl" />
+                <i className="cc-bracket cc-bracket--br" />
+                <p className="cc-label mb-1">최종 수정</p>
+                <p className="cc-num text-sm font-bold">{new Date(meta.updated_at).toLocaleDateString("ko-KR")}</p>
               </div>
             )}
           </div>
@@ -305,9 +317,11 @@ export default function ProjectDetailPage() {
               { label: d.summary.npv, value: meta?.npv ? formatCurrencyKRW(meta.npv) : "분석 전", color: "text-[var(--text-primary)]" },
               { label: d.summary.roi, value: ctxFeas?.profitRatePct != null ? `${ctxFeas.profitRatePct.toFixed(1)}%` : (meta?.roi ? `${meta.roi.toFixed(1)}%` : "분석 전"), color: "text-[var(--accent-strong)]" },
             ].map((stat, i) => (
-              <div key={i} className="relative min-w-[240px] rounded-[3rem] border border-[var(--line-strong)] bg-[var(--surface-strong)]/50 p-10 backdrop-blur-3xl shadow-[var(--shadow-xl)] transition-all hover:-translate-y-2 hover:bg-[var(--surface-soft)] group/stat border-2 border-transparent hover:border-[var(--accent-strong)]/20">
-                <p className="text-[10px] font-black uppercase tracking-[0.4em] text-[var(--text-hint)] mb-4">{stat.label}</p>
-                <p className={`text-4xl font-[1000] tracking-tighter ${stat.color} group-hover/stat:scale-105 transition-transform duration-500 origin-left`}>
+              <div key={i} className="cc-bracketed relative min-w-[240px] overflow-hidden rounded-[3rem] border border-[var(--line-strong)] bg-[var(--surface-strong)]/50 p-10 backdrop-blur-3xl shadow-[var(--shadow-xl)] transition-all hover:-translate-y-2 hover:bg-[var(--surface-soft)] group/stat border-2 border-transparent hover:border-[var(--accent-strong)]/20">
+                <i className="cc-bracket cc-bracket--tl" />
+                <i className="cc-bracket cc-bracket--br" />
+                <p className="cc-label tracking-[0.4em] mb-4">{stat.label}</p>
+                <p className={`cc-num text-4xl font-[1000] ${stat.color} group-hover/stat:scale-105 transition-transform duration-500 origin-left`}>
                   {stat.value}
                 </p>
                 <div className="absolute top-8 right-10 opacity-0 group-hover/stat:opacity-100 transition-opacity duration-500">

@@ -3,6 +3,7 @@
 import { useParams } from "next/navigation";
 import { motion } from "framer-motion";
 import { ModulePlaceholder } from "@/components/layout/ModulePlaceholder";
+import { ModuleCommandStrip } from "@/components/layout/ModuleCommandStrip";
 import { isValidLocale, type Locale } from "@/i18n/config";
 import { useDictionary } from "@/hooks/use-dictionary";
 import { ProjectLegalWorkspaceClient } from "@/components/projects/ProjectLegalWorkspaceClient";
@@ -33,6 +34,7 @@ export default function LegalPage() {
 
   return (
     <div className="flex flex-col gap-12 pb-20">
+      <ModuleCommandStrip label="LEGAL · 인·허가 법무" meta={runtimeMode} />
       <motion.div
         initial={{ opacity: 0, y: 30 }}
         animate={{ opacity: 1, y: 0 }}

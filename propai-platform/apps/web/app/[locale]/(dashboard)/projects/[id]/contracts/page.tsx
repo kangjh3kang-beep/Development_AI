@@ -1,4 +1,5 @@
 import { ModulePlaceholder } from "@/components/layout/ModulePlaceholder";
+import { ModuleCommandStrip } from "@/components/layout/ModuleCommandStrip";
 import { ProjectContractWorkspaceClient } from "@/components/projects/ProjectContractWorkspaceClient";
 import { NextStageCta } from "@/components/projects/NextStageCta";
 import { getDictionary } from "@/i18n/get-dictionary";
@@ -28,7 +29,8 @@ export default async function ProjectContractsPage({
 
   return (
     <div className="grid gap-6">
-            <ModulePlaceholder
+      <ModuleCommandStrip label="CONTRACTS · 계약 관리" meta={runtimeMode} />
+      <ModulePlaceholder
         eyebrow={dictionary.modulePlaceholders["contracts"].eyebrow}
         title={dictionary.modulePlaceholders["contracts"].title}
         description={dictionary.modulePlaceholders["contracts"].description}
