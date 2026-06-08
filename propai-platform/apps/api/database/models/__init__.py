@@ -271,7 +271,3 @@ __all__ = [
 
 # v62 분양관리 ERP + 모델하우스 데스크 (66 테이블) — Base.metadata / Alembic 등록
 from apps.api.database.models import sales  # noqa: E402,F401
-
-# System Settings
-from apps.api.database.models.system_setting import SystemSetting
-__all__.append("SystemSetting")
