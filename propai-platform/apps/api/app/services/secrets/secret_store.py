@@ -73,9 +73,6 @@ CATALOG: list[dict[str, Any]] = [
     {"name": "ONBID_SERVICE_KEY", "label": "온비드(KAMCO 공매) OpenAPI 인증키", "group": "공공데이터·지도",
      "secret": True, "kind": "text", "guide_url": "https://www.data.go.kr",
      "desc": "한국자산관리공사 온비드 공매물건 API. 미설정 시 G2B/MOLIT 공용키 폴백→그래도 없으면 mock."},
-    {"name": "KAKAO_REST_API_KEY", "label": "카카오 REST API 키", "group": "공공데이터·지도",
-     "secret": True, "kind": "text", "guide_url": "https://developers.kakao.com",
-     "desc": "지도/주소 지오코딩(선택)."},
     {"name": "RONE_API_KEY", "label": "한국부동산원 R-ONE 인증키", "group": "공공데이터·지도",
      "secret": True, "kind": "text", "guide_url": "https://www.reb.or.kr/r-one/portal/openapi/openApiIntroPage.do",
      "desc": "지가변동률 등 부동산통계 OpenAPI. 시점수정 실데이터에 사용."},
@@ -96,6 +93,26 @@ CATALOG: list[dict[str, Any]] = [
      "secret": True, "kind": "text", "guide_url": "https://console.anthropic.com"},
     {"name": "OPENAI_API_KEY", "label": "OpenAI API Key", "group": "AI(LLM)",
      "secret": True, "kind": "text", "guide_url": "https://platform.openai.com"},
+    # 인증·소셜 로그인(카카오 등) — 변경 시 백엔드 재시작 후 반영(pydantic Settings 캐시).
+    {"name": "KAKAO_REST_API_KEY", "label": "카카오 REST API 키(로그인 client_id)", "group": "인증·소셜",
+     "secret": True, "kind": "text", "guide_url": "https://developers.kakao.com"},
+    {"name": "KAKAO_REDIRECT_URI", "label": "카카오 로그인 Redirect URI", "group": "인증·소셜",
+     "secret": False, "kind": "text", "guide_url": "https://developers.kakao.com"},
+    {"name": "KAKAO_CLIENT_SECRET", "label": "카카오 Client Secret(보안 사용 시)", "group": "인증·소셜",
+     "secret": True, "kind": "text", "guide_url": "https://developers.kakao.com"},
+    {"name": "KAKAO_DEFAULT_ADMIN_KEY", "label": "카카오 어드민 키(회원관리 등)", "group": "인증·소셜",
+     "secret": True, "kind": "text", "guide_url": "https://developers.kakao.com"},
+    {"name": "KAKAO_JS_KEY", "label": "카카오 JavaScript 키(지도/SDK, 공개)", "group": "인증·소셜",
+     "secret": False, "kind": "text", "guide_url": "https://developers.kakao.com"},
+    # 스토리지·기타 통합(서비스롤/DB비번은 DENYLIST로 차단 — 공개·URL 키만 관리)
+    {"name": "SUPABASE_URL", "label": "Supabase 프로젝트 URL", "group": "스토리지·기타",
+     "secret": False, "kind": "text", "guide_url": "https://supabase.com/dashboard"},
+    {"name": "SUPABASE_ANON_KEY", "label": "Supabase anon 키(공개)", "group": "스토리지·기타",
+     "secret": False, "kind": "text", "guide_url": "https://supabase.com/dashboard"},
+    {"name": "SUPABASE_BUCKET", "label": "Supabase 업로드 버킷명", "group": "스토리지·기타",
+     "secret": False, "kind": "text"},
+    {"name": "PUBLIC_API_BASE", "label": "공개 API 베이스 URL(프록시 절대화)", "group": "스토리지·기타",
+     "secret": False, "kind": "text"},
 ]
 
 _CATALOG_BY_NAME = {c["name"]: c for c in CATALOG}
