@@ -122,8 +122,16 @@ async def _resolve_role(db: AsyncSession, site: SalesSite, user) -> tuple[str, s
     return "", ""  # 멤버 아님
 
 
-async def _get_site(db: AsyncSession, site_id: uuid.UUID) -> SalesSite:
-    site = (await db.execute(select(SalesSite).where(SalesSite.id == site_id))).scalar_one_or_none()
+async def _get_site(db: AsyncSession, site_id) -> SalesSite:
+    # site_id는 UUID 또는 사람이 읽는 현장코드(site_code) 둘 다 허용한다.
+    # (현장앱 주소에 코드가 들어오거나 로컬 생성분이 비-UUID여도 422로 깨지지 않게 함.)
+    sid = str(site_id).strip()
+    cond = None
+    try:
+        cond = SalesSite.id == uuid.UUID(sid)
+    except (ValueError, AttributeError, TypeError):
+        cond = SalesSite.site_code == sid  # UUID가 아니면 현장코드로 조회
+    site = (await db.execute(select(SalesSite).where(cond))).scalar_one_or_none()
     if not site:
         raise HTTPException(404, "현장을 찾을 수 없습니다")
     return site
@@ -176,12 +184,13 @@ class EnterRequest(BaseModel):
 
 # ── 1) 현장 2차비번 설정/변경 ────────────────────────────────────────────────
 @site_auth_router.post("/sites/{site_id}/password", summary="현장 2차비밀번호 설정/변경")
-async def set_site_password(site_id: uuid.UUID, body: SetPasswordRequest,
+async def set_site_password(site_id: str, body: SetPasswordRequest,
                             db: AsyncSession = Depends(get_db), user=Depends(get_current_user)) -> dict:
     if len(body.password or "") < 4:
         raise HTTPException(400, "현장 2차비밀번호는 4자 이상이어야 합니다")
     await _ensure(db)
-    site = await _get_site(db, site_id)
+    site = await _get_site(db, site_id)  # UUID/현장코드 모두 허용
+    sid = str(site.id)  # 이후 SQL은 반드시 해석된 실제 UUID 사용
     _, role = await _resolve_role(db, site, user)
     if role not in _MANAGE_ROLES:
         raise HTTPException(403, "현장 2차비밀번호를 설정할 권한이 없습니다(시행/대행 본부장↑ 또는 관리자)")
@@ -192,11 +201,11 @@ async def set_site_password(site_id: uuid.UUID, body: SetPasswordRequest,
         "VALUES (:sid, :h, :uid, now()) "
         "ON CONFLICT (site_id) DO UPDATE SET "
         "  password_hash = EXCLUDED.password_hash, updated_by = EXCLUDED.updated_by, updated_at = now()"
-    ), {"sid": str(site_id), "h": pw_hash, "uid": str(user.id)})
+    ), {"sid": sid, "h": pw_hash, "uid": str(user.id)})
     # 비번 변경 시 잠금/실패카운트 리셋
-    await db.execute(text("DELETE FROM sales_site_login_attempts WHERE site_id = :sid"), {"sid": str(site_id)})
+    await db.execute(text("DELETE FROM sales_site_login_attempts WHERE site_id = :sid"), {"sid": sid})
     await db.commit()
-    return {"ok": True, "site_id": str(site_id)}
+    return {"ok": True, "site_id": sid}
 
 
 # ── 2) 내 현장 리스트 ─────────────────────────────────────────────────────────
@@ -253,10 +262,11 @@ async def my_sites(db: AsyncSession = Depends(get_db), user=Depends(get_current_
 
 # ── 3) 현장 진입(2차인증) ─────────────────────────────────────────────────────
 @site_auth_router.post("/sites/{site_id}/enter", summary="현장 2차인증 → 현장 세션토큰 발급")
-async def enter_site(site_id: uuid.UUID, body: EnterRequest,
+async def enter_site(site_id: str, body: EnterRequest,
                      db: AsyncSession = Depends(get_db), user=Depends(get_current_user)) -> dict:
     await _ensure(db)
-    site = await _get_site(db, site_id)
+    site = await _get_site(db, site_id)  # UUID/현장코드 모두 허용
+    sid = str(site.id)  # 이후 SQL·토큰은 해석된 실제 UUID 사용
 
     org_path, role = await _resolve_role(db, site, user)
     if not role:
@@ -266,7 +276,7 @@ async def enter_site(site_id: uuid.UUID, body: EnterRequest,
     # rate-limit: 잠금 여부 확인
     att = (await db.execute(text(
         "SELECT fail_count, locked_until FROM sales_site_login_attempts WHERE site_id=:s AND user_id=:u"
-    ), {"s": str(site_id), "u": str(user.id)})).first()
+    ), {"s": sid, "u": str(user.id)})).first()
     if att and att.locked_until is not None:
         locked_until = att.locked_until
         if locked_until.tzinfo is None:
@@ -277,7 +287,7 @@ async def enter_site(site_id: uuid.UUID, body: EnterRequest,
 
     pw = (await db.execute(text(
         "SELECT password_hash FROM sales_site_passwords WHERE site_id=:s"
-    ), {"s": str(site_id)})).first()
+    ), {"s": sid})).first()
     if not pw:
         raise HTTPException(409, "현장 2차비밀번호가 아직 설정되지 않았습니다. 관리자에게 문의하세요")
 
@@ -296,22 +306,22 @@ async def enter_site(site_id: uuid.UUID, body: EnterRequest,
             "VALUES (:s, :u, :f, :l, now()) "
             "ON CONFLICT (site_id, user_id) DO UPDATE SET "
             "  fail_count = EXCLUDED.fail_count, locked_until = EXCLUDED.locked_until, last_attempt_at = now()"
-        ), {"s": str(site_id), "u": str(user.id), "f": new_fail, "l": locked})
+        ), {"s": sid, "u": str(user.id), "f": new_fail, "l": locked})
         await db.commit()
         remaining = max(0, _MAX_FAILS - new_fail)
         raise HTTPException(401, f"비밀번호가 일치하지 않습니다(남은 시도 {remaining}회)")
 
     # 성공: 실패카운트 리셋 + 세션토큰 발급
     await db.execute(text("DELETE FROM sales_site_login_attempts WHERE site_id=:s AND user_id=:u"),
-                     {"s": str(site_id), "u": str(user.id)})
+                     {"s": sid, "u": str(user.id)})
     await db.commit()
 
-    token = issue_site_token(user.id, getattr(user, "tenant_id", None), site_id, role, org_path)
+    token = issue_site_token(user.id, getattr(user, "tenant_id", None), site.id, role, org_path)
     return {
         "site_token": token,
         "token_type": "bearer",
         "expires_in": _SITE_TOKEN_HOURS * 3600,
-        "site_id": str(site_id),
+        "site_id": sid,
         "role": role,
         "role_label": _ROLE_LABEL.get(role, role),
         "features": _features(role),
@@ -320,17 +330,18 @@ async def enter_site(site_id: uuid.UUID, body: EnterRequest,
 
 # ── 4) 역할 맵 ────────────────────────────────────────────────────────────────
 @site_auth_router.get("/sites/{site_id}/role", summary="현 사용자의 현장 역할 + 허용 기능키")
-async def site_role(site_id: uuid.UUID, db: AsyncSession = Depends(get_db),
+async def site_role(site_id: str, db: AsyncSession = Depends(get_db),
                     user=Depends(get_current_user)) -> dict:
-    site = await _get_site(db, site_id)
+    site = await _get_site(db, site_id)  # UUID/현장코드 모두 허용
+    sid = str(site.id)
     org_path, role = await _resolve_role(db, site, user)
     if not role:
         raise HTTPException(403, "이 현장의 멤버가 아닙니다")
     await _ensure(db)
     has_pw = (await db.execute(text(
-        "SELECT 1 FROM sales_site_passwords WHERE site_id=:s"), {"s": str(site_id)})).first() is not None
+        "SELECT 1 FROM sales_site_passwords WHERE site_id=:s"), {"s": sid})).first() is not None
     return {
-        "site_id": str(site_id),
+        "site_id": sid,
         "role": role,
         "role_label": _ROLE_LABEL.get(role, role),
         "org_path": org_path,

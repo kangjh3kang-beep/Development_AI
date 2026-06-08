@@ -96,12 +96,19 @@ export default function SiteWorkspaceClient({ locale, siteId }: { locale: Locale
         if (tabs[0]) setTab(tabs[0].key);
       })
       .catch((e) => {
-        // 토큰 만료/없음 → 재진입 유도. 그 외는 에러 표시.
+        // 토큰 만료/없음(401/403) → 재진입(2차 비밀번호) 유도.
         if (e instanceof ApiClientError && (e.status === 401 || e.status === 403)) {
           clearSiteToken(siteId);
           setNeedEnter(true);
+          return;
+        }
+        // 그 외는 실제 원인을 함께 보여줘 진단이 쉽게 한다.
+        const st = e instanceof ApiClientError ? e.status : 0;
+        if (st === 404 || st === 422) {
+          // 현장 주소(ID)가 잘못된 경우 — 목록에서 다시 들어오도록 안내.
+          setErr("현장 주소가 올바르지 않습니다. ‘내 현장’ 목록에서 다시 들어와 주세요.");
         } else {
-          setErr("현장 정보를 불러오지 못했습니다.");
+          setErr(`현장 정보를 불러오지 못했습니다${st ? ` (오류 ${st})` : " (네트워크 오류)"}. 잠시 후 다시 시도해 주세요.`);
         }
       })
       .finally(() => setLoading(false));
