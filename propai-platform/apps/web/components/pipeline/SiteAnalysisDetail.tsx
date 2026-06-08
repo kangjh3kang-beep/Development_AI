@@ -75,58 +75,69 @@ function arr(val: unknown): unknown[] {
   return Array.isArray(val) ? val : [];
 }
 
-/* ── Category Card ── */
+/* ── Category Card (정보 그룹 블록) ──
+   프리미엄 데이터 인텔리전스: 무거운 카드 대신 얇은 헤어라인 블록으로 한 정보 그룹을 묶는다.
+   헤더를 누르면 본문이 150ms 트랜지션으로 펼쳐진다. 색·로직은 그대로 유지. */
 
 interface CategoryCardProps {
   title: string;
+  /** 섹션 헤더 우측에 붙는 작은 대문자 메타 라벨(예: LAND OVERVIEW) — 데이터 계기판 느낌 */
+  eyebrow?: string;
   icon: React.ReactNode;
   children: React.ReactNode;
   defaultOpen?: boolean;
 }
 
-function CategoryCard({ title, icon, children, defaultOpen = false }: CategoryCardProps) {
+function CategoryCard({ title, eyebrow, icon, children, defaultOpen = false }: CategoryCardProps) {
   const [open, setOpen] = useState(defaultOpen);
   return (
-    <div className="rounded-xl border border-[var(--line)] bg-[var(--surface)] overflow-hidden transition-all">
+    <div className="sa-di-block">
       <button
         type="button"
         onClick={() => setOpen(!open)}
-        className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-[var(--surface-strong)] transition-colors"
+        className="sa-di-block__head"
+        aria-expanded={open}
       >
-        <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-[var(--accent-soft)] text-[var(--accent-strong)] shrink-0">
-          {icon}
-        </span>
-        <span className="flex-1 text-sm font-bold text-[var(--text-primary)] tracking-tight">{title}</span>
+        <span className="sa-di-block__icon">{icon}</span>
+        <span className="sa-di-block__title">{title}</span>
+        {eyebrow && <span className="sa-di-eyebrow">{eyebrow}</span>}
         <svg
           width="14" height="14" viewBox="0 0 24 24"
-          fill="none" stroke="var(--text-tertiary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-          className={`shrink-0 transition-transform duration-200 ${open ? "rotate-180" : ""}`}
+          fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+          className="sa-di-block__chevron" data-open={open}
         >
           <path d="m6 9 6 6 6-6" />
         </svg>
       </button>
-      {open && (
-        <div className="px-4 pb-4 pt-1 border-t border-[var(--line)]">
-          {children}
-        </div>
-      )}
+      {open && <div className="sa-di-block__body">{children}</div>}
     </div>
   );
 }
 
-/* ── Field Row ── */
+/* ── Metric Tile (핵심 지표 한 칸) ──
+   숫자 값은 mono·tabular-nums로 정렬(text=true면 주소 등 본문체로). accent=true는 핵심 KPI 1~2개에만. */
 
-function Field({ label, value }: { label: string; value: string }) {
+function Tile({
+  label,
+  value,
+  accent = false,
+  text = false,
+}: {
+  label: string;
+  value: string;
+  accent?: boolean;
+  text?: boolean;
+}) {
   return (
-    <div className="rounded-lg bg-[var(--surface-soft)] border border-[var(--line)] px-3 py-2">
-      <p className="text-[10px] font-bold text-[var(--text-hint)] tracking-wider uppercase mb-0.5">{label}</p>
-      <p className="text-xs font-bold text-[var(--text-primary)]">{value || "-"}</p>
+    <div className={`sa-di-tile${accent ? " sa-di-tile--accent" : ""}`}>
+      <span className="sa-di-tile__label">{label}</span>
+      <span className={`sa-di-tile__value${text ? " sa-di-tile__value--text" : ""}`}>{value || "-"}</span>
     </div>
   );
 }
 
 function NoData() {
-  return <p className="text-xs text-[var(--text-hint)] italic py-2">데이터 없음</p>;
+  return <p className="sa-di-empty">데이터 없음</p>;
 }
 
 /* ── Icons (inline SVG) ── */
@@ -183,15 +194,16 @@ function FarProgressBar({ base, allowed, cap }: { base: number; allowed: number;
   const allowedPct = (allowed / max) * 100;
   const capPct = (cap / max) * 100;
 
+  // 단일 트랙 위에 base/allowed/cap 막대를 겹쳐 단계를 표현(색은 data-accent 토큰 단계).
   return (
-    <div className="mt-2">
-      <p className="text-[10px] font-bold text-[var(--text-hint)] mb-1">기부체납 인센티브 용적률</p>
-      <div className="relative h-6 rounded-full bg-[var(--surface-strong)] border border-[var(--line)] overflow-hidden">
-        <div className="absolute inset-y-0 left-0 rounded-full bg-blue-500/30" style={{ width: `${capPct}%` }} />
-        <div className="absolute inset-y-0 left-0 rounded-full bg-blue-500/50" style={{ width: `${allowedPct}%` }} />
-        <div className="absolute inset-y-0 left-0 rounded-full bg-[var(--accent-strong)]" style={{ width: `${basePct}%` }} />
+    <div className="sa-di-gauge">
+      <p className="sa-di-eyebrow mb-1.5">기부체납 인센티브 용적률</p>
+      <div className="sa-di-gauge__track">
+        <div className="sa-di-gauge__fill sa-di-gauge__fill--cap" style={{ width: `${capPct}%` }} />
+        <div className="sa-di-gauge__fill sa-di-gauge__fill--allowed" style={{ width: `${allowedPct}%` }} />
+        <div className="sa-di-gauge__fill sa-di-gauge__fill--base" style={{ width: `${basePct}%` }} />
       </div>
-      <div className="flex justify-between text-[10px] text-[var(--text-secondary)] mt-1">
+      <div className="sa-di-gauge__legend">
         <span>기본 {base}%</span>
         <span>허용 {allowed}%</span>
         <span>상한 {cap}%</span>
@@ -210,21 +222,21 @@ function DonationSimTable({ baseFar, capFar }: { baseFar: number; capFar: number
   }
 
   return (
-    <div className="mt-3">
-      <p className="text-[10px] font-bold text-[var(--text-hint)] mb-1">기부체납 시뮬레이션</p>
+    <div className="sa-di-sub mt-3">
+      <p className="sa-di-eyebrow mb-2">기부체납 시뮬레이션</p>
       <div className="overflow-x-auto">
-        <table className="w-full text-[10px]">
+        <table className="sa-di-table">
           <thead>
-            <tr className="border-b border-[var(--line)]">
-              <th className="text-left py-1 px-2 font-bold text-[var(--text-secondary)]">기부체납률</th>
-              <th className="text-right py-1 px-2 font-bold text-[var(--text-secondary)]">적용 용적률</th>
+            <tr>
+              <th>기부체납률</th>
+              <th className="sa-di-num">적용 용적률</th>
             </tr>
           </thead>
           <tbody>
             {rows.map((r) => (
-              <tr key={r.pct} className="border-b border-[var(--line)]/50">
-                <td className="py-1 px-2 text-[var(--text-primary)]">{r.pct}%</td>
-                <td className="py-1 px-2 text-right font-bold text-[var(--text-primary)]">{r.far}%</td>
+              <tr key={r.pct}>
+                <td className="sa-di-num">{r.pct}%</td>
+                <td className="sa-di-num">{r.far}%</td>
               </tr>
             ))}
           </tbody>
@@ -315,15 +327,15 @@ export function SiteAnalysisDetail({ data, hideInterpretation = false }: SiteAna
 
   return (
     <div className="space-y-2">
-      {/* 1. 기본 토지정보 */}
-      <CategoryCard title="기본 토지정보" icon={IconPin} defaultOpen={true}>
+      {/* 1. 기본 토지정보 — 주소/PNU는 본문체(text), 면적은 mono 정렬 */}
+      <CategoryCard title="기본 토지정보" eyebrow="LAND OVERVIEW" icon={IconPin} defaultOpen={true}>
         {hasBasic ? (
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-            {landAddress && <Field label="주소" value={landAddress} />}
-            {pnu && <Field label="PNU" value={typeof pnu === "string" && pnu.startsWith("[") ? pnu : s(pnu)} />}
-            {landCategory && <Field label="지목" value={landCategory} />}
-            {landAreaSqm && <Field label="대지면적" value={formatArea(landAreaSqm)} />}
-            {ownerType && <Field label="소유구분" value={ownerType} />}
+          <div className="sa-di-tiles">
+            {landAddress && <Tile label="주소" value={landAddress} text />}
+            {pnu && <Tile label="PNU" value={typeof pnu === "string" && pnu.startsWith("[") ? pnu : s(pnu)} text />}
+            {landCategory && <Tile label="지목" value={landCategory} text />}
+            {landAreaSqm && <Tile label="대지면적" value={formatArea(landAreaSqm)} accent />}
+            {ownerType && <Tile label="소유구분" value={ownerType} text />}
           </div>
         ) : (
           <NoData />
@@ -348,22 +360,22 @@ export function SiteAnalysisDetail({ data, hideInterpretation = false }: SiteAna
       {/* 1-2. 주변 실거래 지도 — 이 분석의 주소/PNU를 직접 주입(이력 선택 시 store 오염 방지, 첫 분석은 동일값). */}
       {landAddress ? <NearbyTransactionsMap address={landAddress} pnu={pnu} /> : <NearbyTransactionsMap />}
 
-      {/* 2. 용도지역/법규한도 */}
-      <CategoryCard title="용도지역 · 법규한도" icon={IconRuler} defaultOpen={true}>
+      {/* 2. 용도지역/법규한도 — 실효 건폐/용적률을 핵심 KPI(accent)로 강조 */}
+      <CategoryCard title="용도지역 · 법규한도" eyebrow="ZONING · LIMITS" icon={IconRuler} defaultOpen={true}>
         {hasZoning ? (
           <div className="space-y-3">
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-              {zoneType && <Field label="용도지역" value={zoneType} />}
-              {nationalBcr != null && <Field label="법정 건폐율 (국토계획법)" value={formatPct(nationalBcr)} />}
-              {nationalFar != null && <Field label="법정 용적률 (국토계획법)" value={formatPct(nationalFar)} />}
-              {ordinanceBcr != null && <Field label="조례 건폐율 (지자체)" value={formatPct(ordinanceBcr)} />}
-              {ordinanceFar != null && <Field label="조례 용적률 (지자체)" value={formatPct(ordinanceFar)} />}
-              {effectiveBcr != null && <Field label="실효 건폐율" value={formatPct(effectiveBcr)} />}
-              {effectiveFar != null && <Field label="실효 용적률" value={formatPct(effectiveFar)} />}
-              {heightLimit != null && heightLimit > 0 && <Field label="높이제한" value={`${heightLimit}m`} />}
+            <div className="sa-di-tiles">
+              {zoneType && <Tile label="용도지역" value={zoneType} text />}
+              {nationalBcr != null && <Tile label="법정 건폐율 (국토계획법)" value={formatPct(nationalBcr)} />}
+              {nationalFar != null && <Tile label="법정 용적률 (국토계획법)" value={formatPct(nationalFar)} />}
+              {ordinanceBcr != null && <Tile label="조례 건폐율 (지자체)" value={formatPct(ordinanceBcr)} />}
+              {ordinanceFar != null && <Tile label="조례 용적률 (지자체)" value={formatPct(ordinanceFar)} />}
+              {effectiveBcr != null && <Tile label="실효 건폐율" value={formatPct(effectiveBcr)} accent />}
+              {effectiveFar != null && <Tile label="실효 용적률" value={formatPct(effectiveFar)} accent />}
+              {heightLimit != null && heightLimit > 0 && <Tile label="높이제한" value={`${heightLimit}m`} />}
             </div>
             {s(zoning.ordinance_source) && (
-              <p className="text-[10px] text-[var(--text-hint)] mt-1">출처: {s(zoning.ordinance_source)}</p>
+              <p className="sa-di-eyebrow">출처: {s(zoning.ordinance_source)}</p>
             )}
             {baseFar != null && allowedFar != null && capFar != null && (
               <>
@@ -377,44 +389,43 @@ export function SiteAnalysisDetail({ data, hideInterpretation = false }: SiteAna
         )}
       </CategoryCard>
 
-      {/* 3. 개발 가능 유형 */}
-      <CategoryCard title="개발 가능 유형" icon={IconBuilding}>
+      {/* 3. 개발 가능 유형 — 추천(★)은 accent, 제한은 점선+취소선 토큰 */}
+      <CategoryCard title="개발 가능 유형" eyebrow="DEV TYPES" icon={IconBuilding}>
         {hasDevTypes ? (
-          <div className="space-y-2">
+          <div className="space-y-3">
             <div className="flex flex-wrap gap-1.5">
               {devTypes.map((item, i) => {
                 const dt = obj(item);
                 const name = s(dt.type_name || dt.name || dt.type || item);
                 const recommended = Boolean(dt.recommended);
                 const restricted = Boolean(dt.restricted);
+                const variant = restricted
+                  ? "sa-di-token--off"
+                  : recommended
+                  ? "sa-di-token--accent"
+                  : "";
                 return (
-                  <span
-                    key={i}
-                    className={`inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-bold border transition-all ${
-                      restricted
-                        ? "bg-gray-500/10 text-[var(--text-hint)] border-gray-500/20 line-through"
-                        : recommended
-                        ? "bg-[var(--accent-strong)]/10 text-[var(--accent-strong)] border-[var(--accent-strong)]/30"
-                        : "bg-[var(--surface-strong)] text-[var(--text-secondary)] border-[var(--line)]"
-                    }`}
-                  >
-                    {recommended && <span className="mr-1">★</span>}
+                  <span key={i} className={`sa-di-token ${variant}`}>
+                    {recommended && <span aria-hidden>★</span>}
                     {name}
                   </span>
                 );
               })}
             </div>
-            {/* Conditions */}
+            {/* 조건부 유형 설명 */}
             {devTypes.some((item) => obj(item).conditions || obj(item).condition) && (
-              <div className="space-y-1 mt-2">
+              <div className="sa-di-rows">
                 {devTypes.map((item, i) => {
                   const dt = obj(item);
                   const condition = s(dt.conditions || dt.condition);
                   if (!condition) return null;
                   return (
-                    <p key={i} className="text-[10px] text-[var(--text-secondary)]">
-                      <span className="font-bold">{s(dt.type_name || dt.name || dt.type)}:</span> {condition}
-                    </p>
+                    <div key={i} className="sa-di-row">
+                      <span className="sa-di-row__label">{s(dt.type_name || dt.name || dt.type)}</span>
+                      <span className="sa-di-row__value" style={{ fontFamily: "inherit", fontWeight: 500, color: "var(--text-secondary)" }}>
+                        {condition}
+                      </span>
+                    </div>
                   );
                 })}
               </div>
@@ -425,56 +436,76 @@ export function SiteAnalysisDetail({ data, hideInterpretation = false }: SiteAna
         )}
       </CategoryCard>
 
-      {/* 4. 공시지가/시세 */}
-      <CategoryCard title="공시지가 · 시세" icon={IconWon}>
+      {/* 4. 공시지가/시세 — 금액은 모두 mono·tabular-nums로 자릿수 정렬 */}
+      <CategoryCard title="공시지가 · 시세" eyebrow="PRICE · DEALS" icon={IconWon}>
         {hasPricing ? (
           <div className="space-y-3">
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+            <div className="sa-di-tiles">
               {officialPrice != null && (
                 <>
-                  <Field label="공시지가 (원/m²)" value={formatWon(officialPrice)} />
+                  <Tile label="공시지가 (원/m²)" value={formatWon(officialPrice)} />
                   {landAreaSqm && (
-                    <Field label="공시지가 총액" value={formatWon(officialPrice * landAreaSqm)} />
+                    <Tile label="공시지가 총액" value={formatWon(officialPrice * landAreaSqm)} accent />
                   )}
                 </>
               )}
               {totalLandValue != null && !landAreaSqm && (
-                <Field label="추정가치" value={formatWon(totalLandValue)} />
+                <Tile label="추정가치" value={formatWon(totalLandValue)} accent />
               )}
             </div>
-            {/* 인근 실거래가 요약 */}
+            {/* 인근 실거래가 요약 — 4분할 통계 줄 */}
             {Object.keys(transactions).length > 0 && (
-              <div className="rounded-lg bg-[var(--surface-soft)] border border-[var(--line)] p-3">
-                <p className="text-[10px] font-bold text-[var(--text-hint)] mb-2">인근 실거래가 요약</p>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                  {transactions.count != null && <Field label="거래건수" value={`${transactions.count}건`} />}
-                  {transactions.avg_price != null && <Field label="평균가" value={formatWon(transactions.avg_price)} />}
-                  {transactions.max_price != null && <Field label="최고가" value={formatWon(transactions.max_price)} />}
-                  {transactions.min_price != null && <Field label="최저가" value={formatWon(transactions.min_price)} />}
+              <div className="sa-di-sub">
+                <p className="sa-di-eyebrow mb-2.5">인근 실거래가 요약</p>
+                <div className="sa-di-stats">
+                  {transactions.count != null && (
+                    <div className="sa-di-stat">
+                      <span className="sa-di-stat__label">거래건수</span>
+                      <span className="sa-di-stat__value">{`${transactions.count}건`}</span>
+                    </div>
+                  )}
+                  {transactions.avg_price != null && (
+                    <div className="sa-di-stat">
+                      <span className="sa-di-stat__label">평균가</span>
+                      <span className="sa-di-stat__value">{formatWon(transactions.avg_price)}</span>
+                    </div>
+                  )}
+                  {transactions.max_price != null && (
+                    <div className="sa-di-stat">
+                      <span className="sa-di-stat__label">최고가</span>
+                      <span className="sa-di-stat__value">{formatWon(transactions.max_price)}</span>
+                    </div>
+                  )}
+                  {transactions.min_price != null && (
+                    <div className="sa-di-stat">
+                      <span className="sa-di-stat__label">최저가</span>
+                      <span className="sa-di-stat__value">{formatWon(transactions.min_price)}</span>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
-            {/* 최근 거래 목록 */}
+            {/* 최근 거래 목록 — 정밀 데이터 테이블 */}
             {recentDeals.length > 0 && (
-              <div className="rounded-lg bg-[var(--surface-soft)] border border-[var(--line)] p-3">
-                <p className="text-[10px] font-bold text-[var(--text-hint)] mb-2">최근 거래 (상위 5건)</p>
+              <div className="sa-di-sub">
+                <p className="sa-di-eyebrow mb-2">최근 거래 (상위 5건)</p>
                 <div className="overflow-x-auto">
-                  <table className="w-full text-[10px]">
+                  <table className="sa-di-table">
                     <thead>
-                      <tr className="border-b border-[var(--line)]">
-                        <th className="text-left py-1 px-2 font-bold text-[var(--text-secondary)]">거래일</th>
-                        <th className="text-left py-1 px-2 font-bold text-[var(--text-secondary)]">면적</th>
-                        <th className="text-right py-1 px-2 font-bold text-[var(--text-secondary)]">금액</th>
+                      <tr>
+                        <th>거래일</th>
+                        <th>면적</th>
+                        <th className="sa-di-num">금액</th>
                       </tr>
                     </thead>
                     <tbody>
                       {recentDeals.slice(0, 5).map((deal, i) => {
                         const d = obj(deal);
                         return (
-                          <tr key={i} className="border-b border-[var(--line)]/50">
-                            <td className="py-1 px-2 text-[var(--text-primary)]">{s(d.date || d.deal_date)}</td>
-                            <td className="py-1 px-2 text-[var(--text-primary)]">{formatArea(n(d.area_sqm))}</td>
-                            <td className="py-1 px-2 text-right font-bold text-[var(--text-primary)]">{formatWon(n(d.price || d.amount))}</td>
+                          <tr key={i}>
+                            <td>{s(d.date || d.deal_date)}</td>
+                            <td>{formatArea(n(d.area_sqm))}</td>
+                            <td className="sa-di-num">{formatWon(n(d.price || d.amount))}</td>
                           </tr>
                         );
                       })}
@@ -490,7 +521,7 @@ export function SiteAnalysisDetail({ data, hideInterpretation = false }: SiteAna
       </CategoryCard>
 
       {/* 5. 기존 건축물 */}
-      <CategoryCard title="기존 건축물" icon={IconOffice}>
+      <CategoryCard title="기존 건축물" eyebrow="EXISTING BLDG" icon={IconOffice}>
         {hasBuilding ? (
           (() => {
             const bName = s(building.buildingName || building.building_name);
@@ -500,46 +531,46 @@ export function SiteAnalysisDetail({ data, hideInterpretation = false }: SiteAna
             const bFloors = n(building.groundFloors ?? building.ground_floors ?? building.floors);
             const bApproval = s(building.useApprovalDate || building.use_approval_date);
             return (
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                {bName && <Field label="건축물명" value={bName} />}
-                {bPurpose && <Field label="주용도" value={bPurpose} />}
-                {bStructure && <Field label="구조" value={bStructure} />}
-                {bArea != null && <Field label="연면적" value={formatArea(bArea)} />}
-                {bFloors != null && <Field label="층수" value={`${bFloors}층`} />}
-                {bApproval && <Field label="사용승인일" value={bApproval} />}
+              <div className="sa-di-tiles">
+                {bName && <Tile label="건축물명" value={bName} text />}
+                {bPurpose && <Tile label="주용도" value={bPurpose} text />}
+                {bStructure && <Tile label="구조" value={bStructure} text />}
+                {bArea != null && <Tile label="연면적" value={formatArea(bArea)} />}
+                {bFloors != null && <Tile label="층수" value={`${bFloors}층`} />}
+                {bApproval && <Tile label="사용승인일" value={bApproval} />}
               </div>
             );
           })()
         ) : (
-          <p className="text-xs text-[var(--text-hint)] italic py-2">기존 건축물 없음 (나대지)</p>
+          <p className="sa-di-empty">기존 건축물 없음 (나대지)</p>
         )}
       </CategoryCard>
 
       {/* 6. 주변 인프라 */}
-      <CategoryCard title="주변 인프라" icon={IconSubway}>
+      <CategoryCard title="주변 인프라" eyebrow="INFRA" icon={IconSubway}>
         {hasInfra ? (
           <div className="space-y-3">
             {/* 최근접 지하철역 */}
             {infra.nearest_subway != null && (
-              <div className="grid grid-cols-2 gap-2">
-                <Field label="최근접 지하철역" value={String(obj(infra.nearest_subway).name ?? "")} />
-                <Field label="거리" value={`${n(obj(infra.nearest_subway).distance_m) ?? "-"}m`} />
+              <div className="sa-di-tiles">
+                <Tile label="최근접 지하철역" value={String(obj(infra.nearest_subway).name ?? "")} text />
+                <Tile label="거리" value={`${n(obj(infra.nearest_subway).distance_m) ?? "-"}m`} />
               </div>
             )}
-            {/* 인근 학교 */}
+            {/* 인근 학교 — 라벨↔거리 데이터 로우 */}
             {arr(infra.schools).length > 0 && (
-              <div className="rounded-lg bg-[var(--surface-soft)] border border-[var(--line)] p-3">
-                <p className="text-[10px] font-bold text-[var(--text-hint)] mb-2">인근 학교</p>
-                <div className="space-y-1">
+              <div className="sa-di-sub">
+                <p className="sa-di-eyebrow mb-2">인근 학교</p>
+                <div className="sa-di-rows">
                   {arr(infra.schools).map((school, i) => {
                     const sc = obj(school);
                     return (
-                      <div key={i} className="flex items-center justify-between text-[11px]">
-                        <span className="text-[var(--text-primary)] font-medium">
+                      <div key={i} className="sa-di-row">
+                        <span className="sa-di-row__label">
                           {String(sc.name ?? "")}
                           {sc.type != null && <span className="ml-1 text-[var(--text-hint)]">({String(sc.type)})</span>}
                         </span>
-                        <span className="text-[var(--text-secondary)]">{n(sc.distance_m) ?? "-"}m</span>
+                        <span className="sa-di-row__value">{n(sc.distance_m) ?? "-"}m</span>
                       </div>
                     );
                   })}
@@ -552,20 +583,20 @@ export function SiteAnalysisDetail({ data, hideInterpretation = false }: SiteAna
         )}
       </CategoryCard>
 
-      {/* 7. 규제 사항 */}
-      <CategoryCard title="규제 사항" icon={IconWarning}>
+      {/* 7. 규제 사항 — 특수구역은 경고색 토큰, 경고 사항은 alert 패널 */}
+      <CategoryCard title="규제 사항" eyebrow="REGULATIONS" icon={IconWarning}>
         {hasRegulations ? (
           <div className="space-y-3">
             {/* 토지이용계획 규제 */}
             {landUseRegs.length > 0 && (
-              <div className="rounded-lg bg-[var(--surface-soft)] border border-[var(--line)] p-3">
-                <p className="text-[10px] font-bold text-[var(--text-hint)] mb-2">토지이용계획 규제</p>
+              <div className="sa-di-sub">
+                <p className="sa-di-eyebrow mb-2">토지이용계획 규제</p>
                 <div className="space-y-1">
                   {landUseRegs.map((reg, i) => {
                     const r = obj(reg);
                     return (
                       <div key={i} className="flex items-center gap-2 text-[11px]">
-                        <span className="h-1.5 w-1.5 rounded-full bg-amber-400 shrink-0" />
+                        <span className="sa-dot sa-dot--warning shrink-0" style={{ width: "0.375rem", height: "0.375rem" }} />
                         <span className="text-[var(--text-primary)]">{s(r.district_name || r.districtName || r.name || reg)}</span>
                       </div>
                     );
@@ -575,11 +606,11 @@ export function SiteAnalysisDetail({ data, hideInterpretation = false }: SiteAna
             )}
             {/* 특수구역 */}
             {specialDistricts.length > 0 && (
-              <div className="rounded-lg bg-[var(--surface-soft)] border border-[var(--line)] p-3">
-                <p className="text-[10px] font-bold text-[var(--text-hint)] mb-2">특수구역</p>
+              <div className="sa-di-sub">
+                <p className="sa-di-eyebrow mb-2">특수구역</p>
                 <div className="flex flex-wrap gap-1.5">
                   {specialDistricts.map((d, i) => (
-                    <span key={i} className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                    <span key={i} className="sa-di-token sa-di-token--warn">
                       {s(obj(d).name || d)}
                     </span>
                   ))}
@@ -588,13 +619,13 @@ export function SiteAnalysisDetail({ data, hideInterpretation = false }: SiteAna
             )}
             {/* 경고 사항 */}
             {warnings.length > 0 && (
-              <div className="rounded-lg bg-red-500/5 border border-red-500/20 p-3">
-                <p className="text-[10px] font-bold text-red-400 mb-2">경고 사항</p>
+              <div className="sa-di-alert">
+                <p className="sa-di-alert__title mb-2">경고 사항</p>
                 <div className="space-y-1">
                   {warnings.map((w, i) => (
                     <div key={i} className="flex items-start gap-2 text-[11px]">
-                      <span className="text-red-400 mt-0.5 shrink-0">!</span>
-                      <span className="text-red-300">{s(w)}</span>
+                      <span className="shrink-0 mt-0.5" style={{ color: "var(--status-error)" }}>!</span>
+                      <span style={{ color: "var(--status-error)" }}>{s(w)}</span>
                     </div>
                   ))}
                 </div>

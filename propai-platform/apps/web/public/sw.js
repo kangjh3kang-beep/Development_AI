@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v117-fieldapp-siteid-fix";
+const CACHE_NAME = "propai-v118-site-analysis-premium";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",
