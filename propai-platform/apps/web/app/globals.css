@@ -499,6 +499,199 @@ textarea {
   .sa-bubble-me { box-shadow: var(--shadow-sm); }
 }
 
+/* ═══════════════════════════════════════════════════════════════
+   Spatial Command Center — 재사용 유틸리티 (55개 페이지 전파용)
+   미션컨트롤/관제탑 디자인 언어. 전부 opt-in 클래스(기존 마크업 무영향).
+   색상 100% 디자인 토큰(var(--...)). 버튼색은 기존 accent 유지,
+   데이터 강조/실시간/그래프엔 --data-accent 만 사용.
+   ───────────────────────────────────────────────────────────────
+   사용 예:
+     <section class="cc-panel"><header class="cc-panel__head">
+       <span class="cc-meta">SECTOR · LIVE</span></header> ... </section>
+     <div class="cc-grid-bg"></div>            // 정밀 그리드 배경
+     <span class="cc-num">1,240.5</span>        // 모노스페이스 계기 수치
+     <span class="cc-label">AVG ROI</span>      // uppercase 메타 라벨
+     <span class="cc-live"><i></i>LIVE</span>   // 점멸 실시간 도트
+   ═══════════════════════════════════════════════════════════════ */
+@layer components {
+  /* ── 모듈 패널(벤토 박스) — radius/보더/그림자 토큰 통일 ── */
+  .cc-panel {
+    position: relative;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--line);
+    background: var(--surface-soft);
+    box-shadow: var(--shadow-md);
+    overflow: hidden;
+  }
+  /* 패널 헤더(메타라벨 + 우측 상태) */
+  .cc-panel__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 1rem 1.25rem;
+    border-bottom: 1px solid var(--line-subtle);
+  }
+  .cc-panel__body { padding: 1.25rem; }
+
+  /* ── HUD 코너 브래킷(패널 모서리 ⌜ ⌝ ⌞ ⌟) ──
+     .cc-bracketed 컨테이너에 4개의 <i class="cc-bracket cc-bracket--tl"> 자식을 넣는다. */
+  .cc-bracketed { position: relative; }
+  .cc-bracket {
+    position: absolute;
+    width: 0.75rem;
+    height: 0.75rem;
+    border: 1.5px solid var(--hud-bracket);
+    pointer-events: none;
+    opacity: 0.8;
+  }
+  .cc-bracket--tl { top: 0.5rem; left: 0.5rem; border-right: 0; border-bottom: 0; }
+  .cc-bracket--tr { top: 0.5rem; right: 0.5rem; border-left: 0; border-bottom: 0; }
+  .cc-bracket--bl { bottom: 0.5rem; left: 0.5rem; border-right: 0; border-top: 0; }
+  .cc-bracket--br { bottom: 0.5rem; right: 0.5rem; border-left: 0; border-top: 0; }
+
+  /* ── 정밀 그리드 배경(은은) — 패널/맵 내부 절대배치 ── */
+  .cc-grid-bg {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background-image:
+      linear-gradient(var(--grid-line) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+    background-size: 28px 28px;
+  }
+  /* 중심 강조형(레이더/맵용): 가장자리로 페이드 */
+  .cc-grid-bg--radial {
+    -webkit-mask-image: radial-gradient(ellipse at center, #000 35%, transparent 80%);
+    mask-image: radial-gradient(ellipse at center, #000 35%, transparent 80%);
+  }
+
+  /* ── 스캔라인 오버레이(미세한 가로 주사선) ── */
+  .cc-scanline {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background-image: repeating-linear-gradient(
+      0deg,
+      var(--hud-scanline) 0px,
+      var(--hud-scanline) 1px,
+      transparent 1px,
+      transparent 4px
+    );
+    opacity: 0.5;
+  }
+
+  /* ── 모노스페이스 계기 수치(ROI/NPV/면적/금액) ── */
+  .cc-num {
+    font-family: var(--font-mono), "JetBrains Mono", ui-monospace, monospace;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.02em;
+    color: var(--text-primary);
+  }
+  /* 데이터 액센트 발광 수치(핵심 KPI 강조) */
+  .cc-num--data {
+    color: var(--data-accent);
+    text-shadow: var(--data-glow);
+  }
+
+  /* ── uppercase 메타 라벨(계기판 라벨) ── */
+  .cc-label {
+    font-family: var(--font-mono), "JetBrains Mono", ui-monospace, monospace;
+    font-size: 0.6875rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    color: var(--text-tertiary);
+  }
+  /* 패널 메타라벨(헤더용, 데이터 액센트) */
+  .cc-meta {
+    font-family: var(--font-mono), "JetBrains Mono", ui-monospace, monospace;
+    font-size: 0.625rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.22em;
+    color: var(--data-accent);
+  }
+
+  /* ── 실시간 점멸 도트 + 라벨(LIVE indicator) ── */
+  .cc-live {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-family: var(--font-mono), "JetBrains Mono", ui-monospace, monospace;
+    font-size: 0.625rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    color: var(--data-accent);
+  }
+  .cc-live > i {
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 999px;
+    background: var(--data-accent);
+    box-shadow: 0 0 0 0 var(--data-accent);
+    animation: cc-pulse-dot 1.8s var(--ease-out-expo) infinite;
+  }
+  @keyframes cc-pulse-dot {
+    0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--data-accent) 55%, transparent); }
+    70%  { box-shadow: 0 0 0 0.5rem transparent; }
+    100% { box-shadow: 0 0 0 0 transparent; }
+  }
+
+  /* ── 데이터 액센트 미니 배지(상태/섹터 칩) ── */
+  .cc-chip-data {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    border-radius: 0.5rem;
+    padding: 0.2rem 0.55rem;
+    font-family: var(--font-mono), "JetBrains Mono", ui-monospace, monospace;
+    font-size: 0.625rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    color: var(--data-accent);
+    background: var(--data-accent-soft);
+    border: 1px solid var(--data-accent-line);
+  }
+
+  /* ── 절제된 마이크로 인터랙션(hover lift + 포커스 글로우) ──
+     과한 blur/float 금지. 데이터 패널에 권위감 있는 미세 반응만. */
+  .cc-interactive {
+    transition:
+      transform var(--duration-normal) var(--ease-out-expo),
+      border-color var(--duration-normal) var(--ease-out-expo),
+      box-shadow var(--duration-normal) var(--ease-out-expo);
+  }
+  @media (hover: hover) {
+    .cc-interactive:hover {
+      transform: translateY(-3px);
+      border-color: var(--data-accent-line);
+      box-shadow: var(--shadow-lg), var(--data-glow);
+    }
+  }
+  .cc-interactive:active { transform: translateY(-1px) scale(0.995); }
+
+  /* ── 레이더 스윕(맵 모티프) — 절제된 단일 회전, 무거운 효과 금지 ── */
+  .cc-radar-sweep {
+    position: absolute;
+    inset: 0;
+    border-radius: 999px;
+    background: conic-gradient(
+      from 0deg,
+      transparent 0deg,
+      var(--data-accent-soft) 40deg,
+      transparent 90deg
+    );
+    animation: cc-radar 6s linear infinite;
+    pointer-events: none;
+  }
+  @keyframes cc-radar { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) {
+    .cc-radar-sweep, .cc-live > i { animation: none !important; }
+  }
+}
+
 /* Leaflet 지도 z-index 격리 — 지도 panes/controls(z 400~1000)가 sticky 헤더(z-50)·
    사이드바 위로 떠오르는 문제 방지. 컨테이너를 독립 스택 컨텍스트로 묶고 낮은 층에 고정. */
 .leaflet-container {

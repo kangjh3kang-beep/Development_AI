@@ -90,34 +90,43 @@ export function ProjectsOverviewClient({
   return (
     <section className="grid gap-6">
       <div className="flex flex-wrap items-center justify-between gap-4 px-2">
-        <div className="flex gap-2 p-1 bg-[var(--surface-strong)] rounded-full border border-[var(--line-strong)]">
-          <button
-            type="button"
-            onClick={() => setProjectViewMode("grid")}
-            className={`rounded-full px-6 py-2 text-xs font-black uppercase tracking-widest transition-all ${
-              projectViewMode === "grid"
-                ? "bg-[var(--accent-strong)] text-white shadow-[var(--shadow-glow)]"
-                : "text-[var(--text-hint)] hover:text-[var(--text-primary)]"
-            }`}
-          >
-            {labels.viewGridLabel}
-          </button>
-          <button
-            type="button"
-            onClick={() => setProjectViewMode("list")}
-            className={`rounded-full px-6 py-2 text-xs font-black uppercase tracking-widest transition-all ${
-              projectViewMode === "list"
-                ? "bg-[var(--accent-strong)] text-white shadow-[var(--shadow-glow)]"
-                : "text-[var(--text-hint)] hover:text-[var(--text-primary)]"
-            }`}
-          >
-            {labels.viewListLabel}
-          </button>
+        <div className="flex flex-wrap items-center gap-4">
+          <div className="flex gap-2 p-1 bg-[var(--surface-strong)] rounded-full border border-[var(--line-strong)]">
+            <button
+              type="button"
+              onClick={() => setProjectViewMode("grid")}
+              className={`rounded-full px-6 py-2 text-xs font-black uppercase tracking-widest transition-all ${
+                projectViewMode === "grid"
+                  ? "bg-[var(--accent-strong)] text-white shadow-[var(--shadow-glow)]"
+                  : "text-[var(--text-hint)] hover:text-[var(--text-primary)]"
+              }`}
+            >
+              {labels.viewGridLabel}
+            </button>
+            <button
+              type="button"
+              onClick={() => setProjectViewMode("list")}
+              className={`rounded-full px-6 py-2 text-xs font-black uppercase tracking-widest transition-all ${
+                projectViewMode === "list"
+                  ? "bg-[var(--accent-strong)] text-white shadow-[var(--shadow-glow)]"
+                  : "text-[var(--text-hint)] hover:text-[var(--text-primary)]"
+              }`}
+            >
+              {labels.viewListLabel}
+            </button>
+          </div>
+          {/* 목록 메타: 총 N건 + 실시간 동기화 상태 */}
+          <div className="flex items-center gap-3">
+            <span className="cc-chip-data">
+              <span className="cc-num">{projectsData.total}</span> UNITS
+            </span>
+            <span className="cc-live"><i />{syncing ? "SYNCING" : "LIVE"}</span>
+          </div>
         </div>
         {projectsData && (
           <p className="text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)]">
             {labels.lastUpdatedLabel}:{" "}
-            <span className="text-[var(--text-secondary)]">{formatDate(locale, projectsData.updatedAt)}</span>
+            <span className="cc-num text-[var(--text-secondary)]">{formatDate(locale, projectsData.updatedAt)}</span>
           </p>
         )}
       </div>
@@ -132,7 +141,7 @@ export function ProjectsOverviewClient({
           <SkeletonLoader
             count={4}
             className={projectViewMode === "grid" ? "md:grid-cols-2" : undefined}
-            itemClassName="h-72 rounded-[3.5rem]"
+            itemClassName="h-72 rounded-[var(--radius-md)]"
           />
         ) : null}
         {isError ? (
@@ -165,32 +174,43 @@ export function ProjectsOverviewClient({
           </Card>
         ) : null}
         {!isLoading && !hasProjects ? (
-          <Card className="rounded-[3.5rem] border-[var(--line-strong)] bg-[var(--surface-strong)] md:col-span-2 overflow-hidden">
-            <CardContent className="p-12 text-center flex flex-col items-center">
+          <div className="cc-bracketed cc-panel md:col-span-2">
+            <div className="cc-grid-bg cc-grid-bg--radial" />
+            <i className="cc-bracket cc-bracket--tl" />
+            <i className="cc-bracket cc-bracket--tr" />
+            <i className="cc-bracket cc-bracket--bl" />
+            <i className="cc-bracket cc-bracket--br" />
+            <div className="relative z-10 p-12 text-center flex flex-col items-center">
+              <span className="cc-label mb-6">NO ACTIVE PROJECTS</span>
               <div className="h-20 w-20 rounded-[2.5rem] bg-[var(--surface-soft)] flex items-center justify-center text-[var(--text-hint)] mb-8 shadow-[var(--shadow-lg)] border border-[var(--line)]">
                  🏗️
               </div>
               <h3 className="text-2xl font-[1000] text-[var(--text-primary)] tracking-tighter">
                 {labels.emptyStateTitle}
               </h3>
-              <p className="mt-4 text-sm font-medium text-[var(--text-secondary)] italic">
+              <p className="mt-4 text-sm font-medium text-[var(--text-secondary)]">
                 {labels.emptyStateDescription}
               </p>
-            </CardContent>
-          </Card>
+            </div>
+          </div>
         ) : null}
         {hasProjects ? (projectsData.projects ?? []).map((project) => {
           const isSelected = currentProjectId === project.id;
 
           return (
-            <Card
+            <div
               key={project.id}
-              className={`group flex rounded-[3.5rem] border-[var(--line-strong)] bg-[var(--surface-strong)] transition-all duration-500 hover:shadow-[var(--shadow-2xl)] hover:border-[var(--accent-strong)]/30 overflow-hidden ${isSelected ? 'ring-2 ring-[var(--accent-strong)]/50' : ''}`}
+              className={`cc-bracketed cc-interactive cc-panel group flex ${isSelected ? 'ring-2 ring-[var(--accent-strong)]/50 border-[var(--data-accent-line)]' : ''}`}
             >
-              <CardContent className="p-10 flex flex-col w-full">
+              <div className="cc-grid-bg opacity-50" />
+              <i className="cc-bracket cc-bracket--tl" />
+              <i className="cc-bracket cc-bracket--tr" />
+              <i className="cc-bracket cc-bracket--bl" />
+              <i className="cc-bracket cc-bracket--br" />
+              <div className="relative z-10 p-10 flex flex-col w-full">
               <div className="flex flex-wrap items-start justify-between gap-4">
-                <div className="space-y-1">
-                  <p className="text-[10px] font-black uppercase tracking-[0.4em] text-[var(--text-hint)]">
+                <div className="space-y-1.5">
+                  <p className="cc-label tracking-[0.28em]">
                     {project.location}
                   </p>
                   <h3 className="text-3xl font-[1000] text-[var(--text-primary)] tracking-tighter group-hover:text-[var(--accent-strong)] transition-colors">
@@ -198,7 +218,7 @@ export function ProjectsOverviewClient({
                   </h3>
                 </div>
                 <div className="flex flex-wrap items-center gap-3">
-                  <span className="rounded-2xl border border-[var(--accent-strong)]/20 bg-[var(--accent-soft)] px-4 py-1.5 text-[10px] font-black uppercase tracking-widest text-[var(--accent-strong)]">
+                  <span className="cc-chip-data">
                     {project.phase}
                   </span>
                   {isSelected && (
@@ -208,22 +228,22 @@ export function ProjectsOverviewClient({
                   )}
                 </div>
               </div>
-              
+
               <div className="mt-8 flex-1 grid gap-4">
                 <div className="flex items-center justify-between py-3 border-b border-[var(--line)]">
-                  <span className="text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)]">{labels.lastUpdatedLabel}</span>
-                  <span className="text-xs font-bold text-[var(--text-secondary)] tracking-tight italic">{formatDate(locale, project.updatedAt)}</span>
+                  <span className="cc-label">{labels.lastUpdatedLabel}</span>
+                  <span className="cc-num text-xs text-[var(--text-secondary)]">{formatDate(locale, project.updatedAt)}</span>
                 </div>
                 <div className="flex flex-col gap-2">
-                  <span className="text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)]">{labels.nextActionLabel}</span>
-                  <p className="text-sm font-bold text-[var(--text-primary)] leading-tight italic decoration-[var(--line)] underline underline-offset-4 decoration-2">
+                  <span className="cc-label">{labels.nextActionLabel}</span>
+                  <p className="text-sm font-bold text-[var(--text-primary)] leading-tight">
                     {project.nextAction}
                   </p>
                 </div>
               </div>
 
               <div className="mt-8">
-                <p className="text-[10px] font-black uppercase tracking-[0.4em] text-[var(--text-hint)] mb-4">
+                <p className="cc-label tracking-[0.28em] mb-4">
                   {labels.modulesLabel}
                 </p>
                 <div className="flex flex-wrap gap-2">
@@ -262,8 +282,8 @@ export function ProjectsOverviewClient({
                   ✕
                 </button>
               </div>
-              </CardContent>
-            </Card>
+              </div>
+            </div>
           );
         }) : null}
       </div>

@@ -115,6 +115,10 @@ export default function NewProjectPage() {
   return (
     <div className="flex flex-col gap-10 pb-20 max-w-3xl mx-auto mt-4">
       <div className="space-y-2">
+        <div className="flex items-center gap-3">
+          <span className="cc-meta">NEW PROJECT · INTAKE CONSOLE</span>
+          <span className="cc-live"><i />READY</span>
+        </div>
         <h1 className="text-4xl font-[900] tracking-tighter text-[var(--text-primary)]">
           새 프로젝트 <span className="text-[var(--accent-strong)]">_</span>
         </h1>
@@ -124,20 +128,22 @@ export default function NewProjectPage() {
         </p>
       </div>
 
-      {/* ── 단일 입력 카드 ── */}
-      <section className="relative overflow-hidden rounded-[2rem] border border-[var(--line-strong)] bg-[var(--surface-soft)] p-8 shadow-[var(--shadow-xl)] backdrop-blur-xl transition-all focus-within:border-[var(--accent-strong)]/50 focus-within:shadow-[0_0_30px_rgba(45,212,191,0.1)]">
-        <div className="absolute top-0 left-0 w-1 h-full bg-gradient-to-b from-[var(--accent-strong)] to-transparent opacity-50 pointer-events-none" />
-
-        <div className="flex items-center gap-4 mb-8">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--surface)] border border-[var(--line-strong)] text-[var(--text-secondary)] font-black">
-            01
+      {/* ── 단일 입력 콘솔 ── */}
+      <section className="cc-bracketed cc-panel transition-all focus-within:border-[var(--accent-strong)]/50 focus-within:shadow-[var(--shadow-lg),var(--data-glow)]">
+        <div className="cc-grid-bg opacity-40" />
+        <i className="cc-bracket cc-bracket--tl" />
+        <i className="cc-bracket cc-bracket--tr" />
+        <i className="cc-bracket cc-bracket--bl" />
+        <i className="cc-bracket cc-bracket--br" />
+        <header className="cc-panel__head relative z-10">
+          <div className="flex items-center gap-3">
+            <span className="cc-chip-data">STEP 01</span>
+            <span className="cc-label">프로젝트 메타데이터</span>
           </div>
-          <h3 className="text-xl font-bold text-[var(--text-primary)] tracking-wide">프로젝트 메타데이터</h3>
-        </div>
-
-        <div className="space-y-6">
+        </header>
+        <div className="relative z-10 cc-panel__body space-y-6">
           <div className="grid gap-2">
-            <label className="text-xs font-bold uppercase tracking-widest text-[var(--text-tertiary)]">프로젝트 명칭</label>
+            <label className="cc-label">프로젝트 명칭</label>
             <input
               type="text"
               value={name}
@@ -148,7 +154,7 @@ export default function NewProjectPage() {
           </div>
 
           <div className="grid gap-2 relative z-10">
-            <label className="text-xs font-bold uppercase tracking-widest text-[var(--text-tertiary)]">소재지 (주소 검색)</label>
+            <label className="cc-label">소재지 (주소 검색)</label>
             <GlobalAddressSearch
               onChange={handleAddressChange}
               initialAddress={handoff?.address}
@@ -167,7 +173,7 @@ export default function NewProjectPage() {
           </div>
 
           <div className="grid gap-2 mt-4 relative z-10">
-            <label className="text-xs font-bold uppercase tracking-widest text-[var(--text-tertiary)]">현장(부지) 이미지 등록</label>
+            <label className="cc-label">현장(부지) 이미지 등록</label>
             <ImageUpload 
               value={siteImageUrl}
               onChange={setSiteImageUrl}
@@ -178,17 +184,29 @@ export default function NewProjectPage() {
       </section>
 
       {/* ── 요약 + 시작 ── */}
-      <section className="rounded-[2rem] border border-[var(--line-strong)] bg-[var(--surface-soft)] p-8 shadow-[var(--shadow-xl)] backdrop-blur-xl relative overflow-hidden">
-        <div className="absolute top-0 right-0 w-32 h-32 bg-[var(--accent-strong)]/10 blur-[50px] rounded-full pointer-events-none" />
+      <section className="cc-bracketed cc-panel">
+        <div className="cc-grid-bg cc-grid-bg--radial opacity-40" />
+        <i className="cc-bracket cc-bracket--tl" />
+        <i className="cc-bracket cc-bracket--tr" />
+        <i className="cc-bracket cc-bracket--bl" />
+        <i className="cc-bracket cc-bracket--br" />
+        <header className="cc-panel__head relative z-10">
+          <div className="flex items-center gap-3">
+            <span className="cc-chip-data">STEP 02</span>
+            <span className="cc-label">분석 시작</span>
+          </div>
+          <span className="cc-live"><i />{isSubmitting ? "RUNNING" : "STANDBY"}</span>
+        </header>
+        <div className="relative z-10 cc-panel__body">
 
         <div className="flex flex-col gap-6 sm:flex-row sm:items-end sm:justify-between">
           <div className="space-y-3">
-            <div className="flex items-center gap-2 text-sm">
-              <span className="text-[var(--text-tertiary)] font-medium w-16">프로젝트</span>
+            <div className="flex items-center gap-3 text-sm">
+              <span className="cc-label w-16">프로젝트</span>
               <span className="text-[var(--text-primary)] font-bold truncate max-w-[280px]">{name || "-"}</span>
             </div>
-            <div className="flex items-center gap-2 text-sm">
-              <span className="text-[var(--text-tertiary)] font-medium w-16">위치</span>
+            <div className="flex items-center gap-3 text-sm">
+              <span className="cc-label w-16">위치</span>
               <span className="text-[var(--text-primary)] font-bold truncate max-w-[280px]">{location || "-"}</span>
             </div>
           </div>
@@ -218,6 +236,7 @@ export default function NewProjectPage() {
             프로젝트가 생성되면 부지분석이 자동으로 진행되고, 결과를 확인한 뒤 최적 사업모델 Top 3 추천으로 이어집니다.
             용도·활성 모듈은 분석 과정에서 자동으로 결정됩니다.
           </p>
+        </div>
         </div>
       </section>
     </div>

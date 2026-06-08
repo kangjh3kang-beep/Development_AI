@@ -665,23 +665,58 @@ export function AuthWorkspaceClient({
         ? "border-[rgba(13,148,136,0.28)] bg-[rgba(13,148,136,0.12)] text-[rgb(15,118,110)]"
         : "border-[rgba(14,116,144,0.24)] bg-[rgba(14,116,144,0.08)] text-[rgb(14,116,144)]";
 
+  const gateMeta = mode === "register" ? "ENROLL TENANT" : "SECURE ACCESS";
+  const gateTitle = mode === "register" ? "사통팔땅 관리자 등록" : "사통팔땅 로그인";
+  const gateDescription =
+    mode === "register"
+      ? "새 테넌트와 첫 관리자 계정을 생성합니다."
+      : "서비스 이용을 위해 계정에 로그인해 주세요.";
+
   return (
-    <main className="mx-auto flex min-h-screen max-w-6xl items-center px-6 py-10">
+    <main className="relative isolate mx-auto flex min-h-screen max-w-6xl items-center px-6 py-10">
+      {/* 관제탑 게이트 배경 — 정밀 그리드 + 미세 주사선(고정 백드롭, 폼 무영향) */}
+      <div className="pointer-events-none fixed inset-0 -z-10 bg-[var(--surface-soft)]">
+        <div className="cc-grid-bg cc-grid-bg--radial" />
+        <div className="cc-scanline" />
+      </div>
+
       <section className="mx-auto w-full max-w-lg">
-        <Card className="rounded-[var(--radius-2xl)] border border-[var(--line)] bg-[var(--surface-strong)] shadow-[var(--shadow-lg)]">
-          <CardContent className="p-8 md:p-10">
-            <div className="space-y-3 mb-6">
+        <Card className="cc-bracketed relative overflow-hidden rounded-[var(--radius-2xl)] border border-[var(--line)] bg-[var(--surface-strong)] shadow-[var(--shadow-lg)]">
+          {/* HUD 코너 브래킷 ⌜ ⌝ ⌞ ⌟ */}
+          <i className="cc-bracket cc-bracket--tl" />
+          <i className="cc-bracket cc-bracket--tr" />
+          <i className="cc-bracket cc-bracket--bl" />
+          <i className="cc-bracket cc-bracket--br" />
+          <CardContent className="relative p-8 md:p-10">
+            <div className="mb-6 space-y-3">
+              {/* 모노 메타라벨 + 실시간 가동 도트 */}
+              <div className="flex items-center justify-between gap-3">
+                <span className="cc-meta">{gateMeta} · 사통팔땅</span>
+                <span className="cc-live">
+                  <i />
+                  LIVE
+                </span>
+              </div>
               <h1 className="text-3xl font-bold text-[var(--text-primary)] md:text-4xl">
-                사통팔땅 로그인
+                {gateTitle}
               </h1>
               <p className="text-sm leading-7 text-[var(--text-secondary)] md:text-base">
-                서비스 이용을 위해 계정에 로그인해 주세요.
+                {gateDescription}
               </p>
             </div>
 
-            <div className="rounded-[var(--radius-xl)] border border-[var(--line)] bg-[var(--surface)] p-5">
+            <div className="cc-panel">
+              <header className="cc-panel__head">
+                <span className="cc-label text-[var(--text-secondary)]">
+                  {mode === "register" ? "CREDENTIALS · 신규" : "CREDENTIALS · 게이트"}
+                </span>
+                <span className="cc-chip-data">
+                  {runtime.mode === "live" ? "LIVE" : "MOCK"}
+                </span>
+              </header>
+              <div className="cc-panel__body">
 
-              <form className="mt-6 grid gap-4" onSubmit={handleSubmit}>
+              <form className="grid gap-4" onSubmit={handleSubmit}>
                 {mode === "register" ? (
                   <>
                     <label className="grid gap-2 text-sm font-medium text-[var(--text-primary)]">
@@ -793,9 +828,9 @@ export function AuthWorkspaceClient({
                       {isSubmitting ? labels.submitting : labels.loginFields.submit}
                     </Button>
                     <div className="relative my-4 flex items-center">
-                      <div className="flex-grow border-t border-[var(--line)]"></div>
-                      <span className="mx-4 text-xs font-bold text-[var(--text-hint)]">SNS 간편 로그인</span>
-                      <div className="flex-grow border-t border-[var(--line)]"></div>
+                      <div className="flex-grow border-t border-[var(--line-subtle)]"></div>
+                      <span className="cc-label mx-4 text-[var(--text-tertiary)]">SNS · 간편 로그인</span>
+                      <div className="flex-grow border-t border-[var(--line-subtle)]"></div>
                     </div>
                     <div className="grid gap-2">
                       <button
@@ -861,8 +896,23 @@ export function AuthWorkspaceClient({
                   {feedback.message}
                 </div>
               ) : null}
+              </div>
             </div>
 
+            {/* 인증 경로 전환 + 시스템 메타 푸터 */}
+            <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
+              <Link
+                href={`/${locale}/${mode === "login" ? "register" : "login"}`}
+                className="cc-label text-[var(--accent-strong)] underline-offset-4 hover:underline"
+              >
+                {mode === "login"
+                  ? labels.switchLinks.register + " →"
+                  : "← " + labels.switchLinks.login}
+              </Link>
+              <span className="cc-label text-[var(--text-tertiary)]">
+                ENCRYPTED · JWT
+              </span>
+            </div>
 
           </CardContent>
         </Card>

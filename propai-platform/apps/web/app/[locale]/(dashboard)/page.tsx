@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { HeroGridBackground } from "@/components/dashboard/DashboardDynamicElements";
+import { DashboardEsgScore } from "@/components/dashboard/DashboardEsgScore";
 import { DashboardKpiLoader } from "@/components/dashboard/DashboardKpiLoader";
 import { DashboardProjectLoader } from "@/components/dashboard/DashboardProjectLoader";
 import { MarketingPanels } from "@/components/dashboard/MarketingPanels";
@@ -58,7 +59,7 @@ export default async function DashboardPage({ params }: DashboardPageProps) {
       <section className="relative min-h-[200px] sm:min-h-[260px] lg:min-h-[320px] overflow-hidden rounded-2xl sm:rounded-[2rem] lg:rounded-[3rem] border border-[var(--line-strong)] bg-[var(--surface-soft)] p-5 sm:p-8 lg:p-12 shadow-[var(--shadow-2xl)] transition-all group backdrop-blur-2xl">
         {/* 애니메이션 배경 요소 (Cyber Glows) */}
         <div className="absolute -right-20 -top-20 h-[500px] w-[500px] rounded-full bg-[var(--accent-strong)]/10 blur-[120px] transition-all duration-[3000ms] group-hover:scale-150 group-hover:bg-[var(--accent-strong)]/20" />
-        <div className="absolute -bottom-40 left-1/4 h-[400px] w-[400px] rounded-full bg-indigo-500/10 blur-[100px] animate-float opacity-70" />
+        <div className="absolute -bottom-40 left-1/4 h-[400px] w-[400px] rounded-full bg-[var(--data-accent)]/10 blur-[100px] animate-float opacity-60" />
         {/* 그리드 배경 패턴 (사이버틱한 공간감) */}
         <HeroGridBackground />
 
@@ -160,25 +161,49 @@ export default async function DashboardPage({ params }: DashboardPageProps) {
       <div className="grid gap-4 lg:grid-cols-[1fr_420px]">
         
         {/* 메인 콘텐츠: 진행 단계 모니터링 */}
-        <div className="space-y-8">
-           <div className="flex items-center justify-between px-4">
-              <h2 className="text-2xl font-bold tracking-tight text-[var(--text-primary)]">활성 진행 단계 <span className="text-[var(--accent)]">_</span></h2>
-              <Link href={`/${locale}/projects`} className="text-xs font-bold text-[var(--accent-strong)] tracking-wider hover:underline underline-offset-8">전체 보기</Link>
+        <div className="space-y-6">
+           <div className="flex items-center justify-between px-1">
+              <div className="flex items-center gap-3">
+                 <h2 className="text-2xl font-bold tracking-tight text-[var(--text-primary)]">활성 진행 단계</h2>
+                 <span className="cc-live"><i />LIVE</span>
+              </div>
+              <Link href={`/${locale}/projects`} className="cc-label text-[var(--accent-strong)] hover:underline underline-offset-8">전체 보기</Link>
            </div>
 
            <DashboardProjectLoader locale={locale} />
 
-           {/* AI 포트폴리오 지능형 지도 */}
-            <div className="relative h-[300px] w-full overflow-hidden rounded-[2rem] border border-[var(--line)] bg-[var(--surface-soft)] shadow-[var(--shadow-inner)]">
-               <div className="absolute inset-0 bg-[linear-gradient(var(--line-subtle)_1px,transparent_1px),linear-gradient(90deg,var(--line-subtle)_1px,transparent_1px)] bg-[size:24px_24px] opacity-30" />
+           {/* ── 포트폴리오 커맨드 맵 — 그리드 + 레이더 모티프 ──
+               실데이터(좌표/자산 시각화) 연동 전이므로 가짜 자산점을 찍지 않고
+               "데이터 연결 대기" 정직 빈상태로 둔다(무목업 원칙). */}
+            <div className="cc-bracketed relative h-[300px] w-full overflow-hidden rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface-soft)] shadow-[var(--shadow-inner)]">
+               <div className="cc-grid-bg cc-grid-bg--radial" />
+               <div className="cc-scanline" />
+               <i className="cc-bracket cc-bracket--tl" />
+               <i className="cc-bracket cc-bracket--tr" />
+               <i className="cc-bracket cc-bracket--bl" />
+               <i className="cc-bracket cc-bracket--br" />
+
+               {/* 패널 메타 헤더(HUD) */}
+               <div className="absolute left-4 top-3 z-10 flex items-center gap-3">
+                  <span className="cc-meta">PORTFOLIO · SPATIAL MAP</span>
+               </div>
+               <div className="absolute right-4 top-3 z-10">
+                  <span className="cc-chip-data">STANDBY</span>
+               </div>
+
                <div className="absolute inset-0 flex items-center justify-center">
-                  <div className="flex flex-col items-center gap-4 text-center">
-                     <div className="h-16 w-16 rounded-3xl bg-[var(--accent-soft)] flex items-center justify-center text-[var(--accent-strong)] border border-[var(--accent-strong)]/20 shadow-[var(--shadow-md)]">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2v20"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-                     </div>
-                     <div>
-                        <h3 className="text-lg font-bold text-[var(--text-primary)] tracking-tight">AI 포트폴리오 분석 맵</h3>
-                        <p className="text-xs font-medium text-[var(--text-tertiary)] tracking-wider mt-1">글로벌 자산 시각화 활성</p>
+                  {/* 레이더 링 + 절제된 단일 스윕 */}
+                  <div className="relative flex h-40 w-40 items-center justify-center">
+                     <div className="absolute inset-0 rounded-full border border-[var(--data-accent-line)] opacity-40" />
+                     <div className="absolute inset-6 rounded-full border border-[var(--data-accent-line)] opacity-30" />
+                     <div className="absolute inset-12 rounded-full border border-[var(--data-accent-line)] opacity-20" />
+                     <div className="cc-radar-sweep" />
+                     <div className="relative z-10 flex flex-col items-center gap-2 text-center">
+                        <span className="cc-num cc-num--data text-base">⌖</span>
+                        <div>
+                           <p className="cc-label text-[var(--text-secondary)]">포트폴리오 맵</p>
+                           <p className="mt-1 text-[11px] font-medium text-[var(--text-tertiary)]">데이터 연결 대기</p>
+                        </div>
                      </div>
                   </div>
                </div>
@@ -186,43 +211,34 @@ export default async function DashboardPage({ params }: DashboardPageProps) {
         </div>
 
         {/* 사이드바 위젯: 시스템 상태 & 규제 */}
-        <div className="space-y-8">
-           <div className="glass rounded-[2rem] p-8 border border-[var(--line)] shadow-2xl space-y-8">
+        <div className="space-y-6">
+           <div className="cc-panel space-y-6 p-6">
               <div>
-                 <h4 className="text-sm font-bold text-[var(--text-primary)] tracking-[0.12em] mb-6 flex items-center gap-2">
-                   <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-                   부동산 규제 동향
-                 </h4>
-                 <div className="space-y-6">
-                    {[
-                      { title: "건축법 제21조 (개정안)", desc: "친환경 건축물 가산 용적률 상향", date: "24.03.20", type: "업데이트" },
-                      { title: "도시정비법 (시행령)", desc: "재건축 초과이익 환수제 완화 지침", date: "24.03.18", type: "중요" },
-                    ].map((item, i) => (
-                      <div key={i} className="group cursor-pointer">
-                         <div className="flex justify-between items-center mb-1">
-                            <span className="text-[11px] font-bold text-[var(--accent-strong)] tracking-wider">{item.type}</span>
-                            <span className="text-[11px] font-medium text-[var(--text-hint)]">{item.date}</span>
-                         </div>
-                         <h5 className="text-[13px] font-bold text-[var(--text-primary)] group-hover:text-[var(--accent)] transition-colors">{item.title}</h5>
-                         <p className="text-[12px] text-[var(--text-secondary)] leading-relaxed mt-0.5">{item.desc}</p>
-                      </div>
-                    ))}
+                 <div className="flex items-center justify-between mb-5">
+                    <h4 className="cc-label text-[var(--text-secondary)]">REGULATION FEED</h4>
+                    <span className="cc-meta">규제 모니터</span>
+                 </div>
+                 {/* 규제 동향 실데이터 소스 미연동 → 가짜 항목 대신 정직한 빈상태(무목업) */}
+                 <div className="cc-bracketed relative flex flex-col items-center gap-2 rounded-xl border border-dashed border-[var(--line-strong)] bg-[var(--surface)] px-5 py-8 text-center overflow-hidden">
+                    <div className="cc-grid-bg opacity-40" />
+                    <span className="relative z-10 cc-num text-xl text-[var(--text-tertiary)]">—</span>
+                    <p className="relative z-10 text-[13px] font-bold text-[var(--text-primary)]">규제 동향 피드 연동 예정</p>
+                    <p className="relative z-10 text-[11px] font-medium text-[var(--text-tertiary)] leading-relaxed">
+                       실시간 법령·조례 변경 모니터링을 연결하면<br/>여기에 최신 개정 동향이 표시됩니다.
+                    </p>
+                    <Link href={`/${locale}/regulations`} className="relative z-10 mt-1 cc-label text-[var(--accent-strong)] hover:underline underline-offset-4">규제 분석 열기 →</Link>
                  </div>
               </div>
 
-              <div className="pt-8 border-t border-[var(--line)] space-y-6">
-                 <h4 className="text-sm font-bold text-[var(--text-primary)] tracking-[0.12em] mb-4">ESG 통합 점수</h4>
-                 <div className="relative h-40 w-full rounded-2xl bg-gradient-to-br from-indigo-500/20 to-purple-600/20 border border-indigo-500/20 flex flex-col items-center justify-center gap-2 overflow-hidden group">
-                    <div className="absolute inset-0 bg-indigo-500/5 animate-pulse group-hover:scale-150 transition-transform duration-[3000ms]" />
-                    <span className="text-5xl font-[900] text-[var(--text-primary)] tracking-tighter z-10">84.2</span>
-                    <span className="text-[11px] font-bold text-indigo-400 tracking-[0.3em] z-10 transition-all group-hover:tracking-[0.5em]">시스템 등급: A+</span>
-                 </div>
-              </div>
+              {/* ESG 통합 점수 — 실데이터(/analytics/esg) 로더 */}
+              <DashboardEsgScore />
            </div>
 
            {/* 사용자 시작 안내 카드 */}
-           <div className="rounded-[2rem] bg-gradient-to-br from-[var(--accent-soft)] to-[var(--status-info)]/10 p-1 border border-[var(--line)] group overflow-hidden">
-              <div className="rounded-[2rem] bg-[var(--surface)] p-10 space-y-6 transition-all group-hover:bg-[var(--surface-strong)]">
+           <div className="cc-panel cc-interactive group p-7 space-y-5">
+              <div className="cc-grid-bg opacity-40" />
+              <div className="relative z-10 space-y-5">
+                 <span className="cc-meta">GUIDE · ONBOARDING</span>
                  <h4 className="text-lg font-bold text-[var(--text-primary)] leading-tight tracking-tight">전문 가이드가<br/>필요하신가요?</h4>
                  <p className="text-sm font-medium text-[var(--text-secondary)] leading-relaxed">
                     사통팔땅의 168종 데이터 맵과<br/>AI 엔진을 활용하는 방법을 확인하세요.

@@ -22,39 +22,42 @@ interface KpiItem {
 
 export function KpiGrid({ items }: { items: KpiItem[] }) {
   return (
-    <div className="grid gap-8 md:grid-cols-3">
+    <div className="grid gap-6 md:grid-cols-3">
       {items.map((item, i) => (
         <TiltCard
           key={i}
-          className={`group rounded-[2.5rem] border ${item.border} ${item.bg} p-8 shadow-[var(--shadow-lg)] hover:shadow-[var(--shadow-glow)] backdrop-blur-md`}
-          maxTilt={6}
+          className={`cc-bracketed cc-interactive group rounded-[var(--radius-md)] border ${item.border} ${item.bg} p-7 shadow-[var(--shadow-md)] overflow-hidden`}
+          maxTilt={4}
         >
-          {/* Cyber Hover Glow */}
-          <div className="absolute inset-0 bg-gradient-to-br from-white/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 rounded-[2.5rem]" />
+          {/* HUD 정밀 그리드 배경 + 코너 브래킷(계기판 디테일) */}
+          <div className="cc-grid-bg opacity-50" />
+          <i className="cc-bracket cc-bracket--tl" />
+          <i className="cc-bracket cc-bracket--tr" />
+          <i className="cc-bracket cc-bracket--bl" />
+          <i className="cc-bracket cc-bracket--br" />
+
           <div className="relative z-10 flex items-center justify-between">
-            <span className="text-xs font-bold tracking-[0.1em] text-[var(--text-tertiary)]">
-              {item.label}
-            </span>
+            <span className="cc-label">{item.label}</span>
             {item.trend ? (
-              <span
-                className={`text-[11px] font-bold ${item.color} px-2.5 py-1 rounded-full bg-white/10 dark:bg-black/20`}
-              >
+              <span className={`cc-num text-[11px] font-bold ${item.color} px-2.5 py-1 rounded-md bg-white/10 dark:bg-black/20`}>
                 {item.trend}
               </span>
             ) : null}
           </div>
+
           <div className="mt-6 flex items-baseline gap-2">
             <AnimatedCounter
               value={item.value}
               decimals={item.decimals}
               duration={1400}
-              className="text-5xl font-[900] tracking-tighter text-[var(--text-primary)]"
+              className="cc-num text-5xl font-[900]"
             />
-            <span className="text-xl font-semibold text-[var(--text-tertiary)]">
+            <span className="cc-num text-lg font-semibold text-[var(--text-tertiary)]">
               {item.unit}
             </span>
           </div>
-          <p className="mt-4 text-[11px] font-semibold text-[var(--text-hint)] uppercase tracking-wider">
+
+          <p className="mt-4 cc-label text-[10px] text-[var(--text-hint)]">
             {item.sub}
           </p>
         </TiltCard>
@@ -123,14 +126,14 @@ export function ProjectCardGrid({
             </p>
 
             <div className="space-y-2">
-              <div className="flex justify-between text-[11px] font-semibold text-[var(--text-hint)]">
-                <span>전체 진행률</span>
-                <span>{proj.progress}%</span>
+              <div className="flex justify-between items-center">
+                <span className="cc-label text-[10px]">PROGRESS</span>
+                <span className="cc-num text-[12px] font-bold text-[var(--data-accent)]">{proj.progress}%</span>
               </div>
-              <div className="h-1.5 w-full rounded-full bg-[var(--line)]">
+              <div className="h-1.5 w-full rounded-full bg-[var(--line)] overflow-hidden">
                 <div
-                  className="h-full rounded-full bg-gradient-to-r from-[var(--accent)] to-blue-500 transition-all duration-1000 group-hover:w-full"
-                  style={{ width: `${proj.progress}%` }}
+                  className="h-full rounded-full bg-[var(--data-accent)] transition-all duration-1000"
+                  style={{ width: `${proj.progress}%`, boxShadow: "var(--data-glow)" }}
                 />
               </div>
             </div>
