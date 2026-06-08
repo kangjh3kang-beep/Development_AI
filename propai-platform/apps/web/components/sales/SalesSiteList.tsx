@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import SitePasswordModal from "@/components/sales-app/SitePasswordModal";
 import { salesGlobal } from "@/lib/salesApi";
 import { apiClient, ApiClientError } from "@/lib/api-client";
 import { useProjectStore } from "@/store/useProjectStore";
@@ -38,6 +39,8 @@ export default function SalesSiteList({ locale }: { locale: Locale }) {
   const [form, setForm] = useState({ site_name: "", development_type: "APT", project_id: "" });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  // 현장앱 2차 비밀번호 설정 모달(닭-달걀 해소: 진입 전에 목록에서 직접 설정).
+  const [pwSite, setPwSite] = useState<{ id: string; name: string } | null>(null);
   const [fee, setFee] = useState<number | null>(null); // 분양현장 생성 사용료(관리자 책정)
 
   const devLabel = (v: string) => devTypes.find((d) => d.value === v)?.label ?? v;
@@ -177,11 +180,26 @@ export default function SalesSiteList({ locale }: { locale: Locale }) {
                     🔐 현장앱 진입
                   </Link>
                 </div>
+                {/* 2차 비밀번호 설정/변경 — 진입 전에 목록에서 직접(닭-달걀 해소). 권한 없으면 403 안내. */}
+                <button
+                  type="button"
+                  onClick={() => setPwSite({ id: s.id, name: s.site_name })}
+                  className="mt-2 w-full rounded-lg border border-dashed border-[var(--line-strong)] px-3 py-1.5 text-center text-[11px] font-bold text-[var(--text-tertiary)] transition hover:border-[var(--accent-strong)] hover:text-[var(--accent-strong)]"
+                >
+                  🔑 현장앱 비밀번호 설정/변경
+                </button>
               </div>
             ))}
           </div>
         )}
       </div>
+      {pwSite && (
+        <SitePasswordModal
+          siteId={pwSite.id}
+          open={!!pwSite}
+          onClose={() => setPwSite(null)}
+        />
+      )}
     </div>
   );
 }
