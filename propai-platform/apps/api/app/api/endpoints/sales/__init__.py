@@ -68,6 +68,14 @@ REGISTRY = [
     (tx.SalesTaxInvoice, "tax/invoices-list"), (tx.SalesWithholdingStatement, "tax/withholding-list"),
 ]
 
+# 도메인 액션 라우터를 자동 CRUD보다 '먼저' 등록한다.
+# 이유: 자동 CRUD가 contracts 모델로 GET/POST /contracts 를 자동 생성하는데, 그게 먼저 잡히면
+# 우리가 만든 똑똑한 계약 체결(POST /contracts: 가격 자동산출·세대 RESERVED 전환)과
+# 선택기용 라벨 목록(GET /contracts: {id,label,status})을 가려버린다.
+# FastAPI는 먼저 등록된 경로가 우선이므로, 액션 라우터를 앞에 둬 같은 경로(/contracts)에서 우리 핸들러가 이긴다.
+# (/contracts/{id} 같은 다른 CRUD 경로는 그대로 유지 — 충돌하는 건 /contracts 하나뿐.)
+sales_router.include_router(actions_router)
+
 for _model, _prefix in REGISTRY:
     _name = _model.__name__
     sales_router.include_router(make_crud_router(
@@ -78,7 +86,6 @@ for _model, _prefix in REGISTRY:
         prefix=f"/{_prefix}", tags=["sales"],
     ))
 
-sales_router.include_router(actions_router)
 sales_router.include_router(commission_agreement_router)
 sales_router.include_router(crm_enhance_router)
 sales_router.include_router(referral_router)
