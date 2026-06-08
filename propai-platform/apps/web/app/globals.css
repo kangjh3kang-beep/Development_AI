@@ -1059,6 +1059,68 @@ textarea {
     background: var(--surface-soft);
   }
 
+  /* ── 히어로 왼쪽 'AI가 지도를 분석하는' 생동감 레이어 ──────────────────
+     세 가지를 겹친다: ①지도 좌표 그리드(미세한 가로·세로 선) ②분석 노드 점들
+     ③가로로 천천히 지나가는 스캔 빔. 색은 단일 파랑(accent)에 아주 옅은 알파라
+     큰 흰 글자가 그 위에 또렷이 얹힌다. 오른쪽으로 갈수록 mask로 사라져 CTA 영역은 깨끗하다. */
+  .db-hero__viz {
+    position: absolute;
+    inset: 0;
+    z-index: 2;                 /* 그리드(z1) 위, 본문(z10) 아래 */
+    pointer-events: none;
+    /* ①지도 좌표 그리드 + ②분석 노드 점(고정 위치) */
+    background-image:
+      radial-gradient(circle at 16% 34%, color-mix(in srgb, var(--accent-strong) 55%, transparent) 0 2.5px, transparent 3px),
+      radial-gradient(circle at 30% 64%, color-mix(in srgb, var(--accent-strong) 40%, transparent) 0 2px, transparent 2.5px),
+      radial-gradient(circle at 44% 26%, color-mix(in srgb, var(--accent-strong) 35%, transparent) 0 2px, transparent 2.5px),
+      radial-gradient(circle at 9% 70%, color-mix(in srgb, var(--accent-strong) 30%, transparent) 0 1.5px, transparent 2px),
+      repeating-linear-gradient(0deg, color-mix(in srgb, var(--accent-strong) 9%, transparent) 0 1px, transparent 1px 34px),
+      repeating-linear-gradient(90deg, color-mix(in srgb, var(--accent-strong) 9%, transparent) 0 1px, transparent 1px 34px);
+    /* 왼쪽만 진하고 오른쪽으로 갈수록 투명(텍스트·CTA 보호) */
+    -webkit-mask-image: linear-gradient(90deg, #000 0%, #000 34%, transparent 70%);
+    mask-image: linear-gradient(90deg, #000 0%, #000 34%, transparent 70%);
+    opacity: 0.6;
+  }
+  /* ③스캔 빔 — 부드러운 파랑 띠가 왼쪽 영역을 가로로 천천히 왕복 */
+  .db-hero__viz::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+      90deg,
+      transparent 0%,
+      color-mix(in srgb, var(--accent-strong) 16%, transparent) 46%,
+      color-mix(in srgb, var(--accent-strong) 30%, transparent) 50%,
+      color-mix(in srgb, var(--accent-strong) 16%, transparent) 54%,
+      transparent 100%
+    );
+    background-size: 38% 100%;
+    background-repeat: no-repeat;
+    animation: db-hero-scan 7s ease-in-out infinite alternate;
+  }
+  /* 분석 노드 펄스(은은하게 깜빡) */
+  .db-hero__viz::before {
+    content: "";
+    position: absolute;
+    left: 16%; top: 34%;
+    width: 14px; height: 14px; margin: -7px 0 0 -7px;
+    border-radius: 999px;
+    background: radial-gradient(circle, color-mix(in srgb, var(--accent-strong) 45%, transparent) 0%, transparent 70%);
+    animation: db-hero-pulse 3.2s ease-in-out infinite;
+  }
+  @keyframes db-hero-scan {
+    0%   { background-position: -10% 0; }
+    100% { background-position: 60% 0; }
+  }
+  @keyframes db-hero-pulse {
+    0%, 100% { opacity: 0.35; transform: scale(0.8); }
+    50%      { opacity: 0.9;  transform: scale(1.25); }
+  }
+  /* 모션 최소화 설정이면 애니메이션 정지(접근성) */
+  @media (prefers-reduced-motion: reduce) {
+    .db-hero__viz::after, .db-hero__viz::before { animation: none; }
+  }
+
   /* 작은 대문자 메타 라벨(섹션 분위기 통일) */
   .db-eyebrow {
     display: inline-flex;

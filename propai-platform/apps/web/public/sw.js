@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v127-palatria-real-assets";
+const CACHE_NAME = "propai-v128-hero-map-ai-anim";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",
