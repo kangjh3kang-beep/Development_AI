@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { salesApi } from "@/lib/salesApi";
+import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 
 interface Report { id: string; status: string; due_date?: string }
 interface Transfer { id: string; transfer_type?: string; allowed?: boolean; reason?: string; decided_at?: string }
@@ -16,25 +17,43 @@ export default function ResalePanel({ siteCode }: { siteCode: string }) {
   const [rc, setRc] = useState("");
   const [tf, setTf] = useState({ contract_id: "", to_customer: "", transfer_type: "RESALE" });
   const [contracts, setContracts] = useState<ContractOpt[]>([]);
-  const [msg, setMsg] = useState("");
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  // loaded: 첫 데이터를 한 번 불러왔는지 표시(false면 '불러오는 중' 회색 자리표시를 보여줌).
+  const [loaded, setLoaded] = useState(false);
+  const errText = (e: unknown) => (e instanceof Error && e.message ? e.message : "요청에 실패했습니다.");
 
   const load = useCallback(() => {
-    api.get<Report[]>("/realtx/reports").then(setReports).catch(() => setReports([]));
+    // 실거래신고 목록을 다 불러오면(성공/실패 무관) 자리표시를 걷어낸다.
+    api.get<Report[]>("/realtx/reports").then(setReports).catch(() => setReports([])).finally(() => setLoaded(true));
     api.get<Transfer[]>("/resale/transfers").then(setTransfers).catch(() => setTransfers([]));
     api.get<ContractOpt[]>("/contracts").then((r) => setContracts(r || [])).catch(() => setContracts([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [siteCode]);
   useEffect(() => { load(); }, [load]);
 
-  const report = async () => { if (!rc) return; await api.post("/realtx/report", { contract_id: rc }); setRc(""); setMsg("실거래신고 생성"); load(); };
-  const request = async () => {
-    if (!tf.contract_id) return;
-    const r = await api.post<{ allowed: boolean; reason: string }>("/resale/transfer/request",
-      { contract_id: tf.contract_id, to_customer: tf.to_customer || undefined, transfer_type: tf.transfer_type });
-    setMsg(r.allowed ? "전매 요청 — 허용(제한 없음)" : `전매 차단 — ${r.reason}`); load();
+  const report = async () => {
+    setMsg(null);
+    if (!rc) return;
+    // 실패하면 사용자에게 빨간 안내를 보여준다(무반응 방지).
+    try { await api.post("/realtx/report", { contract_id: rc }); setRc(""); setMsg({ ok: true, text: "실거래신고 생성" }); load(); }
+    catch (e) { setMsg({ ok: false, text: errText(e) }); }
   };
-  const decide = async (id: string, allowed: boolean) => { await api.post(`/resale/transfer/${id}/decide`, { allowed, reason: allowed ? "승인" : "반려" }); load(); };
+  const request = async () => {
+    setMsg(null);
+    if (!tf.contract_id) return;
+    try {
+      const r = await api.post<{ allowed: boolean; reason: string }>("/resale/transfer/request",
+        { contract_id: tf.contract_id, to_customer: tf.to_customer || undefined, transfer_type: tf.transfer_type });
+      setMsg({ ok: r.allowed, text: r.allowed ? "전매 요청 — 허용(제한 없음)" : `전매 차단 — ${r.reason}` }); load();
+    } catch (e) { setMsg({ ok: false, text: errText(e) }); }
+  };
+  const decide = async (id: string, allowed: boolean) => {
+    try { await api.post(`/resale/transfer/${id}/decide`, { allowed, reason: allowed ? "승인" : "반려" }); load(); }
+    catch (e) { setMsg({ ok: false, text: errText(e) }); }
+  };
 
+  // 처음 불러오는 중이면 회색 자리표시(스켈레톤)로 빈 화면 깜빡임을 막는다.
+  if (!loaded) return <SkeletonLoader count={3} itemClassName="h-24 rounded-xl mb-3" />;
   return (
     <div className="space-y-5">
       <div className="grid gap-4 lg:grid-cols-2">
@@ -77,7 +96,11 @@ export default function ResalePanel({ siteCode }: { siteCode: string }) {
           </div>
         </div>
       </div>
-      {msg && <p className="text-sm font-semibold text-[var(--accent-strong)]">{msg}</p>}
+      {msg && (
+        <p className={`rounded-lg px-3 py-2 text-sm font-semibold ${msg.ok ? "bg-emerald-500/10 text-emerald-400" : "bg-rose-500/10 text-rose-400"}`}>
+          {msg.text}
+        </p>
+      )}
       <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-4">
         <h3 className="mb-3 font-bold text-[var(--text-primary)]">전매 요청 심사 ({transfers.length})</h3>
         <table className="w-full text-sm">

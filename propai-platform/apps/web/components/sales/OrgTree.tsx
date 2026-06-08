@@ -7,6 +7,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { salesApi } from "@/lib/salesApi";
+import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 
 interface Node { id: string; path: string; node_type: string; display_name?: string | null }
 
@@ -28,9 +29,12 @@ export default function OrgTree({ siteCode }: { siteCode: string }) {
   const [nodeType, setNodeType] = useState("DIRECTOR");
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
+  // loaded: 조직도를 한 번 불러왔는지 표시(false면 '불러오는 중' 회색 자리표시를 보여줌).
+  const [loaded, setLoaded] = useState(false);
 
   const load = useCallback(() => {
-    api.get<Node[]>("/org/tree").then((r) => setNodes(r || [])).catch(() => setNodes([]));
+    // 조직도를 다 불러오면(성공/실패 무관) 자리표시를 걷어낸다.
+    api.get<Node[]>("/org/tree").then((r) => setNodes(r || [])).catch(() => setNodes([])).finally(() => setLoaded(true));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [siteCode]);
   useEffect(() => { load(); }, [load]);
@@ -53,6 +57,8 @@ export default function OrgTree({ siteCode }: { siteCode: string }) {
     catch { alert("이동 실패(권한/순환 확인)"); }
   };
 
+  // 처음 불러오는 중이면 회색 자리표시(스켈레톤)로 빈 화면 깜빡임을 막는다.
+  if (!loaded) return <SkeletonLoader count={3} itemClassName="h-16 rounded-xl mb-3" />;
   return (
     <div className="space-y-4">
       {/* 노드 추가 */}

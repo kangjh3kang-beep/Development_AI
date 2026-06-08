@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { salesApi, won } from "@/lib/salesApi";
 import { NumberInput } from "@/components/common/NumberInput";
+import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 
 interface Invoice { id: string; direction?: string; supply_amount?: number; vat_amount?: number; status?: string; item?: string }
 const IN = "rounded-lg border border-[var(--line-strong)] bg-[var(--surface-strong)] px-3 py-2 text-sm text-[var(--text-primary)]";
@@ -16,11 +17,14 @@ export default function TaxPanel({ siteCode }: { siteCode: string }) {
   const [period, setPeriod] = useState(new Date().toISOString().slice(0, 7));
   const [wh, setWh] = useState<{ gross: number; withholding: number } | null>(null);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  // loaded: 첫 데이터를 한 번 불러왔는지 표시(false면 '불러오는 중' 회색 자리표시를 보여줌).
+  const [loaded, setLoaded] = useState(false);
   const errText = (e: unknown) => (e instanceof Error && e.message ? e.message : "요청에 실패했습니다.");
 
   const load = useCallback(() => {
     api.get<{ satisfied: boolean; hug: boolean; trust_mgmt_agency: boolean }>("/guarantee/check").then(setG).catch(() => setG(null));
-    api.get<Invoice[]>("/tax/invoices-list").then(setInvoices).catch(() => setInvoices([]));
+    // 세금계산서 목록을 다 불러오면(성공/실패 무관) 자리표시를 걷어낸다.
+    api.get<Invoice[]>("/tax/invoices-list").then(setInvoices).catch(() => setInvoices([])).finally(() => setLoaded(true));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [siteCode]);
   useEffect(() => { load(); }, [load]);
@@ -43,6 +47,8 @@ export default function TaxPanel({ siteCode }: { siteCode: string }) {
     } catch (e) { setMsg({ ok: false, text: errText(e) }); }
   };
 
+  // 처음 불러오는 중이면 회색 자리표시(스켈레톤)로 빈 화면 깜빡임을 막는다.
+  if (!loaded) return <SkeletonLoader count={3} itemClassName="h-24 rounded-xl mb-3" />;
   return (
     <div className="space-y-5">
       {msg && (
