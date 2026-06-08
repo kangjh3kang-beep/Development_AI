@@ -63,7 +63,8 @@
   - 발견2: 자동 CRUD가 /contracts 섀도잉 → 선택기 빈 라벨·계약 상태전환 누락(v114 라우터 우선순위 수정)
   - ✅ E2E: POST→{stage:RESERVED,total_price}, GET→{label:"상가동 101호"}, unit→RESERVED, 정리(삭제204/복원200)
   - 잔여: 청약 당첨(draw)→reserve_promote→계약 자동 승격 훅(현재 수동 [계약 체결] 버튼)
-- [ ] 혁신요소(더치페이·해촉증명·구인구직·무결성가드·AI예측) 완성도 점검
+- [x] 혁신요소(더치페이·해촉증명·구인구직·무결성가드·AI예측) 라이브 스폿체크 — 모두 200 작동,
+      영업일지 실적집계 섀도잉(422) 발견·수정(v115). 무결성 가드는 미가격 세대 12건 실적발 동작 확인.
 
 ## 배포 방식(고정)
 - 백엔드: Oracle SSH(propai-api-8000, `-p 8000:8000`, KAKAO env 보존) git pull+build Dockerfile.oracle.
