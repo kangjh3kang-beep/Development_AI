@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v120-auction-detail-refine";
+const CACHE_NAME = "propai-v121-auction-image-lightbox";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

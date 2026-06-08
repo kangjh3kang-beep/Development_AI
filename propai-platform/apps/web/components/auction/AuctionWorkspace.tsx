@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
@@ -987,7 +987,21 @@ function DetailModal({
   const [imgIdx, setImgIdx] = useState(0);
   const safeImgIdx = Math.min(imgIdx, Math.max(0, galleryImages.length - 1));
   const mainImage = galleryImages[safeImgIdx] ?? null;
+  // 이미지 확대(라이트박스) 열림 여부 — 메인 사진을 누르면 전체화면으로 크게 본다.
+  const [zoomOpen, setZoomOpen] = useState(false);
   const prevBids = Array.isArray(detail?.prev_bids) ? detail!.prev_bids! : [];
+
+  // 라이트박스에서 키보드로 닫기(Esc)·좌우 이동(←/→) 지원.
+  useEffect(() => {
+    if (!zoomOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setZoomOpen(false);
+      else if (e.key === "ArrowRight") setImgIdx((i) => Math.min(i + 1, galleryImages.length - 1));
+      else if (e.key === "ArrowLeft") setImgIdx((i) => Math.max(i - 1, 0));
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [zoomOpen, galleryImages.length]);
 
   // ── 사안별 미제공 사유(데이터 신뢰도) ──
   const isLandOnly = /대지|토지|임야|전|답|잡종지|나대지/.test(
@@ -1139,17 +1153,29 @@ function DetailModal({
           <div className="relative flex aspect-[4/3] max-h-80 w-full items-center justify-center overflow-hidden rounded-2xl border border-[var(--line)] bg-black/40">
             {mainImage ? (
               <>
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                {/* max-h/max-w로 '원본 크기까지만' 표시 — h-full w-full로 강제 채우면 지적도 같은
-                    저해상도 원본이 과하게 확대돼 뭉개진다(깨짐의 근본원인). 작은 이미지는 또렷하게
-                    가운데 정렬되고, 큰 이미지만 컨테이너에 맞춰 줄어든다(레터박스). */}
-                <img
-                  src={mainImage}
-                  alt={`물건 사진 ${safeImgIdx + 1}`}
-                  className="max-h-full max-w-full object-contain"
-                />
+                {/* 메인 사진을 누르면 전체화면 확대(라이트박스)로 크게 본다. */}
+                <button
+                  type="button"
+                  onClick={() => setZoomOpen(true)}
+                  className="group flex h-full w-full cursor-zoom-in items-center justify-center"
+                  aria-label="사진 확대해서 보기"
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  {/* max-h/max-w로 '원본 크기까지만' 표시 — h-full w-full로 강제 채우면 지적도 같은
+                      저해상도 원본이 과하게 확대돼 뭉개진다(깨짐의 근본원인). 작은 이미지는 또렷하게
+                      가운데 정렬되고, 큰 이미지만 컨테이너에 맞춰 줄어든다(레터박스). */}
+                  <img
+                    src={mainImage}
+                    alt={`물건 사진 ${safeImgIdx + 1}`}
+                    className="max-h-full max-w-full object-contain transition-transform duration-200 group-hover:scale-[1.02]"
+                  />
+                </button>
+                {/* 확대 안내 아이콘(우상단) */}
+                <span className="pointer-events-none absolute right-2 top-2 rounded-md bg-black/55 px-2 py-0.5 text-[10px] font-bold text-white">
+                  🔍 클릭하면 확대
+                </span>
                 {galleryImages.length > 1 ? (
-                  <span className="absolute bottom-1.5 right-2 rounded bg-black/55 px-2 py-0.5 text-[10px] font-bold text-white">
+                  <span className="pointer-events-none absolute bottom-1.5 right-2 rounded bg-black/55 px-2 py-0.5 text-[10px] font-bold text-white">
                     {safeImgIdx + 1} / {galleryImages.length}
                   </span>
                 ) : null}
@@ -1194,6 +1220,65 @@ function DetailModal({
             </div>
           ) : null}
         </div>
+
+        {/* ── 이미지 확대 라이트박스 ── 메인 사진 클릭 시 전체화면으로 크게 본다.
+            배경/✕ 클릭·Esc로 닫고, 사진이 여러 장이면 ‹ › 또는 ←/→ 로 넘긴다. */}
+        {zoomOpen && mainImage ? (
+          <div
+            className="fixed inset-0 z-[70] flex items-center justify-center bg-black/90 p-4"
+            role="dialog"
+            aria-modal="true"
+            aria-label="물건 사진 확대 보기"
+            onClick={() => setZoomOpen(false)}
+          >
+            {/* 닫기 */}
+            <button
+              type="button"
+              onClick={() => setZoomOpen(false)}
+              className="absolute right-4 top-4 flex h-10 w-10 items-center justify-center rounded-full bg-white/10 text-xl font-bold text-white transition hover:bg-white/20"
+              aria-label="닫기"
+            >
+              ✕
+            </button>
+            {/* 이전 사진 */}
+            {galleryImages.length > 1 ? (
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); setImgIdx((i) => Math.max(i - 1, 0)); }}
+                disabled={safeImgIdx === 0}
+                className="absolute left-3 flex h-12 w-12 items-center justify-center rounded-full bg-white/10 text-2xl text-white transition hover:bg-white/20 disabled:opacity-30"
+                aria-label="이전 사진"
+              >
+                ‹
+              </button>
+            ) : null}
+            {/* 확대 이미지 — 화면을 넘지 않게 contain. 클릭이 배경으로 전파돼 닫히지 않도록 stopPropagation. */}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={mainImage}
+              alt={`물건 사진 확대 ${safeImgIdx + 1}`}
+              onClick={(e) => e.stopPropagation()}
+              className="max-h-[90vh] max-w-[92vw] object-contain"
+            />
+            {/* 다음 사진 */}
+            {galleryImages.length > 1 ? (
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); setImgIdx((i) => Math.min(i + 1, galleryImages.length - 1)); }}
+                disabled={safeImgIdx >= galleryImages.length - 1}
+                className="absolute right-3 flex h-12 w-12 items-center justify-center rounded-full bg-white/10 text-2xl text-white transition hover:bg-white/20 disabled:opacity-30"
+                aria-label="다음 사진"
+              >
+                ›
+              </button>
+            ) : null}
+            {/* 매수(번호) 표시 */}
+            <span className="absolute bottom-5 left-1/2 -translate-x-1/2 rounded-full bg-white/10 px-3 py-1 text-xs font-bold text-white">
+              {safeImgIdx + 1} / {galleryImages.length}
+            </span>
+          </div>
+        ) : null}
+
         {detail?.video_url ? (
           <a
             href={detail.video_url}
