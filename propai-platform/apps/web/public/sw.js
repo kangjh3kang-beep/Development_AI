@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v121-auction-image-lightbox";
+const CACHE_NAME = "propai-v122-dashboard-apple-grade";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

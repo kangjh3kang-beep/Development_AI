@@ -1039,6 +1039,209 @@ textarea {
     gap: 0.5rem;
     margin-bottom: 0.625rem;
   }
+
+  /* ═══════════════════════════════════════════════════════════════
+     대시보드 프리미엄 유틸(db-*) — 로그인 후 첫 화면 전용
+     ───────────────────────────────────────────────────────────────
+     설계 원칙(애플급 절제):
+     ① 장식(그라데이션·컬러 글로우·이모지)을 걷어내고 중립 표면 + 헤어라인으로만 구분.
+     ② accent(강조)는 핵심 행동 1곳(프로젝트 생성)에만.
+     ③ 8px 그리드 리듬 · 명확한 타입 위계 · 150~250ms 미세 모션.
+     색상은 100% 디자인 토큰. HEX/rgb 하드코딩 없음.
+     ─────────────────────────────────────────────────────────────── */
+
+  /* 히어로: 평평한 표면 1단, 넉넉한 여백, 헤어라인 테두리(그림자 최소) */
+  .db-hero {
+    position: relative;
+    overflow: hidden;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--line);
+    background: var(--surface-soft);
+  }
+
+  /* 작은 대문자 메타 라벨(섹션 분위기 통일) */
+  .db-eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-family: var(--font-mono), ui-monospace, monospace;
+    font-size: 0.6875rem;       /* 11px */
+    font-weight: 600;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--text-tertiary);
+  }
+  .db-eyebrow > i {
+    width: 0.4rem;
+    height: 0.4rem;
+    border-radius: 9999px;
+    background: var(--accent-strong);
+    flex: none;
+  }
+
+  /* 섹션 제목 + 부제(좌측 에지 정렬, 일관 간격) */
+  .db-section-head { margin-bottom: 1.5rem; }   /* 24px */
+  .db-section-title {
+    font-size: 1.5rem;          /* 24px */
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    line-height: 1.2;
+    color: var(--text-primary);
+  }
+  .db-section-sub {
+    margin-top: 0.5rem;
+    max-width: 42rem;
+    font-size: 0.9375rem;       /* 15px */
+    line-height: 1.6;
+    color: var(--text-secondary);
+  }
+
+  /* 기능 요약 행: 카드가 아니라 헤어라인으로 칸을 나눈 한 줄(절제) */
+  .db-feature-row {
+    display: grid;
+    grid-template-columns: 1fr;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    background: var(--surface-soft);
+    overflow: hidden;
+  }
+  @media (min-width: 640px) {
+    .db-feature-row { grid-template-columns: repeat(2, 1fr); }
+  }
+  @media (min-width: 1024px) {
+    .db-feature-row { grid-template-columns: repeat(5, 1fr); }
+  }
+  .db-feature-cell {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 1.25rem 1.5rem;     /* 20px / 24px */
+    border-top: 1px solid var(--line-subtle);
+    transition: background-color 200ms var(--ease-out-expo);
+  }
+  .db-feature-cell:first-child { border-top: 0; }
+  @media (min-width: 640px) {
+    /* 가로 배치에선 좌측 헤어라인으로 칸 구분 */
+    .db-feature-cell { border-top: 0; border-left: 1px solid var(--line-subtle); }
+    .db-feature-cell:nth-child(1),
+    .db-feature-cell:nth-child(2) { border-left: 0; }
+    .db-feature-cell:nth-child(3) { border-top: 1px solid var(--line-subtle); }
+    .db-feature-cell:nth-child(4) { border-top: 1px solid var(--line-subtle); border-left: 1px solid var(--line-subtle); }
+    .db-feature-cell:nth-child(5) { border-top: 1px solid var(--line-subtle); }
+  }
+  @media (min-width: 1024px) {
+    .db-feature-cell { border-top: 0; border-left: 1px solid var(--line-subtle); }
+    .db-feature-cell:first-child { border-left: 0; }
+  }
+  .db-feature-cell:hover { background: var(--surface); }
+  .db-feature-icon { color: var(--text-tertiary); flex: none; }
+  .db-feature-title {
+    font-size: 0.9375rem;        /* 15px */
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--text-primary);
+    line-height: 1.3;
+  }
+  .db-feature-desc {
+    margin-top: 0.125rem;
+    font-size: 0.8125rem;        /* 13px */
+    color: var(--text-tertiary);
+    line-height: 1.4;
+  }
+
+  /* 벤토/기능 카드: 평평한 표면 + 헤어라인. hover 시 테두리·미세 상승만 */
+  .db-card {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    background: var(--surface-soft);
+    padding: 1.75rem;            /* 28px */
+    transition:
+      border-color 200ms var(--ease-out-expo),
+      transform 200ms var(--ease-out-expo);
+  }
+  .db-card:hover {
+    border-color: var(--line-strong);
+    transform: translateY(-2px);
+  }
+  .db-card__icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.5rem;
+    height: 2.5rem;
+    border-radius: 0.75rem;
+    border: 1px solid var(--line);
+    background: var(--surface);
+    color: var(--text-secondary);
+    flex: none;
+  }
+  .db-card__title {
+    font-weight: 600;
+    letter-spacing: -0.015em;
+    color: var(--text-primary);
+    line-height: 1.25;
+  }
+  .db-card__desc {
+    font-size: 0.875rem;         /* 14px */
+    line-height: 1.6;
+    color: var(--text-secondary);
+  }
+
+  /* KPI 타일: 계기판 군더더기를 줄인 차분한 헤어라인 타일 */
+  .db-kpi {
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    background: var(--surface-soft);
+    padding: 1.5rem;             /* 24px */
+    transition: border-color 200ms var(--ease-out-expo);
+  }
+  .db-kpi:hover { border-color: var(--line-strong); }
+  .db-kpi__value {
+    font-family: var(--font-mono), ui-monospace, monospace;
+    font-variant-numeric: tabular-nums;
+    font-size: 2.5rem;           /* 40px */
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    line-height: 1;
+    color: var(--text-primary);
+  }
+  .db-kpi__unit {
+    font-family: var(--font-mono), ui-monospace, monospace;
+    font-size: 1rem;
+    font-weight: 500;
+    color: var(--text-tertiary);
+  }
+  .db-kpi__sub {
+    font-size: 0.75rem;          /* 12px */
+    color: var(--text-tertiary);
+    line-height: 1.4;
+  }
+
+  /* 빈 KPI 정직 표기: 0.0 나열 대신 줄표(—)로 '데이터 준비 중'을 우아하게 */
+  .db-kpi__placeholder {
+    font-family: var(--font-mono), ui-monospace, monospace;
+    font-size: 2.5rem;
+    font-weight: 500;
+    line-height: 1;
+    color: var(--text-hint);
+  }
+
+  /* 프로모 배너: 중립 표면 한 줄, 강조는 텍스트 링크 1곳 */
+  .db-promo {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    background: var(--surface-soft);
+    padding: 1rem 1.5rem;
+    transition: border-color 200ms var(--ease-out-expo);
+  }
+  .db-promo:hover { border-color: var(--line-strong); }
 }
 
 /* Leaflet 지도 z-index 격리 — 지도 panes/controls(z 400~1000)가 sticky 헤더(z-50)·

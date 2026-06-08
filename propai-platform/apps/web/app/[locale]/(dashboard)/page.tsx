@@ -51,50 +51,46 @@ export default async function DashboardPage({ params }: DashboardPageProps) {
   const dictionary = await getDictionary(locale as Locale);
 
   return (
-    <div className="flex flex-col gap-3 pb-12">
+    <div className="flex flex-col gap-12 pb-16">
       {/* ── 시작 안내 위자드 (최초 방문 시에만 표시) ── */}
       <OnboardingWizard />
 
-      {/* ── 프리미엄 히어로 섹션: AI 커맨드 센터 ── */}
-      <section className="relative min-h-[200px] sm:min-h-[260px] lg:min-h-[320px] overflow-hidden rounded-2xl sm:rounded-[2rem] lg:rounded-[3rem] border border-[var(--line-strong)] bg-[var(--surface-soft)] p-5 sm:p-8 lg:p-12 shadow-[var(--shadow-2xl)] transition-all group backdrop-blur-2xl">
-        {/* 애니메이션 배경 요소 (Cyber Glows) */}
-        <div className="absolute -right-20 -top-20 h-[500px] w-[500px] rounded-full bg-[var(--accent-strong)]/10 blur-[120px] transition-all duration-[3000ms] group-hover:scale-150 group-hover:bg-[var(--accent-strong)]/20" />
-        <div className="absolute -bottom-40 left-1/4 h-[400px] w-[400px] rounded-full bg-[var(--data-accent)]/10 blur-[100px] animate-float opacity-60" />
-        {/* 그리드 배경 패턴 (사이버틱한 공간감) */}
+      {/* ── 히어로 섹션: 절제된 커맨드 센터(장식 제거·여백이 디자인) ── */}
+      <section className="db-hero p-8 sm:p-12 lg:p-16">
+        {/* 미묘한 깊이감을 위한 정밀 그리드만 유지(컬러 글로우는 제거) */}
         <HeroGridBackground />
 
-        <div className="relative z-10 flex flex-col justify-between h-full gap-12 lg:flex-row lg:items-end">
-          <div className="max-w-4xl space-y-10">
-            <div className="flex items-center gap-3">
-              <span className="inline-flex items-center gap-2 rounded-full border border-[var(--accent-strong)]/30 bg-[var(--accent-soft)] px-5 py-2 text-[11px] font-bold uppercase tracking-[0.2em] text-[var(--accent-strong)] backdrop-blur-md">
-                <span className="h-2 w-2 rounded-full bg-[var(--accent-strong)] animate-pulse" />
-                {dictionary.dashboard.title}
-              </span>
-            </div>
+        <div className="relative z-10 flex flex-col justify-between gap-12 lg:flex-row lg:items-end">
+          <div className="max-w-3xl space-y-8">
+            <span className="db-eyebrow">
+              <i />
+              {dictionary.dashboard.title}
+            </span>
 
-            <h1 className="text-3xl font-[900] font-display tracking-tighter text-[var(--text-primary)] sm:text-5xl md:text-6xl lg:text-7xl leading-[0.9]">
-               <span className="sr-only">{dictionary.meta.siteName}</span>
-               <div className="flex justify-start items-center">
-                 <Logo size="xl" />
-               </div>
+            <h1 className="tracking-tighter text-[var(--text-primary)]">
+              <span className="sr-only">{dictionary.meta.siteName}</span>
+              <span className="flex items-center justify-start">
+                <Logo size="xl" />
+              </span>
             </h1>
 
-            <p className="max-w-xl text-base font-medium leading-relaxed text-[var(--text-secondary)] sm:text-lg lg:text-xl tracking-tight">
-              &quot;{(dictionary.dashboard as any).welcome}&quot;
+            <p className="max-w-xl text-lg leading-relaxed text-[var(--text-secondary)] sm:text-xl">
+              {(dictionary.dashboard as any).welcome}
             </p>
           </div>
 
-          <div className="flex flex-col gap-4 sm:flex-row lg:mb-4 shrink-0">
+          <div className="flex shrink-0 flex-col gap-3 sm:flex-row">
+            {/* 강조(accent)는 핵심 행동 단 1곳에만 — 프로젝트 생성 */}
             <Link
               href={`/${locale}/projects/new`}
-              className="group/btn flex h-16 items-center justify-center gap-5 rounded-[2rem] bg-gradient-to-br from-[var(--accent-strong)] to-[var(--accent)] px-10 text-lg font-bold text-white shadow-[var(--shadow-glow)] transition-all hover:scale-[1.05] active:scale-[0.95] shrink-0 whitespace-nowrap"
+              className="group/btn flex h-14 items-center justify-center gap-3 rounded-2xl bg-[var(--accent-strong)] px-8 text-base font-semibold text-white transition-all duration-200 hover:opacity-90 active:scale-[0.98]"
             >
               <span>프로젝트 생성</span>
-              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="transition-transform group-hover/btn:translate-x-1"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="transition-transform duration-200 group-hover/btn:translate-x-0.5"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
             </Link>
             <Link
               href={`/${locale}/guide`}
-              className="flex h-16 items-center justify-center gap-4 rounded-[2rem] border border-[var(--line-strong)] bg-[var(--surface-soft)] px-8 text-base font-bold text-[var(--text-primary)] backdrop-blur-xl transition-all hover:bg-[var(--surface-strong)] shrink-0 whitespace-nowrap"
+              className="flex h-14 items-center justify-center rounded-2xl border border-[var(--line)] bg-[var(--surface)] px-8 text-base font-semibold text-[var(--text-primary)] transition-colors duration-200 hover:border-[var(--line-strong)]"
             >
               이용 가이드
             </Link>
@@ -102,43 +98,41 @@ export default async function DashboardPage({ params }: DashboardPageProps) {
         </div>
       </section>
 
-      {/* ── 기능 요약 배너 (유기적 플로팅 카드) ── */}
-      <section className="w-full mb-3 mt-1 relative z-10">
-        <div className="flex flex-wrap justify-center gap-4 lg:gap-6">
+      {/* ── 기능 요약: 떠다니는 카드 대신 헤어라인으로 칸을 나눈 한 줄(절제) ── */}
+      <section className="relative z-10">
+        <div className="db-feature-row">
           {[
             {
               title: "전국 데이터 연결",
               desc: "공간정보 통합",
-              icon: <svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--accent-strong)] opacity-90"><circle cx="12" cy="5" r="3"/><circle cx="5" cy="19" r="3"/><circle cx="19" cy="19" r="3"/><path d="m7.5 16.5 4.5-9"/><path d="m16.5 16.5-4.5-9"/><path d="M5 19h14"/></svg>
+              icon: <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="db-feature-icon"><circle cx="12" cy="5" r="3"/><circle cx="5" cy="19" r="3"/><circle cx="19" cy="19" r="3"/><path d="m7.5 16.5 4.5-9"/><path d="m16.5 16.5-4.5-9"/><path d="M5 19h14"/></svg>
             },
             {
-              title: "AI 분석/예측",
+              title: "AI 분석·예측",
               desc: "최적 개발안 도출",
-              icon: <svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--accent-strong)] opacity-90"><rect width="16" height="16" x="4" y="4" rx="2"/><rect width="6" height="6" x="9" y="9" rx="1"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="M6 2v2"/><path d="M6 20v2"/><path d="M18 2v2"/><path d="M18 20v2"/><path d="M2 6h2"/><path d="M2 18h2"/><path d="M20 6h2"/><path d="M20 18h2"/></svg>
+              icon: <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="db-feature-icon"><rect width="16" height="16" x="4" y="4" rx="2"/><rect width="6" height="6" x="9" y="9" rx="1"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="M6 2v2"/><path d="M6 20v2"/><path d="M18 2v2"/><path d="M18 20v2"/><path d="M2 6h2"/><path d="M2 18h2"/><path d="M20 6h2"/><path d="M20 18h2"/></svg>
             },
             {
               title: "개발계획 자동수립",
-              desc: "시간과 비용 절감",
-              icon: <svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--accent-strong)] opacity-90"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="m9 15 2 2 4-4"/></svg>
+              desc: "시간·비용 절감",
+              icon: <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="db-feature-icon"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="m9 15 2 2 4-4"/></svg>
             },
             {
               title: "수익성 분석",
               desc: "사업성 극대화",
-              icon: <svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--accent-strong)] opacity-90"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/><path d="M12 14v4"/><path d="M16 10v8"/></svg>
+              icon: <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="db-feature-icon"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/><path d="M12 14v4"/><path d="M16 10v8"/></svg>
             },
             {
               title: "미래가치 창출",
               desc: "지속가능한 개발",
-              icon: <svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--accent-strong)] opacity-90"><circle cx="12" cy="12" r="10"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/><path d="M2 12h20"/></svg>
+              icon: <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="db-feature-icon"><circle cx="12" cy="12" r="10"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/><path d="M2 12h20"/></svg>
             }
           ].map((item, idx) => (
-            <div key={idx} className="flex items-center gap-3 px-4 py-3 lg:px-6 lg:py-4 rounded-2xl bg-[var(--surface-soft)] border border-[var(--line-strong)] shadow-sm hover:shadow-[var(--shadow-glow)] hover:border-[var(--accent)] hover:-translate-y-1 transition-all duration-300 group flex-1 min-w-[200px] w-full sm:w-auto backdrop-blur-md">
-              <div className="flex items-center justify-center shrink-0 h-10 w-10 lg:h-12 lg:w-12 rounded-xl bg-gradient-to-br from-[var(--surface-muted)] to-[var(--surface)] border border-[var(--line)] group-hover:border-[var(--accent-strong)]/50 group-hover:scale-110 group-hover:bg-[var(--accent-soft)] transition-all duration-300">
-                {item.icon}
-              </div>
-              <div className="flex flex-col gap-1 min-w-0">
-                <p className="text-[14px] lg:text-[15px] font-[800] text-[var(--text-primary)] leading-tight tracking-tight group-hover:text-[var(--accent-strong)] transition-colors truncate">{item.title}</p>
-                <p className="text-[12px] lg:text-[13px] font-medium text-[var(--text-secondary)] tracking-tight truncate">{item.desc}</p>
+            <div key={idx} className="db-feature-cell">
+              {item.icon}
+              <div className="min-w-0">
+                <p className="db-feature-title truncate">{item.title}</p>
+                <p className="db-feature-desc truncate">{item.desc}</p>
               </div>
             </div>
           ))}
@@ -158,16 +152,16 @@ export default async function DashboardPage({ params }: DashboardPageProps) {
       <DashboardKpiLoader />
 
       {/* ── 대시보드 콘텐츠 레이아웃 ── */}
-      <div className="grid gap-4 lg:grid-cols-[1fr_420px]">
-        
+      <div className="grid gap-8 lg:grid-cols-[1fr_400px]">
+
         {/* 메인 콘텐츠: 진행 단계 모니터링 */}
         <div className="space-y-6">
-           <div className="flex items-center justify-between px-1">
+           <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
-                 <h2 className="text-2xl font-bold tracking-tight text-[var(--text-primary)]">활성 진행 단계</h2>
+                 <h2 className="db-section-title">활성 진행 단계</h2>
                  <span className="cc-live"><i />LIVE</span>
               </div>
-              <Link href={`/${locale}/projects`} className="cc-label text-[var(--accent-strong)] hover:underline underline-offset-8">전체 보기</Link>
+              <Link href={`/${locale}/projects`} className="db-eyebrow text-[var(--accent-strong)] hover:opacity-80 transition-opacity">전체 보기</Link>
            </div>
 
            <DashboardProjectLoader locale={locale} />
@@ -226,7 +220,7 @@ export default async function DashboardPage({ params }: DashboardPageProps) {
                     <p className="relative z-10 text-[11px] font-medium text-[var(--text-tertiary)] leading-relaxed">
                        실시간 법령·조례 변경 모니터링을 연결하면<br/>여기에 최신 개정 동향이 표시됩니다.
                     </p>
-                    <Link href={`/${locale}/regulations`} className="relative z-10 mt-1 cc-label text-[var(--accent-strong)] hover:underline underline-offset-4">규제 분석 열기 →</Link>
+                    <Link href={`/${locale}/regulations`} className="relative z-10 mt-1 db-eyebrow text-[var(--accent-strong)] hover:opacity-80 transition-opacity">규제 분석 열기 →</Link>
                  </div>
               </div>
 
@@ -235,18 +229,15 @@ export default async function DashboardPage({ params }: DashboardPageProps) {
            </div>
 
            {/* 사용자 시작 안내 카드 */}
-           <div className="cc-panel cc-interactive group p-7 space-y-5">
-              <div className="cc-grid-bg opacity-40" />
-              <div className="relative z-10 space-y-5">
-                 <span className="cc-meta">GUIDE · ONBOARDING</span>
-                 <h4 className="text-lg font-bold text-[var(--text-primary)] leading-tight tracking-tight">전문 가이드가<br/>필요하신가요?</h4>
-                 <p className="text-sm font-medium text-[var(--text-secondary)] leading-relaxed">
-                    사통팔땅의 168종 데이터 맵과<br/>AI 엔진을 활용하는 방법을 확인하세요.
-                 </p>
-                 <Link href={`/${locale}/guide`} className="inline-flex h-12 items-center justify-center rounded-2xl bg-[var(--accent-strong)] px-8 text-[12px] font-bold text-white tracking-wider transition-all hover:scale-105 active:scale-95">
-                    시작 안내 시작하기
-                 </Link>
-              </div>
+           <div className="db-card gap-5 p-7">
+              <span className="db-eyebrow">GUIDE · ONBOARDING</span>
+              <h4 className="db-card__title text-lg">전문 가이드가<br/>필요하신가요?</h4>
+              <p className="db-card__desc">
+                 사통팔땅의 168종 데이터 맵과<br/>AI 엔진을 활용하는 방법을 확인하세요.
+              </p>
+              <Link href={`/${locale}/guide`} className="inline-flex h-12 w-fit items-center justify-center rounded-2xl border border-[var(--line)] bg-[var(--surface)] px-7 text-[13px] font-semibold text-[var(--text-primary)] transition-colors duration-200 hover:border-[var(--line-strong)]">
+                 시작 안내 보기
+              </Link>
            </div>
         </div>
 

@@ -22,46 +22,43 @@ interface KpiItem {
 
 export function KpiGrid({ items }: { items: KpiItem[] }) {
   return (
-    <div className="grid gap-6 md:grid-cols-3">
-      {items.map((item, i) => (
-        <TiltCard
-          key={i}
-          className={`cc-bracketed cc-interactive group rounded-[var(--radius-md)] border ${item.border} ${item.bg} p-7 shadow-[var(--shadow-md)] overflow-hidden`}
-          maxTilt={4}
-        >
-          {/* HUD 정밀 그리드 배경 + 코너 브래킷(계기판 디테일) */}
-          <div className="cc-grid-bg opacity-50" />
-          <i className="cc-bracket cc-bracket--tl" />
-          <i className="cc-bracket cc-bracket--tr" />
-          <i className="cc-bracket cc-bracket--bl" />
-          <i className="cc-bracket cc-bracket--br" />
+    <div className="grid gap-4 md:grid-cols-3">
+      {items.map((item, i) => {
+        // 값이 0이면(아직 데이터 없음) 0.0 나열 대신 줄표(—)로 정직하게 표기
+        const isEmpty = item.value === 0;
+        return (
+          <div key={i} className="db-kpi">
+            <div className="flex items-center justify-between">
+              <span className="db-eyebrow">{item.label}</span>
+              {item.trend ? (
+                <span className="db-kpi__unit text-[11px] font-semibold text-[var(--text-tertiary)]">
+                  {item.trend}
+                </span>
+              ) : null}
+            </div>
 
-          <div className="relative z-10 flex items-center justify-between">
-            <span className="cc-label">{item.label}</span>
-            {item.trend ? (
-              <span className={`cc-num text-[11px] font-bold ${item.color} px-2.5 py-1 rounded-md bg-white/10 dark:bg-black/20`}>
-                {item.trend}
-              </span>
-            ) : null}
+            <div className="mt-5 flex items-baseline gap-1.5">
+              {isEmpty ? (
+                <span className="db-kpi__placeholder">—</span>
+              ) : (
+                <>
+                  <AnimatedCounter
+                    value={item.value}
+                    decimals={item.decimals}
+                    duration={1400}
+                    className="db-kpi__value"
+                  />
+                  <span className="db-kpi__unit">{item.unit}</span>
+                </>
+              )}
+            </div>
+
+            <p className="mt-3 db-kpi__sub">
+              {isEmpty ? "프로젝트 생성 시 표시됩니다" : item.sub}
+            </p>
           </div>
-
-          <div className="mt-6 flex items-baseline gap-2">
-            <AnimatedCounter
-              value={item.value}
-              decimals={item.decimals}
-              duration={1400}
-              className="cc-num text-5xl font-[900]"
-            />
-            <span className="cc-num text-lg font-semibold text-[var(--text-tertiary)]">
-              {item.unit}
-            </span>
-          </div>
-
-          <p className="mt-4 cc-label text-[10px] text-[var(--text-hint)]">
-            {item.sub}
-          </p>
-        </TiltCard>
-      ))}
+        );
+      })}
     </div>
   );
 }
