@@ -25,6 +25,17 @@
 | v112 | 로딩 스켈레톤 마무리 — 세금·전매·조직도 패널 + 전매 액션 에러 피드백 | edge OK |
 | v113 | 계약 체결(최초 생성) 연결 — 세대→계약→수납/대출/전매 전주기 단절 복구(create_contract+POST /contracts+Unit360 버튼) | 백엔드 라이브(/api/v1/sales/contracts) |
 | v114(BE) | 자동 CRUD가 /contracts 라우트를 섀도잉 → 액션 라우터 우선 등록. v108/v109 선택기 빈 라벨·v113 계약 상태전환 누락 동시 해소 | ✅ E2E 검증 |
+| v115(BE) | 도메인 라우터 전체를 CRUD보다 먼저 등록 — /work-logs/summary(422)·POST /work-logs(이력연계)·/units/board(422) 섀도잉 일괄 해소+회귀 점검 | 빌드 중 |
+
+## 혁신요소 라이브 스폿체크(슬라이스4)
+| 기능 | 엔드포인트 | 결과 |
+|------|-----------|------|
+| 🛡 무결성 가드 | GET /integrity/check | ✅ 200 — 미가격 세대 12건 실시간 적발(작동) |
+| 해촉증명 | GET /cert/issuers | ✅ 200 |
+| 더치페이(수수료협약) | GET /commission/agreements | ✅ 200 |
+| AI 고객예측 | GET /crm/grade-suggestions | ✅ 200 |
+| 영업일지 실적집계 | GET /work-logs/summary | ❌→✅ 422(CRUD 섀도잉)→v115 수정 |
+| 구인구직/추천 | GET /referral/stats | 422(code 파라미터 필수=정상 설계) |
 
 ### 라이브 검증 중 발견(중요)
 - POST /contracts E2E: 계약 행은 생성됐으나 응답이 **원시 ORM**(내 dict 아님)+세대 상태 AVAILABLE 유지 → 자동 CRUD가
