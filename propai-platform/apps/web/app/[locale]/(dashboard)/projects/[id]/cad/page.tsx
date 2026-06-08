@@ -2,7 +2,7 @@
 
 import { useParams } from "next/navigation";
 import { motion } from "framer-motion";
-import { CadEditor } from "@/components/cad/CadEditor";
+import { CadBimIntegrationPanel } from "@/components/design/CadBimIntegrationPanel";
 import { isValidLocale } from "@/i18n/config";
 
 export default function CadPage() {
@@ -63,7 +63,9 @@ export default function CadPage() {
               </div>
             </div>
         </div>
-        <CadEditor projectId={id} />
+        {/* 진짜 동작하는 v62 CAD/BIM 통합 스튜디오 마운트(2D 도면+3D BIM+편집 저장).
+            dictionary는 패널 내부에서 `||` 폴백을 가지므로 빈 객체로 안전 주입. */}
+        <CadBimIntegrationPanel projectId={id} dictionary={{}} />
       </motion.div>
     </div>
   );

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { apiClient } from "@/lib/api-client";
 import { useCadStore } from "@/store/use-cad-store";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { useStageAutoRecalc } from "@/hooks/useStageAutoRecalc";
@@ -98,7 +99,6 @@ export function AutoDesignPanel({ projectId }: AutoDesignPanelProps) {
     setLoading(true);
     setError(null);
     try {
-      const { generateAutoDesign } = await import("@/lib/parametric-design-engine");
       const body: AutoDesignRequest = {
         site_area_sqm: siteArea,
         zone_code: zoneCode,
@@ -107,8 +107,15 @@ export function AutoDesignPanel({ projectId }: AutoDesignPanelProps) {
         floor_height_m: floorHeight,
         setback_m: setback,
       };
-      // 로컬 엔진으로 즉시 생성 (백엔드 불필요)
-      const data = generateAutoDesign(body);
+      // 백엔드 실엔진(법규한도·일조·주차 정밀) 우선 호출. 응답 계약은 TS 타입과 일치 검증됨.
+      // 실패(오프라인·키없음 등) 시에만 브라우저 엔진으로 폴백해 항상 결과를 보장.
+      let data: AutoDesignResponse;
+      try {
+        data = await apiClient.post<AutoDesignResponse>("/drawing/auto-design", { body });
+      } catch {
+        const { generateAutoDesign } = await import("@/lib/parametric-design-engine");
+        data = generateAutoDesign(body);
+      }
       setResult(data);
       // 자동으로 캔버스에 적용
       loadDesignPayload(data.design_payload);
@@ -129,7 +136,7 @@ export function AutoDesignPanel({ projectId }: AutoDesignPanelProps) {
   }, [siteArea, zoneCode, buildingUse, unitTypes, floorHeight, setback, loadDesignPayload, updateDesignData, markStageComplete]);
 
   // 모세혈관: 부지(업스트림)가 갱신되면 이미 생성된 설계를 1회 자동 재생성.
-  // 로컬 엔진 호출이지만 1회/stale·결과있을때만·로딩중 제외로 과도호출을 막고
+  // 백엔드 호출(폴백 로컬)이며 1회/stale·결과있을때만·로딩중 제외로 과도호출을 막고
   // 사용자 입력값(면적·용도·세대유형 등)은 현재 state를 사용해 보존한다.
   useStageAutoRecalc("design", handleGenerate, {
     enabled: !loading,

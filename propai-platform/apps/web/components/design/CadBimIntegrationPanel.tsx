@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Canvas } from "@react-three/fiber";
+import { Canvas, useThree } from "@react-three/fiber";
 import { OrbitControls, Grid } from "@react-three/drei";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import * as THREE from "three";
@@ -83,13 +83,40 @@ function BuildingModel({ scene }: { scene: THREE.Group | null }) {
   );
 }
 
+/**
+ * frameloop="demand"(정지화면에서 렌더 멈춤)일 때, 자동회전이 켜져 있는 동안에는
+ * 매 프레임 다시 그리도록 invalidate를 호출해 주는 작은 다리 컴포넌트.
+ * 자동회전이 꺼지면 호출하지 않아 메인스레드 점유 없이 화면이 멈춘다.
+ */
+function AutoRotateTicker({ active }: { active: boolean }) {
+  const invalidate = useThree((s) => s.invalidate);
+  useEffect(() => {
+    if (!active) return;
+    let raf = 0;
+    const loop = () => {
+      invalidate(); // 다음 프레임 렌더 요청
+      raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, [active, invalidate]);
+  return null;
+}
+
 export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: string; dictionary: Record<string, string> }) {
-  const [viewMode, setViewMode] = useState<"cad_2d" | "bim_3d">("bim_3d");
+  // 기본 진입 화면은 2D 도면. 3D는 사용자가 명시적으로 전환할 때만 캔버스를 마운트(과거 진입멈춤 방지).
+  const [viewMode, setViewMode] = useState<"cad_2d" | "bim_3d">("cad_2d");
+  // 3D 자동회전은 기본 꺼짐(무한회전이 과거 메인스레드 점유→멈춤의 직접원인). 버튼으로만 켠다.
+  const [autoRotate, setAutoRotate] = useState(false);
   const t = dictionary;
 
   // 선택한 건축개요(모세혈관 스토어) — CAD/BIM 기하의 단일 출처
   const designData = useProjectContextStore((s) => s.designData);
   const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
+
+  // 설계(건축개요)가 있는지 — 3D 캔버스는 "설계 생성 후"에만 마운트하는 게이트.
+  // 선택한 개요(GFA) 또는 부지분석(대지면적·용도지역) 중 하나라도 있으면 매스 산출이 가능하다.
+  const hasDesignBasis = !!(designData?.totalGfaSqm || siteAnalysis?.landAreaSqm || siteAnalysis?.zoneCode);
 
   // 공용 건축 기하(spec) — /mass로 1회 산출 후 2D·3D가 공유
   const [spec, setSpec] = useState<DesignSpec | null>(null);
@@ -171,10 +198,10 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
     }
   }, [projectId, designData, siteAnalysis]);
 
-  // 마운트 시 1회 기하 산출
+  // 마운트 시 1회 기하 산출 — 단, 설계 기반(개요·부지)이 있을 때만(무목업·게이트)
   useEffect(() => {
-    if (!spec && !specLoading) resolveSpec();
-  }, [spec, specLoading, resolveSpec]);
+    if (hasDesignBasis && !spec && !specLoading) resolveSpec();
+  }, [hasDesignBasis, spec, specLoading, resolveSpec]);
 
   // spec → /mass·BIM 요청 바디(명시 매스로 2D와 동일 기하 강제)
   const bimBody = useCallback(() => JSON.stringify({
@@ -412,17 +439,49 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
         <div className="absolute inset-0 bg-gradient-to-b from-transparent via-black/20 to-black/60 pointer-events-none z-10" />
 
         {/* 3D Canvas or 2D SVG */}
-        {viewMode === "bim_3d" ? (
+        {viewMode === "bim_3d" && !hasDesignBasis ? (
+          /* ── 게이트: 설계 기반(개요·부지)이 없으면 3D 캔버스를 마운트하지 않고 정직 안내 ── */
+          <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-4 bg-[#0a0f14] px-8 text-center">
+            <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-white/10 bg-white/5">
+              <span className="text-2xl">🏗️</span>
+            </div>
+            <p className="text-base font-black text-white/80">먼저 설계를 생성하세요</p>
+            <p className="max-w-sm text-xs leading-relaxed text-white/40">
+              부지분석에서 대지·용도지역을 불러오거나 사업모델 추천에서 건축개요를 선택하면 3D BIM 모델을 자동 생성합니다.
+            </p>
+            <button
+              onClick={() => setViewMode("cad_2d")}
+              className="mt-2 rounded-full bg-white/10 px-6 py-2 text-[11px] font-black uppercase tracking-widest text-white hover:bg-white/20"
+            >
+              2D 도면으로 이동
+            </button>
+          </div>
+        ) : viewMode === "bim_3d" ? (
           <div className="absolute inset-0">
-            <Canvas camera={{ position: [25, 20, 25], fov: 40 }}>
+            {/* frameloop="demand": 정적 화면에서는 렌더를 멈춰 메인스레드 점유 0(자동회전 시에만 ticker가 재요청) */}
+            <Canvas frameloop="demand" camera={{ position: [25, 20, 25], fov: 40 }}>
               <ambientLight intensity={0.8} />
               <directionalLight position={[10, 20, 10]} intensity={1.4} castShadow />
               <directionalLight position={[-10, 10, -10]} intensity={0.5} />
               <pointLight position={[-10, 10, -10]} intensity={0.5} color="#60a5fa" />
-              {/* 무거운 HDR Environment 제거(네트워크 다운로드·GPU 부하). 모델 있을 때만 완만 회전. */}
-              <OrbitControls makeDefault autoRotate={!!bimScene} autoRotateSpeed={0.3} enableDamping dampingFactor={0.05} />
+              {/* HDR Environment 제거(네트워크 다운로드·GPU 부하). 기본 조명만 사용. 자동회전은 버튼으로만. */}
+              <OrbitControls makeDefault autoRotate={autoRotate} autoRotateSpeed={0.3} enableDamping dampingFactor={0.05} />
+              <AutoRotateTicker active={autoRotate} />
               <BuildingModel scene={bimScene} />
             </Canvas>
+            {/* 자동회전 토글(기본 꺼짐) — 사용자가 명시적으로 켤 때만 회전 */}
+            {bimScene && (
+              <button
+                onClick={() => setAutoRotate((v) => !v)}
+                className={`absolute right-6 bottom-6 z-30 rounded-full border px-4 py-2 text-[10px] font-black uppercase tracking-widest transition-colors ${
+                  autoRotate
+                    ? "border-[var(--accent-strong)] bg-[var(--accent-strong)]/20 text-[var(--accent-strong)]"
+                    : "border-white/10 bg-black/40 text-white/50 hover:text-white"
+                }`}
+              >
+                {autoRotate ? "■ 회전 정지" : "▶ 자동 회전"}
+              </button>
+            )}
             {/* 로딩/에러 오버레이 */}
             {(bimLoading || bimError) && (
               <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/30 pointer-events-none">
@@ -478,6 +537,16 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
 
             {/* 도면 표시 영역 */}
             <div className="relative flex-1 flex items-center justify-center overflow-auto p-8">
+              {/* 게이트: 설계 기반(개요·부지)이 없으면 도면을 만들지 않고 정직 안내 */}
+              {!hasDesignBasis && !drawingLoading && (
+                <div className="flex flex-col items-center gap-3 text-center">
+                  <span className="text-2xl">📐</span>
+                  <p className="text-sm font-black text-white/70">먼저 설계를 생성하세요</p>
+                  <p className="max-w-xs text-xs leading-relaxed text-white/40">
+                    부지분석에서 대지·용도지역을 불러오거나 사업모델 추천에서 건축개요를 선택하면 2D 도면을 자동 생성합니다.
+                  </p>
+                </div>
+              )}
               {drawingLoading && (
                 <div className="flex flex-col items-center gap-4">
                   <div className="h-12 w-12 animate-spin rounded-full border-4 border-[var(--accent-strong)] border-t-transparent" />
