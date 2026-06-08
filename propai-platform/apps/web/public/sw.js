@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v123-dashboard-refine";
+const CACHE_NAME = "propai-v124-hero-wordbreak";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

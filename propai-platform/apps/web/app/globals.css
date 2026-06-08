@@ -1262,6 +1262,9 @@ textarea {
     font-weight: 700;
     letter-spacing: -0.02em;
     line-height: 1.2;
+    /* 한국어는 어절(띄어쓰기) 단위로만 줄을 바꾼다 — 'keep-all'이 없으면 '사업성'이
+       '사업/성'처럼 단어 중간에서 끊겨 어색하다(애플급 한글 조판 기본). */
+    word-break: keep-all;
   }
 
   /* 실시간 표시 도트 — 네온 시안 대신 단일 파랑 펄스(C2), 한글이라 트래킹 0(C3) */
