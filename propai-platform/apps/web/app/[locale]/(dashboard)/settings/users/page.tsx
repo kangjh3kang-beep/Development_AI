@@ -36,14 +36,25 @@ export default function AdminUsersPage() {
 
   return (
     <div className="space-y-8 p-4 sm:p-8">
-      <div>
-        <h1 className="text-2xl sm:text-3xl font-black text-[var(--text-primary)]">사용자 관리</h1>
-        <p className="text-sm text-[var(--text-secondary)] mt-1">등록된 사용자를 관리합니다 (관리자 전용)</p>
+      <div className="cc-bracketed relative overflow-hidden rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-soft)] p-6 shadow-[var(--shadow-lg)]">
+        <div className="cc-grid-bg opacity-50" />
+        <i className="cc-bracket cc-bracket--tl" />
+        <i className="cc-bracket cc-bracket--tr" />
+        <i className="cc-bracket cc-bracket--bl" />
+        <i className="cc-bracket cc-bracket--br" />
+        <div className="relative z-10 flex flex-wrap items-end justify-between gap-3">
+          <div className="space-y-1.5">
+            <span className="cc-meta">ACCESS · ROSTER</span>
+            <h1 className="text-2xl sm:text-3xl font-black text-[var(--text-primary)]">사용자 관리</h1>
+            <p className="text-sm text-[var(--text-secondary)]">등록된 사용자를 관리합니다 (관리자 전용)</p>
+          </div>
+          <span className="cc-chip-data">{users.length} REGISTERED</span>
+        </div>
       </div>
 
       {error && (
         <Card><CardContent className="p-4">
-          <p className="text-sm text-red-400">{error}</p>
+          <p className="text-sm text-[var(--status-error)]">{error}</p>
           <p className="text-xs text-[var(--text-hint)] mt-1">관리자 권한이 필요합니다.</p>
         </CardContent></Card>
       )}
@@ -52,11 +63,11 @@ export default function AdminUsersPage() {
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-[var(--line)] bg-[var(--surface-muted)]">
-              <th className="px-4 py-3 text-left font-bold text-[var(--text-secondary)]">이름</th>
-              <th className="px-4 py-3 text-left font-bold text-[var(--text-secondary)]">이메일</th>
-              <th className="px-4 py-3 text-left font-bold text-[var(--text-secondary)]">역할</th>
-              <th className="px-4 py-3 text-left font-bold text-[var(--text-secondary)]">상태</th>
-              <th className="px-4 py-3 text-left font-bold text-[var(--text-secondary)]">가입일</th>
+              <th className="cc-label px-4 py-3 text-left">이름</th>
+              <th className="cc-label px-4 py-3 text-left">이메일</th>
+              <th className="cc-label px-4 py-3 text-left">역할</th>
+              <th className="cc-label px-4 py-3 text-left">상태</th>
+              <th className="cc-label px-4 py-3 text-left">가입일</th>
             </tr>
           </thead>
           <tbody>
@@ -65,17 +76,17 @@ export default function AdminUsersPage() {
                 <td className="px-4 py-3 font-medium text-[var(--text-primary)]">{u.name}</td>
                 <td className="px-4 py-3 text-[var(--text-secondary)]">{u.email}</td>
                 <td className="px-4 py-3">
-                  <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${u.role === "admin" ? "bg-amber-500/10 text-amber-400" : "bg-blue-500/10 text-blue-400"}`}>
+                  <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${u.role === "admin" ? "bg-[var(--status-warning)]/10 text-[var(--status-warning)]" : "bg-[var(--status-info)]/10 text-[var(--status-info)]"}`}>
                     {u.role === "admin" ? "관리자" : "사용자"}
                   </span>
                 </td>
                 <td className="px-4 py-3">
-                  <span className={`flex items-center gap-1.5 text-xs ${u.is_active ? "text-emerald-400" : "text-red-400"}`}>
-                    <span className={`h-1.5 w-1.5 rounded-full ${u.is_active ? "bg-emerald-400" : "bg-red-400"}`} />
+                  <span className={`flex items-center gap-1.5 text-xs ${u.is_active ? "text-[var(--status-success)]" : "text-[var(--status-error)]"}`}>
+                    <span className={`h-1.5 w-1.5 rounded-full ${u.is_active ? "bg-[var(--status-success)]" : "bg-[var(--status-error)]"}`} />
                     {u.is_active ? "활성" : "비활성"}
                   </span>
                 </td>
-                <td className="px-4 py-3 text-[var(--text-hint)] text-xs">{new Date(u.created_at).toLocaleDateString("ko-KR")}</td>
+                <td className="cc-num px-4 py-3 text-[var(--text-hint)] text-xs">{new Date(u.created_at).toLocaleDateString("ko-KR")}</td>
               </tr>
             ))}
           </tbody>

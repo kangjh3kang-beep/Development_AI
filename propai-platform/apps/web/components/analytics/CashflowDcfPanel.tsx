@@ -100,6 +100,10 @@ export function CashflowDcfPanel() {
     <Card>
       <CardContent className="p-6 space-y-5">
         <div>
+          <div className="flex items-center gap-3 mb-1">
+            <span className="cc-meta">DCF · CASHFLOW</span>
+            {s && <span className="cc-live"><i />COMPUTED</span>}
+          </div>
           <h3 className="text-base font-bold text-[var(--text-primary)]">다기간 DCF 현금흐름 (월별)</h3>
           <p className="mt-0.5 text-xs text-[var(--text-secondary)]">월별 현금흐름·IRR·NPV·최대 자금소요(peak)를 산정합니다. 값은 공사비·수지 분석에서 자동 연동되며 수정 가능합니다.</p>
         </div>
@@ -158,10 +162,10 @@ export function CashflowDcfPanel() {
                     <tr key={r.month} className="border-t border-[var(--line)]">
                       <td className="px-3 py-1.5 text-[var(--text-secondary)]">{r.month}</td>
                       <td className="px-3 py-1.5 text-[var(--text-secondary)]">{r.phase}</td>
-                      <td className="px-3 py-1.5 text-right text-[var(--text-primary)]">{r.inflow ? eok(r.inflow) : "-"}</td>
-                      <td className="px-3 py-1.5 text-right text-[var(--text-primary)]">{r.outflow ? eok(r.outflow) : "-"}</td>
-                      <td className={`px-3 py-1.5 text-right font-semibold ${r.net < 0 ? "text-red-500" : "text-emerald-600"}`}>{eok(r.net)}</td>
-                      <td className={`px-3 py-1.5 text-right ${r.cumulative < 0 ? "text-red-500" : "text-[var(--text-primary)]"}`}>{eok(r.cumulative)}</td>
+                      <td className="cc-num px-3 py-1.5 text-right text-[var(--text-primary)]">{r.inflow ? eok(r.inflow) : "-"}</td>
+                      <td className="cc-num px-3 py-1.5 text-right text-[var(--text-primary)]">{r.outflow ? eok(r.outflow) : "-"}</td>
+                      <td className={`cc-num px-3 py-1.5 text-right font-semibold ${r.net < 0 ? "text-red-500" : "text-emerald-600"}`}>{eok(r.net)}</td>
+                      <td className={`cc-num px-3 py-1.5 text-right ${r.cumulative < 0 ? "text-red-500" : "text-[var(--text-primary)]"}`}>{eok(r.cumulative)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -176,10 +180,15 @@ export function CashflowDcfPanel() {
 
 function Tile({ label, value, sub, accent }: { label: string; value: string; sub?: string; accent?: boolean }) {
   return (
-    <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-3">
-      <p className="text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)]">{label}</p>
-      <p className={`mt-1 text-lg font-[1000] ${accent ? "text-[var(--accent-strong)]" : "text-[var(--text-primary)]"}`}>{value}</p>
-      {sub ? <p className="mt-0.5 text-[11px] text-[var(--text-secondary)]">{sub}</p> : null}
+    <div className="cc-panel cc-bracketed cc-interactive px-4 py-3">
+      <i className="cc-bracket cc-bracket--tl" />
+      <i className="cc-bracket cc-bracket--br" />
+      <div className="cc-grid-bg opacity-25" />
+      <div className="relative">
+        <p className="cc-label">{label}</p>
+        <p className={`cc-num mt-1 text-lg font-[1000] ${accent ? "cc-num--data" : "text-[var(--text-primary)]"}`}>{value}</p>
+        {sub ? <p className="mt-0.5 text-[11px] text-[var(--text-secondary)]">{sub}</p> : null}
+      </div>
     </div>
   );
 }

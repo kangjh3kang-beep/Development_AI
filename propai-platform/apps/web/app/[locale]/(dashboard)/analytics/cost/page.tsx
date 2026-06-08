@@ -19,6 +19,14 @@ export default function CostPage() {
 
   return (
     <div className="space-y-8">
+      <div>
+        <div className="flex items-center gap-3 mb-2">
+          <span className="cc-meta">COST · ESTIMATION CONSOLE</span>
+          <span className="cc-live"><i />LIVE</span>
+        </div>
+        <h1 className="text-3xl font-black tracking-tight text-[var(--text-primary)]">공사비 분석</h1>
+      </div>
+
       <div className="flex flex-wrap gap-2 border-b border-[var(--line)] pb-1">
         {TABS.map(([key, label]) => (
           <button

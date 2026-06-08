@@ -69,6 +69,10 @@ export function InvestmentFeasibilityClient() {
   return (
     <section className="grid gap-6">
       <div>
+        <div className="flex items-center gap-3 mb-1.5">
+          <span className="cc-meta">ROI · SSOT FEED</span>
+          {hasResult && <span className="cc-live"><i />SYNCED</span>}
+        </div>
         <h1 className="text-2xl font-black text-[var(--text-primary)]">투자 수익성 분석 (개발사업 수지 기반)</h1>
         <p className="mt-1 text-sm text-[var(--text-secondary)]">
           프로젝트 <b className="text-[var(--text-primary)]">수지분석</b>에서 산출한 결과를 단일 진실원으로 표시합니다(순이익·수익률·ROI·자기자본수익률·NPV·총사업비). 입력·재계산은 수지분석 화면에서 수행합니다.
@@ -105,21 +109,30 @@ export function InvestmentFeasibilityClient() {
               ["총 사업비", fmtKrw(derived.cost), "text-[var(--text-primary)]"],
               ["사업성 등급", feasibilityData?.grade || "—", "text-amber-400"],
             ] as [string, string, string][]).map(([k, v, cls]) => (
-              <div key={k} className="rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-strong)] p-5">
-                <p className="text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)]">{k}</p>
-                <p className={`mt-2 text-2xl font-[1000] tracking-tight ${cls}`}>{v}</p>
+              <div key={k} className="cc-panel cc-bracketed cc-interactive">
+                <i className="cc-bracket cc-bracket--tl" />
+                <i className="cc-bracket cc-bracket--br" />
+                <div className="cc-grid-bg opacity-30" />
+                <div className="relative cc-panel__body p-5">
+                  <p className="cc-label">{k}</p>
+                  <p className={`cc-num mt-2 text-2xl font-[1000] tracking-tight ${cls}`}>{v}</p>
+                </div>
               </div>
             ))}
           </div>
 
           {/* 총사업비 + 금융 레버리지 */}
-          <div className="rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-soft)] p-5">
-            <h3 className="mb-3 text-sm font-black text-[var(--text-primary)]">총사업비·레버리지</h3>
+          <div className="cc-panel">
+            <div className="cc-panel__head">
+              <h3 className="text-sm font-black text-[var(--text-primary)]">총사업비·레버리지</h3>
+              <span className="cc-meta">CAPITAL STACK</span>
+            </div>
+            <div className="cc-panel__body">
             <div className="flex flex-wrap items-center gap-x-8 gap-y-2 text-xs">
-              <span><b className="text-[var(--text-secondary)]">총 사업비</b> <span className="text-[var(--text-primary)] font-bold">{fmtKrw(derived.cost)}</span></span>
-              <span><b className="text-[var(--text-secondary)]">자기자본</b> <span className="text-[var(--text-primary)] font-bold">{fmtKrw(derived.equity)}</span></span>
-              <span><b className="text-[var(--text-secondary)]">타인자본(추정)</b> <span className="text-[var(--text-primary)] font-bold">{fmtKrw(derived.debt)}</span></span>
-              <span><b className="text-[var(--text-secondary)]">실효 레버리지(LTV)</b> <span className="text-[var(--accent-strong)] font-bold">{derived.ltv != null ? `${derived.ltv.toFixed(0)}%` : "—"}</span></span>
+              <span><b className="cc-label">총 사업비</b> <span className="cc-num text-[var(--text-primary)] font-bold">{fmtKrw(derived.cost)}</span></span>
+              <span><b className="cc-label">자기자본</b> <span className="cc-num text-[var(--text-primary)] font-bold">{fmtKrw(derived.equity)}</span></span>
+              <span><b className="cc-label">타인자본(추정)</b> <span className="cc-num text-[var(--text-primary)] font-bold">{fmtKrw(derived.debt)}</span></span>
+              <span><b className="cc-label">실효 레버리지(LTV)</b> <span className="cc-num text-[var(--accent-strong)] font-bold">{derived.ltv != null ? `${derived.ltv.toFixed(0)}%` : "—"}</span></span>
             </div>
             {derived.equity == null && (
               <p className="mt-3 text-[11px] text-[var(--text-hint)]">※ 자기자본수익률(ROE)·타인자본·LTV는 수지분석에서 자기자본을 입력하면 표시됩니다.</p>
@@ -131,6 +144,7 @@ export function InvestmentFeasibilityClient() {
                 {costData.rangeMinWon != null && costData.rangeMaxWon != null && <span className="text-[var(--text-tertiary)]"> (범위 {fmtKrw(costData.rangeMinWon)}~{fmtKrw(costData.rangeMaxWon)})</span>}
               </div>
             )}
+            </div>
           </div>
 
           {/* 할루시네이션 검증 + 전문가 패널(회계사·세무사·MBA·디벨로퍼·시공사·증권·저축은행) */}

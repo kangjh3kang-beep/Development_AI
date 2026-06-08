@@ -128,22 +128,22 @@ function SecretCard({
                 </span>
               )}
               {item.is_set ? (
-                <span className="flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[11px] font-bold text-emerald-600">
-                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                <span className="flex items-center gap-1 rounded-full bg-[var(--status-success)]/10 px-2 py-0.5 text-[11px] font-bold text-[var(--status-success)]">
+                  <span className="h-1.5 w-1.5 rounded-full bg-[var(--status-success)]" />
                   설정됨{item.source === "env" ? " (.env)" : ""}
                 </span>
               ) : (
-                <span className="rounded-full bg-red-500/10 px-2 py-0.5 text-[11px] font-bold text-red-500">
+                <span className="rounded-full bg-[var(--status-error)]/10 px-2 py-0.5 text-[11px] font-bold text-[var(--status-error)]">
                   미설정
                 </span>
               )}
             </div>
-            <p className="mt-0.5 font-mono text-[11px] text-[var(--text-tertiary)]">{item.name}</p>
+            <p className="cc-num mt-0.5 text-[11px] text-[var(--text-tertiary)]">{item.name}</p>
             {item.desc && (
               <p className="mt-1 text-xs text-[var(--text-secondary)]">{item.desc}</p>
             )}
             {item.is_set && item.masked && item.kind !== "select" && (
-              <p className="mt-1 font-mono text-xs text-[var(--text-secondary)]">
+              <p className="cc-num mt-1 text-xs text-[var(--text-secondary)]">
                 현재값: {item.masked}
               </p>
             )}
@@ -227,7 +227,7 @@ function SecretCard({
               type="button"
               onClick={remove}
               disabled={busy !== ""}
-              className="h-9 whitespace-nowrap rounded-lg border border-red-500/30 px-3 text-sm font-semibold text-red-500 disabled:opacity-50"
+              className="h-9 whitespace-nowrap rounded-lg border border-[var(--status-error)]/30 px-3 text-sm font-semibold text-[var(--status-error)] disabled:opacity-50"
             >
               {busy === "del" ? "삭제 중…" : "삭제"}
             </button>
@@ -237,7 +237,7 @@ function SecretCard({
         {msg && (
           <p
             className={`mt-2 text-xs font-semibold ${
-              msg.ok ? "text-emerald-600" : "text-red-500"
+              msg.ok ? "text-[var(--status-success)]" : "text-[var(--status-error)]"
             }`}
           >
             {msg.text}
@@ -371,7 +371,7 @@ function AddCustomKey({ onAdded }: { onAdded: () => void }) {
         {msg && (
           <p
             className={`mt-2 text-xs font-semibold ${
-              msg.ok ? "text-emerald-600" : "text-red-500"
+              msg.ok ? "text-[var(--status-success)]" : "text-[var(--status-error)]"
             }`}
           >
             {msg.text}
@@ -424,11 +424,12 @@ export function ApiKeyManagementPanel() {
     <div className="space-y-5">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-lg font-bold text-[var(--text-primary)]">API 키 관리</h2>
+          <span className="cc-meta">CREDENTIALS · ENCRYPTED VAULT</span>
+          <h2 className="text-lg font-bold text-[var(--text-primary)] mt-1">API 키 관리</h2>
           <p className="mt-0.5 text-xs text-[var(--text-secondary)]">
             서버에 암호화 저장되며 즉시 반영됩니다(재배포 불필요).{" "}
             {data && (
-              <span className="font-semibold text-[var(--text-primary)]">
+              <span className="cc-num font-semibold text-[var(--text-primary)]">
                 {setCount}/{data.items?.length ?? 0} 설정됨
               </span>
             )}
@@ -447,7 +448,7 @@ export function ApiKeyManagementPanel() {
       {error && (
         <Card>
           <CardContent className="p-4">
-            <p className="text-sm font-semibold text-red-500">{error}</p>
+            <p className="text-sm font-semibold text-[var(--status-error)]">{error}</p>
           </CardContent>
         </Card>
       )}
@@ -456,7 +457,7 @@ export function ApiKeyManagementPanel() {
         !error &&
         (data?.groups || []).map((g) => (
           <section key={g} className="space-y-2">
-            <h3 className="text-sm font-bold text-[var(--text-secondary)]">{g}</h3>
+            <h3 className="cc-label text-[var(--text-secondary)]">{g}</h3>
             <div className="space-y-2">
               {(byGroup.get(g) || []).map((it) => (
                 <SecretCard key={it.name} item={it} onSaved={load} />

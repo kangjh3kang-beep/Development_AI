@@ -31,12 +31,25 @@ export default function ESGPage() {
   return (
     <div className="space-y-8 p-6">
       <motion.div initial={{ y: -20, opacity: 0 }} animate={{ y: 0, opacity: 1 }}>
+        <div className="flex items-center gap-3 mb-2">
+          <span className="cc-meta">ESG · CARBON CONSOLE</span>
+          <span className="cc-live"><i />LIVE</span>
+        </div>
         <h1 className="text-3xl font-black tracking-tight text-[var(--text-primary)]">ESG / 탄소 경영</h1>
         <p className="text-sm text-[var(--text-secondary)] mt-1">건물 생애주기 탄소 배출량과 녹색 인증 등급을 AI가 분석합니다</p>
       </motion.div>
 
-      <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.1 }} className="glass rounded-3xl p-8 border border-[var(--line-strong)]">
-        <h2 className="text-lg font-black text-[var(--text-primary)] mb-6">건물 정보</h2>
+      <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.1 }} className="cc-panel cc-bracketed glass">
+        <i className="cc-bracket cc-bracket--tl" />
+        <i className="cc-bracket cc-bracket--tr" />
+        <i className="cc-bracket cc-bracket--bl" />
+        <i className="cc-bracket cc-bracket--br" />
+        <div className="cc-grid-bg opacity-40" />
+        <div className="relative cc-panel__head">
+          <h2 className="cc-label text-[var(--text-secondary)]">건물 정보 / INPUT</h2>
+          <span className="cc-meta">PARAMETERS</span>
+        </div>
+        <div className="relative cc-panel__body p-8">
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           <div>
             <label className="text-xs font-bold uppercase tracking-widest text-[var(--text-tertiary)] mb-2 block">건물유형</label>
@@ -66,6 +79,7 @@ export default function ESGPage() {
           className="mt-6 w-full rounded-2xl bg-gradient-to-r from-emerald-600 to-green-600 py-4 font-black text-white shadow-lg transition-all hover:scale-[1.01] active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed">
           {isPending ? "🔄 ESG 분석 중..." : !isReady ? "⚙️ API 키를 먼저 등록하세요" : "🌿 ESG 분석"}
         </button>
+        </div>
       </motion.div>
 
       {error && <div className="rounded-2xl bg-red-500/10 border border-red-500/20 p-4"><p className="text-sm text-red-400 font-bold">⚠️ {error.message}</p></div>}
@@ -76,13 +90,18 @@ export default function ESGPage() {
           {ai.carbonFootprint && (
             <div className="grid grid-cols-3 gap-4">
               {[
-                { label: "시공 단계", val: ai.carbonFootprint.construction, color: "text-amber-400" },
-                { label: "운영 단계", val: ai.carbonFootprint.operation, color: "text-blue-400" },
-                { label: "전체", val: ai.carbonFootprint.total, color: "text-red-400" },
+                { label: "시공 단계 · CONSTRUCTION", val: ai.carbonFootprint.construction, accent: "text-amber-400" },
+                { label: "운영 단계 · OPERATION", val: ai.carbonFootprint.operation, accent: "text-blue-400" },
+                { label: "전체 · TOTAL", val: ai.carbonFootprint.total, accent: "text-red-400" },
               ].map(c => (
-                <div key={c.label} className="glass rounded-2xl p-5 border border-[var(--line)] text-center">
-                  <p className={`text-xs font-bold uppercase tracking-widest ${c.color} mb-2`}>{c.label}</p>
-                  <p className="text-2xl font-black text-[var(--text-primary)]">{c.val?.toLocaleString()}<span className="text-xs ml-1">{ai.carbonFootprint?.unit}</span></p>
+                <div key={c.label} className="cc-panel cc-bracketed cc-interactive glass text-center">
+                  <i className="cc-bracket cc-bracket--tl" />
+                  <i className="cc-bracket cc-bracket--br" />
+                  <div className="cc-grid-bg opacity-30" />
+                  <div className="relative cc-panel__body p-5">
+                    <p className={`cc-label mb-2 ${c.accent}`}>{c.label}</p>
+                    <p className="cc-num text-2xl font-black">{c.val?.toLocaleString() ?? "—"}<span className="cc-label text-[10px] ml-1.5">{ai.carbonFootprint?.unit}</span></p>
+                  </div>
                 </div>
               ))}
             </div>
@@ -91,28 +110,36 @@ export default function ESGPage() {
           {/* Grades */}
           <div className="grid grid-cols-3 gap-4">
             {[
-              { label: "에너지효율등급", val: ai.energyGrade },
-              { label: "G-SEED 등급", val: ai.gSeedGrade },
-              { label: "ZEB 수준", val: ai.zebLevel },
+              { label: "에너지효율등급 · ENERGY", val: ai.energyGrade },
+              { label: "G-SEED 등급 · GREEN", val: ai.gSeedGrade },
+              { label: "ZEB 수준 · NET-ZERO", val: ai.zebLevel },
             ].map(g => (
-              <div key={g.label} className="glass rounded-2xl p-5 border border-[var(--line)] text-center">
-                <p className="text-xs font-bold text-emerald-400 uppercase tracking-widest mb-3">{g.label}</p>
-                <span className={`inline-block rounded-full px-4 py-2 text-sm font-black text-white ${gradeColor(g.val)}`}>{g.val ?? "—"}</span>
+              <div key={g.label} className="cc-panel cc-bracketed cc-interactive glass text-center">
+                <i className="cc-bracket cc-bracket--tr" />
+                <i className="cc-bracket cc-bracket--bl" />
+                <div className="cc-grid-bg cc-grid-bg--radial opacity-30" />
+                <div className="relative cc-panel__body p-5">
+                  <p className="cc-label text-emerald-400 mb-3">{g.label}</p>
+                  <span className={`inline-block rounded-full px-4 py-2 text-sm font-black text-white ${gradeColor(g.val)}`}>{g.val ?? "—"}</span>
+                </div>
               </div>
             ))}
           </div>
 
           {/* Recommendations */}
           {ai.recommendations && ai.recommendations?.length > 0 && (
-            <div className="glass rounded-2xl p-6 border border-[var(--line)]">
-              <h3 className="text-lg font-black text-[var(--text-primary)] mb-4">🌱 개선 권고사항</h3>
-              <div className="space-y-3">
+            <div className="cc-panel glass">
+              <div className="cc-panel__head">
+                <h3 className="text-lg font-black text-[var(--text-primary)]">🌱 개선 권고사항</h3>
+                <span className="cc-meta">RECOMMENDATIONS</span>
+              </div>
+              <div className="cc-panel__body space-y-3">
                 {(ai.recommendations ?? []).map((r, i) => (
                   <div key={i} className="rounded-xl bg-[var(--surface-muted)] border border-[var(--line)] p-4">
                     <p className="text-sm font-bold text-[var(--text-primary)]">{r.action}</p>
                     <div className="flex gap-4 mt-2">
-                      <span className="text-xs text-emerald-400">효과: {r.impact}</span>
-                      <span className="text-xs text-amber-400">비용: {r.cost}</span>
+                      <span className="text-xs text-emerald-400"><span className="cc-label text-[10px]">효과</span> {r.impact}</span>
+                      <span className="text-xs text-amber-400"><span className="cc-label text-[10px]">비용</span> {r.cost}</span>
                     </div>
                   </div>
                 ))}
@@ -121,9 +148,14 @@ export default function ESGPage() {
           )}
 
           {ai.summary && (
-            <div className="glass rounded-2xl p-6 border border-emerald-500/20 bg-emerald-500/5">
-              <h3 className="text-lg font-black text-emerald-400 mb-2">AI ESG 종합 평가</h3>
-              <p className="text-sm text-[var(--text-secondary)] leading-relaxed">{ai.summary}</p>
+            <div className="cc-panel glass border-emerald-500/20">
+              <div className="cc-panel__head">
+                <h3 className="text-lg font-black text-emerald-400">AI ESG 종합 평가</h3>
+                <span className="cc-meta">SUMMARY · AI</span>
+              </div>
+              <div className="cc-panel__body bg-emerald-500/5">
+                <p className="text-sm text-[var(--text-secondary)] leading-relaxed">{ai.summary}</p>
+              </div>
             </div>
           )}
           {/* 신뢰도·할루시네이션 검증 */}

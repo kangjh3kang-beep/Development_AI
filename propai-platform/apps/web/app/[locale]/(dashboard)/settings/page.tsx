@@ -142,14 +142,25 @@ export default function SettingsPage() {
 
   return (
     <div className="flex flex-col gap-10 pb-20 max-w-5xl mx-auto">
-      {/* Header */}
-      <div className="space-y-2">
-        <h1 className="text-4xl font-[900] tracking-tighter text-[var(--text-primary)]">
-          관리자 설정 <span className="text-[var(--accent-strong)]">_</span>
-        </h1>
-        <p className="text-[var(--text-secondary)] font-medium">
-          API 키, 구독, AI 사용량, 시스템 환경을 통합 관리합니다.
-        </p>
+      {/* Header — 관제 콘솔 식별자 */}
+      <div className="cc-bracketed relative overflow-hidden rounded-[2rem] border border-[var(--line-strong)] bg-[var(--surface-soft)] p-7 lg:p-9 shadow-[var(--shadow-xl)]">
+        <div className="cc-grid-bg opacity-60" />
+        <i className="cc-bracket cc-bracket--tl" />
+        <i className="cc-bracket cc-bracket--tr" />
+        <i className="cc-bracket cc-bracket--bl" />
+        <i className="cc-bracket cc-bracket--br" />
+        <div className="relative z-10 flex flex-wrap items-end justify-between gap-4">
+          <div className="space-y-3">
+            <span className="cc-meta">CONTROL · ADMIN CONSOLE</span>
+            <h1 className="text-4xl font-[900] tracking-tighter text-[var(--text-primary)]">
+              관리자 설정 <span className="text-[var(--accent-strong)]">_</span>
+            </h1>
+            <p className="text-[var(--text-secondary)] font-medium">
+              API 키, 구독, AI 사용량, 시스템 환경을 통합 관리합니다.
+            </p>
+          </div>
+          <span className="cc-live"><i />SYSTEM ONLINE</span>
+        </div>
       </div>
 
       {/* Tab navigation */}
@@ -188,11 +199,15 @@ export default function SettingsPage() {
       {activeTab === "subscription" && <SubscriptionPanel />}
 
       {activeTab === "system" && (
-        <section className="relative overflow-hidden rounded-[2.5rem] border border-[var(--line-strong)] bg-[var(--surface-soft)] p-8 lg:p-12 shadow-[var(--shadow-xl)] backdrop-blur-xl group">
-          <div className="absolute -right-20 -top-20 h-64 w-64 rounded-full bg-[var(--accent-strong)]/5 blur-[80px] group-hover:bg-[var(--accent-strong)]/10 transition-colors duration-1000" />
+        <section className="cc-panel cc-bracketed">
+          <div className="cc-grid-bg opacity-50" />
+          <i className="cc-bracket cc-bracket--tl" />
+          <i className="cc-bracket cc-bracket--tr" />
+          <i className="cc-bracket cc-bracket--bl" />
+          <i className="cc-bracket cc-bracket--br" />
 
-          <div className="relative z-10 space-y-10">
-            <div className="flex items-center gap-4 border-b border-[var(--line)] pb-6">
+          <header className="cc-panel__head relative z-10">
+            <div className="flex items-center gap-4">
               <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[var(--accent-soft)] border border-[var(--accent-strong)]/20 shadow-[var(--shadow-glow)] text-[var(--accent-strong)]">
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
@@ -214,7 +229,8 @@ export default function SettingsPage() {
                 </svg>
               </div>
               <div>
-                <h2 className="text-xl font-bold text-[var(--text-primary)]">
+                <span className="cc-meta">LLM · TELEMETRY LINK</span>
+                <h2 className="text-xl font-bold text-[var(--text-primary)] mt-1">
                   AI 텔레메트리 연결 (LLM API)
                 </h2>
                 <p className="text-sm text-[var(--text-hint)] mt-1 tracking-wide">
@@ -223,10 +239,12 @@ export default function SettingsPage() {
                 </p>
               </div>
             </div>
+          </header>
 
+          <div className="cc-panel__body relative z-10 space-y-10">
             <div className="grid gap-8">
               <div className="space-y-3">
-                <label className="text-xs font-bold uppercase tracking-[0.15em] text-[var(--text-tertiary)]">
+                <label className="cc-label">
                   LLM Provider (공급자)
                 </label>
                 <div className="flex gap-4">
@@ -262,7 +280,7 @@ export default function SettingsPage() {
               </div>
 
               <div className="space-y-3">
-                <label className="text-xs font-bold uppercase tracking-[0.15em] text-[var(--text-tertiary)]">
+                <label className="cc-label">
                   {llmProvider === "openai" ? "OpenAI" : "Anthropic"} API Key
                 </label>
                 <div className="relative">
@@ -323,7 +341,7 @@ export default function SettingsPage() {
               </div>
 
               <div className="space-y-3">
-                <label className="text-xs font-bold uppercase tracking-[0.15em] text-[var(--text-tertiary)]">
+                <label className="cc-label">
                   AI Model (선택사항 — 미지정 시 자동 선택)
                 </label>
                 <select
@@ -367,9 +385,9 @@ export default function SettingsPage() {
             <div className="pt-8 border-t border-[var(--line)] flex justify-between items-center">
               <div className="flex items-center gap-3">
                 <div
-                  className={`h-3 w-3 rounded-full ${hasValidKey() ? "bg-emerald-500 animate-pulse shadow-[0_0_10px_rgba(16,185,129,0.5)]" : "bg-red-500"}`}
+                  className={`h-3 w-3 rounded-full ${hasValidKey() ? "bg-[var(--status-success)] animate-pulse shadow-[0_0_10px_rgba(16,185,129,0.5)]" : "bg-[var(--status-error)]"}`}
                 />
-                <span className="text-xs font-bold uppercase tracking-widest text-[var(--text-hint)]">
+                <span className="cc-label text-[var(--text-hint)]">
                   {hasValidKey()
                     ? `Connected — ${llmProvider === "openai" ? "OpenAI" : "Anthropic"} ${llmModel === "auto" ? "(자동 모델)" : llmModel}`
                     : "API 키를 입력해 주세요"}

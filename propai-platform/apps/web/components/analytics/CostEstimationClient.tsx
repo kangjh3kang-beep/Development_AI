@@ -248,6 +248,10 @@ export function CostEstimationClient() {
     <section className="grid gap-8">
       {/* 헤더 */}
       <div>
+        <div className="flex items-center gap-3 mb-1.5">
+          <span className="cc-meta">COST · WORKFLOW</span>
+          {result && <span className="cc-live"><i />ESTIMATED</span>}
+        </div>
         <h1 className="text-2xl font-black text-[var(--text-primary)]">공사비 분석 (단계별 통합)</h1>
         <p className="mt-1 text-sm text-[var(--text-secondary)]">
           프로젝트 정보 자동연동 → 개략 공사비 산정 → 리스크 시뮬레이션 → BIM 정밀 적산 연계까지 한 흐름으로 진행합니다.
@@ -335,20 +339,35 @@ export function CostEstimationClient() {
             />
             {/* 총공사비 + range */}
             <div className="grid gap-4 sm:grid-cols-3">
-              <div className="rounded-2xl border border-[var(--accent-strong)]/30 bg-[var(--accent-soft)] p-5">
-                <p className="text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)]">총 공사비(기대)</p>
-                <p className="mt-2 text-2xl font-[1000] text-[var(--accent-strong)]">{fmtKrw(result.total_won)}</p>
-                <p className="mt-1 text-[11px] text-[var(--text-secondary)]">평당 {result.per_pyeong_won.toLocaleString()}원</p>
+              <div className="cc-panel cc-bracketed cc-interactive border-[var(--accent-strong)]/30">
+                <i className="cc-bracket cc-bracket--tl" />
+                <i className="cc-bracket cc-bracket--br" />
+                <div className="cc-grid-bg opacity-30" />
+                <div className="relative cc-panel__body p-5 bg-[var(--accent-soft)]">
+                  <p className="cc-label">총 공사비(기대)</p>
+                  <p className="cc-num mt-2 text-2xl font-[1000] text-[var(--accent-strong)]">{fmtKrw(result.total_won)}</p>
+                  <p className="mt-1 text-[11px] text-[var(--text-secondary)]">평당 <span className="cc-num">{result.per_pyeong_won.toLocaleString()}</span>원</p>
+                </div>
               </div>
-              <div className="rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-strong)] p-5">
-                <p className="text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)]">최저~최대 예상</p>
-                <p className="mt-2 text-lg font-[1000] text-[var(--text-primary)]">{fmtKrw(result.range.min_won)} ~ {fmtKrw(result.range.max_won)}</p>
-                <p className="mt-1 text-[11px] text-[var(--text-secondary)]">건설물가 변동 ±(설계변경 반영)</p>
+              <div className="cc-panel cc-bracketed cc-interactive">
+                <i className="cc-bracket cc-bracket--tr" />
+                <i className="cc-bracket cc-bracket--bl" />
+                <div className="cc-grid-bg opacity-25" />
+                <div className="relative cc-panel__body p-5">
+                  <p className="cc-label">최저~최대 예상</p>
+                  <p className="cc-num mt-2 text-lg font-[1000] text-[var(--text-primary)]">{fmtKrw(result.range.min_won)} ~ {fmtKrw(result.range.max_won)}</p>
+                  <p className="mt-1 text-[11px] text-[var(--text-secondary)]">건설물가 변동 ±(설계변경 반영)</p>
+                </div>
               </div>
-              <div className="rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-strong)] p-5">
-                <p className="text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)]">규모</p>
-                <p className="mt-2 text-sm font-bold text-[var(--text-primary)]">연면적 {result.total_gfa_sqm.toLocaleString()}㎡</p>
-                <p className="mt-1 text-[11px] text-[var(--text-secondary)]">지상 {result.gfa_above_sqm.toLocaleString()} / 지하 {result.gfa_below_sqm.toLocaleString()}㎡</p>
+              <div className="cc-panel cc-bracketed cc-interactive">
+                <i className="cc-bracket cc-bracket--tr" />
+                <i className="cc-bracket cc-bracket--bl" />
+                <div className="cc-grid-bg opacity-25" />
+                <div className="relative cc-panel__body p-5">
+                  <p className="cc-label">규모</p>
+                  <p className="mt-2 text-sm font-bold text-[var(--text-primary)]">연면적 <span className="cc-num">{result.total_gfa_sqm.toLocaleString()}</span>㎡</p>
+                  <p className="mt-1 text-[11px] text-[var(--text-secondary)]">지상 <span className="cc-num">{result.gfa_above_sqm.toLocaleString()}</span> / 지하 <span className="cc-num">{result.gfa_below_sqm.toLocaleString()}</span>㎡</p>
+                </div>
               </div>
             </div>
 
@@ -478,16 +497,23 @@ export function CostEstimationClient() {
                     ["P90 (상위 10%)", fmtKrw(risk.p90)],
                     ["시뮬레이션", `${risk.iterations.toLocaleString()}회`],
                   ].map(([k, v]) => (
-                    <div key={k} className="rounded-xl border border-[var(--line)] bg-[var(--surface-strong)] p-3">
-                      <p className="text-[9px] font-bold uppercase tracking-widest text-[var(--text-hint)]">{k}</p>
-                      <p className="mt-1 text-sm font-[1000] text-[var(--text-primary)]">{v}</p>
+                    <div key={k} className="cc-panel cc-bracketed p-3">
+                      <i className="cc-bracket cc-bracket--tl" />
+                      <div className="relative">
+                        <p className="cc-label text-[9px]">{k}</p>
+                        <p className="cc-num mt-1 text-sm font-[1000] text-[var(--text-primary)]">{v}</p>
+                      </div>
                     </div>
                   ))}
                 </div>
 
-                <div className="rounded-xl border border-[var(--accent-strong)]/30 bg-[var(--accent-soft)] p-4">
-                  <p className="text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)]">90% 신뢰구간</p>
-                  <p className="mt-1 text-base font-[1000] text-[var(--accent-strong)]">{fmtKrw(risk.ci90[0])} ~ {fmtKrw(risk.ci90[1])}</p>
+                <div className="cc-panel cc-bracketed border-[var(--accent-strong)]/30 bg-[var(--accent-soft)] p-4">
+                  <i className="cc-bracket cc-bracket--tl" />
+                  <i className="cc-bracket cc-bracket--br" />
+                  <div className="relative">
+                    <p className="cc-label">90% 신뢰구간</p>
+                    <p className="cc-num mt-1 text-base font-[1000] text-[var(--accent-strong)]">{fmtKrw(risk.ci90[0])} ~ {fmtKrw(risk.ci90[1])}</p>
+                  </div>
                 </div>
 
                 {/* 히스토그램 */}

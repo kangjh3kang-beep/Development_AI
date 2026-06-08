@@ -14,6 +14,13 @@ export default function InvestmentPage() {
 
   return (
     <div className="space-y-10">
+      <div>
+        <div className="flex items-center gap-3 mb-2">
+          <span className="cc-meta">INVESTMENT · FEASIBILITY CONSOLE</span>
+          <span className="cc-live"><i />LIVE</span>
+        </div>
+        <h1 className="text-3xl font-black tracking-tight text-[var(--text-primary)]">투자수익성 분석</h1>
+      </div>
       {/* 개발사업 수지 기반 투자수익성 분석(프로젝트 연동·자동로드·전문가 검증) */}
       <InvestmentFeasibilityClient />
       {/* 다기간 DCF 월별 현금흐름 + 엑셀 다운로드(은행제출용) */}

@@ -28,9 +28,9 @@ const EVENT_OPTIONS = [
 ];
 
 const DELIVERY_STATUS_LABELS: Record<string, { label: string; color: string }> = {
-  success: { label: "성공", color: "text-emerald-500" },
-  failed: { label: "실패", color: "text-red-500" },
-  pending: { label: "대기 중", color: "text-amber-500" },
+  success: { label: "성공", color: "text-[var(--status-success)]" },
+  failed: { label: "실패", color: "text-[var(--status-error)]" },
+  pending: { label: "대기 중", color: "text-[var(--status-warning)]" },
 };
 
 // Mock data for when API is not available
@@ -153,7 +153,7 @@ export function WebhookManagementPanel() {
       {/* Header + Create Button */}
       <div className="flex items-center justify-between">
         <p className="text-sm font-medium text-[var(--text-secondary)]">
-          등록된 웹훅: {webhooks.length}개
+          등록된 웹훅: <span className="cc-num text-[var(--text-primary)] font-bold">{webhooks.length}</span>개
         </p>
         <Button
           onClick={() => setShowCreateForm(!showCreateForm)}
@@ -181,7 +181,7 @@ export function WebhookManagementPanel() {
       {showCreateForm && (
         <Card className="border-[var(--accent-strong)]/30">
           <CardContent className="p-6">
-            <p className="text-xs font-bold uppercase tracking-[0.15em] text-[var(--text-tertiary)]">
+            <p className="cc-label">
               새 웹훅 등록
             </p>
             <form className="mt-4 space-y-4" onSubmit={handleCreate}>
@@ -192,7 +192,7 @@ export function WebhookManagementPanel() {
               />
 
               <div className="space-y-2">
-                <p className="text-xs font-bold uppercase tracking-[0.15em] text-[var(--text-tertiary)]">
+                <p className="cc-label">
                   이벤트 선택
                 </p>
                 <div className="flex flex-wrap gap-2">
@@ -258,11 +258,11 @@ export function WebhookManagementPanel() {
                       <div
                         className={`h-2.5 w-2.5 shrink-0 rounded-full ${
                           wh.active
-                            ? "bg-emerald-500 animate-pulse"
+                            ? "bg-[var(--status-success)] animate-pulse"
                             : "bg-[var(--text-hint)]"
                         }`}
                       />
-                      <p className="truncate text-sm font-semibold text-[var(--text-primary)]">
+                      <p className="cc-num truncate text-sm font-semibold text-[var(--text-primary)]">
                         {wh.url}
                       </p>
                     </div>
@@ -317,7 +317,7 @@ export function WebhookManagementPanel() {
                       onClick={() => toggleActive(wh.id)}
                       className={`rounded-xl px-3 py-1.5 text-xs font-bold transition-all ${
                         wh.active
-                          ? "bg-emerald-500/10 text-emerald-500"
+                          ? "bg-[var(--status-success)]/10 text-[var(--status-success)]"
                           : "bg-[var(--surface-soft)] text-[var(--text-hint)]"
                       }`}
                     >
@@ -325,7 +325,7 @@ export function WebhookManagementPanel() {
                     </button>
                     <button
                       onClick={() => handleDelete(wh.id)}
-                      className="rounded-xl px-3 py-1.5 text-xs font-bold text-red-500 transition-all hover:bg-red-500/10"
+                      className="rounded-xl px-3 py-1.5 text-xs font-bold text-[var(--status-error)] transition-all hover:bg-[var(--status-error)]/10"
                     >
                       삭제
                     </button>

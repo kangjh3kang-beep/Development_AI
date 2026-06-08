@@ -65,7 +65,7 @@ export default function BillingConfigPage() {
       <span className="text-xs text-[var(--text-secondary)]">{label}</span>
       <span className="flex items-center gap-1">
         <input value={value ?? 0} onChange={(e) => onChange(e.target.value)}
-          className="w-24 rounded-md border border-[var(--line-strong)] bg-[var(--surface)] px-2 py-1 text-right text-sm font-bold text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-strong)]" />
+          className="cc-num w-24 rounded-md border border-[var(--line-strong)] bg-[var(--surface)] px-2 py-1 text-right text-sm font-bold text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-strong)]" />
         <span className="text-[10px] text-[var(--text-hint)]">{suffix}</span>
       </span>
     </label>
@@ -73,61 +73,89 @@ export default function BillingConfigPage() {
 
   return (
     <div className="max-w-3xl mx-auto space-y-6 pb-20">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-black text-[var(--text-primary)]">과금 금액 설정 <span className="text-[var(--accent-strong)]">_</span></h1>
-          <p className="text-sm text-[var(--text-secondary)] mt-1">구독 등급·서비스 사용료·단계별 과금 금액을 수정합니다 (관리자 전용, 즉시 적용)</p>
+      <div className="cc-bracketed relative overflow-hidden rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-soft)] p-6 shadow-[var(--shadow-lg)]">
+        <div className="cc-grid-bg opacity-50" />
+        <i className="cc-bracket cc-bracket--tl" />
+        <i className="cc-bracket cc-bracket--tr" />
+        <i className="cc-bracket cc-bracket--bl" />
+        <i className="cc-bracket cc-bracket--br" />
+        <div className="relative z-10 flex items-end justify-between gap-4">
+          <div className="space-y-1.5">
+            <span className="cc-meta">BILLING · RATE CONTROL</span>
+            <h1 className="text-2xl font-black text-[var(--text-primary)]">과금 금액 설정 <span className="text-[var(--accent-strong)]">_</span></h1>
+            <p className="text-sm text-[var(--text-secondary)]">구독 등급·서비스 사용료·단계별 과금 금액을 수정합니다 (관리자 전용, 즉시 적용)</p>
+          </div>
+          <button onClick={save} disabled={saving}
+            className="rounded-xl bg-gradient-to-r from-[var(--accent-strong)] to-[#085d73] px-6 py-2.5 text-sm font-black text-white disabled:opacity-50">
+            {saving ? "저장 중…" : "저장"}
+          </button>
         </div>
-        <button onClick={save} disabled={saving}
-          className="rounded-xl bg-gradient-to-r from-[var(--accent-strong)] to-[#085d73] px-6 py-2.5 text-sm font-black text-white disabled:opacity-50">
-          {saving ? "저장 중…" : "저장"}
-        </button>
       </div>
-      {msg && <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-2.5 text-sm text-[var(--text-secondary)]">{msg}</div>}
+      {msg && <div className="rounded-xl border border-[var(--data-accent-line)] bg-[var(--data-accent-soft)] px-4 py-2.5 text-sm text-[var(--text-secondary)]">{msg}</div>}
 
       {/* 구독 등급 */}
-      <section className="rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-soft)] p-5">
-        <h2 className="text-sm font-bold text-[var(--text-primary)] mb-3">구독 등급 (월 요금 · 할증배수)</h2>
-        <div className="grid gap-4 md:grid-cols-3">
-          {Object.keys(cfg.tiers).map((t) => (
-            <div key={t} className="space-y-2">
-              <p className="text-xs font-bold text-[var(--accent-strong)]">{TIER_LABELS[t] || t}</p>
-              <Field label="월 요금" value={cfg.tiers[t].fee_krw} onChange={(v) => setTier(t, "fee_krw", v)} />
-              <Field label="할증배수(내부)" value={cfg.tiers[t].multiplier} onChange={(v) => setTier(t, "multiplier", v)} suffix="×" />
-            </div>
-          ))}
+      <section className="cc-panel">
+        <header className="cc-panel__head">
+          <span className="cc-meta">TIER · MONTHLY</span>
+          <h2 className="text-sm font-bold text-[var(--text-primary)]">구독 등급 (월 요금 · 할증배수)</h2>
+        </header>
+        <div className="cc-panel__body">
+          <div className="grid gap-4 md:grid-cols-3">
+            {Object.keys(cfg.tiers).map((t) => (
+              <div key={t} className="space-y-2">
+                <p className="cc-label text-[var(--accent-strong)]">{TIER_LABELS[t] || t}</p>
+                <Field label="월 요금" value={cfg.tiers[t].fee_krw} onChange={(v) => setTier(t, "fee_krw", v)} />
+                <Field label="할증배수(내부)" value={cfg.tiers[t].multiplier} onChange={(v) => setTier(t, "multiplier", v)} suffix="×" />
+              </div>
+            ))}
+          </div>
+          <p className="text-[10px] text-[var(--text-hint)] mt-3">※ 포함 LLM 한도 = 월 요금 × {Math.round((cfg.budget_ratio ?? 0.5) * 100)}%. 할증배수는 내부 정책(사용자 미노출).</p>
         </div>
-        <p className="text-[10px] text-[var(--text-hint)] mt-3">※ 포함 LLM 한도 = 월 요금 × {Math.round((cfg.budget_ratio ?? 0.5) * 100)}%. 할증배수는 내부 정책(사용자 미노출).</p>
       </section>
 
       {/* 서비스 사용료 */}
-      <section className="rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-soft)] p-5">
-        <h2 className="text-sm font-bold text-[var(--text-primary)] mb-3">서비스 사용료 (LLM 과금과 별개)</h2>
-        <div className="grid gap-2 md:grid-cols-2">
-          <Field label="프로젝트 생성" value={cfg.service_fees.project_create} onChange={(v) => setSvc("project_create", v)} />
-          <Field label="토지분석(구독자)" value={cfg.service_fees.land_analysis} onChange={(v) => setSvc("land_analysis", v)} />
-          <Field label="분양현장 생성" value={cfg.service_fees.sales_provision ?? 0} onChange={(v) => setSvc("sales_provision", v)} />
+      <section className="cc-panel">
+        <header className="cc-panel__head">
+          <span className="cc-meta">SERVICE · FEE</span>
+          <h2 className="text-sm font-bold text-[var(--text-primary)]">서비스 사용료 (LLM 과금과 별개)</h2>
+        </header>
+        <div className="cc-panel__body">
+          <div className="grid gap-2 md:grid-cols-2">
+            <Field label="프로젝트 생성" value={cfg.service_fees.project_create} onChange={(v) => setSvc("project_create", v)} />
+            <Field label="토지분석(구독자)" value={cfg.service_fees.land_analysis} onChange={(v) => setSvc("land_analysis", v)} />
+            <Field label="분양현장 생성" value={cfg.service_fees.sales_provision ?? 0} onChange={(v) => setSvc("sales_provision", v)} />
+          </div>
         </div>
       </section>
 
       {/* 진행 단계 단계별 */}
-      <section className="rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-soft)] p-5">
-        <h2 className="text-sm font-bold text-[var(--text-primary)] mb-3">진행 단계 단계별 과금</h2>
-        <div className="grid gap-2 md:grid-cols-2">
-          {Object.keys(cfg.service_fees.stages).map((s) => (
-            <Field key={s} label={STAGE_LABELS[s] || s} value={cfg.service_fees.stages[s]} onChange={(v) => setStage(s, v)} />
-          ))}
+      <section className="cc-panel">
+        <header className="cc-panel__head">
+          <span className="cc-meta">PIPELINE · STAGE</span>
+          <h2 className="text-sm font-bold text-[var(--text-primary)]">진행 단계 단계별 과금</h2>
+        </header>
+        <div className="cc-panel__body">
+          <div className="grid gap-2 md:grid-cols-2">
+            {Object.keys(cfg.service_fees.stages).map((s) => (
+              <Field key={s} label={STAGE_LABELS[s] || s} value={cfg.service_fees.stages[s]} onChange={(v) => setStage(s, v)} />
+            ))}
+          </div>
         </div>
       </section>
 
       {/* 비구독 무료/초과 */}
-      <section className="rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-soft)] p-5">
-        <h2 className="text-sm font-bold text-[var(--text-primary)] mb-3">비구독 정책 (토지분석)</h2>
-        <div className="grid gap-2 md:grid-cols-2">
-          <Field label="일반회원 무료 횟수" value={cfg.free_tier.analysis_quota.free} onChange={(v) => setFree("analysis_quota", "free", v)} suffix="회" />
-          <Field label="일반회원 초과 단가" value={cfg.free_tier.analysis_fee.free} onChange={(v) => setFree("analysis_fee", "free", v)} />
-          <Field label="비회원 무료 횟수" value={cfg.free_tier.analysis_quota.guest} onChange={(v) => setFree("analysis_quota", "guest", v)} suffix="회" />
-          <Field label="비회원 초과 단가" value={cfg.free_tier.analysis_fee.guest} onChange={(v) => setFree("analysis_fee", "guest", v)} />
+      <section className="cc-panel">
+        <header className="cc-panel__head">
+          <span className="cc-meta">FREE TIER · QUOTA</span>
+          <h2 className="text-sm font-bold text-[var(--text-primary)]">비구독 정책 (토지분석)</h2>
+        </header>
+        <div className="cc-panel__body">
+          <div className="grid gap-2 md:grid-cols-2">
+            <Field label="일반회원 무료 횟수" value={cfg.free_tier.analysis_quota.free} onChange={(v) => setFree("analysis_quota", "free", v)} suffix="회" />
+            <Field label="일반회원 초과 단가" value={cfg.free_tier.analysis_fee.free} onChange={(v) => setFree("analysis_fee", "free", v)} />
+            <Field label="비회원 무료 횟수" value={cfg.free_tier.analysis_quota.guest} onChange={(v) => setFree("analysis_quota", "guest", v)} suffix="회" />
+            <Field label="비회원 초과 단가" value={cfg.free_tier.analysis_fee.guest} onChange={(v) => setFree("analysis_fee", "guest", v)} />
+          </div>
         </div>
       </section>
     </div>

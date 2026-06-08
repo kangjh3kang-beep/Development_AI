@@ -62,7 +62,8 @@ function ListEditor({ def }: { def: { key: string; title: string; desc: string }
       <CardContent className="p-6">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
-            <h2 className="text-base font-black text-[var(--text-primary)]">{def.title}</h2>
+            <span className="cc-meta">LIST · {def.key.toUpperCase()}</span>
+            <h2 className="text-base font-black text-[var(--text-primary)] mt-1">{def.title}</h2>
             <p className="mt-0.5 text-xs text-[var(--text-secondary)]">{def.desc}</p>
           </div>
           <button
@@ -78,9 +79,9 @@ function ListEditor({ def }: { def: { key: string; title: string; desc: string }
           <p className="mt-4 text-sm text-[var(--text-hint)]">불러오는 중…</p>
         ) : (
           <div className="mt-4 space-y-2">
-            <div className="flex gap-2 px-1 text-[11px] font-bold text-[var(--text-tertiary)]">
-              <span className="w-40">코드(value)</span>
-              <span className="flex-1">표시명(label)</span>
+            <div className="flex gap-2 px-1">
+              <span className="cc-label w-40">코드(value)</span>
+              <span className="cc-label flex-1">표시명(label)</span>
               <span className="w-8" />
             </div>
             {items.map((it, i) => (
@@ -100,7 +101,7 @@ function ListEditor({ def }: { def: { key: string; title: string; desc: string }
                 <button
                   onClick={() => remove(i)}
                   title="삭제"
-                  className="h-9 w-9 shrink-0 rounded-lg border border-rose-500/30 text-rose-500 hover:bg-rose-500/10"
+                  className="h-9 w-9 shrink-0 rounded-lg border border-[var(--status-error)]/30 text-[var(--status-error)] hover:bg-[var(--status-error)]/10"
                 >
                   ✕
                 </button>
@@ -123,11 +124,19 @@ function ListEditor({ def }: { def: { key: string; title: string; desc: string }
 export default function OptionListsAdminPage() {
   return (
     <div className="space-y-6 p-4 sm:p-8">
-      <div>
-        <h1 className="text-2xl font-black text-[var(--text-primary)]">편집 목록 관리</h1>
-        <p className="mt-1 text-sm text-[var(--text-secondary)]">
-          화면의 고정 선택목록(드롭다운)을 추가/삭제/수정합니다 (관리자 전용). 저장 즉시 전 사용자에게 반영됩니다.
-        </p>
+      <div className="cc-bracketed relative overflow-hidden rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-soft)] p-6 shadow-[var(--shadow-lg)]">
+        <div className="cc-grid-bg opacity-50" />
+        <i className="cc-bracket cc-bracket--tl" />
+        <i className="cc-bracket cc-bracket--tr" />
+        <i className="cc-bracket cc-bracket--bl" />
+        <i className="cc-bracket cc-bracket--br" />
+        <div className="relative z-10 space-y-1.5">
+          <span className="cc-meta">REGISTRY · OPTION LISTS</span>
+          <h1 className="text-2xl font-black text-[var(--text-primary)]">편집 목록 관리</h1>
+          <p className="text-sm text-[var(--text-secondary)]">
+            화면의 고정 선택목록(드롭다운)을 추가/삭제/수정합니다 (관리자 전용). 저장 즉시 전 사용자에게 반영됩니다.
+          </p>
+        </div>
       </div>
       {EDITABLE_LISTS.map((def) => (
         <ListEditor key={def.key} def={def} />

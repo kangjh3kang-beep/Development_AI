@@ -164,57 +164,66 @@ export function AiTokenUsageDashboard() {
 
   return (
     <div className="space-y-6">
-      {/* 요약 카드 */}
+      {/* 요약 카드 — 계기판 게이지 */}
       <div className="grid gap-4 sm:grid-cols-3">
-        <Card>
-          <CardContent className="p-6">
-            <p className="text-xs font-bold uppercase tracking-[0.15em] text-[var(--text-tertiary)]">
+        <div className="cc-panel cc-bracketed">
+          <div className="cc-grid-bg opacity-40" />
+          <i className="cc-bracket cc-bracket--tl" />
+          <i className="cc-bracket cc-bracket--br" />
+          <div className="cc-panel__body relative z-10">
+            <p className="cc-label">
               최근 {usage.days}일 총 토큰 사용량
             </p>
-            <p className="mt-3 text-3xl font-[900] tracking-tight text-[var(--text-primary)]">
+            <p className="cc-num cc-num--data mt-3 text-3xl font-[900]">
               <AnimatedCounter target={totalTokens} />
             </p>
-          </CardContent>
-        </Card>
+          </div>
+        </div>
 
-        <Card>
-          <CardContent className="p-6">
-            <p className="text-xs font-bold uppercase tracking-[0.15em] text-[var(--text-tertiary)]">
+        <div className="cc-panel cc-bracketed">
+          <div className="cc-grid-bg opacity-40" />
+          <i className="cc-bracket cc-bracket--tl" />
+          <i className="cc-bracket cc-bracket--br" />
+          <div className="cc-panel__body relative z-10">
+            <p className="cc-label">
               최근 {usage.days}일 비용 (마진 포함)
             </p>
-            <p className="mt-3 text-3xl font-[900] tracking-tight text-[var(--text-primary)]">
+            <p className="cc-num mt-3 text-3xl font-[900] text-[var(--text-primary)]">
               {won(usage.total_cost_krw)}
             </p>
             <p className="mt-1 text-xs text-[var(--text-hint)]">
               {balance.tier_label} 등급 · 마진 +{balance.markup_pct}% 포함
             </p>
-          </CardContent>
-        </Card>
+          </div>
+        </div>
 
-        <Card>
-          <CardContent className="p-6">
-            <p className="text-xs font-bold uppercase tracking-[0.15em] text-[var(--text-tertiary)]">
+        <div className="cc-panel cc-bracketed">
+          <div className="cc-grid-bg opacity-40" />
+          <i className="cc-bracket cc-bracket--tl" />
+          <i className="cc-bracket cc-bracket--br" />
+          <div className="cc-panel__body relative z-10">
+            <p className="cc-label">
               코인 잔여 (월기본 + 충전)
             </p>
-            <p className="mt-3 text-3xl font-[900] tracking-tight text-[var(--accent-strong)]">
+            <p className="cc-num mt-3 text-3xl font-[900] text-[var(--accent-strong)]">
               {won(totalRemaining)}
             </p>
             <div className="mt-3 space-y-1 text-xs text-[var(--text-hint)]">
               <div className="flex justify-between">
                 <span>월 기본 잔여</span>
-                <span className="font-bold text-[var(--text-secondary)]">{won(balance.monthly_base_remaining)} / {won(balance.monthly_base_krw)}</span>
+                <span className="cc-num font-bold text-[var(--text-secondary)]">{won(balance.monthly_base_remaining)} / {won(balance.monthly_base_krw)}</span>
               </div>
               <div className="flex justify-between">
                 <span>충전 잔여</span>
-                <span className="font-bold text-[var(--text-secondary)]">{won(balance.topup_remaining)} / {won(balance.topup_krw)}</span>
+                <span className="cc-num font-bold text-[var(--text-secondary)]">{won(balance.topup_remaining)} / {won(balance.topup_krw)}</span>
               </div>
               <div className="flex justify-between border-t border-[var(--line)] pt-1">
                 <span>이번 주기 사용</span>
-                <span className="font-bold text-[var(--text-secondary)]">{won(balance.used_this_cycle_krw)}</span>
+                <span className="cc-num font-bold text-[var(--text-secondary)]">{won(balance.used_this_cycle_krw)}</span>
               </div>
             </div>
-          </CardContent>
-        </Card>
+          </div>
+        </div>
       </div>
 
       {!hasUsage ? (
@@ -233,7 +242,7 @@ export function AiTokenUsageDashboard() {
           {/* 서비스별 사용량 */}
           <Card>
             <CardContent className="p-6">
-              <p className="text-xs font-bold uppercase tracking-[0.15em] text-[var(--text-tertiary)]">
+              <p className="cc-label">
                 서비스별 사용량 (마진 포함 비용)
               </p>
               <div className="mt-4 space-y-3">
@@ -246,7 +255,7 @@ export function AiTokenUsageDashboard() {
                         <span className="font-medium text-[var(--text-primary)]">
                           {SERVICE_LABELS[svc.service] ?? svc.service}
                         </span>
-                        <span className="text-[var(--text-secondary)]">
+                        <span className="cc-num text-[var(--text-secondary)]">
                           {svc.tokens.toLocaleString("ko-KR")} 토큰 &middot; {won(svc.cost_krw)}
                         </span>
                       </div>
@@ -267,7 +276,7 @@ export function AiTokenUsageDashboard() {
           {(usage.daily?.length ?? 0) > 0 && (
             <Card>
               <CardContent className="p-6">
-                <p className="text-xs font-bold uppercase tracking-[0.15em] text-[var(--text-tertiary)]">
+                <p className="cc-label">
                   일별 토큰 사용량 (최근 {usage.days}일)
                 </p>
                 <div className="mt-4 flex items-end gap-1.5" style={{ height: 160 }}>
@@ -276,23 +285,23 @@ export function AiTokenUsageDashboard() {
                     return (
                       <div key={day.date} className="group relative flex-1" style={{ height: "100%" }}>
                         <div
-                          className="absolute bottom-0 w-full rounded-t-md bg-[var(--accent-strong)] transition-all duration-300 hover:bg-[var(--accent)]"
+                          className="absolute bottom-0 w-full rounded-t-md bg-[var(--data-accent)] transition-all duration-300 hover:brightness-125"
                           style={{ height: `${heightPct}%` }}
                         />
                         <div className="pointer-events-none absolute -top-16 left-1/2 z-10 -translate-x-1/2 whitespace-nowrap rounded-lg bg-[var(--surface-strong)] px-3 py-1.5 text-xs font-medium text-[var(--text-primary)] opacity-0 shadow-lg transition-opacity group-hover:opacity-100 border border-[var(--line)]">
-                          <span>{day.date.slice(5)}</span>
+                          <span className="cc-num">{day.date.slice(5)}</span>
                           <br />
-                          <span className="text-[var(--accent-strong)]">{day.tokens.toLocaleString("ko-KR")} 토큰</span>
+                          <span className="cc-num text-[var(--data-accent)]">{day.tokens.toLocaleString("ko-KR")} 토큰</span>
                           <br />
-                          <span className="text-[var(--text-secondary)]">{won(day.cost_krw)}</span>
+                          <span className="cc-num text-[var(--text-secondary)]">{won(day.cost_krw)}</span>
                         </div>
                       </div>
                     );
                   })}
                 </div>
                 <div className="mt-2 flex justify-between text-[10px] text-[var(--text-hint)]">
-                  <span>{usage.daily[0]?.date.slice(5)}</span>
-                  <span>{usage.daily[usage.daily.length - 1]?.date.slice(5)}</span>
+                  <span className="cc-num">{usage.daily[0]?.date.slice(5)}</span>
+                  <span className="cc-num">{usage.daily[usage.daily.length - 1]?.date.slice(5)}</span>
                 </div>
               </CardContent>
             </Card>

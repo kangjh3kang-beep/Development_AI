@@ -104,8 +104,8 @@ function UsageBar({ item }: { item: UsageItem }) {
         <span className="text-sm font-medium text-[var(--text-primary)]">
           {item.label}
         </span>
-        <span className="text-xs text-[var(--text-secondary)]">
-          <span className={`font-bold ${isCritical ? "text-red-500" : isWarning ? "text-amber-500" : "text-[var(--text-primary)]"}`}>
+        <span className="cc-num text-xs text-[var(--text-secondary)]">
+          <span className={`font-bold ${isCritical ? "text-[var(--status-error)]" : isWarning ? "text-[var(--status-warning)]" : "text-[var(--text-primary)]"}`}>
             {item.current.toLocaleString("ko-KR")}
           </span>
           {" / "}
@@ -117,10 +117,10 @@ function UsageBar({ item }: { item: UsageItem }) {
         <div
           className={`h-full rounded-full transition-all duration-700 ${
             isCritical
-              ? "bg-red-500"
+              ? "bg-[var(--status-error)]"
               : isWarning
-                ? "bg-amber-500"
-                : "bg-[var(--accent-strong)]"
+                ? "bg-[var(--status-warning)]"
+                : "bg-[var(--data-accent)]"
           }`}
           style={{ width: `${pct}%` }}
         />
@@ -173,7 +173,7 @@ export function SubscriptionPanel() {
                     <h3 className="text-lg font-bold text-[var(--text-primary)]">
                       현재 플랜: {plan.name}
                     </h3>
-                    <span className="rounded-full bg-[var(--accent-strong)]/10 px-2.5 py-0.5 text-xs font-bold text-[var(--accent-strong)]">
+                    <span className="cc-chip-data">
                       {plan.tier.toUpperCase()}
                     </span>
                   </div>
@@ -182,7 +182,7 @@ export function SubscriptionPanel() {
                   </p>
                 </div>
               </div>
-              <p className="text-2xl font-[900] text-[var(--text-primary)]">
+              <p className="cc-num text-2xl font-[900] text-[var(--text-primary)]">
                 {plan.price}
               </p>
             </div>
@@ -190,13 +190,13 @@ export function SubscriptionPanel() {
 
           {/* Features */}
           <div className="p-6">
-            <p className="text-xs font-bold uppercase tracking-[0.15em] text-[var(--text-tertiary)] mb-3">
+            <p className="cc-label mb-3">
               포함된 기능
             </p>
             <div className="grid gap-2 sm:grid-cols-2">
               {(plan.features ?? []).map((feat, i) => (
                 <div key={i} className="flex items-center gap-2 text-sm text-[var(--text-secondary)]">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-emerald-500 shrink-0">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--status-success)] shrink-0">
                     <path d="M20 6 9 17l-5-5" />
                   </svg>
                   {feat}
@@ -210,7 +210,7 @@ export function SubscriptionPanel() {
       {/* Usage */}
       <Card>
         <CardContent className="p-6">
-          <p className="text-xs font-bold uppercase tracking-[0.15em] text-[var(--text-tertiary)] mb-5">
+          <p className="cc-label mb-5">
             이번 달 사용량
           </p>
           <div className="space-y-5">
@@ -223,7 +223,7 @@ export function SubscriptionPanel() {
 
       {/* Upgrade cards */}
       <div>
-        <p className="text-xs font-bold uppercase tracking-[0.15em] text-[var(--text-tertiary)] mb-4">
+        <p className="cc-label mb-4">
           플랜 업그레이드
         </p>
         <div className="grid gap-4 sm:grid-cols-2">
@@ -240,12 +240,12 @@ export function SubscriptionPanel() {
                           {def.name}
                         </h4>
                         {tier === "pro" && (
-                          <span className="rounded-md bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-bold text-amber-600">
+                          <span className="rounded-md bg-[var(--status-warning)]/10 px-1.5 py-0.5 text-[10px] font-bold text-[var(--status-warning)]">
                             추천
                           </span>
                         )}
                       </div>
-                      <p className="text-xl font-[900] text-[var(--text-primary)] mt-1">
+                      <p className="cc-num text-xl font-[900] text-[var(--text-primary)] mt-1">
                         {def.price}
                       </p>
                       <p className="text-xs text-[var(--text-secondary)] mt-1">
