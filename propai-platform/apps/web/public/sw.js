@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v109-loan-resale-select";
+const CACHE_NAME = "propai-v110-sales-action-errfeedback";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

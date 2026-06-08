@@ -38,6 +38,7 @@ export default function CommissionBoard({ siteCode }: { siteCode: string }) {
   const [dBasis, setDBasis] = useState("RATE");
   const [dValue, setDValue] = useState<number>(0.5);
   const [sample, setSample] = useState<number>(500000000);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
   const load = useCallback(() => {
     // 최신(활성) 마스터 사용 — 백엔드 _active_master(effective_at 최신)와 일치. provision 자동생성분과
@@ -49,30 +50,49 @@ export default function CommissionBoard({ siteCode }: { siteCode: string }) {
   }, [siteCode]);
   useEffect(() => { load(); }, [load]);
 
+  const errText = (e: unknown) => (e instanceof Error && e.message ? e.message : "요청에 실패했습니다.");
   const saveMaster = async () => {
-    await api.post("/commission-master", {
-      basis: mBasis,
-      fixed_amount: mBasis === "RATE_OF_PRICE" ? undefined : mFixed,
-      rate: mBasis === "RATE_OF_PRICE" ? mRate : undefined,
-    });
-    load();
+    setMsg(null);
+    try {
+      await api.post("/commission-master", {
+        basis: mBasis,
+        fixed_amount: mBasis === "RATE_OF_PRICE" ? undefined : mFixed,
+        rate: mBasis === "RATE_OF_PRICE" ? mRate : undefined,
+      });
+      setMsg({ ok: true, text: "1단 마스터 저장 완료" }); load();
+    } catch (e) { setMsg({ ok: false, text: errText(e) }); }
   };
   const addDist = async () => {
-    if (!master?.id) { alert("먼저 1단(시행사 총액)을 설정하세요."); return; }
-    await api.post("/commission-distribution", {
-      master_id: master.id, target_node_type: dType, basis: dBasis, value: dValue,
-    });
-    load();
+    setMsg(null);
+    if (!master?.id) { setMsg({ ok: false, text: "먼저 1단(시행사 총액)을 설정하세요." }); return; }
+    try {
+      await api.post("/commission-distribution", {
+        master_id: master.id, target_node_type: dType, basis: dBasis, value: dValue,
+      });
+      setMsg({ ok: true, text: "배분 규칙 추가 완료" }); load();
+    } catch (e) { setMsg({ ok: false, text: errText(e) }); }
   };
-  const delDist = async (id: string) => { await api.del(`/commission-distribution/${id}`); load(); };
+  const delDist = async (id: string) => {
+    setMsg(null);
+    try { await api.del(`/commission-distribution/${id}`); load(); }
+    catch (e) { setMsg({ ok: false, text: errText(e) }); }
+  };
   const check = async () => {
-    const r = await api.post<{ total: number; allocated: number; valid: boolean }>(
-      "/commission/distribution/validate", { sample_price: sample });
-    setValid(r);
+    setMsg(null);
+    try {
+      const r = await api.post<{ total: number; allocated: number; valid: boolean }>(
+        "/commission/distribution/validate", { sample_price: sample });
+      setValid(r);
+    } catch (e) { setMsg({ ok: false, text: errText(e) }); }
   };
 
   return (
     <div className="space-y-4">
+      {msg && (
+        <p className={`rounded-lg px-3 py-2 text-sm font-semibold ${msg.ok ? "bg-emerald-500/10 text-emerald-400" : "bg-rose-500/10 text-rose-400"}`}>
+          {msg.text}
+        </p>
+      )}
       {/* 1단 마스터 */}
       <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-4">
         <h3 className="mb-2 font-black text-[var(--text-primary)]">1단: 시행사 총액</h3>

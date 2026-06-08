@@ -15,6 +15,8 @@ export default function TaxPanel({ siteCode }: { siteCode: string }) {
   const [inv, setInv] = useState<{ counterparty_biz_no: string; supply_amount: number | null; vat_amount: number | null; item: string }>({ counterparty_biz_no: "", supply_amount: null, vat_amount: null, item: "분양대금" });
   const [period, setPeriod] = useState(new Date().toISOString().slice(0, 7));
   const [wh, setWh] = useState<{ gross: number; withholding: number } | null>(null);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const errText = (e: unknown) => (e instanceof Error && e.message ? e.message : "요청에 실패했습니다.");
 
   const load = useCallback(() => {
     api.get<{ satisfied: boolean; hug: boolean; trust_mgmt_agency: boolean }>("/guarantee/check").then(setG).catch(() => setG(null));
@@ -24,17 +26,30 @@ export default function TaxPanel({ siteCode }: { siteCode: string }) {
   useEffect(() => { load(); }, [load]);
 
   const issue = async () => {
-    await api.post("/tax/invoices", { direction: "ISSUE", counterparty_biz_no: inv.counterparty_biz_no,
-      supply_amount: inv.supply_amount ?? 0, vat_amount: inv.vat_amount ?? 0, item: inv.item });
-    setInv({ counterparty_biz_no: "", supply_amount: null, vat_amount: null, item: "분양대금" }); load();
+    setMsg(null);
+    if (!inv.counterparty_biz_no) { setMsg({ ok: false, text: "상대 사업자번호를 입력하세요." }); return; }
+    try {
+      await api.post("/tax/invoices", { direction: "ISSUE", counterparty_biz_no: inv.counterparty_biz_no,
+        supply_amount: inv.supply_amount ?? 0, vat_amount: inv.vat_amount ?? 0, item: inv.item });
+      setInv({ counterparty_biz_no: "", supply_amount: null, vat_amount: null, item: "분양대금" });
+      setMsg({ ok: true, text: "세금계산서 발행(DRAFT) 완료" }); load();
+    } catch (e) { setMsg({ ok: false, text: errText(e) }); }
   };
   const queryWh = async () => {
-    const r = await api.get<{ gross: number; withholding: number }>(`/tax/withholding-statements?period=${period}`);
-    setWh(r);
+    setMsg(null);
+    try {
+      const r = await api.get<{ gross: number; withholding: number }>(`/tax/withholding-statements?period=${period}`);
+      setWh(r);
+    } catch (e) { setMsg({ ok: false, text: errText(e) }); }
   };
 
   return (
     <div className="space-y-5">
+      {msg && (
+        <p className={`rounded-lg px-3 py-2 text-sm font-semibold ${msg.ok ? "bg-emerald-500/10 text-emerald-400" : "bg-rose-500/10 text-rose-400"}`}>
+          {msg.text}
+        </p>
+      )}
       <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-4">
         <h3 className="mb-2 font-bold text-[var(--text-primary)]">선분양 보증 요건</h3>
         {g ? (
