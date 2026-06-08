@@ -94,7 +94,7 @@ export default async function DashboardLayout({
 
   // 1. 사업 검토 — 사업성·시장·인허가·규제 (핵심 깔때기 진입)
   const reviewNavigation = [
-    { href: `/${locale}`, label: "대시보드", icon: <IconDashboard /> },
+    { href: `/${locale}`, label: "중앙분석센타", icon: <IconDashboard /> },
     { href: `/${locale}/precheck`, label: "90초 사업성 진단", icon: <IconPermit /> },
     { href: `/${locale}/projects`, label: "프로젝트 관리", icon: <IconProject /> },
     { href: `/${locale}/market-insights`, label: "시장·시세 분석", icon: <IconMarket /> },
@@ -117,7 +117,7 @@ export default async function DashboardLayout({
   const executionNavigation = [
     { href: `/${locale}/sales`, label: "분양 현장 관리", icon: <IconProject /> },
     { href: `/${locale}/sales/sites`, label: "└ 내 분양 현장(현장앱)", icon: <IconProject /> },
-    { href: `/${locale}/sales/projection`, label: "└ 분양 요약(경영진용)", icon: <IconMarket /> },
+    { href: `/${locale}/sales/projection`, label: "└ 분양관리요약(관리자)", icon: <IconMarket /> },
     { href: `/${locale}/g2b`, label: "공공입찰 (나라장터)", icon: <IconAuction /> },
   ];
 
