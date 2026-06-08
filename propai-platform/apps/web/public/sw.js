@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v103-parcel-scrollzoom";
+const CACHE_NAME = "propai-v104-kakao-login";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

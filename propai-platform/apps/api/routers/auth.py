@@ -343,6 +343,32 @@ class KakaoCallbackRequest(BaseModel):
     redirect_uri: str | None = None
 
 
+@router.get("/kakao/login-url")
+async def kakao_login_url(
+    redirect_uri: str | None = None,
+    settings: Settings = Depends(get_settings),
+) -> dict[str, str]:
+    """카카오 인가 페이지 URL을 생성해 반환한다(REST API 키 비노출 — 서버에서 조립).
+
+    프론트 '카카오 로그인' 버튼이 이 URL로 이동하면 카카오 동의→콜백(code)→/kakao/callback 교환.
+    redirect_uri 미지정 시 서버 설정값(kakao_redirect_uri) 사용. authorize/callback의 redirect_uri는
+    반드시 동일해야 하므로 기본은 서버 설정값으로 통일한다.
+    """
+    from urllib.parse import urlencode
+
+    client_id = settings.kakao_client_id
+    if not client_id:
+        raise HTTPException(status_code=503, detail="카카오 로그인 미설정(KAKAO_REST_API_KEY)")
+    ruri = redirect_uri or settings.kakao_redirect_uri
+    params = {
+        "client_id": client_id,
+        "redirect_uri": ruri,
+        "response_type": "code",
+    }
+    url = f"https://kauth.kakao.com/oauth/authorize?{urlencode(params)}"
+    return {"url": url, "redirect_uri": ruri}
+
+
 @router.post("/kakao/callback", response_model=TokenResponse)
 async def kakao_callback(
     body: KakaoCallbackRequest,

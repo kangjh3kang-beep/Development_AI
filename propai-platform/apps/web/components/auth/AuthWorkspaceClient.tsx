@@ -802,8 +802,17 @@ export function AuthWorkspaceClient({
                         type="button"
                         className="flex w-full items-center justify-center gap-2 rounded-[var(--radius-md)] px-4 py-2.5 text-sm font-semibold transition-all hover:brightness-95 active:scale-[0.98]"
                         style={{ backgroundColor: "#FEE500", color: "#000000" }}
-                        onClick={() => {
-                          window.location.href = `${process.env.NEXT_PUBLIC_API_URL || ""}/api/auth/kakao/login`;
+                        onClick={async () => {
+                          try {
+                            // 서버가 REST 키로 카카오 인가 URL을 조립해 반환(키 비노출) → 이동.
+                            const res = await apiClient.get<{ url: string }>(
+                              "/auth/kakao/login-url",
+                              { useMock: false },
+                            );
+                            if (res?.url) window.location.href = res.url;
+                          } catch {
+                            alert("카카오 로그인 준비 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.");
+                          }
                         }}
                       >
                         <svg viewBox="0 0 24 24" className="h-5 w-5" fill="currentColor">
