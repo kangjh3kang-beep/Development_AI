@@ -88,8 +88,10 @@
 | v124 | 히어로 헤드라인 한글 word-break:keep-all (critic 재검 잔여 MAJOR 해소) → 애플급 ACCEPT | ✅ |
 | v125 | 히어로 카피 변경("개발사업의 필수 플랫폼! 주소만 입력하면, 시장조사·사업성·수지 분석을 한 번에.")+반응형 줄바꿈 | ✅ 라이브 |
 | (api·web 전체 재빌드) | 사용자 요청 — G2B /detail 재확인(이미 200·7섹션) + api(HEAD)·web(HEAD) 전체 재배포 | ✅ health200·/detail200·edge v125 |
-| v126 | 스카이게러지 '팔라트리아' 프리미엄 배너(분양광고 배너 위)+skygarage.net 링크. 골드 럭셔리·왕관·타이포, 사진 슬롯 폴백 | 빌드 중 |
-- ※팔라트리아 실사진은 첨부 이미지를 코드가 호스팅 불가 → `apps/web/public/images/palatria-hero.jpg` 업로드 필요(없으면 골드 그라데이션 폴백).
+| v126 | 스카이게러지 '팔라트리아' 배너 신설(분양광고 배너 위)+skygarage.net 링크 | (v127로 대체) |
+| v127 | 팔라트리아 배너 실에셋 — 배경 실사진(Supabase 럭셔리 차고 거실)+공식 골드 'P' 로고(skygarage.net) | (v128 포함) |
+| v128 | 히어로 왼쪽 'AI가 지도 분석' 생동감 레이어(좌표그리드+노드펄스+스캔빔, 단일파랑·저투명·reduced-motion) | 빌드 중 |
+- 팔라트리아 에셋 URL: 배경=Supabase section-media, 로고=skygarage.net/logo-palatria.webp(사용자 제공).
 
 ### critic 재검 결과(v123)
 - VERDICT: ACCEPT-WITH-RESERVATIONS. C1~C3·H1·H4 = **5/5 해소 확인**. 잔여 = 헤드라인 word-break MAJOR 1건(+ESG 글로우 MINOR=코드상 이미 중립, 저해상 오인). → v124에서 word-break 교정 = ACCEPT.
