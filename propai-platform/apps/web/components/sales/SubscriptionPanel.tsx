@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { salesApi } from "@/lib/salesApi";
+import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 
 interface Ann { id: string; announce_no?: string; status: string; round_id?: string }
 interface Winner { id: string; win_type?: string; status: string; unit_id?: string }
@@ -16,9 +17,10 @@ export default function SubscriptionPanel({ siteCode }: { siteCode: string }) {
   const [no, setNo] = useState("");
   const [rid, setRid] = useState("");
   const [busy, setBusy] = useState("");
+  const [loaded, setLoaded] = useState(false);
 
   const load = useCallback(() => {
-    api.get<Ann[]>("/subscription/announcements").then(setAnns).catch(() => setAnns([]));
+    api.get<Ann[]>("/subscription/announcements").then(setAnns).catch(() => setAnns([])).finally(() => setLoaded(true));
     api.get<Winner[]>("/subscription/winners").then(setWinners).catch(() => setWinners([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [siteCode]);
@@ -41,6 +43,7 @@ export default function SubscriptionPanel({ siteCode }: { siteCode: string }) {
     finally { setBusy(""); }
   };
 
+  if (!loaded) return <SkeletonLoader count={3} itemClassName="h-24 rounded-xl mb-3" />;
   return (
     <div className="space-y-5">
       <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-4">

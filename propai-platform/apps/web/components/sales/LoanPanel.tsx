@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { salesApi, won } from "@/lib/salesApi";
 import { NumberInput } from "@/components/common/NumberInput";
+import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 
 interface Program { id: string; bank_name?: string; guarantee_type?: string; status: string }
 interface Agreement { id: string; approved_amount?: number; status: string; program_id?: string }
@@ -15,13 +16,16 @@ export default function LoanPanel({ siteCode }: { siteCode: string }) {
   const [programs, setPrograms] = useState<Program[]>([]);
   const [agreements, setAgreements] = useState<Agreement[]>([]);
   const [contracts, setContracts] = useState<ContractOpt[]>([]);
+  // loaded: 데이터를 처음 한 번 불러왔는지 표시(false면 화면에 '불러오는 중' 자리표시를 보여줌).
+  const [loaded, setLoaded] = useState(false);
   const [prog, setProg] = useState({ bank_name: "", guarantee_type: "HUG" });
   const [ag, setAg] = useState<{ contract_ext_id: string; program_id: string; approved_amount: number | null }>({ contract_ext_id: "", program_id: "", approved_amount: null });
   const [dis, setDis] = useState<{ agreement_id: string; installment_seq: string; amount: number | null }>({ agreement_id: "", installment_seq: "", amount: null });
   const [msg, setMsg] = useState("");
 
   const load = useCallback(() => {
-    api.get<Program[]>("/loan/programs").then(setPrograms).catch(() => setPrograms([]));
+    // 첫 목록(은행 협약)을 다 불러오면(성공이든 실패든) 자리표시를 걷어낸다.
+    api.get<Program[]>("/loan/programs").then(setPrograms).catch(() => setPrograms([])).finally(() => setLoaded(true));
     api.get<Agreement[]>("/loan/agreements").then(setAgreements).catch(() => setAgreements([]));
     api.get<ContractOpt[]>("/contracts").then((r) => setContracts(r || [])).catch(() => setContracts([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -36,6 +40,8 @@ export default function LoanPanel({ siteCode }: { siteCode: string }) {
     setMsg("실행 기록 완료(회차 납입처리)"); setDis({ agreement_id: "", installment_seq: "", amount: null }); load();
   };
 
+  // 아직 처음 불러오는 중이면 회색 자리표시(스켈레톤)를 보여줘 빈 화면 깜빡임을 막는다.
+  if (!loaded) return <SkeletonLoader count={3} itemClassName="h-24 rounded-xl mb-3" />;
   return (
     <div className="space-y-5">
       <div className="grid gap-4 lg:grid-cols-2">

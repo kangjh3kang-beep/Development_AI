@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { salesApi, won } from "@/lib/salesApi";
 import { NumberInput } from "@/components/common/NumberInput";
+import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 
 interface Overdue { id: string; overdue_days?: number; amount?: number }
 interface ContractOpt { id: string; label: string; status?: string }
@@ -16,9 +17,10 @@ export default function PaymentsPanel({ siteCode }: { siteCode: string }) {
   const [overdue, setOverdue] = useState<Overdue[]>([]);
   const [contracts, setContracts] = useState<ContractOpt[]>([]);
   const [msg, setMsg] = useState("");
+  const [loaded, setLoaded] = useState(false);
 
   const load = useCallback(() => {
-    api.get<Overdue[]>("/payments/overdue").then(setOverdue).catch(() => setOverdue([]));
+    api.get<Overdue[]>("/payments/overdue").then(setOverdue).catch(() => setOverdue([])).finally(() => setLoaded(true));
     // 계약 선택기 목록(원시 UUID 수기입력 대체).
     api.get<ContractOpt[]>("/contracts").then((r) => setContracts(r || [])).catch(() => setContracts([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -36,6 +38,7 @@ export default function PaymentsPanel({ siteCode }: { siteCode: string }) {
     setMsg(r.matched ? "입금 대사 완료(회차 충당)" : "미매칭 — 수동 대사 큐로 이동"); setPay({ va_number: "", amount: null }); load();
   };
 
+  if (!loaded) return <SkeletonLoader count={3} itemClassName="h-24 rounded-xl mb-3" />;
   return (
     <div className="grid gap-5 lg:grid-cols-2">
       <div className="space-y-4">

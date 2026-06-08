@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { salesApi, won } from "@/lib/salesApi";
 import { NumberInput } from "@/components/common/NumberInput";
+import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 
 interface Master { id?: string; basis: string; fixed_amount?: number | null; rate?: number | null; locked?: boolean }
 interface Dist { id: string; master_id?: string; target_node_type?: string | null; target_node_id?: string | null; basis: string; value: number }
@@ -39,13 +40,16 @@ export default function CommissionBoard({ siteCode }: { siteCode: string }) {
   const [dValue, setDValue] = useState<number>(0.5);
   const [sample, setSample] = useState<number>(500000000);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  // loaded: 첫 데이터를 불러왔는지 여부(false면 '불러오는 중' 자리표시 표시).
+  const [loaded, setLoaded] = useState(false);
 
   const load = useCallback(() => {
     // 최신(활성) 마스터 사용 — 백엔드 _active_master(effective_at 최신)와 일치. provision 자동생성분과
     // 사용자 설정분이 공존할 수 있어 마지막 항목(가장 최근 삽입)을 활성으로 본다.
     api.get<Master[]>("/commission-master")
       .then((m) => setMaster(m && m.length ? m[m.length - 1] : null)).catch(() => setMaster(null));
-    api.get<Dist[]>("/commission-distribution").then((d) => setDist(d || [])).catch(() => setDist([]));
+    // 배분 규칙 목록을 다 불러오면 '불러오는 중' 자리표시를 걷어낸다.
+    api.get<Dist[]>("/commission-distribution").then((d) => setDist(d || [])).catch(() => setDist([])).finally(() => setLoaded(true));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [siteCode]);
   useEffect(() => { load(); }, [load]);
@@ -86,6 +90,8 @@ export default function CommissionBoard({ siteCode }: { siteCode: string }) {
     } catch (e) { setMsg({ ok: false, text: errText(e) }); }
   };
 
+  // 처음 불러오는 중이면 회색 자리표시(스켈레톤)로 빈 화면 깜빡임을 막는다.
+  if (!loaded) return <SkeletonLoader count={3} itemClassName="h-24 rounded-xl mb-3" />;
   return (
     <div className="space-y-4">
       {msg && (
