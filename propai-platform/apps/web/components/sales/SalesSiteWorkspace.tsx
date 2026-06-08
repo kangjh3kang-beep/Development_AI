@@ -74,7 +74,10 @@ export default function SalesSiteWorkspace({ siteCode, locale }: { siteCode: str
     <div className="space-y-5">
       <div className="flex items-center gap-3">
         <Link href={`/${locale}/sales`} className="text-sm text-[var(--text-tertiary)] hover:text-[var(--text-primary)]">← 현장 목록</Link>
-        <h1 className="text-lg font-black text-[var(--text-primary)]">{siteName || "분양 현장"}</h1>
+        <div>
+          <span className="cc-meta">SITE · ADMIN CONSOLE</span>
+          <h1 className="mt-0.5 text-lg font-black leading-tight text-[var(--text-primary)]">{siteName || "분양 현장"}</h1>
+        </div>
         {tab === "units" && (
           <button onClick={() => setBuilderOpen(true)}
             className="ml-auto rounded-lg bg-[var(--accent-strong)] px-3 py-1.5 text-xs font-black text-white">
@@ -106,13 +109,18 @@ export default function SalesSiteWorkspace({ siteCode, locale }: { siteCode: str
       {tab === "overview" && (
         <div className="space-y-5">
           {/* 현장 기본정보 + 비밀번호 설정 */}
-          <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-5">
-            <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="cc-bracketed relative overflow-hidden rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-5">
+            <div className="cc-grid-bg opacity-40" />
+            <i className="cc-bracket cc-bracket--tl" />
+            <i className="cc-bracket cc-bracket--tr" />
+            <i className="cc-bracket cc-bracket--bl" />
+            <i className="cc-bracket cc-bracket--br" />
+            <div className="relative z-10 flex flex-wrap items-start justify-between gap-3">
               <div>
-                <p className="text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)]">현장 기본정보</p>
+                <span className="cc-meta">SITE · OVERVIEW</span>
                 <h2 className="mt-1 text-xl font-black text-[var(--text-primary)]">{siteName || "분양 현장"}</h2>
                 <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-xs text-[var(--text-secondary)]">
-                  <span>현장코드 <b className="text-[var(--text-primary)]">{siteInfo?.site_code || siteCode}</b></span>
+                  <span>현장코드 <b className="cc-num text-[var(--text-primary)]">{siteInfo?.site_code || siteCode}</b></span>
                   {siteInfo?.development_type && <span>유형 <b className="text-[var(--text-primary)]">{siteInfo.development_type}</b></span>}
                   {siteInfo?.status && <span>상태 <b className="text-[var(--accent-strong)]">{siteInfo.status}</b></span>}
                 </div>
@@ -126,7 +134,7 @@ export default function SalesSiteWorkspace({ siteCode, locale }: { siteCode: str
                 🔑 현장앱 비밀번호 설정/변경
               </button>
             </div>
-            <p className="mt-3 rounded-lg bg-[var(--surface-strong)] px-3 py-2 text-[11px] text-[var(--text-hint)]">
+            <p className="relative z-10 mt-3 rounded-lg bg-[var(--surface-strong)] px-3 py-2 text-[11px] text-[var(--text-hint)]">
               현장앱(현장 직원용)은 2차 비밀번호로 보호됩니다. 위 버튼으로 먼저 비밀번호를 설정한 뒤 직원에게 공유하세요.
             </p>
           </div>

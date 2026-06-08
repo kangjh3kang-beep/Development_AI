@@ -89,9 +89,10 @@ export default function SalesSiteList({ locale }: { locale: Locale }) {
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-3">
-        <span className="text-2xl">🏗️</span>
+        <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-[var(--accent-soft)] text-2xl">🏗️</span>
         <div>
-          <h1 className="text-lg font-black text-[var(--text-primary)]">분양 현장 관리</h1>
+          <span className="cc-meta">SALES · SITE CONTROL</span>
+          <h1 className="mt-0.5 text-lg font-black text-[var(--text-primary)]">분양 현장 관리</h1>
           <p className="mt-0.5 text-xs text-[var(--text-secondary)]">시행·관리자 경로입니다. 현장을 만들고 설정·요약을 운영합니다. 현장 직원처럼 역할별 앱 화면을 쓰려면 <b className="text-[var(--accent-strong)]">‘현장앱 진입’</b>(2차 비밀번호)을 사용하세요.</p>
         </div>
         <Link href={`/${locale}/sales/sites`}
@@ -147,7 +148,7 @@ export default function SalesSiteList({ locale }: { locale: Locale }) {
             {busy ? "만드는 중…" : "현장 만들기"}
           </button>
         </div>
-        {err && <p className="mt-2 text-xs font-semibold text-rose-400">{err}</p>}
+        {err && <p className="mt-2 text-xs font-semibold text-[var(--status-error)]">{err}</p>}
       </div>
 
       {/* 현장 목록 */}
@@ -160,12 +161,14 @@ export default function SalesSiteList({ locale }: { locale: Locale }) {
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {sites.map((s) => (
+            {sites.map((s) => {
+              const tone = s.status === "OPEN" ? "sa-chip--success" : s.status === "CLOSED" ? "sa-chip--muted" : "sa-chip--warning";
+              return (
               <div key={s.id}
-                className="flex flex-col rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-4 shadow-[var(--shadow-sm)] transition hover:border-[var(--accent-strong)]">
-                <div className="flex items-center justify-between">
+                className="sa-card flex flex-col rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-4 shadow-[var(--shadow-sm)]">
+                <div className="flex items-center justify-between gap-2">
                   <h3 className="font-bold text-[var(--text-primary)]">{s.site_name}</h3>
-                  <span className="rounded-full bg-[var(--surface-strong)] px-2 py-0.5 text-[11px] font-bold text-[var(--accent-strong)]">{STATUS_LABEL[s.status] ?? s.status}</span>
+                  <span className={`sa-chip shrink-0 ${tone}`}>{STATUS_LABEL[s.status] ?? s.status}</span>
                 </div>
                 <p className="mt-1 text-xs text-[var(--text-tertiary)]">{devLabel(s.development_type)}</p>
                 {/* 관리(설정·요약) vs 현장앱 진입(2차비번 게이트) 명확 분리 */}
@@ -189,7 +192,8 @@ export default function SalesSiteList({ locale }: { locale: Locale }) {
                   🔑 현장앱 비밀번호 설정/변경
                 </button>
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

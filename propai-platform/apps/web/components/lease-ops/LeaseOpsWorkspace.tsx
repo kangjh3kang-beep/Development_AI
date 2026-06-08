@@ -47,13 +47,13 @@ function statusLabel(status: string) {
   return STATUS_LABEL_KO[status.toLowerCase()] ?? status;
 }
 
+// 상태 → sa-chip 톤(의미색 토큰). 다크/라이트 모두 토큰이 명암을 보장.
 function statusBadge(status: string) {
   const s = status.toLowerCase();
-  if (s === "active" || s === "occupied" || s === "leased")
-    return "bg-emerald-500/15 text-emerald-500";
-  if (s === "pending") return "bg-amber-500/15 text-amber-500";
-  if (s === "expired") return "bg-rose-500/15 text-rose-500";
-  return "bg-[var(--surface-soft)] text-[var(--text-secondary)]";
+  if (s === "active" || s === "occupied" || s === "leased") return "sa-chip--success";
+  if (s === "pending") return "sa-chip--warning";
+  if (s === "expired") return "sa-chip--error";
+  return "sa-chip--muted";
 }
 
 function formatKrw(value: number | null | undefined) {
@@ -99,18 +99,22 @@ function KpiTile({
 }) {
   return (
     <div
-      className={`rounded-[var(--radius-xl)] p-4 ${
+      className={`cc-bracketed relative overflow-hidden rounded-[var(--radius-xl)] border p-4 ${
         accent
-          ? "bg-[var(--accent-soft)] border border-[var(--line)]"
-          : "bg-[var(--surface)]"
+          ? "border-[var(--data-accent-line)] bg-[var(--data-accent-soft)]"
+          : "border-[var(--line)] bg-[var(--surface)]"
       }`}
     >
-      <p className="text-xs uppercase tracking-[0.2em] text-[var(--text-tertiary)]">
-        {label}
-      </p>
+      {accent && (
+        <>
+          <i className="cc-bracket cc-bracket--tl" />
+          <i className="cc-bracket cc-bracket--br" />
+        </>
+      )}
+      <p className="cc-label text-[var(--text-tertiary)]">{label}</p>
       <p
-        className={`mt-2 text-2xl font-bold ${
-          accent ? "text-[var(--accent-strong)]" : "text-[var(--text-primary)]"
+        className={`mt-2 cc-num text-2xl font-bold ${
+          accent ? "cc-num--data" : "text-[var(--text-primary)]"
         }`}
       >
         {value}
@@ -129,9 +133,7 @@ function SectionCard({
   return (
     <Card>
       <CardContent className="p-6">
-        <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
-          {title}
-        </p>
+        <p className="cc-meta">{title}</p>
         <div className="mt-4">{children}</div>
       </CardContent>
     </Card>
@@ -153,7 +155,15 @@ const inputClass =
 /*  Component                                                         */
 /* ------------------------------------------------------------------ */
 
-const BAR_COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#64748b"];
+// 차트 막대색 — 디자인 토큰(의미색)만 사용. SVG fill은 var() 허용.
+const BAR_COLORS = [
+  "var(--data-accent)",
+  "var(--status-success)",
+  "var(--status-warning)",
+  "var(--status-error)",
+  "var(--status-info)",
+  "var(--text-tertiary)",
+];
 
 export function LeaseOpsWorkspace({ locale }: { locale: Locale }) {
   void locale; // 라벨은 하드코딩(다국어 무관) — 시그니처 호환 유지
@@ -346,16 +356,24 @@ export function LeaseOpsWorkspace({ locale }: { locale: Locale }) {
 
   return (
     <section className="grid gap-6">
-      {/* Hero */}
-      <Card className="rounded-[var(--radius-2xl)] bg-[var(--surface-strong)] shadow-[var(--shadow-lg)]">
-        <CardContent className="p-8">
+      {/* Hero — 임대 운영 관제 헤더 */}
+      <Card className="cc-bracketed relative overflow-hidden rounded-[var(--radius-2xl)] bg-[var(--surface-strong)] shadow-[var(--shadow-lg)]">
+        <div className="cc-grid-bg opacity-40" />
+        <i className="cc-bracket cc-bracket--tl" />
+        <i className="cc-bracket cc-bracket--tr" />
+        <i className="cc-bracket cc-bracket--bl" />
+        <i className="cc-bracket cc-bracket--br" />
+        <CardContent className="relative z-10 p-8">
           <div className="flex flex-wrap items-center gap-3">
+            <span className="cc-meta">LEASE · OPERATIONS</span>
             <span className="rounded-full bg-[var(--accent-soft)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--accent-strong)]">
               임대·임차인 관리
             </span>
-            <span className="rounded-full border border-[var(--line)] px-4 py-2 text-xs font-medium text-[var(--text-secondary)]">
-              {runtimeConfig.mode === "live" ? "LIVE" : "HYBRID"}
-            </span>
+            {runtimeConfig.mode === "live" ? (
+              <span className="cc-live"><i />LIVE</span>
+            ) : (
+              <span className="cc-chip-data">HYBRID</span>
+            )}
           </div>
           <h3 className="mt-5 text-3xl font-bold text-[var(--text-primary)]">
             공실률·임대수익 대시보드와 임차인·계약 관리
@@ -372,7 +390,7 @@ export function LeaseOpsWorkspace({ locale }: { locale: Locale }) {
           )}
 
           {forbidden && (
-            <div className="mt-6 rounded-[var(--radius-xl)] border border-[var(--warning)]/30 bg-[var(--warning-soft)] p-5 text-sm leading-7 text-[var(--text-primary)]">
+            <div className="mt-6 rounded-[var(--radius-xl)] border border-[color:color-mix(in_srgb,var(--status-warning)_40%,transparent)] bg-[color:color-mix(in_srgb,var(--status-warning)_12%,transparent)] p-5 text-sm leading-7 text-[var(--text-primary)]">
               이 기능을 사용할 권한이 없습니다. 임대·임차인 관리는 운영 권한이 필요합니다.
               구독자(viewer) 권한으로는 조회가 제한될 수 있습니다. 관리자에게 권한
               부여를 요청하세요.
@@ -537,10 +555,10 @@ export function LeaseOpsWorkspace({ locale }: { locale: Locale }) {
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="text-left text-xs font-bold uppercase tracking-widest text-[var(--text-tertiary)]">
-                    <th className="pb-3 pr-4">임차인명</th>
-                    <th className="pb-3 pr-4">연락처</th>
-                    <th className="pb-3">업종</th>
+                  <tr className="text-left">
+                    <th className="cc-label pb-3 pr-4">임차인명</th>
+                    <th className="cc-label pb-3 pr-4">연락처</th>
+                    <th className="cc-label pb-3">업종</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -751,15 +769,15 @@ export function LeaseOpsWorkspace({ locale }: { locale: Locale }) {
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="text-left text-xs font-bold uppercase tracking-widest text-[var(--text-tertiary)]">
-                    <th className="pb-3 pr-4">세대</th>
-                    <th className="pb-3 pr-4">임차인</th>
-                    <th className="pb-3 pr-4">보증금</th>
-                    <th className="pb-3 pr-4">월 임대료</th>
-                    <th className="pb-3 pr-4">계약기간</th>
-                    <th className="pb-3 pr-4">면적</th>
-                    <th className="pb-3 pr-4">상태</th>
-                    <th className="pb-3">상태 변경</th>
+                  <tr className="text-left">
+                    <th className="cc-label pb-3 pr-4">세대</th>
+                    <th className="cc-label pb-3 pr-4">임차인</th>
+                    <th className="cc-label pb-3 pr-4">보증금</th>
+                    <th className="cc-label pb-3 pr-4">월 임대료</th>
+                    <th className="cc-label pb-3 pr-4">계약기간</th>
+                    <th className="cc-label pb-3 pr-4">면적</th>
+                    <th className="cc-label pb-3 pr-4">상태</th>
+                    <th className="cc-label pb-3">상태 변경</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -771,22 +789,20 @@ export function LeaseOpsWorkspace({ locale }: { locale: Locale }) {
                       <td className="py-3 pr-4 text-[var(--text-secondary)]">
                         {c.lessee_name ?? tenantNameById.get(c.id) ?? "-"}
                       </td>
-                      <td className="py-3 pr-4 text-[var(--text-secondary)]">
+                      <td className="cc-num py-3 pr-4 text-[var(--text-secondary)]">
                         {formatKrw(c.deposit)}
                       </td>
-                      <td className="py-3 pr-4 text-[var(--text-secondary)]">
+                      <td className="cc-num py-3 pr-4 text-[var(--text-secondary)]">
                         {formatKrw(c.monthly_rent)}
                       </td>
-                      <td className="py-3 pr-4 text-[var(--text-secondary)] whitespace-nowrap">
+                      <td className="cc-num py-3 pr-4 text-[var(--text-secondary)] whitespace-nowrap">
                         {c.start_date ?? "-"} ~ {c.end_date ?? "-"}
                       </td>
-                      <td className="py-3 pr-4 text-[var(--text-secondary)]">
+                      <td className="cc-num py-3 pr-4 text-[var(--text-secondary)]">
                         {c.area_sqm != null ? `${c.area_sqm.toLocaleString()}㎡` : "-"}
                       </td>
                       <td className="py-3 pr-4">
-                        <span
-                          className={`rounded-full px-3 py-1 text-xs font-bold ${statusBadge(c.status)}`}
-                        >
+                        <span className={`sa-chip ${statusBadge(c.status)}`}>
                           {statusLabel(c.status)}
                         </span>
                       </td>

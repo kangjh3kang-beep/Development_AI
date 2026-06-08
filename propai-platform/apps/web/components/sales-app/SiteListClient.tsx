@@ -77,7 +77,8 @@ export default function SiteListClient({ locale }: { locale: Locale }) {
       <div className="flex items-center gap-3">
         <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-[var(--accent-soft)] text-2xl">🏗️</span>
         <div>
-          <h1 className="text-xl font-black tracking-tight text-[var(--text-primary)]">내 분양 현장</h1>
+          <span className="cc-meta">FIELD APP · MY SITES</span>
+          <h1 className="mt-0.5 text-xl font-black tracking-tight text-[var(--text-primary)]">내 분양 현장</h1>
           <p className="mt-0.5 text-xs text-[var(--text-secondary)]">
             현장 앱 진입점입니다. 현장을 선택하고 2차 비밀번호로 진입하면 내 역할에 맞는 메뉴가 열립니다.
           </p>

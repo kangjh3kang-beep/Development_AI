@@ -338,12 +338,15 @@ export function ProjectBimWorkspaceClient({
       <Card className="rounded-[var(--radius-2xl)] bg-[var(--surface-strong)] shadow-[var(--shadow-lg)]">
         <CardContent className="p-8">
           <div className="flex flex-wrap items-center gap-3">
+            <span className="cc-meta">BIM WORKSPACE</span>
             <span className="rounded-full bg-[rgba(14,116,144,0.1)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--accent-strong)]">
               {labels.heroTitle}
             </span>
-            <span className="rounded-full border border-[var(--line)] px-4 py-2 text-xs font-medium text-[var(--text-secondary)]">
-              {runtimeConfig.mode === "live" ? "LIVE" : "HYBRID"}
-            </span>
+            {runtimeConfig.mode === "live" ? (
+              <span className="cc-live"><i />LIVE</span>
+            ) : (
+              <span className="cc-chip-data">HYBRID</span>
+            )}
           </div>
           <h3 className="mt-5 text-3xl font-bold text-[var(--text-primary)]">
             {labels.heroDescription}
@@ -392,7 +395,7 @@ export function ProjectBimWorkspaceClient({
         <CardContent className="grid gap-5 p-6 lg:grid-cols-[0.95fr_1.05fr]">
           <div className="grid gap-3">
             <div>
-              <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+              <p className="cc-label">
                 {labels.contextTitle}
               </p>
               <CardTitle className="mt-2 text-xl">{labels.contextHint}</CardTitle>
@@ -424,7 +427,7 @@ export function ProjectBimWorkspaceClient({
 
           <Card className="bg-[var(--surface-soft)] shadow-none">
             <CardContent className="p-5">
-              <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+              <p className="cc-label">
                 {labels.generateTitle}
               </p>
               <form className="mt-4 grid gap-3" onSubmit={handleGenerate}>
@@ -478,7 +481,7 @@ export function ProjectBimWorkspaceClient({
       <div className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
         <Card>
           <CardContent className="p-6">
-            <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+            <p className="cc-label">
               {labels.resultTitle}
             </p>
             {bimResult ? (
@@ -518,7 +521,7 @@ export function ProjectBimWorkspaceClient({
 
         <Card>
           <CardContent className="p-6">
-            <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+            <p className="cc-label">
               {labels.geometryTitle}
             </p>
             {geometryResult ? (
@@ -534,7 +537,7 @@ export function ProjectBimWorkspaceClient({
                   />
                 </div>
                 <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
-                  <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+                  <p className="cc-label">
                     {labels.geometryTypesLabel}
                   </p>
                   {geometryTypeSummary.length ? (
@@ -572,11 +575,13 @@ function MetricTile({
   value: string;
 }) {
   return (
-    <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
-      <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+    <div className="cc-bracketed rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
+      <i className="cc-bracket cc-bracket--tl" />
+      <i className="cc-bracket cc-bracket--br" />
+      <p className="cc-label">
         {label}
       </p>
-      <p className="mt-3 break-all text-sm font-semibold text-[var(--text-primary)]">
+      <p className="cc-num mt-3 break-all text-sm font-semibold">
         {value}
       </p>
     </div>

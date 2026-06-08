@@ -165,7 +165,11 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
     <div className="space-y-8">
       <motion.div initial={{ y: -20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} className="flex flex-wrap items-start justify-between gap-3">
         <div>
-        <h1 className="text-3xl font-black tracking-tight text-[var(--text-primary)]">AI 건축 설계</h1>
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="cc-meta">DESIGN CONSOLE · KR CODE</span>
+          {isReady && <span className="cc-live"><i />AI READY</span>}
+        </div>
+        <h1 className="mt-2 text-3xl font-black tracking-tight text-[var(--text-primary)]">AI 건축 설계</h1>
         <p className="text-sm text-[var(--text-secondary)] mt-1">한국 건축법 기반 즉시 계산 + AI 심층 분석</p>
         </div>
         <button onClick={() => setEasy((v) => !v)}
@@ -183,22 +187,25 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
       </motion.div>
 
       <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.1 }} className="glass rounded-3xl p-8 border border-[var(--line-strong)]">
-        <h2 className="text-lg font-black text-[var(--text-primary)] mb-6">설계 조건</h2>
+        <div className="mb-6 flex items-center gap-2.5">
+          <span className="cc-label text-[var(--text-secondary)]">INPUT · PARAMS</span>
+          <h2 className="text-lg font-black text-[var(--text-primary)]">설계 조건</h2>
+        </div>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div>
-            <label className="text-xs font-bold uppercase tracking-widest text-[var(--text-tertiary)] mb-2 block">대지면적 (㎡)</label>
+            <label className="cc-label mb-2 block">대지면적 (㎡)</label>
             <NumberInput allowDecimal placeholder="500" value={form.landArea === "" ? null : Number(form.landArea)} onChange={(n) => setForm((f) => ({ ...f, landArea: n != null ? String(n) : "" }))}
               className="w-full rounded-xl border border-[var(--line)] bg-[var(--surface-muted)] px-4 py-3 text-sm text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-strong)]/50" />
           </div>
           <div>
-            <label className="text-xs font-bold uppercase tracking-widest text-[var(--text-tertiary)] mb-2 block">용도지역</label>
+            <label className="cc-label mb-2 block">용도지역</label>
             <select value={effectiveZoning} onChange={(e) => { setZoneEdited(true); setForm((f) => ({ ...f, zoning: e.target.value })); }}
               className="w-full rounded-xl border border-[var(--line)] bg-[var(--surface-muted)] px-4 py-3 text-sm text-[var(--text-primary)] appearance-none cursor-pointer">
               {["제1종전용주거지역","제2종전용주거지역","제1종일반주거지역","제2종일반주거지역","제3종일반주거지역","준주거지역","일반상업지역","근린상업지역","준공업지역"].map((z) => <option key={z} value={z}>{z}</option>)}
             </select>
           </div>
           <div>
-            <label className="text-xs font-bold uppercase tracking-widest text-[var(--text-tertiary)] mb-2 block">건물용도</label>
+            <label className="cc-label mb-2 block">건물용도</label>
             <select value={form.buildingUse} onChange={(e) => setForm((f) => ({ ...f, buildingUse: e.target.value }))}
               className="w-full rounded-xl border border-[var(--line)] bg-[var(--surface-muted)] px-4 py-3 text-sm text-[var(--text-primary)] appearance-none cursor-pointer">
               {["공동주택","업무시설","근린생활시설","숙박시설","판매시설","교육연구시설"].map((u) => <option key={u} value={u}>{u}</option>)}
@@ -215,10 +222,13 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
 
       {calc && (
         <motion.div initial={{ y: 30, opacity: 0 }} animate={{ y: 0, opacity: 1 }} className="space-y-6">
-          <div className="flex items-center gap-2">
-            <span className={`inline-block h-2 w-2 rounded-full ${ai ? "bg-emerald-400" : "bg-blue-400"}`} />
-            <span className="text-xs font-bold text-[var(--text-secondary)]">{ai ? "AI 분석 결과 반영됨" : "한국 건축법/국토계획법 기반 자동 계산"}</span>
-          </div>
+          {ai ? (
+            <span className="cc-live"><i />AI 분석 결과 반영됨</span>
+          ) : (
+            <div className="flex items-center gap-2">
+              <span className="cc-label text-[var(--text-secondary)]">한국 건축법/국토계획법 기반 자동 계산</span>
+            </div>
+          )}
 
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             {[
@@ -227,9 +237,9 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
               { label: "예상 층수", val: `${calc.maxFloors}층`, sub: `${calc.maxHeight}m (${calc.heightNote})`, color: "text-purple-400" },
               { label: "주차 대수", val: `${calc.parking}대`, sub: "주차장법 기준", color: "text-amber-400" },
             ].map((k) => (
-              <div key={k.label} className="glass rounded-2xl p-5 border border-[var(--line)] text-center">
-                <p className={`text-xs font-bold uppercase tracking-widest ${k.color} mb-2`}>{k.label}</p>
-                <p className="text-2xl font-black text-[var(--text-primary)]">{k.val}</p>
+              <div key={k.label} className="cc-panel cc-interactive p-5 text-center">
+                <p className={`cc-label ${k.color} mb-2`}>{k.label}</p>
+                <p className="cc-num text-2xl font-black">{k.val}</p>
                 <p className="text-[10px] text-[var(--text-hint)]">{k.sub}</p>
                 {easy && EASY[k.label] && <p className="mt-1.5 text-[10px] leading-snug text-[var(--accent-strong)]">{EASY[k.label]}</p>}
               </div>
@@ -237,8 +247,11 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
           </div>
 
           {/* 법규 적합 체크리스트 — 적용값이 법정 한도 이내인지 한눈에 */}
-          <div className="glass rounded-2xl p-6 border border-[var(--line)]">
-            <h3 className="text-sm font-black text-[var(--text-primary)] mb-3">✅ 법규 적합 체크리스트</h3>
+          <div className="cc-panel p-6">
+            <div className="mb-3 flex items-center gap-2.5">
+              <span className="cc-label text-[var(--text-secondary)]">COMPLIANCE CHECK</span>
+              <h3 className="text-sm font-black text-[var(--text-primary)]">법규 적합 체크리스트</h3>
+            </div>
             {easy && <p className="mb-2 text-[11px] text-[var(--accent-strong)]">적용 설계값이 법으로 정한 한도 안에 들어오는지 확인합니다. ✓면 통과예요.</p>}
             <div className="space-y-1.5">
               {[
@@ -251,8 +264,8 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
                 return (
                   <div key={row.k} className="flex items-center justify-between rounded-lg bg-[var(--surface-muted)] px-3 py-2 text-xs">
                     <span className="font-bold text-[var(--text-secondary)]">{row.k}</span>
-                    <span className="text-[var(--text-hint)]">적용 {row.v}{row.u} / 한도 {row.max}{row.u}</span>
-                    <span className={`font-black ${ok ? "text-emerald-500" : "text-rose-500"}`}>{ok ? "✓ 적합" : "⚠ 초과"}</span>
+                    <span className="cc-num text-[var(--text-hint)]">적용 {row.v}{row.u} / 한도 {row.max}{row.u}</span>
+                    <span className="font-black" style={{ color: ok ? "var(--status-success)" : "var(--status-error)" }}>{ok ? "✓ 적합" : "⚠ 초과"}</span>
                   </div>
                 );
               })}
@@ -273,18 +286,21 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
           )}
 
           <div className="grid grid-cols-2 gap-4">
-            <div className="glass rounded-2xl p-5 border border-[var(--line)]">
-              <p className="text-xs font-bold text-cyan-400 uppercase tracking-widest mb-1">최대 연면적</p>
-              <p className="text-3xl font-black text-[var(--text-primary)]">{calc.maxGrossArea.toLocaleString()} <span className="text-sm">㎡</span></p>
+            <div className="cc-panel cc-interactive p-5">
+              <p className="cc-label text-cyan-400 mb-1">최대 연면적</p>
+              <p className="cc-num cc-num--data text-3xl font-black">{calc.maxGrossArea.toLocaleString()} <span className="text-sm">㎡</span></p>
             </div>
-            <div className="glass rounded-2xl p-5 border border-[var(--line)]">
-              <p className="text-xs font-bold text-orange-400 uppercase tracking-widest mb-1">건축가능면적</p>
-              <p className="text-3xl font-black text-[var(--text-primary)]">{calc.buildableArea.toLocaleString()} <span className="text-sm">㎡</span></p>
+            <div className="cc-panel cc-interactive p-5">
+              <p className="cc-label text-orange-400 mb-1">건축가능면적</p>
+              <p className="cc-num text-3xl font-black">{calc.buildableArea.toLocaleString()} <span className="text-sm">㎡</span></p>
             </div>
           </div>
 
-          <div className="glass rounded-2xl p-6 border border-[var(--line)]">
-            <h3 className="text-sm font-black text-[var(--text-primary)] mb-3">건축선 이격거리</h3>
+          <div className="cc-panel p-6">
+            <div className="mb-3 flex items-center gap-2.5">
+              <span className="cc-label text-[var(--text-secondary)]">SETBACK</span>
+              <h3 className="text-sm font-black text-[var(--text-primary)]">건축선 이격거리</h3>
+            </div>
             <div className="grid grid-cols-3 gap-4 text-center">
               {[
                 { label: "전면", val: ai?.setbacks?.front ?? calc.setbacks.front },
@@ -292,15 +308,18 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
                 { label: "후면", val: ai?.setbacks?.rear ?? calc.setbacks.rear },
               ].map((s) => (
                 <div key={s.label} className="rounded-xl bg-[var(--surface-muted)] p-3 border border-[var(--line)]">
-                  <p className="text-[10px] font-bold text-[var(--text-hint)] uppercase">{s.label}</p>
-                  <p className="text-xl font-black text-[var(--text-primary)]">{s.val}<span className="text-xs ml-0.5">m</span></p>
+                  <p className="cc-label text-[var(--text-hint)]">{s.label}</p>
+                  <p className="cc-num text-xl font-black">{s.val}<span className="text-xs ml-0.5">m</span></p>
                 </div>
               ))}
             </div>
           </div>
 
-          <div className="glass rounded-2xl p-6 border border-[var(--line)]">
-            <h3 className="text-lg font-black text-[var(--text-primary)] mb-1">매싱 대안 비교</h3>
+          <div className="cc-panel p-6">
+            <div className="mb-1 flex items-center gap-2.5">
+              <span className="cc-label text-[var(--text-secondary)]">MASSING · OPTIONS</span>
+              <h3 className="text-lg font-black text-[var(--text-primary)]">매싱 대안 비교</h3>
+            </div>
             {easy && <p className="mb-3 text-[11px] text-[var(--accent-strong)]">{EASY["매싱"]} 효율(전용률)이 높을수록 같은 면적에서 분양·임대 면적이 많아 유리합니다. ★가 추천안.</p>}
             {(() => {
               const opts = ai?.massingOptions || calc.massingOptions;
@@ -318,7 +337,7 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
                         <p className="mt-0.5 text-[11px] leading-snug text-[var(--text-secondary)]">{m.description}</p>
                         <div className="mt-2 flex items-center gap-2">
                           <div className="h-2 flex-1 rounded-full bg-[var(--line)]"><div className="h-2 rounded-full" style={{ width: `${m.efficiency}%`, background: isBest ? "var(--accent-strong)" : "#60a5fa" }} /></div>
-                          <span className={`text-xs font-black ${isBest ? "text-[var(--accent-strong)]" : "text-blue-400"}`}>{m.efficiency}%</span>
+                          <span className={`cc-num text-xs font-black ${isBest ? "text-[var(--accent-strong)]" : "text-blue-400"}`}>{m.efficiency}%</span>
                         </div>
                         {estGfa != null && (
                           <p className="mt-1.5 text-[10px] text-[var(--text-hint)]">예상 전용 연면적 약 {estGfa.toLocaleString()}㎡</p>

@@ -151,7 +151,10 @@ export default function SiteWorkspaceClient({ locale, siteId }: { locale: Locale
         >
           ← 내 현장
         </Link>
-        <h1 className="text-lg font-black text-[var(--text-primary)]">분양 현장</h1>
+        <div>
+          <span className="cc-meta">FIELD APP · WORKSPACE</span>
+          <h1 className="mt-0.5 text-lg font-black leading-tight text-[var(--text-primary)]">분양 현장</h1>
+        </div>
         {role && (
           <span className="rounded-md bg-[var(--accent-soft)] px-2 py-0.5 text-[11px] font-bold text-[var(--accent-strong)]">
             {role.role_label ?? ROLE_LABEL[role.role] ?? role.role}

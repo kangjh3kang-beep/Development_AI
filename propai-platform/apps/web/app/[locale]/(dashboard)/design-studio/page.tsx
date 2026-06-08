@@ -16,8 +16,14 @@ export default function DesignStudioPage() {
       {projectId ? (
         <DesignStudio projectId={projectId} />
       ) : (
-        <div className="rounded-2xl border border-dashed border-[var(--line-strong)] bg-[var(--surface-soft)] p-10 text-center text-sm text-[var(--text-secondary)]">
-          위에서 프로젝트를 선택하면 AI 자동설계가 시작됩니다. (부지분석 데이터가 자동 반영됩니다)
+        <div className="cc-panel cc-bracketed p-10 text-center">
+          <i className="cc-bracket cc-bracket--tl" />
+          <i className="cc-bracket cc-bracket--tr" />
+          <i className="cc-bracket cc-bracket--bl" />
+          <i className="cc-bracket cc-bracket--br" />
+          <div className="cc-grid-bg opacity-40" />
+          <span className="relative z-10 cc-label text-[var(--text-tertiary)]">NO PROJECT LOADED</span>
+          <p className="relative z-10 mt-2 text-sm text-[var(--text-secondary)]">위에서 프로젝트를 선택하면 AI 자동설계가 시작됩니다. (부지분석 데이터가 자동 반영됩니다)</p>
         </div>
       )}
     </div>
