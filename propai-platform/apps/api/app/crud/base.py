@@ -14,8 +14,15 @@ class CRUDBase(Generic[M]):
     def __init__(self, model: Type[M]):
         self.model = model
 
-    async def get(self, db: AsyncSession, id_: uuid.UUID) -> M | None:
-        return (await db.execute(select(self.model).where(self.model.id == id_))).scalar_one_or_none()
+    async def get(self, db: AsyncSession, id_: uuid.UUID, site_id=None) -> M | None:
+        # site_id가 주어지고 모델에 site_id 컬럼이 있으면 '같은 현장' 것만 조회한다.
+        # (멀티테넌트 격리: 다른 현장의 UUID를 알아도 그 현장 데이터를 못 보게 막는다.)
+        q = select(self.model).where(self.model.id == id_)
+        if site_id is not None and hasattr(self.model, "site_id"):
+            q = q.where(self.model.site_id == site_id)
+        if hasattr(self.model, "deleted_at"):
+            q = q.where(self.model.deleted_at.is_(None))
+        return (await db.execute(q)).scalar_one_or_none()
 
     async def list(self, db: AsyncSession, site_id=None, limit=100, offset=0, **filters):
         q = select(self.model)
@@ -36,8 +43,8 @@ class CRUDBase(Generic[M]):
         await db.refresh(obj)
         return obj
 
-    async def update(self, db: AsyncSession, id_: uuid.UUID, data: dict) -> M | None:
-        obj = await self.get(db, id_)
+    async def update(self, db: AsyncSession, id_: uuid.UUID, data: dict, site_id=None) -> M | None:
+        obj = await self.get(db, id_, site_id=site_id)  # 같은 현장 것만 수정 허용
         if not obj:
             return None
         for k, v in data.items():
@@ -47,8 +54,8 @@ class CRUDBase(Generic[M]):
         await db.refresh(obj)
         return obj
 
-    async def delete(self, db: AsyncSession, id_: uuid.UUID) -> bool:
-        obj = await self.get(db, id_)
+    async def delete(self, db: AsyncSession, id_: uuid.UUID, site_id=None) -> bool:
+        obj = await self.get(db, id_, site_id=site_id)  # 같은 현장 것만 삭제 허용
         if not obj:
             return False
         if hasattr(obj, "deleted_at"):

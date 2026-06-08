@@ -118,9 +118,10 @@ export default function CustomerCardDrawer({
   const load = useCallback(() => {
     setLoading(true);
     api
-      .get<{ history?: HistoryItem[]; items?: HistoryItem[] }>(`/customers/${customerId}/history`)
+      // 백엔드는 활동 이력을 `timeline` 키로 준다(예전엔 history/items만 읽어 항상 빈 타임라인이었음).
+      .get<{ timeline?: HistoryItem[]; history?: HistoryItem[]; items?: HistoryItem[] }>(`/customers/${customerId}/history`)
       .then((r) => {
-        setItems(r.history ?? r.items ?? []);
+        setItems(r.timeline ?? r.history ?? r.items ?? []);
         setErr("");
       })
       .catch(() => setErr("히스토리를 불러오지 못했습니다."))

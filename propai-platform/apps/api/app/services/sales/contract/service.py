@@ -26,7 +26,8 @@ async def _set_unit_status(db, unit_id, to_status, by=None):
     return u
 
 
-async def create_contract(db: AsyncSession, site_id, unit_id, customer_id=None, round_id=None, total_price=None, by=None):
+async def create_contract(db: AsyncSession, site_id, unit_id, customer_id=None, round_id=None,
+                          total_price=None, member_node_id=None, by=None):
     """계약 체결(최초 생성) — 세대 1호에 계약 1건을 만든다.
 
     이 함수가 없으면 '청약/세대 → 계약 → 수납/대출/전매'로 이어지는 전주기 흐름이 끊겨
@@ -34,6 +35,8 @@ async def create_contract(db: AsyncSession, site_id, unit_id, customer_id=None, 
 
     - total_price 미지정 시 해당 세대의 가격표(sales_unit_price_table)에서 자동으로 끌어온다.
     - 세대 상태를 RESERVED(예약)로 바꾸고, 다른 화면들이 곧바로 이 계약을 선택할 수 있게 한다.
+    - member_node_id: 이 계약을 담당한 영업사원(조직도 노드). 이게 있어야 계약 체결 시
+      수수료가 그 사원→상위 조직으로 배분된다(없으면 split이 빈 체인이라 아무도 수수료를 못 받음).
     """
     from sqlalchemy import desc
 
@@ -56,7 +59,7 @@ async def create_contract(db: AsyncSession, site_id, unit_id, customer_id=None, 
             price = int(pt.override_price or pt.total_price or pt.base_price or 0)
 
     c = SalesContractExt(site_id=site_id, unit_id=unit_id, customer_id=customer_id,
-                         round_id=round_id, stage="RESERVED", status="ACTIVE",
+                         round_id=round_id, member_node_id=member_node_id, stage="RESERVED", status="ACTIVE",
                          total_price=int(price) if price else None)
     db.add(c)
     await _set_unit_status(db, unit_id, "RESERVED", by)  # 예약 상태로 전환(청약·배치도와 동기화)
@@ -66,6 +69,9 @@ async def create_contract(db: AsyncSession, site_id, unit_id, customer_id=None, 
 
 async def sign_contract(db: AsyncSession, site_id, contract_id, by=None):
     c = (await db.execute(select(SalesContractExt).where(SalesContractExt.id == contract_id))).scalar_one()
+    # 이미 서명됐거나 취소된 계약을 또 서명하면 회차표·수수료가 중복 생성된다 → 막는다(멱등 가드).
+    if c.stage != "RESERVED" or c.status != "ACTIVE":
+        raise ValueError(f"서명할 수 없는 계약 상태입니다(현재 단계={c.stage}, 상태={c.status}). 예약(RESERVED) 상태에서만 서명 가능합니다.")
     c.stage = "SIGNED"
     c.signed_at = datetime.now(timezone.utc)
     await _set_unit_status(db, c.unit_id, "CONTRACTED", by)  # 동호 유니크로 1호 1계약 보장
@@ -93,7 +99,10 @@ async def cancel_contract(db: AsyncSession, site_id, contract_id, reason: str, b
         reason=reason, prev_snapshot={"stage": c.stage, "total_price": int(c.total_price or 0)},
     ))
     c.status = "CANCELLED"
-    await _set_unit_status(db, c.unit_id, "CANCELLED", by)
+    c.stage = "CANCELLED"
+    # 계약은 취소(CANCELLED)로 남기되, 세대(호실)는 다시 'AVAILABLE'로 되돌려 재분양이 가능하게 한다.
+    # (이전엔 세대를 CANCELLED로 막아버려 해지 후 같은 호실을 영영 다시 팔 수 없는 결함이 있었음.)
+    await _set_unit_status(db, c.unit_id, "AVAILABLE", by)
     ev = (await db.execute(select(SalesCommissionEvent).where(
         SalesCommissionEvent.contract_ext_id == c.id))).scalar_one_or_none()
     if ev:

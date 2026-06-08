@@ -15,18 +15,19 @@ interface Pred {
   current_grade?: string | null; score: number; suggested_grade: string; reasons: string[]; next_action: string;
 }
 
-// Phase 1-D — 현장별/통합(union) 고객 목록 행. 통합뷰는 masked=true(연락처 phone_masked만)·sites[] 현장칩.
+// Phase 1-D — 현장별/통합(union) 고객 목록 행. 필드명은 백엔드 my-customers 응답과 1:1로 맞춘다
+// (customer_id·stage·site_name). 예전엔 id·status·sites[]로 잘못 가정해 카드 클릭·단계표시가 전부 깨졌었음.
 interface MyCustomer {
-  id: string;
+  customer_id: string;
   name?: string | null;
   phone?: string | null;
   phone_masked?: string | null;
-  status?: string | null; // 단계
+  stage?: string | null; // 단계(LEAD/CONSULT/…)
   grade?: string | null; // 온도(A/B/C)
   masked?: boolean;
-  sites?: { id?: string; name?: string }[] | null;
   site_id?: string | null;
-  site_name?: string | null;
+  site_name?: string | null; // 통합뷰에서 현장칩으로 표시
+  role_in_site?: string | null;
 }
 
 const GRADE: Record<string, string> = {
@@ -73,12 +74,14 @@ export default function CrmPanel({ siteCode }: { siteCode: string }) {
   }, [siteCode]);
   useEffect(() => { load(); }, [load]);
 
-  // 고객 목록 로딩. scope=site → salesApi(X-Site-Token), scope=all → apiClient(전역토큰·union·마스킹).
+  // 고객 목록 로딩. scope=site → salesApi(X-Site-Code 헤더로 현장 자동 인식), scope=all → apiClient(전역토큰·union·마스킹).
   const loadCustomers = useCallback(() => {
     setListLoading(true);
     setListErr("");
     const qs = new URLSearchParams({ scope });
-    if (scope === "site") qs.set("site_id", siteCode);
+    // ※ 현장별(site)일 때는 site_id 쿼리를 보내지 않는다. 백엔드 site_id는 UUID만 받는데
+    //   여기 siteCode는 사람이 읽는 코드(예: GANGNAM-1)라 보내면 422가 난다.
+    //   대신 salesApi가 붙이는 X-Site-Code 헤더로 백엔드가 현장을 자동 인식한다.
     if (stage) qs.set("stage", stage);
     if (q.trim()) qs.set("q", q.trim());
     const path = `/sales/my-customers?${qs.toString()}`;
@@ -168,13 +171,13 @@ export default function CrmPanel({ siteCode }: { siteCode: string }) {
           <ul className="space-y-2">
             {customers.map((c) => {
               const masked = c.masked || scope === "all";
-              const clickable = !masked && !!c.id;
+              const clickable = !masked && !!c.customer_id;
               return (
-                <li key={c.id}>
+                <li key={c.customer_id}>
                   <button
                     type="button"
                     disabled={!clickable}
-                    onClick={() => clickable && setDrawer({ id: c.id, name: c.name })}
+                    onClick={() => clickable && setDrawer({ id: c.customer_id, name: c.name })}
                     className={`flex w-full flex-wrap items-center gap-2 rounded-xl border border-[var(--line)] bg-[var(--surface-strong)] p-2.5 text-left transition ${
                       clickable ? "hover:border-[var(--accent-strong)]" : "cursor-default"
                     }`}
@@ -186,18 +189,14 @@ export default function CrmPanel({ siteCode }: { siteCode: string }) {
                     )}
                     <span className="font-bold text-[var(--text-primary)]">{c.name || "-"}</span>
                     <span className="text-xs text-[var(--text-tertiary)]">{masked ? (c.phone_masked || "010****") : (c.phone || "")}</span>
-                    {c.status && (
+                    {c.stage && (
                       <span className="rounded-md bg-[var(--surface-soft)] px-1.5 py-0.5 text-[10px] font-bold text-[var(--text-secondary)]">
-                        {STAGE_LABEL[c.status] ?? c.status}
+                        {STAGE_LABEL[c.stage] ?? c.stage}
                       </span>
                     )}
-                    {scope === "all" && Array.isArray(c.sites) && c.sites?.length > 0 && (
-                      <span className="flex flex-wrap gap-1">
-                        {(c.sites ?? []).map((s, i) => (
-                          <span key={s.id ?? i} className="rounded-md bg-[var(--accent-soft)] px-1.5 py-0.5 text-[10px] font-bold text-[var(--accent-strong)]">
-                            {s.name || s.id}
-                          </span>
-                        ))}
+                    {scope === "all" && c.site_name && (
+                      <span className="rounded-md bg-[var(--accent-soft)] px-1.5 py-0.5 text-[10px] font-bold text-[var(--accent-strong)]">
+                        {c.site_name}
                       </span>
                     )}
                     {clickable && <span className="ml-auto text-[11px] font-bold text-[var(--accent-strong)]">상세 →</span>}

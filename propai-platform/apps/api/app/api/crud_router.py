@@ -26,7 +26,8 @@ def make_crud_router(*, model, create_schema: type[BaseModel], update_schema: ty
 
     @r.get("/{id_}", response_model=read_schema)
     async def _get(id_: uuid.UUID, db: AsyncSession = Depends(get_db), ctx: SalesCtx = Depends(sales_ctx)):
-        obj = await crud.get(db, id_)
+        # 같은 현장(site_id) 레코드만 조회 — 타 현장 UUID로는 404(데이터 누출 차단)
+        obj = await crud.get(db, id_, site_id=getattr(ctx, "site_id", None))
         if not obj:
             raise HTTPException(404)
         return obj
@@ -48,7 +49,7 @@ def make_crud_router(*, model, create_schema: type[BaseModel], update_schema: ty
                       ctx: SalesCtx = Depends(sales_ctx)):
         if ctx.role not in write_roles and ctx.role != "SUPERADMIN":
             raise HTTPException(403)
-        obj = await crud.update(db, id_, body.model_dump(exclude_unset=True))
+        obj = await crud.update(db, id_, body.model_dump(exclude_unset=True), site_id=getattr(ctx, "site_id", None))
         if not obj:
             raise HTTPException(404)
         await db.commit()
@@ -59,7 +60,7 @@ def make_crud_router(*, model, create_schema: type[BaseModel], update_schema: ty
                       ctx: SalesCtx = Depends(sales_ctx)):
         if ctx.role not in write_roles and ctx.role != "SUPERADMIN":
             raise HTTPException(403)
-        ok = await crud.delete(db, id_)
+        ok = await crud.delete(db, id_, site_id=getattr(ctx, "site_id", None))
         if not ok:
             raise HTTPException(404)
         await db.commit()

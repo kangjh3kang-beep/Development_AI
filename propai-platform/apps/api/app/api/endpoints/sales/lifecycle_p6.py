@@ -52,7 +52,12 @@ async def resale_request(body: dict, db: AsyncSession = Depends(get_db), ctx: Sa
 @r6.post("/resale/transfer/{transfer_id}/decide")
 async def resale_decide(transfer_id: uuid.UUID, body: dict, db: AsyncSession = Depends(get_db),
                         ctx: SalesCtx = Depends(require_role("AGENCY", "DEVELOPER"))):
-    await decide_transfer(db, transfer_id, bool(body["allowed"]), body.get("reason", ""))
+    from fastapi import HTTPException
+    try:
+        await decide_transfer(db, transfer_id, bool(body.get("allowed")), body.get("reason", ""), site_id=ctx.site_id)
+    except ValueError as e:
+        await db.rollback()
+        raise HTTPException(404, str(e))
     await db.commit()
     return {"ok": True}
 

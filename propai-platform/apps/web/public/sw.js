@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v113-sales-contract-create";
+const CACHE_NAME = "propai-v116-sales-critical-fixes";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

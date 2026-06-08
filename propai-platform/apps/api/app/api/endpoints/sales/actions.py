@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
 from app.api.deps_sales import SalesCtx, require_role, sales_ctx
-from apps.api.database.models.sales.units_pricing import SalesUnitGeneration, SalesUnitHold, SalesUnitPriceTable
+from apps.api.database.models.sales.units_pricing import SalesUnitGeneration, SalesUnitPriceTable
 from app.services.sales.contract.service import cancel_contract, create_contract, sign_contract
 from app.services.sales.org.service import create_node, move_subtree
 from app.services.sales.pricing.engine import generate_price_table
@@ -96,40 +96,9 @@ async def set_unit_price_mode(unit_id: uuid.UUID, body: dict, db: AsyncSession =
     return {"ok": True}
 
 
-@actions_router.post("/units/{unit_id}/hold")
-async def hold_unit(unit_id: uuid.UUID, body: dict | None = None, db: AsyncSession = Depends(get_db),
-                    ctx: SalesCtx = Depends(sales_ctx)):
-    """동호 임시선점 — Phase1-C 원자 선점(DB-SSOT)으로 위임(동시성 0충돌 보장).
-
-    이전 구현은 무조건 INSERT라 race를 막지 못했다. 이제 atomic_hold 의 단일행 조건부
-    UPDATE 로 정확히 1명만 선점, 부가로 SalesUnitHold 감사행을 남긴다.
-    """
-    from fastapi import HTTPException
-
-    from app.services.sales.units.concurrency import (
-        HOLD_TTL_MINUTES, atomic_hold, current_status, ensure_unit_concurrency_columns,
-    )
-    from app.api.endpoints.sales.units_live import _broadcast
-
-    await ensure_unit_concurrency_columns(db)
-    body = body or {}
-    ttl = int(body.get("minutes") or HOLD_TTL_MINUTES)
-    me = ctx.user.id
-    row = await atomic_hold(db, ctx.site_id, unit_id, me, ttl_minutes=ttl)
-    if row is None:
-        cur = await current_status(db, ctx.site_id, unit_id)
-        await db.rollback()
-        if cur is None:
-            raise HTTPException(404, "세대를 찾을 수 없습니다")
-        held_by_me = str(cur["held_by"]) == str(me) if cur["held_by"] else False
-        raise HTTPException(409, detail={"message": "이미 다른 직원이 선점했거나 계약된 세대입니다",
-                                         "current_status": cur["status"], "held_by_me": held_by_me})
-    db.add(SalesUnitHold(site_id=ctx.site_id, unit_id=unit_id, staff_id=body.get("staff_id"),
-           customer_id=body.get("customer_id"), expires_at=row["hold_expires_at"]))
-    await db.commit()
-    await _broadcast(ctx.site_id, "HOLD", unit_id, "HOLD", held_by=me, expires_at=row["hold_expires_at"])
-    return {"ok": True, "hold_token": row["hold_token"],
-            "expires_at": row["hold_expires_at"].isoformat() if row["hold_expires_at"] else None}
+# ※ POST /units/{id}/hold 는 units_live.py 의 hold_unit_live 가 정식 핸들러다.
+#   (예전엔 여기에도 같은 경로가 있어 둘 중 하나가 죽는 '중복 라우트' 결함이 있었음 → 일원화).
+#   임시선점/해제/확정(hold/release/reserve)은 모두 units_live 라우터에서 일관 처리한다.
 
 
 @actions_router.post("/contracts")
@@ -147,11 +116,13 @@ async def contract_create(body: dict, db: AsyncSession = Depends(get_db),
         raise HTTPException(400, "세대(unit_id)를 선택하세요.")
     cust = body.get("customer_id")
     rnd = body.get("round_id")
+    mnode = body.get("member_node_id")  # 담당 영업사원 노드(있으면 계약 체결 시 수수료가 배분됨)
     try:
         c = await create_contract(
             db, ctx.site_id, unit_id,
             customer_id=uuid.UUID(str(cust)) if cust else None,
             round_id=uuid.UUID(str(rnd)) if rnd else None,
+            member_node_id=uuid.UUID(str(mnode)) if mnode else None,
             total_price=body.get("total_price"), by=ctx.user.id)
     except ValueError as e:
         await db.rollback()
@@ -163,7 +134,12 @@ async def contract_create(body: dict, db: AsyncSession = Depends(get_db),
 @actions_router.post("/contracts/{contract_id}/sign")
 async def contract_sign(contract_id: uuid.UUID, db: AsyncSession = Depends(get_db),
                         ctx: SalesCtx = Depends(sales_ctx)):
-    c = await sign_contract(db, ctx.site_id, contract_id, by=ctx.user.id)
+    from fastapi import HTTPException
+    try:
+        c = await sign_contract(db, ctx.site_id, contract_id, by=ctx.user.id)
+    except ValueError as e:
+        await db.rollback()
+        raise HTTPException(409, str(e))  # 중복 서명·잘못된 상태는 409로 명확히
     await db.commit()
     return {"id": str(c.id), "stage": c.stage}
 

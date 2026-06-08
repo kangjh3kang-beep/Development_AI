@@ -23,6 +23,20 @@ async def ingest_payment(db: AsyncSession, site_id, payload: dict) -> dict:
     target = encrypt(payload["va_number"])
     amount = Decimal(str(payload["amount"]))
     paid_at = payload.get("paid_at")
+
+    # 입금액이 0 이하면 거부(은행/PG 페이로드 위조·오류 방어).
+    if amount <= 0:
+        return {"matched": False, "error": "입금액이 0 이하입니다."}
+
+    # 멱등성: 같은 거래참조(raw_ref)가 이미 처리됐으면 다시 충당하지 않고 그대로 반환한다.
+    # (PG·은행 webhook은 네트워크 재시도로 같은 입금을 여러 번 보내는 게 정상 → 이중 충당 방지.)
+    raw_ref = payload.get("raw_ref")
+    if raw_ref:
+        dup = (await db.execute(select(SalesPayment).where(
+            SalesPayment.site_id == site_id, SalesPayment.raw_ref == raw_ref))).scalar_one_or_none()
+        if dup is not None:
+            return {"matched": bool(dup.matched), "duplicate": True,
+                    "contract": str(dup.contract_ext_id) if dup.contract_ext_id else None}
     va = (await db.execute(select(SalesVirtualAccount).where(
         SalesVirtualAccount.site_id == site_id, SalesVirtualAccount.va_number_enc == target))).scalar_one_or_none()
     if not va:

@@ -54,8 +54,14 @@ async def request_transfer(db: AsyncSession, site_id, contract_id, to_customer, 
     return {"transfer_id": str(t.id), "allowed": not blocked, "reason": note}
 
 
-async def decide_transfer(db: AsyncSession, transfer_id, allowed: bool, reason: str = ""):
-    t = (await db.execute(select(SalesResaleTransfer).where(SalesResaleTransfer.id == transfer_id))).scalar_one()
+async def decide_transfer(db: AsyncSession, transfer_id, allowed: bool, reason: str = "", site_id=None):
+    # site_id를 받으면 같은 현장의 전매요청만 처리 — 타 현장 명의변경 승인 차단(테넌트 격리).
+    q = select(SalesResaleTransfer).where(SalesResaleTransfer.id == transfer_id)
+    if site_id is not None:
+        q = q.where(SalesResaleTransfer.site_id == site_id)
+    t = (await db.execute(q)).scalar_one_or_none()
+    if t is None:
+        raise ValueError("전매 요청을 찾을 수 없습니다")
     t.allowed = allowed
     t.reason = reason
     t.decided_at = datetime.now(timezone.utc)

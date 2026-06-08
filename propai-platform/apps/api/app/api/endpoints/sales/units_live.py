@@ -57,6 +57,8 @@ async def _broadcast(site_id, event: str, unit_id, status: str, held_by=None, ex
 
 class HoldBody(BaseModel):
     minutes: int | None = None
+    staff_id: uuid.UUID | None = None      # 선점한 직원(감사용)
+    customer_id: uuid.UUID | None = None   # 선점 대상 고객(감사용)
 
 
 class ReleaseBody(BaseModel):
@@ -90,6 +92,13 @@ async def hold_unit_live(unit_id: uuid.UUID, body: HoldBody | None = None,
             "current_status": cur["status"],
             "held_by_me": held_by_me,
         })
+    # 선점 감사행 남기기(누가·누구를 위해 언제까지 선점했는지 추적). actions.py에 있던 중복
+    # hold 핸들러를 제거하면서 이 감사 기록을 정식 핸들러(units_live)로 옮겨왔다.
+    from apps.api.database.models.sales.units_pricing import SalesUnitHold
+    db.add(SalesUnitHold(site_id=ctx.site_id, unit_id=unit_id,
+                         staff_id=(body.staff_id if body else None),
+                         customer_id=(body.customer_id if body else None),
+                         expires_at=row["hold_expires_at"]))
     await db.commit()
     await _broadcast(ctx.site_id, "HOLD", unit_id, "HOLD",
                      held_by=me, expires_at=row["hold_expires_at"])
