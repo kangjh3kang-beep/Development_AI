@@ -27,6 +27,22 @@
 | v114(BE) | 자동 CRUD가 /contracts 라우트를 섀도잉 → 액션 라우터 우선 등록. v108/v109 선택기 빈 라벨·v113 계약 상태전환 누락 동시 해소 | ✅ E2E 검증 |
 | v115(BE) | 도메인 라우터 전체를 CRUD보다 먼저 등록 — /work-logs/summary·POST /work-logs·/units/board 섀도잉 일괄 해소 | ✅ 라이브 검증(200, 회귀 없음) |
 
+## Phase A — 무결점 코드리뷰(멀티에이전트 3관점) + Critical 수정(v116)
+3개 `code-reviewer`(opus)로 ①백엔드 워크플로우/상태머신 ②보안·RBAC·라우팅 ③프론트연동·외부데이터 리뷰.
+발견 Critical/High를 v116으로 일괄 수정:
+| ID | 결함 | 수정 |
+|----|------|------|
+| S1 | 자동 CRUD `/{id}` GET/PATCH/DELETE 테넌트 격리 부재(타 현장 누출/변조, ~50 엔드포인트) | CRUDBase.get/update/delete `site_id` 강제 + 라우터가 ctx.site_id 전달 |
+| S2 | 계약 취소 후 세대 CANCELLED 고착 → 재분양 불가 | cancel 시 세대 AVAILABLE 복귀 |
+| S3 | 계약 체결 시 `member_node_id` 미설정 → 수수료 split 빈 체인 early-return(전원 미배분) | create_contract·POST /contracts에 member_node_id 플럼 |
+| S4 | 입금 webhook 멱등성 부재 → 중복 이중충당 | raw_ref 중복 무시 + 음수금액 거부 + manual_match 멱등·site격리 |
+| S5 | `/units/{id}/hold` 중복 라우트(actions+units_live) | actions 제거·units_live 일원화(+감사행 이전) |
+| H-3 | sign_contract 재서명 시 회차·수수료 중복생성 | RESERVED/ACTIVE만 서명 허용(409) |
+| C-3 | va_issue를 MEMBER도 호출 | AGENCY+ 권한 상향·입력검증 |
+| M-3 | decide_transfer 타 현장 명의변경 가능 | site_id 격리 |
+| S6 | 프론트 CRM 고객목록/상세 전면 단절(필드명·site_code→422·timeline 키) | customer_id/stage/site_name 정합, site_id 미전송(헤더위임), timeline 키 |
+후속(미포함): 초과입금 선수금 적재, overdue 멱등, payments_webhook PG서명 분리.
+
 ## 혁신요소 라이브 스폿체크(슬라이스4)
 | 기능 | 엔드포인트 | 결과 |
 |------|-----------|------|
@@ -49,6 +65,15 @@
 - ★배포 정정(고정): `cd propai-platform && docker build -f Dockerfile.oracle -t propai-api:oracle .` →
   `docker run -d --name propai-api-8000 --restart always --env-file .env -p 8000:8000 propai-api:oracle`.
   프런트엔드 Caddy(host망)가 `reverse_proxy localhost:8000` 이므로 반드시 `-p 8000:8000`.
+
+## ⚠ 인시던트#2 (v116 배포 시 백엔드 크래시 루프)
+- 원인: v116 커밋에서 `git add -A propai-platform/apps/api`가 추적 안 되던 **미완성 WIP 파일
+  `system_setting.py`**(+__init__ 등록)를 함께 커밋. 이 파일이 base.py에 없는 `BaseModel`을
+  import → 모델 로딩 ImportError로 앱 부팅 실패(8회 재시작). v115는 Docker 레이어 캐시로 가려져
+  정상 부팅했으나, v116의 apps/api 변경이 캐시를 무효화하며 표면화.
+- 복구: 고아 WIP 제거(어디서도 미사용, 동적설정은 platform_secrets로 이미 동작) → 재빌드·재기동.
+- ★교훈(고정): 커밋은 **변경한 파일만 명시적으로 `git add`** 하고 `git add -A <dir>`는 금지
+  (추적 안 된 WIP를 쓸어담아 부팅 깨짐). 빌드 후 `health:200`까지 확인 후 다음 단계.
 
 ## 추가 해결(엑셀·등기·경매 API)
 - 엑셀 토지조서 LLM 파싱 폴백(병합셀 지번 상속·집계행 제외) — 합성 3행 검증.
