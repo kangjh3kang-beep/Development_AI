@@ -6,6 +6,7 @@ import { NumberInput } from "@/components/common/NumberInput";
 
 interface Program { id: string; bank_name?: string; guarantee_type?: string; status: string }
 interface Agreement { id: string; approved_amount?: number; status: string; program_id?: string }
+interface ContractOpt { id: string; label: string; status?: string }
 const IN = "rounded-lg border border-[var(--line-strong)] bg-[var(--surface-strong)] px-3 py-2 text-sm text-[var(--text-primary)]";
 const BTN = "rounded-lg bg-[var(--accent-strong)] px-3 py-1.5 text-sm font-bold text-white disabled:opacity-50";
 
@@ -13,6 +14,7 @@ export default function LoanPanel({ siteCode }: { siteCode: string }) {
   const api = salesApi(siteCode);
   const [programs, setPrograms] = useState<Program[]>([]);
   const [agreements, setAgreements] = useState<Agreement[]>([]);
+  const [contracts, setContracts] = useState<ContractOpt[]>([]);
   const [prog, setProg] = useState({ bank_name: "", guarantee_type: "HUG" });
   const [ag, setAg] = useState<{ contract_ext_id: string; program_id: string; approved_amount: number | null }>({ contract_ext_id: "", program_id: "", approved_amount: null });
   const [dis, setDis] = useState<{ agreement_id: string; installment_seq: string; amount: number | null }>({ agreement_id: "", installment_seq: "", amount: null });
@@ -21,6 +23,7 @@ export default function LoanPanel({ siteCode }: { siteCode: string }) {
   const load = useCallback(() => {
     api.get<Program[]>("/loan/programs").then(setPrograms).catch(() => setPrograms([]));
     api.get<Agreement[]>("/loan/agreements").then(setAgreements).catch(() => setAgreements([]));
+    api.get<ContractOpt[]>("/contracts").then((r) => setContracts(r || [])).catch(() => setContracts([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [siteCode]);
   useEffect(() => { load(); }, [load]);
@@ -52,8 +55,18 @@ export default function LoanPanel({ siteCode }: { siteCode: string }) {
         <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-4">
           <h3 className="mb-3 font-bold text-[var(--text-primary)]">차주 약정</h3>
           <div className="flex flex-col gap-2">
-            <input value={ag.contract_ext_id} onChange={(e) => setAg({ ...ag, contract_ext_id: e.target.value })} placeholder="계약 ID" className={IN} />
-            <input value={ag.program_id} onChange={(e) => setAg({ ...ag, program_id: e.target.value })} placeholder="협약 ID" className={IN} />
+            {contracts.length > 0 ? (
+              <select value={ag.contract_ext_id} onChange={(e) => setAg({ ...ag, contract_ext_id: e.target.value })} className={IN}>
+                <option value="">계약 선택…</option>
+                {contracts.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
+              </select>
+            ) : (
+              <input value={ag.contract_ext_id} onChange={(e) => setAg({ ...ag, contract_ext_id: e.target.value })} placeholder="계약 ID — 계약 생성 후 선택" className={IN} />
+            )}
+            <select value={ag.program_id} onChange={(e) => setAg({ ...ag, program_id: e.target.value })} className={IN}>
+              <option value="">협약(은행) 선택…</option>
+              {programs.map((p) => <option key={p.id} value={p.id}>{[p.bank_name, p.guarantee_type].filter(Boolean).join(" · ") || p.id.slice(0, 8)}</option>)}
+            </select>
             <NumberInput value={ag.approved_amount} onChange={(n) => setAg({ ...ag, approved_amount: n })} placeholder="승인액(원)" className={IN} />
             <button onClick={addAg} className={BTN}>약정 추가</button>
           </div>
@@ -65,7 +78,10 @@ export default function LoanPanel({ siteCode }: { siteCode: string }) {
       <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-4">
         <h3 className="mb-3 font-bold text-[var(--text-primary)]">중도금 실행(회차 납입처리)</h3>
         <div className="flex flex-wrap items-end gap-2">
-          <input value={dis.agreement_id} onChange={(e) => setDis({ ...dis, agreement_id: e.target.value })} placeholder="약정 ID" className={IN} />
+          <select value={dis.agreement_id} onChange={(e) => setDis({ ...dis, agreement_id: e.target.value })} className={IN}>
+            <option value="">약정 선택…</option>
+            {agreements.map((a) => <option key={a.id} value={a.id}>{won(a.approved_amount || 0)} · {a.status}</option>)}
+          </select>
           <input value={dis.installment_seq} onChange={(e) => setDis({ ...dis, installment_seq: e.target.value })} type="number" placeholder="회차" className={`${IN} w-20`} />
           <NumberInput value={dis.amount} onChange={(n) => setDis({ ...dis, amount: n })} placeholder="금액(원)" className={IN} />
           <button onClick={disburse} className={BTN}>실행 기록</button>

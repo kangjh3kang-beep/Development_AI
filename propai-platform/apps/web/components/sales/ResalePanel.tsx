@@ -5,6 +5,7 @@ import { salesApi } from "@/lib/salesApi";
 
 interface Report { id: string; status: string; due_date?: string }
 interface Transfer { id: string; transfer_type?: string; allowed?: boolean; reason?: string; decided_at?: string }
+interface ContractOpt { id: string; label: string; status?: string }
 const IN = "rounded-lg border border-[var(--line-strong)] bg-[var(--surface-strong)] px-3 py-2 text-sm text-[var(--text-primary)]";
 const BTN = "rounded-lg bg-[var(--accent-strong)] px-3 py-1.5 text-sm font-bold text-white disabled:opacity-50";
 
@@ -14,11 +15,13 @@ export default function ResalePanel({ siteCode }: { siteCode: string }) {
   const [transfers, setTransfers] = useState<Transfer[]>([]);
   const [rc, setRc] = useState("");
   const [tf, setTf] = useState({ contract_id: "", to_customer: "", transfer_type: "RESALE" });
+  const [contracts, setContracts] = useState<ContractOpt[]>([]);
   const [msg, setMsg] = useState("");
 
   const load = useCallback(() => {
     api.get<Report[]>("/realtx/reports").then(setReports).catch(() => setReports([]));
     api.get<Transfer[]>("/resale/transfers").then(setTransfers).catch(() => setTransfers([]));
+    api.get<ContractOpt[]>("/contracts").then((r) => setContracts(r || [])).catch(() => setContracts([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [siteCode]);
   useEffect(() => { load(); }, [load]);
@@ -38,7 +41,14 @@ export default function ResalePanel({ siteCode }: { siteCode: string }) {
         <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-4">
           <h3 className="mb-3 font-bold text-[var(--text-primary)]">실거래신고</h3>
           <div className="flex flex-wrap items-end gap-2">
-            <input value={rc} onChange={(e) => setRc(e.target.value)} placeholder="계약 ID" className={`${IN} flex-1`} />
+            {contracts.length > 0 ? (
+              <select value={rc} onChange={(e) => setRc(e.target.value)} className={`${IN} flex-1`}>
+                <option value="">계약 선택…</option>
+                {contracts.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
+              </select>
+            ) : (
+              <input value={rc} onChange={(e) => setRc(e.target.value)} placeholder="계약 ID — 계약 생성 후 선택" className={`${IN} flex-1`} />
+            )}
             <button onClick={report} className={BTN}>신고 생성</button>
           </div>
           <ul className="mt-3 space-y-1 text-sm text-[var(--text-secondary)]">
@@ -49,7 +59,14 @@ export default function ResalePanel({ siteCode }: { siteCode: string }) {
         <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-4">
           <h3 className="mb-3 font-bold text-[var(--text-primary)]">전매·명의변경 요청</h3>
           <div className="flex flex-col gap-2">
-            <input value={tf.contract_id} onChange={(e) => setTf({ ...tf, contract_id: e.target.value })} placeholder="계약 ID" className={IN} />
+            {contracts.length > 0 ? (
+              <select value={tf.contract_id} onChange={(e) => setTf({ ...tf, contract_id: e.target.value })} className={IN}>
+                <option value="">계약 선택…</option>
+                {contracts.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
+              </select>
+            ) : (
+              <input value={tf.contract_id} onChange={(e) => setTf({ ...tf, contract_id: e.target.value })} placeholder="계약 ID — 계약 생성 후 선택" className={IN} />
+            )}
             <input value={tf.to_customer} onChange={(e) => setTf({ ...tf, to_customer: e.target.value })} placeholder="양수인 고객 ID(선택)" className={IN} />
             <div className="flex gap-2">
               <select value={tf.transfer_type} onChange={(e) => setTf({ ...tf, transfer_type: e.target.value })} className={IN}>
