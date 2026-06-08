@@ -83,6 +83,7 @@ type AuctionDetail = {
   usage_category?: string | null;
   pbanc_mng_no?: string | null;
   // 부동산 물건상세정보(getRlstDtlInf2) 보강 — 사진·이용현황·동영상·공고기관
+  image_urls?: (string | null)[] | null;
   video_url?: string | null;
   usage_status?: string | null;
   location_desc?: string | null;
@@ -960,6 +961,17 @@ function DetailModal({
     !imageUrl && detail?.aerial_image_url
       ? `${resolveApiOrigin()}${detail.aerial_image_url}`
       : null;
+  // 갤러리: 온비드 물건사진 전체(보통 3~4장). 없으면 단일 image_url 폴백.
+  const galleryImages = (() => {
+    const arr = (detail?.image_urls ?? []).filter(
+      (u): u is string => typeof u === "string" && u.trim().length > 0,
+    );
+    if (arr.length) return arr;
+    return imageUrl ? [imageUrl] : [];
+  })();
+  const [imgIdx, setImgIdx] = useState(0);
+  const safeImgIdx = Math.min(imgIdx, Math.max(0, galleryImages.length - 1));
+  const mainImage = galleryImages[safeImgIdx] ?? null;
   const prevBids = Array.isArray(detail?.prev_bids) ? detail!.prev_bids! : [];
 
   // ── 사안별 미제공 사유(데이터 신뢰도) ──
@@ -1085,26 +1097,61 @@ function DetailModal({
           </button>
         </div>
 
-        {/* 물건 이미지: 온비드 물건사진 우선 → 없으면 PNU 기반 실제 항공뷰(VWorld) 대체 */}
-        <div className="relative mb-4 flex h-44 w-full items-center justify-center overflow-hidden rounded-2xl border border-[var(--line)] bg-[var(--surface-muted)]">
-          {imageUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={imageUrl} alt="물건 이미지" className="h-full w-full object-cover" />
-          ) : aerialUrl ? (
-            <>
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={aerialUrl} alt="대상지 항공뷰" className="h-full w-full object-cover" />
-              <span className="absolute bottom-1.5 right-2 rounded bg-black/55 px-2 py-0.5 text-[10px] font-bold text-white">
-                항공뷰 (VWorld) · 온비드 물건사진 미제공
+        {/* 물건 이미지 갤러리: 온비드 물건사진 전체(메인+썸네일) → 없으면 항공뷰(VWorld) 대체.
+            전체가 보이도록 object-contain + 반응형(letterbox). */}
+        <div className="mb-4">
+          <div className="relative flex aspect-[4/3] max-h-80 w-full items-center justify-center overflow-hidden rounded-2xl border border-[var(--line)] bg-black/40">
+            {mainImage ? (
+              <>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={mainImage}
+                  alt={`물건 사진 ${safeImgIdx + 1}`}
+                  className="h-full w-full object-contain"
+                />
+                {galleryImages.length > 1 ? (
+                  <span className="absolute bottom-1.5 right-2 rounded bg-black/55 px-2 py-0.5 text-[10px] font-bold text-white">
+                    {safeImgIdx + 1} / {galleryImages.length}
+                  </span>
+                ) : null}
+              </>
+            ) : aerialUrl ? (
+              <>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={aerialUrl} alt="대상지 항공뷰" className="h-full w-full object-contain" />
+                <span className="absolute bottom-1.5 right-2 rounded bg-black/55 px-2 py-0.5 text-[10px] font-bold text-white">
+                  항공뷰 (VWorld) · 온비드 물건사진 미제공
+                </span>
+              </>
+            ) : (
+              <span className="text-xs font-bold text-[var(--text-hint)]">
+                {detailQuery.isLoading
+                  ? "이미지 불러오는 중…"
+                  : "이미지 없음 (온비드·항공뷰 미제공)"}
               </span>
-            </>
-          ) : (
-            <span className="text-xs font-bold text-[var(--text-hint)]">
-              {detailQuery.isLoading
-                ? "이미지 불러오는 중…"
-                : "이미지 없음 (온비드·항공뷰 미제공)"}
-            </span>
-          )}
+            )}
+          </div>
+          {/* 썸네일 스트립(2장 이상) — 클릭 시 메인 전환 */}
+          {galleryImages.length > 1 ? (
+            <div className="mt-2 flex gap-2 overflow-x-auto pb-1">
+              {galleryImages.map((src, i) => (
+                <button
+                  key={`${src}-${i}`}
+                  type="button"
+                  onClick={() => setImgIdx(i)}
+                  className={`h-14 w-16 shrink-0 overflow-hidden rounded-lg border-2 transition-all ${
+                    i === safeImgIdx
+                      ? "border-[var(--accent-strong)]"
+                      : "border-[var(--line)] opacity-70 hover:opacity-100"
+                  }`}
+                  aria-label={`사진 ${i + 1} 보기`}
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={src} alt={`썸네일 ${i + 1}`} className="h-full w-full object-cover" />
+                </button>
+              ))}
+            </div>
+          ) : null}
         </div>
         {detail?.video_url ? (
           <a

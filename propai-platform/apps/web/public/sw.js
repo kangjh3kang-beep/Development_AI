@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v101-registry-fee-monitor-sub";
+const CACHE_NAME = "propai-v102-auction-gallery-appraisal";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

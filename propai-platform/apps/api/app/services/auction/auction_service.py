@@ -335,6 +335,49 @@ class AuctionStep1Service:
             await client.close()
 
         items = res.get("items", [])
+        # ── 감정가 누락 보강 ── ONBID 순위 피드(getInqRnkClg)는 일부 물건(신규공고·감정 진행 등)의
+        # apslEvlAmt를 빈값으로 준다. 같은 공고의 물건들은 getPbancCltrInf2 1회로 모두 채워지므로,
+        # 누락 물건을 공고(pbancMngNo) 단위로 묶어 getCltrBidInf2(→pbancMngNo)+getPbancCltrInf2 1쌍으로
+        # 일괄 보강한다(호출 최소화·상한 6공고). 실패는 무시(가짜 금지).
+        try:
+            missing = [it for it in items if not it.get("appraisal_price")]
+            if missing:
+                from app.services.auction.onbid_client import _parse_amount
+
+                cli = OnbidClient(service_key)
+                fetched: set[str] = set()
+                try:
+                    for it in missing:
+                        if it.get("appraisal_price"):
+                            continue  # 같은 공고 보강으로 이미 채워짐
+                        if len(fetched) >= 6:
+                            break  # 호출 상한(리스트 지연 가드)
+                        cm = str(it.get("cltr_mng_no") or "")
+                        pc = str(it.get("pbct_cdtn_no") or "")
+                        if not cm or not pc:
+                            continue
+                        bi = await cli.get_cltr_bid_info(cm, pc)
+                        braw = bi.get("raw") or []
+                        pbanc = (
+                            braw[0].get("pbancMngNo")
+                            if braw and isinstance(braw[0], dict) else None
+                        )
+                        if not pbanc or str(pbanc) in fetched:
+                            continue
+                        fetched.add(str(pbanc))
+                        pl = await cli.get_pbanc_cltr_list(str(pbanc))
+                        amap = {
+                            str(x.get("cltrMngNo")): _parse_amount(x.get("apslEvlAmt"))
+                            for x in pl.get("items", [])
+                        }
+                        for it2 in missing:
+                            amt = amap.get(str(it2.get("cltr_mng_no")))
+                            if amt and not it2.get("appraisal_price"):
+                                it2["appraisal_price"] = amt
+                finally:
+                    await cli.close()
+        except Exception as e:  # noqa: BLE001
+            logger.warning("순위 감정가 보강 실패(무시): %s", str(e)[:120])
         enriched = [self._attach_est_win(it) for it in items]
         out: dict[str, Any] = {
             "items": enriched,
@@ -503,18 +546,23 @@ class AuctionStep1Service:
             if ri:
                 from app.services.auction.onbid_client import _parse_int, _parse_rate
 
-                # 사진 URL: potoUrlList = [{"urlAdr": "..."}] 첫 항목.
-                photo = None
+                # 사진 URL: potoUrlList = [{"urlAdr": "..."}] — 전체 수집(보통 3~4장).
+                photos: list[str] = []
                 plist = ri.get("potoUrlList")
-                if isinstance(plist, list) and plist:
-                    first = plist[0]
-                    photo = (first.get("urlAdr") if isinstance(first, dict) else str(first)) or None
+                if isinstance(plist, list):
+                    for p in plist:
+                        u = (p.get("urlAdr") if isinstance(p, dict) else str(p)) or ""
+                        u = str(u).strip()
+                        if u and u not in photos:
+                            photos.append(u)
+                photo = photos[0] if photos else None
                 vdo = ri.get("vdoUrlAdrList")
                 if isinstance(vdo, list):
                     vdo = (vdo[0].get("urlAdr") if vdo and isinstance(vdo[0], dict) else None)
                 pnu_d = (ri.get("ltnoPnu") or ri.get("rdnmPnu") or "") or None
                 rlst_extra = {
                     "image_url": (str(photo).strip() or None) if photo else None,
+                    "image_urls": photos or None,
                     "video_url": (str(vdo).strip() or None) if vdo else None,
                     "land_area": _parse_rate(ri.get("landSqms")),
                     "bld_area": _parse_rate(ri.get("bldSqms")),
@@ -550,6 +598,7 @@ class AuctionStep1Service:
                     "win_rate": None,
                     "win_price": None,
                     "image_url": rlst_extra.get("image_url") if rlst_extra else None,
+                    "image_urls": rlst_extra.get("image_urls") if rlst_extra else None,
                     "video_url": rlst_extra.get("video_url") if rlst_extra else None,
                     "usage_status": rlst_extra.get("usage_status") if rlst_extra else None,
                     "location_desc": rlst_extra.get("location_desc") if rlst_extra else None,
@@ -604,6 +653,8 @@ class AuctionStep1Service:
         if rlst_extra:
             if not enriched.get("image_url") and rlst_extra.get("image_url"):
                 enriched["image_url"] = rlst_extra["image_url"]
+            if rlst_extra.get("image_urls") and not enriched.get("image_urls"):
+                enriched["image_urls"] = rlst_extra["image_urls"]
             if not enriched.get("land_area") and rlst_extra.get("land_area"):
                 enriched["land_area"] = rlst_extra["land_area"]
             if not enriched.get("bld_area") and rlst_extra.get("bld_area"):
