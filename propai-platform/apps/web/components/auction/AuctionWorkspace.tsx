@@ -511,7 +511,7 @@ export function AuctionWorkspace({ locale }: AuctionWorkspaceProps) {
 
               {(myQuery.data.combined ?? []).length ? (
                 <div className="rounded-3xl border border-[var(--accent-strong)]/30 bg-[var(--surface-strong)] p-6">
-                  <p className="mb-4 text-[10px] font-black uppercase tracking-[0.3em] text-[var(--text-hint)]">
+                  <p className="sa-di-eyebrow mb-4">
                     통합 보드 · 전체 {(myQuery.data.combined ?? []).length}건
                   </p>
                   <AuctionTable
@@ -776,9 +776,10 @@ export function AuctionWorkspace({ locale }: AuctionWorkspaceProps) {
                     type="button"
                     key={item.cltrMngNo ?? `rank-${idx}`}
                     onClick={() => setSelected(item)}
-                    className="flex w-full items-center gap-4 rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-soft)]/50 p-4 text-left transition-colors hover:bg-[var(--surface-soft)]"
+                    className="sa-di-block flex w-full items-center gap-4 p-4 text-left"
                   >
-                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--accent-strong)]/10 text-sm font-black text-[var(--accent-strong)]">
+                    {/* 순위 배지 — 데이터 액센트 칩(블록 아이콘 톤과 통일) */}
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[var(--data-accent-line)] bg-[var(--data-accent-soft)] font-mono text-sm font-bold tabular-nums text-[var(--data-accent)]">
                       {item.rank ?? idx + 1}
                     </span>
                     {item.thumbnail ? (
@@ -801,23 +802,24 @@ export function AuctionWorkspace({ locale }: AuctionWorkspaceProps) {
                         {formatText(item.usage)} · {formatText(item.status)}
                       </p>
                     </div>
-                    <div className="hidden shrink-0 text-right sm:block">
-                      <p className="text-xs text-[var(--text-hint)]">감정가</p>
-                      <p className="text-sm font-bold text-[var(--text-primary)]">
+                    {/* 우측 핵심 지표 — eyebrow 라벨 + mono·tabular 값(할인율만 액센트 강조) */}
+                    <div className="hidden shrink-0 flex-col items-end gap-0.5 sm:flex">
+                      <span className="sa-di-eyebrow">감정가</span>
+                      <span className="font-mono text-sm font-bold tabular-nums text-[var(--text-primary)]">
                         {formatCurrency(locale, item.appraisal_price)}
-                      </p>
+                      </span>
                     </div>
-                    <div className="hidden shrink-0 text-right sm:block">
-                      <p className="text-xs text-[var(--text-hint)]">할인율</p>
-                      <p className="text-sm font-bold text-[var(--accent-strong)]">
+                    <div className="hidden shrink-0 flex-col items-end gap-0.5 sm:flex">
+                      <span className="sa-di-eyebrow">할인율</span>
+                      <span className="font-mono text-sm font-bold tabular-nums text-[var(--data-accent)]">
                         {formatPercent(item.discount_rate)}
-                      </p>
+                      </span>
                     </div>
-                    <div className="shrink-0 text-right">
-                      <p className="text-xs text-[var(--text-hint)]">최저입찰가</p>
-                      <p className="text-sm font-bold text-[var(--text-primary)]">
+                    <div className="flex shrink-0 flex-col items-end gap-0.5">
+                      <span className="sa-di-eyebrow">최저입찰가</span>
+                      <span className="font-mono text-sm font-bold tabular-nums text-[var(--text-primary)]">
                         {formatBidPrice(item.min_bid_price, locale)}
-                      </p>
+                      </span>
                     </div>
                   </button>
                 ))}
@@ -853,19 +855,20 @@ function AuctionTable({
   variant: "results";
   onSelect: (item: AuctionItem) => void;
 }) {
+  // 물건 목록 → 정밀 데이터 테이블(sa-di-table). 숫자열은 .sa-di-num(우측·mono·tabular).
   return (
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[720px] border-collapse text-sm">
+      <table className="sa-di-table min-w-[720px]">
         <thead>
-          <tr className="border-b border-[var(--line)] text-left text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)]">
-            <th className="py-3 pr-4">주소</th>
-            <th className="py-3 pr-4">용도</th>
-            <th className="py-3 pr-4 text-right">감정가</th>
-            <th className="py-3 pr-4 text-right">최저입찰가</th>
-            <th className="py-3 pr-4 text-right">유찰</th>
-            <th className="py-3 pr-4 text-right">낙찰가율</th>
-            <th className="py-3 pr-4 text-right">낙찰가능가(추정)</th>
-            <th className="py-3 pr-4">상태</th>
+          <tr>
+            <th>주소</th>
+            <th>용도</th>
+            <th className="sa-di-num">감정가</th>
+            <th className="sa-di-num">최저입찰가</th>
+            <th className="sa-di-num">유찰</th>
+            <th className="sa-di-num">낙찰가율</th>
+            <th className="sa-di-num">낙찰가능가(추정)</th>
+            <th>상태</th>
           </tr>
         </thead>
         <tbody>
@@ -873,30 +876,31 @@ function AuctionTable({
             <tr
               key={item.cltrMngNo ?? `${variant}-${idx}`}
               onClick={() => onSelect(item)}
-              className="cursor-pointer border-b border-[var(--line)]/60 transition-colors hover:bg-[var(--surface-soft)]/60"
+              className="cursor-pointer"
             >
-              <td className="max-w-[220px] truncate py-3 pr-4 font-bold text-[var(--text-primary)]">
+              <td className="max-w-[220px] truncate font-bold">
                 {formatText(item.address)}
               </td>
-              <td className="py-3 pr-4 text-[var(--text-secondary)]">
+              <td className="text-[var(--text-secondary)]">
                 {formatText(item.usage)}
               </td>
-              <td className="cc-num py-3 pr-4 text-right text-[var(--text-primary)]">
+              <td className="sa-di-num">
                 {formatCurrency(locale, item.appraisal_price)}
               </td>
-              <td className="cc-num py-3 pr-4 text-right text-[var(--text-primary)]">
+              <td className="sa-di-num">
                 {formatBidPrice(item.min_bid_price, locale)}
               </td>
-              <td className="cc-num py-3 pr-4 text-right text-[var(--text-secondary)]">
+              <td className="sa-di-num text-[var(--text-secondary)]">
                 {item.fail_count == null ? "-" : `${item.fail_count}회`}
               </td>
-              <td className="cc-num py-3 pr-4 text-right text-[var(--text-secondary)]">
+              <td className="sa-di-num text-[var(--text-secondary)]">
                 {formatPercent(item.win_rate)}
               </td>
-              <td className="cc-num py-3 pr-4 text-right font-bold text-[var(--accent-strong)]">
+              {/* 낙찰가능가(추정)는 핵심 KPI → 데이터 액센트로 강조 */}
+              <td className="sa-di-num text-[var(--data-accent)]">
                 {item.est_win == null ? "-" : `${formatCurrency(locale, item.est_win)}`}
               </td>
-              <td className="py-3 pr-4 text-[var(--text-secondary)]">
+              <td className="text-[var(--text-secondary)]">
                 {formatText(item.status)}
               </td>
             </tr>
@@ -1194,60 +1198,75 @@ function DetailModal({
           </p>
         ) : null}
 
-        <dl className="space-y-2">
+        {/* 핵심 수치 4종 → metric tile(mono). 감정가·낙찰가능가만 액센트 강조 */}
+        <div className="sa-di-tiles sa-di-tiles--4 mb-4">
+          <div className="sa-di-tile sa-di-tile--accent">
+            <span className="sa-di-tile__label">감정가</span>
+            <span className="sa-di-tile__value">{formatCurrency(locale, appraisalVal)}</span>
+          </div>
+          <div className="sa-di-tile">
+            <span className="sa-di-tile__label">최저입찰가</span>
+            <span className="sa-di-tile__value">{minBidText}</span>
+          </div>
+          <div className="sa-di-tile">
+            <span className="sa-di-tile__label">유찰횟수</span>
+            <span className="sa-di-tile__value">
+              {failCountVal == null ? "비공개" : `${failCountVal}회`}
+            </span>
+          </div>
+          <div className="sa-di-tile sa-di-tile--accent">
+            <span className="sa-di-tile__label">낙찰가능가(추정)</span>
+            <span className="sa-di-tile__value">
+              {estWinVal == null ? "추정 불가" : formatCurrency(locale, estWinVal)}
+            </span>
+          </div>
+        </div>
+
+        {/* 상세 속성 → 라벨↔값 데이터 로우(표보다 가벼운 정렬) */}
+        <dl className="sa-di-rows">
           {rows.map((row) => (
-            <div
-              key={row.label}
-              className="flex items-center justify-between gap-4 border-b border-[var(--line)]/50 py-2"
-            >
-              <dt className="text-xs font-bold text-[var(--text-hint)]">{row.label}</dt>
-              <dd className="cc-num text-right text-sm font-medium text-[var(--text-primary)]">
-                {row.value}
-              </dd>
+            <div key={row.label} className="sa-di-row">
+              <dt className="sa-di-row__label">{row.label}</dt>
+              <dd className="sa-di-row__value">{row.value}</dd>
             </div>
           ))}
         </dl>
 
         {/* 회차별 입찰내역(prev_bids) */}
         {prevBids.length ? (
-          <div className="mt-5">
-            <p className="mb-2 text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)]">
-              회차별 입찰내역
-            </p>
+          <div className="sa-di-sub mt-5">
+            <p className="sa-di-eyebrow mb-2">회차별 입찰내역</p>
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[460px] border-collapse text-xs">
+              <table className="sa-di-table min-w-[460px]">
                 <thead>
-                  <tr className="border-b border-[var(--line)] text-left font-black uppercase tracking-widest text-[var(--text-hint)]">
-                    <th className="py-2 pr-3">회차</th>
-                    <th className="py-2 pr-3">개찰일</th>
-                    <th className="py-2 pr-3 text-right">최저입찰가</th>
-                    <th className="py-2 pr-3">결과</th>
-                    <th className="py-2 pr-3 text-right">낙찰가</th>
-                    <th className="py-2 pr-3 text-right">낙찰가율</th>
+                  <tr>
+                    <th>회차</th>
+                    <th>개찰일</th>
+                    <th className="sa-di-num">최저입찰가</th>
+                    <th>결과</th>
+                    <th className="sa-di-num">낙찰가</th>
+                    <th className="sa-di-num">낙찰가율</th>
                   </tr>
                 </thead>
                 <tbody>
                   {prevBids.map((b, idx) => (
-                    <tr
-                      key={`${b.round ?? idx}-${b.opbd_dt ?? idx}`}
-                      className="border-b border-[var(--line)]/60"
-                    >
-                      <td className="py-2 pr-3 font-bold text-[var(--text-primary)]">
+                    <tr key={`${b.round ?? idx}-${b.opbd_dt ?? idx}`}>
+                      <td className="font-bold">
                         {b.round == null ? "-" : `${b.round}회`}
                       </td>
-                      <td className="py-2 pr-3 text-[var(--text-secondary)]">
+                      <td className="text-[var(--text-secondary)]">
                         {formatText(b.opbd_dt)}
                       </td>
-                      <td className="cc-num py-2 pr-3 text-right text-[var(--text-primary)]">
+                      <td className="sa-di-num">
                         {formatBidPrice(safeNumber(b.min_bid), locale)}
                       </td>
-                      <td className="py-2 pr-3 text-[var(--text-secondary)]">
+                      <td className="text-[var(--text-secondary)]">
                         {formatText(b.result)}
                       </td>
-                      <td className="cc-num py-2 pr-3 text-right text-[var(--text-primary)]">
+                      <td className="sa-di-num">
                         {formatBidPrice(safeNumber(b.win_price), locale)}
                       </td>
-                      <td className="cc-num py-2 pr-3 text-right text-[var(--text-secondary)]">
+                      <td className="sa-di-num text-[var(--text-secondary)]">
                         {formatPercent(safeNumber(b.win_rate))}
                       </td>
                     </tr>
@@ -1260,11 +1279,9 @@ function DetailModal({
 
         {/* ── 입찰정보 (getCltrBidInf2) ── */}
         {detail?.bid_info ? (
-          <div className="mt-5">
-            <p className="mb-2 text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)]">
-              입찰정보
-            </p>
-            {/* 입찰방법 칩 */}
+          <div className="sa-di-sub mt-5">
+            <p className="sa-di-eyebrow mb-2">입찰정보</p>
+            {/* 입찰방법 칩 — 가능=액센트 토큰, 불가=흐린 off 토큰(취소선) */}
             <div className="mb-3 flex flex-wrap gap-1.5">
               {([
                 ["공동입찰", detail.bid_info.joint_bid],
@@ -1277,17 +1294,14 @@ function DetailModal({
                 .map(([label, v]) => (
                   <span
                     key={label}
-                    className={`rounded-lg px-2.5 py-1 text-[11px] font-bold ${
-                      v === "가능"
-                        ? "bg-[rgba(14,116,144,0.12)] text-[var(--accent-strong)]"
-                        : "bg-[var(--surface-soft)] text-[var(--text-hint)]"
-                    }`}
+                    className={`sa-di-token ${v === "가능" ? "sa-di-token--accent" : "sa-di-token--off"}`}
                   >
                     {label} {v === "가능" ? "✓" : "✕"}
                   </span>
                 ))}
             </div>
-            <dl className="space-y-1.5 text-xs">
+            {/* 입찰 세부 → 라벨↔값 데이터 로우(긴 텍스트는 줄바꿈 허용) */}
+            <dl className="sa-di-rows">
               {([
                 ["입찰보증금", detail.bid_info.deposit],
                 ["잔대금 납부방법", detail.bid_info.balance_pay_method],
@@ -1301,12 +1315,12 @@ function DetailModal({
               ] as [string, string | null | undefined][])
                 .filter(([, v]) => v)
                 .map(([label, v]) => (
-                  <div
-                    key={label}
-                    className="flex items-start justify-between gap-3 border-b border-[var(--line)]/50 py-1.5"
-                  >
-                    <dt className="shrink-0 text-[var(--text-hint)]">{label}</dt>
-                    <dd className="max-w-[68%] whitespace-pre-line text-right text-[var(--text-primary)]">
+                  <div key={label} className="sa-di-row">
+                    <dt className="sa-di-row__label">{label}</dt>
+                    <dd
+                      className="sa-di-row__value max-w-[68%] whitespace-pre-line"
+                      style={{ fontFamily: "inherit", fontWeight: 500, color: "var(--text-primary)" }}
+                    >
                       {v}
                     </dd>
                   </div>
@@ -1383,13 +1397,13 @@ function DetailModal({
               ) : null}
               {regResult.ai.rights_analysis ? (
                 <div className="rounded-lg bg-[var(--surface-soft)] px-3 py-2">
-                  <p className="mb-1 text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)]">권리분석</p>
+                  <p className="sa-di-eyebrow mb-1">권리분석</p>
                   <p className="leading-5 text-[var(--text-primary)]">{regResult.ai.rights_analysis}</p>
                 </div>
               ) : null}
               {regResult.ai.risks?.length ? (
                 <div className="rounded-lg border border-[var(--spot)]/30 bg-[var(--spot)]/10 px-3 py-2">
-                  <p className="mb-1 text-[10px] font-black uppercase tracking-widest text-[var(--spot)]">위험요소</p>
+                  <p className="sa-di-eyebrow mb-1 !text-[var(--spot)]">위험요소</p>
                   <ul className="list-disc space-y-0.5 pl-4 text-[var(--text-primary)]">
                     {regResult.ai.risks.map((r, i) => (
                       <li key={i}>{r}</li>

@@ -677,10 +677,8 @@ export function AuctionMonitorPanel({ locale, canUseLiveApi }: { locale: Locale;
             토지조서에 등록한 보유 토지는 별도 등록 없이 자동으로 경·공매 모니터링 대상이 됩니다.
           </p>
           <div className="mt-4 rounded-xl bg-[var(--surface-muted)] px-4 py-3">
-            <p className="text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)]">
-              현재 모니터링 중
-            </p>
-            <p className="text-2xl font-black text-[var(--accent-strong)]">
+            <p className="sa-di-eyebrow">현재 모니터링 중</p>
+            <p className="font-mono text-2xl font-black tabular-nums text-[var(--data-accent)]">
               {watchlistQuery.isLoading ? "…" : `${sourceCounts.landschedule}건`}
             </p>
           </div>
@@ -765,7 +763,7 @@ export function AuctionMonitorPanel({ locale, canUseLiveApi }: { locale: Locale;
                   <span className="font-bold text-[var(--text-secondary)]">
                     {m.icon} {m.label}
                   </span>
-                  <span className="font-black text-[var(--text-primary)]">
+                  <span className="font-mono font-black tabular-nums text-[var(--text-primary)]">
                     {watchlistQuery.isLoading ? "…" : `${sourceCounts[m.key] ?? 0}건`}
                   </span>
                 </li>
@@ -796,7 +794,7 @@ export function AuctionMonitorPanel({ locale, canUseLiveApi }: { locale: Locale;
           <div className="flex flex-wrap gap-2">
             {editing ? (
               <>
-                <span className="inline-flex items-center rounded-xl bg-[#f59e0b]/15 px-3 py-2 text-xs font-black text-[#f59e0b]">
+                <span className="sa-di-token sa-di-token--warn font-black tabular-nums">
                   편집 중 ({editPointCount})
                 </span>
                 <button
@@ -820,7 +818,7 @@ export function AuctionMonitorPanel({ locale, canUseLiveApi }: { locale: Locale;
               <button
                 type="button"
                 onClick={finishDrawing}
-                className="rounded-xl bg-[#f59e0b] px-4 py-2 text-xs font-black text-white"
+                className="rounded-xl bg-[var(--status-warning)] px-4 py-2 text-xs font-black text-white"
               >
                 구역 완료 ({draftCount})
               </button>
@@ -875,7 +873,7 @@ export function AuctionMonitorPanel({ locale, canUseLiveApi }: { locale: Locale;
               type="button"
               onClick={handleSaveEdit}
               disabled={editSaveMutation.isPending || editPointCount < 3}
-              className="rounded-xl border border-[#f59e0b]/50 bg-[#f59e0b]/15 px-4 py-2 text-sm font-bold text-[#f59e0b] transition-colors hover:bg-[#f59e0b]/25 disabled:opacity-50"
+              className="rounded-xl border border-[color-mix(in_srgb,var(--status-warning)_50%,transparent)] bg-[color-mix(in_srgb,var(--status-warning)_15%,transparent)] px-4 py-2 text-sm font-bold text-[var(--status-warning)] transition-colors hover:bg-[color-mix(in_srgb,var(--status-warning)_25%,transparent)] disabled:opacity-50"
             >
               {editSaveMutation.isPending ? "수정 저장 중…" : "수정 저장"}
             </button>
@@ -906,7 +904,7 @@ export function AuctionMonitorPanel({ locale, canUseLiveApi }: { locale: Locale;
                 key={r.id}
                 className={`inline-flex items-center gap-2 rounded-full border bg-[var(--surface-soft)] px-4 py-2 text-xs font-bold text-[var(--text-secondary)] ${
                   editing?.id === r.id
-                    ? "border-[#f59e0b]/60"
+                    ? "border-[color-mix(in_srgb,var(--status-warning)_60%,transparent)]"
                     : "border-[var(--line-strong)]"
                 }`}
               >
@@ -922,7 +920,7 @@ export function AuctionMonitorPanel({ locale, canUseLiveApi }: { locale: Locale;
                   type="button"
                   aria-label={`${r.label ?? "구역"} 편집`}
                   onClick={() => enterEdit(r)}
-                  className="text-[var(--text-hint)] hover:text-[#f59e0b]"
+                  className="text-[var(--text-hint)] hover:text-[var(--status-warning)]"
                 >
                   편집
                 </button>
@@ -949,7 +947,7 @@ export function AuctionMonitorPanel({ locale, canUseLiveApi }: { locale: Locale;
             관심대상별 매칭 결과
           </h2>
           {monitorQuery.data?.total_matched != null ? (
-            <span className="rounded-full bg-[var(--accent-strong)]/10 px-3 py-1 text-xs font-bold text-[var(--accent-strong)]">
+            <span className="sa-di-token sa-di-token--accent font-mono tabular-nums">
               총 {monitorQuery.data.total_matched}건 매칭
             </span>
           ) : null}
@@ -991,9 +989,9 @@ export function AuctionMonitorPanel({ locale, canUseLiveApi }: { locale: Locale;
                   <div className="mb-3 flex items-center justify-between gap-3">
                     <p className="flex items-center gap-2 text-sm font-black text-[var(--text-primary)]">
                       <span>{m.icon}</span> {m.label}
-                      <span className="text-[10px] font-bold text-[var(--text-hint)]">{m.desc}</span>
+                      <span className="sa-di-eyebrow">{m.desc}</span>
                     </p>
-                    <span className="rounded-full bg-[var(--surface-muted)] px-3 py-1 text-xs font-bold text-[var(--text-secondary)]">
+                    <span className="sa-di-token font-mono tabular-nums">
                       {matches.length}건
                     </span>
                   </div>
@@ -1020,51 +1018,50 @@ export function AuctionMonitorPanel({ locale, canUseLiveApi }: { locale: Locale;
 }
 
 function MatchTable({ matches, locale }: { matches: MonitorMatch[]; locale: Locale }) {
+  // 매칭 물건 → 정밀 데이터 테이블(sa-di-table). 숫자열은 .sa-di-num.
   return (
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[680px] border-collapse text-sm">
+      <table className="sa-di-table min-w-[680px]">
         <thead>
-          <tr className="border-b border-[var(--line)] text-left text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)]">
-            <th className="py-3 pr-4">관심대상</th>
-            <th className="py-3 pr-4">주소</th>
-            <th className="py-3 pr-4">용도</th>
-            <th className="py-3 pr-4 text-right">감정가</th>
-            <th className="py-3 pr-4 text-right">최저입찰가</th>
-            <th className="py-3 pr-4 text-right">유찰</th>
-            <th className="py-3 pr-4 text-right">낙찰가능가(추정)</th>
-            <th className="py-3 pr-4">상태</th>
+          <tr>
+            <th>관심대상</th>
+            <th>주소</th>
+            <th>용도</th>
+            <th className="sa-di-num">감정가</th>
+            <th className="sa-di-num">최저입찰가</th>
+            <th className="sa-di-num">유찰</th>
+            <th className="sa-di-num">낙찰가능가(추정)</th>
+            <th>상태</th>
           </tr>
         </thead>
         <tbody>
           {matches.map((item, idx) => (
-            <tr
-              key={`${item.watch_target_id ?? "t"}-${idx}`}
-              className="border-b border-[var(--line)]/60"
-            >
-              <td className="py-3 pr-4 font-bold text-[var(--accent-strong)]">
+            <tr key={`${item.watch_target_id ?? "t"}-${idx}`}>
+              <td className="font-bold text-[var(--data-accent)]">
                 {formatText(item.watch_label)}
               </td>
-              <td className="max-w-[220px] truncate py-3 pr-4 font-bold text-[var(--text-primary)]">
+              <td className="max-w-[220px] truncate font-bold">
                 {formatText(item.address)}
               </td>
-              <td className="py-3 pr-4 text-[var(--text-secondary)]">
+              <td className="text-[var(--text-secondary)]">
                 {formatText(item.usage ?? item.kind)}
               </td>
-              <td className="py-3 pr-4 text-right text-[var(--text-primary)]">
+              <td className="sa-di-num">
                 {formatCurrency(locale, item.appraisal_price)}
               </td>
-              <td className="py-3 pr-4 text-right text-[var(--text-primary)]">
+              <td className="sa-di-num">
                 {item.min_bid_price == null ? "비공개" : formatCurrency(locale, item.min_bid_price)}
               </td>
-              <td className="py-3 pr-4 text-right text-[var(--text-secondary)]">
+              <td className="sa-di-num text-[var(--text-secondary)]">
                 {item.fail_count == null ? "-" : `${item.fail_count}회`}
               </td>
-              <td className="py-3 pr-4 text-right font-bold text-[var(--accent-strong)]">
+              {/* 낙찰가능가(추정)는 핵심 KPI → 데이터 액센트 강조 */}
+              <td className="sa-di-num text-[var(--data-accent)]">
                 {item.est_win?.est_win_mid == null
                   ? "-"
                   : formatCurrency(locale, item.est_win.est_win_mid)}
               </td>
-              <td className="py-3 pr-4 text-[var(--text-secondary)]">{formatText(item.status)}</td>
+              <td className="text-[var(--text-secondary)]">{formatText(item.status)}</td>
             </tr>
           ))}
         </tbody>

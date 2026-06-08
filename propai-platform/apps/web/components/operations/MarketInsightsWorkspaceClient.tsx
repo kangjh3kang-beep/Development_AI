@@ -171,11 +171,13 @@ type Balance = {
 
 const won = (n: number) => (n ?? 0).toLocaleString("ko-KR") + "원";
 
-function MetricTile({ label, value }: { label: string; value: string }) {
+/* ── 데이터 인텔리전스 metric 타일 ──
+   핵심 수치는 mono·tabular-nums로 자릿수 정렬(sa-di-tile). accent=true는 핵심 KPI 1개에만. */
+function MetricTile({ label, value, accent = false }: { label: string; value: string; accent?: boolean }) {
   return (
-    <div className="rounded-[var(--radius-xl)] border border-[var(--line)] bg-[var(--surface)] p-4">
-      <p className="cc-label">{label}</p>
-      <p className="cc-num mt-2 text-lg font-bold text-[var(--text-primary)]">{value}</p>
+    <div className={`sa-di-tile${accent ? " sa-di-tile--accent" : ""}`}>
+      <span className="sa-di-tile__label">{label}</span>
+      <span className="sa-di-tile__value">{value || "-"}</span>
     </div>
   );
 }
@@ -377,36 +379,36 @@ export function MarketInsightsWorkspaceClient() {
                   {genState === "pdf" ? "PDF 생성 중…" : "PDF 다운로드"}
                 </button>
                 <button onClick={() => downloadReport("pptx")} disabled={!!genState}
-                  className="whitespace-nowrap rounded-xl bg-gradient-to-r from-[var(--accent-strong)] to-[#085d73] px-4 py-2 text-xs font-black text-white hover:opacity-90 disabled:opacity-50">
+                  className="whitespace-nowrap rounded-xl bg-gradient-to-r from-[var(--accent-strong)] to-[var(--data-accent)] px-4 py-2 text-xs font-black text-white hover:opacity-90 disabled:opacity-50">
                   {genState === "pptx" ? "PPT 생성 중…" : "PPT 다운로드"}
                 </button>
               </div>
             </div>
 
             {report && (
-              <div className="mt-5 space-y-3 border-t border-[var(--line)] pt-4">
+              <div className="mt-5 space-y-4 border-t border-[var(--line)] pt-4">
                 <div>
-                  <p className="text-xs font-bold text-[var(--accent-strong)]">시장 요약</p>
-                  <p className="mt-1 text-sm leading-relaxed text-[var(--text-secondary)]">{report.narrative?.summary || "-"}</p>
+                  <p className="sa-di-eyebrow">MARKET SUMMARY · 시장 요약</p>
+                  <p className="mt-1.5 text-sm leading-relaxed text-[var(--text-secondary)]">{report.narrative?.summary || "-"}</p>
                 </div>
-                <div className="grid gap-3 sm:grid-cols-2">
+                <div className="grid gap-4 sm:grid-cols-2">
                   <div>
-                    <p className="text-xs font-bold text-[var(--accent-strong)]">기회 요인</p>
-                    <ul className="mt-1 space-y-0.5 text-xs text-[var(--text-secondary)]">
+                    <p className="sa-di-eyebrow">OPPORTUNITIES · 기회 요인</p>
+                    <ul className="mt-1.5 space-y-0.5 text-xs text-[var(--text-secondary)]">
                       {(report.narrative?.opportunities || []).map((o: string, i: number) => <li key={i}>· {o}</li>)}
                     </ul>
                   </div>
                   <div>
-                    <p className="text-xs font-bold text-[var(--status-warning)]">리스크 요인</p>
-                    <ul className="mt-1 space-y-0.5 text-xs text-[var(--text-secondary)]">
+                    <p className="sa-di-eyebrow" style={{ color: "var(--status-warning)" }}>RISKS · 리스크 요인</p>
+                    <ul className="mt-1.5 space-y-0.5 text-xs text-[var(--text-secondary)]">
                       {(report.narrative?.risks || []).map((r: string, i: number) => <li key={i}>· {r}</li>)}
                     </ul>
                   </div>
                 </div>
                 {report.narrative?.price_trend && (
                   <div>
-                    <p className="text-xs font-bold text-[var(--accent-strong)]">가격 동향</p>
-                    <p className="mt-1 text-sm leading-relaxed text-[var(--text-secondary)]">{report.narrative.price_trend}</p>
+                    <p className="sa-di-eyebrow">PRICE TREND · 가격 동향</p>
+                    <p className="mt-1.5 text-sm leading-relaxed text-[var(--text-secondary)]">{report.narrative.price_trend}</p>
                   </div>
                 )}
               </div>
@@ -428,102 +430,122 @@ export function MarketInsightsWorkspaceClient() {
         </div>
       )}
 
-      {/* AI 시세 추정 */}
-      <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
-        <CardContent className="p-6">
-          <div className="flex items-center justify-between">
-            <p className="cc-label">AI 시세 추정</p>
-            <span className="cc-chip-data">AVM</span>
-          </div>
+      {/* AI 시세 추정 — 데이터 인텔리전스 metric 블록 */}
+      <div className="sa-di-block">
+        <header className="sa-di-block__head" style={{ cursor: "default" }}>
+          <span className="sa-di-block__icon" aria-hidden>₩</span>
+          <span className="sa-di-block__title">AI 시세 추정</span>
+          <span className="sa-di-eyebrow">AVM · ESTIMATE</span>
+        </header>
+        <div className="sa-di-block__body">
           {results?.avm ? (
-            <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              <MetricTile label="추정 시세 (84㎡)" value={formatCurrency(results.avm.estimated_price)} />
-              <MetricTile label="㎡당 시세" value={formatCurrency(results.avm.price_per_sqm)} />
-              <MetricTile label="신뢰도" value={`${(results.avm.confidence_score * 100).toFixed(0)}%`} />
-              <MetricTile label="비교 사례" value={`${results.avm.comparable_count.toLocaleString()}건`} />
-            </div>
+            <>
+              <div className="sa-di-tiles sa-di-tiles--4">
+                {/* 추정 시세만 accent — 핵심 KPI 1개 강조 */}
+                <MetricTile label="추정 시세 (84㎡)" value={formatCurrency(results.avm.estimated_price)} accent />
+                <MetricTile label="㎡당 시세" value={formatCurrency(results.avm.price_per_sqm)} />
+                <MetricTile label="신뢰도" value={`${(results.avm.confidence_score * 100).toFixed(0)}%`} />
+                <MetricTile label="비교 사례" value={`${results.avm.comparable_count.toLocaleString()}건`} />
+              </div>
+              <p className="mt-3 text-[11px] text-[var(--text-hint)]">※ 주변 아파트 실거래 평당가 가중평균을 84㎡ 기준으로 환산한 참고 추정치입니다.</p>
+            </>
           ) : mapLoading || (address && !mapPayload) ? (
-            <p className="mt-4 text-sm text-[var(--text-secondary)]">주변 실거래를 수집해 시세를 추정하는 중…</p>
+            <p className="sa-di-empty">주변 실거래를 수집해 시세를 추정하는 중…</p>
           ) : (
-            <p className="mt-4 text-sm text-[var(--text-secondary)]">
+            <p className="sa-di-empty">
               {address ? "주변 아파트 실거래가 없어 시세를 추정할 수 없습니다." : "주소 입력 후 「분석 시작」을 누르면 AI 시세가 표시됩니다."}
             </p>
           )}
-          {results?.avm && (
-            <p className="mt-3 text-[11px] text-[var(--text-hint)]">※ 주변 아파트 실거래 평당가 가중평균을 84㎡ 기준으로 환산한 참고 추정치입니다.</p>
-          )}
-        </CardContent>
-      </Card>
+        </div>
+      </div>
 
-      {/* 주변 실거래 현황 */}
-      <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
-        <CardContent className="p-6">
-          <div className="flex items-center justify-between">
-            <p className="cc-label">주변 실거래 현황</p>
-            <span className="cc-live"><i />LIVE</span>
-          </div>
+      {/* 주변 실거래 현황 — 반경별 거래량·평균가를 데이터 인텔리전스로 */}
+      <div className="sa-di-block">
+        <header className="sa-di-block__head" style={{ cursor: "default" }}>
+          <span className="sa-di-block__icon" aria-hidden>◎</span>
+          <span className="sa-di-block__title">주변 실거래 현황</span>
+          <span className="cc-live"><i />LIVE</span>
+        </header>
+        <div className="sa-di-block__body">
           {mapLoading || (address && !mapPayload) ? (
-            <p className="mt-4 text-sm text-[var(--text-secondary)]">주변 실거래를 수집하는 중…</p>
+            <p className="sa-di-empty">주변 실거래를 수집하는 중…</p>
           ) : results ? (
             <>
-              <div className="mt-3 flex flex-wrap items-baseline gap-4">
-                <p className="text-lg font-bold text-[var(--text-primary)]">
-                  최근 {results.months}개월간{" "}
-                  <span className="text-[var(--accent-strong)]">{results.totalCount.toLocaleString()}건</span> 거래
-                </p>
-                {results.avgPrice > 0 && (
-                  <p className="text-sm text-[var(--text-secondary)]">매매 평균 거래가: {formatPrice(results.avgPrice)}</p>
-                )}
+              {/* 요약 통계 줄 — 기간/거래건수/평균가 */}
+              <div className="sa-di-stats">
+                <div className="sa-di-stat">
+                  <span className="sa-di-stat__label">조회 기간</span>
+                  <span className="sa-di-stat__value">{results.months}개월</span>
+                </div>
+                <div className="sa-di-stat">
+                  <span className="sa-di-stat__label">총 거래</span>
+                  <span className="sa-di-stat__value" style={{ color: "var(--data-accent)" }}>{results.totalCount.toLocaleString()}건</span>
+                </div>
+                <div className="sa-di-stat">
+                  <span className="sa-di-stat__label">매매 평균가</span>
+                  <span className="sa-di-stat__value">{results.avgPrice > 0 ? formatPrice(results.avgPrice) : "-"}</span>
+                </div>
+                <div className="sa-di-stat">
+                  <span className="sa-di-stat__label">분석 반경</span>
+                  <span className="sa-di-stat__value">{(results.radius / 1000).toLocaleString()}km</span>
+                </div>
               </div>
 
               {results.radiusGroups?.length > 0 && (
-                <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                  {(results.radiusGroups ?? []).map((group) => (
-                    <div key={group.label} className="rounded-[var(--radius-xl)] border border-[var(--line)] bg-[var(--surface-soft)] p-4">
-                      <p className="cc-label">{group.label}</p>
-                      <p className="cc-num mt-1 text-sm font-bold text-[var(--text-primary)]">{group.count.toLocaleString()}건</p>
-                      <p className="cc-num text-xs text-[var(--text-secondary)]">평균 {formatPrice(group.avgPrice)}</p>
-                    </div>
-                  ))}
+                <div className="sa-di-sub mt-3">
+                  <p className="sa-di-eyebrow mb-2.5">반경별 거래량 · 평균가</p>
+                  <div className="sa-di-tiles sa-di-tiles--4">
+                    {(results.radiusGroups ?? []).map((group) => (
+                      <div key={group.label} className="sa-di-tile">
+                        <span className="sa-di-tile__label">{group.label}</span>
+                        <span className="sa-di-tile__value">{group.count.toLocaleString()}건</span>
+                        <span className="sa-di-tile__label" style={{ marginTop: "0.125rem" }}>평균 {formatPrice(group.avgPrice)}</span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
 
               {results.totalCount === 0 && (
-                <p className="mt-4 text-sm text-[var(--text-secondary)]">조건에 맞는 실거래 데이터가 없습니다.</p>
+                <p className="sa-di-empty">조건에 맞는 실거래 데이터가 없습니다.</p>
               )}
             </>
           ) : (
-            <p className="mt-4 text-sm text-[var(--text-secondary)]">주소 입력 후 「분석 시작」을 누르면 주변 실거래 현황이 표시됩니다.</p>
+            <p className="sa-di-empty">주소 입력 후 「분석 시작」을 누르면 주변 실거래 현황이 표시됩니다.</p>
           )}
-        </CardContent>
-      </Card>
+        </div>
+      </div>
 
-      {/* 실거래 상세 내역 */}
+      {/* 실거래 상세 내역 — 헤어라인 정밀 데이터 테이블(숫자 우측 mono 정렬) */}
       {results && results.transactions?.length > 0 && (
-        <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
-          <CardContent className="p-6">
-            <p className="cc-label">실거래 상세 내역</p>
-            <div className="mt-4 overflow-x-auto">
-              <table className="w-full text-sm">
+        <div className="sa-di-block">
+          <header className="sa-di-block__head" style={{ cursor: "default" }}>
+            <span className="sa-di-block__icon" aria-hidden>≣</span>
+            <span className="sa-di-block__title">실거래 상세 내역</span>
+            <span className="sa-di-eyebrow">{results.totalCount.toLocaleString()} DEALS</span>
+          </header>
+          <div className="sa-di-block__body">
+            <div className="overflow-x-auto">
+              <table className="sa-di-table">
                 <thead>
-                  <tr className="text-left text-xs font-bold uppercase tracking-widest text-[var(--text-tertiary)]">
-                    <th className="pb-3 pr-4">거래일</th>
-                    <th className="pb-3 pr-4">단지명</th>
-                    <th className="pb-3 pr-4">면적</th>
-                    <th className="pb-3 pr-4">층</th>
-                    <th className="pb-3">거래가</th>
+                  <tr>
+                    <th>거래일</th>
+                    <th>단지명</th>
+                    <th className="sa-di-num">면적</th>
+                    <th className="sa-di-num">층</th>
+                    <th className="sa-di-num">거래가</th>
                   </tr>
                 </thead>
                 <tbody>
                   {results.transactions.slice(0, 50).map((tx, idx) => (
-                    <tr key={idx} className="border-t border-[var(--line)]">
-                      <td className="cc-num py-3 pr-4 text-[var(--text-secondary)]">
+                    <tr key={idx}>
+                      <td className="sa-di-num" style={{ textAlign: "left", color: "var(--text-secondary)" }}>
                         {tx.deal_year ?? ""}{tx.deal_month ? `.${tx.deal_month}` : ""}{tx.deal_day ? `.${tx.deal_day}` : ""}
                       </td>
-                      <td className="py-3 pr-4 font-semibold text-[var(--text-primary)]">{tx.apt_name ?? "-"}</td>
-                      <td className="cc-num py-3 pr-4 text-[var(--text-secondary)]">{tx.area_sqm != null ? `${tx.area_sqm}㎡` : "-"}</td>
-                      <td className="cc-num py-3 pr-4 text-[var(--text-secondary)]">{tx.floor != null ? `${tx.floor}층` : "-"}</td>
-                      <td className="cc-num py-3 font-semibold text-[var(--text-primary)]">{tx.deal_amount != null ? formatPrice(tx.deal_amount) : "-"}</td>
+                      <td style={{ fontWeight: 600 }}>{tx.apt_name ?? "-"}</td>
+                      <td className="sa-di-num" style={{ color: "var(--text-secondary)" }}>{tx.area_sqm != null ? `${tx.area_sqm}㎡` : "-"}</td>
+                      <td className="sa-di-num" style={{ color: "var(--text-secondary)" }}>{tx.floor != null ? `${tx.floor}층` : "-"}</td>
+                      <td className="sa-di-num">{tx.deal_amount != null ? formatPrice(tx.deal_amount) : "-"}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -532,8 +554,8 @@ export function MarketInsightsWorkspaceClient() {
                 <p className="mt-3 text-xs text-[var(--text-tertiary)]">상위 50건만 표시 (표본 {results.transactions?.length}건 · 전체 {results.totalCount.toLocaleString()}건)</p>
               )}
             </div>
-          </CardContent>
-        </Card>
+          </div>
+        </div>
       )}
     </section>
   );
