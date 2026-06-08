@@ -62,7 +62,7 @@ export function SidebarNav({ sections }: SidebarNavProps) {
           {sectionIdx > 0 && (
             <div className="h-px bg-[var(--line)] opacity-50 mb-3" aria-hidden="true" />
           )}
-          <p className="px-3 pb-1.5 text-[11px] font-bold tracking-[0.12em] text-[var(--text-tertiary)] uppercase">
+          <p className="px-3 pb-1.5 text-[11px] font-bold tracking-normal text-[var(--text-tertiary)]">
             {section.title}
           </p>
           <nav className="grid gap-1">

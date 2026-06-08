@@ -24,7 +24,7 @@ export function PromoBanner() {
 
         {/* 텍스트 */}
         <div className="flex flex-1 flex-col items-center sm:items-start">
-          <span className="db-eyebrow mb-1">분양광고 마케팅 템플릿</span>
+          <span className="db-eyebrow db-eyebrow--ko mb-1">분양광고 마케팅 템플릿</span>
           <h3 className="text-sm font-semibold tracking-tight text-[var(--text-primary)] md:text-base">
             3분 만에 완성하는 분양광고 홈페이지
           </h3>

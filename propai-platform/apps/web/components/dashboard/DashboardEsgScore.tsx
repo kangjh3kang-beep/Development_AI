@@ -48,38 +48,36 @@ export function DashboardEsgScore() {
 
   return (
     <div className="pt-6 border-t border-[var(--line)] space-y-4">
+      {/* 네온 시안/모노 영문 라벨 폐기 → 한국어 라벨 + 본문 서체 큰 숫자(C2) */}
       <div className="flex items-center justify-between">
-        <h4 className="cc-label">ESG INDEX</h4>
-        <span className="cc-meta">GRESB · ANALYTICS</span>
+        <h4 className="db-panel-label">ESG 통합 점수</h4>
+        <span className="db-panel-meta">GRESB 기준</span>
       </div>
 
-      <div className="cc-bracketed relative h-40 w-full overflow-hidden rounded-2xl border border-[var(--line)] bg-[var(--surface)]">
-        <div className="cc-grid-bg cc-grid-bg--radial opacity-60" />
-        <i className="cc-bracket cc-bracket--tl" />
-        <i className="cc-bracket cc-bracket--tr" />
-        <i className="cc-bracket cc-bracket--bl" />
-        <i className="cc-bracket cc-bracket--br" />
+      <div className="relative h-40 w-full overflow-hidden rounded-2xl border border-[var(--line)] bg-[var(--surface)]">
+        <div className="cc-grid-bg cc-grid-bg--radial opacity-40" />
 
         <div className="relative z-10 flex h-full flex-col items-center justify-center gap-1">
           {state === "loading" ? (
-            <span className="cc-num text-3xl text-[var(--text-tertiary)] animate-pulse">— · —</span>
+            <span className="text-3xl font-semibold text-[var(--text-tertiary)] animate-pulse tabular-nums">— · —</span>
           ) : state === "empty" ? (
-            <div className="flex flex-col items-center gap-1 text-center px-4">
-              <span className="cc-num text-2xl text-[var(--text-tertiary)]">N/A</span>
-              <span className="text-[11px] font-medium text-[var(--text-tertiary)] leading-snug">
+            <div className="flex flex-col items-center gap-1.5 text-center px-4">
+              <span className="text-2xl font-semibold text-[var(--text-tertiary)]">—</span>
+              <span className="text-[12px] font-medium text-[var(--text-tertiary)] leading-snug">
                 ESG 분석 데이터 없음
                 <br />
-                <span className="cc-label text-[10px]">PENDING · 분석 후 산출</span>
+                <span className="text-[11px] text-[var(--text-hint)]">프로젝트 분석 후 산출됩니다</span>
               </span>
             </div>
           ) : (
             <>
-              <span className="cc-num cc-num--data text-5xl font-[900]">
+              {/* 큰 숫자는 본문 서체 계열 + 중립 화이트(상태색 절제) */}
+              <span className="text-5xl font-bold tabular-nums text-[var(--text-primary)] leading-none">
                 {score!.toFixed(1)}
               </span>
-              <div className="flex items-center gap-2">
-                <span className="cc-label text-[10px]">SCORE / 100</span>
-                {grade ? <span className="cc-chip-data">{grade}</span> : null}
+              <div className="mt-2 flex items-center gap-2">
+                <span className="text-[12px] font-medium text-[var(--text-tertiary)]">100점 만점</span>
+                {grade ? <span className="db-status-chip">{grade}</span> : null}
               </div>
             </>
           )}

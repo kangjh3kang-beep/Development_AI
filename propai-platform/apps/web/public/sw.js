@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v122-dashboard-apple-grade";
+const CACHE_NAME = "propai-v123-dashboard-refine";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

@@ -21,44 +21,57 @@ interface KpiItem {
 }
 
 export function KpiGrid({ items }: { items: KpiItem[] }) {
+  // 모든 지표가 비어 있으면(값 0) 카드마다 안내문을 반복하지 않고
+  // 묶음 하단에 한 번만 통합 안내를 보여 준다(H1: 와이어프레임 인상 제거).
+  const allEmpty = items.every((it) => it.value === 0);
+
   return (
-    <div className="grid gap-4 md:grid-cols-3">
-      {items.map((item, i) => {
-        // 값이 0이면(아직 데이터 없음) 0.0 나열 대신 줄표(—)로 정직하게 표기
-        const isEmpty = item.value === 0;
-        return (
-          <div key={i} className="db-kpi">
-            <div className="flex items-center justify-between">
-              <span className="db-eyebrow">{item.label}</span>
-              {item.trend ? (
-                <span className="db-kpi__unit text-[11px] font-semibold text-[var(--text-tertiary)]">
-                  {item.trend}
-                </span>
-              ) : null}
-            </div>
+    <div className="space-y-3">
+      <div className="grid gap-4 md:grid-cols-3">
+        {items.map((item, i) => {
+          // 값이 0이면(아직 데이터 없음) 회색 바 대신 흐린 줄표(—)를
+          // 라벨과 같은 좌측 기준선에 정렬해 절제 있게 표기한다.
+          const isEmpty = item.value === 0;
+          return (
+            <div key={i} className="db-kpi">
+              <div className="flex items-center justify-between">
+                <span className="db-eyebrow db-eyebrow--ko">{item.label}</span>
+                {!isEmpty && item.trend ? (
+                  <span className="db-kpi__unit text-[11px] font-semibold text-[var(--text-tertiary)]">
+                    {item.trend}
+                  </span>
+                ) : null}
+              </div>
 
-            <div className="mt-5 flex items-baseline gap-1.5">
-              {isEmpty ? (
-                <span className="db-kpi__placeholder">—</span>
-              ) : (
-                <>
-                  <AnimatedCounter
-                    value={item.value}
-                    decimals={item.decimals}
-                    duration={1400}
-                    className="db-kpi__value"
-                  />
-                  <span className="db-kpi__unit">{item.unit}</span>
-                </>
-              )}
-            </div>
+              <div className="mt-5 flex items-baseline gap-1.5">
+                {isEmpty ? (
+                  <span className="db-kpi__placeholder" aria-label="데이터 없음">—</span>
+                ) : (
+                  <>
+                    <AnimatedCounter
+                      value={item.value}
+                      decimals={item.decimals}
+                      duration={1400}
+                      className="db-kpi__value"
+                    />
+                    <span className="db-kpi__unit">{item.unit}</span>
+                  </>
+                )}
+              </div>
 
-            <p className="mt-3 db-kpi__sub">
-              {isEmpty ? "프로젝트 생성 시 표시됩니다" : item.sub}
-            </p>
-          </div>
-        );
-      })}
+              {/* 채워진 지표에만 부연 설명. 빈 지표는 하단 통합 안내로 대체 */}
+              {!isEmpty ? <p className="mt-3 db-kpi__sub">{item.sub}</p> : null}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* 빈상태 통합 안내 — 카드별 반복 대신 한 줄로 */}
+      {allEmpty ? (
+        <p className="db-kpi__sub text-center text-[var(--text-tertiary)]">
+          첫 프로젝트를 생성하면 지표가 채워집니다.
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -118,19 +131,21 @@ export function ProjectCardGrid({
             <h4 className="text-lg font-bold text-[var(--text-primary)] leading-tight mb-2">
               {proj.name}
             </h4>
-            <p className="text-[11px] font-bold text-[var(--accent-strong)] tracking-wider mb-8">
+            {/* 상태 라벨 — 한글이므로 양수 트래킹 제거(C3) */}
+            <p className="text-[12px] font-semibold text-[var(--accent-strong)] mb-8">
               {proj.status}
             </p>
 
             <div className="space-y-2">
+              {/* 진행률 — 네온 시안 폐기, 단일 파랑(C2) + 한국어 라벨(C3) */}
               <div className="flex justify-between items-center">
-                <span className="cc-label text-[10px]">PROGRESS</span>
-                <span className="cc-num text-[12px] font-bold text-[var(--data-accent)]">{proj.progress}%</span>
+                <span className="text-[11px] font-semibold text-[var(--text-tertiary)]">진행률</span>
+                <span className="text-[12px] font-bold tabular-nums text-[var(--accent-strong)]">{proj.progress}%</span>
               </div>
               <div className="h-1.5 w-full rounded-full bg-[var(--line)] overflow-hidden">
                 <div
-                  className="h-full rounded-full bg-[var(--data-accent)] transition-all duration-1000"
-                  style={{ width: `${proj.progress}%`, boxShadow: "var(--data-glow)" }}
+                  className="h-full rounded-full bg-[var(--accent-strong)] transition-all duration-1000"
+                  style={{ width: `${proj.progress}%` }}
                 />
               </div>
             </div>

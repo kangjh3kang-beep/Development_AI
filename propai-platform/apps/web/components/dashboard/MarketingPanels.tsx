@@ -60,10 +60,12 @@ export function MarketingPanels() {
           >
             <div className="flex items-center gap-3">
               <span className="db-card__icon">{p.icon}</span>
-              <span className="db-eyebrow">{p.eyebrow}</span>
+              {/* 한글 카테고리 라벨 — 양수 트래킹 제거(C3) */}
+              <span className="db-eyebrow db-eyebrow--ko">{p.eyebrow}</span>
             </div>
+            {/* H3: 같은 그리드 내 카드 구조·서체 균일화(제목 크기 동일, baseline 동일) */}
             <div>
-              <h3 className={`db-card__title mb-2 ${p.large ? "text-2xl" : "text-lg"}`}>
+              <h3 className="db-card__title mb-2 text-lg">
                 {p.title}
               </h3>
               <p className={`db-card__desc ${p.large ? "max-w-md" : ""}`}>{p.desc}</p>

@@ -1242,6 +1242,86 @@ textarea {
     transition: border-color 200ms var(--ease-out-expo);
   }
   .db-promo:hover { border-color: var(--line-strong); }
+
+  /* ── 한글 라벨 보정(C3) ───────────────────────────────────────────
+     db-eyebrow는 영문 메타라벨용이라 양수 트래킹(0.18em)+대문자 변환이 걸려 있다.
+     한글에 그대로 적용하면 "활 성 진 행"처럼 글자가 벌어져 싸구려 조판으로 읽힌다.
+     한글 라벨에는 이 modifier를 붙여 트래킹 0·대문자 변환 해제·고유 서체로 강제한다. */
+  .db-eyebrow--ko {
+    text-transform: none;
+    letter-spacing: 0;
+    font-family: var(--font-sans), system-ui, sans-serif;
+    font-size: 0.75rem;          /* 12px */
+    font-weight: 600;
+    color: var(--text-tertiary);
+  }
+
+  /* 히어로 가치제안 헤드라인 — 차분하게, 한글 자간 음수(C1/C3) */
+  .db-hero__headline {
+    font-size: clamp(1.75rem, 3.5vw, 2.75rem);  /* 28~44px */
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    line-height: 1.2;
+  }
+
+  /* 실시간 표시 도트 — 네온 시안 대신 단일 파랑 펄스(C2), 한글이라 트래킹 0(C3) */
+  .db-live {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.75rem;          /* 12px */
+    font-weight: 600;
+    letter-spacing: 0;
+    color: var(--accent-strong);
+  }
+  .db-live > i {
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 999px;
+    background: var(--accent-strong);
+    box-shadow: 0 0 0 0 var(--accent-strong);
+    animation: db-pulse-dot 1.8s var(--ease-out-expo) infinite;
+  }
+  @keyframes db-pulse-dot {
+    0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent-strong) 55%, transparent); }
+    70%  { box-shadow: 0 0 0 0.5rem transparent; }
+    100% { box-shadow: 0 0 0 0 transparent; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .db-live > i { animation: none !important; }
+  }
+
+  /* 패널 한국어 라벨/메타 — 모노 영문 대문자 라벨(cc-label/cc-meta)을 대체.
+     트래킹 0·일반 서체·중립색으로 차분하게(C2/C3). */
+  .db-panel-label {
+    font-family: var(--font-sans), system-ui, sans-serif;
+    font-size: 0.8125rem;        /* 13px */
+    font-weight: 600;
+    letter-spacing: 0;
+    color: var(--text-secondary);
+  }
+  .db-panel-meta {
+    font-family: var(--font-sans), system-ui, sans-serif;
+    font-size: 0.75rem;          /* 12px */
+    font-weight: 500;
+    letter-spacing: 0;
+    color: var(--text-tertiary);
+  }
+
+  /* 상태 칩 — 네온 시안 cc-chip-data 대체. 중립 표면 + 파랑 텍스트(C2). */
+  .db-status-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    border-radius: 0.5rem;
+    padding: 0.2rem 0.55rem;
+    font-size: 0.6875rem;        /* 11px */
+    font-weight: 600;
+    letter-spacing: 0;
+    color: var(--accent-strong);
+    background: var(--accent-soft);
+    border: 1px solid var(--line-strong);
+  }
 }
 
 /* Leaflet 지도 z-index 격리 — 지도 panes/controls(z 400~1000)가 sticky 헤더(z-50)·

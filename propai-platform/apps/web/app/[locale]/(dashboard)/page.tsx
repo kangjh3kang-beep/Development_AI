@@ -7,9 +7,7 @@ import { MarketingPanels } from "@/components/dashboard/MarketingPanels";
 import { PromoBanner } from "@/components/dashboard/PromoBanner";
 import { OnboardingWizard } from "@/components/onboarding/OnboardingWizard";
 import { PipelinePanelClient } from "@/components/pipeline/PipelinePanelClient";
-import { Logo } from "@/components/ui/Logo";
-import { getDictionary } from "@/i18n/get-dictionary";
-import { isValidLocale, type Locale } from "@/i18n/config";
+import { isValidLocale } from "@/i18n/config";
 
 type DashboardPageProps = {
   params: Promise<{
@@ -48,8 +46,6 @@ export default async function DashboardPage({ params }: DashboardPageProps) {
     return null;
   }
 
-  const dictionary = await getDictionary(locale as Locale);
-
   return (
     <div className="flex flex-col gap-12 pb-16">
       {/* ── 시작 안내 위자드 (최초 방문 시에만 표시) ── */}
@@ -61,21 +57,21 @@ export default async function DashboardPage({ params }: DashboardPageProps) {
         <HeroGridBackground />
 
         <div className="relative z-10 flex flex-col justify-between gap-12 lg:flex-row lg:items-end">
-          <div className="max-w-3xl space-y-8">
-            <span className="db-eyebrow">
+          <div className="max-w-3xl space-y-6">
+            {/* eyebrow: 자사 슬로건 대신 차분한 분야 라벨로 축소(C2) */}
+            <span className="db-eyebrow db-eyebrow--ko">
               <i />
-              {dictionary.dashboard.title}
+              부동산 개발 분석
             </span>
 
-            <h1 className="tracking-tighter text-[var(--text-primary)]">
-              <span className="sr-only">{dictionary.meta.siteName}</span>
-              <span className="flex items-center justify-start">
-                <Logo size="xl" />
-              </span>
+            {/* C1: 히어로 중앙 대형 로고/태그라인 제거 → 가치제안 한 줄 헤드라인만.
+                로고는 사이드바 1곳에만 남긴다. */}
+            <h1 className="db-hero__headline text-[var(--text-primary)]">
+              주소만 입력하면, 사업성·설계·수지 분석을 한 번에.
             </h1>
 
             <p className="max-w-xl text-lg leading-relaxed text-[var(--text-secondary)] sm:text-xl">
-              {(dictionary.dashboard as any).welcome}
+              전국 필지 데이터와 AI 분석 엔진으로 개발 전 과정을 한 흐름에서 검증합니다.
             </p>
           </div>
 
@@ -159,9 +155,10 @@ export default async function DashboardPage({ params }: DashboardPageProps) {
            <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
                  <h2 className="db-section-title">활성 진행 단계</h2>
-                 <span className="cc-live"><i />LIVE</span>
+                 {/* 실시간 표시 — 네온 시안 대신 파랑 펄스 도트(C2) */}
+                 <span className="db-live"><i />실시간</span>
               </div>
-              <Link href={`/${locale}/projects`} className="db-eyebrow text-[var(--accent-strong)] hover:opacity-80 transition-opacity">전체 보기</Link>
+              <Link href={`/${locale}/projects`} className="db-eyebrow db-eyebrow--ko text-[var(--accent-strong)] hover:opacity-80 transition-opacity">전체 보기</Link>
            </div>
 
            <DashboardProjectLoader locale={locale} />
@@ -169,33 +166,29 @@ export default async function DashboardPage({ params }: DashboardPageProps) {
            {/* ── 포트폴리오 커맨드 맵 — 그리드 + 레이더 모티프 ──
                실데이터(좌표/자산 시각화) 연동 전이므로 가짜 자산점을 찍지 않고
                "데이터 연결 대기" 정직 빈상태로 둔다(무목업 원칙). */}
-            <div className="cc-bracketed relative h-[300px] w-full overflow-hidden rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface-soft)] shadow-[var(--shadow-inner)]">
-               <div className="cc-grid-bg cc-grid-bg--radial" />
-               <div className="cc-scanline" />
-               <i className="cc-bracket cc-bracket--tl" />
-               <i className="cc-bracket cc-bracket--tr" />
-               <i className="cc-bracket cc-bracket--bl" />
-               <i className="cc-bracket cc-bracket--br" />
+            {/* 포트폴리오 공간 맵 — 게임 HUD 톤(네온 시안/레이더/모노 영문) 폐기.
+                차분한 단일 파랑 + 한국어 라벨로 통일(C2). */}
+            <div className="relative h-[300px] w-full overflow-hidden rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface-soft)] shadow-[var(--shadow-inner)]">
+               <div className="cc-grid-bg cc-grid-bg--radial opacity-50" />
 
-               {/* 패널 메타 헤더(HUD) */}
-               <div className="absolute left-4 top-3 z-10 flex items-center gap-3">
-                  <span className="cc-meta">PORTFOLIO · SPATIAL MAP</span>
+               {/* 패널 헤더 — 한국어 라벨(좌)/상태(우) */}
+               <div className="absolute left-5 top-4 z-10">
+                  <span className="db-panel-label">포트폴리오 공간 맵</span>
                </div>
-               <div className="absolute right-4 top-3 z-10">
-                  <span className="cc-chip-data">STANDBY</span>
+               <div className="absolute right-5 top-4 z-10">
+                  <span className="db-status-chip">연결 대기</span>
                </div>
 
                <div className="absolute inset-0 flex items-center justify-center">
-                  {/* 레이더 링 + 절제된 단일 스윕 */}
+                  {/* 동심원(파랑 헤어라인) + 정직한 빈상태 */}
                   <div className="relative flex h-40 w-40 items-center justify-center">
-                     <div className="absolute inset-0 rounded-full border border-[var(--data-accent-line)] opacity-40" />
-                     <div className="absolute inset-6 rounded-full border border-[var(--data-accent-line)] opacity-30" />
-                     <div className="absolute inset-12 rounded-full border border-[var(--data-accent-line)] opacity-20" />
-                     <div className="cc-radar-sweep" />
+                     <div className="absolute inset-0 rounded-full border border-[var(--line-strong)] opacity-50" />
+                     <div className="absolute inset-6 rounded-full border border-[var(--line-strong)] opacity-35" />
+                     <div className="absolute inset-12 rounded-full border border-[var(--line-strong)] opacity-25" />
                      <div className="relative z-10 flex flex-col items-center gap-2 text-center">
-                        <span className="cc-num cc-num--data text-base">⌖</span>
+                        <span className="text-2xl text-[var(--accent-strong)]">⌖</span>
                         <div>
-                           <p className="cc-label text-[var(--text-secondary)]">포트폴리오 맵</p>
+                           <p className="text-[13px] font-semibold text-[var(--text-secondary)]">포트폴리오 맵</p>
                            <p className="mt-1 text-[11px] font-medium text-[var(--text-tertiary)]">데이터 연결 대기</p>
                         </div>
                      </div>
@@ -209,18 +202,18 @@ export default async function DashboardPage({ params }: DashboardPageProps) {
            <div className="cc-panel space-y-6 p-6">
               <div>
                  <div className="flex items-center justify-between mb-5">
-                    <h4 className="cc-label text-[var(--text-secondary)]">REGULATION FEED</h4>
-                    <span className="cc-meta">규제 모니터</span>
+                    <h4 className="db-panel-label">규제 동향</h4>
+                    <span className="db-panel-meta">실시간 모니터</span>
                  </div>
                  {/* 규제 동향 실데이터 소스 미연동 → 가짜 항목 대신 정직한 빈상태(무목업) */}
-                 <div className="cc-bracketed relative flex flex-col items-center gap-2 rounded-xl border border-dashed border-[var(--line-strong)] bg-[var(--surface)] px-5 py-8 text-center overflow-hidden">
-                    <div className="cc-grid-bg opacity-40" />
-                    <span className="relative z-10 cc-num text-xl text-[var(--text-tertiary)]">—</span>
+                 <div className="relative flex flex-col items-center gap-2 rounded-xl border border-dashed border-[var(--line-strong)] bg-[var(--surface)] px-5 py-8 text-center overflow-hidden">
+                    <div className="cc-grid-bg opacity-30" />
+                    <span className="relative z-10 text-xl text-[var(--text-tertiary)]">—</span>
                     <p className="relative z-10 text-[13px] font-bold text-[var(--text-primary)]">규제 동향 피드 연동 예정</p>
                     <p className="relative z-10 text-[11px] font-medium text-[var(--text-tertiary)] leading-relaxed">
                        실시간 법령·조례 변경 모니터링을 연결하면<br/>여기에 최신 개정 동향이 표시됩니다.
                     </p>
-                    <Link href={`/${locale}/regulations`} className="relative z-10 mt-1 db-eyebrow text-[var(--accent-strong)] hover:opacity-80 transition-opacity">규제 분석 열기 →</Link>
+                    <Link href={`/${locale}/regulations`} className="relative z-10 mt-1 inline-flex items-center gap-1 text-[12px] font-semibold text-[var(--accent-strong)] hover:opacity-80 transition-opacity">규제 분석 열기 →</Link>
                  </div>
               </div>
 
@@ -230,7 +223,7 @@ export default async function DashboardPage({ params }: DashboardPageProps) {
 
            {/* 사용자 시작 안내 카드 */}
            <div className="db-card gap-5 p-7">
-              <span className="db-eyebrow">GUIDE · ONBOARDING</span>
+              <span className="db-eyebrow db-eyebrow--ko">시작 안내</span>
               <h4 className="db-card__title text-lg">전문 가이드가<br/>필요하신가요?</h4>
               <p className="db-card__desc">
                  사통팔땅의 168종 데이터 맵과<br/>AI 엔진을 활용하는 방법을 확인하세요.
