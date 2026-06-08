@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v106-sales-pw-twin";
+const CACHE_NAME = "propai-v107-sales-overview-hub";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

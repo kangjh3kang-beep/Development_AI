@@ -20,9 +20,11 @@ import TaxPanel from "@/components/sales/TaxPanel";
 import { UnitOutlineBuilder } from "@/components/sales/UnitOutlineBuilder";
 import IntegrityGuard from "@/components/sales/IntegrityGuard";
 import CrmPanel from "@/components/sales/CrmPanel";
+import SitePasswordModal from "@/components/sales-app/SitePasswordModal";
 
-type Tab = "units" | "pricing" | "subscription" | "payments" | "loan" | "resale" | "tax" | "org" | "commission" | "desk" | "crm" | "integrity";
+type Tab = "overview" | "units" | "pricing" | "subscription" | "payments" | "loan" | "resale" | "tax" | "org" | "commission" | "desk" | "crm" | "integrity";
 const TABS: { key: Tab; label: string }[] = [
+  { key: "overview", label: "📋 설정·요약" },
   { key: "units", label: "세대 배치도" },
   { key: "pricing", label: "분양가" },
   { key: "subscription", label: "청약·당첨" },
@@ -37,20 +39,34 @@ const TABS: { key: Tab; label: string }[] = [
   { key: "integrity", label: "🛡 무결성 가드" },
 ];
 
+type SiteInfo = {
+  id: string;
+  site_code: string;
+  site_name: string;
+  status?: string | null;
+  development_type?: string | null;
+};
+
 export default function SalesSiteWorkspace({ siteCode, locale }: { siteCode: string; locale: Locale }) {
-  const [tab, setTab] = useState<Tab>("units");
+  const [tab, setTab] = useState<Tab>("overview");
   const [rounds, setRounds] = useState<{ id: string; name: string }[]>([]);
   const [rid, setRid] = useState("");
   const [siteName, setSiteName] = useState("");
+  const [siteInfo, setSiteInfo] = useState<SiteInfo | null>(null);
   const [builderOpen, setBuilderOpen] = useState(false);
   const [priceRefresh, setPriceRefresh] = useState(0);
+  const [pwOpen, setPwOpen] = useState(false);
 
   useEffect(() => {
     salesApi(siteCode).get<{ id: string; name: string }[]>("/rounds")
       .then((r) => { setRounds(r || []); if (r?.[0]) setRid(r[0].id); })
       .catch(() => setRounds([]));
-    salesGlobal.get<{ site_code: string; site_name: string }[]>("/sites")
-      .then((ss) => setSiteName((ss || []).find((x) => x.site_code === siteCode)?.site_name || ""))
+    salesGlobal.get<SiteInfo[]>("/sites")
+      .then((ss) => {
+        const me = (ss || []).find((x) => x.site_code === siteCode) || null;
+        setSiteInfo(me);
+        setSiteName(me?.site_name || "");
+      })
       .catch(() => {});
   }, [siteCode]);
 
@@ -87,6 +103,67 @@ export default function SalesSiteWorkspace({ siteCode, locale }: { siteCode: str
         ))}
       </div>
 
+      {tab === "overview" && (
+        <div className="space-y-5">
+          {/* 현장 기본정보 + 비밀번호 설정 */}
+          <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-5">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)]">현장 기본정보</p>
+                <h2 className="mt-1 text-xl font-black text-[var(--text-primary)]">{siteName || "분양 현장"}</h2>
+                <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-xs text-[var(--text-secondary)]">
+                  <span>현장코드 <b className="text-[var(--text-primary)]">{siteInfo?.site_code || siteCode}</b></span>
+                  {siteInfo?.development_type && <span>유형 <b className="text-[var(--text-primary)]">{siteInfo.development_type}</b></span>}
+                  {siteInfo?.status && <span>상태 <b className="text-[var(--accent-strong)]">{siteInfo.status}</b></span>}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPwOpen(true)}
+                disabled={!siteInfo?.id}
+                className="rounded-lg border border-[var(--accent-strong)]/50 bg-[var(--accent-strong)]/10 px-4 py-2 text-xs font-black text-[var(--accent-strong)] transition hover:bg-[var(--accent-strong)]/20 disabled:opacity-50"
+              >
+                🔑 현장앱 비밀번호 설정/변경
+              </button>
+            </div>
+            <p className="mt-3 rounded-lg bg-[var(--surface-strong)] px-3 py-2 text-[11px] text-[var(--text-hint)]">
+              현장앱(현장 직원용)은 2차 비밀번호로 보호됩니다. 위 버튼으로 먼저 비밀번호를 설정한 뒤 직원에게 공유하세요.
+            </p>
+          </div>
+
+          {/* 관리 메뉴 빠른 이동 — 각 기능 안내 */}
+          <div>
+            <p className="mb-2 text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)]">관리 메뉴</p>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+              {[
+                { key: "units" as Tab, label: "세대 배치도", desc: "동·호 배치·상태" },
+                { key: "pricing" as Tab, label: "분양가", desc: "회차별 가격표" },
+                { key: "subscription" as Tab, label: "청약·당첨", desc: "접수·추첨·당첨" },
+                { key: "payments" as Tab, label: "수납·납부", desc: "계약·중도·잔금" },
+                { key: "loan" as Tab, label: "중도금 대출", desc: "대출 알선·실행" },
+                { key: "resale" as Tab, label: "전매·실거래", desc: "전매·신고" },
+                { key: "tax" as Tab, label: "세금·보증", desc: "취득세·보증" },
+                { key: "org" as Tab, label: "조직도", desc: "본부·팀·직원" },
+                { key: "commission" as Tab, label: "수수료", desc: "정산·더치페이" },
+                { key: "desk" as Tab, label: "방문 안내데스크", desc: "체크인·방문통계" },
+                { key: "crm" as Tab, label: "🤖 고객 예측", desc: "CRM·전환예측" },
+                { key: "integrity" as Tab, label: "🛡 무결성 가드", desc: "데이터 검증" },
+              ].map((m) => (
+                <button
+                  key={m.key}
+                  type="button"
+                  onClick={() => setTab(m.key)}
+                  className="flex flex-col items-start rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-3 text-left transition hover:border-[var(--accent-strong)] hover:shadow-[var(--shadow-sm)]"
+                >
+                  <span className="text-sm font-black text-[var(--text-primary)]">{m.label}</span>
+                  <span className="mt-0.5 text-[11px] text-[var(--text-tertiary)]">{m.desc}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
       {tab === "units" && (<><UnitGrid siteCode={siteCode} /><Unit360Panel siteCode={siteCode} /></>)}
       {tab === "pricing" && (
         <div className="space-y-3">
@@ -114,6 +191,10 @@ export default function SalesSiteWorkspace({ siteCode, locale }: { siteCode: str
       {tab === "desk" && (<div className="grid gap-6 lg:grid-cols-2"><DeskCheckin siteCode={siteCode} /><VisitorStats siteCode={siteCode} /></div>)}
       {tab === "crm" && <CrmPanel siteCode={siteCode} />}
       {tab === "integrity" && <IntegrityGuard siteCode={siteCode} />}
+
+      {siteInfo?.id && (
+        <SitePasswordModal siteId={siteInfo.id} open={pwOpen} onClose={() => setPwOpen(false)} />
+      )}
     </div>
   );
 }
