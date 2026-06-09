@@ -309,6 +309,27 @@ async def token_usage(
         params,
     )).all()
 
+    # 관리자 전체뷰일 때만 계정별(by_user) 사용량도 집계(총괄관리자가 계정별로 확인).
+    by_user: list[dict[str, Any]] = []
+    if platform_wide:
+        user_rows = (await db.execute(
+            text(
+                "SELECT l.user_id, COALESCE(u.email,'(알수없음)'), COALESCE(u.role,''), "
+                "COALESCE(SUM(l.input_tokens+l.output_tokens),0), COALESCE(SUM(l.cost_krw),0) "
+                "FROM llm_usage_log l LEFT JOIN users u ON u.id::text = l.user_id "
+                "WHERE l.created_at >= :since "
+                "GROUP BY l.user_id, u.email, u.role ORDER BY 4 DESC LIMIT 100"
+            ),
+            {"since": since},
+        )).all()
+        by_user = [
+            {
+                "user_id": str(r[0]), "email": r[1], "role": r[2],
+                "tokens": int(r[3] or 0), "cost_krw": round(float(r[4] or 0)),
+            }
+            for r in user_rows
+        ]
+
     return {
         "scope": "platform" if platform_wide else "user",
         "days": days,
@@ -318,6 +339,7 @@ async def token_usage(
             {"service": r[0], "tokens": int(r[1] or 0), "cost_krw": round(float(r[2] or 0))}
             for r in by_service_rows
         ],
+        "by_user": by_user,
         "daily": [
             {"date": r[0], "tokens": int(r[1] or 0), "cost_krw": round(float(r[2] or 0))}
             for r in daily_rows

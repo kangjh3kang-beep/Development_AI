@@ -17,6 +17,7 @@ import { apiClient, ApiClientError } from "@/lib/api-client";
 
 type ServiceUsage = { service: string; tokens: number; cost_krw: number };
 type DailyUsage = { date: string; tokens: number; cost_krw: number };
+type UserUsage = { user_id: string; email: string; role: string; tokens: number; cost_krw: number };
 
 type TokenUsage = {
   days: number;
@@ -24,6 +25,7 @@ type TokenUsage = {
   total_tokens: number;
   total_cost_krw: number;
   by_service: ServiceUsage[];
+  by_user?: UserUsage[]; // 관리자 전체뷰에서만 — 계정별 사용량
   daily: DailyUsage[];
 };
 
@@ -272,6 +274,37 @@ export function AiTokenUsageDashboard() {
               </div>
             </CardContent>
           </Card>
+
+          {/* 계정별 사용량 — 총괄관리자 전체뷰에서만 */}
+          {usage.scope === "platform" && (usage.by_user?.length ?? 0) > 0 && (
+            <Card>
+              <CardContent className="p-6">
+                <p className="cc-label">계정별 사용량 (총괄관리자)</p>
+                <div className="mt-4 overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-left text-[10px] uppercase tracking-[0.12em] text-[var(--text-hint)]">
+                        <th className="pb-2 font-bold">계정</th>
+                        <th className="pb-2 font-bold">역할</th>
+                        <th className="pb-2 text-right font-bold">토큰</th>
+                        <th className="pb-2 text-right font-bold">이용 금액</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(usage.by_user ?? []).map((u) => (
+                        <tr key={u.user_id} className="border-t border-[var(--line)]">
+                          <td className="py-2 font-medium text-[var(--text-primary)]">{u.email}</td>
+                          <td className="py-2 text-[var(--text-secondary)]">{u.role || "-"}</td>
+                          <td className="py-2 text-right cc-num text-[var(--text-secondary)]">{u.tokens.toLocaleString("ko-KR")}</td>
+                          <td className="py-2 text-right cc-num font-bold text-[var(--text-primary)]">{won(u.cost_krw)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </CardContent>
+            </Card>
+          )}
 
           {/* 일별 추이 */}
           {(usage.daily?.length ?? 0) > 0 && (
