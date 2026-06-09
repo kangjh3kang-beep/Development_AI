@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import dynamic from "next/dynamic";
 import { motion } from "framer-motion";
 import { ProjectAnalysisSummary } from "@/components/projects/ProjectAnalysisSummary";
+import { currentUserId } from "@/lib/projectSync";
 import { isValidLocale, type Locale } from "@/i18n/config";
 import { useDictionary } from "@/hooks/use-dictionary";
 import { formatCurrencyKRW } from "@/lib/formatters";
@@ -133,7 +134,7 @@ export default function ProjectDetailPage() {
 
       // 3) localStorage 폴백(레거시·오프라인)
       try {
-        const hist = JSON.parse(localStorage.getItem("propai_pipeline_history") || "[]") as Array<{
+        const hist = JSON.parse(localStorage.getItem(`propai_pipeline_history__${currentUserId()}`) || "[]") as Array<{
           address?: string; result?: { summary?: Record<string, any>; stages?: Array<{ stage: string; status: string; data?: any }> };
         }>;
         const norm = (s: string) => s.replace(/\s+/g, "");

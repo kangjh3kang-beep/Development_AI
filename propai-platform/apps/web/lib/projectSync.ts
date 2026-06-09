@@ -57,6 +57,12 @@ function decodeTokenUser(token: string | null): string | null {
   }
 }
 
+/** 현재 로그인 사용자 식별자(localStorage 키 분리용). 비로그인이면 "guest". */
+export function currentUserId(): string {
+  if (typeof window === "undefined") return "guest";
+  return decodeTokenUser(window.localStorage.getItem("propai_access_token")) || "guest";
+}
+
 /** 모든 프로젝트/분석 로컬 데이터를 완전 초기화(메모리 store + localStorage). 토큰은 건드리지 않음. */
 export function clearAllProjectData(): void {
   if (typeof window === "undefined") return;

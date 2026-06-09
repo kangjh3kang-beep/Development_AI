@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, usePathname, useRouter } from "next/navigation";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { appendLedger } from "@/lib/analysis-ledger";
+import { currentUserId } from "@/lib/projectSync";
 import { useProjectStore as useProjectListStore } from "@/store/useProjectStore";
 import { apiClient } from "@/lib/api-client";
 import { GlobalAddressSearch, type AddressEntry } from "@/components/common/GlobalAddressSearch";
@@ -47,10 +48,17 @@ interface HistoryEntry {
 const HISTORY_KEY = "propai_pipeline_history";
 const MAX_HISTORY = 20;   // 전역 보관 확대(프로젝트별 필터링 후 표시)
 
+// ★분석이력은 계정별로 분리한다(propai_pipeline_history__{userId}). 단일 공유키였을 때
+//  로그아웃 와이프로 본인 이력이 사라지고 다른 계정에 노출되던 문제를 근본 차단.
+//  키 자체가 격리되므로 와이프 없이도 본인 이력은 영구 보존되고 삭제는 본인만 영향.
+export function pipelineHistoryKey(): string {
+  return `${HISTORY_KEY}__${currentUserId()}`;
+}
+
 function loadHistory(): HistoryEntry[] {
   if (typeof window === "undefined") return [];
   try {
-    const raw = localStorage.getItem(HISTORY_KEY);
+    const raw = localStorage.getItem(pipelineHistoryKey());
     return raw ? (JSON.parse(raw) as HistoryEntry[]) : [];
   } catch {
     return [];
@@ -59,7 +67,7 @@ function loadHistory(): HistoryEntry[] {
 
 function saveHistory(entries: HistoryEntry[]) {
   if (typeof window === "undefined") return;
-  localStorage.setItem(HISTORY_KEY, JSON.stringify(entries.slice(0, MAX_HISTORY)));
+  localStorage.setItem(pipelineHistoryKey(), JSON.stringify(entries.slice(0, MAX_HISTORY)));
 }
 
 /* ── 비회원(미로그인) 브라우저 기반 무료 1회 게이트 ── */
