@@ -229,6 +229,12 @@ class Settings(BaseSettings):
         default="https://api.smith.langchain.com",
         validation_alias=AliasChoices("langsmith_endpoint", "LANGSMITH_ENDPOINT"),
     )
+    # APAC/EU 등 org-스코프 키는 워크스페이스(tenant) ID가 있어야 트레이스 전송 가능.
+    # SDK(0.1.x)가 X-Tenant-Id를 안 보내므로 observability가 Client 헤더에 주입한다.
+    langsmith_workspace_id: str = Field(
+        default="",
+        validation_alias=AliasChoices("langsmith_workspace_id", "LANGSMITH_WORKSPACE_ID"),
+    )
     # 프로덕션 단일워커(1GB) 보호용 샘플링(1.0=전수, 0.1=10%). 추적 자체는 비동기라 영향 미미.
     langsmith_sample_rate: float = Field(
         default=1.0,
