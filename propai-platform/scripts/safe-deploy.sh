@@ -131,13 +131,13 @@ sleep 8
 # ── 6) 공개 검증 ──
 status "VERIFY"
 WEB=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:80/ko --max-time 15)
-API=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:80/api/v1/health --max-time 15)
+API=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:80/health --max-time 15)
 # 검증 실패(502 등)면 nginx 한 번 더 재시작 후 재확인
 if [ "$WEB" != "200" ] || [ "$API" != "200" ]; then
   log "1차 검증 실패(web=$WEB api=$API) → nginx 재시작 재시도"
   docker restart propai-platform_nginx_1 >>"$LOG" 2>&1; sleep 8
   WEB=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:80/ko --max-time 15)
-  API=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:80/api/v1/health --max-time 15)
+  API=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:80/health --max-time 15)
 fi
 if [ "$WEB" = "200" ] && [ "$API" = "200" ]; then
   status "DONE web=$WEB api=$API @ $HEAD"

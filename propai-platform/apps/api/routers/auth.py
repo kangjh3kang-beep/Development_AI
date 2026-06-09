@@ -357,8 +357,12 @@ async def kakao_login_url(
     from urllib.parse import urlencode
 
     client_id = settings.kakao_client_id
-    if not client_id:
-        raise HTTPException(status_code=503, detail="카카오 로그인 미설정(KAKAO_REST_API_KEY)")
+    # ★플레이스홀더(your-kakao-key 등)도 '미설정'으로 취급한다.
+    # (이전: 빈문자만 차단 → 플레이스홀더로 깨진 인가URL 생성→카카오 거부→프론트 오류.
+    #  이제 미설정이면 503으로 정직 반환 → 프론트가 "관리자 키 설정 필요" 안내.)
+    _PLACEHOLDERS = {"your-kakao-key", "your-kakao-rest-api-key", "changeme", "dummy"}
+    if not client_id or str(client_id).strip().lower() in _PLACEHOLDERS:
+        raise HTTPException(status_code=503, detail="카카오 로그인 미설정(KAKAO_REST_API_KEY) — 관리자 키 설정이 필요합니다.")
     ruri = redirect_uri or settings.kakao_redirect_uri
     params = {
         "client_id": client_id,

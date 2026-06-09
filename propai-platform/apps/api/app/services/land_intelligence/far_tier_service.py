@@ -49,16 +49,20 @@ def calc_effective_far(base: dict, zone_type: str, land_area: float = 0) -> dict
         plan_payload=base.get("special_districts"),
     ) or {}
 
+    # ★법정(국토계획법) 상한은 '용도지역 라벨 기준 SSOT(legal_*)'를 최우선으로 채택한다.
+    # (이전: 업스트림 zone_limits.max_*_pct를 먼저 신뢰 → 라벨과 불일치한 값(예: 일반상업지역에
+    #  제1종주거값 60/200)이 그대로 표시되고 실효=min(200,800)=200으로 오염되는 버그.
+    #  법정값은 용도지역명으로 결정되는 고정 상한이므로, 라벨에서 도출한 legal_*가 진실의 단일원천.)
     national_bcr = float(
-        zone_limits.get("max_bcr_pct")
+        legal_bcr
+        or zone_limits.get("max_bcr_pct")
         or zone_limits.get("bcr")
-        or legal_bcr
         or 60
     )
     national_far = float(
-        zone_limits.get("max_far_pct")
+        legal_far
+        or zone_limits.get("max_far_pct")
         or zone_limits.get("far")
-        or legal_far
         or 200
     )
     ordinance_bcr = float(ordinance.get("effective_bcr") or ordinance.get("ordinance_bcr") or national_bcr)
