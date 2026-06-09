@@ -359,8 +359,20 @@ async def nearby_transactions_map(req: NearbyMapRequest):
     if not pnu and req.bcode and req.jibun_address:
         pnu = _build_pnu_from_bcode(req.bcode, req.jibun_address)
     lawd_cd = (pnu or "")[:5] if pnu else (req.bcode or "")[:5]
+    # ★프론트가 pnu/bcode를 못 넘기는 경우(스토어 미보유·약식검색 등)에도 빈 결과가
+    #  나오지 않도록, 주소를 VWORLD 지오코딩해 PNU→LAWD_CD를 직접 구한다
+    #  (parcel-boundaries와 동일 폴백). 이게 없어 강남이어도 거래 0건으로 보였음.
+    if (not lawd_cd or len(lawd_cd) < 5) and req.address:
+        try:
+            from apps.api.app.services.external_api.vworld_service import VWorldService
+            geo = await VWorldService().geocode_address(req.address)
+            if geo and geo.get("pnu"):
+                pnu = str(geo["pnu"])
+                lawd_cd = pnu[:5]
+        except Exception:  # noqa: BLE001
+            pass
     if not lawd_cd or len(lawd_cd) < 5:
-        return {"error": "법정동코드(LAWD_CD) 결정 불가 — bcode 또는 pnu 필요",
+        return {"error": "법정동코드(LAWD_CD) 결정 불가 — 주소/pnu 확인 필요",
                 "center": None, "categories": {}}
 
     # sigungu 힌트(지오코딩 폴백용): 주소 앞 2토큰
