@@ -594,6 +594,12 @@ export function AuthWorkspaceClient({
 
       persistTokens(tokens);
       setStoredTokenPresent(true);
+      // ★로그인/등록 성공 시 즉시 대시보드로 이동 — 추가 /auth/me 왕복을 기다리지 않아
+      //  perceived 로딩시간이 절반↓. 세션 검증은 대시보드(ProjectSyncProvider/AuthButton)가 수행.
+      if (mode === "login" || mode === "register") {
+        router.push(`/${locale}`);
+        return;
+      }
       await loadSession(mode, tokens.expires_in);
     } catch (error) {
       setFeedback({
