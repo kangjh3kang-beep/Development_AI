@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v130-hero-map-visible-spacing";
+const CACHE_NAME = "propai-v131-hero-svg-map";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

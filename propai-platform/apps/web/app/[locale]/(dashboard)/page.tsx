@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { HeroGridBackground } from "@/components/dashboard/DashboardDynamicElements";
+import { HeroMapViz } from "@/components/dashboard/HeroMapViz";
 import { DashboardEsgScore } from "@/components/dashboard/DashboardEsgScore";
 import { DashboardKpiLoader } from "@/components/dashboard/DashboardKpiLoader";
 import { DashboardProjectLoader } from "@/components/dashboard/DashboardProjectLoader";
@@ -57,11 +58,9 @@ export default async function DashboardPage({ params }: DashboardPageProps) {
         {/* 미묘한 깊이감을 위한 정밀 그리드만 유지(컬러 글로우는 제거) */}
         <HeroGridBackground />
 
-        {/* 왼쪽 배경: '지도 위에서 AI가 분석하는' 느낌의 생동감 레이어.
-            지도 좌표 그리드 + 분석 노드(펄스) + 가로로 천천히 지나가는 스캔 빔.
-            텍스트 가독성을 위해 저투명도·단일 파랑이며, 오른쪽으로 갈수록 사라진다(mask).
-            모션을 끄는 사용자 설정(prefers-reduced-motion)에선 애니메이션이 멈춘다. */}
-        <div className="db-hero__viz" aria-hidden="true" />
+        {/* 배경: 'AI가 지도를 분석하는' 비주얼(실제 지도처럼 보이는 SVG 도로·필지·핀 + 펄스·스캔).
+            화면 전체에 깔리되 좌우 가장자리는 페이드(텍스트 가독성 유지). */}
+        <HeroMapViz />
 
         <div className="relative z-10 flex flex-col justify-between gap-12 lg:flex-row lg:items-end">
           <div className="max-w-3xl space-y-6">

@@ -1059,69 +1059,47 @@ textarea {
     background: var(--surface-soft);
   }
 
-  /* ── 히어로 왼쪽 'AI가 지도를 분석하는' 생동감 레이어 ──────────────────
-     세 가지를 겹친다: ①지도 좌표 그리드(미세한 가로·세로 선) ②분석 노드 점들
-     ③가로로 천천히 지나가는 스캔 빔. 색은 단일 파랑(accent)에 아주 옅은 알파라
-     큰 흰 글자가 그 위에 또렷이 얹힌다. 오른쪽으로 갈수록 mask로 사라져 CTA 영역은 깨끗하다. */
+  /* ── 히어로 배경 'AI가 지도를 분석하는' SVG 레이어(HeroMapViz) ──────────
+     실제 지도처럼 보이는 SVG(도로·필지·핀)를 배경에 깔고, 분석 펄스·스캔을 얹는다.
+     좌우 가장자리만 페이드해 화면 전체에서 지도가 보이되 텍스트 가독성은 유지한다. */
   .db-hero__viz {
     position: absolute;
     inset: 0;
     z-index: 2;                 /* 그리드(z1) 위, 본문(z10) 아래 */
     pointer-events: none;
-    /* ①지도 좌표 그리드(전체 폭에 또렷이 = 양쪽 모두 '지도'가 보임)
-       ②분석 노드 점(오른쪽 빈 영역에 모아 'AI가 그 구역을 분석' 느낌) */
-    background-image:
-      radial-gradient(circle at 70% 32%, color-mix(in srgb, var(--accent-strong) 85%, transparent) 0 3px, transparent 3.5px),
-      radial-gradient(circle at 84% 60%, color-mix(in srgb, var(--accent-strong) 70%, transparent) 0 2.5px, transparent 3px),
-      radial-gradient(circle at 60% 70%, color-mix(in srgb, var(--accent-strong) 60%, transparent) 0 2px, transparent 2.5px),
-      radial-gradient(circle at 92% 38%, color-mix(in srgb, var(--accent-strong) 55%, transparent) 0 2px, transparent 2.5px),
-      radial-gradient(circle at 76% 80%, color-mix(in srgb, var(--accent-strong) 45%, transparent) 0 1.5px, transparent 2px),
-      repeating-linear-gradient(0deg, color-mix(in srgb, var(--accent-strong) 20%, transparent) 0 1px, transparent 1px 32px),
-      repeating-linear-gradient(90deg, color-mix(in srgb, var(--accent-strong) 20%, transparent) 0 1px, transparent 1px 32px);
     /* 좌우 가장자리만 부드럽게 사라지고 가운데는 보인다(양쪽 지도 노출). */
-    -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 12%, #000 88%, transparent 100%);
-    mask-image: linear-gradient(90deg, transparent 0%, #000 12%, #000 88%, transparent 100%);
-    opacity: 0.9;
+    -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 10%, #000 90%, transparent 100%);
+    mask-image: linear-gradient(90deg, transparent 0%, #000 10%, #000 90%, transparent 100%);
+    opacity: 0.85;
   }
-  /* ③스캔 빔 — 부드러운 파랑 띠가 오른쪽 영역을 가로로 천천히 왕복 */
-  .db-hero__viz::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    background: linear-gradient(
-      90deg,
-      transparent 0%,
-      color-mix(in srgb, var(--accent-strong) 18%, transparent) 46%,
-      color-mix(in srgb, var(--accent-strong) 34%, transparent) 50%,
-      color-mix(in srgb, var(--accent-strong) 18%, transparent) 54%,
-      transparent 100%
-    );
-    background-size: 40% 100%;
-    background-repeat: no-repeat;
-    /* 오른쪽 절반만 비추도록 마스크 공유(부모 mask가 적용됨) */
-    animation: db-hero-scan 7s ease-in-out infinite alternate;
+  .db-hero__map { position: absolute; inset: 0; width: 100%; height: 100%; }
+
+  /* 분석 펄스(동심원이 퍼지며 사라짐) */
+  .db-map-pulse {
+    fill: none;
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: db-map-ping 3s ease-out infinite;
   }
-  /* 분석 노드 펄스(은은하게 깜빡) — 오른쪽 노드 위 */
-  .db-hero__viz::before {
-    content: "";
-    position: absolute;
-    left: 70%; top: 32%;
-    width: 16px; height: 16px; margin: -8px 0 0 -8px;
-    border-radius: 999px;
-    background: radial-gradient(circle, color-mix(in srgb, var(--accent-strong) 55%, transparent) 0%, transparent 70%);
-    animation: db-hero-pulse 3.2s ease-in-out infinite;
+  .db-map-pulse--2 { animation-delay: 1.5s; }
+  @keyframes db-map-ping {
+    0%   { transform: scale(1);   opacity: 0.55; }
+    100% { transform: scale(7.5); opacity: 0; }
   }
-  @keyframes db-hero-scan {
-    0%   { background-position: 42% 0; }
-    100% { background-position: 100% 0; }
+
+  /* 가로 스캔 띠 — 지도 위를 좌우로 천천히 */
+  .db-map-scan {
+    transform-box: view-box;
+    animation: db-map-sweep 7s ease-in-out infinite alternate;
   }
-  @keyframes db-hero-pulse {
-    0%, 100% { opacity: 0.35; transform: scale(0.8); }
-    50%      { opacity: 0.9;  transform: scale(1.25); }
+  @keyframes db-map-sweep {
+    0%   { transform: translateX(20px); }
+    100% { transform: translateX(370px); }
   }
+
   /* 모션 최소화 설정이면 애니메이션 정지(접근성) */
   @media (prefers-reduced-motion: reduce) {
-    .db-hero__viz::after, .db-hero__viz::before { animation: none; }
+    .db-map-pulse, .db-map-scan { animation: none; }
   }
 
   /* 작은 대문자 메타 라벨(섹션 분위기 통일) */
