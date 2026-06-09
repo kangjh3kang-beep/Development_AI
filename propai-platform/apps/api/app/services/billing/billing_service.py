@@ -267,24 +267,34 @@ async def topup(db: AsyncSession, user_id: Any, amount_krw: float) -> None:
     await db.commit()
 
 
-async def token_usage(db: AsyncSession, user_id: Any, days: int = 30) -> dict[str, Any]:
-    """본인 LLM 실계측 사용량 집계(llm_usage_log). service별·일별 + 총합."""
+async def token_usage(
+    db: AsyncSession, user_id: Any, days: int = 30, *, platform_wide: bool = False
+) -> dict[str, Any]:
+    """LLM 실계측 사용량 집계(llm_usage_log). service별·일별 + 총합.
+
+    platform_wide=True(관리자): user_id 필터 없이 플랫폼 전체 사용량을 집계한다
+    (관리자는 전 사용자 AI 비용을 모니터링해야 하므로). 일반 사용자는 본인만.
+    """
     await ensure_schema(db)
     days = max(1, min(int(days or 30), 365))
     since = datetime.now(timezone.utc) - timedelta(days=days)
-    params = {"id": str(user_id), "since": since}
+    # ★platform_wide면 user_id 조건 제거(전체 집계). 식별자는 코드 상수라 SQL 인젝션 무관.
+    user_cond = "" if platform_wide else "user_id=:id AND "
+    params: dict[str, Any] = {"since": since}
+    if not platform_wide:
+        params["id"] = str(user_id)
 
     total = (await db.execute(
         text(
             "SELECT COALESCE(SUM(input_tokens+output_tokens),0), COALESCE(SUM(cost_krw),0) "
-            "FROM llm_usage_log WHERE user_id=:id AND created_at >= :since"
+            f"FROM llm_usage_log WHERE {user_cond}created_at >= :since"
         ),
         params,
     )).first()
     by_service_rows = (await db.execute(
         text(
             "SELECT service, COALESCE(SUM(input_tokens+output_tokens),0), COALESCE(SUM(cost_krw),0) "
-            "FROM llm_usage_log WHERE user_id=:id AND created_at >= :since "
+            f"FROM llm_usage_log WHERE {user_cond}created_at >= :since "
             "GROUP BY service ORDER BY 3 DESC"
         ),
         params,
@@ -293,13 +303,14 @@ async def token_usage(db: AsyncSession, user_id: Any, days: int = 30) -> dict[st
         text(
             "SELECT to_char(created_at::date,'YYYY-MM-DD'), "
             "COALESCE(SUM(input_tokens+output_tokens),0), COALESCE(SUM(cost_krw),0) "
-            "FROM llm_usage_log WHERE user_id=:id AND created_at >= :since "
+            f"FROM llm_usage_log WHERE {user_cond}created_at >= :since "
             "GROUP BY created_at::date ORDER BY 1"
         ),
         params,
     )).all()
 
     return {
+        "scope": "platform" if platform_wide else "user",
         "days": days,
         "total_tokens": int(total[0] or 0),
         "total_cost_krw": round(float(total[1] or 0)),

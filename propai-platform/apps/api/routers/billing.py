@@ -53,8 +53,14 @@ async def token_usage(
     current: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """본인 LLM 실계측 사용량(llm_usage_log) — 총 토큰·청구액(원)·service별·일별 집계."""
-    return await billing_service.token_usage(db, current.user_id, days)
+    """LLM 실계측 사용량(llm_usage_log) — 총 토큰·청구액(원)·service별·일별 집계.
+
+    관리자/총괄관리자는 플랫폼 전체 사용량을, 일반 사용자는 본인 사용량을 본다.
+    """
+    is_admin = str(getattr(current, "role", "")).lower() in {"admin", "super_admin"}
+    return await billing_service.token_usage(
+        db, current.user_id, days, platform_wide=is_admin
+    )
 
 
 @router.get("/balance")

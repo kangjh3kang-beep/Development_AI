@@ -20,6 +20,7 @@ type DailyUsage = { date: string; tokens: number; cost_krw: number };
 
 type TokenUsage = {
   days: number;
+  scope?: "platform" | "user"; // 관리자=platform(전체), 일반=user(본인)
   total_tokens: number;
   total_cost_krw: number;
   by_service: ServiceUsage[];
@@ -172,7 +173,7 @@ export function AiTokenUsageDashboard() {
           <i className="cc-bracket cc-bracket--br" />
           <div className="cc-panel__body relative z-10">
             <p className="cc-label">
-              최근 {usage.days}일 총 토큰 사용량
+              최근 {usage.days}일 {usage.scope === "platform" ? "총 토큰 사용량 (플랫폼 전체)" : "총 토큰 사용량"}
             </p>
             <p className="cc-num cc-num--data mt-3 text-3xl font-[900]">
               <AnimatedCounter target={totalTokens} />
