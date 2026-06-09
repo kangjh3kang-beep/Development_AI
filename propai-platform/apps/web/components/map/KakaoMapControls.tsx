@@ -28,8 +28,8 @@ function IconBtn({
       type="button"
       onClick={onClick}
       aria-label={label}
-      className={`group relative flex h-8 w-8 items-center justify-center rounded-md border border-black/10 shadow-sm transition-colors ${
-        active ? "bg-[var(--accent-strong)] text-white" : "bg-white/90 text-slate-700 hover:bg-white"
+      className={`group relative flex h-9 w-9 items-center justify-center rounded-md border border-black/10 shadow transition-colors ${
+        active ? "bg-[var(--accent-strong)] text-white" : "bg-white text-slate-700 hover:bg-slate-100"
       }`}
     >
       {children}
@@ -160,8 +160,8 @@ export function KakaoMapControls({
 
   return (
     <>
-      {/* 상단 우측: 지도유형 + 지적편집도(텍스트) */}
-      <div className="absolute right-2 top-2 z-[450] flex flex-col items-end gap-1">
+      {/* 상단 우측: 지도유형 + 지적편집도 — 한 줄 가로로 연달아 */}
+      <div className="absolute right-2 top-2 z-[450] flex items-center gap-1">
         <div className="flex overflow-hidden rounded-md border border-black/10 shadow-sm">
           {(["ROADMAP", "SKYVIEW", "HYBRID"] as MapType[]).map((t) => (
             <button key={t} type="button" onClick={() => setMapType(t)} className={txtBtn(mapType === t)}>
@@ -174,8 +174,8 @@ export function KakaoMapControls({
         </button>
       </div>
 
-      {/* 좌측 세로: 로드뷰·거리·면적 측정(아이콘 + 롤오버 툴팁) */}
-      <div className="absolute left-2 top-1/2 z-[450] flex -translate-y-1/2 flex-col gap-1.5">
+      {/* 좌측 세로 아이콘 메뉴: 로드뷰·거리·면적 측정(롤오버 시 메뉴명 툴팁) */}
+      <div className="absolute left-2 top-1/2 z-[450] flex -translate-y-1/2 flex-col gap-1.5 rounded-lg bg-black/5 p-1 backdrop-blur-sm">
         <IconBtn active={rvOn} onClick={() => setRvOn((v) => !v)} label="로드뷰">
           {/* 사람(거리뷰) */}
           <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
