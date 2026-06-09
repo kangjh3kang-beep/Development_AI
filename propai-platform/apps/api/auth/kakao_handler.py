@@ -91,7 +91,13 @@ async def fetch_kakao_user_info(access_token: str) -> dict:
         resp = await client.get(KAKAO_USER_INFO_URL, headers=headers)
 
     if resp.status_code != 200:
-        logger.warning("카카오 사용자 정보 조회 실패", status=resp.status_code)
+        # ★카카오가 주는 정확한 에러코드(body의 code/msg)를 남겨야 원인 확정 가능
+        #  (예: code -401=토큰무효, code -2=파라미터, 동의항목/스코프 문제 등).
+        logger.warning(
+            "카카오 사용자 정보 조회 실패",
+            status=resp.status_code,
+            body=resp.text[:500],
+        )
         raise KakaoOAuthError(
             f"카카오 사용자 정보 조회 실패: {resp.status_code}",
             status_code=resp.status_code,
