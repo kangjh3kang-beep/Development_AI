@@ -33,7 +33,8 @@ function IconBtn({
       }`}
     >
       {children}
-      <span className="pointer-events-none absolute left-full ml-2 whitespace-nowrap rounded bg-black/80 px-2 py-1 text-[11px] font-semibold text-white opacity-0 shadow transition-opacity duration-150 group-hover:opacity-100">
+      {/* 우측 상단 배치 → 툴팁은 왼쪽으로 펼쳐 지도 밖으로 넘치지 않게 */}
+      <span className="pointer-events-none absolute right-full mr-2 whitespace-nowrap rounded bg-black/80 px-2 py-1 text-[11px] font-semibold text-white opacity-0 shadow transition-opacity duration-150 group-hover:opacity-100">
         {label}
       </span>
     </button>
@@ -161,27 +162,30 @@ export function KakaoMapControls({
   return (
     <>
       {/* 상단 우측: 지도유형 + 지적편집도 — 한 줄 가로로 연달아 */}
-      <div className="absolute right-2 top-2 z-[450] flex items-center gap-1">
-        <div className="flex overflow-hidden rounded-md border border-black/10 shadow-sm">
-          {(["ROADMAP", "SKYVIEW", "HYBRID"] as MapType[]).map((t) => (
-            <button key={t} type="button" onClick={() => setMapType(t)} className={txtBtn(mapType === t)}>
-              {t === "ROADMAP" ? "일반" : t === "SKYVIEW" ? "위성" : "하이브리드"}
-            </button>
-          ))}
+      {/* 우측 상단: 텍스트 컨트롤(한 줄) + 그 아래 세로 아이콘 메뉴 */}
+      <div className="absolute right-2 top-2 z-[450] flex flex-col items-end gap-1.5">
+        <div className="flex items-center gap-1">
+          <div className="flex overflow-hidden rounded-md border border-black/10 shadow-sm">
+            {(["ROADMAP", "SKYVIEW", "HYBRID"] as MapType[]).map((t) => (
+              <button key={t} type="button" onClick={() => setMapType(t)} className={txtBtn(mapType === t)}>
+                {t === "ROADMAP" ? "일반" : t === "SKYVIEW" ? "위성" : "하이브리드"}
+              </button>
+            ))}
+          </div>
+          <button type="button" onClick={() => setDistrict((v) => !v)} className={`${txtBtn(district)} rounded-md border border-black/10 shadow-sm`}>
+            지적편집도
+          </button>
         </div>
-        <button type="button" onClick={() => setDistrict((v) => !v)} className={`${txtBtn(district)} rounded-md border border-black/10 shadow-sm`}>
-          지적편집도
-        </button>
-      </div>
 
-      {/* 좌측 세로 아이콘 메뉴: 로드뷰·거리·면적 측정(롤오버 시 메뉴명 툴팁) */}
-      <div className="absolute left-2 top-1/2 z-[450] flex -translate-y-1/2 flex-col gap-1.5 rounded-lg bg-black/5 p-1 backdrop-blur-sm">
-        <IconBtn active={rvOn} onClick={() => setRvOn((v) => !v)} label="로드뷰">
-          {/* 사람(거리뷰) */}
-          <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="12" cy="5" r="2.5" /><path d="M9 11l3-1 3 1M12 10v6M10 21l2-5 2 5" />
-          </svg>
-        </IconBtn>
+        {/* 세로 아이콘 메뉴: 로드뷰·거리·면적 측정(롤오버 시 메뉴명 툴팁) */}
+        <div className="flex flex-col items-end gap-1.5 rounded-lg bg-black/5 p-1 backdrop-blur-sm">
+          <IconBtn active={rvOn} onClick={() => setRvOn((v) => !v)} label="로드뷰">
+            {/* 카메라 */}
+            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M3 9a2 2 0 012-2h1.6l1.1-1.7A1 1 0 019 4.9h6a1 1 0 01.8.4L17 7h2a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
+              <circle cx="12" cy="13" r="3.2" />
+            </svg>
+          </IconBtn>
         <IconBtn active={measure === "distance"} onClick={() => setMeasure((m) => (m === "distance" ? null : "distance"))} label="거리측정">
           {/* 점-선-점(거리) */}
           <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -194,17 +198,18 @@ export function KakaoMapControls({
             <polygon points="4,8 12,3 20,9 16,20 7,19" />
           </svg>
         </IconBtn>
-        {measure && (
-          <IconBtn active={false} onClick={clearMeasure} label="지우기">
-            {/* 휴지통 */}
-            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13" />
-            </svg>
-          </IconBtn>
-        )}
+          {measure && (
+            <IconBtn active={false} onClick={clearMeasure} label="지우기">
+              {/* 휴지통 */}
+              <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13" />
+              </svg>
+            </IconBtn>
+          )}
+        </div>
       </div>
 
-      {/* 측정 결과 라벨(하단 좌측 — 좌측 아이콘과 겹치지 않게) */}
+      {/* 측정 결과 라벨(하단 좌측) */}
       {measure && (
         <div className="absolute bottom-2 left-2 z-[450] rounded-md bg-black/70 px-3 py-1.5 text-[11px] font-bold text-white">
           {measureText || (measure === "distance" ? "지도를 클릭해 거리 측정" : "지도를 클릭해 면적 측정")}
