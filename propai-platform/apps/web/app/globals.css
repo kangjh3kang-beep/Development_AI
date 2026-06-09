@@ -1068,20 +1068,21 @@ textarea {
     inset: 0;
     z-index: 2;                 /* 그리드(z1) 위, 본문(z10) 아래 */
     pointer-events: none;
-    /* ①지도 좌표 그리드 + ②분석 노드 점(고정 위치) */
+    /* ①지도 좌표 그리드 + ②분석 노드 점 — 텍스트가 왼쪽에 있으므로 '오른쪽' 빈 영역에 배치 */
     background-image:
-      radial-gradient(circle at 16% 34%, color-mix(in srgb, var(--accent-strong) 55%, transparent) 0 2.5px, transparent 3px),
-      radial-gradient(circle at 30% 64%, color-mix(in srgb, var(--accent-strong) 40%, transparent) 0 2px, transparent 2.5px),
-      radial-gradient(circle at 44% 26%, color-mix(in srgb, var(--accent-strong) 35%, transparent) 0 2px, transparent 2.5px),
-      radial-gradient(circle at 9% 70%, color-mix(in srgb, var(--accent-strong) 30%, transparent) 0 1.5px, transparent 2px),
-      repeating-linear-gradient(0deg, color-mix(in srgb, var(--accent-strong) 9%, transparent) 0 1px, transparent 1px 34px),
-      repeating-linear-gradient(90deg, color-mix(in srgb, var(--accent-strong) 9%, transparent) 0 1px, transparent 1px 34px);
-    /* 왼쪽만 진하고 오른쪽으로 갈수록 투명(텍스트·CTA 보호) */
-    -webkit-mask-image: linear-gradient(90deg, #000 0%, #000 34%, transparent 70%);
-    mask-image: linear-gradient(90deg, #000 0%, #000 34%, transparent 70%);
-    opacity: 0.6;
+      radial-gradient(circle at 70% 32%, color-mix(in srgb, var(--accent-strong) 70%, transparent) 0 3px, transparent 3.5px),
+      radial-gradient(circle at 84% 60%, color-mix(in srgb, var(--accent-strong) 55%, transparent) 0 2.5px, transparent 3px),
+      radial-gradient(circle at 60% 70%, color-mix(in srgb, var(--accent-strong) 45%, transparent) 0 2px, transparent 2.5px),
+      radial-gradient(circle at 92% 38%, color-mix(in srgb, var(--accent-strong) 45%, transparent) 0 2px, transparent 2.5px),
+      radial-gradient(circle at 76% 80%, color-mix(in srgb, var(--accent-strong) 35%, transparent) 0 1.5px, transparent 2px),
+      repeating-linear-gradient(0deg, color-mix(in srgb, var(--accent-strong) 11%, transparent) 0 1px, transparent 1px 34px),
+      repeating-linear-gradient(90deg, color-mix(in srgb, var(--accent-strong) 11%, transparent) 0 1px, transparent 1px 34px);
+    /* 오른쪽만 보이고 왼쪽(텍스트)으로 갈수록 투명 — 글자 가독성 보호 + 빈 우측을 채움 */
+    -webkit-mask-image: linear-gradient(90deg, transparent 0%, transparent 38%, #000 66%, #000 100%);
+    mask-image: linear-gradient(90deg, transparent 0%, transparent 38%, #000 66%, #000 100%);
+    opacity: 0.7;
   }
-  /* ③스캔 빔 — 부드러운 파랑 띠가 왼쪽 영역을 가로로 천천히 왕복 */
+  /* ③스캔 빔 — 부드러운 파랑 띠가 오른쪽 영역을 가로로 천천히 왕복 */
   .db-hero__viz::after {
     content: "";
     position: absolute;
@@ -1089,28 +1090,29 @@ textarea {
     background: linear-gradient(
       90deg,
       transparent 0%,
-      color-mix(in srgb, var(--accent-strong) 16%, transparent) 46%,
-      color-mix(in srgb, var(--accent-strong) 30%, transparent) 50%,
-      color-mix(in srgb, var(--accent-strong) 16%, transparent) 54%,
+      color-mix(in srgb, var(--accent-strong) 18%, transparent) 46%,
+      color-mix(in srgb, var(--accent-strong) 34%, transparent) 50%,
+      color-mix(in srgb, var(--accent-strong) 18%, transparent) 54%,
       transparent 100%
     );
-    background-size: 38% 100%;
+    background-size: 40% 100%;
     background-repeat: no-repeat;
+    /* 오른쪽 절반만 비추도록 마스크 공유(부모 mask가 적용됨) */
     animation: db-hero-scan 7s ease-in-out infinite alternate;
   }
-  /* 분석 노드 펄스(은은하게 깜빡) */
+  /* 분석 노드 펄스(은은하게 깜빡) — 오른쪽 노드 위 */
   .db-hero__viz::before {
     content: "";
     position: absolute;
-    left: 16%; top: 34%;
-    width: 14px; height: 14px; margin: -7px 0 0 -7px;
+    left: 70%; top: 32%;
+    width: 16px; height: 16px; margin: -8px 0 0 -8px;
     border-radius: 999px;
-    background: radial-gradient(circle, color-mix(in srgb, var(--accent-strong) 45%, transparent) 0%, transparent 70%);
+    background: radial-gradient(circle, color-mix(in srgb, var(--accent-strong) 55%, transparent) 0%, transparent 70%);
     animation: db-hero-pulse 3.2s ease-in-out infinite;
   }
   @keyframes db-hero-scan {
-    0%   { background-position: -10% 0; }
-    100% { background-position: 60% 0; }
+    0%   { background-position: 42% 0; }
+    100% { background-position: 100% 0; }
   }
   @keyframes db-hero-pulse {
     0%, 100% { opacity: 0.35; transform: scale(0.8); }
