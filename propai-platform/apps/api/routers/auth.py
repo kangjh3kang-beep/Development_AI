@@ -415,6 +415,7 @@ class AdminUserItem(BaseModel):
     email: str
     name: str
     role: str
+    tier: str | None = None  # 구독 등급(super_admin/power/free 등)
     is_active: bool
     created_at: str | None = None
 
@@ -429,13 +430,15 @@ async def get_admin_users(
     current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """관리자용: 테넌트의 모든 사용자 조회."""
+    """사용자 조회. 총괄관리자(tier=super_admin)는 전체, 테넌트 관리자는 자기 테넌트만."""
     if current_user.role not in ("admin", "owner"):
         raise HTTPException(status_code=403, detail="관리자 권한이 필요합니다.")
 
-    result = await db.execute(
-        select(User).where(User.tenant_id == current_user.tenant_id)
-    )
+    # ★총괄관리자는 플랫폼 전체 사용자를 본다. 일반(테넌트) 관리자는 자기 테넌트만(격리).
+    from app.services.billing.billing_service import is_super_admin
+    is_super = await is_super_admin(db, current_user.user_id)
+    stmt = select(User) if is_super else select(User).where(User.tenant_id == current_user.tenant_id)
+    result = await db.execute(stmt)
     users = result.scalars().all()
 
     return {
@@ -445,6 +448,7 @@ async def get_admin_users(
                 "email": u.email,
                 "name": u.name,
                 "role": u.role,
+                "tier": getattr(u, "tier", None),
                 "is_active": u.is_active,
                 "created_at": u.created_at.isoformat() if u.created_at else None,
             }

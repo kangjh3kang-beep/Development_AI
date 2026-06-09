@@ -57,9 +57,11 @@ async def token_usage(
 
     관리자/총괄관리자는 플랫폼 전체 사용량을, 일반 사용자는 본인 사용량을 본다.
     """
-    is_admin = str(getattr(current, "role", "")).lower() in {"admin", "super_admin"}
+    # ★플랫폼 전체뷰는 총괄관리자(tier=super_admin)만. role로 판별하면 모든 가입자가
+    #  자기 테넌트 role='admin'이라 전 사용자 사용량·이메일이 노출되므로 절대 금지.
+    platform = await billing_service.is_super_admin(db, current.user_id)
     return await billing_service.token_usage(
-        db, current.user_id, days, platform_wide=is_admin
+        db, current.user_id, days, platform_wide=platform
     )
 
 

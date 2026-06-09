@@ -267,6 +267,22 @@ async def topup(db: AsyncSession, user_id: Any, amount_krw: float) -> None:
     await db.commit()
 
 
+async def is_super_admin(db: AsyncSession, user_id: Any) -> bool:
+    """플랫폼 총괄관리자 여부 — users.tier == 'super_admin'으로만 판별한다.
+
+    ★role이 아니라 tier로 판별한다: 가입 시 모든 사용자가 자기 테넌트의 role='admin'이
+      되므로 role로 판별하면 모든 사용자가 플랫폼 전체를 보는 누출이 된다.
+    """
+    try:
+        r = (await db.execute(
+            text("SELECT tier FROM users WHERE id::text = :id"),
+            {"id": str(user_id)},
+        )).first()
+        return bool(r and str(r[0] or "").lower() == "super_admin")
+    except Exception:  # noqa: BLE001
+        return False
+
+
 async def token_usage(
     db: AsyncSession, user_id: Any, days: int = 30, *, platform_wide: bool = False
 ) -> dict[str, Any]:
