@@ -232,6 +232,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except Exception:
         logger.warning("플랫폼 시크릿 env 로드 실패 — .env 값으로 시작")
 
+    # LangSmith LLM 추적 활성화(키 있을 때만). load_into_env 이후여야 관리자 키가 반영됨.
+    try:
+        from apps.api.core.observability import init_langsmith
+        init_langsmith()
+    except Exception:
+        logger.warning("LangSmith 초기화 실패 — 추적 없이 시작")
+
     yield
 
     # ── 종료 ──

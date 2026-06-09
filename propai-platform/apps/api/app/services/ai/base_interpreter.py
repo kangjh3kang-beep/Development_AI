@@ -344,9 +344,25 @@ class BaseInterpreter:
         ]
         logger.info("인터프리터 LLM 요청", interp=self.name, prompt_chars=len(user_prompt))
 
+        # LangSmith 트레이스 라벨링: 어떤 인터프리터·어떤 사용자의 호출인지 식별 가능하게.
+        # (추적 비활성이면 LangChain이 이 config를 무시하므로 완전 무해.)
+        try:
+            from app.core.request_context import get_current_user_id
+
+            _trace_cfg: dict[str, Any] = {
+                "run_name": f"interp:{self.name}",
+                "tags": ["propai", "interpreter", self.name],
+                "metadata": {
+                    "service": self.name,
+                    "user_id": get_current_user_id() or "anon",
+                },
+            }
+        except Exception:  # noqa: BLE001
+            _trace_cfg = {}
+
         try:
             response = await asyncio.wait_for(
-                llm.ainvoke(messages), timeout=self._timeout_sec
+                llm.ainvoke(messages, config=_trace_cfg), timeout=self._timeout_sec
             )
         except Exception as e:  # noqa: BLE001
             logger.warning("인터프리터 LLM 호출 실패", interp=self.name, error=str(e)[:120])

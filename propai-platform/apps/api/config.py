@@ -214,6 +214,29 @@ class Settings(BaseSettings):
     otel_sample_rate: float = Field(default=1.0, ge=0.0, le=1.0)
     otel_enabled: bool = False
 
+    # ── LangSmith / LLM 관측·평가 ──
+    # 기본 OFF. LANGSMITH_API_KEY(관리자 시크릿/.env)가 있고 tracing=true일 때만 활성.
+    # 활성 시 LangChain 전 ainvoke 호출이 LangSmith로 자동 추적(인터프리터 9개+전문가패널+RAG).
+    langsmith_tracing: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("langsmith_tracing", "LANGSMITH_TRACING"),
+    )
+    langsmith_project: str = Field(
+        default="propai-prod",
+        validation_alias=AliasChoices("langsmith_project", "LANGSMITH_PROJECT"),
+    )
+    langsmith_endpoint: str = Field(
+        default="https://api.smith.langchain.com",
+        validation_alias=AliasChoices("langsmith_endpoint", "LANGSMITH_ENDPOINT"),
+    )
+    # 프로덕션 단일워커(1GB) 보호용 샘플링(1.0=전수, 0.1=10%). 추적 자체는 비동기라 영향 미미.
+    langsmith_sample_rate: float = Field(
+        default=1.0,
+        ge=0.0,
+        le=1.0,
+        validation_alias=AliasChoices("langsmith_sample_rate", "LANGSMITH_SAMPLE_RATE"),
+    )
+
     # ── Qdrant ──
     qdrant_host: str = "localhost"
     qdrant_port: int = 6333
