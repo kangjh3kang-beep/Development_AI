@@ -54,3 +54,43 @@ export function loadKakaoMap(): Promise<void> {
   });
   return kakaoLoading;
 }
+
+/**
+ * GeoJSON geometry(Polygon/MultiPolygon)를 카카오 LatLng 링(ring) 배열로 변환.
+ * 각 링 = LatLng[] (외곽/구멍 모두 개별 링으로 반환 — 지적도 필지는 구멍이 거의 없어
+ * 링별 폴리곤으로 그려도 시각적으로 정확). GeoJSON 좌표순서는 [lon, lat]임에 유의.
+ */
+export function geoJsonToKakaoRings(kakao: any, geometry: any): any[][] {
+  if (!geometry) return [];
+  const ringsLonLat: number[][][] = [];
+  if (geometry.type === "Polygon") {
+    (geometry.coordinates || []).forEach((ring: number[][]) => ringsLonLat.push(ring));
+  } else if (geometry.type === "MultiPolygon") {
+    (geometry.coordinates || []).forEach((poly: number[][][]) =>
+      (poly || []).forEach((ring) => ringsLonLat.push(ring)),
+    );
+  }
+  return ringsLonLat
+    .map((ring) =>
+      (ring || [])
+        .filter((c) => Array.isArray(c) && c.length >= 2)
+        .map(([lon, lat]) => new kakao.maps.LatLng(lat, lon)),
+    )
+    .filter((path) => path.length >= 3);
+}
+
+/**
+ * 지적편집도(용도지역 종별) 오버레이 토글.
+ * 카카오 USE_DISTRICT = 주거/상업/공업/녹지 용도지역을 색으로 표시하는 공식 오버레이.
+ * 우리 VWorld 필지 경계 폴리곤과 겹쳐 표시하면 "종별 색상 + 정확한 지번 경계"가 된다.
+ */
+export function toggleUseDistrict(kakao: any, map: any, on: boolean): void {
+  if (!kakao?.maps?.MapTypeId || !map) return;
+  const id = kakao.maps.MapTypeId.USE_DISTRICT;
+  try {
+    if (on) map.addOverlayMapTypeId(id);
+    else map.removeOverlayMapTypeId(id);
+  } catch {
+    /* noop */
+  }
+}

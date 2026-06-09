@@ -4,16 +4,18 @@
  * 필지 경계(구획도) 지도 — 단필지/다필지.
  *
  * /zoning/parcel-boundaries(VWORLD 지적도 geometry + 토지특성)를 호출해
- * 필지 경계 폴리곤을 Leaflet+OSM(무키) 위에 그리고, 용도지역별 색상·면적 라벨을 표시.
+ * 필지 경계 폴리곤을 카카오맵 위에 그리고, 용도지역별 색상·면적 라벨을 표시.
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { apiClient } from "@/lib/api-client";
 import { normalizeZoning } from "@/lib/kr-building-regulations";
+import { loadKakaoMap, geoJsonToKakaoRings } from "@/lib/kakao-map";
+import { KakaoMapControls } from "@/components/map/KakaoMapControls";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 declare global {
-  interface Window { L: any }
+  interface Window { kakao: any }
 }
 
 type Feature = {
@@ -33,29 +35,6 @@ type Boundaries = {
   parcel_count: number;
   adjacency?: Adjacency;
 };
-
-let leafletLoading: Promise<void> | null = null;
-function loadLeaflet(): Promise<void> {
-  if (typeof window === "undefined") return Promise.reject(new Error("no window"));
-  if (window.L) return Promise.resolve();
-  if (leafletLoading) return leafletLoading;
-  leafletLoading = new Promise((resolve, reject) => {
-    if (!document.querySelector('link[data-leaflet]')) {
-      const css = document.createElement("link");
-      css.rel = "stylesheet";
-      css.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
-      css.setAttribute("data-leaflet", "1");
-      document.head.appendChild(css);
-    }
-    const s = document.createElement("script");
-    s.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
-    s.async = true;
-    s.onload = () => resolve();
-    s.onerror = () => reject(new Error("Leaflet 로드 실패"));
-    document.head.appendChild(s);
-  });
-  return leafletLoading;
-}
 
 const PALETTE = ["#14b8a6", "#3b82f6", "#f59e0b", "#8b5cf6", "#ec4899", "#65a30d"];
 function zoneColor(zone: string | null, i: number): string {
@@ -104,6 +83,9 @@ export function ParcelBoundaryMap({
   const [error, setError] = useState("");
   const mapEl = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<any>(null);
+  const polysRef = useRef<any[]>([]);
+  const infoRef = useRef<any>(null);
+  const [mapReady, setMapReady] = useState(false); // 카카오맵 생성 완료 → 툴바 활성
 
   // 데이터 조회
   useEffect(() => {
@@ -126,44 +108,74 @@ export function ParcelBoundaryMap({
   useEffect(() => {
     if (!data || !data.features?.length || !mapEl.current) return;
     let alive = true;
-    void loadLeaflet().then(() => {
+    void loadKakaoMap().then(() => {
       if (!alive || !mapEl.current) return;
-      const L = window.L;
-      if (mapRef.current) { mapRef.current.remove(); mapRef.current = null; }
-      // 마우스 휠 확대/축소 활성화(사용자 요청). 페이지 스크롤 탈취 방지를 위해
-      // 지도에 포커스/호버 시에만 휠 줌이 동작하도록 Leaflet 기본 동작 사용.
-      const map = L.map(mapEl.current, { scrollWheelZoom: true });
-      mapRef.current = map;
-      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-        maxZoom: 19, attribution: "© OpenStreetMap",
-      }).addTo(map);
-      const group = L.featureGroup().addTo(map);
-      let hiLayer: any = null;
+      const kakao = window.kakao;
+      if (!mapRef.current) {
+        mapRef.current = new kakao.maps.Map(mapEl.current, {
+          center: new kakao.maps.LatLng(37.5665, 126.978), level: 3,
+        });
+      }
+      const map = mapRef.current;
+      setMapReady(true);
+      // 이전 폴리곤/정보창 정리
+      polysRef.current.forEach((p) => { try { p.setMap(null); } catch { /* noop */ } });
+      polysRef.current = [];
+      try { infoRef.current?.close(); } catch { /* noop */ }
+
+      const bounds = new kakao.maps.LatLngBounds();
+      let hasPt = false;
+      let hiBounds: any = null;
       (data.features ?? []).forEach((f, i) => {
         if (!f.geometry) return;
         const zoneDisp = effZone(f, i);
         const sc = statusColors?.[f.address || ""];
         const color = sc || zoneColor(zoneDisp, i);
-        const isHi = highlight && f.address === highlight;
-        const layer = L.geoJSON(f.geometry, {
-          style: { color: isHi ? "#ef4444" : color, weight: isHi ? 4 : 2, fillColor: color, fillOpacity: isHi ? 0.5 : 0.28 },
-        }).addTo(group);
+        const isHi = !!highlight && f.address === highlight;
         const z2 = f.zone_type_2 ? ` / ${f.zone_type_2}` : "";
         const stat = statusLabels?.[f.address || ""];
-        layer.bindPopup(
+        const html =
+          `<div style="padding:6px 10px;font-size:12px;min-width:160px;">` +
           `<b>${i + 1}. ${f.address || f.pnu}</b>` + (stat ? ` <span style="color:#0e7490">[${stat}]</span>` : "") +
           `<br/>용도지역: ${zoneDisp || "-"}${z2}<br/>` +
-          `면적: ${f.area_sqm?.toLocaleString()}㎡ (${pyeong(f.area_sqm)})`,
-        );
-        if (onParcelClick) layer.on("click", () => onParcelClick(f.address || ""));
-        if (isHi) hiLayer = layer;
+          `면적: ${f.area_sqm?.toLocaleString()}㎡ (${pyeong(f.area_sqm)})</div>`;
+        geoJsonToKakaoRings(kakao, f.geometry).forEach((path) => {
+          const poly = new kakao.maps.Polygon({
+            path, strokeWeight: isHi ? 4 : 2, strokeColor: isHi ? "#ef4444" : color,
+            strokeOpacity: 0.9, fillColor: color, fillOpacity: isHi ? 0.5 : 0.28,
+          });
+          poly.setMap(map);
+          polysRef.current.push(poly);
+          kakao.maps.event.addListener(poly, "click", (e: any) => {
+            try { infoRef.current?.close(); } catch { /* noop */ }
+            const iw = new kakao.maps.InfoWindow({ position: e.latLng, content: html, removable: true });
+            iw.open(map);
+            infoRef.current = iw;
+            if (onParcelClick) onParcelClick(f.address || "");
+          });
+          path.forEach((ll: any) => { bounds.extend(ll); hasPt = true; });
+          if (isHi) {
+            hiBounds = hiBounds || new kakao.maps.LatLngBounds();
+            path.forEach((ll: any) => hiBounds.extend(ll));
+          }
+        });
       });
-      try {
-        if (hiLayer) map.fitBounds(hiLayer.getBounds().pad(0.4));
-        else map.fitBounds(group.getBounds().pad(0.25));
-      } catch { if (data.center) map.setView([data.center.lat, data.center.lon], 16); }
+      const applyBounds = () => {
+        try {
+          if (hiBounds) map.setBounds(hiBounds, 60, 60, 60, 60);
+          else if (hasPt) map.setBounds(bounds, 30, 30, 30, 30);
+          else if (data.center) map.setCenter(new kakao.maps.LatLng(data.center.lat, data.center.lon));
+        } catch { /* noop */ }
+      };
+      applyBounds();
+      setTimeout(() => { if (alive) { try { map.relayout(); } catch { /* noop */ } applyBounds(); } }, 60);
     });
-    return () => { alive = false; if (mapRef.current) { mapRef.current.remove(); mapRef.current = null; } };
+    return () => {
+      alive = false;
+      try { infoRef.current?.close(); } catch { /* noop */ }
+      polysRef.current.forEach((p) => { try { p.setMap(null); } catch { /* noop */ } });
+      polysRef.current = [];
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data, highlight, primaryZone, JSON.stringify(statusColors)]);
 
@@ -193,6 +205,7 @@ export function ParcelBoundaryMap({
       )}
       <div className="relative">
         <div ref={mapEl} className="h-[340px] w-full overflow-hidden rounded-xl border border-[var(--line)]" />
+        <KakaoMapControls mapRef={mapRef} ready={mapReady} />
         {/* 로딩/빈결과 오버레이 — 무한 '불러오는 중' 방지 */}
         {(loading || (!loading && !error && (!data || !data.features?.length))) && (
           <div className="absolute inset-0 flex items-center justify-center rounded-xl bg-[var(--surface-soft)]/70 text-xs text-[var(--text-hint)]">

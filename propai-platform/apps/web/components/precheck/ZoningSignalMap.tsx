@@ -1,43 +1,22 @@
 "use client";
 
 /**
- * 조닝 시그널 지도 — 대상 필지 + 주변 기회 필지를 Leaflet+OSM(무키)에 렌더.
+ * 조닝 시그널 지도 — 대상 필지 + 주변 기회 필지를 카카오맵에 렌더.
  *
  * 백엔드(B: /precheck/zoning-signals)가 parcel-boundaries 형식의 geojson을
  * 동봉하면 구획 폴리곤을 그리고, 없으면 시그널 필지 PNU 라벨만 표시한다.
- * ParcelBoundaryMap의 leaflet 로더/토큰 패턴을 따른다.
  */
 
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { loadKakaoMap, geoJsonToKakaoRings } from "@/lib/kakao-map";
+import { KakaoMapControls } from "@/components/map/KakaoMapControls";
 import type { ZoningSignal } from "./types";
 
+/* eslint-disable @typescript-eslint/no-explicit-any */
 declare global {
   interface Window {
-    L: any;
+    kakao: any;
   }
-}
-
-let leafletLoading: Promise<void> | null = null;
-function loadLeaflet(): Promise<void> {
-  if (typeof window === "undefined") return Promise.reject(new Error("no window"));
-  if (window.L) return Promise.resolve();
-  if (leafletLoading) return leafletLoading;
-  leafletLoading = new Promise((resolve, reject) => {
-    if (!document.querySelector("link[data-leaflet]")) {
-      const css = document.createElement("link");
-      css.rel = "stylesheet";
-      css.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
-      css.setAttribute("data-leaflet", "1");
-      document.head.appendChild(css);
-    }
-    const s = document.createElement("script");
-    s.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
-    s.async = true;
-    s.onload = () => resolve();
-    s.onerror = () => reject(new Error("Leaflet 로드 실패"));
-    document.head.appendChild(s);
-  });
-  return leafletLoading;
 }
 
 const LEVEL_COLOR: Record<string, string> = {
@@ -57,6 +36,9 @@ export function ZoningSignalMap({
 }) {
   const mapEl = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<any>(null);
+  const polysRef = useRef<any[]>([]);
+  const infoRef = useRef<any>(null);
+  const [mapReady, setMapReady] = useState(false);
 
   // 시그널 → 필지 PNU별 최고 레벨 색상 매핑(폴리곤 강조용)
   const pnuLevel = useMemo(() => {
@@ -80,66 +62,65 @@ export function ZoningSignalMap({
   useEffect(() => {
     if (!mapEl.current) return;
     let alive = true;
-    void loadLeaflet().then(() => {
+    void loadKakaoMap().then(() => {
       if (!alive || !mapEl.current) return;
-      const L = window.L;
-      if (mapRef.current) {
-        mapRef.current.remove();
-        mapRef.current = null;
+      const kakao = window.kakao;
+      if (!mapRef.current) {
+        mapRef.current = new kakao.maps.Map(mapEl.current, {
+          center: new kakao.maps.LatLng(37.5665, 126.978), level: 4,
+        });
       }
-      const map = L.map(mapEl.current, { scrollWheelZoom: false });
-      mapRef.current = map;
-      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-        maxZoom: 19,
-        attribution: "© OpenStreetMap",
-      }).addTo(map);
+      const map = mapRef.current;
+      setMapReady(true);
+      // 이전 폴리곤/정보창 정리
+      polysRef.current.forEach((p) => { try { p.setMap(null); } catch { /* noop */ } });
+      polysRef.current = [];
+      try { infoRef.current?.close(); } catch { /* noop */ }
 
-      const group = L.featureGroup().addTo(map);
+      const bounds = new kakao.maps.LatLngBounds();
       let drew = false;
 
       if (hasGeo) {
         const fc = geojson as any;
-        const layer = L.geoJSON(fc, {
-          style: (feat: any) => {
-            const pnu = feat?.properties?.pnu;
-            const level = pnu ? pnuLevel[pnu] : undefined;
-            const color = level ? LEVEL_COLOR[level] : "#3b82f6";
-            return {
-              color,
-              weight: level ? 3 : 1.5,
-              fillColor: color,
-              fillOpacity: level ? 0.4 : 0.18,
-            };
-          },
-          onEachFeature: (feat: any, lyr: any) => {
-            const props = feat?.properties ?? {};
-            const label = props.address || props.pnu || "필지";
-            lyr.bindPopup(
-              `<b>${label}</b><br/>용도지역: ${props.zone_type || "-"}`,
-            );
-          },
-        }).addTo(group);
-        if (layer.getLayers().length) drew = true;
+        (fc.features ?? []).forEach((feat: any) => {
+          const props = feat?.properties ?? {};
+          const level = props.pnu ? pnuLevel[props.pnu] : undefined;
+          const color = level ? LEVEL_COLOR[level] : "#3b82f6";
+          const label = props.address || props.pnu || "필지";
+          const html = `<div style="padding:6px 10px;font-size:12px;"><b>${label}</b><br/>용도지역: ${props.zone_type || "-"}</div>`;
+          geoJsonToKakaoRings(kakao, feat?.geometry).forEach((path) => {
+            const poly = new kakao.maps.Polygon({
+              path, strokeWeight: level ? 3 : 1.5, strokeColor: color, strokeOpacity: 0.9,
+              fillColor: color, fillOpacity: level ? 0.4 : 0.18,
+            });
+            poly.setMap(map);
+            polysRef.current.push(poly);
+            kakao.maps.event.addListener(poly, "click", (e: any) => {
+              try { infoRef.current?.close(); } catch { /* noop */ }
+              const iw = new kakao.maps.InfoWindow({ position: e.latLng, content: html, removable: true });
+              iw.open(map);
+              infoRef.current = iw;
+            });
+            path.forEach((ll: any) => { bounds.extend(ll); drew = true; });
+          });
+        });
       }
 
-      try {
-        if (drew) {
-          map.fitBounds(group.getBounds().pad(0.25));
-        } else if (centerHint) {
-          map.setView([centerHint.lat, centerHint.lon], 16);
-        } else {
-          map.setView([37.5665, 126.978], 13); // 서울 기본
-        }
-      } catch {
-        map.setView([37.5665, 126.978], 13);
-      }
+      const applyView = () => {
+        try {
+          if (drew) map.setBounds(bounds, 30, 30, 30, 30);
+          else if (centerHint) map.setCenter(new kakao.maps.LatLng(centerHint.lat, centerHint.lon));
+          else map.setCenter(new kakao.maps.LatLng(37.5665, 126.978));
+        } catch { /* noop */ }
+      };
+      applyView();
+      setTimeout(() => { if (alive) { try { map.relayout(); } catch { /* noop */ } applyView(); } }, 60);
     });
     return () => {
       alive = false;
-      if (mapRef.current) {
-        mapRef.current.remove();
-        mapRef.current = null;
-      }
+      try { infoRef.current?.close(); } catch { /* noop */ }
+      polysRef.current.forEach((p) => { try { p.setMap(null); } catch { /* noop */ } });
+      polysRef.current = [];
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [JSON.stringify(geojson), JSON.stringify(pnuLevel), centerHint?.lat, centerHint?.lon]);
@@ -150,6 +131,7 @@ export function ZoningSignalMap({
         ref={mapEl}
         className="h-[360px] w-full overflow-hidden rounded-xl border border-[var(--line)]"
       />
+      <KakaoMapControls mapRef={mapRef} ready={mapReady} />
       {!hasGeo && (
         <div className="pointer-events-none absolute inset-x-0 bottom-0 m-2 rounded-lg bg-[var(--surface-soft)]/85 px-3 py-2 text-[11px] text-[var(--text-hint)]">
           구획 데이터(geojson)가 없어 위치 개요만 표시합니다. 아래 시그널 카드의 필지 목록을 확인하세요.

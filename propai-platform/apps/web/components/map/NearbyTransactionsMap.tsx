@@ -15,6 +15,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { apiClient } from "@/lib/api-client";
 import { loadKakaoMap } from "@/lib/kakao-map";
+import { KakaoMapControls } from "@/components/map/KakaoMapControls";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 declare global {
@@ -90,6 +91,7 @@ export function NearbyTransactionsMap({
   const [kind, setKind] = useState<"trade" | "rent">("trade");
   const [type, setType] = useState("apt");
   const [sdkReady, setSdkReady] = useState(false);
+  const [mapReady, setMapReady] = useState(false);
 
   const mapEl = useRef<HTMLDivElement>(null);
   const mapRef = useRef<any>(null);
@@ -152,6 +154,7 @@ export function NearbyTransactionsMap({
     const center = new kakao.maps.LatLng(payload.center.lat, payload.center.lon);
     const map = new kakao.maps.Map(mapEl.current, { center, level: 5 });
     mapRef.current = map;
+    setMapReady(true);
 
     // 깜빡이는 펄스 중심 마커(대상 지번 강조) — CustomOverlay + CSS keyframes
     if (typeof document !== "undefined" && !document.getElementById("propai-pulse-style")) {
@@ -308,6 +311,7 @@ export function NearbyTransactionsMap({
 
       <div className="relative">
         <div ref={mapEl} className="w-full rounded-xl overflow-hidden border border-[var(--line-strong)] z-0" style={{ height: 440 }} />
+        <KakaoMapControls mapRef={mapRef} ready={mapReady} />
         {(loading || !sdkReady) && (
           <div className="absolute inset-0 flex items-center justify-center rounded-xl bg-black/40 backdrop-blur-sm z-[400]">
             <div className="flex items-center gap-2 text-white text-sm font-bold">
