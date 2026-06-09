@@ -10,7 +10,7 @@
  * 생성된 kakao 지도 인스턴스를 mapRef로, 준비완료를 ready로 전달한다.
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { toggleUseDistrict } from "@/lib/kakao-map";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -18,6 +18,27 @@ import { toggleUseDistrict } from "@/lib/kakao-map";
 type MapType = "ROADMAP" | "SKYVIEW" | "HYBRID";
 
 const PYEONG = 3.305785;
+
+/** 좌측 아이콘 버튼 — 롤오버(hover) 시 메뉴명 툴팁 표시. */
+function IconBtn({
+  active, onClick, label, children,
+}: { active: boolean; onClick: () => void; label: string; children: ReactNode }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      className={`group relative flex h-8 w-8 items-center justify-center rounded-md border border-black/10 shadow-sm transition-colors ${
+        active ? "bg-[var(--accent-strong)] text-white" : "bg-white/90 text-slate-700 hover:bg-white"
+      }`}
+    >
+      {children}
+      <span className="pointer-events-none absolute left-full ml-2 whitespace-nowrap rounded bg-black/80 px-2 py-1 text-[11px] font-semibold text-white opacity-0 shadow transition-opacity duration-150 group-hover:opacity-100">
+        {label}
+      </span>
+    </button>
+  );
+}
 
 export function KakaoMapControls({
   mapRef,
@@ -134,52 +155,64 @@ export function KakaoMapControls({
 
   if (!ready) return null;
 
-  const btn = (active: boolean) =>
-    `px-2 py-1 text-[11px] font-bold rounded-md transition-colors ${active ? "bg-[var(--accent-strong)] text-white" : "bg-white/90 text-slate-700 hover:bg-white"}`;
+  const txtBtn = (active: boolean) =>
+    `px-2.5 py-1 text-[11px] font-bold transition-colors ${active ? "bg-[var(--accent-strong)] text-white" : "bg-white/90 text-slate-700 hover:bg-white"}`;
 
   return (
     <>
-      {/* 우상단 툴바 */}
+      {/* 상단 우측: 지도유형 + 지적편집도(텍스트) */}
       <div className="absolute right-2 top-2 z-[450] flex flex-col items-end gap-1">
         <div className="flex overflow-hidden rounded-md border border-black/10 shadow-sm">
           {(["ROADMAP", "SKYVIEW", "HYBRID"] as MapType[]).map((t) => (
-            <button key={t} type="button" onClick={() => setMapType(t)} className={btn(mapType === t)}>
+            <button key={t} type="button" onClick={() => setMapType(t)} className={txtBtn(mapType === t)}>
               {t === "ROADMAP" ? "일반" : t === "SKYVIEW" ? "위성" : "하이브리드"}
             </button>
           ))}
         </div>
-        <div className="flex gap-1">
-          <button type="button" onClick={() => setDistrict((v) => !v)} className={`${btn(district)} border border-black/10 shadow-sm`}>
-            지적편집도
-          </button>
-          <button type="button" onClick={() => { setRvOn((v) => !v); }} className={`${btn(rvOn)} border border-black/10 shadow-sm`}>
-            로드뷰
-          </button>
-        </div>
-        <div className="flex gap-1">
-          <button type="button" onClick={() => setMeasure((m) => (m === "distance" ? null : "distance"))} className={`${btn(measure === "distance")} border border-black/10 shadow-sm`}>
-            거리측정
-          </button>
-          <button type="button" onClick={() => setMeasure((m) => (m === "area" ? null : "area"))} className={`${btn(measure === "area")} border border-black/10 shadow-sm`}>
-            면적측정
-          </button>
-          {measure && (
-            <button type="button" onClick={clearMeasure} className={`${btn(false)} border border-black/10 shadow-sm`}>
-              지우기
-            </button>
-          )}
-        </div>
+        <button type="button" onClick={() => setDistrict((v) => !v)} className={`${txtBtn(district)} rounded-md border border-black/10 shadow-sm`}>
+          지적편집도
+        </button>
       </div>
 
-      {/* 측정 결과 라벨 */}
+      {/* 좌측 세로: 로드뷰·거리·면적 측정(아이콘 + 롤오버 툴팁) */}
+      <div className="absolute left-2 top-1/2 z-[450] flex -translate-y-1/2 flex-col gap-1.5">
+        <IconBtn active={rvOn} onClick={() => setRvOn((v) => !v)} label="로드뷰">
+          {/* 사람(거리뷰) */}
+          <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="5" r="2.5" /><path d="M9 11l3-1 3 1M12 10v6M10 21l2-5 2 5" />
+          </svg>
+        </IconBtn>
+        <IconBtn active={measure === "distance"} onClick={() => setMeasure((m) => (m === "distance" ? null : "distance"))} label="거리측정">
+          {/* 점-선-점(거리) */}
+          <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="5" cy="19" r="2" fill="currentColor" /><circle cx="19" cy="5" r="2" fill="currentColor" /><path d="M6.5 17.5l11-11" strokeDasharray="3 2.5" />
+          </svg>
+        </IconBtn>
+        <IconBtn active={measure === "area"} onClick={() => setMeasure((m) => (m === "area" ? null : "area"))} label="면적측정">
+          {/* 다각형(면적) */}
+          <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round">
+            <polygon points="4,8 12,3 20,9 16,20 7,19" />
+          </svg>
+        </IconBtn>
+        {measure && (
+          <IconBtn active={false} onClick={clearMeasure} label="지우기">
+            {/* 휴지통 */}
+            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13" />
+            </svg>
+          </IconBtn>
+        )}
+      </div>
+
+      {/* 측정 결과 라벨(하단 좌측 — 좌측 아이콘과 겹치지 않게) */}
       {measure && (
-        <div className="absolute left-2 top-2 z-[450] rounded-md bg-black/70 px-3 py-1.5 text-[11px] font-bold text-white">
+        <div className="absolute bottom-2 left-2 z-[450] rounded-md bg-black/70 px-3 py-1.5 text-[11px] font-bold text-white">
           {measureText || (measure === "distance" ? "지도를 클릭해 거리 측정" : "지도를 클릭해 면적 측정")}
         </div>
       )}
 
       {/* 로드뷰 오버레이 + 닫기 */}
-      <div ref={rvElRef} className={`absolute inset-0 z-[440] rounded-xl overflow-hidden ${rvOn ? "" : "hidden"}`} />
+      <div ref={rvElRef} className={`absolute inset-0 z-[440] overflow-hidden rounded-xl ${rvOn ? "" : "hidden"}`} />
       {rvOn && (
         <button type="button" onClick={() => setRvOn(false)} className="absolute right-2 top-2 z-[460] rounded-md bg-black/70 px-2 py-1 text-[11px] font-bold text-white">
           ✕ 지도로
