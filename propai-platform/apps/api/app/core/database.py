@@ -1,3 +1,5 @@
+import uuid
+
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 from app.core.config import settings
@@ -8,11 +10,16 @@ engine = create_async_engine(
     pool_size=20,
     max_overflow=10,
     pool_pre_ping=True,
-    # Supabase pgbouncer(transaction pooling) 호환: asyncpg prepared statement 캐시 비활성화.
-    # 미설정 시 풀링된 커넥션 재사용에서 DuplicatePreparedStatementError 발생.
+    # Supabase pgbouncer(transaction pooling) 호환:
+    #  - statement_cache_size=0: asyncpg 자체 statement 캐시 비활성화.
+    #  - ★prepared_statement_name_func: SQLAlchemy asyncpg는 고정 이름(__asyncpg_stmt_N__)
+    #    prepared statement를 쓰는데, pgbouncer가 풀링한 커넥션을 트랜잭션 간 재사용하면
+    #    같은 이름이 이미 존재해 DuplicatePreparedStatementError 발생(관리자 키 저장 실패·
+    #    간헐적 DB오류의 직접원인). 매번 고유(uuid) 이름을 부여해 충돌을 원천 차단한다.
     connect_args={
         "statement_cache_size": 0,
         "prepared_statement_cache_size": 0,
+        "prepared_statement_name_func": lambda: f"__asyncpg_{uuid.uuid4().hex}__",
     },
 )
 
