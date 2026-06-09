@@ -20,9 +20,16 @@ from apps.api.config import get_settings
 settings = get_settings()
 
 # Supabase PGBouncer 호환: prepared statements 완전 비활성화
+import uuid as _uuid
+
 _connect_args: dict = {
     "statement_cache_size": 0,
     "prepared_statement_cache_size": 0,
+    # ★pgbouncer transaction모드는 NullPool이어도 백엔드 커넥션을 클라이언트 간 재사용해
+    #  고정이름(__asyncpg_stmt_N__) prepared statement가 충돌(DuplicatePreparedStatementError)한다.
+    #  → load_into_env(관리자 키 os.environ 오버레이) 등 이 엔진을 쓰는 모든 경로가 실패했음.
+    #  매번 고유(uuid) 이름을 부여해 원천 차단한다.
+    "prepared_statement_name_func": lambda: f"__asyncpg_{_uuid.uuid4().hex}__",
 }
 
 
