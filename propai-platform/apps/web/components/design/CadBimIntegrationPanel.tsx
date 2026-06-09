@@ -8,6 +8,7 @@ import * as THREE from "three";
 import { motion } from "framer-motion";
 import CADEditor from "./CADEditor";
 import { GenerativeDesignPanel } from "@/components/cad/GenerativeDesignPanel";
+import { DesignOutcomeSummary } from "@/components/design/DesignOutcomeSummary";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { apiClient, ApiClientError } from "@/lib/api-client";
 
@@ -650,6 +651,11 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
 
       {/* ── Phase 2 · 생성 UX(자연어→Top3 설계안→스튜디오 로드) ── */}
       <GenerativeDesignPanel projectId={projectId} onApplied={handleGeneratedApplied} />
+
+      {/* ── Phase 4 · 설계 결과 → 사업성·환경·해설·은행제출 연결 요약 ──
+          설계 적용/변경 시 designData를 기준으로 공사비(estimate-overview) 1회 산정 → 수지/ROI·ESG(SSOT)
+          요약 + 설계해설(designAi 6섹션) + 은행제출 패키지 원클릭. 기존 분석/보고서 로직은 재구현 없이 연결만. */}
+      <DesignOutcomeSummary projectId={projectId} designAi={designAi} />
 
       <div className="relative h-[650px] w-full overflow-hidden rounded-[4rem] border border-[var(--line-strong)] bg-[#0d1520] shadow-[var(--shadow-2xl)] group">
         {/* Cinematic Backdrop */}
