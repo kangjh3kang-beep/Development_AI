@@ -180,10 +180,13 @@ export function KakaoMapControls({
         {/* 세로 아이콘 메뉴: 로드뷰·거리·면적 측정(롤오버 시 메뉴명 툴팁) */}
         <div className="flex flex-col items-end gap-1.5 rounded-lg bg-black/5 p-1 backdrop-blur-sm">
           <IconBtn active={rvOn} onClick={() => setRvOn((v) => !v)} label="로드뷰">
-            {/* 카메라 */}
+            {/* CCTV 카메라 */}
             <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M3 9a2 2 0 012-2h1.6l1.1-1.7A1 1 0 019 4.9h6a1 1 0 01.8.4L17 7h2a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
-              <circle cx="12" cy="13" r="3.2" />
+              <path d="M16.75 12h3.63a1 1 0 0 1 .9 1.45l-2.04 4.07a1 1 0 0 1-1.71.13l-2.12-2.97" />
+              <path d="M17.1 9.05a1 1 0 0 1 .45 1.34l-3.11 6.21a1 1 0 0 1-1.34.45L3.6 12.3a2.92 2.92 0 0 1-1.3-3.91L3.7 5.6a2.92 2.92 0 0 1 3.92-1.3z" />
+              <path d="M2 19h3.76a2 2 0 0 0 1.8-1.1L9 15" />
+              <path d="M2 21v-4" />
+              <circle cx="9" cy="9" r="2" />
             </svg>
           </IconBtn>
         <IconBtn active={measure === "distance"} onClick={() => setMeasure((m) => (m === "distance" ? null : "distance"))} label="거리측정">

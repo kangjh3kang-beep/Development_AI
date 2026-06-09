@@ -265,7 +265,10 @@ export function SiteAnalysisDetail({ data, hideInterpretation = false }: SiteAna
   const landAddress = s(basic.address || data.address);
   const pnu = s(basic.pnu || data.pnu_codes);
   const landCategory = s(basic.land_category || data.land_category);
-  const landAreaSqm = n(basic.land_area_sqm ?? data.land_area_sqm);
+  const landAreaSqm = n(
+    basic.land_area_sqm ?? data.land_area_sqm ?? basic.area_sqm ?? data.area_sqm ??
+    basic.lndpcl_ar ?? data.lndpcl_ar ?? basic.area ?? data.area,
+  );
   const ownerType = s(basic.owner_type || data.owner_type);
 
   // 2. 용도지역/법규한도
@@ -343,9 +346,14 @@ export function SiteAnalysisDetail({ data, hideInterpretation = false }: SiteAna
         {hasBasic ? (
           <div className="sa-di-tiles">
             {landAddress && <Tile label="주소" value={landAddress} text />}
-            {pnu && <Tile label="PNU" value={typeof pnu === "string" && pnu.startsWith("[") ? pnu : s(pnu)} text />}
+            {zoneType && <Tile label="용도지역" value={zoneType} accent />}
+            {landAreaSqm != null && landAreaSqm > 0 && <Tile label="면적" value={formatArea(landAreaSqm)} accent />}
+            {officialPrice != null && officialPrice > 0 && <Tile label="공시지가(㎡당)" value={formatWon(officialPrice)} accent />}
             {landCategory && <Tile label="지목" value={landCategory} text />}
-            {landAreaSqm && <Tile label="대지면적" value={formatArea(landAreaSqm)} accent />}
+            {/* PNU는 19자리 코드일 때만 표시(데이터 누락 시 '0' 등 노출 방지) */}
+            {pnu && s(pnu).replace(/[^0-9]/g, "").length >= 10 && (
+              <Tile label="PNU" value={typeof pnu === "string" && pnu.startsWith("[") ? pnu : s(pnu)} text />
+            )}
             {ownerType && <Tile label="소유구분" value={ownerType} text />}
           </div>
         ) : (
