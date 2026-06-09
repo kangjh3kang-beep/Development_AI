@@ -315,7 +315,11 @@ async def token_usage(db: AsyncSession, user_id: Any, days: int = 30) -> dict[st
 
 
 async def get_balance(db: AsyncSession, user_id: Any) -> dict[str, Any]:
-    """월기본/충전 코인 잔액 + 등급·마진율·사이클 시작."""
+    """월기본/충전 코인 잔액 + 등급·사이클 시작.
+
+    ★마진율(markup_pct)은 내부 정책이라 응답에 포함하지 않는다(개발자도구 노출 방지).
+      청구 금액(used_this_cycle_krw 등)에는 이미 반영돼 있으므로 사용자는 실지급액만 본다.
+    """
     await load_config(db)
     await ensure_cycle(db, user_id)
     row = await _row(db, user_id)
@@ -323,7 +327,7 @@ async def get_balance(db: AsyncSession, user_id: Any) -> dict[str, Any]:
         return {
             "tier": "guest", "tier_label": "비회원", "monthly_base_krw": 0,
             "monthly_base_remaining": 0, "topup_krw": 0, "used_this_cycle_krw": 0,
-            "markup_pct": round((tier_multiplier("guest") - 1) * 100), "cycle_start": None,
+            "cycle_start": None,
         }
     tier, billed = row[0], float(row[1])
     cycle = row[3]
@@ -338,7 +342,6 @@ async def get_balance(db: AsyncSession, user_id: Any) -> dict[str, Any]:
         "topup_krw": round(topup),
         "topup_remaining": round(topup_remaining),
         "used_this_cycle_krw": round(billed),
-        "markup_pct": round((tier_multiplier(tier) - 1) * 100),
         "cycle_start": cycle.isoformat() if cycle else None,
     }
 

@@ -186,13 +186,13 @@ export function AiTokenUsageDashboard() {
           <i className="cc-bracket cc-bracket--br" />
           <div className="cc-panel__body relative z-10">
             <p className="cc-label">
-              최근 {usage.days}일 비용 (마진 포함)
+              최근 {usage.days}일 이용 금액
             </p>
             <p className="cc-num mt-3 text-3xl font-[900] text-[var(--text-primary)]">
               {won(usage.total_cost_krw)}
             </p>
             <p className="mt-1 text-xs text-[var(--text-hint)]">
-              {balance.tier_label} 등급 · 마진 +{balance.markup_pct}% 포함
+              {balance.tier_label} 등급
             </p>
           </div>
         </div>
@@ -243,7 +243,7 @@ export function AiTokenUsageDashboard() {
           <Card>
             <CardContent className="p-6">
               <p className="cc-label">
-                서비스별 사용량 (마진 포함 비용)
+                서비스별 이용 금액
               </p>
               <div className="mt-4 space-y-3">
                 {(usage.by_service ?? []).map((svc) => {

@@ -334,9 +334,6 @@ export function MarketInsightsWorkspaceClient() {
                 {totalRemaining !== null && (
                   <> · 코인 잔여 <b className="text-[var(--text-primary)]">{won(totalRemaining)}</b></>
                 )}
-                {balance && balance.markup_pct > 0 && (
-                  <span className="ml-1 rounded-md bg-[var(--accent-soft)] px-1.5 py-0.5 text-[10px] font-bold text-[var(--accent-strong)]">마진 +{balance.markup_pct}%</span>
-                )}
               </p>
             </div>
             <button

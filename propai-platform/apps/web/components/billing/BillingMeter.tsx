@@ -170,11 +170,6 @@ export function BillingMeter({ compact = false }: { compact?: boolean }) {
         <div className="flex items-center justify-between gap-2 mb-2">
           <span className="flex items-center gap-1.5 text-xs font-bold text-[var(--text-secondary)]">
             <span className="text-[var(--accent-strong)]">●</span> {status.tier_label} 구독
-            {balance && balance.markup_pct > 0 && (
-              <span className="rounded-md bg-[var(--accent-soft)] px-1.5 py-0.5 text-[9px] font-bold text-[var(--accent-strong)]">
-                마진 +{balance.markup_pct}%
-              </span>
-            )}
           </span>
           <button
             onClick={() => setModalOpen(true)}
