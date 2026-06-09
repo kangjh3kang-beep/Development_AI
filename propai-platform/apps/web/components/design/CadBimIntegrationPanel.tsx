@@ -7,6 +7,7 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import * as THREE from "three";
 import { motion } from "framer-motion";
 import CADEditor from "./CADEditor";
+import { GenerativeDesignPanel } from "@/components/cad/GenerativeDesignPanel";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 
 // 도면 코드 → 한글 명칭 (SVGDrawingService.generate_full_drawing_set 기준)
@@ -360,6 +361,19 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
     if (activeCode) loadSvg(activeCode);
   }, [activeCode, loadSvg]);
 
+  // 생성 UX(Phase 2)에서 설계안 적용 시 — 파생 기하·도면·3D를 초기화해
+  // 새 SSOT(designData)로 spec을 재산출하고 2D/3D를 재생성한다(기존 로드 경로 재사용).
+  const handleGeneratedApplied = useCallback(() => {
+    setSpec(null);
+    setBimScene(null);
+    setBimError(null);
+    setBimMass(null);
+    setDesignAi(null);
+    setDrawingCodes([]);
+    setSvgMap({});
+    setActiveCode(null);
+  }, []);
+
   return (
     <div className="flex flex-col gap-10">
       <div className="flex flex-wrap items-end justify-between gap-6 px-2">
@@ -433,6 +447,9 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
           </button>
         </div>
       </div>
+
+      {/* ── Phase 2 · 생성 UX(자연어→Top3 설계안→스튜디오 로드) ── */}
+      <GenerativeDesignPanel projectId={projectId} onApplied={handleGeneratedApplied} />
 
       <div className="relative h-[650px] w-full overflow-hidden rounded-[4rem] border border-[var(--line-strong)] bg-[#0d1520] shadow-[var(--shadow-2xl)] group">
         {/* Cinematic Backdrop */}

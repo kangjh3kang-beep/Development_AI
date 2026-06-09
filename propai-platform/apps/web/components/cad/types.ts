@@ -143,6 +143,64 @@ export type DesignAlternativesResponse = {
   alternatives: AutoDesignResponse[];
 };
 
+/** 평형 배분 한 줄(distribution 항목) — 믹스 표시는 ratio_pct만 신뢰. */
+export type UnitMixRow = {
+  code: string;
+  name: string;
+  area_sqm: number;
+  ratio_pct: number;
+};
+
+export type UnitMixBlock = {
+  distribution: UnitMixRow[];
+  /** 이론치(총 세대). 화면 표기에는 쓰지 않음(summary.total_units가 실건축가능). */
+  optimizer_total_units?: number;
+};
+
+/** 법정 한도(슬라이더 하드캡용). zone_code로 조회. */
+export type LegalLimitsResponse = {
+  zone_code: string;
+  max_bcr_percent: number;
+  max_far_percent: number;
+  max_height_m: number;
+  min_setback_m: number;
+  sunlight_hours: number;
+};
+
+/** 자연어 설계 의도 파싱 결과. */
+export type DesignIntent = {
+  target_units: number | null;
+  unit_mix: Record<string, number> | null;
+  building_use: string | null;
+  priority: "yield" | "livability" | "balanced";
+  target_margin_pct: number | null;
+  notes: string;
+  source: "llm" | "rule" | "empty";
+  suggested_unit_types: string[];
+};
+
+export type ParseIntentResponse = {
+  intent: DesignIntent;
+};
+
+/** Phase 2 Top3 설계안 — 정렬: 준수 우선·score desc. */
+export type DesignAlternative = {
+  rank: number;
+  alternative_name: string;
+  priority: "yield" | "livability" | "balanced";
+  summary: AutoDesignSummary;
+  compliance: AutoDesignCompliance;
+  unit_mix: UnitMixBlock;
+  design_payload: DesignPayload;
+  score: number;
+  compliant: boolean;
+};
+
+export type DesignAlternativesV2Response = {
+  alternatives: DesignAlternative[];
+  recommended_index: number;
+};
+
 export type ComplianceViolation = {
   violation_type: string;
   severity: "error" | "warning";
