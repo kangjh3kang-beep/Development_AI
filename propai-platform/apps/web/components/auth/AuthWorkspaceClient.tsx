@@ -132,7 +132,7 @@ const LABELS: Record<Locale, Labels> = {
     },
     registerFields: {
       name: "담당자 이름",
-      companyName: "회사명",
+      companyName: "회사명 (개인은 비워두세요)",
       email: "관리자 이메일",
       password: "비밀번호",
       submit: "테넌트 등록",
@@ -211,7 +211,7 @@ const LABELS: Record<Locale, Labels> = {
     },
     registerFields: {
       name: "Operator name",
-      companyName: "Company name",
+      companyName: "Company (optional)",
       email: "Admin email",
       password: "Password",
       submit: "Create tenant",
@@ -289,7 +289,7 @@ const LABELS: Record<Locale, Labels> = {
     },
     registerFields: {
       name: "负责人姓名",
-      companyName: "公司名称",
+      companyName: "公司名称(可选)",
       email: "管理员邮箱",
       password: "密码",
       submit: "创建租户",
@@ -753,8 +753,6 @@ export function AuthWorkspaceClient({
                           }))
                         }
                         placeholder={labels.registerFields.companyName}
-                        required
-                        minLength={1}
                         maxLength={200}
                       />
                     </label>

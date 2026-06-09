@@ -57,7 +57,8 @@ class RegisterRequest(BaseModel):
     email: EmailStr
     password: str = Field(min_length=8, max_length=128)
     name: str = Field(min_length=1, max_length=100)
-    company_name: str = Field(min_length=1, max_length=200)
+    # 회사명은 선택 — 무구독 일반(개인) 회원도 가입 가능. 비우면 개인 워크스페이스로 생성.
+    company_name: str = Field(default="", max_length=200)
 
 
 def _slugify_tenant_name(value: str) -> str:
@@ -168,9 +169,11 @@ async def register(
             detail="A user with that email already exists.",
         )
 
+    # 회사명 미입력(개인/무료 일반회원) → 본인 이름 기반 개인 워크스페이스로 생성.
+    workspace_name = (body.company_name or "").strip() or f"{body.name}님의 워크스페이스"
     tenant = Tenant(
-        name=body.company_name,
-        slug=await _build_unique_tenant_slug(db, body.company_name),
+        name=workspace_name,
+        slug=await _build_unique_tenant_slug(db, workspace_name),
         plan="free",
         is_active=True,
     )
