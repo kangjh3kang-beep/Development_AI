@@ -80,10 +80,18 @@ def apply_config(override: dict[str, Any]) -> None:
         except (ValueError, TypeError):
             pass
     for tier, vals in (override.get("tiers") or {}).items():
-        if tier in _CONFIG["tiers"] and isinstance(vals, dict):
-            for k in ("fee_krw", "multiplier", "label"):
-                if k in vals:
-                    _CONFIG["tiers"][tier][k] = vals[k]
+        if not isinstance(vals, dict):
+            continue
+        # 신규 플랜 추가 허용(기존에 없던 tier면 기본값으로 생성).
+        if tier not in _CONFIG["tiers"]:
+            _CONFIG["tiers"][tier] = {"fee_krw": 0, "multiplier": 1.0, "label": tier}
+        for k in ("fee_krw", "multiplier", "label"):
+            if k in vals:
+                _CONFIG["tiers"][tier][k] = vals[k]
+    # 플랜 삭제(_remove_tiers). 시스템 보호 등급은 삭제 불가(과금·권한 무결성).
+    for tier in (override.get("_remove_tiers") or []):
+        if tier in _CONFIG["tiers"] and tier not in {"free", "guest", "super_admin"}:
+            _CONFIG["tiers"].pop(tier, None)
     sf = override.get("service_fees") or {}
     for k in ("project_create", "land_analysis", "sales_provision", "photoreal_render",
               "registry_issue", "registry_analysis"):

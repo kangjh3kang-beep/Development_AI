@@ -47,10 +47,33 @@ export default function BillingConfigPage() {
   const setFree = (sub: string, t: string, v: string) =>
     setCfg((c: Config) => ({ ...c, free_tier: { ...c.free_tier, [sub]: { ...c.free_tier[sub], [t]: num(v) } } }));
 
+  // ── 구독 플랜 추가/삭제(과금설정과 통합) ──
+  const [removed, setRemoved] = useState<string[]>([]);
+  const PROTECTED = new Set(["free", "guest", "super_admin"]); // 시스템 보호 등급(삭제 불가)
+  const setTierLabel = (t: string, v: string) =>
+    setCfg((c: Config) => ({ ...c, tiers: { ...c.tiers, [t]: { ...c.tiers[t], label: v } } }));
+  const addPlan = () => {
+    // eslint-disable-next-line no-alert
+    const raw = window.prompt("새 구독 플랜 식별자(영문 소문자/숫자, 예: pro, business)") || "";
+    const key = raw.trim().toLowerCase().replace(/[^a-z0-9_]/g, "");
+    if (!key) return;
+    setCfg((c: Config) => (c.tiers[key] ? c : { ...c, tiers: { ...c.tiers, [key]: { fee_krw: 0, multiplier: 1, label: key } } }));
+    setRemoved((r) => r.filter((x) => x !== key));
+  };
+  const deletePlan = (t: string) => {
+    if (PROTECTED.has(t)) return;
+    // eslint-disable-next-line no-alert
+    if (!window.confirm(`'${t}' 구독 플랜을 삭제할까요? (구독 중인 사용자 등급은 별도)`)) return;
+    setCfg((c: Config) => { const tiers = { ...c.tiers }; delete tiers[t]; return { ...c, tiers }; });
+    setRemoved((r) => Array.from(new Set([...r, t])));
+  };
+
   const save = async () => {
     setSaving(true); setMsg("");
     try {
-      await apiClient.put<Config>("/billing/admin/config", { body: cfg, useMock: false });
+      // 삭제목록(_remove_tiers) 동봉 → 백엔드가 해당 플랜 제거.
+      await apiClient.put<Config>("/billing/admin/config", { body: { ...cfg, _remove_tiers: removed }, useMock: false });
+      setRemoved([]);
       setMsg("저장되었습니다. 즉시 적용됩니다.");
     } catch {
       setMsg("저장 실패 — 관리자 권한을 확인하세요.");
@@ -93,23 +116,42 @@ export default function BillingConfigPage() {
       </div>
       {msg && <div className="rounded-xl border border-[var(--data-accent-line)] bg-[var(--data-accent-soft)] px-4 py-2.5 text-sm text-[var(--text-secondary)]">{msg}</div>}
 
-      {/* 구독 등급 */}
+      {/* 구독 플랜 (과금설정 통합) — 추가·삭제·이름·월요금·할증배수 */}
       <section className="cc-panel">
-        <header className="cc-panel__head">
-          <span className="cc-meta">TIER · MONTHLY</span>
-          <h2 className="text-sm font-bold text-[var(--text-primary)]">구독 등급 (월 요금 · 할증배수)</h2>
+        <header className="cc-panel__head flex items-center justify-between">
+          <div>
+            <span className="cc-meta">SUBSCRIPTION · PLANS</span>
+            <h2 className="text-sm font-bold text-[var(--text-primary)]">구독 플랜 관리 (추가·삭제·요금)</h2>
+          </div>
+          <button onClick={addPlan} className="rounded-lg border border-[var(--accent-strong)]/40 bg-[var(--accent-soft)] px-3 py-1.5 text-xs font-bold text-[var(--accent-strong)] hover:opacity-90">
+            + 플랜 추가
+          </button>
         </header>
         <div className="cc-panel__body">
           <div className="grid gap-4 md:grid-cols-3">
             {Object.keys(cfg.tiers).map((t) => (
-              <div key={t} className="space-y-2">
-                <p className="cc-label text-[var(--accent-strong)]">{TIER_LABELS[t] || t}</p>
+              <div key={t} className="space-y-2 rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <input
+                    value={cfg.tiers[t].label ?? TIER_LABELS[t] ?? t}
+                    onChange={(e) => setTierLabel(t, e.target.value)}
+                    className="w-full rounded-md border border-[var(--line-strong)] bg-[var(--surface)] px-2 py-1 text-sm font-bold text-[var(--accent-strong)] focus:outline-none focus:border-[var(--accent-strong)]"
+                    placeholder="플랜 이름"
+                  />
+                  {!PROTECTED.has(t) && (
+                    <button onClick={() => deletePlan(t)} title="플랜 삭제"
+                      className="shrink-0 rounded-md border border-rose-500/30 px-2 py-1 text-[11px] font-bold text-rose-400 hover:bg-rose-500/10">
+                      삭제
+                    </button>
+                  )}
+                </div>
+                <p className="text-[10px] text-[var(--text-hint)]">식별자: {t}{PROTECTED.has(t) ? " · 시스템" : ""}</p>
                 <Field label="월 요금" value={cfg.tiers[t].fee_krw} onChange={(v) => setTier(t, "fee_krw", v)} />
                 <Field label="할증배수(내부)" value={cfg.tiers[t].multiplier} onChange={(v) => setTier(t, "multiplier", v)} suffix="×" />
               </div>
             ))}
           </div>
-          <p className="text-[10px] text-[var(--text-hint)] mt-3">※ 포함 LLM 한도 = 월 요금 × {Math.round((cfg.budget_ratio ?? 0.5) * 100)}%. 할증배수는 내부 정책(사용자 미노출).</p>
+          <p className="text-[10px] text-[var(--text-hint)] mt-3">※ 포함 LLM 한도 = 월 요금 × {Math.round((cfg.budget_ratio ?? 0.5) * 100)}%. 할증배수는 내부 정책(사용자 미노출). 시스템 플랜(free·guest·super_admin)은 삭제 불가.</p>
         </div>
       </section>
 
