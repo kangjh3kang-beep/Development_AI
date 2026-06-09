@@ -141,6 +141,21 @@ _DDL = (
     "label text, group_name text, is_secret boolean DEFAULT true, "
     "updated_at timestamptz DEFAULT now(), updated_by text)"
 )
+# 백업/버전 이력 테이블 — 키가 덮어써지거나 삭제되기 직전의 (암호)값을 스냅샷 보관.
+# 평문은 저장하지 않음(value_enc 그대로 복사). 복구 시 이 행을 골라 되돌린다.
+_DDL_BACKUP = (
+    "CREATE TABLE IF NOT EXISTS platform_secret_backups ("
+    "  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),"
+    "  name text NOT NULL, value_enc text NOT NULL,"
+    "  label text, group_name text, is_secret boolean DEFAULT true,"
+    "  action text NOT NULL,"  # 'overwrite'(수정 직전) 또는 'delete'(삭제 직전)
+    "  backed_up_at timestamptz DEFAULT now(), updated_by text)"
+)
+# 키 이름으로 이력 조회를 빠르게(많이 안 쌓여도 안전).
+_DDL_BACKUP_IDX = (
+    "CREATE INDEX IF NOT EXISTS ix_secret_backups_name "
+    "ON platform_secret_backups(name)"
+)
 # 기존 테이블(구버전) 보강 — 신규 메타 컬럼 멱등 추가
 _ALTERS = [
     "ALTER TABLE platform_secrets ADD COLUMN IF NOT EXISTS label text",
@@ -160,6 +175,12 @@ async def _ensure_table(db: AsyncSession) -> None:
             await db.execute(text(a))
         except Exception:  # noqa: BLE001 — 권한/구버전 PG 폴백
             pass
+    # 백업 이력 테이블도 같은 흐름에서 멱등 생성(앱 부팅·최초 호출 시).
+    try:
+        await db.execute(text(_DDL_BACKUP))
+        await db.execute(text(_DDL_BACKUP_IDX))
+    except Exception:  # noqa: BLE001 — 권한/구버전 PG 폴백
+        pass
     await db.commit()
 
 
@@ -204,6 +225,30 @@ def _mask(value: str) -> str:
     if len(v) <= 8:
         return "•" * len(v)
     return f"{v[:3]}{'•' * 6}{v[-3:]}"
+
+
+async def _snapshot_existing(db: AsyncSession, name: str, action: str) -> bool:
+    """덮어쓰기/삭제 직전, platform_secrets 의 현재 행을 백업 테이블로 복사.
+
+    값은 암호문(value_enc) 그대로 복사 — 평문은 절대 다루지 않는다.
+    기존 행이 없으면(처음 등록) 백업할 게 없으므로 False.
+    """
+    row = (await db.execute(
+        text("SELECT value_enc, label, group_name, is_secret, updated_by "
+             "FROM platform_secrets WHERE name=:n"),
+        {"n": name},
+    )).first()
+    if not row:
+        return False
+    # 직전에 누가 마지막으로 바꿨는지(updated_by)도 같이 보존.
+    enc, label, grp, is_sec, by = row[0], row[1], row[2], row[3], row[4]
+    await db.execute(
+        text("INSERT INTO platform_secret_backups"
+             "(name, value_enc, label, group_name, is_secret, action, updated_by) "
+             "VALUES (:n, :v, :l, :g, :s, :a, :by)"),
+        {"n": name, "v": enc, "l": label, "g": grp, "s": is_sec, "a": action, "by": by},
+    )
+    return True
 
 
 async def load_into_env(db: AsyncSession) -> int:
@@ -300,6 +345,11 @@ async def set_secret(
         f_secret = True if secret is None else bool(secret)
 
     await _ensure_table(db)
+    # 덮어쓰기 직전: 기존 값이 있으면 백업 스냅샷(실수 수정 시 되돌릴 수 있게).
+    try:
+        await _snapshot_existing(db, name, action="overwrite")
+    except Exception as e:  # noqa: BLE001 — 백업 실패가 본 저장을 막지 않음(best-effort)
+        logger.warning("시크릿 백업 스냅샷 실패", name=name, err=str(e)[:120])
     enc = _encrypt(value)
     await db.execute(
         text("INSERT INTO platform_secrets(name, value_enc, label, group_name, is_secret, updated_at, updated_by) "
@@ -319,6 +369,11 @@ async def delete_secret(db: AsyncSession, name: str) -> None:
         raise ValueError(f"허용되지 않는 키 이름입니다: {name}")
     _capture_baseline()
     await _ensure_table(db)
+    # 삭제 직전: 현재 값을 백업 스냅샷(실수 삭제 시 복구할 수 있게).
+    try:
+        await _snapshot_existing(db, name, action="delete")
+    except Exception as e:  # noqa: BLE001 — 백업 실패가 삭제를 막지 않음(best-effort)
+        logger.warning("시크릿 삭제 백업 스냅샷 실패", name=name, err=str(e)[:120])
     await db.execute(text("DELETE FROM platform_secrets WHERE name=:n"), {"n": name})
     await db.commit()
     base = _ENV_BASELINE.get(name)
@@ -326,3 +381,74 @@ async def delete_secret(db: AsyncSession, name: str) -> None:
         os.environ[name] = base
     else:
         os.environ.pop(name, None)
+
+
+async def list_backups(db: AsyncSession, name: str | None = None) -> list[dict[str, Any]]:
+    """백업(버전) 이력 — 키명·동작·시점·작업자·마스킹값(평문 절대 미노출).
+
+    name 을 주면 그 키의 이력만, 없으면 전체. 최신 백업이 위로 오게 정렬.
+    """
+    await _ensure_table(db)
+    sql = ("SELECT id, name, value_enc, label, group_name, is_secret, "
+           "action, backed_up_at, updated_by FROM platform_secret_backups")
+    params: dict[str, Any] = {}
+    if name:
+        sql += " WHERE name=:n"
+        params["n"] = (name or "").strip()
+    sql += " ORDER BY backed_up_at DESC"
+    out: list[dict[str, Any]] = []
+    try:
+        rows = (await db.execute(text(sql), params)).all()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("시크릿 백업 이력 조회 실패", err=str(e)[:120])
+        return out
+    for r in rows:
+        bid, nm, enc, label, grp, is_sec, action, at, by = r
+        # 마스킹 미리보기 — secret 키는 복호화 후 마스킹, 평문은 절대 반환 안 함.
+        plain = _decrypt(enc)
+        if plain is None:
+            masked = "(복호화 불가 — 마스터키 변경 가능성)"
+        elif is_sec:
+            masked = _mask(plain)
+        else:
+            masked = plain  # 공개 키(secret=False)는 원래 평문 노출 정책과 동일
+        out.append({
+            "id": str(bid),
+            "name": nm,
+            "label": label,
+            "group": grp,
+            "secret": bool(is_sec),
+            "action": action,
+            "backed_up_at": at.isoformat() if at else None,
+            "updated_by": by,
+            "masked": masked,
+        })
+    return out
+
+
+async def restore_secret(db: AsyncSession, backup_id: str, updated_by: str | None) -> None:
+    """백업 한 건을 골라 현재 값으로 복구 — 그 시점의 value_enc 를 복호화→set_secret 재설정.
+
+    복구 전 현재 값은 set_secret 안에서 다시 백업되므로 안전(되돌리기의 되돌리기 가능).
+    복호화 실패(마스터키 변경 등)면 명확한 에러를 던진다.
+    """
+    backup_id = (backup_id or "").strip()
+    if not backup_id:
+        raise ValueError("backup_id 가 비어 있습니다.")
+    await _ensure_table(db)
+    row = (await db.execute(
+        text("SELECT name, value_enc FROM platform_secret_backups WHERE id=CAST(:i AS uuid)"),
+        {"i": backup_id},
+    )).first()
+    if not row:
+        raise ValueError(f"해당 백업을 찾을 수 없습니다: {backup_id}")
+    name, enc = row[0], row[1]
+    if not is_allowed(name):
+        raise ValueError(f"복구할 수 없는 보호 키입니다: {name}")
+    plain = _decrypt(enc)
+    if plain is None:
+        raise ValueError(
+            "백업 값을 복호화할 수 없습니다(마스터키가 변경되었을 수 있습니다). 복구를 진행할 수 없습니다."
+        )
+    # set_secret 이 현재 값을 다시 백업한 뒤 이 값으로 재설정(env 즉시 반영 포함).
+    await set_secret(db, name, plain, updated_by)

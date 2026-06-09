@@ -1,11 +1,13 @@
 """관리자 전용 — 플랫폼 연동 API 키 관리(입력/수정/삭제 + 사용자 임의추가).
 
 엔드포인트(prefix=/api/v1/admin/secrets):
-- GET  /            : 분류별·항목별 키 상태(설정여부·마스킹·출처). 평문 미노출.
-- PUT  /{name}      : 키 입력/수정(카탈로그 키 또는 사용자추가 키 갱신).
-- POST /            : 사용자 임의추가(name+value+분류/라벨) — 향후 코드수정 불필요.
-- DELETE /{name}    : 키 삭제(.env 원본 복원/제거).
-- POST /{name}/test : 등기/공공데이터 키 간이 연결 테스트(선택).
+- GET  /                       : 분류별·항목별 키 상태(설정여부·마스킹·출처). 평문 미노출.
+- PUT  /{name}                 : 키 입력/수정(카탈로그 키 또는 사용자추가 키 갱신).
+- POST /                       : 사용자 임의추가(name+value+분류/라벨) — 향후 코드수정 불필요.
+- DELETE /{name}               : 키 삭제(.env 원본 복원/제거).
+- POST /{name}/test            : 등기/공공데이터 키 간이 연결 테스트(선택).
+- GET  /{name}/backups         : 그 키의 백업(버전) 이력(마스킹, 평문 미노출).
+- POST /backups/{id}/restore   : 백업 한 건을 현재 값으로 복구.
 
 권한: role ∈ 관리자군(JWT). 단일 워커라 변경 즉시 반영(재배포 불필요).
 """
@@ -18,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.api.auth.jwt_handler import CurrentUser, get_current_user
 from apps.api.database.session import get_db
+from app.core.audit import audit_admin_action
 from app.services.secrets import secret_store
 
 router = APIRouter(prefix="/api/v1/admin/secrets", tags=["관리자·API키"])
@@ -76,6 +79,11 @@ async def set_secret(
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    # 감사기록(누가·언제·어떤키 변경) — 값은 절대 기록하지 않음.
+    await audit_admin_action(
+        actor_id=str(current.user_id), actor_role=current.role,
+        action="secret.set", target=name,
+    )
     return {"status": "ok", "name": name}
 
 
@@ -94,6 +102,10 @@ async def add_secret(
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    await audit_admin_action(
+        actor_id=str(current.user_id), actor_role=current.role,
+        action="secret.add", target=req.name.strip(),
+    )
     return {"status": "ok", "name": req.name.strip()}
 
 
@@ -109,7 +121,42 @@ async def delete_secret(
         await secret_store.delete_secret(db, name)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    await audit_admin_action(
+        actor_id=str(current.user_id), actor_role=current.role,
+        action="secret.delete", target=name,
+    )
     return {"status": "ok", "name": name}
+
+
+@router.get("/{name}/backups")
+async def list_secret_backups(
+    name: str,
+    current: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """그 키의 백업(버전) 이력 — 마스킹값·동작·시점·작업자. 평문 절대 미반환."""
+    _require_admin(current)
+    items = await secret_store.list_backups(db, name)
+    return {"name": name, "items": items}
+
+
+@router.post("/backups/{backup_id}/restore")
+async def restore_secret_backup(
+    backup_id: str,
+    current: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """백업 한 건을 현재 값으로 복구 — 현재 값은 복구 전 자동 백업됨. 평문 미반환."""
+    _require_admin(current)
+    try:
+        await secret_store.restore_secret(db, backup_id, str(current.user_id))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    await audit_admin_action(
+        actor_id=str(current.user_id), actor_role=current.role,
+        action="secret.restore", target=backup_id,
+    )
+    return {"status": "ok", "backup_id": backup_id}
 
 
 @router.post("/{name}/test")
