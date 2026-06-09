@@ -167,6 +167,18 @@ export function KakaoCallbackWorkspaceClient({
     };
   }, [code, hasRequiredParams, labels.error, labels.success, redirectUri, locale]);
 
+  // ★인증 성공 시 자동으로 홈(대시보드)으로 이동 — 성공화면에 멈춰 "오류처럼" 보이는 문제 해결.
+  //  세션 저장(persistTokens) 직후 약간의 지연으로 성공 메시지를 보여준 뒤 전환한다.
+  useEffect(() => {
+    if (requestState.status !== "success") {
+      return;
+    }
+    const timer = setTimeout(() => {
+      router.replace(`/${locale}`);
+    }, 800);
+    return () => clearTimeout(timer);
+  }, [requestState.status, router, locale]);
+
   const status = hasRequiredParams ? requestState.status : "error";
   const message = hasRequiredParams ? requestState.message : labels.missingParams;
 
