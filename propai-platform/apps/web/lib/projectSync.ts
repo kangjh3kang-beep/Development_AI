@@ -31,7 +31,15 @@ const PROJECT_PERSIST_KEYS = [
   "propai-project-context",   // useProjectContextStore (snapshots·analysisResults·siteAnalysis 등)
   "propai-land-schedule",     // useLandScheduleStore
   "propai-project-storage",   // useProjectStore
+  "propai-system-storage",    // useSystemStore (LLM provider·입력 API키 등 민감)
   "propai_pipeline_history",  // 파이프라인 분석이력(프로젝트 상세)
+  "propai_precheck_handoff",  // PreCheck 분석결과 전달(localStorage일 수도)
+];
+// 주소+컨텍스트 해시로 만들어지는 동적 캐시 키(개수 가변) — 접두사 패턴으로 일괄 제거.
+const PROJECT_PERSIST_PREFIXES = [
+  "propai_panel_",        // 전문가 패널 분석결과(9유형)
+  "propai_scenario_",     // 개발 시나리오 시뮬레이션
+  "propai_verification_", // 검증 배지 캐시
 ];
 
 /** JWT 페이로드에서 사용자 식별자(sub/user_id)를 디코드. 실패 시 null. */
@@ -67,6 +75,22 @@ export function clearAllProjectData(): void {
   for (const k of PROJECT_PERSIST_KEYS) {
     try { window.localStorage.removeItem(k); } catch { /* noop */ }
   }
+  // 동적 해시 캐시 키(propai_panel_*·propai_scenario_*·propai_verification_*) 패턴 일괄 제거.
+  try {
+    for (const k of Object.keys(window.localStorage)) {
+      if (PROJECT_PERSIST_PREFIXES.some((p) => k.startsWith(p))) {
+        try { window.localStorage.removeItem(k); } catch { /* noop */ }
+      }
+    }
+  } catch { /* noop */ }
+  // 세션 저장소의 현장앱 토큰·핸드오프도 정리(계정 전환 시 잔존 방지).
+  try {
+    for (const k of Object.keys(window.sessionStorage)) {
+      if (k.startsWith("propai_site_token:") || k === "propai_precheck_handoff") {
+        try { window.sessionStorage.removeItem(k); } catch { /* noop */ }
+      }
+    }
+  } catch { /* noop */ }
 }
 
 /** 로그아웃: 분석데이터 + 소유자 표식 모두 제거(다음 로그인은 새 계정으로 깨끗이 시작). */
