@@ -365,9 +365,16 @@ async def nearby_transactions_map(req: NearbyMapRequest):
     if (not lawd_cd or len(lawd_cd) < 5) and req.address:
         try:
             from apps.api.app.services.external_api.vworld_service import VWorldService
-            geo = await VWorldService().geocode_address(req.address)
-            if geo and geo.get("pnu"):
-                pnu = str(geo["pnu"])
+            vworld = VWorldService()
+            geo = await vworld.geocode_address(req.address)
+            cand_pnu = (geo or {}).get("pnu")
+            # 지번 PARCEL 미발견(역삼동 13 등)이라도 좌표는 나오므로, 좌표로 필지를
+            # 직접 조회(point→parcel)해 pnu를 얻는다. parcel-boundaries와 동일 2차 폴백.
+            if not cand_pnu and geo and geo.get("lat") and geo.get("lon"):
+                pp = await vworld.get_parcel_by_point(geo["lat"], geo["lon"])
+                cand_pnu = (pp or {}).get("pnu")
+            if cand_pnu:
+                pnu = str(cand_pnu)
                 lawd_cd = pnu[:5]
         except Exception:  # noqa: BLE001
             pass
