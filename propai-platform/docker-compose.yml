@@ -2,9 +2,13 @@ version: '3.8'
 
 services:
   web:
-    build: 
+    build:
       context: .
       dockerfile: Dockerfile.web
+      # 클라이언트 번들 인라인용 공개키(.env에서 치환). 런타임 env_file과 별개로 빌드타임 필요.
+      args:
+        NEXT_PUBLIC_KAKAO_MAP_KEY: ${NEXT_PUBLIC_KAKAO_MAP_KEY:-}
+        NEXT_PUBLIC_VWORLD_API_KEY: ${NEXT_PUBLIC_VWORLD_API_KEY:-}
     image: propai-web:oracle
     restart: always
     expose:

@@ -7,6 +7,13 @@ FROM base AS builder
 WORKDIR /app
 COPY . .
 RUN pnpm install --frozen-lockfile
+# NEXT_PUBLIC_* 는 빌드타임에 클라이언트 번들로 인라인된다. .env는 .dockerignore로
+# 컨텍스트에서 제외되므로(런타임 env_file로만 주입), 클라이언트가 직접 쓰는 공개키는
+# build-arg → ENV로 넘겨 next build가 인라인하게 한다(카카오맵 JS SDK 키 등).
+ARG NEXT_PUBLIC_KAKAO_MAP_KEY=""
+ARG NEXT_PUBLIC_VWORLD_API_KEY=""
+ENV NEXT_PUBLIC_KAKAO_MAP_KEY=${NEXT_PUBLIC_KAKAO_MAP_KEY}
+ENV NEXT_PUBLIC_VWORLD_API_KEY=${NEXT_PUBLIC_VWORLD_API_KEY}
 RUN pnpm --filter=@propai/web run build
 
 FROM base AS runner
