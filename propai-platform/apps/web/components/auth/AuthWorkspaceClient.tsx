@@ -839,9 +839,13 @@ export function AuthWorkspaceClient({
                         style={{ backgroundColor: "#FEE500", color: "#000000" }}
                         onClick={async () => {
                           try {
+                            // ★카카오는 콜백 시 redirect_uri를 돌려주지 않으므로(코드만 전달),
+                            //  로그인 단계에서 "현재 도메인 기준 콜백주소"를 명시 전달해야
+                            //  콜백 교환 때와 정확히 일치한다(불일치=KOE006). 환경(www/no-www/로컬) 무관 정확.
+                            const redirectUri = `${window.location.origin}/${locale}/kakao/callback`;
                             // 서버가 REST 키로 카카오 인가 URL을 조립해 반환(키 비노출) → 이동.
                             const res = await apiClient.get<{ url: string }>(
-                              "/auth/kakao/login-url",
+                              `/auth/kakao/login-url?redirect_uri=${encodeURIComponent(redirectUri)}`,
                               { useMock: false },
                             );
                             if (res?.url) window.location.href = res.url;

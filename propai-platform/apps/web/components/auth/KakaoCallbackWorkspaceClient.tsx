@@ -125,10 +125,16 @@ export function KakaoCallbackWorkspaceClient({
 
     const run = async () => {
       try {
+        // ★카카오는 콜백 URL에 redirect_uri를 붙여주지 않는다(code만 전달) →
+        //  쿼리파라미터(redirectUri)는 실제 플로우에서 거의 항상 null이다.
+        //  토큰 교환의 redirect_uri는 "로그인 단계에서 보낸 값"과 1바이트도 다르면 안 되므로
+        //  현재 페이지(=등록된 콜백 주소)에서 결정적으로 재구성한다. 쿼리값이 있으면 우선 사용.
+        const effectiveRedirectUri =
+          redirectUri || `${window.location.origin}/${locale}/kakao/callback`;
         const tokens = await apiClient.post<TokenResponse>("/auth/kakao/callback", {
           body: {
             code,
-            redirect_uri: redirectUri,
+            redirect_uri: effectiveRedirectUri,
           },
           useMock: false,
         });
@@ -159,7 +165,7 @@ export function KakaoCallbackWorkspaceClient({
     return () => {
       active = false;
     };
-  }, [code, hasRequiredParams, labels.error, labels.success, redirectUri]);
+  }, [code, hasRequiredParams, labels.error, labels.success, redirectUri, locale]);
 
   const status = hasRequiredParams ? requestState.status : "error";
   const message = hasRequiredParams ? requestState.message : labels.missingParams;
