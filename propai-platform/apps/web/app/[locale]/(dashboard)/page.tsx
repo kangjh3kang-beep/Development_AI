@@ -48,7 +48,7 @@ export default async function DashboardPage({ params }: DashboardPageProps) {
   }
 
   return (
-    <div className="flex flex-col gap-12 pb-16">
+    <div className="flex flex-col gap-6 pb-16 sm:gap-7">
       {/* ── 시작 안내 위자드 (최초 방문 시에만 표시) ── */}
       <OnboardingWizard />
 
