@@ -93,6 +93,9 @@ CATALOG: list[dict[str, Any]] = [
      "secret": True, "kind": "text", "guide_url": "https://console.anthropic.com"},
     {"name": "OPENAI_API_KEY", "label": "OpenAI API Key", "group": "AI(LLM)",
      "secret": True, "kind": "text", "guide_url": "https://platform.openai.com"},
+    {"name": "REPLICATE_API_TOKEN", "label": "Replicate API 토큰(AI 포토리얼 렌더)", "group": "AI(LLM)",
+     "secret": True, "kind": "text", "guide_url": "https://replicate.com/account/api-tokens",
+     "desc": "3D 뷰포트→포토리얼 렌더(ControlNet) 생성에 사용. 미설정 시 렌더 메뉴는 정직하게 '키 미설정' 안내(가짜 이미지 없음)."},
     # 인증·소셜 로그인(카카오 등) — 변경 시 백엔드 재시작 후 반영(pydantic Settings 캐시).
     {"name": "KAKAO_REST_API_KEY", "label": "카카오 REST API 키(로그인 client_id)", "group": "인증·소셜",
      "secret": True, "kind": "text", "guide_url": "https://developers.kakao.com"},

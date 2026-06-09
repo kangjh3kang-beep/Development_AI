@@ -32,6 +32,7 @@ _DEFAULT_CONFIG: dict[str, Any] = {
         "project_create": 2000,           # 프로젝트 생성 건당
         "land_analysis": 2000,            # 토지분석(구독자) 건당
         "sales_provision": 50000,         # 분양현장 생성 건당(관리자 책정)
+        "photoreal_render": 3000,         # AI 포토리얼 렌더(외부 GPU 호출) 건당
         "registry_issue": 1200,           # 등기부등본 발급·열람 건당(AI 분석 없음)
         "registry_analysis": 2000,        # 등기부등본 권리분석(AI) 건당 — 발급/열람과 차별화
         "stages": {s: 2000 for s in _PIPELINE_STAGES},  # 파이프라인 단계별 건당
@@ -50,6 +51,7 @@ _CONFIG: dict[str, Any] = {
         "project_create": _DEFAULT_CONFIG["service_fees"]["project_create"],
         "land_analysis": _DEFAULT_CONFIG["service_fees"]["land_analysis"],
         "sales_provision": _DEFAULT_CONFIG["service_fees"]["sales_provision"],
+        "photoreal_render": _DEFAULT_CONFIG["service_fees"]["photoreal_render"],
         "registry_issue": _DEFAULT_CONFIG["service_fees"]["registry_issue"],
         "registry_analysis": _DEFAULT_CONFIG["service_fees"]["registry_analysis"],
         "stages": dict(_DEFAULT_CONFIG["service_fees"]["stages"]),
@@ -83,7 +85,8 @@ def apply_config(override: dict[str, Any]) -> None:
                 if k in vals:
                     _CONFIG["tiers"][tier][k] = vals[k]
     sf = override.get("service_fees") or {}
-    for k in ("project_create", "land_analysis", "sales_provision", "registry_issue", "registry_analysis"):
+    for k in ("project_create", "land_analysis", "sales_provision", "photoreal_render",
+              "registry_issue", "registry_analysis"):
         if k in sf:
             _CONFIG["service_fees"][k] = sf[k]
     for s, v in (sf.get("stages") or {}).items():
@@ -106,6 +109,10 @@ def service_fee_land_analysis() -> float:
 
 def service_fee_sales_provision() -> float:
     return float(_CONFIG["service_fees"].get("sales_provision", 0))
+
+
+def service_fee_photoreal_render() -> float:
+    return float(_CONFIG["service_fees"].get("photoreal_render", 3000))
 
 
 def service_fee_registry_analysis() -> float:

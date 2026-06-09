@@ -1,0 +1,183 @@
+"""AI 포토리얼 렌더 서비스 — 3D 뷰포트 이미지를 ControlNet으로 사실적 외관 이미지로 변환.
+
+핵심 원칙(정직·비파괴):
+- 외부 렌더 API 키(REPLICATE_API_TOKEN)가 없으면 **가짜 이미지를 만들지 않고**
+  status="no_key" 안내만 돌려준다(에러 아님, 정상 200 응답).
+- 원본 3D/설계 모델은 절대 바꾸지 않는다(이미지만 새로 생성하는 비파괴 작업).
+- 키·토큰은 로그·응답에 평문으로 절대 노출하지 않는다.
+
+동작:
+1. platform_secrets→env 순으로 렌더 API 키를 찾는다(secret_store가 시작 시 env에 오버레이).
+2. 키가 있으면 Replicate REST API(ControlNet 계열)에 입력 이미지(구조 보존)+스타일
+   프롬프트로 예측을 요청하고, 완료까지 폴링해 결과 이미지 URL을 받는다.
+3. 외부 호출이 실패하면 status="error"로 사유를 정직하게 알린다(가짜 이미지 없음).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import os
+from typing import Any
+
+import httpx
+import structlog
+
+logger = structlog.get_logger(__name__)
+
+# 렌더 API 키를 찾는 환경변수 후보(우선순위). secret_store가 DB→env로 오버레이해 둔다.
+_KEY_ENV_CANDIDATES = ("REPLICATE_API_TOKEN", "REPLICATE_API_KEY")
+
+# Replicate ControlNet 모델 — 입력 이미지의 구조(깊이/윤곽)를 보존하며 사실적으로 재질감 입힘.
+# 버전 해시는 변동될 수 있어 env(REPLICATE_RENDER_VERSION)로 덮어쓸 수 있게 한다.
+_DEFAULT_MODEL_VERSION = (
+    "435061a1b5a4c1e26740464bf786efdfa9cb3a3ac488595a2de23e143fdb0117"  # lucataco/sdxl-controlnet (canny)
+)
+
+# 스타일(한국어 라벨)→영문 프롬프트 보강어. 기본은 '실사'.
+_STYLE_PROMPT = {
+    "주간": "bright daylight, clear blue sky, soft natural shadows",
+    "야간": "night scene, warm interior lights glowing, dusk sky, cinematic exterior lighting",
+    "실사": "photorealistic daylight, realistic materials, ultra detailed",
+}
+
+_BASE_PROMPT = (
+    "photorealistic architectural exterior rendering of a modern korean building, "
+    "high quality, professional architecture photography, realistic glass and concrete materials"
+)
+_NEGATIVE_PROMPT = "cartoon, sketch, lowres, blurry, distorted, watermark, text, people"
+
+
+def get_render_api_key() -> str | None:
+    """렌더 API 키 조회(platform_secrets가 오버레이한 env에서). 없으면 None.
+
+    secret_store.load_into_env()가 앱 시작 시 DB 암호화 키를 os.environ에 덮어쓰므로
+    여기서는 env만 보면 'DB 설정 키'와 '.env 키'를 모두 자연스럽게 포함한다.
+    """
+    for name in _KEY_ENV_CANDIDATES:
+        val = (os.getenv(name) or "").strip()
+        if val:
+            return val
+    return None
+
+
+def _style_prompt(style: str) -> str:
+    extra = _STYLE_PROMPT.get((style or "").strip(), _STYLE_PROMPT["실사"])
+    return f"{_BASE_PROMPT}, {extra}"
+
+
+def _ensure_data_uri(image_base64: str) -> str:
+    """프론트가 순수 base64만 보내면 data URI로 감싼다(Replicate는 data URI 허용)."""
+    s = (image_base64 or "").strip()
+    if s.startswith("data:"):
+        return s
+    return f"data:image/png;base64,{s}"
+
+
+async def render_photoreal(
+    image_base64: str,
+    *,
+    style: str = "실사",
+    strength: float = 0.6,
+    timeout_s: float = 90.0,
+) -> dict[str, Any]:
+    """3D 뷰포트 이미지를 포토리얼 렌더로 변환. 비파괴(원본 불변).
+
+    반환 status:
+    - "no_key": 키 미설정 → 정직 안내(가짜 이미지 없음).
+    - "ok":     image_url 포함(외부 렌더 성공).
+    - "error":  외부 호출 실패 사유(가짜 이미지 없음).
+    """
+    api_key = get_render_api_key()
+    if not api_key:
+        return {
+            "status": "no_key",
+            "message": "AI 렌더 API 키가 설정되지 않았습니다. 관리자 키 설정 후 이용 가능합니다.",
+        }
+
+    if not (image_base64 or "").strip():
+        return {"status": "error", "message": "입력 3D 이미지가 비어 있습니다."}
+
+    # strength(0~1) 보정 — ControlNet conditioning 가중치로 사용(구조 보존 강도).
+    try:
+        cond_scale = max(0.0, min(1.0, float(strength)))
+    except (TypeError, ValueError):
+        cond_scale = 0.6
+
+    model_version = (os.getenv("REPLICATE_RENDER_VERSION") or "").strip() or _DEFAULT_MODEL_VERSION
+    image_uri = _ensure_data_uri(image_base64)
+
+    payload = {
+        "version": model_version,
+        "input": {
+            "image": image_uri,
+            "prompt": _style_prompt(style),
+            "negative_prompt": _NEGATIVE_PROMPT,
+            "condition_scale": cond_scale,
+            "num_inference_steps": 30,
+        },
+    }
+    headers = {
+        "Authorization": f"Bearer {api_key}",  # 토큰은 헤더에만, 로그/응답 미노출
+        "Content-Type": "application/json",
+        "Prefer": "wait",  # 가능하면 완료까지 대기(빠른 모델은 단일 호출로 종료)
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=timeout_s) as client:
+            resp = await client.post(
+                "https://api.replicate.com/v1/predictions", json=payload, headers=headers
+            )
+            if resp.status_code not in (200, 201):
+                # 외부 사유는 노출하되 키는 포함되지 않는 본문만(요약).
+                logger.warning("포토리얼 렌더 외부호출 비정상", code=resp.status_code)
+                return {
+                    "status": "error",
+                    "message": f"렌더 서버 응답 오류(HTTP {resp.status_code}). 잠시 후 다시 시도해 주세요.",
+                }
+            data = resp.json()
+            image_url = await _poll_until_done(client, data, headers, timeout_s)
+            if not image_url:
+                return {
+                    "status": "error",
+                    "message": "렌더 결과 이미지를 받지 못했습니다(시간 초과 또는 실패).",
+                }
+            return {"status": "ok", "image_url": image_url}
+    except httpx.HTTPError as e:
+        logger.warning("포토리얼 렌더 통신 오류", err=str(e)[:120])
+        return {"status": "error", "message": "렌더 서버에 연결하지 못했습니다. 네트워크를 확인해 주세요."}
+    except Exception as e:  # noqa: BLE001
+        logger.warning("포토리얼 렌더 처리 오류", err=str(e)[:120])
+        return {"status": "error", "message": "렌더 처리 중 오류가 발생했습니다."}
+
+
+async def _poll_until_done(
+    client: httpx.AsyncClient, data: dict[str, Any], headers: dict[str, str], timeout_s: float
+) -> str | None:
+    """예측이 끝날 때까지 get_url을 폴링해 결과 이미지 URL을 추출. 실패/시간초과 시 None."""
+    deadline = asyncio.get_event_loop().time() + timeout_s
+    while True:
+        status = data.get("status")
+        if status == "succeeded":
+            return _extract_image_url(data.get("output"))
+        if status in ("failed", "canceled"):
+            return None
+        # 진행 중 — get_url로 재조회(없으면 더 못 기다림).
+        get_url = (data.get("urls") or {}).get("get")
+        if not get_url or asyncio.get_event_loop().time() >= deadline:
+            return None
+        await asyncio.sleep(1.5)
+        r = await client.get(get_url, headers={"Authorization": headers["Authorization"]})
+        if r.status_code != 200:
+            return None
+        data = r.json()
+
+
+def _extract_image_url(output: Any) -> str | None:
+    """Replicate output(문자열 또는 리스트)에서 첫 이미지 URL을 꺼낸다."""
+    if isinstance(output, str) and output.startswith("http"):
+        return output
+    if isinstance(output, list):
+        for item in output:
+            if isinstance(item, str) and item.startswith("http"):
+                return item
+    return None

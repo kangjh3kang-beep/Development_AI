@@ -1,14 +1,15 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Canvas, useThree } from "@react-three/fiber";
-import { OrbitControls, Grid } from "@react-three/drei";
+import { CameraControls, Grid } from "@react-three/drei";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import * as THREE from "three";
 import { motion } from "framer-motion";
 import CADEditor from "./CADEditor";
 import { GenerativeDesignPanel } from "@/components/cad/GenerativeDesignPanel";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { apiClient, ApiClientError } from "@/lib/api-client";
 
 // 도면 코드 → 한글 명칭 (SVGDrawingService.generate_full_drawing_set 기준)
 const DRAWING_LABELS: Record<string, string> = {
@@ -84,23 +85,111 @@ function BuildingModel({ scene }: { scene: THREE.Group | null }) {
   );
 }
 
+// ── 카메라 시점 프리셋(비전문가용 시점 전환) ──────────────────────
+// 각 프리셋은 카메라 위치(pos)와 바라보는 중심(target)을 "건물크기 배수"로 정의한다.
+// 실제 좌표는 모델 크기(span)에 비례해 계산하므로 작은 단독주택·큰 아파트 모두 잘 잡힌다.
+type CamPresetKey = "aerial" | "perspective" | "front" | "side" | "reset";
+
+interface CamPreset {
+  label: string; // 버튼 한글 라벨(비전문가용)
+  icon: string;
+  // span(건물 한 변 기준 크기)을 받아 [카메라위치, 바라보는중심]을 돌려준다.
+  compute: (span: number, height: number) => { pos: [number, number, number]; target: [number, number, number] };
+}
+
+const CAM_PRESETS: Record<CamPresetKey, CamPreset> = {
+  // 조감도: 위에서 약 45° 내려다보기(전체 배치 파악)
+  aerial: {
+    label: "조감도",
+    icon: "▲",
+    compute: (s, h) => ({ pos: [s * 0.9, s * 1.3, s * 0.9], target: [0, h * 0.3, 0] }),
+  },
+  // 투시도: 사람 눈높이(보행자 시점)에서 비스듬히 보기
+  perspective: {
+    label: "투시도",
+    icon: "◉",
+    compute: (s, h) => ({ pos: [s * 1.6, h * 0.18, s * 1.6], target: [0, h * 0.35, 0] }),
+  },
+  // 정면도: 건물 정면을 똑바로 보기
+  front: {
+    label: "정면",
+    icon: "▮",
+    compute: (s, h) => ({ pos: [0, h * 0.5, s * 2.1], target: [0, h * 0.5, 0] }),
+  },
+  // 측면도: 건물 옆면을 똑바로 보기
+  side: {
+    label: "측면",
+    icon: "◧",
+    compute: (s, h) => ({ pos: [s * 2.1, h * 0.5, 0], target: [0, h * 0.5, 0] }),
+  },
+  // 리셋: 기본 진입 시점으로 복귀
+  reset: {
+    label: "리셋",
+    icon: "↺",
+    compute: (s, h) => ({ pos: [s * 1.1, s * 0.9, s * 1.1], target: [0, h * 0.3, 0] }),
+  },
+};
+
 /**
- * frameloop="demand"(정지화면에서 렌더 멈춤)일 때, 자동회전이 켜져 있는 동안에는
- * 매 프레임 다시 그리도록 invalidate를 호출해 주는 작은 다리 컴포넌트.
- * 자동회전이 꺼지면 호출하지 않아 메인스레드 점유 없이 화면이 멈춘다.
+ * 카메라 제어 + 시점 프리셋 보간.
+ * drei <CameraControls>는 setLookAt(.., enableTransition)로 목표 시점까지 "부드럽게 보간"하며,
+ * 보간 중에만 내부적으로 invalidate()를 호출하고 도달하면 멈춘다(frameloop="demand"와 완벽 호환).
+ * 따라서 수동 useFrame/lerp 없이도 성능 처방(보간 중에만 렌더, 도달 후 정지)이 그대로 지켜진다.
+ *
+ * @param preset    현재 적용할 프리셋 키(변경 시 해당 시점으로 보간)
+ * @param presetSeq 같은 프리셋을 다시 눌러도 재적용되도록 하는 단조 증가 카운터
+ * @param span      모델 크기(한 변 기준) — 프리셋 거리 산정의 기준값
+ * @param height    모델 높이 — 시선 높이/중심 산정의 기준값
+ * @param autoRotate 기존 자동회전 토글(신규 추가 아님, 기존 기능 유지)
  */
-function AutoRotateTicker({ active }: { active: boolean }) {
+function CameraRig({
+  controlsRef,
+  preset,
+  presetSeq,
+  span,
+  height,
+  autoRotate,
+}: {
+  controlsRef: React.RefObject<CameraControls | null>;
+  preset: CamPresetKey;
+  presetSeq: number;
+  span: number;
+  height: number;
+  autoRotate: boolean;
+}) {
   const invalidate = useThree((s) => s.invalidate);
+
+  // 프리셋(또는 재적용 카운터) 변경 시 → 목표 시점으로 부드럽게 보간 이동
   useEffect(() => {
-    if (!active) return;
+    const cc = controlsRef.current;
+    if (!cc) return;
+    const { pos, target } = CAM_PRESETS[preset].compute(span, height);
+    // setLookAt(camX,camY,camZ, tgtX,tgtY,tgtZ, enableTransition=true) → 보간 이동
+    cc.setLookAt(pos[0], pos[1], pos[2], target[0], target[1], target[2], true);
+    invalidate(); // 첫 프레임 렌더 트리거(이후는 CameraControls가 보간 동안만 자동 요청)
+  }, [controlsRef, preset, presetSeq, span, height, invalidate]);
+
+  // 자동회전(기존 기능 유지) — 켜진 동안에만 azimuth를 조금씩 돌리고 invalidate.
+  // 꺼지면 루프를 멈춰 메인스레드 점유 0(정지). 신규 autoRotate 추가가 아니라 기존 토글 이식.
+  useEffect(() => {
+    if (!autoRotate) return;
     let raf = 0;
-    const loop = () => {
-      invalidate(); // 다음 프레임 렌더 요청
+    let last = performance.now();
+    const loop = (now: number) => {
+      const cc = controlsRef.current;
+      if (cc) {
+        const dt = (now - last) / 1000;
+        cc.rotate(0.3 * dt, 0, false); // 초당 0.3rad 천천히 회전
+        cc.update(dt);
+        invalidate();
+      }
+      last = now;
       raf = requestAnimationFrame(loop);
     };
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
-  }, [active, invalidate]);
+  }, [autoRotate, controlsRef, invalidate]);
+
   return null;
 }
 
@@ -138,6 +227,35 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
   // AI 설계 해석(DesignInterpreter 6섹션) + 매스 메타
   const [designAi, setDesignAi] = useState<Record<string, string> | null>(null);
   const [bimMass, setBimMass] = useState<Record<string, unknown> | null>(null);
+
+  // ── 3D 카메라 시점 프리셋(비전문가용 시점 전환) ──
+  const camControlsRef = useRef<CameraControls | null>(null);
+  // 현재 활성 시점(버튼 활성 표시용). 기본은 리셋(기본 진입 시점).
+  const [camPreset, setCamPreset] = useState<CamPresetKey>("reset");
+  // 같은 버튼을 다시 눌러도 보간이 재적용되도록 하는 단조 증가 카운터.
+  const [camPresetSeq, setCamPresetSeq] = useState(0);
+  // 로드된 모델의 크기(한 변 기준 span·높이) — 프리셋 거리 산정 기준값(모델 없으면 기본값).
+  const [modelDims, setModelDims] = useState<{ span: number; height: number }>({ span: 30, height: 18 });
+
+  // 시점 프리셋 버튼 핸들러: 같은 프리셋 재선택도 보간 재적용(seq 증가).
+  const applyPreset = useCallback((key: CamPresetKey) => {
+    setCamPreset(key);
+    setCamPresetSeq((n) => n + 1);
+  }, []);
+
+  // ── 3D 렌더러(gl) 참조 — AI 포토리얼 렌더용 뷰포트 캡처에 사용 ──
+  const glRef = useRef<THREE.WebGLRenderer | null>(null);
+
+  // ── AI 포토리얼 렌더(과금 게이트) 상태 ──
+  // 결과 표시는 모달. status: idle→confirm(과금확인)→loading→result|nokey|error
+  type RenderPhase = "idle" | "confirm" | "loading" | "result" | "nokey" | "error";
+  const [renderPhase, setRenderPhase] = useState<RenderPhase>("idle");
+  const [renderStyle, setRenderStyle] = useState<"주간" | "야간" | "실사">("주간");
+  const [renderImage, setRenderImage] = useState<string | null>(null); // 결과 이미지(data URL 또는 원격 URL)
+  const [renderMsg, setRenderMsg] = useState<string | null>(null);
+  const [renderCharged, setRenderCharged] = useState<number | null>(null);
+  // 이 기능 1회 소요 코인(비전문가용 안내). 실제 청구는 백엔드가 charged로 회신.
+  const RENDER_COST_COIN = 5;
 
   // ── 공용 기하 산출: 선택한 건축개요(GFA·층수) 우선, 없으면 대지+용도지역으로 자동 ──
   const resolveSpec = useCallback(async () => {
@@ -276,6 +394,14 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
           (obj as THREE.Mesh).receiveShadow = true;
         }
       });
+      // 모델 크기 측정(바운딩박스) → 카메라 프리셋 거리 산정 기준값.
+      // span=평면 최대 변(폭/깊이 중 큰 값), height=높이. 작은/큰 건물 모두 시점이 잘 잡힌다.
+      const box = new THREE.Box3().setFromObject(gltf.scene);
+      const size = new THREE.Vector3();
+      box.getSize(size);
+      const span = Math.max(8, Math.max(size.x, size.z));
+      const height = Math.max(4, size.y);
+      setModelDims({ span, height });
       setBimScene(gltf.scene);
     } catch (err) {
       setBimError(err instanceof Error ? err.message : "3D 모델을 불러오지 못했습니다.");
@@ -373,6 +499,80 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
     setSvgMap({});
     setActiveCode(null);
   }, []);
+
+  // ── AI 포토리얼 렌더 실행 ──────────────────────────────────────
+  // 현재 3D 뷰포트를 PNG로 캡처해 백엔드로 보내고, AI가 사실적으로 다시 그린 이미지를 받는다.
+  // 과금 게이트: confirm 단계에서 사용자가 "결제하고 렌더"를 눌러야 실제 호출(아래)이 시작된다.
+  const runPhotorealRender = useCallback(async () => {
+    const gl = glRef.current;
+    if (!gl || !bimScene) {
+      // 모델이 없으면 캡처할 화면이 없음 — 정직 안내(가짜 호출 금지).
+      setRenderMsg("먼저 3D 모델을 불러온 뒤 렌더할 수 있습니다.");
+      setRenderPhase("error");
+      return;
+    }
+    setRenderPhase("loading");
+    setRenderMsg(null);
+    setRenderImage(null);
+    setRenderCharged(null);
+
+    let imageBase64 = "";
+    try {
+      // 현재 뷰포트를 PNG로 캡처. Canvas에 preserveDrawingBuffer=true를 줘서
+      // demand 루프(정지 화면)에서도 마지막 프레임이 버퍼에 남아 캡처가 빈 화면이 되지 않는다.
+      imageBase64 = gl.domElement.toDataURL("image/png");
+    } catch {
+      setRenderMsg("뷰포트 캡처에 실패했습니다. 화면을 한 번 움직인 뒤 다시 시도하세요.");
+      setRenderPhase("error");
+      return;
+    }
+
+    try {
+      // 백엔드 계약: status가 ok|no_key|error로 회신(HTTP는 200). apiClient는 비-2xx만 throw.
+      const resp = await apiClient.post<{
+        status: "ok" | "no_key" | "error";
+        image_url?: string;
+        image_base64?: string;
+        message?: string;
+        charged?: number;
+      }>(`/design/${encodeURIComponent(projectId)}/render-photoreal`, {
+        body: { image_base64: imageBase64, style: renderStyle },
+        timeoutMs: 120_000,
+      });
+
+      if (resp.status === "no_key") {
+        // 서버에 렌더 API 키 미설정 — 정직 안내(가짜 이미지 금지).
+        setRenderMsg(resp.message || "AI 렌더는 관리자 키 설정 후 이용 가능합니다.");
+        setRenderPhase("nokey");
+        return;
+      }
+      if (resp.status !== "ok") {
+        setRenderMsg(resp.message || "AI 렌더에 실패했습니다. 잠시 후 다시 시도하세요.");
+        setRenderPhase("error");
+        return;
+      }
+      // 성공: 원격 URL 우선, 없으면 base64. 둘 다 없으면 결과 없음(가짜 표시 금지).
+      const img = resp.image_url || (resp.image_base64
+        ? (resp.image_base64.startsWith("data:") ? resp.image_base64 : `data:image/png;base64,${resp.image_base64}`)
+        : null);
+      if (!img) {
+        setRenderMsg("렌더 결과 이미지를 받지 못했습니다.");
+        setRenderPhase("error");
+        return;
+      }
+      setRenderImage(img);
+      setRenderCharged(typeof resp.charged === "number" ? resp.charged : null);
+      setRenderMsg(resp.message || null);
+      setRenderPhase("result");
+    } catch (err) {
+      // 인증·서버 오류 등 HTTP 비-2xx
+      const msg = err instanceof ApiClientError
+        ? (err.status === 402 ? "코인이 부족합니다. 충전 후 다시 시도하세요." : "AI 렌더 요청이 거부되었습니다.")
+        : "네트워크 오류로 AI 렌더에 실패했습니다.";
+      setRenderMsg(msg);
+      setRenderPhase("error");
+    }
+  }, [projectId, bimScene, renderStyle]);
 
   return (
     <div className="flex flex-col gap-10">
@@ -475,17 +675,64 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
           </div>
         ) : viewMode === "bim_3d" ? (
           <div className="absolute inset-0">
-            {/* frameloop="demand": 정적 화면에서는 렌더를 멈춰 메인스레드 점유 0(자동회전 시에만 ticker가 재요청) */}
-            <Canvas frameloop="demand" camera={{ position: [25, 20, 25], fov: 40 }}>
+            {/* frameloop="demand": 정적 화면에서는 렌더를 멈춰 메인스레드 점유 0.
+                preserveDrawingBuffer=true: AI 렌더용 뷰포트 캡처(toDataURL)가 빈 화면이 되지 않도록 마지막 프레임 보존.
+                onCreated: gl(렌더러) 참조 확보(캡처용). */}
+            <Canvas
+              frameloop="demand"
+              camera={{ position: [25, 20, 25], fov: 40 }}
+              gl={{ preserveDrawingBuffer: true }}
+              onCreated={({ gl }) => { glRef.current = gl; }}
+            >
               <ambientLight intensity={0.8} />
               <directionalLight position={[10, 20, 10]} intensity={1.4} castShadow />
               <directionalLight position={[-10, 10, -10]} intensity={0.5} />
               <pointLight position={[-10, 10, -10]} intensity={0.5} color="#60a5fa" />
-              {/* HDR Environment 제거(네트워크 다운로드·GPU 부하). 기본 조명만 사용. 자동회전은 버튼으로만. */}
-              <OrbitControls makeDefault autoRotate={autoRotate} autoRotateSpeed={0.3} enableDamping dampingFactor={0.05} />
-              <AutoRotateTicker active={autoRotate} />
+              {/* HDR Environment 제거(네트워크 다운로드·GPU 부하). 기본 조명만 사용. 자동회전은 버튼으로만.
+                  CameraControls: 시점 프리셋을 setLookAt으로 "부드럽게 보간 이동"(보간 중에만 invalidate→도달 후 정지). */}
+              <CameraControls ref={camControlsRef} makeDefault dampingFactor={0.06} />
+              <CameraRig
+                controlsRef={camControlsRef}
+                preset={camPreset}
+                presetSeq={camPresetSeq}
+                span={modelDims.span}
+                height={modelDims.height}
+                autoRotate={autoRotate}
+              />
               <BuildingModel scene={bimScene} />
             </Canvas>
+
+            {/* ── 카메라 시점 프리셋 바(비전문가용 시점 전환) ── 모델 없으면 비활성+안내 ── */}
+            <div className="absolute left-6 top-6 z-30 flex flex-col gap-2">
+              <div className="flex items-center gap-1.5 rounded-2xl border border-white/10 bg-black/45 p-1.5 backdrop-blur-xl shadow-2xl">
+                {(Object.keys(CAM_PRESETS) as CamPresetKey[]).map((key) => {
+                  const active = camPreset === key;
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      disabled={!bimScene}
+                      onClick={() => applyPreset(key)}
+                      title={CAM_PRESETS[key].label}
+                      className={`flex items-center gap-1.5 rounded-xl px-3 py-2 text-[10px] font-black uppercase tracking-widest transition-colors disabled:cursor-not-allowed disabled:opacity-30 ${
+                        active
+                          ? "bg-[var(--accent-strong)] text-white shadow-lg"
+                          : "text-white/55 hover:text-white hover:bg-white/10"
+                      }`}
+                    >
+                      <span className="text-[11px] leading-none">{CAM_PRESETS[key].icon}</span>
+                      {CAM_PRESETS[key].label}
+                    </button>
+                  );
+                })}
+              </div>
+              {!bimScene && (
+                <span className="rounded-lg bg-black/40 px-3 py-1 text-[10px] font-bold text-white/45 backdrop-blur-md">
+                  모델을 불러오면 시점 전환을 사용할 수 있어요
+                </span>
+              )}
+            </div>
+
             {/* 자동회전 토글(기본 꺼짐) — 사용자가 명시적으로 켤 때만 회전 */}
             {bimScene && (
               <button
@@ -497,6 +744,18 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
                 }`}
               >
                 {autoRotate ? "■ 회전 정지" : "▶ 자동 회전"}
+              </button>
+            )}
+
+            {/* ── AI 포토리얼 렌더 버튼(과금 게이트) — 모델 있을 때만 노출 ── */}
+            {bimScene && (
+              <button
+                type="button"
+                onClick={() => setRenderPhase("confirm")}
+                className="absolute right-6 top-6 z-30 flex items-center gap-2 rounded-full border border-[var(--accent-strong)]/60 bg-[var(--accent-strong)]/15 px-5 py-2.5 text-[10px] font-black uppercase tracking-widest text-[var(--accent-strong)] backdrop-blur-xl shadow-lg transition-colors hover:bg-[var(--accent-strong)]/25"
+              >
+                <span className="text-[12px] leading-none">✦</span>
+                AI 포토리얼 렌더
               </button>
             )}
             {/* 로딩/에러 오버레이 */}
@@ -622,7 +881,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
         {/* Overlay Tools (only for 3D) */}
         {viewMode === "bim_3d" && (
           <>
-            <div className="absolute right-6 top-6 flex max-h-[88%] w-[340px] flex-col gap-3 z-20 overflow-y-auto">
+            <div className="absolute right-6 top-[5.5rem] flex max-h-[80%] w-[340px] flex-col gap-3 z-20 overflow-y-auto">
               {/* 매스 메타(실측) */}
               {bimMass && (
                 <motion.div
@@ -694,6 +953,173 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
               </div>
             </div>
           </>
+        )}
+
+        {/* ══════════════ AI 포토리얼 렌더 모달(과금 게이트 + 결과/정직안내) ══════════════ */}
+        {renderPhase !== "idle" && (
+          <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/70 p-6 backdrop-blur-sm">
+            <div className="w-full max-w-2xl overflow-hidden rounded-3xl border border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-2xl)]">
+              {/* 헤더 */}
+              <div className="flex items-center justify-between border-b border-[var(--line)] px-6 py-4">
+                <div className="flex items-center gap-2.5">
+                  <span className="text-[var(--accent-strong)]">✦</span>
+                  <h5 className="text-sm font-black uppercase tracking-widest text-[var(--text-primary)]">AI 포토리얼 렌더</h5>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => { setRenderPhase("idle"); setRenderImage(null); setRenderMsg(null); }}
+                  className="rounded-full px-2 text-lg text-[var(--text-hint)] hover:text-[var(--text-primary)]"
+                  aria-label="닫기"
+                >
+                  ×
+                </button>
+              </div>
+
+              <div className="px-6 py-6">
+                {/* ── 1) 과금 확인(실행 전) ── */}
+                {renderPhase === "confirm" && (
+                  <div className="space-y-5">
+                    <p className="text-sm leading-relaxed text-[var(--text-secondary)]">
+                      지금 보이는 <b className="text-[var(--text-primary)]">3D 화면 그대로</b>를 AI가 사실적인 사진처럼 다시 그려드립니다.
+                      원본 3D 모델은 <b className="text-[var(--text-primary)]">바뀌지 않습니다(비파괴)</b>.
+                    </p>
+                    {/* 스타일 선택(쉬운 한글) */}
+                    <div>
+                      <p className="mb-2 text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)]">렌더 스타일</p>
+                      <div className="flex gap-2">
+                        {(["주간", "야간", "실사"] as const).map((s) => (
+                          <button
+                            key={s}
+                            type="button"
+                            onClick={() => setRenderStyle(s)}
+                            className={`rounded-xl px-4 py-2 text-xs font-bold transition-colors ${
+                              renderStyle === s
+                                ? "bg-[var(--accent-strong)] text-white"
+                                : "border border-[var(--line-strong)] text-[var(--text-secondary)] hover:bg-[var(--surface-soft)]"
+                            }`}
+                          >
+                            {s === "주간" ? "낮(주간)" : s === "야간" ? "밤(야간)" : "실사(사진풍)"}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    {/* 과금 안내(쉬운 문구) */}
+                    <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-3">
+                      <p className="text-xs leading-relaxed text-[var(--text-secondary)]">
+                        이 기능은 1회 실행에 <b className="text-[var(--accent-strong)]">약 {RENDER_COST_COIN}코인</b>이 소요됩니다.
+                        실제 차감 금액은 완료 후 안내해 드립니다.
+                      </p>
+                    </div>
+                    <div className="flex justify-end gap-3 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => setRenderPhase("idle")}
+                        className="rounded-full border border-[var(--line-strong)] px-5 py-2.5 text-xs font-bold text-[var(--text-secondary)] hover:bg-[var(--surface-soft)]"
+                      >
+                        취소
+                      </button>
+                      <button
+                        type="button"
+                        onClick={runPhotorealRender}
+                        className="rounded-full bg-[var(--accent-strong)] px-6 py-2.5 text-xs font-black uppercase tracking-widest text-white hover:opacity-90"
+                      >
+                        결제하고 렌더 ({RENDER_COST_COIN}코인)
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* ── 2) 렌더 진행 중 ── */}
+                {renderPhase === "loading" && (
+                  <div className="flex flex-col items-center gap-4 py-8">
+                    <div className="h-12 w-12 animate-spin rounded-full border-4 border-[var(--accent-strong)] border-t-transparent" />
+                    <p className="text-sm font-bold text-[var(--text-secondary)]">AI가 사진처럼 그리는 중입니다…</p>
+                    <p className="text-xs text-[var(--text-hint)]">최대 1~2분 걸릴 수 있어요</p>
+                  </div>
+                )}
+
+                {/* ── 3) 결과(성공) ── */}
+                {renderPhase === "result" && renderImage && (
+                  <div className="space-y-4">
+                    {/* 결과 이미지 — 백엔드가 회신한 실제 렌더 결과만 표시(가짜 이미지 금지) */}
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={renderImage}
+                      alt="AI 포토리얼 렌더 결과"
+                      className="w-full rounded-2xl border border-[var(--line)] shadow-lg"
+                    />
+                    <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-3 text-xs leading-relaxed text-[var(--text-secondary)]">
+                      <p>· 원본 3D 모델은 <b className="text-[var(--text-primary)]">그대로 유지</b>됩니다(이 이미지는 별도 결과물).</p>
+                      {renderCharged != null && (
+                        <p className="mt-1">· 이번 렌더로 <b className="text-[var(--accent-strong)]">{renderCharged}코인</b>이 차감되었습니다.</p>
+                      )}
+                      {renderMsg && <p className="mt-1 text-[var(--text-hint)]">{renderMsg}</p>}
+                    </div>
+                    <div className="flex justify-end gap-3">
+                      <a
+                        href={renderImage}
+                        download="propai-render.png"
+                        className="rounded-full border border-[var(--line-strong)] px-5 py-2.5 text-xs font-bold text-[var(--text-secondary)] hover:bg-[var(--surface-soft)]"
+                      >
+                        이미지 저장
+                      </a>
+                      <button
+                        type="button"
+                        onClick={() => setRenderPhase("idle")}
+                        className="rounded-full bg-[var(--accent-strong)] px-6 py-2.5 text-xs font-black uppercase tracking-widest text-white hover:opacity-90"
+                      >
+                        완료
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* ── 4) 서버 키 미설정(정직 안내, 가짜 이미지 금지) ── */}
+                {renderPhase === "nokey" && (
+                  <div className="space-y-4 text-center">
+                    <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-soft)]">
+                      <span className="text-2xl">🔑</span>
+                    </div>
+                    <p className="text-sm font-bold text-[var(--text-primary)]">AI 렌더가 아직 준비되지 않았어요</p>
+                    <p className="mx-auto max-w-md text-xs leading-relaxed text-[var(--text-secondary)]">
+                      {renderMsg || "AI 렌더는 관리자 키 설정 후 이용 가능합니다."}
+                    </p>
+                    <p className="text-[11px] text-[var(--text-hint)]">키가 없어 코인은 차감되지 않았습니다.</p>
+                    <button
+                      type="button"
+                      onClick={() => setRenderPhase("idle")}
+                      className="rounded-full bg-[var(--surface-soft)] px-6 py-2.5 text-xs font-black uppercase tracking-widest text-[var(--text-primary)] hover:bg-[var(--surface-strong)] border border-[var(--line-strong)]"
+                    >
+                      확인
+                    </button>
+                  </div>
+                )}
+
+                {/* ── 5) 오류 ── */}
+                {renderPhase === "error" && (
+                  <div className="space-y-4 text-center">
+                    <p className="text-sm font-bold text-red-400">{renderMsg || "AI 렌더에 실패했습니다."}</p>
+                    <div className="flex justify-center gap-3">
+                      <button
+                        type="button"
+                        onClick={() => setRenderPhase("idle")}
+                        className="rounded-full border border-[var(--line-strong)] px-5 py-2.5 text-xs font-bold text-[var(--text-secondary)] hover:bg-[var(--surface-soft)]"
+                      >
+                        닫기
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setRenderPhase("confirm")}
+                        className="rounded-full bg-[var(--accent-strong)] px-6 py-2.5 text-xs font-black uppercase tracking-widest text-white hover:opacity-90"
+                      >
+                        다시 시도
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
         )}
       </div>
     </div>

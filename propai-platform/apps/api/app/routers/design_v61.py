@@ -13,6 +13,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.auth.auth_service import get_current_user
 from app.services.drawing.design_alternative_selector import DesignAlternativeSelector
 from app.services.drawing.svg_drawing_service import SVGDrawingService
 from apps.api.database.session import get_db
@@ -54,6 +55,18 @@ class CADSaveRequest(BaseModel):
     surfaces: list[dict[str, Any]] = Field(default_factory=list)
     floor_count: Optional[int] = None
     building_height_m: Optional[float] = None
+
+
+class PhotorealRenderRequest(BaseModel):
+    """AI 포토리얼 렌더 요청 — 3D 뷰포트 캡처 이미지를 사실적 외관 이미지로 변환.
+
+    image_base64: 3D 화면 캡처(순수 base64 또는 data URI 모두 허용).
+    style: 주간|야간|실사(기본 실사).
+    strength: 0~1, 구조(깊이/윤곽) 보존 강도(기본 0.6).
+    """
+    image_base64: str = Field(..., min_length=1)
+    style: str = Field("실사")
+    strength: float = Field(0.6, ge=0.0, le=1.0)
 
 
 class AltSelectionRequest(BaseModel):
@@ -627,6 +640,47 @@ async def select_alternative(project_id: str, req: AltSelectionRequest):
         "ranked": result["ranked"],
         "mc_results": result["mc_results"],
         "winner": result["winner"],
+    }
+
+
+@router.post("/{project_id}/render-photoreal")
+async def render_photoreal(
+    project_id: str,
+    req: PhotorealRenderRequest,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """3D 뷰포트 이미지를 ControlNet으로 포토리얼 렌더(비파괴 — 원본 3D 불변).
+
+    정직 처리:
+    - 렌더 API 키 미설정 → status="no_key"(에러 아님, 200). 가짜 이미지 절대 금지.
+    - 외부 호출 실패 → status="error"(사유 안내). 성공 시에만 과금.
+    """
+    from app.services.billing import billing_service
+    from app.services.drawing import photoreal_render_service
+
+    result = await photoreal_render_service.render_photoreal(
+        req.image_base64, style=req.style, strength=req.strength
+    )
+
+    # 키 미설정/실패는 그대로 정직 반환(과금 없음).
+    if result.get("status") != "ok":
+        return result
+
+    # 렌더 성공 시에만 사용료 차감(best-effort — 차감 실패해도 결과는 제공, 후불 누적).
+    charged = None
+    try:
+        await billing_service.load_config(db)
+        c = await billing_service.charge_service(db, user.id, "photoreal_render")
+        charged = c.get("charged_krw")
+    except Exception:  # noqa: BLE001
+        pass
+
+    return {
+        "status": "ok",
+        "image_url": result["image_url"],
+        "message": "비파괴 렌더(원본 3D 불변)",
+        "charged": charged,
     }
 
 
