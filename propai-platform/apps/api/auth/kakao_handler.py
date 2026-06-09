@@ -220,11 +220,16 @@ async def process_kakao_callback(
         {"access_token": str, "refresh_token": str, "user": dict}
     """
     # 1. 토큰 교환
+    # ★관리자 키화면(secret_store)이 os.environ을 즉시 갱신하나 settings는 캐시됨 →
+    #   login-url과 동일하게 os.environ을 라이브 우선 읽어 재시작 없이 반영(키 불일치 방지).
+    import os
+    _client_id = (os.environ.get("KAKAO_REST_API_KEY") or settings.kakao_client_id or "").strip()
+    _client_secret = (os.environ.get("KAKAO_CLIENT_SECRET") or settings.kakao_client_secret or "").strip() or None
     kakao_tokens = await exchange_code_for_token(
         code=code,
         redirect_uri=redirect_uri,
-        client_id=settings.kakao_client_id,
-        client_secret=settings.kakao_client_secret or None,
+        client_id=_client_id,
+        client_secret=_client_secret,
     )
 
     # 2. 사용자 정보 조회

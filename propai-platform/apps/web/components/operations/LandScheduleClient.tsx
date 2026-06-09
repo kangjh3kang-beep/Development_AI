@@ -10,9 +10,20 @@ import { useParams, useRouter } from "next/navigation";
 import { Card, CardContent } from "@propai/ui";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { NumberInput } from "@/components/common/NumberInput";
-import { ParcelBoundaryMap } from "@/components/map/ParcelBoundaryMap";
-import { NearbyTransactionsMap } from "@/components/map/NearbyTransactionsMap";
+import { dynamicMap } from "@/components/common/MapShell";
+import type { ParcelBoundaryMap as ParcelBoundaryMapType } from "@/components/map/ParcelBoundaryMap";
+import type { NearbyTransactionsMap as NearbyTransactionsMapType } from "@/components/map/NearbyTransactionsMap";
 import { DeskAppraisalModal } from "@/components/operations/DeskAppraisalModal";
+
+// 지도는 SSR 없이 동적 로드(SSR throw 차단 + 로딩 스켈레톤). 동작·props 불변.
+const ParcelBoundaryMap = dynamicMap<React.ComponentProps<typeof ParcelBoundaryMapType>>(
+  () => import("@/components/map/ParcelBoundaryMap"),
+  { pick: "ParcelBoundaryMap", height: 360, loadingMessage: "필지 구획도 로딩…" },
+);
+const NearbyTransactionsMap = dynamicMap<React.ComponentProps<typeof NearbyTransactionsMapType>>(
+  () => import("@/components/map/NearbyTransactionsMap"),
+  { pick: "NearbyTransactionsMap", height: 440, loadingMessage: "주변 실거래 지도 로딩…" },
+);
 import { analyzeRegistry } from "@/lib/registry-analyze";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { useLandScheduleStore, type LandRow } from "@/store/useLandScheduleStore";

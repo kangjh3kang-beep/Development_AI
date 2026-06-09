@@ -11,7 +11,7 @@
  */
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Canvas } from "@react-three/fiber";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { TextureLoader } from "three";
@@ -494,6 +494,23 @@ function sunDirectionEnu(sp: SunPosition, span: number): [number, number, number
   return [x * r, Math.max(y, 0.05) * r, zNorth * r];
 }
 
+/**
+ * frameloop="demand" 보조기.
+ * 자동회전이 켜진 동안에만 매 프레임 invalidate()를 호출해 렌더를 계속 요청한다.
+ * (정지 화면에서는 렌더가 멈춰 메인스레드 점유 0 — 1102/프리징 회귀 차단)
+ */
+function DemandInvalidator({ active }: { active: boolean }) {
+  const invalidate = useThree((s) => s.invalidate);
+  // 마운트 직후 1회 강제 렌더(demand 모드 초기 흰 화면 방지).
+  useEffect(() => {
+    invalidate();
+  }, [invalidate]);
+  useFrame(() => {
+    if (active) invalidate();
+  });
+  return null;
+}
+
 /** 씬 본체(레이어 토글 반영). */
 function SceneContent({
   payload,
@@ -515,6 +532,8 @@ function SceneContent({
   /** 주거지역 여부 — 정북 일조사선 envelope 생성 게이트. */
   residential: boolean;
 }) {
+  // frameloop="demand"에서 드래그/줌/댐핑 중 렌더를 이어가기 위한 invalidate.
+  const invalidate = useThree((s) => s.invalidate);
   const baseY = payload.terrain?.elev0 ?? 0;
   const span = payload.terrain?.bbox_m?.size_m ?? payload.aerial?.cover_m ?? 200;
   const camDist = Math.max(120, span * 0.9);
@@ -547,6 +566,9 @@ function SceneContent({
         <NorthLightEnvelope parcel={payload.parcel} baseY={baseY} />
       )}
 
+      {/* 자동회전 중에만 매 프레임 렌더 요청(정지 시 0). */}
+      <DemandInvalidator active={autoRotate} />
+
       <OrbitControls
         makeDefault
         autoRotate={autoRotate}
@@ -555,6 +577,7 @@ function SceneContent({
         dampingFactor={0.05}
         maxDistance={camDist * 3}
         target={[0, baseY, 0]}
+        onChange={() => invalidate()} // 드래그·줌·댐핑 중 렌더 이어가기
       />
     </>
   );
@@ -1030,6 +1053,7 @@ export default function DigitalTwinScene({
           <div className="relative h-[560px] w-full overflow-hidden rounded-3xl border border-[var(--line-strong)] bg-[#0d1520]">
             <Canvas
               shadows
+              frameloop="demand"
               camera={{
                 position: [
                   camSpan * 0.7,

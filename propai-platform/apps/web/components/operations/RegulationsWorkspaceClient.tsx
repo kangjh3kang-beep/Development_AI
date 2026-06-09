@@ -11,8 +11,15 @@
 import { useCallback, useState } from "react";
 import { Card, CardContent, Input } from "@propai/ui";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
-import { ParcelBoundaryMap } from "@/components/map/ParcelBoundaryMap";
+import { dynamicMap } from "@/components/common/MapShell";
+import type { ParcelBoundaryMap as ParcelBoundaryMapType } from "@/components/map/ParcelBoundaryMap";
 import { ExpertPanelCard } from "@/components/common/ExpertPanelCard";
+
+// 구획도 지도는 SSR 없이 동적 로드(SSR throw 차단 + 로딩 스켈레톤). 동작·props 불변.
+const ParcelBoundaryMap = dynamicMap<React.ComponentProps<typeof ParcelBoundaryMapType>>(
+  () => import("@/components/map/ParcelBoundaryMap"),
+  { pick: "ParcelBoundaryMap", height: 360, loadingMessage: "필지 구획도 로딩…" },
+);
 import { AnalysisVerdict } from "@/components/analysis/AnalysisVerdict";
 import { RegulationHierarchyView, type RegResult } from "@/components/regulation/RegulationHierarchyView";
 import { ApiClientError, apiClient } from "@/lib/api-client";

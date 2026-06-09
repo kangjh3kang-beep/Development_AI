@@ -16,8 +16,15 @@ import { AnalysisCacheStatus } from "@/components/common/AnalysisCacheStatus";
 import { GlobalAddressSearch } from "@/components/common/GlobalAddressSearch";
 import { NumberInput } from "@/components/common/NumberInput";
 import { AutoZoningBadge } from "@/components/projects/AutoZoningBadge";
-import { ParcelBoundaryMap } from "@/components/map/ParcelBoundaryMap";
+import { dynamicMap } from "@/components/common/MapShell";
+import type { ParcelBoundaryMap as ParcelBoundaryMapType } from "@/components/map/ParcelBoundaryMap";
 import type { Locale } from "@/i18n/config";
+
+// 구획도 지도는 SSR 없이 동적 로드(SSR throw 차단 + 로딩 스켈레톤). 동작·props 불변.
+const ParcelBoundaryMap = dynamicMap<React.ComponentProps<typeof ParcelBoundaryMapType>>(
+  () => import("@/components/map/ParcelBoundaryMap"),
+  { pick: "ParcelBoundaryMap", height: 360, loadingMessage: "필지 구획도 로딩…" },
+);
 
 /* ── Response types ── */
 

@@ -354,16 +354,17 @@ async def kakao_login_url(
     redirect_uri 미지정 시 서버 설정값(kakao_redirect_uri) 사용. authorize/callback의 redirect_uri는
     반드시 동일해야 하므로 기본은 서버 설정값으로 통일한다.
     """
+    import os
     from urllib.parse import urlencode
 
-    client_id = settings.kakao_client_id
-    # ★플레이스홀더(your-kakao-key 등)도 '미설정'으로 취급한다.
-    # (이전: 빈문자만 차단 → 플레이스홀더로 깨진 인가URL 생성→카카오 거부→프론트 오류.
-    #  이제 미설정이면 503으로 정직 반환 → 프론트가 "관리자 키 설정 필요" 안내.)
+    # ★관리자 키화면(secret_store)은 저장 시 os.environ을 즉시 갱신하나, settings는 캐시되어
+    #  재시작 전까지 반영 안 됨 → os.environ을 라이브로 우선 읽어 '재배포 불필요'를 보장한다.
+    client_id = (os.environ.get("KAKAO_REST_API_KEY") or settings.kakao_client_id or "").strip()
+    # 플레이스홀더(your-kakao-key 등)도 '미설정'으로 취급(깨진 인가URL 생성·카카오 거부 방지).
     _PLACEHOLDERS = {"your-kakao-key", "your-kakao-rest-api-key", "changeme", "dummy"}
-    if not client_id or str(client_id).strip().lower() in _PLACEHOLDERS:
+    if not client_id or client_id.lower() in _PLACEHOLDERS:
         raise HTTPException(status_code=503, detail="카카오 로그인 미설정(KAKAO_REST_API_KEY) — 관리자 키 설정이 필요합니다.")
-    ruri = redirect_uri or settings.kakao_redirect_uri
+    ruri = redirect_uri or os.environ.get("KAKAO_REDIRECT_URI") or settings.kakao_redirect_uri
     params = {
         "client_id": client_id,
         "redirect_uri": ruri,
@@ -380,7 +381,8 @@ async def kakao_callback(
     settings: Settings = Depends(get_settings),
 ) -> TokenResponse:
     """Exchange a Kakao OAuth code for PropAI JWT credentials."""
-    redirect_uri = body.redirect_uri or settings.kakao_redirect_uri
+    import os
+    redirect_uri = body.redirect_uri or os.environ.get("KAKAO_REDIRECT_URI") or settings.kakao_redirect_uri
     try:
         result = await process_kakao_callback(
             code=body.code,

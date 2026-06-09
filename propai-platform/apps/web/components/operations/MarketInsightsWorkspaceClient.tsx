@@ -4,9 +4,23 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Card, CardContent } from "@propai/ui";
 import { apiClient, ApiClientError } from "@/lib/api-client";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
-import { NearbyTransactionsMap, type NearbyMapPayload } from "@/components/map/NearbyTransactionsMap";
-import { ParcelBoundaryMap } from "@/components/map/ParcelBoundaryMap";
+import { dynamicMap } from "@/components/common/MapShell";
+import type {
+  NearbyTransactionsMap as NearbyTransactionsMapType,
+  NearbyMapPayload,
+} from "@/components/map/NearbyTransactionsMap";
+import type { ParcelBoundaryMap as ParcelBoundaryMapType } from "@/components/map/ParcelBoundaryMap";
 import { ExpertPanelCard } from "@/components/common/ExpertPanelCard";
+
+// 지도는 SSR 없이 동적 로드(SSR throw 차단 + 로딩 스켈레톤). 동작·props 불변.
+const NearbyTransactionsMap = dynamicMap<React.ComponentProps<typeof NearbyTransactionsMapType>>(
+  () => import("@/components/map/NearbyTransactionsMap"),
+  { pick: "NearbyTransactionsMap", height: 440, loadingMessage: "주변 실거래 지도 로딩…" },
+);
+const ParcelBoundaryMap = dynamicMap<React.ComponentProps<typeof ParcelBoundaryMapType>>(
+  () => import("@/components/map/ParcelBoundaryMap"),
+  { pick: "ParcelBoundaryMap", height: 360, loadingMessage: "필지 구획도 로딩…" },
+);
 import { VerificationBadge } from "@/components/common/VerificationBadge";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 

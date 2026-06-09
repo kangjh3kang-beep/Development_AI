@@ -118,6 +118,13 @@ export function NearbyTransactionsMap({
   const circleRef = useRef<any>(null);
   const centerRef = useRef<any>(null);
 
+  // 부모가 매 렌더 새 함수를 넘겨도(인라인 콜백) fetch가 재실행되지 않도록 ref로 안정화.
+  // → 콜백을 의존성에서 제거해 fetch 폭주 차단(데이터/동작은 동일).
+  const onPayloadRef = useRef(onPayload);
+  const onLoadingRef = useRef(onLoading);
+  onPayloadRef.current = onPayload;
+  onLoadingRef.current = onLoading;
+
   useEffect(() => {
     let alive = true;
     loadLeaflet().then(() => alive && setSdkReady(true)).catch((e) => alive && setError(String(e.message || e)));
@@ -127,7 +134,7 @@ export function NearbyTransactionsMap({
   const fetchData = useCallback(async () => {
     if (!address) return;
     setLoading(true);
-    onLoading?.(true);
+    onLoadingRef.current?.(true);
     setError("");
     try {
       const res = await apiClient.post<MapPayload>("/zoning/nearby-map", {
@@ -136,15 +143,15 @@ export function NearbyTransactionsMap({
         timeoutMs: 90000,
       });
       setPayload(res);
-      onPayload?.(res); // 부모(마켓분석)가 동일 데이터로 실거래 현황·시세 산출
+      onPayloadRef.current?.(res); // 부모(마켓분석)가 동일 데이터로 실거래 현황·시세 산출
     } catch (e: any) {
       setError(e?.message || "주변 실거래 조회 실패");
-      onPayload?.(null);
+      onPayloadRef.current?.(null);
     } finally {
       setLoading(false);
-      onLoading?.(false);
+      onLoadingRef.current?.(false);
     }
-  }, [address, pnu, onPayload, onLoading]);
+  }, [address, pnu]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -179,7 +186,16 @@ export function NearbyTransactionsMap({
       radius: payload.radius_m, color: "#14b8a6", weight: 2, dashArray: "6",
       fillColor: "#14b8a6", fillOpacity: 0.05,
     }).addTo(map);
-    setTimeout(() => map.invalidateSize(), 100);
+    const t = setTimeout(() => map.invalidateSize(), 100);
+    // 정리: 타이머 해제 + Leaflet 지도 파괴(언마운트/재마운트 시 죽은 ref·메모리 누수 방지).
+    return () => {
+      clearTimeout(t);
+      try { mapRef.current?.remove(); } catch { /* 이미 파괴됨 */ }
+      mapRef.current = null;
+      layerRef.current = null;
+      circleRef.current = null;
+      centerRef.current = null;
+    };
   }, [sdkReady, payload, address]);
 
   const activeCategory = useMemo(
