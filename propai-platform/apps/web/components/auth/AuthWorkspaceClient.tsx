@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { Button, Card, CardContent, CardTitle, Input } from "@propai/ui";
 import { ApiClientError, apiClient } from "@/lib/api-client";
+import { clearOnLogout, ensureDataOwner } from "@/lib/projectSync";
 import type { Locale } from "@/i18n/config";
 
 type AuthMode = "login" | "register";
@@ -353,12 +354,16 @@ function persistTokens(tokens: TokenResponse) {
   }
   window.localStorage.setItem(STORAGE_KEYS.access, tokens.access_token);
   window.localStorage.setItem(STORAGE_KEYS.refresh, tokens.refresh_token);
+  // ★새 토큰 적용 직후 소유자 검사: 이전 계정 로컬데이터가 남아있으면 즉시 비운다(계정 격리).
+  ensureDataOwner();
 }
 
 function clearTokens() {
   if (typeof window === "undefined") {
     return;
   }
+  // ★로그아웃: 분석/프로젝트 로컬데이터 + 소유자표식 완전 제거(계정 간 격리).
+  clearOnLogout();
   window.localStorage.removeItem(STORAGE_KEYS.access);
   window.localStorage.removeItem(STORAGE_KEYS.refresh);
 }

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { clearOnLogout } from "@/lib/projectSync";
 
 export function AuthButton({ locale }: { locale: string }) {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -23,6 +24,8 @@ export function AuthButton({ locale }: { locale: string }) {
   }, []);
 
   const handleLogout = () => {
+    // ★분석/프로젝트 로컬데이터 + 소유자표식 완전 제거(계정 간 격리). 토큰도 제거.
+    clearOnLogout();
     localStorage.removeItem("propai_access_token");
     localStorage.removeItem("propai_refresh_token");
     setIsLoggedIn(false);

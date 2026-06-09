@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Button, Card, CardContent, CardTitle } from "@propai/ui";
 import { ApiClientError, apiClient } from "@/lib/api-client";
+import { ensureDataOwner } from "@/lib/projectSync";
 import type { Locale } from "@/i18n/config";
 
 type TokenResponse = {
@@ -79,6 +80,8 @@ const STORAGE_KEYS = {
 function persistTokens(tokens: TokenResponse) {
   window.localStorage.setItem(STORAGE_KEYS.access, tokens.access_token);
   window.localStorage.setItem(STORAGE_KEYS.refresh, tokens.refresh_token);
+  // ★카카오 로그인 직후에도 소유자 검사 → 이전 계정 로컬데이터 노출 차단(계정 격리).
+  ensureDataOwner();
 }
 
 function resolveApiErrorMessage(error: unknown, fallback: string) {

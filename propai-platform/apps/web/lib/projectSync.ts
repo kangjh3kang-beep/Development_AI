@@ -22,6 +22,72 @@ function isLoggedIn(): boolean {
   return typeof window !== "undefined" && !!window.localStorage.getItem("propai_access_token");
 }
 
+// ── 계정 간 데이터 격리 ──────────────────────────────────────────────
+// localStorage(zustand persist)는 브라우저 단위라, 로그아웃/계정전환 때 비우지 않으면
+// 같은 브라우저의 다른 계정에 이전 계정 분석이 노출된다(격리붕괴). 아래로 원천 차단한다.
+const DATA_OWNER_KEY = "propai_data_owner";
+// 분석/프로젝트 데이터가 담긴 localStorage 키 전체(토큰은 별도 관리).
+const PROJECT_PERSIST_KEYS = [
+  "propai-project-context",   // useProjectContextStore (snapshots·analysisResults·siteAnalysis 등)
+  "propai-land-schedule",     // useLandScheduleStore
+  "propai-project-storage",   // useProjectStore
+  "propai_pipeline_history",  // 파이프라인 분석이력(프로젝트 상세)
+];
+
+/** JWT 페이로드에서 사용자 식별자(sub/user_id)를 디코드. 실패 시 null. */
+function decodeTokenUser(token: string | null): string | null {
+  if (!token) return null;
+  try {
+    const seg = token.split(".")[1];
+    if (!seg) return null;
+    const json = atob(seg.replace(/-/g, "+").replace(/_/g, "/"));
+    const payload = JSON.parse(json) as Record<string, unknown>;
+    const uid = payload.sub ?? payload.user_id ?? payload.uid;
+    return uid ? String(uid) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** 모든 프로젝트/분석 로컬 데이터를 완전 초기화(메모리 store + localStorage). 토큰은 건드리지 않음. */
+export function clearAllProjectData(): void {
+  if (typeof window === "undefined") return;
+  try {
+    useProjectContextStore.setState({
+      projectId: null, projectName: "", projectStatus: "",
+      completedStages: [], currentStage: null,
+      siteAnalysis: null, designData: null, feasibilityData: null,
+      costData: null, esgData: null, complianceData: null,
+      analysisResults: [], snapshots: {}, updatedAt: {}, analysisCache: {},
+    } as never);
+  } catch { /* noop */ }
+  try { useProjectStore.setState({ projects: [] } as never); } catch { /* noop */ }
+  try { useLandScheduleStore.setState({ byProject: {} } as never); } catch { /* noop */ }
+  pulled = false; // 빈 상태가 서버로 syncUp되지 않도록(scheduleSyncUp이 pulled=false면 무시)
+  for (const k of PROJECT_PERSIST_KEYS) {
+    try { window.localStorage.removeItem(k); } catch { /* noop */ }
+  }
+}
+
+/** 로그아웃: 분석데이터 + 소유자 표식 모두 제거(다음 로그인은 새 계정으로 깨끗이 시작). */
+export function clearOnLogout(): void {
+  clearAllProjectData();
+  try { window.localStorage.removeItem(DATA_OWNER_KEY); } catch { /* noop */ }
+}
+
+/** 현재 토큰의 사용자와 로컬 데이터 소유자가 다르면(계정 전환·잔존) 로컬을 즉시 비운다.
+ *  앱 로드/로그인 직후 호출 → 다른 계정 데이터 노출을 원천 차단. */
+export function ensureDataOwner(): void {
+  if (typeof window === "undefined") return;
+  const uid = decodeTokenUser(window.localStorage.getItem("propai_access_token"));
+  if (!uid) return; // 비로그인 → 유지(로그인 시 다시 검사)
+  const owner = window.localStorage.getItem(DATA_OWNER_KEY);
+  if (owner !== uid) {
+    clearAllProjectData();
+    try { window.localStorage.setItem(DATA_OWNER_KEY, uid); } catch { /* noop */ }
+  }
+}
+
 // 백엔드 UUID 프로젝트만 /projects/{id} 경로로 분석 스냅샷을 직접 영속한다.
 // 비-UUID 로컬 프로젝트는 500 회피 위해 기존 user_project_store(syncUp) 경로만 사용.
 const _isUuid = (id: string | null | undefined): id is string =>
@@ -49,6 +115,8 @@ let pulled = false;
 
 export async function syncDown(): Promise<void> {
   if (!isLoggedIn()) return;
+  // ★먼저 소유자 검사: 로컬에 다른 계정 데이터가 남아있으면 비운 뒤 서버 데이터를 받는다.
+  ensureDataOwner();
   try {
     const res = await apiClient.get<{ data: Record<string, unknown> }>("/store/projects");
     const data = (res?.data || {}) as {
