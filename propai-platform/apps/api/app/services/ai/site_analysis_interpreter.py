@@ -82,9 +82,9 @@ USER_PROMPT_TEMPLATE = """\
 {{
   "effective_far_interpretation": "실효 용적률/건폐율에 대한 해석 (법적 근거, 조례 영향, 개발 가능 규모)",
   "supply_area_interpretation": "개발방식별 공급면적 분석 (최적 개발유형, 세대수, 수익성 시사점)",
-  "land_price_interpretation": "토지 시세 해석 (공시지가 수준, 시장 보정, 토지매입 비용 시사점)",
-  "transaction_interpretation": "주변 실거래가 해석 (시장 동향, 가격 수준, 수요 판단)",
-  "sale_price_interpretation": "예상 분양가 해석 (지역 시세 대비, 분양성, 수익 예측)",
+  "land_price_interpretation": "토지 시세 해석 (제공된 공시지가만 인용. ★'공시지가는 시장가의 70~80%' 등 비율을 데이터 근거 없이 단정 금지. 시장가 데이터 없으면 '시장가 데이터 없음')",
+  "transaction_interpretation": "주변 실거래가 해석 (제공된 실거래 데이터 있을 때만. 없으면 '실거래 데이터 없음')",
+  "sale_price_interpretation": "분양가 해석 (★sale_prices_top3 등 분양가 데이터가 제공된 경우에만 해석. 제공 안 됐으면 평균·벤치마크 분양가를 절대 만들어내지 말고 '분양가 데이터 없음'으로만 기술)",
   "location_interpretation": "입지 분석 해석 (교통, 교육, 생활 인프라, 입지 등급)",
   "development_plan_interpretation": "개발계획 해석 (토지이용규제, 특수구역, 규제 리스크)",
   "upzoning_interpretation": "종상향/종변경 잠재력 해석 (★예상치 — 현행 실효 용적률과 분리. 유력 경로·목표 용도지역·예상 용적률 범위·가능성 등급·전제(도시계획 결정·인허가)를 비단정 표현으로 안내. scenarios 없으면 미매핑 안내)",
