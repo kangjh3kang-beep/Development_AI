@@ -5,19 +5,21 @@
  *
  * 대상 지번 중심 + 반경 원 + 카테고리별(매매6·전월세4) 건물 마커.
  * 분류 탭(매매/전월세 + 부동산 유형)으로 필터, 마커 클릭 시 건물 정보(평균가·건수·
- * 면적·최근거래) 팝업. 백엔드 /zoning/nearby-map(VWorld 지오코딩) 사용.
+ * 면적·최근거래) 팝업. 백엔드 /zoning/nearby-map(카카오 지오코딩) 사용.
  *
- * 지도 엔진: Leaflet + OpenStreetMap (키·도메인등록 불필요, CDN 동적로드).
+ * 지도 엔진: 카카오맵 JS SDK(한국 지도·한글 라벨). 키=NEXT_PUBLIC_KAKAO_MAP_KEY,
+ * 카카오 콘솔에 사이트 도메인 등록 필요. 좌표계 WGS84 동일.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { apiClient } from "@/lib/api-client";
+import { loadKakaoMap } from "@/lib/kakao-map";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 declare global {
   interface Window {
-    L: any;
+    kakao: any;
   }
 }
 
@@ -64,29 +66,6 @@ function won(man?: number): string {
 }
 const pyeong = (m2?: number) => (m2 && m2 > 0 ? `${(m2 / 3.305785).toFixed(1)}평` : "-");
 
-let leafletLoading: Promise<void> | null = null;
-function loadLeaflet(): Promise<void> {
-  if (typeof window === "undefined") return Promise.reject(new Error("no window"));
-  if (window.L) return Promise.resolve();
-  if (leafletLoading) return leafletLoading;
-  leafletLoading = new Promise((resolve, reject) => {
-    if (!document.querySelector('link[data-leaflet]')) {
-      const css = document.createElement("link");
-      css.rel = "stylesheet";
-      css.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
-      css.setAttribute("data-leaflet", "1");
-      document.head.appendChild(css);
-    }
-    const script = document.createElement("script");
-    script.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
-    script.async = true;
-    script.onload = () => resolve();
-    script.onerror = () => reject(new Error("Leaflet 로드 실패"));
-    document.head.appendChild(script);
-  });
-  return leafletLoading;
-}
-
 export function NearbyTransactionsMap({
   onPayload,
   onLoading,
@@ -114,9 +93,10 @@ export function NearbyTransactionsMap({
 
   const mapEl = useRef<HTMLDivElement>(null);
   const mapRef = useRef<any>(null);
-  const layerRef = useRef<any>(null); // 마커 레이어그룹
+  const overlaysRef = useRef<any[]>([]); // 건물 마커 오버레이 목록
   const circleRef = useRef<any>(null);
   const centerRef = useRef<any>(null);
+  const infoRef = useRef<any>(null); // 현재 열린 정보창
 
   // 부모가 매 렌더 새 함수를 넘겨도(인라인 콜백) fetch가 재실행되지 않도록 ref로 안정화.
   // → 콜백을 의존성에서 제거해 fetch 폭주 차단(데이터/동작은 동일).
@@ -127,7 +107,7 @@ export function NearbyTransactionsMap({
 
   useEffect(() => {
     let alive = true;
-    loadLeaflet().then(() => alive && setSdkReady(true)).catch((e) => alive && setError(String(e.message || e)));
+    loadKakaoMap().then(() => alive && setSdkReady(true)).catch((e) => alive && setError(String(e.message || e)));
     return () => { alive = false; };
   }, []);
 
@@ -155,47 +135,66 @@ export function NearbyTransactionsMap({
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
+  // 정보창 열기(이전 것 닫고 위치 기반으로 표시) — Leaflet bindPopup 대응.
+  const openInfo = useCallback((latlng: any, html: string) => {
+    const kakao = window.kakao;
+    if (!kakao || !mapRef.current) return;
+    try { infoRef.current?.close(); } catch { /* noop */ }
+    const iw = new kakao.maps.InfoWindow({ position: latlng, content: html, removable: true, zIndex: 900 });
+    iw.open(mapRef.current);
+    infoRef.current = iw;
+  }, []);
+
   // 지도 초기화 (중심 + 반경)
   useEffect(() => {
     if (!sdkReady || !payload?.center?.lat || !mapEl.current || mapRef.current) return;
-    const L = window.L;
-    const map = L.map(mapEl.current, { center: [payload.center.lat, payload.center.lon], zoom: 15, scrollWheelZoom: true });
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      maxZoom: 19, attribution: "&copy; OpenStreetMap",
-    }).addTo(map);
+    const kakao = window.kakao;
+    const center = new kakao.maps.LatLng(payload.center.lat, payload.center.lon);
+    const map = new kakao.maps.Map(mapEl.current, { center, level: 5 });
     mapRef.current = map;
-    layerRef.current = L.layerGroup().addTo(map);
-    // 깜빡이는 펄스 중심 마커(대상 지번 강조) — divIcon + CSS keyframes
+
+    // 깜빡이는 펄스 중심 마커(대상 지번 강조) — CustomOverlay + CSS keyframes
     if (typeof document !== "undefined" && !document.getElementById("propai-pulse-style")) {
       const st = document.createElement("style");
       st.id = "propai-pulse-style";
       st.textContent = `@keyframes propaiPulse{0%{transform:scale(.6);opacity:.9}70%{transform:scale(2.4);opacity:0}100%{opacity:0}}
-.propai-pin{position:relative}
-.propai-pin .core{position:absolute;left:50%;top:50%;width:16px;height:16px;margin:-8px 0 0 -8px;border-radius:50%;background:#ef4444;border:3px solid #fff;box-shadow:0 0 6px rgba(0,0,0,.4);z-index:2}
+.propai-pin{position:relative;width:16px;height:16px}
+.propai-pin .core{position:absolute;left:50%;top:50%;width:16px;height:16px;margin:-8px 0 0 -8px;border-radius:50%;background:#ef4444;border:3px solid #fff;box-shadow:0 0 6px rgba(0,0,0,.4);z-index:2;cursor:pointer}
 .propai-pin .ring{position:absolute;left:50%;top:50%;width:16px;height:16px;margin:-8px 0 0 -8px;border-radius:50%;background:rgba(239,68,68,.6);animation:propaiPulse 1.6s ease-out infinite;z-index:1}`;
       document.head.appendChild(st);
     }
-    const pulseIcon = L.divIcon({
-      className: "",
-      html: '<div class="propai-pin"><div class="ring"></div><div class="core"></div></div>',
-      iconSize: [16, 16], iconAnchor: [8, 8],
+    const pinEl = document.createElement("div");
+    pinEl.className = "propai-pin";
+    pinEl.innerHTML = '<div class="ring"></div><div class="core"></div>';
+    pinEl.onclick = () =>
+      openInfo(center, `<div style="padding:6px 10px;font-size:12px;"><b>분석 대상지</b><br/>${payload.center?.address || address}</div>`);
+    centerRef.current = new kakao.maps.CustomOverlay({
+      position: center, content: pinEl, xAnchor: 0.5, yAnchor: 0.5, zIndex: 1000,
     });
-    centerRef.current = L.marker([payload.center.lat, payload.center.lon], { icon: pulseIcon, zIndexOffset: 1000 })
-      .addTo(map).bindPopup(`<b>분석 대상지</b><br/>${payload.center.address || address}`);
-    circleRef.current = L.circle([payload.center.lat, payload.center.lon], {
-      radius: payload.radius_m, color: "#14b8a6", weight: 2, dashArray: "6",
-      fillColor: "#14b8a6", fillOpacity: 0.05,
-    }).addTo(map);
-    const t = setTimeout(() => map.invalidateSize(), 100);
-    // 정리: 타이머 해제 + Leaflet 지도 파괴(언마운트/재마운트 시 죽은 ref·메모리 누수 방지).
+    centerRef.current.setMap(map);
+
+    circleRef.current = new kakao.maps.Circle({
+      center, radius: payload.radius_m, strokeWeight: 2, strokeColor: "#14b8a6",
+      strokeOpacity: 0.9, strokeStyle: "dashed", fillColor: "#14b8a6", fillOpacity: 0.05,
+    });
+    circleRef.current.setMap(map);
+
+    // 컨테이너가 숨김→표시 전환된 경우 레이아웃 보정(Leaflet invalidateSize 대응).
+    const t = setTimeout(() => { try { map.relayout(); map.setCenter(center); } catch { /* noop */ } }, 100);
     return () => {
       clearTimeout(t);
-      try { mapRef.current?.remove(); } catch { /* 이미 파괴됨 */ }
+      try { infoRef.current?.close(); } catch { /* noop */ }
+      overlaysRef.current.forEach((o) => { try { o.setMap(null); } catch { /* noop */ } });
+      try { circleRef.current?.setMap(null); } catch { /* noop */ }
+      try { centerRef.current?.setMap(null); } catch { /* noop */ }
+      overlaysRef.current = [];
       mapRef.current = null;
-      layerRef.current = null;
       circleRef.current = null;
       centerRef.current = null;
+      infoRef.current = null;
     };
+    // openInfo는 안정적(렌더 무관)이라 의존성에서 제외.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sdkReady, payload, address]);
 
   const activeCategory = useMemo(
@@ -205,13 +204,18 @@ export function NearbyTransactionsMap({
 
   // 마커 갱신
   useEffect(() => {
-    if (!mapRef.current || !window.L || !layerRef.current) return;
-    const L = window.L;
-    layerRef.current.clearLayers();
+    if (!mapRef.current || !window.kakao) return;
+    const kakao = window.kakao;
+    // 이전 건물 오버레이 제거
+    overlaysRef.current.forEach((o) => { try { o.setMap(null); } catch { /* noop */ } });
+    overlaysRef.current = [];
+    try { infoRef.current?.close(); } catch { /* noop */ }
     const groups = activeCategory?.groups || [];
     const color = (kind === "trade" ? TRADE_TYPES : RENT_TYPES).find((t) => t.key === type)?.color || "#14b8a6";
-    const pts: any[] = [];
-    if (payload?.center?.lat) pts.push([payload.center.lat, payload.center.lon]);
+    const pts: Array<[number, number]> = [];
+    if (payload?.center?.lat != null && payload?.center?.lon != null) {
+      pts.push([payload.center.lat, payload.center.lon]);
+    }
 
     groups.forEach((g) => {
       if (!g.lat || !g.lon) return;
@@ -239,15 +243,27 @@ export function NearbyTransactionsMap({
           <div style="font-size:11px;color:#64748b;margin-bottom:6px;">${g.dong} ${g.jibun} · ${g.count}건 · 평균 ${pyeong(g.avg_area_m2)}</div>
           <div style="font-size:12px;color:#0f172a;margin-bottom:6px;">${priceLine}</div>${dealsHtml}
         </div>`;
-      // 거래건수에 따라 마커 크기 가변(6~16)
+      // 거래건수에 따라 마커 크기 가변(반지름 6~16 → 지름 px)
       const r = Math.min(16, 6 + Math.round(Math.sqrt(g.count) * 1.6));
-      L.circleMarker([g.lat, g.lon], {
-        radius: r, color: "#ffffff", weight: 1.5, fillColor: color, fillOpacity: 0.85,
-      }).addTo(layerRef.current).bindPopup(html);
+      const d = r * 2;
+      const dot = document.createElement("div");
+      dot.style.cssText = `width:${d}px;height:${d}px;border-radius:50%;background:${color};` +
+        `border:1.5px solid #fff;opacity:.9;cursor:pointer;box-shadow:0 0 4px rgba(0,0,0,.3)`;
+      const pos = new kakao.maps.LatLng(g.lat, g.lon);
+      dot.onclick = () => openInfo(pos, html);
+      const ov = new kakao.maps.CustomOverlay({ position: pos, content: dot, xAnchor: 0.5, yAnchor: 0.5, clickable: true });
+      ov.setMap(mapRef.current);
+      overlaysRef.current.push(ov);
     });
     if (pts.length > 1) {
-      try { mapRef.current.fitBounds(L.latLngBounds(pts), { padding: [40, 40], maxZoom: 16 }); } catch { /* noop */ }
+      try {
+        const bounds = new kakao.maps.LatLngBounds();
+        pts.forEach(([la, lo]) => bounds.extend(new kakao.maps.LatLng(la, lo)));
+        mapRef.current.setBounds(bounds, 40, 40, 40, 40);
+      } catch { /* noop */ }
     }
+    // openInfo는 안정적이라 의존성 제외.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeCategory, kind, type, payload]);
 
   const typeList = kind === "trade" ? TRADE_TYPES : RENT_TYPES;
