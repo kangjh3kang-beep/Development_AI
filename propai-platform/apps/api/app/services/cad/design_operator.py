@@ -18,8 +18,8 @@ from typing import Any
 
 import structlog
 
-from .auto_design_engine import AutoDesignEngineService, UNIT_TYPES
-from .design_spec import DesignSpec, Violation, validate_geometry, validate_spec
+from .auto_design_engine import AutoDesignEngineService
+from .design_spec import DesignSpec, validate_geometry, validate_spec
 
 logger = structlog.get_logger(__name__)
 
@@ -124,7 +124,7 @@ class DesignOperator:
         # 4) 커널 생성(실제 기하·수치 계산 — LLM 아님)
         result = self.engine.generate(new_spec.to_site_input())
 
-        # 5) 근거 게이트: 커널 산출값을 법규와 대조
+        # 5) 근거 게이트(법규): 커널 산출값을 법규와 대조
         m = _metrics_from_result(result.summary)
         geom_v = validate_geometry(
             new_spec, bcr_pct=m["bcr_pct"], far_pct=m["far_pct"],
@@ -132,14 +132,20 @@ class DesignOperator:
             parking_required=m["parking_required"], parking_provided=m["parking_required"],
         )
 
+        # 6) 근거 게이트(수치): LLM 설명문 수치를 커널 산출값과 대조(가짜수치 적발)
+        from .design_grounding import ground_check
+        notes = intent.get("notes", "") or ""
+        grounding = ground_check(result.summary, notes)
+
         return {
             "spec": new_spec.model_dump(),
             "summary": result.summary,
             "compliance": result.compliance,
             "design_payload": result.design_payload,
             "applied_changes": changes,
-            "intent_notes": intent.get("notes", ""),
+            "intent_notes": notes,
             "violations": [v.model_dump() for v in (spec_v + geom_v)],
+            "grounding": grounding,
             "source": source,
         }
 

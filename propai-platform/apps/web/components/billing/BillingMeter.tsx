@@ -8,10 +8,23 @@
  * (할증·실원가·환율 등 내부 정책은 노출하지 않음 — 백엔드가 실지급액만 반환)
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { apiClient, ApiClientError } from "@/lib/api-client";
+
+/**
+ * 모달 포털 — 모달을 document.body로 렌더(변형/backdrop-filter 조상 탈출).
+ * 사이드바 aside가 glass(backdrop-filter)라 그 안의 position:fixed가 사이드바 박스에
+ * 갇혀 페이지에 겹치던 근본 원인 해결. fixed가 항상 뷰포트 기준이 되도록 보장.
+ */
+function ModalPortal({ children }: { children: ReactNode }) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  if (!mounted || typeof document === "undefined") return null;
+  return createPortal(children, document.body);
+}
 
 type Status = {
   tier: string;
@@ -51,6 +64,7 @@ function PlansModal({ onClose }: { onClose: () => void }) {
   }, []);
   const won2 = (n: number) => n.toLocaleString("ko-KR") + "원";
   return (
+    <ModalPortal>
     <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={onClose}>
       <div className="w-full max-w-md rounded-2xl border border-[var(--line-strong)] bg-[var(--surface)] p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <h3 className="text-lg font-bold text-[var(--text-primary)]">구독 요금제</h3>
@@ -70,6 +84,7 @@ function PlansModal({ onClose }: { onClose: () => void }) {
         <button onClick={onClose} className="mt-3 w-full rounded-xl border border-[var(--line-strong)] py-2.5 text-sm font-bold text-[var(--text-secondary)]">닫기</button>
       </div>
     </div>
+    </ModalPortal>
   );
 }
 
@@ -104,6 +119,8 @@ export function BillingMeter({ compact = false }: { compact?: boolean }) {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+  // 페이지 이동 시 모달 자동 닫힘 — 대시보드 레이아웃이 유지돼 모달이 남던 문제 방어.
+  useEffect(() => { setModalOpen(false); }, [pathname]);
 
   const handleTopup = async () => {
     setPaying(true);
@@ -213,6 +230,7 @@ export function BillingMeter({ compact = false }: { compact?: boolean }) {
       </div>
 
       {modalOpen && (
+        <ModalPortal>
         <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={() => !paying && setModalOpen(false)}>
           <div className="w-full max-w-sm rounded-2xl border border-[var(--line-strong)] bg-[var(--surface)] p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-lg font-bold text-[var(--text-primary)]">추가결제 (LLM 충전)</h3>
@@ -244,6 +262,7 @@ export function BillingMeter({ compact = false }: { compact?: boolean }) {
             <p className="mt-3 text-center text-[10px] text-[var(--text-hint)]">결제 시 한도가 즉시 충전되어 서비스를 계속 이용할 수 있습니다.</p>
           </div>
         </div>
+        </ModalPortal>
       )}
     </>
   );
