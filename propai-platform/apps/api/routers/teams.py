@@ -1,7 +1,8 @@
-"""팀(공유 워크스페이스) API — 개인 로그인 + 팀 배정.
+"""팀(공유 워크스페이스) API v2 — 다중 팀, 개인 로그인 + 팀 배정.
 
-보안: 팀 생성=유료 구독자(사업자/구독자)만. 가입=신청→팀장 승인. 팀장만 관리.
-멤버는 자기 계정으로 로그인하되 팀 테넌트에 배정돼 팀 자원·quota를 공유한다.
+보안: 팀 생성=유료 구독자. 팀장만 자기 팀 관리(초대·승인·제거·한도·삭제).
+팀원 추가 2경로 — ①팀장 초대(invited)→멤버 동의(accept) ②멤버 신청(pending)→팀장 승인.
+강제 추가 불가(초대는 멤버 동의 필수).
 """
 
 from __future__ import annotations
@@ -32,34 +33,42 @@ class JoinReq(BaseModel):
     owner_email: EmailStr
 
 
+class InviteReq(BaseModel):
+    email: EmailStr
+
+
 class LimitReq(BaseModel):
     user_id: str
     limit_krw: float = 0
 
 
+async def _owner_team_or_403(db: AsyncSession, team_id: str, user_id) -> dict:
+    team = await team_service.is_team_owner(db, team_id, user_id)
+    if not team:
+        raise HTTPException(status_code=403, detail="해당 팀의 팀장만 가능합니다.")
+    return team
+
+
 @router.get("/mine")
-async def my_team(current: CurrentUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    """내 팀 상황 — 소유(팀장)/소속(멤버)/미소속 + 멤버 목록(팀장)."""
+async def my_teams(current: CurrentUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """내 팀 현황 — 소유 팀 목록(+멤버) + 내 소속/초대/신청."""
     await team_service.ensure_schema(db)
-    owned = await team_service.get_team_owned(db, current.user_id)
-    if owned:
-        members = await team_service.list_members(db, owned["id"])
-        return {"role": "owner", "team": owned, "members": members}
-    # 소속 멤버 여부
-    from sqlalchemy import text
-    r = (await db.execute(
-        text("SELECT t.id, t.name, m.status FROM team_members m JOIN teams t ON t.id=m.team_id "
-             "WHERE m.user_id=:u ORDER BY m.requested_at DESC LIMIT 1"),
-        {"u": str(current.user_id)},
-    )).first()
-    if r:
-        return {"role": "member", "team": {"id": str(r[0]), "name": r[1]}, "status": r[2]}
-    return {"role": "none"}
+    owned = await team_service.list_owned_teams(db, current.user_id)
+    teams_with_members = []
+    for t in owned:
+        teams_with_members.append({**t, "members": await team_service.list_members(db, t["id"])})
+    memberships = await team_service.my_memberships(db, current.user_id)
+    tier = await _user_tier(db, current.user_id)
+    return {
+        "can_create": is_metered_tier(tier),
+        "owned": teams_with_members,
+        "memberships": memberships,  # 내가 멤버/초대/신청한 팀들
+    }
 
 
 @router.post("/create")
 async def create_team(req: CreateTeamReq, current: CurrentUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    """팀 생성 — 유료 구독자(사업자/구독자)만. 본인 테넌트가 팀 공유 테넌트가 된다."""
+    """팀 생성(다중 가능) — 유료 구독자만. 팀별 전용 테넌트 생성."""
     tier = await _user_tier(db, current.user_id)
     if not is_metered_tier(tier):
         raise HTTPException(status_code=403, detail="팀 생성은 유료 구독(사업자/구독자)만 가능합니다.")
@@ -67,41 +76,56 @@ async def create_team(req: CreateTeamReq, current: CurrentUser = Depends(get_cur
     return {"ok": True, "team": team}
 
 
+@router.delete("/{team_id}")
+async def delete_team(team_id: str, current: CurrentUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """팀 삭제(팀장만) — 멤버 개인 테넌트 복원 후 제거."""
+    team = await _owner_team_or_403(db, team_id, current.user_id)
+    return await team_service.delete_team(db, team, current.user_id)
+
+
+@router.post("/{team_id}/invite")
+async def invite(team_id: str, req: InviteReq, current: CurrentUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """팀장이 ID(이메일)로 초대 → 멤버 동의(accept) 대기."""
+    team = await _owner_team_or_403(db, team_id, current.user_id)
+    return await team_service.invite_member(db, team, str(req.email))
+
+
 @router.post("/join")
-async def join_team(req: JoinReq, current: CurrentUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    """팀장 이메일(ID)로 가입 신청 → 팀장 승인 대기."""
+async def join(req: JoinReq, current: CurrentUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """멤버가 팀장 ID(이메일)로 가입 신청 → 팀장 승인 대기."""
     return await team_service.request_join(db, current.user_id, current.tenant_id, str(req.owner_email))
 
 
-def _require_owner(team):
-    if not team:
-        raise HTTPException(status_code=403, detail="팀장만 가능합니다.")
+@router.post("/{team_id}/accept")
+async def accept(team_id: str, current: CurrentUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """멤버가 초대 동의 → 팀 합류."""
+    return await team_service.accept_invite(db, current.user_id, team_id)
 
 
-@router.post("/members/{user_id}/approve")
-async def approve(user_id: str, current: CurrentUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    team = await team_service.get_team_owned(db, current.user_id)
-    _require_owner(team)
+@router.post("/{team_id}/decline")
+async def decline(team_id: str, current: CurrentUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    return await team_service.decline_invite(db, current.user_id, team_id)
+
+
+@router.post("/{team_id}/members/{user_id}/approve")
+async def approve(team_id: str, user_id: str, current: CurrentUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    team = await _owner_team_or_403(db, team_id, current.user_id)
     return await team_service.approve_member(db, team, user_id, current.user_id)
 
 
-@router.delete("/members/{user_id}")
-async def remove(user_id: str, current: CurrentUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    team = await team_service.get_team_owned(db, current.user_id)
-    _require_owner(team)
+@router.delete("/{team_id}/members/{user_id}")
+async def remove(team_id: str, user_id: str, current: CurrentUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    team = await _owner_team_or_403(db, team_id, current.user_id)
     return await team_service.remove_member(db, team, user_id)
 
 
-@router.put("/members/limit")
-async def set_limit(req: LimitReq, current: CurrentUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    team = await team_service.get_team_owned(db, current.user_id)
-    _require_owner(team)
-    return await team_service.set_member_limit(db, team["id"], req.user_id, req.limit_krw)
+@router.put("/{team_id}/members/limit")
+async def set_limit(team_id: str, req: LimitReq, current: CurrentUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    await _owner_team_or_403(db, team_id, current.user_id)
+    return await team_service.set_member_limit(db, team_id, req.user_id, req.limit_krw)
 
 
-@router.get("/usage")
-async def usage(days: int = 30, current: CurrentUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    """팀장: 멤버별 사용량 모니터링."""
-    team = await team_service.get_team_owned(db, current.user_id)
-    _require_owner(team)
-    return {"team": team, "members": await team_service.member_usage(db, team["id"], days)}
+@router.get("/{team_id}/usage")
+async def usage(team_id: str, days: int = 30, current: CurrentUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    await _owner_team_or_403(db, team_id, current.user_id)
+    return {"members": await team_service.member_usage(db, team_id, days)}
