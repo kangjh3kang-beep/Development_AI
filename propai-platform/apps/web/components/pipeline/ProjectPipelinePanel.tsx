@@ -6,6 +6,7 @@ import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { appendLedger } from "@/lib/analysis-ledger";
 import { currentUserId } from "@/lib/projectSync";
 import { useProjectStore as useProjectListStore } from "@/store/useProjectStore";
+import { useUiReset } from "@/store/useUiReset";
 import { apiClient } from "@/lib/api-client";
 import { GlobalAddressSearch, type AddressEntry } from "@/components/common/GlobalAddressSearch";
 import { PipelineResultDetail } from "./PipelineResultDetail";
@@ -147,7 +148,10 @@ const FIELD_LABELS: Record<string, string> = {
 
   // feasibility (약식 수지분석)
   land_cost: "토지비",
+  land_cost_source: "토지비 산정근거",
   construction_cost: "공사비",
+  general_expense_won: "일반사업비",
+  finance_cost_won: "금융비",
   total_project_cost: "총 사업비",
   total_revenue: "총 분양수입",
   net_profit: "순이익",
@@ -377,6 +381,26 @@ export function ProjectPipelinePanel({
     setHistory(loadHistory());
     void useProjectListStore.getState().syncFromBackend();
   }, []);
+
+  // ★홈/중앙분석센타 클릭 시(같은 라우트라 리마운트 없음) 분석뷰→입력(랜딩)으로 리셋.
+  //  새로고침해야만 홈으로 가던 문제 해결. 프로젝트 허브(projectMode)에선 적용 안 함.
+  const homeNonce = useUiReset((s) => s.homeNonce);
+  const homeNonceInit = useRef(true);
+  useEffect(() => {
+    if (homeNonceInit.current) { homeNonceInit.current = false; return; }
+    if (projectMode) return;
+    setWorkflowPhase("input");
+    setStages(DEFAULT_STAGES);
+    setSummary({});
+    setLastResult(null);
+    setError(null);
+    setExpandedStage(null);
+    setViewMode("pipeline");
+    setAddress("");
+    setAllAddresses([]);
+    if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [homeNonce]);
 
   // 경로 변경(대시보드 복귀/프로젝트 전환) 시 항상 첫 단계(진행 단계 뷰)로 리셋.
   // (이전: detail/compare 뷰가 남아 재진입 시 다른 분석 상세가 그대로 표시됨)

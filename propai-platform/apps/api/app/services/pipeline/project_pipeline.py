@@ -1173,7 +1173,32 @@ class ProjectPipeline:
         sellable_pyeong = total_gfa_pyeong * (efficiency_pct / 100)
         total_revenue = avg_sale_price * sellable_pyeong
 
-        total_project_cost = land_cost + cost.total_construction_cost
+        # ── 토지비: 공시지가 미확보 시 주변시세(예상토지비)로 폴백 — '토지비 0' 방지 ──
+        land_cost_source = "공시지가×1.3"
+        if land_cost <= 0:
+            try:
+                from app.services.land_intelligence.land_price_estimator import estimate_land_price
+                _sa = state.stages.get("site_analysis")
+                _sad = (_sa.data if _sa else {}) or {}
+                _pnu = (_sad.get("basic", {}) or {}).get("pnu") or _sad.get("pnu")
+                est = await estimate_land_price(
+                    address=site.address, area_sqm=site.land_area_sqm, pnu=_pnu,
+                )
+                if est and est.get("ok") and est.get("estimated_total_won"):
+                    land_cost = float(est["estimated_total_won"])
+                    land_cost_source = "주변시세 추정(공시지가×지역보정)"
+            except Exception:  # noqa: BLE001
+                pass
+        if land_cost <= 0 and total_revenue > 0:
+            land_cost = total_revenue * 0.35  # 최후 폴백: 도심개발 통상 토지비≈매출 35%
+            land_cost_source = "매출 대비 35% 추정(공시지가·시세 미확보)"
+
+        # ── 총사업비(통상 약식 기준): 토지비 + 공사비 + 일반사업비(매출20%) + 금융비(매출10%) ──
+        # 일반사업비=설계·감리·인허가·분양마케팅·예비비·일반관리 통합 개산, 금융비=PF/브릿지 이자·수수료.
+        # 이 둘을 빼면 총사업비가 과소→수익률 과대(827% 등) 왜곡 발생.
+        general_expense = total_revenue * 0.20
+        finance_cost = total_revenue * 0.10
+        total_project_cost = land_cost + cost.total_construction_cost + general_expense + finance_cost
         net_profit = total_revenue - total_project_cost
         profit_rate = (net_profit / total_project_cost * 100) if total_project_cost > 0 else 0
 
@@ -1189,7 +1214,10 @@ class ProjectPipeline:
 
         feasibility_data: dict[str, Any] = {
             "land_cost": land_cost,
+            "land_cost_source": land_cost_source,        # 토지비 산정 출처(정직 표기)
             "construction_cost": cost.total_construction_cost,
+            "general_expense_won": round(general_expense),  # 일반사업비(매출20%)
+            "finance_cost_won": round(finance_cost),        # 금융비(매출10%)
             "total_project_cost": total_project_cost,
             "total_cost_won": total_project_cost,  # 보고서 호환 alias
             "total_revenue": total_revenue,
@@ -1215,10 +1243,11 @@ class ProjectPipeline:
 
             def mc_profit_fn(vars_dict: dict[str, float]) -> float:
                 mc_revenue = vars_dict["sale_price"] * sellable_pyeong
-                mc_cost = land_cost + vars_dict["construction_cost"]
-                # 금리 변동 → 금융비용 변동 (공사비 × 금리 × 공사기간/12)
-                finance_cost = vars_dict["construction_cost"] * vars_dict["interest_rate"] * (cost.construction_months / 12)
-                return mc_revenue - mc_cost - finance_cost
+                # 결정론 총사업비와 동일 구조: 토지비 + 공사비 + 일반사업비(매출20%) + 금융비(매출10%, 금리연동)
+                mc_general = mc_revenue * 0.20
+                mc_finance = mc_revenue * 0.10 * (vars_dict["interest_rate"] / base_interest_rate)
+                mc_cost = land_cost + vars_dict["construction_cost"] + mc_general + mc_finance
+                return mc_revenue - mc_cost
 
             mc_result = run_monte_carlo(
                 calculate_fn=mc_profit_fn,
