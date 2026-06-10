@@ -127,6 +127,7 @@ export default async function DashboardLayout({
   const designNavigation = [
     { href: `/${locale}/design-studio`, label: "AI 설계도면(CAD)", icon: <IconDesign /> },
     { href: `/${locale}/bim-studio`, label: "3D 모델·공사물량(BIM·적산)", icon: <IconCost /> },
+    { href: `/${locale}/settings/design-references`, label: "표준설계 라이브러리", icon: <IconDesign /> },
   ];
 
   // 자산 운영 (준공 후 임대·임차인) — 페르소나 게이팅(운영/관리자 역할만)
