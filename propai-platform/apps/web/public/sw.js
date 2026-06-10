@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v140-ai-assistant-serverkey";
+const CACHE_NAME = "propai-v141-ai-assistant-backend";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

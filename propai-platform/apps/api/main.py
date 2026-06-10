@@ -32,6 +32,7 @@ from apps.api.routers import (
     ai_costs,
     analytics,
     api_keys,
+    ai_assistant,
     auction,
     auth,
     auto_zoning,
@@ -404,6 +405,7 @@ app.include_router(api_keys.router, prefix="/api/v1/api-keys", tags=["API 키"])
 app.include_router(building_compliance.router, prefix="/api/v1/building-compliance", tags=["건축 법규 검증"])
 app.include_router(cad_correction.router, prefix="/api/v1/cad-correction", tags=["CAD 자동 보정"])
 app.include_router(drawing.router, prefix="/api/v1/drawing", tags=["도면 자동 생성"])
+app.include_router(ai_assistant.router, prefix="/api/v1/ai", tags=["AI 비서"])
 app.include_router(system.router, prefix="/api/v1/system", tags=["system"])
 app.include_router(dashboard.router, prefix="/api/v1/dashboard", tags=["dashboard"])
 app.include_router(ai_costs.router, prefix="/api/v1/ai-costs", tags=["ai-costs"])

@@ -1,11 +1,10 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { usePathname } from "next/navigation";
-import { useChat } from "@ai-sdk/react";
-import { useSystemStore } from "@/store/useSystemStore";
 import { useIsAdmin } from "@/lib/use-is-admin";
+import { apiClient } from "@/lib/api-client";
 import Link from "next/link";
 
 const Icons = {
@@ -21,40 +20,49 @@ export function AIAssistant() {
   const [isOpen, setIsOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   
-  const { llmProvider, openaiApiKey, anthropicApiKey, llmModel, hasValidKey } = useSystemStore();
   const isAdmin = useIsAdmin();
-  const apiKey = llmProvider === 'openai' ? openaiApiKey : anthropicApiKey;
 
-  // 서버(관리자 설정) LLM 키 가용 여부 — 클라 BYOK 키가 없어도 서버 키가 있으면 연결됨으로 처리.
+  // 비서는 백엔드(api.4t8t.net/api/v1/ai/*)를 직접 호출한다 — Next /api/ai/*는 A1 nginx가 백엔드로
+  // 프록시해 닿지 못함(404). 서버(관리자 설정) LLM 키를 쓰므로 사용자 별도 키 불필요.
   const [serverKeyAvailable, setServerKeyAvailable] = useState(false);
   useEffect(() => {
     let alive = true;
-    fetch('/api/ai/status')
-      .then((r) => (r.ok ? r.json() : { serverKeyAvailable: false }))
-      .then((d) => { if (alive) setServerKeyAvailable(!!d?.serverKeyAvailable); })
+    apiClient.get<{ available?: boolean }>("/ai/status", { useMock: false })
+      .then((d) => { if (alive) setServerKeyAvailable(!!d?.available); })
       .catch(() => { if (alive) setServerKeyAvailable(false); });
     return () => { alive = false; };
   }, []);
-  // 연결 상태 = 클라 BYOK 키 ∪ 서버 키. 둘 중 하나면 비서 사용 가능.
-  const connected = hasValidKey() || serverKeyAvailable;
-  
-  // Vercel AI SDK
+  const connected = serverKeyAvailable;
+
   const [input, setInput] = useState("");
-  const chatOptions: any = {
-    api: '/api/ai/chat',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: {
-      provider: llmProvider,
-      model: llmModel,
-      pathname, // Send context to backend if needed
-    },
-    onError: (error: any) => {
-      console.error(error);
-    }
-  };
-  const { messages, append, setMessages, isLoading } = useChat(chatOptions) as any;
+  const [messages, setMessages] = useState<{ id: string; role: string; content: string }[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+
+  // 백엔드 LLM으로 대화 — 사용자 메시지 추가 → /ai/chat 호출 → 답변 추가
+  const send = useCallback(async (text: string) => {
+    const t = (text || "").trim();
+    if (!t || !serverKeyAvailable || isLoading) return;
+    const userMsg = { id: `u${Date.now()}`, role: "user", content: t };
+    setInput("");
+    setIsLoading(true);
+    setMessages((cur) => {
+      const next = [...cur, userMsg];
+      // 최신 next로 백엔드 호출(스테일 방지)
+      apiClient.post<{ ok?: boolean; reply?: string; message?: string }>("/ai/chat", {
+        body: { messages: next.map((m) => ({ role: m.role, content: m.content })), pathname },
+        useMock: false, timeoutMs: 40000,
+      })
+        .then((resp) => {
+          const reply = resp?.ok ? (resp.reply || "(빈 응답)") : (resp?.message || "AI 응답에 실패했습니다.");
+          setMessages((c) => [...c, { id: `a${Date.now()}`, role: "assistant", content: reply }]);
+        })
+        .catch(() => {
+          setMessages((c) => [...c, { id: `a${Date.now()}`, role: "assistant", content: "네트워크 오류로 응답하지 못했습니다." }]);
+        })
+        .finally(() => setIsLoading(false));
+      return next;
+    });
+  }, [serverKeyAvailable, isLoading, pathname]);
 
   // 컨텍스트 인지형 초기 메시지 설정 (클라이언트 전용)
   useEffect(() => {
@@ -70,8 +78,10 @@ export function AIAssistant() {
       initialText = "디지털 트윈 제어 타워에 오신 것을 환영합니다. 센서 가동 현황과 LCC 분석 값을 동기화하겠습니다.";
     }
 
+    // 화면(도메인) 진입 시 초기 인사로 리셋 — 의도된 동작.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setMessages([{ id: 'initial', role: "assistant", content: initialText }]);
-  }, [pathname, setMessages]);
+  }, [pathname]);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -92,9 +102,7 @@ export function AIAssistant() {
 
   const handleManualSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!input.trim() || !connected || isLoading) return;
-    append({ role: 'user', content: input });
-    setInput('');
+    void send(input);
   };
 
   return (
@@ -121,7 +129,7 @@ export function AIAssistant() {
                     <h3 className="text-sm font-[1000] tracking-tighter uppercase italic">PropAI Orchestrator</h3>
                     <div className="flex items-center gap-2">
                       <p className="text-[9px] font-black text-white/50 uppercase tracking-[0.3em]">
-                        {connected ? `Neural Context: Active${llmModel !== 'auto' ? ` (${llmModel})` : ''}` : 'Disconnected'}
+                        {connected ? 'Neural Context: Active' : 'Disconnected'}
                       </p>
                       {!connected && (
                         <span className="h-1.5 w-1.5 rounded-full bg-red-400 animate-pulse" />
