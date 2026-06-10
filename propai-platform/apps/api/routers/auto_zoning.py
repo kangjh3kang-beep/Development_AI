@@ -311,12 +311,62 @@ async def parcel_boundaries(req: ParcelBoundariesRequest):
     adjacency = _parcel_adjacency([f.get("geometry") for f in features]) if len(features) >= 2 else \
         {"contiguous": True, "components": 1, "note": "단일 필지"}
 
+    # ── 정밀 구획도(A+B+C+D): 주변 필지·도로(벡터 지적도) + 통합외곽선(union) + 실제 이격거리 ──
+    neighbors: list[dict] = []
+    merged_geometry = None
+    min_gap_m: float | None = None
+    try:
+        import itertools
+        import math
+
+        from shapely.geometry import mapping, shape
+        from shapely.ops import unary_union
+
+        sel_shapes = [shape(f["geometry"]).buffer(0) for f in features if f.get("geometry")]
+        sel_pnus = {f.get("pnu") for f in features}
+        if sel_shapes:
+            union_sel = unary_union(sel_shapes)
+            merged_geometry = mapping(union_sel)  # B: 통합개발 외곽선(슬리버 없는 단일 경계)
+            minx, miny, maxx, maxy = union_sel.bounds
+            mx = max(0.0008, (maxx - minx) * 0.7)
+            my = max(0.0008, (maxy - miny) * 0.7)
+            # A+D: bbox 내 전체 필지(연속지적도)를 받아 정밀 벡터 지적도로 깔고, 도로 지목을 구분
+            try:
+                allp = await vworld.get_parcels_in_bbox(minx - mx, miny - my, maxx + mx, maxy + my, max_count=150)
+            except Exception:  # noqa: BLE001
+                allp = []
+            for p in allp:
+                if p.get("pnu") in sel_pnus or not p.get("geometry"):
+                    continue
+                jm = p.get("jimok") or ""
+                neighbors.append({
+                    "pnu": p.get("pnu"),
+                    "jimok": jm,
+                    "is_road": ("도로" in jm),
+                    "geometry": p.get("geometry"),
+                })
+            # C: 선택 필지 간 실제 최소 이격(m) — "맞닿음(6m 허용)"의 실제 거리 정직 표기
+            if len(sel_shapes) >= 2:
+                latc = union_sel.centroid.y
+                m_per_deg = 111000 * math.cos(math.radians(latc))
+                gaps = [a.distance(b) for a, b in itertools.combinations(sel_shapes, 2)]
+                min_gap_m = round(min(gaps) * m_per_deg, 1) if gaps else 0.0
+                if adjacency.get("contiguous") and min_gap_m and min_gap_m > 0.3:
+                    adjacency = {**adjacency, "note": (
+                        f"필지 간 약 {min_gap_m}m 이격(도로 등) — 6m 이내라 통합개발 가능"
+                    )}
+    except Exception:  # noqa: BLE001 — 정밀 레이어 실패해도 기본 구획도는 반환
+        pass
+
     return {
         "features": features,
         "center": center,
         "total_area_sqm": round(total_area, 1),
         "parcel_count": len(features),
         "adjacency": adjacency,
+        "neighbors": neighbors,            # A+D: 주변 필지·도로(연회색/도로색) 벡터 지적도
+        "merged_geometry": merged_geometry,  # B: 통합개발 외곽선
+        "min_gap_m": min_gap_m,            # C: 실제 최소 이격(m)
     }
 
 

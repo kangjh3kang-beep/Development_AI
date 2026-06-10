@@ -33,12 +33,16 @@ type Feature = {
   geometry: any;
 };
 type Adjacency = { contiguous: boolean | null; components: number | null; note: string };
+type Neighbor = { pnu: string; jimok: string; is_road: boolean; geometry: any };
 type Boundaries = {
   features: Feature[];
   center: { lat: number; lon: number } | null;
   total_area_sqm: number;
   parcel_count: number;
   adjacency?: Adjacency;
+  neighbors?: Neighbor[];       // A+D: 주변 필지·도로(벡터 지적도)
+  merged_geometry?: any;        // B: 통합개발 외곽선
+  min_gap_m?: number | null;    // C: 실제 최소 이격(m)
 };
 
 const PALETTE = ["#14b8a6", "#3b82f6", "#f59e0b", "#8b5cf6", "#ec4899", "#65a30d"];
@@ -119,6 +123,8 @@ export function ParcelBoundaryMap({
       if (!mapRef.current) {
         mapRef.current = new kakao.maps.Map(mapEl.current, {
           center: new kakao.maps.LatLng(37.5665, 126.978), level: 3,
+          // 위성+라벨(하이브리드) 기본 — 항공사진과 지적좌표 정합이 좋아 '도로에서 뜨는' 착시↓
+          mapTypeId: kakao.maps.MapTypeId.HYBRID,
         });
       }
       const map = mapRef.current;
@@ -131,6 +137,25 @@ export function ParcelBoundaryMap({
       const bounds = new kakao.maps.LatLngBounds();
       let hasPt = false;
       let hiBounds: any = null;
+
+      // ── A+D: 주변 필지·도로(정밀 벡터 지적도) — 선택 필지 아래에 깔아 "빈 공간=도로/인접지"를 명확히 ──
+      (data.neighbors ?? []).forEach((nb) => {
+        if (!nb.geometry) return;
+        geoJsonToKakaoRings(kakao, nb.geometry).forEach((path) => {
+          const poly = new kakao.maps.Polygon({
+            path,
+            strokeWeight: 1,
+            strokeColor: nb.is_road ? "#b08746" : "#94a3b8",
+            strokeOpacity: nb.is_road ? 0.8 : 0.55,
+            fillColor: nb.is_road ? "#e7d3a8" : "#cbd5e1",
+            fillOpacity: nb.is_road ? 0.3 : 0.06,
+            zIndex: 1,
+          });
+          poly.setMap(map);
+          polysRef.current.push(poly);
+        });
+      });
+
       (data.features ?? []).forEach((f, i) => {
         if (!f.geometry) return;
         const zoneDisp = effZone(f, i);
@@ -148,6 +173,7 @@ export function ParcelBoundaryMap({
           const poly = new kakao.maps.Polygon({
             path, strokeWeight: isHi ? 4 : 2, strokeColor: isHi ? "#ef4444" : color,
             strokeOpacity: 0.9, fillColor: color, fillOpacity: isHi ? 0.5 : 0.28,
+            zIndex: 3,
           });
           poly.setMap(map);
           polysRef.current.push(poly);
@@ -165,6 +191,18 @@ export function ParcelBoundaryMap({
           }
         });
       });
+      // ── B: 통합개발 외곽선(슬리버 없는 union 단일 경계) — 굵은 청색 점선 ──
+      if (data.parcel_count >= 2 && data.merged_geometry) {
+        geoJsonToKakaoRings(kakao, data.merged_geometry).forEach((path) => {
+          const poly = new kakao.maps.Polygon({
+            path, strokeWeight: 3, strokeColor: "#0ea5e9", strokeOpacity: 0.95,
+            strokeStyle: "dash", fillColor: "#0ea5e9", fillOpacity: 0.04, zIndex: 5,
+          });
+          poly.setMap(map);
+          polysRef.current.push(poly);
+        });
+      }
+
       const applyBounds = () => {
         try {
           if (hiBounds) map.setBounds(hiBounds, 60, 60, 60, 60);
@@ -222,6 +260,18 @@ export function ParcelBoundaryMap({
         }`}>
           {data.adjacency.contiguous === true ? "🔗 통합개발 가능 — " : data.adjacency.contiguous === false ? "✂ 통합개발 불가 — " : "❔ 인접성 미상 — "}
           {data.adjacency.note}
+        </div>
+      )}
+      {/* 정밀 구획도 범례 — 주변 필지·도로(벡터 지적도) + 통합 외곽선 */}
+      {data && (data.neighbors?.length || data.merged_geometry) && (
+        <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 px-1 text-[10px] text-[var(--text-hint)]">
+          <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-teal-500/40 ring-1 ring-teal-500" />선택 필지</span>
+          <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-slate-300/30 ring-1 ring-slate-400" />주변 필지</span>
+          <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-amber-200/40 ring-1 ring-amber-600" />도로</span>
+          {data.parcel_count >= 2 && (
+            <span className="flex items-center gap-1"><span className="inline-block h-0 w-3 border-t-2 border-dashed border-sky-500" />통합개발 경계</span>
+          )}
+          <span className="ml-auto text-[var(--text-hint)]">지적도(VWorld) 벡터 · 위성 베이스 권장</span>
         </div>
       )}
       <div className="relative">
