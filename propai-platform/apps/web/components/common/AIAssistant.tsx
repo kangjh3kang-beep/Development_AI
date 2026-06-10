@@ -24,6 +24,19 @@ export function AIAssistant() {
   const { llmProvider, openaiApiKey, anthropicApiKey, llmModel, hasValidKey } = useSystemStore();
   const isAdmin = useIsAdmin();
   const apiKey = llmProvider === 'openai' ? openaiApiKey : anthropicApiKey;
+
+  // 서버(관리자 설정) LLM 키 가용 여부 — 클라 BYOK 키가 없어도 서버 키가 있으면 연결됨으로 처리.
+  const [serverKeyAvailable, setServerKeyAvailable] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    fetch('/api/ai/status')
+      .then((r) => (r.ok ? r.json() : { serverKeyAvailable: false }))
+      .then((d) => { if (alive) setServerKeyAvailable(!!d?.serverKeyAvailable); })
+      .catch(() => { if (alive) setServerKeyAvailable(false); });
+    return () => { alive = false; };
+  }, []);
+  // 연결 상태 = 클라 BYOK 키 ∪ 서버 키. 둘 중 하나면 비서 사용 가능.
+  const connected = hasValidKey() || serverKeyAvailable;
   
   // Vercel AI SDK
   const [input, setInput] = useState("");
@@ -79,7 +92,7 @@ export function AIAssistant() {
 
   const handleManualSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!input.trim() || !hasValidKey() || isLoading) return;
+    if (!input.trim() || !connected || isLoading) return;
     append({ role: 'user', content: input });
     setInput('');
   };
@@ -108,16 +121,16 @@ export function AIAssistant() {
                     <h3 className="text-sm font-[1000] tracking-tighter uppercase italic">PropAI Orchestrator</h3>
                     <div className="flex items-center gap-2">
                       <p className="text-[9px] font-black text-white/50 uppercase tracking-[0.3em]">
-                        {hasValidKey() ? `Neural Context: Active${llmModel !== 'auto' ? ` (${llmModel})` : ''}` : 'Disconnected'}
+                        {connected ? `Neural Context: Active${llmModel !== 'auto' ? ` (${llmModel})` : ''}` : 'Disconnected'}
                       </p>
-                      {!hasValidKey() && (
+                      {!connected && (
                         <span className="h-1.5 w-1.5 rounded-full bg-red-400 animate-pulse" />
                       )}
                     </div>
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  {!hasValidKey() && isAdmin === true && (
+                  {!connected && isAdmin === true && (
                     <Link href="/ko/settings" className="flex h-8 w-8 items-center justify-center rounded-full bg-white/10 hover:bg-white/20 transition-all text-red-200 hover:text-white" title="Settings">
                       <Icons.Settings />
                     </Link>
@@ -136,7 +149,7 @@ export function AIAssistant() {
               ref={scrollRef}
               className="relative flex h-[380px] flex-col gap-5 overflow-y-auto p-6 scrollbar-hide bg-[var(--surface-soft)]/50 backdrop-blur-sm"
             >
-              {!hasValidKey() && (
+              {!connected && (
                 <div className="mb-4 rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-center">
                   <p className="text-xs font-bold text-red-400 mb-2">AI 어시스턴트가 아직 연결되지 않았습니다.</p>
                   {isAdmin === true ? (
@@ -176,7 +189,7 @@ export function AIAssistant() {
                 </div>
               )}
               
-              {!input && (messages?.length ?? 0) <= 1 && hasValidKey() && (
+              {!input && (messages?.length ?? 0) <= 1 && connected && (
                 <div className="mt-2 flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
                     {getSuggestedTags().map(tag => (
                         <button 
@@ -195,15 +208,15 @@ export function AIAssistant() {
               <form onSubmit={handleManualSubmit} className="relative">
                 <input
                   type="text"
-                  placeholder={hasValidKey() ? "Ask for site intelligence..." : "API 키를 먼저 설정해주세요"}
+                  placeholder={connected ? "Ask for site intelligence..." : "API 키를 먼저 설정해주세요"}
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
-                  disabled={!hasValidKey() || isLoading}
+                  disabled={!connected || isLoading}
                   className="w-full rounded-[1.75rem] border border-[var(--line)] bg-[var(--surface-muted)] py-4 pl-6 pr-14 text-sm font-bold placeholder:text-[var(--text-hint)] focus:outline-none focus:ring-4 focus:ring-[var(--accent-strong)]/10 transition-all text-[var(--text-primary)] shadow-inner disabled:opacity-50"
                 />
                 <button 
                   type="submit"
-                  disabled={!hasValidKey() || isLoading || !input.trim()}
+                  disabled={!connected || isLoading || !input.trim()}
                   className="absolute right-2 top-2 flex h-10 w-10 items-center justify-center rounded-2xl bg-[var(--accent-strong)] text-white shadow-xl hover:scale-105 active:scale-95 transition-all disabled:opacity-50 disabled:hover:scale-100"
                 >
                   <Icons.Send />
@@ -233,7 +246,7 @@ export function AIAssistant() {
         {isOpen ? <Icons.X /> : <Icons.Sparkles />}
         
         {!isOpen && (
-            <div className={`absolute -top-1 -right-1 flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-black ring-4 ring-[var(--background)] ${hasValidKey() ? 'bg-[var(--accent-strong)]' : 'bg-red-500'}`}>
+            <div className={`absolute -top-1 -right-1 flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-black ring-4 ring-[var(--background)] ${connected ? 'bg-[var(--accent-strong)]' : 'bg-red-500'}`}>
                 <span className="h-2 w-2 rounded-full bg-white animate-ping" />
             </div>
         )}

@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v139-zoning-feas-nav";
+const CACHE_NAME = "propai-v140-ai-assistant-serverkey";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

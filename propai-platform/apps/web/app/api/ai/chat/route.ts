@@ -41,17 +41,18 @@ export async function POST(req: Request) {
     const { messages, provider, model, pathname } = await req.json();
     const authHeader = req.headers.get("Authorization");
 
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      return NextResponse.json(
-        { error: "API 키가 필요합니다." },
-        { status: 401 },
-      );
+    // 1순위: 사용자 브라우저 BYOK 키. 없으면 2순위: 서버(관리자 설정) LLM 키 폴백.
+    // → 관리자가 키를 설정해 두면 사용자가 별도 키 없이도 비서를 쓸 수 있다.
+    let apiKey = authHeader?.startsWith("Bearer ") ? authHeader.split(" ")[1] : "";
+    if (!apiKey) {
+      apiKey =
+        (provider === "openai"
+          ? process.env.OPENAI_API_KEY
+          : process.env.ANTHROPIC_API_KEY) || "";
     }
-
-    const apiKey = authHeader.split(" ")[1];
     if (!apiKey) {
       return NextResponse.json(
-        { error: "API Key not provided" },
+        { error: "API 키가 필요합니다. 관리자 키 설정 또는 비서 설정에서 키를 등록하세요." },
         { status: 401 },
       );
     }
