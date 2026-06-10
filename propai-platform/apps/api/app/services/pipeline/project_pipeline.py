@@ -1140,7 +1140,26 @@ class ProjectPipeline:
         )
 
         market_price = get_regional_sale_price_per_pyeong(address=site.address)
-        if market_price and market_price > 0:
+
+        # F1: 다중출처 신뢰도 가중 시장 재평가(지역표준 + MOLIT 실거래 블렌딩). 있으면 우선.
+        market_reval: dict | None = None
+        try:
+            from app.services.feasibility.market_revaluation_service import MarketRevaluationService
+            sa = state.stages.get("site_analysis")
+            sa_data = sa.data if sa else {}
+            pnu = (sa_data.get("basic", {}) or {}).get("pnu") or sa_data.get("pnu")
+            lawd = str(pnu)[:5] if pnu else None
+            market_reval = await MarketRevaluationService().revalue(
+                address=site.address, building_type=design.building_type,
+                lawd_cd=lawd, land_area_sqm=site.land_area_sqm,
+            )
+        except Exception:  # noqa: BLE001
+            market_reval = None
+
+        if market_reval and market_reval.get("available"):
+            avg_sale_price = float(market_reval["price_per_pyeong"])
+            sale_price_source = "market_blended"
+        elif market_price and market_price > 0:
             avg_sale_price = float(market_price)
             sale_price_source = "regional_market_table"
         else:
@@ -1180,6 +1199,8 @@ class ProjectPipeline:
             "profit_rate_pct": round(profit_rate, 2),
             "avg_sale_price_per_pyeong": avg_sale_price,
             "sale_price_source": sale_price_source,
+            "sale_price_confidence": (market_reval or {}).get("confidence"),  # 분양가 신뢰도(%)
+            "market_revaluation": market_reval,  # 출처별 블렌딩 내역(가정버전·원장 기록용)
             "grade": grade,
         }
 

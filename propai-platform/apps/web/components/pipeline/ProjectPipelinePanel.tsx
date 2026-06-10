@@ -153,6 +153,7 @@ const FIELD_LABELS: Record<string, string> = {
   net_profit: "순이익",
   avg_sale_price_per_pyeong: "평당 분양가",
   sale_price_source: "분양가 산정근거",
+  sale_price_confidence: "분양가 신뢰도(%)",
   total_revenue_won: "총 예상 분양수입",
   total_cost_won: "총 투자비용",
   net_profit_won: "순이익(원)",
@@ -193,16 +194,18 @@ const FIELD_LABELS: Record<string, string> = {
 // 약식 그리드에서 숨길 필드: 보고서 호환 중복 alias + 복합객체(상세는 정식 분석에서).
 const HIDDEN_GRID_FIELDS = new Set<string>([
   "total_cost_won", "total_revenue_won", "net_profit_won",  // *_won = 본필드 중복 alias
-  "monte_carlo", "cashflow", "sensitivity",                  // 복합객체(원시 JSON 방지)
+  "monte_carlo", "cashflow", "sensitivity", "market_revaluation",  // 복합객체(원시 JSON 방지)
   "pnu_codes", "coordinates", "building_info", "category_totals",
 ]);
 
 // 분양가 산정근거 코드 → 한글
 const SALE_SOURCE_LABEL: Record<string, string> = {
+  market_blended: "시장 블렌딩(실거래+표준)",
   regional_market_table: "지역 시장 표준단가",
   molit_realtx: "국토부 실거래",
   nearby_map: "주변 실거래",
   avm: "AI 추정시세",
+  cost_based_fallback: "공사비 기반(폴백)",
   user: "사용자 입력",
 };
 
