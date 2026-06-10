@@ -27,6 +27,8 @@ interface SiteAnalysisDetailProps {
    * (보고서에는 이미 한글 라벨 해석이 별도로 있어 중복 방지)
    */
   hideInterpretation?: boolean;
+  /** 다중 필지 주소 — 필지 구획도에 전체 필지를 표시(미전달 시 분석 대상 단일 필지). */
+  parcels?: string[];
 }
 
 /* ── Helpers ── */
@@ -259,7 +261,7 @@ function DonationSimTable({ baseFar, capFar }: { baseFar: number; capFar: number
 
 /* ── Main Component ── */
 
-export function SiteAnalysisDetail({ data, hideInterpretation = false }: SiteAnalysisDetailProps) {
+export function SiteAnalysisDetail({ data, hideInterpretation = false, parcels }: SiteAnalysisDetailProps) {
   // 1. 기본 토지정보
   const basic = obj(data.basic);
   const landAddress = s(basic.address || data.address);
@@ -373,8 +375,15 @@ export function SiteAnalysisDetail({ data, hideInterpretation = false }: SiteAna
         />
       )}
 
-      {/* 1-1. 필지 구획도 (경계·용도지역·면적) */}
-      {landAddress && <ParcelBoundaryMap parcels={[landAddress]} primaryZone={zoneType || undefined} />}
+      {/* 1-1. 필지 구획도 (경계·용도지역·면적) — 다중필지 전달 시 전체 표시 */}
+      {(() => {
+        const mapParcels = (parcels && parcels.length > 0)
+          ? parcels
+          : (landAddress ? [landAddress] : []);
+        return mapParcels.length > 0
+          ? <ParcelBoundaryMap parcels={mapParcels} primaryZone={zoneType || undefined} />
+          : null;
+      })()}
 
       {/* 1-2. 주변 실거래 지도 — 이 분석의 주소/PNU를 직접 주입(이력 선택 시 store 오염 방지, 첫 분석은 동일값). */}
       {landAddress ? <NearbyTransactionsMap address={landAddress} pnu={pnu} /> : <NearbyTransactionsMap />}

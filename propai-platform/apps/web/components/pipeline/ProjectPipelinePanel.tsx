@@ -144,9 +144,17 @@ const FIELD_LABELS: Record<string, string> = {
   cost_per_sqm: "평당공사비",
   duration_months: "예상 공기(개월)",
 
-  // feasibility
+  // feasibility (약식 수지분석)
+  land_cost: "토지비",
+  construction_cost: "공사비",
+  total_project_cost: "총 사업비",
+  total_revenue: "총 분양수입",
+  net_profit: "순이익",
+  avg_sale_price_per_pyeong: "평당 분양가",
+  sale_price_source: "분양가 산정근거",
   total_revenue_won: "총 예상 분양수입",
   total_cost_won: "총 투자비용",
+  net_profit_won: "순이익(원)",
   profit_rate_pct: "예상 수익률(%)",
   npv: "순현재가치(NPV)",
   irr: "내부수익률(IRR)",
@@ -180,6 +188,32 @@ const FIELD_LABELS: Record<string, string> = {
   generated_at: "보고서 생성 일시",
   sections_included: "포함된 분석 섹션",
 };
+
+// 약식 그리드에서 숨길 필드: 보고서 호환 중복 alias + 복합객체(상세는 정식 분석에서).
+const HIDDEN_GRID_FIELDS = new Set<string>([
+  "total_cost_won", "total_revenue_won", "net_profit_won",  // *_won = 본필드 중복 alias
+  "monte_carlo", "cashflow", "sensitivity",                  // 복합객체(원시 JSON 방지)
+  "pnu_codes", "coordinates", "building_info", "category_totals",
+]);
+
+// 분양가 산정근거 코드 → 한글
+const SALE_SOURCE_LABEL: Record<string, string> = {
+  regional_market_table: "지역 시장 표준단가",
+  molit_realtx: "국토부 실거래",
+  nearby_map: "주변 실거래",
+  avm: "AI 추정시세",
+  user: "사용자 입력",
+};
+
+/** 약식 분석 필드 값 표시 — 객체 JSON 덤프 금지, 코드값은 한글 매핑. */
+function displayFieldValue(key: string, value: unknown): string {
+  if (value == null) return "-";
+  if (key === "sale_price_source" && typeof value === "string") {
+    return SALE_SOURCE_LABEL[value] || value;
+  }
+  if (typeof value === "object") return "—"; // 복합객체는 그리드에 표시하지 않음(숨김 대상)
+  return formatNumber(value as number | string);
+}
 
 const DEFAULT_STAGES: PipelineStageStatus[] = [
   "site_analysis",
@@ -692,8 +726,18 @@ export function ProjectPipelinePanel({
     router.push(`/${locale ?? "ko"}/projects/new`);
   }, [address, storeAddress, siteAnalysis, router, locale]);
 
+  // 단계 행 ref — 펼침 시 상단(긴 지도) 접힘에 따른 레이아웃 점프를 막고 클릭 단계로 재고정.
+  const stageRowRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const toggleStage = (stageKey: string) => {
-    setExpandedStage((prev) => (prev === stageKey ? null : stageKey));
+    setExpandedStage((prev) => {
+      const next = prev === stageKey ? null : stageKey;
+      if (next) {
+        requestAnimationFrame(() => {
+          stageRowRefs.current[stageKey]?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        });
+      }
+      return next;
+    });
   };
 
   const handleRerun = useCallback(
@@ -1031,7 +1075,11 @@ export function ProjectPipelinePanel({
           }
 
           return (
-            <div key={stage.stage} className="rounded-xl border border-[var(--line)] overflow-hidden transition-all">
+            <div
+              key={stage.stage}
+              ref={(el) => { stageRowRefs.current[stage.stage] = el; }}
+              className="rounded-xl border border-[var(--line)] overflow-hidden transition-all scroll-mt-24"
+            >
               {/* Stage Row */}
               <button
                 type="button"
@@ -1090,19 +1138,21 @@ export function ProjectPipelinePanel({
                     <p className="text-xs text-red-400 mb-2">{stage.error}</p>
                   )}
                   {stage.stage === "site_analysis" ? (
-                    <SiteAnalysisDetail data={stage.data} />
+                    <SiteAnalysisDetail data={stage.data} parcels={allAddresses.map((a) => a.fullAddress)} />
                   ) : (
                     <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                      {Object.entries(stage.data).map(([key, value]) => (
-                        <div key={key} className="rounded-lg bg-[var(--surface)] border border-[var(--line)] px-3 py-2">
-                          <p className="text-[10px] font-bold text-[var(--text-hint)] tracking-wider uppercase mb-0.5">
-                            {FIELD_LABELS[key] || key.replace(/_/g, " ")}
-                          </p>
-                          <p className="text-xs font-bold text-[var(--text-primary)] truncate">
-                            {typeof value === "object" ? JSON.stringify(value) : formatNumber(value)}
-                          </p>
-                        </div>
-                      ))}
+                      {Object.entries(stage.data)
+                        .filter(([key, value]) => !HIDDEN_GRID_FIELDS.has(key) && !(value && typeof value === "object"))
+                        .map(([key, value]) => (
+                          <div key={key} className="rounded-lg bg-[var(--surface)] border border-[var(--line)] px-3 py-2">
+                            <p className="text-[10px] font-bold text-[var(--text-hint)] tracking-wider mb-0.5">
+                              {FIELD_LABELS[key] || key.replace(/_/g, " ")}
+                            </p>
+                            <p className="text-xs font-bold text-[var(--text-primary)] truncate">
+                              {displayFieldValue(key, value)}
+                            </p>
+                          </div>
+                        ))}
                     </div>
                   )}
                 </div>
