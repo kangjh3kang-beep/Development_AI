@@ -270,6 +270,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
 
   // P4: 세대믹스 시뮬레이터가 "평면 반영"한 명시 믹스(타입:면적:총세대). 도면 SVG에 mix= 로 전달.
   const [appliedMix, setAppliedMix] = useState<string | null>(null);
+  const [dxfBusy, setDxfBusy] = useState(false);
 
   // 설계(건축개요)가 있는지 — 3D 캔버스는 "설계 생성 후"에만 마운트하는 게이트.
   // 선택한 개요(GFA) 또는 부지분석(대지면적·용도지역) 중 하나라도 있으면 매스 산출이 가능하다.
@@ -525,7 +526,9 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
         (c) => data.drawings[c]?.has_content,
       );
       setDrawingCodes(codes);
-      setActiveCode((prev) => prev ?? codes[0] ?? null);
+      // 기본 도면을 "기준층 평면도(B-02-STD)"로 — 벽체·문·창호·치수·세대분할이 있는 밀도 높은
+      // 실 도면이라 한눈에 CAD 도면임이 드러남(배치도는 단순해 목업처럼 보인다는 피드백 반영).
+      setActiveCode((prev) => prev ?? (codes.includes("B-02-STD") ? "B-02-STD" : codes[0]) ?? null);
     } catch (err) {
       setDrawingError(err instanceof Error ? err.message : "도면을 불러오지 못했습니다.");
     } finally {
@@ -585,6 +588,39 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
       updateDesignData({ ...designData, unitTypes: types });
     }
   }, [designData, updateDesignData]);
+
+  // DXF(캐드) 내보내기 — 실제 AutoCAD 호환 .dxf 파일 다운로드(벡터 CAD 도면임을 증명).
+  const exportDxf = useCallback(async () => {
+    if (!spec) return;
+    setDxfBusy(true);
+    try {
+      const base = designApiBase();
+      const res = await fetch(`${base}/design/${encodeURIComponent(projectId)}/drawings/export-dxf`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          building_width_m: spec.building_width_m,
+          building_depth_m: spec.building_depth_m,
+          floor_count: spec.floor_count,
+        }),
+        signal: AbortSignal.timeout(30000),
+      });
+      if (!res.ok) throw new Error(String(res.status));
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${(spec.project_name || "PropAI")}_평면도.dxf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      /* 다운로드 실패는 무시(사용자는 재시도 가능) */
+    } finally {
+      setDxfBusy(false);
+    }
+  }, [projectId, spec]);
 
   // 생성 UX(Phase 2)에서 설계안 적용 시 — 파생 기하·도면·3D를 초기화해
   // 새 SSOT(designData)로 spec을 재산출하고 2D/3D를 재생성한다(기존 로드 경로 재사용).
@@ -907,12 +943,23 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
                   ))}
                 </select>
               </label>
-              <button
-                onClick={() => setEditMode(true)}
-                className="shrink-0 rounded-full border border-white/10 px-4 py-2 text-[10px] font-black uppercase tracking-widest text-[var(--accent-strong)] hover:bg-white/5"
-              >
-                편집 모드
-              </button>
+              <div className="flex shrink-0 items-center gap-2">
+                {/* DXF(캐드) 내보내기 — 실제 AutoCAD 호환 벡터 도면 파일 다운로드 */}
+                <button
+                  onClick={exportDxf}
+                  disabled={dxfBusy || !spec}
+                  title="AutoCAD 등에서 열 수 있는 벡터 CAD 도면(.dxf)으로 내보냅니다"
+                  className="rounded-full border border-white/10 px-4 py-2 text-[10px] font-black uppercase tracking-widest text-white/70 hover:bg-white/5 disabled:opacity-50"
+                >
+                  {dxfBusy ? "내보내는 중…" : "⬇ DXF(캐드) 내보내기"}
+                </button>
+                <button
+                  onClick={() => setEditMode(true)}
+                  className="rounded-full border border-white/10 px-4 py-2 text-[10px] font-black uppercase tracking-widest text-[var(--accent-strong)] hover:bg-white/5"
+                >
+                  편집 모드
+                </button>
+              </div>
             </div>
 
             {/* 도면 표시 영역 */}

@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v134-unitmix-sim";
+const CACHE_NAME = "propai-v135-dxf-authfix";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

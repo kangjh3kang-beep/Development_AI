@@ -13,7 +13,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
-# 비용유발(LLM·도면생성) 엔드포인트는 로그인 필수 — 외부 무단호출·비용유발 차단.
+# 진짜 비용유발(LLM 호출) 엔드포인트만 로그인 필수 — 현재는 parse_intent(자연어→의도).
+# 도면/설계 산출(auto_design·design_alternatives·design_operate·site/floor_plan)은 순수 결정론
+# 계산(SLSQP·룰)으로 LLM 비용이 없고, 스튜디오의 /design/* 생성과 동일하게 무인증 허용해야
+# 일관적(로그인 만료/게스트에서도 스튜디오 설계 생성이 동작). 외부 남용은 레이트리밋 계층에서 차단.
 from apps.api.auth.jwt_handler import CurrentUser, get_current_user
 
 logger = logging.getLogger(__name__)
@@ -130,7 +133,7 @@ def _check_services() -> None:
 # ── 엔드포인트 ──
 
 @router.post("/site-plan", response_class=Response)
-async def generate_site_plan(req: SitePlanRequest, _user: CurrentUser = Depends(get_current_user)):
+async def generate_site_plan(req: SitePlanRequest):
     """배치도 SVG를 생성한다."""
     _check_services()
     svg = svg_service.generate_site_plan(
@@ -141,7 +144,7 @@ async def generate_site_plan(req: SitePlanRequest, _user: CurrentUser = Depends(
 
 
 @router.post("/floor-plan", response_class=Response)
-async def generate_floor_plan(req: FloorPlanRequest, _user: CurrentUser = Depends(get_current_user)):
+async def generate_floor_plan(req: FloorPlanRequest):
     """평면도 SVG를 생성한다."""
     _check_services()
     svg = svg_service.generate_floor_plan(
@@ -326,7 +329,7 @@ def _score_alternative(
 
 
 @router.post("/design-alternatives")
-async def design_alternatives(req: DesignAlternativesRequest, _user: CurrentUser = Depends(get_current_user)):
+async def design_alternatives(req: DesignAlternativesRequest):
     """수익형/거주형/균형형 3개 대안을 생성·점수화·정렬하여 비교한다.
 
     각 대안은 평형배분(유닛믹스)이 다르며, 법규 준수 여부(all_pass)와 점수(score)를
@@ -375,7 +378,7 @@ async def design_alternatives(req: DesignAlternativesRequest, _user: CurrentUser
 
 
 @router.post("/auto-design")
-async def auto_design(req: AutoDesignRequest, _user: CurrentUser = Depends(get_current_user)):
+async def auto_design(req: AutoDesignRequest):
     """대지면적+법규 기반 단일 AI 자동 설계를 생성한다(CAD Phase 2).
 
     Phase 1에서 정의됐으나 라이브 미노출(404)이던 엔드포인트를 실 라우터에 추가.
@@ -421,7 +424,7 @@ class DesignOperateRequest(BaseModel):
 
 
 @router.post("/design-operate")
-async def design_operate(req: DesignOperateRequest, _user: CurrentUser = Depends(get_current_user)):
+async def design_operate(req: DesignOperateRequest):
     """검증형 설계 생성·편집 (CAD P2).
 
     자연어/음성 의도 → DesignSpec 결정론 반영 → 커널 생성 → 법규 근거검증.
