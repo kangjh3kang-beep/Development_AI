@@ -186,6 +186,40 @@ async def generate_full_drawing_set(project_id: str, req: DrawingSetRequest):
     }
 
 
+def _parse_mix_param(mix: Optional[str], floor_count: int) -> Optional[list[dict[str, Any]]]:
+    """P4 슬라이더 명시 세대믹스 파싱: 'type:area:total' 쉼표구분 → units 리스트.
+
+    예) '59A:59:20,84A:84:20' → [{type,area_sqm,count_per_floor,total_count}, ...]
+    형식 오류 시 None(자동 산출로 폴백).
+    """
+    if not mix:
+        return None
+    nf = max(1, floor_count)
+    units: list[dict[str, Any]] = []
+    try:
+        for seg in mix.split(","):
+            seg = seg.strip()
+            if not seg:
+                continue
+            parts = seg.split(":")
+            if len(parts) != 3:
+                continue
+            t, area_s, total_s = parts
+            area = float(area_s)
+            total = int(float(total_s))
+            if area <= 0 or total <= 0:
+                continue
+            units.append({
+                "type": t.strip(),
+                "area_sqm": round(area, 1),
+                "count_per_floor": max(1, round(total / nf)),
+                "total_count": total,
+            })
+    except (ValueError, TypeError):
+        return None
+    return units or None
+
+
 @router.get("/{project_id}/drawings/{code}/svg", response_class=Response)
 async def get_drawing_svg(
     project_id: str,
@@ -203,15 +237,16 @@ async def get_drawing_svg(
     project_name: str = Query("PropAI"),
     building_use: str = Query("공동주택"),
     unit_types: Optional[str] = Query(None, description="쉼표구분 평형(예: 59A,84A)"),
+    mix: Optional[str] = Query(None, description="세대믹스 명시(P4 슬라이더): 'type:area:total' 쉼표구분(예: 59A:59:20,84A:84:20)"),
 ):
     """특정 도면의 SVG를 반환한다.
 
     선택한 건축개요(부지·건물 치수·층수)를 쿼리로 받아 실제 기하로 도면을 생성한다.
     파라미터 미전달 시 기존 기본값(부지 60×40 / 건물 40×20 / 5층)으로 폴백.
     이로써 동일 기하를 3D BIM과 공유 → CAD↔BIM 정합.
-    building_use·unit_types가 오면 기준층 평면도를 실제 평형믹스로 분할한다.
+    mix가 오면 그 명시 세대믹스로, 없고 building_use·unit_types가 오면 자동 산출로 평면 분할한다.
     """
-    project_data = {
+    project_data: dict[str, Any] = {
         "site_width_m": site_width_m, "site_depth_m": site_depth_m,
         "building_width_m": building_width_m, "building_depth_m": building_depth_m,
         "floor_count": floor_count, "floor_height_m": floor_height_m,
@@ -219,29 +254,170 @@ async def get_drawing_svg(
         "setback_m": setback_m, "parking_count": parking_count,
         "project_name": project_name,
     }
-    # ── 실제 세대믹스 산출 → 기준층 평면도에 주입(GET도 2D·3D 정합 유지) ──
-    try:
-        from app.services.cad.auto_design_engine import AutoDesignEngineService
+    # ── 세대믹스 → 기준층 평면도 주입 ── mix(P4 슬라이더 명시) 우선, 없으면 자동 산출 ──
+    explicit_units = _parse_mix_param(mix, floor_count)
+    if explicit_units:
+        project_data["units"] = explicit_units
+    else:
+        try:
+            from app.services.cad.auto_design_engine import AutoDesignEngineService
 
-        svc = AutoDesignEngineService()
-        mass = {
-            "building_width_m": building_width_m, "building_depth_m": building_depth_m,
-            "num_floors": floor_count, "floor_height_m": floor_height_m,
-            "building_footprint_sqm": building_width_m * building_depth_m,
-            "total_floor_area_sqm": building_width_m * building_depth_m * floor_count,
-        }
-        core_layout = svc.compute_core_layout(mass, building_use)
-        utypes = [t.strip() for t in unit_types.split(",") if t.strip()] if unit_types else ["59A", "84A"]
-        unit_layout = svc.compute_unit_layout(mass, core_layout, utypes, building_use)
-        project_data["units"] = unit_layout.get("units")
-    except Exception:  # noqa: BLE001 — 산출 실패해도 generic 분할로 도면 생성
-        pass
+            svc = AutoDesignEngineService()
+            mass = {
+                "building_width_m": building_width_m, "building_depth_m": building_depth_m,
+                "num_floors": floor_count, "floor_height_m": floor_height_m,
+                "building_footprint_sqm": building_width_m * building_depth_m,
+                "total_floor_area_sqm": building_width_m * building_depth_m * floor_count,
+            }
+            core_layout = svc.compute_core_layout(mass, building_use)
+            utypes = [t.strip() for t in unit_types.split(",") if t.strip()] if unit_types else ["59A", "84A"]
+            unit_layout = svc.compute_unit_layout(mass, core_layout, utypes, building_use)
+            project_data["units"] = unit_layout.get("units")
+        except Exception:  # noqa: BLE001 — 산출 실패해도 generic 분할로 도면 생성
+            pass
 
     drawings = svg_service.generate_full_drawing_set(project_data)
     svg = drawings.get(code)
     if not svg:
         raise HTTPException(status_code=404, detail=f"도면 {code} 없음")
     return Response(content=svg, media_type="image/svg+xml")
+
+
+# ── P4: 세대믹스 시뮬레이터(비율 슬라이더 → 평면 세대 재배치 + 약식 수지 실시간) ──
+
+_PYEONG_TO_SQM = 3.305785
+
+
+class UnitMixEntry(BaseModel):
+    """평형별 입력: 타입명·전용면적(㎡)·비율(%)."""
+    type: str
+    area_sqm: float = Field(gt=0)
+    ratio_pct: float = Field(ge=0)
+
+
+class UnitMixSimulateRequest(BaseModel):
+    """세대믹스 시뮬레이션 요청. 외부 API 호출 없는 자체완결 고속 계산(슬라이더용)."""
+    building_width_m: float = Field(gt=0)
+    building_depth_m: float = Field(gt=0)
+    floor_count: int = Field(ge=1, le=200)
+    building_use: str = "공동주택"
+    efficiency_pct: float = Field(75.0, gt=0, le=100)   # 전용률(연면적 대비 분양가능면적)
+    mix: list[UnitMixEntry]
+    land_area_sqm: Optional[float] = None
+    sale_price_per_pyeong_won: Optional[float] = None    # 원/평(F1 시세 전달 권장)
+    official_price_per_sqm: Optional[float] = None        # 공시지가 원/㎡(토지비)
+    price_multiplier: float = 1.2                          # 감정가 배율
+    build_cost_per_sqm: Optional[int] = None              # 직접공사비 단가 원/㎡(override)
+
+
+def _use_to_building_type(use: str) -> str:
+    """한글 용도 → 공사비/단가 building_type 키."""
+    s = use or ""
+    if "오피스텔" in s:
+        return "officetel"
+    if "상가" in s or "근린" in s or "판매" in s:
+        return "commercial"
+    if "업무" in s or "오피스" in s:
+        return "office"
+    if "단독" in s or "다세대" in s or "타운" in s:
+        return "townhouse"
+    return "apartment"
+
+
+@router.post("/{project_id}/unit-mix/simulate")
+async def simulate_unit_mix(project_id: str, req: UnitMixSimulateRequest):
+    """세대믹스 비율(슬라이더)로 평형별 세대수·분양수입·약식 ROI를 실시간 산출한다.
+
+    - 평면 재배치용 units(타입·전용면적·층당/총세대수)를 비율대로 직접 배분(GET svg에 그대로 전달 가능).
+    - 분양수입 = Σ 세대수 × 전용평 × 분양가(원/평). 분양가 미전달 시 기본값(시장가 미연동 표기).
+    - 약식 ROI = (수입 - 토지비 - 직접공사비 - 간접비)/총사업비. 정밀 수지는 투자수익성(ROI) 메뉴.
+    """
+    from app.services.feasibility.construction_cost_engine import (
+        DEFAULT_INDIRECT_RATIOS,
+        calculate_direct_cost,
+    )
+
+    footprint = req.building_width_m * req.building_depth_m
+    gfa = footprint * req.floor_count
+    sellable = gfa * (req.efficiency_pct / 100.0)
+
+    # 비율 정규화(합계 0이면 균등)
+    total_ratio = sum(max(0.0, e.ratio_pct) for e in req.mix)
+    entries = req.mix or []
+    if total_ratio <= 0 and entries:
+        for e in entries:
+            e.ratio_pct = 100.0 / len(entries)
+        total_ratio = 100.0
+
+    units: list[dict[str, Any]] = []
+    revenue_won = 0
+    nf = max(1, req.floor_count)
+    price = req.sale_price_per_pyeong_won
+    price_source = "전달 시세(원/평)" if price and price > 0 else "기본값(시장가 미연동)"
+    if not price or price <= 0:
+        price = 20_000_000.0  # 2,000만원/평 보수적 기본값(반드시 F1 시세로 대체 권장)
+
+    for e in entries:
+        if e.area_sqm <= 0 or total_ratio <= 0:
+            continue
+        alloc_area = sellable * (e.ratio_pct / total_ratio)
+        total_count = int(alloc_area // e.area_sqm)
+        if total_count <= 0:
+            continue
+        per_floor = max(1, round(total_count / nf))
+        area_pyeong = e.area_sqm / _PYEONG_TO_SQM
+        unit_rev = int(total_count * area_pyeong * price)
+        revenue_won += unit_rev
+        units.append({
+            "type": e.type,
+            "area_sqm": round(e.area_sqm, 1),
+            "count_per_floor": per_floor,
+            "total_count": total_count,
+            "area_pyeong": round(area_pyeong, 1),
+            "ratio_pct": round(e.ratio_pct / total_ratio * 100, 1),
+            "revenue_won": unit_rev,
+        })
+
+    total_units = sum(u["total_count"] for u in units)
+    used_area = sum(u["total_count"] * u["area_sqm"] for u in units)
+
+    # 공사비(직접) + 간접비
+    btype = _use_to_building_type(req.building_use)
+    direct = calculate_direct_cost(
+        total_gfa_sqm=gfa, building_type=btype,
+        unit_cost_per_sqm=req.build_cost_per_sqm,
+    )
+    build_cost_won = int(direct["total_direct_cost_won"])
+    indirect_ratio = sum(DEFAULT_INDIRECT_RATIOS.values())  # 설계·감리·예비·일반관리 합
+    indirect_cost_won = int(build_cost_won * indirect_ratio)
+
+    # 토지비(공시지가×배율, 입력 시에만)
+    land_cost_won = 0
+    if req.official_price_per_sqm and req.land_area_sqm:
+        land_cost_won = int(req.official_price_per_sqm * req.land_area_sqm * req.price_multiplier)
+
+    total_cost_won = land_cost_won + build_cost_won + indirect_cost_won
+    profit_won = revenue_won - total_cost_won
+    roi_pct = round(profit_won / total_cost_won * 100, 1) if total_cost_won > 0 else 0.0
+
+    return {
+        "units": units,
+        "total_units": total_units,
+        "gfa_sqm": round(gfa, 1),
+        "sellable_area_sqm": round(sellable, 1),
+        "used_area_sqm": round(used_area, 1),
+        "revenue_won": revenue_won,
+        "land_cost_won": land_cost_won,
+        "build_cost_won": build_cost_won,
+        "indirect_cost_won": indirect_cost_won,
+        "total_cost_won": total_cost_won,
+        "profit_won": profit_won,
+        "roi_pct": roi_pct,
+        "sale_price_per_pyeong_won": int(price),
+        "price_source": price_source,
+        "build_unit_cost_per_sqm": direct["unit_cost_per_sqm"],
+        "note": "약식 실시간 추정 — 정밀 수지는 투자수익성(ROI) 메뉴에서 산출",
+    }
 
 
 @router.post("/{project_id}/drawings/save", response_model=DrawingSaveResponse)

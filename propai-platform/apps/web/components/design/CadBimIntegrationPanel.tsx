@@ -9,6 +9,7 @@ import { motion } from "framer-motion";
 import CADEditor from "./CADEditor";
 import { GenerativeDesignPanel } from "@/components/cad/GenerativeDesignPanel";
 import { DesignOutcomeSummary } from "@/components/design/DesignOutcomeSummary";
+import { UnitMixSimulatorPanel } from "@/components/design/UnitMixSimulatorPanel";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { apiClient, ApiClientError } from "@/lib/api-client";
 
@@ -264,7 +265,11 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
 
   // 선택한 건축개요(모세혈관 스토어) — CAD/BIM 기하의 단일 출처
   const designData = useProjectContextStore((s) => s.designData);
+  const updateDesignData = useProjectContextStore((s) => s.updateDesignData);
   const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
+
+  // P4: 세대믹스 시뮬레이터가 "평면 반영"한 명시 믹스(타입:면적:총세대). 도면 SVG에 mix= 로 전달.
+  const [appliedMix, setAppliedMix] = useState<string | null>(null);
 
   // 설계(건축개요)가 있는지 — 3D 캔버스는 "설계 생성 후"에만 마운트하는 게이트.
   // 선택한 개요(GFA) 또는 부지분석(대지면적·용도지역) 중 하나라도 있으면 매스 산출이 가능하다.
@@ -424,8 +429,10 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
     // 평형믹스(실제 세대 분할) — 있을 때만 전달, 없으면 백엔드 기본(59A,84A)
     const ut = designData?.unitTypes;
     if (ut && ut.length > 0) q.set("unit_types", ut.join(","));
+    // P4: 시뮬레이터가 명시 반영한 믹스가 있으면 그대로(type:area:total) 전달 → 평면이 정확한 비율로 분할
+    if (appliedMix) q.set("mix", appliedMix);
     return `?${q.toString()}`;
-  }, [spec, designData]);
+  }, [spec, designData, appliedMix]);
 
   const loadBimModel = useCallback(async () => {
     if (!spec) return;
@@ -568,6 +575,16 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
   useEffect(() => {
     if (activeCode) loadSvg(activeCode);
   }, [activeCode, loadSvg]);
+
+  // P4: 세대믹스 시뮬레이터 "평면 반영" — 명시 믹스를 도면 쿼리에 싣고, 캐시를 비워 재로드.
+  // unitTypes도 스토어에 반영(다음 진입·3D 해석과 정합).
+  const handleApplyMix = useCallback((mixParam: string, types: string[]) => {
+    setAppliedMix(mixParam);
+    setSvgMap({});  // 캐시 무효화 → svgQuery(mix 포함)로 활성 도면 재로드(아래 effect가 트리거)
+    if (designData && types.length > 0) {
+      updateDesignData({ ...designData, unitTypes: types });
+    }
+  }, [designData, updateDesignData]);
 
   // 생성 UX(Phase 2)에서 설계안 적용 시 — 파생 기하·도면·3D를 초기화해
   // 새 SSOT(designData)로 spec을 재산출하고 2D/3D를 재생성한다(기존 로드 경로 재사용).
@@ -1209,6 +1226,20 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
           </div>
         )}
       </div>
+
+      {/* ── P4: 세대믹스 시뮬레이터(비율 슬라이더 → 평면 재배치 + 약식 수지 실시간) ── */}
+      {hasDesignBasis && spec && (
+        <UnitMixSimulatorPanel
+          projectId={projectId}
+          buildingWidthM={spec.building_width_m}
+          buildingDepthM={spec.building_depth_m}
+          floorCount={spec.floor_count}
+          landAreaSqm={spec.land_area_sqm}
+          buildingUse={designData?.buildingType ?? spec.building_use}
+          defaultTypes={designData?.unitTypes ?? undefined}
+          onApplyMix={handleApplyMix}
+        />
+      )}
 
       {/* ── 설계 결과 요약 + AI 설계 해석(designAi 6섹션) — 편집화면(뷰포트) 아래로 재배치 ── */}
       <DesignOutcomeSummary projectId={projectId} designAi={designAi} />

@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v133-cad-editor-3d";
+const CACHE_NAME = "propai-v134-unitmix-sim";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",
