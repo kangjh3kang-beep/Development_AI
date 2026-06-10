@@ -45,6 +45,12 @@ type DesignEval = {
   violations: { field: string; rule: string; message: string; severity: string }[];
   lenses: { lenses: LensItem[]; overall: number };
 };
+type DesignOperateResponse = DesignEval & {
+  design_payload: AutoDesignResponse["design_payload"];
+  summary: AutoDesignResponse["summary"];
+  applied_changes: string[];
+  spec?: { target_unit_types?: string[] };
+};
 
 const PRIORITY_LABELS: Record<DesignIntent["priority"], string> = {
   yield: "수익 최대화",
@@ -185,6 +191,12 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
     }
   }, [siteArea, zoneCode, intent, unitTypes]);
 
+  // ── 자연어/음성 설계 편집(P6) — 현재 설계를 말로 수정 → 커널 재생성 → 2D/3D/BIM/QTO 전파 ──
+  const [editText, setEditText] = useState("");
+  const [editing, setEditing] = useState(false);
+  const [appliedChanges, setAppliedChanges] = useState<string[]>([]);
+  const editStt = useSpeechToText((t) => setEditText(t));
+
   // 1) 자연어 → 설계 의도(폼 자동 채움)
   const handleParse = useCallback(async () => {
     const text = intentText.trim();
@@ -228,6 +240,36 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
     },
     [loadDesignPayload, updateDesignData, markStageComplete, intent, onApplied],
   );
+
+  // 자연어/음성 설계 편집(P6) — 현재 설계를 말로 수정 → 커널 재생성 → applyDesign으로 2D/3D/BIM/QTO 전파
+  const handleEdit = useCallback(async () => {
+    const text = editText.trim();
+    if (!text) return;
+    setEditing(true);
+    try {
+      const data = await apiClient.post<DesignOperateResponse>("/drawing/design-operate", {
+        body: {
+          text,
+          site_area_sqm: siteArea,
+          zone_code: zoneCode,
+          building_use: intent?.building_use ?? "공동주택",
+          target_unit_types: unitTypes.length > 0 ? unitTypes : ["84A"],
+          priority: "balanced",
+        },
+      });
+      if (data.design_payload && data.summary) {
+        applyDesign(data.design_payload, data.summary); // 2D/3D/BIM/QTO 단일기하 전파
+        setEvaluation(data);
+        setAppliedChanges(data.applied_changes ?? []);
+        if (Array.isArray(data.spec?.target_unit_types)) setUnitTypes(data.spec.target_unit_types);
+      }
+      setEditText("");
+    } catch {
+      /* 편집 실패는 무시 — 기존 설계 유지 */
+    } finally {
+      setEditing(false);
+    }
+  }, [editText, siteArea, zoneCode, intent, unitTypes, applyDesign]);
 
   // 4) 단일 자동설계
   const handleSingle = useCallback(async () => {
@@ -579,6 +621,50 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
 
           {/* 검증·다각평가(P5) — 법규 위반 + 4관점 점수(전부 커널값 기반) */}
           {evaluation && <EvaluationCard ev={evaluation} />}
+
+          {/* 설계 편집(P6) — 말/음성으로 현재 설계 수정 → 2D/3D/BIM/QTO 단일기하 전파 */}
+          {(single || selectedRank != null) && (
+            <section className="mt-4 rounded-2xl border border-[var(--accent-strong)]/30 bg-[var(--surface)] p-5">
+              <h4 className="mb-2 text-sm font-black text-[var(--text-primary)]">설계 편집 — 말이나 음성으로 수정</h4>
+              <div className="relative">
+                <input
+                  value={editText}
+                  onChange={(e) => setEditText(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") handleEdit(); }}
+                  placeholder="예) 층수 3개 더 올리고 84A 위주로, 거주성 우선"
+                  className="w-full rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] px-3 py-2 pr-11 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-hint)] focus:border-[var(--accent-strong)] focus:outline-none"
+                  aria-label="설계 편집 자연어 입력"
+                />
+                {editStt.supported && (
+                  <button
+                    type="button"
+                    onClick={() => (editStt.listening ? editStt.stop() : editStt.start())}
+                    title={editStt.listening ? "음성 입력 중지" : "음성으로 편집"}
+                    aria-label={editStt.listening ? "음성 입력 중지" : "음성으로 편집"}
+                    className={`absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-full border transition-all ${editStt.listening ? "border-red-500/50 bg-red-500/15 text-red-400 animate-pulse" : "border-[var(--line)] bg-[var(--surface)] text-[var(--text-secondary)] hover:border-[var(--accent-strong)]"}`}
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+                      <path d="M19 10v2a7 7 0 0 1-14 0v-2" /><line x1="12" y1="19" x2="12" y2="23" />
+                    </svg>
+                  </button>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={handleEdit}
+                disabled={editing || !editText.trim()}
+                className="mt-2 w-full rounded-xl bg-[var(--accent-strong)] px-4 py-2 text-sm font-black text-white transition-opacity disabled:opacity-40"
+              >
+                {editing ? "편집 적용 중…" : "편집 적용"}
+              </button>
+              {editStt.listening && <p className="mt-1 text-[11px] font-bold text-red-400">🎙️ 듣는 중… 말씀하세요</p>}
+              {appliedChanges.length > 0 && (
+                <p className="mt-2 text-[11px] font-bold text-emerald-500">적용됨: {appliedChanges.join(" · ")}</p>
+              )}
+              <p className="mt-1 text-[10px] text-[var(--text-hint)]">편집은 즉시 2D 도면·3D BIM·물량(QTO)에 동일 기하로 반영됩니다.</p>
+            </section>
+          )}
 
           {/* 단일 자동설계 결과 */}
           {single && (
