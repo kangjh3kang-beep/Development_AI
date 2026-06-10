@@ -119,6 +119,7 @@ export default async function DashboardLayout({
     { href: `/${locale}/sales/sites`, label: "└ 내 분양 현장(현장앱)", icon: <IconProject /> },
     { href: `/${locale}/sales/projection`, label: "└ 분양관리요약(관리자)", icon: <IconMarket /> },
     { href: `/${locale}/g2b`, label: "공공입찰 (나라장터)", icon: <IconAuction /> },
+    { href: `/${locale}/settings/team`, label: "팀 관리(공유 워크스페이스)", icon: <IconProject /> },
   ];
 
   // 4. 설계 참고 — CAD 자동설계 / BIM·적산

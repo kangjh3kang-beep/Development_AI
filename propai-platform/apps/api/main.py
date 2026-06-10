@@ -347,6 +347,8 @@ async def health_check() -> HealthResponse:
 
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["인증"])
 app.include_router(billing.router, tags=["구독·과금"])  # 자체 prefix=/api/v1/billing
+from apps.api.routers import teams as _teams_router  # 팀(공유 워크스페이스)
+app.include_router(_teams_router.router, tags=["팀"])  # 자체 prefix=/api/v1/teams
 app.include_router(market_report.router, tags=["시장조사보고서"])  # 자체 prefix=/api/v1/market
 app.include_router(projects.router, prefix="/api/v1/projects", tags=["프로젝트"])
 app.include_router(user_store.router, prefix="/api/v1", tags=["사용자 저장소"])
