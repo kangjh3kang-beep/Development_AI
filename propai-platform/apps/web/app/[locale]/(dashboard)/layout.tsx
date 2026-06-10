@@ -98,6 +98,7 @@ export default async function DashboardLayout({
     { href: `/${locale}/precheck`, label: "90초 사업성 진단", icon: <IconPermit /> },
     { href: `/${locale}/projects`, label: "프로젝트 관리", icon: <IconProject /> },
     { href: `/${locale}/market-insights`, label: "시장·시세 분석", icon: <IconMarket /> },
+    { href: `/${locale}/sales-info`, label: "분양정보", icon: <IconMarket /> },
     { href: `/${locale}/permits`, label: "인허가 가능성", icon: <IconPermit /> },
     { href: `/${locale}/regulations`, label: "개발 규제", icon: <IconRegulation /> },
     { href: `/${locale}/analytics/cost`, label: "공사비 분석", icon: <IconCost /> },

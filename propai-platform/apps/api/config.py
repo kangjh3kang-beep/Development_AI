@@ -99,6 +99,14 @@ class Settings(BaseSettings):
     # ── 공공 API 키 ──
     vworld_api_key: str = ""
     molit_api_key: str = ""
+    applyhome_api_key: str = ""  # 청약홈(한국부동산원) 분양정보 조회 API. 미설정 시 molit_api_key 폴백
+
+    # ── 알림 발송(솔라피 — SMS + 카카오 알림톡 단일 API). 미설정 시 인앱만 동작 ──
+    solapi_api_key: str = ""
+    solapi_api_secret: str = ""
+    solapi_sender: str = ""            # 등록된 발신번호(SMS·알림톡 공통)
+    solapi_kakao_pf_id: str = ""       # 카카오 비즈채널 pfId(알림톡)
+    solapi_kakao_template_id: str = ""  # 승인된 알림톡 템플릿 ID
     kma_api_key: str = ""
     hug_api_key: str = ""
     lh_api_key: str = ""

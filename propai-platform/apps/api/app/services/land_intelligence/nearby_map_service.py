@@ -231,6 +231,14 @@ class NearbyMapService:
         return {"label": label, "type": type_key, "kind": kind,
                 "count": sum(x["count"] for x in out), "groups": out}
 
+    # ── 공개 지오코딩(다른 서비스 재사용·캐시 공유) ──
+    async def geocode_addresses(self, queries: list[str]) -> dict[str, dict]:
+        """주소 리스트 → {주소: {lat, lon}} (VWorld, 7일 캐시 공유). 분양정보 등에서 재사용."""
+        return await self._geocode_many(queries)
+
+    async def geocode_one(self, query: str) -> dict | None:
+        return await self._geocode_one(query)
+
     # ── 지오코딩(카카오 로컬 + Redis 캐시) ──
     async def _redis(self):
         try:

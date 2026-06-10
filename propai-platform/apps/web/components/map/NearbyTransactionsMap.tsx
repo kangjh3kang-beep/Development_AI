@@ -45,6 +45,15 @@ export type NearbyMapPayload = {
   categories: Record<string, Category>;
 };
 type MapPayload = NearbyMapPayload;
+type PresaleItem = {
+  house_manage_no: string; pblanc_no: string; name: string; address: string;
+  area_name: string; status: string; receipt_begin: string; receipt_end: string;
+  total_households: string; recruit_date: string; url: string;
+  lat: number; lon: number; distance_m: number;
+};
+const PRESALE_COLOR: Record<string, string> = {
+  접수중: "#ef4444", 접수예정: "#0ea5e9", 마감: "#94a3b8", 미정: "#f59e0b",
+};
 
 const TRADE_TYPES = [
   { key: "apt", label: "아파트", color: "#14b8a6" },
@@ -88,8 +97,10 @@ export function NearbyTransactionsMap({
   const [payload, setPayload] = useState<MapPayload | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [kind, setKind] = useState<"trade" | "rent">("trade");
+  const [kind, setKind] = useState<"trade" | "rent" | "presale">("trade");
   const [type, setType] = useState("apt");
+  const [presale, setPresale] = useState<PresaleItem[] | null>(null);
+  const [presaleLoading, setPresaleLoading] = useState(false);
   const [sdkReady, setSdkReady] = useState(false);
   const [mapReady, setMapReady] = useState(false);
 
@@ -136,6 +147,24 @@ export function NearbyTransactionsMap({
   }, [address, pnu]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  // 분양 카테고리 — 활성화 시 1회 지연 로드(지오코딩 비용 절약). 청약홈 분양정보.
+  const fetchPresale = useCallback(async () => {
+    if (!payload?.center?.lat || !payload?.center?.lon) return;
+    setPresaleLoading(true);
+    try {
+      const r = await apiClient.post<{ available: boolean; items: PresaleItem[] }>("/presale/nearby", {
+        body: { lat: payload.center.lat, lon: payload.center.lon, lawd_cd: payload.lawd_cd, radius_m: 3000, months_back: 12 },
+        useMock: false, timeoutMs: 90000,
+      });
+      setPresale(r.available ? (r.items || []) : []);
+    } catch { setPresale([]); }
+    finally { setPresaleLoading(false); }
+  }, [payload?.center?.lat, payload?.center?.lon, payload?.lawd_cd]);
+
+  useEffect(() => {
+    if (kind === "presale" && presale === null) fetchPresale();
+  }, [kind, presale, fetchPresale]);
 
   // 정보창 열기(이전 것 닫고 위치 기반으로 표시) — Leaflet bindPopup 대응.
   const openInfo = useCallback((latlng: any, html: string) => {
@@ -213,6 +242,37 @@ export function NearbyTransactionsMap({
     overlaysRef.current.forEach((o) => { try { o.setMap(null); } catch { /* noop */ } });
     overlaysRef.current = [];
     try { infoRef.current?.close(); } catch { /* noop */ }
+
+    // 분양 카테고리 — 청약홈 분양 단지 마커(상태별 색, 마름모 형태로 실거래와 구분)
+    if (kind === "presale") {
+      const ppts: Array<[number, number]> = [];
+      if (payload?.center?.lat != null && payload?.center?.lon != null) ppts.push([payload.center.lat, payload.center.lon]);
+      (presale || []).forEach((it) => {
+        if (!it.lat || !it.lon) return;
+        ppts.push([it.lat, it.lon]);
+        const col = PRESALE_COLOR[it.status] || "#f59e0b";
+        const html = `<div style="min-width:200px;max-width:270px;font-family:sans-serif;">
+            <div style="font-weight:700;font-size:13px;color:#0f172a;">${it.name}</div>
+            <div style="font-size:11px;color:#64748b;margin:2px 0 6px;">${it.area_name} · ${it.address}</div>
+            <div style="font-size:12px;color:${col};font-weight:700;">${it.status}</div>
+            <div style="font-size:11px;color:#475569;">접수 ${it.receipt_begin || "-"} ~ ${it.receipt_end || "-"}</div>
+            <div style="font-size:11px;color:#475569;">공급 ${it.total_households || "-"}세대 · ${Math.round((it.distance_m || 0) / 100) / 10}km</div>
+            ${it.url ? `<a href="${it.url}" target="_blank" style="font-size:11px;color:#2563eb;font-weight:700;">청약홈 공고 ↗</a>` : ""}
+          </div>`;
+        const mk = document.createElement("div");
+        mk.style.cssText = `width:18px;height:18px;border-radius:4px;background:${col};border:2px solid #fff;opacity:.92;cursor:pointer;box-shadow:0 0 4px rgba(0,0,0,.35);transform:rotate(45deg)`;
+        const pos = new kakao.maps.LatLng(it.lat, it.lon);
+        mk.onclick = () => openInfo(pos, html);
+        const ov = new kakao.maps.CustomOverlay({ position: pos, content: mk, xAnchor: 0.5, yAnchor: 0.5, clickable: true });
+        ov.setMap(mapRef.current);
+        overlaysRef.current.push(ov);
+      });
+      if (ppts.length > 1) {
+        try { const b = new kakao.maps.LatLngBounds(); ppts.forEach(([la, lo]) => b.extend(new kakao.maps.LatLng(la, lo))); mapRef.current.setBounds(b, 40, 40, 40, 40); } catch { /* noop */ }
+      }
+      return;
+    }
+
     const groups = activeCategory?.groups || [];
     const color = (kind === "trade" ? TRADE_TYPES : RENT_TYPES).find((t) => t.key === type)?.color || "#14b8a6";
     const pts: Array<[number, number]> = [];
@@ -267,7 +327,7 @@ export function NearbyTransactionsMap({
     }
     // openInfo는 안정적이라 의존성 제외.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeCategory, kind, type, payload]);
+  }, [activeCategory, kind, type, payload, presale]);
 
   const typeList = kind === "trade" ? TRADE_TYPES : RENT_TYPES;
 
@@ -285,38 +345,48 @@ export function NearbyTransactionsMap({
           </p>
         </div>
         <div className="flex rounded-xl border border-[var(--line-strong)] overflow-hidden">
-          {(["trade", "rent"] as const).map((k) => (
+          {(["trade", "rent", "presale"] as const).map((k) => (
             <button key={k} onClick={() => { setKind(k); if (k === "rent" && ["land", "commercial"].includes(type)) setType("apt"); }}
               className={`px-4 py-1.5 text-xs font-bold transition-colors ${kind === k ? "bg-[var(--accent-strong)] text-white" : "bg-[var(--surface-muted)] text-[var(--text-secondary)]"}`}>
-              {k === "trade" ? "매매" : "전월세"}
+              {k === "trade" ? "매매" : k === "rent" ? "전월세" : "분양"}
             </button>
           ))}
         </div>
       </div>
 
-      <div className="flex flex-wrap gap-1.5 mb-3">
-        {typeList.map((t) => {
-          const cnt = payload?.categories?.[`${t.key}_${kind}`]?.count ?? 0;
-          const active = type === t.key;
-          return (
-            <button key={t.key} onClick={() => setType(t.key)}
-              className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold border transition-all ${active ? "border-transparent text-white" : "border-[var(--line)] text-[var(--text-secondary)] bg-[var(--surface-muted)] hover:border-[var(--text-tertiary)]"}`}
-              style={active ? { backgroundColor: t.color } : undefined}>
-              <span className="h-2 w-2 rounded-full" style={{ backgroundColor: t.color }} />
-              {t.label}<span className="opacity-70">{cnt}</span>
-            </button>
-          );
-        })}
-      </div>
+      {kind !== "presale" ? (
+        <div className="flex flex-wrap gap-1.5 mb-3">
+          {typeList.map((t) => {
+            const cnt = payload?.categories?.[`${t.key}_${kind}`]?.count ?? 0;
+            const active = type === t.key;
+            return (
+              <button key={t.key} onClick={() => setType(t.key)}
+                className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold border transition-all ${active ? "border-transparent text-white" : "border-[var(--line)] text-[var(--text-secondary)] bg-[var(--surface-muted)] hover:border-[var(--text-tertiary)]"}`}
+                style={active ? { backgroundColor: t.color } : undefined}>
+                <span className="h-2 w-2 rounded-full" style={{ backgroundColor: t.color }} />
+                {t.label}<span className="opacity-70">{cnt}</span>
+              </button>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="flex flex-wrap items-center gap-3 mb-3 text-[11px] text-[var(--text-secondary)]">
+          <span className="font-bold text-[var(--text-primary)]">분양 단지 {presale?.length ?? 0}곳</span>
+          {(["접수중", "접수예정", "마감"] as const).map((s) => (
+            <span key={s} className="flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{ backgroundColor: PRESALE_COLOR[s] }} />{s}</span>
+          ))}
+          <span className="text-[var(--text-hint)]">청약홈 · 반경 3km · 최근 12개월</span>
+        </div>
+      )}
 
       <div className="relative">
         <div ref={mapEl} className="w-full rounded-xl overflow-hidden border border-[var(--line-strong)] z-0" style={{ height: 440 }} />
         <KakaoMapControls mapRef={mapRef} ready={mapReady} />
-        {(loading || !sdkReady) && (
+        {(loading || presaleLoading || !sdkReady) && (
           <div className="absolute inset-0 flex items-center justify-center rounded-xl bg-black/40 backdrop-blur-sm z-[400]">
             <div className="flex items-center gap-2 text-white text-sm font-bold">
               <span className="h-4 w-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-              {!sdkReady ? "지도 로딩…" : "주변 실거래 수집·지오코딩 중…"}
+              {!sdkReady ? "지도 로딩…" : presaleLoading ? "분양 단지 수집·지오코딩 중…" : "주변 실거래 수집·지오코딩 중…"}
             </div>
           </div>
         )}
@@ -326,9 +396,14 @@ export function NearbyTransactionsMap({
             <button onClick={fetchData} className="rounded-lg bg-[var(--accent-strong)] px-4 py-1.5 text-xs font-bold text-white">다시 시도</button>
           </div>
         )}
-        {payload && !loading && activeCategory && activeCategory.groups?.length === 0 && (
+        {payload && !loading && kind !== "presale" && activeCategory && activeCategory.groups?.length === 0 && (
           <div className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full bg-black/60 px-4 py-1.5 text-xs font-bold text-white z-[400]">
             해당 유형 최근 거래 없음
+          </div>
+        )}
+        {kind === "presale" && !presaleLoading && presale && presale.length === 0 && (
+          <div className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full bg-black/60 px-4 py-1.5 text-xs font-bold text-white z-[400]">
+            반경 내 분양 단지 없음 (청약홈 키 미설정 시 표시 안 됨)
           </div>
         )}
       </div>

@@ -239,9 +239,34 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except Exception:
         logger.warning("LangSmith 초기화 실패 — 추적 없이 시작")
 
+    # 분양·청약 관심지역 모니터링 — 인프로세스 주기 폴링(celery 미배포 환경 대응).
+    # 단일 uvicorn 워커에서 1개 루프만 동작. 관심지역/키 없으면 즉시 반환되어 유휴비용 0.
+    import asyncio as _asyncio
+
+    async def _presale_monitor_loop() -> None:
+        from apps.api.database.session import AsyncSessionLocal
+        from apps.api.app.services.land_intelligence import presale_monitor_service as _mon
+        await _asyncio.sleep(300)  # 부팅 안정화 후 시작
+        while True:
+            try:
+                async with AsyncSessionLocal() as _s:
+                    res = await _mon.run_all(_s)
+                logger.info("분양 모니터링 폴링", **res)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("분양 모니터링 폴링 실패: %s", str(e)[:160])
+            await _asyncio.sleep(6 * 3600)  # 6시간 주기
+
+    try:
+        app.state.presale_monitor_task = _asyncio.create_task(_presale_monitor_loop())
+    except Exception:  # noqa: BLE001
+        logger.warning("분양 모니터링 루프 시작 실패")
+
     yield
 
     # ── 종료 ──
+    _t = getattr(app.state, "presale_monitor_task", None)
+    if _t is not None:
+        _t.cancel()
     logger.info("PropAI API 종료")
 
 
@@ -349,6 +374,8 @@ app.include_router(auth.router, prefix="/api/v1/auth", tags=["인증"])
 app.include_router(billing.router, tags=["구독·과금"])  # 자체 prefix=/api/v1/billing
 from apps.api.routers import teams as _teams_router  # 팀(공유 워크스페이스)
 app.include_router(_teams_router.router, tags=["팀"])  # 자체 prefix=/api/v1/teams
+from apps.api.routers import presale as _presale_router  # 분양·청약 정보 + 관심지역 모니터링
+app.include_router(_presale_router.router, tags=["분양정보"])  # 자체 prefix=/api/v1/presale
 app.include_router(market_report.router, tags=["시장조사보고서"])  # 자체 prefix=/api/v1/market
 app.include_router(projects.router, prefix="/api/v1/projects", tags=["프로젝트"])
 app.include_router(user_store.router, prefix="/api/v1", tags=["사용자 저장소"])
