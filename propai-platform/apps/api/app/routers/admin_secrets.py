@@ -22,14 +22,18 @@ from apps.api.auth.jwt_handler import CurrentUser, get_current_user
 from apps.api.database.session import get_db
 from app.core.audit import audit_admin_action
 from app.services.secrets import secret_store
+from app.services.billing.billing_service import is_super_admin
 
 router = APIRouter(prefix="/api/v1/admin/secrets", tags=["관리자·API키"])
 
-_ADMIN_ROLES = {"admin", "superadmin", "super_admin", "owner", "총괄관리자", "platform_admin"}
 
+async def _require_admin(current: CurrentUser, db: AsyncSession) -> None:
+    """플랫폼 총괄관리자(users.tier='super_admin')만 허용.
 
-def _require_admin(current: CurrentUser) -> None:
-    if (current.role or "").strip().lower() not in {r.lower() for r in _ADMIN_ROLES}:
+    ★role 기반 금지: 가입 시 모든 사용자가 '자기 테넌트의' role='admin'이 되므로
+      role로 판별하면 전원 통과(플랫폼 키 금고 누출)된다. 반드시 tier로 판별한다.
+    """
+    if not await is_super_admin(db, current.user_id):
         raise HTTPException(status_code=403, detail="관리자만 접근할 수 있습니다.")
 
 
@@ -54,7 +58,7 @@ async def list_secrets(
     db: AsyncSession = Depends(get_db),
 ):
     """분류별·항목별 키 상태. (값은 마스킹, 평문 절대 미반환)"""
-    _require_admin(current)
+    await _require_admin(current, db)
     items = await secret_store.list_status(db)
     groups: list[str] = []
     for it in items:
@@ -71,7 +75,7 @@ async def set_secret(
     db: AsyncSession = Depends(get_db),
 ):
     """키 입력/수정 — 즉시 반영."""
-    _require_admin(current)
+    await _require_admin(current, db)
     try:
         await secret_store.set_secret(
             db, name, req.value, str(current.user_id),
@@ -94,7 +98,7 @@ async def add_secret(
     db: AsyncSession = Depends(get_db),
 ):
     """사용자 임의추가 — 새 네임+값으로 키 등록(분류/라벨 선택)."""
-    _require_admin(current)
+    await _require_admin(current, db)
     try:
         await secret_store.set_secret(
             db, req.name, req.value, str(current.user_id),
@@ -116,7 +120,7 @@ async def delete_secret(
     db: AsyncSession = Depends(get_db),
 ):
     """키 삭제 — .env 원본 복원(없으면 제거)."""
-    _require_admin(current)
+    await _require_admin(current, db)
     try:
         await secret_store.delete_secret(db, name)
     except ValueError as e:
@@ -135,7 +139,7 @@ async def list_secret_backups(
     db: AsyncSession = Depends(get_db),
 ):
     """그 키의 백업(버전) 이력 — 마스킹값·동작·시점·작업자. 평문 절대 미반환."""
-    _require_admin(current)
+    await _require_admin(current, db)
     items = await secret_store.list_backups(db, name)
     return {"name": name, "items": items}
 
@@ -147,7 +151,7 @@ async def restore_secret_backup(
     db: AsyncSession = Depends(get_db),
 ):
     """백업 한 건을 현재 값으로 복구 — 현재 값은 복구 전 자동 백업됨. 평문 미반환."""
-    _require_admin(current)
+    await _require_admin(current, db)
     try:
         await secret_store.restore_secret(db, backup_id, str(current.user_id))
     except ValueError as e:
@@ -163,9 +167,10 @@ async def restore_secret_backup(
 async def test_secret(
     name: str,
     current: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
     """간이 연결 테스트 — 등기(registry)/공공데이터 일부 키에 한해 동작 확인."""
-    _require_admin(current)
+    await _require_admin(current, db)
     import os
 
     name = (name or "").strip()

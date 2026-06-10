@@ -24,8 +24,10 @@ router = APIRouter(prefix="/api/v1/admin/sales-rls", tags=["관리자·분양RLS
 _ADMIN_ROLES = {"admin", "superadmin", "super_admin", "owner", "총괄관리자", "platform_admin"}
 
 
-def _require_admin(current: CurrentUser) -> None:
-    if (current.role or "").strip().lower() not in {r.lower() for r in _ADMIN_ROLES}:
+async def _require_admin(current: CurrentUser, db: AsyncSession) -> None:
+    # ★tier(super_admin)로만 판별 — 가입 시 모두 role='admin'이라 role 게이트는 누출.
+    from app.services.billing.billing_service import is_super_admin
+    if not await is_super_admin(db, current.user_id):
         raise HTTPException(status_code=403, detail="관리자만 접근할 수 있습니다.")
 
 
@@ -40,7 +42,7 @@ async def sales_rls_status(
     db: AsyncSession = Depends(get_db),
 ):
     """sales_/mh_ 테이블별 RLS 활성화·정책수 집계."""
-    _require_admin(current)
+    await _require_admin(current, db)
     return await sales_rls_bootstrap.rls_status(db)
 
 
@@ -51,7 +53,7 @@ async def sales_rls_apply(
     db: AsyncSession = Depends(get_db),
 ):
     """RLS ENABLE + p_site/p_org 멱등 적용. only_table(카나리)·dry_run 지원."""
-    _require_admin(current)
+    await _require_admin(current, db)
     return await sales_rls_bootstrap.ensure_sales_rls(
         db, only_table=req.only_table, dry_run=req.dry_run
     )
@@ -63,5 +65,5 @@ async def sales_rls_rollback(
     db: AsyncSession = Depends(get_db),
 ):
     """롤백: 전 sales_/mh_ 테이블 RLS DISABLE + 정책 DROP(1콜)."""
-    _require_admin(current)
+    await _require_admin(current, db)
     return await sales_rls_bootstrap.disable_sales_rls(db)

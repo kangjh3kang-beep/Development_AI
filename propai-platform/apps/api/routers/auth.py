@@ -339,6 +339,19 @@ async def get_me(
     )
 
 
+@router.get("/is-admin")
+async def is_admin_check(
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, bool]:
+    """플랫폼 총괄관리자 여부(클라이언트 관리자 메뉴·페이지 가드용).
+
+    ★tier(super_admin)로만 판별 — role은 가입 시 전원 'admin'이라 신뢰 불가.
+    """
+    from app.services.billing.billing_service import is_super_admin
+    return {"is_admin": await is_super_admin(db, current_user.user_id)}
+
+
 class KakaoCallbackRequest(BaseModel):
     """Request body for Kakao OAuth callback completion."""
 

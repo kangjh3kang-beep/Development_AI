@@ -81,7 +81,8 @@ async def put_option_list(
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     """옵션목록 저장(관리자 전용). 빈 value/label·중복 value 제거."""
-    if current_user.role not in _ADMIN_ROLES:
+    from app.services.billing.billing_service import is_super_admin
+    if not await is_super_admin(db, current_user.user_id):
         raise HTTPException(403, "관리자만 편집할 수 있습니다.")
     seen: set[str] = set()
     items: list[dict[str, str]] = []

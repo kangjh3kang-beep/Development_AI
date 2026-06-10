@@ -10,8 +10,10 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.api.auth.jwt_handler import CurrentUser, get_current_user
+from apps.api.database.session import get_db
 from app.services.ledger import analysis_ledger_service as ledger
 
 router = APIRouter(prefix="/api/v1/analysis-ledger", tags=["분석원장(해시체인)"])
@@ -24,8 +26,10 @@ def _tid(current: CurrentUser) -> str | None:
     return str(getattr(current, "tenant_id", "") or "") or None
 
 
-def _require_admin(current: CurrentUser) -> None:
-    if (getattr(current, "role", "") or "").strip().lower() not in {r.lower() for r in _ADMIN_ROLES}:
+async def _require_admin(current: CurrentUser, db) -> None:
+    # ★tier(super_admin)로만 판별 — 가입 시 모두 role='admin'이라 role 게이트는 누출.
+    from app.services.billing.billing_service import is_super_admin
+    if not await is_super_admin(db, current.user_id):
         raise HTTPException(status_code=403, detail="관리자 권한이 필요합니다.")
 
 
@@ -121,8 +125,8 @@ class SetQuotaRequest(BaseModel):
 
 
 @router.post("/admin/set-quota", summary="관리자: 테넌트 용량 한도 상향/조정")
-async def admin_set_quota(req: SetQuotaRequest, current: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
-    _require_admin(current)
+async def admin_set_quota(req: SetQuotaRequest, current: CurrentUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+    await _require_admin(current, db)
     result = await ledger.set_quota(req.tenant_id, req.max_entries)
     from app.core.audit import audit_admin_action
     await audit_admin_action(

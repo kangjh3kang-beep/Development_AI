@@ -31,21 +31,19 @@ export function SidebarNav({ sections }: SidebarNavProps) {
   const [isAssetOps, setIsAssetOps] = useState<boolean | null>(null);
   useEffect(() => {
     let alive = true;
-    apiClient.get<{ role?: string; is_admin?: boolean }>("/auth/me", { useMock: false })
-      .then((u) => {
-        if (!alive) return;
-        const role = u?.role || "";
-        const admin =
-          u?.is_admin === true ||
-          ["admin", "manager", "총괄관리자", "owner", "platform_admin"].includes(role);
-        setIsAdmin(admin);
-        // 운영권한 = 관리자 ∪ 자산운용 역할. 시행사/시공사 기본(developer/viewer/구독자)은 제외.
-        setIsAssetOps(
-          admin ||
-          ["asset_manager", "operations", "운영관리자", "자산운용"].includes(role),
-        );
-      })
-      .catch(() => { if (alive) { setIsAdmin(false); setIsAssetOps(false); } });
+    // ★관리자 여부는 서버의 tier 기반 /auth/is-admin으로만 판별한다.
+    //  (role은 가입 시 전원 'admin'이라 role 폴백을 쓰면 관리 메뉴가 전원 노출되는 누출이 된다.)
+    Promise.all([
+      apiClient.get<{ is_admin?: boolean }>("/auth/is-admin", { useMock: false }).catch(() => ({ is_admin: false })),
+      apiClient.get<{ role?: string }>("/auth/me", { useMock: false }).catch(() => ({ role: "" })),
+    ]).then(([a, u]) => {
+      if (!alive) return;
+      const admin = (a as { is_admin?: boolean })?.is_admin === true;
+      const role = (u as { role?: string })?.role || "";
+      setIsAdmin(admin);
+      // 운영권한 = 관리자 ∪ 자산운용 역할(이건 별도 운영역할이라 role 기반 유지).
+      setIsAssetOps(admin || ["asset_manager", "operations", "운영관리자", "자산운용"].includes(role));
+    }).catch(() => { if (alive) { setIsAdmin(false); setIsAssetOps(false); } });
     return () => { alive = false; };
   }, []);
 

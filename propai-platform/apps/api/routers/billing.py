@@ -146,7 +146,7 @@ async def get_billing_config(
     db: AsyncSession = Depends(get_db),
 ):
     """관리자 전용: 현재 과금 설정(등급요금·할증·서비스료·단계별·무료횟수) 조회."""
-    if current.role not in ("admin", "manager"):
+    if not await billing_service.is_super_admin(db, current.user_id):
         raise HTTPException(status_code=403, detail="관리자 권한이 필요합니다.")
     from app.core.billing import get_config
 
@@ -161,7 +161,7 @@ async def update_billing_config(
     db: AsyncSession = Depends(get_db),
 ):
     """관리자 전용: 과금 금액 설정 수정/변경(DB 영속 + 즉시 반영)."""
-    if current.role not in ("admin", "manager"):
+    if not await billing_service.is_super_admin(db, current.user_id):
         raise HTTPException(status_code=403, detail="관리자 권한이 필요합니다.")
     return await billing_service.save_config(db, override or {})
 
@@ -173,7 +173,7 @@ async def admin_set_tier(
     db: AsyncSession = Depends(get_db),
 ):
     """관리자 전용: 사용자 등급 변경."""
-    if current.role not in ("admin", "manager", "owner", "super_admin", "총괄관리자", "platform_admin"):
+    if not await billing_service.is_super_admin(db, current.user_id):
         raise HTTPException(status_code=403, detail="관리자 권한이 필요합니다.")
     await billing_service.set_tier(db, req.user_id, req.tier)
     try:

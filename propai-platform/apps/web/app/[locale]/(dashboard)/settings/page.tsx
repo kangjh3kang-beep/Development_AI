@@ -3,6 +3,7 @@
 import { useSystemStore } from "@/store/useSystemStore";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { useIsAdmin } from "@/lib/use-is-admin";
 import { ApiKeyManagementPanel } from "@/components/settings/ApiKeyManagementPanel";
 import { AiTokenUsageDashboard } from "@/components/settings/AiTokenUsageDashboard";
 import { WebhookManagementPanel } from "@/components/settings/WebhookManagementPanel";
@@ -96,6 +97,7 @@ const TABS: { id: TabId; label: string; icon: React.ReactNode }[] = [
 
 export default function SettingsPage() {
   const router = useRouter();
+  const isAdmin = useIsAdmin();
   const {
     llmProvider,
     openaiApiKey,
@@ -119,7 +121,7 @@ export default function SettingsPage() {
     setIsMounted(true);
   }, []);
 
-  if (!isMounted) {
+  if (!isMounted || isAdmin === null) {
     return (
       <div className="flex flex-col gap-10 pb-20 max-w-5xl mx-auto">
         <div className="space-y-2">
@@ -128,6 +130,20 @@ export default function SettingsPage() {
         </div>
         <div className="h-14 animate-pulse rounded-2xl bg-[var(--surface-soft)]" />
         <div className="h-64 animate-pulse rounded-[2.5rem] bg-[var(--surface-soft)]" />
+      </div>
+    );
+  }
+
+  // ★관리자 페이지 접근 가드 — 비관리자는 관리 콘솔 자체를 렌더하지 않는다(서버 게이트와 이중 방어).
+  if (isAdmin === false) {
+    return (
+      <div className="mx-auto flex max-w-3xl flex-col items-center justify-center gap-4 py-24 text-center">
+        <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-soft)]">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-[var(--text-hint)]"><rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></svg>
+        </div>
+        <h1 className="text-xl font-black text-[var(--text-primary)]">접근 권한이 없습니다</h1>
+        <p className="text-sm text-[var(--text-secondary)]">관리자 설정은 플랫폼 총괄관리자만 이용할 수 있습니다.<br />구독·팀 관리는 MY PAGE에서, 그 외 문의는 관리자에게 요청해 주세요.</p>
+        <button onClick={() => router.push("./")} className="rounded-xl bg-[var(--accent-strong)] px-5 py-2.5 text-sm font-bold text-white">대시보드로 돌아가기</button>
       </div>
     );
   }

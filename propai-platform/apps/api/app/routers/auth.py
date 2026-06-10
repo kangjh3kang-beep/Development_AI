@@ -99,13 +99,17 @@ class AdminUserItem(BaseModel):
 
 
 @router.get("/me", response_model=MeResponse)
-async def me(current_user: User = Depends(get_current_user)):
+async def me(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     role = (getattr(current_user, "role", None) or "viewer")
+    # ★is_admin은 role이 아니라 tier(super_admin)로만 판별. 가입 시 모두 자기 테넌트 role='admin'이라
+    #  role로 주면 전원 is_admin=true(관리자 메뉴/페이지 노출 누출)가 된다.
+    from app.services.billing.billing_service import is_super_admin
+    is_admin = await is_super_admin(db, current_user.id)
     return {
         "id": str(current_user.id), "email": current_user.email,
         "full_name": getattr(current_user, "full_name", "") or "",
         "role": role,
-        "is_admin": role.strip().lower() in {r.lower() for r in _ADMIN_ROLES},
+        "is_admin": is_admin,
     }
 
 @router.get("/admin/users", response_model=list[AdminUserItem])
