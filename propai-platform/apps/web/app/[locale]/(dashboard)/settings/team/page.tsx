@@ -8,6 +8,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { apiClient } from "@/lib/api-client";
+import { BillingMeter } from "@/components/billing/BillingMeter";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -63,11 +64,14 @@ export default function TeamPage() {
         <div className="cc-grid-bg opacity-50" />
         <i className="cc-bracket cc-bracket--tl" /><i className="cc-bracket cc-bracket--br" />
         <div className="relative z-10">
-          <span className="cc-meta">TEAM · WORKSPACE</span>
-          <h1 className="text-2xl font-black text-[var(--text-primary)]">팀 관리 <span className="text-[var(--accent-strong)]">_</span></h1>
-          <p className="text-sm text-[var(--text-secondary)]">개인 로그인 + 팀 배정 — 멤버는 자기 계정으로 로그인하되 팀의 프로젝트·사용량을 공유합니다.</p>
+          <span className="cc-meta">MY PAGE · 구독 · 팀</span>
+          <h1 className="text-2xl font-black text-[var(--text-primary)]">MY PAGE <span className="text-[var(--accent-strong)]">_</span></h1>
+          <p className="text-sm text-[var(--text-secondary)]">내 구독·사용량 + 팀 생성 → 팀 관리 → 팀원 관리. 멤버는 자기 계정으로 로그인하되 팀의 프로젝트·사용량을 공유합니다.</p>
         </div>
       </div>
+
+      {/* 내 구독·사용량 */}
+      <BillingMeter />
       {msg && <div className="rounded-xl border border-[var(--data-accent-line)] bg-[var(--data-accent-soft)] px-4 py-2.5 text-sm text-[var(--text-secondary)]">{msg}</div>}
 
       {/* 미소속 — 팀 생성 또는 가입 신청 */}

@@ -9,6 +9,8 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { apiClient, ApiClientError } from "@/lib/api-client";
 
 type Status = {
@@ -171,12 +173,21 @@ export function BillingMeter({ compact = false }: { compact?: boolean }) {
           <span className="flex items-center gap-1.5 text-xs font-bold text-[var(--text-secondary)]">
             <span className="text-[var(--accent-strong)]">●</span> {status.tier_label} 구독
           </span>
-          <button
-            onClick={() => setModalOpen(true)}
-            className="rounded-lg bg-[var(--accent-strong)] px-2.5 py-1 text-[10px] font-bold text-white hover:opacity-90"
-          >
-            추가결제
-          </button>
+          <span className="flex items-center gap-1.5">
+            {/* MY PAGE — 구독·팀(팀생성→팀관리→팀원관리) 진입 */}
+            <Link
+              href={`/${(pathname?.split("/")[1] || "ko")}/settings/team`}
+              className="rounded-lg border border-[var(--accent-strong)]/40 bg-[var(--accent-soft)] px-2.5 py-1 text-[10px] font-bold text-[var(--accent-strong)] hover:opacity-90"
+            >
+              MY PAGE
+            </Link>
+            <button
+              onClick={() => setModalOpen(true)}
+              className="rounded-lg bg-[var(--accent-strong)] px-2.5 py-1 text-[10px] font-bold text-white hover:opacity-90"
+            >
+              추가결제
+            </button>
+          </span>
         </div>
         <div className="h-2 w-full rounded-full bg-[var(--surface-muted)] overflow-hidden">
           <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, backgroundColor: barColor }} />
@@ -195,12 +206,6 @@ export function BillingMeter({ compact = false }: { compact?: boolean }) {
         )}
         {lowBalance && (
           <p className="mt-1 text-[10px] font-bold text-amber-500">코인 소진 임박 · 충전을 권장합니다</p>
-        )}
-        {(status.service_fee_krw ?? 0) > 0 && (
-          <div className="mt-1 flex items-center justify-between text-[10px] text-[var(--text-hint)] border-t border-[var(--line)] pt-1">
-            <span>서비스 사용료(분석·생성)</span>
-            <span className="font-bold text-[var(--text-secondary)]">{won(status.service_fee_krw)}</span>
-          </div>
         )}
       </div>
 
