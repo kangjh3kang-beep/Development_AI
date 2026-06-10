@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v131-hero-svg-map";
+const CACHE_NAME = "propai-v132-modal-portal-swr";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",
@@ -101,7 +101,10 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  event.respondWith(cacheFirst(request));
+  // JS/CSS/폰트/RSC 등 자산: stale-while-revalidate(즉시 표시 + 백그라운드 갱신).
+  // ★cacheFirst(영구캐시)였던 것을 SWR로 변경 — 새 배포가 다음 로드에 자동 반영(자가치유).
+  // 콘텐츠해시 청크는 캐시미스=항상 최신, 비해시 자산도 한 번 더 로드 시 갱신됨.
+  event.respondWith(staleWhileRevalidate(request));
 });
 
 // 응답을 안전하게 캐시 — 클론을 즉시 떠서 본문 중복사용/스킴미지원 에러를 흡수.
