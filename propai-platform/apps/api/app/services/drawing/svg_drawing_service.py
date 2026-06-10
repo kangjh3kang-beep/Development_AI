@@ -182,7 +182,10 @@ class SVGDrawingService:
             _uarea = float(_rep.get("area_sqm") or 84.0)
         else:
             _utype, _uarea = "84A", 84.0
-        drawings["B-02-UNIT"] = self.generate_unit_plan(_utype, _uarea, project_name=name)
+        _total_units = int(sum(float(u.get("total_count") or 0) for u in _units)) if _units else 0
+        drawings["B-02-UNIT"] = self.generate_unit_plan(
+            _utype, _uarea, project_name=name, floors=int(fc or 0), total_units=_total_units,
+        )
 
         # B-03: 단면도
         drawings["B-03"] = self.generate_section_drawing(
@@ -537,6 +540,8 @@ class SVGDrawingService:
         area_sqm: float = 84.0,
         project_name: str = "PropAI",
         drawing_no: str = "A-201",
+        floors: int = 0,
+        total_units: int = 0,
     ) -> str:
         """실제 건축 평면도에 부합하는 단위세대 평면도 SVG.
 
@@ -669,6 +674,84 @@ class SVGDrawingService:
                 g.add(dwg.line(start=(px(wx), px(yy)), end=(px(wx + ww), px(yy)),
                                stroke="#5a7fa6", stroke_width=0.8))
 
+        # 6.5) 위생기구·가구(옅은 선) — 실명 라벨 아래 레이어로 깔아 도면 현실감↑
+        FS = "#9aa4b2"  # 가구/기구 선색(옅은 회청)
+
+        def fr_rect(rx_: float, ry_: float, rw_: float, rh_: float, rad: float = 0.0, fill: str = "none") -> None:
+            kw = dict(insert=(px(rx_), px(ry_)), size=(px(max(0.05, rw_)), px(max(0.05, rh_))),
+                      fill=fill, stroke=FS, stroke_width=0.7)
+            if rad > 0:
+                kw["rx"] = px(rad); kw["ry"] = px(rad)
+            g.add(dwg.rect(**kw))
+
+        def fr_circle(cx_: float, cy_: float, rr: float) -> None:
+            g.add(dwg.circle(center=(px(cx_), px(cy_)), r=px(rr), fill="none", stroke=FS, stroke_width=0.7))
+
+        def fr_line(x1_: float, y1_: float, x2_: float, y2_: float) -> None:
+            g.add(dwg.line(start=(px(x1_), px(y1_)), end=(px(x2_), px(y2_)), stroke=FS, stroke_width=0.6))
+
+        for r in rooms:
+            if r.get("hall"):
+                continue
+            nm = r["name"]; rx0 = r["x"]; ry0 = r["y"]; rw0 = r["w"]; rh0 = r["h"]
+            mg = 0.28  # 벽 여백
+            south = ry0 >= s_y
+            if nm == "거실":
+                # 소파(복도측) + 등받이 + 좌식테이블 + TV(창측 벽)
+                sw_ = min(rw0 - 2 * mg, 2.6); sx_ = rx0 + (rw0 - sw_) / 2
+                sy_ = ry0 + mg if south else ry0 + rh0 - mg - 0.85
+                fr_rect(sx_, sy_, sw_, 0.85, rad=0.08)
+                fr_line(sx_, sy_ + (0.2 if south else 0.65), sx_ + sw_, sy_ + (0.2 if south else 0.65))
+                fr_rect(rx0 + (rw0 - 1.0) / 2, ry0 + rh0 / 2 - 0.25, 1.0, 0.5, rad=0.05)  # 테이블
+                tvy = ry0 + rh0 - mg - 0.12 if south else ry0 + mg
+                fr_rect(rx0 + (rw0 - 1.6) / 2, tvy, 1.6, 0.12)  # TV
+            elif nm == "안방":
+                bw_ = min(rw0 - 2 * mg, 1.6); bx_ = rx0 + (rw0 - bw_) / 2
+                by_ = ry0 + mg if south else ry0 + rh0 - mg - 2.0
+                fr_rect(bx_, by_, bw_, 2.0, rad=0.05)  # 더블침대
+                ply = by_ if south else by_ + 2.0 - 0.32
+                fr_rect(bx_ + 0.05, ply, bw_ * 0.46, 0.32)  # 베개1
+                fr_rect(bx_ + bw_ * 0.5, ply, bw_ * 0.46, 0.32)  # 베개2
+                fr_rect(rx0 + mg, ry0 + rh0 - mg - 0.55, 1.2, 0.55)  # 옷장
+            elif nm.startswith("침실"):
+                bw_ = min(rw0 - 2 * mg, 1.1); bx_ = rx0 + mg
+                by_ = ry0 + mg if south else ry0 + rh0 - mg - 2.0
+                fr_rect(bx_, by_, bw_, 2.0, rad=0.05)  # 싱글침대
+                fr_rect(bx_, by_ if south else by_ + 1.7, bw_, 0.3)  # 베개
+                fr_rect(rx0 + rw0 - mg - 0.55, ry0 + mg, 0.55, 1.2)  # 책상/옷장
+            elif nm in ("주방·식당", "주방"):
+                cyc = ry0 + mg if not south else ry0 + rh0 - mg - 0.6  # 카운터는 외벽측
+                fr_rect(rx0 + mg, cyc, rw0 - 2 * mg, 0.6)  # 싱크대 카운터
+                fr_rect(rx0 + mg + 0.25, cyc + 0.12, 0.55, 0.36, rad=0.05)  # 싱크볼
+                for ii in range(2):
+                    for jj in range(2):
+                        fr_circle(rx0 + mg + 1.35 + ii * 0.3, cyc + 0.18 + jj * 0.26, 0.1)  # 레인지 4구
+                tx_ = rx0 + (rw0 - 1.0) / 2; ty_ = ry0 + rh0 / 2
+                fr_rect(tx_, ty_, 1.0, 0.7, rad=0.05)  # 식탁
+                for cxs in (tx_ - 0.22, tx_ + 1.0 + 0.02):
+                    fr_rect(cxs, ty_ + 0.18, 0.2, 0.34, rad=0.03)  # 의자
+            elif nm in ("욕실", "공용욕실"):
+                tubw = min(rw0 - 2 * mg, 1.5)
+                fr_rect(rx0 + mg, ry0 + rh0 - mg - 0.7, tubw, 0.7, rad=0.12)  # 욕조
+                fr_rect(rx0 + mg + 0.08, ry0 + rh0 - mg - 0.62, tubw - 0.16, 0.54, rad=0.1)
+                fr_rect(rx0 + mg, ry0 + mg, 0.5, 0.4, rad=0.05)  # 세면대
+                fr_circle(rx0 + mg + 0.25, ry0 + mg + 0.2, 0.06)
+                fr_rect(rx0 + rw0 - mg - 0.4, ry0 + mg, 0.36, 0.22)  # 변기 탱크
+                fr_circle(rx0 + rw0 - mg - 0.22, ry0 + mg + 0.45, 0.17)  # 변기 보울
+            elif nm == "부속욕실":
+                fr_rect(rx0 + mg, ry0 + mg, 0.45, 0.36, rad=0.05)  # 세면대
+                fr_rect(rx0 + rw0 - mg - 0.34, ry0 + mg, 0.32, 0.2)  # 변기 탱크
+                fr_circle(rx0 + rw0 - mg - 0.18, ry0 + mg + 0.4, 0.15)  # 변기 보울
+                fr_rect(rx0 + mg, ry0 + rh0 - mg - 0.75, 0.75, 0.75)  # 샤워부스
+                fr_line(rx0 + mg, ry0 + rh0 - mg - 0.75, rx0 + mg + 0.75, ry0 + rh0 - mg)  # 샤워 대각
+            elif nm == "현관":
+                fr_rect(rx0 + mg, ry0 + mg, 0.35, max(0.6, rh0 - 2 * mg))  # 신발장(측벽)
+            elif nm == "드레스룸":
+                fr_rect(rx0 + mg, ry0 + mg, rw0 - 2 * mg, 0.4)  # 붙박이장
+                fr_line(rx0 + mg + (rw0 - 2 * mg) / 2, ry0 + mg, rx0 + mg + (rw0 - 2 * mg) / 2, ry0 + mg + 0.4)
+            elif nm == "다용도실":
+                fr_rect(rx0 + mg, ry0 + mg, 0.5, 0.5)  # 세탁기
+
         # 7) 실명 + 전용면적
         for r in rooms:
             if r.get("hall"):
@@ -724,7 +807,13 @@ class SVGDrawingService:
                        stroke="#333333", stroke_width=0.6))
         g.add(dwg.text(f"{unit_type} 단위세대 평면도", insert=(8, tb_y + 17),
                        font_size="12px", font_family=FONT, fill="#1a1a1a", font_weight="bold"))
-        g.add(dwg.text(f"전용 {area_sqm:.0f}㎡ · {project_name}", insert=(8, tb_y + 32),
+        # 실제 프로젝트 기하 반영: 전용면적·프로젝트명 + (있으면)층수·총세대수
+        _ctx = f"전용 {area_sqm:.0f}㎡ · {project_name}"
+        if floors > 0:
+            _ctx += f" · 지상 {floors}층"
+        if total_units > 0:
+            _ctx += f" · 총 {total_units}세대"
+        g.add(dwg.text(_ctx, insert=(8, tb_y + 32),
                        font_size="9px", font_family=FONT, fill="#6b7480"))
         g.add(dwg.text("축척 1:100", insert=(px(body_w) * 0.62 + 8, tb_y + 15),
                        font_size="9px", font_family=FONT, fill="#333333"))
