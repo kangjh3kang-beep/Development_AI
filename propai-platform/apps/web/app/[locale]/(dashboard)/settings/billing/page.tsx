@@ -147,11 +147,12 @@ export default function BillingConfigPage() {
                 </div>
                 <p className="text-[10px] text-[var(--text-hint)]">식별자: {t}{PROTECTED.has(t) ? " · 시스템" : ""}</p>
                 <Field label="월 요금" value={cfg.tiers[t].fee_krw} onChange={(v) => setTier(t, "fee_krw", v)} />
-                <Field label="할증배수(내부)" value={cfg.tiers[t].multiplier} onChange={(v) => setTier(t, "multiplier", v)} suffix="×" />
+                <Field label="기본 사용량(포함)" value={cfg.tiers[t].base_quota_krw ?? 0} onChange={(v) => setTier(t, "base_quota_krw", v)} />
+                <Field label="초과 마진율(내부)" value={cfg.tiers[t].overage_margin_pct ?? 0} onChange={(v) => setTier(t, "overage_margin_pct", v)} suffix="%" />
               </div>
             ))}
           </div>
-          <p className="text-[10px] text-[var(--text-hint)] mt-3">※ 포함 LLM 한도 = 월 요금 × {Math.round((cfg.budget_ratio ?? 0.5) * 100)}%. 할증배수는 내부 정책(사용자 미노출). 시스템 플랜(free·guest·super_admin)은 삭제 불가.</p>
+          <p className="text-[10px] text-[var(--text-hint)] mt-3">※ 플랜 핵심: <b>기본 사용량(포함)</b>까지 무료, 초과분은 <b>원가 × (1+초과 마진율)</b>로 과금. 콘텐츠/서비스 이용료(아래)는 전 플랜 동일. 마진율은 내부 정책(사용자 미노출). 시스템 플랜(free·guest·super_admin) 삭제 불가.</p>
         </div>
       </section>
 

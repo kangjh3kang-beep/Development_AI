@@ -24,9 +24,11 @@ _PIPELINE_STAGES = ["site_analysis", "design", "cost", "feasibility", "tax", "es
 _DEFAULT_CONFIG: dict[str, Any] = {
     "budget_ratio": 0.5,  # 구독료의 N%를 LLM 포함한도로
     "tiers": {
-        "power": {"fee_krw": 24500, "multiplier": 1.5, "label": "파워"},
-        "superpower": {"fee_krw": 49900, "multiplier": 1.4, "label": "슈퍼파워"},
-        "master": {"fee_krw": 99000, "multiplier": 1.3, "label": "마스터"},
+        # base_quota_krw=월 기본 포함 사용량(원), overage_margin_pct=초과분 원가 마진율(%).
+        # multiplier는 하위호환(overage_margin_pct 우선).
+        "power": {"fee_krw": 24500, "multiplier": 1.5, "overage_margin_pct": 50, "base_quota_krw": 12250, "label": "파워"},
+        "superpower": {"fee_krw": 49900, "multiplier": 1.4, "overage_margin_pct": 40, "base_quota_krw": 24950, "label": "슈퍼파워"},
+        "master": {"fee_krw": 99000, "multiplier": 1.3, "overage_margin_pct": 30, "base_quota_krw": 49500, "label": "마스터"},
     },
     "service_fees": {
         "project_create": 2000,           # 프로젝트 생성 건당
@@ -85,7 +87,9 @@ def apply_config(override: dict[str, Any]) -> None:
         # 신규 플랜 추가 허용(기존에 없던 tier면 기본값으로 생성).
         if tier not in _CONFIG["tiers"]:
             _CONFIG["tiers"][tier] = {"fee_krw": 0, "multiplier": 1.0, "label": tier}
-        for k in ("fee_krw", "multiplier", "label"):
+        # fee_krw(월요금)·label·base_quota_krw(기본 사용량)·overage_margin_pct(초과 마진율%).
+        # multiplier는 하위호환 유지(overage_margin_pct 미설정 시 사용).
+        for k in ("fee_krw", "multiplier", "label", "base_quota_krw", "overage_margin_pct"):
             if k in vals:
                 _CONFIG["tiers"][tier][k] = vals[k]
     # 플랜 삭제(_remove_tiers). 시스템 보호 등급은 삭제 불가(과금·권한 무결성).
@@ -164,14 +168,32 @@ _NON_SUB_MULTIPLIER = 1.5
 
 
 def tier_multiplier(tier: str) -> float:
-    """등급 할증배수. 구독 등급은 설정값, 비구독(free/guest 등)은 1.5(+50%)."""
+    """등급 초과분 마진배수. 플랜별 overage_margin_pct(%)가 있으면 1+pct/100,
+    없으면 기존 multiplier. 비구독(free/guest 등)은 1.5(+50%)."""
     if tier in TIER_BILLING:
-        return float(TIER_BILLING[tier].get("multiplier", 1.0))
+        t = TIER_BILLING[tier]
+        pct = t.get("overage_margin_pct")
+        if pct is not None:
+            try:
+                return 1.0 + float(pct) / 100.0
+            except (ValueError, TypeError):
+                pass
+        return float(t.get("multiplier", 1.0))
     return _NON_SUB_MULTIPLIER
 
 
 def tier_included_budget_krw(tier: str) -> float:
-    """등급 월 포함 LLM 한도(원) = 구독료 × budget_ratio."""
+    """등급 월 포함 LLM 사용량(원). 플랜별 base_quota_krw가 설정돼 있으면 그 값,
+    없으면 구독료 × budget_ratio(하위호환)."""
+    t = TIER_BILLING.get(tier, {})
+    bq = t.get("base_quota_krw")
+    if bq is not None:
+        try:
+            v = float(bq)
+            if v >= 0:
+                return round(v)
+        except (ValueError, TypeError):
+            pass
     return round(tier_fee_krw(tier) * float(_CONFIG.get("budget_ratio", 0.5)))
 
 
