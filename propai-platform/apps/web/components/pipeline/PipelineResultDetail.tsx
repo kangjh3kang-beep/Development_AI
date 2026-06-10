@@ -630,9 +630,13 @@ export function PipelineResultDetail({ result, onRerun }: PipelineResultDetailPr
                 </div>
               );
             }
+            // 필지 구획도·주변 지도는 주소로 라이브 재조회 — 저장본에 좌표가 없어도 주소만 있으면 표시.
+            const _basic = siteData.basic as Record<string, unknown> | undefined;
+            const _addr = (_basic?.address as string) || (siteData.address as string) || "";
+            const _parcels = _addr ? [_addr] : [];
             return (
               <div className="mb-5">
-                <SiteAnalysisDetail data={siteData} hideInterpretation />
+                <SiteAnalysisDetail data={siteData} parcels={_parcels} hideInterpretation />
               </div>
             );
           })()}

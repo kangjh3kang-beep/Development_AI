@@ -1193,14 +1193,44 @@ class ProjectPipeline:
             land_cost = total_revenue * 0.35  # 최후 폴백: 도심개발 통상 토지비≈매출 35%
             land_cost_source = "매출 대비 35% 추정(공시지가·시세 미확보)"
 
-        # ── 총사업비(통상 약식 기준): 토지비 + 공사비 + 일반사업비(매출20%) + 금융비(매출10%) ──
-        # 일반사업비=설계·감리·인허가·분양마케팅·예비비·일반관리 통합 개산, 금융비=PF/브릿지 이자·수수료.
-        # 이 둘을 빼면 총사업비가 과소→수익률 과대(827% 등) 왜곡 발생.
-        general_expense = total_revenue * 0.20
-        finance_cost = total_revenue * 0.10
-        total_project_cost = land_cost + cost.total_construction_cost + general_expense + finance_cost
+        # ── 총사업비: 실무 약식 라인아이템(개별 항목 명시) ──
+        #  토지비 + 직접공사비 + 설계·감리 + 인허가·분담금 + 분양경비 + 일반관리 + 예비비 + 금융비 + 제세공과
+        #  (기존 '일반사업비 매출20%+금융비10%' 뭉뚱그림 → 검토 가능한 항목별 분해)
+        direct_construction = float(cost.total_construction_cost or 0)
+        proj_months = float(getattr(cost, "construction_months", 0) or 0) or 30.0  # 토지매입~준공 통상 30개월
+        interest_rate = 0.065
+
+        design_supervision = direct_construction * 0.05      # 설계·감리비(직접공사비 5%)
+        permit_contrib = direct_construction * 0.03          # 인허가·분담금(직접공사비 3%)
+        sales_expense = total_revenue * 0.04                 # 분양경비(매출 4%)
+        general_admin = (land_cost + direct_construction) * 0.03  # 일반관리비(토지+공사 3%)
+        contingency = direct_construction * 0.05             # 예비비(직접공사비 5%)
+        # 금융비: PF/브릿지 평균잔액(토지+공사의 절반)×금리×사업기간
+        finance_cost = (land_cost + direct_construction) * 0.5 * interest_rate * (proj_months / 12.0)
+        levies = land_cost * 0.046                            # 제세공과(취득세 등 토지비 4.6%)
+
+        cost_breakdown = {
+            "토지비": round(land_cost),
+            "직접공사비": round(direct_construction),
+            "설계·감리비": round(design_supervision),
+            "인허가·분담금": round(permit_contrib),
+            "분양경비": round(sales_expense),
+            "일반관리비": round(general_admin),
+            "예비비": round(contingency),
+            "금융비": round(finance_cost),
+            "제세공과(취득세 등)": round(levies),
+        }
+        total_project_cost = float(sum(cost_breakdown.values()))
+        # 일반사업비(소프트코스트 합계 — 토지·공사 제외) — 보고서 표기 호환
+        general_expense = (design_supervision + permit_contrib + sales_expense
+                           + general_admin + contingency + levies)
+
         net_profit = total_revenue - total_project_cost
+        # 사업이익률(총사업비 대비) + 손익분기 분양률 + 자기자본수익률(ROE, 자기자본=총사업비30% 가정)
         profit_rate = (net_profit / total_project_cost * 100) if total_project_cost > 0 else 0
+        breakeven_sale_rate = (total_project_cost / total_revenue * 100) if total_revenue > 0 else 0
+        equity = total_project_cost * 0.30
+        roe_pct = (net_profit / equity * 100) if equity > 0 else 0
 
         # 등급 판정
         if profit_rate >= 20:
@@ -1216,8 +1246,12 @@ class ProjectPipeline:
             "land_cost": land_cost,
             "land_cost_source": land_cost_source,        # 토지비 산정 출처(정직 표기)
             "construction_cost": cost.total_construction_cost,
-            "general_expense_won": round(general_expense),  # 일반사업비(매출20%)
-            "finance_cost_won": round(finance_cost),        # 금융비(매출10%)
+            "general_expense_won": round(general_expense),  # 일반사업비(소프트코스트 합계)
+            "finance_cost_won": round(finance_cost),        # 금융비(PF 평균잔액×금리×기간)
+            "cost_breakdown": cost_breakdown,               # ★실무 라인아이템(항목별 총사업비)
+            "breakeven_sale_rate_pct": round(breakeven_sale_rate, 1),  # 손익분기 분양률
+            "roe_pct": round(roe_pct, 1),                   # 자기자본수익률(자기자본=총사업비30% 가정)
+            "project_months": int(proj_months),
             "total_project_cost": total_project_cost,
             "total_cost_won": total_project_cost,  # 보고서 호환 alias
             "total_revenue": total_revenue,
@@ -1243,10 +1277,13 @@ class ProjectPipeline:
 
             def mc_profit_fn(vars_dict: dict[str, float]) -> float:
                 mc_revenue = vars_dict["sale_price"] * sellable_pyeong
-                # 결정론 총사업비와 동일 구조: 토지비 + 공사비 + 일반사업비(매출20%) + 금융비(매출10%, 금리연동)
-                mc_general = mc_revenue * 0.20
-                mc_finance = mc_revenue * 0.10 * (vars_dict["interest_rate"] / base_interest_rate)
-                mc_cost = land_cost + vars_dict["construction_cost"] + mc_general + mc_finance
+                c = vars_dict["construction_cost"]
+                r = vars_dict["interest_rate"]
+                # 결정론 라인아이템과 동일 구조(설계감리5%+인허가3%+예비5%=공사 13%, 분양경비4%, 일반관리3%, 제세4.6%, 금융)
+                mc_soft = c * 0.13 + mc_revenue * 0.04 + (land_cost + c) * 0.03
+                mc_finance = (land_cost + c) * 0.5 * r * (proj_months / 12.0)
+                mc_levies = land_cost * 0.046
+                mc_cost = land_cost + c + mc_soft + mc_finance + mc_levies
                 return mc_revenue - mc_cost
 
             mc_result = run_monte_carlo(

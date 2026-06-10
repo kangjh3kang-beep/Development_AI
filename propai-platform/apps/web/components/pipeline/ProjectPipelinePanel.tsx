@@ -43,6 +43,7 @@ interface HistoryEntry {
   address: string;
   completedAt: string;
   result: PipelineRunResponse;
+  addresses?: string[];  // 다필지 주소 — 재진입 시 필지 구획도/지도 재조회용(개별 좌표는 라이브 재조회)
   projectId?: string;   // 프로젝트별 이력 격리(프로젝트 모드에서만 태깅)
   mode?: "quick" | "project";  // 실행 모드 — 대시보드(quick) vs 프로젝트(project). 이력 분류 기준.
 }
@@ -67,9 +68,41 @@ function loadHistory(): HistoryEntry[] {
   }
 }
 
+// 무거운 분석결과(몬테카를로 샘플·현금흐름·민감도·실거래 수백건)는 localStorage 용량을 폭증시켜
+// 저장 실패→이력 재진입 시 사업개요 상세가 사라지는 원인. 표시에 불필요한 대용량 필드만 솎아낸다.
+function trimEntry(entry: HistoryEntry): HistoryEntry {
+  try {
+    const r = JSON.parse(JSON.stringify(entry.result)) as PipelineRunResponse;
+    for (const s of r.stages ?? []) {
+      const d = s.data as Record<string, unknown> | undefined;
+      if (!d) continue;
+      delete d.monte_carlo; delete d.cashflow; delete d.sensitivity;  // 복합객체(표시 안 함)
+      const pricing = d.pricing as Record<string, unknown> | undefined;
+      if (pricing && Array.isArray(pricing.nearby_transactions)) {
+        pricing.nearby_transactions = (pricing.nearby_transactions as unknown[]).slice(0, 8); // 실거래 8건만
+      }
+      if (Array.isArray(d.nearby_amenities)) d.nearby_amenities = (d.nearby_amenities as unknown[]).slice(0, 12);
+    }
+    return { ...entry, result: r };
+  } catch {
+    return entry;
+  }
+}
+
 function saveHistory(entries: HistoryEntry[]) {
   if (typeof window === "undefined") return;
-  localStorage.setItem(pipelineHistoryKey(), JSON.stringify(entries.slice(0, MAX_HISTORY)));
+  const key = pipelineHistoryKey();
+  // 최신 우선 보존 + 무거운 필드 솎기 + 용량 초과 시 오래된 항목부터 제거하며 재시도(저장 실패=상세 유실 방지).
+  let list = entries.slice(0, MAX_HISTORY).map(trimEntry);
+  for (let i = 0; i < MAX_HISTORY; i++) {
+    try {
+      localStorage.setItem(key, JSON.stringify(list));
+      return;
+    } catch {
+      if (list.length > 1) { list = list.slice(0, list.length - 1); continue; }
+      return; // 1개도 못 넣으면 포기(드문 경우)
+    }
+  }
 }
 
 /* ── 비회원(미로그인) 브라우저 기반 무료 1회 게이트 ── */
@@ -149,9 +182,12 @@ const FIELD_LABELS: Record<string, string> = {
   // feasibility (약식 수지분석)
   land_cost: "토지비",
   land_cost_source: "토지비 산정근거",
-  construction_cost: "공사비",
-  general_expense_won: "일반사업비",
+  construction_cost: "직접공사비",
+  general_expense_won: "일반사업비(소프트코스트)",
   finance_cost_won: "금융비",
+  breakeven_sale_rate_pct: "손익분기 분양률(%)",
+  roe_pct: "자기자본수익률 ROE(%)",
+  project_months: "사업기간(개월)",
   total_project_cost: "총 사업비",
   total_revenue: "총 분양수입",
   net_profit: "순이익",
@@ -199,8 +235,15 @@ const FIELD_LABELS: Record<string, string> = {
 const HIDDEN_GRID_FIELDS = new Set<string>([
   "total_cost_won", "total_revenue_won", "net_profit_won",  // *_won = 본필드 중복 alias
   "monte_carlo", "cashflow", "sensitivity", "market_revaluation",  // 복합객체(원시 JSON 방지)
+  "cost_breakdown",  // 라인아이템 총사업비 — 별도 표로 렌더(아래)
   "pnu_codes", "coordinates", "building_info", "category_totals",
 ]);
+
+// 총사업비 라인아이템 표시 순서(실무 수지 검토용)
+const COST_BREAKDOWN_ORDER = [
+  "토지비", "직접공사비", "설계·감리비", "인허가·분담금", "분양경비",
+  "일반관리비", "예비비", "금융비", "제세공과(취득세 등)",
+];
 
 // 분양가 산정근거 코드 → 한글
 const SALE_SOURCE_LABEL: Record<string, string> = {
@@ -502,6 +545,7 @@ export function ProjectPipelinePanel({
         address: addr,
         completedAt: new Date().toISOString(),
         result,
+        addresses: allAddresses.length > 0 ? allAddresses.map((a) => a.fullAddress) : [addr],
         // ★대시보드(quick)는 projectId 태깅 금지 — store에 묻은 stale projectId로 태깅돼
         //  무태깅 필터에서 본인 이력이 전부 숨겨지던 근본원인 차단. 프로젝트 모드만 태깅.
         projectId: projectMode ? (projectId || undefined) : undefined,
@@ -522,7 +566,7 @@ export function ProjectPipelinePanel({
         projectMode ? "project" : "quick",
       );
     },
-    [history, projectId, projectMode],
+    [history, projectId, projectMode, allAddresses],
   );
 
   // 이력 삭제
@@ -552,6 +596,11 @@ export function ProjectPipelinePanel({
     }
     setLastResult(entry.result);
     setAddress(entry.address);
+    // 다필지 주소 복원 — 사업개요의 필지 구획도/지도가 재진입 시에도 표시되도록(좌표는 라이브 재조회)
+    setAllAddresses(
+      (entry.addresses && entry.addresses.length > 0 ? entry.addresses : [entry.address])
+        .map((a) => ({ fullAddress: a } as AddressEntry)),
+    );
     setStages(entry.result.stages);
     setSummary(entry.result.summary ?? {});
     setViewMode("detail");
@@ -1187,6 +1236,32 @@ export function ProjectPipelinePanel({
                             </p>
                           </div>
                         ))}
+                    </div>
+                  )}
+                  {/* 총사업비 라인아이템(실무 수지) — feasibility 단계에만 */}
+                  {stage.stage === "feasibility" && stage.data.cost_breakdown != null
+                    && typeof stage.data.cost_breakdown === "object" && (
+                    <div className="mt-3 overflow-hidden rounded-lg border border-[var(--line)]">
+                      <div className="bg-[var(--surface-muted)] px-3 py-1.5 text-[10px] font-black tracking-wider text-[var(--text-secondary)]">
+                        총사업비 구성 (실무 라인아이템)
+                      </div>
+                      <table className="w-full text-[11px]">
+                        <tbody>
+                          {COST_BREAKDOWN_ORDER
+                            .filter((k) => (stage.data.cost_breakdown as Record<string, number>)[k] != null)
+                            .map((k) => {
+                              const v = (stage.data.cost_breakdown as Record<string, number>)[k];
+                              return (
+                                <tr key={k} className="border-t border-[var(--line)]">
+                                  <td className="px-3 py-1 text-[var(--text-secondary)]">{k}</td>
+                                  <td className="px-3 py-1 text-right font-bold text-[var(--text-primary)]">
+                                    {(v / 1e8).toLocaleString(undefined, { maximumFractionDigits: 1 })}억
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                        </tbody>
+                      </table>
                     </div>
                   )}
                 </div>
