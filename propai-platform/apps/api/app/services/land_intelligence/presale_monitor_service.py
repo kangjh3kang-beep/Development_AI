@@ -140,7 +140,7 @@ async def check_interest(db: AsyncSession, interest: dict, svc: PresaleService |
 
     events = 0
     for it in items:
-        key = f"{it.get('house_manage_no')}:{it.get('pblanc_no')}"
+        key = f"{it.get('product', 'apt')}:{it.get('house_manage_no')}:{it.get('pblanc_no')}"
         status = it.get("status")
         prev = seen.get(key)
 

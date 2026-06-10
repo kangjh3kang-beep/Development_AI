@@ -10,11 +10,8 @@
 
 from __future__ import annotations
 
-import hashlib
-import hmac
 import json
 import uuid
-from datetime import datetime, timezone
 from typing import Any
 
 import httpx
@@ -25,8 +22,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from apps.api.config import get_settings
 
 logger = structlog.get_logger(__name__)
-
-_SOLAPI_URL = "https://api.solapi.com/messages/v4/send"
 
 _DDL = [
     """CREATE TABLE IF NOT EXISTS user_notification_prefs (
@@ -138,17 +133,17 @@ async def notify(db: AsyncSession, user_id: Any, title: str, body: str,
     channels: list[str] = []
     if prefs.get("inapp_enabled", True):
         channels.append("inapp")
-    # 외부 발송(전화번호 + 채널 ON + 발송사 키 있을 때만)
+    # 외부 발송(전화번호 + 채널 ON + 알리고 키 있을 때만)
     phone = prefs.get("phone") or ""
-    sent_ext = {"sms": None, "kakao": None}
+    sent_ext: dict[str, Any] = {"sms": None, "kakao": None}
     if phone and prefs.get("kakao_enabled"):
-        res = await _send_solapi(phone, f"{title}\n{body}", kakao=True)
+        # 알림톡(발신프로필·템플릿 설정 시). 실패/미설정이면 SMS 폴백.
+        res = await _send_aligo_alimtalk(phone, title, body)
         sent_ext["kakao"] = res
         if res.get("ok"):
             channels.append("kakao")
-    if phone and prefs.get("sms_enabled") and "kakao" not in channels:
-        # 알림톡 실패/미사용 시 SMS 폴백
-        res = await _send_solapi(phone, f"[사통팔땅] {title} {body}"[:80], kakao=False)
+    if phone and (prefs.get("sms_enabled") or prefs.get("kakao_enabled")) and "kakao" not in channels:
+        res = await _send_aligo_sms(phone, f"[사통팔땅] {title}\n{body}")
         sent_ext["sms"] = res
         if res.get("ok"):
             channels.append("sms")
@@ -164,40 +159,63 @@ async def notify(db: AsyncSession, user_id: Any, title: str, body: str,
     return {"id": nid, "channels": channels, "external": sent_ext}
 
 
-# ── 솔라피 어댑터(SMS / 알림톡) ──
-def _solapi_headers(api_key: str, api_secret: str) -> dict[str, str]:
-    # HMAC-SHA256(date + salt) 서명 — 솔라피 표준 인증.
-    date = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
-    salt = uuid.uuid4().hex
-    sig = hmac.new(api_secret.encode(), (date + salt).encode(), hashlib.sha256).hexdigest()
-    auth = (f"HMAC-SHA256 apiKey={api_key}, date={date}, salt={salt}, signature={sig}")
-    return {"Authorization": auth, "Content-Type": "application/json"}
-
-
-async def _send_solapi(phone: str, content: str, kakao: bool) -> dict[str, Any]:
-    """솔라피로 SMS 또는 카카오 알림톡 발송. 키 미설정 시 skipped(목업 없음)."""
+# ── 알리고(ALIGO) 어댑터 ──
+def _aligo_creds() -> tuple[str, str, str]:
     s = get_settings()
-    api_key = (getattr(s, "solapi_api_key", "") or "").strip()
-    api_secret = (getattr(s, "solapi_api_secret", "") or "").strip()
-    sender = (getattr(s, "solapi_sender", "") or "").strip()
-    if not (api_key and api_secret and sender):
-        return {"ok": False, "skipped": True, "reason": "발송사 키 미설정"}
-    to = "".join(ch for ch in phone if ch.isdigit())
-    msg: dict[str, Any] = {"to": to, "from": sender, "text": content}
-    if kakao:
-        pf = (getattr(s, "solapi_kakao_pf_id", "") or "").strip()
-        tmpl = (getattr(s, "solapi_kakao_template_id", "") or "").strip()
-        if not (pf and tmpl):
-            return {"ok": False, "skipped": True, "reason": "알림톡 채널/템플릿 미설정"}
-        msg["type"] = "ATA"  # 알림톡
-        msg["kakaoOptions"] = {"pfId": pf, "templateId": tmpl}
+    return ((getattr(s, "aligo_api_key", "") or "").strip(),
+            (getattr(s, "aligo_user_id", "") or "").strip(),
+            (getattr(s, "aligo_sender", "") or "").strip())
+
+
+async def _send_aligo_sms(phone: str, content: str) -> dict[str, Any]:
+    """알리고 문자 발송(길이에 따라 SMS/LMS 자동). 키 미설정 시 skipped(목업 없음)."""
+    api_key, user_id, sender = _aligo_creds()
+    if not (api_key and user_id and sender):
+        return {"ok": False, "skipped": True, "reason": "알리고 키 미설정"}
+    receiver = "".join(ch for ch in phone if ch.isdigit())
+    if not receiver:
+        return {"ok": False, "skipped": True, "reason": "수신번호 없음"}
+    # 90byte 초과면 LMS. 한글 가정 시 단순 길이 기준으로 LMS 처리.
+    is_long = len(content.encode("euc-kr", "ignore")) > 90
+    data = {
+        "key": api_key, "user_id": user_id, "sender": sender,
+        "receiver": receiver, "msg": content,
+        "msg_type": "LMS" if is_long else "SMS",
+    }
+    if is_long:
+        data["title"] = "사통팔땅 분양알림"
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.post(_SOLAPI_URL, headers=_solapi_headers(api_key, api_secret),
-                                     content=json.dumps({"message": msg}))
-        ok = resp.status_code in (200, 201)
+            resp = await client.post("https://apis.aligo.in/send/", data=data)
+        j = resp.json() if resp.status_code == 200 else {}
+        ok = str(j.get("result_code")) == "1"
         return {"ok": ok, "status": resp.status_code,
-                "detail": (resp.json() if ok else resp.text)[:300] if not ok else "sent"}
+                "detail": j.get("message") or resp.text[:200], "msg_id": j.get("msg_id")}
     except Exception as e:  # noqa: BLE001
-        logger.warning("solapi.send_failed", error=str(e))
+        logger.warning("aligo.sms_failed", error=str(e))
+        return {"ok": False, "error": str(e)[:200]}
+
+
+async def _send_aligo_alimtalk(phone: str, title: str, body: str) -> dict[str, Any]:
+    """알리고 카카오 알림톡 발송(발신프로필키·템플릿코드 설정 시). 미설정 시 skipped→SMS 폴백."""
+    api_key, user_id, sender = _aligo_creds()
+    s = get_settings()
+    senderkey = (getattr(s, "aligo_kakao_senderkey", "") or "").strip()
+    tpl_code = (getattr(s, "aligo_kakao_tpl_code", "") or "").strip()
+    if not (api_key and user_id and senderkey and tpl_code):
+        return {"ok": False, "skipped": True, "reason": "알림톡 발신프로필/템플릿 미설정"}
+    receiver = "".join(ch for ch in phone if ch.isdigit())
+    data = {
+        "apikey": api_key, "userid": user_id, "senderkey": senderkey,
+        "tpl_code": tpl_code, "sender": sender, "receiver_1": receiver,
+        "subject_1": title[:30], "message_1": f"{title}\n{body}"[:1000],
+    }
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post("https://kakaoapi.aligo.in/akv10/alarm/send/", data=data)
+        j = resp.json() if resp.status_code == 200 else {}
+        ok = str(j.get("code")) == "0"
+        return {"ok": ok, "status": resp.status_code, "detail": j.get("message") or resp.text[:200]}
+    except Exception as e:  # noqa: BLE001
+        logger.warning("aligo.alimtalk_failed", error=str(e))
         return {"ok": False, "error": str(e)[:200]}

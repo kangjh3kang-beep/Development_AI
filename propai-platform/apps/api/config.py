@@ -101,12 +101,12 @@ class Settings(BaseSettings):
     molit_api_key: str = ""
     applyhome_api_key: str = ""  # 청약홈(한국부동산원) 분양정보 조회 API. 미설정 시 molit_api_key 폴백
 
-    # ── 알림 발송(솔라피 — SMS + 카카오 알림톡 단일 API). 미설정 시 인앱만 동작 ──
-    solapi_api_key: str = ""
-    solapi_api_secret: str = ""
-    solapi_sender: str = ""            # 등록된 발신번호(SMS·알림톡 공통)
-    solapi_kakao_pf_id: str = ""       # 카카오 비즈채널 pfId(알림톡)
-    solapi_kakao_template_id: str = ""  # 승인된 알림톡 템플릿 ID
+    # ── 알림 발송(알리고 ALIGO — 문자 + 카카오 알림톡). 미설정 시 인앱만 동작 ──
+    aligo_api_key: str = ""            # 알리고 문자 API Key
+    aligo_user_id: str = ""            # 알리고 사용자 ID
+    aligo_sender: str = ""            # 등록된 발신번호
+    aligo_kakao_senderkey: str = ""    # 알림톡 발신프로필 키(플러스친구). 미설정 시 SMS 폴백
+    aligo_kakao_tpl_code: str = ""     # 승인된 알림톡 템플릿 코드
     kma_api_key: str = ""
     hug_api_key: str = ""
     lh_api_key: str = ""

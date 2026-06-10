@@ -16,9 +16,15 @@ type Item = {
   house_manage_no: string; pblanc_no: string; name: string; address: string;
   area_name: string; total_households: string; recruit_date: string;
   receipt_begin: string; receipt_end: string; developer: string; url: string;
-  status: string;
+  status: string; product: string; product_label: string;
 };
-type ListResp = { available: boolean; area?: string; count?: number; items: Item[]; note?: string };
+type ListResp = { available: boolean; area?: string; count?: number; items: Item[]; note?: string; by_product?: Record<string, number> };
+
+const PRODUCTS = [
+  { key: "all", label: "전체" }, { key: "apt", label: "APT" },
+  { key: "officetel", label: "오피스텔·생숙" }, { key: "remndr", label: "APT 잔여세대" },
+  { key: "opt", label: "임의공급" }, { key: "pblrent", label: "공공지원 민간임대" },
+];
 type Interest = {
   id: string; label: string; area: string | null; sigungu: string | null;
   keyword: string | null; min_households: number; baseline_done: boolean;
@@ -48,6 +54,7 @@ export default function SalesInfoPage() {
   const [tab, setTab] = useState<"browse" | "monitor">("browse");
   const [areas, setAreas] = useState<string[]>([]);
   const [area, setArea] = useState<string>("전국");
+  const [product, setProduct] = useState<string>("all");
   const [list, setList] = useState<ListResp | null>(null);
   const [loading, setLoading] = useState(false);
   const [detail, setDetail] = useState<any | null>(null);
@@ -58,22 +65,23 @@ export default function SalesInfoPage() {
       .then((r) => setAreas(["전국", ...(r.areas || [])])).catch(() => setAreas(["전국"]));
   }, []);
 
-  const loadList = useCallback(async (a: string) => {
+  const loadList = useCallback(async (a: string, p: string) => {
     setLoading(true);
     try {
-      const q = a && a !== "전국" ? `?area=${encodeURIComponent(a)}&months_back=6` : "?months_back=6";
-      const r = await apiClient.get<ListResp>(`/presale/list${q}`, { useMock: false, timeoutMs: 60000 });
+      const qs = new URLSearchParams({ months_back: "6", product: p });
+      if (a && a !== "전국") qs.set("area", a);
+      const r = await apiClient.get<ListResp>(`/presale/list?${qs.toString()}`, { useMock: false, timeoutMs: 90000 });
       setList(r);
     } catch { setList({ available: false, items: [], note: "분양정보 조회 실패" }); }
     finally { setLoading(false); }
   }, []);
-  useEffect(() => { if (tab === "browse") loadList(area); }, [area, tab, loadList]);
+  useEffect(() => { if (tab === "browse") loadList(area, product); }, [area, product, tab, loadList]);
 
   const openDetail = async (it: Item) => {
     setDetail({ _loading: true, name: it.name }); setDetailLoading(true);
     try {
       const d = await apiClient.get<any>(
-        `/presale/detail?house_manage_no=${encodeURIComponent(it.house_manage_no)}&pblanc_no=${encodeURIComponent(it.pblanc_no)}`,
+        `/presale/detail?house_manage_no=${encodeURIComponent(it.house_manage_no)}&pblanc_no=${encodeURIComponent(it.pblanc_no)}&product=${encodeURIComponent(it.product || "apt")}`,
         { useMock: false, timeoutMs: 60000 });
       setDetail({ ...it, ...d });
     } catch { setDetail({ ...it, available: false, note: "상세 조회 실패" }); }
@@ -111,6 +119,17 @@ export default function SalesInfoPage() {
               </button>
             ))}
           </div>
+          <div className="flex flex-wrap gap-1.5">
+            {PRODUCTS.map((p) => {
+              const cnt = p.key === "all" ? undefined : list?.by_product?.[p.key];
+              return (
+                <button key={p.key} onClick={() => setProduct(p.key)}
+                  className={`rounded-lg border px-2.5 py-1 text-[11px] font-bold transition-all ${product === p.key ? "border-[var(--accent-strong)] bg-[var(--accent-soft)] text-[var(--accent-strong)]" : "border-[var(--line)] bg-[var(--surface-muted)] text-[var(--text-hint)] hover:border-[var(--text-tertiary)]"}`}>
+                  {p.label}{cnt != null && <span className="ml-1 opacity-70">{cnt}</span>}
+                </button>
+              );
+            })}
+          </div>
 
           {loading && <div className="py-10 text-center text-sm text-[var(--text-secondary)]">분양정보 불러오는 중…</div>}
 
@@ -132,7 +151,10 @@ export default function SalesInfoPage() {
                         <h3 className="text-sm font-bold text-[var(--text-primary)] leading-snug">{it.name}</h3>
                         <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-bold ${STATUS_STYLE[it.status] || STATUS_STYLE.미정}`}>{it.status}</span>
                       </div>
-                      <p className="text-xs text-[var(--text-secondary)] line-clamp-1">{it.area_name} · {it.address}</p>
+                      <div className="flex items-center gap-1.5">
+                        <span className="rounded bg-[var(--surface-muted)] px-1.5 py-0.5 text-[9px] font-bold text-[var(--text-hint)]">{it.product_label}</span>
+                        <p className="text-xs text-[var(--text-secondary)] line-clamp-1">{it.area_name} · {it.address}</p>
+                      </div>
                       <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-[var(--text-hint)]">
                         {it.total_households && <span>공급 {it.total_households}세대</span>}
                         {it.receipt_begin && <span>접수 {it.receipt_begin}~{it.receipt_end}</span>}
