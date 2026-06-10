@@ -16,6 +16,7 @@ import { apiClient, ApiClientError } from "@/lib/api-client";
 // 도면 코드 → 한글 명칭 (SVGDrawingService.generate_full_drawing_set 기준)
 const DRAWING_LABELS: Record<string, string> = {
   "B-01": "배치도",
+  "B-02-UNIT": "단위세대 평면도",
   "B-02-STD": "기준층 평면도",
   "B-03": "단면도",
   "B-04-F": "정면도",
@@ -544,9 +545,11 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
         (c) => data.drawings[c]?.has_content,
       );
       setDrawingCodes(codes);
-      // 기본 도면을 "기준층 평면도(B-02-STD)"로 — 벽체·문·창호·치수·세대분할이 있는 밀도 높은
-      // 실 도면이라 한눈에 CAD 도면임이 드러남(배치도는 단순해 목업처럼 보인다는 피드백 반영).
-      setActiveCode((prev) => prev ?? (codes.includes("B-02-STD") ? "B-02-STD" : codes[0]) ?? null);
+      // 기본 도면을 "단위세대 평면도(B-02-UNIT)"로 — 실배치·실명·면적·문스윙·창호·치수·방위·
+      // 표제란을 갖춘 실제 건축 평면도. 없으면 기준층 평면도→첫 도면 순 폴백.
+      setActiveCode((prev) => prev
+        ?? (codes.includes("B-02-UNIT") ? "B-02-UNIT"
+            : codes.includes("B-02-STD") ? "B-02-STD" : codes[0]) ?? null);
     } catch (err) {
       setDrawingError(err instanceof Error ? err.message : "도면을 불러오지 못했습니다.");
     } finally {
@@ -1011,8 +1014,9 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
               )}
               {!drawingLoading && !drawingError && activeCode && svgMap[activeCode] && (
                 <div
-                  className="max-h-full max-w-full rounded-2xl bg-white p-4 shadow-2xl [&>svg]:h-auto [&>svg]:max-h-[480px] [&>svg]:w-auto [&>svg]:max-w-full"
-                  // SVG는 백엔드 SVGDrawingService가 생성한 신뢰 가능한 자체 컨텐츠
+                  className="flex h-full w-full max-w-[920px] items-center justify-center rounded-2xl bg-white p-5 shadow-2xl [&>svg]:max-h-full [&>svg]:w-full"
+                  // SVG는 백엔드 SVGDrawingService가 생성한 신뢰 가능한 자체 컨텐츠.
+                  // 모든 도면이 viewBox+100%(반응형)라 컨테이너를 꽉 채워 크게 렌더된다.
                   dangerouslySetInnerHTML={{ __html: svgMap[activeCode] }}
                 />
               )}

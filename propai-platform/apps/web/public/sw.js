@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v136-daylight-step";
+const CACHE_NAME = "propai-v137-unit-plan";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

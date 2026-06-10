@@ -40,6 +40,32 @@ def _s(m: float) -> float:
     return m * SCALE_PX_PER_M
 
 
+import re as _re
+
+
+def _make_responsive(svg: str) -> str:
+    """고정 px <svg width/height> → viewBox + 100% 로 바꿔 컨테이너에 꽉 차게(가독성).
+
+    기존 도면들이 작은 고정 px로 렌더돼 화면 중앙에 작게 떠 보이던 문제 해결.
+    """
+    if not svg or "<svg" not in svg:
+        return svg
+    # svgwrite는 속성을 알파벳순 출력 → width/height가 인접하지 않으므로 각각 탐색.
+    mw = _re.search(r'\bwidth="(\d+(?:\.\d+)?)(?:px)?"', svg)
+    mh = _re.search(r'\bheight="(\d+(?:\.\d+)?)(?:px)?"', svg)
+    if not (mw and mh):
+        return svg
+    w, h = mw.group(1), mh.group(1)
+    if "viewBox" not in svg:
+        svg = svg.replace(
+            "<svg ",
+            f'<svg viewBox="0 0 {w} {h}" preserveAspectRatio="xMidYMid meet" '
+            'style="width:100%;height:100%;display:block" ',
+            1,
+        )
+    return svg
+
+
 def _dim_h(dwg: svgwrite.Drawing, group, x1: float, x2: float, y: float,
            offset: float = 12) -> None:
     """수평 치수선 (px 단위 좌표)."""
@@ -148,6 +174,16 @@ class SVGDrawingService:
             units=project_data.get("units"),
         )
 
+        # B-02-UNIT: 단위세대 평면도(실배치·실명·면적·문스윙·창호·치수·방위·표제란) — 대표 평형
+        _units = project_data.get("units") or []
+        if _units:
+            _rep = max(_units, key=lambda u: float(u.get("area_sqm") or 0))
+            _utype = str(_rep.get("type") or "84A")
+            _uarea = float(_rep.get("area_sqm") or 84.0)
+        else:
+            _utype, _uarea = "84A", 84.0
+        drawings["B-02-UNIT"] = self.generate_unit_plan(_utype, _uarea, project_name=name)
+
         # B-03: 단면도
         drawings["B-03"] = self.generate_section_drawing(
             bw, fc, fh, basement_floors=bf,
@@ -192,6 +228,10 @@ class SVGDrawingService:
         # C-03: 주차장 배치도
         parking_count = project_data.get("parking_count", 50)
         drawings["C-03"] = self.generate_parking_layout(parking_count)
+
+        # 모든 도면을 반응형(viewBox+100%)으로 — 화면에 작게 뜨던 문제 해결
+        for _code in list(drawings.keys()):
+            drawings[_code] = _make_responsive(drawings[_code])
 
         return drawings
 
@@ -488,6 +528,215 @@ class SVGDrawingService:
         ))
 
         return dwg.tostring()
+
+    # ── 단위세대 평면도(실배치·실명·면적·문스윙·창호·치수·방위·표제란) ──
+
+    def generate_unit_plan(
+        self,
+        unit_type: str = "84A",
+        area_sqm: float = 84.0,
+        project_name: str = "PropAI",
+        drawing_no: str = "A-201",
+    ) -> str:
+        """실제 건축 평면도에 부합하는 단위세대 평면도 SVG.
+
+        벽=poché(채워진 두께), 실=실명+전용면적, 문=개구부+문짝+90°스윙호,
+        창=외벽 3선, 치수체인, 방위표(N), 표제란, 스케일바. 한국 공동주택 판상형 관례.
+        "어두운 본체 − 흰 실 = 벽(poché)" 기법으로 내·외벽을 한 번에 표현.
+        """
+        if svgwrite is None:
+            return SVG_PLACEHOLDER
+
+        PXM = 36.0            # 1m = 36px (1:100 화면 가독 스케일)
+        EXT = 0.20           # 외벽 200mm
+        big = area_sqm >= 72.0
+
+        # ── 전용면적에 맞춰 본체 치수 추정(판상형 전면 8.4m 기준) ──
+        body_w = 8.4 if big else 8.4
+        body_d = max(6.0, round(area_sqm / body_w, 1))  # 전용면적/전면폭 ≈ 깊이
+        bal_h = min(1.5, round(body_d * 0.14, 2))
+
+        # ── 실배치(파라메트릭 판상형) — 남측(아래)=거실·침실, 북측(위)=주방·욕실·현관 ──
+        n_h = round(body_d * 0.30, 2)
+        c_h = round(body_d * 0.16, 2)
+        s_y = round(n_h + c_h, 2)
+        s_h = round(body_d - s_y, 2)
+
+        rooms: list[dict] = []
+        doors: list[dict] = []
+        windows: list[dict] = []
+
+        south_cols = ([("안방", 0.38), ("거실", 0.34), ("침실2", 0.28)]
+                      if big else [("안방", 0.45), ("거실", 0.55)])
+        x = 0.0
+        for name, frac in south_cols:
+            cw = round(body_w * frac, 2)
+            rooms.append({"name": name, "x": x, "y": s_y, "w": cw, "h": s_h})
+            doors.append({"cx": round(x + cw / 2, 2), "y": s_y, "w": 0.8, "hinge": "l"})  # 복도측
+            windows.append({"x": round(x + 0.25, 2), "w": round(cw - 0.5, 2), "y": body_d, "wall": "s"})
+            x = round(x + cw, 2)
+        # 폭 잔차 보정(마지막 실 폭에 합산)
+        if rooms and abs(x - body_w) > 0.01:
+            rooms[len(south_cols) - 1]["w"] = round(rooms[len(south_cols) - 1]["w"] + (body_w - x), 2)
+
+        north_cols = ([("현관", 0.18), ("욕실", 0.18), ("주방·식당", 0.36), ("침실3", 0.28)]
+                      if big else [("현관", 0.20), ("욕실", 0.20), ("주방·식당", 0.60)])
+        x = 0.0
+        ncount = len(north_cols)
+        for i, (name, frac) in enumerate(north_cols):
+            cw = round(body_w * frac, 2)
+            if i == ncount - 1:
+                cw = round(body_w - x, 2)
+            rooms.append({"name": name, "x": x, "y": 0.0, "w": cw, "h": n_h})
+            if name == "현관":
+                doors.append({"cx": round(x + cw / 2, 2), "y": 0.0, "w": 0.95, "hinge": "l", "entry": True})
+            else:
+                doors.append({"cx": round(x + cw / 2, 2), "y": n_h, "w": 0.75, "hinge": "l"})
+            if name in ("주방·식당", "침실3"):
+                windows.append({"x": round(x + 0.25, 2), "w": round(cw - 0.5, 2), "y": 0.0, "wall": "n"})
+            x = round(x + cw, 2)
+
+        rooms.append({"name": "복도", "x": 0.0, "y": n_h, "w": body_w, "h": c_h, "hall": True})
+
+        # ── 캔버스/여백 ──
+        MX, MTOP, MBOT, MR = 78.0, 64.0, 128.0, 40.0
+        cw_px = body_w * PXM + MX + MR
+        ch_px = (body_d + bal_h) * PXM + MTOP + MBOT
+        dwg = svgwrite.Drawing(size=(f"{cw_px:.0f}px", f"{ch_px:.0f}px"))
+        dwg.add(dwg.rect(insert=(0, 0), size=(cw_px, ch_px), fill="#ffffff"))
+        g = dwg.g(transform=f"translate({MX},{MTOP})")
+        dwg.add(g)
+
+        def px(m: float) -> float:
+            return m * PXM
+
+        # 1) 발코니(남) — 본체 밖, 옅은 해칭
+        g.add(dwg.rect(insert=(0, px(body_d)), size=(px(body_w), px(bal_h)),
+                       fill="#eef1f4", stroke="#9aa4ad", stroke_width=0.8))
+        g.add(dwg.text("발코니", insert=(px(body_w / 2), px(body_d) + px(bal_h) / 2 + 4),
+                       font_size="10px", font_family=FONT, fill="#7a838c", text_anchor="middle"))
+
+        # 2) 본체 = 어두운 면(=벽 poché 베이스)
+        g.add(dwg.rect(insert=(0, 0), size=(px(body_w), px(body_d)), fill="#1a1a1a"))
+
+        # 3) 각 실 = 흰 면(내벽 두께만큼 inset → 사이 어두운 띠가 칸막이벽 poché)
+        P = 0.07  # 칸막이 절반(→ 실간벽 ~140mm)
+        for r in rooms:
+            fill = "#f0f2f4" if r.get("hall") else "#fafafa"
+            g.add(dwg.rect(
+                insert=(px(r["x"] + P), px(r["y"] + P)),
+                size=(px(max(0.1, r["w"] - 2 * P)), px(max(0.1, r["h"] - 2 * P))),
+                fill=fill,
+            ))
+
+        # 4) 외벽 poché(두껍게) — 본체 둘레 EXT 띠를 실 위에 덮음
+        g.add(dwg.rect(insert=(0, 0), size=(px(body_w), px(EXT)), fill="#1a1a1a"))                  # 북(상)
+        g.add(dwg.rect(insert=(0, px(body_d - EXT)), size=(px(body_w), px(EXT)), fill="#1a1a1a"))    # 남(하)
+        g.add(dwg.rect(insert=(0, 0), size=(px(EXT), px(body_d)), fill="#1a1a1a"))                   # 좌
+        g.add(dwg.rect(insert=(px(body_w - EXT), 0), size=(px(EXT), px(body_d)), fill="#1a1a1a"))    # 우
+
+        # 5) 개구부(문) 흰색 절단 + 문짝 + 90° 스윙호
+        for dd in doors:
+            cx = dd["cx"]; y = dd["y"]; dw = dd["w"]
+            x0 = cx - dw / 2
+            # 벽 절단(가로벽: y 중심으로 ±0.13)
+            g.add(dwg.rect(insert=(px(x0), px(y - 0.13)), size=(px(dw), px(0.26)), fill="#ffffff"))
+            # 문짝(열린 위치) + 스윙호 — 현관/실문 모두 가로벽
+            hinge_x = x0 if dd.get("hinge", "l") == "l" else x0 + dw
+            sign = 1 if dd.get("hinge", "l") == "l" else -1
+            # 문짝: 경첩에서 아래(실 안쪽)로 수직
+            g.add(dwg.line(start=(px(hinge_x), px(y)), end=(px(hinge_x), px(y + dw)),
+                           stroke="#222222", stroke_width=1.0))
+            # 스윙 1/4원
+            sweep = 1 if sign > 0 else 0
+            g.add(dwg.path(
+                d=f"M {px(hinge_x + sign * dw):.1f},{px(y):.1f} "
+                  f"A {px(dw):.1f},{px(dw):.1f} 0 0,{sweep} {px(hinge_x):.1f},{px(y + dw):.1f}",
+                stroke="#9aa4ad", stroke_width=0.7, fill="none"))
+
+        # 6) 창호(외벽 3선) — 흰 절단 후 평행 3선
+        for wd in windows:
+            wx = wd["x"]; ww = wd["w"]; wall = wd["wall"]
+            if wall == "s":
+                wy = body_d - EXT
+            else:
+                wy = 0.0
+            g.add(dwg.rect(insert=(px(wx), px(wy)), size=(px(ww), px(EXT)), fill="#ffffff"))
+            for k in range(3):
+                yy = wy + EXT * (0.25 + 0.25 * k)
+                g.add(dwg.line(start=(px(wx), px(yy)), end=(px(wx + ww), px(yy)),
+                               stroke="#5a7fa6", stroke_width=0.8))
+
+        # 7) 실명 + 전용면적
+        for r in rooms:
+            if r.get("hall"):
+                continue
+            cx = px(r["x"] + r["w"] / 2)
+            cy = px(r["y"] + r["h"] / 2)
+            g.add(dwg.text(r["name"], insert=(cx, cy - 1), font_size="13px", font_family=FONT,
+                           fill="#1a1a1a", text_anchor="middle", font_weight="bold"))
+            ar = r["w"] * r["h"]
+            g.add(dwg.text(f"{ar:.1f}㎡", insert=(cx, cy + 13), font_size="10px",
+                           font_family=FONT, fill="#6b7480", text_anchor="middle"))
+
+        # 8) 치수선 — 전체 폭(하단)·전체 깊이(좌측) + 남측 실폭 체인
+        def dim_h(x1: float, x2: float, y_off: float, text: str) -> None:
+            y = px(body_d + bal_h) + y_off
+            g.add(dwg.line(start=(px(x1), y), end=(px(x2), y), stroke="#666666", stroke_width=0.5))
+            for xe in (x1, x2):
+                g.add(dwg.line(start=(px(xe), y - 4), end=(px(xe), y + 4), stroke="#666666", stroke_width=0.5))
+            g.add(dwg.text(text, insert=((px(x1) + px(x2)) / 2, y - 3), font_size="10px",
+                           font_family=FONT, fill="#333333", text_anchor="middle"))
+
+        def dim_v(y1: float, y2: float, x_off: float, text: str) -> None:
+            xx = x_off
+            g.add(dwg.line(start=(xx, px(y1)), end=(xx, px(y2)), stroke="#666666", stroke_width=0.5))
+            for ye in (y1, y2):
+                g.add(dwg.line(start=(xx - 4, px(ye)), end=(xx + 4, px(ye)), stroke="#666666", stroke_width=0.5))
+            g.add(dwg.text(text, insert=(xx - 6, (px(y1) + px(y2)) / 2),
+                           font_size="10px", font_family=FONT, fill="#333333",
+                           text_anchor="middle", transform=f"rotate(-90 {xx - 6} {(px(y1) + px(y2)) / 2})"))
+
+        # 남측 실폭 체인
+        cxacc = 0.0
+        for name, frac in south_cols:
+            cwid = round(body_w * frac, 2)
+            dim_h(cxacc, cxacc + cwid, 22, f"{int(cwid * 1000)}")
+            cxacc = round(cxacc + cwid, 2)
+        dim_h(0, body_w, 44, f"{int(body_w * 1000)}")          # 전체 폭
+        dim_v(0, body_d, -26, f"{int(body_d * 1000)}")          # 전체 깊이
+
+        # 9) 방위표(N) — 우상단
+        nax = px(body_w) - 16
+        nay = -34
+        g.add(dwg.circle(center=(nax, nay), r=12, fill="none", stroke="#222222", stroke_width=0.8))
+        g.add(dwg.polygon(points=[(nax, nay - 11), (nax - 4, nay + 2), (nax + 4, nay + 2)], fill="#222222"))
+        g.add(dwg.text("N", insert=(nax, nay + 13), font_size="9px", font_family=FONT,
+                       fill="#222222", text_anchor="middle", font_weight="bold"))
+
+        # 10) 표제란 + 축척 + 스케일바(하단)
+        tb_y = px(body_d + bal_h) + 64
+        g.add(dwg.rect(insert=(0, tb_y), size=(px(body_w), 40), fill="none",
+                       stroke="#333333", stroke_width=0.8))
+        g.add(dwg.line(start=(px(body_w) * 0.62, tb_y), end=(px(body_w) * 0.62, tb_y + 40),
+                       stroke="#333333", stroke_width=0.6))
+        g.add(dwg.text(f"{unit_type} 단위세대 평면도", insert=(8, tb_y + 17),
+                       font_size="12px", font_family=FONT, fill="#1a1a1a", font_weight="bold"))
+        g.add(dwg.text(f"전용 {area_sqm:.0f}㎡ · {project_name}", insert=(8, tb_y + 32),
+                       font_size="9px", font_family=FONT, fill="#6b7480"))
+        g.add(dwg.text("축척 1:100", insert=(px(body_w) * 0.62 + 8, tb_y + 15),
+                       font_size="9px", font_family=FONT, fill="#333333"))
+        g.add(dwg.text(f"도면 {drawing_no}", insert=(px(body_w) * 0.62 + 8, tb_y + 30),
+                       font_size="9px", font_family=FONT, fill="#333333"))
+        # 스케일바(0~5m, 1m 칸)
+        sb_x = px(body_w) * 0.62 + 70
+        for k in range(5):
+            g.add(dwg.rect(insert=(sb_x + k * (PXM * 0.5), tb_y + 24),
+                           size=(PXM * 0.5, 5),
+                           fill="#333333" if k % 2 == 0 else "#ffffff",
+                           stroke="#333333", stroke_width=0.4))
+
+        return _make_responsive(dwg.tostring())
 
     # ── 단면도 ──
 
