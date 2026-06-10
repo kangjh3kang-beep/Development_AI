@@ -37,6 +37,7 @@ SYSTEM_PROMPT = """\
 - "균형/적당" 또는 불명확 → priority=balanced
 - "N세대/N호" → target_units=N
 - "상가/근생/사무실" → building_use 변경
+- "북측 일조/정북 일조/채광/햇빛 확보/일조권" → daylight_north=true (정북일조 사선제한 단계후퇴 적용)
 
 출력 규칙:
 1. 사용자가 명시하지 않은 값은 null로 둔다(추측 강제 금지).
@@ -65,6 +66,7 @@ USER_PROMPT_TEMPLATE = """\
   "building_use": "건축물 용도(예: 공동주택/근린생활시설/업무시설) 또는 null",
   "priority": "yield | livability | balanced 중 하나",
   "target_margin_pct": "목표 수익률(%) 숫자 또는 null",
+  "daylight_north": "북측 일조/정북 일조/채광 확보 의도면 true, 아니면 false",
   "notes": "사용자 의도 요약 — 쉬운 한국어 한두 문장"
 }}
 """
@@ -81,6 +83,7 @@ class DesignIntentInterpreter(BaseInterpreter):
         "building_use",
         "priority",
         "target_margin_pct",
+        "daylight_north",
         "notes",
     ]
     fallback_key = "notes"
@@ -118,6 +121,9 @@ class DesignIntentInterpreter(BaseInterpreter):
         structured = _normalize_llm_intent(raw) if raw else None
         if structured is not None:
             structured["source"] = "llm"
+            # LLM이 놓쳐도 키워드로 정북일조 의도를 보강(누락 방지).
+            if not structured.get("daylight_north") and _detect_daylight_north(text):
+                structured["daylight_north"] = True
             return structured
 
         # LLM 미응답/파싱 실패 → 규칙기반 폴백
@@ -135,6 +141,14 @@ _ROOM_KEYWORDS = {
 }
 _YIELD_KEYWORDS = ("수익", "최대", "임대", "분양", "수익률", "이익")
 _LIVABILITY_KEYWORDS = ("거주", "쾌적", "조망", "넓게", "여유")
+# 정북일조 사선제한(단계후퇴) 의도 키워드
+_DAYLIGHT_KEYWORDS = ("일조", "정북", "북측", "북쪽", "채광", "햇빛", "햇볕", "일조권", "남향")
+
+
+def _detect_daylight_north(text: str) -> bool:
+    """'북측 일조 확보'·'정북 일조'·'채광' 등 정북일조 단계후퇴 의도 감지."""
+    t = text or ""
+    return any(kw in t for kw in _DAYLIGHT_KEYWORDS)
 _USE_KEYWORDS = {
     "근린생활시설": ("상가", "근생", "근린", "점포"),
     "업무시설": ("사무실", "오피스", "업무"),
@@ -200,12 +214,17 @@ def parse_intent_rule_based(text: str) -> dict[str, Any]:
     parts.append({"yield": "수익 우선", "livability": "거주성 우선", "balanced": "균형"}[priority])
     notes = "키워드 분석: " + ", ".join(parts) + " 의도로 보입니다." if parts else "의도를 명확히 추출하지 못했습니다."
 
+    daylight_north = _detect_daylight_north(t)
+    if daylight_north and "일조" not in notes:
+        notes = notes.rstrip(".") + " · 정북일조 단계후퇴(북측 채광) 반영."
+
     return {
         "target_units": target_units,
         "unit_mix": unit_mix,
         "building_use": building_use,
         "priority": priority,
         "target_margin_pct": target_margin_pct,
+        "daylight_north": daylight_north,
         "notes": notes,
     }
 
@@ -217,6 +236,7 @@ def _empty_intent(notes: str) -> dict[str, Any]:
         "building_use": None,
         "priority": "balanced",
         "target_margin_pct": None,
+        "daylight_north": False,
         "notes": notes,
         "source": "empty",
     }
@@ -267,12 +287,17 @@ def _normalize_llm_intent(raw: dict[str, str]) -> dict[str, Any] | None:
     if building_use.lower() in ("null", "none", ""):
         building_use = None
 
+    def _to_bool(v: Any) -> bool:
+        s = str(v).strip().lower()
+        return s in ("true", "1", "yes", "y", "참", "예")
+
     return {
         "target_units": _to_int(raw.get("target_units")),
         "unit_mix": _to_mix(raw.get("unit_mix")),
         "building_use": building_use,
         "priority": priority,
         "target_margin_pct": _to_float(raw.get("target_margin_pct")),
+        "daylight_north": _to_bool(raw.get("daylight_north")),
         "notes": str(raw.get("notes", "")).strip() or "설계 의도를 분석했습니다.",
     }
 

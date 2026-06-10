@@ -65,6 +65,7 @@ interface DesignSpec {
   bcr?: number | null;
   far?: number | null;
   total_units?: number | null;
+  daylightNorth?: boolean;   // P5: 정북일조 단계후퇴(북측 상부 매스 후퇴)
   project_name: string;
 }
 
@@ -72,14 +73,25 @@ interface DesignSpec {
 // 서버 IFC 파이프라인과 무관하게 "항상 무언가를 렌더"하는 것이 핵심(에디터가 빈 화면이 되지 않도록).
 // 서버 정밀 glb가 도착하면 그쪽을 우선 사용(아래 BuildingModel).
 function ProceduralBuilding({
-  width, depth, floors, floorHeight,
-}: { width: number; depth: number; floors: number; floorHeight: number }) {
+  width, depth, floors, floorHeight, daylightNorth,
+}: { width: number; depth: number; floors: number; floorHeight: number; daylightNorth?: boolean }) {
   const group = useMemo(() => {
     const w = Math.max(4, width || 20);
     const d = Math.max(4, depth || 15);
     const nf = Math.max(1, Math.round(floors || 5));
     const fh = Math.max(2.2, floorHeight || 3);
     const wallT = 0.3;
+    // P5: 정북일조 단계후퇴. 북(-z)면을 층별로 후퇴(높이/2 사선). 남(+z)면은 고정.
+    const baseNorth = 1.5;
+    const minDepth = Math.max(4, d * 0.35);
+    // 층 f(0-base)의 윗변 높이 = (f+1)*fh → 필요 북측 이격 = max(base, h/2), inset = 그 초과분.
+    const floorGeom = (f: number) => {
+      if (!daylightNorth) return { depth: d, zc: 0 };
+      const topH = (f + 1) * fh;
+      const inset = Math.max(0, topH / 2 - baseNorth);
+      const depthF = Math.max(minDepth, d - inset);
+      return { depth: depthF, zc: (d - depthF) / 2 }; // 남면 고정, 북면만 안으로
+    };
 
     const matSlab = new THREE.MeshStandardMaterial({ color: "#94a3b8", roughness: 0.9, metalness: 0.05 });
     const matGlass = new THREE.MeshStandardMaterial({ color: "#60a5fa", roughness: 0.12, metalness: 0.5, transparent: true, opacity: 0.5 });
@@ -87,22 +99,26 @@ function ProceduralBuilding({
     const matCore = new THREE.MeshStandardMaterial({ color: "#475569", roughness: 0.85 });
 
     const g = new THREE.Group();
+    let lastDepth = d;
+    let lastZc = 0;
     for (let f = 0; f < nf; f++) {
       const y = f * fh;
+      const { depth: df, zc } = floorGeom(f);
+      lastDepth = df; lastZc = zc;
       // 바닥 슬래브
-      const slab = new THREE.Mesh(new THREE.BoxGeometry(w, 0.25, d), matSlab);
-      slab.position.set(0, y, 0); slab.castShadow = true; slab.receiveShadow = true;
+      const slab = new THREE.Mesh(new THREE.BoxGeometry(w, 0.25, df), matSlab);
+      slab.position.set(0, y, zc); slab.castShadow = true; slab.receiveShadow = true;
       g.add(slab);
-      // 외피(커튼월 유리) 4면
+      // 외피(커튼월 유리) 4면 — 남(+z)/북(-z)은 후퇴 깊이 반영
       const fb = new THREE.BoxGeometry(w * 0.98, fh * 0.86, wallT);
-      const front = new THREE.Mesh(fb, matGlass); front.position.set(0, y + fh / 2, d / 2); g.add(front);
-      const back = new THREE.Mesh(fb, matGlass); back.position.set(0, y + fh / 2, -d / 2); g.add(back);
-      const lr = new THREE.BoxGeometry(wallT, fh * 0.86, d * 0.98);
-      const left = new THREE.Mesh(lr, matGlass); left.position.set(-w / 2, y + fh / 2, 0); g.add(left);
-      const right = new THREE.Mesh(lr, matGlass); right.position.set(w / 2, y + fh / 2, 0); g.add(right);
+      const front = new THREE.Mesh(fb, matGlass); front.position.set(0, y + fh / 2, zc + df / 2); g.add(front);
+      const back = new THREE.Mesh(fb, matGlass); back.position.set(0, y + fh / 2, zc - df / 2); g.add(back);
+      const lr = new THREE.BoxGeometry(wallT, fh * 0.86, df * 0.98);
+      const left = new THREE.Mesh(lr, matGlass); left.position.set(-w / 2, y + fh / 2, zc); g.add(left);
+      const right = new THREE.Mesh(lr, matGlass); right.position.set(w / 2, y + fh / 2, zc); g.add(right);
       // 층간 멀리언(테두리 띠)
-      const band = new THREE.Mesh(new THREE.BoxGeometry(w + 0.1, 0.18, d + 0.1), matMull);
-      band.position.set(0, y + fh * 0.9, 0); g.add(band);
+      const band = new THREE.Mesh(new THREE.BoxGeometry(w + 0.1, 0.18, df + 0.1), matMull);
+      band.position.set(0, y + fh * 0.9, zc); g.add(band);
     }
     // 코어(중앙 EV·계단실) 전체 높이
     const coreW = Math.min(w * 0.32, 7);
@@ -110,11 +126,11 @@ function ProceduralBuilding({
     const core = new THREE.Mesh(new THREE.BoxGeometry(coreW, nf * fh, coreD), matCore);
     core.position.set(0, (nf * fh) / 2, 0); core.castShadow = true;
     g.add(core);
-    // 옥상 파라펫
-    const roof = new THREE.Mesh(new THREE.BoxGeometry(w, 0.7, d), matSlab);
-    roof.position.set(0, nf * fh, 0); g.add(roof);
+    // 옥상 파라펫(최상층 후퇴 깊이 따름)
+    const roof = new THREE.Mesh(new THREE.BoxGeometry(w, 0.7, lastDepth), matSlab);
+    roof.position.set(0, nf * fh, lastZc); g.add(roof);
     return g;
-  }, [width, depth, floors, floorHeight]);
+  }, [width, depth, floors, floorHeight, daylightNorth]);
 
   return <primitive object={group} />;
 }
@@ -132,6 +148,7 @@ function BuildingModel({ scene, spec }: { scene: THREE.Group | null; spec: Desig
           depth={spec.building_depth_m}
           floors={spec.floor_count}
           floorHeight={spec.floor_height_m ?? 3}
+          daylightNorth={spec.daylightNorth}
         />
       ) : null}
       <Grid
@@ -354,7 +371,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
       site_width_m: 46, site_depth_m: 26, setback_m: 3, unit_width_m: 8, basement_floors: 1,
       land_area_sqm: landArea, zone_code: zone, building_use: use, building_type: designData?.buildingType ?? null,
       gfa: gfa ?? null, bcr: designData?.bcr ?? null, far: designData?.far ?? null,
-      total_units: null, project_name: "PropAI",
+      total_units: null, daylightNorth: designData?.daylightNorth ?? false, project_name: "PropAI",
     };
 
     try {
@@ -376,7 +393,8 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
         gfa: gfa ?? null,
         bcr: designData?.bcr ?? m.bcr_pct ?? null,
         far: designData?.far ?? m.far_pct ?? null,
-        total_units: m.total_units ?? null, project_name: "PropAI",
+        total_units: m.total_units ?? null,
+        daylightNorth: designData?.daylightNorth ?? false, project_name: "PropAI",
       });
     } catch {
       setSpec(fallback);

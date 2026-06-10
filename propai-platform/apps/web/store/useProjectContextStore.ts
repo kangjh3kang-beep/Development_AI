@@ -88,6 +88,7 @@ interface DesignData {
   unitCount?: number | null;        // 총 세대수
   unitTypes?: string[] | null;      // 평형 구성(예: ["59A","84A"])
   efficiencyPct?: number | null;    // 전용률(%)
+  daylightNorth?: boolean | null;   // P5: 정북일조 단계후퇴(북측 상부 매스 후퇴) 적용 여부
 }
 
 interface FeasibilityData {

@@ -95,6 +95,7 @@ class DesignAlternativesRequest(BaseModel):
         default={"north": 3.0, "south": 2.0, "east": 1.5, "west": 1.5},
     )
     count: int = Field(3, ge=1, le=5, description="대안 수")
+    daylight_north: bool = Field(False, description="정북일조 단계후퇴(북측 채광) 적용")
 
 
 class AutoDesignRequest(BaseModel):
@@ -112,6 +113,7 @@ class AutoDesignRequest(BaseModel):
         default={"north": 3.0, "south": 2.0, "east": 1.5, "west": 1.5},
         description="세트백 거리 (m)",
     )
+    daylight_north: bool = Field(False, description="정북일조 단계후퇴(북측 채광) 적용 — 상부 층 북측 자동 후퇴")
 
 
 class ParseIntentRequest(BaseModel):
@@ -343,6 +345,7 @@ async def design_alternatives(req: DesignAlternativesRequest):
         target_unit_types=req.target_unit_types,
         floor_height_m=req.floor_height_m,
         setback_m=req.setback_m,
+        daylight_step=req.daylight_north,
     )
     results = auto_design_engine.generate_alternatives(site_input, count=req.count)
     legal = auto_design_engine.get_legal_limits(req.zone_code)
@@ -394,6 +397,7 @@ async def auto_design(req: AutoDesignRequest):
         target_unit_types=req.target_unit_types,
         floor_height_m=req.floor_height_m,
         setback_m=req.setback_m,
+        daylight_step=req.daylight_north,
     )
     result = auto_design_engine.generate(site_input)
     unit_mix = _unit_mix_for(result.summary)

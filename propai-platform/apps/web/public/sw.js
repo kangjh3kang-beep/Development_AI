@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v135-dxf-authfix";
+const CACHE_NAME = "propai-v136-daylight-step";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

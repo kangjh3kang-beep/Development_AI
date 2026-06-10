@@ -111,6 +111,8 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
   const [targetUnits, setTargetUnits] = useState(40);
   const [targetMargin, setTargetMargin] = useState(15);
   const [priority, setPriority] = useState<DesignIntent["priority"]>("balanced");
+  // P5: 정북일조 단계후퇴(북측 상부 매스 후퇴). 의도 파싱 또는 토글로 켜짐.
+  const [daylightNorth, setDaylightNorth] = useState(false);
 
   // 컨텍스트(SSOT)를 폼에 우선 주입(사용자 수정값 보존)
   useEffect(() => {
@@ -231,6 +233,8 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
         setTargetMargin(Math.min(60, it.target_margin_pct));
       if (it.priority) setPriority(it.priority);
       if (it.suggested_unit_types?.length) setUnitTypes(it.suggested_unit_types);
+      // P5: "북측 일조 확보" 등 정북일조 의도 → 단계후퇴 ON(매스 자동 후퇴)
+      if (it.daylight_north) setDaylightNorth(true);
     } catch (e) {
       setParseError(e instanceof Error ? e.message : "해석에 실패했습니다.");
     } finally {
@@ -254,11 +258,13 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
         unitCount: summary.total_units ?? null,
         unitTypes: unitTypes.length > 0 ? unitTypes : null,
         efficiencyPct: null,
+        // P5: 정북일조 단계후퇴 적용 여부 — 3D 매스 후퇴 렌더의 SSOT
+        daylightNorth: (summary as { daylight_step?: boolean }).daylight_step ?? daylightNorth,
       });
       markStageComplete("design");
       onApplied?.();
     },
-    [loadDesignPayload, updateDesignData, markStageComplete, intent, onApplied],
+    [loadDesignPayload, updateDesignData, markStageComplete, intent, unitTypes, daylightNorth, onApplied],
   );
 
   // 자연어/음성 설계 편집(P6) — 현재 설계를 말로 수정 → 커널 재생성 → applyDesign으로 2D/3D/BIM/QTO 전파
@@ -303,6 +309,7 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
           building_use: intent?.building_use ?? "공동주택",
           target_unit_types: unitTypes.length > 0 ? unitTypes : ["84A"],
           floor_height_m: 3.0,
+          daylight_north: daylightNorth,
         },
       });
       setSingle(data);
@@ -313,7 +320,7 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
     } finally {
       setSingleLoading(false);
     }
-  }, [siteArea, zoneCode, intent, unitTypes, applyDesign, fetchEvaluation]);
+  }, [siteArea, zoneCode, intent, unitTypes, daylightNorth, applyDesign, fetchEvaluation]);
 
   // 3) Top3 설계안 생성
   const handleAlternatives = useCallback(async () => {
@@ -328,6 +335,7 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
             zone_code: zoneCode,
             target_unit_types: unitTypes.length > 0 ? unitTypes : ["84A"],
             count: 3,
+            daylight_north: daylightNorth,
           },
         },
       );
@@ -341,7 +349,7 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
     } finally {
       setAltLoading(false);
     }
-  }, [siteArea, zoneCode, unitTypes]);
+  }, [siteArea, zoneCode, unitTypes, daylightNorth]);
 
   const handleSelectAlt = useCallback(
     (alt: DesignAlternative) => {
@@ -607,6 +615,32 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
                   </button>
                 ))}
               </div>
+            </div>
+
+            {/* P5: 정북일조 단계후퇴 토글 — 켜면 상부 층이 북측으로 자동 후퇴(일조 확보, 더 높이) */}
+            <div className="mt-4">
+              <button
+                type="button"
+                onClick={() => setDaylightNorth((v) => !v)}
+                aria-pressed={daylightNorth}
+                className={`flex w-full items-center justify-between rounded-lg border px-3 py-2 text-left transition-colors ${
+                  daylightNorth
+                    ? "border-[var(--accent-strong)] bg-[var(--accent-strong)]/15"
+                    : "border-[var(--line)] bg-[var(--surface-soft)]"
+                }`}
+              >
+                <span className="flex items-center gap-2">
+                  <span className="text-[13px]">☀</span>
+                  <span className="text-[11px] font-bold text-[var(--text-secondary)]">정북일조 단계후퇴</span>
+                </span>
+                <span className={`text-[10px] font-black ${daylightNorth ? "text-[var(--accent-strong)]" : "text-[var(--text-tertiary)]"}`}>
+                  {daylightNorth ? "ON" : "OFF"}
+                </span>
+              </button>
+              <p className="mt-1 text-[10px] leading-tight text-[var(--text-tertiary)]">
+                북측 일조 확보 — 상부 층을 정북 사선제한(높이/2)만큼 자동 후퇴시켜 더 높이 짓습니다.
+                음성/자연어로 &ldquo;북측 일조 확보&rdquo;라고 말해도 자동으로 켜집니다.
+              </p>
             </div>
           </section>
         </div>

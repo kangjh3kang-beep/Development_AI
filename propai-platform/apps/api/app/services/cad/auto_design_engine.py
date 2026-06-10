@@ -89,6 +89,9 @@ class SiteInput:
     setback_m: dict[str, float] = field(
         default_factory=lambda: {"north": 3.0, "south": 2.0, "east": 1.5, "west": 1.5}
     )
+    # P5: 정북일조 사선제한 "단계후퇴" 모드. True면 단일 세트백 높이캡 대신 층별 북측
+    # 후퇴(상부일수록 더 후퇴)로 더 높게 짓고 상부 세대의 일조를 확보한다(결정론).
+    daylight_step: bool = False
 
 
 @dataclass
@@ -99,6 +102,53 @@ class DesignResult:
     summary: dict[str, Any]
     compliance: dict[str, Any]
     alternatives: list[dict[str, Any]] = field(default_factory=list)
+
+
+def compute_north_step_profile(
+    building_w: float,
+    building_d: float,
+    max_floors: int,
+    floor_height_m: float,
+    base_north_m: float,
+    max_total_floor_area: float,
+) -> tuple[list[dict[str, float]], float, int]:
+    """정북일조 사선제한 단계후퇴 프로파일을 산출한다(결정론).
+
+    한국 건축법 정북일조: 어떤 높이 h의 외벽은 정북 인접대지경계선에서 h/2 이상 이격
+    (최소 1.5m). 따라서 층의 윗변 높이 h=층수×층고에 대해 필요 북측 이격 d=max(base, h/2).
+    base(=설계 북측 세트백)를 넘는 만큼(inset)만 상부 층이 북쪽으로 후퇴한다.
+
+    Returns: (profile, 단계후퇴 반영 총연면적, 실제 층수)
+      profile[f] = {floor, north_setback_m, inset_m, depth_m}
+    """
+    profile: list[dict[str, float]] = []
+    area = 0.0
+    n = 0
+    min_depth = max(4.0, building_d * 0.35)  # 후퇴해도 세대 성립 최소 깊이
+    for f in range(1, max(1, max_floors) + 1):
+        top_h = f * floor_height_m
+        req_north = max(base_north_m, top_h / 2.0)  # 정북일조: 높이/2
+        inset = max(0.0, req_north - base_north_m)
+        depth_f = building_d - inset
+        if depth_f < min_depth:
+            break  # 더 후퇴하면 세대 불가 → 이 층부터 못 올림
+        af = building_w * depth_f
+        if max_total_floor_area > 0 and area + af > max_total_floor_area:
+            break  # 용적률 초과 → 중단
+        area += af
+        n += 1
+        profile.append({
+            "floor": f,
+            "north_setback_m": round(req_north, 2),
+            "inset_m": round(inset, 2),
+            "depth_m": round(depth_f, 1),
+        })
+    if n == 0:  # 최소 1층 보장
+        profile = [{"floor": 1, "north_setback_m": round(base_north_m, 2),
+                    "inset_m": 0.0, "depth_m": round(building_d, 1)}]
+        area = building_w * building_d
+        n = 1
+    return profile, round(area, 2), n
 
 
 class AutoDesignEngineService:
@@ -203,29 +253,41 @@ class AutoDesignEngineService:
             else 100
         )
 
-        # 정북방향 일조권 제약
         north_setback = site_input.setback_m.get("north", 3.0)
-        max_height_by_sunlight = 100.0  # 기본 무제한
-        if north_setback > 0:
-            if north_setback <= 4.5:
-                max_height_by_sunlight = north_setback * 2.0
-            else:
-                max_height_by_sunlight = (north_setback - 4.5) * 2.0 + 9.0
-        max_floors_by_sunlight = int(max_height_by_sunlight / site_input.floor_height_m)
+        fh = site_input.floor_height_m
+        north_step_profile: list[dict[str, float]] | None = None
 
-        num_floors = max(1, min(max_floors_by_far, max_floors_by_height, max_floors_by_sunlight))
-        total_floor_area = actual_footprint * num_floors
-        building_height = num_floors * site_input.floor_height_m
+        if getattr(site_input, "daylight_step", False):
+            # 정북일조 "단계후퇴" 모드: 단일 세트백 높이캡을 쓰지 않고(FAR·높이 한도만),
+            # 상부 층을 북쪽으로 후퇴시켜 더 높이 짓고 일조를 확보(결정론 사선제한).
+            base_north = max(1.5, north_setback)
+            cap_floors = max(1, min(max_floors_by_far * 3, max_floors_by_height))  # 후퇴로 더 높이 가능
+            north_step_profile, total_floor_area, num_floors = compute_north_step_profile(
+                building_w, building_d, cap_floors, fh, base_north, max_total_floor,
+            )
+            building_height = num_floors * fh
+        else:
+            # 정북방향 일조권 제약(기존: 단일 세트백 기준 높이 하드캡)
+            max_height_by_sunlight = 100.0  # 기본 무제한
+            if north_setback > 0:
+                if north_setback <= 4.5:
+                    max_height_by_sunlight = north_setback * 2.0
+                else:
+                    max_height_by_sunlight = (north_setback - 4.5) * 2.0 + 9.0
+            max_floors_by_sunlight = int(max_height_by_sunlight / fh)
+            num_floors = max(1, min(max_floors_by_far, max_floors_by_height, max_floors_by_sunlight))
+            total_floor_area = actual_footprint * num_floors
+            building_height = num_floors * fh
 
         bcr = round(actual_footprint / site_area * 100, 2) if site_area > 0 else 0
         far = round(total_floor_area / site_area * 100, 2) if site_area > 0 else 0
 
-        return {
+        result: dict[str, Any] = {
             "building_width_m": building_w,
             "building_depth_m": building_d,
             "building_footprint_sqm": round(actual_footprint, 2),
             "num_floors": num_floors,
-            "floor_height_m": site_input.floor_height_m,
+            "floor_height_m": fh,
             "building_height_m": round(building_height, 2),
             "total_floor_area_sqm": round(total_floor_area, 2),
             "bcr_pct": bcr,
@@ -234,6 +296,10 @@ class AutoDesignEngineService:
             "max_far_pct": legal["max_far_percent"],
             "max_height_m": max_height,
         }
+        if north_step_profile is not None:
+            result["north_step_profile"] = north_step_profile
+            result["daylight_step"] = True
+        return result
 
     # ── 3단계: 코어 + 복도 배치 ──
 
@@ -500,6 +566,20 @@ class AutoDesignEngineService:
             mass["bcr_pct"] = round(fp / site_input.site_area_sqm * 100, 2) if site_input.site_area_sqm > 0 else 0
             mass["far_pct"] = round(mass["total_floor_area_sqm"] / site_input.site_area_sqm * 100, 2) if site_input.site_area_sqm > 0 else 0
 
+        # 2-b. 정북일조 단계후퇴: 보정 루프가 box 연면적으로 덮어쓰므로 여기서 재산출(층수/치수 반영)
+        if mass.get("daylight_step"):
+            base_north = max(1.5, site_input.setback_m.get("north", 1.5))
+            far_cap_area = site_input.site_area_sqm * (max_far / 100.0)
+            profile, stepped_area, n = compute_north_step_profile(
+                mass["building_width_m"], mass["building_depth_m"], mass["num_floors"],
+                site_input.floor_height_m, base_north, far_cap_area,
+            )
+            mass["num_floors"] = n
+            mass["north_step_profile"] = profile
+            mass["total_floor_area_sqm"] = stepped_area
+            mass["building_height_m"] = round(n * site_input.floor_height_m, 2)
+            mass["far_pct"] = round(stepped_area / site_input.site_area_sqm * 100, 2) if site_input.site_area_sqm > 0 else 0
+
         # 3. 코어 배치
         core_layout = self.compute_core_layout(mass, site_input.building_use)
 
@@ -522,6 +602,18 @@ class AutoDesignEngineService:
             "parking_count": unit_layout["parking_required"],
             "core_count": core_layout["num_cores"],
         }
+
+        # P5: 정북일조 단계후퇴 정보 — 3D 매스 후퇴 렌더·근거 표기에 사용
+        if mass.get("north_step_profile"):
+            profile = mass["north_step_profile"]
+            step_from = next((p["floor"] for p in profile if p["inset_m"] > 0), None)
+            summary["daylight_step"] = True
+            summary["north_step_profile"] = profile
+            summary["base_north_setback_m"] = max(1.5, site_input.setback_m.get("north", 1.5))
+            summary["daylight_note"] = (
+                f"정북일조 사선제한 적용 — {step_from}층부터 북측 단계 후퇴(상부 세대 일조 확보)"
+                if step_from else "정북일조 사선제한 검토 — 현재 높이는 단계후퇴 없이 충족"
+            )
 
         bcr_ok = mass["bcr_pct"] <= max_bcr
         far_ok = mass["far_pct"] <= max_far
@@ -582,6 +674,7 @@ class AutoDesignEngineService:
                 target_unit_types=["39A", "49A"],
                 floor_height_m=2.8,  # 최소 층고
                 setback_m=site_input.setback_m,
+                daylight_step=site_input.daylight_step,
             )
             result_b = self.generate(input_b)
             result_b.summary["alternative_name"] = "B: 최대 세대수"
@@ -600,6 +693,7 @@ class AutoDesignEngineService:
                 target_unit_types=["84A", "114A"],
                 floor_height_m=3.3,  # 여유 층고
                 setback_m=wider_setback,
+                daylight_step=site_input.daylight_step,
             )
             result_c = self.generate(input_c)
             result_c.summary["alternative_name"] = "C: 최적 일조"

@@ -174,6 +174,7 @@ export type DesignIntent = {
   building_use: string | null;
   priority: "yield" | "livability" | "balanced";
   target_margin_pct: number | null;
+  daylight_north?: boolean;   // 정북일조 단계후퇴(북측 채광) 의도
   notes: string;
   source: "llm" | "rule" | "empty";
   suggested_unit_types: string[];
