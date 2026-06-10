@@ -20,12 +20,14 @@ export type PresaleMarker = {
   url: string; lat: number; lon: number; distance_m: number;
 };
 
-const PRODUCT_COLOR: Record<string, string> = {
-  apt: "#14b8a6", officetel: "#8b5cf6", remndr: "#f59e0b", opt: "#ec4899", pblrent: "#3b82f6",
+// 상태별 색상(분양중/분양예정/분양완료) — 지도 마커 구분.
+const STATUS_COLOR: Record<string, string> = {
+  접수중: "#10b981", 접수예정: "#3b82f6", 마감: "#94a3b8", 미정: "#f59e0b",
 };
-const PRODUCT_LABEL: Record<string, string> = {
-  apt: "APT", officetel: "오피스텔·생숙", remndr: "APT 잔여세대", opt: "임의공급", pblrent: "공공지원 민간임대",
+const STATUS_LABEL: Record<string, string> = {
+  접수중: "분양중", 접수예정: "분양예정", 마감: "분양완료", 미정: "미정",
 };
+const STATUS_ORDER = ["접수중", "접수예정", "마감", "미정"];
 
 export function ProjectPresaleMap({
   center, items, radiusM = 3000, onSelect,
@@ -40,6 +42,8 @@ export function ProjectPresaleMap({
   const overlaysRef = useRef<any[]>([]);
   const infoRef = useRef<any>(null);
   const [sdkReady, setSdkReady] = useState(false);
+  // 상태 필터(분양중/분양예정/분양완료) — 기본 모두 표시.
+  const [active, setActive] = useState<Set<string>>(new Set(STATUS_ORDER));
 
   useEffect(() => {
     let alive = true;
@@ -83,17 +87,21 @@ export function ProjectPresaleMap({
     const pts: Array<[number, number]> = center?.lat ? [[center.lat, center.lon]] : [];
     items.forEach((it) => {
       if (!it.lat || !it.lon) return;
+      const st = it.status || "미정";
+      if (!active.has(st)) return; // 상태 필터(분양중/예정/완료)
       pts.push([it.lat, it.lon]);
-      const col = PRODUCT_COLOR[it.product] || "#64748b";
+      const col = STATUS_COLOR[st] || "#64748b";
+      const stLabel = STATUS_LABEL[st] || st;
       const html = `<div style="min-width:190px;max-width:250px;font-family:sans-serif;">
           <div style="font-weight:700;font-size:13px;color:#0f172a;">${it.name}</div>
-          <div style="font-size:11px;color:#64748b;margin:2px 0 4px;">${it.product_label} · ${it.status}</div>
+          <div style="font-size:11px;margin:2px 0 4px;"><b style="color:${col};">${stLabel}</b> <span style="color:#64748b;">· ${it.product_label}</span></div>
           <div style="font-size:11px;color:#475569;">접수 ${it.receipt_begin || "-"} ~ ${it.receipt_end || "-"}</div>
           <div style="font-size:11px;color:#475569;">공급 ${it.total_households || "-"}세대 · ${Math.round((it.distance_m || 0) / 100) / 10}km</div>
           <div style="margin-top:5px;font-size:11px;color:#2563eb;font-weight:700;cursor:pointer;">상세 보기(청약일정·분양가) ↗</div>
         </div>`;
       const dot = document.createElement("div");
-      dot.style.cssText = `width:16px;height:16px;border-radius:4px;background:${col};border:2px solid #fff;opacity:.92;cursor:pointer;box-shadow:0 0 4px rgba(0,0,0,.35);transform:rotate(45deg)`;
+      const op = st === "마감" ? 0.6 : 0.95; // 분양완료는 약하게
+      dot.style.cssText = `width:16px;height:16px;border-radius:4px;background:${col};border:2px solid #fff;opacity:${op};cursor:pointer;box-shadow:0 0 4px rgba(0,0,0,.35);transform:rotate(45deg)`;
       const pos = new kakao.maps.LatLng(it.lat, it.lon);
       dot.onclick = () => { openInfo(pos, html); onSelect(it); };
       const ov = new kakao.maps.CustomOverlay({ position: pos, content: dot, xAnchor: 0.5, yAnchor: 0.5, clickable: true });
@@ -103,15 +111,22 @@ export function ProjectPresaleMap({
     if (pts.length > 1) {
       try { const b = new kakao.maps.LatLngBounds(); pts.forEach(([la, lo]) => b.extend(new kakao.maps.LatLng(la, lo))); mapRef.current.setBounds(b, 40, 40, 40, 40); } catch { /* noop */ }
     }
-  }, [items, center, onSelect, openInfo]);
+  }, [items, center, onSelect, openInfo, active]);
 
-  const present = new Set(items.map((i) => i.product));
+  // 상태별 건수 + 토글
+  const counts = STATUS_ORDER.reduce((m, s) => { m[s] = items.filter((i) => (i.status || "미정") === s).length; return m; }, {} as Record<string, number>);
+  const toggle = (s: string) => setActive((prev) => { const n = new Set(prev); if (n.has(s)) n.delete(s); else n.add(s); return n; });
 
   return (
     <div>
-      <div className="mb-2 flex flex-wrap gap-2 text-[11px] text-[var(--text-secondary)]">
-        {Object.keys(PRODUCT_LABEL).filter((k) => present.has(k)).map((k) => (
-          <span key={k} className="flex items-center gap-1"><span className="h-2.5 w-2.5 rotate-45 rounded-[2px]" style={{ backgroundColor: PRODUCT_COLOR[k] }} />{PRODUCT_LABEL[k]}</span>
+      <div className="mb-2 flex flex-wrap items-center gap-1.5 text-[11px]">
+        {STATUS_ORDER.filter((s) => s !== "미정" || counts["미정"] > 0).map((s) => (
+          <button key={s} onClick={() => toggle(s)}
+            className={`flex items-center gap-1 rounded-full border px-2.5 py-1 font-bold transition-all ${active.has(s) ? "border-transparent text-white" : "border-[var(--line)] bg-[var(--surface-muted)] text-[var(--text-hint)] line-through opacity-60"}`}
+            style={active.has(s) ? { backgroundColor: STATUS_COLOR[s] } : undefined}>
+            <span className="h-2 w-2 rotate-45 rounded-[2px]" style={{ backgroundColor: STATUS_COLOR[s] }} />
+            {STATUS_LABEL[s]} {counts[s] || 0}
+          </button>
         ))}
         <span className="text-[var(--text-hint)]">· 반경 {radiusM / 1000}km · 마커 클릭 시 상세</span>
       </div>
