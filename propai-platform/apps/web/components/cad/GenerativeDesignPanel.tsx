@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { apiClient } from "@/lib/api-client";
+import { useSpeechToText } from "@/lib/use-speech-to-text";
 import { useCadStore } from "@/store/use-cad-store";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import type {
@@ -153,6 +154,9 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
     );
   }, []);
 
+  // 음성 입력(STT) — 말로 설계 의도를 받아 텍스트박스에 채움(브라우저 네이티브).
+  const stt = useSpeechToText((t) => setIntentText(t));
+
   // 1) 자연어 → 설계 의도(폼 자동 채움)
   const handleParse = useCallback(async () => {
     const text = intentText.trim();
@@ -277,16 +281,38 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
           {/* 1) 자연어 입력 */}
           <section className="rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-5">
             <h4 className="mb-2 text-sm font-black text-[var(--text-primary)]">
-              원하는 설계를 말로 설명하세요
+              원하는 설계를 말이나 음성으로 설명하세요
             </h4>
-            <textarea
-              value={intentText}
-              onChange={(e) => setIntentText(e.target.value)}
-              placeholder="예) 원룸 위주 50세대, 수익 최대"
-              rows={2}
-              className="w-full resize-none rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] px-3 py-2 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-hint)] focus:border-[var(--accent-strong)] focus:outline-none"
-              aria-label="설계 의도 자연어 입력"
-            />
+            <div className="relative">
+              <textarea
+                value={intentText}
+                onChange={(e) => setIntentText(e.target.value)}
+                placeholder="예) 원룸 위주 50세대, 수익 최대"
+                rows={2}
+                className="w-full resize-none rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] px-3 py-2 pr-11 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-hint)] focus:border-[var(--accent-strong)] focus:outline-none"
+                aria-label="설계 의도 자연어 입력"
+              />
+              {stt.supported && (
+                <button
+                  type="button"
+                  onClick={() => (stt.listening ? stt.stop() : stt.start())}
+                  title={stt.listening ? "음성 입력 중지" : "음성으로 입력"}
+                  aria-label={stt.listening ? "음성 입력 중지" : "음성으로 입력"}
+                  className={`absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-full border transition-all ${stt.listening ? "border-red-500/50 bg-red-500/15 text-red-400 animate-pulse" : "border-[var(--line)] bg-[var(--surface)] text-[var(--text-secondary)] hover:border-[var(--accent-strong)]"}`}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+                    <path d="M19 10v2a7 7 0 0 1-14 0v-2" /><line x1="12" y1="19" x2="12" y2="23" />
+                  </svg>
+                </button>
+              )}
+            </div>
+            {stt.listening && (
+              <p className="mt-1 text-[11px] font-bold text-red-400">🎙️ 듣는 중… 말씀하세요</p>
+            )}
+            {stt.error && (
+              <p className="mt-1 text-[11px] text-[var(--text-hint)]">{stt.error}</p>
+            )}
             <button
               type="button"
               onClick={handleParse}
