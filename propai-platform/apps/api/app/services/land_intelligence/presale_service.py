@@ -192,30 +192,77 @@ class PresaleService:
 
     # ── 2) 상세(+분양가) ──
     async def detail(self, house_manage_no: str, pblanc_no: str = "", product: str = "apt") -> dict[str, Any]:
-        if not self._key or not house_manage_no:
-            return {"available": False, "note": "키 미설정 또는 관리번호 없음"}
-        type_cfg = _TYPE_BY_KEY.get(product) or _TYPE_BY_KEY["apt"]
+        """단지 상세 + 주택형별 분양가.
+
+        id 필터(cond[HOUSE_MANAGE_NO::EQ])가 무순위/임의공급/잔여세대(9XX 관리번호)에는
+        안 먹는 odcloud 특성 → 실패 시 목록과 동일한 날짜조건으로 전 유형을 가져와
+        클라이언트 필터링(목록에 나온 공고는 반드시 찾는다). 분양가(models)는 선택.
+        """
+        if not self._key:
+            return {"available": False, "note": "청약홈 키 미설정"}
         today = datetime.now()
-        base_params = {"page": 1, "perPage": 50, "serviceKey": self._key,
-                       "cond[HOUSE_MANAGE_NO::EQ]": house_manage_no}
+        since = (today - timedelta(days=400)).strftime("%Y-%m-%d")
+        target = str(house_manage_no or "").strip()
+        target_pb = str(pblanc_no or "").strip()
+        if not target and not target_pb:
+            return {"available": False, "note": "관리번호 없음"}
+
+        type_cfg = _TYPE_BY_KEY.get(product) or _TYPE_BY_KEY["apt"]
+        row: dict | None = None
         try:
-            async with httpx.AsyncClient(timeout=20.0) as client:
-                d_resp, m_resp = await asyncio.gather(
-                    client.get(f"{_BASE}/{type_cfg['detail']}", params=base_params),
-                    client.get(f"{_BASE}/{type_cfg['model']}", params=base_params),
-                )
-            drows = d_resp.json().get("data", []) if d_resp.status_code == 200 else []
-            mrows = m_resp.json().get("data", []) if m_resp.status_code == 200 else []
+            async with httpx.AsyncClient(timeout=25.0) as client:
+                # 1) 빠른 경로: 지정 유형에서 id 필터
+                if target:
+                    try:
+                        resp = await client.get(
+                            f"{_BASE}/{type_cfg['detail']}",
+                            params={"page": 1, "perPage": 50, "serviceKey": self._key,
+                                    "cond[HOUSE_MANAGE_NO::EQ]": target})
+                        rows = resp.json().get("data", []) if resp.status_code == 200 else []
+                        if rows:
+                            row = rows[0]
+                    except Exception:  # noqa: BLE001
+                        pass
+                # 2) 폴백: 전 유형을 날짜조건으로 가져와 관리번호/공고번호 일치 행 탐색
+                if row is None:
+                    ordered = [type_cfg] + [t for t in PRESALE_TYPES if t["key"] != type_cfg["key"]]
+                    for tc in ordered:
+                        try:
+                            resp = await client.get(
+                                f"{_BASE}/{tc['detail']}",
+                                params={"page": 1, "perPage": 300, "serviceKey": self._key,
+                                        "cond[RCRIT_PBLANC_DE::GTE]": since})
+                            rows = resp.json().get("data", []) if resp.status_code == 200 else []
+                        except Exception:  # noqa: BLE001
+                            rows = []
+                        for r in rows:
+                            if (target and _g(r, "HOUSE_MANAGE_NO") == target) or \
+                               (target_pb and _g(r, "PBLANC_NO") == target_pb):
+                                row, type_cfg = r, tc
+                                break
+                        if row is not None:
+                            break
+                if row is None:
+                    return {"available": False, "note": "해당 공고를 찾을 수 없음"}
+
+                info = self._normalize(row, today, type_cfg)
+
+                # 3) 주택형별 분양가(models) — id 필터(실패 시 빈 목록=가격 미표시, 정직)
+                mrows: list = []
+                try:
+                    mresp = await client.get(
+                        f"{_BASE}/{type_cfg['model']}",
+                        params={"page": 1, "perPage": 50, "serviceKey": self._key,
+                                "cond[HOUSE_MANAGE_NO::EQ]": _g(row, "HOUSE_MANAGE_NO")})
+                    mrows = mresp.json().get("data", []) if mresp.status_code == 200 else []
+                except Exception:  # noqa: BLE001
+                    mrows = []
         except Exception as e:  # noqa: BLE001
             logger.warning("presale.detail_failed", error=str(e))
             return {"available": False, "note": "청약홈 상세 호출 실패"}
 
-        if not drows:
-            return {"available": False, "note": "해당 공고를 찾을 수 없음"}
-        info = self._normalize(drows[0], today, type_cfg)
         models, prices = [], []
         for r in mrows:
-            # 분양가 후보: APT=LTTOT_TOP_AMOUNT, 그 외=SUPLY_AMOUNT/LTTOT_AMOUNT
             amt = _g(r, "LTTOT_TOP_AMOUNT", "SUPLY_AMOUNT", "LTTOT_AMOUNT")
             try:
                 amt_man = int(float(amt)) if amt else None

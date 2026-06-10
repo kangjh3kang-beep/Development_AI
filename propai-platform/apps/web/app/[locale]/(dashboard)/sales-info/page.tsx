@@ -111,24 +111,25 @@ export default function SalesInfoPage() {
 
       {tab === "browse" && (
         <>
-          <div className="flex flex-wrap gap-1.5">
-            {areas.map((a) => (
-              <button key={a} onClick={() => setArea(a)}
-                className={`rounded-full border px-3 py-1.5 text-xs font-bold transition-all ${area === a ? "border-transparent bg-[var(--accent-strong)] text-white" : "border-[var(--line)] bg-[var(--surface-muted)] text-[var(--text-secondary)] hover:border-[var(--text-tertiary)]"}`}>
-                {a}
-              </button>
-            ))}
-          </div>
-          <div className="flex flex-wrap gap-1.5">
-            {PRODUCTS.map((p) => {
-              const cnt = p.key === "all" ? undefined : list?.by_product?.[p.key];
-              return (
-                <button key={p.key} onClick={() => setProduct(p.key)}
-                  className={`rounded-lg border px-2.5 py-1 text-[11px] font-bold transition-all ${product === p.key ? "border-[var(--accent-strong)] bg-[var(--accent-soft)] text-[var(--accent-strong)]" : "border-[var(--line)] bg-[var(--surface-muted)] text-[var(--text-hint)] hover:border-[var(--text-tertiary)]"}`}>
-                  {p.label}{cnt != null && <span className="ml-1 opacity-70">{cnt}</span>}
-                </button>
-              );
-            })}
+          {/* 지역·유형 드롭다운(가독성·페이지 최적화) */}
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="flex items-center gap-1.5 text-xs font-bold text-[var(--text-secondary)]">
+              <span className="text-[var(--text-hint)]">지역</span>
+              <select value={area} onChange={(e) => setArea(e.target.value)}
+                className="rounded-lg border border-[var(--line-strong)] bg-[var(--surface)] px-3 py-1.5 text-sm font-bold text-[var(--text-primary)]">
+                {areas.map((a) => <option key={a} value={a}>{a}</option>)}
+              </select>
+            </label>
+            <label className="flex items-center gap-1.5 text-xs font-bold text-[var(--text-secondary)]">
+              <span className="text-[var(--text-hint)]">유형</span>
+              <select value={product} onChange={(e) => setProduct(e.target.value)}
+                className="rounded-lg border border-[var(--line-strong)] bg-[var(--surface)] px-3 py-1.5 text-sm font-bold text-[var(--text-primary)]">
+                {PRODUCTS.map((p) => {
+                  const cnt = p.key === "all" ? undefined : list?.by_product?.[p.key];
+                  return <option key={p.key} value={p.key}>{p.label}{cnt != null ? ` (${cnt})` : ""}</option>;
+                })}
+              </select>
+            </label>
           </div>
 
           {loading && <div className="py-10 text-center text-sm text-[var(--text-secondary)]">분양정보 불러오는 중…</div>}
@@ -180,64 +181,110 @@ export default function SalesInfoPage() {
 }
 
 function DetailModal({ detail, loading, onClose }: { detail: any; loading: boolean; onClose: () => void }) {
-  const rows: Array<[string, string]> = [
-    ["모집공고일", detail.recruit_date], ["특별공급 접수", detail.special_date],
+  // 일정(날짜) 항목 — 값 있는 것만 표시
+  const schedule: Array<[string, string]> = [
+    ["모집공고일", detail.recruit_date],
+    ["특별공급 접수", detail.special_date],
     ["일반 청약접수", detail.receipt_begin && `${detail.receipt_begin} ~ ${detail.receipt_end}`],
     ["당첨자 발표", detail.winner_date],
     ["계약기간", detail.contract_begin && `${detail.contract_begin} ~ ${detail.contract_end}`],
-    ["입주예정", detail.move_in], ["시행사", detail.developer], ["시공사", detail.constructor],
-    ["문의", detail.tel],
+    ["입주예정월", detail.move_in],
   ];
+  const meta: Array<[string, string]> = [
+    ["분양/공급 구분", detail.house_kind], ["임대 구분", detail.rent_kind],
+    ["총 공급세대", detail.total_households && `${detail.total_households}세대`],
+    ["시행사", detail.developer], ["시공사", detail.constructor], ["문의", detail.tel],
+  ];
+  const hasModels = Array.isArray(detail.models) && detail.models.length > 0;
+  const hasPrice = detail.price_min_man || detail.price_max_man;
+  // 기본 정보(목록에서 넘어온 것)는 available=false여도 표시
+  const hasBasic = detail.address || detail.recruit_date || detail.receipt_begin;
+
   return (
     <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
       <div className="max-h-[88vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-[var(--line-strong)] bg-[var(--surface)] p-6" onClick={(e) => e.stopPropagation()}>
         <div className="mb-3 flex items-start justify-between gap-3">
-          <div>
-            <h2 className="text-lg font-black text-[var(--text-primary)]">{detail.name}</h2>
-            <p className="text-xs text-[var(--text-secondary)]">{detail.area_name} · {detail.address}</p>
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-lg font-black text-[var(--text-primary)]">{detail.name}</h2>
+              {detail.status && <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${STATUS_STYLE[detail.status] || STATUS_STYLE.미정}`}>{detail.status}</span>}
+              {detail.product_label && <span className="rounded bg-[var(--surface-muted)] px-1.5 py-0.5 text-[9px] font-bold text-[var(--text-hint)]">{detail.product_label}</span>}
+            </div>
+            <p className="mt-0.5 text-xs text-[var(--text-secondary)]">{[detail.area_name, detail.address].filter(Boolean).join(" · ")}</p>
           </div>
-          <button onClick={onClose} className="rounded-lg border border-[var(--line-strong)] px-3 py-1 text-sm text-[var(--text-secondary)]">닫기</button>
+          <button onClick={onClose} className="shrink-0 rounded-lg border border-[var(--line-strong)] px-3 py-1 text-sm text-[var(--text-secondary)]">닫기</button>
         </div>
 
         {loading && <div className="py-10 text-center text-sm text-[var(--text-secondary)]">상세 불러오는 중…</div>}
 
-        {!loading && detail.available === false && (
+        {!loading && !hasBasic && detail.available === false && (
           <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-[var(--text-secondary)]">⚠️ {detail.note || "상세 정보를 불러올 수 없습니다."}</div>
         )}
 
-        {!loading && detail.available !== false && (
+        {!loading && (hasBasic || detail.available !== false) && (
           <div className="space-y-4">
-            {(detail.price_min_man || detail.price_max_man) && (
+            {/* 분양가 */}
+            {hasPrice ? (
               <div className="rounded-xl border border-[var(--accent-strong)]/30 bg-[var(--accent-soft)] px-4 py-3">
                 <p className="text-xs text-[var(--text-secondary)]">분양가(주택형별 최고분양가 기준)</p>
                 <p className="text-lg font-black text-[var(--accent-strong)]">{eok(detail.price_min_man)} ~ {eok(detail.price_max_man)}</p>
               </div>
+            ) : (
+              <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-2.5 text-xs text-[var(--text-hint)]">분양가 정보는 청약홈 공고에서 확인하세요(이 유형은 주택형별 금액 미제공일 수 있음).</div>
             )}
-            <div className="grid grid-cols-2 gap-x-4 gap-y-2">
-              {rows.filter(([, v]) => v).map(([k, v]) => (
-                <div key={k} className="text-sm"><span className="text-[var(--text-hint)]">{k}</span><br /><span className="font-medium text-[var(--text-primary)]">{v}</span></div>
-              ))}
-            </div>
-            {Array.isArray(detail.models) && detail.models.length > 0 && (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead><tr className="text-left text-[10px] uppercase tracking-wide text-[var(--text-hint)]">
-                    <th className="pb-1">주택형</th><th className="pb-1 text-right">공급면적</th><th className="pb-1 text-right">세대</th><th className="pb-1 text-right">분양가(최고)</th>
-                  </tr></thead>
-                  <tbody>
-                    {detail.models.map((m: any, i: number) => (
-                      <tr key={i} className="border-t border-[var(--line)]">
-                        <td className="py-1.5 font-medium text-[var(--text-primary)]">{m.house_ty}</td>
-                        <td className="py-1.5 text-right text-[var(--text-secondary)]">{m.supply_area_m2}㎡</td>
-                        <td className="py-1.5 text-right text-[var(--text-secondary)]">{m.supply_households}</td>
-                        <td className="py-1.5 text-right cc-num font-bold text-[var(--text-primary)]">{eok(m.price_man)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+
+            {/* 청약 일정 */}
+            {schedule.some(([, v]) => v) && (
+              <div>
+                <p className="mb-1.5 text-[11px] font-black uppercase tracking-wide text-[var(--text-hint)]">청약 일정</p>
+                <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+                  {schedule.filter(([, v]) => v).map(([k, v]) => (
+                    <div key={k} className="text-sm"><span className="text-[var(--text-hint)]">{k}</span><br /><span className="font-medium text-[var(--text-primary)]">{v}</span></div>
+                  ))}
+                </div>
               </div>
             )}
-            {detail.url && <a href={detail.url} target="_blank" rel="noopener noreferrer" className="inline-block rounded-lg bg-[var(--accent-strong)] px-4 py-2 text-sm font-bold text-white">청약홈 공고 보기 ↗</a>}
+
+            {/* 단지 정보 */}
+            {meta.some(([, v]) => v) && (
+              <div>
+                <p className="mb-1.5 text-[11px] font-black uppercase tracking-wide text-[var(--text-hint)]">단지 정보</p>
+                <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+                  {meta.filter(([, v]) => v).map(([k, v]) => (
+                    <div key={k} className="text-sm"><span className="text-[var(--text-hint)]">{k}</span><br /><span className="font-medium text-[var(--text-primary)]">{v}</span></div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* 주택형별 분양가 */}
+            {hasModels && (
+              <div>
+                <p className="mb-1.5 text-[11px] font-black uppercase tracking-wide text-[var(--text-hint)]">주택형별 ({detail.models.length})</p>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead><tr className="text-left text-[10px] uppercase tracking-wide text-[var(--text-hint)]">
+                      <th className="pb-1">주택형</th><th className="pb-1 text-right">공급면적</th><th className="pb-1 text-right">세대</th><th className="pb-1 text-right">분양가(최고)</th>
+                    </tr></thead>
+                    <tbody>
+                      {detail.models.map((m: any, i: number) => (
+                        <tr key={i} className="border-t border-[var(--line)]">
+                          <td className="py-1.5 font-medium text-[var(--text-primary)]">{m.house_ty}</td>
+                          <td className="py-1.5 text-right text-[var(--text-secondary)]">{m.supply_area_m2}㎡</td>
+                          <td className="py-1.5 text-right text-[var(--text-secondary)]">{m.supply_households}</td>
+                          <td className="py-1.5 text-right cc-num font-bold text-[var(--text-primary)]">{eok(m.price_man)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            <div className="flex flex-wrap gap-2 pt-1">
+              {detail.url && <a href={detail.url} target="_blank" rel="noopener noreferrer" className="inline-block rounded-lg bg-[var(--accent-strong)] px-4 py-2 text-sm font-bold text-white">청약홈 공고 보기 ↗</a>}
+              {detail.homepage && detail.homepage !== detail.url && <a href={detail.homepage} target="_blank" rel="noopener noreferrer" className="inline-block rounded-lg border border-[var(--line-strong)] px-4 py-2 text-sm font-bold text-[var(--text-secondary)]">분양 홈페이지 ↗</a>}
+            </div>
           </div>
         )}
       </div>
