@@ -42,7 +42,8 @@ interface HistoryEntry {
   address: string;
   completedAt: string;
   result: PipelineRunResponse;
-  projectId?: string;   // 프로젝트별 이력 격리(대시보드=전역, 프로젝트=해당 프로젝트만)
+  projectId?: string;   // 프로젝트별 이력 격리(프로젝트 모드에서만 태깅)
+  mode?: "quick" | "project";  // 실행 모드 — 대시보드(quick) vs 프로젝트(project). 이력 분류 기준.
 }
 
 const HISTORY_KEY = "propai_pipeline_history";
@@ -474,7 +475,10 @@ export function ProjectPipelinePanel({
         address: addr,
         completedAt: new Date().toISOString(),
         result,
-        projectId: projectId || undefined,   // 현재 프로젝트 태깅(이력 격리용)
+        // ★대시보드(quick)는 projectId 태깅 금지 — store에 묻은 stale projectId로 태깅돼
+        //  무태깅 필터에서 본인 이력이 전부 숨겨지던 근본원인 차단. 프로젝트 모드만 태깅.
+        projectId: projectMode ? (projectId || undefined) : undefined,
+        mode: projectMode ? "project" : "quick",
       };
       const updated = [entry, ...history.filter((h) => h.id !== entry.id)].slice(0, MAX_HISTORY);
       setHistory(updated);
@@ -794,13 +798,16 @@ export function ProjectPipelinePanel({
   // 프로젝트 생성으로 분석한 건(projectId 태깅)은 대시보드 이력에서 제외(중복 해소).
   // 프로젝트 모드는 현재 projectId 이력만(레거시 무태깅은 주소매칭 폴백).
   const visibleHistory = (() => {
-    if (!projectMode) return history.filter((h) => !h.projectId);
+    // 대시보드(체험): 프로젝트 모드로 실행한 이력만 제외하고 모두 노출.
+    //  (mode 기준 — 레거시 무mode 항목은 stale projectId로 잘못 태깅됐어도 여기서 복구됨.)
+    if (!projectMode) return history.filter((h) => h.mode !== "project");
     if (!projectId) return history;
     const norm = (s: string) => (s || "").replace(/\s+/g, "");
     const projAddr = norm(storeAddress);
     return history.filter((h) =>
       h.projectId === projectId ||
-      (!h.projectId && projAddr && h.address &&
+      // 레거시(무projectId) 또는 quick으로 잘못 남은 동일주소 건은 주소매칭 폴백.
+      ((!h.projectId || h.mode === "quick") && projAddr && h.address &&
         (norm(h.address) === projAddr || norm(h.address).includes(projAddr) || projAddr.includes(norm(h.address)))),
     );
   })();
