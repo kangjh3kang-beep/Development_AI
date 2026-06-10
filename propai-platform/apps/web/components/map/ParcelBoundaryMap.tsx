@@ -22,6 +22,11 @@ type Feature = {
   pnu: string;
   address: string;
   area_sqm: number;
+  area_source?: string | null;
+  area_confidence?: "high" | "mid" | "low" | "none" | null;
+  area_note?: string | null;
+  area_ledger_sqm?: number | null;   // 토지대장(공부상) 면적
+  area_cadastral_sqm?: number | null; // 지적도 등록면적
   zone_type: string | null;
   zone_type_2: string | null;
   zone_limits: { max_bcr_pct?: number; max_far_pct?: number } | null;
@@ -190,6 +195,22 @@ export function ParcelBoundaryMap({
         {loading && <span className="text-xs text-[var(--text-hint)]">불러오는 중…</span>}
       </div>
       {error && <p className="mb-2 text-xs text-rose-500">{error}</p>}
+      {/* 면적 교차검증 — 주 필지(첫 필지)의 토지대장↔지적도 대조 결과 */}
+      {(() => {
+        const f0 = data?.features?.[0];
+        if (!f0?.area_note || f0.area_confidence === "high") return null;
+        const low = f0.area_confidence === "low";
+        return (
+          <div className={`mb-2 rounded-lg border px-3 py-2 text-[11px] font-semibold ${
+            low ? "border-amber-500/30 bg-amber-500/10 text-amber-400" : "border-[var(--line)] bg-[var(--surface-muted)] text-[var(--text-secondary)]"
+          }`}>
+            {low ? "⚠️ 면적 검증 주의 — " : "ℹ️ 면적 출처 — "}{f0.area_note}
+            {f0.area_ledger_sqm && f0.area_cadastral_sqm && (
+              <span className="ml-1 text-[var(--text-hint)]">(대장 {f0.area_ledger_sqm.toLocaleString()}㎡ · 지적 {f0.area_cadastral_sqm.toLocaleString()}㎡)</span>
+            )}
+          </div>
+        );
+      })()}
       {/* 다필지 인접성(통합개발 가능 여부) */}
       {data && data.parcel_count >= 2 && data.adjacency && (
         <div className={`mb-2 rounded-lg border px-3 py-2 text-[11px] font-semibold ${

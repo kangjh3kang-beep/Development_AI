@@ -224,24 +224,44 @@ async def parcel_boundaries(req: ParcelBoundariesRequest):
             continue
 
         geometry = point_geom
-        area_sqm = 0.0
         zone_type = zone_type_2 = None
+        # ── 면적 다출처 교차검증 ──
+        #  ① 지적/등록면적: VWorld get_land_info(properties.area)
+        #  ② 공부상(토지대장) 면적: NED 토지특성 get_land_characteristics(lndpclAr)
+        #  → 토지대장(공부상)을 권위 출처로 우선, 지적도와 대조해 일치도·신뢰도 산출.
+        li_area = 0.0
+        lc_area = 0.0
         try:
             if geometry is None:
                 li = await vworld.get_land_info(pnu)
                 if li:
                     geometry = li.get("geometry")
-                    area_sqm = float((li.get("properties") or {}).get("area") or 0)
+                    li_area = float((li.get("properties") or {}).get("area") or 0)
         except Exception:  # noqa: BLE001
             pass
         try:
             lc = await vworld.get_land_characteristics(pnu)
             if lc:
-                area_sqm = area_sqm or float(lc.get("area_sqm") or 0)
+                lc_area = float(lc.get("area_sqm") or 0)
                 zone_type = lc.get("zone_type") or None
                 zone_type_2 = lc.get("zone_type_2") or None
         except Exception:  # noqa: BLE001
             pass
+        # 권위 우선: 토지대장(lc_area) → 지적등록(li_area)
+        area_sqm = lc_area or li_area
+        area_source = "토지대장(토지특성)" if lc_area else ("지적도 등록면적" if li_area else "미확인")
+        if lc_area > 0 and li_area > 0:
+            diff = abs(lc_area - li_area) / max(lc_area, li_area)
+            if diff <= 0.05:
+                area_confidence, area_note = "high", "토지대장·지적도 면적 일치(교차검증 통과)"
+            else:
+                area_confidence = "low"
+                area_note = (f"면적 출처 불일치 — 토지대장 {lc_area:,.0f}㎡ vs 지적도 {li_area:,.0f}㎡"
+                             f"(차이 {round(diff*100)}%). 공부상(토지대장) 면적을 우선 적용")
+        elif area_sqm > 0:
+            area_confidence, area_note = "mid", "단일 출처 면적(교차검증 불가)"
+        else:
+            area_confidence, area_note = "none", "면적 데이터 없음"
 
         # 좌표(중심) 보강
         if not coords:
@@ -259,6 +279,12 @@ async def parcel_boundaries(req: ParcelBoundariesRequest):
             "pnu": pnu,
             "address": address,
             "area_sqm": round(area_sqm, 1),
+            # 면적 교차검증 결과(출처·신뢰도·메모) — 프론트가 검증배지로 표기.
+            "area_source": area_source,
+            "area_confidence": area_confidence,
+            "area_note": area_note,
+            "area_ledger_sqm": round(lc_area, 1) if lc_area else None,
+            "area_cadastral_sqm": round(li_area, 1) if li_area else None,
             "zone_type": zone_type,
             "zone_type_2": zone_type_2,
             "zone_limits": _zone_limits_compact(zone_type),
