@@ -39,6 +39,10 @@ class DrawingSetRequest(BaseModel):
     parking_count: int = Field(50, ge=0)
     facade_material: str = "concrete"
     project_name: str = "PropAI"
+    # 기준층 평면도를 실제 평형믹스로 분할하기 위한 입력(미전달 시 generic 균등분할)
+    building_use: str = "공동주택"
+    unit_types: Optional[list[str]] = None
+    zone_code: Optional[str] = None
 
 
 class CADSaveRequest(BaseModel):
@@ -142,8 +146,37 @@ class PermitDocsResponse(BaseModel):
 
 @router.post("/{project_id}/generate-full-set", response_model=FullDrawingSetResponse)
 async def generate_full_drawing_set(project_id: str, req: DrawingSetRequest):
-    """전체 도면 세트를 일괄 생성한다 (B-01~C-03)."""
+    """전체 도면 세트를 일괄 생성한다 (B-01~C-03).
+
+    building_use·unit_types가 주어지면 AutoDesignEngine으로 실제 평형믹스(세대배치)를
+    산출해 기준층 평면도를 실제 세대 분할로 그린다(미전달 시 generic 균등분할 폴백).
+    """
     project_data = req.model_dump()
+
+    # ── 실제 세대믹스 산출 → 기준층 평면도에 주입(데이터 있으면) ──
+    try:
+        from app.services.cad.auto_design_engine import AutoDesignEngineService
+
+        svc = AutoDesignEngineService()
+        _bw = project_data["building_width_m"]
+        _bd = project_data["building_depth_m"]
+        _nf = project_data["floor_count"]
+        mass = {
+            "building_width_m": _bw,
+            "building_depth_m": _bd,
+            "num_floors": _nf,
+            "floor_height_m": project_data["floor_height_m"],
+            "building_footprint_sqm": _bw * _bd,        # compute_unit_layout 필수 입력
+            "total_floor_area_sqm": _bw * _bd * _nf,    # compute_core_layout 필수 입력
+        }
+        core_layout = svc.compute_core_layout(mass, req.building_use)
+        unit_layout = svc.compute_unit_layout(
+            mass, core_layout, req.unit_types or ["59A", "84A"], req.building_use,
+        )
+        project_data["units"] = unit_layout.get("units")
+    except Exception:  # noqa: BLE001 — 산출 실패해도 generic 분할로 도면 생성
+        pass
+
     drawings = svg_service.generate_full_drawing_set(project_data)
     return {
         "project_id": project_id,
@@ -168,12 +201,15 @@ async def get_drawing_svg(
     setback_m: float = Query(3.0, ge=0),
     parking_count: int = Query(50, ge=0),
     project_name: str = Query("PropAI"),
+    building_use: str = Query("공동주택"),
+    unit_types: Optional[str] = Query(None, description="쉼표구분 평형(예: 59A,84A)"),
 ):
     """특정 도면의 SVG를 반환한다.
 
     선택한 건축개요(부지·건물 치수·층수)를 쿼리로 받아 실제 기하로 도면을 생성한다.
     파라미터 미전달 시 기존 기본값(부지 60×40 / 건물 40×20 / 5층)으로 폴백.
     이로써 동일 기하를 3D BIM과 공유 → CAD↔BIM 정합.
+    building_use·unit_types가 오면 기준층 평면도를 실제 평형믹스로 분할한다.
     """
     project_data = {
         "site_width_m": site_width_m, "site_depth_m": site_depth_m,
@@ -183,6 +219,24 @@ async def get_drawing_svg(
         "setback_m": setback_m, "parking_count": parking_count,
         "project_name": project_name,
     }
+    # ── 실제 세대믹스 산출 → 기준층 평면도에 주입(GET도 2D·3D 정합 유지) ──
+    try:
+        from app.services.cad.auto_design_engine import AutoDesignEngineService
+
+        svc = AutoDesignEngineService()
+        mass = {
+            "building_width_m": building_width_m, "building_depth_m": building_depth_m,
+            "num_floors": floor_count, "floor_height_m": floor_height_m,
+            "building_footprint_sqm": building_width_m * building_depth_m,
+            "total_floor_area_sqm": building_width_m * building_depth_m * floor_count,
+        }
+        core_layout = svc.compute_core_layout(mass, building_use)
+        utypes = [t.strip() for t in unit_types.split(",") if t.strip()] if unit_types else ["59A", "84A"]
+        unit_layout = svc.compute_unit_layout(mass, core_layout, utypes, building_use)
+        project_data["units"] = unit_layout.get("units")
+    except Exception:  # noqa: BLE001 — 산출 실패해도 generic 분할로 도면 생성
+        pass
+
     drawings = svg_service.generate_full_drawing_set(project_data)
     svg = drawings.get(code)
     if not svg:

@@ -142,9 +142,10 @@ class SVGDrawingService:
         # B-01: 배치도
         drawings["B-01"] = self.generate_site_plan(sw, sd, bw, bd, sb)
 
-        # B-02-STD: 기준층 평면도
+        # B-02-STD: 기준층 평면도 (units 제공 시 실제 평형믹스로 분할)
         drawings["B-02-STD"] = self.generate_detailed_floor_plan(
             bw, bd, floor_label="기준층", unit_width_m=uw,
+            units=project_data.get("units"),
         )
 
         # B-03: 단면도
@@ -327,8 +328,13 @@ class SVGDrawingService:
         core_count: int = 2,
         core_width_m: float = 4.0,
         core_depth_m: float = 6.0,
+        units: list[dict] | None = None,
     ) -> str:
-        """상세 평면도 SVG — 벽체(200mm), 문(900mm), 창호(1200mm), 코어, 복도, 치수선."""
+        """상세 평면도 SVG — 벽체(200mm), 문(900mm), 창호(1200mm), 코어, 복도, 치수선.
+
+        units 제공 시(예: [{type:'59A',area_sqm:59,count_per_floor:2}]) 실제 평형믹스로
+        면적비례 분할·타입라벨, 미제공 시 generic 균등분할(기존 호환).
+        """
         if svgwrite is None:
             return SVG_PLACEHOLDER
         bw = _s(building_width_m)
@@ -388,10 +394,18 @@ class SVGDrawingService:
                     g.add(dwg.line(start=(st_x, ly), end=(st_x + st_w, ly),
                                     stroke=C_TEXT, stroke_width=0.3))
 
-        # 세대 분할
+        # 세대 분할: units 제공 시 실제 평형믹스(면적비례), 없으면 generic 균등분할
         inner_w = bw - 2 * wt
-        units_per_side = max(1, int(inner_w / _s(unit_width_m)))
-        act_uw = inner_w / units_per_side
+        door_px = _s(0.9)
+        win_px = _s(1.2)
+
+        # 층당 세대 리스트(타입,면적) 구성 → 남/북 2열로 분배
+        per_floor: list[tuple[str, float]] = []
+        for u in (units or []):
+            cnt = int(u.get("count_per_floor") or 0)
+            per_floor += [(str(u.get("type") or "세대"), float(u.get("area_sqm") or 0.0))] * max(0, cnt)
+        mid = (len(per_floor) + 1) // 2
+        side_lists = {"south": per_floor[:mid], "north": per_floor[mid:]}
 
         for side in ["south", "north"]:
             if side == "south":
@@ -400,23 +414,38 @@ class SVGDrawingService:
                 y_s, y_e = corr_y + corr_h, bd - wt
             ud = y_e - y_s
 
-            for ui in range(units_per_side):
-                ux = wt + ui * act_uw
+            su = side_lists[side]
+            if su:
+                # 실제 세대: 면적 비례 폭으로 inner_w 채움 → seg=(타입, 폭px, 면적)
+                total_area = sum(a for _, a in su) or 1.0
+                segs = [(t, inner_w * (a / total_area), a) for t, a in su]
+            else:
+                # generic 균등분할(units 미제공 호환)
+                ups = max(1, int(inner_w / _s(unit_width_m)))
+                act_uw = inner_w / ups
+                seg_area = (act_uw / SCALE_PX_PER_M) * (ud / SCALE_PX_PER_M)
+                segs = [("", act_uw, seg_area) for _ in range(ups)]
+
+            x = wt
+            for idx, (utype, uw_px, uarea) in enumerate(segs):
                 # 세대 간 내벽
-                if ui > 0:
-                    g.add(dwg.line(start=(ux, y_s), end=(ux, y_e),
+                if idx > 0:
+                    g.add(dwg.line(start=(x, y_s), end=(x, y_e),
                                     stroke=C_WALL_INT, stroke_width=1))
 
-                # 면적 라벨
-                area = (act_uw / SCALE_PX_PER_M) * (ud / SCALE_PX_PER_M)
-                g.add(dwg.text(
-                    f"{area:.1f}m\u00b2", insert=(ux + act_uw / 2, (y_s + y_e) / 2 + 3),
-                    font_size="7px", font_family=FONT, fill=C_TEXT, text_anchor="middle",
-                ))
+                cx = x + uw_px / 2
+                cy = (y_s + y_e) / 2
+                if utype:  # 실제 세대: 타입 + 전용면적
+                    g.add(dwg.text(utype, insert=(cx, cy - 1), font_size="7px", font_family=FONT,
+                                    fill=C_TEXT, text_anchor="middle", font_weight="bold"))
+                    g.add(dwg.text(f"{uarea:.0f}\u33a1", insert=(cx, cy + 8), font_size="6px",
+                                    font_family=FONT, fill=C_TEXT, text_anchor="middle"))
+                else:  # generic: 면적만
+                    g.add(dwg.text(f"{uarea:.1f}m\u00b2", insert=(cx, cy + 3), font_size="7px",
+                                    font_family=FONT, fill=C_TEXT, text_anchor="middle"))
 
                 # 현관문 (복도 쪽)
-                door_px = _s(0.9)
-                dx = ux + act_uw * 0.1
+                dx = x + uw_px * 0.1
                 if side == "south":
                     g.add(dwg.line(start=(dx, corr_y), end=(dx + door_px, corr_y),
                                     stroke=C_DOOR, stroke_width=2))
@@ -434,8 +463,7 @@ class SVGDrawingService:
                     ))
 
                 # 외벽 창호
-                win_px = _s(1.2)
-                wx = ux + (act_uw - win_px) / 2
+                wx = x + (uw_px - win_px) / 2
                 if side == "south":
                     g.add(dwg.rect(insert=(wx, 0), size=(win_px, wt),
                                     fill=C_WINDOW, opacity=0.6))
@@ -446,6 +474,7 @@ class SVGDrawingService:
                                     fill=C_WINDOW, opacity=0.6))
                     g.add(dwg.line(start=(wx + win_px / 2, bd - wt), end=(wx + win_px / 2, bd),
                                     stroke="white", stroke_width=0.5))
+                x += uw_px
 
         # 치수선
         _dim_h(dwg, g, 0, bw, bd, offset=15)

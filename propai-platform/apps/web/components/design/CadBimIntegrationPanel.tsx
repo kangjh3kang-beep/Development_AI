@@ -338,13 +338,16 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
   }), [spec, designData]);
 
   // spec → 도면(generate-full-set) 요청 바디
+  // building_use·unit_types를 함께 보내 기준층 평면도를 실제 평형믹스로 분할.
   const drawingBody = useCallback(() => JSON.stringify({
     site_width_m: spec?.site_width_m, site_depth_m: spec?.site_depth_m,
     building_width_m: spec?.building_width_m, building_depth_m: spec?.building_depth_m,
     floor_count: spec?.floor_count, floor_height_m: spec?.floor_height_m ?? 3.0,
     basement_floors: spec?.basement_floors ?? 1, unit_width_m: spec?.unit_width_m ?? 8,
     setback_m: spec?.setback_m ?? 3, project_name: spec?.project_name ?? "PropAI",
-  }), [spec]);
+    building_use: designData?.buildingType ?? "공동주택",
+    unit_types: designData?.unitTypes ?? undefined,
+  }), [spec, designData]);
 
   // spec → 개별 도면 SVG(GET) 쿼리스트링(2D·3D 동일 기하 공유)
   const svgQuery = useCallback(() => {
@@ -355,9 +358,13 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
       floor_count: String(spec.floor_count), floor_height_m: String(spec.floor_height_m),
       basement_floors: String(spec.basement_floors), unit_width_m: String(spec.unit_width_m),
       setback_m: String(spec.setback_m), project_name: spec.project_name,
+      building_use: designData?.buildingType ?? "공동주택",
     });
+    // 평형믹스(실제 세대 분할) — 있을 때만 전달, 없으면 백엔드 기본(59A,84A)
+    const ut = designData?.unitTypes;
+    if (ut && ut.length > 0) q.set("unit_types", ut.join(","));
     return `?${q.toString()}`;
-  }, [spec]);
+  }, [spec, designData]);
 
   const loadBimModel = useCallback(async () => {
     if (!spec) return;
