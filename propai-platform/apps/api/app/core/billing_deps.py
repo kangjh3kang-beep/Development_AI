@@ -21,7 +21,15 @@ async def enforce_llm_quota(db: AsyncSession = Depends(get_db)) -> None:
     except Exception:  # noqa: BLE001 — 과금 조회 실패 시 서비스는 계속
         return
     if blocked:
-        raise HTTPException(
-            status_code=402,
-            detail="LLM 사용 한도를 초과했습니다. 추가결제 후 계속 이용하실 수 있습니다.",
+        # 팀 멤버 한도 초과면 팀장에게 상향 요청, 구독 한도 초과면 추가결제 안내.
+        team_over = False
+        try:
+            team_over = await billing_service.team_limit_exceeded(db, uid)
+        except Exception:  # noqa: BLE001
+            pass
+        detail = (
+            "팀 사용 한도를 초과했습니다. 팀장에게 한도 상향을 요청하세요."
+            if team_over
+            else "LLM 사용 한도를 초과했습니다. 추가결제 후 계속 이용하실 수 있습니다."
         )
+        raise HTTPException(status_code=402, detail=detail)

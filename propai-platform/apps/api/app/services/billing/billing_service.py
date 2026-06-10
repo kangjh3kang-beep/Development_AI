@@ -153,6 +153,7 @@ async def get_status(db: AsyncSession, user_id: Any) -> dict[str, Any]:
     acount = int(meta[1]) if meta else 0
     sfee = float(meta[2]) if meta else 0.0
     free_quota = free_tier_analysis_quota(tier) if not metered else 0
+    team_limited = await team_limit_exceeded(db, user_id)  # 팀 멤버 한도 초과 여부
     return {
         "tier": tier,
         "tier_label": TIER_BILLING.get(tier, {}).get("label", tier),
@@ -163,7 +164,8 @@ async def get_status(db: AsyncSession, user_id: Any) -> dict[str, Any]:
         "billed_krw": round(billed),
         "remaining_krw": round(remaining),
         "usage_pct": round(billed / budget * 100, 1) if budget > 0 else 0,
-        "blocked": metered and billed >= budget,
+        "blocked": (metered and billed >= budget) or team_limited,
+        "team_limited": team_limited,
         # 월기본/충전 코인 분리
         "monthly_base_krw": round(monthly_base),
         "monthly_base_remaining": round(base_remaining),
@@ -180,8 +182,21 @@ async def get_status(db: AsyncSession, user_id: Any) -> dict[str, Any]:
     }
 
 
+async def team_limit_exceeded(db: AsyncSession, user_id: Any) -> bool:
+    """이 사용자가 팀 멤버이고 팀장이 설정한 사용량 한도를 초과했는지(서버측 강제)."""
+    try:
+        from app.services.team.team_service import member_limit_status
+        st = await member_limit_status(db, user_id)
+        return bool(st.get("limited"))
+    except Exception:  # noqa: BLE001 — 팀 테이블 미존재 등은 차단하지 않음
+        return False
+
+
 async def is_blocked(db: AsyncSession, user_id: Any) -> bool:
     row = await ensure_cycle(db, user_id)
+    # ★팀 멤버 한도 초과는 구독 여부와 무관하게 차단(팀장이 설정한 개인 상한).
+    if await team_limit_exceeded(db, user_id):
+        return True
     if not row:
         return False
     tier, billed, budget = row[0], row[1], row[2]
