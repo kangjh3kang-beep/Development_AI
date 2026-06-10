@@ -308,18 +308,44 @@ export default function CADEditor({
     setIsReady(true);
   }, []);
 
-  /* ── 컨테이너 크기 측정(반응형 캔버스) ── */
+  /* ── 컨테이너 크기 측정(반응형 캔버스) ──
+     deps에 rk 포함: 캔버스 div는 react-konva 로드(rk) 후에야 마운트되므로 그때 재측정해야 한다.
+     초기 레이아웃이 0으로 잡혀 Stage가 안 뜨던 문제: rAF로 size>0 될 때까지 재시도(+ResizeObserver). */
   useEffect(() => {
+    if (!isReady || !rk) return;
     const el = containerRef.current;
     if (!el) return;
+    let raf = 0;
+    let tries = 0;
+    const measure = () => {
+      const w = el.clientWidth;
+      const h = el.clientHeight;
+      if (w > 0 && h > 0) {
+        setSize({ w, h });
+        return;
+      }
+      if (tries++ < 90) raf = requestAnimationFrame(measure); // 레이아웃 확정까지 ~1.5s 재시도
+    };
+    measure();
     const ro = new ResizeObserver((entries) => {
       const cr = entries[0]?.contentRect;
-      if (cr) setSize({ w: Math.round(cr.width), h: Math.round(cr.height) });
+      if (cr && cr.width > 0 && cr.height > 0) {
+        setSize({ w: Math.round(cr.width), h: Math.round(cr.height) });
+      }
     });
     ro.observe(el);
-    setSize({ w: el.clientWidth, h: el.clientHeight });
-    return () => ro.disconnect();
-  }, [isReady]);
+    const onResize = () => {
+      if (el.clientWidth > 0 && el.clientHeight > 0) {
+        setSize({ w: el.clientWidth, h: el.clientHeight });
+      }
+    };
+    window.addEventListener("resize", onResize);
+    return () => {
+      cancelAnimationFrame(raf);
+      ro.disconnect();
+      window.removeEventListener("resize", onResize);
+    };
+  }, [isReady, rk]);
 
   /* ── 기본 도형 시드: 크기 측정 완료 + 로드 완료 + 미시드일 때, 실제 건물치수 사각형을 중앙배치 ── */
   useEffect(() => {

@@ -589,7 +589,9 @@ class SVGDrawingService:
                 cw = round(body_w - x, 2)
             rooms.append({"name": name, "x": x, "y": 0.0, "w": cw, "h": n_h})
             if name == "현관":
+                # 외부 진입문(북측 외벽) + 세대 진입문(복도측) 둘 다 — 현관이 막히지 않게.
                 doors.append({"cx": round(x + cw / 2, 2), "y": 0.0, "w": 0.95, "hinge": "l", "entry": True})
+                doors.append({"cx": round(x + cw / 2, 2), "y": n_h, "w": 0.9, "hinge": "l"})
             else:
                 doors.append({"cx": round(x + cw / 2, 2), "y": n_h, "w": 0.75, "hinge": "l"})
             if name in ("주방·식당", "침실3"):

@@ -367,9 +367,21 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
       body = { land_area_sqm: landArea, zone_code: zone, floor_count: floors, floor_height_m: 3.0 };
     }
 
+    // 폴백 매스도 프로젝트 개요(GFA·층수)에서 역산 — /mass 실패 시에도 "프로젝트와 무관한
+    // 40×20 박스"가 잠깐 뜨던 문제 해소(정보 있으면 실제에 근접).
+    const fbFloors = floors || 5;
+    let fbW = 40, fbD = 20;
+    if (gfa && fbFloors) {
+      const fp = gfa / fbFloors;
+      fbD = Math.max(8, Math.min(40, Math.sqrt(fp / 1.6)));
+      fbW = Math.max(8, fp / fbD);
+    } else if (landArea) {
+      const side = Math.sqrt(landArea) * 0.6;  // 대지의 ~60% 변길이 가정
+      fbW = Math.max(8, side); fbD = Math.max(8, side * 0.6);
+    }
     const fallback: DesignSpec = {
-      building_width_m: 40, building_depth_m: 20, floor_count: floors || 5, floor_height_m: 3.0,
-      site_width_m: 46, site_depth_m: 26, setback_m: 3, unit_width_m: 8, basement_floors: 1,
+      building_width_m: r2(fbW), building_depth_m: r2(fbD), floor_count: fbFloors, floor_height_m: 3.0,
+      site_width_m: r2(fbW + 6), site_depth_m: r2(fbD + 6), setback_m: 3, unit_width_m: 8, basement_floors: 1,
       land_area_sqm: landArea, zone_code: zone, building_use: use, building_type: designData?.buildingType ?? null,
       gfa: gfa ?? null, bcr: designData?.bcr ?? null, far: designData?.far ?? null,
       total_units: null, daylightNorth: designData?.daylightNorth ?? false, project_name: "PropAI",
@@ -487,17 +499,24 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
       const buf = await res.arrayBuffer();
       const loader = new GLTFLoader();
       const gltf = await loader.parseAsync(buf, "");
+      let meshCount = 0;
       gltf.scene.traverse((obj) => {
         if ((obj as THREE.Mesh).isMesh) {
+          meshCount++;
           (obj as THREE.Mesh).castShadow = true;
           (obj as THREE.Mesh).receiveShadow = true;
         }
       });
-      // 모델 크기 측정(바운딩박스) → 카메라 프리셋 거리 산정 기준값.
-      // span=평면 최대 변(폭/깊이 중 큰 값), height=높이. 작은/큰 건물 모두 시점이 잘 잡힌다.
+      // ★서버 glb가 비어있으면(메시 0 — ifcopenshell 퇴화) 절차모델을 덮어쓰지 않는다.
+      //  (덮어쓰면 1초 뒤 빈 화면으로 사라지던 버그). 절차모델을 그대로 유지.
       const box = new THREE.Box3().setFromObject(gltf.scene);
       const size = new THREE.Vector3();
       box.getSize(size);
+      if (meshCount === 0 || (size.x < 0.1 && size.y < 0.1 && size.z < 0.1)) {
+        // 정밀 IFC가 비었음 — 절차모델 유지(조용히). 사용자에겐 절차모델이 계속 보인다.
+        return;
+      }
+      // 모델 크기 측정(바운딩박스) → 카메라 프리셋 거리 산정 기준값.
       const span = Math.max(8, Math.max(size.x, size.z));
       const height = Math.max(4, size.y);
       setModelDims({ span, height });
@@ -723,7 +742,10 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
     } catch (err) {
       // 인증·서버 오류 등 HTTP 비-2xx
       const msg = err instanceof ApiClientError
-        ? (err.status === 402 ? "코인이 부족합니다. 충전 후 다시 시도하세요." : "AI 렌더 요청이 거부되었습니다.")
+        ? (err.status === 402 ? "코인이 부족합니다. 충전 후 다시 시도하세요."
+          : err.status === 401 ? "로그인이 만료되었습니다. 다시 로그인 후 시도하세요."
+          : err.status === 403 ? "이 기능 사용 권한이 없습니다."
+          : "AI 렌더 요청이 거부되었습니다.")
         : "네트워크 오류로 AI 렌더에 실패했습니다.";
       setRenderMsg(msg);
       setRenderPhase("error");

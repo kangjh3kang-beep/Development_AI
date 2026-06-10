@@ -58,3 +58,24 @@ async def get_current_user(
     if not user:
         raise HTTPException(status_code=401, detail="사용자를 찾을 수 없음")
     return user
+
+
+# 인증이 "있으면 사용, 없으면 None" — 무인증도 허용하되 로그인 시 사용자 식별(과금 등).
+_optional_security = HTTPBearer(auto_error=False)
+
+
+async def get_current_user_optional(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_optional_security),
+    db: AsyncSession = Depends(get_db),
+):
+    """토큰이 없거나 만료/무효면 401을 던지지 않고 None을 반환한다.
+
+    포토리얼 렌더처럼 '키 미설정이면 정직 안내(200)'가 핵심인 엔드포인트에서, 토큰 만료로
+    401이 먼저 터져 'API 요청 거부'로 표시되던 문제를 막는다. 과금은 user가 있을 때만.
+    """
+    if credentials is None:
+        return None
+    try:
+        return await get_current_user(credentials=credentials, db=db)
+    except HTTPException:
+        return None

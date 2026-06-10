@@ -13,7 +13,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.auth.auth_service import get_current_user
+from app.services.auth.auth_service import get_current_user_optional
 from app.services.drawing.design_alternative_selector import DesignAlternativeSelector
 from app.services.drawing.svg_drawing_service import SVGDrawingService
 from apps.api.database.session import get_db
@@ -900,7 +900,7 @@ async def render_photoreal(
     project_id: str,
     req: PhotorealRenderRequest,
     db: AsyncSession = Depends(get_db),
-    user=Depends(get_current_user),
+    user=Depends(get_current_user_optional),
 ):
     """3D 뷰포트 이미지를 ControlNet으로 포토리얼 렌더(비파괴 — 원본 3D 불변).
 
@@ -919,14 +919,15 @@ async def render_photoreal(
     if result.get("status") != "ok":
         return result
 
-    # 렌더 성공 시에만 사용료 차감(best-effort — 차감 실패해도 결과는 제공, 후불 누적).
+    # 렌더 성공 시에만 사용료 차감(로그인 사용자일 때만; best-effort — 실패해도 결과 제공).
     charged = None
-    try:
-        await billing_service.load_config(db)
-        c = await billing_service.charge_service(db, user.id, "photoreal_render")
-        charged = c.get("charged_krw")
-    except Exception:  # noqa: BLE001
-        pass
+    if user is not None:
+        try:
+            await billing_service.load_config(db)
+            c = await billing_service.charge_service(db, user.id, "photoreal_render")
+            charged = c.get("charged_krw")
+        except Exception:  # noqa: BLE001
+            pass
 
     return {
         "status": "ok",
