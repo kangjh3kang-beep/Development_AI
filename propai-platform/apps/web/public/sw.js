@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v132-modal-portal-swr";
+const CACHE_NAME = "propai-v133-cad-editor-3d";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",
