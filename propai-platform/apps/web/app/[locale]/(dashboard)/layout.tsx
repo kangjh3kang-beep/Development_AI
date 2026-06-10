@@ -9,6 +9,7 @@ import { ThemeToggle } from "@/components/ui/ThemeToggle";
 import { SidebarNav } from "@/components/layout/SidebarNav";
 import { BillingMeter } from "@/components/billing/BillingMeter";
 import { MobileSidebarToggle } from "@/components/layout/MobileSidebarToggle";
+import { HomeLink } from "@/components/layout/HomeLink";
 import { AuthButton } from "@/components/auth/AuthButton";
 import { AuthGuard } from "@/components/auth/AuthGuard";
 import { Disclaimer } from "@/components/common/Disclaimer";
@@ -160,10 +161,10 @@ export default async function DashboardLayout({
       {/* 헤더 */}
       <header className="sticky top-2 z-50 glass rounded-[var(--radius-xl)] border border-[var(--line)] bg-[var(--glass-bg)] px-4 py-3 md:px-8 md:py-4 shadow-[var(--shadow-lg)] transition-all duration-500 mt-2">
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <Link href={`/${locale}`} className="flex items-center gap-4 group min-w-0">
+          <HomeLink href={`/${locale}`} className="flex items-center gap-4 group min-w-0">
              <Logo size="md" className="transition-transform group-hover:scale-105 active:scale-95 shrink-0" />
              <span className="sr-only">사통팔땅 AI Real-Estate Intelligence</span>
-          </Link>
+          </HomeLink>
 
           <div className="flex flex-wrap items-center gap-3">
             <MobileSidebarToggle sections={sections} />

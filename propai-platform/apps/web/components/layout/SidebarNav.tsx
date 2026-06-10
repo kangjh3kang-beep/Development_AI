@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { motion } from "framer-motion";
 import { useEffect, useState } from "react";
 import { apiClient } from "@/lib/api-client";
+import { useUiReset } from "@/store/useUiReset";
 
 type NavItem = {
   href: string;
@@ -25,6 +26,7 @@ type SidebarNavProps = {
 
 export function SidebarNav({ sections }: SidebarNavProps) {
   const pathname = usePathname();
+  const goHome = useUiReset((s) => s.goHome);
   // 역할 확인(클라이언트): 관리자 전용 섹션 노출 제어
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
   // 자산 운영(임대·임차인 등) 노출 권한: 운영/관리자 역할만. 역할 미확인 시 보수적으로 숨김.
@@ -71,6 +73,11 @@ export function SidebarNav({ sections }: SidebarNavProps) {
                 <Link
                   key={item.href}
                   href={item.href}
+                  onClick={() => {
+                    // 중앙분석센타(홈 라우트=/{locale})를 이미 그 위치에서 누르면 리마운트가 없으므로
+                    // 전역 리셋 신호로 분석뷰→랜딩 복귀(새로고침 없이 본 홈화면).
+                    if (isActive && /^\/[a-z]{2}(-[A-Z]{2})?$/.test(item.href)) goHome();
+                  }}
                   className={`group relative flex items-center gap-2.5 rounded-xl px-3 py-2 text-[13px] font-semibold transition-all duration-300 overflow-hidden ${
                     isActive
                       ? "text-[var(--accent-strong)] bg-[var(--accent-soft)] shadow-[inset_0_0_20px_var(--accent-soft)] border border-[var(--accent-strong)]/20"
