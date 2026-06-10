@@ -332,7 +332,10 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
     land_area_sqm: spec?.land_area_sqm,
     zone_code: spec?.zone_code ?? "2R",
     project_name: spec?.project_name ?? "PropAI",
-  }), [spec]);
+    // 세대 구성(SSOT) — 평면 세대배치·AI 해석의 "세대수·평형 부재" 해소.
+    building_use: designData?.buildingType ?? "공동주택",
+    unit_types: designData?.unitTypes ?? undefined,
+  }), [spec, designData]);
 
   // spec → 도면(generate-full-set) 요청 바디
   const drawingBody = useCallback(() => JSON.stringify({

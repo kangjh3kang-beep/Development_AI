@@ -84,6 +84,10 @@ interface DesignData {
   buildingType: string | null;
   bcr: number | null;
   far: number | null;
+  // 세대 구성(도면·해석·수지 다운스트림의 "데이터 없음" 해소용 SSOT)
+  unitCount?: number | null;        // 총 세대수
+  unitTypes?: string[] | null;      // 평형 구성(예: ["59A","84A"])
+  efficiencyPct?: number | null;    // 전용률(%)
 }
 
 interface FeasibilityData {

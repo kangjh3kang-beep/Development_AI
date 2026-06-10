@@ -90,6 +90,9 @@ class BimGenerateRequest(BaseModel):
     land_area_sqm: float | None = Field(None, gt=0)
     zone_code: str = "2R"
     project_name: str = "PropAI"
+    # 세대 구성(있으면 평면 세대배치·해석에 반영 — "데이터 없음" 해소)
+    building_use: str = "공동주택"
+    unit_types: list[str] | None = None
 
 
 # ── 응답 스키마 ──
@@ -414,6 +417,24 @@ async def generate_bim_model(project_id: str, req: BimGenerateRequest):
     mass = _resolve_mass(req)
     ifc_bytes = build_ifc_from_mass(mass, project_name=req.project_name)
 
+    # ── 세대배치·코어 산출(엔진) — 해석/평면에 "세대수·평형" 반영(데이터 없음 해소) ──
+    units_data: dict = {}
+    try:
+        from app.services.cad.auto_design_engine import AutoDesignEngineService
+        svc = AutoDesignEngineService()
+        core_layout = svc.compute_core_layout(mass, req.building_use)
+        unit_layout = svc.compute_unit_layout(
+            mass, core_layout, req.unit_types or ["59A", "84A"], req.building_use,
+        )
+        units_data = {
+            "core_positions": core_layout.get("core_positions"),
+            "corridor_width_m": core_layout.get("corridor_width_m"),
+            "units": unit_layout.get("units"),
+            "total_units": unit_layout.get("total_units"),
+        }
+    except Exception:  # noqa: BLE001
+        units_data = {}
+
     # ── DesignInterpreter(Claude) 설계 AI 해석 — 실패해도 모델은 정상 반환 ──
     ai_interpretation = None
     try:
@@ -422,7 +443,8 @@ async def generate_bim_model(project_id: str, req: BimGenerateRequest):
         interp = await DesignInterpreter().generate_interpretation({
             **mass,
             "zone_code": req.zone_code,
-            "building_use": "공동주택",
+            "building_use": req.building_use,
+            **units_data,
         })
         if isinstance(interp, dict) and interp:
             ai_interpretation = interp
