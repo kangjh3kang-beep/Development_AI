@@ -5,6 +5,7 @@ import { motion } from "framer-motion";
 import { useAIAnalyze, useAIReady } from "@/lib/ai-analyze-client";
 import { analyzeLocally } from "@/lib/kr-building-regulations";
 import { apiClient } from "@/lib/api-client";
+import { getCachedAnalysis, setCachedAnalysis, TTL_30D, TTL_7D, TTL_3D } from "@/lib/analysis-fetch-cache";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 
 // ── Icons ──
@@ -231,6 +232,11 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
       return;
     }
 
+    const zAddr = data.address.trim();
+    // 캐시 우선 — 한번 분석한 용도지역은 재진입 시 즉시 사용(재분석 방지).
+    const zCached = getCachedAnalysis<ZoningAnalysisResponse>(`zoning:${zAddr}`, TTL_30D);
+    if (zCached) { setZoningData(zCached); setZoningLoading(false); return; }
+
     let cancelled = false;
     async function fetchZoning() {
       setZoningLoading(true);
@@ -242,6 +248,7 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
         });
         if (!cancelled) {
           setZoningData(res);
+          setCachedAnalysis(`zoning:${zAddr}`, res);
           // Update project context store
           updateSiteAnalysis({
             estimatedValue: siteAnalysis?.estimatedValue ?? null,
@@ -278,18 +285,21 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
       return;
     }
 
+    const now = new Date();
+    const dealYm = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}`;
+    const txCached = getCachedAnalysis<TransactionsResponse>(`tx:${lawdCd}:${dealYm}`, TTL_3D);
+    if (txCached) { setTxData(txCached); setTxLoading(false); return; }
+
     let cancelled = false;
     async function fetchTransactions() {
       setTxLoading(true);
       setTxError(null);
       try {
-        const now = new Date();
-        const dealYm = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}`;
         const res = await apiClient.get<TransactionsResponse>(
           `/external/transactions/apt?lawd_cd=${lawdCd}&deal_ym=${dealYm}`,
           { useMock: false },
         );
-        if (!cancelled) setTxData(res);
+        if (!cancelled) { setTxData(res); setCachedAnalysis(`tx:${lawdCd}:${dealYm}`, res); }
       } catch (err) {
         if (!cancelled) {
           setTxError(err instanceof Error ? err.message : "실거래 데이터 조회 실패");
@@ -310,6 +320,11 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
       return;
     }
 
+    const sAddr = data.address.trim();
+    const sKey = `scenario:${sAddr}:${zoningData?.land_area_sqm ?? ""}`;
+    const sCached = getCachedAnalysis<{ recommendations: RecommendedModel[]; all_models: RecommendedModel[]; analysis_count: number }>(sKey, TTL_7D);
+    if (sCached) { setScenarioData(sCached); setScenarioLoading(false); return; }
+
     let cancelled = false;
     async function fetchScenarios() {
       setScenarioLoading(true);
@@ -329,7 +344,7 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
           all_models: (raw.all_results ?? recs).map((item, i) => mapBackendToModel(item, i + 1)),
           analysis_count: raw.total_types_analyzed ?? recs.length,
         };
-        if (!cancelled) setScenarioData(mapped);
+        if (!cancelled) { setScenarioData(mapped); setCachedAnalysis(sKey, mapped); }
       } catch (err) {
         if (!cancelled) {
           setScenarioError(err instanceof Error ? err.message : "시나리오 분석 실패");
