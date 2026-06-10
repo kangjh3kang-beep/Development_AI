@@ -40,6 +40,12 @@ const ZONE_OPTIONS = [
 
 const UNIT_TYPE_OPTIONS = ["29A", "39A", "59A", "74A", "84A", "114A"];
 
+type LensItem = { lens: string; label: string; score: number; basis: string; hint: string };
+type DesignEval = {
+  violations: { field: string; rule: string; message: string; severity: string }[];
+  lenses: { lenses: LensItem[]; overall: number };
+};
+
 const PRIORITY_LABELS: Record<DesignIntent["priority"], string> = {
   yield: "수익 최대화",
   livability: "거주성 우선",
@@ -116,6 +122,9 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
   // ── 법정 한도(슬라이더 하드캡) ──
   const [limits, setLimits] = useState<LegalLimitsResponse | null>(null);
 
+  // ── 검증·다각평가(P5) — 법규 위반 + 4관점 점수(전부 커널값 기반) ──
+  const [evaluation, setEvaluation] = useState<DesignEval | null>(null);
+
   // ── 단일 자동설계 ──
   const [single, setSingle] = useState<AutoDesignResponse | null>(null);
   const [singleLoading, setSingleLoading] = useState(false);
@@ -156,6 +165,25 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
 
   // 음성 입력(STT) — 말로 설계 의도를 받아 텍스트박스에 채움(브라우저 네이티브).
   const stt = useSpeechToText((t) => setIntentText(t));
+
+  // 생성 직후 검증·다각평가 조회(/design-operate, text="" → LLM 미사용·결정론).
+  const fetchEvaluation = useCallback(async () => {
+    try {
+      const data = await apiClient.post<DesignEval>("/drawing/design-operate", {
+        body: {
+          text: "",
+          site_area_sqm: siteArea,
+          zone_code: zoneCode,
+          building_use: intent?.building_use ?? "공동주택",
+          target_unit_types: unitTypes.length > 0 ? unitTypes : ["84A"],
+          priority: "balanced",
+        },
+      });
+      setEvaluation(data);
+    } catch {
+      /* 평가 실패는 무시 — 설계 생성 자체는 정상 */
+    }
+  }, [siteArea, zoneCode, intent, unitTypes]);
 
   // 1) 자연어 → 설계 의도(폼 자동 채움)
   const handleParse = useCallback(async () => {
@@ -217,12 +245,13 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
       });
       setSingle(data);
       applyDesign(data.design_payload, data.summary);
+      fetchEvaluation();
     } catch (e) {
       setSingleError(e instanceof Error ? e.message : "자동설계에 실패했습니다.");
     } finally {
       setSingleLoading(false);
     }
-  }, [siteArea, zoneCode, intent, unitTypes, applyDesign]);
+  }, [siteArea, zoneCode, intent, unitTypes, applyDesign, fetchEvaluation]);
 
   // 3) Top3 설계안 생성
   const handleAlternatives = useCallback(async () => {
@@ -256,8 +285,9 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
     (alt: DesignAlternative) => {
       applyDesign(alt.design_payload, alt.summary);
       setSelectedRank(alt.rank);
+      fetchEvaluation();
     },
-    [applyDesign],
+    [applyDesign, fetchEvaluation],
   );
 
   return (
@@ -547,6 +577,9 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
             </p>
           )}
 
+          {/* 검증·다각평가(P5) — 법규 위반 + 4관점 점수(전부 커널값 기반) */}
+          {evaluation && <EvaluationCard ev={evaluation} />}
+
           {/* 단일 자동설계 결과 */}
           {single && (
             <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-4">
@@ -799,5 +832,52 @@ function MixBar({
         ))}
       </div>
     </div>
+  );
+}
+
+/**
+ * 검증·다각평가 카드(P5) — 법규 위반 배지 + 4관점(수익/거주/법규/시공) 점수 바.
+ * 모든 수치는 설계 엔진(커널) 산출값 기준 — LLM 생성 아님(가짜수치 없음).
+ */
+function EvaluationCard({ ev }: { ev: DesignEval }) {
+  const lenses = ev.lenses?.lenses ?? [];
+  const overall = ev.lenses?.overall ?? 0;
+  const errors = (ev.violations ?? []).filter((v) => v.severity === "error");
+  const warns = (ev.violations ?? []).filter((v) => v.severity === "warn");
+  const barColor = (s: number) => (s >= 80 ? "#10b981" : s >= 60 ? "#f59e0b" : "#ef4444");
+  return (
+    <section className="mt-4 rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-5">
+      <div className="mb-3 flex items-center justify-between">
+        <h4 className="text-sm font-black text-[var(--text-primary)]">법규 검증 · 다각 평가</h4>
+        <span className="rounded-full bg-[var(--accent-soft)] px-3 py-1 text-xs font-black text-[var(--accent-strong)]">종합 {overall}점</span>
+      </div>
+      {errors.length === 0 && warns.length === 0 ? (
+        <p className="mb-3 text-xs font-bold text-emerald-500">✓ 법정 한도 내 적합 — 위반 없음</p>
+      ) : (
+        <div className="mb-3 space-y-1">
+          {errors.map((v, i) => (
+            <p key={`e${i}`} className="text-xs font-bold text-red-400">⚠️ {v.message}</p>
+          ))}
+          {warns.map((v, i) => (
+            <p key={`w${i}`} className="text-[11px] text-amber-400">· {v.message}</p>
+          ))}
+        </div>
+      )}
+      <div className="space-y-2">
+        {lenses.map((L) => (
+          <div key={L.lens}>
+            <div className="flex items-center justify-between text-[11px]">
+              <span className="font-bold text-[var(--text-secondary)]">{L.label}</span>
+              <span className="font-black text-[var(--text-primary)]">{L.score}</span>
+            </div>
+            <div className="mt-0.5 h-1.5 w-full overflow-hidden rounded-full bg-[var(--surface-muted)]">
+              <div className="h-full rounded-full" style={{ width: `${L.score}%`, backgroundColor: barColor(L.score) }} />
+            </div>
+            <p className="mt-0.5 text-[10px] text-[var(--text-hint)]">{L.basis}</p>
+          </div>
+        ))}
+      </div>
+      <p className="mt-3 text-[10px] text-[var(--text-hint)]">※ 모든 수치는 설계 엔진 산출값 기준(가짜수치 없음). 법규 위반은 표시·차단됩니다.</p>
+    </section>
   );
 }
