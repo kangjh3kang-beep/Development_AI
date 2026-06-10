@@ -137,6 +137,11 @@ class DesignOperator:
         notes = intent.get("notes", "") or ""
         grounding = ground_check(result.summary, notes)
 
+        # 7) 다각 렌즈(P5): 수익·거주·법규·시공 4관점 결정론 채점
+        from .design_lenses import evaluate_lenses
+        violations = [v.model_dump() for v in (spec_v + geom_v)]
+        lenses = evaluate_lenses(new_spec.model_dump(), result.summary, violations)
+
         return {
             "spec": new_spec.model_dump(),
             "summary": result.summary,
@@ -144,8 +149,9 @@ class DesignOperator:
             "design_payload": result.design_payload,
             "applied_changes": changes,
             "intent_notes": notes,
-            "violations": [v.model_dump() for v in (spec_v + geom_v)],
+            "violations": violations,
             "grounding": grounding,
+            "lenses": lenses,
             "source": source,
         }
 
