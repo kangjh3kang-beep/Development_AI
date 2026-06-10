@@ -7,6 +7,7 @@
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { ProjectSwitcher } from "@/components/common/ProjectSwitcher";
 import { DesignStudio } from "@/components/design/DesignStudio";
+import { CadBimIntegrationPanel } from "@/components/design/CadBimIntegrationPanel";
 
 export default function DesignStudioPage() {
   const projectId = useProjectContextStore((s) => s.projectId);
@@ -14,7 +15,12 @@ export default function DesignStudioPage() {
     <div className="grid gap-6 p-1">
       <ProjectSwitcher />
       {projectId ? (
-        <DesignStudio projectId={projectId} />
+        <>
+          {/* 1) AI 자동설계(매싱·법규) */}
+          <DesignStudio projectId={projectId} />
+          {/* 2) 실 CAD/BIM 설계·작성·편집 스튜디오(2D 도면·3D 조감·생성·수정·저장) */}
+          <CadBimIntegrationPanel projectId={projectId} dictionary={{}} />
+        </>
       ) : (
         <div className="cc-panel cc-bracketed p-10 text-center">
           <i className="cc-bracket cc-bracket--tl" />
