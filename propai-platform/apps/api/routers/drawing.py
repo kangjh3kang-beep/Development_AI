@@ -403,6 +403,53 @@ async def auto_design(req: AutoDesignRequest, _user: CurrentUser = Depends(get_c
     }
 
 
+class DesignOperateRequest(BaseModel):
+    """검증형 설계 생성·편집 요청 (CAD P2 — 의도→스펙→커널→근거검증 일원화)."""
+
+    text: str = Field("", description="자연어/음성 설계 의도(빈값=파라미터만)")
+    site_area_sqm: float = Field(..., gt=0)
+    zone_code: str = Field("2R")
+    building_use: str = Field("공동주택")
+    floor_height_m: float = Field(3.0, gt=1.5, le=6.0)
+    num_floors: Optional[int] = Field(None, ge=1, le=120)
+    target_unit_types: list[str] = Field(default=["84A"])
+    corridor_width_m: Optional[float] = Field(None)
+    priority: str = Field("balanced")
+    setback_m: dict[str, float] = Field(
+        default={"north": 3.0, "south": 2.0, "east": 1.5, "west": 1.5}
+    )
+
+
+@router.post("/design-operate")
+async def design_operate(req: DesignOperateRequest, _user: CurrentUser = Depends(get_current_user)):
+    """검증형 설계 생성·편집 (CAD P2).
+
+    자연어/음성 의도 → DesignSpec 결정론 반영 → 커널 생성 → 법규 근거검증.
+    화면 수치는 전부 커널 산출값, violations로 법규 위반을 표면화(할루시네이션 차단).
+    """
+    from app.services.cad.design_spec import DesignSpec, Setback
+    from app.services.cad.design_operator import DesignOperator
+
+    sb = req.setback_m or {}
+    spec = DesignSpec(
+        site_area_sqm=req.site_area_sqm,
+        zone_code=req.zone_code,
+        building_use=req.building_use,
+        floor_height_m=req.floor_height_m,
+        num_floors=req.num_floors,
+        target_unit_types=req.target_unit_types or ["84A"],
+        corridor_width_m=req.corridor_width_m,
+        priority=req.priority,
+        setback_m=Setback(
+            north=sb.get("north", 3.0), south=sb.get("south", 2.0),
+            east=sb.get("east", 1.5), west=sb.get("west", 1.5),
+        ),
+    )
+    result = await DesignOperator().operate(req.text, spec)
+    result["legal_limits"] = auto_design_engine.get_legal_limits(req.zone_code)
+    return result
+
+
 @router.post("/parse-intent")
 async def parse_intent(req: ParseIntentRequest, _user: CurrentUser = Depends(get_current_user)):
     """자연어 설계 의도를 구조화 파라미터로 변환한다(CAD Phase 2).
