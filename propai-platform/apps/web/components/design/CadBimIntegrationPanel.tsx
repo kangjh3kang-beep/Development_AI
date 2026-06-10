@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { Canvas, useThree } from "@react-three/fiber";
 import { CameraControls, Grid } from "@react-three/drei";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
@@ -67,11 +67,72 @@ interface DesignSpec {
   project_name: string;
 }
 
-// 백엔드가 생성한 IFC→glTF 모델을 렌더. scene이 없으면 격자만(로딩/실패 graceful).
-function BuildingModel({ scene }: { scene: THREE.Group | null }) {
+// 클라이언트 절차생성 3D 매스 — 건축개요(폭·깊이·층수·층고)만으로 즉시 생성.
+// 서버 IFC 파이프라인과 무관하게 "항상 무언가를 렌더"하는 것이 핵심(에디터가 빈 화면이 되지 않도록).
+// 서버 정밀 glb가 도착하면 그쪽을 우선 사용(아래 BuildingModel).
+function ProceduralBuilding({
+  width, depth, floors, floorHeight,
+}: { width: number; depth: number; floors: number; floorHeight: number }) {
+  const group = useMemo(() => {
+    const w = Math.max(4, width || 20);
+    const d = Math.max(4, depth || 15);
+    const nf = Math.max(1, Math.round(floors || 5));
+    const fh = Math.max(2.2, floorHeight || 3);
+    const wallT = 0.3;
+
+    const matSlab = new THREE.MeshStandardMaterial({ color: "#94a3b8", roughness: 0.9, metalness: 0.05 });
+    const matGlass = new THREE.MeshStandardMaterial({ color: "#60a5fa", roughness: 0.12, metalness: 0.5, transparent: true, opacity: 0.5 });
+    const matMull = new THREE.MeshStandardMaterial({ color: "#e2e8f0", roughness: 0.6 });
+    const matCore = new THREE.MeshStandardMaterial({ color: "#475569", roughness: 0.85 });
+
+    const g = new THREE.Group();
+    for (let f = 0; f < nf; f++) {
+      const y = f * fh;
+      // 바닥 슬래브
+      const slab = new THREE.Mesh(new THREE.BoxGeometry(w, 0.25, d), matSlab);
+      slab.position.set(0, y, 0); slab.castShadow = true; slab.receiveShadow = true;
+      g.add(slab);
+      // 외피(커튼월 유리) 4면
+      const fb = new THREE.BoxGeometry(w * 0.98, fh * 0.86, wallT);
+      const front = new THREE.Mesh(fb, matGlass); front.position.set(0, y + fh / 2, d / 2); g.add(front);
+      const back = new THREE.Mesh(fb, matGlass); back.position.set(0, y + fh / 2, -d / 2); g.add(back);
+      const lr = new THREE.BoxGeometry(wallT, fh * 0.86, d * 0.98);
+      const left = new THREE.Mesh(lr, matGlass); left.position.set(-w / 2, y + fh / 2, 0); g.add(left);
+      const right = new THREE.Mesh(lr, matGlass); right.position.set(w / 2, y + fh / 2, 0); g.add(right);
+      // 층간 멀리언(테두리 띠)
+      const band = new THREE.Mesh(new THREE.BoxGeometry(w + 0.1, 0.18, d + 0.1), matMull);
+      band.position.set(0, y + fh * 0.9, 0); g.add(band);
+    }
+    // 코어(중앙 EV·계단실) 전체 높이
+    const coreW = Math.min(w * 0.32, 7);
+    const coreD = Math.min(d * 0.32, 7);
+    const core = new THREE.Mesh(new THREE.BoxGeometry(coreW, nf * fh, coreD), matCore);
+    core.position.set(0, (nf * fh) / 2, 0); core.castShadow = true;
+    g.add(core);
+    // 옥상 파라펫
+    const roof = new THREE.Mesh(new THREE.BoxGeometry(w, 0.7, d), matSlab);
+    roof.position.set(0, nf * fh, 0); g.add(roof);
+    return g;
+  }, [width, depth, floors, floorHeight]);
+
+  return <primitive object={group} />;
+}
+
+// 3D 렌더: 서버 glb(scene)가 있으면 그것을, 없으면 spec 기반 절차생성 모델을 표시.
+// 둘 다 없으면 격자만(게이트 단계). → 빈 화면 방지.
+function BuildingModel({ scene, spec }: { scene: THREE.Group | null; spec: DesignSpec | null }) {
   return (
     <group position={[0, 0, 0]}>
-      {scene && <primitive object={scene} />}
+      {scene ? (
+        <primitive object={scene} />
+      ) : spec ? (
+        <ProceduralBuilding
+          width={spec.building_width_m}
+          depth={spec.building_depth_m}
+          floors={spec.floor_count}
+          floorHeight={spec.floor_height_m ?? 3}
+        />
+      ) : null}
       <Grid
         infiniteGrid
         fadeDistance={50}
@@ -421,7 +482,17 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
     }
   }, [projectId, spec, bimBody]);
 
-  // 3D 뷰 진입 시(기하 준비 후) 모델 1회 로드
+  // 절차생성 모델용 카메라 프레이밍 — spec이 준비되고 서버 glb가 아직 없으면 spec 치수로 시점 산정.
+  // (서버 glb가 도착하면 loadBimModel이 실측 bbox로 다시 setModelDims → 자연 전환)
+  useEffect(() => {
+    if (spec && !bimScene) {
+      const span = Math.max(8, spec.building_width_m || 0, spec.building_depth_m || 0);
+      const height = Math.max(4, (spec.floor_count || 5) * (spec.floor_height_m || 3));
+      setModelDims({ span, height });
+    }
+  }, [spec, bimScene]);
+
+  // 3D 뷰 진입 시(기하 준비 후) 서버 정밀 IFC 모델 1회 로드(실패해도 절차모델은 계속 표시)
   useEffect(() => {
     if (viewMode === "bim_3d" && spec && !bimScene && !bimLoading && !bimError) {
       loadBimModel();
@@ -516,9 +587,9 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
   // 과금 게이트: confirm 단계에서 사용자가 "결제하고 렌더"를 눌러야 실제 호출(아래)이 시작된다.
   const runPhotorealRender = useCallback(async () => {
     const gl = glRef.current;
-    if (!gl || !bimScene) {
-      // 모델이 없으면 캡처할 화면이 없음 — 정직 안내(가짜 호출 금지).
-      setRenderMsg("먼저 3D 모델을 불러온 뒤 렌더할 수 있습니다.");
+    if (!gl || (!bimScene && !spec)) {
+      // 모델(절차/서버)이 없으면 캡처할 화면이 없음 — 정직 안내(가짜 호출 금지).
+      setRenderMsg("먼저 설계를 생성한 뒤 렌더할 수 있습니다.");
       setRenderPhase("error");
       return;
     }
@@ -583,7 +654,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
       setRenderMsg(msg);
       setRenderPhase("error");
     }
-  }, [projectId, bimScene, renderStyle]);
+  }, [projectId, bimScene, spec, renderStyle]);
 
   return (
     <div className="flex flex-col gap-10">
@@ -711,7 +782,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
                 height={modelDims.height}
                 autoRotate={autoRotate}
               />
-              <BuildingModel scene={bimScene} />
+              <BuildingModel scene={bimScene} spec={spec} />
             </Canvas>
 
             {/* ── 카메라 시점 프리셋 바(비전문가용 시점 전환) ── 모델 없으면 비활성+안내 ── */}
@@ -723,7 +794,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
                     <button
                       key={key}
                       type="button"
-                      disabled={!bimScene}
+                      disabled={!bimScene && !spec}
                       onClick={() => applyPreset(key)}
                       title={CAM_PRESETS[key].label}
                       className={`flex items-center gap-1.5 rounded-xl px-3 py-2 text-[10px] font-black uppercase tracking-widest transition-colors disabled:cursor-not-allowed disabled:opacity-30 ${
@@ -738,15 +809,15 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
                   );
                 })}
               </div>
-              {!bimScene && (
+              {!bimScene && !spec && (
                 <span className="rounded-lg bg-black/40 px-3 py-1 text-[10px] font-bold text-white/45 backdrop-blur-md">
-                  모델을 불러오면 시점 전환을 사용할 수 있어요
+                  설계를 생성하면 시점 전환을 사용할 수 있어요
                 </span>
               )}
             </div>
 
-            {/* 자동회전 토글(기본 꺼짐) — 사용자가 명시적으로 켤 때만 회전 */}
-            {bimScene && (
+            {/* 자동회전 토글(기본 꺼짐) — 절차모델/서버모델 모두에서 사용 */}
+            {(bimScene || spec) && (
               <button
                 onClick={() => setAutoRotate((v) => !v)}
                 className={`absolute right-6 bottom-6 z-30 rounded-full border px-4 py-2 text-[10px] font-black uppercase tracking-widest transition-colors ${
@@ -759,8 +830,8 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
               </button>
             )}
 
-            {/* ── AI 포토리얼 렌더 버튼(과금 게이트) — 모델 있을 때만 노출 ── */}
-            {bimScene && (
+            {/* ── AI 포토리얼 렌더 버튼(과금 게이트) — 모델(절차/서버) 있을 때 노출 ── */}
+            {(bimScene || spec) && (
               <button
                 type="button"
                 onClick={() => setRenderPhase("confirm")}
@@ -770,31 +841,36 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
                 AI 포토리얼 렌더
               </button>
             )}
-            {/* 로딩/에러 오버레이 */}
-            {(bimLoading || bimError) && (
-              <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/30 pointer-events-none">
-                {bimLoading ? (
-                  <div className="flex flex-col items-center gap-4">
-                    <div className="h-12 w-12 animate-spin rounded-full border-4 border-[var(--accent-strong)] border-t-transparent" />
-                    <p className="text-[11px] font-bold uppercase tracking-widest text-white/60">3D BIM 모델 생성 중...</p>
-                  </div>
-                ) : (
-                  <div className="flex flex-col items-center gap-3 text-center pointer-events-auto">
-                    <p className="text-sm font-bold text-red-300">{bimError}</p>
-                    <button
-                      onClick={() => { setBimError(null); loadBimModel(); }}
-                      className="rounded-full bg-white/10 px-6 py-2 text-[11px] font-black uppercase tracking-widest text-white hover:bg-white/20"
-                    >
-                      다시 시도
-                    </button>
-                  </div>
-                )}
+            {/* ── 비차폐 상태 칩 — 절차모델은 즉시 렌더되므로 전체화면 오버레이로 막지 않는다 ── */}
+            {bimLoading && (
+              <div className="absolute bottom-6 left-1/2 z-20 flex -translate-x-1/2 items-center gap-2 rounded-full bg-black/55 px-4 py-2 backdrop-blur-xl border border-white/10 pointer-events-none">
+                <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-[var(--accent-strong)] border-t-transparent" />
+                <span className="text-[10px] font-bold uppercase tracking-widest text-white/65">정밀 IFC 모델 생성 중 · 현재 절차모델 표시</span>
+              </div>
+            )}
+            {bimError && !bimLoading && (
+              <div className="absolute bottom-6 left-1/2 z-20 flex -translate-x-1/2 items-center gap-3 rounded-full bg-black/65 px-4 py-2 backdrop-blur-xl border border-amber-400/30">
+                <span className="text-[10px] font-bold text-amber-200">절차모델 표시 중 · 정밀 IFC 생성 실패</span>
+                <button
+                  onClick={() => { setBimError(null); loadBimModel(); }}
+                  className="rounded-full bg-white/10 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-white hover:bg-white/20"
+                >
+                  다시 시도
+                </button>
               </div>
             )}
           </div>
         ) : editMode ? (
           <div className="absolute inset-0 z-30 bg-[#0a0f14] flex flex-col overflow-hidden [&>div]:h-full [&>div]:rounded-none [&>div]:border-none">
-            <CADEditor projectId={projectId} />
+            <CADEditor
+              projectId={projectId}
+              siteAreaSqm={spec?.land_area_sqm}
+              initialWidthM={spec?.building_width_m}
+              initialDepthM={spec?.building_depth_m}
+              initialFloors={spec?.floor_count}
+              initialFloorHeightM={spec?.floor_height_m ?? 3}
+              zoneCode={spec?.zone_code}
+            />
           </div>
         ) : (
           <div className="absolute inset-0 z-30 bg-[#0a0f14] flex flex-col">
