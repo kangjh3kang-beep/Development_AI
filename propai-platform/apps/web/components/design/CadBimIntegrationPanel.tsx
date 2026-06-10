@@ -652,11 +652,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
       {/* ── Phase 2 · 생성 UX(자연어→Top3 설계안→스튜디오 로드) ── */}
       <GenerativeDesignPanel projectId={projectId} onApplied={handleGeneratedApplied} />
 
-      {/* ── Phase 4 · 설계 결과 → 사업성·환경·해설·은행제출 연결 요약 ──
-          설계 적용/변경 시 designData를 기준으로 공사비(estimate-overview) 1회 산정 → 수지/ROI·ESG(SSOT)
-          요약 + 설계해설(designAi 6섹션) + 은행제출 패키지 원클릭. 기존 분석/보고서 로직은 재구현 없이 연결만. */}
-      <DesignOutcomeSummary projectId={projectId} designAi={designAi} />
-
+      {/* ── 편집화면(2D/3D 뷰포트) — 생성 UX 바로 아래(상단 배치). 설계 해석 요약은 뷰포트 아래로 이동. ── */}
       <div className="relative h-[650px] w-full overflow-hidden rounded-[4rem] border border-[var(--line-strong)] bg-[#0d1520] shadow-[var(--shadow-2xl)] group">
         {/* Cinematic Backdrop */}
         <div className="absolute inset-0 bg-gradient-to-b from-transparent via-black/20 to-black/60 pointer-events-none z-10" />
@@ -797,7 +793,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
               <label className="flex items-center gap-2">
                 <span className="text-[10px] font-black uppercase tracking-widest text-white/40">도면</span>
                 <select
-                  value={activeCode}
+                  value={activeCode ?? ""}
                   onChange={(e) => setActiveCode(e.target.value)}
                   className="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-bold text-white focus:border-[var(--accent-strong)] focus:outline-none"
                 >
@@ -1127,6 +1123,9 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
           </div>
         )}
       </div>
+
+      {/* ── 설계 결과 요약 + AI 설계 해석(designAi 6섹션) — 편집화면(뷰포트) 아래로 재배치 ── */}
+      <DesignOutcomeSummary projectId={projectId} designAi={designAi} />
     </div>
   );
 }
