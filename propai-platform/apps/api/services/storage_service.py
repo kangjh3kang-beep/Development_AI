@@ -180,3 +180,37 @@ async def cleanup_registry_pdfs(days: int = 30) -> int:
                     deleted += len(paths)
     logger.info("등기부 PDF TTL 정리", deleted=deleted, days=days)
     return deleted
+
+
+# ── 설계 참조도면(P7): 공개 버킷 propai-design-refs (DXF/PDF/이미지) ──
+
+_DESIGN_REF_BUCKET = "propai-design-refs"
+_DESIGN_EXT: dict[str, str] = {
+    "application/pdf": "pdf",
+    "image/png": "png", "image/jpeg": "jpg", "image/jpg": "jpg", "image/webp": "webp",
+    "application/dxf": "dxf", "image/vnd.dxf": "dxf", "image/x-dxf": "dxf",
+    "application/acad": "dwg", "image/vnd.dwg": "dwg", "application/x-dwg": "dwg",
+}
+
+
+async def upload_design_file(data: bytes, content_type: str, file_name: str = "") -> dict[str, str]:
+    """설계 참조도면(DXF/PDF/이미지)을 공개 버킷에 업로드하고 public URL+형식을 반환한다."""
+    base, key = _sb_conf()
+    ext = _DESIGN_EXT.get((content_type or "").lower())
+    if not ext and file_name and "." in file_name:
+        ext = file_name.rsplit(".", 1)[-1].lower()
+    ext = (ext or "bin")[:8]
+    path = f"refs/{uuid.uuid4().hex}.{ext}"
+    auth = {"Authorization": f"Bearer {key}", "apikey": key}
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        await _ensure_bucket(client, base, _DESIGN_REF_BUCKET, auth)
+        resp = await client.post(
+            f"{base}/storage/v1/object/{_DESIGN_REF_BUCKET}/{path}",
+            headers={**auth, "Content-Type": content_type or "application/octet-stream", "x-upsert": "true"},
+            content=data,
+        )
+        if resp.status_code not in (200, 201):
+            raise StorageError(f"설계도면 업로드 실패: {resp.status_code} {resp.text[:200]}")
+    url = f"{base}/storage/v1/object/public/{_DESIGN_REF_BUCKET}/{path}"
+    logger.info("설계 참조도면 업로드", path=path, bytes=len(data))
+    return {"url": url, "file_type": ext}
