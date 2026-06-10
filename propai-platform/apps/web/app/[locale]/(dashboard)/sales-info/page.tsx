@@ -9,6 +9,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { apiClient } from "@/lib/api-client";
+import { ProjectPresaleMap, type PresaleMarker } from "@/components/presale/ProjectPresaleMap";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -171,7 +172,7 @@ export default function SalesInfoPage() {
         </>
       )}
 
-      {tab === "monitor" && <MonitorTab />}
+      {tab === "monitor" && <MonitorTab onOpenDetail={openDetail} />}
 
       {detail && (
         <DetailModal detail={detail} loading={detailLoading} onClose={() => setDetail(null)} />
@@ -292,7 +293,9 @@ function DetailModal({ detail, loading, onClose }: { detail: any; loading: boole
   );
 }
 
-function MonitorTab() {
+type ProjectSummary = { id: string; name: string; address?: string | null };
+
+function MonitorTab({ onOpenDetail }: { onOpenDetail: (it: any) => void }) {
   const [interests, setInterests] = useState<Interest[]>([]);
   const [feed, setFeed] = useState<FeedItem[]>([]);
   const [prefs, setPrefs] = useState<Prefs>({ phone: "", sms_enabled: false, kakao_enabled: false, inapp_enabled: true });
@@ -300,6 +303,38 @@ function MonitorTab() {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
   const [areas, setAreas] = useState<string[]>([]);
+
+  // 프로젝트 주변 분양 지도
+  const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  const [selProject, setSelProject] = useState<string>("");
+  const [mapItems, setMapItems] = useState<PresaleMarker[]>([]);
+  const [mapCenter, setMapCenter] = useState<{ lat: number; lon: number } | null>(null);
+  const [mapLoading, setMapLoading] = useState(false);
+
+  useEffect(() => {
+    apiClient.get<{ items?: ProjectSummary[] } | ProjectSummary[]>("/projects?page=1&page_size=50", { useMock: false })
+      .then((r: any) => setProjects(r.items || r.data || (Array.isArray(r) ? r : [])))
+      .catch(() => { /* 비로그인/없음 */ });
+  }, []);
+
+  const loadProjectPresale = useCallback(async (proj: ProjectSummary) => {
+    if (!proj.address) { setMsg("선택한 프로젝트에 주소가 없어 주변 분양을 조회할 수 없습니다."); return; }
+    setMapLoading(true); setMapItems([]); setMapCenter(null);
+    try {
+      const r = await apiClient.post<{ available: boolean; items: PresaleMarker[]; center: { lat: number; lon: number } | null }>(
+        "/presale/nearby", { body: { address: proj.address, radius_m: 3000, months_back: 12 }, useMock: false, timeoutMs: 90000 });
+      setMapItems(r.available ? (r.items || []) : []);
+      setMapCenter(r.center || null);
+      if (!r.available || (r.items || []).length === 0) setMsg("반경 3km 내 최근 분양 단지가 없습니다.");
+    } catch { setMsg("주변 분양 조회 실패."); }
+    finally { setMapLoading(false); }
+  }, []);
+
+  const onSelectProject = (id: string) => {
+    setSelProject(id);
+    const p = projects.find((x) => x.id === id);
+    if (p) loadProjectPresale(p);
+  };
 
   const load = useCallback(async () => {
     try {
@@ -330,6 +365,26 @@ function MonitorTab() {
   return (
     <div className="space-y-5">
       {msg && <div className="rounded-xl border border-[var(--data-accent-line)] bg-[var(--data-accent-soft)] px-4 py-2.5 text-sm text-[var(--text-secondary)]">{msg}</div>}
+
+      {/* 프로젝트 주변 분양 지도 */}
+      <section className="cc-panel"><div className="cc-panel__body space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-sm font-bold text-[var(--text-primary)]">프로젝트 주변 분양 지도</h2>
+          <select value={selProject} onChange={(e) => onSelectProject(e.target.value)}
+            className="rounded-lg border border-[var(--line-strong)] bg-[var(--surface)] px-3 py-1.5 text-sm font-bold text-[var(--text-primary)]">
+            <option value="">{projects.length ? "프로젝트 선택…" : "등록된 프로젝트 없음"}</option>
+            {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+        </div>
+        {!selProject && <p className="py-6 text-center text-sm text-[var(--text-secondary)]">프로젝트를 선택하면 그 주변(반경 3km)의 분양 단지를 유형별로 지도에 표시하고, 마커를 클릭하면 청약일정·분양가·공고문을 보여드립니다.</p>}
+        {selProject && mapLoading && <p className="py-6 text-center text-sm text-[var(--text-secondary)]">주변 분양 단지 수집·지오코딩 중…</p>}
+        {selProject && !mapLoading && (mapCenter || mapItems.length > 0) && (
+          <ProjectPresaleMap center={mapCenter} items={mapItems} radiusM={3000} onSelect={(it) => onOpenDetail(it)} />
+        )}
+        {selProject && !mapLoading && !mapCenter && mapItems.length === 0 && (
+          <p className="py-6 text-center text-sm text-[var(--text-secondary)]">주변 분양 단지를 찾지 못했습니다(프로젝트 주소 확인 필요).</p>
+        )}
+      </div></section>
 
       {/* 관심지역 등록 */}
       <section className="cc-panel"><div className="cc-panel__body space-y-3">

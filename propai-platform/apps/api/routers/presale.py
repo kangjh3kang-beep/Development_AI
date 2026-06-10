@@ -52,6 +52,7 @@ async def presale_detail(house_manage_no: str = Query(...), pblanc_no: str = Que
 class NearbyReq(BaseModel):
     lat: float | None = None
     lon: float | None = None
+    address: str | None = None   # 좌표 없으면 주소를 서버에서 지오코딩(프로젝트 선택 등)
     area: str | None = None
     lawd_cd: str | None = None   # 있으면 시도 자동 도출
     radius_m: int = 3000
@@ -60,12 +61,25 @@ class NearbyReq(BaseModel):
 
 @router.post("/nearby")
 async def presale_nearby(req: NearbyReq):
-    """중심좌표 반경 내 분양 단지(지도 '분양' 카테고리)."""
+    """중심좌표(또는 주소) 반경 내 분양 단지(지도 '분양' 카테고리)."""
+    lat, lon = req.lat, req.lon
+    center_addr = (req.address or "").strip()
+    # 좌표 미제공 + 주소 있으면 서버 지오코딩(프로젝트 주소 → 중심좌표).
+    if (lat is None or lon is None) and center_addr:
+        try:
+            from apps.api.app.services.land_intelligence.nearby_map_service import NearbyMapService
+            c = await NearbyMapService().geocode_one(center_addr)
+            if c:
+                lat, lon = c["lat"], c["lon"]
+        except Exception:  # noqa: BLE001
+            pass
     area = req.area or (area_from_lawd(req.lawd_cd) if req.lawd_cd else None)
-    return await PresaleService().nearby(
-        center_lat=req.lat, center_lon=req.lon, area=area,
+    result = await PresaleService().nearby(
+        center_lat=lat, center_lon=lon, area=area,
         radius_m=req.radius_m, months_back=req.months_back,
     )
+    result["center"] = {"lat": lat, "lon": lon} if (lat is not None and lon is not None) else None
+    return result
 
 
 # ── 관심지역 모니터링(인증) ──
