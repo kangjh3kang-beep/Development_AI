@@ -77,6 +77,7 @@ const TOPUP_PRESETS = [10000, 30000, 50000, 100000];
 const won = (n?: number) => (n ?? 0).toLocaleString("ko-KR") + "원";
 
 export function BillingMeter({ compact = false }: { compact?: boolean }) {
+  const pathname = usePathname();
   const [status, setStatus] = useState<Status | null>(null);
   const [balance, setBalance] = useState<Balance | null>(null);
   const [loading, setLoading] = useState(true);
