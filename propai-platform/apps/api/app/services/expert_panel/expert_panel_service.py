@@ -188,8 +188,16 @@ class ExpertPanelService:
         ctx_str = context if isinstance(context, str) else json.dumps(context, ensure_ascii=False)
         ctx_str = ctx_str[:4000]
 
-        if mode == "deep":
-            result = await self._deep(subject, address, ctx_str, roster)
+        if mode in ("deep", "graph"):
+            # LangGraph 일원화: 전문가(다각도) → 검증(원데이터 대조·할루시네이션 게이트) → 통합.
+            try:
+                from app.services.expert_panel.expert_panel_graph import run_panel_graph
+                result = await run_panel_graph(subject, address, ctx_str, roster)
+                if not (result and result.get("consensus")):
+                    raise ValueError("graph 결과 없음")
+            except Exception as e:  # noqa: BLE001
+                logger.warning("전문가 패널(graph) 실패, deep 폴백: %s", str(e)[:100])
+                result = await self._deep(subject, address, ctx_str, roster)
         else:
             result = await self._single(subject, address, ctx_str, roster)
         result["analysis_type"] = analysis_type
