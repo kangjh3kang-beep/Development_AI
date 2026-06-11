@@ -49,6 +49,7 @@ interface PipelineRunResponse {
 interface PipelineResultDetailProps {
   result: PipelineRunResponse;
   onRerun?: (stageName: string, overrides: Record<string, unknown>) => void;
+  addresses?: string[];   // 다필지 주소(이력 복원분) — 필지 구획도에 전체 필지 표시용
 }
 
 /* ── Section definitions ── */
@@ -305,7 +306,7 @@ function EditableCell({
 
 /* ── Component ── */
 
-export function PipelineResultDetail({ result, onRerun }: PipelineResultDetailProps) {
+export function PipelineResultDetail({ result, onRerun, addresses }: PipelineResultDetailProps) {
   const [activeTab, setActiveTab] = useState("overview");
   const [overrides, setOverrides] = useState<Record<string, Record<string, unknown>>>({});
   const [downloading, setDownloading] = useState(false);
@@ -631,9 +632,12 @@ export function PipelineResultDetail({ result, onRerun }: PipelineResultDetailPr
               );
             }
             // 필지 구획도·주변 지도는 주소로 라이브 재조회 — 저장본에 좌표가 없어도 주소만 있으면 표시.
+            // 다필지(addresses)가 복원돼 있으면 전체 필지를, 없으면 대표 1필지를 표시(옛 이력은 대표만 저장됨).
             const _basic = siteData.basic as Record<string, unknown> | undefined;
             const _addr = (_basic?.address as string) || (siteData.address as string) || "";
-            const _parcels = _addr ? [_addr] : [];
+            const _parcels = (addresses && addresses.length > 0)
+              ? addresses
+              : (_addr ? [_addr] : []);
             return (
               <div className="mb-5">
                 <SiteAnalysisDetail data={siteData} parcels={_parcels} hideInterpretation />

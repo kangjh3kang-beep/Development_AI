@@ -909,7 +909,7 @@ export function ProjectPipelinePanel({
           </svg>
           진행 단계으로 돌아가기
         </button>
-        <PipelineResultDetail result={lastResult} onRerun={handleRerun} />
+        <PipelineResultDetail result={lastResult} onRerun={handleRerun} addresses={allAddresses.map((a) => a.fullAddress)} />
       </div>
     );
   }

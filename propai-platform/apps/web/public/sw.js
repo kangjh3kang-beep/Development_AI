@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v142-feas-lineitem-history";
+const CACHE_NAME = "propai-v143-report-multiparcel";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",
