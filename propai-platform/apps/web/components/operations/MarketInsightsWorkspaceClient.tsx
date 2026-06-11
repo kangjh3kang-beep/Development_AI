@@ -181,6 +181,7 @@ type Balance = {
   monthly_base_remaining: number;
   topup_remaining: number;
   markup_pct: number;
+  unlimited?: boolean; // 비과금 등급(super_admin 등) — 코인 게이트 면제
 };
 
 const won = (n: number) => (n ?? 0).toLocaleString("ko-KR") + "원";
@@ -227,7 +228,8 @@ export function MarketInsightsWorkspaceClient() {
   const totalRemaining = balance
     ? (balance.monthly_base_remaining || 0) + (balance.topup_remaining || 0)
     : null;
-  const insufficient = totalRemaining !== null && totalRemaining <= 0;
+  // 무제한 등급(관리자 등)은 코인 게이트 면제 — 잔액 0이어도 막지 않는다.
+  const insufficient = !balance?.unlimited && totalRemaining !== null && totalRemaining <= 0;
 
   // 코인 잔액(월기본+충전) 안내용 — 차감은 백엔드(BaseInterpreter)가 LLM 호출 시 자동 처리.
   useEffect(() => {
@@ -331,7 +333,9 @@ export function MarketInsightsWorkspaceClient() {
               <p className="text-sm font-bold text-[var(--text-primary)]">분석 시작</p>
               <p className="mt-0.5 text-xs text-[var(--text-secondary)]">
                 분석 시 사용한 LLM 사용량만큼 코인이 자동 차감됩니다
-                {totalRemaining !== null && (
+                {balance?.unlimited ? (
+                  <> · <b className="text-[var(--text-primary)]">무제한(관리자)</b></>
+                ) : totalRemaining !== null && (
                   <> · 코인 잔여 <b className="text-[var(--text-primary)]">{won(totalRemaining)}</b></>
                 )}
               </p>

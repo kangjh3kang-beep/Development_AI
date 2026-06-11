@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v146-cards-clickable";
+const CACHE_NAME = "propai-v147-admin-coin-exempt";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

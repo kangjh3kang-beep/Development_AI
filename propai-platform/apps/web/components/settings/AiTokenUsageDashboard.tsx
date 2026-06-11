@@ -39,6 +39,7 @@ type Balance = {
   used_this_cycle_krw: number;
   markup_pct: number;
   cycle_start: string | null;
+  unlimited?: boolean; // 비과금 등급(super_admin 등) — 코인 무제한
 };
 
 const SERVICE_LABELS: Record<string, string> = {
@@ -209,7 +210,7 @@ export function AiTokenUsageDashboard() {
               코인 잔여 (월기본 + 충전)
             </p>
             <p className="cc-num mt-3 text-3xl font-[900] text-[var(--accent-strong)]">
-              {won(totalRemaining)}
+              {balance.unlimited ? "무제한" : won(totalRemaining)}
             </p>
             <div className="mt-3 space-y-1 text-xs text-[var(--text-hint)]">
               <div className="flex justify-between">
