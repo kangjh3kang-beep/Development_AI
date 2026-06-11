@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v147-admin-coin-exempt";
+const CACHE_NAME = "propai-v148-trust-infra-waves";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",
