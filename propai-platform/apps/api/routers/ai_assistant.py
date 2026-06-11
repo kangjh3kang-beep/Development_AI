@@ -5,8 +5,6 @@
 서버 env의 ANTHROPIC/OPENAI 키를 사용하므로 사용자가 별도 키를 넣지 않아도 동작한다.
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import os

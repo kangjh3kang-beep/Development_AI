@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v145-refactor-upgrade";
+const CACHE_NAME = "propai-v146-cards-clickable";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

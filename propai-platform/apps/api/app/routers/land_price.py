@@ -1,7 +1,5 @@
 """토지 적정 매입가 추정 라우터 — 토지조서 매입예정가 자동 산정."""
 
-from __future__ import annotations
-
 from fastapi import APIRouter, Request
 from fastapi.responses import Response
 from pydantic import BaseModel
