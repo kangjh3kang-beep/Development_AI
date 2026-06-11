@@ -23,6 +23,8 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { apiClient } from "@/lib/api-client";
 import { BankReadyReportBuilder } from "@/components/report/BankReadyReportBuilder";
+import { EvidencePanel } from "@/components/common/EvidencePanel";
+import type { EvidenceItem, EvidenceLegalRef } from "@/components/common/EvidencePanel";
 
 /* ── 공사비 estimate-overview 응답(필요 필드만) ── */
 interface CostOverview {
@@ -69,6 +71,50 @@ function carbonGrade(perSqm?: number | null): { label: string; tone: string } | 
   return { label: "개선필요", tone: "text-rose-400 border-rose-400/30 bg-rose-400/10" };
 }
 
+/* ── FAR/BCR 법규 근거(신뢰 레이어·additive) ──
+   설계 적용값(designData.far/bcr SSOT)과 법정한도(siteAnalysis.ordinance SSOT)를
+   EvidencePanel로 표시하고, 법령 원문 링크는 W1이 저장한
+   siteAnalysis.trustMeta?.legalRefs(레지스트리 출력)를 "재사용"한다(중복 fetch 금지).
+   trustMeta/한도가 없으면 해당 행·칩만 생략(옵셔널 가드 — 구버전 응답 무손상). */
+
+/** 백엔드 legal_refs[] 레코드(레지스트리 출력) — 필요한 필드만 옵셔널로. */
+type DesignLegalRef = {
+  key?: string | null;
+  law_name?: string | null;
+  article?: string | null;
+  title?: string | null;
+  url?: string | null;
+};
+
+/** SSOT(siteAnalysis.trustMeta?.legalRefs)에서 법령 근거 배열을 안전하게 읽는다.
+ *  store 타입에 trustMeta가 명명돼 있지 않으므로(가산 저장) 좁은 캐스트로만 접근. */
+function readTrustLegalRefs(siteAnalysis: unknown): DesignLegalRef[] {
+  const meta = (
+    siteAnalysis as { trustMeta?: { legalRefs?: DesignLegalRef[] | null } | null } | null
+  )?.trustMeta;
+  const refs = meta?.legalRefs;
+  if (!Array.isArray(refs)) return [];
+  return refs.filter((r) => r && typeof r.law_name === "string" && r.law_name.trim());
+}
+
+/** 근거키 우선순위로 법령 칩 데이터를 고른다. url은 백엔드 제공값만(직접 조립 금지). */
+function pickLegalRef(refs: DesignLegalRef[], keys: string[]): EvidenceLegalRef | null {
+  for (const key of keys) {
+    const hit = refs.find((r) => (r.key ?? "").trim() === key);
+    if (hit?.law_name) {
+      return { lawName: hit.law_name, article: hit.article, title: hit.title, url: hit.url };
+    }
+  }
+  return null;
+}
+
+/** 퍼센트 표시(소수 1자리까지, 정수는 정수로). null/비정상 → null(행 생략). */
+function fmtPctLabel(v?: number | null): string | null {
+  if (v == null || !isFinite(v)) return null;
+  const n = Math.round(v * 10) / 10;
+  return `${n}%`;
+}
+
 interface Props {
   projectId: string;
   /** 스튜디오가 이미 받아온 설계해설(있으면 재호출 없이 표면화만). */
@@ -81,6 +127,7 @@ export function DesignOutcomeSummary({ projectId, designAi }: Props) {
   const costData = useProjectContextStore((s) => s.costData);
   const feasibilityData = useProjectContextStore((s) => s.feasibilityData);
   const esgData = useProjectContextStore((s) => s.esgData);
+  const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
   const updateCostData = useProjectContextStore((s) => s.updateCostData);
 
   // ── 설계↔공사비 1회 산정(디바운스·무한루프 가드) ──
@@ -162,6 +209,66 @@ export function DesignOutcomeSummary({ projectId, designAi }: Props) {
   const profitRate = feasibilityData?.profitRatePct ?? null;
 
   const cGrade = carbonGrade(esgData?.totalCarbonPerSqm);
+
+  // ── FAR/BCR 법규 근거(additive) — SSOT 읽기만(재호출·재계산 없음). ──
+  // 설계 적용값(designData)과 법정/조례 한도(siteAnalysis.ordinance)를 트레이스하고,
+  // 법령 원문 칩은 W1이 저장한 trustMeta.legalRefs(레지스트리 출력)를 재사용한다.
+  // 데이터가 하나도 없으면 items가 비고, EvidencePanel은 빈 배열에서 렌더하지 않는다.
+  const farBcrEvidence: EvidenceItem[] = (() => {
+    const items: EvidenceItem[] = [];
+    const refs = readTrustLegalRefs(siteAnalysis);
+    const ord = siteAnalysis?.ordinance ?? null;
+    // 한도: 실효(조례 반영) 우선 → 법정 상한. 둘 다 없으면 한도 행 생략(무목업).
+    const farLimit = fmtPctLabel(ord?.effectiveFar ?? ord?.nationalFar);
+    const bcrLimit = fmtPctLabel(ord?.effectiveBcr ?? ord?.nationalBcr);
+    // 조례 실효값이 실제 조회된 경우에만 조례 근거키를 우선(가짜 조례링크 방지).
+    const farRef = pickLegalRef(
+      refs,
+      ord?.ordinanceFar != null ? ["ordinance_far", "far_limit", "far_law"] : ["far_limit", "far_law"],
+    );
+    const bcrRef = pickLegalRef(
+      refs,
+      ord?.ordinanceBcr != null ? ["ordinance_bcr", "bcr_limit", "bcr_law"] : ["bcr_limit", "bcr_law"],
+    );
+    const limitBasis = ord?.legalBasis?.trim() || "법정·조례 한도(부지분석 SSOT)";
+
+    const farApplied = fmtPctLabel(designData?.far);
+    if (farApplied) {
+      items.push({
+        label: "적용 용적률",
+        value: farApplied,
+        basis: "AI 설계 적용값",
+        // 한도 행이 없으면(한도 미수집) 근거 칩을 적용 행에 부착해 법령 원문은 잃지 않는다.
+        legalRef: farLimit ? null : farRef,
+      });
+    }
+    if (farLimit) {
+      items.push({
+        label: ord?.ordinanceFar != null ? "용적률 한도(조례 실효)" : "법정 용적률 한도",
+        value: farLimit,
+        basis: limitBasis,
+        legalRef: farRef,
+      });
+    }
+    const bcrApplied = fmtPctLabel(designData?.bcr);
+    if (bcrApplied) {
+      items.push({
+        label: "적용 건폐율",
+        value: bcrApplied,
+        basis: "AI 설계 적용값",
+        legalRef: bcrLimit ? null : bcrRef,
+      });
+    }
+    if (bcrLimit) {
+      items.push({
+        label: ord?.ordinanceBcr != null ? "건폐율 한도(조례 실효)" : "법정 건폐율 한도",
+        value: bcrLimit,
+        basis: limitBasis,
+        legalRef: bcrRef,
+      });
+    }
+    return items;
+  })();
 
   // 설계해설 6섹션(있는 것만).
   const aiSections: [string, string][] = [
@@ -280,6 +387,15 @@ export function DesignOutcomeSummary({ projectId, designAi }: Props) {
               ※ 예상 ROI·NPV는 <b className="text-[var(--text-secondary)]">수지분석</b> 화면에서 산출 시 자동 연동됩니다(가짜 수치 미표시).
             </p>
           )}
+
+          {/* ── ①-b FAR/BCR 법규 근거(EvidencePanel·additive) ──
+              적용값(designData)·법정한도(siteAnalysis SSOT)·법령 원문 칩(trustMeta.legalRefs
+              재사용 — 중복 fetch 금지). 데이터 없으면 EvidencePanel이 스스로 렌더하지 않는다. */}
+          <EvidencePanel
+            title="설계 법규 근거 · 용적률/건폐율"
+            items={farBcrEvidence}
+            defaultOpen={false}
+          />
 
           {/* ── ② 환경분석 인라인(ESG 배지) ── */}
           <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] px-5 py-3.5">

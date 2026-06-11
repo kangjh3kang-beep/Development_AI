@@ -188,6 +188,8 @@ class TaxResultResponse(BaseModel):
     construction: dict[str, Any] = {}
     sale: dict[str, Any] = {}
     disposal: dict[str, Any] = {}
+    # 법령 원문링크(레지스트리 출력 — 세목별 근거. additive, 구버전 빈 배열)
+    legal_refs: list[dict[str, Any]] = []
 
 
 class ModuleListResponse(BaseModel):

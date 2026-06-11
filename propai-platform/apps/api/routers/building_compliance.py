@@ -16,6 +16,70 @@ from apps.api.services.building_compliance_service import BuildingComplianceServ
 router = APIRouter()
 
 
+# ── WP-P: 법령 근거 레지스트리 연동(additive·graceful) ──────────────────────
+# 인허가 룰체크의 legal_basis 자유문자열은 그대로 유지하고, 레지스트리에 검증 등록된
+# 근거만 legal_refs[]로 가산한다. 레지스트리 미등록 근거(건축법 제46·47조, 제60조,
+# 장애인등편의법 등)는 매핑하지 않음 — 텍스트만 표기(할루시네이션 링크 금지).
+
+# BuildingCodeRuleEngine 8룰(rule_id) → 레지스트리 키.
+_RULE_LEGAL_REF_KEYS: dict[str, list[str]] = {
+    "BL-001": ["bcr_limit"],                              # 건폐율 — 국토계획법 시행령 §84
+    "BL-002": ["far_limit"],                              # 용적률 — 국토계획법 시행령 §85
+    "BL-003": ["daylight_height"],                        # 높이제한 — 건축법 §61(§60 미등록)
+    "BL-004": [],                                          # 건축선 후퇴 — §46·47 미등록(텍스트만)
+    "BL-005": ["parking_min", "parking_min_dec"],         # 주차 — 주차장법 §19 + 시행령 §6
+    "BL-006": ["daylight_height", "daylight_height_dec"],  # 일조 — 건축법 §61 + 시행령 §86
+    "BL-007": ["evacuation"],                              # 피난·방화 — 건축법 §49(모법)
+    "BL-008": [],                                          # 장애인 편의 — 미등록(텍스트만)
+}
+
+# 설계정합 검증(/check) 위반유형(type) → 레지스트리 키.
+_VIOLATION_LEGAL_REF_KEYS: dict[str, list[str]] = {
+    "building_coverage": ["bcr_limit"],
+    "floor_area_ratio": ["far_limit"],
+    "height": [],                          # 가로구역 높이(건축법 §60) 미등록 — 텍스트만
+    "setback": ["site_open_space"],        # 대지 안의 공지 — 건축법 §58
+    "sunlight": ["daylight_height"],       # 일조 — 건축법 §61
+    "structure": ["structure_safety"],     # 구조내력 — 건축법 §48
+}
+
+# 설계 전 검토(_pre_design_review) rule_code → 레지스트리 키.
+_PRE_DESIGN_LEGAL_REF_KEYS: dict[str, list[str]] = {
+    "건폐율 상한": ["bcr_limit"],
+    "용적률 상한": ["far_limit"],
+    "buildable_scale": ["bcr_limit", "far_limit"],
+    # "최고 높이"·"zone_unknown" — 정확한 근거키 미등록 → 미매핑(텍스트만).
+}
+
+# 주택법 사업계획승인 대상 건물유형(부분일치).
+_HOUSING_TYPES = ("아파트", "공동주택", "다세대주택", "연립주택", "도시형생활주택")
+
+
+def _legal_refs_for(keys: list[str]) -> list[dict[str, Any]]:
+    """레지스트리 키 → legal_refs 직렬화. 미등록 키는 레지스트리가 자동 스킵.
+
+    URL은 전적으로 get_legal_refs 출력만 사용(여기서 URL 조립 금지). 예외 시 빈 배열
+    (graceful — 기존 응답 무손상).
+    """
+    if not keys:
+        return []
+    try:
+        from app.services.legal.legal_reference_registry import get_legal_refs
+
+        return get_legal_refs(keys)
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _permit_base_keys(building_type: str | None) -> list[str]:
+    """인허가 공통 근거키 — 건축허가(건축법 §11) + 주택유형이면 주택법 사업계획승인(§15)."""
+    keys = ["building_permit"]
+    bt = (building_type or "").strip()
+    if bt and any(t in bt for t in _HOUSING_TYPES):
+        keys.append("housing_project_approval")
+    return keys
+
+
 class DesignPayload(BaseModel):
     """CAD 설계 데이터 요청 본문."""
 
@@ -179,6 +243,18 @@ async def _pre_design_review(req: "CheckRequest") -> dict[str, Any]:
         except Exception:
             pass
 
+    # ── WP-P: 법령 근거 칩 가산(additive) — 항목별 + 응답 레벨. 기존 문자열 유지 ──
+    for c in checks:
+        c.setdefault(
+            "legal_refs",
+            _legal_refs_for(_PRE_DESIGN_LEGAL_REF_KEYS.get(str(c.get("rule_code", "")), [])),
+        )
+    _top_keys = _permit_base_keys(req.building_type)
+    if matched:
+        for k in ("bcr_limit", "far_limit"):
+            if k not in _top_keys:
+                _top_keys.append(k)
+
     return {
         "project_id": req.project_id,
         "phase": "pre_design",
@@ -187,6 +263,7 @@ async def _pre_design_review(req: "CheckRequest") -> dict[str, Any]:
         "overall_status": overall_status,
         "checks": checks,
         "summary": summary,
+        "legal_refs": _legal_refs_for(_top_keys),
     }
 
 
@@ -226,6 +303,10 @@ async def check_compliance(
                 f"(현재 {v.get('current_value')}, 한도 {v.get('limit_value')})"
             ).strip(),
             "regulation_ref": v.get("type", ""),
+            # WP-P: 위반유형 → 레지스트리 근거 칩(additive·미매핑은 빈 배열).
+            "legal_refs": _legal_refs_for(
+                _VIOLATION_LEGAL_REF_KEYS.get(str(v.get("type", "")), [])
+            ),
         }
         for v in violations
     ]
@@ -318,6 +399,13 @@ async def check_compliance(
     except Exception:
         pass
 
+    # ── WP-P: 응답 레벨 법령 근거(additive) — 공통 인허가 + 위반항목 근거 합산 ──
+    _top_keys = _permit_base_keys(req.building_type)
+    for v in violations:
+        for k in _VIOLATION_LEGAL_REF_KEYS.get(str(v.get("type", "")), []):
+            if k not in _top_keys:
+                _top_keys.append(k)
+
     return {
         "project_id": req.project_id,
         "violations": violations,
@@ -325,6 +413,7 @@ async def check_compliance(
         "overall_status": overall_status,
         "checks": checks,
         "summary": summary,
+        "legal_refs": _legal_refs_for(_top_keys),
     }
 
 
@@ -423,6 +512,9 @@ class RuleCheckItem(BaseModel):
     required_value: str
     actual_value: str
     message: str
+    # WP-P: 룰별 법령 근거 칩(additive·기본 빈 배열 — 구버전 소비자 무영향).
+    # legal_basis 자유문자열은 그대로 두고, 레지스트리 검증 근거만 가산한다.
+    legal_refs: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class RuleCheckResponse(BaseModel):
@@ -436,6 +528,8 @@ class RuleCheckResponse(BaseModel):
     na_count: int = 0
     results: list[RuleCheckItem] = Field(default_factory=list)
     summary: str | None = None
+    # WP-P: 응답 레벨 법령 근거(additive) — 공통 인허가 + 8룰 근거 합산(중복 제거).
+    legal_refs: list[dict[str, Any]] = Field(default_factory=list)
 
 
 @router.post("/rule-check", response_model=RuleCheckResponse)
@@ -501,6 +595,9 @@ async def rule_check(req: RuleCheckRequest) -> RuleCheckResponse:
             required_value=r.required_value,
             actual_value=r.actual_value,
             message=r.message,
+            # WP-P: 룰 성격별 레지스트리 근거 칩(additive). 미매핑 룰은 빈 배열
+            # (legal_basis 텍스트만 — 할루시네이션 링크 금지).
+            legal_refs=_legal_refs_for(_RULE_LEGAL_REF_KEYS.get(r.rule_id, [])),
         )
         for r in raw_results
     ]
@@ -515,6 +612,13 @@ async def rule_check(req: RuleCheckRequest) -> RuleCheckResponse:
         f"검토필요 {warning_count} / 해당없음 {na_count}."
     )
 
+    # ── WP-P: 응답 레벨 법령 근거(additive) — 공통 인허가 + 8룰 매핑 합산(중복 제거) ──
+    _top_keys = _permit_base_keys(req.building_type)
+    for r in raw_results:
+        for k in _RULE_LEGAL_REF_KEYS.get(r.rule_id, []):
+            if k not in _top_keys:
+                _top_keys.append(k)
+
     return RuleCheckResponse(
         zone_code=req.zone_code,
         zone_name=matched_zone,
@@ -525,6 +629,7 @@ async def rule_check(req: RuleCheckRequest) -> RuleCheckResponse:
         na_count=na_count,
         results=results,
         summary=summary,
+        legal_refs=_legal_refs_for(_top_keys),
     )
 
 

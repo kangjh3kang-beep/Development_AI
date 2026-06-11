@@ -16,6 +16,7 @@ import {
 } from "recharts";
 import { useFeasibilityV2Store } from "@/store/use-feasibility-v2-store";
 import { FeasibilitySimulationWidget } from "@/components/finance/FeasibilitySimulationWidget";
+import { EvidencePanel, type EvidenceItem } from "@/components/common/EvidencePanel";
 
 function formatWon(value: number): string {
   if (value == null || !Number.isFinite(value)) return "—";
@@ -57,6 +58,70 @@ const TERM_DEFINITIONS = {
   ROI: "투자자본수익률 (Return on Investment): 투자액 대비 순이익 비율을 나타내는 지표입니다.",
   NPV: "순현재가치 (Net Present Value): 미래에 발생할 현금흐름을 현재 가치로 환산하여 투자 타당성을 평가하는 지표입니다.",
 };
+
+/* ── WP-S 신뢰 블록(옵셔널·additive) — /calculate 응답의 evidence[]·legal_refs[] ── */
+
+/** 법령 원문링크 근거(레지스트리 get_legal_refs 출력) — url은 백엔드 제공값만. */
+type LegalRef = {
+  key?: string | null;
+  law_name?: string | null;
+  article?: string | null;
+  title?: string | null;
+  url?: string | null;
+  url_status?: string | null;
+};
+
+/** 수치 산출 트레이스 1건(EvidencePanel 항목 원천). */
+type EvidenceTrace = {
+  label?: string | null;
+  value?: string | number | null;
+  basis?: string | null;
+  /** 이 항목과 연결할 법령 근거키(legal_refs[].key와 매칭해 url 주입). */
+  legal_ref_key?: string | null;
+};
+
+/** evidence[] + legal_refs[]를 EvidencePanel 항목으로 결합(정본 패턴:
+ *  ProjectSiteAnalysisWorkspaceClient.buildEvidenceItems와 동일 규약).
+ *  legal_ref_key를 legal_refs[].key와 매칭해 url(백엔드 제공값)을 주입하고,
+ *  매칭 실패/부재 시 legalRef 생략(텍스트만 — 가짜 링크 금지). 구버전 응답
+ *  (두 블록 부재)이면 빈 배열 → EvidencePanel 자체가 렌더되지 않는다(하위호환). */
+function buildEvidenceItems(
+  evidence?: EvidenceTrace[] | null,
+  legalRefs?: LegalRef[] | null,
+): EvidenceItem[] {
+  const traces = Array.isArray(evidence) ? evidence : [];
+  if (traces.length === 0) return [];
+  const refIndex: Record<string, LegalRef> = {};
+  for (const ref of Array.isArray(legalRefs) ? legalRefs : []) {
+    if (ref && typeof ref.key === "string" && ref.key.trim()) {
+      refIndex[ref.key.trim()] = ref;
+    }
+  }
+  const items: EvidenceItem[] = [];
+  for (const trace of traces) {
+    if (!trace || typeof trace !== "object") continue;
+    const label = (trace.label ?? "").toString().trim();
+    if (!label) continue;
+    const value = trace.value ?? "—";
+    const key = trace.legal_ref_key?.trim();
+    const ref = key ? refIndex[key] : undefined;
+    items.push({
+      label,
+      value: typeof value === "number" ? value : String(value),
+      basis: trace.basis ?? null,
+      legalRef:
+        ref && typeof ref.law_name === "string" && ref.law_name.trim()
+          ? {
+              lawName: ref.law_name,
+              article: ref.article,
+              title: ref.title,
+              url: ref.url,
+            }
+          : null,
+    });
+  }
+  return items;
+}
 
 export function FeasibilityResultView() {
   const params = useParams();
@@ -110,6 +175,14 @@ export function FeasibilityResultView() {
   const costData = Object.entries(result.cost_breakdown_won)
     .filter(([, v]) => v > 0)
     .map(([name, value]) => ({ name, value }));
+
+  // WP-S 산출 근거(옵셔널 가드) — 스토어 타입에 없는 가산 필드는 안전하게 좁혀 읽는다.
+  // 구버전 응답(evidence/legal_refs 부재)이면 빈 배열 → 패널 미렌더(기존 화면 무손상).
+  const trust = result as typeof result & {
+    evidence?: EvidenceTrace[] | null;
+    legal_refs?: LegalRef[] | null;
+  };
+  const evidenceItems = buildEvidenceItems(trust.evidence, trust.legal_refs);
 
   return (
     <div className="space-y-12 animate-premium-fade">
@@ -262,6 +335,9 @@ export function FeasibilityResultView() {
                 </PieChart>
               </ResponsiveContainer>
             </div>
+
+            {/* 산출 근거(WP-S evidence[]+legal_refs[]) — 항목이 없으면(구버전 응답) 자동 미표시. */}
+            <EvidencePanel title="산출 근거" items={evidenceItems} className="mt-8" />
           </CardContent>
         </Card>
 

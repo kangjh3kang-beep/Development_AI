@@ -4,6 +4,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Button, Card, CardContent, CardTitle, Input } from "@propai/ui";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
+import { LegalRefChip } from "@/components/common/LegalRefChip";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { NumberInput } from "@/components/common/NumberInput";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
@@ -24,6 +25,16 @@ type ProjectResponse = {
   updated_at: string;
 };
 
+/** 백엔드 legal_reference_registry 직렬화 레코드(WP-P additive — 구버전 응답엔 없음). */
+type LegalRef = {
+  key?: string;
+  law_name: string;
+  article?: string | null;
+  title?: string | null;
+  url?: string | null;
+  url_status?: string;
+};
+
 type ComplianceCheckResponse = {
   overall_status: "pass" | "fail" | "warning";
   checks: Array<{
@@ -32,8 +43,12 @@ type ComplianceCheckResponse = {
     status: "pass" | "fail" | "warning";
     detail: string;
     regulation_ref: string;
+    /** WP-P: 항목별 법령 근거 칩(옵셔널 가드 — 구버전 응답 무손상). */
+    legal_refs?: LegalRef[];
   }>;
   summary: string;
+  /** WP-P: 응답 레벨 법령 근거(공통 인허가 + 위반항목 합산). */
+  legal_refs?: LegalRef[];
 };
 
 type ChecklistItem = {
@@ -650,13 +665,24 @@ export function ProjectPermitWorkspaceClient({
             </p>
             {complianceResult ? (
               <div className="mt-4 space-y-4">
-                <div className="flex items-center gap-3">
+                <div className="flex flex-wrap items-center gap-2">
                   <span
                     className={`rounded-full border px-4 py-1.5 text-xs font-bold ${statusBadgeClass(complianceResult.overall_status)}`}
                   >
                     {labels.complianceOverallLabel}:{" "}
                     {statusText(complianceResult.overall_status)}
                   </span>
+                  {/* WP-P: 판정 옆 법령 근거 칩 — 백엔드 legal_refs[]가 있을 때만(옵셔널 가드, 구버전 무손상).
+                      url은 백엔드 레지스트리 제공값만 사용(LegalRefChip이 무링크 텍스트 폴백). */}
+                  {(complianceResult.legal_refs ?? []).map((ref, j) => (
+                    <LegalRefChip
+                      key={`overall-ref-${ref.key ?? j}`}
+                      lawName={ref.law_name}
+                      article={ref.article}
+                      title={ref.title}
+                      url={ref.url}
+                    />
+                  ))}
                 </div>
                 <div className="space-y-3">
                   {(complianceResult.checks ?? []).map((check, i) => (
@@ -678,6 +704,21 @@ export function ProjectPermitWorkspaceClient({
                           <p className="mt-1 text-xs text-[var(--text-tertiary)]">
                             {labels.complianceRefLabel}: {check.regulation_ref}
                           </p>
+                          {/* WP-P: 룰 카드별 법령 원문 칩 — legal_refs 있을 때만 렌더(옵셔널 가드).
+                              기존 regulation_ref 텍스트는 그대로 유지(additive). */}
+                          {(check.legal_refs ?? []).length > 0 && (
+                            <div className="mt-2 flex flex-wrap gap-1.5">
+                              {(check.legal_refs ?? []).map((ref, j) => (
+                                <LegalRefChip
+                                  key={`check-${i}-ref-${ref.key ?? j}`}
+                                  lawName={ref.law_name}
+                                  article={ref.article}
+                                  title={ref.title}
+                                  url={ref.url}
+                                />
+                              ))}
+                            </div>
+                          )}
                         </div>
                         <span
                           className={`shrink-0 rounded-full border px-3 py-1 text-[10px] font-bold ${statusBadgeClass(check.status)}`}

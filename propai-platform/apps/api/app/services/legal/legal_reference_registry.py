@@ -112,6 +112,7 @@ _BLDG = "건축법"
 _BLDG_DEC = "건축법 시행령"
 _PARKING = "주차장법"
 _PARKING_DEC = "주차장법 시행령"
+_GREEN = "녹색건축물 조성 지원법"
 
 LEGAL_REFERENCES: dict[str, dict[str, str]] = {
     # ── 국토의 계획 및 이용에 관한 법률 ──
@@ -146,6 +147,24 @@ LEGAL_REFERENCES: dict[str, dict[str, str]] = {
     "parking_min_dec":    _ref(_PARKING_DEC, "제6조", "부설주차장의 설치기준(별표1 위임)"),
     # ── 지방세법 ──
     "acquisition_tax":    _ref("지방세법", "제11조", "부동산 취득의 세율"),
+    # ── WP-R 확장: 세금 ──
+    "capital_gains_tax":          _ref("소득세법", "제104조", "양도소득세의 세율"),
+    "comprehensive_property_tax": _ref("종합부동산세법", None, "종합부동산세(주택·토지분, 현행본)"),
+    "reconstruction_levy":        _ref("재건축초과이익 환수에 관한 법률", None, "재건축부담금(재건축초과이익 환수)"),
+    "local_education_tax":        _ref("지방세법", None, "지방교육세(지방세법 내 목적세, 현행본)"),
+    "stamp_tax":                  _ref("인지세법", "제3조", "과세문서 및 세액"),
+    # ── WP-R 확장: 인허가 (housing_project_approval은 _ALIASES → housing_approval) ──
+    "building_permit":            _ref(_BLDG, "제11조", "건축허가"),
+    "use_permission":             _ref(_BLDG, "제22조", "건축물의 사용승인"),
+    # ── WP-R 확장: 설계 ──
+    "evacuation":                 _ref(_BLDG, "제49조", "건축물의 피난시설 및 용도제한 등"),
+    "structure_safety":           _ref(_BLDG, "제48조", "구조내력 등(구조안전 확인)"),
+    # ── WP-R 확장: ESG — 조문 딥링크 미검증 → 법령 루트 폴백(잘못된 조문 추정 금지) ──
+    "green_building":             _ref(_GREEN, None, "녹색건축 인증"),
+    "energy_efficiency":          _ref(_GREEN, None, "건축물 에너지효율등급 인증"),
+    "zeb_certification":          _ref(_GREEN, None, "제로에너지건축물(ZEB) 인증"),
+    # ── WP-R 확장: 정비 (법령 루트) ──
+    "urban_redevelopment":        _ref("도시 및 주거환경정비법", None, "도시·주거환경정비사업(현행본)"),
     # ── 조례(동적) — sigungu 런타임 치환. url은 조례명 확정 시 build_ordinance_url로 주입 ──
     "ordinance_bcr":      {"law_name": "{sigungu} 도시계획 조례", "article": "", "title": "건폐율(지자체별)", "url": ""},
     "ordinance_far":      {"law_name": "{sigungu} 도시계획 조례", "article": "", "title": "용적률(지자체별)", "url": ""},
@@ -161,6 +180,8 @@ _ALIASES: dict[str, str] = {
     "parking": "parking_min",                  # ②-3 키
     "parking_dec": "parking_min_dec",          # ②-3 키
     "acq_tax": "acquisition_tax",              # ②-3 키
+    # WP-R 도메인 확장 별칭 — 기존 레코드 재사용(중복 데이터 0).
+    "housing_project_approval": "housing_approval",  # 주택법 제15조 사업계획승인
 }
 
 

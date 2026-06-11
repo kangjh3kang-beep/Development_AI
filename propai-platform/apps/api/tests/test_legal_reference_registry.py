@@ -42,6 +42,28 @@ BLUEPRINT_ALIASES = [
     "parking_dec",
 ]
 
+# WP-R 도메인 확장 신규 키(5도메인: 세금·인허가·설계·ESG·정비).
+WP_R_NEW_KEYS = [
+    # 세금
+    "capital_gains_tax",
+    "comprehensive_property_tax",
+    "reconstruction_levy",
+    "local_education_tax",
+    "stamp_tax",
+    # 인허가
+    "building_permit",
+    "use_permission",
+    # 설계
+    "evacuation",
+    "structure_safety",
+    # ESG
+    "green_building",
+    "energy_efficiency",
+    "zeb_certification",
+    # 정비
+    "urban_redevelopment",
+]
+
 
 class TestRequiredKeysPresent:
     def test_required_keys_exist(self):
@@ -238,6 +260,83 @@ class TestGetLegalRefsList:
         """별칭 입력 시 출력 key는 정식 키로 정규화."""
         refs = get_legal_refs(["bldg_height"])
         assert refs[0]["key"] == "daylight_height"
+
+
+class TestWpRDomainExpansion:
+    """WP-R: 5도메인(세금·인허가·설계·ESG·정비) 확장 키 — 존재·URL 형식·루트 폴백 검증."""
+
+    @pytest.mark.parametrize("key", WP_R_NEW_KEYS)
+    def test_new_keys_exist(self, key):
+        assert get_legal_ref(key) is not None, f"WP-R 신규 키 누락: {key}"
+
+    def test_preexisting_keys_confirmed(self):
+        """기존재 확인 대상: acquisition_tax·daylight_height·housing_approval(주택법 제15조)."""
+        acq = get_legal_ref("acquisition_tax")
+        assert acq["law_name"] == "지방세법" and acq["article"] == "제11조"
+        day = get_legal_ref("daylight_height")
+        assert day["law_name"] == "건축법" and day["article"] == "제61조"
+        hsg = get_legal_ref("housing_approval")
+        assert hsg["law_name"] == "주택법" and hsg["article"] == "제15조"
+
+    def test_housing_project_approval_alias(self):
+        """housing_project_approval은 기존 housing_approval 레코드의 별칭(중복 데이터 0)."""
+        assert get_legal_ref("housing_project_approval") == get_legal_ref("housing_approval")
+        refs = get_legal_refs(["housing_project_approval"])
+        assert refs[0]["key"] == "housing_approval"
+        assert refs[0]["url_status"] == "verified"
+
+    def test_article_verified_mappings(self):
+        """조문이 확정된 신규 키 — 법령명·조문·딥링크(디코드 동치) 대조."""
+        cases = {
+            "capital_gains_tax": ("소득세법", "제104조"),
+            "stamp_tax": ("인지세법", "제3조"),
+            "building_permit": ("건축법", "제11조"),
+            "use_permission": ("건축법", "제22조"),
+            "evacuation": ("건축법", "제49조"),
+            "structure_safety": ("건축법", "제48조"),
+        }
+        for key, (law, article) in cases.items():
+            ref = get_legal_ref(key)
+            assert ref["law_name"] == law, key
+            assert ref["article"] == article, key
+            decoded = unquote(ref["url"])
+            name_nospace = law.replace(" ", "")
+            assert decoded == f"{LAW_GO_KR_BASE}/법령/{name_nospace}/{article}", key
+
+    @pytest.mark.parametrize(
+        "key,law",
+        [
+            ("comprehensive_property_tax", "종합부동산세법"),
+            ("reconstruction_levy", "재건축초과이익 환수에 관한 법률"),
+            ("local_education_tax", "지방세법"),
+            ("green_building", "녹색건축물 조성 지원법"),
+            ("energy_efficiency", "녹색건축물 조성 지원법"),
+            ("zeb_certification", "녹색건축물 조성 지원법"),
+            ("urban_redevelopment", "도시 및 주거환경정비법"),
+        ],
+    )
+    def test_root_fallback_for_unverified_articles(self, key, law):
+        """조문 미검증 신규 키는 법령 루트 폴백 — 조문 세그먼트 없음(할루시네이션 링크 금지)."""
+        ref = get_legal_ref(key)
+        assert ref["law_name"] == law
+        assert ref["article"] == ""
+        decoded = unquote(ref["url"])
+        name_nospace = law.replace(" ", "")
+        assert decoded == f"{LAW_GO_KR_BASE}/법령/{name_nospace}"
+
+    def test_new_keys_url_status_verified_via_get_legal_refs(self):
+        """신규 키 전부 url 보유(루트 포함) → url_status 'verified', law.go.kr 한글주소 형식."""
+        refs = get_legal_refs(WP_R_NEW_KEYS)
+        assert len(refs) == len(WP_R_NEW_KEYS)
+        prefix = f"{LAW_GO_KR_BASE}/{quote('법령')}/"
+        for rec in refs:
+            assert rec["url_status"] == "verified", rec["key"]
+            assert rec["url"].startswith(prefix), rec["key"]
+
+    def test_existing_required_keys_unchanged(self):
+        """가산 후에도 기존 필수 키·별칭 해석 불변(하위호환)."""
+        for key in REQUIRED_KEYS + BLUEPRINT_ALIASES:
+            assert get_legal_ref(key) is not None, key
 
 
 class TestInjectUrls:

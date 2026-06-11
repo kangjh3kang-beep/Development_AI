@@ -12,6 +12,33 @@ lca_service = LCAService()
 lcc_service = LCCService()
 epd_service = EPDCarbonService()
 
+# ─────────────────────────────────────────────────────────────────────────────
+# 신뢰 레이어(additive): ESG 인증/ZEB 법령 근거(legal_refs) 가산.
+# 기존 응답 필드는 1개도 변경하지 않고 legal_refs 1블록만 setdefault로 가산한다.
+# law.go.kr URL은 legal_reference_registry.get_legal_refs 출력만 사용하며(여기서
+# URL 직접 조립 금지), 레지스트리 실존 키만 쓴다 — 녹색건축 인증·건축물 에너지효율
+# 등급·제로에너지건축물(ZEB) 인증(근거법: 녹색건축물 조성 지원법, 조문 딥링크
+# 미검증 → 법령 루트 링크). 부착 실패 시 원본 무손상 반환(graceful).
+# ─────────────────────────────────────────────────────────────────────────────
+_ESG_LEGAL_REF_KEYS = ["green_building", "energy_efficiency", "zeb_certification"]
+
+
+def _attach_esg_legal_refs(result):
+    """ESG 산출 응답 dict에 인증 법령 근거를 additive로 부착(in-place).
+
+    기존 키는 setdefault로 보존(이미 있으면 덮어쓰지 않음). result가 dict가
+    아니거나 부착 중 예외가 나면 원본을 그대로 반환(기존 응답 무손상).
+    """
+    if not isinstance(result, dict):
+        return result
+    try:
+        from app.services.legal.legal_reference_registry import get_legal_refs
+
+        result.setdefault("legal_refs", get_legal_refs(_ESG_LEGAL_REF_KEYS))
+    except Exception:  # noqa: BLE001
+        pass
+    return result
+
 class LCAMaterialItem(BaseModel):
     name: str
     quantity_kg: float
@@ -118,7 +145,8 @@ async def calculate_lca(req: LCARequest, current_user: User = Depends(get_curren
     except Exception:
         pass
 
-    return result
+    # 인증/ZEB 법령 근거 가산(additive·graceful) — AI 해석의 인증 경로·ZEB 로드맵 근거.
+    return _attach_esg_legal_refs(result)
 
 @router.post("/lcc/calculate")
 async def calculate_lcc(req: LCCRequest, current_user: User = Depends(get_current_user)):

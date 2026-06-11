@@ -7,11 +7,22 @@ import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { useStageAutoRecalc } from "@/hooks/useStageAutoRecalc";
 import { AnalysisVerdict } from "@/components/analysis/AnalysisVerdict";
 import { ExpertPanelCard } from "@/components/common/ExpertPanelCard";
+import { LegalRefChip } from "@/components/common/LegalRefChip";
 import { NumberInput } from "@/components/common/NumberInput";
 import { SiteDataGate } from "@/components/projects/SiteDataGate";
 import type { Locale } from "@/i18n/config";
 
 /* ── Response Types ── */
+
+/** 백엔드 legal_reference_registry 직렬화 레코드 — url은 백엔드 제공값만 사용. */
+type LegalRefItem = {
+  key: string;
+  law_name: string;
+  article?: string | null;
+  title?: string | null;
+  url?: string | null;
+  url_status?: string;
+};
 
 type LcaCalculationResponse = {
   project_id: string;
@@ -36,6 +47,8 @@ type LcaCalculationResponse = {
   epd_coverage?: string;
   gwp_basis?: string;
   ai_analysis?: string;
+  /** 인증/ZEB 법령 근거(additive) — 구버전 응답에는 없으므로 옵셔널 가드 렌더. */
+  legal_refs?: LegalRefItem[];
 };
 
 type CarbonFootprintItem = {
@@ -102,6 +115,7 @@ type Labels = {
   altNameLabel: string;
   altReductionLabel: string;
   altCostImpactLabel: string;
+  legalRefsLabel: string;
   placeholder: string;
 };
 
@@ -142,6 +156,7 @@ const KO_LABELS: Labels = {
   altNameLabel: "대안 자재",
   altReductionLabel: "탄소 저감률",
   altCostImpactLabel: "비용 영향",
+  legalRefsLabel: "인증 법령 근거",
   placeholder: "폼을 제출하면 결과가 표시됩니다.",
 };
 
@@ -182,6 +197,7 @@ const EN_LABELS: Labels = {
   altNameLabel: "Alternative",
   altReductionLabel: "Carbon reduction",
   altCostImpactLabel: "Cost impact",
+  legalRefsLabel: "Certification legal basis",
   placeholder: "Submit the form to see results.",
 };
 
@@ -572,6 +588,24 @@ export function ProjectEsgWorkspaceClient({
                   value={formatCarbon(lcaResult.carbon_per_sqm_kgco2e)}
                 />
               </div>
+              {/* 인증 법령 근거 칩(additive) — 구버전 응답(legal_refs 부재)은 미렌더(무손상).
+                  url은 백엔드 레지스트리 제공값만 사용(LegalRefChip이 무링크 폴백 방어). */}
+              {(lcaResult.legal_refs?.length ?? 0) > 0 ? (
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="text-[10px] uppercase tracking-[0.2em] text-[var(--text-tertiary)]">
+                    {labels.legalRefsLabel}
+                  </span>
+                  {(lcaResult.legal_refs ?? []).map((ref) => (
+                    <LegalRefChip
+                      key={ref.key}
+                      lawName={ref.law_name}
+                      article={ref.article}
+                      title={ref.title}
+                      url={ref.url}
+                    />
+                  ))}
+                </div>
+              ) : null}
               {lcaResult.material_breakdown?.length > 0 && (
                 <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
                   <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">

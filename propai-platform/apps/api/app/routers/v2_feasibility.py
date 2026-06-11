@@ -207,17 +207,213 @@ def _make_base_perturb_fn(base_req: FeasibilityCalculateRequest):
     return perturb_fn, base_out, base_values
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# 신뢰 레이어(additive) — 총사업비 구성 근거 트레이스(evidence[]) + 법령 근거(legal_refs[]).
+# auto_zoning.py의 _build_legal_refs/_build_evidence/_attach_trust_blocks 정본 패턴 준수:
+# 기존 응답 필드는 1개도 변경하지 않고 두 블록만 가산하며, 구축 중 예외가 나면 빈
+# 배열로 강등한다(graceful — 수지 결과 무손상). law.go.kr URL은 반드시
+# legal_reference_registry.get_legal_refs 출력만 사용하고(여기서 URL 조립 금지),
+# 레지스트리에 없는 근거는 링크 없이 텍스트만(할루시네이션 링크 금지).
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class FeasibilityResultTrustResponse(FeasibilityResultResponse):
+    """/calculate 응답 + 신뢰 블록(additive — 기존 필드·타입 불변, 하위호환).
+
+    evidence[]   : 총사업비 구성(토지비·공사비·금융비·세금합계) 산출 트레이스
+                   {label, value, basis, legal_ref_key?}
+    legal_refs[] : 실제 부과된 세목의 법령 근거(레지스트리 get_legal_refs 출력).
+                   far_limit 등 설계한도 키는 수지 산출 근거가 아니므로 미포함.
+    """
+
+    evidence: list[dict[str, Any]] = []
+    legal_refs: list[dict[str, Any]] = []
+
+
+# 통합 세금엔진 항목코드 → 법령 근거 레지스트리 키. 레지스트리 보유분만 매핑하며,
+# 그 외 세목(농어촌특별세·각종 부담금 등)은 링크 없이 합계 텍스트로만 표기한다.
+_TAX_CODE_TO_REF_KEY: dict[str, str] = {
+    "A01": "acquisition_tax",             # 취득세 — 지방세법 제11조
+    "A02": "local_education_tax",         # 지방교육세 — 지방세법(루트)
+    "A04": "stamp_tax",                   # 인지세 — 인지세법 제3조
+    "D01": "capital_gains_tax",           # 양도소득세 — 소득세법 제104조
+    "D05": "reconstruction_levy",         # 재건축부담금 — 재건축초과이익 환수법(루트)
+    "D06": "comprehensive_property_tax",  # 종합부동산세 — 종합부동산세법(루트)
+}
+
+
+def _fmt_won(v) -> str:
+    """원화 표기 — 1234567 → '1,234,567원'. 비수치는 '—'(정직 표기)."""
+    try:
+        return f"{int(round(float(v))):,}원"
+    except (TypeError, ValueError):
+        return "—"
+
+
+def _applied_taxes(tax_detail) -> list[dict[str, Any]]:
+    """tax_detail(통합 세금엔진 출력) 4단계에서 실제 부과(amount_won>0)된 세목 평탄화.
+
+    각 항목: {code, name, amount_won, ref_key}. ref_key는 레지스트리 보유분만
+    부착(그 외 None — 링크 없이 텍스트만). 구조가 다르면 빈 리스트(graceful).
+    """
+    out: list[dict[str, Any]] = []
+    if not isinstance(tax_detail, dict):
+        return out
+    for stage in ("acquisition", "construction", "sale", "disposal"):
+        st = tax_detail.get(stage)
+        items = st.get("items") if isinstance(st, dict) else None
+        for it in items or []:
+            if not isinstance(it, dict):
+                continue
+            try:
+                amount = float(it.get("amount_won") or 0)
+            except (TypeError, ValueError):
+                continue
+            if amount <= 0:
+                continue
+            code = str(it.get("code") or "")
+            out.append({
+                "code": code,
+                "name": str(it.get("name") or code or "세금항목"),
+                "amount_won": int(round(amount)),
+                "ref_key": _TAX_CODE_TO_REF_KEY.get(code),
+            })
+    return out
+
+
+def _build_cost_trust_blocks(
+    output, req: FeasibilityCalculateRequest
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """ModuleOutput → (evidence[], legal_refs[]) — 총사업비 구성 근거 트레이스.
+
+    총사업비 = 토지비+공사비+금융비+기타경비+세금합계(aggregation_engine 합산식과
+    동일 구성)를 구성요소별 한 줄 근거로 트레이스하고, 실제 부과된 세목 중
+    레지스트리 보유분에만 법령 근거(legal_ref_key)를 연결한다. basis의 법령 표기는
+    레지스트리 레코드(law_name·article)에서만 가져온다(단일출처).
+    """
+    taxes = _applied_taxes(getattr(output, "tax_detail", None))
+    ref_keys: list[str] = []
+    for t in taxes:
+        rk = t.get("ref_key")
+        if rk and rk not in ref_keys:
+            ref_keys.append(rk)
+
+    legal_refs: list[dict[str, Any]] = []
+    if ref_keys:
+        try:
+            from app.services.legal.legal_reference_registry import get_legal_refs
+
+            legal_refs = get_legal_refs(ref_keys)
+        except Exception:  # noqa: BLE001 — 레지스트리 실패 시 링크 없이 텍스트만
+            legal_refs = []
+    ref_by_key = {r.get("key"): r for r in legal_refs}
+
+    evidence: list[dict[str, Any]] = []
+    params = req.params or {}
+
+    # 총사업비 — 합산식(구성요소 전체)을 헤드라인으로 명시.
+    evidence.append({
+        "label": "총사업비",
+        "value": _fmt_won(output.total_cost_won),
+        "basis": "토지비 + 공사비 + 금융비 + 기타경비 + 세금 합계",
+    })
+
+    # 토지비 — 공시지가×면적×보정(+보상비). 취득세 등 제세는 세금 합계에 계상(이중계상 방지).
+    if output.total_land_cost_won:
+        basis = (
+            f"공시지가 {_fmt_won(req.official_price_per_sqm)}/㎡ × "
+            f"면적 {req.total_land_area_sqm:,.0f}㎡ × 보정 {req.price_multiplier:g}"
+        )
+        try:
+            comp = float(params.get("compensation_won") or 0)
+        except (TypeError, ValueError):
+            comp = 0.0
+        if comp > 0:
+            basis += f" + 보상비 {_fmt_won(comp)}"
+        evidence.append({
+            "label": "토지비",
+            "value": _fmt_won(output.total_land_cost_won),
+            "basis": basis + " — 취득세 등 제세는 세금 합계에 계상",
+        })
+
+    # 공사비 — 정밀분석 주입값(override) 여부를 정직하게 구분 표기.
+    if output.total_construction_cost_won:
+        try:
+            override_won = float(params.get("construction_cost_override_won") or 0)
+        except (TypeError, ValueError):
+            override_won = 0.0
+        if override_won > 0:
+            constr_basis = "공사비 정밀분석 결과 주입(construction_cost_override_won)"
+        else:
+            constr_basis = (
+                f"연면적 {req.total_gfa_sqm:,.0f}㎡ × 표준단가({req.building_type})"
+            )
+        evidence.append({
+            "label": "공사비",
+            "value": _fmt_won(output.total_construction_cost_won),
+            "basis": constr_basis,
+        })
+
+    # 금융비 — 브릿지·PF·중도금(finance_cost_engine 합산).
+    if output.total_finance_cost_won:
+        evidence.append({
+            "label": "금융비",
+            "value": _fmt_won(output.total_finance_cost_won),
+            "basis": "브릿지·PF·중도금 대출이자·수수료 합산",
+        })
+
+    # 기타경비 — 입력 params(마케팅·관리·예비비) 합산.
+    if output.total_other_cost_won:
+        evidence.append({
+            "label": "기타경비",
+            "value": _fmt_won(output.total_other_cost_won),
+            "basis": "마케팅·관리·예비비 합산(입력 params)",
+        })
+
+    # 세금 합계 — 통합 세금엔진 4단계 합산(부과 건수 정직 표기).
+    if output.total_tax_cost_won:
+        evidence.append({
+            "label": "세금 합계",
+            "value": _fmt_won(output.total_tax_cost_won),
+            "basis": f"취득·공사·분양·양도 4단계 제세공과 합산({len(taxes)}건 부과)",
+        })
+
+    # 개별 세목 — 레지스트리 보유분만(법령 근거 연결). basis는 레지스트리 단일출처.
+    for t in taxes:
+        rk = t.get("ref_key")
+        if not rk:
+            continue
+        ref = ref_by_key.get(rk) or {}
+        law = str(ref.get("law_name") or "").strip()
+        art = str(ref.get("article") or "").strip()
+        basis = f"{law} {art}".strip()
+        evidence.append({
+            "label": f"세금 — {t['name']}",
+            "value": _fmt_won(t["amount_won"]),
+            "basis": basis or None,
+            "legal_ref_key": rk,
+        })
+
+    return evidence, legal_refs
+
+
 @router.post(
     "/calculate",
-    response_model=FeasibilityResultResponse,
+    response_model=FeasibilityResultTrustResponse,
     dependencies=[Depends(enforce_llm_quota)],
 )
 async def calculate_feasibility(req: FeasibilityCalculateRequest):
-    """단일 수지분석 계산."""
+    """단일 수지분석 계산(+ 산출 근거 evidence[]·legal_refs[] 가산 — 기존 필드 불변)."""
     try:
         inp = _request_to_input(req)
         output = _service.calculate(inp)
-        return FeasibilityResultResponse(
+        # 신뢰 블록(additive) — 구축 실패해도 수지 결과는 무손상(빈 배열 폴백).
+        try:
+            evidence, legal_refs = _build_cost_trust_blocks(output, req)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("수지 근거 블록 부착 스킵: %s", str(e)[:120])
+            evidence, legal_refs = [], []
+        return FeasibilityResultTrustResponse(
             development_type=output.development_type,
             module_name=output.module_name,
             total_revenue_won=output.total_revenue_won,
@@ -230,6 +426,8 @@ async def calculate_feasibility(req: FeasibilityCalculateRequest):
             cost_breakdown_won=output.cost_detail,
             tax_detail=output.tax_detail,
             special_detail=output.special_detail,
+            evidence=evidence,
+            legal_refs=legal_refs,
         )
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
