@@ -5,6 +5,8 @@
  * 개발방식)를 sessionStorage로 projects/new 한 화면에만 전달한다.
  *   - PreCheckWorkspace: 결과 ok일 때 CTA에서 write + projects/new로 router.push
  *   - NewProjectPage: mount 1회 read·소비(consume) 후 즉시 삭제(잔존 방지)
+ *   - 경매(AuctionWorkspace)·G2B(G2BBidDashboard) "프로젝트 생성" CTA도 동일 경로 재사용
+ *     (source/memo는 옵셔널 — 기존 작성·소비 코드 무수정 동작)
  */
 
 export const PRECHECK_HANDOFF_KEY = "propai_precheck_handoff";
@@ -18,6 +20,13 @@ export interface PreCheckHandoff {
   bestMethod: string | null;
   /** 추천 개발방식 한글명(예: "일반분양(공동주택)") */
   bestMethodName: string | null;
+  /**
+   * 핸드오프 출처 — 발굴(경매·G2B) 진입을 구분(미지정 시 precheck로 간주).
+   * 옵셔널 추가 필드: consume 검증식(address만 검사)은 불변 → 구 핸드오프와 하위호환.
+   */
+  source?: "precheck" | "auction" | "g2b";
+  /** 발굴 출처 메모(예: 온비드 물건관리번호, G2B 공고명) — projects/new 선채움용 */
+  memo?: string | null;
 }
 
 /** 핸드오프를 sessionStorage에 기록한다(PreCheck·대시보드 체험분석 공용). 실패는 무시. */

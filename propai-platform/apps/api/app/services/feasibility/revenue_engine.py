@@ -100,7 +100,7 @@ def calculate_rental_revenue(
     monthly_rent_per_unit: int = 0,
     management_fee_per_unit: int = 0,
     vacancy_rate: float = 0.05,
-    cap_rate: float = 0.05,
+    cap_rate: float | None = None,
     region: str = "default",
     avg_area_pyeong: float = 0,
     avg_deposit_per_pyeong: float = 0,
@@ -128,9 +128,10 @@ def calculate_rental_revenue(
         {'rental_units', 'total_deposit_won', 'annual_rent_won',
          'annual_net_rent_won', 'capitalized_value_won', 'total_revenue_won'}
     """
-    # 지역 기반 cap_rate 적용 (명시적으로 지정하지 않은 경우)
-    if region != "default" and cap_rate == 0.05:
-        cap_rate = get_regional_cap_rate(region)
+    # 지역 기반 cap_rate 적용 (명시 미지정 시에만 — None 센티널)
+    # (이전: cap_rate == 0.05 값 비교라 사용자가 명시한 0.05도 지역값으로 덮어썼음)
+    if cap_rate is None:
+        cap_rate = get_regional_cap_rate(region) if region != "default" else 0.05
 
     metadata = CalculationMetadata("임대수입")
     metadata.add_source("자본환원율(Cap Rate)", "하드코딩", is_live=False)

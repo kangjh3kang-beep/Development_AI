@@ -42,9 +42,20 @@ class StageRerunRequest(BaseModel):
         default_factory=dict,
         description="해당 단계에 주입할 사용자 수정값 (예: {\"max_far\": 250})",
     )
+    stage_overrides: dict[str, dict[str, Any]] = Field(
+        default_factory=dict,
+        description=(
+            "단계별 사용자 수정값 맵 (다단계, 예: {\"cost\": {\"total_construction_cost\": 1.2e9}, "
+            "\"feasibility\": {\"avg_sale_price_per_pyeong\": 2200}}). "
+            "기존 단일 overrides와 병합된다. 미전달 시 기존 동작과 동일(하위호환)."
+        ),
+    )
     previous_result: dict[str, Any] = Field(
         default_factory=dict,
-        description="이전 파이프라인 실행 결과 (stages dict). 미제공 시 전체 재실행.",
+        description=(
+            "이전 파이프라인 실행 결과. stages는 list[{stage,data}] / {stage:{data}} 양형 모두 수용. "
+            "미제공 시 skip 단계 payload 복원 없이 재실행."
+        ),
     )
 
 
@@ -606,10 +617,14 @@ async def rerun_stage(req: StageRerunRequest):
     사용자가 입력값(overrides)을 수정한 후 해당 단계만 재분석할 수 있다.
 
     동작 방식:
-    1. ``previous_result`` 가 있으면 해당 단계 이전까지의 결과를 보존한다.
+    1. ``previous_result.stages`` 가 있으면 options["previous_stage_data"]로 전달되어
+       파이프라인이 skip 단계 data와 단계간 payload 3종(SiteToDesign/DesignToCost/
+       CostToFeasibility)을 복원한다 — 기본값(500㎡/60%/200%) 왜곡 없이 수정 지점부터
+       정확히 재계산. (list[{stage,data}] / {stage:{data}} 양형 모두 수용)
     2. 지정 단계부터 파이프라인 끝까지 재실행한다.
-    3. ``overrides`` 는 options 에 ``stage_overrides.{stage}`` 키로 주입되어
-       해당 단계 실행 시 참조된다.
+    3. ``stage_overrides`` (다단계) 와 ``overrides`` (단일 — 하위호환) 는 병합되어
+       options["stage_overrides"]로 주입, 각 단계 실행 시 참조된다.
+    4. 응답은 PipelineRunResponse 호환 형상(stages + summary) + rerun_from/report.
     """
     # stage 유효성 검증
     valid_stages = [s.value for s in PipelineStage]
@@ -621,14 +636,32 @@ async def rerun_stage(req: StageRerunRequest):
 
     target_idx = valid_stages.index(req.stage)
 
-    # options 구성: overrides를 stage_overrides 하위에 삽입
-    options: dict[str, Any] = {}
+    # options 구성: 다단계 stage_overrides + 기존 단일 overrides 병합.
+    # 동일 단계 키 충돌 시 기존 계약인 overrides가 우선(단일 필드 호출자의 의도 보존).
+    merged_overrides: dict[str, dict[str, Any]] = {
+        name: dict(ov)
+        for name, ov in (req.stage_overrides or {}).items()
+        if isinstance(ov, dict) and ov
+    }
     if req.overrides:
-        options["stage_overrides"] = {req.stage: req.overrides}
+        merged_overrides[req.stage] = {
+            **merged_overrides.get(req.stage, {}),
+            **req.overrides,
+        }
+
+    options: dict[str, Any] = {}
+    if merged_overrides:
+        options["stage_overrides"] = merged_overrides
 
     # skip_stages: 재실행 대상 이전 단계를 스킵 (이전 결과 유지)
     skip_before = valid_stages[:target_idx]
     options["skip_stages"] = skip_before
+
+    # 이전 결과 → previous_stage_data 주입 (미제공 시 키 자체를 생략 — 하위호환)
+    if req.previous_result:
+        options["previous_stage_data"] = req.previous_result.get(
+            "stages", req.previous_result
+        )
 
     pipeline = ProjectPipeline()
     result = await pipeline.run(
@@ -637,15 +670,13 @@ async def rerun_stage(req: StageRerunRequest):
         options=options,
     )
 
-    # 이전 결과가 제공된 경우, 스킵된 단계의 data를 이전 결과로 채움
+    # 하위호환: 이전 결과로 data가 복원된 skip 단계는 응답에서 completed로 표기
+    # (기존 라우터가 prev data 채움+COMPLETED 처리하던 응답 계약 보존).
     if req.previous_result:
-        prev_stages = req.previous_result.get("stages", req.previous_result)
         for skipped_stage in skip_before:
-            prev_entry = prev_stages.get(skipped_stage)
-            if prev_entry and skipped_stage in result.stages:
-                prev_data = prev_entry.get("data", prev_entry) if isinstance(prev_entry, dict) else {}
-                result.stages[skipped_stage].data = prev_data
-                result.stages[skipped_stage].status = PipelineStatus.COMPLETED
+            sr = result.stages.get(skipped_stage)
+            if sr and sr.status == PipelineStatus.SKIPPED and sr.data:
+                sr.status = PipelineStatus.COMPLETED
 
     stages = _build_stages_response(result)
 
@@ -654,11 +685,19 @@ async def rerun_stage(req: StageRerunRequest):
     report_svc = PipelineReportService()
     report = report_svc.generate(result_dict)
 
+    # 최종 요약 — run_pipeline과 동일 소스(report 단계 data.summary).
+    # _run_report가 SKIPPED+data 단계도 포함하므로 미재계산 단계 결과가 유실되지 않는다.
+    summary: dict[str, Any] = {}
+    report_stage = result.stages.get("report")
+    if report_stage and report_stage.data:
+        summary = report_stage.data.get("summary", {})
+
     return {
         "pipeline_id": result.pipeline_id,
         "project_id": result.project_id,
         "status": result.status.value,
         "rerun_from": req.stage,
         "stages": [s.model_dump() for s in stages],
+        "summary": summary,
         "report": report.model_dump(),
     }

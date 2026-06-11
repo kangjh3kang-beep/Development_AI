@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import Response
 from pydantic import BaseModel
 
+from apps.api.rate_limit import limiter
 from app.services.land_intelligence.land_price_estimator import estimate_land_price
 from app.services.land_intelligence.desk_appraisal_service import desk_appraisal
 
 router = APIRouter(prefix="/api/v1/land-price", tags=["토지 적정가"])
+
+# 비회원 무료체험을 허용하되, 무인증 남용을 막기 위한 IP 기반 제한
+_LAND_PRICE_LIMIT = "10/minute"
 
 
 class LandPriceRequest(BaseModel):
@@ -20,7 +24,8 @@ class LandPriceRequest(BaseModel):
 
 
 @router.post("/estimate")
-async def land_price_estimate(req: LandPriceRequest):
+@limiter.limit(_LAND_PRICE_LIMIT)
+async def land_price_estimate(request: Request, req: LandPriceRequest):
     """공시지가×지역 시세보정으로 적정 매입가 추정(참고값, 수정가능)."""
     return await estimate_land_price(
         pnu=req.pnu, address=req.address,
@@ -44,7 +49,8 @@ class DeskAppraisalRequest(BaseModel):
 
 
 @router.post("/desk-appraisal")
-async def land_desk_appraisal(req: DeskAppraisalRequest):
+@limiter.limit(_LAND_PRICE_LIMIT)
+async def land_desk_appraisal(request: Request, req: DeskAppraisalRequest):
     """예상 탁상감정 — 공시지가기준법 + 거래사례비교법 결합(정식감정 아님, 참고용)."""
     return await desk_appraisal(
         pnu=req.pnu, address=req.address, area_sqm=req.area_sqm,
@@ -58,7 +64,8 @@ async def land_desk_appraisal(req: DeskAppraisalRequest):
 
 
 @router.get("/price-trend")
-async def price_trend(address: str = ""):
+@limiter.limit(_LAND_PRICE_LIMIT)
+async def price_trend(request: Request, address: str = ""):
     """지가변동률 월별·연도별 통계분석(시계열) — 차트/추이 표시용. R-ONE 실데이터."""
     from app.services.land_intelligence.reb_statistics_service import land_price_trend, _sido_of
     t = await land_price_trend(address)
@@ -159,7 +166,8 @@ async def rone_status(keyword: str = "지가변동"):
 
 
 @router.post("/desk-appraisal/pdf")
-async def land_desk_appraisal_pdf(req: DeskAppraisalRequest):
+@limiter.limit(_LAND_PRICE_LIMIT)
+async def land_desk_appraisal_pdf(request: Request, req: DeskAppraisalRequest):
     """예상 탁상감정서 PDF 다운로드."""
     from app.services.land_intelligence.desk_appraisal_pdf import build_desk_appraisal_pdf
 

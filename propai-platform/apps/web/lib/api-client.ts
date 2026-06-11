@@ -1,4 +1,5 @@
 import { resolveMockRequest } from "@/mocks/handlers";
+import { isMockMode } from "@/lib/runtime-mode";
 
 /* ── API base 해석 (단일 source of truth) ──
    v1·v2가 호스트 화이트리스트를 각각 중복 유지하던 결함을 단일 헬퍼로 통합한다.
@@ -43,10 +44,20 @@ export function resolveApiOrigin(): string {
   return PROD_API_ORIGIN;
 }
 
-// 런타임 진단/표시용 베이스(v1) — getRuntimeConfig에서 노출.
-const apiBaseUrl = `${resolveApiOrigin()}/api/v1`;
+/**
+ * v1 API base URL — 컴포넌트별로 호스트 화이트리스트를 중복 하드코딩하던
+ * designApiBase 류의 단일 대체(호출 시점 해석 — SSR/브라우저 분기 안전).
+ * @returns 예) "https://api.4t8t.net/api/v1" | "http://localhost:8000/api/v1"
+ */
+export function apiV1BaseUrl(): string {
+  return `${resolveApiOrigin()}/api/v1`;
+}
 
-const useMocksByDefault = process.env.NEXT_PUBLIC_USE_MOCKS === "true";
+// 런타임 진단/표시용 베이스(v1) — getRuntimeConfig에서 노출.
+const apiBaseUrl = apiV1BaseUrl();
+
+// mock 게이트 판정식은 runtime-mode SSOT 단일 출처를 사용한다("true"일 때만 mock).
+const useMocksByDefault = isMockMode();
 // 보안: NEXT_PUBLIC_* 환경변수는 빌드 시 클라이언트 번들에 포함되므로
 // 토큰을 NEXT_PUBLIC_ 접두사 환경변수에 저장하면 안 됨.
 // 토큰은 localStorage에서만 읽는다.

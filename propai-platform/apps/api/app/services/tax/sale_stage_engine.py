@@ -164,7 +164,8 @@ def calculate_all_sale_stage(
     Returns:
         {'items': [...], 'total_won': int, 'applicable_count': int}
     """
-    items = [
+    # 시행사 부담 항목
+    developer_items = [
         calculate_c01_vat(
             total_sale_amount_won=total_sale_amount_won,
             total_units=total_units,
@@ -175,17 +176,29 @@ def calculate_all_sale_stage(
             building_type=building_type,
         ),
         calculate_c03_ad_charge(total_sale_amount_won=total_sale_amount_won),
-        calculate_c04_buyer_acquisition_tax(total_sale_amount_won=total_sale_amount_won),
-        calculate_c05_registration(total_sale_amount_won=total_sale_amount_won),
-        calculate_c06_housing_bond_buyer(total_sale_amount_won=total_sale_amount_won),
         calculate_c07_infrastructure_charge(total_gfa_sqm=total_gfa_sqm),
         calculate_c08_energy_saving(total_gfa_sqm=total_gfa_sqm),
     ]
+    for it in developer_items:
+        it["borne_by"] = "developer"
 
-    total = sum(it["amount_won"] for it in items)
+    # 분양자(수분양자) 부담 항목 — 참고 정보로 제공하되 시행사 사업비 총액에서 제외
+    # (포함 시 분양가의 약 1.55%가 사업비로 과대계상됨 — 2026-06 리뷰 M-6)
+    buyer_items = [
+        calculate_c04_buyer_acquisition_tax(total_sale_amount_won=total_sale_amount_won),
+        calculate_c05_registration(total_sale_amount_won=total_sale_amount_won),
+        calculate_c06_housing_bond_buyer(total_sale_amount_won=total_sale_amount_won),
+    ]
+    for it in buyer_items:
+        it["borne_by"] = "buyer"
+
+    items = developer_items[:3] + buyer_items + developer_items[3:]  # 기존 C01~C08 순서 유지
+    total = sum(it["amount_won"] for it in developer_items)
+    buyer_total = sum(it["amount_won"] for it in buyer_items)
     return {
         "stage": "sale",
         "items": items,
-        "total_won": total,
+        "total_won": total,  # 시행사 부담만 (수지분석 사업비 합산용)
+        "buyer_borne_total_won": buyer_total,  # 분양자 부담 (참고)
         "applicable_count": len(items),
     }

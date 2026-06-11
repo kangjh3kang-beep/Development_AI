@@ -157,10 +157,17 @@ class AutoDesignEngineService:
     # ── 1단계: 법규 한도 조회 ──
 
     @staticmethod
-    def get_legal_limits(zone_code: str) -> dict[str, float]:
-        """용도지역 코드로 법규 한도를 조회한다."""
+    def get_legal_limits(zone_code: str) -> dict[str, Any]:
+        """용도지역 코드로 법규 한도를 조회한다.
+
+        주의: 본 한도는 ZONE_LIMITS의 국토계획법 시행령 '법정 상한' 기준이며,
+        지자체 도시계획조례·지구단위계획 가감을 반영하지 않는다(설계엔진 경로 한정).
+        조례 실효 한도가 필요한 정밀 산정은 feasibility_service_v2(ordinance_far_pct/
+        ordinance_bcr_pct, land_info_service 출처)를 사용한다. 출처를 정직 표기한다.
+        """
         limits = ZONE_LIMITS.get(zone_code)
-        if limits is None:
+        is_known = limits is not None
+        if not is_known:
             logger.warning("알 수 없는 용도지역 코드, 기본값 사용", zone_code=zone_code)
             limits = _DEFAULT_LIMITS
         return {
@@ -169,6 +176,12 @@ class AutoDesignEngineService:
             "max_height_m": limits.max_height_m,
             "min_setback_m": limits.min_setback_m,
             "sunlight_hours": limits.sunlight_hours,
+            # 정직 출처 표기 — 조례 미반영 법정상한, 미지정 코드는 기본값 폴백
+            "limits_source": "statutory_default" if is_known else "fallback_default",
+            "ordinance_applied": False,
+            "warnings": ([] if is_known else [f"미지정 용도지역 코드 '{zone_code}' — 기본값 적용"]) + [
+                "지자체 조례·지구단위계획 가감 미반영(법정 상한 기준). 조례 실효 한도는 v2 수지엔진 참조.",
+            ],
         }
 
     # ── 2단계: 유효 건축 영역 + 최적 매스 ──

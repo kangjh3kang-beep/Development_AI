@@ -417,19 +417,19 @@ class TestOrchestratorStepReport:
             AgentStepName.AVM: {"estimated_price": 50_000_000_000},
         }
 
+        # _step_report는 모델을 하드코딩하지 않고 get_llm() 단일출처를 사용한다(WP-12).
+        # 따라서 ChatAnthropic 직접 mock이 아니라 llm_provider.get_llm을 패치한다.
         mock_llm = AsyncMock()
         mock_response = MagicMock()
         mock_response.content = "투자 분석 종합 보고서 내용입니다."
         mock_llm.ainvoke = AsyncMock(return_value=mock_response)
 
-        mock_langchain = MagicMock()
-        mock_langchain.ChatAnthropic = MagicMock(return_value=mock_llm)
-
-        with patch.dict("sys.modules", {"langchain_anthropic": mock_langchain}):
+        with patch("app.services.ai.llm_provider.get_llm", return_value=mock_llm):
             result = await orch._step_report(state)
             assert result["status"] == "generated"
             assert result["investment_grade"] in {"A", "B", "C", "D", "E", "F"}
             assert "보고서" in result["final_report"]
+            assert result.get("report_source") == "llm"  # LLM 경로 출처 정직 표기
 
 
 # ═══════════════════════════════════════════════

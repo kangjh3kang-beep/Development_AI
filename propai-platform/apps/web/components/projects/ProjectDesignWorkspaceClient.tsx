@@ -125,7 +125,7 @@ const LABELS: Record<Locale, Labels> = {
     heroTitle: "设计 AI 和 BIM 实时工作区",
     heroDescription: "通过 AI 引擎实时生成当前项目的平面图并进行自动 IFC 分析。",
     heroHint: "此页面基于项目 ID，结合项目生成集，统一驱动 AI 平面设计、BIM 合成与碳排放分析。",
-    tokenHint: "实时 API 调用需要 NEXT_PUBLIC_API_ACCESS_TOKEN 或本地安全令牌。",
+    tokenHint: "분석을 위해 로그인이 필요합니다.",
     authError: "使用实时工作区功能需要 API 身份验证。",
     contextTitle: "项目上下文",
     contextHint: "基于从实时 API 加载的项目元数据，自动建议优化的设计设置。",

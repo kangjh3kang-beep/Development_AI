@@ -46,6 +46,9 @@ class MonteCarloRequest(BaseModel):
     )
     n_simulations: int = Field(default=10_000, ge=100, le=100_000)
     seed: Optional[int] = 42
+    # base 제공 시 변수 합산(simple_npv) 대신 실수지(FeasibilityServiceV2.calculate)
+    # 섭동으로 net_profit_won 분포를 산출한다. 미제공 시 기존 동작 그대로(하위호환).
+    base: Optional[FeasibilityCalculateRequest] = None
 
 
 class OptimizationRequest(BaseModel):
@@ -55,6 +58,20 @@ class OptimizationRequest(BaseModel):
     )
     objective: str = "max_profit"
     max_iter: int = 200
+
+
+class SensitivityScenarioSpec(BaseModel):
+    """민감도 사용자 정의 시나리오(미지정 시 엔진 프리셋 5종 사용)."""
+    name: str
+    # 지원 변수: sale_price | construction_cost | land_cost | interest_rate | project_months
+    variable: str
+    deltas_pct: list[float] = Field(..., description="변동폭 목록(예: [-20,-10,0,10,20])")
+
+
+class SensitivityRequest(BaseModel):
+    """민감도 분석(토네이도) 요청 — 실수지 base 입력 기반."""
+    base: FeasibilityCalculateRequest
+    scenarios: Optional[list[SensitivityScenarioSpec]] = None
 
 
 class TaxCalculateAllRequest(BaseModel):
@@ -146,6 +163,20 @@ class MonteCarloResponse(BaseModel):
     convergence_ratio: float
     n_simulations: int
     histogram: list[dict[str, Any]] = []
+    # ── 실수지 모드 메타(additive — 기본값은 기존 변수합 동작 의미 유지) ──
+    target_metric: str = "variable_sum"   # base 제공 시 "net_profit_won"
+    calc_source: str = "simple_npv"       # base 제공 시 "feasibility_v2"
+    note: Optional[str] = None            # 횟수 상한 등 적용 제약 정직 고지
+
+
+class SensitivityResponse(BaseModel):
+    """민감도 분석(토네이도) 응답 — 시나리오별 실수지 재계산 결과."""
+    base_result: dict[str, Any]
+    scenarios: list[dict[str, Any]] = []
+    tornado: list[dict[str, Any]] = []
+    # 섭동 원점(실수지 산출 기준값) — 어떤 값을 중심으로 변동했는지 출처 표기
+    base_values: dict[str, float] = {}
+    calc_source: str = "feasibility_v2"
 
 
 class TaxResultResponse(BaseModel):

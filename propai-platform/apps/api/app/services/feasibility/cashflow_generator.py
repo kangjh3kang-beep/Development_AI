@@ -86,6 +86,9 @@ class CashflowGenerator:
         cumulative_outflow = 0.0
         outstanding_bridge = 0.0
         outstanding_pf = 0.0
+        equity_in_total = 0.0    # 자기자본 투입 누계 (이익 계산 시 제외용)
+        revenue_received = 0.0   # 분양수입 누계 (잔금 계산 전용 — 대출/자본 유입과 분리)
+        interest_total = 0.0     # 이자 누계
 
         for month in range(total_months):
             inflow = 0.0
@@ -100,6 +103,7 @@ class CashflowGenerator:
                 # 자기자본 투입 (토지비 중 equity_ratio)
                 equity_for_land = land_cost * equity_ratio
                 inflow += equity_for_land
+                equity_in_total += equity_for_land
                 items.append("자기자본(토지)")
 
                 # 브릿지론 실행
@@ -128,6 +132,7 @@ class CashflowGenerator:
                 equity_remaining = equity_amount - land_cost * equity_ratio
                 if equity_remaining > 0:
                     inflow += equity_remaining
+                    equity_in_total += equity_remaining
                     items.append("자기자본(시공)")
 
                 outstanding_bridge = 0.0
@@ -148,13 +153,15 @@ class CashflowGenerator:
                 interest += outstanding_pf * (pf_loan_rate / 12)
                 items.append("PF이자")
             outflow += interest
+            interest_total += interest
 
-            # ── Phase 3: 분양수입 ──
-            if sale_abs_start <= month <= sale_abs_end:
+            # ── Phase 3: 분양수입 (정산월 전까지만 — 잔금에서 일괄 정산) ──
+            if sale_abs_start <= month <= min(sale_abs_end, construction_end):
                 ri = month - sale_abs_start
                 if ri < len(monthly_revenue):
                     rev = monthly_revenue[ri]
                     inflow += rev
+                    revenue_received += rev
                     items.append("분양수입")
 
                     # 분양수입으로 PF 일부 상환
@@ -167,15 +174,11 @@ class CashflowGenerator:
 
             # ── Phase 4: 정산 ──
             if month == construction_end + 1:
-                # 잔여 분양대금 수령
-                received_so_far = sum(
-                    r["inflow"]
-                    for r in rows
-                    if "분양수입" in (r.get("items", "") or "")
-                )
-                remaining_rev = total_revenue - received_so_far
+                # 잔여 분양대금 수령 — 분양수입 누계만 기준(대출·자본 유입과 분리)
+                remaining_rev = total_revenue - revenue_received
                 if remaining_rev > 0:
                     inflow += remaining_rev
+                    revenue_received += remaining_rev
                     items.append("잔금 수령")
 
             if month == construction_end + 2:
@@ -205,7 +208,11 @@ class CashflowGenerator:
             })
 
         # ── 요약 ──
-        net_profit = cumulative_inflow - cumulative_outflow
+        # 자기자본 투입은 자금조달이지 수익이 아님 — 유입 누계에서 제외해야 실제 이익.
+        # (대출은 실행=상환 상쇄, equity는 반환 행이 없으므로 빼지 않으면 이익이 equity만큼 과대)
+        net_profit = cumulative_inflow - cumulative_outflow - equity_in_total
+        # 이익률 분모: 실제 사업비(토지+설계+공사+이자) — 대출 상환액이 섞인 outflow 누계가 아님
+        real_project_cost = land_cost + design_cost + construction_cost + interest_total
 
         # 언레버리지(금융 제외) 프로젝트 IRR — 토지·설계·공사 지출 vs 분양수입만으로 산정.
         # (rows의 net은 대출 드로/상환·자기자본 포함이라 IRR 폭증 → 의미있는 사업 IRR은 무차입 기준)
@@ -218,18 +225,26 @@ class CashflowGenerator:
             m = construction_start + ci
             if m < total_months:
                 unlevered[m] -= monthly_construction[ci]
+        # 수입 분배는 rows와 동일하게: 정산월 전까지 월별, 잔여분은 정산월 일괄
+        scheduled_rev = 0.0
         for ri in range(len(monthly_revenue)):
             m = sale_abs_start + ri
-            if m < total_months:
+            if m < total_months and m <= construction_end:
                 unlevered[m] += monthly_revenue[ri]
+                scheduled_rev += monthly_revenue[ri]
+        settle_m = construction_end + 1
+        if settle_m < total_months and total_revenue > scheduled_rev:
+            unlevered[settle_m] += total_revenue - scheduled_rev
         irr = self._irr_from_netflows(unlevered)
 
         summary = {
             "total_months": total_months,
             "total_inflow": round(cumulative_inflow),
             "total_outflow": round(cumulative_outflow),
+            "equity_in_total": round(equity_in_total),
+            "interest_total": round(interest_total),
             "net_profit": round(net_profit),
-            "profit_rate_pct": round(net_profit / cumulative_outflow * 100, 2) if cumulative_outflow else 0,
+            "profit_rate_pct": round(net_profit / real_project_cost * 100, 2) if real_project_cost else 0,
             "peak_negative_cashflow": round(min(r["cumulative"] for r in rows)),
             "equity_amount": round(equity_amount),
             "bridge_loan_amount": round(bridge_loan_amount),

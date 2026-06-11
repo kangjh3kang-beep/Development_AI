@@ -1,7 +1,11 @@
 """
 대화형 시장분석 AI — 자연어 질문으로 부동산 시장 데이터를 즉시 분석.
 Deepblocks ChatDB 벤치마크.
+
+분석 텍스트는 LLM 우선(get_llm 단일출처) — MOLIT 실데이터만 근거로 생성하며,
+API 키 부재·호출 실패 시 템플릿 분석으로 폴백하고 `analysis_source`로 출처를 표기.
 """
+import json
 import logging
 import re
 from typing import Optional
@@ -35,8 +39,16 @@ class ConversationalMarketAI:
         # Step 3: Execute data retrieval
         data = await self._retrieve_data(intent, params)
 
-        # Step 4: Generate analysis
-        analysis = self._generate_analysis(query, intent, data, params)
+        # Step 4: Generate analysis — LLM 우선, 실패·키 부재 시 템플릿 폴백
+        analysis = None
+        analysis_source = "template"
+        if data.get("statistics"):
+            # 통계(실데이터)가 없으면 LLM을 호출하지 않는다 — 근거 없는 생성 방지
+            analysis = await self._generate_llm_analysis(query, intent, data, params)
+            if analysis is not None:
+                analysis_source = "llm"
+        if analysis is None:
+            analysis = self._generate_analysis(query, intent, data, params)
 
         return {
             "query": query,
@@ -44,6 +56,7 @@ class ConversationalMarketAI:
             "parameters": params,
             "data": data,
             "analysis": analysis,
+            "analysis_source": analysis_source,
             "timestamp": datetime.now().isoformat(),
             "tools_used": [intent["tool"]],
         }
@@ -158,10 +171,80 @@ class ConversationalMarketAI:
 
         return data
 
+    async def _generate_llm_analysis(
+        self, query: str, intent: dict, data: dict, params: dict
+    ) -> Optional[dict]:
+        """LLM으로 MOLIT 실거래 데이터 근거 한정 분석을 생성.
+
+        API 키 부재(get_llm ValueError)·호출 실패·JSON 파싱 실패 시 None을
+        반환하여 호출부가 템플릿 분석(_generate_analysis)으로 폴백하게 한다.
+        반환 dict 키는 템플릿 분석과 동일(summary/details/chart_data/recommendations).
+        """
+        try:
+            from app.services.ai.llm_provider import get_llm
+            from langchain_core.messages import HumanMessage, SystemMessage
+
+            llm = get_llm(timeout=30, max_tokens=1200)
+        except Exception as e:
+            logger.info("LLM 사용 불가 — 템플릿 분석 폴백: %s", str(e)[:80])
+            return None
+
+        # chart_data는 LLM이 아닌 실거래 레코드에서 직접 계산한다(수치 변조 방지)
+        chart_data = self._generate_monthly_chart(data.get("records", []))
+        evidence = {
+            "region": params.get("region_name", "해당 지역"),
+            "period": data.get("period", ""),
+            "total_count": data.get("total_count", 0),
+            "statistics_10k_won": data.get("statistics", {}),
+            "monthly_avg_price_10k": chart_data,
+            "intent": intent.get("type", ""),
+        }
+
+        sys_msg = (
+            "당신은 부동산 시장분석 전문가다. 아래 국토교통부(MOLIT) 실거래 "
+            "데이터만 근거로 한국어 JSON으로 답하라. "
+            "키: summary(핵심 요약 2~3문장), details(데이터 해석 1~2문장), "
+            "recommendations(실행 제안 2~3개 문자열 배열). "
+            "가격 단위는 만원이다. 데이터에 없는 수치는 만들지 말 것."
+        )
+        usr_msg = (
+            f"## 질문\n{query}\n\n"
+            f"## 실거래 데이터\n{json.dumps(evidence, ensure_ascii=False)[:3500]}"
+        )
+
+        try:
+            resp = await llm.ainvoke(
+                [SystemMessage(content=sys_msg), HumanMessage(content=usr_msg)]
+            )
+            raw = resp.content if hasattr(resp, "content") else str(resp)
+            txt = str(raw).strip()
+            if txt.startswith("```"):
+                txt = (
+                    txt.split("```")[1].lstrip("json").strip()
+                    if "```" in txt[3:]
+                    else txt.strip("`")
+                )
+            parsed = json.loads(txt)
+            summary = parsed.get("summary")
+            if not isinstance(summary, str) or not summary.strip():
+                return None
+
+            count = data.get("total_count", 0)
+            return {
+                "summary": summary,
+                "details": parsed.get("details")
+                or f"데이터 출처: 국토교통부 실거래가 공개시스템. 총 {count}건 분석.",
+                "chart_data": chart_data,
+                "recommendations": parsed.get("recommendations") or [],
+            }
+        except Exception as e:
+            logger.warning("LLM 시장분석 실패 — 템플릿 폴백: %s", str(e)[:80])
+            return None
+
     def _generate_analysis(
         self, query: str, intent: dict, data: dict, params: dict
     ) -> dict:
-        """데이터 기반 분석 텍스트 생성."""
+        """데이터 기반 분석 텍스트 생성 (템플릿 폴백 경로)."""
         region = params.get("region_name", "해당 지역")
         months = params.get("months", 6)
         stats = data.get("statistics", {})

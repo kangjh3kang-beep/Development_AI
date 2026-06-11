@@ -152,7 +152,7 @@ function SecretCard({
             <a
               href={item.guide_url}
               target="_blank"
-              rel="noreferrer"
+              rel="noopener noreferrer"
               className="shrink-0 whitespace-nowrap text-xs font-semibold text-[var(--accent-strong)] hover:underline"
             >
               발급 사이트 ↗

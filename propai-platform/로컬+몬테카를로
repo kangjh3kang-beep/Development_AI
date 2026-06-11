@@ -1,8 +1,0 @@
-[main 1440fc1] Phase
- 8 files changed, 989 insertions(+), 51 deletions(-)
- create mode 100644 propai-platform/apps/web/lib/kr-auction-calculator.ts
- create mode 100644 propai-platform/apps/web/lib/kr-carbon-calculator.ts
- create mode 100644 propai-platform/apps/web/lib/kr-construction-cost.ts
- create mode 100644 propai-platform/apps/web/lib/kr-tax-calculator.ts
- create mode 100644 "propai-platform/\353\241\234\354\273\254"
- create mode 100644 "propai-platform/\353\241\234\354\273\254+\353\252\254\355\205\214\354\271\264\353\245\274\353\241\234"

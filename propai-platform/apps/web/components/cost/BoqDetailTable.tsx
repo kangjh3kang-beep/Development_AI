@@ -6,6 +6,9 @@
  *     각 단가에 price_source·basis_year·qto_source(bim ±5% / derived ±12%) 배지.
  *  ② GET /api/v1/cost/unit-prices → 표준(품셈)/시장(KCCI)/실적(null) 단가 3중 비교.
  *  ③ ai_cost_analysis(있으면) AI 해설 카드.
+ *  ④ summary 카드 "이 적산 결과를 수지분석에 반영" — BOQ 합계를 SSOT costData(source:"boq")로
+ *     1방향 주입. 수지 화면의 기존 공사비 오버라이드 라인이 costData를 소비하므로 백엔드 무변경,
+ *     cost 갱신 stamp가 수지·금융 staleness를 자동 트리거한다.
  * 정직성 note·전문 적산사 검토 배지.
  */
 
@@ -19,6 +22,9 @@ import type {
 
 const fcls =
   "w-full rounded-lg border border-[var(--line-strong)] bg-[var(--surface-strong)] px-3 py-2 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]";
+
+// 1평 = 3.305785㎡ — per㎡ 단가의 per평 환산용(코드베이스 공용 관행값).
+const SQM_PER_PYEONG = 3.305785;
 
 function won(v?: number | null): string {
   if (v == null || isNaN(v)) return "—";
@@ -45,6 +51,7 @@ function QtoBadge({ source }: { source?: string }) {
 export function BoqDetailTable({ projectId: projectIdProp }: { projectId?: string }) {
   const ctxProjectId = useProjectContextStore((s) => s.projectId);
   const designData = useProjectContextStore((s) => s.designData);
+  const updateCostData = useProjectContextStore((s) => s.updateCostData);
   const projectId = projectIdProp || ctxProjectId || "default";
 
   const [bt, setBt] = useState("apartment");
@@ -61,6 +68,9 @@ export function BoqDetailTable({ projectId: projectIdProp }: { projectId?: strin
   const [prices, setPrices] = useState<UnitPricesResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
+  // 수지 반영용 — BOQ 실행 시점의 연면적 스냅샷(이후 입력 변경과 무관하게 결과와 정합 유지).
+  const [boqGfaSqm, setBoqGfaSqm] = useState<number | null>(null);
+  const [applied, setApplied] = useState(false);
 
   const run = useCallback(async () => {
     const gfaNum = Number(gfa);
@@ -89,6 +99,8 @@ export function BoqDetailTable({ projectId: projectIdProp }: { projectId?: strin
           .catch(() => null),
       ]);
       setBoq(boqRes);
+      setBoqGfaSqm(gfaNum);
+      setApplied(false); // 새 적산 결과 — 이전 "반영됨" 표시 해제
       if (priceRes) setPrices(priceRes);
     } catch {
       setErr("BOQ 상세적산에 실패했습니다. 입력값을 확인하세요.");
@@ -96,6 +108,29 @@ export function BoqDetailTable({ projectId: projectIdProp }: { projectId?: strin
       setLoading(false);
     }
   }, [bt, gfa, floorsAbove, floorsBelow, structure, projectId]);
+
+  // BOQ 합계 → 수지 costData 1방향 주입(WP-08). CostData는 full replace 계약이므로
+  // BOQ summary가 제공하지 않는 분해 항목(지상/지하/조경·신뢰범위)은 가짜값 대신 null 유지
+  // (confidence_band는 문자열 라벨이라 수치 범위로 환산하지 않는다).
+  const applyToFeasibility = useCallback(() => {
+    const s = boq?.summary;
+    if (!s || !(s.total > 0)) return;
+    const perSqm = boqGfaSqm && boqGfaSqm > 0 ? s.total / boqGfaSqm : null;
+    updateCostData({
+      totalConstructionCostWon: s.total,
+      perSqmWon: perSqm,
+      perPyeongWon: perSqm != null ? perSqm * SQM_PER_PYEONG : null,
+      abovegroundWon: null,
+      undergroundWon: null,
+      landscapeWon: null,
+      directWon: s.direct ?? null,
+      indirectWon: s.indirect ?? null,
+      rangeMinWon: null,
+      rangeMaxWon: null,
+      source: "boq",
+    });
+    setApplied(true);
+  }, [boq, boqGfaSqm, updateCostData]);
 
   const items = boq?.items ?? [];
   const summary = boq?.summary;
@@ -171,24 +206,47 @@ export function BoqDetailTable({ projectId: projectIdProp }: { projectId?: strin
 
       {/* summary */}
       {summary && (
-        <div className="grid gap-4 sm:grid-cols-4">
-          <div className="rounded-2xl border border-[var(--accent-strong)]/30 bg-[var(--accent-soft)] p-5">
-            <p className="text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)]">총 공사비</p>
-            <p className="mt-2 text-2xl font-[1000] text-[var(--accent-strong)]">{eok(summary.total)}</p>
+        <div className="grid gap-3">
+          <div className="grid gap-4 sm:grid-cols-4">
+            <div className="rounded-2xl border border-[var(--accent-strong)]/30 bg-[var(--accent-soft)] p-5">
+              <p className="text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)]">총 공사비</p>
+              <p className="mt-2 text-2xl font-[1000] text-[var(--accent-strong)]">{eok(summary.total)}</p>
+            </div>
+            <div className="rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-strong)] p-5">
+              <p className="text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)]">직접비</p>
+              <p className="mt-2 text-lg font-[1000] text-[var(--text-primary)]">{eok(summary.direct)}</p>
+            </div>
+            <div className="rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-strong)] p-5">
+              <p className="text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)]">간접비</p>
+              <p className="mt-2 text-lg font-[1000] text-[var(--text-primary)]">{eok(summary.indirect)}</p>
+            </div>
+            <div className="rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-strong)] p-5">
+              <p className="text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)]">신뢰등급</p>
+              <p className="mt-2 text-lg font-[1000] text-[var(--text-primary)]">{summary.confidence_grade || "—"}</p>
+              {summary.confidence_band && (
+                <p className="mt-0.5 text-[11px] text-[var(--text-secondary)]">{summary.confidence_band}</p>
+              )}
+            </div>
           </div>
-          <div className="rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-strong)] p-5">
-            <p className="text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)]">직접비</p>
-            <p className="mt-2 text-lg font-[1000] text-[var(--text-primary)]">{eok(summary.direct)}</p>
-          </div>
-          <div className="rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-strong)] p-5">
-            <p className="text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)]">간접비</p>
-            <p className="mt-2 text-lg font-[1000] text-[var(--text-primary)]">{eok(summary.indirect)}</p>
-          </div>
-          <div className="rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-strong)] p-5">
-            <p className="text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)]">신뢰등급</p>
-            <p className="mt-2 text-lg font-[1000] text-[var(--text-primary)]">{summary.confidence_grade || "—"}</p>
-            {summary.confidence_band && (
-              <p className="mt-0.5 text-[11px] text-[var(--text-secondary)]">{summary.confidence_band}</p>
+          {/* WP-08: BOQ 합계 → 수지 costData 주입 — cost stamp가 수지·금융 staleness를 트리거 */}
+          <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-strong)] px-5 py-4">
+            <button
+              onClick={applyToFeasibility}
+              disabled={!(summary.total > 0)}
+              className="rounded-xl border border-[var(--accent-strong)]/50 bg-[var(--accent-soft)] px-5 py-2.5 text-xs font-black text-[var(--accent-strong)] hover:opacity-90 disabled:opacity-50"
+            >
+              이 적산 결과를 수지분석에 반영
+            </button>
+            {applied ? (
+              <span className="text-[11px] font-bold text-emerald-400">
+                반영됨 — 공사비 컨텍스트(출처: BOQ)가 갱신되어 수지·금융 재계산이 제안됩니다.
+              </span>
+            ) : (
+              <span className="text-[11px] text-[var(--text-hint)]">
+                총·직접·간접 공사비를 수지분석 공통 컨텍스트에 주입합니다(출처: BOQ).
+                {!(boqGfaSqm && boqGfaSqm > 0) &&
+                  " 연면적 미확인 — ㎡·평당 단가는 데이터 없음으로 처리됩니다."}
+              </span>
             )}
           </div>
         </div>

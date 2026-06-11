@@ -36,10 +36,23 @@ ACQUISITION_TAX_MATRIX: dict[tuple[str, int, bool], tuple[float, float, float, f
 }
 
 
+def _housing_sliding_rate(purchase_won: int) -> float:
+    """주택 유상취득 표준세율 (지방세법 제11조 1항 8호).
+
+    6억 이하 1%, 6~9억 구간 슬라이딩 (가액/1억 × 2/3 − 3)%, 9억 초과 3%.
+    """
+    if purchase_won <= 600_000_000:
+        return 0.01
+    if purchase_won >= 900_000_000:
+        return 0.03
+    return round((purchase_won / 100_000_000 * 2 / 3 - 3) / 100, 6)
+
+
 def get_acquisition_tax_rates(
     land_category: str,
     house_count: int = 0,
     is_adjusted_area: bool = False,
+    purchase_won: int = 0,
 ) -> dict[str, float]:
     """취득세율 조회.
 
@@ -47,6 +60,8 @@ def get_acquisition_tax_rates(
         land_category: 'forest', 'farmland', 'land'
         house_count: 주택수 (0=비주택, 1=1주택, 2=2주택, 3+=3주택이상)
         is_adjusted_area: 조정대상지역 여부
+        purchase_won: 취득가액 (주택 표준세율 1~3% 슬라이딩 산정용.
+            0이면 슬라이딩 미적용 — 기존 flat 1% 동작 유지)
 
     Returns:
         {'base_rate', 'surcharge_rate', 'education_rate', 'rural_rate', 'total_rate'}
@@ -61,6 +76,13 @@ def get_acquisition_tax_rates(
         rates = ACQUISITION_TAX_MATRIX[key]
 
     base, surcharge, edu, rural = rates
+
+    # 표준세율(중과 아닌 1%) 적용 주택은 가액 기준 1~3% 슬라이딩
+    # (1주택 전체 + 비조정 2주택). 중과(8%/12%) 구간은 flat 유지.
+    if land_category == "land" and house_count >= 1 and base == 0.010 and purchase_won > 0:
+        base = _housing_sliding_rate(purchase_won)
+        edu = round(base * 0.1, 6)  # 주택 지방교육세 = 취득세율 × 1/2 × 20%
+
     return {
         "base_rate": base,
         "surcharge_rate": surcharge,

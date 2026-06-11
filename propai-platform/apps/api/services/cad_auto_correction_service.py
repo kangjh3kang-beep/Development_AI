@@ -4,7 +4,7 @@
 위반 시 자동 보정(용적률/건폐율/높이 조정)을 수행한다.
 
 보정 루프:
-1. 설계안 입력 (BuildingModel)
+1. 설계안 입력 (ComplianceBuildingModel — 별칭 BuildingModel)
 2. 법규 기준 대비 검증 (RegulationLimit)
 3. 위반 항목 감지
 4. 자동 보정 (최대 100회 반복)
@@ -28,8 +28,15 @@ logger = structlog.get_logger(__name__)
 
 
 @dataclass
-class BuildingModel:
-    """건축물 설계 모델."""
+class ComplianceBuildingModel:
+    """건축물 설계 모델 (법규 적합성 검증·자동 보정용 — 정본).
+
+    면적·층수·층고로 건폐율(bcr)/용적률(far)/높이를 산출하는 '법규 보정'
+    모델이다. CAD 매스 기하(width/depth/floor_area)를 다루는 동명 클래스
+    ``app.services.cad.parametric_cad_service.BuildingModel``과는 별개 라이브
+    경로다(병합 금지). 하위호환을 위해 모듈 끝에서 ``BuildingModel`` 별칭을
+    유지하므로 기존 ``from ... import BuildingModel`` 호출은 그대로 동작한다.
+    """
 
     site_area_sqm: float  # 대지면적
     building_area_sqm: float  # 건축면적
@@ -105,7 +112,7 @@ class CadAutoCorrectionService:
 
     @staticmethod
     def check_compliance(
-        building: BuildingModel, regulation: RegulationLimit
+        building: ComplianceBuildingModel, regulation: RegulationLimit
     ) -> list[Violation]:
         """법규 적합성을 검증한다."""
         violations = []
@@ -149,7 +156,7 @@ class CadAutoCorrectionService:
 
     @staticmethod
     def auto_correct(
-        building: BuildingModel,
+        building: ComplianceBuildingModel,
         regulation: RegulationLimit,
         *,
         max_iter: int = 100,
@@ -240,7 +247,7 @@ class CadAutoCorrectionService:
 
     @staticmethod
     def check_setback_compliance(
-        building_model: "BuildingModel",
+        building_model: "ComplianceBuildingModel",
         site_boundary: dict,
         min_setback_m: float,
     ) -> list[dict]:
@@ -269,7 +276,7 @@ class CadAutoCorrectionService:
 
     @staticmethod
     def optimize_floor_height(
-        building_model: "BuildingModel",
+        building_model: "ComplianceBuildingModel",
         max_height_m: float,
     ) -> dict:
         """층고를 최적화한다 (최소 2.7m 확보하면서 높이 제한 준수).
@@ -302,3 +309,11 @@ class CadAutoCorrectionService:
             "max_floors": actual_floors,
             "total_height_m": round(optimal_height * actual_floors, 2),
         }
+
+
+# ── 하위호환 별칭 ──
+# 법규 보정 모델의 정본 이름은 ``ComplianceBuildingModel``이다(CAD 매스 기하용
+# parametric_cad_service.BuildingModel과 구분). 기존 임포트
+# (cad_correction.py·테스트의 ``from ... import BuildingModel``)를 깨지 않도록
+# 동일 객체를 가리키는 별칭을 유지한다.
+BuildingModel = ComplianceBuildingModel

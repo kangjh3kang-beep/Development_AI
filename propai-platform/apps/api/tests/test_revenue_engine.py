@@ -67,10 +67,11 @@ class TestRentalRevenue:
         assert result["total_deposit_won"] == 20_000_000_000
         # 연임대: 200 × 20평 × 5만 × 12 = 24억
         assert result["annual_rent_won"] == 2_400_000_000
-        # 자본환원: 24억 / 0.05 = 480억
-        assert result["capitalized_value_won"] == 48_000_000_000
-        # 합계: 200억 + 480억 = 680억
-        assert result["total_revenue_won"] == 68_000_000_000
+        # 자본환원: 24억 × (1 − 공실률 5%) / 0.05 = 456억
+        # (엔진은 공실률 기본 5%를 반영 — 이전 기대값 480억은 공실 미반영으로 항상 실패했음)
+        assert result["capitalized_value_won"] == 45_600_000_000
+        # 합계: 200억 + 456억 = 656억
+        assert result["total_revenue_won"] == 65_600_000_000
 
     def test_rental_deposit_only(self):
         result = calculate_rental_revenue(

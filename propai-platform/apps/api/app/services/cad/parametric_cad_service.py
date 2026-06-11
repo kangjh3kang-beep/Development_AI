@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import io
 import math
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 try:
     import ezdxf
@@ -55,39 +55,52 @@ def _setup_layers(doc: ezdxf.document.Drawing) -> None:
             doc.layers.add(name, **attrs)
 
 
+# 정식 DIMENSION 공통 스타일 오버라이드 — 기존 간이 치수선 표기와 시각 일관 유지
+_DIM_STYLE_OVERRIDE: Dict[str, Any] = {
+    "dimtxt": 0.25,  # 치수문자 높이 (기존 add_text height=0.25와 동일)
+    "dimasz": 0.25,  # 화살표 크기
+    "dimexo": 0.1,   # 치수보조선 이격
+    "dimexe": 0.2,   # 치수보조선 연장
+    "dimdec": 1,     # 소수 1자리 (기존 f"{length:.1f}" 표기와 동일)
+    "dimtad": 1,     # 치수문자를 치수선 위에 배치
+}
+
+
+def _render_linear_dim(msp: Modelspace, base: Tuple[float, float],
+                       p1: Tuple[float, float], p2: Tuple[float, float],
+                       angle: float = 0.0) -> None:
+    """ezdxf 정식 선형 DIMENSION을 렌더링한다.
+
+    dimstyle은 "Standard" — ezdxf.new(setup=True) 없이 생성된 문서에도
+    항상 존재하는 기본 스타일이라 5종 도면 생성 경로와 호환된다.
+    """
+    dim = msp.add_linear_dim(
+        base=base, p1=p1, p2=p2, angle=angle,
+        dimstyle="Standard",
+        override=dict(_DIM_STYLE_OVERRIDE),
+        dxfattribs={"layer": "DIM"},
+    )
+    dim.render()
+
+
 def _add_dimension_h(msp: Modelspace, x1: float, x2: float, y: float,
                      offset: float = DIM_OFFSET_M) -> None:
-    """수평 치수선을 추가한다."""
-    dy = y - offset
-    length = abs(x2 - x1)
-    msp.add_line((x1, y), (x1, dy - 0.3), dxfattribs={"layer": "DIM"})
-    msp.add_line((x2, y), (x2, dy - 0.3), dxfattribs={"layer": "DIM"})
-    msp.add_line((x1, dy), (x2, dy), dxfattribs={"layer": "DIM"})
-    # 화살표 (간이)
-    msp.add_line((x1, dy), (x1 + 0.2, dy + 0.1), dxfattribs={"layer": "DIM"})
-    msp.add_line((x1, dy), (x1 + 0.2, dy - 0.1), dxfattribs={"layer": "DIM"})
-    msp.add_line((x2, dy), (x2 - 0.2, dy + 0.1), dxfattribs={"layer": "DIM"})
-    msp.add_line((x2, dy), (x2 - 0.2, dy - 0.1), dxfattribs={"layer": "DIM"})
-    mid_x = (x1 + x2) / 2
-    msp.add_text(
-        f"{length:.1f}",
-        dxfattribs={"layer": "DIM", "height": 0.25},
-    ).set_placement((mid_x, dy + 0.15), align=TextEntityAlignment.BOTTOM_CENTER)
+    """수평 치수선을 추가한다 — 내부를 정식 DIMENSION으로 교체(시그니처 불변)."""
+    # 기존 간이 치수선과 동일 위치: 치수선은 y - offset 높이에 배치
+    _render_linear_dim(
+        msp, base=((x1 + x2) / 2, y - offset),
+        p1=(x1, y), p2=(x2, y), angle=0.0,
+    )
 
 
 def _add_dimension_v(msp: Modelspace, y1: float, y2: float, x: float,
                      offset: float = DIM_OFFSET_M) -> None:
-    """수직 치수선을 추가한다."""
-    dx = x - offset
-    length = abs(y2 - y1)
-    msp.add_line((x, y1), (dx - 0.3, y1), dxfattribs={"layer": "DIM"})
-    msp.add_line((x, y2), (dx - 0.3, y2), dxfattribs={"layer": "DIM"})
-    msp.add_line((dx, y1), (dx, y2), dxfattribs={"layer": "DIM"})
-    mid_y = (y1 + y2) / 2
-    msp.add_text(
-        f"{length:.1f}",
-        dxfattribs={"layer": "DIM", "height": 0.25, "rotation": 90},
-    ).set_placement((dx - 0.15, mid_y), align=TextEntityAlignment.BOTTOM_CENTER)
+    """수직 치수선을 추가한다 — 내부를 정식 DIMENSION으로 교체(시그니처 불변)."""
+    # 기존 간이 치수선과 동일 위치: 치수선은 x - offset 위치에 배치
+    _render_linear_dim(
+        msp, base=(x - offset, (y1 + y2) / 2),
+        p1=(x, y1), p2=(x, y2), angle=90.0,
+    )
 
 
 def _draw_door(msp: Modelspace, x: float, y: float,
@@ -130,6 +143,24 @@ def _write_dxf(doc: ezdxf.document.Drawing) -> bytes:
     buf = io.StringIO()
     doc.write(buf)
     return buf.getvalue().encode("utf-8")
+
+
+_DEFAULT_SETBACK: Dict[str, float] = {"north": 3.0, "south": 2.0, "east": 1.5, "west": 1.5}
+
+
+def _normalize_setback(setback_m: Optional[Dict[str, float] | float]) -> Dict[str, float]:
+    """세트백 입력을 방위별 dict로 정규화한다.
+
+    - None → 기본 세트백(_DEFAULT_SETBACK).
+    - float/int → 전 방위 동일 이격(단일 setback_m: float 라우터 호환).
+    - dict → 누락 방위는 기본값으로 보완.
+    """
+    if setback_m is None:
+        return dict(_DEFAULT_SETBACK)
+    if isinstance(setback_m, (int, float)):
+        v = float(setback_m)
+        return {"north": v, "south": v, "east": v, "west": v}
+    return {d: float(setback_m.get(d, _DEFAULT_SETBACK[d])) for d in _DEFAULT_SETBACK}
 
 
 class BuildingModel:
@@ -184,6 +215,7 @@ class ParametricCADService:
     - 단면도: 층별 높이/기초/지붕 (create_section_drawing_dxf)
     - 입면도: 정면/측면 (create_elevation_drawing_dxf)
     - 배치도: 대지/건물/주차장/조경/진입로 (create_site_plan_dxf)
+    - 편집좌표 직변환: CADEditor px 폴리곤 → DXF (create_dxf_from_edited_points)
     """
 
     # ── 기존 기본 평면도 ──
@@ -679,19 +711,24 @@ class ParametricCADService:
         site_depth_m: float,
         building_width_m: float,
         building_depth_m: float,
-        setback_m: Optional[Dict[str, float]] = None,
+        setback_m: Optional[Dict[str, float] | float] = None,
         parking_count: int = 0,
         parking_type: str = "자주식",
         landscape_ratio: float = 0.15,
     ) -> bytes:
-        """배치도 DXF — 대지 경계, 건물, 주차장, 조경, 진입로, 세트백 표시."""
+        """배치도 DXF — 대지 경계, 건물, 주차장, 조경, 진입로, 세트백 표시.
+
+        setback_m은 방위별 dict({"north":..,"south":..,"east":..,"west":..})가
+        정본이나, 단일 float(전 방위 동일 이격)도 허용해 ExportDxfRequest(단일
+        setback_m: float)에서 site_plan 도면 생성이 가능하다(기존 dict 호출 불변).
+        """
         if ezdxf is None:
             return b"DXF_PLACEHOLDER_NO_EZDXF"
         doc = ezdxf.new("R2010")
         _setup_layers(doc)
         msp: Modelspace = doc.modelspace()
 
-        sb = setback_m or {"north": 3.0, "south": 2.0, "east": 1.5, "west": 1.5}
+        sb = _normalize_setback(setback_m)
 
         # ─ 대지 경계 ─
         msp.add_lwpolyline(
@@ -839,6 +876,92 @@ class ParametricCADService:
             "배치도",
             dxfattribs={"layer": "TEXT", "height": 0.5},
         ).set_placement((site_width_m / 2, -5.0), align=TextEntityAlignment.TOP_CENTER)
+
+        return _write_dxf(doc)
+
+    # ── 편집좌표 직변환 (CADEditor → DXF) ──
+
+    def create_dxf_from_edited_points(
+        self,
+        points: List[Dict[str, Any]],
+        surfaces: Optional[List[Dict[str, Any]]] = None,
+        scale_px_per_m: float = 10.0,
+    ) -> bytes:
+        """CADEditor 편집 좌표(px, 캔버스 y축 하향)를 DXF(m, y축 상향)로 직변환한다.
+
+        - 링 복원: surfaces[0]["point_ids"] 순서 우선(CADEditor 저장 계약),
+          없으면 points 입력 순서. 닫힘 중복점(첫=끝 id)은 1개로 정규화.
+        - 좌표 변환: px → m (scale_px_per_m, CADEditor 기본 10), 캔버스 y축
+          하향 → CAD y축 상향 반전 후 bbox 좌하단을 원점으로 정규화.
+        - 산출: WALL 레이어 닫힌 LWPOLYLINE + 각 변 정식 DIMENSION(aligned).
+        - ezdxf 미설치 시 기존 생성 메서드와 동일한 플레이스홀더 반환.
+        """
+        if scale_px_per_m <= 0:
+            raise ValueError("scale_px_per_m는 0보다 커야 합니다")
+
+        pmap: Dict[str, Dict[str, Any]] = {}
+        for p in points or []:
+            if isinstance(p, dict) and "x" in p and "y" in p:
+                pmap[str(p.get("id"))] = p
+
+        order: List[str] = []
+        if surfaces and isinstance(surfaces[0], dict):
+            order = [str(pid) for pid in (surfaces[0].get("point_ids") or [])]
+        if not order:
+            order = [str(p.get("id")) for p in points or [] if isinstance(p, dict)]
+        if len(order) >= 2 and order[0] == order[-1]:
+            order = order[:-1]  # 닫힘 중복점 제거 — LWPOLYLINE close=True가 닫음
+
+        ring_px: List[Tuple[float, float]] = []
+        for pid in order:
+            p = pmap.get(pid)
+            if p is not None:
+                ring_px.append((float(p["x"]), float(p["y"])))
+
+        if len(ring_px) < 3:
+            raise ValueError("편집 좌표 부족 — 폴리곤 구성에 점 3개 이상이 필요합니다")
+
+        if ezdxf is None:
+            return b"DXF_PLACEHOLDER_NO_EZDXF"
+
+        min_x = min(x for x, _ in ring_px)
+        max_y = max(y for _, y in ring_px)
+        ring_m: List[Tuple[float, float]] = [
+            ((x - min_x) / scale_px_per_m, (max_y - y) / scale_px_per_m)
+            for x, y in ring_px
+        ]
+
+        doc = ezdxf.new("R2010")
+        _setup_layers(doc)
+        msp: Modelspace = doc.modelspace()
+
+        msp.add_lwpolyline(
+            ring_m, close=True,
+            dxfattribs={"layer": "WALL", "lineweight": 50},
+        )
+
+        # 폴리곤 방향(shoelace) — 치수선을 외측에 배치하기 위한 오프셋 부호 결정
+        n = len(ring_m)
+        area2 = sum(
+            ring_m[i][0] * ring_m[(i + 1) % n][1]
+            - ring_m[(i + 1) % n][0] * ring_m[i][1]
+            for i in range(n)
+        )
+        outward = -1.0 if area2 > 0 else 1.0  # CCW면 진행방향 좌측이 내부 → 음수 거리
+
+        for i in range(n):
+            p1 = ring_m[i]
+            p2 = ring_m[(i + 1) % n]
+            if math.hypot(p2[0] - p1[0], p2[1] - p1[1]) < 1e-6:
+                continue  # 길이 0 변은 치수 렌더 불가 — 생략
+            dim = msp.add_aligned_dim(
+                p1=p1, p2=p2,
+                distance=outward * DIM_OFFSET_M / 2,
+                dimstyle="Standard",
+                override=dict(_DIM_STYLE_OVERRIDE),
+                dxfattribs={"layer": "DIM"},
+            )
+            dim.render()
 
         return _write_dxf(doc)
 

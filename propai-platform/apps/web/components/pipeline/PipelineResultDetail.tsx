@@ -3,6 +3,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiClient } from "@/lib/api-client";
 import { VerificationBadge } from "@/components/common/VerificationBadge";
+import { FieldSourceBadge } from "@/components/common/FieldSourceBadge";
+import {
+  useProjectContextStore,
+  type CostData,
+  type ProvenanceModule,
+} from "@/store/useProjectContextStore";
 import { SiteAnalysisDetail } from "./SiteAnalysisDetail";
 
 // 세련된 인라인 아이콘(lucide 스타일) — 이모지 대체
@@ -200,6 +206,22 @@ const SECTIONS: SectionDef[] = [
   },
 ];
 
+/* ── 오버라이드 영속 매핑(STORE_FIELD_MAP) ──
+   재분석은 flat "{stage}.{field}" 계약(onRerun)을 그대로 쓰되, "수동 입력값"으로
+   장기 보존할 가치가 있는 핵심 필드만 store(useProjectContextStore.manualFields)에
+   source:"user"로 영속한다 — 페이지 이탈 후에도 수동값이 살아남고(소실 해소),
+   자동 갱신(재분석 saveToStore)이 이 필드를 덮어쓰지 못한다(merge 가드).
+   매핑되지 않은 편집 필드는 기존대로 세션 한정(overrides state)으로만 동작한다. */
+interface StoreFieldEntry {
+  module: ProvenanceModule;
+  storeField: string; // store 데이터/manualFields의 키(예: landAreaSqm)
+}
+const STORE_FIELD_MAP: Record<string, StoreFieldEntry> = {
+  "site_analysis.land_area_sqm": { module: "siteAnalysis", storeField: "landAreaSqm" },
+  "cost.total_construction_cost": { module: "cost", storeField: "totalConstructionCostWon" },
+};
+const storeFieldKey = (stage: string, field: string) => `${stage}.${field}`;
+
 /* ── Executive Summary Card Specs ── */
 
 interface ExecKPI {
@@ -310,6 +332,14 @@ export function PipelineResultDetail({ result, onRerun, addresses }: PipelineRes
   const [activeTab, setActiveTab] = useState("overview");
   const [overrides, setOverrides] = useState<Record<string, Record<string, unknown>>>({});
   const [downloading, setDownloading] = useState(false);
+
+  // ── 오버라이드 영속(STORE_FIELD_MAP) — store 액션/provenance 구독 ──
+  // 셀렉터 단위 구독으로 불필요 리렌더 최소화(기존 ProjectPipelinePanel 패턴과 동일).
+  const updateSiteAnalysis = useProjectContextStore((s) => s.updateSiteAnalysis);
+  const updateCostData = useProjectContextStore((s) => s.updateCostData);
+  const revertFieldToAuto = useProjectContextStore((s) => s.revertFieldToAuto);
+  // 마운트 시 시드 복원·배지 출처 판정은 현재 manualFields 스냅을 구독해 반영한다.
+  const manualFields = useProjectContextStore((s) => s.manualFields);
   // 온디맨드 AI 해석(섹션 열람 시 단건 생성) — 저장 payload에 없을 때만
   const [lazyNarr, setLazyNarr] = useState<Record<string, { label: string; text: string }[]>>({});
   const [narrLoading, setNarrLoading] = useState<string | null>(null);
@@ -396,7 +426,9 @@ export function PipelineResultDetail({ result, onRerun, addresses }: PipelineRes
       if (showLoading) setNarrLoading(stg);
       apiClient
         .postV2<{ ok?: boolean; sections?: Record<string, string> }>("/pipeline/interpret", {
-          body: { stage: stg, data, context }, useMock: false, timeoutMs: 35000,
+          // E1: use_verification_retry=true → 검증관(VerifierService)이 fail/high 판정 시
+          // LLM 1회 재생성하는 기 구현 피드백루프를 활성화한다(없으면 단발 생성).
+          body: { stage: stg, data, context, use_verification_retry: true }, useMock: false, timeoutMs: 35000,
         })
         .then((r) => {
           const secs = (r?.sections || {}) as Record<string, string>;
@@ -426,11 +458,75 @@ export function PipelineResultDetail({ result, onRerun, addresses }: PipelineRes
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // STORE_FIELD_MAP에 등록된 핵심 필드는 store에 source:"user"로 영속한다(이탈 시 소실 해소).
+  // siteAnalysis는 partial patch, cost는 full replace이므로 현재 store costData 위에 병합한다.
+  const persistFieldToStore = useCallback((entry: StoreFieldEntry, value: unknown) => {
+    if (entry.module === "siteAnalysis") {
+      // partial patch — 단일 키만 갱신(나머지 보존). store는 Partial<SiteAnalysisData> 수용.
+      updateSiteAnalysis(
+        { [entry.storeField]: value } as Parameters<typeof updateSiteAnalysis>[0],
+        { source: "user" },
+      );
+    } else if (entry.module === "cost") {
+      // full replace 계약 — 현재 costData 위에 단일 필드만 덮어쓴다(나머지 보존).
+      const prev = useProjectContextStore.getState().costData;
+      const base: CostData = prev ?? {
+        totalConstructionCostWon: null,
+        perSqmWon: null,
+        perPyeongWon: null,
+        abovegroundWon: null,
+        undergroundWon: null,
+        landscapeWon: null,
+        directWon: null,
+        indirectWon: null,
+        rangeMinWon: null,
+        rangeMaxWon: null,
+        source: "overview",
+      };
+      updateCostData({ ...base, [entry.storeField]: value } as CostData, { source: "user" });
+    }
+  }, [updateSiteAnalysis, updateCostData]);
+
   const setFieldOverride = useCallback((sourceStage: string, fieldKey: string, value: unknown) => {
     setOverrides((prev) => ({
       ...prev,
       [sourceStage]: { ...prev[sourceStage], [fieldKey]: value },
     }));
+    const entry = STORE_FIELD_MAP[storeFieldKey(sourceStage, fieldKey)];
+    if (entry) persistFieldToStore(entry, value);
+  }, [persistFieldToStore]);
+
+  // 마운트 시 manualFields(영속 user) → overrides 시드 복원.
+  // store에 user로 보존된 핵심 필드를 세션 overrides에 주입해, 이탈/재진입 후에도
+  // '수정됨' 링·재분석 대상으로 즉시 인지되게 한다(FieldSourceBadge는 별도로 출처 표기).
+  useEffect(() => {
+    const st = useProjectContextStore.getState();
+    const seeded: Record<string, Record<string, unknown>> = {};
+    for (const [flatKey, entry] of Object.entries(STORE_FIELD_MAP)) {
+      const prov = st.getFieldProvenance(entry.module, entry.storeField);
+      if (prov?.source !== "user") continue;
+      const dataRec =
+        entry.module === "siteAnalysis"
+          ? (st.siteAnalysis as Record<string, unknown> | null)
+          : (st.costData as Record<string, unknown> | null);
+      const val = dataRec?.[entry.storeField];
+      if (val == null) continue;
+      const dot = flatKey.indexOf(".");
+      const stage = flatKey.slice(0, dot);
+      const field = flatKey.slice(dot + 1);
+      seeded[stage] = { ...seeded[stage], [field]: val };
+    }
+    if (Object.keys(seeded).length > 0) {
+      setOverrides((prev) => {
+        const next = { ...prev };
+        for (const [stage, fields] of Object.entries(seeded)) {
+          next[stage] = { ...fields, ...next[stage] }; // 기존 세션 편집이 우선(시드는 보조)
+        }
+        return next;
+      });
+    }
+    // 마운트 1회 — store 액션 정체성은 안정적이라 의존성 비포함(시드 복원은 진입 시 1회만).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const hasOverrides = Object.keys(overrides).length > 0;
@@ -451,6 +547,16 @@ export function PipelineResultDetail({ result, onRerun, addresses }: PipelineRes
     const activeSection = SECTIONS.find((s) => s.id === activeTab);
     onRerun(activeSection?.sourceStage ?? "site_analysis", collectOverrides());
   }, [onRerun, activeTab, collectOverrides]);
+
+  // 수정 초기화 — 세션 overrides를 비우고, STORE_FIELD_MAP에 영속된 user 플래그도 해제해
+  // 다음 자동 갱신부터 덮어쓰기를 재허용한다(revertFieldToAuto). 값 자체는 보존(되돌림은
+  // 다음 재분석이 담당) — 정직성: 임의 자동값으로 즉시 되돌리지 않는다.
+  const resetOverrides = useCallback(() => {
+    setOverrides({});
+    for (const entry of Object.values(STORE_FIELD_MAP)) {
+      revertFieldToAuto(entry.module, entry.storeField);
+    }
+  }, [revertFieldToAuto]);
 
   const handleDownload = useCallback(async () => {
     setDownloading(true);
@@ -617,6 +723,39 @@ export function PipelineResultDetail({ result, onRerun, addresses }: PipelineRes
           {activeSection.label}
         </h3>
 
+        {/* ── E7: 가정값(assumed_defaults) 경고 배지 ──
+            부지 단계가 외부 데이터 미확보로 기본 가정값(제2종/500㎡ 등)을 주입했으면
+            data_quality="assumed_defaults"를 부지 출처 섹션에 정직 표기한다. 수치는 표시하되
+            "가정값임"을 var(--status-warning)로 경고 — 사용자가 실측값으로 수정하도록 유도. */}
+        {activeSection.sourceStage === "site_analysis" &&
+          (() => {
+            const site = stageDataMap.site_analysis;
+            if (!site || site.data_quality !== "assumed_defaults") return null;
+            const fields = Array.isArray(site.assumed_fields)
+              ? (site.assumed_fields as unknown[]).map((f) => String(f))
+              : [];
+            return (
+              <div className="mb-4 flex items-start gap-2 rounded-xl border border-[color-mix(in_srgb,var(--status-warning)_38%,transparent)] bg-[color-mix(in_srgb,var(--status-warning)_12%,transparent)] px-4 py-3">
+                <svg
+                  width="15" height="15" viewBox="0 0 24 24" fill="none"
+                  stroke="var(--status-warning)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                  className="mt-0.5 shrink-0"
+                >
+                  <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                  <line x1="12" x2="12" y1="9" y2="13" />
+                  <line x1="12" x2="12.01" y1="17" y2="17" />
+                </svg>
+                <div className="text-[11px] leading-relaxed text-[var(--status-warning)]">
+                  <span className="font-bold">가정값 사용</span> — 외부 데이터 미확보로 기본 가정값을 적용했습니다(실측 아님).
+                  {fields.length > 0 && (
+                    <span className="font-medium"> 해당 항목: {fields.join(", ")}.</span>
+                  )}
+                  <span className="font-medium"> 정확한 값으로 수정 후 재분석을 권장합니다.</span>
+                </div>
+              </div>
+            );
+          })()}
+
         {/* ── 부지분석 풍부 보고서(첫 분석과 동일) — 지도(필지구획도·주변실거래)·기본토지정보 ── */}
         {/* '입지분석' 탭에서만 1회 마운트(사업개요 탭 중복 제거). 자체 AI 해석은 hideInterpretation으로 숨김
             — 보고서 하단의 한글 라벨 "AI 상세 해석"과 중복되므로 지도+기본 토지정보만 노출한다. */}
@@ -649,6 +788,12 @@ export function PipelineResultDetail({ result, onRerun, addresses }: PipelineRes
           {(activeSection.fields ?? []).map((field) => {
             const val = getFieldValue(activeSection.sourceStage, field.key);
             const isOverridden = overrides[activeSection.sourceStage]?.[field.key] !== undefined;
+            // 영속 출처(provenance) — STORE_FIELD_MAP에 등록된 필드만 store에서 user/auto를
+            // 판정한다(미등록 필드는 배지 없음 = 세션 한정 '수정됨' 칩만 사용).
+            const storeEntry = STORE_FIELD_MAP[storeFieldKey(activeSection.sourceStage, field.key)];
+            const prov = storeEntry
+              ? manualFields?.[storeEntry.module]?.[storeEntry.storeField] ?? null
+              : null;
 
             return (
               <div
@@ -664,11 +809,15 @@ export function PipelineResultDetail({ result, onRerun, addresses }: PipelineRes
                   {field.unit && (
                     <span className="text-[var(--text-hint)]/60">({field.unit})</span>
                   )}
-                  {isOverridden && (
-                    <span className="ml-auto text-[8px] px-1.5 py-0.5 rounded bg-[var(--accent-strong)]/10 text-[var(--accent-strong)] font-bold">
-                      수정됨
-                    </span>
-                  )}
+                  <span className="ml-auto flex items-center gap-1">
+                    {/* 영속 출처 배지 — user(영속)/auto. 세션 '수정됨' 칩과 병기(소실 해소 가시화). */}
+                    {prov && <FieldSourceBadge source={prov.source} updatedAt={prov.updatedAt} />}
+                    {isOverridden && (
+                      <span className="text-[8px] px-1.5 py-0.5 rounded bg-[var(--accent-strong)]/10 text-[var(--accent-strong)] font-bold">
+                        수정됨
+                      </span>
+                    )}
+                  </span>
                 </p>
                 <EditableCell
                   value={val}
@@ -772,7 +921,7 @@ export function PipelineResultDetail({ result, onRerun, addresses }: PipelineRes
         {hasOverrides && (
           <button
             type="button"
-            onClick={() => setOverrides({})}
+            onClick={resetOverrides}
             className="h-10 px-4 rounded-xl text-xs font-bold text-[var(--text-secondary)] hover:text-red-400 transition-colors"
           >
             수정 초기화

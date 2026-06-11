@@ -69,6 +69,8 @@ class BIMIFCService:
         total_volume = 0.0
         total_area = 0.0
         element_count = 0
+        # 요소 단위 물량(공종코드 매핑·bim_quantities INSERT 입력) — 집계 키와 병행.
+        elements: list[dict] = []
 
         for element in ifc_file.by_type("IfcBuildingElement"):
             element_count += 1
@@ -96,6 +98,18 @@ class BIMIFCService:
             materials[element_type]["volume_m3"] += volume
             materials[element_type]["area_sqm"] += area
 
+            # 요소 단위 레코드 — BIMService.extract_quantities_with_work_codes 입력 형식.
+            # 물량 기준: 체적(m3)이 0이면 면적(m2)을 quantity 로 사용(정직 — 가짜값 없음).
+            qty = volume if volume else area
+            elements.append({
+                "element_type": element_type,
+                "global_id": getattr(element, "GlobalId", "") or "",
+                "name": getattr(element, "Name", "") or "",
+                "quantity": qty,
+                "unit": "m3" if volume else "m2",
+                "floor_level": "",
+            })
+
         return {
             "ifc_version": ifc_version,
             "total_volume_m3": total_volume,
@@ -104,7 +118,50 @@ class BIMIFCService:
             "material_breakdown": [
                 {"type": k, **v} for k, v in materials.items()
             ],
+            # 신규: 요소 단위 물량(기존 키 불변 — additive).
+            "elements": elements,
         }
+
+    def _persist_bim_quantities(
+        self,
+        project_id: UUID,
+        tenant_id: UUID,
+        elements: list[dict],
+    ) -> int:
+        """요소 단위 물량을 공종코드로 매핑해 bim_quantities 행으로 add 한다.
+
+        commit 은 호출측(analyze_ifc)이 수행한다(동일 세션 일괄 처리).
+        매핑되는 공종이 없거나 요소가 없으면 0행을 반환한다(정직 — 가짜 행 없음).
+        """
+        if not elements:
+            return 0
+
+        from app.services.cost.ifc_work_map import map_ifc_to_work_codes
+
+        from apps.api.database.models.v61_cost import BimQuantity
+
+        rows: list[BimQuantity] = []
+        for elem in elements:
+            ifc_type = elem.get("element_type", "") or ""
+            work_codes = map_ifc_to_work_codes(ifc_type)
+            for work_code, _work_name in work_codes:
+                rows.append(BimQuantity(
+                    tenant_id=tenant_id,
+                    project_id=project_id,
+                    ifc_global_id=elem.get("global_id") or None,
+                    ifc_object_type=ifc_type or None,
+                    ifc_object_name=elem.get("name") or None,
+                    work_code=work_code,
+                    floor_level=elem.get("floor_level") or None,
+                    quantity=elem.get("quantity", 0) or 0,
+                    unit=elem.get("unit") or None,
+                    extraction_method="AI_AUTO",
+                ))
+
+        if not rows:
+            return 0
+        self.db.add_all(rows)
+        return len(rows)
 
     def _generate_threejs_geometry(self, filepath: str) -> dict:
         """Three.js용 geometry JSON을 생성한다.
@@ -167,11 +224,25 @@ class BIMIFCService:
         await self.db.commit()
         await self.db.refresh(design)
 
+        # 3-1. 요소 단위 물량 → 공종코드 매핑 → bim_quantities bulk INSERT(동일 세션).
+        # 요소 정보가 없으면(구버전 _parse_ifc/mock) 조용히 스킵 — 하위호환.
+        bim_quantity_rows = self._persist_bim_quantities(
+            project_id=project_id,
+            tenant_id=tenant_id,
+            elements=result.get("elements") or [],
+        )
+        if bim_quantity_rows:
+            await self.db.commit()
+
         # 4. 임시 파일 정리
         import os
         os.unlink(filepath)
 
-        logger.info("IFC 분석 완료", elements=result["element_count"])
+        logger.info(
+            "IFC 분석 완료",
+            elements=result["element_count"],
+            bim_quantities=bim_quantity_rows,
+        )
 
         return BIMQuantityResponse(
             id=design.id,

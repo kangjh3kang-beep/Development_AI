@@ -14,6 +14,7 @@ import { AuthButton } from "@/components/auth/AuthButton";
 import { AuthGuard } from "@/components/auth/AuthGuard";
 import { Disclaimer } from "@/components/common/Disclaimer";
 import { ProjectSyncProvider } from "@/components/common/ProjectSyncProvider";
+import { runtimeMode } from "@/lib/runtime-mode";
 type DashboardLayoutProps = Readonly<{
   children: React.ReactNode;
   params: Promise<{
@@ -85,7 +86,7 @@ export default async function DashboardLayout({
 
   const dictionary = await getDictionary(locale as Locale);
   const runtimeModeLabel =
-    process.env.NEXT_PUBLIC_USE_MOCKS === "false"
+    runtimeMode() === "live"
       ? dictionary.workspace.modeLive
       : dictionary.workspace.modeMock;
 
@@ -132,8 +133,12 @@ export default async function DashboardLayout({
   ];
 
   // 자산 운영 (준공 후 임대·임차인) — 페르소나 게이팅(운영/관리자 역할만)
+  // tenant·maintenance·digital-twin 라우트는 기존재(도달 동선만 부재) — 메뉴 연결로 운영 국면 진입 복원
   const assetOpsNavigation = [
     { href: `/${locale}/operations/lease`, label: "임대·임차인 관리", icon: <IconProject /> },
+    { href: `/${locale}/tenant`, label: "임차인 포털", icon: <IconProject /> },
+    { href: `/${locale}/maintenance`, label: "시설 유지보수", icon: <IconSRE /> },
+    { href: `/${locale}/digital-twin`, label: "디지털 트윈", icon: <IconDesign /> },
   ];
 
   // 관리자 — 기존 role 게이팅 유지

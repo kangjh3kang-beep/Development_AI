@@ -70,27 +70,30 @@ async def build_boq(
     from app.services.cost.standard_quantity_estimator import StandardQuantityEstimator
     from app.services.cost.unit_price_repository import UnitPriceRepository
 
+    # 단가 SSOT 1회 async 조회 → estimator 주입(DB 실패 시 None 폴백 — 동기 fallback 회귀 0).
+    # 주입으로 raw 물량(mat/labor/exp)·원가합계(_calc)·items[] 단가가 동일 출처로 정합된다.
+    repo = UnitPriceRepository()
+    try:
+        unit_prices: dict[str, dict[str, Any]] | None = await repo.get_prices()
+    except Exception:  # noqa: BLE001
+        unit_prices = None
+
     raw = StandardQuantityEstimator().estimate(
         building_type=_BT_KR.get(building_type, "공동주택"),
         total_gfa_sqm=total_gfa_sqm, floor_count_above=floor_count_above,
         floor_count_below=floor_count_below, structure_type=structure_type,
+        prices=unit_prices,
     )
 
-    repo = UnitPriceRepository()
     band = _QTO_BAND.get(qto_source, "±12%")
     items: list[dict[str, Any]] = []
     for it in raw:
         wc = it.get("work_code", "")
         key = _WORKCODE_TO_KEY.get(wc)
         std_unit = float(it.get("mat_unit", 0)) + float(it.get("labor_unit", 0)) + float(it.get("exp_unit", 0))
-        price_source = "fallback"
-        basis_year = 2026
-        if key:
-            p = await repo.get_price(key)
-            if p:
-                std_unit = p["mat_unit"] + p["labor_unit"] + p["exp_unit"]
-                price_source = p["price_source"]
-                basis_year = p["price_basis_year"]
+        # 단가 출처: estimator가 항목별로 정직 표기(주입 DB 출처명 또는 "fallback").
+        price_source = it.get("price_source", "fallback") if key else "fallback"
+        basis_year = int(it.get("price_basis_year", 2026)) if key else 2026
         qty = float(it.get("quantity", 0))
         market_unit = _kcci_market_unit(key) if key else None
         items.append({

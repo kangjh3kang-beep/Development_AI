@@ -46,10 +46,11 @@ class TestTracingImport:
 class TestOtelConfig:
     """OpenTelemetry 설정 값 검증."""
 
-    def test_otel_settings_default(self):
-        """기본 OTel 설정값 확인."""
+    def test_otel_settings_default(self, monkeypatch):
+        """기본 OTel 설정값 확인 (.env/환경변수 오버라이드 격리)."""
+        monkeypatch.delenv("OTEL_EXPORTER_OTLP_ENDPOINT", raising=False)
         from apps.api.config import Settings
-        s = Settings()
+        s = Settings(_env_file=None)
         assert s.otel_exporter_otlp_endpoint == "http://localhost:4318"
         assert s.otel_service_name == "propai-api"
         assert s.otel_sample_rate == 1.0

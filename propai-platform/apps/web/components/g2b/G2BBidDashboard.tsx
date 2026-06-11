@@ -1,7 +1,9 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { useParams, useRouter } from "next/navigation";
 import { apiClient } from "@/lib/api-client";
+import { writePreCheckHandoff } from "@/components/precheck/handoff";
 import { G2BBidAnalysisModal } from "./G2BBidAnalysisModal";
 import { G2BBidDetailModal } from "./G2BBidDetailModal";
 import { G2BAwardStats } from "./G2BAwardStats";
@@ -90,6 +92,8 @@ function tagColor(tag: string, groups: Record<string, string[]>): string {
 
 /* ── 메인 컴포넌트 ── */
 export default function G2BBidDashboard() {
+  const router = useRouter();
+  const { locale } = useParams() as { locale: string };
   const [tab, setTab] = useState<"bids" | "history" | "awards">("bids");
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [bids, setBids] = useState<G2BBid[]>([]);
@@ -157,6 +161,29 @@ export default function G2BBidDashboard() {
   useEffect(() => { if (tab === "bids") fetchBids(); }, [fetchBids, tab]);
 
   const resetPage = () => setPage(1);
+
+  // ── 발굴(G2B) → 기획 핸드오프 ── 기존 PreCheck 핸드오프(sessionStorage)를 재사용해
+  // projects/new가 주소(시도)·메모(공고명)를 선채움한다(consume 검증식 불변).
+  // G2B 공고는 시도(region_sido)까지만 제공 → 정밀 주소는 생성 화면의 주소 검색으로 보강.
+  // region_sido가 없으면 주소 시드가 불가능하므로 CTA를 노출하지 않는다.
+  const createProjectFromBid = useCallback(
+    (bid: G2BBid) => {
+      const region = bid.region_sido?.trim();
+      if (!region) return;
+      writePreCheckHandoff({
+        address: region,
+        zoneType: null,
+        areaSqm: null,
+        pnu: null,
+        bestMethod: null,
+        bestMethodName: null,
+        source: "g2b",
+        memo: bid.bid_notice_nm || null,
+      });
+      router.push(`/${locale}/projects/new`);
+    },
+    [router, locale],
+  );
 
   return (
     <div className="flex flex-col gap-6 pb-20">
@@ -333,6 +360,9 @@ export default function G2BBidDashboard() {
                   bid={bid}
                   groups={groups}
                   onClick={() => setSelectedBid(bid)}
+                  onCreateProject={
+                    bid.region_sido?.trim() ? () => createProjectFromBid(bid) : undefined
+                  }
                 />
               ))}
             </div>
@@ -410,7 +440,18 @@ export default function G2BBidDashboard() {
 }
 
 /* ── 입찰 카드 (가독성 강화) ── */
-function BidCard({ bid, groups, onClick }: { bid: G2BBid; groups: Record<string, string[]>; onClick: () => void }) {
+function BidCard({
+  bid,
+  groups,
+  onClick,
+  onCreateProject,
+}: {
+  bid: G2BBid;
+  groups: Record<string, string[]>;
+  onClick: () => void;
+  /** 발굴 → 기획 CTA. region_sido 미제공 공고는 undefined → 버튼 비노출 */
+  onCreateProject?: () => void;
+}) {
   const days = daysUntil(bid.bid_close_dt);
   const dday =
     days == null ? null : days < 0 ? "마감" : days === 0 ? "D-DAY" : `D-${days}`;
@@ -423,9 +464,19 @@ function BidCard({ bid, groups, onClick }: { bid: G2BBid; groups: Record<string,
   const isRecommended = bid.ai_risk_score != null && bid.ai_risk_score <= 30;
 
   return (
-    <button
+    // CTA 버튼을 품기 위해 button → div[role=button] (button 중첩은 invalid HTML).
+    // 키보드 접근성(Enter/Space)은 onKeyDown으로 유지.
+    <div
+      role="button"
+      tabIndex={0}
       onClick={onClick}
-      className="group text-left rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-4 transition-all hover:-translate-y-0.5 hover:border-[var(--accent-strong)]/40 hover:shadow-lg"
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onClick();
+        }
+      }}
+      className="group cursor-pointer text-left rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-4 transition-all hover:-translate-y-0.5 hover:border-[var(--accent-strong)]/40 hover:shadow-lg"
     >
       {/* 상단: 업무구분 + D-day */}
       <div className="flex items-center justify-between mb-2.5">
@@ -469,7 +520,24 @@ function BidCard({ bid, groups, onClick }: { bid: G2BBid; groups: Record<string,
           ))}
         </div>
       )}
-    </button>
+
+      {/* ── 이 공고로 프로젝트 생성(발굴 → 기획) ── region_sido 미제공 시 비노출 */}
+      {onCreateProject ? (
+        <div className="mt-3 border-t border-[var(--line)] pt-3">
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onCreateProject();
+            }}
+            title="공고 지역(시도)·공고명을 새 프로젝트 화면에 선채움합니다. 정밀 주소는 생성 화면의 주소 검색으로 보강하세요."
+            className="w-full rounded-lg border border-[var(--accent-strong)]/40 bg-[var(--accent-soft)] px-3 py-1.5 text-[11px] font-black text-[var(--accent-strong)] transition-colors hover:bg-[var(--accent-soft)]/70"
+          >
+            🏗️ 이 공고로 프로젝트 생성
+          </button>
+        </div>
+      ) : null}
+    </div>
   );
 }
 

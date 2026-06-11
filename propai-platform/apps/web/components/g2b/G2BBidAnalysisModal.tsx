@@ -428,7 +428,7 @@ export function G2BBidAnalysisModal({
 
             {result.g2b_url && (
               <button
-                onClick={() => window.open(result.g2b_url || "#", "_blank")}
+                onClick={() => window.open(result.g2b_url || "#", "_blank", "noopener,noreferrer")}
                 className="w-full h-11 rounded-xl bg-[var(--accent-strong)] text-white font-bold hover:opacity-90 transition"
               >
                 나라장터에서 입찰하기 →

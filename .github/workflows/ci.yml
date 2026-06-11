@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths: ["propai-platform/**"]
+  pull_request:
+    paths: ["propai-platform/**"]
+  workflow_dispatch:
+
+jobs:
+  backend-tests:
+    name: Backend (pytest)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: propai-platform
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: propai-platform/apps/api/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r apps/api/requirements.txt
+
+      - name: Run unit tests (apps/api)
+        working-directory: propai-platform/apps/api
+        run: python -m pytest tests/ -q --no-header
+
+  frontend-checks:
+    name: Frontend (type-check + lint + test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: propai-platform/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install
+        working-directory: propai-platform
+
+      - name: Type check
+        run: pnpm type-check
+        working-directory: propai-platform/apps/web
+        continue-on-error: true # 기존 에러 정리 전까지 비차단 — 정리 후 제거할 것
+
+      - name: Lint
+        run: pnpm lint
+        working-directory: propai-platform/apps/web
+        continue-on-error: true # 기존 에러 정리 전까지 비차단 — 정리 후 제거할 것
+
+      - name: Unit tests
+        run: pnpm test:run
+        working-directory: propai-platform/apps/web

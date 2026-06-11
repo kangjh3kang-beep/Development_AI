@@ -3,6 +3,7 @@ import { TenantWorkspaceClient } from "@/components/operations/TenantWorkspaceCl
 import { ModulePlaceholder } from "@/components/layout/ModulePlaceholder";
 import { getDictionary } from "@/i18n/get-dictionary";
 import { isValidLocale, type Locale } from "@/i18n/config";
+import { runtimeMode } from "@/lib/runtime-mode";
 
 type TenantPageProps = {
   params: Promise<{
@@ -18,8 +19,8 @@ export default async function TenantPage({ params }: TenantPageProps) {
   }
 
   const dictionary = await getDictionary(locale as Locale);
-  const runtimeMode =
-    process.env.NEXT_PUBLIC_USE_MOCKS === "false"
+  const runtimeModeLabel =
+    runtimeMode() === "live"
       ? dictionary.workspace.modeLive
       : dictionary.workspace.modeMock;
 
@@ -29,7 +30,7 @@ export default async function TenantPage({ params }: TenantPageProps) {
         eyebrow={dictionary.modulePlaceholders["tenant"].eyebrow}
         title={dictionary.modulePlaceholders["tenant"].title}
         description={dictionary.modulePlaceholders["tenant"].description}
-        statusLabel={runtimeMode}
+        statusLabel={runtimeModeLabel}
         localeLabel={locale}
         items={dictionary.modulePlaceholders["tenant"].items}
       />

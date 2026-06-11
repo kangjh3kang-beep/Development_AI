@@ -2,6 +2,7 @@ import { OperationsIntelligenceWorkspaceClient } from "@/components/analytics/Op
 import { ModulePlaceholder } from "@/components/layout/ModulePlaceholder";
 import { getDictionary } from "@/i18n/get-dictionary";
 import { isValidLocale, type Locale } from "@/i18n/config";
+import { runtimeMode } from "@/lib/runtime-mode";
 
 type MaintenancePageProps = {
   params: Promise<{
@@ -19,8 +20,8 @@ export default async function MaintenancePage({
   }
 
   const dictionary = await getDictionary(locale as Locale);
-  const runtimeMode =
-    process.env.NEXT_PUBLIC_USE_MOCKS === "false"
+  const runtimeModeLabel =
+    runtimeMode() === "live"
       ? dictionary.workspace.modeLive
       : dictionary.workspace.modeMock;
 
@@ -30,7 +31,7 @@ export default async function MaintenancePage({
         eyebrow={dictionary.modulePlaceholders["maintenance"].eyebrow}
         title={dictionary.modulePlaceholders["maintenance"].title}
         description={dictionary.modulePlaceholders["maintenance"].description}
-        statusLabel={runtimeMode}
+        statusLabel={runtimeModeLabel}
         localeLabel={locale}
         items={dictionary.modulePlaceholders["maintenance"].items}
       />

@@ -306,21 +306,21 @@ class TestJWTSecretSecurity:
         )
         assert settings.jwt_secret == "complex_jwt_secret_key_change_in_prod"
 
-    def test_프로덕션_기본_시크릿_경고(self):
-        """프로덕션 환경에서 기본 시크릿 사용 시 경고가 발생한다."""
-        import warnings
-        with warnings.catch_warnings(record=True):
-            warnings.simplefilter("always")
-            os.environ["ENVIRONMENT"] = "production"
-            try:
-                settings = Settings(
+    def test_프로덕션_기본_시크릿_차단(self):
+        """프로덕션 환경에서 기본형 시크릿 사용 시 기동이 차단된다.
+
+        (이전: 경고만 발생 → 현재: ValidationError로 차단 강화. 2026-06 보안 조치와 일관.)
+        """
+        import pydantic
+        os.environ["ENVIRONMENT"] = "production"
+        try:
+            with pytest.raises(pydantic.ValidationError):
+                Settings(
                     jwt_secret="complex_jwt_secret_key_change_in_prod",
                     environment="production",
                 )
-                # 시크릿은 여전히 설정되지만 경고가 발생했을 것
-                assert settings.jwt_secret == "complex_jwt_secret_key_change_in_prod"
-            finally:
-                os.environ.pop("ENVIRONMENT", None)
+        finally:
+            os.environ.pop("ENVIRONMENT", None)
 
     def test_커스텀_시크릿_경고_없음(self):
         """커스텀 시크릿은 경고가 발생하지 않는다."""

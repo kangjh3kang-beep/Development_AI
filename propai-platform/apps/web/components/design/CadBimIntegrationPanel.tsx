@@ -6,12 +6,13 @@ import { CameraControls, Grid } from "@react-three/drei";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import * as THREE from "three";
 import { motion } from "framer-motion";
-import CADEditor from "./CADEditor";
+import CADEditor, { type CADEditorMetrics } from "./CADEditor";
 import { GenerativeDesignPanel } from "@/components/cad/GenerativeDesignPanel";
 import { DesignOutcomeSummary } from "@/components/design/DesignOutcomeSummary";
 import { UnitMixSimulatorPanel } from "@/components/design/UnitMixSimulatorPanel";
+import { LiveProFormaStrip, type LiveProFormaDesign } from "@/components/design/LiveProFormaStrip";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
-import { apiClient, ApiClientError } from "@/lib/api-client";
+import { apiClient, ApiClientError, apiV1BaseUrl } from "@/lib/api-client";
 
 // 도면 코드 → 한글 명칭 (SVGDrawingService.generate_full_drawing_set 기준)
 const DRAWING_LABELS: Record<string, string> = {
@@ -26,17 +27,23 @@ const DRAWING_LABELS: Record<string, string> = {
   "C-03": "상세도",
 };
 
-// v1 API base URL (apiClient와 동일 규칙). SVG는 텍스트라 직접 fetch.
-function designApiBase(): string {
-  if (typeof window !== "undefined") {
-    const host = window.location.hostname;
-    if (host === "4t8t.net" || host === "www.4t8t.net" || host.endsWith(".pages.dev") || host === "propai.kr") {
-      return "https://api.4t8t.net/api/v1";
-    }
-  }
-  return "http://localhost:8000/api/v1";
-}
+// DXF 도면종류(export-dxf drawing_type) — 평면/상세/단면/입면/배치 5종.
+const DXF_TYPE_LABELS: Record<string, string> = {
+  floor_plan: "평면도",
+  detail: "상세도",
+  section: "단면도",
+  elevation: "입면도",
+  site: "배치도",
+};
+const DXF_TYPE_OPTIONS: { value: string; label: string }[] = [
+  { value: "floor_plan", label: "평면도" },
+  { value: "detail", label: "상세도" },
+  { value: "section", label: "단면도" },
+  { value: "elevation", label: "입면도" },
+  { value: "site", label: "배치도" },
+];
 
+// v1 API base는 apiV1BaseUrl()(api-client 단일 출처) 사용 — SVG·바이너리는 텍스트/blob이라 직접 fetch.
 const r2 = (n: number) => Math.round(n * 100) / 100;
 
 // 건축물 용도 → 백엔드 building_use 매핑(세대/평면 배치에 사용)
@@ -289,6 +296,10 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
   // P4: 세대믹스 시뮬레이터가 "평면 반영"한 명시 믹스(타입:면적:총세대). 도면 SVG에 mix= 로 전달.
   const [appliedMix, setAppliedMix] = useState<string | null>(null);
   const [dxfBusy, setDxfBusy] = useState(false);
+  // DXF 내보내기 도면종류(평면/상세/단면/입면/배치) — design_v61 export-dxf drawing_type.
+  const [dxfType, setDxfType] = useState<string>("floor_plan");
+  // 편집모드 정점 드래그가 통지한 라이브 메트릭(footprint·매스치수) — 라이브 수지에 즉시 반영.
+  const [editMetrics, setEditMetrics] = useState<CADEditorMetrics | null>(null);
 
   // 설계(건축개요)가 있는지 — 3D 캔버스는 "설계 생성 후"에만 마운트하는 게이트.
   // 선택한 개요(GFA) 또는 부지분석(대지면적·용도지역) 중 하나라도 있으면 매스 산출이 가능하다.
@@ -302,9 +313,30 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
   const [drawingCodes, setDrawingCodes] = useState<string[]>([]);
   const [activeCode, setActiveCode] = useState<string | null>(null);
   const [svgMap, setSvgMap] = useState<Record<string, string>>({});
+  // 보안: SVG 문자열을 DOM에 직접 주입하지 않고 Blob URL + <img>로 렌더(스크립트 실행 차단).
+  const [activeSvgUrl, setActiveSvgUrl] = useState<string | null>(null);
   const [drawingLoading, setDrawingLoading] = useState(false);
   const [drawingError, setDrawingError] = useState<string | null>(null);
   const [editMode, setEditMode] = useState(false);
+  // 3단계 스테퍼 단계(①생성 → ②확인 → ③다듬기). 진입 동선·진행 표시용(읽기 전용 시각화).
+  type StudioStep = 1 | 2 | 3;
+  const studioStep: StudioStep = editMode ? 3 : (spec ? 2 : 1);
+
+  // ── 라이브 수지 스트립 입력(읽기 전용) ──
+  // 스튜디오 상시: spec 치수. 편집모드: 정점 드래그가 통지한 editMetrics(footprint·매스치수)를 우선.
+  const liveProFormaDesign: LiveProFormaDesign = useMemo(() => {
+    const useEdit = editMode && editMetrics != null;
+    return {
+      footprintSqm: useEdit ? editMetrics!.footprintSqm : null,
+      buildingWidthM: useEdit ? editMetrics!.buildingWidthM : (spec?.building_width_m ?? null),
+      buildingDepthM: useEdit ? editMetrics!.buildingDepthM : (spec?.building_depth_m ?? null),
+      floorCount: useEdit ? editMetrics!.floorCount : (spec?.floor_count ?? null),
+      buildingUse: designData?.buildingType ?? spec?.building_use ?? null,
+      landAreaSqm: spec?.land_area_sqm ?? null,
+      unitTypes: designData?.unitTypes ?? null,
+      efficiencyPct: designData?.efficiencyPct ?? null,
+    };
+  }, [editMode, editMetrics, spec, designData]);
 
   // ── 3D BIM 모델(IFC→glTF) 로딩 — 백엔드가 생성한 실제 매스 모델 ──
   const [bimScene, setBimScene] = useState<THREE.Group | null>(null);
@@ -346,7 +378,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
   // ── 공용 기하 산출: 선택한 건축개요(GFA·층수) 우선, 없으면 대지+용도지역으로 자동 ──
   const resolveSpec = useCallback(async () => {
     setSpecLoading(true);
-    const base = designApiBase();
+    const base = apiV1BaseUrl();
     const landArea = siteAnalysis?.landAreaSqm || undefined;
     const zone = siteAnalysis?.zoneCode || "2R";
     const use = mapUse(designData?.buildingType);
@@ -470,7 +502,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
     if (!spec) return;
     setBimLoading(true);
     setBimError(null);
-    const base = designApiBase();
+    const base = apiV1BaseUrl();
     const reqBody = bimBody();
 
     // (1) AI 설계해석 + 메타는 병렬로(실패해도 3D는 표시)
@@ -551,7 +583,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
     setDrawingLoading(true);
     setDrawingError(null);
     try {
-      const base = designApiBase();
+      const base = apiV1BaseUrl();
       const res = await fetch(`${base}/design/${encodeURIComponent(projectId)}/generate-full-set`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -581,7 +613,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
     async (code: string) => {
       if (svgMap[code] || !spec) return;
       try {
-        const base = designApiBase();
+        const base = apiV1BaseUrl();
         const res = await fetch(`${base}/design/${encodeURIComponent(projectId)}/drawings/${code}/svg${svgQuery()}`, {
           signal: AbortSignal.timeout(60000),
         });
@@ -601,7 +633,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
       loadDrawingSet();
     }
     if (viewMode === "cad_2d" && !editMode && spec && !designAi) {
-      const base = designApiBase();
+      const base = apiV1BaseUrl();
       fetch(`${base}/design/${encodeURIComponent(projectId)}/bim/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -619,6 +651,15 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
     if (activeCode) loadSvg(activeCode);
   }, [activeCode, loadSvg]);
 
+  // 활성 도면 SVG → Blob URL 변환(언마운트/교체 시 revoke). img 로드된 SVG는 스크립트 미실행.
+  useEffect(() => {
+    const svg = activeCode ? svgMap[activeCode] : undefined;
+    if (!svg) { setActiveSvgUrl(null); return; }
+    const url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
+    setActiveSvgUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [activeCode, svgMap]);
+
   // P4: 세대믹스 시뮬레이터 "평면 반영" — 명시 믹스를 도면 쿼리에 싣고, 캐시를 비워 재로드.
   // unitTypes도 스토어에 반영(다음 진입·3D 해석과 정합).
   const handleApplyMix = useCallback((mixParam: string, types: string[]) => {
@@ -630,18 +671,28 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
   }, [designData, updateDesignData]);
 
   // DXF(캐드) 내보내기 — 실제 AutoCAD 호환 .dxf 파일 다운로드(벡터 CAD 도면임을 증명).
+  // drawing_type으로 평면/상세/단면/입면/배치 5종 분기(design_v61 export-dxf). 미전달 시 floor_plan(하위호환).
   const exportDxf = useCallback(async () => {
     if (!spec) return;
     setDxfBusy(true);
     try {
-      const base = designApiBase();
+      const base = apiV1BaseUrl();
       const res = await fetch(`${base}/design/${encodeURIComponent(projectId)}/drawings/export-dxf`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          // 5종 도면이 각기 다른 필드를 소비하므로 spec 기반 전체 치수를 동봉(미상 필드는 백엔드 기본값).
+          site_width_m: spec.site_width_m,
+          site_depth_m: spec.site_depth_m,
           building_width_m: spec.building_width_m,
           building_depth_m: spec.building_depth_m,
           floor_count: spec.floor_count,
+          floor_height_m: spec.floor_height_m ?? 3.0,
+          basement_floors: spec.basement_floors ?? 1,
+          unit_width_m: spec.unit_width_m ?? 8,
+          setback_m: spec.setback_m ?? 3,
+          project_name: spec.project_name ?? "PropAI",
+          drawing_type: dxfType,
         }),
         signal: AbortSignal.timeout(30000),
       });
@@ -650,7 +701,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `${(spec.project_name || "PropAI")}_평면도.dxf`;
+      a.download = `${(spec.project_name || "PropAI")}_${DXF_TYPE_LABELS[dxfType] || dxfType}.dxf`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -660,7 +711,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
     } finally {
       setDxfBusy(false);
     }
-  }, [projectId, spec]);
+  }, [projectId, spec, dxfType]);
 
   // 생성 UX(Phase 2)에서 설계안 적용 시 — 파생 기하·도면·3D를 초기화해
   // 새 SSOT(designData)로 spec을 재산출하고 2D/3D를 재생성한다(기존 로드 경로 재사용).
@@ -829,6 +880,52 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
       {/* ── Phase 2 · 생성 UX(자연어→Top3 설계안→스튜디오 로드) ── */}
       <GenerativeDesignPanel projectId={projectId} onApplied={handleGeneratedApplied} />
 
+      {/* ── 3단계 스테퍼(①AI로 생성 → ②도면·3D 확인 → ③직접 다듬고 내보내기) — 쉬운 모드 동선 안내 ── */}
+      <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] px-5 py-3 -mt-4">
+        {([
+          [1, "AI로 생성", "슬라이더·자연어로 설계안 생성"],
+          [2, "도면·3D 확인", "평면·단면·3D 매스 확인"],
+          [3, "다듬고 내보내기", "정점 드래그·Ctrl+Z·DXF"],
+        ] as [StudioStep, string, string][]).map(([n, label, hint], i) => {
+          const active = studioStep === n;
+          const done = studioStep > n;
+          return (
+            <div key={n} className="flex items-center gap-2">
+              {i > 0 && <span className="text-[var(--text-hint)]">→</span>}
+              <div
+                className={`flex items-center gap-2 rounded-full px-3 py-1.5 transition-colors ${
+                  active
+                    ? "bg-[var(--accent-strong)]/15 border border-[var(--accent-strong)]/50"
+                    : done
+                      ? "bg-[var(--surface-strong)] border border-[var(--line)]"
+                      : "border border-transparent"
+                }`}
+                title={hint}
+              >
+                <span
+                  className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-black ${
+                    active
+                      ? "bg-[var(--accent-strong)] text-white"
+                      : done
+                        ? "bg-[var(--accent-strong)]/40 text-[var(--text-primary)]"
+                        : "bg-[var(--surface-strong)] text-[var(--text-hint)]"
+                  }`}
+                >
+                  {done ? "✓" : n}
+                </span>
+                <span
+                  className={`text-[11px] font-black ${
+                    active ? "text-[var(--accent-strong)]" : "text-[var(--text-secondary)]"
+                  }`}
+                >
+                  {label}
+                </span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
       {/* ── 편집화면(2D/3D 뷰포트) — 생성 UX 바로 아래(상단 배치). 설계 해석 요약은 뷰포트 아래로 이동. ── */}
       <div className="relative h-[650px] w-full overflow-hidden rounded-[4rem] border border-[var(--line-strong)] bg-[#0d1520] shadow-[var(--shadow-2xl)] group">
         {/* Cinematic Backdrop */}
@@ -958,6 +1055,13 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
           </div>
         ) : editMode ? (
           <div className="absolute inset-0 z-30 bg-[#0a0f14] flex flex-col overflow-hidden [&>div]:h-full [&>div]:rounded-none [&>div]:border-none">
+            {/* 편집 종료 → 도면 확인(②) 화면으로 복귀. CADEditor 내부 칩과 비충돌 위치(좌상단). */}
+            <button
+              onClick={() => { setEditMode(false); setEditMetrics(null); }}
+              className="absolute left-4 top-4 z-40 rounded-full border border-white/15 bg-black/60 px-4 py-2 text-[10px] font-black uppercase tracking-widest text-white/80 backdrop-blur-xl hover:bg-white/15"
+            >
+              ← 편집 종료
+            </button>
             <CADEditor
               projectId={projectId}
               siteAreaSqm={spec?.land_area_sqm}
@@ -966,6 +1070,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
               initialFloors={spec?.floor_count}
               initialFloorHeightM={spec?.floor_height_m ?? 3}
               zoneCode={spec?.zone_code}
+              onMetricsChange={setEditMetrics}
             />
           </div>
         ) : (
@@ -987,6 +1092,22 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
                 </select>
               </label>
               <div className="flex shrink-0 items-center gap-2">
+                {/* DXF 도면종류 셀렉트(평면/상세/단면/입면/배치) — export-dxf drawing_type 분기 */}
+                <label className="flex items-center gap-1.5">
+                  <span className="text-[9px] font-black uppercase tracking-widest text-white/35">종류</span>
+                  <select
+                    value={dxfType}
+                    onChange={(e) => setDxfType(e.target.value)}
+                    title="내보낼 DXF 도면 종류"
+                    className="rounded-lg border border-white/10 bg-white/5 px-2 py-1.5 text-[11px] font-bold text-white focus:border-[var(--accent-strong)] focus:outline-none"
+                  >
+                    {DXF_TYPE_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value} className="bg-[#0a0f14] text-white">
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
                 {/* DXF(캐드) 내보내기 — 실제 AutoCAD 호환 벡터 도면 파일 다운로드 */}
                 <button
                   onClick={exportDxf}
@@ -996,11 +1117,12 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
                 >
                   {dxfBusy ? "내보내는 중…" : "⬇ DXF(캐드) 내보내기"}
                 </button>
+                {/* ③ 도면 다듬기 CTA — 편집모드 직행(쉬운 모드 동선) */}
                 <button
                   onClick={() => setEditMode(true)}
-                  className="rounded-full border border-white/10 px-4 py-2 text-[10px] font-black uppercase tracking-widest text-[var(--accent-strong)] hover:bg-white/5"
+                  className="rounded-full border border-[var(--accent-strong)]/60 bg-[var(--accent-strong)]/15 px-4 py-2 text-[10px] font-black uppercase tracking-widest text-[var(--accent-strong)] hover:bg-[var(--accent-strong)]/25"
                 >
-                  편집 모드
+                  ③ 도면 다듬기
                 </button>
               </div>
             </div>
@@ -1034,15 +1156,16 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
                   </button>
                 </div>
               )}
-              {!drawingLoading && !drawingError && activeCode && svgMap[activeCode] && (
-                <div
-                  className="flex h-full w-full max-w-[920px] items-center justify-center rounded-2xl bg-white p-5 shadow-2xl [&>svg]:max-h-full [&>svg]:w-full"
-                  // SVG는 백엔드 SVGDrawingService가 생성한 신뢰 가능한 자체 컨텐츠.
-                  // 모든 도면이 viewBox+100%(반응형)라 컨테이너를 꽉 채워 크게 렌더된다.
-                  dangerouslySetInnerHTML={{ __html: svgMap[activeCode] }}
-                />
+              {!drawingLoading && !drawingError && activeCode && activeSvgUrl && (
+                <div className="flex h-full w-full max-w-[920px] items-center justify-center rounded-2xl bg-white p-5 shadow-2xl">
+                  {/* 보안: dangerouslySetInnerHTML 대신 Blob URL <img>로 렌더 — img로 로드된
+                      SVG는 스크립트·이벤트핸들러가 실행되지 않는다(XSS 차단).
+                      모든 도면이 viewBox+100%(반응형)라 컨테이너를 꽉 채워 크게 렌더된다. */}
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={activeSvgUrl} alt={DRAWING_LABELS[activeCode] || activeCode} className="max-h-full w-full" />
+                </div>
               )}
-              {!drawingLoading && !drawingError && activeCode && !svgMap[activeCode] && (
+              {!drawingLoading && !drawingError && activeCode && !activeSvgUrl && (
                 <div className="h-10 w-10 animate-spin rounded-full border-4 border-[var(--accent-strong)] border-t-transparent" />
               )}
             </div>
@@ -1317,6 +1440,16 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
           </div>
         )}
       </div>
+
+      {/* ── 라이브 수지 스트립(TestFit 차별화) — 스튜디오 상시 마운트 + 편집모드 정점 드래그 즉시 갱신 ──
+          읽기 전용: 기존 unit-mix/simulate(+footprint_sqm)를 400ms 디바운스로 재사용, SSOT 비침범. ── */}
+      {hasDesignBasis && spec && (
+        <LiveProFormaStrip
+          projectId={projectId}
+          design={liveProFormaDesign}
+          contextLabel={editMode ? "편집 반영" : undefined}
+        />
+      )}
 
       {/* ── P4: 세대믹스 시뮬레이터(비율 슬라이더 → 평면 재배치 + 약식 수지 실시간) ── */}
       {hasDesignBasis && spec && (

@@ -132,7 +132,11 @@ class FeasibilityServiceV2:
                 # Auto-generate input based on zone constraints
                 effective_far = min(max_far, self._get_type_typical_far(dev_type))
                 total_gfa = site_area * effective_far / 100
-                total_hh = max(1, int(total_gfa / self._get_type_avg_unit_area(dev_type)))
+                # 세대수 = 전용 가용면적(연면적×전용률) ÷ 전용면적
+                # (전용률 미반영 시 공용면적 무시로 세대수 ~30% 과대 → 세대당 부담금·주차 왜곡)
+                eff_ratio = self._get_type_efficiency_ratio(dev_type)
+                avg_unit_area = self._get_type_avg_unit_area(dev_type)
+                total_hh = max(1, int(total_gfa * eff_ratio / avg_unit_area))
 
                 inp = ModuleInput(
                     development_type=dev_type,
@@ -140,7 +144,8 @@ class FeasibilityServiceV2:
                     total_gfa_sqm=total_gfa,
                     total_households=total_hh,
                     avg_sale_price_per_pyeong=self._get_regional_price(dev_type, region, address),
-                    avg_area_pyeong=self._get_type_avg_unit_area(dev_type) / 3.305785,
+                    # 분양가(원/평)는 공급면적 기준 시세 → 면적도 공급평수(전용/전용률)로 통일
+                    avg_area_pyeong=(avg_unit_area / eff_ratio) / 3.305785,
                     sale_ratio=0.95 if dev_type not in ("M14", "M15") else 0.0,
                     official_price_per_sqm=zoning.get("official_price_per_sqm") or 1_500_000,
                     price_multiplier=1.1,
@@ -230,13 +235,26 @@ class FeasibilityServiceV2:
         return typical.get(dev_type, 250)
 
     def _get_type_avg_unit_area(self, dev_type: str) -> float:
-        """개발유형별 평균 세대면적 (m2)."""
+        """개발유형별 평균 세대면적 (전용 m2)."""
         areas = {
             "M01": 84, "M02": 84, "M03": 59, "M04": 84, "M05": 49,
             "M06": 84, "M07": 102, "M08": 39, "M09": 50, "M10": 165,
             "M11": 200, "M12": 130, "M13": 30, "M14": 59, "M15": 84,
         }
         return areas.get(dev_type, 84)
+
+    def _get_type_efficiency_ratio(self, dev_type: str) -> float:
+        """개발유형별 전용률 (전용면적/공급면적).
+
+        공동주택(아파트·오피스텔)은 코어·복도 등 공용면적으로 0.7~0.8,
+        단독·전원·타운하우스는 공용면적이 작아 0.9 수준.
+        """
+        low_rise = {"M10", "M11", "M12"}  # 단독·전원·타운하우스
+        if dev_type in low_rise:
+            return 0.90
+        if dev_type == "M08":  # 오피스텔 — 전용률 낮음
+            return 0.55
+        return 0.75
 
     def _get_regional_price(self, dev_type: str, region: str, address: str = "") -> int:
         """지역x개발유형별 평균 분양가 (원/평).

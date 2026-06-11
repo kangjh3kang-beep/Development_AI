@@ -33,14 +33,18 @@ class StorageError(Exception):
 async def _ensure_bucket(
     client: httpx.AsyncClient, base: str, bucket: str, headers: dict[str, str]
 ) -> None:
-    """버킷 존재를 보장한다. 없으면 public 버킷으로 생성한다(멱등)."""
+    """버킷 존재를 보장한다. 없으면 비공개 버킷으로 생성한다(멱등).
+
+    보안: 자동 생성 버킷은 public=False. 공개 제공이 필요하면 관리자가
+    Supabase 대시보드에서 명시적으로 public 전환한다(기존 버킷은 그대로 사용).
+    """
     resp = await client.get(f"{base}/storage/v1/bucket/{bucket}", headers=headers)
     if resp.status_code == 200:
         return
     create = await client.post(
         f"{base}/storage/v1/bucket",
         headers=headers,
-        json={"id": bucket, "name": bucket, "public": True},
+        json={"id": bucket, "name": bucket, "public": False},
     )
     if create.status_code in (200, 201):
         logger.info("Supabase Storage 버킷 생성", bucket=bucket)

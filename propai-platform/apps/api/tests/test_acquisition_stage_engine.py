@@ -29,7 +29,12 @@ class TestA01AcquisitionTax:
 
 class TestA04StampTax:
     def test_small(self):
-        assert calculate_a04_stamp_tax(50_000_000)["amount_won"] == 0
+        # 인지세법 제3조: 3천만~5천만 구간 4만원 (이전 0원은 하위구간 미반영 버그)
+        assert calculate_a04_stamp_tax(50_000_000)["amount_won"] == 40_000
+
+    def test_exempt(self):
+        # 1천만원 이하 비과세
+        assert calculate_a04_stamp_tax(10_000_000)["amount_won"] == 0
 
     def test_medium(self):
         assert calculate_a04_stamp_tax(500_000_000)["amount_won"] == 150_000
@@ -40,8 +45,14 @@ class TestA04StampTax:
 
 class TestA05RegistrationTax:
     def test_basic(self):
+        # 2011년 지방세법 개편: 소유권이전 등록세는 취득세(A01) 통합 — 별도 2% 부과는 이중과세
         result = calculate_a05_registration_tax(10_000_000_000)
-        assert result["amount_won"] == 200_000_000
+        assert result["amount_won"] == 0
+
+    def test_mortgage(self):
+        # 저당권 설정 등기: 채권금액의 0.2%
+        result = calculate_a05_registration_tax(10_000_000_000, mortgage_amount_won=5_000_000_000)
+        assert result["amount_won"] == 10_000_000
 
 
 class TestA06HousingBond:

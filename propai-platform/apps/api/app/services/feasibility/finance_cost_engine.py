@@ -25,6 +25,25 @@ def calculate_balloon_interest(principal: int, annual_rate: float, months: int) 
     return total_interest
 
 
+def calculate_drawdown_interest(principal: int, annual_rate: float, months: int) -> int:
+    """분할실행(progressive drawdown) 이자 계산.
+
+    PF 기성불 인출·중도금 회차별 실행처럼 원금이 기간에 걸쳐 균등 분할
+    실행되는 대출의 이자. 각 월별 트랜치가 만기까지 복리 부리:
+        총이자 = Σ_{k=1..m} (P/m) × ((1+i)^(m−k+1) − 1)
+    전액·전기간 가정 대비 약 절반 수준 — 실제 PF 관행에 부합.
+    """
+    if months <= 0 or principal <= 0:
+        return 0
+    monthly_rate = annual_rate / 12
+    tranche = principal / months
+    total = sum(
+        tranche * ((1 + monthly_rate) ** (months - k + 1) - 1)
+        for k in range(1, months + 1)
+    )
+    return int(total)
+
+
 def get_pf_rate(credit_grade: str = "A", presale_ratio: float = 0.0) -> float:
     """신용등급 및 분양률 기반 PF 금리 결정.
 
@@ -245,8 +264,13 @@ def calculate_total_finance_cost(
     midpay_guarantee_fee_rate: float = 0.004,
     midpay_start_month: int = 0,
     midpay_end_month: int | None = None,
+    progressive_drawdown: bool = True,
 ) -> dict[str, Any]:
     """금융비 총합 (브릿지 + 본PF + 중도금).
+
+    progressive_drawdown=True(기본)면 PF·중도금 이자를 분할실행 모델로 계산한다
+    (PF는 기성불 인출, 중도금은 회차별 실행 — 전액·전기간 가정은 ~2배 과대계상).
+    브릿지는 토지비 일시 실행이므로 항상 전액 기준.
 
     Returns:
         {'bridge', 'pf', 'midpay', 'weighted_avg_rate', 'total_finance_cost_won'}
@@ -279,6 +303,23 @@ def calculate_total_finance_cost(
         loan_start_month=midpay_start_month,
         loan_end_month=midpay_end_month,
     )
+
+    # 분할실행 모델: PF(기성불)·중도금(회차별)은 평균잔액이 원금의 ~50%
+    # — 전액·전기간 복리 이자를 분할실행 이자로 교체 (브릿지는 일시 실행 유지)
+    if progressive_drawdown:
+        pf_dd_interest = calculate_drawdown_interest(
+            pf_amount_won, pf["rate"], pf["months"]
+        )
+        pf["interest_won"] = pf_dd_interest
+        pf["disbursement"] = "progressive"
+        pf["total_pf_cost_won"] = pf_dd_interest + pf["guarantee_fee_won"]
+
+        mid_dd_interest = calculate_drawdown_interest(
+            midpay_amount_won, midpay_rate, midpay["months"]
+        )
+        midpay["interest_won"] = mid_dd_interest
+        midpay["disbursement"] = "progressive"
+        midpay["total_midpay_cost_won"] = mid_dd_interest + midpay["guarantee_fee_won"]
 
     # 실제 적용된 PF 금리 (동적 결정된 경우 포함)
     actual_pf_rate = pf["rate"]

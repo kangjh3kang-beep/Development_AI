@@ -3,15 +3,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from typing import Dict, Any
 from app.core.database import get_db
-from app.services.agents.orchestrator import create_propai_graph, ProjectState, execute_run
 
 
 async def _fetch_project_lite(db: AsyncSession, project_id: str) -> dict | None:
     """실제 projects 테이블 컬럼만 raw SQL로 조회(ORM 컬럼불일치 회피).
-    실 테이블: building_type/floor_above/floor_below/total_area_sqm (organization_id·project_type 없음)."""
+    실 테이블: building_type/floor_above/floor_below/total_area_sqm/address
+    (organization_id·project_type 없음)."""
     try:
         row = (await db.execute(text(
-            "SELECT building_type, total_area_sqm, floor_above, floor_below "
+            "SELECT building_type, total_area_sqm, floor_above, floor_below, address "
             "FROM projects WHERE id = CAST(:pid AS uuid)"),
             {"pid": str(project_id)})).first()
     except Exception:  # noqa: BLE001 — 비-UUID 등
@@ -23,6 +23,7 @@ async def _fetch_project_lite(db: AsyncSession, project_id: str) -> dict | None:
         "total_area_sqm": float(row[1]) if row[1] else 0.0,
         "floor_above": int(row[2]) if row[2] else 0,
         "floor_below": int(row[3]) if row[3] else 0,
+        "address": row[4],  # 분양가 지역시세(regional_pricing) 매칭용 — 없으면 None
     }
 
 router = APIRouter(
@@ -119,24 +120,106 @@ async def get_bim_takeoff(project_id: str, db: AsyncSession = Depends(get_db)) -
 
 @router.post("/{project_id}/simulate-feasibility")
 async def run_feasibility_simulation(project_id: str, db: AsyncSession = Depends(get_db)) -> Dict[str, Any]:
-    """Invoke the LangGraph AI Engine and run the full pipeline."""
+    """실계산 사업성 시뮬레이션 (스텁 오케스트레이터 청산 — WP-11).
+
+    - 공사비: /cost/estimate-overview와 동일 엔진(건축개요 적산) 재사용.
+    - 분양수입: regional_pricing(지역 시세 단일출처) × 분양면적(전용률 75% 가정 — 출처 표기).
+    - 분포: 실 MonteCarloService(시드 고정, 10,000회).
+    - 건축개요 미확정 시 가짜 고정값(구 1.28B 폴백) 대신 no_data 정직 응답.
+    - 응답 계약(results.npv_mean_krw/var_5_krw/profitability_index + 구 키) 유지.
+    """
+    proj = await _fetch_project_lite(db, project_id)
+    if not proj:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    overview = await _resolve_overview(db, project_id, proj)
+    if not overview:
+        return {
+            "status": "no_data",
+            "project_id": project_id,
+            "results": None,
+            "message": "건축개요(연면적) 미확정 — 부지/설계 분석 후 시뮬레이션할 수 있습니다.",
+        }
+
     try:
-        # Run the orchestrator safely with astream and try-catch
-        final_state = await execute_run(project_id, db)
-        
-        feasibility = final_state.get("feasibility_result", {})
-        
+        from app.routers.cost import OverviewCostRequest, estimate_overview
+
+        est = await estimate_overview(OverviewCostRequest(project_id=project_id, **overview), db)
+        total_cost = float(est.get("total_won") or 0)
+        if total_cost <= 0:
+            return {
+                "status": "no_data",
+                "project_id": project_id,
+                "results": None,
+                "message": "공사비 산출 불가(적산 결과 0) — 건축개요 확인 필요",
+            }
+
+        # 분양수입 — regional_pricing 단일출처(시군구→시도→전국 기본값 순 매칭).
+        # 공사비 역산 금지(토지비 미반영 구조적 적자) — 파이프라인 수지 단계와 동일 원칙.
+        from app.services.feasibility.regional_pricing import get_regional_sale_price_per_pyeong
+
+        address = (proj.get("address") or "").strip()
+        sale_price_per_pyeong = get_regional_sale_price_per_pyeong(address=address)
+        sale_price_source = "regional_market_table" if address else "national_default_no_address"
+        efficiency_pct = 75.0  # 분양 전용률 — 설계 미확정 시 표준 가정값(아래 inputs에 출처 표기)
+        sellable_pyeong = overview["total_gfa_sqm"] / 3.305785 * (efficiency_pct / 100.0)
+        expected_revenue = sellable_pyeong * float(sale_price_per_pyeong)
+
+        # 공기(월) — 동일 파일의 결정론적 표준공기 추정 재사용(프로젝트별 변별)
+        period_months = int(round(_estimate_schedule(
+            gfa_sqm=overview["total_gfa_sqm"],
+            floors_above=overview["floor_count_above"],
+            floors_below=overview["floor_count_below"],
+        )["total_months"]))
+
+        from app.services.finance.monte_carlo_service import MonteCarloService
+
+        mc = MonteCarloService().run_simulation(
+            total_cost_krw=total_cost,
+            expected_revenue_krw=expected_revenue,
+            construction_period_months=period_months,
+        )
+
+        npv_mean = int(mc["npv_mean_krw"])
+        npv_std = int(mc["npv_std_krw"])
+        # 파라메트릭 VaR(5%) — 시뮬 분포 평균·표준편차 정규근사의 하위 5% 분위수(z=1.645)
+        var_5 = int(npv_mean - 1.645 * npv_std)
+        profitability_index = round((npv_mean + total_cost) / total_cost, 4)
+        roi_percent = round(npv_mean / total_cost * 100, 2)
+
         return {
             "status": "success",
             "project_id": project_id,
             "results": {
-                "npv_mean_krw": feasibility.get("npv_mean_krw", 1280000000),
-                "roi_percent": feasibility.get("roi_percent", 18.4),
-                "value_at_risk_5": feasibility.get("value_at_risk_5", -210000000),
-                "profitability_index": feasibility.get("profitability_index", 1.18),
-                "message": "LangGraph Engine Fully Executed and Persisted to DB."
-            }
+                "npv_mean_krw": npv_mean,
+                "npv_std_krw": npv_std,
+                "npv_p10_krw": mc["npv_p10_krw"],
+                "npv_p90_krw": mc["npv_p90_krw"],
+                "probability_positive_npv": mc["probability_positive_npv"],
+                "var_5_krw": var_5,
+                "value_at_risk_5": var_5,  # 구 응답 키 하위호환
+                "roi_percent": roi_percent,  # 구 응답 키 하위호환 — NPV/총공사비 기준
+                "profitability_index": profitability_index,
+                "n_simulations": mc["n_simulations"],
+                "converged": mc["converged"],
+                # 입력·출처 정직 표기(provenance) — 가정값·시세 출처를 응답에 동봉
+                "inputs": {
+                    "total_cost_krw": int(total_cost),
+                    "cost_source": "estimate_overview",
+                    "qto_source": est.get("qto_source"),
+                    "unit_price_source": est.get("unit_price_source"),
+                    "expected_revenue_krw": int(expected_revenue),
+                    "sale_price_per_pyeong_won": int(sale_price_per_pyeong),
+                    "sale_price_source": sale_price_source,
+                    "efficiency_pct_assumed": efficiency_pct,
+                    "construction_period_months": period_months,
+                    "address_used": address or None,
+                },
+                "message": "실계산: 건축개요 적산 공사비 + 지역시세 분양수입 기반 몬테카를로 NPV 시뮬레이션",
+            },
         }
+    except HTTPException:
+        raise
     except Exception as e:
         import logging
         logging.getLogger(__name__).error("프로젝트 대시보드 오류: %s", e, exc_info=True)

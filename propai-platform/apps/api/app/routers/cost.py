@@ -25,6 +25,20 @@ bim_service = BIMService()
 # ── 건축개요 기반 공사비 추정(수지·사업성과 단일 데이터원 연동) ──
 _STRUCT_FACTOR = {"RC": 1.0, "RC조": 1.0, "SRC": 1.15, "SRC조": 1.15, "SC": 1.10, "철골": 1.10, "철골조": 1.10, "PC": 0.95, "목구조": 0.85}
 
+# ── BIM 물량(bim_quantities) 공종코드 → 단가 SSOT(UnitPriceRepository) 키 매핑 ──
+# ifc_work_map 의 leaf 코드만 단가에 대응(부모 집계코드 A01/A05 는 미가격 — 중복합산 방지).
+# 매핑 없는 코드(기계/전기/마감 등)는 단가 미보유로 0원·priced=false 정직 표기.
+_BIM_WORKCODE_TO_PRICE_KEY: dict[str, str] = {
+    "A01-01": "formwork",   # 거푸집
+    "A01-02": "rebar",      # 철근
+    "A01-03": "concrete",   # 콘크리트
+    "A02": "concrete",      # 기초공사 → 콘크리트
+    "A03": "masonry",       # 조적공사
+    "A04": "waterproof",    # 방수공사
+    "A05-03": "window",     # 창호프레임
+    "A06": "waterproof",    # 지붕공사 → 방수
+}
+
 
 class OverviewCostRequest(BaseModel):
     """건축개요(연면적·지상/지하 층수·구조·용도) 기반 공사비 추정 요청."""
@@ -132,14 +146,30 @@ async def estimate_overview(req: OverviewCostRequest, db: AsyncSession = Depends
     # 항목별 정밀 적산(QTO) — 레미콘·철근·거푸집·조적·방수·창호·기계·전기(물량×단가).
     # 건축개요(연면적·층수·구조) 기반. 설계/BIM 완성 시 실 매스로 정밀화 가능.
     items_qto: list[dict[str, Any]] = []
+    unit_price_source = "fallback"
     try:
         from app.services.cost.standard_quantity_estimator import StandardQuantityEstimator
+
+        # 단가 SSOT(UnitPriceRepository) 1회 async 조회 주입 — DB 실패 시 None 폴백
+        # (estimator가 기존 동기 fallback resolve로 회귀, 회귀 0).
+        unit_prices: dict[str, dict[str, Any]] | None = None
+        try:
+            from app.services.cost.unit_price_repository import UnitPriceRepository
+            unit_prices = await UnitPriceRepository().get_prices()
+        except Exception:  # noqa: BLE001
+            unit_prices = None
+        if unit_prices and any(
+            (p or {}).get("price_source") not in (None, "fallback") for p in unit_prices.values()
+        ):
+            unit_price_source = "db"
+
         _BT_KR = {"apartment": "공동주택", "officetel": "오피스텔", "office": "근린생활시설",
                   "townhouse": "다세대주택", "single_house": "다세대주택", "warehouse": "근린생활시설"}
         raw = StandardQuantityEstimator().estimate(
             building_type=_BT_KR.get(req.building_type, "공동주택"),
             total_gfa_sqm=gfa, floor_count_above=req.floor_count_above,
             floor_count_below=req.floor_count_below, structure_type=req.structure_type,
+            prices=unit_prices,
         )
         for it in raw:
             unit_sum = float(it.get("mat_unit", 0)) + float(it.get("labor_unit", 0)) + float(it.get("exp_unit", 0))
@@ -147,9 +177,13 @@ async def estimate_overview(req: OverviewCostRequest, db: AsyncSession = Depends
                 "name": it.get("item_name"), "spec": it.get("spec"), "unit": it.get("unit"),
                 "quantity": it.get("quantity"), "unit_cost_won": int(unit_sum),
                 "cost_won": int(float(it.get("quantity", 0)) * unit_sum),
+                # 단가 출처 정직 표기(DB 출처명 또는 "fallback") — additive 필드.
+                "price_source": it.get("price_source", "fallback"),
+                "price_basis_year": it.get("price_basis_year", 2026),
             })
     except Exception:  # noqa: BLE001
         items_qto = []
+        unit_price_source = "fallback"
 
     return {
         "building_type": req.building_type, "structure_type": req.structure_type,
@@ -163,7 +197,126 @@ async def estimate_overview(req: OverviewCostRequest, db: AsyncSession = Depends
         "items": items_qto,
         "geometry": geometry,
         "qto_source": qto_source,
+        # 항목 단가 출처 요약 — DB 단가 1건 이상 반영 시 "db", 전부 하드코딩 fallback이면 "fallback".
+        "unit_price_source": unit_price_source,
         "note": "건축개요 기반 표준 추정(지상/지하/조경/간접) + 기하(geometry) 정밀 적산. 설계 매스(BIM) 있으면 실치수로 자동 정밀화.",
+    }
+
+
+async def _load_bim_quantities(db: AsyncSession, project_id: str) -> list[dict[str, Any]]:
+    """프로젝트 bim_quantities 를 공종코드 단위로 합산 조회(없으면 빈 리스트)."""
+    import uuid as _uuid
+
+    from sqlalchemy import text
+
+    try:
+        pid = _uuid.UUID(str(project_id))
+    except (ValueError, AttributeError, TypeError):
+        return []
+    rows = (await db.execute(text(
+        "SELECT work_code, "
+        "       COALESCE(MAX(unit), '') AS unit, "
+        "       COALESCE(SUM(quantity), 0) AS quantity, "
+        "       COUNT(*) AS line_count "
+        "FROM bim_quantities WHERE project_id = :pid AND work_code IS NOT NULL "
+        "GROUP BY work_code ORDER BY work_code"), {"pid": str(pid)})).mappings().all()
+    return [dict(r) for r in rows]
+
+
+@router.get(
+    "/{project_id}/bim-quantities/origin-cost",
+    summary="BIM 물량(bim_quantities) + 단가 SSOT → 원가계산 12단계(공종코드 결합·정직성)",
+)
+async def bim_quantities_origin_cost(
+    project_id: str, db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """저장된 BIM 물량을 단가 SSOT와 결합해 OriginCostCalculator 12단계 원가를 산정한다.
+
+    bim_quantities 0건이면 가짜 0원 대신 `status="no_bim_quantities"` 로 정직 응답한다.
+    단가 미보유 공종(기계/전기/마감 등)은 0원·priced=false 로 표기(중복합산·허위값 없음)."""
+    grouped = await _load_bim_quantities(db, project_id)
+    if not grouped:
+        # 정직성: 물량 없음 → 가짜값 없이 빈 상태 반환(프론트가 안내 표시).
+        return {
+            "project_id": project_id,
+            "status": "no_bim_quantities",
+            "message": "이 프로젝트에 저장된 BIM 물량(bim_quantities)이 없습니다. IFC 분석을 먼저 실행하세요.",
+            "items": [],
+            "priced_item_count": 0,
+            "unpriced_work_codes": [],
+        }
+
+    # 단가 SSOT 1회 조회(DB 우선·실패 시 fallback) — 출처 정직 표기.
+    unit_prices: dict[str, dict[str, Any]] = {}
+    unit_price_source = "fallback"
+    try:
+        from app.services.cost.unit_price_repository import UnitPriceRepository
+        unit_prices = await UnitPriceRepository().get_prices()
+        if any((p or {}).get("price_source") not in (None, "fallback") for p in unit_prices.values()):
+            unit_price_source = "db"
+    except Exception:  # noqa: BLE001
+        unit_prices = {}
+        unit_price_source = "fallback"
+
+    from app.services.cost.ifc_work_map import IFC_WORK_MAP
+
+    # work_code → 표시명(ifc_work_map 역참조, 첫 매칭).
+    code_to_name: dict[str, str] = {}
+    for _ifc_type, mappings in IFC_WORK_MAP.items():
+        for wc, wn in mappings:
+            code_to_name.setdefault(wc, wn)
+
+    cost_items: list[dict[str, Any]] = []
+    priced_items: list[dict[str, Any]] = []
+    unpriced_codes: list[str] = []
+    for g in grouped:
+        wc = g.get("work_code") or ""
+        qty = float(g.get("quantity") or 0)
+        unit = g.get("unit") or ""
+        price_key = _BIM_WORKCODE_TO_PRICE_KEY.get(wc)
+        price = unit_prices.get(price_key) if price_key else None
+        if price and price_key:
+            mat_u = float(price.get("mat_unit", 0))
+            labor_u = float(price.get("labor_unit", 0))
+            exp_u = float(price.get("exp_unit", 0))
+            item = {
+                "work_code": wc,
+                "item_name": code_to_name.get(wc, wc),
+                "spec": price.get("spec", ""),
+                "unit": price.get("unit") or unit,
+                "quantity": qty,
+                "mat_unit": mat_u,
+                "labor_unit": labor_u,
+                "exp_unit": exp_u,
+            }
+            cost_items.append(item)
+            priced_items.append({
+                **item,
+                "amount": int(qty * (mat_u + labor_u + exp_u)),
+                "price_source": price.get("price_source", "fallback"),
+                "price_key": price_key,
+                "priced": True,
+            })
+        else:
+            # 단가 미보유(매핑 없음 또는 단가 조회 실패) — 정직 표기(0원·priced=false).
+            unpriced_codes.append(wc)
+            priced_items.append({
+                "work_code": wc, "item_name": code_to_name.get(wc, wc),
+                "unit": unit, "quantity": qty, "amount": 0,
+                "price_source": None, "price_key": None, "priced": False,
+            })
+
+    calc = cost_calc.calculate(cost_items)
+    return {
+        "project_id": project_id,
+        "status": "ok",
+        "items": priced_items,
+        "priced_item_count": len(cost_items),
+        "unpriced_work_codes": unpriced_codes,
+        "unit_price_source": unit_price_source,
+        "cost": calc,
+        "total_project_cost": calc.get("total_project_cost", 0),
+        "note": "BIM 물량×단가 SSOT 12단계 원가(추정). 단가 미보유 공종은 0원(priced=false) — 전문 적산사 검토 권장.",
     }
 
 

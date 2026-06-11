@@ -114,7 +114,7 @@ interface CostData {
   indirectWon: number | null;
   rangeMinWon: number | null;
   rangeMaxWon: number | null;
-  source: string | null; // overview | bim
+  source: string | null; // overview | bim | boq (boq = 적산 합계 1방향 주입)
 }
 
 interface EsgData {
@@ -130,6 +130,21 @@ interface ComplianceData {
   violations: string[];
 }
 
+/* ── 필드 단위 provenance(manualFields) 모델 ──
+   siteAnalysis.landAreaSqm 등 평탄 필드를 다수 소비처가 직접 읽으므로 {value, source}
+   래핑은 전 소비자 파괴 → store 톱레벨 "병행 맵"으로 필드별 수동/자동 출처를 관리한다.
+   merge 가드: source:"user"로 stamp된 필드는 자동(auto) 갱신이 덮어쓰지 못하며,
+   revertFieldToAuto로 해제해야 다음 자동 갱신부터 다시 허용된다. */
+export type FieldSource = "auto" | "user";
+export interface FieldProvenance {
+  source: FieldSource;
+  updatedAt: number; // stamp 시각(epoch ms)
+}
+export type ProvenanceModule = "siteAnalysis" | "cost";
+type ManualFieldsMap = Partial<
+  Record<ProvenanceModule, Record<string, FieldProvenance>>
+>;
+
 /* ── Lifecycle stage order ── */
 
 const LIFECYCLE_STAGES = [
@@ -143,6 +158,10 @@ const LIFECYCLE_STAGES = [
   "esg",
   "permit",
   "report",
+  // WP-17: 여정 출구 단계 append-only — "보고서→운영" 동선 연결.
+  // append이므로 기존 영속 스냅샷(completedStages/currentStage: string)과 호환되고,
+  // NextStageCta는 SSOT 순서를 보므로 무수정으로 "보고서 다음 = 운영"이 자동 활성된다.
+  "operations",
 ] as const;
 
 export type LifecycleStage = (typeof LIFECYCLE_STAGES)[number];
@@ -178,6 +197,9 @@ interface ProjectSnapshot {
   analysisResults: AnalysisResult[];
   updatedAt: Partial<Record<ModuleKey, number>>;
   analysisCache: Partial<Record<AnalysisCacheKind, AnalysisCacheEntry>>;
+  // 필드 provenance 병행 맵 — 전환/재선택 시 수동값 보호가 함께 복원되도록 포함.
+  // 구 스냅샷(필드 부재)은 복원 시 ?? {} 폴백(analysisCache와 동일 패턴).
+  manualFields: ManualFieldsMap;
 }
 
 /* ── Staleness / 의존성 모델 ──
@@ -237,23 +259,44 @@ export interface ProjectContextState {
   // 무거운 휘발성 분석 영속 캐시(현재 프로젝트 기준)
   analysisCache: Partial<Record<AnalysisCacheKind, AnalysisCacheEntry>>;
 
+  // 필드 단위 provenance 병행 맵(현재 프로젝트 기준, 초기 {}).
+  // "user"로 stamp된 필드는 auto 갱신의 덮어쓰기가 차단된다(merge 가드).
+  manualFields: ManualFieldsMap;
+
   // Actions
   // projectId 단일 SSOT writer. name/status를 원자 저장하고, address가 주어지면
   // (스냅샷 복원이 우선이되) 신규/주소 미설정 프로젝트에 한해 siteAnalysis.address를 시드한다.
   setProject: (id: string, name: string, status: string, address?: string) => void;
   clearProject: () => void;
 
-  updateSiteAnalysis: (data: Partial<SiteAnalysisData>) => void;
+  // meta 옵셔널(미전달 = "auto") — 기존 호출 무수정 호환.
+  // auto: user 플래그 필드를 patch에서 제거(전부 제거돼 빈 patch면 갱신·stamp 생략).
+  // user: patch의 각 키를 manualFields에 {source:"user"}로 stamp.
+  updateSiteAnalysis: (
+    data: Partial<SiteAnalysisData>,
+    meta?: { source?: FieldSource },
+  ) => void;
   updateDesignData: (data: DesignData) => void;
   // merge 패치 — 부분 writer(UnitMix/AutoRecommend)가 기존 totalCostWon 등을 보존하도록
   // 기존 feasibilityData 위에 병합한다. 전체 객체를 넘기던 기존 호출도 동일하게 동작.
   updateFeasibilityData: (data: Partial<FeasibilityData>) => void;
-  updateCostData: (data: CostData) => void;
+  // full replace. meta 옵셔널(미전달 = "auto") — 기존 호출 무수정 호환.
+  // auto: user 플래그 키의 이전값을 보존한 채 교체(merge 가드).
+  // user: 이전값과 달라진 비null 키만 stamp(미변경 키까지 동결하면 자동 환류 무력화).
+  updateCostData: (data: CostData, meta?: { source?: FieldSource }) => void;
   updateEsgData: (data: EsgData) => void;
   updateComplianceData: (data: ComplianceData) => void;
   // 개발금융(finance) 갱신 stamp — 별도 데이터 필드 없이 updatedAt만 갱신해
   // 수지·공사비 변경 대비 finance staleness 추적을 활성화한다(additive).
   markFinanceUpdated: () => void;
+
+  // 해당 필드의 user 플래그를 해제 — 다음 자동(auto) 갱신부터 덮어쓰기를 재허용한다.
+  revertFieldToAuto: (module: ProvenanceModule, field: string) => void;
+  // 필드 provenance 조회 — 기록이 없으면 null(= auto 취급).
+  getFieldProvenance: (
+    module: ProvenanceModule,
+    field: string,
+  ) => FieldProvenance | null;
 
   markStageComplete: (stage: string) => void;
   setCurrentStage: (stage: string) => void;
@@ -351,6 +394,8 @@ function snapOf(s: ProjectContextState): ProjectSnapshot {
     analysisResults: s.analysisResults,
     updatedAt: s.updatedAt,
     analysisCache: s.analysisCache,
+    // 구 hydrated state(필드 부재) 호환 — analysisCache와 동일하게 ?? {} 방어.
+    manualFields: s.manualFields ?? {},
   };
 }
 
@@ -491,6 +536,9 @@ export const useProjectContextStore = create<ProjectContextState>()(
       // 분석캐시
       analysisCache: {},
 
+      // 필드 단위 provenance 병행 맵
+      manualFields: {},
+
       /* ── Actions ── */
 
       setProject: (id, name, status, address) => {
@@ -555,6 +603,7 @@ export const useProjectContextStore = create<ProjectContextState>()(
                 analysisResults: snap.analysisResults ?? [],
                 updatedAt: snap.updatedAt ?? {},
                 analysisCache: snap.analysisCache ?? {},
+                manualFields: snap.manualFields ?? {},
               }
             : {
                 completedStages: [],
@@ -562,6 +611,7 @@ export const useProjectContextStore = create<ProjectContextState>()(
                 analysisResults: [],
                 updatedAt: {},
                 analysisCache: {},
+                manualFields: {},
                 ...INITIAL_CROSS_MODULE,
                 siteAnalysis: seededSite,
               }),
@@ -584,6 +634,7 @@ export const useProjectContextStore = create<ProjectContextState>()(
           snapshots,
           updatedAt: {},
           analysisCache: {},
+          manualFields: {},
           ...INITIAL_CROSS_MODULE,
         });
       },
@@ -603,9 +654,25 @@ export const useProjectContextStore = create<ProjectContextState>()(
         );
       },
 
-      updateSiteAnalysis: (data) => {
-        set((state) =>
-          withSnap(state, {
+      updateSiteAnalysis: (data, meta) => {
+        const source: FieldSource = meta?.source ?? "auto";
+        set((state) => {
+          const flagged = state.manualFields?.siteAnalysis ?? {};
+          let patch: Partial<SiteAnalysisData> = data;
+          if (source === "auto") {
+            // merge 가드 — user 플래그 필드는 auto patch에서 제거해 수동값을 보존.
+            const guarded = { ...data };
+            for (const key of Object.keys(
+              guarded,
+            ) as (keyof SiteAnalysisData)[]) {
+              if (flagged[key]) delete guarded[key];
+            }
+            // 전 키가 user 보호 대상(빈 patch)이면 갱신·stamp 생략
+            // (불필요한 staleness 캐스케이드 오염 방지).
+            if (Object.keys(guarded).length === 0) return {};
+            patch = guarded;
+          }
+          const next: Partial<ProjectContextState> = {
             siteAnalysis: {
               ...(state.siteAnalysis ?? {
                 estimatedValue: null,
@@ -614,20 +681,42 @@ export const useProjectContextStore = create<ProjectContextState>()(
                 address: null,
                 pnu: null,
               }),
-              ...data,
+              ...patch,
             } as SiteAnalysisData,
             updatedAt: stampedAt(state, "siteAnalysis"),
-          }),
-        );
+          };
+          if (source === "user") {
+            // user 갱신 — patch의 각 키를 stamp(이후 auto 덮어쓰기 차단).
+            const now = Date.now();
+            const stamped: Record<string, FieldProvenance> = { ...flagged };
+            for (const key of Object.keys(data)) {
+              stamped[key] = { source: "user", updatedAt: now };
+            }
+            next.manualFields = {
+              ...(state.manualFields ?? {}),
+              siteAnalysis: stamped,
+            };
+          }
+          return withSnap(state, next);
+        });
       },
 
       updateDesignData: (data) => {
-        set((state) =>
-          withSnap(state, {
-            designData: data,
+        set((state) => {
+          // merge 가드 — 부분 writer(예: cost만 재실행한 rerun의 design summary)가
+          // 누락하거나 null로 보낸 키가 기존 구체값(unitTypes/unitCount 등)을 덮지
+          // 않도록, 기존값 위에 비null 키만 덮어쓴다(updateFeasibilityData와 동일 의도).
+          const prev = (state.designData ?? {}) as Record<string, unknown>;
+          const merged: Record<string, unknown> = { ...prev };
+          for (const [key, value] of Object.entries(data)) {
+            if (value == null && prev[key] != null) continue; // null은 "데이터 없음" — 기존 구체값 보존
+            merged[key] = value;
+          }
+          return withSnap(state, {
+            designData: merged as unknown as DesignData,
             updatedAt: stampedAt(state, "design"),
-          }),
-        );
+          });
+        });
       },
 
       updateFeasibilityData: (data) => {
@@ -646,13 +735,46 @@ export const useProjectContextStore = create<ProjectContextState>()(
           }),
         );
       },
-      updateCostData: (data) => {
-        set((state) =>
-          withSnap(state, {
+      updateCostData: (data, meta) => {
+        const source: FieldSource = meta?.source ?? "auto";
+        set((state) => {
+          const flagged = state.manualFields?.cost ?? {};
+          const prevRec = state.costData
+            ? (state.costData as unknown as Record<string, unknown>)
+            : null;
+          const next: Partial<ProjectContextState> = {
             costData: data,
             updatedAt: stampedAt(state, "cost"),
-          }),
-        );
+          };
+          if (source === "auto") {
+            // merge 가드 — full replace이되 user 플래그 키는 이전값 보존(auto 덮어쓰기 차단).
+            const flaggedKeys = Object.keys(flagged);
+            if (prevRec && flaggedKeys.length > 0) {
+              const merged = { ...data } as unknown as Record<string, unknown>;
+              for (const key of flaggedKeys) {
+                if (key in prevRec) merged[key] = prevRec[key];
+              }
+              next.costData = merged as unknown as CostData;
+            }
+          } else {
+            // user 갱신 stamp — 이전값과 달라진 비null 키만 기록한다.
+            // 근거: full replace 특성상 전 키를 stamp하면 미변경 필드까지 user로
+            // 동결돼 이후 자동 환류(saveToStore)가 무력화되고, null은 "데이터 없음"
+            // 표기이므로 수동값 보호 대상이 아니다.
+            const now = Date.now();
+            const stamped: Record<string, FieldProvenance> = { ...flagged };
+            for (const [key, value] of Object.entries(data)) {
+              if (value == null) continue;
+              if (prevRec && value === prevRec[key]) continue;
+              stamped[key] = { source: "user", updatedAt: now };
+            }
+            next.manualFields = {
+              ...(state.manualFields ?? {}),
+              cost: stamped,
+            };
+          }
+          return withSnap(state, next);
+        });
       },
 
       updateEsgData: (data) => {
@@ -677,6 +799,23 @@ export const useProjectContextStore = create<ProjectContextState>()(
         set((state) =>
           withSnap(state, { updatedAt: stampedAt(state, "finance") }),
         );
+      },
+
+      revertFieldToAuto: (module, field) => {
+        set((state) => {
+          const mod = state.manualFields?.[module];
+          // 기록이 없으면 no-op(이미 auto) — 스냅샷 불필요 갱신 방지.
+          if (!mod || !(field in mod)) return {};
+          const rest: Record<string, FieldProvenance> = { ...mod };
+          delete rest[field];
+          return withSnap(state, {
+            manualFields: { ...(state.manualFields ?? {}), [module]: rest },
+          });
+        });
+      },
+
+      getFieldProvenance: (module, field) => {
+        return get().manualFields?.[module]?.[field] ?? null;
       },
 
       markStageComplete: (stage) => {

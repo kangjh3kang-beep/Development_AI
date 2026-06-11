@@ -107,7 +107,7 @@ export function EscrowCard({ locale, snapshot, labels }: EscrowCardProps) {
             <a
               href={`https://amoy.polygonscan.com/tx/${snapshot.transactionHash}`}
               target="_blank"
-              rel="noreferrer"
+              rel="noopener noreferrer"
               className="mt-3 inline-flex font-mono text-sm text-[var(--accent-strong)] underline underline-offset-4"
             >
               {snapshot.transactionHash}

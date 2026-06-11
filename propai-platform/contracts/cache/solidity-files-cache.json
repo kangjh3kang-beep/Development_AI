@@ -314,8 +314,8 @@
       ]
     },
     "/home/kangjh3kang/My_Projects/Development_AI/propai-platform/contracts/src/PropAIToken.sol": {
-      "lastModificationDate": 1774313837479,
-      "contentHash": "698e92bf704c49f8628d779c742389de",
+      "lastModificationDate": 1781137242521,
+      "contentHash": "7dfe86fea004c1f855304212c2a36a38",
       "sourceName": "src/PropAIToken.sol",
       "solcConfig": {
         "version": "0.8.20",

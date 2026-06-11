@@ -31,6 +31,8 @@ const NextStageCta = dynamic(() => import("@/components/projects/NextStageCta").
 const ProjectHealthBoard = dynamic(() => import("@/components/projects/ProjectHealthBoard").then((m) => m.ProjectHealthBoard), { ssr: false, loading: _loading("프로젝트 완성도 불러오는 중…") });
 const ProjectAnalysisFlow = dynamic(() => import("@/components/projects/ProjectAnalysisFlow").then((m) => m.ProjectAnalysisFlow), { ssr: false, loading: _loading("분석 흐름 불러오는 중…") });
 const PipelineResultDetail = dynamic(() => import("@/components/pipeline/PipelineResultDetail").then((m) => m.PipelineResultDetail), { ssr: false, loading: _loading("통합 보고서 불러오는 중…") });
+// WP-07: 상단탭(라이프사이클 그룹)에 없는 서브라우트 9종 진입 카드 — 순수 링크(데이터 fetch 없음).
+const ExtensionModulesGrid = dynamic(() => import("@/components/projects/ExtensionModulesGrid").then((m) => m.ExtensionModulesGrid), { ssr: false, loading: _loading("확장 모듈 불러오는 중…") });
 
 type ProjectMeta = {
   id: string;
@@ -354,6 +356,15 @@ export default function ProjectDetailPage() {
         transition={{ delay: 0.5 }}
       >
         <NextStageCta locale={locale} />
+      </motion.div>
+
+      {/* ── 확장 모듈 카드 그리드(WP-07) — 도달불가 서브라우트 9종 진입 ── */}
+      <motion.div
+        initial={{ opacity: 0, y: 40 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.6 }}
+      >
+        <ExtensionModulesGrid locale={locale} projectId={id} />
       </motion.div>
     </div>
   );

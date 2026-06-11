@@ -12,7 +12,11 @@ from app.services.feasibility.modules.base_module import ModuleInput
 
 
 def compute_land_cost(inp: ModuleInput) -> dict[str, Any]:
-    """표준 토지비 계산."""
+    """표준 토지비 계산.
+
+    취득세·전용부담금은 통합 세금 엔진(compute_taxes → A01~A03, A08/A09)이
+    grand_total_won에 계상하므로 여기서는 제외한다 (이중계상 방지).
+    """
     return calculate_total_land_cost(
         total_area_sqm=inp.total_land_area_sqm,
         official_price_per_sqm=inp.official_price_per_sqm,
@@ -21,6 +25,7 @@ def compute_land_cost(inp: ModuleInput) -> dict[str, Any]:
         house_count=inp.house_count,
         is_adjusted_area=inp.is_adjusted_area,
         compensation_won=inp.params.get("compensation_won", 0),
+        include_taxes_and_fees=False,
     )
 
 

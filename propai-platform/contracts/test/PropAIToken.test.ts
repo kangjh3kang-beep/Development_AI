@@ -140,6 +140,74 @@ describe("PropAIToken (STO)", function () {
     });
   });
 
+  describe("배당 회계 회귀 (2026-06 감사 H-1 수정)", function () {
+    it("burn 후에도 기존 배당을 정상 수령할 수 있다 (언더플로 DoS 회귀)", async function () {
+      const { token, owner, investor1 } = await deployFixture();
+      await token.connect(owner).setWhitelist(investor1.address, true);
+      await token.connect(owner).mint(investor1.address, ethers.parseEther("1000"));
+
+      await token.connect(owner).distributeDividend({ value: ethers.parseEther("10") });
+
+      // 수정 전: burn 후 debit가 옛 잔액 기준으로 남아 claim/transfer/burn 영구 revert
+      await token.connect(investor1).burn(ethers.parseEther("200"));
+
+      const balBefore = await ethers.provider.getBalance(investor1.address);
+      const tx = await token.connect(investor1).claimDividend();
+      const receipt = await tx.wait();
+      const gasUsed = receipt!.gasUsed * receipt!.gasPrice;
+      const balAfter = await ethers.provider.getBalance(investor1.address);
+
+      // burn 전 분배된 10 ETH 전액 (당시 단독 보유자)
+      expect(balAfter - balBefore + gasUsed).to.equal(ethers.parseEther("10"));
+    });
+
+    it("transfer 후 양도인·양수인 모두 배당 회계가 정확하다", async function () {
+      const { token, owner, investor1, investor2, lockupEnd } = await deployFixture();
+      await token.connect(owner).setWhitelist(investor1.address, true);
+      await token.connect(owner).setWhitelist(investor2.address, true);
+      await token.connect(owner).mint(investor1.address, ethers.parseEther("1000"));
+      await time.increaseTo(lockupEnd + 1);
+
+      // 1차 배당: investor1 단독 보유 → 10 ETH 전액
+      await token.connect(owner).distributeDividend({ value: ethers.parseEther("10") });
+
+      // 400 양도 후 2차 배당: 600/400 비율
+      await token.connect(investor1).transfer(investor2.address, ethers.parseEther("400"));
+      await token.connect(owner).distributeDividend({ value: ethers.parseEther("10") });
+
+      expect(await token.pendingDividend(investor1.address)).to.equal(ethers.parseEther("16")); // 10 + 6
+      expect(await token.pendingDividend(investor2.address)).to.equal(ethers.parseEther("4"));  // 0 + 4
+
+      // 양쪽 모두 실제 수령 가능 (revert 없음)
+      await token.connect(investor1).claimDividend();
+      await token.connect(investor2).claimDividend();
+    });
+
+    it("mint가 과거 배당을 소급 적립하지 않는다 (지급불능 회귀)", async function () {
+      const { token, owner, investor1, investor2 } = await deployFixture();
+      await token.connect(owner).setWhitelist(investor1.address, true);
+      await token.connect(owner).setWhitelist(investor2.address, true);
+      await token.connect(owner).mint(investor1.address, ethers.parseEther("1000"));
+
+      // investor2가 없던 시점의 배당
+      await token.connect(owner).distributeDividend({ value: ethers.parseEther("10") });
+
+      // 이후 investor2에게 mint — 과거 배당에 대한 권리가 생기면 안 됨
+      await token.connect(owner).mint(investor2.address, ethers.parseEther("1000"));
+      expect(await token.pendingDividend(investor2.address)).to.equal(0n);
+
+      // 추가 mint 후에도 적립 합계 = 분배 총액 (컨트랙트 지급여력 보존)
+      await token.connect(owner).distributeDividend({ value: ethers.parseEther("10") });
+      const p1 = await token.pendingDividend(investor1.address); // 10 + 5
+      const p2 = await token.pendingDividend(investor2.address); // 0 + 5
+      expect(p1 + p2).to.equal(ethers.parseEther("20"));
+
+      // 전원 수령해도 잔액 부족 revert가 없어야 함
+      await token.connect(investor1).claimDividend();
+      await token.connect(investor2).claimDividend();
+    });
+  });
+
   describe("관리 기능", function () {
     it("잠금 기간을 변경할 수 있다", async function () {
       const { token, owner } = await deployFixture();

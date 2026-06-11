@@ -13,7 +13,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.auth.auth_service import get_current_user_optional
+from app.services.auth.auth_service import get_current_user, get_current_user_optional
 from app.services.drawing.design_alternative_selector import DesignAlternativeSelector
 from app.services.drawing.svg_drawing_service import SVGDrawingService
 from apps.api.database.session import get_db
@@ -21,6 +21,36 @@ from apps.api.database.session import get_db
 router = APIRouter(prefix="/api/v1/design", tags=["v61 설계도면"])
 svg_service = SVGDrawingService()
 alt_selector = DesignAlternativeSelector()
+
+
+async def _assert_project_owned(project_id: str, db: AsyncSession, user: Any) -> Optional[str]:
+    """project_id의 tenant 소유권을 검사한다(v2_feasibility 인증 패턴 준용).
+
+    반환:
+    - project_id가 UUID가 아니면(데모/임시 ID) None — 소유권 검사 생략(graceful echo 경로).
+    - UUID이고 프로젝트가 존재하면 그 tenant_id(str). user.tenant_id와 불일치면 403.
+    - UUID이나 프로젝트 행이 없으면 None — 호출부가 "프로젝트없음" graceful 처리.
+
+    가짜 통과 금지: 소유 tenant가 분명히 다르면 403으로 거부한다.
+    """
+    import uuid as _uuid
+
+    from sqlalchemy import text
+
+    try:
+        pid = _uuid.UUID(project_id)
+    except (ValueError, AttributeError):
+        return None  # 비UUID — 소유권 검사 불가(데모 경로)
+
+    row = (await db.execute(
+        text("SELECT tenant_id FROM projects WHERE id = :pid"), {"pid": str(pid)}
+    )).first()
+    if row is None:
+        return None  # 프로젝트 없음 — 호출부가 정직 처리
+    owner_tenant = str(row[0]) if row[0] is not None else None
+    if owner_tenant is not None and str(getattr(user, "tenant_id", "")) != owner_tenant:
+        raise HTTPException(status_code=403, detail="해당 프로젝트에 대한 권한이 없습니다")
+    return owner_tenant
 
 
 # ── 요청 스키마 ──
@@ -43,6 +73,9 @@ class DrawingSetRequest(BaseModel):
     building_use: str = "공동주택"
     unit_types: Optional[list[str]] = None
     zone_code: Optional[str] = None
+    # DXF 내보내기 도면종류 — 평면(floor_plan)/상세(detail)/단면(section)/입면(elevation)/배치(site).
+    # 미전달 시 floor_plan(기존 동작 보존 — 하위호환).
+    drawing_type: str = "floor_plan"
 
 
 class CADSaveRequest(BaseModel):
@@ -59,6 +92,11 @@ class CADSaveRequest(BaseModel):
     surfaces: list[dict[str, Any]] = Field(default_factory=list)
     floor_count: Optional[int] = None
     building_height_m: Optional[float] = None
+    # 편집본 매스치수(폴리곤 bbox 역산값) — _load_mass_from_design_version이 GLB/해석에 소비.
+    # 미전달 시 None(저장 JSON에 미기록 → 로드 시 합리적 기본값 폴백, 하위호환).
+    building_width_m: Optional[float] = None
+    building_depth_m: Optional[float] = None
+    floor_height_m: Optional[float] = None
 
 
 class PhotorealRenderRequest(BaseModel):
@@ -129,7 +167,9 @@ class AlternativeSelectionResponse(BaseModel):
     """대안 선정 결과."""
     project_id: str
     ranked: list[dict[str, Any]]
-    mc_results: list[dict[str, Any]] = Field(default_factory=list)
+    # DesignAlternativeSelector.simulate가 dict({iterations, noise_pct, win_rates})를 반환 →
+    # list가 아닌 dict로 교정(빈 대안 시 selector가 []를 줄 수 있어 기본값은 dict).
+    mc_results: dict[str, Any] = Field(default_factory=dict)
     winner: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -308,6 +348,9 @@ class UnitMixSimulateRequest(BaseModel):
     official_price_per_sqm: Optional[float] = None        # 공시지가 원/㎡(토지비)
     price_multiplier: float = 1.2                          # 감정가 배율
     build_cost_per_sqm: Optional[int] = None              # 직접공사비 단가 원/㎡(override)
+    # 편집본 건축면적(㎡) — 전달 시 폭×깊이 대신 이 값으로 연면적·전용면적 산정(CAD 편집 정합).
+    # 미전달 시 building_width_m×building_depth_m(기존 동작, 하위호환).
+    footprint_sqm: Optional[float] = Field(None, gt=0)
 
 
 def _use_to_building_type(use: str) -> str:
@@ -337,7 +380,8 @@ async def simulate_unit_mix(project_id: str, req: UnitMixSimulateRequest):
         calculate_direct_cost,
     )
 
-    footprint = req.building_width_m * req.building_depth_m
+    # 건축면적: 편집본 footprint_sqm 전달 시 우선(CAD 편집 정합), 미전달 시 폭×깊이(하위호환).
+    footprint = req.footprint_sqm if req.footprint_sqm else req.building_width_m * req.building_depth_m
     gfa = footprint * req.floor_count
     sellable = gfa * (req.efficiency_pct / 100.0)
 
@@ -425,13 +469,18 @@ async def save_drawing(
     project_id: str,
     req: CADSaveRequest,
     db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
 ):
     """편집된 CAD 도면을 design_versions 테이블에 영속화한다.
 
     CADEditor가 드래그 편집한 points/lines/surfaces를 design_data_json에 저장.
     프로젝트별 버전 자동 증가. project_id가 UUID가 아니면(데모) 저장 스킵·echo.
+    인증 필수(무인증 401) + 프로젝트 tenant 소유권 검사(불일치 403).
     """
     import uuid as _uuid
+
+    # 소유권 검사(비UUID/프로젝트없음 → None, graceful echo로 진행 / 타 tenant → 403)
+    await _assert_project_owned(project_id, db, user)
 
     # project_id UUID 검증 — 데모/임시 ID면 저장 없이 echo(graceful)
     try:
@@ -466,7 +515,7 @@ async def save_drawing(
         )).first()
         next_ver = int(ver_row[0]) + 1 if ver_row else 1
 
-        design_json = json.dumps({
+        design_payload: dict[str, Any] = {
             "drawing_code": req.drawing_code,
             "drawing_type": req.drawing_type,
             "drawing_name": req.drawing_name,
@@ -476,7 +525,15 @@ async def save_drawing(
             "svg_content": req.svg_content[:50000],
             "layers": req.layers,
             "vector_data": req.vector_data,
-        }, ensure_ascii=False)
+        }
+        # 편집본 매스치수(전달 시에만 기록) — _load_mass_from_design_version이 GLB/해석에 소비.
+        if req.building_width_m is not None:
+            design_payload["building_width_m"] = req.building_width_m
+        if req.building_depth_m is not None:
+            design_payload["building_depth_m"] = req.building_depth_m
+        if req.floor_height_m is not None:
+            design_payload["floor_height_m"] = req.floor_height_m
+        design_json = json.dumps(design_payload, ensure_ascii=False)
 
         await db.execute(
             text("""
@@ -507,11 +564,21 @@ async def save_drawing(
 
 
 @router.get("/{project_id}/drawings/load")
-async def load_drawing(project_id: str, db: AsyncSession = Depends(get_db)):
-    """저장된 최신 CAD 편집본을 불러온다. 없으면 saved=false."""
+async def load_drawing(
+    project_id: str,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """저장된 최신 CAD 편집본을 불러온다. 없으면 saved=false.
+
+    인증 필수(무인증 401) + 프로젝트 tenant 소유권 검사(불일치 403).
+    """
     import uuid as _uuid
 
     from sqlalchemy import text
+
+    # 소유권 검사(타 tenant → 403; 비UUID/프로젝트없음은 아래 graceful 분기로 진행)
+    await _assert_project_owned(project_id, db, user)
 
     try:
         pid = _uuid.UUID(project_id)
@@ -548,21 +615,138 @@ async def load_drawing(project_id: str, db: AsyncSession = Depends(get_db)):
 
 @router.post("/{project_id}/drawings/export-dxf", response_class=Response)
 async def export_dxf(project_id: str, req: DrawingSetRequest):
-    """DXF 파일로 내보낸다."""
+    """DXF 파일로 내보낸다.
+
+    drawing_type으로 도면종류를 분기한다(평면/상세/단면/입면/배치 5종).
+    미전달/미상 시 floor_plan(기본 평면도 — 하위호환).
+    """
     try:
         from app.services.cad.parametric_cad_service import ParametricCADService
         cad_service = ParametricCADService()
-        dxf_bytes = cad_service.create_floor_plan_dxf(
-            building_width_m=req.building_width_m,
-            building_depth_m=req.building_depth_m,
-        )
+        dtype = (req.drawing_type or "floor_plan").strip().lower()
+
+        if dtype == "detail":
+            dxf_bytes = cad_service.create_detailed_floor_plan_dxf(
+                building_width_m=req.building_width_m,
+                building_depth_m=req.building_depth_m,
+                floor_count=req.floor_count,
+                unit_width_m=req.unit_width_m,
+            )
+        elif dtype == "section":
+            dxf_bytes = cad_service.create_section_drawing_dxf(
+                building_width_m=req.building_width_m,
+                building_depth_m=req.building_depth_m,
+                floor_count=req.floor_count,
+                floor_height_m=req.floor_height_m,
+                basement_floors=req.basement_floors,
+            )
+        elif dtype == "elevation":
+            dxf_bytes = cad_service.create_elevation_drawing_dxf(
+                building_width_m=req.building_width_m,
+                building_depth_m=req.building_depth_m,
+                floor_count=req.floor_count,
+                floor_height_m=req.floor_height_m,
+                unit_width_m=req.unit_width_m,
+            )
+        elif dtype == "site":
+            dxf_bytes = cad_service.create_site_plan_dxf(
+                site_width_m=req.site_width_m,
+                site_depth_m=req.site_depth_m,
+                building_width_m=req.building_width_m,
+                building_depth_m=req.building_depth_m,
+                parking_count=req.parking_count,
+            )
+        else:  # floor_plan(기본) — 하위호환
+            dxf_bytes = cad_service.create_floor_plan_dxf(
+                building_width_m=req.building_width_m,
+                building_depth_m=req.building_depth_m,
+                floor_count=req.floor_count,
+                unit_width_m=req.unit_width_m,
+            )
         return Response(
             content=dxf_bytes,
             media_type="application/dxf",
-            headers={"Content-Disposition": f"attachment; filename={project_id}.dxf"},
+            headers={"Content-Disposition": f"attachment; filename={project_id}_{dtype}.dxf"},
         )
     except (ImportError, ValueError):
         return Response(content=b"DXF_PLACEHOLDER", media_type="application/dxf")
+
+
+@router.get("/{project_id}/drawings/export-edited-dxf", response_class=Response)
+async def export_edited_dxf(
+    project_id: str,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """저장된 CAD 편집본(points/surfaces/scale)을 정식 DXF로 내보낸다(WP-04 직변환).
+
+    저장된 design_data_json의 points·surfaces·vector_data["scale"]를
+    ParametricCADService.create_dxf_from_edited_points에 넘겨 편집본 그대로의
+    DXF(닫힌 LWPOLYLINE + 정식 DIMENSION)를 반환한다.
+
+    정직 처리: 저장본이 없으면 404(가짜 도면 생성 금지). 인증 필수(401) + 소유권(403).
+    """
+    import uuid as _uuid
+
+    from sqlalchemy import text
+
+    # 소유권 검사(타 tenant → 403)
+    await _assert_project_owned(project_id, db, user)
+
+    try:
+        pid = _uuid.UUID(project_id)
+    except (ValueError, AttributeError):
+        raise HTTPException(status_code=404, detail="저장된 편집본 없음(UUID 아님)")
+
+    row = (await db.execute(
+        text("""
+            SELECT design_data_json
+            FROM design_versions
+            WHERE project_id = :pid AND design_type = 'cad_2d'
+            ORDER BY version_number DESC LIMIT 1
+        """),
+        {"pid": str(pid)},
+    )).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="저장된 편집본 없음")
+
+    data = row[0]
+    if isinstance(data, str):
+        try:
+            data = json.loads(data)
+        except (ValueError, TypeError):
+            data = {}
+    data = data or {}
+
+    points = data.get("points") or []
+    surfaces = data.get("surfaces") or []
+    if not points:
+        raise HTTPException(status_code=404, detail="저장된 편집 좌표 없음")
+
+    # CADEditor 저장 계약: vector_data["scale"] = px/m(기본 10). 직변환 서비스에 전달.
+    vector_data = data.get("vector_data") or {}
+    try:
+        scale = float(vector_data.get("scale") or 10.0)
+    except (ValueError, TypeError):
+        scale = 10.0
+    if scale <= 0:
+        scale = 10.0
+
+    from app.services.cad.parametric_cad_service import ParametricCADService
+
+    try:
+        dxf_bytes = ParametricCADService().create_dxf_from_edited_points(
+            points=points, surfaces=surfaces, scale_px_per_m=scale,
+        )
+    except ValueError as e:
+        # 점 3개 미만 등 폴리곤 구성 불가 — 가짜 도면 대신 정직하게 422.
+        raise HTTPException(status_code=422, detail=f"편집본 DXF 변환 실패: {str(e)[:120]}") from e
+
+    return Response(
+        content=dxf_bytes,
+        media_type="application/dxf",
+        headers={"Content-Disposition": f"attachment; filename={project_id}_edited.dxf"},
+    )
 
 
 def _enrich_interior(mass: dict[str, Any], building_use: str = "공동주택") -> dict[str, Any]:

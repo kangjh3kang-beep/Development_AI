@@ -124,6 +124,15 @@ class ParseIntentRequest(BaseModel):
     zone_code: Optional[str] = Field(None, description="용도지역 코드 (선택)")
 
 
+class CalculateAreaRequest(BaseModel):
+    """폴리곤 면적 계산 요청 (CADEditor 편집 좌표 → 면적·건폐율)."""
+
+    points: list[dict[str, float]] = Field(..., description="점 목록 [{id, x, y}]")
+    surfaces: list[dict] = Field(..., description="폴리곤 목록 [{id, pointIds}]")
+    scale: float = Field(10.0, gt=0, description="1m = N px")
+    site_area_sqm: float = Field(0.0, ge=0, description="대지면적 (㎡)")
+
+
 def _check_services() -> None:
     if not _SERVICES_AVAILABLE:
         raise HTTPException(
@@ -219,6 +228,47 @@ async def export_dxf(req: ExportDxfRequest):
         media_type="application/dxf",
         headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
+
+
+@router.post("/calculate-area")
+async def calculate_area(req: CalculateAreaRequest):
+    """DesignPayload(편집 좌표)에서 폴리곤별 면적 + 건폐율을 계산한다.
+
+    순수 Shoelace 기하 계산(서비스 의존성 없음)이라 _check_services 불요.
+    surfaces 항목은 pointIds(camelCase) 또는 point_ids(snake_case) 모두 허용한다.
+    """
+    point_map = {p["id"]: (p["x"], p["y"]) for p in req.points if "id" in p}
+    results = []
+    total_area_sqm = 0.0
+
+    for surf in req.surfaces:
+        pid_list = surf.get("pointIds") or surf.get("point_ids") or []
+        coords = [point_map[pid] for pid in pid_list if pid in point_map]
+        if len(coords) < 3:
+            continue
+        # Shoelace
+        area_px = 0.0
+        for i in range(len(coords)):
+            j = (i + 1) % len(coords)
+            area_px += coords[i][0] * coords[j][1]
+            area_px -= coords[j][0] * coords[i][1]
+        area_px = abs(area_px) / 2.0
+        area_sqm = area_px / (req.scale * req.scale)
+        total_area_sqm += area_sqm
+        results.append({
+            "surface_id": surf.get("id", ""),
+            "area_sqm": round(area_sqm, 2),
+            "area_pyeong": round(area_sqm / 3.3058, 2),
+        })
+
+    bcr_pct = round(total_area_sqm / req.site_area_sqm * 100, 2) if req.site_area_sqm > 0 else 0.0
+
+    return {
+        "surfaces": results,
+        "total_area_sqm": round(total_area_sqm, 2),
+        "total_area_pyeong": round(total_area_sqm / 3.3058, 2),
+        "bcr_percent": bcr_pct,
+    }
 
 
 # priority별 평형 후보·수요편향 — 대안마다 평형배분이 실제로 달라지게 한다.

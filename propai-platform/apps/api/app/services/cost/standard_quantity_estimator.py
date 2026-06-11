@@ -25,6 +25,10 @@ class QuantityItem:
     mat_unit: float   # 재료 단가 (원)
     labor_unit: float  # 노무 단가 (원)
     exp_unit: float    # 경비 단가 (원)
+    # 단가 출처 정직 표기 — DB 주입 시 해당 출처(예: "표준품셈2025"), 미주입 시 "fallback".
+    # 추가 키는 OriginCostCalculator 등 dict 소비처에서 무시되므로 하위호환.
+    price_source: str = "fallback"
+    price_basis_year: int = 2026
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -36,6 +40,8 @@ class QuantityItem:
             "mat_unit": self.mat_unit,
             "labor_unit": self.labor_unit,
             "exp_unit": self.exp_unit,
+            "price_source": self.price_source,
+            "price_basis_year": self.price_basis_year,
         }
 
 
@@ -169,6 +175,7 @@ class StandardQuantityEstimator:
         floor_count_above: int,
         floor_count_below: int = 1,
         structure_type: str = "RC",
+        prices: dict[str, dict[str, Any]] | None = None,
     ) -> list[dict[str, Any]]:
         """건축 개요로 공종별 물량을 추정한다.
 
@@ -178,6 +185,9 @@ class StandardQuantityEstimator:
             floor_count_above: 지상 층수
             floor_count_below: 지하 층수 (기본 1)
             structure_type: 구조유형 (RC/SRC/SC/PC/목구조)
+            prices: 단가 묶음 옵셔널 주입(UnitPriceRepository.get_prices() 형식,
+                key→{spec,unit,mat_unit,labor_unit,exp_unit,price_source,price_basis_year}).
+                미주입(None) 시 기존 동기 fallback resolve — 하위호환(회귀 0).
 
         Returns:
             CostItem 호환 dict 리스트
@@ -202,92 +212,110 @@ class StandardQuantityEstimator:
         # 5. 공종별 물량 산출
         items: list[dict[str, Any]] = []
 
-        # 단가 SSOT — 동기 fallback 경로(회귀 0: UNIT_PRICES_2026 동일값).
+        # 단가 SSOT — 주입(prices) 우선, 미주입 키는 동기 fallback(회귀 0: UNIT_PRICES_2026 동일값).
         from app.services.cost.unit_price_repository import resolve_unit_price_sync
+
+        def _price(key: str) -> dict[str, Any]:
+            injected = (prices or {}).get(key)
+            if isinstance(injected, dict) and injected.get("mat_unit") is not None:
+                return injected
+            return resolve_unit_price_sync(key)
 
         # 5-1. 콘크리트
         concrete_qty = effective_area * std["concrete_m3_per_sqm"] * struct_factor * height_factor
-        prices = resolve_unit_price_sync("concrete")
+        p = _price("concrete")
         items.append(QuantityItem(
             work_code="01-콘크리트",
             item_name="레미콘 타설",
-            spec=prices["spec"],
-            unit=prices["unit"],
+            spec=p["spec"],
+            unit=p["unit"],
             quantity=round(concrete_qty, 1),
-            mat_unit=prices["mat_unit"],
-            labor_unit=prices["labor_unit"],
-            exp_unit=prices["exp_unit"],
+            mat_unit=p["mat_unit"],
+            labor_unit=p["labor_unit"],
+            exp_unit=p["exp_unit"],
+            price_source=p.get("price_source", "fallback"),
+            price_basis_year=int(p.get("price_basis_year", 2026)),
         ).to_dict())
 
         # 5-2. 철근
         rebar_qty_kg = effective_area * std["rebar_kg_per_sqm"] * struct_factor * height_factor
         rebar_qty_ton = rebar_qty_kg / 1000
-        prices = resolve_unit_price_sync("rebar")
+        p = _price("rebar")
         items.append(QuantityItem(
             work_code="02-철근",
             item_name="철근 가공 및 조립",
-            spec=prices["spec"],
-            unit=prices["unit"],
+            spec=p["spec"],
+            unit=p["unit"],
             quantity=round(rebar_qty_ton, 2),
-            mat_unit=prices["mat_unit"],
-            labor_unit=prices["labor_unit"],
-            exp_unit=prices["exp_unit"],
+            mat_unit=p["mat_unit"],
+            labor_unit=p["labor_unit"],
+            exp_unit=p["exp_unit"],
+            price_source=p.get("price_source", "fallback"),
+            price_basis_year=int(p.get("price_basis_year", 2026)),
         ).to_dict())
 
         # 5-3. 거푸집
         formwork_qty = effective_area * std["formwork_sqm_per_sqm"] * struct_factor
-        prices = resolve_unit_price_sync("formwork")
+        p = _price("formwork")
         items.append(QuantityItem(
             work_code="03-거푸집",
             item_name="거푸집 설치 및 해체",
-            spec=prices["spec"],
-            unit=prices["unit"],
+            spec=p["spec"],
+            unit=p["unit"],
             quantity=round(formwork_qty, 1),
-            mat_unit=prices["mat_unit"],
-            labor_unit=prices["labor_unit"],
-            exp_unit=prices["exp_unit"],
+            mat_unit=p["mat_unit"],
+            labor_unit=p["labor_unit"],
+            exp_unit=p["exp_unit"],
+            price_source=p.get("price_source", "fallback"),
+            price_basis_year=int(p.get("price_basis_year", 2026)),
         ).to_dict())
 
         # 5-4. 조적
         masonry_qty = total_gfa_sqm * std["masonry_sqm_per_sqm"]
-        prices = resolve_unit_price_sync("masonry")
+        p = _price("masonry")
         items.append(QuantityItem(
             work_code="04-조적",
             item_name="벽돌 쌓기",
-            spec=prices["spec"],
-            unit=prices["unit"],
+            spec=p["spec"],
+            unit=p["unit"],
             quantity=round(masonry_qty, 1),
-            mat_unit=prices["mat_unit"],
-            labor_unit=prices["labor_unit"],
-            exp_unit=prices["exp_unit"],
+            mat_unit=p["mat_unit"],
+            labor_unit=p["labor_unit"],
+            exp_unit=p["exp_unit"],
+            price_source=p.get("price_source", "fallback"),
+            price_basis_year=int(p.get("price_basis_year", 2026)),
         ).to_dict())
 
         # 5-5. 방수
         waterproof_qty = total_gfa_sqm * std["waterproof_sqm_per_sqm"]
-        prices = resolve_unit_price_sync("waterproof")
+        p = _price("waterproof")
         items.append(QuantityItem(
             work_code="05-방수",
             item_name="우레탄 방수",
-            spec=prices["spec"],
-            unit=prices["unit"],
+            spec=p["spec"],
+            unit=p["unit"],
             quantity=round(waterproof_qty, 1),
-            mat_unit=prices["mat_unit"],
-            labor_unit=prices["labor_unit"],
-            exp_unit=prices["exp_unit"],
+            mat_unit=p["mat_unit"],
+            labor_unit=p["labor_unit"],
+            exp_unit=p["exp_unit"],
+            price_source=p.get("price_source", "fallback"),
+            price_basis_year=int(p.get("price_basis_year", 2026)),
         ).to_dict())
 
         # 5-6. 창호
         window_qty = total_gfa_sqm * std["window_sqm_per_sqm"]
-        prices = resolve_unit_price_sync("window")
+        p = _price("window")
         items.append(QuantityItem(
             work_code="06-창호",
             item_name="알루미늄 이중창",
-            spec=prices["spec"],
-            unit=prices["unit"],
+            spec=p["spec"],
+            unit=p["unit"],
             quantity=round(window_qty, 1),
-            mat_unit=prices["mat_unit"],
-            labor_unit=prices["labor_unit"],
-            exp_unit=prices["exp_unit"],
+            mat_unit=p["mat_unit"],
+            labor_unit=p["labor_unit"],
+            exp_unit=p["exp_unit"],
+            price_source=p.get("price_source", "fallback"),
+            price_basis_year=int(p.get("price_basis_year", 2026)),
         ).to_dict())
 
         # 5-7. 기계설비 (직접비 대비 비율로 산출)
@@ -329,14 +357,16 @@ class StandardQuantityEstimator:
         floor_count_above: int,
         floor_count_below: int = 1,
         structure_type: str = "RC",
+        prices: dict[str, dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
-        """물량 추정 요약 정보를 반환한다."""
+        """물량 추정 요약 정보를 반환한다. prices 미주입 시 기존 동작(하위호환)."""
         items = self.estimate(
             building_type=building_type,
             total_gfa_sqm=total_gfa_sqm,
             floor_count_above=floor_count_above,
             floor_count_below=floor_count_below,
             structure_type=structure_type,
+            prices=prices,
         )
 
         total_direct = sum(

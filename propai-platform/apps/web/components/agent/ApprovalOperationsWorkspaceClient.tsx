@@ -674,7 +674,7 @@ export function ApprovalOperationsWorkspaceClient({
             <p>{labels.tokenHint}</p>
             <div className="mt-4 flex flex-wrap gap-3">
               <Link
-                href={`/${locale}/agent`}
+                href={`/${locale}/projects`}
                 className="rounded-full border border-[var(--line)] bg-[var(--surface)] px-4 py-2 text-sm font-medium text-[var(--text-primary)] transition hover:border-[var(--accent)] hover:text-[var(--accent-strong)]"
               >
                 {labels.goToAgentAction}

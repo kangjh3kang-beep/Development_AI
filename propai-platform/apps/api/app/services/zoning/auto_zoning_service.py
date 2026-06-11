@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 # 용도지역별 법적 한도 (국토의 계획 및 이용에 관한 법률 제78조)
 ZONE_LIMITS = {
-    "제1종전용주거지역": {"max_bcr": 40, "max_far": 100, "max_height_m": 10},
+    "제1종전용주거지역": {"max_bcr": 50, "max_far": 100, "max_height_m": 10},  # 시행령 84조 상한 50%
     "제2종전용주거지역": {"max_bcr": 50, "max_far": 150, "max_height_m": 12},
     "제1종일반주거지역": {"max_bcr": 60, "max_far": 200, "max_height_m": None},
     "제2종일반주거지역": {"max_bcr": 60, "max_far": 250, "max_height_m": None},
@@ -26,6 +26,13 @@ ZONE_LIMITS = {
     "보전녹지지역": {"max_bcr": 20, "max_far": 80, "max_height_m": None},
     "생산녹지지역": {"max_bcr": 20, "max_far": 100, "max_height_m": None},
     "자연녹지지역": {"max_bcr": 20, "max_far": 100, "max_height_m": None},
+    # 관리지역·농림·자연환경보전 (시행령 84·85조) — 누락 시 해당 지역 법규검증이
+    # 빈 결과(=통과로 보임)로 끝나는 문제가 있어 보완 (2026-06 리뷰 M-7)
+    "보전관리지역": {"max_bcr": 20, "max_far": 80, "max_height_m": None},
+    "생산관리지역": {"max_bcr": 20, "max_far": 80, "max_height_m": None},
+    "계획관리지역": {"max_bcr": 40, "max_far": 100, "max_height_m": None},
+    "농림지역": {"max_bcr": 20, "max_far": 80, "max_height_m": None},
+    "자연환경보전지역": {"max_bcr": 20, "max_far": 80, "max_height_m": None},
     "역세권개발구역": {"max_bcr": 80, "max_far": 700, "max_height_m": None},
     "도시재생활성화구역": {"max_bcr": 80, "max_far": 500, "max_height_m": None},
 }

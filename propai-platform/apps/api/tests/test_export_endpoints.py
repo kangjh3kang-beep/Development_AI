@@ -3,12 +3,15 @@
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.routers.drawing import router as drawing_router
+# 정본 도면 라우터는 apps/api/routers/drawing.py (main.py가 마운트하는 라이브 경로).
+# 이 라우터는 prefix를 내장하지 않으므로 main.py와 동일하게 마운트 시 부여한다.
+# (구 app/routers/drawing.py는 미마운트 중복본 — WP-20에서 삭제, /calculate-area는 정본에 포팅됨.)
+from apps.api.routers.drawing import router as drawing_router
 from app.routers.cost import router as cost_router
 
 _app = FastAPI()
-_app.include_router(drawing_router)
-_app.include_router(cost_router)
+_app.include_router(drawing_router, prefix="/api/v1/drawing")
+_app.include_router(cost_router)  # cost 라우터는 자체 prefix=/api/v1/cost 내장
 client = TestClient(_app)
 
 

@@ -47,7 +47,12 @@ class TestRegisterValidation:
         assert response.status_code == 422
 
     @pytest.mark.asyncio
-    async def test_requires_company_name(self, client):
+    async def test_company_name_is_optional(self, client):
+        """회사명은 선택값 — 개인(무구독) 회원 가입 허용 스펙.
+
+        (이전 테스트는 필수값 시절의 422를 기대했으나 스펙이 변경됨.
+        DB 없는 테스트 환경이라 성공 코드 대신 '검증 거부가 아님'만 확인.)
+        """
         response = await client.post(
             "/api/v1/auth/register",
             json={
@@ -56,7 +61,7 @@ class TestRegisterValidation:
                 "password": "test1234",
             },
         )
-        assert response.status_code == 422
+        assert response.status_code != 422
 
     @pytest.mark.asyncio
     async def test_requires_minimum_password_length(self, client):

@@ -33,7 +33,7 @@ def calculate_a01_acquisition_tax(
     is_adjusted: bool = False,
 ) -> dict[str, Any]:
     """A01 취득세."""
-    rates = get_acquisition_tax_rates(land_category, house_count, is_adjusted)
+    rates = get_acquisition_tax_rates(land_category, house_count, is_adjusted, purchase_won=purchase_won)
     amount = int(purchase_won * rates["base_rate"])
     return {
         "code": "A01", "name": "취득세",
@@ -49,7 +49,7 @@ def calculate_a02_education_tax(
     is_adjusted: bool = False,
 ) -> dict[str, Any]:
     """A02 지방교육세."""
-    rates = get_acquisition_tax_rates(land_category, house_count, is_adjusted)
+    rates = get_acquisition_tax_rates(land_category, house_count, is_adjusted, purchase_won=purchase_won)
     amount = int(purchase_won * rates["education_rate"])
     return {
         "code": "A02", "name": "지방교육세",
@@ -65,7 +65,7 @@ def calculate_a03_rural_tax(
     is_adjusted: bool = False,
 ) -> dict[str, Any]:
     """A03 농어촌특별세."""
-    rates = get_acquisition_tax_rates(land_category, house_count, is_adjusted)
+    rates = get_acquisition_tax_rates(land_category, house_count, is_adjusted, purchase_won=purchase_won)
     amount = int(purchase_won * rates["rural_rate"])
     return {
         "code": "A03", "name": "농어촌특별세",
@@ -75,15 +75,19 @@ def calculate_a03_rural_tax(
 
 
 def calculate_a04_stamp_tax(purchase_won: int) -> dict[str, Any]:
-    """A04 인지세 (누진세율)."""
-    if purchase_won <= 100_000_000:
-        amount = 0
+    """A04 인지세 (인지세법 제3조 — 부동산 소유권 이전 증서 기준)."""
+    if purchase_won <= 10_000_000:
+        amount = 0  # 1천만원 이하 비과세
+    elif purchase_won <= 30_000_000:
+        amount = 20_000
+    elif purchase_won <= 50_000_000:
+        amount = 40_000
+    elif purchase_won <= 100_000_000:
+        amount = 70_000
     elif purchase_won <= 1_000_000_000:
         amount = 150_000
-    elif purchase_won <= 10_000_000_000:
-        amount = 350_000
     else:
-        amount = 350_000  # 상한
+        amount = 350_000  # 10억 초과
     return {
         "code": "A04", "name": "인지세",
         "base_won": purchase_won, "rate": None,
@@ -91,13 +95,26 @@ def calculate_a04_stamp_tax(purchase_won: int) -> dict[str, Any]:
     }
 
 
-def calculate_a05_registration_tax(purchase_won: int, rate: float = 0.02) -> dict[str, Any]:
-    """A05 등록면허세."""
-    amount = int(purchase_won * rate)
+def calculate_a05_registration_tax(
+    purchase_won: int,
+    mortgage_amount_won: int = 0,
+    mortgage_rate: float = 0.002,
+) -> dict[str, Any]:
+    """A05 등록면허세.
+
+    2011년 지방세법 개편으로 소유권이전 등록세는 취득세(A01)에 통합되었다.
+    소유권이전에 대한 별도 2% 부과는 이중과세 — 등록면허세는 저당권 설정 등
+    별도 등기에만 발생한다 (저당권: 채권금액의 0.2%).
+    """
+    amount = int(mortgage_amount_won * mortgage_rate) if mortgage_amount_won > 0 else 0
     return {
         "code": "A05", "name": "등록면허세",
-        "base_won": purchase_won, "rate": rate,
+        "base_won": mortgage_amount_won, "rate": mortgage_rate if mortgage_amount_won > 0 else None,
         "amount_won": amount,
+        "detail": {
+            "note": "소유권이전 등록세는 2011년 취득세 통합 — 저당권 설정 등기 시에만 부과",
+            "mortgage_amount_won": mortgage_amount_won,
+        },
     }
 
 

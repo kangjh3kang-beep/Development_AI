@@ -56,7 +56,9 @@ def calculate_acquisition_tax(
     Returns:
         {'rates': {...}, 'tax_amount_won', 'detail': {...}}
     """
-    rates = get_acquisition_tax_rates(land_category, house_count, is_adjusted_area)
+    rates = get_acquisition_tax_rates(
+        land_category, house_count, is_adjusted_area, purchase_won=purchase_amount_won
+    )
     tax_amount = int(purchase_amount_won * rates["total_rate"])
 
     return {
@@ -127,8 +129,15 @@ def calculate_total_land_cost(
     house_count: int = 0,
     is_adjusted_area: bool = False,
     compensation_won: int = 0,
+    include_taxes_and_fees: bool = True,
 ) -> dict[str, Any]:
     """토지비 총합 계산 (매입비 + 취득세 + 전용부담금 + 보상비).
+
+    Args:
+        include_taxes_and_fees: False면 취득세·전용부담금을 total에서 제외.
+            수지분석 모듈 파이프라인처럼 통합 세금 엔진(A01~A03, A08/A09)이
+            별도로 계상하는 경로에서 이중계상을 방지하기 위함.
+            (참고 정보로 acquisition_tax/conversion_fee 항목 자체는 항상 반환)
 
     Returns:
         {'purchase', 'acquisition_tax', 'conversion_fee', 'compensation_won', 'total_land_cost_won'}
@@ -158,17 +167,15 @@ def calculate_total_land_cost(
             area_sqm=total_area_sqm,
         )
 
-    total = (
-        purchase["total_purchase_won"]
-        + acq_tax["tax_amount_won"]
-        + conversion_fee["total_fee_won"]
-        + compensation_won
-    )
+    total = purchase["total_purchase_won"] + compensation_won
+    if include_taxes_and_fees:
+        total += acq_tax["tax_amount_won"] + conversion_fee["total_fee_won"]
 
     return {
         "purchase": purchase,
         "acquisition_tax": acq_tax,
         "conversion_fee": conversion_fee,
         "compensation_won": compensation_won,
+        "taxes_and_fees_included": include_taxes_and_fees,
         "total_land_cost_won": total,
     }

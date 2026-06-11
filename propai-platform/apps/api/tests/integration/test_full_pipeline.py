@@ -7,6 +7,28 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 
+class _FakeResult:
+    def __init__(self, row):
+        self._row = row
+
+    def first(self):
+        return self._row
+
+
+class _FakeAsyncDb:
+    """raw SQL 순차 호출에 사전 정의된 행을 차례로 반환하는 AsyncSession 대역.
+
+    project_dashboard 계열 엔드포인트는 raw SQL + .first()만 사용하므로
+    실제 DB 없이 호출 순서대로 행을 주입해 결정론 테스트가 가능하다.
+    """
+
+    def __init__(self, rows):
+        self._rows = list(rows)
+
+    async def execute(self, *args, **kwargs):
+        return _FakeResult(self._rows.pop(0) if self._rows else None)
+
+
 class TestProjectLifecyclePipeline:
 
     def test_avm_to_feasibility_flow(self, sample_project):
@@ -152,12 +174,106 @@ class TestProjectLifecyclePipeline:
         assert len(payments) == 4
         assert payments[0]["amount"] == 6_000_000_000
 
-    def test_orchestrator_multi_node_pipeline(self):
-        """오케스트레이터 다중 노드 파이프라인."""
-        from app.services.agents.orchestrator import OrchestratorService
+    def test_orchestrator_canonical_only(self):
+        """정본 오케스트레이터(propai_orchestrator)만 유지 — 스텁 3본 청산 (WP-11)."""
+        import importlib.util
+        import inspect
 
-        orch = OrchestratorService()
-        assert hasattr(orch, "run_pipeline") or hasattr(orch, "execute")
+        from apps.api.agents.propai_orchestrator import PropAIOrchestrator
+
+        assert hasattr(PropAIOrchestrator, "run")
+
+        # 청산 대상 스텁 모듈 잔존 0건 (삭제 검증 계약)
+        for mod in (
+            "app.services.agents.orchestrator",        # '인허가 자동 신청 완료' 허위 스텁
+            "app.routers.agents",                      # 미마운트 중복 라우터
+            "apps.api.agents.langgraph_orchestrator",  # 하드코딩 결과 스텁 그래프
+        ):
+            assert importlib.util.find_spec(mod) is None, f"{mod} 미삭제 — 스텁 잔존"
+
+        # project_dashboard가 스텁 오케스트레이터를 더 이상 참조하지 않음
+        from app.routers import project_dashboard
+
+        src = inspect.getsource(project_dashboard)
+        assert "services.agents.orchestrator" not in src
+
+    async def test_simulate_feasibility_project_not_found(self):
+        """simulate-feasibility: 프로젝트 미존재 시 404 정직 응답 (WP-11)."""
+        from fastapi import HTTPException
+        from app.routers import project_dashboard as pd_router
+
+        db = _FakeAsyncDb([None])
+        with pytest.raises(HTTPException) as exc:
+            await pd_router.run_feasibility_simulation("wp11-missing", db=db)
+        assert exc.value.status_code == 404
+
+    async def test_simulate_feasibility_no_overview_returns_no_data(self):
+        """건축개요(연면적) 미확정 시 가짜 1.28B 폴백 대신 no_data 정직 응답 (WP-11)."""
+        from app.routers import project_dashboard as pd_router
+
+        proj_row = ("apartment", None, 0, 0, None)  # 연면적·설계 모두 없음
+        db = _FakeAsyncDb([proj_row, None])
+        res = await pd_router.run_feasibility_simulation("wp11-test-project", db=db)
+
+        assert res["status"] == "no_data"
+        assert res["results"] is None
+        assert res["project_id"] == "wp11-test-project"
+
+    async def test_simulate_feasibility_real_calculation(self, monkeypatch):
+        """simulate-feasibility 실계산 계약 — 고정 시드 몬테카를로 + 출처 표기 (WP-11)."""
+        from app.routers import project_dashboard as pd_router
+        from app.services.cost.unit_price_repository import UnitPriceRepository
+        from app.services.finance.monte_carlo_service import MonteCarloService
+
+        async def _no_db_prices(self):
+            return None  # DB 미접속 환경 — estimator가 동기 fallback 단가로 회귀
+
+        monkeypatch.setattr(UnitPriceRepository, "get_prices", _no_db_prices)
+
+        # GFA 10,000㎡ / 지상 10층·지하 2층 / 강남구 주소(시세 테이블 5,500만원/평)
+        proj_row = ("apartment", 10000, 10, 2, "서울특별시 강남구 역삼동 123-45")
+        db = _FakeAsyncDb([proj_row, None])
+        res = await pd_router.run_feasibility_simulation("wp11-test-project", db=db)
+
+        assert res["status"] == "success"
+        r = res["results"]
+        # 프론트 계약 키(FeasibilitySimulationWidget) + 구 응답 키 하위호환
+        for key in ("npv_mean_krw", "var_5_krw", "profitability_index",
+                    "roi_percent", "value_at_risk_5"):
+            assert key in r
+        # 구 스텁의 가짜 고정값(1.28B / 'LangGraph ... Persisted') 미사용
+        assert r["npv_mean_krw"] != 1_280_000_000
+        assert "LangGraph" not in r["message"]
+
+        inputs = r["inputs"]
+        # 분양가: 강남구 시세 테이블 고정값(regional_pricing 단일출처)
+        assert inputs["sale_price_per_pyeong_won"] == 55_000_000
+        assert inputs["sale_price_source"] == "regional_market_table"
+        assert inputs["cost_source"] == "estimate_overview"
+        assert inputs["efficiency_pct_assumed"] == 75.0
+        # 수입 = GFA(평) × 전용률 75% × 평당 분양가 — 고정 수치
+        expected_revenue = 10000 / 3.305785 * (75.0 / 100.0) * float(55_000_000)
+        assert inputs["expected_revenue_krw"] == int(expected_revenue)
+        # 표준공기: 6 + 10×0.55 + 2×1.0 = 13.5개월 → 반올림 14
+        assert inputs["construction_period_months"] == 14
+        assert inputs["total_cost_krw"] > 0
+
+        # 결정론 재현: 동일 입력으로 실 MonteCarloService(시드 42) 재실행 결과와 일치
+        mc = MonteCarloService().run_simulation(
+            total_cost_krw=float(inputs["total_cost_krw"]),
+            expected_revenue_krw=expected_revenue,
+            construction_period_months=inputs["construction_period_months"],
+        )
+        assert r["npv_mean_krw"] == int(mc["npv_mean_krw"])
+        assert r["npv_std_krw"] == int(mc["npv_std_krw"])
+        assert r["probability_positive_npv"] == mc["probability_positive_npv"]
+        # VaR(5%) = 평균 − 1.645σ (정규근사), 구 키와 동일값
+        assert r["var_5_krw"] == int(int(mc["npv_mean_krw"]) - 1.645 * int(mc["npv_std_krw"]))
+        assert r["value_at_risk_5"] == r["var_5_krw"]
+        # PI = (NPV + 총공사비)/총공사비, ROI = NPV/총공사비 × 100
+        cost = float(inputs["total_cost_krw"])
+        assert r["profitability_index"] == round((r["npv_mean_krw"] + cost) / cost, 4)
+        assert r["roi_percent"] == round(r["npv_mean_krw"] / cost * 100, 2)
 
     def test_regulation_monitoring_flow(self, sample_project):
         """법규 모니터링 -> 영향 분석."""

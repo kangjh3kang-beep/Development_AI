@@ -6,4 +6,3 @@
  */
 export { useAppStore } from "../../store/use-app-store";
 export { useProjectStore } from "../../store/use-project-store";
-export { useCadStore } from "../../store/use-cad-store";

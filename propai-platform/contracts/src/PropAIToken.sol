@@ -96,9 +96,10 @@ contract PropAIToken is Ownable, Pausable, ReentrancyGuard {
     function mint(address _to, uint256 _amount) external onlyOwner onlyWhitelisted(_to) whenNotPaused {
         if (_amount == 0) revert InvalidAmount();
 
-        _updateDividend(_to);
+        _settleDividend(_to);
         totalSupply += _amount;
         balanceOf[_to] += _amount;
+        _syncDividendDebit(_to);
 
         emit TokensMinted(_to, _amount);
         emit Transfer(address(0), _to, _amount);
@@ -108,9 +109,10 @@ contract PropAIToken is Ownable, Pausable, ReentrancyGuard {
         if (_amount == 0) revert InvalidAmount();
         if (balanceOf[msg.sender] < _amount) revert InsufficientBalance(msg.sender, _amount, balanceOf[msg.sender]);
 
-        _updateDividend(msg.sender);
+        _settleDividend(msg.sender);
         totalSupply -= _amount;
         balanceOf[msg.sender] -= _amount;
+        _syncDividendDebit(msg.sender);
 
         emit TokensBurned(msg.sender, _amount);
         emit Transfer(msg.sender, address(0), _amount);
@@ -158,11 +160,14 @@ contract PropAIToken is Ownable, Pausable, ReentrancyGuard {
         if (_amount == 0) revert InvalidAmount();
         if (balanceOf[_from] < _amount) revert InsufficientBalance(_from, _amount, balanceOf[_from]);
 
-        _updateDividend(_from);
-        _updateDividend(_to);
+        _settleDividend(_from);
+        _settleDividend(_to);
 
         balanceOf[_from] -= _amount;
         balanceOf[_to] += _amount;
+
+        _syncDividendDebit(_from);
+        _syncDividendDebit(_to);
 
         emit Transfer(_from, _to, _amount);
     }
@@ -182,7 +187,7 @@ contract PropAIToken is Ownable, Pausable, ReentrancyGuard {
     }
 
     function claimDividend() external nonReentrant {
-        _updateDividend(msg.sender);
+        _settleDividend(msg.sender);
         uint256 amount = dividendCredit[msg.sender];
         if (amount == 0) revert NoDividend();
 
@@ -199,10 +204,24 @@ contract PropAIToken is Ownable, Pausable, ReentrancyGuard {
         return dividendCredit[_account] + owed - dividendDebit[_account];
     }
 
-    function _updateDividend(address _account) internal {
+    /**
+     * @dev 현재 잔액 기준 미정산 배당을 credit으로 정산.
+     *      잔액 변경 전에 호출해야 한다 (MasterChef 정산 패턴 1단계).
+     *      불변식: dividendDebit는 항상 직전 sync 시점의 balance×dpt이고
+     *      dividendPerToken은 단조증가하므로 owed >= debit (언더플로 불가).
+     */
+    function _settleDividend(address _account) internal {
         uint256 owed = (balanceOf[_account] * dividendPerToken) / 1e18;
         dividendCredit[_account] += owed - dividendDebit[_account];
         dividendDebit[_account] = owed;
+    }
+
+    /**
+     * @dev 잔액 변경 직후 debit를 새 잔액 기준으로 재동기화 (패턴 2단계).
+     *      이를 누락하면 mint 후 과다적립, burn/transfer 후 언더플로 DoS 발생.
+     */
+    function _syncDividendDebit(address _account) internal {
+        dividendDebit[_account] = (balanceOf[_account] * dividendPerToken) / 1e18;
     }
 
     // ──────────────────────────────────────────────

@@ -21,7 +21,7 @@ from apps.api.auth.rbac import RequirePermission
 from apps.api.database.models.webhook import Webhook
 from apps.api.database.models.webhook_delivery import WebhookDelivery
 from apps.api.database.session import get_db
-from apps.api.services.webhook_service import WebhookService
+from apps.api.services.webhook_service import WebhookService, validate_webhook_url
 
 router = APIRouter()
 
@@ -80,7 +80,15 @@ async def create_webhook(
     current_user: CurrentUser = Depends(RequirePermission("webhooks", "write")),
     db: AsyncSession = Depends(get_db),
 ) -> WebhookResponse:
-    """웹훅을 생성한다. secret은 자동 생성."""
+    """웹훅을 생성한다. secret은 자동 생성. URL은 SSRF 검증을 통과해야 한다."""
+    try:
+        validate_webhook_url(str(body.url))
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+
     webhook = Webhook(
         tenant_id=current_user.tenant_id,
         url=body.url,
@@ -116,6 +124,14 @@ async def update_webhook(
     webhook = await _get_webhook_or_404(webhook_id, current_user.tenant_id, db)
 
     update_data = body.model_dump(exclude_unset=True)
+    if "url" in update_data:
+        try:
+            validate_webhook_url(str(update_data["url"]))
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=str(exc),
+            ) from exc
     for field, value in update_data.items():
         setattr(webhook, field, value)
 

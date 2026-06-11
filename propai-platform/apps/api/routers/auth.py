@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 from datetime import datetime, timedelta, timezone
 import re
 from uuid import UUID
@@ -10,7 +11,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from packages.schemas.enums import UserRole
 from packages.schemas.models import TokenResponse, UserResponse
-from passlib.context import CryptContext
+import bcrypt as _bcrypt
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,7 +31,22 @@ from apps.api.database.models.user import User
 from apps.api.database.session import get_db
 
 router = APIRouter()
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+logger = logging.getLogger(__name__)
+# passlib 1.7.4는 bcrypt>=4.1과 비호환(백엔드 self-test가 ValueError로 크래시)이라
+# bcrypt를 직접 사용한다. 해시 포맷($2b$)은 passlib 산출물과 동일해 기존 해시와 호환.
+# bcrypt는 72바이트 초과 입력을 거부하므로 표준 관행대로 절단한다.
+def _hash_password(password: str) -> str:
+    return _bcrypt.hashpw(password.encode("utf-8")[:72], _bcrypt.gensalt()).decode("ascii")
+
+
+def _verify_password(password: str, hashed: str) -> bool:
+    try:
+        return _bcrypt.checkpw(password.encode("utf-8")[:72], hashed.encode("ascii"))
+    except ValueError:
+        # 잘못된 해시 포맷 등 — 인증 실패로 처리
+        return False
+
+
 UTC = timezone.utc
 
 
@@ -117,19 +133,21 @@ async def login(
     try:
         result = await db.execute(select(User).where(User.email == body.email))
         user = result.scalar_one_or_none()
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"DB 쿼리 오류: {str(e)[:200]}")
+    except Exception:
+        logger.exception("로그인 DB 조회 실패")
+        raise HTTPException(status_code=500, detail="로그인 처리 중 오류가 발생했습니다.")
 
     if user is None:
         raise HTTPException(status_code=401, detail="등록되지 않은 이메일입니다.")
 
     try:
-        if not pwd_context.verify(body.password, user.hashed_password):
+        if not _verify_password(body.password, user.hashed_password):
             raise HTTPException(status_code=401, detail="비밀번호가 일치하지 않습니다.")
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"비밀번호 검증 오류: {str(e)[:200]}")
+    except Exception:
+        logger.exception("로그인 비밀번호 검증 실패")
+        raise HTTPException(status_code=500, detail="로그인 처리 중 오류가 발생했습니다.")
 
     if not user.is_active:
         raise HTTPException(
@@ -184,7 +202,7 @@ async def register(
         tenant_id=tenant.id,
         email=body.email,
         name=body.name,
-        hashed_password=pwd_context.hash(body.password),
+        hashed_password=_hash_password(body.password),
         role=UserRole.ADMIN.value,
         is_active=True,
     )

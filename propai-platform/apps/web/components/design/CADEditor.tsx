@@ -2,6 +2,7 @@
 
 import React, { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import type Konva from "konva";
+import { apiClient, ApiClientError } from "@/lib/api-client";
 
 // React 19 Shim for React 18-era libraries (Proxy-based)
 const applyShim = () => {
@@ -46,6 +47,22 @@ interface ComplianceViolation {
 }
 type Tool = "select" | "point" | "poly" | "dim" | "delete";
 
+/** 편집 중 면적·세대 변경을 부모(스튜디오)에 통지하는 메트릭 페이로드. */
+export interface CADEditorMetrics {
+  /** 건축면적(㎡) — 신발끈 면적. */
+  footprintSqm: number;
+  /** 연면적(㎡) = 건축면적 × 층수. */
+  gfaSqm: number;
+  floorCount: number;
+  /** bbox 역산 건물 폭(m). */
+  buildingWidthM: number;
+  /** bbox 역산 건물 깊이(m). */
+  buildingDepthM: number;
+  floorHeightM: number;
+  bcrPct: number | null;
+  farPct: number | null;
+}
+
 interface CADEditorProps {
   projectId: string;
   apiBaseUrl?: string;
@@ -62,6 +79,8 @@ interface CADEditorProps {
   maxBcrPct?: number;
   maxFarPct?: number;
   maxHeightM?: number;
+  /** 면적·세대(건축면적·연면적·매스치수) 변경을 부모에 통지(라이브 수지 연동용). */
+  onMetricsChange?: (m: CADEditorMetrics) => void;
 }
 
 /* ───────────── 상수 ───────────── */
@@ -113,6 +132,7 @@ export default function CADEditor({
   maxBcrPct,
   maxFarPct,
   maxHeightM,
+  onMetricsChange,
 }: CADEditorProps) {
   /* ── 정점 링(ordered) — 폴리곤을 정점 순서로 관리. lines/surfaces는 저장 시 파생 ── */
   const [ring, setRing] = useState<DesignPoint[]>([]);
@@ -133,6 +153,22 @@ export default function CADEditor({
   const [size, setSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
   const seededRef = useRef(false);
 
+  // ── undo/redo 스냅샷 스택(use-cad-store MAX 50 패턴 이식) ──
+  // 편집 상태(폴리곤 ring + 층수/높이)를 스냅샷으로 쌓아 Ctrl+Z/Ctrl+Shift+Z로 복원.
+  type EditSnapshot = { ring: DesignPoint[]; floorCount: number; buildingHeight: number };
+  const MAX_HISTORY = 50;
+  const undoStackRef = useRef<EditSnapshot[]>([]);
+  const redoStackRef = useRef<EditSnapshot[]>([]);
+  const skipHistoryRef = useRef(false); // undo/redo 적용 중에는 새 스냅샷 push 금지
+  const [canUndo, setCanUndo] = useState(false);
+  const [canRedo, setCanRedo] = useState(false);
+
+  // 편집본 DXF 다운로드 상태(저장본 없으면 404 → 안내)
+  const [dxfState, setDxfState] = useState<"idle" | "loading" | "need-save" | "error">("idle");
+
+  // 최초 1회 도움말 칩(편집기 진입 시 1회만 노출)
+  const [showHelp, setShowHelp] = useState(false);
+
   const containerRef = useRef<HTMLDivElement | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -152,6 +188,16 @@ export default function CADEditor({
     [snapGrid, gridSize],
   );
 
+  /* ── undo/redo: 변경 직전 현재 상태를 undo 스택에 push(use-cad-store MAX 50 이식) ── */
+  const commitSnapshot = useCallback(() => {
+    if (skipHistoryRef.current) return;
+    undoStackRef.current.push({ ring, floorCount, buildingHeight });
+    if (undoStackRef.current.length > MAX_HISTORY) undoStackRef.current.shift();
+    redoStackRef.current = []; // 새 편집 → redo 무효화
+    setCanUndo(true);
+    setCanRedo(false);
+  }, [ring, floorCount, buildingHeight]);
+
   /* ── 면적·BCR·FAR 라이브 계산(신발끈 공식) ── */
   const metrics = useMemo(() => {
     if (ring.length < 3) return { areaM2: 0, bcr: null as number | null, far: null as number | null, gfa: 0 };
@@ -168,6 +214,40 @@ export default function CADEditor({
     const far = siteAreaSqm && siteAreaSqm > 0 ? (gfa / siteAreaSqm) * 100 : null;
     return { areaM2, bcr, far, gfa };
   }, [ring, scalePxPerM, floorCount, siteAreaSqm]);
+
+  /* ── 매스치수 bbox 역산(C2): 편집 ring의 경계상자를 px→m로 환산 ── */
+  const massDims = useMemo(() => {
+    if (ring.length < 3) return { widthM: 0, depthM: 0 };
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const p of ring) {
+      if (p.x < minX) minX = p.x;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.y > maxY) maxY = p.y;
+    }
+    return {
+      widthM: (maxX - minX) / scalePxPerM,
+      depthM: (maxY - minY) / scalePxPerM,
+    };
+  }, [ring, scalePxPerM]);
+
+  const floorHeightM = initialFloorHeightM || 3;
+
+  /* ── 면적·세대 변경을 부모에 통지(라이브 수지 연동). 읽기 전용 — 부모 결정. ── */
+  useEffect(() => {
+    if (!onMetricsChange) return;
+    if (ring.length < 3) return;
+    onMetricsChange({
+      footprintSqm: metrics.areaM2,
+      gfaSqm: metrics.gfa,
+      floorCount,
+      buildingWidthM: Math.round(massDims.widthM * 100) / 100,
+      buildingDepthM: Math.round(massDims.depthM * 100) / 100,
+      floorHeightM,
+      bcrPct: metrics.bcr,
+      farPct: metrics.far,
+    });
+  }, [metrics, floorCount, massDims, floorHeightM, onMetricsChange, ring.length]);
 
   // 법규 초과 여부(클라 힌트)
   const overBcr = limits.bcr != null && metrics.bcr != null && metrics.bcr > limits.bcr + 0.5;
@@ -220,6 +300,51 @@ export default function CADEditor({
     [checkCompliance],
   );
 
+  /* ── undo: undo 스택에서 직전 상태 복원, 현재 상태는 redo로 ── */
+  const undo = useCallback(() => {
+    const prev = undoStackRef.current.pop();
+    if (!prev) return;
+    redoStackRef.current.push({ ring, floorCount, buildingHeight });
+    skipHistoryRef.current = true;
+    setRing(prev.ring);
+    setFloorCount(prev.floorCount);
+    setBuildingHeight(prev.buildingHeight);
+    setTimeout(() => { skipHistoryRef.current = false; }, 0);
+    setCanUndo(undoStackRef.current.length > 0);
+    setCanRedo(true);
+    debouncedCheck(prev.ring);
+  }, [ring, floorCount, buildingHeight, debouncedCheck]);
+
+  /* ── redo: redo 스택에서 상태 재적용, 현재 상태는 undo로 ── */
+  const redo = useCallback(() => {
+    const next = redoStackRef.current.pop();
+    if (!next) return;
+    undoStackRef.current.push({ ring, floorCount, buildingHeight });
+    if (undoStackRef.current.length > MAX_HISTORY) undoStackRef.current.shift();
+    skipHistoryRef.current = true;
+    setRing(next.ring);
+    setFloorCount(next.floorCount);
+    setBuildingHeight(next.buildingHeight);
+    setTimeout(() => { skipHistoryRef.current = false; }, 0);
+    setCanUndo(true);
+    setCanRedo(redoStackRef.current.length > 0);
+    debouncedCheck(next.ring);
+  }, [ring, floorCount, buildingHeight, debouncedCheck]);
+
+  /* ── 키보드 단축키: Ctrl+Z(undo) / Ctrl+Shift+Z(redo) ── */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      const key = e.key.toLowerCase();
+      if (key !== "z") return;
+      e.preventDefault();
+      if (e.shiftKey) redo();
+      else undo();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [undo, redo]);
+
   /* ── 저장(design_versions 영속) ── */
   const handleSave = useCallback(async () => {
     if (ring.length < 3) return;
@@ -228,12 +353,13 @@ export default function CADEditor({
       const lines = ring.map((p, i) => ({
         id: `l${i}`, start_point_id: p.id, end_point_id: ring[(i + 1) % ring.length].id,
       }));
-      const res = await fetch(
-        `${apiBaseUrl}/api/v1/design/${encodeURIComponent(projectId)}/drawings/save`,
+      // apiClient 사용 — Authorization 헤더·401 자동 갱신을 일관 처리(직접 localStorage 토큰 read 금지).
+      // C2: ring bbox 역산 매스치수(building_width/depth_m) + floor_height_m 동봉(GLB 12×9 폴백 해소).
+      // export-edited-dxf가 vector_data.scale을 소비하므로 scale(px/m)도 함께 영속.
+      const d = await apiClient.post<{ status?: string }>(
+        `/design/${encodeURIComponent(projectId)}/drawings/save`,
         {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
+          body: {
             drawing_code: "CAD-EDIT",
             drawing_type: "평면도",
             points: ring.map((p) => ({ id: p.id, x: p.x, y: p.y })),
@@ -241,12 +367,16 @@ export default function CADEditor({
             surfaces: [{ id: "s1", point_ids: ring.map((p) => p.id) }],
             floor_count: floorCount,
             building_height_m: buildingHeight,
-          }),
-          signal: AbortSignal.timeout(30000),
+            // C2 신규 필드(WP-16 CADSaveRequest) — 편집본 매스치수
+            building_width_m: Math.round(massDims.widthM * 100) / 100 || undefined,
+            building_depth_m: Math.round(massDims.depthM * 100) / 100 || undefined,
+            floor_height_m: floorHeightM,
+            // export-edited-dxf의 px→m 변환 스케일 출처
+            vector_data: { scale: scalePxPerM },
+          },
+          timeoutMs: 30000,
         },
       );
-      if (!res.ok) throw new Error(`저장 실패 ${res.status}`);
-      const d = await res.json();
       setSaveStatus("saved");
       const m = /v(\d+)/.exec(d?.status || "");
       if (m) setLoadedVersion(Number(m[1]));
@@ -255,46 +385,96 @@ export default function CADEditor({
       setSaveStatus("error");
       setTimeout(() => setSaveStatus("idle"), 3000);
     }
-  }, [apiBaseUrl, projectId, ring, floorCount, buildingHeight]);
+  }, [projectId, ring, floorCount, buildingHeight, massDims, floorHeightM, scalePxPerM]);
 
-  /* ── 저장본 로드(있으면 정점 순서 복원) ── */
+  /* ── 편집본 DXF 다운로드(GET export-edited-dxf) ──
+     저장본을 ParametricCADService.create_dxf_from_edited_points로 변환한 정식 DXF(LWPOLYLINE+DIMENSION).
+     DXF는 UTF-8 텍스트라 apiClient.get이 { message } 로 회신(바이너리 손상 없음). 404면 "먼저 저장하세요". */
+  const downloadEditedDxf = useCallback(async () => {
+    setDxfState("loading");
+    try {
+      const payload = await apiClient.get<{ message?: string }>(
+        `/design/${encodeURIComponent(projectId)}/drawings/export-edited-dxf`,
+        { timeoutMs: 30000 },
+      );
+      const dxfText = typeof payload?.message === "string" ? payload.message : "";
+      if (!dxfText) {
+        setDxfState("error");
+        setTimeout(() => setDxfState("idle"), 3000);
+        return;
+      }
+      const url = URL.createObjectURL(new Blob([dxfText], { type: "application/dxf" }));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `propai_${projectId}_편집본.dxf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      setDxfState("idle");
+    } catch (err) {
+      // 404 = 저장본 없음 → "먼저 저장하세요" 안내. 그 외는 일반 오류.
+      if (err instanceof ApiClientError && err.status === 404) {
+        setDxfState("need-save");
+        setTimeout(() => setDxfState("idle"), 3500);
+      } else {
+        setDxfState("error");
+        setTimeout(() => setDxfState("idle"), 3000);
+      }
+    }
+  }, [projectId]);
+
+  /* ── 저장본 로드(있으면 정점 순서 복원) — apiClient(인증 첨부)로 호출 ── */
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(
-          `${apiBaseUrl}/api/v1/design/${encodeURIComponent(projectId)}/drawings/load`,
-          { signal: AbortSignal.timeout(20000) },
-        );
-        if (res.ok) {
-          const d = await res.json();
-          if (!cancelled && d?.saved && Array.isArray(d.data?.points) && d.data.points.length >= 3) {
-            const pmap: Record<string, DesignPoint> = {};
-            d.data.points.forEach((p: any) => {
-              pmap[String(p.id)] = { id: String(p.id), x: Number(p.x), y: Number(p.y) };
-            });
-            // surface.point_ids로 정점 순서 복원(없으면 points 순서)
-            const order: string[] = Array.isArray(d.data.surfaces?.[0]?.point_ids)
-              ? d.data.surfaces[0].point_ids.map(String)
-              : d.data.points.map((p: any) => String(p.id));
-            const restored = order.map((id) => pmap[id]).filter(Boolean) as DesignPoint[];
-            if (restored.length >= 3) {
-              setRing(restored);
-              seededRef.current = true;
-            }
-            if (typeof d.data.floor_count === "number") setFloorCount(d.data.floor_count);
-            if (typeof d.data.building_height_m === "number") setBuildingHeight(d.data.building_height_m);
-            setLoadedVersion(d.version ?? null);
+        const d = await apiClient.get<{
+          saved?: boolean; version?: number | null;
+          data?: { points?: any[]; surfaces?: any[]; floor_count?: number; building_height_m?: number };
+        }>(`/design/${encodeURIComponent(projectId)}/drawings/load`, { timeoutMs: 20000 });
+        if (!cancelled && d?.saved && Array.isArray(d.data?.points) && d.data.points.length >= 3) {
+          const pmap: Record<string, DesignPoint> = {};
+          d.data.points.forEach((p: any) => {
+            pmap[String(p.id)] = { id: String(p.id), x: Number(p.x), y: Number(p.y) };
+          });
+          // surface.point_ids로 정점 순서 복원(없으면 points 순서)
+          const order: string[] = Array.isArray(d.data.surfaces?.[0]?.point_ids)
+            ? d.data.surfaces[0].point_ids.map(String)
+            : d.data.points.map((p: any) => String(p.id));
+          const restored = order.map((id) => pmap[id]).filter(Boolean) as DesignPoint[];
+          if (restored.length >= 3) {
+            setRing(restored);
+            seededRef.current = true;
           }
+          if (typeof d.data.floor_count === "number") setFloorCount(d.data.floor_count);
+          if (typeof d.data.building_height_m === "number") setBuildingHeight(d.data.building_height_m);
+          setLoadedVersion(d.version ?? null);
         }
       } catch {
-        /* 로드 실패 무시 — 기본 도형으로 시드 */
+        /* 로드 실패(401·미저장 등) 무시 — 기본 도형으로 시드 */
       } finally {
         if (!cancelled) setLoadState("done");
       }
     })();
     return () => { cancelled = true; };
-  }, [apiBaseUrl, projectId]);
+  }, [projectId]);
+
+  /* ── 최초 1회 도움말 칩(편집기 진입 시 1회만, localStorage 플래그) ── */
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      if (!window.localStorage.getItem("propai_cad_help_seen")) {
+        setShowHelp(true);
+      }
+    } catch {
+      /* localStorage 차단 환경 — 칩 생략 */
+    }
+  }, []);
+  const dismissHelp = useCallback(() => {
+    setShowHelp(false);
+    try { window.localStorage.setItem("propai_cad_help_seen", "1"); } catch { /* noop */ }
+  }, []);
 
   /* ── react-konva 로드 ── */
   useEffect(() => {
@@ -376,6 +556,8 @@ export default function CADEditor({
   }, [loadState, size, ring.length, initialWidthM, initialDepthM, scalePxPerM, snap, debouncedCheck]);
 
   /* ── 정점 드래그(라이브) ── */
+  // 드래그 시작 시 1회 스냅샷(이동 전 상태) → undo로 정확 복원.
+  const handleDragStart = useCallback(() => { commitSnapshot(); }, [commitSnapshot]);
   const handleDragMove = useCallback(
     (idx: number, e: Konva.KonvaEventObject<DragEvent>) => {
       const nx = snap(e.target.x());
@@ -398,6 +580,7 @@ export default function CADEditor({
   /* ── 엣지 중점에 정점 삽입(POINT 도구) ── */
   const insertVertexAt = useCallback(
     (edgeIdx: number) => {
+      commitSnapshot(); // 삽입 전 스냅샷(undo 대상)
       setRing((prev) => {
         const a = prev[edgeIdx];
         const b = prev[(edgeIdx + 1) % prev.length];
@@ -409,12 +592,13 @@ export default function CADEditor({
         return next;
       });
     },
-    [snap, debouncedCheck],
+    [snap, debouncedCheck, commitSnapshot],
   );
 
   /* ── 정점 삭제(DELETE 도구) ── */
   const deleteVertex = useCallback(
     (idx: number) => {
+      commitSnapshot(); // 삭제 전 스냅샷(undo 대상)
       setRing((prev) => {
         if (prev.length <= 3) return prev; // 최소 삼각형 유지
         const next = prev.filter((_, i) => i !== idx);
@@ -423,7 +607,7 @@ export default function CADEditor({
       });
       setSelectedIdx(null);
     },
-    [debouncedCheck],
+    [debouncedCheck, commitSnapshot],
   );
 
   /* ── 스테이지 클릭(POLY 재작도) ── */
@@ -439,12 +623,13 @@ export default function CADEditor({
   );
   const finishPoly = useCallback(() => {
     if (draft.length >= 3) {
+      commitSnapshot(); // 외곽선 교체 전 스냅샷(undo 대상)
       setRing(draft);
       debouncedCheck(draft);
     }
     setDraft([]);
     setTool("select");
-  }, [draft, debouncedCheck]);
+  }, [draft, debouncedCheck, commitSnapshot]);
   const cancelPoly = useCallback(() => { setDraft([]); setTool("select"); }, []);
 
   /* ── 렌더 게이트 ── */
@@ -542,6 +727,7 @@ export default function CADEditor({
                       fill={isSel ? "#60a5fa" : "#ffffff"}
                       stroke={hasViolationHint ? "#f43f5e" : "#2dd4bf"} strokeWidth={3}
                       draggable={tool === "select"}
+                      onDragStart={handleDragStart}
                       onDragMove={(e: Konva.KonvaEventObject<DragEvent>) => handleDragMove(idx, e)}
                       onDragEnd={handleDragEnd}
                       onClick={() => {
@@ -592,6 +778,26 @@ export default function CADEditor({
           </button>
         ))}
         <div className="mx-1 h-5 w-px bg-white/10" />
+        {/* ── undo/redo(↶↷) — Ctrl+Z / Ctrl+Shift+Z ── */}
+        <button
+          onClick={undo}
+          disabled={!canUndo}
+          title="실행 취소 (Ctrl+Z)"
+          aria-label="실행 취소"
+          className="rounded-xl px-3 py-2 text-[13px] font-black text-white/70 transition-colors hover:bg-white/10 hover:text-white disabled:opacity-30"
+        >
+          ↶
+        </button>
+        <button
+          onClick={redo}
+          disabled={!canRedo}
+          title="다시 실행 (Ctrl+Shift+Z)"
+          aria-label="다시 실행"
+          className="rounded-xl px-3 py-2 text-[13px] font-black text-white/70 transition-colors hover:bg-white/10 hover:text-white disabled:opacity-30"
+        >
+          ↷
+        </button>
+        <div className="mx-1 h-5 w-px bg-white/10" />
         <button
           onClick={handleSave}
           disabled={saveStatus === "saving" || ring.length < 3}
@@ -606,7 +812,46 @@ export default function CADEditor({
             : saveStatus === "error" ? "재시도"
             : `저장${loadedVersion ? ` (v${loadedVersion})` : ""}`}
         </button>
+        {/* ── 편집본 DXF 다운로드(저장본 → 정식 DXF). 404면 "먼저 저장하세요" 안내 ── */}
+        <button
+          onClick={downloadEditedDxf}
+          disabled={dxfState === "loading"}
+          title="저장된 편집본을 정식 DXF(LWPOLYLINE+치수)로 내려받습니다"
+          className={`rounded-xl px-3 py-2 text-[10px] font-black uppercase tracking-widest transition-colors disabled:opacity-50 ${
+            dxfState === "need-save" ? "bg-amber-500/80 text-white"
+              : dxfState === "error" ? "bg-red-500/80 text-white"
+              : "bg-white/10 text-white/80 hover:bg-white/20"
+          }`}
+        >
+          {dxfState === "loading" ? "DXF 생성…"
+            : dxfState === "need-save" ? "먼저 저장하세요"
+            : dxfState === "error" ? "DXF 실패"
+            : "⬇ 편집본 DXF"}
+        </button>
       </div>
+
+      {/* ── 최초 1회 도움말 칩(편집기 첫 진입 안내) ── */}
+      {showHelp && tool !== "poly" && (
+        <div className="absolute left-1/2 top-[4.5rem] z-30 flex max-w-[440px] -translate-x-1/2 items-start gap-3 rounded-2xl border border-teal-400/30 bg-black/80 px-4 py-3 backdrop-blur-xl shadow-2xl">
+          <span className="mt-0.5 text-[14px] leading-none">💡</span>
+          <div className="flex-1">
+            <p className="text-[11px] font-black text-teal-200">처음이신가요? 이렇게 다듬으세요</p>
+            <p className="mt-1 text-[10px] leading-relaxed text-white/65">
+              정점을 끌어 평면을 수정하면 면적·수지가 실시간 갱신됩니다.
+              <span className="text-white/40"> 되돌리기 </span><b className="text-white/80">Ctrl+Z</b>
+              <span className="text-white/40"> · 다시 </span><b className="text-white/80">Ctrl+Shift+Z</b>.
+              마치면 <b className="text-white/80">저장</b> 후 <b className="text-white/80">편집본 DXF</b>를 받을 수 있어요.
+            </p>
+          </div>
+          <button
+            onClick={dismissHelp}
+            aria-label="도움말 닫기"
+            className="rounded-lg px-2 py-0.5 text-[13px] font-black text-white/50 hover:bg-white/10 hover:text-white"
+          >
+            ×
+          </button>
+        </div>
+      )}
 
       {/* ── POLY 재작도 안내 ── */}
       {tool === "poly" && (
@@ -636,6 +881,7 @@ export default function CADEditor({
               <span className="text-[11px] font-black text-teal-400">{floorCount} F</span>
             </div>
             <input type="range" min={1} max={50} value={floorCount}
+              onPointerDown={commitSnapshot}
               onChange={(e) => {
                 const v = Number(e.target.value);
                 setFloorCount(v);
@@ -650,6 +896,7 @@ export default function CADEditor({
               <span className={`text-[11px] font-black ${overHeight ? "text-rose-400" : "text-blue-400"}`}>{buildingHeight} m</span>
             </div>
             <input type="range" min={3} max={300} value={buildingHeight}
+              onPointerDown={commitSnapshot}
               onChange={(e) => { setBuildingHeight(Number(e.target.value)); debouncedCheck(ring); }}
               className="h-1 w-full cursor-pointer rounded-full bg-white/10 accent-blue-400" />
           </div>

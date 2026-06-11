@@ -76,6 +76,26 @@ function won(man?: number): string {
 }
 const pyeong = (m2?: number) => (m2 && m2 > 0 ? `${(m2 / 3.305785).toFixed(1)}평` : "-");
 
+// 외부 API 응답을 InfoWindow HTML 문자열에 주입하기 전 XSS 방지 이스케이프.
+function escapeHtml(v: unknown): string {
+  return String(v ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+// http/https 스킴만 허용(javascript: 등 차단). 부적합하면 빈 문자열 → 링크 미표시.
+function safeUrl(u?: string): string {
+  if (!u) return "";
+  try {
+    const p = new URL(u);
+    if (p.protocol === "http:" || p.protocol === "https:") return u;
+  } catch { /* noop */ }
+  return "";
+}
+
 export function NearbyTransactionsMap({
   onPayload,
   onLoading,
@@ -199,7 +219,7 @@ export function NearbyTransactionsMap({
     pinEl.className = "propai-pin";
     pinEl.innerHTML = '<div class="ring"></div><div class="core"></div>';
     pinEl.onclick = () =>
-      openInfo(center, `<div style="padding:6px 10px;font-size:12px;"><b>분석 대상지</b><br/>${payload.center?.address || address}</div>`);
+      openInfo(center, `<div style="padding:6px 10px;font-size:12px;"><b>분석 대상지</b><br/>${escapeHtml(payload.center?.address || address)}</div>`);
     centerRef.current = new kakao.maps.CustomOverlay({
       position: center, content: pinEl, xAnchor: 0.5, yAnchor: 0.5, zIndex: 1000,
     });
@@ -251,13 +271,14 @@ export function NearbyTransactionsMap({
         if (!it.lat || !it.lon) return;
         ppts.push([it.lat, it.lon]);
         const col = PRESALE_COLOR[it.status] || "#f59e0b";
+        const href = safeUrl(it.url);
         const html = `<div style="min-width:200px;max-width:270px;font-family:sans-serif;">
-            <div style="font-weight:700;font-size:13px;color:#0f172a;">${it.name}</div>
-            <div style="font-size:11px;color:#64748b;margin:2px 0 6px;">${it.area_name} · ${it.address}</div>
-            <div style="font-size:12px;color:${col};font-weight:700;">${it.status}</div>
-            <div style="font-size:11px;color:#475569;">접수 ${it.receipt_begin || "-"} ~ ${it.receipt_end || "-"}</div>
-            <div style="font-size:11px;color:#475569;">공급 ${it.total_households || "-"}세대 · ${Math.round((it.distance_m || 0) / 100) / 10}km</div>
-            ${it.url ? `<a href="${it.url}" target="_blank" style="font-size:11px;color:#2563eb;font-weight:700;">청약홈 공고 ↗</a>` : ""}
+            <div style="font-weight:700;font-size:13px;color:#0f172a;">${escapeHtml(it.name)}</div>
+            <div style="font-size:11px;color:#64748b;margin:2px 0 6px;">${escapeHtml(it.area_name)} · ${escapeHtml(it.address)}</div>
+            <div style="font-size:12px;color:${col};font-weight:700;">${escapeHtml(it.status)}</div>
+            <div style="font-size:11px;color:#475569;">접수 ${escapeHtml(it.receipt_begin || "-")} ~ ${escapeHtml(it.receipt_end || "-")}</div>
+            <div style="font-size:11px;color:#475569;">공급 ${escapeHtml(it.total_households || "-")}세대 · ${Math.round((it.distance_m || 0) / 100) / 10}km</div>
+            ${href ? `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer" style="font-size:11px;color:#2563eb;font-weight:700;">청약홈 공고 ↗</a>` : ""}
           </div>`;
         const mk = document.createElement("div");
         mk.style.cssText = `width:18px;height:18px;border-radius:4px;background:${col};border:2px solid #fff;opacity:.92;cursor:pointer;box-shadow:0 0 4px rgba(0,0,0,.35);transform:rotate(45deg)`;
@@ -298,12 +319,12 @@ export function NearbyTransactionsMap({
           : "";
         const p = kind === "trade" ? (dpp || won(d.price_10k_won))
           : `${won(d.deposit_10k_won)}${d.monthly_rent_10k_won ? `/${d.monthly_rent_10k_won}만` : ""}`;
-        return `<div style="font-size:11px;color:#475569;">· ${d.deal_date || ""} ${p} · ${pyeong(d.area_m2)} ${d.floor ? `${d.floor}층` : ""}</div>`;
+        return `<div style="font-size:11px;color:#475569;">· ${escapeHtml(d.deal_date || "")} ${p} · ${pyeong(d.area_m2)} ${d.floor ? `${escapeHtml(d.floor)}층` : ""}</div>`;
       }).join("");
       const html =
         `<div style="min-width:200px;max-width:260px;font-family:sans-serif;">
-          <div style="font-weight:700;font-size:13px;color:#0f172a;">${g.name}</div>
-          <div style="font-size:11px;color:#64748b;margin-bottom:6px;">${g.dong} ${g.jibun} · ${g.count}건 · 평균 ${pyeong(g.avg_area_m2)}</div>
+          <div style="font-weight:700;font-size:13px;color:#0f172a;">${escapeHtml(g.name)}</div>
+          <div style="font-size:11px;color:#64748b;margin-bottom:6px;">${escapeHtml(g.dong)} ${escapeHtml(g.jibun)} · ${g.count}건 · 평균 ${pyeong(g.avg_area_m2)}</div>
           <div style="font-size:12px;color:#0f172a;margin-bottom:6px;">${priceLine}</div>${dealsHtml}
         </div>`;
       // 거래건수에 따라 마커 크기 가변(반지름 6~16 → 지름 px)

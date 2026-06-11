@@ -294,7 +294,9 @@ function displayFieldValue(key: string, value: unknown): string {
   return formatNumber(value as number | string);
 }
 
-const DEFAULT_STAGES: PipelineStageStatus[] = [
+// 백엔드 PipelineStage enum과 동일한 단계 순서(SSOT). rerun-stage 라우터의 valid_stages·
+// skip_stages 계산과 일치해야 한다 — 다단계 오버라이드 중 "파이프라인상 최초 단계"를 산출하는 기준.
+const STAGE_ORDER = [
   "site_analysis",
   "design",
   "cost",
@@ -302,7 +304,9 @@ const DEFAULT_STAGES: PipelineStageStatus[] = [
   "tax",
   "esg",
   "report",
-].map((s) => ({
+] as const;
+
+const DEFAULT_STAGES: PipelineStageStatus[] = STAGE_ORDER.map((s) => ({
   stage: s,
   status: "pending",
   duration_ms: null,
@@ -492,6 +496,8 @@ export function ProjectPipelinePanel({
   const updateDesignData = useProjectContextStore((s) => s.updateDesignData);
   const updateFeasibilityData = useProjectContextStore((s) => s.updateFeasibilityData);
   const updateEsgData = useProjectContextStore((s) => s.updateEsgData);
+  const updateCostData = useProjectContextStore((s) => s.updateCostData);
+  const updateComplianceData = useProjectContextStore((s) => s.updateComplianceData);
   const addAnalysisResult = useProjectContextStore((s) => s.addAnalysisResult);
   const markStageComplete = useProjectContextStore((s) => s.markStageComplete);
 
@@ -509,10 +515,23 @@ export function ProjectPipelinePanel({
         const newPnu = (site?.pnu as string) ?? (basic.pnu as string);
         const newEstValue = site?.estimated_value as number | undefined;
 
+        // E7: 사이트 결과가 외부 데이터 미확보로 기본 가정값을 채운 경우(data_quality==="assumed_defaults"),
+        //  해당 가정 필드(assumed_fields)를 SSOT 시드에서 제외한다. 가정값이 자동 환류로 store에 박히면
+        //  staleness/다운스트림이 "근거 있는 값"으로 오인 → 정직성 위반·재분석 왜곡. (zone_type→zoneCode,
+        //  land_area_sqm→landAreaSqm 매핑으로 store 필드명에 대응)
+        const dataQuality = (site?.data_quality as string | undefined) ?? (siteStageData?.data_quality as string | undefined);
+        const assumedFields = new Set<string>(
+          dataQuality === "assumed_defaults"
+            ? (((site?.assumed_fields as string[] | undefined) ?? (siteStageData?.assumed_fields as string[] | undefined)) ?? [])
+            : [],
+        );
+        const seedLandArea = !assumedFields.has("land_area_sqm");
+        const seedZone = !assumedFields.has("zone_type");
+
         updateSiteAnalysis({
           ...(newEstValue != null ? { estimatedValue: newEstValue } : {}),
-          ...(newLandArea != null && newLandArea > 0 ? { landAreaSqm: newLandArea } : {}),
-          ...(newZoneCode ? { zoneCode: newZoneCode } : {}),
+          ...(seedLandArea && newLandArea != null && newLandArea > 0 ? { landAreaSqm: newLandArea } : {}),
+          ...(seedZone && newZoneCode ? { zoneCode: newZoneCode } : {}),
           ...(effectiveAddr ? { address: effectiveAddr } : {}),
           ...(newPnu ? { pnu: newPnu } : {}),
         });
@@ -522,14 +541,89 @@ export function ProjectPipelinePanel({
       // design
       const design = result.summary?.design;
       if (design) {
+        // 세대 구성·전용률 환류 — 도면/유닛믹스/수지 다운스트림의 "데이터 없음" 해소(SSOT 연결).
+        //  unit_types는 백엔드가 객체 배열([{type,...}])로 산출 → 평형 라벨 문자열 배열로 정규화.
+        const unitTypesRaw = design.unit_types;
+        const unitTypes: string[] | null = Array.isArray(unitTypesRaw)
+          ? unitTypesRaw
+              .map((u) =>
+                typeof u === "string"
+                  ? u
+                  : ((u as Record<string, unknown> | null)?.type as string | undefined)
+                    ?? ((u as Record<string, unknown> | null)?.name as string | undefined),
+              )
+              .filter((v): v is string => typeof v === "string" && v.length > 0)
+          : null;
+        const efficiencyPct = (design.sellable_efficiency_pct as number) ?? null;
+        const unitCount = (design.unit_count as number | undefined) ?? null;
         updateDesignData({
           totalGfaSqm: (design.total_gfa_sqm as number) ?? null,
           floorCount: (design.floor_count as number) ?? null,
           buildingType: (design.building_type as string) ?? null,
           bcr: (design.bcr as number) ?? null,
           far: (design.far as number) ?? null,
+          // 세대수·평형·전용률은 summary에 실제 값이 있을 때만 환류 — 부재 시 기존 SSOT값 보존
+          ...(unitCount != null ? { unitCount } : {}),
+          ...(unitTypes && unitTypes.length > 0 ? { unitTypes } : {}),
+          ...(efficiencyPct != null ? { efficiencyPct } : {}),
         });
         markStageComplete("design");
+
+        // 법규검토(BL-001 건폐율 / BL-002 용적률 / BL-003 높이) → ComplianceData 환류.
+        //  설계 단계가 BuildingCodeRuleEngine으로 산출한 results를 SSOT로 연결해 "법규" 단계를 완료 처리한다.
+        //  status는 ComplianceStatus enum값(pass/fail/warning/n/a) — pass만 적합, n/a(높이제한 없음)는
+        //  "위반 아님"으로 null 유지(거짓 적합/위반 표기 방지).
+        const complianceResults = (design.compliance as Record<string, unknown> | undefined)?.results;
+        if (Array.isArray(complianceResults) && complianceResults.length > 0) {
+          const byRule = new Map<string, string>();
+          const violations: string[] = [];
+          for (const r of complianceResults) {
+            const rule = (r as Record<string, unknown>)?.rule_id as string | undefined;
+            const status = (r as Record<string, unknown>)?.status as string | undefined;
+            if (rule && status) byRule.set(rule, status);
+            if (status === "fail") {
+              const msg =
+                ((r as Record<string, unknown>)?.message as string | undefined) ??
+                ((r as Record<string, unknown>)?.rule_name as string | undefined) ??
+                rule;
+              if (msg) violations.push(msg);
+            }
+          }
+          // pass → true / fail → false / 미검(n/a·부재) → null("데이터 없음" 정직 표기)
+          const verdict = (rule: string): boolean | null => {
+            const s = byRule.get(rule);
+            if (s === "pass") return true;
+            if (s === "fail") return false;
+            return null;
+          };
+          updateComplianceData({
+            bcrCompliant: verdict("BL-001"),
+            farCompliant: verdict("BL-002"),
+            heightCompliant: verdict("BL-003"),
+            violations,
+          });
+          markStageComplete("legal");
+        }
+      }
+
+      // cost — 공사비 분석 결과를 SSOT(CostData)에 환류(auto). 수지·사업성 단일 데이터원 연결,
+      //  staleness 캐스케이드 트리거. 백엔드 미산출 필드는 정직하게 null 유지(가짜값 금지).
+      const cost = result.summary?.cost;
+      if (cost) {
+        updateCostData({
+          totalConstructionCostWon: (cost.total_construction_cost as number) ?? null,
+          perSqmWon: (cost.cost_per_sqm as number) ?? null,
+          perPyeongWon: (cost.cost_per_pyeong as number) ?? null,
+          abovegroundWon: (cost.aboveground_cost as number) ?? null,
+          undergroundWon: (cost.underground_cost as number) ?? null,
+          landscapeWon: (cost.landscape_cost as number) ?? null,
+          directWon: (cost.direct_cost as number) ?? null,
+          indirectWon: (cost.indirect_cost as number) ?? null,
+          rangeMinWon: (cost.range_min as number) ?? null,
+          rangeMaxWon: (cost.range_max as number) ?? null,
+          source: "overview",
+        });
+        markStageComplete("construction");
       }
 
       // feasibility
@@ -566,7 +660,7 @@ export function ProjectPipelinePanel({
         }
       }
     },
-    [address, updateSiteAnalysis, updateDesignData, updateFeasibilityData, updateEsgData, addAnalysisResult, markStageComplete],
+    [address, updateSiteAnalysis, updateDesignData, updateFeasibilityData, updateEsgData, updateCostData, updateComplianceData, addAnalysisResult, markStageComplete],
   );
 
   const addToHistory = useCallback(
@@ -867,13 +961,42 @@ export function ProjectPipelinePanel({
       setViewMode("pipeline");
 
       try {
-        const result = await apiClient.postV2<PipelineRunResponse>("/pipeline/run", {
+        // PipelineResultDetail의 onRerun 계약은 flat "{stage}.{field}" 오버라이드(불변).
+        //  이를 단계별 맵(stage_overrides)으로 파싱하고, STAGE_ORDER상 "최초로 오버라이드된 단계"를
+        //  재실행 진입점(stage)으로 산출한다 — 그 이전 단계는 previous_result로 복원·스킵되어
+        //  기본값(500/60/200) 왜곡 없이 수정 지점부터 정확히 재계산된다. (/pipeline/rerun-stage 전환)
+        const stageOverrides: Record<string, Record<string, unknown>> = {};
+        for (const [flatKey, value] of Object.entries(overrides)) {
+          const dot = flatKey.indexOf(".");
+          // 점이 없는 키(드묾)는 호출자가 지정한 stageName으로 귀속(하위호환).
+          const stage = dot >= 0 ? flatKey.slice(0, dot) : stageName;
+          const field = dot >= 0 ? flatKey.slice(dot + 1) : flatKey;
+          if (!field) continue;
+          (stageOverrides[stage] ??= {})[field] = value;
+        }
+
+        // 파이프라인 순서상 최초 오버라이드 단계 산출(미상 단계는 무시). 없으면 호출자 stageName 폴백.
+        let earliest = stageName;
+        let earliestIdx = Number.POSITIVE_INFINITY;
+        for (const stage of Object.keys(stageOverrides)) {
+          const idx = STAGE_ORDER.indexOf(stage as (typeof STAGE_ORDER)[number]);
+          if (idx >= 0 && idx < earliestIdx) {
+            earliestIdx = idx;
+            earliest = stage;
+          }
+        }
+
+        const result = await apiClient.postV2<PipelineRunResponse>("/pipeline/rerun-stage", {
           body: {
             address: address.trim(),
             project_id: projectId,
-            options: { from_stage: stageName, overrides },
+            stage: earliest,
+            stage_overrides: stageOverrides,
+            // 이전 결과 동봉 → 백엔드가 skip 단계 data + 단계간 payload 복원(정확 재계산).
+            previous_result: { stages: lastResult.stages },
           },
           useMock: false,
+          timeoutMs: 170000,
         });
 
         setStages(result.stages);

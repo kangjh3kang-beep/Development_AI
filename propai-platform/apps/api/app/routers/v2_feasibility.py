@@ -1,4 +1,4 @@
-"""수지분석 v2 API 라우터 — 14개 엔드포인트 (Auto-Recommend Top 3 포함)."""
+"""수지분석 v2 API 라우터 — 계산·비교·몬테카를로(실수지)·민감도·VCS·내보내기."""
 
 from __future__ import annotations
 
@@ -24,6 +24,8 @@ from app.schemas.feasibility_v2 import (
     OptimizationRequest,
     RecommendationResponse,
     ModuleListResponse,
+    SensitivityRequest,
+    SensitivityResponse,
     VCSCommitRequest,
     VCSRollbackRequest,
 )
@@ -33,7 +35,10 @@ from app.services.feasibility.monte_carlo_engine import run_monte_carlo, MCVaria
 from app.services.feasibility.ai_optimizer import optimize_slsqp
 from app.services.feasibility.ai_recommendation import diagnose
 from app.services.feasibility.version_control_db import FeasibilityVCSDB
-from app.services.feasibility.sensitivity_engine import run_sensitivity_analysis
+from app.services.feasibility.sensitivity_engine import (
+    SensitivityScenario,
+    run_sensitivity_analysis,
+)
 from app.core.database import get_db
 from app.core.billing_deps import enforce_llm_quota
 from app.services.auth.auth_service import get_current_user
@@ -124,6 +129,82 @@ def _request_to_input(req: FeasibilityCalculateRequest) -> ModuleInput:
         equity_won=req.equity_won,
         params=req.params,
     )
+
+
+# ── 실수지 섭동(몬테카를로 base 모드 · /sensitivity 공용) ──────────
+# 지원 변수명은 sensitivity_engine DEFAULT_SCENARIOS 관례를 따른다.
+BASE_PERTURB_VARIABLES = (
+    "sale_price",         # 평당 분양가(원/평) → avg_sale_price_per_pyeong
+    "construction_cost",  # 총공사비(원) → params.construction_cost_override_won
+    "land_cost",          # 총토지비(원) → 공시지가 비례 스케일
+    "interest_rate",      # 대표금리(소수) → bridge/pf/midpay 3종 동률(pp) 적용
+    "project_months",     # 사업기간(월)
+)
+
+# 실수지 모드 시뮬레이션 횟수 상한 — 표본마다 수지모듈 전체(공사비·세금·금융)를
+# 재계산하므로 동기 API 응답시간 보호를 위해 제한(파이프라인 MC도 1,000회 관례).
+MC_BASE_MAX_SIMULATIONS = 1_000
+
+
+def _make_base_perturb_fn(base_req: FeasibilityCalculateRequest):
+    """실수지 섭동 함수 팩토리 — 변수 dict를 base 입력에 반영해 v2 엔진으로 재계산.
+
+    Returns:
+        (perturb_fn, base_output, base_values)
+        - perturb_fn(vals: dict[str, float]) -> ModuleOutput
+        - base_values: 지원 변수 5종의 섭동 원점(실수지 산출 기준값)
+
+    Raises:
+        ValueError: base 입력 자체가 계산 불가(모듈 검증 실패)할 때.
+    """
+    base_inp = _request_to_input(base_req)
+    base_out = _service.calculate(base_inp)  # 입력 검증 겸 기준 토지비·공사비 확보
+    base_land = float(base_out.total_land_cost_won)
+    base_constr = float(base_out.total_construction_cost_won)
+
+    base_values: dict[str, float] = {
+        "sale_price": float(base_req.avg_sale_price_per_pyeong),
+        "construction_cost": base_constr,
+        "land_cost": base_land,
+        "interest_rate": float(base_inp.pf_rate),  # ModuleInput 표준 PF금리 기준
+        "project_months": float(base_req.project_months),
+    }
+
+    def perturb_fn(vals: dict[str, float]):
+        inp = _request_to_input(base_req)
+        inp.params = dict(base_req.params or {})  # 표본 간 params 공유 오염 방지
+        for name, value in vals.items():
+            v = float(value)
+            if name == "sale_price":
+                inp.avg_sale_price_per_pyeong = max(0.0, v)  # 음수 분양가 불가 — 0 하한
+            elif name == "construction_cost":
+                # 기존 정밀공사비 주입 라인(construction_cost_override_won) 재사용.
+                # 1원 하한: 0 이하면 override가 무시되어 표준단가 계산으로 암묵
+                # 전환(모델 스위칭)되는 것을 방지.
+                inp.params["construction_cost_override_won"] = max(1.0, v)
+            elif name == "land_cost":
+                # 토지비는 공시지가에 선형 → 공시지가 비례 스케일(params 보상비 불변).
+                # 기준 토지비/공시지가가 0이면 섭동 불능 — 무변경(no-op) 정직 처리.
+                if base_land > 0 and base_inp.official_price_per_sqm > 0:
+                    inp.official_price_per_sqm = (
+                        base_inp.official_price_per_sqm * max(0.0, v) / base_land
+                    )
+            elif name == "interest_rate":
+                # 단일 대표금리 가정 — pp 변동분을 3종 대출금리에 동률 적용.
+                shift = v - float(base_inp.pf_rate)
+                inp.bridge_rate = max(0.0, base_inp.bridge_rate + shift)
+                inp.pf_rate = max(0.0, base_inp.pf_rate + shift)
+                inp.midpay_rate = max(0.0, base_inp.midpay_rate + shift)
+            elif name == "project_months":
+                inp.project_months = max(1, int(round(v)))
+            else:
+                raise ValueError(
+                    f"실수지 섭동 미지원 변수 '{name}' — "
+                    f"지원: {', '.join(BASE_PERTURB_VARIABLES)}"
+                )
+        return _service.calculate(inp)
+
+    return perturb_fn, base_out, base_values
 
 
 @router.post(
@@ -402,7 +483,13 @@ async def list_modules():
 
 @router.post("/monte-carlo", response_model=MonteCarloResponse)
 async def run_monte_carlo_sim(req: MonteCarloRequest):
-    """몬테카를로 시뮬레이션."""
+    """몬테카를로 시뮬레이션.
+
+    - base 미제공(기존 계약): 변수 합(simple_npv)을 목적함수로 사용 — 하위호환.
+    - base 제공: 표본을 실수지 입력에 반영해 FeasibilityServiceV2.calculate로
+      net_profit_won 분포를 산출. 지원 변수: sale_price/construction_cost/
+      land_cost/interest_rate/project_months (그 외 변수명은 422).
+    """
     mc_vars = [
         MCVariable(
             name=v["name"],
@@ -413,16 +500,118 @@ async def run_monte_carlo_sim(req: MonteCarloRequest):
         for v in req.variables
     ]
 
-    def simple_npv(vals):
-        return sum(vals.values())
+    if req.base is None:
+        # 기존 동작 유지(하위호환) — 변수 단순 합산
+        def simple_npv(vals):
+            return sum(vals.values())
+
+        result = run_monte_carlo(
+            calculate_fn=simple_npv,
+            variables=mc_vars,
+            n_simulations=req.n_simulations,
+            seed=req.seed,
+        )
+        return MonteCarloResponse(**result)
+
+    # ── 실수지 모드 — 미지원 변수는 가짜 반영 대신 정직하게 거부 ──
+    unknown = [v.name for v in mc_vars if v.name not in BASE_PERTURB_VARIABLES]
+    if unknown:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"실수지 모드 미지원 변수: {', '.join(unknown)} — "
+                f"지원: {', '.join(BASE_PERTURB_VARIABLES)}"
+            ),
+        )
+
+    try:
+        perturb_fn, _base_out, _base_values = _make_base_perturb_fn(req.base)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    def real_profit_fn(vals: dict[str, float]) -> float:
+        return float(perturb_fn(vals).net_profit_won)
+
+    n_sim = min(req.n_simulations, MC_BASE_MAX_SIMULATIONS)
+    note = None
+    if n_sim < req.n_simulations:
+        note = (
+            f"실수지 모드: 요청 {req.n_simulations:,}회를 상한 "
+            f"{MC_BASE_MAX_SIMULATIONS:,}회로 제한(표본마다 수지모듈 전체 재계산)"
+        )
 
     result = run_monte_carlo(
-        calculate_fn=simple_npv,
+        calculate_fn=real_profit_fn,
         variables=mc_vars,
-        n_simulations=req.n_simulations,
+        n_simulations=n_sim,
         seed=req.seed,
     )
-    return MonteCarloResponse(**result)
+    return MonteCarloResponse(
+        **result,
+        target_metric="net_profit_won",
+        calc_source="feasibility_v2",
+        note=note,
+    )
+
+
+@router.post("/sensitivity", response_model=SensitivityResponse)
+async def run_sensitivity(req: SensitivityRequest):
+    """민감도 분석(토네이도) — 실수지(FeasibilityServiceV2) 섭동 기반.
+
+    base 수지입력을 원점으로 시나리오 변수(분양가/공사비/토지비/금리/공기)를
+    변동시키며 수지를 재계산한다. scenarios 미지정 시 엔진 프리셋 5종 사용.
+    """
+    custom_scenarios = None
+    if req.scenarios:
+        unknown = [
+            s.variable for s in req.scenarios
+            if s.variable not in BASE_PERTURB_VARIABLES
+        ]
+        if unknown:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"민감도 미지원 변수: {', '.join(unknown)} — "
+                    f"지원: {', '.join(BASE_PERTURB_VARIABLES)}"
+                ),
+            )
+        custom_scenarios = [
+            SensitivityScenario(
+                name=s.name, variable=s.variable, deltas_pct=s.deltas_pct
+            )
+            for s in req.scenarios
+        ]
+
+    try:
+        perturb_fn, _base_out, base_values = _make_base_perturb_fn(req.base)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    def sensitivity_fn(vals: dict[str, float]) -> dict[str, Any]:
+        out = perturb_fn(vals)
+        return {
+            "development_type": out.development_type,
+            "total_revenue_won": out.total_revenue_won,
+            "total_cost_won": out.total_cost_won,
+            "net_profit_won": out.net_profit_won,
+            "profit_rate_pct": out.profit_rate_pct,
+            "roi_pct": out.roi_pct,
+            "npv_won": out.npv_won,
+            "grade": out.grade,
+        }
+
+    result = run_sensitivity_analysis(
+        base_values=base_values,
+        calculate_fn=sensitivity_fn,
+        scenarios=custom_scenarios,
+    )
+    return SensitivityResponse(
+        base_result=result["base_result"],
+        scenarios=result["scenarios"],
+        tornado=result["tornado"],
+        base_values=base_values,
+        calc_source="feasibility_v2",
+    )
 
 
 @router.post("/optimize")

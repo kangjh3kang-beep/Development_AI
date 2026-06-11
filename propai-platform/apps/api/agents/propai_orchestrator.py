@@ -10,7 +10,7 @@ LangGraph 기반 상태 머신.
 3. avm — AVM 시세 추정
 4. feasibility — 사업성 분석 (NPV/IRR + 세금 + 전세 리스크)
 5. permit — 인허가 준비도 판단
-6. report — Claude LLM 종합 보고서 + 투자 등급
+6. report — LLM 종합 보고서 + 투자 등급 (모델 선택은 get_llm 단일출처)
 
 각 단계 결과를 AgentStepEvent SSE로 실시간 전송한다.
 """
@@ -364,15 +364,11 @@ class PropAIOrchestrator:
     # ── Step 6: 종합 보고서 + 투자 등급 ──
 
     async def _step_report(self, state: OrchestratorState) -> dict:
-        """Claude LLM으로 전체 결과를 종합하여 보고서를 생성한다."""
-        from langchain_anthropic import ChatAnthropic
+        """LLM으로 전체 결과를 종합하여 보고서를 생성한다.
 
-        llm = ChatAnthropic(
-            model="claude-sonnet-4-5-20250929",
-            api_key=self.settings.anthropic_api_key,
-            temperature=0.3,
-        )
-
+        모델은 하드코딩하지 않고 get_llm()(app.services.ai.llm_provider)
+        단일출처를 따른다 — 전 서비스 공통 모델 레지스트리.
+        """
         feasibility = state.results.get(AgentStepName.FEASIBILITY, {})
         npv = feasibility.get("npv", 0)
         irr = feasibility.get("irr", 0)
@@ -397,18 +393,26 @@ class PropAIOrchestrator:
 투자 의사결정에 도움이 되도록 한국어로 간결하게 작성하세요."""
 
         try:
+            # API 키 부재(get_llm ValueError) 포함 모든 실패는 템플릿 폴백
+            # — 단계를 중단하지 않고 출처(report_source)만 정직 표기한다.
+            from app.services.ai.llm_provider import get_llm
+
+            llm = get_llm(temperature=0.3)
             response = await llm.ainvoke(prompt)
             report_text = response.content
+            report_source = "llm"
         except Exception:
             report_text = (
                 f"투자 등급 {grade}. NPV {npv:,.0f}원, IRR {irr:.1%}. "
                 "상세 분석은 전문가 상담을 권장합니다."
             )
+            report_source = "template_fallback"
 
         return {
             "status": "generated",
             "investment_grade": grade,
             "final_report": report_text[:3000],
+            "report_source": report_source,
             "total_steps": len(STEPS),
         }
 

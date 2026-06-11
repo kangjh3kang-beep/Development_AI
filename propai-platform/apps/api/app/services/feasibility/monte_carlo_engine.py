@@ -62,7 +62,13 @@ def run_monte_carlo(
 
         mean_val = float(np.mean(results))
         std_val = float(np.std(results))
+        # convergence_ratio(σ/|μ|)는 변동계수(CV) — 결과 분포의 고유 리스크 지표 (하위호환 유지)
         convergence = abs(std_val / mean_val) if mean_val != 0 else float("inf")
+        # 실제 수렴 판정은 평균의 표준오차 비율: σ/(√N·|μ|) — N이 커지면 줄어드는 값
+        se_ratio = (
+            std_val / (abs(mean_val) * (n_simulations ** 0.5))
+            if mean_val != 0 else float("inf")
+        )
 
         # 히스토그램 데이터 (20 빈)
         hist_counts, hist_edges = np.histogram(results, bins=20)
@@ -79,7 +85,9 @@ def run_monte_carlo(
             "p50": float(np.percentile(results, 50)),
             "p95": float(np.percentile(results, 95)),
             "probability_positive": float(np.mean(results > 0)),
-            "convergence_ratio": round(convergence, 6),
+            "convergence_ratio": round(convergence, 6),  # CV(σ/|μ|) — 리스크 지표
+            "standard_error_ratio": round(se_ratio, 8),  # σ/(√N·|μ|) — 수렴 지표
+            "converged": se_ratio < 0.01,
             "histogram": histogram,
             "n_simulations": n_simulations,
         }
@@ -104,7 +112,16 @@ def _fallback_monte_carlo(
     for _ in range(min(n_simulations, 1000)):  # 폴백은 1K로 제한
         var_dict = {}
         for var in variables:
-            var_dict[var.name] = random.gauss(var.mean, var.std)
+            if var.distribution == "uniform":
+                lo = var.mean - var.std * 1.732  # sqrt(3)
+                hi = var.mean + var.std * 1.732
+                var_dict[var.name] = random.uniform(lo, hi)
+            elif var.distribution == "triangular":
+                lo = var.mean - var.std * 2
+                hi = var.mean + var.std * 2
+                var_dict[var.name] = random.triangular(lo, hi, var.mean)
+            else:  # normal
+                var_dict[var.name] = random.gauss(var.mean, var.std)
         results.append(calculate_fn(var_dict))
 
     n = len(results)
@@ -114,6 +131,7 @@ def _fallback_monte_carlo(
 
     sorted_r = sorted(results)
     convergence = abs(std_val / mean_val) if mean_val != 0 else float("inf")
+    se_ratio = std_val / (abs(mean_val) * (n ** 0.5)) if mean_val != 0 else float("inf")
 
     return {
         "mean": mean_val,
@@ -123,6 +141,8 @@ def _fallback_monte_carlo(
         "p95": sorted_r[int(n * 0.95)],
         "probability_positive": sum(1 for x in results if x > 0) / n,
         "convergence_ratio": round(convergence, 6),
+        "standard_error_ratio": round(se_ratio, 8),
+        "converged": se_ratio < 0.01,
         "histogram": [],
         "n_simulations": n,
     }

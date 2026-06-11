@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiClient } from "@/lib/api-client";
 import { useSpeechToText } from "@/lib/use-speech-to-text";
-import { useCadStore } from "@/store/use-cad-store";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import type {
   DesignAlternative,
@@ -25,7 +24,7 @@ import type {
  *
  * 선택한 설계안은 모세혈관 SSOT(useProjectContextStore.designData)에 기록하여
  * 본 스튜디오의 2D 도면·3D BIM이 동일 기하로 자동 재생성되도록 한다.
- * (기존 로드 함수만 재사용 — 스튜디오 로드/저장/3D 로직 시그니처 불변)
+ * (SSOT가 유일 출처 — 구세대 Konva 캔버스 스토어로 가던 죽은 경로는 제거됨)
  */
 
 const ZONE_OPTIONS = [
@@ -88,7 +87,6 @@ type GenerativeDesignPanelProps = {
 
 export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesignPanelProps) {
   void projectId; // 라우팅 컨텍스트용(현재 호출엔 불필요하나 시그니처 유지)
-  const loadDesignPayload = useCadStore((s) => s.loadDesignPayload);
   const updateDesignData = useProjectContextStore((s) => s.updateDesignData);
   const markStageComplete = useProjectContextStore((s) => s.markStageComplete);
   const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
@@ -242,12 +240,12 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
     }
   }, [intentText, siteArea, zoneCode]);
 
-  // 적용 공통: SSOT(designData)에 기록 → 스튜디오 2D/3D 자동 재생성 + 캔버스 로드
+  // 적용 공통: SSOT(designData)에 기록 → 스튜디오 2D/3D 자동 재생성
   const applyDesign = useCallback(
     (payload: AutoDesignResponse["design_payload"], summary: AutoDesignResponse["summary"]) => {
-      // (a) 캔버스 편집기 경로(기존 로드 함수 재사용)
-      loadDesignPayload(payload);
-      // (b) 모세혈관 SSOT — 스튜디오 spec 재산출의 단일 출처(공사비·수지 다운스트림 전파)
+      // payload는 호출부 시그니처 호환을 위해 유지(구세대 캔버스 로드 경로는 제거됨 — 기하 출처는 SSOT 단일화).
+      void payload;
+      // 모세혈관 SSOT — 스튜디오 spec 재산출의 단일 출처(공사비·수지 다운스트림 전파)
       updateDesignData({
         totalGfaSqm: summary.total_floor_area_sqm,
         floorCount: summary.num_floors,
@@ -264,7 +262,7 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
       markStageComplete("design");
       onApplied?.();
     },
-    [loadDesignPayload, updateDesignData, markStageComplete, intent, unitTypes, daylightNorth, onApplied],
+    [updateDesignData, markStageComplete, intent, unitTypes, daylightNorth, onApplied],
   );
 
   // 자연어/음성 설계 편집(P6) — 현재 설계를 말로 수정 → 커널 재생성 → applyDesign으로 2D/3D/BIM/QTO 전파

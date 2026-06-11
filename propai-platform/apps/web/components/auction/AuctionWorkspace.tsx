@@ -8,6 +8,7 @@ import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import { AuctionMonitorPanel } from "@/components/auction/AuctionMonitorPanel";
 import { ApiClientError, apiClient, resolveApiOrigin } from "@/lib/api-client";
 import { analyzeRegistry } from "@/lib/registry-analyze";
+import { writePreCheckHandoff } from "@/components/precheck/handoff";
 import { useRouter } from "next/navigation";
 import type { Locale } from "@/i18n/config";
 
@@ -1057,6 +1058,29 @@ function DetailModal({
     }
   };
 
+  // ── 발굴(경매) → 기획 핸드오프 ── 기존 PreCheck 핸드오프(sessionStorage)를 그대로
+  // 재사용해 projects/new가 주소·용도지역·면적·PNU를 선채움한다(consume 검증식 불변).
+  // 주소가 없는 물건은 부지분석 시드가 불가능하므로 CTA 자체를 노출하지 않는다.
+  const projectAddress =
+    typeof addressVal === "string" && addressVal.trim() ? addressVal.trim() : null;
+  const startProjectFromItem = () => {
+    if (!projectAddress) return;
+    const memoParts = ["온비드 경매 물건"];
+    if (cltrMngNoVal) memoParts.push(`물건관리번호 ${cltrMngNoVal}`);
+    if (usageVal) memoParts.push(usageVal);
+    writePreCheckHandoff({
+      address: projectAddress,
+      zoneType: detail?.zone_type ?? null,
+      areaSqm: landAreaVal,
+      pnu: itemPnu ?? detail?.pnu ?? null,
+      bestMethod: null,
+      bestMethodName: null,
+      source: "auction",
+      memo: memoParts.join(" · "),
+    });
+    router.push(`/${locale}/projects/new`);
+  };
+
   // ── 상세 속성을 '단락(섹션)'으로 분류한다 ──
   // 예전엔 모든 항목이 한 덩어리로 나열돼 무엇이 어떤 묶음인지 알기 어려웠다.
   // 이제 ①물건 개요 ②토지·건물 ③입찰·진행 3개 단락으로 나눠, 각 단락에 작은 제목(eyebrow)을 단다.
@@ -1549,6 +1573,30 @@ function DetailModal({
             </p>
           ) : null}
         </div>
+
+        {/* ── 이 물건으로 프로젝트 생성(발굴 → 기획) ── 주소 미제공 물건은 비노출 */}
+        {projectAddress ? (
+          <div className="mt-3 rounded-2xl border border-[var(--accent-strong)]/25 bg-[var(--accent-strong)]/5 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="min-w-0">
+                <p className="text-sm font-black text-[var(--text-primary)]">
+                  🏗️ 이 물건으로 프로젝트 생성
+                </p>
+                <p className="mt-0.5 text-[11px] text-[var(--text-secondary)]">
+                  주소·용도지역·면적을 새 프로젝트 화면에 선채움합니다. 면적·용도지역이
+                  미제공이면 생성 화면에서 주소 검색으로 보강됩니다.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={startProjectFromItem}
+                className="h-9 shrink-0 rounded-lg bg-[var(--accent-strong)] px-4 text-xs font-black text-white hover:opacity-90"
+              >
+                프로젝트 생성
+              </button>
+            </div>
+          </div>
+        ) : null}
 
         <p className="mt-4 text-[10px] text-[var(--text-hint)]">
           감정가·낙찰가능가는 추정치이며 가정이 포함됩니다. 온비드 비공개 항목은

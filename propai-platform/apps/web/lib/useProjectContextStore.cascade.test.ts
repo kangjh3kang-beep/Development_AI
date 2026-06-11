@@ -1,5 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { useProjectContextStore } from "@/store/useProjectContextStore";
+import {
+  useProjectContextStore,
+  LIFECYCLE_STAGES,
+} from "@/store/useProjectContextStore";
 
 /**
  * Phase2 자동 캐스케이드 — isReadyForFirstCompute / isStale 회귀안전 검증.
@@ -99,6 +102,43 @@ describe("Phase2 캐스케이드 — 최초 자동산출 허용", () => {
     expect(
       useProjectContextStore.getState().isReadyForFirstCompute("siteAnalysis"),
     ).toBe(false);
+  });
+});
+
+describe("WP-17 라이프사이클 단계 — operations append 계약", () => {
+  // 단계수 가정 고정: 10 → 11. operations 단계가 append-only로 추가됐는지 검증한다.
+  // (LIFECYCLE_STAGES는 다수 네비게이션 컴포넌트의 SSOT이므로 개수·순서를 계약으로 고정.)
+  it("LIFECYCLE_STAGES는 11단계이며 operations가 마지막에 append됐다", () => {
+    expect(LIFECYCLE_STAGES).toHaveLength(11);
+    expect(LIFECYCLE_STAGES[LIFECYCLE_STAGES.length - 1]).toBe("operations");
+  });
+
+  it("기존 10단계의 순서·구성은 불변(append-only — 회귀안전)", () => {
+    // operations append가 앞선 단계의 인덱스/순서를 흔들지 않음을 고정.
+    expect(LIFECYCLE_STAGES.slice(0, 10)).toEqual([
+      "site-analysis",
+      "legal",
+      "design",
+      "bim",
+      "construction",
+      "feasibility",
+      "finance",
+      "esg",
+      "permit",
+      "report",
+    ]);
+  });
+
+  it("보고서 다음 단계 = 운영 (NextStageCta 'report→operations' 자동 활성)", () => {
+    // NextStageCta.nextOf와 동일한 SSOT 순서 기반 산출을 계약으로 고정한다.
+    const reportIdx = LIFECYCLE_STAGES.indexOf("report");
+    expect(reportIdx).toBeGreaterThanOrEqual(0);
+    expect(LIFECYCLE_STAGES[reportIdx + 1]).toBe("operations");
+  });
+
+  it("operations는 마지막 단계 — 다음 단계 없음(라이프사이클 완료)", () => {
+    const opsIdx = LIFECYCLE_STAGES.indexOf("operations");
+    expect(opsIdx).toBe(LIFECYCLE_STAGES.length - 1);
   });
 });
 

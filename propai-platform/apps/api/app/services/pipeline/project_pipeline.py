@@ -109,6 +109,13 @@ _UNIT_PRICE_PREMIUM: dict[str, float] = {
     "S84": 1.00, "S102": 1.09, "S135": 1.20,
 }
 
+# 부지분석 오버라이드 중 숫자형 강제 변환 대상 키.
+# 잘못된 입력(비숫자 문자열 등)이 float() 캐스팅에서 단계를 실패시키지 않도록 선검증한다.
+_NUMERIC_SITE_OVERRIDE_KEYS = {
+    "land_area_sqm", "official_land_price", "max_bcr", "max_far", "max_height",
+    "national_bcr", "national_far", "ordinance_bcr", "ordinance_far",
+}
+
 
 class PipelineState(BaseModel):
     """파이프라인 전체 상태."""
@@ -152,6 +159,10 @@ class ProjectPipeline:
         opts = options or {}
         skip_stages: list[str] = opts.get("skip_stages", [])
         stop_after: str | None = opts.get("stop_after")
+
+        # 재실행 경로: 이전 결과(previous_stage_data)로 skip 단계 data·단계간 payload를
+        # 선복원한다. 옵션 미전달 시 no-op — 기존 호출 하위호환.
+        self._restore_previous(state, opts)
 
         # 순차 실행
         for stage in self._stages_order:
@@ -244,6 +255,179 @@ class ProjectPipeline:
             import logging
             logging.getLogger(__name__).warning("단계 AI 해석 부착 스킵: %s", str(e)[:140])
 
+    # ── 재실행(rerun) 지원: stage_overrides 소비·previous_stage_data 복원 헬퍼 ──
+
+    @staticmethod
+    def _maybe_float(value: Any) -> float | None:
+        """숫자 변환 가능 시 float, 아니면 None — 잘못된 오버라이드가 단계를 실패시키지 않도록."""
+        try:
+            if value is None:
+                return None
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    @classmethod
+    def _maybe_int(cls, value: Any) -> int | None:
+        f = cls._maybe_float(value)
+        return None if f is None else int(f)
+
+    @classmethod
+    def _as_float(cls, value: Any, default: float = 0.0) -> float:
+        f = cls._maybe_float(value)
+        return default if f is None else f
+
+    @classmethod
+    def _as_int(cls, value: Any, default: int = 0) -> int:
+        i = cls._maybe_int(value)
+        return default if i is None else i
+
+    @staticmethod
+    def _stage_overrides_for(opts: dict, stage: str) -> dict[str, Any]:
+        """options["stage_overrides"][stage]를 dict로 정규화해 반환한다(없으면 빈 dict — 하위호환)."""
+        stage_overrides = (opts or {}).get("stage_overrides") or {}
+        if not isinstance(stage_overrides, dict):
+            return {}
+        overrides = stage_overrides.get(stage)
+        return dict(overrides) if isinstance(overrides, dict) else {}
+
+    @staticmethod
+    def _patch_remaining_overrides(
+        data: dict[str, Any],
+        overrides: dict[str, Any],
+        applied: dict[str, Any],
+        handled: frozenset[str] = frozenset(),
+    ) -> None:
+        """단계별 재계산 훅이 소비하지 않은 나머지 오버라이드 키를 산출 데이터에 직접 반영한다.
+
+        handled: 전용 훅이 담당하는 키 — 훅에서 검증 실패(비숫자 등)로 미적용된 경우에도
+        잘못된 값이 generic patch로 재유입돼 계산 결과를 오염시키지 않도록 제외한다.
+        """
+        for key, value in overrides.items():
+            if key in applied or key in handled or value is None:
+                continue
+            data[key] = value
+            applied[key] = value
+
+    @classmethod
+    def _apply_site_overrides(
+        cls, target: dict[str, Any], overrides: dict[str, Any],
+    ) -> dict[str, Any]:
+        """부지분석 오버라이드를 수집 데이터(실API 병합 완료본)에 주입한다.
+
+        병합 이후 호출되어 사용자값이 최우선이 된다. 실제 적용된 키 맵을 반환한다
+        (applied_overrides 기록용).
+        """
+        applied: dict[str, Any] = {}
+        for key, value in overrides.items():
+            if value is None:
+                continue
+            if key in _NUMERIC_SITE_OVERRIDE_KEYS:
+                num = cls._maybe_float(value)
+                if num is None:
+                    continue  # 비숫자 입력은 미적용(기록도 생략 — 정직성)
+                value = num
+            target[key] = value
+            applied[key] = value
+        # BCR/FAR 오버라이드: effective=min(national, ordinance) 산식에 사용자값이
+        # 그대로 반영되도록 양 출처 모두에 주입한다(사용자값=최종 한도).
+        if "max_bcr" in applied:
+            target["national_bcr"] = applied["max_bcr"]
+            target["ordinance_bcr"] = applied["max_bcr"]
+        if "max_far" in applied:
+            target["national_far"] = applied["max_far"]
+            target["ordinance_far"] = applied["max_far"]
+        if "max_bcr" in applied or "max_far" in applied:
+            target["ordinance_source"] = "user_override"
+        # E7: 가정값이 사용자값으로 대체되면 해당 필드의 가정 표기를 해제한다.
+        assumed = target.get("assumed_fields")
+        if isinstance(assumed, list) and applied:
+            remaining = [f for f in assumed if f not in applied]
+            if remaining:
+                target["assumed_fields"] = remaining
+            else:
+                target.pop("assumed_fields", None)
+                target.pop("data_quality", None)
+        return applied
+
+    def _restore_previous(self, state: PipelineState, opts: dict) -> None:
+        """options["previous_stage_data"]로 skip 단계 data와 단계간 payload 3종을 복원한다.
+
+        복원이 없으면 skip된 단계의 payload(None)를 _run_design/_run_cost/_run_feasibility가
+        기본값(500㎡/60%/200%)으로 대체해 재계산이 왜곡된다. 옵션 미전달 시 no-op(하위호환).
+        재실행되는 단계는 자기 payload를 다시 생성하므로 선복원해도 안전하다.
+        """
+        prev = (opts or {}).get("previous_stage_data")
+        if not prev:
+            return
+
+        # list[{stage, data}] / {stage: {data: ...}} / {stage: data} 형태 모두 수용
+        normalized: dict[str, dict[str, Any]] = {}
+        if isinstance(prev, list):
+            for item in prev:
+                if isinstance(item, dict) and item.get("stage"):
+                    data = item.get("data")
+                    if isinstance(data, dict):
+                        normalized[str(item["stage"])] = data
+        elif isinstance(prev, dict):
+            for name, item in prev.items():
+                if not isinstance(item, dict):
+                    continue
+                inner = item.get("data")
+                normalized[str(name)] = inner if isinstance(inner, dict) else item
+        if not normalized:
+            return
+
+        # 1) skip 단계의 이전 data 복원 — 보고서·후속 단계가 stage.data를 직접 참조한다.
+        #    재실행 단계는 복원하지 않는다(실패 시 옛 데이터가 새 결과로 오인되는 것 방지).
+        skip_stages = set((opts or {}).get("skip_stages") or [])
+        for name, data in normalized.items():
+            if name in skip_stages and name in state.stages and data:
+                state.stages[name].data = dict(data)
+
+        # 2) 단계간 payload 3종 복원 (SiteToDesign / DesignToCost / CostToFeasibility)
+        site = normalized.get("site_analysis") or {}
+        if site:
+            zoning = site.get("zoning") if isinstance(site.get("zoning"), dict) else {}
+            pnu_codes = site.get("pnu_codes")
+            state.site_to_design = SiteToDesignPayload(
+                pnu_codes=[str(p) for p in pnu_codes] if isinstance(pnu_codes, list) else [],
+                zone_type=str(site.get("zone_type") or ""),
+                max_bcr=self._as_float(site.get("max_bcr"), 60.0),
+                max_far=self._as_float(site.get("max_far"), 200.0),
+                max_height=self._as_float((zoning or {}).get("max_height_m"), 0.0),
+                land_area_sqm=self._as_float(site.get("land_area_sqm"), 0.0),
+                land_shape=None,
+                official_land_price=self._as_float(site.get("official_land_price"), 0.0),
+                address=state.address,
+                coordinates=site.get("coordinates") if isinstance(site.get("coordinates"), dict) else None,
+            )
+
+        design = normalized.get("design") or {}
+        if design:
+            avg_unit_sqm = self._as_float(design.get("avg_unit_sqm"), 0.0)
+            state.design_to_cost = DesignToCostPayload(
+                total_gfa_sqm=self._as_float(design.get("total_gfa_sqm"), 0.0),
+                floor_count_above=self._as_int(design.get("floor_count_above"), 0),
+                floor_count_below=self._as_int(design.get("floor_count_below"), 0),
+                structure_type="RC",
+                building_type=str(design.get("building_type") or ""),
+                unit_count=self._as_int(design.get("unit_count"), 0),
+                avg_unit_area_pyeong=round(avg_unit_sqm / 3.3058, 1) if avg_unit_sqm > 0 else 0.0,
+            )
+
+        cost = normalized.get("cost") or {}
+        if cost:
+            cost_breakdown = cost.get("cost_breakdown")
+            state.cost_to_feasibility = CostToFeasibilityPayload(
+                total_construction_cost=self._as_float(cost.get("total_construction_cost"), 0.0),
+                cost_per_pyeong=self._as_float(cost.get("cost_per_pyeong"), 0.0),
+                construction_months=self._as_int(cost.get("construction_months"), 24) or 24,
+                # stage data에는 개수(material_item_count)만 보존됨 — 가짜 목록 대신 빈 목록(정직)
+                material_quantities=[],
+                cost_breakdown=cost_breakdown if isinstance(cost_breakdown, dict) else {},
+            )
+
     async def _run_site_analysis(self, state: PipelineState, opts: dict):
         """STEP 1: 부지분석 — 프론트에서 전달한 데이터 우선, 없으면 외부 API 호출."""
         # ── 고도화 서비스 임포트 ──
@@ -317,6 +501,13 @@ class ProjectPipeline:
                 pnu = comprehensive.get("pnu")
                 if pnu:
                     pre_collected["pnu_codes"] = [pnu]
+
+            # 사용자 오버라이드(stage_overrides.site_analysis)는 실API 병합 이후 주입 —
+            # comprehensive가 사용자값을 덮어쓰지 못하도록 적용 순서를 보장한다.
+            site_overrides = self._stage_overrides_for(opts, "site_analysis")
+            applied_site_overrides: dict[str, Any] = {}
+            if site_overrides:
+                applied_site_overrides = self._apply_site_overrides(pre_collected, site_overrides)
 
             zone_type = pre_collected.get("zone_type", "")
             land_area_sqm = pre_collected.get("land_area_sqm", 0.0)
@@ -432,6 +623,15 @@ class ProjectPipeline:
                 "pnu_codes": pnu_codes,
                 "source": "pre_collected+comprehensive",
             }
+            if applied_site_overrides:
+                state.stages["site_analysis"].data["applied_overrides"] = applied_site_overrides
+            # E7: 폴백 기본값 사용 시 가정 사실을 stage data에 노출
+            # (UI 경고 배지·saveToStore의 SSOT 시드 제외 판단용 — 수치는 유지).
+            if pre_collected.get("data_quality"):
+                state.stages["site_analysis"].data["data_quality"] = pre_collected["data_quality"]
+                state.stages["site_analysis"].data["assumed_fields"] = list(
+                    pre_collected.get("assumed_fields") or []
+                )
             await self._attach_site_ai(state)
             return
 
@@ -732,15 +932,31 @@ class ProjectPipeline:
             import logging
             logging.getLogger(__name__).warning("LandInfoService 호출 실패: %s", str(e)[:200])
 
-        # 3. 최소 기본값 보장
+        # 3. 최소 기본값 보장 — E7: 기본값 주입 사실을 정직하게 기록한다.
+        #    수치는 유지해 파이프라인을 중단시키지 않되, assumed_fields/data_quality/warnings로
+        #    "실측이 아닌 가정값"임을 소비자(UI 배지·SSOT 시드 가드)가 식별할 수 있게 한다.
+        assumed_fields: list[str] = []
         if not result.get("zone_type"):
             result["zone_type"] = "제2종일반주거지역"  # 한국 도시 기본값
+            assumed_fields.append("zone_type")
         if not result.get("land_area_sqm") or result["land_area_sqm"] <= 0:
             result["land_area_sqm"] = 500.0  # 기본 대지면적
+            assumed_fields.append("land_area_sqm")
         if not result.get("max_bcr"):
             result["max_bcr"] = 60.0
+            assumed_fields.append("max_bcr")
         if not result.get("max_far"):
             result["max_far"] = 250.0
+            assumed_fields.append("max_far")
+        if assumed_fields:
+            result["assumed_fields"] = assumed_fields
+            result["data_quality"] = "assumed_defaults"
+            warnings = result.get("warnings")
+            warnings = list(warnings) if isinstance(warnings, list) else []
+            warnings.append(
+                "외부 데이터 미확보로 기본 가정값을 적용했습니다: " + ", ".join(assumed_fields)
+            )
+            result["warnings"] = warnings
 
         return result
 
@@ -877,15 +1093,25 @@ class ProjectPipeline:
     async def _run_design(self, state: PipelineState, opts: dict):
         """STEP 2: 설계 — 부지 제약조건 기반 건축 개요 자동 생성."""
         site = state.site_to_design or SiteToDesignPayload()
+        overrides = self._stage_overrides_for(opts, "design")
+        applied_overrides: dict[str, Any] = {}
 
         land_area = site.land_area_sqm or 500.0
         bcr = site.max_bcr or 60.0
         far = site.max_far or 200.0
 
-        # 건축 개요 자동 산출
+        # 건축 개요 자동 산출 (사용자 오버라이드가 자동 산출값보다 우선)
         building_area = land_area * (bcr / 100)
         total_gfa = land_area * (far / 100)
+        _gfa_ov = self._maybe_float(overrides.get("total_gfa_sqm"))
+        if _gfa_ov is not None and _gfa_ov > 0:
+            total_gfa = _gfa_ov
+            applied_overrides["total_gfa_sqm"] = _gfa_ov
         floor_count = max(1, int(total_gfa / building_area)) if building_area > 0 else 5
+        _floor_ov = self._maybe_int(overrides.get("floor_count_above"))
+        if _floor_ov is not None and _floor_ov >= 1:
+            floor_count = _floor_ov
+            applied_overrides["floor_count_above"] = _floor_ov
 
         # 건물 유형 자동 판정
         zone = site.zone_type or ""
@@ -895,6 +1121,9 @@ class ProjectPipeline:
             building_type = "근린생활시설"
         else:
             building_type = "공동주택"
+        if overrides.get("building_type"):
+            building_type = str(overrides["building_type"])
+            applied_overrides["building_type"] = building_type
 
         # ── 전용률: 건물유형별 현실값 (고정 0.75 대체) ──
         efficiency = _SELLABLE_EFFICIENCY_BY_TYPE.get(building_type, 0.75)
@@ -961,6 +1190,16 @@ class ProjectPipeline:
                     "유닛믹스 최적화 실패, 폴백 추산 사용: %s", str(e)[:200]
                 )
 
+        # 세대수·평형 오버라이드는 최적화 산출보다 우선한다
+        _unit_ov = self._maybe_int(overrides.get("unit_count"))
+        if _unit_ov is not None and _unit_ov >= 1:
+            unit_count = _unit_ov
+            applied_overrides["unit_count"] = _unit_ov
+        _avg_ov = self._maybe_float(overrides.get("avg_unit_area_pyeong"))
+        if _avg_ov is not None and _avg_ov > 0:
+            avg_unit_area = _avg_ov
+            applied_overrides["avg_unit_area_pyeong"] = _avg_ov
+
         state.design_to_cost = DesignToCostPayload(
             total_gfa_sqm=total_gfa,
             floor_count_above=floor_count,
@@ -992,6 +1231,17 @@ class ProjectPipeline:
             "unit_mix_method": unit_mix_method,
             "unit_mix_revenue_won": unit_mix_revenue_won,
         }
+
+        if overrides:
+            self._patch_remaining_overrides(
+                state.stages["design"].data, overrides, applied_overrides,
+                handled=frozenset({
+                    "total_gfa_sqm", "floor_count_above", "building_type",
+                    "unit_count", "avg_unit_area_pyeong",
+                }),
+            )
+        if applied_overrides:
+            state.stages["design"].data["applied_overrides"] = applied_overrides
 
         # ── 건축법규 자동 검증 (BuildingCodeRuleEngine) ──
         try:
@@ -1040,6 +1290,8 @@ class ProjectPipeline:
     async def _run_cost(self, state: PipelineState, opts: dict):
         """STEP 3: 공사비 — 표준물량 추정 → 원가계산서 엔진 연동."""
         design = state.design_to_cost or DesignToCostPayload()
+        overrides = self._stage_overrides_for(opts, "cost")
+        applied_overrides: dict[str, Any] = {}
         total_pyeong = design.total_gfa_sqm / 3.3058
 
         cost_breakdown: dict[str, Any] = {}
@@ -1105,8 +1357,22 @@ class ProjectPipeline:
                 "estimation_method": "fallback_per_pyeong",
             }
 
+        # 사용자 오버라이드: 총공사비 교체 시 평당가를 재계산해 정합성을 유지한다
+        _total_ov = self._maybe_float(overrides.get("total_construction_cost"))
+        if _total_ov is not None and _total_ov > 0:
+            total_cost = _total_ov
+            applied_overrides["total_construction_cost"] = _total_ov
+
         cost_per_pyeong = round(total_cost / total_pyeong) if total_pyeong > 0 else 0
+        _cpp_ov = self._maybe_float(overrides.get("cost_per_pyeong"))
+        if _cpp_ov is not None and _cpp_ov > 0:
+            cost_per_pyeong = _cpp_ov
+            applied_overrides["cost_per_pyeong"] = _cpp_ov
         construction_months = max(12, int(design.floor_count_above * 1.5) + 6)
+        _months_ov = self._maybe_int(overrides.get("construction_months"))
+        if _months_ov is not None and _months_ov >= 1:
+            construction_months = _months_ov
+            applied_overrides["construction_months"] = _months_ov
 
         state.cost_to_feasibility = CostToFeasibilityPayload(
             total_construction_cost=total_cost,
@@ -1126,11 +1392,26 @@ class ProjectPipeline:
             "material_item_count": len(material_quantities),
         }
 
+        if overrides:
+            self._patch_remaining_overrides(
+                state.stages["cost"].data, overrides, applied_overrides,
+                handled=frozenset({
+                    "total_construction_cost", "cost_per_pyeong", "construction_months",
+                }),
+            )
+        if applied_overrides:
+            state.stages["cost"].data["applied_overrides"] = applied_overrides
+            if "total_construction_cost" in applied_overrides:
+                # 출처 정직 표기 — 사용자 수정값 기반 재계산임을 명시
+                state.stages["cost"].data["cost_source"] = "user_override"
+
     async def _run_feasibility(self, state: PipelineState, opts: dict):
         """STEP 4: 수지분석 — 몬테카를로+현금흐름+민감도 통합 분석."""
         site = state.site_to_design or SiteToDesignPayload()
         design = state.design_to_cost or DesignToCostPayload()
         cost = state.cost_to_feasibility or CostToFeasibilityPayload()
+        overrides = self._stage_overrides_for(opts, "feasibility")
+        applied_overrides: dict[str, Any] = {}
 
         # ── 기본 수지분석 ──
         land_cost = site.land_area_sqm * site.official_land_price * 1.3  # 공시지가 x 1.3 보정
@@ -1169,6 +1450,13 @@ class ProjectPipeline:
             avg_sale_price = cost.cost_per_pyeong * 1.3  # 최후 폴백
             sale_price_source = "cost_based_fallback"
 
+        # 사용자 오버라이드: 분양가 직접 지정 시 출처를 "user"로 정직 표기
+        _price_ov = self._maybe_float(overrides.get("avg_sale_price_per_pyeong"))
+        if _price_ov is not None and _price_ov > 0:
+            avg_sale_price = _price_ov
+            sale_price_source = "user"
+            applied_overrides["avg_sale_price_per_pyeong"] = _price_ov
+
         total_gfa_pyeong = design.total_gfa_sqm / 3.3058
         # 전용률은 설계 단계와 동일 단일 출처(건물유형별)를 사용한다.
         design_data = state.stages["design"].data if "design" in state.stages else {}
@@ -1178,6 +1466,11 @@ class ProjectPipeline:
 
         # ── 토지비: 공시지가 미확보 시 주변시세(예상토지비)로 폴백 — '토지비 0' 방지 ──
         land_cost_source = "공시지가×1.3"
+        _land_ov = self._maybe_float(overrides.get("land_cost"))
+        if _land_ov is not None and _land_ov > 0:
+            land_cost = _land_ov
+            land_cost_source = "사용자 입력"
+            applied_overrides["land_cost"] = _land_ov
         if land_cost <= 0:
             try:
                 from app.services.land_intelligence.land_price_estimator import estimate_land_price
@@ -1246,6 +1539,10 @@ class ProjectPipeline:
             grade = "D"
 
         feasibility_data: dict[str, Any] = {
+            # 계산 엔진 출처 — 파이프라인 약식 라인아이템(빠른 전주기 개산).
+            # 정밀 모듈 엔진(M01~M15)은 /api/v2/feasibility(FeasibilityServiceV2) 별도 경로이며
+            # 분양경비·일반관리·금융비 비율 산식이 다를 수 있어 두 결과를 직접 비교 시 주의.
+            "calc_engine": "pipeline_simplified",
             "land_cost": land_cost,
             "land_cost_source": land_cost_source,        # 토지비 산정 출처(정직 표기)
             "construction_cost": cost.total_construction_cost,
@@ -1268,6 +1565,17 @@ class ProjectPipeline:
             "market_revaluation": market_reval,  # 출처별 블렌딩 내역(가정버전·원장 기록용)
             "grade": grade,
         }
+
+        if overrides:
+            if "avg_sale_price_per_pyeong" in applied_overrides:
+                # 시장 블렌딩 신뢰도는 사용자 지정가에 적용되지 않는다(정직성)
+                feasibility_data["sale_price_confidence"] = None
+            self._patch_remaining_overrides(
+                feasibility_data, overrides, applied_overrides,
+                handled=frozenset({"avg_sale_price_per_pyeong", "land_cost"}),
+            )
+        if applied_overrides:
+            feasibility_data["applied_overrides"] = applied_overrides
 
         # ── 몬테카를로 시뮬레이션 (1,000회) ──
         try:
@@ -1415,13 +1723,32 @@ class ProjectPipeline:
 
         total_tax = acquisition_tax + property_tax + transfer_tax
 
-        state.stages["tax"].data = {
+        tax_data: dict[str, Any] = {
             "acquisition_tax": acquisition_tax,
             "property_tax_annual": property_tax,
             "transfer_tax": transfer_tax,
             "vat": vat,
             "total_tax": total_tax,
         }
+
+        overrides = self._stage_overrides_for(opts, "tax")
+        if overrides:
+            applied_overrides: dict[str, Any] = {}
+            self._patch_remaining_overrides(tax_data, overrides, applied_overrides)
+            if applied_overrides:
+                # 구성 항목 수정 시 총액을 재합산해 정합성 유지(총액 직접 지정 시 그 값 우선)
+                if "total_tax" not in applied_overrides and any(
+                    k in applied_overrides
+                    for k in ("acquisition_tax", "property_tax_annual", "transfer_tax")
+                ):
+                    tax_data["total_tax"] = (
+                        self._as_float(tax_data.get("acquisition_tax"))
+                        + self._as_float(tax_data.get("property_tax_annual"))
+                        + self._as_float(tax_data.get("transfer_tax"))
+                    )
+                tax_data["applied_overrides"] = applied_overrides
+
+        state.stages["tax"].data = tax_data
 
     async def _run_esg(self, state: PipelineState, opts: dict):
         """STEP 6: ESG — 자재-탄소DB 연동 + GRESB 스코어링 + G-SEED 예측 + 저탄소 시나리오."""
@@ -1553,13 +1880,24 @@ class ProjectPipeline:
         esg_data["total_carbon_per_sqm"] = esg_data["carbon_per_sqm_kg"]
         esg_data["operational_carbon_kg"] = esg_data["operational_carbon_30yr_kg"]
 
+        overrides = self._stage_overrides_for(opts, "esg")
+        if overrides:
+            applied_overrides: dict[str, Any] = {}
+            self._patch_remaining_overrides(esg_data, overrides, applied_overrides)
+            if applied_overrides:
+                esg_data["applied_overrides"] = applied_overrides
+
         state.stages["esg"].data = esg_data
 
     async def _run_report(self, state: PipelineState, opts: dict):
         """STEP 7: 통합 보고서 생성."""
         summary: dict[str, Any] = {}
         for stage_name, stage_result in state.stages.items():
-            if stage_result.status == PipelineStatus.COMPLETED:
+            # SKIPPED라도 복원된 이전 data가 있으면 포함한다 —
+            # 재실행 시 미재계산 단계(skip)의 결과가 보고서에서 유실되는 것을 방지.
+            if stage_result.status == PipelineStatus.COMPLETED or (
+                stage_result.status == PipelineStatus.SKIPPED and stage_result.data
+            ):
                 summary[stage_name] = stage_result.data
 
         # 보고서 호환 alias — 일부 프론트엔드가 esg_carbon 키를 참조
@@ -1636,3 +1974,12 @@ class ProjectPipeline:
             "recommendation": recommendation,
             "generated_at": datetime.now().isoformat(),
         }
+
+        overrides = self._stage_overrides_for(opts, "report")
+        if overrides:
+            applied_overrides: dict[str, Any] = {}
+            self._patch_remaining_overrides(
+                state.stages["report"].data, overrides, applied_overrides
+            )
+            if applied_overrides:
+                state.stages["report"].data["applied_overrides"] = applied_overrides
