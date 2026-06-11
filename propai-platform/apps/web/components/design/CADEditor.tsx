@@ -144,6 +144,7 @@ export default function CADEditor({
   );
   const [isReady, setIsReady] = useState(false);
   const [rk, setRK] = useState<any>(null);
+  const [rkError, setRkError] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [loadedVersion, setLoadedVersion] = useState<number | null>(null);
   const [loadState, setLoadState] = useState<"loading" | "done">("loading");
@@ -481,9 +482,23 @@ export default function CADEditor({
     applyShim();
     try {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
-      setRK(require("react-konva"));
+      const mod = require("react-konva");
+      // 일부 번들러 경로에서 named export가 default 아래로 들어갈 수 있어 정규화.
+      const resolved = mod?.Stage ? mod : (mod?.default?.Stage ? mod.default : mod);
+      if (!resolved?.Stage) {
+        // require는 성공했으나 Stage/Layer 등이 누락된 경우(예: optimizePackageImports
+        // 배럴 재작성으로 깨진 모듈) — 무증상 빈 캔버스가 되지 않도록 명시 실패 처리.
+        console.error(
+          "[CADEditor] react-konva exports 누락 — keys:",
+          Object.keys(mod || {}),
+        );
+        setRkError("CAD 엔진(Konva) 모듈을 불러오지 못했습니다. 페이지를 새로고침해 주세요.");
+      } else {
+        setRK(resolved);
+      }
     } catch (e) {
       console.error("[CADEditor] react-konva 로드 실패:", e);
+      setRkError("CAD 엔진을 초기화하지 못했습니다. 페이지를 새로고침해 주세요.");
     }
     setIsReady(true);
   }, []);
@@ -633,6 +648,22 @@ export default function CADEditor({
   const cancelPoly = useCallback(() => { setDraft([]); setTool("select"); }, []);
 
   /* ── 렌더 게이트 ── */
+  if (rkError) {
+    return (
+      <div className="flex h-full w-full items-center justify-center bg-[#0a0f14] px-6 text-center text-white">
+        <div className="flex flex-col items-center gap-3">
+          <p className="text-sm font-bold text-rose-400">{rkError}</p>
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="rounded-lg border border-teal-500/40 bg-teal-500/10 px-4 py-2 text-xs font-bold text-teal-300 hover:bg-teal-500/20"
+          >
+            새로고침
+          </button>
+        </div>
+      </div>
+    );
+  }
   if (!isReady || !rk) {
     return (
       <div className="flex h-full w-full items-center justify-center bg-[#0a0f14] text-white">
