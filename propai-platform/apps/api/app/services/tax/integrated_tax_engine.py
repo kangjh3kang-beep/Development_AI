@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Any
 
 from app.services.tax.acquisition_stage_engine import calculate_all_acquisition_stage
@@ -29,6 +30,91 @@ _TAX_CODE_LEGAL_KEYS: dict[str, str] = {
 }
 
 _STAGE_KEYS = ("acquisition", "construction", "sale", "disposal")
+
+# R2(버전드 룰엔진): calculate_all_taxes(as_of_date=...) 시 시점 해석 대상 룰 키.
+# tax_rules_versions.json에 실존하는 키만 등재(가짜 룰 금지).
+_VERSIONED_RULE_KEYS = (
+    "acquisition_tax_matrix",
+    "capital_gains_brackets",
+    "land_comprehensive_tax",
+    "capital_gains_multi_home_surcharge_exclusion",
+)
+
+
+def _effective_label(rule: dict[str, Any]) -> str:
+    """시행 기간 표기 문자열 — '시행 {from} ~ {to|현행}'."""
+    start = rule.get("effective_from") or "?"
+    end = rule.get("effective_to") or "현행"
+    return f"시행 {start} ~ {end}"
+
+
+def _attach_rule_versions(result: dict[str, Any], as_of_date: date) -> dict[str, Any]:
+    """as_of_date 시점의 버전드 룰 해석 결과를 응답에 additive 가산(in-place).
+
+    - result['as_of_date'] / result['tax_rule_versions'][]: 룰별 (시행일 구간, match).
+      policy_flag 룰(예: 양도세 다주택 중과 한시 배제)은 value도 함께 노출.
+    - 수록 구간 밖 as_of는 가짜 과거값 대신 tax_rule_version_warnings로 정직 표기.
+    - legal_refs: legal_ref_key가 일치하는 레코드에 시행일(effective_from/to·
+      effective_label·rule_versions)을 가산 — '적용 세율 + 시행 기간 + 법령 링크' 결합.
+    - 어떤 예외도 기존 응답을 손상시키지 않는다(graceful — 메타만 비움).
+    """
+    try:
+        from app.services.tax.regional_tax_data import get_rule
+
+        resolved = [
+            r for r in (get_rule(key, as_of=as_of_date) for key in _VERSIONED_RULE_KEYS)
+            if r is not None
+        ]
+
+        versions: list[dict[str, Any]] = []
+        warnings: list[str] = []
+        for r in resolved:
+            entry: dict[str, Any] = {
+                "rule_key": r["rule_key"],
+                "effective_from": r["effective_from"],
+                "effective_to": r["effective_to"],
+                "effective_label": _effective_label(r),
+                "legal_ref_key": r.get("legal_ref_key"),
+                "match": r.get("match"),
+            }
+            if r.get("kind") == "policy_flag":
+                entry["value"] = r.get("value")
+            if r.get("warning"):
+                entry["warning"] = r["warning"]
+                warnings.append(f"{r['rule_key']}: {r['warning']}")
+            versions.append(entry)
+
+        result["as_of_date"] = as_of_date.isoformat()
+        result["tax_rule_versions"] = versions
+        if warnings:
+            result["tax_rule_version_warnings"] = warnings
+
+        by_ref_key: dict[str, list[dict[str, Any]]] = {}
+        for r in resolved:
+            ref_key = r.get("legal_ref_key")
+            if ref_key:
+                by_ref_key.setdefault(ref_key, []).append(r)
+
+        for record in result.get("legal_refs") or []:
+            matches = by_ref_key.get(record.get("key"))
+            if not matches:
+                continue
+            primary = matches[0]
+            record["effective_from"] = primary["effective_from"]
+            record["effective_to"] = primary["effective_to"]
+            record["effective_label"] = _effective_label(primary)
+            record["rule_versions"] = [
+                {
+                    "rule_key": m["rule_key"],
+                    "effective_from": m["effective_from"],
+                    "effective_to": m["effective_to"],
+                    "effective_label": _effective_label(m),
+                }
+                for m in matches
+            ]
+    except Exception:  # noqa: BLE001 — 신뢰 블록은 best-effort, 본 응답 무손상.
+        result.setdefault("tax_rule_versions", [])
+    return result
 
 
 def _attach_legal_refs(result: dict[str, Any]) -> dict[str, Any]:
@@ -96,6 +182,8 @@ def calculate_all_taxes(
     is_corporate: bool = False,
     excess_gain_won: int = 0,
     assessed_value_won: int = 0,
+    # R2: 버전드 룰엔진 — 적용 시점(additive, 기본 None=기존 동작 완전 동일)
+    as_of_date: date | None = None,
 ) -> dict[str, Any]:
     """38종 세금 4단계 일괄 계산.
 
@@ -109,10 +197,19 @@ def calculate_all_taxes(
             'total_items_count': int,
             'summary_by_stage': {...},
             'legal_refs': [...],  # additive — 세목별 법령 근거(레지스트리 출력만)
+            # as_of_date 지정 시에만(additive):
+            'as_of_date': 'YYYY-MM-DD',
+            'tax_rule_versions': [...],            # 시점 해석된 룰 버전(시행일 구간)
+            'tax_rule_version_warnings': [...],    # 수록 구간 밖 as_of 정직 경고(있을 때만)
         }
 
     additive: 각 단계 items의 개별 항목에는 레지스트리 매핑이 존재하는 세목에 한해
     legal_ref_key가 가산된다(기존 키·합산 로직 불변).
+
+    as_of_date(additive): 지정 시 tax_rules_versions.json의 해당 시점 룰 버전을
+    해석해 응답 메타(tax_rule_versions)와 legal_refs 시행일 표기를 가산한다.
+    현행 수록 버전이 단일인 룰은 계산값이 현행과 동일하며, 수록 구간 밖 시점은
+    가짜 과거값 대신 경고로 정직 표기한다. None이면 응답이 기존과 완전 동일.
     """
     acquisition = calculate_all_acquisition_stage(
         purchase_won=purchase_won,
@@ -186,7 +283,13 @@ def calculate_all_taxes(
     }
     # 신뢰 레이어(additive): items별 legal_ref_key + 루트 legal_refs[] 가산.
     # 기존 키·합산값은 1개도 변경하지 않는다(실패 시에도 본 응답 무손상).
-    return _attach_legal_refs(result)
+    result = _attach_legal_refs(result)
+
+    # R2 버전드 룰 레이어(additive): as_of_date 지정 시에만 시행일 메타 가산.
+    # 미지정(None) 시 응답은 기존과 byte-level 동일(하위호환 절대조건).
+    if as_of_date is not None:
+        _attach_rule_versions(result, as_of_date)
+    return result
 
 
 def get_applicable_tax_codes(

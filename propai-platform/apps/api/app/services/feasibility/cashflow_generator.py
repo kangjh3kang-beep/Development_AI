@@ -28,6 +28,7 @@ class CashflowGenerator:
         equity_ratio: float = 0.3,        # 자기자본 비율
         design_months: int = 3,           # 설계 기간
         design_cost_ratio: float = 0.03,  # 설계비 비율 (공사비 대비)
+        tax_schedule: dict[str, Any] | None = None,  # R1: 세금 시점 주입(additive, None=기존 동작)
     ) -> dict[str, Any]:
         """월별 현금흐름을 생성한다.
 
@@ -43,6 +44,13 @@ class CashflowGenerator:
             equity_ratio: 자기자본 비율
             design_months: 설계 기간 (월)
             design_cost_ratio: 설계비 비율
+            tax_schedule: (R1, additive) 통합 세금엔진 결과의 시점 주입 입력.
+                None(기본)이면 기존 세전 현금흐름과 완전 동일.
+                키: acquisition_won(A→month 0) / construction_won(B→착공월) /
+                sale_won(C→분양수입 월별 비례) / disposal_settlement_won(D01·D03→정산월) /
+                d06_annual_won·d06_years(D06 종부세→보유 연차별).
+                지정 시 summary에 after_tax_irr_annual_pct·total_tax_won 가산
+                (기존 irr_annual_pct는 세전 유지).
 
         Returns:
             월별 현금흐름 dict (rows, summary, phases)
@@ -80,6 +88,22 @@ class CashflowGenerator:
         monthly_revenue = self._revenue_distribution(
             total_revenue, sale_duration_months
         )
+
+        # ── R1: 세금 시점 매핑 (tax_schedule 미지정 시 전부 0 — 기존 동작 완전 동일) ──
+        tax_by_month: list[float] = [0.0] * total_months
+        tax_labels: dict[int, list[str]] = {}
+        if tax_schedule:
+            self._allocate_tax_schedule(
+                tax_schedule,
+                tax_by_month=tax_by_month,
+                tax_labels=tax_labels,
+                total_months=total_months,
+                construction_start=construction_start,
+                construction_end=construction_end,
+                sale_abs_start=sale_abs_start,
+                monthly_revenue=monthly_revenue,
+                total_revenue=total_revenue,
+            )
 
         cumulative = 0.0
         cumulative_inflow = 0.0
@@ -188,6 +212,12 @@ class CashflowGenerator:
                     items.append("PF 잔액 상환")
                     outstanding_pf = 0
 
+            # ── R1: 세금 유출 주입 (tax_schedule 시점 매핑 — 미지정 시 항상 0) ──
+            month_tax = tax_by_month[month]
+            if month_tax > 0:
+                outflow += month_tax
+                items.extend(tax_labels.get(month, []))
+
             net = inflow - outflow
             cumulative += net
             cumulative_inflow += inflow
@@ -237,6 +267,15 @@ class CashflowGenerator:
             unlevered[settle_m] += total_revenue - scheduled_rev
         irr = self._irr_from_netflows(unlevered)
 
+        # ── R1: 세후 IRR — 동일 무차입 netflow에서 세금만 차감해 동일 IRR 엔진 통과 ──
+        # (기존 irr_annual_pct는 세전 기준 그대로 유지)
+        after_tax_irr: float | None = None
+        if tax_schedule is not None:
+            after_tax_netflows = [
+                unlevered[m] - tax_by_month[m] for m in range(total_months)
+            ]
+            after_tax_irr = self._irr_from_netflows(after_tax_netflows)
+
         summary = {
             "total_months": total_months,
             "total_inflow": round(cumulative_inflow),
@@ -251,6 +290,11 @@ class CashflowGenerator:
             "pf_loan_amount": round(pf_loan_amount),
             "irr_annual_pct": irr,
         }
+
+        # ── R1(additive): tax_schedule 지정 시에만 세후 지표 가산 — None이면 키 자체가 없다 ──
+        if tax_schedule is not None:
+            summary["after_tax_irr_annual_pct"] = after_tax_irr
+            summary["total_tax_won"] = round(sum(tax_by_month))
 
         phases = {
             "land_acquisition": {"month": 0, "cost": round(land_cost)},
@@ -314,6 +358,78 @@ class CashflowGenerator:
 
         total_w = sum(weights)
         return [total * (w / total_w) for w in weights]
+
+    def _allocate_tax_schedule(
+        self,
+        tax_schedule: dict[str, Any],
+        *,
+        tax_by_month: list[float],
+        tax_labels: dict[int, list[str]],
+        total_months: int,
+        construction_start: int,
+        construction_end: int,
+        sale_abs_start: int,
+        monthly_revenue: list[float],
+        total_revenue: float,
+    ) -> None:
+        """tax_schedule을 월별 세금 유출로 시점 매핑한다 (R1 — 주입 전용, 새 엔진 0).
+
+        매핑 규칙(계획서 R1):
+        - A(취득단계) → month 0 (토지매입 동월)
+        - B(공사부담금) → 착공월
+        - C(분양 제세·HUG·VAT) → 분양수입 월별 비례 배분, 잔금분은 정산월(총액 보존)
+        - D01·D03 등(양도단계, D06 제외) → 정산월(construction_end+1)
+        - D06(종부세) → 보유 연차별(매 12개월 도래, 타임라인 말월 클램프 — 총액 보존)
+        """
+        last_month = total_months - 1
+        settlement_month = min(construction_end + 1, last_month)
+
+        def _amount(key: str) -> float:
+            try:
+                return max(0.0, float(tax_schedule.get(key) or 0))
+            except (TypeError, ValueError):
+                return 0.0
+
+        def _add(month: int, amount: float, label: str) -> None:
+            if amount <= 0:
+                return
+            m = min(max(0, month), last_month)
+            tax_by_month[m] += amount
+            labels = tax_labels.setdefault(m, [])
+            if label not in labels:
+                labels.append(label)
+
+        # A(취득단계 제세) → month 0
+        _add(0, _amount("acquisition_won"), "취득단계 제세(A)")
+
+        # B(공사부담금) → 착공월
+        _add(construction_start, _amount("construction_won"), "공사부담금(B)")
+
+        # C(분양 제세·HUG·VAT) → 분양수입 월별 비례 (잔금분은 정산월 — 총액 보존)
+        sale_tax = _amount("sale_won")
+        if sale_tax > 0:
+            allocated = 0.0
+            if total_revenue > 0:
+                for ri, rev in enumerate(monthly_revenue):
+                    m = sale_abs_start + ri
+                    if m <= construction_end and m < total_months:
+                        portion = sale_tax * (rev / total_revenue)
+                        _add(m, portion, "분양 제세(C)")
+                        allocated += portion
+            _add(settlement_month, sale_tax - allocated, "분양 제세(C)")
+
+        # D01·D03 등(양도단계, D06 제외) → 정산월
+        _add(settlement_month, _amount("disposal_settlement_won"), "양도세·지방소득세(D)")
+
+        # D06(종부세) → 보유 연차별
+        d06_annual = _amount("d06_annual_won")
+        try:
+            d06_years = max(0, int(tax_schedule.get("d06_years") or 0))
+        except (TypeError, ValueError):
+            d06_years = 0
+        if d06_annual > 0 and d06_years > 0:
+            for year in range(1, d06_years + 1):
+                _add(min(12 * year, last_month), d06_annual, "종부세(D06)")
 
     def _get_phase_name(
         self,
@@ -381,3 +497,84 @@ class CashflowGenerator:
             return round(annual_irr * 100, 2)
         except Exception:  # noqa: BLE001
             return None
+
+
+def build_tax_schedule_from_integrated(
+    tax_result: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """integrated_tax_engine.calculate_all_taxes 결과 → tax_schedule 변환 어댑터 (R1).
+
+    새 엔진 0 — 엔진 출력(summary_by_stage·disposal items)을 **읽기만** 해서
+    generate_monthly_cashflow(tax_schedule=...)의 시점 매핑 입력으로 변환한다.
+
+    분해 규칙(총액 보존 — 가짜값·누락 금지):
+    - acquisition_won  = summary_by_stage.acquisition  (A → month 0)
+    - construction_won = summary_by_stage.construction (B → 착공월)
+    - sale_won         = summary_by_stage.sale         (C → 분양수입 비례, 시행사 부담분)
+    - disposal_settlement_won = disposal 합계 − D06    (D01·D03 등 → 정산월)
+    - d06_annual_won × d06_years = D06 amount_won      (종부세 → 보유 연차별)
+      (연차 분해 정보가 없으면 1회분으로 정직 처리해 총액을 보존)
+
+    Returns:
+        tax_schedule dict — 세금이 전무(전부 0)하거나 입력이 없으면 None(기존 동작).
+    """
+    if not tax_result or not isinstance(tax_result, dict):
+        return None
+
+    summary = tax_result.get("summary_by_stage") or {}
+
+    def _stage_total(name: str) -> int:
+        value = summary.get(name)
+        if value is None:
+            stage = tax_result.get(name)
+            value = stage.get("total_won", 0) if isinstance(stage, dict) else 0
+        try:
+            return max(0, int(value or 0))
+        except (TypeError, ValueError):
+            return 0
+
+    acquisition_won = _stage_total("acquisition")
+    construction_won = _stage_total("construction")
+    sale_won = _stage_total("sale")
+    disposal_total_won = _stage_total("disposal")
+
+    # D06(종부세)는 보유 연차별 분해 — disposal items에서 annual·years 추출
+    d06_amount = 0
+    d06_annual = 0
+    d06_years = 0
+    disposal_stage = tax_result.get("disposal")
+    if isinstance(disposal_stage, dict):
+        for item in disposal_stage.get("items") or []:
+            if isinstance(item, dict) and item.get("code") == "D06":
+                try:
+                    d06_amount = max(0, int(item.get("amount_won") or 0))
+                    detail = item.get("detail") or {}
+                    d06_annual = max(0, int(detail.get("annual_won") or 0))
+                    d06_years = max(0, int(detail.get("holding_years") or 0))
+                except (TypeError, ValueError):
+                    d06_amount = d06_annual = d06_years = 0
+                break
+    if d06_amount > 0 and (d06_annual <= 0 or d06_years <= 0):
+        # 연차 분해 정보 부재 — 1회분으로 정직 처리(총액 보존, 추정값 날조 금지)
+        d06_annual, d06_years = d06_amount, 1
+    if d06_annual * d06_years != d06_amount:
+        # annual×years가 amount와 어긋나면 amount를 정본으로 1회분 처리(총액 보존)
+        d06_annual, d06_years = d06_amount, 1
+
+    disposal_settlement_won = max(0, disposal_total_won - d06_amount)
+
+    schedule = {
+        "acquisition_won": acquisition_won,
+        "construction_won": construction_won,
+        "sale_won": sale_won,
+        "disposal_settlement_won": disposal_settlement_won,
+        "d06_annual_won": d06_annual,
+        "d06_years": d06_years,
+    }
+    total = (
+        acquisition_won + construction_won + sale_won
+        + disposal_settlement_won + d06_annual * d06_years
+    )
+    if total <= 0:
+        return None  # 세금 전무 — 주입 불필요(기존 세전 동작 유지)
+    return schedule

@@ -1029,10 +1029,30 @@ class CashflowRequest(BaseModel):
     design_months: int = 3
     design_cost_ratio: float = 0.03
     discount_rate_annual: float = 0.06  # NPV 할인율(연)
+    # R1(additive): integrated_tax_engine.calculate_all_taxes 키워드 입력(부분집합).
+    # 지정 시 38종 세금을 시점 매핑 주입해 summary에 after_tax_irr_annual_pct·total_tax_won 가산.
+    # 미지정(None, 기본)이면 기존 세전 현금흐름과 완전 동일.
+    tax_inputs: dict | None = None
 
 
 def _build_cashflow(req: "CashflowRequest") -> dict:
-    from app.services.feasibility.cashflow_generator import CashflowGenerator
+    from app.services.feasibility.cashflow_generator import (
+        CashflowGenerator,
+        build_tax_schedule_from_integrated,
+    )
+
+    # ── R1 세후 IRR(additive): tax_inputs 지정 시에만 통합 세금엔진(38종) 주입 ──
+    tax_schedule = None
+    if req.tax_inputs:
+        import inspect
+
+        from app.services.tax.integrated_tax_engine import calculate_all_taxes
+
+        allowed = set(inspect.signature(calculate_all_taxes).parameters)
+        tax_kwargs = {k: v for k, v in req.tax_inputs.items() if k in allowed}
+        tax_schedule = build_tax_schedule_from_integrated(
+            calculate_all_taxes(**tax_kwargs)
+        )
 
     cf = CashflowGenerator().generate_monthly_cashflow(
         land_cost=req.land_cost_won,
@@ -1046,6 +1066,7 @@ def _build_cashflow(req: "CashflowRequest") -> dict:
         equity_ratio=req.equity_ratio,
         design_months=max(0, req.design_months),
         design_cost_ratio=req.design_cost_ratio,
+        tax_schedule=tax_schedule,
     )
     # 월 할인율로 NPV 재계산(엔진 IRR과 별개로 사용자 지정 할인율 반영)
     rmonthly = (1 + req.discount_rate_annual) ** (1 / 12) - 1

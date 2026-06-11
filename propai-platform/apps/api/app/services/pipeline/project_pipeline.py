@@ -1763,6 +1763,35 @@ class ProjectPipeline:
             cf_gen = CashflowGenerator()
             sale_start_month = max(0, cost.construction_months - 6)  # 준공 6개월 전 분양 시작
 
+            # ── R1 세후 IRR: 통합 세금엔진(38종) 결과를 시점 매핑해 주입(additive) ──
+            # 실패·세금 전무 시 tax_schedule=None → 기존 세전 현금흐름과 완전 동일(graceful).
+            tax_schedule = None
+            try:
+                from app.services.feasibility.cashflow_generator import (
+                    build_tax_schedule_from_integrated,
+                )
+                from app.services.tax.integrated_tax_engine import calculate_all_taxes
+
+                _units = int(design.unit_count or 0)
+                tax_result = calculate_all_taxes(
+                    purchase_won=int(land_cost),
+                    area_sqm=float(site.land_area_sqm or 0),
+                    official_price_per_sqm=float(site.official_land_price or 0),
+                    total_households=_units,
+                    total_sale_amount_won=int(total_revenue),
+                    total_gfa_sqm=float(design.total_gfa_sqm or 0),
+                    building_type=design.building_type or "apartment",
+                    total_units=_units,
+                    avg_area_sqm=(
+                        design.avg_unit_area_pyeong * 3.305785
+                        if design.avg_unit_area_pyeong
+                        else 85.0
+                    ),
+                )
+                tax_schedule = build_tax_schedule_from_integrated(tax_result)
+            except Exception:  # noqa: BLE001
+                tax_schedule = None
+
             cf_result = cf_gen.generate_monthly_cashflow(
                 land_cost=land_cost,
                 construction_cost=cost.total_construction_cost,
@@ -1773,6 +1802,7 @@ class ProjectPipeline:
                 bridge_loan_rate=0.08,
                 pf_loan_rate=0.065,
                 equity_ratio=0.3,
+                tax_schedule=tax_schedule,
             )
 
             feasibility_data["cashflow"] = {
