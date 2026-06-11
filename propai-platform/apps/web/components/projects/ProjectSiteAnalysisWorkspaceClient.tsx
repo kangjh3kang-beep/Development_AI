@@ -7,6 +7,7 @@ import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryEr
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import { ApiClientError, apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import type { SiteAnalysisData } from "@/store/useProjectContextStore";
 import {
   useAnalysisCache,
   analysisSignature,
@@ -16,6 +17,11 @@ import { AnalysisCacheStatus } from "@/components/common/AnalysisCacheStatus";
 import { GlobalAddressSearch } from "@/components/common/GlobalAddressSearch";
 import { NumberInput } from "@/components/common/NumberInput";
 import { AutoZoningBadge } from "@/components/projects/AutoZoningBadge";
+import { FieldSourceBadge } from "@/components/common/FieldSourceBadge";
+import {
+  EvidencePanel,
+  type EvidenceItem,
+} from "@/components/common/EvidencePanel";
 import { dynamicMap } from "@/components/common/MapShell";
 import type { ParcelBoundaryMap as ParcelBoundaryMapType } from "@/components/map/ParcelBoundaryMap";
 import type { Locale } from "@/i18n/config";
@@ -55,6 +61,41 @@ type AVMEstimateResponse = {
   created_at: string;
 };
 
+/* ── 신뢰 메타데이터 타입(WP-D 가산·전부 옵셔널) ──
+   구버전 백엔드(필드 부재)에서도 깨지지 않도록 모두 옵셔널로 둔다. url은 백엔드가
+   검증한 값만 들어오며 프론트에서 조립하지 않는다(할루시네이션 링크 금지). */
+
+/** 필드별 provenance — method=auto(자동)/estimated(추정)/user(수동) 등. */
+type FieldProvenanceInput = {
+  /** 출처 방식 (예: "auto", "estimated", "user", "manual"). */
+  method?: string | null;
+  /** 출처명/근거 한 줄 (예: "VWORLD 토지특성"). title 보조. */
+  source?: string | null;
+  /** 신뢰도 라벨(있으면 title에 부연). */
+  confidence?: string | number | null;
+  /** stamp 시각(epoch ms) — FieldSourceBadge title에 부연. */
+  updated_at?: number | null;
+};
+
+/** 법령 원문링크 근거(레지스트리 get_legal_refs 출력) — url은 백엔드 제공값만. */
+type LegalRef = {
+  key?: string | null;
+  law_name?: string | null;
+  article?: string | null;
+  title?: string | null;
+  url?: string | null;
+  url_status?: string | null;
+};
+
+/** 수치 산출 트레이스 1건(EvidencePanel 항목 원천). */
+type EvidenceTrace = {
+  label?: string | null;
+  value?: string | number | null;
+  basis?: string | null;
+  /** 이 항목과 연결할 법령 근거키(legal_refs[].key와 매칭해 url 주입). */
+  legal_ref_key?: string | null;
+};
+
 type ParcelInfoResponse = {
   pnu: string;
   address: string;
@@ -66,6 +107,10 @@ type ParcelInfoResponse = {
   road_side: string;
   terrain: string;
   restrictions: string[];
+  /** WP-D 신뢰 메타데이터(가산·옵셔널) — 없으면(구버전) 렌더 생략. */
+  inputs?: Record<string, FieldProvenanceInput> | null;
+  evidence?: EvidenceTrace[] | null;
+  legal_refs?: LegalRef[] | null;
 };
 
 /* ── Labels (Korean primary) ── */
@@ -285,6 +330,102 @@ function extractErrorMessage(error: unknown, authMessage: string) {
   return "요청 실패.";
 }
 
+/* ── 신뢰 메타데이터 헬퍼(가산·순수함수) ── */
+
+/** provenance method → FieldSourceBadge source.
+ *  "user"/"manual"만 수동(user)으로, 그 외(auto/estimated/derived 등)는 자동(auto).
+ *  FieldSourceBadge가 두 값만 받으므로 매핑한다. method 미상이면 null(미표시·정직). */
+function provenanceToFieldSource(
+  input?: FieldProvenanceInput | null,
+): "auto" | "user" | null {
+  if (!input || typeof input !== "object") return null;
+  const method = (input.method ?? "").toString().trim().toLowerCase();
+  if (!method) return null;
+  if (method === "user" || method === "manual") return "user";
+  // auto/estimated/derived/computed/api 등 파이프라인 산출 → 자동.
+  return "auto";
+}
+
+/** legal_refs[]를 key로 인덱싱(법령 근거 url 주입용). 잘못된 항목은 건너뛴다. */
+function indexLegalRefs(
+  refs?: LegalRef[] | null,
+): Record<string, LegalRef> {
+  const map: Record<string, LegalRef> = {};
+  for (const ref of refs ?? []) {
+    if (ref && typeof ref.key === "string" && ref.key.trim()) {
+      map[ref.key.trim()] = ref;
+    }
+  }
+  return map;
+}
+
+/** SSOT 보존용 신뢰 메타데이터 — 부지분석 patch에 가산 저장(있을 때만).
+ *  store(SiteAnalysisData) 타입은 이 키를 명명하지 않지만, updateSiteAnalysis가
+ *  patch를 siteAnalysis에 스프레드·영속하므로 round-trip 보존된다(하위호환·additive). */
+type SiteTrustMeta = {
+  legalRefs?: LegalRef[];
+  inputs?: Record<string, FieldProvenanceInput>;
+};
+
+/** 부지분석 patch에 신뢰 메타데이터를 가산한 객체를 만든다.
+ *  trust 값이 모두 없으면 기존 patch를 그대로 반환(불필요 키 추가 방지·완전 하위호환).
+ *  excess-property 검사를 피하려고 fresh literal이 아닌 변수로 구성해 반환한다. */
+function withSiteTrustMeta(
+  base: Partial<SiteAnalysisData>,
+  trust?: { legalRefs?: LegalRef[] | null; inputs?: Record<string, FieldProvenanceInput> | null },
+): Partial<SiteAnalysisData> {
+  const legalRefs = trust?.legalRefs ?? null;
+  const inputs = trust?.inputs ?? null;
+  const hasLegal = Array.isArray(legalRefs) && legalRefs.length > 0;
+  const hasInputs = !!inputs && Object.keys(inputs).length > 0;
+  if (!hasLegal && !hasInputs) return base;
+  const meta: SiteTrustMeta = {};
+  if (hasLegal) meta.legalRefs = legalRefs as LegalRef[];
+  if (hasInputs) meta.inputs = inputs as Record<string, FieldProvenanceInput>;
+  // 변수로 구성(literal 아님) → Partial<SiteAnalysisData>로 좁혀 반환해도 trustMeta가 살아 영속된다.
+  const merged: Partial<SiteAnalysisData> & { trustMeta: SiteTrustMeta } = {
+    ...base,
+    trustMeta: meta,
+  };
+  return merged;
+}
+
+/** evidence[] + legal_refs[]를 EvidencePanel 항목으로 결합.
+ *  각 trace의 legal_ref_key를 legal_refs 인덱스와 매칭해 url(백엔드 제공값)을 주입한다.
+ *  매칭 실패/부재 시 legalRef 생략(텍스트만) — 가짜 링크 금지. label 없는 항목은 제외. */
+function buildEvidenceItems(
+  evidence?: EvidenceTrace[] | null,
+  legalRefs?: LegalRef[] | null,
+): EvidenceItem[] {
+  const traces = Array.isArray(evidence) ? evidence : [];
+  if (traces.length === 0) return [];
+  const refIndex = indexLegalRefs(legalRefs);
+  const items: EvidenceItem[] = [];
+  for (const trace of traces) {
+    if (!trace || typeof trace !== "object") continue;
+    const label = (trace.label ?? "").toString().trim();
+    if (!label) continue;
+    const value = trace.value ?? "—";
+    const key = trace.legal_ref_key?.trim();
+    const ref = key ? refIndex[key] : undefined;
+    items.push({
+      label,
+      value: typeof value === "number" ? value : String(value),
+      basis: trace.basis ?? null,
+      legalRef:
+        ref && typeof ref.law_name === "string" && ref.law_name.trim()
+          ? {
+              lawName: ref.law_name,
+              article: ref.article,
+              title: ref.title,
+              url: ref.url,
+            }
+          : null,
+    });
+  }
+  return items;
+}
+
 /* ── Component ── */
 
 export function ProjectSiteAnalysisWorkspaceClient({
@@ -397,6 +538,26 @@ export function ProjectSiteAnalysisWorkspaceClient({
       : labels.autoMissingArea
     : labels.placeholder;
 
+  // ── 신뢰 메타데이터(WP-D 가산·옵셔널) 파생 ──
+  // 필드 provenance(inputs{}) → FieldSourceBadge, 산출 트레이스(evidence[]) → EvidencePanel.
+  // 모두 옵셔널 가드 — 구버전 백엔드(필드 부재)에선 빈 값이 되어 렌더 생략된다.
+  const parcelInputs = parcelResult?.inputs ?? null;
+  const evidenceItems = buildEvidenceItems(
+    parcelResult?.evidence,
+    parcelResult?.legal_refs,
+  );
+  // 필드 키 → FieldSourceBadge 노드(없으면 undefined → MetricTile에서 미표시).
+  const fieldBadge = (key: string): React.ReactNode => {
+    const input = parcelInputs?.[key];
+    const source = provenanceToFieldSource(input);
+    if (!source) return undefined;
+    const at =
+      input && typeof input.updated_at === "number" && Number.isFinite(input.updated_at)
+        ? input.updated_at
+        : undefined;
+    return <FieldSourceBadge source={source} updatedAt={at} />;
+  };
+
   // auto 모드: 상단 흐름이 확정한 주소(+면적/PNU)로 AVM ML 자동감정·필지정보를 자동 호출한다.
   // 면적이 없으면 호출 보류(정직 안내). 무목업 — 실패 시 graceful 에러만 표기.
   useEffect(() => {
@@ -447,13 +608,22 @@ export function ProjectSiteAnalysisWorkspaceClient({
         // 검증된 결과 영속 → 재방문 시 재사용(입력 불변이면 재호출 안 함)
         saveAvm({ avm, parcel: parcelData });
 
-        updateSiteAnalysis({
-          estimatedValue: avm.estimated_price,
-          landAreaSqm: autoArea,
-          zoneCode: parcelZoning,
-          address: autoAddress,
-          pnu: autoPnu || null,
-        });
+        // 신뢰 메타데이터(legal_refs/inputs)를 SSOT에 가산 보존(있을 때만). 없으면 기존 patch 그대로.
+        updateSiteAnalysis(
+          withSiteTrustMeta(
+            {
+              estimatedValue: avm.estimated_price,
+              landAreaSqm: autoArea,
+              zoneCode: parcelZoning,
+              address: autoAddress,
+              pnu: autoPnu || null,
+            },
+            {
+              legalRefs: parcelData?.legal_refs,
+              inputs: parcelData?.inputs,
+            },
+          ),
+        );
         addAnalysisResult({
           module: "site-analysis",
           completedAt: new Date().toISOString(),
@@ -516,6 +686,7 @@ export function ProjectSiteAnalysisWorkspaceClient({
       setAvmResult(avm);
 
       let parcelZoning: string | null = null;
+      let parcelData: ParcelInfoResponse | null = null;
       if (pnu || address) {
         const parcel = await apiClient.post<ParcelInfoResponse>(
           "/external/parcel/info",
@@ -524,18 +695,28 @@ export function ProjectSiteAnalysisWorkspaceClient({
             body: { pnu: pnu || undefined, address: address || undefined },
           },
         );
+        parcelData = parcel;
         setParcelResult(parcel);
         parcelZoning = parcel.zoning || null;
       }
 
       // Update project context store (capillary network)
-      updateSiteAnalysis({
-        estimatedValue: avm.estimated_price,
-        landAreaSqm: areaSqm,
-        zoneCode: parcelZoning,
-        address,
-        pnu: pnu || null,
-      });
+      // 신뢰 메타데이터(legal_refs/inputs)를 SSOT에 가산 보존(있을 때만). 없으면 기존 patch 그대로.
+      updateSiteAnalysis(
+        withSiteTrustMeta(
+          {
+            estimatedValue: avm.estimated_price,
+            landAreaSqm: areaSqm,
+            zoneCode: parcelZoning,
+            address,
+            pnu: pnu || null,
+          },
+          {
+            legalRefs: parcelData?.legal_refs,
+            inputs: parcelData?.inputs,
+          },
+        ),
+      );
       markStageComplete("site-analysis");
       addAnalysisResult({
         module: "site-analysis",
@@ -849,14 +1030,17 @@ export function ProjectSiteAnalysisWorkspaceClient({
                   <MetricTile
                     label={labels.parcelCategoryLabel}
                     value={parcelResult.land_category}
+                    badge={fieldBadge("land_category")}
                   />
                   <MetricTile
                     label={labels.parcelZoningLabel}
                     value={parcelResult.zoning}
+                    badge={fieldBadge("zoning")}
                   />
                   <MetricTile
                     label={labels.parcelAreaLabel}
                     value={parcelResult.area_sqm != null && Number.isFinite(parcelResult.area_sqm) ? `${parcelResult.area_sqm.toLocaleString()} m2` : "—"}
+                    badge={fieldBadge("area_sqm")}
                   />
                   <MetricTile
                     label={labels.parcelUseSituationLabel}
@@ -868,6 +1052,7 @@ export function ProjectSiteAnalysisWorkspaceClient({
                       locale,
                       parcelResult.official_price_per_sqm,
                     )}
+                    badge={fieldBadge("official_price_per_sqm")}
                   />
                   <MetricTile
                     label={labels.parcelRoadLabel}
@@ -878,6 +1063,9 @@ export function ProjectSiteAnalysisWorkspaceClient({
                     value={parcelResult.terrain}
                   />
                 </div>
+                {/* 산출 근거(WP-D evidence[] + legal_refs[]) — 항목이 없으면(구버전) 자동 미표시.
+                    EvidencePanel 내부에서 빈 items면 렌더하지 않으므로 추가 가드 불필요. */}
+                <EvidencePanel items={evidenceItems} />
                 {parcelResult.restrictions?.length > 0 && (
                   <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
                     <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
@@ -960,14 +1148,18 @@ export function ProjectSiteAnalysisWorkspaceClient({
 function MetricTile({
   label,
   value,
+  badge,
 }: {
   label: string;
   value: string;
+  /** 옵셔널 출처 배지(FieldSourceBadge 등) — 라벨 옆에 표시. 기존 호출은 미전달(무변경). */
+  badge?: React.ReactNode;
 }) {
   return (
     <div className="rounded-[var(--radius-xl)] bg-[var(--surface)] p-4">
-      <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+      <p className="flex items-center gap-1.5 text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
         {label}
+        {badge}
       </p>
       <p className="mt-2 text-sm font-semibold text-[var(--text-primary)]">
         {value}

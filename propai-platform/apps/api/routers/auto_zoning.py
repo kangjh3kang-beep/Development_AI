@@ -36,6 +36,286 @@ def _zone_limits_compact(zone_type: str | None) -> dict | None:
     return {"max_bcr_pct": limits.get("max_bcr"), "max_far_pct": limits.get("max_far")}
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# 신뢰 레이어(additive): 법령링크·필드 출처(provenance)·근거 트레이스.
+# 기존 응답 필드는 1개도 변경하지 않고 legal_refs/inputs/evidence 3블록만 가산한다.
+# law.go.kr URL은 반드시 legal_reference_registry.get_legal_refs 출력만 사용하며
+# (프론트/여기서 URL 직접 조립 금지), zone_type 미확정 시 legal_refs는 빈 배열(가짜 링크 금지).
+# ─────────────────────────────────────────────────────────────────────────────
+def _extract_sigungu(result: dict) -> str | None:
+    """응답/주소에서 시군구명을 정직하게 추출(조례 url 치환용).
+
+    우선순위: local_ordinance.sigungu(조례서비스 추출값) → zone_limits.sigungu →
+    주소 정규식("OO시/군/구"). 추출 실패 시 None(레지스트리에 sigungu 미전달 → 조례
+    url_status='pending'). '미확인'은 ordinance_service의 sentinel이므로 None 취급.
+    """
+    lo = result.get("local_ordinance")
+    if isinstance(lo, dict):
+        sgg = lo.get("sigungu")
+        if sgg and str(sgg).strip() and str(sgg).strip() != "미확인":
+            return str(sgg).strip()
+    zl = result.get("zone_limits")
+    if isinstance(zl, dict):
+        sgg = zl.get("sigungu")
+        if sgg and str(sgg).strip() and str(sgg).strip() != "미확인":
+            return str(sgg).strip()
+    addr = str(result.get("address") or "")
+    if addr:
+        m = re.search(r"(\S{2,4}[시군구])(?:\s|$)", addr)
+        if m:
+            cand = m.group(1)
+            if "특별" not in cand and "광역" not in cand:
+                return cand
+    return None
+
+
+def _zone_limits_ref_keys(result: dict) -> list[str]:
+    """zone_type 한도의 법령 근거키를 legal_zone_limits.legal_limits_for로 결정.
+
+    반환은 legal_reference_registry 키 목록(중복 없는 순서 보존). zone_type 미확정·
+    미매칭이면 빈 리스트(→ legal_refs 빈 배열). 조례 적용이 확인되면(아래) 호출부에서
+    ordinance_far/ordinance_bcr 키를 추가한다.
+    """
+    zone_type = result.get("zone_type")
+    if not zone_type:
+        return []
+    try:
+        from app.services.zoning.legal_zone_limits import legal_limits_for
+
+        legal = legal_limits_for(zone_type)
+    except Exception:  # noqa: BLE001
+        legal = None
+    if not legal:
+        return []
+    ref_keys = legal.get("legal_ref_keys") or {}
+    keys: list[str] = []
+    # 용적률·건폐율 순으로 부착(zone_use는 일반 한도 근거가 아니라 생략 — 한도키만).
+    for k in ("far", "bcr"):
+        v = ref_keys.get(k)
+        if v and v not in keys:
+            keys.append(v)
+    return keys
+
+
+def _ordinance_applied(result: dict) -> bool:
+    """조례 실효값이 응답에 실제로 반영되었는지 판정(가짜 조례링크 방지).
+
+    zone_limits.ordinance_far_pct/ordinance_bcr_pct(land_info_service가 effective_*로
+    주입) 또는 local_ordinance.effective_*가 raw 조례값(ordinance_far/bcr)에서 유래해
+    존재하면 조례 근거 있음으로 본다. 단순히 법정상한을 그대로 쓴 경우(source=='법정상한')는
+    조례 적용으로 보지 않는다.
+    """
+    zl = result.get("zone_limits")
+    if isinstance(zl, dict):
+        if zl.get("ordinance_far_pct") or zl.get("ordinance_bcr_pct"):
+            return True
+    lo = result.get("local_ordinance")
+    if isinstance(lo, dict):
+        # raw 조례값이 실제로 조회된 경우에만(법정상한 폴백은 제외).
+        if lo.get("ordinance_far") or lo.get("ordinance_bcr"):
+            return True
+    return False
+
+
+def _build_legal_refs(result: dict) -> list[dict]:
+    """zone 한도·조례 근거를 레지스트리(get_legal_refs)로 직렬화해 반환(additive).
+
+    - zone_type 미확정/미매칭 → 빈 배열(할루시네이션 링크 금지).
+    - 조례 실효값이 반영된 경우 ordinance_far/ordinance_bcr 키를 추가하고 sigungu를
+      전달해 조례 url을 치환(미상이면 sigungu 미전달 → url_status='pending').
+    - URL은 전적으로 get_legal_refs 출력만 사용한다(여기서 URL 조립 금지).
+    """
+    keys = _zone_limits_ref_keys(result)
+    if not keys:
+        return []
+    if _ordinance_applied(result):
+        for ok in ("ordinance_far", "ordinance_bcr"):
+            if ok not in keys:
+                keys.append(ok)
+    sigungu = _extract_sigungu(result)
+    try:
+        from app.services.legal.legal_reference_registry import get_legal_refs
+
+        return get_legal_refs(keys, sigungu=sigungu)
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _provenance(value, source: str, method: str, confidence: str) -> dict:
+    """필드 provenance 1건 구성 — value/source/method/confidence."""
+    return {"value": value, "source": source, "method": method, "confidence": confidence}
+
+
+def _build_inputs(result: dict) -> dict:
+    """필드별 provenance(zone_type/land_area_sqm/official_price_per_sqm/pnu).
+
+    실제 result에서 값 출처를 정직 매핑한다.
+    - pnu 존재 → 외부 권위 출처(VWorld 토지특성/개별공시지가)에서 자동수집(auto, high).
+    - pnu 부재 → 주소키워드 추론 폴백(_detect_zone_from_address): zone_type은 estimated/low.
+    - 값이 비어 있으면 confidence='none'(있는 그대로 표기, 목업 금지).
+    """
+    pnu = result.get("pnu")
+    has_pnu = bool(pnu)
+
+    # zone_type 출처: PNU 있으면 VWorld 토지특성, 없으면 주소 추론.
+    zone_type = result.get("zone_type")
+    if not zone_type:
+        zone_prov = _provenance(None, "미수집", "fallback", "none")
+    elif has_pnu:
+        zone_prov = _provenance(zone_type, "vworld_land_characteristics", "auto", "high")
+    else:
+        zone_prov = _provenance(zone_type, "추론", "estimated", "low")
+
+    # 대지면적: land_register.area_sqm(comprehensive) 또는 land_area_sqm(analyze).
+    land_area = result.get("land_area_sqm")
+    if not land_area:
+        lr = result.get("land_register")
+        if isinstance(lr, dict):
+            land_area = lr.get("area_sqm") or None
+    if not land_area:
+        area_prov = _provenance(None, "미수집", "fallback", "none")
+    else:
+        area_prov = _provenance(land_area, "vworld_land_characteristics", "auto", "high")
+
+    # 공시지가: official_price_per_sqm 또는 official_prices[0].price_per_sqm.
+    price = result.get("official_price_per_sqm")
+    if not price:
+        ops = result.get("official_prices")
+        if isinstance(ops, list) and ops and isinstance(ops[0], dict):
+            price = ops[0].get("price_per_sqm") or ops[0].get("official_price") or None
+        if not price:
+            lr = result.get("land_register")
+            if isinstance(lr, dict):
+                price = lr.get("official_price_per_sqm") or None
+    if not price:
+        price_prov = _provenance(None, "미수집", "fallback", "none")
+    else:
+        price_prov = _provenance(price, "vworld_individual_land_price", "auto", "high")
+
+    # PNU: bcode로 구성됐는지(bcode_pnu) vs VWorld 지오코딩 — 응답엔 출처표식이 없어
+    # 보수적으로 자동수집 통칭. 부재 시 none.
+    if not has_pnu:
+        pnu_prov = _provenance(None, "미수집", "fallback", "none")
+    else:
+        pnu_prov = _provenance(pnu, "vworld_geocode", "auto", "high")
+
+    return {
+        "zone_type": zone_prov,
+        "land_area_sqm": area_prov,
+        "official_price_per_sqm": price_prov,
+        "pnu": pnu_prov,
+    }
+
+
+def _fmt_pct(v) -> str | None:
+    """퍼센트 표기 — 250 → '250%'. None/빈값 → None."""
+    if v is None:
+        return None
+    try:
+        n = float(v)
+    except (TypeError, ValueError):
+        return None
+    if n == int(n):
+        return f"{int(n)}%"
+    return f"{n:g}%"
+
+
+def _build_evidence(result: dict, legal_refs: list[dict]) -> list[dict]:
+    """한도 산출 트레이스(EvidencePanel 소비 구조).
+
+    {label, value, basis, legal_ref_key}. 법정 상한(far/bcr)을 부착하고, 조례 실효값이
+    법정과 다르면 둘 다 트레이스(법정 + 조례적용). zone_type 미확정 시 빈 배열.
+    """
+    zone_type = result.get("zone_type")
+    if not zone_type:
+        return []
+    try:
+        from app.services.zoning.legal_zone_limits import legal_limits_for
+
+        legal = legal_limits_for(zone_type)
+    except Exception:  # noqa: BLE001
+        legal = None
+    if not legal:
+        return []
+
+    zone_key = legal.get("zone_type") or zone_type
+    far_key = (legal.get("legal_ref_keys") or {}).get("far")
+    bcr_key = (legal.get("legal_ref_keys") or {}).get("bcr")
+    # legal_refs에서 조문 표기(law_name·article)를 가져와 basis를 구성(레지스트리 단일출처).
+    ref_by_key = {r.get("key"): r for r in (legal_refs or [])}
+
+    def _basis(ref_key: str) -> str:
+        ref = ref_by_key.get(ref_key) or {}
+        law = ref.get("law_name") or ""
+        art = ref.get("article") or ""
+        tail = f"{law} {art}".strip()
+        return f"{zone_key} · {tail}".strip(" ·") if tail else zone_key
+
+    evidence: list[dict] = []
+    far_legal = _fmt_pct(legal.get("max_far_pct"))
+    if far_legal and far_key:
+        evidence.append({
+            "label": "법정 용적률 상한",
+            "value": far_legal,
+            "basis": _basis(far_key),
+            "legal_ref_key": far_key,
+        })
+    bcr_legal = _fmt_pct(legal.get("max_bcr_pct"))
+    if bcr_legal and bcr_key:
+        evidence.append({
+            "label": "법정 건폐율 상한",
+            "value": bcr_legal,
+            "basis": _basis(bcr_key),
+            "legal_ref_key": bcr_key,
+        })
+
+    # 조례 실효값이 법정과 다르면 별도 트레이스(조례 근거키로).
+    zl = result.get("zone_limits") if isinstance(result.get("zone_limits"), dict) else {}
+    ord_far = zl.get("ordinance_far_pct")
+    if ord_far is not None and _fmt_pct(ord_far) != far_legal:
+        ord_far_fmt = _fmt_pct(ord_far)
+        if ord_far_fmt:
+            sigungu = _extract_sigungu(result) or "지자체"
+            evidence.append({
+                "label": "조례 적용 용적률",
+                "value": ord_far_fmt,
+                "basis": f"{zone_key} · {sigungu} 도시계획 조례(실효값)",
+                "legal_ref_key": "ordinance_far",
+            })
+    ord_bcr = zl.get("ordinance_bcr_pct")
+    if ord_bcr is not None and _fmt_pct(ord_bcr) != bcr_legal:
+        ord_bcr_fmt = _fmt_pct(ord_bcr)
+        if ord_bcr_fmt:
+            sigungu = _extract_sigungu(result) or "지자체"
+            evidence.append({
+                "label": "조례 적용 건폐율",
+                "value": ord_bcr_fmt,
+                "basis": f"{zone_key} · {sigungu} 도시계획 조례(실효값)",
+                "legal_ref_key": "ordinance_bcr",
+            })
+    return evidence
+
+
+def _attach_trust_blocks(result: dict) -> dict:
+    """응답 dict에 legal_refs/inputs/evidence 3블록을 additive로 부착(in-place).
+
+    기존 키는 setdefault로 보존(이미 있으면 덮어쓰지 않음). result가 dict가 아니거나
+    부착 중 예외가 나면 원본을 그대로 반환(기존 응답 무손상 — graceful).
+    """
+    if not isinstance(result, dict):
+        return result
+    try:
+        legal_refs = _build_legal_refs(result)
+        result.setdefault("legal_refs", legal_refs)
+        result.setdefault("inputs", _build_inputs(result))
+        result.setdefault("evidence", _build_evidence(result, legal_refs))
+    except Exception as e:  # noqa: BLE001
+        import structlog
+
+        structlog.get_logger().warning("신뢰 블록 부착 스킵", error=str(e)[:120])
+    return result
+
+
 def _build_pnu_from_bcode(bcode: str, jibun_address: str) -> str | None:
     """법정동 코드(10자리) + 지번 주소에서 PNU(19자리)를 구성한다.
 
@@ -145,6 +425,9 @@ async def analyze_zoning(req: ZoningAnalyzeRequest):
     except Exception:  # noqa: BLE001
         pass
 
+    # 신뢰 레이어(additive): 법령링크·필드 출처·근거 트레이스 부착(기존 필드 무손상).
+    _attach_trust_blocks(result)
+
     return result
 
 
@@ -161,7 +444,9 @@ async def comprehensive_land_analysis(req: ZoningAnalyzeRequest):
         pnu = _build_pnu_from_bcode(req.bcode, req.jibun_address)
 
     service = LandInfoService()
-    return await service.collect_comprehensive(req.address, pnu=pnu)
+    result = await service.collect_comprehensive(req.address, pnu=pnu)
+    # 신뢰 레이어(additive): 법령링크·필드 출처·근거 트레이스 부착(기존 필드 무손상).
+    return _attach_trust_blocks(result)
 
 
 class ParcelBoundariesRequest(BaseModel):

@@ -9,13 +9,33 @@
  */
 
 import { Card, CardContent } from "@propai/ui";
+import { LegalRefChip } from "@/components/common/LegalRefChip";
+import { EvidencePanel, type EvidenceItem } from "@/components/common/EvidencePanel";
 import type { Locale } from "@/i18n/config";
 
 /* ── Types (기존 RegulationsWorkspaceClient와 1:1 동일) ── */
 
 export type LimitTrio = { legal: number | null; ordinance: number | null; effective: number | null; unit: string };
 export type HierItem = { name: string; ref?: string; desc?: string };
-export type HierLevel = { level: string; items: HierItem[] };
+/** 법령 원문링크 근거(레지스트리 get_legal_refs 출력) — url은 백엔드 제공값만. */
+export type LegalRef = {
+  key?: string | null;
+  law_name?: string | null;
+  article?: string | null;
+  title?: string | null;
+  url?: string | null;
+  url_status?: string | null;
+};
+/** 수치 산출 트레이스 1건(EvidencePanel 항목 원천). */
+export type EvidenceTrace = {
+  label?: string | null;
+  value?: string | number | null;
+  basis?: string | null;
+  /** 이 항목과 연결할 법령 근거키(legal_refs[].key와 매칭해 url 주입). */
+  legal_ref_key?: string | null;
+};
+/** 계층 레벨 — WP-H 신뢰 레이어로 legal_refs[]가 가산될 수 있음(옵셔널·하위호환). */
+export type HierLevel = { level: string; items: HierItem[]; legal_refs?: LegalRef[] | null };
 export type District = { name: string; code?: string; impact: "상" | "중" | "하" | string; status?: string; register_date?: string };
 export type RegAI = {
   generated?: boolean;
@@ -38,6 +58,8 @@ export type RegResult = {
   hierarchy: HierLevel[];
   districts: District[];
   ai: RegAI | null;
+  /** WP-H 신뢰 메타데이터(가산·옵셔널) — 없으면(구버전) 렌더 생략. */
+  evidence?: EvidenceTrace[] | null;
 };
 
 const IMPACT_STYLE: Record<string, string> = {
@@ -56,6 +78,61 @@ function pyeong(sqm: number | null): string {
   return sqm ? `${Math.round(sqm / 3.305785).toLocaleString()}평` : "";
 }
 
+/** legal_refs[]를 key로 인덱싱(법령 근거 url 주입용). 잘못된 항목은 건너뛴다. */
+function indexLegalRefs(refs?: LegalRef[] | null): Record<string, LegalRef> {
+  const map: Record<string, LegalRef> = {};
+  for (const ref of refs ?? []) {
+    if (ref && typeof ref.key === "string" && ref.key.trim()) map[ref.key.trim()] = ref;
+  }
+  return map;
+}
+
+/** evidence[] + 계층 전체 legal_refs[]를 EvidencePanel 항목으로 결합.
+ *  각 trace의 legal_ref_key를 legal_refs 인덱스와 매칭해 url(백엔드 제공값)을 주입한다.
+ *  매칭 실패/부재 시 legalRef 생략(텍스트만) — 가짜 링크 금지. label 없는 항목은 제외. */
+function buildEvidenceItems(
+  evidence?: EvidenceTrace[] | null,
+  legalRefs?: LegalRef[] | null,
+): EvidenceItem[] {
+  const traces = Array.isArray(evidence) ? evidence : [];
+  if (traces.length === 0) return [];
+  const refIndex = indexLegalRefs(legalRefs);
+  const items: EvidenceItem[] = [];
+  for (const trace of traces) {
+    if (!trace || typeof trace !== "object") continue;
+    const label = (trace.label ?? "").toString().trim();
+    if (!label) continue;
+    const value = trace.value ?? "—";
+    const key = trace.legal_ref_key?.trim();
+    const ref = key ? refIndex[key] : undefined;
+    items.push({
+      label,
+      value: typeof value === "number" ? value : String(value),
+      basis: trace.basis ?? null,
+      legalRef:
+        ref && typeof ref.law_name === "string" && ref.law_name.trim()
+          ? { lawName: ref.law_name, article: ref.article, title: ref.title, url: ref.url }
+          : null,
+    });
+  }
+  return items;
+}
+
+/** 계층 전체 노드의 legal_refs[]를 평탄화(중복 key 제거) — evidence url 매칭 인덱스용. */
+function flattenLegalRefs(hierarchy?: HierLevel[]): LegalRef[] {
+  const seen = new Set<string>();
+  const out: LegalRef[] = [];
+  for (const lv of hierarchy ?? []) {
+    for (const ref of lv?.legal_refs ?? []) {
+      const k = typeof ref?.key === "string" ? ref.key.trim() : "";
+      if (!k || seen.has(k)) continue;
+      seen.add(k);
+      out.push(ref);
+    }
+  }
+  return out;
+}
+
 /* ── 공용 종합 렌더 ── */
 
 export function RegulationHierarchyView({
@@ -65,6 +142,10 @@ export function RegulationHierarchyView({
   result: RegResult;
   locale: Locale;
 }) {
+  // 한도 산출 근거(evidence[] + 계층 legal_refs[]) — 항목이 없으면(구버전) 자동 미표시.
+  const allLegalRefs = flattenLegalRefs(result.hierarchy);
+  const evidenceItems = buildEvidenceItems(result.evidence, allLegalRefs);
+
   return (
     <>
       {/* 부지 요약 + 정량 한도 */}
@@ -100,6 +181,13 @@ export function RegulationHierarchyView({
               <p className="mt-1 text-xs font-semibold leading-snug text-[var(--text-primary)]">{result.limits.parking.description}</p>
             </div>
           </div>
+
+          {/* 한도 산출 근거(WP-H evidence[] + legal_refs[]) — 빈 items면 자동 미표시(구버전 무손상). */}
+          {evidenceItems.length > 0 && (
+            <div className="mt-4">
+              <EvidencePanel items={evidenceItems} title="한도 산출 근거" />
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -149,6 +237,24 @@ export function RegulationHierarchyView({
                       </div>
                     ))}
                   </div>
+
+                  {/* 노드 법령 원문링크(WP-H legal_refs[]) — 옵셔널 가드(구버전·zone 미확정 시 미표시).
+                      url은 백엔드 제공값만(LegalRefChip이 미검증 url은 텍스트로 폴백). */}
+                  {Array.isArray(lv.legal_refs) && lv.legal_refs.length > 0 && (
+                    <div className="mt-2.5 flex flex-wrap gap-1.5 border-t border-[var(--line)] pt-2">
+                      {lv.legal_refs.map((ref, k) =>
+                        ref?.law_name ? (
+                          <LegalRefChip
+                            key={`${ref.key ?? ref.law_name}-${k}`}
+                            lawName={ref.law_name}
+                            article={ref.article}
+                            title={ref.title}
+                            url={ref.url}
+                          />
+                        ) : null,
+                      )}
+                    </div>
+                  )}
                 </div>
               );
             })}

@@ -41,6 +41,14 @@ async def precheck_instant(req: PreCheckInstantRequest) -> dict:
     signal: 용도지역 불허→fail / 허용+복잡도≤3→pass / 허용+복잡도4~5→warn.
     면적 있으면 건폐율·용적률 개략 안내, 없으면 해당 check는 warn(면적 미입력).
     use_llm=true면 summary.llm_note 1줄만 LLM(타임아웃시 null).
+
+    응답은 기존 필드(ok/zone_type/area_sqm/legal_limits/methods/summary/sources 등)를
+    전부 유지하며, 신뢰 레이어 5블록을 additive로 가산한다(선택적 렌더):
+      - inputs: 필드별 provenance(zone_type/area_sqm/official_price/pnu).
+      - data_quality: confidence_level/quantitative_reliable/warnings/sources_meta/disclaimer.
+      - legal_refs: 한도·조례 법령 원문링크(law.go.kr, 레지스트리 출력만).
+      - evidence: 한도·면적·수지 산출 트레이스(EvidencePanel 소비 구조).
+      - feasibility_band: best 후보 1건의 최저/기본/최대 3시나리오(검증된 수지엔진).
     """
     if not req.address or not req.address.strip():
         raise HTTPException(status_code=422, detail="address가 필요합니다.")

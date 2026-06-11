@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from typing import Any, Optional
 
@@ -29,6 +30,8 @@ from app.services.zoning.auto_zoning_service import ZONE_LIMITS, AutoZoningServi
 _ZONING_TIMEOUT = 30.0
 _BBOX_TIMEOUT = 25.0
 _LLM_TIMEOUT = 25.0
+# 조례 실효값 조회(법제처 API/캐시) 가드 — 실패 시 법정상한 폴백.
+_ORDINANCE_TIMEOUT = 8.0
 
 # 모든 후보 개발방식 코드(M01~M15)
 _ALL_METHODS = [f"M{n:02d}" for n in range(1, 16)]
@@ -45,20 +48,360 @@ def _normalize_zone(zone_type: str) -> str:
     return key
 
 
-def _legal_limits(zone_type: Optional[str]) -> dict[str, Any]:
-    """용도지역 → 법정 건폐율/용적률/높이 한도(국토계획법 제78조)."""
+async def _legal_limits(zone_type: Optional[str], address: Optional[str] = None) -> dict[str, Any]:
+    """용도지역 → 법정 건폐율/용적률/높이 한도(국토계획법 제78조) + 조례 실효값(가산).
+
+    기존 반환 키(bcr_pct/far_pct/height_m/source)는 전부 보존한다(_area_checks·프론트 무영향).
+    address가 주어지면 OrdinanceService로 조례 실효값을 조회해 applicable_limits_for로
+    계층 적용 한도(법정범위→조례→도시군관리계획)를 산정하고, 다음 키를 **가산**한다:
+      applied_bcr_pct / applied_far_pct / ordinance_confirmed / far_source /
+      sigungu / legal_ref_keys(법령 원문링크 근거키 목록).
+    조례 조회 실패·미확인 시 법정상한으로 폴백(현행 동작과 동일값), ordinance_confirmed=False.
+    """
     if not zone_type:
-        return {"bcr_pct": None, "far_pct": None, "height_m": None, "source": "미확인"}
+        return {"bcr_pct": None, "far_pct": None, "height_m": None, "source": "미확인",
+                "legal_ref_keys": []}
     key = _normalize_zone(zone_type)
     limits = ZONE_LIMITS.get(key)
     if not limits:
-        return {"bcr_pct": None, "far_pct": None, "height_m": None, "source": "법정한도 미매핑"}
-    return {
+        return {"bcr_pct": None, "far_pct": None, "height_m": None, "source": "법정한도 미매핑",
+                "legal_ref_keys": []}
+
+    legal: dict[str, Any] = {
         "bcr_pct": limits.get("max_bcr"),
         "far_pct": limits.get("max_far"),
         "height_m": limits.get("max_height_m"),
         "source": "국토의 계획 및 이용에 관한 법률 제78조",
+        "zone_type": key,
     }
+
+    # ── 조례 실효값 적용(가산) — applicable_limits_for 경유(새 산식 0) ──
+    # 법령 한도 근거키는 항상 부착(zone 매칭 시), 조례 적용은 확인된 경우에만 표기.
+    ref_keys: list[str] = ["far_limit", "bcr_limit"]
+    sigungu = _extract_sigungu_from_address(address)
+    legal["sigungu"] = sigungu
+    legal["ordinance_confirmed"] = False
+    legal["applied_bcr_pct"] = legal["bcr_pct"]
+    legal["applied_far_pct"] = legal["far_pct"]
+    legal["far_source"] = "법정범위 상한(조례·도시군관리계획 확인 필요)"
+
+    regulation_payload: Any = None
+    if address:
+        try:
+            from app.services.land_intelligence.ordinance_service import OrdinanceService
+
+            ord_result = await asyncio.wait_for(
+                OrdinanceService().get_ordinance_limits(address, zone_type),
+                timeout=_ORDINANCE_TIMEOUT,
+            )
+            regulation_payload = ord_result
+        except Exception:  # noqa: BLE001 — 조례 조회 실패 시 법정상한 폴백(SLA 보호)
+            regulation_payload = None
+
+    try:
+        from app.services.zoning.legal_zone_limits import applicable_limits_for
+
+        applied = applicable_limits_for(
+            zone_type, sigungu=sigungu, regulation_payload=regulation_payload
+        )
+    except Exception:  # noqa: BLE001
+        applied = None
+
+    if applied:
+        if applied.get("applied_bcr_pct") is not None:
+            legal["applied_bcr_pct"] = applied["applied_bcr_pct"]
+        if applied.get("applied_far_pct") is not None:
+            legal["applied_far_pct"] = applied["applied_far_pct"]
+        legal["ordinance_confirmed"] = bool(applied.get("ordinance_confirmed"))
+        legal["far_source"] = applied.get("far_source") or legal["far_source"]
+        if applied.get("ordinance_far_pct") is not None:
+            legal["ordinance_far_pct"] = applied["ordinance_far_pct"]
+        if applied.get("ordinance_bcr_pct") is not None:
+            legal["ordinance_bcr_pct"] = applied["ordinance_bcr_pct"]
+        # 조례가 실제로 확인되면 조례 근거키를 가산(가짜 조례링크 방지).
+        if legal["ordinance_confirmed"]:
+            # 조례 결과의 sigungu(권위적)를 우선 사용해 조례 url 치환 정확도를 높인다.
+            if isinstance(regulation_payload, dict):
+                rp_sgg = regulation_payload.get("sigungu")
+                if rp_sgg and str(rp_sgg).strip() and str(rp_sgg).strip() != "미확인":
+                    legal["sigungu"] = str(rp_sgg).strip()
+            for ok in ("ordinance_far", "ordinance_bcr"):
+                if ok not in ref_keys:
+                    ref_keys.append(ok)
+
+    legal["legal_ref_keys"] = ref_keys
+    return legal
+
+
+def _extract_sigungu_from_address(address: Optional[str]) -> Optional[str]:
+    """주소 문자열에서 시군구명을 정직 추출(조례 url 치환용).
+
+    특별시/광역시(시군구 아님)는 건너뛰고 첫 시군구 토큰을 반환한다. 모든 후보를
+    순회(finditer)하므로 '서울특별시 강남구 …'에서 '강남구'를 정확히 잡는다.
+    추출 실패 시 None(레지스트리에 sigungu 미전달 → 조례 url_status='pending').
+    """
+    addr = str(address or "")
+    if not addr:
+        return None
+    for m in re.finditer(r"(\S{2,4}[시군구])(?:\s|$)", addr):
+        cand = m.group(1)
+        if "특별" not in cand and "광역" not in cand:
+            return cand
+    return None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 신뢰 레이어(additive) 조립 헬퍼 — inputs/data_quality/legal_refs/evidence/feasibility_band
+# 원칙: 새 계산/조닝/검증 엔진 0개. 기존 함수 rewire + 데이터 매핑만. URL은 레지스트리만.
+# 모든 헬퍼는 graceful(예외 시 안전 폴백) — 기존 응답을 절대 깨지 않는다.
+# ─────────────────────────────────────────────────────────────────────────────
+def _prov(value, source: str, method: str, confidence: str, **extra) -> dict:
+    """필드 provenance 1건 — value/source/method/confidence (+선택 메타)."""
+    rec = {"value": value, "source": source, "method": method, "confidence": confidence}
+    rec.update(extra)
+    return rec
+
+
+def _build_inputs(
+    *,
+    zone_type: Optional[str],
+    resolved_pnu: Optional[str],
+    resolved_area: Optional[float],
+    official_price: Optional[float] = None,
+) -> dict[str, Any]:
+    """필드별 provenance(zone_type/area_sqm/official_price/pnu) — auto_zoning과 동일 패턴.
+
+    - pnu 존재 → 외부 권위 출처에서 자동수집(auto, high). (이 함수 도달 시 pnu 확인됨이 정상)
+    - pnu 부재 → zone_type은 주소키워드 추론 폴백(estimated/low).
+    - 값이 없으면 confidence='none'(있는 그대로 표기, 목업 금지). method ∈
+      {auto(공공API)|estimated(테이블/추론)|user(사용자입력)|fallback}.
+    """
+    has_pnu = bool(resolved_pnu)
+
+    if not zone_type:
+        zone_prov = _prov(None, "미수집", "fallback", "none")
+    elif has_pnu:
+        zone_prov = _prov(zone_type, "vworld_land_characteristics(NED)", "auto", "high")
+    else:
+        zone_prov = _prov(zone_type, "추론(주소 키워드)", "estimated", "low")
+
+    if not resolved_area:
+        area_prov = _prov(None, "미수집", "fallback", "none")
+    elif has_pnu:
+        area_prov = _prov(resolved_area, "vworld_land_characteristics(NED)", "auto", "high")
+    else:
+        area_prov = _prov(resolved_area, "사용자입력", "user", "medium")
+
+    if not official_price:
+        price_prov = _prov(None, "미수집", "fallback", "none")
+    else:
+        price_prov = _prov(official_price, "vworld_individual_land_price", "auto", "high")
+
+    if not has_pnu:
+        pnu_prov = _prov(None, "미수집", "fallback", "none")
+    else:
+        pnu_prov = _prov(resolved_pnu, "vworld_geocode(PARCEL)", "auto", "high")
+
+    return {
+        "zone_type": zone_prov,
+        "area_sqm": area_prov,
+        "official_price": price_prov,
+        "pnu": pnu_prov,
+    }
+
+
+def _build_legal_refs(legal: dict[str, Any]) -> list[dict]:
+    """_legal_limits의 legal_ref_keys를 레지스트리(get_legal_refs)로 직렬화(additive).
+
+    - zone_type 미확정/미매칭 → legal_ref_keys 빈 리스트 → 빈 배열(할루시네이션 링크 금지).
+    - 조례 확인 시 ordinance_far/bcr 키 포함(=_legal_limits가 부착) + sigungu 치환.
+    - URL은 전적으로 get_legal_refs 출력만 사용한다(여기서 URL 조립 금지).
+    """
+    keys = legal.get("legal_ref_keys") or []
+    if not keys:
+        return []
+    sigungu = legal.get("sigungu")
+    try:
+        from app.services.legal.legal_reference_registry import get_legal_refs
+
+        return get_legal_refs(keys, sigungu=sigungu)
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _build_data_quality(
+    *,
+    used_sources: list[str],
+    quantitative_reliable: bool,
+    ordinance_confirmed: bool = False,
+) -> dict[str, Any]:
+    """데이터 품질·할루시네이션 검증 메타(G2) — CalculationMetadata + PublicDataRegistry 조립.
+
+    - confidence_level: CalculationMetadata가 하드코딩 소스 사용 시 자동 강등(high→medium).
+    - quantitative_reliable: 기존 pnu 차단 분기(:194)와 동일 조건(중복 로직 0).
+    - sources_meta/warnings/disclaimer: 레지스트리·메타에서 조회. 과하지 않게 핵심 소스만.
+    """
+    try:
+        from app.services.data_validation.calculation_metadata import CalculationMetadata
+        from app.services.data_validation.public_data_registry import PublicDataRegistry
+
+        meta = CalculationMetadata("precheck")
+        # 정량 진단에 실제 기여한 핵심 소스(자동수집 1 + 하드코딩 한도 1).
+        meta.add_source("vworld_zoning", "공공API", is_live=True)
+        meta.add_source("zone_bcr_far_limits", "하드코딩", is_live=False)  # 자동 경고+강등
+        if ordinance_confirmed:
+            meta.add_source("local_ordinance", "공공API", is_live=True)
+
+        registry = PublicDataRegistry.get_instance()
+        # sources_meta: 사용 소스의 타입·실시간 여부(간이 표기).
+        sources_meta: list[dict] = []
+        for name in ("vworld_zoning", "zone_bcr_far_limits"):
+            st = registry.get_status(name)
+            if st is not None:
+                sources_meta.append({
+                    "name": st.name,
+                    "type": "하드코딩" if st.source_type == "hardcoded" else "공공API",
+                    "is_live": st.source_type != "hardcoded",
+                    "update_frequency": st.update_frequency,
+                })
+
+        confidence = meta.confidence_level
+        # 정량 신뢰불가(pnu 미확인)면 보수적으로 low.
+        if not quantitative_reliable:
+            confidence = "low"
+
+        warnings = list(meta.warnings)
+        if not quantitative_reliable:
+            warnings.append(
+                "필지(PNU)가 확인되지 않아 정량 진단을 신뢰할 수 없습니다(참고용)."
+            )
+
+        return {
+            "confidence_level": confidence,
+            "quantitative_reliable": quantitative_reliable,
+            "warnings": warnings,
+            "sources_meta": sources_meta,
+            "disclaimer": "본 진단은 참고용이며, 실제 의사결정 시 전문가 확인을 권장합니다.",
+        }
+    except Exception:  # noqa: BLE001 — 검증 모듈 실패 시 간이 표기로 폴백(graceful).
+        return {
+            "confidence_level": "medium" if quantitative_reliable else "low",
+            "quantitative_reliable": quantitative_reliable,
+            "warnings": (
+                [] if quantitative_reliable
+                else ["필지(PNU) 미확인 — 정량 진단 신뢰 불가(참고용)."]
+            ),
+            "sources_meta": [],
+            "disclaimer": "본 진단은 참고용이며, 실제 의사결정 시 전문가 확인을 권장합니다.",
+        }
+
+
+def _fmt_pct(v) -> Optional[str]:
+    """퍼센트 표기 — 250 → '250%'. None/빈값 → None."""
+    if v is None:
+        return None
+    try:
+        n = float(v)
+    except (TypeError, ValueError):
+        return None
+    return f"{int(n)}%" if n == int(n) else f"{n:g}%"
+
+
+def _build_evidence(
+    *,
+    legal: dict[str, Any],
+    area_checks: list[dict[str, str]],
+    legal_refs: list[dict],
+    area_sqm: Optional[float],
+    feasibility_band: Optional[dict] = None,
+) -> list[dict]:
+    """한도·면적 산출 트레이스(EvidencePanel 소비 구조).
+
+    {id, target, inputs[], formula, result, legal_ref_keys[]}. zone_type 미확정(법정한도
+    미매핑) 시 빈 배열. 조례 실효값이 법정과 다르면 적용값 트레이스를 추가한다.
+    """
+    far_legal = legal.get("far_pct")
+    bcr_legal = legal.get("bcr_pct")
+    if far_legal is None and bcr_legal is None:
+        return []
+
+    ref_keys = legal.get("legal_ref_keys") or []
+    applied_far = legal.get("applied_far_pct")
+    sigungu = legal.get("sigungu") or "지자체"
+    ordinance_confirmed = bool(legal.get("ordinance_confirmed"))
+
+    evidence: list[dict] = []
+
+    # (1) 적용 용적률 트레이스(법정 vs 조례 min).
+    far_legal_fmt = _fmt_pct(far_legal)
+    applied_far_fmt = _fmt_pct(applied_far)
+    if far_legal_fmt:
+        if ordinance_confirmed and applied_far_fmt and applied_far_fmt != far_legal_fmt:
+            formula = f"적용 용적률 = min(법정상한 {far_legal_fmt}, {sigungu} 조례 {applied_far_fmt})"
+            result = applied_far_fmt
+            keys = [k for k in ref_keys if k in ("far_limit", "ordinance_far")]
+        else:
+            formula = f"법정 용적률 상한 = {far_legal_fmt}"
+            result = far_legal_fmt
+            keys = [k for k in ref_keys if k == "far_limit"]
+        far_inputs = [f"zone_type={legal.get('zone_type') or ''}".rstrip("=")]
+        if ordinance_confirmed:
+            far_inputs.append(f"sigungu={sigungu}")
+        evidence.append({
+            "id": "ev_far",
+            "target": "legal_limits.far_pct",
+            "inputs": far_inputs,
+            "formula": formula,
+            "result": result,
+            "legal_ref_keys": keys,
+        })
+
+    # (2) 건폐율 트레이스.
+    bcr_legal_fmt = _fmt_pct(bcr_legal)
+    if bcr_legal_fmt:
+        evidence.append({
+            "id": "ev_bcr",
+            "target": "legal_limits.bcr_pct",
+            "inputs": [f"sigungu={sigungu}"],
+            "formula": f"법정 건폐율 상한 = {bcr_legal_fmt}",
+            "result": bcr_legal_fmt,
+            "legal_ref_keys": [k for k in ref_keys if k == "bcr_limit"],
+        })
+
+    # (3) 가용 연면적 트레이스(면적 확정 시).
+    if area_sqm and applied_far is not None:
+        try:
+            gfa = round(float(area_sqm) * float(applied_far) / 100.0)
+            evidence.append({
+                "id": "ev_buildable",
+                "target": "methods[].checks.용적률",
+                "inputs": [f"area_sqm={area_sqm:g}", f"applied_far={_fmt_pct(applied_far)}"],
+                "formula": f"연면적 = 대지면적 × 적용용적률 = {area_sqm:g} × {float(applied_far) / 100:g}",
+                "result": f"{gfa:,}㎡",
+                "legal_ref_keys": [k for k in ref_keys if k in ("far_limit", "ordinance_far")],
+            })
+        except (TypeError, ValueError):
+            pass
+
+    # (4) 수지 밴드 트레이스(feasibility_band 산출 시).
+    if feasibility_band and feasibility_band.get("scenarios", {}).get("base"):
+        base = feasibility_band["scenarios"]["base"]
+        evidence.append({
+            "id": "ev_feasibility",
+            "target": "feasibility_band.base",
+            "inputs": [
+                f"method={feasibility_band.get('method_code')}",
+                f"npv={base.get('npv_won')}",
+            ],
+            "formula": "aggregate_feasibility(revenue - (land+construction+finance+other+tax))",
+            "result": (
+                f"NPV {base.get('npv_won')}원 / 이익률 {base.get('profit_rate_pct')}% / "
+                f"{base.get('grade')}등급"
+            ),
+            "legal_ref_keys": [],
+        })
+
+    return evidence
 
 
 def _area_checks(area_sqm: Optional[float], legal: dict[str, Any]) -> list[dict[str, str]]:
@@ -201,8 +544,8 @@ async def run_instant_precheck(
             "sources": sources,
         }
 
-    # ── 2) 법정 한도 + 후보 개발방식 ──
-    legal = _legal_limits(zone_type)
+    # ── 2) 법정 한도(조례 실효값 가산) + 후보 개발방식 ──
+    legal = await _legal_limits(zone_type, address)
     permitted_codes = get_permitted_types(zone_type)
     area_checks = _area_checks(resolved_area, legal)
 
@@ -235,6 +578,30 @@ async def run_instant_precheck(
         if summary["llm_note"]:
             sources.append("llm(anthropic)")
 
+    # ── 5) 신뢰 레이어(additive) — inputs/data_quality/legal_refs/evidence/feasibility_band ──
+    # 전부 가산 필드. 조립 실패해도 기존 응답은 무손상(graceful).
+    inputs = _build_inputs(
+        zone_type=zone_type, resolved_pnu=resolved_pnu, resolved_area=resolved_area,
+        official_price=None,
+    )
+    legal_refs = _build_legal_refs(legal)
+    # 정량 신뢰 가능 여부 = 기존 pnu 차단 분기(:194)와 동일 조건(pnu 확인). 여기 도달=확인됨.
+    quantitative_reliable = bool(resolved_pnu)
+    data_quality = _build_data_quality(
+        used_sources=sources, quantitative_reliable=quantitative_reliable,
+        ordinance_confirmed=bool(legal.get("ordinance_confirmed")),
+    )
+    feasibility_band = _build_feasibility_band(
+        best_code=best, zone_type=zone_type, legal=legal,
+        area_sqm=resolved_area, address=address,
+        official_price_per_sqm=None,
+        quantitative_reliable=quantitative_reliable,
+    )
+    evidence = _build_evidence(
+        legal=legal, area_checks=area_checks, legal_refs=legal_refs,
+        area_sqm=resolved_area, feasibility_band=feasibility_band,
+    )
+
     return {
         "ok": True,
         "address": address,
@@ -246,6 +613,12 @@ async def run_instant_precheck(
         "summary": summary,
         "elapsed_ms": int((time.perf_counter() - t0) * 1000),
         "sources": sources,
+        # ── additive 신뢰 블록(선택적 렌더) ──
+        "inputs": inputs,
+        "data_quality": data_quality,
+        "legal_refs": legal_refs,
+        "evidence": evidence,
+        "feasibility_band": feasibility_band,
     }
 
 
@@ -277,6 +650,184 @@ async def _llm_one_liner(
         text = (text or "").strip()
         return text[:200] or None
     except Exception:  # noqa: BLE001
+        return None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# feasibility_band(최저/기본/최대) — best 후보 1건만 3시나리오(90초 SLA 보호).
+# 새 계산로직 0: ModuleInput → FeasibilityServiceV2.calculate(검증된 엔진)를
+# run_sensitivity_analysis의 calculate_fn 클로저로 감싸 분양가·공사비·분양률을 밴드로 흔든다.
+# ─────────────────────────────────────────────────────────────────────────────
+# 밴드 가정(최저/기본/최대) — 분양가 ±15%, 공사비 ∓(상승/하락), 분양률 0.85~1.0.
+_BAND_ASSUMPTIONS: dict[str, dict[str, float]] = {
+    "min":  {"sale_price_delta_pct": -15.0, "construction_cost_delta_pct": 10.0, "sale_ratio": 0.85},
+    "base": {"sale_price_delta_pct": 0.0,   "construction_cost_delta_pct": 0.0,  "sale_ratio": 0.95},
+    "max":  {"sale_price_delta_pct": 15.0,  "construction_cost_delta_pct": -10.0, "sale_ratio": 1.0},
+}
+
+
+def _build_band_module_input(
+    *,
+    best_code: str,
+    zone_type: str,
+    legal: dict[str, Any],
+    area_sqm: float,
+    address: Optional[str],
+    official_price_per_sqm: Optional[float],
+):
+    """best 후보 → ModuleInput 구성(auto_recommend_top3 헬퍼 재사용, 새 산식 0).
+
+    적용 용적률(applied_far_pct, 조례 실효값 우선)로 연면적·세대수를 산정한다.
+    """
+    from app.services.feasibility.feasibility_service_v2 import FeasibilityServiceV2
+    from app.services.feasibility.modules.base_module import ModuleInput
+
+    svc = FeasibilityServiceV2()
+    # 적용 용적률(조례 실효값 우선) 우선, 없으면 법정상한, 그래도 없으면 유형 일반값.
+    applied_far = legal.get("applied_far_pct") or legal.get("far_pct")
+    typical_far = svc._get_type_typical_far(best_code)
+    effective_far = min(float(applied_far), typical_far) if applied_far else typical_far
+
+    total_gfa = area_sqm * effective_far / 100.0
+    eff_ratio = svc._get_type_efficiency_ratio(best_code)
+    avg_unit_area = svc._get_type_avg_unit_area(best_code)
+    total_hh = max(1, int(total_gfa * eff_ratio / avg_unit_area))
+    region = (legal.get("sigungu") or _extract_sigungu_from_address(address) or "서울")
+
+    inp = ModuleInput(
+        development_type=best_code,
+        total_land_area_sqm=area_sqm,
+        total_gfa_sqm=total_gfa,
+        total_households=total_hh,
+        avg_sale_price_per_pyeong=svc._get_regional_price(best_code, region, address or ""),
+        avg_area_pyeong=(avg_unit_area / eff_ratio) / 3.305785,
+        sale_ratio=0.95 if best_code not in ("M14", "M15") else 0.0,
+        official_price_per_sqm=official_price_per_sqm or 1_500_000,
+        price_multiplier=1.1,
+        building_type=svc._get_building_type(best_code),
+        sido_name=region,
+        sigungu_name="",
+        project_months=svc._get_type_project_months(best_code),
+        discount_rate=0.08,
+    )
+    return svc, inp
+
+
+def _build_feasibility_band(
+    *,
+    best_code: Optional[str],
+    zone_type: Optional[str],
+    legal: dict[str, Any],
+    area_sqm: Optional[float],
+    address: Optional[str],
+    official_price_per_sqm: Optional[float] = None,
+    quantitative_reliable: bool = True,
+) -> Optional[dict]:
+    """최저/기본/최대 3시나리오 밴드 — 검증된 수지엔진 호출만(새 계산로직 금지).
+
+    best 후보 1건에 대해 분양가(±15%)·공사비(∓)·분양률(0.85~1.0)을 흔들어
+    run_sensitivity_analysis(custom 3점)로 NPV/이익률/ROI/등급을 산출한다.
+    best 없거나 면적 미확정·정량 신뢰불가면 None(밴드 생략 — 빈 결과/과장 금지).
+    """
+    if not best_code or not zone_type or not area_sqm or not quantitative_reliable:
+        return None
+    try:
+        svc, base_inp = _build_band_module_input(
+            best_code=best_code, zone_type=zone_type, legal=legal,
+            area_sqm=float(area_sqm), address=address,
+            official_price_per_sqm=official_price_per_sqm,
+        )
+        # 입력 검증(엔진 가드) — 실패 시 밴드 생략.
+        if base_inp.total_gfa_sqm <= 0 or base_inp.total_land_area_sqm <= 0:
+            return None
+
+        import dataclasses
+
+        from app.services.feasibility.sensitivity_engine import (
+            SensitivityScenario,
+            run_sensitivity_analysis,
+        )
+
+        base_sale_price = base_inp.avg_sale_price_per_pyeong
+
+        base_cost_index = float(base_inp.params.get("cost_index_factor", 1.0) or 1.0)
+
+        def calculate_fn(values: dict[str, float]) -> dict[str, Any]:
+            """값 dict → {profit_rate_pct, npv_won, roi_pct, grade}. 검증된 엔진만 호출.
+
+            공사비 변동은 construction_cost_engine이 실제로 읽는 params.cost_index_factor로
+            반영한다(밴드 단조성 보장). 분양가는 avg_sale_price_per_pyeong, 분양률은 sale_ratio.
+            """
+            sale_price = values.get("sale_price", base_sale_price)
+            cost_mult = values.get("construction_cost", 1.0)
+            sale_ratio = values.get("sale_ratio", base_inp.sale_ratio)
+            inp = dataclasses.replace(
+                base_inp,
+                avg_sale_price_per_pyeong=sale_price,
+                sale_ratio=sale_ratio,
+                params={**base_inp.params, "cost_index_factor": base_cost_index * cost_mult},
+            )
+            out = svc.calculate(inp)
+            return {
+                "profit_rate_pct": out.profit_rate_pct,
+                "npv_won": out.npv_won,
+                "roi_pct": out.roi_pct,
+                "grade": out.grade,
+            }
+
+        # 3점 커스텀 시나리오(분양가/공사비). 분양률은 시나리오별 base_values로 직접 주입.
+        scenarios = [
+            SensitivityScenario("분양가 변동", "sale_price", [-15.0, 0.0, 15.0]),
+            SensitivityScenario("공사비 변동", "construction_cost", [-10.0, 0.0, 10.0]),
+        ]
+
+        def _scenario_result(key: str) -> dict[str, Any]:
+            a = _BAND_ASSUMPTIONS[key]
+            values = {
+                "sale_price": base_sale_price * (1 + a["sale_price_delta_pct"] / 100.0),
+                "construction_cost": 1 + a["construction_cost_delta_pct"] / 100.0,
+                "sale_ratio": a["sale_ratio"],
+            }
+            r = calculate_fn(values)
+            return {
+                "npv_won": r["npv_won"],
+                "profit_rate_pct": r["profit_rate_pct"],
+                "roi_pct": r["roi_pct"],
+                "grade": r["grade"],
+                "assumptions": dict(a),
+            }
+
+        scn = {k: _scenario_result(k) for k in ("min", "base", "max")}
+
+        # band_drivers: 토네이도(base 기준 ±delta 스프레드 상위).
+        sens = run_sensitivity_analysis(
+            base_values={
+                "sale_price": base_sale_price,
+                "construction_cost": 1.0,
+                "sale_ratio": base_inp.sale_ratio,
+            },
+            calculate_fn=calculate_fn,
+            scenarios=scenarios,
+        )
+        band_drivers = [
+            {"variable": t["variable"], "name": t["name"], "spread_pct": round(t["spread"], 2)}
+            for t in sens.get("tornado", [])
+        ]
+
+        from app.services.feasibility.permit_validator import DEVELOPMENT_TYPE_NAMES
+
+        return {
+            "method_code": best_code,
+            "method_name": DEVELOPMENT_TYPE_NAMES.get(best_code, best_code),
+            "scenarios": scn,
+            "band_drivers": band_drivers,
+            "evidence_ref": "ev_feasibility",
+            "note": "best 후보 1건의 3시나리오(최저/기본/최대) — 검증된 수지엔진 산출(참고용).",
+        }
+    except Exception:  # noqa: BLE001 — 밴드 산출 실패 시 생략(기존 응답 무손상).
+        import structlog
+
+        structlog.get_logger().warning("feasibility_band 산출 스킵")
         return None
 
 

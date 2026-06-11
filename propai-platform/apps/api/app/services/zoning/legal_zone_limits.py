@@ -21,6 +21,20 @@ from app.services.zoning.auto_zoning_service import ZONE_LIMITS
 # 법정 출처 주석(그라운딩/배지 표기에 사용)
 LEGAL_BASIS = "국토계획법 시행령 제84·85조(용도지역별 건폐율·용적률 상한)"
 
+# ── 법령 원문링크 근거키 매핑(법령 레퍼런스 레지스트리 키와 일치) ──
+# 용도지역 한도(건폐율/용적률/용도지역제한)의 근거 조문을 가리키는 키.
+# 값은 legal_reference_registry(LEGAL_REFERENCES) 키 명명과 정확히 일치해야 하며
+# (불일치 시 법령 딥링크가 깨짐), law.go.kr 한글주소 딥링크는 레지스트리가 보유한다.
+#   bcr → 국토계획법 시행령 제84조(용도지역 안에서의 건폐율)
+#   far → 국토계획법 시행령 제85조(용도지역 안에서의 용적률)
+#   use → 국토계획법 제76조(용도지역에서의 건축물 제한)
+# (이 모듈은 키만 노출하고 URL 생성/매핑은 하지 않는다 — 데이터 매핑은 레지스트리 책임.)
+LEGAL_REF_KEYS: dict[str, str] = {
+    "bcr": "bcr_limit",
+    "far": "far_limit",
+    "use": "zone_use",
+}
+
 # ── 법정 '범위'(국토계획법 시행령 제85조) ──
 # 시행령은 용적률을 단일값이 아닌 범위(min~max)로 두고, 구체 적용값은 지자체 도시계획조례로
 # 정한다. ZONE_LIMITS(auto_zoning)의 max_far는 이 범위의 '상한'이다. 본 표는 그 '하한'을
@@ -148,6 +162,9 @@ def legal_limits_for(zone_type: str | None) -> dict[str, Any] | None:
         "min_far_pct": min_far,
         "max_height_m": limits.get("max_height_m"),
         "legal_basis": LEGAL_BASIS,
+        # 옵셔널: 건폐율/용적률 한도의 법령 원문링크 근거키(레지스트리 키와 일치).
+        # 기존 키는 전부 유지하며, 소비자는 이 키를 옵셔널로 읽는다(없어도 무해).
+        "legal_ref_keys": {"bcr": LEGAL_REF_KEYS["bcr"], "far": LEGAL_REF_KEYS["far"]},
     }
 
 

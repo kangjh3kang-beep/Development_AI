@@ -8,7 +8,7 @@
  * AI 통합 해석, 필지 구획도를 함께 제공한다. (POST /regulation/analyze)
  */
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Card, CardContent, Input } from "@propai/ui";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { dynamicMap } from "@/components/common/MapShell";
@@ -28,6 +28,9 @@ import type { Locale } from "@/i18n/config";
 
 export function RegulationsWorkspaceClient({ locale }: { locale: Locale }) {
   const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
+  // 프로젝트 선택 추적(projectId 변경 = 새 프로젝트 선택) — PNU 자동 채움 트리거.
+  const ctxProjectId = useProjectContextStore((s) => s.projectId);
+  const ctxPnu = siteAnalysis?.pnu ?? null;
   const [addr, setAddr] = useState("");
   const [pnu, setPnu] = useState("");
   const [useLlm, setUseLlm] = useState(true);
@@ -35,6 +38,16 @@ export function RegulationsWorkspaceClient({ locale }: { locale: Locale }) {
   const [error, setError] = useState("");
   const [llmGated, setLlmGated] = useState(false);
   const [result, setResult] = useState<RegResult | null>(null);
+
+  // 프로젝트 선택 시 주소(ProjectAddressInput→setAddr)에 더해 PNU도 입력칸에 자동 채움.
+  // ProjectAddressInput이 선택 프로젝트의 pnu를 컨텍스트(siteAnalysis.pnu)에 기록하므로,
+  // 활성 프로젝트가 있고 컨텍스트 PNU가 있으면 빈 PNU 입력칸에 반영한다(사용자 입력은 보존).
+  useEffect(() => {
+    if (ctxProjectId && ctxPnu && !pnu.trim()) {
+      setPnu(String(ctxPnu));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ctxProjectId, ctxPnu]);
 
   const run = useCallback(async () => {
     const target = addr || siteAnalysis?.address || "";
