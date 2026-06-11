@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PropAI 서비스 이용 동선 (카카오 심사 제출용)</title>
+    <style>
+        body {
+            font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, Roboto, 'Helvetica Neue', 'Segoe UI', 'Apple SD Gothic Neo', 'Noto Sans KR', 'Malgun Gothic', sans-serif;
+            background-color: #f8f9fa;
+            color: #333;
+            margin: 0;
+            padding: 40px;
+            display: flex;
+            justify-content: center;
+        }
+
+        .container {
+            width: 1200px;
+            background-color: #ffffff;
+            border-radius: 16px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.05);
+            padding: 60px;
+            box-sizing: border-box;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 60px;
+            padding-bottom: 30px;
+            border-bottom: 2px solid #f1f3f5;
+        }
+
+        .header h1 {
+            font-size: 32px;
+            font-weight: 800;
+            color: #111;
+            margin: 0 0 15px 0;
+        }
+
+        .header p {
+            font-size: 16px;
+            color: #666;
+            margin: 0;
+        }
+
+        .flow-container {
+            display: flex;
+            flex-direction: column;
+            gap: 40px;
+        }
+
+        .step {
+            display: flex;
+            align-items: flex-start;
+            gap: 40px;
+            background: #fff;
+            border: 1px solid #e9ecef;
+            border-radius: 12px;
+            padding: 30px;
+        }
+
+        .step-number {
+            flex-shrink: 0;
+            width: 50px;
+            height: 50px;
+            background-color: #fee500;
+            color: #000000;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            font-weight: 900;
+        }
+
+        .step-content {
+            flex-grow: 1;
+        }
+
+        .step-content h3 {
+            font-size: 22px;
+            margin: 0 0 10px 0;
+            color: #212529;
+        }
+
+        .step-content p {
+            font-size: 15px;
+            color: #495057;
+            margin: 0 0 20px 0;
+            line-height: 1.6;
+        }
+
+        .img-placeholder {
+            width: 100%;
+            border-radius: 8px;
+            border: 1px solid #dee2e6;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+            overflow: hidden;
+            background: #f8f9fa;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 300px;
+            position: relative;
+        }
+
+        .img-placeholder img {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
+
+        .img-placeholder::before {
+            content: "여기에 스크린샷이 표시됩니다. (같은 폴더에 step1.png, step2.png, step3.png 저장)";
+            position: absolute;
+            color: #adb5bd;
+            font-size: 14px;
+            z-index: 0;
+        }
+
+        .img-placeholder img {
+            position: relative;
+            z-index: 1;
+        }
+
+        .arrow {
+            display: flex;
+            justify-content: center;
+            color: #ced4da;
+            font-size: 40px;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="container">
+        <div class="header">
+            <h1>PropAI 서비스 이용 동선 안내</h1>
+            <p>카카오 비즈니스 정보 심사를 위한 서비스 실제 이용 화면 및 동선입니다.</p>
+        </div>
+
+        <div class="flow-container">
+            <!-- Step 1 -->
+            <div class="step">
+                <div class="step-number">1</div>
+                <div class="step-content">
+                    <h3>서비스 메인 화면 및 카카오 로그인 진입</h3>
+                    <p>사용자가 서비스에 처음 진입하여 소셜 로그인을 시도하는 화면입니다.<br>소셜 로그인 영역에 위치한 <strong>'카카오 로그인'</strong> 버튼을 통해 간편하게
+                        서비스에 가입하고 로그인할 수 있습니다.</p>
+                    <div class="img-placeholder">
+                        <img src="step1.png" alt="로그인 화면" onerror="this.style.display='none'">
+                    </div>
+                </div>
+            </div>
+
+            <div class="arrow">⬇</div>
+
+            <!-- Step 2 -->
+            <div class="step">
+                <div class="step-number">2</div>
+                <div class="step-content">
+                    <h3>카카오 로그인 후 대시보드 진입</h3>
+                    <p>카카오 계정으로 로그인이 완료된 후 진입하는 <strong>메인 대시보드 화면</strong>입니다.<br>부동산 자산 분석, 90초 AI PreCheck 등 플랫폼에서
+                        제공하는 핵심 워크플로우를 한눈에 파악할 수 있습니다.</p>
+                    <div class="img-placeholder">
+                        <img src="step2.png" alt="대시보드 화면" onerror="this.style.display='none'">
+                    </div>
+                </div>
+            </div>
+
+            <div class="arrow">⬇</div>
+
+            <!-- Step 3 -->
+            <div class="step">
+                <div class="step-number">3</div>
+                <div class="step-content">
+                    <h3>주요 실무 기능 이용 (토지조서 관리 등)</h3>
+                    <p>PropAI 플랫폼이 제공하는 전문적인 <strong>토지조서(편입토지) 및 AI 부지분석 기능</strong> 화면입니다.<br>사용자는 카카오 로그인 후 이처럼 다양한
+                        프롭테크(Prop-tech) 서비스를 제한 없이 이용하게 됩니다.</p>
+                    <div class="img-placeholder">
+                        <img src="step3.png" alt="서비스 기능 화면" onerror="this.style.display='none'">
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+</body>
+
+</html>

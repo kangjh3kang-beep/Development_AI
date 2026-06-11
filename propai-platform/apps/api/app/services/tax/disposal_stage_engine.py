@@ -27,14 +27,24 @@ def calculate_d01_capital_gains_tax(
     holding_years: int = 0,
     is_residential: bool = True,
 ) -> dict[str, Any]:
-    """D01 양도소득세 (누진세율).
+    """D01 양도소득세.
+
+    소득세법 제104조: 보유 1년 미만 70%(주택)/50%(토지), 1~2년 60%(주택)/40%(토지)
+    단일세율 중과. 2년 이상 보유 시 기본 누진세율 + 장기보유특별공제(3년 이상).
 
     Args:
         gain_10k_won: 양도차익 (만원)
         holding_years: 보유기간 (년)
-        is_residential: 주거용 여부 (장기보유특별공제 적용)
+        is_residential: 주거용 여부 (단기 중과세율·장기보유특별공제 구분)
     """
-    # 장기보유특별공제
+    # 단기보유 중과세율 (단일세율, 누진·장특공제 미적용)
+    short_term_rate = None
+    if holding_years < 1:
+        short_term_rate = 0.70 if is_residential else 0.50
+    elif holding_years < 2:
+        short_term_rate = 0.60 if is_residential else 0.40
+
+    # 장기보유특별공제 (3년 이상 보유 시에만)
     deduction_rate = 0.0
     if is_residential and holding_years >= 3:
         deduction_rate = LTDC_RATES_RESIDENTIAL.get(min(holding_years, 15), 0.0)
@@ -44,15 +54,19 @@ def calculate_d01_capital_gains_tax(
 
     taxable = gain_10k_won * (1 - deduction_rate)
 
-    # 누진세율 적용
-    tax_10k = 0.0
-    applied_rate = 0.0
-    for threshold, rate, deduction in CAPITAL_GAINS_BRACKETS:
-        if taxable >= threshold:
-            applied_rate = rate
-            tax_10k = taxable * rate - deduction
+    if short_term_rate is not None:
+        applied_rate = short_term_rate
+        tax_10k = taxable * short_term_rate
+    else:
+        # 누진세율 적용
+        tax_10k = 0.0
+        applied_rate = 0.0
+        for threshold, rate, deduction in CAPITAL_GAINS_BRACKETS:
+            if taxable >= threshold:
+                applied_rate = rate
+                tax_10k = taxable * rate - deduction
 
-    amount_won = int(tax_10k * 10_000)
+    amount_won = max(0, int(tax_10k * 10_000))
 
     return {
         "code": "D01", "name": "양도소득세",
@@ -64,6 +78,7 @@ def calculate_d01_capital_gains_tax(
             "deduction_rate": deduction_rate,
             "taxable_10k": round(taxable, 2),
             "applied_bracket_rate": applied_rate,
+            "short_term_heavy_rate": short_term_rate,
         },
     }
 
@@ -118,52 +133,57 @@ def calculate_d04_ltdc(
         deduction_rate = min(holding_years * 0.02, LTDC_MAX_NON_RESIDENTIAL)
 
     reduction = int(gain_won * deduction_rate)
+    # 공제는 D01 과세표준(taxable)에 이미 반영됨 — amount_won을 0으로 두어
+    # total_won 합산 시 이중차감을 방지한다 (정보성 항목).
     return {
         "code": "D04", "name": "장기보유특별공제",
         "base_won": gain_won, "rate": deduction_rate,
-        "amount_won": -reduction,  # 음수 = 절감
+        "amount_won": 0,
+        "detail": {
+            "taxable_reduction_won": reduction,
+            "note": "D01 과세표준에 기반영 (정보성 항목, 합산 제외)",
+        },
     }
+
+
+# 재건축이익환수법 2024.3.27 개정 기준 — 조합원 1인당 초과이익 구간별 한계세율
+_RECON_LEVY_EXEMPT_WON = 80_000_000  # 면제 구간: 8천만원 이하
+_RECON_LEVY_BRACKETS = [
+    # (구간 상한 won, 한계세율) — 8천만 초과분부터 5천만원 단위
+    (130_000_000, 0.10),
+    (180_000_000, 0.20),
+    (230_000_000, 0.30),
+    (280_000_000, 0.40),
+    (None, 0.50),
+]
 
 
 def calculate_d05_reconstruction_levy(
     *,
     excess_gain_won: int,
 ) -> dict[str, Any]:
-    """D05 재건축 초과이익환수 — 5구간 누진 (오류#6 단위통일).
+    """D05 재건축 초과이익환수 — 2024.3.27 개정법 기준 누진.
 
-    구간:
-    0~3000만원: 면제
-    3000만~5000만: 10%
-    5000만~1억: 20%
-    1억~1.5억: 30%
-    1.5억~: 40%
-    최대 50%
+    구간 (조합원 1인당 초과이익):
+    8천만원 이하: 면제
+    8천만~1.3억: 10% / 1.3~1.8억: 20% / 1.8~2.3억: 30% / 2.3~2.8억: 40% / 2.8억 초과: 50%
     """
-    excess_10k = excess_gain_won / 10_000  # 만원 단위
-
-    if excess_10k <= 3_000:
-        levy = 0
-    elif excess_10k <= 5_000:
-        levy = int((excess_10k - 3_000) * 0.10 * 10_000)
-    elif excess_10k <= 10_000:
-        levy = int(((5_000 - 3_000) * 0.10 + (excess_10k - 5_000) * 0.20) * 10_000)
-    elif excess_10k <= 15_000:
-        levy = int(((5_000 - 3_000) * 0.10 + (10_000 - 5_000) * 0.20 + (excess_10k - 10_000) * 0.30) * 10_000)
-    else:
-        levy = int((
-            (5_000 - 3_000) * 0.10
-            + (10_000 - 5_000) * 0.20
-            + (15_000 - 10_000) * 0.30
-            + (excess_10k - 15_000) * 0.40
-        ) * 10_000)
-        # 최대 50% cap
-        levy = min(levy, int(excess_gain_won * 0.50))
+    levy = 0
+    if excess_gain_won > _RECON_LEVY_EXEMPT_WON:
+        lower = _RECON_LEVY_EXEMPT_WON
+        for upper, rate in _RECON_LEVY_BRACKETS:
+            if upper is None or excess_gain_won <= upper:
+                levy += int((excess_gain_won - lower) * rate)
+                break
+            levy += int((upper - lower) * rate)
+            lower = upper
 
     return {
         "code": "D05", "name": "재건축 초과이익환수",
         "base_won": excess_gain_won,
         "rate": None,
         "amount_won": levy,
+        "detail": {"basis": "재건축이익환수법 2024.3.27 개정 (면제 8천만, 5천만 단위 10~50%)"},
     }
 
 

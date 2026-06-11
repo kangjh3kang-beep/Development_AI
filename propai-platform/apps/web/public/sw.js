@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v143-report-multiparcel";
+const CACHE_NAME = "propai-v144-basis-dedup-roadview";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

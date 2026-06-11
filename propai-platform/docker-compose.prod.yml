@@ -9,10 +9,11 @@ services:
     container_name: propai-api-prod
     restart: always
     environment:
-      - DATABASE_URL=postgresql+asyncpg://propai:secret@postgres:5432/propaidb
+      - DATABASE_URL=postgresql+asyncpg://propai:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres:5432/propaidb
       - REDIS_URL=redis://redis:6379/0
       - ENVIRONMENT=production
       - DEBUG=false
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY must be set}
     ports:
       - "8000:8000"
     depends_on:
@@ -43,7 +44,7 @@ services:
     restart: always
     environment:
       - POSTGRES_USER=propai
-      - POSTGRES_PASSWORD=secret
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
       - POSTGRES_DB=propaidb
     volumes:
       - propai_pg_data:/var/lib/postgresql/data

@@ -478,6 +478,20 @@ class LandInfoService:
             except Exception as e:
                 logger.warning("건축물대장 상세 조회 실패: %s (%s)", effective_pnu, str(e))
 
+        # 건축물대장 조회 상태 — 프론트가 "확정 나대지"와 "조회불가(미승인)"를 구분하도록 신호.
+        #   ok=건축물있음 / no_data=조회성공·무건축물(나대지) / unavailable=미승인·오류(확인불가) / no_key=키없음
+        _bstatus = getattr(self.building, "last_status", "unknown")
+        if result.get("building_info") or result.get("building_detail"):
+            result["building_lookup_status"] = "ok"
+        elif _bstatus == "no_data":
+            result["building_lookup_status"] = "no_data"
+        elif _bstatus == "no_key":
+            result["building_lookup_status"] = "no_key"
+        elif _bstatus in ("unauthorized", "error"):
+            result["building_lookup_status"] = "unavailable"
+        else:
+            result["building_lookup_status"] = "unknown"
+
         # Phase 2-C: 인근 실거래가 수집 (MOLIT API — 반경 1km / 최근 1년)
         try:
             tx_summary = await self._fetch_nearby_transactions(address, effective_pnu)

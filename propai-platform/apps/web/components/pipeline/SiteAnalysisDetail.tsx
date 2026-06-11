@@ -570,7 +570,24 @@ export function SiteAnalysisDetail({ data, hideInterpretation = false, parcels }
             );
           })()
         ) : (
-          <p className="sa-di-empty">기존 건축물 없음 (나대지)</p>
+          (() => {
+            // 건축물대장 조회 상태에 따라 정직하게 구분 — 미승인/오류를 "나대지"로 단정하지 않는다.
+            const bStatus = s(data.building_lookup_status);
+            if (bStatus === "no_data") {
+              return <p className="sa-di-empty">기존 건축물 없음 (나대지) · 건축물대장 조회 결과 등재 건축물 없음</p>;
+            }
+            if (bStatus === "unavailable" || bStatus === "no_key" || bStatus === "unknown") {
+              return (
+                <p className="sa-di-empty">
+                  건축물대장 미확인 — 공공 API(건축HUB) 미승인 상태로 기존 건축물 여부를 확인할 수 없습니다.
+                  <br />
+                  <span className="text-[11px] opacity-80">data.go.kr에서 ‘건축물대장정보(BldRgstHubService)’ 활용신청 승인 후 자동 표시됩니다.</span>
+                </p>
+              );
+            }
+            // 상태신호 없는 구버전 응답 → 기존 문구 유지
+            return <p className="sa-di-empty">기존 건축물 없음 (나대지)</p>;
+          })()
         )}
       </CategoryCard>
 

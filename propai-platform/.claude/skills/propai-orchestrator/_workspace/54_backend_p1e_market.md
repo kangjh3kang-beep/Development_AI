@@ -41,7 +41,7 @@
 - 기존 sales_rls_bootstrap.py 무수정(무파괴)
 
 ## 6. 커밋해시
-(아래 커밋 후 기재)
+`8d9e35b` — feat(market): Phase1-E 직원관리+공통 구인구직 마켓+재사용 프로필 — public 컨텐츠·공개범위·채용연계 (3 files, +930)
 
 ## 7. 프론트 계약(페이로드) · 미진점
 ### 프로필(개인) — PUT /market/profile/personal

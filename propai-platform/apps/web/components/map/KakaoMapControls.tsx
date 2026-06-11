@@ -56,6 +56,10 @@ export function KakaoMapControls({
 
   const rvElRef = useRef<HTMLDivElement | null>(null);
   const rvRef = useRef<any>(null);
+  // 로드뷰 좌하단 위치 미니맵(PiP) — 현재 로드뷰 지점·시선방향을 작은 지도로 실시간 표시
+  const rvMiniElRef = useRef<HTMLDivElement | null>(null);
+  const rvMiniRef = useRef<any>(null);
+  const rvMarkerRef = useRef<any>(null);
 
   // 측정 상태
   const pointsRef = useRef<any[]>([]);
@@ -133,25 +137,63 @@ export function KakaoMapControls({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [measure, ready, mapRef]);
 
-  // ── 로드뷰 ──
+  // ── 로드뷰 + 좌하단 위치 미니맵(PiP) ──
   useEffect(() => {
     const kakao = (window as any).kakao;
     if (!ready || !mapRef.current || !kakao) return;
     if (!rvOn) return;
     const center = mapRef.current.getCenter();
     if (!rvRef.current && rvElRef.current) rvRef.current = new kakao.maps.Roadview(rvElRef.current);
+    const rv = rvRef.current;
+
+    // 시선방향 표시 마커: 가운데 점 + 위쪽 부채꼴(시선). wrap을 회전시켜 방향 표현.
+    const wrap = document.createElement("div");
+    wrap.style.cssText = "position:relative;width:30px;height:30px;transform-origin:50% 50%;transition:transform .12s linear";
+    const cone = document.createElement("div");
+    cone.style.cssText = "position:absolute;left:50%;top:-1px;transform:translateX(-50%);width:0;height:0;border-left:9px solid transparent;border-right:9px solid transparent;border-bottom:15px solid rgba(37,99,235,.55)";
+    const dot = document.createElement("div");
+    dot.style.cssText = "position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:11px;height:11px;border-radius:50%;background:#2563eb;border:2px solid #fff;box-shadow:0 0 3px rgba(0,0,0,.5)";
+    wrap.appendChild(cone); wrap.appendChild(dot);
+
+    const lsnrs: any[] = [];
     try {
       new kakao.maps.RoadviewClient().getNearestPanoId(center, 100, (panoId: any) => {
-        if (panoId && rvRef.current) {
-          rvRef.current.setPanoId(panoId, center);
-          setTimeout(() => { try { rvRef.current.relayout(); } catch { /* noop */ } }, 80);
-        } else {
+        if (!panoId || !rv) {
           setRvOn(false);
           // eslint-disable-next-line no-alert
           alert("이 위치 주변의 로드뷰가 없습니다.");
+          return;
+        }
+        rv.setPanoId(panoId, center);
+        setTimeout(() => { try { rv.relayout(); } catch { /* noop */ } }, 80);
+
+        // 미니맵 생성(최초 1회) + 마커 부착
+        if (rvMiniElRef.current && !rvMiniRef.current) {
+          rvMiniRef.current = new kakao.maps.Map(rvMiniElRef.current, { center, level: 3, draggable: false, disableDoubleClickZoom: true });
+          try { rvMiniRef.current.setZoomable(false); } catch { /* noop */ }
+        }
+        const mini = rvMiniRef.current;
+        if (mini) {
+          rvMarkerRef.current = new kakao.maps.CustomOverlay({ map: mini, position: center, content: wrap, xAnchor: 0.5, yAnchor: 0.5, zIndex: 10 });
+          setTimeout(() => { try { mini.relayout(); mini.setCenter(center); } catch { /* noop */ } }, 120);
+
+          // 로드뷰 위치 이동 → 미니맵 중심·마커 동기화
+          lsnrs.push(kakao.maps.event.addListener(rv, "position_changed", () => {
+            try { const p = rv.getPosition(); mini.setCenter(p); rvMarkerRef.current?.setPosition(p); } catch { /* noop */ }
+          }));
+          // 시점(방위) 변경 → 부채꼴 회전(pan: 0=북, 시계방향)
+          lsnrs.push(kakao.maps.event.addListener(rv, "viewpoint_changed", () => {
+            try { wrap.style.transform = `rotate(${rv.getViewpoint().pan}deg)`; } catch { /* noop */ }
+          }));
         }
       });
     } catch { setRvOn(false); }
+
+    return () => {
+      lsnrs.forEach((l) => { try { kakao.maps.event.removeListener(l); } catch { /* noop */ } });
+      try { rvMarkerRef.current?.setMap(null); } catch { /* noop */ }
+      rvMarkerRef.current = null;
+    };
   }, [rvOn, ready, mapRef]);
 
   if (!ready) return null;
@@ -162,8 +204,9 @@ export function KakaoMapControls({
   return (
     <>
       {/* 상단 우측: 지도유형 + 지적편집도 — 한 줄 가로로 연달아 */}
-      {/* 우측 상단: 텍스트 컨트롤(한 줄) + 그 아래 세로 아이콘 메뉴 */}
-      <div className="absolute right-2 top-2 z-[450] flex flex-col items-end gap-1.5">
+      {/* 우측 상단: 텍스트 컨트롤(한 줄) + 그 아래 세로 아이콘 메뉴
+          로드뷰 진입 시에는 지도유형/지적편집도 토글이 '지도로' 닫기버튼과 겹치므로 숨긴다. */}
+      <div className={`absolute right-2 top-2 z-[450] flex flex-col items-end gap-1.5 ${rvOn ? "hidden" : ""}`}>
         <div className="flex items-center gap-1">
           <div className="flex overflow-hidden rounded-md border border-black/10 shadow-sm">
             {(["ROADMAP", "SKYVIEW", "HYBRID"] as MapType[]).map((t) => (
@@ -219,13 +262,20 @@ export function KakaoMapControls({
         </div>
       )}
 
-      {/* 로드뷰 오버레이 + 닫기 */}
-      <div ref={rvElRef} className={`absolute inset-0 z-[440] overflow-hidden rounded-xl ${rvOn ? "" : "hidden"}`} />
+      {/* 로드뷰 오버레이 + 닫기 + 좌하단 위치 미니맵 */}
+      <div ref={rvElRef} className={`absolute inset-0 z-[455] overflow-hidden rounded-xl ${rvOn ? "" : "hidden"}`} />
       {rvOn && (
-        <button type="button" onClick={() => setRvOn(false)} className="absolute right-2 top-2 z-[460] rounded-md bg-black/70 px-2 py-1 text-[11px] font-bold text-white">
+        <button type="button" onClick={() => setRvOn(false)} className="absolute right-2 top-2 z-[470] rounded-md bg-black/70 px-2.5 py-1 text-[11px] font-bold text-white shadow-md hover:bg-black/85">
           ✕ 지도로
         </button>
       )}
+      {/* 좌하단 위치 미니맵(PiP): 현재 로드뷰 지점·시선방향 실시간 표시 */}
+      <div className={`absolute bottom-2 left-2 z-[465] ${rvOn ? "" : "hidden"}`}>
+        <div className="overflow-hidden rounded-lg border-2 border-white/80 shadow-lg" style={{ width: 150, height: 110 }}>
+          <div ref={rvMiniElRef} className="h-full w-full bg-slate-200" />
+        </div>
+        <div className="mt-0.5 text-center text-[9px] font-bold text-white drop-shadow">현재 위치</div>
+      </div>
     </>
   );
 }

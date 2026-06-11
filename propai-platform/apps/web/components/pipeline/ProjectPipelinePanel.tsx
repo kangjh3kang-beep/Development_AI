@@ -245,6 +245,34 @@ const COST_BREAKDOWN_ORDER = [
   "일반관리비", "예비비", "금융비", "제세공과(취득세 등)",
 ];
 
+// 수지 필드별 산정근거(주석) — 실제 백엔드 계산식과 동일. 화면에 작은 회색 글씨로 표시.
+const FIELD_BASIS: Record<string, string> = {
+  construction_cost: "공사비 분석 단계 산출(지상+지하 직접공사비)",
+  general_expense_won: "분양경비(매출×4%)+일반관리비((토지+공사)×3%)+예비비(공사×5%)",
+  finance_cost_won: "(토지비+직접공사비)×50% 차입 × 연 6.5% × 사업기간",
+  breakeven_sale_rate_pct: "총사업비 ÷ 총분양수입 × 100 (이 분양률에서 손익분기)",
+  roe_pct: "순이익 ÷ 자기자본(총사업비의 30%) × 100",
+  project_months: "공사비 분석의 추정 공기(미산출 시 기본 30개월)",
+  total_project_cost: "9개 라인아이템 합산(토지+공사+설계+인허가+분양경비+관리비+예비비+금융+제세)",
+  total_revenue: "평당 분양가 × 분양면적(전용/공용 효율 반영)",
+  net_profit: "총 분양수입 − 총 사업비",
+  profit_rate_pct: "순이익 ÷ 총 사업비 × 100",
+  grade: "예상 수익률 구간별 등급(A 우수 ~ D 주의)",
+};
+
+// 총사업비 라인아이템별 산정근거(주석)
+const COST_BASIS: Record<string, string> = {
+  "토지비": "공시지가×1.3 또는 주변 실거래시세",
+  "직접공사비": "공사비 분석(지상+지하)",
+  "설계·감리비": "직접공사비 × 5%",
+  "인허가·분담금": "직접공사비 × 3%",
+  "분양경비": "총 분양수입 × 4%",
+  "일반관리비": "(토지비+직접공사비) × 3%",
+  "예비비": "직접공사비 × 5%",
+  "금융비": "(토지+공사)×50% × 연6.5% × 사업기간",
+  "제세공과(취득세 등)": "토지비 × 4.6%",
+};
+
 // 분양가 산정근거 코드 → 한글
 const SALE_SOURCE_LABEL: Record<string, string> = {
   market_blended: "시장 블렌딩(실거래+표준)",
@@ -457,6 +485,9 @@ export function ProjectPipelinePanel({
   const completedStages = useProjectContextStore((s) => s.completedStages);
   const storeAddress = useProjectContextStore((s) => s.siteAnalysis?.address ?? "");
   const autoStartedRef = useRef(false);
+  // 부지분석 단독 실행이 남긴 "임시 이력"의 id. 이어서 전체 분석이 끝나면 이 항목을 교체(supersede)해
+  // "1회 분석 = 이력 2개(부지만/전체)" 중복을 방지한다.
+  const siteOnlyEntryIdRef = useRef<string | null>(null);
   const updateSiteAnalysis = useProjectContextStore((s) => s.updateSiteAnalysis);
   const updateDesignData = useProjectContextStore((s) => s.updateDesignData);
   const updateFeasibilityData = useProjectContextStore((s) => s.updateFeasibilityData);
@@ -539,7 +570,7 @@ export function ProjectPipelinePanel({
   );
 
   const addToHistory = useCallback(
-    (result: PipelineRunResponse, addr: string) => {
+    (result: PipelineRunResponse, addr: string, supersedeId?: string | null) => {
       const entry: HistoryEntry = {
         id: result.pipeline_id,
         address: addr,
@@ -551,7 +582,11 @@ export function ProjectPipelinePanel({
         projectId: projectMode ? (projectId || undefined) : undefined,
         mode: projectMode ? "project" : "quick",
       };
-      const updated = [entry, ...history.filter((h) => h.id !== entry.id)].slice(0, MAX_HISTORY);
+      // entry.id 중복 제거 + (있으면) 부지분석 단독 임시이력(supersedeId)도 함께 제거 → 전체분석이 대체
+      const updated = [
+        entry,
+        ...history.filter((h) => h.id !== entry.id && (!supersedeId || h.id !== supersedeId)),
+      ].slice(0, MAX_HISTORY);
       setHistory(updated);
       saveHistory(updated);
       // 분석 원장 write-through(서버 영속·기기간 공유·무결성). best-effort.
@@ -685,6 +720,8 @@ export function ProjectPipelinePanel({
         setExpandedStage("site_analysis");
         saveToStore(result);
         addToHistory(result, address.trim());  // 부지분석 단독 실행도 이력 저장
+        // 이 임시 이력 id를 기억 → 이어서 전체 분석이 끝나면 교체(중복 방지)
+        siteOnlyEntryIdRef.current = result.pipeline_id;
         if (isGuest()) bumpGuest();  // 비회원 무료 사용 횟수 증가
       } else {
         setError("부지분석에 실패했습니다. 주소를 확인해주세요.");
@@ -742,7 +779,9 @@ export function ProjectPipelinePanel({
       setWorkflowPhase("done");
 
       saveToStore(result);
-      addToHistory(result, address.trim());
+      // 전체 분석 완료 → 직전 부지분석 단독 임시이력을 교체(supersede)해 중복 이력 방지
+      addToHistory(result, address.trim(), siteOnlyEntryIdRef.current);
+      siteOnlyEntryIdRef.current = null;
     } catch (err) {
       let msg = err instanceof Error ? err.message : "알 수 없는 오류가 발생했습니다.";
       if (/fetch|network|timeout|시간|abort|load failed/i.test(msg)) {
@@ -1234,6 +1273,11 @@ export function ProjectPipelinePanel({
                             <p className="text-xs font-bold text-[var(--text-primary)] truncate">
                               {displayFieldValue(key, value)}
                             </p>
+                            {stage.stage === "feasibility" && FIELD_BASIS[key] && (
+                              <p className="mt-0.5 text-[9px] leading-tight text-[var(--text-hint)]">
+                                {FIELD_BASIS[key]}
+                              </p>
+                            )}
                           </div>
                         ))}
                     </div>
@@ -1253,8 +1297,13 @@ export function ProjectPipelinePanel({
                               const v = (stage.data.cost_breakdown as Record<string, number>)[k];
                               return (
                                 <tr key={k} className="border-t border-[var(--line)]">
-                                  <td className="px-3 py-1 text-[var(--text-secondary)]">{k}</td>
-                                  <td className="px-3 py-1 text-right font-bold text-[var(--text-primary)]">
+                                  <td className="px-3 py-1 text-[var(--text-secondary)]">
+                                    {k}
+                                    {COST_BASIS[k] && (
+                                      <span className="block text-[9px] leading-tight text-[var(--text-hint)]">{COST_BASIS[k]}</span>
+                                    )}
+                                  </td>
+                                  <td className="px-3 py-1 text-right font-bold text-[var(--text-primary)] align-top">
                                     {(v / 1e8).toLocaleString(undefined, { maximumFractionDigits: 1 })}억
                                   </td>
                                 </tr>

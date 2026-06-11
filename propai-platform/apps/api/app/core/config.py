@@ -100,15 +100,30 @@ class Settings(BaseSettings):
         case_sensitive = True
         extra = "ignore"
 
+# 유출 이력이 있거나 예제/기본값으로 쓰였던 시크릿 — 어떤 환경에서도 운영 사용 금지
+_KNOWN_WEAK_SECRETS = frozenset({
+    "propai_jwt_secret_change_in_production",
+    "propai_secret_key_change_in_production_32chars_min",
+    "da4c16477278ad3bce0f32447c0804c3b5dd4a530ca78ce19366ccb63d3fe5c8",  # .env.example 유출분
+    "replace-with-random-64-hex",
+    "hasura_super_secret_key",
+})
+
+def _validate_secret(name: str, value: str) -> None:
+    if not value:
+        raise RuntimeError(f"{name} 환경변수가 설정되지 않았습니다.")
+    if value in _KNOWN_WEAK_SECRETS:
+        raise RuntimeError(f"{name}에 유출/예제 시크릿이 설정되어 있습니다. 새 키로 교체하세요 (openssl rand -hex 32).")
+    if len(value) < 32:
+        raise RuntimeError(f"{name}는 32자 이상이어야 합니다.")
+
 @lru_cache()
 def get_settings() -> Settings:
     s = Settings()
-    # 프로덕션 환경에서 빈 비밀키 사용 차단
+    # 프로덕션 환경에서 빈/약한 비밀키 사용 차단
     if s.APP_ENV != "development" and s.APP_ENV != "test":
-        if not s.APP_SECRET_KEY:
-            raise RuntimeError("APP_SECRET_KEY 환경변수가 설정되지 않았습니다.")
-        if not s.JWT_SECRET_KEY:
-            raise RuntimeError("JWT_SECRET_KEY 환경변수가 설정되지 않았습니다.")
+        _validate_secret("APP_SECRET_KEY", s.APP_SECRET_KEY)
+        _validate_secret("JWT_SECRET_KEY", s.JWT_SECRET_KEY)
     # 개발 환경에서 빈 키 자동 생성 + 경고
     if not s.APP_SECRET_KEY:
         object.__setattr__(s, "APP_SECRET_KEY", secrets.token_urlsafe(32))

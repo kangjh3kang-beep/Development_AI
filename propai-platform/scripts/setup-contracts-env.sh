@@ -13,12 +13,12 @@ echo "--------------------------------------------------------"
 # 1. RPC URL
 read -p "1. POLYGON_AMOY_RPC_URL 을 입력하세요 (입력 후 Enter): " RPC_URL
 
-# 2. Private Key (입력 내용이 화면에 표시됩니다)
-read -p "2. DEPLOYER_PRIVATE_KEY (마스터 개인키) 를 입력하세요 (입력 후 Enter): " PRIVATE_KEY
+# 2. Private Key (-s: 입력 내용이 화면에 표시되지 않음)
+read -s -p "2. DEPLOYER_PRIVATE_KEY (마스터 개인키) 를 입력하세요 (입력 후 Enter): " PRIVATE_KEY
 echo ""
 
 # 3. Polygonscan API Key
-read -p "3. POLYGONSCAN_API_KEY 을 입력하세요 (입력 후 Enter): " SCAN_API_KEY
+read -s -p "3. POLYGONSCAN_API_KEY 을 입력하세요 (입력 후 Enter): " SCAN_API_KEY
 echo ""
 echo "--------------------------------------------------------"
 

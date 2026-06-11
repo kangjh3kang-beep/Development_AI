@@ -9,3 +9,27 @@ build/
 *.log
 .DS_Store
 .open-next
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Test artifacts
+test-results/
+playwright-report/
+
+# Runtime data
+uploads/
+qdrant_storage/
+
+# Misc
+*:Zone.Identifier
+.vercel/

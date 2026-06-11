@@ -21,6 +21,9 @@ BASE_URL = "http://apis.data.go.kr/1613000/BldRgstHubService"
 class BuildingRegistryService:
     """건축물대장 조회 서비스."""
 
+    # 마지막 조회 상태(no_key/unauthorized/error/no_data/ok). 상위 서비스가 "나대지 단정" 판단에 사용.
+    last_status: str = "unknown"
+
     async def get_building_info(self, sigungu_cd: str, bjdong_cd: str, bun: str = "", ji: str = "") -> dict[str, Any] | None:
         """시군구코드+법정동코드로 건축물대장 기본개요를 조회.
 
@@ -30,7 +33,11 @@ class BuildingRegistryService:
             bun: 본번 (4자리, 선택)
             ji: 부번 (4자리, 선택)
         """
+        # last_status: 마지막 조회 결과 상태(상위에서 "나대지 단정" 여부 판단에 사용)
+        #   no_key=키없음 / unauthorized=미승인(401·Unauthorized) / error=호출오류
+        #   no_data=조회성공·무건축물(=나대지 추정) / ok=건축물 있음
         if not settings.MOLIT_API_KEY:
+            self.last_status = "no_key"
             return None
 
         params: dict[str, str] = {
@@ -49,18 +56,28 @@ class BuildingRegistryService:
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:
                 resp = await client.get(f"{BASE_URL}/getBrBasisOulnInfo", params=params)
+                # 401/403 또는 "Unauthorized" 본문 → 미승인(활용신청 필요)
+                if resp.status_code in (401, 403) or resp.text.strip().lower().startswith("unauthorized"):
+                    self.last_status = "unauthorized"
+                    logger.warning("건축물대장 API 미승인(활용신청 필요): %s", resp.status_code)
+                    return None
                 resp.raise_for_status()
                 data = resp.json()
 
             header = data.get("response", {}).get("header", {})
             if header.get("resultCode") != "00":
+                # 인증 관련 결과코드(예: 30 서비스키 오류) → 미승인으로 분류
+                rc = str(header.get("resultCode", ""))
+                self.last_status = "unauthorized" if rc in ("30", "31", "20", "22") else "error"
                 logger.warning("건축물대장 조회 실패: %s", header.get("resultMsg"))
                 return None
 
             items = data.get("response", {}).get("body", {}).get("items", {}).get("item", [])
             if not items:
+                self.last_status = "no_data"  # 조회 성공·건축물 없음 → 나대지 추정 가능
                 return None
 
+            self.last_status = "ok"
             item = items[0] if isinstance(items, list) else items
             return {
                 "building_name": item.get("bldNm", ""),
@@ -81,6 +98,7 @@ class BuildingRegistryService:
                 "road_address": item.get("newPlatPlc", ""),
             }
         except Exception as e:
+            self.last_status = "error"
             logger.warning("건축물대장 API 오류: %s", str(e))
             return None
 

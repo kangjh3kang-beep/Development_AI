@@ -415,6 +415,7 @@ class ProjectPipeline:
                     "nearby_transactions": pre_collected.get("nearby_transactions"),
                 },
                 "building": pre_collected.get("building_info") or comprehensive.get("building_detail") or comprehensive.get("building_info"),
+                "building_lookup_status": comprehensive.get("building_lookup_status") or pre_collected.get("building_lookup_status"),
                 "infrastructure": pre_collected.get("infrastructure") or comprehensive.get("infrastructure"),
                 "coordinates": pre_collected.get("coordinates") or comprehensive.get("coordinates"),
                 "regulations": {
@@ -585,6 +586,7 @@ class ProjectPipeline:
                 "nearby_transactions": comprehensive.get("nearby_transactions"),
             },
             "building": comprehensive.get("building_detail") or comprehensive.get("building_info"),
+            "building_lookup_status": comprehensive.get("building_lookup_status"),
             "infrastructure": comprehensive.get("infrastructure"),
             "coordinates": comprehensive.get("coordinates"),
             "regulations": {
@@ -712,6 +714,7 @@ class ProjectPipeline:
             result["nearby_transactions"] = comprehensive.get("nearby_transactions")
             result["building_info"] = comprehensive.get("building_info")
             result["building_detail"] = comprehensive.get("building_detail")
+            result["building_lookup_status"] = comprehensive.get("building_lookup_status")
             result["infrastructure"] = comprehensive.get("infrastructure")
             result["land_use_plan"] = comprehensive.get("land_use_plan")
             result["local_ordinance"] = comprehensive.get("local_ordinance")
