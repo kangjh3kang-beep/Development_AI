@@ -97,8 +97,9 @@ class AVMService:
             # ★강남 기본값(11680) 제거: LAWD_CD 미도출 시 타지역(예:의정부)을 강남 아파트
             #   실거래로 비교 추정해 ㎡단가가 비상식적으로 폭등하던 버그. 비교사례 없이 반환 →
             #   estimate()의 콜드스타트(면적기반 합성) 폴백으로 안전 처리.
+            # MolitClient 미생성 상태이므로 close() 호출 없이 즉시 반환한다
+            # (기존: 생성 전 await molit.close() → UnboundLocalError로 폴백 경로 크래시).
             logger.warning("LAWD_CD 미도출 — 비교사례 수집 생략(합성 폴백)", address=address)
-            await molit.close()
             return []
 
         molit = MolitClient()

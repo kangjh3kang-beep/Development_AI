@@ -483,7 +483,17 @@ class TestDroneInspect:
             image_urls=["http://example.com/image1.jpg", "http://example.com/image2.jpg"],
             flight_id="flight-001",
         )
+        # #8 회귀 고정: 키 미설정 시 dict 상태 반환을 순회해 TypeError가 나던 버그.
+        # 현행 스펙 — 탐지 0건 + 미설정 상태를 응답에 정직하게 전파한다.
         assert result is not None
+        assert result.defects_found == 0
+        assert result.defects == []
+        assert result.images_processed == 2
+        assert result.severity_summary["service_available"] is False
+        assert result.severity_summary["status"] == "service_not_configured"
+        # 기존 심각도 키는 그대로 유지(하위호환)
+        for key in ("EMERGENCY", "HIGH", "MEDIUM", "LOW"):
+            assert result.severity_summary[key] == 0
 
 
 # ═══════════════════════════════════════════

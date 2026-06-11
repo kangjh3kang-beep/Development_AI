@@ -102,15 +102,32 @@ class DroneIoTService:
 
         all_defects: list[dict] = []
         severity_count = {"EMERGENCY": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0}
+        service_status: dict | None = None
 
         for url in image_urls:
             detections = await self._detect_defects(url)
+            if isinstance(detections, dict):
+                # 서비스 미설정 상태 dict — 가짜 빈 탐지값으로 위장하지 않고
+                # 상태를 응답에 정직하게 전파한다(순회 시 TypeError 방지 가드).
+                service_status = detections
+                continue
             for d in detections:
                 severity = self._classify_severity(d["defect_type"], d["confidence"])
                 d["severity"] = severity
                 d["image_url"] = url
                 severity_count[severity] += 1
                 all_defects.append(d)
+
+        # 심각도 요약 + (미설정 시) 서비스 상태 정직 전파 — 기존 4개 심각도 키는 그대로 유지
+        severity_summary: dict = dict(severity_count)
+        if service_status is not None:
+            severity_summary["service_available"] = service_status.get("service_available", False)
+            severity_summary["status"] = service_status.get("status", "service_not_configured")
+            severity_summary["message"] = service_status.get("message", "")
+            logger.warning(
+                "하자 탐지 서비스 미설정 — 탐지 생략·상태 전파",
+                status=severity_summary["status"],
+            )
 
         # DB 저장
         inspection = DroneInspection(
@@ -120,7 +137,7 @@ class DroneIoTService:
             images_processed=len(image_urls),
             defects_found=len(all_defects),
             defects=all_defects,
-            severity_summary=severity_count,
+            severity_summary=severity_summary,
             model_version="yolov8-roboflow-v1",
         )
         self.db.add(inspection)
@@ -139,7 +156,7 @@ class DroneIoTService:
             inspection_date=inspection.created_at,
             defects_found=inspection.defects_found,
             defects=all_defects,
-            severity_summary=severity_count,
+            severity_summary=severity_summary,
             images_processed=inspection.images_processed,
             created_at=inspection.created_at,
         )

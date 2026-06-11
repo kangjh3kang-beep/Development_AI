@@ -109,6 +109,7 @@ class TestAVMFetchComparables:
 
     @pytest.mark.asyncio
     async def test_예외_처리(self):
+        """API 예외 시 빈 리스트 반환 + 클라이언트 정리(close) 보장."""
         from apps.api.services.avm_service import AVMService
 
         svc = AVMService.__new__(AVMService)
@@ -120,8 +121,29 @@ class TestAVMFetchComparables:
         mock_molit.close = AsyncMock()
 
         with patch("apps.api.integrations.molit_client.MolitClient", return_value=mock_molit):
-            result = await svc._fetch_comparables("서울", 84.0)
+            # lawd_cd를 명시해 실제 조회→예외 경로를 태운다(조기반환 경로와 분리).
+            result = await svc._fetch_comparables("서울", 84.0, "11680")
             assert result == []
+        mock_molit.close.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_lawd_cd_미도출_조기반환(self):
+        """#9 회귀 고정: lawd_cd 미도출 시 MolitClient 생성 없이 [] 조기반환.
+
+        과거 버그: 조기반환 분기에서 미생성 클라이언트에 await molit.close()를
+        호출해 UnboundLocalError로 항상 크래시(합성 폴백 경로 손상).
+        """
+        from apps.api.services.avm_service import AVMService
+
+        svc = AVMService.__new__(AVMService)
+        svc.db = AsyncMock()
+        svc.settings = MagicMock()
+
+        mock_cls = MagicMock()
+        with patch("apps.api.integrations.molit_client.MolitClient", mock_cls):
+            result = await svc._fetch_comparables("서울", 84.0)
+        assert result == []
+        mock_cls.assert_not_called()  # 클라이언트 자체를 생성하지 않아야 한다
 
 
 class TestAVMFetchSpatialData:
