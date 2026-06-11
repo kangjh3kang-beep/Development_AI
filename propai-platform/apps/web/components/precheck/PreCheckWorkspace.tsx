@@ -19,10 +19,16 @@ import { apiClient, ApiClientError } from "@/lib/api-client";
 import { PRECHECK_HANDOFF_KEY, type PreCheckHandoff } from "./handoff";
 import { NumberInput } from "@/components/common/NumberInput";
 import { AnimatedCounter } from "@/components/ui/AnimatedCounter";
+import { GlobalAddressSearch, type AddressEntry } from "@/components/common/GlobalAddressSearch";
+import { FieldSourceBadge } from "@/components/common/FieldSourceBadge";
+import { LegalRefChip } from "@/components/common/LegalRefChip";
+import { EvidencePanel, type EvidenceItem } from "@/components/common/EvidencePanel";
 import type {
   InstantPreCheckRequest,
   InstantPreCheckResponse,
+  PreCheckFeasibilityBand,
   PreCheckMethod,
+  PreCheckScenario,
   PreCheckSignal,
   ZoningSignal,
   ZoningSignalsRequest,
@@ -82,7 +88,22 @@ export function PreCheckWorkspace() {
 
   const [address, setAddress] = useState("");
   const [areaSqm, setAreaSqm] = useState<number | null>(null);
+  // 면적 출처: 주소검색의 토지특성 자동반영(auto) vs 사용자 직접입력(user)
+  const [areaSource, setAreaSource] = useState<"auto" | "user" | null>(null);
   const [useLlm, setUseLlm] = useState(false);
+
+  /** 주소검색 선택 → 주소·면적 자동입력 (사용자 수동값은 덮지 않음) */
+  function handleAddressChange(entries: AddressEntry[]) {
+    const entry = entries[0];
+    if (!entry) return;
+    const picked = entry.jibunAddress || entry.fullAddress || entry.roadAddress;
+    if (picked) setAddress(picked);
+    // 면적: 검색이 토지특성에서 가져온 값이 있고, 사용자가 직접 입력한 적 없을 때만 자동 채움
+    if (entry.areaSqm != null && entry.areaSqm > 0 && areaSource !== "user") {
+      setAreaSqm(entry.areaSqm);
+      setAreaSource("auto");
+    }
+  }
 
   const [tab, setTab] = useState<TabKey>("instant");
 
@@ -203,25 +224,30 @@ export function PreCheckWorkspace() {
             <label htmlFor="precheck-address" className="text-[11px] font-semibold text-[var(--text-tertiary)]">
               주소 <span className="text-[var(--status-error)]">*</span>
             </label>
-            <input
-              id="precheck-address"
-              value={address}
-              onChange={(e) => setAddress(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && canRun) void runAll();
-              }}
+            {/* 카카오 주소검색 — 선택 시 토지특성(면적 등) 자동입력 + 종합분석 백그라운드 트리거 */}
+            <GlobalAddressSearch
+              single
+              onChange={handleAddressChange}
               placeholder="예) 서울특별시 강남구 테헤란로 152"
-              className="w-full rounded-xl border border-[var(--line)] bg-[var(--surface-strong)] px-3 py-2.5 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
             />
+            {address && (
+              <p className="truncate text-[11px] text-[var(--text-hint)]" title={address}>
+                선택됨: {address}
+              </p>
+            )}
           </div>
           <div className="grid gap-1">
-            <label htmlFor="precheck-area" className="text-[11px] font-semibold text-[var(--text-tertiary)]">
+            <label htmlFor="precheck-area" className="flex items-center gap-1.5 text-[11px] font-semibold text-[var(--text-tertiary)]">
               대지면적(㎡, 선택)
+              {areaSource && <FieldSourceBadge source={areaSource === "user" ? "user" : "auto"} />}
             </label>
             <NumberInput
               id="precheck-area"
               value={areaSqm}
-              onChange={setAreaSqm}
+              onChange={(v) => {
+                setAreaSqm(v);
+                setAreaSource(v == null ? null : "user");
+              }}
               allowDecimal
               placeholder="미입력 시 토지특성 자동"
               className="w-full rounded-xl border border-[var(--line)] bg-[var(--surface-strong)] px-3 py-2.5 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
@@ -392,7 +418,83 @@ function InstantPanel({
           <LimitChip label="용적률" value={legal_limits.far_pct} suffix="%" />
           <LimitChip label="높이" value={legal_limits.height_m} suffix="m" />
         </div>
+        {/* 법령 원문링크 — 백엔드 레지스트리(law.go.kr 검증 딥링크) 출력만 렌더 */}
+        {Array.isArray(data.legal_refs) && data.legal_refs.length > 0 && (
+          <div className="mt-3 flex flex-wrap gap-1.5 border-t border-[var(--line)] pt-3">
+            <span className="mr-1 self-center text-[11px] font-semibold text-[var(--text-tertiary)]">법적 근거</span>
+            {data.legal_refs.map((ref) => (
+              <LegalRefChip
+                key={ref.key}
+                lawName={ref.law_name}
+                article={ref.article}
+                title={ref.title}
+                url={ref.url}
+              />
+            ))}
+          </div>
+        )}
       </section>
+
+      {/* 최저/기본/최대 사업성 밴드 */}
+      {data.feasibility_band && <FeasibilityBandSection band={data.feasibility_band} />}
+
+      {/* 산출 근거 트레이스 */}
+      {Array.isArray(data.evidence) && data.evidence.length > 0 && (
+        <EvidencePanel
+          title="산출 근거"
+          defaultOpen={false}
+          items={data.evidence.map((ev): EvidenceItem => {
+            const ref = ev.legal_ref_key
+              ? data.legal_refs?.find((r) => r.key === ev.legal_ref_key)
+              : undefined;
+            return {
+              label: ev.label,
+              value: ev.value ?? "-",
+              basis: ev.basis,
+              legalRef: ref
+                ? { lawName: ref.law_name, article: ref.article, title: ref.title, url: ref.url }
+                : null,
+            };
+          })}
+        />
+      )}
+
+      {/* 데이터 품질·검증 표기 */}
+      {data.data_quality && (
+        <section className="rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-4">
+          <div className="mb-2 flex flex-wrap items-center gap-2">
+            <p className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-tertiary)]">
+              데이터 품질 · 검증
+            </p>
+            {data.data_quality.confidence_level && (
+              <span className={`rounded-full border px-2 py-0.5 text-[11px] font-bold ${
+                data.data_quality.confidence_level === "high"
+                  ? "border-[var(--status-success)]/40 bg-[var(--status-success)]/15 text-[var(--status-success)]"
+                  : data.data_quality.confidence_level === "low"
+                    ? "border-[var(--status-error)]/40 bg-[var(--status-error)]/15 text-[var(--status-error)]"
+                    : "border-[var(--status-warning)]/40 bg-[var(--status-warning)]/15 text-[var(--status-warning)]"
+              }`}>
+                신뢰도 {data.data_quality.confidence_level === "high" ? "높음" : data.data_quality.confidence_level === "low" ? "낮음" : "보통"}
+              </span>
+            )}
+            {data.data_quality.quantitative_reliable === false && (
+              <span className="rounded-full border border-[var(--status-warning)]/40 bg-[var(--status-warning)]/15 px-2 py-0.5 text-[11px] font-bold text-[var(--status-warning)]">
+                필지 미확정 — 정량 수치 참고용
+              </span>
+            )}
+          </div>
+          {Array.isArray(data.data_quality.warnings) && data.data_quality.warnings.length > 0 && (
+            <ul className="grid gap-1 text-[12px] text-[var(--text-secondary)]">
+              {data.data_quality.warnings.map((w, i) => (
+                <li key={i} className="flex gap-1.5">
+                  <span className="text-[var(--status-warning)]">⚠</span>
+                  <span>{w}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
 
       {/* LLM 요약 */}
       {summary.llm_note && (
@@ -424,6 +526,83 @@ function InstantPanel({
         <p className="text-[11px] text-[var(--text-hint)]">출처: {data.sources.join(" · ")}</p>
       )}
     </div>
+  );
+}
+
+/* ── 최저/기본/최대 사업성 밴드 — 검증된 수지엔진 3점 산출 렌더 ── */
+
+const SCENARIO_META: { key: "min" | "base" | "max"; label: string; tone: string }[] = [
+  { key: "min", label: "최저(보수)", tone: "border-[var(--status-error)]/30" },
+  { key: "base", label: "기본", tone: "border-[var(--accent-strong)]/40" },
+  { key: "max", label: "최대(낙관)", tone: "border-[var(--status-success)]/30" },
+];
+
+function fmtEok(won?: number | null): string {
+  if (won == null) return "-";
+  const eok = won / 100_000_000;
+  return `${eok >= 0 ? "" : "-"}${Math.abs(eok) >= 100 ? Math.round(Math.abs(eok)).toLocaleString() : Math.abs(eok).toFixed(1)}억`;
+}
+
+function describeAssumptions(a?: Record<string, number | string>): string {
+  if (!a) return "";
+  const parts: string[] = [];
+  if (typeof a.sale_price_delta_pct === "number" && a.sale_price_delta_pct !== 0) {
+    parts.push(`분양가 ${a.sale_price_delta_pct > 0 ? "+" : ""}${a.sale_price_delta_pct}%`);
+  }
+  if (typeof a.construction_cost_delta_pct === "number" && a.construction_cost_delta_pct !== 0) {
+    parts.push(`공사비 ${a.construction_cost_delta_pct > 0 ? "+" : ""}${a.construction_cost_delta_pct}%`);
+  }
+  if (typeof a.sale_ratio === "number") parts.push(`분양률 ${(a.sale_ratio * 100).toFixed(0)}%`);
+  return parts.join(" · ");
+}
+
+function ScenarioCard({ label, tone, s }: { label: string; tone: string; s?: PreCheckScenario }) {
+  if (!s) return null;
+  return (
+    <div className={`grid gap-1 rounded-xl border ${tone} bg-[var(--surface-strong)] p-3`}>
+      <div className="flex items-center justify-between">
+        <span className="text-[11px] font-bold text-[var(--text-tertiary)]">{label}</span>
+        {s.grade && (
+          <span className="rounded-full border border-[var(--line)] px-1.5 py-0.5 text-[11px] font-bold text-[var(--text-primary)]">
+            {s.grade}등급
+          </span>
+        )}
+      </div>
+      <p className="text-base font-bold text-[var(--text-primary)]">{fmtEok(s.npv_won)}</p>
+      <p className="text-[12px] text-[var(--text-secondary)]">
+        이익률 {s.profit_rate_pct != null ? `${s.profit_rate_pct.toFixed(1)}%` : "-"}
+        {s.roi_pct != null ? ` · ROI ${s.roi_pct.toFixed(1)}%` : ""}
+      </p>
+      {describeAssumptions(s.assumptions) && (
+        <p className="text-[11px] text-[var(--text-hint)]" title="시나리오 가정">
+          {describeAssumptions(s.assumptions)}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function FeasibilityBandSection({ band }: { band: PreCheckFeasibilityBand }) {
+  const { scenarios } = band;
+  if (!scenarios?.base && !scenarios?.min && !scenarios?.max) return null;
+  return (
+    <section className="rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-4">
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <p className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-tertiary)]">
+          사업성 밴드 (최저·기본·최대)
+        </p>
+        <span className="rounded-full border border-[var(--accent-strong)]/30 bg-[var(--accent-soft)] px-2 py-0.5 text-[11px] font-bold text-[var(--accent-strong)]">
+          {band.method_name}
+        </span>
+        <span className="text-[11px] text-[var(--text-hint)]">검증된 수지엔진 3점 산출 · 약식</span>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-3">
+        {SCENARIO_META.map(({ key, label, tone }) => (
+          <ScenarioCard key={key} label={label} tone={tone} s={scenarios[key]} />
+        ))}
+      </div>
+      {band.note && <p className="mt-2 text-[11px] text-[var(--text-hint)]">{band.note}</p>}
+    </section>
   );
 }
 
