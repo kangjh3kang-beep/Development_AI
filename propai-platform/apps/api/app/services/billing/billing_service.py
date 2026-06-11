@@ -133,6 +133,23 @@ async def ensure_cycle(db: AsyncSession, user_id: Any):
         )
         await db.commit()
         billed = 0.0
+    elif is_metered_tier(tier) and monthly_base <= 0:
+        # 같은 달이라도 월기본이 미할당(0)인 과금 등급 — 포함한도를 지연 할당(사용량·사이클 보존).
+        #   원인: 마이그레이션 이전부터 현재 월 사이클이 잡혀 롤오버가 한 번도 안 돈 기존 유저.
+        #   ★monthly_base_krw==0은 '미할당'을 뜻함(소진은 base_remaining=한도-billed로 별도 계산되며
+        #     monthly_base_krw 자체는 유지). 따라서 0이면 안전하게 채워줄 수 있다(자가 백필).
+        included = tier_included_budget_krw(tier)
+        if included > 0:
+            monthly_base = included
+            budget = _sync_budget(monthly_base, topup)
+            await db.execute(
+                text(
+                    "UPDATE public.users SET monthly_base_krw=:m, billing_budget_krw=:b "
+                    "WHERE id=:id"
+                ),
+                {"m": monthly_base, "b": budget, "id": str(user_id)},
+            )
+            await db.commit()
     return tier, billed, budget, monthly_base, topup
 
 
