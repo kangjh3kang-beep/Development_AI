@@ -11,6 +11,7 @@
 
 import asyncio
 import json
+import time
 from datetime import datetime
 from typing import Any
 
@@ -37,8 +38,15 @@ _RENT_TYPES = [
     ("officetel", "오피스텔"),
 ]
 
-_MAX_GROUPS_PER_CAT = 40  # 카테고리별 마커 상한(건물 수)
-_GEOCODE_CONCURRENCY = 6
+_MAX_GROUPS_PER_CAT = 28  # 카테고리별 마커 상한(건물 수) — 지오코딩 부하·페이로드 축소(40→28)
+_GEOCODE_CONCURRENCY = 12  # 지오코딩 병렬도(6→12) — 첫 로딩 시간 단축
+
+# ── 결과 캐시(프로세스 메모리, TTL) ──
+# 같은 지역(주소·lawd_cd·기간)을 재조회하면 MOLIT 수집+지오코딩(수 초)을 건너뛰고 즉시 반환.
+# Redis가 degraded여도 동작(인프로세스). 단일 워커 운영이라 적중률 높음.
+_BUILD_CACHE: dict[tuple, tuple[float, "dict[str, Any]"]] = {}
+_BUILD_CACHE_TTL = 1800.0  # 30분
+_BUILD_CACHE_MAX = 128     # 메모리 상한(초과 시 가장 오래된 항목부터 제거)
 # VWorld 지오코딩(서버에 키 설정·운영중). 지번주소=PARCEL, 도로명=ROAD.
 _VWORLD_GEOCODE_URL = "https://api.vworld.kr/req/address"
 
@@ -60,6 +68,12 @@ class NearbyMapService:
         radius_m: int = 1000,
         sigungu_hint: str = "",
     ) -> dict[str, Any]:
+        # 0) 결과 캐시 조회 — 동일 조건 재조회는 즉시 반환(수 초 → 수 ms)
+        cache_key = ((address or "").strip(), f"{lawd_cd}", months, radius_m)
+        hit = _BUILD_CACHE.get(cache_key)
+        if hit and (time.monotonic() - hit[0]) < _BUILD_CACHE_TTL:
+            return hit[1]
+
         ym_list = self._recent_months(months)
 
         # 1) 카테고리별 실거래 수집(병렬)
@@ -98,13 +112,20 @@ class NearbyMapService:
             cat["groups"] = resolved
             cat["count"] = sum(g["count"] for g in resolved)
 
-        return {
+        result = {
             "center": center or {"lat": None, "lon": None, "address": address},
             "radius_m": radius_m,
             "lawd_cd": lawd_cd,
             "months": ym_list,
             "categories": categories,
         }
+
+        # 결과 캐시 저장(+ 상한 초과 시 가장 오래된 항목 제거)
+        _BUILD_CACHE[cache_key] = (time.monotonic(), result)
+        if len(_BUILD_CACHE) > _BUILD_CACHE_MAX:
+            oldest = min(_BUILD_CACHE, key=lambda k: _BUILD_CACHE[k][0])
+            _BUILD_CACHE.pop(oldest, None)
+        return result
 
     # ── 수집 ──
     @staticmethod
