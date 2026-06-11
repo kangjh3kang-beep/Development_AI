@@ -83,14 +83,22 @@ def worker_settings() -> MagicMock:
 
 @pytest.fixture
 def worker_ctx(worker_settings: MagicMock) -> dict:
-    """arq 워커 컨텍스트 mock."""
+    """arq 워커 컨텍스트 mock.
+
+    apps/worker/main.py startup이 주입하는 db_factory(세션 팩토리) 계약을 반영한다
+    (parse_large_ifc 등은 ctx["db_factory"]()로 세션을 생성·close까지 책임).
+    팩토리는 ctx["db"]와 동일한 목 세션을 반환하므로 기존 테스트의
+    worker_ctx["db"].commit/execute 단언이 팩토리 산출 세션을 그대로 검증한다(하위호환).
+    """
     mock_db = AsyncMock()
     mock_db.execute = AsyncMock()
     mock_db.commit = AsyncMock()
     mock_db.rollback = AsyncMock()
+    mock_db.close = AsyncMock()
     return {
         "settings": worker_settings,
-        "db": mock_db,
+        "db": mock_db,                  # 구 계약(직접 세션) — 기존 테스트 호환
+        "db_factory": lambda: mock_db,  # 현행 계약(startup 주입 세션 팩토리)
     }
 
 

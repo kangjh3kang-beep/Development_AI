@@ -187,7 +187,9 @@ class TestUsageApis:
         sess = FakeSession(responses=[("FROM public.users WHERE id", _FakeResult(row=row))])
         bal = await bs.get_balance(sess, "u1")
         assert bal["tier"] == "master"
-        assert bal["markup_pct"] == 30  # master +30%
+        # ★마진율(markup_pct)은 내부 정책 — 응답 비노출 스펙(billing_service.get_balance,
+        #   개발자도구 노출 방지). 부재를 고정 단언한다(금액에는 이미 반영).
+        assert "markup_pct" not in bal
         assert bal["monthly_base_krw"] == 10000
         assert bal["monthly_base_remaining"] == 7000  # 10000-3000
         assert bal["topup_krw"] == 5000

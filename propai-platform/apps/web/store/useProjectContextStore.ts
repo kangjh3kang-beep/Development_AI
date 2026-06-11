@@ -140,7 +140,14 @@ export interface FieldProvenance {
   source: FieldSource;
   updatedAt: number; // stamp 시각(epoch ms)
 }
-export type ProvenanceModule = "siteAnalysis" | "cost";
+// WP-V: design/esg는 update 액션에 merge 가드 적용, tax는 전용 store 데이터
+// 필드가 아직 없어 타입만 선등록(향후 세금 모듈 provenance 대비 — additive).
+export type ProvenanceModule =
+  | "siteAnalysis"
+  | "cost"
+  | "design"
+  | "tax"
+  | "esg";
 type ManualFieldsMap = Partial<
   Record<ProvenanceModule, Record<string, FieldProvenance>>
 >;
@@ -276,7 +283,13 @@ export interface ProjectContextState {
     data: Partial<SiteAnalysisData>,
     meta?: { source?: FieldSource },
   ) => void;
-  updateDesignData: (data: DesignData) => void;
+  // 머지-보존 가드(비null 키만 덮어씀) 유지 + provenance 가산(WP-V).
+  // meta 옵셔널(미전달 = "auto") — 기존 호출 무수정 호환.
+  // auto: user 플래그 키는 덮지 못함(이전값 보존). user: 변경된 비null 키만 stamp.
+  updateDesignData: (
+    data: DesignData,
+    meta?: { source?: FieldSource },
+  ) => void;
   // merge 패치 — 부분 writer(UnitMix/AutoRecommend)가 기존 totalCostWon 등을 보존하도록
   // 기존 feasibilityData 위에 병합한다. 전체 객체를 넘기던 기존 호출도 동일하게 동작.
   updateFeasibilityData: (data: Partial<FeasibilityData>) => void;
@@ -284,7 +297,9 @@ export interface ProjectContextState {
   // auto: user 플래그 키의 이전값을 보존한 채 교체(merge 가드).
   // user: 이전값과 달라진 비null 키만 stamp(미변경 키까지 동결하면 자동 환류 무력화).
   updateCostData: (data: CostData, meta?: { source?: FieldSource }) => void;
-  updateEsgData: (data: EsgData) => void;
+  // full replace + provenance(WP-V) — updateCostData와 동일 merge 가드 규칙.
+  // meta 옵셔널(미전달 = "auto") — 기존 호출 무수정 호환.
+  updateEsgData: (data: EsgData, meta?: { source?: FieldSource }) => void;
   updateComplianceData: (data: ComplianceData) => void;
   // 개발금융(finance) 갱신 stamp — 별도 데이터 필드 없이 updatedAt만 갱신해
   // 수지·공사비 변경 대비 finance staleness 추적을 활성화한다(additive).
@@ -701,21 +716,45 @@ export const useProjectContextStore = create<ProjectContextState>()(
         });
       },
 
-      updateDesignData: (data) => {
+      updateDesignData: (data, meta) => {
+        const source: FieldSource = meta?.source ?? "auto";
         set((state) => {
-          // merge 가드 — 부분 writer(예: cost만 재실행한 rerun의 design summary)가
-          // 누락하거나 null로 보낸 키가 기존 구체값(unitTypes/unitCount 등)을 덮지
-          // 않도록, 기존값 위에 비null 키만 덮어쓴다(updateFeasibilityData와 동일 의도).
+          const flagged = state.manualFields?.design ?? {};
+          // merge 가드(기존 동작 불변) — 부분 writer(예: cost만 재실행한 rerun의
+          // design summary)가 누락하거나 null로 보낸 키가 기존 구체값(unitTypes/
+          // unitCount 등)을 덮지 않도록, 기존값 위에 비null 키만 덮어쓴다
+          // (updateFeasibilityData와 동일 의도).
           const prev = (state.designData ?? {}) as Record<string, unknown>;
           const merged: Record<string, unknown> = { ...prev };
           for (const [key, value] of Object.entries(data)) {
             if (value == null && prev[key] != null) continue; // null은 "데이터 없음" — 기존 구체값 보존
+            // provenance merge 가드(WP-V 가산) — auto 갱신은 user 플래그 키를
+            // 덮지 못한다(이전값 보존, cost와 동일 규칙). meta 미전달(=auto)
+            // 기존 호출은 flagged가 비어 있어 종전과 완전히 동일하게 동작.
+            if (source === "auto" && flagged[key]) continue;
             merged[key] = value;
           }
-          return withSnap(state, {
+          const next: Partial<ProjectContextState> = {
             designData: merged as unknown as DesignData,
             updatedAt: stampedAt(state, "design"),
-          });
+          };
+          if (source === "user") {
+            // user 갱신 stamp — 이전값과 달라진 비null 키만 기록(cost와 동일).
+            // 미변경 키까지 동결하면 자동 환류가 무력화되고, null은 "데이터 없음"
+            // 표기이므로 수동값 보호 대상이 아니다.
+            const now = Date.now();
+            const stamped: Record<string, FieldProvenance> = { ...flagged };
+            for (const [key, value] of Object.entries(data)) {
+              if (value == null) continue;
+              if (value === prev[key]) continue;
+              stamped[key] = { source: "user", updatedAt: now };
+            }
+            next.manualFields = {
+              ...(state.manualFields ?? {}),
+              design: stamped,
+            };
+          }
+          return withSnap(state, next);
         });
       },
 
@@ -777,13 +816,44 @@ export const useProjectContextStore = create<ProjectContextState>()(
         });
       },
 
-      updateEsgData: (data) => {
-        set((state) =>
-          withSnap(state, {
+      updateEsgData: (data, meta) => {
+        const source: FieldSource = meta?.source ?? "auto";
+        set((state) => {
+          const flagged = state.manualFields?.esg ?? {};
+          const prevRec = state.esgData
+            ? (state.esgData as unknown as Record<string, unknown>)
+            : null;
+          const next: Partial<ProjectContextState> = {
             esgData: data,
             updatedAt: stampedAt(state, "esg"),
-          }),
-        );
+          };
+          if (source === "auto") {
+            // merge 가드(WP-V, cost와 동일) — full replace이되 user 플래그 키는
+            // 이전값 보존(auto 덮어쓰기 차단). 플래그 없으면 종전과 동일한 교체.
+            const flaggedKeys = Object.keys(flagged);
+            if (prevRec && flaggedKeys.length > 0) {
+              const merged = { ...data } as unknown as Record<string, unknown>;
+              for (const key of flaggedKeys) {
+                if (key in prevRec) merged[key] = prevRec[key];
+              }
+              next.esgData = merged as unknown as EsgData;
+            }
+          } else {
+            // user 갱신 stamp — 이전값과 달라진 비null 키만 기록(cost와 동일).
+            const now = Date.now();
+            const stamped: Record<string, FieldProvenance> = { ...flagged };
+            for (const [key, value] of Object.entries(data)) {
+              if (value == null) continue;
+              if (prevRec && value === prevRec[key]) continue;
+              stamped[key] = { source: "user", updatedAt: now };
+            }
+            next.manualFields = {
+              ...(state.manualFields ?? {}),
+              esg: stamped,
+            };
+          }
+          return withSnap(state, next);
+        });
       },
 
       updateComplianceData: (data) => {

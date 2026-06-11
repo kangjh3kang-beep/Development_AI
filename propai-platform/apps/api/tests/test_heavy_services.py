@@ -633,13 +633,17 @@ class TestDroneIoTServiceMethods:
 
     @pytest.mark.asyncio
     async def test_detect_defects_no_api_key(self):
+        """현행 스펙(#7): 키 미설정 시 가짜 빈 리스트 대신 정직한 상태 dict 반환."""
         from apps.api.services.drone_iot_service import DroneIoTService
 
         svc = DroneIoTService(db=AsyncMock())
         svc.settings = MagicMock()
         svc.settings.roboflow_api_key = ""
         result = await svc._detect_defects("http://example.com/image.jpg")
-        assert result == []
+        assert isinstance(result, dict)
+        assert result["status"] == "service_not_configured"
+        assert result["service_available"] is False
+        assert result["detections"] == []
 
 
 # ═══════════════════════════════════════════

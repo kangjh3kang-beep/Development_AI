@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { LegalRefChip } from "@/components/common/LegalRefChip";
 
 /* ── Response type ── */
 
@@ -19,6 +20,18 @@ type SpecialDistrict = {
   bonus_far: number | null;
 };
 
+/** 법령 원문링크 근거(레지스트리 get_legal_refs 출력) — 옵셔널·하위호환.
+ * url은 백엔드가 검증한 값만 들어오며(프론트 조립 금지), 없으면 LegalRefChip이
+ * 자동으로 텍스트 폴백한다(할루시네이션 링크 금지). 구버전 백엔드는 이 필드 부재. */
+type LegalRef = {
+  key?: string | null;
+  law_name?: string | null;
+  article?: string | null;
+  title?: string | null;
+  url?: string | null;
+  url_status?: string | null;
+};
+
 type ZoningAnalysisResponse = {
   address: string;
   pnu: string | null;
@@ -29,6 +42,8 @@ type ZoningAnalysisResponse = {
   official_price_per_sqm: number | null;
   special_districts: SpecialDistrict[];
   warnings: string[];
+  /** WP-D 신뢰 메타데이터(가산·옵셔널) — 없으면(구버전) 렌더 생략. */
+  legal_refs?: LegalRef[] | null;
 };
 
 /* ── Component ── */
@@ -121,6 +136,12 @@ export function AutoZoningBadge({ address }: { address: string }) {
 
   const limits = result.zone_limits;
 
+  // 법령 원문링크 근거 — 백엔드(get_legal_refs)가 보낸 검증 url만 사용(프론트 조립 금지).
+  // law_name이 있는 항목만 칩으로 렌더(빈 항목 방지). 구버전 백엔드는 빈 배열 → 미표시.
+  const legalRefs = (result.legal_refs ?? []).filter(
+    (ref) => ref && typeof ref.law_name === "string" && ref.law_name.trim().length > 0,
+  );
+
   return (
     <div className="space-y-2">
       {/* Badge row: zone type + metrics */}
@@ -149,6 +170,27 @@ export function AutoZoningBadge({ address }: { address: string }) {
           />
         )}
       </div>
+
+      {/* 법령 근거: 백엔드가 보낸 legal_refs[] 원문링크 칩(우선) + zone_limits.legal_basis 텍스트 폴백.
+          legal_refs는 검증 url을 가질 수 있고, legal_basis는 url 없는 텍스트(LegalRefChip이 자동 텍스트 폴백). */}
+      {(legalRefs.length > 0 || limits?.legal_basis) && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          {legalRefs.length > 0 ? (
+            legalRefs.map((ref, i) => (
+              <LegalRefChip
+                key={`legal-ref-${ref.key ?? i}`}
+                lawName={ref.law_name ?? ""}
+                article={ref.article}
+                title={ref.title}
+                url={ref.url}
+              />
+            ))
+          ) : limits?.legal_basis ? (
+            /* 구버전 백엔드(legal_refs 부재): legal_basis 텍스트만 칩으로 표기(url 없음 → 텍스트 폴백). */
+            <LegalRefChip lawName={limits.legal_basis} />
+          ) : null}
+        </div>
+      )}
 
       {/* Special districts */}
       {(result.special_districts?.length ?? 0) > 0 && (

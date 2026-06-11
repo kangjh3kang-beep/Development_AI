@@ -11,6 +11,7 @@ import {
   Select,
 } from "@propai/ui";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
+import { LegalRefChip } from "@/components/common/LegalRefChip";
 import { NumberInput } from "@/components/common/NumberInput";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import { VerificationBadge } from "@/components/common/VerificationBadge";
@@ -33,6 +34,19 @@ type PaginatedResponse<T> = {
   has_next: boolean;
 };
 
+/**
+ * 법령 근거 1건 — 백엔드 legal_reference_registry 직렬화 형태와 동일 스키마.
+ * url은 **백엔드 제공값만** 사용(프론트에서 law.go.kr URL 조립 금지).
+ * url 부재 시 LegalRefChip이 링크 없는 텍스트 칩으로 정직 폴백한다.
+ */
+type TaxLegalRef = {
+  key?: string;
+  law_name: string;
+  article?: string | null;
+  title?: string | null;
+  url?: string | null;
+};
+
 type TaxCalculationResponse = {
   id: string;
   project_id: string;
@@ -43,6 +57,8 @@ type TaxCalculationResponse = {
   deductions: Array<Record<string, unknown>>;
   optimization_tips: string[];
   created_at: string;
+  /** additive·옵셔널 — 구버전 응답(미포함)도 무손상 렌더. */
+  legal_refs?: TaxLegalRef[];
 };
 
 type Labels = {
@@ -68,6 +84,7 @@ type Labels = {
   taxableBaseLabel: string;
   deductionsLabel: string;
   tipsLabel: string;
+  legalRefsLabel: string;
   projectLoadErrorTitle: string;
   projectLoadErrorDetail: string;
   retryAction: string;
@@ -100,6 +117,7 @@ const LABELS: Record<Locale, Labels> = {
     taxableBaseLabel: "과세표준",
     deductionsLabel: "공제 항목",
     tipsLabel: "절세 팁",
+    legalRefsLabel: "법령 근거",
     projectLoadErrorTitle: "프로젝트 로드 실패",
     projectLoadErrorDetail:
       "세금 계산 대상 프로젝트 목록을 불러오지 못했습니다. 기존 UUID 수동 입력은 계속 사용할 수 있습니다.",
@@ -131,6 +149,7 @@ const LABELS: Record<Locale, Labels> = {
     taxableBaseLabel: "Taxable value",
     deductionsLabel: "Deductions",
     tipsLabel: "Optimization tips",
+    legalRefsLabel: "Legal basis",
     projectLoadErrorTitle: "Project list unavailable",
     projectLoadErrorDetail:
       "The tax workspace could not load the live project picker. Manual UUID input remains available.",
@@ -160,6 +179,7 @@ const LABELS: Record<Locale, Labels> = {
     taxableBaseLabel: "计税基数",
     deductionsLabel: "扣减项",
     tipsLabel: "优化建议",
+    legalRefsLabel: "法律依据",
     projectLoadErrorTitle: "项目列表不可用",
     projectLoadErrorDetail:
       "税务工作台无法加载实时项目列表，但仍可继续手动输入项目 UUID。",
@@ -266,6 +286,10 @@ export function TaxOperationsWorkspaceClient({
       let taxRate = 0;
       const deductions: Array<Record<string, unknown>> = [];
       const tips: string[] = [];
+      // 법령 근거(additive) — 백엔드 legal_reference_registry의 검증된 레코드와
+      // 동일한 법령명·조문만 텍스트로 표기한다. url은 백엔드 제공값만 쓰는 원칙이라
+      // 로컬 계산 경로에서는 url을 비워 LegalRefChip이 무링크 텍스트로 폴백한다.
+      const legalRefs: TaxLegalRef[] = [];
 
       if (form.taxType === "acquisition") {
         const res = calculateAcquisitionTax(taxableValue, 1);
@@ -274,6 +298,10 @@ export function TaxOperationsWorkspaceClient({
         deductions.push({ type: "취득세", amount: res.acquisitionTax }, { type: "농특세", amount: res.ruralTax }, { type: "교육세", amount: res.educationTax });
         if (form.isFirstHome && taxableValue <= 600_000_000) tips.push("생애 최초 주택 취득세 감면 적용 가능 (200만원 한도)");
         tips.push("취득일 기준 60일 이내 신고/납부 필요");
+        legalRefs.push(
+          { key: "acquisition_tax", law_name: "지방세법", article: "제11조", title: "부동산 취득의 세율" },
+          { key: "local_education_tax", law_name: "지방세법", title: "지방교육세" },
+        );
       } else if (form.taxType === "transfer") {
         const res = calculateCapitalGainsTax({
           acquisitionPrice: Math.round(taxableValue * 0.7),
@@ -290,6 +318,9 @@ export function TaxOperationsWorkspaceClient({
         tips.push(`실효세율: ${res.effectiveRate}%`);
         if (holdingYears < 3) tips.push("3년 이상 보유 시 장기보유특별공제 적용 가능");
         if (holdingYears >= 10 && form.isFirstHome) tips.push("1세대 1주택 10년 이상 보유 시 최대 40% 공제");
+        legalRefs.push(
+          { key: "capital_gains_tax", law_name: "소득세법", article: "제104조", title: "양도소득세의 세율" },
+        );
       } else {
         const res = calculateComprehensivePropertyTax(taxableValue, 1);
         amount = res.totalTax;
@@ -297,6 +328,9 @@ export function TaxOperationsWorkspaceClient({
         deductions.push({ type: "재산세", amount: res.propertyTax }, { type: "종합부동산세", amount: res.comprehensiveTax });
         tips.push(`공정시장가액비율: ${res.fairMarketRatio}%`);
         if (res.comprehensiveTax > 0) tips.push("종부세 합산배제 신청 가능 여부 확인 권장");
+        legalRefs.push(
+          { key: "comprehensive_property_tax", law_name: "종합부동산세법", title: "종합부동산세(주택·토지분)" },
+        );
       }
 
       setResult({
@@ -309,6 +343,7 @@ export function TaxOperationsWorkspaceClient({
         deductions,
         optimization_tips: tips,
         created_at: new Date().toISOString(),
+        legal_refs: legalRefs,
       });
     } catch (error) {
       setWorkspaceError(error instanceof Error ? error.message : "계산 오류");
@@ -528,6 +563,26 @@ export function TaxOperationsWorkspaceClient({
                     value={formatDate(locale, result.created_at)}
                   />
                 </div>
+                {/* 법령 근거 칩(additive·옵셔널) — legal_refs 없으면 미렌더(구버전 무손상).
+                    url은 백엔드 제공값만 통과(LegalRefChip이 무링크 텍스트 폴백 보장). */}
+                {result.legal_refs?.length ? (
+                  <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
+                    <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+                      {labels.legalRefsLabel}
+                    </p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {(result.legal_refs ?? []).map((ref, index) => (
+                        <LegalRefChip
+                          key={ref.key ?? `${ref.law_name}-${ref.article ?? ""}-${index}`}
+                          lawName={ref.law_name}
+                          article={ref.article}
+                          title={ref.title}
+                          url={ref.url}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
                 <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
                   <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
                     {labels.deductionsLabel}

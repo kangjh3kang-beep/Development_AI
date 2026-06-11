@@ -523,6 +523,8 @@ class ProjectPipeline:
             ordinance_bcr = pre_collected.get("ordinance_bcr")
             ordinance_far = pre_collected.get("ordinance_far")
             ordinance_source = pre_collected.get("ordinance_source", "")
+            # 조례 url 시군구 치환용(신뢰블록): 조회된 sigungu 보존(없으면 None → 주소 폴백).
+            ordinance_sigungu = pre_collected.get("ordinance_sigungu")
             if not ordinance_bcr:
                 try:
                     from app.services.land_intelligence.ordinance_service import OrdinanceService
@@ -532,6 +534,9 @@ class ProjectPipeline:
                         ordinance_bcr = ord_result["ordinance_bcr"]
                         ordinance_far = ord_result.get("ordinance_far", national_far)
                         ordinance_source = ord_result.get("source", "조례")
+                    _sgg = ord_result.get("sigungu")
+                    if _sgg and str(_sgg).strip() and str(_sgg).strip() != "미확인":
+                        ordinance_sigungu = str(_sgg).strip()
                 except Exception:
                     pass
             if not ordinance_bcr:
@@ -598,6 +603,7 @@ class ProjectPipeline:
                     "effective_far": effective_far,
                     "max_height_m": max_height,
                     "ordinance_source": ordinance_source or "pre_collected",
+                    "ordinance_sigungu": ordinance_sigungu,
                     "far_incentive": far_incentive,
                 },
                 "development_types": development_types,
@@ -632,6 +638,8 @@ class ProjectPipeline:
                 state.stages["site_analysis"].data["assumed_fields"] = list(
                     pre_collected.get("assumed_fields") or []
                 )
+            # 신뢰 메타데이터(additive): 입지분석(auto_zoning)과 동일한 legal_refs[]·evidence[].
+            self._attach_site_trust_blocks(state)
             await self._attach_site_ai(state)
             return
 
@@ -708,6 +716,8 @@ class ProjectPipeline:
         ordinance_bcr = national_bcr
         ordinance_far = national_far
         ordinance_source = "법정상한"
+        # 조례 url 시군구 치환용(신뢰블록): 조회된 sigungu 보존(없으면 None → 주소 폴백).
+        ordinance_sigungu: str | None = None
         try:
             from app.services.land_intelligence.ordinance_service import OrdinanceService
 
@@ -717,6 +727,9 @@ class ProjectPipeline:
                 ordinance_bcr = ord_result["ordinance_bcr"]
                 ordinance_far = ord_result.get("ordinance_far", national_far)
                 ordinance_source = ord_result.get("source", "조례")
+            _sgg = ord_result.get("sigungu")
+            if _sgg and str(_sgg).strip() and str(_sgg).strip() != "미확인":
+                ordinance_sigungu = str(_sgg).strip()
         except Exception:
             pass
 
@@ -778,6 +791,7 @@ class ProjectPipeline:
                 "effective_far": effective_far,
                 "max_height_m": max_height,
                 "ordinance_source": ordinance_source,
+                "ordinance_sigungu": ordinance_sigungu,
                 "far_incentive": far_incentive,
             },
             "development_types": development_types,
@@ -804,6 +818,8 @@ class ProjectPipeline:
             "comprehensive_report": comprehensive_report if comprehensive_report else None,
         }
 
+        # 신뢰 메타데이터(additive): 입지분석(auto_zoning)과 동일한 legal_refs[]·evidence[].
+        self._attach_site_trust_blocks(state)
         await self._attach_site_ai(state)
 
         # ProjectLandData 자동 저장: 분석 결과를 Project 모델에 반영
@@ -987,6 +1003,105 @@ class ProjectPipeline:
         if geom_type == "Polygon":
             return shoelace(coordinates[0])
         return 0.0
+
+    @staticmethod
+    def _site_trust_adapter(data: dict[str, Any]) -> dict[str, Any]:
+        """파이프라인 site stage data를 auto_zoning 신뢰헬퍼가 기대하는 형태로 어댑트한다.
+
+        auto_zoning(_build_legal_refs/_build_evidence/_extract_sigungu)는 평탄
+        zone_type + zone_limits(*_pct) + local_ordinance 구조를 읽지만, 파이프라인은
+        zoning 블록 안에 effective_*/ordinance_*(pct 접미사 없음)를 둔다. 본 어댑터는
+        값을 새로 계산하지 않고 키만 재배치한다(데이터 매핑, 계산 0).
+
+        정직성 규칙:
+        - 조례 실효값(ordinance_*)이 법정상한(national_*)과 실제로 다를 때만 ordinance_*_pct를
+          주입한다. 단순 법정상한 폴백(ordinance==national)을 조례 적용으로 오인(가짜 조례링크)하지
+          않기 위함. ordinance_source가 사용자/법정 폴백 신호면 조례로 보지 않는다.
+        """
+        zoning = data.get("zoning") if isinstance(data.get("zoning"), dict) else {}
+        zone_type = data.get("zone_type") or zoning.get("zone_type") or ""
+
+        zone_limits: dict[str, Any] = {}
+        eff_far = zoning.get("effective_far")
+        eff_bcr = zoning.get("effective_bcr")
+        if eff_far is not None:
+            zone_limits["max_far_pct"] = eff_far
+        if eff_bcr is not None:
+            zone_limits["max_bcr_pct"] = eff_bcr
+
+        # 조례 실효값: 법정상한과 다르고, 폴백/사용자오버라이드 신호가 아닐 때만 인정.
+        ord_far = zoning.get("ordinance_far")
+        ord_bcr = zoning.get("ordinance_bcr")
+        nat_far = zoning.get("national_far")
+        nat_bcr = zoning.get("national_bcr")
+        ord_source = str(zoning.get("ordinance_source") or "")
+        _fallback_source = (not ord_source) or ("법정상한" in ord_source) or (
+            ord_source in {"pre_collected", "user_override"}
+        )
+        if not _fallback_source:
+            try:
+                if ord_far is not None and nat_far is not None and float(ord_far) != float(nat_far):
+                    zone_limits["ordinance_far_pct"] = ord_far
+                if ord_bcr is not None and nat_bcr is not None and float(ord_bcr) != float(nat_bcr):
+                    zone_limits["ordinance_bcr_pct"] = ord_bcr
+            except (TypeError, ValueError):
+                pass
+
+        adapter: dict[str, Any] = {
+            "address": data.get("address") or (data.get("basic") or {}).get("address") or "",
+            "zone_type": zone_type,
+            "zone_limits": zone_limits,
+        }
+        # sigungu 추출 보조: 조례 실효값이 있을 때만 조례 컨테이너를 노출(가짜 조례 방지).
+        if "ordinance_far_pct" in zone_limits or "ordinance_bcr_pct" in zone_limits:
+            lo: dict[str, Any] = {
+                "ordinance_far": zone_limits.get("ordinance_far_pct"),
+                "ordinance_bcr": zone_limits.get("ordinance_bcr_pct"),
+                "source": ord_source or "지자체 조례",
+            }
+            # 조회된 시군구가 있으면 조례 url 치환에 사용(없으면 주소 폴백 → pending).
+            sgg = zoning.get("ordinance_sigungu")
+            if sgg and str(sgg).strip():
+                lo["sigungu"] = str(sgg).strip()
+            adapter["local_ordinance"] = lo
+        return adapter
+
+    def _attach_site_trust_blocks(self, state: PipelineState) -> None:
+        """site stage data에 legal_refs[]·evidence[]를 additive로 부착(입지분석과 동일).
+
+        - auto_zoning(_build_legal_refs/_build_evidence/_extract_sigungu)을 재사용해
+          레지스트리(get_legal_refs) 단일출처 URL만 사용한다(여기서 URL 조립 금지).
+        - E7 가정값(assumed_fields/data_quality)이면 legal_refs/evidence를 빈 배열로 둔다
+          (가짜 부지에 진짜 법령링크를 붙이지 않음 — 정직성). assumed_fields/data_quality는 유지.
+        - 기존 site data 키는 1개도 변경/제거하지 않는다(setdefault). 실패 시 graceful no-op.
+        """
+        try:
+            data = state.stages["site_analysis"].data
+            if not isinstance(data, dict):
+                return
+
+            # E7: 가정값(폴백 기본치)이면 진짜 법령링크/근거를 붙이지 않는다(빈 배열).
+            if data.get("data_quality") == "assumed_defaults" or data.get("assumed_fields"):
+                data.setdefault("legal_refs", [])
+                data.setdefault("evidence", [])
+                return
+
+            from apps.api.routers.auto_zoning import (
+                _build_evidence,
+                _build_legal_refs,
+            )
+
+            adapter = self._site_trust_adapter(data)
+            legal_refs = _build_legal_refs(adapter)
+            evidence = _build_evidence(adapter, legal_refs)
+            data.setdefault("legal_refs", legal_refs)
+            data.setdefault("evidence", evidence)
+        except Exception as e:  # noqa: BLE001
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "부지분석 신뢰블록 부착 스킵: %s", str(e)[:120]
+            )
 
     async def _attach_site_ai(self, state: PipelineState) -> None:
         """부지분석 stage data에 SiteAnalysisInterpreter(LLM) 해석을 부착한다.
@@ -1648,6 +1763,35 @@ class ProjectPipeline:
             cf_gen = CashflowGenerator()
             sale_start_month = max(0, cost.construction_months - 6)  # 준공 6개월 전 분양 시작
 
+            # ── R1 세후 IRR: 통합 세금엔진(38종) 결과를 시점 매핑해 주입(additive) ──
+            # 실패·세금 전무 시 tax_schedule=None → 기존 세전 현금흐름과 완전 동일(graceful).
+            tax_schedule = None
+            try:
+                from app.services.feasibility.cashflow_generator import (
+                    build_tax_schedule_from_integrated,
+                )
+                from app.services.tax.integrated_tax_engine import calculate_all_taxes
+
+                _units = int(design.unit_count or 0)
+                tax_result = calculate_all_taxes(
+                    purchase_won=int(land_cost),
+                    area_sqm=float(site.land_area_sqm or 0),
+                    official_price_per_sqm=float(site.official_land_price or 0),
+                    total_households=_units,
+                    total_sale_amount_won=int(total_revenue),
+                    total_gfa_sqm=float(design.total_gfa_sqm or 0),
+                    building_type=design.building_type or "apartment",
+                    total_units=_units,
+                    avg_area_sqm=(
+                        design.avg_unit_area_pyeong * 3.305785
+                        if design.avg_unit_area_pyeong
+                        else 85.0
+                    ),
+                )
+                tax_schedule = build_tax_schedule_from_integrated(tax_result)
+            except Exception:  # noqa: BLE001
+                tax_schedule = None
+
             cf_result = cf_gen.generate_monthly_cashflow(
                 land_cost=land_cost,
                 construction_cost=cost.total_construction_cost,
@@ -1658,6 +1802,7 @@ class ProjectPipeline:
                 bridge_loan_rate=0.08,
                 pf_loan_rate=0.065,
                 equity_ratio=0.3,
+                tax_schedule=tax_schedule,
             )
 
             feasibility_data["cashflow"] = {

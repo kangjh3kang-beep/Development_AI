@@ -11,6 +11,13 @@ IfcExtrudedAreaSolid로 압출해 표현한다.
 
 산출 모델 계층:
     IfcProject → IfcSite → IfcBuilding → IfcBuildingStorey[N] → (IfcSlab, IfcWall×4)
+
+품질 보강(R4′ — additive):
+- 모든 생성 요소에 IfcElementQuantity(BaseQuantities: 벽 Length/NetSideArea/NetVolume,
+  슬래브 NetArea/NetVolume 등)를 부착 — 수치는 압출 지오메트리와 동일 수식(가짜값 없음).
+- 벽(IfcWall/IfcWallStandardCase)에 Pset_WallCommon(LoadBearing·IsExternal) 부착.
+- 기존 생성 키·지오메트리·요소 수 불변. 자사 analyze_ifc 파서(IfcElementQuantity 의존)가
+  자기 생성 IFC를 그대로 적산할 수 있게 하는 것이 목적.
 """
 
 from __future__ import annotations
@@ -107,6 +114,13 @@ class IfcGeneratorService:
             run("geometry.assign_representation", model, product=slab, representation=slab_solid)
             self._place_z(model, slab, elev)
             run("spatial.assign_container", model, products=[slab], relating_structure=storey)
+            # BaseQuantities — 압출 수식과 동일(bw×bd 사각 × slab_thickness)
+            self._attach_base_quantities(model, slab, "Qto_SlabBaseQuantities", [
+                ("IfcQuantityLength", "Width", slab_thickness_m),
+                ("IfcQuantityLength", "Perimeter", 2 * (bw + bd)),
+                ("IfcQuantityArea", "NetArea", bw * bd),
+                ("IfcQuantityVolume", "NetVolume", bw * bd * slab_thickness_m),
+            ])
 
             # 외벽 4면(각 면을 얇은 박스로 압출) — 슬래브 위 floor_height만큼
             walls = self._make_perimeter_walls(model, body, bw, bd, fh, wall_thickness_m)
@@ -115,6 +129,16 @@ class IfcGeneratorService:
                 run("geometry.assign_representation", model, product=wall, representation=wall_solid)
                 self._place_z(model, wall, elev + slab_thickness_m)
                 run("spatial.assign_container", model, products=[wall], relating_structure=storey)
+                # BaseQuantities + Pset_WallCommon — S/N면 길이=bw, W/E면 길이=bd
+                wall_len = bw if name in ("S", "N") else bd
+                self._attach_base_quantities(model, wall, "Qto_WallBaseQuantities", [
+                    ("IfcQuantityLength", "Length", wall_len),
+                    ("IfcQuantityLength", "Height", fh),
+                    ("IfcQuantityLength", "Width", wall_thickness_m),
+                    ("IfcQuantityArea", "NetSideArea", wall_len * fh),
+                    ("IfcQuantityVolume", "NetVolume", wall_len * wall_thickness_m * fh),
+                ])
+                self._attach_pset_wall_common(model, wall, load_bearing=True, is_external=True)
 
             # 코어(계단실+EV): 외곽벽 4면(코어벽) + 층참 슬래브 + 계단 경사판.
             # 단순 솔리드 대신 실제 계단실 형상으로 표현.
@@ -139,6 +163,12 @@ class IfcGeneratorService:
                         run("geometry.assign_representation", model, product=cwl, representation=cwl_solid)
                         self._place_z(model, cwl, elev + slab_thickness_m)
                         run("spatial.assign_container", model, products=[cwl], relating_structure=storey)
+                        # BaseQuantities — 코어벽(IfcColumn): 단면적 ww×wd, 수직길이 fh
+                        self._attach_base_quantities(model, cwl, "Qto_ColumnBaseQuantities", [
+                            ("IfcQuantityLength", "Length", fh),
+                            ("IfcQuantityArea", "CrossSectionArea", ww * wd),
+                            ("IfcQuantityVolume", "NetVolume", ww * wd * fh),
+                        ])
                     # 계단 경사판: 코어 내부를 가로지르는 2개 계단참(half-flight) 슬래브
                     inset = cwt + 0.05
                     half_w = (cs - 2 * inset) / 2
@@ -151,6 +181,14 @@ class IfcGeneratorService:
                         run("geometry.assign_representation", model, product=stair, representation=stair_solid)
                         self._place_z(model, stair, elev + slab_thickness_m + st_z)
                         run("spatial.assign_container", model, products=[stair], relating_structure=storey)
+                        # BaseQuantities — 계단참 슬래브 압출 수식과 동일
+                        st_w = half_w - 0.05
+                        st_d = cs - 2 * inset
+                        self._attach_base_quantities(model, stair, "Qto_StairFlightBaseQuantities", [
+                            ("IfcQuantityLength", "Length", st_d),
+                            ("IfcQuantityArea", "GrossArea", st_w * st_d),
+                            ("IfcQuantityVolume", "NetVolume", st_w * st_d * 0.15),
+                        ])
 
             # 중복도: 건물 중앙 수평 스트립 슬래브(얇게) — 동선 시각화
             if corridor_width_m and corridor_width_m > 0:
@@ -161,6 +199,13 @@ class IfcGeneratorService:
                 run("geometry.assign_representation", model, product=corr, representation=corr_solid)
                 self._place_z(model, corr, elev + slab_thickness_m)
                 run("spatial.assign_container", model, products=[corr], relating_structure=storey)
+                # BaseQuantities — 복도 스트립 슬래브(두께 0.05) 압출 수식과 동일
+                corr_len = bw - 2 * wall_thickness_m
+                self._attach_base_quantities(model, corr, "Qto_SlabBaseQuantities", [
+                    ("IfcQuantityLength", "Width", 0.05),
+                    ("IfcQuantityArea", "NetArea", corr_len * cw),
+                    ("IfcQuantityVolume", "NetVolume", corr_len * cw * 0.05),
+                ])
 
             # 창호: 정면/배면 외벽에 등간격 개구부 박스(IfcWindow) — 1층 제외(상가/필로티)
             if windows_per_side and windows_per_side > 0 and i > 0:
@@ -175,6 +220,12 @@ class IfcGeneratorService:
                         run("geometry.assign_representation", model, product=win, representation=win_solid)
                         self._place_z(model, win, elev + slab_thickness_m + sill)
                         run("spatial.assign_container", model, products=[win], relating_structure=storey)
+                        # BaseQuantities — 창호 개구부 면적(폭×높이)
+                        self._attach_base_quantities(model, win, "Qto_WindowBaseQuantities", [
+                            ("IfcQuantityLength", "Width", win_w),
+                            ("IfcQuantityLength", "Height", win_h),
+                            ("IfcQuantityArea", "Area", win_w * win_h),
+                        ])
 
             # 세대 분할 내벽 + 발코니 + 현관문: 복도 기준 전면/배면 zone에 세대를 배치.
             # unit_sequence가 있으면 평형별 가변 폭(면적/zone깊이), 없으면 unit_width 균등.
@@ -206,6 +257,16 @@ class IfcGeneratorService:
                                 run("geometry.assign_representation", model, product=part, representation=part_solid)
                                 self._place_z(model, part, elev + slab_thickness_m)
                                 run("spatial.assign_container", model, products=[part], relating_structure=storey)
+                                # BaseQuantities + Pset_WallCommon — 내벽(비내력·내부)
+                                part_h = fh - slab_thickness_m
+                                self._attach_base_quantities(model, part, "Qto_WallBaseQuantities", [
+                                    ("IfcQuantityLength", "Length", zd),
+                                    ("IfcQuantityLength", "Height", part_h),
+                                    ("IfcQuantityLength", "Width", pwt),
+                                    ("IfcQuantityArea", "NetSideArea", zd * part_h),
+                                    ("IfcQuantityVolume", "NetVolume", pwt * zd * part_h),
+                                ])
+                                self._attach_pset_wall_common(model, part, load_bearing=False, is_external=False)
                             # 발코니: 전면 세대 외부(외벽 밖 1.5m 캔틸레버 슬래브)
                             if balconies and face == "F":
                                 bal_d = 1.5
@@ -214,6 +275,13 @@ class IfcGeneratorService:
                                 run("geometry.assign_representation", model, product=bal, representation=bal_solid)
                                 self._place_z(model, bal, elev + slab_thickness_m)
                                 run("spatial.assign_container", model, products=[bal], relating_structure=storey)
+                                # BaseQuantities — 발코니 캔틸레버 슬래브 압출 수식과 동일
+                                bal_w = max(0.5, uw - 0.6)
+                                self._attach_base_quantities(model, bal, "Qto_SlabBaseQuantities", [
+                                    ("IfcQuantityLength", "Width", 0.12),
+                                    ("IfcQuantityArea", "NetArea", bal_w * bal_d),
+                                    ("IfcQuantityVolume", "NetVolume", bal_w * bal_d * 0.12),
+                                ])
                             # 현관문: 복도 쪽 개구부(zone 안쪽 모서리)
                             if unit_doors and cw > 0:
                                 door_w, door_h = 0.9, 2.1
@@ -224,6 +292,12 @@ class IfcGeneratorService:
                                 run("geometry.assign_representation", model, product=door, representation=door_solid)
                                 self._place_z(model, door, elev + slab_thickness_m)
                                 run("spatial.assign_container", model, products=[door], relating_structure=storey)
+                                # BaseQuantities — 현관문 개구부 면적(폭×높이)
+                                self._attach_base_quantities(model, door, "Qto_DoorBaseQuantities", [
+                                    ("IfcQuantityLength", "Width", door_w),
+                                    ("IfcQuantityLength", "Height", door_h),
+                                    ("IfcQuantityArea", "Area", door_w * door_h),
+                                ])
                             cursor += uw
 
         logger.info(
@@ -319,6 +393,89 @@ class IfcGeneratorService:
             ),
         )
         product.ObjectPlacement = placement
+
+    @staticmethod
+    def _attach_base_quantities(
+        model,
+        product,
+        qto_name: str,
+        quantities: list[tuple[str, str, float]],
+    ) -> None:
+        """product에 IfcElementQuantity(BaseQuantities)를 부착한다(additive).
+
+        기존 create_entity 생성 패턴 확장 — ifcopenshell.api pset 모듈의 버전별
+        템플릿 해석에 의존하지 않고 파서 계약(bim_ifc_service._parse_ifc:
+        IsDefinedBy → IfcRelDefinesByProperties → IfcElementQuantity → Quantities의
+        IfcQuantityArea.AreaValue / IfcQuantityVolume.VolumeValue)을 직접 충족한다.
+
+        주의: 요소당 IfcQuantityArea·IfcQuantityVolume은 각 1개만 부착할 것 —
+        _parse_ifc가 마지막 값으로 덮어쓰므로(대입 누적 아님) 2개 이상이면 비결정적.
+
+        Args:
+            qto_name: IfcElementQuantity 이름(Qto_WallBaseQuantities 등 표준명).
+            quantities: (ifc_class, 물량명, 값) 목록.
+                ifc_class ∈ {IfcQuantityLength, IfcQuantityArea, IfcQuantityVolume}.
+        """
+        import ifcopenshell
+
+        value_attr = {
+            "IfcQuantityLength": "LengthValue",
+            "IfcQuantityArea": "AreaValue",
+            "IfcQuantityVolume": "VolumeValue",
+        }
+        qs = [
+            model.create_entity(qclass, Name=qname, **{value_attr[qclass]: float(qvalue)})
+            for qclass, qname, qvalue in quantities
+        ]
+        element_quantity = model.create_entity(
+            "IfcElementQuantity",
+            GlobalId=ifcopenshell.guid.new(),
+            Name=qto_name,
+            MethodOfMeasurement="BaseQuantities",
+            Quantities=qs,
+        )
+        model.create_entity(
+            "IfcRelDefinesByProperties",
+            GlobalId=ifcopenshell.guid.new(),
+            RelatedObjects=[product],
+            RelatingPropertyDefinition=element_quantity,
+        )
+
+    @staticmethod
+    def _attach_pset_wall_common(
+        model,
+        product,
+        *,
+        load_bearing: bool,
+        is_external: bool,
+    ) -> None:
+        """벽 요소에 Pset_WallCommon(LoadBearing·IsExternal)을 부착한다(additive)."""
+        import ifcopenshell
+
+        props = [
+            model.create_entity(
+                "IfcPropertySingleValue",
+                Name="LoadBearing",
+                NominalValue=model.create_entity("IfcBoolean", bool(load_bearing)),
+            ),
+            model.create_entity(
+                "IfcPropertySingleValue",
+                Name="IsExternal",
+                NominalValue=model.create_entity("IfcBoolean", bool(is_external)),
+            ),
+        ]
+        pset = model.create_entity(
+            "IfcPropertySet",
+            GlobalId=ifcopenshell.guid.new(),
+            Name="Pset_WallCommon",
+            HasProperties=props,
+        )
+        model.create_entity(
+            "IfcRelDefinesByProperties",
+            GlobalId=ifcopenshell.guid.new(),
+            RelatedObjects=[product],
+            RelatingPropertyDefinition=pset,
+        )
 
 
 def build_ifc_from_mass(mass: dict[str, Any], project_name: str = "PropAI Project") -> bytes:

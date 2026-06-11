@@ -15,7 +15,10 @@ from app.services.tax.disposal_stage_engine import (
     calculate_all_disposal_stage,
 )
 from app.services.feasibility.land_cost_engine import calculate_total_land_cost
-from app.services.feasibility.cashflow_generator import CashflowGenerator
+from app.services.feasibility.cashflow_generator import (
+    CashflowGenerator,
+    build_tax_schedule_from_integrated,
+)
 
 
 class TestD01CapitalGains:
@@ -322,3 +325,199 @@ class TestCashflowEquityExclusion:
         financing_in = s["equity_in_total"] + s["bridge_loan_amount"] * 2 + s["pf_loan_amount"]
         # bridge는 PF 전환 시 잔액이 PF에 합산 실행되므로 *2 (실행 + PF재실행분)
         assert abs(s["total_inflow"] - (financing_in + 40_000_000_000)) <= 5
+
+
+class TestAfterTaxIRRIntegration:
+    """R1 회귀: 세후 IRR 통합 현금흐름 — tax_schedule additive 주입.
+
+    타임라인(BASE_KW 기준): 설계 3개월 → 착공월 4, 준공월 15, 정산월 16,
+    총 19개월(month 0~18). 분양 6개월(month 4~9, 가중 2,2,1,1,1,0.6 — 합 7.6).
+    """
+
+    BASE_KW = dict(
+        land_cost=10_000_000_000,
+        construction_cost=20_000_000_000,
+        construction_months=12,
+        total_revenue=40_000_000_000,
+        sale_start_month=0,
+        sale_duration_months=6,
+        equity_ratio=0.3,
+        design_months=3,
+        design_cost_ratio=0.03,
+    )
+
+    SCHEDULE = {
+        "acquisition_won": 460_000_000,          # A → month 0
+        "construction_won": 200_000_000,         # B → 착공월(4)
+        "sale_won": 1_200_000_000,               # C → 분양수입 월별 비례(4~9)
+        "disposal_settlement_won": 800_000_000,  # D01·D03 → 정산월(16)
+        "d06_annual_won": 50_000_000,            # D06 → 보유 연차별
+        "d06_years": 2,
+    }
+
+    def test_backward_compat_none_schedule_identical(self):
+        """하위호환: tax_schedule=None(기본)이면 기존 결과와 완전 동일 + 신규 키 부재."""
+        legacy = CashflowGenerator().generate_monthly_cashflow(**self.BASE_KW)
+        explicit_none = CashflowGenerator().generate_monthly_cashflow(
+            **self.BASE_KW, tax_schedule=None
+        )
+        assert explicit_none == legacy
+        assert "after_tax_irr_annual_pct" not in legacy["summary"]
+        assert "total_tax_won" not in legacy["summary"]
+        # 기존 정답값 유지 (C-3 회귀와 동일 파라미터)
+        assert legacy["summary"]["equity_in_total"] == 9_180_000_000
+
+    def test_after_tax_irr_below_pretax_and_pretax_unchanged(self):
+        """방향성: 세후 IRR < 세전 IRR. 세전 irr_annual_pct는 주입과 무관하게 불변."""
+        base = CashflowGenerator().generate_monthly_cashflow(**self.BASE_KW)
+        taxed = CashflowGenerator().generate_monthly_cashflow(
+            **self.BASE_KW, tax_schedule=self.SCHEDULE
+        )
+        assert taxed["summary"]["irr_annual_pct"] == base["summary"]["irr_annual_pct"]
+        assert taxed["summary"]["after_tax_irr_annual_pct"] is not None
+        assert (
+            taxed["summary"]["after_tax_irr_annual_pct"]
+            < taxed["summary"]["irr_annual_pct"]
+        )
+        # 총세금 정답값: 4.6억 + 2억 + 12억 + 8억 + 0.5억×2 = 27.6억
+        assert taxed["summary"]["total_tax_won"] == 2_760_000_000
+
+    def test_injection_months_fixed(self):
+        """A=month0 / B=착공월 / C=분양월 비례 / D=정산월 위치 정답값 고정."""
+        base = CashflowGenerator().generate_monthly_cashflow(**self.BASE_KW)
+        taxed = CashflowGenerator().generate_monthly_cashflow(
+            **self.BASE_KW, tax_schedule=self.SCHEDULE
+        )
+        delta = {
+            b["month"]: t["outflow"] - b["outflow"]
+            for t, b in zip(taxed["rows"], base["rows"])
+        }
+        # A(취득) → month 0
+        assert delta[0] == pytest.approx(460_000_000, abs=1)
+        # B(공사부담금) 착공월(4) + C 비례분(가중 2/7.6): 2억 + 12억×2/7.6
+        assert delta[4] == pytest.approx(200_000_000 + 1_200_000_000 * 2 / 7.6, abs=2)
+        # C 비례분만 있는 분양 2개월차(month 5, 가중 2/7.6)
+        assert delta[5] == pytest.approx(1_200_000_000 * 2 / 7.6, abs=2)
+        # D01·D03 → 정산월(16)
+        assert delta[16] == pytest.approx(800_000_000, abs=1)
+        # 전월 주입 총합 = 총세금 (시점 분배가 총액을 보존)
+        assert sum(delta.values()) == pytest.approx(2_760_000_000, abs=len(delta))
+
+    def test_d06_yearly_sum_equals_annual_times_years(self):
+        """D06 연차 주입 합계 = annual × 년수 정답값 고정 (12·24개월차, 말월 클램프)."""
+        schedule = {"d06_annual_won": 50_000_000, "d06_years": 2}
+        base = CashflowGenerator().generate_monthly_cashflow(**self.BASE_KW)
+        taxed = CashflowGenerator().generate_monthly_cashflow(
+            **self.BASE_KW, tax_schedule=schedule
+        )
+        # 정답값: 50,000,000 × 2년 = 100,000,000
+        assert taxed["summary"]["total_tax_won"] == 100_000_000
+        delta = {
+            b["month"]: t["outflow"] - b["outflow"]
+            for t, b in zip(taxed["rows"], base["rows"])
+        }
+        assert delta[12] == pytest.approx(50_000_000, abs=1)   # 보유 1년차
+        assert delta[18] == pytest.approx(50_000_000, abs=1)   # 2년차(24개월) → 말월(18) 클램프
+        assert sum(delta.values()) == pytest.approx(100_000_000, abs=2)
+        # 종부세만 주입해도 세후 IRR은 세전보다 낮다
+        assert (
+            taxed["summary"]["after_tax_irr_annual_pct"]
+            < taxed["summary"]["irr_annual_pct"]
+        )
+
+
+class TestTaxScheduleAdapter:
+    """R1 어댑터: calculate_all_taxes 출력 → tax_schedule 변환 (새 엔진 0, 총액 보존)."""
+
+    def test_total_conservation_and_d06_decomposition(self):
+        from app.services.tax.integrated_tax_engine import calculate_all_taxes
+
+        result = calculate_all_taxes(
+            purchase_won=10_000_000_000,
+            area_sqm=1_000.0,
+            official_price_per_sqm=10_000_000,
+            total_households=400,
+            total_sale_amount_won=40_000_000_000,
+            total_gfa_sqm=10_000.0,
+            building_type="apartment",
+            total_units=400,
+            avg_area_sqm=100.0,
+            gain_10k_won=1_000_000,            # 양도차익 100억(만원 단위)
+            gain_won=10_000_000_000,
+            holding_years=3,
+            assessed_value_won=2_000_000_000,  # 공제 5억 초과 → D06 > 0
+        )
+        sched = build_tax_schedule_from_integrated(result)
+        assert sched is not None
+
+        # D06 연차 분해 정합: annual × years = D06 amount_won (보유 3년)
+        d06 = next(it for it in result["disposal"]["items"] if it["code"] == "D06")
+        assert d06["amount_won"] > 0
+        assert sched["d06_years"] == 3
+        assert sched["d06_annual_won"] * sched["d06_years"] == d06["amount_won"]
+
+        # 총액 보존: 어댑터 분해 합 = grand_total_won (누락·날조 없음)
+        recomposed = (
+            sched["acquisition_won"]
+            + sched["construction_won"]
+            + sched["sale_won"]
+            + sched["disposal_settlement_won"]
+            + sched["d06_annual_won"] * sched["d06_years"]
+        )
+        assert recomposed == result["grand_total_won"]
+
+        # 단계별 매핑 정합 (summary_by_stage 그대로 — 읽기 전용 어댑터)
+        assert sched["acquisition_won"] == result["summary_by_stage"]["acquisition"]
+        assert sched["construction_won"] == result["summary_by_stage"]["construction"]
+        assert sched["sale_won"] == result["summary_by_stage"]["sale"]
+        assert sched["disposal_settlement_won"] == (
+            result["summary_by_stage"]["disposal"] - d06["amount_won"]
+        )
+
+    def test_none_or_empty_returns_none(self):
+        """입력 없음·세금 전무(전부 0)면 None — 주입 없이 기존 동작 유지."""
+        assert build_tax_schedule_from_integrated(None) is None
+        assert build_tax_schedule_from_integrated({}) is None
+        zero = {
+            "summary_by_stage": {
+                "acquisition": 0, "construction": 0, "sale": 0, "disposal": 0,
+            },
+            "disposal": {"items": []},
+        }
+        assert build_tax_schedule_from_integrated(zero) is None
+
+    def test_adapter_schedule_roundtrip_into_cashflow(self):
+        """엔진→어댑터→생성기 왕복: total_tax_won = grand_total_won (시점 분배 총액 보존)."""
+        from app.services.tax.integrated_tax_engine import calculate_all_taxes
+
+        result = calculate_all_taxes(
+            purchase_won=10_000_000_000,
+            area_sqm=1_000.0,
+            official_price_per_sqm=10_000_000,
+            total_households=400,
+            total_sale_amount_won=40_000_000_000,
+            total_gfa_sqm=10_000.0,
+            building_type="apartment",
+            total_units=400,
+            avg_area_sqm=100.0,
+            gain_10k_won=1_000_000,
+            gain_won=10_000_000_000,
+            holding_years=3,
+            assessed_value_won=2_000_000_000,
+        )
+        sched = build_tax_schedule_from_integrated(result)
+        cf = CashflowGenerator().generate_monthly_cashflow(
+            land_cost=10_000_000_000,
+            construction_cost=20_000_000_000,
+            construction_months=12,
+            total_revenue=40_000_000_000,
+            sale_start_month=0,
+            sale_duration_months=6,
+            tax_schedule=sched,
+        )
+        assert cf["summary"]["total_tax_won"] == result["grand_total_won"]
+        assert cf["summary"]["after_tax_irr_annual_pct"] is not None
+        assert (
+            cf["summary"]["after_tax_irr_annual_pct"]
+            < cf["summary"]["irr_annual_pct"]
+        )

@@ -102,6 +102,11 @@ class RegulationAnalysisService:
         sigungu = self._sigungu(address)
         hierarchy = self._hierarchy(zone_type, zone_2, districts, sigungu, zl)
 
+        # 신뢰 레이어(additive): 계층 각 노드에 법령링크(legal_refs) 가산 + 한도 근거 트레이스(evidence).
+        # zone_type 미확정 시 해당 노드 legal_refs는 빈 배열(가짜 링크 금지). url은 레지스트리 출력만.
+        self._attach_node_legal_refs(hierarchy, zone_type, sigungu, zl)
+        evidence = self._build_evidence(zone_type, limits, sigungu)
+
         result: dict[str, Any] = {
             "address": address,
             "pnu": comp.get("pnu") or pnu,
@@ -114,6 +119,8 @@ class RegulationAnalysisService:
             "hierarchy": hierarchy,
             "districts": districts,
             "coordinates": comp.get("coordinates"),
+            # 한도(건폐/용적) 산출 근거 트레이스 — EvidencePanel 소비 구조. zone_type 미확정 시 빈 배열.
+            "evidence": evidence,
         }
 
         if use_llm:
@@ -197,6 +204,132 @@ class RegulationAnalysisService:
                         "desc": f"영향도 {d['impact']}" + (f" · {d['status']}" if d.get("status") else "")}
                        for d in districts]},
         ]
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # 신뢰 레이어(additive): 계층 노드별 법령링크(legal_refs) + 한도 산출 근거(evidence).
+    # 기존 hierarchy/items 필드는 1개도 변경하지 않고 각 level에 legal_refs[]만 가산한다.
+    # law.go.kr URL은 전적으로 legal_reference_registry.get_legal_refs 출력만 사용하며
+    # (여기서 URL 직접 조립 금지), zone_type 미확정 시 zone 종속 노드 legal_refs는 빈 배열.
+    # 규제 항목 ↔ 레지스트리 키 매핑:
+    #   건폐율→bcr_limit, 용적률→far_limit, 용도제한→zone_use, 주차→parking_min,
+    #   지구단위→district_unit_plan, 조례→ordinance_bcr/ordinance_far.
+    # ─────────────────────────────────────────────────────────────────────────
+    @staticmethod
+    def _level_ref_keys(level_name: str, zone_known: bool, has_du_plan: bool) -> list[str]:
+        """계층 레벨명 → 부착할 레지스트리 근거키 목록(중복 없는 순서 보존).
+
+        zone_type 미확정(zone_known=False) 시 zone 종속 한도 근거는 부착하지 않는다
+        (건폐/용적/용도 한도는 용도지역이 있어야 의미 있음 → 빈 배열로 정직 표기).
+        """
+        if level_name == "상위법령":
+            # 용도지역 행위제한·건폐율·용적률(국토계획법/시행령) + 건축 한도 + 주차 기준.
+            base = ["zone_use", "bcr_limit", "far_limit", "bldg_far", "parking_min"]
+            return base if zone_known else ["parking_min"]
+        if level_name == "도시·군계획 / 지구단위계획":
+            # 지구단위계획 근거는 해당 구역이 실제 있을 때만(가짜 링크 방지).
+            return ["district_unit_plan"] if has_du_plan else []
+        if level_name == "지자체 조례":
+            # 조례 건폐/용적 강화 한도 — sigungu 치환 후 url 승격(미상이면 pending).
+            return ["ordinance_bcr", "ordinance_far"] if zone_known else []
+        return []
+
+    def _attach_node_legal_refs(
+        self, hierarchy: list[dict], zone_type: str, sigungu: str, zl: dict
+    ) -> None:
+        """hierarchy 각 level dict에 legal_refs[]를 in-place 가산(기존 필드 무손상).
+
+        - zone_type 미확정 → zone 종속 노드 legal_refs 빈 배열(할루시네이션 링크 금지).
+        - 조례 노드는 sigungu를 전달해 조례명·url을 치환(미상이면 url_status='pending').
+        - URL은 전적으로 get_legal_refs 출력만 사용한다(여기서 URL 조립 금지).
+        - 부착 중 예외가 나도 원본 계층은 그대로 둔다(graceful).
+        """
+        zone_known = bool(zone_type and str(zone_type).strip())
+        has_du_plan = any(
+            isinstance(it, dict) and any(
+                k in str(it.get("name", ""))
+                for k in ("지구단위", "재정비촉진", "정비구역", "도시개발", "성장관리")
+            )
+            for lv in hierarchy
+            if lv.get("level") == "도시·군계획 / 지구단위계획"
+            for it in (lv.get("items") or [])
+        )
+        sgg = sigungu if (sigungu and str(sigungu).strip() and str(sigungu).strip() != "미확인") else None
+        try:
+            from app.services.legal.legal_reference_registry import get_legal_refs
+        except Exception:  # noqa: BLE001
+            return
+        for lv in hierarchy:
+            if not isinstance(lv, dict):
+                continue
+            keys = self._level_ref_keys(lv.get("level", ""), zone_known, has_du_plan)
+            try:
+                lv.setdefault("legal_refs", get_legal_refs(keys, sigungu=sgg) if keys else [])
+            except Exception:  # noqa: BLE001
+                lv.setdefault("legal_refs", [])
+
+    @staticmethod
+    def _build_evidence(zone_type: str, limits: dict, sigungu: str) -> list[dict]:
+        """건폐/용적 한도 산출 트레이스(EvidencePanel 소비 구조).
+
+        {label, value, basis, legal_ref_key}. 법정 상한 + (조례 실효값이 다르면) 조례 적용값을
+        트레이스한다. zone_type 미확정 시 빈 배열. basis는 legal_zone_limits의 법정근거 문구를
+        사용(레지스트리 단일출처 원문링크는 legal_ref_key로 프론트가 결합).
+        """
+        if not (zone_type and str(zone_type).strip()):
+            return []
+        try:
+            from app.services.zoning.legal_zone_limits import legal_limits_for
+
+            legal = legal_limits_for(zone_type)
+        except Exception:  # noqa: BLE001
+            legal = None
+        if not legal:
+            return []
+        zone_key = legal.get("zone_type") or zone_type
+        ref_keys = legal.get("legal_ref_keys") or {}
+        far_key = ref_keys.get("far")
+        bcr_key = ref_keys.get("bcr")
+        sgg = sigungu if (sigungu and str(sigungu).strip() and str(sigungu).strip() != "미확인") else "지자체"
+
+        def _pct(v) -> str | None:
+            if v is None:
+                return None
+            try:
+                n = float(v)
+            except (TypeError, ValueError):
+                return None
+            return f"{int(n)}%" if n == int(n) else f"{n:g}%"
+
+        bcr = limits.get("bcr") or {}
+        far = limits.get("far") or {}
+        evidence: list[dict] = []
+        # 법정 상한(건폐/용적) — legal_zone_limits SSOT.
+        bcr_legal = _pct(legal.get("max_bcr_pct"))
+        if bcr_legal and bcr_key:
+            evidence.append({
+                "label": "법정 건폐율 상한", "value": bcr_legal,
+                "basis": f"{zone_key} · 국토계획법 시행령 제84조", "legal_ref_key": bcr_key,
+            })
+        far_legal = _pct(legal.get("max_far_pct"))
+        if far_legal and far_key:
+            evidence.append({
+                "label": "법정 용적률 상한", "value": far_legal,
+                "basis": f"{zone_key} · 국토계획법 시행령 제85조", "legal_ref_key": far_key,
+            })
+        # 조례 실효값이 법정과 다르면 별도 트레이스(조례 근거키로).
+        ord_bcr = _pct(bcr.get("ordinance"))
+        if ord_bcr and ord_bcr != bcr_legal:
+            evidence.append({
+                "label": "조례 적용 건폐율", "value": ord_bcr,
+                "basis": f"{zone_key} · {sgg} 도시계획 조례(실효값)", "legal_ref_key": "ordinance_bcr",
+            })
+        ord_far = _pct(far.get("ordinance"))
+        if ord_far and ord_far != far_legal:
+            evidence.append({
+                "label": "조례 적용 용적률", "value": ord_far,
+                "basis": f"{zone_key} · {sgg} 도시계획 조례(실효값)", "legal_ref_key": "ordinance_far",
+            })
+        return evidence
 
     async def _llm(
         self, address: str, zone: str, zone2: str, area: Any,

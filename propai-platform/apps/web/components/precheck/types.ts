@@ -47,6 +47,58 @@ export interface PreCheckSummary {
   llm_note: string | null;
 }
 
+/* ── 신뢰 레이어(additive) — 백엔드 trust 블록 옵셔널 계약 ── */
+
+/** 필드별 자동수집 출처(provenance) */
+export interface PreCheckInputProvenance {
+  value: unknown;
+  source?: string;       // 예: vworld_land_characteristics
+  method?: string;       // auto | estimated | fallback | user
+  confidence?: string;   // high | medium | low | none
+}
+
+/** 데이터 품질·할루시네이션 검증 표기 */
+export interface PreCheckDataQuality {
+  confidence_level?: string;        // high | medium | low
+  quantitative_reliable?: boolean;  // PNU 확인 여부
+  warnings?: string[];
+  disclaimer?: string;
+}
+
+/** law.go.kr 법령 원문링크 (백엔드 레지스트리 출력 그대로 — 프론트 조립 금지) */
+export interface PreCheckLegalRef {
+  key: string;
+  law_name: string;
+  article?: string | null;
+  title?: string | null;
+  url?: string | null;
+  url_status?: string; // verified | pending
+}
+
+/** 산출 근거 트레이스 */
+export interface PreCheckEvidence {
+  label: string;
+  value?: string | number | null;
+  basis?: string | null;
+  legal_ref_key?: string | null;
+}
+
+/** 최저/기본/최대 사업성 시나리오 */
+export interface PreCheckScenario {
+  npv_won?: number | null;
+  profit_rate_pct?: number | null;
+  roi_pct?: number | null;
+  grade?: string | null;
+  assumptions?: Record<string, number | string>;
+}
+
+export interface PreCheckFeasibilityBand {
+  method_code: string;
+  method_name: string;
+  scenarios: { min?: PreCheckScenario; base?: PreCheckScenario; max?: PreCheckScenario };
+  note?: string | null;
+}
+
 /** A. 즉시 룰체크 응답 */
 export interface InstantPreCheckResponse {
   ok: boolean;
@@ -61,6 +113,12 @@ export interface InstantPreCheckResponse {
   sources: string[];
   // 빈/오류 경로(ok:false)에서 백엔드가 사유 전달
   message?: string | null;
+  // ── 신뢰 레이어(옵셔널 — 구버전 백엔드와 호환) ──
+  inputs?: Record<string, PreCheckInputProvenance>;
+  data_quality?: PreCheckDataQuality;
+  legal_refs?: PreCheckLegalRef[];
+  evidence?: PreCheckEvidence[];
+  feasibility_band?: PreCheckFeasibilityBand | null;
 }
 
 /** A. 즉시 룰체크 요청 */

@@ -187,6 +187,20 @@ class SVGDrawingService:
             _utype, _uarea, project_name=name, floors=int(fc or 0), total_units=_total_units,
         )
 
+        # B-02-UNIT-R: 결정론 유닛플랜(R3-1) — project_data['unit_plan'] 제공 시에만
+        # 추가 생성(additive). 미제공 시 기존 도면 세트 완전 동일.
+        _uplan = project_data.get("unit_plan") or {}
+        if _uplan.get("rooms"):
+            drawings["B-02-UNIT-R"] = self.generate_unit_plan_rooms(
+                _uplan["rooms"],
+                _uplan.get("body_width_m"),
+                _uplan.get("body_depth_m"),
+                unit_type=str(_uplan.get("unit_type") or _utype),
+                area_sqm=float(_uplan.get("area_sqm") or _uarea),
+                balconies=_uplan.get("balconies"),
+                project_name=name,
+            )
+
         # B-03: 단면도
         drawings["B-03"] = self.generate_section_drawing(
             bw, fc, fh, basement_floors=bf,
@@ -826,6 +840,176 @@ class SVGDrawingService:
                            size=(PXM * 0.5, 5),
                            fill="#333333" if k % 2 == 0 else "#ffffff",
                            stroke="#333333", stroke_width=0.4))
+
+        return _make_responsive(dwg.tostring())
+
+    # ── 결정론 유닛플랜 렌더(R3-1) — unit_plan_generator 결과(rooms) 전용 ──
+
+    def generate_unit_plan_rooms(
+        self,
+        rooms: List[dict],
+        body_width_m: Optional[float] = None,
+        body_depth_m: Optional[float] = None,
+        *,
+        unit_type: str = "",
+        area_sqm: float = 0.0,
+        balconies: Optional[List[dict]] = None,
+        project_name: str = "PropAI",
+        drawing_no: str = "A-202",
+    ) -> str:
+        """결정론 유닛플랜 생성기(rooms) 결과를 단위세대 평면 SVG로 렌더한다.
+
+        기존 generate_unit_plan은 자체 파라메트릭 배치(시그니처 불변 유지) —
+        본 함수는 외부 생성기(cad.unit_plan_generator)가 산출한
+        rooms[{name,x,y,w,h}](m, y=0 북측)를 내벽 poché·실라벨·치수로 그린다(additive).
+
+        Args:
+            rooms: 실 목록 [{name, x, y, w, h}] (m 단위, 본체 타일링).
+            body_width_m / body_depth_m: 본체 치수(m). None이면 rooms 외곽에서 산출.
+            balconies: [{name, x, y, w, h, extended}] 서비스면적(남측, 본체 밖).
+        """
+        if svgwrite is None:
+            return SVG_PLACEHOLDER
+        if not rooms:
+            return SVG_PLACEHOLDER
+
+        bw_m = float(body_width_m or max(float(r["x"]) + float(r["w"]) for r in rooms))
+        bd_m = float(body_depth_m or max(float(r["y"]) + float(r["h"]) for r in rooms))
+        bal = list(balconies or [])
+        bal_h = max((float(b.get("h") or 0.0) for b in bal), default=0.0)
+
+        PXM = 36.0   # 1m = 36px (1:100 화면 가독 스케일 — 기존 unit plan과 동일)
+        EXT = 0.20   # 외벽 200mm
+        P = 0.07     # 칸막이 절반(실간벽 ~140mm)
+        MX, MTOP, MBOT, MR = 78.0, 56.0, 118.0, 40.0
+        cw_px = bw_m * PXM + MX + MR
+        ch_px = (bd_m + bal_h) * PXM + MTOP + MBOT
+
+        dwg = svgwrite.Drawing(size=(f"{cw_px:.0f}px", f"{ch_px:.0f}px"))
+        dwg.add(dwg.rect(insert=(0, 0), size=(cw_px, ch_px), fill="#ffffff"))
+        g = dwg.g(transform=f"translate({MX},{MTOP})")
+        dwg.add(g)
+
+        def px(m: float) -> float:
+            return m * PXM
+
+        # 1) 발코니(남측, 본체 밖) — 확장 시 점선 경계 + 옅은 초록
+        for b in bal:
+            bx = float(b.get("x") or 0.0)
+            by = float(b.get("y") if b.get("y") is not None else bd_m)
+            bw_ = float(b.get("w") or bw_m)
+            bh_ = float(b.get("h") or 0.0)
+            if bh_ <= 0:
+                continue
+            extended = bool(b.get("extended"))
+            kw = dict(insert=(px(bx), px(by)), size=(px(bw_), px(bh_)),
+                      fill="#e8f4ec" if extended else "#eef1f4",
+                      stroke="#9aa4ad", stroke_width=0.8)
+            if extended:
+                kw["stroke_dasharray"] = "4,3"
+            g.add(dwg.rect(**kw))
+            lbl = "발코니(확장)" if extended else str(b.get("name") or "발코니")
+            g.add(dwg.text(lbl, insert=(px(bx + bw_ / 2), px(by + bh_ / 2) + 4),
+                           font_size="10px", font_family=FONT, fill="#7a838c",
+                           text_anchor="middle"))
+
+        # 2) 본체 = 어두운 면(벽 poché 베이스)
+        g.add(dwg.rect(insert=(0, 0), size=(px(bw_m), px(bd_m)), fill="#1a1a1a"))
+
+        # 3) 각 실 = 흰 inset(사이 어두운 띠 = 내벽 poché)
+        for r in rooms:
+            fill = "#f0f2f4" if str(r["name"]) == "복도" else "#fafafa"
+            g.add(dwg.rect(
+                insert=(px(float(r["x"]) + P), px(float(r["y"]) + P)),
+                size=(px(max(0.1, float(r["w"]) - 2 * P)),
+                      px(max(0.1, float(r["h"]) - 2 * P))),
+                fill=fill,
+            ))
+
+        # 4) 외벽 poché(두껍게) — 본체 둘레 EXT 띠
+        g.add(dwg.rect(insert=(0, 0), size=(px(bw_m), px(EXT)), fill="#1a1a1a"))
+        g.add(dwg.rect(insert=(0, px(bd_m - EXT)), size=(px(bw_m), px(EXT)), fill="#1a1a1a"))
+        g.add(dwg.rect(insert=(0, 0), size=(px(EXT), px(bd_m)), fill="#1a1a1a"))
+        g.add(dwg.rect(insert=(px(bw_m - EXT), 0), size=(px(EXT), px(bd_m)), fill="#1a1a1a"))
+
+        # 5) 실명 + 실면적 라벨(좁은 실은 축소 폰트·면적 생략)
+        for r in rooms:
+            name = str(r["name"])
+            rw_px = px(float(r["w"]))
+            cx = px(float(r["x"]) + float(r["w"]) / 2)
+            cy = px(float(r["y"]) + float(r["h"]) / 2)
+            if name == "복도":
+                g.add(dwg.text(name, insert=(cx, cy + 3), font_size="9px",
+                               font_family=FONT, fill="#7a838c", text_anchor="middle"))
+                continue
+            narrow = rw_px < 52
+            g.add(dwg.text(name, insert=(cx, cy - 1),
+                           font_size="8px" if narrow else "12px", font_family=FONT,
+                           fill="#1a1a1a", text_anchor="middle", font_weight="bold"))
+            if not narrow:
+                ar = float(r["w"]) * float(r["h"])
+                g.add(dwg.text(f"{ar:.1f}㎡", insert=(cx, cy + 12), font_size="9px",
+                               font_family=FONT, fill="#6b7480", text_anchor="middle"))
+
+        # 6) 치수선 — 남측 채광 베이 실폭 체인 + 전체 폭/깊이
+        def dim_h(x1: float, x2: float, y_off: float, text: str) -> None:
+            y = px(bd_m + bal_h) + y_off
+            g.add(dwg.line(start=(px(x1), y), end=(px(x2), y),
+                           stroke="#666666", stroke_width=0.5))
+            for xe in (x1, x2):
+                g.add(dwg.line(start=(px(xe), y - 4), end=(px(xe), y + 4),
+                               stroke="#666666", stroke_width=0.5))
+            g.add(dwg.text(text, insert=((px(x1) + px(x2)) / 2, y - 3), font_size="10px",
+                           font_family=FONT, fill="#333333", text_anchor="middle"))
+
+        def dim_v(y1: float, y2: float, x_off: float, text: str) -> None:
+            xx = x_off
+            g.add(dwg.line(start=(xx, px(y1)), end=(xx, px(y2)),
+                           stroke="#666666", stroke_width=0.5))
+            for ye in (y1, y2):
+                g.add(dwg.line(start=(xx - 4, px(ye)), end=(xx + 4, px(ye)),
+                               stroke="#666666", stroke_width=0.5))
+            g.add(dwg.text(text, insert=(xx - 6, (px(y1) + px(y2)) / 2),
+                           font_size="10px", font_family=FONT, fill="#333333",
+                           text_anchor="middle",
+                           transform=f"rotate(-90 {xx - 6} {(px(y1) + px(y2)) / 2})"))
+
+        south_rooms = sorted(
+            (r for r in rooms if abs(float(r["y"]) + float(r["h"]) - bd_m) < 1e-3),
+            key=lambda r: float(r["x"]),
+        )
+        for r in south_rooms:
+            dim_h(float(r["x"]), float(r["x"]) + float(r["w"]), 22,
+                  f"{int(round(float(r['w']) * 1000))}")
+        dim_h(0.0, bw_m, 44, f"{int(round(bw_m * 1000))}")
+        dim_v(0.0, bd_m, -26, f"{int(round(bd_m * 1000))}")
+
+        # 7) 방위표(N) — 우상단
+        nax = px(bw_m) - 16
+        nay = -30
+        g.add(dwg.circle(center=(nax, nay), r=12, fill="none",
+                         stroke="#222222", stroke_width=0.8))
+        g.add(dwg.polygon(points=[(nax, nay - 11), (nax - 4, nay + 2), (nax + 4, nay + 2)],
+                          fill="#222222"))
+        g.add(dwg.text("N", insert=(nax, nay + 13), font_size="9px", font_family=FONT,
+                       fill="#222222", text_anchor="middle", font_weight="bold"))
+
+        # 8) 표제란
+        tb_y = px(bd_m + bal_h) + 58
+        g.add(dwg.rect(insert=(0, tb_y), size=(px(bw_m), 40), fill="none",
+                       stroke="#333333", stroke_width=0.8))
+        g.add(dwg.line(start=(px(bw_m) * 0.62, tb_y), end=(px(bw_m) * 0.62, tb_y + 40),
+                       stroke="#333333", stroke_width=0.6))
+        title = f"{unit_type or '단위세대'} 단위세대 평면도(결정론)"
+        g.add(dwg.text(title, insert=(8, tb_y + 17), font_size="12px", font_family=FONT,
+                       fill="#1a1a1a", font_weight="bold"))
+        ctx = f"전용 {area_sqm:.1f}㎡ · {project_name}" if area_sqm > 0 else project_name
+        g.add(dwg.text(ctx, insert=(8, tb_y + 32), font_size="9px",
+                       font_family=FONT, fill="#6b7480"))
+        g.add(dwg.text("축척 1:100", insert=(px(bw_m) * 0.62 + 8, tb_y + 15),
+                       font_size="9px", font_family=FONT, fill="#333333"))
+        g.add(dwg.text(f"도면 {drawing_no}", insert=(px(bw_m) * 0.62 + 8, tb_y + 30),
+                       font_size="9px", font_family=FONT, fill="#333333"))
 
         return _make_responsive(dwg.tostring())
 

@@ -1,39 +1,153 @@
 """229개 시군구 지역세금 기준 데이터 (수지분석고도화 v2).
 
 3축 교차 설계: 지역(229개 시군구) × 지목(임야/농지/대지) × 개발방식(M01~M15)
+
+R2(법령 시행일 버전드 룰엔진): 핵심 세율 상수(ACQUISITION_TAX_MATRIX·
+CAPITAL_GAINS_BRACKETS·LAND_COMPREHENSIVE_TAX_BRACKETS 등)는
+tax_rules_versions.json으로 외부화되었고, 기존 상수명은 **현행 최신본을
+가리키는 별칭**으로 유지된다(하위호환 — 기존 호출·테스트 무수정 통과).
+시점별 조회는 get_rule(rule_key, as_of=...)로 한다.
 """
 
 from __future__ import annotations
 
+import copy
+import json
+from datetime import date
+from functools import lru_cache
+from pathlib import Path
 from typing import Any
+
+# ─────────────────────────────────────────────────────────────────────────────
+# R2: 법령 시행일 버전드 룰 로더 (tax_rules_versions.json)
+#
+# 스키마: rules[rule_key] = {kind, legal_ref_key, versions: [
+#     {effective_from, effective_to(null=현행), legal_basis, value}, ...]}
+# 원칙: 잘못된 과거 세율/시행일 추정 금지 — 검증 버전만 수록하고, 수록 구간
+# 밖의 as_of 요청은 가짜 과거값 대신 match="out_of_range" + warning으로 정직 표기.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_TAX_RULES_VERSIONS_PATH = Path(__file__).resolve().parent / "tax_rules_versions.json"
+
+
+def _parse_iso_date(value: str | None) -> date | None:
+    """ISO 'YYYY-MM-DD' → date. None/빈값은 None(개방 구간)."""
+    if not value:
+        return None
+    return date.fromisoformat(value)
+
+
+@lru_cache(maxsize=1)
+def _load_tax_rules_versions() -> dict[str, Any]:
+    """tax_rules_versions.json 로드 + 구조 검증(실패 시 fail-fast — 무결성 우선)."""
+    with open(_TAX_RULES_VERSIONS_PATH, encoding="utf-8") as fh:
+        data = json.load(fh)
+    rules = data.get("rules")
+    if not isinstance(rules, dict) or not rules:
+        raise ValueError(f"tax_rules_versions.json: 'rules' 비어있음 ({_TAX_RULES_VERSIONS_PATH})")
+    for rule_key, rule in rules.items():
+        versions = rule.get("versions")
+        if not isinstance(versions, list) or not versions:
+            raise ValueError(f"tax_rules_versions.json: rule '{rule_key}' versions 비어있음")
+        for ver in versions:
+            eff_from = _parse_iso_date(ver.get("effective_from"))
+            if eff_from is None:
+                raise ValueError(f"tax_rules_versions.json: rule '{rule_key}' effective_from 누락")
+            eff_to = _parse_iso_date(ver.get("effective_to"))
+            if eff_to is not None and eff_to < eff_from:
+                raise ValueError(f"tax_rules_versions.json: rule '{rule_key}' 시행 구간 역전")
+    return data
+
+
+def _build_rule_result(rule_key: str, rule: dict, version: dict, match: str,
+                       warning: str | None = None) -> dict[str, Any]:
+    """get_rule 반환 레코드 구성 — value는 깊은 복사(캐시 오염 방지)."""
+    out: dict[str, Any] = {
+        "rule_key": rule_key,
+        "value": copy.deepcopy(version["value"]),
+        "effective_from": version["effective_from"],
+        "effective_to": version.get("effective_to"),
+        "legal_ref_key": rule.get("legal_ref_key"),
+        "legal_basis": version.get("legal_basis", ""),
+        "kind": rule.get("kind", "rate_table"),
+        "match": match,
+    }
+    if warning:
+        out["warning"] = warning
+    return out
+
+
+def get_rule(rule_key: str, as_of: date | None = None) -> dict[str, Any] | None:
+    """버전드 세율 룰 조회.
+
+    Args:
+        rule_key: tax_rules_versions.json의 룰 키.
+        as_of: 적용 시점. None이면 현행 최신본(effective_to=null 우선).
+
+    Returns:
+        {rule_key, value, effective_from, effective_to, legal_ref_key,
+         legal_basis, kind, match[, warning]} — 미등록 rule_key는 None.
+        match: 'latest'(as_of 미지정 현행본) | 'exact'(구간 일치) |
+               'out_of_range'(수록 구간 이전 — 최초 수록본 폴백+경고) |
+               'stale'(종료된 마지막 구간 폴백+경고; 데이터 공백 시).
+    """
+    rule = _load_tax_rules_versions()["rules"].get(rule_key)
+    if rule is None:
+        return None
+
+    versions = sorted(rule["versions"], key=lambda v: _parse_iso_date(v["effective_from"]))
+
+    if as_of is None:
+        # 현행 최신본: 개방 구간(effective_to=null) 중 최신 → 없으면 최신 시행본.
+        open_versions = [v for v in versions if _parse_iso_date(v.get("effective_to")) is None]
+        chosen = open_versions[-1] if open_versions else versions[-1]
+        return _build_rule_result(rule_key, rule, chosen, "latest")
+
+    started = [v for v in versions if _parse_iso_date(v["effective_from"]) <= as_of]
+    if not started:
+        earliest = versions[0]
+        return _build_rule_result(
+            rule_key, rule, earliest, "out_of_range",
+            warning=(
+                f"as_of={as_of.isoformat()} 이전의 검증된 룰 데이터 미보유 — "
+                f"최초 수록본(시행 {earliest['effective_from']})을 폴백 반환(과거 세율 추정 금지)"
+            ),
+        )
+
+    candidate = started[-1]
+    cand_to = _parse_iso_date(candidate.get("effective_to"))
+    if cand_to is None or as_of <= cand_to:
+        return _build_rule_result(rule_key, rule, candidate, "exact")
+
+    # 데이터 공백(종료된 마지막 구간 이후, 후속 버전 미수록) — 정직 경고 폴백.
+    return _build_rule_result(
+        rule_key, rule, candidate, "stale",
+        warning=(
+            f"as_of={as_of.isoformat()} 시점의 룰 버전 미수록 — "
+            f"직전 버전(시행 {candidate['effective_from']} ~ {candidate.get('effective_to')})을 폴백 반환"
+        ),
+    )
+
 
 # ── 취득세 매트릭스: (지목, 주택수, 조정지역) → (기본율, 중과율, 교육세율, 농특세율) ──
 
-ACQUISITION_TAX_MATRIX: dict[tuple[str, int, bool], tuple[float, float, float, float]] = {
-    # (지목, 주택수, 조정지역여부) → (기본율, 중과율, 교육세율, 농특세율)
-    # 임야(forest)
-    ("forest", 0, False): (0.022, 0.0, 0.002, 0.002),
-    ("forest", 0, True):  (0.022, 0.0, 0.002, 0.002),
-    ("forest", 1, False): (0.022, 0.0, 0.002, 0.002),
-    ("forest", 1, True):  (0.022, 0.0, 0.002, 0.002),
-    # 농지(farmland)
-    ("farmland", 0, False): (0.030, 0.0, 0.002, 0.002),
-    ("farmland", 0, True):  (0.030, 0.0, 0.002, 0.002),
-    ("farmland", 1, False): (0.030, 0.0, 0.002, 0.002),
-    ("farmland", 1, True):  (0.030, 0.0, 0.002, 0.002),
-    # 대지(land) — 비주택
-    ("land", 0, False): (0.040, 0.0, 0.004, 0.002),
-    ("land", 0, True):  (0.040, 0.0, 0.004, 0.002),
-    # 대지(land) — 주택 1주택
-    ("land", 1, False): (0.010, 0.0, 0.001, 0.0),
-    ("land", 1, True):  (0.010, 0.0, 0.001, 0.0),
-    # 대지(land) — 주택 2주택
-    ("land", 2, False): (0.010, 0.0, 0.001, 0.0),
-    ("land", 2, True):  (0.080, 0.0, 0.004, 0.006),  # 조정지역 2주택 중과 8%(지방세법 제13조의2)
-    # 대지(land) — 주택 3주택+
-    ("land", 3, False): (0.080, 0.0, 0.004, 0.006),  # 비조정 3주택 중과 8%
-    ("land", 3, True):  (0.120, 0.0, 0.004, 0.010),  # 조정 3주택+/법인 중과 12%(상한)
-}
+
+def _acquisition_matrix_from_records(
+    records: list[dict[str, Any]],
+) -> dict[tuple[str, int, bool], tuple[float, float, float, float]]:
+    """JSON 레코드 목록 → 기존 매트릭스 dict 구조(튜플 키/값) 복원."""
+    return {
+        (r["land_category"], int(r["house_count"]), bool(r["is_adjusted_area"])): (
+            r["base_rate"], r["surcharge_rate"], r["education_rate"], r["rural_rate"],
+        )
+        for r in records
+    }
+
+
+# 별칭(하위호환): 현행 최신본 — 기존 import·조회 코드 무수정 동작.
+ACQUISITION_TAX_MATRIX: dict[tuple[str, int, bool], tuple[float, float, float, float]] = (
+    _acquisition_matrix_from_records(get_rule("acquisition_tax_matrix")["value"])
+)
 
 
 def _housing_sliding_rate(purchase_won: int) -> float:
@@ -53,6 +167,7 @@ def get_acquisition_tax_rates(
     house_count: int = 0,
     is_adjusted_area: bool = False,
     purchase_won: int = 0,
+    as_of: date | None = None,
 ) -> dict[str, float]:
     """취득세율 조회.
 
@@ -62,18 +177,27 @@ def get_acquisition_tax_rates(
         is_adjusted_area: 조정대상지역 여부
         purchase_won: 취득가액 (주택 표준세율 1~3% 슬라이딩 산정용.
             0이면 슬라이딩 미적용 — 기존 flat 1% 동작 유지)
+        as_of: 적용 시점(additive). None이면 현행 최신본 — 기존 동작 완전 동일.
+            지정 시 해당 시점 버전드 매트릭스(get_rule) 적용.
 
     Returns:
         {'base_rate', 'surcharge_rate', 'education_rate', 'rural_rate', 'total_rate'}
     """
+    if as_of is None:
+        matrix = ACQUISITION_TAX_MATRIX
+    else:
+        matrix = _acquisition_matrix_from_records(
+            get_rule("acquisition_tax_matrix", as_of=as_of)["value"]
+        )
+
     key_count = min(house_count, 3)
     key = (land_category, key_count, is_adjusted_area)
 
-    if key not in ACQUISITION_TAX_MATRIX:
+    if key not in matrix:
         # 폴백: 대지 비주택
-        rates = ACQUISITION_TAX_MATRIX[("land", 0, False)]
+        rates = matrix[("land", 0, False)]
     else:
-        rates = ACQUISITION_TAX_MATRIX[key]
+        rates = matrix[key]
 
     base, surcharge, edu, rural = rates
 
@@ -250,16 +374,10 @@ VAT_RATE = 0.10  # 10%
 
 # ── 양도소득세 누진세율 ──
 
+# 별칭(하위호환): 현행 최신본 — (하한 만원, 세율, 누진공제 만원).
+# 정본은 tax_rules_versions.json 'capital_gains_brackets'(시행일 메타 포함).
 CAPITAL_GAINS_BRACKETS: list[tuple[float, float, float]] = [
-    # (하한 만원, 세율, 누진공제 만원)
-    (0, 0.06, 0),
-    (1_400, 0.15, 126),
-    (5_000, 0.24, 576),
-    (8_800, 0.35, 1_544),
-    (15_000, 0.38, 1_994),
-    (30_000, 0.40, 2_594),
-    (50_000, 0.42, 3_594),
-    (100_000, 0.45, 6_594),
+    tuple(row) for row in get_rule("capital_gains_brackets")["value"]
 ]
 
 # 장기보유특별공제 (보유기간 → 공제율)
@@ -282,34 +400,66 @@ LTDC_RATES_PRIMARY_RESIDENCE: dict[int, float] = {
 CORP_ADDON_RATE_RESIDENTIAL = 0.10  # 10%
 
 
-# ── 종합부동산세: 종합합산 토지(나대지) 기준 (2024) ──
+# ── 종합부동산세: 종합합산 토지(나대지) 기준 ──
 # 개발사업은 착공 전 토지가 통상 '나대지=종합합산' → 공제 5억, 누진 1/2/3%.
 # (주택건설사업용 토지는 종부세 비과세 특례가 있을 수 있어 별도 적용 — note 명시)
-LAND_COMPREHENSIVE_DEDUCTION_WON = 500_000_000   # 종합합산 토지 공제(공시가격 기준)
-LAND_FAIR_MARKET_RATIO = 1.0                       # 토지 공정시장가액비율(2024)
+# 정본은 tax_rules_versions.json 'land_comprehensive_tax'(시행일 메타 포함).
+
+
+def _land_brackets_from_value(value: dict[str, Any]) -> list[tuple[float, float, int]]:
+    """JSON 브래킷([한도(null=무한), 세율, 누진공제]) → 기존 튜플 구조 복원."""
+    return [
+        (float("inf") if row[0] is None else row[0], row[1], row[2])
+        for row in value["brackets"]
+    ]
+
+
+_LAND_COMPREHENSIVE_CURRENT = get_rule("land_comprehensive_tax")["value"]
+
+# 별칭(하위호환): 현행 최신본.
+LAND_COMPREHENSIVE_DEDUCTION_WON = int(_LAND_COMPREHENSIVE_CURRENT["deduction_won"])  # 종합합산 토지 공제(공시가격 기준)
+LAND_FAIR_MARKET_RATIO = float(_LAND_COMPREHENSIVE_CURRENT["fair_market_ratio"])      # 토지 공정시장가액비율(현행)
 # (과세표준 한도, 세율, 누진공제) — 종합합산토지
-LAND_COMPREHENSIVE_TAX_BRACKETS: list[tuple[float, float, int]] = [
-    (1_500_000_000, 0.010, 0),
-    (4_500_000_000, 0.020, 15_000_000),
-    (float("inf"),  0.030, 60_000_000),
-]
+LAND_COMPREHENSIVE_TAX_BRACKETS: list[tuple[float, float, int]] = (
+    _land_brackets_from_value(_LAND_COMPREHENSIVE_CURRENT)
+)
 
 
 def calc_land_comprehensive_property_tax(
     assessed_value_won: int,
     *,
-    deduction_won: int = LAND_COMPREHENSIVE_DEDUCTION_WON,
-    fair_market_ratio: float = LAND_FAIR_MARKET_RATIO,
+    deduction_won: int | None = None,
+    fair_market_ratio: float | None = None,
     holding_years: int = 1,
+    as_of: date | None = None,
 ) -> dict[str, Any]:
     """종합합산 토지 종합부동산세(연간·합산). 공제 이하면 0(구조적 정확).
 
     과세표준 = max(0, 공시가격합산 − 공제) × 공정시장가액비율 → 누진세율 적용.
+
+    additive: as_of 지정 시 해당 시점 버전드 룰(공제·비율·브래킷) 적용.
+    None이면 현행 별칭 사용 — 기존 동작 완전 동일. deduction_won/fair_market_ratio를
+    명시하면 그 값이 버전값보다 우선한다(기존 호출 계약 유지).
     """
+    if as_of is None:
+        brackets = LAND_COMPREHENSIVE_TAX_BRACKETS
+        default_deduction = LAND_COMPREHENSIVE_DEDUCTION_WON
+        default_ratio = LAND_FAIR_MARKET_RATIO
+    else:
+        versioned = get_rule("land_comprehensive_tax", as_of=as_of)["value"]
+        brackets = _land_brackets_from_value(versioned)
+        default_deduction = int(versioned["deduction_won"])
+        default_ratio = float(versioned["fair_market_ratio"])
+
+    if deduction_won is None:
+        deduction_won = default_deduction
+    if fair_market_ratio is None:
+        fair_market_ratio = default_ratio
+
     taxable = max(0.0, (assessed_value_won - deduction_won)) * fair_market_ratio
     annual = 0
     rate_applied = 0.0
-    for limit, rate, prog in LAND_COMPREHENSIVE_TAX_BRACKETS:
+    for limit, rate, prog in brackets:
         if taxable <= limit:
             annual = max(0, int(taxable * rate - prog))
             rate_applied = rate

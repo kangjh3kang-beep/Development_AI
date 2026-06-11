@@ -4,6 +4,7 @@
 """
 
 import contextlib
+import json
 import tempfile
 from typing import Any
 
@@ -110,7 +111,8 @@ async def run_parse_large_ifc(
                 "UPDATE designs SET bim_data = :data, updated_at = NOW() "
                 "WHERE project_id = :pid"
             ),
-            {"data": str(result_json), "pid": project_id},
+            # str()은 파이썬 repr(작은따옴표)이라 JSON 비호환 — json.dumps로 직렬화
+            {"data": json.dumps(result_json, ensure_ascii=False), "pid": project_id},
         )
         await db.commit()
     finally:

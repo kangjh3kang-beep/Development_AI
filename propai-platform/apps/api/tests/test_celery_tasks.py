@@ -10,7 +10,15 @@ class TestCeleryAppMeta:
     """Celery 앱 메타 정보 검증."""
 
     def test_beat_schedule_count(self):
-        assert len(BEAT_SCHEDULE_NAMES) == 3
+        # 카운트 단언은 신규 태스크 추가마다 드리프트(안티패턴) →
+        # 현행 celery_app.py beat_schedule 이름 집합 동등 단언으로 고정.
+        assert set(BEAT_SCHEDULE_NAMES) == {
+            "check-legal-rates-daily",
+            "check-standard-prices-weekly",
+            "check-pension-increase-monthly",
+            "sync-onbid-auctions-daily",
+        }
+        assert len(BEAT_SCHEDULE_NAMES) == len(set(BEAT_SCHEDULE_NAMES))  # 중복 금지
 
     def test_beat_schedule_names(self):
         assert "check-legal-rates-daily" in BEAT_SCHEDULE_NAMES
@@ -18,7 +26,15 @@ class TestCeleryAppMeta:
         assert "check-pension-increase-monthly" in BEAT_SCHEDULE_NAMES
 
     def test_task_names_count(self):
-        assert len(TASK_NAMES) == 4
+        # 카운트 → 이름 집합 동등 단언 (sync_onbid_auctions 신규 태스크 반영).
+        assert set(TASK_NAMES) == {
+            "app.tasks.rate_tasks.check_legal_rates",
+            "app.tasks.rate_tasks.check_standard_prices",
+            "app.tasks.rate_tasks.check_pension_increase",
+            "app.tasks.cost_tasks.recalculate_project_cost",
+            "app.tasks.auction_sync_task.sync_onbid_auctions",
+        }
+        assert len(TASK_NAMES) == len(set(TASK_NAMES))  # 중복 금지
 
     def test_task_names_content(self):
         assert "app.tasks.rate_tasks.check_legal_rates" in TASK_NAMES

@@ -205,6 +205,11 @@ class TestKakaoHandler:
 
     @pytest.mark.asyncio
     async def test_get_or_create_user_existing(self):
+        """기존 OAuth 매핑 사용자 — 정본 시그니처 get_or_create_user(db, profile).
+
+        tenant_id 인자는 제거됨(개인 테넌트 내부 자동생성으로 스펙 변경,
+        kakao_handler.py:149).
+        """
         from apps.api.auth.kakao_handler import get_or_create_user
 
         mock_user = MagicMock()
@@ -217,15 +222,17 @@ class TestKakaoHandler:
 
         user = await get_or_create_user(
             db=mock_db,
-            profile={"kakao_id": 12345, "email": "test@kakao.com", "nickname": "테스트"},
-            tenant_id=TEST_TENANT_ID,
+            profile={"kakao_id": "12345", "email": "test@kakao.com", "nickname": "테스트"},
         )
         assert user.email == "test@kakao.com"
-        mock_db.add.assert_not_called()
+        mock_db.add.assert_not_called()  # 기존 사용자 → 테넌트/사용자 생성 없음
 
     @pytest.mark.asyncio
     async def test_get_or_create_user_new(self):
+        """신규 사용자 — 개인 테넌트 자동생성 후 사용자 생성(현행 스펙 고정)."""
         from apps.api.auth.kakao_handler import get_or_create_user
+        from apps.api.database.models.tenant import Tenant
+        from apps.api.database.models.user import User
 
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = None
@@ -233,15 +240,24 @@ class TestKakaoHandler:
         mock_db = _mock_db()
         mock_db.execute = AsyncMock(return_value=mock_result)
 
-        try:
-            user = await get_or_create_user(
-                db=mock_db,
-                profile={"kakao_id": 12345, "email": "test@kakao.com", "nickname": "테스트"},
-                tenant_id=TEST_TENANT_ID,
-            )
-            mock_db.add.assert_called_once()
-        except TypeError:
-            pass  # User 모델 필드 차이 허용 — import 커버리지 확보
+        user = await get_or_create_user(
+            db=mock_db,
+            profile={"kakao_id": "12345", "email": "test@kakao.com", "nickname": "테스트"},
+        )
+
+        # 개인 테넌트 자동생성 → 사용자 생성 순서로 add 2회
+        added = [call.args[0] for call in mock_db.add.call_args_list]
+        assert len(added) == 2
+        tenant, new_user = added
+        assert isinstance(tenant, Tenant)
+        assert tenant.plan == "free"
+        assert "테스트" in tenant.name  # "<닉네임> 워크스페이스"
+        assert tenant.is_active is True
+        assert isinstance(new_user, User)
+        assert new_user.oauth_provider == "kakao"
+        assert new_user.oauth_id == "12345"
+        assert new_user.tenant_id == tenant.id  # 생성된 개인 테넌트에 귀속
+        assert user is new_user
 
 
 # ═══════════════════════════════════════════════
