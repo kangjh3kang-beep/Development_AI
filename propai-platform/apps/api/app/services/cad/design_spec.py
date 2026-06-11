@@ -25,6 +25,7 @@ from .auto_design_engine import (
     SiteInput,
     _DEFAULT_LIMITS,
 )
+from .unit_plan_generator import SUPPORTED_BAYS, UNIT_CORE_TYPES
 
 PRIORITIES = ("yield", "balanced", "livability")
 # 한국 용도지역 코드 ↔ 한글명(검증 메시지·UI 공용)
@@ -52,6 +53,18 @@ class Setback(BaseModel):
     west: float = 1.5
 
 
+class UnitGrammar(BaseModel):
+    """단위세대 평면 문법(R3-1 결정론 유닛플랜).
+
+    DesignSpec.unit_grammar가 None이면 유닛플랜 미생성(기존 동작 완전 불변).
+    값 유효성은 validate_spec이 Violation으로 반환한다(LLM 재시도 루프 호환).
+    """
+
+    bays: int = Field(default=3, description="남측 채광 베이 수(2/3/4)")
+    core_type: str = Field(default="계단실형", description="계단실형/복도형/타워형")
+    balcony_extension: bool = Field(default=False, description="발코니 확장 여부")
+
+
 class DesignSpec(BaseModel):
     """검증된 설계 스펙(단일 진실원). LLM 도구가 편집하고 커널이 기하를 산출한다."""
 
@@ -66,6 +79,8 @@ class DesignSpec(BaseModel):
     priority: str = "balanced"
     target_units: int | None = Field(default=None, ge=1)
     target_margin_pct: float | None = None
+    # R3-1: 단위세대 평면 문법(옵셔널·additive) — None이면 기존 동작 완전 불변
+    unit_grammar: UnitGrammar | None = None
 
     def to_site_input(self) -> SiteInput:
         """커널(AutoDesignEngine) 입력으로 변환."""
@@ -132,6 +147,24 @@ def validate_spec(spec: DesignSpec) -> list[Violation]:
             field="priority", rule="우선순위", legal="/".join(PRIORITIES), actual=spec.priority,
             severity="warn", message="우선순위는 yield/balanced/livability 중 하나여야 합니다.",
         ))
+
+    # R3-1: 단위세대 문법 유효성(unit_grammar 지정 시에만 — 미지정이면 기존 동작 불변)
+    if spec.unit_grammar is not None:
+        ug = spec.unit_grammar
+        if ug.bays not in SUPPORTED_BAYS:
+            out.append(Violation(
+                field="unit_grammar.bays", rule="베이 수",
+                legal="/".join(str(b) for b in SUPPORTED_BAYS), actual=ug.bays,
+                message=f"베이 수는 {'/'.join(str(b) for b in SUPPORTED_BAYS)}만 지원합니다"
+                        f"(현재 {ug.bays}베이).",
+            ))
+        if ug.core_type not in UNIT_CORE_TYPES:
+            out.append(Violation(
+                field="unit_grammar.core_type", rule="코어타입",
+                legal="/".join(UNIT_CORE_TYPES), actual=ug.core_type,
+                message=f"코어타입은 {'/'.join(UNIT_CORE_TYPES)} 중 하나여야 합니다"
+                        f"(현재 '{ug.core_type}').",
+            ))
 
     return out
 
