@@ -52,6 +52,7 @@ type Balance = {
   used_this_cycle_krw: number;
   markup_pct: number;
   cycle_start: string | null;
+  unlimited?: boolean; // 비과금 등급(super_admin 등) — 코인 무제한
 };
 
 type Plan = { tier: string; label: string; fee_krw: number; included_budget_krw: number };
@@ -213,12 +214,12 @@ export function BillingMeter({ compact = false }: { compact?: boolean }) {
           <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, backgroundColor: barColor }} />
         </div>
         <div className="mt-1.5 flex items-center justify-between text-[10px] text-[var(--text-hint)]">
-          <span>코인 {won(status.billed_krw)} 사용 / {won(status.budget_krw)}</span>
+          <span>{balance?.unlimited ? "관리자 · 코인 차감 없음" : `코인 ${won(status.billed_krw)} 사용 / ${won(status.budget_krw)}`}</span>
           <span className={status.blocked ? "text-red-500 font-bold" : lowBalance ? "text-amber-500 font-bold" : ""}>
-            {status.blocked ? "코인 소진 · 추가결제" : `잔여 ${won(totalRemaining)}`}
+            {balance?.unlimited ? "무제한" : status.blocked ? "코인 소진 · 추가결제" : `잔여 ${won(totalRemaining)}`}
           </span>
         </div>
-        {balance && (
+        {balance && !balance.unlimited && (
           <div className="mt-1 flex items-center justify-between text-[10px] text-[var(--text-hint)]">
             <span>월기본 잔여 {won(balance.monthly_base_remaining)}</span>
             <span>충전 잔여 {won(balance.topup_remaining)}</span>

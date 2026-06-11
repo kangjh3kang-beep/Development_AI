@@ -398,9 +398,14 @@ async def get_balance(db: AsyncSession, user_id: Any) -> dict[str, Any]:
     monthly_base, topup = float(row[4]), float(row[5])
     base_remaining = max(0.0, monthly_base - billed)
     topup_remaining = max(0.0, topup - max(0.0, billed - monthly_base))
+    # ★비과금 등급(super_admin 등 TIER_BILLING 미포함)은 코인 게이트 면제(무제한).
+    #   백엔드 하드게이트(is_blocked)는 이미 면제하나, 프론트 소프트게이트가 잔액 0원으로
+    #   '분석 시작'을 막던 것을 해소한다. unlimited=True로 프론트가 무제한 처리.
+    unlimited = not is_metered_tier(tier)
     return {
         "tier": tier,
         "tier_label": TIER_BILLING.get(tier, {}).get("label", tier),
+        "unlimited": unlimited,
         "monthly_base_krw": round(monthly_base),
         "monthly_base_remaining": round(base_remaining),
         "topup_krw": round(topup),
