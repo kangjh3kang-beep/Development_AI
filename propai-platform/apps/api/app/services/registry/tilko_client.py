@@ -133,10 +133,17 @@ async def search_unique_no(address: str, page: str = "1") -> dict[str, Any]:
 
     try:
         enc_key, aes_key = _build_cipher(pub)
-        body = {
+        c = iros_creds()
+        body: dict[str, Any] = {
             "Address": _aes_encrypt(addr, aes_key),   # [필수] 암호화 — 시/군/구 등 검색어 포함
             "Page": _aes_encrypt(str(page or "1"), aes_key),
         }
+        # IROS 로그인 Auth(있으면 첨부) — 일부 검색 API가 로그인 세션을 요구할 수 있어 포함.
+        if c["UserId"] and c["UserPassword"]:
+            body["Auth"] = {
+                "UserId": _aes_encrypt(c["UserId"], aes_key),
+                "UserPassword": _aes_encrypt(c["UserPassword"], aes_key),
+            }
         import httpx
 
         headers = {"Content-Type": "application/json", "API-KEY": tilko_key(), "ENC-KEY": enc_key}
