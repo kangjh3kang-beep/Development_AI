@@ -1520,6 +1520,79 @@ class ProjectPipeline:
                 # 출처 정직 표기 — 사용자 수정값 기반 재계산임을 명시
                 state.stages["cost"].data["cost_source"] = "user_override"
 
+        # ── BOQ 자동초안 힌트(additive) ──
+        # 실적 공내역 마스터(services/cost/data/boq_master, 실적 n=1) 기반 파라메트릭
+        # 엔진(boq_parametric_engine)이 존재하면 분야별 항목수 요약·정직성 배지만
+        # 'boq_draft_hint' 키로 가산한다. 엔진 부재·실패 시 키 자체를 생략해 기존
+        # 응답 키·단계 동작을 그대로 유지한다(하위호환). 상세 항목 목록은 stage data에
+        # 싣지 않는다(스냅샷 비대 방지) — /api/v1/boq-auto/draft 가 단일 상세 출처.
+        self._attach_boq_draft_hint(state, design)
+
+    @staticmethod
+    def _attach_boq_draft_hint(state: PipelineState, design: DesignToCostPayload) -> None:
+        """cost stage data에 BOQ 초안 요약 힌트를 부착한다(실패 시 graceful no-op).
+
+        정직성: 항목수는 엔진 반환값에서만 집계(여기서 생성 금지), 배지는 엔진 배지를
+        우선하되 없으면 마스터 출처 사실(_meta.json sample_count=1)에 근거한 고정
+        문구만 사용한다. 가짜 수치·임의 단가 생성 없음(결정론, LLM 0).
+        """
+        try:
+            if not (design.total_gfa_sqm and design.total_gfa_sqm > 0):
+                return
+            from app.services.cost import boq_parametric_engine as _bpe
+
+            _gen = getattr(_bpe, "generate_draft", None)
+            if _gen is None:
+                _engine_cls = getattr(_bpe, "BoqParametricEngine", None)
+                if _engine_cls is not None:
+                    _gen = getattr(_engine_cls(), "generate_draft", None)
+            if not callable(_gen):
+                return
+            try:
+                draft = _gen(gfa_sqm=design.total_gfa_sqm)
+            except TypeError:
+                # 시그니처 차이 허용(키워드명 불일치 등) — 위치 인자 1개로 재시도
+                draft = _gen(design.total_gfa_sqm)
+            if not isinstance(draft, dict) or not draft:
+                return
+
+            # 분야별 항목수 집계 — dict/list 양형 모두 수용(엔진 반환값만 사용)
+            disc_counts: dict[str, int] = {}
+            disc = draft.get("disciplines")
+            if isinstance(disc, dict):
+                blocks = [(str(k), v) for k, v in disc.items()]
+            elif isinstance(disc, list):
+                blocks = [
+                    (str(b.get("discipline") or b.get("name") or ""), b)
+                    for b in disc if isinstance(b, dict)
+                ]
+            else:
+                blocks = []
+            for name, block in blocks:
+                if not name or not isinstance(block, dict):
+                    continue
+                cnt = block.get("item_count")
+                if cnt is None and isinstance(block.get("items"), list):
+                    cnt = len(block["items"])
+                if isinstance(cnt, (int, float)) and int(cnt) > 0:
+                    disc_counts[name] = int(cnt)
+            if not disc_counts:
+                return
+
+            badges = draft.get("badges")
+            if not (isinstance(badges, list) and badges):
+                # 엔진 배지 부재 시 마스터 출처 사실 기반 고정 배지(가짜값 아님)
+                badges = ["실적 1건 기반 표준항목(n=1)", "전문가 검토 필수"]
+            state.stages["cost"].data["boq_draft_hint"] = {
+                "disciplines": disc_counts,
+                "item_total": sum(disc_counts.values()),
+                "badges": [str(b) for b in badges],
+                "detail": "상세는 /api/v1/boq-auto/draft",
+            }
+        except Exception as e:  # noqa: BLE001
+            import logging
+            logging.getLogger(__name__).info("BOQ 초안 힌트 생략: %s", str(e)[:140])
+
     async def _run_feasibility(self, state: PipelineState, opts: dict):
         """STEP 4: 수지분석 — 몬테카를로+현금흐름+민감도 통합 분석."""
         site = state.site_to_design or SiteToDesignPayload()
