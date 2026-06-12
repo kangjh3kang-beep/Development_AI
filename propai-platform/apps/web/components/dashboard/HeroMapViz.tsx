@@ -10,6 +10,14 @@ import React from "react";
 export function HeroMapViz() {
   return (
     <div className="db-hero__viz" aria-hidden="true">
+      {/* 첨부된 실제 지도 이미지를 우측에 은은하게 배치 */}
+      <div 
+        className="absolute inset-y-0 right-0 w-[80%] md:w-[60%] lg:w-[50%] bg-[url('/images/korea-map.png')] bg-no-repeat bg-right bg-contain opacity-25 mix-blend-screen"
+        style={{
+          maskImage: 'linear-gradient(to right, transparent, black 40%)',
+          WebkitMaskImage: 'linear-gradient(to right, transparent, black 40%)'
+        }}
+      />
       <svg
         className="db-hero__map"
         viewBox="0 0 480 320"
