@@ -1,0 +1,615 @@
+{
+ "discipline": "조경",
+ "source_file": "의정부동 424 주상복합 신축공사_조경_공내역서.xlsx",
+ "project": {
+  "name": "의정부동 424 주상복합 신축공사",
+  "gfa_sqm": 238504.0,
+  "gfa_basis": "건축 내역서 '임시동력+가설전기시설(연면적기준)' 수량",
+  "sample_count": 1,
+  "provenance": "실적 공내역서 1건(공개 단가 없음) — 원단위 계수는 n=1 참고치"
+ },
+ "sections": [
+  {
+   "code": "L01",
+   "name": "식 재 공",
+   "level": 1
+  },
+  {
+   "code": "L02",
+   "name": "기  타",
+   "level": 1
+  },
+  {
+   "code": "L03",
+   "name": "시 설 공",
+   "level": 1
+  },
+  {
+   "code": "L04",
+   "name": "포 장 공",
+   "level": 1
+  }
+ ],
+ "items": [
+  {
+   "section_code": "L01",
+   "section_name": "식 재 공",
+   "name": "남 천",
+   "spec": "H1.0x3가지",
+   "unit": "주",
+   "qty_sample": 200.0,
+   "row_count": 1,
+   "id": "조경-0001"
+  },
+  {
+   "section_code": "L01",
+   "section_name": "식 재 공",
+   "name": "대왕참나무",
+   "spec": "H4.0xR12",
+   "unit": "주",
+   "qty_sample": 39.0,
+   "row_count": 1,
+   "id": "조경-0002"
+  },
+  {
+   "section_code": "L01",
+   "section_name": "식 재 공",
+   "name": "맥문동",
+   "spec": "3~5분얼",
+   "unit": "본",
+   "qty_sample": 1700.0,
+   "row_count": 1,
+   "id": "조경-0003"
+  },
+  {
+   "section_code": "L01",
+   "section_name": "식 재 공",
+   "name": "백철쭉",
+   "spec": "H0.3xW0.3",
+   "unit": "주",
+   "qty_sample": 1100.0,
+   "row_count": 1,
+   "id": "조경-0004"
+  },
+  {
+   "section_code": "L01",
+   "section_name": "식 재 공",
+   "name": "복자기",
+   "spec": "H3.5xR12",
+   "unit": "주",
+   "qty_sample": 6.0,
+   "row_count": 1,
+   "id": "조경-0005"
+  },
+  {
+   "section_code": "L01",
+   "section_name": "식 재 공",
+   "name": "비비추",
+   "spec": "2~3분얼",
+   "unit": "본",
+   "qty_sample": 600.0,
+   "row_count": 1,
+   "id": "조경-0006"
+  },
+  {
+   "section_code": "L01",
+   "section_name": "식 재 공",
+   "name": "사철나무",
+   "spec": "H1.0xW0.3",
+   "unit": "주",
+   "qty_sample": 1000.0,
+   "row_count": 1,
+   "id": "조경-0007"
+  },
+  {
+   "section_code": "L01",
+   "section_name": "식 재 공",
+   "name": "산딸나무",
+   "spec": "H3.5xR10",
+   "unit": "주",
+   "qty_sample": 5.0,
+   "row_count": 1,
+   "id": "조경-0008"
+  },
+  {
+   "section_code": "L01",
+   "section_name": "식 재 공",
+   "name": "산수국",
+   "spec": "H0.3xW0.4",
+   "unit": "주",
+   "qty_sample": 1400.0,
+   "row_count": 1,
+   "id": "조경-0009"
+  },
+  {
+   "section_code": "L01",
+   "section_name": "식 재 공",
+   "name": "산수유",
+   "spec": "H2.5xR8",
+   "unit": "주",
+   "qty_sample": 8.0,
+   "row_count": 1,
+   "id": "조경-0010"
+  },
+  {
+   "section_code": "L01",
+   "section_name": "식 재 공",
+   "name": "산철쭉",
+   "spec": "H0.3xW0.3",
+   "unit": "주",
+   "qty_sample": 3000.0,
+   "row_count": 1,
+   "id": "조경-0011"
+  },
+  {
+   "section_code": "L01",
+   "section_name": "식 재 공",
+   "name": "세덤류",
+   "spec": "",
+   "unit": "M2",
+   "qty_sample": 3966.0,
+   "row_count": 1,
+   "id": "조경-0012"
+  },
+  {
+   "section_code": "L01",
+   "section_name": "식 재 공",
+   "name": "소나무",
+   "spec": "H2.5xR8",
+   "unit": "주",
+   "qty_sample": 6.0,
+   "row_count": 1,
+   "id": "조경-0013"
+  },
+  {
+   "section_code": "L01",
+   "section_name": "식 재 공",
+   "name": "소나무",
+   "spec": "H3.5xR12",
+   "unit": "주",
+   "qty_sample": 15.0,
+   "row_count": 1,
+   "id": "조경-0014"
+  },
+  {
+   "section_code": "L01",
+   "section_name": "식 재 공",
+   "name": "소나무",
+   "spec": "H4.0xR15",
+   "unit": "주",
+   "qty_sample": 8.0,
+   "row_count": 1,
+   "id": "조경-0015"
+  },
+  {
+   "section_code": "L01",
+   "section_name": "식 재 공",
+   "name": "수수꽃다리",
+   "spec": "H1.2xW0.3",
+   "unit": "주",
+   "qty_sample": 1000.0,
+   "row_count": 1,
+   "id": "조경-0016"
+  },
+  {
+   "section_code": "L01",
+   "section_name": "식 재 공",
+   "name": "수호초",
+   "spec": "10cm",
+   "unit": "본",
+   "qty_sample": 1200.0,
+   "row_count": 1,
+   "id": "조경-0017"
+  },
+  {
+   "section_code": "L01",
+   "section_name": "식 재 공",
+   "name": "스트로브잣나무",
+   "spec": "H2.0xW1.0",
+   "unit": "주",
+   "qty_sample": 84.0,
+   "row_count": 1,
+   "id": "조경-0018"
+  },
+  {
+   "section_code": "L01",
+   "section_name": "식 재 공",
+   "name": "영산홍",
+   "spec": "H0.3xW0.3",
+   "unit": "주",
+   "qty_sample": 2500.0,
+   "row_count": 1,
+   "id": "조경-0019"
+  },
+  {
+   "section_code": "L01",
+   "section_name": "식 재 공",
+   "name": "옥잠화",
+   "spec": "2~3분얼",
+   "unit": "본",
+   "qty_sample": 200.0,
+   "row_count": 1,
+   "id": "조경-0020"
+  },
+  {
+   "section_code": "L01",
+   "section_name": "식 재 공",
+   "name": "원추리",
+   "spec": "2~3분얼",
+   "unit": "본",
+   "qty_sample": 200.0,
+   "row_count": 1,
+   "id": "조경-0021"
+  },
+  {
+   "section_code": "L01",
+   "section_name": "식 재 공",
+   "name": "잔 디",
+   "spec": "0.18x0.18x0.01m",
+   "unit": "M2",
+   "qty_sample": 1986.0,
+   "row_count": 1,
+   "id": "조경-0022"
+  },
+  {
+   "section_code": "L01",
+   "section_name": "식 재 공",
+   "name": "잣나무",
+   "spec": "H2.5xW1.2",
+   "unit": "주",
+   "qty_sample": 43.0,
+   "row_count": 1,
+   "id": "조경-0023"
+  },
+  {
+   "section_code": "L01",
+   "section_name": "식 재 공",
+   "name": "조팝나무",
+   "spec": "H0.6xW0.3",
+   "unit": "주",
+   "qty_sample": 1000.0,
+   "row_count": 1,
+   "id": "조경-0024"
+  },
+  {
+   "section_code": "L01",
+   "section_name": "식 재 공",
+   "name": "청단풍",
+   "spec": "H3.5xR15",
+   "unit": "주",
+   "qty_sample": 13.0,
+   "row_count": 1,
+   "id": "조경-0025"
+  },
+  {
+   "section_code": "L01",
+   "section_name": "식 재 공",
+   "name": "팽나무",
+   "spec": "H4.0xR18",
+   "unit": "주",
+   "qty_sample": 1.0,
+   "row_count": 1,
+   "id": "조경-0026"
+  },
+  {
+   "section_code": "L01",
+   "section_name": "식 재 공",
+   "name": "홍단풍",
+   "spec": "H3.5xR12",
+   "unit": "주",
+   "qty_sample": 20.0,
+   "row_count": 1,
+   "id": "조경-0027"
+  },
+  {
+   "section_code": "L01",
+   "section_name": "식 재 공",
+   "name": "회양목",
+   "spec": "H0.3xW0.3",
+   "unit": "주",
+   "qty_sample": 3400.0,
+   "row_count": 1,
+   "id": "조경-0028"
+  },
+  {
+   "section_code": "L01",
+   "section_name": "식 재 공",
+   "name": "흰말채나무",
+   "spec": "H1.0xW0.4",
+   "unit": "주",
+   "qty_sample": 1300.0,
+   "row_count": 1,
+   "id": "조경-0029"
+  },
+  {
+   "section_code": "L02",
+   "section_name": "기  타",
+   "name": "QC밸브",
+   "spec": "D25, STS",
+   "unit": "개소",
+   "qty_sample": 25.0,
+   "row_count": 1,
+   "id": "조경-0030"
+  },
+  {
+   "section_code": "L02",
+   "section_name": "기  타",
+   "name": "방근시트",
+   "spec": "",
+   "unit": "M2",
+   "qty_sample": 5060.0,
+   "row_count": 1,
+   "id": "조경-0031"
+  },
+  {
+   "section_code": "L02",
+   "section_name": "기  타",
+   "name": "배수판",
+   "spec": "500x500xT35",
+   "unit": "M2",
+   "qty_sample": 5060.0,
+   "row_count": 1,
+   "id": "조경-0032"
+  },
+  {
+   "section_code": "L02",
+   "section_name": "기  타",
+   "name": "부직포",
+   "spec": "250g/m2",
+   "unit": "M2",
+   "qty_sample": 5060.0,
+   "row_count": 1,
+   "id": "조경-0033"
+  },
+  {
+   "section_code": "L02",
+   "section_name": "기  타",
+   "name": "수직드레인 점검구",
+   "spec": "",
+   "unit": "개소",
+   "qty_sample": 3.0,
+   "row_count": 1,
+   "id": "조경-0034"
+  },
+  {
+   "section_code": "L02",
+   "section_name": "기  타",
+   "name": "옥상점검구 A",
+   "spec": "200x200xT200",
+   "unit": "개소",
+   "qty_sample": 28.0,
+   "row_count": 1,
+   "id": "조경-0035"
+  },
+  {
+   "section_code": "L02",
+   "section_name": "기  타",
+   "name": "옥상점검구 B",
+   "spec": "200x200xT600",
+   "unit": "개소",
+   "qty_sample": 2.0,
+   "row_count": 1,
+   "id": "조경-0036"
+  },
+  {
+   "section_code": "L02",
+   "section_name": "기  타",
+   "name": "인공토(옥상)",
+   "spec": "",
+   "unit": "M3",
+   "qty_sample": 1177.0,
+   "row_count": 1,
+   "id": "조경-0037"
+  },
+  {
+   "section_code": "L02",
+   "section_name": "기  타",
+   "name": "조경토(옥상)",
+   "spec": "",
+   "unit": "M3",
+   "qty_sample": 504.0,
+   "row_count": 1,
+   "id": "조경-0038"
+  },
+  {
+   "section_code": "L02",
+   "section_name": "기  타",
+   "name": "조경토(지상1층인공지반)",
+   "spec": "",
+   "unit": "M3",
+   "qty_sample": 1446.0,
+   "row_count": 1,
+   "id": "조경-0039"
+  },
+  {
+   "section_code": "L03",
+   "section_name": "시 설 공",
+   "name": "그 네",
+   "spec": "",
+   "unit": "개소",
+   "qty_sample": 1.0,
+   "row_count": 1,
+   "id": "조경-0040"
+  },
+  {
+   "section_code": "L03",
+   "section_name": "시 설 공",
+   "name": "놀이시설,포장재 설치검사 수수료",
+   "spec": "",
+   "unit": "식",
+   "qty_sample": 1.0,
+   "row_count": 1,
+   "id": "조경-0041"
+  },
+  {
+   "section_code": "L03",
+   "section_name": "시 설 공",
+   "name": "등의자",
+   "spec": "",
+   "unit": "개소",
+   "qty_sample": 28.0,
+   "row_count": 1,
+   "id": "조경-0042"
+  },
+  {
+   "section_code": "L03",
+   "section_name": "시 설 공",
+   "name": "시 소",
+   "spec": "",
+   "unit": "개소",
+   "qty_sample": 3.0,
+   "row_count": 1,
+   "id": "조경-0043"
+  },
+  {
+   "section_code": "L03",
+   "section_name": "시 설 공",
+   "name": "앉음벽",
+   "spec": "L=6.4m",
+   "unit": "개소",
+   "qty_sample": 1.0,
+   "row_count": 1,
+   "id": "조경-0044"
+  },
+  {
+   "section_code": "L03",
+   "section_name": "시 설 공",
+   "name": "야외테이블셋트",
+   "spec": "",
+   "unit": "개소",
+   "qty_sample": 11.0,
+   "row_count": 1,
+   "id": "조경-0045"
+  },
+  {
+   "section_code": "L03",
+   "section_name": "시 설 공",
+   "name": "외곽 휀스",
+   "spec": "W1500xH1200",
+   "unit": "M",
+   "qty_sample": 694.0,
+   "row_count": 1,
+   "id": "조경-0046"
+  },
+  {
+   "section_code": "L03",
+   "section_name": "시 설 공",
+   "name": "자전거보관소 A",
+   "spec": "2단, 30대",
+   "unit": "개소",
+   "qty_sample": 9.0,
+   "row_count": 1,
+   "id": "조경-0047"
+  },
+  {
+   "section_code": "L03",
+   "section_name": "시 설 공",
+   "name": "자전거보관소 B",
+   "spec": "2단, 20대",
+   "unit": "개소",
+   "qty_sample": 2.0,
+   "row_count": 1,
+   "id": "조경-0048"
+  },
+  {
+   "section_code": "L03",
+   "section_name": "시 설 공",
+   "name": "재활용보관소",
+   "spec": "5000x4000",
+   "unit": "개소",
+   "qty_sample": 4.0,
+   "row_count": 1,
+   "id": "조경-0049"
+  },
+  {
+   "section_code": "L03",
+   "section_name": "시 설 공",
+   "name": "조합놀이대 A",
+   "spec": "",
+   "unit": "개소",
+   "qty_sample": 1.0,
+   "row_count": 1,
+   "id": "조경-0050"
+  },
+  {
+   "section_code": "L03",
+   "section_name": "시 설 공",
+   "name": "조합놀이대 B",
+   "spec": "",
+   "unit": "개소",
+   "qty_sample": 1.0,
+   "row_count": 1,
+   "id": "조경-0051"
+  },
+  {
+   "section_code": "L03",
+   "section_name": "시 설 공",
+   "name": "조합놀이대 C",
+   "spec": "",
+   "unit": "개소",
+   "qty_sample": 1.0,
+   "row_count": 1,
+   "id": "조경-0052"
+  },
+  {
+   "section_code": "L03",
+   "section_name": "시 설 공",
+   "name": "파고라",
+   "spec": "",
+   "unit": "개소",
+   "qty_sample": 4.0,
+   "row_count": 1,
+   "id": "조경-0053"
+  },
+  {
+   "section_code": "L03",
+   "section_name": "시 설 공",
+   "name": "흔들놀이",
+   "spec": "",
+   "unit": "개소",
+   "qty_sample": 6.0,
+   "row_count": 1,
+   "id": "조경-0054"
+  },
+  {
+   "section_code": "L04",
+   "section_name": "포 장 공",
+   "name": "AL 경계마감재",
+   "spec": "H330",
+   "unit": "M",
+   "qty_sample": 266.0,
+   "row_count": 1,
+   "id": "조경-0055"
+  },
+  {
+   "section_code": "L04",
+   "section_name": "포 장 공",
+   "name": "고무칩포장",
+   "spec": "T75",
+   "unit": "M2",
+   "qty_sample": 990.0,
+   "row_count": 1,
+   "id": "조경-0056"
+  },
+  {
+   "section_code": "L04",
+   "section_name": "포 장 공",
+   "name": "디딤석",
+   "spec": "500x500xT70",
+   "unit": "EA",
+   "qty_sample": 844.0,
+   "row_count": 1,
+   "id": "조경-0057"
+  },
+  {
+   "section_code": "L04",
+   "section_name": "포 장 공",
+   "name": "인조화강석블럭포장",
+   "spec": "T60, 칼라",
+   "unit": "M2",
+   "qty_sample": 2370.7,
+   "row_count": 1,
+   "id": "조경-0058"
+  }
+ ]
+}
