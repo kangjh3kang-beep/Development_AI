@@ -92,21 +92,41 @@ async def tilko_status() -> dict[str, Any]:
     return out
 
 
+@router.post("/tilko/search", summary="틸코 등기물건 주소검색(주소→부동산 고유번호)")
+async def tilko_search(
+    req: dict[str, Any],
+    current_user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    """주소 → 부동산 고유번호 목록(RISUConfirmSimpleC). IROS 로그인·전자결제 불필요(Tilko API키만)."""
+    from app.services.registry import tilko_client as tk
+    return await tk.search_unique_no(str(req.get("address") or ""), page=str(req.get("page") or "1"))
+
+
 @router.post("/tilko/realty", summary="틸코 등기부등본 조회/발급(IROS ID로그인)")
 async def tilko_realty(
     req: dict[str, Any],
     current_user: CurrentUser = Depends(get_current_user),
 ) -> dict[str, Any]:
-    """틸코로 등기부등본 조회/발급. req.property_params에 부동산 식별 필드(소재지/고유번호 등) 주입.
+    """틸코로 등기부등본 조회/발급. unique_no(고유번호) 또는 address(자동 주소검색)로 부동산 지정.
 
-    ⚠ 발급 수수료가 IROS 전자지급수단에서 차감됨(실호출). 명세 확정된 property_params 필요.
+    ⚠ 발급 수수료가 IROS 전자지급수단에서 차감됨(실호출).
     """
     from app.services.registry import tilko_client as tk
 
     # unique_no(부동산 고유번호 14자리) = Pin 필드. property_params.Pin/UniqueNo도 허용(하위호환).
     uno = str(req.get("unique_no") or req.get("pin")
               or (req.get("property_params") or {}).get("Pin")
-              or (req.get("property_params") or {}).get("UniqueNo") or "")
+              or (req.get("property_params") or {}).get("UniqueNo") or "").replace("-", "").strip()
+    # 고유번호 미지정 + 주소 제공 시 → 주소검색으로 자동 해석(첫 결과 사용)
+    if not uno and req.get("address"):
+        s = await tk.search_unique_no(str(req["address"]))
+        items = s.get("items") or []
+        if items and items[0].get("unique_no"):
+            uno = items[0]["unique_no"]
+        else:
+            return {"ok": False, "status": s.get("status", "need_unique_no"),
+                    "message": s.get("message") or "주소로 부동산 고유번호를 찾지 못했습니다.",
+                    "search": s}
     result = await tk.fetch_realty_registry(
         unique_no=uno,
         cmort_flag=str(req.get("cmort_flag", "N")),
