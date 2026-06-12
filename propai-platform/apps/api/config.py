@@ -99,6 +99,7 @@ class Settings(BaseSettings):
     # ── 공공 API 키 ──
     vworld_api_key: str = ""
     molit_api_key: str = ""
+    hub_permit_api_key: str = ""  # 건축HUB 주택·건축인허가(HsPms/ArchPmsHubService). 미설정 시 molit_api_key 폴백
     applyhome_api_key: str = ""  # 청약홈(한국부동산원) 분양정보 조회 API. 미설정 시 molit_api_key 폴백
 
     # ── 알림 발송(알리고 ALIGO — 문자 + 카카오 알림톡). 미설정 시 인앱만 동작 ──

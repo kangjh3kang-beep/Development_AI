@@ -32,6 +32,17 @@ export interface AddressEntry {
   areaPyeong?: number; // 면적 (평) — 자동 환산
 }
 
+/** 종합 토지분석 결과 요약 — onAnalyzed 콜백으로 전달(store 비기록 모드에서도 면적 자동채움 등 유지) */
+export interface AddressAnalysisSummary {
+  address: string;
+  pnu: string | null;
+  landAreaSqm: number | null;
+  zoneCode: string | null;
+  effectiveBcr: number | null;
+  effectiveFar: number | null;
+  dataSource: string | null;
+}
+
 interface GlobalAddressSearchProps {
   /** 단일 필지만 허용 */
   single?: boolean;
@@ -45,6 +56,14 @@ interface GlobalAddressSearchProps {
   disabled?: boolean;
   /** 초기 주소 (스토어에서 가져온 값 사전 표시) */
   initialAddress?: string;
+  /**
+   * WP-D: ProjectContextStore(SSOT) 기록 여부 — 기본 true(기존 동작 불변).
+   * false면 store에 일절 기록하지 않고 onChange/onAnalyzed 콜백으로만 데이터를 전달한다
+   * (활성 프로젝트와 무관한 검색이 updateSiteAnalysis→withSnap 스냅샷을 오염시키는 사슬 차단).
+   */
+  writeToContext?: boolean;
+  /** 종합 토지분석 도착 시 콜백 — writeToContext=false 소비자(PreCheck 등)의 면적 자동채움용 */
+  onAnalyzed?: (analysis: AddressAnalysisSummary) => void;
 }
 
 export function GlobalAddressSearch({
@@ -54,6 +73,8 @@ export function GlobalAddressSearch({
   placeholder = "주소를 검색하세요",
   disabled = false,
   initialAddress,
+  writeToContext = true,
+  onAnalyzed,
 }: GlobalAddressSearchProps) {
   const [addresses, setAddresses] = useState<AddressEntry[]>(() => {
     if (initialAddress) {
@@ -63,6 +84,8 @@ export function GlobalAddressSearch({
   });
   const [isSearching, setIsSearching] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  // WP-D: store 비기록 모드(writeToContext=false)의 요약 표시·콜백용 로컬 분석값.
+  const [localAnalysis, setLocalAnalysis] = useState<AddressAnalysisSummary | null>(null);
   const updateSiteAnalysis = useProjectContextStore((s) => s.updateSiteAnalysis);
   const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
 
@@ -72,6 +95,9 @@ export function GlobalAddressSearch({
   // 종합 토지 분석 자동 트리거 (주소 입력 즉시 백그라운드 실행)
   // 카카오에서 얻은 bcode(법정동코드) + 지번주소를 백엔드에 전달하여 토지정보 조회
   const triggerComprehensiveAnalysis = useCallback(async (address: string, bcode?: string, jibunAddress?: string) => {
+    // WP-D race 가드: 트리거 시점의 활성 projectId 캡처 — 응답 도착 시
+    // 불일치(분석 중 프로젝트 전환)면 store 기록을 중단해 오염을 차단한다.
+    const triggeredProjectId = useProjectContextStore.getState().projectId;
     setIsAnalyzing(true);
     try {
       const data = await apiClient.post<{
@@ -88,13 +114,42 @@ export function GlobalAddressSearch({
         useMock: false,
       });
 
+      const analyzedAreaSqm = data.land_register?.area_sqm
+        ?? (data as Record<string, unknown>).land_area_sqm as number | undefined
+        ?? null;
+
+      // 로컬 요약/콜백 — store와 무관하게 전달(비기록 모드의 면적 자동채움 등 기존 동작 유지).
+      const summary: AddressAnalysisSummary = {
+        address,
+        pnu: data.pnu ?? null,
+        landAreaSqm: analyzedAreaSqm,
+        zoneCode: data.zone_type ?? null,
+        effectiveBcr: data.local_ordinance?.effective_bcr ?? null,
+        effectiveFar: data.local_ordinance?.effective_far ?? null,
+        dataSource: "백엔드 API (bcode:" + (bcode ?? "없음") + ")",
+      };
+      setLocalAnalysis(summary);
+      // 필지 칩에 면적 자동 반영(로컬 state) — onChange 데이터(areaSqm)로도 노출된다.
+      if (analyzedAreaSqm && analyzedAreaSqm > 0) {
+        setAddresses((prev) => prev.map((a) =>
+          a.fullAddress === address || a.jibunAddress === address
+            ? { ...a, areaSqm: analyzedAreaSqm, areaPyeong: analyzedAreaSqm / 3.305785 }
+            : a,
+        ));
+      }
+      onAnalyzed?.(summary);
+
+      // WP-D 가드: 비기록 모드면 store 기록 생략, 트리거 시점과 활성 프로젝트가
+      // 다르면(전환 race) 기록 중단 — 무관 프로젝트 스냅샷 오염 차단.
+      if (!writeToContext || useProjectContextStore.getState().projectId !== triggeredProjectId) {
+        return;
+      }
+
       updateSiteAnalysis({
         address,
         pnu: data.pnu ?? siteAnalysis?.pnu ?? null,
         estimatedValue: siteAnalysis?.estimatedValue ?? null,
-        landAreaSqm: data.land_register?.area_sqm
-          ?? (data as Record<string, unknown>).land_area_sqm as number | undefined
-          ?? siteAnalysis?.landAreaSqm ?? null,
+        landAreaSqm: analyzedAreaSqm ?? siteAnalysis?.landAreaSqm ?? null,
         zoneCode: data.zone_type ?? siteAnalysis?.zoneCode ?? null,
         coordinates: data.coordinates ?? undefined,
         officialPrices: data.official_prices?.map((p) => ({ pnu: p.pnu, year: p.year, pricePerSqm: p.price_per_sqm })),
@@ -126,7 +181,7 @@ export function GlobalAddressSearch({
     } finally {
       setIsAnalyzing(false);
     }
-  }, [siteAnalysis, updateSiteAnalysis]);
+  }, [siteAnalysis, updateSiteAnalysis, writeToContext, onAnalyzed]);
 
   const handleAddressSelect = useCallback((result: KakaoAddressResult) => {
     const entry: AddressEntry = {
@@ -154,32 +209,50 @@ export function GlobalAddressSearch({
 
     // ProjectContextStore에 자동 저장 (Single Source of Truth)
     // 주소만 즉시 저장, 나머지 필드는 기존값 유지 (partial merge)
+    // WP-D: writeToContext=false면 store 기록 생략(콜백 전용 모드).
     const primary = newAddresses[0];
     if (primary) {
-      updateSiteAnalysis({
-        address: primary.fullAddress,
-      });
+      if (writeToContext) {
+        updateSiteAnalysis({
+          address: primary.fullAddress,
+        });
+      }
 
       // 자동 종합 분석 트리거 (bcode + 지번주소 포함)
       triggerComprehensiveAnalysis(primary.fullAddress, primary.bcode, primary.jibunAddress);
     }
 
     onChange?.(newAddresses);
-  }, [single, addresses, siteAnalysis, updateSiteAnalysis, onChange]);
+  }, [single, addresses, siteAnalysis, updateSiteAnalysis, onChange, writeToContext, triggerComprehensiveAnalysis]);
 
   const handleRemove = useCallback((index: number) => {
     const newAddresses = addresses.filter((_, i) => i !== index);
     setAddresses(newAddresses);
 
     // 첫 번째 주소가 변경되면 store 업데이트 (partial merge)
-    if (newAddresses.length > 0) {
+    // WP-D: writeToContext=false면 store 기록 생략(콜백 전용 모드).
+    if (newAddresses.length > 0 && writeToContext) {
       updateSiteAnalysis({
         address: newAddresses[0].fullAddress,
       });
     }
 
     onChange?.(newAddresses);
-  }, [addresses, siteAnalysis, updateSiteAnalysis, onChange]);
+  }, [addresses, siteAnalysis, updateSiteAnalysis, onChange, writeToContext]);
+
+  // 하단 요약 표시용 — store 기록 모드면 SSOT(siteAnalysis), 비기록 모드면 로컬 분석값만
+  // 사용한다(무관 프로젝트의 store 데이터가 비기록 화면에 표시되는 혼선 방지).
+  const displayAnalysis = writeToContext
+    ? siteAnalysis
+      ? {
+          zoneCode: siteAnalysis.zoneCode,
+          landAreaSqm: siteAnalysis.landAreaSqm,
+          effectiveBcr: siteAnalysis.ordinance?.effectiveBcr ?? null,
+          effectiveFar: siteAnalysis.ordinance?.effectiveFar ?? null,
+          dataSource: siteAnalysis.dataSource ?? null,
+        }
+      : null
+    : localAnalysis;
 
   return (
     <div className={`flex flex-col gap-2 ${className}`}>
@@ -260,25 +333,25 @@ export function GlobalAddressSearch({
         </div>
       )}
 
-      {/* 분석 완료 — 기본 정보 요약 */}
-      {!isAnalyzing && siteAnalysis?.zoneCode && displayAddresses.length > 0 && (
+      {/* 분석 완료 — 기본 정보 요약 (기록 모드: SSOT / 비기록 모드: 로컬 분석값) */}
+      {!isAnalyzing && displayAnalysis?.zoneCode && displayAddresses.length > 0 && (
         <div className="flex flex-wrap items-center gap-2 text-[10px]">
           <span className="rounded-md bg-[var(--accent-soft)] px-2 py-0.5 font-bold text-[var(--accent-strong)]">
-            {siteAnalysis.zoneCode}
+            {displayAnalysis.zoneCode}
           </span>
-          {siteAnalysis.landAreaSqm && (
+          {displayAnalysis.landAreaSqm && (
             <span className="text-[var(--text-secondary)]">
-              {siteAnalysis.landAreaSqm.toLocaleString()}m²
+              {displayAnalysis.landAreaSqm.toLocaleString()}m²
             </span>
           )}
-          {siteAnalysis.ordinance?.effectiveBcr && (
+          {displayAnalysis.effectiveBcr && (
             <span className="text-[var(--text-hint)]">
-              건폐율 {siteAnalysis.ordinance.effectiveBcr}% · 용적률 {siteAnalysis.ordinance.effectiveFar}%
+              건폐율 {displayAnalysis.effectiveBcr}% · 용적률 {displayAnalysis.effectiveFar}%
             </span>
           )}
-          {siteAnalysis.dataSource && (
+          {displayAnalysis.dataSource && (
             <span className="text-[var(--text-hint)]">
-              ({siteAnalysis.dataSource})
+              ({displayAnalysis.dataSource})
             </span>
           )}
         </div>

@@ -8,6 +8,7 @@
 import { useEffect } from "react";
 import { useProjectStore } from "@/store/useProjectStore";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { restoreSnapshot } from "@/lib/projectSync";
 
 export function ProjectSwitcher({ onSelect }: { onSelect?: (projectId: string) => void }) {
   const projects = useProjectStore((s) => s.projects);
@@ -28,7 +29,13 @@ export function ProjectSwitcher({ onSelect }: { onSelect?: (projectId: string) =
         onChange={(e) => {
           const id = e.target.value;
           const p = projects.find((x) => x.id === id);
-          if (p) { setProject(p.id, p.name, p.status); onSelect?.(p.id); }
+          if (p) {
+            // WP-D: 주소 시드(스냅샷 복원 우선·주소 미설정 프로젝트만 — setProject 내부 가드)
+            // + UUID 백엔드 프로젝트면 서버 analysis_snapshot 복원(비-UUID는 내부 no-op).
+            setProject(p.id, p.name, p.status, p.address || undefined);
+            void restoreSnapshot(p.id);
+            onSelect?.(p.id);
+          }
         }}
         className="min-w-[260px] flex-1 rounded-xl border border-[var(--line)] bg-[var(--surface-strong)] px-4 py-2.5 text-sm font-semibold text-[var(--text-primary)] outline-none"
       >

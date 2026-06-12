@@ -79,6 +79,7 @@ from apps.api.routers import (
     monte_carlo,
     notifications,
     parking,
+    permit_cases,
     permits,
     portals,
     precheck,
@@ -450,6 +451,7 @@ app.include_router(cost_intelligence.router, prefix="/api/v1/cost-intelligence",
 app.include_router(contracts.router, prefix="/api/v1/contracts", tags=["contracts"])
 app.include_router(risk.router, prefix="/api/v1/risk", tags=["risk"])
 app.include_router(permits.router, prefix="/api/v1/permits", tags=["permits"])
+app.include_router(permit_cases.router, prefix="/api/v1/permit-cases", tags=["인허가 사례(건축HUB)"])
 app.include_router(data_integrity.router, prefix="/api/v1", tags=["데이터 무결성"])
 
 # 자동 용도지역 + 유닛믹스 최적화 라우터
@@ -573,6 +575,16 @@ try:
     app.include_router(design_risk_router, tags=["설계변경 사전예측(D3)"])
 except Exception as e:
     logger.warning("app/routers/design_risk 로드 실패", error=str(e))
+
+# U6 설계심사(Design Audit): 개요 추출·심사 실행·결과 조회·리포트 PDF(S0~S7).
+# U5 오케스트레이터는 라우터 내부 지연 임포트(미배포 시 run만 503 정직).
+# 자체 prefix=/api/v1/design-audit(충돌0).
+try:
+    from apps.api.app.routers.design_audit import router as design_audit_router
+
+    app.include_router(design_audit_router, tags=["설계심사(Design Audit)"])
+except Exception as e:
+    logger.warning("app/routers/design_audit 로드 실패", error=str(e))
 
 # 프론트가 호출하나 미마운트였던 app/routers 4종(자체 prefix 보유, 기존 라우트와 경로
 # 충돌 0·대상경로 미존재 라이브확인). 프론트 호출 없는 agents/cost/rates/v2_tax는

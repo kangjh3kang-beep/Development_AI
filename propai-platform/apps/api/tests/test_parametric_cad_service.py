@@ -180,3 +180,147 @@ class TestFormalDimensionsInDrawingSet:
         assert isinstance(dxf, bytes)
         doc = _readback(dxf)
         assert len(doc.modelspace()) > 0
+
+
+# ════════════════════════════════════════════════════════
+# CAD2.0 shapes 모드 (U1) — 레이어맵·kind별 엔티티·outline 한정 치수
+# ════════════════════════════════════════════════════════
+
+# CAD2.0 셰이프 페이로드(px, 캔버스 y축 하향, scale 10px/m)
+SHAPES_FIXTURE = [
+    {"kind": "polygon", "layer": "outline",
+     "points": [{"x": 0, "y": 0}, {"x": 200, "y": 0},
+                {"x": 200, "y": 120}, {"x": 0, "y": 120}]},
+    {"kind": "rect", "layer": "wall", "x": 20, "y": 20, "w": 60, "h": 40},
+    {"kind": "line", "layer": "wall", "x1": 100, "y1": 20, "x2": 180, "y2": 20},
+    {"kind": "circle", "layer": "wall", "cx": 150, "cy": 90, "r": 15},
+    {"kind": "label", "layer": "note", "x": 10, "y": 110, "text": "거실"},
+]
+
+
+class TestShapesModeDxf:
+    """create_dxf_from_edited_points shapes 가산 파라미터 — None이면 기존 경로 불변."""
+
+    def _doc(self, svc, shapes=SHAPES_FIXTURE, scale=10):
+        return _readback(
+            svc.create_dxf_from_edited_points([], None, scale, shapes=shapes)
+        )
+
+    def test_shapes_none_keeps_legacy_path(self, svc: ParametricCADService):
+        # shapes=None 명시 호출 == 기존 points 직변환 결과(회귀 0)
+        dxf = svc.create_dxf_from_edited_points(
+            RECT_POINTS, RECT_SURFACES, scale_px_per_m=10, shapes=None,
+        )
+        assert _wall_polyline_points(_readback(dxf)) == RECT_EXPECTED_M
+
+    def test_empty_shapes_falls_back_to_legacy_path(self, svc: ParametricCADService):
+        # shapes=[](빈 배열)도 기존 points 경로(저장본에 shapes 미기록과 동일 취급)
+        dxf = svc.create_dxf_from_edited_points(
+            RECT_POINTS, RECT_SURFACES, scale_px_per_m=10, shapes=[],
+        )
+        assert _wall_polyline_points(_readback(dxf)) == RECT_EXPECTED_M
+
+    def test_outline_polygon_on_wall_layer_closed(self, svc: ParametricCADService):
+        doc = self._doc(svc)
+        walls = doc.modelspace().query('LWPOLYLINE[layer=="WALL"]')
+        assert len(walls) == 1
+        assert walls[0].closed
+        pts = [(round(x, 6), round(y, 6)) for x, y in walls[0].get_points("xy")]
+        # px→m(scale 10)+Y반전: (0,0)→(0,12), (200,0)→(20,12), (200,120)→(20,0), (0,120)→(0,0)
+        assert pts == [(0.0, 12.0), (20.0, 12.0), (20.0, 0.0), (0.0, 0.0)]
+
+    def test_wall_rect_on_wall_interior_layer(self, svc: ParametricCADService):
+        doc = self._doc(svc)
+        inner = doc.modelspace().query('LWPOLYLINE[layer=="WALL_INTERIOR"]')
+        assert len(inner) == 1
+        assert inner[0].closed
+        pts = [(round(x, 6), round(y, 6)) for x, y in inner[0].get_points("xy")]
+        assert pts == [(2.0, 10.0), (8.0, 10.0), (8.0, 6.0), (2.0, 6.0)]
+
+    def test_line_kind_to_line_entity(self, svc: ParametricCADService):
+        doc = self._doc(svc)
+        lines = doc.modelspace().query('LINE[layer=="WALL_INTERIOR"]')
+        assert len(lines) == 1
+        start, end = lines[0].dxf.start, lines[0].dxf.end
+        assert (round(start.x, 6), round(start.y, 6)) == (10.0, 10.0)
+        assert (round(end.x, 6), round(end.y, 6)) == (18.0, 10.0)
+
+    def test_circle_kind_to_circle_entity(self, svc: ParametricCADService):
+        doc = self._doc(svc)
+        circles = doc.modelspace().query("CIRCLE")
+        assert len(circles) == 1
+        c = circles[0]
+        assert (round(c.dxf.center.x, 6), round(c.dxf.center.y, 6)) == (15.0, 3.0)
+        assert round(c.dxf.radius, 6) == 1.5  # 15px ÷ 10px/m
+
+    def test_label_kind_to_text_entity(self, svc: ParametricCADService):
+        doc = self._doc(svc)
+        texts = doc.modelspace().query('TEXT[layer=="TEXT"]')
+        assert len(texts) == 1
+        assert texts[0].dxf.text == "거실"
+        ins = texts[0].dxf.insert
+        assert (round(ins.x, 6), round(ins.y, 6)) == (1.0, 1.0)
+
+    def test_dimensions_only_on_outline_edges(self, svc: ParametricCADService):
+        # outline 폴리곤(변 4개)에만 정식 치수 — wall rect 변에는 없음
+        doc = self._doc(svc)
+        dims = doc.modelspace().query("DIMENSION")
+        assert len(dims) == 4
+        assert all(d.dxf.layer == "DIM" for d in dims)
+        measurements = sorted(round(d.get_measurement(), 6) for d in dims)
+        assert measurements == [12.0, 12.0, 20.0, 20.0]
+
+    def test_unknown_layer_defaults(self, svc: ParametricCADService):
+        # 레이어 미상: label→TEXT, 그 외→WALL_INTERIOR(+outline 아님 → 치수 없음)
+        shapes = [
+            {"kind": "polygon",
+             "points": [{"x": 0, "y": 0}, {"x": 100, "y": 0}, {"x": 100, "y": 50}]},
+            {"kind": "label", "x": 10, "y": 10, "text": "A"},
+        ]
+        doc = self._doc(svc, shapes=shapes)
+        msp = doc.modelspace()
+        assert len(msp.query('LWPOLYLINE[layer=="WALL_INTERIOR"]')) == 1
+        assert len(msp.query('TEXT[layer=="TEXT"]')) == 1
+        assert len(msp.query("DIMENSION")) == 0
+
+    def test_polyline_kind_open(self, svc: ParametricCADService):
+        shapes = [{"kind": "polyline", "layer": "wall", "closed": False,
+                   "points": [{"x": 0, "y": 0}, {"x": 50, "y": 0}, {"x": 50, "y": 30}]}]
+        doc = self._doc(svc, shapes=shapes)
+        polys = doc.modelspace().query("LWPOLYLINE")
+        assert len(polys) == 1
+        assert not polys[0].closed
+
+    def test_insunits_meters_recorded(self, svc: ParametricCADService):
+        # 재가져오기(import) 시 단위 확정용 $INSUNITS=6(m)
+        doc = self._doc(svc)
+        assert int(doc.header.get("$INSUNITS", 0)) == 6
+
+    def test_invalid_shapes_skipped_valid_kept(self, svc: ParametricCADService):
+        shapes = [
+            {"kind": "hexagram", "x": 0, "y": 0},                 # 미지원 kind
+            {"kind": "circle", "cx": 10, "cy": 10, "r": 0},        # 반경 0
+            {"kind": "rect", "x": 0, "y": 0, "w": 50, "h": 30},    # 유효
+        ]
+        doc = self._doc(svc, shapes=shapes)
+        assert len(doc.modelspace().query("LWPOLYLINE")) == 1
+
+    def test_no_valid_shapes_raises_value_error(self, svc: ParametricCADService):
+        with pytest.raises(ValueError):
+            svc.create_dxf_from_edited_points(
+                [], None, scale_px_per_m=10,
+                shapes=[{"kind": "hexagram", "x": 0, "y": 0}],
+            )
+
+    def test_invalid_scale_raises_value_error(self, svc: ParametricCADService):
+        with pytest.raises(ValueError):
+            svc.create_dxf_from_edited_points(
+                [], None, scale_px_per_m=0, shapes=SHAPES_FIXTURE,
+            )
+
+    def test_no_ezdxf_returns_placeholder(self, svc: ParametricCADService, monkeypatch):
+        monkeypatch.setattr(pcs_module, "ezdxf", None)
+        out = svc.create_dxf_from_edited_points(
+            [], None, scale_px_per_m=10, shapes=SHAPES_FIXTURE,
+        )
+        assert out == b"DXF_PLACEHOLDER_NO_EZDXF"

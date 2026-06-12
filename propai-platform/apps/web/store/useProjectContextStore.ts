@@ -522,6 +522,188 @@ function withSnap(
   };
 }
 
+/* ── WP-D: SSOT 오염 차단 — 주소 토큰 검증 · 오염 스냅샷 정화 ──
+   진단된 오염 사슬: 활성 프로젝트와 무관한 주소 검색 결과가 updateSiteAnalysis →
+   withSnap으로 스냅샷 영속 → 전환 시 복원 → 서버 푸시로 고착.
+   프로젝트 레코드 주소와 분석 주소의 "핵심 토큰"이 명백히 불일치할 때만 오염으로
+   판정한다. 표기 차이(도로명/지번 혼용, 시도 축약, 행정동 숫자)에 의한 오탐 방지:
+   - 시군구(광역 시도 제외) 토큰이 양쪽 모두 존재하고 전부 다르면 불일치
+   - 법정동(숫자 정규화) 토큰이 양쪽 모두 존재하고 전부 다르면 불일치
+   - 같은 법정동에서 번지가 양쪽 모두 존재하고 다르면 불일치
+   비교 불능(주소 부재·토큰 추출 실패)은 "불일치 아님"으로 보수 처리(과차단 금지). */
+
+interface AddressTokens {
+  /** 시군구(광역 시도 제외) — 예: "강남구", "성남시", "분당구" */
+  sigungu: string[];
+  /** 법정동/읍/면/리/가(행정동 숫자 제거 정규화) — 예: "역삼동" */
+  dong: string[];
+  /** 법정동 토큰 직후의 지번(산·번지 표기 정규화) — 예: "737", "737-1" */
+  bunji: string | null;
+}
+
+function extractAddressTokens(
+  address: string | null | undefined,
+): AddressTokens | null {
+  if (!address || typeof address !== "string") return null;
+  const words = address.trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return null;
+  const sigungu: string[] = [];
+  const dong: string[] = [];
+  let bunji: string | null = null;
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i];
+    // 광역 시도(서울특별시·부산광역시·세종특별자치시 등)는 변별력이 낮아 제외.
+    if (/(특별시|광역시|특별자치시|특별자치도)$/.test(w)) continue;
+    if (w.length >= 2 && /(시|군|구)$/.test(w)) {
+      sigungu.push(w);
+      continue;
+    }
+    if (/^[가-힣0-9]+(동|읍|면|리|가)$/.test(w)) {
+      // 행정동 숫자 정규화(역삼1동 → 역삼동). 숫자 제거 후 1글자(예: "101동")는
+      // 건물 동호수 표기일 가능성이 높아 제외한다.
+      const norm = w.replace(/[0-9]/g, "");
+      if (norm.length < 2) continue;
+      dong.push(norm);
+      const next = words[i + 1];
+      if (bunji == null && next && /^산?\d+(-\d+)?(번지)?$/.test(next)) {
+        bunji = next.replace(/번지$/, "").replace(/^산/, "");
+      }
+      continue;
+    }
+  }
+  if (sigungu.length === 0 && dong.length === 0) return null;
+  return { sigungu, dong, bunji };
+}
+
+/** 두 주소의 핵심 토큰(시군구·법정동·번지)이 명백히 불일치하면 true.
+    비교 불능(어느 한쪽 토큰 추출 실패)이면 false — 정상 동기화를 막지 않는다. */
+export function addressTokenMismatch(
+  a: string | null | undefined,
+  b: string | null | undefined,
+): boolean {
+  const ta = extractAddressTokens(a);
+  const tb = extractAddressTokens(b);
+  if (!ta || !tb) return false;
+  if (ta.sigungu.length > 0 && tb.sigungu.length > 0) {
+    const setB = new Set(tb.sigungu);
+    if (!ta.sigungu.some((t) => setB.has(t))) return true; // 시군구 전부 불일치
+  }
+  if (ta.dong.length > 0 && tb.dong.length > 0) {
+    const setB = new Set(tb.dong);
+    if (!ta.dong.some((t) => setB.has(t))) return true; // 법정동 전부 불일치
+    if (ta.bunji && tb.bunji && ta.bunji !== tb.bunji) return true; // 같은 동, 다른 번지
+  }
+  return false;
+}
+
+/** 오염 스냅샷 정화 — siteAnalysis와 그 파생(designData)을 null로, completedStages에서
+    site-analysis/design을 제거한다. 해당 updatedAt stamp·manualFields도 함께 정리해
+    "null 데이터가 산출됨으로 잔존 → 최초 자동산출 차단" 부작용을 막는다. 그 외 필드 보존.
+    원본 객체는 변경하지 않고 정화된 사본을 반환한다. */
+export function purifyPollutedSnapshot(
+  snap: Record<string, unknown>,
+): Record<string, unknown> {
+  const completedStages = Array.isArray(snap.completedStages)
+    ? (snap.completedStages as unknown[]).filter(
+        (st) => st !== "site-analysis" && st !== "design",
+      )
+    : [];
+  const updatedAt = { ...((snap.updatedAt as Record<string, unknown>) ?? {}) };
+  delete updatedAt.siteAnalysis;
+  delete updatedAt.design;
+  const manualFields = {
+    ...((snap.manualFields as Record<string, unknown>) ?? {}),
+  };
+  delete manualFields.siteAnalysis;
+  delete manualFields.design;
+  return {
+    ...snap,
+    siteAnalysis: null,
+    designData: null,
+    completedStages,
+    updatedAt,
+    manualFields,
+  };
+}
+
+/** localStorage의 프로젝트 레코드(propai-project-storage)에서 id→주소 맵을 직접 읽는다.
+    (useProjectStore import 대신 raw 접근 — persist hydrate 순서 의존·순환 import 제거) */
+function readPersistedProjectAddressMap(): Record<string, string> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.localStorage.getItem("propai-project-storage");
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as {
+      state?: { projects?: Array<{ id?: unknown; address?: unknown }> };
+    };
+    const map: Record<string, string> = {};
+    for (const p of parsed.state?.projects ?? []) {
+      if (
+        typeof p?.id === "string" &&
+        typeof p?.address === "string" &&
+        p.address.trim()
+      ) {
+        map[p.id] = p.address;
+      }
+    }
+    return map;
+  } catch {
+    return {};
+  }
+}
+
+/** persist hydrate(migrate) 정화 — 프로젝트 레코드 주소와 토큰 불일치인 스냅샷과
+    live 필드(현재 활성 프로젝트)를 정화한다. 레코드 주소가 없는 프로젝트는 비교
+    불능이므로 보존한다. 오염이 전혀 없으면 원본 참조를 그대로 반환(무변경). */
+export function purifyPersistedContextState(
+  persisted: Record<string, unknown>,
+  addressOf: Record<string, string> = readPersistedProjectAddressMap(),
+): Record<string, unknown> {
+  let next = persisted;
+  const snaps = next.snapshots;
+  if (snaps && typeof snaps === "object") {
+    let changed = false;
+    const purified: Record<string, unknown> = {
+      ...(snaps as Record<string, unknown>),
+    };
+    for (const [pid, snap] of Object.entries(purified)) {
+      if (!snap || typeof snap !== "object") continue;
+      const recordAddress = addressOf[pid];
+      const snapAddress = (
+        (snap as Record<string, unknown>).siteAnalysis as
+          | { address?: unknown }
+          | null
+          | undefined
+      )?.address;
+      if (
+        recordAddress &&
+        typeof snapAddress === "string" &&
+        addressTokenMismatch(recordAddress, snapAddress)
+      ) {
+        purified[pid] = purifyPollutedSnapshot(
+          snap as Record<string, unknown>,
+        );
+        changed = true;
+      }
+    }
+    if (changed) next = { ...next, snapshots: purified };
+  }
+  // live 필드(현재 활성 프로젝트) 동일 기준 정화
+  const pid = typeof next.projectId === "string" ? next.projectId : null;
+  const recordAddress = pid ? addressOf[pid] : undefined;
+  const liveAddress = (
+    next.siteAnalysis as { address?: unknown } | null | undefined
+  )?.address;
+  if (
+    recordAddress &&
+    typeof liveAddress === "string" &&
+    addressTokenMismatch(recordAddress, liveAddress)
+  ) {
+    next = purifyPollutedSnapshot({ ...next });
+  }
+  return next;
+}
+
 /* ── Store ── */
 
 export const useProjectContextStore = create<ProjectContextState>()(
@@ -1028,6 +1210,19 @@ export const useProjectContextStore = create<ProjectContextState>()(
     }),
     {
       name: "propai-project-context",
+      // WP-D: 오염 스냅샷 정화 마이그레이션 — hydrate 시 프로젝트 레코드 주소와
+      // 핵심 토큰이 불일치하는 스냅샷·live 필드의 siteAnalysis와 파생 designData를
+      // null로 정화하고 completedStages에서 site-analysis/design을 제거한다
+      // (이미 영속된 오염이 전환 복원→서버 푸시로 고착되는 사슬 차단).
+      version: 1,
+      migrate: (persisted) => {
+        if (!persisted || typeof persisted !== "object") {
+          return persisted as ProjectContextState;
+        }
+        return purifyPersistedContextState(
+          persisted as Record<string, unknown>,
+        ) as unknown as ProjectContextState;
+      },
     },
   ),
 );

@@ -282,6 +282,77 @@ export type ESGDashboardData = {
   carbon_by_scope: Array<{ scope: string; tco2e: number }>;
 };
 
+/** ── U4 템플릿 조립(R6~R8) — 유사 사례 v2 · 조립 응답 ──────────────
+ * 확장 필드는 전부 optional(구버전 백엔드 응답 하위호환 — 부재 시 미표시·추정 금지).
+ */
+
+/** 유사도 점수 분해 한 축 — 서버 산출 그대로(가공·추정 금지). */
+export type SimilarScorePart = {
+  key: string;
+  label?: string | null;
+  score: number;
+  max?: number | null;
+  basis?: string | null;
+};
+
+/** 법규 적합성(현재 부지 용도지역 기준) — 서버 산출 그대로. */
+export type SimilarLegalFit = {
+  fit?: boolean;
+  zone_code?: string | null;
+  message?: string | null;
+  basis?: string | null;
+};
+
+/** GET /design-references/similar 응답 항목 v2 — 구버전 필드 + R6 확장. */
+export type SimilarRefV2 = {
+  id: string;
+  title: string;
+  building_use: string | null;
+  area_sqm: number | null;
+  total_units: number | null;
+  floors: number | null;
+  unit_types: string[];
+  file_url: string | null;
+  file_type: string | null;
+  similarity: number;
+  /** R6: 유사도 점수 분해(용도/면적/평형/용도지역 등) — 있을 때만 미니바 렌더. */
+  score_breakdown?: SimilarScorePart[];
+  /** R6: 현재 부지 용도지역 기준 법규 적합성 — 있을 때만 칩 렌더. */
+  legal_fit?: boolean | SimilarLegalFit | null;
+  /** R7: 파싱된 기하(geometry) 보유 여부 — true일 때만 조립 버튼 노출. */
+  has_geometry?: boolean;
+  /** R7: 도면 썸네일(inline SVG 마크업) — script 제거 가드 후에만 렌더. */
+  thumbnail_svg?: string | null;
+};
+
+/** 조립 적응 내역 한 건 — 문자열 또는 {message} 객체(서버 출력 수용). */
+export type AssembleAdaptation = {
+  kind?: string | null;
+  field?: string | null;
+  message: string;
+};
+
+/** 조립 검증 위반 한 건. */
+export type AssembleViolation = {
+  rule?: string | null;
+  severity?: string | null;
+  message: string;
+};
+
+/**
+ * R8: POST /design-references/{ref_id}/assemble 응답.
+ * passed·violations가 모두 없으면 검증 결과 미제공으로 간주 — 적용 차단(정직 게이트).
+ */
+export type AssembleResponse = {
+  design_payload?: DesignPayload | null;
+  summary?: AutoDesignSummary | null;
+  adaptations?: Array<string | AssembleAdaptation>;
+  violations?: Array<string | AssembleViolation>;
+  passed?: boolean;
+  /** 원본 사례 제목(서버 제공 시 우선 표기 — 없으면 카드 item.title). */
+  source_title?: string | null;
+};
+
 /** Phase 4 — 스마트 안전/비전/주차 타입. */
 export type SafetyViolation = {
   id: string;

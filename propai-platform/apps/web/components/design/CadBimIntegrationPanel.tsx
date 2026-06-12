@@ -345,6 +345,8 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
   // AI 설계 해석(DesignInterpreter 6섹션) + 매스 메타
   const [designAi, setDesignAi] = useState<Record<string, string> | null>(null);
   const [bimMass, setBimMass] = useState<Record<string, unknown> | null>(null);
+  // AI 해석 패널 접기(기본 열림) — 접으면 3D가 전폭이 되고 휠 스크롤이 캔버스(CameraControls)로 직접 전달.
+  const [aiPanelOpen, setAiPanelOpen] = useState(true);
 
   // ── 3D 카메라 시점 프리셋(비전문가용 시점 전환) ──
   const camControlsRef = useRef<CameraControls | null>(null);
@@ -372,6 +374,8 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
   const [renderImage, setRenderImage] = useState<string | null>(null); // 결과 이미지(data URL 또는 원격 URL)
   const [renderMsg, setRenderMsg] = useState<string | null>(null);
   const [renderCharged, setRenderCharged] = useState<number | null>(null);
+  // 렌더 요청 in-flight 여부 — 모달을 닫아도 뷰포트 버튼 스피너로 진행 상태를 계속 표시.
+  const [renderBusy, setRenderBusy] = useState(false);
   // 이 기능 1회 소요 코인(비전문가용 안내). 실제 청구는 백엔드가 charged로 회신.
   const RENDER_COST_COIN = 5;
 
@@ -741,65 +745,79 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
     setRenderMsg(null);
     setRenderImage(null);
     setRenderCharged(null);
-
-    let imageBase64 = "";
-    try {
-      // 현재 뷰포트를 PNG로 캡처. Canvas에 preserveDrawingBuffer=true를 줘서
-      // demand 루프(정지 화면)에서도 마지막 프레임이 버퍼에 남아 캡처가 빈 화면이 되지 않는다.
-      imageBase64 = gl.domElement.toDataURL("image/png");
-    } catch {
-      setRenderMsg("뷰포트 캡처에 실패했습니다. 화면을 한 번 움직인 뒤 다시 시도하세요.");
-      setRenderPhase("error");
-      return;
-    }
+    setRenderBusy(true);
 
     try {
-      // 백엔드 계약: status가 ok|no_key|error로 회신(HTTP는 200). apiClient는 비-2xx만 throw.
-      const resp = await apiClient.post<{
-        status: "ok" | "no_key" | "error";
-        image_url?: string;
-        image_base64?: string;
-        message?: string;
-        charged?: number;
-      }>(`/design/${encodeURIComponent(projectId)}/render-photoreal`, {
-        body: { image_base64: imageBase64, style: renderStyle },
-        timeoutMs: 120_000,
-      });
-
-      if (resp.status === "no_key") {
-        // 서버에 렌더 API 키 미설정 — 정직 안내(가짜 이미지 금지).
-        setRenderMsg(resp.message || "AI 렌더는 관리자 키 설정 후 이용 가능합니다.");
-        setRenderPhase("nokey");
-        return;
-      }
-      if (resp.status !== "ok") {
-        setRenderMsg(resp.message || "AI 렌더에 실패했습니다. 잠시 후 다시 시도하세요.");
+      let imageBase64 = "";
+      try {
+        // 현재 뷰포트를 PNG로 캡처. Canvas에 preserveDrawingBuffer=true를 줘서
+        // demand 루프(정지 화면)에서도 마지막 프레임이 버퍼에 남아 캡처가 빈 화면이 되지 않는다.
+        imageBase64 = gl.domElement.toDataURL("image/png");
+      } catch {
+        setRenderMsg("뷰포트 캡처에 실패했습니다. 화면을 한 번 움직인 뒤 다시 시도하세요.");
         setRenderPhase("error");
         return;
       }
-      // 성공: 원격 URL 우선, 없으면 base64. 둘 다 없으면 결과 없음(가짜 표시 금지).
-      const img = resp.image_url || (resp.image_base64
-        ? (resp.image_base64.startsWith("data:") ? resp.image_base64 : `data:image/png;base64,${resp.image_base64}`)
-        : null);
-      if (!img) {
-        setRenderMsg("렌더 결과 이미지를 받지 못했습니다.");
+
+      try {
+        // 백엔드 계약: status가 ok|no_key|error로 회신(HTTP는 200). apiClient는 비-2xx만 throw.
+        // W-B(서버 폴링) 이후 시간 내 미완료면 202류 본문(pending|processing)이 올 수 있다 — 지연 안내+재시도.
+        const resp = await apiClient.post<{
+          status: "ok" | "no_key" | "error" | "pending" | "processing";
+          image_url?: string;
+          image_base64?: string;
+          message?: string;
+          charged?: number;
+        }>(`/design/${encodeURIComponent(projectId)}/render-photoreal`, {
+          body: { image_base64: imageBase64, style: renderStyle },
+          timeoutMs: 120_000,
+        });
+
+        if (resp.status === "no_key") {
+          // 서버에 렌더 API 키 미설정 — 정직 안내(가짜 이미지 금지).
+          setRenderMsg(resp.message || "AI 렌더는 관리자 키 설정 후 이용 가능합니다.");
+          setRenderPhase("nokey");
+          return;
+        }
+        if (resp.status === "pending" || resp.status === "processing") {
+          // 서버가 아직 처리 중(202/폴링 미완) — 실패가 아님을 정직 안내, 재시도 유도.
+          setRenderMsg(resp.message || "렌더가 오래 걸리고 있습니다. 잠시 후 '다시 시도'를 눌러 주세요.");
+          setRenderPhase("error");
+          return;
+        }
+        if (resp.status !== "ok") {
+          setRenderMsg(resp.message || "AI 렌더에 실패했습니다. 잠시 후 다시 시도하세요.");
+          setRenderPhase("error");
+          return;
+        }
+        // 성공: 원격 URL 우선, 없으면 base64. 둘 다 없으면 결과 없음(가짜 표시 금지).
+        const img = resp.image_url || (resp.image_base64
+          ? (resp.image_base64.startsWith("data:") ? resp.image_base64 : `data:image/png;base64,${resp.image_base64}`)
+          : null);
+        if (!img) {
+          setRenderMsg("렌더 결과 이미지를 받지 못했습니다.");
+          setRenderPhase("error");
+          return;
+        }
+        setRenderImage(img);
+        setRenderCharged(typeof resp.charged === "number" ? resp.charged : null);
+        setRenderMsg(resp.message || null);
+        setRenderPhase("result");
+      } catch (err) {
+        // 인증·서버 오류 등 HTTP 비-2xx. 408은 apiClient 자체 타임아웃, 202/504는 지연 계열로 분기.
+        const msg = err instanceof ApiClientError
+          ? (err.status === 402 ? "코인이 부족합니다. 충전 후 다시 시도하세요."
+            : err.status === 401 ? "로그인이 만료되었습니다. 다시 로그인 후 시도하세요."
+            : err.status === 403 ? "이 기능 사용 권한이 없습니다."
+            : err.status === 202 || err.status === 408 || err.status === 504
+              ? "렌더가 오래 걸리고 있습니다. 서버에서 계속 처리 중일 수 있어요 — 잠시 후 다시 시도해 주세요."
+            : "AI 렌더 요청이 거부되었습니다.")
+          : "네트워크 오류로 AI 렌더에 실패했습니다.";
+        setRenderMsg(msg);
         setRenderPhase("error");
-        return;
       }
-      setRenderImage(img);
-      setRenderCharged(typeof resp.charged === "number" ? resp.charged : null);
-      setRenderMsg(resp.message || null);
-      setRenderPhase("result");
-    } catch (err) {
-      // 인증·서버 오류 등 HTTP 비-2xx
-      const msg = err instanceof ApiClientError
-        ? (err.status === 402 ? "코인이 부족합니다. 충전 후 다시 시도하세요."
-          : err.status === 401 ? "로그인이 만료되었습니다. 다시 로그인 후 시도하세요."
-          : err.status === 403 ? "이 기능 사용 권한이 없습니다."
-          : "AI 렌더 요청이 거부되었습니다.")
-        : "네트워크 오류로 AI 렌더에 실패했습니다.";
-      setRenderMsg(msg);
-      setRenderPhase("error");
+    } finally {
+      setRenderBusy(false);
     }
   }, [projectId, bimScene, spec, renderStyle]);
 
@@ -815,24 +833,8 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
             {t.description || "선택한 건축개요를 기준으로 2D CAD 도면과 3D BIM을 동일 기하로 동기화 생성합니다."}
           </p>
         </div>
-        <div className="flex gap-2 rounded-[2rem] bg-[var(--surface-soft)] p-2 border border-[var(--line-strong)] shadow-[var(--shadow-lg)]">
-          <button
-            onClick={() => setViewMode("cad_2d")}
-            className={`rounded-full px-8 py-3 text-[10px] font-black uppercase tracking-widest transition-all ${
-              viewMode === "cad_2d" ? "bg-[var(--surface-strong)] text-[var(--accent-strong)] shadow-lg" : "text-[var(--text-hint)] hover:text-[var(--text-primary)]"
-            }`}
-          >
-            {t.btn2D || "2D 도면"}
-          </button>
-          <button
-            onClick={() => setViewMode("bim_3d")}
-            className={`rounded-full px-8 py-3 text-[10px] font-black uppercase tracking-widest transition-all ${
-              viewMode === "bim_3d" ? "bg-[var(--surface-strong)] text-[var(--accent-strong)] shadow-lg" : "text-[var(--text-hint)] hover:text-[var(--text-primary)]"
-            }`}
-          >
-            {t.btn3D || "3D BIM"}
-          </button>
-        </div>
+        {/* 2D/3D 전환 토글은 결과 뷰포트 상단 중앙의 세그먼트 칩으로 이동(아래 뷰포트 컨테이너 내부) —
+            "보는 화면과 전환 버튼"이 한곳에 있도록(헤더↔뷰포트 시선 왕복 제거). */}
       </div>
 
       {/* ── 적용 건축개요 스트립(선택한 개발종목 기반 — CAD·BIM 공용 기하) ── */}
@@ -1023,15 +1025,25 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
               </button>
             )}
 
-            {/* ── AI 포토리얼 렌더 버튼(과금 게이트) — 모델(절차/서버) 있을 때 노출 ── */}
+            {/* ── AI 포토리얼 렌더 버튼(과금 게이트) — 모델(절차/서버) 있을 때 노출.
+                렌더 in-flight면 스피너로 진행 표시(모달을 닫았다가 눌러도 진행 모달로 복귀). ── */}
             {(bimScene || spec) && (
               <button
                 type="button"
-                onClick={() => setRenderPhase("confirm")}
+                onClick={() => setRenderPhase(renderBusy ? "loading" : "confirm")}
                 className="absolute right-6 top-6 z-30 flex items-center gap-2 rounded-full border border-[var(--accent-strong)]/60 bg-[var(--accent-strong)]/15 px-5 py-2.5 text-[10px] font-black uppercase tracking-widest text-[var(--accent-strong)] backdrop-blur-xl shadow-lg transition-colors hover:bg-[var(--accent-strong)]/25"
               >
-                <span className="text-[12px] leading-none">✦</span>
-                AI 포토리얼 렌더
+                {renderBusy ? (
+                  <>
+                    <span className="h-3 w-3 animate-spin rounded-full border-2 border-[var(--accent-strong)] border-t-transparent" />
+                    렌더 중…
+                  </>
+                ) : (
+                  <>
+                    <span className="text-[12px] leading-none">✦</span>
+                    AI 포토리얼 렌더
+                  </>
+                )}
               </button>
             )}
             {/* ── 비차폐 상태 칩 — 절차모델은 즉시 렌더되므로 전체화면 오버레이로 막지 않는다 ── */}
@@ -1199,7 +1211,26 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
         {/* Overlay Tools (only for 3D) */}
         {viewMode === "bim_3d" && (
           <>
-            <div className="absolute right-6 top-[5.5rem] flex max-h-[80%] w-[340px] flex-col gap-3 z-20 overflow-y-auto">
+            {/* ── AI 해석 패널(접이식) — 기본 열림. 접으면 슬림 세로 칩만 남아 3D 전폭 + 휠이 캔버스로 직접 전달 ── */}
+            {aiPanelOpen ? (
+            <motion.div
+              initial={{ opacity: 0, x: 24 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ duration: 0.25, ease: "easeOut" }}
+              className="absolute right-6 top-[5.5rem] flex max-h-[80%] w-[340px] flex-col gap-3 z-20 overflow-y-auto"
+            >
+              {/* 헤더 행: 제목 + 접기 버튼 */}
+              <div className="flex shrink-0 items-center justify-between rounded-2xl border border-white/10 bg-black/70 px-4 py-2.5 text-white backdrop-blur-2xl shadow-2xl">
+                <p className="text-[9px] font-black uppercase tracking-[0.3em] text-indigo-300">AI 설계 해석</p>
+                <button
+                  type="button"
+                  onClick={() => setAiPanelOpen(false)}
+                  title="패널을 접고 3D를 넓게 봅니다"
+                  className="rounded-full px-2 py-0.5 text-[10px] font-black uppercase tracking-widest text-white/50 transition-colors hover:bg-white/10 hover:text-white"
+                >
+                  접기 ▸
+                </button>
+              </div>
               {/* 매스 메타(실측) */}
               {bimMass && (
                 <motion.div
@@ -1258,7 +1289,21 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
                   AI 설계 해석 생성 중...
                 </div>
               )}
-            </div>
+            </motion.div>
+            ) : (
+            /* 접힘 상태: 슬림 세로 칩만 — 클릭하면 다시 펼침 */
+            <motion.button
+              initial={{ opacity: 0, x: 24 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ duration: 0.25, ease: "easeOut" }}
+              type="button"
+              onClick={() => setAiPanelOpen(true)}
+              title="AI 설계 해석 패널 펼치기"
+              className="absolute right-0 top-[5.5rem] z-20 rounded-l-2xl border border-r-0 border-white/10 bg-black/70 px-2 py-4 text-[10px] font-black uppercase tracking-[0.25em] text-indigo-300 backdrop-blur-2xl shadow-2xl transition-colors hover:bg-black/85 [writing-mode:vertical-rl]"
+            >
+              AI 해석 ▸
+            </motion.button>
+            )}
 
             {/* HUD Bottom Left */}
             <div className="absolute bottom-10 left-10 z-20 flex items-center gap-6">
@@ -1271,6 +1316,35 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
               </div>
             </div>
           </>
+        )}
+
+        {/* ── 2D/3D 전환 세그먼트 칩 — 뷰포트 상단 중앙(헤더에서 이동). 프리셋 바와 동일 토큰.
+            편집모드에서는 숨김(편집 종료 버튼과 동선 충돌 방지). 3D 클릭 시 editMode 해제 선행. ── */}
+        {!editMode && (
+          <div className="absolute left-1/2 top-6 z-30 flex -translate-x-1/2 items-center gap-1.5 rounded-2xl border border-white/10 bg-black/45 p-1.5 backdrop-blur-xl shadow-2xl">
+            <button
+              type="button"
+              onClick={() => setViewMode("cad_2d")}
+              className={`rounded-xl px-4 py-2 text-[10px] font-black uppercase tracking-widest transition-colors ${
+                viewMode === "cad_2d"
+                  ? "bg-[var(--accent-strong)] text-white shadow-lg"
+                  : "text-white/55 hover:text-white hover:bg-white/10"
+              }`}
+            >
+              {t.btn2D || "2D 도면"}
+            </button>
+            <button
+              type="button"
+              onClick={() => { setEditMode(false); setViewMode("bim_3d"); }}
+              className={`rounded-xl px-4 py-2 text-[10px] font-black uppercase tracking-widest transition-colors ${
+                viewMode === "bim_3d"
+                  ? "bg-[var(--accent-strong)] text-white shadow-lg"
+                  : "text-white/55 hover:text-white hover:bg-white/10"
+              }`}
+            >
+              {t.btn3D || "3D BIM"}
+            </button>
+          </div>
         )}
 
         {/* ══════════════ AI 포토리얼 렌더 모달(과금 게이트 + 결과/정직안내) ══════════════ */}
@@ -1339,9 +1413,17 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
                       <button
                         type="button"
                         onClick={runPhotorealRender}
-                        className="rounded-full bg-[var(--accent-strong)] px-6 py-2.5 text-xs font-black uppercase tracking-widest text-white hover:opacity-90"
+                        disabled={renderBusy}
+                        className="flex items-center gap-2 rounded-full bg-[var(--accent-strong)] px-6 py-2.5 text-xs font-black uppercase tracking-widest text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
                       >
-                        결제하고 렌더 ({RENDER_COST_COIN}코인)
+                        {renderBusy ? (
+                          <>
+                            <span className="h-3 w-3 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                            렌더 중…
+                          </>
+                        ) : (
+                          <>결제하고 렌더 ({RENDER_COST_COIN}코인)</>
+                        )}
                       </button>
                     </div>
                   </div>

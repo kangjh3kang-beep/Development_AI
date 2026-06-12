@@ -1,4 +1,5 @@
-from typing import Dict, List
+import math
+from typing import Dict, List, Optional
 import structlog
 
 logger = structlog.get_logger()
@@ -87,3 +88,117 @@ class DesignReviewService:
         except Exception as e:  # noqa: BLE001
             logger.warning("설계검토 법령근거 부착 스킵", error=str(e)[:120])
             return []
+
+    # ── 사례비교 결합(additive): 인근 인허가 사례 통계 대비 설계 FAR/BCR 위치 ──
+    # 표본 부족·통계 미존재 시 통계 비표기(정직) — 가짜 수치 생성 금지.
+    MIN_SAMPLE_FOR_STATS = 5
+
+    def compare_with_nearby_cases(self, design_params: Dict, case_summary: Optional[Dict]) -> Dict:
+        """설계 FAR/BCR을 인근 인허가 사례 분위(p25/p50/p75)와 비교(additive·결정론 산술, LLM 0).
+
+        - case_summary는 호출자가 PermitCaseService.summarize 출력을 주입한다
+          (이 서비스는 직접 외부호출하지 않음 — 결합도 최소).
+          기대 형태: {"sample_count": int,
+                      "far_stats": {"p25","p50","p75"}, "bcr_stats": {...}}
+          (중첩 "far"/"bcr" 또는 평면 "far_p25" 표기도 graceful 수용).
+        - case_summary None/빈값/available=False/표본 0 → {"available": False}(정직한 빈결과).
+        - 표본 < MIN_SAMPLE_FOR_STATS(5) → available True지만 band="insufficient_sample",
+          분위·중위편차(pp) 비표기.
+        - pp = percentage point(설계값 − 사례 중위값).
+        """
+        empty = {
+            "available": False, "sample_count": 0,
+            "far_position": None, "bcr_position": None,
+            "vs_median_far_pp": None, "vs_median_bcr_pp": None,
+            "note": "인근 인허가 사례 없음 — 비교 생략",
+        }
+        if not isinstance(case_summary, dict) or not case_summary:
+            return empty
+        if case_summary.get("available") is False:
+            return empty
+        raw_count = self._to_number(case_summary.get("sample_count"))
+        sample_count = int(raw_count) if raw_count is not None and raw_count > 0 else 0
+        if sample_count <= 0:
+            return empty
+
+        params = design_params if isinstance(design_params, dict) else {}
+        far_value = self._to_number(params.get("far_applied", params.get("far")))
+        bcr_value = self._to_number(params.get("bcr_applied", params.get("bcr")))
+
+        if sample_count < self.MIN_SAMPLE_FOR_STATS:
+            insufficient = {"p25": None, "p50": None, "p75": None, "band": "insufficient_sample"}
+            return {
+                "available": True, "sample_count": sample_count,
+                "far_position": {"value": far_value, **insufficient},
+                "bcr_position": {"value": bcr_value, **insufficient},
+                "vs_median_far_pp": None, "vs_median_bcr_pp": None,
+                "note": f"인근 사례 {sample_count}건 — 표본 부족(<{self.MIN_SAMPLE_FOR_STATS})으로 분위 통계 비표기",
+            }
+
+        far_stats = self._extract_percentiles(case_summary, "far")
+        bcr_stats = self._extract_percentiles(case_summary, "bcr")
+        far_band = self._position_band(far_value, far_stats)
+        bcr_band = self._position_band(bcr_value, bcr_stats)
+        vs_far = (round(far_value - far_stats["p50"], 1)
+                  if far_value is not None and far_stats["p50"] is not None else None)
+        vs_bcr = (round(bcr_value - bcr_stats["p50"], 1)
+                  if bcr_value is not None and bcr_stats["p50"] is not None else None)
+
+        note_parts = [f"인근 인허가 사례 {sample_count}건 비교"]
+        if vs_far is not None:
+            note_parts.append(f"FAR 중위 대비 {vs_far:+.1f}pp({far_band})")
+        if vs_bcr is not None:
+            note_parts.append(f"BCR 중위 대비 {vs_bcr:+.1f}pp({bcr_band})")
+        if vs_far is None and vs_bcr is None:
+            note_parts.append("분위 통계 없음 — 위치 비교 비표기")
+        return {
+            "available": True, "sample_count": sample_count,
+            "far_position": {"value": far_value, **far_stats, "band": far_band},
+            "bcr_position": {"value": bcr_value, **bcr_stats, "band": bcr_band},
+            "vs_median_far_pp": vs_far, "vs_median_bcr_pp": vs_bcr,
+            "note": " · ".join(note_parts),
+        }
+
+    @staticmethod
+    def _to_number(value) -> Optional[float]:
+        """유한 실수만 통과(bool·NaN·inf·비수치 → None) — 가짜 수치 금지."""
+        if isinstance(value, bool):
+            return None
+        try:
+            f = float(value)
+        except (TypeError, ValueError):
+            return None
+        return f if math.isfinite(f) else None
+
+    @classmethod
+    def _extract_percentiles(cls, case_summary: Dict, metric: str) -> Dict[str, Optional[float]]:
+        """case_summary에서 metric(far|bcr)의 p25/p50/p75 추출 — 표기 변형 graceful 수용.
+
+        우선순위: "{metric}_stats" 중첩 → "{metric}" 중첩 → 평면 "{metric}_p25" 등.
+        미존재·비수치는 None(이후 band="insufficient_sample"로 정직 처리).
+        """
+        out: Dict[str, Optional[float]] = {"p25": None, "p50": None, "p75": None}
+        for container_key in (f"{metric}_stats", metric):
+            block = case_summary.get(container_key)
+            if isinstance(block, dict):
+                for p in out:
+                    if out[p] is None:
+                        out[p] = cls._to_number(block.get(p))
+        for p in out:
+            if out[p] is None:
+                out[p] = cls._to_number(case_summary.get(f"{metric}_{p}"))
+        return out
+
+    @staticmethod
+    def _position_band(value: Optional[float], stats: Dict[str, Optional[float]]) -> str:
+        """분위 대비 위치 밴드(결정론). 값·분위 결손 시 insufficient_sample(정직)."""
+        p25, p50, p75 = stats.get("p25"), stats.get("p50"), stats.get("p75")
+        if value is None or p25 is None or p50 is None or p75 is None:
+            return "insufficient_sample"
+        if value < p25:
+            return "below_p25"
+        if value < p50:
+            return "p25_p50"
+        if value < p75:
+            return "p50_p75"
+        return "above_p75"
