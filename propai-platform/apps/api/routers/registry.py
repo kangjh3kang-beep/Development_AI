@@ -103,12 +103,16 @@ async def tilko_realty(
     """
     from app.services.registry import tilko_client as tk
 
+    # unique_no(부동산 고유번호 14자리) = Pin 필드. property_params.Pin/UniqueNo도 허용(하위호환).
+    uno = str(req.get("unique_no") or req.get("pin")
+              or (req.get("property_params") or {}).get("Pin")
+              or (req.get("property_params") or {}).get("UniqueNo") or "")
     result = await tk.fetch_realty_registry(
-        property_params=req.get("property_params") or {},
-        cmort_flag=str(req.get("cmort_flag", "0")),
-        trade_seq_flag=str(req.get("trade_seq_flag", "0")),
-        abs_cls=str(req.get("abs_cls", "0")),
-        rgs_mttr_smry=str(req.get("rgs_mttr_smry", "0")),
+        unique_no=uno,
+        cmort_flag=str(req.get("cmort_flag", "N")),
+        trade_seq_flag=str(req.get("trade_seq_flag", "N")),
+        abs_cls=str(req.get("abs_cls", "11")),
+        rgs_mttr_smry=str(req.get("rgs_mttr_smry", "")),
     )
     # 등기부등본 발급·열람 1건 1,200원(발급 성공 시, best-effort).
     await _charge_registry_issue(current_user.user_id, result, times=1)

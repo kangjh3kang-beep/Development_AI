@@ -43,10 +43,11 @@ def iros_creds() -> dict[str, str]:
     return {
         "UserId": (os.getenv("IROS_USER_ID") or "").strip(),
         "UserPassword": (os.getenv("IROS_USER_PW") or "").strip(),
+        # 전자지불 선불카드: NO1=앞8자리(영문포함), NO2=뒤4자리(숫자), PWD=비밀번호
         "EmoneyNo1": (os.getenv("IROS_EMONEY_NO1") or "").strip(),
         "EmoneyNo2": (os.getenv("IROS_EMONEY_NO2") or "").strip(),
         "EmoneyPwd": (os.getenv("IROS_EMONEY_PWD") or "").strip(),
-        "Pin": (os.getenv("IROS_PIN") or "").strip(),
+        # ※ Pin은 자격이 아니라 '부동산 고유번호'(요청별 인자) — fetch_realty_registry(unique_no=…)로 전달
     }
 
 
@@ -85,7 +86,11 @@ def _build_cipher(public_key_b64: str) -> tuple[str, bytes]:
 
 
 def _aes_encrypt(value: str, aes_key: bytes) -> str:
-    """AES-128-CBC(IV=0)·PKCS7 암호화 → "ENC:"+base64."""
+    """AES-128-CBC(IV=0)·PKCS7 암호화 → base64.
+
+    ★틸코 공식 샘플(aesEncrypt)은 base64만 반환하고 "ENC:" 프리픽스를 붙이지 않는다.
+      이전 구현이 "ENC:"를 붙여 틸코 복호화가 깨지던(HTTP 500) 버그를 수정.
+    """
     from cryptography.hazmat.primitives import padding as sym_padding
     from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
@@ -93,26 +98,34 @@ def _aes_encrypt(value: str, aes_key: bytes) -> str:
     padded = padder.update(value.encode("utf-8")) + padder.finalize()
     enc = Cipher(algorithms.AES(aes_key), modes.CBC(_IV)).encryptor()
     ct = enc.update(padded) + enc.finalize()
-    return "ENC:" + base64.b64encode(ct).decode()
+    return base64.b64encode(ct).decode()
 
 
 async def fetch_realty_registry(
     *,
-    property_params: dict[str, Any] | None = None,
-    cmort_flag: str = "0",
-    trade_seq_flag: str = "0",
-    abs_cls: str = "0",
-    rgs_mttr_smry: str = "0",
+    unique_no: str = "",
+    cmort_flag: str = "N",     # 공동담보/전세목록 추출(Y/N), 기본 미추출
+    trade_seq_flag: str = "N",  # 매매목록 추출(Y/N), 기본 미추출
+    abs_cls: str = "11",        # 등기기록유형(11=현재유효, 12=말소포함), 기본 현재유효
+    rgs_mttr_smry: str = "",    # 등기사항요약(1=포함, 공백=미포함), 기본 미포함
 ) -> dict[str, Any]:
     """등기부등본 조회/발급(IROS ID 로그인). 성공 시 {ok, pdf_data, xml_data, ...}.
 
-    property_params: 부동산 식별 필드(소재지/고유번호/등기종류 등) — 명세 확정 후 주입.
+    ★틸코 명세(v2.0 RealtyRegistry):
+      - Pin = 부동산 고유번호(14자리, '-' 제외, 평문) ← 조회 대상 부동산 지정
+      - EmoneyNo1 = 전자지불 선불카드 앞 8자리(영문 포함), EmoneyNo2 = 뒤 4자리(숫자),
+        EmoneyPwd = 선불카드 비밀번호 (모두 AES 암호화) ← IROS_EMONEY_* 시크릿
     """
     if not tilko_ready():
         return {"ok": False, "status": "not_configured", "message": "TILKO_API_KEY 미설정(관리자 키화면 입력 필요)"}
     if not iros_ready():
         return {"ok": False, "status": "not_configured",
                 "message": "IROS 자격(IROS_USER_ID/IROS_USER_PW 등) 미설정(관리자 키화면 입력 필요)"}
+
+    uno = (unique_no or "").replace("-", "").strip()
+    if not uno:
+        return {"ok": False, "status": "need_unique_no",
+                "message": "부동산 고유번호(14자리)가 필요합니다. 주소검색으로 고유번호를 먼저 조회하세요."}
 
     pub = await get_public_key()
     if not pub:
@@ -126,7 +139,7 @@ async def fetch_realty_registry(
                 "UserId": _aes_encrypt(c["UserId"], aes_key),
                 "UserPassword": _aes_encrypt(c["UserPassword"], aes_key),
             },
-            "Pin": c["Pin"],  # 평문(있으면)
+            "Pin": uno,  # 부동산 고유번호 14자리(평문)
             "EmoneyNo1": _aes_encrypt(c["EmoneyNo1"], aes_key) if c["EmoneyNo1"] else "",
             "EmoneyNo2": _aes_encrypt(c["EmoneyNo2"], aes_key) if c["EmoneyNo2"] else "",
             "EmoneyPwd": _aes_encrypt(c["EmoneyPwd"], aes_key) if c["EmoneyPwd"] else "",
@@ -135,8 +148,6 @@ async def fetch_realty_registry(
             "AbsCls": abs_cls,
             "RgsMttrSmry": rgs_mttr_smry,
         }
-        if property_params:
-            body.update(property_params)   # 부동산 식별 필드(소재지/고유번호 등)
 
         import httpx
 
