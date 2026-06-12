@@ -46,6 +46,11 @@ _BASE_PROMPT = (
 )
 _NEGATIVE_PROMPT = "cartoon, sketch, lowres, blurry, distorted, watermark, text, people"
 
+# 서버측 폴링 정책 — Prefer:wait(60s) 한도를 넘겨 202(미완료 prediction)가 와도
+# 에러가 아니라 '접수됨'이므로 여기서 완료까지 이어서 기다린다.
+_POLL_INTERVAL_S = 2.0  # 폴링 간격(초)
+_POLL_MAX_S = 120.0  # 서버측 폴링 최대 대기(초) — 초과 시 status="pending" 정직 반환
+
 
 def get_render_api_key() -> str | None:
     """렌더 API 키 조회(platform_secrets가 오버레이한 env에서). 없으면 None.
@@ -83,9 +88,11 @@ async def render_photoreal(
     """3D 뷰포트 이미지를 포토리얼 렌더로 변환. 비파괴(원본 불변).
 
     반환 status:
-    - "no_key": 키 미설정 → 정직 안내(가짜 이미지 없음).
-    - "ok":     image_url 포함(외부 렌더 성공).
-    - "error":  외부 호출 실패 사유(가짜 이미지 없음).
+    - "no_key":  키 미설정 → 정직 안내(가짜 이미지 없음).
+    - "ok":      image_url 포함(외부 렌더 성공).
+    - "pending": 서버측 폴링 한도(_POLL_MAX_S) 내 미완료 — 렌더 지연 안내 +
+                 prediction_id 포함(가짜 이미지 없음, 에러로 단정하지 않음).
+    - "error":   외부 호출 실패 사유(가짜 이미지 없음).
     """
     api_key = get_render_api_key()
     if not api_key:
@@ -127,7 +134,9 @@ async def render_photoreal(
             resp = await client.post(
                 "https://api.replicate.com/v1/predictions", json=payload, headers=headers
             )
-            if resp.status_code not in (200, 201):
+            # 202 = Prefer:wait(60s) 한도 내 미완료 — 에러가 아니라 '접수됨'.
+            # 201도 starting/processing 상태로 올 수 있어 동일하게 폴링으로 이어간다.
+            if resp.status_code not in (200, 201, 202):
                 # 외부 사유는 노출하되 키는 포함되지 않는 본문만(요약).
                 logger.warning("포토리얼 렌더 외부호출 비정상", code=resp.status_code)
                 return {
@@ -135,13 +144,7 @@ async def render_photoreal(
                     "message": f"렌더 서버 응답 오류(HTTP {resp.status_code}). 잠시 후 다시 시도해 주세요.",
                 }
             data = resp.json()
-            image_url = await _poll_until_done(client, data, headers, timeout_s)
-            if not image_url:
-                return {
-                    "status": "error",
-                    "message": "렌더 결과 이미지를 받지 못했습니다(시간 초과 또는 실패).",
-                }
-            return {"status": "ok", "image_url": image_url}
+            return await _resolve_prediction(client, data, headers)
     except httpx.HTTPError as e:
         logger.warning("포토리얼 렌더 통신 오류", err=str(e)[:120])
         return {"status": "error", "message": "렌더 서버에 연결하지 못했습니다. 네트워크를 확인해 주세요."}
@@ -150,25 +153,56 @@ async def render_photoreal(
         return {"status": "error", "message": "렌더 처리 중 오류가 발생했습니다."}
 
 
-async def _poll_until_done(
-    client: httpx.AsyncClient, data: dict[str, Any], headers: dict[str, str], timeout_s: float
-) -> str | None:
-    """예측이 끝날 때까지 get_url을 폴링해 결과 이미지 URL을 추출. 실패/시간초과 시 None."""
-    deadline = asyncio.get_event_loop().time() + timeout_s
+async def _resolve_prediction(
+    client: httpx.AsyncClient, data: dict[str, Any], headers: dict[str, str]
+) -> dict[str, Any]:
+    """prediction 객체를 종결 상태까지 해석해 응답 dict로 변환(정직 — 가짜 이미지 없음).
+
+    - succeeded        → {"status": "ok", "image_url": ...} (즉시완료 200/201 포함)
+    - failed/canceled  → {"status": "error", ...} 사유 안내
+    - starting/processing → urls.get을 _POLL_INTERVAL_S 간격으로 재조회,
+      _POLL_MAX_S 초과 시 {"status": "pending", "prediction_id": ...} 반환
+      (외부에서 렌더가 계속 진행 중일 수 있어 에러로 단정하지 않는다).
+    """
+    deadline = asyncio.get_event_loop().time() + _POLL_MAX_S
+    auth_header = {"Authorization": headers["Authorization"]}  # 토큰은 헤더에만, 로그 미노출
     while True:
         status = data.get("status")
         if status == "succeeded":
-            return _extract_image_url(data.get("output"))
+            image_url = _extract_image_url(data.get("output"))
+            if not image_url:
+                return {
+                    "status": "error",
+                    "message": "렌더가 완료됐지만 결과 이미지 URL이 없습니다. 잠시 후 다시 시도해 주세요.",
+                }
+            return {"status": "ok", "image_url": image_url}
         if status in ("failed", "canceled"):
-            return None
-        # 진행 중 — get_url로 재조회(없으면 더 못 기다림).
+            logger.warning("포토리얼 렌더 외부 실패", pred_status=status)
+            return {
+                "status": "error",
+                "message": f"외부 렌더가 완료되지 못했습니다(상태: {status}). 잠시 후 다시 시도해 주세요.",
+            }
+        # 진행 중(starting/processing) — 폴링 URL이 없으면 더 기다릴 수 없다(정직 에러).
         get_url = (data.get("urls") or {}).get("get")
-        if not get_url or asyncio.get_event_loop().time() >= deadline:
-            return None
-        await asyncio.sleep(1.5)
-        r = await client.get(get_url, headers={"Authorization": headers["Authorization"]})
+        if not get_url:
+            return {
+                "status": "error",
+                "message": "렌더 진행 상태를 조회할 수 없습니다(폴링 URL 없음).",
+            }
+        if asyncio.get_event_loop().time() >= deadline:
+            return {
+                "status": "pending",
+                "message": "렌더 지연 — 잠시 후 재시도해 주세요.",
+                "prediction_id": data.get("id"),
+            }
+        await asyncio.sleep(_POLL_INTERVAL_S)
+        r = await client.get(get_url, headers=auth_header)
         if r.status_code != 200:
-            return None
+            logger.warning("포토리얼 렌더 상태조회 비정상", code=r.status_code)
+            return {
+                "status": "error",
+                "message": f"렌더 상태 조회 오류(HTTP {r.status_code}). 잠시 후 다시 시도해 주세요.",
+            }
         data = r.json()
 
 

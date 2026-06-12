@@ -20,10 +20,15 @@ from ..external_api.vworld_service import VWorldService
 from ..external_api.molit_service import MOLITService
 from ..external_api.building_registry_service import BuildingRegistryService
 from ..external_api.commercial_area_service import CommercialAreaService
-from ..zoning.auto_zoning_service import AutoZoningService
+from ..zoning.auto_zoning_service import ZONE_INFERENCE_WARNING, AutoZoningService
 from .ordinance_service import OrdinanceService
 
 logger = logging.getLogger(__name__)
+
+
+def _strip_zone_inference_warning(warnings: list | None) -> list:
+    """주소키워드 추론 경고 제거 — 실조회 값으로 교체된 뒤 거짓 경고 잔존 방지(W-C)."""
+    return [w for w in (warnings or []) if w != ZONE_INFERENCE_WARNING]
 
 # ── 종합 토지정보 인프로세스 TTL 캐시(Redis 비의존, 중복 외부호출 제거) ──
 _COMP_CACHE: dict[str, tuple[float, dict]] = {}
@@ -347,6 +352,8 @@ class LandInfoService:
             "nearby_transactions": None,
             "infrastructure": None,
             "zone_type": None,
+            # zone_type 출처(W-C): keyword_inference(추론)/vworld_*(실조회)/None(미확인)
+            "zone_source": None,
             "zone_limits": None,
             "special_districts": [],
             "warnings": [],
@@ -366,6 +373,7 @@ class LandInfoService:
             result["pnu"] = zoning_result.get("pnu")
             result["coordinates"] = zoning_result.get("coordinates")
             result["zone_type"] = zoning_result.get("zone_type")
+            result["zone_source"] = zoning_result.get("zone_source")
             result["zone_limits"] = zoning_result.get("zone_limits")
             result["special_districts"] = zoning_result.get("special_districts", [])
             result["warnings"] = zoning_result.get("warnings", [])
@@ -408,10 +416,15 @@ class LandInfoService:
             # 지적도(get_land_info)가 면적 0을 주거나 주소키워드 감지가 용도지역을
             # 놓친 필지를 정확히 보완한다.
             if isinstance(land_char, dict) and land_char:
-                # 용도지역: AutoZoning이 못 찾았으면 토지특성으로 채움
-                if not result.get("zone_type") and land_char.get("zone_type"):
+                # 용도지역: AutoZoning이 못 찾았거나 '주소키워드 추론값'이면 토지특성
+                # (NED 실조회)으로 채움/덮어쓰기 — 실조회 우선(W-C ②). 종전에는
+                # 추론 선점값이 'not zone_type' 가드에 걸려 NED 실값을 영구 차단했다.
+                zone_inferred = result.get("zone_source") == "keyword_inference"
+                if land_char.get("zone_type") and (zone_inferred or not result.get("zone_type")):
                     result["zone_type"] = land_char["zone_type"]
                     result["zone_limits"] = self._zone_limits_for(land_char["zone_type"])
+                    result["zone_source"] = "vworld_ned"
+                    result["warnings"] = _strip_zone_inference_warning(result.get("warnings"))
                 # 다용도(둘 이상 용도지역) 필지 표기
                 if land_char.get("zone_type_2"):
                     result["zone_type_secondary"] = land_char["zone_type_2"]
@@ -446,11 +459,16 @@ class LandInfoService:
 
             # 토지이용계획 (VWORLD NED — 중첩 규제 전부 포함)
             if isinstance(land_use, list) and land_use:
-                # land_use_plan.zone_type도 districts에서 확정된 용도지역으로 채움
-                lup_zone = result.get("zone_type") or self._zone_from_districts(land_use)
-                if lup_zone and not result.get("zone_type"):
-                    result["zone_type"] = lup_zone
-                    result["zone_limits"] = self._zone_limits_for(lup_zone)
+                # districts에서 확정된 용도지역으로 채움 — 추론 선점값(keyword_inference)도
+                # 실조회(districts) 값으로 덮어쓴다(실조회 우선, W-C ②).
+                zone_inferred = result.get("zone_source") == "keyword_inference"
+                district_zone = self._zone_from_districts(land_use)
+                if district_zone and (zone_inferred or not result.get("zone_type")):
+                    result["zone_type"] = district_zone
+                    result["zone_limits"] = self._zone_limits_for(district_zone)
+                    result["zone_source"] = "vworld_ned_land_use"
+                    result["warnings"] = _strip_zone_inference_warning(result.get("warnings"))
+                lup_zone = result.get("zone_type") or district_zone
                 result["land_use_plan"] = {
                     "zone_type": lup_zone,
                     "zone_limits": result.get("zone_limits"),

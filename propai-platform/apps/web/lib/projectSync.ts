@@ -8,7 +8,11 @@
 
 import { apiClient } from "@/lib/api-client";
 import { useProjectStore } from "@/store/useProjectStore";
-import { useProjectContextStore } from "@/store/useProjectContextStore";
+import {
+  useProjectContextStore,
+  addressTokenMismatch,
+  purifyPollutedSnapshot,
+} from "@/store/useProjectContextStore";
 import { useLandScheduleStore } from "@/store/useLandScheduleStore";
 
 const CTX_KEYS = [
@@ -140,6 +144,41 @@ function currentSnapshot(): Record<string, unknown> {
   };
 }
 
+/* ── WP-D: 스냅샷 무결성 가드 ──
+   프로젝트 레코드(useProjectStore)의 주소와 분석 스냅샷의 siteAnalysis.address가
+   핵심 토큰(시군구·번지)에서 명백히 불일치하면 오염으로 판정해 서버 푸시를 보류한다.
+   비교 불능(주소 부재)은 위반 아님 — 정상 동기화를 과차단하지 않는다. */
+
+/** 프로젝트 레코드의 주소 — 무결성 비교 기준. 미설정/빈 문자열이면 null. */
+function projectRecordAddress(projectId: string): string | null {
+  try {
+    const p = useProjectStore.getState().projects.find((x) => x.id === projectId);
+    const addr = p?.address;
+    return typeof addr === "string" && addr.trim() ? addr : null;
+  } catch {
+    return null;
+  }
+}
+
+/** 무결성 위반 시 사유 문자열, 정상이면 null. */
+function snapshotIntegrityViolation(
+  projectId: string,
+  snap: Record<string, unknown>,
+): string | null {
+  const recordAddress = projectRecordAddress(projectId);
+  const snapAddress = (
+    snap.siteAnalysis as { address?: unknown } | null | undefined
+  )?.address;
+  if (
+    recordAddress &&
+    typeof snapAddress === "string" &&
+    addressTokenMismatch(recordAddress, snapAddress)
+  ) {
+    return `프로젝트 주소("${recordAddress}") ↔ 분석 주소("${snapAddress}") 핵심 토큰 불일치`;
+  }
+  return null;
+}
+
 // 최초 서버 pull 완료 전에는 push 금지(빈 로컬상태로 서버를 덮어쓰는 사고 방지)
 let pulled = false;
 
@@ -157,11 +196,38 @@ export async function syncDown(): Promise<void> {
       useProjectStore.setState({ projects: data.projectStore!.projects as never });
     }
     if (data.contextStore && typeof data.contextStore === "object") {
-      const patch: Record<string, unknown> = {};
-      for (const k of CTX_KEYS) {
-        if (k in data.contextStore!) patch[k] = data.contextStore![k];
+      const remote = data.contextStore as Record<string, unknown>;
+      const localPid = useProjectContextStore.getState().projectId;
+      const remotePid =
+        typeof remote.projectId === "string" ? remote.projectId : null;
+      if (localPid && remotePid && localPid !== remotePid) {
+        // WP-D 머지 가드: 로컬 활성 프로젝트와 서버 blob의 프로젝트가 다르면
+        // live 필드(siteAnalysis 등)를 덮지 않는다(다른 프로젝트 분석이 현재
+        // 화면을 오염시키는 사고 방지). snapshots만 프로젝트별 updatedAt 최신
+        // 우선으로 병합한다(applyRemoteSnapshot과 동일 규칙 — 동률은 서버 우선).
+        const localSnaps = (useProjectContextStore.getState().snapshots ??
+          {}) as Record<string, { updatedAt?: unknown } | undefined>;
+        const remoteSnaps = (
+          remote.snapshots && typeof remote.snapshots === "object"
+            ? remote.snapshots
+            : {}
+        ) as Record<string, { updatedAt?: unknown } | undefined>;
+        const merged: Record<string, unknown> = { ...localSnaps };
+        for (const [pid, snap] of Object.entries(remoteSnaps)) {
+          if (!snap || typeof snap !== "object") continue;
+          const local = localSnaps[pid];
+          if (!local || _maxTs(local.updatedAt) <= _maxTs(snap.updatedAt)) {
+            merged[pid] = snap;
+          }
+        }
+        useProjectContextStore.setState({ snapshots: merged } as never);
+      } else {
+        const patch: Record<string, unknown> = {};
+        for (const k of CTX_KEYS) {
+          if (k in remote) patch[k] = remote[k];
+        }
+        useProjectContextStore.setState(patch as never);
       }
-      useProjectContextStore.setState(patch as never);
     }
     const ls = (data as { landSchedule?: { byProject?: unknown } }).landSchedule;
     if (ls && typeof ls === "object" && ls.byProject) {
@@ -193,6 +259,13 @@ export function scheduleSnapshotSync(): void {
   if (!isLoggedIn() || !pulled) return;
   const pid = useProjectContextStore.getState().projectId;
   if (!_isUuid(pid)) return; // 로컬 프로젝트는 스킵(500 회피)
+  // WP-D 무결성 가드: 오염 의심 상태는 스케줄 자체를 보류한다.
+  // 이후 정상 변경(store 갱신)이 오면 다시 스케줄되므로 영구 차단이 아니다.
+  const violation = snapshotIntegrityViolation(pid, currentSnapshot());
+  if (violation) {
+    console.warn(`[projectSync] 스냅샷 푸시 보류(SSOT 오염 의심): ${violation}`);
+    return;
+  }
   if (snapTimer) clearTimeout(snapTimer);
   snapTimer = setTimeout(() => { void pushSnapshot(); }, 1500);
 }
@@ -201,9 +274,17 @@ export async function pushSnapshot(): Promise<void> {
   if (!isLoggedIn()) return;
   const pid = useProjectContextStore.getState().projectId;
   if (!_isUuid(pid)) return;
+  const snap = currentSnapshot();
+  // WP-D 무결성 가드: 푸시 직전 최종 검증(디바운스 사이 상태 변화 대비) —
+  // 오염 스냅샷이 서버에 고착되는 마지막 길목을 차단한다.
+  const violation = snapshotIntegrityViolation(pid, snap);
+  if (violation) {
+    console.warn(`[projectSync] 스냅샷 푸시 보류(SSOT 오염 의심): ${violation}`);
+    return;
+  }
   try {
     await apiClient.put(`/projects/${pid}`, {
-      body: { analysis_snapshot: currentSnapshot() },
+      body: { analysis_snapshot: snap },
       useMock: false,
       timeoutMs: 30000,
     });
@@ -231,21 +312,34 @@ export function applyRemoteSnapshot(
   // 현재 활성 프로젝트가 대상과 다르면(전환됨) 복원 중단(경합 방지).
   if (ctx.projectId !== projectId) return;
 
-  const backendTs = _maxTs((snap as Record<string, unknown>).updatedAt);
+  // WP-D: 적용 직전 무결성 검증 — 서버에 이미 고착된 오염 스냅샷(프로젝트 레코드
+  // 주소와 토큰 불일치)은 siteAnalysis·파생 designData를 정화한 뒤 적용한다.
+  const violation = snapshotIntegrityViolation(
+    projectId,
+    snap as Record<string, unknown>,
+  );
+  const effective = violation
+    ? purifyPollutedSnapshot(snap as Record<string, unknown>)
+    : (snap as Record<string, unknown>);
+  if (violation) {
+    console.warn(`[projectSync] 원격 스냅샷 정화 후 적용(SSOT 오염 의심): ${violation}`);
+  }
+
+  const backendTs = _maxTs(effective.updatedAt);
   const localTs = _maxTs(ctx.updatedAt);
   if (localTs > backendTs) return; // 로컬이 더 최신 → 보존
 
   useProjectContextStore.setState({
-    siteAnalysis: (snap.siteAnalysis ?? null) as never,
-    designData: (snap.designData ?? null) as never,
-    feasibilityData: (snap.feasibilityData ?? null) as never,
-    costData: (snap.costData ?? null) as never,
-    esgData: (snap.esgData ?? null) as never,
-    complianceData: (snap.complianceData ?? null) as never,
-    completedStages: (snap.completedStages ?? []) as never,
-    currentStage: (snap.currentStage ?? null) as never,
-    analysisResults: (snap.analysisResults ?? []) as never,
-    updatedAt: (snap.updatedAt ?? {}) as never,
+    siteAnalysis: (effective.siteAnalysis ?? null) as never,
+    designData: (effective.designData ?? null) as never,
+    feasibilityData: (effective.feasibilityData ?? null) as never,
+    costData: (effective.costData ?? null) as never,
+    esgData: (effective.esgData ?? null) as never,
+    complianceData: (effective.complianceData ?? null) as never,
+    completedStages: (effective.completedStages ?? []) as never,
+    currentStage: (effective.currentStage ?? null) as never,
+    analysisResults: (effective.analysisResults ?? []) as never,
+    updatedAt: (effective.updatedAt ?? {}) as never,
   } as never);
 }
 

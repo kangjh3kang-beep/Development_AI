@@ -150,17 +150,26 @@ def _build_inputs(result: dict) -> dict:
     """필드별 provenance(zone_type/land_area_sqm/official_price_per_sqm/pnu).
 
     실제 result에서 값 출처를 정직 매핑한다.
-    - pnu 존재 → 외부 권위 출처(VWorld 토지특성/개별공시지가)에서 자동수집(auto, high).
-    - pnu 부재 → 주소키워드 추론 폴백(_detect_zone_from_address): zone_type은 estimated/low.
+    - zone_type은 서비스가 표기한 zone_source 실값을 우선 사용(W-C ③):
+      keyword_inference → estimated/low(PNU 유무 무관 — has_pnu 휴리스틱이 추론을
+      vworld/high로 거짓 표기하던 문제 교정), vworld_* 실조회 → auto/high.
+    - zone_source 미표기(구버전 응답)는 기존 has_pnu 휴리스틱 유지(하위호환).
     - 값이 비어 있으면 confidence='none'(있는 그대로 표기, 목업 금지).
     """
     pnu = result.get("pnu")
     has_pnu = bool(pnu)
 
-    # zone_type 출처: PNU 있으면 VWorld 토지특성, 없으면 주소 추론.
+    # zone_type 출처: zone_source(서비스 표기 실값) > has_pnu 휴리스틱(하위호환).
     zone_type = result.get("zone_type")
+    zone_source = result.get("zone_source")
     if not zone_type:
         zone_prov = _provenance(None, "미수집", "fallback", "none")
+    elif zone_source == "keyword_inference":
+        # 주소키워드 추론값 — PNU가 있어도 추론은 추론으로 정직 표기.
+        zone_prov = _provenance(zone_type, "keyword_inference", "estimated", "low")
+    elif zone_source:
+        # 실조회 출처(vworld_land_info/vworld_land_use_plan/vworld_ned 등) 그대로 표기.
+        zone_prov = _provenance(zone_type, zone_source, "auto", "high")
     elif has_pnu:
         zone_prov = _provenance(zone_type, "vworld_land_characteristics", "auto", "high")
     else:

@@ -11,7 +11,7 @@
  * apiClient v1 POST(lib/api-client.ts) 패턴, Leaflet은 dynamic ssr:false.
  */
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { useParams, useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
@@ -19,7 +19,11 @@ import { apiClient, ApiClientError } from "@/lib/api-client";
 import { PRECHECK_HANDOFF_KEY, type PreCheckHandoff } from "./handoff";
 import { NumberInput } from "@/components/common/NumberInput";
 import { AnimatedCounter } from "@/components/ui/AnimatedCounter";
-import { GlobalAddressSearch, type AddressEntry } from "@/components/common/GlobalAddressSearch";
+import {
+  GlobalAddressSearch,
+  type AddressAnalysisSummary,
+  type AddressEntry,
+} from "@/components/common/GlobalAddressSearch";
 import { FieldSourceBadge } from "@/components/common/FieldSourceBadge";
 import { LegalRefChip } from "@/components/common/LegalRefChip";
 import { EvidencePanel, type EvidenceItem } from "@/components/common/EvidencePanel";
@@ -92,6 +96,13 @@ export function PreCheckWorkspace() {
   const [areaSource, setAreaSource] = useState<"auto" | "user" | null>(null);
   const [useLlm, setUseLlm] = useState(false);
 
+  // WP-D: onAnalyzed는 비동기(종합분석 응답) 도착이라 stale 클로저가 그 사이
+  // 사용자가 직접 입력한 면적을 덮지 않도록 areaSource 최신값을 ref로 가드한다.
+  const areaSourceRef = useRef<"auto" | "user" | null>(null);
+  useEffect(() => {
+    areaSourceRef.current = areaSource;
+  }, [areaSource]);
+
   /** 주소검색 선택 → 주소·면적 자동입력 (사용자 수동값은 덮지 않음) */
   function handleAddressChange(entries: AddressEntry[]) {
     const entry = entries[0];
@@ -101,6 +112,18 @@ export function PreCheckWorkspace() {
     // 면적: 검색이 토지특성에서 가져온 값이 있고, 사용자가 직접 입력한 적 없을 때만 자동 채움
     if (entry.areaSqm != null && entry.areaSqm > 0 && areaSource !== "user") {
       setAreaSqm(entry.areaSqm);
+      setAreaSource("auto");
+    }
+  }
+
+  /** 종합 토지분석 도착 → 면적 자동채움 — WP-D: store 비기록 모드에서 콜백 데이터로 기존 동작 유지 */
+  function handleAnalyzed(analysis: AddressAnalysisSummary) {
+    if (
+      analysis.landAreaSqm != null &&
+      analysis.landAreaSqm > 0 &&
+      areaSourceRef.current !== "user"
+    ) {
+      setAreaSqm(analysis.landAreaSqm);
       setAreaSource("auto");
     }
   }
@@ -224,10 +247,14 @@ export function PreCheckWorkspace() {
             <label htmlFor="precheck-address" className="text-[11px] font-semibold text-[var(--text-tertiary)]">
               주소 <span className="text-[var(--status-error)]">*</span>
             </label>
-            {/* 카카오 주소검색 — 선택 시 토지특성(면적 등) 자동입력 + 종합분석 백그라운드 트리거 */}
+            {/* 카카오 주소검색 — 선택 시 토지특성(면적 등) 자동입력 + 종합분석 백그라운드 트리거.
+                WP-D: PreCheck는 탐색 도구(활성 프로젝트와 무관한 임의 주소 진단)이므로
+                store 비기록(writeToContext=false) — 면적 자동채움은 onAnalyzed 콜백으로 유지. */}
             <GlobalAddressSearch
               single
+              writeToContext={false}
               onChange={handleAddressChange}
+              onAnalyzed={handleAnalyzed}
               placeholder="예) 서울특별시 강남구 테헤란로 152"
             />
             {address && (

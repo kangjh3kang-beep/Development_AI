@@ -39,10 +39,16 @@ ZONE_LIMITS: dict[str, LegalLimits] = {
     "GC": LegalLimits(0.60, 10.00, 0.0, 0.0, 0.0),  # 일반상업 (높이 무제한)
     "NC": LegalLimits(0.60, 9.00, 0.0, 0.5, 0.0),  # 근린상업
     "QI": LegalLimits(0.60, 4.00, 0.0, 1.0, 0.0),  # 준공업
-    "QR": LegalLimits(0.60, 5.00, 0.0, 1.0, 0.0),  # 준주거
+    # W-A 교정: 준주거 건폐율 70% 이하(국토계획법 시행령 84조). 기존 0.60은 오기재.
+    "QR": LegalLimits(0.70, 5.00, 0.0, 1.0, 0.0),  # 준주거
 }
 
 _DEFAULT_LIMITS = LegalLimits(0.60, 2.50, 35.0, 1.0, 2.0)
+
+# 건축법 61조(일조 등의 확보를 위한 건축물의 높이 제한)은 전용·일반주거지역에만 적용.
+# 본 엔진 코드 체계에서 1R/2R/3R(일반주거)만 해당 — 준주거(QR)·상업(GC/NC)·공업(QI)은
+# 정북일조 사선제한 적용 대상이 아니다(W-A ① 교정).
+SUNLIGHT_ZONES: frozenset[str] = frozenset({"1R", "2R", "3R"})
 
 
 # ── 건축물 용도별 상수 ──
@@ -92,6 +98,10 @@ class SiteInput:
     # P5: 정북일조 사선제한 "단계후퇴" 모드. True면 단일 세트백 높이캡 대신 층별 북측
     # 후퇴(상부일수록 더 후퇴)로 더 높게 짓고 상부 세대의 일조를 확보한다(결정론).
     daylight_step: bool = False
+    # W-A ④: 목표 설계강도(%). None=법정 한도 그대로. 값이 있으면 min(법정, 목표) 적용
+    # (라우터에서 법정 한도로 1차 클램프, 엔진에서 한 번 더 min — 이중 안전).
+    target_far_percent: float | None = None
+    target_bcr_percent: float | None = None
 
 
 @dataclass
@@ -114,8 +124,9 @@ def compute_north_step_profile(
 ) -> tuple[list[dict[str, float]], float, int]:
     """정북일조 사선제한 단계후퇴 프로파일을 산출한다(결정론).
 
-    한국 건축법 정북일조: 어떤 높이 h의 외벽은 정북 인접대지경계선에서 h/2 이상 이격
-    (최소 1.5m). 따라서 층의 윗변 높이 h=층수×층고에 대해 필요 북측 이격 d=max(base, h/2).
+    건축법 61조·시행령 86조(W-A ① 교정 산식): 높이 9m 이하 부분은 정북 인접대지
+    경계선에서 1.5m 이상, 9m 초과 부분은 해당 높이의 1/2 이상 이격. 따라서 층의
+    윗변 높이 h=층수×층고에 대해 필요 북측 이격 d=max(base, h<=9 ? 1.5 : h/2).
     base(=설계 북측 세트백)를 넘는 만큼(inset)만 상부 층이 북쪽으로 후퇴한다.
 
     Returns: (profile, 단계후퇴 반영 총연면적, 실제 층수)
@@ -127,7 +138,8 @@ def compute_north_step_profile(
     min_depth = max(4.0, building_d * 0.35)  # 후퇴해도 세대 성립 최소 깊이
     for f in range(1, max(1, max_floors) + 1):
         top_h = f * floor_height_m
-        req_north = max(base_north_m, top_h / 2.0)  # 정북일조: 높이/2
+        # 정북일조(시행령 86조): 9m 이하 부분 1.5m / 9m 초과 부분 h/2
+        req_north = max(base_north_m, 1.5 if top_h <= 9.0 else top_h / 2.0)
         inset = max(0.0, req_north - base_north_m)
         depth_f = building_d - inset
         if depth_f < min_depth:
@@ -149,6 +161,29 @@ def compute_north_step_profile(
         area = building_w * building_d
         n = 1
     return profile, round(area, 2), n
+
+
+def _north_step_stop_reason(
+    building_w: float,
+    building_d: float,
+    num_floors: int,
+    floor_height_m: float,
+    base_north_m: float,
+    max_floors_by_height: int,
+) -> str:
+    """단계후퇴 프로파일이 num_floors에서 멈춘 바인딩 제약을 판정한다(far|height|sunlight).
+
+    compute_north_step_profile의 중단 조건을 다음 층(num_floors+1)에 대해 같은
+    순서(깊이→면적)로 재현하는 휴리스틱 판정 — W-A ④ binding_constraint 표기용.
+    """
+    if 0 < max_floors_by_height <= num_floors:
+        return "height"
+    next_h = (num_floors + 1) * floor_height_m
+    req_north = max(base_north_m, 1.5 if next_h <= 9.0 else next_h / 2.0)
+    depth_next = building_d - max(0.0, req_north - base_north_m)
+    if depth_next < max(4.0, building_d * 0.35):
+        return "sunlight"  # 다음 층은 후퇴 한계로 세대 성립 불가 → 일조가 증층을 막음
+    return "far"  # 깊이·높이 여유가 있는데 멈췄으면 FAR(연면적 한도) 소진
 
 
 class AutoDesignEngineService:
@@ -220,17 +255,46 @@ class AutoDesignEngineService:
         }
 
     @staticmethod
+    def _effective_limits(
+        site_input: SiteInput,
+        legal: dict[str, float],
+    ) -> tuple[float, float]:
+        """적용 한도(%)를 반환한다 — (건폐율, 용적률).
+
+        W-A ④: 목표(target_bcr/far_percent)가 있으면 min(법정, 목표). 목표가 법정을
+        넘으면 법정값으로 클램프(가짜 한도 상향 금지). None/0 이하는 법정 그대로.
+        """
+        max_bcr = legal["max_bcr_percent"]
+        max_far = legal["max_far_percent"]
+        target_bcr = getattr(site_input, "target_bcr_percent", None)
+        target_far = getattr(site_input, "target_far_percent", None)
+        if target_bcr is not None and target_bcr > 0:
+            max_bcr = min(max_bcr, target_bcr)
+        if target_far is not None and target_far > 0:
+            max_far = min(max_far, target_far)
+        return max_bcr, max_far
+
+    @staticmethod
     def compute_optimal_mass(
         site_input: SiteInput,
         effective: dict[str, float],
         legal: dict[str, float],
     ) -> dict[str, Any]:
-        """법규 제약 하 최적 건축 매스를 산출한다."""
+        """법규 제약 하 최적 건축 매스를 산출한다.
+
+        W-A 교정 사항:
+        - 정북일조 높이캡은 전용·일반주거지역(1R/2R/3R)만 적용(건축법 61조 적용범위).
+        - 목표 설계강도(target_far/bcr_percent)는 min(법정, 목표)로 적용.
+        - 층수를 막은 제약을 binding_constraint(far|height|sunlight|setback)로 표기.
+        """
         site_area = site_input.site_area_sqm
         eff_area = effective["effective_area_sqm"]
 
-        max_bcr = legal["max_bcr_percent"] / 100.0
-        max_far = legal["max_far_percent"] / 100.0
+        applied_bcr_pct, applied_far_pct = AutoDesignEngineService._effective_limits(
+            site_input, legal,
+        )
+        max_bcr = applied_bcr_pct / 100.0
+        max_far = applied_far_pct / 100.0
         max_height = legal["max_height_m"]
 
         # 건폐율 제약 → 최대 건축면적
@@ -269,8 +333,12 @@ class AutoDesignEngineService:
         north_setback = site_input.setback_m.get("north", 3.0)
         fh = site_input.floor_height_m
         north_step_profile: list[dict[str, float]] | None = None
+        # W-A ①: 정북일조(건축법 61조)는 전용·일반주거지역만 적용 — QR/상업/공업 스킵
+        sunlight_zone = site_input.zone_code in SUNLIGHT_ZONES
+        max_height_by_sunlight: float | None = None
+        binding_constraint = "far"
 
-        if getattr(site_input, "daylight_step", False):
+        if getattr(site_input, "daylight_step", False) and sunlight_zone:
             # 정북일조 "단계후퇴" 모드: 단일 세트백 높이캡을 쓰지 않고(FAR·높이 한도만),
             # 상부 층을 북쪽으로 후퇴시켜 더 높이 짓고 일조를 확보(결정론 사선제한).
             base_north = max(1.5, north_setback)
@@ -279,16 +347,35 @@ class AutoDesignEngineService:
                 building_w, building_d, cap_floors, fh, base_north, max_total_floor,
             )
             building_height = num_floors * fh
+            binding_constraint = _north_step_stop_reason(
+                building_w, building_d, num_floors, fh, base_north, max_floors_by_height,
+            )
+            sunlight_mode = "step_profile"
         else:
-            # 정북방향 일조권 제약(기존: 단일 세트백 기준 높이 하드캡)
-            max_height_by_sunlight = 100.0  # 기본 무제한
-            if north_setback > 0:
-                if north_setback <= 4.5:
-                    max_height_by_sunlight = north_setback * 2.0
-                else:
-                    max_height_by_sunlight = (north_setback - 4.5) * 2.0 + 9.0
-            max_floors_by_sunlight = int(max_height_by_sunlight / fh)
-            num_floors = max(1, min(max_floors_by_far, max_floors_by_height, max_floors_by_sunlight))
+            if sunlight_zone:
+                # W-A ① 교정 산식(건축법 시행령 86조 단순화): 높이 9m 이하 부분은 북측
+                # 1.5m 이격으로 충족 → 북측이격 d>=4.5m면 최고높이 2d, d<4.5m면 9m 캡.
+                # (기존 d*2 일괄 적용은 9m 이하 부분 1.5m 룰 누락으로 과소 산정)
+                max_height_by_sunlight = (
+                    north_setback * 2.0 if north_setback >= 4.5 else 9.0
+                )
+                max_floors_by_sunlight = int(max_height_by_sunlight / fh)
+                sunlight_mode = "hard_cap"
+            else:
+                max_floors_by_sunlight = 10**6  # 미적용(법 61조 적용범위 외)
+                sunlight_mode = "not_applicable"
+            # 층수 후보 중 최솟값이 바인딩 제약(동률 시 far→height→sunlight 순 표기)
+            floor_candidates = {
+                "far": max_floors_by_far,
+                "height": max_floors_by_height,
+                "sunlight": max_floors_by_sunlight,
+            }
+            num_floors = max(1, min(floor_candidates.values()))
+            binding_constraint = (
+                min(floor_candidates, key=floor_candidates.get)
+                if actual_footprint > 0
+                else "setback"  # 세트백으로 유효 건축면적 자체가 0
+            )
             total_floor_area = actual_footprint * num_floors
             building_height = num_floors * fh
 
@@ -308,6 +395,16 @@ class AutoDesignEngineService:
             "max_bcr_pct": legal["max_bcr_percent"],
             "max_far_pct": legal["max_far_percent"],
             "max_height_m": max_height,
+            # W-A ④⑤: 적용 한도(목표 반영)·바인딩 제약·일조캡 근거 (additive)
+            "applied_max_bcr_pct": round(applied_bcr_pct, 2),
+            "applied_max_far_pct": round(applied_far_pct, 2),
+            "binding_constraint": binding_constraint,
+            "sunlight_mode": sunlight_mode,
+            "max_height_by_sunlight_m": (
+                round(max_height_by_sunlight, 2)
+                if max_height_by_sunlight is not None
+                else None
+            ),
         }
         if north_step_profile is not None:
             result["north_step_profile"] = north_step_profile
@@ -368,25 +465,48 @@ class AutoDesignEngineService:
 
         units: list[dict[str, Any]] = []
         total_units = 0
+        units_feasible = True
+        infeasible_reason: str | None = None
 
         if building_use == "공동주택" and target_unit_types:
-            # 세대 유형별 균등 배분
-            type_areas = [UNIT_TYPES.get(t, 84.0) for t in target_unit_types]
-            avg_area = sum(type_areas) / len(type_areas) if type_areas else 84.0
+            # W-A ③: 그리디 라운드로빈(소형 우선) — 층당 잔여 순면적 내에서만 배치.
+            # 기존 max(1,…) 최소 1세대 강제는 순면적을 초과하는 가짜 세대를 만들 수
+            # 있어 제거. 불변식: sum(area_sqm×count_per_floor) <= net_area_per_floor.
+            unique_types = list(dict.fromkeys(target_unit_types))  # 입력 순서 유지 중복 제거
+            greedy_order = sorted(unique_types, key=lambda t: UNIT_TYPES.get(t, 84.0))
+            counts: dict[str, int] = {t: 0 for t in unique_types}
+            remaining = net_area_per_floor
+            placed = True
+            while placed:
+                placed = False
+                for ut in greedy_order:  # 한 바퀴에 유형별 1세대씩(라운드로빈)
+                    unit_area = UNIT_TYPES.get(ut, 84.0)
+                    if unit_area <= remaining:
+                        counts[ut] += 1
+                        remaining -= unit_area
+                        placed = True
 
-            units_per_floor = max(1, int(net_area_per_floor / avg_area))
-
-            for ut in target_unit_types:
-                unit_area = UNIT_TYPES.get(ut, 84.0)
-                count_per_floor = max(1, units_per_floor // len(target_unit_types))
+            for ut in unique_types:
+                count_per_floor = counts[ut]
+                if count_per_floor <= 0:
+                    continue  # 성립 불가 유형은 0세대 — 가짜 1세대 강제 금지
                 total = count_per_floor * mass["num_floors"]
                 units.append({
                     "type": ut,
-                    "area_sqm": unit_area,
+                    "area_sqm": UNIT_TYPES.get(ut, 84.0),
                     "count_per_floor": count_per_floor,
                     "total_count": total,
                 })
                 total_units += total
+
+            if total_units == 0:
+                # 정직 반환: 순면적이 최소 평형보다 작아 세대 성립 불가
+                units_feasible = False
+                min_area = min(UNIT_TYPES.get(t, 84.0) for t in unique_types)
+                infeasible_reason = (
+                    f"세대 성립 불가 — 층당 순면적 {net_area_per_floor:.1f}㎡가 "
+                    f"최소 평형 {min_area:.0f}㎡보다 작음"
+                )
         else:
             # 비주거: 호실 면적 기준
             room_area = 50.0  # 기본 호실 면적
@@ -399,17 +519,21 @@ class AutoDesignEngineService:
                 "total_count": total_units,
             })
 
-        # 주차 대수 산정
+        # 주차 대수 산정 (0세대면 0대 — 세대수 연동 정직 재산출)
         parking = _compute_parking(total_units, mass["total_floor_area_sqm"], building_use)
 
-        return {
+        result: dict[str, Any] = {
             "net_area_per_floor_sqm": round(net_area_per_floor, 2),
             "units": units,
             "total_units": total_units,
+            "units_feasible": units_feasible,  # W-A ③: False면 세대 성립 불가(정직 표기)
             "parking_required": parking["required"],
             "parking_area_sqm": parking["area_sqm"],
             "basement_floors_for_parking": parking["basement_floors"],
         }
+        if infeasible_reason:
+            result["infeasible_reason"] = infeasible_reason
+        return result
 
     # ── 5단계: DesignPayload 변환 ──
 
@@ -582,7 +706,9 @@ class AutoDesignEngineService:
         # 2-b. 정북일조 단계후퇴: 보정 루프가 box 연면적으로 덮어쓰므로 여기서 재산출(층수/치수 반영)
         if mass.get("daylight_step"):
             base_north = max(1.5, site_input.setback_m.get("north", 1.5))
-            far_cap_area = site_input.site_area_sqm * (max_far / 100.0)
+            # W-A ④: FAR 캡은 목표 반영 적용 한도(min(법정, 목표)) 기준
+            _, applied_far_pct = self._effective_limits(site_input, legal)
+            far_cap_area = site_input.site_area_sqm * (applied_far_pct / 100.0)
             profile, stepped_area, n = compute_north_step_profile(
                 mass["building_width_m"], mass["building_depth_m"], mass["num_floors"],
                 site_input.floor_height_m, base_north, far_cap_area,
@@ -592,6 +718,14 @@ class AutoDesignEngineService:
             mass["total_floor_area_sqm"] = stepped_area
             mass["building_height_m"] = round(n * site_input.floor_height_m, 2)
             mass["far_pct"] = round(stepped_area / site_input.site_area_sqm * 100, 2) if site_input.site_area_sqm > 0 else 0
+            # 재산출된 층수 기준으로 바인딩 제약 재판정(W-A ④)
+            max_floors_by_height = (
+                int(max_h / site_input.floor_height_m) if max_h > 0 else 100
+            )
+            mass["binding_constraint"] = _north_step_stop_reason(
+                mass["building_width_m"], mass["building_depth_m"], n,
+                site_input.floor_height_m, base_north, max_floors_by_height,
+            )
 
         # 3. 코어 배치
         core_layout = self.compute_core_layout(mass, site_input.building_use)
@@ -614,6 +748,64 @@ class AutoDesignEngineService:
             "total_units": unit_layout["total_units"],
             "parking_count": unit_layout["parking_required"],
             "core_count": core_layout["num_cores"],
+            # W-A ④: 층수/목표 미달을 막은 제약(far|height|sunlight|setback)
+            "binding_constraint": mass.get("binding_constraint", "far"),
+            # W-A ③: 세대 성립 여부 정직 표기 (False면 total_units=0)
+            "units_feasible": unit_layout.get("units_feasible", True),
+        }
+        if not unit_layout.get("units_feasible", True):
+            summary["units_note"] = unit_layout.get("infeasible_reason", "세대 성립 불가")
+
+        # W-A ⑤: 산출 근거(basis) — 적용 세트백 실값·일조캡 산식·바인딩 제약·주차/코어 산식 정직 표기
+        sunlight_mode = mass.get("sunlight_mode") or (
+            "step_profile" if mass.get("daylight_step") else "not_applicable"
+        )
+        if sunlight_mode == "hard_cap":
+            sunlight_formula = (
+                "건축법 61조·시행령 86조 단순화 — 정북이격 d≥4.5m: 최고높이 2d / "
+                "d<4.5m: 9m (높이 9m 이하 부분은 1.5m 이격으로 충족)"
+            )
+        elif sunlight_mode == "step_profile":
+            sunlight_formula = (
+                "단계후퇴 — 층 상단높이 h≤9m: 북측이격 max(기본세트백, 1.5m) / "
+                "h>9m: max(기본세트백, h/2)"
+            )
+        else:
+            sunlight_formula = "정북일조 미적용 — 건축법 61조 적용범위(전용·일반주거지역) 외"
+
+        parking_rule = PARKING_RULES.get(site_input.building_use, PARKING_RULES["공동주택"])
+        if parking_rule.get("per_unit"):
+            parking_formula = (
+                f"세대당 {parking_rule['rate']:.1f}대 "
+                "(주차장법 단순화 — 지역·전용면적별 세부기준 미반영)"
+            )
+        else:
+            parking_formula = (
+                f"연면적 {parking_rule.get('rate_per_sqm', 100)}㎡당 1대 (주차장법 단순화)"
+            )
+
+        summary["basis"] = {
+            "setback_applied_m": dict(site_input.setback_m),
+            "sunlight": {
+                "applied": sunlight_mode != "not_applicable",
+                "mode": sunlight_mode,  # hard_cap | step_profile | not_applicable
+                "max_height_by_sunlight_m": mass.get("max_height_by_sunlight_m"),
+                "formula": sunlight_formula,
+            },
+            "floors_binding_constraint": mass.get("binding_constraint", "far"),
+            "applied_limits": {
+                "max_bcr_percent": mass.get("applied_max_bcr_pct", legal["max_bcr_percent"]),
+                "max_far_percent": mass.get("applied_max_far_pct", legal["max_far_percent"]),
+                "statutory_max_bcr_percent": legal["max_bcr_percent"],
+                "statutory_max_far_percent": legal["max_far_percent"],
+                "target_bcr_percent": getattr(site_input, "target_bcr_percent", None),
+                "target_far_percent": getattr(site_input, "target_far_percent", None),
+            },
+            "parking_formula": parking_formula,
+            "core_formula": (
+                f"연면적 {CORE_PER_FLOOR_AREA:.0f}㎡당 코어 1개(피난규칙 단순화), "
+                f"코어 1개당 {CORE_AREA_SQM:.0f}㎡"
+            ),
         }
 
         # P5: 정북일조 단계후퇴 정보 — 3D 매스 후퇴 렌더·근거 표기에 사용
@@ -688,6 +880,8 @@ class AutoDesignEngineService:
                 floor_height_m=2.8,  # 최소 층고
                 setback_m=site_input.setback_m,
                 daylight_step=site_input.daylight_step,
+                target_far_percent=site_input.target_far_percent,
+                target_bcr_percent=site_input.target_bcr_percent,
             )
             result_b = self.generate(input_b)
             result_b.summary["alternative_name"] = "B: 최대 세대수"
@@ -707,6 +901,8 @@ class AutoDesignEngineService:
                 floor_height_m=3.3,  # 여유 층고
                 setback_m=wider_setback,
                 daylight_step=site_input.daylight_step,
+                target_far_percent=site_input.target_far_percent,
+                target_bcr_percent=site_input.target_bcr_percent,
             )
             result_c = self.generate(input_c)
             result_c.summary["alternative_name"] = "C: 최적 일조"
@@ -722,18 +918,22 @@ def _compute_parking(
     total_floor_area: float,
     building_use: str,
 ) -> dict[str, Any]:
-    """법규 기반 주차대수를 산정한다."""
+    """법규 기반 주차대수를 산정한다.
+
+    공동주택은 '세대당 1.0대'(주차장법 단순화 — 지역·전용면적별 세부기준 미반영)
+    이며, 0세대면 0대로 정직 반환한다(W-A ③ 가짜값 금지).
+    """
     rule = PARKING_RULES.get(building_use, PARKING_RULES["공동주택"])
 
     if rule.get("per_unit"):
-        required = int(total_units * rule["rate"])
+        required = int(total_units * rule["rate"])  # 0세대 → 0대 (최소 1대 강제 없음)
     else:
         required = max(1, int(total_floor_area / rule.get("rate_per_sqm", 100)))
 
     area_per_car = rule.get("area_per_car_sqm", 33.0)
     total_parking_area = required * area_per_car
-    # 지하 주차장 기준 1개 층 약 500sqm
-    basement_floors = max(1, math.ceil(total_parking_area / 500))
+    # 지하 주차장 기준 1개 층 약 500sqm — 주차 0대면 지하층도 0(가짜 지하층 금지)
+    basement_floors = math.ceil(total_parking_area / 500) if required > 0 else 0
 
     return {
         "required": required,

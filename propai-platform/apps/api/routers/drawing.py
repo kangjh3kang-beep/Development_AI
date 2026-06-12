@@ -96,6 +96,13 @@ class DesignAlternativesRequest(BaseModel):
     )
     count: int = Field(3, ge=1, le=5, description="대안 수")
     daylight_north: bool = Field(False, description="정북일조 단계후퇴(북측 채광) 적용")
+    # W-A ④: 목표 설계강도(%) — 서버에서 법정 한도로 클램프 후 min(법정, 목표) 적용
+    target_far_percent: Optional[float] = Field(
+        None, gt=0, description="목표 용적률(%) — 법정 한도 초과분은 법정값으로 클램프",
+    )
+    target_bcr_percent: Optional[float] = Field(
+        None, gt=0, description="목표 건폐율(%) — 법정 한도 초과분은 법정값으로 클램프",
+    )
 
 
 class AutoDesignRequest(BaseModel):
@@ -114,6 +121,13 @@ class AutoDesignRequest(BaseModel):
         description="세트백 거리 (m)",
     )
     daylight_north: bool = Field(False, description="정북일조 단계후퇴(북측 채광) 적용 — 상부 층 북측 자동 후퇴")
+    # W-A ④: 목표 설계강도(%) — 서버에서 법정 한도로 클램프 후 min(법정, 목표) 적용
+    target_far_percent: Optional[float] = Field(
+        None, gt=0, description="목표 용적률(%) — 법정 한도 초과분은 법정값으로 클램프",
+    )
+    target_bcr_percent: Optional[float] = Field(
+        None, gt=0, description="목표 건폐율(%) — 법정 한도 초과분은 법정값으로 클램프",
+    )
 
 
 class ParseIntentRequest(BaseModel):
@@ -139,6 +153,31 @@ def _check_services() -> None:
             status_code=501,
             detail="도면 서비스를 사용할 수 없습니다 (의존성 누락)",
         )
+
+
+def _clamped_targets(
+    zone_code: str,
+    target_far_percent: Optional[float],
+    target_bcr_percent: Optional[float],
+) -> tuple[Optional[float], Optional[float]]:
+    """목표 FAR/BCR(%)을 해당 용도지역 법정 한도로 클램프한다(W-A ④).
+
+    법정 초과 목표는 법정값으로 내려 잡는다(가짜 한도 상향 금지). None은 그대로
+    (목표 미지정 = 법정 한도 사용). 엔진(compute_optimal_mass)에서도 min(법정, 목표)을
+    한 번 더 적용하므로 이중 안전장치다.
+    """
+    legal = auto_design_engine.get_legal_limits(zone_code)
+    far = (
+        min(target_far_percent, legal["max_far_percent"])
+        if target_far_percent and target_far_percent > 0
+        else None
+    )
+    bcr = (
+        min(target_bcr_percent, legal["max_bcr_percent"])
+        if target_bcr_percent and target_bcr_percent > 0
+        else None
+    )
+    return far, bcr
 
 
 # ── 엔드포인트 ──
@@ -388,6 +427,10 @@ async def design_alternatives(req: DesignAlternativesRequest):
     포함한다. 법규 위반 대안은 명시되며 정렬 시 후순위로 밀린다.
     """
     _check_services()
+    # W-A ④: 목표 FAR/BCR을 법정 한도로 클램프 후 엔진에 전달(min(법정, 목표) 적용)
+    target_far, target_bcr = _clamped_targets(
+        req.zone_code, req.target_far_percent, req.target_bcr_percent,
+    )
     site_input = SiteInput(
         site_area_sqm=req.site_area_sqm,
         zone_code=req.zone_code,
@@ -396,6 +439,8 @@ async def design_alternatives(req: DesignAlternativesRequest):
         floor_height_m=req.floor_height_m,
         setback_m=req.setback_m,
         daylight_step=req.daylight_north,
+        target_far_percent=target_far,
+        target_bcr_percent=target_bcr,
     )
     results = auto_design_engine.generate_alternatives(site_input, count=req.count)
     legal = auto_design_engine.get_legal_limits(req.zone_code)
@@ -437,6 +482,10 @@ async def auto_design(req: AutoDesignRequest):
     Phase 1에서 정의됐으나 라이브 미노출(404)이던 엔드포인트를 실 라우터에 추가.
     """
     _check_services()
+    # W-A ④: 목표 FAR/BCR을 법정 한도로 클램프 후 엔진에 전달(min(법정, 목표) 적용)
+    target_far, target_bcr = _clamped_targets(
+        req.zone_code, req.target_far_percent, req.target_bcr_percent,
+    )
     site_input = SiteInput(
         site_area_sqm=req.site_area_sqm,
         site_shape=req.site_shape,
@@ -448,6 +497,8 @@ async def auto_design(req: AutoDesignRequest):
         floor_height_m=req.floor_height_m,
         setback_m=req.setback_m,
         daylight_step=req.daylight_north,
+        target_far_percent=target_far,
+        target_bcr_percent=target_bcr,
     )
     result = auto_design_engine.generate(site_input)
     unit_mix = _unit_mix_for(result.summary)

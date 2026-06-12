@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { apiClient } from "@/lib/api-client";
+import { apiClient, ApiClientError } from "@/lib/api-client";
+import { EvidencePanel, type EvidenceItem, type EvidenceLegalRef } from "@/components/common/EvidencePanel";
 import { useSpeechToText } from "@/lib/use-speech-to-text";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import type {
@@ -61,6 +62,257 @@ const PRIORITY_LABELS: Record<DesignIntent["priority"], string> = {
   livability: "거주성 우선",
   balanced: "균형형",
 };
+
+/**
+ * W-A 신설 summary 확장 필드 — 구버전 백엔드 응답엔 없으므로 전부 optional.
+ * 부재 시 어떤 것도 추정·표시하지 않는다(가짜값 금지 — 있을 때만 렌더).
+ */
+type SummaryExtras = {
+  /** 목표(슬라이더)를 막은 바인딩 제약 코드/이름 (예: "far", "height"). */
+  binding_constraint?: string | null;
+  /** 산출 근거(세트백 실값·일조캡 여부·층수 바인딩·주차/코어 산식 등). */
+  basis?: unknown;
+};
+
+/** 바인딩 제약 코드 → 사용자 라벨. 미등록 코드는 원문 그대로 표기(정직). */
+const BINDING_CONSTRAINT_LABELS: Record<string, string> = {
+  far: "법정 용적률",
+  bcr: "법정 건폐율",
+  height: "높이 제한",
+  daylight: "정북일조 사선",
+  sunlight: "일조 기준",
+  setback: "세트백",
+  parking: "주차 대수",
+  units: "세대수",
+};
+
+/** W-A 신설 산출 근거 키 → 사용자 라벨. 미등록 키는 키 이름 그대로(정직). */
+const BASIS_KEY_LABELS: Record<string, string> = {
+  // W-A 실응답 키(auto_design_engine summary["basis"])
+  setback_applied_m: "적용 세트백",
+  sunlight: "정북일조 높이캡",
+  floors_binding_constraint: "층수 결정 요인",
+  applied_limits: "적용 한도",
+  parking_formula: "주차 산식",
+  core_formula: "코어 산식",
+  // 변형 키 호환(타 경로/구버전 응답 대비 — 라벨만 매핑, 값 추정 없음)
+  setback: "적용 세트백",
+  setback_m: "적용 세트백",
+  daylight_cap: "정북일조 높이캡",
+  daylight_capped: "정북일조 높이캡",
+  floors_binding: "층수 결정 요인",
+  num_floors: "층수 산정",
+  parking: "주차 산식",
+  core: "코어 산식",
+};
+
+/** 객체에서 유한수만 안전 추출(아니면 null — 추정 금지). */
+function readFiniteNumber(rec: Record<string, unknown>, key: string): number | null {
+  const v = rec[key];
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
+
+/** summary.basis.applied_limits에서 목표·법정 용적률(%)을 안전 추출(없으면 null). */
+function readFarLimits(basis: unknown): { targetFar: number | null; statutoryFar: number | null } {
+  const none = { targetFar: null, statutoryFar: null };
+  if (!basis || typeof basis !== "object" || Array.isArray(basis)) return none;
+  const lim = (basis as { applied_limits?: unknown }).applied_limits;
+  if (!lim || typeof lim !== "object" || Array.isArray(lim)) return none;
+  const L = lim as Record<string, unknown>;
+  const tgt = readFiniteNumber(L, "target_far_percent");
+  return {
+    targetFar: tgt != null && tgt > 0 ? tgt : null,
+    statutoryFar: readFiniteNumber(L, "statutory_max_far_percent"),
+  };
+}
+
+/** basis 값 → 표시 문자열(불명확한 값은 빈 문자열 → 행 제외, 추정 금지). */
+function formatBasisValue(v: unknown): string {
+  if (v == null) return "";
+  if (typeof v === "string") return v.trim();
+  if (typeof v === "number") return Number.isFinite(v) ? v.toLocaleString() : "";
+  if (typeof v === "boolean") return v ? "적용" : "미적용";
+  try {
+    return JSON.stringify(v);
+  } catch {
+    return "";
+  }
+}
+
+/** basis 항목의 legalRef/legal_ref를 EvidencePanel 칩 형태로 안전 변환. */
+function toLegalRef(raw: unknown): EvidenceLegalRef | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as { lawName?: unknown; law_name?: unknown; article?: unknown; title?: unknown; url?: unknown };
+  const lawName = typeof r.lawName === "string" ? r.lawName : typeof r.law_name === "string" ? r.law_name : null;
+  if (!lawName) return null;
+  return {
+    lawName,
+    article: typeof r.article === "string" ? r.article : null,
+    title: typeof r.title === "string" ? r.title : null,
+    url: typeof r.url === "string" ? r.url : null,
+  };
+}
+
+/**
+ * W-A summary.basis(배열·객체 모두 허용)를 EvidencePanel 항목으로 변환.
+ * 객체형(W-A 실응답)은 알려진 키(세트백 실값·일조캡 여부·층수 바인딩·적용 한도·
+ * 주차/코어 산식)를 사람이 읽는 행으로 펼치고, 미등록 키는 원문 그대로 표기한다
+ * (추정·가공 금지). 형태 불명 값은 행 제외(빈 패널은 EvidencePanel이 자체 미렌더).
+ */
+function toEvidenceItems(basis: unknown): EvidenceItem[] {
+  if (Array.isArray(basis)) {
+    return basis
+      .filter((b): b is Record<string, unknown> => !!b && typeof b === "object")
+      .map((b) => ({
+        label: typeof b.label === "string" ? b.label : "",
+        value:
+          typeof b.value === "string" || typeof b.value === "number"
+            ? b.value
+            : formatBasisValue(b.value),
+        basis: typeof b.basis === "string" ? b.basis : null,
+        legalRef: toLegalRef(b.legalRef ?? b.legal_ref),
+      }))
+      .filter((it) => it.label && `${it.value}` !== "");
+  }
+  if (basis && typeof basis === "object") {
+    const rec = basis as Record<string, unknown>;
+    const items: EvidenceItem[] = [];
+    const consumed = new Set<string>();
+
+    // 1) 적용 세트백 실값 — {north,south,east,west}(m)
+    const setback = rec.setback_applied_m;
+    if (setback && typeof setback === "object" && !Array.isArray(setback)) {
+      const sb = setback as Record<string, unknown>;
+      const parts = ([["north", "북"], ["south", "남"], ["east", "동"], ["west", "서"]] as const)
+        .map(([k, lab]) => {
+          const v = readFiniteNumber(sb, k);
+          return v != null ? `${lab} ${v}m` : "";
+        })
+        .filter(Boolean);
+      if (parts.length > 0) {
+        items.push({ label: "적용 세트백", value: parts.join(" · ") });
+        consumed.add("setback_applied_m");
+      }
+    }
+
+    // 2) 정북일조 높이캡 여부 — {applied, mode, max_height_by_sunlight_m, formula}
+    const sun = rec.sunlight;
+    if (sun && typeof sun === "object" && !Array.isArray(sun)) {
+      const s = sun as Record<string, unknown>;
+      if (typeof s.applied === "boolean") {
+        const capM = readFiniteNumber(s, "max_height_by_sunlight_m");
+        const value = !s.applied
+          ? "미적용"
+          : s.mode === "step_profile"
+            ? "단계후퇴 적용"
+            : capM != null
+              ? `적용 — 최고 ${capM}m`
+              : "적용";
+        items.push({
+          label: "정북일조 높이캡",
+          value,
+          basis: typeof s.formula === "string" && s.formula.trim() ? s.formula.trim() : null,
+        });
+        consumed.add("sunlight");
+      }
+    }
+
+    // 3) 층수 바인딩 — 어떤 한도가 층수를 결정했는가.
+    //    "far"는 적용 한도(min(법정, 목표))가 막은 것이므로 "법정"으로 단정하지 않는다(정직).
+    const fb = rec.floors_binding_constraint;
+    if (typeof fb === "string" && fb.trim()) {
+      const fbKey = fb.trim().toLowerCase();
+      items.push({
+        label: "층수 결정 요인",
+        value:
+          fbKey === "far"
+            ? "용적률 한도(적용 한도 기준)"
+            : BINDING_CONSTRAINT_LABELS[fbKey] ?? fb.trim(),
+      });
+      consumed.add("floors_binding_constraint");
+    }
+
+    // 4) 적용 한도 — min(법정, 목표) 결과와 그 구성값
+    const lim = rec.applied_limits;
+    if (lim && typeof lim === "object" && !Array.isArray(lim)) {
+      const L = lim as Record<string, unknown>;
+      const bcrMax = readFiniteNumber(L, "max_bcr_percent");
+      const farMax = readFiniteNumber(L, "max_far_percent");
+      if (bcrMax != null || farMax != null) {
+        const statBcr = readFiniteNumber(L, "statutory_max_bcr_percent");
+        const tgtBcr = readFiniteNumber(L, "target_bcr_percent");
+        const statFar = readFiniteNumber(L, "statutory_max_far_percent");
+        const tgtFar = readFiniteNumber(L, "target_far_percent");
+        const basisParts = [
+          statBcr != null ? `법정 건폐율 ${statBcr}%` : "",
+          tgtBcr != null ? `목표 건폐율 ${tgtBcr}%` : "",
+          statFar != null ? `법정 용적률 ${statFar}%` : "",
+          tgtFar != null ? `목표 용적률 ${tgtFar}%` : "",
+        ].filter(Boolean);
+        items.push({
+          label: "적용 한도",
+          value: [
+            bcrMax != null ? `건폐율 ≤${bcrMax}%` : "",
+            farMax != null ? `용적률 ≤${farMax}%` : "",
+          ]
+            .filter(Boolean)
+            .join(" · "),
+          basis: basisParts.length > 0 ? `min(법정, 목표) — ${basisParts.join(" · ")}` : null,
+        });
+        consumed.add("applied_limits");
+      }
+    }
+
+    // 5) 나머지 키(주차/코어 산식 등 문자열 + 미등록 키) — 원문 정직 표기
+    for (const [k, v] of Object.entries(rec)) {
+      if (consumed.has(k)) continue;
+      const value = formatBasisValue(v);
+      if (value !== "") items.push({ label: BASIS_KEY_LABELS[k] ?? k, value });
+    }
+    return items;
+  }
+  return [];
+}
+
+/** FastAPI 422 payload({detail: string | [{loc,msg}...]})에서 첫 메시지만 안전 추출. */
+function extractValidationDetail(payload: unknown): string | null {
+  if (!payload || typeof payload !== "object") return null;
+  const detail = (payload as { detail?: unknown }).detail;
+  if (typeof detail === "string" && detail.trim()) return detail.trim();
+  if (Array.isArray(detail) && detail.length > 0) {
+    const first = detail[0] as { msg?: unknown; loc?: unknown };
+    const msg = typeof first?.msg === "string" ? first.msg : null;
+    const loc = Array.isArray(first?.loc) ? first.loc.filter((p) => p !== "body").join(".") : "";
+    if (msg) return loc ? `${loc}: ${msg}` : msg;
+  }
+  return null;
+}
+
+/**
+ * ApiClientError.status → 사용자 행동 가능 메시지.
+ * 알 수 없는 상태는 상태코드를 정직 표기하고, ApiClientError가 아니면 원문 메시지 유지.
+ */
+function describeApiError(e: unknown, fallback: string): string {
+  if (e instanceof ApiClientError) {
+    switch (e.status) {
+      case 401:
+        return "로그인이 필요합니다 — 로그인 후 다시 시도해 주세요.";
+      case 408:
+        return "요청 시간이 초과되었습니다 — 잠시 후 다시 시도해 주세요.";
+      case 422: {
+        const detail = extractValidationDetail(e.payload);
+        return detail ? `입력값을 확인해 주세요 — ${detail}` : "입력값을 확인해 주세요(요청 형식 오류).";
+      }
+      case 429:
+        return "요청이 너무 잦습니다 — 잠시 후 다시 시도해 주세요.";
+      case 501:
+        return "이 기능의 서버 구성이 아직 완료되지 않았습니다(서비스 미구성) — 관리자에게 문의해 주세요.";
+      default:
+        return `${fallback} (HTTP ${e.status})`;
+    }
+  }
+  return e instanceof Error && e.message ? e.message : fallback;
+}
 
 /** 컨텍스트 용도지역명(한글) → 로컬 엔진 단축코드(SSOT 우선 읽기). */
 function mapZoneToCode(zone?: string | null): string | null {
@@ -147,6 +399,8 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
   const [recommendedIdx, setRecommendedIdx] = useState<number | null>(null);
   const [altLoading, setAltLoading] = useState(false);
   const [altError, setAltError] = useState<string | null>(null);
+  // 구버전 API 응답(rank 부재) 등 비치명 경고 — 빈 화면 대신 보정 사실을 정직 고지.
+  const [altWarning, setAltWarning] = useState<string | null>(null);
   const [selectedRank, setSelectedRank] = useState<number | null>(null);
 
   // 용도지역 변경 시 법정 한도 조회 → 슬라이더 max 하드캡
@@ -308,22 +562,27 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
           target_unit_types: unitTypes.length > 0 ? unitTypes : ["84A"],
           floor_height_m: 3.0,
           daylight_north: daylightNorth,
+          // 법규 슬라이더 의도값 — W-A 백엔드가 목표 BCR/FAR·우선순위로 수용(구버전은 무시).
+          target_bcr_percent: bcr,
+          target_far_percent: far,
+          priority,
         },
       });
       setSingle(data);
       applyDesign(data.design_payload, data.summary);
       fetchEvaluation();
     } catch (e) {
-      setSingleError(e instanceof Error ? e.message : "자동설계에 실패했습니다.");
+      setSingleError(describeApiError(e, "자동설계에 실패했습니다."));
     } finally {
       setSingleLoading(false);
     }
-  }, [siteArea, zoneCode, intent, unitTypes, daylightNorth, applyDesign, fetchEvaluation]);
+  }, [siteArea, zoneCode, intent, unitTypes, daylightNorth, bcr, far, priority, applyDesign, fetchEvaluation]);
 
   // 3) Top3 설계안 생성
   const handleAlternatives = useCallback(async () => {
     setAltLoading(true);
     setAltError(null);
+    setAltWarning(null);
     try {
       const data = await apiClient.post<DesignAlternativesV2Response>(
         "/drawing/design-alternatives",
@@ -334,20 +593,33 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
             target_unit_types: unitTypes.length > 0 ? unitTypes : ["84A"],
             count: 3,
             daylight_north: daylightNorth,
+            // 법규 슬라이더 의도값 — W-A 백엔드가 목표 BCR/FAR·우선순위로 수용(구버전은 무시).
+            target_bcr_percent: bcr,
+            target_far_percent: far,
+            priority,
           },
         },
       );
-      setAlternatives(data.alternatives ?? []);
+      const raw = data.alternatives ?? [];
+      // 응답 가드: 구버전 API가 rank를 누락해도 표시 순서(idx+1)로 보정 — 빈 화면 방지.
+      const missingRank = raw.some((a) => typeof (a as { rank?: unknown }).rank !== "number");
+      const normalized = raw.map((a, idx) =>
+        typeof (a as { rank?: unknown }).rank === "number" ? a : { ...a, rank: idx + 1 },
+      );
+      setAlternatives(normalized);
+      if (missingRank) {
+        setAltWarning("구버전 API 응답 — 설계안 순위(rank)가 없어 표시 순서로 자동 보정했습니다.");
+      }
       setRecommendedIdx(
         typeof data.recommended_index === "number" ? data.recommended_index : null,
       );
       setSelectedRank(null);
     } catch (e) {
-      setAltError(e instanceof Error ? e.message : "설계안 생성에 실패했습니다.");
+      setAltError(describeApiError(e, "설계안 생성에 실패했습니다."));
     } finally {
       setAltLoading(false);
     }
-  }, [siteArea, zoneCode, unitTypes, daylightNorth]);
+  }, [siteArea, zoneCode, unitTypes, daylightNorth, bcr, far, priority]);
 
   const handleSelectAlt = useCallback(
     (alt: DesignAlternative) => {
@@ -357,6 +629,10 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
     },
     [applyDesign, fetchEvaluation],
   );
+
+  // 선택된 설계안 — 산출 근거(W-A summary.basis)를 카드(버튼) 밖에서 렌더하기 위함.
+  const selectedAlt =
+    selectedRank != null ? alternatives.find((a) => a.rank === selectedRank) ?? null : null;
 
   return (
     <div className="rounded-[2rem] border border-[var(--line-strong)] bg-[var(--surface-soft)] p-6 lg:p-8">
@@ -671,6 +947,13 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
             </p>
           )}
 
+          {/* 비치명 경고(예: 구버전 API 응답 rank 보정) — 결과는 표시하되 사실을 고지 */}
+          {altWarning && (
+            <p className="text-[11px] font-bold text-amber-400" role="status">
+              ⚠ {altWarning}
+            </p>
+          )}
+
           {/* 검증·다각평가(P5) — 법규 위반 + 4관점 점수(전부 커널값 기반) */}
           {evaluation && <EvaluationCard ev={evaluation} />}
 
@@ -750,9 +1033,13 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
                 <ComplianceBadge ok={!!single.compliance.all_pass} />
               </div>
               <SummaryRow summary={single.summary} />
+              {/* W-A: 목표(슬라이더) 미달 시 바인딩 제약 — 응답에 있을 때만 표시(정직) */}
+              <BindingConstraintChip summary={single.summary} />
               <p className="mt-2 text-[10px] font-bold text-[var(--status-success)]">
                 스튜디오에 적용됨 — 2D/3D가 갱신됩니다
               </p>
+              {/* W-A: 산출 근거(세트백 실값·일조캡·층수 바인딩·주차/코어 산식) — 접이식 */}
+              <BasisSection summary={single.summary} className="mt-2" />
             </div>
           )}
 
@@ -801,6 +1088,9 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
                       <Metric label="용적률" value={`${alt.summary.far_percent.toFixed(0)}%`} />
                     </div>
 
+                    {/* W-A: 목표(슬라이더) 미달 시 바인딩 제약 — 응답에 있을 때만 표시(정직) */}
+                    <BindingConstraintChip summary={alt.summary} />
+
                     {/* 평형배분 미니바(ratio_pct만 사용) */}
                     {alt.unit_mix?.distribution?.length > 0 && (
                       <div className="mt-3">
@@ -840,10 +1130,68 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
               </div>
             )
           )}
+
+          {/* W-A: 선택 설계안 산출 근거 — 카드(버튼) 중첩을 피해 그리드 밖에서 렌더 */}
+          {selectedAlt && (
+            <BasisSection summary={selectedAlt.summary} title="선택 설계안 산출 근거" />
+          )}
         </div>
       </div>
     </div>
   );
+}
+
+/**
+ * W-A: 목표 미달 바인딩 제약 칩 — 실제 목표 미달일 때만 표시(정직 게이트).
+ *
+ * W-A 응답은 binding_constraint를 항상 포함(기본 "far")하므로 필드 존재만으론
+ * "목표 미달"을 단정할 수 없다. 다음을 모두 만족할 때만 칩을 띄운다:
+ *  · 목표 용적률(슬라이더)이 basis.applied_limits에 기록돼 있고
+ *  · 달성 용적률이 목표보다 낮으며(허용오차 0.5%p — 반올림 노이즈 차단)
+ *  · 막은 것이 외부 한도일 때(height/sunlight/setback, 또는 법정 FAR<목표).
+ *    binding=far인데 법정≥목표면 자기 목표가 캡(층수 정수화) — 칩 비표시.
+ * 구버전 응답(필드 부재)은 어떤 것도 표시하지 않는다(가짜 경고 금지).
+ */
+function BindingConstraintChip({ summary }: { summary: AutoDesignResponse["summary"] }) {
+  const s = summary as AutoDesignResponse["summary"] & SummaryExtras;
+  const code =
+    typeof s.binding_constraint === "string" ? s.binding_constraint.trim().toLowerCase() : "";
+  if (!code) return null;
+  const { targetFar, statutoryFar } = readFarLimits(s.basis);
+  if (targetFar == null) return null;
+  if (!(summary.far_percent < targetFar - 0.5)) return null;
+  if (code === "far" && !(statutoryFar != null && statutoryFar < targetFar)) return null;
+  const label = BINDING_CONSTRAINT_LABELS[code] ?? code;
+  return (
+    <span
+      className="mt-2 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-black"
+      style={{
+        color: "var(--status-warning)",
+        background: "color-mix(in srgb, var(--status-warning) 14%, transparent)",
+        border: "1px solid color-mix(in srgb, var(--status-warning) 40%, transparent)",
+      }}
+    >
+      목표 미달 — {label} 한도가 막음
+    </span>
+  );
+}
+
+/**
+ * W-A: 산출 근거 접이식 섹션 — summary.basis(신설)를 EvidencePanel로 렌더.
+ * 구버전 응답(필드 부재)·형태 불명 값은 렌더하지 않는다(가짜 근거 금지).
+ */
+function BasisSection({
+  summary,
+  title = "산출 근거",
+  className = "",
+}: {
+  summary: AutoDesignResponse["summary"];
+  title?: string;
+  className?: string;
+}) {
+  const items = toEvidenceItems((summary as AutoDesignResponse["summary"] & SummaryExtras).basis);
+  if (items.length === 0) return null;
+  return <EvidencePanel title={title} items={items} defaultOpen={false} className={className} />;
 }
 
 /** 법정 한도로 max를 하드캡한 슬라이더(토큰색 accent-color). */

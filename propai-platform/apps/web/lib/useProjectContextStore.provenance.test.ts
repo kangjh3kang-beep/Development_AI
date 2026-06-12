@@ -1,6 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   useProjectContextStore,
+  addressTokenMismatch,
+  purifyPollutedSnapshot,
+  purifyPersistedContextState,
   type ProjectContextState,
   type CostData,
   type DesignData,
@@ -459,5 +462,166 @@ describe("WP-V provenance 모듈 확장(design/esg/tax) — merge 가드 계약"
     const s1 = useProjectContextStore.getState();
     expect(s1.getFieldProvenance("tax", "acquisitionTaxWon")).toBeNull();
     expect(s1.manualFields).toEqual({});
+  });
+});
+
+/* ════════════ WP-D — SSOT 오염 차단: 주소 토큰 검증·정화 마이그레이션 ════════════
+   진단된 오염 사슬: 활성 프로젝트와 무관한 주소 검색 결과가 updateSiteAnalysis →
+   withSnap으로 스냅샷 영속 → 전환 시 복원 → 서버 푸시로 고착.
+   계약: (a) 핵심 토큰(시군구·법정동·번지)이 "명백히" 불일치할 때만 오염 판정 —
+   표기 차이(도로명/지번 혼용·행정동 숫자)와 비교 불능은 오염 아님(과차단 금지).
+   (b) 정화는 siteAnalysis·파생 designData만 null화하고 그 외(공사비·수지 등) 보존.
+   (c) persist migrate(version 1)가 hydrate 시 purifyPersistedContextState를 적용. */
+
+describe("WP-D SSOT 오염 차단 — 주소 토큰 검증·정화 마이그레이션", () => {
+  it("케이스10: addressTokenMismatch — 시군구·번지 명백 불일치만 true, 표기차이·비교불능은 false", () => {
+    // 명백 불일치: 다른 시군구(서울 강남구 ↔ 성남 분당구)
+    expect(
+      addressTokenMismatch(
+        "서울특별시 강남구 역삼동 737",
+        "경기도 성남시 분당구 정자동 178-1",
+      ),
+    ).toBe(true);
+    // 같은 법정동, 다른 번지
+    expect(
+      addressTokenMismatch(
+        "서울특별시 강남구 역삼동 737",
+        "서울특별시 강남구 역삼동 12-3",
+      ),
+    ).toBe(true);
+    // 도로명 ↔ 지번(같은 시군구, 동 토큰 한쪽 부재) → 불일치 아님(오탐 방지)
+    expect(
+      addressTokenMismatch(
+        "서울특별시 강남구 테헤란로 152",
+        "서울특별시 강남구 역삼동 737",
+      ),
+    ).toBe(false);
+    // 행정동 숫자 정규화(역삼1동 ↔ 역삼동) + 시도 축약 → 불일치 아님
+    expect(
+      addressTokenMismatch(
+        "서울 강남구 역삼1동 737",
+        "서울특별시 강남구 역삼동 737",
+      ),
+    ).toBe(false);
+    // 동일 주소 → 불일치 아님
+    expect(
+      addressTokenMismatch(
+        "서울특별시 강남구 역삼동 737",
+        "서울특별시 강남구 역삼동 737",
+      ),
+    ).toBe(false);
+    // 비교 불능(null·빈 문자열·토큰 추출 실패) → 불일치 아님(과차단 금지)
+    expect(addressTokenMismatch(null, "서울특별시 강남구 역삼동 737")).toBe(false);
+    expect(addressTokenMismatch("서울특별시 강남구 역삼동 737", undefined)).toBe(false);
+    expect(addressTokenMismatch("", "")).toBe(false);
+  });
+
+  it("케이스11: purifyPollutedSnapshot — siteAnalysis·designData null 정화 + 단계/stamp/provenance 정리, 그 외 보존·원본 불변", () => {
+    const snap = {
+      siteAnalysis: { address: "경기도 성남시 분당구 정자동 178-1", landAreaSqm: 500 },
+      designData: { totalGfaSqm: 1000 },
+      feasibilityData: { totalCostWon: 1 },
+      costData: { totalConstructionCostWon: 5 },
+      completedStages: ["site-analysis", "design", "feasibility"],
+      currentStage: "design",
+      analysisResults: [{ module: "m", completedAt: "t", summary: {} }],
+      updatedAt: { siteAnalysis: 1, design: 2, cost: 3 },
+      analysisCache: { terrain: { signature: "s", data: 1, at: 1 } },
+      manualFields: {
+        siteAnalysis: { landAreaSqm: { source: "user", updatedAt: 1 } },
+        cost: { totalConstructionCostWon: { source: "user", updatedAt: 2 } },
+      },
+    };
+    const purified = purifyPollutedSnapshot(snap as unknown as Record<string, unknown>);
+    // 오염 필드·파생만 정화
+    expect(purified.siteAnalysis).toBeNull();
+    expect(purified.designData).toBeNull();
+    expect(purified.completedStages).toEqual(["feasibility"]);
+    expect(purified.updatedAt).toEqual({ cost: 3 });
+    expect(purified.manualFields).toEqual({
+      cost: { totalConstructionCostWon: { source: "user", updatedAt: 2 } },
+    });
+    // 그 외 필드(공사비·수지·분석이력·캐시)는 보존
+    expect(purified.costData).toEqual({ totalConstructionCostWon: 5 });
+    expect(purified.feasibilityData).toEqual({ totalCostWon: 1 });
+    expect(purified.analysisResults).toHaveLength(1);
+    expect(purified.analysisCache).toEqual(snap.analysisCache);
+    // 원본 불변(정화된 사본 반환)
+    expect(snap.siteAnalysis).not.toBeNull();
+    expect(snap.completedStages).toEqual(["site-analysis", "design", "feasibility"]);
+    expect(snap.updatedAt).toEqual({ siteAnalysis: 1, design: 2, cost: 3 });
+  });
+
+  it("케이스12: purifyPersistedContextState(migrate 본체) — 토큰 불일치 스냅샷·live만 정화, 비교불능·무오염은 참조 보존", () => {
+    const polluted = {
+      siteAnalysis: { address: "경기도 성남시 분당구 정자동 178-1", landAreaSqm: 1 },
+      designData: { totalGfaSqm: 9 },
+      completedStages: ["site-analysis", "design"],
+      updatedAt: { siteAnalysis: 1, design: 2 },
+      manualFields: {},
+    };
+    const clean = {
+      siteAnalysis: { address: "서울특별시 강남구 역삼동 737", landAreaSqm: 2 },
+      designData: null,
+      completedStages: [],
+      updatedAt: {},
+      manualFields: {},
+    };
+    const noRecord = {
+      siteAnalysis: { address: "부산광역시 해운대구 우동 1408" },
+      designData: { totalGfaSqm: 3 },
+      completedStages: ["site-analysis"],
+      updatedAt: {},
+      manualFields: {},
+    };
+    const persisted = {
+      projectId: "p-polluted",
+      // live 필드도 동일 오염(스냅샷과 같은 무관 주소)
+      siteAnalysis: { address: "경기도 성남시 분당구 정자동 178-1" },
+      designData: { totalGfaSqm: 9 },
+      completedStages: ["site-analysis", "design"],
+      updatedAt: { siteAnalysis: 1, design: 2 },
+      manualFields: {},
+      snapshots: {
+        "p-polluted": polluted,
+        "p-clean": clean,
+        "p-norecord": noRecord,
+      },
+    };
+    const addressOf = {
+      "p-polluted": "서울특별시 강남구 역삼동 737",
+      "p-clean": "서울특별시 강남구 역삼동 737",
+      // p-norecord: 프로젝트 레코드 주소 없음 → 비교 불능 → 보존
+    };
+    const out = purifyPersistedContextState(
+      persisted as unknown as Record<string, unknown>,
+      addressOf,
+    );
+    const snaps = out.snapshots as Record<string, Record<string, unknown>>;
+    // 오염 스냅샷: siteAnalysis·designData 정화 + 단계 제거
+    expect(snaps["p-polluted"].siteAnalysis).toBeNull();
+    expect(snaps["p-polluted"].designData).toBeNull();
+    expect(snaps["p-polluted"].completedStages).toEqual([]);
+    // 무오염·비교불능 스냅샷: 참조 그대로 보존(무변경)
+    expect(snaps["p-clean"]).toBe(clean);
+    expect(snaps["p-norecord"]).toBe(noRecord);
+    // live 필드(현재 활성 프로젝트)도 동일 기준 정화
+    expect(out.siteAnalysis).toBeNull();
+    expect(out.designData).toBeNull();
+    expect(out.completedStages).toEqual([]);
+    expect(out.updatedAt).toEqual({});
+
+    // 오염이 전혀 없으면 원본 참조를 그대로 반환(무변경 보장 — migrate 부작용 없음)
+    const allClean = {
+      projectId: "p-clean",
+      siteAnalysis: { address: "서울특별시 강남구 역삼동 737" },
+      snapshots: { "p-clean": clean },
+    };
+    expect(
+      purifyPersistedContextState(
+        allClean as unknown as Record<string, unknown>,
+        addressOf,
+      ),
+    ).toBe(allClean);
   });
 });
