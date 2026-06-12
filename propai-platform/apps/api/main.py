@@ -508,6 +508,13 @@ try:
 except Exception as _e:  # noqa: BLE001
     logger.warning("analysis_ledger 라우터 등록 실패", err=str(_e)[:160])
 
+# BOQ 자동화 — 공내역서 마스터(B1) + 드래프트(B2) + 개산 연동 → /api/v1/boq-auto/*
+try:
+    from apps.api.app.routers.boq_auto import router as boq_auto_router
+    app.include_router(boq_auto_router, tags=["BOQ 자동화"])  # 자체 prefix
+except Exception as _e:  # noqa: BLE001
+    logger.warning("boq_auto 라우터 등록 실패", err=str(_e)[:160])
+
 # 나라장터(G2B) 공공입찰 — 라우터 자체 prefix="/g2b" → 최종 /api/v1/g2b/*
 if g2b_router is not None:
     app.include_router(g2b_router, prefix="/api/v1", tags=["공공입찰(G2B)"])

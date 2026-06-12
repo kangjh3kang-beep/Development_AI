@@ -8,6 +8,10 @@
 - GET /{id}: 본인 행 반환(jsonb 역직렬화·소유권 필터) / 미존재·잘못된 ID 404
 - citation_gate(결정론): 미근거 수치·법조문 → '전문가 확인 필요' 치환 + confidence 강등
 - PDF: build_design_audit_pdf → %PDF 바이트(표본 0건·blindspot 없음도 무중단)
+- UP4: POST /run-upload dxf_file 수용(파서·허브 모킹 e2e — design_raw→geometry,
+  rooms→run(rooms=), params_hint는 brief 미입력만 보완) + .dxf/20MB/파싱 검증
+  (422·413·422) + RunRequest.rooms 전달 + grammar 핑거 섹션(S5/S6) +
+  기존 /run-upload(파일 없음)·rooms 미제공 시 구버전 run() 계약 회귀.
 
 DB 비의존 — get_db override(SQL 텍스트 분기 가짜 세션) + get_current_user override.
 """
@@ -82,7 +86,11 @@ class _FakeSession:
 
 class _FakeOrchestrator:
     """U5 run(db, site=, params=, geometry=, ifc_file_url=, use_llm=,
-    use_verification_retry=) 계약 흉내 — 호출 키워드 기록."""
+    use_verification_retry=) 계약 흉내 — 호출 키워드 기록.
+
+    의도적으로 rooms 키워드를 **받지 않는다** — rooms 미제공 요청이 구버전
+    run() 계약 그대로 호출됨(키워드 미가산, TypeError 없음)을 함께 증명한다.
+    """
 
     def __init__(self, result=None):
         self.result = dict(_FAKE_RESULT) if result is None else result
@@ -96,6 +104,48 @@ class _FakeOrchestrator:
             "use_verification_retry": use_verification_retry,
         })
         return self.result
+
+
+class _FakeRoomsOrchestrator(_FakeOrchestrator):
+    """UP3 확장 계약(run(..., rooms=)) 흉내 — rooms 키워드 수용·기록(UP4)."""
+
+    async def run(self, db, *, site, params, geometry, ifc_file_url,
+                  use_llm, use_verification_retry, rooms=None):
+        self.calls.append({
+            "site": site, "params": params, "geometry": geometry,
+            "ifc_file_url": ifc_file_url, "use_llm": use_llm,
+            "use_verification_retry": use_verification_retry, "rooms": rooms,
+        })
+        return self.result
+
+
+# ── UP4 — DXF 허브 모킹 픽스처(parse·distribute 출력 흉내, 가짜값 아님: 테스트 더블) ──
+
+_HUB_ROOMS = [
+    {"name": "거실", "type": "living", "x": 0.0, "y": 0.0, "w": 4.0, "h": 5.0,
+     "polygon": [[0.0, 0.0], [4.0, 0.0], [4.0, 5.0], [0.0, 5.0]],
+     "area_sqm": 20.0, "inferred": False, "confidence": None, "label_source": "label"},
+]
+
+_HUB_DESIGN_RAW = {
+    "points": [{"id": "pt-s0-0", "x": 0.0, "y": 0.0}],
+    "lines": [], "surfaces": [{"id": "pg-s0", "point_ids": ["pt-s0-0"]}],
+    "scale": 10.0,
+}
+
+_HUB_OUT = {
+    "editing_shapes": [{"kind": "polyline", "closed": True,
+                        "points": [{"x": 0, "y": 0}, {"x": 40, "y": 0}, {"x": 40, "y": 50}]}],
+    "geometry_payload": {"shapes": [], "unit": "px"},
+    "design_raw": _HUB_DESIGN_RAW,
+    "rooms": {"rooms": list(_HUB_ROOMS), "warnings": []},
+    "params_hint": {"building_width_m": 4.0, "building_depth_m": 5.0,
+                    "building_area_sqm": 20.0, "source": "도면추정"},
+    "diagnostics": [],
+}
+
+_FAKE_PARSE_RESULT = {"shapes": [{"kind": "polyline", "closed": True}],
+                      "scale_px_per_m": 10.0, "main_outline_index": 0}
 
 
 def _make_client(*, authed=True, audit_row=None):
@@ -150,6 +200,11 @@ class TestAuthRequired:
     def test_extract_brief_requires_auth(self):
         client = _make_client(authed=False)
         resp = client.post("/api/v1/design-audit/extract-brief", data={"text": "x"})
+        assert resp.status_code in {401, 403}
+
+    def test_run_upload_requires_auth(self):
+        client = _make_client(authed=False)
+        resp = client.post("/api/v1/design-audit/run-upload", data={"payload": "{}"})
         assert resp.status_code in {401, 403}
 
     def test_get_requires_auth(self):
@@ -254,6 +309,288 @@ class TestRunMockedE2E:
         monkeypatch.setattr(da_module, "_get_orchestrator", _raise)
         resp = client.post("/api/v1/design-audit/run", json={})
         assert resp.status_code == 503
+
+
+# ════════════════════════════════════════════════════════
+# ②-1 UP4 — /run-upload dxf_file(파서·허브 모킹 e2e) + 검증 + 회귀
+# ════════════════════════════════════════════════════════
+
+
+class TestRunUploadDxf:
+
+    def _mock_dxf_pipeline(self, monkeypatch, *, hub_out=None, parse_raises=None):
+        """parse_dxf_to_shapes·distribute 모킹(라우터는 호출 시점 임포트 — 모듈 패치)."""
+        import app.services.cad.cad_upload_hub as hub_mod
+        import app.services.cad.dxf_import_service as dxf_mod
+
+        parse_calls = []
+        distribute_calls = []
+
+        def _fake_parse(data, **kwargs):
+            if parse_raises is not None:
+                raise parse_raises
+            parse_calls.append(len(data))
+            return dict(_FAKE_PARSE_RESULT)
+
+        def _fake_distribute(parse_result):
+            distribute_calls.append(parse_result)
+            return dict(_HUB_OUT) if hub_out is None else dict(hub_out)
+
+        monkeypatch.setattr(dxf_mod, "parse_dxf_to_shapes", _fake_parse)
+        monkeypatch.setattr(hub_mod, "distribute", _fake_distribute)
+        return parse_calls, distribute_calls
+
+    def test_run_upload_dxf_e2e(self, monkeypatch):
+        """dxf_file → parse → 허브 → design_raw=geometry·rooms 전달·params_hint 보완."""
+        client = _make_client()
+        fake_orch = _FakeRoomsOrchestrator()
+        monkeypatch.setattr(da_module, "_get_orchestrator", lambda: fake_orch)
+        parse_calls, distribute_calls = self._mock_dxf_pipeline(monkeypatch)
+
+        payload = json.dumps({
+            "project_id": "p-1",
+            "site": {"zone_type": "제2종일반주거지역"},
+            # brief에 building_width_m 기존값 — params_hint(4.0)가 덮어쓰면 안 됨
+            "brief": {"fields": [{"key": "building_width_m", "value": 12.0}]},
+            "use_llm": False,
+        })
+        resp = client.post(
+            "/api/v1/design-audit/run-upload",
+            data={"payload": payload},
+            files={"dxf_file": ("plan.dxf", b"0\nSECTION\n", "application/dxf")},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ok"] is True and data["id"] == data["audit_id"]
+        assert parse_calls and distribute_calls
+        assert distribute_calls[0] == _FAKE_PARSE_RESULT  # 파서 출력이 허브 입력
+
+        call = fake_orch.calls[0]
+        assert call["geometry"] == _HUB_DESIGN_RAW          # design_raw → geometry
+        assert call["rooms"] == _HUB_ROOMS                  # rooms → run(rooms=)
+        # params_hint — 기존값 우선(덮어쓰기 금지), 미입력만 보완, source 미혼입
+        assert call["params"]["building_width_m"] == 12.0
+        assert call["params"]["building_depth_m"] == 5.0
+        assert call["params"]["building_area_sqm"] == 20.0
+        assert "source" not in call["params"]
+
+        # 응답 dxf_import — 적용 내역 투명 보고(additive)
+        dxf = data["dxf_import"]
+        assert dxf["applied"] == ["geometry", "rooms"]
+        assert dxf["params_hint_applied"] == ["building_area_sqm", "building_depth_m"]
+        assert dxf["params_hint_source"] == "도면추정"
+        assert dxf["rooms_count"] == 1
+
+        # 저장 inputs에 rooms_provided 보존(additive)
+        ins = client._session.inserted
+        assert json.loads(ins["inp"])["rooms_provided"] is True
+
+    def test_run_upload_dxf_payload_values_win(self, monkeypatch):
+        """payload의 geometry/rooms 직접 입력이 DXF 산출보다 우선(덮어쓰기 금지)."""
+        client = _make_client()
+        fake_orch = _FakeRoomsOrchestrator()
+        monkeypatch.setattr(da_module, "_get_orchestrator", lambda: fake_orch)
+        self._mock_dxf_pipeline(monkeypatch)
+
+        my_geometry = {"points": [], "lines": [], "surfaces": []}
+        my_rooms = [{"name": "안방", "type": "bedroom", "x": 0, "y": 0, "w": 3, "h": 3}]
+        payload = json.dumps({"geometry": my_geometry, "rooms": my_rooms,
+                              "use_llm": False})
+        resp = client.post(
+            "/api/v1/design-audit/run-upload",
+            data={"payload": payload},
+            files={"dxf_file": ("plan.dxf", b"0\nSECTION\n", "application/dxf")},
+        )
+        assert resp.status_code == 200
+        call = fake_orch.calls[0]
+        assert call["geometry"] == my_geometry
+        assert call["rooms"] == my_rooms
+        assert resp.json()["dxf_import"]["applied"] == []  # DXF 산출 미적용 정직 보고
+
+    def test_run_upload_dxf_bad_extension_422(self):
+        client = _make_client()  # 검증이 오케스트레이터 이전 — 모킹 불필요
+        resp = client.post(
+            "/api/v1/design-audit/run-upload",
+            data={"payload": "{}"},
+            files={"dxf_file": ("plan.pdf", b"%PDF-", "application/pdf")},
+        )
+        assert resp.status_code == 422
+
+    def test_run_upload_dxf_too_large_413(self, monkeypatch):
+        monkeypatch.setattr(da_module, "_MAX_DXF_BYTES", 8)
+        client = _make_client()
+        resp = client.post(
+            "/api/v1/design-audit/run-upload",
+            data={"payload": "{}"},
+            files={"dxf_file": ("plan.dxf", b"123456789", "application/dxf")},
+        )
+        assert resp.status_code == 413
+
+    def test_run_upload_dxf_parse_failure_422(self, monkeypatch):
+        """파싱 불가(손상/비DXF) → 422 정직(가짜 기하 금지)."""
+        client = _make_client()
+        self._mock_dxf_pipeline(
+            monkeypatch, parse_raises=ValueError("DXF 파싱 불가(손상/비DXF 파일)"))
+        resp = client.post(
+            "/api/v1/design-audit/run-upload",
+            data={"payload": "{}"},
+            files={"dxf_file": ("plan.dxf", b"not-a-dxf", "application/dxf")},
+        )
+        assert resp.status_code == 422
+        assert "DXF 파싱 실패" in resp.json()["detail"]
+
+    def test_run_upload_without_files_regression(self, monkeypatch):
+        """기존 /run-upload(payload만) 회귀 — rooms 미가산(구버전 run() 계약 그대로)."""
+        client = _make_client()
+        fake_orch = _FakeOrchestrator()  # rooms 키워드 미지원 — TypeError 없으면 통과
+        monkeypatch.setattr(da_module, "_get_orchestrator", lambda: fake_orch)
+
+        payload = json.dumps({
+            "project_id": "p-1",
+            "brief": {"fields": [{"key": "far_pct", "value": 249.9},
+                                 {"key": "units", "value": None}]},
+            "use_llm": False,
+        })
+        resp = client.post("/api/v1/design-audit/run-upload", data={"payload": payload})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ok"] is True
+        assert data["id"] == data["audit_id"]
+        assert data["verdict"]["verdict"] == "conditional"
+        assert isinstance(data["sections"], list) and data["generated_at"]
+        assert "dxf_import" not in data  # DXF 미업로드 시 키 미가산
+        call = fake_orch.calls[0]
+        assert call["params"] == {"far_pct": 249.9}  # null 값 제외(날조 금지)
+        assert call["geometry"] is None and call["ifc_file_url"] is None
+
+
+# ════════════════════════════════════════════════════════
+# ②-2 UP4 — RunRequest.rooms 전달(/run JSON)
+# ════════════════════════════════════════════════════════
+
+
+class TestRunRoomsPassthrough:
+
+    def test_run_rooms_passed_to_orchestrator(self, monkeypatch):
+        client = _make_client()
+        fake_orch = _FakeRoomsOrchestrator()
+        monkeypatch.setattr(da_module, "_get_orchestrator", lambda: fake_orch)
+
+        resp = client.post("/api/v1/design-audit/run", json={
+            "project_id": "p-1", "use_llm": False, "rooms": _HUB_ROOMS,
+        })
+        assert resp.status_code == 200
+        assert fake_orch.calls[0]["rooms"] == _HUB_ROOMS
+        ins = client._session.inserted
+        assert json.loads(ins["inp"])["rooms_provided"] is True
+
+    def test_run_without_rooms_old_contract(self, monkeypatch):
+        """rooms 미제공 — rooms 키워드 미지원 구버전 run() 그대로 호출(하위호환)."""
+        client = _make_client()
+        fake_orch = _FakeOrchestrator()  # rooms 파라미터 없음
+        monkeypatch.setattr(da_module, "_get_orchestrator", lambda: fake_orch)
+
+        resp = client.post("/api/v1/design-audit/run",
+                           json={"project_id": "p-1", "use_llm": False})
+        assert resp.status_code == 200  # TypeError(502) 없음 — 키워드 미가산 증명
+        assert json.loads(client._session.inserted["inp"])["rooms_provided"] is False
+
+
+# ════════════════════════════════════════════════════════
+# ②-3 UP4 — _build_report_sections grammar 핑거(S5)·경고(S6)
+# ════════════════════════════════════════════════════════
+
+
+_GRAMMAR_RAW = {
+    "ldk_open": {"status": "pass", "open_boundaries": 2},
+    "connectivity": {"status": "pass", "unreachable": []},
+    "daylight": {"status": "warn", "rooms_without_window": ["실(추정)"]},
+    "warnings": [{"field": "실(추정)", "rule": "채광창",
+                  "message": "채광창을 낼 외기변이 없습니다(정직 경고)."}],
+}
+
+
+class TestGrammarSections:
+
+    def _result_with_grammar(self, grammar=None):
+        result = dict(_FAKE_RESULT)
+        result["sections"] = {"grammar": dict(_GRAMMAR_RAW) if grammar is None else grammar}
+        return result
+
+    def test_grammar_finger_on_s5_and_warnings_s6(self, monkeypatch):
+        """grammar 존재 → S5 하위 핑거(실재 키만) + S6 경고(AI 라벨 없이 정직)."""
+        client = _make_client()
+        fake_orch = _FakeRoomsOrchestrator(result=self._result_with_grammar())
+        monkeypatch.setattr(da_module, "_get_orchestrator", lambda: fake_orch)
+
+        resp = client.post("/api/v1/design-audit/run-upload",
+                           data={"payload": json.dumps({"use_llm": False})})
+        assert resp.status_code == 200
+        sections = resp.json()["sections"]
+
+        s5 = next(s for s in sections if s["id"] == "s5")
+        assert s5["findings"]  # 기존 findings 유지
+        assert s5["grammar"]["ldk_open"]["status"] == "pass"
+        assert s5["grammar"]["connectivity"]["unreachable"] == []
+        assert s5["grammar"]["daylight"]["rooms_without_window"] == ["실(추정)"]
+
+        s6 = next(s for s in sections if s["id"] == "s6")
+        assert s6["grammar_warnings"] == _GRAMMAR_RAW["warnings"]
+        # blindspot 없음 — AI 라벨 미부착 + 결정론 출처 명시(정직)
+        assert "blind_spots" not in s6
+        assert "AI 추정" not in s6["title"]
+        assert "결정론" in s6["grammar_note"]
+
+    def test_grammar_partial_keys_only(self, monkeypatch):
+        """일부 키만 실재 — 존재하는 키만 핑거(가짜값 0), 경고 없으면 S6 미생성."""
+        client = _make_client()
+        fake_orch = _FakeRoomsOrchestrator(
+            result=self._result_with_grammar({"connectivity": {"status": "pass"}}))
+        monkeypatch.setattr(da_module, "_get_orchestrator", lambda: fake_orch)
+
+        resp = client.post("/api/v1/design-audit/run-upload",
+                           data={"payload": json.dumps({"use_llm": False})})
+        sections = resp.json()["sections"]
+        s5 = next(s for s in sections if s["id"] == "s5")
+        assert set(s5["grammar"].keys()) == {"connectivity"}
+        assert not [s for s in sections if s["id"] == "s6"]  # 빈 섹션 미생성
+
+    def test_grammar_warnings_combined_with_blindspot(self, monkeypatch):
+        """blindspot(S6)과 grammar 경고 결합 — AI 항목·결정론 경고 출처 구분 유지."""
+        client = _make_client()
+        fake_orch = _FakeRoomsOrchestrator(result=self._result_with_grammar())
+        monkeypatch.setattr(da_module, "_get_orchestrator", lambda: fake_orch)
+
+        import app.services.design_audit.blindspot_interpreter as bs_mod
+
+        async def _fake_blindspot(findings, derived_signals=None, **kwargs):
+            return {"generated": True, "label": "AI 추정",
+                    "blindspots": [{"claim": "c", "basis": "ENG-1",
+                                    "confidence": "medium"}]}
+
+        monkeypatch.setattr(bs_mod, "generate_blindspot", _fake_blindspot)
+
+        resp = client.post("/api/v1/design-audit/run-upload",
+                           data={"payload": json.dumps({"use_llm": True})})
+        sections = resp.json()["sections"]
+        s6 = next(s for s in sections if s["id"] == "s6")
+        assert s6["title"] == "심의 예상 쟁점·사각지대 (AI 추정)"
+        assert s6["blind_spots"][0]["basis"] == "ENG-1"
+        assert s6["grammar_warnings"] == _GRAMMAR_RAW["warnings"]
+        assert "AI 추정 아님" in s6["grammar_note"]
+
+    def test_no_grammar_regression(self, monkeypatch):
+        """grammar 부재 — 기존 섹션 출력과 동일(s5에 grammar 키 없음, s6 미생성)."""
+        client = _make_client()
+        fake_orch = _FakeOrchestrator()  # sections 자체 없음(기존 결과)
+        monkeypatch.setattr(da_module, "_get_orchestrator", lambda: fake_orch)
+
+        resp = client.post("/api/v1/design-audit/run-upload",
+                           data={"payload": json.dumps({"use_llm": False})})
+        sections = resp.json()["sections"]
+        s5 = next(s for s in sections if s["id"] == "s5")
+        assert "grammar" not in s5
+        assert not [s for s in sections if s["id"] == "s6"]
 
 
 # ════════════════════════════════════════════════════════

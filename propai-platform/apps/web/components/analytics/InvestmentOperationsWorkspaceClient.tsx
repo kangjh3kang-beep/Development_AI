@@ -640,9 +640,14 @@ export function InvestmentOperationsWorkspaceClient({
           <p className="mt-4 max-w-3xl text-sm leading-8 text-[var(--text-secondary)]">
             {labels.heroHint}
           </p>
-          <p className="mt-3 max-w-3xl text-sm leading-8 text-[var(--text-tertiary)]">
+          {!canUseLiveApi && (
+            {!canUseLiveApi && (
+            {!canUseLiveApi && (
+            <p className="mt-3 max-w-3xl text-sm leading-8 text-[var(--text-tertiary)]">
             {labels.tokenHint}
           </p>
+            )}
+            )}
           {!canUseLiveApi ? (
             <div className="mt-6 rounded-[var(--radius-xl)] border border-dashed border-[var(--line)] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[var(--text-secondary)]">
               {labels.authError}

@@ -267,11 +267,43 @@ export interface DxfImportPolyline {
   layer?: string | null;
 }
 
+/**
+ * POST import-dxf 응답의 신규 셰이프 항목(백엔드 parse_dxf_to_shapes 실제 출력).
+ * 좌표는 백엔드가 이미 px로 변환·y축 하향·bbox 정규화를 마쳤다 — 프론트는 재스케일 금지.
+ * - polyline: closed + points[{x,y}]
+ * - line: x1/y1/x2/y2(별도 좌표 — points 배열 아님)
+ * - circle: cx/cy/r
+ * - label: x/y/text
+ * layer는 이미 CAD2.0 레이어 키(outline|wall|dim|note), source_layer는 원본 DXF 레이어명.
+ */
+export interface DxfImportShape {
+  kind?: string | null;
+  layer?: string | null;
+  source_layer?: string | null;
+  closed?: boolean | null;
+  points?: Array<{ x?: unknown; y?: unknown }> | null;
+  x1?: unknown;
+  y1?: unknown;
+  x2?: unknown;
+  y2?: unknown;
+  cx?: unknown;
+  cy?: unknown;
+  r?: unknown;
+  x?: unknown;
+  y?: unknown;
+  text?: string | null;
+  [key: string]: unknown;
+}
+
 /** POST import-dxf 응답(관용 파싱 — 알 수 없는 키는 무시, 없는 키는 정직 폴백). */
 export interface DxfImportResult {
+  /** 신규 백엔드 실제 형태 — px 좌표 셰이프 배열(1차 소스). */
+  shapes?: DxfImportShape[] | null;
+  /** 레거시 폴백 — m 단위 폴리라인 배열(shapes 부재 시에만 px 변환). */
   polylines?: DxfImportPolyline[] | null;
   main_outline_index?: number | null;
-  unit?: string | null;
+  /** 신규 백엔드는 {detected,source} 객체, 레거시는 문자열 — 둘 다 수용. */
+  unit?: string | { detected?: string | null; source?: string | null } | null;
   [key: string]: unknown;
 }
 
@@ -303,22 +335,143 @@ function classifyImportLayer(name?: string | null): LayerKey {
 }
 
 /**
+ * 셰이프의 layer 값을 CAD2.0 레이어 키로 확정한다.
+ * 백엔드가 이미 유효 키(outline|wall|dim|note)를 주면 그대로 신뢰하고,
+ * 아니면 source_layer 원본명으로 휴리스틱 분류(가짜 분류 금지 — 알려진 값 우선).
+ */
+function resolveShapeLayer(layer?: string | null, sourceLayer?: string | null): LayerKey {
+  const v = String(layer ?? "");
+  if (VALID_LAYERS.has(v)) return v as LayerKey;
+  return classifyImportLayer(sourceLayer ?? layer);
+}
+
+/**
+ * import-dxf 신규 응답의 shapes[](백엔드 px 좌표)를 CadShape[]로 변환한다.
+ * 좌표는 백엔드가 이미 px·y하향·정규화를 마쳤으므로 재스케일/반전/마진 적용 금지 — 그대로 사용.
+ * - polyline: closed(또는 첫점==끝점)면 polygon, 아니면 line. main_outline_index는 outline 레이어.
+ * - line: x1/y1/x2/y2 → 2점 line. circle: cx/cy/r → circle. label: x/y/text → label.
+ * - 정점·좌표 부족 셰이프는 제외(변환 불가 — 호출부가 개수 차이로 정직 표기).
+ */
+function shapesResultToShapes(
+  rawShapes: DxfImportShape[],
+  mainOutlineIndex: number,
+): CadShape[] {
+  const out: CadShape[] = [];
+  rawShapes.forEach((s, idx) => {
+    if (!s || typeof s !== "object") return;
+    const kind = String(s.kind ?? "");
+    const layerKey = resolveShapeLayer(s.layer, s.source_layer);
+
+    if (kind === "polyline") {
+      const isMain = idx === mainOutlineIndex;
+      const id = newShapeId(isMain ? "outline" : "imp");
+      const valid = (Array.isArray(s.points) ? s.points : []).filter(
+        (p) => Number.isFinite(Number(p?.x)) && Number.isFinite(Number(p?.y)),
+      );
+      if (valid.length < 2) return;
+      let pts: CadShapePoint[] = valid.map((p, i) => ({
+        id: `${id}-p${i}`,
+        x: Number(p?.x),
+        y: Number(p?.y),
+      }));
+      // 첫점 반복 종결(first==last)이면 마지막 정점 제거 + 닫힘 처리.
+      const first = pts[0];
+      const last = pts[pts.length - 1];
+      const dupClosed =
+        pts.length >= 2 &&
+        Math.abs(first.x - last.x) < 1e-6 &&
+        Math.abs(first.y - last.y) < 1e-6;
+      if (dupClosed) pts = pts.slice(0, -1);
+      const closed = Boolean(s.closed) || dupClosed || isMain;
+      if (closed && pts.length >= 3) {
+        out.push({
+          id,
+          kind: "polygon",
+          layer: isMain ? "outline" : layerKey,
+          points: pts,
+        });
+      } else if (pts.length >= 2) {
+        // 외곽 지정이어도 정점 3개 미만이면 polygon 불가 → line으로 정직 강등.
+        out.push({ id, kind: "line", layer: layerKey, points: pts });
+      }
+    } else if (kind === "line") {
+      const x1 = Number(s.x1);
+      const y1 = Number(s.y1);
+      const x2 = Number(s.x2);
+      const y2 = Number(s.y2);
+      if (![x1, y1, x2, y2].every(Number.isFinite)) return;
+      const id = newShapeId("imp");
+      out.push({
+        id,
+        kind: "line",
+        layer: layerKey,
+        points: [
+          { id: `${id}-p0`, x: x1, y: y1 },
+          { id: `${id}-p1`, x: x2, y: y2 },
+        ],
+      });
+    } else if (kind === "circle") {
+      const cx = Number(s.cx);
+      const cy = Number(s.cy);
+      const r = Number(s.r);
+      if (!Number.isFinite(cx) || !Number.isFinite(cy)) return;
+      const id = newShapeId("imp");
+      out.push({
+        id,
+        kind: "circle",
+        layer: layerKey,
+        points: [{ id: `${id}-c`, x: cx, y: cy }],
+        radius: Number.isFinite(r) && r > 0 ? r : 10,
+      });
+    } else if (kind === "label") {
+      const x = Number(s.x);
+      const y = Number(s.y);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+      const id = newShapeId("imp");
+      out.push({
+        id,
+        kind: "label",
+        layer: layerKey,
+        points: [{ id: `${id}-l`, x, y }],
+        text: typeof s.text === "string" ? s.text : "",
+      });
+    }
+    // 알 수 없는 kind는 조용히 무시(백엔드 ignored 보고와 별개 — 가짜 변환 금지).
+  });
+  return out;
+}
+
+/**
  * import-dxf 응답을 CadShape[]로 변환한다.
- * - 닫힌 폴리라인(closed=true, 또는 첫점==끝점) → polygon, 열린 폴리라인 → line.
- * - main_outline_index 폴리라인은 outline 레이어 polygon으로(정점 3개 이상일 때만).
- * - 좌표는 단위 환산(unit→m) 후 px로 스케일, 전체 bbox 기준 원점(margin) 정규화 + y축 반전.
- * - 정점 2개 미만 폴리라인은 제외(변환 불가 — 호출부가 개수 차이로 정직 표기).
+ *
+ * 1차: result.shapes(신규 백엔드 parse_dxf_to_shapes 실제 출력 — px 좌표).
+ *   - polyline closed(또는 첫점==끝점) → polygon, open → line. main_outline_index → outline.
+ *   - line(x1/y1/x2/y2) → line, circle(cx/cy/r) → circle, label(x/y/text) → label.
+ *   - 좌표는 백엔드가 이미 px·y하향·정규화 완료 → 재스케일/반전/마진 적용 금지(그대로 사용).
+ * 폴백: result.shapes 부재 시에만 result.polylines(레거시 m단위 폴리라인) → 단위·스케일·반전 적용.
+ *   - 닫힌 폴리라인 → polygon, 열린 폴리라인 → line, main_outline_index → outline 레이어.
+ *   - 좌표는 단위 환산(unit→m) 후 px 스케일, 전체 bbox 기준 원점(margin) 정규화 + y축 반전.
+ * 둘 다 없으면 빈 배열(가짜 도형 생성 금지). 정점·좌표 부족 셰이프는 제외.
  */
 export function dxfImportToShapes(
   result: DxfImportResult | null | undefined,
   options?: DxfImportOptions,
 ): CadShape[] {
+  // 1차: 신규 백엔드 shapes[](px 좌표) — 존재하면 폴리라인 폴백보다 우선.
+  if (result && Array.isArray(result.shapes) && result.shapes.length > 0) {
+    const mainIdxRaw = result.main_outline_index;
+    const mainIdx = typeof mainIdxRaw === "number" ? mainIdxRaw : -1;
+    return shapesResultToShapes(result.shapes, mainIdx);
+  }
+
+  // 폴백: 레거시 polylines[](m 단위) — px 변환(scale·flipY·margin) 적용.
   const polylines = result && Array.isArray(result.polylines) ? result.polylines : [];
   if (polylines.length === 0) return [];
   const scale = options?.scalePxPerM ?? 10;
   const margin = options?.marginPx ?? 40;
   const flipY = options?.flipY ?? true;
-  const u = unitToMeters(result?.unit);
+  // unit은 신규 객체({detected,source}) 또는 레거시 문자열 — 문자열일 때만 환산(객체면 1m 가정).
+  const u = unitToMeters(typeof result?.unit === "string" ? result.unit : null);
 
   // 전체 bbox(원본 단위) — 캔버스 원점(margin) 정규화 + DXF y-up → 캔버스 y-down 반전 기준.
   let minX = Infinity;

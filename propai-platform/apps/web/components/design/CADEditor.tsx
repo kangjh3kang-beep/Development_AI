@@ -511,10 +511,10 @@ export default function CADEditor({
           `/design/${encodeURIComponent(projectId)}/drawings/import-dxf`,
           { body: fd, timeoutMs: 60000 },
         );
-        // polyline→polygon/line 매핑, main_outline_index→outline 레이어(cad-shapes 변환)
+        // 신규 shapes[](백엔드 px 좌표) 1차 → 레거시 polylines 폴백(cad-shapes 변환)
         const imported = dxfImportToShapes(res, { scalePxPerM });
         if (imported.length === 0) {
-          showImportMsg("error", "가져올 수 있는 폴리라인이 없습니다(빈 변환 결과).");
+          showImportMsg("error", "가져올 수 있는 도형이 없습니다(빈 변환 결과).");
           return;
         }
         const replace =
@@ -549,18 +549,38 @@ export default function CADEditor({
         const ignoredRaw = rec.ignored_count ?? rec.ignored ?? rec.ignored_entities;
         const ignoredNum =
           typeof ignoredRaw === "number" ? ignoredRaw
-            : Array.isArray(ignoredRaw) ? ignoredRaw.length : null;
-        const unitTxt =
-          typeof res.unit === "string" && res.unit.trim()
-            ? `단위 ${res.unit.trim()}`
-            : "단위 정보 없음(1단위=1m 가정)";
-        const skippedLocal =
-          (Array.isArray(res.polylines) ? res.polylines.length : 0) - imported.length;
+            : Array.isArray(ignoredRaw)
+              ? ignoredRaw.reduce<number>((acc, item) => {
+                  // 신규 백엔드 ignored:[{type,count}] → count 합산, 레거시 항목은 1개로 계수
+                  const c = Number((item as Record<string, unknown> | null)?.count);
+                  return acc + (Number.isFinite(c) && c > 0 ? c : 1);
+                }, 0)
+              : null;
+        // unit은 신규 객체({detected,source}) 또는 레거시 문자열 — 둘 다 정직 표기
+        const unitDetected =
+          typeof res.unit === "string"
+            ? res.unit.trim()
+            : res.unit && typeof res.unit === "object" && typeof res.unit.detected === "string"
+              ? res.unit.detected.trim()
+              : "";
+        const unitHeuristic =
+          !!res.unit && typeof res.unit === "object" && res.unit.source === "heuristic";
+        const unitTxt = unitDetected
+          ? `단위 ${unitDetected}${unitHeuristic ? "(추정)" : ""}`
+          : "단위 정보 없음(1단위=1m 가정)";
+        // 변환 제외 개수 — 신규 shapes 기준 우선, 없으면 레거시 polylines 기준
+        const sourceCount =
+          Array.isArray(res.shapes) && res.shapes.length > 0
+            ? res.shapes.length
+            : Array.isArray(res.polylines)
+              ? res.polylines.length
+              : 0;
+        const skippedLocal = sourceCount - imported.length;
         showImportMsg(
           "ok",
           `도형 ${imported.length}개 ${replace ? "교체" : "추가"} · ${unitTxt}` +
             (ignoredNum != null && ignoredNum > 0 ? ` · 미지원 엔티티 ${ignoredNum}개 무시` : "") +
-            (skippedLocal > 0 ? ` · 변환 불가 폴리라인 ${skippedLocal}개 제외` : "") +
+            (skippedLocal > 0 ? ` · 변환 불가 도형 ${skippedLocal}개 제외` : "") +
             appendedNote,
         );
       } catch (err) {

@@ -1,0 +1,2450 @@
+{
+ "discipline": "토목",
+ "source_file": "의정부동 424 주상복합 신축공사_토목_공내역서.xls",
+ "project": {
+  "name": "의정부동 424 주상복합 신축공사",
+  "gfa_sqm": 238504.0,
+  "gfa_basis": "건축 내역서 '임시동력+가설전기시설(연면적기준)' 수량",
+  "sample_count": 1,
+  "provenance": "실적 공내역서 1건(공개 단가 없음) — 원단위 계수는 n=1 참고치"
+ },
+ "sections": [
+  {
+   "code": "C01",
+   "name": "*. 순 공 사 비",
+   "level": 1
+  },
+  {
+   "code": "C02",
+   "name": "Ⅰ.흙막이공사",
+   "level": 1
+  },
+  {
+   "code": "C03",
+   "name": "1.토공사",
+   "level": 1
+  },
+  {
+   "code": "C04",
+   "name": "1)터파기",
+   "level": 1
+  },
+  {
+   "code": "C05",
+   "name": "2)크람쉘상차",
+   "level": 1
+  },
+  {
+   "code": "C06",
+   "name": "3)되메우기및다짐",
+   "level": 1
+  },
+  {
+   "code": "C07",
+   "name": "4)잔토운반",
+   "level": 1
+  },
+  {
+   "code": "C08",
+   "name": "5)시토장정지",
+   "level": 1
+  },
+  {
+   "code": "C09",
+   "name": "6)유용토운반",
+   "level": 1
+  },
+  {
+   "code": "C10",
+   "name": "7)바닥면고르기",
+   "level": 1
+  },
+  {
+   "code": "C11",
+   "name": "8)기타공사",
+   "level": 1
+  },
+  {
+   "code": "C12",
+   "name": "2.토류벽공사",
+   "level": 1
+  },
+  {
+   "code": "C13",
+   "name": "3.C.I.P공사",
+   "level": 1
+  },
+  {
+   "code": "C14",
+   "name": "4.숏크리트",
+   "level": 1
+  },
+  {
+   "code": "C15",
+   "name": "5.SGR공사",
+   "level": 1
+  },
+  {
+   "code": "C16",
+   "name": "6.P.R.D공사",
+   "level": 1
+  },
+  {
+   "code": "C17",
+   "name": "1) PRD공사",
+   "level": 1
+  },
+  {
+   "code": "C18",
+   "name": "2) PRD공사",
+   "level": 1
+  },
+  {
+   "code": "C19",
+   "name": "7.계측공사",
+   "level": 1
+  },
+  {
+   "code": "C20",
+   "name": "8.부대공사",
+   "level": 1
+  },
+  {
+   "code": "C21",
+   "name": "9.운반공사",
+   "level": 1
+  },
+  {
+   "code": "C22",
+   "name": "10.주요자재",
+   "level": 1
+  },
+  {
+   "code": "C23",
+   "name": "1)레미콘",
+   "level": 1
+  },
+  {
+   "code": "C24",
+   "name": "2)시멘트",
+   "level": 1
+  },
+  {
+   "code": "C25",
+   "name": "3)철 근",
+   "level": 1
+  },
+  {
+   "code": "C26",
+   "name": "4)골재",
+   "level": 1
+  },
+  {
+   "code": "C27",
+   "name": "5)강 재",
+   "level": 1
+  },
+  {
+   "code": "C28",
+   "name": "Ⅱ.부대토목",
+   "level": 1
+  },
+  {
+   "code": "C29",
+   "name": "1.토공사",
+   "level": 1
+  },
+  {
+   "code": "C30",
+   "name": "1)터파기",
+   "level": 1
+  },
+  {
+   "code": "C31",
+   "name": "2)되메우기",
+   "level": 1
+  },
+  {
+   "code": "C32",
+   "name": "3)흙운반",
+   "level": 1
+  },
+  {
+   "code": "C33",
+   "name": "2.우수공사",
+   "level": 1
+  },
+  {
+   "code": "C34",
+   "name": "1)관부설공",
+   "level": 1
+  },
+  {
+   "code": "C35",
+   "name": "2)우수맨홀",
+   "level": 1
+  },
+  {
+   "code": "C36",
+   "name": "3)집수정",
+   "level": 1
+  },
+  {
+   "code": "C37",
+   "name": "4)측구",
+   "level": 1
+  },
+  {
+   "code": "C38",
+   "name": "5)관보호공",
+   "level": 1
+  },
+  {
+   "code": "C39",
+   "name": "6)연결관",
+   "level": 1
+  },
+  {
+   "code": "C40",
+   "name": "7)우수부대공",
+   "level": 1
+  },
+  {
+   "code": "C41",
+   "name": "3.오수공사",
+   "level": 1
+  },
+  {
+   "code": "C42",
+   "name": "1)관부설공",
+   "level": 1
+  },
+  {
+   "code": "C43",
+   "name": "2)오수맨홀",
+   "level": 1
+  },
+  {
+   "code": "C44",
+   "name": "3)관보호공",
+   "level": 1
+  },
+  {
+   "code": "C45",
+   "name": "4)오수부대공",
+   "level": 1
+  },
+  {
+   "code": "C46",
+   "name": "4.상수도공사",
+   "level": 1
+  },
+  {
+   "code": "C47",
+   "name": "1)상수관 부설",
+   "level": 1
+  },
+  {
+   "code": "C48",
+   "name": "2)밸브류 부설 및 접합",
+   "level": 1
+  },
+  {
+   "code": "C49",
+   "name": "3)관절단",
+   "level": 1
+  },
+  {
+   "code": "C50",
+   "name": "4)제수변실 및 보호통",
+   "level": 1
+  },
+  {
+   "code": "C51",
+   "name": "5)관보호공",
+   "level": 1
+  },
+  {
+   "code": "C52",
+   "name": "6)수압시험",
+   "level": 1
+  },
+  {
+   "code": "C53",
+   "name": "7)관대",
+   "level": 1
+  },
+  {
+   "code": "C54",
+   "name": "5.포장공사",
+   "level": 1
+  },
+  {
+   "code": "C55",
+   "name": "1)투수블럭포장",
+   "level": 1
+  },
+  {
+   "code": "C56",
+   "name": "2)험프식횡단보도",
+   "level": 1
+  },
+  {
+   "code": "C57",
+   "name": "3)경계석",
+   "level": 1
+  },
+  {
+   "code": "C58",
+   "name": "4)안전시설",
+   "level": 1
+  },
+  {
+   "code": "C59",
+   "name": "6.부대공사",
+   "level": 1
+  },
+  {
+   "code": "C60",
+   "name": "7.운반공사",
+   "level": 1
+  },
+  {
+   "code": "C61",
+   "name": "8.주요자재",
+   "level": 1
+  },
+  {
+   "code": "C62",
+   "name": "1)레미콘",
+   "level": 1
+  },
+  {
+   "code": "C63",
+   "name": "2)시멘트",
+   "level": 1
+  },
+  {
+   "code": "C64",
+   "name": "3)철근",
+   "level": 1
+  },
+  {
+   "code": "C65",
+   "name": "4)포장블럭",
+   "level": 1
+  },
+  {
+   "code": "C66",
+   "name": "5)경계석",
+   "level": 1
+  },
+  {
+   "code": "C67",
+   "name": "6)배수관",
+   "level": 1
+  },
+  {
+   "code": "C68",
+   "name": "7)골 재",
+   "level": 1
+  },
+  {
+   "code": "C69",
+   "name": "9.교통영향평가",
+   "level": 1
+  },
+  {
+   "code": "C70",
+   "name": "1)대중교통,보행및자전거",
+   "level": 1
+  },
+  {
+   "code": "C71",
+   "name": "2)교통안전및기타",
+   "level": 1
+  }
+ ],
+ "items": [
+  {
+   "section_code": "C04",
+   "section_name": "1)터파기",
+   "name": "암석절취(육상)-미진동굴착공법(TYPE-I)-기계적파쇄",
+   "spec": "기계적파쇄",
+   "unit": "㎥",
+   "qty_sample": 11223.0,
+   "row_count": 1,
+   "id": "토목-0001"
+  },
+  {
+   "section_code": "C04",
+   "section_name": "1)터파기",
+   "name": "암석절취(육상)-소규모진동제어발파(TYPE-Ⅲ)",
+   "spec": "소규모진동제어발파",
+   "unit": "㎥",
+   "qty_sample": 15263.0,
+   "row_count": 1,
+   "id": "토목-0002"
+  },
+  {
+   "section_code": "C04",
+   "section_name": "1)터파기",
+   "name": "암석절취(육상)-정밀진동제어발파(TYPE-∥)",
+   "spec": "정밀진동제어발파",
+   "unit": "㎥",
+   "qty_sample": 15712.0,
+   "row_count": 1,
+   "id": "토목-0003"
+  },
+  {
+   "section_code": "C04",
+   "section_name": "1)터파기",
+   "name": "암석절취(육상)-중규모진동제어발파(TYPE-Ⅳ)",
+   "spec": "중규모진동제어발파",
+   "unit": "㎥",
+   "qty_sample": 2693.0,
+   "row_count": 1,
+   "id": "토목-0004"
+  },
+  {
+   "section_code": "C04",
+   "section_name": "1)터파기",
+   "name": "터파기(매립토)",
+   "spec": "백호우1.0㎥",
+   "unit": "㎥",
+   "qty_sample": 52169.0,
+   "row_count": 1,
+   "id": "토목-0005"
+  },
+  {
+   "section_code": "C04",
+   "section_name": "1)터파기",
+   "name": "터파기(풍화암)",
+   "spec": "브레카+굴착",
+   "unit": "㎥",
+   "qty_sample": 147333.0,
+   "row_count": 1,
+   "id": "토목-0006"
+  },
+  {
+   "section_code": "C04",
+   "section_name": "1)터파기",
+   "name": "터파기(풍화토)",
+   "spec": "백호우1.0㎥",
+   "unit": "㎥",
+   "qty_sample": 108322.0,
+   "row_count": 1,
+   "id": "토목-0007"
+  },
+  {
+   "section_code": "C05",
+   "section_name": "2)크람쉘상차",
+   "name": "크람쉘상차",
+   "spec": "연암",
+   "unit": "㎥",
+   "qty_sample": 44891.0,
+   "row_count": 1,
+   "id": "토목-0008"
+  },
+  {
+   "section_code": "C05",
+   "section_name": "2)크람쉘상차",
+   "name": "크람쉘상차",
+   "spec": "토사",
+   "unit": "㎥",
+   "qty_sample": 86935.0,
+   "row_count": 1,
+   "id": "토목-0009"
+  },
+  {
+   "section_code": "C05",
+   "section_name": "2)크람쉘상차",
+   "name": "크람쉘상차",
+   "spec": "풍화암",
+   "unit": "㎥",
+   "qty_sample": 147333.0,
+   "row_count": 1,
+   "id": "토목-0010"
+  },
+  {
+   "section_code": "C06",
+   "section_name": "3)되메우기및다짐",
+   "name": "되메우기(콘크리트)",
+   "spec": "인력운반",
+   "unit": "㎥",
+   "qty_sample": 636.0,
+   "row_count": 1,
+   "id": "토목-0011"
+  },
+  {
+   "section_code": "C06",
+   "section_name": "3)되메우기및다짐",
+   "name": "되메우기및다짐",
+   "spec": "백호우0.7㎥+콤팩터,인력10%",
+   "unit": "㎥",
+   "qty_sample": 6304.0,
+   "row_count": 2,
+   "id": "토목-0012"
+  },
+  {
+   "section_code": "C07",
+   "section_name": "4)잔토운반",
+   "name": "잔토처리(매립토)",
+   "spec": "덤프24Ton L=20.0km",
+   "unit": "㎥",
+   "qty_sample": 52169.0,
+   "row_count": 1,
+   "id": "토목-0013"
+  },
+  {
+   "section_code": "C07",
+   "section_name": "4)잔토운반",
+   "name": "잔토처리(연암)",
+   "spec": "덤프24Ton L=20.0km",
+   "unit": "㎥",
+   "qty_sample": 46123.0,
+   "row_count": 3,
+   "id": "토목-0014"
+  },
+  {
+   "section_code": "C07",
+   "section_name": "4)잔토운반",
+   "name": "잔토처리(풍화암)",
+   "spec": "덤프24Ton L=20.0km",
+   "unit": "㎥",
+   "qty_sample": 149764.0,
+   "row_count": 3,
+   "id": "토목-0015"
+  },
+  {
+   "section_code": "C07",
+   "section_name": "4)잔토운반",
+   "name": "잔토처리(풍화토)",
+   "spec": "덤프24Ton L=20.0km",
+   "unit": "㎥",
+   "qty_sample": 108322.0,
+   "row_count": 1,
+   "id": "토목-0016"
+  },
+  {
+   "section_code": "C08",
+   "section_name": "5)시토장정지",
+   "name": "사토장정지",
+   "spec": "연암",
+   "unit": "㎥",
+   "qty_sample": 44891.0,
+   "row_count": 1,
+   "id": "토목-0017"
+  },
+  {
+   "section_code": "C08",
+   "section_name": "5)시토장정지",
+   "name": "사토장정지",
+   "spec": "토사",
+   "unit": "㎥",
+   "qty_sample": 160804.0,
+   "row_count": 2,
+   "id": "토목-0018"
+  },
+  {
+   "section_code": "C08",
+   "section_name": "5)시토장정지",
+   "name": "사토장정지",
+   "spec": "풍화암",
+   "unit": "㎥",
+   "qty_sample": 147333.0,
+   "row_count": 1,
+   "id": "토목-0019"
+  },
+  {
+   "section_code": "C09",
+   "section_name": "6)유용토운반",
+   "name": "반입토운반(토사)",
+   "spec": "백호1.0m3+덤프24Ton,L=20km",
+   "unit": "㎥",
+   "qty_sample": 1858.0,
+   "row_count": 1,
+   "id": "토목-0020"
+  },
+  {
+   "section_code": "C10",
+   "section_name": "7)바닥면고르기",
+   "name": "바닥면고르기",
+   "spec": "발파암",
+   "unit": "㎡",
+   "qty_sample": 14178.0,
+   "row_count": 1,
+   "id": "토목-0021"
+  },
+  {
+   "section_code": "C11",
+   "section_name": "8)기타공사",
+   "name": "가설배수로",
+   "spec": "토사측구,상하부",
+   "unit": "M",
+   "qty_sample": 1951.0,
+   "row_count": 1,
+   "id": "토목-0022"
+  },
+  {
+   "section_code": "C11",
+   "section_name": "8)기타공사",
+   "name": "가설우수관로",
+   "spec": "D250mm",
+   "unit": "M",
+   "qty_sample": 140.0,
+   "row_count": 1,
+   "id": "토목-0023"
+  },
+  {
+   "section_code": "C11",
+   "section_name": "8)기타공사",
+   "name": "가설집수정",
+   "spec": "1200x1200x1200",
+   "unit": "개소",
+   "qty_sample": 4.0,
+   "row_count": 1,
+   "id": "토목-0024"
+  },
+  {
+   "section_code": "C11",
+   "section_name": "8)기타공사",
+   "name": "펌핑배출",
+   "spec": "예비1대포함,6개월기준",
+   "unit": "개소",
+   "qty_sample": 4.0,
+   "row_count": 1,
+   "id": "토목-0025"
+  },
+  {
+   "section_code": "C12",
+   "section_name": "2.토류벽공사",
+   "name": "H-PILE 근입박기",
+   "spec": "H-300x300x10x15",
+   "unit": "본",
+   "qty_sample": 500.0,
+   "row_count": 1,
+   "id": "토목-0026"
+  },
+  {
+   "section_code": "C12",
+   "section_name": "2.토류벽공사",
+   "name": "H-PILE 이음",
+   "spec": "H-300x300x10x15",
+   "unit": "개소",
+   "qty_sample": 1000.0,
+   "row_count": 1,
+   "id": "토목-0027"
+  },
+  {
+   "section_code": "C12",
+   "section_name": "2.토류벽공사",
+   "name": "말뚝 두부정리",
+   "spec": "ø500",
+   "unit": "본",
+   "qty_sample": 500.0,
+   "row_count": 1,
+   "id": "토목-0028"
+  },
+  {
+   "section_code": "C12",
+   "section_name": "2.토류벽공사",
+   "name": "부상토잔토처리",
+   "spec": "상차+덤프15Ton L=20km",
+   "unit": "㎥",
+   "qty_sample": 1994.0,
+   "row_count": 1,
+   "id": "토목-0029"
+  },
+  {
+   "section_code": "C12",
+   "section_name": "2.토류벽공사",
+   "name": "연암천공",
+   "spec": "φ500~600mm,HammerBit",
+   "unit": "M",
+   "qty_sample": 2721.0,
+   "row_count": 1,
+   "id": "토목-0030"
+  },
+  {
+   "section_code": "C12",
+   "section_name": "2.토류벽공사",
+   "name": "장비조립및해체(천공장비)",
+   "spec": "(천공장비 최초조립및해체)",
+   "unit": "회",
+   "qty_sample": 1.0,
+   "row_count": 1,
+   "id": "토목-0031"
+  },
+  {
+   "section_code": "C12",
+   "section_name": "2.토류벽공사",
+   "name": "줄파기",
+   "spec": "기계+인력",
+   "unit": "M",
+   "qty_sample": 736.0,
+   "row_count": 1,
+   "id": "토목-0032"
+  },
+  {
+   "section_code": "C12",
+   "section_name": "2.토류벽공사",
+   "name": "천공홀 되메우기",
+   "spec": "백호0.2m3+인력",
+   "unit": "㎥",
+   "qty_sample": 641.0,
+   "row_count": 1,
+   "id": "토목-0033"
+  },
+  {
+   "section_code": "C12",
+   "section_name": "2.토류벽공사",
+   "name": "케이싱튜브설치철거",
+   "spec": "D500mm,토사",
+   "unit": "M",
+   "qty_sample": 17371.0,
+   "row_count": 2,
+   "id": "토목-0034"
+  },
+  {
+   "section_code": "C12",
+   "section_name": "2.토류벽공사",
+   "name": "토사천공",
+   "spec": "φ500~600mm,AUGER",
+   "unit": "M",
+   "qty_sample": 17371.0,
+   "row_count": 2,
+   "id": "토목-0035"
+  },
+  {
+   "section_code": "C12",
+   "section_name": "2.토류벽공사",
+   "name": "풍화암천공",
+   "spec": "φ500~600mm,HammerBit",
+   "unit": "M",
+   "qty_sample": 13465.0,
+   "row_count": 2,
+   "id": "토목-0036"
+  },
+  {
+   "section_code": "C13",
+   "section_name": "3.C.I.P공사",
+   "name": "CAP BEAM설치",
+   "spec": "600x300",
+   "unit": "M",
+   "qty_sample": 736.0,
+   "row_count": 1,
+   "id": "토목-0037"
+  },
+  {
+   "section_code": "C13",
+   "section_name": "3.C.I.P공사",
+   "name": "SLIME처리",
+   "spec": "상차+운반L=20km",
+   "unit": "㎥",
+   "qty_sample": 4163.0,
+   "row_count": 1,
+   "id": "토목-0038"
+  },
+  {
+   "section_code": "C13",
+   "section_name": "3.C.I.P공사",
+   "name": "벽면정리",
+   "spec": "",
+   "unit": "㎡",
+   "qty_sample": 13962.0,
+   "row_count": 1,
+   "id": "토목-0039"
+  },
+  {
+   "section_code": "C13",
+   "section_name": "3.C.I.P공사",
+   "name": "철근 현장가공 및 조립(토목)",
+   "spec": "Type-2",
+   "unit": "ton",
+   "qty_sample": 479.85,
+   "row_count": 1,
+   "id": "토목-0040"
+  },
+  {
+   "section_code": "C13",
+   "section_name": "3.C.I.P공사",
+   "name": "철근망 건입",
+   "spec": "",
+   "unit": "공",
+   "qty_sample": 995.0,
+   "row_count": 1,
+   "id": "토목-0041"
+  },
+  {
+   "section_code": "C13",
+   "section_name": "3.C.I.P공사",
+   "name": "철근콘크리트깨기",
+   "spec": "T=30cm이상",
+   "unit": "㎥",
+   "qty_sample": 132.0,
+   "row_count": 1,
+   "id": "토목-0042"
+  },
+  {
+   "section_code": "C13",
+   "section_name": "3.C.I.P공사",
+   "name": "콘크리트타설(트레미)",
+   "spec": "",
+   "unit": "㎥",
+   "qty_sample": 6639.0,
+   "row_count": 3,
+   "id": "토목-0043"
+  },
+  {
+   "section_code": "C13",
+   "section_name": "3.C.I.P공사",
+   "name": "폐기물수집운반비(24톤덤프)",
+   "spec": "상차+운반,L=30km",
+   "unit": "Ton",
+   "qty_sample": 2180.8,
+   "row_count": 3,
+   "id": "토목-0044"
+  },
+  {
+   "section_code": "C13",
+   "section_name": "3.C.I.P공사",
+   "name": "폐기물처리비",
+   "spec": "폐콘크리트",
+   "unit": "Ton",
+   "qty_sample": 2180.8,
+   "row_count": 3,
+   "id": "토목-0045"
+  },
+  {
+   "section_code": "C14",
+   "section_name": "4.숏크리트",
+   "name": "숏크리트타설",
+   "spec": "THK100mm",
+   "unit": "㎡",
+   "qty_sample": 2746.0,
+   "row_count": 1,
+   "id": "토목-0046"
+  },
+  {
+   "section_code": "C14",
+   "section_name": "4.숏크리트",
+   "name": "와이어메쉬설치",
+   "spec": "#6-100x100",
+   "unit": "㎡",
+   "qty_sample": 2746.0,
+   "row_count": 1,
+   "id": "토목-0047"
+  },
+  {
+   "section_code": "C14",
+   "section_name": "4.숏크리트",
+   "name": "절토면 고르기",
+   "spec": "연암",
+   "unit": "㎡",
+   "qty_sample": 2746.0,
+   "row_count": 1,
+   "id": "토목-0048"
+  },
+  {
+   "section_code": "C15",
+   "section_name": "5.SGR공사",
+   "name": "GROUTING 주입",
+   "spec": "SGR,혼화제포함",
+   "unit": "㎥",
+   "qty_sample": 5063.0,
+   "row_count": 1,
+   "id": "토목-0049"
+  },
+  {
+   "section_code": "C15",
+   "section_name": "5.SGR공사",
+   "name": "기계기구설치",
+   "spec": "",
+   "unit": "회",
+   "qty_sample": 15.0,
+   "row_count": 1,
+   "id": "토목-0050"
+  },
+  {
+   "section_code": "C15",
+   "section_name": "5.SGR공사",
+   "name": "천공(Φ100)",
+   "spec": "토사",
+   "unit": "M",
+   "qty_sample": 17084.0,
+   "row_count": 1,
+   "id": "토목-0051"
+  },
+  {
+   "section_code": "C15",
+   "section_name": "5.SGR공사",
+   "name": "천공(Φ100)",
+   "spec": "풍화암",
+   "unit": "M",
+   "qty_sample": 13237.0,
+   "row_count": 1,
+   "id": "토목-0052"
+  },
+  {
+   "section_code": "C15",
+   "section_name": "5.SGR공사",
+   "name": "플랜트설치해체",
+   "spec": "",
+   "unit": "회",
+   "qty_sample": 8.0,
+   "row_count": 1,
+   "id": "토목-0053"
+  },
+  {
+   "section_code": "C17",
+   "section_name": "1) PRD공사",
+   "name": "AIR SURGING",
+   "spec": "",
+   "unit": "공",
+   "qty_sample": 266.0,
+   "row_count": 2,
+   "id": "토목-0054"
+  },
+  {
+   "section_code": "C17",
+   "section_name": "1) PRD공사",
+   "name": "INCASING 설치 및 해체",
+   "spec": "",
+   "unit": "M",
+   "qty_sample": 7551.0,
+   "row_count": 2,
+   "id": "토목-0055"
+  },
+  {
+   "section_code": "C17",
+   "section_name": "1) PRD공사",
+   "name": "KODEN CHECK",
+   "spec": "",
+   "unit": "회",
+   "qty_sample": 266.0,
+   "row_count": 2,
+   "id": "토목-0056"
+  },
+  {
+   "section_code": "C17",
+   "section_name": "1) PRD공사",
+   "name": "PRD 천공(φ800)",
+   "spec": "연암",
+   "unit": "M",
+   "qty_sample": 1569.0,
+   "row_count": 2,
+   "id": "토목-0057"
+  },
+  {
+   "section_code": "C17",
+   "section_name": "1) PRD공사",
+   "name": "PRD 천공(φ800)",
+   "spec": "토사",
+   "unit": "M",
+   "qty_sample": 2620.0,
+   "row_count": 2,
+   "id": "토목-0058"
+  },
+  {
+   "section_code": "C17",
+   "section_name": "1) PRD공사",
+   "name": "PRD 천공(φ800)",
+   "spec": "풍화암",
+   "unit": "M",
+   "qty_sample": 3097.0,
+   "row_count": 2,
+   "id": "토목-0059"
+  },
+  {
+   "section_code": "C17",
+   "section_name": "1) PRD공사",
+   "name": "가이드 설치 (P R D공사)",
+   "spec": "",
+   "unit": "㎥",
+   "qty_sample": 729.0,
+   "row_count": 2,
+   "id": "토목-0060"
+  },
+  {
+   "section_code": "C17",
+   "section_name": "1) PRD공사",
+   "name": "가이드 철거 (P R D공사)",
+   "spec": "",
+   "unit": "㎥",
+   "qty_sample": 729.0,
+   "row_count": 2,
+   "id": "토목-0061"
+  },
+  {
+   "section_code": "C17",
+   "section_name": "1) PRD공사",
+   "name": "건전도시험(SonicTest)",
+   "spec": "",
+   "unit": "회",
+   "qty_sample": 80.0,
+   "row_count": 2,
+   "id": "토목-0062"
+  },
+  {
+   "section_code": "C17",
+   "section_name": "1) PRD공사",
+   "name": "말뚝 두부정리",
+   "spec": "ø800 인력치핑",
+   "unit": "공",
+   "qty_sample": 266.0,
+   "row_count": 2,
+   "id": "토목-0063"
+  },
+  {
+   "section_code": "C17",
+   "section_name": "1) PRD공사",
+   "name": "양방향재하시험",
+   "spec": "",
+   "unit": "개소",
+   "qty_sample": 5.0,
+   "row_count": 2,
+   "id": "토목-0064"
+  },
+  {
+   "section_code": "C17",
+   "section_name": "1) PRD공사",
+   "name": "잔토처리(토사)",
+   "spec": "덤프24Ton L=20.0km",
+   "unit": "㎥",
+   "qty_sample": 2056.0,
+   "row_count": 2,
+   "id": "토목-0065"
+  },
+  {
+   "section_code": "C17",
+   "section_name": "1) PRD공사",
+   "name": "철골건입",
+   "spec": "자재별도:건축",
+   "unit": "공",
+   "qty_sample": 266.0,
+   "row_count": 2,
+   "id": "토목-0066"
+  },
+  {
+   "section_code": "C17",
+   "section_name": "1) PRD공사",
+   "name": "파일공내속채움",
+   "spec": "",
+   "unit": "㎥",
+   "qty_sample": 5335.0,
+   "row_count": 2,
+   "id": "토목-0067"
+  },
+  {
+   "section_code": "C17",
+   "section_name": "1) PRD공사",
+   "name": "파일두부보강",
+   "spec": "철근보강",
+   "unit": "본",
+   "qty_sample": 266.0,
+   "row_count": 2,
+   "id": "토목-0068"
+  },
+  {
+   "section_code": "C17",
+   "section_name": "1) PRD공사",
+   "name": "파일중심보기",
+   "spec": "",
+   "unit": "본",
+   "qty_sample": 266.0,
+   "row_count": 2,
+   "id": "토목-0069"
+  },
+  {
+   "section_code": "C17",
+   "section_name": "1) PRD공사",
+   "name": "현장타설말뚝",
+   "spec": "장비 조립ㆍ해체",
+   "unit": "회",
+   "qty_sample": 1.0,
+   "row_count": 1,
+   "id": "토목-0070"
+  },
+  {
+   "section_code": "C18",
+   "section_name": "2) PRD공사",
+   "name": "H-PILE 인발",
+   "spec": "가설강재",
+   "unit": "본",
+   "qty_sample": 62.0,
+   "row_count": 1,
+   "id": "토목-0071"
+  },
+  {
+   "section_code": "C19",
+   "section_name": "7.계측공사",
+   "name": "건물경사계",
+   "spec": "TILT METER",
+   "unit": "EA",
+   "qty_sample": 64.0,
+   "row_count": 1,
+   "id": "토목-0072"
+  },
+  {
+   "section_code": "C19",
+   "section_name": "7.계측공사",
+   "name": "계측관리비",
+   "spec": "주2회, 보고서 포함",
+   "unit": "개월",
+   "qty_sample": 12.0,
+   "row_count": 1,
+   "id": "토목-0073"
+  },
+  {
+   "section_code": "C19",
+   "section_name": "7.계측공사",
+   "name": "균열측정계",
+   "spec": "CRACK GAUGE",
+   "unit": "EA",
+   "qty_sample": 64.0,
+   "row_count": 1,
+   "id": "토목-0074"
+  },
+  {
+   "section_code": "C19",
+   "section_name": "7.계측공사",
+   "name": "변형율계",
+   "spec": "STRAIN GAUGE",
+   "unit": "EA",
+   "qty_sample": 75.0,
+   "row_count": 1,
+   "id": "토목-0075"
+  },
+  {
+   "section_code": "C19",
+   "section_name": "7.계측공사",
+   "name": "유량계",
+   "spec": "FLOWMETER",
+   "unit": "EA",
+   "qty_sample": 4.0,
+   "row_count": 1,
+   "id": "토목-0076"
+  },
+  {
+   "section_code": "C19",
+   "section_name": "7.계측공사",
+   "name": "지중경사계",
+   "spec": "INCLINO METER, H=27m/EA",
+   "unit": "EA",
+   "qty_sample": 11.0,
+   "row_count": 1,
+   "id": "토목-0077"
+  },
+  {
+   "section_code": "C19",
+   "section_name": "7.계측공사",
+   "name": "지표침하계",
+   "spec": "SURFACE SETTLEMENT",
+   "unit": "EA",
+   "qty_sample": 33.0,
+   "row_count": 1,
+   "id": "토목-0078"
+  },
+  {
+   "section_code": "C19",
+   "section_name": "7.계측공사",
+   "name": "지하수위계",
+   "spec": "PIEZOMETER, H=27m/EA",
+   "unit": "EA",
+   "qty_sample": 13.0,
+   "row_count": 1,
+   "id": "토목-0079"
+  },
+  {
+   "section_code": "C19",
+   "section_name": "7.계측공사",
+   "name": "진동소음측정계",
+   "spec": "VIBRATION GAUGE,자동화",
+   "unit": "EA",
+   "qty_sample": 2.0,
+   "row_count": 1,
+   "id": "토목-0080"
+  },
+  {
+   "section_code": "C20",
+   "section_name": "8.부대공사",
+   "name": "가설계단",
+   "spec": "",
+   "unit": "개소",
+   "qty_sample": 2.0,
+   "row_count": 1,
+   "id": "토목-0081"
+  },
+  {
+   "section_code": "C20",
+   "section_name": "8.부대공사",
+   "name": "교통정리비",
+   "spec": "",
+   "unit": "월",
+   "qty_sample": 12.0,
+   "row_count": 1,
+   "id": "토목-0082"
+  },
+  {
+   "section_code": "C20",
+   "section_name": "8.부대공사",
+   "name": "세륜시설설치",
+   "spec": "세륜대 및 설비포함",
+   "unit": "월",
+   "qty_sample": 18.0,
+   "row_count": 2,
+   "id": "토목-0083"
+  },
+  {
+   "section_code": "C20",
+   "section_name": "8.부대공사",
+   "name": "안전난간",
+   "spec": "",
+   "unit": "M",
+   "qty_sample": 736.0,
+   "row_count": 1,
+   "id": "토목-0084"
+  },
+  {
+   "section_code": "C20",
+   "section_name": "8.부대공사",
+   "name": "용수비",
+   "spec": "",
+   "unit": "월",
+   "qty_sample": 18.0,
+   "row_count": 2,
+   "id": "토목-0085"
+  },
+  {
+   "section_code": "C20",
+   "section_name": "8.부대공사",
+   "name": "임시전력",
+   "spec": "",
+   "unit": "월",
+   "qty_sample": 12.0,
+   "row_count": 1,
+   "id": "토목-0086"
+  },
+  {
+   "section_code": "C20",
+   "section_name": "8.부대공사",
+   "name": "장비인양",
+   "spec": "",
+   "unit": "회",
+   "qty_sample": 2.0,
+   "row_count": 1,
+   "id": "토목-0087"
+  },
+  {
+   "section_code": "C20",
+   "section_name": "8.부대공사",
+   "name": "중기운반비",
+   "spec": "가시설공",
+   "unit": "식",
+   "qty_sample": 1.0,
+   "row_count": 1,
+   "id": "토목-0088"
+  },
+  {
+   "section_code": "C21",
+   "section_name": "9.운반공사",
+   "name": "강재운반(편도)",
+   "spec": "12ton 구역화물",
+   "unit": "Ton",
+   "qty_sample": 1307.99,
+   "row_count": 1,
+   "id": "토목-0089"
+  },
+  {
+   "section_code": "C21",
+   "section_name": "9.운반공사",
+   "name": "시멘트운반",
+   "spec": "구역",
+   "unit": "포",
+   "qty_sample": 19056.0,
+   "row_count": 2,
+   "id": "토목-0090"
+  },
+  {
+   "section_code": "C21",
+   "section_name": "9.운반공사",
+   "name": "철근운반",
+   "spec": "",
+   "unit": "Ton",
+   "qty_sample": 511.57,
+   "row_count": 2,
+   "id": "토목-0091"
+  },
+  {
+   "section_code": "C23",
+   "section_name": "1)레미콘",
+   "name": "레미콘",
+   "spec": "25-180-12",
+   "unit": "㎥",
+   "qty_sample": 1405.0,
+   "row_count": 2,
+   "id": "토목-0092"
+  },
+  {
+   "section_code": "C23",
+   "section_name": "1)레미콘",
+   "name": "레미콘",
+   "spec": "25-210-12",
+   "unit": "㎥",
+   "qty_sample": 223.0,
+   "row_count": 2,
+   "id": "토목-0093"
+  },
+  {
+   "section_code": "C23",
+   "section_name": "1)레미콘",
+   "name": "레미콘",
+   "spec": "25-240-15",
+   "unit": "㎥",
+   "qty_sample": 6318.0,
+   "row_count": 1,
+   "id": "토목-0094"
+  },
+  {
+   "section_code": "C23",
+   "section_name": "1)레미콘",
+   "name": "레미콘",
+   "spec": "25-450-18",
+   "unit": "㎥",
+   "qty_sample": 415.0,
+   "row_count": 1,
+   "id": "토목-0095"
+  },
+  {
+   "section_code": "C23",
+   "section_name": "1)레미콘",
+   "name": "레미콘(숏크리트용)",
+   "spec": "13-210-10",
+   "unit": "㎥",
+   "qty_sample": 536.0,
+   "row_count": 1,
+   "id": "토목-0096"
+  },
+  {
+   "section_code": "C24",
+   "section_name": "2)시멘트",
+   "name": "시멘트",
+   "spec": "40kg/포",
+   "unit": "포",
+   "qty_sample": 19056.0,
+   "row_count": 2,
+   "id": "토목-0097"
+  },
+  {
+   "section_code": "C25",
+   "section_name": "3)철 근",
+   "name": "철근(SD30)",
+   "spec": "D13 mm",
+   "unit": "Ton",
+   "qty_sample": 102.33,
+   "row_count": 2,
+   "id": "토목-0098"
+  },
+  {
+   "section_code": "C25",
+   "section_name": "3)철 근",
+   "name": "철근(SD30)",
+   "spec": "D22 mm",
+   "unit": "Ton",
+   "qty_sample": 407.29,
+   "row_count": 1,
+   "id": "토목-0099"
+  },
+  {
+   "section_code": "C26",
+   "section_name": "4)골재",
+   "name": "쇄석자갈",
+   "spec": "φ25이하",
+   "unit": "㎥",
+   "qty_sample": 5548.0,
+   "row_count": 1,
+   "id": "토목-0100"
+  },
+  {
+   "section_code": "C27",
+   "section_name": "5)강 재",
+   "name": "H형강(사장)",
+   "spec": "H-300x300x10x15",
+   "unit": "Ton",
+   "qty_sample": 1307.99,
+   "row_count": 1,
+   "id": "토목-0101"
+  },
+  {
+   "section_code": "C30",
+   "section_name": "1)터파기",
+   "name": "터파기(토사)",
+   "spec": "인력10%:0∼1M,백호0.7M3",
+   "unit": "㎥",
+   "qty_sample": 5458.0,
+   "row_count": 1,
+   "id": "토목-0102"
+  },
+  {
+   "section_code": "C32",
+   "section_name": "3)흙운반",
+   "name": "사토처리",
+   "spec": "토사(덤프24Ton),L=20km",
+   "unit": "㎥",
+   "qty_sample": 312.0,
+   "row_count": 1,
+   "id": "토목-0103"
+  },
+  {
+   "section_code": "C34",
+   "section_name": "1)관부설공",
+   "name": "우수관부설(기초CONC)",
+   "spec": "D450mm,소켓식",
+   "unit": "M",
+   "qty_sample": 30.0,
+   "row_count": 1,
+   "id": "토목-0104"
+  },
+  {
+   "section_code": "C34",
+   "section_name": "1)관부설공",
+   "name": "우수관부설(기초CONC)",
+   "spec": "D600mm,소켓식",
+   "unit": "M",
+   "qty_sample": 100.0,
+   "row_count": 1,
+   "id": "토목-0105"
+  },
+  {
+   "section_code": "C35",
+   "section_name": "2)우수맨홀",
+   "name": "우수1호맨홀",
+   "spec": "φ900mm,H=2.02m",
+   "unit": "개소",
+   "qty_sample": 4.0,
+   "row_count": 1,
+   "id": "토목-0106"
+  },
+  {
+   "section_code": "C35",
+   "section_name": "2)우수맨홀",
+   "name": "우수2호맨홀",
+   "spec": "φ1200mm,H=1.65m",
+   "unit": "개소",
+   "qty_sample": 2.0,
+   "row_count": 1,
+   "id": "토목-0107"
+  },
+  {
+   "section_code": "C36",
+   "section_name": "3)집수정",
+   "name": "집수정(스틸그레이팅)",
+   "spec": "500x500",
+   "unit": "개소",
+   "qty_sample": 48.0,
+   "row_count": 1,
+   "id": "토목-0108"
+  },
+  {
+   "section_code": "C36",
+   "section_name": "3)집수정",
+   "name": "침투집수정",
+   "spec": "450x450",
+   "unit": "개소",
+   "qty_sample": 16.0,
+   "row_count": 1,
+   "id": "토목-0109"
+  },
+  {
+   "section_code": "C37",
+   "section_name": "4)측구",
+   "name": "U형측구(디자인뚜껑포함)",
+   "spec": "300x300",
+   "unit": "M",
+   "qty_sample": 125.0,
+   "row_count": 1,
+   "id": "토목-0110"
+  },
+  {
+   "section_code": "C37",
+   "section_name": "4)측구",
+   "name": "U형측구(무소음뚜껑)",
+   "spec": "300x300",
+   "unit": "M",
+   "qty_sample": 62.0,
+   "row_count": 1,
+   "id": "토목-0111"
+  },
+  {
+   "section_code": "C37",
+   "section_name": "4)측구",
+   "name": "원형수로관부설",
+   "spec": "D300mm,2.0m/본",
+   "unit": "M",
+   "qty_sample": 16.0,
+   "row_count": 1,
+   "id": "토목-0112"
+  },
+  {
+   "section_code": "C37",
+   "section_name": "4)측구",
+   "name": "침투형트랜치",
+   "spec": "D300,유공관",
+   "unit": "M",
+   "qty_sample": 177.0,
+   "row_count": 1,
+   "id": "토목-0113"
+  },
+  {
+   "section_code": "C38",
+   "section_name": "5)관보호공",
+   "name": "관보호공",
+   "spec": "D600mm",
+   "unit": "M",
+   "qty_sample": 17.0,
+   "row_count": 1,
+   "id": "토목-0114"
+  },
+  {
+   "section_code": "C39",
+   "section_name": "6)연결관",
+   "name": "연결관부설및접합",
+   "spec": "D300mm/PVC이중벽관",
+   "unit": "M",
+   "qty_sample": 608.0,
+   "row_count": 1,
+   "id": "토목-0115"
+  },
+  {
+   "section_code": "C40",
+   "section_name": "7)우수부대공",
+   "name": "기존맨홀연결",
+   "spec": "",
+   "unit": "개소",
+   "qty_sample": 4.0,
+   "row_count": 2,
+   "id": "토목-0116"
+  },
+  {
+   "section_code": "C40",
+   "section_name": "7)우수부대공",
+   "name": "지하매설물예고쉬트",
+   "spec": "",
+   "unit": "M",
+   "qty_sample": 740.0,
+   "row_count": 3,
+   "id": "토목-0117"
+  },
+  {
+   "section_code": "C40",
+   "section_name": "7)우수부대공",
+   "name": "하수관내CCTV검사",
+   "spec": "D800mm이하",
+   "unit": "M",
+   "qty_sample": 658.0,
+   "row_count": 2,
+   "id": "토목-0118"
+  },
+  {
+   "section_code": "C40",
+   "section_name": "7)우수부대공",
+   "name": "하수관수밀시험",
+   "spec": "ψ300mm",
+   "unit": "개소",
+   "qty_sample": 34.0,
+   "row_count": 2,
+   "id": "토목-0119"
+  },
+  {
+   "section_code": "C42",
+   "section_name": "1)관부설공",
+   "name": "분뇨오수관부설및접합(기초모래)",
+   "spec": "D250mm/PVC이중벽관",
+   "unit": "M",
+   "qty_sample": 223.0,
+   "row_count": 1,
+   "id": "토목-0120"
+  },
+  {
+   "section_code": "C42",
+   "section_name": "1)관부설공",
+   "name": "생활오수관부설및접합(기초모래)",
+   "spec": "D250mm/PVC이중벽관",
+   "unit": "M",
+   "qty_sample": 265.0,
+   "row_count": 1,
+   "id": "토목-0121"
+  },
+  {
+   "section_code": "C43",
+   "section_name": "2)오수맨홀",
+   "name": "분뇨오수소형맨홀",
+   "spec": "φ600mm",
+   "unit": "개소",
+   "qty_sample": 13.0,
+   "row_count": 1,
+   "id": "토목-0122"
+  },
+  {
+   "section_code": "C43",
+   "section_name": "2)오수맨홀",
+   "name": "생활오수소형맨홀",
+   "spec": "φ600mm",
+   "unit": "개소",
+   "qty_sample": 15.0,
+   "row_count": 1,
+   "id": "토목-0123"
+  },
+  {
+   "section_code": "C44",
+   "section_name": "3)관보호공",
+   "name": "관보호공",
+   "spec": "D250mm",
+   "unit": "M",
+   "qty_sample": 23.0,
+   "row_count": 1,
+   "id": "토목-0124"
+  },
+  {
+   "section_code": "C47",
+   "section_name": "1)상수관 부설",
+   "name": "KP메커니컬 조인트관 접합",
+   "spec": "관경 150mm",
+   "unit": "개소",
+   "qty_sample": 15.0,
+   "row_count": 1,
+   "id": "토목-0125"
+  },
+  {
+   "section_code": "C47",
+   "section_name": "1)상수관 부설",
+   "name": "KP메커니컬 조인트관 접합",
+   "spec": "관경 80mm",
+   "unit": "개소",
+   "qty_sample": 1.0,
+   "row_count": 1,
+   "id": "토목-0126"
+  },
+  {
+   "section_code": "C47",
+   "section_name": "1)상수관 부설",
+   "name": "주철관 부설 (기계)",
+   "spec": "관경 150mm",
+   "unit": "본",
+   "qty_sample": 16.0,
+   "row_count": 1,
+   "id": "토목-0127"
+  },
+  {
+   "section_code": "C47",
+   "section_name": "1)상수관 부설",
+   "name": "플랜지 조인트관 부설 및 접합",
+   "spec": "관경 100㎜, 볼트구멍 지름 19㎜, 8개",
+   "unit": "개소",
+   "qty_sample": 3.0,
+   "row_count": 1,
+   "id": "토목-0128"
+  },
+  {
+   "section_code": "C47",
+   "section_name": "1)상수관 부설",
+   "name": "플랜지 조인트관 부설 및 접합",
+   "spec": "관경 150㎜, 볼트구멍 지름 19㎜, 8개",
+   "unit": "개소",
+   "qty_sample": 5.0,
+   "row_count": 1,
+   "id": "토목-0129"
+  },
+  {
+   "section_code": "C48",
+   "section_name": "2)밸브류 부설 및 접합",
+   "name": "제수변 접합 및 부설",
+   "spec": "D= 80mm",
+   "unit": "개소",
+   "qty_sample": 1.0,
+   "row_count": 1,
+   "id": "토목-0130"
+  },
+  {
+   "section_code": "C48",
+   "section_name": "2)밸브류 부설 및 접합",
+   "name": "제수변 접합 및 부설",
+   "spec": "D=150mm",
+   "unit": "개소",
+   "qty_sample": 2.0,
+   "row_count": 1,
+   "id": "토목-0131"
+  },
+  {
+   "section_code": "C49",
+   "section_name": "3)관절단",
+   "name": "주철관 절단",
+   "spec": "관경 150mm",
+   "unit": "개소",
+   "qty_sample": 8.0,
+   "row_count": 1,
+   "id": "토목-0132"
+  },
+  {
+   "section_code": "C50",
+   "section_name": "4)제수변실 및 보호통",
+   "name": "제수변실",
+   "spec": "2.1x3.6x1.8",
+   "unit": "개소",
+   "qty_sample": 1.0,
+   "row_count": 1,
+   "id": "토목-0133"
+  },
+  {
+   "section_code": "C50",
+   "section_name": "4)제수변실 및 보호통",
+   "name": "제수변키보호공",
+   "spec": "1호 D318xD410",
+   "unit": "개소",
+   "qty_sample": 1.0,
+   "row_count": 1,
+   "id": "토목-0134"
+  },
+  {
+   "section_code": "C50",
+   "section_name": "4)제수변실 및 보호통",
+   "name": "제수변키보호공",
+   "spec": "2호 D318xD560",
+   "unit": "개소",
+   "qty_sample": 1.0,
+   "row_count": 1,
+   "id": "토목-0135"
+  },
+  {
+   "section_code": "C51",
+   "section_name": "5)관보호공",
+   "name": "이형관보호공",
+   "spec": "각종",
+   "unit": "개소",
+   "qty_sample": 7.0,
+   "row_count": 1,
+   "id": "토목-0136"
+  },
+  {
+   "section_code": "C52",
+   "section_name": "6)수압시험",
+   "name": "수압시험",
+   "spec": "D=150M/M",
+   "unit": "회",
+   "qty_sample": 1.0,
+   "row_count": 1,
+   "id": "토목-0137"
+  },
+  {
+   "section_code": "C53",
+   "section_name": "7)관대",
+   "name": "22-1/2도소켓곡관",
+   "spec": "φ150mm",
+   "unit": "EA",
+   "qty_sample": 2.0,
+   "row_count": 1,
+   "id": "토목-0138"
+  },
+  {
+   "section_code": "C53",
+   "section_name": "7)관대",
+   "name": "45도소켓곡관",
+   "spec": "φ150mm",
+   "unit": "EA",
+   "qty_sample": 4.0,
+   "row_count": 1,
+   "id": "토목-0139"
+  },
+  {
+   "section_code": "C53",
+   "section_name": "7)관대",
+   "name": "소켓플랜지T형관",
+   "spec": "φ150x150mm",
+   "unit": "EA",
+   "qty_sample": 2.0,
+   "row_count": 1,
+   "id": "토목-0140"
+  },
+  {
+   "section_code": "C53",
+   "section_name": "7)관대",
+   "name": "수도용닥타일주철관(직관)",
+   "spec": "150㎜x6ｍ(KP시멘트,2종)",
+   "unit": "본",
+   "qty_sample": 16.0,
+   "row_count": 1,
+   "id": "토목-0141"
+  },
+  {
+   "section_code": "C53",
+   "section_name": "7)관대",
+   "name": "수도용제수밸브(수동)",
+   "spec": "150㎜",
+   "unit": "EA",
+   "qty_sample": 2.0,
+   "row_count": 1,
+   "id": "토목-0142"
+  },
+  {
+   "section_code": "C53",
+   "section_name": "7)관대",
+   "name": "수도용제수밸브(수동)",
+   "spec": "80㎜",
+   "unit": "EA",
+   "qty_sample": 1.0,
+   "row_count": 1,
+   "id": "토목-0143"
+  },
+  {
+   "section_code": "C53",
+   "section_name": "7)관대",
+   "name": "유량계",
+   "spec": "φ150mm",
+   "unit": "EA",
+   "qty_sample": 1.0,
+   "row_count": 1,
+   "id": "토목-0144"
+  },
+  {
+   "section_code": "C53",
+   "section_name": "7)관대",
+   "name": "유량계",
+   "spec": "φ80mm",
+   "unit": "EA",
+   "qty_sample": 1.0,
+   "row_count": 1,
+   "id": "토목-0145"
+  },
+  {
+   "section_code": "C53",
+   "section_name": "7)관대",
+   "name": "이음관",
+   "spec": "φ150mm",
+   "unit": "EA",
+   "qty_sample": 1.0,
+   "row_count": 1,
+   "id": "토목-0146"
+  },
+  {
+   "section_code": "C53",
+   "section_name": "7)관대",
+   "name": "편락관",
+   "spec": "φ150x80mm",
+   "unit": "EA",
+   "qty_sample": 1.0,
+   "row_count": 1,
+   "id": "토목-0147"
+  },
+  {
+   "section_code": "C53",
+   "section_name": "7)관대",
+   "name": "플랜지단관",
+   "spec": "φ150mm",
+   "unit": "EA",
+   "qty_sample": 6.0,
+   "row_count": 1,
+   "id": "토목-0148"
+  },
+  {
+   "section_code": "C53",
+   "section_name": "7)관대",
+   "name": "플랜지단관",
+   "spec": "φ80mm",
+   "unit": "EA",
+   "qty_sample": 2.0,
+   "row_count": 1,
+   "id": "토목-0149"
+  },
+  {
+   "section_code": "C55",
+   "section_name": "1)투수블럭포장",
+   "name": "동상방지층포설및다짐",
+   "spec": "기계시공-본선 포장",
+   "unit": "㎥",
+   "qty_sample": 614.0,
+   "row_count": 2,
+   "id": "토목-0150"
+  },
+  {
+   "section_code": "C55",
+   "section_name": "1)투수블럭포장",
+   "name": "모래부설",
+   "spec": "(기초지정)",
+   "unit": "㎥",
+   "qty_sample": 136.0,
+   "row_count": 2,
+   "id": "토목-0151"
+  },
+  {
+   "section_code": "C55",
+   "section_name": "1)투수블럭포장",
+   "name": "보조기층포설및다짐",
+   "spec": "기계시공-본선 포장",
+   "unit": "㎥",
+   "qty_sample": 681.0,
+   "row_count": 2,
+   "id": "토목-0152"
+  },
+  {
+   "section_code": "C55",
+   "section_name": "1)투수블럭포장",
+   "name": "투수블럭포장",
+   "spec": "THK80/320mm",
+   "unit": "a",
+   "qty_sample": 34.09,
+   "row_count": 2,
+   "id": "토목-0153"
+  },
+  {
+   "section_code": "C57",
+   "section_name": "3)경계석",
+   "name": "도로경계석설치",
+   "spec": "150x150x1000,화강석",
+   "unit": "M",
+   "qty_sample": 640.0,
+   "row_count": 1,
+   "id": "토목-0154"
+  },
+  {
+   "section_code": "C57",
+   "section_name": "3)경계석",
+   "name": "보차도경계석설치",
+   "spec": "180x200x1000,화강석",
+   "unit": "m",
+   "qty_sample": 346.0,
+   "row_count": 1,
+   "id": "토목-0155"
+  },
+  {
+   "section_code": "C58",
+   "section_name": "4)안전시설",
+   "name": "차선도색(융착식)",
+   "spec": "백색,실선",
+   "unit": "㎡",
+   "qty_sample": 22.0,
+   "row_count": 1,
+   "id": "토목-0156"
+  },
+  {
+   "section_code": "C58",
+   "section_name": "4)안전시설",
+   "name": "차선도색(융착식)",
+   "spec": "수동식,백색,기호",
+   "unit": "㎡",
+   "qty_sample": 85.0,
+   "row_count": 1,
+   "id": "토목-0157"
+  },
+  {
+   "section_code": "C58",
+   "section_name": "4)안전시설",
+   "name": "차선도색(융착식)",
+   "spec": "수동식,백색,문자",
+   "unit": "㎡",
+   "qty_sample": 14.0,
+   "row_count": 1,
+   "id": "토목-0158"
+  },
+  {
+   "section_code": "C58",
+   "section_name": "4)안전시설",
+   "name": "차선도색(융착식)",
+   "spec": "수동식,황색,문자",
+   "unit": "㎡",
+   "qty_sample": 25.0,
+   "row_count": 1,
+   "id": "토목-0159"
+  },
+  {
+   "section_code": "C58",
+   "section_name": "4)안전시설",
+   "name": "차선도색(융착식)",
+   "spec": "황색,실선",
+   "unit": "㎡",
+   "qty_sample": 53.0,
+   "row_count": 1,
+   "id": "토목-0160"
+  },
+  {
+   "section_code": "C59",
+   "section_name": "6.부대공사",
+   "name": "중기운반비",
+   "spec": "",
+   "unit": "식",
+   "qty_sample": 1.0,
+   "row_count": 1,
+   "id": "토목-0161"
+  },
+  {
+   "section_code": "C59",
+   "section_name": "6.부대공사",
+   "name": "현장정리비",
+   "spec": "",
+   "unit": "월",
+   "qty_sample": 6.0,
+   "row_count": 1,
+   "id": "토목-0162"
+  },
+  {
+   "section_code": "C60",
+   "section_name": "7.운반공사",
+   "name": "흄관운반",
+   "spec": "D=450mm",
+   "unit": "본",
+   "qty_sample": 13.0,
+   "row_count": 1,
+   "id": "토목-0163"
+  },
+  {
+   "section_code": "C60",
+   "section_name": "7.운반공사",
+   "name": "흄관운반",
+   "spec": "D=600mm",
+   "unit": "본",
+   "qty_sample": 49.0,
+   "row_count": 1,
+   "id": "토목-0164"
+  },
+  {
+   "section_code": "C62",
+   "section_name": "1)레미콘",
+   "name": "레미콘",
+   "spec": "25-180-08",
+   "unit": "㎥",
+   "qty_sample": 81.0,
+   "row_count": 1,
+   "id": "토목-0165"
+  },
+  {
+   "section_code": "C62",
+   "section_name": "1)레미콘",
+   "name": "레미콘",
+   "spec": "25-210-08",
+   "unit": "㎥",
+   "qty_sample": 17.0,
+   "row_count": 1,
+   "id": "토목-0166"
+  },
+  {
+   "section_code": "C64",
+   "section_name": "3)철근",
+   "name": "철근(SD30)",
+   "spec": "D16 mm",
+   "unit": "Ton",
+   "qty_sample": 0.17,
+   "row_count": 1,
+   "id": "토목-0167"
+  },
+  {
+   "section_code": "C64",
+   "section_name": "3)철근",
+   "name": "철근(SD30)",
+   "spec": "D19 mm",
+   "unit": "Ton",
+   "qty_sample": 0.06,
+   "row_count": 1,
+   "id": "토목-0168"
+  },
+  {
+   "section_code": "C64",
+   "section_name": "3)철근",
+   "name": "철근(SD40)",
+   "spec": "HD13 mm",
+   "unit": "Ton",
+   "qty_sample": 0.24,
+   "row_count": 1,
+   "id": "토목-0169"
+  },
+  {
+   "section_code": "C64",
+   "section_name": "3)철근",
+   "name": "철근(SD40)",
+   "spec": "HD16 mm",
+   "unit": "Ton",
+   "qty_sample": 1.47,
+   "row_count": 1,
+   "id": "토목-0170"
+  },
+  {
+   "section_code": "C65",
+   "section_name": "4)포장블럭",
+   "name": "투수블럭",
+   "spec": "T80",
+   "unit": "㎡",
+   "qty_sample": 3680.0,
+   "row_count": 1,
+   "id": "토목-0171"
+  },
+  {
+   "section_code": "C66",
+   "section_name": "5)경계석",
+   "name": "도로경계석(화강석)",
+   "spec": "150x150x1000,곡선",
+   "unit": "EA",
+   "qty_sample": 74.0,
+   "row_count": 1,
+   "id": "토목-0172"
+  },
+  {
+   "section_code": "C66",
+   "section_name": "5)경계석",
+   "name": "도로경계석(화강석)",
+   "spec": "150x150x1000,직선",
+   "unit": "EA",
+   "qty_sample": 584.0,
+   "row_count": 1,
+   "id": "토목-0173"
+  },
+  {
+   "section_code": "C66",
+   "section_name": "5)경계석",
+   "name": "보차도경계석(화강석)",
+   "spec": "180x200x1000,곡선",
+   "unit": "EA",
+   "qty_sample": 160.0,
+   "row_count": 1,
+   "id": "토목-0174"
+  },
+  {
+   "section_code": "C66",
+   "section_name": "5)경계석",
+   "name": "보차도경계석(화강석)",
+   "spec": "180x200x1000,직선",
+   "unit": "EA",
+   "qty_sample": 196.0,
+   "row_count": 1,
+   "id": "토목-0175"
+  },
+  {
+   "section_code": "C67",
+   "section_name": "6)배수관",
+   "name": "PVC PIPE(VG1)",
+   "spec": "D300mm",
+   "unit": "M",
+   "qty_sample": 184.0,
+   "row_count": 1,
+   "id": "토목-0176"
+  },
+  {
+   "section_code": "C67",
+   "section_name": "6)배수관",
+   "name": "PVC이중벽관",
+   "spec": "D250mm",
+   "unit": "M",
+   "qty_sample": 527.0,
+   "row_count": 1,
+   "id": "토목-0177"
+  },
+  {
+   "section_code": "C67",
+   "section_name": "6)배수관",
+   "name": "PVC이중벽관",
+   "spec": "D300mm",
+   "unit": "M",
+   "qty_sample": 626.0,
+   "row_count": 1,
+   "id": "토목-0178"
+  },
+  {
+   "section_code": "C67",
+   "section_name": "6)배수관",
+   "name": "원형수로관",
+   "spec": "D300,2.0m/본",
+   "unit": "본",
+   "qty_sample": 9.0,
+   "row_count": 1,
+   "id": "토목-0179"
+  },
+  {
+   "section_code": "C67",
+   "section_name": "6)배수관",
+   "name": "흄관(소켓관)",
+   "spec": "Φ450 mm",
+   "unit": "본",
+   "qty_sample": 13.0,
+   "row_count": 1,
+   "id": "토목-0180"
+  },
+  {
+   "section_code": "C67",
+   "section_name": "6)배수관",
+   "name": "흄관(소켓관)",
+   "spec": "Φ600 mm",
+   "unit": "본",
+   "qty_sample": 49.0,
+   "row_count": 1,
+   "id": "토목-0181"
+  },
+  {
+   "section_code": "C68",
+   "section_name": "7)골 재",
+   "name": "모래",
+   "spec": "쇄사",
+   "unit": "㎥",
+   "qty_sample": 468.0,
+   "row_count": 1,
+   "id": "토목-0182"
+  },
+  {
+   "section_code": "C68",
+   "section_name": "7)골 재",
+   "name": "보조기층재",
+   "spec": "Φ40mm이하",
+   "unit": "㎥",
+   "qty_sample": 879.0,
+   "row_count": 1,
+   "id": "토목-0183"
+  },
+  {
+   "section_code": "C68",
+   "section_name": "7)골 재",
+   "name": "선택층재",
+   "spec": "Φ75mm이하",
+   "unit": "㎥",
+   "qty_sample": 791.0,
+   "row_count": 1,
+   "id": "토목-0184"
+  },
+  {
+   "section_code": "C68",
+   "section_name": "7)골 재",
+   "name": "자갈",
+   "spec": "25㎜",
+   "unit": "㎥",
+   "qty_sample": 1.0,
+   "row_count": 1,
+   "id": "토목-0185"
+  },
+  {
+   "section_code": "C68",
+   "section_name": "7)골 재",
+   "name": "잡석",
+   "spec": "φ90∼150mm",
+   "unit": "㎥",
+   "qty_sample": 195.0,
+   "row_count": 1,
+   "id": "토목-0186"
+  },
+  {
+   "section_code": "C70",
+   "section_name": "1)대중교통,보행및자전거",
+   "name": "보행동선 고원식횡단보도 설치",
+   "spec": "",
+   "unit": "개소",
+   "qty_sample": 10.0,
+   "row_count": 1,
+   "id": "토목-0187"
+  },
+  {
+   "section_code": "C70",
+   "section_name": "1)대중교통,보행및자전거",
+   "name": "보행동선 단절지점 횡단보도 설치",
+   "spec": "504M, 2.0M/경간",
+   "unit": "경간",
+   "qty_sample": 8.0,
+   "row_count": 1,
+   "id": "토목-0188"
+  },
+  {
+   "section_code": "C70",
+   "section_name": "1)대중교통,보행및자전거",
+   "name": "자전거보관소",
+   "spec": "비가림시설포함",
+   "unit": "개소",
+   "qty_sample": 11.0,
+   "row_count": 1,
+   "id": "토목-0189"
+  },
+  {
+   "section_code": "C70",
+   "section_name": "1)대중교통,보행및자전거",
+   "name": "저전거공기주입기",
+   "spec": "",
+   "unit": "개소",
+   "qty_sample": 11.0,
+   "row_count": 1,
+   "id": "토목-0190"
+  },
+  {
+   "section_code": "C71",
+   "section_name": "2)교통안전및기타",
+   "name": "30km 규제에 따른 노면표시 및 표지판 설치",
+   "spec": "흥선로 167번길",
+   "unit": "개소",
+   "qty_sample": 10.0,
+   "row_count": 1,
+   "id": "토목-0191"
+  },
+  {
+   "section_code": "C71",
+   "section_name": "2)교통안전및기타",
+   "name": "가속차로 합류부 양보표시 및 표지판 설치",
+   "spec": "호국로 및 흥선로상",
+   "unit": "개소",
+   "qty_sample": 2.0,
+   "row_count": 1,
+   "id": "토목-0192"
+  },
+  {
+   "section_code": "C71",
+   "section_name": "2)교통안전및기타",
+   "name": "과속방지턱",
+   "spec": "흥선로 167번길 및 흥선로",
+   "unit": "개소",
+   "qty_sample": 4.0,
+   "row_count": 1,
+   "id": "토목-0193"
+  },
+  {
+   "section_code": "C71",
+   "section_name": "2)교통안전및기타",
+   "name": "과속방지턱 예고 표지판설치",
+   "spec": "흥선로 167번길 및 흥선로",
+   "unit": "개소",
+   "qty_sample": 7.0,
+   "row_count": 1,
+   "id": "토목-0194"
+  },
+  {
+   "section_code": "C71",
+   "section_name": "2)교통안전및기타",
+   "name": "규제봉",
+   "spec": "호국로",
+   "unit": "M",
+   "qty_sample": 30.0,
+   "row_count": 1,
+   "id": "토목-0195"
+  },
+  {
+   "section_code": "C71",
+   "section_name": "2)교통안전및기타",
+   "name": "도류화시설 및 노면표시 및 표지판 설치",
+   "spec": "흥선로 167번길 ~ 흥선로방면",
+   "unit": "개소",
+   "qty_sample": 2.0,
+   "row_count": 1,
+   "id": "토목-0196"
+  },
+  {
+   "section_code": "C71",
+   "section_name": "2)교통안전및기타",
+   "name": "반사경 설치",
+   "spec": "흥선로",
+   "unit": "개소",
+   "qty_sample": 1.0,
+   "row_count": 1,
+   "id": "토목-0197"
+  },
+  {
+   "section_code": "C71",
+   "section_name": "2)교통안전및기타",
+   "name": "보행교 연결을 위한 횡단보도 설치",
+   "spec": "흥선로 지하차도 위",
+   "unit": "개소",
+   "qty_sample": 1.0,
+   "row_count": 1,
+   "id": "토목-0198"
+  },
+  {
+   "section_code": "C71",
+   "section_name": "2)교통안전및기타",
+   "name": "보행자방호울타리 설치",
+   "spec": "",
+   "unit": "경간",
+   "qty_sample": 252.0,
+   "row_count": 1,
+   "id": "토목-0199"
+  },
+  {
+   "section_code": "C71",
+   "section_name": "2)교통안전및기타",
+   "name": "신설교차로 다기능무인단속카메라 설치",
+   "spec": "",
+   "unit": "개소",
+   "qty_sample": 1.0,
+   "row_count": 1,
+   "id": "토목-0200"
+  },
+  {
+   "section_code": "C71",
+   "section_name": "2)교통안전및기타",
+   "name": "주정차금지 표지판 설치",
+   "spec": "흥선로 167번길",
+   "unit": "개소",
+   "qty_sample": 4.0,
+   "row_count": 1,
+   "id": "토목-0201"
+  },
+  {
+   "section_code": "C71",
+   "section_name": "2)교통안전및기타",
+   "name": "주진입로 교차로 LED 바닥 보행신호기 설치",
+   "spec": "2개 교차로",
+   "unit": "개소",
+   "qty_sample": 4.0,
+   "row_count": 1,
+   "id": "토목-0202"
+  },
+  {
+   "section_code": "C71",
+   "section_name": "2)교통안전및기타",
+   "name": "지하주차장 통로 반사경설치",
+   "spec": "",
+   "unit": "개소",
+   "qty_sample": 30.0,
+   "row_count": 1,
+   "id": "토목-0203"
+  },
+  {
+   "section_code": "C71",
+   "section_name": "2)교통안전및기타",
+   "name": "차량 진출입 및 지하주차장 램프 경고등",
+   "spec": "",
+   "unit": "개소",
+   "qty_sample": 23.0,
+   "row_count": 1,
+   "id": "토목-0204"
+  },
+  {
+   "section_code": "C71",
+   "section_name": "2)교통안전및기타",
+   "name": "철도통과높이 제한시설 철골구조물, 안내표지판 설치",
+   "spec": "흥선로 167번길 시점부 주면",
+   "unit": "개소",
+   "qty_sample": 1.0,
+   "row_count": 1,
+   "id": "토목-0205"
+  },
+  {
+   "section_code": "C71",
+   "section_name": "2)교통안전및기타",
+   "name": "충격흡수시설 설치",
+   "spec": "호국로",
+   "unit": "개소",
+   "qty_sample": 1.0,
+   "row_count": 1,
+   "id": "토목-0206"
+  },
+  {
+   "section_code": "C71",
+   "section_name": "2)교통안전및기타",
+   "name": "횡단보도 주변 볼라드 설치",
+   "spec": "24개지점",
+   "unit": "EA",
+   "qty_sample": 48.0,
+   "row_count": 1,
+   "id": "토목-0207"
+  },
+  {
+   "section_code": "C71",
+   "section_name": "2)교통안전및기타",
+   "name": "횡단보도 표지판 설치",
+   "spec": "사업지 인접구간",
+   "unit": "개소",
+   "qty_sample": 12.0,
+   "row_count": 1,
+   "id": "토목-0208"
+  }
+ ]
+}

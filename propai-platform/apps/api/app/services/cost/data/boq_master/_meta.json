@@ -1,0 +1,41 @@
+{
+ "project": {
+  "name": "의정부동 424 주상복합 신축공사",
+  "gfa_sqm": 238504.0,
+  "gfa_basis": "건축 내역서 '임시동력+가설전기시설(연면적기준)' 수량",
+  "sample_count": 1,
+  "provenance": "실적 공내역서 1건(공개 단가 없음) — 원단위 계수는 n=1 참고치"
+ },
+ "disciplines": {
+  "건축": {
+   "file": "architecture.json",
+   "sections": 126,
+   "unique_items": 961,
+   "rows_aggregated": 1656
+  },
+  "기계소방": {
+   "file": "mechanical.json",
+   "sections": 99,
+   "unique_items": 1741,
+   "rows_aggregated": 4575
+  },
+  "전기통신소방": {
+   "file": "electrical.json",
+   "sections": 114,
+   "unique_items": 1029,
+   "rows_aggregated": 3621
+  },
+  "조경": {
+   "file": "landscape.json",
+   "sections": 4,
+   "unique_items": 58,
+   "rows_aggregated": 58
+  },
+  "토목": {
+   "file": "civil.json",
+   "sections": 71,
+   "unique_items": 208,
+   "rows_aggregated": 256
+  }
+ }
+}

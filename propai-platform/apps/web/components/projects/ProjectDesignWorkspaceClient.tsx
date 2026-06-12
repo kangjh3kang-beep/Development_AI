@@ -232,9 +232,13 @@ export function ProjectDesignWorkspaceClient({
           <p className="mt-4 max-w-3xl text-sm leading-7 text-[var(--text-secondary)] font-medium">
             {labels.heroHint}
           </p>
+          {!canUseLiveApi && (
+          {!canUseLiveApi && (
           <p className="mt-3 max-w-3xl text-xs leading-6 text-[var(--text-hint)] font-mono">
             {labels.tokenHint}
           </p>
+          )}
+          )}
           {!canUseLiveApi ? (
             <div className="mt-6 rounded-2xl border border-dashed border-[var(--line)] bg-[var(--surface-soft)]/50 p-5 text-xs font-semibold leading-relaxed text-[var(--text-secondary)]">
               {labels.authError} (현재 매개변수 가중치 매핑이 내장된 하이브리드 시뮬레이션 엔진이 활성화되었습니다.)

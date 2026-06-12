@@ -47,6 +47,42 @@ def _legal(law_name: str, article: str) -> dict:
     return rec
 
 
+# ── 비(非)법령 출처 헬퍼(additive) — 법령화 방지의 핵심 ────────────────────
+# _legal()은 검증된 '한국 법령'에만 사용한다. 표준(KDS·NKBA)·실무가이드·통상관행·
+# 논문 휴리스틱은 절대 _legal()로 감싸지 않고 아래 전용 헬퍼로 출처를 분리한다.
+# 모든 레코드에 source_type(법령|표준|실무가이드|통상관행|논문)을 명시하고, 비법령
+# 레코드는 is_legal=False를 강제한다(가짜 법령화·할루시네이션 링크 금지).
+
+
+def _std(standard: str, clause: str) -> dict:
+    """공인 표준(KDS·NKBA 등) 근거 1건(문자열 조립 — 계산 로직 아님).
+
+    standard=표준 식별자(예: 'KDS 14 20 30', 'NKBA Kitchen'), clause=세부 조항.
+    법령이 아니므로 url을 생성하지 않으며 is_legal=False를 부착한다.
+    """
+    return {
+        "standard": standard, "clause": clause,
+        "source_type": "표준", "is_legal": False,
+    }
+
+
+def _practice(note: str, *, source_type: str = "통상관행") -> dict:
+    """실무가이드·통상관행 근거 1건. source_type ∈ {실무가이드, 통상관행}.
+
+    법정·표준 근거가 아닌 실무 관행 수치(Neufert 등 가이드 포함)에 사용한다.
+    """
+    return {"note": note, "source_type": source_type, "is_legal": False}
+
+
+def _paper(ref: str) -> dict:
+    """논문 휴리스틱 근거 1건 — source='논문' 태그 강제, 법령화 절대 금지.
+
+    ref=논문 식별자(arXiv ID/DOI 등). is_legal=False + source_type='논문'을
+    불변으로 부착한다(생성 모델 학습/평가 휴리스틱을 법령으로 오인 방지).
+    """
+    return {"paper_ref": ref, "source_type": "논문", "is_legal": False}
+
+
 # ── 전역 문법 상수 ──
 
 # 평면 그리드 모듈(mm) — 문·창 배치 좌표는 이 모듈로 스냅한다(통상관행: 50mm).
@@ -99,6 +135,7 @@ ROOM_TYPES: dict[str, dict] = {
         "needs_door": True, "door": dict(_ENTRY_DOOR),
         "needs_window": False, "window": None, "wet": False,
         "source": "통상관행", "legal_basis": None,
+        "furniture_clearance_ref": None,
         "note": "현관문 1000×2100 외여닫이(out)·방화문·세대당 1개(통상관행)",
     },
     "living": {
@@ -106,6 +143,7 @@ ROOM_TYPES: dict[str, dict] = {
         "needs_door": False, "door": None,
         "needs_window": True, "window": dict(_LIVING_WINDOW), "wet": False,
         "source": "법령", "legal_basis": dict(_DAYLIGHT_BASIS),
+        "furniture_clearance_ref": "furniture",
         "note": _DAYLIGHT_NOTE + " / LDK 오픈플랜 — 주방·복도와 벽 미설치(통상관행)",
     },
     "kitchen_dining": {
@@ -113,6 +151,7 @@ ROOM_TYPES: dict[str, dict] = {
         "needs_door": False, "door": None,
         "needs_window": False, "window": None, "wet": True,
         "source": "통상관행", "legal_basis": None,
+        "furniture_clearance_ref": "kitchen",
         "note": "LDK 오픈플랜 — 거실·복도와 개방 연결(통상관행)",
     },
     "bedroom": {
@@ -120,6 +159,7 @@ ROOM_TYPES: dict[str, dict] = {
         "needs_door": True, "door": dict(_BEDROOM_DOOR),
         "needs_window": True, "window": dict(_BEDROOM_WINDOW), "wet": False,
         "source": "법령", "legal_basis": dict(_DAYLIGHT_BASIS),
+        "furniture_clearance_ref": "furniture",
         "note": "침실문 900×2100 안여닫이(in) / " + _DAYLIGHT_NOTE,
     },
     "master_bedroom": {
@@ -127,6 +167,7 @@ ROOM_TYPES: dict[str, dict] = {
         "needs_door": True, "door": dict(_BEDROOM_DOOR),
         "needs_window": True, "window": dict(_BEDROOM_WINDOW), "wet": False,
         "source": "법령", "legal_basis": dict(_DAYLIGHT_BASIS),
+        "furniture_clearance_ref": "furniture",
         "note": "안방 — 침실문 900×2100 안여닫이(in) / " + _DAYLIGHT_NOTE,
     },
     "bath_common": {
@@ -134,6 +175,7 @@ ROOM_TYPES: dict[str, dict] = {
         "needs_door": True, "door": dict(_BATH_DOOR),
         "needs_window": False, "window": None, "wet": True,
         "source": "통상관행", "legal_basis": None,
+        "furniture_clearance_ref": "bath",
         "note": "공용욕실 — 욕실문 750×2000 안여닫이(in), 기계환기 가정(통상관행)",
     },
     "bath_master": {
@@ -141,6 +183,7 @@ ROOM_TYPES: dict[str, dict] = {
         "needs_door": True, "door": dict(_BATH_DOOR),
         "needs_window": False, "window": None, "wet": True,
         "source": "통상관행", "legal_basis": None,
+        "furniture_clearance_ref": "bath",
         "note": "부속욕실(안방 부속) — 욕실문 750×2000 안여닫이(in)(통상관행)",
     },
     "utility": {
@@ -148,6 +191,7 @@ ROOM_TYPES: dict[str, dict] = {
         "needs_door": True, "door": dict(_UTILITY_DOOR),
         "needs_window": False, "window": None, "wet": True,
         "source": "통상관행", "legal_basis": None,
+        "furniture_clearance_ref": None,
         "note": "다용도실 — 문 750 / 최소면적 법정 기준 없음(미정의 — 가짜값 금지)",
     },
     "corridor": {
@@ -155,6 +199,7 @@ ROOM_TYPES: dict[str, dict] = {
         "needs_door": False, "door": None,
         "needs_window": False, "window": None, "wet": False,
         "source": "통상관행", "legal_basis": None,
+        "furniture_clearance_ref": "passage",
         "note": "세대 내 복도 — 유효폭 0.9m 관행, 거실·주방·현관과 개방 연결",
     },
     "dress": {
@@ -162,6 +207,7 @@ ROOM_TYPES: dict[str, dict] = {
         "needs_door": True, "door": dict(_DRESS_DOOR),
         "needs_window": False, "window": None, "wet": False,
         "source": "통상관행", "legal_basis": None,
+        "furniture_clearance_ref": "furniture",
         "note": "드레스룸 — 안방 부속, 문 800×2100(통상관행)",
     },
     "balcony": {
@@ -169,6 +215,7 @@ ROOM_TYPES: dict[str, dict] = {
         "needs_door": False, "door": None,
         "needs_window": False, "window": None, "wet": False,
         "source": "통상관행", "legal_basis": None,
+        "furniture_clearance_ref": None,
         "note": "발코니(서비스면적, 전용 외) — 전면 분합창은 인접 거실·침실 개구로 표현",
     },
 }
@@ -272,6 +319,164 @@ WALL_TYPES: dict[str, dict] = {
         "note": "세대 내 칸막이벽 — 비내력 120mm(조적·경량벽 통상관행)",
     },
 }
+
+# ── 인접 선호 가중치 KB(additive·데이터 전용) ────────────────────────────────
+# 출처: 건축 프로그래밍 통상관행(A1 — archisoup/BriefBuilder류 인접 매트릭스).
+# 값 도메인: +2(필수 인접)~−2(필수 분리). 0(중립)은 미수록(미정의=중립으로 엔진 처리).
+# 키는 frozenset[str]로 대칭 보장(거실-현관 == 현관-거실). 타입은 ROOM_TYPES 키만.
+# 법령·표준 아님 — source_type='통상관행'(아래 메타). 판정·합산은 엔진(체커)이 담당.
+
+ADJACENCY_WEIGHTS: dict[frozenset, int] = {
+    frozenset({"living", "kitchen_dining"}): 2,    # LDK 강결합
+    frozenset({"kitchen_dining", "utility"}): 2,   # 주방-다용도(서비스 동선)
+    frozenset({"master_bedroom", "bath_master"}): 2,  # 안방존 전용욕 결합
+    frozenset({"master_bedroom", "dress"}): 2,     # 안방존 드레스룸 결합
+    frozenset({"living", "entry"}): 1,             # 거실-현관 근접 선호
+    frozenset({"living", "corridor"}): 1,          # 거실-복도(분배 동선)
+    frozenset({"bedroom", "corridor"}): 1,         # 침실-복도 접근
+    frozenset({"living", "bath_common"}): -1,      # 거실-욕실 직접노출 회피
+    frozenset({"bedroom", "kitchen_dining"}): -1,  # 침실-주방 소음·냄새 분리
+    frozenset({"entry", "bath_common"}): -2,       # 현관-욕실 직접대면 필수분리
+}
+
+# 인접 선호 메타(출처 정직 표기 — 법령화 금지)
+ADJACENCY_WEIGHTS_META: dict = _practice(
+    "인접 선호행렬 +2(필수인접)~−2(필수분리) — 건축 프로그래밍 통상관행(A1). "
+    "frozenset 키로 대칭, 0(중립)은 미수록.",
+)
+
+# 인접 판정 거리 임계(논문 휴리스틱) — dist < dist_ratio×planLength → 인접.
+# source='논문' 태그 필수(R4). KB엔 임계값만, 그래프 판정 함수는 엔진.
+ADJACENCY_DETECT: dict = {
+    "dist_ratio": 0.03,
+    **_paper("arXiv 2108.05947 / ScienceDirect 2023(인접 판정 거리 임계 0.03)"),
+}
+
+# ── 인체공학 클리어런스 KB(additive·데이터 전용, mm) ─────────────────────────
+# 가구·기구 주변 여유. 표준(NKBA)·실무가이드(Neufert) 출처를 항목별로 정직 분리.
+# ROOM_TYPES[*].furniture_clearance_ref가 아래 키(kitchen/bath/furniture/passage)를 참조.
+# 판정(가구 수용·동선 관통)은 엔진(check_*) 담당 — 여기엔 수치만.
+
+CLEARANCES: dict[str, dict] = {
+    "kitchen": {
+        "work_triangle": {
+            "leg_min_mm": 1200, "leg_max_mm": 2700,
+            "sum_max_mm": 6700, "no_traffic": True,
+        },
+        "aisle_mm": {
+            "cook1": 1067, "cook2": 1219, "walkway": 914,
+            "opposed_min": 1067, "opposed_max": 1219,
+        },
+        "landing_mm": {
+            "sink": [610, 460], "fridge_handle": 380,
+            "cooktop": 300, "builtin_cab_w": 918,
+        },
+        "source": _std("NKBA Kitchen", "G5·G6·G7(작업삼각형·통로·착지면)"),
+    },
+    "bath": {
+        "wc_to_wall_mm": 380, "wc_to_wall_rec_mm": 460,
+        "wc_front_mm": 530, "wc_front_rec_mm": 760,
+        "dual_lav_mm": 760, "dual_lav_rec_mm": 910,
+        "source": _std("NKBA Bathroom", "변기·세면 클리어런스(권장치 별도)"),
+    },
+    "furniture": {
+        "dining_wall_mm": 750, "dining_wall_pass_mm": 1000,
+        "dining_perimeter_mm": 900,
+        "bed_access_mm": 700, "wardrobe_front_mm": 900,
+        "source": _practice(
+            "가구 클리어런스: 식탁-벽 750(통행1000)·식탁둘레 900·침대진입 700·"
+            "옷장앞 900 — Neufert(N1)", source_type="실무가이드",
+        ),
+    },
+    "passage": {
+        "single_mm": 600, "standard_mm": 900,
+        "two_min_mm": 1000, "two_max_mm": 1500,
+        "unit_corridor_min_mm": 900, "unit_corridor_max_mm": 1200,
+        "source": _practice(
+            "통로/복도폭: 1인 600·표준 900·2인교행 1000~1500·세대내복도 900~1200 — "
+            "Neufert·실무(N2)", source_type="실무가이드",
+        ),
+    },
+}
+
+# ── 구조 경간 KB(additive·데이터 전용) ───────────────────────────────────────
+# 출처: KDS 14 20 30(슬래브·보 최소두께비, 표준) + RC/벽식 설계 통상관행.
+# 보정계수(factor_fy/factor_lw)는 '식 표현 문자열'만 KB에 두고, 적용 계산은 엔진.
+# 계산 로직 0 원칙 유지 — 비율·식·범위 데이터만.
+
+STRUCTURE_SPANS: dict = {
+    # 1방향 슬래브 최소두께비(처짐 검토 생략 가능 최소두께 = 경간×비율)
+    "slab_min_ratio": {
+        "simple": 1.0 / 20.0, "one_end": 1.0 / 24.0,
+        "both": 1.0 / 28.0, "cantilever": 1.0 / 10.0,
+    },
+    # 보 최소춤비
+    "beam_min_ratio": {
+        "simple": 1.0 / 16.0, "one_end": 1.0 / 18.5,
+        "both": 1.0 / 21.0, "cantilever": 1.0 / 8.0,
+    },
+    # 최소두께 보정계수 — '식'만 보관(엔진이 적용). fy≠400MPa·경량콘크리트 보정.
+    "factor_fy": "0.43 + fy/700",                 # fy(MPa)
+    "factor_lw": "max(1.65 - 0.00031*wc, 1.09)",  # wc=단위질량(kg/m^3)
+    # 무량판 2방향 슬래브 — 통상 두께 범위(식 파라미터 β=장변/단변은 엔진 산정)
+    "flat_plate_typ_mm": [250, 300],
+    "flat_plate_thickness_formula": "ln*(0.8 + fy/1400) / (36 + 9*beta)",  # ln=순경간
+    # RC 라멘 — 기둥 경간·부담면적(통상관행)
+    "rc_frame": {
+        "col_span_mm": [6000, 9000], "col_span_typ_mm": [6000, 7500],
+        "tributary_sqm": 30, "warn_over_mm": 9000,
+        **_practice("RC라멘 기둥경간 6~9m(typ 6~7.5)·부담면적≈30㎡(C1)"),
+    },
+    # 벽식 — 벽간격·벽두께(통상관행)
+    "bearing_wall": {
+        "spacing_max_mm": 6000, "thickness_mm": [200, 250], "no_beam": True,
+        **_practice("벽식 벽간격≤6m·벽두께 200~250mm·무보(C2)"),
+    },
+    "source": _std("KDS 14 20 30", "표4.2-1(처짐 검토 생략 최소두께비·보정계수)"),
+}
+
+# ── 단면(층고·반자) 규칙 KB(additive·데이터 전용, mm) ────────────────────────
+# 출처: 반자·층고 최소치는 한국 법령(주택건설기준 등에 관한 규정·주택법 시행규칙),
+# 슬래브 두께·층고 적층·Blondel(계단)은 표준/관행. 법정 최소치만 _legal()로 근거 부착.
+# 판정(반자≥2.2·층고≥2.4)은 엔진(check_ceiling_floor_height) 담당.
+
+_SECTION_HEIGHT_BASIS: dict = _legal("주택건설기준 등에 관한 규정", "제3조")
+
+SECTION_RULES: dict = {
+    "ceiling_h_min_mm": 2200,   # 법정 반자높이 최소(거실)
+    "ceiling_h_typ_mm": 2300,   # 통상 반자높이
+    "floor_h_min_mm": 2400,     # 통상 층고 최소(반자+슬래브·설비)
+    "floor_h_typ_mm": 2800,     # 통상 층고(공동주택)
+    "floor_h_formula": "ceiling_h + slab_thickness + service_plenum",  # 층고 적층(엔진 산정)
+    "slab_typ_mm": {"rahmen": [120, 150], "flat": [250, 300]},
+    # 계단 Blondel 식: 2R + T = 600~635mm(R=챌판높이, T=디딤판폭) — 관행
+    "stair_blondel_mm": {"two_r_plus_t_min": 600, "two_r_plus_t_max": 635},
+    "ceiling_floor_legal_basis": dict(_SECTION_HEIGHT_BASIS),
+    "stair_source": _practice("계단 Blondel 2R+T=600~635mm(보행 편의 관행)"),
+    "source": _std("KDS(슬래브 두께)", "법정 반자·층고는 ceiling_floor_legal_basis 참조"),
+}
+
+# ── 주차 모듈 KB(additive·데이터 전용, mm) ───────────────────────────────────
+# 주차구획·차로폭 치수는 주차장법 시행규칙 제3조(검증된 한국 법령) → _legal() 근거.
+# 세대당 주차대수(0.7~1.0)는 주차장법 시행령 별표1·지자체 조례로 변동 → 통상관행 표기
+# (지역·용도별 상이 — 단일 법정값 없음, 가짜 법령화 금지).
+
+_PARKING_DIM_BASIS: dict = _legal("주차장법 시행규칙", "제3조")
+
+PARKING_MODULE: dict = {
+    "stall_mm": {"w": 2500, "l": 5000},          # 일반형 주차구획(법령)
+    "stall_expanded_mm": {"w": 2600, "l": 5200},  # 확장형 주차구획(법령)
+    "aisle_mm": {"right_angle": 6000},            # 직각주차 차로폭(법령)
+    "stall_legal_basis": dict(_PARKING_DIM_BASIS),
+    # 세대당 대수는 지역·조례별 변동 — 단일 법정값 없음(정직 표기)
+    "units_per_household": [0.7, 1.0],
+    "units_per_household_meta": _practice(
+        "세대당 주차대수 0.7~1.0 — 지역·용도·지자체 조례별 상이(주차장법 시행령 별표1 위임). "
+        "단일 법정값 없음(가짜 법령화 금지).",
+    ),
+    "source_note": "구획·차로 치수=주차장법 시행규칙 제3조(법령) / 세대당 대수=조례 변동(관행)",
+}
+
 
 # ── 경계/개구 dict 필드 계약(IFC 후속 변환이 그대로 소비 — additive만 허용) ──
 
