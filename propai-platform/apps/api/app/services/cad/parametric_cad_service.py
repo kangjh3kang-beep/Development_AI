@@ -55,6 +55,15 @@ def _setup_layers(doc: ezdxf.document.Drawing) -> None:
             doc.layers.add(name, **attrs)
 
 
+# CAD2.0 셰이프 레이어 → DXF 표준 레이어 매핑
+# (dxf_import_service._DXF_LAYER_TO_SHAPE가 역매핑 — 왕복 시 레이어 보존)
+SHAPE_LAYER_MAP: Dict[str, str] = {
+    "outline": "WALL",
+    "wall": "WALL_INTERIOR",
+    "dim": "DIM",
+    "note": "TEXT",
+}
+
 # 정식 DIMENSION 공통 스타일 오버라이드 — 기존 간이 치수선 표기와 시각 일관 유지
 _DIM_STYLE_OVERRIDE: Dict[str, Any] = {
     "dimtxt": 0.25,  # 치수문자 높이 (기존 add_text height=0.25와 동일)
@@ -886,6 +895,7 @@ class ParametricCADService:
         points: List[Dict[str, Any]],
         surfaces: Optional[List[Dict[str, Any]]] = None,
         scale_px_per_m: float = 10.0,
+        shapes: Optional[List[Dict[str, Any]]] = None,
     ) -> bytes:
         """CADEditor 편집 좌표(px, 캔버스 y축 하향)를 DXF(m, y축 상향)로 직변환한다.
 
@@ -895,9 +905,14 @@ class ParametricCADService:
           하향 → CAD y축 상향 반전 후 bbox 좌하단을 원점으로 정규화.
         - 산출: WALL 레이어 닫힌 LWPOLYLINE + 각 변 정식 DIMENSION(aligned).
         - ezdxf 미설치 시 기존 생성 메서드와 동일한 플레이스홀더 반환.
+        - shapes(CAD2.0): 전달 시 points/surfaces 대신 셰이프 목록으로 전체
+          도면을 변환(_create_dxf_from_shapes). None/빈 목록이면 기존 경로 불변.
         """
         if scale_px_per_m <= 0:
             raise ValueError("scale_px_per_m는 0보다 커야 합니다")
+
+        if shapes:
+            return self._create_dxf_from_shapes(shapes, scale_px_per_m)
 
         pmap: Dict[str, Dict[str, Any]] = {}
         for p in points or []:
@@ -940,8 +955,20 @@ class ParametricCADService:
             dxfattribs={"layer": "WALL", "lineweight": 50},
         )
 
-        # 폴리곤 방향(shoelace) — 치수선을 외측에 배치하기 위한 오프셋 부호 결정
+        self._add_ring_dimensions(msp, ring_m)
+
+        return _write_dxf(doc)
+
+    @staticmethod
+    def _add_ring_dimensions(msp: Modelspace, ring_m: List[Tuple[float, float]]) -> None:
+        """닫힌 링(m)의 각 변에 정식 aligned DIMENSION을 외측 배치한다.
+
+        폴리곤 방향(shoelace)으로 외측 오프셋 부호를 결정 — 기존 점 경로의
+        치수 배치 로직을 그대로 분리(동작 불변, points/shapes 경로 공용).
+        """
         n = len(ring_m)
+        if n < 3:
+            return
         area2 = sum(
             ring_m[i][0] * ring_m[(i + 1) % n][1]
             - ring_m[(i + 1) % n][0] * ring_m[i][1]
@@ -962,6 +989,137 @@ class ParametricCADService:
                 dxfattribs={"layer": "DIM"},
             )
             dim.render()
+
+    # ── CAD2.0 셰이프 직변환 (shapes 모드) ──
+
+    @staticmethod
+    def _resolve_shape_layer(shape_layer: Any, kind: str) -> str:
+        """CAD2.0 셰이프 레이어 → DXF 표준 레이어.
+
+        outline→WALL, wall→WALL_INTERIOR, dim→DIM, note→TEXT.
+        미상/누락은 label→TEXT, 그 외→WALL_INTERIOR(임의 레이어 발명 금지).
+        """
+        mapped = SHAPE_LAYER_MAP.get(str(shape_layer or "").strip().lower())
+        if mapped:
+            return mapped
+        return "TEXT" if kind == "label" else "WALL_INTERIOR"
+
+    def _create_dxf_from_shapes(
+        self,
+        shapes: List[Dict[str, Any]],
+        scale_px_per_m: float,
+    ) -> bytes:
+        """CAD2.0 셰이프(px, 캔버스 y축 하향)를 DXF(m, y축 상향)로 직변환한다.
+
+        - kind별 엔티티: polygon/rect/polyline→LWPOLYLINE(닫힘은 close=True),
+          line→LINE, circle→CIRCLE, label→TEXT. 미지원 kind/결손 좌표는 건너뜀.
+        - 레이어맵: SHAPE_LAYER_MAP(_resolve_shape_layer) — outline 닫힌 링의
+          변에만 정식 DIMENSION을 배치한다.
+        - bbox 정규화 기준은 앵커 좌표(꼭짓점·끝점·원 중심·라벨 삽입점) —
+          dxf_import_service.parse_dxf_to_shapes와 동일 규약(왕복 무결성).
+        - $INSUNITS=6(m) 기록 — 재가져오기 시 단위가 휴리스틱 없이 확정된다.
+        - 유효 셰이프가 하나도 없으면 ValueError(가짜 도면 생성 금지).
+        """
+        anchors: List[Tuple[float, float]] = []
+        parsed: List[Dict[str, Any]] = []
+
+        for s in shapes:
+            if not isinstance(s, dict):
+                continue
+            kind = str(s.get("kind") or "").strip().lower()
+            is_outline = str(s.get("layer") or "").strip().lower() == "outline"
+            layer = self._resolve_shape_layer(s.get("layer"), kind)
+            try:
+                if kind in ("polygon", "polyline"):
+                    pts = [
+                        (float(p["x"]), float(p["y"]))
+                        for p in (s.get("points") or [])
+                        if isinstance(p, dict) and "x" in p and "y" in p
+                    ]
+                    closed = True if kind == "polygon" else bool(s.get("closed", False))
+                    if closed and len(pts) >= 2 and pts[0] == pts[-1]:
+                        pts = pts[:-1]  # 닫힘 중복점 정규화 — close=True가 닫음
+                    if len(pts) < (3 if closed else 2):
+                        continue
+                    parsed.append({"etype": "poly", "points": pts, "closed": closed,
+                                   "layer": layer, "is_outline": is_outline})
+                    anchors.extend(pts)
+                elif kind == "rect":
+                    x, y = float(s["x"]), float(s["y"])
+                    w, h = float(s["w"]), float(s["h"])
+                    if w <= 0 or h <= 0:
+                        continue
+                    pts = [(x, y), (x + w, y), (x + w, y + h), (x, y + h)]
+                    parsed.append({"etype": "poly", "points": pts, "closed": True,
+                                   "layer": layer, "is_outline": is_outline})
+                    anchors.extend(pts)
+                elif kind == "line":
+                    p1 = (float(s["x1"]), float(s["y1"]))
+                    p2 = (float(s["x2"]), float(s["y2"]))
+                    parsed.append({"etype": "line", "p1": p1, "p2": p2, "layer": layer})
+                    anchors.extend([p1, p2])
+                elif kind == "circle":
+                    center = (float(s["cx"]), float(s["cy"]))
+                    r = float(s.get("r") or 0)
+                    if r <= 0:
+                        continue
+                    parsed.append({"etype": "circle", "center": center, "r": r,
+                                   "layer": layer})
+                    anchors.append(center)
+                elif kind == "label":
+                    pos = (float(s["x"]), float(s["y"]))
+                    text = str(s.get("text") or "").strip()
+                    if not text:
+                        continue
+                    height = float(s.get("text_height_m") or 0.3)
+                    parsed.append({"etype": "text", "pos": pos, "text": text,
+                                   "height": height, "layer": layer})
+                    anchors.append(pos)
+                # 미지원 kind는 건너뜀(additive — 프론트 신규 kind에 관대)
+            except (KeyError, TypeError, ValueError):
+                continue  # 좌표 결손 셰이프는 건너뜀(부분 성공 허용)
+
+        if not parsed:
+            raise ValueError(
+                "유효한 셰이프 없음 — polygon/rect/polyline/line/circle/label 중 1개 이상 필요"
+            )
+
+        if ezdxf is None:
+            return b"DXF_PLACEHOLDER_NO_EZDXF"
+
+        min_x = min(x for x, _ in anchors)
+        max_y = max(y for _, y in anchors)
+
+        def to_m(pt: Tuple[float, float]) -> Tuple[float, float]:
+            return ((pt[0] - min_x) / scale_px_per_m, (max_y - pt[1]) / scale_px_per_m)
+
+        doc = ezdxf.new("R2010")
+        doc.header["$INSUNITS"] = 6  # m — 재가져오기(import) 시 단위 확정
+        _setup_layers(doc)
+        msp: Modelspace = doc.modelspace()
+
+        for item in parsed:
+            layer = item["layer"]
+            if item["etype"] == "poly":
+                ring_m = [to_m(p) for p in item["points"]]
+                attrs: Dict[str, Any] = {"layer": layer}
+                if layer == "WALL":
+                    attrs["lineweight"] = 50  # 기존 points 경로 외곽선과 동일 표기
+                msp.add_lwpolyline(ring_m, close=item["closed"], dxfattribs=attrs)
+                if item["is_outline"] and item["closed"]:
+                    self._add_ring_dimensions(msp, ring_m)  # outline 변에만 정식 치수
+            elif item["etype"] == "line":
+                msp.add_line(to_m(item["p1"]), to_m(item["p2"]),
+                             dxfattribs={"layer": layer})
+            elif item["etype"] == "circle":
+                msp.add_circle(to_m(item["center"]),
+                               radius=item["r"] / scale_px_per_m,
+                               dxfattribs={"layer": layer})
+            else:  # text
+                msp.add_text(
+                    item["text"],
+                    dxfattribs={"layer": layer, "height": item["height"]},
+                ).set_placement(to_m(item["pos"]))
 
         return _write_dxf(doc)
 

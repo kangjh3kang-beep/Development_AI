@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -90,6 +90,9 @@ class CADSaveRequest(BaseModel):
     points: list[dict[str, Any]] = Field(default_factory=list)
     lines: list[dict[str, Any]] = Field(default_factory=list)
     surfaces: list[dict[str, Any]] = Field(default_factory=list)
+    # CAD2.0 셰이프(polygon/rect/polyline/line/circle/label) — 전달 시에만
+    # design_data_json에 기록(빈 배열 미기록 → 기존 저장 JSON 불변, 하위호환).
+    shapes: list[dict[str, Any]] = Field(default_factory=list)
     floor_count: Optional[int] = None
     building_height_m: Optional[float] = None
     # 편집본 매스치수(폴리곤 bbox 역산값) — _load_mass_from_design_version이 GLB/해석에 소비.
@@ -526,6 +529,9 @@ async def save_drawing(
             "layers": req.layers,
             "vector_data": req.vector_data,
         }
+        # CAD2.0 shapes(전달 시에만 기록 — 빈 배열 미기록, 기존 저장 JSON 불변).
+        if req.shapes:
+            design_payload["shapes"] = req.shapes
         # 편집본 매스치수(전달 시에만 기록) — _load_mass_from_design_version이 GLB/해석에 소비.
         if req.building_width_m is not None:
             design_payload["building_width_m"] = req.building_width_m
@@ -683,6 +689,7 @@ async def export_edited_dxf(
     저장된 design_data_json의 points·surfaces·vector_data["scale"]를
     ParametricCADService.create_dxf_from_edited_points에 넘겨 편집본 그대로의
     DXF(닫힌 LWPOLYLINE + 정식 DIMENSION)를 반환한다.
+    CAD2.0 shapes가 저장돼 있으면 shapes 모드(전체 셰이프 직변환)로 내보낸다.
 
     정직 처리: 저장본이 없으면 404(가짜 도면 생성 금지). 인증 필수(401) + 소유권(403).
     """
@@ -720,7 +727,9 @@ async def export_edited_dxf(
 
     points = data.get("points") or []
     surfaces = data.get("surfaces") or []
-    if not points:
+    # CAD2.0 shapes가 저장돼 있으면 shapes 모드(전체 셰이프 변환) — 없으면 기존 points 직변환.
+    shapes = data.get("shapes") or []
+    if not points and not shapes:
         raise HTTPException(status_code=404, detail="저장된 편집 좌표 없음")
 
     # CADEditor 저장 계약: vector_data["scale"] = px/m(기본 10). 직변환 서비스에 전달.
@@ -737,6 +746,7 @@ async def export_edited_dxf(
     try:
         dxf_bytes = ParametricCADService().create_dxf_from_edited_points(
             points=points, surfaces=surfaces, scale_px_per_m=scale,
+            shapes=shapes or None,
         )
     except ValueError as e:
         # 점 3개 미만 등 폴리곤 구성 불가 — 가짜 도면 대신 정직하게 422.
@@ -747,6 +757,49 @@ async def export_edited_dxf(
         media_type="application/dxf",
         headers={"Content-Disposition": f"attachment; filename={project_id}_edited.dxf"},
     )
+
+
+_MAX_DXF_UPLOAD_BYTES = 20 * 1024 * 1024  # 20MB
+
+
+@router.post("/{project_id}/drawings/import-dxf")
+async def import_dxf(
+    project_id: str,
+    file: UploadFile = File(...),
+    scale_px_per_m: float = Query(10.0, gt=0, description="캔버스 px/m 스케일(CADEditor 기본 10)"),
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """업로드한 DXF를 CAD2.0 셰이프(px 좌표)로 파싱해 반환한다(영속 없음 — 저장은 save).
+
+    인증 필수(무인증 401) + 프로젝트 tenant 소유권 검사(불일치 403).
+    .dxf만 지원(그 외 415 + DWG 변환 안내), 20MB 초과 413, 파싱 불가 422(정직 —
+    가짜 셰이프 생성 금지). 미지원 엔티티는 ignored 목록으로 투명 보고.
+    """
+    # 소유권 검사(비UUID/프로젝트없음 → 통과, 타 tenant → 403)
+    await _assert_project_owned(project_id, db, user)
+
+    filename = (file.filename or "").strip()
+    if not filename.lower().endswith(".dxf"):
+        raise HTTPException(
+            status_code=415,
+            detail="DXF 파일만 지원합니다. DWG는 CAD 프로그램에서 'DXF로 저장' 후 업로드해 주세요.",
+        )
+
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="빈 파일입니다.")
+    if len(data) > _MAX_DXF_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="DXF가 너무 큽니다(최대 20MB).")
+
+    from app.services.cad.dxf_import_service import parse_dxf_to_shapes
+
+    try:
+        result = parse_dxf_to_shapes(data, scale_px_per_m=scale_px_per_m)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=f"DXF 파싱 실패: {str(e)[:150]}") from e
+
+    return {"project_id": project_id, "filename": filename, **result}
 
 
 def _enrich_interior(mass: dict[str, Any], building_use: str = "공동주택") -> dict[str, Any]:

@@ -5,6 +5,7 @@ import { apiClient, ApiClientError } from "@/lib/api-client";
 import { EvidencePanel, type EvidenceItem, type EvidenceLegalRef } from "@/components/common/EvidencePanel";
 import { useSpeechToText } from "@/lib/use-speech-to-text";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { ReferenceAssemblyCard } from "@/components/cad/ReferenceAssemblyCard";
 import type {
   DesignAlternative,
   DesignAlternativesV2Response,
@@ -12,6 +13,7 @@ import type {
   DesignIntent,
   LegalLimitsResponse,
   ParseIntentResponse,
+  SimilarRefV2,
 } from "@/components/cad/types";
 
 /**
@@ -51,11 +53,7 @@ type DesignOperateResponse = DesignEval & {
   applied_changes: string[];
   spec?: { target_unit_types?: string[] };
 };
-type SimilarRef = {
-  id: string; title: string; building_use: string | null; area_sqm: number | null;
-  total_units: number | null; floors: number | null; unit_types: string[];
-  file_url: string | null; file_type: string | null; similarity: number;
-};
+// U4: 유사 사례 타입은 SimilarRefV2(types.ts)로 승격 — v2 확장 필드는 전부 optional(하위호환).
 
 const PRIORITY_LABELS: Record<DesignIntent["priority"], string> = {
   yield: "수익 최대화",
@@ -387,7 +385,7 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
 
   // ── 검증·다각평가(P5) — 법규 위반 + 4관점 점수(전부 커널값 기반) ──
   const [evaluation, setEvaluation] = useState<DesignEval | null>(null);
-  const [similar, setSimilar] = useState<SimilarRef[]>([]);
+  const [similar, setSimilar] = useState<SimilarRefV2[]>([]);
 
   // ── 단일 자동설계 ──
   const [single, setSingle] = useState<AutoDesignResponse | null>(null);
@@ -449,10 +447,11 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
     } catch {
       /* 평가 실패는 무시 — 설계 생성 자체는 정상 */
     }
-    // 유사 표준설계 사례(P7) — 등록된 라이브러리에서 메타 유사도 Top5.
+    // 유사 표준설계 사례(P7→U4 v2) — 라이브러리 메타 유사도 Top5(+용도지역 적합성).
+    // zone_code는 R6 신설 파라미터 — 구버전 백엔드는 무시(additive·하위호환).
     try {
-      const sim = await apiClient.get<{ items: SimilarRef[] }>(
-        `/design-references/similar?building_use=${encodeURIComponent(intent?.building_use ?? "공동주택")}&area_sqm=${siteArea}&unit_types=${encodeURIComponent((unitTypes.length > 0 ? unitTypes : ["84A"]).join(","))}&k=5`,
+      const sim = await apiClient.get<{ items: SimilarRefV2[] }>(
+        `/design-references/similar?building_use=${encodeURIComponent(intent?.building_use ?? "공동주택")}&area_sqm=${siteArea}&zone_code=${encodeURIComponent(zoneCode)}&unit_types=${encodeURIComponent((unitTypes.length > 0 ? unitTypes : ["84A"]).join(","))}&k=5`,
         { useMock: false },
       );
       setSimilar(sim.items || []);
@@ -957,25 +956,28 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
           {/* 검증·다각평가(P5) — 법규 위반 + 4관점 점수(전부 커널값 기반) */}
           {evaluation && <EvaluationCard ev={evaluation} />}
 
-          {/* 유사 표준설계 사례(P7) — 등록 라이브러리 메타 유사도 Top5 */}
+          {/* 유사 사례 기반 설계안(U4·R6~R8) — 기하 보유 사례는 현재 부지에 맞춰 조립 가능 */}
           {similar.length > 0 && (
             <section className="mt-4 rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-5">
-              <h4 className="mb-2 text-sm font-black text-[var(--text-primary)]">유사 설계 사례 <span className="text-[var(--text-hint)]">({similar.length})</span></h4>
-              <div className="space-y-1.5">
+              <h4 className="mb-2 text-sm font-black text-[var(--text-primary)]">유사 사례 기반 설계안 <span className="text-[var(--text-hint)]">({similar.length})</span></h4>
+              <div className="space-y-2">
                 {similar.map((r) => (
-                  <div key={r.id} className="flex items-center justify-between gap-2 rounded-lg border border-[var(--line)] px-3 py-2">
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-medium text-[var(--text-primary)]">{r.title}</p>
-                      <p className="text-[11px] text-[var(--text-secondary)]">{[r.building_use, r.area_sqm ? `${Math.round(r.area_sqm)}㎡` : "", r.total_units ? `${r.total_units}세대` : "", r.floors ? `${r.floors}층` : ""].filter(Boolean).join(" · ")}</p>
-                    </div>
-                    <div className="flex shrink-0 items-center gap-2">
-                      <span className="rounded-full bg-[var(--accent-soft)] px-2 py-0.5 text-[10px] font-black text-[var(--accent-strong)]">{r.similarity}%</span>
-                      {r.file_url && <a href={r.file_url} target="_blank" rel="noopener noreferrer" className="text-[11px] font-bold text-[var(--accent-strong)]">도면 ↗</a>}
-                    </div>
-                  </div>
+                  <ReferenceAssemblyCard
+                    key={r.id}
+                    item={r}
+                    siteContext={{
+                      siteArea,
+                      zoneCode,
+                      buildingUse: intent?.building_use ?? "공동주택",
+                      unitTypes: unitTypes.length > 0 ? unitTypes : ["84A"],
+                    }}
+                    onApply={(p, s) => {
+                      applyDesign(p, s); // 기존 SSOT 경로 재사용 — 2D/3D/BIM/QTO 단일기하 전파
+                    }}
+                  />
                 ))}
               </div>
-              <p className="mt-2 text-[10px] text-[var(--text-hint)]">※ 관리자가 등록한 사례를 용도·면적·평형 유사도로 검색(참고용).</p>
+              <p className="mt-2 text-[10px] text-[var(--text-hint)]">※ 관리자가 등록한 사례를 용도·면적·평형·용도지역 유사도로 검색. 기하 보유 사례는 부지에 맞춘 초안 조립 후 검증 통과 시에만 적용됩니다.</p>
             </section>
           )}
 

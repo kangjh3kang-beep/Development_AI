@@ -128,6 +128,7 @@ export default async function DashboardLayout({
   // 4. 설계 참고 — CAD 자동설계 / BIM·적산
   const designNavigation = [
     { href: `/${locale}/design-studio`, label: "AI 설계도면(CAD)", icon: <IconDesign /> },
+    { href: `/${locale}/design-audit`, label: "설계안 AI 심사", icon: <IconPermit /> },
     { href: `/${locale}/bim-studio`, label: "3D 모델·공사물량(BIM·적산)", icon: <IconCost /> },
     { href: `/${locale}/settings/design-references`, label: "표준설계 라이브러리", icon: <IconDesign /> },
   ];

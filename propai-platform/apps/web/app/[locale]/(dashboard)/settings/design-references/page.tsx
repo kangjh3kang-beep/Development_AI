@@ -8,6 +8,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { apiClient } from "@/lib/api-client";
+import { sanitizeSvgMarkup } from "@/components/cad/ReferenceAssemblyCard";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -16,6 +17,9 @@ type Ref = {
   area_sqm: number | null; total_units: number | null; floors: number | null;
   unit_types: string[]; file_url: string | null; file_type: string | null;
   source: string | null; note: string | null; created_at: string | null;
+  /** U4(R7) 확장 — 구버전 백엔드 응답엔 없으므로 optional(부재 시 미표시). */
+  has_geometry?: boolean;
+  thumbnail_svg?: string | null;
 };
 
 const USES = ["공동주택", "오피스텔", "근린생활시설", "업무시설", "숙박시설", "단독주택"];
@@ -77,6 +81,20 @@ export default function DesignReferencesPage() {
     finally { setBusy(false); }
   };
 
+  // U4(R7): DXF 기하 업로드 — 등록된 사례에 파싱 가능한 기하를 부여(조립 가능 사례로 전환).
+  const uploadGeometry = async (id: string, f: File) => {
+    setBusy(true); setMsg("");
+    try {
+      const fd = new FormData();
+      fd.append("file", f);
+      const r = await apiClient.post<any>(`/design-references/${id}/geometry`, { body: fd, useMock: false, timeoutMs: 120000 });
+      setMsg(r?.ok ? "DXF 기하가 등록되었습니다 — 설계 생성 시 '조립 가능' 사례로 표시됩니다." : (r?.detail || "기하 등록 처리됨"));
+      await load();
+    } catch (e: any) {
+      setMsg(e?.message?.includes("403") ? "관리자만 기하를 등록할 수 있습니다." : "DXF 기하 등록 실패 — 파일/권한/서버 설정을 확인하세요.");
+    } finally { setBusy(false); }
+  };
+
   const won = (n: number | null) => (n ? `${Math.round(n).toLocaleString("ko-KR")}㎡` : "-");
 
   return (
@@ -126,17 +144,51 @@ export default function DesignReferencesPage() {
         <h2 className="mb-3 text-sm font-bold text-[var(--text-primary)]">등록된 사례 ({items.length})</h2>
         {items.length === 0 && <p className="py-6 text-center text-sm text-[var(--text-secondary)]">아직 등록된 사례가 없습니다.</p>}
         <div className="grid gap-2 sm:grid-cols-2">
-          {items.map((it) => (
-            <div key={it.id} className="rounded-lg border border-[var(--line)] px-3 py-2">
-              <div className="flex items-start justify-between gap-2">
-                <p className="text-sm font-bold text-[var(--text-primary)]">{it.title}</p>
-                <button onClick={() => remove(it.id)} disabled={busy} className="shrink-0 rounded-md border border-rose-500/30 px-2 py-0.5 text-[10px] font-bold text-rose-400">삭제</button>
+          {items.map((it) => {
+            const thumb = sanitizeSvgMarkup(it.thumbnail_svg);
+            return (
+              <div key={it.id} className="rounded-lg border border-[var(--line)] px-3 py-2">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex min-w-0 items-start gap-2">
+                    {/* U4(R7): 도면 썸네일(inline SVG) — script 제거 가드 통과 시에만 렌더 */}
+                    {thumb && (
+                      <div
+                        className="h-14 w-16 shrink-0 overflow-hidden rounded-md border border-[var(--line)] bg-[var(--surface-muted)] [&_svg]:h-full [&_svg]:w-full"
+                        role="img"
+                        aria-label={`${it.title} 도면 썸네일`}
+                        dangerouslySetInnerHTML={{ __html: thumb }}
+                      />
+                    )}
+                    <div className="min-w-0">
+                      <p className="text-sm font-bold text-[var(--text-primary)]">
+                        {it.title}
+                        {it.has_geometry === true && <span className="ml-1.5 rounded bg-[var(--accent-soft)] px-1.5 py-0.5 text-[9px] font-black text-[var(--accent-strong)]">기하 보유</span>}
+                      </p>
+                      <p className="text-[11px] text-[var(--text-secondary)]">{[it.building_use, it.zone_code, won(it.area_sqm), it.total_units ? `${it.total_units}세대` : "", it.floors ? `${it.floors}층` : ""].filter(Boolean).join(" · ")}</p>
+                      {it.unit_types?.length > 0 && <p className="text-[10px] text-[var(--text-hint)]">{it.unit_types.join(", ")}</p>}
+                      {it.file_url && <a href={it.file_url} target="_blank" rel="noopener noreferrer" className="text-[11px] font-bold text-[var(--accent-strong)]">도면 보기({it.file_type}) ↗</a>}
+                    </div>
+                  </div>
+                  <button onClick={() => remove(it.id)} disabled={busy} className="shrink-0 rounded-md border border-rose-500/30 px-2 py-0.5 text-[10px] font-bold text-rose-400">삭제</button>
+                </div>
+                {/* U4(R7): DXF 기하 업로드 — 조립(템플릿 어댑테이션) 가능 사례로 전환 */}
+                <label className={`mt-2 inline-flex items-center gap-1 rounded-md border border-[var(--line)] bg-[var(--surface-muted)] px-2 py-1 text-[10px] font-bold text-[var(--text-secondary)] ${busy ? "opacity-50" : "cursor-pointer hover:border-[var(--accent-strong)]"}`}>
+                  ⬆ DXF 기하 {it.has_geometry === true ? "교체" : "등록"}
+                  <input
+                    type="file"
+                    accept=".dxf"
+                    className="hidden"
+                    disabled={busy}
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) uploadGeometry(it.id, f);
+                      e.target.value = "";
+                    }}
+                  />
+                </label>
               </div>
-              <p className="text-[11px] text-[var(--text-secondary)]">{[it.building_use, it.zone_code, won(it.area_sqm), it.total_units ? `${it.total_units}세대` : "", it.floors ? `${it.floors}층` : ""].filter(Boolean).join(" · ")}</p>
-              {it.unit_types?.length > 0 && <p className="text-[10px] text-[var(--text-hint)]">{it.unit_types.join(", ")}</p>}
-              {it.file_url && <a href={it.file_url} target="_blank" rel="noopener noreferrer" className="text-[11px] font-bold text-[var(--accent-strong)]">도면 보기({it.file_type}) ↗</a>}
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div></section>
     </div>

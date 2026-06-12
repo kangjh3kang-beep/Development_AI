@@ -13,6 +13,7 @@ DB 비의존 — get_db override(SQL 텍스트로 분기하는 가짜 세션) + 
 
 import uuid
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -432,3 +433,175 @@ class TestUnitMixFootprint:
             json=self._body(footprint_sqm=0),
         )
         assert resp.status_code == 422
+
+
+# ════════════════════════════════════════════════════════
+# ⑦ CAD2.0 (U1) — shapes 영속(save) + DXF 가져오기(import-dxf) + shapes 내보내기
+# ════════════════════════════════════════════════════════
+
+
+def _import_dxf_bytes():
+    """업로드 테스트용 소형 DXF(WALL 닫힌 사각형 1개, $INSUNITS=6) 바이트."""
+    import io as _io
+
+    ezdxf = pytest.importorskip("ezdxf", reason="ezdxf 미설치 — DXF 테스트 스킵")
+    doc = ezdxf.new("R2010")
+    doc.header["$INSUNITS"] = 6
+    doc.modelspace().add_lwpolyline(
+        [(0, 0), (12, 0), (12, 8), (0, 8)], close=True,
+        dxfattribs={"layer": "WALL"},
+    )
+    buf = _io.StringIO()
+    doc.write(buf)
+    return buf.getvalue().encode("utf-8")
+
+
+class TestSaveShapes:
+    """CADSaveRequest.shapes 가산 필드 — 전달 시에만 design_data_json에 기록."""
+
+    def _save_body(self, **extra):
+        body = {"drawing_code": "CAD-EDIT", "svg_content": "<svg></svg>"}
+        body.update(extra)
+        return body
+
+    def test_save_with_shapes_persists_payload(self):
+        import json as _json
+
+        client = _make_client(user_tenant=TENANT_A, project_tenant=TENANT_A)
+        shapes = [{"kind": "rect", "layer": "wall", "x": 0, "y": 0, "w": 50, "h": 30}]
+        resp = client.post(
+            f"/api/v1/design/{UUID_PROJECT_ID}/drawings/save",
+            json=self._save_body(shapes=shapes),
+        )
+        assert resp.status_code == 200
+        assert resp.json()["status"].startswith("saved")
+        dj = _json.loads(client._session.inserted["dj"])
+        assert dj["shapes"] == shapes
+
+    def test_save_without_shapes_omits_key(self):
+        """shapes 미전달 → 저장 JSON에 키 미기록(기존 저장본과 동일, 하위호환)."""
+        import json as _json
+
+        client = _make_client(user_tenant=TENANT_A, project_tenant=TENANT_A)
+        resp = client.post(
+            f"/api/v1/design/{UUID_PROJECT_ID}/drawings/save", json=self._save_body(),
+        )
+        assert resp.status_code == 200
+        dj = _json.loads(client._session.inserted["dj"])
+        assert "shapes" not in dj
+
+    def test_save_empty_shapes_omits_key(self):
+        """shapes=[](빈 배열) → 미기록(빈 배열 미기록 계약)."""
+        import json as _json
+
+        client = _make_client(user_tenant=TENANT_A, project_tenant=TENANT_A)
+        resp = client.post(
+            f"/api/v1/design/{UUID_PROJECT_ID}/drawings/save",
+            json=self._save_body(shapes=[]),
+        )
+        assert resp.status_code == 200
+        dj = _json.loads(client._session.inserted["dj"])
+        assert "shapes" not in dj
+
+
+class TestImportDxf:
+    """import-dxf — 인증·소유권 + 확장자 415 + 20MB 413 + 파싱 422 + 성공 계약."""
+
+    def _post(self, client, content=b"x", name="plan.dxf", project_id=PROJECT_ID):
+        return client.post(
+            f"/api/v1/design/{project_id}/drawings/import-dxf",
+            files={"file": (name, content, "application/dxf")},
+        )
+
+    def test_requires_auth_401(self):
+        client = _make_client(authed=False)
+        assert self._post(client).status_code == 401
+
+    def test_other_tenant_forbidden_403(self):
+        client = _make_client(user_tenant=TENANT_A, project_tenant=TENANT_B)
+        assert self._post(client, project_id=UUID_PROJECT_ID).status_code == 403
+
+    def test_non_dxf_extension_415_with_dwg_guidance(self):
+        client = _make_client()
+        resp = self._post(client, name="plan.dwg")
+        assert resp.status_code == 415
+        assert "DXF로 저장" in resp.json()["detail"]
+
+    def test_empty_file_400(self):
+        client = _make_client()
+        assert self._post(client, content=b"").status_code == 400
+
+    def test_oversize_413(self, monkeypatch):
+        from app.routers import design_v61 as mod
+
+        monkeypatch.setattr(mod, "_MAX_DXF_UPLOAD_BYTES", 10)
+        client = _make_client()
+        resp = self._post(client, content=b"0123456789ABCDEF")
+        assert resp.status_code == 413
+
+    def test_invalid_dxf_422(self):
+        """비DXF 바이트 → 422(정직 — 가짜 셰이프 생성 금지)."""
+        client = _make_client()
+        resp = self._post(client, content=b"NOT A DXF FILE AT ALL")
+        assert resp.status_code == 422
+
+    def test_import_success_returns_shapes_and_unit(self):
+        client = _make_client()
+        resp = self._post(client, content=_import_dxf_bytes())
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["project_id"] == PROJECT_ID
+        assert data["unit"] == {"detected": "m", "source": "insunits"}
+        assert data["truncated"] is False
+        shapes = data["shapes"]
+        assert len(shapes) == 1
+        assert shapes[0]["kind"] == "polyline"
+        assert shapes[0]["closed"] is True
+        assert shapes[0]["layer"] == "outline"  # WALL 역매핑
+        assert data["main_outline_index"] == 0
+
+
+class TestExportEditedDxfShapesMode:
+    """export-edited-dxf — 저장본에 CAD2.0 shapes가 있으면 shapes 모드로 내보내기."""
+
+    def _shapes_saved_json(self):
+        import json as _json
+
+        return _json.dumps({
+            "shapes": [
+                {"kind": "polygon", "layer": "outline",
+                 "points": [{"x": 0, "y": 0}, {"x": 100, "y": 0},
+                            {"x": 100, "y": 80}, {"x": 0, "y": 80}]},
+                {"kind": "circle", "layer": "wall", "cx": 50, "cy": 40, "r": 10},
+            ],
+            "vector_data": {"scale": 10.0},
+        }, ensure_ascii=False)
+
+    def test_saved_shapes_without_points_export_200(self):
+        """points 없이 shapes만 저장돼 있어도 DXF 200(기존엔 404였던 케이스 확장)."""
+        client = _make_client(
+            user_tenant=TENANT_A, project_tenant=TENANT_A,
+            saved_json=self._shapes_saved_json(),
+        )
+        resp = client.get(f"/api/v1/design/{UUID_PROJECT_ID}/drawings/export-edited-dxf")
+        assert resp.status_code == 200
+        assert "dxf" in resp.headers.get("content-type", "")
+        assert resp.content and resp.content != b"DXF_PLACEHOLDER"
+
+    def test_saved_shapes_dxf_contains_circle_and_wall(self):
+        """shapes 모드 산출 DXF 재파싱 — CIRCLE + WALL 닫힌 LWPOLYLINE 포함."""
+        import io as _io
+
+        ezdxf = pytest.importorskip("ezdxf", reason="ezdxf 미설치 — DXF 테스트 스킵")
+        client = _make_client(
+            user_tenant=TENANT_A, project_tenant=TENANT_A,
+            saved_json=self._shapes_saved_json(),
+        )
+        resp = client.get(f"/api/v1/design/{UUID_PROJECT_ID}/drawings/export-edited-dxf")
+        assert resp.status_code == 200
+        doc = ezdxf.read(_io.StringIO(resp.content.decode("utf-8")))
+        msp = doc.modelspace()
+        assert len(msp.query("CIRCLE")) == 1
+        walls = msp.query('LWPOLYLINE[layer=="WALL"]')
+        assert len(walls) == 1
+        assert walls[0].closed
