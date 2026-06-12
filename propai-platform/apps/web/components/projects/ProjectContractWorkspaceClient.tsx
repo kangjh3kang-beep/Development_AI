@@ -442,9 +442,13 @@ export function ProjectContractWorkspaceClient({
           <p className="mt-4 max-w-3xl text-sm leading-8 text-[var(--text-secondary)]">
             {labels.heroDescription}
           </p>
+          {!canUseLiveApi && (
+          {!canUseLiveApi && (
           <p className="mt-3 text-xs uppercase tracking-[0.18em] text-[var(--text-hint)]">
             {labels.tokenHint}
           </p>
+          )}
+          )}
           {workspaceError ? (
             <div className="mt-6 rounded-[var(--radius-xl)] border border-[rgba(217,119,6,0.28)] bg-[rgba(217,119,6,0.08)] p-5 text-sm leading-7 text-[var(--spot)]">
               {workspaceError}

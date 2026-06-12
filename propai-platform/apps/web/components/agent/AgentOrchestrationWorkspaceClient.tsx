@@ -892,9 +892,11 @@ export function AgentOrchestrationWorkspaceClient({
                 {labels.heroHint}
               </p>
             </div>
-            <div className="rounded-[var(--radius-xl)] border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-4 text-sm leading-7 text-[var(--text-secondary)]">
-              {labels.tokenHint}
-            </div>
+            {!canUseLiveApi && (
+              <div className="rounded-[var(--radius-xl)] border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-4 text-sm leading-7 text-[var(--text-secondary)]">
+                {labels.tokenHint}
+              </div>
+            )}
           </div>
           {!canUseLiveApi ? (
             <p className="mt-4 text-sm font-medium text-[var(--spot)]" role="alert">
