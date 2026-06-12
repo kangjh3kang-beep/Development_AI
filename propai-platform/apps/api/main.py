@@ -79,6 +79,7 @@ from apps.api.routers import (
     monte_carlo,
     notifications,
     parking,
+    permit_cases,
     permits,
     portals,
     precheck,
@@ -450,6 +451,7 @@ app.include_router(cost_intelligence.router, prefix="/api/v1/cost-intelligence",
 app.include_router(contracts.router, prefix="/api/v1/contracts", tags=["contracts"])
 app.include_router(risk.router, prefix="/api/v1/risk", tags=["risk"])
 app.include_router(permits.router, prefix="/api/v1/permits", tags=["permits"])
+app.include_router(permit_cases.router, prefix="/api/v1/permit-cases", tags=["인허가 사례(건축HUB)"])
 app.include_router(data_integrity.router, prefix="/api/v1", tags=["데이터 무결성"])
 
 # 자동 용도지역 + 유닛믹스 최적화 라우터
