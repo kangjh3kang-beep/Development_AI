@@ -24,11 +24,22 @@ import structlog
 
 logger = structlog.get_logger(__name__)
 
-_HOST = "https://api.tilko.net"
-_PUBKEY_URL = f"{_HOST}/api/Auth/GetPublicKey"
-_REALTY_URL = f"{_HOST}/api/v2.0/Iros2IdLogin/RealtyRegistry"
-# 등기물건 주소검색 — 주소 → 부동산 고유번호. IROS 로그인·전자결제 불필요(Tilko API키만).
-_SEARCH_URL = f"{_HOST}/api/v2.0/iros/risuconfirmsimplec"
+def _host() -> str:
+    """틸코 호스트 — 운영=api.tilko.net(기본), 데모=dev.tilko.net. TILKO_API_HOST로 무중단 전환."""
+    return (os.getenv("TILKO_API_HOST") or "https://api.tilko.net").rstrip("/")
+
+
+def _pubkey_url() -> str:
+    return f"{_host()}/api/Auth/GetPublicKey"
+
+
+def _realty_url() -> str:
+    return f"{_host()}/api/v2.0/Iros2IdLogin/RealtyRegistry"
+
+
+def _search_url() -> str:
+    # 등기물건 주소검색 — 주소 → 부동산 고유번호. IROS 로그인·전자결제 불필요(Tilko API키만).
+    return f"{_host()}/api/v2.0/iros/risuconfirmsimplec"
 _IV = b"\x00" * 16
 
 
@@ -67,7 +78,7 @@ async def get_public_key() -> str | None:
         import httpx
 
         async with httpx.AsyncClient(timeout=15.0) as client:
-            r = await client.get(_PUBKEY_URL, params={"APIkey": key})
+            r = await client.get(_pubkey_url(), params={"APIkey": key})
             r.raise_for_status()
             data = r.json()
         return (data or {}).get("PublicKey") or (data or {}).get("publicKey")
@@ -130,7 +141,7 @@ async def search_unique_no(address: str, page: str = "1") -> dict[str, Any]:
 
         headers = {"Content-Type": "application/json", "API-KEY": tilko_key(), "ENC-KEY": enc_key}
         async with httpx.AsyncClient(timeout=60.0) as client:
-            r = await client.post(_SEARCH_URL, json=body, headers=headers)
+            r = await client.post(_search_url(), json=body, headers=headers)
             if r.status_code != 200:
                 return {"ok": False, "status": "provider_error", "items": [],
                         "message": f"틸코 주소검색 오류(HTTP {r.status_code})", "raw": r.text[:300]}
@@ -211,7 +222,7 @@ async def fetch_realty_registry(
 
         headers = {"Content-Type": "application/json", "API-KEY": tilko_key(), "ENC-KEY": enc_key}
         async with httpx.AsyncClient(timeout=90.0) as client:
-            r = await client.post(_REALTY_URL, json=body, headers=headers)
+            r = await client.post(_realty_url(), json=body, headers=headers)
             if r.status_code != 200:
                 return {"ok": False, "status": "provider_error",
                         "message": f"틸코 응답 오류(HTTP {r.status_code})", "raw": r.text[:300]}
