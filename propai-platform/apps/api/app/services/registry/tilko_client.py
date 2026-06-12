@@ -27,6 +27,8 @@ logger = structlog.get_logger(__name__)
 _HOST = "https://api.tilko.net"
 _PUBKEY_URL = f"{_HOST}/api/Auth/GetPublicKey"
 _REALTY_URL = f"{_HOST}/api/v2.0/Iros2IdLogin/RealtyRegistry"
+# 등기물건 주소검색 — 주소 → 부동산 고유번호. IROS 로그인·전자결제 불필요(Tilko API키만).
+_SEARCH_URL = f"{_HOST}/api/v2.0/iros/risuconfirmsimplec"
 _IV = b"\x00" * 16
 
 
@@ -99,6 +101,62 @@ def _aes_encrypt(value: str, aes_key: bytes) -> str:
     enc = Cipher(algorithms.AES(aes_key), modes.CBC(_IV)).encryptor()
     ct = enc.update(padded) + enc.finalize()
     return base64.b64encode(ct).decode()
+
+
+async def search_unique_no(address: str, page: str = "1") -> dict[str, Any]:
+    """등기물건 주소검색(RISUConfirmSimpleC) — 주소 → 부동산 고유번호 목록.
+
+    ★IROS 로그인·전자결제 불필요(Tilko API키만). RealtyRegistry 전 단계로 고유번호 확보용.
+    반환: {ok, status, items:[{unique_no, gubun, jibun, sangtae}], total, message}
+    """
+    if not tilko_ready():
+        return {"ok": False, "status": "not_configured", "items": [],
+                "message": "TILKO_API_KEY 미설정(관리자 키화면 입력 필요)"}
+    addr = (address or "").strip()
+    if not addr:
+        return {"ok": False, "status": "bad_request", "items": [], "message": "검색할 주소가 필요합니다."}
+
+    pub = await get_public_key()
+    if not pub:
+        return {"ok": False, "status": "provider_error", "items": [], "message": "틸코 공개키 조회 실패(API키 확인)"}
+
+    try:
+        enc_key, aes_key = _build_cipher(pub)
+        body = {
+            "Address": _aes_encrypt(addr, aes_key),   # [필수] 암호화 — 시/군/구 등 검색어 포함
+            "Page": _aes_encrypt(str(page or "1"), aes_key),
+        }
+        import httpx
+
+        headers = {"Content-Type": "application/json", "API-KEY": tilko_key(), "ENC-KEY": enc_key}
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            r = await client.post(_SEARCH_URL, json=body, headers=headers)
+            if r.status_code != 200:
+                return {"ok": False, "status": "provider_error", "items": [],
+                        "message": f"틸코 주소검색 오류(HTTP {r.status_code})", "raw": r.text[:300]}
+            data = r.json()
+
+        err = data.get("ErrorCode")
+        if err not in (None, 0, "0"):
+            return {"ok": False, "status": "provider_error", "items": [], "error_code": err,
+                    "message": data.get("Message") or "주소검색 실패"}
+
+        result = data.get("Result") or {}
+        rows = (result.get("Result") if isinstance(result, dict) else None) or []
+        if isinstance(rows, dict):
+            rows = [rows]
+        items = [{
+            "unique_no": (it.get("BudongsanGoyubeonho") or "").replace("-", "").strip(),
+            "gubun": it.get("Gubun"),
+            "jibun": it.get("BudongsanSojaejibeon"),
+            "sangtae": it.get("Sangtae"),
+        } for it in rows if isinstance(it, dict)]
+        total = result.get("TotalCount") if isinstance(result, dict) else len(items)
+        return {"ok": True, "status": "ok", "items": items, "total": total,
+                "point_balance": data.get("PointBalance")}
+    except Exception as e:  # noqa: BLE001
+        logger.warning("틸코 주소검색 실패", err=str(e)[:120])
+        return {"ok": False, "status": "error", "items": [], "message": str(e)[:200]}
 
 
 async def fetch_realty_registry(
