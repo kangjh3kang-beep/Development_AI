@@ -198,6 +198,9 @@ class SVGDrawingService:
                 unit_type=str(_uplan.get("unit_type") or _utype),
                 area_sqm=float(_uplan.get("area_sqm") or _uarea),
                 balconies=_uplan.get("balconies"),
+                # 경계·개구(arch_grammar) — 미제공 시 기존 박스 렌더 그대로(additive)
+                boundaries=_uplan.get("boundaries"),
+                openings=_uplan.get("openings"),
                 project_name=name,
             )
 
@@ -845,6 +848,135 @@ class SVGDrawingService:
 
     # ── 결정론 유닛플랜 렌더(R3-1) — unit_plan_generator 결과(rooms) 전용 ──
 
+    @staticmethod
+    def _render_boundary_plan(dwg, g, px, rooms: list[dict],
+                              boundaries: list[dict],
+                              openings: list[dict] | None) -> None:
+        """경계 단위 실무 렌더 — 전실 박스 벽 폐기(LDK 오픈플랜 보존).
+
+        - wall/wall_door 경계만 두께 차등 벽띠(내력 200mm/비내력 120mm 스케일 환산),
+          **경계 1개 = path 1개(class="wall")** — 테스트 가능 불변식.
+        - open 경계: 무벽(옅은 점선 구분만 — 실측 구획 아님).
+        - 문: 개구 절개 + 문짝 + 90° 스윙 호(KS 평면 표기), 현관문 포함.
+        - 창: 이중 평행선, 발코니 전면(balcony_sliding)은 중앙 선대 추가.
+        """
+        t_bearing = 0.20    # 내력(외벽 등) 200mm — arch_grammar.WALL_TYPES와 동치
+        t_partition = 0.12  # 비내력 칸막이 120mm
+
+        def _wall_t(b: dict) -> float:
+            if b.get("room_b") is None or b.get("wall_type") in (
+                "exterior", "unit_party", "core",
+            ):
+                return t_bearing
+            return t_partition
+
+        def _band(b: dict, t: float):
+            """경계 → 벽띠 사각형 (x, y, w, h) m — 외기=안쪽 오프셋, 내부=중심."""
+            if b["orient"] == "h":
+                if b.get("room_b") is None:
+                    y0 = float(b["y1"]) if b.get("side") == "n" else float(b["y1"]) - t
+                else:
+                    y0 = float(b["y1"]) - t / 2.0
+                return (float(b["x1"]), y0, float(b["x2"]) - float(b["x1"]), t)
+            if b.get("room_b") is None:
+                x0 = float(b["x1"]) if b.get("side") == "w" else float(b["x1"]) - t
+            else:
+                x0 = float(b["x1"]) - t / 2.0
+            return (x0, float(b["y1"]), t, float(b["y2"]) - float(b["y1"]))
+
+        # 1) 실 면 채움(벽 없는 베이스)
+        for r in rooms:
+            fill = "#f0f2f4" if str(r["name"]) == "복도" else "#fafafa"
+            g.add(dwg.rect(insert=(px(float(r["x"])), px(float(r["y"]))),
+                           size=(px(float(r["w"])), px(float(r["h"]))), fill=fill))
+
+        # 2) open 경계 — 무벽, 옅은 점선 구분(공간 전이 표시)
+        for b in boundaries:
+            if b.get("kind") == "open":
+                g.add(dwg.line(start=(px(float(b["x1"])), px(float(b["y1"]))),
+                               end=(px(float(b["x2"])), px(float(b["y2"]))),
+                               stroke="#c8cfd6", stroke_width=0.7,
+                               stroke_dasharray="3,3"))
+
+        # 3) 벽띠 — 경계 1개 = path 1개(class="wall"), 두께 차등
+        for b in boundaries:
+            if b.get("kind") == "open":
+                continue
+            t = _wall_t(b)
+            bx, by, bw_r, bh_r = _band(b, t)
+            d_attr = (f"M {px(bx):.2f} {px(by):.2f} h {px(bw_r):.2f} "
+                      f"v {px(bh_r):.2f} h {-px(bw_r):.2f} Z")
+            g.add(dwg.path(d=d_attr, fill="#1a1a1a", class_="wall"))
+
+        # 4) 개구 — 문(절개+문짝+90° 스윙 호), 창(이중 평행선/분합창)
+        bnd_by_id = {b.get("id"): b for b in boundaries if b.get("id")}
+        for o in (openings or []):
+            b = bnd_by_id.get(o.get("boundary_id"))
+            if b is None:
+                continue
+            w_m = float(o.get("width_mm") or 0) / 1000.0
+            if w_m <= 0:
+                continue
+            t = _wall_t(b)
+            bx, by, _bw, _bh = _band(b, t)
+            cx = float(o.get("center_x_m") or 0.0)
+            cy = float(o.get("center_y_m") or 0.0)
+            if o.get("kind") == "door":
+                # 4a) 벽띠 절개(개구)
+                if o.get("orient") == "h":
+                    g.add(dwg.rect(insert=(px(cx - w_m / 2), px(by) - 0.4),
+                                   size=(px(w_m), px(t) + 0.8), fill="#ffffff"))
+                    hx, hy = cx - w_m / 2, cy            # 힌지 = 변 시작측
+                    sgn = -1.0 if o.get("swing_side") == "n" else 1.0
+                    tipx, tipy = hx, cy + sgn * w_m       # 문짝 끝(열림 위치)
+                    sx0, sy0 = hx + w_m, cy               # 호 시작(닫힘 위치)
+                else:
+                    g.add(dwg.rect(insert=(px(bx) - 0.4, px(cy - w_m / 2)),
+                                   size=(px(t) + 0.8, px(w_m)), fill="#ffffff"))
+                    hx, hy = cx, cy - w_m / 2
+                    sgn = -1.0 if o.get("swing_side") == "w" else 1.0
+                    tipx, tipy = cx + sgn * w_m, hy
+                    sx0, sy0 = cx, hy + w_m
+                # 4b) 문짝(현관 방화문은 굵게)
+                leaf_w = 1.8 if o.get("fire_rated") else 1.4
+                g.add(dwg.line(start=(px(hx), px(hy)), end=(px(tipx), px(tipy)),
+                               stroke="#1a1a1a", stroke_width=leaf_w))
+                # 4c) 90° 스윙 호(KS) — sweep은 외적 부호로 결정(SVG y하향)
+                cross = (sx0 - hx) * (tipy - hy) - (sy0 - hy) * (tipx - hx)
+                sweep = 1 if cross > 0 else 0
+                rr = px(w_m)
+                g.add(dwg.path(
+                    d=(f"M {px(sx0):.2f} {px(sy0):.2f} "
+                       f"A {rr:.2f} {rr:.2f} 0 0 {sweep} "
+                       f"{px(tipx):.2f} {px(tipy):.2f}"),
+                    fill="none", stroke="#6b7480", stroke_width=0.7,
+                    stroke_dasharray="2,2"))
+            else:  # window — 이중 평행선(발코니 전면=분합창: 중앙 선대 추가)
+                if o.get("orient") == "h":
+                    g.add(dwg.rect(insert=(px(cx - w_m / 2), px(by)),
+                                   size=(px(w_m), px(t)), fill="#ffffff",
+                                   class_="window"))
+                    for ly in (by + t / 3.0, by + 2.0 * t / 3.0):
+                        g.add(dwg.line(start=(px(cx - w_m / 2), px(ly)),
+                                       end=(px(cx + w_m / 2), px(ly)),
+                                       stroke="#2d3436", stroke_width=0.9))
+                    if o.get("subtype") == "balcony_sliding":
+                        g.add(dwg.line(start=(px(cx), px(by)),
+                                       end=(px(cx), px(by + t)),
+                                       stroke="#2d3436", stroke_width=0.9))
+                else:
+                    g.add(dwg.rect(insert=(px(bx), px(cy - w_m / 2)),
+                                   size=(px(t), px(w_m)), fill="#ffffff",
+                                   class_="window"))
+                    for lx in (bx + t / 3.0, bx + 2.0 * t / 3.0):
+                        g.add(dwg.line(start=(px(lx), px(cy - w_m / 2)),
+                                       end=(px(lx), px(cy + w_m / 2)),
+                                       stroke="#2d3436", stroke_width=0.9))
+                    if o.get("subtype") == "balcony_sliding":
+                        g.add(dwg.line(start=(px(bx), px(cy)),
+                                       end=(px(bx + t), px(cy)),
+                                       stroke="#2d3436", stroke_width=0.9))
+
     def generate_unit_plan_rooms(
         self,
         rooms: List[dict],
@@ -854,6 +986,8 @@ class SVGDrawingService:
         unit_type: str = "",
         area_sqm: float = 0.0,
         balconies: Optional[List[dict]] = None,
+        boundaries: list[dict] | None = None,
+        openings: list[dict] | None = None,
         project_name: str = "PropAI",
         drawing_no: str = "A-202",
     ) -> str:
@@ -867,6 +1001,13 @@ class SVGDrawingService:
             rooms: 실 목록 [{name, x, y, w, h}] (m 단위, 본체 타일링).
             body_width_m / body_depth_m: 본체 치수(m). None이면 rooms 외곽에서 산출.
             balconies: [{name, x, y, w, h, extended}] 서비스면적(남측, 본체 밖).
+            boundaries: 경계 목록(arch_grammar BOUNDARY_SCHEMA — kind/wall_type 분류
+                완료본). **None이면 기존 전실 poché 박스 렌더 그대로(하위호환).**
+                제공 시 경계 단위 실무 렌더: wall/wall_door만 두께 차등 벽띠
+                (내력 200/비내력 120), open은 무벽(옅은 점선 구분), 벽띠 1경계=1path
+                (class="wall").
+            openings: 개구 목록(arch_grammar OPENING_SCHEMA). 문=개구 절개+문짝+
+                90° 스윙 호(KS), 창=이중 평행선, 발코니 전면=분합창(중앙 선대).
         """
         if svgwrite is None:
             return SVG_PLACEHOLDER
@@ -913,24 +1054,31 @@ class SVGDrawingService:
                            font_size="10px", font_family=FONT, fill="#7a838c",
                            text_anchor="middle"))
 
-        # 2) 본체 = 어두운 면(벽 poché 베이스)
-        g.add(dwg.rect(insert=(0, 0), size=(px(bw_m), px(bd_m)), fill="#1a1a1a"))
+        if boundaries is None:
+            # ── 하위호환 경로(기존 그대로): 전실 poché 박스 렌더 ──
+            # 2) 본체 = 어두운 면(벽 poché 베이스)
+            g.add(dwg.rect(insert=(0, 0), size=(px(bw_m), px(bd_m)), fill="#1a1a1a"))
 
-        # 3) 각 실 = 흰 inset(사이 어두운 띠 = 내벽 poché)
-        for r in rooms:
-            fill = "#f0f2f4" if str(r["name"]) == "복도" else "#fafafa"
-            g.add(dwg.rect(
-                insert=(px(float(r["x"]) + P), px(float(r["y"]) + P)),
-                size=(px(max(0.1, float(r["w"]) - 2 * P)),
-                      px(max(0.1, float(r["h"]) - 2 * P))),
-                fill=fill,
-            ))
+            # 3) 각 실 = 흰 inset(사이 어두운 띠 = 내벽 poché)
+            for r in rooms:
+                fill = "#f0f2f4" if str(r["name"]) == "복도" else "#fafafa"
+                g.add(dwg.rect(
+                    insert=(px(float(r["x"]) + P), px(float(r["y"]) + P)),
+                    size=(px(max(0.1, float(r["w"]) - 2 * P)),
+                          px(max(0.1, float(r["h"]) - 2 * P))),
+                    fill=fill,
+                ))
 
-        # 4) 외벽 poché(두껍게) — 본체 둘레 EXT 띠
-        g.add(dwg.rect(insert=(0, 0), size=(px(bw_m), px(EXT)), fill="#1a1a1a"))
-        g.add(dwg.rect(insert=(0, px(bd_m - EXT)), size=(px(bw_m), px(EXT)), fill="#1a1a1a"))
-        g.add(dwg.rect(insert=(0, 0), size=(px(EXT), px(bd_m)), fill="#1a1a1a"))
-        g.add(dwg.rect(insert=(px(bw_m - EXT), 0), size=(px(EXT), px(bd_m)), fill="#1a1a1a"))
+            # 4) 외벽 poché(두껍게) — 본체 둘레 EXT 띠
+            g.add(dwg.rect(insert=(0, 0), size=(px(bw_m), px(EXT)), fill="#1a1a1a"))
+            g.add(dwg.rect(insert=(0, px(bd_m - EXT)), size=(px(bw_m), px(EXT)),
+                           fill="#1a1a1a"))
+            g.add(dwg.rect(insert=(0, 0), size=(px(EXT), px(bd_m)), fill="#1a1a1a"))
+            g.add(dwg.rect(insert=(px(bw_m - EXT), 0), size=(px(EXT), px(bd_m)),
+                           fill="#1a1a1a"))
+        else:
+            # ── 경계 단위 실무 렌더(arch_grammar) — LDK 오픈플랜 보존 ──
+            self._render_boundary_plan(dwg, g, px, rooms, boundaries, openings)
 
         # 5) 실명 + 실면적 라벨(좁은 실은 축소 폰트·면적 생략)
         for r in rooms:

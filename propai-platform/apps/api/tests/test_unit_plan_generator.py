@@ -8,17 +8,24 @@
 - 잘못된 입력(베이 5 등) 시 명시 오류
 - DesignSpec.unit_grammar additive(기본 None = 기존 동작 불변)
 - SVG 렌더(generate_unit_plan_rooms) — 기존 도면 함수 무파손
+- 경계 엔진(arch_grammar): 84㎡ 3베이 정답 — LDK open 체인·문 수 고정·
+  50mm 그리드·연결성 BFS·창면적 1/10 + SVG 경계 단위 렌더(additive)
 """
 
 import pytest
 
+from app.services.cad.arch_grammar import GRID_MODULE_MM, room_type_of
 from app.services.cad.design_spec import DesignSpec, UnitGrammar, validate_spec
 from app.services.cad.unit_plan_generator import (
     SUPPORTED_BAYS,
     UNIT_CORE_TYPES,
     UNIT_RULE_TABLE,
     UnitPlanResult,
+    classify_boundaries,
+    extract_boundaries,
     generate_unit_plan,
+    place_openings,
+    validate_connectivity,
     validate_unit_layout,
 )
 
@@ -329,3 +336,226 @@ class TestSVGRender:
         # 기존 도면 코드는 그대로 존재
         for code in base:
             assert code in with_plan
+
+
+# ── 경계 엔진(arch_grammar) — 84㎡ 3베이 정답 ──
+
+
+def _open_reachable(boundaries: list, start: str) -> set:
+    """open 경계만으로 도달 가능한 실 집합(BFS) — LDK open 체인 검증용."""
+    adj: dict[str, set] = {}
+    for b in boundaries:
+        if b.get("kind") == "open" and b.get("room_b") is not None:
+            adj.setdefault(b["room_a"], set()).add(b["room_b"])
+            adj.setdefault(b["room_b"], set()).add(b["room_a"])
+    seen = {start}
+    queue = [start]
+    while queue:
+        cur = queue.pop(0)
+        for nxt in sorted(adj.get(cur, ())):
+            if nxt not in seen:
+                seen.add(nxt)
+                queue.append(nxt)
+    return seen
+
+
+class TestBoundaryEngine84Type3Bay:
+    """84형 3베이 — 경계 추출·분류·개구·연결성 정답(결정론 회귀 가드)."""
+
+    @pytest.fixture()
+    def result(self) -> UnitPlanResult:
+        return generate_unit_plan(84.0, 3)
+
+    def test_additive_keys_present_rooms_unchanged(self, result: UnitPlanResult):
+        """boundaries/openings는 additive — 기존 rooms 키 계약 불변."""
+        assert result.boundaries and result.openings
+        for room in result.rooms:
+            assert set(room.keys()) == {"name", "x", "y", "w", "h"}
+        d = result.as_dict()
+        for key in ("boundaries", "openings", "grammar_warnings"):
+            assert key in d
+
+    def test_boundaries_deterministic(self):
+        r1 = generate_unit_plan(84.0, 3)
+        r2 = generate_unit_plan(84.0, 3)
+        assert r1.boundaries == r2.boundaries
+        assert r1.openings == r2.openings
+
+    def test_boundary_schema_fields(self, result: UnitPlanResult):
+        for b in result.boundaries:
+            for key in ("id", "room_a", "room_b", "side", "orient",
+                        "x1", "y1", "x2", "y2", "length_m",
+                        "balcony_front", "kind", "wall_type", "door_owner"):
+                assert key in b, (key, b)
+            assert b["kind"] in ("open", "wall", "wall_door")
+            assert b["orient"] in ("h", "v")
+
+    def test_ldk_open_chain_living_to_kitchen(self, result: UnitPlanResult):
+        """거실↔주방 경로 open 체인(복도 경유) — 벽 미생성(LDK 오픈플랜)."""
+        reachable = _open_reachable(result.boundaries, "거실")
+        assert "주방·식당" in reachable, "거실→주방 open 체인 단절(LDK 위반)"
+        # 거실-주방 사이에 wall/wall_door 직접 경계가 생성되면 안 된다
+        for b in result.boundaries:
+            pair = {b["room_a"], b.get("room_b")}
+            if pair == {"거실", "주방·식당"}:
+                assert b["kind"] == "open", b
+
+    def test_open_boundaries_exact(self, result: UnitPlanResult):
+        """open 경계 = 현관↔복도, 주방↔복도, 복도↔거실(84형 3베이 인접 구성)."""
+        open_pairs = {
+            frozenset({b["room_a"], b["room_b"]})
+            for b in result.boundaries if b["kind"] == "open"
+        }
+        assert open_pairs == {
+            frozenset({"현관", "복도"}),
+            frozenset({"주방·식당", "복도"}),
+            frozenset({"복도", "거실"}),
+        }
+
+    def test_door_counts_fixed(self, result: UnitPlanResult):
+        """침실문 3 + 욕실문 2 + 현관문 1 = 총 6문(정답 고정)."""
+        doors = [o for o in result.openings if o["kind"] == "door"]
+        assert len(doors) == 6
+        bedroom_doors = [o for o in doors
+                         if room_type_of(o["room"]) in ("bedroom", "master_bedroom")]
+        bath_doors = [o for o in doors
+                      if room_type_of(o["room"]) in ("bath_common", "bath_master")]
+        entrance = [o for o in doors if o["subtype"] == "entrance"]
+        assert len(bedroom_doors) == 3
+        assert len(bath_doors) == 2
+        assert len(entrance) == 1
+        assert entrance[0]["fire_rated"] is True
+        assert entrance[0]["swing"] == "out"
+        assert entrance[0]["width_mm"] == 1000
+
+    def test_one_door_per_room_invariant(self, result: UnitPlanResult):
+        """1실 1문 — needs_door 실마다 자기 소유 문 정확히 1개."""
+        owned: dict[str, int] = {}
+        for o in result.openings:
+            if o["kind"] == "door":
+                owned[o["room"]] = owned.get(o["room"], 0) + 1
+        for name in ("침실2", "침실3", "안방", "공용욕실", "부속욕실", "현관"):
+            assert owned.get(name) == 1, (name, owned)
+
+    def test_all_doors_on_50mm_grid(self, result: UnitPlanResult):
+        """모든 문 중심(벽 진행축)이 50mm 그리드 위."""
+        for o in result.openings:
+            if o["kind"] != "door":
+                continue
+            axis = o["center_x_m"] if o["orient"] == "h" else o["center_y_m"]
+            assert round(axis * 1000) % GRID_MODULE_MM == 0, o
+
+    def test_connectivity_bfs_all_rooms_reached(self, result: UnitPlanResult):
+        """현관 기점 BFS(open·문 간선) — 전실 도달, 위반 0."""
+        violations = validate_connectivity(
+            result.rooms, result.boundaries, result.openings,
+        )
+        assert violations == []
+        assert result.grammar_warnings == []  # 84형 3베이 정답: 문법 경고 0
+
+    def test_window_area_ratio_living_and_bedrooms(self, result: UnitPlanResult):
+        """거실·침실(안방 포함) 창면적 ≥ 바닥면적 1/10(건축법 시행령 제51조)."""
+        rooms = {r["name"]: r for r in result.rooms}
+        windows = {o["room"]: o for o in result.openings if o["kind"] == "window"}
+        for name in ("거실", "침실2", "침실3", "안방"):
+            assert name in windows, f"{name} 창 미배치"
+            o = windows[name]
+            win_area = o["width_mm"] * o["height_mm"] / 1e6
+            floor_area = rooms[name]["w"] * rooms[name]["h"]
+            assert win_area >= floor_area / 10.0 - 1e-9, (name, win_area, floor_area)
+            assert 1500 <= o["width_mm"] <= 2400, o
+
+    def test_balcony_front_sliding_windows(self, result: UnitPlanResult):
+        """남측(발코니 전면) 창은 분합창(balcony_sliding) — 거실 포함."""
+        living = next(o for o in result.openings
+                      if o["kind"] == "window" and o["room"] == "거실")
+        assert living["subtype"] == "balcony_sliding"
+        south = [b for b in result.boundaries
+                 if b["room_b"] is None and b["side"] == "s"]
+        assert south and all(b["balcony_front"] for b in south)
+
+    def test_engine_functions_composable(self, result: UnitPlanResult):
+        """엔진 단계 함수 직접 호출 = generate_unit_plan 내장 결과와 동일(결정론)."""
+        raw = extract_boundaries(
+            result.rooms, result.body_width_m, result.body_depth_m,
+            balconies=result.balconies,
+        )
+        classified, warn1 = classify_boundaries(raw, result.rooms)
+        openings, warn2 = place_openings(classified, result.rooms)
+        assert classified == result.boundaries
+        assert openings == result.openings
+        assert warn1 == [] and warn2 == []
+
+    def test_undefined_room_name_warns_not_silent(self):
+        """미등록 실명 → wall 처리 + 정직 경고(침묵 폴백 금지)."""
+        rooms = [
+            {"name": "미지실", "x": 0.0, "y": 0.0, "w": 3.0, "h": 4.0},
+            {"name": "거실", "x": 3.0, "y": 0.0, "w": 3.0, "h": 4.0},
+        ]
+        raw = extract_boundaries(rooms, 6.0, 4.0)
+        classified, warnings = classify_boundaries(raw, rooms)
+        interior = [b for b in classified if b["room_b"] is not None]
+        assert interior and all(b["kind"] == "wall" for b in interior)
+        assert any(w["rule"] == "실명 매핑" for w in warnings)
+
+
+class TestSVGBoundaryRender:
+    """SVG 경계 단위 렌더 — additive(미제공 시 기존 렌더 그대로)."""
+
+    @pytest.fixture(autouse=True)
+    def _require_svgwrite(self):
+        pytest.importorskip("svgwrite")
+
+    @pytest.fixture()
+    def svc(self):
+        from app.services.drawing.svg_drawing_service import SVGDrawingService
+        return SVGDrawingService()
+
+    @pytest.fixture()
+    def result(self) -> UnitPlanResult:
+        return generate_unit_plan(84.0, 3)
+
+    def test_wall_path_count_equals_nonopen_boundaries(self, svc, result):
+        """boundaries 제공 시 벽 path 수 = (open 제외) 경계 수 — 전실 박스 아님."""
+        svg = svc.generate_unit_plan_rooms(
+            result.rooms, result.body_width_m, result.body_depth_m,
+            unit_type="84A", area_sqm=84.0, balconies=result.balconies,
+            boundaries=result.boundaries, openings=result.openings,
+        )
+        n_wall_paths = svg.count('class="wall"')
+        n_nonopen = sum(1 for b in result.boundaries if b["kind"] != "open")
+        assert n_wall_paths == n_nonopen
+        # 실 라벨·면적·발코니 등 기존 표기 유지
+        for label in ("거실", "안방", "침실2", "침실3", "발코니"):
+            assert label in svg
+
+    def test_legacy_render_unchanged_without_boundaries(self, svc, result):
+        """미제공 시 기존 렌더 경로 그대로 — 동일 입력 = 동일 바이트, 벽 path 없음."""
+        kwargs = dict(unit_type="84A", area_sqm=84.0, balconies=result.balconies)
+        svg1 = svc.generate_unit_plan_rooms(
+            result.rooms, result.body_width_m, result.body_depth_m, **kwargs)
+        svg2 = svc.generate_unit_plan_rooms(
+            result.rooms, result.body_width_m, result.body_depth_m, **kwargs)
+        assert svg1 == svg2  # 결정론(바이트 동일)
+        assert 'class="wall"' not in svg1  # 경계 렌더 미적용(기존 poché 박스)
+
+    def test_full_drawing_set_passes_boundaries(self, svc, result):
+        """full_drawing_set 배선 — unit_plan.boundaries 제공 시 경계 렌더 적용."""
+        drawings = svc.generate_full_drawing_set({
+            "site_width_m": 60.0, "site_depth_m": 40.0,
+            "building_width_m": 40.0, "building_depth_m": 20.0,
+            "floor_count": 5, "floor_height_m": 3.0,
+            "project_name": "경계 렌더 테스트",
+            "unit_plan": {
+                "rooms": result.rooms,
+                "body_width_m": result.body_width_m,
+                "body_depth_m": result.body_depth_m,
+                "balconies": result.balconies,
+                "boundaries": result.boundaries,
+                "openings": result.openings,
+                "unit_type": "84A",
+                "area_sqm": 84.0,
+            },
+        })
+        assert "B-02-UNIT-R" in drawings
+        assert 'class="wall"' in drawings["B-02-UNIT-R"]
