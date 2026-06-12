@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v149-cad-konva-fix";
+const CACHE_NAME = "propai-v150-hub-design";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",
