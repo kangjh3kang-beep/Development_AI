@@ -7,8 +7,8 @@
  *          또는 주소 직접 입력(로컬 state) — 이 화면은 컨텍스트 스토어를 절대 수정하지 않는다.
  *  ⑵ 개요: BriefUploadStep(PDF/텍스트 → POST /design-audit/extract-brief)
  *          + ParamConfirmStep(필드 그리드 — '추출'/'수동' 출처 배지·quote 툴팁·수정).
- *  ⑶ 도면: IFC 업로드 슬롯. DXF 슬롯은 disabled + 'CAD 2.0 연동 예정' 배지.
- *  ⑷ 실행: POST /design-audit/run(multipart: payload JSON + ifc_file?) →
+ *  ⑶ 도면: IFC 업로드 슬롯 + DXF 업로드 슬롯(.dxf · 20MB — CAD 2.0 내보내기 호환).
+ *  ⑷ 실행: POST /design-audit/run(multipart: payload JSON + ifc_file? + dxf_file?) →
  *          로딩 중 엔진 체크리스트(예상 진행 표시) → AuditReportView 전환.
  *
  * 정직성 원칙: 빈 결과·서버 오류는 메시지 그대로 노출, 가짜값·임의 링크 생성 금지.
@@ -34,7 +34,7 @@ import { AuditReportView, type DesignAuditReport } from "./AuditReportView";
 const STEPS = [
   { key: "site", label: "부지", desc: "프로젝트 선택 또는 주소" },
   { key: "brief", label: "개요", desc: "건축개요 업로드·확인" },
-  { key: "drawing", label: "도면", desc: "IFC 첨부(선택)" },
+  { key: "drawing", label: "도면", desc: "IFC·DXF 첨부(선택)" },
   { key: "run", label: "실행", desc: "AI 심사 실행" },
 ] as const;
 
@@ -52,6 +52,7 @@ const ENGINE_STEPS = [
 ];
 
 const MAX_IFC_BYTES = 200 * 1024 * 1024; // 200MB — BIM 모델 상한(클라이언트 사전 차단)
+const MAX_DXF_BYTES = 20 * 1024 * 1024; // 20MB — DXF 상한(백엔드 import-dxf 한도와 동일)
 
 export function DesignAuditWorkspace({ locale }: { locale: Locale }) {
   /* 컨텍스트 스토어 — 읽기 전용 구독(액션 호출 금지: 이 화면은 스토어를 수정하지 않는다). */
@@ -83,10 +84,13 @@ export function DesignAuditWorkspace({ locale }: { locale: Locale }) {
   const [briefId, setBriefId] = useState<string | null>(null);
   const [briefNote, setBriefNote] = useState<string | null>(null);
 
-  /* ⑶ 도면 — IFC 파일(선택) */
+  /* ⑶ 도면 — IFC·DXF 파일(선택) */
   const ifcRef = useRef<HTMLInputElement>(null);
   const [ifcFile, setIfcFile] = useState<File | null>(null);
   const [ifcError, setIfcError] = useState("");
+  const dxfRef = useRef<HTMLInputElement>(null);
+  const [dxfFile, setDxfFile] = useState<File | null>(null);
+  const [dxfError, setDxfError] = useState("");
 
   /* ⑷ 실행 */
   const [running, setRunning] = useState(false);
@@ -161,7 +165,24 @@ export function DesignAuditWorkspace({ locale }: { locale: Locale }) {
     setIfcFile(picked);
   }
 
-  /* ⑷ 실행 — multipart(payload JSON + ifc_file?) → 보고서 전환 */
+  function handleDxfPick(picked: File | null) {
+    setDxfError("");
+    if (!picked) {
+      setDxfFile(null);
+      return;
+    }
+    if (!/\.dxf$/i.test(picked.name)) {
+      setDxfError("DXF 파일(.dxf)만 첨부할 수 있습니다. DWG는 CAD에서 'DXF로 저장' 후 첨부하세요.");
+      return;
+    }
+    if (picked.size > MAX_DXF_BYTES) {
+      setDxfError("파일이 너무 큽니다(최대 20MB).");
+      return;
+    }
+    setDxfFile(picked);
+  }
+
+  /* ⑷ 실행 — multipart(payload JSON + ifc_file? + dxf_file?) → 보고서 전환 */
   async function runAudit() {
     if (!siteReady) {
       setRunError("부지 정보가 필요합니다 — 1단계에서 프로젝트를 선택하거나 주소를 입력하세요.");
@@ -195,10 +216,12 @@ export function DesignAuditWorkspace({ locale }: { locale: Locale }) {
           },
           drawing: {
             ifc_filename: ifcFile?.name ?? null,
+            dxf_filename: dxfFile?.name ?? null,
           },
         }),
       );
       if (ifcFile) fd.append("ifc_file", ifcFile);
+      if (dxfFile) fd.append("dxf_file", dxfFile);
       const r = await apiClient.post<DesignAuditReport>("/design-audit/run-upload", {
         body: fd,
         timeoutMs: 300_000, // 다단계 엔진 심사 — 기본 120s보다 넉넉히(무한대기는 차단)
@@ -232,7 +255,7 @@ export function DesignAuditWorkspace({ locale }: { locale: Locale }) {
               </div>
               <h1 className="text-lg font-black text-[var(--text-primary)]">설계안 AI 심사</h1>
               <p className="mt-0.5 text-xs text-[var(--text-secondary)]">
-                부지·건축개요·도면(IFC)을 입력하면 법규 적합성(건폐율·용적률·일조·주차·피난)과
+                부지·건축개요·도면(IFC·DXF)을 입력하면 법규 적합성(건폐율·용적률·일조·주차·피난)과
                 인근 인허가 사례 비교·인센티브 경로·사각지대를 AI가 사전 심사합니다.
               </p>
             </div>
@@ -485,25 +508,63 @@ export function DesignAuditWorkspace({ locale }: { locale: Locale }) {
                     )}
                   </div>
 
-                  {/* DXF 슬롯 — CAD 2.0 연동 예정(disabled) */}
-                  <div className="rounded-xl border border-dashed border-[var(--line)] bg-[var(--surface-soft)] p-4 opacity-70">
-                    <div className="flex items-center gap-2">
-                      <p className="text-xs font-bold text-[var(--text-secondary)]">📐 CAD 도면 (DXF)</p>
-                      <span className="rounded-full border border-[var(--line-strong)] bg-[var(--surface-strong)] px-2 py-0.5 text-[10px] font-bold text-[var(--text-tertiary)]">
-                        CAD 2.0 연동 예정
-                      </span>
-                    </div>
-                    <p className="mt-1 text-[11px] text-[var(--text-hint)]">
-                      DXF 직접 첨부는 CAD 2.0 파이프라인 연동 후 제공됩니다. 현재는 AI
-                      설계도면(CAD)에서 생성한 설계의 개요 값으로 심사할 수 있습니다.
+                  {/* DXF 업로드 슬롯 — CAD 2.0 편집본 DXF 호환(.dxf · 최대 20MB) */}
+                  <div className="rounded-xl border border-dashed border-[var(--line-strong)] bg-[var(--surface-soft)] p-4">
+                    <p className="text-xs font-bold text-[var(--text-primary)]">
+                      📐 CAD 도면 (DXF) <span className="font-normal text-[var(--text-hint)]">— 선택</span>
                     </p>
-                    <button
-                      type="button"
-                      disabled
-                      className="mt-3 cursor-not-allowed rounded-xl border border-[var(--line)] bg-[var(--surface-strong)] px-4 py-2 text-xs font-bold text-[var(--text-hint)]"
-                    >
-                      DXF 파일 선택 (준비 중)
-                    </button>
+                    <p className="mt-1 text-[11px] text-[var(--text-hint)]">
+                      DXF를 첨부하면 도면 파일이 심사 요청에 함께 전송됩니다(.dxf · 최대 20MB).
+                      CAD 2.0의 &quot;편집본 DXF&quot; 내보내기 파일을 그대로 첨부할 수 있습니다.
+                    </p>
+                    <input
+                      ref={dxfRef}
+                      type="file"
+                      accept=".dxf"
+                      className="hidden"
+                      disabled={running}
+                      onChange={(e) => handleDxfPick(e.target.files?.[0] ?? null)}
+                    />
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => dxfRef.current?.click()}
+                        disabled={running}
+                        className="rounded-xl border border-[var(--line-strong)] bg-[var(--surface-strong)] px-4 py-2 text-xs font-bold text-[var(--text-secondary)] hover:border-[var(--accent-strong)] disabled:opacity-50"
+                      >
+                        DXF 파일 선택
+                      </button>
+                      {dxfFile && (
+                        <span className="flex items-center gap-2 text-xs text-[var(--text-secondary)]">
+                          <span
+                            className="max-w-[200px] truncate font-semibold text-[var(--text-primary)]"
+                            title={dxfFile.name}
+                          >
+                            {dxfFile.name}
+                          </span>
+                          <span className="text-[var(--text-hint)]">
+                            {(dxfFile.size / 1024 / 1024).toFixed(1)}MB
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setDxfFile(null);
+                              if (dxfRef.current) dxfRef.current.value = "";
+                            }}
+                            disabled={running}
+                            title="첨부 제거"
+                            className="text-[var(--status-error)] disabled:opacity-50"
+                          >
+                            ✕
+                          </button>
+                        </span>
+                      )}
+                    </div>
+                    {dxfError && (
+                      <p className="mt-2 text-[11px] font-semibold text-[var(--status-error)]">
+                        {dxfError}
+                      </p>
+                    )}
                   </div>
                 </div>
               )}
@@ -582,12 +643,15 @@ export function DesignAuditWorkspace({ locale }: { locale: Locale }) {
                         </p>
                         <p
                           className="mt-1 truncate text-xs font-bold text-[var(--text-primary)]"
-                          title={ifcFile?.name}
+                          title={[ifcFile?.name, dxfFile?.name].filter(Boolean).join(" · ") || undefined}
                         >
-                          {ifcFile ? ifcFile.name : "IFC 미첨부"}
+                          {ifcFile || dxfFile
+                            ? [ifcFile?.name, dxfFile?.name].filter(Boolean).join(" · ")
+                            : "도면 미첨부"}
                         </p>
                         <p className="text-[10px] text-[var(--text-hint)]">
                           {ifcFile ? "도면 기반 항목 포함" : "개요·부지 기반 항목만"}
+                          {dxfFile ? " · DXF 동봉" : ""}
                         </p>
                       </div>
                     </div>

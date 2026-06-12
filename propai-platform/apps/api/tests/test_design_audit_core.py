@@ -4,6 +4,8 @@
 - DA-2: 출처 병합(user>ifc>brief) + 5% 괴리 conflicts, 도형 검증 패스스루.
 - DA-3: AuditFinding 정규화(레지스트리 근거만), overall 결정론 산정,
         엔진 실패 graceful(skipped), 사례비교 결합(모킹).
+- UP3: run() 라우터 계약 어댑터(audit 위임·verdict 영문 별칭·IFC 병합),
+        grammar 섹션(rooms 제공 시 경계·개구·연결성 — None이면 skipped).
 """
 
 import os
@@ -22,6 +24,7 @@ from app.services.design_audit.brief_extractor import (  # noqa: E402
 )
 from app.services.design_audit.design_audit_orchestrator import (  # noqa: E402
     ENGINE_NAMES,
+    VERDICT_EN_ALIASES,
     DesignAuditOrchestrator,
     make_finding,
 )
@@ -406,3 +409,177 @@ class TestCaseCompareIntegration:
         )
         finding = next(f for f in result["findings"] if f["engine"] == "case_compare")
         assert finding["status"] == "skipped"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# UP3: run() 라우터 계약 어댑터 — audit() 위임·verdict 영문 별칭·IFC 병합
+# ─────────────────────────────────────────────────────────────────────────────
+def _grammar_rooms_clean():
+    """현관+거실 2실 타일링 — 문법 경고 0(현관-거실 open·현관문 북측·거실 남측창)."""
+    return [
+        {"name": "현관", "x": 0.0, "y": 0.0, "w": 1.5, "h": 3.0},
+        {"name": "거실", "x": 1.5, "y": 0.0, "w": 3.6, "h": 3.0},
+    ]
+
+
+def _grammar_rooms_with_warning():
+    """침실2가 복도 없이 거실에만 접함 — 1실 1문(wall 승격) 경고 발생."""
+    return _grammar_rooms_clean() + [
+        {"name": "침실2", "x": 5.1, "y": 0.0, "w": 3.0, "h": 3.0},
+    ]
+
+
+class TestRunAdapter:
+    async def test_run_delegates_site_geometry_rooms_to_audit(self, monkeypatch):
+        """run()은 site 분해(zone_type·sigungu·address·pnu)·geometry→shapes·rooms 그대로 audit 위임."""
+        orchestrator = DesignAuditOrchestrator()
+        captured = {}
+
+        async def fake_audit(params, **kwargs):
+            captured["params"] = params
+            captured.update(kwargs)
+            return {"overall": {"verdict": "적합"}, "findings": []}
+
+        monkeypatch.setattr(orchestrator, "audit", fake_audit)
+        shapes = _square_shapes()
+        rooms = _grammar_rooms_clean()
+        result = await orchestrator.run(
+            None,
+            site={
+                "zone_type": ZONE, "sigungu": "강남구",
+                "address": "서울 강남구 역삼동", "pnu": "1168010100100010000",
+            },
+            params={"far_pct": 200.0},
+            geometry=shapes,
+            rooms=rooms,
+        )
+        assert captured["params"] == {"far_pct": 200.0}
+        assert captured["zone_type"] == ZONE
+        assert captured["sigungu"] == "강남구"
+        assert captured["address"] == "서울 강남구 역삼동"
+        assert captured["pnu"] == "1168010100100010000"
+        assert captured["shapes"] is shapes
+        assert captured["rooms"] is rooms
+        assert result["overall"]["verdict_en"] == "pass"
+
+    async def test_run_verdict_en_aliases(self, monkeypatch):
+        """영문 별칭: 부적합→fail·조건부적합→conditional·적합→pass·판정불가→None(한국어 불변)."""
+        assert VERDICT_EN_ALIASES == {"부적합": "fail", "조건부적합": "conditional", "적합": "pass"}
+        orchestrator = DesignAuditOrchestrator()
+        for korean, english in (
+            ("부적합", "fail"), ("조건부적합", "conditional"),
+            ("적합", "pass"), ("판정불가", None),
+        ):
+            async def fake_audit(params, _v=korean, **kwargs):
+                return {"overall": {"verdict": _v}, "findings": []}
+
+            monkeypatch.setattr(orchestrator, "audit", fake_audit)
+            result = await orchestrator.run(None, site={}, params={})
+            assert result["overall"]["verdict"] == korean
+            assert result["overall"]["verdict_en"] == english
+
+    async def test_run_real_path_matches_audit_contract(self):
+        """라이브 503 버그 수정 핵심: run() 실호출이 audit()와 동일 결정론 결과."""
+        result = await DesignAuditOrchestrator().run(
+            None,
+            site={"zone_type": ZONE},
+            params=_clean_params(),
+            geometry=_square_shapes(),
+        )
+        assert result["overall"]["verdict"] == "적합"
+        assert result["overall"]["verdict_en"] == "pass"
+        assert set(ENGINE_NAMES).issubset(result["engines"])
+        assert result["findings"]
+        # 기존 응답 키 무파손(additive) — 라우터가 소비하는 키 유지.
+        for key in ("schema_version", "limits", "sections", "params_used", "overall"):
+            assert key in result
+
+    async def test_run_merges_ifc_params_user_first(self, monkeypatch):
+        """ifc_file_url 제공 시 params_from_ifc→merge_params(user>ifc) 병합 + 출처 표면화."""
+        import app.services.design_audit.geometry_adapter as ga
+
+        async def fake_params_from_ifc(db, project_id, tenant_id, file_url):
+            assert file_url == "minio://bim/test.ifc"
+            return {
+                "available": True,
+                "params": {"total_floor_area_sqm": 900.0},
+                "source": "bim_ifc", "ifc_version": "IFC4", "raw": None,
+                "note": "연면적은 IfcSlab 합 근사",
+            }
+
+        monkeypatch.setattr(ga, "params_from_ifc", fake_params_from_ifc)
+        result = await DesignAuditOrchestrator().run(
+            None,
+            site={"zone_type": ZONE},
+            params={"far_pct": 160.0, "bcr_pct": 48.0, "land_area_sqm": 500.0},
+            ifc_file_url="minio://bim/test.ifc",
+        )
+        assert result["params_used"]["total_floor_area_sqm"] == 900.0  # IFC 병합
+        assert result["params_used"]["far_pct"] == 160.0               # user 우선 유지
+        merge = result["param_merge"]
+        assert merge["param_sources"]["total_floor_area_sqm"] == "ifc"
+        assert merge["param_sources"]["far_pct"] == "user"
+        assert merge["ifc_available"] is True
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# UP3: grammar 섹션 — rooms 제공 시 경계·개구·연결성, None이면 skipped
+# ─────────────────────────────────────────────────────────────────────────────
+class TestGrammarSection:
+    async def test_rooms_none_grammar_skipped(self):
+        """rooms 미제공 → grammar skipped(정직) — 기존 8엔진 상태·판정 무파손."""
+        result = await DesignAuditOrchestrator().audit(_clean_params(), zone_type=ZONE)
+        assert result["sections"]["grammar"]["skipped"] is True
+        assert "grammar" not in result["engines"]
+        assert not [f for f in result["findings"] if f["engine"] == "grammar"]
+        assert result["overall"]["verdict"] == "적합"
+
+    async def test_rooms_clean_grammar_pass(self):
+        """경고 없는 타일링 → grammar pass 1건 + sections.grammar 적재(판정 불변)."""
+        result = await DesignAuditOrchestrator().audit(
+            _clean_params(), zone_type=ZONE, rooms=_grammar_rooms_clean()
+        )
+        assert result["engines"]["grammar"] == "ok"
+        grammar = result["sections"]["grammar"]
+        assert grammar["skipped"] is False
+        assert grammar["grammar_warnings"] == []
+        assert grammar["boundaries"] and grammar["openings"]
+        # LDK 오픈플랜: 현관-거실 경계는 open(arch_grammar BOUNDARY_RULES).
+        opens = [b for b in grammar["boundaries"] if b["kind"] == "open" and b.get("room_b")]
+        assert any({b["room_a"], b["room_b"]} == {"현관", "거실"} for b in opens)
+        # 개구: 현관 방화문(entrance) + 거실 남측 채광창.
+        assert any(
+            o["kind"] == "door" and o["subtype"] == "entrance" and o["fire_rated"]
+            for o in grammar["openings"]
+        )
+        assert any(o["kind"] == "window" and o["room"] == "거실" for o in grammar["openings"])
+        finding = next(f for f in result["findings"] if f["engine"] == "grammar")
+        assert finding["status"] == "pass"
+        assert result["overall"]["verdict"] == "적합"  # grammar pass — 판정 불변
+
+    async def test_grammar_warning_makes_conditional(self):
+        """1실 1문 승격 경고 → grammar warning → 조건부적합(기존 결정론 규칙 반영)."""
+        result = await DesignAuditOrchestrator().audit(
+            _clean_params(), zone_type=ZONE, rooms=_grammar_rooms_with_warning()
+        )
+        assert result["engines"]["grammar"] == "ok"
+        warnings = [
+            f for f in result["findings"]
+            if f["engine"] == "grammar" and f["status"] == "warning"
+        ]
+        assert warnings
+        assert _FINDING_KEYS.issubset(warnings[0].keys())  # AuditFinding 단일 스키마
+        assert warnings[0]["improvement"]  # KB 경고 message 동반
+        assert result["sections"]["grammar"]["grammar_warnings"]
+        assert result["overall"]["verdict"] == "조건부적합"
+
+    async def test_invalid_rooms_grammar_skipped_not_crash(self):
+        """좌표 결손 rooms → grammar skipped(정직) — 예외 미전파·판정 미반영."""
+        result = await DesignAuditOrchestrator().audit(
+            _clean_params(), zone_type=ZONE, rooms=[{"name": "거실"}]
+        )
+        assert result["engines"]["grammar"] == "failed"
+        finding = next(f for f in result["findings"] if f["engine"] == "grammar")
+        assert finding["status"] == "skipped"
+        assert "미산출" in finding["note"]
+        assert result["overall"]["verdict"] == "적합"  # skipped는 판정 미반영

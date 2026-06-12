@@ -37,6 +37,7 @@ logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/api/v1/design-audit", tags=["설계심사(Design Audit)"])
 
 _MAX_PDF_BYTES = 25 * 1024 * 1024  # design_references와 동일 한도(도면 PDF 여유)
+_MAX_DXF_BYTES = 20 * 1024 * 1024  # UP4(WI-6) — run-upload dxf_file 한도(설계 명시 20MB)
 
 _DISCLAIMER = (
     "본 심사는 공개데이터·결정론 룰체크·AI 보조 기반 참고 자료이며 법적 효력이 없습니다. "
@@ -140,7 +141,9 @@ async def _load_audit(db: AsyncSession, audit_id: str, *, user_id: Any) -> dict[
 
 
 # ── U5 오케스트레이터(지연 임포트 — 계약: run(db, site=, params=, geometry=,
-#    ifc_file_url=, use_llm=, use_verification_retry=)) ───────────────────────
+#    ifc_file_url=, use_llm=, use_verification_retry=[, rooms=])) ─────────────
+#    rooms 키워드는 UP3 확장 계약 — 제공 시에만 가산 전달(미제공 호출은 기존과
+#    동일해 rooms 미지원 구버전 run()과도 하위호환). ───────────────────────────
 
 
 def _get_orchestrator():
@@ -262,6 +265,11 @@ class RunRequest(BaseModel):
     )
     geometry: Optional[dict[str, Any]] = Field(None, description="설계 지오메트리(선택)")
     ifc_file_url: Optional[str] = Field(None, description="IFC 파일 URL(선택)")
+    # UP4(WI-7) additive — 실(室) 목록(UP1 extract_rooms 출력의 rooms 등).
+    # 제공 시에만 orchestrator.run(rooms=...)으로 가산 전달(미제공 시 기존 호출 동일).
+    rooms: Optional[list[dict[str, Any]]] = Field(
+        None, description="실(室) 목록(DXF rooms 역추출 등 — 선택, grammar 검증용)"
+    )
     use_llm: bool = Field(True, description="AI 보조(사각지대 쟁점 생성) 사용 여부")
     use_verification_retry: bool = Field(True, description="검증관 1회 재생성 사용 여부")
 
@@ -293,16 +301,21 @@ async def _execute_run(
             status_code=503, detail="설계심사 엔진이 아직 준비되지 않았습니다. 잠시 후 다시 시도하세요."
         ) from e
 
+    run_kwargs: dict[str, Any] = {
+        "site": req.site,
+        "params": req.params,
+        "geometry": req.geometry,
+        "ifc_file_url": req.ifc_file_url,
+        "use_llm": req.use_llm,
+        "use_verification_retry": req.use_verification_retry,
+    }
+    # UP4(WI-7) — rooms는 제공 시에만 키워드 가산(미제공 호출은 기존과 동일 —
+    # rooms 미지원 구버전 run() 계약과 하위호환, TypeError 미유발).
+    if req.rooms is not None:
+        run_kwargs["rooms"] = req.rooms
+
     try:
-        result = await orchestrator.run(
-            db,
-            site=req.site,
-            params=req.params,
-            geometry=req.geometry,
-            ifc_file_url=req.ifc_file_url,
-            use_llm=req.use_llm,
-            use_verification_retry=req.use_verification_retry,
-        )
+        result = await orchestrator.run(db, **run_kwargs)
     except HTTPException:
         raise
     except Exception as e:  # noqa: BLE001
@@ -339,6 +352,7 @@ async def _execute_run(
         "site": req.site,
         "params": req.params,
         "geometry_provided": req.geometry is not None,
+        "rooms_provided": req.rooms is not None,  # UP4 additive(키 추가만)
         "ifc_file_url": req.ifc_file_url,
         "use_llm": req.use_llm,
         "use_verification_retry": req.use_verification_retry,
@@ -376,18 +390,52 @@ async def _execute_run(
 
 
 def _build_report_sections(resp: dict[str, Any]) -> list[dict[str, Any]]:
-    """U7 프론트 AuditSection[] 구성 — 존재하는 원자료만(빈 섹션 미생성, 가짜값 0)."""
+    """U7 프론트 AuditSection[] 구성 — 존재하는 원자료만(빈 섹션 미생성, 가짜값 0).
+
+    UP4(WI-7) additive — sections_raw.grammar(UP3 결정론 문법검증 섹션) 존재 시:
+      · S5 하위 grammar 핑거: ldk_open·connectivity·daylight 중 **실재 키만** 부착.
+      · S6 grammar 경고: warnings|grammar_warnings(list)를 S6에 결합. blindspot
+        없이 경고만 있으면 'AI 추정' 라벨 없이 정직 표기로 별도 생성.
+    grammar 부재 시 기존 출력과 동일(회귀 0).
+    """
     sections: list[dict[str, Any]] = []
     findings = resp.get("findings") or []
     raw = resp.get("sections_raw") or {}
     blindspot = resp.get("blindspot") or {}
 
+    # UP4 — grammar 원자료(결정론 문법검증): 실재 키만 채택(가짜값 0)
+    grammar = raw.get("grammar") if isinstance(raw, dict) else None
+    g_finger: dict[str, Any] = {}
+    g_warnings: list[Any] = []
+    if isinstance(grammar, dict) and grammar:
+        g_finger = {
+            k: grammar[k]
+            for k in ("ldk_open", "connectivity", "daylight")
+            if grammar.get(k) is not None
+        }
+        gw = grammar.get("warnings")
+        if not isinstance(gw, list):
+            gw = grammar.get("grammar_warnings")
+        if isinstance(gw, list) and gw:
+            g_warnings = gw
+
     if findings:
-        sections.append({
+        s5: dict[str, Any] = {
             "id": "s5",
             "title": "공학·법규 검증 (8룰)",
             "status": resp.get("overall"),
             "findings": findings,
+        }
+        if g_finger:
+            s5["grammar"] = g_finger
+        sections.append(s5)
+    elif g_finger:
+        # findings 없이 grammar 핑거만 실재 — S5를 grammar 전용으로 생성(빈 섹션 아님)
+        sections.append({
+            "id": "s5",
+            "title": "공학·법규 검증 (8룰)",
+            "status": resp.get("overall"),
+            "grammar": g_finger,
         })
     s1 = raw.get("s1_samples") if isinstance(raw, dict) else None
     if s1:
@@ -412,18 +460,77 @@ def _build_report_sections(resp: dict[str, Any]) -> list[dict[str, Any]]:
         })
     bs_items = (blindspot or {}).get("blindspots") if isinstance(blindspot, dict) else None
     if bs_items:
-        sections.append({
+        s6: dict[str, Any] = {
             "id": "s6",
             "title": "심의 예상 쟁점·사각지대 (AI 추정)",
             "blind_spots": bs_items,
+        }
+        if g_warnings:
+            s6["grammar_warnings"] = g_warnings
+            s6["grammar_note"] = "grammar 경고는 결정론 문법검증 결과(AI 추정 아님)"
+        sections.append(s6)
+    elif g_warnings:
+        # blindspot 없이 grammar 경고만 실재 — 'AI 추정' 라벨 없이 정직 표기
+        sections.append({
+            "id": "s6",
+            "title": "심의 예상 쟁점·사각지대",
+            "grammar_warnings": g_warnings,
+            "grammar_note": "결정론 문법검증(LDK 오픈·연결성·채광) 경고 — AI 추정 아님",
         })
     return sections
+
+
+# ── UP4(WI-6) — run-upload DXF 수용(parse_dxf_to_shapes → cad_upload_hub) ────
+
+
+def _rooms_list_of(hub_rooms: Any) -> list[dict[str, Any]] | None:
+    """허브 rooms 산출({rooms:[...], warnings:[...]} dict | list)에서 실 dict 목록만 추출.
+
+    UP2 허브의 rooms는 UP1 extract_rooms 출력(dict) 또는 미배포 시 None이다.
+    빈 목록·비정형은 None — 가짜 실 금지(미제공과 동일 취급).
+    """
+    if isinstance(hub_rooms, dict):
+        hub_rooms = hub_rooms.get("rooms")
+    if not isinstance(hub_rooms, list):
+        return None
+    rooms = [r for r in hub_rooms if isinstance(r, dict)]
+    return rooms or None
+
+
+async def _ingest_dxf_upload(dxf_file: UploadFile) -> dict[str, Any] | None:
+    """dxf_file 업로드 → parse_dxf_to_shapes → cad_upload_hub.distribute(UP2 허브).
+
+    검증: .dxf 확장자(아니면 422) → 20MB 한도(초과 413 — PDF 25MB 관행 미러) →
+    파싱 실패(ValueError — 손상/비DXF/ezdxf 미설치)는 422 정직(가짜 기하 금지).
+    빈 파일은 None(미제공과 동일 — ifc_file 경로 관행 미러).
+    """
+    if not (dxf_file.filename or "").lower().endswith(".dxf"):
+        raise HTTPException(
+            status_code=422, detail="DXF 파일(.dxf 확장자)만 업로드할 수 있습니다."
+        )
+    data = await dxf_file.read()
+    if not data:
+        return None
+    if len(data) > _MAX_DXF_BYTES:
+        raise HTTPException(status_code=413, detail="DXF 파일이 너무 큽니다(최대 20MB).")
+
+    from app.services.cad.dxf_import_service import parse_dxf_to_shapes
+
+    try:
+        parse_result = parse_dxf_to_shapes(data)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=f"DXF 파싱 실패: {str(e)[:160]}") from e
+
+    from app.services.cad.cad_upload_hub import distribute
+
+    return distribute(parse_result)
 
 
 @router.post("/run-upload")
 async def run_design_audit_upload(
     payload: str = Form(..., description="실행 페이로드 JSON 문자열(site/brief/drawing)"),
     ifc_file: UploadFile | None = File(None),
+    dxf_file: UploadFile | None = File(None),
     current: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
@@ -433,6 +540,12 @@ async def run_design_audit_upload(
     ②brief.fields[{key,value}] → params dict 변환 ③IFC 업로드를 임시파일로
     저장해 ifc_file_url로 전달만 추가한다. 응답에 프론트 계약 별칭
     (id·verdict·sections)을 가산한다(/run 응답 키도 전부 포함 — additive).
+
+    UP4(WI-6) additive — dxf_file 수용: parse_dxf_to_shapes(20MB·.dxf 검증,
+    파싱 실패 422) → cad_upload_hub.distribute로 design_raw→geometry,
+    rooms→RunRequest.rooms, params_hint→brief 미입력 항목만 보완(기존값 우선·
+    덮어쓰기 금지). 적용 내역은 응답 dxf_import 키로 투명 보고(additive).
+    payload의 geometry/rooms 직접 입력은 DXF보다 우선한다(덮어쓰기 금지).
     """
     import json as _json
 
@@ -465,12 +578,54 @@ async def run_design_audit_upload(
             tmp.close()
             ifc_file_url = tmp.name
 
+    # payload 직접 입력(geometry/rooms) — DXF 산출보다 우선(덮어쓰기 금지)
+    geometry: dict[str, Any] | None = (
+        body.get("geometry") if isinstance(body.get("geometry"), dict) else None
+    )
+    rooms: list[dict[str, Any]] | None = None
+    if isinstance(body.get("rooms"), list):
+        rooms = [r for r in body["rooms"] if isinstance(r, dict)] or None
+
+    # UP4(WI-6) — DXF 업로드: parse → 허브 분배 → 심사 입력 배선(기존값 우선)
+    dxf_import: dict[str, Any] | None = None
+    if dxf_file is not None and dxf_file.filename:
+        hub = await _ingest_dxf_upload(dxf_file)
+        if hub is not None:
+            applied: list[str] = []
+            if geometry is None and isinstance(hub.get("design_raw"), dict):
+                geometry = hub["design_raw"]
+                applied.append("geometry")
+            hub_rooms = _rooms_list_of(hub.get("rooms"))
+            if rooms is None and hub_rooms:
+                rooms = hub_rooms
+                applied.append("rooms")
+            # params_hint — brief 미입력 항목만 보완(기존값 우선·덮어쓰기 금지).
+            # 'source'(출처 라벨)는 params에 혼입하지 않고 dxf_import로 투명 보고.
+            hint = hub.get("params_hint")
+            hint_applied: list[str] = []
+            if isinstance(hint, dict):
+                for k, v in hint.items():
+                    if k == "source" or v is None or k in params:
+                        continue
+                    params[k] = v
+                    hint_applied.append(k)
+            dxf_import = {
+                "filename": dxf_file.filename,
+                "applied": applied,
+                "params_hint_applied": sorted(hint_applied),
+                "rooms_count": len(hub_rooms or []),
+                "diagnostics": hub.get("diagnostics") or [],
+            }
+            if isinstance(hint, dict) and hint.get("source"):
+                dxf_import["params_hint_source"] = hint["source"]
+
     req = RunRequest(
         project_id=body.get("project_id") or (site.get("project_id") if isinstance(site, dict) else None),
         site=site,
         params=params,
-        geometry=body.get("geometry") if isinstance(body.get("geometry"), dict) else None,
+        geometry=geometry,
         ifc_file_url=ifc_file_url,
+        rooms=rooms,
         use_llm=bool(body.get("use_llm", True)),
         use_verification_retry=bool(body.get("use_verification_retry", True)),
     )
@@ -483,6 +638,8 @@ async def run_design_audit_upload(
     resp["verdict"] = resp.get("overall")
     resp["sections"] = _build_report_sections(resp)
     resp["generated_at"] = datetime.now(_tz.utc).isoformat()
+    if dxf_import is not None:
+        resp["dxf_import"] = dxf_import  # UP4 additive — DXF 적용 내역 투명 보고
     return resp
 
 

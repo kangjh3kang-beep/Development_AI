@@ -22,6 +22,19 @@
 - 데이터 부족 엔진은 skipped + 사유(임의 기본값으로 강행하지 않음).
 - 리포트 S섹션 결합용 원자료(sections: s1_samples, s4_incentives,
   efficiency_metrics[S7 전용률·코어비율])를 함께 반환한다.
+
+[UP3 — additive] 라우터 계약 어댑터 + 평면 문법 섹션:
+- run(db, site=, params=, geometry=, ifc_file_url=, …): design_audit.py /run이
+  호출하는 진입점. site에서 zone_type·sigungu·address·pnu만 추출하고 IFC 파라미터를
+  병합(user>ifc)한 뒤 기존 audit()에 위임한다(audit·8엔진 시그니처 불변).
+  반환에는 overall.verdict_en 영문 별칭(부적합→fail, 조건부적합→conditional,
+  적합→pass)만 가산한다.
+- audit(rooms=): 실 타일링(rooms) 제공 시 unit_plan_generator 경계 엔진
+  (arch_grammar KB — classify_boundaries·place_openings·validate_connectivity)을
+  실행해 LDK 오픈·1실 1문·채광창·연결성 결과를 engine='grammar' finding으로
+  정규화하고 sections.grammar(boundaries·openings·grammar_warnings)에 적재한다.
+  rooms 미제공 시 grammar는 skipped(정직) — 기존 8엔진·종합판정 결정론 불변
+  (grammar warning은 기존 규칙대로 조건부적합에 반영).
 """
 
 from __future__ import annotations
@@ -49,6 +62,14 @@ STATUS_WARNING = "warning"
 STATUS_FAIL = "fail"
 STATUS_INFO = "info"
 STATUS_SKIPPED = "skipped"
+
+# [UP3] overall.verdict 영문 별칭(라우터/프론트 계약) — 한국어 verdict는 불변(additive).
+# '판정불가'는 설계 명세에 별칭이 없어 None(날조 금지 — 미정의는 미정의로).
+VERDICT_EN_ALIASES: dict[str, str] = {
+    "부적합": "fail",
+    "조건부적합": "conditional",
+    "적합": "pass",
+}
 
 # rules8 위반유형 → 법령 레지스트리 근거키(존재 검증된 키만 — 할루시네이션 링크 금지).
 # height(가로구역 최고높이, 건축법 제60조)는 레지스트리 미보유 → 매핑 없음(텍스트만).
@@ -203,6 +224,7 @@ class DesignAuditOrchestrator:
         regulation_payload: Any = None,
         plan_payload: Any = None,
         case_service: Any = None,
+        rooms: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """설계 파라미터·기하·맥락으로 8엔진 설계심사를 수행한다.
 
@@ -215,6 +237,9 @@ class DesignAuditOrchestrator:
             shapes: CAD 도형 페이로드(rules8 기하검증용, 없으면 해당 엔진 skipped).
             regulation_payload/plan_payload: 조례·도시군관리계획 페이로드(실효한도 계층).
             case_service: PermitCaseService 호환 객체(테스트 주입 — 생성자 주입보다 우선).
+            rooms: [UP3] 실 타일링 [{name,x,y,w,h}](m, unit_plan_generator 좌표계) —
+                제공 시에만 arch_grammar 평면 문법 검증(engine='grammar') 실행.
+                미제공 시 sections.grammar는 skipped(정직) — 기존 동작 불변.
         """
         params = dict(params or {})
 
@@ -273,6 +298,20 @@ class DesignAuditOrchestrator:
                 key, payload = section
                 sections[key] = payload
 
+        # ── [UP3] grammar: 평면 문법(LDK 오픈·1실 1문·채광창·연결성) ──
+        # rooms 제공 시에만 실행(additive — 8엔진 gather·ENGINE_NAMES 불변).
+        # warning은 기존 결정론 규칙 그대로 조건부적합에 반영, skipped는 판정 미반영.
+        if rooms:
+            grammar = self._run_grammar(rooms)
+            engines_status["grammar"] = grammar["status"]
+            findings.extend(grammar["findings"])
+            sections["grammar"] = grammar["section"]
+        else:
+            sections["grammar"] = {
+                "skipped": True,
+                "note": "rooms(실 타일링) 미제공 — 평면 문법(경계·개구·연결성) 검증 생략",
+            }
+
         # [S7] 효율 지표(결정론 산술 — 엔진 외 공통 섹션).
         sections["efficiency_metrics"] = _efficiency_metrics(params)
 
@@ -310,6 +349,167 @@ class DesignAuditOrchestrator:
                 "법령 근거 링크는 검증된 레지스트리 출력만 사용합니다."
             ),
         }
+
+    # ── [UP3] run: 라우터(design_audit.py /run) 계약 어댑터 — audit() 위임 ───
+    async def run(
+        self,
+        db: Any,
+        *,
+        site: dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
+        geometry: dict[str, Any] | None = None,
+        ifc_file_url: str | None = None,
+        use_llm: bool = True,
+        use_verification_retry: bool = True,
+        rooms: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        """라우터 계약(run) → 기존 audit() 위임 어댑터(additive — audit 시그니처 불변).
+
+        - site에서 zone_type·sigungu·address·pnu만 추출한다(없는 키는 None — 날조 금지).
+        - geometry는 audit(shapes=)로 그대로 전달한다(rules8 기하검증).
+        - ifc_file_url 제공 시 geometry_adapter.params_from_ifc(db) 분석 후
+          merge_params(user>ifc)로 병합하고, 출처·5%+ 괴리(conflicts)를
+          param_merge 키로 정직 표면화한다(IFC 분석 실패는 빈 병합 — 무중단).
+        - use_llm·use_verification_retry는 라우터 계약 호환용으로 수용만 한다 —
+          본 오케스트레이터는 결정론 전용이며 AI 보조(blindspot)는 라우터(DA-4) 소관.
+        - 반환은 audit() 결과에 overall.verdict_en 영문 별칭(부적합→fail,
+          조건부적합→conditional, 적합→pass, 판정불가→None)만 가산한다.
+        """
+        del use_llm, use_verification_retry  # 계약 수용만(결정론 — LLM은 라우터 소관)
+        site = site if isinstance(site, dict) else {}
+
+        merged_params = dict(params or {})
+        param_merge: dict[str, Any] | None = None
+        if ifc_file_url:
+            from app.services.design_audit.geometry_adapter import merge_params, params_from_ifc
+
+            ifc = await params_from_ifc(
+                db, site.get("project_id"), site.get("tenant_id"), ifc_file_url
+            )
+            merge = merge_params(user=merged_params, ifc=ifc.get("params") or {})
+            merged_params = merge["params"]
+            param_merge = {
+                "param_sources": merge["param_sources"],
+                "conflicts": merge["conflicts"],
+                "priority": merge["priority"],
+                "ifc_available": bool(ifc.get("available")),
+                "ifc_note": ifc.get("note"),
+            }
+
+        result = await self.audit(
+            merged_params,
+            zone_type=site.get("zone_type"),
+            sigungu=site.get("sigungu"),
+            address=site.get("address"),
+            pnu=site.get("pnu"),
+            shapes=geometry,
+            rooms=rooms,
+        )
+
+        overall = result.get("overall")
+        if isinstance(overall, dict):
+            overall["verdict_en"] = VERDICT_EN_ALIASES.get(str(overall.get("verdict")))
+        if param_merge is not None:
+            result["param_merge"] = param_merge
+        return result
+
+    # ── [UP3] grammar: 평면 문법 검증(unit_plan_generator 경계 엔진 재사용) ──
+    def _run_grammar(self, rooms: list[dict[str, Any]]) -> dict[str, Any]:
+        """arch_grammar KB 기반 평면 문법 검증을 AuditFinding으로 정규화한다.
+
+        파이프라인(결정론 — unit_plan_generator 경계 엔진, arch_grammar KB 소비):
+          boundaries_from_bbox_rooms(업로드 bbox 실의 공유변 — 타일링 갭 허용,
+          미인접·갭은 warnings로 정직 보고) → classify_boundaries(LDK 오픈·
+          1실 1문) → place_openings(문·채광창 50mm 그리드) →
+          validate_connectivity(현관 기점 BFS).
+        업로드 도면의 역추출 rooms는 bbox 근사라 빈틈없는 타일링을 보장하지
+        않으므로, 타일링 전제인 extract_boundaries 대신 갭 허용 어댑터를 쓴다.
+        경고(미배치·미도달·승격·창면적 미달·갭 등)는 warning, 무경고는 pass 1건.
+        rooms 형식 오류·실행 실패는 skipped(정직) — 종합판정 미반영.
+        """
+        try:
+            from app.services.cad.shapes_to_rooms import boundaries_from_bbox_rooms
+            from app.services.cad.unit_plan_generator import (
+                classify_boundaries,
+                place_openings,
+                validate_connectivity,
+            )
+
+            if not rooms:
+                raise ValueError("rooms 비어 있음")
+            for r in rooms:
+                # 형식 검증 — bbox 결손은 기하 갭이 아닌 형식 오류(skipped 대상).
+                # 어댑터의 갭 관용은 '키는 있으나 타일링이 안 맞는' 경우만이다.
+                (str(r["name"]), float(r["x"]), float(r["y"]),
+                 float(r["w"]), float(r["h"]))
+
+            adj = boundaries_from_bbox_rooms(rooms)
+            boundaries = adj["boundaries"]
+            adj_warnings = adj["warnings"]
+            classified, cls_warnings = classify_boundaries(boundaries, rooms)
+            openings, open_warnings = place_openings(classified, rooms)
+            conn_violations = validate_connectivity(rooms, classified, openings)
+        except Exception as e:  # noqa: BLE001 — 형식 오류·엔진 실패는 skipped(정직)
+            logger.warning("평면 문법 검증 실패 — skipped 처리", error=str(e)[:160])
+            return {
+                "status": "failed",
+                "findings": [make_finding(
+                    "grammar", "grammar", STATUS_SKIPPED,
+                    note=f"평면 문법 검증 실패 — 결과 미산출(정직한 생략): {str(e)[:160]}",
+                )],
+                "section": {"skipped": True, "note": f"문법 검증 실패: {str(e)[:160]}"},
+            }
+
+        findings: list[dict[str, Any]] = []
+        groups: tuple[tuple[str, list[dict[str, Any]]], ...] = (
+            ("adjacency", adj_warnings),        # bbox 공유변 미인접·타일링 갭
+            ("boundary", cls_warnings),         # LDK 오픈·1실 1문(승격/미배치)
+            ("opening", open_warnings),         # 문·채광창 배치(미배치·창면적 미달)
+            ("connectivity", conn_violations),  # 현관 기점 도달성(미도달)
+        )
+        for kind, items in groups:
+            for w in items:
+                findings.append(make_finding(
+                    f"grammar_{kind}", "grammar", STATUS_WARNING,
+                    current=w.get("actual"),
+                    limit=w.get("legal"),
+                    improvement=w.get("message"),
+                    note=f"{w.get('rule')} — 대상: {w.get('field')}",
+                ))
+        if not findings:
+            findings.append(make_finding(
+                "grammar", "grammar", STATUS_PASS,
+                current=f"경계 {len(classified)}개 · 개구 {len(openings)}개",
+                note="평면 문법(LDK 오픈·1실 1문·채광창·현관 기점 연결성) 경고 없음",
+            ))
+
+        grammar_warnings = (
+            list(adj_warnings) + list(cls_warnings)
+            + list(open_warnings) + list(conn_violations)
+        )
+        # 리포트 S5 핑거용 요약(실데이터에서만 파생 — 가짜값 0)
+        open_pairs = sorted(
+            f"{b.get('room_a')}-{b.get('room_b')}"
+            for b in classified
+            if b.get("kind") == "open" and b.get("room_b")
+        )
+        section = {
+            "skipped": False,
+            "boundaries": classified,
+            "openings": openings,
+            "grammar_warnings": grammar_warnings,
+            "ldk_open": {"open_count": len(open_pairs), "pairs": open_pairs},
+            "connectivity": {
+                "ok": not conn_violations,
+                "violations": len(conn_violations),
+            },
+            "daylight": {
+                "window_count": sum(
+                    1 for o in openings if str(o.get("id", "")).startswith("w")
+                ),
+            },
+        }
+        return {"status": "ok", "findings": findings, "section": section}
 
     # ── ① rules8: 기하 8룰(BuildingComplianceService 검증기 재사용) ──────────
     async def _run_rules8(

@@ -378,6 +378,125 @@ describe("cad-shapes", () => {
     });
   });
 
+  // ── DXF 가져오기(신규 백엔드 shapes[] 형태 — px 좌표) ──
+  describe("dxfImportToShapes(shapes 형태 — 신규 백엔드)", () => {
+    it("shapes를 polylines보다 우선 읽고 px 좌표를 재스케일 없이 그대로 쓴다", () => {
+      const out = dxfImportToShapes(
+        {
+          shapes: [
+            {
+              kind: "polyline",
+              layer: "outline",
+              source_layer: "WALL",
+              closed: true,
+              points: [
+                { x: 40, y: 120 },
+                { x: 140, y: 120 },
+                { x: 140, y: 40 },
+                { x: 40, y: 40 },
+              ],
+            },
+            {
+              kind: "polyline",
+              layer: "wall",
+              source_layer: "WALL_INTERIOR",
+              closed: false,
+              points: [
+                { x: 60, y: 100 },
+                { x: 120, y: 100 },
+              ],
+            },
+          ],
+          // 레거시 폴백이 무시되는지 검증 — shapes가 있으면 polylines는 읽지 않는다.
+          polylines: [{ points: [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }], closed: true }],
+          main_outline_index: 0,
+          unit: { detected: "mm", source: "insunits" },
+          scale_px_per_m: 10,
+        },
+        { scalePxPerM: 10, marginPx: 40 },
+      );
+      expect(out).toHaveLength(2);
+      expect(out[0]).toMatchObject({ kind: "polygon", layer: "outline" });
+      // 백엔드 px 좌표를 그대로 보존(재스케일·반전·마진 미적용)
+      expect(out[0].points.map((p) => [p.x, p.y])).toEqual([
+        [40, 120], [140, 120], [140, 40], [40, 40],
+      ]);
+      expect(out[1]).toMatchObject({ kind: "line", layer: "wall" });
+      expect(out[1].points.map((p) => [p.x, p.y])).toEqual([[60, 100], [120, 100]]);
+    });
+
+    it("line(x1/y1/x2/y2)·circle(cx/cy/r)·label(x/y/text)을 각각 매핑한다", () => {
+      const out = dxfImportToShapes({
+        shapes: [
+          { kind: "line", layer: "wall", x1: 10, y1: 20, x2: 30, y2: 40 },
+          { kind: "circle", layer: "dim", cx: 50, cy: 60, r: 8 },
+          { kind: "label", layer: "note", x: 70, y: 80, text: "기둥 P1" },
+        ],
+      });
+      expect(out).toHaveLength(3);
+      expect(out[0]).toMatchObject({ kind: "line", layer: "wall" });
+      expect(out[0].points.map((p) => [p.x, p.y])).toEqual([[10, 20], [30, 40]]);
+      expect(out[1]).toMatchObject({ kind: "circle", layer: "dim", radius: 8 });
+      expect(out[1].points[0]).toMatchObject({ x: 50, y: 60 });
+      expect(out[2]).toMatchObject({ kind: "label", layer: "note", text: "기둥 P1" });
+      expect(out[2].points[0]).toMatchObject({ x: 70, y: 80 });
+    });
+
+    it("닫힌 polyline 중 main_outline_index만 outline, 나머지는 layer/소스로 분류", () => {
+      const out = dxfImportToShapes({
+        shapes: [
+          {
+            kind: "polyline", layer: "wall", closed: true,
+            points: [{ x: 0, y: 0 }, { x: 5, y: 0 }, { x: 5, y: 5 }],
+          },
+          {
+            kind: "polyline", layer: "outline", closed: true,
+            points: [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }, { x: 0, y: 10 }],
+          },
+        ],
+        main_outline_index: 1,
+      });
+      expect(out[0]).toMatchObject({ kind: "polygon", layer: "wall" });
+      expect(out[1]).toMatchObject({ kind: "polygon", layer: "outline" });
+    });
+
+    it("알 수 없는 layer는 source_layer 휴리스틱으로 분류(DIM→dim)", () => {
+      const out = dxfImportToShapes({
+        shapes: [
+          { kind: "line", layer: "기둥", source_layer: "A-DIMS", x1: 0, y1: 0, x2: 1, y2: 0 },
+        ],
+      });
+      expect(out[0].layer).toBe("dim");
+    });
+
+    it("좌표 부족 셰이프는 제외하고, circle 반경 무효는 10으로 보정", () => {
+      const out = dxfImportToShapes({
+        shapes: [
+          { kind: "line", layer: "wall", x1: 0, y1: 0, x2: "x", y2: 1 }, // 무효 → 제외
+          { kind: "polyline", layer: "wall", closed: false, points: [{ x: 1, y: 1 }] }, // 1점 → 제외
+          { kind: "circle", layer: "wall", cx: 5, cy: 5, r: -3 }, // 반경 무효 → 10
+        ],
+      });
+      expect(out).toHaveLength(1);
+      expect(out[0]).toMatchObject({ kind: "circle", radius: 10 });
+    });
+
+    it("빈 shapes 배열이면 polylines 폴백으로 내려간다", () => {
+      const out = dxfImportToShapes(
+        {
+          shapes: [],
+          polylines: [
+            { points: [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 8 }], closed: true },
+          ],
+          unit: "m",
+        },
+        { scalePxPerM: 10, marginPx: 40 },
+      );
+      expect(out).toHaveLength(1);
+      expect(out[0].kind).toBe("polygon");
+    });
+  });
+
   // ── ID 생성 ──
   describe("newShapeId", () => {
     it("호출마다 고유 ID를 생성한다", () => {
