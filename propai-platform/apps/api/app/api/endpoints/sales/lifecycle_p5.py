@@ -181,11 +181,11 @@ async def payment_contract_summary(contract_id: str, db: AsyncSession = Depends(
         raise HTTPException(404, "해당 현장의 계약을 찾을 수 없습니다.")
     insts = list((await db.execute(select(SalesContractInstallment).where(
         SalesContractInstallment.contract_ext_id == cid)
-        .order_by(SalesContractInstallment.number))).scalars())
+        .order_by(SalesContractInstallment.seq))).scalars())
     billed = sum(int(i.amount or 0) for i in insts)
     paid = sum(int(i.paid_amount or 0) for i in insts)
     today = datetime.now(timezone.utc).date()
-    overdue = [{"number": i.number, "due_date": str(i.due_date), "unpaid": int((i.amount or 0) - (i.paid_amount or 0))}
+    overdue = [{"seq": i.seq, "due_date": str(i.due_date), "unpaid": int((i.amount or 0) - (i.paid_amount or 0))}
                for i in insts if i.due_date and i.due_date < today and (i.paid_amount or 0) < (i.amount or 0)]
     adj = (await db.execute(text(
         "SELECT adj_type, count(*), coalesce(sum(amount),0) FROM sales_payment_adjustments "
