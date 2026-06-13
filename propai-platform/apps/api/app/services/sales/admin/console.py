@@ -48,7 +48,7 @@ async def add_accounting_entry(db: AsyncSession, site_id, entry_type: str, amoun
     await _ensure_acct(db)
     await db.execute(text(
         "INSERT INTO sales_site_accounting (site_id, entry_type, amount, memo, entry_date, created_by) "
-        "VALUES (:s,:t,:a,:m,COALESCE(:d::date, current_date),:u)"),
+        "VALUES (:s,:t,:a,:m,COALESCE(CAST(:d AS date), current_date),:u)"),
         {"s": str(site_id), "t": et, "a": int(amount), "m": memo, "d": entry_date, "u": str(by) if by else None})
     await db.commit()
     return {"ok": True, "entry_type": et, "amount": int(amount)}
@@ -66,7 +66,11 @@ async def _scalar(db: AsyncSession, sql: str, **p) -> int:
     try:
         r = (await db.execute(text(sql), p)).first()
         return int(r[0] or 0) if r else 0
-    except Exception:  # noqa: BLE001 — 테이블 미존재/빈 경우 0(정직)
+    except Exception:  # noqa: BLE001 — 테이블 미존재/오류 시 0(정직). 트랜잭션 오염 방지 위해 롤백.
+        try:
+            await db.rollback()
+        except Exception:  # noqa: BLE001
+            pass
         return 0
 
 
@@ -83,7 +87,7 @@ async def site_management_detail(db: AsyncSession, site_id) -> dict[str, Any]:
         "JOIN sales_commission_events e ON e.id=sp.event_id "
         "JOIN sales_contracts_ext c ON c.id=e.contract_ext_id WHERE c.site_id=:s", s=s)
     visitors = await _scalar(db, "SELECT count(*) FROM mh_visitors WHERE site_id=:s", s=s)
-    attend_today = await _scalar(db, "SELECT count(*) FROM sales_staff_attendance WHERE site_id=:s AND check_in::date=:d::date", s=s, d=today)
+    attend_today = await _scalar(db, "SELECT count(*) FROM sales_staff_attendance WHERE site_id=:s AND check_in::date=CAST(:d AS date)", s=s, d=today)
     ad_budget = await _scalar(db, "SELECT COALESCE(SUM(budget),0) FROM sales_ad_campaigns WHERE site_id=:s", s=s)
 
     cost = await _cost_by_type(db, site_id)
