@@ -31,10 +31,13 @@ export default function OrgTree({ siteCode }: { siteCode: string }) {
   const [busy, setBusy] = useState(false);
   // loaded: 조직도를 한 번 불러왔는지 표시(false면 '불러오는 중' 회색 자리표시를 보여줌).
   const [loaded, setLoaded] = useState(false);
+  type Ov = { members: number; totals: { contracts: number; customers: number; work_logs: number }; roster: { name: string; role_label: string; assigned: boolean; contracts: number; customers: number; work_logs: number }[] };
+  const [ov, setOv] = useState<Ov | null>(null);
 
   const load = useCallback(() => {
     // 조직도를 다 불러오면(성공/실패 무관) 자리표시를 걷어낸다.
     api.get<Node[]>("/org/tree").then((r) => setNodes(r || [])).catch(() => setNodes([])).finally(() => setLoaded(true));
+    api.get<Ov>("/org/team-overview").then((r) => setOv(r)).catch(() => setOv(null));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [siteCode]);
   useEffect(() => { load(); }, [load]);
@@ -70,6 +73,36 @@ export default function OrgTree({ siteCode }: { siteCode: string }) {
   if (!loaded) return <SkeletonLoader count={3} itemClassName="h-16 rounded-xl mb-3" />;
   return (
     <div className="space-y-4">
+      {/* P2-3 팀 현황(내 하위 조직 활동 집계) */}
+      {ov && ov.members > 0 && (
+        <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-3">
+          <div className="mb-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+            <span className="font-bold text-[var(--text-secondary)]">팀 현황(하위 조직)</span>
+            <span className="text-[var(--text-tertiary)]">관리대상 <b className="text-[var(--text-primary)]">{ov.members}</b>명</span>
+            <span className="text-[var(--text-tertiary)]">계약 <b className="text-[var(--accent-strong)]">{ov.totals.contracts}</b></span>
+            <span className="text-[var(--text-tertiary)]">고객 <b className="text-[var(--accent-strong)]">{ov.totals.customers}</b></span>
+            <span className="text-[var(--text-tertiary)]">업무일지 <b className="text-[var(--accent-strong)]">{ov.totals.work_logs}</b></span>
+          </div>
+          <div className="max-h-40 overflow-auto">
+            <table className="w-full text-[11px]">
+              <thead><tr className="text-[var(--text-hint)]"><th className="text-left font-medium">직급</th><th className="text-left font-medium">이름</th><th className="text-right font-medium">계약</th><th className="text-right font-medium">고객</th><th className="text-right font-medium">업무일지</th></tr></thead>
+              <tbody>
+                {ov.roster.slice(0, 30).map((r, i) => (
+                  <tr key={i} className="border-t border-[var(--line)]/50">
+                    <td className="py-0.5 text-[var(--text-tertiary)]">{r.role_label}</td>
+                    <td className="text-[var(--text-secondary)]">{r.name}{!r.assigned && <span className="ml-1 text-[9px] text-[var(--text-hint)]">(미배정)</span>}</td>
+                    <td className="text-right text-[var(--text-primary)]">{r.contracts}</td>
+                    <td className="text-right text-[var(--text-primary)]">{r.customers}</td>
+                    <td className="text-right text-[var(--text-primary)]">{r.work_logs}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="mt-1 text-[10px] text-[var(--text-hint)]">근태·수수료·단체메시지는 각 전용 탭(수수료·방문 데스크·소셜)에서 관리합니다.</p>
+        </div>
+      )}
+
       {/* 노드 추가 */}
       <div className="flex flex-wrap items-end gap-2 rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-3">
         <label className="flex flex-col gap-1"><span className="text-[10px] text-[var(--text-tertiary)]">상위(부모)</span>

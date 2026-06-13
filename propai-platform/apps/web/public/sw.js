@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v160-org-seed";
+const CACHE_NAME = "propai-v161-team-overview";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

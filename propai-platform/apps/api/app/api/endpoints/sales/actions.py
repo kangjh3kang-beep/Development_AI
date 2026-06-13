@@ -46,6 +46,15 @@ async def add_node(body: dict, db: AsyncSession = Depends(get_db),
     return {"id": str(node.id), "path": str(node.path)}
 
 
+@actions_router.get("/org/team-overview")
+async def org_team_overview(db: AsyncSession = Depends(get_db),
+                            ctx: SalesCtx = Depends(require_role(
+                                "TEAM_LEADER", "DIRECTOR", "GM_DIRECTOR", "SUBAGENCY", "AGENCY", "DEVELOPER", "SUPERADMIN"))):
+    """P2-3 내 하위 조직 인원의 계약·고객·업무일지 집계+로스터(직급별 관리)."""
+    from app.services.sales.org.overview import team_overview
+    return await team_overview(db, ctx.site_id, getattr(ctx, "org_path", None) or None)
+
+
 @actions_router.post("/org/seed-default")
 async def org_seed_default(body: dict | None = None, db: AsyncSession = Depends(get_db),
                            ctx: SalesCtx = Depends(require_role("DEVELOPER", "AGENCY", "SUPERADMIN"))):
