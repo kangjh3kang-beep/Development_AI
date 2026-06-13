@@ -12,7 +12,7 @@ from app.api.deps_sales import SalesCtx, require_role, sales_ctx
 from apps.api.database.models.sales.units_pricing import SalesUnitGeneration, SalesUnitPriceTable
 from app.services.sales.contract.service import cancel_contract, create_contract, sign_contract
 from app.services.sales.org.service import create_node, move_subtree
-from app.services.sales.pricing.engine import generate_price_table
+from app.services.sales.pricing.engine import generate_price_table, project_revenue, solve_base_for_target
 from app.services.sales.pricing.suggest import suggest_base_price
 from app.services.sales.units.generation import generate_units
 
@@ -82,6 +82,24 @@ async def pricing_suggest(bcode: str | None = None, db: AsyncSession = Depends(g
                           ctx: SalesCtx = Depends(require_role("DEVELOPER", "AGENCY"))):
     """P1-1 기준층 적정분양가 3안(공/기/보) — 주변시세(거래사례비교) 기반. bcode 선택(미전달 시 PNU 유도)."""
     return await suggest_base_price(db, ctx.site_id, bcode=bcode)
+
+
+@actions_router.get("/pricing/revenue")
+async def pricing_revenue(round_id: str, db: AsyncSession = Depends(get_db),
+                          ctx: SalesCtx = Depends(require_role("DEVELOPER", "AGENCY", "GM_DIRECTOR", "DIRECTOR"))):
+    """P1-3 현재 분양가표 기준 총매출(분양액) 산출 — forward."""
+    return await project_revenue(db, ctx.site_id, uuid.UUID(round_id))
+
+
+@actions_router.post("/pricing/solve-base")
+async def pricing_solve_base(body: dict, db: AsyncSession = Depends(get_db),
+                             ctx: SalesCtx = Depends(require_role("DEVELOPER", "AGENCY"))):
+    """P1-3 목표 총매출 → 균일 기준단가 역산·전 타입 반영·재생성 — reverse."""
+    res = await solve_base_for_target(db, ctx.site_id, uuid.UUID(body["round_id"]),
+                                      int(body["target_total_10k"]), by=ctx.user.id)
+    if res.get("ok"):
+        await db.commit()
+    return res
 
 
 @actions_router.patch("/units/{unit_id}/price")

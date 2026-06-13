@@ -118,3 +118,103 @@ async def generate_price_table(db: AsyncSession, site_id: uuid.UUID, round_id: u
            params_snapshot={"mode": mode}, by=by))
     await db.flush()
     return count
+
+
+async def solve_base_for_target(
+    db: AsyncSession, site_id: uuid.UUID, round_id: uuid.UUID, target_total_10k: int, by=None,
+) -> dict:
+    """목표 총매출 → 균일 기준단가(㎡당, PER_AREA) 역산 후 전 타입 반영·재생성. reverse.
+
+    총매출은 기준단가 base 에 선형: total = base·M + F.
+      M = Σ_세대[ 공급면적 × round_factor × (1+가중치율) ]   (PER_AREA 균일 가정)
+      F = Σ_세대[ 정액가중치 + 옵션 + 프리미엄 ]
+    base = (target - F) / M. M<=0 이면 산출 불가(세대/면적 없음).
+    """
+    weights = list((await db.execute(select(SalesPriceWeight).where(
+        SalesPriceWeight.site_id == site_id, SalesPriceWeight.round_id == round_id))).scalars())
+    base_rows = {r.type_id: r for r in (await db.execute(select(SalesPriceBase).where(
+        SalesPriceBase.site_id == site_id, SalesPriceBase.round_id == round_id))).scalars()}
+    group_map: dict = {}
+    for g in (await db.execute(select(SalesPriceGroup).where(SalesPriceGroup.site_id == site_id))).scalars():
+        for m in (await db.execute(select(SalesPriceGroupMember).where(
+                SalesPriceGroupMember.group_id == g.id))).scalars():
+            group_map.setdefault(m.unit_id, []).append(g)
+    types = {t.id: t for t in (await db.execute(select(SalesUnitType).where(
+        SalesUnitType.site_id == site_id))).scalars()}
+    units = list((await db.execute(select(SalesUnitInventory).where(
+        SalesUnitInventory.site_id == site_id, SalesUnitInventory.deleted_at.is_(None)))).scalars())
+    opt_prem = {pt.unit_id: (Decimal(pt.option_price or 0) + Decimal(pt.premium or 0))
+                for pt in (await db.execute(select(SalesUnitPriceTable).where(
+                    SalesUnitPriceTable.site_id == site_id, SalesUnitPriceTable.round_id == round_id))).scalars()}
+
+    M = Decimal(0)
+    F = Decimal(0)
+    for u in units:
+        t = types.get(u.type_id)
+        if not t:
+            continue
+        br = base_rows.get(u.type_id)
+        area = _area(t, (br.base_area_kind if br else None) or "supply")
+        factor = Decimal(str((br.round_factor if br else None) or 1))
+        rate = Decimal(0); fixed = Decimal(0)
+        for w in _match_weights(u, weights, group_map):
+            if w.basis == "RATE":
+                rate += Decimal(str(w.value or 0))
+            else:
+                fixed += Decimal(str(w.value or 0))
+        M += area * factor * (Decimal(1) + rate)
+        F += fixed + opt_prem.get(u.id, Decimal(0))
+
+    if M <= 0:
+        return {"ok": False, "note": "세대/공급면적이 없어 역산 불가 — 동·호표·타입 면적을 먼저 확정하세요."}
+
+    # 단가·금액은 원(KRW) 단위. 목표는 만원으로 받으므로 ×10000 환산(F·옵션·프리미엄도 원).
+    target_won = Decimal(int(target_total_10k)) * 10000
+    base = (target_won - F) / M
+    if base <= 0:
+        return {"ok": False, "note": "목표 매출이 정액·옵션 합보다 작아 기준단가가 음수입니다 — 목표를 확인하세요."}
+    base = base.quantize(Decimal("1"), ROUND_HALF_UP)
+
+    # 전 타입에 균일 기준단가(PER_AREA, 공급) 반영 후 재생성.
+    for t in types.values():
+        br = base_rows.get(t.id)
+        if br:
+            br.basis = "PER_AREA"; br.base_unit_price = int(base); br.base_area_kind = br.base_area_kind or "supply"
+        else:
+            db.add(SalesPriceBase(site_id=site_id, round_id=round_id, type_id=t.id,
+                   basis="PER_AREA", base_unit_price=int(base), base_area_kind="supply", round_factor=1))
+    await db.flush()
+    await generate_price_table(db, site_id, round_id, by=by)
+    rev = await project_revenue(db, site_id, round_id)
+    return {"ok": True, "base_unit_price": int(base), "target_total_10k": int(target_total_10k),
+            "achieved_total_10k": rev["total_revenue_10k"], "units_priced": rev["units_priced"]}
+
+
+async def project_revenue(db: AsyncSession, site_id: uuid.UUID, round_id: uuid.UUID) -> dict:
+    """현재 분양가표 기준 총매출(분양액) 산출 — forward. 타입별 분해 포함(만원 단위)."""
+    rows = list((await db.execute(select(SalesUnitPriceTable).where(
+        SalesUnitPriceTable.site_id == site_id, SalesUnitPriceTable.round_id == round_id))).scalars())
+    types = {t.id: t for t in (await db.execute(select(SalesUnitType).where(
+        SalesUnitType.site_id == site_id))).scalars()}
+    units = {u.id: u for u in (await db.execute(select(SalesUnitInventory).where(
+        SalesUnitInventory.site_id == site_id, SalesUnitInventory.deleted_at.is_(None)))).scalars()}
+    # 분양가표 base_price/total_price 는 원(KRW) 단위. 만원(_10k) 표기는 ÷10000.
+    total = Decimal(0)
+    by_type: dict[str, dict] = {}
+    for pt in rows:
+        amt = Decimal(pt.total_price or pt.base_price or 0)
+        total += amt
+        u = units.get(pt.unit_id)
+        _t = types.get(u.type_id) if u else None
+        tname = _t.type_name if _t else "기타"
+        e = by_type.setdefault(tname, {"count": 0, "total_10k": 0})
+        e["count"] += 1
+        e["total_10k"] += int(amt / 10000)
+    return {
+        "round_id": str(round_id),
+        "units_priced": len(rows),
+        "total_revenue_won": int(total),            # 총분양액(원)
+        "total_revenue_10k": int(total / 10000),    # 총분양액(만원)
+        "avg_unit_10k": int(total / len(rows) / 10000) if rows else 0,
+        "by_type": by_type,
+    }
