@@ -256,7 +256,25 @@ class MarketReportService:
             avg_pyeong_price_manwon=target_pp,
             official_price_per_sqm=official_price or 0
         )
-        
+
+        # ── M3: 적정 분양가 산정 — 거래사례비교(1차 핵심) + 지불여력(2차 검증)·결정론 ──
+        # 1차: 주변 동일종목 실거래 시세(평당가)·주변 분양가. 2차: KOSIS 소득→PIR/DSR/LTV로 수요 수용성.
+        # 비교 데이터 없으면 엔진이 data_source='unavailable'로 정직 반환(가짜값 금지).
+        from app.services.market.pricing_band_service import compute_fair_price
+        _mi = (demographics or {}).get("macro_income") or {}
+        _income_10k = _mi.get("median_income_10k") or _mi.get("avg_income_10k")
+        # 실거래 평당가(만원/평) — 폴백 2000 제외, 실값만 비교가로 사용.
+        _real_pp = apt_pp or (sum(valid_pp) / len(valid_pp) if valid_pp else None)
+        # 대표 84㎡ 1세대 실거래 기반가(만원) = 평당가 × 25.4평(=84/3.305785)
+        _trade_unit_10k = round(_real_pp * (84.0 / 3.305785)) if _real_pp else None
+        pricing_band = compute_fair_price(
+            comparable_trade_10k=_trade_unit_10k,
+            nearby_presale_10k=None,  # 청약홈 주변 분양가(PresaleService) 연동은 후속 — 현재 미연동(정직)
+            annual_income_10k=_income_10k,
+            trade_source="live" if _real_pp else None,
+            income_source=_mi.get("data_source"),
+        )
+
         ctx = {
             "address": address,
             "zone_type": zone_type,
@@ -293,6 +311,7 @@ class MarketReportService:
             "demographics": demographics,
             "narrative": narrative,
             "feasibility_analysis": feasibility,
+            "pricing_band": pricing_band,
         }
 
     # ── 정적 지도 이미지(OSM 타일 합성, Pillow) ──

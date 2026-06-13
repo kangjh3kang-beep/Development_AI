@@ -10,8 +10,8 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-/** 데이터 출처 상태 — 'live'(실데이터) / 'fallback'(합성·추정) / 'unavailable'(데이터 없음). */
-export type DataSource = "live" | "fallback" | "unavailable";
+/** 데이터 출처 상태 — live(실데이터)/fallback(합성·추정)/mock(개발목업)/unavailable(데이터 없음). */
+export type DataSource = "live" | "fallback" | "mock" | "unavailable";
 
 /** 인구 이동망(SGIS/행안부 기반). top_inflow_regions 항목은 좌표가 없을 수 있다(옵셔널). */
 export interface MigrationRegion {
@@ -102,6 +102,43 @@ export interface FeasibilityAnalysis {
   };
 }
 
+/** 지불여력 검증(2차) — 타깃 소득 기반 감당 가능 밴드. 단위 만원. */
+export interface Affordability {
+  annual_income_10k?: number;
+  affordable_by_pir_10k?: number;     // 보수(PIR 교차)
+  affordable_by_dsr_ltv_10k?: number; // 낙관(DSR+LTV)
+  max_loan_10k?: number;
+  band_10k?: [number, number];
+  recommended_cap_10k?: number;
+  assumptions?: { dsr: number; ltv: number; stress_rate: number; term_years: number; pir: number };
+  data_source?: DataSource;
+  note?: string;
+}
+
+/** 거래사례비교(1차 핵심) — 주변 실거래 시세 + 주변 분양가. */
+export interface MarketReference {
+  comparable_trade_10k?: number | null; // 주변 동일종목 실거래 기반가
+  nearby_presale_10k?: number | null;   // 주변 신규 분양가
+  fair_price_10k?: number;               // 비교법 적정가(분양가 우선 가중)
+  method?: string;
+  data_source?: DataSource;
+}
+
+/**
+ * M3 적정 분양가 산정 — 거래사례비교(1차) + 지불여력(2차 검증). 단위 만원.
+ * 비교 데이터 없으면 data_source='unavailable'(fair_price_10k 없음).
+ */
+export interface PricingBand {
+  fair_price_10k?: number;               // 헤드라인: 시장 비교 적정 분양가
+  market_reference?: MarketReference;    // 1차(핵심)
+  affordability?: Affordability;         // 2차(보조 검증)
+  /** within_conservative(수요 안전) / within_optimistic(부담) / over_band(미분양 위험) / unavailable */
+  affordability_verdict?: "within_conservative" | "within_optimistic" | "over_band" | "unavailable";
+  data_source?: DataSource;
+  basis?: string;
+  note?: string;
+}
+
 /** AI 내러티브(LLM 생성). 결정론 영역 외 — 텍스트 한정. */
 export interface MarketNarrative {
   summary?: string;
@@ -127,6 +164,7 @@ export interface MarketReport {
   demographics?: DemographicProfile | null;
   narrative?: MarketNarrative | null;
   feasibility_analysis?: FeasibilityAnalysis | null;
+  pricing_band?: PricingBand | null;
   /** 신규(옵셔널): 보고서 전체 데이터 출처 상태. */
   data_source?: DataSource;
 }

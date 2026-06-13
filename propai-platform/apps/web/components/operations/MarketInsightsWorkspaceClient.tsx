@@ -26,6 +26,7 @@ import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { FeasibilityDashboard } from "@/components/feasibility/FeasibilityDashboard";
 import { AnalysisModuleSelector, type AnalysisModuleOption } from "@/components/common/AnalysisModuleSelector";
 import { DemographicPanel } from "@/components/operations/market/DemographicPanel";
+import { PricingBandPanel } from "@/components/operations/market/PricingBandPanel";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 // PDF/PPTX 바이너리 다운로드용 API 베이스 (api-client 로직 미러)
@@ -622,13 +623,16 @@ export function MarketInsightsWorkspaceClient() {
         </div>
       )}
       
-      {/* ── Phase 3: AI 사업 타당성 엔진 (Feasibility) ── */}
+      {/* ── Phase 3: AI 사업 타당성 엔진 (Feasibility, 공급측) ── */}
       {report?.feasibility_analysis && (
-        <FeasibilityDashboard 
-          data={report.feasibility_analysis} 
-          zoneType={report.zone_type} 
+        <FeasibilityDashboard
+          data={report.feasibility_analysis}
+          zoneType={report.zone_type}
         />
       )}
+
+      {/* ── M3: 적정 분양가 밴드 (수요측 지불여력 — 공급측 타당성과 결합) ── */}
+      {report?.pricing_band && <PricingBandPanel data={report.pricing_band} />}
 
       {/* 실데이터 연동 영역 (Phase 2) — 인구·가구·소득 시각화(Recharts) + 데이터 출처 정직 배지 */}
       {report?.demographics && <DemographicPanel data={report.demographics} />}

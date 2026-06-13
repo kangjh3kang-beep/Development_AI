@@ -16,6 +16,7 @@ import type { DataSource } from "./marketTypes";
 const MAP: Record<DataSource, { label: string; color: string; bg: string }> = {
   live: { label: "실데이터", color: "var(--status-success)", bg: "color-mix(in srgb, var(--status-success) 12%, transparent)" },
   fallback: { label: "추정·합성", color: "var(--status-warning)", bg: "color-mix(in srgb, var(--status-warning) 12%, transparent)" },
+  mock: { label: "개발 목업", color: "var(--status-warning)", bg: "color-mix(in srgb, var(--status-warning) 12%, transparent)" },
   unavailable: { label: "데이터 없음", color: "var(--text-tertiary)", bg: "var(--surface-muted)" },
 };
 
