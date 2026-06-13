@@ -201,11 +201,9 @@ export function TenantWorkspaceClient({
             {labels.heroHint}
           </p>
           {!canUseLiveApi && (
-          {!canUseLiveApi && (
           <p className="relative z-10 mt-3 max-w-3xl text-sm leading-8 text-[var(--text-tertiary)]">
             {labels.tokenHint}
           </p>
-          )}
           )}
           {!canUseLiveApi && (
             <div className="relative z-10 mt-6 rounded-[var(--radius-xl)] border border-dashed border-[var(--line)] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[var(--text-secondary)]">

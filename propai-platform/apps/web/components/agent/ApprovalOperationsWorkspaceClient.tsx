@@ -672,10 +672,8 @@ export function ApprovalOperationsWorkspaceClient({
           </div>
           <div className="rounded-[1.35rem] border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-4 text-sm leading-7 text-[var(--text-secondary)]">
             {!canUseLiveApi && (
-              {!canUseLiveApi && (
                 <p>{labels.tokenHint}</p>
               )}
-            )}
             <div className="mt-4 flex flex-wrap gap-3">
               <Link
                 href={`/${locale}/projects`}
