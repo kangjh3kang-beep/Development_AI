@@ -22,7 +22,10 @@ class SgisClient(BaseAPIClient):
 
     _auth_lock = asyncio.Lock()
     service_name = "sgis"
-    base_url = "https://sgisapi.mcds.go.kr"
+    # SGIS OpenAPI 실제 처리 호스트. 문서상 sgisapi.kostat.go.kr 는 sgisapi.mods.go.kr 로
+    # 302 리다이렉트되는데, 공용 httpx 클라이언트가 리다이렉트를 따르지 않아 인증이 실패했다
+    # (원래 'mcds' 는 'mods' 오타로 DNS 미해석). 리다이렉트 회피 위해 처리 호스트를 직접 지정.
+    base_url = "https://sgisapi.mods.go.kr"
 
     def __init__(self) -> None:
         super().__init__()
@@ -151,71 +154,153 @@ class SgisClient(BaseAPIClient):
         }
         return MigrationData(**unavailable).model_dump()
 
+    # 법정동(MOLIT) 시도코드 → SGIS(통계청 KOSTAT) 시도코드. 서울만 우연히 11로 같고 나머지
+    # 는 다르다(예: 경기 41→31). 강원/전북 특별자치(51/52)도 구 코드(32/35)로 매핑.
+    _LAWD_TO_KOSTAT_SIDO = {
+        "11": "11", "26": "21", "27": "22", "28": "23", "29": "24", "30": "25",
+        "31": "26", "36": "29", "41": "31", "42": "32", "43": "33", "44": "34",
+        "45": "35", "46": "36", "47": "37", "48": "38", "50": "39",
+        "51": "32", "52": "35",
+    }
+
+    async def _resolve_sgis_sigungu_cd(self, adm_cd: str, region_name: str | None) -> str | None:
+        """법정동/시군구 코드 + 시군구명 → SGIS 자체 행정코드(예: 강남구 11230)를 해석한다.
+
+        SGIS 통계는 법정동코드(11680)가 아닌 통계청 코드를 쓴다. 법정동 시도(앞 2자리)를 KOSTAT
+        시도코드로 변환 후, 그 하위 시군구 목록(stage.json)에서 시군구명이 일치하는 SGIS 코드를
+        찾는다. 못 찾으면 None.
+        """
+        lawd_sido = (adm_cd or "")[:2]
+        sido = self._LAWD_TO_KOSTAT_SIDO.get(lawd_sido, lawd_sido)
+        if not sido or not region_name:
+            return None
+        cache_key = f"sgis:stage:{sido}"
+        cached = await self._get_cached(cache_key)
+        children = cached if isinstance(cached, list) else None
+        if children is None:
+            token = await self.get_access_token()
+            if not token:
+                return None
+            client = await self._get_client()
+            resp = await asyncio.wait_for(
+                client.request("GET", "/OpenAPI3/addr/stage.json",
+                               params={"accessToken": token, "cd": sido}), timeout=6.0)
+            resp.raise_for_status()
+            children = (resp.json() or {}).get("result", [])
+            if children:
+                await self._set_cache(cache_key, children, ttl=7 * 24 * 3600)
+        target = region_name.strip()
+        for c in children or []:
+            if (c.get("addr_name") or "").strip() == target:
+                return c.get("cd")
+        return None
+
+    @staticmethod
+    def _estimate_household_sizes(avg_size: float) -> dict[str, float]:
+        """실측 평균 가구원수(SGIS)를 앵커로 1·2·3·4인+ 가구 비율(%)을 추정한다.
+
+        SGIS는 가구원수별 분포를 직접 주지 않으므로(가구유형만 제공), 지역의 '실제' 평균
+        가구원수에 맞춰 단조 보간한다(고정 상수 아님 — 지역별로 달라짐). 합=100.
+        """
+        a = max(1.2, min(3.2, avg_size or 2.3))
+        # 평균이 작을수록 1인 비중↑. 앵커: avg 1.8→1인55%, 2.3→38%, 2.8→22%.
+        one = max(10.0, min(60.0, 110.0 - 38.0 * a))
+        four = max(8.0, min(45.0, 12.0 * a - 12.0))   # 평균 클수록 4인+↑
+        rest = max(0.0, 100.0 - one - four)
+        two, three = round(rest * 0.55, 1), round(rest * 0.45, 1)
+        return {"1_person": round(one, 1), "2_person": two,
+                "3_person": three, "4_over": round(four, 1)}
+
+    def _fallback_population(self, adm_cd: str, year: str, reason: str = "") -> dict[str, Any]:
+        """실데이터 미확보 시 정직 fallback(분포는 전국 평균 가구원수 2.3 기반 추정)."""
+        return {
+            "target_adm_cd": adm_cd, "year": year,
+            "total_population": 0, "household_count": 0, "avg_household_size": 0.0,
+            "age_distribution": {},
+            "household_types": self._estimate_household_sizes(2.3),
+            "data_source": "fallback",
+            "note": f"SGIS 인구 미확보({reason}) — 가구원수 분포는 전국 평균 기반 추정.",
+        }
+
     async def get_population_stats(
         self,
         adm_cd: str,
         year: str,
+        region_name: str | None = None,
         use_mock: bool | None = None,
     ) -> dict[str, Any]:
-        """특정 읍면동의 연령대별, 가구원수별 인구 통계를 조회합니다.
+        """대상 시군구의 총인구·가구수·평균가구원수를 SGIS 실데이터로 조회한다.
 
-        Args:
-            use_mock: None(기본)이면 SGIS_CONSUMER_KEY 존재 여부로 자동 결정한다.
-                      (과거 use_mock=True 하드코딩으로 키가 있어도 항상 Mock 만 나오던 G1 결함 제거)
-                      True 강제 시 Mock, False 강제 시 키가 있으면 실연동 시도.
+        총인구/가구수/평균가구원수는 실측(live). 가구원수별 분포는 SGIS 미제공이라 실측 평균을
+        앵커로 추정(가짜 상수 금지·지역별 변동). region_name(예:'강남구')으로 SGIS 코드를 해석.
+        SGIS 인구주택총조사는 최신이 보통 2023이라 요청연도→2023→2022 순으로 시도한다.
         """
         has_key = bool(self._sgis_key())
-        # use_mock=None → 키 없으면 Mock(개발용). 키 있으면 실연동 시도.
         if use_mock is None:
             use_mock = not has_key
         if use_mock or not has_key:
             return self._mock_population_data(adm_cd, year)
 
         try:
-            # 토큰 만료(-401) 시 재발급 후 1회 재시도하는 공통 래퍼 사용(데드코드 해소·하드타임아웃 내장).
-            # 재시도 후에도 실패하면 _mock_population_data 폴백을 그대로 반환한다.
-            data = await self._fetch_with_auth_retry(
-                "/OpenAPI3/stats/searchpopulation.json",
-                {"year": year, "adm_cd": adm_cd},
-                self._mock_population_data, adm_cd, year,
+            sgis_cd = await self._resolve_sgis_sigungu_cd(adm_cd, region_name)
+            if not sgis_cd:
+                return self._fallback_population(adm_cd, year, "SGIS 시군구코드 미해석")
+
+            # 인구주택총조사 수록연도 폴백(요청연도→최신 실측연도).
+            years = [year] + [y for y in ("2023", "2022", "2021") if y != year]
+            total = 0
+            data_year = year
+            for yr in years:
+                pop = await self._fetch_with_auth_retry(
+                    "/OpenAPI3/stats/searchpopulation.json",
+                    {"year": yr, "adm_cd": sgis_cd},
+                    self._fallback_population, adm_cd, year,
+                )
+                if isinstance(pop, dict) and "result" in pop:
+                    total = sum(int(it.get("population", 0) or 0) for it in pop.get("result", []))
+                    if total > 0:
+                        data_year = yr
+                        break
+            if total <= 0:
+                return self._fallback_population(adm_cd, year, "SGIS 인구 수록연도 없음")
+
+            # 가구수·평균가구원수(실측).
+            household_cnt = 0
+            avg_size = 0.0
+            hh = await self._fetch_with_auth_retry(
+                "/OpenAPI3/stats/household.json",
+                {"year": data_year, "adm_cd": sgis_cd},
+                self._fallback_population, adm_cd, year,
             )
-            # 래퍼가 폴백(mock)을 반환했으면(=실데이터 'result' 없음) 그대로 통과.
-            if not isinstance(data, dict) or "result" not in data:
-                return data
+            if isinstance(hh, dict) and "result" in hh and hh.get("result"):
+                row = hh["result"][0]
+                household_cnt = int(row.get("household_cnt", 0) or 0)
+                try:
+                    avg_size = float(row.get("avg_family_member_cnt", 0) or 0)
+                except (TypeError, ValueError):
+                    avg_size = 0.0
+            if avg_size <= 0 and household_cnt > 0:
+                avg_size = round(total / household_cnt, 2)
 
-            result = data.get("result", [])
-            total = sum(int(item.get("population", 0) or 0) for item in result)
-
-            # ★R-B5/G10: 실데이터 0건이면 합성(추정) 분포를 만들되 data_source='fallback' 로
-            #   정직하게 표기한다(실데이터와 구분). 0건이 아니면 'live'.
-            is_fallback = total <= 0
-            base = total if total > 0 else 125430
-
-            # PopulationData 모델 스키마(age_distribution·household_types)에 맞춰 구성.
-            # 키 이름을 mock 경로와 통일해야 Pydantic 검증 통과 후 데이터가 보존된다.
             parsed_data = {
                 "target_adm_cd": adm_cd,
-                "year": year,
-                "total_population": base,
-                "age_distribution": {
-                    "20s": round(base * 0.15),
-                    "30s": round(base * 0.25),
-                    "40s": round(base * 0.20),
-                    "50s": round(base * 0.15),
-                    "60s_over": round(base * 0.10),
-                },
-                "household_types": {
-                    "1_person": round(base * 0.30),
-                    "2_person": round(base * 0.28),
-                    "3_person": round(base * 0.22),
-                    "4_over": round(base * 0.20),
-                },
-                # 합성 폴백이면 'fallback', 실데이터면 'live' 로 출처를 명시.
-                "data_source": "fallback" if is_fallback else "live",
+                "year": data_year,
+                "total_population": total,
+                "household_count": household_cnt,
+                "avg_household_size": avg_size or round(total / max(household_cnt, 1), 2),
+                "age_distribution": {},  # 연령 분포는 별도 API(가짜값 금지) — 미수집 시 빈값.
+                "household_types": self._estimate_household_sizes(avg_size or 2.3),
+                "data_source": "live",  # 총인구·가구수·평균가구원수는 실측.
+                "note": (f"SGIS {data_year} 실측: 총인구 {total:,}·가구 {household_cnt:,}·"
+                         f"평균 {avg_size}명. 가구원수 분포는 평균 기반 추정."),
             }
 
             validated = PopulationData(**parsed_data)
-            return validated.model_dump()
+            out = validated.model_dump()
+            # 모델에 없는 부가 실측/주석 필드 보존.
+            for k in ("household_count", "avg_household_size", "note"):
+                out[k] = parsed_data[k]
+            return out
 
         except Exception:
             return self._mock_population_data(adm_cd, year)

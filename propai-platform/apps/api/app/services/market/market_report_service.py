@@ -6,12 +6,28 @@ AI 내러티브(get_llm, best-effort). 출력: 구조화 dict / PDF(reportlab) /
 
 import io
 import json
+import re
 from datetime import datetime
 from typing import Any
 
 import structlog
 
 logger = structlog.get_logger(__name__)
+
+# 주소 문자열에서 시군구명(예: '강남구','수원시','파주시')을 추출 — KOSIS 시군구 행 식별용.
+# '시'와 '구'가 함께 오면(예: '수원시 장안구') KOSIS 표 분류는 자치구 단위가 우선이므로 구를 채택.
+_SIGUNGU_RE = re.compile(r"([가-힣]{1,6}(?:시|군|구))")
+
+
+def _extract_sigungu_name(address: str | None) -> str | None:
+    """주소에서 시군구명을 추출한다. '구' > '시/군' 순으로 우선(자치구 단위 매칭)."""
+    if not address:
+        return None
+    toks = _SIGUNGU_RE.findall(address)
+    if not toks:
+        return None
+    gu = [t for t in toks if t.endswith("구")]
+    return (gu[-1] if gu else toks[-1])
 
 _TRADE = [("apt", "아파트"), ("villa", "연립·다세대"), ("officetel", "오피스텔"), ("house", "단독·다가구")]
 _RENT = [("apt", "아파트"), ("villa", "연립·다세대"), ("officetel", "오피스텔")]
@@ -238,18 +254,26 @@ class MarketReportService:
                 #   (과거 use_mock=True 하드코딩으로 키가 있어도 항상 Mock만 나오던 G1 결함 제거)
                 #   키가 있으면 실데이터 시도→data_source='live', 없으면 폴백→'fallback'/'mock'/'unavailable'.
                 async def fetch_mig():
+                    if not use_sgis and not use_kosis:
+                        return {"target_adm_cd": lawd_cd, "year": cur_year}
+                    # I2: 인구이동은 SGIS 미제공 → KOSIS 「시군구별 이동자수」로 대상 시군구의
+                    #     총전입·총전출·순이동(유입세)을 산출. 주소에서 시군구명을 추출해 식별한다.
+                    region_nm = _extract_sigungu_name(address)
+                    od = await kosis.get_migration_od(lawd_cd[:5], cur_year, region_name=region_nm)
+                    if od.get("data_source") == "live":
+                        return od
+                    # KOSIS 미확정/실패 시 SGIS 정직 폴백(가짜 금지).
+                    return await sgis.get_migration_stats(lawd_cd, cur_year) if use_sgis else od
+                async def fetch_pop():
                     if not use_sgis:
                         return {"target_adm_cd": lawd_cd, "year": cur_year}
-                    # I2: 인구이동(OD)은 SGIS 미제공 → KOSIS 국내인구이동통계 우선 시도.
-                    #     데이터 있으면 전출지별 유입 Top, 없으면 SGIS 정직 unavailable 폴백(가짜 금지).
-                    od = await kosis.get_migration_od(lawd_cd[:5], cur_year)
-                    if od.get("top_inflow_regions"):
-                        return od
-                    return await sgis.get_migration_stats(lawd_cd, cur_year)
-                async def fetch_pop():
-                    return await sgis.get_population_stats(lawd_cd, cur_year) if use_sgis else {"target_adm_cd": lawd_cd, "year": cur_year}
+                    return await sgis.get_population_stats(
+                        lawd_cd, cur_year, region_name=_extract_sigungu_name(address))
                 async def fetch_inc():
-                    return await kosis.get_macro_income_stats(lawd_cd[:5], cur_year) if use_kosis else {"sigungu_cd": lawd_cd[:5], "year": cur_year}
+                    if not use_kosis:
+                        return {"sigungu_cd": lawd_cd[:5], "year": cur_year}
+                    return await kosis.get_macro_income_stats(
+                        lawd_cd[:5], cur_year, region_name=_extract_sigungu_name(address))
 
                 mig, pop, inc = await asyncio.gather(
                     fetch_mig(),
