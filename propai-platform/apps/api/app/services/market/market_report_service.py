@@ -14,20 +14,34 @@ import structlog
 
 logger = structlog.get_logger(__name__)
 
-# 주소 문자열에서 시군구명(예: '강남구','수원시','파주시')을 추출 — KOSIS 시군구 행 식별용.
-# '시'와 '구'가 함께 오면(예: '수원시 장안구') KOSIS 표 분류는 자치구 단위가 우선이므로 구를 채택.
+# 주소에서 시/군/구 토큰 추출. KOSIS·SGIS는 통합시(수원·성남·고양 등)를 다르게 표기한다:
+#   KOSIS 인구이동/소득 표 → 시 단위 집계('수원시', 자치구 없음)
+#   SGIS stage 목록        → 시+구('수원시 장안구')
+# 광역/특별시 자치구는 양쪽 모두 '강남구', 일반 시/군은 '파주시'/'○○군' 그대로.
 _SIGUNGU_RE = re.compile(r"([가-힣]{1,6}(?:시|군|구))")
 
 
-def _extract_sigungu_name(address: str | None) -> str | None:
-    """주소에서 시군구명을 추출한다. '구' > '시/군' 순으로 우선(자치구 단위 매칭)."""
+def _extract_region_keys(address: str | None) -> tuple[str | None, str | None]:
+    """주소 → (KOSIS 시군구명, SGIS 시군구명). provider별 표기 차이를 흡수한다."""
     if not address:
-        return None
+        return (None, None)
     toks = _SIGUNGU_RE.findall(address)
     if not toks:
-        return None
-    gu = [t for t in toks if t.endswith("구")]
-    return (gu[-1] if gu else toks[-1])
+        return (None, None)
+    # 시도(광역/특별/특별자치시)는 제외 — 실제 시군구만.
+    si = next((t for t in reversed(toks)
+               if t.endswith("시") and not t.endswith(("광역시", "특별시", "특별자치시"))), None)
+    gu = next((t for t in reversed(toks) if t.endswith("구")), None)
+    gun = next((t for t in reversed(toks) if t.endswith("군")), None)
+    if si and gu:        # 통합시 자치구(수원시 장안구): KOSIS=시, SGIS="시 구"
+        return (si, f"{si} {gu}")
+    if gu:               # 광역/특별시 자치구(강남구): 양쪽 동일
+        return (gu, gu)
+    if si:               # 일반시(파주시)
+        return (si, si)
+    if gun:              # 군
+        return (gun, gun)
+    return (None, None)
 
 _TRADE = [("apt", "아파트"), ("villa", "연립·다세대"), ("officetel", "오피스텔"), ("house", "단독·다가구")]
 _RENT = [("apt", "아파트"), ("villa", "연립·다세대"), ("officetel", "오피스텔")]
@@ -253,13 +267,15 @@ class MarketReportService:
                 # use_mock=None: 클라이언트가 키 존재 여부로 실연동/폴백을 자동 결정한다.
                 #   (과거 use_mock=True 하드코딩으로 키가 있어도 항상 Mock만 나오던 G1 결함 제거)
                 #   키가 있으면 실데이터 시도→data_source='live', 없으면 폴백→'fallback'/'mock'/'unavailable'.
+                # 통합시(수원/성남 등) 표기차 흡수: KOSIS=시 단위, SGIS=시+구.
+                kosis_nm, sgis_nm = _extract_region_keys(address)
+
                 async def fetch_mig():
                     if not use_sgis and not use_kosis:
                         return {"target_adm_cd": lawd_cd, "year": cur_year}
                     # I2: 인구이동은 SGIS 미제공 → KOSIS 「시군구별 이동자수」로 대상 시군구의
                     #     총전입·총전출·순이동(유입세)을 산출. 주소에서 시군구명을 추출해 식별한다.
-                    region_nm = _extract_sigungu_name(address)
-                    od = await kosis.get_migration_od(lawd_cd[:5], cur_year, region_name=region_nm)
+                    od = await kosis.get_migration_od(lawd_cd[:5], cur_year, region_name=kosis_nm)
                     if od.get("data_source") == "live":
                         return od
                     # KOSIS 미확정/실패 시 SGIS 정직 폴백(가짜 금지).
@@ -268,12 +284,12 @@ class MarketReportService:
                     if not use_sgis:
                         return {"target_adm_cd": lawd_cd, "year": cur_year}
                     return await sgis.get_population_stats(
-                        lawd_cd, cur_year, region_name=_extract_sigungu_name(address))
+                        lawd_cd, cur_year, region_name=sgis_nm)
                 async def fetch_inc():
                     if not use_kosis:
                         return {"sigungu_cd": lawd_cd[:5], "year": cur_year}
                     return await kosis.get_macro_income_stats(
-                        lawd_cd[:5], cur_year, region_name=_extract_sigungu_name(address))
+                        lawd_cd[:5], cur_year, region_name=kosis_nm)
 
                 mig, pop, inc = await asyncio.gather(
                     fetch_mig(),
