@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v162-commission-mgm";
+const CACHE_NAME = "propai-v163-salesapp-redesign";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

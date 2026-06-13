@@ -159,51 +159,66 @@ export default function SiteWorkspaceClient({ locale, siteId }: { locale: Locale
 
   return (
     <div className="space-y-5">
-      <div className="flex flex-wrap items-center gap-3">
-        <Link
-          href={`/${locale}/sales/sites`}
-          className="text-sm text-[var(--text-tertiary)] hover:text-[var(--text-primary)]"
-        >
-          ← 내 현장
-        </Link>
-        <div>
-          <span className="cc-meta">FIELD APP · WORKSPACE</span>
-          <h1 className="mt-0.5 text-lg font-black leading-tight text-[var(--text-primary)]">분양 현장</h1>
+      {/* 워크스페이스 헤더 — 커맨드센터 패널. 뒤로가기 / 타이틀·역할 / 액션 그룹의 3영역 위계. */}
+      <header className="relative overflow-hidden rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface-soft)] p-4 shadow-[var(--shadow-sm)] sm:p-5">
+        <div className="cc-grid-bg opacity-30" aria-hidden />
+        <div
+          aria-hidden
+          className="pointer-events-none absolute -right-12 -top-16 h-40 w-40 rounded-full bg-[var(--accent-soft)] blur-3xl"
+        />
+        <div className="relative flex flex-wrap items-center gap-x-3 gap-y-3">
+          <Link
+            href={`/${locale}/sales/sites`}
+            className="inline-flex min-h-[40px] items-center gap-1 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 text-xs font-bold text-[var(--text-secondary)] transition hover:border-[var(--accent-strong)] hover:text-[var(--text-primary)] active:scale-95"
+          >
+            <span aria-hidden>←</span> 내 현장
+          </Link>
+          <div className="min-w-0">
+            <span className="cc-meta">FIELD APP · WORKSPACE</span>
+            <div className="mt-0.5 flex items-center gap-2">
+              <h1 className="text-lg font-black leading-tight text-[var(--text-primary)]">분양 현장</h1>
+              {role && (
+                <span className="inline-flex items-center gap-1 rounded-md border border-[color:color-mix(in_srgb,var(--accent-strong)_30%,transparent)] bg-[var(--accent-soft)] px-2 py-0.5 text-[11px] font-bold text-[var(--accent-strong)]">
+                  <span className="sa-dot" style={{ background: "var(--accent-strong)" }} aria-hidden />
+                  {role.role_label ?? ROLE_LABEL[role.role] ?? role.role}
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* 액션 그룹 — 우측 정렬. 주요(동·호표/비번설정)와 보조(앱으로 열기) 구분. */}
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            {!loading && role && tab === "units" && (
+              <button
+                onClick={() => setBuilderOpen(true)}
+                className="inline-flex min-h-[40px] items-center gap-1 rounded-lg bg-[var(--accent-strong)] px-3.5 text-xs font-black text-white shadow-[var(--shadow-xs)] transition hover:opacity-90 active:scale-95"
+              >
+                <span aria-hidden>＋</span> 동·호표 생성
+              </button>
+            )}
+            {canManage && (
+              <button
+                onClick={() => setPwOpen(true)}
+                className="inline-flex min-h-[40px] items-center gap-1 rounded-lg border border-[var(--accent-strong)] px-3.5 text-xs font-black text-[var(--accent-strong)] transition hover:bg-[var(--accent-soft)] active:scale-95"
+              >
+                <span aria-hidden>🛠</span> 현장 비밀번호 설정
+              </button>
+            )}
+            {/* 앱으로 열기 — 별도 창(앱 모드). 서브도메인(*.4t8t.net) 배선 전이라 현재 경로를 새 창으로.
+                서브도메인 준비 시: window.open(`https://${siteCode}.4t8t.net`, ...)로 자동 연결 가능. */}
+            <button
+              onClick={() => {
+                if (typeof window !== "undefined") {
+                  window.open(window.location.href, "_blank", "noopener,noreferrer");
+                }
+              }}
+              className="inline-flex min-h-[40px] items-center gap-1 rounded-lg border border-[var(--line-strong)] bg-[var(--surface)] px-3.5 text-xs font-black text-[var(--text-secondary)] transition hover:border-[var(--accent-strong)] hover:text-[var(--accent-strong)] active:scale-95"
+            >
+              <span aria-hidden>🪟</span> 앱으로 열기
+            </button>
+          </div>
         </div>
-        {role && (
-          <span className="rounded-md bg-[var(--accent-soft)] px-2 py-0.5 text-[11px] font-bold text-[var(--accent-strong)]">
-            {role.role_label ?? ROLE_LABEL[role.role] ?? role.role}
-          </span>
-        )}
-        {!loading && role && tab === "units" && (
-          <button
-            onClick={() => setBuilderOpen(true)}
-            className="inline-flex min-h-[40px] items-center rounded-lg bg-[var(--accent-strong)] px-3.5 text-xs font-black text-white transition hover:opacity-90 active:scale-95"
-          >
-            ＋ 동·호표 생성
-          </button>
-        )}
-        {/* 앱으로 열기 — 별도 창(앱 모드). 서브도메인(*.4t8t.net) 배선 전이라 현재 경로를 새 창으로.
-            서브도메인 준비 시: window.open(`https://${siteCode}.4t8t.net`, ...)로 자동 연결 가능. */}
-        <button
-          onClick={() => {
-            if (typeof window !== "undefined") {
-              window.open(window.location.href, "_blank", "noopener,noreferrer");
-            }
-          }}
-          className="ml-auto inline-flex min-h-[40px] items-center rounded-lg border border-[var(--line-strong)] px-3.5 text-xs font-black text-[var(--text-secondary)] transition hover:border-[var(--accent-strong)] hover:text-[var(--accent-strong)] active:scale-95"
-        >
-          🪟 앱으로 열기
-        </button>
-        {canManage && (
-          <button
-            onClick={() => setPwOpen(true)}
-            className="inline-flex min-h-[40px] items-center rounded-lg border border-[var(--accent-strong)] px-3.5 text-xs font-black text-[var(--accent-strong)] transition hover:bg-[var(--accent-soft)] active:scale-95"
-          >
-            🛠 현장 비밀번호 설정
-          </button>
-        )}
-      </div>
+      </header>
 
       {err && (
         <div className="rounded-xl border border-[color:color-mix(in_srgb,var(--status-error)_40%,transparent)] bg-[color:color-mix(in_srgb,var(--status-error)_12%,transparent)] px-4 py-3 text-sm font-semibold text-[var(--status-error)]">
@@ -217,7 +232,13 @@ export default function SiteWorkspaceClient({ locale, siteId }: { locale: Locale
         <>
           {/* 역할 기반 탭 — features[]에 포함된 메뉴만 노출.
               모바일: 가로 스크롤 탭바(스냅·페이드·터치타깃 ≥44px)+아이콘으로 직관화. */}
-          <div className="sticky top-0 z-20 -mx-1 border-b border-[var(--line)] bg-[var(--background)]/85 px-1 backdrop-blur">
+          <div className="sticky top-0 z-20 -mx-1 border-b border-[var(--line)] bg-[color:color-mix(in_srgb,var(--background)_85%,transparent)] px-1 pt-1.5 backdrop-blur">
+            <div className="mb-1.5 flex items-center gap-2 px-1">
+              <span className="cc-label">MENU</span>
+              <span className="text-[11px] font-bold text-[var(--text-tertiary)]">
+                {tabs.length}개 메뉴 · 내 권한 기준
+              </span>
+            </div>
             <div className="sa-tabbar" role="tablist" aria-label="현장 메뉴">
               {tabs.map((t) => (
                 <button
