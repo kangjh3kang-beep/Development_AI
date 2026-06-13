@@ -504,6 +504,14 @@ export default function BoqAutoWorkspace({ projectId }: { projectId: string }) {
                 신뢰도 낮음 항목 {fmt(lowConfidenceCount)}건 — 개별 확인 필요
               </span>
             )}
+            {(draft.summary?.bim_merge?.bim_matched_count ?? 0) > 0 && (
+              <span
+                title="BIM 실측 물량이 1:1 매칭된 항목 수 — 나머지는 파라메트릭(추정)입니다."
+                className="rounded-full border border-[var(--status-info)]/40 bg-[var(--status-info)]/10 px-2.5 py-1 text-[10px] font-black text-[var(--status-info)]"
+              >
+                BIM 실측 병합 {fmt(draft.summary!.bim_merge!.bim_matched_count ?? 0)}건
+              </span>
+            )}
             {draft.badges?.note && (
               <span className="text-[10px] font-semibold text-[var(--text-hint)]">
                 {String(draft.badges.note)}
@@ -692,7 +700,10 @@ export default function BoqAutoWorkspace({ projectId }: { projectId: string }) {
                                       {it.unit?.trim() || "—"}
                                     </td>
                                     <td className="px-4 py-2 text-right text-[12px] font-black tabular-nums text-[var(--text-primary)]">
-                                      {fmtQty(it.qty)}
+                                      <span className="inline-flex items-center justify-end gap-1">
+                                        {fmtQty(it.qty)}
+                                        <QtySourceChip item={it} />
+                                      </span>
                                     </td>
                                     <td className="px-4 py-2">
                                       <span
@@ -800,6 +811,43 @@ export default function BoqAutoWorkspace({ projectId }: { projectId: string }) {
         </section>
       )}
     </div>
+  );
+}
+
+/* ── 수량 출처 칩(N2 BIM 병합) — BIM실측/입력/추정 정직 표기 ── */
+function QtySourceChip({ item }: { item: BoqAutoDraftItem }) {
+  const src = (item.qty_source ?? "").toLowerCase();
+  if (src === "bim") {
+    const orig = item.qty_parametric;
+    const title =
+      `BIM 실측 물량으로 교체됨${orig != null ? ` (추정 ${fmtQty(orig)} → 실측)` : ""}` +
+      (item.bim_work_code ? ` · ${item.bim_work_code}` : "");
+    return (
+      <span
+        title={title}
+        className="inline-flex cursor-help items-center rounded-full border border-[var(--status-info)]/40 bg-[var(--status-info)]/10 px-1.5 py-0.5 text-[8px] font-black text-[var(--status-info)]"
+      >
+        BIM실측
+      </span>
+    );
+  }
+  if (src === "user") {
+    return (
+      <span
+        title="사용자가 입력한 수량 — BIM·파라메트릭이 덮지 않습니다(우선순위 최상)."
+        className="inline-flex cursor-help items-center rounded-full border border-[var(--accent-strong)]/40 bg-[var(--accent-soft)]/20 px-1.5 py-0.5 text-[8px] font-black text-[var(--accent-strong)]"
+      >
+        입력
+      </span>
+    );
+  }
+  return (
+    <span
+      title="파라메트릭(실적 원단위 비례) 추정 수량 — BIM 실측 미보유."
+      className="inline-flex cursor-help items-center rounded-full border border-[var(--line)] bg-[var(--surface-soft)] px-1.5 py-0.5 text-[8px] font-bold text-[var(--text-hint)]"
+    >
+      추정
+    </span>
   );
 }
 

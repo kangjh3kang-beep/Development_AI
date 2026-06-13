@@ -210,16 +210,28 @@ def _canonical_disciplines(disciplines: list[str] | None) -> list[str]:
 def generate_draft(
     params: dict[str, Any],
     disciplines: list[str] | None = None,
+    sample_stats: dict[Any, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """파라메트릭 공내역서 초안 생성.
 
     params: {gfa_sqm(필수, ㎡), households=None, site_area_sqm=None,
              landscape_area_sqm=None}
     disciplines: 공종 리스트(한글 캐논명 또는 영문 별칭) — None 이면 5공종 전체.
+    sample_stats: N1 옵셔널 — (name,spec,unit)→{n,mean,cv,driver}. 항목 표본이
+        n≥REF_MIN_N(3)이면 단일표본 스케일 대신 **표본평균 원단위**를 쓰고 신뢰도를
+        "실적 N건 기반·CV xx%"로 전환한다. None 이거나 n<3 이면 현 동작 그대로(n=1).
 
     scaled_qty = qty_sample × (project_value / ref_value), 유효숫자 반올림.
     단가는 생성하지 않는다(공내역서 = 단가 빈칸). 전기 ref_mat_price 만 원본 전달.
     """
+    # N1 일반화 게이트(섣부른 일반화 금지) — sample_stats 제공 시에만 지연 참조(순환 임포트 회피).
+    min_n = 3
+    if sample_stats:
+        try:
+            from app.services.cost.boq_sample_stats import REF_MIN_N  # noqa: PLC0415
+            min_n = REF_MIN_N
+        except Exception:  # noqa: BLE001 — 미배포 시 기본 3
+            min_n = 3
     gfa = params.get("gfa_sqm")
     if not isinstance(gfa, (int, float)) or isinstance(gfa, bool) or gfa <= 0:
         raise ValueError("gfa_sqm(연면적, ㎡)은 필수 양수 파라미터입니다")
@@ -289,6 +301,30 @@ def generate_draft(
             if fallback_from:
                 basis_str += f" · {fallback_from} 미제공 폴백"
 
+            # ── N1 훅: 동일 항목 표본 n≥min_n 이면 표본평균 원단위로 전환(배지 갱신) ──
+            confidence = _CONFIDENCE
+            if sample_stats and driver != "fixed":
+                st = sample_stats.get((it.get("name"), it.get("spec", ""), it.get("unit")))
+                if st and int(st.get("n") or 0) >= min_n:
+                    st_driver = st.get("driver") or driver
+                    pair = scale_map.get(st_driver)
+                    mean_rate = st.get("mean")
+                    if pair and isinstance(mean_rate, (int, float)) and not isinstance(mean_rate, bool):
+                        proj_v2 = pair[1]
+                        qty = round_qty(float(mean_rate) * proj_v2)
+                        n_s = int(st["n"])
+                        cv_pct = float(st.get("cv") or 0.0) * 100
+                        confidence = f"실적 {n_s}건 기반·CV {cv_pct:.0f}%"
+                        basis_str = (
+                            f"표본평균 원단위 {float(mean_rate):.4g} × {proj_v2:,.0f} "
+                            f"(실적 {n_s}건, CV {cv_pct:.0f}%)"
+                        )
+                        qty_basis = {
+                            **qty_basis, "n_samples": n_s,
+                            "mean_unit_rate": float(mean_rate),
+                            "cv": float(st.get("cv") or 0.0), "project_value": proj_v2,
+                        }
+
             entry: dict[str, Any] = {
                 "id": it.get("id"),
                 "discipline": disc,
@@ -302,7 +338,7 @@ def generate_draft(
                 "qty_sample": sample,
                 "driver": driver,
                 "basis": basis_str,
-                "confidence": _CONFIDENCE,
+                "confidence": confidence,
             }
             if "ref_mat_price" in it:  # 전기 참고 재료단가 — 원본 그대로(가공 금지)
                 entry["ref_mat_price"] = it["ref_mat_price"]

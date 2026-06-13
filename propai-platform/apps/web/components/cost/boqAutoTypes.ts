@@ -117,6 +117,25 @@ export interface BoqAutoDraftItem {
   confidence?: string | null;
   /** 전기 마스터만 존재하는 참고 자재단가(원) — 표기만, 합산 금지. */
   ref_mat_price?: number | null;
+
+  /* ── N2 BIM 병합(additive·옵셔널) ── */
+  /** 수량 출처: "user" | "bim" | "parametric"(없으면 추정 취급). */
+  qty_source?: "user" | "bim" | "parametric" | string | null;
+  /** BIM 실측치로 교체된 경우의 원 파라메트릭 수량(정직 표기). */
+  qty_parametric?: number | null;
+  /** 매칭된 BIM work_code(예: "A04"). */
+  bim_work_code?: string | null;
+
+  /* ── N3 단가결합(additive·옵셔널) ── */
+  /** 단가 출처: "db" | "fallback" | "도면참고단가" | null(미결합·가짜값 금지). */
+  price_source?: string | null;
+  /** 매칭된 단가 SSOT 키(예: "concrete"). */
+  price_key?: string | null;
+  mat_unit?: number | null;
+  labor_unit?: number | null;
+  exp_unit?: number | null;
+  /** 금액(원) = qty × (채워진 단가 합). 미결합이면 null. */
+  amount?: number | null;
 }
 
 export interface BoqAutoDraftDiscipline {
@@ -151,6 +170,24 @@ export interface BoqAutoDraftResponse {
   disciplines?: BoqAutoDraftDiscipline[] | null;
   warnings?: string[] | null;
   badges?: BoqAutoDraftBadges | null;
+  /** 서버 summary — N2 BIM 병합 / N3 단가결합 통계(옵셔널·additive). */
+  summary?: {
+    /** N2 BIM 병합 통계(/draft/from-project 응답). */
+    bim_merge?: {
+      bim_rows_count?: number | null;
+      bim_matched_count?: number | null;
+      by_source?: Record<string, number> | null;
+      [k: string]: unknown;
+    } | null;
+    /** N3 단가결합 통계(/draft/priced 응답). */
+    pricing?: {
+      priced_count?: number | null;
+      total_items?: number | null;
+      coverage_pct?: number | null;
+      [k: string]: unknown;
+    } | null;
+    [k: string]: unknown;
+  } | null;
 }
 
 /* ── 엑셀 내보내기(POST export — blob) ── */

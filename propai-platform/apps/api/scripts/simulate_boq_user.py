@@ -80,6 +80,8 @@ def _discover_paths(client: httpx.Client) -> dict[str, tuple[str, str]]:
         "draft": ("/api/v1/boq/draft", "POST"),
         "export": ("/api/v1/boq/export", "POST"),
         "apply_cost": ("/api/v1/boq/apply-cost", "POST"),
+        "priced": ("/api/v1/boq-auto/draft/priced", "POST"),
+        "from_project": ("/api/v1/boq-auto/draft/from-project", "POST"),
     }
     try:
         spec = client.get(f"{BASE}/openapi.json", timeout=30).json()
@@ -101,6 +103,10 @@ def _discover_paths(client: httpx.Client) -> dict[str, tuple[str, str]]:
             found.setdefault("draft", (path, "POST" if "POST" in methods else "GET"))
         elif path.endswith("/export") and ("POST" in methods or "GET" in methods):
             found.setdefault("export", (path, "POST" if "POST" in methods else "GET"))
+        elif path.endswith("/draft/priced") and "POST" in methods:
+            found.setdefault("priced", (path, "POST"))
+        elif path.endswith("/draft/from-project") and "POST" in methods:
+            found.setdefault("from_project", (path, "POST"))
         elif path.endswith("/apply-cost") and ("POST" in methods or "GET" in methods):
             found.setdefault("apply_cost", (path, "POST" if "POST" in methods else "GET"))
     for key, default in defaults.items():
@@ -354,6 +360,43 @@ def main() -> int:
                 else "total* 양수 키 미발견 — 응답: " + json.dumps(
                     resp.json(), ensure_ascii=False)[:200])
         if total is None:
+            return 1
+
+        # 6) N3 단가결합 — POST /draft/priced → 단가/금액 커버리지 + 금액 보유 항목
+        pp, pm = paths["priced"]
+        resp = _call(client, pp, pm, PARAM_BODIES)
+        if resp.status_code != 200:
+            _report("6.priced(N3 단가결합)", False, f"HTTP {resp.status_code} — {resp.text[:200]}")
+            return 1
+        priced = resp.json()
+        pricing = (priced.get("summary") or {}).get("pricing") or {}
+        priced_count = int(pricing.get("priced_count") or 0)
+        coverage = pricing.get("coverage_pct")
+        amounts = [it for it in _items_by_discipline(priced).get("electrical", [])
+                   if isinstance(it.get("amount"), (int, float)) and it["amount"] > 0]
+        ok_priced = priced_count > 0 and bool(amounts)
+        _report("6.priced(N3 단가결합)", ok_priced,
+                f"단가 결합 {priced_count}건(커버리지 {coverage}%) · 금액 보유 전기 항목 "
+                f"{len(amounts)}건(가짜 단가 없이 부분 결합)")
+        if not ok_priced:
+            return 1
+
+        # 7) N2 BIM 우선 병합 — POST /draft/from-project(BIM 없으면 parametric 안내)
+        fp, fm = paths["from_project"]
+        fbodies = [{**b, "project_id": "sim-user"} for b in PARAM_BODIES]
+        resp = _call(client, fp, fm, fbodies)
+        if resp.status_code != 200:
+            _report("7.from-project(N2 BIM병합)", False, f"HTTP {resp.status_code} — {resp.text[:200]}")
+            return 1
+        merged = resp.json()
+        bm = (merged.get("summary") or {}).get("bim_merge") or {}
+        has_bm = "bim_rows_count" in bm and "by_source" in bm
+        srcs = {it.get("qty_source") for it in _items_by_discipline(merged).get("architecture", [])}
+        ok_merge = has_bm and srcs.issubset({"bim", "user", "parametric"}) and bool(srcs)
+        _report("7.from-project(N2 BIM병합)", ok_merge,
+                f"BIM {bm.get('bim_matched_count', 0)}/{bm.get('bim_rows_count', 0)}건 매칭 · "
+                f"qty_source={sorted(s for s in srcs if s)} (BIM 없으면 parametric 정직 유지)")
+        if not ok_merge:
             return 1
     finally:
         client.close()
