@@ -21,19 +21,20 @@ logger = structlog.get_logger(__name__)
 #    소득/임금 통계표를 확정하기 전까지, 이 경로로 받은 값은 data_source='fallback' 로
 #    정직 표기한다(실데이터로 단정하지 않음).
 KOSIS_ORG_ID = "101"  # 통계청
-KOSIS_INCOME_TBL_ID = "DT_1EW0010"  # 일자리행정통계(임시·미확정) — 확정 전까지 fallback 표기
-KOSIS_INCOME_ITM_ID = "T10"
+KOSIS_INCOME_TBL_ID = "DT_1EW0010"  # 일자리행정통계(임시·미확정) — 통합검색 확정 전 기본 폴백표
 KOSIS_PERIOD_TYPE = "Y"  # 수록주기: 연
+# 항목코드(itmId)는 추측하지 않고 'ALL'(전체 항목) 사용 — 가이드 권장(errCd 20/21 회피).
 
 # ── 국내인구이동통계(OD) 설정 ──
 # 전입지(현 시군구)로 유입된 인구의 전출지(이전 거주지)별 이동자수를 조회한다.
 # ★ 아래 tblId/itmId 는 운영 확정 전(미검증)이다. 통계목록 API(data.go.kr 15056860)로
 #    '국내인구이동통계 시군구별 전입' 표를 확정하기 전까지, 수신 데이터는 data_source='fallback'
 #    로 정직 표기한다(실데이터로 단정하지 않음). 키·데이터 없으면 'unavailable'.
-KOSIS_MIGRATION_TBL_ID = "DT_1B26001_A01"  # 국내인구이동통계(미확정)
-KOSIS_MIGRATION_ITM_ID = "T1"               # 이동자수(미확정)
+KOSIS_MIGRATION_TBL_ID = "DT_1B26001_A01"  # 국내인구이동통계(통합검색 확정 전 기본 폴백표)
 # KOSIS 응답에서 합계/전체를 의미하는 분류값명(전출지 Top 집계에서 제외).
 _MIGRATION_TOTAL_LABELS = {"계", "전국", "소계", "합계", "전체"}
+# 전입(유입) 항목 식별 힌트 — itmId=ALL 응답에서 전입/순이동/전출이 섞일 때 전입만 집계.
+_INFLOW_ITEM_HINTS = ("전입",)
 
 
 def normalize_sigungu_cd(region_cd: str | None) -> str:
@@ -84,6 +85,54 @@ class KosisClient(BaseAPIClient):
     def _kosis_key(self) -> str:
         return os.getenv("KOSIS_API_KEY") or getattr(self.api_settings, "KOSIS_API_KEY", "") or ""
 
+    async def search_tables(self, keyword: str, max_items: int = 20) -> list[dict[str, Any]]:
+        """KOSIS 통합검색(statisticsSearch.do)으로 키워드에 맞는 통계표 후보를 반환한다.
+
+        개발가이드 §2.6 규격. 반환: [{tbl_id, tbl_nm, org_id, path}]. 키 없음/실패 시 [].
+        통계표ID(tblId) 확정용 유틸 — 관리자 진단/자동탐색에 사용(가짜 결과 금지).
+        """
+        key = self._kosis_key()
+        if not key or not keyword:
+            return []
+        try:
+            client = await self._get_client()
+            resp = await asyncio.wait_for(
+                client.request("GET", "/statisticsSearch.do", params={
+                    "method": "getList", "apiKey": key, "format": "json",
+                    "searchNm": keyword, "sort": "RANK",
+                    "startCount": 1, "resultCount": max_items,
+                }), timeout=6.0)
+            resp.raise_for_status()
+            ctype = (resp.headers.get("content-type") or "").lower()
+            body = resp.text or ""
+            if "json" not in ctype and body.lstrip()[:1] in ("<",):
+                return []
+            data = resp.json()
+            if not isinstance(data, list):
+                return []
+            return [
+                {"tbl_id": r.get("TBL_ID"), "tbl_nm": r.get("TBL_NM"),
+                 "org_id": r.get("ORG_ID"), "path": r.get("MT_ATITLE")}
+                for r in data if isinstance(r, dict) and r.get("TBL_ID")
+            ]
+        except Exception as e:  # noqa: BLE001
+            logger.warning("KOSIS search_tables failed", err=str(e))
+            return []
+
+    async def _resolve_tbl_id(
+        self, search_kw: str, require: tuple[str, ...], default: str,
+    ) -> tuple[str, bool]:
+        """통합검색으로 통계표ID를 확정한다. (tbl_id, resolved).
+
+        통계청(orgId 101) 표 중 TBL_NM 에 require 키워드를 모두 포함하는 첫 결과를 채택한다.
+        확정 못하면 (default, False) — 임의의 잘못된 표 채택을 막아 가짜 데이터를 방지한다.
+        """
+        for c in await self.search_tables(search_kw):
+            nm = c.get("tbl_nm") or ""
+            if c.get("org_id") == KOSIS_ORG_ID and all(r in nm for r in require) and c.get("tbl_id"):
+                return c["tbl_id"], True
+        return default, False
+
     async def get_macro_income_stats(
         self,
         sigungu_cd: str,
@@ -110,12 +159,14 @@ class KosisClient(BaseAPIClient):
 
         # 실제 KOSIS API 연동 로직
         try:
-            data = await self._fetch_income(sgg5, year, obj_level="ALL")
+            # 통합검색으로 '소득' 통계표 확정 시도(실표 확정 시에만 live 승격). 못하면 기본표로 시도(fallback).
+            tbl_id, resolved = await self._resolve_tbl_id("시군구 소득", ("소득",), KOSIS_INCOME_TBL_ID)
+            data = await self._fetch_income(sgg5, year, tbl_id=tbl_id)
 
-            # KOSIS 에러 응답: errCd 20 = 필수요청변수 누락(분류레벨) → objL ALL 폴백 후 재시도
+            # KOSIS 에러 응답: errCd 20 = 필수요청변수 누락(분류레벨) → objL/itm ALL 보강 재시도
             if isinstance(data, dict) and str(data.get("errCd")) == "20":
-                logger.info("KOSIS errCd 20 — objL ALL 폴백 재시도", sigungu=sgg5)
-                data = await self._fetch_income(sgg5, year, obj_level="ALL", extra_levels=True)
+                logger.info("KOSIS errCd 20 — objL ALL 보강 재시도", sigungu=sgg5)
+                data = await self._fetch_income(sgg5, year, tbl_id=tbl_id, extra_levels=True)
 
             if isinstance(data, dict) and (data.get("errMsg") or data.get("errCd")):
                 logger.warning("KOSIS API Error", err=data)
@@ -124,7 +175,16 @@ class KosisClient(BaseAPIClient):
             if not isinstance(data, list) or len(data) == 0:
                 return self._mock_income_data(sgg5, year)
 
-            val = float(data[0].get("DT", 0))
+            # itmId=ALL 응답 — DT 양수인 첫 유효 수치 사용(전체 항목 중 대표 소득값).
+            val = 0.0
+            for r in data:
+                try:
+                    v = float(r.get("DT", 0))
+                except (TypeError, ValueError):
+                    v = 0.0
+                if v > 0:
+                    val = v
+                    break
 
             parsed_data = {
                 "sigungu_cd": sgg5,
@@ -136,9 +196,10 @@ class KosisClient(BaseAPIClient):
                     "30m_to_70m": 45.0,
                     "over_70m": 19.5,
                 },
-                # ★ 통계표ID 미확정 상태 → 호출에 성공해도 실데이터로 단정하지 않고 fallback 표기.
-                #    통계목록 API로 tblId 확정 후 'live' 로 승격 예정.
-                "data_source": "fallback",
+                # 실표 확정(resolved) + 실수치(val>0) 일 때만 live. 그 외엔 정직하게 fallback.
+                "data_source": "live" if (resolved and val > 0) else "fallback",
+                "note": (f"KOSIS {tbl_id} 기반" + ("(통합검색 확정)" if resolved
+                         else "(통계표 미확정 — 통합검색으로 소득표 확정 권장)")),
             }
 
             validated = MacroIncomeData(**parsed_data)
@@ -149,9 +210,12 @@ class KosisClient(BaseAPIClient):
             return self._mock_income_data(sgg5, year)
 
     async def _fetch_income(
-        self, sigungu_cd: str, year: str, obj_level: str = "ALL", extra_levels: bool = False
+        self, sigungu_cd: str, year: str, tbl_id: str = KOSIS_INCOME_TBL_ID, extra_levels: bool = False
     ) -> Any:
-        """KOSIS statisticsParameterData.do 호출 → JSON 파싱(비-JSON/HTML 가드 포함)."""
+        """KOSIS statisticsParameterData.do 호출 → JSON 파싱(비-JSON/HTML 가드 포함).
+
+        가이드 §2.2.3.1: itmId/objL 'ALL' 은 전체 항목·분류 조회(필수변수 누락 errCd 20 회피).
+        """
         client = await self._get_client()
         params = {
             "method": "getList",
@@ -159,10 +223,9 @@ class KosisClient(BaseAPIClient):
             "format": "json",
             "jsonVD": "Y",
             "orgId": KOSIS_ORG_ID,
-            "tblId": KOSIS_INCOME_TBL_ID,
-            "itmId": KOSIS_INCOME_ITM_ID,
-            # objL1: 분류레벨 누락(errCd 20) 방지를 위해 ALL 우선 사용
-            "objL1": obj_level if obj_level == "ALL" else sigungu_cd,
+            "tblId": tbl_id,
+            "itmId": "ALL",   # 전체 항목(항목코드 추측 금지 — 가이드 권장)
+            "objL1": "ALL",   # 전체 분류(errCd 20 방지)
             "prdSe": KOSIS_PERIOD_TYPE,
             "prdDe": year,
         }
@@ -209,11 +272,17 @@ class KosisClient(BaseAPIClient):
         if use_mock or not has_key:
             return empty
         try:
-            rows = await self._fetch_migration(sgg5, year)
+            # 통합검색으로 '인구이동' 통계표 확정 시도(실표 확정 시에만 live 승격). 못하면 기본표(fallback).
+            tbl_id, resolved = await self._resolve_tbl_id("국내인구이동", ("인구이동",), KOSIS_MIGRATION_TBL_ID)
+            rows = await self._fetch_migration(sgg5, year, tbl_id=tbl_id)
             if not isinstance(rows, list) or not rows:
                 return empty
+            # itmId=ALL 응답에 전입/전출/순이동이 섞일 수 있어, 전입(유입) 항목만 집계한다.
+            inflow_rows = [r for r in rows if any(h in str(r.get("ITM_NM", "")) for h in _INFLOW_ITEM_HINTS)]
+            target_rows = inflow_rows or rows  # 전입 항목이 식별되면 그것만, 없으면 전체(차선)
             regions: list[dict[str, Any]] = []
-            for r in rows:
+            for r in target_rows:
+                # 전출지(이전 거주지)명 — 분류값명. 전입지(목적지) 분류는 합계/자기지역 제외로 걸러짐.
                 name = (r.get("C1_NM") or r.get("C2_NM") or "").strip()
                 try:
                     cnt = int(float(r.get("DT", 0)))
@@ -232,24 +301,30 @@ class KosisClient(BaseAPIClient):
                 "target_adm_cd": sgg5, "year": year,
                 "total_inflow": total, "total_outflow": 0, "net_migration": 0,
                 "top_inflow_regions": top,
-                # 통계표ID 미확정 → 실데이터로 단정하지 않고 fallback(확정 후 live 승격).
-                "data_source": "fallback",
-                "note": "KOSIS 국내인구이동통계 기반(통계표 확정 전 추정). 전출지별 전입 Top.",
+                # 실표 확정(resolved) 시 live, 미확정이면 정직하게 fallback.
+                "data_source": "live" if resolved else "fallback",
+                "note": (f"KOSIS {tbl_id} 전출지별 전입 Top"
+                         + ("(통합검색 확정)" if resolved else "(통계표 미확정 — 통합검색 확정 권장)")),
             }
         except Exception as e:  # noqa: BLE001
             logger.warning("KOSIS migration OD fetch failed", err=str(e))
             return empty
 
-    async def _fetch_migration(self, sigungu_cd: str, year: str) -> Any:
-        """KOSIS 국내인구이동통계(전입지=시군구, 전출지별) 호출 → JSON(비-JSON 가드)."""
+    async def _fetch_migration(
+        self, sigungu_cd: str, year: str, tbl_id: str = KOSIS_MIGRATION_TBL_ID,
+    ) -> Any:
+        """KOSIS 국내인구이동통계(전입지=시군구, 전출지별) 호출 → JSON(비-JSON 가드).
+
+        itmId=ALL(전입/전출/순이동 전체) → 호출측에서 전입 항목만 필터. objL1=전입지(시군구).
+        """
         client = await self._get_client()
         params = {
             "method": "getList",
             "apiKey": self._kosis_key(),
             "format": "json", "jsonVD": "Y",
             "orgId": KOSIS_ORG_ID,
-            "tblId": KOSIS_MIGRATION_TBL_ID,
-            "itmId": KOSIS_MIGRATION_ITM_ID,
+            "tblId": tbl_id,
+            "itmId": "ALL",        # 전입/전출/순이동 전체(항목코드 추측 금지)
             "objL1": sigungu_cd,  # 전입지(현 시군구)
             "objL2": "ALL",        # 전출지(이전 거주지) 전체
             "prdSe": KOSIS_PERIOD_TYPE, "prdDe": year,
