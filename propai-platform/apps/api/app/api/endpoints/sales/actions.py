@@ -68,6 +68,42 @@ async def org_seed_default(body: dict | None = None, db: AsyncSession = Depends(
     return res
 
 
+# ── 분양관리요약(관리자) 현장별 통합 관리 콘솔 ────────────────────────────────
+@actions_router.get("/admin/site-detail")
+async def admin_site_detail(db: AsyncSession = Depends(get_db),
+                            ctx: SalesCtx = Depends(require_role(
+                                "GM_DIRECTOR", "SUBAGENCY", "AGENCY", "DEVELOPER", "SUPERADMIN"))):
+    """현장 1곳 통합 관리 지표 — 담당자·근태·계약·매출·수수료·방문·광고·회계·손익."""
+    from app.services.sales.admin.console import site_management_detail
+    return await site_management_detail(db, ctx.site_id)
+
+
+@actions_router.post("/accounting/entry")
+async def accounting_entry(body: dict, db: AsyncSession = Depends(get_db),
+                           ctx: SalesCtx = Depends(require_role(
+                               "GM_DIRECTOR", "SUBAGENCY", "AGENCY", "DEVELOPER", "SUPERADMIN"))):
+    """현장 회계 항목 등록(인건비/경비/공과금/광고비/기타)."""
+    from fastapi import HTTPException
+    from app.services.sales.admin.console import add_accounting_entry
+    try:
+        return await add_accounting_entry(
+            db, ctx.site_id, body.get("entry_type", ""), int(body.get("amount", 0)),
+            body.get("memo"), body.get("entry_date"), getattr(ctx.user, "id", None))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@actions_router.get("/accounting/summary")
+async def accounting_summary(db: AsyncSession = Depends(get_db),
+                             ctx: SalesCtx = Depends(require_role(
+                                 "GM_DIRECTOR", "SUBAGENCY", "AGENCY", "DEVELOPER", "SUPERADMIN"))):
+    """현장 회계 비용 집계(항목별)+매출·수수료·손익 — site-detail 와 동일 원장 기준."""
+    from app.services.sales.admin.console import site_management_detail
+    d = await site_management_detail(db, ctx.site_id)
+    return {"accounting": d["accounting"], "revenue": d["revenue"],
+            "commission": d["commission"], "profit_estimate": d["profit_estimate"], "note": d["note"]}
+
+
 @actions_router.get("/contracts")
 async def list_contracts(db: AsyncSession = Depends(get_db),
                          ctx: SalesCtx = Depends(sales_ctx)):
