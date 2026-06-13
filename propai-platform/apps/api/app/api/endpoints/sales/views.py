@@ -250,19 +250,24 @@ async def projection_accounting_rollup(db: AsyncSession = Depends(get_db), user=
     현장별로 집계(site_management_detail)하고, 시행사 레벨로 롤업한다. '같이(통합)·따로(현장별)'.
     """
     from app.services.sales.admin.console import site_management_detail
-    site_rows = (await db.execute(select(SalesSite).where(
-        SalesSite.organization_id == user.tenant_id, SalesSite.deleted_at.is_(None)))).scalars().all()
+    # site_management_detail 내부 _scalar 가 오류 시 rollback 하면 ORM 객체가 만료돼
+    # 이후 s.id/s.site_name 접근이 lazy load(MissingGreenlet) 된다. 루프 전에 평문 추출.
+    rows = (await db.execute(select(
+        SalesSite.id, SalesSite.site_name, SalesSite.status).where(
+        SalesSite.organization_id == user.tenant_id, SalesSite.deleted_at.is_(None)))).all()
     sites = []
     con = {"revenue": 0, "cost_total": 0, "commission": 0, "profit_estimate": 0}
     by_type: dict[str, int] = {}
-    for s in site_rows:
-        d = await site_management_detail(db, s.id)
+    for sid, sname, sstatus in rows:
+        d = await site_management_detail(db, sid)
         for t in d["accounting"]["by_type"]:
             by_type[t["label"]] = by_type.get(t["label"], 0) + int(t["amount"])
-        for k in con:
-            con[k] += int(d.get(k, 0))
+        con["revenue"] += int(d["revenue"])
+        con["commission"] += int(d["commission"])
+        con["profit_estimate"] += int(d["profit_estimate"])
+        con["cost_total"] += int(d["accounting"]["cost_total"])
         sites.append({
-            "site_id": str(s.id), "site_name": s.site_name, "status": s.status,
+            "site_id": str(sid), "site_name": sname, "status": sstatus,
             "revenue": d["revenue"], "cost_total": d["accounting"]["cost_total"],
             "commission": d["commission"], "profit_estimate": d["profit_estimate"],
             "by_type": d["accounting"]["by_type"],
