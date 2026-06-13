@@ -5,7 +5,7 @@
 
 ## 0. 한 줄 요약
 
-적산은 백엔드 N1·N2·N3 + 프론트 정합까지 **완성·검증·푸시**(3300 pytest·tsc·build 그린). 설계/CAD/BIM은 **상당 부분 실구현**(IFC/DXF 분석·8엔진 법규검증·BIM read/view/generate). 매스 선택→재생성(§4-A)은 **완결·검증·푸시**(`ff3b8bc`). **참조설계 피드백루프(§4-B)도 완결·검증·푸시**(`5df33cf` — find_similar 기하 종횡비를 합성 매스에 결정론 주입, 3344 pytest·tsc·build 그린). 남은 미완은 **실무 도면등급(§4-D)·BIM 편집/IFC export(§4-E)** + §4-B 둘째 불릿(조례 DB, 후속).
+적산은 백엔드 N1·N2·N3 + 프론트 정합까지 **완성·검증·푸시**(3300 pytest·tsc·build 그린). 설계/CAD/BIM은 **상당 부분 실구현**(IFC/DXF 분석·8엔진 법규검증·BIM read/view/generate). 매스 선택→재생성(§4-A `ff3b8bc`)·참조설계 피드백루프(§4-B `5df33cf`)·도면 법규주석(§4-C `33202cd` — 8엔진 audit/compliance를 배치도에 결정론 주석화, audit↔drawing 연결)까지 **완결·검증·푸시**(전체회귀 3358 pytest·tsc·build·vitest 그린). 남은 미완은 **실무 도면등급(§4-D, 대형)·BIM 편집/IFC export(§4-E)** + §4-B 둘째 불릿(조례 DB, 후속).
 
 ## 1. 불변 규칙 (위반 금지)
 
@@ -29,8 +29,9 @@
 | `11bc342` | **설계: `massing_kind` 엔진 파라미터(판상/타워/ㄱ자/중정 결정론 매스 변형)** |
 | `ff3b8bc` | **설계: 매스 형상 재생성 배선(§4-A 완결) — 라우터 massing_kind 수용·대안별 형상(A=입력/auto·B=tower·C=lshape)·프론트 선택→재생성** |
 | `5df33cf` | **설계: 참조설계 피드백루프(§4-B 완결) — find_similar 기하 종횡비를 합성 매스에 결정론 주입(엔진 reference_mass·서비스 derive_reference_mass_hint·라우터 opt-in use_references·프론트 토글/칩), 적대적 4-렌즈 리뷰 통과** |
+| `33202cd` | **설계: 도면 법규주석(§4-C 완결) — audit↔drawing 연결. annotate_site_plan(findings→배치도 색/범례/정북일조)·POST /annotated-site-plan·프론트 AnnotatedSitePlanCard(Blob-img 안전 렌더)·legalAnnotation 순수모듈+vitest. 적대적 리뷰 must-fix 2건(solar_envelope 엔진명·multi-word 라벨 dead-path) 수정** |
 
-검증 베이스라인: pytest **3344 passed / 0 failed**(21:50, `apps/api/tests` 2건 제외, `INTERP_REDIS_CACHE=0`으로 미가동 Redis 캐시 우회 — 테스트 로직 불변), tsc·build 그린. (§4-A 시점 3320 + §4-B 신규 24.)
+검증 베이스라인: pytest **3358 passed / 0 failed**(22:29, `apps/api/tests` 2건 제외, `INTERP_REDIS_CACHE=0`으로 미가동 Redis 캐시 우회 — 테스트 로직 불변), tsc·build·vitest 그린. (§4-A 시점 3320 + §4-B 신규 24 + §4-C 신규 14.)
 
 > 검증 주의: 전체회귀는 **`pytest tests/` (apps/api/tests, 메인 204파일)**를 타깃해야 한다. 인자 없는 `pytest`는 `pyproject testpaths=["../../tests"]`(통합·load·벤치 83파일)를 수집하며, 이쪽엔 본 작업과 무관한 사전존재 환경실패(Molit XML·Sentry·IFC 온보딩 샘플 등)가 있다 — §4-A 변경 무관.
 
@@ -63,8 +64,9 @@
 - **완료**: `derive_reference_mass_hint`가 `find_similar(building_use, area_sqm, unit_types, zone_code)` 상위 후보 중 기하 보유·치수 유효 사례의 종횡비를 도출하고, `compute_optimal_mass`가 BCR footprint를 유지한 채 종횡비만 참조 쪽으로 편향(대지 유효치 클램프). 기하 결측/정규화 실패/치수 무효는 건너뛰어 다음 후보로 재탐색. 라우터 opt-in `use_references`(기본 False)·조회 실패 정직 흡수·프론트 토글/칩. 결정론(LLM 0). 테스트 22건 + 적대적 4-렌즈 리뷰.
 - **미완(후속)**: 지자체 조례 DB(`zone_code→local_bcr/far/height` 적재 후 `ZONE_LIMITS` 대체)는 SSOT 5개 모듈 공유로 "0 계약 변경" 위반 위험 + 데이터 소스 부재 — 별도 세션 권장.
 
-### C. 도면 법규주석 (stub→partial+)
-- 8엔진 audit 위반/통과를 SVG 도면에 주석화(피난로 적색, 일조 미달 경고, 건폐/용적 ✓/✗). audit↔drawing 연결.
+### C. 도면 법규주석 ✅ 완료 (33202cd)
+- **완료**: `SVGDrawingService.annotate_site_plan(findings, verdict)`가 8엔진 audit/설계 compliance를 배치도에 결정론 주석화 — footprint 최악 status 색칠(✓녹/⚠황/✗적)·범례(라벨·현재/한도)·정북일조(solar_envelope) 북측 적색 점선. 판정가능 finding(pass/warning/fail)만 반영(skipped/info 제외·가짜 적합 금지). `POST /drawing/annotated-site-plan`(DB-free). 프론트 `AnnotatedSitePlanCard`(Blob-URL `<img>` 안전 렌더)를 `GenerativeDesignPanel`에 배선(설계 compliance→finding). 정직 로직 순수모듈 `legalAnnotation`+vitest 10. 적대적 4-렌즈 리뷰 must-fix 2건(solar 엔진명 실데이터 dead-path·multi-word 라벨) 수정·검증.
+- **남은 partial+(후속)**: 평면도(floor-plan)에 피난동선/실별 주석은 미구현 — 현재 배치도(site-plan) 수준. 8엔진 audit 워크스페이스(design-audit)에 주석 도면을 띄우려면 geometry 스레딩 필요(audit 리포트가 치수 미보유) — 현재는 설계패널(실 geometry 보유)에서 시연.
 
 ### D. 실무 도면 등급 (partial→실무, 대형·장기)
 - 진짜 DXF `DIMENSION`/`LEADER` 엔티티(ISO 128), 재료 해칭(콘크리트/조적/석고), 1:50 상세(문/창 콜아웃), RCP·MEP 평면, 단면 구조부재. → 별도 다회 세션 권장. **"완벽한 AutoCAD 실무 도면 자동생성"은 현 스키매틱에서 점진 확장 대상이며 1세션 완성 불가 — 정직.**
@@ -74,6 +76,6 @@
 
 ## 5. 새 세션 첫 메시지 예시
 
-> §4-A(매스 재생성)는 `ff3b8bc`, §4-B(참조설계 피드백루프)는 `5df33cf`로 **완결**됐다(전체회귀 3344 그린). `propai-platform/docs/HANDOFF_DESIGN_CAD_BIM_2026-06-13.md`를 읽고, **§4-C(도면 법규주석 stub→partial+)**부터 추천순서로 구현해줘 — 8엔진 audit 위반/통과를 SVG 도면에 주석화(피난로 적색·일조 미달 경고·건폐/용적 ✓/✗), audit↔drawing 연결. §1 불변규칙 준수, §5 검증 통과 후 작업 브랜치 커밋·푸시. main 푸시 금지.
+> §4-A(매스 재생성 `ff3b8bc`)·§4-B(참조설계 피드백루프 `5df33cf`)·§4-C(도면 법규주석 `33202cd`)는 **완결**됐다(전체회귀 3358 그린). `propai-platform/docs/HANDOFF_DESIGN_CAD_BIM_2026-06-13.md`를 읽고, **§4-E(BIM 편집/저작 partial→built)**부터 구현해줘 — IFC export 엔드포인트, 3D 뷰어 요소 선택·이동/회전/스케일, 단면(slicer)·측정도구(§4-D 실무 도면등급은 대형·다회 세션이라 후순위). §1 불변규칙 준수, §5 검증 통과(`INTERP_REDIS_CACHE=0` 주의) 후 작업 브랜치 커밋·푸시. main 푸시 금지.
 
 (검증: `apps/api`에서 신규/관련 pytest + **전체회귀는 `pytest tests/ --ignore=tests/test_auction_demock_court.py --ignore=tests/test_molit_client.py`**(메인 204파일 타깃 — 인자 없는 pytest는 testpaths의 통합 스위트를 수집해 사전존재 환경실패가 섞임) → `apps/web` tsc·build → 그린이면 `git push origin feature/trust-infra-2026-06-11`. 커밋 말미 `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>` — 모델은 실행 세션 기준.)
