@@ -25,10 +25,13 @@ class PopulationData(BaseModel):
     target_adm_cd: str = Field(..., description="대상 행정구역 코드")
     year: str = Field(..., description="조회 연도")
     total_population: int = Field(0, description="총 인구")
+    household_count: int = Field(0, description="총 가구수(SGIS 실측)")
+    avg_household_size: float = Field(0.0, description="평균 가구원수(SGIS 실측)")
     age_distribution: dict = Field(default_factory=dict, description="연령대별 인구 분포")
     household_types: dict = Field(default_factory=dict, description="가구원수별 분포 (1인가구 등)")
     # 데이터 출처 플래그(위 MigrationData 와 동일 의미). 옵셔널·하위호환 가산 필드.
     data_source: Optional[str] = Field(None, description="데이터 출처 구분 플래그")
+    note: Optional[str] = Field(None, description="산출 근거/주석")
 
 class MacroIncomeData(BaseModel):
     """거시적 소득 지표 (1단계 KOSIS 기반).
