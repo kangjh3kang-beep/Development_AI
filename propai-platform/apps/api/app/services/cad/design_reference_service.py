@@ -22,6 +22,7 @@ import structlog
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .design_reference_geometry import GeometryError, mass_dims, normalize_geometry
 from .design_spec import legal_limits_for
 
 logger = structlog.get_logger(__name__)
@@ -374,3 +375,79 @@ async def find_similar(db: AsyncSession, *, building_use: str | None, area_sqm: 
         scored = [s for s in scored if s["similarity"] > 0]
         scored.sort(key=lambda x: x["similarity"], reverse=True)
     return scored[:k]
+
+
+async def derive_reference_mass_hint(
+    db: AsyncSession, *, site_area_sqm: float | None, zone_code: str | None,
+    building_use: str | None, unit_types: list[str], k: int = 5,
+) -> dict[str, Any]:
+    """유사 사례 Top-K 중 '기하 보유·치수 유효' 최상위 사례의 종횡비를 매스 힌트로 도출한다.
+
+    §4-B 참조설계 피드백 — AutoDesignEngine 합성 경로(generate)에 주입할 결정론 힌트를
+    만든다. find_similar(법규 인지 v2 정렬) 결과를 순위대로 순회하며, 기하가 없는
+    (has_geometry False)·정규화 실패·치수 무효(폭/깊이 ≤ 0) 사례는 건너뛰어 다음 후보로
+    재탐색한다(handoff '조립실패 시 더 타이트한 필터로 재탐색'의 결정론 구현 — footprint
+    수용도는 similarity_v2의 footprint 인자로 이미 순위에 반영됨). 사용 가능한 사례가
+    없으면 used=False + 정직 사유(가짜 추천 금지).
+
+    Returns:
+        {used, hint, ref, note, candidates}
+        - hint: 엔진 SiteInput.reference_mass로 그대로 주입하는 dict(또는 None) —
+          {aspect, ref_id, title, similarity, source, basis}.
+        - ref: 선택된 사례 요약(없으면 None). candidates: 기하 보유 후보 수.
+    """
+    cands = await find_similar(db, building_use=building_use, area_sqm=site_area_sqm,
+                               unit_types=unit_types, k=k, zone_code=zone_code)
+    with_geo = [c for c in cands if c.get("has_geometry")]
+    skipped = 0
+    for c in with_geo:
+        full = await get_reference(db, c["id"])
+        raw = full.get("geometry_json") if full else None
+        if not raw:
+            skipped += 1
+            continue
+        try:
+            dims = mass_dims(normalize_geometry(raw))
+        except (GeometryError, ValueError, KeyError, TypeError):
+            skipped += 1
+            continue
+        ref_w = dims["building_width_m"]
+        ref_d = dims["building_depth_m"]
+        if ref_w <= 0 or ref_d <= 0:
+            skipped += 1
+            continue
+        aspect = round(ref_w / ref_d, 3)
+        sim = c.get("similarity_v2")
+        if sim is None:
+            sim = c.get("similarity")
+        return {
+            "used": True,
+            "hint": {
+                "aspect": aspect,
+                "ref_id": c["id"],
+                "title": c.get("title"),
+                "similarity": sim,
+                "source": "design_reference",
+                "basis": f"유사 사례 '{c.get('title') or c['id']}' 기하 종횡비 "
+                         f"{aspect:.2f}(전면 {ref_w:.1f}m / 깊이 {ref_d:.1f}m)로 매스 편향",
+            },
+            "ref": {
+                "id": c["id"], "title": c.get("title"),
+                "similarity_v2": c.get("similarity_v2"),
+                "area_sqm": c.get("area_sqm"), "floors": c.get("floors"),
+                "building_width_m": ref_w, "building_depth_m": ref_d,
+            },
+            "note": (f"기하 보유 후보 {len(with_geo)}개 중 최상위 적합 사례 적용"
+                     + (f"({skipped}개 정규화/치수 무효로 건너뜀)" if skipped else "")),
+            "candidates": len(with_geo),
+        }
+
+    # 사용 가능한 기하 사례 없음 — 정직 표기(가짜 추천 금지)
+    if with_geo:
+        note = f"기하 보유 {len(with_geo)}개 모두 정규화/치수 무효로 참조 미적용"
+    elif cands:
+        note = "유사 사례는 있으나 기하(geometry) 보유분이 없어 참조 미적용"
+    else:
+        note = "유사 사례 라이브러리에 부합 사례 없음"
+    return {"used": False, "hint": None, "ref": None, "note": note,
+            "candidates": len(with_geo)}

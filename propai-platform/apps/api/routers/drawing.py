@@ -108,6 +108,11 @@ class DesignAlternativesRequest(BaseModel):
     massing_kind: Optional[str] = Field(
         None, description="매스 형상(slab/tower/lshape/court) — 미지정/미정의 시 자동(대지비율)",
     )
+    # §4-B: 참조설계 피드백(opt-in). True면 유사 사례 기하 종횡비를 합성 매스에 주입한다.
+    # 기본 False=기존 동작 완전 불변·DB 미접근(하위호환). 명시 massing_kind이 참조보다 우선.
+    use_references: bool = Field(
+        False, description="유사 참조 사례 기하 반영(종횡비 주입) — 기본 False(하위호환)",
+    )
 
 
 class AutoDesignRequest(BaseModel):
@@ -137,6 +142,11 @@ class AutoDesignRequest(BaseModel):
     # 명시 시 형상별 종횡비·플로어플레이트로 매스 재산출, 미정의 값은 엔진이 auto로 폴백.
     massing_kind: Optional[str] = Field(
         None, description="매스 형상(slab/tower/lshape/court) — 미지정/미정의 시 자동(대지비율)",
+    )
+    # §4-B: 참조설계 피드백(opt-in). True면 유사 사례 기하 종횡비를 합성 매스에 주입한다.
+    # 기본 False=기존 동작 완전 불변·DB 미접근(하위호환). 명시 massing_kind이 참조보다 우선.
+    use_references: bool = Field(
+        False, description="유사 참조 사례 기하 반영(종횡비 주입) — 기본 False(하위호환)",
     )
 
 
@@ -188,6 +198,46 @@ def _clamped_targets(
         else None
     )
     return far, bcr
+
+
+async def _reference_hint(
+    use_references: bool,
+    *,
+    site_area_sqm: float,
+    zone_code: str,
+    building_use: str,
+    unit_types: list[str],
+) -> Optional[dict]:
+    """§4-B: use_references=True일 때만 자체 DB 세션으로 유사사례 기하 힌트를 도출한다.
+
+    반환: None(opt-out — 세션 미개방) 또는 {used, hint, ref, note, candidates}.
+    `hint`는 엔진 SiteInput.reference_mass로 그대로 주입한다. 조회 실패는 침묵하지 않고
+    로그 + used=False·사유로 반환한다 — 참조는 부가 기능이지 설계 산출 차단 요인이 아니므로
+    핵심 설계는 계속 200으로 진행한다(정직 표기). use_references=False면 DB를 열지 않는다.
+    """
+    if not use_references:
+        return None
+    try:
+        from apps.api.database.session import AsyncSessionLocal
+        from app.services.cad import design_reference_service as ref_svc
+
+        async with AsyncSessionLocal() as db:
+            return await ref_svc.derive_reference_mass_hint(
+                db, site_area_sqm=site_area_sqm, zone_code=zone_code,
+                building_use=building_use, unit_types=unit_types or ["84A"],
+            )
+    except Exception as exc:  # noqa: BLE001 — DB/조회 실패가 설계 산출을 막지 않게(정직 표기)
+        # 광범위 catch지만 침묵하지 않는다 — traceback을 로그로 남겨 진짜 버그도 드러낸다.
+        logger.warning("참조 힌트 도출 실패: %s", exc, exc_info=True)
+        return {"used": False, "hint": None, "ref": None,
+                "note": f"참조 라이브러리 조회 실패: {exc}", "candidates": 0}
+
+
+def _reference_response_block(ref_result: Optional[dict]) -> Optional[dict]:
+    """응답용 reference 블록 — 내부 주입용 hint는 제외하고 정직 요약만 노출."""
+    if ref_result is None:
+        return None
+    return {k: v for k, v in ref_result.items() if k != "hint"}
 
 
 # ── 엔드포인트 ──
@@ -453,6 +503,13 @@ async def design_alternatives(req: DesignAlternativesRequest):
         target_bcr_percent=target_bcr,
         massing_kind=req.massing_kind,  # §4-A①: A 대안이 따름(B=tower·C=lshape 고정 다양화)
     )
+    # §4-B: 참조 비례는 대안 A(입력 형상)만 적용 — B(tower)·C(lshape)는 명시 형상이 우선.
+    ref_result = await _reference_hint(
+        req.use_references, site_area_sqm=req.site_area_sqm, zone_code=req.zone_code,
+        building_use=req.building_use, unit_types=req.target_unit_types,
+    )
+    if ref_result and ref_result.get("hint"):
+        site_input.reference_mass = ref_result["hint"]
     results = auto_design_engine.generate_alternatives(site_input, count=req.count)
     legal = auto_design_engine.get_legal_limits(req.zone_code)
 
@@ -480,10 +537,14 @@ async def design_alternatives(req: DesignAlternativesRequest):
     for rank, a in enumerate(alternatives, start=1):
         a["rank"] = rank
 
-    return {
+    resp = {
         "alternatives": alternatives,
         "recommended_index": 0 if alternatives else None,
     }
+    ref_block = _reference_response_block(ref_result)
+    if ref_block is not None:  # additive — use_references=True일 때만(정직)
+        resp["reference"] = ref_block
+    return resp
 
 
 @router.post("/auto-design")
@@ -512,15 +573,26 @@ async def auto_design(req: AutoDesignRequest):
         target_bcr_percent=target_bcr,
         massing_kind=req.massing_kind,  # §4-A①: 형상별 결정론 매스 변형(None=auto, 하위호환)
     )
+    # §4-B: use_references=True면 유사 사례 기하 종횡비를 매스에 주입(명시 형상이 우선).
+    ref_result = await _reference_hint(
+        req.use_references, site_area_sqm=req.site_area_sqm, zone_code=req.zone_code,
+        building_use=req.building_use, unit_types=req.target_unit_types,
+    )
+    if ref_result and ref_result.get("hint"):
+        site_input.reference_mass = ref_result["hint"]
     result = auto_design_engine.generate(site_input)
     unit_mix = _unit_mix_for(result.summary)
-    return {
+    resp = {
         "design_payload": result.design_payload,
         "summary": result.summary,
         "compliance": result.compliance,
         "unit_mix": unit_mix,
         "legal_limits": auto_design_engine.get_legal_limits(req.zone_code),
     }
+    ref_block = _reference_response_block(ref_result)
+    if ref_block is not None:  # additive — use_references=True일 때만 노출(정직)
+        resp["reference"] = ref_block
+    return resp
 
 
 class DesignOperateRequest(BaseModel):

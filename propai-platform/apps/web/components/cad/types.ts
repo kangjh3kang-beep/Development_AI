@@ -111,6 +111,44 @@ export type AutoDesignRequest = {
   setback_m: { north: number; south: number; east: number; west: number; };
   /** §4-A①: 매스 형상(slab/tower/lshape/court). 미지정/null=자동(대지비율) — 가산·하위호환. */
   massing_kind?: string | null;
+  /** §4-B: 유사 참조 사례 기하(종횡비) 반영. 미지정/false=미적용 — 가산·하위호환. */
+  use_references?: boolean;
+};
+
+/**
+ * §4-B 참조설계 피드백 — 엔진 summary 내 적용 프로비넌스(정직 표기).
+ * 구버전·미적용 응답엔 부재 — 전부 옵셔널. used=true일 때만 ref_id/title/aspect.
+ */
+export type ReferenceProvenance = {
+  used: boolean;
+  ref_id?: string | null;
+  title?: string | null;
+  similarity?: number | null;
+  /** 요청(목표) 종횡비. */
+  aspect?: number;
+  /** 실현 종횡비(대지 유효치 클램프 반영) — aspect와 다를 수 있음(정직). */
+  applied_aspect?: number | null;
+  /** 대지 유효치로 클램프돼 실현 종횡비가 목표와 달라졌는지. */
+  clamped?: boolean;
+  source?: string;
+  basis?: string;
+  note?: string;
+};
+
+/** §4-B: 라우터 응답의 reference 블록(유사사례 조회 결과 — 정직 요약). */
+export type ReferenceResultBlock = {
+  used: boolean;
+  ref?: {
+    id: string;
+    title?: string | null;
+    similarity_v2?: number | null;
+    area_sqm?: number | null;
+    floors?: number | null;
+    building_width_m?: number;
+    building_depth_m?: number;
+  } | null;
+  note?: string;
+  candidates?: number;
 };
 
 export type AutoDesignSummary = {
@@ -127,6 +165,8 @@ export type AutoDesignSummary = {
   /** §4-A: 적용된 매스 형상 출처/라벨(엔진 정직 표기). 구버전 응답엔 부재 — 옵셔널. */
   massing_kind?: string;
   massing_label?: string;
+  /** §4-B: 참조 사례 적용 프로비넌스(엔진 정직 표기). 미적용·구버전엔 부재 — 옵셔널. */
+  reference?: ReferenceProvenance;
 };
 
 export type AutoDesignCompliance = {
@@ -142,6 +182,8 @@ export type AutoDesignResponse = {
   design_payload: DesignPayload;
   summary: AutoDesignSummary;
   compliance: AutoDesignCompliance;
+  /** §4-B: use_references=true일 때만 — 유사사례 조회 결과(정직 요약). */
+  reference?: ReferenceResultBlock;
 };
 
 export type DesignAlternativesResponse = {
@@ -205,6 +247,8 @@ export type DesignAlternative = {
 export type DesignAlternativesV2Response = {
   alternatives: DesignAlternative[];
   recommended_index: number;
+  /** §4-B: use_references=true일 때만 — 유사사례 조회 결과(A 대안에 참조 비례 적용). */
+  reference?: ReferenceResultBlock;
 };
 
 export type ComplianceViolation = {

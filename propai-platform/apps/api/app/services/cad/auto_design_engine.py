@@ -105,6 +105,11 @@ class SiteInput:
     # 매스 형상(옵셔널·additive). None="auto"(대지 종횡비 기반 — 기존 동작 불변).
     # 명시 시 형상별 종횡비·플로어플레이트 계수로 매스를 재산출(결정론).
     massing_kind: str | None = None
+    # §4-B 참조설계 피드백(옵셔널·additive): 유사 사례 기하 힌트(종횡비 등).
+    # 라우터가 design_reference_service.derive_reference_mass_hint로 도출해 주입한다
+    # (결정론). 우선순위 — 명시 massing_kind > 참조 비례 > auto(대지비율).
+    # None=미사용(기존 동작 완전 불변). 형식: {aspect, ref_id, title, similarity, ...}.
+    reference_mass: dict[str, Any] | None = None
 
 
 # 매스 형상 정의 — aspect=전면/깊이 비, fp_factor=최대 건축면적 대비 플로어플레이트 계수.
@@ -328,8 +333,19 @@ class AutoDesignEngineService:
 
         # 매스 형상(opt-in·additive): massing_kind 명시 시 형상별 종횡비·플로어플레이트로
         # 폭/깊이를 재산출(대지 유효치 내 클램프). None이면 위 기본 동작 그대로(하위호환).
+        # §4-B 우선순위: 명시 massing_kind > 참조 비례(reference_mass) > auto(대지비율).
         mk = getattr(site_input, "massing_kind", None)
         form = MASSING_FORMS.get(mk) if mk else None
+        ref_hint = getattr(site_input, "reference_mass", None)
+        ref_hint = ref_hint if isinstance(ref_hint, dict) else None
+        ref_aspect = 0.0
+        if ref_hint is not None:
+            try:
+                ref_aspect = float(ref_hint.get("aspect") or 0.0)
+            except (TypeError, ValueError):
+                ref_aspect = 0.0
+        ref_provenance: dict[str, Any] | None = None
+
         if form and eff_w * eff_d > 0 and building_footprint > 0:
             target_fp = building_footprint * form["fp_factor"]
             aspect = form["aspect"]
@@ -337,6 +353,44 @@ class AutoDesignEngineService:
             raw_w = aspect * raw_d
             building_w = round(min(raw_w, eff_w), 1)
             building_d = round(min(raw_d, eff_d), 1)
+            if ref_hint is not None:  # 참조 힌트는 왔으나 명시 형상이 우선 — 정직 표기
+                ref_provenance = {
+                    "used": False, "note": "명시 매스 형상이 우선 적용됨",
+                    "ref_id": ref_hint.get("ref_id"), "title": ref_hint.get("title"),
+                }
+        elif ref_aspect > 0 and eff_w * eff_d > 0 and building_footprint > 0:
+            # §4-B: 참조 사례 비례 주입 — BCR 건축면적은 그대로 두고(법규 불변) 종횡비만
+            # 참조 사례(전면/깊이) 쪽으로 편향, 대지 유효치 내 클램프(결정론).
+            raw_d = math.sqrt(building_footprint / ref_aspect)
+            raw_w = ref_aspect * raw_d
+            building_w = round(min(raw_w, eff_w), 1)
+            building_d = round(min(raw_d, eff_d), 1)
+            # 정직성: 유효치 클램프로 실현 종횡비가 목표와 달라질 수 있으므로 둘 다 표기한다
+            # (목표 aspect + 실현 applied_aspect + clamped 플래그). 부분 적용을 온전 적용처럼
+            # 표기하지 않는다(불변규칙 — 정직 표기).
+            clamped = raw_w > eff_w + 1e-9 or raw_d > eff_d + 1e-9
+            applied_aspect = round(building_w / building_d, 3) if building_d > 0 else None
+            basis = (ref_hint.get("basis")
+                     or f"유사 사례 기하 종횡비 {ref_aspect:.2f}(전면/깊이)로 매스 편향")
+            if clamped and applied_aspect is not None:
+                basis += f" — 대지 유효치로 클램프(실현 종횡비 {applied_aspect:.2f})"
+            ref_provenance = {
+                "used": True,
+                "ref_id": ref_hint.get("ref_id"),
+                "title": ref_hint.get("title"),
+                "similarity": ref_hint.get("similarity"),
+                "aspect": round(ref_aspect, 3),
+                "applied_aspect": applied_aspect,
+                "clamped": clamped,
+                "source": ref_hint.get("source", "design_reference"),
+                "basis": basis,
+            }
+        elif ref_hint is not None:
+            # 힌트는 왔으나 종횡비가 무효(0/음수/결측) → auto 동작 유지, 정직 표기
+            ref_provenance = {
+                "used": False, "note": "참조 종횡비가 유효하지 않아 미적용(auto)",
+                "ref_id": ref_hint.get("ref_id"),
+            }
 
         actual_footprint = building_w * building_d
 
@@ -437,6 +491,9 @@ class AutoDesignEngineService:
         if north_step_profile is not None:
             result["north_step_profile"] = north_step_profile
             result["daylight_step"] = True
+        # §4-B: 참조 프로비넌스(있을 때만 — additive). 미주입 시 키 없음(기존 동작 불변).
+        if ref_provenance is not None:
+            result["reference"] = ref_provenance
         return result
 
     # ── 3단계: 코어 + 복도 배치 ──
@@ -788,6 +845,10 @@ class AutoDesignEngineService:
         }
         if not unit_layout.get("units_feasible", True):
             summary["units_note"] = unit_layout.get("infeasible_reason", "세대 성립 불가")
+
+        # §4-B 참조설계 피드백 — 적용/미적용 프로비넌스를 summary에 가산(있을 때만, 정직).
+        if mass.get("reference") is not None:
+            summary["reference"] = mass["reference"]
 
         # W-A ⑤: 산출 근거(basis) — 적용 세트백 실값·일조캡 산식·바인딩 제약·주차/코어 산식 정직 표기
         sunlight_mode = mass.get("sunlight_mode") or (

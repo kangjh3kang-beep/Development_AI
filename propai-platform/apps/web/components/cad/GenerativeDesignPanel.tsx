@@ -13,6 +13,7 @@ import type {
   DesignIntent,
   LegalLimitsResponse,
   ParseIntentResponse,
+  ReferenceResultBlock,
   SimilarRefV2,
 } from "@/components/cad/types";
 
@@ -376,6 +377,9 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
   const [daylightNorth, setDaylightNorth] = useState(false);
   // §4-A③: 매스 형상 선택(null=자동). 단일 자동설계·Top3 재생성에 massing_kind로 전달.
   const [massingKind, setMassingKind] = useState<string | null>(null);
+  // §4-B: 유사 참조 사례 기하(종횡비) 반영(기본 ON). 단일·Top3 생성에 use_references로 전달.
+  // 명시 매스 형상이 선택돼 있으면 그 형상이 우선(참조는 auto 대안 A에만 영향).
+  const [useReferences, setUseReferences] = useState(true);
 
   // 컨텍스트(SSOT)를 폼에 우선 주입(사용자 수정값 보존)
   useEffect(() => {
@@ -415,6 +419,8 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
   // 구버전 API 응답(rank 부재) 등 비치명 경고 — 빈 화면 대신 보정 사실을 정직 고지.
   const [altWarning, setAltWarning] = useState<string | null>(null);
   const [selectedRank, setSelectedRank] = useState<number | null>(null);
+  // §4-B: Top3 응답의 유사사례 조회 결과(A 대안 참조 비례 적용 여부·사유 — 정직 표기용).
+  const [altReference, setAltReference] = useState<ReferenceResultBlock | null>(null);
 
   // 용도지역 변경 시 법정 한도 조회 → 슬라이더 max 하드캡
   useEffect(() => {
@@ -582,6 +588,8 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
           priority,
           // §4-A③: 매스 형상(null=자동) — 백엔드가 형상별 결정론 매스로 재산출(구버전은 무시).
           massing_kind: massingKind,
+          // §4-B: 유사 참조 사례 기하(종횡비) 반영(구버전은 무시). 명시 형상이 우선.
+          use_references: useReferences,
         },
       });
       setSingle(data);
@@ -592,7 +600,7 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
     } finally {
       setSingleLoading(false);
     }
-  }, [siteArea, zoneCode, intent, unitTypes, daylightNorth, bcr, far, priority, massingKind, applyDesign, fetchEvaluation]);
+  }, [siteArea, zoneCode, intent, unitTypes, daylightNorth, bcr, far, priority, massingKind, useReferences, applyDesign, fetchEvaluation]);
 
   // 3) Top3 설계안 생성
   const handleAlternatives = useCallback(async () => {
@@ -615,9 +623,12 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
             priority,
             // §4-A③: A 대안이 선택 형상을 따름(B=타워·C=ㄱ자 고정 다양화, 구버전은 무시).
             massing_kind: massingKind,
+            // §4-B: 유사 참조 사례 기하 반영 — A 대안에만 적용(B/C는 명시 형상 우선).
+            use_references: useReferences,
           },
         },
       );
+      setAltReference(data.reference ?? null);  // 정직 표기용 — 조회 결과(적용/미적용·사유)
       const raw = data.alternatives ?? [];
       // 응답 가드: 구버전 API가 rank를 누락해도 표시 순서(idx+1)로 보정 — 빈 화면 방지.
       const missingRank = raw.some((a) => typeof (a as { rank?: unknown }).rank !== "number");
@@ -637,7 +648,7 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
     } finally {
       setAltLoading(false);
     }
-  }, [siteArea, zoneCode, unitTypes, daylightNorth, bcr, far, priority, massingKind]);
+  }, [siteArea, zoneCode, unitTypes, daylightNorth, bcr, far, priority, massingKind, useReferences]);
 
   const handleSelectAlt = useCallback(
     (alt: DesignAlternative) => {
@@ -959,6 +970,33 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
                 음성/자연어로 &ldquo;북측 일조 확보&rdquo;라고 말해도 자동으로 켜집니다.
               </p>
             </div>
+
+            {/* §4-B: 참조 사례 반영 토글 — 켜면 유사 사례 기하(종횡비)를 합성 매스에 주입 */}
+            <div className="mt-4">
+              <button
+                type="button"
+                onClick={() => setUseReferences((v) => !v)}
+                aria-pressed={useReferences}
+                className={`flex w-full items-center justify-between rounded-lg border px-3 py-2 text-left transition-colors ${
+                  useReferences
+                    ? "border-[var(--accent-strong)] bg-[var(--accent-strong)]/15"
+                    : "border-[var(--line)] bg-[var(--surface-soft)]"
+                }`}
+              >
+                <span className="flex items-center gap-2">
+                  <span className="text-[13px]">▦</span>
+                  <span className="text-[11px] font-bold text-[var(--text-secondary)]">참조 사례 반영</span>
+                </span>
+                <span className={`text-[10px] font-black ${useReferences ? "text-[var(--accent-strong)]" : "text-[var(--text-tertiary)]"}`}>
+                  {useReferences ? "ON" : "OFF"}
+                </span>
+              </button>
+              <p className="mt-1 text-[10px] leading-tight text-[var(--text-tertiary)]">
+                관리자가 등록한 유사 사례(용도·면적·평형·용도지역) 중 기하 보유 최상위 사례의 종횡비를
+                합성 매스에 반영합니다. 부합 사례가 없으면 자동으로 미적용(정직 표기). 매스 형상을 직접
+                고르면 그 형상이 우선합니다.
+              </p>
+            </div>
           </section>
         </div>
 
@@ -1077,11 +1115,14 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
                   단일 자동설계
                 </span>
                 <div className="flex items-center gap-1.5">
+                  <ReferenceChip summary={single.summary} />
                   <MassingChip summary={single.summary} />
                   <ComplianceBadge ok={!!single.compliance.all_pass} />
                 </div>
               </div>
               <SummaryRow summary={single.summary} />
+              {/* §4-B: 참조 조회가 미적용일 때만 사유 정직 고지(적용 시엔 위 칩이 표시) */}
+              <ReferenceUnusedNote reference={single.reference} />
               {/* W-A: 목표(슬라이더) 미달 시 바인딩 제약 — 응답에 있을 때만 표시(정직) */}
               <BindingConstraintChip summary={single.summary} />
               <p className="mt-2 text-[10px] font-bold text-[var(--status-success)]">
@@ -1100,6 +1141,9 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
               <span className="mt-1 block text-[10px] font-bold text-[var(--text-hint)]">가짜 세대수를 만들지 않고 정직하게 표기합니다.</span>
             </div>
           )}
+
+          {/* §4-B: Top3에서 참조 미적용 시 사유 정직 고지(적용 시엔 A 카드 칩이 표시) */}
+          {alternatives.length > 0 && <ReferenceUnusedNote reference={altReference} />}
 
           {/* Top3 카드 */}
           {alternatives.length > 0 ? (
@@ -1136,6 +1180,7 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
                         </span>
                       </div>
                       <div className="flex items-center gap-1.5">
+                        <ReferenceChip summary={alt.summary} />
                         <MassingChip summary={alt.summary} />
                         <ComplianceBadge ok={alt.compliant ?? !!alt.compliance.all_pass} />
                       </div>
@@ -1362,6 +1407,46 @@ function MassingChip({ summary }: { summary: AutoDesignResponse["summary"] }) {
     >
       {label}
     </span>
+  );
+}
+
+/**
+ * §4-B: 적용된 참조 사례 라벨 칩 — summary.reference.used일 때만 표시(정직 게이트).
+ * 미적용·구버전 응답(필드 부재)은 칩을 띄우지 않는다(가짜·중복 표기 금지).
+ */
+function ReferenceChip({ summary }: { summary: AutoDesignResponse["summary"] }) {
+  const ref = summary.reference;
+  if (!ref || !ref.used) return null;
+  const title = typeof ref.title === "string" ? ref.title.trim() : "";
+  const sim = typeof ref.similarity === "number" && Number.isFinite(ref.similarity)
+    ? Math.round(ref.similarity)
+    : null;
+  return (
+    <span
+      className="rounded-full px-2 py-0.5 text-[10px] font-black"
+      style={{
+        color: "var(--status-success)",
+        background: "color-mix(in srgb, var(--status-success) 14%, transparent)",
+        border: "1px solid color-mix(in srgb, var(--status-success) 38%, transparent)",
+      }}
+      title={typeof ref.basis === "string" ? ref.basis : undefined}
+    >
+      참조{title ? ` · ${title}` : ""}{sim != null ? ` ${sim}` : ""}
+    </span>
+  );
+}
+
+/**
+ * §4-B: 참조 조회 결과가 '미적용'일 때만 사유를 정직 고지(used=true는 칩이 대신 표시).
+ * 블록 자체가 없으면(use_references=false·구버전) 아무것도 렌더하지 않는다.
+ */
+function ReferenceUnusedNote({ reference }: { reference?: ReferenceResultBlock | null }) {
+  if (!reference || reference.used) return null;
+  const note = typeof reference.note === "string" ? reference.note.trim() : "";
+  return (
+    <p className="mt-1.5 text-[10px] font-bold text-[var(--text-hint)]">
+      ▦ 참조 사례 미적용{note ? ` — ${note}` : ""}
+    </p>
   );
 }
 
