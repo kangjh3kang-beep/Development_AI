@@ -74,6 +74,10 @@ def _boq_paths() -> dict[str, tuple[str, str]]:
             continue
         if path.endswith("/summary"):
             found.setdefault("summary", (path, "GET" if "GET" in methods else "POST"))
+        elif path.endswith("/draft/priced"):
+            found.setdefault("priced", (path, "POST"))
+        elif path.endswith("/draft/from-project"):
+            found.setdefault("from_project", (path, "POST"))
         elif path.endswith("/draft"):
             found.setdefault("draft", (path, "POST" if "POST" in methods else "GET"))
         elif path.endswith("/export"):
@@ -345,6 +349,58 @@ async def test_apply_cost_응답키_및_총액_양수(client):
     # provenance 등 다른 출처 키는 형태(B3 자유)를 강제하지 않는다(선택 계약).
     if "price_source" in data:
         assert isinstance(data["price_source"], str), "price_source 는 문자열이어야 함"
+
+
+@pytest.mark.asyncio
+async def test_priced_draft_단가결합_커버리지_금액(client):
+    """POST /draft/priced → summary.pricing(커버리지) + 금액 보유 항목 + 미결합 빈칸(정직).
+
+    실엔진·실단가 SSOT(모킹 없음). 전기 ref_mat_price/공종키 매핑으로 부분 결합되며,
+    매칭 안 된 항목은 단가/금액 None 유지(가짜 단가 금지 — §1 정직성).
+    """
+    path, method = _require_path("priced")
+    resp = await _call(client, path, method, PARAM_BODIES)
+    _assert_ok(resp, "draft/priced")
+    data = resp.json()
+    pricing = (data.get("summary") or {}).get("pricing") or {}
+    # 결정론: 커밋된 마스터(의정부424)는 전기 ref_mat_price 1,025항목을 보유하므로
+    # priced_count>0 은 비-플레이키한 회귀 가드(0이면 단가결합 경로가 깨진 것).
+    assert isinstance(pricing.get("priced_count"), int) and pricing["priced_count"] > 0, (
+        "단가 결합 항목 0건 — 전기 ref_mat_price/공종키 매핑 확인")
+    assert 0 <= pricing.get("coverage_pct", -1) <= 100  # 커버리지 범위 정합(보편 불변식)
+    assert pricing.get("total_items", 0) >= pricing["priced_count"]
+    assert isinstance(pricing.get("coverage_pct"), (int, float))
+
+    items = [it for lst in _items_by_discipline(data).values() for it in lst]
+    priced_items = [it for it in items if it.get("price_source")]
+    assert priced_items, "price_source 보유 항목 없음"
+    amounts = [it for it in priced_items
+               if isinstance(it.get("amount"), (int, float)) and it["amount"] > 0]
+    assert amounts, "금액(amount) 양수 항목 없음"
+    # 미결합 항목은 단가·금액 None(가짜 단가 금지)
+    unpriced = [it for it in items if it.get("price_source") is None]
+    if unpriced:
+        assert unpriced[0].get("amount") is None, "미결합 항목에 금액이 채워짐(정직성 위반)"
+
+
+@pytest.mark.asyncio
+async def test_from_project_bim_병합_정직_폴백(client):
+    """POST /draft/from-project(BIM 미보유 프로젝트) → bim_merge 통계 + 전 항목 parametric.
+
+    BIM 물량이 없으면 가짜 실측을 만들지 않고 parametric(추정)을 유지한다(§1 정직성).
+    """
+    path, method = _require_path("from_project")
+    bodies = [{**b, "project_id": "e2e-no-bim"} for b in PARAM_BODIES]
+    resp = await _call(client, path, method, bodies)
+    _assert_ok(resp, "draft/from-project")
+    data = resp.json()
+    bm = (data.get("summary") or {}).get("bim_merge") or {}
+    assert "bim_rows_count" in bm and "by_source" in bm, "bim_merge 통계 누락"
+    assert bm.get("bim_matched_count", 0) == 0  # BIM 0건 → 매칭 0
+    items = [it for lst in _items_by_discipline(data).values() for it in lst]
+    assert items, "항목 없음"
+    srcs = {it.get("qty_source") for it in items}
+    assert srcs == {"parametric"}, f"BIM 미보유인데 비-parametric 출처 혼입: {srcs}"
 
 
 if __name__ == "__main__":

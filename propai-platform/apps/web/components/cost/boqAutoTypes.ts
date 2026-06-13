@@ -42,10 +42,16 @@ export const BOQ_AUTO_API = {
   masterSummary: "/boq-auto/master/summary",
   /** POST — 파라메트릭 드래프트 생성(수량 스케일링, 단가 없음). */
   draft: "/boq-auto/draft",
-  /** POST — 드래프트 전체 엑셀(xlsx) blob 내보내기. */
-  export: "/boq-auto/export",
-  /** POST — 수지 반영 "후보" 총액 산출(단가 SSOT 결합) — store 직접 반영 없음. */
-  applyCost: "/boq-auto/apply-cost",
+  /** POST — 드래프트 전체 엑셀(xlsx) blob 내보내기. (백엔드 라우트: /draft/export) */
+  export: "/boq-auto/draft/export",
+  /** POST — 수지 반영 "후보" 총액 산출. (백엔드 라우트: /draft/apply-cost) */
+  applyCost: "/boq-auto/draft/apply-cost",
+  /** POST — N3 단가결합 드래프트(금액까지 채움 — DB/fallback·도면참고단가). */
+  pricedDraft: "/boq-auto/draft/priced",
+  /** POST — N3 단가결합 엑셀(금액 모드: 단가/금액칸·공종 소계·총계 시트). */
+  pricedExport: "/boq-auto/draft/priced/export",
+  /** POST — N2 프로젝트 BIM 실측 물량 우선 병합 드래프트. */
+  fromProject: "/boq-auto/draft/from-project",
 } as const;
 
 /* ── 마스터 요약(GET master/summary) ── */
@@ -84,16 +90,22 @@ export interface BoqMasterSummaryResponse {
   note?: string | null;
 }
 
-/* ── 드래프트 생성(POST draft) ── */
+/* ── 드래프트 생성 요청(POST /draft·/draft/priced·/draft/from-project·/draft/apply-cost) ── */
 
-export interface BoqAutoDraftRequest {
-  /** 대상 연면적(㎡) — 필수 스케일 드라이버. */
-  gfa_sqm: number;
-  /** 세대수 — 세대 드라이버 항목용(없으면 GFA 비례 폴백은 서버 정책). */
-  unit_count?: number | null;
+/**
+ * 실제 백엔드 요청 계약 — params 를 **반드시 중첩**한다(평탄형 {gfa_sqm}은 422 거부).
+ * project_id 는 apply-cost·from-project 에서 상단 레벨 필수.
+ */
+export interface BoqDraftRequestBody {
+  params: {
+    /** 대상 연면적(㎡) — 필수 스케일 드라이버. */
+    gfa_sqm: number;
+    /** 세대수 — 세대 드라이버 항목용(없으면 GFA 비례 폴백은 서버 정책). */
+    households?: number | null;
+  };
   /** 공종 필터(미지정 = 5공종 전체). */
   disciplines?: BoqDisciplineKey[];
-  /** 추적용 프로젝트 id(서버 영속화 시 사용, 옵셔널). */
+  /** apply-cost · from-project 에서 필수(BIM 물량 조회 대상/응답 echo). */
   project_id?: string | null;
 }
 
@@ -149,6 +161,13 @@ export interface BoqAutoDraftDiscipline {
   truncated?: boolean | null;
 }
 
+/** 실제 백엔드 응답의 공종 블록(disciplines record 값). */
+export interface BoqAutoDraftDisciplineBlock {
+  items?: BoqAutoDraftItem[] | null;
+  item_count?: number | null;
+  sections?: Array<{ section_code?: string; section_name?: string }> | null;
+}
+
 /** 드래프트 상단 고정 배지(정직성) — 서버 문구를 그대로 표기. */
 export interface BoqAutoDraftBadges {
   note?: string | null;
@@ -167,16 +186,24 @@ export interface BoqAutoDraftResponse {
     scale_ratio?: number | null;
     [k: string]: unknown;
   } | null;
-  disciplines?: BoqAutoDraftDiscipline[] | null;
+  /** 공종 블록 — 실제 백엔드는 record(한글 공종명 키)로 반환. 배열형도 방어적 허용. */
+  disciplines?:
+    | Record<string, BoqAutoDraftDisciplineBlock>
+    | BoqAutoDraftDiscipline[]
+    | null;
   warnings?: string[] | null;
   badges?: BoqAutoDraftBadges | null;
+  provenance?: BoqMasterProject | null;
   /** 서버 summary — N2 BIM 병합 / N3 단가결합 통계(옵셔널·additive). */
   summary?: {
+    total_items?: number | null;
+    warnings?: string[] | null;
     /** N2 BIM 병합 통계(/draft/from-project 응답). */
     bim_merge?: {
       bim_rows_count?: number | null;
       bim_matched_count?: number | null;
       by_source?: Record<string, number> | null;
+      note?: string | null;
       [k: string]: unknown;
     } | null;
     /** N3 단가결합 통계(/draft/priced 응답). */
@@ -184,38 +211,47 @@ export interface BoqAutoDraftResponse {
       priced_count?: number | null;
       total_items?: number | null;
       coverage_pct?: number | null;
+      priced_amount_won?: number | null;
+      by_source?: Record<string, number> | null;
+      unit_mismatch_count?: number | null;
+      note?: string | null;
       [k: string]: unknown;
     } | null;
     [k: string]: unknown;
   } | null;
 }
 
-/* ── 엑셀 내보내기(POST export — blob) ── */
+/* ── 수지 반영 후보(POST /draft/apply-cost) ── 요청은 BoqDraftRequestBody(+project_id) 사용 ── */
 
-/** 드래프트와 동일 파라미터 + draft_id(있으면 서버 재계산 생략 가능). */
-export interface BoqAutoExportRequest extends BoqAutoDraftRequest {
-  draft_id?: string | null;
-}
-
-/* ── 수지 반영 후보(POST apply-cost) ── */
-
-export interface BoqApplyCostRequest extends BoqAutoDraftRequest {
-  draft_id?: string | null;
-}
-
-/** 후보 총액 — costData 자동 반영 없음(기존 수지 흐름에서 사용자가 적용). */
-export interface BoqApplyCostResponse {
-  ok?: boolean;
-  /** 단가 결합 총액 후보(원). 단가 미결합이면 null — 가짜값 금지. */
-  total_won?: number | null;
-  direct_won?: number | null;
-  indirect_won?: number | null;
-  per_sqm_won?: number | null;
-  /** 단가 출처(예: "표준품셈/물가 SSOT", basis_year 포함 문구). */
-  source?: string | null;
-  /** 단가가 매칭된/안 된 항목 수 — 커버리지 정직 표기. */
-  priced_item_count?: number | null;
-  unpriced_item_count?: number | null;
+/** N3 단가결합 직접비 → 12단계 법정요율 경로(apply-cost 가산 블록). */
+export interface BoqPricedCostEstimate {
+  cost_source?: string | null;          // "boq_priced"
+  direct_cost_won?: number | null;      // 결합 항목 직접비 합
+  total_construction_cost_won?: number | null;
+  coverage_pct?: number | null;
+  priced_count?: number | null;
+  total_items?: number | null;
+  priced_amount_won?: number | null;
   note?: string | null;
-  badges?: { note?: string | null; [k: string]: unknown } | null;
+}
+
+/**
+ * 수지 반영 "후보" 응답 — 실제 백엔드 /draft/apply-cost 형태.
+ * costData 자동 반영 없음(persisted=false). 가짜값 금지(미발견은 null).
+ */
+export interface BoqApplyCostResponse {
+  project_id?: string | null;
+  boq_draft_summary?: Record<string, unknown> | null;
+  /** boq_builder 개산 경로(기본). */
+  cost_estimate?: {
+    total_construction_cost_won?: number | null;
+    source?: string | null;             // "boq_builder 개산"
+    summary?: Record<string, unknown> | null;
+    assumptions?: Record<string, unknown> | null;
+    builder_badges?: Record<string, unknown> | null;
+  } | null;
+  /** N3 단가결합 직접비 → 법정요율 경로(결합 0건이면 null — 정직). */
+  priced_cost_estimate?: BoqPricedCostEstimate | null;
+  badges?: string[] | null;
+  persisted?: boolean | null;
 }
