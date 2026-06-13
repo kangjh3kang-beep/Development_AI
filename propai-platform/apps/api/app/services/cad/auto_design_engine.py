@@ -889,13 +889,17 @@ class AutoDesignEngineService:
     ) -> list[DesignResult]:
         """대안 3개를 생성한다.
 
-        대안 A: 최대 용적률 (층수 최대화)
-        대안 B: 최대 세대수 (소형 위주)
-        대안 C: 최적 일조 (낮은 층수, 넓은 세트백)
+        대안 A: 최적 밸런스 (입력 massing_kind를 그대로 따름 — 미지정 시 auto)
+        대안 B: 최대 세대수 (소형 위주, 타워형 — 작은 플로어플레이트로 더 높이)
+        대안 C: 최적 일조 (넓은 세트백, ㄱ자형 — 채광·소음차폐 배치)
+
+        §4-A②: B·C에 형상(tower/lshape)을 고정 배정해 대안마다 매스가 실제로
+        달라지게 한다(가산 — summary 키 불변, 3개 대안 모두 법규 준수 유지).
+        A는 입력 massing_kind를 honors(하위호환 — None이면 기존 auto 동작).
         """
         alternatives: list[DesignResult] = []
 
-        # A: 기본 (최적 밸런스)
+        # A: 기본 (최적 밸런스) — 입력 massing_kind 그대로(None=auto, 하위호환)
         result_a = self.generate(site_input)
         result_a.summary["alternative_name"] = "A: 최적 밸런스"
         alternatives.append(result_a)
@@ -915,6 +919,7 @@ class AutoDesignEngineService:
                 daylight_step=site_input.daylight_step,
                 target_far_percent=site_input.target_far_percent,
                 target_bcr_percent=site_input.target_bcr_percent,
+                massing_kind="tower",  # §4-A②: 타워형 — 작은 플로어플레이트로 더 높이(최대 세대수)
             )
             result_b = self.generate(input_b)
             result_b.summary["alternative_name"] = "B: 최대 세대수"
@@ -936,6 +941,7 @@ class AutoDesignEngineService:
                 daylight_step=site_input.daylight_step,
                 target_far_percent=site_input.target_far_percent,
                 target_bcr_percent=site_input.target_bcr_percent,
+                massing_kind="lshape",  # §4-A②: ㄱ자형 — 채광·소음차폐 배치(최적 일조)
             )
             result_c = self.generate(input_c)
             result_c.summary["alternative_name"] = "C: 최적 일조"

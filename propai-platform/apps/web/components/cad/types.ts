@@ -109,6 +109,8 @@ export type AutoDesignRequest = {
   target_unit_types: string[];
   floor_height_m: number;
   setback_m: { north: number; south: number; east: number; west: number; };
+  /** §4-A①: 매스 형상(slab/tower/lshape/court). 미지정/null=자동(대지비율) — 가산·하위호환. */
+  massing_kind?: string | null;
 };
 
 export type AutoDesignSummary = {
@@ -122,6 +124,9 @@ export type AutoDesignSummary = {
   parking_count: number;
   core_count?: number;
   units_per_floor?: number;
+  /** §4-A: 적용된 매스 형상 출처/라벨(엔진 정직 표기). 구버전 응답엔 부재 — 옵셔널. */
+  massing_kind?: string;
+  massing_label?: string;
 };
 
 export type AutoDesignCompliance = {

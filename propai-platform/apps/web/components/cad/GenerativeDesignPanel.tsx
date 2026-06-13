@@ -329,6 +329,19 @@ function mapZoneToCode(zone?: string | null): string | null {
 
 const PRIORITY_OPTIONS: DesignIntent["priority"][] = ["yield", "balanced", "livability"];
 
+/**
+ * §4-A③: 매스 형상 선택 옵션 — 백엔드 MASSING_FORMS(slab/tower/lshape/court)와 정합.
+ * value=null은 "자동"(대지 종횡비 기반 — massing_kind 미전송과 동일, 하위호환).
+ * 선택값은 단일 자동설계(auto-design)·Top3(design-alternatives) 재생성에 massing_kind로 전달된다.
+ */
+const MASSING_OPTIONS: { value: string | null; label: string }[] = [
+  { value: null, label: "자동" },
+  { value: "slab", label: "판상형" },
+  { value: "tower", label: "타워형" },
+  { value: "lshape", label: "ㄱ자형" },
+  { value: "court", label: "중정형" },
+];
+
 type GenerativeDesignPanelProps = {
   projectId: string;
   /** 설계안 적용 직후 호출(호스트가 spec 재산출 → 2D/3D 재생성 유도). */
@@ -361,6 +374,8 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
   const [priority, setPriority] = useState<DesignIntent["priority"]>("balanced");
   // P5: 정북일조 단계후퇴(북측 상부 매스 후퇴). 의도 파싱 또는 토글로 켜짐.
   const [daylightNorth, setDaylightNorth] = useState(false);
+  // §4-A③: 매스 형상 선택(null=자동). 단일 자동설계·Top3 재생성에 massing_kind로 전달.
+  const [massingKind, setMassingKind] = useState<string | null>(null);
 
   // 컨텍스트(SSOT)를 폼에 우선 주입(사용자 수정값 보존)
   useEffect(() => {
@@ -565,6 +580,8 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
           target_bcr_percent: bcr,
           target_far_percent: far,
           priority,
+          // §4-A③: 매스 형상(null=자동) — 백엔드가 형상별 결정론 매스로 재산출(구버전은 무시).
+          massing_kind: massingKind,
         },
       });
       setSingle(data);
@@ -575,7 +592,7 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
     } finally {
       setSingleLoading(false);
     }
-  }, [siteArea, zoneCode, intent, unitTypes, daylightNorth, bcr, far, priority, applyDesign, fetchEvaluation]);
+  }, [siteArea, zoneCode, intent, unitTypes, daylightNorth, bcr, far, priority, massingKind, applyDesign, fetchEvaluation]);
 
   // 3) Top3 설계안 생성
   const handleAlternatives = useCallback(async () => {
@@ -596,6 +613,8 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
             target_bcr_percent: bcr,
             target_far_percent: far,
             priority,
+            // §4-A③: A 대안이 선택 형상을 따름(B=타워·C=ㄱ자 고정 다양화, 구버전은 무시).
+            massing_kind: massingKind,
           },
         },
       );
@@ -618,7 +637,7 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
     } finally {
       setAltLoading(false);
     }
-  }, [siteArea, zoneCode, unitTypes, daylightNorth, bcr, far, priority]);
+  }, [siteArea, zoneCode, unitTypes, daylightNorth, bcr, far, priority, massingKind]);
 
   const handleSelectAlt = useCallback(
     (alt: DesignAlternative) => {
@@ -890,6 +909,31 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
               </div>
             </div>
 
+            {/* §4-A③: 매스 형상 — 선택 시 생성/재생성에 massing_kind 전달(결정론 매스 변형) */}
+            <div className="mt-4">
+              <span className="text-[11px] font-bold text-[var(--text-secondary)]">매스 형상</span>
+              <div className="mt-1.5 grid grid-cols-5 gap-1.5">
+                {MASSING_OPTIONS.map((m) => (
+                  <button
+                    key={m.label}
+                    type="button"
+                    onClick={() => setMassingKind(m.value)}
+                    className={`rounded-lg px-2 py-1.5 text-[11px] font-bold transition-colors ${
+                      massingKind === m.value
+                        ? "bg-[var(--accent-strong)] text-white"
+                        : "bg-[var(--surface-soft)] text-[var(--text-tertiary)] border border-[var(--line)]"
+                    }`}
+                    aria-pressed={massingKind === m.value}
+                  >
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+              <p className="mt-1 text-[10px] leading-tight text-[var(--text-tertiary)]">
+                단일 자동설계는 선택 형상으로 매스를 재산출합니다. Top3는 A=선택(자동 시 대지비율)·B=타워·C=ㄱ자로 다양화됩니다.
+              </p>
+            </div>
+
             {/* P5: 정북일조 단계후퇴 토글 — 켜면 상부 층이 북측으로 자동 후퇴(일조 확보, 더 높이) */}
             <div className="mt-4">
               <button
@@ -1032,7 +1076,10 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
                 <span className="text-[10px] font-black uppercase tracking-[0.2em] text-[var(--text-hint)]">
                   단일 자동설계
                 </span>
-                <ComplianceBadge ok={!!single.compliance.all_pass} />
+                <div className="flex items-center gap-1.5">
+                  <MassingChip summary={single.summary} />
+                  <ComplianceBadge ok={!!single.compliance.all_pass} />
+                </div>
               </div>
               <SummaryRow summary={single.summary} />
               {/* W-A: 목표(슬라이더) 미달 시 바인딩 제약 — 응답에 있을 때만 표시(정직) */}
@@ -1088,7 +1135,10 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
                           {PRIORITY_LABELS[alt.priority]}
                         </span>
                       </div>
-                      <ComplianceBadge ok={alt.compliant ?? !!alt.compliance.all_pass} />
+                      <div className="flex items-center gap-1.5">
+                        <MassingChip summary={alt.summary} />
+                        <ComplianceBadge ok={alt.compliant ?? !!alt.compliance.all_pass} />
+                      </div>
                     </div>
 
                     {/* 핵심 수치(cc-num) — total_units는 실건축가능치 신뢰 */}
@@ -1290,6 +1340,28 @@ function SummaryRow({
       <Metric label="용적률" value={`${summary.far_percent.toFixed(0)}%`} />
       <Metric label="주차" value={`${summary.parking_count}`} />
     </div>
+  );
+}
+
+/**
+ * §4-A: 적용된 매스 형상 라벨 칩 — summary.massing_label이 있을 때만 표시(정직 게이트).
+ * 구버전 응답(필드 부재)·auto(자동)는 칩을 띄우지 않는다(가짜·중복 표기 금지).
+ */
+function MassingChip({ summary }: { summary: AutoDesignResponse["summary"] }) {
+  const label = typeof summary.massing_label === "string" ? summary.massing_label.trim() : "";
+  // auto(자동·대지비율)는 별도 선택 형상이 아니므로 칩 비표시 — 명시 형상만 강조.
+  if (!label || !summary.massing_kind || summary.massing_kind === "auto") return null;
+  return (
+    <span
+      className="rounded-full px-2 py-0.5 text-[10px] font-black"
+      style={{
+        color: "var(--accent-strong)",
+        background: "var(--accent-soft)",
+        border: "1px solid color-mix(in srgb, var(--accent-strong) 35%, transparent)",
+      }}
+    >
+      {label}
+    </span>
   );
 }
 

@@ -69,3 +69,37 @@ class TestMassingKind:
         assert s["building_area_sqm"] > 0
         assert s["num_floors"] >= 1
         assert s["bcr_percent"] <= 100
+
+
+class TestGenerateAlternativesForms:
+    """§4-A②: generate_alternatives 대안별 형상 배정 — A=auto(입력 honors)·B=tower·C=lshape.
+
+    형상 다양화는 가산(summary 키 불변)이며, 3개 대안 모두 법규 준수를 유지한다(정직).
+    """
+
+    def test_alternatives_assign_distinct_forms(self, engine: AutoDesignEngineService):
+        """A=auto(입력 None)·B=tower·C=lshape — 대안마다 매스 형상이 실제로 다르다."""
+        results = engine.generate_alternatives(_inp(None), count=3)
+        kinds = [r.summary["massing_kind"] for r in results]
+        assert kinds == ["auto", "tower", "lshape"]
+
+    def test_alternative_a_honors_input_massing_kind(self, engine: AutoDesignEngineService):
+        """A는 입력 massing_kind를 그대로 따른다(명시 시 court → A=court)."""
+        results = engine.generate_alternatives(_inp("court"), count=3)
+        assert results[0].summary["massing_kind"] == "court"
+        # B·C는 다양화 형상 고정(입력과 무관).
+        assert results[1].summary["massing_kind"] == "tower"
+        assert results[2].summary["massing_kind"] == "lshape"
+
+    def test_all_alternatives_remain_compliant(self, engine: AutoDesignEngineService):
+        """형상 배정 후에도 3개 대안 모두 건폐율·용적률 준수(회귀 보호)."""
+        results = engine.generate_alternatives(_inp(None), count=3)
+        for r in results:
+            assert r.compliance["bcr_ok"] is True
+            assert r.compliance["far_ok"] is True
+
+    def test_count_one_unaffected(self, engine: AutoDesignEngineService):
+        """count=1이면 A만 — 형상 다양화는 B·C에만 적용(하위호환)."""
+        results = engine.generate_alternatives(_inp(None), count=1)
+        assert len(results) == 1
+        assert results[0].summary["massing_kind"] == "auto"

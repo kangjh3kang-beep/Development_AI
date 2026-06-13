@@ -103,6 +103,11 @@ class DesignAlternativesRequest(BaseModel):
     target_bcr_percent: Optional[float] = Field(
         None, gt=0, description="목표 건폐율(%) — 법정 한도 초과분은 법정값으로 클램프",
     )
+    # §4-A①: 매스 형상(slab/tower/lshape/court). None=auto(대지 종횡비 — 기존 동작 불변).
+    # A 대안이 이 값을 따르고(B=tower·C=lshape는 다양화 고정), 미정의 값은 엔진이 auto로 폴백.
+    massing_kind: Optional[str] = Field(
+        None, description="매스 형상(slab/tower/lshape/court) — 미지정/미정의 시 자동(대지비율)",
+    )
 
 
 class AutoDesignRequest(BaseModel):
@@ -127,6 +132,11 @@ class AutoDesignRequest(BaseModel):
     )
     target_bcr_percent: Optional[float] = Field(
         None, gt=0, description="목표 건폐율(%) — 법정 한도 초과분은 법정값으로 클램프",
+    )
+    # §4-A①: 매스 형상(slab/tower/lshape/court). None=auto(대지 종횡비 — 기존 동작 불변).
+    # 명시 시 형상별 종횡비·플로어플레이트로 매스 재산출, 미정의 값은 엔진이 auto로 폴백.
+    massing_kind: Optional[str] = Field(
+        None, description="매스 형상(slab/tower/lshape/court) — 미지정/미정의 시 자동(대지비율)",
     )
 
 
@@ -441,6 +451,7 @@ async def design_alternatives(req: DesignAlternativesRequest):
         daylight_step=req.daylight_north,
         target_far_percent=target_far,
         target_bcr_percent=target_bcr,
+        massing_kind=req.massing_kind,  # §4-A①: A 대안이 따름(B=tower·C=lshape 고정 다양화)
     )
     results = auto_design_engine.generate_alternatives(site_input, count=req.count)
     legal = auto_design_engine.get_legal_limits(req.zone_code)
@@ -499,6 +510,7 @@ async def auto_design(req: AutoDesignRequest):
         daylight_step=req.daylight_north,
         target_far_percent=target_far,
         target_bcr_percent=target_bcr,
+        massing_kind=req.massing_kind,  # §4-A①: 형상별 결정론 매스 변형(None=auto, 하위호환)
     )
     result = auto_design_engine.generate(site_input)
     unit_mix = _unit_mix_for(result.summary)
