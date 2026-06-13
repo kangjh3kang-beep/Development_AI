@@ -112,6 +112,23 @@ def _add_dimension_v(msp: Modelspace, y1: float, y2: float, x: float,
     )
 
 
+def _add_material_hatch(msp: Modelspace, points: list[tuple[float, float]], *,
+                        pattern: str = "ANSI31", scale: float = 0.3) -> None:
+    """§4-D: 닫힌 경계에 재료 해칭(HATCH 엔티티)을 additive로 추가한다.
+
+    HATCH 레이어에 패턴 채움(ANSI31=대각선, 콘크리트/단면 관용)으로 그린다. 기존 LINE/치수는
+    유지(가산만). 해칭 실패는 도면 생성을 막지 않는다(선은 이미 그려짐 — graceful).
+    """
+    if ezdxf is None or len(points) < 3:
+        return
+    try:
+        hatch = msp.add_hatch(color=8, dxfattribs={"layer": "HATCH"})
+        hatch.set_pattern_fill(pattern, scale=max(0.05, scale))
+        hatch.paths.add_polyline_path(points, is_closed=True)
+    except Exception:  # noqa: BLE001 — 패턴 미지원 등은 선 단면을 그대로 두고 스킵
+        return
+
+
 def _draw_door(msp: Modelspace, x: float, y: float,
                width: float = DOOR_WIDTH_M, horizontal: bool = True) -> None:
     """문 기호를 그린다 (아크 표시)."""
@@ -484,13 +501,14 @@ class ParametricCADService:
         found_y = ground_level_y - total_below_h - foundation_depth_m
         found_w = building_width_m + 2.0  # 기초 폭은 건물보다 1m씩 넓음
         found_x = -1.0
-        msp.add_lwpolyline(
-            [(found_x, found_y), (found_x + found_w, found_y),
-             (found_x + found_w, found_y + foundation_depth_m),
-             (found_x, found_y + foundation_depth_m)],
-            close=True,
-            dxfattribs={"layer": "SECTION_FILL"},
-        )
+        _found_pts = [
+            (found_x, found_y), (found_x + found_w, found_y),
+            (found_x + found_w, found_y + foundation_depth_m),
+            (found_x, found_y + foundation_depth_m),
+        ]
+        msp.add_lwpolyline(_found_pts, close=True, dxfattribs={"layer": "SECTION_FILL"})
+        # §4-D: 기초 콘크리트 재료 해칭(HATCH 엔티티)
+        _add_material_hatch(msp, _found_pts, pattern="ANSI31", scale=0.4)
         msp.add_text(
             "기초",
             dxfattribs={"layer": "TEXT", "height": 0.25},
@@ -525,6 +543,7 @@ class ParametricCADService:
             )
 
         # ─ 지상층 ─
+        _slab_t = 0.25  # 슬래브 두께(콘크리트 단면 해칭용)
         for fi in range(floor_count):
             fy = ground_level_y + fi * floor_height_m
             # 슬래브
@@ -532,6 +551,11 @@ class ParametricCADService:
                 (0, fy), (building_width_m, fy),
                 dxfattribs={"layer": "SECTION_CUT"},
             )
+            # §4-D: 층 슬래브 콘크리트 해칭(HATCH 엔티티) — 슬래브 두께만큼 채움(additive)
+            _add_material_hatch(msp, [
+                (0, fy - _slab_t), (building_width_m, fy - _slab_t),
+                (building_width_m, fy), (0, fy),
+            ], pattern="ANSI31", scale=0.25)
             # 좌우 벽
             msp.add_line((0, fy), (0, fy + floor_height_m), dxfattribs={"layer": "SECTION_CUT"})
             msp.add_line(
