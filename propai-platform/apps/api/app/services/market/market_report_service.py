@@ -155,6 +155,57 @@ class MarketReportService:
             logger.warning("시장 내러티브 생성 실패, 구조화 폴백", err=str(e)[:80])
             return {"summary": "수집된 실거래·시세 데이터를 기반으로 한 시장 현황입니다.", "opportunities": [], "risks": [], "price_trend": "", "target_persona": "데이터 기반 타겟팅 분석 불가"}
 
+    async def _nearby_presale_84_price(
+        self, lawd_cd: str, coords: Any,
+    ) -> tuple[float | None, str]:
+        """주변 신규 분양가(청약홈) → 84㎡급 대표 분양총액(만원) 중앙값. (값, 출처).
+
+        거래사례비교 1차 보강. PresaleService.nearby(거리필터 공고) → 가까운 아파트 공고 상위 3개의
+        detail(주택형별 분양총액 price_man·공급면적)에서 84㎡급(공급 100~125㎡) 분양가를 모아 중앙값.
+        키 미설정/데이터 없음/타임아웃이면 (None, 'unavailable') 정직 반환(가짜값 금지).
+        보고서 지연 방지를 위해 하드타임아웃 적용.
+        """
+        import asyncio as _aio
+        try:
+            from app.services.land_intelligence.presale_service import PresaleService, area_from_lawd
+        except Exception:  # noqa: BLE001
+            return None, "unavailable"
+        _lat = coords.get("lat") if isinstance(coords, dict) else None
+        _lon = (coords.get("lon") or coords.get("lng")) if isinstance(coords, dict) else None
+        try:
+            svc = PresaleService()
+            near = await _aio.wait_for(
+                svc.nearby(_lat, _lon, area_from_lawd(lawd_cd),
+                           radius_m=3000, months_back=12, max_markers=8),
+                timeout=12.0)
+            if not near.get("available"):
+                return None, "unavailable"
+            picks = [it for it in (near.get("items") or []) if it.get("house_manage_no")][:3]
+            if not picks:
+                return None, "unavailable"
+            details = await _aio.wait_for(_aio.gather(*[
+                svc.detail(it.get("house_manage_no", ""), it.get("pblanc_no", ""), it.get("product", "apt"))
+                for it in picks], return_exceptions=True), timeout=15.0)
+            cands: list[float] = []
+            for d in details:
+                if not isinstance(d, dict) or not d.get("available"):
+                    continue
+                for m in d.get("models", []):
+                    try:
+                        amt = float(m.get("price_man"))
+                        ar = float(m.get("supply_area_m2"))
+                    except (TypeError, ValueError):
+                        continue
+                    # 전용 84㎡급 ≈ 공급 100~125㎡ — 실거래 84㎡ 기준가와 일관되게 비교.
+                    if amt > 0 and 100.0 <= ar <= 125.0:
+                        cands.append(amt)
+            if not cands:
+                return None, "unavailable"
+            cands.sort()
+            return float(cands[len(cands) // 2]), "live"  # 중앙값
+        except Exception:  # noqa: BLE001 — 타임아웃·네트워크·파싱 실패 시 정직 None
+            return None, "unavailable"
+
     async def build_report(self, address: str, lawd_cd: str, pnu: str | None = None, use_llm: bool = True, options: dict | None = None) -> dict[str, Any]:
         from app.services.land_intelligence.land_info_service import LandInfoService
         
@@ -267,11 +318,14 @@ class MarketReportService:
         _real_pp = apt_pp or (sum(valid_pp) / len(valid_pp) if valid_pp else None)
         # 대표 84㎡ 1세대 실거래 기반가(만원) = 평당가 × 25.4평(=84/3.305785)
         _trade_unit_10k = round(_real_pp * (84.0 / 3.305785)) if _real_pp else None
+        # 주변 신규 분양가(청약홈) — 84㎡급(공급 100~125㎡) 분양총액 중앙값. 키/데이터 없으면 None(정직).
+        _presale_10k, _presale_src = await self._nearby_presale_84_price(lawd_cd, coords)
         pricing_band = compute_fair_price(
             comparable_trade_10k=_trade_unit_10k,
-            nearby_presale_10k=None,  # 청약홈 주변 분양가(PresaleService) 연동은 후속 — 현재 미연동(정직)
+            nearby_presale_10k=_presale_10k,
             annual_income_10k=_income_10k,
             trade_source="live" if _real_pp else None,
+            presale_source=_presale_src,
             income_source=_mi.get("data_source"),
         )
 
