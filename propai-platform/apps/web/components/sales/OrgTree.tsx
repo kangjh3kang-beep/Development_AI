@@ -56,6 +56,15 @@ export default function OrgTree({ siteCode }: { siteCode: string }) {
     try { await api.patch(`/org/nodes/${id}/move`, { new_parent_id: newParent }); load(); }
     catch { alert("이동 실패(권한/순환 확인)"); }
   };
+  const seedDefault = async () => {
+    if (!confirm("기본조직(대행사→본부장→5팀×10명)을 생성할까요? 빈 조직에서만 가능합니다.")) return;
+    setBusy(true);
+    try {
+      const r = await api.post<{ ok: boolean; total?: number; note?: string }>("/org/seed-default", {});
+      if (r?.ok) load(); else alert(r?.note || "생성 실패");
+    } catch { alert("기본조직 생성 실패(권한을 확인하세요)."); }
+    finally { setBusy(false); }
+  };
 
   // 처음 불러오는 중이면 회색 자리표시(스켈레톤)로 빈 화면 깜빡임을 막는다.
   if (!loaded) return <SkeletonLoader count={3} itemClassName="h-16 rounded-xl mb-3" />;
@@ -82,7 +91,15 @@ export default function OrgTree({ siteCode }: { siteCode: string }) {
 
       {/* 트리 */}
       <div className="space-y-1 rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-4">
-        {tree.length === 0 && <p className="text-sm text-[var(--text-secondary)]">조직 노드가 없습니다. 위에서 최상위(대행사)부터 추가하세요.</p>}
+        {tree.length === 0 && (
+          <div className="flex flex-col items-start gap-2">
+            <p className="text-sm text-[var(--text-secondary)]">조직 노드가 없습니다. 위에서 최상위(대행사)부터 추가하거나, 기본조직을 한 번에 생성하세요.</p>
+            <button onClick={seedDefault} disabled={busy}
+              className="rounded-lg border border-[var(--accent-strong)] px-3 py-1.5 text-xs font-black text-[var(--accent-strong)] hover:bg-[var(--accent-soft)] disabled:opacity-50">
+              🏢 기본조직 생성 (대행사→본부장→5팀×10명)
+            </button>
+          </div>
+        )}
         {tree.map((n) => (
           <div key={n.id} className="flex flex-wrap items-center gap-2 rounded-lg py-1 text-sm hover:bg-[var(--surface)]" style={{ paddingLeft: `${depth(n.path) * 18}px` }}>
             <span className="rounded bg-[var(--surface-strong)] px-1.5 py-0.5 text-xs font-semibold text-[var(--accent-strong)]">{LABEL[n.node_type] ?? n.node_type}</span>

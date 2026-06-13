@@ -25,6 +25,30 @@ async def create_node(db: AsyncSession, site_id, node_type, parent_id=None, **kw
     return node
 
 
+async def seed_default_org(db: AsyncSession, site_id, teams: int = 5, members_per_team: int = 10) -> dict:
+    """P2 기본조직 생성: 대행사(AGENCY)→본부장(GM_DIRECTOR)→N팀(TEAM_LEADER)→팀당 M명(MEMBER).
+
+    user 미배정 placeholder 노드로 생성(이후 직급별 등록권한으로 실제 인원 배정·추가·삭제).
+    이미 노드가 있으면 가드(중복 시드 방지).
+    """
+    existing = (await db.execute(select(SalesOrgNode).where(
+        SalesOrgNode.site_id == site_id, SalesOrgNode.deleted_at.is_(None)))).first()
+    if existing:
+        return {"ok": False, "note": "이미 조직 노드가 있습니다 — 기본조직 시드는 빈 조직에서만 가능합니다."}
+
+    agency = await create_node(db, site_id, "AGENCY", display_name="대행사")
+    gm = await create_node(db, site_id, "GM_DIRECTOR", parent_id=agency.id, display_name="본부장")
+    n_team = n_member = 0
+    for t in range(1, teams + 1):
+        tl = await create_node(db, site_id, "TEAM_LEADER", parent_id=gm.id, display_name=f"{t}팀 팀장")
+        n_team += 1
+        for m in range(1, members_per_team + 1):
+            await create_node(db, site_id, "MEMBER", parent_id=tl.id, display_name=f"{t}팀 직원{m}")
+            n_member += 1
+    return {"ok": True, "agency": 1, "gm_director": 1, "team_leaders": n_team, "members": n_member,
+            "total": 2 + n_team + n_member}
+
+
 async def descendants(db: AsyncSession, node: SalesOrgNode):
     return list((await db.execute(
         select(SalesOrgNode).where(text("path <@ :p")).params(p=node.path))).scalars().all())

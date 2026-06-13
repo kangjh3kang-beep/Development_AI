@@ -11,7 +11,7 @@ from app.api.deps import get_current_user, get_db
 from app.api.deps_sales import SalesCtx, require_role, sales_ctx
 from apps.api.database.models.sales.units_pricing import SalesUnitGeneration, SalesUnitPriceTable
 from app.services.sales.contract.service import cancel_contract, create_contract, sign_contract
-from app.services.sales.org.service import create_node, move_subtree
+from app.services.sales.org.service import create_node, move_subtree, seed_default_org
 from app.services.sales.pricing.engine import (
     apply_group_pricing, generate_price_table, project_revenue, solve_base_for_target,
 )
@@ -20,15 +20,43 @@ from app.services.sales.units.generation import generate_units
 
 actions_router = APIRouter(tags=["sales-actions"])
 
+# P2 직급별 등록권한: 각 node_type 을 등록할 수 있는 '최소 상위 역할' 집합.
+# 시행사→대행사, 대행사→본부장, 본부장→팀장, 팀장→직원 (상위 역할·관리자는 항상 허용).
+_REGISTER_MATRIX = {
+    "AGENCY": {"DEVELOPER", "SUPERADMIN"},
+    "SUBAGENCY": {"AGENCY", "DEVELOPER", "SUPERADMIN"},
+    "GM_DIRECTOR": {"AGENCY", "SUBAGENCY", "DEVELOPER", "SUPERADMIN"},
+    "TEAM_LEADER": {"GM_DIRECTOR", "AGENCY", "SUBAGENCY", "DEVELOPER", "SUPERADMIN"},
+    "MEMBER": {"TEAM_LEADER", "GM_DIRECTOR", "AGENCY", "SUBAGENCY", "DEVELOPER", "SUPERADMIN"},
+}
+
 
 @actions_router.post("/org/nodes")
 async def add_node(body: dict, db: AsyncSession = Depends(get_db),
-                   ctx: SalesCtx = Depends(require_role("AGENCY", "SUBAGENCY", "DIRECTOR", "GM_DIRECTOR", "DEVELOPER"))):
-    node = await create_node(db, ctx.site_id, body["node_type"], body.get("parent_id"),
+                   ctx: SalesCtx = Depends(require_role("AGENCY", "SUBAGENCY", "DIRECTOR", "GM_DIRECTOR", "TEAM_LEADER", "DEVELOPER"))):
+    ntype = body["node_type"]
+    allowed = _REGISTER_MATRIX.get(ntype)
+    if allowed is not None and ctx.role not in allowed:
+        from fastapi import HTTPException
+        raise HTTPException(403, f"{ntype} 등록 권한이 없습니다(상위 직급만 등록 가능).")
+    node = await create_node(db, ctx.site_id, ntype, body.get("parent_id"),
                              user_id=body.get("user_id"), company_id=body.get("company_id"),
                              display_name=body.get("display_name"))
     await db.commit()
     return {"id": str(node.id), "path": str(node.path)}
+
+
+@actions_router.post("/org/seed-default")
+async def org_seed_default(body: dict | None = None, db: AsyncSession = Depends(get_db),
+                           ctx: SalesCtx = Depends(require_role("DEVELOPER", "AGENCY", "SUPERADMIN"))):
+    """P2 기본조직 생성(대행사→본부장→5팀×10명). 빈 조직에서만. 이후 추가·삭제·인원배정."""
+    body = body or {}
+    res = await seed_default_org(db, ctx.site_id,
+                                 teams=int(body.get("teams", 5)),
+                                 members_per_team=int(body.get("members_per_team", 10)))
+    if res.get("ok"):
+        await db.commit()
+    return res
 
 
 @actions_router.get("/contracts")
