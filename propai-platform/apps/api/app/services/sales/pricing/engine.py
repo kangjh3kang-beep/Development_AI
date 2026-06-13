@@ -190,6 +190,57 @@ async def solve_base_for_target(
             "achieved_total_10k": rev["total_revenue_10k"], "units_priced": rev["units_priced"]}
 
 
+async def apply_group_pricing(
+    db: AsyncSession, site_id: uuid.UUID, round_id: uuid.UUID,
+    unit_ids: list[uuid.UUID], mode: str, value: float, group_name: str | None = None, by=None,
+) -> dict:
+    """P1-4 선택 세대 그룹 일괄단가 적용 후 재생성.
+
+    mode:
+      RATE          그룹 가중치 +value(예 0.05=+5%)  — SalesPriceGroup(basis=RATE)
+      FIXED         그룹 가중치 +value 원             — SalesPriceGroup(basis=FIXED)
+      OVERRIDE_PSQM 선택 세대에 절대 평당단가 value(원/㎡)×공급면적 = 확정금액(override)
+    """
+    uids = [u for u in unit_ids if u]
+    if not uids:
+        return {"ok": False, "note": "선택된 세대가 없습니다."}
+    if mode in ("RATE", "FIXED"):
+        g = SalesPriceGroup(site_id=site_id, group_name=group_name or "그룹",
+                            basis=mode, value=value, priority=10)
+        db.add(g)
+        await db.flush()
+        for uid in uids:
+            db.add(SalesPriceGroupMember(group_id=g.id, unit_id=uid))
+    elif mode == "OVERRIDE_PSQM":
+        types = {t.id: t for t in (await db.execute(select(SalesUnitType).where(
+            SalesUnitType.site_id == site_id))).scalars()}
+        units = {u.id: u for u in (await db.execute(select(SalesUnitInventory).where(
+            SalesUnitInventory.id.in_(uids)))).scalars()}
+        for uid in uids:
+            u = units.get(uid)
+            t = types.get(u.type_id) if u else None
+            if not t:
+                continue
+            area = Decimal(str(t.supply_area or t.contract_area or t.exclusive_area or 0))
+            if area <= 0:
+                continue
+            amt = (Decimal(str(value)) * area).quantize(Decimal("1"), ROUND_HALF_UP)
+            pt = (await db.execute(select(SalesUnitPriceTable).where(
+                SalesUnitPriceTable.unit_id == uid, SalesUnitPriceTable.round_id == round_id))).scalar_one_or_none()
+            if not pt:
+                pt = SalesUnitPriceTable(site_id=site_id, unit_id=uid, round_id=round_id)
+                db.add(pt)
+            pt.price_mode = "FIXED"
+            pt.override_price = int(amt)
+    else:
+        return {"ok": False, "note": f"알 수 없는 mode: {mode}"}
+    await db.flush()
+    n = await generate_price_table(db, site_id, round_id, by=by)
+    rev = await project_revenue(db, site_id, round_id)
+    return {"ok": True, "mode": mode, "applied_units": len(uids), "regenerated": n,
+            "total_revenue_10k": rev["total_revenue_10k"]}
+
+
 async def project_revenue(db: AsyncSession, site_id: uuid.UUID, round_id: uuid.UUID) -> dict:
     """현재 분양가표 기준 총매출(분양액) 산출 — forward. 타입별 분해 포함(만원 단위)."""
     rows = list((await db.execute(select(SalesUnitPriceTable).where(

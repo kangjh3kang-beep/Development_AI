@@ -25,6 +25,7 @@ import UnitGrid from "@/components/sales/UnitGrid";
 import UnitLiveBoard from "@/components/sales/UnitLiveBoard";
 import Unit360Panel from "@/components/sales/Unit360Panel";
 import PriceTableEditor from "@/components/sales/PriceTableEditor";
+import PriceGroupingPanel from "@/components/sales/PriceGroupingPanel";
 import PricingConfigPanel from "@/components/sales/PricingConfigPanel";
 import SubscriptionPanel from "@/components/sales/SubscriptionPanel";
 import PaymentsPanel from "@/components/sales/PaymentsPanel";
@@ -280,6 +281,7 @@ export default function SiteWorkspaceClient({ locale, siteId }: { locale: Locale
                     roundId={rid}
                     onChanged={() => setPriceRefresh((n) => n + 1)}
                   />
+                  <PriceGroupingPanel siteCode={siteId} roundId={rid} onChanged={() => setPriceRefresh((n) => n + 1)} />
                   <PriceTableEditor key={priceRefresh} siteCode={siteId} roundId={rid} />
                 </>
               ) : (

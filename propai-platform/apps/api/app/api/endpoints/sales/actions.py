@@ -12,7 +12,9 @@ from app.api.deps_sales import SalesCtx, require_role, sales_ctx
 from apps.api.database.models.sales.units_pricing import SalesUnitGeneration, SalesUnitPriceTable
 from app.services.sales.contract.service import cancel_contract, create_contract, sign_contract
 from app.services.sales.org.service import create_node, move_subtree
-from app.services.sales.pricing.engine import generate_price_table, project_revenue, solve_base_for_target
+from app.services.sales.pricing.engine import (
+    apply_group_pricing, generate_price_table, project_revenue, solve_base_for_target,
+)
 from app.services.sales.pricing.suggest import suggest_base_price
 from app.services.sales.units.generation import generate_units
 
@@ -97,6 +99,20 @@ async def pricing_solve_base(body: dict, db: AsyncSession = Depends(get_db),
     """P1-3 목표 총매출 → 균일 기준단가 역산·전 타입 반영·재생성 — reverse."""
     res = await solve_base_for_target(db, ctx.site_id, uuid.UUID(body["round_id"]),
                                       int(body["target_total_10k"]), by=ctx.user.id)
+    if res.get("ok"):
+        await db.commit()
+    return res
+
+
+@actions_router.post("/pricing/group-apply")
+async def pricing_group_apply(body: dict, db: AsyncSession = Depends(get_db),
+                              ctx: SalesCtx = Depends(require_role("DEVELOPER", "AGENCY"))):
+    """P1-4 선택 세대 그룹 일괄단가 — mode=RATE(+%)·FIXED(+원)·OVERRIDE_PSQM(절대 평당단가)."""
+    res = await apply_group_pricing(
+        db, ctx.site_id, uuid.UUID(body["round_id"]),
+        [uuid.UUID(str(u)) for u in (body.get("unit_ids") or [])],
+        mode=body.get("mode", "RATE"), value=float(body.get("value", 0)),
+        group_name=body.get("group_name"), by=ctx.user.id)
     if res.get("ok"):
         await db.commit()
     return res
