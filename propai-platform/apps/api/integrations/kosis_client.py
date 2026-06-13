@@ -5,6 +5,7 @@
 """
 
 import asyncio
+import os
 from typing import Any
 
 import structlog
@@ -78,6 +79,11 @@ class KosisClient(BaseAPIClient):
         # API 키 전용 설정(인프라 설정 self.settings 와 분리)
         self.api_settings = kosis_settings
 
+    # ★ 관리자 등록 키는 os.environ 으로만 오버레이되는데 settings 객체는 import 시점 고정(@lru_cache)이라
+    #   런타임 오버레이를 못 받는다. → os.environ 우선 읽기로 관리자 등록 키를 즉시 활성화한다.
+    def _kosis_key(self) -> str:
+        return os.getenv("KOSIS_API_KEY") or getattr(self.api_settings, "KOSIS_API_KEY", "") or ""
+
     async def get_macro_income_stats(
         self,
         sigungu_cd: str,
@@ -95,7 +101,7 @@ class KosisClient(BaseAPIClient):
         # 지역코드 정규화(이름매칭 금지·자릿수 기반 시군구5 절단)
         sgg5 = normalize_sigungu_cd(sigungu_cd) or sigungu_cd
 
-        has_key = bool(getattr(self.api_settings, "KOSIS_API_KEY", None))
+        has_key = bool(self._kosis_key())
         # use_mock=None → 키 없으면 mock(폴백). 키 있으면 실연동 시도.
         if use_mock is None:
             use_mock = not has_key
@@ -149,7 +155,7 @@ class KosisClient(BaseAPIClient):
         client = await self._get_client()
         params = {
             "method": "getList",
-            "apiKey": self.api_settings.KOSIS_API_KEY,
+            "apiKey": self._kosis_key(),
             "format": "json",
             "jsonVD": "Y",
             "orgId": KOSIS_ORG_ID,
@@ -197,7 +203,7 @@ class KosisClient(BaseAPIClient):
             "top_inflow_regions": [], "data_source": "unavailable",
             "note": "국내인구이동(OD) 데이터 없음 — KOSIS 키/통계표 확정 시 산출.",
         }
-        has_key = bool(getattr(self.api_settings, "KOSIS_API_KEY", None))
+        has_key = bool(self._kosis_key())
         if use_mock is None:
             use_mock = not has_key
         if use_mock or not has_key:
@@ -239,7 +245,7 @@ class KosisClient(BaseAPIClient):
         client = await self._get_client()
         params = {
             "method": "getList",
-            "apiKey": self.api_settings.KOSIS_API_KEY,
+            "apiKey": self._kosis_key(),
             "format": "json", "jsonVD": "Y",
             "orgId": KOSIS_ORG_ID,
             "tblId": KOSIS_MIGRATION_TBL_ID,

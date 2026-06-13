@@ -1,4 +1,5 @@
 import asyncio
+import os
 from typing import Any
 
 import structlog
@@ -28,11 +29,20 @@ class SgisClient(BaseAPIClient):
         # API 키 전용 설정(인프라 설정 self.settings 와 분리)
         self.api_settings = sgis_settings
 
+    # ★ 관리자 화면 등록 키는 lifespan 에서 os.environ 으로만 오버레이된다. 그런데 settings 객체는
+    #   import 시점 @lru_cache 로 고정돼 런타임 오버레이를 못 받는다(apick 등은 os.environ 직독으로 동작).
+    #   따라서 키는 os.environ 을 우선 읽고, 없으면 settings 폴백 — 관리자 등록 키가 즉시 활성화된다.
+    def _sgis_key(self) -> str:
+        return os.getenv("SGIS_CONSUMER_KEY") or getattr(self.api_settings, "SGIS_CONSUMER_KEY", "") or ""
+
+    def _sgis_secret(self) -> str:
+        return os.getenv("SGIS_CONSUMER_SECRET") or getattr(self.api_settings, "SGIS_CONSUMER_SECRET", "") or ""
+
     async def get_access_token(self) -> str | None:
         """SGIS API는 consumer_key/secret을 통해 임시 token을 발급받아야 합니다.
         내부 캐싱(Redis)을 통해 토큰 만료 전까지 재사용합니다.
         """
-        if not getattr(self.api_settings, 'SGIS_CONSUMER_KEY', None):
+        if not self._sgis_key():
             return None
             
         cache_key = "sgis:access_token"
@@ -53,8 +63,8 @@ class SgisClient(BaseAPIClient):
                         "GET", 
                         "/OpenAPI3/auth/authentication.json",
                         params={
-                            "consumer_key": getattr(self.api_settings, 'SGIS_CONSUMER_KEY', ''),
-                            "consumer_secret": getattr(self.api_settings, 'SGIS_CONSUMER_SECRET', '')
+                            "consumer_key": self._sgis_key(),
+                            "consumer_secret": self._sgis_secret()
                         }
                     ),
                     timeout=5.0
@@ -154,7 +164,7 @@ class SgisClient(BaseAPIClient):
                       (과거 use_mock=True 하드코딩으로 키가 있어도 항상 Mock 만 나오던 G1 결함 제거)
                       True 강제 시 Mock, False 강제 시 키가 있으면 실연동 시도.
         """
-        has_key = bool(getattr(self.api_settings, 'SGIS_CONSUMER_KEY', None))
+        has_key = bool(self._sgis_key())
         # use_mock=None → 키 없으면 Mock(개발용). 키 있으면 실연동 시도.
         if use_mock is None:
             use_mock = not has_key
