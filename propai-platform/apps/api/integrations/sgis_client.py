@@ -163,6 +163,37 @@ class SgisClient(BaseAPIClient):
         "51": "32", "52": "35",
     }
 
+    # SGIS searchpopulation age_type 코드 → 10세 단위 연령대(강남·파주 교차검증으로 확정).
+    # 합이 총인구의 약 1% 내(인구총조사 경계/반올림)로 일치, 분포 형태 현실 부합(40대 피크).
+    _AGE_TYPE_LABELS = {
+        "30": "0-9", "31": "10-19", "32": "20-29", "33": "30-39", "34": "40-49",
+        "35": "50-59", "36": "60-69", "37": "70-79", "38": "80-89", "39": "90+",
+    }
+
+    async def _fetch_age_distribution(self, sgis_cd: str, year: str) -> dict[str, int]:
+        """SGIS 10세 단위 연령대별 인구를 동시 조회한다(실측). 실패 코드는 제외(정직)."""
+        token = await self.get_access_token()
+        if not token:
+            return {}
+        client = await self._get_client()
+
+        async def one(at: str) -> tuple[str, int]:
+            try:
+                resp = await asyncio.wait_for(
+                    client.request("GET", "/OpenAPI3/stats/searchpopulation.json",
+                                   params={"accessToken": token, "year": year,
+                                           "adm_cd": sgis_cd, "age_type": at}), timeout=6.0)
+                data = resp.json()
+                if data.get("errCd") == 0:
+                    pop = sum(int(x.get("population", 0) or 0) for x in data.get("result", []))
+                    return self._AGE_TYPE_LABELS[at], pop
+            except Exception:  # noqa: BLE001
+                pass
+            return self._AGE_TYPE_LABELS[at], -1
+
+        pairs = await asyncio.gather(*[one(at) for at in self._AGE_TYPE_LABELS])
+        return {label: pop for label, pop in pairs if pop >= 0}
+
     async def _resolve_sgis_sigungu_cd(self, adm_cd: str, region_name: str | None) -> str | None:
         """법정동/시군구 코드 + 시군구명 → SGIS 자체 행정코드(예: 강남구 11230)를 해석한다.
 
@@ -282,17 +313,20 @@ class SgisClient(BaseAPIClient):
             if avg_size <= 0 and household_cnt > 0:
                 avg_size = round(total / household_cnt, 2)
 
+            # 10세 단위 연령대별 인구(실측, 동시조회). 실패 시 빈 dict(정직).
+            age_dist = await self._fetch_age_distribution(sgis_cd, data_year)
+
             parsed_data = {
                 "target_adm_cd": adm_cd,
                 "year": data_year,
                 "total_population": total,
                 "household_count": household_cnt,
                 "avg_household_size": avg_size or round(total / max(household_cnt, 1), 2),
-                "age_distribution": {},  # 연령 분포는 별도 API(가짜값 금지) — 미수집 시 빈값.
+                "age_distribution": age_dist,  # 10세 단위 실측(0-9…90+)
                 "household_types": self._estimate_household_sizes(avg_size or 2.3),
-                "data_source": "live",  # 총인구·가구수·평균가구원수는 실측.
+                "data_source": "live",  # 총인구·가구수·평균가구원수·연령분포는 실측.
                 "note": (f"SGIS {data_year} 실측: 총인구 {total:,}·가구 {household_cnt:,}·"
-                         f"평균 {avg_size}명. 가구원수 분포는 평균 기반 추정."),
+                         f"평균 {avg_size}명·연령 {len(age_dist)}구간. 가구원수 분포는 평균 기반 추정."),
             }
 
             validated = PopulationData(**parsed_data)

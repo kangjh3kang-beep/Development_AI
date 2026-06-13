@@ -39,3 +39,12 @@ class TestHouseholdEstimate:
             d = SgisClient._estimate_household_sizes(avg)
             assert all(v >= 0 for v in d.values())
             assert abs(sum(d.values()) - 100.0) < 0.6
+
+
+class TestAgeTypeLabels:
+    def test_10세단위_10구간(self):
+        labels = SgisClient._AGE_TYPE_LABELS
+        assert len(labels) == 10
+        assert labels["30"] == "0-9" and labels["34"] == "40-49" and labels["39"] == "90+"
+        # 코드 30~39 연속
+        assert sorted(labels.keys()) == [str(i) for i in range(30, 40)]
