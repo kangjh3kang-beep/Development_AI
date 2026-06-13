@@ -59,6 +59,13 @@ class Settings(BaseSettings):
     # 미설정 시 G2B/MOLIT 공용키 폴백(get_settings) → 그래도 없으면 mock 폴백.
     ONBID_SERVICE_KEY: str = ""
 
+    # SGIS 통계지리정보서비스 (통계청)
+    SGIS_CONSUMER_KEY: str = ""
+    SGIS_CONSUMER_SECRET: str = ""
+
+    # KOSIS 국가통계포털 API Key
+    KOSIS_API_KEY: str = ""
+
     AWS_ACCESS_KEY_ID: str = ""
     AWS_SECRET_ACCESS_KEY: str = ""
     AWS_S3_BUCKET: str = "propai-files"

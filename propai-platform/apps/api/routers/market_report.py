@@ -19,6 +19,7 @@ class MarketReportRequest(BaseModel):
     bcode: str | None = None
     jibun_address: str | None = None
     use_llm: bool = True  # AI 내러티브 분석 포함 여부(사용자 선택)
+    options: dict[str, bool] | None = None  # 선택형 분석 모듈 옵션 (sgis, kosis 등)
 
 
 def _pnu_from_bcode(bcode: str, jibun: str) -> str | None:
@@ -46,7 +47,7 @@ async def market_report(
     current_user: CurrentUser = Depends(get_current_user),
 ):
     lawd_cd, pnu = _resolve(req)
-    return await MarketReportService().build_report(req.address, lawd_cd, pnu, use_llm=req.use_llm)
+    return await MarketReportService().build_report(req.address, lawd_cd, pnu, use_llm=req.use_llm, options=req.options)
 
 
 @router.post("/report/pdf", dependencies=[Depends(enforce_llm_quota)])

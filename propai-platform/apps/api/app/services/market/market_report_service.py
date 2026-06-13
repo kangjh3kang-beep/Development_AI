@@ -137,13 +137,13 @@ class MarketReportService:
             from langchain_core.messages import HumanMessage, SystemMessage
 
             llm = get_llm(timeout=40, max_tokens=1500)
-            sys = ("당신은 부동산 시장분석 전문가다. 제공된 실거래·시세·입지 데이터만 근거로 "
+            sys = ("당신은 부동산 개발 및 시장분석 전문가다. 제공된 실거래·시세·입지 데이터와 인구 이동, 연령대, 평균 소득 데이터를 종합하여 "
                    "한국어 JSON으로 답하라. 키: summary(시장요약 3~4문장), opportunities(기회 2~3개 배열), "
-                   "risks(리스크 2~3개 배열), price_trend(가격동향 2문장). "
+                   "risks(리스크 2~3개 배열), price_trend(가격동향 2문장), target_persona(추천 분양 타겟 고객층 2문장). "
                    "★모든 거래시세·분양가는 반드시 평당가(만원/평) 기준으로 서술하라. 총액(억원)이 아닌 "
                    "평당 단가를 사용한다. 예: '아파트 평당 약 1,800만원'. 데이터 단위는 만원/평이다. "
-                   "데이터에 없는 수치는 만들지 말 것.")
-            usr = f"## 시장 데이터\n{json.dumps(ctx, ensure_ascii=False)[:3500]}"
+                   "★target_persona에는 유입 인구의 주 연령대, 거시적 평균 소득을 고려해 가장 분양 가능성이 높은 고객의 직업군/가구형태/특화설계 제안을 포함하라.")
+            usr = f"## 시장 데이터\n{json.dumps(ctx, ensure_ascii=False)[:4000]}"
             resp = await llm.ainvoke([SystemMessage(content=sys), HumanMessage(content=usr)])
             raw = resp.content if hasattr(resp, "content") else str(resp)
             txt = raw.strip()
@@ -153,10 +153,14 @@ class MarketReportService:
             return data
         except Exception as e:  # noqa: BLE001
             logger.warning("시장 내러티브 생성 실패, 구조화 폴백", err=str(e)[:80])
-            return {"summary": "수집된 실거래·시세 데이터를 기반으로 한 시장 현황입니다.", "opportunities": [], "risks": [], "price_trend": ""}
+            return {"summary": "수집된 실거래·시세 데이터를 기반으로 한 시장 현황입니다.", "opportunities": [], "risks": [], "price_trend": "", "target_persona": "데이터 기반 타겟팅 분석 불가"}
 
-    async def build_report(self, address: str, lawd_cd: str, pnu: str | None = None, use_llm: bool = True) -> dict[str, Any]:
+    async def build_report(self, address: str, lawd_cd: str, pnu: str | None = None, use_llm: bool = True, options: dict | None = None) -> dict[str, Any]:
         from app.services.land_intelligence.land_info_service import LandInfoService
+        
+        options = options or {}
+        use_sgis = options.get("sgis", False)
+        use_kosis = options.get("kosis", False)
 
         comp = {}
         try:
@@ -164,6 +168,44 @@ class MarketReportService:
         except Exception:  # noqa: BLE001
             pass
         stats = await self._category_stats(lawd_cd)
+
+        # ── Phase 1: 공공 인구 및 소득 데이터(SGIS, KOSIS) 연동 ──
+        from apps.api.integrations.sgis_client import SgisClient
+        from apps.api.integrations.kosis_client import KosisClient
+        from apps.api.app.services.market.market_models import DemographicProfile, MigrationData, PopulationData, MacroIncomeData
+        import asyncio
+        
+        sgis = SgisClient()
+        kosis = KosisClient()
+        cur_year = str(datetime.now().year)
+        
+        # 병렬로 인구이동, 연령통계, 거시소득 호출 (옵션 선택 여부에 따라 분기)
+        demographics: dict[str, Any] | None = None
+        if use_sgis or use_kosis:
+            try:
+                async def fetch_mig():
+                    return await sgis.get_migration_stats(lawd_cd, cur_year, use_mock=True) if use_sgis else {"target_adm_cd": lawd_cd, "year": cur_year}
+                async def fetch_pop():
+                    return await sgis.get_population_stats(lawd_cd, cur_year, use_mock=True) if use_sgis else {"target_adm_cd": lawd_cd, "year": cur_year}
+                async def fetch_inc():
+                    return await kosis.get_macro_income_stats(lawd_cd[:5], cur_year, use_mock=True) if use_kosis else {"sigungu_cd": lawd_cd[:5], "year": cur_year}
+
+                mig, pop, inc = await asyncio.gather(
+                    fetch_mig(),
+                    fetch_pop(),
+                    fetch_inc(),
+                    return_exceptions=True
+                )
+                # Pydantic 모델을 사용해 어댑터 패턴으로 데이터 표준화
+                profile = DemographicProfile(
+                    source_phase=1,
+                    migration=MigrationData(**(mig if not isinstance(mig, Exception) else {"target_adm_cd": lawd_cd, "year": cur_year})),
+                    population=PopulationData(**(pop if not isinstance(pop, Exception) else {"target_adm_cd": lawd_cd, "year": cur_year})),
+                    macro_income=MacroIncomeData(**(inc if not isinstance(inc, Exception) else {"sigungu_cd": lawd_cd[:5], "year": cur_year}))
+                )
+                demographics = profile.model_dump()
+            except Exception as e:
+                logger.warning("Demographic data fetch failed", error=str(e))
 
         comp = comp if isinstance(comp, dict) else {}
         zone = comp.get("local_ordinance") or {}
@@ -198,6 +240,20 @@ class MarketReportService:
             if (v.get("per_pyeong") or {}).get("avg")
         }
         apt_pp = ((stats["trade"].get("아파트") or {}).get("per_pyeong") or {}).get("avg")
+        
+        # ── Phase 3: 사업 타당성 분석 (Feasibility Engine) ──
+        from app.services.market.feasibility_service import FeasibilityService
+        land_area = float(basic.get("land_area") or basic.get("area_sqm") or 330.0) # 기본 100평
+        # 대표 평당가는 아파트 평당가를 우선 사용, 없으면 전체 평균 사용
+        valid_pp = [v for v in pp_by_type.values() if v is not None]
+        target_pp = apt_pp or (sum(valid_pp)/len(valid_pp) if valid_pp else 2000)
+        feasibility = FeasibilityService().analyze_feasibility(
+            land_area_sqm=land_area,
+            zone_type=zone_type or "",
+            avg_pyeong_price_manwon=target_pp,
+            official_price_per_sqm=official_price or 0
+        )
+        
         ctx = {
             "address": address,
             "zone_type": zone_type,
@@ -211,10 +267,12 @@ class MarketReportService:
             ],
             "rent_stats_manwon": stats["rent"],
             "subway": (infra.get("nearest_subway") or {}).get("name") if isinstance(infra, dict) else None,
+            "demographics": demographics,
+            "feasibility": feasibility,
         }
         narrative = await self._narrative(ctx) if use_llm else {
             "summary": "수집된 실거래·시세 데이터 기반 시장 현황입니다. (AI 분석 미포함)",
-            "opportunities": [], "risks": [], "price_trend": "",
+            "opportunities": [], "risks": [], "price_trend": "", "target_persona": "AI 분석 미포함"
         }
 
         return {
@@ -229,7 +287,9 @@ class MarketReportService:
             "rent": stats["rent"],
             "apt_trend": stats.get("apt_trend") or [],
             "infrastructure": infra,
+            "demographics": demographics,
             "narrative": narrative,
+            "feasibility_analysis": feasibility,
         }
 
     # ── 정적 지도 이미지(OSM 타일 합성, Pillow) ──

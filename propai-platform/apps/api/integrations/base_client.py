@@ -166,6 +166,16 @@ class BaseAPIClient:
         except Exception:
             pass
 
+    async def _delete_cached(self, cache_key: str) -> None:
+        """Redis 캐시에서 키를 삭제한다."""
+        try:
+            import redis.asyncio as aioredis
+            r = aioredis.from_url(self.settings.redis_url)
+            await r.delete(cache_key)
+            await r.aclose()
+        except Exception:
+            pass
+
     @retry(
         retry=retry_if_exception_type(httpx.HTTPStatusError),
         stop=stop_after_attempt(3),
