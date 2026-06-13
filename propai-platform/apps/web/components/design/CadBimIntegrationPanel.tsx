@@ -7,6 +7,7 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import * as THREE from "three";
 import { motion } from "framer-motion";
 import CADEditor, { type CADEditorMetrics } from "./CADEditor";
+import { sectionCutHeightM, visibleFloorCount } from "./bimSection";
 import { GenerativeDesignPanel } from "@/components/cad/GenerativeDesignPanel";
 import { DesignOutcomeSummary } from "@/components/design/DesignOutcomeSummary";
 import { UnitMixSimulatorPanel } from "@/components/design/UnitMixSimulatorPanel";
@@ -172,6 +173,25 @@ function BuildingModel({ scene, spec }: { scene: THREE.Group | null; spec: Desig
       />
     </group>
   );
+}
+
+// §4-E: 단면(slicer) — 전역 클립평면으로 절단선(world-y=cutHeight) 위를 잘라 내부를 본다.
+// THREE.Plane((0,-1,0), cutHeight)는 y<=cutHeight를 남긴다(절단선 아래만 표시). frameloop=
+// "demand"라 클립 변경 시 invalidate로 1프레임 강제 렌더. Canvas 내부에서만 사용(useThree).
+function SectionClipper({ enabled, cutHeight }: { enabled: boolean; cutHeight: number }) {
+  const gl = useThree((s) => s.gl);
+  const invalidate = useThree((s) => s.invalidate);
+  useEffect(() => {
+    gl.clippingPlanes = enabled
+      ? [new THREE.Plane(new THREE.Vector3(0, -1, 0), cutHeight)]
+      : [];
+    invalidate();
+    return () => {
+      gl.clippingPlanes = [];
+      invalidate();
+    };
+  }, [gl, invalidate, enabled, cutHeight]);
+  return null;
 }
 
 // ── 카메라 시점 프리셋(비전문가용 시점 전환) ──────────────────────
@@ -358,7 +378,12 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
   // 같은 버튼을 다시 눌러도 보간이 재적용되도록 하는 단조 증가 카운터.
   const [camPresetSeq, setCamPresetSeq] = useState(0);
   // 로드된 모델의 크기(한 변 기준 span·높이) — 프리셋 거리 산정 기준값(모델 없으면 기본값).
-  const [modelDims, setModelDims] = useState<{ span: number; height: number }>({ span: 30, height: 18 });
+  // §4-E: minY=모델 실측 base의 world-y(절차모델=0, 서버 glTF는 Y중심화로 음수). 단면 클립평면
+  // 접지에 사용 — glTF가 y=0에 접지돼 있지 않아도 절단선이 실제 모델 범위에 맞게 정렬된다.
+  const [modelDims, setModelDims] = useState<{ span: number; height: number; minY: number }>({ span: 30, height: 18, minY: 0 });
+  // §4-E: 단면(slicer) — 절단선 위를 잘라 내부를 본다. pct 100=전체(절단 없음).
+  const [sectionOn, setSectionOn] = useState(false);
+  const [sectionPct, setSectionPct] = useState(100);
 
   // 시점 프리셋 버튼 핸들러: 같은 프리셋 재선택도 보간 재적용(seq 증가).
   const applyPreset = useCallback((key: CamPresetKey) => {
@@ -555,10 +580,10 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
         // 정밀 IFC가 비었음 — 절차모델 유지(조용히). 사용자에겐 절차모델이 계속 보인다.
         return;
       }
-      // 모델 크기 측정(바운딩박스) → 카메라 프리셋 거리 산정 기준값.
+      // 모델 크기 측정(바운딩박스) → 카메라 프리셋 거리 산정 기준값. minY=실측 base(단면 접지용).
       const span = Math.max(8, Math.max(size.x, size.z));
       const height = Math.max(4, size.y);
-      setModelDims({ span, height });
+      setModelDims({ span, height, minY: box.min.y });
       setBimScene(gltf.scene);
     } catch (err) {
       setBimError(err instanceof Error ? err.message : "3D 모델을 불러오지 못했습니다.");
@@ -573,7 +598,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
     if (spec && !bimScene) {
       const span = Math.max(8, spec.building_width_m || 0, spec.building_depth_m || 0);
       const height = Math.max(4, (spec.floor_count || 5) * (spec.floor_height_m || 3));
-      setModelDims({ span, height });
+      setModelDims({ span, height, minY: 0 });  // 절차모델은 base가 y=0(층 y=f*fh)
     }
   }, [spec, bimScene]);
 
@@ -1017,6 +1042,12 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
                 autoRotate={autoRotate}
               />
               <BuildingModel scene={bimScene} spec={spec} />
+              {/* §4-E 단면: 절단선을 모델 실측 base(minY)에 접지 — world-y = minY + 상대절단높이.
+                  서버 glTF가 Y중심화돼 base가 y=0이 아니어도 슬라이더 전 범위가 정확히 작동한다. */}
+              <SectionClipper
+                enabled={sectionOn && (!!bimScene || !!spec)}
+                cutHeight={modelDims.minY + sectionCutHeightM(sectionPct, modelDims.height)}
+              />
             </Canvas>
 
             {/* ── 카메라 시점 프리셋 바(비전문가용 시점 전환) ── 모델 없으면 비활성+안내 ── */}
@@ -1062,6 +1093,46 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
               >
                 {autoRotate ? "■ 회전 정지" : "▶ 자동 회전"}
               </button>
+            )}
+
+            {/* §4-E 단면(slicer) — 절단선 높이를 내려 건물 내부(층별)를 들여다본다 */}
+            {(bimScene || spec) && (
+              <div className="absolute bottom-6 left-1/2 z-30 flex -translate-x-1/2 items-center gap-3 rounded-2xl border border-white/10 bg-black/45 px-4 py-2 backdrop-blur-xl shadow-2xl">
+                <button
+                  type="button"
+                  onClick={() => setSectionOn((v) => !v)}
+                  aria-pressed={sectionOn}
+                  title="건물을 수평으로 잘라 내부(층별)를 봅니다"
+                  className={`rounded-full px-3 py-1.5 text-[10px] font-black uppercase tracking-widest transition-colors ${
+                    sectionOn
+                      ? "bg-[var(--accent-strong)] text-white"
+                      : "text-white/55 hover:text-white hover:bg-white/10"
+                  }`}
+                >
+                  {sectionOn ? "■ 단면 ON" : "▤ 단면"}
+                </button>
+                {sectionOn && (
+                  <>
+                    <input
+                      type="range"
+                      min={0}
+                      max={100}
+                      step={1}
+                      value={sectionPct}
+                      onChange={(e) => setSectionPct(Number(e.target.value))}
+                      aria-label="단면 절단 높이(%)"
+                      className="w-40 cursor-pointer accent-[var(--accent-strong)]"
+                    />
+                    <span className="whitespace-nowrap text-[10px] font-bold tabular-nums text-white/70">
+                      보이는 층 {visibleFloorCount(
+                        sectionCutHeightM(sectionPct, modelDims.height),
+                        spec?.floor_height_m ?? 3,
+                        spec?.floor_count ?? 0,
+                      )}/{spec?.floor_count ?? "—"} · 절단 {sectionCutHeightM(sectionPct, modelDims.height).toFixed(1)}m
+                    </span>
+                  </>
+                )}
+              </div>
             )}
 
             {/* ── AI 포토리얼 렌더 버튼(과금 게이트) — 모델(절차/서버) 있을 때 노출.
