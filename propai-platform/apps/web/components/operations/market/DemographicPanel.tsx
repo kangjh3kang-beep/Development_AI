@@ -15,7 +15,7 @@
  */
 
 import { BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, Tooltip, ResponsiveContainer, LabelList } from "recharts";
-import type { DemographicProfile, DataSource } from "./marketTypes";
+import type { DemographicProfile, DataSource, UnitMixRecommendation } from "./marketTypes";
 import { DataSourceBadge } from "./DataSourceBadge";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -55,7 +55,7 @@ function formatMan(man?: number): string {
   return `${man.toLocaleString()}만원`;
 }
 
-export function DemographicPanel({ data }: { data?: DemographicProfile | null }) {
+export function DemographicPanel({ data, unitMix }: { data?: DemographicProfile | null; unitMix?: UnitMixRecommendation | null }) {
   if (!data) return null;
   const pop = data.population || {};
   const income = data.macro_income || {};
@@ -92,7 +92,12 @@ export function DemographicPanel({ data }: { data?: DemographicProfile | null })
     );
   }
 
+  // I6 수요기반 평형 MD 추천(가구원수 분포 → 권장 전용면적 배분).
+  const mix = unitMix?.recommended_mix;
+  const hasMix = mix && Object.keys(mix).length > 0;
+
   return (
+    <>
     <div className="grid gap-6 md:grid-cols-2">
       {/* 인구·가구 구조(SGIS) */}
       {hasPop && (
@@ -199,5 +204,36 @@ export function DemographicPanel({ data }: { data?: DemographicProfile | null })
         </div>
       )}
     </div>
+
+    {/* I6: 수요기반 평형 MD 추천 */}
+    {hasMix && (
+      <div className="sa-di-block mt-6">
+        <header className="sa-di-block__head" style={{ cursor: "default" }}>
+          <span className="sa-di-block__icon" aria-hidden>🏠</span>
+          <span className="sa-di-block__title">수요기반 평형 MD 추천</span>
+          <DataSourceBadge source={unitMix?.data_source} />
+        </header>
+        <div className="sa-di-block__body">
+          {unitMix?.rationale && (
+            <p className="mb-3 text-sm font-bold text-[var(--text-primary)]">{unitMix.rationale}</p>
+          )}
+          <p className="sa-di-eyebrow mb-2">권장 전용면적 공급배분</p>
+          <div className="space-y-2">
+            {Object.entries(mix!).sort((a, b) => b[1] - a[1]).map(([band, pct]) => (
+              <div key={band} className="flex items-center gap-2">
+                <span className="w-24 shrink-0 text-xs font-semibold text-[var(--text-secondary)]">{band}</span>
+                <div className="relative h-4 flex-1 overflow-hidden rounded-full bg-[var(--surface-muted)]">
+                  <div className="absolute inset-y-0 left-0 rounded-full bg-[var(--accent-strong)]"
+                    style={{ width: `${Math.min(100, pct)}%` }} />
+                </div>
+                <span className="w-12 shrink-0 text-right text-xs font-bold text-[var(--text-primary)]">{pct}%</span>
+              </div>
+            ))}
+          </div>
+          <p className="mt-3 text-[11px] text-[var(--text-hint)]">※ {unitMix?.basis} 정밀 수익최적 배분은 별도 엔진(SLSQP) 사용.</p>
+        </div>
+      </div>
+    )}
+    </>
   );
 }

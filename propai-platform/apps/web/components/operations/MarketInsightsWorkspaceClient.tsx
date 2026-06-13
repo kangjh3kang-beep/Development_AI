@@ -635,7 +635,7 @@ export function MarketInsightsWorkspaceClient() {
       {report?.pricing_band && <PricingBandPanel data={report.pricing_band} />}
 
       {/* 실데이터 연동 영역 (Phase 2) — 인구·가구·소득 시각화(Recharts) + 데이터 출처 정직 배지 */}
-      {report?.demographics && <DemographicPanel data={report.demographics} />}
+      {report?.demographics && <DemographicPanel data={report.demographics} unitMix={report.unit_mix_recommendation} />}
 
       {/* 인구 이동(OD) — 현재 SGIS 미제공·행안부/KOSIS OD 미연동이라 정직하게 안내(가짜 Top3 금지) */}
       {report?.demographics?.migration && (

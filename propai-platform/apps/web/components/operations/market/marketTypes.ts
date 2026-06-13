@@ -140,6 +140,16 @@ export interface PricingBand {
   note?: string;
 }
 
+/** I6 수요기반 평형 MD 추천. 데이터 없으면 data_source='unavailable'. */
+export interface UnitMixRecommendation {
+  recommended_mix?: Record<string, number>; // 전용면적 밴드 → 공급배분%
+  dominant_band?: string;
+  rationale?: string;
+  data_source?: DataSource;
+  basis?: string;
+  note?: string;
+}
+
 /** AI 내러티브(LLM 생성). 결정론 영역 외 — 텍스트 한정. */
 export interface MarketNarrative {
   summary?: string;
@@ -166,6 +176,7 @@ export interface MarketReport {
   narrative?: MarketNarrative | null;
   feasibility_analysis?: FeasibilityAnalysis | null;
   pricing_band?: PricingBand | null;
+  unit_mix_recommendation?: UnitMixRecommendation | null;
   /** 신규(옵셔널): 보고서 전체 데이터 출처 상태. */
   data_source?: DataSource;
 }

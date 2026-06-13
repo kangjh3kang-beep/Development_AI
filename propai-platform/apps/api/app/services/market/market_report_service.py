@@ -329,6 +329,14 @@ class MarketReportService:
             income_source=_mi.get("data_source"),
         )
 
+        # ── I6: 수요기반 평형 MD 추천(가구원수 분포 → 권장 전용면적 배분)·결정론 ──
+        from app.services.market.unit_mix_recommender import recommend_unit_mix
+        _pop = (demographics or {}).get("population") or {}
+        unit_mix_recommendation = recommend_unit_mix(
+            _pop.get("household_types"),
+            data_source=_pop.get("data_source"),
+        )
+
         ctx = {
             "address": address,
             "zone_type": zone_type,
@@ -366,6 +374,7 @@ class MarketReportService:
             "narrative": narrative,
             "feasibility_analysis": feasibility,
             "pricing_band": pricing_band,
+            "unit_mix_recommendation": unit_mix_recommendation,
         }
 
     # ── 정적 지도 이미지(OSM 타일 합성, Pillow) ──
