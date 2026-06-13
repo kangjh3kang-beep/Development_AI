@@ -95,6 +95,7 @@ export interface FeasibilityAnalysis {
     total_cost_10k: number;
     net_profit_10k: number;
     roi_percent: number;
+    npv_10k?: number; // 순현재가치(개략·할인 반영)
   };
   assumptions?: {
     avg_pyeong_price_10k: number;
