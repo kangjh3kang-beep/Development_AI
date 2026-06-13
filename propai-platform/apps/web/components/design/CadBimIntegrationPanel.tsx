@@ -18,6 +18,7 @@ import { apiClient, ApiClientError, apiV1BaseUrl } from "@/lib/api-client";
 const DRAWING_LABELS: Record<string, string> = {
   "B-01": "배치도",
   "B-02-UNIT": "단위세대 평면도",
+  "B-02-UNIT-R": "단위세대 평면도(정밀·실배치)",
   "B-02-STD": "기준층 평면도",
   "B-03": "단면도",
   "B-04-F": "정면도",
@@ -1087,8 +1088,10 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
           </div>
         ) : (
           <div className="absolute inset-0 z-30 bg-[#0a0f14] flex flex-col">
-            {/* 상단 바: 도면 선택 드롭다운(공간 최적화) + 편집모드 전환 */}
-            <div className="flex items-center justify-between gap-3 border-b border-white/5 px-6 py-3">
+            {/* 상단 바: 도면 선택 드롭다운(공간 최적화) + 편집모드 전환.
+                pt-16 = 뷰포트 상단 중앙의 플로팅 2D/3D 토글(absolute top-6)과 겹치지 않도록 상단 여백 확보.
+                flex-wrap = 좁은 폭/확대 시 우측 버튼군(내보내기·다듬기)이 토글 위로 올라타지 않게 줄바꿈. */}
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/5 px-6 pt-16 pb-3">
               <label className="flex items-center gap-2">
                 <span className="text-[10px] font-black uppercase tracking-widest text-white/40">도면</span>
                 <select

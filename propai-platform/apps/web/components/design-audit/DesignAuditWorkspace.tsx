@@ -253,7 +253,7 @@ export function DesignAuditWorkspace({ locale }: { locale: Locale }) {
                 <span className="cc-meta">DESIGN · AI AUDIT</span>
                 <span className="cc-chip-data">DA-7</span>
               </div>
-              <h1 className="text-lg font-black text-[var(--text-primary)]">설계안 AI 심사</h1>
+              <h1 className="text-lg font-black text-[var(--text-primary)]">AI 설계분석</h1>
               <p className="mt-0.5 text-xs text-[var(--text-secondary)]">
                 부지·건축개요·도면(IFC·DXF)을 입력하면 법규 적합성(건폐율·용적률·일조·주차·피난)과
                 인근 인허가 사례 비교·인센티브 경로·사각지대를 AI가 사전 심사합니다.
@@ -664,7 +664,7 @@ export function DesignAuditWorkspace({ locale }: { locale: Locale }) {
                         title={!siteReady ? "1단계에서 부지(주소)를 먼저 입력하세요." : undefined}
                         className="rounded-xl bg-[var(--accent-strong)] px-6 py-2.5 text-sm font-black text-white shadow-[var(--shadow-glow)] hover:opacity-90 disabled:opacity-50"
                       >
-                        🏗️ 설계안 AI 심사 실행
+                        🏗️ AI 설계분석 실행
                       </button>
                       {!siteReady && (
                         <span className="text-xs text-[var(--text-hint)]">

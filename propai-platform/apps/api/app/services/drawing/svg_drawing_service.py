@@ -187,9 +187,20 @@ class SVGDrawingService:
             _utype, _uarea, project_name=name, floors=int(fc or 0), total_units=_total_units,
         )
 
-        # B-02-UNIT-R: 결정론 유닛플랜(R3-1) — project_data['unit_plan'] 제공 시에만
-        # 추가 생성(additive). 미제공 시 기존 도면 세트 완전 동일.
+        # B-02-UNIT-R: 결정론 유닛플랜(R3-1) — 실배치(arch_grammar 경계·개구) 기반 엔지니어링 도면.
+        # project_data['unit_plan'] 이 없으면 대표 평형 전용면적으로 결정론 생성기를 호출해
+        # 자동 배선(additive). 생성 실패(면적 범위 밖 등)·룸 부재 시 기존 도면 세트 완전 동일.
         _uplan = project_data.get("unit_plan") or {}
+        if not _uplan.get("rooms") and _units:
+            try:
+                from app.services.cad.unit_plan_generator import (  # noqa: PLC0415
+                    generate_unit_plan as _gen_unit_plan,
+                )
+                _up = _gen_unit_plan(float(_uarea), bays=3)
+                if _up.rooms:
+                    _uplan = {**_up.as_dict(), "unit_type": _utype, "area_sqm": float(_uarea)}
+            except Exception:  # noqa: BLE001 — 범위 밖/룰 미정의 시 엔지니어링 도면 스킵(정직·기존 유지)
+                _uplan = {}
         if _uplan.get("rooms"):
             drawings["B-02-UNIT-R"] = self.generate_unit_plan_rooms(
                 _uplan["rooms"],

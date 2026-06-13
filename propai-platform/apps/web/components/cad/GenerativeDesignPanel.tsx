@@ -1045,6 +1045,15 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
             </div>
           )}
 
+          {/* 부지가 작아 세대 구성이 불가한 경우 — 엔진이 정직하게 0세대로 응답(가짜 세대 금지). */}
+          {alternatives.length > 0 && alternatives.every((a) => (a.summary.total_units ?? 0) === 0) && (
+            <div className="rounded-2xl border border-[var(--status-warning)]/40 bg-[var(--status-warning)]/10 p-4 text-[12px] font-bold leading-relaxed text-[var(--status-warning)]" role="status">
+              ⚠ 현재 대지면적·용도지역·선호 평형으로는 세대 구성이 어렵습니다(전 설계안 0세대).
+              대지면적을 키우거나, 더 작은 평형(예: 29A·39A)을 선택하거나, 용적률·세대수 목표를 조정해 다시 생성해 보세요.
+              <span className="mt-1 block text-[10px] font-bold text-[var(--text-hint)]">가짜 세대수를 만들지 않고 정직하게 표기합니다.</span>
+            </div>
+          )}
+
           {/* Top3 카드 */}
           {alternatives.length > 0 ? (
             <div className="grid gap-3" role="group" aria-label="Top3 설계안">
