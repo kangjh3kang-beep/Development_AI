@@ -238,7 +238,14 @@ class MarketReportService:
                 #   (과거 use_mock=True 하드코딩으로 키가 있어도 항상 Mock만 나오던 G1 결함 제거)
                 #   키가 있으면 실데이터 시도→data_source='live', 없으면 폴백→'fallback'/'mock'/'unavailable'.
                 async def fetch_mig():
-                    return await sgis.get_migration_stats(lawd_cd, cur_year) if use_sgis else {"target_adm_cd": lawd_cd, "year": cur_year}
+                    if not use_sgis:
+                        return {"target_adm_cd": lawd_cd, "year": cur_year}
+                    # I2: 인구이동(OD)은 SGIS 미제공 → KOSIS 국내인구이동통계 우선 시도.
+                    #     데이터 있으면 전출지별 유입 Top, 없으면 SGIS 정직 unavailable 폴백(가짜 금지).
+                    od = await kosis.get_migration_od(lawd_cd[:5], cur_year)
+                    if od.get("top_inflow_regions"):
+                        return od
+                    return await sgis.get_migration_stats(lawd_cd, cur_year)
                 async def fetch_pop():
                     return await sgis.get_population_stats(lawd_cd, cur_year) if use_sgis else {"target_adm_cd": lawd_cd, "year": cur_year}
                 async def fetch_inc():
