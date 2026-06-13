@@ -10,6 +10,7 @@ import { useCallback, useEffect, useState } from "react";
 import { salesApi } from "@/lib/salesApi";
 import { apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import FairPriceSuggestCard from "@/components/sales/FairPriceSuggestCard";
 
 type UnitType = { id: string; type_name: string };
 type Base = { id?: string; round_id: string; type_id: string; basis: string; base_unit_price: number; base_area_kind?: string; round_factor?: number };
@@ -102,6 +103,14 @@ export default function PricingConfigPanel({
       </button>
       {open && (
         <div className="space-y-5 border-t border-[var(--line)] p-4">
+          {/* ⓪ 적정분양가 추천(주변 실거래 교차검증) → 채택 시 전 타입 기준단가(㎡당) 일괄 반영 */}
+          <FairPriceSuggestCard siteCode={siteCode} onAdopt={async (perSqmWon, label) => {
+            if (types.length === 0) { flash("타입이 없습니다. 먼저 동·호표를 생성하세요."); return; }
+            for (const t of types) await saveBase(t.id, perSqmWon, "PER_AREA");
+            await load();
+            flash(`적정분양가(${label}) 기준단가 ㎡당 ${perSqmWon.toLocaleString()}원 — 전 타입 반영`);
+          }} />
+
           {/* 기준가 */}
           <div>
             <p className="mb-2 text-xs font-bold text-[var(--text-secondary)]">① 기준가 (타입별 단가)</p>

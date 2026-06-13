@@ -127,6 +127,19 @@ async def suggest_base_price(
         conv = pnu_to_bcode(pnu)
         lawd = conv[0] if conv else None
     if not lawd:
+        # 프로젝트에 PNU가 없으면 주소를 VWorld로 지오코딩해 PNU→법정동코드 유도(자체 충족).
+        try:
+            from app.services.external_api.vworld_service import VWorldService
+            geo = await VWorldService().geocode_address(address)
+            gp = (geo or {}).get("pnu") or ""
+            if len(gp) >= 19:
+                conv = pnu_to_bcode(gp)
+                lawd = conv[0] if conv else None
+            elif len(gp) >= 10:
+                lawd = gp[:10]
+        except Exception:  # noqa: BLE001
+            lawd = None
+    if not lawd:
         return {"data_source": "unavailable", "address": address,
                 "note": "법정동코드(bcode)를 확보하지 못했습니다 — 부지분석에서 주소를 확정하거나 bcode를 전달하세요."}
 

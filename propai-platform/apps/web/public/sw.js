@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v156-unitgen-resilient";
+const CACHE_NAME = "propai-v157-fairprice-card";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",
