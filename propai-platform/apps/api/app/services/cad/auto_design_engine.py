@@ -102,6 +102,19 @@ class SiteInput:
     # (라우터에서 법정 한도로 1차 클램프, 엔진에서 한 번 더 min — 이중 안전).
     target_far_percent: float | None = None
     target_bcr_percent: float | None = None
+    # 매스 형상(옵셔널·additive). None="auto"(대지 종횡비 기반 — 기존 동작 불변).
+    # 명시 시 형상별 종횡비·플로어플레이트 계수로 매스를 재산출(결정론).
+    massing_kind: str | None = None
+
+
+# 매스 형상 정의 — aspect=전면/깊이 비, fp_factor=최대 건축면적 대비 플로어플레이트 계수.
+# 결정론 규칙(LLM 0): 타워형은 작은 플로어플레이트로 더 높이, 판상형은 넓고 얕게.
+MASSING_FORMS: dict[str, dict[str, Any]] = {
+    "slab": {"label": "판상형", "aspect": 2.6, "fp_factor": 1.0},
+    "tower": {"label": "타워형", "aspect": 1.0, "fp_factor": 0.55},
+    "lshape": {"label": "ㄱ자형", "aspect": 1.7, "fp_factor": 0.82},
+    "court": {"label": "중정형", "aspect": 1.2, "fp_factor": 0.70},
+}
 
 
 @dataclass
@@ -313,6 +326,18 @@ class AutoDesignEngineService:
             building_w = 0
             building_d = 0
 
+        # 매스 형상(opt-in·additive): massing_kind 명시 시 형상별 종횡비·플로어플레이트로
+        # 폭/깊이를 재산출(대지 유효치 내 클램프). None이면 위 기본 동작 그대로(하위호환).
+        mk = getattr(site_input, "massing_kind", None)
+        form = MASSING_FORMS.get(mk) if mk else None
+        if form and eff_w * eff_d > 0 and building_footprint > 0:
+            target_fp = building_footprint * form["fp_factor"]
+            aspect = form["aspect"]
+            raw_d = math.sqrt(target_fp / aspect) if aspect > 0 else 0.0
+            raw_w = aspect * raw_d
+            building_w = round(min(raw_w, eff_w), 1)
+            building_d = round(min(raw_d, eff_d), 1)
+
         actual_footprint = building_w * building_d
 
         # 용적률 제약 → 최대 연면적 → 최대 층수
@@ -405,6 +430,9 @@ class AutoDesignEngineService:
                 if max_height_by_sunlight is not None
                 else None
             ),
+            # 매스 형상 출처(정직 표기) — 유효 형상이 적용된 경우만 그 이름, 아니면 auto.
+            "massing_kind": (mk if form else "auto"),
+            "massing_label": (form["label"] if form else "자동(대지비율)"),
         }
         if north_step_profile is not None:
             result["north_step_profile"] = north_step_profile
@@ -740,6 +768,8 @@ class AutoDesignEngineService:
 
         summary = {
             "building_area_sqm": mass["building_footprint_sqm"],
+            "building_width_m": mass["building_width_m"],
+            "building_depth_m": mass["building_depth_m"],
             "total_floor_area_sqm": mass["total_floor_area_sqm"],
             "num_floors": mass["num_floors"],
             "building_height_m": mass["building_height_m"],
@@ -752,6 +782,9 @@ class AutoDesignEngineService:
             "binding_constraint": mass.get("binding_constraint", "far"),
             # W-A ③: 세대 성립 여부 정직 표기 (False면 total_units=0)
             "units_feasible": unit_layout.get("units_feasible", True),
+            # 매스 형상 출처(정직 표기) — auto면 대지 종횡비 기반.
+            "massing_kind": mass.get("massing_kind", "auto"),
+            "massing_label": mass.get("massing_label", "자동(대지비율)"),
         }
         if not unit_layout.get("units_feasible", True):
             summary["units_note"] = unit_layout.get("infeasible_reason", "세대 성립 불가")
