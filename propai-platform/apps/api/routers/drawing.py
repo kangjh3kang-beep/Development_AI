@@ -147,6 +147,14 @@ class DesignAlternativesRequest(BaseModel):
     use_references: bool = Field(
         False, description="유사 참조 사례 기하 반영(종횡비 주입) — 기본 False(하위호환)",
     )
+    # §4-B 조례(opt-in). True+address면 지자체 도시계획조례 실효 한도(OrdinanceService)를
+    # min(법정, 조례, 목표)로 반영. 기본 False=법정상한 기준(하위호환·외부 조회 안 함).
+    use_ordinance: bool = Field(
+        False, description="지자체 조례 실효 한도 반영(법제처 API) — 기본 False(법정상한)",
+    )
+    address: Optional[str] = Field(
+        None, description="대지 주소(조례 조회용 — use_ordinance=True 시 지자체 추출에 사용)",
+    )
 
 
 class AutoDesignRequest(BaseModel):
@@ -181,6 +189,14 @@ class AutoDesignRequest(BaseModel):
     # 기본 False=기존 동작 완전 불변·DB 미접근(하위호환). 명시 massing_kind이 참조보다 우선.
     use_references: bool = Field(
         False, description="유사 참조 사례 기하 반영(종횡비 주입) — 기본 False(하위호환)",
+    )
+    # §4-B 조례(opt-in). True+address면 지자체 도시계획조례 실효 한도(OrdinanceService)를
+    # min(법정, 조례, 목표)로 반영. 기본 False=법정상한 기준(하위호환·외부 조회 안 함).
+    use_ordinance: bool = Field(
+        False, description="지자체 조례 실효 한도 반영(법제처 API) — 기본 False(법정상한)",
+    )
+    address: Optional[str] = Field(
+        None, description="대지 주소(조례 조회용 — use_ordinance=True 시 지자체 추출에 사용)",
     )
 
 
@@ -272,6 +288,87 @@ def _reference_response_block(ref_result: Optional[dict]) -> Optional[dict]:
     if ref_result is None:
         return None
     return {k: v for k, v in ref_result.items() if k != "hint"}
+
+
+def _zone_type_for_ordinance(zone_code: str) -> Optional[str]:
+    """엔진 용도지역 코드(2R 등) → OrdinanceService 한글 zone_type(제2종일반주거지역).
+
+    design_spec.ZONE_LABELS(코드→한글) + '지역' 접미사. 미지정 코드는 None(가짜 매핑 금지).
+    """
+    try:
+        from app.services.cad.design_spec import ZONE_LABELS
+    except ImportError:
+        return None
+    label = ZONE_LABELS.get(zone_code)
+    return f"{label}지역" if label else None
+
+
+async def _ordinance_limits(
+    use_ordinance: bool,
+    *,
+    address: Optional[str],
+    zone_code: str,
+) -> Optional[dict]:
+    """§4-B: use_ordinance=True일 때 지자체 도시계획조례 실효 한도를 조회한다.
+
+    OrdinanceService(법제처 API→캐시→법정상한)로 effective_bcr/far를 받아 엔진 SiteInput에
+    주입할 형태로 반환한다. 반환: None(opt-out) 또는 {used, ordinance_bcr_percent,
+    ordinance_far_percent, source, legal_basis, sigungu, note}. 조례 미보유·주소 미제공·조회
+    실패는 used=False + 사유로 정직 표기(법정상한 적용 — 설계는 계속 진행). 침묵 금지.
+    """
+    if not use_ordinance:
+        return None
+    zone_type = _zone_type_for_ordinance(zone_code)
+    if not zone_type:
+        return {"used": False, "ordinance_bcr_percent": None, "ordinance_far_percent": None,
+                "source": None, "note": f"용도지역 코드 '{zone_code}' 한글 매핑 없음 — 조례 미반영(법정상한)"}
+    if not (address and address.strip()):
+        return {"used": False, "ordinance_bcr_percent": None, "ordinance_far_percent": None,
+                "source": None, "note": "주소 미제공 — 지자체 조례 조회 불가(법정상한)"}
+    try:
+        from app.services.land_intelligence.ordinance_service import OrdinanceService
+
+        result = await OrdinanceService().get_ordinance_limits(address.strip(), zone_type)
+    except Exception as exc:  # noqa: BLE001 — 조회 실패가 설계 산출을 막지 않게(로그+정직 표기)
+        # 상세 예외는 로그에만(내부 경로·키 단편이 응답에 새지 않게), 응답 note는 일반화.
+        logger.warning("조례 한도 조회 실패: %s", exc, exc_info=True)
+        return {"used": False, "ordinance_bcr_percent": None, "ordinance_far_percent": None,
+                "source": None, "note": "조례 조회 일시 실패 — 법정상한 적용"}
+
+    # 정직성: 엔진 법정 한도(SSOT)로 정규화 — 조례 실효값이 엔진 법정을 넘지 않게 클램프하고,
+    # 조례가 '실제로 더 제약'(법정 미만)할 때만 used=True·주입(법정 이상이면 무의미 → 미적용).
+    # 이유: 엔진 ZONE_LIMITS와 OrdinanceService NATIONAL_LIMITS의 법정값이 달라(2R far 200 vs 250)
+    # 그대로 싣으면 basis에 '조례>법정'이 호도적으로 기록되기 때문(한도 안전엔 무영향, 표기 정직).
+    eng = auto_design_engine.get_legal_limits(zone_code)
+    stat_bcr = float(eng["max_bcr_percent"])
+    stat_far = float(eng["max_far_percent"])
+    eff_bcr = result.get("effective_bcr")
+    eff_far = result.get("effective_far")
+    norm_bcr = min(float(eff_bcr), stat_bcr) if eff_bcr else None
+    norm_far = min(float(eff_far), stat_far) if eff_far else None
+    bcr_constrains = norm_bcr is not None and norm_bcr < stat_bcr - 1e-9
+    far_constrains = norm_far is not None and norm_far < stat_far - 1e-9
+    used = bcr_constrains or far_constrains
+    return {
+        "used": used,
+        "ordinance_bcr_percent": norm_bcr if bcr_constrains else None,
+        "ordinance_far_percent": norm_far if far_constrains else None,
+        "source": result.get("source"),
+        "legal_basis": result.get("legal_basis"),
+        "sigungu": result.get("sigungu"),
+        "note": ("지자체 조례 실효 한도 적용(법정 이하)" if used
+                 else "해당 지자체 조례가 법정상한을 더 제약하지 않음 — 법정상한 적용"),
+    }
+
+
+def _apply_ordinance(site_input, ord_result: Optional[dict]) -> None:
+    """조례 조회 결과를 SiteInput에 주입(값 있을 때만). 엔진이 min(법정,조례,목표) 적용."""
+    if not ord_result:
+        return
+    if ord_result.get("ordinance_bcr_percent"):
+        site_input.ordinance_bcr_percent = ord_result["ordinance_bcr_percent"]
+    if ord_result.get("ordinance_far_percent"):
+        site_input.ordinance_far_percent = ord_result["ordinance_far_percent"]
 
 
 # ── 엔드포인트 ──
@@ -632,6 +729,11 @@ async def design_alternatives(req: DesignAlternativesRequest):
     )
     if ref_result and ref_result.get("hint"):
         site_input.reference_mass = ref_result["hint"]
+    # §4-B 조례: 법적 한도이므로 전 대안(A/B/C)에 적용 — generate_alternatives가 B/C에 전파.
+    ord_result = await _ordinance_limits(
+        req.use_ordinance, address=req.address, zone_code=req.zone_code,
+    )
+    _apply_ordinance(site_input, ord_result)
     results = auto_design_engine.generate_alternatives(site_input, count=req.count)
     legal = auto_design_engine.get_legal_limits(req.zone_code)
 
@@ -666,6 +768,8 @@ async def design_alternatives(req: DesignAlternativesRequest):
     ref_block = _reference_response_block(ref_result)
     if ref_block is not None:  # additive — use_references=True일 때만(정직)
         resp["reference"] = ref_block
+    if ord_result is not None:  # additive — use_ordinance=True일 때만(정직)
+        resp["ordinance"] = ord_result
     return resp
 
 
@@ -702,6 +806,11 @@ async def auto_design(req: AutoDesignRequest):
     )
     if ref_result and ref_result.get("hint"):
         site_input.reference_mass = ref_result["hint"]
+    # §4-B 조례: use_ordinance=True면 지자체 조례 실효 한도를 min(법정,조례,목표)로 반영.
+    ord_result = await _ordinance_limits(
+        req.use_ordinance, address=req.address, zone_code=req.zone_code,
+    )
+    _apply_ordinance(site_input, ord_result)
     result = auto_design_engine.generate(site_input)
     unit_mix = _unit_mix_for(result.summary)
     resp = {
@@ -714,6 +823,8 @@ async def auto_design(req: AutoDesignRequest):
     ref_block = _reference_response_block(ref_result)
     if ref_block is not None:  # additive — use_references=True일 때만 노출(정직)
         resp["reference"] = ref_block
+    if ord_result is not None:  # additive — use_ordinance=True일 때만(정직)
+        resp["ordinance"] = ord_result
     return resp
 
 

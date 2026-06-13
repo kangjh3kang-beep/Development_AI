@@ -113,6 +113,21 @@ export type AutoDesignRequest = {
   massing_kind?: string | null;
   /** §4-B: 유사 참조 사례 기하(종횡비) 반영. 미지정/false=미적용 — 가산·하위호환. */
   use_references?: boolean;
+  /** §4-B: 지자체 조례 실효 한도 반영(법제처 API). 미지정/false=법정상한 — 가산·하위호환. */
+  use_ordinance?: boolean;
+  /** §4-B: 조례 조회용 대지 주소(use_ordinance=true 시 지자체 추출). */
+  address?: string | null;
+};
+
+/** §4-B: 지자체 조례 실효 한도 조회 결과(정직 — 미반영/실패 시 used=false+사유). */
+export type OrdinanceBlock = {
+  used: boolean;
+  ordinance_bcr_percent?: number | null;
+  ordinance_far_percent?: number | null;
+  source?: string | null; // 법제처API | 지자체 조례 | 법정상한
+  legal_basis?: string | null;
+  sigungu?: string | null;
+  note?: string;
 };
 
 /**
@@ -187,6 +202,8 @@ export type AutoDesignResponse = {
   compliance: AutoDesignCompliance;
   /** §4-B: use_references=true일 때만 — 유사사례 조회 결과(정직 요약). */
   reference?: ReferenceResultBlock;
+  /** §4-B: use_ordinance=true일 때만 — 지자체 조례 조회 결과(정직). */
+  ordinance?: OrdinanceBlock;
   /** auto-design 응답의 법정 한도(슬라이더·주석 배치도 한도값). 구버전엔 부재 — 옵셔널. */
   legal_limits?: LegalLimitsResponse;
 };
@@ -272,6 +289,8 @@ export type DesignAlternativesV2Response = {
   recommended_index: number;
   /** §4-B: use_references=true일 때만 — 유사사례 조회 결과(A 대안에 참조 비례 적용). */
   reference?: ReferenceResultBlock;
+  /** §4-B: use_ordinance=true일 때만 — 조례 조회 결과(전 대안에 법적 한도 적용). */
+  ordinance?: OrdinanceBlock;
 };
 
 export type ComplianceViolation = {

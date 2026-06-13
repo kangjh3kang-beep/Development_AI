@@ -102,6 +102,11 @@ class SiteInput:
     # (라우터에서 법정 한도로 1차 클램프, 엔진에서 한 번 더 min — 이중 안전).
     target_far_percent: float | None = None
     target_bcr_percent: float | None = None
+    # §4-B 조례: 지자체 도시계획조례 실효 한도(%). 라우터가 OrdinanceService(법제처 API→캐시→
+    # 법정상한)로 조회해 주입한다. 적용은 min(법정, 조례, 목표) — 조례가 법정을 넘으면 법정으로
+    # 클램프(가짜 상향 금지). None=조례 미반영(법정상한 기준 — 기존 동작 불변).
+    ordinance_bcr_percent: float | None = None
+    ordinance_far_percent: float | None = None
     # 매스 형상(옵셔널·additive). None="auto"(대지 종횡비 기반 — 기존 동작 불변).
     # 명시 시 형상별 종횡비·플로어플레이트 계수로 매스를 재산출(결정론).
     massing_kind: str | None = None
@@ -279,13 +284,22 @@ class AutoDesignEngineService:
     ) -> tuple[float, float]:
         """적용 한도(%)를 반환한다 — (건폐율, 용적률).
 
-        W-A ④: 목표(target_bcr/far_percent)가 있으면 min(법정, 목표). 목표가 법정을
-        넘으면 법정값으로 클램프(가짜 한도 상향 금지). None/0 이하는 법정 그대로.
+        적용 우선순위: min(법정, 조례, 목표). 조례(ordinance_*)·목표(target_*)가 법정을
+        넘으면 법정값으로 클램프(가짜 한도 상향 금지). None/0 이하는 해당 단계 생략.
+        조례는 §4-B(지자체 도시계획조례 실효 한도), 목표는 W-A ④(슬라이더 의도값).
         """
         max_bcr = legal["max_bcr_percent"]
         max_far = legal["max_far_percent"]
+        ord_bcr = getattr(site_input, "ordinance_bcr_percent", None)
+        ord_far = getattr(site_input, "ordinance_far_percent", None)
         target_bcr = getattr(site_input, "target_bcr_percent", None)
         target_far = getattr(site_input, "target_far_percent", None)
+        # §4-B: 조례 실효 한도(법정 이하로만)
+        if ord_bcr is not None and ord_bcr > 0:
+            max_bcr = min(max_bcr, ord_bcr)
+        if ord_far is not None and ord_far > 0:
+            max_far = min(max_far, ord_far)
+        # W-A ④: 목표 설계강도
         if target_bcr is not None and target_bcr > 0:
             max_bcr = min(max_bcr, target_bcr)
         if target_far is not None and target_far > 0:
@@ -892,6 +906,9 @@ class AutoDesignEngineService:
                 "max_far_percent": mass.get("applied_max_far_pct", legal["max_far_percent"]),
                 "statutory_max_bcr_percent": legal["max_bcr_percent"],
                 "statutory_max_far_percent": legal["max_far_percent"],
+                # §4-B 조례 실효 한도(정직 — 법정·목표와 구분). 미반영 시 None.
+                "ordinance_bcr_percent": getattr(site_input, "ordinance_bcr_percent", None),
+                "ordinance_far_percent": getattr(site_input, "ordinance_far_percent", None),
                 "target_bcr_percent": getattr(site_input, "target_bcr_percent", None),
                 "target_far_percent": getattr(site_input, "target_far_percent", None),
             },
@@ -980,6 +997,8 @@ class AutoDesignEngineService:
                 daylight_step=site_input.daylight_step,
                 target_far_percent=site_input.target_far_percent,
                 target_bcr_percent=site_input.target_bcr_percent,
+                ordinance_far_percent=site_input.ordinance_far_percent,
+                ordinance_bcr_percent=site_input.ordinance_bcr_percent,
                 massing_kind="tower",  # §4-A②: 타워형 — 작은 플로어플레이트로 더 높이(최대 세대수)
             )
             result_b = self.generate(input_b)
@@ -1002,6 +1021,8 @@ class AutoDesignEngineService:
                 daylight_step=site_input.daylight_step,
                 target_far_percent=site_input.target_far_percent,
                 target_bcr_percent=site_input.target_bcr_percent,
+                ordinance_far_percent=site_input.ordinance_far_percent,
+                ordinance_bcr_percent=site_input.ordinance_bcr_percent,
                 massing_kind="lshape",  # §4-A②: ㄱ자형 — 채광·소음차폐 배치(최적 일조)
             )
             result_c = self.generate(input_c)
