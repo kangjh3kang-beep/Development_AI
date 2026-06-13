@@ -103,6 +103,22 @@ class ExportDxfRequest(BaseModel):
     drawing_type: str = "floor_plan"
 
 
+class ExportIfcRequest(BaseModel):
+    """§4-E: 설계 매스를 IFC4(.ifc)로 내보내기 — build_ifc_from_mass 입력(파라미터→IFC)."""
+
+    building_width_m: float = Field(..., gt=0)
+    building_depth_m: float = Field(..., gt=0)
+    num_floors: int = Field(1, ge=1)
+    floor_height_m: float = Field(3.0, gt=0)
+    project_name: str = Field("PropAI Project")
+    # 실내 요소(옵셔널) — 있으면 코어/복도/창 압출. 미제공 시 매스 셸만(하위호환).
+    core_positions: Optional[list[dict]] = Field(None, description="코어 중심 [{x,y}]")
+    core_size_m: float = Field(5.0, ge=0)
+    corridor_width_m: float = Field(0.0, ge=0)
+    windows_per_side: int = Field(0, ge=0)
+    unit_width_m: float = Field(0.0, ge=0)
+
+
 class DesignAlternativesRequest(BaseModel):
     site_area_sqm: float = Field(..., gt=0)
     zone_code: str = "2R"
@@ -362,6 +378,76 @@ async def export_dxf(req: ExportDxfRequest):
         content=dxf_bytes,
         media_type="application/dxf",
         headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
+def _ascii_filename(name: str, fallback: str = "design") -> str:
+    """ASCII 안전 파일명 — HTTP 헤더(latin-1)용. 비-ASCII·경로/특수문자 제거."""
+    import re
+
+    cleaned = re.sub(r"[^0-9A-Za-z._-]+", "_", (name or "").strip()).strip("._")
+    return cleaned[:80] or fallback
+
+
+def _content_disposition(name: str, ext: str) -> str:
+    """다운로드 Content-Disposition — ASCII filename + RFC 5987 filename*(유니코드 보존).
+
+    HTTP 헤더는 latin-1만 허용하므로 한글 등은 filename=에 못 싣는다. ASCII 폴백 파일명과
+    함께 filename*=UTF-8''<percent-encoded>로 원래 이름을 보존한다(헤더 주입·경로탈출 방지).
+    """
+    import re
+    from urllib.parse import quote
+
+    ascii_fn = f"{_ascii_filename(name)}.{ext}"
+    raw = re.sub(r'[\\/\x00-\x1f"]+', "_", (name or "").strip()) or "design"
+    utf8_fn = quote(f"{raw}.{ext}", safe="")
+    return f'attachment; filename="{ascii_fn}"; filename*=UTF-8\'\'{utf8_fn}'
+
+
+@router.post("/export-ifc", response_class=Response)
+async def export_ifc(req: ExportIfcRequest):
+    """§4-E: 설계 매스를 IFC4(.ifc) 파일로 내보낸다 — BIM 저작도구용 export.
+
+    파라미터→IFC 생성(build_ifc_from_mass)을 다운로드 가능한 STEP(.ifc)로 반환한다.
+    LLM·DB·부작용 없는 순수 산출이라 무인증(`/drawing/export-dxf`와 동일 패턴 — param-based).
+    Revit/ArchiCAD 등 BIM 저작도구에서 열 수 있다.
+
+    정직: 기하·구조는 결정론(동일 입력=동일 기하)이나, IFC GlobalId·STEP 타임스탬프는 IFC
+    표준상 매 생성 고유하므로 **bytes는 재현되지 않는다**. ifcopenshell 미설치 시 501(의존성
+    누락), 입력 오류 시 400. ※project 저장본 기반 export는 `/design/{id}/bim/export-ifc` 별도.
+    """
+    try:
+        from app.services.bim.ifc_generator_service import build_ifc_from_mass
+    except ImportError as exc:  # 모듈 자체 로드 실패
+        raise HTTPException(status_code=501, detail=f"IFC 생성 모듈 누락: {exc}") from exc
+
+    mass = {
+        "building_width_m": req.building_width_m,
+        "building_depth_m": req.building_depth_m,
+        "num_floors": req.num_floors,
+        "floor_height_m": req.floor_height_m,
+        "core_positions": req.core_positions,
+        "core_size_m": req.core_size_m,
+        "corridor_width_m": req.corridor_width_m,
+        "windows_per_side": req.windows_per_side,
+        "unit_width_m": req.unit_width_m,
+    }
+    try:
+        ifc_bytes = build_ifc_from_mass(mass, project_name=req.project_name)
+    except ImportError as exc:  # ifcopenshell 미설치(생성 호출 시점)
+        raise HTTPException(
+            status_code=501, detail=f"IFC 생성 의존성(ifcopenshell) 누락: {exc}",
+        ) from exc
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"IFC 생성 입력 오류: {e}") from e
+    except Exception as e:  # noqa: BLE001
+        logger.error("IFC 생성 중 오류: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail="IFC 생성 중 오류가 발생했습니다") from e
+
+    return Response(
+        content=ifc_bytes,
+        media_type="application/x-step",  # IFC SPF = STEP Physical File
+        headers={"Content-Disposition": _content_disposition(req.project_name, "ifc")},
     )
 
 

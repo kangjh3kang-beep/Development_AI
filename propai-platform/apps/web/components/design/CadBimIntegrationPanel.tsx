@@ -297,6 +297,8 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
   // P4: 세대믹스 시뮬레이터가 "평면 반영"한 명시 믹스(타입:면적:총세대). 도면 SVG에 mix= 로 전달.
   const [appliedMix, setAppliedMix] = useState<string | null>(null);
   const [dxfBusy, setDxfBusy] = useState(false);
+  // §4-E: IFC(.ifc) 내보내기 진행 상태 — BIM 저작도구(Revit/ArchiCAD)용 export.
+  const [ifcBusy, setIfcBusy] = useState(false);
   // DXF 내보내기 도면종류(평면/상세/단면/입면/배치) — design_v61 export-dxf drawing_type.
   const [dxfType, setDxfType] = useState<string>("floor_plan");
   // 편집모드 정점 드래그가 통지한 라이브 메트릭(footprint·매스치수) — 라이브 수지에 즉시 반영.
@@ -718,6 +720,42 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
     }
   }, [projectId, spec, dxfType]);
 
+  // §4-E: IFC(.ifc) 내보내기 — 설계 매스를 IFC4 STEP 파일로 다운로드(BIM 저작도구 호환).
+  // /drawing/export-ifc(파라미터→build_ifc_from_mass·DB-free)를 호출해 blob 다운로드.
+  const exportIfc = useCallback(async () => {
+    if (!spec) return;
+    setIfcBusy(true);
+    try {
+      const base = apiV1BaseUrl();
+      const res = await fetch(`${base}/drawing/export-ifc`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          building_width_m: spec.building_width_m,
+          building_depth_m: spec.building_depth_m,
+          num_floors: spec.floor_count,
+          floor_height_m: spec.floor_height_m ?? 3.0,
+          project_name: spec.project_name ?? "PropAI",
+        }),
+        signal: AbortSignal.timeout(60000),
+      });
+      if (!res.ok) throw new Error(String(res.status));
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${spec.project_name || "PropAI"}.ifc`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      /* 다운로드 실패는 무시(사용자는 재시도 가능) */
+    } finally {
+      setIfcBusy(false);
+    }
+  }, [spec]);
+
   // 생성 UX(Phase 2)에서 설계안 적용 시 — 파생 기하·도면·3D를 초기화해
   // 새 SSOT(designData)로 spec을 재산출하고 2D/3D를 재생성한다(기존 로드 경로 재사용).
   const handleGeneratedApplied = useCallback(() => {
@@ -1131,6 +1169,15 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
                   className="rounded-full border border-white/10 px-4 py-2 text-[10px] font-black uppercase tracking-widest text-white/70 hover:bg-white/5 disabled:opacity-50"
                 >
                   {dxfBusy ? "내보내는 중…" : "⬇ DXF(캐드) 내보내기"}
+                </button>
+                {/* §4-E: IFC(.ifc) 내보내기 — Revit/ArchiCAD 등 BIM 저작도구 호환(read-only 해소) */}
+                <button
+                  onClick={exportIfc}
+                  disabled={ifcBusy || !spec}
+                  title="Revit·ArchiCAD 등 BIM 저작도구에서 열 수 있는 IFC4(.ifc) 모델로 내보냅니다"
+                  className="rounded-full border border-white/10 px-4 py-2 text-[10px] font-black uppercase tracking-widest text-white/70 hover:bg-white/5 disabled:opacity-50"
+                >
+                  {ifcBusy ? "내보내는 중…" : "⬇ IFC(BIM) 내보내기"}
                 </button>
                 {/* ③ 도면 다듬기 CTA — 편집모드 직행(쉬운 모드 동선) */}
                 <button
