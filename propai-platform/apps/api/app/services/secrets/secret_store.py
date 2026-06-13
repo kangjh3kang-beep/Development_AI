@@ -184,17 +184,47 @@ async def _ensure_table(db: AsyncSession) -> None:
     await db.commit()
 
 
+def _fernet_key_from_material(material: str) -> bytes:
+    """임의 문자열 → 유효한 Fernet 키(bytes). 이미 유효한 Fernet 키면 그대로, 아니면 SHA256 파생.
+
+    SECRET_STORE_KEY 로 아무 문자열(또는 정식 Fernet 키)을 줘도 생성 단계 예외 없이 동작하게 한다.
+    (과거: raw.encode() 가 정식 포맷이 아니면 Fernet() 생성 시 예외)
+    """
+    from cryptography.fernet import Fernet
+
+    b = material.encode()
+    try:
+        Fernet(b)  # 이미 정식 Fernet 키(32B urlsafe base64)면 그대로 사용(하위호환)
+        return b
+    except Exception:  # noqa: BLE001 — 정식 키가 아니면 결정적 파생
+        return base64.urlsafe_b64encode(hashlib.sha256(b).digest())
+
+
+def master_key_status() -> dict[str, Any]:
+    """현재 시크릿 마스터키의 출처와 안정성을 보고한다(평문 미노출).
+
+    안정(stable)=True 는 전용 SECRET_STORE_KEY 사용 시에만. APP_SECRET_KEY/JWT_SECRET_KEY/
+    하드코딩 폴백은 로테이션·재배포·블루그린 인스턴스에 따라 바뀔 수 있어 unstable.
+    """
+    if os.getenv("SECRET_STORE_KEY"):
+        return {"source": "SECRET_STORE_KEY", "stable": True}
+    for src in ("APP_SECRET_KEY", "JWT_SECRET_KEY"):
+        if os.getenv(src):
+            return {"source": src, "stable": False,
+                    "warning": (f"마스터키가 {src}에서 파생됨 — 이 값은 로테이션/재배포 시 바뀌어 "
+                                "기존 시크릿 복호화가 깨질 수 있음. 전용 SECRET_STORE_KEY 고정 권장.")}
+    return {"source": "hardcoded-fallback", "stable": False,
+            "warning": "SECRET_STORE_KEY·APP_SECRET_KEY 미설정 — 하드코딩 폴백 사용(운영 부적합)."}
+
+
 def _fernet():
     from cryptography.fernet import Fernet
 
     raw = os.getenv("SECRET_STORE_KEY")
     if raw:
-        key = raw.encode()
-    else:
-        base = (os.getenv("APP_SECRET_KEY") or os.getenv("JWT_SECRET_KEY")
-                or "propai-secret-store-fallback").encode()
-        key = base64.urlsafe_b64encode(hashlib.sha256(base).digest())
-    return Fernet(key)
+        return Fernet(_fernet_key_from_material(raw))
+    base = os.getenv("APP_SECRET_KEY") or os.getenv("JWT_SECRET_KEY") or "propai-secret-store-fallback"
+    return Fernet(_fernet_key_from_material(base))
 
 
 def _encrypt(value: str) -> str:
@@ -252,9 +282,13 @@ async def _snapshot_existing(db: AsyncSession, name: str, action: str) -> bool:
 
 
 async def load_into_env(db: AsyncSession) -> int:
-    """DB의 시크릿을 복호화해 os.environ 에 오버레이(앱 시작 시 1회). 적용 개수 반환."""
+    """DB의 시크릿을 복호화해 os.environ 에 오버레이(앱 시작 시 1회). 적용 개수 반환.
+
+    복호화 실패(마스터키 불일치) 건수와 마스터키 안정성을 함께 진단·경고한다.
+    """
     _capture_baseline()
     n = 0
+    failed = 0
     try:
         await _ensure_table(db)
         rows = (await db.execute(text("SELECT name, value_enc FROM platform_secrets"))).all()
@@ -265,11 +299,53 @@ async def load_into_env(db: AsyncSession) -> int:
             if val is not None:
                 os.environ[name] = val
                 n += 1
+            else:
+                failed += 1
     except Exception as e:  # noqa: BLE001
         logger.warning("시크릿 env 로드 실패", err=str(e)[:120])
     if n:
         logger.info("플랫폼 시크릿 env 오버레이 적용", count=n)
+    # 마스터키 불일치 진단: 복호화 실패가 있으면 근본원인(마스터키 변경) 경고.
+    if failed:
+        st = master_key_status()
+        logger.error(
+            "시크릿 복호화 실패 — 마스터키 불일치(저장 시점 키 ≠ 현재 키)",
+            failed=failed, applied=n, key_source=st.get("source"), key_stable=st.get("stable"),
+            hint="전용 SECRET_STORE_KEY 고정 후 실패분 재입력 필요(또는 옛 키로 reencrypt_all 마이그레이션).",
+        )
+    # 운영에서 전용 마스터키 미고정 시 경고(APP_SECRET_KEY 로테이션에 얹히는 위험 구조).
+    if not master_key_status().get("stable"):
+        logger.warning("시크릿 마스터키 미고정", **master_key_status())
     return n
+
+
+async def reencrypt_all(db: AsyncSession, old_key_material: str) -> dict[str, int]:
+    """키 회전 마이그레이션 — 옛 마스터키로 복호화 후 현재 마스터키로 재암호화한다.
+
+    old_key_material: 과거 SECRET_STORE_KEY 또는 옛 APP_SECRET_KEY 값(파생 동일 규칙 적용).
+    현재 _fernet()(가급적 새 SECRET_STORE_KEY 고정 상태)로 재암호화해 DB를 갱신한다.
+    반환: {total, recovered, skipped}. recovered=옛 키로 복호화 성공해 재암호화한 건수.
+    """
+    from cryptography.fernet import Fernet
+
+    old = Fernet(_fernet_key_from_material(old_key_material))
+    await _ensure_table(db)
+    rows = (await db.execute(text("SELECT name, value_enc FROM platform_secrets"))).all()
+    total = len(rows)
+    recovered = 0
+    for name, enc in rows:
+        try:
+            plain = old.decrypt(enc.encode()).decode()
+        except Exception:  # noqa: BLE001 — 옛 키로도 안 풀리면 건너뜀(다른 키로 암호화됨)
+            continue
+        await db.execute(
+            text("UPDATE platform_secrets SET value_enc=:v WHERE name=:n"),
+            {"v": _encrypt(plain), "n": name},
+        )
+        recovered += 1
+    await db.commit()
+    logger.info("시크릿 재암호화 마이그레이션 완료", total=total, recovered=recovered)
+    return {"total": total, "recovered": recovered, "skipped": total - recovered}
 
 
 async def list_status(db: AsyncSession) -> list[dict[str, Any]]:
