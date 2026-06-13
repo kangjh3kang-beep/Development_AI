@@ -40,6 +40,9 @@ export default function PaymentsPanel({ siteCode }: { siteCode: string }) {
 
   if (!loaded) return <SkeletonLoader count={3} itemClassName="h-24 rounded-xl mb-3" />;
   return (
+   <div className="space-y-5">
+    {/* #4 계약자별 통합 수납현황(납부/연체/할인/환급) */}
+    <ContractSummarySection api={api} contracts={contracts} onChanged={load} />
     <div className="grid gap-5 lg:grid-cols-2">
       <div className="space-y-4">
         <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-4">
@@ -90,6 +93,80 @@ export default function PaymentsPanel({ siteCode }: { siteCode: string }) {
           </tbody>
         </table>
       </div>
+    </div>
+   </div>
+  );
+}
+
+type SummaryT = {
+  total_price: number;
+  installments: { count: number; billed: number; paid: number; unpaid: number };
+  overdue: { count: number; unpaid_amount: number };
+  discount: { count: number; amount: number };
+  refund: { count: number; amount: number };
+};
+
+// 계약자(계약) 기준 통합 수납현황 + 할인/환급 등록.
+function ContractSummarySection({ api, contracts, onChanged }: {
+  api: ReturnType<typeof salesApi>; contracts: { id: string; label: string; status?: string }[]; onChanged: () => void;
+}) {
+  const [cid, setCid] = useState("");
+  const [sum, setSum] = useState<SummaryT | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [adj, setAdj] = useState<{ type: "DISCOUNT" | "REFUND"; amount: number | null; reason: string }>({ type: "DISCOUNT", amount: null, reason: "" });
+  const [msg, setMsg] = useState("");
+
+  const loadSummary = async (id: string) => {
+    setCid(id); setSum(null); setMsg("");
+    if (!id) return;
+    try { setSum(await api.get<SummaryT>(`/payments/contract-summary?contract_id=${id}`)); }
+    catch { setMsg("현황 조회 실패(계약 확인)."); }
+  };
+  const addAdj = async () => {
+    if (!cid || !adj.amount) { setMsg("계약과 금액을 입력하세요."); return; }
+    setBusy(true); setMsg("");
+    try {
+      await api.post("/payments/adjustment", { contract_ext_id: cid, adj_type: adj.type, amount: adj.amount, reason: adj.reason || undefined });
+      setAdj({ ...adj, amount: null, reason: "" }); await loadSummary(cid); onChanged();
+    } catch { setMsg("등록 실패(권한 확인)."); }
+    finally { setBusy(false); }
+  };
+
+  const Card = ({ label, value, tone }: { label: string; value: string; tone?: string }) => (
+    <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-strong)] p-2.5 text-center">
+      <p className="text-[10px] text-[var(--text-tertiary)]">{label}</p>
+      <p className={`mt-0.5 text-sm font-black ${tone || "text-[var(--text-primary)]"}`}>{value}</p>
+    </div>
+  );
+
+  return (
+    <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-4">
+      <h3 className="mb-3 font-bold text-[var(--text-primary)]">계약자별 수납 현황</h3>
+      <select value={cid} onChange={(e) => loadSummary(e.target.value)} className={`${IN} w-full`}>
+        <option value="">계약자(계약) 선택…</option>
+        {contracts.map((c) => <option key={c.id} value={c.id}>{c.label}{c.status ? ` (${c.status})` : ""}</option>)}
+      </select>
+      {sum && (
+        <>
+          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+            <Card label="분양가" value={won(sum.total_price)} />
+            <Card label="청구" value={won(sum.installments.billed)} />
+            <Card label="납부" value={won(sum.installments.paid)} tone="text-emerald-400" />
+            <Card label="미납" value={won(sum.installments.unpaid)} tone="text-amber-400" />
+            <Card label={`연체(${sum.overdue.count})`} value={won(sum.overdue.unpaid_amount)} tone="text-rose-400" />
+            <Card label={`할인/환급`} value={`${won(sum.discount.amount)} / ${won(sum.refund.amount)}`} />
+          </div>
+          <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-[var(--line)] pt-3">
+            <select value={adj.type} onChange={(e) => setAdj({ ...adj, type: e.target.value as "DISCOUNT" | "REFUND" })} className={`${IN} py-1`}>
+              <option value="DISCOUNT">할인</option><option value="REFUND">환급</option>
+            </select>
+            <NumberInput value={adj.amount} onChange={(n) => setAdj({ ...adj, amount: n })} placeholder="금액(원)" className={`${IN} w-32 py-1`} />
+            <input value={adj.reason} onChange={(e) => setAdj({ ...adj, reason: e.target.value })} placeholder="사유(선택)" className={`${IN} flex-1 py-1`} />
+            <button onClick={addAdj} disabled={busy} className={BTN}>{busy ? "등록 중…" : "등록"}</button>
+          </div>
+        </>
+      )}
+      {msg && <p className="mt-2 text-xs text-[var(--text-tertiary)]">{msg}</p>}
     </div>
   );
 }
