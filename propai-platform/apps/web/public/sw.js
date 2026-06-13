@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v164-payment-summary";
+const CACHE_NAME = "propai-v165-cert-image";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",
