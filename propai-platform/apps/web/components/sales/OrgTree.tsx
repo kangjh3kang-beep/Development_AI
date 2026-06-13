@@ -31,7 +31,7 @@ export default function OrgTree({ siteCode }: { siteCode: string }) {
   const [busy, setBusy] = useState(false);
   // loaded: 조직도를 한 번 불러왔는지 표시(false면 '불러오는 중' 회색 자리표시를 보여줌).
   const [loaded, setLoaded] = useState(false);
-  type Ov = { members: number; totals: { contracts: number; customers: number; work_logs: number }; roster: { name: string; role_label: string; assigned: boolean; contracts: number; customers: number; work_logs: number }[] };
+  type Ov = { members: number; totals: { contracts: number; customers: number; work_logs: number }; roster: { node_id: string; name: string; role_label: string; assigned: boolean; contracts: number; customers: number; work_logs: number; tax_type?: string }[] };
   const [ov, setOv] = useState<Ov | null>(null);
 
   const load = useCallback(() => {
@@ -41,6 +41,10 @@ export default function OrgTree({ siteCode }: { siteCode: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [siteCode]);
   useEffect(() => { load(); }, [load]);
+  const setTax = async (nodeId: string, taxType: string) => {
+    try { await api.post("/commission/tax-pref", { node_id: nodeId, tax_type: taxType }); load(); }
+    catch { alert("세금유형 저장 실패(권한 확인)"); }
+  };
 
   const tree = nodes.slice().sort((a, b) => a.path.localeCompare(b.path));
   const depth = (p: string) => p.split(".").length - 1;
@@ -85,7 +89,7 @@ export default function OrgTree({ siteCode }: { siteCode: string }) {
           </div>
           <div className="max-h-40 overflow-auto">
             <table className="w-full text-[11px]">
-              <thead><tr className="text-[var(--text-hint)]"><th className="text-left font-medium">직급</th><th className="text-left font-medium">이름</th><th className="text-right font-medium">계약</th><th className="text-right font-medium">고객</th><th className="text-right font-medium">업무일지</th></tr></thead>
+              <thead><tr className="text-[var(--text-hint)]"><th className="text-left font-medium">직급</th><th className="text-left font-medium">이름</th><th className="text-right font-medium">계약</th><th className="text-right font-medium">고객</th><th className="text-right font-medium">업무일지</th><th className="text-right font-medium">수수료세금</th></tr></thead>
               <tbody>
                 {ov.roster.slice(0, 30).map((r, i) => (
                   <tr key={i} className="border-t border-[var(--line)]/50">
@@ -94,6 +98,7 @@ export default function OrgTree({ siteCode }: { siteCode: string }) {
                     <td className="text-right text-[var(--text-primary)]">{r.contracts}</td>
                     <td className="text-right text-[var(--text-primary)]">{r.customers}</td>
                     <td className="text-right text-[var(--text-primary)]">{r.work_logs}</td>
+                    <td className="text-right"><select value={r.tax_type || "WITHHOLDING"} onChange={(e) => setTax(r.node_id, e.target.value)} className="rounded border border-[var(--line)] bg-[var(--surface-strong)] px-1 py-0.5 text-[10px] text-[var(--text-secondary)]"><option value="WITHHOLDING">3.3% 원천</option><option value="VAT">부가세10%</option></select></td>
                   </tr>
                 ))}
               </tbody>

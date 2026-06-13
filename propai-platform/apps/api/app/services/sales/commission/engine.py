@@ -5,7 +5,7 @@ SUM(배분) ≤ 총액 보장. 지급 원천징수(3.3%). 계약취소 시 역�
 import uuid
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.api.database.models.sales.commission_mh_harness import (
@@ -82,9 +82,67 @@ async def split_commission(db: AsyncSession, site_id, contract):
     return ev
 
 
-def payout_net(gross: Decimal, wh_rate: Decimal = Decimal("0.033")) -> dict:
-    wh = (gross * wh_rate).quantize(Q)
-    return {"gross": gross, "withholding": wh, "net": gross - wh}  # 사업소득 원천징수 3.3%
+def payout_net(gross: Decimal, tax_type: str = "WITHHOLDING",
+               wh_rate: Decimal = Decimal("0.033"), vat_rate: Decimal = Decimal("0.10")) -> dict:
+    """수령자 세금유형별 지급 분개.
+
+    - WITHHOLDING(개인 사업소득, 3.3% 원천징수): 지급액에서 원천징수 후 실수령 = gross - 원천.
+      세금계산서 없음. (프리랜서/팀원 기본)
+    - VAT(사업자 세금계산서, 부가세 10%): 공급가액=gross 에 부가세 10% 가산해 지급(total_paid),
+      사업자 실수령 공급가액 = gross(부가세는 별도 신고). 원천징수 없음.
+    반환 키는 하위호환(gross/withholding/net) 유지 + tax_type/vat/total_paid 추가.
+    """
+    if (tax_type or "").upper() == "VAT":
+        vat = (gross * vat_rate).quantize(Q)
+        return {"tax_type": "VAT", "gross": gross, "withholding": Decimal(0), "vat": vat,
+                "total_paid": gross + vat, "net": gross}
+    wh = (gross * wh_rate).quantize(Q)   # 사업소득 원천징수 3.3%
+    return {"tax_type": "WITHHOLDING", "gross": gross, "withholding": wh, "vat": Decimal(0),
+            "total_paid": gross, "net": gross - wh}
+
+
+# 수령자(조직노드)별 세금유형 선호 — 멱등 테이블(WITHHOLDING 기본).
+_TAXPREF_DDL = (
+    "CREATE TABLE IF NOT EXISTS sales_commission_tax_pref ("
+    "  site_id uuid NOT NULL,"
+    "  node_id uuid NOT NULL,"
+    "  tax_type varchar(16) NOT NULL DEFAULT 'WITHHOLDING',"
+    "  updated_at timestamptz NOT NULL DEFAULT now(),"
+    "  PRIMARY KEY (node_id)"
+    ")"
+)
+_TAXPREF_READY = False
+
+
+async def ensure_tax_pref(db) -> None:
+    global _TAXPREF_READY
+    if _TAXPREF_READY:
+        return
+    await db.execute(text(_TAXPREF_DDL))
+    await db.commit()
+    _TAXPREF_READY = True
+
+
+async def get_node_tax_type(db, node_id) -> str:
+    """노드(수령자) 세금유형. 미설정 시 WITHHOLDING(3.3%)."""
+    if node_id is None:
+        return "WITHHOLDING"
+    await ensure_tax_pref(db)
+    r = (await db.execute(text("SELECT tax_type FROM sales_commission_tax_pref WHERE node_id=:n"),
+                          {"n": str(node_id)})).first()
+    return (r[0] if r else "WITHHOLDING") or "WITHHOLDING"
+
+
+async def set_node_tax_type(db, site_id, node_id, tax_type: str) -> str:
+    tt = (tax_type or "").upper()
+    if tt not in ("WITHHOLDING", "VAT"):
+        raise ValueError("tax_type은 WITHHOLDING 또는 VAT")
+    await ensure_tax_pref(db)
+    await db.execute(text(
+        "INSERT INTO sales_commission_tax_pref (site_id, node_id, tax_type, updated_at) "
+        "VALUES (:s,:n,:t, now()) ON CONFLICT (node_id) DO UPDATE SET tax_type=:t, updated_at=now()"),
+        {"s": str(site_id), "n": str(node_id), "t": tt})
+    return tt
 
 
 async def clawback(db: AsyncSession, event_id, reason: str):

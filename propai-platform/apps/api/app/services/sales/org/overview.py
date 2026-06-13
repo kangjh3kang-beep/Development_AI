@@ -52,6 +52,16 @@ async def team_overview(db: AsyncSession, site_id: uuid.UUID, org_path: str | No
         {"ids": node_ids})).all()
     work_logs = {str(k): int(v) for k, v in wl_rows}
 
+    # 수령자별 수수료 세금유형(WITHHOLDING 3.3% / VAT 10%) — 멱등 테이블 일괄 조회.
+    tax_map = {}
+    try:
+        tx = (await db.execute(text(
+            "SELECT node_id, tax_type FROM sales_commission_tax_pref WHERE node_id = ANY(:ids)"),
+            {"ids": node_ids})).all()
+        tax_map = {str(k): v for k, v in tx}
+    except Exception:  # noqa: BLE001 — 테이블 미생성(지급 전)이면 기본값
+        tax_map = {}
+
     roster = []
     for n in nodes:
         if n.node_type not in ("MEMBER", "TEAM_LEADER", "GM_DIRECTOR", "DIRECTOR"):
@@ -64,6 +74,7 @@ async def team_overview(db: AsyncSession, site_id: uuid.UUID, org_path: str | No
             "contracts": contracts.get(nid, 0),
             "customers": customers.get(nid, 0),
             "work_logs": work_logs.get(nid, 0),
+            "tax_type": tax_map.get(nid, "WITHHOLDING"),
         })
     roster.sort(key=lambda r: (-r["contracts"], -r["customers"]))
     return {

@@ -271,6 +271,27 @@ async def provision(body: dict, db: AsyncSession = Depends(get_db), user=Depends
     return res
 
 
+@actions_router.get("/commission/tax-pref")
+async def get_tax_pref(node_id: str, db: AsyncSession = Depends(get_db), ctx: SalesCtx = Depends(sales_ctx)):
+    """수령자(노드) 수수료 세금유형 조회 — WITHHOLDING(3.3% 원천) | VAT(부가세 10%)."""
+    from app.services.sales.commission.engine import get_node_tax_type
+    return {"node_id": node_id, "tax_type": await get_node_tax_type(db, uuid.UUID(node_id))}
+
+
+@actions_router.post("/commission/tax-pref")
+async def set_tax_pref(body: dict, db: AsyncSession = Depends(get_db),
+                       ctx: SalesCtx = Depends(require_role("DEVELOPER", "AGENCY", "GM_DIRECTOR", "TEAM_LEADER", "MEMBER"))):
+    """수령자 세금유형 설정 — 3.3% 원천징수(WITHHOLDING) 또는 부가세 10%(VAT) 중 선택."""
+    from fastapi import HTTPException
+    from app.services.sales.commission.engine import set_node_tax_type
+    try:
+        tt = await set_node_tax_type(db, ctx.site_id, uuid.UUID(body["node_id"]), body.get("tax_type", ""))
+    except (KeyError, ValueError) as e:
+        raise HTTPException(400, str(e) or "node_id·tax_type(WITHHOLDING/VAT) 필요")
+    await db.commit()
+    return {"ok": True, "node_id": body["node_id"], "tax_type": tt}
+
+
 @actions_router.post("/commission/distribution/validate")
 async def validate_distribution(body: dict, db: AsyncSession = Depends(get_db), ctx: SalesCtx = Depends(sales_ctx)):
     from app.services.sales.commission.engine import _active_master, _amount, _rules, resolve_total
