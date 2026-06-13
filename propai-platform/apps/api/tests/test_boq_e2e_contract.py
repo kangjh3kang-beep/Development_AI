@@ -400,7 +400,9 @@ async def test_from_project_bim_병합_정직_폴백(client):
     items = [it for lst in _items_by_discipline(data).values() for it in lst]
     assert items, "항목 없음"
     srcs = {it.get("qty_source") for it in items}
-    assert srcs == {"parametric"}, f"BIM 미보유인데 비-parametric 출처 혼입: {srcs}"
+    # BIM 0건 → 가짜 'bim' 출처를 만들면 안 됨(§1 정직). 'user'(사용자 실입력)는 허용.
+    assert "bim" not in srcs, f"BIM 미보유인데 'bim' 출처 혼입(허위 실측): {srcs}"
+    assert srcs <= {"parametric", "user"}, f"예상 밖 qty_source: {srcs}"
 
 
 if __name__ == "__main__":
