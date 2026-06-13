@@ -28,6 +28,12 @@ import {
 } from "./BriefUploadStep";
 import { ParamConfirmStep } from "./ParamConfirmStep";
 import { AuditReportView, type DesignAuditReport } from "./AuditReportView";
+import { AnnotatedSitePlanCard } from "@/components/cad/AnnotatedSitePlanCard";
+import {
+  auditFindingsToLegal,
+  auditSchematicGeometry,
+  auditVerdict,
+} from "./auditAnnotation";
 
 /* ── 스테퍼 정의 ── */
 
@@ -264,8 +270,22 @@ export function DesignAuditWorkspace({ locale }: { locale: Locale }) {
       </Card>
 
       {report ? (
-        /* 실행 완료 → 보고서 뷰 전환 */
-        <AuditReportView report={report} onReset={() => setReport(null)} />
+        /* 실행 완료 → 보고서 뷰 + §4-C 후속: 법규 준수 배치도(findings→도면 주석, audit↔drawing) */
+        <>
+          <AuditReportView report={report} onReset={() => setReport(null)} />
+          {(() => {
+            const legal = auditFindingsToLegal(report);
+            const geometry = auditSchematicGeometry(site.landAreaSqm, legal);
+            // 건폐율 finding·대지면적이 없으면 카드 미표시(건물 footprint 도출 불가 — 정직)
+            return geometry ? (
+              <AnnotatedSitePlanCard
+                geometry={geometry}
+                findings={legal}
+                verdict={auditVerdict(report)}
+              />
+            ) : null;
+          })()}
+        </>
       ) : (
         <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
           <CardContent className="p-6">
