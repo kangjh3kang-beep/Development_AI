@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v150-hub-design";
+const CACHE_NAME = "propai-v151-boq-estimation";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",
