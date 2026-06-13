@@ -5,7 +5,7 @@
 
 ## 0. 한 줄 요약
 
-적산은 백엔드 N1·N2·N3 + 프론트 정합까지 **완성·검증·푸시**(3300 pytest·tsc·build 그린). 설계/CAD/BIM은 **상당 부분 실구현**(IFC/DXF 분석·8엔진 법규검증·BIM read/view/generate)이나, **참조설계 피드백루프·실무 도면등급·BIM 편집/IFC export** 3개가 미완(partial/stub). 매스 선택→재생성(§4-A)은 **완결·검증·푸시**(`ff3b8bc` — 라우터 massing_kind 수용·대안별 형상·프론트 선택, 3320 pytest·tsc·build 그린).
+적산은 백엔드 N1·N2·N3 + 프론트 정합까지 **완성·검증·푸시**(3300 pytest·tsc·build 그린). 설계/CAD/BIM은 **상당 부분 실구현**(IFC/DXF 분석·8엔진 법규검증·BIM read/view/generate). 매스 선택→재생성(§4-A)은 **완결·검증·푸시**(`ff3b8bc`). **참조설계 피드백루프(§4-B)도 완결·검증·푸시**(`5df33cf` — find_similar 기하 종횡비를 합성 매스에 결정론 주입, 3344 pytest·tsc·build 그린). 남은 미완은 **실무 도면등급(§4-D)·BIM 편집/IFC export(§4-E)** + §4-B 둘째 불릿(조례 DB, 후속).
 
 ## 1. 불변 규칙 (위반 금지)
 
@@ -28,8 +28,9 @@
 | `27bad73` | BOQ from-project e2e 계약 완화(허위 bim만 금지, user 허용) |
 | `11bc342` | **설계: `massing_kind` 엔진 파라미터(판상/타워/ㄱ자/중정 결정론 매스 변형)** |
 | `ff3b8bc` | **설계: 매스 형상 재생성 배선(§4-A 완결) — 라우터 massing_kind 수용·대안별 형상(A=입력/auto·B=tower·C=lshape)·프론트 선택→재생성** |
+| `5df33cf` | **설계: 참조설계 피드백루프(§4-B 완결) — find_similar 기하 종횡비를 합성 매스에 결정론 주입(엔진 reference_mass·서비스 derive_reference_mass_hint·라우터 opt-in use_references·프론트 토글/칩), 적대적 4-렌즈 리뷰 통과** |
 
-검증 베이스라인: pytest **3320 passed / 0 failed**(35:24, `apps/api/tests` 2건 제외), tsc·build 그린.
+검증 베이스라인: pytest **3344 passed / 0 failed**(21:50, `apps/api/tests` 2건 제외, `INTERP_REDIS_CACHE=0`으로 미가동 Redis 캐시 우회 — 테스트 로직 불변), tsc·build 그린. (§4-A 시점 3320 + §4-B 신규 24.)
 
 > 검증 주의: 전체회귀는 **`pytest tests/` (apps/api/tests, 메인 204파일)**를 타깃해야 한다. 인자 없는 `pytest`는 `pyproject testpaths=["../../tests"]`(통합·load·벤치 83파일)를 수집하며, 이쪽엔 본 작업과 무관한 사전존재 환경실패(Molit XML·Sentry·IFC 온보딩 샘플 등)가 있다 — §4-A 변경 무관.
 
@@ -44,8 +45,11 @@
 ### ✅ BUILT 추가 (§4-A 완결, ff3b8bc)
 - **매스 선택→재생성**: 엔진 `massing_kind`(11bc342) + 라우터 수용·대안별 형상·프론트 선택→재생성(ff3b8bc)까지 **배선 완료**. `/auto-design`·`/design-alternatives`가 옵셔널 massing_kind를 수용(미정의→auto 폴백·하위호환), `generate_alternatives`는 A=입력형상(None=auto)·B=tower·C=lshape로 매스 다양화(법규 준수 유지), 프론트 `GenerativeDesignPanel`에 형상 선택 UI + 적용 형상 라벨 칩. 테스트: `test_drawing_massing_router.py`(7) + `test_massing_kind.py` 대안형상(4).
 
+### ✅ BUILT 추가 (§4-B 완결, 5df33cf)
+- **CAD 참조설계 피드백루프**(stub→built): 합성 경로(`AutoDesignEngine.generate`)가 이제 `find_similar` 유사 사례의 기하 종횡비를 결정론으로 매스에 주입한다. 엔진 `SiteInput.reference_mass`(명시 형상>참조 비례>auto 우선순위·클램프 정직 표기), 서비스 `derive_reference_mass_hint`(기하 결측/무효 건너뛰기·없으면 정직 used=False), 라우터 opt-in `use_references`(기본 False·조회실패 정직 흡수), 프론트 토글/칩. 적대적 4-렌즈 리뷰(계약·정직·정확·커버리지) 위반 0. ※전체 기하 이식 `assemble_from_reference`(사용자가 ID 선택)는 기존 별도 경로 — 본 변경은 합성 경로 비례 주입(비중복).
+
 ### ⚠️ PARTIAL / STUB (미완 — §4 대상)
-- **CAD 참조설계 피드백루프**(stub): 업로드/저장(Supabase `propai-design-refs`)/검색/조립은 BUILT이나, **생성기가 합성 시 유사 사례를 참조하지 않음**(`find_similar` 결과가 생성에 미투입). 법규지식도 하드코딩 `ZONE_LIMITS`(지자체 조례 DB 미연동).
+- **지자체 조례 DB**(§4-B 둘째 불릿, 미완): 법규지식이 여전히 하드코딩 `ZONE_LIMITS`(SSOT). 조례 실효 한도 연동은 SSOT를 5개 모듈(building_compliance/land_info/precheck/design_spec/auto_design_engine)이 공유해 "0 계약 변경" 위반 위험 + 데이터 소스 부재로 **후속 분리**(정직).
 - **실무 도면 등급**(partial): 치수·포셰벽·KS 문/창 기호·전체 도면셋(B-01~C-03)은 BUILT이나 **스키매틱 수준** — 진짜 DXF DIMENSION 엔티티 아님(임베디드 텍스트), 재료 해칭·RCP·MEP·단면 상세·법규위반 도면주석 없음. **AutoCAD 실무 워킹드로잉 등급은 미달**(기술적 한계 아닌 미구현 — §4-D).
 - **BIM 소프트웨어 완전성**(partial): read/view/generate는 되나 **IFC export/저작 없음(read-only)**, 3D 편집(이동/회전/스케일)·단면뷰·측정도구 없음.
 
@@ -55,9 +59,9 @@
 - **완료(11bc342)**: `SiteInput.massing_kind`(slab/tower/lshape/court) + `MASSING_FORMS`(종횡비·플로어플레이트) + `compute_optimal_mass` 형상 변형 + summary `massing_kind`/`massing_label` + `DesignSpec→SiteInput` 배선 + `test_massing_kind`(8건). None=자동(기존 불변).
 - **완료(ff3b8bc)**: ① `/drawing/auto-design`·`/drawing/design-alternatives`(정본 라우터 `apps/api/routers/drawing.py`)가 옵셔널 `massing_kind`를 수용해 SiteInput에 전달(additive·미정의→auto 폴백). ② `generate_alternatives` 대안별 형상 배정 — A=입력형상(None=auto), B=tower, C=lshape(다양화 고정·summary 키 불변·3대안 법규 준수 유지). ③ 프론트 매스 형상 선택 UI는 **백엔드 재생성 컴포넌트 `GenerativeDesignPanel`**에 배선(단일/Top3 호출에 massing_kind 전송 + 적용 형상 라벨 칩). ※ `DesignStudio`(독립 로컬계산 화면)는 백엔드 생성 경로가 없어 대상에서 제외 — 실 재생성 surface는 `GenerativeDesignPanel`. ④ 검증: `test_drawing_massing_router.py`(7) + `test_massing_kind` 대안형상(4) + 전체회귀 3320 그린 + tsc/build 그린.
 
-### B. CAD 참조설계 피드백루프 (stub→built)
-- `AutoDesignEngine` 생성 시 `design_reference_service.find_similar(site_area, zone_code, building_use, unit_types)` 상위 N건의 기하를 **참조 입력**으로 주입(대입·조합). 조립실패(footprint 초과) 시 더 타이트한 필터로 재탐색. 결정론 규칙 우선(LLM은 설명만).
-- 지자체 조례 DB: `design_references`/별도 테이블에 `zone_code→local_bcr/far/height` 적재 후 `ZONE_LIMITS` 하드코딩 대체.
+### B. CAD 참조설계 피드백루프 ✅ 완료 (5df33cf)
+- **완료**: `derive_reference_mass_hint`가 `find_similar(building_use, area_sqm, unit_types, zone_code)` 상위 후보 중 기하 보유·치수 유효 사례의 종횡비를 도출하고, `compute_optimal_mass`가 BCR footprint를 유지한 채 종횡비만 참조 쪽으로 편향(대지 유효치 클램프). 기하 결측/정규화 실패/치수 무효는 건너뛰어 다음 후보로 재탐색. 라우터 opt-in `use_references`(기본 False)·조회 실패 정직 흡수·프론트 토글/칩. 결정론(LLM 0). 테스트 22건 + 적대적 4-렌즈 리뷰.
+- **미완(후속)**: 지자체 조례 DB(`zone_code→local_bcr/far/height` 적재 후 `ZONE_LIMITS` 대체)는 SSOT 5개 모듈 공유로 "0 계약 변경" 위반 위험 + 데이터 소스 부재 — 별도 세션 권장.
 
 ### C. 도면 법규주석 (stub→partial+)
 - 8엔진 audit 위반/통과를 SVG 도면에 주석화(피난로 적색, 일조 미달 경고, 건폐/용적 ✓/✗). audit↔drawing 연결.
@@ -70,6 +74,6 @@
 
 ## 5. 새 세션 첫 메시지 예시
 
-> §4-A(매스 선택→재생성)는 `ff3b8bc`로 **완결**됐다. `propai-platform/docs/HANDOFF_DESIGN_CAD_BIM_2026-06-13.md`를 읽고, **§4-B(CAD 참조설계 피드백루프 stub→built)**부터 추천순서로 구현해줘 — `AutoDesignEngine` 생성 시 `design_reference_service.find_similar(...)` 상위 N건 기하를 참조 입력으로 주입(결정론 규칙 우선). §1 불변규칙 준수, §5 검증 통과 후 작업 브랜치 커밋·푸시. main 푸시 금지.
+> §4-A(매스 재생성)는 `ff3b8bc`, §4-B(참조설계 피드백루프)는 `5df33cf`로 **완결**됐다(전체회귀 3344 그린). `propai-platform/docs/HANDOFF_DESIGN_CAD_BIM_2026-06-13.md`를 읽고, **§4-C(도면 법규주석 stub→partial+)**부터 추천순서로 구현해줘 — 8엔진 audit 위반/통과를 SVG 도면에 주석화(피난로 적색·일조 미달 경고·건폐/용적 ✓/✗), audit↔drawing 연결. §1 불변규칙 준수, §5 검증 통과 후 작업 브랜치 커밋·푸시. main 푸시 금지.
 
 (검증: `apps/api`에서 신규/관련 pytest + **전체회귀는 `pytest tests/ --ignore=tests/test_auction_demock_court.py --ignore=tests/test_molit_client.py`**(메인 204파일 타깃 — 인자 없는 pytest는 testpaths의 통합 스위트를 수집해 사전존재 환경실패가 섞임) → `apps/web` tsc·build → 그린이면 `git push origin feature/trust-infra-2026-06-11`. 커밋 말미 `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>` — 모델은 실행 세션 기준.)
