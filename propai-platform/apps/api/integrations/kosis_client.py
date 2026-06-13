@@ -14,6 +14,43 @@ from apps.api.app.services.market.market_models import MacroIncomeData
 
 logger = structlog.get_logger(__name__)
 
+# ── KOSIS 통계표 설정(하드코딩 금지·설정가능 상수로 분리) ──
+# 통계표ID(tblId)는 통계표 개편 시 변경되므로 상수로 분리해 한 곳에서 관리한다.
+# ★ 아래 tblId 는 아직 운영 확정 전이다. 통계목록 조회 API(data.go.kr 15056860)로
+#    소득/임금 통계표를 확정하기 전까지, 이 경로로 받은 값은 data_source='fallback' 로
+#    정직 표기한다(실데이터로 단정하지 않음).
+KOSIS_ORG_ID = "101"  # 통계청
+KOSIS_INCOME_TBL_ID = "DT_1EW0010"  # 일자리행정통계(임시·미확정) — 확정 전까지 fallback 표기
+KOSIS_INCOME_ITM_ID = "T10"
+KOSIS_PERIOD_TYPE = "Y"  # 수록주기: 연
+
+
+def normalize_sigungu_cd(region_cd: str | None) -> str:
+    """지역코드를 KOSIS 시군구5 코드로 정규화한다.
+
+    입력 가능 형태(자릿수 기준): 법정동10 / 행정동10 / SGIS8 / 시군구5 / 집계구13 등.
+    공통 규칙: 시군구5 = '시도2 + 시군구3' = 앞 5자리(법정동·행정동·SGIS·집계구 모두 동일).
+    PublicDataReader 가 설치돼 있으면 코드 검증/매핑에 활용하되, 없으면 안전하게 앞 5자리를 사용한다.
+    ※ 이름 매칭은 금지(행정동↔법정동 N:M). 자릿수 기반 절단만 수행.
+    """
+    if not region_cd:
+        return ""
+    digits = "".join(ch for ch in str(region_cd) if ch.isdigit())
+    if not digits:
+        return ""
+    # PublicDataReader 가 있으면 시군구 코드 유효성 보강(없으면 폴백). 이름매칭 금지.
+    try:
+        import PublicDataReader as pdr  # type: ignore
+
+        sgg5 = digits[:5]
+        # 코드표가 로드되면 그대로 사용(검증 목적). 실패해도 앞5자리 폴백.
+        _ = pdr  # noqa: F841  (설치 확인용 — 현재는 절단 규칙이 결정론적이라 그대로 사용)
+        return sgg5
+    except Exception:  # noqa: BLE001
+        # PDR 미설치/오류 → 안전 폴백(앞 5자리). 시군구5는 모든 체계의 상위 공통 접두다.
+        return digits[:5]
+
+
 class KosisClient(BaseAPIClient):
     """KOSIS 거시 경제 및 소득 통계 API 클라이언트.
 
@@ -35,73 +72,108 @@ class KosisClient(BaseAPIClient):
         self,
         sigungu_cd: str,
         year: str,
-        use_mock: bool = True
+        use_mock: bool | None = None,
     ) -> dict[str, Any]:
         """해당 시/군/구의 연령별/산업별 평균 급여(소득) 거시 지표를 조회합니다.
-        
+
         Args:
-            sigungu_cd: 시군구 코드
+            sigungu_cd: 지역코드(법정동10/행정동10/SGIS8/시군구5/집계구13 등). 내부에서 시군구5로 정규화.
             year: 조회 연도
-            use_mock: True일 경우 시뮬레이션 데이터 반환
+            use_mock: None(기본)이면 KOSIS_API_KEY 존재 여부로 자동 결정.
+                      True 강제 시 mock, False 강제 시 키가 있으면 실연동 시도.
         """
-        if use_mock or not getattr(self.api_settings, 'KOSIS_API_KEY', None):
-            return self._mock_income_data(sigungu_cd, year)
-            
+        # 지역코드 정규화(이름매칭 금지·자릿수 기반 시군구5 절단)
+        sgg5 = normalize_sigungu_cd(sigungu_cd) or sigungu_cd
+
+        has_key = bool(getattr(self.api_settings, "KOSIS_API_KEY", None))
+        # use_mock=None → 키 없으면 mock(폴백). 키 있으면 실연동 시도.
+        if use_mock is None:
+            use_mock = not has_key
+        if use_mock or not has_key:
+            return self._mock_income_data(sgg5, year)
+
         # 실제 KOSIS API 연동 로직
         try:
-            client = await self._get_client()
-            resp = await asyncio.wait_for(
-                client.request(
-                    "GET",
-                    "/Param/statisticsParameterData.do",
-                    params={
-                        "method": "getList",
-                        "apiKey": self.api_settings.KOSIS_API_KEY,
-                        "format": "json",
-                        "jsonVD": "Y",
-                        "orgId": "101", # 통계청
-                        "tblId": "DT_1EW0010", # 일자리행정통계(예시)
-                        "itmId": "T10",
-                        "objL1": sigungu_cd,
-                        "prdSe": "Y",
-                        "prdDe": year
-                    }
-                ),
-                timeout=5.0
-            )
-            resp.raise_for_status()
-            
-            data = resp.json()
-            if isinstance(data, dict) and data.get("errMsg"):
+            data = await self._fetch_income(sgg5, year, obj_level="ALL")
+
+            # KOSIS 에러 응답: errCd 20 = 필수요청변수 누락(분류레벨) → objL ALL 폴백 후 재시도
+            if isinstance(data, dict) and str(data.get("errCd")) == "20":
+                logger.info("KOSIS errCd 20 — objL ALL 폴백 재시도", sigungu=sgg5)
+                data = await self._fetch_income(sgg5, year, obj_level="ALL", extra_levels=True)
+
+            if isinstance(data, dict) and (data.get("errMsg") or data.get("errCd")):
                 logger.warning("KOSIS API Error", err=data)
-                return self._mock_income_data(sigungu_cd, year)
+                return self._mock_income_data(sgg5, year)
 
             if not isinstance(data, list) or len(data) == 0:
-                return self._mock_income_data(sigungu_cd, year)
-                
+                return self._mock_income_data(sgg5, year)
+
             val = float(data[0].get("DT", 0))
-            
+
             parsed_data = {
-                "sigungu_cd": sigungu_cd,
+                "sigungu_cd": sgg5,
                 "year": year,
                 "avg_income_10k": int(val) if val > 0 else 4620,
                 "median_income_10k": int(val * 0.85) if val > 0 else 3800,
                 "income_bracket_ratio": {
                     "under_30m": 35.5,
                     "30m_to_70m": 45.0,
-                    "over_70m": 19.5
-                }
+                    "over_70m": 19.5,
+                },
+                # ★ 통계표ID 미확정 상태 → 호출에 성공해도 실데이터로 단정하지 않고 fallback 표기.
+                #    통계목록 API로 tblId 확정 후 'live' 로 승격 예정.
+                "data_source": "fallback",
             }
-            
+
             validated = MacroIncomeData(**parsed_data)
             return validated.model_dump()
-            
-        except Exception as e:
+
+        except Exception as e:  # noqa: BLE001
             logger.warning("KOSIS data fetch failed, using fallback", err=str(e))
-            return self._mock_income_data(sigungu_cd, year)
+            return self._mock_income_data(sgg5, year)
+
+    async def _fetch_income(
+        self, sigungu_cd: str, year: str, obj_level: str = "ALL", extra_levels: bool = False
+    ) -> Any:
+        """KOSIS statisticsParameterData.do 호출 → JSON 파싱(비-JSON/HTML 가드 포함)."""
+        client = await self._get_client()
+        params = {
+            "method": "getList",
+            "apiKey": self.api_settings.KOSIS_API_KEY,
+            "format": "json",
+            "jsonVD": "Y",
+            "orgId": KOSIS_ORG_ID,
+            "tblId": KOSIS_INCOME_TBL_ID,
+            "itmId": KOSIS_INCOME_ITM_ID,
+            # objL1: 분류레벨 누락(errCd 20) 방지를 위해 ALL 우선 사용
+            "objL1": obj_level if obj_level == "ALL" else sigungu_cd,
+            "prdSe": KOSIS_PERIOD_TYPE,
+            "prdDe": year,
+        }
+        # errCd 20 재시도 시 하위 분류레벨도 ALL 로 보강
+        if extra_levels:
+            params["objL2"] = "ALL"
+            params["objL3"] = "ALL"
+
+        resp = await asyncio.wait_for(
+            client.request("GET", "/Param/statisticsParameterData.do", params=params),
+            timeout=5.0,
+        )
+        resp.raise_for_status()
+        # HTML/비-JSON 응답 명시 가드: content-type 또는 본문 선두로 판별
+        ctype = (resp.headers.get("content-type") or "").lower()
+        body = resp.text or ""
+        if "json" not in ctype and body.lstrip()[:1] in ("<",):
+            logger.warning("KOSIS non-JSON(HTML) response", ctype=ctype, head=body[:80])
+            return {"errMsg": "non-json-response"}
+        try:
+            return resp.json()
+        except Exception:  # noqa: BLE001
+            logger.warning("KOSIS JSON parse fail", head=body[:80])
+            return {"errMsg": "json-parse-fail"}
 
     def _mock_income_data(self, sigungu_cd: str, year: str) -> dict[str, Any]:
-        """테스트 및 UI 개발을 위한 Mock 거시 소득 데이터."""
+        """테스트 및 UI 개발을 위한 Mock 거시 소득 데이터(정직 플래그 부착)."""
         return {
             "sigungu_cd": sigungu_cd,
             "year": year,
@@ -110,7 +182,8 @@ class KosisClient(BaseAPIClient):
             "income_bracket_ratio": {
                 "under_30m": 35.5,
                 "30m_to_70m": 45.0,
-                "over_70m": 19.5
+                "over_70m": 19.5,
             },
-            "note": "본 데이터는 KOSIS 일자리행정통계 기반의 Mock 데이터입니다."
+            "data_source": "mock",
+            "note": "본 데이터는 KOSIS 일자리행정통계 기반의 Mock 데이터입니다.",
         }

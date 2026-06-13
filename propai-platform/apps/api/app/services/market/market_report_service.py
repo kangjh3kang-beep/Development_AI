@@ -183,12 +183,15 @@ class MarketReportService:
         demographics: dict[str, Any] | None = None
         if use_sgis or use_kosis:
             try:
+                # use_mock=None: 클라이언트가 키 존재 여부로 실연동/폴백을 자동 결정한다.
+                #   (과거 use_mock=True 하드코딩으로 키가 있어도 항상 Mock만 나오던 G1 결함 제거)
+                #   키가 있으면 실데이터 시도→data_source='live', 없으면 폴백→'fallback'/'mock'/'unavailable'.
                 async def fetch_mig():
-                    return await sgis.get_migration_stats(lawd_cd, cur_year, use_mock=True) if use_sgis else {"target_adm_cd": lawd_cd, "year": cur_year}
+                    return await sgis.get_migration_stats(lawd_cd, cur_year) if use_sgis else {"target_adm_cd": lawd_cd, "year": cur_year}
                 async def fetch_pop():
-                    return await sgis.get_population_stats(lawd_cd, cur_year, use_mock=True) if use_sgis else {"target_adm_cd": lawd_cd, "year": cur_year}
+                    return await sgis.get_population_stats(lawd_cd, cur_year) if use_sgis else {"target_adm_cd": lawd_cd, "year": cur_year}
                 async def fetch_inc():
-                    return await kosis.get_macro_income_stats(lawd_cd[:5], cur_year, use_mock=True) if use_kosis else {"sigungu_cd": lawd_cd[:5], "year": cur_year}
+                    return await kosis.get_macro_income_stats(lawd_cd[:5], cur_year) if use_kosis else {"sigungu_cd": lawd_cd[:5], "year": cur_year}
 
                 mig, pop, inc = await asyncio.gather(
                     fetch_mig(),
