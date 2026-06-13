@@ -81,7 +81,10 @@ class SgisClient(BaseAPIClient):
             
             try:
                 client = await self._get_client()
-                resp = await client.request("GET", path, params={**params, "accessToken": token})
+                # 하드타임아웃 — 통계청 지연이 보고서 전체를 막지 않도록(정직 폴백 전환).
+                resp = await asyncio.wait_for(
+                    client.request("GET", path, params={**params, "accessToken": token}),
+                    timeout=5.0)
                 resp.raise_for_status()
                 data = resp.json()
                 
@@ -159,28 +162,16 @@ class SgisClient(BaseAPIClient):
             return self._mock_population_data(adm_cd, year)
 
         try:
-            token = await self.get_access_token()
-            client = await self._get_client()
-            resp = await asyncio.wait_for(
-                client.request(
-                    "GET",
-                    "/OpenAPI3/stats/searchpopulation.json",
-                    params={
-                        "accessToken": token,
-                        "year": year,
-                        "adm_cd": adm_cd
-                    }
-                ),
-                timeout=5.0
+            # 토큰 만료(-401) 시 재발급 후 1회 재시도하는 공통 래퍼 사용(데드코드 해소·하드타임아웃 내장).
+            # 재시도 후에도 실패하면 _mock_population_data 폴백을 그대로 반환한다.
+            data = await self._fetch_with_auth_retry(
+                "/OpenAPI3/stats/searchpopulation.json",
+                {"year": year, "adm_cd": adm_cd},
+                self._mock_population_data, adm_cd, year,
             )
-            resp.raise_for_status()
-            data = resp.json()
-
-            if str(data.get("errCd")) == "-401":
-                return self._mock_population_data(adm_cd, year)
-
-            if str(data.get("errCd")) != "0":
-                return self._mock_population_data(adm_cd, year)
+            # 래퍼가 폴백(mock)을 반환했으면(=실데이터 'result' 없음) 그대로 통과.
+            if not isinstance(data, dict) or "result" not in data:
+                return data
 
             result = data.get("result", [])
             total = sum(int(item.get("population", 0) or 0) for item in result)
