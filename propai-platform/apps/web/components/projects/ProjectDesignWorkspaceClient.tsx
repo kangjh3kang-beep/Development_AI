@@ -233,11 +233,9 @@ export function ProjectDesignWorkspaceClient({
             {labels.heroHint}
           </p>
           {!canUseLiveApi && (
-          {!canUseLiveApi && (
           <p className="mt-3 max-w-3xl text-xs leading-6 text-[var(--text-hint)] font-mono">
             {labels.tokenHint}
           </p>
-          )}
           )}
           {!canUseLiveApi ? (
             <div className="mt-6 rounded-2xl border border-dashed border-[var(--line)] bg-[var(--surface-soft)]/50 p-5 text-xs font-semibold leading-relaxed text-[var(--text-secondary)]">
