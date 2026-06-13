@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, type FormEvent } from "react";
+import { AnalysisModuleSelector } from "@/components/common/AnalysisModuleSelector";
 import { useQuery } from "@tanstack/react-query";
 import {
   Button,
@@ -363,9 +364,14 @@ export function OperationsIntelligenceWorkspaceClient({
 
   const runtimeConfig = { mode: "local" as string, hasAccessToken: false };
   const canUseLiveApi = true;
-  const showMaintenance = sections.includes("maintenance");
-  const showTenant = sections.includes("tenant");
-  const showAsset = sections.includes("asset");
+  // 선택형 분석(전 시스템 기본): 사용자가 실행할 분석만 체크 → 선택분만 노출·실행.
+  // 기본 전체선택(=기존 동작 무변경). sections(capability) ∩ selected(사용자 선택).
+  const [analysisSel, setAnalysisSel] = useState<Record<string, boolean>>({
+    maintenance: true, tenant: true, asset: true,
+  });
+  const showMaintenance = sections.includes("maintenance") && analysisSel.maintenance;
+  const showTenant = sections.includes("tenant") && analysisSel.tenant;
+  const showAsset = sections.includes("asset") && analysisSel.asset;
 
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [manualProjectId, setManualProjectId] = useState("");
@@ -671,6 +677,21 @@ export function OperationsIntelligenceWorkspaceClient({
           </div>
         </CardContent>
       </Card>
+
+      {/* 선택형 분석(전 시스템 기본 UX) — 실행할 분석만 선택. 2개 이상 가능할 때만 노출. */}
+      {sections.length > 1 && (
+        <AnalysisModuleSelector
+          modules={[
+            ...(sections.includes("maintenance") ? [{ key: "maintenance", label: labels.maintenanceTitle, description: "예지정비 신호 분석", estimatedSeconds: 4 }] : []),
+            ...(sections.includes("tenant") ? [{ key: "tenant", label: labels.tenantTitle, description: "테넌트 경험·피드백 분석", estimatedSeconds: 4 }] : []),
+            ...(sections.includes("asset") ? [{ key: "asset", label: labels.assetTitle, description: "자산 종합 분석", estimatedSeconds: 4 }] : []),
+          ]}
+          selected={analysisSel}
+          onChange={setAnalysisSel}
+          title="분석 항목 선택"
+          subtitle="실행할 분석만 선택하세요. 선택한 분석만 표시·실행됩니다."
+        />
+      )}
 
       <div
         className={
