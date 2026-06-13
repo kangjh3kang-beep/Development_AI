@@ -127,7 +127,20 @@ class AVMService:
             except Exception:
                 ml_price = idw_price
         model_used = bool(self.model and features and pd is not None and ml_price != idw_price)
-        final_price = (ml_price * 0.6 + idw_price * 0.4) if model_used else idw_price
+
+        # ★신뢰루프: 모델(ml)과 지역 실거래(idw) 교차검증. 모델이 지역 대비 이상치(타지역 학습/
+        #   폴백 오염으로 1.5배 이탈)면 배제하고 지역 실거래로 폴백·신뢰도 하향(가짜 단가 방지).
+        cross = None
+        if model_used:
+            from app.services.data_validation.trust import Signal, cross_validate
+            cross = cross_validate(
+                [Signal("idw_local", float(idw_price), sample_size=len(comparables), source="live", weight=1.2),
+                 Signal("ml_model", float(ml_price), sample_size=len(comparables), source="live", weight=1.0)],
+                anchor="idw_local", outlier_ratio=1.5, min_anchor_samples=3,
+            )
+            final_price = float(cross.trusted_value) if cross.trusted_value else idw_price
+        else:
+            final_price = idw_price
 
         # 신뢰도·가격범위 — comparable 표본수·가격분산 기반(실측). 고정 R² 제거(할루시네이션 방지).
         import statistics as _st
@@ -154,7 +167,8 @@ class AVMService:
                 {"low": round(final_price - margin), "high": round(final_price + margin)}
                 if margin is not None else None
             ),
-            "method_note": "신뢰도·범위는 comparable 표본수·가격분산 기반 실측치. 학습 R²는 train_model 시에만 산출하며 추정 응답에 고정값을 넣지 않음.",
+            "cross_validation": cross.to_dict() if cross is not None else None,
+            "method_note": "신뢰도·범위는 comparable 표본수·가격분산 기반 실측치. 앙상블은 모델↔지역 실거래 교차검증(이상치 모델 배제). 학습 R²는 train_model 시에만 산출.",
         }
 
     def train_model(self, X_train: Any, y_train: Any) -> Dict:
