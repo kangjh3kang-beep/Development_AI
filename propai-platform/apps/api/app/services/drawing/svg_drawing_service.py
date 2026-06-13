@@ -553,19 +553,27 @@ class SVGDrawingService:
         core_width_m: float = 4.0,
         core_depth_m: float = 6.0,
         units: list[dict] | None = None,
+        *,
+        findings: Optional[List[dict]] = None,
     ) -> str:
         """상세 평면도 SVG — 벽체(200mm), 문(900mm), 창호(1200mm), 코어, 복도, 치수선.
 
         units 제공 시(예: [{type:'59A',area_sqm:59,count_per_floor:2}]) 실제 평형믹스로
         면적비례 분할·타입라벨, 미제공 시 generic 균등분할(기존 호환).
+
+        §4-C 후속: findings(8엔진 audit) 제공 시 복도를 피난동선으로 적색 점선 강조하고 법규
+        범례(✓/⚠/✗·라벨)를 하단에 추가한다(판정가능 finding만 — skipped 제외). 미제공 시 기존 불변.
         """
         if svgwrite is None:
             return SVG_PLACEHOLDER
+        # §4-C 후속: 판정 가능한 finding(pass/warning/fail)만 주석·범례에 반영(가짜 판정 금지).
+        judged = [f for f in (findings or []) if str(f.get("status")) in ("pass", "warning", "fail")]
         bw = _s(building_width_m)
         bd = _s(building_depth_m)
         wt = _s(0.2)  # 벽체
         canvas_w = int(bw + MARGIN * 2 + 40)
-        canvas_h = int(bd + MARGIN * 2 + 60)
+        legend_h = (20 + len(judged) * 14) if judged else 0  # 하단 법규 범례 공간
+        canvas_h = int(bd + MARGIN * 2 + 60 + legend_h)
 
         dwg = svgwrite.Drawing(size=(f"{canvas_w}px", f"{canvas_h}px"))
         dwg.add(dwg.rect(insert=(0, 0), size=(canvas_w, canvas_h), fill="white"))
@@ -710,6 +718,34 @@ class SVGDrawingService:
             insert=(bw / 2, -10), font_size="10px", font_family=FONT,
             fill=C_TEXT, text_anchor="middle", font_weight="bold",
         ))
+
+        # ── §4-C 후속: 법규 findings 주석(피난동선 강조 + 범례) ──
+        if judged:
+            # 피난동선 — 복도 중심선을 적색 점선으로 강조 + 라벨(거주자 피난 경로 인지).
+            evac_y = corr_y + corr_h / 2
+            g.add(dwg.line(start=(wt, evac_y), end=(bw - wt, evac_y),
+                           stroke=C_BAD, stroke_width=1.5, stroke_dasharray="6,3"))
+            g.add(dwg.text("피난동선", insert=(bw - wt - 4, evac_y - 3),
+                           font_size="7px", font_family=FONT, fill=C_BAD,
+                           text_anchor="end", font_weight="bold"))
+            # 법규 범례 — 건물 하단(치수선 아래)에 각 finding 정직 표기.
+            ly = bd + 34
+            g.add(dwg.text("법규 준수", insert=(0, ly), font_size="9px",
+                           font_family=FONT, fill=C_TEXT, font_weight="bold"))
+            ly += 14
+            for f in judged:
+                st = str(f.get("status"))
+                icon = _STATUS_ICON.get(st, "·")
+                color = _STATUS_COLOR.get(st, C_TEXT)
+                label = _finding_label(f)
+                cur = f.get("current")
+                lim = f.get("limit")
+                row = f"{icon} {label}"
+                if cur is not None and lim is not None:
+                    row += f": 현재 {cur} · 한도 {lim}"
+                g.add(dwg.text(row, insert=(0, ly), font_size="8px",
+                               font_family=FONT, fill=color))
+                ly += 14
 
         return dwg.tostring()
 
