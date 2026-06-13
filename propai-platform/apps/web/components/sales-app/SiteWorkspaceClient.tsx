@@ -86,32 +86,46 @@ export default function SiteWorkspaceClient({ locale, siteId }: { locale: Locale
       });
       return;
     }
-    apiClient
-      .get<RoleResponse>(`/sales/sites/${siteId}/role`)
-      .then((r) => {
-        setRole(r);
-        setErr("");
-        setNeedEnter(false);
-        const tabs = visibleTabs(r.features);
-        if (tabs[0]) setTab(tabs[0].key);
-      })
-      .catch((e) => {
-        // 토큰 만료/없음(401/403) → 재진입(2차 비밀번호) 유도.
-        if (e instanceof ApiClientError && (e.status === 401 || e.status === 403)) {
-          clearSiteToken(siteId);
-          setNeedEnter(true);
-          return;
-        }
-        // 그 외는 실제 원인을 함께 보여줘 진단이 쉽게 한다.
-        const st = e instanceof ApiClientError ? e.status : 0;
-        if (st === 404 || st === 422) {
-          // 현장 주소(ID)가 잘못된 경우 — 목록에서 다시 들어오도록 안내.
-          setErr("현장 주소가 올바르지 않습니다. ‘내 현장’ 목록에서 다시 들어와 주세요.");
-        } else {
-          setErr(`현장 정보를 불러오지 못했습니다${st ? ` (오류 ${st})` : " (네트워크 오류)"}. 잠시 후 다시 시도해 주세요.`);
-        }
-      })
-      .finally(() => setLoading(false));
+    // 일시적 인프라 오류(배포 전환·게이트웨이)는 자동 재시도해 사용자에게 노출하지 않는다.
+    //  502/503/504/네트워크(0)만 재시도 — 401/403/404/422 등 확정 오류는 즉시 처리.
+    const TRANSIENT = new Set([0, 502, 503, 504]);
+    const MAX_RETRY = 3;
+
+    const attempt = (n: number) => {
+      apiClient
+        .get<RoleResponse>(`/sales/sites/${siteId}/role`)
+        .then((r) => {
+          setRole(r);
+          setErr("");
+          setNeedEnter(false);
+          const tabs = visibleTabs(r.features);
+          if (tabs[0]) setTab(tabs[0].key);
+          setLoading(false);
+        })
+        .catch((e) => {
+          // 토큰 만료/없음(401/403) → 재진입(2차 비밀번호) 유도.
+          if (e instanceof ApiClientError && (e.status === 401 || e.status === 403)) {
+            clearSiteToken(siteId);
+            setNeedEnter(true);
+            setLoading(false);
+            return;
+          }
+          const st = e instanceof ApiClientError ? e.status : 0;
+          // 일시 오류면 지수 백오프(0.8s·1.6s·2.4s) 후 재시도 — 로딩 유지.
+          if (TRANSIENT.has(st) && n < MAX_RETRY) {
+            setLoading(true);
+            setTimeout(() => attempt(n + 1), 800 * (n + 1));
+            return;
+          }
+          if (st === 404 || st === 422) {
+            setErr("현장 주소가 올바르지 않습니다. ‘내 현장’ 목록에서 다시 들어와 주세요.");
+          } else {
+            setErr(`현장 정보를 불러오지 못했습니다${st ? ` (오류 ${st})` : " (네트워크 오류)"}. 잠시 후 다시 시도해 주세요.`);
+          }
+          setLoading(false);
+        });
+    };
+    attempt(0);
   }, [siteId]);
 
   useEffect(() => {

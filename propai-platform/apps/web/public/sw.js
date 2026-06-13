@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v154-promo-logo";
+const CACHE_NAME = "propai-v155-fieldapp-resilient";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

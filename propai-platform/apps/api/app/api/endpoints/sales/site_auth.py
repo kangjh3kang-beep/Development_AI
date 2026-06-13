@@ -91,10 +91,20 @@ _ATTEMPT_DDL = (
 )
 
 
+# 인증 테이블 DDL은 프로세스당 1회만 실행한다(요청마다 CREATE TABLE IF NOT EXISTS 는
+# 존재해도 락을 잡아 동시성 시 지연·503 유발). 첫 성공 후 플래그로 건너뛴다.
+_ENSURED = False
+
+
 async def _ensure(db: AsyncSession) -> None:
-    """현장 인증 테이블을 멱등 생성(배포 후 최초 호출 시 1회). 기존 무파괴."""
+    """현장 인증 테이블을 멱등 생성(프로세스 최초 1회). 기존 무파괴."""
+    global _ENSURED
+    if _ENSURED:
+        return
     await db.execute(text(_PWD_DDL))
     await db.execute(text(_ATTEMPT_DDL))
+    await db.commit()  # DDL 영속 보장(신규 DB의 GET 경로도 안전) 후에만 플래그 설정.
+    _ENSURED = True
 
 
 # ── 역할 해석(deps_sales 와 동일 규칙 — 단일 기준) ────────────────────────────
