@@ -5,7 +5,7 @@
 import uuid
 from decimal import Decimal, ROUND_HALF_UP
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.api.database.models.sales.site_org import SalesSiteConfig
@@ -261,6 +261,20 @@ async def project_revenue(db: AsyncSession, site_id: uuid.UUID, round_id: uuid.U
         e = by_type.setdefault(tname, {"count": 0, "total_10k": 0})
         e["count"] += 1
         e["total_10k"] += int(amt / 10000)
+    # 원가구성 집계(토지비/건축비/업무대행비 + VAT) — decompose 결과(SalesUnitPriceBreakdown).
+    _LBL = {"LAND": "토지비", "BUILD": "건축비", "CUSTOM": "업무대행비"}
+    bd_rows = (await db.execute(
+        select(SalesUnitPriceBreakdown.component_type,
+               func.sum(SalesUnitPriceBreakdown.amount),
+               func.sum(SalesUnitPriceBreakdown.vat_amount))
+        .where(SalesUnitPriceBreakdown.site_id == site_id,
+               SalesUnitPriceBreakdown.round_id == round_id)
+        .group_by(SalesUnitPriceBreakdown.component_type))).all()
+    breakdown = [{
+        "component_type": ct, "label": _LBL.get(ct or "", ct or "기타"),
+        "amount_10k": int((a or 0) / 10000), "vat_10k": int((v or 0) / 10000),
+    } for ct, a, v in bd_rows]
+
     return {
         "round_id": str(round_id),
         "units_priced": len(rows),
@@ -268,4 +282,5 @@ async def project_revenue(db: AsyncSession, site_id: uuid.UUID, round_id: uuid.U
         "total_revenue_10k": int(total / 10000),    # 총분양액(만원)
         "avg_unit_10k": int(total / len(rows) / 10000) if rows else 0,
         "by_type": by_type,
+        "breakdown": breakdown,                     # 원가구성(토지비/건축비/대행비·VAT, 만원)
     }

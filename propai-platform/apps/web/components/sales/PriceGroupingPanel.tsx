@@ -18,14 +18,16 @@ export default function PriceGroupingPanel({ siteCode, roundId, onChanged }: { s
   const [mode, setMode] = useState<"RATE" | "FIXED" | "OVERRIDE_PSQM">("RATE");
   const [value, setValue] = useState("");
   const [revenue, setRevenue] = useState<number | null>(null);
+  const [breakdown, setBreakdown] = useState<{ label: string; amount_10k: number; vat_10k: number }[]>([]);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
   const [target, setTarget] = useState("");      // 목표 총매출(억)
   const [solveBusy, setSolveBusy] = useState(false);
 
   const loadRevenue = useCallback(() => {
-    api.get<{ total_revenue_10k: number }>(`/pricing/revenue?round_id=${roundId}`)
-      .then((r) => setRevenue(r?.total_revenue_10k ?? 0)).catch(() => setRevenue(null));
+    api.get<{ total_revenue_10k: number; breakdown?: { label: string; amount_10k: number; vat_10k: number }[] }>(`/pricing/revenue?round_id=${roundId}`)
+      .then((r) => { setRevenue(r?.total_revenue_10k ?? 0); setBreakdown(r?.breakdown || []); })
+      .catch(() => setRevenue(null));
   }, [siteCode, roundId]);
 
   useEffect(() => {
@@ -90,6 +92,16 @@ export default function PriceGroupingPanel({ siteCode, roundId, onChanged }: { s
         <p className="text-xs font-bold text-[var(--text-secondary)]">④ 그룹핑 일괄단가 <span className="font-normal text-[var(--text-hint)]">(층/라인/향 선택 → 적용)</span></p>
         <p className="text-[11px] text-[var(--text-tertiary)]">현재 총매출 <b className="text-[var(--accent-strong)]">{eok(revenue ?? undefined)}</b> · 선택 {sel.size}세대</p>
       </div>
+      {breakdown.length > 0 && (
+        <div className="mb-2 flex flex-wrap items-center gap-1.5 text-[10px] text-[var(--text-tertiary)]">
+          <span className="text-[var(--text-hint)]">원가구성:</span>
+          {breakdown.map((b) => (
+            <span key={b.label} className="rounded-md border border-[var(--line)] bg-[var(--surface-strong)] px-1.5 py-0.5">
+              {b.label} {eok(b.amount_10k)}{b.vat_10k > 0 ? ` (VAT ${eok(b.vat_10k)})` : ""}
+            </span>
+          ))}
+        </div>
+      )}
 
       {/* P1-3 목표 총매출 → 기준단가 역산 */}
       <div className="mb-2 flex flex-wrap items-center gap-1.5 rounded-lg border border-[var(--line)] bg-[var(--surface-strong)] px-2 py-1.5">
