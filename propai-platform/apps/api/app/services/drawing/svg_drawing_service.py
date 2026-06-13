@@ -34,6 +34,51 @@ C_LANDSCAPE = "#00b894"
 C_ROAD = "#b2bec3"
 C_SETBACK = "#d63031"
 
+# §4-C 법규주석 — 심사 status별 색/아이콘(결정론). skipped/info는 판정에서 제외(정직).
+C_OK = "#00b894"    # pass (적합 — 녹)
+C_WARN = "#e17055"  # warning (조건부 — 주황)
+C_BAD = "#d63031"   # fail (부적합 — 적)
+_STATUS_ICON: Dict[str, str] = {"pass": "✓", "warning": "⚠", "fail": "✗"}
+_STATUS_COLOR: Dict[str, str] = {"pass": C_OK, "warning": C_WARN, "fail": C_BAD}
+# 엔진명 → 사람이 읽는 라벨(check_id 접미사가 더 구체적이면 그쪽 우선).
+# 실제 design_audit_orchestrator가 emit하는 엔진명 기준(solar_envelope·design_review 등).
+_ENGINE_LABELS: Dict[str, str] = {
+    "rules8": "법규",
+    "solar": "정북일조",
+    "solar_envelope": "정북일조",
+    "parking": "주차",
+    "grammar": "평면·피난",
+    "design_review": "설계법규",
+    "incentive": "인센티브",
+    "case": "인근사례",
+    "efficiency": "효율",
+}
+
+
+def _finding_label(finding: dict) -> str:
+    """finding의 check_id(예: 'rules8_건폐율')·engine으로 표시 라벨을 정한다(정직).
+
+    우선순위:
+      1) check_id == engine(접미사 없음, 예: 'solar_envelope') → 엔진 라벨.
+      2) check_id가 'engine_타입' 꼴(예: 'design_review_건폐율') → 'engine_' 접두만 정확히
+         제거한 접미사. (첫 '_' split은 multi-word 엔진에서 깨지므로 금지.)
+      3) 그 외 '_' 포함 check_id → 첫 '_' 뒤(예: 'rules8_용적률' → '용적률').
+      4) 폴백 → 엔진 라벨. 숫자/엔진명 자체뿐인 접미사는 무시(가공 금지).
+    """
+    cid = str(finding.get("check_id") or "")
+    engine = str(finding.get("engine") or "")
+    if cid and cid == engine:
+        return _ENGINE_LABELS.get(engine, engine or "검토")
+    if engine and cid.startswith(engine + "_"):
+        suffix = cid[len(engine) + 1:].strip()
+        if suffix and not suffix.isdigit():
+            return suffix
+    if "_" in cid:
+        suffix = cid.split("_", 1)[1].strip()
+        if suffix and not suffix.isdigit() and suffix != engine:
+            return suffix
+    return _ENGINE_LABELS.get(engine, engine or "검토")
+
 
 def _s(m: float) -> float:
     """미터 → 픽셀 변환."""
@@ -295,6 +340,114 @@ class SVGDrawingService:
                           insert=(50, by + building_depth_m * 5 + 20), font_size="10px", fill="red"))
         dwg.add(dwg.text("N", insert=(canvas_w - 30, 70), font_size="14px", font_weight="bold"))
         return dwg.tostring()
+
+    # ── §4-C: 법규주석 배치도 (8엔진 audit findings → 도면 시각화) ──
+
+    def annotate_site_plan(
+        self,
+        site_width_m: float,
+        site_depth_m: float,
+        building_width_m: float,
+        building_depth_m: float,
+        setback_m: float = 3.0,
+        *,
+        findings: Optional[List[dict]] = None,
+        verdict: Optional[str] = None,
+    ) -> str:
+        """배치도에 설계심사(8엔진) findings를 결정론으로 주석화한다(audit↔drawing 연결).
+
+        - 건물 footprint를 판정 가능한 finding의 최악 status로 색칠(pass 녹/warning 주황/
+          fail 적). 판정 가능한 finding(pass/warning/fail)이 없으면 중립색(기존 배치도와 동일).
+        - 우측 범례에 각 finding을 아이콘(✓/⚠/✗)·라벨·'현재 X · 한도 Y'로 표기.
+        - 정북일조(solar) fail/warning이면 북측(상단) 변에 적색 점선 + 라벨로 사선제한 인지.
+        - skipped/info는 판정에서 제외(✓/✗ 단정 금지). findings 미제공 시 색·범례 없이 기본
+          배치도(하위호환·날조 0). 존재하는 finding만 렌더한다.
+        """
+        if svgwrite is None:
+            return SVG_PLACEHOLDER
+
+        items = findings or []
+        # 판정 가능한 finding만 색·범례에 반영(skipped/info 제외 — 가짜 적합/부적합 금지).
+        judged = [f for f in items if str(f.get("status")) in ("pass", "warning", "fail")]
+        if any(f.get("status") == "fail" for f in judged):
+            worst: Optional[str] = "fail"
+        elif any(f.get("status") == "warning" for f in judged):
+            worst = "warning"
+        elif judged:
+            worst = "pass"
+        else:
+            worst = None
+        fp_color = _STATUS_COLOR.get(worst) if worst else C_BUILDING
+
+        scale = 5
+        legend_w = 240 if (judged or verdict) else 0
+        site_px_w = site_width_m * scale
+        site_px_h = site_depth_m * scale
+        canvas_w = int(site_px_w) + 100 + legend_w
+        canvas_h = max(int(site_px_h) + 100, 90 + len(judged) * 16 + 60)
+
+        dwg = svgwrite.Drawing(size=(f"{canvas_w}px", f"{canvas_h}px"))
+        dwg.add(dwg.rect(insert=(0, 0), size=(canvas_w, canvas_h), fill="white"))
+
+        # 부지
+        dwg.add(dwg.rect(insert=(50, 50), size=(site_px_w, site_px_h),
+                         stroke="black", stroke_width=2, fill=C_SITE))
+        # 건물 footprint — 판정 색(없으면 중립 C_BUILDING)
+        bx = 50 + setback_m * scale
+        by = 50 + setback_m * scale
+        dwg.add(dwg.rect(insert=(bx, by), size=(building_width_m * scale, building_depth_m * scale),
+                         stroke="navy", stroke_width=2, fill=fp_color, opacity=0.6))
+        dwg.add(dwg.text(f"부지 {site_width_m:.1f}m x {site_depth_m:.1f}m",
+                         insert=(50, 40), font_size="12px", fill="black"))
+        dwg.add(dwg.text(f"건물 {building_width_m:.1f}m x {building_depth_m:.1f}m",
+                         insert=(bx, by - 5), font_size="10px", fill="navy"))
+        dwg.add(dwg.text(f"이격거리 {setback_m:.1f}m",
+                         insert=(50, by + building_depth_m * scale + 20),
+                         font_size="10px", fill=C_SETBACK))
+        dwg.add(dwg.text("N", insert=(50 + site_px_w - 18, 70),
+                         font_size="14px", font_weight="bold"))
+
+        # 정북일조(solar) 위반/경고 → 북측(상단) 변에 적색 점선 사선제한 표시.
+        # 실 오케스트레이터 엔진명은 'solar_envelope' — startswith로 'solar'/'solar_envelope' 모두 매칭.
+        solar = [f for f in judged
+                 if str(f.get("engine") or "").startswith("solar")
+                 and f.get("status") in ("fail", "warning")]
+        if solar:
+            sworst = "fail" if any(f.get("status") == "fail" for f in solar) else "warning"
+            dwg.add(dwg.line(start=(50, 50), end=(50 + site_px_w, 50),
+                             stroke=C_BAD, stroke_width=2.5, stroke_dasharray="5,3"))
+            dwg.add(dwg.text(f"정북일조 {_STATUS_ICON[sworst]} (사선제한)",
+                             insert=(50, 50 - 5), font_size="10px",
+                             fill=C_BAD, font_weight="bold"))
+
+        # 범례 패널 — 종합판정 + 각 finding 정직 표기(아이콘·라벨·현재/한도)
+        if judged or verdict:
+            lx = int(50 + site_px_w + 40)
+            ly = 50
+            if verdict:
+                vcolor = {"적합": C_OK, "조건부적합": C_WARN, "부적합": C_BAD}.get(verdict, C_TEXT)
+                dwg.add(dwg.text(f"종합판정: {verdict}", insert=(lx, ly),
+                                 font_size="12px", font_weight="bold", fill=vcolor))
+                ly += 24
+            dwg.add(dwg.text("법규 준수", insert=(lx, ly),
+                             font_size="11px", font_weight="bold", fill=C_TEXT))
+            ly += 18
+            for f in judged:
+                st = str(f.get("status"))
+                icon = _STATUS_ICON.get(st, "·")
+                color = _STATUS_COLOR.get(st, C_TEXT)
+                label = _finding_label(f)
+                cur = f.get("current")
+                lim = f.get("limit")
+                row = f"{icon} {label}"
+                if cur is not None and lim is not None:
+                    row += f": 현재 {cur} · 한도 {lim}"
+                dwg.add(dwg.text(row, insert=(lx, ly), font_size="9px", fill=color))
+                ly += 16
+            dwg.add(dwg.text("※ 보유 데이터 기반 자동심사(보조) — 인허가권자 판단 대체 아님",
+                             insert=(lx, ly + 6), font_size="7px", fill=C_WALL_INT))
+
+        return _make_responsive(dwg.tostring())
 
     # ── 하위 호환 래퍼 (기존 dict 기반 API) ──
 

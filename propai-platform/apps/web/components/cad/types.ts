@@ -167,6 +167,9 @@ export type AutoDesignSummary = {
   massing_label?: string;
   /** §4-B: 참조 사례 적용 프로비넌스(엔진 정직 표기). 미적용·구버전엔 부재 — 옵셔널. */
   reference?: ReferenceProvenance;
+  /** §4-C: 엔진 산출 건물 치수(주석 배치도용). 구버전 응답엔 부재 — 옵셔널. */
+  building_width_m?: number;
+  building_depth_m?: number;
 };
 
 export type AutoDesignCompliance = {
@@ -184,6 +187,26 @@ export type AutoDesignResponse = {
   compliance: AutoDesignCompliance;
   /** §4-B: use_references=true일 때만 — 유사사례 조회 결과(정직 요약). */
   reference?: ReferenceResultBlock;
+  /** auto-design 응답의 법정 한도(슬라이더·주석 배치도 한도값). 구버전엔 부재 — 옵셔널. */
+  legal_limits?: LegalLimitsResponse;
+};
+
+/** §4-C: 도면 법규주석 finding(8엔진 audit 또는 설계 compliance 산출). */
+export type LegalFinding = {
+  check_id?: string;
+  engine?: string;
+  status?: string; // pass | warning | fail | skipped
+  current?: number | null;
+  limit?: number | null;
+};
+
+/** §4-C: 주석 배치도 기하 — 부지/건물 치수(m). 부지 경계는 면적 기반 개략일 수 있음(정직 라벨). */
+export type AnnotatedSiteGeometry = {
+  site_width_m: number;
+  site_depth_m: number;
+  building_width_m: number;
+  building_depth_m: number;
+  setback_m?: number;
 };
 
 export type DesignAlternativesResponse = {

@@ -1,11 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiClient, ApiClientError } from "@/lib/api-client";
 import { EvidencePanel, type EvidenceItem, type EvidenceLegalRef } from "@/components/common/EvidencePanel";
 import { useSpeechToText } from "@/lib/use-speech-to-text";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { ReferenceAssemblyCard } from "@/components/cad/ReferenceAssemblyCard";
+import { AnnotatedSitePlanCard } from "@/components/cad/AnnotatedSitePlanCard";
+import {
+  annotatedGeometryFor,
+  buildLegalFindings,
+  complianceVerdict,
+} from "@/components/cad/legalAnnotation";
 import type {
   DesignAlternative,
   DesignAlternativesV2Response,
@@ -663,6 +669,17 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
   const selectedAlt =
     selectedRank != null ? alternatives.find((a) => a.rank === selectedRank) ?? null : null;
 
+  // §4-C: 법규주석 배치도 prop 안정화(useMemo) — 슬라이더 조작 등 부모 리렌더마다 SVG 재요청 방지.
+  const annotatedGeometry = useMemo(
+    () => (single ? annotatedGeometryFor(siteArea, single.summary) : null),
+    [single, siteArea],
+  );
+  const legalFindings = useMemo(
+    () => (single ? buildLegalFindings(single.summary, single.compliance, single.legal_limits) : []),
+    [single],
+  );
+  const legalVerdict = single ? complianceVerdict(single.compliance) : null;
+
   return (
     <div className="rounded-[2rem] border border-[var(--line-strong)] bg-[var(--surface-soft)] p-6 lg:p-8">
       {/* 헤더 */}
@@ -1131,6 +1148,15 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
               {/* W-A: 산출 근거(세트백 실값·일조캡·층수 바인딩·주차/코어 산식) — 접이식 */}
               <BasisSection summary={single.summary} className="mt-2" />
             </div>
+          )}
+
+          {/* §4-C: 법규 준수 배치도 — 설계 compliance(건폐/용적/높이)를 배치도에 주석화(audit↔drawing) */}
+          {single && (
+            <AnnotatedSitePlanCard
+              geometry={annotatedGeometry}
+              findings={legalFindings}
+              verdict={legalVerdict}
+            />
           )}
 
           {/* 부지가 작아 세대 구성이 불가한 경우 — 엔진이 정직하게 0세대로 응답(가짜 세대 금지). */}

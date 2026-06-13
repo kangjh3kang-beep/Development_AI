@@ -63,6 +63,24 @@ class SitePlanRequest(BaseModel):
     setback_m: float = 3.0
 
 
+class AnnotatedSitePlanRequest(BaseModel):
+    """§4-C: 법규주석 배치도 — 8엔진 design_audit findings를 도면에 시각화.
+
+    findings는 `/design-audit/run` 출력의 findings 항목({check_id, engine, status,
+    current, limit, ...})을 그대로 전달한다. 빈 배열이면 기본 배치도(하위호환).
+    """
+
+    site_width_m: float = Field(..., gt=0)
+    site_depth_m: float = Field(..., gt=0)
+    building_width_m: float = Field(..., gt=0)
+    building_depth_m: float = Field(..., gt=0)
+    setback_m: float = Field(3.0, ge=0)
+    findings: list[dict] = Field(default_factory=list, description="design_audit findings")
+    verdict: Optional[str] = Field(
+        None, description="종합판정(적합/조건부적합/부적합) — 있으면 범례에 표기",
+    )
+
+
 class FloorPlanRequest(BaseModel):
     total_floor_area_sqm: float
     unit_type: str = "84A"
@@ -249,6 +267,24 @@ async def generate_site_plan(req: SitePlanRequest):
     svg = svg_service.generate_site_plan(
         req.site_width_m, req.site_depth_m,
         req.building_width_m, req.building_depth_m, req.setback_m,
+    )
+    return Response(content=svg, media_type="image/svg+xml")
+
+
+@router.post("/annotated-site-plan", response_class=Response)
+async def generate_annotated_site_plan(req: AnnotatedSitePlanRequest):
+    """§4-C: 8엔진 설계심사 findings를 배치도에 결정론 주석화한 SVG를 반환한다.
+
+    audit↔drawing 연결 — `/design-audit/run`의 findings를 그대로 받아 footprint 색·범례·
+    정북일조 표시로 시각화한다. 순수 결정론 산출(LLM·DB 없음)이라 무인증 허용.
+    """
+    _check_services()
+    svg = svg_service.annotate_site_plan(
+        req.site_width_m, req.site_depth_m,
+        req.building_width_m, req.building_depth_m,
+        setback_m=req.setback_m,
+        findings=req.findings,
+        verdict=req.verdict,
     )
     return Response(content=svg, media_type="image/svg+xml")
 
