@@ -109,6 +109,9 @@ class MarketReportService:
     async def _category_stats(self, lawd_cd: str) -> dict[str, Any]:
         import asyncio
 
+        # ★MOLIT LAWD_CD 는 시군구 5자리. 10자리 법정동/bcode 가 들어오면 [:5]로 정규화하지 않으면
+        #   실거래가 전부 빈 결과가 되어 trade·comparable_trade(적정분양가 앵커)가 통째로 누락된다.
+        lawd_cd = (lawd_cd or "")[:5]
         months = self._months(3)
         trade: dict[str, Any] = {}
         rent: dict[str, Any] = {}
