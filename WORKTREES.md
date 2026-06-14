@@ -1,6 +1,8 @@
 # 워크트리 정책 — 세션 간 브랜치 충돌 재발 방지
 
 > **반드시 지킬 규칙: 작업 브랜치마다 전용 git worktree를 쓴다. 공유 워크트리에서 다른 브랜치를 `git checkout` 하지 않는다.**
+>
+> 협업 조율(누가 무슨 영역 작업 중·클레임·핸드오프): `coordination/PROTOCOL.md` · 공유 보드 `~/My_Projects/.coordination/BOARD.md` · 한눈 조회 `scripts/coord.sh status`.
 
 ## 왜 (2026-06-14 사고)
 여러 Claude 세션이 **하나의 메인 워크트리(`Development_AI/`)를 공유**하면서 각자 다른 브랜치를 `git checkout` 했다. 한 세션이 `feature/trust-infra-2026-06-11` → `feature/self-growth-engine`으로 전환하자 다른 세션의 HEAD가 따라 움직였고, 그 세션의 커밋(SP2-1)이 **엉뚱한 브랜치에 얹혔다.** 같은 워크트리에서 HEAD는 하나뿐이라, 동시 작업은 반드시 충돌한다.

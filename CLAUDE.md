@@ -26,3 +26,14 @@
 | 2026-05-27 | Innovation5: GRESB ESG 스코어링 | gresb_scoring_service.py, GresbScoreCard.tsx | GRESB 2025 기준 자동 ESG 점수 산출 |
 | 2026-05-28 | 킬러기능: Top3 자동추천 파이프라인 | permit_validator.py, auto_recommend_top3(), AutoRecommendPanel.tsx, BusinessModelRefineModal.tsx | 주소입력→15모델시뮬→인허가검증→Top3추천→수정→완성 |
 | 2026-05-31 | 나라장터(G2B) 6엔진 연동 | bid_analyzer, schemas, routers, 프론트 모달 | 입찰 추정가격→QTO/수지/용도지역/인허가/ESG/시장 정밀분석 + 적정투찰가 |
+| 2026-06-14 | 멀티세션 협업체계 수립 | WORKTREES.md, coordination/, scripts/ | 세션 간 브랜치 충돌 방지(워크트리 격리)+조율 보드 |
+
+## 멀티세션 협업 (필수 — 여러 Claude 세션이 동시 작업)
+
+이 저장소는 **여러 Claude 세션이 동시에** 개발한다. 충돌(특히 같은 워크트리에서 브랜치 전환→HEAD 충돌→엉뚱한 브랜치 커밋)을 막기 위해 **세션 시작 시 반드시**:
+
+1. **공유 보드를 읽는다**: `~/My_Projects/.coordination/BOARD.md` (브랜치 무관 공유 — 누가 어느 브랜치·영역을 작업 중인지). 빠른 조회: `scripts/coord.sh status`.
+2. **브랜치당 전용 워크트리에서만 작업한다.** 공유 메인(`Development_AI/`)에서 feature 브랜치 `git checkout` 금지. 전용 워크트리 생성: `scripts/new-worktree.sh <branch>`. (git이 동일 브랜치 이중 checkout을 거부하므로, 한 번 전용 워크트리에 두면 충돌이 구조적으로 불가능.) 상세: `WORKTREES.md`.
+3. **공유 파일(예: `main.py` 라우터 등록) 편집 전 claim**: `scripts/coord.sh claim <영역>` → 완료 후 `release`. 진행/완료는 `scripts/coord.sh note <내용>`.
+4. **커밋 전 `git branch --show-current`로 자기 브랜치 확인.** main 직접 푸시 금지.
+5. 명시적 인계는 `mcp__ccd_session_mgmt__send_message`(사용자 확인). 전체 규약: `coordination/PROTOCOL.md`.
