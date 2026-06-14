@@ -117,6 +117,15 @@ except ImportError:
     except ImportError:
         v2_feasibility_router = None
 
+# v2 collaboration (회의방/협업 — 자체 prefix /api/v2/collaboration)
+try:
+    from apps.api.app.routers.v2_collaboration import router as v2_collaboration_router
+except ImportError:
+    try:
+        from app.routers.v2_collaboration import router as v2_collaboration_router
+    except ImportError:
+        v2_collaboration_router = None
+
 # v2 pipeline (자체 prefix 포함)
 try:
     from apps.api.app.routers.pipeline import router as pipeline_router
@@ -620,6 +629,8 @@ app.include_router(v2_projects.router, prefix="/api/v2/projects", tags=["프로�
 app.include_router(v2_design.router, prefix="/api/v2/design", tags=["설계 v2"])
 if v2_feasibility_router is not None:
     app.include_router(v2_feasibility_router)  # 자체 prefix: /api/v2/feasibility
+if v2_collaboration_router is not None:
+    app.include_router(v2_collaboration_router)  # 자체 prefix: /api/v2/collaboration
 if pipeline_router is not None:
     app.include_router(pipeline_router)  # 자체 prefix: /api/v2/pipeline
 if comprehensive_analysis_router is not None:
