@@ -55,5 +55,27 @@
 - **악성파일 스캔 미적용**(확장자+크기 30MB+magic-byte만). ClamAV 등은 범위 밖 — 운영 시 별도 검토 권장.
 - 프론트 검증(trust-infra): 백엔드 협업 회귀 63 passed, document_audit 서비스 5, lib vitest 16, tsc 0·next build 0, 회의방 Playwright 스모크 1 passed(자료교환·8엔진 배지 포함).
 
-## 6. 범위 경계
+## 6. 버그수정 + SP4(분석/저장 구분) + 보안 하드닝 (추가 푸시됨)
+| 커밋 | 내용 |
+|---|---|
+| `049b97a` | **FIX 회의방 API 403** — 프로젝트는 organization_id로 조직 소유(개인 owner 컬럼 없음)인데 ProjectMember는 초대수락에서만 생성돼 생성자/내부팀이 전원 403이던 근본버그. require_project_member에 *조직 내부 사용자 암묵 owner 멤버십*(user.tenant_id==project.organization_id) 추가. |
+| `d5d9134` | 심의 카테고리 **건축설계·도시계획** 추가(6→8종). |
+| `d5c25c2` | **SP4-1** 분석/저장 purpose 구분 + **alembic 027**(project_documents.purpose 컬럼). |
+| `66b6f4a` | 보안 하드닝 — IFC tempfile 정리(누수)·파일명 basename+null-byte. |
+| `055ad47` | SP4-1 프론트 분석/저장 토글. |
+
+배포 담당 추가 체크리스트:
+- [ ] ⚠️**alembic 027 적용**: `alembic upgrade head` → `project_documents.purpose VARCHAR(20) DEFAULT 'storage'`. (head=`027_collaboration_doc_purpose`, 체인 024→025→026→027 단일.)
+- [ ] **회의방 403 회귀 확인**: 프로젝트 생성자(조직 내부 사용자)가 `GET /api/v2/collaboration/projects/{id}/members` → 200(빈 목록 가능)·403 아님. (이전 배포에서 "API 요청 처리에 실패했습니다"의 근본원인.)
+- [ ] purpose 스모크: `POST .../documents` purpose=analysis+PDF → 400, analysis+DXF → 8엔진 실행, storage+임의 → 저장(audit_status null).
+
+⚠️ **알려진 보안 한계(적대적 리뷰 — 정직 문서화, 운영 전 검토 권장):**
+- **external_reviewer 문서 scope 미필터**: 초대 scope_categories는 ProjectMember에 미저장(accept 시 소실)이라, 수락한 외부 협력업체는 자기 허용 카테고리 밖 문서도 조회/심의상태 변경 가능. 근본수정은 멤버십 모델에 scope 영속 필요(Phase 2).
+- **magic-byte/악성파일 스캔 미적용**: 확장자+크기(30MB)+content_type만. 분석용 DXF/IFC는 parse 실패 시 audit failed로 일부 방어. 임의 저장 파일은 스캔 없음(ClamAV 등 별도 인프라 필요).
+- **repo 함수 organization_id 미필터**: list/get/soft_delete_document는 app-level require_project_member·RLS(026/027)에 격리 의존(기존 SP2 list_members와 동일 아키텍처). dep 우회 시에만 위험.
+
+## 7. 미구현(후속) — 문서 뷰어
+- 플랫폼 내부 문서 뷰어(이미지/PDF=react-pdf/DXF=경량 CadShape 뷰어)는 설계·승인 완료, 구현 예정(SP4-2/3). 현재는 서명URL '열기'(새 탭)만 제공.
+
+## 8. 범위 경계
 - trust-infra는 배포 안 함. 배포·롤백·prod 환경변수는 배포 담당 책임.
