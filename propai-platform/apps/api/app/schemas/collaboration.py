@@ -83,3 +83,43 @@ class DocumentShapesOut(BaseModel):
     shapes: list[dict] = Field(default_factory=list)
     bounds_px: Optional[dict] = None
     scale_px_per_m: Optional[float] = None
+
+
+class ReviewCommentCreate(BaseModel):
+    """의견교환 생성 — 루트(parent_id=None) 또는 답변(parent_id). anchor는 루트 전용(서버 강제)."""
+
+    body: str = Field(..., min_length=1, max_length=4000)
+    parent_id: Optional[str] = None
+    anchor: Optional[str] = Field(None, max_length=200)
+
+
+class ReviewCommentEdit(BaseModel):
+    body: str = Field(..., min_length=1, max_length=4000)
+
+
+class ReviewCommentResolve(BaseModel):
+    resolved: bool
+
+
+class ReviewCommentOut(BaseModel):
+    """의견교환 댓글 뷰 — 삭제(soft) 시 body=null(visible_body)."""
+
+    id: str
+    project_id: str
+    document_id: str
+    parent_id: Optional[str] = None
+    anchor: Optional[str] = None
+    author_id: Optional[str] = None
+    body: Optional[str] = None
+    resolved: bool = False
+    resolved_by: Optional[str] = None
+    resolved_at: Optional[datetime] = None
+    edited: bool = False
+    status: str = "active"
+    created_at: Optional[datetime] = None
+
+
+class ReviewCommentActionResult(BaseModel):
+    ok: bool
+    status: str
+    detail: Optional[str] = None
