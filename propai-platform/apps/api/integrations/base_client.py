@@ -49,6 +49,24 @@ EXTERNAL_API_LATENCY = Histogram(
 )
 
 
+def _emit_growth_fallback(service_name: str, circuit_state: Any) -> None:
+    """자가성장 엔진에 폴백/장애 이벤트 1건 발행(best-effort, 로직불변).
+
+    외부 API 호출 실패 시 record_failure 인접에서 호출된다. 성장엔진 capture_service
+    큐에 논블로킹 push 만 한다(동기 INSERT 없음). 어떤 예외도(import 실패·순환·큐
+    오류) 호출경로로 전파하지 않는다 — 기존 재시도·circuit 로직에 영향 없음.
+    """
+    try:
+        from app.services.growth import capture_service
+
+        capture_service.record_event("fallback", {
+            "surface": "api", "service": service_name, "severity": "error",
+            "payload": {"circuit_state": str(circuit_state)},
+        })
+    except Exception:  # noqa: BLE001 — 수집은 절대 호출경로를 깨뜨리면 안 됨.
+        pass
+
+
 class CircuitState(StrEnum):
     CLOSED = "closed"
     OPEN = "open"
@@ -236,6 +254,7 @@ class BaseAPIClient:
         except Exception as e:
             self.circuit_breaker.record_failure()
             EXTERNAL_API_REQUESTS.labels(self.service_name, method, "error").inc()
+            _emit_growth_fallback(self.service_name, self.circuit_breaker.state)  # 성장엔진 관측(로직불변·best-effort)
             logger.error("외부 API 호출 실패", service=self.service_name, error=str(e))
             # Circuit OPEN 시 Slack 알림
             if self.circuit_breaker.state == CircuitState.OPEN:
