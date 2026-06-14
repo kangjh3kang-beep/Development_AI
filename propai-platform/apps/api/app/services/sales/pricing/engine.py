@@ -67,6 +67,35 @@ def decompose(price: Decimal, comps, mode: str) -> list[dict]:
     return rows
 
 
+async def resolve_unit_price(db: AsyncSession, site_id, unit, round_id=None):
+    """per-unit 가격표(SalesUnitPriceTable)가 없을 때 기준단가(SalesPriceBase)에서 1세대 가격을 직접
+    산정한다(계약 가격 자동해소 폴백). generate_price_table 미실행 상태에서도 계약 total_price 가
+    NULL→0 cascade(수수료·할부·연체 전량 0) 되지 않도록 한다. 산식은 generate_price_table 과 동일.
+    """
+    if unit is None or not getattr(unit, "type_id", None):
+        return None
+    q = select(SalesPriceBase).where(
+        SalesPriceBase.site_id == site_id, SalesPriceBase.type_id == unit.type_id)
+    if round_id:
+        q = q.where(SalesPriceBase.round_id == round_id)
+    br = (await db.execute(q)).scalars().first()
+    if not br:
+        return None
+    ttype = (await db.execute(select(SalesUnitType).where(SalesUnitType.id == unit.type_id))).scalar_one_or_none()
+    if not ttype:
+        return None
+    rid = round_id or br.round_id
+    weights = list((await db.execute(select(SalesPriceWeight).where(
+        SalesPriceWeight.site_id == site_id, SalesPriceWeight.round_id == rid))).scalars())
+    group_map: dict = {}
+    for g in (await db.execute(select(SalesPriceGroup).where(SalesPriceGroup.site_id == site_id))).scalars():
+        for m in (await db.execute(select(SalesPriceGroupMember).where(
+                SalesPriceGroupMember.group_id == g.id))).scalars():
+            group_map.setdefault(m.unit_id, []).append(g)
+    price = compute_unit_price(unit, ttype, br, _match_weights(unit, weights, group_map))
+    return int(price) if price else None
+
+
 async def generate_price_table(db: AsyncSession, site_id: uuid.UUID, round_id: uuid.UUID, by=None) -> int:
     cfg = (await db.execute(select(SalesSiteConfig).where(SalesSiteConfig.site_id == site_id))).scalar_one()
     mode = cfg.pricing_mode or "GENERAL"
