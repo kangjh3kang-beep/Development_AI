@@ -65,12 +65,12 @@
 | `055ad47` | SP4-1 프론트 분석/저장 토글. |
 
 배포 담당 추가 체크리스트:
-- [ ] ⚠️**alembic 027 적용**: `alembic upgrade head` → `project_documents.purpose VARCHAR(20) DEFAULT 'storage'`. (head=`027_collaboration_doc_purpose`, 체인 024→025→026→027 단일.)
+- [ ] ⚠️**alembic 027·028 적용**: `alembic upgrade head` → `project_documents.purpose`(027) + `project_members.scope_categories`(028). (현재 head=`028_project_member_scope`, 체인 024→025→026→027→028 단일.)
 - [ ] **회의방 403 회귀 확인**: 프로젝트 생성자(조직 내부 사용자)가 `GET /api/v2/collaboration/projects/{id}/members` → 200(빈 목록 가능)·403 아님. (이전 배포에서 "API 요청 처리에 실패했습니다"의 근본원인.)
 - [ ] purpose 스모크: `POST .../documents` purpose=analysis+PDF → 400, analysis+DXF → 8엔진 실행, storage+임의 → 저장(audit_status null).
 
 ⚠️ **알려진 보안 한계(적대적 리뷰 — 정직 문서화, 운영 전 검토 권장):**
-- **external_reviewer 문서 scope 미필터**: 초대 scope_categories는 ProjectMember에 미저장(accept 시 소실)이라, 수락한 외부 협력업체는 자기 허용 카테고리 밖 문서도 조회/심의상태 변경 가능. 근본수정은 멤버십 모델에 scope 영속 필요(Phase 2).
+- ✅ **external_reviewer 문서 scope** — **SP5(`c61f29e`)에서 수정**. ProjectMember.scope_categories(alembic **028**) 영속 + 목록 필터·문서별 404 가드. 외부 협력업체는 허용 심의범위 문서만 조회·심의·삭제 가능.
 - **magic-byte/악성파일 스캔 미적용**: 확장자+크기(30MB)+content_type만. 분석용 DXF/IFC는 parse 실패 시 audit failed로 일부 방어. 임의 저장 파일은 스캔 없음(ClamAV 등 별도 인프라 필요).
 - **repo 함수 organization_id 미필터**: list/get/soft_delete_document는 app-level require_project_member·RLS(026/027)에 격리 의존(기존 SP2 list_members와 동일 아키텍처). dep 우회 시에만 위험.
 
