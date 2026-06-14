@@ -1,5 +1,36 @@
 import { resolveMockRequest } from "@/mocks/handlers";
 import { isMockMode } from "@/lib/runtime-mode";
+import { trackEvent, isGrowthEndpoint } from "@/lib/growth/event-collector";
+
+/**
+ * API 호출 계측(자가성장 엔진 §3.1) — 논블로킹·격리.
+ * 성공=api_call(샘플), 4xx/5xx=api_error(전수). 수집 실패가 본 호출을 막지 않는다.
+ * growth 엔드포인트 자체는 제외(수집의 무한루프 방지).
+ */
+function trackApiCall(path: string, status: number, latencyMs: number): void {
+  try {
+    if (isGrowthEndpoint(path)) return;
+    // 쿼리스트링 제거(정규화).
+    const route = path.split("?")[0] ?? path;
+    if (status >= 400) {
+      trackEvent("api_error", {
+        route,
+        status_code: status,
+        latency_ms: latencyMs,
+        severity: status >= 500 ? "error" : "warn",
+      });
+    } else {
+      trackEvent("api_call", {
+        route,
+        status_code: status,
+        latency_ms: latencyMs,
+        severity: "info",
+      });
+    }
+  } catch {
+    /* 수집 실패는 무시 */
+  }
+}
 
 /* ── API base 해석 (단일 source of truth) ──
    v1·v2가 호스트 화이트리스트를 각각 중복 유지하던 결함을 단일 헬퍼로 통합한다.
@@ -258,8 +289,10 @@ async function executeFetch(
   // sales 현장 경로면 저장된 현장 진입 토큰을 X-Site-Token으로 자동첨부(무파괴: 경로+토큰 존재시만).
   const salesSiteId = extractSalesSiteId(path);
   const siteToken = salesSiteId ? getActiveSiteToken(salesSiteId) : "";
+  // 텔레메트리: 호출 지연·상태 계측(자가성장 엔진). 측정 시작.
+  const startedAt = typeof performance !== "undefined" ? performance.now() : Date.now();
   try {
-    return await fetch(getRequestUrl(path), {
+    const response = await fetch(getRequestUrl(path), {
       ...options,
       method,
       body: createRequestBody(options.body),
@@ -275,8 +308,16 @@ async function executeFetch(
         ...options.headers,
       },
     });
+    // 정상 응답(2xx~5xx 모두) 계측 — 성공/오류는 trackApiCall 내부에서 분기.
+    const now = typeof performance !== "undefined" ? performance.now() : Date.now();
+    trackApiCall(path, response.status, Math.round(now - startedAt));
+    return response;
   } catch (err) {
-    if (err instanceof DOMException && err.name === "AbortError") {
+    // 네트워크 실패/타임아웃: status 0(또는 408)으로 api_error 계측.
+    const now = typeof performance !== "undefined" ? performance.now() : Date.now();
+    const isTimeout = err instanceof DOMException && err.name === "AbortError";
+    trackApiCall(path, isTimeout ? 408 : 0, Math.round(now - startedAt));
+    if (isTimeout) {
       throw new ApiClientError(
         `요청 시간이 초과되었습니다(${Math.round(timeoutMs / 1000)}초). 서버 응답이 지연되고 있습니다.`,
         408,

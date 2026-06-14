@@ -8,6 +8,7 @@
 from contextvars import ContextVar
 
 _current_user_id: ContextVar[str | None] = ContextVar("current_user_id", default=None)
+_current_tenant_id: ContextVar[str | None] = ContextVar("current_tenant_id", default=None)
 
 
 def set_current_user_id(user_id: str | None) -> None:
@@ -16,3 +17,12 @@ def set_current_user_id(user_id: str | None) -> None:
 
 def get_current_user_id() -> str | None:
     return _current_user_id.get()
+
+
+def set_current_tenant_id(tenant_id: str | None) -> None:
+    """현재 요청의 테넌트 ID를 저장(자가성장 텔레메트리 귀속용)."""
+    _current_tenant_id.set(tenant_id)
+
+
+def get_current_tenant_id() -> str | None:
+    return _current_tenant_id.get()

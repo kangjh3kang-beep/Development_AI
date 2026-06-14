@@ -15,6 +15,7 @@ import { PwaRuntimeProvider } from "@/components/pwa/PwaRuntimeProvider";
 import { createAppQueryClient } from "@/lib/query-client";
 import { defaultLocale, type Locale } from "@/i18n/config";
 import { useAppStore } from "@/store/use-app-store";
+import { useGrowthEvents } from "@/hooks/useGrowthEvents";
 
 const LocaleContext = createContext<Locale>(defaultLocale);
 
@@ -30,6 +31,9 @@ function AppStateBridge({
   const setLocale = useAppStore((state) => state.setLocale);
   const setOnline = useAppStore((state) => state.setOnline);
   const setIntegrationState = useAppStore((state) => state.setIntegrationState);
+
+  // 자가성장 엔진 텔레메트리 수집(1회 마운트·라우트 page_view·언마운트 flush). 논블로킹.
+  useGrowthEvents();
 
   useEffect(() => {
     setLocale(locale);
