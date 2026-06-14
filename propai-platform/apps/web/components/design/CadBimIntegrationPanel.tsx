@@ -2,13 +2,14 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { Canvas, useThree, type ThreeEvent } from "@react-three/fiber";
-import { CameraControls, Grid, Line, Html, Sphere } from "@react-three/drei";
+import { CameraControls, Grid, Line, Html, Sphere, TransformControls } from "@react-three/drei";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import * as THREE from "three";
 import { motion } from "framer-motion";
 import CADEditor, { type CADEditorMetrics } from "./CADEditor";
 import { sectionCutHeightM, visibleFloorCount } from "./bimSection";
 import { distance3D, formatLength, midpoint3D, type Vec3 } from "./bimMeasure";
+import { cycleTransformMode, transformReadout, type TransformMode } from "./bimTransform";
 import { GenerativeDesignPanel } from "@/components/cad/GenerativeDesignPanel";
 import { DesignOutcomeSummary } from "@/components/design/DesignOutcomeSummary";
 import { UnitMixSimulatorPanel } from "@/components/design/UnitMixSimulatorPanel";
@@ -140,6 +141,8 @@ function ProceduralBuilding({
     // 옥상 파라펫(최상층 후퇴 깊이 따름)
     const roof = new THREE.Mesh(new THREE.BoxGeometry(w, 0.7, lastDepth), matSlab);
     roof.position.set(0, nf * fh, lastZc); g.add(roof);
+    // §4-D: gizmo 선택 대상 표시 — 건축 요소(메시)만 선택 가능(격자·헬퍼 제외).
+    g.traverse((o) => { if ((o as THREE.Mesh).isMesh) o.userData.selectable = true; });
     return g;
   }, [width, depth, floors, floorHeight, daylightNorth]);
 
@@ -229,6 +232,63 @@ function MeasureOverlay({ points }: { points: Vec3[] }) {
         </Html>
       )}
     </>
+  );
+}
+
+// §4-D 선택 하이라이트: 선택된 요소의 월드 AABB를 와이어프레임 박스로 그린다(비파괴 — 재질 불변).
+// version이 바뀌면(선택/변환) AABB를 다시 계산. Canvas 내부에서만 사용(useThree).
+function SelectionOverlay({ object, version }: { object: THREE.Object3D | null; version: number }) {
+  const invalidate = useThree((s) => s.invalidate);
+  const edges = useMemo<[number, number, number][][] | null>(() => {
+    if (!object) return null;
+    const box = new THREE.Box3().setFromObject(object);
+    if (box.isEmpty()) return null;
+    const { min, max } = box;
+    const loop = (y: number): [number, number, number][] => [
+      [min.x, y, min.z], [max.x, y, min.z], [max.x, y, max.z], [min.x, y, max.z], [min.x, y, min.z],
+    ];
+    const vert = (x: number, z: number): [number, number, number][] => [
+      [x, min.y, z], [x, max.y, z],
+    ];
+    return [loop(min.y), loop(max.y), vert(min.x, min.z), vert(max.x, min.z), vert(max.x, max.z), vert(min.x, max.z)];
+  }, [object, version]);
+  useEffect(() => { invalidate(); }, [version, invalidate]);
+  if (!edges) return null;
+  return (
+    <>
+      {edges.map((pts, i) => (
+        <Line key={i} points={pts} color="#22d3ee" lineWidth={2} />
+      ))}
+    </>
+  );
+}
+
+// §4-D gizmo: 선택된 요소에 이동/회전 핸들을 붙인다. 드래그 동안 카메라 잠금(camControls.enabled=false)
+// + demand 렌더(invalidate). 변환되면 onChange로 readout 갱신. Canvas 내부에서만 사용(useThree).
+// 정직: 변환은 뷰포트 시점 편집 — 설계/IFC에 저장되지 않으며 "원위치"로 복귀 가능.
+function ElementGizmo({
+  object, mode, camControlsRef, onChange,
+}: {
+  object: THREE.Object3D;
+  mode: TransformMode;
+  camControlsRef: React.RefObject<CameraControls | null>;
+  onChange: () => void;
+}) {
+  const invalidate = useThree((s) => s.invalidate);
+  const lock = useCallback((dragging: boolean) => {
+    const cc = camControlsRef.current;
+    if (cc) cc.enabled = !dragging;  // 드래그 동안 카메라 회전/줌 잠금(핸들 조작 우선)
+    invalidate();
+  }, [camControlsRef, invalidate]);
+  return (
+    <TransformControls
+      object={object}
+      mode={mode}
+      size={0.8}
+      onMouseDown={() => lock(true)}
+      onMouseUp={() => lock(false)}
+      onObjectChange={() => { invalidate(); onChange(); }}
+    />
   );
 }
 
@@ -425,6 +485,38 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
   // §4-E 측정: 모델 표면 두 점을 클릭해 거리를 잰다. 3번째 클릭은 새 측정 시작.
   const [measureMode, setMeasureMode] = useState(false);
   const [measurePoints, setMeasurePoints] = useState<Vec3[]>([]);
+  // §4-D 요소 편집(gizmo): 요소를 클릭 선택 → 이동/회전 핸들. 변환은 뷰포트 시점 편집(미저장).
+  const [gizmoMode, setGizmoMode] = useState(false);
+  const [selectedObj, setSelectedObj] = useState<THREE.Object3D | null>(null);
+  const [transformMode, setTransformMode] = useState<TransformMode>("translate");
+  // 변환 시 readout 갱신용 단조 카운터(THREE 객체 변이는 React 리렌더를 일으키지 않으므로 명시 bump).
+  const [selVersion, setSelVersion] = useState(0);
+  // 선택 시점의 초기 위치/회전(원위치 복귀용) — 변환은 미저장이므로 되돌릴 수 있어야 한다.
+  const selInitial = useRef<{ pos: THREE.Vector3; rot: THREE.Euler } | null>(null);
+
+  // 요소 선택/해제 — 선택 시 초기 변환을 저장(원위치용), 해제 시 정리.
+  const selectObject = useCallback((obj: THREE.Object3D | null) => {
+    if (obj) selInitial.current = { pos: obj.position.clone(), rot: obj.rotation.clone() };
+    else selInitial.current = null;
+    setSelectedObj(obj);
+    setSelVersion((n) => n + 1);
+  }, []);
+
+  // 원위치 복귀 — 선택 요소를 선택 당시 위치/회전으로 되돌린다.
+  const resetSelected = useCallback(() => {
+    const init = selInitial.current;
+    if (selectedObj && init) {
+      selectedObj.position.copy(init.pos);
+      selectedObj.rotation.copy(init.rot);
+      setSelVersion((n) => n + 1);
+    }
+  }, [selectedObj]);
+
+  // 모델(절차/서버)이 바뀌면 선택 요소가 무효(detach)되므로 선택을 해제한다.
+  useEffect(() => {
+    selInitial.current = null;
+    setSelectedObj(null);
+  }, [bimScene, spec]);
 
   // 시점 프리셋 버튼 핸들러: 같은 프리셋 재선택도 보간 재적용(seq 증가).
   const applyPreset = useCallback((key: CamPresetKey) => {
@@ -610,6 +702,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
           meshCount++;
           (obj as THREE.Mesh).castShadow = true;
           (obj as THREE.Mesh).receiveShadow = true;
+          obj.userData.selectable = true;  // §4-D: gizmo 선택 대상
         }
       });
       // ★서버 glb가 비어있으면(메시 0 — ifcopenshell 퇴화) 절차모델을 덮어쓰지 않는다.
@@ -1066,6 +1159,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
               camera={{ position: [25, 20, 25], fov: 40 }}
               gl={{ preserveDrawingBuffer: true }}
               onCreated={({ gl }) => { glRef.current = gl; }}
+              onPointerMissed={() => { if (gizmoMode) selectObject(null); }}
             >
               <ambientLight intensity={0.8} />
               <directionalLight position={[10, 20, 10]} intensity={1.4} castShadow />
@@ -1082,9 +1176,16 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
                 height={modelDims.height}
                 autoRotate={autoRotate}
               />
-              {/* §4-E 측정: measureMode면 모델 클릭 위치(world)를 점으로 수집(2점→거리) */}
+              {/* §4-E 측정 / §4-D 요소선택: 모드에 따라 클릭 위치(측정)·클릭 요소(편집)를 수집 */}
               <group
                 onClick={(e: ThreeEvent<MouseEvent>) => {
+                  if (gizmoMode) {
+                    // 건축 요소(selectable 메시)만 선택 — 격자·헬퍼는 무시. e.object=레이캐스트 적중 메시.
+                    if (!e.object?.userData?.selectable) return;
+                    e.stopPropagation();
+                    selectObject(e.object);
+                    return;
+                  }
                   if (!measureMode) return;
                   e.stopPropagation();
                   const p = e.point;
@@ -1098,6 +1199,18 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
                 <BuildingModel scene={bimScene} spec={spec} />
               </group>
               <MeasureOverlay points={measurePoints} />
+              {/* §4-D gizmo + 선택 하이라이트 — gizmoMode이고 요소가 선택됐을 때만 */}
+              {gizmoMode && selectedObj && (
+                <>
+                  <SelectionOverlay object={selectedObj} version={selVersion} />
+                  <ElementGizmo
+                    object={selectedObj}
+                    mode={transformMode}
+                    camControlsRef={camControlsRef}
+                    onChange={() => setSelVersion((n) => n + 1)}
+                  />
+                </>
+              )}
               {/* §4-E 단면: 절단선을 모델 실측 base(minY)에 접지 — world-y = minY + 상대절단높이.
                   서버 glTF가 Y중심화돼 base가 y=0이 아니어도 슬라이더 전 범위가 정확히 작동한다. */}
               <SectionClipper
@@ -1171,7 +1284,11 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
                 <button
                   type="button"
                   onClick={() => {
-                    setMeasureMode((v) => !v);
+                    setMeasureMode((v) => {
+                      const next = !v;
+                      if (next) { setGizmoMode(false); selectObject(null); }  // 측정·편집 상호배타
+                      return next;
+                    });
                     setMeasurePoints([]);
                   }}
                   aria-pressed={measureMode}
@@ -1199,6 +1316,66 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
                       >
                         초기화
                       </button>
+                    )}
+                  </span>
+                )}
+                {/* §4-D 요소 편집(gizmo) — 요소를 클릭 선택해 이동/회전(뷰포트 시점 편집·미저장) */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setGizmoMode((v) => {
+                      const next = !v;
+                      if (next) { setMeasureMode(false); setMeasurePoints([]); }  // 측정·편집 상호배타
+                      else selectObject(null);  // 끄면 선택 해제
+                      return next;
+                    });
+                  }}
+                  aria-pressed={gizmoMode}
+                  title="요소를 클릭해 선택하고 이동/회전합니다(시점 편집 · 설계 저장 아님)"
+                  className={`rounded-full px-3 py-1.5 text-[10px] font-black uppercase tracking-widest transition-colors ${
+                    gizmoMode
+                      ? "bg-[#22d3ee] text-black"
+                      : "text-white/55 hover:text-white hover:bg-white/10"
+                  }`}
+                >
+                  {gizmoMode ? "■ 편집 ON" : "✥ 편집"}
+                </button>
+                {gizmoMode && (
+                  <span className="flex items-center gap-2 whitespace-nowrap text-[10px] font-bold text-white/70">
+                    {!selectedObj ? (
+                      "요소를 클릭해 선택"
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => setTransformMode((m) => cycleTransformMode(m))}
+                          title="이동/회전 전환"
+                          className="rounded px-1.5 py-0.5 text-[#22d3ee] hover:bg-white/10"
+                        >
+                          {transformMode === "translate" ? "✥ 이동" : "↻ 회전"}
+                        </button>
+                        <span className="tabular-nums text-white/80" data-v={selVersion}>
+                          {/* data-v={selVersion}: 변환(객체 변이) 후 리렌더→live position 재독 */}
+                          {transformReadout(
+                            { x: selectedObj.position.x, y: selectedObj.position.y, z: selectedObj.position.z },
+                            selectedObj.rotation.y,
+                          )}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={resetSelected}
+                          className="rounded px-1.5 py-0.5 text-white/50 hover:text-white hover:bg-white/10"
+                        >
+                          원위치
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => selectObject(null)}
+                          className="rounded px-1.5 py-0.5 text-white/50 hover:text-white hover:bg-white/10"
+                        >
+                          해제
+                        </button>
+                      </>
                     )}
                   </span>
                 )}
