@@ -34,6 +34,51 @@ C_LANDSCAPE = "#00b894"
 C_ROAD = "#b2bec3"
 C_SETBACK = "#d63031"
 
+# §4-C 법규주석 — 심사 status별 색/아이콘(결정론). skipped/info는 판정에서 제외(정직).
+C_OK = "#00b894"    # pass (적합 — 녹)
+C_WARN = "#e17055"  # warning (조건부 — 주황)
+C_BAD = "#d63031"   # fail (부적합 — 적)
+_STATUS_ICON: Dict[str, str] = {"pass": "✓", "warning": "⚠", "fail": "✗"}
+_STATUS_COLOR: Dict[str, str] = {"pass": C_OK, "warning": C_WARN, "fail": C_BAD}
+# 엔진명 → 사람이 읽는 라벨(check_id 접미사가 더 구체적이면 그쪽 우선).
+# 실제 design_audit_orchestrator가 emit하는 엔진명 기준(solar_envelope·design_review 등).
+_ENGINE_LABELS: Dict[str, str] = {
+    "rules8": "법규",
+    "solar": "정북일조",
+    "solar_envelope": "정북일조",
+    "parking": "주차",
+    "grammar": "평면·피난",
+    "design_review": "설계법규",
+    "incentive": "인센티브",
+    "case": "인근사례",
+    "efficiency": "효율",
+}
+
+
+def _finding_label(finding: dict) -> str:
+    """finding의 check_id(예: 'rules8_건폐율')·engine으로 표시 라벨을 정한다(정직).
+
+    우선순위:
+      1) check_id == engine(접미사 없음, 예: 'solar_envelope') → 엔진 라벨.
+      2) check_id가 'engine_타입' 꼴(예: 'design_review_건폐율') → 'engine_' 접두만 정확히
+         제거한 접미사. (첫 '_' split은 multi-word 엔진에서 깨지므로 금지.)
+      3) 그 외 '_' 포함 check_id → 첫 '_' 뒤(예: 'rules8_용적률' → '용적률').
+      4) 폴백 → 엔진 라벨. 숫자/엔진명 자체뿐인 접미사는 무시(가공 금지).
+    """
+    cid = str(finding.get("check_id") or "")
+    engine = str(finding.get("engine") or "")
+    if cid and cid == engine:
+        return _ENGINE_LABELS.get(engine, engine or "검토")
+    if engine and cid.startswith(engine + "_"):
+        suffix = cid[len(engine) + 1:].strip()
+        if suffix and not suffix.isdigit():
+            return suffix
+    if "_" in cid:
+        suffix = cid.split("_", 1)[1].strip()
+        if suffix and not suffix.isdigit() and suffix != engine:
+            return suffix
+    return _ENGINE_LABELS.get(engine, engine or "검토")
+
 
 def _s(m: float) -> float:
     """미터 → 픽셀 변환."""
@@ -187,9 +232,20 @@ class SVGDrawingService:
             _utype, _uarea, project_name=name, floors=int(fc or 0), total_units=_total_units,
         )
 
-        # B-02-UNIT-R: 결정론 유닛플랜(R3-1) — project_data['unit_plan'] 제공 시에만
-        # 추가 생성(additive). 미제공 시 기존 도면 세트 완전 동일.
+        # B-02-UNIT-R: 결정론 유닛플랜(R3-1) — 실배치(arch_grammar 경계·개구) 기반 엔지니어링 도면.
+        # project_data['unit_plan'] 이 없으면 대표 평형 전용면적으로 결정론 생성기를 호출해
+        # 자동 배선(additive). 생성 실패(면적 범위 밖 등)·룸 부재 시 기존 도면 세트 완전 동일.
         _uplan = project_data.get("unit_plan") or {}
+        if not _uplan.get("rooms") and _units:
+            try:
+                from app.services.cad.unit_plan_generator import (  # noqa: PLC0415
+                    generate_unit_plan as _gen_unit_plan,
+                )
+                _up = _gen_unit_plan(float(_uarea), bays=3)
+                if _up.rooms:
+                    _uplan = {**_up.as_dict(), "unit_type": _utype, "area_sqm": float(_uarea)}
+            except Exception:  # noqa: BLE001 — 범위 밖/룰 미정의 시 엔지니어링 도면 스킵(정직·기존 유지)
+                _uplan = {}
         if _uplan.get("rooms"):
             drawings["B-02-UNIT-R"] = self.generate_unit_plan_rooms(
                 _uplan["rooms"],
@@ -249,6 +305,14 @@ class SVGDrawingService:
         parking_count = project_data.get("parking_count", 50)
         drawings["C-03"] = self.generate_parking_layout(parking_count)
 
+        # B-05: 반사천장도(RCP), B-06: 설비도(MEP) — §4-D 결정론 schematic
+        # 실패해도 셋 전체를 막지 않되, 조용히 사라지지 않도록 경고 로그를 남긴다(정직 — 무음실패 금지).
+        try:
+            drawings["B-05-RCP"] = self.generate_rcp(bw, bd)
+            drawings["B-06-MEP"] = self.generate_mep(bw, bd)
+        except Exception as exc:  # noqa: BLE001 — RCP/MEP만 격리(기존 키 영향 없음)
+            logger.warning("rcp_mep_generation_failed", error=str(exc))
+
         # 모든 도면을 반응형(viewBox+100%)으로 — 화면에 작게 뜨던 문제 해결
         for _code in list(drawings.keys()):
             drawings[_code] = _make_responsive(drawings[_code])
@@ -284,6 +348,114 @@ class SVGDrawingService:
                           insert=(50, by + building_depth_m * 5 + 20), font_size="10px", fill="red"))
         dwg.add(dwg.text("N", insert=(canvas_w - 30, 70), font_size="14px", font_weight="bold"))
         return dwg.tostring()
+
+    # ── §4-C: 법규주석 배치도 (8엔진 audit findings → 도면 시각화) ──
+
+    def annotate_site_plan(
+        self,
+        site_width_m: float,
+        site_depth_m: float,
+        building_width_m: float,
+        building_depth_m: float,
+        setback_m: float = 3.0,
+        *,
+        findings: Optional[List[dict]] = None,
+        verdict: Optional[str] = None,
+    ) -> str:
+        """배치도에 설계심사(8엔진) findings를 결정론으로 주석화한다(audit↔drawing 연결).
+
+        - 건물 footprint를 판정 가능한 finding의 최악 status로 색칠(pass 녹/warning 주황/
+          fail 적). 판정 가능한 finding(pass/warning/fail)이 없으면 중립색(기존 배치도와 동일).
+        - 우측 범례에 각 finding을 아이콘(✓/⚠/✗)·라벨·'현재 X · 한도 Y'로 표기.
+        - 정북일조(solar) fail/warning이면 북측(상단) 변에 적색 점선 + 라벨로 사선제한 인지.
+        - skipped/info는 판정에서 제외(✓/✗ 단정 금지). findings 미제공 시 색·범례 없이 기본
+          배치도(하위호환·날조 0). 존재하는 finding만 렌더한다.
+        """
+        if svgwrite is None:
+            return SVG_PLACEHOLDER
+
+        items = findings or []
+        # 판정 가능한 finding만 색·범례에 반영(skipped/info 제외 — 가짜 적합/부적합 금지).
+        judged = [f for f in items if str(f.get("status")) in ("pass", "warning", "fail")]
+        if any(f.get("status") == "fail" for f in judged):
+            worst: Optional[str] = "fail"
+        elif any(f.get("status") == "warning" for f in judged):
+            worst = "warning"
+        elif judged:
+            worst = "pass"
+        else:
+            worst = None
+        fp_color = _STATUS_COLOR.get(worst) if worst else C_BUILDING
+
+        scale = 5
+        legend_w = 240 if (judged or verdict) else 0
+        site_px_w = site_width_m * scale
+        site_px_h = site_depth_m * scale
+        canvas_w = int(site_px_w) + 100 + legend_w
+        canvas_h = max(int(site_px_h) + 100, 90 + len(judged) * 16 + 60)
+
+        dwg = svgwrite.Drawing(size=(f"{canvas_w}px", f"{canvas_h}px"))
+        dwg.add(dwg.rect(insert=(0, 0), size=(canvas_w, canvas_h), fill="white"))
+
+        # 부지
+        dwg.add(dwg.rect(insert=(50, 50), size=(site_px_w, site_px_h),
+                         stroke="black", stroke_width=2, fill=C_SITE))
+        # 건물 footprint — 판정 색(없으면 중립 C_BUILDING)
+        bx = 50 + setback_m * scale
+        by = 50 + setback_m * scale
+        dwg.add(dwg.rect(insert=(bx, by), size=(building_width_m * scale, building_depth_m * scale),
+                         stroke="navy", stroke_width=2, fill=fp_color, opacity=0.6))
+        dwg.add(dwg.text(f"부지 {site_width_m:.1f}m x {site_depth_m:.1f}m",
+                         insert=(50, 40), font_size="12px", fill="black"))
+        dwg.add(dwg.text(f"건물 {building_width_m:.1f}m x {building_depth_m:.1f}m",
+                         insert=(bx, by - 5), font_size="10px", fill="navy"))
+        dwg.add(dwg.text(f"이격거리 {setback_m:.1f}m",
+                         insert=(50, by + building_depth_m * scale + 20),
+                         font_size="10px", fill=C_SETBACK))
+        dwg.add(dwg.text("N", insert=(50 + site_px_w - 18, 70),
+                         font_size="14px", font_weight="bold"))
+
+        # 정북일조(solar) 위반/경고 → 북측(상단) 변에 적색 점선 사선제한 표시.
+        # 실 오케스트레이터 엔진명은 'solar_envelope' — startswith로 'solar'/'solar_envelope' 모두 매칭.
+        solar = [f for f in judged
+                 if str(f.get("engine") or "").startswith("solar")
+                 and f.get("status") in ("fail", "warning")]
+        if solar:
+            sworst = "fail" if any(f.get("status") == "fail" for f in solar) else "warning"
+            dwg.add(dwg.line(start=(50, 50), end=(50 + site_px_w, 50),
+                             stroke=C_BAD, stroke_width=2.5, stroke_dasharray="5,3"))
+            dwg.add(dwg.text(f"정북일조 {_STATUS_ICON[sworst]} (사선제한)",
+                             insert=(50, 50 - 5), font_size="10px",
+                             fill=C_BAD, font_weight="bold"))
+
+        # 범례 패널 — 종합판정 + 각 finding 정직 표기(아이콘·라벨·현재/한도)
+        if judged or verdict:
+            lx = int(50 + site_px_w + 40)
+            ly = 50
+            if verdict:
+                vcolor = {"적합": C_OK, "조건부적합": C_WARN, "부적합": C_BAD}.get(verdict, C_TEXT)
+                dwg.add(dwg.text(f"종합판정: {verdict}", insert=(lx, ly),
+                                 font_size="12px", font_weight="bold", fill=vcolor))
+                ly += 24
+            dwg.add(dwg.text("법규 준수", insert=(lx, ly),
+                             font_size="11px", font_weight="bold", fill=C_TEXT))
+            ly += 18
+            for f in judged:
+                st = str(f.get("status"))
+                icon = _STATUS_ICON.get(st, "·")
+                color = _STATUS_COLOR.get(st, C_TEXT)
+                label = _finding_label(f)
+                cur = f.get("current")
+                lim = f.get("limit")
+                row = f"{icon} {label}"
+                if cur is not None and lim is not None:
+                    row += f": 현재 {cur} · 한도 {lim}"
+                dwg.add(dwg.text(row, insert=(lx, ly), font_size="9px", fill=color))
+                ly += 16
+            dwg.add(dwg.text("※ 보유 데이터 기반 자동심사(보조) — 인허가권자 판단 대체 아님",
+                             insert=(lx, ly + 6), font_size="7px", fill=C_WALL_INT))
+
+        return _make_responsive(dwg.tostring())
 
     # ── 하위 호환 래퍼 (기존 dict 기반 API) ──
 
@@ -389,19 +561,27 @@ class SVGDrawingService:
         core_width_m: float = 4.0,
         core_depth_m: float = 6.0,
         units: list[dict] | None = None,
+        *,
+        findings: Optional[List[dict]] = None,
     ) -> str:
         """상세 평면도 SVG — 벽체(200mm), 문(900mm), 창호(1200mm), 코어, 복도, 치수선.
 
         units 제공 시(예: [{type:'59A',area_sqm:59,count_per_floor:2}]) 실제 평형믹스로
         면적비례 분할·타입라벨, 미제공 시 generic 균등분할(기존 호환).
+
+        §4-C 후속: findings(8엔진 audit) 제공 시 복도를 피난동선으로 적색 점선 강조하고 법규
+        범례(✓/⚠/✗·라벨)를 하단에 추가한다(판정가능 finding만 — skipped 제외). 미제공 시 기존 불변.
         """
         if svgwrite is None:
             return SVG_PLACEHOLDER
+        # §4-C 후속: 판정 가능한 finding(pass/warning/fail)만 주석·범례에 반영(가짜 판정 금지).
+        judged = [f for f in (findings or []) if str(f.get("status")) in ("pass", "warning", "fail")]
         bw = _s(building_width_m)
         bd = _s(building_depth_m)
         wt = _s(0.2)  # 벽체
         canvas_w = int(bw + MARGIN * 2 + 40)
-        canvas_h = int(bd + MARGIN * 2 + 60)
+        legend_h = (20 + len(judged) * 14) if judged else 0  # 하단 법규 범례 공간
+        canvas_h = int(bd + MARGIN * 2 + 60 + legend_h)
 
         dwg = svgwrite.Drawing(size=(f"{canvas_w}px", f"{canvas_h}px"))
         dwg.add(dwg.rect(insert=(0, 0), size=(canvas_w, canvas_h), fill="white"))
@@ -546,6 +726,34 @@ class SVGDrawingService:
             insert=(bw / 2, -10), font_size="10px", font_family=FONT,
             fill=C_TEXT, text_anchor="middle", font_weight="bold",
         ))
+
+        # ── §4-C 후속: 법규 findings 주석(피난동선 강조 + 범례) ──
+        if judged:
+            # 피난동선 — 복도 중심선을 적색 점선으로 강조 + 라벨(거주자 피난 경로 인지).
+            evac_y = corr_y + corr_h / 2
+            g.add(dwg.line(start=(wt, evac_y), end=(bw - wt, evac_y),
+                           stroke=C_BAD, stroke_width=1.5, stroke_dasharray="6,3"))
+            g.add(dwg.text("피난동선", insert=(bw - wt - 4, evac_y - 3),
+                           font_size="7px", font_family=FONT, fill=C_BAD,
+                           text_anchor="end", font_weight="bold"))
+            # 법규 범례 — 건물 하단(치수선 아래)에 각 finding 정직 표기.
+            ly = bd + 34
+            g.add(dwg.text("법규 준수", insert=(0, ly), font_size="9px",
+                           font_family=FONT, fill=C_TEXT, font_weight="bold"))
+            ly += 14
+            for f in judged:
+                st = str(f.get("status"))
+                icon = _STATUS_ICON.get(st, "·")
+                color = _STATUS_COLOR.get(st, C_TEXT)
+                label = _finding_label(f)
+                cur = f.get("current")
+                lim = f.get("limit")
+                row = f"{icon} {label}"
+                if cur is not None and lim is not None:
+                    row += f": 현재 {cur} · 한도 {lim}"
+                g.add(dwg.text(row, insert=(0, ly), font_size="8px",
+                               font_family=FONT, fill=color))
+                ly += 14
 
         return dwg.tostring()
 
@@ -1355,6 +1563,136 @@ class SVGDrawingService:
                         text_anchor="middle", font_weight="bold"))
 
         return dwg.tostring()
+
+    # ── §4-D: 반사천장도(RCP) ──
+
+    def generate_rcp(
+        self,
+        building_width_m: float,
+        building_depth_m: float,
+        *,
+        tile_m: float = 0.6,
+        fixture_spacing_m: float = 2.4,
+    ) -> str:
+        """반사천장도(RCP) SVG — 천장 텍스 그리드 + 조명·디퓨저·스프링클러 배치(결정론).
+
+        정직: 기구 배치는 표준 격자 기반 schematic(조도·풍량 산정 미연동 — 표기용).
+        """
+        if svgwrite is None:
+            return SVG_PLACEHOLDER
+        s = SCALE_PX_PER_M
+        bw = building_width_m * s
+        bd = building_depth_m * s
+        cw = int(bw + MARGIN * 2)
+        ch = int(bd + MARGIN * 2 + 30)
+        dwg = svgwrite.Drawing(size=(f"{cw}px", f"{ch}px"))
+        dwg.add(dwg.rect(insert=(0, 0), size=(cw, ch), fill="white"))
+        g = dwg.g(transform=f"translate({MARGIN},{MARGIN})")
+        dwg.add(g)
+        g.add(dwg.rect(insert=(0, 0), size=(bw, bd), stroke=C_TEXT, stroke_width=2, fill="none"))
+        # 천장 텍스 그리드
+        tile = max(4.0, tile_m * s)
+        x = tile
+        while x < bw:
+            g.add(dwg.line(start=(x, 0), end=(x, bd), stroke="#dfe6e9", stroke_width=0.4))
+            x += tile
+        y = tile
+        while y < bd:
+            g.add(dwg.line(start=(0, y), end=(bw, y), stroke="#dfe6e9", stroke_width=0.4))
+            y += tile
+        # 천장 기구 — fixture_spacing 격자(조명/디퓨저/스프링클러 순환)
+        fs = max(12.0, fixture_spacing_m * s)
+        idx = 0
+        fx = fs
+        while fx < bw:
+            fy = fs
+            while fy < bd:
+                kind = idx % 3
+                if kind == 0:  # 조명(매입등)
+                    g.add(dwg.rect(insert=(fx - 9, fy - 3), size=(18, 6),
+                                   stroke="#f0a500", stroke_width=1, fill="#ffeaa7"))
+                elif kind == 1:  # 디퓨저(공조 취출구) — 사각 + X
+                    g.add(dwg.rect(insert=(fx - 7, fy - 7), size=(14, 14),
+                                   stroke="#0984e3", stroke_width=1, fill="none"))
+                    g.add(dwg.line(start=(fx - 7, fy - 7), end=(fx + 7, fy + 7),
+                                   stroke="#0984e3", stroke_width=0.6))
+                    g.add(dwg.line(start=(fx - 7, fy + 7), end=(fx + 7, fy - 7),
+                                   stroke="#0984e3", stroke_width=0.6))
+                else:  # 스프링클러(소방)
+                    g.add(dwg.circle(center=(fx, fy), r=3.5, stroke="#d63031",
+                                     stroke_width=1, fill="none"))
+                    g.add(dwg.circle(center=(fx, fy), r=1, fill="#d63031"))
+                idx += 1
+                fy += fs
+            fx += fs
+        # 제목 + 범례
+        g.add(dwg.text("반사천장도 (RCP)", insert=(bw / 2, -10), font_size="11px",
+                       font_family=FONT, fill=C_TEXT, text_anchor="middle", font_weight="bold"))
+        ly = bd + 16
+        for label, color in (("■ 조명", "#f0a500"), ("⊠ 디퓨저", "#0984e3"),
+                             ("⊙ 스프링클러", "#d63031")):
+            g.add(dwg.text(label, insert=(0 if "조명" in label else (bw * 0.34 if "디퓨저" in label else bw * 0.68), ly),
+                           font_size="9px", font_family=FONT, fill=color))
+        # 정직 표기 — 렌더 출력에 명시(MEP와 동일). 비전문가가 엔지니어링 산정으로 오인하지 않도록.
+        g.add(dwg.text("※ 표준 격자 배치(개략) — 조도·풍량 산정 미연동(표기용)",
+                       insert=(0, bd + 30), font_size="7px", font_family=FONT, fill=C_WALL_INT))
+        return _make_responsive(dwg.tostring())
+
+    # ── §4-D: 설비도(MEP) ──
+
+    def generate_mep(
+        self,
+        building_width_m: float,
+        building_depth_m: float,
+        *,
+        floor_height_m: float = 3.0,
+    ) -> str:
+        """설비도(MEP) SVG — 급배기 덕트 간선 + 급수/오수 배관 경로(결정론).
+
+        정직: 라우팅은 표준 코어·복도 기반 개략(schematic) — 덕트 사이징·배관 부하 산정 미연동.
+        """
+        if svgwrite is None:
+            return SVG_PLACEHOLDER
+        s = SCALE_PX_PER_M
+        bw = building_width_m * s
+        bd = building_depth_m * s
+        cw = int(bw + MARGIN * 2)
+        ch = int(bd + MARGIN * 2 + 40)
+        dwg = svgwrite.Drawing(size=(f"{cw}px", f"{ch}px"))
+        dwg.add(dwg.rect(insert=(0, 0), size=(cw, ch), fill="white"))
+        g = dwg.g(transform=f"translate({MARGIN},{MARGIN})")
+        dwg.add(g)
+        g.add(dwg.rect(insert=(0, 0), size=(bw, bd), stroke=C_TEXT, stroke_width=2, fill="none"))
+        mid_y = bd / 2
+        # 급기 덕트 간선(중앙 수평) — 굵은 청색
+        g.add(dwg.line(start=(0, mid_y - 6), end=(bw, mid_y - 6),
+                       stroke="#0984e3", stroke_width=3))
+        g.add(dwg.text("급기 덕트", insert=(6, mid_y - 9), font_size="8px",
+                       font_family=FONT, fill="#0984e3", font_weight="bold"))
+        # 배기 덕트 간선(중앙 수평) — 굵은 회색 점선
+        g.add(dwg.line(start=(0, mid_y + 6), end=(bw, mid_y + 6),
+                       stroke="#636e72", stroke_width=3, stroke_dasharray="6,3"))
+        g.add(dwg.text("배기 덕트", insert=(6, mid_y + 16), font_size="8px",
+                       font_family=FONT, fill="#636e72", font_weight="bold"))
+        # 급수/오수 배관(수직 간선) — 코어 위치 가정(중앙) + 양측
+        for px, label, color in ((bw * 0.5, "급수", "#00b894"), (bw * 0.5 + 10, "오수", "#6c5ce7")):
+            g.add(dwg.line(start=(px, 0), end=(px, bd), stroke=color, stroke_width=1.5,
+                           stroke_dasharray="2,2"))
+        g.add(dwg.text("급수 배관", insert=(bw * 0.5 - 30, 14), font_size="8px",
+                       font_family=FONT, fill="#00b894"))
+        g.add(dwg.text("오수 배관", insert=(bw * 0.5 + 14, 14), font_size="8px",
+                       font_family=FONT, fill="#6c5ce7"))
+        # 기계실(좌하단 schematic)
+        g.add(dwg.rect(insert=(4, bd - 30), size=(60, 26), stroke="#2d3436",
+                       stroke_width=1, fill="#dfe6e9", opacity=0.5))
+        g.add(dwg.text("기계실", insert=(34, bd - 15), font_size="8px",
+                       font_family=FONT, fill=C_TEXT, text_anchor="middle"))
+        # 제목 + 정직 표기
+        g.add(dwg.text("설비도 (MEP)", insert=(bw / 2, -10), font_size="11px",
+                       font_family=FONT, fill=C_TEXT, text_anchor="middle", font_weight="bold"))
+        g.add(dwg.text("※ 개략(schematic) — 덕트 사이징·배관 부하 산정 미연동(표기용)",
+                       insert=(0, bd + 18), font_size="7px", font_family=FONT, fill=C_WALL_INT))
+        return _make_responsive(dwg.tostring())
 
     # ── 주차장 배치도 ──
 

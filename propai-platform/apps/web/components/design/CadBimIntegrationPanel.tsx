@@ -1,12 +1,15 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { Canvas, useThree } from "@react-three/fiber";
-import { CameraControls, Grid } from "@react-three/drei";
+import { Canvas, useThree, type ThreeEvent } from "@react-three/fiber";
+import { CameraControls, Grid, Line, Html, Sphere, TransformControls } from "@react-three/drei";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import * as THREE from "three";
 import { motion } from "framer-motion";
 import CADEditor, { type CADEditorMetrics } from "./CADEditor";
+import { sectionCutHeightM, visibleFloorCount } from "./bimSection";
+import { distance3D, formatLength, midpoint3D, type Vec3 } from "./bimMeasure";
+import { cycleTransformMode, transformReadout, type TransformMode } from "./bimTransform";
 import { GenerativeDesignPanel } from "@/components/cad/GenerativeDesignPanel";
 import { DesignOutcomeSummary } from "@/components/design/DesignOutcomeSummary";
 import { UnitMixSimulatorPanel } from "@/components/design/UnitMixSimulatorPanel";
@@ -18,6 +21,7 @@ import { apiClient, ApiClientError, apiV1BaseUrl } from "@/lib/api-client";
 const DRAWING_LABELS: Record<string, string> = {
   "B-01": "배치도",
   "B-02-UNIT": "단위세대 평면도",
+  "B-02-UNIT-R": "단위세대 평면도(정밀·실배치)",
   "B-02-STD": "기준층 평면도",
   "B-03": "단면도",
   "B-04-F": "정면도",
@@ -137,6 +141,8 @@ function ProceduralBuilding({
     // 옥상 파라펫(최상층 후퇴 깊이 따름)
     const roof = new THREE.Mesh(new THREE.BoxGeometry(w, 0.7, lastDepth), matSlab);
     roof.position.set(0, nf * fh, lastZc); g.add(roof);
+    // §4-D: gizmo 선택 대상 표시 — 건축 요소(메시)만 선택 가능(격자·헬퍼 제외).
+    g.traverse((o) => { if ((o as THREE.Mesh).isMesh) o.userData.selectable = true; });
     return g;
   }, [width, depth, floors, floorHeight, daylightNorth]);
 
@@ -170,6 +176,128 @@ function BuildingModel({ scene, spec }: { scene: THREE.Group | null; spec: Desig
         opacity={0.2}
       />
     </group>
+  );
+}
+
+// §4-E: 단면(slicer) — 전역 클립평면으로 절단선(world-y=cutHeight) 위를 잘라 내부를 본다.
+// THREE.Plane((0,-1,0), cutHeight)는 y<=cutHeight를 남긴다(절단선 아래만 표시). frameloop=
+// "demand"라 클립 변경 시 invalidate로 1프레임 강제 렌더. Canvas 내부에서만 사용(useThree).
+function SectionClipper({ enabled, cutHeight }: { enabled: boolean; cutHeight: number }) {
+  const gl = useThree((s) => s.gl);
+  const invalidate = useThree((s) => s.invalidate);
+  useEffect(() => {
+    gl.clippingPlanes = enabled
+      ? [new THREE.Plane(new THREE.Vector3(0, -1, 0), cutHeight)]
+      : [];
+    invalidate();
+    return () => {
+      gl.clippingPlanes = [];
+      invalidate();
+    };
+  }, [gl, invalidate, enabled, cutHeight]);
+  return null;
+}
+
+// §4-E 측정: 픽한 점(들)에 마커·연결선·거리 라벨을 그린다. 2점이면 점-점 거리(formatLength).
+// frameloop="demand"라 점 변경 시 invalidate. Canvas 내부에서만 사용.
+function MeasureOverlay({ points }: { points: Vec3[] }) {
+  const invalidate = useThree((s) => s.invalidate);
+  useEffect(() => {
+    invalidate();
+  }, [points, invalidate]);
+  if (points.length === 0) return null;
+  const mid = points.length === 2 ? midpoint3D(points[0], points[1]) : null;
+  return (
+    <>
+      {points.map((p, i) => (
+        <Sphere key={i} args={[0.4, 12, 12]} position={[p.x, p.y, p.z]}>
+          <meshBasicMaterial color="#f59e0b" />
+        </Sphere>
+      ))}
+      {points.length === 2 && (
+        <Line
+          points={[
+            [points[0].x, points[0].y, points[0].z],
+            [points[1].x, points[1].y, points[1].z],
+          ]}
+          color="#f59e0b"
+          lineWidth={2}
+        />
+      )}
+      {mid && (
+        <Html position={[mid.x, mid.y, mid.z]} center distanceFactor={28} zIndexRange={[20, 0]}>
+          <div className="whitespace-nowrap rounded-md bg-[#f59e0b] px-1.5 py-0.5 text-[10px] font-black text-black shadow-lg">
+            {formatLength(distance3D(points[0], points[1]))}
+          </div>
+        </Html>
+      )}
+    </>
+  );
+}
+
+// §4-D 선택 하이라이트: 선택된 요소의 월드 AABB를 와이어프레임 박스로 그린다(비파괴 — 재질 불변).
+// version이 바뀌면(선택/변환) AABB를 다시 계산. Canvas 내부에서만 사용(useThree).
+function SelectionOverlay({ object, version }: { object: THREE.Object3D | null; version: number }) {
+  const invalidate = useThree((s) => s.invalidate);
+  const edges = useMemo<[number, number, number][][] | null>(() => {
+    if (!object) return null;
+    const box = new THREE.Box3().setFromObject(object);
+    if (box.isEmpty()) return null;
+    const { min, max } = box;
+    const loop = (y: number): [number, number, number][] => [
+      [min.x, y, min.z], [max.x, y, min.z], [max.x, y, max.z], [min.x, y, max.z], [min.x, y, min.z],
+    ];
+    const vert = (x: number, z: number): [number, number, number][] => [
+      [x, min.y, z], [x, max.y, z],
+    ];
+    return [loop(min.y), loop(max.y), vert(min.x, min.z), vert(max.x, min.z), vert(max.x, max.z), vert(min.x, max.z)];
+  }, [object, version]);
+  useEffect(() => { invalidate(); }, [version, invalidate]);
+  if (!edges) return null;
+  return (
+    <>
+      {edges.map((pts, i) => (
+        <Line key={i} points={pts} color="#22d3ee" lineWidth={2} />
+      ))}
+    </>
+  );
+}
+
+// §4-D gizmo: 선택된 요소에 이동/회전 핸들을 붙인다. 드래그 동안 카메라 잠금(camControls.enabled=false)
+// + demand 렌더(invalidate). 변환되면 onChange로 readout 갱신. Canvas 내부에서만 사용(useThree).
+// 정직: 변환은 뷰포트 시점 편집 — 설계/IFC에 저장되지 않으며 "원위치"로 복귀 가능.
+function ElementGizmo({
+  object, mode, camControlsRef, onChange,
+}: {
+  object: THREE.Object3D;
+  mode: TransformMode;
+  camControlsRef: React.RefObject<CameraControls | null>;
+  onChange: () => void;
+}) {
+  const invalidate = useThree((s) => s.invalidate);
+  const lock = useCallback((dragging: boolean) => {
+    const cc = camControlsRef.current;
+    if (cc) cc.enabled = !dragging;  // 드래그 동안 카메라 회전/줌 잠금(핸들 조작 우선)
+    invalidate();
+  }, [camControlsRef, invalidate]);
+  // 안전망: gizmo 언마운트(선택 해제·모드 종료) 시 카메라를 무조건 복구한다.
+  // 드래그가 캔버스 밖에서 끝나 onMouseUp이 누락돼도 카메라가 영구 잠금되지 않도록.
+  useEffect(() => {
+    return () => {
+      const cc = camControlsRef.current;
+      if (cc) cc.enabled = true;
+      invalidate();
+    };
+  }, [camControlsRef, invalidate]);
+  return (
+    <TransformControls
+      object={object}
+      mode={mode}
+      size={0.8}
+      onMouseDown={() => lock(true)}
+      onMouseUp={() => lock(false)}
+      onObjectChange={() => { invalidate(); onChange(); }}
+    />
   );
 }
 
@@ -296,6 +424,8 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
   // P4: 세대믹스 시뮬레이터가 "평면 반영"한 명시 믹스(타입:면적:총세대). 도면 SVG에 mix= 로 전달.
   const [appliedMix, setAppliedMix] = useState<string | null>(null);
   const [dxfBusy, setDxfBusy] = useState(false);
+  // §4-E: IFC(.ifc) 내보내기 진행 상태 — BIM 저작도구(Revit/ArchiCAD)용 export.
+  const [ifcBusy, setIfcBusy] = useState(false);
   // DXF 내보내기 도면종류(평면/상세/단면/입면/배치) — design_v61 export-dxf drawing_type.
   const [dxfType, setDxfType] = useState<string>("floor_plan");
   // 편집모드 정점 드래그가 통지한 라이브 메트릭(footprint·매스치수) — 라이브 수지에 즉시 반영.
@@ -355,7 +485,47 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
   // 같은 버튼을 다시 눌러도 보간이 재적용되도록 하는 단조 증가 카운터.
   const [camPresetSeq, setCamPresetSeq] = useState(0);
   // 로드된 모델의 크기(한 변 기준 span·높이) — 프리셋 거리 산정 기준값(모델 없으면 기본값).
-  const [modelDims, setModelDims] = useState<{ span: number; height: number }>({ span: 30, height: 18 });
+  // §4-E: minY=모델 실측 base의 world-y(절차모델=0, 서버 glTF는 Y중심화로 음수). 단면 클립평면
+  // 접지에 사용 — glTF가 y=0에 접지돼 있지 않아도 절단선이 실제 모델 범위에 맞게 정렬된다.
+  const [modelDims, setModelDims] = useState<{ span: number; height: number; minY: number }>({ span: 30, height: 18, minY: 0 });
+  // §4-E: 단면(slicer) — 절단선 위를 잘라 내부를 본다. pct 100=전체(절단 없음).
+  const [sectionOn, setSectionOn] = useState(false);
+  const [sectionPct, setSectionPct] = useState(100);
+  // §4-E 측정: 모델 표면 두 점을 클릭해 거리를 잰다. 3번째 클릭은 새 측정 시작.
+  const [measureMode, setMeasureMode] = useState(false);
+  const [measurePoints, setMeasurePoints] = useState<Vec3[]>([]);
+  // §4-D 요소 편집(gizmo): 요소를 클릭 선택 → 이동/회전 핸들. 변환은 뷰포트 시점 편집(미저장).
+  const [gizmoMode, setGizmoMode] = useState(false);
+  const [selectedObj, setSelectedObj] = useState<THREE.Object3D | null>(null);
+  const [transformMode, setTransformMode] = useState<TransformMode>("translate");
+  // 변환 시 readout 갱신용 단조 카운터(THREE 객체 변이는 React 리렌더를 일으키지 않으므로 명시 bump).
+  const [selVersion, setSelVersion] = useState(0);
+  // 선택 시점의 초기 위치/회전(원위치 복귀용) — 변환은 미저장이므로 되돌릴 수 있어야 한다.
+  const selInitial = useRef<{ pos: THREE.Vector3; rot: THREE.Euler } | null>(null);
+
+  // 요소 선택/해제 — 선택 시 초기 변환을 저장(원위치용), 해제 시 정리.
+  const selectObject = useCallback((obj: THREE.Object3D | null) => {
+    if (obj) selInitial.current = { pos: obj.position.clone(), rot: obj.rotation.clone() };
+    else selInitial.current = null;
+    setSelectedObj(obj);
+    setSelVersion((n) => n + 1);
+  }, []);
+
+  // 원위치 복귀 — 선택 요소를 선택 당시 위치/회전으로 되돌린다.
+  const resetSelected = useCallback(() => {
+    const init = selInitial.current;
+    if (selectedObj && init) {
+      selectedObj.position.copy(init.pos);
+      selectedObj.rotation.copy(init.rot);
+      setSelVersion((n) => n + 1);
+    }
+  }, [selectedObj]);
+
+  // 모델(절차/서버)이 바뀌면 선택 요소가 무효(detach)되므로 선택을 해제한다.
+  useEffect(() => {
+    selInitial.current = null;
+    setSelectedObj(null);
+  }, [bimScene, spec]);
 
   // 시점 프리셋 버튼 핸들러: 같은 프리셋 재선택도 보간 재적용(seq 증가).
   const applyPreset = useCallback((key: CamPresetKey) => {
@@ -541,6 +711,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
           meshCount++;
           (obj as THREE.Mesh).castShadow = true;
           (obj as THREE.Mesh).receiveShadow = true;
+          obj.userData.selectable = true;  // §4-D: gizmo 선택 대상
         }
       });
       // ★서버 glb가 비어있으면(메시 0 — ifcopenshell 퇴화) 절차모델을 덮어쓰지 않는다.
@@ -552,10 +723,10 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
         // 정밀 IFC가 비었음 — 절차모델 유지(조용히). 사용자에겐 절차모델이 계속 보인다.
         return;
       }
-      // 모델 크기 측정(바운딩박스) → 카메라 프리셋 거리 산정 기준값.
+      // 모델 크기 측정(바운딩박스) → 카메라 프리셋 거리 산정 기준값. minY=실측 base(단면 접지용).
       const span = Math.max(8, Math.max(size.x, size.z));
       const height = Math.max(4, size.y);
-      setModelDims({ span, height });
+      setModelDims({ span, height, minY: box.min.y });
       setBimScene(gltf.scene);
     } catch (err) {
       setBimError(err instanceof Error ? err.message : "3D 모델을 불러오지 못했습니다.");
@@ -570,7 +741,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
     if (spec && !bimScene) {
       const span = Math.max(8, spec.building_width_m || 0, spec.building_depth_m || 0);
       const height = Math.max(4, (spec.floor_count || 5) * (spec.floor_height_m || 3));
-      setModelDims({ span, height });
+      setModelDims({ span, height, minY: 0 });  // 절차모델은 base가 y=0(층 y=f*fh)
     }
   }, [spec, bimScene]);
 
@@ -716,6 +887,42 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
       setDxfBusy(false);
     }
   }, [projectId, spec, dxfType]);
+
+  // §4-E: IFC(.ifc) 내보내기 — 설계 매스를 IFC4 STEP 파일로 다운로드(BIM 저작도구 호환).
+  // /drawing/export-ifc(파라미터→build_ifc_from_mass·DB-free)를 호출해 blob 다운로드.
+  const exportIfc = useCallback(async () => {
+    if (!spec) return;
+    setIfcBusy(true);
+    try {
+      const base = apiV1BaseUrl();
+      const res = await fetch(`${base}/drawing/export-ifc`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          building_width_m: spec.building_width_m,
+          building_depth_m: spec.building_depth_m,
+          num_floors: spec.floor_count,
+          floor_height_m: spec.floor_height_m ?? 3.0,
+          project_name: spec.project_name ?? "PropAI",
+        }),
+        signal: AbortSignal.timeout(60000),
+      });
+      if (!res.ok) throw new Error(String(res.status));
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${spec.project_name || "PropAI"}.ifc`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      /* 다운로드 실패는 무시(사용자는 재시도 가능) */
+    } finally {
+      setIfcBusy(false);
+    }
+  }, [spec]);
 
   // 생성 UX(Phase 2)에서 설계안 적용 시 — 파생 기하·도면·3D를 초기화해
   // 새 SSOT(designData)로 spec을 재산출하고 2D/3D를 재생성한다(기존 로드 경로 재사용).
@@ -961,6 +1168,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
               camera={{ position: [25, 20, 25], fov: 40 }}
               gl={{ preserveDrawingBuffer: true }}
               onCreated={({ gl }) => { glRef.current = gl; }}
+              onPointerMissed={() => { if (gizmoMode) selectObject(null); }}
             >
               <ambientLight intensity={0.8} />
               <directionalLight position={[10, 20, 10]} intensity={1.4} castShadow />
@@ -977,7 +1185,47 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
                 height={modelDims.height}
                 autoRotate={autoRotate}
               />
-              <BuildingModel scene={bimScene} spec={spec} />
+              {/* §4-E 측정 / §4-D 요소선택: 모드에 따라 클릭 위치(측정)·클릭 요소(편집)를 수집 */}
+              <group
+                onClick={(e: ThreeEvent<MouseEvent>) => {
+                  if (gizmoMode) {
+                    // 건축 요소(selectable 메시)만 선택 — 격자·헬퍼는 무시. e.object=레이캐스트 적중 메시.
+                    if (!e.object?.userData?.selectable) return;
+                    e.stopPropagation();
+                    selectObject(e.object);
+                    return;
+                  }
+                  if (!measureMode) return;
+                  e.stopPropagation();
+                  const p = e.point;
+                  setMeasurePoints((prev) =>
+                    prev.length >= 2
+                      ? [{ x: p.x, y: p.y, z: p.z }]
+                      : [...prev, { x: p.x, y: p.y, z: p.z }],
+                  );
+                }}
+              >
+                <BuildingModel scene={bimScene} spec={spec} />
+              </group>
+              <MeasureOverlay points={measurePoints} />
+              {/* §4-D gizmo + 선택 하이라이트 — gizmoMode이고 요소가 선택됐을 때만 */}
+              {gizmoMode && selectedObj && (
+                <>
+                  <SelectionOverlay object={selectedObj} version={selVersion} />
+                  <ElementGizmo
+                    object={selectedObj}
+                    mode={transformMode}
+                    camControlsRef={camControlsRef}
+                    onChange={() => setSelVersion((n) => n + 1)}
+                  />
+                </>
+              )}
+              {/* §4-E 단면: 절단선을 모델 실측 base(minY)에 접지 — world-y = minY + 상대절단높이.
+                  서버 glTF가 Y중심화돼 base가 y=0이 아니어도 슬라이더 전 범위가 정확히 작동한다. */}
+              <SectionClipper
+                enabled={sectionOn && (!!bimScene || !!spec)}
+                cutHeight={modelDims.minY + sectionCutHeightM(sectionPct, modelDims.height)}
+              />
             </Canvas>
 
             {/* ── 카메라 시점 프리셋 바(비전문가용 시점 전환) ── 모델 없으면 비활성+안내 ── */}
@@ -1023,6 +1271,150 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
               >
                 {autoRotate ? "■ 회전 정지" : "▶ 자동 회전"}
               </button>
+            )}
+
+            {/* §4-E 단면(slicer) — 절단선 높이를 내려 건물 내부(층별)를 들여다본다 */}
+            {(bimScene || spec) && (
+              <div className="absolute bottom-6 left-1/2 z-30 flex -translate-x-1/2 items-center gap-3 rounded-2xl border border-white/10 bg-black/45 px-4 py-2 backdrop-blur-xl shadow-2xl">
+                <button
+                  type="button"
+                  data-testid="bim3d-section"
+                  onClick={() => setSectionOn((v) => !v)}
+                  aria-pressed={sectionOn}
+                  title="건물을 수평으로 잘라 내부(층별)를 봅니다"
+                  className={`rounded-full px-3 py-1.5 text-[10px] font-black uppercase tracking-widest transition-colors ${
+                    sectionOn
+                      ? "bg-[var(--accent-strong)] text-white"
+                      : "text-white/55 hover:text-white hover:bg-white/10"
+                  }`}
+                >
+                  {sectionOn ? "■ 단면 ON" : "▤ 단면"}
+                </button>
+                {/* §4-E 측정 — 모델 두 점을 클릭해 거리를 잰다 */}
+                <button
+                  type="button"
+                  data-testid="bim3d-measure"
+                  onClick={() => {
+                    setMeasureMode((v) => {
+                      const next = !v;
+                      if (next) { setGizmoMode(false); selectObject(null); }  // 측정·편집 상호배타
+                      return next;
+                    });
+                    setMeasurePoints([]);
+                  }}
+                  aria-pressed={measureMode}
+                  title="모델 표면 두 점을 클릭해 거리를 측정합니다"
+                  className={`rounded-full px-3 py-1.5 text-[10px] font-black uppercase tracking-widest transition-colors ${
+                    measureMode
+                      ? "bg-[#f59e0b] text-black"
+                      : "text-white/55 hover:text-white hover:bg-white/10"
+                  }`}
+                >
+                  {measureMode ? "■ 측정 ON" : "📏 측정"}
+                </button>
+                {measureMode && (
+                  <span className="whitespace-nowrap text-[10px] font-bold text-white/70">
+                    {measurePoints.length === 0
+                      ? "첫 점을 클릭"
+                      : measurePoints.length === 1
+                        ? "둘째 점을 클릭"
+                        : `거리 ${formatLength(distance3D(measurePoints[0], measurePoints[1]))} · 다시 클릭=새 측정`}
+                    {measurePoints.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setMeasurePoints([])}
+                        className="ml-2 rounded px-1.5 py-0.5 text-white/50 hover:text-white hover:bg-white/10"
+                      >
+                        초기화
+                      </button>
+                    )}
+                  </span>
+                )}
+                {/* §4-D 요소 편집(gizmo) — 요소를 클릭 선택해 이동/회전(뷰포트 시점 편집·미저장) */}
+                <button
+                  type="button"
+                  data-testid="bim3d-gizmo"
+                  onClick={() => {
+                    setGizmoMode((v) => {
+                      const next = !v;
+                      if (next) { setMeasureMode(false); setMeasurePoints([]); }  // 측정·편집 상호배타
+                      else selectObject(null);  // 끄면 선택 해제
+                      return next;
+                    });
+                  }}
+                  aria-pressed={gizmoMode}
+                  title="요소를 클릭해 선택하고 이동/회전합니다(시점 편집 · 설계 저장 아님)"
+                  className={`rounded-full px-3 py-1.5 text-[10px] font-black uppercase tracking-widest transition-colors ${
+                    gizmoMode
+                      ? "bg-[#22d3ee] text-black"
+                      : "text-white/55 hover:text-white hover:bg-white/10"
+                  }`}
+                >
+                  {gizmoMode ? "■ 편집 ON" : "✥ 편집"}
+                </button>
+                {gizmoMode && (
+                  <span className="flex items-center gap-2 whitespace-nowrap text-[10px] font-bold text-white/70">
+                    {!selectedObj ? (
+                      "요소를 클릭해 선택"
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => setTransformMode((m) => cycleTransformMode(m))}
+                          title="이동/회전 전환"
+                          className="rounded px-1.5 py-0.5 text-[#22d3ee] hover:bg-white/10"
+                        >
+                          {transformMode === "translate" ? "✥ 이동" : "↻ 회전"}
+                        </button>
+                        <span className="tabular-nums text-white/80" data-v={selVersion}>
+                          {/* data-v={selVersion}: 변환(객체 변이) 후 리렌더→live position 재독 */}
+                          {transformReadout(
+                            { x: selectedObj.position.x, y: selectedObj.position.y, z: selectedObj.position.z },
+                            selectedObj.rotation.y,
+                          )}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={resetSelected}
+                          className="rounded px-1.5 py-0.5 text-white/50 hover:text-white hover:bg-white/10"
+                        >
+                          원위치
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => selectObject(null)}
+                          className="rounded px-1.5 py-0.5 text-white/50 hover:text-white hover:bg-white/10"
+                        >
+                          해제
+                        </button>
+                        {/* 정직: 변환은 시점 편집(미저장) — 버튼 툴팁뿐 아니라 화면에도 명시 */}
+                        <span className="text-white/40">· 미저장(시점)</span>
+                      </>
+                    )}
+                  </span>
+                )}
+                {sectionOn && (
+                  <>
+                    <input
+                      type="range"
+                      min={0}
+                      max={100}
+                      step={1}
+                      value={sectionPct}
+                      onChange={(e) => setSectionPct(Number(e.target.value))}
+                      aria-label="단면 절단 높이(%)"
+                      className="w-40 cursor-pointer accent-[var(--accent-strong)]"
+                    />
+                    <span className="whitespace-nowrap text-[10px] font-bold tabular-nums text-white/70">
+                      보이는 층 {visibleFloorCount(
+                        sectionCutHeightM(sectionPct, modelDims.height),
+                        spec?.floor_height_m ?? 3,
+                        spec?.floor_count ?? 0,
+                      )}/{spec?.floor_count ?? "—"} · 절단 {sectionCutHeightM(sectionPct, modelDims.height).toFixed(1)}m
+                    </span>
+                  </>
+                )}
+              </div>
             )}
 
             {/* ── AI 포토리얼 렌더 버튼(과금 게이트) — 모델(절차/서버) 있을 때 노출.
@@ -1087,8 +1479,10 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
           </div>
         ) : (
           <div className="absolute inset-0 z-30 bg-[#0a0f14] flex flex-col">
-            {/* 상단 바: 도면 선택 드롭다운(공간 최적화) + 편집모드 전환 */}
-            <div className="flex items-center justify-between gap-3 border-b border-white/5 px-6 py-3">
+            {/* 상단 바: 도면 선택 드롭다운(공간 최적화) + 편집모드 전환.
+                pt-16 = 뷰포트 상단 중앙의 플로팅 2D/3D 토글(absolute top-6)과 겹치지 않도록 상단 여백 확보.
+                flex-wrap = 좁은 폭/확대 시 우측 버튼군(내보내기·다듬기)이 토글 위로 올라타지 않게 줄바꿈. */}
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/5 px-6 pt-16 pb-3">
               <label className="flex items-center gap-2">
                 <span className="text-[10px] font-black uppercase tracking-widest text-white/40">도면</span>
                 <select
@@ -1128,6 +1522,15 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
                   className="rounded-full border border-white/10 px-4 py-2 text-[10px] font-black uppercase tracking-widest text-white/70 hover:bg-white/5 disabled:opacity-50"
                 >
                   {dxfBusy ? "내보내는 중…" : "⬇ DXF(캐드) 내보내기"}
+                </button>
+                {/* §4-E: IFC(.ifc) 내보내기 — Revit/ArchiCAD 등 BIM 저작도구 호환(read-only 해소) */}
+                <button
+                  onClick={exportIfc}
+                  disabled={ifcBusy || !spec}
+                  title="Revit·ArchiCAD 등 BIM 저작도구에서 열 수 있는 IFC4(.ifc) 모델로 내보냅니다"
+                  className="rounded-full border border-white/10 px-4 py-2 text-[10px] font-black uppercase tracking-widest text-white/70 hover:bg-white/5 disabled:opacity-50"
+                >
+                  {ifcBusy ? "내보내는 중…" : "⬇ IFC(BIM) 내보내기"}
                 </button>
                 {/* ③ 도면 다듬기 CTA — 편집모드 직행(쉬운 모드 동선) */}
                 <button
@@ -1335,6 +1738,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
             </button>
             <button
               type="button"
+              data-testid="cadbim-to-3d"
               onClick={() => { setEditMode(false); setViewMode("bim_3d"); }}
               className={`rounded-xl px-4 py-2 text-[10px] font-black uppercase tracking-widest transition-colors ${
                 viewMode === "bim_3d"

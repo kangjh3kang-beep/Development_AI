@@ -28,6 +28,12 @@ import {
 } from "./BriefUploadStep";
 import { ParamConfirmStep } from "./ParamConfirmStep";
 import { AuditReportView, type DesignAuditReport } from "./AuditReportView";
+import { AnnotatedSitePlanCard } from "@/components/cad/AnnotatedSitePlanCard";
+import {
+  auditFindingsToLegal,
+  auditSchematicGeometry,
+  auditVerdict,
+} from "./auditAnnotation";
 
 /* ── 스테퍼 정의 ── */
 
@@ -253,7 +259,7 @@ export function DesignAuditWorkspace({ locale }: { locale: Locale }) {
                 <span className="cc-meta">DESIGN · AI AUDIT</span>
                 <span className="cc-chip-data">DA-7</span>
               </div>
-              <h1 className="text-lg font-black text-[var(--text-primary)]">설계안 AI 심사</h1>
+              <h1 className="text-lg font-black text-[var(--text-primary)]">AI 설계분석</h1>
               <p className="mt-0.5 text-xs text-[var(--text-secondary)]">
                 부지·건축개요·도면(IFC·DXF)을 입력하면 법규 적합성(건폐율·용적률·일조·주차·피난)과
                 인근 인허가 사례 비교·인센티브 경로·사각지대를 AI가 사전 심사합니다.
@@ -264,8 +270,22 @@ export function DesignAuditWorkspace({ locale }: { locale: Locale }) {
       </Card>
 
       {report ? (
-        /* 실행 완료 → 보고서 뷰 전환 */
-        <AuditReportView report={report} onReset={() => setReport(null)} />
+        /* 실행 완료 → 보고서 뷰 + §4-C 후속: 법규 준수 배치도(findings→도면 주석, audit↔drawing) */
+        <>
+          <AuditReportView report={report} onReset={() => setReport(null)} />
+          {(() => {
+            const legal = auditFindingsToLegal(report);
+            const geometry = auditSchematicGeometry(site.landAreaSqm, legal);
+            // 건폐율 finding·대지면적이 없으면 카드 미표시(건물 footprint 도출 불가 — 정직)
+            return geometry ? (
+              <AnnotatedSitePlanCard
+                geometry={geometry}
+                findings={legal}
+                verdict={auditVerdict(report)}
+              />
+            ) : null;
+          })()}
+        </>
       ) : (
         <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
           <CardContent className="p-6">
@@ -664,7 +684,7 @@ export function DesignAuditWorkspace({ locale }: { locale: Locale }) {
                         title={!siteReady ? "1단계에서 부지(주소)를 먼저 입력하세요." : undefined}
                         className="rounded-xl bg-[var(--accent-strong)] px-6 py-2.5 text-sm font-black text-white shadow-[var(--shadow-glow)] hover:opacity-90 disabled:opacity-50"
                       >
-                        🏗️ 설계안 AI 심사 실행
+                        🏗️ AI 설계분석 실행
                       </button>
                       {!siteReady && (
                         <span className="text-xs text-[var(--text-hint)]">

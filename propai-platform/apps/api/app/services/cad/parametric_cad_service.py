@@ -47,6 +47,7 @@ def _setup_layers(doc: ezdxf.document.Drawing) -> None:
         "SETBACK": {"color": 1, "lineweight": 13, "linetype": "DASHED"},
         "SECTION_CUT": {"color": 1, "lineweight": 50},
         "SECTION_FILL": {"color": 8, "lineweight": 25},
+        "REBAR": {"color": 2, "lineweight": 18},  # §4-D: 철근배근(구조 단면상세)
         "ELEVATION": {"color": 7, "lineweight": 35},
         "GRID": {"color": 8, "lineweight": 13, "linetype": "CENTER"},
     }
@@ -110,6 +111,54 @@ def _add_dimension_v(msp: Modelspace, y1: float, y2: float, x: float,
         msp, base=(x - offset, (y1 + y2) / 2),
         p1=(x, y1), p2=(x, y2), angle=90.0,
     )
+
+
+def _add_material_hatch(msp: Modelspace, points: list[tuple[float, float]], *,
+                        pattern: str = "ANSI31", scale: float = 0.3) -> None:
+    """§4-D: 닫힌 경계에 재료 해칭(HATCH 엔티티)을 additive로 추가한다.
+
+    HATCH 레이어에 패턴 채움(ANSI31=대각선, 콘크리트/단면 관용)으로 그린다. 기존 LINE/치수는
+    유지(가산만). 해칭 실패는 도면 생성을 막지 않는다(선은 이미 그려짐 — graceful).
+    """
+    if ezdxf is None or len(points) < 3:
+        return
+    try:
+        hatch = msp.add_hatch(color=8, dxfattribs={"layer": "HATCH"})
+        hatch.set_pattern_fill(pattern, scale=max(0.05, scale))
+        hatch.paths.add_polyline_path(points, is_closed=True)
+    except Exception:  # noqa: BLE001 — 패턴 미지원 등은 선 단면을 그대로 두고 스킵
+        return
+
+
+def _add_slab_rebar(msp: Modelspace, building_width_m: float, slab_top_y: float,
+                    slab_t: float, *, cover: float = 0.04, spacing: float = 1.5,
+                    bar_r: float = 0.02) -> None:
+    """§4-D: 슬래브 단면 철근배근을 그린다 — 상/하부 주근(원=단면)·배력근(선), REBAR 레이어.
+
+    상부근은 슬래브 상단에서 cover 아래, 하부근은 하단에서 cover 위에 배치(콘크리트 피복 반영).
+    주근은 spacing 간격의 원(단면), 상/하부 배력근은 전폭 수평선. 간격·피복은 표준 가정값
+    (구조계산 미연동 — 표기용). 좌표는 단면 모델 좌표(m).
+    """
+    # 얇은 슬래브에서 피복이 두께의 절반을 넘으면 상/하부근이 뒤집힌다 — cover를 안전 상한으로 클램프.
+    cover = max(0.0, min(cover, slab_t / 2.0 - bar_r))
+    top_y = slab_top_y - cover
+    bot_y = slab_top_y - slab_t + cover
+    x = cover
+    while x <= building_width_m - cover + 1e-6:
+        msp.add_circle((x, top_y), bar_r, dxfattribs={"layer": "REBAR"})  # 상부 주근
+        msp.add_circle((x, bot_y), bar_r, dxfattribs={"layer": "REBAR"})  # 하부 주근
+        x += spacing
+    # 배력근(전폭 수평선) — 상/하부
+    msp.add_line((cover, top_y), (building_width_m - cover, top_y), dxfattribs={"layer": "REBAR"})
+    msp.add_line((cover, bot_y), (building_width_m - cover, bot_y), dxfattribs={"layer": "REBAR"})
+    # 정직 표기 — 도면에 표준배근(구조계산 미연동)임을 명시(DXF TEXT, REBAR 레이어).
+    try:
+        msp.add_text(
+            "표준배근(구조계산 미연동)",
+            dxfattribs={"layer": "REBAR", "height": 0.12},
+        ).set_placement((cover, slab_top_y + 0.05))
+    except Exception:  # noqa: BLE001 — 일부 ezdxf 버전 텍스트 배치 차이는 무시(배근 자체는 유지)
+        pass
 
 
 def _draw_door(msp: Modelspace, x: float, y: float,
@@ -468,8 +517,14 @@ class ParametricCADService:
         basement_height_m: float = 3.3,
         foundation_depth_m: float = 1.0,
         parapet_height_m: float = 1.2,
+        rebar: bool = False,
     ) -> bytes:
-        """건물 단면도 DXF — 지하층, 각 층, 지붕, 기초 포함."""
+        """건물 단면도 DXF — 지하층, 각 층, 지붕, 기초 포함.
+
+        §4-D: rebar=True면 각 층 슬래브에 상/하부 주근(원=단면)·배력근(선)을 REBAR 레이어에
+        additive로 그린다(콘크리트 피복 반영). 배근 간격은 표준 가정값(구조계산 미연동 — 표기용).
+        rebar=False(기본)면 기존 동작 완전 불변.
+        """
         if ezdxf is None:
             return b"DXF_PLACEHOLDER_NO_EZDXF"
         doc = ezdxf.new("R2010")
@@ -484,13 +539,14 @@ class ParametricCADService:
         found_y = ground_level_y - total_below_h - foundation_depth_m
         found_w = building_width_m + 2.0  # 기초 폭은 건물보다 1m씩 넓음
         found_x = -1.0
-        msp.add_lwpolyline(
-            [(found_x, found_y), (found_x + found_w, found_y),
-             (found_x + found_w, found_y + foundation_depth_m),
-             (found_x, found_y + foundation_depth_m)],
-            close=True,
-            dxfattribs={"layer": "SECTION_FILL"},
-        )
+        _found_pts = [
+            (found_x, found_y), (found_x + found_w, found_y),
+            (found_x + found_w, found_y + foundation_depth_m),
+            (found_x, found_y + foundation_depth_m),
+        ]
+        msp.add_lwpolyline(_found_pts, close=True, dxfattribs={"layer": "SECTION_FILL"})
+        # §4-D: 기초 콘크리트 재료 해칭(HATCH 엔티티)
+        _add_material_hatch(msp, _found_pts, pattern="ANSI31", scale=0.4)
         msp.add_text(
             "기초",
             dxfattribs={"layer": "TEXT", "height": 0.25},
@@ -525,6 +581,7 @@ class ParametricCADService:
             )
 
         # ─ 지상층 ─
+        _slab_t = 0.25  # 슬래브 두께(콘크리트 단면 해칭용)
         for fi in range(floor_count):
             fy = ground_level_y + fi * floor_height_m
             # 슬래브
@@ -532,6 +589,14 @@ class ParametricCADService:
                 (0, fy), (building_width_m, fy),
                 dxfattribs={"layer": "SECTION_CUT"},
             )
+            # §4-D: 층 슬래브 콘크리트 해칭(HATCH 엔티티) — 슬래브 두께만큼 채움(additive)
+            _add_material_hatch(msp, [
+                (0, fy - _slab_t), (building_width_m, fy - _slab_t),
+                (building_width_m, fy), (0, fy),
+            ], pattern="ANSI31", scale=0.25)
+            # §4-D: 슬래브 철근배근(상/하부 주근=원 단면 + 배력근=선) — REBAR 레이어, 옵셔널
+            if rebar:
+                _add_slab_rebar(msp, building_width_m, fy, _slab_t)
             # 좌우 벽
             msp.add_line((0, fy), (0, fy + floor_height_m), dxfattribs={"layer": "SECTION_CUT"})
             msp.add_line(

@@ -90,6 +90,98 @@ def _get_build_boq():
     return build_boq
 
 
+def _get_price_join():
+    """N3 단가결합 모듈(boq_price_join.join_prices) — 미배포 시 503 정직."""
+    try:
+        from app.services.cost import boq_price_join
+    except ImportError as exc:  # pragma: no cover — 본 작업 신규 자산(방어용)
+        raise HTTPException(
+            status_code=503,
+            detail=f"BOQ 단가결합(N3) 모듈 미배포 — 정직 안내: {exc}",
+        ) from exc
+    return boq_price_join
+
+
+def _get_excel_builder():
+    """공내역서 엑셀 익스포터(boq_excel_export.build_xlsx, priced= 지원) — 미배포 시 503."""
+    try:
+        from app.services.cost.boq_excel_export import build_xlsx
+    except ImportError as exc:  # pragma: no cover — 기존 자산(방어용)
+        raise HTTPException(
+            status_code=503,
+            detail=f"BOQ 엑셀 익스포터 미배포 — 정직 안내: {exc}",
+        ) from exc
+    return build_xlsx
+
+
+def _get_bim_merge():
+    """N2 BIM 병합 모듈(boq_bim_merge.merge_bim) — 미배포 시 503 정직."""
+    try:
+        from app.services.cost import boq_bim_merge
+    except ImportError as exc:  # pragma: no cover — 본 작업 신규 자산(방어용)
+        raise HTTPException(
+            status_code=503,
+            detail=f"BOQ BIM 병합(N2) 모듈 미배포 — 정직 안내: {exc}",
+        ) from exc
+    return boq_bim_merge
+
+
+async def _load_project_bim(project_id: str) -> list[dict[str, Any]]:
+    """프로젝트 BIM 물량(bim_quantities)을 자체 세션으로 조회 — 기존 cost._load_bim_quantities 재사용.
+
+    DB/모듈 실패·미존재 시 빈 리스트(정직) → merge_bim 이 parametric 그대로 유지.
+    """
+    try:
+        from app.core.database import async_session_factory
+        from app.routers.cost import _load_bim_quantities  # 기존 자산 무수정 재사용
+        async with async_session_factory() as db:
+            return await _load_bim_quantities(db, project_id)
+    except Exception:  # noqa: BLE001 — DB 실패 시 BIM 0건(가짜값 금지·parametric 폴백)
+        return []
+
+
+async def _resolve_unit_prices() -> Optional[dict[str, Any]]:
+    """단가 SSOT(UnitPriceRepository.get_prices) — DB 우선. 실패 시 None.
+
+    None 이면 join_prices 가 동기 fallback(UNIT_PRICES_2026)으로 결합(회귀 0·결정론).
+    """
+    try:
+        from app.services.cost.unit_price_repository import UnitPriceRepository
+        return await UnitPriceRepository().get_prices()
+    except Exception:  # noqa: BLE001 — DB 실패 시 join_prices 동기 fallback
+        return None
+
+
+def _priced_cost_items(priced_draft: Any) -> list[dict[str, Any]]:
+    """단가 결합된 항목(price_source 有) → OriginCostCalculator 입력 cost dict 리스트.
+
+    미결합 항목(price_source=None)은 제외 — 직접비는 결합 항목만의 부분합(정직).
+    """
+    out: list[dict[str, Any]] = []
+    blocks: list[Any] = []
+    disciplines = priced_draft.get("disciplines") if isinstance(priced_draft, dict) else None
+    if isinstance(disciplines, dict):
+        for b in disciplines.values():
+            blocks.append(b.get("items") if isinstance(b, dict) else b)
+    elif isinstance(priced_draft, dict) and isinstance(priced_draft.get("items"), list):
+        blocks.append(priced_draft["items"])
+    for items in blocks:
+        for it in items or []:
+            if not isinstance(it, dict) or it.get("price_source") is None:
+                continue
+            out.append({
+                "work_code": it.get("section_code", ""),
+                "item_name": it.get("name", ""),
+                "spec": it.get("spec", ""),
+                "unit": it.get("unit", ""),
+                "quantity": float(it.get("qty") or 0),
+                "mat_unit": float(it.get("mat_unit") or 0),
+                "labor_unit": float(it.get("labor_unit") or 0),
+                "exp_unit": float(it.get("exp_unit") or 0),
+            })
+    return out
+
+
 # ── 호출 어댑터(병렬 구현 모듈 간 느슨한 결합 — 결정론 유지) ──
 
 
@@ -183,6 +275,12 @@ class BoqApplyCostRequest(BoqDraftRequest):
     project_id: str = Field(..., min_length=1, description="프로젝트 ID(응답 echo 용)")
 
 
+class BoqFromProjectRequest(BoqDraftRequest):
+    """프로젝트 BIM 물량 우선 병합 드래프트 요청(N2)."""
+
+    project_id: str = Field(..., min_length=1, description="BIM 물량(bim_quantities) 조회 대상 프로젝트 ID")
+
+
 # ── 엔드포인트 ──
 
 
@@ -241,6 +339,53 @@ async def export_draft(req: BoqDraftRequest) -> StreamingResponse:
     return StreamingResponse(io.BytesIO(data), media_type=XLSX_MEDIA_TYPE, headers=headers)
 
 
+@router.post("/draft/priced", summary="공내역서 드래프트 + 단가결합(N3 — 금액까지 채움)")
+async def create_priced_draft(req: BoqDraftRequest) -> dict[str, Any]:
+    """generate_draft → join_prices(단가DB 결합). 단가 출처는 DB 우선·fallback 정직 표기.
+
+    가짜 단가 금지: 미매칭/단위불일치 항목은 단가 빈칸 유지(summary.pricing 에 커버리지).
+    """
+    mod = _get_draft_module()
+    draft = await _invoke_draft_fn(mod.generate_draft, req)
+    pj = _get_price_join()
+    prices = await _resolve_unit_prices()
+    priced = pj.join_prices(draft, prices=prices)
+    return priced if isinstance(priced, dict) else {"draft": priced}
+
+
+@router.post("/draft/priced/export", summary="단가결합 공내역서 XLSX(금액 모드 — 단가/금액 채움)")
+async def export_priced_draft(req: BoqDraftRequest) -> StreamingResponse:
+    """join_prices 결과를 금액 모드 XLSX(단가/금액 칸 + 공종 소계 + 총계 시트)로 반환."""
+    mod = _get_draft_module()
+    draft = await _invoke_draft_fn(mod.generate_draft, req)
+    pj = _get_price_join()
+    prices = await _resolve_unit_prices()
+    priced = pj.join_prices(draft, prices=prices)
+    build_xlsx = _get_excel_builder()
+    data = _as_xlsx_bytes(build_xlsx(priced, priced=True))
+    fname = "boq_priced.xlsx"
+    headers = {
+        "Content-Disposition": (
+            f'attachment; filename="{fname}"; filename*=UTF-8\'\'{fname}'
+        )
+    }
+    return StreamingResponse(io.BytesIO(data), media_type=XLSX_MEDIA_TYPE, headers=headers)
+
+
+@router.post("/draft/from-project", summary="프로젝트 BIM 실측 물량 우선 병합 드래프트(N2)")
+async def create_from_project_draft(req: BoqFromProjectRequest) -> dict[str, Any]:
+    """generate_draft → merge_bim(프로젝트 BIM 물량 1:1 정합 시 실측치 우선).
+
+    BIM 0건이면 parametric 그대로 + bim_merge 안내(가짜값 금지). 우선순위 user>bim>parametric.
+    """
+    mod = _get_draft_module()
+    draft = await _invoke_draft_fn(mod.generate_draft, req)
+    bim_rows = await _load_project_bim(req.project_id)
+    bm = _get_bim_merge()
+    merged = bm.merge_bim(draft, bim_rows)
+    return merged if isinstance(merged, dict) else {"draft": merged}
+
+
 @router.post("/draft/apply-cost", summary="드래프트 + 개산 공사비(costData 후보) 연동 — DB 쓰기 없음")
 async def apply_cost(req: BoqApplyCostRequest) -> dict[str, Any]:
     """드래프트 summary 와 기존 boq_builder 개산 총액(costData 후보)을 함께 반환한다.
@@ -279,6 +424,21 @@ async def apply_cost(req: BoqApplyCostRequest) -> dict[str, Any]:
             detail="boq_builder 결과에서 summary.total_project_cost 미발견 — 가짜 0원 대신 정직 안내",
         )
 
+    # ── N3 정밀화(옵션·가산): 단가 결합 시 항목 합산 직접비 → 12단계 법정요율 ──
+    # 결합 0건(미매칭)이면 None(정직). 기존 boq_builder 개산은 무수정 보존(폴백).
+    priced_cost_estimate = await _priced_cost_estimate(draft)
+
+    badges = [
+        "공내역서 마스터: 실적 표본 1건(의정부동 424 주상복합) 기반 드래프트",
+        "공사비: boq_builder 개산(확정가 아님) — 전문 적산사 검토 권장",
+        "DB 미저장 — costData 후보 값(적용 여부는 사용자 확인)",
+    ]
+    if priced_cost_estimate is not None:
+        badges.append(
+            "단가 결합(boq_priced) 직접비 → 법정요율 경로 병행 제공 — "
+            f"커버리지 {priced_cost_estimate.get('coverage_pct')}%(부분 단가)"
+        )
+
     return {
         "project_id": req.project_id,
         "boq_draft_summary": draft_summary,
@@ -289,10 +449,45 @@ async def apply_cost(req: BoqApplyCostRequest) -> dict[str, Any]:
             "assumptions": assumptions,
             "builder_badges": boq.get("badges") if isinstance(boq, dict) else None,
         },
-        "badges": [
-            "공내역서 마스터: 실적 표본 1건(의정부동 424 주상복합) 기반 드래프트",
-            "공사비: boq_builder 개산(확정가 아님) — 전문 적산사 검토 권장",
-            "DB 미저장 — costData 후보 값(적용 여부는 사용자 확인)",
-        ],
+        "priced_cost_estimate": priced_cost_estimate,
+        "badges": badges,
         "persisted": False,
     }
+
+
+async def _priced_cost_estimate(draft: Any) -> Optional[dict[str, Any]]:
+    """단가 결합 항목 직접비 → OriginCostCalculator(12단계 법정요율) 산정(가산·옵션).
+
+    결합 항목 0건이거나 경로 실패 시 None(기존 개산 경로가 폴백 — 회귀 0).
+    """
+    try:
+        pj = _get_price_join()
+        prices = await _resolve_unit_prices()
+        priced = pj.join_prices(draft, prices=prices)
+        cost_items = _priced_cost_items(priced)
+        if not cost_items:
+            return None
+        from app.services.cost.origin_cost_calculator import OriginCostCalculator
+        calc = OriginCostCalculator().calculate(cost_items)
+        direct = int(calc.get("direct_cost", 0))
+        total = int(calc.get("total_project_cost", 0))
+        if direct <= 0:
+            return None
+        pricing = (priced.get("summary") or {}).get("pricing") or {} if isinstance(priced, dict) else {}
+        return {
+            "cost_source": "boq_priced",
+            "direct_cost_won": direct,
+            "total_construction_cost_won": total,
+            "coverage_pct": pricing.get("coverage_pct"),
+            "priced_count": pricing.get("priced_count"),
+            "total_items": pricing.get("total_items"),
+            "priced_amount_won": pricing.get("priced_amount_won"),
+            "note": (
+                "단가 결합 항목 직접비 → 12단계 법정요율(부분 커버리지 — "
+                "미결합 항목 제외). 가짜 단가 없음 · 전문 적산사 검토 필수."
+            ),
+        }
+    except HTTPException:
+        raise
+    except Exception:  # noqa: BLE001 — priced 경로 실패는 기존 개산(폴백) 보존
+        return None

@@ -81,6 +81,8 @@ class DesignSpec(BaseModel):
     target_margin_pct: float | None = None
     # R3-1: 단위세대 평면 문법(옵셔널·additive) — None이면 기존 동작 완전 불변
     unit_grammar: UnitGrammar | None = None
+    # 매스 형상(옵셔널·additive): slab/tower/lshape/court. None=자동(대지비율).
+    massing_kind: str | None = None
 
     def to_site_input(self) -> SiteInput:
         """커널(AutoDesignEngine) 입력으로 변환."""
@@ -92,6 +94,7 @@ class DesignSpec(BaseModel):
             target_unit_types=self.target_unit_types or ["84A"],
             floor_height_m=self.floor_height_m,
             setback_m={"north": sb.north, "south": sb.south, "east": sb.east, "west": sb.west},
+            massing_kind=self.massing_kind,
         )
 
 

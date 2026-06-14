@@ -283,3 +283,148 @@ class TestApplyCost:
         resp = client.post(f"{BASE}/draft/apply-cost", json={**VALID_BODY, "project_id": "p1"})
         assert resp.status_code == 500
         assert "total_project_cost" in resp.json()["detail"]
+
+
+# ──────────────────────────────────────────────
+# N3 — POST /draft/priced · /draft/priced/export · apply-cost priced 블록
+# ──────────────────────────────────────────────
+
+
+def _disc_draft_module(items: list[dict], captured: dict | None = None):
+    """실형(disciplines dict) 초안을 반환하는 B2 모킹 — join_prices 가 결합 가능한 형태."""
+
+    def generate_draft(params, disciplines=None):
+        if captured is not None:
+            captured["params"] = params
+        return {
+            "disciplines": {"건축": {"items": [dict(i) for i in items],
+                                     "item_count": len(items), "sections": []}},
+            "summary": {"total_items": len(items), "params_used": params, "warnings": []},
+            "provenance": {"name": "의정부동 424 주상복합", "sample_count": 1},
+            "badges": {"note": "실적 1건 기반 — 전문 적산 검토 필수", "confidence": "낮음(n=1)"},
+        }
+
+    def build_xlsx(params, disciplines=None):  # priced 경로 미사용(엑셀 익스포터 직접 호출)
+        return b"PK\x03\x04unused"
+
+    return types.SimpleNamespace(generate_draft=generate_draft, build_xlsx=build_xlsx)
+
+
+_CONCRETE_ITEM = {
+    "id": "건축-0001", "discipline": "건축", "section_code": "0101",
+    "section_name": "철근콘크리트공사", "name": "레미콘 타설", "spec": "25-24-15",
+    "unit": "m3", "qty": 10.0, "qty_sample": 10.0, "driver": "gfa",
+    "basis": "표본 비례", "confidence": "낮음(n=1)",
+}
+
+
+async def _async_none():
+    return None
+
+
+class TestDraftPriced:
+    def test_priced_생성_커버리지_및_금액(self, monkeypatch):
+        monkeypatch.setattr(ba_module, "_get_draft_module",
+                            lambda: _disc_draft_module([_CONCRETE_ITEM]))
+        monkeypatch.setattr(ba_module, "_resolve_unit_prices", _async_none)  # fallback 결정론
+        resp = client.post(f"{BASE}/draft/priced", json=VALID_BODY)
+        assert resp.status_code == 200
+        data = resp.json()
+        pricing = data["summary"]["pricing"]
+        assert pricing["priced_count"] == 1
+        assert pricing["coverage_pct"] == 100.0
+        it = data["disciplines"]["건축"]["items"][0]
+        assert it["price_source"] == "fallback"
+        assert it["amount"] == 1_320_000  # 10 × (85,000+35,000+12,000)
+
+    def test_priced_gfa_0_422(self):
+        resp = client.post(f"{BASE}/draft/priced", json={"params": {"gfa_sqm": 0}})
+        assert resp.status_code == 422
+
+    def test_priced_export_xlsx_금액모드(self, monkeypatch):
+        monkeypatch.setattr(ba_module, "_get_draft_module",
+                            lambda: _disc_draft_module([_CONCRETE_ITEM]))
+        monkeypatch.setattr(ba_module, "_resolve_unit_prices", _async_none)
+        resp = client.post(f"{BASE}/draft/priced/export", json=VALID_BODY)
+        assert resp.status_code == 200
+        assert resp.headers["content-type"].startswith(XLSX_MIME)
+        assert resp.content[:4] == b"PK\x03\x04"
+        cd = resp.headers["content-disposition"]
+        assert "boq_priced.xlsx" in cd
+
+    def test_apply_cost_priced_블록_가산(self, monkeypatch):
+        monkeypatch.setattr(ba_module, "_get_draft_module",
+                            lambda: _disc_draft_module([_CONCRETE_ITEM]))
+        monkeypatch.setattr(ba_module, "_get_build_boq", lambda: _fake_build_boq())
+        monkeypatch.setattr(ba_module, "_resolve_unit_prices", _async_none)
+        resp = client.post(f"{BASE}/draft/apply-cost", json={**VALID_BODY, "project_id": "prj-1"})
+        assert resp.status_code == 200
+        data = resp.json()
+        # 기존 boq_builder 개산은 그대로(하위호환)
+        assert data["cost_estimate"]["source"] == "boq_builder 개산"
+        # priced 블록 가산(cost_source='boq_priced', 직접비 양수, 커버리지 정직 표기)
+        pced = data["priced_cost_estimate"]
+        assert pced["cost_source"] == "boq_priced"
+        assert pced["coverage_pct"] == 100.0
+        assert pced["direct_cost_won"] == 1_320_000  # 직접비 = 결합 항목 합
+        assert pced["total_construction_cost_won"] > pced["direct_cost_won"]  # 법정요율 가산
+
+    def test_apply_cost_미결합시_priced_블록_없음(self, monkeypatch):
+        # 단위 없는 모킹 초안(top-level items) → 결합 0건 → priced 블록 None(정직)
+        monkeypatch.setattr(ba_module, "_get_draft_module", lambda: _fake_draft_module())
+        monkeypatch.setattr(ba_module, "_get_build_boq", lambda: _fake_build_boq())
+        monkeypatch.setattr(ba_module, "_resolve_unit_prices", _async_none)
+        resp = client.post(f"{BASE}/draft/apply-cost", json={**VALID_BODY, "project_id": "p2"})
+        assert resp.status_code == 200
+        assert resp.json().get("priced_cost_estimate") is None
+
+
+# ──────────────────────────────────────────────
+# N2 — POST /draft/from-project (BIM 물량 우선 병합)
+# ──────────────────────────────────────────────
+
+_WATERPROOF_ITEM = {
+    "id": "건축-0104", "discipline": "건축", "section_code": "0104",
+    "section_name": "방수공사", "name": "우레탄 방수", "spec": "노출형",
+    "unit": "m2", "qty": 100.0, "qty_sample": 100.0, "driver": "gfa",
+    "basis": "표본 비례", "confidence": "낮음(n=1)",
+}
+
+
+def _bim_loader(rows: list[dict]):
+    async def _load(project_id):
+        return rows
+    return _load
+
+
+class TestDraftFromProject:
+    def test_from_project_bim_병합(self, monkeypatch):
+        monkeypatch.setattr(ba_module, "_get_draft_module",
+                            lambda: _disc_draft_module([_WATERPROOF_ITEM]))
+        monkeypatch.setattr(ba_module, "_load_project_bim",
+                            _bim_loader([{"work_code": "A04", "unit": "m2",
+                                          "quantity": 250.0, "line_count": 3}]))
+        resp = client.post(f"{BASE}/draft/from-project",
+                           json={**VALID_BODY, "project_id": "prj-1"})
+        assert resp.status_code == 200
+        data = resp.json()
+        it = data["disciplines"]["건축"]["items"][0]
+        assert it["qty_source"] == "bim"
+        assert it["qty"] == 250.0
+        assert it["qty_parametric"] == 100.0
+        assert data["summary"]["bim_merge"]["bim_matched_count"] == 1
+
+    def test_from_project_bim_0건_parametric_안내(self, monkeypatch):
+        monkeypatch.setattr(ba_module, "_get_draft_module",
+                            lambda: _disc_draft_module([_WATERPROOF_ITEM]))
+        monkeypatch.setattr(ba_module, "_load_project_bim", _bim_loader([]))
+        resp = client.post(f"{BASE}/draft/from-project",
+                           json={**VALID_BODY, "project_id": "prj-empty"})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["disciplines"]["건축"]["items"][0]["qty_source"] == "parametric"
+        assert data["summary"]["bim_merge"]["bim_rows_count"] == 0
+
+    def test_from_project_project_id_누락_422(self):
+        resp = client.post(f"{BASE}/draft/from-project", json=VALID_BODY)
+        assert resp.status_code == 422

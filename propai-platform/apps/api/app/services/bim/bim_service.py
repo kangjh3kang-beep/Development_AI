@@ -6,12 +6,32 @@ class BIMService:
     """IFC 파싱 + 물량 산출 서비스."""
 
     def parse_ifc_metadata(self, ifc_path: str) -> Dict:
-        return {
-            "schema": "IFC4",
-            "file_path": ifc_path,
-            "authoring_tool": "Revit 2024",
-            "project_name": "PropAI BIM Model",
+        """IFC 파일 메타데이터를 실제로 읽는다(ifcopenshell).
+
+        읽기 실패(라이브러리 미설치·손상 파일 등) 시 가짜 도구명(예: 'Revit 2024')을
+        지어내지 않고 정직하게 None(미상)으로 표기한다 — 할루시네이션 금지.
+        """
+        meta: Dict[str, Any] = {
+            "schema": None, "file_path": ifc_path,
+            "authoring_tool": None, "project_name": None, "element_count": None,
         }
+        try:
+            import ifcopenshell  # noqa: PLC0415
+            f = ifcopenshell.open(ifc_path)
+            meta["schema"] = f.schema
+            projs = f.by_type("IfcProject")
+            if projs:
+                meta["project_name"] = getattr(projs[0], "Name", None)
+            apps = f.by_type("IfcApplication")
+            if apps:
+                meta["authoring_tool"] = (
+                    getattr(apps[0], "ApplicationFullName", None)
+                    or getattr(apps[0], "ApplicationIdentifier", None)
+                )
+            meta["element_count"] = len(f.by_type("IfcProduct"))
+        except Exception:  # noqa: BLE001 — 읽기 불가 시 미상 유지(가짜값 금지)
+            pass
+        return meta
 
     def extract_quantities(self, elements: List[Dict]) -> Dict:
         quantities = {}

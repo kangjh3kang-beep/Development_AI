@@ -295,6 +295,8 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
   // 사용자가 폼(면적·용도지역·건물용도)을 직접 수정했는가 — 부지분석 미실행 상태에서도
   // 사용자 직접 입력 기반 계산은 designData에 기록을 허용하기 위한 신호(②).
   const [userEdited, setUserEdited] = useState(false);
+  // 매싱 대안 사용자 선택(판상형/타워형/ㄱ자형). null이면 추천(최고 효율)이 활성.
+  const [selectedMassing, setSelectedMassing] = useState<string | null>(null);
 
   // ② projectId 변경 시 폼 기본값 리셋 — 이전 프로젝트의 시드/입력값 잔류 차단.
   const prevProjectRef = useRef(effectiveProjectId);
@@ -616,6 +618,8 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
                 <div className="mt-2 grid grid-cols-1 gap-3 md:grid-cols-3">
                   {opts.map((m, i) => {
                     const isBest = (m.efficiency || 0) === best;
+                    // 선택 우선 — 사용자가 고른 대안이 활성. 미선택이면 추천(최고효율)이 활성.
+                    const isActive = selectedMassing ? m.name === selectedMassing : isBest;
                     const estGfa = calc.maxGrossArea ? Math.round(calc.maxGrossArea * (m.efficiency / 100)) : null;
                     // ③ 실프리뷰 geom — 로컬 옵션은 산출 geom, AI 옵션은 이름 매칭으로 동일한
                     // calc 실값(법정한도 연면적·층수) 기반 geom을 생성(AI 폴백에서도 실척 유지).
@@ -626,19 +630,30 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
                       calc.maxFloors,
                     );
                     return (
-                      <div key={i} className={`relative rounded-xl border p-4 ${isBest ? "border-[var(--accent-strong)]/50 bg-[var(--accent-soft)]" : "border-[var(--line)] bg-[var(--surface-muted)]"}`}>
+                      <button
+                        key={i}
+                        type="button"
+                        onClick={() => setSelectedMassing((cur) => (cur === m.name ? null : m.name))}
+                        aria-pressed={selectedMassing === m.name}
+                        aria-label={`${m.name} 매싱안 선택`}
+                        className={`relative cursor-pointer rounded-xl border p-4 text-left transition-all ${isActive ? "border-[var(--accent-strong)] bg-[var(--accent-soft)] shadow-[var(--shadow-md)]" : "border-[var(--line)] bg-[var(--surface-muted)] hover:border-[var(--line-strong)] hover:bg-[var(--surface)]"}`}
+                      >
                         {isBest && <span className="absolute right-3 top-3 rounded-full bg-[var(--accent-strong)] px-2 py-0.5 text-[9px] font-black text-white">★ 추천</span>}
-                        <MassingDiagram name={m.name} active={isBest} geom={geom} />
+                        <MassingDiagram name={m.name} active={isActive} geom={geom} />
                         <p className="mt-1 text-sm font-bold text-[var(--text-primary)]">{m.name}</p>
                         <p className="mt-0.5 text-[11px] leading-snug text-[var(--text-secondary)]">{m.description}</p>
                         <div className="mt-2 flex items-center gap-2">
-                          <div className="h-2 flex-1 rounded-full bg-[var(--line)]"><div className="h-2 rounded-full" style={{ width: `${m.efficiency}%`, background: isBest ? "var(--accent-strong)" : "#60a5fa" }} /></div>
-                          <span className={`cc-num text-xs font-black ${isBest ? "text-[var(--accent-strong)]" : "text-blue-400"}`}>{m.efficiency}%</span>
+                          <div className="h-2 flex-1 rounded-full bg-[var(--line)]"><div className="h-2 rounded-full" style={{ width: `${m.efficiency}%`, background: isActive ? "var(--accent-strong)" : "#60a5fa" }} /></div>
+                          <span className={`cc-num text-xs font-black ${isActive ? "text-[var(--accent-strong)]" : "text-blue-400"}`}>{m.efficiency}%</span>
+                          <span className="text-[8px] font-bold text-[var(--text-hint)]">추정</span>
                         </div>
                         {estGfa != null && (
                           <p className="mt-1.5 text-[10px] text-[var(--text-hint)]">예상 전용 연면적 약 {estGfa.toLocaleString()}㎡</p>
                         )}
-                      </div>
+                        {selectedMassing === m.name && (
+                          <p className="mt-1.5 text-[10px] font-black text-[var(--accent-strong)]">✓ 선택됨 — 비교 기준</p>
+                        )}
+                      </button>
                     );
                   })}
                 </div>

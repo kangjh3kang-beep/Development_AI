@@ -63,6 +63,24 @@ class SitePlanRequest(BaseModel):
     setback_m: float = 3.0
 
 
+class AnnotatedSitePlanRequest(BaseModel):
+    """§4-C: 법규주석 배치도 — 8엔진 design_audit findings를 도면에 시각화.
+
+    findings는 `/design-audit/run` 출력의 findings 항목({check_id, engine, status,
+    current, limit, ...})을 그대로 전달한다. 빈 배열이면 기본 배치도(하위호환).
+    """
+
+    site_width_m: float = Field(..., gt=0)
+    site_depth_m: float = Field(..., gt=0)
+    building_width_m: float = Field(..., gt=0)
+    building_depth_m: float = Field(..., gt=0)
+    setback_m: float = Field(3.0, ge=0)
+    findings: list[dict] = Field(default_factory=list, description="design_audit findings")
+    verdict: Optional[str] = Field(
+        None, description="종합판정(적합/조건부적합/부적합) — 있으면 범례에 표기",
+    )
+
+
 class FloorPlanRequest(BaseModel):
     total_floor_area_sqm: float
     unit_type: str = "84A"
@@ -85,6 +103,22 @@ class ExportDxfRequest(BaseModel):
     drawing_type: str = "floor_plan"
 
 
+class ExportIfcRequest(BaseModel):
+    """§4-E: 설계 매스를 IFC4(.ifc)로 내보내기 — build_ifc_from_mass 입력(파라미터→IFC)."""
+
+    building_width_m: float = Field(..., gt=0)
+    building_depth_m: float = Field(..., gt=0)
+    num_floors: int = Field(1, ge=1)
+    floor_height_m: float = Field(3.0, gt=0)
+    project_name: str = Field("PropAI Project")
+    # 실내 요소(옵셔널) — 있으면 코어/복도/창 압출. 미제공 시 매스 셸만(하위호환).
+    core_positions: Optional[list[dict]] = Field(None, description="코어 중심 [{x,y}]")
+    core_size_m: float = Field(5.0, ge=0)
+    corridor_width_m: float = Field(0.0, ge=0)
+    windows_per_side: int = Field(0, ge=0)
+    unit_width_m: float = Field(0.0, ge=0)
+
+
 class DesignAlternativesRequest(BaseModel):
     site_area_sqm: float = Field(..., gt=0)
     zone_code: str = "2R"
@@ -102,6 +136,24 @@ class DesignAlternativesRequest(BaseModel):
     )
     target_bcr_percent: Optional[float] = Field(
         None, gt=0, description="목표 건폐율(%) — 법정 한도 초과분은 법정값으로 클램프",
+    )
+    # §4-A①: 매스 형상(slab/tower/lshape/court). None=auto(대지 종횡비 — 기존 동작 불변).
+    # A 대안이 이 값을 따르고(B=tower·C=lshape는 다양화 고정), 미정의 값은 엔진이 auto로 폴백.
+    massing_kind: Optional[str] = Field(
+        None, description="매스 형상(slab/tower/lshape/court) — 미지정/미정의 시 자동(대지비율)",
+    )
+    # §4-B: 참조설계 피드백(opt-in). True면 유사 사례 기하 종횡비를 합성 매스에 주입한다.
+    # 기본 False=기존 동작 완전 불변·DB 미접근(하위호환). 명시 massing_kind이 참조보다 우선.
+    use_references: bool = Field(
+        False, description="유사 참조 사례 기하 반영(종횡비 주입) — 기본 False(하위호환)",
+    )
+    # §4-B 조례(opt-in). True+address면 지자체 도시계획조례 실효 한도(OrdinanceService)를
+    # min(법정, 조례, 목표)로 반영. 기본 False=법정상한 기준(하위호환·외부 조회 안 함).
+    use_ordinance: bool = Field(
+        False, description="지자체 조례 실효 한도 반영(법제처 API) — 기본 False(법정상한)",
+    )
+    address: Optional[str] = Field(
+        None, description="대지 주소(조례 조회용 — use_ordinance=True 시 지자체 추출에 사용)",
     )
 
 
@@ -127,6 +179,24 @@ class AutoDesignRequest(BaseModel):
     )
     target_bcr_percent: Optional[float] = Field(
         None, gt=0, description="목표 건폐율(%) — 법정 한도 초과분은 법정값으로 클램프",
+    )
+    # §4-A①: 매스 형상(slab/tower/lshape/court). None=auto(대지 종횡비 — 기존 동작 불변).
+    # 명시 시 형상별 종횡비·플로어플레이트로 매스 재산출, 미정의 값은 엔진이 auto로 폴백.
+    massing_kind: Optional[str] = Field(
+        None, description="매스 형상(slab/tower/lshape/court) — 미지정/미정의 시 자동(대지비율)",
+    )
+    # §4-B: 참조설계 피드백(opt-in). True면 유사 사례 기하 종횡비를 합성 매스에 주입한다.
+    # 기본 False=기존 동작 완전 불변·DB 미접근(하위호환). 명시 massing_kind이 참조보다 우선.
+    use_references: bool = Field(
+        False, description="유사 참조 사례 기하 반영(종횡비 주입) — 기본 False(하위호환)",
+    )
+    # §4-B 조례(opt-in). True+address면 지자체 도시계획조례 실효 한도(OrdinanceService)를
+    # min(법정, 조례, 목표)로 반영. 기본 False=법정상한 기준(하위호환·외부 조회 안 함).
+    use_ordinance: bool = Field(
+        False, description="지자체 조례 실효 한도 반영(법제처 API) — 기본 False(법정상한)",
+    )
+    address: Optional[str] = Field(
+        None, description="대지 주소(조례 조회용 — use_ordinance=True 시 지자체 추출에 사용)",
     )
 
 
@@ -180,6 +250,127 @@ def _clamped_targets(
     return far, bcr
 
 
+async def _reference_hint(
+    use_references: bool,
+    *,
+    site_area_sqm: float,
+    zone_code: str,
+    building_use: str,
+    unit_types: list[str],
+) -> Optional[dict]:
+    """§4-B: use_references=True일 때만 자체 DB 세션으로 유사사례 기하 힌트를 도출한다.
+
+    반환: None(opt-out — 세션 미개방) 또는 {used, hint, ref, note, candidates}.
+    `hint`는 엔진 SiteInput.reference_mass로 그대로 주입한다. 조회 실패는 침묵하지 않고
+    로그 + used=False·사유로 반환한다 — 참조는 부가 기능이지 설계 산출 차단 요인이 아니므로
+    핵심 설계는 계속 200으로 진행한다(정직 표기). use_references=False면 DB를 열지 않는다.
+    """
+    if not use_references:
+        return None
+    try:
+        from apps.api.database.session import AsyncSessionLocal
+        from app.services.cad import design_reference_service as ref_svc
+
+        async with AsyncSessionLocal() as db:
+            return await ref_svc.derive_reference_mass_hint(
+                db, site_area_sqm=site_area_sqm, zone_code=zone_code,
+                building_use=building_use, unit_types=unit_types or ["84A"],
+            )
+    except Exception as exc:  # noqa: BLE001 — DB/조회 실패가 설계 산출을 막지 않게(정직 표기)
+        # 광범위 catch지만 침묵하지 않는다 — traceback을 로그로 남겨 진짜 버그도 드러낸다.
+        logger.warning("참조 힌트 도출 실패: %s", exc, exc_info=True)
+        return {"used": False, "hint": None, "ref": None,
+                "note": f"참조 라이브러리 조회 실패: {exc}", "candidates": 0}
+
+
+def _reference_response_block(ref_result: Optional[dict]) -> Optional[dict]:
+    """응답용 reference 블록 — 내부 주입용 hint는 제외하고 정직 요약만 노출."""
+    if ref_result is None:
+        return None
+    return {k: v for k, v in ref_result.items() if k != "hint"}
+
+
+def _zone_type_for_ordinance(zone_code: str) -> Optional[str]:
+    """엔진 용도지역 코드(2R 등) → OrdinanceService 한글 zone_type(제2종일반주거지역).
+
+    design_spec.ZONE_LABELS(코드→한글) + '지역' 접미사. 미지정 코드는 None(가짜 매핑 금지).
+    """
+    try:
+        from app.services.cad.design_spec import ZONE_LABELS
+    except ImportError:
+        return None
+    label = ZONE_LABELS.get(zone_code)
+    return f"{label}지역" if label else None
+
+
+async def _ordinance_limits(
+    use_ordinance: bool,
+    *,
+    address: Optional[str],
+    zone_code: str,
+) -> Optional[dict]:
+    """§4-B: use_ordinance=True일 때 지자체 도시계획조례 실효 한도를 조회한다.
+
+    OrdinanceService(법제처 API→캐시→법정상한)로 effective_bcr/far를 받아 엔진 SiteInput에
+    주입할 형태로 반환한다. 반환: None(opt-out) 또는 {used, ordinance_bcr_percent,
+    ordinance_far_percent, source, legal_basis, sigungu, note}. 조례 미보유·주소 미제공·조회
+    실패는 used=False + 사유로 정직 표기(법정상한 적용 — 설계는 계속 진행). 침묵 금지.
+    """
+    if not use_ordinance:
+        return None
+    zone_type = _zone_type_for_ordinance(zone_code)
+    if not zone_type:
+        return {"used": False, "ordinance_bcr_percent": None, "ordinance_far_percent": None,
+                "source": None, "note": f"용도지역 코드 '{zone_code}' 한글 매핑 없음 — 조례 미반영(법정상한)"}
+    if not (address and address.strip()):
+        return {"used": False, "ordinance_bcr_percent": None, "ordinance_far_percent": None,
+                "source": None, "note": "주소 미제공 — 지자체 조례 조회 불가(법정상한)"}
+    try:
+        from app.services.land_intelligence.ordinance_service import OrdinanceService
+
+        result = await OrdinanceService().get_ordinance_limits(address.strip(), zone_type)
+    except Exception as exc:  # noqa: BLE001 — 조회 실패가 설계 산출을 막지 않게(로그+정직 표기)
+        # 상세 예외는 로그에만(내부 경로·키 단편이 응답에 새지 않게), 응답 note는 일반화.
+        logger.warning("조례 한도 조회 실패: %s", exc, exc_info=True)
+        return {"used": False, "ordinance_bcr_percent": None, "ordinance_far_percent": None,
+                "source": None, "note": "조례 조회 일시 실패 — 법정상한 적용"}
+
+    # 정직성: 엔진 법정 한도(SSOT)로 정규화 — 조례 실효값이 엔진 법정을 넘지 않게 클램프하고,
+    # 조례가 '실제로 더 제약'(법정 미만)할 때만 used=True·주입(법정 이상이면 무의미 → 미적용).
+    # 이유: 엔진 ZONE_LIMITS와 OrdinanceService NATIONAL_LIMITS의 법정값이 달라(2R far 200 vs 250)
+    # 그대로 싣으면 basis에 '조례>법정'이 호도적으로 기록되기 때문(한도 안전엔 무영향, 표기 정직).
+    eng = auto_design_engine.get_legal_limits(zone_code)
+    stat_bcr = float(eng["max_bcr_percent"])
+    stat_far = float(eng["max_far_percent"])
+    eff_bcr = result.get("effective_bcr")
+    eff_far = result.get("effective_far")
+    norm_bcr = min(float(eff_bcr), stat_bcr) if eff_bcr else None
+    norm_far = min(float(eff_far), stat_far) if eff_far else None
+    bcr_constrains = norm_bcr is not None and norm_bcr < stat_bcr - 1e-9
+    far_constrains = norm_far is not None and norm_far < stat_far - 1e-9
+    used = bcr_constrains or far_constrains
+    return {
+        "used": used,
+        "ordinance_bcr_percent": norm_bcr if bcr_constrains else None,
+        "ordinance_far_percent": norm_far if far_constrains else None,
+        "source": result.get("source"),
+        "legal_basis": result.get("legal_basis"),
+        "sigungu": result.get("sigungu"),
+        "note": ("지자체 조례 실효 한도 적용(법정 이하)" if used
+                 else "해당 지자체 조례가 법정상한을 더 제약하지 않음 — 법정상한 적용"),
+    }
+
+
+def _apply_ordinance(site_input, ord_result: Optional[dict]) -> None:
+    """조례 조회 결과를 SiteInput에 주입(값 있을 때만). 엔진이 min(법정,조례,목표) 적용."""
+    if not ord_result:
+        return
+    if ord_result.get("ordinance_bcr_percent"):
+        site_input.ordinance_bcr_percent = ord_result["ordinance_bcr_percent"]
+    if ord_result.get("ordinance_far_percent"):
+        site_input.ordinance_far_percent = ord_result["ordinance_far_percent"]
+
+
 # ── 엔드포인트 ──
 
 @router.post("/site-plan", response_class=Response)
@@ -189,6 +380,24 @@ async def generate_site_plan(req: SitePlanRequest):
     svg = svg_service.generate_site_plan(
         req.site_width_m, req.site_depth_m,
         req.building_width_m, req.building_depth_m, req.setback_m,
+    )
+    return Response(content=svg, media_type="image/svg+xml")
+
+
+@router.post("/annotated-site-plan", response_class=Response)
+async def generate_annotated_site_plan(req: AnnotatedSitePlanRequest):
+    """§4-C: 8엔진 설계심사 findings를 배치도에 결정론 주석화한 SVG를 반환한다.
+
+    audit↔drawing 연결 — `/design-audit/run`의 findings를 그대로 받아 footprint 색·범례·
+    정북일조 표시로 시각화한다. 순수 결정론 산출(LLM·DB 없음)이라 무인증 허용.
+    """
+    _check_services()
+    svg = svg_service.annotate_site_plan(
+        req.site_width_m, req.site_depth_m,
+        req.building_width_m, req.building_depth_m,
+        setback_m=req.setback_m,
+        findings=req.findings,
+        verdict=req.verdict,
     )
     return Response(content=svg, media_type="image/svg+xml")
 
@@ -266,6 +475,76 @@ async def export_dxf(req: ExportDxfRequest):
         content=dxf_bytes,
         media_type="application/dxf",
         headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
+def _ascii_filename(name: str, fallback: str = "design") -> str:
+    """ASCII 안전 파일명 — HTTP 헤더(latin-1)용. 비-ASCII·경로/특수문자 제거."""
+    import re
+
+    cleaned = re.sub(r"[^0-9A-Za-z._-]+", "_", (name or "").strip()).strip("._")
+    return cleaned[:80] or fallback
+
+
+def _content_disposition(name: str, ext: str) -> str:
+    """다운로드 Content-Disposition — ASCII filename + RFC 5987 filename*(유니코드 보존).
+
+    HTTP 헤더는 latin-1만 허용하므로 한글 등은 filename=에 못 싣는다. ASCII 폴백 파일명과
+    함께 filename*=UTF-8''<percent-encoded>로 원래 이름을 보존한다(헤더 주입·경로탈출 방지).
+    """
+    import re
+    from urllib.parse import quote
+
+    ascii_fn = f"{_ascii_filename(name)}.{ext}"
+    raw = re.sub(r'[\\/\x00-\x1f"]+', "_", (name or "").strip()) or "design"
+    utf8_fn = quote(f"{raw}.{ext}", safe="")
+    return f'attachment; filename="{ascii_fn}"; filename*=UTF-8\'\'{utf8_fn}'
+
+
+@router.post("/export-ifc", response_class=Response)
+async def export_ifc(req: ExportIfcRequest):
+    """§4-E: 설계 매스를 IFC4(.ifc) 파일로 내보낸다 — BIM 저작도구용 export.
+
+    파라미터→IFC 생성(build_ifc_from_mass)을 다운로드 가능한 STEP(.ifc)로 반환한다.
+    LLM·DB·부작용 없는 순수 산출이라 무인증(`/drawing/export-dxf`와 동일 패턴 — param-based).
+    Revit/ArchiCAD 등 BIM 저작도구에서 열 수 있다.
+
+    정직: 기하·구조는 결정론(동일 입력=동일 기하)이나, IFC GlobalId·STEP 타임스탬프는 IFC
+    표준상 매 생성 고유하므로 **bytes는 재현되지 않는다**. ifcopenshell 미설치 시 501(의존성
+    누락), 입력 오류 시 400. ※project 저장본 기반 export는 `/design/{id}/bim/export-ifc` 별도.
+    """
+    try:
+        from app.services.bim.ifc_generator_service import build_ifc_from_mass
+    except ImportError as exc:  # 모듈 자체 로드 실패
+        raise HTTPException(status_code=501, detail=f"IFC 생성 모듈 누락: {exc}") from exc
+
+    mass = {
+        "building_width_m": req.building_width_m,
+        "building_depth_m": req.building_depth_m,
+        "num_floors": req.num_floors,
+        "floor_height_m": req.floor_height_m,
+        "core_positions": req.core_positions,
+        "core_size_m": req.core_size_m,
+        "corridor_width_m": req.corridor_width_m,
+        "windows_per_side": req.windows_per_side,
+        "unit_width_m": req.unit_width_m,
+    }
+    try:
+        ifc_bytes = build_ifc_from_mass(mass, project_name=req.project_name)
+    except ImportError as exc:  # ifcopenshell 미설치(생성 호출 시점)
+        raise HTTPException(
+            status_code=501, detail=f"IFC 생성 의존성(ifcopenshell) 누락: {exc}",
+        ) from exc
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"IFC 생성 입력 오류: {e}") from e
+    except Exception as e:  # noqa: BLE001
+        logger.error("IFC 생성 중 오류: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail="IFC 생성 중 오류가 발생했습니다") from e
+
+    return Response(
+        content=ifc_bytes,
+        media_type="application/x-step",  # IFC SPF = STEP Physical File
+        headers={"Content-Disposition": _content_disposition(req.project_name, "ifc")},
     )
 
 
@@ -441,7 +720,20 @@ async def design_alternatives(req: DesignAlternativesRequest):
         daylight_step=req.daylight_north,
         target_far_percent=target_far,
         target_bcr_percent=target_bcr,
+        massing_kind=req.massing_kind,  # §4-A①: A 대안이 따름(B=tower·C=lshape 고정 다양화)
     )
+    # §4-B: 참조 비례는 대안 A(입력 형상)만 적용 — B(tower)·C(lshape)는 명시 형상이 우선.
+    ref_result = await _reference_hint(
+        req.use_references, site_area_sqm=req.site_area_sqm, zone_code=req.zone_code,
+        building_use=req.building_use, unit_types=req.target_unit_types,
+    )
+    if ref_result and ref_result.get("hint"):
+        site_input.reference_mass = ref_result["hint"]
+    # §4-B 조례: 법적 한도이므로 전 대안(A/B/C)에 적용 — generate_alternatives가 B/C에 전파.
+    ord_result = await _ordinance_limits(
+        req.use_ordinance, address=req.address, zone_code=req.zone_code,
+    )
+    _apply_ordinance(site_input, ord_result)
     results = auto_design_engine.generate_alternatives(site_input, count=req.count)
     legal = auto_design_engine.get_legal_limits(req.zone_code)
 
@@ -469,10 +761,16 @@ async def design_alternatives(req: DesignAlternativesRequest):
     for rank, a in enumerate(alternatives, start=1):
         a["rank"] = rank
 
-    return {
+    resp = {
         "alternatives": alternatives,
         "recommended_index": 0 if alternatives else None,
     }
+    ref_block = _reference_response_block(ref_result)
+    if ref_block is not None:  # additive — use_references=True일 때만(정직)
+        resp["reference"] = ref_block
+    if ord_result is not None:  # additive — use_ordinance=True일 때만(정직)
+        resp["ordinance"] = ord_result
+    return resp
 
 
 @router.post("/auto-design")
@@ -499,16 +797,35 @@ async def auto_design(req: AutoDesignRequest):
         daylight_step=req.daylight_north,
         target_far_percent=target_far,
         target_bcr_percent=target_bcr,
+        massing_kind=req.massing_kind,  # §4-A①: 형상별 결정론 매스 변형(None=auto, 하위호환)
     )
+    # §4-B: use_references=True면 유사 사례 기하 종횡비를 매스에 주입(명시 형상이 우선).
+    ref_result = await _reference_hint(
+        req.use_references, site_area_sqm=req.site_area_sqm, zone_code=req.zone_code,
+        building_use=req.building_use, unit_types=req.target_unit_types,
+    )
+    if ref_result and ref_result.get("hint"):
+        site_input.reference_mass = ref_result["hint"]
+    # §4-B 조례: use_ordinance=True면 지자체 조례 실효 한도를 min(법정,조례,목표)로 반영.
+    ord_result = await _ordinance_limits(
+        req.use_ordinance, address=req.address, zone_code=req.zone_code,
+    )
+    _apply_ordinance(site_input, ord_result)
     result = auto_design_engine.generate(site_input)
     unit_mix = _unit_mix_for(result.summary)
-    return {
+    resp = {
         "design_payload": result.design_payload,
         "summary": result.summary,
         "compliance": result.compliance,
         "unit_mix": unit_mix,
         "legal_limits": auto_design_engine.get_legal_limits(req.zone_code),
     }
+    ref_block = _reference_response_block(ref_result)
+    if ref_block is not None:  # additive — use_references=True일 때만 노출(정직)
+        resp["reference"] = ref_block
+    if ord_result is not None:  # additive — use_ordinance=True일 때만(정직)
+        resp["ordinance"] = ord_result
+    return resp
 
 
 class DesignOperateRequest(BaseModel):

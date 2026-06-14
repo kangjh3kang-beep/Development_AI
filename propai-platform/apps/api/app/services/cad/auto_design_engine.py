@@ -102,6 +102,29 @@ class SiteInput:
     # (라우터에서 법정 한도로 1차 클램프, 엔진에서 한 번 더 min — 이중 안전).
     target_far_percent: float | None = None
     target_bcr_percent: float | None = None
+    # §4-B 조례: 지자체 도시계획조례 실효 한도(%). 라우터가 OrdinanceService(법제처 API→캐시→
+    # 법정상한)로 조회해 주입한다. 적용은 min(법정, 조례, 목표) — 조례가 법정을 넘으면 법정으로
+    # 클램프(가짜 상향 금지). None=조례 미반영(법정상한 기준 — 기존 동작 불변).
+    ordinance_bcr_percent: float | None = None
+    ordinance_far_percent: float | None = None
+    # 매스 형상(옵셔널·additive). None="auto"(대지 종횡비 기반 — 기존 동작 불변).
+    # 명시 시 형상별 종횡비·플로어플레이트 계수로 매스를 재산출(결정론).
+    massing_kind: str | None = None
+    # §4-B 참조설계 피드백(옵셔널·additive): 유사 사례 기하 힌트(종횡비 등).
+    # 라우터가 design_reference_service.derive_reference_mass_hint로 도출해 주입한다
+    # (결정론). 우선순위 — 명시 massing_kind > 참조 비례 > auto(대지비율).
+    # None=미사용(기존 동작 완전 불변). 형식: {aspect, ref_id, title, similarity, ...}.
+    reference_mass: dict[str, Any] | None = None
+
+
+# 매스 형상 정의 — aspect=전면/깊이 비, fp_factor=최대 건축면적 대비 플로어플레이트 계수.
+# 결정론 규칙(LLM 0): 타워형은 작은 플로어플레이트로 더 높이, 판상형은 넓고 얕게.
+MASSING_FORMS: dict[str, dict[str, Any]] = {
+    "slab": {"label": "판상형", "aspect": 2.6, "fp_factor": 1.0},
+    "tower": {"label": "타워형", "aspect": 1.0, "fp_factor": 0.55},
+    "lshape": {"label": "ㄱ자형", "aspect": 1.7, "fp_factor": 0.82},
+    "court": {"label": "중정형", "aspect": 1.2, "fp_factor": 0.70},
+}
 
 
 @dataclass
@@ -261,13 +284,22 @@ class AutoDesignEngineService:
     ) -> tuple[float, float]:
         """적용 한도(%)를 반환한다 — (건폐율, 용적률).
 
-        W-A ④: 목표(target_bcr/far_percent)가 있으면 min(법정, 목표). 목표가 법정을
-        넘으면 법정값으로 클램프(가짜 한도 상향 금지). None/0 이하는 법정 그대로.
+        적용 우선순위: min(법정, 조례, 목표). 조례(ordinance_*)·목표(target_*)가 법정을
+        넘으면 법정값으로 클램프(가짜 한도 상향 금지). None/0 이하는 해당 단계 생략.
+        조례는 §4-B(지자체 도시계획조례 실효 한도), 목표는 W-A ④(슬라이더 의도값).
         """
         max_bcr = legal["max_bcr_percent"]
         max_far = legal["max_far_percent"]
+        ord_bcr = getattr(site_input, "ordinance_bcr_percent", None)
+        ord_far = getattr(site_input, "ordinance_far_percent", None)
         target_bcr = getattr(site_input, "target_bcr_percent", None)
         target_far = getattr(site_input, "target_far_percent", None)
+        # §4-B: 조례 실효 한도(법정 이하로만)
+        if ord_bcr is not None and ord_bcr > 0:
+            max_bcr = min(max_bcr, ord_bcr)
+        if ord_far is not None and ord_far > 0:
+            max_far = min(max_far, ord_far)
+        # W-A ④: 목표 설계강도
         if target_bcr is not None and target_bcr > 0:
             max_bcr = min(max_bcr, target_bcr)
         if target_far is not None and target_far > 0:
@@ -312,6 +344,67 @@ class AutoDesignEngineService:
         else:
             building_w = 0
             building_d = 0
+
+        # 매스 형상(opt-in·additive): massing_kind 명시 시 형상별 종횡비·플로어플레이트로
+        # 폭/깊이를 재산출(대지 유효치 내 클램프). None이면 위 기본 동작 그대로(하위호환).
+        # §4-B 우선순위: 명시 massing_kind > 참조 비례(reference_mass) > auto(대지비율).
+        mk = getattr(site_input, "massing_kind", None)
+        form = MASSING_FORMS.get(mk) if mk else None
+        ref_hint = getattr(site_input, "reference_mass", None)
+        ref_hint = ref_hint if isinstance(ref_hint, dict) else None
+        ref_aspect = 0.0
+        if ref_hint is not None:
+            try:
+                ref_aspect = float(ref_hint.get("aspect") or 0.0)
+            except (TypeError, ValueError):
+                ref_aspect = 0.0
+        ref_provenance: dict[str, Any] | None = None
+
+        if form and eff_w * eff_d > 0 and building_footprint > 0:
+            target_fp = building_footprint * form["fp_factor"]
+            aspect = form["aspect"]
+            raw_d = math.sqrt(target_fp / aspect) if aspect > 0 else 0.0
+            raw_w = aspect * raw_d
+            building_w = round(min(raw_w, eff_w), 1)
+            building_d = round(min(raw_d, eff_d), 1)
+            if ref_hint is not None:  # 참조 힌트는 왔으나 명시 형상이 우선 — 정직 표기
+                ref_provenance = {
+                    "used": False, "note": "명시 매스 형상이 우선 적용됨",
+                    "ref_id": ref_hint.get("ref_id"), "title": ref_hint.get("title"),
+                }
+        elif ref_aspect > 0 and eff_w * eff_d > 0 and building_footprint > 0:
+            # §4-B: 참조 사례 비례 주입 — BCR 건축면적은 그대로 두고(법규 불변) 종횡비만
+            # 참조 사례(전면/깊이) 쪽으로 편향, 대지 유효치 내 클램프(결정론).
+            raw_d = math.sqrt(building_footprint / ref_aspect)
+            raw_w = ref_aspect * raw_d
+            building_w = round(min(raw_w, eff_w), 1)
+            building_d = round(min(raw_d, eff_d), 1)
+            # 정직성: 유효치 클램프로 실현 종횡비가 목표와 달라질 수 있으므로 둘 다 표기한다
+            # (목표 aspect + 실현 applied_aspect + clamped 플래그). 부분 적용을 온전 적용처럼
+            # 표기하지 않는다(불변규칙 — 정직 표기).
+            clamped = raw_w > eff_w + 1e-9 or raw_d > eff_d + 1e-9
+            applied_aspect = round(building_w / building_d, 3) if building_d > 0 else None
+            basis = (ref_hint.get("basis")
+                     or f"유사 사례 기하 종횡비 {ref_aspect:.2f}(전면/깊이)로 매스 편향")
+            if clamped and applied_aspect is not None:
+                basis += f" — 대지 유효치로 클램프(실현 종횡비 {applied_aspect:.2f})"
+            ref_provenance = {
+                "used": True,
+                "ref_id": ref_hint.get("ref_id"),
+                "title": ref_hint.get("title"),
+                "similarity": ref_hint.get("similarity"),
+                "aspect": round(ref_aspect, 3),
+                "applied_aspect": applied_aspect,
+                "clamped": clamped,
+                "source": ref_hint.get("source", "design_reference"),
+                "basis": basis,
+            }
+        elif ref_hint is not None:
+            # 힌트는 왔으나 종횡비가 무효(0/음수/결측) → auto 동작 유지, 정직 표기
+            ref_provenance = {
+                "used": False, "note": "참조 종횡비가 유효하지 않아 미적용(auto)",
+                "ref_id": ref_hint.get("ref_id"),
+            }
 
         actual_footprint = building_w * building_d
 
@@ -405,10 +498,16 @@ class AutoDesignEngineService:
                 if max_height_by_sunlight is not None
                 else None
             ),
+            # 매스 형상 출처(정직 표기) — 유효 형상이 적용된 경우만 그 이름, 아니면 auto.
+            "massing_kind": (mk if form else "auto"),
+            "massing_label": (form["label"] if form else "자동(대지비율)"),
         }
         if north_step_profile is not None:
             result["north_step_profile"] = north_step_profile
             result["daylight_step"] = True
+        # §4-B: 참조 프로비넌스(있을 때만 — additive). 미주입 시 키 없음(기존 동작 불변).
+        if ref_provenance is not None:
+            result["reference"] = ref_provenance
         return result
 
     # ── 3단계: 코어 + 복도 배치 ──
@@ -740,6 +839,8 @@ class AutoDesignEngineService:
 
         summary = {
             "building_area_sqm": mass["building_footprint_sqm"],
+            "building_width_m": mass["building_width_m"],
+            "building_depth_m": mass["building_depth_m"],
             "total_floor_area_sqm": mass["total_floor_area_sqm"],
             "num_floors": mass["num_floors"],
             "building_height_m": mass["building_height_m"],
@@ -752,9 +853,16 @@ class AutoDesignEngineService:
             "binding_constraint": mass.get("binding_constraint", "far"),
             # W-A ③: 세대 성립 여부 정직 표기 (False면 total_units=0)
             "units_feasible": unit_layout.get("units_feasible", True),
+            # 매스 형상 출처(정직 표기) — auto면 대지 종횡비 기반.
+            "massing_kind": mass.get("massing_kind", "auto"),
+            "massing_label": mass.get("massing_label", "자동(대지비율)"),
         }
         if not unit_layout.get("units_feasible", True):
             summary["units_note"] = unit_layout.get("infeasible_reason", "세대 성립 불가")
+
+        # §4-B 참조설계 피드백 — 적용/미적용 프로비넌스를 summary에 가산(있을 때만, 정직).
+        if mass.get("reference") is not None:
+            summary["reference"] = mass["reference"]
 
         # W-A ⑤: 산출 근거(basis) — 적용 세트백 실값·일조캡 산식·바인딩 제약·주차/코어 산식 정직 표기
         sunlight_mode = mass.get("sunlight_mode") or (
@@ -798,6 +906,9 @@ class AutoDesignEngineService:
                 "max_far_percent": mass.get("applied_max_far_pct", legal["max_far_percent"]),
                 "statutory_max_bcr_percent": legal["max_bcr_percent"],
                 "statutory_max_far_percent": legal["max_far_percent"],
+                # §4-B 조례 실효 한도(정직 — 법정·목표와 구분). 미반영 시 None.
+                "ordinance_bcr_percent": getattr(site_input, "ordinance_bcr_percent", None),
+                "ordinance_far_percent": getattr(site_input, "ordinance_far_percent", None),
                 "target_bcr_percent": getattr(site_input, "target_bcr_percent", None),
                 "target_far_percent": getattr(site_input, "target_far_percent", None),
             },
@@ -856,13 +967,17 @@ class AutoDesignEngineService:
     ) -> list[DesignResult]:
         """대안 3개를 생성한다.
 
-        대안 A: 최대 용적률 (층수 최대화)
-        대안 B: 최대 세대수 (소형 위주)
-        대안 C: 최적 일조 (낮은 층수, 넓은 세트백)
+        대안 A: 최적 밸런스 (입력 massing_kind를 그대로 따름 — 미지정 시 auto)
+        대안 B: 최대 세대수 (소형 위주, 타워형 — 작은 플로어플레이트로 더 높이)
+        대안 C: 최적 일조 (넓은 세트백, ㄱ자형 — 채광·소음차폐 배치)
+
+        §4-A②: B·C에 형상(tower/lshape)을 고정 배정해 대안마다 매스가 실제로
+        달라지게 한다(가산 — summary 키 불변, 3개 대안 모두 법규 준수 유지).
+        A는 입력 massing_kind를 honors(하위호환 — None이면 기존 auto 동작).
         """
         alternatives: list[DesignResult] = []
 
-        # A: 기본 (최적 밸런스)
+        # A: 기본 (최적 밸런스) — 입력 massing_kind 그대로(None=auto, 하위호환)
         result_a = self.generate(site_input)
         result_a.summary["alternative_name"] = "A: 최적 밸런스"
         alternatives.append(result_a)
@@ -882,6 +997,9 @@ class AutoDesignEngineService:
                 daylight_step=site_input.daylight_step,
                 target_far_percent=site_input.target_far_percent,
                 target_bcr_percent=site_input.target_bcr_percent,
+                ordinance_far_percent=site_input.ordinance_far_percent,
+                ordinance_bcr_percent=site_input.ordinance_bcr_percent,
+                massing_kind="tower",  # §4-A②: 타워형 — 작은 플로어플레이트로 더 높이(최대 세대수)
             )
             result_b = self.generate(input_b)
             result_b.summary["alternative_name"] = "B: 최대 세대수"
@@ -903,6 +1021,9 @@ class AutoDesignEngineService:
                 daylight_step=site_input.daylight_step,
                 target_far_percent=site_input.target_far_percent,
                 target_bcr_percent=site_input.target_bcr_percent,
+                ordinance_far_percent=site_input.ordinance_far_percent,
+                ordinance_bcr_percent=site_input.ordinance_bcr_percent,
+                massing_kind="lshape",  # §4-A②: ㄱ자형 — 채광·소음차폐 배치(최적 일조)
             )
             result_c = self.generate(input_c)
             result_c.summary["alternative_name"] = "C: 최적 일조"

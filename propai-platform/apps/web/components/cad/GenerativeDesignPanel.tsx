@@ -1,18 +1,26 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiClient, ApiClientError } from "@/lib/api-client";
 import { EvidencePanel, type EvidenceItem, type EvidenceLegalRef } from "@/components/common/EvidencePanel";
 import { useSpeechToText } from "@/lib/use-speech-to-text";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { ReferenceAssemblyCard } from "@/components/cad/ReferenceAssemblyCard";
+import { AnnotatedSitePlanCard } from "@/components/cad/AnnotatedSitePlanCard";
+import {
+  annotatedGeometryFor,
+  buildLegalFindings,
+  complianceVerdict,
+} from "@/components/cad/legalAnnotation";
 import type {
   DesignAlternative,
   DesignAlternativesV2Response,
   AutoDesignResponse,
   DesignIntent,
   LegalLimitsResponse,
+  OrdinanceBlock,
   ParseIntentResponse,
+  ReferenceResultBlock,
   SimilarRefV2,
 } from "@/components/cad/types";
 
@@ -329,6 +337,19 @@ function mapZoneToCode(zone?: string | null): string | null {
 
 const PRIORITY_OPTIONS: DesignIntent["priority"][] = ["yield", "balanced", "livability"];
 
+/**
+ * §4-A③: 매스 형상 선택 옵션 — 백엔드 MASSING_FORMS(slab/tower/lshape/court)와 정합.
+ * value=null은 "자동"(대지 종횡비 기반 — massing_kind 미전송과 동일, 하위호환).
+ * 선택값은 단일 자동설계(auto-design)·Top3(design-alternatives) 재생성에 massing_kind로 전달된다.
+ */
+const MASSING_OPTIONS: { value: string | null; label: string }[] = [
+  { value: null, label: "자동" },
+  { value: "slab", label: "판상형" },
+  { value: "tower", label: "타워형" },
+  { value: "lshape", label: "ㄱ자형" },
+  { value: "court", label: "중정형" },
+];
+
 type GenerativeDesignPanelProps = {
   projectId: string;
   /** 설계안 적용 직후 호출(호스트가 spec 재산출 → 2D/3D 재생성 유도). */
@@ -343,6 +364,7 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
 
   const ctxArea = siteAnalysis?.landAreaSqm ?? null;
   const ctxZone = mapZoneToCode(siteAnalysis?.zoneCode);
+  const ctxAddress = siteAnalysis?.address ?? null;  // §4-B 조례 조회용 대지 주소
 
   // ── 부지 컨텍스트 기반 폼 상태 ──
   const [siteArea, setSiteArea] = useState(500);
@@ -361,6 +383,13 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
   const [priority, setPriority] = useState<DesignIntent["priority"]>("balanced");
   // P5: 정북일조 단계후퇴(북측 상부 매스 후퇴). 의도 파싱 또는 토글로 켜짐.
   const [daylightNorth, setDaylightNorth] = useState(false);
+  // §4-A③: 매스 형상 선택(null=자동). 단일 자동설계·Top3 재생성에 massing_kind로 전달.
+  const [massingKind, setMassingKind] = useState<string | null>(null);
+  // §4-B: 유사 참조 사례 기하(종횡비) 반영(기본 ON). 단일·Top3 생성에 use_references로 전달.
+  // 명시 매스 형상이 선택돼 있으면 그 형상이 우선(참조는 auto 대안 A에만 영향).
+  const [useReferences, setUseReferences] = useState(true);
+  // §4-B 조례: 지자체 도시계획조례 실효 한도 반영(기본 OFF — 외부 API 조회·주소 필요).
+  const [useOrdinance, setUseOrdinance] = useState(false);
 
   // 컨텍스트(SSOT)를 폼에 우선 주입(사용자 수정값 보존)
   useEffect(() => {
@@ -400,6 +429,10 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
   // 구버전 API 응답(rank 부재) 등 비치명 경고 — 빈 화면 대신 보정 사실을 정직 고지.
   const [altWarning, setAltWarning] = useState<string | null>(null);
   const [selectedRank, setSelectedRank] = useState<number | null>(null);
+  // §4-B: Top3 응답의 유사사례 조회 결과(A 대안 참조 비례 적용 여부·사유 — 정직 표기용).
+  const [altReference, setAltReference] = useState<ReferenceResultBlock | null>(null);
+  // §4-B: Top3 응답의 조례 조회 결과(전 대안 적용 — 정직 고지용).
+  const [altOrdinance, setAltOrdinance] = useState<OrdinanceBlock | null>(null);
 
   // 용도지역 변경 시 법정 한도 조회 → 슬라이더 max 하드캡
   useEffect(() => {
@@ -565,6 +598,13 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
           target_bcr_percent: bcr,
           target_far_percent: far,
           priority,
+          // §4-A③: 매스 형상(null=자동) — 백엔드가 형상별 결정론 매스로 재산출(구버전은 무시).
+          massing_kind: massingKind,
+          // §4-B: 유사 참조 사례 기하(종횡비) 반영(구버전은 무시). 명시 형상이 우선.
+          use_references: useReferences,
+          // §4-B 조례: 지자체 조례 실효 한도 반영(구버전은 무시). 주소로 지자체 추출.
+          use_ordinance: useOrdinance,
+          address: ctxAddress,
         },
       });
       setSingle(data);
@@ -575,7 +615,7 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
     } finally {
       setSingleLoading(false);
     }
-  }, [siteArea, zoneCode, intent, unitTypes, daylightNorth, bcr, far, priority, applyDesign, fetchEvaluation]);
+  }, [siteArea, zoneCode, intent, unitTypes, daylightNorth, bcr, far, priority, massingKind, useReferences, useOrdinance, ctxAddress, applyDesign, fetchEvaluation]);
 
   // 3) Top3 설계안 생성
   const handleAlternatives = useCallback(async () => {
@@ -596,9 +636,18 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
             target_bcr_percent: bcr,
             target_far_percent: far,
             priority,
+            // §4-A③: A 대안이 선택 형상을 따름(B=타워·C=ㄱ자 고정 다양화, 구버전은 무시).
+            massing_kind: massingKind,
+            // §4-B: 유사 참조 사례 기하 반영 — A 대안에만 적용(B/C는 명시 형상 우선).
+            use_references: useReferences,
+            // §4-B 조례: 전 대안에 법적 한도로 적용(구버전은 무시).
+            use_ordinance: useOrdinance,
+            address: ctxAddress,
           },
         },
       );
+      setAltReference(data.reference ?? null);  // 정직 표기용 — 조회 결과(적용/미적용·사유)
+      setAltOrdinance(data.ordinance ?? null);  // §4-B 조례 — 전 대안 적용 여부·사유
       const raw = data.alternatives ?? [];
       // 응답 가드: 구버전 API가 rank를 누락해도 표시 순서(idx+1)로 보정 — 빈 화면 방지.
       const missingRank = raw.some((a) => typeof (a as { rank?: unknown }).rank !== "number");
@@ -618,7 +667,7 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
     } finally {
       setAltLoading(false);
     }
-  }, [siteArea, zoneCode, unitTypes, daylightNorth, bcr, far, priority]);
+  }, [siteArea, zoneCode, unitTypes, daylightNorth, bcr, far, priority, massingKind, useReferences, useOrdinance, ctxAddress]);
 
   const handleSelectAlt = useCallback(
     (alt: DesignAlternative) => {
@@ -632,6 +681,17 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
   // 선택된 설계안 — 산출 근거(W-A summary.basis)를 카드(버튼) 밖에서 렌더하기 위함.
   const selectedAlt =
     selectedRank != null ? alternatives.find((a) => a.rank === selectedRank) ?? null : null;
+
+  // §4-C: 법규주석 배치도 prop 안정화(useMemo) — 슬라이더 조작 등 부모 리렌더마다 SVG 재요청 방지.
+  const annotatedGeometry = useMemo(
+    () => (single ? annotatedGeometryFor(siteArea, single.summary) : null),
+    [single, siteArea],
+  );
+  const legalFindings = useMemo(
+    () => (single ? buildLegalFindings(single.summary, single.compliance, single.legal_limits) : []),
+    [single],
+  );
+  const legalVerdict = single ? complianceVerdict(single.compliance) : null;
 
   return (
     <div className="rounded-[2rem] border border-[var(--line-strong)] bg-[var(--surface-soft)] p-6 lg:p-8">
@@ -890,6 +950,31 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
               </div>
             </div>
 
+            {/* §4-A③: 매스 형상 — 선택 시 생성/재생성에 massing_kind 전달(결정론 매스 변형) */}
+            <div className="mt-4">
+              <span className="text-[11px] font-bold text-[var(--text-secondary)]">매스 형상</span>
+              <div className="mt-1.5 grid grid-cols-5 gap-1.5">
+                {MASSING_OPTIONS.map((m) => (
+                  <button
+                    key={m.label}
+                    type="button"
+                    onClick={() => setMassingKind(m.value)}
+                    className={`rounded-lg px-2 py-1.5 text-[11px] font-bold transition-colors ${
+                      massingKind === m.value
+                        ? "bg-[var(--accent-strong)] text-white"
+                        : "bg-[var(--surface-soft)] text-[var(--text-tertiary)] border border-[var(--line)]"
+                    }`}
+                    aria-pressed={massingKind === m.value}
+                  >
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+              <p className="mt-1 text-[10px] leading-tight text-[var(--text-tertiary)]">
+                단일 자동설계는 선택 형상으로 매스를 재산출합니다. Top3는 A=선택(자동 시 대지비율)·B=타워·C=ㄱ자로 다양화됩니다.
+              </p>
+            </div>
+
             {/* P5: 정북일조 단계후퇴 토글 — 켜면 상부 층이 북측으로 자동 후퇴(일조 확보, 더 높이) */}
             <div className="mt-4">
               <button
@@ -913,6 +998,61 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
               <p className="mt-1 text-[10px] leading-tight text-[var(--text-tertiary)]">
                 북측 일조 확보 — 상부 층을 정북 사선제한(높이/2)만큼 자동 후퇴시켜 더 높이 짓습니다.
                 음성/자연어로 &ldquo;북측 일조 확보&rdquo;라고 말해도 자동으로 켜집니다.
+              </p>
+            </div>
+
+            {/* §4-B: 참조 사례 반영 토글 — 켜면 유사 사례 기하(종횡비)를 합성 매스에 주입 */}
+            <div className="mt-4">
+              <button
+                type="button"
+                onClick={() => setUseReferences((v) => !v)}
+                aria-pressed={useReferences}
+                className={`flex w-full items-center justify-between rounded-lg border px-3 py-2 text-left transition-colors ${
+                  useReferences
+                    ? "border-[var(--accent-strong)] bg-[var(--accent-strong)]/15"
+                    : "border-[var(--line)] bg-[var(--surface-soft)]"
+                }`}
+              >
+                <span className="flex items-center gap-2">
+                  <span className="text-[13px]">▦</span>
+                  <span className="text-[11px] font-bold text-[var(--text-secondary)]">참조 사례 반영</span>
+                </span>
+                <span className={`text-[10px] font-black ${useReferences ? "text-[var(--accent-strong)]" : "text-[var(--text-tertiary)]"}`}>
+                  {useReferences ? "ON" : "OFF"}
+                </span>
+              </button>
+              <p className="mt-1 text-[10px] leading-tight text-[var(--text-tertiary)]">
+                관리자가 등록한 유사 사례(용도·면적·평형·용도지역) 중 기하 보유 최상위 사례의 종횡비를
+                합성 매스에 반영합니다. 부합 사례가 없으면 자동으로 미적용(정직 표기). 매스 형상을 직접
+                고르면 그 형상이 우선합니다.
+              </p>
+            </div>
+
+            {/* §4-B 조례: 지자체 도시계획조례 실효 한도 반영 토글(주소 필요) */}
+            <div className="mt-4">
+              <button
+                type="button"
+                onClick={() => setUseOrdinance((v) => !v)}
+                aria-pressed={useOrdinance}
+                disabled={!ctxAddress}
+                className={`flex w-full items-center justify-between rounded-lg border px-3 py-2 text-left transition-colors disabled:opacity-50 ${
+                  useOrdinance
+                    ? "border-[var(--accent-strong)] bg-[var(--accent-strong)]/15"
+                    : "border-[var(--line)] bg-[var(--surface-soft)]"
+                }`}
+              >
+                <span className="flex items-center gap-2">
+                  <span className="text-[13px]">§</span>
+                  <span className="text-[11px] font-bold text-[var(--text-secondary)]">지자체 조례 한도 반영</span>
+                </span>
+                <span className={`text-[10px] font-black ${useOrdinance ? "text-[var(--accent-strong)]" : "text-[var(--text-tertiary)]"}`}>
+                  {useOrdinance ? "ON" : "OFF"}
+                </span>
+              </button>
+              <p className="mt-1 text-[10px] leading-tight text-[var(--text-tertiary)]">
+                {ctxAddress
+                  ? "법제처 API로 해당 지자체 도시계획조례 실효 건폐율·용적률을 조회해 min(법정, 조례, 목표)로 적용합니다. 조례 미보유·조회 실패 시 자동으로 법정상한(정직 표기)."
+                  : "대지 주소가 있어야 조례를 조회할 수 있습니다(부지분석 먼저). 현재는 법정상한 기준."}
               </p>
             </div>
           </section>
@@ -1032,9 +1172,17 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
                 <span className="text-[10px] font-black uppercase tracking-[0.2em] text-[var(--text-hint)]">
                   단일 자동설계
                 </span>
-                <ComplianceBadge ok={!!single.compliance.all_pass} />
+                <div className="flex items-center gap-1.5">
+                  <ReferenceChip summary={single.summary} />
+                  <MassingChip summary={single.summary} />
+                  <ComplianceBadge ok={!!single.compliance.all_pass} />
+                </div>
               </div>
               <SummaryRow summary={single.summary} />
+              {/* §4-B: 참조 조회가 미적용일 때만 사유 정직 고지(적용 시엔 위 칩이 표시) */}
+              <ReferenceUnusedNote reference={single.reference} />
+              {/* §4-B 조례: 적용/미적용 정직 고지(use_ordinance=true일 때만) */}
+              <OrdinanceNote ordinance={single.ordinance} />
               {/* W-A: 목표(슬라이더) 미달 시 바인딩 제약 — 응답에 있을 때만 표시(정직) */}
               <BindingConstraintChip summary={single.summary} />
               <p className="mt-2 text-[10px] font-bold text-[var(--status-success)]">
@@ -1044,6 +1192,29 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
               <BasisSection summary={single.summary} className="mt-2" />
             </div>
           )}
+
+          {/* §4-C: 법규 준수 배치도 — 설계 compliance(건폐/용적/높이)를 배치도에 주석화(audit↔drawing) */}
+          {single && (
+            <AnnotatedSitePlanCard
+              geometry={annotatedGeometry}
+              findings={legalFindings}
+              verdict={legalVerdict}
+            />
+          )}
+
+          {/* 부지가 작아 세대 구성이 불가한 경우 — 엔진이 정직하게 0세대로 응답(가짜 세대 금지). */}
+          {alternatives.length > 0 && alternatives.every((a) => (a.summary.total_units ?? 0) === 0) && (
+            <div className="rounded-2xl border border-[var(--status-warning)]/40 bg-[var(--status-warning)]/10 p-4 text-[12px] font-bold leading-relaxed text-[var(--status-warning)]" role="status">
+              ⚠ 현재 대지면적·용도지역·선호 평형으로는 세대 구성이 어렵습니다(전 설계안 0세대).
+              대지면적을 키우거나, 더 작은 평형(예: 29A·39A)을 선택하거나, 용적률·세대수 목표를 조정해 다시 생성해 보세요.
+              <span className="mt-1 block text-[10px] font-bold text-[var(--text-hint)]">가짜 세대수를 만들지 않고 정직하게 표기합니다.</span>
+            </div>
+          )}
+
+          {/* §4-B: Top3에서 참조 미적용 시 사유 정직 고지(적용 시엔 A 카드 칩이 표시) */}
+          {alternatives.length > 0 && <ReferenceUnusedNote reference={altReference} />}
+          {/* §4-B: Top3 조례 적용/미적용 정직 고지(전 대안 공통 법적 한도) */}
+          {alternatives.length > 0 && <OrdinanceNote ordinance={altOrdinance ?? undefined} />}
 
           {/* Top3 카드 */}
           {alternatives.length > 0 ? (
@@ -1079,7 +1250,11 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
                           {PRIORITY_LABELS[alt.priority]}
                         </span>
                       </div>
-                      <ComplianceBadge ok={alt.compliant ?? !!alt.compliance.all_pass} />
+                      <div className="flex items-center gap-1.5">
+                        <ReferenceChip summary={alt.summary} />
+                        <MassingChip summary={alt.summary} />
+                        <ComplianceBadge ok={alt.compliant ?? !!alt.compliance.all_pass} />
+                      </div>
                     </div>
 
                     {/* 핵심 수치(cc-num) — total_units는 실건축가능치 신뢰 */}
@@ -1281,6 +1456,94 @@ function SummaryRow({
       <Metric label="용적률" value={`${summary.far_percent.toFixed(0)}%`} />
       <Metric label="주차" value={`${summary.parking_count}`} />
     </div>
+  );
+}
+
+/**
+ * §4-A: 적용된 매스 형상 라벨 칩 — summary.massing_label이 있을 때만 표시(정직 게이트).
+ * 구버전 응답(필드 부재)·auto(자동)는 칩을 띄우지 않는다(가짜·중복 표기 금지).
+ */
+function MassingChip({ summary }: { summary: AutoDesignResponse["summary"] }) {
+  const label = typeof summary.massing_label === "string" ? summary.massing_label.trim() : "";
+  // auto(자동·대지비율)는 별도 선택 형상이 아니므로 칩 비표시 — 명시 형상만 강조.
+  if (!label || !summary.massing_kind || summary.massing_kind === "auto") return null;
+  return (
+    <span
+      className="rounded-full px-2 py-0.5 text-[10px] font-black"
+      style={{
+        color: "var(--accent-strong)",
+        background: "var(--accent-soft)",
+        border: "1px solid color-mix(in srgb, var(--accent-strong) 35%, transparent)",
+      }}
+    >
+      {label}
+    </span>
+  );
+}
+
+/**
+ * §4-B: 적용된 참조 사례 라벨 칩 — summary.reference.used일 때만 표시(정직 게이트).
+ * 미적용·구버전 응답(필드 부재)은 칩을 띄우지 않는다(가짜·중복 표기 금지).
+ */
+function ReferenceChip({ summary }: { summary: AutoDesignResponse["summary"] }) {
+  const ref = summary.reference;
+  if (!ref || !ref.used) return null;
+  const title = typeof ref.title === "string" ? ref.title.trim() : "";
+  const sim = typeof ref.similarity === "number" && Number.isFinite(ref.similarity)
+    ? Math.round(ref.similarity)
+    : null;
+  return (
+    <span
+      className="rounded-full px-2 py-0.5 text-[10px] font-black"
+      style={{
+        color: "var(--status-success)",
+        background: "color-mix(in srgb, var(--status-success) 14%, transparent)",
+        border: "1px solid color-mix(in srgb, var(--status-success) 38%, transparent)",
+      }}
+      title={typeof ref.basis === "string" ? ref.basis : undefined}
+    >
+      참조{title ? ` · ${title}` : ""}{sim != null ? ` ${sim}` : ""}
+    </span>
+  );
+}
+
+/**
+ * §4-B: 참조 조회 결과가 '미적용'일 때만 사유를 정직 고지(used=true는 칩이 대신 표시).
+ * 블록 자체가 없으면(use_references=false·구버전) 아무것도 렌더하지 않는다.
+ */
+function ReferenceUnusedNote({ reference }: { reference?: ReferenceResultBlock | null }) {
+  if (!reference || reference.used) return null;
+  const note = typeof reference.note === "string" ? reference.note.trim() : "";
+  return (
+    <p className="mt-1.5 text-[10px] font-bold text-[var(--text-hint)]">
+      ▦ 참조 사례 미적용{note ? ` — ${note}` : ""}
+    </p>
+  );
+}
+
+/**
+ * §4-B 조례: use_ordinance 응답의 조례 적용/미적용을 정직 고지(블록 없으면 미렌더).
+ * 적용 시 출처·근거·실효 한도, 미적용 시 사유(법정상한)를 표기 — 가짜 한도 금지.
+ */
+function OrdinanceNote({ ordinance }: { ordinance?: AutoDesignResponse["ordinance"] }) {
+  if (!ordinance) return null;
+  const far = typeof ordinance.ordinance_far_percent === "number" ? ordinance.ordinance_far_percent : null;
+  const bcr = typeof ordinance.ordinance_bcr_percent === "number" ? ordinance.ordinance_bcr_percent : null;
+  if (ordinance.used) {
+    return (
+      <p className="mt-1.5 text-[10px] font-bold text-[var(--status-success)]">
+        § 조례 적용{ordinance.sigungu ? ` · ${ordinance.sigungu}` : ""}
+        {ordinance.source ? ` (${ordinance.source})` : ""}
+        {far != null || bcr != null
+          ? ` — ${bcr != null ? `건폐 ${bcr}%` : ""}${bcr != null && far != null ? " · " : ""}${far != null ? `용적 ${far}%` : ""}`
+          : ""}
+      </p>
+    );
+  }
+  return (
+    <p className="mt-1.5 text-[10px] font-bold text-[var(--text-hint)]">
+      § 조례 미반영 — 법정상한 적용{ordinance.note ? ` (${ordinance.note})` : ""}
+    </p>
   );
 }
 

@@ -1102,17 +1102,61 @@ async def get_bim_glb_get(
     )
 
 
+def _ascii_filename(name: str, fallback: str = "design") -> str:
+    """ASCII 안전 파일명 — HTTP 헤더(latin-1)용. 비-ASCII·경로/특수문자 제거."""
+    import re
+
+    cleaned = re.sub(r"[^0-9A-Za-z._-]+", "_", (name or "").strip()).strip("._")
+    return cleaned[:80] or fallback
+
+
+def _content_disposition(name: str, ext: str) -> str:
+    """다운로드 Content-Disposition — ASCII filename + RFC 5987 filename*(유니코드 보존).
+
+    HTTP 헤더는 latin-1만 허용하므로 한글 등은 filename=에 못 싣는다. ASCII 폴백 파일명과
+    함께 filename*=UTF-8''<percent-encoded>로 원래 이름을 보존한다(헤더 주입·경로탈출 방지).
+    """
+    import re
+    from urllib.parse import quote
+
+    ascii_fn = f"{_ascii_filename(name)}.{ext}"
+    raw = re.sub(r'[\\/\x00-\x1f"]+', "_", (name or "").strip()) or "design"
+    utf8_fn = quote(f"{raw}.{ext}", safe="")
+    return f'attachment; filename="{ascii_fn}"; filename*=UTF-8\'\'{utf8_fn}'
+
+
 @router.post("/{project_id}/bim/export-ifc", response_class=Response)
 async def export_bim_ifc(project_id: str, req: BimGenerateRequest):
-    """3D BIM 모델을 IFC4 파일로 내보낸다(BIM 표준 교환)."""
-    from app.services.bim.ifc_generator_service import build_ifc_from_mass
+    """3D BIM 모델을 IFC4 파일로 내보낸다(BIM 표준 교환).
 
-    mass = _resolve_mass(req)
-    ifc_bytes = build_ifc_from_mass(mass, project_name=req.project_name)
+    SP0 하드닝: param-based `/drawing/export-ifc`와 동일 견고성 — ifcopenshell 미설치 시 501,
+    입력 오류 시 400, 그 외 500(원시 트레이스 비노출). Content-Disposition은 RFC 5987로
+    한글 project_name을 안전 보존(latin-1 크래시 방지). 정상 경로 산출은 불변.
+    """
+    try:
+        from app.services.bim.ifc_generator_service import build_ifc_from_mass
+    except ImportError as exc:  # 모듈 자체 로드 실패
+        raise HTTPException(status_code=501, detail=f"IFC 생성 모듈 누락: {exc}") from exc
+
+    try:
+        mass = _resolve_mass(req)
+        ifc_bytes = build_ifc_from_mass(mass, project_name=req.project_name)
+    except ImportError as exc:  # ifcopenshell 미설치(생성 호출 시점)
+        raise HTTPException(
+            status_code=501, detail=f"IFC 생성 의존성(ifcopenshell) 누락: {exc}",
+        ) from exc
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"IFC 생성 입력 오류: {e}") from e
+    except Exception as e:  # noqa: BLE001 — 원시 트레이스 비노출, 서버 로그만
+        import logging
+
+        logging.getLogger(__name__).error("BIM IFC 생성 중 오류: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail="IFC 생성 중 오류가 발생했습니다") from e
+
     return Response(
         content=ifc_bytes,
         media_type="application/x-step",
-        headers={"Content-Disposition": f"attachment; filename={project_id}.ifc"},
+        headers={"Content-Disposition": _content_disposition(req.project_name, "ifc")},
     )
 
 

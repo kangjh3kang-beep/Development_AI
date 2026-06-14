@@ -171,8 +171,19 @@ def extract_civil(path: Path) -> dict[str, Any]:
     return col.dump("토목", path.name)
 
 
-def main() -> None:
-    OUT.mkdir(parents=True, exist_ok=True)
+def main(argv: list[str] | None = None) -> None:
+    # N1: 프로젝트별 누적 구조 수용(additive). --project 미지정 시 기존 단일 플랫 구조 유지.
+    import argparse  # noqa: PLC0415
+
+    parser = argparse.ArgumentParser(description="실무 공내역서 5공종 → 표준항목 마스터 추출")
+    parser.add_argument(
+        "--project", default=None,
+        help="프로젝트 식별자 — 지정 시 data/boq_master/<project>/ 하위에 누적 저장"
+        "(N1 표본 통계용). 미지정 시 기존 평면 구조(default)로 저장(하위호환).")
+    args = parser.parse_args(argv)
+
+    out_dir = (OUT / args.project) if args.project else OUT
+    out_dir.mkdir(parents=True, exist_ok=True)
     results = {
         "건축": extract_standard(
             BASE / "건축" / "의정부동 424 주상복합 신축공사_건축_공내역서.xlsx",
@@ -192,7 +203,7 @@ def main() -> None:
     fname = {"건축": "architecture", "기계소방": "mechanical", "전기통신소방": "electrical",
              "조경": "landscape", "토목": "civil"}
     for disc, data in results.items():
-        out = OUT / f"{fname[disc]}.json"
+        out = out_dir / f"{fname[disc]}.json"
         out.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
         meta["disciplines"][disc] = {
             "file": out.name, "sections": len(data["sections"]),
@@ -201,8 +212,8 @@ def main() -> None:
         }
         print(f"{disc}: 섹션 {len(data['sections'])} · 고유항목 {len(data['items'])} "
               f"· 원천행 {meta['disciplines'][disc]['rows_aggregated']}")
-    (OUT / "_meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=1), encoding="utf-8")
-    print("저장 →", OUT)
+    (out_dir / "_meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=1), encoding="utf-8")
+    print("저장 →", out_dir)
 
 
 if __name__ == "__main__":
