@@ -42,3 +42,29 @@ class InviteActionResult(BaseModel):
     ok: bool
     status: str
     detail: Optional[str] = None
+
+
+class DocumentOut(BaseModel):
+    """회의방 자료교환 문서 뷰 — 실바이트는 미포함(file_url=비공개버킷 서명URL, TTL 후 만료)."""
+
+    id: str
+    project_id: str
+    uploaded_by: Optional[str] = None
+    original_filename: str
+    content_type: Optional[str] = None
+    size_bytes: Optional[int] = None
+    category: Optional[str] = None  # REVIEW_CATEGORIES 화이트리스트 or null
+    doc_kind: str                   # design(DXF/IFC, 8엔진 대상) / document(표기용)
+    audit_status: Optional[str] = None   # null/pending/completed/skipped/unsupported
+    audit_summary: Optional[dict] = None
+    review_state: str               # requested/acknowledged/addressed(표기용·자동판정 아님)
+    reviewed_by: Optional[str] = None
+    reviewed_at: Optional[datetime] = None
+    file_url: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+
+class DocumentActionResult(BaseModel):
+    ok: bool
+    status: str
+    detail: Optional[str] = None
