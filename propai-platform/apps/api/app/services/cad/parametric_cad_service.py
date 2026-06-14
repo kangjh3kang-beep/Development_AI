@@ -47,6 +47,7 @@ def _setup_layers(doc: ezdxf.document.Drawing) -> None:
         "SETBACK": {"color": 1, "lineweight": 13, "linetype": "DASHED"},
         "SECTION_CUT": {"color": 1, "lineweight": 50},
         "SECTION_FILL": {"color": 8, "lineweight": 25},
+        "REBAR": {"color": 2, "lineweight": 18},  # §4-D: 철근배근(구조 단면상세)
         "ELEVATION": {"color": 7, "lineweight": 35},
         "GRID": {"color": 8, "lineweight": 13, "linetype": "CENTER"},
     }
@@ -127,6 +128,27 @@ def _add_material_hatch(msp: Modelspace, points: list[tuple[float, float]], *,
         hatch.paths.add_polyline_path(points, is_closed=True)
     except Exception:  # noqa: BLE001 — 패턴 미지원 등은 선 단면을 그대로 두고 스킵
         return
+
+
+def _add_slab_rebar(msp: Modelspace, building_width_m: float, slab_top_y: float,
+                    slab_t: float, *, cover: float = 0.04, spacing: float = 1.5,
+                    bar_r: float = 0.02) -> None:
+    """§4-D: 슬래브 단면 철근배근을 그린다 — 상/하부 주근(원=단면)·배력근(선), REBAR 레이어.
+
+    상부근은 슬래브 상단에서 cover 아래, 하부근은 하단에서 cover 위에 배치(콘크리트 피복 반영).
+    주근은 spacing 간격의 원(단면), 상/하부 배력근은 전폭 수평선. 간격·피복은 표준 가정값
+    (구조계산 미연동 — 표기용). 좌표는 단면 모델 좌표(m).
+    """
+    top_y = slab_top_y - cover
+    bot_y = slab_top_y - slab_t + cover
+    x = cover
+    while x <= building_width_m - cover + 1e-6:
+        msp.add_circle((x, top_y), bar_r, dxfattribs={"layer": "REBAR"})  # 상부 주근
+        msp.add_circle((x, bot_y), bar_r, dxfattribs={"layer": "REBAR"})  # 하부 주근
+        x += spacing
+    # 배력근(전폭 수평선) — 상/하부
+    msp.add_line((cover, top_y), (building_width_m - cover, top_y), dxfattribs={"layer": "REBAR"})
+    msp.add_line((cover, bot_y), (building_width_m - cover, bot_y), dxfattribs={"layer": "REBAR"})
 
 
 def _draw_door(msp: Modelspace, x: float, y: float,
@@ -485,8 +507,14 @@ class ParametricCADService:
         basement_height_m: float = 3.3,
         foundation_depth_m: float = 1.0,
         parapet_height_m: float = 1.2,
+        rebar: bool = False,
     ) -> bytes:
-        """건물 단면도 DXF — 지하층, 각 층, 지붕, 기초 포함."""
+        """건물 단면도 DXF — 지하층, 각 층, 지붕, 기초 포함.
+
+        §4-D: rebar=True면 각 층 슬래브에 상/하부 주근(원=단면)·배력근(선)을 REBAR 레이어에
+        additive로 그린다(콘크리트 피복 반영). 배근 간격은 표준 가정값(구조계산 미연동 — 표기용).
+        rebar=False(기본)면 기존 동작 완전 불변.
+        """
         if ezdxf is None:
             return b"DXF_PLACEHOLDER_NO_EZDXF"
         doc = ezdxf.new("R2010")
@@ -556,6 +584,9 @@ class ParametricCADService:
                 (0, fy - _slab_t), (building_width_m, fy - _slab_t),
                 (building_width_m, fy), (0, fy),
             ], pattern="ANSI31", scale=0.25)
+            # §4-D: 슬래브 철근배근(상/하부 주근=원 단면 + 배력근=선) — REBAR 레이어, 옵셔널
+            if rebar:
+                _add_slab_rebar(msp, building_width_m, fy, _slab_t)
             # 좌우 벽
             msp.add_line((0, fy), (0, fy + floor_height_m), dxfattribs={"layer": "SECTION_CUT"})
             msp.add_line(
