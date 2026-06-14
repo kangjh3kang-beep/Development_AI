@@ -2,17 +2,19 @@
 SUM(배분) ≤ 총액 보장. 지급 원천징수(3.3%). 계약취소 시 역추적 환수(clawback).
 """
 
-import uuid
 from decimal import Decimal
 
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apps.api.database.models.sales.commission_mh_harness import (
-    SalesCommissionDistribution, SalesCommissionClawback, SalesCommissionEvent,
-    SalesCommissionMaster, SalesCommissionSplit,
-)
 from app.services.sales.org.service import ancestors_path
+from apps.api.database.models.sales.commission_mh_harness import (
+    SalesCommissionClawback,
+    SalesCommissionDistribution,
+    SalesCommissionEvent,
+    SalesCommissionMaster,
+    SalesCommissionSplit,
+)
 
 Q = Decimal("1")
 
@@ -46,7 +48,9 @@ async def _rules(db, site_id, master_id):
 def _amount(rule, total: Decimal) -> Decimal:
     if not rule:
         return Decimal(0)
-    return Decimal(str(rule.value or 0)) if rule.basis == "FIXED" else (total * Decimal(str(rule.value or 0))).quantize(Q)
+    if rule.basis == "FIXED":
+        return Decimal(str(rule.value or 0))
+    return (total * Decimal(str(rule.value or 0))).quantize(Q)
 
 
 async def split_commission(db: AsyncSession, site_id, contract):
@@ -143,6 +147,41 @@ async def set_node_tax_type(db, site_id, node_id, tax_type: str) -> str:
         "VALUES (:s,:n,:t, now()) ON CONFLICT (node_id) DO UPDATE SET tax_type=:t, updated_at=now()"),
         {"s": str(site_id), "n": str(node_id), "t": tt})
     return tt
+
+
+async def settle_summary(db: AsyncSession, site_id, node_id) -> dict:
+    """노드(영업사원) 수수료 정산 명세 — 해촉/정산용.
+
+    기발생(미환수 SPLIT 이벤트의 배분 합) − 기지급(payout gross) = 미지급 잔액. 노드 세금유형으로
+    원천징수(3.3%)/부가세(10%) 분개. 환수(clawback→event.status='REVERSED')된 이벤트는
+    기발생에서 자동 제외된다(status='SPLIT' 만 합산). 지급(payout)은 기록만으로 자금이체 미수행."""
+    earned = int((await db.execute(text(
+        "SELECT COALESCE(SUM(s.amount),0) FROM sales_commission_splits s "
+        "JOIN sales_commission_events e ON e.id=s.event_id "
+        "WHERE e.site_id=:s AND s.node_id=:n AND e.status='SPLIT'"),
+        {"s": str(site_id), "n": str(node_id)})).scalar() or 0)
+    contracts = int((await db.execute(text(
+        "SELECT COUNT(DISTINCT e.contract_ext_id) FROM sales_commission_splits s "
+        "JOIN sales_commission_events e ON e.id=s.event_id "
+        "WHERE e.site_id=:s AND s.node_id=:n AND e.status='SPLIT'"),
+        {"s": str(site_id), "n": str(node_id)})).scalar() or 0)
+    try:
+        paid = int((await db.execute(text(
+            "SELECT COALESCE(SUM(p.gross),0) FROM sales_commission_payouts p "
+            "JOIN sales_commission_claims c ON c.id=p.claim_id "
+            "JOIN sales_commission_splits s ON s.id=c.split_id "
+            "WHERE s.node_id=:n"), {"n": str(node_id)})).scalar() or 0)
+    except Exception:  # noqa: BLE001 — 지급 테이블 미생성(지급 전)이면 0
+        await db.rollback()
+        paid = 0
+    outstanding = max(0, earned - paid)
+    tax_type = await get_node_tax_type(db, node_id)
+    net = payout_net(Decimal(outstanding), tax_type)
+    return {
+        "node_id": str(node_id), "tax_type": tax_type, "contracts": contracts,
+        "earned_gross": earned, "paid_gross": paid, "outstanding_gross": outstanding,
+        "settlement": {k: (int(v) if isinstance(v, Decimal) else v) for k, v in net.items()},
+    }
 
 
 async def clawback(db: AsyncSession, event_id, reason: str):

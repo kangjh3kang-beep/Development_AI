@@ -33,6 +33,9 @@ export default function OrgTree({ siteCode }: { siteCode: string }) {
   const [loaded, setLoaded] = useState(false);
   type Ov = { members: number; totals: { contracts: number; customers: number; work_logs: number }; roster: { node_id: string; name: string; role_label: string; assigned: boolean; contracts: number; customers: number; work_logs: number; tax_type?: string }[] };
   const [ov, setOv] = useState<Ov | null>(null);
+  // #5 해촉/정산 — 노드 수수료 정산 명세(기발생−기지급=미지급, 세금분개).
+  type Settle = { tax_type: string; contracts: number; earned_gross: number; paid_gross: number; outstanding_gross: number; settlement: { withholding: number; vat: number; net: number; total_paid: number } };
+  const [settle, setSettle] = useState<{ name: string; data: Settle } | null>(null);
 
   const load = useCallback(() => {
     // 조직도를 다 불러오면(성공/실패 무관) 자리표시를 걷어낸다.
@@ -57,6 +60,11 @@ export default function OrgTree({ siteCode }: { siteCode: string }) {
     try { await api.post(`/org/nodes/${nodeId}/unassign`, {}); load(); }
     catch (e) { alert(e instanceof Error && e.message ? e.message : "해제 실패"); }
   };
+  const loadSettle = async (nodeId: string, name: string) => {
+    try { const d = await api.get<Settle>(`/commission/settle-summary?node_id=${nodeId}`); setSettle({ name, data: d }); }
+    catch (e) { alert(e instanceof Error && e.message ? e.message : "정산 명세 조회 실패"); }
+  };
+  const won = (n: number) => `${(n || 0).toLocaleString()}원`;
 
   const tree = nodes.slice().sort((a, b) => a.path.localeCompare(b.path));
   const depth = (p: string) => p.split(".").length - 1;
@@ -101,7 +109,7 @@ export default function OrgTree({ siteCode }: { siteCode: string }) {
           </div>
           <div className="max-h-40 overflow-auto">
             <table className="w-full text-[11px]">
-              <thead><tr className="text-[var(--text-hint)]"><th className="text-left font-medium">직급</th><th className="text-left font-medium">이름</th><th className="text-center font-medium">인원</th><th className="text-right font-medium">계약</th><th className="text-right font-medium">고객</th><th className="text-right font-medium">업무일지</th><th className="text-right font-medium">수수료세금</th></tr></thead>
+              <thead><tr className="text-[var(--text-hint)]"><th className="text-left font-medium">직급</th><th className="text-left font-medium">이름</th><th className="text-center font-medium">인원</th><th className="text-right font-medium">계약</th><th className="text-right font-medium">고객</th><th className="text-right font-medium">업무일지</th><th className="text-right font-medium">수수료세금</th><th className="text-center font-medium">정산</th></tr></thead>
               <tbody>
                 {ov.roster.slice(0, 30).map((r, i) => (
                   <tr key={i} className="border-t border-[var(--line)]/50">
@@ -118,6 +126,7 @@ export default function OrgTree({ siteCode }: { siteCode: string }) {
                     <td className="text-right text-[var(--text-primary)]">{r.customers}</td>
                     <td className="text-right text-[var(--text-primary)]">{r.work_logs}</td>
                     <td className="text-right"><select value={r.tax_type || "WITHHOLDING"} onChange={(e) => setTax(r.node_id, e.target.value)} className="rounded border border-[var(--line)] bg-[var(--surface-strong)] px-1 py-0.5 text-[10px] text-[var(--text-secondary)]"><option value="WITHHOLDING">3.3% 원천</option><option value="VAT">부가세10%</option></select></td>
+                    <td className="text-center"><button onClick={() => loadSettle(r.node_id, r.name)} className="rounded border border-[var(--line)] px-1.5 py-0.5 text-[9px] font-bold text-[var(--text-secondary)]" title="해촉/정산 명세">정산</button></td>
                   </tr>
                 ))}
               </tbody>
@@ -171,6 +180,39 @@ export default function OrgTree({ siteCode }: { siteCode: string }) {
         ))}
       </div>
       <p className="text-[11px] text-[var(--text-hint)]">계층(대행사＞대대행＞총괄본부장＞본부장＞팀장＞팀원)은 수수료 2단 배분의 기준이 됩니다. 이동 시 하위 조직도 함께 이동합니다.</p>
+
+      {/* #5 해촉/정산 명세 모달 */}
+      {settle && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setSettle(null)}>
+          <div className="mx-4 w-full max-w-md rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-5 shadow-[var(--shadow-lg)]" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="font-black text-[var(--text-primary)]">해촉/정산 명세 — {settle.name}</h3>
+              <button onClick={() => setSettle(null)} className="text-[var(--text-tertiary)]">✕</button>
+            </div>
+            <div className="space-y-1.5 text-sm">
+              <div className="flex justify-between"><span className="text-[var(--text-secondary)]">계약 기여</span><b className="text-[var(--text-primary)]">{settle.data.contracts}건</b></div>
+              <div className="flex justify-between"><span className="text-[var(--text-secondary)]">기발생 수수료</span><b className="text-[var(--text-primary)]">{won(settle.data.earned_gross)}</b></div>
+              <div className="flex justify-between"><span className="text-[var(--text-secondary)]">기지급</span><b className="text-emerald-400">{won(settle.data.paid_gross)}</b></div>
+              <div className="flex justify-between border-t border-[var(--line)] pt-1.5"><span className="font-bold text-[var(--text-primary)]">미지급 정산액</span><b className="text-[var(--accent-strong)]">{won(settle.data.outstanding_gross)}</b></div>
+              <div className="mt-2 rounded-lg border border-[var(--line)] bg-[var(--surface-soft)] p-2.5 text-xs">
+                <p className="mb-1 font-bold text-[var(--text-secondary)]">{settle.data.tax_type === "VAT" ? "부가세 10%(세금계산서)" : "원천징수 3.3%(사업소득)"}</p>
+                {settle.data.tax_type === "VAT" ? (
+                  <>
+                    <div className="flex justify-between"><span className="text-[var(--text-tertiary)]">부가세</span><span>{won(settle.data.settlement.vat)}</span></div>
+                    <div className="flex justify-between"><span className="text-[var(--text-tertiary)]">지급총액(공급가+부가세)</span><b>{won(settle.data.settlement.total_paid)}</b></div>
+                  </>
+                ) : (
+                  <>
+                    <div className="flex justify-between"><span className="text-[var(--text-tertiary)]">원천징수(3.3%)</span><span className="text-rose-400">−{won(settle.data.settlement.withholding)}</span></div>
+                    <div className="flex justify-between"><span className="text-[var(--text-tertiary)]">실수령</span><b className="text-[var(--accent-strong)]">{won(settle.data.settlement.net)}</b></div>
+                  </>
+                )}
+              </div>
+              <p className="mt-1 text-[10px] text-[var(--text-hint)]">※ 환수(계약취소)분 제외·기발생 기준. 자금이체는 시스템이 수행하지 않습니다(명세 산출).</p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

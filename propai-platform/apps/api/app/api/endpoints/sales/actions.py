@@ -403,6 +403,14 @@ async def get_tax_pref(node_id: str, db: AsyncSession = Depends(get_db), ctx: Sa
     return {"node_id": node_id, "tax_type": await get_node_tax_type(db, uuid.UUID(node_id))}
 
 
+@actions_router.get("/commission/settle-summary")
+async def commission_settle_summary(node_id: str, db: AsyncSession = Depends(get_db),
+                                    ctx: SalesCtx = Depends(require_role(*_R_TEAM))):
+    """#5 해촉/정산 — 노드(영업사원) 수수료 정산 명세(기발생−기지급=미지급, 원천/부가세 분개)."""
+    from app.services.sales.commission.engine import settle_summary
+    return await settle_summary(db, ctx.site_id, uuid.UUID(node_id))
+
+
 @actions_router.post("/commission/tax-pref")
 async def set_tax_pref(body: dict, db: AsyncSession = Depends(get_db),
                        ctx: SalesCtx = Depends(require_role(*_R_TAXPREF))):
