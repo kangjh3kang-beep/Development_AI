@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, File, UploadFile
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -415,3 +415,81 @@ async def unit_verify_chain(unit_id: uuid.UUID, db: AsyncSession = Depends(get_d
     """세대 이벤트 해시체인 무결성 검증(변조탐지) — 감사/공정성."""
     from app.services.sales.units.event_ledger import verify_chain
     return await verify_chain(db, unit_id)
+
+
+# ── 동·호 추첨(즉석추첨 + seed 해시체인 감사) ────────────────────────────────
+_DRAW_MGR = ("TEAM_LEADER", "GM_DIRECTOR", "SUBAGENCY", "AGENCY", "DEVELOPER", "SUPERADMIN")
+
+
+@actions_router.post("/draw/groups")
+async def draw_group_create(body: dict, db: AsyncSession = Depends(get_db),
+                            ctx: SalesCtx = Depends(require_role(*_DRAW_MGR))):
+    from fastapi import HTTPException
+    from app.services.sales.draw.draw_engine import create_group
+    try:
+        return await create_group(db, ctx.site_id, body.get("name", ""))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@actions_router.post("/draw/groups/{group_id}/pool")
+async def draw_group_pool(group_id: uuid.UUID, body: dict, db: AsyncSession = Depends(get_db),
+                          ctx: SalesCtx = Depends(require_role(*_DRAW_MGR))):
+    """그룹 동·호판(추첨 대상 세대) 지정. body.unit_ids[]"""
+    from app.services.sales.draw.draw_engine import set_pool
+    return await set_pool(db, ctx.site_id, group_id, body.get("unit_ids") or [])
+
+
+@actions_router.post("/draw/groups/{group_id}/candidates")
+async def draw_add_candidates(group_id: uuid.UUID, body: dict, db: AsyncSession = Depends(get_db),
+                              ctx: SalesCtx = Depends(require_role(*_DRAW_MGR))):
+    """대상자 일괄 등록. body.rows=[{name, phone?, customer_id?}]"""
+    from app.services.sales.draw.draw_engine import add_candidates
+    return await add_candidates(db, ctx.site_id, group_id, body.get("rows") or [])
+
+
+@actions_router.post("/draw/groups/{group_id}/candidates/from-customers")
+async def draw_from_customers(group_id: uuid.UUID, body: dict, db: AsyncSession = Depends(get_db),
+                              ctx: SalesCtx = Depends(require_role(*_DRAW_MGR))):
+    """계약자/고객 명부에서 대상자 선별 등록. body.customer_ids[](미지정=현장 전체)"""
+    from app.services.sales.draw.draw_engine import from_customers
+    return await from_customers(db, ctx.site_id, group_id, body.get("customer_ids"))
+
+
+@actions_router.post("/draw/groups/{group_id}/candidates/excel")
+async def draw_import_excel(group_id: uuid.UUID, file: UploadFile = File(...), db: AsyncSession = Depends(get_db),
+                            ctx: SalesCtx = Depends(require_role(*_DRAW_MGR))):
+    """고객명부 Excel(.xlsx) 업로드 → 대상자 등록(이름·연락처 자동인식)."""
+    from fastapi import HTTPException
+    from app.services.sales.draw.draw_engine import parse_excel, add_candidates
+    try:
+        content = await file.read()
+        rows = parse_excel(content)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(400, f"엑셀 파싱 실패: {str(e)[:120]}")
+    if not rows:
+        raise HTTPException(400, "엑셀에서 대상자를 찾지 못했습니다(1행 헤더: 이름/연락처).")
+    return await add_candidates(db, ctx.site_id, group_id, rows)
+
+
+@actions_router.post("/draw/groups/{group_id}/candidates/{candidate_id}/draw")
+async def draw_run(group_id: uuid.UUID, candidate_id: uuid.UUID, db: AsyncSession = Depends(get_db),
+                   ctx: SalesCtx = Depends(require_role("MEMBER", *_DRAW_MGR))):
+    """즉석추첨 — 대상자가 누르면 남은 동호 중 무작위 1개 배정·공개(seed 해시체인 감사)."""
+    from fastapi import HTTPException
+    from app.services.sales.draw.draw_engine import draw_for_candidate
+    try:
+        return await draw_for_candidate(db, ctx.site_id, group_id, candidate_id, by=getattr(ctx.user, "id", None))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@actions_router.get("/draw/groups/{group_id}/status")
+async def draw_group_status(group_id: uuid.UUID, db: AsyncSession = Depends(get_db), ctx: SalesCtx = Depends(sales_ctx)):
+    """추첨그룹 현황 — 대상자 순번·배정세대·진행률·남은 세대."""
+    from fastapi import HTTPException
+    from app.services.sales.draw.draw_engine import group_status
+    try:
+        return await group_status(db, ctx.site_id, group_id)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
