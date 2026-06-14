@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v166-commission-tax";
+const CACHE_NAME = "propai-v167-admin-console";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",
