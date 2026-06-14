@@ -130,6 +130,7 @@ export default async function DashboardLayout({
     { href: `/${locale}/design-studio`, label: "AI 설계도면(CAD)", icon: <IconDesign /> },
     { href: `/${locale}/design-audit`, label: "AI 설계분석", icon: <IconPermit /> },
     { href: `/${locale}/bim-studio`, label: "3D 모델·공사물량(BIM·적산)", icon: <IconCost /> },
+    { href: `/${locale}/meeting-rooms`, label: "프로젝트 회의방", icon: <IconProject /> },
     { href: `/${locale}/settings/design-references`, label: "표준설계 라이브러리", icon: <IconDesign /> },
   ];
 
