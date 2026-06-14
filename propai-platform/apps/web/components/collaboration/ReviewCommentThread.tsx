@@ -114,6 +114,8 @@ function CommentNode({
             <input
               value={editText}
               onChange={(e) => setEditText(e.target.value)}
+              placeholder="수정 내용…"
+              data-testid="review-comment-edit-input"
               className="flex-1 rounded border border-[var(--line)] bg-[var(--surface-soft)] px-2 py-1 text-xs"
             />
             <button
@@ -172,8 +174,8 @@ export function ReviewCommentThread({ projectId, docId }: { projectId: string; d
     void loadComments(projectId, docId);
   }, [projectId, docId, loadComments]);
 
-  const flat = commentsByDoc[docId] ?? [];
-  const tree = useMemo(() => buildCommentTree(flat), [flat]);
+  const flat = commentsByDoc[docId];
+  const tree = useMemo(() => buildCommentTree(flat ?? []), [flat]);
 
   const submitRoot = async () => {
     if (!rootText.trim()) return;
