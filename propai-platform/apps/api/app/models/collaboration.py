@@ -8,7 +8,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Column, DateTime, ForeignKey, JSON, String, UniqueConstraint
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, JSON, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 
 from app.core.database import Base
@@ -79,3 +79,40 @@ class CollaboratorInvite(Base):
     accepted_at = Column(DateTime, nullable=True)
     accepted_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class ProjectDocument(Base):
+    """회의방 자료교환 문서 — 협력업체 업로드자료(SP3).
+
+    실파일은 Supabase 비공개 버킷(TTL 서명URL, storage_service.upload_collab_document)에 저장하고
+    DB엔 메타+storage_path만 보관한다(코드베이스 일관 규약: 실바이트 DB 미저장, 외부 URL 문자열만).
+    storage_path는 재서명·삭제의 출처라 필수(서명URL은 만료되므로 path를 보관).
+
+    doc_kind로 8엔진 자동검증 가능여부를 라우팅한다(정직 type-routing):
+      - "design"(DXF/IFC): 기존 run-upload 변환경로로 DesignAuditOrchestrator 실투입(audit_status/summary).
+      - "document"(PDF 등): 8엔진 미지원 → audit_status="unsupported", review_state(사람 심의자 주도)만.
+    review_state(requested/acknowledged/addressed)는 *표기용* 상태로 자동판정이 아니다(LLM=0, 사람이
+    누른 상태만 결정론 기록). 상태전이·분류 로직은 SP3-2(collaboration service/rules).
+    """
+
+    __tablename__ = "project_documents"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False, index=True)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False)
+    uploaded_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    storage_path = Column(String(512), nullable=False)   # Supabase object path(재서명·삭제 출처)
+    file_url = Column(String(1024), nullable=True)        # 마지막 발급 서명URL(만료 가능)
+    original_filename = Column(String(255), nullable=False)
+    content_type = Column(String(120), nullable=True)
+    size_bytes = Column(Integer, nullable=True)
+    category = Column(String(30), nullable=True)          # REVIEW_CATEGORIES 화이트리스트 or null
+    doc_kind = Column(String(20), nullable=False, default="document")  # design/document
+    audit_status = Column(String(20), nullable=True)      # null/pending/completed/skipped/unsupported
+    audit_summary = Column(JSON, nullable=True)           # {overall, findings_count, engines_run, engines_skipped}
+    review_state = Column(String(20), nullable=False, default="requested")  # requested/acknowledged/addressed(표기용)
+    reviewed_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    reviewed_at = Column(DateTime, nullable=True)
+    status = Column(String(20), nullable=False, default="active")  # active/deleted(소프트삭제)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
