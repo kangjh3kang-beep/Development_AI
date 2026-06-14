@@ -23,14 +23,16 @@ PROJECT_ROLES = (
     "viewer",             # 읽기전용
 )
 
-# 심의 카테고리 6종(교통영향평가/환경/토목/경관/건축/소방).
+# 심의 카테고리(교통영향평가/환경/토목/경관/건축/소방 + 건축설계/도시계획).
 REVIEW_CATEGORIES = (
-    "traffic",       # 교통영향평가
-    "environment",   # 환경
-    "civil",         # 토목
-    "landscape",     # 경관
-    "architecture",  # 건축
-    "fire",          # 소방
+    "traffic",               # 교통영향평가
+    "environment",           # 환경
+    "civil",                 # 토목
+    "landscape",             # 경관
+    "architecture",          # 건축
+    "fire",                  # 소방
+    "architectural_design",  # 건축설계
+    "urban_planning",        # 도시계획
 )
 
 

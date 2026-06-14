@@ -19,7 +19,9 @@ export type ReviewCategory =
   | "civil"
   | "landscape"
   | "architecture"
-  | "fire";
+  | "fire"
+  | "architectural_design"
+  | "urban_planning";
 
 export const REVIEW_CATEGORIES: ReviewCategory[] = [
   "traffic",
@@ -28,6 +30,8 @@ export const REVIEW_CATEGORIES: ReviewCategory[] = [
   "landscape",
   "architecture",
   "fire",
+  "architectural_design",
+  "urban_planning",
 ];
 const REVIEW_CATEGORY_SET = new Set<string>(REVIEW_CATEGORIES);
 
@@ -47,6 +51,8 @@ export const REVIEW_CATEGORY_LABELS: Record<string, string> = {
   landscape: "경관",
   architecture: "건축",
   fire: "소방",
+  architectural_design: "건축설계",
+  urban_planning: "도시계획",
 };
 
 /** 역할 한글 라벨 — 미지값은 원문 폴백(가짜 라벨 금지). */

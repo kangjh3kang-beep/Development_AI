@@ -24,10 +24,15 @@ describe("roleLabel / categoryLabel", () => {
     expect(roleLabel("unknown_role")).toBe("unknown_role");
     expect(categoryLabel("xxx")).toBe("xxx");
   });
-  it("REVIEW_CATEGORIES는 6종(백엔드 정합)", () => {
+  it("REVIEW_CATEGORIES는 8종(백엔드 정합 — 건축설계·도시계획 추가)", () => {
     expect(REVIEW_CATEGORIES).toEqual([
       "traffic", "environment", "civil", "landscape", "architecture", "fire",
+      "architectural_design", "urban_planning",
     ]);
+  });
+  it("추가 카테고리 라벨", () => {
+    expect(categoryLabel("architectural_design")).toBe("건축설계");
+    expect(categoryLabel("urban_planning")).toBe("도시계획");
   });
 });
 

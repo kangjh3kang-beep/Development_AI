@@ -50,6 +50,7 @@ class TestProjectDocumentStructure:
         # category는 REVIEW_CATEGORIES 화이트리스트 or null(검증은 SP3-2, 여기선 재사용 정합만)
         assert set(REVIEW_CATEGORIES) == {
             "traffic", "environment", "civil", "landscape", "architecture", "fire",
+            "architectural_design", "urban_planning",
         }
 
 

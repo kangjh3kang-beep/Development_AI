@@ -55,9 +55,10 @@ class TestEnums:
         for r in ("owner", "manager", "contributor", "reviewer_internal", "external_reviewer", "viewer"):
             assert r in PROJECT_ROLES
 
-    def test_review_categories_six(self):
+    def test_review_categories(self):
         assert set(REVIEW_CATEGORIES) == {
             "traffic", "environment", "civil", "landscape", "architecture", "fire",
+            "architectural_design", "urban_planning",
         }
 
 
