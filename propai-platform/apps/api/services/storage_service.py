@@ -218,3 +218,60 @@ async def upload_design_file(data: bytes, content_type: str, file_name: str = ""
     url = f"{base}/storage/v1/object/public/{_DESIGN_REF_BUCKET}/{path}"
     logger.info("설계 참조도면 업로드", path=path, bytes=len(data))
     return {"url": url, "file_type": ext}
+
+
+# ── SP3 회의방 자료교환: 비공개 버킷 propai-collab-docs (협력업체 심의문서, TTL 서명URL) ──
+#    민감 협력업체 문서 → 비공개+만료 서명URL(upload_registry_pdf 패턴). 멤버만 시간제한 접근.
+
+_COLLAB_BUCKET = "propai-collab-docs"
+
+
+async def upload_collab_document(
+    data: bytes, content_type: str, filename: str = "", ttl_days: int = 14
+) -> dict[str, str]:
+    """협업 회의방 문서를 비공개 버킷에 저장하고 만료 서명 URL을 반환한다(TTL=ttl_days).
+
+    실파일은 Supabase 비공개 버킷에만 저장하고, DB(ProjectDocument)엔 path+서명URL 메타만 보관한다.
+    경로는 서버측 uuid로 생성(원본 파일명은 DB 메타에만, 경로 traversal 차단).
+    """
+    import datetime as _dt
+
+    base, key = _sb_conf()
+    auth = {"Authorization": f"Bearer {key}", "apikey": key}
+    day = _dt.datetime.utcnow().strftime("%Y%m%d")
+    ext = filename.rsplit(".", 1)[-1].lower() if filename and "." in filename else "bin"
+    safe_ext = "".join(ch for ch in ext if ch.isalnum())[:8] or "bin"
+    path = f"collab/{day}/{uuid.uuid4().hex}.{safe_ext}"
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        await _ensure_private_bucket(client, base, _COLLAB_BUCKET, auth)
+        up = await client.post(
+            f"{base}/storage/v1/object/{_COLLAB_BUCKET}/{path}",
+            headers={**auth, "Content-Type": content_type or "application/octet-stream", "x-upsert": "true"},
+            content=data,
+        )
+        if up.status_code not in (200, 201):
+            raise StorageError(f"협업 문서 업로드 실패: {up.status_code} {up.text[:160]}")
+        url = await _sign_collab_path(client, base, auth, path, ttl_days)
+    logger.info("협업 문서 저장", path=path, bytes=len(data))
+    return {"path": path, "url": url}
+
+
+async def sign_collab_document(path: str, ttl_days: int = 14) -> str:
+    """저장된 협업 문서 path에 새 서명 URL을 발급한다(읽기 시 만료 재서명용)."""
+    base, key = _sb_conf()
+    auth = {"Authorization": f"Bearer {key}", "apikey": key}
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        return await _sign_collab_path(client, base, auth, path, ttl_days)
+
+
+async def _sign_collab_path(
+    client: httpx.AsyncClient, base: str, auth: dict, path: str, ttl_days: int
+) -> str:
+    sign = await client.post(
+        f"{base}/storage/v1/object/sign/{_COLLAB_BUCKET}/{path}",
+        headers=auth, json={"expiresIn": ttl_days * 86400},
+    )
+    if sign.status_code != 200:
+        raise StorageError(f"서명URL 실패: {sign.status_code} {sign.text[:160]}")
+    signed = (sign.json() or {}).get("signedURL") or ""
+    return f"{base}/storage/v1{signed}" if signed.startswith("/") else f"{base}/storage/v1/{signed}"

@@ -36,3 +36,46 @@ def filter_scope_categories(requested, allowed) -> list[str]:
         if c in allowed_set and c not in out:
             out.append(c)
     return out
+
+
+# ── SP3 자료교환 순수 규칙 ──
+
+# 8엔진(DesignAuditOrchestrator)이 변환·투입 가능한 설계파일 확장자(parse_dxf_to_shapes/IFC 경로).
+# 그 외(PDF·HWP 등 보고서·문서)는 자동검증 불가 → document(사람 심의자 표기용).
+_DESIGN_EXTS = ("dxf", "ifc")
+
+
+def classify_doc_kind(content_type, filename) -> str:
+    """업로드 문서를 8엔진 자동검증 라우팅 종류로 분류 — "design"(DXF/IFC) 또는 "document".
+
+    파일명 확장자를 1차 근거로 한다(가장 신뢰도 높음). 확장자가 없을 때만 content_type을 보조로
+    본다(dxf/ifc/step 토큰). 모호하면 보수적으로 "document"(과대표기 금지 — 자동검증을 함부로 표방
+    하지 않는다).
+    """
+    name = filename or ""
+    ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+    if ext:
+        return "design" if ext in _DESIGN_EXTS else "document"
+    ct = (content_type or "").lower()
+    if "dxf" in ct or "ifc" in ct or "step" in ct:
+        return "design"
+    return "document"
+
+
+def normalize_document_category(category) -> str | None:
+    """문서 심의 카테고리 정규화 — REVIEW_CATEGORIES(6종) 화이트리스트 외/빈값은 None(가짜 금지)."""
+    return category if category in REVIEW_CATEGORIES else None
+
+
+# 표기용 심의 상태(사람 심의자 주도, 자동판정 아님). 전진 전용 선형 상태머신.
+REVIEW_STATES = ("requested", "acknowledged", "addressed")
+_REVIEW_TRANSITIONS = {
+    "requested": {"acknowledged"},
+    "acknowledged": {"addressed"},
+    "addressed": set(),
+}
+
+
+def is_allowed_review_transition(current: str, target: str) -> bool:
+    """심의 상태 전이 허용 여부 — 전진(requested→acknowledged→addressed)만. 스킵·역행·무변경·미지 거부."""
+    return target in _REVIEW_TRANSITIONS.get(current, set())
