@@ -8,6 +8,7 @@ import { ApiKeyManagementPanel } from "@/components/settings/ApiKeyManagementPan
 import { AiTokenUsageDashboard } from "@/components/settings/AiTokenUsageDashboard";
 import { WebhookManagementPanel } from "@/components/settings/WebhookManagementPanel";
 import { SubscriptionPanel } from "@/components/settings/SubscriptionPanel";
+import { GrowthDashboard } from "@/components/settings/GrowthDashboard";
 
 /* ------------------------------------------------------------------ */
 /*  Tab definition                                                    */
@@ -16,6 +17,7 @@ import { SubscriptionPanel } from "@/components/settings/SubscriptionPanel";
 type TabId =
   | "api-keys"
   | "ai-usage"
+  | "growth"
   | "webhooks"
   | "subscription"
   | "users"
@@ -39,6 +41,16 @@ const TABS: { id: TabId; label: string; icon: React.ReactNode }[] = [
     icon: (
       <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <path d="M3 3v18h18" />
+        <path d="m19 9-5 5-4-4-3 3" />
+      </svg>
+    ),
+  },
+  {
+    id: "growth",
+    label: "성장 분석",
+    icon: (
+      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M3 3v16a2 2 0 0 0 2 2h16" />
         <path d="m19 9-5 5-4-4-3 3" />
       </svg>
     ),
@@ -209,6 +221,9 @@ export default function SettingsPage() {
       {activeTab === "api-keys" && <ApiKeyManagementPanel />}
 
       {activeTab === "ai-usage" && <AiTokenUsageDashboard />}
+
+      {/* 성장 분석 — 관리자 전용(이 페이지는 isAdmin 게이트 통과 후에만 렌더). */}
+      {activeTab === "growth" && isAdmin && <GrowthDashboard />}
 
       {activeTab === "webhooks" && <WebhookManagementPanel />}
 

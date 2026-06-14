@@ -74,6 +74,24 @@ def _create_app() -> "Celery":
             "schedule": 5.0,  # 5초 주기(초 단위 float)
             "options": {"queue": "growth"},
         },
+        # 자가성장 엔진 — 분석 배치(Phase 2, §5.1). flush 와 달리 DB(platform_events)
+        # 를 읽어 인사이트를 산출하므로 별도 Celery 워커에서도 정상 동작한다
+        # (프로세스-로컬 큐 비의존). 인프로세스 폴백이 도는 환경에서는 main.py 의
+        # 인프로세스 루프가 동일 함수를 주기 호출하도록 보강할 수 있다.
+        # hourly: error_cluster/fallback_rate/quality_drop(직전 1시간 윈도우).
+        "analyze-growth-hourly": {
+            "task": "app.tasks.growth_tasks.analyze_growth",
+            "schedule": crontab(minute=5),  # 매시 5분
+            "kwargs": {"window_hours": 1},
+            "options": {"queue": "growth"},
+        },
+        # daily: 일 단위 추세(usage/funnel/latency baseline) 누적 — 24시간 윈도우.
+        "analyze-growth-daily": {
+            "task": "app.tasks.growth_tasks.analyze_growth",
+            "schedule": crontab(hour=2, minute=30),  # 매일 02:30
+            "kwargs": {"window_hours": 24},
+            "options": {"queue": "growth"},
+        },
     }
 
     _app.autodiscover_tasks(["app.tasks"])
@@ -94,6 +112,8 @@ BEAT_SCHEDULE_NAMES = [
     "check-pension-increase-monthly",
     "sync-onbid-auctions-daily",
     "flush-growth-events",
+    "analyze-growth-hourly",
+    "analyze-growth-daily",
 ]
 
 TASK_NAMES = [
