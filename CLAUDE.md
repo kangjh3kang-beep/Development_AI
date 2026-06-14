@@ -32,7 +32,7 @@
 
 이 저장소는 **여러 Claude 세션이 동시에** 개발한다. 충돌(특히 같은 워크트리에서 브랜치 전환→HEAD 충돌→엉뚱한 브랜치 커밋)을 막기 위해 **세션 시작 시 반드시**:
 
-1. **공유 보드를 읽는다**: `~/My_Projects/.coordination/BOARD.md` (브랜치 무관 공유 — 누가 어느 브랜치·영역을 작업 중인지). 빠른 조회: `scripts/coord.sh status`.
+1. **공유 보드를 읽는다**: `scripts/coord.sh status` (보드는 우리 저장소의 공유 git 디렉토리 `.git/coordination/BOARD.md` — 모든 워크트리가 같은 한 부를 보고 이 저장소에만 스코프). 누가 어느 브랜치·영역을 작업 중인지 파악.
 2. **브랜치당 전용 워크트리에서만 작업한다.** 공유 메인(`Development_AI/`)에서 feature 브랜치 `git checkout` 금지. 전용 워크트리 생성: `scripts/new-worktree.sh <branch>`. (git이 동일 브랜치 이중 checkout을 거부하므로, 한 번 전용 워크트리에 두면 충돌이 구조적으로 불가능.) 상세: `WORKTREES.md`.
 3. **공유 파일(예: `main.py` 라우터 등록) 편집 전 claim**: `scripts/coord.sh claim <영역>` → 완료 후 `release`. 진행/완료는 `scripts/coord.sh note <내용>`.
 4. **커밋 전 `git branch --show-current`로 자기 브랜치 확인.** main 직접 푸시 금지.

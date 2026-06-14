@@ -4,8 +4,9 @@
 # 사용: scripts/coord.sh {status | claim <영역> | release <영역> | note <내용>}
 set -euo pipefail
 
-ROOT="$(git rev-parse --show-toplevel)"
-BOARD_DIR="${COORD_DIR:-$(cd "$ROOT/.." && pwd)/.coordination}"
+# 보드는 우리 저장소의 공유 git 디렉토리(git-common-dir) 안에 둔다 — 모든 워크트리가 공유하면서
+# 정확히 이 저장소에만 스코프되고, git이 추적하지 않아(브랜치무관·머지충돌 0) 라이브 상태에 적합.
+BOARD_DIR="${COORD_DIR:-$(cd "$(git rev-parse --git-common-dir)" && pwd)/coordination}"
 BOARD="$BOARD_DIR/BOARD.md"
 BRANCH="$(git branch --show-current 2>/dev/null || echo '?')"
 mkdir -p "$BOARD_DIR"
