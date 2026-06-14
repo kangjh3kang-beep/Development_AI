@@ -74,4 +74,16 @@ async def estimate_land_price(
             + (f" × 면적 {round(area_f, 1):,}㎡ = 적정 매입가 약 {est_total:,}원" if area_f and est_total else "")
             + ". 참고용 추정치이며 사용자가 수정할 수 있습니다."
         ),
+        # 신뢰 정보(정직 표기) — 단일출처(공시지가×보정) 추정임을 명시하고 교차검증 경로를 안내한다.
+        # (가짜 cross_validation 신호를 만들지 않고, 단일출처 한계를 정직하게 고지)
+        "trust": {
+            "method": "single_source",
+            "basis": "개별공시지가 × 지역 시세보정(현실화율 역수)",
+            "confidence": 0.7,
+            "recheck_recommended": True,
+            "cross_validation": None,
+            "note": "단일 출처(공시지가 기준) 추정입니다. 주변 토지 실거래와의 교차검증은 "
+                    "/land-price/desk-appraisal(공시지가법+거래사례비교법 결합) 또는 토지조서 구획도의 "
+                    "주변 실거래를 활용하세요.",
+        },
     }

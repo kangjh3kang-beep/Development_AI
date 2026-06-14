@@ -130,14 +130,20 @@ class AVMService:
 
         # ★신뢰루프: 모델(ml)과 지역 실거래(idw) 교차검증. 모델이 지역 대비 이상치(타지역 학습/
         #   폴백 오염으로 1.5배 이탈)면 배제하고 지역 실거래로 폴백·신뢰도 하향(가짜 단가 방지).
-        cross = None
+        # ★신뢰루프(라이브 상시 활성): IDW(지역 거리가중)를 앵커로 독립신호와 교차검증한다. 모델이
+        #   적재돼 있으면 ml 을, 없으면(XGBoost 미적재 폴백) 비교사례 중앙값(거리무관·이상치강건)을
+        #   2번째 신호로 써, 폴백에서도 cross_validate 가 '동일신호'로 비활성되지 않게 한다.
+        from app.services.data_validation.trust import Signal, cross_validate
+        _cprices = [c.get("price_per_sqm") for c in comparables if c.get("price_per_sqm")]
+        _signals = [Signal("idw_local", float(idw_price), sample_size=len(comparables), source="live", weight=1.2)]
         if model_used:
-            from app.services.data_validation.trust import Signal, cross_validate
-            cross = cross_validate(
-                [Signal("idw_local", float(idw_price), sample_size=len(comparables), source="live", weight=1.2),
-                 Signal("ml_model", float(ml_price), sample_size=len(comparables), source="live", weight=1.0)],
-                anchor="idw_local", outlier_ratio=1.5, min_anchor_samples=3,
-            )
+            _signals.append(Signal("ml_model", float(ml_price), sample_size=len(comparables), source="live", weight=1.0))
+        elif len(_cprices) >= 3:
+            _median = float(sorted(_cprices)[len(_cprices) // 2])
+            _signals.append(Signal("comparable_median", _median, sample_size=len(_cprices), source="live", weight=1.0))
+        cross = None
+        if len(_signals) >= 2:
+            cross = cross_validate(_signals, anchor="idw_local", outlier_ratio=1.5, min_anchor_samples=3)
             final_price = float(cross.trusted_value) if cross.trusted_value else idw_price
         else:
             final_price = idw_price
