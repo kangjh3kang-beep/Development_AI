@@ -29,7 +29,7 @@ class VWorldService:
             "crs": "EPSG:4326",
             "attrFilter": f"pnu:=:{pnu_code}",
         }
-        async with httpx.AsyncClient(timeout=30.0, headers=self.HEADERS) as client:
+        async with httpx.AsyncClient(timeout=12.0, headers=self.HEADERS) as client:
             try:
                 resp = await client.get(f"{self.BASE_URL}/data", params=params)
                 resp.raise_for_status()
@@ -82,7 +82,7 @@ class VWorldService:
             vworld_key[:8] if vworld_key and len(vworld_key) > 8 else "EMPTY",
         )
 
-        async with httpx.AsyncClient(timeout=30.0, headers=self.HEADERS) as client:
+        async with httpx.AsyncClient(timeout=12.0, headers=self.HEADERS) as client:
             # PARCEL 타입 우선 (PNU가 level4LC에 포함됨)
             for addr_type in ["PARCEL", "ROAD"]:
                 try:
@@ -144,7 +144,7 @@ class VWorldService:
             "geometry": "true",
             "attribute": "true",
         }
-        async with httpx.AsyncClient(timeout=30.0, headers=self.HEADERS) as client:
+        async with httpx.AsyncClient(timeout=12.0, headers=self.HEADERS) as client:
             try:
                 resp = await client.get(f"{self.BASE_URL}/data", params=params)
                 resp.raise_for_status()
@@ -189,7 +189,7 @@ class VWorldService:
             "key": settings.VWORLD_API_KEY, "format": "json", "crs": "EPSG:4326",
             "geomFilter": f"POINT({lon} {lat})", "geometry": "true", "attribute": "true",
         }
-        async with httpx.AsyncClient(timeout=30.0, headers=self.HEADERS) as client:
+        async with httpx.AsyncClient(timeout=12.0, headers=self.HEADERS) as client:
             try:
                 resp = await client.get(f"{self.BASE_URL}/data", params=params)
                 resp.raise_for_status()
@@ -234,7 +234,7 @@ class VWorldService:
             "size": str(max_count),
         }
         try:
-            async with httpx.AsyncClient(timeout=20.0, headers=self.HEADERS) as client:
+            async with httpx.AsyncClient(timeout=12.0, headers=self.HEADERS) as client:
                 resp = await client.get(f"{self.BASE_URL}/data", params=params)
                 resp.raise_for_status()
                 data = resp.json()
@@ -273,7 +273,7 @@ class VWorldService:
                     "format": "json",
                     "attrFilter": f"pnu:=:{pnu}",
                 }
-                async with httpx.AsyncClient(timeout=15.0, headers=self.HEADERS) as client:
+                async with httpx.AsyncClient(timeout=12.0, headers=self.HEADERS) as client:
                     resp = await client.get(f"{self.BASE_URL}/data", params=params)
                     resp.raise_for_status()
                     data = resp.json()
@@ -305,7 +305,7 @@ class VWorldService:
             "crs": "EPSG:4326",
             "geomFilter": f"BOX({x-0.001},{y-0.001},{x+0.001},{y+0.001})",
         }
-        async with httpx.AsyncClient(timeout=30.0, headers=self.HEADERS) as client:
+        async with httpx.AsyncClient(timeout=12.0, headers=self.HEADERS) as client:
             try:
                 resp = await client.get(f"{self.BASE_URL}/data", params=params)
                 resp.raise_for_status()
@@ -328,7 +328,7 @@ class VWorldService:
         if not settings.VWORLD_API_KEY:
             return None
         try:
-            async with httpx.AsyncClient(timeout=15.0, headers=self.HEADERS) as client:
+            async with httpx.AsyncClient(timeout=12.0, headers=self.HEADERS) as client:
                 resp = await client.get(
                     f"{self.NED_BASE_URL}/getIndvdLandPriceAttr",
                     params={
@@ -368,7 +368,7 @@ class VWorldService:
         if not settings.VWORLD_API_KEY:
             return None
         try:
-            async with httpx.AsyncClient(timeout=15.0, headers=self.HEADERS) as client:
+            async with httpx.AsyncClient(timeout=12.0, headers=self.HEADERS) as client:
                 resp = await client.get(
                     f"{self.NED_BASE_URL}/getLandCharacteristics",
                     params={
@@ -417,7 +417,7 @@ class VWorldService:
         if not settings.VWORLD_API_KEY:
             return []
         try:
-            async with httpx.AsyncClient(timeout=15.0, headers=self.HEADERS) as client:
+            async with httpx.AsyncClient(timeout=12.0, headers=self.HEADERS) as client:
                 resp = await client.get(
                     f"{self.NED_BASE_URL}/getLandUseAttr",
                     params={
@@ -486,6 +486,8 @@ class VWorldService:
             "version": "2.0",
         }
         try:
+            # 이미지(항공/위성 PNG 타일)는 JSON보다 응답이 크고 느릴 수 있어 타임아웃을 길게 유지
+            # (지적도 경계 JSON 경로만 12s 단축, 이미지 취득은 20s 보존 — 정상 타일 절단 방지).
             async with httpx.AsyncClient(timeout=20.0, headers=self.HEADERS) as client:
                 resp = await client.get(self.IMAGE_URL, params=params)
                 ct = resp.headers.get("content-type", "")

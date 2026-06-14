@@ -10,6 +10,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { loadKakaoMap, geoJsonToKakaoRings } from "@/lib/kakao-map";
 import { KakaoMapControls } from "@/components/map/KakaoMapControls";
+import { useMapFullscreen } from "@/hooks/useMapFullscreen";
 import type { ZoningSignal } from "./types";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -39,6 +40,7 @@ export function ZoningSignalMap({
   const polysRef = useRef<any[]>([]);
   const infoRef = useRef<any>(null);
   const [mapReady, setMapReady] = useState(false);
+  const fs = useMapFullscreen(mapRef);
 
   // 시그널 → 필지 PNU별 최고 레벨 색상 매핑(폴리곤 강조용)
   const pnuLevel = useMemo(() => {
@@ -126,12 +128,12 @@ export function ZoningSignalMap({
   }, [JSON.stringify(geojson), JSON.stringify(pnuLevel), centerHint?.lat, centerHint?.lon]);
 
   return (
-    <div className="relative">
+    <div className={fs.wrapperClass("relative flex flex-col")}>
       <div
         ref={mapEl}
-        className="h-[360px] w-full overflow-hidden rounded-xl border border-[var(--line)]"
+        className={fs.mapClass("h-[360px] w-full overflow-hidden rounded-xl border border-[var(--line)]")}
       />
-      <KakaoMapControls mapRef={mapRef} ready={mapReady} />
+      <KakaoMapControls mapRef={mapRef} ready={mapReady} onFullscreen={fs.toggle} isFullscreen={fs.isFull} />
       {!hasGeo && (
         <div className="pointer-events-none absolute inset-x-0 bottom-0 m-2 rounded-lg bg-[var(--surface-soft)]/85 px-3 py-2 text-[11px] text-[var(--text-hint)]">
           구획 데이터(geojson)가 없어 위치 개요만 표시합니다. 아래 시그널 카드의 필지 목록을 확인하세요.

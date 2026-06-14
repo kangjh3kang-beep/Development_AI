@@ -16,6 +16,7 @@ import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { apiClient } from "@/lib/api-client";
 import { loadKakaoMap } from "@/lib/kakao-map";
 import { KakaoMapControls } from "@/components/map/KakaoMapControls";
+import { useMapFullscreen } from "@/hooks/useMapFullscreen";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 declare global {
@@ -126,6 +127,7 @@ export function NearbyTransactionsMap({
 
   const mapEl = useRef<HTMLDivElement>(null);
   const mapRef = useRef<any>(null);
+  const fs = useMapFullscreen(mapRef);
   const overlaysRef = useRef<any[]>([]); // 건물 마커 오버레이 목록
   const circleRef = useRef<any>(null);
   const centerRef = useRef<any>(null);
@@ -400,9 +402,13 @@ export function NearbyTransactionsMap({
         </div>
       )}
 
-      <div className="relative">
-        <div ref={mapEl} className="w-full rounded-xl overflow-hidden border border-[var(--line-strong)] z-0" style={{ height: 440 }} />
-        <KakaoMapControls mapRef={mapRef} ready={mapReady} />
+      <div className={fs.wrapperClass("relative flex flex-col")}>
+        <div
+          ref={mapEl}
+          className={fs.mapClass("w-full rounded-xl overflow-hidden border border-[var(--line-strong)] z-0")}
+          style={fs.isFull ? undefined : { height: 440 }}
+        />
+        <KakaoMapControls mapRef={mapRef} ready={mapReady} onFullscreen={fs.toggle} isFullscreen={fs.isFull} />
         {(loading || presaleLoading || !sdkReady) && (
           <div className="absolute inset-0 flex items-center justify-center rounded-xl bg-black/40 backdrop-blur-sm z-[400]">
             <div className="flex items-center gap-2 text-white text-sm font-bold">

@@ -151,7 +151,21 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
             <span className="cc-live"><i />LIVE</span>
           </div>
           <div className="relative z-10 mt-3 flex items-center gap-3">
-            <span className="text-2xl">⚖️</span>
+            {/* 인허가/심사 — 문서 위 승인 체크(도장 의미). 디자인토큰 색·장식용 */}
+            <svg
+              viewBox="0 0 24 24"
+              className="h-7 w-7 shrink-0 text-[var(--accent-strong)]"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
+              <path d="M14 3v5h5" />
+              <path d="M9 14.5l2 2 4-4.5" />
+            </svg>
             <div>
               <h1 className="text-lg font-black text-[var(--text-primary)]">인.허가분석 자동화</h1>
               <p className="mt-0.5 text-xs text-[var(--text-secondary)]">

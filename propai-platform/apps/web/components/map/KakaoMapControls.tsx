@@ -44,9 +44,15 @@ function IconBtn({
 export function KakaoMapControls({
   mapRef,
   ready,
+  onFullscreen,
+  isFullscreen,
 }: {
   mapRef: { current: any };
   ready: boolean;
+  /** 풀스크린 토글 콜백(미전달 시 버튼 미표시). useMapFullscreen.toggle 연결. */
+  onFullscreen?: () => void;
+  /** 현재 풀스크린 여부 — 아이콘/라벨(확대↔축소) 전환. */
+  isFullscreen?: boolean;
 }) {
   const [mapType, setMapType] = useState<MapType>("ROADMAP");
   const [district, setDistrict] = useState(false);
@@ -220,8 +226,23 @@ export function KakaoMapControls({
           </button>
         </div>
 
-        {/* 세로 아이콘 메뉴: 로드뷰·거리·면적 측정(롤오버 시 메뉴명 툴팁) */}
+        {/* 세로 아이콘 메뉴: 풀스크린·로드뷰·거리·면적 측정(롤오버 시 메뉴명 툴팁) */}
         <div className="flex flex-col items-end gap-1.5 rounded-lg bg-black/5 p-1 backdrop-blur-sm">
+          {onFullscreen && (
+            <IconBtn active={!!isFullscreen} onClick={onFullscreen} label={isFullscreen ? "원래 크기로" : "전체화면"}>
+              {isFullscreen ? (
+                /* 축소(나가기) — 안쪽으로 모이는 화살표 */
+                <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M9 3v3a3 3 0 0 1-3 3H3M21 9h-3a3 3 0 0 1-3-3V3M3 15h3a3 3 0 0 1 3 3v3M15 21v-3a3 3 0 0 1 3-3h3" />
+                </svg>
+              ) : (
+                /* 확대(전체화면) — 바깥으로 향하는 화살표 */
+                <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3" />
+                </svg>
+              )}
+            </IconBtn>
+          )}
           <IconBtn active={rvOn} onClick={() => setRvOn((v) => !v)} label="로드뷰">
             {/* CCTV 카메라 */}
             <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

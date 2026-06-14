@@ -8,10 +8,11 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { apiClient } from "@/lib/api-client";
+import { apiClient, ApiClientError } from "@/lib/api-client";
 import { normalizeZoning } from "@/lib/kr-building-regulations";
 import { loadKakaoMap, geoJsonToKakaoRings } from "@/lib/kakao-map";
 import { KakaoMapControls } from "@/components/map/KakaoMapControls";
+import { useMapFullscreen } from "@/hooks/useMapFullscreen";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 declare global {
@@ -95,6 +96,7 @@ export function ParcelBoundaryMap({
   const polysRef = useRef<any[]>([]);
   const infoRef = useRef<any>(null);
   const [mapReady, setMapReady] = useState(false); // 카카오맵 생성 완료 → 툴바 활성
+  const fs = useMapFullscreen(mapRef);
 
   // 데이터 조회
   useEffect(() => {
@@ -107,7 +109,21 @@ export function ParcelBoundaryMap({
         useMock: false, timeoutMs: 45000,
       })
       .then((d) => { if (alive) setData(d); })
-      .catch(() => { if (alive) setError("필지 경계를 불러오지 못했습니다."); })
+      .catch((e: unknown) => {
+        if (!alive) return;
+        // 에러 종류별 진단 문구 — apiClient는 타임아웃(408)·HTTP오류(5xx 등)는
+        // ApiClientError(.status)로, 네트워크 실패는 status 없는 일반 에러로 던진다.
+        if (e instanceof ApiClientError) {
+          const s = e.status;
+          if (s === 408) setError("응답 지연(VWorld 지적도 서버 지연) — 잠시 후 재시도");
+          else if (s >= 500) setError("서버 오류로 필지 경계를 불러오지 못함");
+          else if (s === 0) setError("네트워크 오류 — 연결 상태를 확인하세요");
+          else setError("필지 경계를 불러오지 못했습니다.");
+        } else {
+          // ApiClientError가 아니면 fetch 자체 실패(네트워크 단절 등)
+          setError("네트워크 오류 — 연결 상태를 확인하세요");
+        }
+      })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -274,9 +290,9 @@ export function ParcelBoundaryMap({
           <span className="ml-auto text-[var(--text-hint)]">지적도(VWorld) 벡터 · 위성 베이스 권장</span>
         </div>
       )}
-      <div className="relative">
-        <div ref={mapEl} className="h-[340px] w-full overflow-hidden rounded-xl border border-[var(--line)]" />
-        <KakaoMapControls mapRef={mapRef} ready={mapReady} />
+      <div className={fs.wrapperClass("relative flex flex-col")}>
+        <div ref={mapEl} className={fs.mapClass("h-[340px] w-full overflow-hidden rounded-xl border border-[var(--line)]")} />
+        <KakaoMapControls mapRef={mapRef} ready={mapReady} onFullscreen={fs.toggle} isFullscreen={fs.isFull} />
         {/* 로딩/빈결과 오버레이 — 무한 '불러오는 중' 방지 */}
         {(loading || (!loading && !error && (!data || !data.features?.length))) && (
           <div className="absolute inset-0 flex items-center justify-center rounded-xl bg-[var(--surface-soft)]/70 text-xs text-[var(--text-hint)]">

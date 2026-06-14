@@ -1,5 +1,6 @@
 """자동 용도지역 감지 + 종합 토지정보 라우터."""
 
+import asyncio
 import re
 
 from fastapi import APIRouter, Depends
@@ -551,19 +552,22 @@ async def parcel_boundaries(req: ParcelBoundariesRequest):
         return {"features": [], "center": None, "total_area_sqm": 0}
 
     vworld = VWorldService()
-    features: list[dict] = []
-    total_area = 0.0
-    lat_sum = lon_sum = 0.0
-    coord_n = 0
 
-    for it in items:
+    async def _resolve_one(it: dict) -> dict | None:
+        """단일 필지의 경계·면적·용도지역을 조회해 feature dict를 만든다.
+
+        ★의존순서 보존: PNU 미확보 시 geocode_address → (좌표 의존) get_parcel_by_point는
+        순차로 수행해야 한다(뒤 호출이 앞 결과에 의존). PNU 확보 이후의 get_land_info(경계)와
+        get_land_characteristics(용도/면적)는 서로 독립이므로 asyncio.gather로 병렬 호출한다.
+        한 필지 실패는 None을 돌려 전체를 깨지 않는다(상위 gather에서 격리).
+        """
         pnu = it.get("pnu")
         address = it.get("address") or ""
         if not pnu and it.get("bcode") and it.get("jibun_address"):
             pnu = _build_pnu_from_bcode(it["bcode"], it["jibun_address"])
         coords = None
         point_geom = None
-        # PNU가 없으면 주소 지오코딩
+        # PNU가 없으면 주소 지오코딩 (이후 좌표 폴백이 이 결과에 의존 → 순차 유지)
         if not pnu and address:
             try:
                 geo = await vworld.geocode_address(address)
@@ -572,7 +576,7 @@ async def parcel_boundaries(req: ParcelBoundariesRequest):
                     coords = {"lat": geo.get("lat"), "lon": geo.get("lon")}
             except Exception:  # noqa: BLE001
                 pass
-        # 도로명주소 등 PNU 미확보 시: 좌표로 필지 직접 조회(점 기반)
+        # 도로명주소 등 PNU 미확보 시: 좌표로 필지 직접 조회(점 기반) — geocode 좌표에 의존
         if not pnu and coords and coords.get("lat") and coords.get("lon"):
             try:
                 pp = await vworld.get_parcel_by_point(coords["lat"], coords["lon"])
@@ -582,7 +586,7 @@ async def parcel_boundaries(req: ParcelBoundariesRequest):
             except Exception:  # noqa: BLE001
                 pass
         if not pnu:
-            continue
+            return None
 
         geometry = point_geom
         zone_type = zone_type_2 = None
@@ -590,24 +594,25 @@ async def parcel_boundaries(req: ParcelBoundariesRequest):
         #  ① 지적/등록면적: VWorld get_land_info(properties.area)
         #  ② 공부상(토지대장) 면적: NED 토지특성 get_land_characteristics(lndpclAr)
         #  → 토지대장(공부상)을 권위 출처로 우선, 지적도와 대조해 일치도·신뢰도 산출.
+        #  ★두 호출은 PNU만 필요하고 서로 독립 → gather로 동시에(순차 30s+15s 대신 병렬).
         li_area = 0.0
         lc_area = 0.0
-        try:
-            if geometry is None:
-                li = await vworld.get_land_info(pnu)
-                if li:
-                    geometry = li.get("geometry")
-                    li_area = float((li.get("properties") or {}).get("area") or 0)
-        except Exception:  # noqa: BLE001
-            pass
-        try:
-            lc = await vworld.get_land_characteristics(pnu)
-            if lc:
-                lc_area = float(lc.get("area_sqm") or 0)
-                zone_type = lc.get("zone_type") or None
-                zone_type_2 = lc.get("zone_type_2") or None
-        except Exception:  # noqa: BLE001
-            pass
+        need_li = geometry is None  # point_geom이 이미 있으면 land_info 생략
+        # PNU만 필요한 두 호출을 동시에. land_info는 geometry 없을 때만 코루틴을 추가한다.
+        coros = []
+        if need_li:
+            coros.append(vworld.get_land_info(pnu))
+        coros.append(vworld.get_land_characteristics(pnu))
+        gathered = await asyncio.gather(*coros, return_exceptions=True)
+        li_res = gathered[0] if need_li else None
+        lc_res = gathered[-1]
+        if need_li and isinstance(li_res, dict):
+            geometry = li_res.get("geometry")
+            li_area = float((li_res.get("properties") or {}).get("area") or 0)
+        if isinstance(lc_res, dict):
+            lc_area = float(lc_res.get("area_sqm") or 0)
+            zone_type = lc_res.get("zone_type") or None
+            zone_type_2 = lc_res.get("zone_type_2") or None
         # 권위 우선: 토지대장(lc_area) → 지적등록(li_area)
         area_sqm = lc_area or li_area
         area_source = "토지대장(토지특성)" if lc_area else ("지적도 등록면적" if li_area else "미확인")
@@ -624,7 +629,7 @@ async def parcel_boundaries(req: ParcelBoundariesRequest):
         else:
             area_confidence, area_note = "none", "면적 데이터 없음"
 
-        # 좌표(중심) 보강
+        # 좌표(중심) 보강 — 위에서 좌표를 못 구한 경우에만 추가 지오코딩(순차)
         if not coords:
             try:
                 geo = await vworld.geocode_address(address) if address else None
@@ -632,11 +637,10 @@ async def parcel_boundaries(req: ParcelBoundariesRequest):
                     coords = {"lat": geo.get("lat"), "lon": geo.get("lon")}
             except Exception:  # noqa: BLE001
                 pass
-        if coords and coords.get("lat") and coords.get("lon"):
-            lat_sum += coords["lat"]; lon_sum += coords["lon"]; coord_n += 1
 
-        total_area += area_sqm
-        features.append({
+        return {
+            "_coords": coords if (coords and coords.get("lat") and coords.get("lon")) else None,
+            "_area_sqm": area_sqm,
             "pnu": pnu,
             "address": address,
             "area_sqm": round(area_sqm, 1),
@@ -650,7 +654,29 @@ async def parcel_boundaries(req: ParcelBoundariesRequest):
             "zone_type_2": zone_type_2,
             "zone_limits": _zone_limits_compact(zone_type),
             "geometry": geometry,
-        })
+        }
+
+    # ★다필지면 필지 간 완전 독립 → 병렬 처리(가장 느린 한 필지 시간으로 수렴).
+    #  한 필지 예외는 return_exceptions로 격리해 나머지 필지를 살린다(항상 200 보존).
+    results = await asyncio.gather(
+        *[_resolve_one(it) for it in items], return_exceptions=True
+    )
+
+    features: list[dict] = []
+    total_area = 0.0
+    lat_sum = lon_sum = 0.0
+    coord_n = 0
+    for r in results:
+        if not isinstance(r, dict):
+            continue
+        coords = r.pop("_coords", None)
+        area_sqm = r.pop("_area_sqm", 0.0)
+        if coords:
+            lat_sum += coords["lat"]
+            lon_sum += coords["lon"]
+            coord_n += 1
+        total_area += area_sqm
+        features.append(r)
 
     center = {"lat": lat_sum / coord_n, "lon": lon_sum / coord_n} if coord_n else None
     # 중심 폴백: 첫 폴리곤 첫 좌표
