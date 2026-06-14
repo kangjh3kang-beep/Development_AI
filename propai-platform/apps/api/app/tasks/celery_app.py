@@ -116,6 +116,15 @@ def _create_app() -> "Celery":
             "schedule": crontab(hour=3, minute=0),  # 매일 03:00
             "options": {"queue": "growth"},
         },
+        # L3 자가학습 주간 배치(Phase 5, §6.4) — few-shot 큐레이션(candidate 등록)
+        # + 파인튜닝셋 생성(생성까지만) + down율 개선대상 프롬프트 후보 A/B 등록.
+        # ★파인튜닝 잡 자동실행 금지·few-shot 자동활성 금지·프롬프트 자동채택 금지.
+        # 일요일 04:00(개선배치 03:00 후속). 주 1회로 LLM 비용·부하 가드.
+        "run-learning-weekly": {
+            "task": "app.tasks.growth_learning_task.run_learning",
+            "schedule": crontab(hour=4, minute=0, day_of_week=0),  # 일요일 04:00
+            "options": {"queue": "growth"},
+        },
     }
 
     _app.autodiscover_tasks(["app.tasks"])
@@ -141,6 +150,7 @@ BEAT_SCHEDULE_NAMES = [
     "evaluate-healing",
     "evaluate-correction",
     "evaluate-improvement-daily",
+    "run-learning-weekly",
 ]
 
 TASK_NAMES = [
@@ -155,4 +165,5 @@ TASK_NAMES = [
     "app.tasks.growth_tasks.evaluate_correction",
     "app.tasks.growth_tasks.evaluate_improvement",
     "app.tasks.growth_pr_task.run_pr_bot",
+    "app.tasks.growth_learning_task.run_learning",
 ]

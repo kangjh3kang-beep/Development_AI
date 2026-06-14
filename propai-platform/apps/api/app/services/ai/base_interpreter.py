@@ -209,6 +209,10 @@ class BaseInterpreter:
         # 검증 실패 피드백(재생성 1회용). set_retry_feedback로 주입하면
         # _invoke가 user_prompt 뒤에 부착하고 캐시 키에 반영해 재생성을 강제한다.
         self._retry_feedback: str | None = None
+        # 자가성장 L1 A/B: _invoke 진입부에서 1회 await로 해석해 캐시하는 활성 프롬프트
+        # 버전(M-1 해소). None 이면 미해석(기본 _PROMPT_VERSION 사용 = 기존 동작 불변).
+        # 동기 _cache_key·텔레메트리는 이 캐시값만 참조한다(asyncio.run 죽은경로 제거).
+        self._active_prompt_version: str | None = None
 
     def set_retry_feedback(self, feedback: str | None) -> None:
         """검증관 이슈를 다음 1회 생성에 주입(재생성 피드백 루프).
@@ -281,50 +285,56 @@ class BaseInterpreter:
         return None
 
     # ── 자가성장 L1: A/B 프롬프트 버전 해석(additive·best-effort) ──
-    def _resolve_prompt_version(self) -> str:
-        """이 인터프리터에 적용할 프롬프트 버전을 반환한다.
+    # ★M-1 해소: 과거 _resolve_prompt_version 은 동기 _cache_key 에서 asyncio.run 으로
+    #   호출돼, async _invoke 안(이미 루프 가동)에서 항상 RuntimeError→기본폴백되는
+    #   **죽은 경로**였다. 이제 _invoke 진입부에서 _resolve_prompt_version_async 를
+    #   1회 await 로 해석해 self._active_prompt_version 에 캐시하고, 동기
+    #   _resolve_prompt_version·_cache_key·텔레메트리는 그 캐시값만 참조한다(asyncio.run 제거).
+    async def _resolve_prompt_version_async(self) -> str:
+        """A/B 프롬프트 버전을 1회 해석해 self._active_prompt_version 에 캐시·반환.
 
         자가수정(L1)이 platform_settings('prompt.<name>')에 채택 버전을 기록했고,
         그 값이 **사전등록 후보군(_PROMPT_AB_CANDIDATES[self.name]) 내**이면 그 버전을,
         아니면 기본(_PROMPT_VERSION)을 쓴다. 임의 버전 생성 금지(후보군 화이트리스트).
 
-        완전 격리: import 순환·DB 미가용·키 부재 등 어떤 예외도 기본 버전으로 폴백한다.
-        후보군이 비어 있으면(현 기본 상태) 즉시 기본 반환 → 기존 동작 완전 불변.
+        완전 격리: import 순환·DB 미가용 등 어떤 예외도 기본 버전으로 폴백한다.
+        후보군이 비어 있으면(현 기본 상태) 즉시 기본 캐시 → 기존 동작 완전 불변.
         """
         candidates = _PROMPT_AB_CANDIDATES.get(self.name)
         if not candidates:
+            self._active_prompt_version = _PROMPT_VERSION
             return _PROMPT_VERSION
+        chosen: str | None = None
         try:
-            # best-effort 동기 조회(짧은 자체 이벤트루프). 캐시키 산출 경로라 가벼워야 함.
-            import asyncio
+            from apps.api.database.session import AsyncSessionLocal
+            from app.services.growth import schema_guard
 
-            async def _read() -> str | None:
-                from apps.api.database.session import AsyncSessionLocal
-                from app.services.growth import schema_guard
-
-                async with AsyncSessionLocal() as db:
-                    val = await schema_guard.get_setting(db, f"prompt.{self.name}")
-                if isinstance(val, dict):
-                    return val.get("version")
-                return None
-
-            try:
-                chosen = asyncio.run(_read())
-            except RuntimeError:
-                # 이미 루프가 도는 컨텍스트면 별도 호출 회피(기본 버전 폴백 — 안전).
-                return _PROMPT_VERSION
-            if chosen and chosen in candidates:
-                return chosen
+            async with AsyncSessionLocal() as db:
+                val = await schema_guard.get_setting(db, f"prompt.{self.name}")
+            if isinstance(val, dict):
+                cand = val.get("version")
+                if cand and cand in candidates:
+                    chosen = cand
         except Exception:  # noqa: BLE001 — 어떤 실패도 기본 버전으로 폴백.
-            pass
-        return _PROMPT_VERSION
+            chosen = None
+        self._active_prompt_version = chosen or _PROMPT_VERSION
+        return self._active_prompt_version
+
+    def _resolve_prompt_version(self) -> str:
+        """현재 적용 프롬프트 버전(동기·무DB). _invoke 가 캐시한 값을 그대로 읽는다.
+
+        _active_prompt_version 이 None(아직 _invoke 진입 전·외부 직접 호출)이면 기본
+        _PROMPT_VERSION 을 반환한다(안전 폴백 — 동기 경로는 DB 를 만지지 않는다).
+        """
+        return self._active_prompt_version or _PROMPT_VERSION
 
     # ── P4: 캐시 키 ──
     def _cache_key(self, cache_data: Any) -> str:
         payload = json.dumps(cache_data, ensure_ascii=False, sort_keys=True, default=str)
         digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]
         # 프롬프트 버전 포함 → 프롬프트/그라운딩 규칙·A/B 채택 버전이 바뀌면 기존 캐시
-        # 무효화(새 규칙 즉시 적용). A/B 후보군이 비면 항상 _PROMPT_VERSION(기존 동작).
+        # 무효화(새 규칙 즉시 적용). _invoke 가 진입부에서 해석·캐시한 활성 버전을 참조
+        # (A/B 후보군이 비면 항상 _PROMPT_VERSION = 기존 동작 불변).
         version = self._resolve_prompt_version()
         return f"{self.name}:{version}:{self.max_tokens}:{digest}"
 
@@ -347,6 +357,15 @@ class BaseInterpreter:
         - 시스템 프롬프트에는 그라운딩 규칙을 자동 주입(P3).
         - 모든 실패는 graceful: 빈 dict 반환(호출자 폴백).
         """
+        # ★M-1: A/B 프롬프트 버전을 진입부에서 1회 await 로 해석해 인스턴스에 캐시한다.
+        # 이후 동기 _cache_key·텔레메트리(_resolve_prompt_version)는 이 캐시값을 참조
+        # (과거 asyncio.run 죽은경로 제거). 후보군이 비면 즉시 기본 → 기존 동작 불변.
+        # try/except 완전 격리: 어떤 실패도 추론·빌링·캐시 정확성을 깨뜨리지 않는다.
+        try:
+            await self._resolve_prompt_version_async()
+        except Exception:  # noqa: BLE001
+            self._active_prompt_version = _PROMPT_VERSION
+
         # P4: evidence_text는 결과를 바꾸므로 캐시 키에 포함(근거 다르면 캐시 분리).
         if cache_data is not None and evidence_text:
             cache_data = {"_data": cache_data, "_evidence": evidence_text}

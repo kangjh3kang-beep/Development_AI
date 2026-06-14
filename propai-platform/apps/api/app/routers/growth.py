@@ -14,6 +14,7 @@ from datetime import datetime
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -615,3 +616,121 @@ async def rollback_growth_setting(
         pass
 
     return SettingRollbackResult(key=key, scope=scope, rolled_back=rolled)
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# 자가학습 L3 — 데이터셋 다운로드 · few-shot 후보 승인 (Phase 5, 관리자, 설계 §6.4)
+# ════════════════════════════════════════════════════════════════════════════
+# GET  /learning/dataset      : (input_summary, good_output) 페어 JSONL 다운로드.
+#                               ★생성/다운로드까지만 — 파인튜닝 잡 트리거 절대 없음.
+# POST /learning/promote      : learning_example candidate → active (사람 승인) + 감사.
+#                               ★자동 활성 금지 — 이 경로(관리자 사람)로만 활성화.
+# 모두 super_admin(tier) 전용.
+
+_PROMOTE_STATUSES = {"active", "rejected"}
+
+
+@router.get("/learning/dataset", response_class=PlainTextResponse)
+async def learning_dataset(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    service: str | None = Query(default=None, description="service 필터(미지정=전체)"),
+    status: str = Query(default="active", description="active(기본) | candidate"),
+    limit: int = Query(default=5000, ge=1, le=20000),
+) -> PlainTextResponse:
+    """learning_examples (input_summary, good_output) 페어 JSONL 다운로드(관리자).
+
+    ★생성/다운로드까지만 — 파인튜닝 잡은 절대 트리거하지 않는다(사람이 수동 실행).
+    기본 status='active'(사람이 promote 한 것)만. candidate 도 옵션 지정 가능.
+    """
+    from app.services.growth import learning_loop
+
+    user_id = await _require_admin(request, db)
+    statuses = ("active",) if status != "candidate" else ("candidate",)
+    ds = await learning_loop.build_dataset_jsonl(
+        db, service=service, statuses=statuses, limit=limit
+    )
+
+    # 감사: 누가 어떤 학습셋을 다운로드했는지(데이터 반출 추적).
+    try:
+        from app.core.audit import audit_admin_action
+
+        await audit_admin_action(
+            actor_id=user_id, actor_role="super_admin",
+            action="growth.learn.dataset_download",
+            target=f"{service or 'all'}@{status}",
+            detail={"count": ds.get("count", 0), "statuses": ds.get("statuses")},
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+    fname = f"learning_dataset_{service or 'all'}_{status}.jsonl"
+    return PlainTextResponse(
+        content=ds.get("jsonl", ""),
+        media_type="application/x-ndjson",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"',
+                 "X-Dataset-Count": str(ds.get("count", 0))},
+    )
+
+
+class PromoteRequest(BaseModel):
+    """few-shot 후보 승인/거부 요청(프론트 계약)."""
+
+    example_id: str = Field(..., description="learning_examples.id")
+    status: str = Field(default="active", description="active(승인) | rejected(거부)")
+
+
+class PromoteResult(BaseModel):
+    example_id: str
+    status: str
+
+
+@router.post("/learning/promote", response_model=PromoteResult)
+async def promote_learning_example(
+    body: PromoteRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> PromoteResult:
+    """learning_example 후보를 사람 승인으로 active(또는 rejected) 전환 + 감사.
+
+    ★few-shot 활성화는 이 경로(관리자 사람)로만 — 자동 활성 절대 금지.
+    candidate 상태만 전이 허용(이미 처리된 건 재전이 금지).
+    """
+    from sqlalchemy import text
+
+    user_id = await _require_admin(request, db)
+    if body.status not in _PROMOTE_STATUSES:
+        raise HTTPException(
+            status_code=400, detail="status 는 active 또는 rejected 여야 합니다."
+        )
+
+    row = (await db.execute(text(
+        "UPDATE learning_examples SET status = :st "
+        "WHERE id = :id AND status = 'candidate' "
+        "RETURNING id, status"
+    ), {"st": body.status, "id": body.example_id})).fetchone()
+    if row is None:
+        await db.rollback()
+        exists = (await db.execute(text(
+            "SELECT status FROM learning_examples WHERE id = :id"
+        ), {"id": body.example_id})).fetchone()
+        if exists is None:
+            raise HTTPException(status_code=404, detail="학습 예시를 찾을 수 없습니다.")
+        raise HTTPException(
+            status_code=409,
+            detail=f"이미 처리된 예시입니다(현재 상태: {exists[0]}).",
+        )
+    await db.commit()
+
+    try:
+        from app.core.audit import audit_admin_action
+
+        await audit_admin_action(
+            actor_id=user_id, actor_role="super_admin",
+            action=f"growth.learn.promote.{body.status}", target=body.example_id,
+            detail={"status": body.status},
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+    return PromoteResult(example_id=str(row[0]), status=str(row[1]))

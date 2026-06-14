@@ -303,13 +303,25 @@ async def apply_prompt_ab(
 async def _ab_stats(db, w_hours: int = 24) -> dict[str, dict[str, dict[str, Any]]]:
     """service × prompt_version 별 품질통계 집계(verify pass/fail + feedback up/down).
 
-    llm_call payload.prompt_version(있으면) 기준. 버전 라벨이 없는 환경에서는
-    빈 dict → A/B 채택 비대상(기본 버전 유지). best-effort.
+    ★M-2 해소: 과거엔 llm_call payload.ok(=pass)/samples 만 채우고 up/down/fail 이
+    항상 0 이라 _pick_better_version 점수가 실데이터를 반영하지 못했다. 이제:
+      - llm_call.prompt_version 으로 service×version 의 samples(+ ok 기반 pass) 집계.
+      - ai_feedback(up/down) 을 service 단위로 집계해 그 service 의 **모든 version**에
+        귀속(피드백은 버전 라벨이 없으므로 동일 service 의 후보 버전들에 공통 반영).
+      - verify_result(fail) 을 service 단위로 집계해 동일 방식으로 fail 에 귀속.
+    버전 라벨이 없는 환경에서는 빈 dict → A/B 채택 비대상(기본 버전 유지). best-effort.
     """
     from sqlalchemy import text
 
     out: dict[str, dict[str, dict[str, Any]]] = {}
     since = datetime.now(timezone.utc) - timedelta(hours=w_hours)
+
+    def _ver_slot(svc: str, ver: str) -> dict[str, Any]:
+        return out.setdefault(svc, {}).setdefault(
+            ver, {"pass": 0, "fail": 0, "up": 0, "down": 0, "samples": 0}
+        )
+
+    # (1) llm_call: service×version 의 samples + pass(ok=true) — 버전별 1차 신호.
     try:
         rows = (await db.execute(text(
             "SELECT service, payload->>'prompt_version' AS ver, "
@@ -321,14 +333,54 @@ async def _ab_stats(db, w_hours: int = 24) -> dict[str, dict[str, dict[str, Any]
             "GROUP BY service, payload->>'prompt_version'"
         ), {"since": since})).fetchall()
         for r in rows:
-            svc, ver = r[0], r[1]
-            d = out.setdefault(svc, {}).setdefault(
-                ver, {"pass": 0, "fail": 0, "up": 0, "down": 0, "samples": 0}
-            )
+            d = _ver_slot(r[0], r[1])
             d["pass"] += int(r[2] or 0)
             d["samples"] += int(r[3] or 0)
     except Exception as e:  # noqa: BLE001
-        logger.debug("ab_stats 집계 실패: %s", str(e)[:120])
+        logger.debug("ab_stats llm_call 집계 실패: %s", str(e)[:120])
+
+    # (2) ai_feedback: service 단위 up/down → 그 service 의 모든 version 에 귀속.
+    try:
+        fb = (await db.execute(text(
+            "SELECT service, "
+            "  SUM(CASE WHEN verdict='up' THEN 1 ELSE 0 END) AS up, "
+            "  SUM(CASE WHEN verdict='down' THEN 1 ELSE 0 END) AS down "
+            "FROM ai_feedback "
+            "WHERE service IS NOT NULL AND created_at >= :since "
+            "GROUP BY service"
+        ), {"since": since})).fetchall()
+        for r in fb:
+            svc = r[0]
+            vers = out.get(svc)
+            if not vers:
+                continue  # 버전 라벨 없는 service 는 A/B 비대상(스킵).
+            for d in vers.values():
+                d["up"] += int(r[1] or 0)
+                d["down"] += int(r[2] or 0)
+    except Exception as e:  # noqa: BLE001
+        logger.debug("ab_stats feedback 집계 실패: %s", str(e)[:120])
+
+    # (3) verify_result: service 단위 fail → 그 service 의 모든 version 에 귀속.
+    try:
+        vr = (await db.execute(text(
+            "SELECT service, "
+            "  SUM(CASE WHEN severity='fail' OR payload->>'verdict'='fail' "
+            "           THEN 1 ELSE 0 END) AS fail "
+            "FROM platform_events "
+            "WHERE event_type='verify_result' AND service IS NOT NULL "
+            "  AND created_at >= :since "
+            "GROUP BY service"
+        ), {"since": since})).fetchall()
+        for r in vr:
+            svc = r[0]
+            vers = out.get(svc)
+            if not vers:
+                continue
+            for d in vers.values():
+                d["fail"] += int(r[1] or 0)
+    except Exception as e:  # noqa: BLE001
+        logger.debug("ab_stats verify 집계 실패: %s", str(e)[:120])
+
     return out
 
 

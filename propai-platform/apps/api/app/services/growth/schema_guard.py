@@ -1,7 +1,7 @@
 """자가성장 엔진 — 부팅 시 스키마 멱등 보장(billing_service._ensure_* 선례).
 
-마이그레이션(v62_5_self_growth_tables)이 정본이지만, 미적용 환경(개발/신규배포)
-에서도 부팅 시 텔레메트리 3 테이블·인덱스를 자동 보장한다.
+마이그레이션(v62_5/v62_6/v62_7)이 정본이지만, 미적용 환경(개발/신규배포)
+에서도 부팅 시 텔레메트리/설정/학습 테이블·인덱스를 자동 보장한다.
 CREATE TABLE/INDEX IF NOT EXISTS 만 사용(파괴적 변경 없음). best-effort.
 
 ⚠️ 컬럼/인덱스는 database/models/platform_event.py ORM 과 정합 유지.
@@ -86,6 +86,22 @@ CREATE TABLE IF NOT EXISTS platform_settings (
 )
 """
 
+# Phase 5(L3) — few-shot 큐레이션 스토리지(마이그레이션 v62_7 가 정본).
+# status: candidate(자동 등록) | active(사람 승인 후) | rejected. 자동 활성 금지.
+_LEARNING_EXAMPLES_DDL = """
+CREATE TABLE IF NOT EXISTS learning_examples (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    input_summary text,
+    good_output text,
+    service text,
+    analysis_type text,
+    source_feedback_id uuid,
+    content_hash text,
+    status varchar(20) NOT NULL DEFAULT 'candidate',
+    created_at timestamptz NOT NULL DEFAULT now()
+)
+"""
+
 _INDEXES = [
     # platform_events
     "CREATE INDEX IF NOT EXISTS idx_pe_type_created ON platform_events (event_type, created_at)",
@@ -106,11 +122,15 @@ _INDEXES = [
     # platform_settings (Phase 3): (key, scope) upsert 키 + TTL 인덱스.
     "CREATE UNIQUE INDEX IF NOT EXISTS uq_ps_key_scope ON platform_settings (key, scope)",
     "CREATE INDEX IF NOT EXISTS idx_ps_ttl ON platform_settings (ttl_expires_at)",
+    # learning_examples (Phase 5): service/status 조회 + (service, content_hash) 멱등.
+    "CREATE INDEX IF NOT EXISTS idx_le_service_status ON learning_examples (service, status)",
+    "CREATE INDEX IF NOT EXISTS idx_le_created ON learning_examples (created_at)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_le_service_hash ON learning_examples (service, content_hash)",
 ]
 
 
 async def ensure_schema(db: AsyncSession, force: bool = False) -> bool:
-    """텔레메트리 3 테이블·인덱스를 멱등 보장한다. 성공 시 True.
+    """텔레메트리/설정/학습 테이블·인덱스를 멱등 보장한다. 성공 시 True.
 
     부팅 시 1회 호출(load_into_env 인접). 실패는 graceful(rollback 후 False).
     """
@@ -122,6 +142,7 @@ async def ensure_schema(db: AsyncSession, force: bool = False) -> bool:
         await db.execute(text(_PLATFORM_INSIGHTS_DDL))
         await db.execute(text(_AI_FEEDBACK_DDL))
         await db.execute(text(_PLATFORM_SETTINGS_DDL))
+        await db.execute(text(_LEARNING_EXAMPLES_DDL))
         for ddl in _INDEXES:
             await db.execute(text(ddl))
         await db.commit()
