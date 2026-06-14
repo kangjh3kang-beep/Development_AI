@@ -100,6 +100,31 @@ def _create_app() -> "Celery":
             "schedule": crontab(minute="*/10"),  # 10분마다
             "options": {"queue": "growth"},
         },
+        # L1 자가수정 평가(Phase 4, §6.2) — open 인사이트/이벤트 → 임계보정·피처
+        # 토글·프롬프트 A/B 채택(저위험 무인, 화이트리스트/후보군·±20% 상한·롤백·감사).
+        # analyze(매시5분) 직후 효과를 보도록 15분 주기. 가드가 빈번 실행을 자체 차단.
+        "evaluate-correction": {
+            "task": "app.tasks.growth_tasks.evaluate_correction",
+            "schedule": crontab(minute="*/15"),  # 15분마다
+            "options": {"queue": "growth"},
+        },
+        # L2 개선제안 생성 + Draft PR봇(Phase 4, §6.3) — propose_pr critical 인사이트 →
+        # 진단+패치 제안 아티팩트(코드 자동변경 없음). GH_TOKEN 있을 때만 Draft PR(없으면
+        # 아티팩트만). 일배치(analyze-daily 02:30) 후속 03:00. 절대 자동 머지/배포 금지.
+        "evaluate-improvement-daily": {
+            "task": "app.tasks.growth_tasks.evaluate_improvement",
+            "schedule": crontab(hour=3, minute=0),  # 매일 03:00
+            "options": {"queue": "growth"},
+        },
+        # L3 자가학습 주간 배치(Phase 5, §6.4) — few-shot 큐레이션(candidate 등록)
+        # + 파인튜닝셋 생성(생성까지만) + down율 개선대상 프롬프트 후보 A/B 등록.
+        # ★파인튜닝 잡 자동실행 금지·few-shot 자동활성 금지·프롬프트 자동채택 금지.
+        # 일요일 04:00(개선배치 03:00 후속). 주 1회로 LLM 비용·부하 가드.
+        "run-learning-weekly": {
+            "task": "app.tasks.growth_learning_task.run_learning",
+            "schedule": crontab(hour=4, minute=0, day_of_week=0),  # 일요일 04:00
+            "options": {"queue": "growth"},
+        },
     }
 
     _app.autodiscover_tasks(["app.tasks"])
@@ -123,6 +148,9 @@ BEAT_SCHEDULE_NAMES = [
     "analyze-growth-hourly",
     "analyze-growth-daily",
     "evaluate-healing",
+    "evaluate-correction",
+    "evaluate-improvement-daily",
+    "run-learning-weekly",
 ]
 
 TASK_NAMES = [
@@ -134,4 +162,8 @@ TASK_NAMES = [
     "app.tasks.growth_tasks.flush_growth_events",
     "app.tasks.growth_tasks.analyze_growth",
     "app.tasks.growth_tasks.evaluate_healing",
+    "app.tasks.growth_tasks.evaluate_correction",
+    "app.tasks.growth_tasks.evaluate_improvement",
+    "app.tasks.growth_pr_task.run_pr_bot",
+    "app.tasks.growth_learning_task.run_learning",
 ]

@@ -158,6 +158,93 @@ def evaluate_healing() -> dict:
     return result
 
 
+# ── L1 자가수정 평가 배치(Phase 4, 설계서 §6.2) ─────────────────────────────
+# feature_flags.evaluate 가 open 인사이트/이벤트를 보고 L1 자동수정(임계보정·피처
+# 토글·프롬프트 A/B 채택)을 결정·실행한다. heal 과 동일하게 DB 를 읽으므로 별도
+# Celery 워커에서도 정상 동작(프로세스-로컬 큐 비의존). 가드(캡·쿨다운)·롤백·감사는
+# healing_rules/platform_settings 를 재사용하므로 안전.
+
+async def _correct_async() -> dict:
+    """1회 L1 자가수정 평가 사이클을 새 AsyncSession 으로 구동한다."""
+    from apps.api.database.session import AsyncSessionLocal
+    from app.services.growth import feature_flags
+
+    async with AsyncSessionLocal() as session:
+        return await feature_flags.evaluate(session)
+
+
+def evaluate_correction() -> dict:
+    """L1 자가수정 평가 배치(feature_flags.evaluate). Beat 주기 호출(analyze 후속).
+
+    반환: feature_flags.evaluate 요약 dict. 동기 진입점에서 asyncio.run 구동.
+    best-effort: 어떤 예외도 워커를 죽이지 않는다.
+    """
+    import asyncio
+
+    try:
+        result = asyncio.run(_correct_async())
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        try:
+            result = loop.run_until_complete(_correct_async())
+        finally:
+            loop.close()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("evaluate_correction 실패: %s", str(e)[:160])
+        return {"applied": 0, "error": str(e)[:160]}
+
+    if result.get("applied"):
+        logger.info("growth L1 자가수정: 적용 %d / 차단 %d",
+                    result.get("applied", 0), result.get("blocked", 0))
+    return result
+
+
+# ── L2 개선제안 생성 배치(Phase 4, 설계서 §6.3) ─────────────────────────────
+# improvement_agent.generate_proposals 가 propose_pr critical 인사이트 → 진단+패치
+# 제안 아티팩트를 생성·저장한다(코드 자동변경 없음, 제안만). 이어서 growth_pr_task 가
+# GH_TOKEN 있을 때만 Draft PR 을 생성(없으면 아티팩트만 보존 = graceful). 둘 다 best-effort.
+
+async def _improve_async() -> dict:
+    """1회 L2 제안 생성 + PR봇 처리를 새 AsyncSession 으로 구동한다."""
+    from apps.api.database.session import AsyncSessionLocal
+    from app.services.growth import improvement_agent
+
+    async with AsyncSessionLocal() as session:
+        gen = await improvement_agent.generate_proposals(session)
+    # PR봇은 별도 진입점(GH_TOKEN 가드·동기 subprocess) — 같은 사이클에서 이어 호출.
+    try:
+        from app.tasks.growth_pr_task import _run_async as _pr_run
+        pr = await _pr_run()
+    except Exception:  # noqa: BLE001
+        pr = {"processed": 0}
+    return {"generated": gen, "pr_bot": pr}
+
+
+def evaluate_improvement() -> dict:
+    """L2 개선제안 배치(improvement_agent + PR봇). Beat 일배치 후속.
+
+    반환: {"generated": {...}, "pr_bot": {...}}. best-effort.
+    """
+    import asyncio
+
+    try:
+        result = asyncio.run(_improve_async())
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        try:
+            result = loop.run_until_complete(_improve_async())
+        finally:
+            loop.close()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("evaluate_improvement 실패: %s", str(e)[:160])
+        return {"generated": {}, "error": str(e)[:160]}
+
+    gen = result.get("generated") or {}
+    if gen.get("proposed"):
+        logger.info("growth L2: 제안 %d건 생성", gen.get("proposed", 0))
+    return result
+
+
 # Celery 태스크 등록(앱이 있을 때만; 미설치 환경에서도 함수는 직접 호출 가능).
 _celery = _get_celery_app()
 if _celery is not None:
@@ -170,3 +257,9 @@ if _celery is not None:
     evaluate_healing = _celery.task(
         name="app.tasks.growth_tasks.evaluate_healing"
     )(evaluate_healing)
+    evaluate_correction = _celery.task(
+        name="app.tasks.growth_tasks.evaluate_correction"
+    )(evaluate_correction)
+    evaluate_improvement = _celery.task(
+        name="app.tasks.growth_tasks.evaluate_improvement"
+    )(evaluate_improvement)

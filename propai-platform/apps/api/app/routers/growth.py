@@ -14,6 +14,7 @@ from datetime import datetime
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -436,3 +437,300 @@ async def rollback_heal(
         setting_key=result.get("setting_key"),
         detail=detail if isinstance(detail, str) else None,
     )
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# 피드백 수집 (Phase 4 — 설계서 §2.2(C), §6.4 학습 신호)
+# ════════════════════════════════════════════════════════════════════════════
+# 👍/👎 + 자유 교정 + 평점을 ai_feedback 에 INSERT 한다. 인증 선택(로그인 사용자는
+# user_id 를 HMAC 익명화, 익명 허용). content_hash 로 analysis_ledger 와 조인 가능.
+# verify_result(Phase3 verifier 발행) + 이 피드백이 analyzer.quality_drop 의
+# 양쪽 신호(verify fail 비율 + feedback down 비율)를 채운다.
+
+_FEEDBACK_TARGET_TYPES = {"llm_output", "analysis", "recommendation"}
+_FEEDBACK_VERDICTS = {"up", "down"}
+
+
+class FeedbackIn(BaseModel):
+    """프론트 FeedbackWidget 이 보내는 피드백 1건(익명화 전 — 프론트 계약)."""
+
+    target_type: str = Field(..., description="llm_output | analysis | recommendation")
+    verdict: str = Field(..., description="up | down")
+    service: str | None = Field(default=None, description="LLM service명(base_interpreter.name)")
+    analysis_type: str | None = Field(default=None, description="analysis_ledger.analysis_type 와 정합")
+    content_hash: str | None = Field(default=None, description="analysis_ledger.content_hash 조인키")
+    correction: str | None = Field(default=None, max_length=4000, description="사용자 교정 텍스트(학습 신호)")
+    rating: int | None = Field(default=None, ge=1, le=5, description="1~5 선택")
+    payload: dict | None = Field(default=None, description="추가 컨텍스트(서버가 PII 마스킹)")
+
+
+class FeedbackResult(BaseModel):
+    id: str
+    accepted: bool
+
+
+@router.post("/feedback", response_model=FeedbackResult)
+async def submit_feedback(
+    fb: FeedbackIn,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> FeedbackResult:
+    """사용자 피드백을 ai_feedback 에 INSERT. 인증 선택(익명 허용)·PII 마스킹."""
+    import json as _json
+
+    from sqlalchemy import text
+
+    from app.services.growth import capture_service
+
+    if fb.target_type not in _FEEDBACK_TARGET_TYPES:
+        raise HTTPException(status_code=400, detail="잘못된 target_type 입니다.")
+    if fb.verdict not in _FEEDBACK_VERDICTS:
+        raise HTTPException(status_code=400, detail="verdict 는 up 또는 down 이어야 합니다.")
+
+    # 인증 선택: 로그인 사용자면 user_id → HMAC user_hash(원본 미저장), tenant_id 귀속.
+    user_id, tenant_id = _extract_identity(request)
+    user_hash = capture_service.hash_user_id(user_id) if user_id else None
+    # payload 는 capture_service 의 PII 마스킹 재사용(이메일/전화/주민번호/주소 등).
+    masked_payload = capture_service.mask_pii(fb.payload) if fb.payload else None
+
+    try:
+        row = (await db.execute(text(
+            "INSERT INTO ai_feedback "
+            "(tenant_id, user_hash, target_type, service, analysis_type, "
+            " content_hash, verdict, correction, rating, payload) "
+            "VALUES (:tid, :uh, :tt, :svc, :at, :ch, :v, :corr, :rt, "
+            " CAST(:pl AS jsonb)) "
+            "RETURNING id"
+        ), {
+            "tid": tenant_id, "uh": user_hash, "tt": fb.target_type,
+            "svc": fb.service, "at": fb.analysis_type, "ch": fb.content_hash,
+            "v": fb.verdict, "corr": fb.correction, "rt": fb.rating,
+            "pl": _json.dumps(masked_payload, ensure_ascii=False, default=str)
+            if masked_payload is not None else None,
+        })).fetchone()
+        await db.commit()
+    except Exception as e:  # noqa: BLE001
+        try:
+            await db.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+        logger.warning("ai_feedback INSERT 실패", err=str(e)[:160])
+        raise HTTPException(status_code=500, detail="피드백 저장에 실패했습니다.") from e
+
+    return FeedbackResult(id=str(row[0]) if row else "", accepted=True)
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# 설정 API (Phase 4 — L1 자가수정 수동제어, 관리자 전용, 설계서 §6.2)
+# ════════════════════════════════════════════════════════════════════════════
+# POST /settings        : platform_settings 수동 upsert(key/value/scope/ttl).
+# POST /settings/{key}/rollback : clear_setting 으로 즉시 원복(롤백) + 감사.
+# 모두 super_admin(tier) 전용. L1 자동조치가 만든 설정도 같은 경로로 사람이 제어 가능.
+
+class SettingIn(BaseModel):
+    """수동 설정 upsert 요청(프론트 계약)."""
+
+    key: str = Field(..., min_length=1, max_length=200)
+    value: dict | list | str | int | float | bool | None = Field(
+        default=None, description="jsonb 로 저장될 값"
+    )
+    scope: str = Field(default="global", max_length=100)
+    ttl_minutes: int | None = Field(
+        default=None, ge=1, le=10080, description="만료(분). 지정 시 만료 후 자동원복"
+    )
+
+
+class SettingResult(BaseModel):
+    key: str
+    scope: str
+    ok: bool
+    ttl_expires_at: datetime | None = None
+
+
+class SettingRollbackResult(BaseModel):
+    key: str
+    scope: str
+    rolled_back: bool
+
+
+@router.post("/settings", response_model=SettingResult)
+async def set_growth_setting(
+    body: SettingIn,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> SettingResult:
+    """platform_settings 수동 upsert(관리자 전용) + 감사기록."""
+    from datetime import timedelta, timezone
+
+    from app.services.growth import schema_guard
+
+    user_id = await _require_admin(request, db)
+
+    ttl_expires_at = None
+    if body.ttl_minutes:
+        ttl_expires_at = datetime.now(timezone.utc) + timedelta(minutes=body.ttl_minutes)
+
+    ok = await schema_guard.set_setting(
+        db, body.key, body.value, scope=body.scope,
+        ttl_expires_at=ttl_expires_at, updated_by=user_id,
+    )
+
+    try:
+        from app.core.audit import audit_admin_action
+
+        await audit_admin_action(
+            actor_id=user_id, actor_role="super_admin",
+            action="growth.setting.set", target=f"{body.key}@{body.scope}",
+            detail={"value": body.value, "ttl_minutes": body.ttl_minutes, "ok": ok},
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+    return SettingResult(
+        key=body.key, scope=body.scope, ok=ok, ttl_expires_at=ttl_expires_at
+    )
+
+
+@router.post("/settings/{key}/rollback", response_model=SettingRollbackResult)
+async def rollback_growth_setting(
+    key: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    scope: str = Query(default="global"),
+) -> SettingRollbackResult:
+    """platform_settings 설정 즉시 삭제(롤백 = 원래값으로 즉시 원복) + 감사. 관리자 전용."""
+    from app.services.growth import schema_guard
+
+    user_id = await _require_admin(request, db)
+    rolled = await schema_guard.clear_setting(db, key, scope=scope)
+
+    try:
+        from app.core.audit import audit_admin_action
+
+        await audit_admin_action(
+            actor_id=user_id, actor_role="super_admin",
+            action="growth.setting.rollback", target=f"{key}@{scope}",
+            detail={"rolled_back": rolled},
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+    return SettingRollbackResult(key=key, scope=scope, rolled_back=rolled)
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# 자가학습 L3 — 데이터셋 다운로드 · few-shot 후보 승인 (Phase 5, 관리자, 설계 §6.4)
+# ════════════════════════════════════════════════════════════════════════════
+# GET  /learning/dataset      : (input_summary, good_output) 페어 JSONL 다운로드.
+#                               ★생성/다운로드까지만 — 파인튜닝 잡 트리거 절대 없음.
+# POST /learning/promote      : learning_example candidate → active (사람 승인) + 감사.
+#                               ★자동 활성 금지 — 이 경로(관리자 사람)로만 활성화.
+# 모두 super_admin(tier) 전용.
+
+_PROMOTE_STATUSES = {"active", "rejected"}
+
+
+@router.get("/learning/dataset", response_class=PlainTextResponse)
+async def learning_dataset(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    service: str | None = Query(default=None, description="service 필터(미지정=전체)"),
+    status: str = Query(default="active", description="active(기본) | candidate"),
+    limit: int = Query(default=5000, ge=1, le=20000),
+) -> PlainTextResponse:
+    """learning_examples (input_summary, good_output) 페어 JSONL 다운로드(관리자).
+
+    ★생성/다운로드까지만 — 파인튜닝 잡은 절대 트리거하지 않는다(사람이 수동 실행).
+    기본 status='active'(사람이 promote 한 것)만. candidate 도 옵션 지정 가능.
+    """
+    from app.services.growth import learning_loop
+
+    user_id = await _require_admin(request, db)
+    statuses = ("active",) if status != "candidate" else ("candidate",)
+    ds = await learning_loop.build_dataset_jsonl(
+        db, service=service, statuses=statuses, limit=limit
+    )
+
+    # 감사: 누가 어떤 학습셋을 다운로드했는지(데이터 반출 추적).
+    try:
+        from app.core.audit import audit_admin_action
+
+        await audit_admin_action(
+            actor_id=user_id, actor_role="super_admin",
+            action="growth.learn.dataset_download",
+            target=f"{service or 'all'}@{status}",
+            detail={"count": ds.get("count", 0), "statuses": ds.get("statuses")},
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+    fname = f"learning_dataset_{service or 'all'}_{status}.jsonl"
+    return PlainTextResponse(
+        content=ds.get("jsonl", ""),
+        media_type="application/x-ndjson",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"',
+                 "X-Dataset-Count": str(ds.get("count", 0))},
+    )
+
+
+class PromoteRequest(BaseModel):
+    """few-shot 후보 승인/거부 요청(프론트 계약)."""
+
+    example_id: str = Field(..., description="learning_examples.id")
+    status: str = Field(default="active", description="active(승인) | rejected(거부)")
+
+
+class PromoteResult(BaseModel):
+    example_id: str
+    status: str
+
+
+@router.post("/learning/promote", response_model=PromoteResult)
+async def promote_learning_example(
+    body: PromoteRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> PromoteResult:
+    """learning_example 후보를 사람 승인으로 active(또는 rejected) 전환 + 감사.
+
+    ★few-shot 활성화는 이 경로(관리자 사람)로만 — 자동 활성 절대 금지.
+    candidate 상태만 전이 허용(이미 처리된 건 재전이 금지).
+    """
+    from sqlalchemy import text
+
+    user_id = await _require_admin(request, db)
+    if body.status not in _PROMOTE_STATUSES:
+        raise HTTPException(
+            status_code=400, detail="status 는 active 또는 rejected 여야 합니다."
+        )
+
+    row = (await db.execute(text(
+        "UPDATE learning_examples SET status = :st "
+        "WHERE id = :id AND status = 'candidate' "
+        "RETURNING id, status"
+    ), {"st": body.status, "id": body.example_id})).fetchone()
+    if row is None:
+        await db.rollback()
+        exists = (await db.execute(text(
+            "SELECT status FROM learning_examples WHERE id = :id"
+        ), {"id": body.example_id})).fetchone()
+        if exists is None:
+            raise HTTPException(status_code=404, detail="학습 예시를 찾을 수 없습니다.")
+        raise HTTPException(
+            status_code=409,
+            detail=f"이미 처리된 예시입니다(현재 상태: {exists[0]}).",
+        )
+    await db.commit()
+
+    try:
+        from app.core.audit import audit_admin_action
+
+        await audit_admin_action(
+            actor_id=user_id, actor_role="super_admin",
+            action=f"growth.learn.promote.{body.status}", target=body.example_id,
+            detail={"status": body.status},
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+    return PromoteResult(example_id=str(row[0]), status=str(row[1]))
