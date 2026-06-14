@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import text
@@ -74,8 +74,14 @@ def _hash(prev_hash: str | None, unit_id: str, seq: int, event_type: str,
 
 async def append_event(db: AsyncSession, site_id, unit_id, event_type: str,
                        from_status: str | None = None, to_status: str | None = None,
-                       message: str | None = None, by=None, meta: dict | None = None) -> dict[str, Any]:
-    """세대 이벤트를 원장에 append(해시체인). 같은 세대의 직전 이벤트 해시를 prev_hash로 잇는다."""
+                       message: str | None = None, by=None, meta: dict | None = None,
+                       do_commit: bool = True) -> dict[str, Any]:
+    """세대 이벤트를 원장에 append(해시체인). 같은 세대의 직전 이벤트 해시를 prev_hash로 잇는다.
+
+    do_commit=False 이면 INSERT만 하고 커밋하지 않는다 — 호출부(상태전이·추첨)가 세대 UPDATE와
+    이벤트 기록을 '한 트랜잭션'으로 묶어 한 번에 커밋하기 위함(상태는 안 바뀌었는데 원장엔 전이
+    기록이 남는 원자성 붕괴를 막는다). do_commit=True(기본)는 단독 호출 시의 기존 동작 유지.
+    """
     await _ensure(db)
     uid = str(unit_id)
     last = (await db.execute(text(
@@ -83,7 +89,7 @@ async def append_event(db: AsyncSession, site_id, unit_id, event_type: str,
         {"u": uid})).first()
     seq = (int(last[0]) + 1) if last else 1
     prev_hash = last[1] if last else None
-    occurred_dt = datetime.now(timezone.utc)          # timestamptz 컬럼용 datetime(asyncpg 네이티브)
+    occurred_dt = datetime.now(UTC)          # timestamptz 컬럼용 datetime(asyncpg 네이티브)
     occurred_at = occurred_dt.isoformat()              # 해시·occurred_iso 용 정확한 문자열
     chash = _hash(prev_hash, uid, seq, event_type, to_status, message, occurred_at, meta)
     await db.execute(text(
@@ -93,7 +99,8 @@ async def append_event(db: AsyncSession, site_id, unit_id, event_type: str,
         {"s": str(site_id), "u": uid, "seq": seq, "et": event_type, "fs": from_status, "ts": to_status,
          "msg": message, "meta": json.dumps(meta, ensure_ascii=False) if meta else None,
          "by": str(by) if by else None, "dt": occurred_dt, "iso": occurred_at, "ch": chash, "ph": prev_hash})
-    await db.commit()
+    if do_commit:
+        await db.commit()
     return {"seq": seq, "content_hash": chash, "prev_hash": prev_hash, "occurred_at": occurred_at}
 
 

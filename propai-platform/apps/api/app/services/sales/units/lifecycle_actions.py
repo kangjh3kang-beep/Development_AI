@@ -43,7 +43,8 @@ async def unit_action(db: AsyncSession, site_id, unit_id, action: str,
         if not (message or "").strip():
             raise ValueError("특이사항 내용을 입력하세요")
         ev = await append_event(db, site_id, unit_id, "NOTE", from_status=cur, to_status=cur,
-                                message=message, by=by)
+                                message=message, by=by, do_commit=False)
+        await db.commit()  # 원장 INSERT를 호출부에서 한 번만 커밋(append_event 자체 커밋 제거).
         return {"ok": True, "action": "NOTE", "status": cur, "event": ev}
 
     if act not in _TRANSITIONS:
@@ -60,13 +61,19 @@ async def unit_action(db: AsyncSession, site_id, unit_id, action: str,
         raise ValueError("상태가 방금 변경되었습니다. 새로고침 후 다시 시도하세요(동시성).")
 
     # 상태전이 로그(기존 SalesUnitStatusLog 보존) + 이벤트 원장(해시체인).
+    # ★원자성: 위 status UPDATE(미커밋) → status_log → event → commit 을 '전부 성공 또는 전부 롤백'으로 묶는다.
+    #   status_log INSERT 실패(컬럼차이 등)는 savepoint 로만 격리해 되돌리고, 전이 UPDATE·이벤트는 유지한다.
+    #   (과거엔 status_log 실패 시 db.rollback() 으로 전이 UPDATE까지 날린 뒤 append_event 가 자체 commit →
+    #    '상태는 안 바뀌었는데 원장엔 거짓 전이' 가 남는 붕괴가 있었음.)
     try:
-        await db.execute(text(
-            "INSERT INTO sales_unit_status_log (site_id, unit_id, from_status, to_status, by) "
-            "VALUES (:s,:u,:fs,:ts,:by)"),
-            {"s": str(site_id), "u": str(unit_id), "fs": cur, "ts": to_status, "by": str(by) if by else None})
-    except Exception:  # noqa: BLE001 — 상태로그 컬럼차이 등은 원장이 정본이므로 무시
-        await db.rollback()
+        async with db.begin_nested():  # savepoint — 이 INSERT만 실패 시 롤백, 본 트랜잭션은 유지.
+            await db.execute(text(
+                "INSERT INTO sales_unit_status_log (site_id, unit_id, from_status, to_status, by) "
+                "VALUES (:s,:u,:fs,:ts,:by)"),
+                {"s": str(site_id), "u": str(unit_id), "fs": cur, "ts": to_status, "by": str(by) if by else None})
+    except Exception:  # noqa: BLE001 — 상태로그 컬럼차이 등은 원장이 정본이므로 무시(savepoint 롤백됨)
+        pass
     ev = await append_event(db, site_id, unit_id, act, from_status=cur, to_status=to_status,
-                            message=message, by=by)
+                            message=message, by=by, do_commit=False)
+    await db.commit()  # 전이 UPDATE + status_log + 이벤트 원장을 한 번에 커밋(원자성).
     return {"ok": True, "action": act, "from": cur, "status": to_status, "event": ev}

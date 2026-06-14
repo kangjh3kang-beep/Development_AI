@@ -203,31 +203,46 @@ async def draw_for_candidate(db: AsyncSession, site_id, group_id, candidate_id, 
         raise ValueError("추첨 대상자를 찾을 수 없습니다")
     if cand[2]:
         raise ValueError("이미 추첨이 완료된 대상자입니다")
-    remaining = await _remaining_units(db, site_id, group_id)
-    if not remaining:
-        raise ValueError("남은 가용 세대가 없습니다(추첨 종료)")
+    # ★HOLD 선점은 'RETURNING id' 로 원자 확정한다(이중배정 방지). 동시 추첨/지정 경합으로 방금 선점된
+    #   세대(0행)면 그 세대를 빼고 남은 가용 세대를 재조회해 재추첨한다. 모든 후보가 소진되면 명확한 에러.
+    # 공정 추첨: 매 시도마다 secrets seed → 결정적 선택(재현·검증 가능). sorted 로 입력 순서 영향 제거.
+    chosen: str | None = None
+    seed = ""
+    pool_sorted: list[str] = []
+    pool_hash = ""
+    excluded: set[str] = set()  # 이번 호출에서 선점 실패해 제외한 세대(재조회 후에도 중복 시도 방지).
+    while True:
+        remaining = [u for u in await _remaining_units(db, site_id, group_id) if u not in excluded]
+        if not remaining:
+            raise ValueError("남은 가용 세대가 없습니다(추첨 종료)")
+        seed = secrets.token_hex(8)
+        pool_sorted = sorted(remaining)
+        candidate_unit = random.Random(seed).choice(pool_sorted)
+        pool_hash = hashlib.sha256(",".join(pool_sorted).encode()).hexdigest()[:16]
+        # HOLD 선점(원자 조건부 UPDATE) — 0행이면 이미 다른 곳에서 선점됨 → 재추첨.
+        won = (await db.execute(text(
+            "UPDATE sales_unit_inventory SET status='HOLD' WHERE id=:u AND status='AVAILABLE' RETURNING id"),
+            {"u": candidate_unit})).first()
+        if won:
+            chosen = candidate_unit
+            break
+        excluded.add(candidate_unit)  # 방금 선점된 세대 — 제외하고 재추첨.
 
-    # 공정 추첨: secrets seed → 결정적 선택(재현·검증 가능). sorted 로 입력 순서 영향 제거.
-    seed = secrets.token_hex(8)
-    pool_sorted = sorted(remaining)
-    chosen = random.Random(seed).choice(pool_sorted)
-    pool_hash = hashlib.sha256(",".join(pool_sorted).encode()).hexdigest()[:16]
-
-    # 세대 정보(공개용) + 상태 전이(HOLD = 추첨배정 선점).
+    # 세대 정보(공개용)는 HOLD 확정 후 조회. DRAW_ASSIGN 이벤트도 확정 성공분만 기록한다.
     u = (await db.execute(text(
         "SELECT dong, ho FROM sales_unit_inventory WHERE id=:u"), {"u": chosen})).first()
     await db.execute(text(
-        "UPDATE sales_unit_inventory SET status='HOLD' WHERE id=:u AND status='AVAILABLE'"), {"u": chosen})
-    await db.execute(text(
         "UPDATE sales_draw_candidates SET assigned_unit_id=:u, draw_seed=:seed, drawn_at=now() WHERE id=:c"),
         {"u": chosen, "seed": seed, "c": str(candidate_id)})
-    await db.commit()
 
     # 감사: 이벤트 원장에 추첨 배정 기록(seed·group·candidate·pool_hash → 사후 검증).
+    # HOLD UPDATE + candidate UPDATE + 이벤트 원장을 한 트랜잭션으로 묶어 한 번에 커밋(원자성).
     ev = await append_event(db, site_id, chosen, "DRAW_ASSIGN", from_status="AVAILABLE", to_status="HOLD",
                             message=f"추첨 배정: {cand[1]}(순번 {cand[0]})", by=by,
                             meta={"group_id": str(group_id), "candidate_id": str(candidate_id),
-                                  "seed": seed, "pool_hash": pool_hash, "pool_size": len(pool_sorted)})
+                                  "seed": seed, "pool_hash": pool_hash, "pool_size": len(pool_sorted)},
+                            do_commit=False)
+    await db.commit()
     return {
         "ok": True, "candidate": {"seq": int(cand[0]), "name": cand[1]},
         "assigned_unit": {"id": chosen, "dong": u[0] if u else None, "ho": u[1] if u else None},
