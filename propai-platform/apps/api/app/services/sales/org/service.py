@@ -30,9 +30,6 @@ async def assign_user_to_node(db: AsyncSession, site_id, node_id, email: str) ->
 
     배정하면 그 사용자가 로그인 시 본인 노드의 실적(계약·고객·업무일지)을 본다. 교차테넌트
     배정은 차단(같은 organization 사용자만)하고, 배정 이력을 남긴다(감사)."""
-    from sqlalchemy import func
-
-    from app.models.auth import User
     node = (await db.execute(select(SalesOrgNode).where(
         SalesOrgNode.id == node_id, SalesOrgNode.site_id == site_id,
         SalesOrgNode.deleted_at.is_(None)))).scalar_one_or_none()
@@ -41,21 +38,24 @@ async def assign_user_to_node(db: AsyncSession, site_id, node_id, email: str) ->
     em = (email or "").strip()
     if not em:
         raise ValueError("배정할 사용자의 이메일을 입력하세요")
-    u = (await db.execute(select(User).where(func.lower(User.email) == em.lower()))).scalar_one_or_none()
+    # ★public.users 실컬럼은 id·tenant_id·email·name (ORM User 모델은 organization_id/full_name 으로
+    #   stale → select(User) 가 UndefinedColumnError). 인증도 raw SQL을 쓰므로 동일하게 raw SQL로 조회한다.
+    u = (await db.execute(text(
+        "SELECT id, name, tenant_id FROM users WHERE lower(email)=lower(:em)"), {"em": em})).first()
     if u is None:
         raise ValueError(f"'{em}' 사용자를 찾을 수 없습니다(플랫폼 가입 이메일을 확인하세요)")
-    # 같은 조직(테넌트)인지 확인 — site.organization_id == user.organization_id (교차테넌트 차단).
+    # 같은 조직(테넌트)인지 확인 — site.organization_id == users.tenant_id (교차테넌트 차단).
     org_id = (await db.execute(text("SELECT organization_id FROM sales_sites WHERE id=:s"),
                                {"s": str(site_id)})).scalar()
-    if org_id and getattr(u, "organization_id", None) and str(u.organization_id) != str(org_id):
+    if org_id and u[2] and str(u[2]) != str(org_id):
         raise ValueError("같은 조직(테넌트)에 속한 사용자만 배정할 수 있습니다")
-    node.user_id = u.id
+    node.user_id = u[0]
     if not node.display_name:
-        node.display_name = u.full_name
-    db.add(SalesOrgMembershipHistory(node_id=node.id, action="ASSIGN", to_path=node.path, by=u.id))
+        node.display_name = u[1]
+    db.add(SalesOrgMembershipHistory(node_id=node.id, action="ASSIGN", to_path=node.path, by=u[0]))
     await db.flush()
-    return {"ok": True, "node_id": str(node.id), "user_id": str(u.id),
-            "name": node.display_name, "email": u.email}
+    return {"ok": True, "node_id": str(node.id), "user_id": str(u[0]),
+            "name": node.display_name, "email": em}
 
 
 async def unassign_user(db: AsyncSession, site_id, node_id, by=None) -> dict:
