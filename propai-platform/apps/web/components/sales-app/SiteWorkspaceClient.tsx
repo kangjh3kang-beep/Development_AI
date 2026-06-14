@@ -277,6 +277,20 @@ export default function SiteWorkspaceClient({ locale, siteId }: { locale: Locale
             }}
           />
 
+          {/* 공통 메뉴 헤더 — 활성 메뉴의 제목·목적 1줄(전 메뉴 일관 직관력). */}
+          {(() => {
+            const at = tabs.find((t) => t.key === tab);
+            return at ? (
+              <div className="rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-2.5">
+                <div className="flex items-center gap-2">
+                  {at.icon && <span aria-hidden className="text-base">{at.icon}</span>}
+                  <h2 className="text-sm font-black text-[var(--text-primary)]">{at.label}</h2>
+                </div>
+                {at.desc && <p className="mt-0.5 text-[11px] leading-relaxed text-[var(--text-tertiary)]">{at.desc}</p>}
+              </div>
+            ) : null;
+          })()}
+
           {/* 탭 ↔ 기존 패널 연결. siteCode 자리에 현장 UUID(siteId) 전달. */}
           {tab === "units" && (
             <div className="space-y-4">
