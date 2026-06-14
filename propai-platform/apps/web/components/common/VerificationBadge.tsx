@@ -10,6 +10,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiClient } from "@/lib/api-client";
+import { FeedbackWidget } from "@/components/growth/FeedbackWidget";
 
 function hashStr(s: string): string {
   let h = 0;
@@ -66,6 +67,12 @@ export function VerificationBadge({
     try { return `propai_verify_${analysisType}_${hashStr(JSON.stringify(context || {}))}`; }
     catch { return ""; }
   }, [analysisType, context]);
+
+  // 피드백 위젯 조인키 — context 해시(analysis_ledger.content_hash 와 동일 산식은 아니나 분석본 식별에 충분).
+  const contentHash = useMemo(() => {
+    try { return context ? hashStr(JSON.stringify(context)) : undefined; }
+    catch { return undefined; }
+  }, [context]);
 
   const run = useCallback(async () => {
     if (!context) return;
@@ -151,6 +158,15 @@ export function VerificationBadge({
           {!result.generated && <p className="text-[10px] text-[var(--text-hint)]">규칙기반 사전검사 + 결정론 재계산 적용됨</p>}
         </div>
       )}
+
+      {/* 자가성장 피드백 위젯 — 분석 출력에 대한 👍/👎·교정 수집(익명 허용·실패 무시) */}
+      <div className="mt-2 border-t border-[var(--line)] pt-2">
+        <FeedbackWidget
+          targetType="analysis"
+          analysisType={analysisType}
+          contentHash={contentHash}
+        />
+      </div>
     </div>
   );
 }

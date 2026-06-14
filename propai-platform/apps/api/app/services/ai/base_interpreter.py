@@ -64,6 +64,15 @@ GROUNDING_RULE = """\
 # v2: 분양가 벤치마크 날조·평↔㎡ 환산오류·근거없는 비율 단정 금지 강화(2026-06-10).
 _PROMPT_VERSION = "v2"
 
+# ── 자가성장 L1 A/B 프롬프트 버전 후보군(Phase 4, 설계서 §6.2) ──
+# service명 → 허용 버전 목록. 자가수정(L1)이 platform_settings('prompt.<service>')에
+# 채택 버전을 기록하면, _resolve_prompt_version 이 **이 후보군 내에서만** 그 버전을
+# 선택한다(임의 버전 생성 금지 = 안전장치). 후보가 없거나 채택값이 후보 밖이면 기본
+# (_PROMPT_VERSION)으로 폴백. 기존 동작 불변(후보군 비면 항상 기본).
+_PROMPT_AB_CANDIDATES: dict[str, list[str]] = {
+    # 예: "market": ["v2", "v3"]. 비어 있으면 모든 인터프리터가 기본 _PROMPT_VERSION 사용.
+}
+
 
 # ── P4: 캐시(in-process TTL + 선택적 Redis) ──
 class _TTLCache:
@@ -271,12 +280,53 @@ class BaseInterpreter:
             pass
         return None
 
+    # ── 자가성장 L1: A/B 프롬프트 버전 해석(additive·best-effort) ──
+    def _resolve_prompt_version(self) -> str:
+        """이 인터프리터에 적용할 프롬프트 버전을 반환한다.
+
+        자가수정(L1)이 platform_settings('prompt.<name>')에 채택 버전을 기록했고,
+        그 값이 **사전등록 후보군(_PROMPT_AB_CANDIDATES[self.name]) 내**이면 그 버전을,
+        아니면 기본(_PROMPT_VERSION)을 쓴다. 임의 버전 생성 금지(후보군 화이트리스트).
+
+        완전 격리: import 순환·DB 미가용·키 부재 등 어떤 예외도 기본 버전으로 폴백한다.
+        후보군이 비어 있으면(현 기본 상태) 즉시 기본 반환 → 기존 동작 완전 불변.
+        """
+        candidates = _PROMPT_AB_CANDIDATES.get(self.name)
+        if not candidates:
+            return _PROMPT_VERSION
+        try:
+            # best-effort 동기 조회(짧은 자체 이벤트루프). 캐시키 산출 경로라 가벼워야 함.
+            import asyncio
+
+            async def _read() -> str | None:
+                from apps.api.database.session import AsyncSessionLocal
+                from app.services.growth import schema_guard
+
+                async with AsyncSessionLocal() as db:
+                    val = await schema_guard.get_setting(db, f"prompt.{self.name}")
+                if isinstance(val, dict):
+                    return val.get("version")
+                return None
+
+            try:
+                chosen = asyncio.run(_read())
+            except RuntimeError:
+                # 이미 루프가 도는 컨텍스트면 별도 호출 회피(기본 버전 폴백 — 안전).
+                return _PROMPT_VERSION
+            if chosen and chosen in candidates:
+                return chosen
+        except Exception:  # noqa: BLE001 — 어떤 실패도 기본 버전으로 폴백.
+            pass
+        return _PROMPT_VERSION
+
     # ── P4: 캐시 키 ──
     def _cache_key(self, cache_data: Any) -> str:
         payload = json.dumps(cache_data, ensure_ascii=False, sort_keys=True, default=str)
         digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]
-        # _PROMPT_VERSION 포함 → 프롬프트/그라운딩 규칙이 바뀌면 기존 캐시 무효화(새 규칙 즉시 적용).
-        return f"{self.name}:{_PROMPT_VERSION}:{self.max_tokens}:{digest}"
+        # 프롬프트 버전 포함 → 프롬프트/그라운딩 규칙·A/B 채택 버전이 바뀌면 기존 캐시
+        # 무효화(새 규칙 즉시 적용). A/B 후보군이 비면 항상 _PROMPT_VERSION(기존 동작).
+        version = self._resolve_prompt_version()
+        return f"{self.name}:{version}:{self.max_tokens}:{digest}"
 
     # ── P2+P3+P4: 통합 호출 진입점 ──
     async def _invoke(
@@ -448,6 +498,8 @@ class BaseInterpreter:
                         "cache_hit": cache_hit_ratio,
                         "cache_read": cache_read,
                         "retry": bool(self._retry_feedback),
+                        # 자가성장 L1 A/B 집계용 — 이번 호출의 프롬프트 버전(기본 v2).
+                        "prompt_version": self._resolve_prompt_version(),
                     },
                 },
             )
