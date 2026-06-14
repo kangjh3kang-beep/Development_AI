@@ -100,6 +100,11 @@ export function isDesignKind(docKind: string): boolean {
   return docKind === "design";
 }
 
+/** 업로드 용도 라벨 — analysis(분석용·8엔진)/storage(저장·공유용). 미지값은 저장·공유용. */
+export function purposeLabel(purpose: string): string {
+  return purpose === "analysis" ? "분석용 (8엔진)" : "저장·공유용";
+}
+
 /** 8엔진 audit 상태 → 배지. design 파일에만 의미. document는 'unsupported'(자동검증 아님). */
 export function auditStatusBadge(
   status: string | null | undefined,

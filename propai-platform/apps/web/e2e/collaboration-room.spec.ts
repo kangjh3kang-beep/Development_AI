@@ -27,6 +27,7 @@ const DOC = {
   content_type: "application/octet-stream",
   size_bytes: 20480,
   category: "architecture",
+  purpose: "analysis",
   doc_kind: "design",
   audit_status: "completed",
   audit_summary: { verdict: "조건부적합", findings_count: 3, engines_run: 5, engines_skipped: 3 },

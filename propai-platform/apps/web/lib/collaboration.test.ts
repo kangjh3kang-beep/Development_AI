@@ -7,6 +7,7 @@ import {
   toggleCategory,
   memberStatusBadge,
   isDesignKind,
+  purposeLabel,
   auditStatusBadge,
   reviewStateBadge,
   nextReviewState,
@@ -74,6 +75,14 @@ describe("isDesignKind", () => {
   it("design만 8엔진 대상", () => {
     expect(isDesignKind("design")).toBe(true);
     expect(isDesignKind("document")).toBe(false);
+  });
+});
+
+describe("purposeLabel", () => {
+  it("용도 라벨", () => {
+    expect(purposeLabel("analysis")).toBe("분석용 (8엔진)");
+    expect(purposeLabel("storage")).toBe("저장·공유용");
+    expect(purposeLabel("weird")).toBe("저장·공유용"); // 미지→저장·공유용
   });
 });
 

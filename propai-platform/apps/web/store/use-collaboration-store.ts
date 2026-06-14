@@ -40,6 +40,7 @@ export interface CollabDocument {
   content_type?: string | null;
   size_bytes?: number | null;
   category?: string | null;
+  purpose: string; // analysis(8엔진) / storage(공유·저장)
   doc_kind: string; // design(DXF/IFC, 8엔진 대상) / document(표기용)
   audit_status?: string | null; // pending/completed/skipped/unsupported/failed
   audit_summary?: Record<string, unknown> | null;
@@ -67,6 +68,7 @@ interface CollaborationState {
     projectId: string,
     file: File,
     category?: string,
+    purpose?: string,
   ) => Promise<CollabDocument | null>;
   deleteDocument: (projectId: string, docId: string) => Promise<void>;
   setDocReviewState: (
@@ -182,7 +184,7 @@ export const useCollaborationStore = create<CollaborationState>()(
       }
     },
 
-    async uploadDocument(projectId, file, category) {
+    async uploadDocument(projectId, file, category, purpose) {
       set((s) => {
         s.docLoading = true;
         s.docError = null;
@@ -191,6 +193,7 @@ export const useCollaborationStore = create<CollaborationState>()(
         const fd = new FormData();
         fd.append("file", file);
         if (category) fd.append("category", category);
+        if (purpose) fd.append("purpose", purpose);
         const res = await apiClient.postV2<CollabDocument>(
           `/collaboration/projects/${projectId}/documents`,
           { body: fd },

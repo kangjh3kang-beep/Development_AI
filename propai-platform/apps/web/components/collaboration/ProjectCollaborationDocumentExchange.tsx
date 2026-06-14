@@ -14,6 +14,7 @@ import {
   REVIEW_CATEGORIES,
   categoryLabel,
   isDesignKind,
+  purposeLabel,
   auditStatusBadge,
   reviewStateBadge,
   nextReviewState,
@@ -59,6 +60,7 @@ export function ProjectCollaborationDocumentExchange({ projectId }: { projectId:
     useCollaborationStore();
 
   const [category, setCategory] = useState("");
+  const [purpose, setPurpose] = useState<"storage" | "analysis">("storage");
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -68,7 +70,7 @@ export function ProjectCollaborationDocumentExchange({ projectId }: { projectId:
   const submit = async () => {
     const f = fileRef.current?.files?.[0];
     if (!f) return;
-    await uploadDocument(projectId, f, category || undefined);
+    await uploadDocument(projectId, f, category || undefined, purpose);
     if (fileRef.current) fileRef.current.value = "";
     setCategory("");
   };
@@ -85,7 +87,25 @@ export function ProjectCollaborationDocumentExchange({ projectId }: { projectId:
       </p>
 
       {/* 업로드 */}
-      <div data-testid="collab-doc-upload" className="mb-4 flex flex-wrap items-center gap-2">
+      <div data-testid="collab-doc-upload" className="mb-2 flex flex-wrap items-center gap-2">
+        {/* 용도: 분석용(8엔진·DXF/IFC만) vs 저장·공유용(무제한) */}
+        <div className="inline-flex overflow-hidden rounded-lg border border-[var(--line)] text-[11px] font-bold">
+          {(["storage", "analysis"] as const).map((p) => (
+            <button
+              key={p}
+              type="button"
+              data-testid={`collab-doc-purpose-${p}`}
+              onClick={() => setPurpose(p)}
+              className={`px-3 py-1.5 ${
+                purpose === p
+                  ? "bg-[var(--accent-strong)] text-white"
+                  : "bg-[var(--surface)] text-[var(--text-secondary)]"
+              }`}
+            >
+              {p === "storage" ? "저장·공유용" : "분석용(8엔진)"}
+            </button>
+          ))}
+        </div>
         <input
           ref={fileRef}
           data-testid="collab-doc-file"
@@ -114,6 +134,11 @@ export function ProjectCollaborationDocumentExchange({ projectId }: { projectId:
           {docLoading ? "업로드 중…" : "업로드"}
         </button>
       </div>
+      {purpose === "analysis" && (
+        <p className="mb-4 text-[11px] text-[var(--text-hint)]">
+          ※ 분석용은 DXF/IFC 설계파일만 업로드되어 8엔진 자동검증을 실행합니다(그 외 형식은 거부).
+        </p>
+      )}
 
       {/* 목록 */}
       {documents.length === 0 ? (
@@ -140,6 +165,7 @@ export function ProjectCollaborationDocumentExchange({ projectId }: { projectId:
                       {formatBytes(d.size_bytes)}
                       {d.category ? ` · ${categoryLabel(d.category)}` : ""}
                       {` · ${isDesignKind(d.doc_kind) ? "설계파일" : "문서"}`}
+                      {` · ${purposeLabel(d.purpose)}`}
                     </p>
                   </div>
                   <div className="flex shrink-0 items-center gap-2">
