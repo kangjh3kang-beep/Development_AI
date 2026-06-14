@@ -104,6 +104,52 @@ async def accounting_summary(db: AsyncSession = Depends(get_db),
             "commission": d["commission"], "profit_estimate": d["profit_estimate"], "note": d["note"]}
 
 
+# ── 급여관리(근태×단가 자동산정) + 광고 ROI ──────────────────────────────────
+@actions_router.post("/staff/wage")
+async def staff_wage_set(body: dict, db: AsyncSession = Depends(get_db),
+                         ctx: SalesCtx = Depends(require_role(
+                             "TEAM_LEADER", "GM_DIRECTOR", "SUBAGENCY", "AGENCY", "DEVELOPER", "SUPERADMIN"))):
+    """직원 단가 설정(일급/시급/월급) — 급여 자동산정 기준."""
+    from fastapi import HTTPException
+    from app.services.sales.admin.console import set_staff_wage
+    try:
+        return await set_staff_wage(db, ctx.site_id, body["staff_id"],
+                                    body.get("wage_type", "DAILY"), int(body.get("base_wage", 0)))
+    except (ValueError, KeyError) as e:
+        raise HTTPException(400, f"입력 오류: {e}")
+
+
+@actions_router.get("/payroll")
+async def payroll_compute(ym: str, db: AsyncSession = Depends(get_db),
+                          ctx: SalesCtx = Depends(require_role(
+                              "TEAM_LEADER", "GM_DIRECTOR", "SUBAGENCY", "AGENCY", "DEVELOPER", "SUPERADMIN"))):
+    """직원별 급여 자동산정(근태×단가). ym=YYYY-MM."""
+    from app.services.sales.admin.console import compute_payroll
+    return await compute_payroll(db, ctx.site_id, ym)
+
+
+@actions_router.post("/payroll/post")
+async def payroll_post(body: dict, db: AsyncSession = Depends(get_db),
+                       ctx: SalesCtx = Depends(require_role(
+                           "GM_DIRECTOR", "SUBAGENCY", "AGENCY", "DEVELOPER", "SUPERADMIN"))):
+    """산정 급여 총액을 회계 인건비(LABOR)로 자동전기(월 중복 방지). body.ym=YYYY-MM."""
+    from fastapi import HTTPException
+    from app.services.sales.admin.console import post_payroll_to_accounting
+    ym = body.get("ym")
+    if not ym:
+        raise HTTPException(400, "ym(YYYY-MM) 필요")
+    return await post_payroll_to_accounting(db, ctx.site_id, ym, getattr(ctx.user, "id", None))
+
+
+@actions_router.get("/ad/roi")
+async def ad_roi_view(db: AsyncSession = Depends(get_db),
+                      ctx: SalesCtx = Depends(require_role(
+                          "TEAM_LEADER", "GM_DIRECTOR", "SUBAGENCY", "AGENCY", "DEVELOPER", "SUPERADMIN"))):
+    """광고 집행비 대비 집객·계약 효율(단가)."""
+    from app.services.sales.admin.console import ad_roi
+    return await ad_roi(db, ctx.site_id)
+
+
 @actions_router.get("/contracts")
 async def list_contracts(db: AsyncSession = Depends(get_db),
                          ctx: SalesCtx = Depends(sales_ctx)):

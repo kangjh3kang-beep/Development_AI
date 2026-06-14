@@ -239,6 +239,100 @@ function SiteManagePanel({ siteId, onSaved }: { siteId: string; onSaved: () => v
           <button onClick={save} disabled={busy} className="rounded-lg bg-[var(--accent-strong)] px-4 py-2 text-sm font-black text-white disabled:opacity-50">＋ 회계등록</button>
         </div>
       </div>
+      {/* 급여(근태×단가) + 광고 ROI */}
+      <PayrollAdSection siteId={siteId} onPosted={() => { load(); onSaved(); }} />
+    </div>
+  );
+}
+
+/** 급여 자동산정(근태×단가) + 회계 인건비 전기 + 광고 ROI. */
+function PayrollAdSection({ siteId, onPosted }: { siteId: string; onPosted: () => void }) {
+  const api = useMemo(() => salesApi(siteId), [siteId]);
+  const thisMonth = new Date().toISOString().slice(0, 7);
+  type PayStaff = { staff_id: string; name: string; position?: string | null; days: number; hours: number; wage_type: string; wage_label: string; base_wage: number; amount: number; wage_set: boolean };
+  type Payroll = { year_month: string; staff: PayStaff[]; headcount: number; total_payroll: number; note: string };
+  type Roi = { budget: number; spend: number; leads: number; visitors: number; contracts: number; cost_per_lead: number; cost_per_visitor: number; cost_per_contract: number; note: string };
+  const [ym, setYm] = useState(thisMonth);
+  const [pay, setPay] = useState<Payroll | null>(null);
+  const [roi, setRoi] = useState<Roi | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const loadPay = useCallback((m: string) => { api.get<Payroll>(`/payroll?ym=${m}`).then(setPay).catch(() => setPay(null)); }, [api]);
+  useEffect(() => { loadPay(ym); api.get<Roi>("/ad/roi").then(setRoi).catch(() => setRoi(null)); }, [loadPay, ym, api]);
+
+  const setWage = async (staffId: string, wageType: string, baseWage: number) => {
+    try { await api.post("/staff/wage", { staff_id: staffId, wage_type: wageType, base_wage: baseWage }); loadPay(ym); }
+    catch { alert("단가 저장 실패(권한 확인)."); }
+  };
+  const post = async () => {
+    if (!pay || pay.total_payroll <= 0) { alert("산정 급여가 0원입니다(단가·근태 확인)."); return; }
+    if (!confirm(`${ym} 급여 ${won(pay.total_payroll)}을 회계 인건비로 전기할까요?`)) return;
+    setBusy(true);
+    try {
+      const r = await api.post<{ ok: boolean; reason?: string }>("/payroll/post", { ym });
+      if (r?.ok) { alert("회계 인건비로 전기되었습니다."); onPosted(); } else alert(r?.reason || "전기 실패");
+    } catch { alert("전기 실패(권한 확인)."); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <div className="grid gap-3 lg:grid-cols-2">
+      {/* 급여 */}
+      <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-3">
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <span className="cc-label text-[0.6rem] text-[var(--text-tertiary)]">급여(근태×단가) {pay ? `· 합계 ${won(pay.total_payroll)}` : ""}</span>
+          <div className="flex items-center gap-1">
+            <input type="month" value={ym} onChange={(e) => setYm(e.target.value)} className={`${fcls} px-1 py-0.5 text-xs`} />
+            <button onClick={post} disabled={busy || !pay || pay.total_payroll <= 0} className="rounded-lg border border-[var(--accent-strong)] px-2 py-1 text-[11px] font-bold text-[var(--accent-strong)] disabled:opacity-40">인건비 전기</button>
+          </div>
+        </div>
+        {!pay || pay.staff.length === 0 ? (
+          <p className="text-[11px] text-[var(--text-hint)]">직원/근태 데이터가 없습니다. 직원 등록·출퇴근 기록 후 산정됩니다.</p>
+        ) : (
+          <div className="max-h-44 overflow-auto">
+            <table className="w-full text-[11px]">
+              <thead><tr className="text-[var(--text-hint)]"><th className="text-left font-medium">직원</th><th className="text-right font-medium">출근</th><th className="text-right font-medium">시간</th><th className="text-left font-medium">단가</th><th className="text-right font-medium">급여</th></tr></thead>
+              <tbody>
+                {pay.staff.slice(0, 30).map((p) => (
+                  <tr key={p.staff_id} className="border-t border-[var(--line)]/50">
+                    <td className="py-0.5 text-[var(--text-secondary)]">{p.name}{!p.wage_set && <span className="ml-1 text-[9px] text-[var(--warning)]">단가미설정</span>}</td>
+                    <td className="text-right text-[var(--text-primary)]">{p.days}일</td>
+                    <td className="text-right text-[var(--text-tertiary)]">{p.hours}h</td>
+                    <td>
+                      <div className="flex items-center gap-1">
+                        <select defaultValue={p.wage_type} onChange={(e) => setWage(p.staff_id, e.target.value, p.base_wage)} className="rounded border border-[var(--line)] bg-[var(--surface-strong)] px-1 py-0.5 text-[10px]">
+                          <option value="DAILY">일급</option><option value="HOURLY">시급</option><option value="MONTHLY">월급</option>
+                        </select>
+                        <input defaultValue={p.base_wage || ""} placeholder="단가" onBlur={(e) => { const v = Math.round(Number(e.target.value.replace(/[^0-9]/g, ""))); if (v !== p.base_wage) void setWage(p.staff_id, p.wage_type, v); }} className="w-16 rounded border border-[var(--line)] bg-[var(--surface-strong)] px-1 py-0.5 text-[10px]" inputMode="numeric" />
+                      </div>
+                    </td>
+                    <td className="text-right font-bold text-[var(--text-primary)]">{won(p.amount)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+      {/* 광고 ROI */}
+      <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-3">
+        <div className="mb-2"><span className="cc-label text-[0.6rem] text-[var(--text-tertiary)]">광고 ROI(집행비 대비 효율)</span></div>
+        {!roi ? <p className="text-[11px] text-[var(--text-hint)]">광고 데이터가 없습니다.</p> : (
+          <div className="space-y-2">
+            <div className="grid grid-cols-3 gap-2 text-center">
+              <div className="rounded-lg bg-[var(--surface)] px-2 py-1.5"><p className="cc-label text-[0.5rem] text-[var(--text-tertiary)]">예산</p><p className="cc-num text-xs font-bold text-[var(--text-primary)]">{won(roi.budget)}</p></div>
+              <div className="rounded-lg bg-[var(--surface)] px-2 py-1.5"><p className="cc-label text-[0.5rem] text-[var(--text-tertiary)]">실집행</p><p className="cc-num text-xs font-bold text-[var(--text-primary)]">{won(roi.spend)}</p></div>
+              <div className="rounded-lg bg-[var(--surface)] px-2 py-1.5"><p className="cc-label text-[0.5rem] text-[var(--text-tertiary)]">계약</p><p className="cc-num text-xs font-bold text-[var(--text-primary)]">{roi.contracts}건</p></div>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              <span className="sa-chip sa-chip--muted text-[10px]">리드 {roi.leads} · 건당 {won(roi.cost_per_lead)}</span>
+              <span className="sa-chip sa-chip--muted text-[10px]">방문 {roi.visitors} · 건당 {won(roi.cost_per_visitor)}</span>
+              <span className="sa-chip sa-chip--muted text-[10px]">계약 건당 {won(roi.cost_per_contract)}</span>
+            </div>
+            <p className="text-[10px] text-[var(--text-hint)]">{roi.note}</p>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

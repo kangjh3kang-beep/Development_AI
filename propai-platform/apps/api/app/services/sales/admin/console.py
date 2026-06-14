@@ -110,3 +110,123 @@ async def site_management_detail(db: AsyncSession, site_id) -> dict[str, Any]:
         "profit_estimate": profit,
         "note": "손익(개략) = 계약 매출 − 회계비용 − 수수료배분. 정밀 손익은 회계 확정분 기준.",
     }
+
+
+# ── 급여관리(근태×단가 자동산정) ─────────────────────────────────────────────
+_WAGE_TYPES = {"DAILY": "일급", "HOURLY": "시급", "MONTHLY": "월급"}
+_WAGE_DDL = (
+    "CREATE TABLE IF NOT EXISTS sales_staff_wage ("
+    "  staff_id uuid PRIMARY KEY,"
+    "  site_id uuid NOT NULL,"
+    "  wage_type varchar(10) NOT NULL DEFAULT 'DAILY',"   # DAILY/HOURLY/MONTHLY
+    "  base_wage numeric(14,0) NOT NULL DEFAULT 0,"
+    "  updated_at timestamptz NOT NULL DEFAULT now()"
+    ")"
+)
+_WAGE_READY = False
+
+
+async def _ensure_wage(db: AsyncSession) -> None:
+    global _WAGE_READY
+    if _WAGE_READY:
+        return
+    await db.execute(text(_WAGE_DDL))
+    await db.commit()
+    _WAGE_READY = True
+
+
+def _month_bounds(ym: str) -> tuple[str, str]:
+    """'YYYY-MM' → (이달1일, 다음달1일) ISO 문자열."""
+    y, m = int(ym[:4]), int(ym[5:7])
+    ny, nm = (y + 1, 1) if m == 12 else (y, m + 1)
+    return f"{y:04d}-{m:02d}-01", f"{ny:04d}-{nm:02d}-01"
+
+
+async def set_staff_wage(db: AsyncSession, site_id, staff_id, wage_type: str, base_wage: int) -> dict[str, Any]:
+    wt = (wage_type or "").upper()
+    if wt not in _WAGE_TYPES or int(base_wage) < 0:
+        raise ValueError("wage_type(DAILY/HOURLY/MONTHLY)·base_wage(0 이상) 필요")
+    await _ensure_wage(db)
+    await db.execute(text(
+        "INSERT INTO sales_staff_wage (staff_id, site_id, wage_type, base_wage, updated_at) "
+        "VALUES (:st,:s,:wt,:w, now()) "
+        "ON CONFLICT (staff_id) DO UPDATE SET wage_type=:wt, base_wage=:w, updated_at=now()"),
+        {"st": str(staff_id), "s": str(site_id), "wt": wt, "w": int(base_wage)})
+    await db.commit()
+    return {"ok": True, "staff_id": str(staff_id), "wage_type": wt, "base_wage": int(base_wage)}
+
+
+async def compute_payroll(db: AsyncSession, site_id, ym: str) -> dict[str, Any]:
+    """현장 직원별 급여 자동산정 — 근태(출근일수·근무분) × 단가. 회계 인건비 후보."""
+    await _ensure_wage(db)
+    start, end = _month_bounds(ym)
+    s = str(site_id)
+    rows = (await db.execute(text(
+        "SELECT s.id, s.name, s.position, "
+        "  count(distinct a.check_in::date) AS days, "
+        "  COALESCE(sum(a.work_minutes),0) AS minutes "
+        "FROM sales_staff s "
+        "LEFT JOIN sales_staff_attendance a ON a.staff_id=s.id "
+        "  AND a.check_in >= CAST(:start AS date) AND a.check_in < CAST(:end AS date) "
+        "WHERE s.site_id=:s AND s.deleted_at IS NULL AND s.status='ACTIVE' "
+        "GROUP BY s.id, s.name, s.position ORDER BY s.name"),
+        {"s": s, "start": start, "end": end})).all()
+    wages = {str(k): (wt, int(w)) for k, wt, w in (await db.execute(text(
+        "SELECT staff_id, wage_type, base_wage FROM sales_staff_wage WHERE site_id=:s"), {"s": s})).all()}
+    staff = []
+    total = 0
+    for sid, name, pos, days, minutes in rows:
+        wt, base = wages.get(str(sid), ("DAILY", 0))
+        hours = round(int(minutes) / 60)
+        if wt == "HOURLY":
+            amount = hours * base
+        elif wt == "MONTHLY":
+            amount = base if int(days) > 0 else 0  # 무출근이면 미지급
+        else:  # DAILY
+            amount = int(days) * base
+        total += amount
+        staff.append({
+            "staff_id": str(sid), "name": name or "-", "position": pos,
+            "days": int(days), "hours": hours,
+            "wage_type": wt, "wage_label": _WAGE_TYPES.get(wt, wt), "base_wage": base,
+            "amount": amount, "wage_set": str(sid) in wages,
+        })
+    return {"year_month": ym, "staff": staff, "headcount": len(staff),
+            "total_payroll": total,
+            "note": "급여=근태×단가(일급:출근일수·시급:근무시간·월급:출근시 정액). 미설정 단가는 0."}
+
+
+async def post_payroll_to_accounting(db: AsyncSession, site_id, ym: str, by) -> dict[str, Any]:
+    """산정 급여 총액을 회계 인건비(LABOR)로 자동전기 — 동일 월 중복전기 방지(멱등)."""
+    pr = await compute_payroll(db, site_id, ym)
+    total = int(pr["total_payroll"])
+    if total <= 0:
+        return {"ok": False, "reason": "산정 급여가 0원입니다(단가·근태 확인)."}
+    await _ensure_acct(db)
+    memo = f"급여 {ym} 자동전기"
+    dup = (await db.execute(text(
+        "SELECT count(*) FROM sales_site_accounting WHERE site_id=:s AND entry_type='LABOR' AND memo=:m"),
+        {"s": str(site_id), "m": memo})).first()
+    if dup and int(dup[0] or 0) > 0:
+        return {"ok": False, "reason": f"{ym} 급여는 이미 전기되었습니다.", "total": total}
+    await add_accounting_entry(db, site_id, "LABOR", total, memo, f"{ym}-01", by)
+    return {"ok": True, "posted": total, "year_month": ym, "memo": memo}
+
+
+# ── 광고집행 ROI(집행비 대비 집객·계약 효율) ─────────────────────────────────
+async def ad_roi(db: AsyncSession, site_id) -> dict[str, Any]:
+    """광고 집행비(예산/실집행) 대비 집객(방문·리드)·계약 효율 = 단가 산출."""
+    s = str(site_id)
+    budget = await _scalar(db, "SELECT COALESCE(SUM(budget),0) FROM sales_ad_campaigns WHERE site_id=:s", s=s)
+    spend = await _scalar(db, "SELECT COALESCE(SUM(amount),0) FROM sales_ad_spend WHERE site_id=:s", s=s)
+    leads = await _scalar(db, "SELECT count(*) FROM sales_ad_leads WHERE site_id=:s", s=s)
+    visitors = await _scalar(db, "SELECT count(*) FROM mh_visitors WHERE site_id=:s", s=s)
+    contracts = await _scalar(db, "SELECT count(*) FROM sales_contracts_ext WHERE site_id=:s AND status='ACTIVE'", s=s)
+    eff = spend or budget  # 실집행 우선, 없으면 예산 기준
+    return {
+        "budget": budget, "spend": spend, "leads": leads, "visitors": visitors, "contracts": contracts,
+        "cost_per_lead": round(eff / leads) if leads else 0,
+        "cost_per_visitor": round(eff / visitors) if visitors else 0,
+        "cost_per_contract": round(eff / contracts) if contracts else 0,
+        "note": "단가=실집행비(없으면 예산)÷각 성과수. 광고 집행비는 회계 광고비(AD)로 전기 가능.",
+    }
