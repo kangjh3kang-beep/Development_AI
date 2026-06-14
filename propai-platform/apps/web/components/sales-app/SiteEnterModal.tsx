@@ -83,46 +83,65 @@ export default function SiteEnterModal({ locale, siteId, siteName, open, onClose
       aria-label="현장 진입"
     >
       <div
-        className="w-full max-w-sm rounded-t-2xl border border-[var(--line-strong)] bg-[var(--surface-strong)] p-5 shadow-[var(--shadow-md)] sm:rounded-2xl"
+        className="w-full max-w-sm overflow-hidden rounded-t-2xl border border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-md)] sm:rounded-2xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="mb-1 flex items-center gap-2">
-          <span className="text-xl">🔐</span>
-          <h2 className="text-base font-black text-[var(--text-primary)]">현장 진입</h2>
+        {/* 모달 헤더 — accent 글로우 띠로 진입(보안) 행위임을 시각화 */}
+        <div className="relative overflow-hidden border-b border-[var(--line)] bg-[var(--surface-soft)] px-5 py-4">
+          <div
+            aria-hidden
+            className="pointer-events-none absolute -right-8 -top-10 h-28 w-28 rounded-full bg-[var(--accent-soft)] blur-2xl"
+          />
+          <div className="relative flex items-center gap-3">
+            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-[color:color-mix(in_srgb,var(--accent-strong)_30%,transparent)] bg-[var(--accent-soft)] text-lg">
+              🔐
+            </span>
+            <div className="min-w-0">
+              <span className="cc-label">SECURE ENTRY</span>
+              <h2 className="text-base font-black leading-tight text-[var(--text-primary)]">현장 진입</h2>
+            </div>
+          </div>
         </div>
-        <p className="mb-4 text-xs text-[var(--text-secondary)]">
-          <b className="text-[var(--text-primary)]">{siteName}</b> 현장의 2차 비밀번호를 입력하세요.
-        </p>
 
-        <input
-          ref={inputRef}
-          type="password"
-          inputMode="text"
-          autoComplete="off"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter") void submit(); }}
-          placeholder="현장 비밀번호"
-          className="w-full rounded-lg border border-[var(--line-strong)] bg-[var(--surface)] px-3 py-3 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
-        />
+        <div className="p-5">
+          <p className="mb-4 text-xs leading-relaxed text-[var(--text-secondary)]">
+            <b className="text-[var(--text-primary)]">{siteName}</b> 현장의 2차 비밀번호를 입력하세요.
+          </p>
 
-        {err && <p className="mt-2 text-xs font-semibold text-rose-400">{err}</p>}
+          <input
+            ref={inputRef}
+            type="password"
+            inputMode="text"
+            autoComplete="off"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") void submit(); }}
+            placeholder="현장 비밀번호"
+            className="w-full rounded-xl border border-[var(--line-strong)] bg-[var(--surface)] px-3.5 py-3.5 text-sm text-[var(--text-primary)] outline-none transition focus:border-[var(--accent-strong)] focus:shadow-[0_0_0_3px_var(--accent-soft)]"
+          />
 
-        <div className="mt-4 flex gap-2">
-          <button
-            onClick={onClose}
-            disabled={busy}
-            className="flex-1 rounded-xl border border-[var(--line-strong)] bg-[var(--surface)] px-4 py-3 text-sm font-bold text-[var(--text-secondary)] transition hover:text-[var(--text-primary)] disabled:opacity-50"
-          >
-            취소
-          </button>
-          <button
-            onClick={submit}
-            disabled={busy}
-            className="flex-[2] rounded-xl bg-[var(--accent-strong)] px-4 py-3 text-sm font-black text-white shadow-[var(--shadow-sm)] transition hover:opacity-90 disabled:opacity-50"
-          >
-            {busy ? "확인 중…" : "진입"}
-          </button>
+          {err && (
+            <p className="mt-2 rounded-lg bg-[color:color-mix(in_srgb,var(--status-error)_12%,transparent)] px-2.5 py-2 text-xs font-semibold text-[var(--status-error)]">
+              {err}
+            </p>
+          )}
+
+          <div className="mt-4 flex gap-2">
+            <button
+              onClick={onClose}
+              disabled={busy}
+              className="flex-1 rounded-xl border border-[var(--line-strong)] bg-[var(--surface)] px-4 py-3.5 text-sm font-bold text-[var(--text-secondary)] transition hover:text-[var(--text-primary)] active:scale-95 disabled:opacity-50"
+            >
+              취소
+            </button>
+            <button
+              onClick={submit}
+              disabled={busy}
+              className="flex-[2] rounded-xl bg-[var(--accent-strong)] px-4 py-3.5 text-sm font-black text-white shadow-[var(--shadow-sm)] transition hover:opacity-90 active:scale-95 disabled:opacity-50"
+            >
+              {busy ? "확인 중…" : "진입 →"}
+            </button>
+          </div>
         </div>
       </div>
     </div>

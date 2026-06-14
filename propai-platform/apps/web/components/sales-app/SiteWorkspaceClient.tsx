@@ -25,6 +25,7 @@ import UnitGrid from "@/components/sales/UnitGrid";
 import UnitLiveBoard from "@/components/sales/UnitLiveBoard";
 import Unit360Panel from "@/components/sales/Unit360Panel";
 import PriceTableEditor from "@/components/sales/PriceTableEditor";
+import PriceGroupingPanel from "@/components/sales/PriceGroupingPanel";
 import PricingConfigPanel from "@/components/sales/PricingConfigPanel";
 import SubscriptionPanel from "@/components/sales/SubscriptionPanel";
 import PaymentsPanel from "@/components/sales/PaymentsPanel";
@@ -86,32 +87,46 @@ export default function SiteWorkspaceClient({ locale, siteId }: { locale: Locale
       });
       return;
     }
-    apiClient
-      .get<RoleResponse>(`/sales/sites/${siteId}/role`)
-      .then((r) => {
-        setRole(r);
-        setErr("");
-        setNeedEnter(false);
-        const tabs = visibleTabs(r.features);
-        if (tabs[0]) setTab(tabs[0].key);
-      })
-      .catch((e) => {
-        // 토큰 만료/없음(401/403) → 재진입(2차 비밀번호) 유도.
-        if (e instanceof ApiClientError && (e.status === 401 || e.status === 403)) {
-          clearSiteToken(siteId);
-          setNeedEnter(true);
-          return;
-        }
-        // 그 외는 실제 원인을 함께 보여줘 진단이 쉽게 한다.
-        const st = e instanceof ApiClientError ? e.status : 0;
-        if (st === 404 || st === 422) {
-          // 현장 주소(ID)가 잘못된 경우 — 목록에서 다시 들어오도록 안내.
-          setErr("현장 주소가 올바르지 않습니다. ‘내 현장’ 목록에서 다시 들어와 주세요.");
-        } else {
-          setErr(`현장 정보를 불러오지 못했습니다${st ? ` (오류 ${st})` : " (네트워크 오류)"}. 잠시 후 다시 시도해 주세요.`);
-        }
-      })
-      .finally(() => setLoading(false));
+    // 일시적 인프라 오류(배포 전환·게이트웨이)는 자동 재시도해 사용자에게 노출하지 않는다.
+    //  502/503/504/네트워크(0)만 재시도 — 401/403/404/422 등 확정 오류는 즉시 처리.
+    const TRANSIENT = new Set([0, 502, 503, 504]);
+    const MAX_RETRY = 3;
+
+    const attempt = (n: number) => {
+      apiClient
+        .get<RoleResponse>(`/sales/sites/${siteId}/role`)
+        .then((r) => {
+          setRole(r);
+          setErr("");
+          setNeedEnter(false);
+          const tabs = visibleTabs(r.features);
+          if (tabs[0]) setTab(tabs[0].key);
+          setLoading(false);
+        })
+        .catch((e) => {
+          // 토큰 만료/없음(401/403) → 재진입(2차 비밀번호) 유도.
+          if (e instanceof ApiClientError && (e.status === 401 || e.status === 403)) {
+            clearSiteToken(siteId);
+            setNeedEnter(true);
+            setLoading(false);
+            return;
+          }
+          const st = e instanceof ApiClientError ? e.status : 0;
+          // 일시 오류면 지수 백오프(0.8s·1.6s·2.4s) 후 재시도 — 로딩 유지.
+          if (TRANSIENT.has(st) && n < MAX_RETRY) {
+            setLoading(true);
+            setTimeout(() => attempt(n + 1), 800 * (n + 1));
+            return;
+          }
+          if (st === 404 || st === 422) {
+            setErr("현장 주소가 올바르지 않습니다. ‘내 현장’ 목록에서 다시 들어와 주세요.");
+          } else {
+            setErr(`현장 정보를 불러오지 못했습니다${st ? ` (오류 ${st})` : " (네트워크 오류)"}. 잠시 후 다시 시도해 주세요.`);
+          }
+          setLoading(false);
+        });
+    };
+    attempt(0);
   }, [siteId]);
 
   useEffect(() => {
@@ -144,51 +159,66 @@ export default function SiteWorkspaceClient({ locale, siteId }: { locale: Locale
 
   return (
     <div className="space-y-5">
-      <div className="flex flex-wrap items-center gap-3">
-        <Link
-          href={`/${locale}/sales/sites`}
-          className="text-sm text-[var(--text-tertiary)] hover:text-[var(--text-primary)]"
-        >
-          ← 내 현장
-        </Link>
-        <div>
-          <span className="cc-meta">FIELD APP · WORKSPACE</span>
-          <h1 className="mt-0.5 text-lg font-black leading-tight text-[var(--text-primary)]">분양 현장</h1>
+      {/* 워크스페이스 헤더 — 커맨드센터 패널. 뒤로가기 / 타이틀·역할 / 액션 그룹의 3영역 위계. */}
+      <header className="relative overflow-hidden rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface-soft)] p-4 shadow-[var(--shadow-sm)] sm:p-5">
+        <div className="cc-grid-bg opacity-30" aria-hidden />
+        <div
+          aria-hidden
+          className="pointer-events-none absolute -right-12 -top-16 h-40 w-40 rounded-full bg-[var(--accent-soft)] blur-3xl"
+        />
+        <div className="relative flex flex-wrap items-center gap-x-3 gap-y-3">
+          <Link
+            href={`/${locale}/sales/sites`}
+            className="inline-flex min-h-[40px] items-center gap-1 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 text-xs font-bold text-[var(--text-secondary)] transition hover:border-[var(--accent-strong)] hover:text-[var(--text-primary)] active:scale-95"
+          >
+            <span aria-hidden>←</span> 내 현장
+          </Link>
+          <div className="min-w-0">
+            <span className="cc-meta">FIELD APP · WORKSPACE</span>
+            <div className="mt-0.5 flex items-center gap-2">
+              <h1 className="text-lg font-black leading-tight text-[var(--text-primary)]">분양 현장</h1>
+              {role && (
+                <span className="inline-flex items-center gap-1 rounded-md border border-[color:color-mix(in_srgb,var(--accent-strong)_30%,transparent)] bg-[var(--accent-soft)] px-2 py-0.5 text-[11px] font-bold text-[var(--accent-strong)]">
+                  <span className="sa-dot" style={{ background: "var(--accent-strong)" }} aria-hidden />
+                  {role.role_label ?? ROLE_LABEL[role.role] ?? role.role}
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* 액션 그룹 — 우측 정렬. 주요(동·호표/비번설정)와 보조(앱으로 열기) 구분. */}
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            {!loading && role && tab === "units" && (
+              <button
+                onClick={() => setBuilderOpen(true)}
+                className="inline-flex min-h-[40px] items-center gap-1 rounded-lg bg-[var(--accent-strong)] px-3.5 text-xs font-black text-white shadow-[var(--shadow-xs)] transition hover:opacity-90 active:scale-95"
+              >
+                <span aria-hidden>＋</span> 동·호표 생성
+              </button>
+            )}
+            {canManage && (
+              <button
+                onClick={() => setPwOpen(true)}
+                className="inline-flex min-h-[40px] items-center gap-1 rounded-lg border border-[var(--accent-strong)] px-3.5 text-xs font-black text-[var(--accent-strong)] transition hover:bg-[var(--accent-soft)] active:scale-95"
+              >
+                <span aria-hidden>🛠</span> 현장 비밀번호 설정
+              </button>
+            )}
+            {/* 앱으로 열기 — 별도 창(앱 모드). 서브도메인(*.4t8t.net) 배선 전이라 현재 경로를 새 창으로.
+                서브도메인 준비 시: window.open(`https://${siteCode}.4t8t.net`, ...)로 자동 연결 가능. */}
+            <button
+              onClick={() => {
+                if (typeof window !== "undefined") {
+                  window.open(window.location.href, "_blank", "noopener,noreferrer");
+                }
+              }}
+              className="inline-flex min-h-[40px] items-center gap-1 rounded-lg border border-[var(--line-strong)] bg-[var(--surface)] px-3.5 text-xs font-black text-[var(--text-secondary)] transition hover:border-[var(--accent-strong)] hover:text-[var(--accent-strong)] active:scale-95"
+            >
+              <span aria-hidden>🪟</span> 앱으로 열기
+            </button>
+          </div>
         </div>
-        {role && (
-          <span className="rounded-md bg-[var(--accent-soft)] px-2 py-0.5 text-[11px] font-bold text-[var(--accent-strong)]">
-            {role.role_label ?? ROLE_LABEL[role.role] ?? role.role}
-          </span>
-        )}
-        {!loading && role && tab === "units" && (
-          <button
-            onClick={() => setBuilderOpen(true)}
-            className="inline-flex min-h-[40px] items-center rounded-lg bg-[var(--accent-strong)] px-3.5 text-xs font-black text-white transition hover:opacity-90 active:scale-95"
-          >
-            ＋ 동·호표 생성
-          </button>
-        )}
-        {/* 앱으로 열기 — 별도 창(앱 모드). 서브도메인(*.4t8t.net) 배선 전이라 현재 경로를 새 창으로.
-            서브도메인 준비 시: window.open(`https://${siteCode}.4t8t.net`, ...)로 자동 연결 가능. */}
-        <button
-          onClick={() => {
-            if (typeof window !== "undefined") {
-              window.open(window.location.href, "_blank", "noopener,noreferrer");
-            }
-          }}
-          className="ml-auto inline-flex min-h-[40px] items-center rounded-lg border border-[var(--line-strong)] px-3.5 text-xs font-black text-[var(--text-secondary)] transition hover:border-[var(--accent-strong)] hover:text-[var(--accent-strong)] active:scale-95"
-        >
-          🪟 앱으로 열기
-        </button>
-        {canManage && (
-          <button
-            onClick={() => setPwOpen(true)}
-            className="inline-flex min-h-[40px] items-center rounded-lg border border-[var(--accent-strong)] px-3.5 text-xs font-black text-[var(--accent-strong)] transition hover:bg-[var(--accent-soft)] active:scale-95"
-          >
-            🛠 현장 비밀번호 설정
-          </button>
-        )}
-      </div>
+      </header>
 
       {err && (
         <div className="rounded-xl border border-[color:color-mix(in_srgb,var(--status-error)_40%,transparent)] bg-[color:color-mix(in_srgb,var(--status-error)_12%,transparent)] px-4 py-3 text-sm font-semibold text-[var(--status-error)]">
@@ -202,7 +232,13 @@ export default function SiteWorkspaceClient({ locale, siteId }: { locale: Locale
         <>
           {/* 역할 기반 탭 — features[]에 포함된 메뉴만 노출.
               모바일: 가로 스크롤 탭바(스냅·페이드·터치타깃 ≥44px)+아이콘으로 직관화. */}
-          <div className="sticky top-0 z-20 -mx-1 border-b border-[var(--line)] bg-[var(--background)]/85 px-1 backdrop-blur">
+          <div className="sticky top-0 z-20 -mx-1 border-b border-[var(--line)] bg-[color:color-mix(in_srgb,var(--background)_85%,transparent)] px-1 pt-1.5 backdrop-blur">
+            <div className="mb-1.5 flex items-center gap-2 px-1">
+              <span className="cc-label">MENU</span>
+              <span className="text-[11px] font-bold text-[var(--text-tertiary)]">
+                {tabs.length}개 메뉴 · 내 권한 기준
+              </span>
+            </div>
             <div className="sa-tabbar" role="tablist" aria-label="현장 메뉴">
               {tabs.map((t) => (
                 <button
@@ -266,6 +302,7 @@ export default function SiteWorkspaceClient({ locale, siteId }: { locale: Locale
                     roundId={rid}
                     onChanged={() => setPriceRefresh((n) => n + 1)}
                   />
+                  <PriceGroupingPanel siteCode={siteId} roundId={rid} onChanged={() => setPriceRefresh((n) => n + 1)} />
                   <PriceTableEditor key={priceRefresh} siteCode={siteId} roundId={rid} />
                 </>
               ) : (

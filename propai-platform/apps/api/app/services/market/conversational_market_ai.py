@@ -108,10 +108,16 @@ class ConversationalMarketAI:
         else:
             params["months"] = 6  # default 6 months
 
-        # Use context if available
+        # Use context if available — bcode/pnu 에서 LAWD_CD(시군구 5자리) 도출 포함
         if context:
-            if not params.get("lawd_cd") and context.get("lawd_cd"):
-                params["lawd_cd"] = context["lawd_cd"]
+            if not params.get("lawd_cd"):
+                lc = context.get("lawd_cd")
+                if not lc:  # 부지분석 컨텍스트는 보통 bcode(법정동10자리)/pnu(19자리)를 가진다 → 앞 5자리=시군구
+                    src = str(context.get("bcode") or context.get("pnu") or "")
+                    if len(src) >= 5 and src[:5].isdigit():
+                        lc = src[:5]
+                if lc:
+                    params["lawd_cd"] = str(lc)[:5]
             if not params.get("region_name") and context.get("address"):
                 params["region_name"] = context["address"]
 
@@ -125,7 +131,13 @@ class ConversationalMarketAI:
         data: dict = {"source": "국토교통부 실거래가 공개시스템", "records": []}
 
         if tool in ("실거래가_조회", "시세_추이"):
-            lawd_cd = params.get("lawd_cd", "11680")
+            lawd_cd = params.get("lawd_cd")
+            if not lawd_cd:
+                # 지역(시군구) 미특정 시 강남(11680) 등으로 폴백하지 않는다 — 무관 지역 데이터
+                # 반환(할루시네이션)을 차단하고 정직하게 미특정을 고지한다.
+                data["total_count"] = 0
+                data["error"] = "지역(시군구)을 특정하지 못했습니다. 주소나 지역명을 포함해 다시 질문해 주세요."
+                return data
             months = params.get("months", 6)
 
             molit = MOLITService()
@@ -147,7 +159,7 @@ class ConversationalMarketAI:
             if area_filter and all_trades:
                 all_trades = [
                     t for t in all_trades
-                    if abs(t.get("area_sqm", 0) - area_filter) < 10
+                    if abs((t.get("area_m2") or t.get("area_sqm") or 0) - area_filter) < 10
                 ]
 
             data["records"] = all_trades[:100]  # Limit
@@ -156,9 +168,9 @@ class ConversationalMarketAI:
 
             if all_trades:
                 prices = [
-                    t.get("price_10k", 0)
+                    (t.get("price_10k_won") or t.get("price_10k") or 0)
                     for t in all_trades
-                    if t.get("price_10k", 0) > 0
+                    if (t.get("price_10k_won") or t.get("price_10k") or 0) > 0
                 ]
                 if prices:
                     data["statistics"] = {
@@ -284,8 +296,8 @@ class ConversationalMarketAI:
         """월별 평균 가격 차트 데이터 생성."""
         monthly: dict[str, list] = {}
         for r in records:
-            ym = r.get("deal_date", "")[:6]
-            price = r.get("price_10k", 0)
+            ym = str(r.get("deal_date") or "").replace("-", "")[:6]
+            price = r.get("price_10k_won") or r.get("price_10k") or 0
             if ym and price > 0:
                 if ym not in monthly:
                     monthly[ym] = []

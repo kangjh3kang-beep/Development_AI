@@ -11,21 +11,144 @@ from app.api.deps import get_current_user, get_db
 from app.api.deps_sales import SalesCtx, require_role, sales_ctx
 from apps.api.database.models.sales.units_pricing import SalesUnitGeneration, SalesUnitPriceTable
 from app.services.sales.contract.service import cancel_contract, create_contract, sign_contract
-from app.services.sales.org.service import create_node, move_subtree
-from app.services.sales.pricing.engine import generate_price_table
+from app.services.sales.org.service import create_node, move_subtree, seed_default_org
+from app.services.sales.pricing.engine import (
+    apply_group_pricing, generate_price_table, project_revenue, solve_base_for_target,
+)
+from app.services.sales.pricing.suggest import suggest_base_price
 from app.services.sales.units.generation import generate_units
 
 actions_router = APIRouter(tags=["sales-actions"])
 
+# P2 직급별 등록권한: 각 node_type 을 등록할 수 있는 '최소 상위 역할' 집합.
+# 시행사→대행사, 대행사→본부장, 본부장→팀장, 팀장→직원 (상위 역할·관리자는 항상 허용).
+_REGISTER_MATRIX = {
+    "AGENCY": {"DEVELOPER", "SUPERADMIN"},
+    "SUBAGENCY": {"AGENCY", "DEVELOPER", "SUPERADMIN"},
+    "GM_DIRECTOR": {"AGENCY", "SUBAGENCY", "DEVELOPER", "SUPERADMIN"},
+    "TEAM_LEADER": {"GM_DIRECTOR", "AGENCY", "SUBAGENCY", "DEVELOPER", "SUPERADMIN"},
+    "MEMBER": {"TEAM_LEADER", "GM_DIRECTOR", "AGENCY", "SUBAGENCY", "DEVELOPER", "SUPERADMIN"},
+}
+
 
 @actions_router.post("/org/nodes")
 async def add_node(body: dict, db: AsyncSession = Depends(get_db),
-                   ctx: SalesCtx = Depends(require_role("AGENCY", "SUBAGENCY", "DIRECTOR", "GM_DIRECTOR", "DEVELOPER"))):
-    node = await create_node(db, ctx.site_id, body["node_type"], body.get("parent_id"),
+                   ctx: SalesCtx = Depends(require_role("AGENCY", "SUBAGENCY", "DIRECTOR", "GM_DIRECTOR", "TEAM_LEADER", "DEVELOPER"))):
+    ntype = body["node_type"]
+    allowed = _REGISTER_MATRIX.get(ntype)
+    if allowed is not None and ctx.role not in allowed:
+        from fastapi import HTTPException
+        raise HTTPException(403, f"{ntype} 등록 권한이 없습니다(상위 직급만 등록 가능).")
+    node = await create_node(db, ctx.site_id, ntype, body.get("parent_id"),
                              user_id=body.get("user_id"), company_id=body.get("company_id"),
                              display_name=body.get("display_name"))
     await db.commit()
     return {"id": str(node.id), "path": str(node.path)}
+
+
+@actions_router.get("/org/team-overview")
+async def org_team_overview(db: AsyncSession = Depends(get_db),
+                            ctx: SalesCtx = Depends(require_role(
+                                "TEAM_LEADER", "DIRECTOR", "GM_DIRECTOR", "SUBAGENCY", "AGENCY", "DEVELOPER", "SUPERADMIN"))):
+    """P2-3 내 하위 조직 인원의 계약·고객·업무일지 집계+로스터(직급별 관리)."""
+    from app.services.sales.org.overview import team_overview
+    return await team_overview(db, ctx.site_id, getattr(ctx, "org_path", None) or None)
+
+
+@actions_router.post("/org/seed-default")
+async def org_seed_default(body: dict | None = None, db: AsyncSession = Depends(get_db),
+                           ctx: SalesCtx = Depends(require_role("DEVELOPER", "AGENCY", "SUPERADMIN"))):
+    """P2 기본조직 생성(대행사→본부장→5팀×10명). 빈 조직에서만. 이후 추가·삭제·인원배정."""
+    body = body or {}
+    res = await seed_default_org(db, ctx.site_id,
+                                 teams=int(body.get("teams", 5)),
+                                 members_per_team=int(body.get("members_per_team", 10)))
+    if res.get("ok"):
+        await db.commit()
+    return res
+
+
+# ── 분양관리요약(관리자) 현장별 통합 관리 콘솔 ────────────────────────────────
+@actions_router.get("/admin/site-detail")
+async def admin_site_detail(db: AsyncSession = Depends(get_db),
+                            ctx: SalesCtx = Depends(require_role(
+                                "GM_DIRECTOR", "SUBAGENCY", "AGENCY", "DEVELOPER", "SUPERADMIN"))):
+    """현장 1곳 통합 관리 지표 — 담당자·근태·계약·매출·수수료·방문·광고·회계·손익."""
+    from app.services.sales.admin.console import site_management_detail
+    return await site_management_detail(db, ctx.site_id)
+
+
+@actions_router.post("/accounting/entry")
+async def accounting_entry(body: dict, db: AsyncSession = Depends(get_db),
+                           ctx: SalesCtx = Depends(require_role(
+                               "GM_DIRECTOR", "SUBAGENCY", "AGENCY", "DEVELOPER", "SUPERADMIN"))):
+    """현장 회계 항목 등록(인건비/경비/공과금/광고비/기타)."""
+    from fastapi import HTTPException
+    from app.services.sales.admin.console import add_accounting_entry
+    try:
+        return await add_accounting_entry(
+            db, ctx.site_id, body.get("entry_type", ""), int(body.get("amount", 0)),
+            body.get("memo"), body.get("entry_date"), getattr(ctx.user, "id", None))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@actions_router.get("/accounting/summary")
+async def accounting_summary(db: AsyncSession = Depends(get_db),
+                             ctx: SalesCtx = Depends(require_role(
+                                 "GM_DIRECTOR", "SUBAGENCY", "AGENCY", "DEVELOPER", "SUPERADMIN"))):
+    """현장 회계 비용 집계(항목별)+매출·수수료·손익 — site-detail 와 동일 원장 기준."""
+    from app.services.sales.admin.console import site_management_detail
+    d = await site_management_detail(db, ctx.site_id)
+    return {"accounting": d["accounting"], "revenue": d["revenue"],
+            "commission": d["commission"], "profit_estimate": d["profit_estimate"], "note": d["note"]}
+
+
+# ── 급여관리(근태×단가 자동산정) + 광고 ROI ──────────────────────────────────
+@actions_router.post("/staff/wage")
+async def staff_wage_set(body: dict, db: AsyncSession = Depends(get_db),
+                         ctx: SalesCtx = Depends(require_role(
+                             "TEAM_LEADER", "GM_DIRECTOR", "SUBAGENCY", "AGENCY", "DEVELOPER", "SUPERADMIN"))):
+    """직원 단가 설정(일급/시급/월급) — 급여 자동산정 기준."""
+    from fastapi import HTTPException
+    from app.services.sales.admin.console import set_staff_wage
+    try:
+        return await set_staff_wage(db, ctx.site_id, body["staff_id"],
+                                    body.get("wage_type", "DAILY"), int(body.get("base_wage", 0)),
+                                    tax_mode=body.get("tax_mode", "FREELANCE"))
+    except (ValueError, KeyError) as e:
+        raise HTTPException(400, f"입력 오류: {e}")
+
+
+@actions_router.get("/payroll")
+async def payroll_compute(ym: str, db: AsyncSession = Depends(get_db),
+                          ctx: SalesCtx = Depends(require_role(
+                              "TEAM_LEADER", "GM_DIRECTOR", "SUBAGENCY", "AGENCY", "DEVELOPER", "SUPERADMIN"))):
+    """직원별 급여 자동산정(근태×단가). ym=YYYY-MM."""
+    from app.services.sales.admin.console import compute_payroll
+    return await compute_payroll(db, ctx.site_id, ym)
+
+
+@actions_router.post("/payroll/post")
+async def payroll_post(body: dict, db: AsyncSession = Depends(get_db),
+                       ctx: SalesCtx = Depends(require_role(
+                           "GM_DIRECTOR", "SUBAGENCY", "AGENCY", "DEVELOPER", "SUPERADMIN"))):
+    """산정 급여 총액을 회계 인건비(LABOR)로 자동전기(월 중복 방지). body.ym=YYYY-MM."""
+    from fastapi import HTTPException
+    from app.services.sales.admin.console import post_payroll_to_accounting
+    ym = body.get("ym")
+    if not ym:
+        raise HTTPException(400, "ym(YYYY-MM) 필요")
+    return await post_payroll_to_accounting(db, ctx.site_id, ym, getattr(ctx.user, "id", None))
+
+
+@actions_router.get("/ad/roi")
+async def ad_roi_view(db: AsyncSession = Depends(get_db),
+                      ctx: SalesCtx = Depends(require_role(
+                          "TEAM_LEADER", "GM_DIRECTOR", "SUBAGENCY", "AGENCY", "DEVELOPER", "SUPERADMIN"))):
+    """광고 집행비 대비 집객·계약 효율(단가)."""
+    from app.services.sales.admin.console import ad_roi
+    return await ad_roi(db, ctx.site_id)
 
 
 @actions_router.get("/contracts")
@@ -74,6 +197,45 @@ async def pricing_generate(body: dict, db: AsyncSession = Depends(get_db),
     n = await generate_price_table(db, ctx.site_id, uuid.UUID(body["round_id"]), by=ctx.user.id)
     await db.commit()
     return {"priced": n}
+
+
+@actions_router.get("/pricing/suggest")
+async def pricing_suggest(bcode: str | None = None, db: AsyncSession = Depends(get_db),
+                          ctx: SalesCtx = Depends(require_role("DEVELOPER", "AGENCY"))):
+    """P1-1 기준층 적정분양가 3안(공/기/보) — 주변시세(거래사례비교) 기반. bcode 선택(미전달 시 PNU 유도)."""
+    return await suggest_base_price(db, ctx.site_id, bcode=bcode)
+
+
+@actions_router.get("/pricing/revenue")
+async def pricing_revenue(round_id: str, db: AsyncSession = Depends(get_db),
+                          ctx: SalesCtx = Depends(require_role("DEVELOPER", "AGENCY", "GM_DIRECTOR", "DIRECTOR"))):
+    """P1-3 현재 분양가표 기준 총매출(분양액) 산출 — forward."""
+    return await project_revenue(db, ctx.site_id, uuid.UUID(round_id))
+
+
+@actions_router.post("/pricing/solve-base")
+async def pricing_solve_base(body: dict, db: AsyncSession = Depends(get_db),
+                             ctx: SalesCtx = Depends(require_role("DEVELOPER", "AGENCY"))):
+    """P1-3 목표 총매출 → 균일 기준단가 역산·전 타입 반영·재생성 — reverse."""
+    res = await solve_base_for_target(db, ctx.site_id, uuid.UUID(body["round_id"]),
+                                      int(body["target_total_10k"]), by=ctx.user.id)
+    if res.get("ok"):
+        await db.commit()
+    return res
+
+
+@actions_router.post("/pricing/group-apply")
+async def pricing_group_apply(body: dict, db: AsyncSession = Depends(get_db),
+                              ctx: SalesCtx = Depends(require_role("DEVELOPER", "AGENCY"))):
+    """P1-4 선택 세대 그룹 일괄단가 — mode=RATE(+%)·FIXED(+원)·OVERRIDE_PSQM(절대 평당단가)."""
+    res = await apply_group_pricing(
+        db, ctx.site_id, uuid.UUID(body["round_id"]),
+        [uuid.UUID(str(u)) for u in (body.get("unit_ids") or [])],
+        mode=body.get("mode", "RATE"), value=float(body.get("value", 0)),
+        group_name=body.get("group_name"), by=ctx.user.id)
+    if res.get("ok"):
+        await db.commit()
+    return res
 
 
 @actions_router.patch("/units/{unit_id}/price")
@@ -190,6 +352,27 @@ async def provision(body: dict, db: AsyncSession = Depends(get_db), user=Depends
     if isinstance(res, dict):
         res = {**res, "service_fee_krw": fee_krw}
     return res
+
+
+@actions_router.get("/commission/tax-pref")
+async def get_tax_pref(node_id: str, db: AsyncSession = Depends(get_db), ctx: SalesCtx = Depends(sales_ctx)):
+    """수령자(노드) 수수료 세금유형 조회 — WITHHOLDING(3.3% 원천) | VAT(부가세 10%)."""
+    from app.services.sales.commission.engine import get_node_tax_type
+    return {"node_id": node_id, "tax_type": await get_node_tax_type(db, uuid.UUID(node_id))}
+
+
+@actions_router.post("/commission/tax-pref")
+async def set_tax_pref(body: dict, db: AsyncSession = Depends(get_db),
+                       ctx: SalesCtx = Depends(require_role("DEVELOPER", "AGENCY", "GM_DIRECTOR", "TEAM_LEADER", "MEMBER"))):
+    """수령자 세금유형 설정 — 3.3% 원천징수(WITHHOLDING) 또는 부가세 10%(VAT) 중 선택."""
+    from fastapi import HTTPException
+    from app.services.sales.commission.engine import set_node_tax_type
+    try:
+        tt = await set_node_tax_type(db, ctx.site_id, uuid.UUID(body["node_id"]), body.get("tax_type", ""))
+    except (KeyError, ValueError) as e:
+        raise HTTPException(400, str(e) or "node_id·tax_type(WITHHOLDING/VAT) 필요")
+    await db.commit()
+    return {"ok": True, "node_id": body["node_id"], "tax_type": tt}
 
 
 @actions_router.post("/commission/distribution/validate")

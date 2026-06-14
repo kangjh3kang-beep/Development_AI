@@ -37,7 +37,11 @@ _SYSTEM = """\
 1. 법조문은 가능한 한 정확히 인용(예: "건축법 제56조", "국토계획법 제76조", "주택법 제15조").
 2. 용도지역 허용용도·건폐율·용적률 한도와 조례 강화 여부를 근거로 가능성을 판정.
 3. 데이터에 있는 수치만 사용, 추정은 명시. 과장·허위 금지.
-4. 반드시 JSON만 출력(마크다운·설명문 금지)."""
+4. 상업지역(중심·일반·근린·유통상업지역)은 주거(공동주택·주상복합)·업무·판매시설이 모두 허용된다.
+   상업지역에서 '공동주택 건축 불가'로 단정하지 말 것(주거용적률 제한·용도용적제는 규모 제약일 뿐 금지 아님).
+5. 용적률은 '지자체 조례(실효 용적률)'를 법정상한보다 우선 적용한다. 부지정보의 '용적률 한도'와
+   '지자체 조례'가 다르면 조례값을 기준으로 판정하고, 그 근거를 명시한다.
+6. 반드시 JSON만 출력(마크다운·설명문 금지)."""
 
 _USER_TMPL = """\
 아래 부지정보를 바탕으로 각 개발방식의 인허가 가능성을 분석해 JSON으로만 답하세요.
@@ -154,10 +158,23 @@ class PermitAnalysisService:
 
             az = await AutoZoningService().analyze_by_address(address)
             zl = az.get("zone_limits") or {}
+            legal_far = zl.get("max_far_pct") or zl.get("max_far")
+            # 조례 SSOT: 실효 용적률(min(법정,조례))을 max_far 로 사용해 프롬프트 헤더와 조례문구의
+            # 불일치(예 1300 vs 900)를 제거. ordinance_service 단일경로(zoning/regulation 공용).
+            eff_far, eff_bcr = legal_far, (zl.get("max_bcr_pct") or zl.get("max_bcr"))
+            try:
+                from app.services.land_intelligence.ordinance_service import OrdinanceService
+                _o = await OrdinanceService().get_ordinance_limits(address, az.get("zone_type") or "")
+                if isinstance(_o, dict) and _o.get("effective_far"):
+                    eff_far = _o.get("effective_far")
+                    eff_bcr = _o.get("effective_bcr") or eff_bcr
+            except Exception:  # noqa: BLE001
+                pass
             site = {
                 "zone_type": az.get("zone_type"),
-                "max_bcr": zl.get("max_bcr_pct") or zl.get("max_bcr"),
-                "max_far": zl.get("max_far_pct") or zl.get("max_far"),
+                "max_bcr": eff_bcr,
+                "max_far": eff_far,  # 실효(조례 반영) 용적률
+                "legal_max_far": legal_far,
                 "land_area_sqm": az.get("land_area_sqm"),
                 "special_districts": az.get("special_districts"),
                 **{k: v for k, v in site.items() if v is not None},

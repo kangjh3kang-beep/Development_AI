@@ -17,8 +17,18 @@ from app.services.sales.harness.outbox import emit_outbox
 
 
 def _pick_type(b: dict, u: int) -> str:
-    types = b.get("types") or [{"name": "TYPE_A"}]
-    return types[(u - 1) % len(types)]["name"]
+    """세대의 평형 타입명 결정 — 입력의 평형 정보를 보존(59A/84A 등 변별).
+
+    우선순위: types/type_mix 배열(원소가 {"name":..} 또는 문자열) → 블록 단일 type_name → TYPE_A.
+    (기존: b['types']만 읽어 단일 type_name 입력이 있어도 TYPE_A 로 단일화돼 by_type 평형 변별이 소실됐음.)
+    """
+    arr = b.get("types") or b.get("type_mix")
+    if arr:
+        names = [(t.get("name") if isinstance(t, dict) else str(t)) for t in arr]
+        names = [n for n in names if n]
+        if names:
+            return names[(u - 1) % len(names)]
+    return b.get("type_name") or "TYPE_A"
 
 
 def expand_outline(params: dict) -> list[dict]:

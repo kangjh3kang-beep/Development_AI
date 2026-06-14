@@ -18,14 +18,92 @@
 """
 
 import re
+import json
 import logging
 from typing import Any
 
 import httpx
+from sqlalchemy import text
 
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+# ── 조례 해석 영속(persist) — 한번 조사한 (시군구·용도지역) 값을 저장해 재사용한다.
+#    자동 재조사 없음: 사용자가 '재분석'(force_refresh)을 실행할 때만 다시 조사·덮어쓴다.
+#    (플랫폼 원칙: 분석 1회 → 저장 → 재사용, 입력변경/명시 요청 시에만 재실행)
+_ORD_DDL = (
+    "CREATE TABLE IF NOT EXISTS ordinance_resolutions ("
+    "  sigungu varchar(40) NOT NULL,"
+    "  zone_type varchar(40) NOT NULL,"
+    "  payload jsonb NOT NULL,"
+    "  source varchar(40),"
+    "  fetched_at timestamptz NOT NULL DEFAULT now(),"
+    "  PRIMARY KEY (sigungu, zone_type)"
+    ")"
+)
+_ORD_READY = False
+
+
+async def _ensure_ord_table(db) -> None:
+    global _ORD_READY
+    if _ORD_READY:
+        return
+    await db.execute(text(_ORD_DDL))
+    await db.commit()
+    _ORD_READY = True
+
+
+async def _load_stored(sigungu: str | None, zone_type: str) -> dict | None:
+    """저장된 조례 해석을 재사용(있으면). 자동만료 없음 — 사용자 재분석 전까지 유지."""
+    if not sigungu:
+        return None
+    try:
+        from app.core.database import async_session_factory
+        async with async_session_factory() as db:
+            await _ensure_ord_table(db)
+            row = (await db.execute(text(
+                "SELECT payload, fetched_at FROM ordinance_resolutions WHERE sigungu=:s AND zone_type=:z"),
+                {"s": sigungu, "z": zone_type})).first()
+            if row:
+                payload = row[0] if isinstance(row[0], dict) else json.loads(row[0])
+                prov = payload.setdefault("provenance", {})
+                prov["reused"] = True  # 저장본 재사용 표시
+                prov["stored_fetched_at"] = str(row[1])
+                return payload
+    except Exception:  # noqa: BLE001 — 저장조회 실패는 실시간 경로로 진행(무손상)
+        return None
+    return None
+
+
+async def _save_resolution(result: dict, sigungu: str | None, zone_type: str) -> None:
+    if not sigungu:
+        return
+    try:
+        from app.core.database import async_session_factory
+        async with async_session_factory() as db:
+            await _ensure_ord_table(db)
+            await db.execute(text(
+                "INSERT INTO ordinance_resolutions (sigungu, zone_type, payload, source, fetched_at) "
+                "VALUES (:s,:z,CAST(:p AS jsonb),:src, now()) "
+                "ON CONFLICT (sigungu, zone_type) DO UPDATE SET payload=CAST(:p AS jsonb), source=:src, fetched_at=now()"),
+                {"s": sigungu, "z": zone_type, "p": json.dumps(result, ensure_ascii=False, default=str),
+                 "src": result.get("source")})
+            await db.commit()
+    except Exception:  # noqa: BLE001 — 저장 실패는 해석 결과를 손상하지 않는다.
+        pass
+
+
+def _attach_provenance(result: dict, confidence: float, recheck: bool, disclaimer: str) -> dict:
+    """정직 출처표기 — 어떤 경로(실시간/캐시/법정)로 얻었는지·신뢰도·재확인 권장 여부를 명시."""
+    result["provenance"] = {
+        "source": result.get("source"),
+        "confidence": confidence,
+        "recheck_recommended": recheck,  # 캐시/법정폴백이면 True(조례 개정 가능)
+        "disclaimer": disclaimer,
+        "reused": False,
+    }
+    return result
 
 # ── 법정 상한 (국토계획법 시행령) ──
 NATIONAL_LIMITS: dict[str, dict[str, float | None]] = {
@@ -166,19 +244,28 @@ class OrdinanceService:
     """전국 지자체 도시계획조례 실시간 조회 서비스."""
 
     async def get_ordinance_limits(
-        self, address: str, zone_type: str
+        self, address: str, zone_type: str, force_refresh: bool = False
     ) -> dict[str, Any]:
         """주소와 용도지역으로 해당 지자체 조례 건폐율/용적률을 조회.
 
-        우선순위:
+        해석 단일 파이프라인(SSOT) — zoning·regulation 공용:
+        0. 저장된 분석 재사용 (force_refresh=False & 저장본 존재 시 즉시 반환, 재조사 없음)
         1. 법제처 API 실시간 조회 (도시계획조례 본문 파싱)
         2. 정적 캐시 DB (주요 시군구)
         3. 법정 상한 (국토계획법 시행령)
+        → 1~3 결과는 저장(persist)하고 provenance(출처·신뢰도·재확인 권장)를 부착한다.
+        force_refresh=True(사용자 '재분석' 실행) 일 때만 저장본을 무시하고 다시 조사·덮어쓴다.
         """
         # 주소에서 지자체 추출
         region_info = self._extract_region(address)
         sido = region_info["sido"]
         sigungu = region_info["sigungu"]
+
+        # 0차: 저장된 분석 재사용(자동 재조사 금지 — 사용자 재분석 시에만 갱신)
+        if not force_refresh:
+            stored = await _load_stored(sigungu, zone_type)
+            if stored:
+                return stored
 
         # 법정 상한
         national = NATIONAL_LIMITS.get(zone_type, {})
@@ -214,6 +301,9 @@ class OrdinanceService:
             result["ordinance_name"] = api_result.get("ordinance_name")
             result["last_updated"] = api_result.get("last_updated")
             result["legal_basis"] = f"{sigungu or sido} 도시계획 조례"
+            _attach_provenance(result, confidence=0.95, recheck=False,
+                               disclaimer="법제처 자치법규 실시간 조회값(도시계획조례 본문).")
+            await _save_resolution(result, sigungu, zone_type)
             return result
 
         # 2차: 정적 캐시 조회 (전국 주요 시군구 조례 데이터)
@@ -225,8 +315,11 @@ class OrdinanceService:
             result["ordinance_far"] = c_far
             result["effective_bcr"] = min(national_bcr, c_bcr)
             result["effective_far"] = min(national_far, c_far)
-            result["source"] = "지자체 조례"
+            result["source"] = "지자체 조례(정적캐시)"
             result["legal_basis"] = f"{sigungu or sido} 도시계획 조례"
+            _attach_provenance(result, confidence=0.80, recheck=True,
+                               disclaimer="정적 캐시(2025~2026 기준) — 조례 개정 가능, '재분석'으로 실시간 재확인 권장.")
+            await _save_resolution(result, sigungu, zone_type)
             return result
 
         # 3차: 법정 상한 그대로 (해당 지자체 조례 데이터 미보유)
@@ -236,6 +329,9 @@ class OrdinanceService:
             sido, sigungu, zone_type, national_bcr, national_far,
         )
         result["source"] = "법정상한"
+        _attach_provenance(result, confidence=0.60, recheck=True,
+                           disclaimer="해당 지자체 조례 미보유 — 법정상한 적용. 실제 조례 확인 필요.")
+        await _save_resolution(result, sigungu, zone_type)
         return result
 
     async def _fetch_from_moleg_api(

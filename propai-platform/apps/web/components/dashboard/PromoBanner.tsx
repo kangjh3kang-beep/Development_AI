@@ -11,13 +11,13 @@ export function PromoBanner() {
         rel="noopener noreferrer"
         className="db-promo group flex-col text-center sm:flex-row sm:text-left"
       >
-        {/* 로고 */}
-        <div className="flex w-20 shrink-0 items-center justify-center md:w-24">
+        {/* 로고 (확대) */}
+        <div className="flex w-44 shrink-0 items-center justify-center md:w-52">
           <Image
             src="/images/promo-logo.png"
             alt="사통팔땅"
-            width={96}
-            height={28}
+            width={168}
+            height={49}
             className="object-contain"
           />
         </div>

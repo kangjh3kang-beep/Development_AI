@@ -61,8 +61,8 @@ export function Logo({ className = "", size = "md", showText = true }: { classNa
             <span className="bg-gradient-to-r from-[var(--text-primary)] to-[var(--accent-strong)] bg-clip-text text-transparent">사통</span>팔땅
             <span className="text-[var(--accent-strong)] ml-px">.</span>
           </span>
-          <span className={`${current.sub} font-bold tracking-[0.25em] text-[var(--text-tertiary)] uppercase mt-1 opacity-80 leading-none`}>
-            AI 부동산 분석
+          <span className={`${current.sub} font-bold tracking-[0.12em] text-[var(--text-tertiary)] uppercase mt-1 opacity-80 leading-none`}>
+            개발사업 전주기 관리플랫폼
           </span>
         </div>
       )}

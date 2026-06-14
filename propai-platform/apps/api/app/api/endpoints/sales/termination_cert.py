@@ -444,6 +444,38 @@ async def cert_pdf(cert_id: uuid.UUID, db: AsyncSession = Depends(get_db),
                     headers={"Content-Disposition": f'inline; filename="{cert["certificate_no"]}.pdf"'})
 
 
+def _build_image(cert: dict, db: AsyncSession, fmt: str) -> tuple[bytes, str]:
+    """증명서 PDF → PNG/JPEG 래스터(PyMuPDF). 미설치 시 503 정직 안내."""
+    try:
+        import fitz  # PyMuPDF
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(503, "이미지 변환 모듈(PyMuPDF)이 아직 배포되지 않았습니다. PDF를 이용하세요.") from exc
+    pdf = _build_pdf(cert, db)
+    doc = fitz.open(stream=pdf, filetype="pdf")
+    page = doc.load_page(0)
+    pix = page.get_pixmap(dpi=150)               # 인쇄·공유용 적정 해상도
+    out_fmt = "jpeg" if fmt in ("jpg", "jpeg") else "png"
+    img = pix.tobytes(output=out_fmt, jpg_quality=92) if out_fmt == "jpeg" else pix.tobytes(output="png")
+    doc.close()
+    return img, ("image/jpeg" if out_fmt == "jpeg" else "image/png")
+
+
+@termination_cert_router.get("/cert/{cert_id}/image", summary="해촉증명서 이미지(PNG/JPEG)")
+async def cert_image(cert_id: uuid.UUID, fmt: str = "png", db: AsyncSession = Depends(get_db),
+                     ctx: SalesCtx = Depends(sales_ctx)) -> Response:
+    """발급된 증명서를 PNG/JPEG로 제공(인쇄·공유용). fmt=png|jpeg."""
+    await _ensure(db)
+    cert = await _load_cert(db, cert_id)
+    if not cert:
+        raise HTTPException(404, "증명서를 찾을 수 없습니다")
+    if not _can_access_cert(cert, ctx):
+        raise HTTPException(403, "본인 또는 발급 현장 관리자만 열람할 수 있습니다")
+    img, mime = _build_image(cert, db, (fmt or "png").lower())
+    ext = "jpg" if mime == "image/jpeg" else "png"
+    return Response(content=img, media_type=mime,
+                    headers={"Content-Disposition": f'inline; filename="{cert["certificate_no"]}.{ext}"'})
+
+
 # ── 7) PDF (일괄 — zip) ──────────────────────────────────────────────────────
 @termination_cert_router.post("/cert/bulk-pdf", summary="해촉증명서 일괄 PDF(zip)")
 async def bulk_pdf(body: BulkPdfRequest, db: AsyncSession = Depends(get_db),

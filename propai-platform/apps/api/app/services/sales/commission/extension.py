@@ -3,7 +3,7 @@
 from decimal import Decimal
 from datetime import date, datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.api.database.models.sales.commission_ext import SalesCommissionHoldback, SalesCommissionPayoutSchedule
@@ -51,12 +51,23 @@ async def run_due_payouts(db: AsyncSession, site_id, as_of: date, wh_rate=Decima
         if gross <= 0:
             sch.status = "PAID"
             continue
-        net = payout_net(gross, wh_rate)  # 사업소득 원천징수 3.3%(정규직은 4대보험 분기)
+        # 수령자(노드) 세금유형 선택: WITHHOLDING(3.3% 원천) 또는 VAT(부가세 10% 가산).
+        from app.services.sales.commission.engine import get_node_tax_type
+        tt = await get_node_tax_type(db, split.node_id)
+        net = payout_net(gross, tt)
         po = SalesCommissionPayout(claim_id=None, gross=int(net["gross"]),
              withholding=int(net["withholding"]), net=int(net["net"]),
              paid_at=datetime.now(timezone.utc), method="SCHEDULE")
         db.add(po)
         await db.flush()
+        # tax_type/vat 는 모델 외 컬럼 — 멱등 ALTER 후 raw 갱신(부가세 가산 지급액 추적).
+        await db.execute(text(
+            "ALTER TABLE sales_commission_payouts ADD COLUMN IF NOT EXISTS tax_type varchar(16) DEFAULT 'WITHHOLDING'"))
+        await db.execute(text(
+            "ALTER TABLE sales_commission_payouts ADD COLUMN IF NOT EXISTS vat numeric(16,0) DEFAULT 0"))
+        await db.execute(text(
+            "UPDATE sales_commission_payouts SET tax_type=:t, vat=:v WHERE id=:i"),
+            {"t": net["tax_type"], "v": int(net["vat"]), "i": str(po.id)})
         sch.status = "PAID"
         sch.paid_payout_id = po.id
         paid += 1

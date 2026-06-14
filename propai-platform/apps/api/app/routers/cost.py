@@ -97,7 +97,13 @@ async def estimate_overview(req: OverviewCostRequest, db: AsyncSession = Depends
         req.building_type, DEFAULT_DIRECT_COST_PER_SQM["apartment"])
     unit = base_unit * _STRUCT_FACTOR.get(req.structure_type, 1.0)
     gfa = req.total_gfa_sqm
-    gfa_below = min(gfa * 0.4, gfa * req.floor_count_below * 0.12)  # 지하 면적 추정
+    # 지하면적 = 층 바닥판 비례 추정. 지하 바닥판은 주차·기계실로 지상보다 약간 넓어(≈1.2배)
+    # footprint×지하층수×1.2 로 잡는다. 기존 min(gfa*0.4, gfa*층수*0.12)은 고층(예 35F/5F)에서도
+    # 0.4 cap 에 걸려 지하가 총GFA의 40%(지상의 67%)가 되는 물리적 비현실 → 층수비례로 교정.
+    _fa = max(1, int(req.floor_count_above))
+    _fb = max(0, int(req.floor_count_below))
+    _BK = 1.2  # 지하 바닥판 확장계수
+    gfa_below = (gfa * (_fb * _BK) / (_fa + _fb * _BK)) if _fb > 0 else 0.0
     gfa_above = max(0.0, gfa - gfa_below)
 
     def scenario(factor: float) -> dict[str, Any]:

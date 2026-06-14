@@ -9,7 +9,32 @@
 import { useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { salesApi } from "@/lib/salesApi";
+import { ApiClientError } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+
+// 일시적 인프라 오류(배포 전환·게이트웨이)는 짧게 재시도해 사용자에게 노출하지 않는다.
+const _TRANSIENT = new Set([0, 502, 503, 504]);
+async function _withRetry<T>(fn: () => Promise<T>, max = 2): Promise<T> {
+  for (let n = 0; ; n++) {
+    try {
+      return await fn();
+    } catch (e) {
+      const st = e instanceof ApiClientError ? e.status : 0;
+      if (_TRANSIENT.has(st) && n < max) {
+        await new Promise((r) => setTimeout(r, 700 * (n + 1)));
+        continue;
+      }
+      throw e;
+    }
+  }
+}
+function _errMsg(e: unknown, fallback: string): string {
+  const st = e instanceof ApiClientError ? e.status : 0;
+  if (st === 401 || st === 403) return "권한이 없습니다(시행사·대행사만 생성 가능). 현장 재진입 후 다시 시도하세요.";
+  if (st === 422 || st === 400) return "입력값을 확인하세요(동/층/호수).";
+  if (_TRANSIENT.has(st)) return "일시적 연결 오류입니다. 잠시 후 다시 시도해 주세요.";
+  return `${fallback}${st ? ` (오류 ${st})` : ""}.`;
+}
 
 type FloorSpec = { floor: number; units: number; type_name: string };
 type Block = {
@@ -79,11 +104,13 @@ export function UnitOutlineBuilder({
   const submitFromDesign = async () => {
     setBusy(true); setErr("");
     try {
-      const r = await salesApi(siteCode).post<{ generated: number }>("/units/generate", { source_type: "DESIGN_AI" });
+      const r = await _withRetry(() =>
+        salesApi(siteCode).post<{ generated: number }>("/units/generate", { source_type: "DESIGN_AI" }),
+      );
       if ((r?.generated ?? 0) > 0) onDone();
       else setErr("설계 데이터가 없습니다. 먼저 프로젝트에서 건축설계(BIM)를 생성하세요.");
-    } catch {
-      setErr("설계 자동 생성 실패(설계 데이터/권한 확인).");
+    } catch (e) {
+      setErr(_errMsg(e, "설계 자동 생성 실패(설계 데이터 확인)"));
     } finally { setBusy(false); }
   };
 
@@ -108,13 +135,15 @@ export function UnitOutlineBuilder({
               types: b.type_name ? [{ name: b.type_name }] : undefined,
             },
       );
-      await salesApi(siteCode).post("/units/generate", {
-        source_type: "OUTLINE",
-        params: { blocks: payloadBlocks },
-      });
+      await _withRetry(() =>
+        salesApi(siteCode).post("/units/generate", {
+          source_type: "OUTLINE",
+          params: { blocks: payloadBlocks },
+        }),
+      );
       onDone();
-    } catch {
-      setErr("동·호표 생성에 실패했습니다 (권한 또는 입력을 확인하세요).");
+    } catch (e) {
+      setErr(_errMsg(e, "동·호표 생성에 실패했습니다"));
     } finally {
       setBusy(false);
     }

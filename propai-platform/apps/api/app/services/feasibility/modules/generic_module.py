@@ -53,6 +53,23 @@ class GenericModule(BaseModule):
         construction = compute_construction_cost(inp)
         finance = compute_finance_cost(inp)
         other = compute_other_cost(inp)
+
+        # ── P0-2: 금융비·소프트비 자동추정(파라미터 미입력 시에만) ──
+        # 디폴트 호출(loan/소프트비 params 미입력)에서 finance=0·other=0 이면 총사업비가 과소
+        # 계상돼 ROI·순이익률이 비현실적으로 과대(예: ROI 566%)된다. 명시 입력이 없을 때 표준
+        # 가정으로 자동추정하고 auto_estimated 플래그로 정직 표기(사용자 입력 시 그 값 우선).
+        base_cost = float(land["total_land_cost_won"]) + float(construction["total_construction_cost_won"])
+        if float(finance.get("total_finance_cost_won") or 0) <= 0 and base_cost > 0:
+            months = float(inp.project_months or 30)
+            pf_amt = base_cost * 0.70  # 표준 LTV 70%
+            est_finance = round(pf_amt * 0.055 * (months / 12.0))  # PF 이자 5.5%, 사업기간 비례
+            finance = {**finance, "total_finance_cost_won": est_finance, "auto_estimated": True,
+                       "estimate_basis": f"PF 차입 {pf_amt:,.0f}원(토지+공사 LTV70%)×5.5%×{months:.0f}개월 자동추정(미입력)"}
+        if float(other.get("total_other_cost_won") or 0) <= 0 and base_cost > 0:
+            est_other = round(base_cost * 0.07)  # 설계·감리·분양대행·금융수수료·예비비 통칭 7%
+            other = {**other, "total_other_cost_won": est_other, "auto_estimated": True,
+                     "estimate_basis": f"소프트비 = (토지+공사) {base_cost:,.0f}원 × 7% 자동추정(설계·감리·분양대행·예비비 통칭, 미입력)"}
+
         taxes = compute_taxes(inp, revenue["total_revenue_won"])
 
         agg = aggregate_feasibility(

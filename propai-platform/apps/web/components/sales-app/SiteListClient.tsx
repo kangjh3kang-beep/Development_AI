@@ -73,35 +73,49 @@ export default function SiteListClient({ locale }: { locale: Locale }) {
   };
 
   return (
-    <div className="space-y-5">
-      <div className="flex items-center gap-3">
-        <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-[var(--accent-soft)] text-2xl">🏗️</span>
-        <div>
-          <span className="cc-meta">FIELD APP · MY SITES</span>
-          <h1 className="mt-0.5 text-xl font-black tracking-tight text-[var(--text-primary)]">내 분양 현장</h1>
-          <p className="mt-0.5 text-xs text-[var(--text-secondary)]">
-            현장 앱 진입점입니다. 현장을 선택하고 2차 비밀번호로 진입하면 내 역할에 맞는 메뉴가 열립니다.
-          </p>
+    <div className="space-y-6">
+      {/* 히어로 헤더 — 커맨드센터 톤. 은은한 그리드 + accent 글로우로 진입점임을 강조. */}
+      <header className="relative overflow-hidden rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface-soft)] p-5 shadow-[var(--shadow-sm)] sm:p-6">
+        <div className="cc-grid-bg cc-grid-bg--radial opacity-40" aria-hidden />
+        <div
+          aria-hidden
+          className="pointer-events-none absolute -right-16 -top-20 h-48 w-48 rounded-full bg-[var(--accent-soft)] blur-3xl"
+        />
+        <div className="relative flex items-start gap-4">
+          <span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl border border-[color:color-mix(in_srgb,var(--accent-strong)_30%,transparent)] bg-[var(--accent-soft)] text-2xl shadow-[var(--shadow-xs)]">
+            🏗️
+          </span>
+          <div className="min-w-0">
+            <span className="cc-meta">FIELD APP · MY SITES</span>
+            <h1 className="mt-1 text-2xl font-black tracking-tight text-[var(--text-primary)]">내 분양 현장</h1>
+            <p className="mt-1 max-w-prose text-xs leading-relaxed text-[var(--text-secondary)]">
+              현장 앱 진입점입니다. 현장을 선택하고 2차 비밀번호로 진입하면 내 역할에 맞는 메뉴가 열립니다.
+            </p>
+          </div>
         </div>
-      </div>
 
-      {/* 단계 안내 — 처음 사용자가 진입 흐름(①현장→②2차비번→③역할메뉴)을 이해하도록. */}
-      <ol className="flex flex-wrap items-center gap-2 text-[11px] font-semibold text-[var(--text-secondary)]">
-        {[
-          { n: "1", t: "현장 선택", d: "내 역할 배지 확인" },
-          { n: "2", t: "2차 비밀번호", d: "현장별 진입 인증" },
-          { n: "3", t: "역할별 메뉴", d: "권한에 맞는 워크스페이스" },
-        ].map((s, i) => (
-          <li key={s.n} className="flex items-center gap-2">
-            <span className="inline-flex items-center gap-1.5 rounded-full border border-[var(--line)] bg-[var(--surface-soft)] px-2.5 py-1">
-              <span className="grid h-4 w-4 place-items-center rounded-full bg-[var(--accent-strong)] text-[10px] font-black text-white">{s.n}</span>
-              <b className="text-[var(--text-primary)]">{s.t}</b>
-              <span className="text-[var(--text-tertiary)]">{s.d}</span>
-            </span>
-            {i < 2 && <span aria-hidden className="text-[var(--text-tertiary)]">→</span>}
-          </li>
-        ))}
-      </ol>
+        {/* 단계 안내 — 처음 사용자가 진입 흐름(①현장→②2차비번→③역할메뉴)을 이해하도록. */}
+        <ol className="relative mt-5 grid gap-2 sm:grid-cols-3">
+          {[
+            { n: "1", t: "현장 선택", d: "내 역할 배지 확인" },
+            { n: "2", t: "2차 비밀번호", d: "현장별 진입 인증" },
+            { n: "3", t: "역할별 메뉴", d: "권한에 맞는 워크스페이스" },
+          ].map((s) => (
+            <li
+              key={s.n}
+              className="flex items-center gap-2.5 rounded-xl border border-[var(--line)] bg-[var(--surface)] px-3 py-2.5"
+            >
+              <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-[var(--accent-strong)] text-xs font-black text-white shadow-[var(--shadow-xs)]">
+                {s.n}
+              </span>
+              <span className="min-w-0">
+                <b className="block text-[13px] leading-tight text-[var(--text-primary)]">{s.t}</b>
+                <span className="block text-[11px] leading-tight text-[var(--text-tertiary)]">{s.d}</span>
+              </span>
+            </li>
+          ))}
+        </ol>
+      </header>
 
       {/* 앱 실행/설치 affordance — 홈 화면에 추가하면 주소 입력 없이 한 번에 접속. */}
       <InstallGuide />
@@ -115,7 +129,7 @@ export default function SiteListClient({ locale }: { locale: Locale }) {
       {loading ? (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {[0, 1, 2].map((i) => (
-            <div key={i} className="sa-skeleton h-28 rounded-2xl" />
+            <div key={i} className="sa-skeleton h-32 rounded-2xl" />
           ))}
         </div>
       ) : sites.length === 0 ? (
@@ -125,43 +139,75 @@ export default function SiteListClient({ locale }: { locale: Locale }) {
           <p className="text-xs text-[var(--text-tertiary)]">현장 관리자가 조직도에 추가하면 여기에 표시됩니다.</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {sites.map((s) => {
-            const entered = Boolean(getStoredSiteToken(s.site_id));
-            const statusTone =
-              s.status === "OPEN" ? "sa-chip--success" : s.status === "CLOSED" ? "sa-chip--muted" : "sa-chip--warning";
-            return (
-              <button
-                key={s.site_id}
-                onClick={() => onCardClick(s)}
-                className="sa-card group block w-full rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-4 text-left shadow-[var(--shadow-sm)]"
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <h3 className="text-[15px] font-bold leading-snug text-[var(--text-primary)]">{s.site_name}</h3>
-                  <span className={`sa-chip shrink-0 ${statusTone}`}>{STATUS_LABEL[s.status] ?? s.status}</span>
-                </div>
-                {s.development_type && (
-                  <p className="mt-1 text-xs text-[var(--text-tertiary)]">{s.development_type}</p>
-                )}
-                <div className="mt-3 flex flex-wrap items-center gap-2">
-                  <span className="sa-chip sa-chip--accent">{s.role_label ?? ROLE_LABEL[s.role] ?? s.role}</span>
-                  {s.membership && MEMBERSHIP_LABEL[s.membership] && (
-                    <span className="sa-chip sa-chip--muted">{MEMBERSHIP_LABEL[s.membership]}</span>
-                  )}
-                  {entered ? (
-                    <span className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--status-success)]">
-                      <span className="sa-dot sa-dot--success" aria-hidden /> 진입됨
+        <div className="space-y-3">
+          <div className="flex items-center gap-2">
+            <span className="cc-label">{sites.length}개 현장</span>
+            <span className="h-px flex-1 bg-[var(--line)]" aria-hidden />
+          </div>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {sites.map((s) => {
+              const entered = Boolean(getStoredSiteToken(s.site_id));
+              // 상태(준비중/분양중/종료)별 칩 + 좌측 레일 색을 토큰 의미색으로 통일.
+              const statusTone =
+                s.status === "OPEN" ? "success" : s.status === "CLOSED" ? "muted" : "warning";
+              const railVar =
+                statusTone === "success"
+                  ? "var(--status-success)"
+                  : statusTone === "muted"
+                    ? "var(--line-strong)"
+                    : "var(--status-warning)";
+              return (
+                <button
+                  key={s.site_id}
+                  onClick={() => onCardClick(s)}
+                  className="sa-card group relative block w-full overflow-hidden rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-4 pl-5 text-left shadow-[var(--shadow-sm)]"
+                >
+                  {/* 좌측 상태 레일 — 한눈에 현장 상태 인지 */}
+                  <span
+                    aria-hidden
+                    className="absolute inset-y-0 left-0 w-1"
+                    style={{ background: railVar }}
+                  />
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <h3 className="truncate text-[15px] font-bold leading-snug text-[var(--text-primary)]">
+                        {s.site_name}
+                      </h3>
+                      {s.development_type && (
+                        <p className="mt-0.5 truncate text-xs text-[var(--text-tertiary)]">{s.development_type}</p>
+                      )}
+                    </div>
+                    <span className={`sa-chip shrink-0 sa-chip--${statusTone}`}>
+                      {STATUS_LABEL[s.status] ?? s.status}
                     </span>
-                  ) : (
-                    <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-[var(--text-tertiary)]">🔐 2차 비번</span>
-                  )}
-                  <span className="ml-auto text-[13px] font-bold text-[var(--accent-strong)] transition-transform group-hover:translate-x-0.5">
-                    진입 →
-                  </span>
-                </div>
-              </button>
-            );
-          })}
+                  </div>
+
+                  <div className="mt-3 flex flex-wrap items-center gap-1.5">
+                    <span className="sa-chip sa-chip--accent">{s.role_label ?? ROLE_LABEL[s.role] ?? s.role}</span>
+                    {s.membership && MEMBERSHIP_LABEL[s.membership] && (
+                      <span className="sa-chip sa-chip--muted">{MEMBERSHIP_LABEL[s.membership]}</span>
+                    )}
+                  </div>
+
+                  {/* 진입 상태 + CTA를 카드 푸터로 분리해 위계를 명확히 */}
+                  <div className="mt-3 flex items-center justify-between border-t border-[var(--line)] pt-3">
+                    {entered ? (
+                      <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-[var(--status-success)]">
+                        <span className="sa-dot sa-dot--success" aria-hidden /> 입장 완료
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-[var(--text-tertiary)]">
+                        <span aria-hidden>🔐</span> 2차 비밀번호
+                      </span>
+                    )}
+                    <span className="inline-flex items-center gap-1 text-[13px] font-bold text-[var(--accent-strong)] transition-transform group-hover:translate-x-0.5">
+                      {entered ? "바로 입장" : "진입"} <span aria-hidden>→</span>
+                    </span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
         </div>
       )}
 

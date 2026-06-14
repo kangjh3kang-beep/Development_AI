@@ -21,6 +21,7 @@ const BASIS_MASTER = [
 const NODE_TYPES = [
   { value: "SUBAGENCY", label: "대대행" }, { value: "GM_DIRECTOR", label: "총괄본부장" },
   { value: "DIRECTOR", label: "본부장" }, { value: "TEAM_LEADER", label: "팀장" }, { value: "MEMBER", label: "팀원" },
+  { value: "MGM", label: "부동산MGM" },  // 외부 부동산 추천 수수료(총액에서 차감·예약). 잔여는 대행사 귀속.
 ];
 const NT: Record<string, string> = Object.fromEntries(NODE_TYPES.map((t) => [t.value, t.label]));
 const fcls = "rounded-lg border border-[var(--line)] bg-[var(--surface-strong)] px-2 py-1.5 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]";

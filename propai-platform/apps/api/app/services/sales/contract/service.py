@@ -57,6 +57,11 @@ async def create_contract(db: AsyncSession, site_id, unit_id, customer_id=None, 
         pt = (await db.execute(q.order_by(desc(SalesUnitPriceTable.id)))).scalars().first()
         if pt is not None:
             price = int(pt.override_price or pt.total_price or pt.base_price or 0)
+        # 폴백: per-unit 가격표가 없으면(가격표 미생성) 기준단가(SalesPriceBase)에서 직접 산정.
+        # 없을 경우 total_price=NULL→수수료·할부·연체 전량 0 cascade 가 발생하므로 자동해소한다.
+        if not price:
+            from app.services.sales.pricing.engine import resolve_unit_price
+            price = await resolve_unit_price(db, site_id, unit, round_id)
 
     c = SalesContractExt(site_id=site_id, unit_id=unit_id, customer_id=customer_id,
                          round_id=round_id, member_node_id=member_node_id, stage="RESERVED", status="ACTIVE",
@@ -83,7 +88,7 @@ async def sign_contract(db: AsyncSession, site_id, contract_id, by=None):
         db.add(SalesContractInstallment(
             contract_ext_id=c.id, seq=i, kind=s["kind"],
             due_date=base + timedelta(days=int(s["after_days"])),
-            amount=int(round((c.total_price or 0) * float(s["ratio"]))),
+            amount=int(round(float(c.total_price or 0) * float(s["ratio"]))),
         ))
     await split_commission(db, site_id, c)
     await emit_outbox(db, site_id, "ContractSigned",

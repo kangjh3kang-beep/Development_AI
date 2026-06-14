@@ -6,12 +6,42 @@ AI 내러티브(get_llm, best-effort). 출력: 구조화 dict / PDF(reportlab) /
 
 import io
 import json
+import re
 from datetime import datetime
 from typing import Any
 
 import structlog
 
 logger = structlog.get_logger(__name__)
+
+# 주소에서 시/군/구 토큰 추출. KOSIS·SGIS는 통합시(수원·성남·고양 등)를 다르게 표기한다:
+#   KOSIS 인구이동/소득 표 → 시 단위 집계('수원시', 자치구 없음)
+#   SGIS stage 목록        → 시+구('수원시 장안구')
+# 광역/특별시 자치구는 양쪽 모두 '강남구', 일반 시/군은 '파주시'/'○○군' 그대로.
+_SIGUNGU_RE = re.compile(r"([가-힣]{1,6}(?:시|군|구))")
+
+
+def _extract_region_keys(address: str | None) -> tuple[str | None, str | None]:
+    """주소 → (KOSIS 시군구명, SGIS 시군구명). provider별 표기 차이를 흡수한다."""
+    if not address:
+        return (None, None)
+    toks = _SIGUNGU_RE.findall(address)
+    if not toks:
+        return (None, None)
+    # 시도(광역/특별/특별자치시)는 제외 — 실제 시군구만.
+    si = next((t for t in reversed(toks)
+               if t.endswith("시") and not t.endswith(("광역시", "특별시", "특별자치시"))), None)
+    gu = next((t for t in reversed(toks) if t.endswith("구")), None)
+    gun = next((t for t in reversed(toks) if t.endswith("군")), None)
+    if si and gu:        # 통합시 자치구(수원시 장안구): KOSIS=시, SGIS="시 구"
+        return (si, f"{si} {gu}")
+    if gu:               # 광역/특별시 자치구(강남구): 양쪽 동일
+        return (gu, gu)
+    if si:               # 일반시(파주시)
+        return (si, si)
+    if gun:              # 군
+        return (gun, gun)
+    return (None, None)
 
 _TRADE = [("apt", "아파트"), ("villa", "연립·다세대"), ("officetel", "오피스텔"), ("house", "단독·다가구")]
 _RENT = [("apt", "아파트"), ("villa", "연립·다세대"), ("officetel", "오피스텔")]
@@ -79,6 +109,9 @@ class MarketReportService:
     async def _category_stats(self, lawd_cd: str) -> dict[str, Any]:
         import asyncio
 
+        # ★MOLIT LAWD_CD 는 시군구 5자리. 10자리 법정동/bcode 가 들어오면 [:5]로 정규화하지 않으면
+        #   실거래가 전부 빈 결과가 되어 trade·comparable_trade(적정분양가 앵커)가 통째로 누락된다.
+        lawd_cd = (lawd_cd or "")[:5]
         months = self._months(3)
         trade: dict[str, Any] = {}
         rent: dict[str, Any] = {}
@@ -155,6 +188,57 @@ class MarketReportService:
             logger.warning("시장 내러티브 생성 실패, 구조화 폴백", err=str(e)[:80])
             return {"summary": "수집된 실거래·시세 데이터를 기반으로 한 시장 현황입니다.", "opportunities": [], "risks": [], "price_trend": "", "target_persona": "데이터 기반 타겟팅 분석 불가"}
 
+    async def _nearby_presale_84_price(
+        self, lawd_cd: str, coords: Any,
+    ) -> tuple[float | None, str]:
+        """주변 신규 분양가(청약홈) → 84㎡급 대표 분양총액(만원) 중앙값. (값, 출처).
+
+        거래사례비교 1차 보강. PresaleService.nearby(거리필터 공고) → 가까운 아파트 공고 상위 3개의
+        detail(주택형별 분양총액 price_man·공급면적)에서 84㎡급(공급 100~125㎡) 분양가를 모아 중앙값.
+        키 미설정/데이터 없음/타임아웃이면 (None, 'unavailable') 정직 반환(가짜값 금지).
+        보고서 지연 방지를 위해 하드타임아웃 적용.
+        """
+        import asyncio as _aio
+        try:
+            from app.services.land_intelligence.presale_service import PresaleService, area_from_lawd
+        except Exception:  # noqa: BLE001
+            return None, "unavailable"
+        _lat = coords.get("lat") if isinstance(coords, dict) else None
+        _lon = (coords.get("lon") or coords.get("lng")) if isinstance(coords, dict) else None
+        try:
+            svc = PresaleService()
+            near = await _aio.wait_for(
+                svc.nearby(_lat, _lon, area_from_lawd(lawd_cd),
+                           radius_m=3000, months_back=12, max_markers=8),
+                timeout=12.0)
+            if not near.get("available"):
+                return None, "unavailable"
+            picks = [it for it in (near.get("items") or []) if it.get("house_manage_no")][:3]
+            if not picks:
+                return None, "unavailable"
+            details = await _aio.wait_for(_aio.gather(*[
+                svc.detail(it.get("house_manage_no", ""), it.get("pblanc_no", ""), it.get("product", "apt"))
+                for it in picks], return_exceptions=True), timeout=15.0)
+            cands: list[float] = []
+            for d in details:
+                if not isinstance(d, dict) or not d.get("available"):
+                    continue
+                for m in d.get("models", []):
+                    try:
+                        amt = float(m.get("price_man"))
+                        ar = float(m.get("supply_area_m2"))
+                    except (TypeError, ValueError):
+                        continue
+                    # 전용 84㎡급 ≈ 공급 100~125㎡ — 실거래 84㎡ 기준가와 일관되게 비교.
+                    if amt > 0 and 100.0 <= ar <= 125.0:
+                        cands.append(amt)
+            if not cands:
+                return None, "unavailable"
+            cands.sort()
+            return float(cands[len(cands) // 2]), "live"  # 중앙값
+        except Exception:  # noqa: BLE001 — 타임아웃·네트워크·파싱 실패 시 정직 None
+            return None, "unavailable"
+
     async def build_report(self, address: str, lawd_cd: str, pnu: str | None = None, use_llm: bool = True, options: dict | None = None) -> dict[str, Any]:
         from app.services.land_intelligence.land_info_service import LandInfoService
         
@@ -183,12 +267,32 @@ class MarketReportService:
         demographics: dict[str, Any] | None = None
         if use_sgis or use_kosis:
             try:
+                # use_mock=None: 클라이언트가 키 존재 여부로 실연동/폴백을 자동 결정한다.
+                #   (과거 use_mock=True 하드코딩으로 키가 있어도 항상 Mock만 나오던 G1 결함 제거)
+                #   키가 있으면 실데이터 시도→data_source='live', 없으면 폴백→'fallback'/'mock'/'unavailable'.
+                # 통합시(수원/성남 등) 표기차 흡수: KOSIS=시 단위, SGIS=시+구.
+                kosis_nm, sgis_nm = _extract_region_keys(address)
+
                 async def fetch_mig():
-                    return await sgis.get_migration_stats(lawd_cd, cur_year, use_mock=True) if use_sgis else {"target_adm_cd": lawd_cd, "year": cur_year}
+                    if not use_sgis and not use_kosis:
+                        return {"target_adm_cd": lawd_cd, "year": cur_year}
+                    # I2: 인구이동은 SGIS 미제공 → KOSIS 「시군구별 이동자수」로 대상 시군구의
+                    #     총전입·총전출·순이동(유입세)을 산출. 주소에서 시군구명을 추출해 식별한다.
+                    od = await kosis.get_migration_od(lawd_cd[:5], cur_year, region_name=kosis_nm)
+                    if od.get("data_source") == "live":
+                        return od
+                    # KOSIS 미확정/실패 시 SGIS 정직 폴백(가짜 금지).
+                    return await sgis.get_migration_stats(lawd_cd, cur_year) if use_sgis else od
                 async def fetch_pop():
-                    return await sgis.get_population_stats(lawd_cd, cur_year, use_mock=True) if use_sgis else {"target_adm_cd": lawd_cd, "year": cur_year}
+                    if not use_sgis:
+                        return {"target_adm_cd": lawd_cd, "year": cur_year}
+                    return await sgis.get_population_stats(
+                        lawd_cd, cur_year, region_name=sgis_nm)
                 async def fetch_inc():
-                    return await kosis.get_macro_income_stats(lawd_cd[:5], cur_year, use_mock=True) if use_kosis else {"sigungu_cd": lawd_cd[:5], "year": cur_year}
+                    if not use_kosis:
+                        return {"sigungu_cd": lawd_cd[:5], "year": cur_year}
+                    return await kosis.get_macro_income_stats(
+                        lawd_cd[:5], cur_year, region_name=kosis_nm)
 
                 mig, pop, inc = await asyncio.gather(
                     fetch_mig(),
@@ -253,7 +357,36 @@ class MarketReportService:
             avg_pyeong_price_manwon=target_pp,
             official_price_per_sqm=official_price or 0
         )
-        
+
+        # ── M3: 적정 분양가 산정 — 거래사례비교(1차 핵심) + 지불여력(2차 검증)·결정론 ──
+        # 1차: 주변 동일종목 실거래 시세(평당가)·주변 분양가. 2차: KOSIS 소득→PIR/DSR/LTV로 수요 수용성.
+        # 비교 데이터 없으면 엔진이 data_source='unavailable'로 정직 반환(가짜값 금지).
+        from app.services.market.pricing_band_service import compute_fair_price
+        _mi = (demographics or {}).get("macro_income") or {}
+        _income_10k = _mi.get("median_income_10k") or _mi.get("avg_income_10k")
+        # 실거래 평당가(만원/평) — 폴백 2000 제외, 실값만 비교가로 사용.
+        _real_pp = apt_pp or (sum(valid_pp) / len(valid_pp) if valid_pp else None)
+        # 대표 84㎡ 1세대 실거래 기반가(만원) = 평당가 × 25.4평(=84/3.305785)
+        _trade_unit_10k = round(_real_pp * (84.0 / 3.305785)) if _real_pp else None
+        # 주변 신규 분양가(청약홈) — 84㎡급(공급 100~125㎡) 분양총액 중앙값. 키/데이터 없으면 None(정직).
+        _presale_10k, _presale_src = await self._nearby_presale_84_price(lawd_cd, coords)
+        pricing_band = compute_fair_price(
+            comparable_trade_10k=_trade_unit_10k,
+            nearby_presale_10k=_presale_10k,
+            annual_income_10k=_income_10k,
+            trade_source="live" if _real_pp else None,
+            presale_source=_presale_src,
+            income_source=_mi.get("data_source"),
+        )
+
+        # ── I6: 수요기반 평형 MD 추천(가구원수 분포 → 권장 전용면적 배분)·결정론 ──
+        from app.services.market.unit_mix_recommender import recommend_unit_mix
+        _pop = (demographics or {}).get("population") or {}
+        unit_mix_recommendation = recommend_unit_mix(
+            _pop.get("household_types"),
+            data_source=_pop.get("data_source"),
+        )
+
         ctx = {
             "address": address,
             "zone_type": zone_type,
@@ -290,6 +423,8 @@ class MarketReportService:
             "demographics": demographics,
             "narrative": narrative,
             "feasibility_analysis": feasibility,
+            "pricing_band": pricing_band,
+            "unit_mix_recommendation": unit_mix_recommendation,
         }
 
     # ── 정적 지도 이미지(OSM 타일 합성, Pillow) ──

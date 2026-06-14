@@ -544,6 +544,23 @@ function FreelancerView({ api, siteCode }: { api: SalesApi; siteCode: string }) 
     }
   };
 
+  // 개별 이미지(PNG/JPEG): 새 창(inline). 인쇄·공유용. 토큰 헤더 필요 → blob URL.
+  const openImage = async (cert: CertItem, fmt: "png" | "jpeg") => {
+    setErr("");
+    try {
+      const res = await fetch(`${resolveApiOrigin()}/api/v1/sales/cert/${cert.id}/image?fmt=${fmt}`, {
+        headers: buildSalesHeaders(siteCode),
+      });
+      if (!res.ok) { setErr(await readError(res)); return; }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      window.open(url, "_blank", "noopener,noreferrer");
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch {
+      setErr("이미지를 여는 데 실패했습니다.");
+    }
+  };
+
   const downloadBulk = async () => {
     if (pickedCerts.size === 0) {
       setErr("다운로드할 증명서를 선택하세요.");
@@ -731,12 +748,26 @@ function FreelancerView({ api, siteCode }: { api: SalesApi; siteCode: string }) 
                     {fmtPeriod(c.period_start, c.period_end)} · 소득 {won(c.income_total)} · 원천징수 {won(c.withholding_total)}
                   </p>
                 </div>
-                <button
-                  onClick={() => openPdf(c)}
-                  className="rounded-lg border border-[var(--accent-strong)] px-3 py-1.5 text-xs font-bold text-[var(--accent-strong)] transition hover:bg-[var(--accent-soft)]"
-                >
-                  PDF 보기
-                </button>
+                <div className="flex shrink-0 items-center gap-1.5">
+                  <button
+                    onClick={() => openPdf(c)}
+                    className="rounded-lg border border-[var(--accent-strong)] px-3 py-1.5 text-xs font-bold text-[var(--accent-strong)] transition hover:bg-[var(--accent-soft)] active:scale-95"
+                  >
+                    PDF
+                  </button>
+                  <button
+                    onClick={() => openImage(c, "png")}
+                    className="rounded-lg border border-[var(--line)] px-2.5 py-1.5 text-xs font-bold text-[var(--text-secondary)] transition hover:border-[var(--accent-strong)] active:scale-95"
+                  >
+                    PNG
+                  </button>
+                  <button
+                    onClick={() => openImage(c, "jpeg")}
+                    className="rounded-lg border border-[var(--line)] px-2.5 py-1.5 text-xs font-bold text-[var(--text-secondary)] transition hover:border-[var(--accent-strong)] active:scale-95"
+                  >
+                    JPEG
+                  </button>
+                </div>
               </li>
             ))}
           </ul>

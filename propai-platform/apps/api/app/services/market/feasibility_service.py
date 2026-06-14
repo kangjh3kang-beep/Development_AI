@@ -30,6 +30,11 @@ LAND_COST_DEFAULT_PER_PYEONG_10K = 2000
 SOFT_COST_RATIO = 0.10
 # 전용률(분양 가능 면적/연면적): 공용면적 제외한 분양 가능 비율 가정
 SALEABLE_AREA_RATIO = 0.75
+# NPV(순현재가치) 개략 가정: 개발사업 자본비용(할인율) 연 8%, 개발기간 3년.
+#   토지비는 t0 선투입, 건축·부대비는 t1~N 균등 분산, 분양수입은 완공시점(tN) 일시 실현으로 단순화.
+#   정밀 현금흐름·세후 IRR/NPV 는 FeasibilityServiceV2 가 산출(본 값은 참고용 개략).
+NPV_DISCOUNT_RATE = 0.08
+NPV_DEV_PERIOD_YEARS = 3
 
 # 용도지역별 기본 건폐율(BCA, %)·용적률(FAR, %) 추정표.
 # 국토계획법 시행령 상한 부근의 대표값이며, 조례 실효값은 V2/조례 엔진이 반영한다.
@@ -111,6 +116,15 @@ class FeasibilityService:
             profit = expected_revenue - total_cost
             roi_percent = (profit / total_cost) * 100 if total_cost > 0 else 0
 
+            # 6. NPV(개략): 토지비 t0 선투입, 건축·부대비 t1~N 균등 분산, 분양수입 tN 일시 실현 후 할인.
+            r = NPV_DISCOUNT_RATE
+            n = NPV_DEV_PERIOD_YEARS
+            annual_build_cost = (total_construction_cost + soft_cost) / n if n > 0 else 0
+            npv = -land_cost
+            for t in range(1, n + 1):
+                npv += (-annual_build_cost) / ((1 + r) ** t)
+            npv += expected_revenue / ((1 + r) ** n)
+
             return {
                 "method": "quick_estimate",  # 본 결과는 보고서용 개략 추정임을 명시(정밀=V2)
                 "massing": {
@@ -127,7 +141,8 @@ class FeasibilityService:
                     "soft_cost_10k": int(soft_cost),
                     "total_cost_10k": int(total_cost),
                     "net_profit_10k": int(profit),
-                    "roi_percent": round(roi_percent, 2)
+                    "roi_percent": round(roi_percent, 2),
+                    "npv_10k": int(npv),  # 순현재가치(개략·할인 반영). 양수면 자본비용 초과 수익.
                 },
                 "assumptions": {
                     "avg_pyeong_price_10k": int(avg_pyeong_price_manwon),
@@ -135,7 +150,9 @@ class FeasibilityService:
                     "land_cost_official_price_multiplier": LAND_COST_OFFICIAL_PRICE_MULTIPLIER,
                     "soft_cost_ratio": SOFT_COST_RATIO,
                     "saleable_area_ratio": SALEABLE_AREA_RATIO,
-                    "note": "보고서용 개략 추정값(참고용). 정밀 수지는 FeasibilityServiceV2 사용.",
+                    "npv_discount_rate": NPV_DISCOUNT_RATE,
+                    "npv_dev_period_years": NPV_DEV_PERIOD_YEARS,
+                    "note": "보고서용 개략 추정값(참고용). NPV는 할인율 8%·개발 3년 단순가정. 정밀 수지·세후 IRR은 FeasibilityServiceV2 사용.",
                 }
             }
         except Exception as e:

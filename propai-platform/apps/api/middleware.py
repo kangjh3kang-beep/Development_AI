@@ -102,7 +102,11 @@ def setup_middlewares(app: FastAPI) -> None:
         allow_origins=origins,
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-        allow_headers=["Authorization", "Content-Type", "X-Request-ID", "Accept"],
+        # ★ 분양 현장앱은 X-Site-Code/X-Site-Token 커스텀 헤더로 요청한다. 이게 allow_headers 에
+        #   없으면 브라우저 CORS 프리플라이트(OPTIONS)가 "Disallowed CORS headers"로 400 되고,
+        #   서비스워커가 이를 합성 503("오프라인")으로 표시 → 현장 진입 503의 근본원인. 반드시 포함.
+        allow_headers=["Authorization", "Content-Type", "X-Request-ID", "Accept",
+                       "X-Site-Code", "X-Site-Token"],
         expose_headers=["X-Request-ID"],
     )
 

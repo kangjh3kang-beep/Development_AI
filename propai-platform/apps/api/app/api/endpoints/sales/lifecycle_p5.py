@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
@@ -115,3 +115,89 @@ async def manual_match(payment_id: uuid.UUID, body: dict, db: AsyncSession = Dep
     it.paid_at = datetime.now(timezone.utc)
     await db.commit()
     return {"matched": True}
+
+
+# ── #4 할인/환급 + 계약자별 통합 수납현황 ──────────────────────────────────────
+# 회차(installment 납부)·연체(SalesOverdueInterest)는 기존 존재. 할인/환급은 별도 조정 레코드로
+# 멱등 테이블에 적립하고, 계약자 기준으로 납부/연체/할인/환급을 한 번에 집계한다(가짜값 없음).
+_ADJ_DDL = (
+    "CREATE TABLE IF NOT EXISTS sales_payment_adjustments ("
+    "  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),"
+    "  site_id uuid NOT NULL,"
+    "  contract_ext_id uuid NOT NULL,"
+    "  adj_type varchar(12) NOT NULL,"          # DISCOUNT(할인) | REFUND(환급)
+    "  amount numeric(16,0) NOT NULL,"
+    "  reason text,"
+    "  created_by uuid,"
+    "  created_at timestamptz NOT NULL DEFAULT now()"
+    ")"
+)
+_ADJ_READY = False
+
+
+async def _ensure_adj(db: AsyncSession) -> None:
+    global _ADJ_READY
+    if _ADJ_READY:
+        return
+    await db.execute(text(_ADJ_DDL))
+    await db.commit()
+    _ADJ_READY = True
+
+
+@r5.post("/payments/adjustment")
+async def payment_adjustment(body: dict, db: AsyncSession = Depends(get_db),
+                             ctx: SalesCtx = Depends(require_role("AGENCY", "GM_DIRECTOR", "DIRECTOR", "DEVELOPER"))):
+    """할인(DISCOUNT)·환급(REFUND) 조정 등록. amount는 원(KRW) 양수."""
+    from fastapi import HTTPException
+    await _ensure_adj(db)
+    try:
+        cid = uuid.UUID(str(body["contract_ext_id"]))
+        atype = str(body["adj_type"]).upper()
+        amount = int(body["amount"])
+    except (KeyError, ValueError, TypeError):
+        raise HTTPException(400, "contract_ext_id·adj_type(DISCOUNT/REFUND)·amount 필요")
+    if atype not in ("DISCOUNT", "REFUND") or amount <= 0:
+        raise HTTPException(400, "adj_type은 DISCOUNT/REFUND, amount는 양수여야 합니다.")
+    await db.execute(text(
+        "INSERT INTO sales_payment_adjustments (site_id, contract_ext_id, adj_type, amount, reason, created_by) "
+        "VALUES (:s,:c,:t,:a,:r,:u)"),
+        {"s": str(ctx.site_id), "c": str(cid), "t": atype, "a": amount,
+         "r": body.get("reason"), "u": str(getattr(ctx.user, "id", "")) or None})
+    await db.commit()
+    return {"ok": True, "adj_type": atype, "amount": amount}
+
+
+@r5.get("/payments/contract-summary")
+async def payment_contract_summary(contract_id: str, db: AsyncSession = Depends(get_db),
+                                   ctx: SalesCtx = Depends(sales_ctx)):
+    """계약자(계약) 기준 통합 수납현황 — 납부/연체/할인/환급(원 단위)."""
+    from apps.api.database.models.sales.contract_crm_ad import SalesContractExt, SalesContractInstallment
+    await _ensure_adj(db)
+    cid = uuid.UUID(contract_id)
+    c = (await db.execute(select(SalesContractExt).where(
+        SalesContractExt.id == cid, SalesContractExt.site_id == ctx.site_id))).scalar_one_or_none()
+    if not c:
+        from fastapi import HTTPException
+        raise HTTPException(404, "해당 현장의 계약을 찾을 수 없습니다.")
+    insts = list((await db.execute(select(SalesContractInstallment).where(
+        SalesContractInstallment.contract_ext_id == cid)
+        .order_by(SalesContractInstallment.seq))).scalars())
+    billed = sum(int(i.amount or 0) for i in insts)
+    paid = sum(int(i.paid_amount or 0) for i in insts)
+    today = datetime.now(timezone.utc).date()
+    overdue = [{"seq": i.seq, "due_date": str(i.due_date), "unpaid": int((i.amount or 0) - (i.paid_amount or 0))}
+               for i in insts if i.due_date and i.due_date < today and (i.paid_amount or 0) < (i.amount or 0)]
+    adj = (await db.execute(text(
+        "SELECT adj_type, count(*), coalesce(sum(amount),0) FROM sales_payment_adjustments "
+        "WHERE site_id=:s AND contract_ext_id=:c GROUP BY adj_type"),
+        {"s": str(ctx.site_id), "c": str(cid)})).all()
+    adj_map = {t: {"count": int(n), "amount": int(a)} for t, n, a in adj}
+    return {
+        "contract_id": str(cid),
+        "total_price": int(c.total_price or 0),
+        "installments": {"count": len(insts), "billed": billed, "paid": paid, "unpaid": billed - paid},
+        "overdue": {"count": len(overdue), "items": overdue,
+                    "unpaid_amount": sum(o["unpaid"] for o in overdue)},
+        "discount": adj_map.get("DISCOUNT", {"count": 0, "amount": 0}),
+        "refund": adj_map.get("REFUND", {"count": 0, "amount": 0}),
+    }

@@ -16,14 +16,22 @@ class MigrationData(BaseModel):
     total_outflow: int = Field(0, description="총 전출 인구")
     net_migration: int = Field(0, description="순이동 인구")
     top_inflow_regions: List[dict] = Field(default_factory=list, description="주요 전입 출발지 Top 3")
+    # 데이터 출처 플래그: 'live'(실데이터) | 'fallback'(합성·대체값) | 'mock'(개발용) | 'unavailable'(데이터 없음·정직표기)
+    # 옵셔널·하위호환: 기존 응답을 깨지 않으면서 실데이터/가짜값을 구분하기 위한 가산 필드.
+    data_source: Optional[str] = Field(None, description="데이터 출처 구분 플래그")
 
 class PopulationData(BaseModel):
     """거주 인구 및 가구 특성 (1단계 SGIS 기반)"""
     target_adm_cd: str = Field(..., description="대상 행정구역 코드")
     year: str = Field(..., description="조회 연도")
     total_population: int = Field(0, description="총 인구")
+    household_count: int = Field(0, description="총 가구수(SGIS 실측)")
+    avg_household_size: float = Field(0.0, description="평균 가구원수(SGIS 실측)")
     age_distribution: dict = Field(default_factory=dict, description="연령대별 인구 분포")
     household_types: dict = Field(default_factory=dict, description="가구원수별 분포 (1인가구 등)")
+    # 데이터 출처 플래그(위 MigrationData 와 동일 의미). 옵셔널·하위호환 가산 필드.
+    data_source: Optional[str] = Field(None, description="데이터 출처 구분 플래그")
+    note: Optional[str] = Field(None, description="산출 근거/주석")
 
 class MacroIncomeData(BaseModel):
     """거시적 소득 지표 (1단계 KOSIS 기반).
@@ -36,6 +44,8 @@ class MacroIncomeData(BaseModel):
     avg_income_10k: int = Field(0, description="시군구 평균 연소득(만원)")
     median_income_10k: int = Field(0, description="시군구 중위 연소득(만원)")
     income_bracket_ratio: dict = Field(default_factory=dict, description="소득 구간별 비율(%)")
+    # 데이터 출처 플래그(MigrationData 와 동일 의미). 옵셔널·하위호환 가산 필드.
+    data_source: Optional[str] = Field(None, description="데이터 출처 구분 플래그")
 
 class MicroFinancialData(BaseModel):
     """초정밀 금융/소비/소유 지표 (2단계 K-Atlas API 연동 시 활성화)"""

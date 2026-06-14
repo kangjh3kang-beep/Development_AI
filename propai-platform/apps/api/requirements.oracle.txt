@@ -45,6 +45,7 @@ svgwrite==1.4.3
 
 # Documents
 reportlab==4.2.5
+pymupdf==1.24.10  # 해촉증명서 PDF→PNG/JPEG 래스터(순수 wheel·시스템의존 0)
 python-pptx==1.0.2
 python-docx==1.1.2
 openpyxl==3.1.5

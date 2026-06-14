@@ -24,6 +24,9 @@ const ParcelBoundaryMap = dynamicMap<React.ComponentProps<typeof ParcelBoundaryM
 import { VerificationBadge } from "@/components/common/VerificationBadge";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { FeasibilityDashboard } from "@/components/feasibility/FeasibilityDashboard";
+import { AnalysisModuleSelector, type AnalysisModuleOption } from "@/components/common/AnalysisModuleSelector";
+import { DemographicPanel } from "@/components/operations/market/DemographicPanel";
+import { PricingBandPanel } from "@/components/operations/market/PricingBandPanel";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 // PDF/PPTX 바이너리 다운로드용 API 베이스 (api-client 로직 미러)
@@ -243,6 +246,25 @@ export function MarketInsightsWorkspaceClient() {
       (balance?.tier_label || "").toUpperCase().includes(tier)
     );
 
+  // ── 선택형 분석 모듈 카탈로그(공용 AnalysisModuleSelector 주입용) ──
+  // 사용자 핵심지침 "선택형 상세분석을 전 시스템 기본으로" — 필요한 모듈만 체크→선택분만 실행·과금.
+  // coinCost/estimatedSeconds는 선택 수→예상 코인·시간 실시간 표시에 사용(안내용 추정치).
+  const analysisModules: AnalysisModuleOption[] = useMemo(() => [
+    { key: "base", label: "기본 부동산 분석", description: "주변 실거래·AI 시세·입지 인프라", required: true, estimatedSeconds: 8 },
+    { key: "sgis", label: "인구/가구 분석 (SGIS)", description: "인구 이동망·연령/가구 구성비", coinCost: 300, estimatedSeconds: 5 },
+    { key: "kosis", label: "거시 소득 지표 (KOSIS)", description: "시군구 평균·중위 연소득", coinCost: 300, estimatedSeconds: 5 },
+    { key: "katlas", label: "마이크로 타겟팅", description: "초정밀 금융·소비 데이터 (K-Atlas)", locked: !isPremiumUser, coinCost: 2000, estimatedSeconds: 6, lockedCtaLabel: "프리미엄 전용" },
+  ], [isPremiumUser]);
+
+  // 선택 변경 — 공용 컴포넌트의 selected 맵을 analysisOptions(sgis/kosis/katlas)로 반영.
+  const onModulesChange = useCallback((next: Record<string, boolean>) => {
+    setAnalysisOptions({ sgis: !!next.sgis, kosis: !!next.kosis, katlas: !!next.katlas });
+  }, []);
+  // 전체 자동분석 — 가능한 모듈 전부 선택(잠금 모듈은 프리미엄일 때만).
+  const onSelectAll = useCallback(() => {
+    setAnalysisOptions({ sgis: true, kosis: true, katlas: isPremiumUser });
+  }, [isPremiumUser]);
+
   // 코인 잔액(월기본+충전) 안내용 — 차감은 백엔드(BaseInterpreter)가 LLM 호출 시 자동 처리.
   useEffect(() => {
     apiClient.get<Balance>("/billing/balance", { useMock: false })
@@ -337,49 +359,15 @@ export function MarketInsightsWorkspaceClient() {
         placeholder="주소를 검색하세요 (예: 서울 강남구 역삼동)"
       />
 
-      {/* 선택형 분석 모듈 체크박스 패널 */}
-      <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
-        <CardContent className="p-5">
-          <p className="mb-3 text-sm font-bold text-[var(--text-primary)]">분석 항목 선택 (선택형 모듈)</p>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            {/* 기본 필수 */}
-            <label className="flex cursor-not-allowed items-start gap-3 rounded-xl border border-[var(--accent-strong)] bg-[var(--accent-strong)]/5 p-3">
-              <input type="checkbox" checked readOnly className="mt-0.5 h-4 w-4 accent-[var(--accent-strong)] opacity-70" />
-              <div>
-                <p className="text-sm font-bold text-[var(--text-primary)]">기본 부동산 분석</p>
-                <p className="mt-0.5 text-[11px] text-[var(--text-secondary)]">주변 실거래, AI 시세, 입지 인프라 (기본 포함)</p>
-              </div>
-            </label>
-            {/* SGIS */}
-            <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-[var(--line-strong)] bg-[var(--surface-soft)] p-3 transition-colors hover:border-[var(--accent-strong)]/50">
-              <input type="checkbox" checked={analysisOptions.sgis} onChange={(e) => setAnalysisOptions(prev => ({ ...prev, sgis: e.target.checked }))} className="mt-0.5 h-4 w-4 accent-[var(--accent-strong)]" />
-              <div>
-                <p className="text-sm font-bold text-[var(--text-primary)]">인구/가구 분석 (SGIS)</p>
-                <p className="mt-0.5 text-[11px] text-[var(--text-secondary)]">인구 이동망, 연령/가구 구성비</p>
-              </div>
-            </label>
-            {/* KOSIS */}
-            <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-[var(--line-strong)] bg-[var(--surface-soft)] p-3 transition-colors hover:border-[var(--accent-strong)]/50">
-              <input type="checkbox" checked={analysisOptions.kosis} onChange={(e) => setAnalysisOptions(prev => ({ ...prev, kosis: e.target.checked }))} className="mt-0.5 h-4 w-4 accent-[var(--accent-strong)]" />
-              <div>
-                <p className="text-sm font-bold text-[var(--text-primary)]">거시 소득 지표 (KOSIS)</p>
-                <p className="mt-0.5 text-[11px] text-[var(--text-secondary)]">시군구 평균 월급 및 소득 수준</p>
-              </div>
-            </label>
-            {/* K-Atlas Premium (Locked) */}
-            <label className={`flex items-start gap-3 rounded-xl border border-[var(--line-strong)] bg-[var(--surface-card)] p-3 ${!isPremiumUser ? 'cursor-not-allowed opacity-60' : 'cursor-pointer hover:border-[var(--accent-strong)]/50'}`}>
-              <input type="checkbox" checked={analysisOptions.katlas} disabled={!isPremiumUser} onChange={(e) => setAnalysisOptions(prev => ({ ...prev, katlas: e.target.checked }))} className="mt-0.5 h-4 w-4 accent-[var(--accent-strong)]" />
-              <div>
-                <p className="flex items-center gap-1.5 text-sm font-bold text-[var(--text-primary)]">
-                  마이크로 타겟팅
-                  {!isPremiumUser && <span className="text-xs">🔒</span>}
-                </p>
-                <p className="mt-0.5 text-[11px] text-[var(--text-secondary)]">초정밀 금융·소비 데이터 (K-Atlas)</p>
-              </div>
-            </label>
-          </div>
-        </CardContent>
-      </Card>
+      {/* 선택형 분석 모듈 — 공용 AnalysisModuleSelector(선택형이 기본 진입). 선택분만 실행·과금. */}
+      <AnalysisModuleSelector
+        modules={analysisModules}
+        selected={analysisOptions}
+        onChange={onModulesChange}
+        onSelectAll={onSelectAll}
+        unlimited={!!balance?.unlimited}
+        subtitle="필요한 분석만 선택하세요. 선택한 항목만 실행·과금됩니다. (전체 자동분석은 우측 버튼)"
+      />
 
       {/* 명시 실행 패널 — 자동 실행 제거. 코인 차감 안내 + 잔액 부족 시 충전 유도. */}
       <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
@@ -635,91 +623,52 @@ export function MarketInsightsWorkspaceClient() {
         </div>
       )}
       
-      {/* ── Phase 3: AI 사업 타당성 엔진 (Feasibility) ── */}
+      {/* ── Phase 3: AI 사업 타당성 엔진 (Feasibility, 공급측) ── */}
       {report?.feasibility_analysis && (
-        <FeasibilityDashboard 
-          data={report.feasibility_analysis} 
-          zoneType={report.zone_type} 
+        <FeasibilityDashboard
+          data={report.feasibility_analysis}
+          zoneType={report.zone_type}
         />
       )}
 
-      {/* 실데이터 연동 영역 (Phase 2) */}
-      {report?.demographics && (
-        <div className="grid gap-6 md:grid-cols-2">
-          {/* 인구 이동 및 가구 (SGIS) - sgis 옵션이 선택되었거나, 데이터가 빈 껍데기가 아닐 때 표시 */}
-          {report.demographics.migration?.total_inflow > 0 && (
-            <div className="sa-di-block">
-              <header className="sa-di-block__head" style={{ cursor: "default" }}>
-                <span className="sa-di-block__icon" aria-hidden>👥</span>
-                <span className="sa-di-block__title">인구 이동 및 가구 구성</span>
-                <span className="sa-di-eyebrow">DEMOGRAPHICS</span>
-              </header>
-              <div className="sa-di-block__body">
-                <div className="sa-di-stats">
-                  <div className="sa-di-stat">
-                    <span className="sa-di-stat__label">총 전입(연간)</span>
-                    <span className="sa-di-stat__value" style={{ color: "var(--status-success)" }}>
-                      +{report.demographics.migration.total_inflow.toLocaleString()}명
-                    </span>
-                  </div>
-                  <div className="sa-di-stat">
-                    <span className="sa-di-stat__label">총 전출(연간)</span>
-                    <span className="sa-di-stat__value" style={{ color: "var(--status-warning)" }}>
-                      -{report.demographics.migration.total_outflow.toLocaleString()}명
-                    </span>
-                  </div>
-                  <div className="sa-di-stat">
-                    <span className="sa-di-stat__label">순이동</span>
-                    <span className="sa-di-stat__value">
-                      {report.demographics.migration.net_migration?.toLocaleString() ?? 0}명
-                    </span>
-                  </div>
-                </div>
-                
-                {report.demographics.migration.top_inflow_regions?.length > 0 && (
-                  <div className="mt-4">
-                    <p className="sa-di-eyebrow mb-2">주요 유입 지역 Top 3</p>
-                    <ul className="space-y-1.5 text-sm text-[var(--text-secondary)]">
-                      {report.demographics.migration.top_inflow_regions.map((reg: any, i: number) => (
-                        <li key={i} className="flex justify-between border-b border-[var(--line-light)] pb-1.5">
-                          <span>{reg.name}</span>
-                          <span className="font-bold">{reg.ratio}% ({reg.count.toLocaleString()}명)</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
+      {/* ── M3: 적정 분양가 밴드 (수요측 지불여력 — 공급측 타당성과 결합) ── */}
+      {report?.pricing_band && <PricingBandPanel data={report.pricing_band} />}
 
-          {/* 거시 소득 지표 (KOSIS) — 백엔드 DemographicProfile.macro_income 구조와 키 일치 */}
-          {report.demographics.macro_income?.avg_income_10k > 0 && (
-            <div className="sa-di-block">
-              <header className="sa-di-block__head" style={{ cursor: "default" }}>
-                <span className="sa-di-block__icon" aria-hidden>💰</span>
-                <span className="sa-di-block__title">지역 평균 소득 지표</span>
-                <span className="sa-di-eyebrow">MACRO INCOME</span>
-              </header>
-              <div className="sa-di-block__body">
-                <div className="sa-di-tiles sa-di-tiles--2">
-                  <MetricTile
-                    label="시/군/구 평균 연소득"
-                    value={formatPrice(report.demographics.macro_income.avg_income_10k)}
-                    accent
-                  />
-                  <MetricTile
-                    label="중위 연소득"
-                    value={formatPrice(report.demographics.macro_income.median_income_10k ?? 0)}
-                  />
-                </div>
-                <p className="mt-3 text-[11px] text-[var(--text-hint)]">
-                  ※ 국가통계포털(KOSIS) 기반의 시/군/구 단위 거시적 평균 소득 데이터입니다.(단위: 만원)
-                </p>
-              </div>
+      {/* 실데이터 연동 영역 (Phase 2) — 인구·가구·소득 시각화(Recharts) + 데이터 출처 정직 배지 */}
+      {report?.demographics && <DemographicPanel data={report.demographics} unitMix={report.unit_mix_recommendation} />}
+
+      {/* 인구 이동(OD) — 현재 SGIS 미제공·행안부/KOSIS OD 미연동이라 정직하게 안내(가짜 Top3 금지) */}
+      {report?.demographics?.migration && (
+        (report.demographics.migration.top_inflow_regions?.length ?? 0) > 0 ? (
+          <div className="sa-di-block">
+            <header className="sa-di-block__head" style={{ cursor: "default" }}>
+              <span className="sa-di-block__icon" aria-hidden>🧭</span>
+              <span className="sa-di-block__title">인구 이동망 (유입 Top)</span>
+              <span className="sa-di-eyebrow">MIGRATION</span>
+            </header>
+            <div className="sa-di-block__body">
+              <ul className="space-y-1.5 text-sm text-[var(--text-secondary)]">
+                {report.demographics.migration.top_inflow_regions.map((reg: any, i: number) => (
+                  <li key={i} className="flex justify-between border-b border-[var(--line-light)] pb-1.5">
+                    <span>{reg.name}</span>
+                    <span className="font-bold">{reg.ratio}% ({(reg.count ?? 0).toLocaleString()}명)</span>
+                  </li>
+                ))}
+              </ul>
             </div>
-          )}
-        </div>
+          </div>
+        ) : (
+          <div className="sa-di-block">
+            <header className="sa-di-block__head" style={{ cursor: "default" }}>
+              <span className="sa-di-block__icon" aria-hidden>🧭</span>
+              <span className="sa-di-block__title">인구 이동망 (전입·전출)</span>
+              <span className="rounded-full px-2 py-0.5 text-[10px] font-bold" style={{ color: "var(--text-tertiary)", backgroundColor: "var(--surface-muted)" }}>데이터 없음</span>
+            </header>
+            <div className="sa-di-block__body">
+              <p className="sa-di-empty">인구이동(OD) 데이터는 행정안전부/KOSIS 연동 예정입니다. (SGIS 미제공 — 가짜 수치 대신 정직 표기)</p>
+            </div>
+          </div>
+        )
       )}
 
       {/* 초정밀 타겟 분석 (Phase 2 - Premium) */}
@@ -731,22 +680,17 @@ export function MarketInsightsWorkspaceClient() {
             <span className="sa-di-eyebrow text-[var(--accent-strong)]">PREMIUM DATA</span>
           </header>
           <div className={`sa-di-block__body ${!isPremiumUser ? "opacity-30 blur-[2px] pointer-events-none" : ""}`}>
-            <div className="sa-di-tiles sa-di-tiles--4">
-              <MetricTile label="평균 월소득 (avgInc)" value="287.7만원" />
-              <MetricTile label="급여소득자 수 (cntCustEmp)" value="854명" />
-              <MetricTile label="평균 신용평점 (avrCreditscore)" value="817점" />
-              <MetricTile label="주택보유자 수 (cntCustHOwn)" value="844명" />
-            </div>
-            <div className="mt-4 flex gap-4">
-              <div className="flex-1 rounded-xl border border-dashed border-[var(--line-strong)] bg-[var(--surface-soft)] p-4">
-                <p className="text-xs text-[var(--text-secondary)]">대출잔액 합계 (sumLoanAmt)</p>
-                <p className="mt-1 text-lg font-bold">732억원</p>
+            {/* G7: 하드코딩 더미수치 제거 — 실데이터(K-Atlas) 미연동 상태를 정직하게 표기(가짜값 금지). */}
+            {report?.demographics?.micro_finance ? (
+              <div className="sa-di-tiles sa-di-tiles--4">
+                <MetricTile label="평균 월소득 (avgInc)" value={report.demographics.micro_finance.avgInc != null ? `${report.demographics.micro_finance.avgInc}만원` : "-"} />
+                <MetricTile label="급여소득자 수 (cntCustEmp)" value={report.demographics.micro_finance.cntCustEmp != null ? `${report.demographics.micro_finance.cntCustEmp.toLocaleString()}명` : "-"} />
+                <MetricTile label="평균 신용평점 (avrCreditscore)" value={report.demographics.micro_finance.avrCreditscore != null ? `${report.demographics.micro_finance.avrCreditscore}점` : "-"} />
+                <MetricTile label="주택보유자 수 (cntCustHOwn)" value={report.demographics.micro_finance.cntCustHOwn != null ? `${report.demographics.micro_finance.cntCustHOwn.toLocaleString()}명` : "-"} />
               </div>
-              <div className="flex-1 rounded-xl border border-dashed border-[var(--line-strong)] bg-[var(--surface-soft)] p-4">
-                <p className="text-xs text-[var(--text-secondary)]">월 평균 카드소비 (sumCardAvgAmt3m)</p>
-                <p className="mt-1 text-lg font-bold">42.1억원</p>
-              </div>
-            </div>
+            ) : (
+              <p className="sa-di-empty">K-Atlas 초정밀 금융·소비 데이터는 제휴 연동 후 제공됩니다. (현재 미연동 — 표본 수치 비표시)</p>
+            )}
           </div>
           
           {/* 권한 미달 시 잠금 오버레이 */}

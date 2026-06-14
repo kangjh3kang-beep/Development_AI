@@ -21,10 +21,13 @@ type FeasibilityData = {
     total_cost_10k: number;
     net_profit_10k: number;
     roi_percent: number;
+    npv_10k?: number; // 순현재가치(개략·할인 반영)
   };
   assumptions?: {
     avg_pyeong_price_10k: number;
     construction_cost_per_pyeong_10k: number;
+    npv_discount_rate?: number;
+    npv_dev_period_years?: number;
   };
 };
 
@@ -132,7 +135,23 @@ export const FeasibilityDashboard: React.FC<FeasibilityDashboardProps> = ({ data
                     <span className="font-bold text-sm">예상 세전 순수익</span>
                     <span className="font-black text-sm text-[var(--status-success)]">{formatPrice(financials.net_profit_10k)}</span>
                   </div>
+                  {financials.npv_10k != null && (
+                    <div className="flex justify-between">
+                      <span className="text-[var(--text-secondary)] text-sm">
+                        순현재가치 (NPV)
+                        <span className="ml-1 text-[10px] text-[var(--text-hint)]">
+                          할인율 {((assumptions?.npv_discount_rate ?? 0.08) * 100).toFixed(0)}%·{assumptions?.npv_dev_period_years ?? 3}년
+                        </span>
+                      </span>
+                      <span className={`font-bold text-sm ${financials.npv_10k >= 0 ? "text-[var(--status-success)]" : "text-[var(--status-danger)]"}`}>
+                        {formatPrice(financials.npv_10k)}
+                      </span>
+                    </div>
+                  )}
                 </div>
+                <p className="mt-2 text-[10px] leading-snug text-[var(--text-hint)]">
+                  ※ NPV는 토지비 선투입·건축비 분산·분양수입 완공시점 가정의 개략 할인값(참고용). 정밀 세후 IRR/NPV는 정밀 수지엔진 사용.
+                </p>
               </div>
             </CardContent>
           </Card>

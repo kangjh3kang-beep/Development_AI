@@ -125,9 +125,16 @@ class AvmInterpreter(BaseInterpreter):
                 "valuation_date": estimate.get("valuation_date"),
             }
 
-        # 비교 사례 (상위 5개만)
+        # 비교 사례 (상위 5개만 표시 — 단, 분석 건수는 '전체'를 명시해 LLM이 표본수(5/3건)를
+        # 총건수로 오인하지 않게 한다. comparable_count 내부모순(30 vs '3건') 방지.)
         comparables = data.get("comparables", [])
         if comparables:
+            compact["comparables_total_count"] = len(comparables)
+            compact["사례건수_안내"] = (
+                f"총 {len(comparables)}건의 실거래 비교사례를 분석했습니다. "
+                f"아래 comparables_top5 는 그 중 표시용 상위 {min(5, len(comparables))}건일 뿐이므로, "
+                f"서술 시 '분석 사례 건수'는 반드시 {len(comparables)}건으로 기재하십시오."
+            )
             compact["comparables_top5"] = [
                 {
                     "address": c.get("address"),
@@ -140,7 +147,6 @@ class AvmInterpreter(BaseInterpreter):
                 }
                 for c in comparables[:5]
             ]
-            compact["comparables_total_count"] = len(comparables)
 
         # 시장 통계
         market = data.get("market_statistics", {})

@@ -31,13 +31,20 @@ export default function OrgTree({ siteCode }: { siteCode: string }) {
   const [busy, setBusy] = useState(false);
   // loaded: 조직도를 한 번 불러왔는지 표시(false면 '불러오는 중' 회색 자리표시를 보여줌).
   const [loaded, setLoaded] = useState(false);
+  type Ov = { members: number; totals: { contracts: number; customers: number; work_logs: number }; roster: { node_id: string; name: string; role_label: string; assigned: boolean; contracts: number; customers: number; work_logs: number; tax_type?: string }[] };
+  const [ov, setOv] = useState<Ov | null>(null);
 
   const load = useCallback(() => {
     // 조직도를 다 불러오면(성공/실패 무관) 자리표시를 걷어낸다.
     api.get<Node[]>("/org/tree").then((r) => setNodes(r || [])).catch(() => setNodes([])).finally(() => setLoaded(true));
+    api.get<Ov>("/org/team-overview").then((r) => setOv(r)).catch(() => setOv(null));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [siteCode]);
   useEffect(() => { load(); }, [load]);
+  const setTax = async (nodeId: string, taxType: string) => {
+    try { await api.post("/commission/tax-pref", { node_id: nodeId, tax_type: taxType }); load(); }
+    catch { alert("세금유형 저장 실패(권한 확인)"); }
+  };
 
   const tree = nodes.slice().sort((a, b) => a.path.localeCompare(b.path));
   const depth = (p: string) => p.split(".").length - 1;
@@ -56,11 +63,51 @@ export default function OrgTree({ siteCode }: { siteCode: string }) {
     try { await api.patch(`/org/nodes/${id}/move`, { new_parent_id: newParent }); load(); }
     catch { alert("이동 실패(권한/순환 확인)"); }
   };
+  const seedDefault = async () => {
+    if (!confirm("기본조직(대행사→본부장→5팀×10명)을 생성할까요? 빈 조직에서만 가능합니다.")) return;
+    setBusy(true);
+    try {
+      const r = await api.post<{ ok: boolean; total?: number; note?: string }>("/org/seed-default", {});
+      if (r?.ok) load(); else alert(r?.note || "생성 실패");
+    } catch { alert("기본조직 생성 실패(권한을 확인하세요)."); }
+    finally { setBusy(false); }
+  };
 
   // 처음 불러오는 중이면 회색 자리표시(스켈레톤)로 빈 화면 깜빡임을 막는다.
   if (!loaded) return <SkeletonLoader count={3} itemClassName="h-16 rounded-xl mb-3" />;
   return (
     <div className="space-y-4">
+      {/* P2-3 팀 현황(내 하위 조직 활동 집계) */}
+      {ov && ov.members > 0 && (
+        <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-3">
+          <div className="mb-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+            <span className="font-bold text-[var(--text-secondary)]">팀 현황(하위 조직)</span>
+            <span className="text-[var(--text-tertiary)]">관리대상 <b className="text-[var(--text-primary)]">{ov.members}</b>명</span>
+            <span className="text-[var(--text-tertiary)]">계약 <b className="text-[var(--accent-strong)]">{ov.totals.contracts}</b></span>
+            <span className="text-[var(--text-tertiary)]">고객 <b className="text-[var(--accent-strong)]">{ov.totals.customers}</b></span>
+            <span className="text-[var(--text-tertiary)]">업무일지 <b className="text-[var(--accent-strong)]">{ov.totals.work_logs}</b></span>
+          </div>
+          <div className="max-h-40 overflow-auto">
+            <table className="w-full text-[11px]">
+              <thead><tr className="text-[var(--text-hint)]"><th className="text-left font-medium">직급</th><th className="text-left font-medium">이름</th><th className="text-right font-medium">계약</th><th className="text-right font-medium">고객</th><th className="text-right font-medium">업무일지</th><th className="text-right font-medium">수수료세금</th></tr></thead>
+              <tbody>
+                {ov.roster.slice(0, 30).map((r, i) => (
+                  <tr key={i} className="border-t border-[var(--line)]/50">
+                    <td className="py-0.5 text-[var(--text-tertiary)]">{r.role_label}</td>
+                    <td className="text-[var(--text-secondary)]">{r.name}{!r.assigned && <span className="ml-1 text-[9px] text-[var(--text-hint)]">(미배정)</span>}</td>
+                    <td className="text-right text-[var(--text-primary)]">{r.contracts}</td>
+                    <td className="text-right text-[var(--text-primary)]">{r.customers}</td>
+                    <td className="text-right text-[var(--text-primary)]">{r.work_logs}</td>
+                    <td className="text-right"><select value={r.tax_type || "WITHHOLDING"} onChange={(e) => setTax(r.node_id, e.target.value)} className="rounded border border-[var(--line)] bg-[var(--surface-strong)] px-1 py-0.5 text-[10px] text-[var(--text-secondary)]"><option value="WITHHOLDING">3.3% 원천</option><option value="VAT">부가세10%</option></select></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="mt-1 text-[10px] text-[var(--text-hint)]">근태·수수료·단체메시지는 각 전용 탭(수수료·방문 데스크·소셜)에서 관리합니다.</p>
+        </div>
+      )}
+
       {/* 노드 추가 */}
       <div className="flex flex-wrap items-end gap-2 rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-3">
         <label className="flex flex-col gap-1"><span className="text-[10px] text-[var(--text-tertiary)]">상위(부모)</span>
@@ -82,7 +129,15 @@ export default function OrgTree({ siteCode }: { siteCode: string }) {
 
       {/* 트리 */}
       <div className="space-y-1 rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-4">
-        {tree.length === 0 && <p className="text-sm text-[var(--text-secondary)]">조직 노드가 없습니다. 위에서 최상위(대행사)부터 추가하세요.</p>}
+        {tree.length === 0 && (
+          <div className="flex flex-col items-start gap-2">
+            <p className="text-sm text-[var(--text-secondary)]">조직 노드가 없습니다. 위에서 최상위(대행사)부터 추가하거나, 기본조직을 한 번에 생성하세요.</p>
+            <button onClick={seedDefault} disabled={busy}
+              className="rounded-lg border border-[var(--accent-strong)] px-3 py-1.5 text-xs font-black text-[var(--accent-strong)] hover:bg-[var(--accent-soft)] disabled:opacity-50">
+              🏢 기본조직 생성 (대행사→본부장→5팀×10명)
+            </button>
+          </div>
+        )}
         {tree.map((n) => (
           <div key={n.id} className="flex flex-wrap items-center gap-2 rounded-lg py-1 text-sm hover:bg-[var(--surface)]" style={{ paddingLeft: `${depth(n.path) * 18}px` }}>
             <span className="rounded bg-[var(--surface-strong)] px-1.5 py-0.5 text-xs font-semibold text-[var(--accent-strong)]">{LABEL[n.node_type] ?? n.node_type}</span>

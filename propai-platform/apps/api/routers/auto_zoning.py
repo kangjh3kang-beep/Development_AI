@@ -19,6 +19,7 @@ class ZoningAnalyzeRequest(BaseModel):
     pnu: str | None = None
     bcode: str | None = None  # 카카오 법정동 코드 (10자리)
     jibun_address: str | None = None  # 카카오 지번 주소
+    refresh: bool = False  # True면 저장된 조례 해석을 무시하고 재조사(사용자 '재분석' 실행)
 
 
 def _zone_limits_compact(zone_type: str | None) -> dict | None:
@@ -358,6 +359,39 @@ async def analyze_zoning(req: ZoningAnalyzeRequest):
     service = AutoZoningService()
     result = await service.analyze_by_address(req.address)
 
+    # ── 조례 용적률 SSOT(단일출처) ──
+    # regulation/analyze 와 동일한 ordinance_service 를 조회해 local_ordinance(조례 한도)를 주입한다.
+    # 이전: local_ordinance 가 비어 far_tier 가 법정상한(예 일반상업 1300%)으로 폴백 → regulation 의
+    # 조례값(의정부 일반상업 900%)과 같은 필지에서 400%p 충돌·최대연면적 60,000㎡ 괴리. 단일출처로 통일.
+    try:
+        lo = result.get("local_ordinance")
+        has_ord = isinstance(lo, dict) and lo.get("ordinance_far")
+        if not has_ord and result.get("zone_type"):
+            from app.services.land_intelligence.ordinance_service import OrdinanceService
+
+            _ord = await OrdinanceService().get_ordinance_limits(
+                req.address, result.get("zone_type") or "", force_refresh=bool(req.refresh))
+            if isinstance(_ord, dict) and _ord.get("ordinance_far"):
+                result["local_ordinance"] = _ord  # far_tier 가 effective_far=min(법정,조례) 로 채택
+                result["ordinance_provenance"] = _ord.get("provenance")  # 출처·신뢰도·재확인 표기(정직)
+    except Exception:  # noqa: BLE001 — 조례 조회 실패 시 기존 폴백 유지(무손상)
+        pass
+
+    # ── 특이부지 감지(규칙기반·additive) ──
+    # 지목/용도/구역/접도에서 비일상 토지상태(학교용지·공공용지·농지·산지·맹지·규제구역)를 잡아
+    # 법적·인허가 특이사항 + 개발가능성 게이트 + 해결방안 + 정직 고지를 부착한다.
+    # 이로써 '학교용지를 일반상업지처럼 최대 연면적 가능'으로 오분석하는 할루시네이션을 차단.
+    try:
+        from app.services.zoning.special_parcel import detect_special_parcel
+
+        special = detect_special_parcel(result)
+        if special:
+            result["special_parcel"] = special
+            result["warnings"] = list(result.get("warnings") or []) + special.get("warnings", [])
+            result["developability"] = special.get("developability")
+    except Exception:  # noqa: BLE001 — 감지 실패는 기존 결과를 손상하지 않는다.
+        special = None
+
     # ── SiteAnalysisInterpreter(Claude) 자연어 해석 부착 ──
     # 그라운딩: 법정한도 + 실효용적률 계층(far_tier_service 단일출처) + 종상향 잠재
     #          컨텍스트를 인터프리터에 주입한다. (zone_type만 전달 → 200% 무근거 차단)
@@ -403,6 +437,8 @@ async def analyze_zoning(req: ZoningAnalyzeRequest):
             "development_plans": {
                 "special_districts": result.get("special_districts", []),
             },
+            # 특이부지(학교용지 등): LLM이 '최대 연면적 가능'을 무근거로 단언하지 않도록 그라운딩.
+            "special_parcel": special,
         }
         # 화면 경로에서도 계층/종상향을 캡처하도록 응답에 동봉(프론트 옵셔널 렌더).
         result.setdefault("effective_far", effective_far_tier)
@@ -438,6 +474,37 @@ async def analyze_zoning(req: ZoningAnalyzeRequest):
     _attach_trust_blocks(result)
 
     return result
+
+
+@router.post("/special-parcels")
+async def special_parcels_check(body: dict):
+    """다필지 특이부지 종합 워크플로우 — 필지별 특이성 감지 → 대안·해결방안 → 해결불가 시 정직 고지.
+
+    body.parcels: [{address, land_category?, zone_type?, special_districts?, pnu?}, ...]
+    body.analyze(bool): true 면 land_category 미제공 필지를 주소로 실분석(느림). 기본 false(제공값 사용).
+
+    한 필지라도 통상 절차로 해결 불가능(개발제한구역·공공기반시설 등)하면 사업 전체를 '개발 불가'로
+    정직 고지하여 무리한 개발규모 산정(할루시네이션)을 차단한다.
+    """
+    from app.services.zoning.special_parcel import detect_multi_parcel
+
+    parcels = body.get("parcels") or []
+    if not isinstance(parcels, list) or not parcels:
+        from fastapi import HTTPException
+        raise HTTPException(400, "parcels(필지 배열)가 필요합니다.")
+
+    do_analyze = bool(body.get("analyze"))
+    enriched: list[dict] = []
+    for p in parcels[:30]:  # 과도 호출 방지(최대 30필지)
+        p = dict(p or {})
+        if do_analyze and not p.get("land_category") and p.get("address"):
+            try:
+                p = {**(await AutoZoningService().analyze_by_address(p["address"])), **p}
+            except Exception:  # noqa: BLE001 — 개별 실패는 정직하게 미분석으로 둠
+                p.setdefault("warnings", []).append("분석 실패(주소 해석 불가)")
+        enriched.append(p)
+
+    return detect_multi_parcel(enriched)
 
 
 @router.post("/comprehensive")

@@ -240,3 +240,40 @@ async def projection_summary(db: AsyncSession = Depends(get_db), user=Depends(ge
             "commission_paid": int(agg[3] or 0), "commission_due": 0,
         })
     return out
+
+
+@views_router.get("/projection/accounting-rollup")
+async def projection_accounting_rollup(db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
+    """시행사 통합회계 — 보유 현장 회계(매출·비용항목별·수수료·손익)를 유기적으로 합산(연결결산).
+
+    각 현장 ERP가 단일 원장(sales_site_accounting)에 기록한 비용 + 계약 매출·수수료배분을
+    현장별로 집계(site_management_detail)하고, 시행사 레벨로 롤업한다. '같이(통합)·따로(현장별)'.
+    """
+    from app.services.sales.admin.console import site_management_detail
+    # site_management_detail 내부 _scalar 가 오류 시 rollback 하면 ORM 객체가 만료돼
+    # 이후 s.id/s.site_name 접근이 lazy load(MissingGreenlet) 된다. 루프 전에 평문 추출.
+    rows = (await db.execute(select(
+        SalesSite.id, SalesSite.site_name, SalesSite.status).where(
+        SalesSite.organization_id == user.tenant_id, SalesSite.deleted_at.is_(None)))).all()
+    sites = []
+    con = {"revenue": 0, "cost_total": 0, "commission": 0, "profit_estimate": 0}
+    by_type: dict[str, int] = {}
+    for sid, sname, sstatus in rows:
+        d = await site_management_detail(db, sid)
+        for t in d["accounting"]["by_type"]:
+            by_type[t["label"]] = by_type.get(t["label"], 0) + int(t["amount"])
+        con["revenue"] += int(d["revenue"])
+        con["commission"] += int(d["commission"])
+        con["profit_estimate"] += int(d["profit_estimate"])
+        con["cost_total"] += int(d["accounting"]["cost_total"])
+        sites.append({
+            "site_id": str(sid), "site_name": sname, "status": sstatus,
+            "revenue": d["revenue"], "cost_total": d["accounting"]["cost_total"],
+            "commission": d["commission"], "profit_estimate": d["profit_estimate"],
+            "by_type": d["accounting"]["by_type"],
+        })
+    return {
+        "consolidated": {**con, "by_type": [{"label": k, "amount": v} for k, v in sorted(by_type.items())]},
+        "sites": sites,
+        "note": "통합회계 = 보유 현장 연결결산(매출 − 회계비용 − 수수료배분). 현장 ERP 원장 단일출처 합산.",
+    }
