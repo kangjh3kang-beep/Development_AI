@@ -88,7 +88,7 @@ async def sign_contract(db: AsyncSession, site_id, contract_id, by=None):
         db.add(SalesContractInstallment(
             contract_ext_id=c.id, seq=i, kind=s["kind"],
             due_date=base + timedelta(days=int(s["after_days"])),
-            amount=int(round((c.total_price or 0) * float(s["ratio"]))),
+            amount=int(round(float(c.total_price or 0) * float(s["ratio"]))),
         ))
     await split_commission(db, site_id, c)
     await emit_outbox(db, site_id, "ContractSigned",
