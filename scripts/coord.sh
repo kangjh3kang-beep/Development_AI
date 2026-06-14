@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 멀티세션 협업 헬퍼 — 공유 보드(브랜치 무관) 조회/클레임/해제/노트.
-# 정책: coordination/PROTOCOL.md · WORKTREES.md. 보드: ~/My_Projects/.coordination/BOARD.md
+# 정책: coordination/PROTOCOL.md · WORKTREES.md. 보드: <repo>/.git/coordination/BOARD.md (git-common-dir·저장소 스코프)
 # 사용: scripts/coord.sh {status | claim <영역> | release <영역> | note <내용>}
 set -euo pipefail
 
