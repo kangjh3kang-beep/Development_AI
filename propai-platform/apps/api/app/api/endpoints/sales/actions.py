@@ -114,7 +114,8 @@ async def staff_wage_set(body: dict, db: AsyncSession = Depends(get_db),
     from app.services.sales.admin.console import set_staff_wage
     try:
         return await set_staff_wage(db, ctx.site_id, body["staff_id"],
-                                    body.get("wage_type", "DAILY"), int(body.get("base_wage", 0)))
+                                    body.get("wage_type", "DAILY"), int(body.get("base_wage", 0)),
+                                    tax_mode=body.get("tax_mode", "FREELANCE"))
     except (ValueError, KeyError) as e:
         raise HTTPException(400, f"입력 오류: {e}")
 

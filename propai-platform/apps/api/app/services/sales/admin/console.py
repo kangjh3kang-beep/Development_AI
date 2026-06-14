@@ -112,14 +112,27 @@ async def site_management_detail(db: AsyncSession, site_id) -> dict[str, Any]:
     }
 
 
-# ── 급여관리(근태×단가 자동산정) ─────────────────────────────────────────────
+# ── 급여관리(근태×단가 자동산정 + 원천징수·4대보험 자동공제) ──────────────────
 _WAGE_TYPES = {"DAILY": "일급", "HOURLY": "시급", "MONTHLY": "월급"}
+# 세무 모드: 사업소득(영업직 위촉)=3.3% 원천징수 / 근로소득(정규)=4대보험+간이세액 / NONE=공제없음(총액)
+_TAX_MODES = {"FREELANCE": "사업소득3.3%", "EMPLOYEE": "근로소득4대보험", "NONE": "공제없음"}
+
+# 법정 공제율(근로자 부담분, 2025 기준 — 변경 시 상수만 조정). [정직] 근로소득세는 간이세액표 '추정'.
+_R_PENSION = 0.045          # 국민연금 4.5%
+_PENSION_CAP = 6170000      # 국민연금 기준소득월액 상한(월)
+_R_HEALTH = 0.03545         # 건강보험 3.545%
+_R_LTC_OF_HEALTH = 0.1295   # 장기요양 = 건강보험료 × 12.95%
+_R_EMPLOY = 0.009           # 고용보험 0.9%
+_R_FREELANCE_IT = 0.03      # 사업소득 원천 소득세 3%
+_R_LOCAL_OF_IT = 0.10       # 지방소득세 = 소득세 × 10%
+
 _WAGE_DDL = (
     "CREATE TABLE IF NOT EXISTS sales_staff_wage ("
     "  staff_id uuid PRIMARY KEY,"
     "  site_id uuid NOT NULL,"
     "  wage_type varchar(10) NOT NULL DEFAULT 'DAILY',"   # DAILY/HOURLY/MONTHLY
     "  base_wage numeric(14,0) NOT NULL DEFAULT 0,"
+    "  tax_mode varchar(12) NOT NULL DEFAULT 'FREELANCE',"  # FREELANCE/EMPLOYEE/NONE
     "  updated_at timestamptz NOT NULL DEFAULT now()"
     ")"
 )
@@ -131,8 +144,51 @@ async def _ensure_wage(db: AsyncSession) -> None:
     if _WAGE_READY:
         return
     await db.execute(text(_WAGE_DDL))
+    # 기존 테이블에 tax_mode 컬럼 멱등 추가.
+    await db.execute(text("ALTER TABLE sales_staff_wage ADD COLUMN IF NOT EXISTS tax_mode varchar(12) NOT NULL DEFAULT 'FREELANCE'"))
     await db.commit()
     _WAGE_READY = True
+
+
+def _est_income_tax(gross: int) -> int:
+    """근로소득세 월 간이세액 '추정'(1인 가구 가정). 정확액은 국세청 간이세액표/연말정산 기준.
+    구간별 실효율 근사 — 과도산정 방지용 보수적 추정값."""
+    bands = [(1_060_000, 0.0), (2_000_000, 0.008), (3_000_000, 0.020),
+             (4_000_000, 0.040), (6_000_000, 0.070), (8_000_000, 0.100)]
+    rate = 0.150
+    for ceil, r in bands:
+        if gross <= ceil:
+            rate = r
+            break
+    return round(gross * rate)
+
+
+def _deductions(gross: int, mode: str) -> dict[str, Any]:
+    """총급여 → 원천징수·4대보험 자동공제 + 실수령액."""
+    g = int(gross)
+    if g <= 0:
+        return {"items": [], "total_deduction": 0, "net": 0}
+    items: list[dict[str, Any]] = []
+    if mode == "FREELANCE":
+        it = round(g * _R_FREELANCE_IT)
+        lit = round(it * _R_LOCAL_OF_IT)
+        items = [{"key": "income_tax", "label": "원천소득세(3%)", "amount": it},
+                 {"key": "local_tax", "label": "지방소득세(0.3%)", "amount": lit}]
+    elif mode == "EMPLOYEE":
+        np = round(min(g, _PENSION_CAP) * _R_PENSION)
+        hi = round(g * _R_HEALTH)
+        ltc = round(hi * _R_LTC_OF_HEALTH)
+        ei = round(g * _R_EMPLOY)
+        it = _est_income_tax(g)
+        lit = round(it * _R_LOCAL_OF_IT)
+        items = [{"key": "pension", "label": "국민연금(4.5%)", "amount": np},
+                 {"key": "health", "label": "건강보험(3.545%)", "amount": hi},
+                 {"key": "ltc", "label": "장기요양(건강×12.95%)", "amount": ltc},
+                 {"key": "employ", "label": "고용보험(0.9%)", "amount": ei},
+                 {"key": "income_tax", "label": "근로소득세(간이추정)", "amount": it},
+                 {"key": "local_tax", "label": "지방소득세(소득세×10%)", "amount": lit}]
+    total = sum(int(i["amount"]) for i in items)
+    return {"items": items, "total_deduction": total, "net": g - total}
 
 
 def _month_bounds(ym: str) -> tuple[str, str]:
@@ -142,18 +198,20 @@ def _month_bounds(ym: str) -> tuple[str, str]:
     return f"{y:04d}-{m:02d}-01", f"{ny:04d}-{nm:02d}-01"
 
 
-async def set_staff_wage(db: AsyncSession, site_id, staff_id, wage_type: str, base_wage: int) -> dict[str, Any]:
+async def set_staff_wage(db: AsyncSession, site_id, staff_id, wage_type: str, base_wage: int,
+                         tax_mode: str = "FREELANCE") -> dict[str, Any]:
     wt = (wage_type or "").upper()
-    if wt not in _WAGE_TYPES or int(base_wage) < 0:
-        raise ValueError("wage_type(DAILY/HOURLY/MONTHLY)·base_wage(0 이상) 필요")
+    tm = (tax_mode or "FREELANCE").upper()
+    if wt not in _WAGE_TYPES or int(base_wage) < 0 or tm not in _TAX_MODES:
+        raise ValueError("wage_type(DAILY/HOURLY/MONTHLY)·base_wage(0 이상)·tax_mode(FREELANCE/EMPLOYEE/NONE) 필요")
     await _ensure_wage(db)
     await db.execute(text(
-        "INSERT INTO sales_staff_wage (staff_id, site_id, wage_type, base_wage, updated_at) "
-        "VALUES (:st,:s,:wt,:w, now()) "
-        "ON CONFLICT (staff_id) DO UPDATE SET wage_type=:wt, base_wage=:w, updated_at=now()"),
-        {"st": str(staff_id), "s": str(site_id), "wt": wt, "w": int(base_wage)})
+        "INSERT INTO sales_staff_wage (staff_id, site_id, wage_type, base_wage, tax_mode, updated_at) "
+        "VALUES (:st,:s,:wt,:w,:tm, now()) "
+        "ON CONFLICT (staff_id) DO UPDATE SET wage_type=:wt, base_wage=:w, tax_mode=:tm, updated_at=now()"),
+        {"st": str(staff_id), "s": str(site_id), "wt": wt, "w": int(base_wage), "tm": tm})
     await db.commit()
-    return {"ok": True, "staff_id": str(staff_id), "wage_type": wt, "base_wage": int(base_wage)}
+    return {"ok": True, "staff_id": str(staff_id), "wage_type": wt, "base_wage": int(base_wage), "tax_mode": tm}
 
 
 async def compute_payroll(db: AsyncSession, site_id, ym: str) -> dict[str, Any]:
@@ -171,29 +229,36 @@ async def compute_payroll(db: AsyncSession, site_id, ym: str) -> dict[str, Any]:
         "WHERE s.site_id=:s AND s.deleted_at IS NULL AND s.status='ACTIVE' "
         "GROUP BY s.id, s.name, s.position ORDER BY s.name"),
         {"s": s, "start": start, "end": end})).all()
-    wages = {str(k): (wt, int(w)) for k, wt, w in (await db.execute(text(
-        "SELECT staff_id, wage_type, base_wage FROM sales_staff_wage WHERE site_id=:s"), {"s": s})).all()}
+    wages = {str(k): (wt, int(w), tm) for k, wt, w, tm in (await db.execute(text(
+        "SELECT staff_id, wage_type, base_wage, tax_mode FROM sales_staff_wage WHERE site_id=:s"), {"s": s})).all()}
     staff = []
-    total = 0
+    total_gross = total_ded = total_net = 0
     for sid, name, pos, days, minutes in rows:
-        wt, base = wages.get(str(sid), ("DAILY", 0))
+        wt, base, tm = wages.get(str(sid), ("DAILY", 0, "FREELANCE"))
         hours = round(int(minutes) / 60)
         if wt == "HOURLY":
-            amount = hours * base
+            gross = hours * base
         elif wt == "MONTHLY":
-            amount = base if int(days) > 0 else 0  # 무출근이면 미지급
+            gross = base if int(days) > 0 else 0  # 무출근이면 미지급
         else:  # DAILY
-            amount = int(days) * base
-        total += amount
+            gross = int(days) * base
+        ded = _deductions(gross, tm)
+        total_gross += gross
+        total_ded += ded["total_deduction"]
+        total_net += ded["net"]
         staff.append({
             "staff_id": str(sid), "name": name or "-", "position": pos,
             "days": int(days), "hours": hours,
             "wage_type": wt, "wage_label": _WAGE_TYPES.get(wt, wt), "base_wage": base,
-            "amount": amount, "wage_set": str(sid) in wages,
+            "tax_mode": tm, "tax_mode_label": _TAX_MODES.get(tm, tm),
+            "gross": gross, "amount": gross,  # amount=총급여(하위호환)
+            "deductions": ded["items"], "total_deduction": ded["total_deduction"], "net": ded["net"],
+            "wage_set": str(sid) in wages,
         })
     return {"year_month": ym, "staff": staff, "headcount": len(staff),
-            "total_payroll": total,
-            "note": "급여=근태×단가(일급:출근일수·시급:근무시간·월급:출근시 정액). 미설정 단가는 0."}
+            "total_payroll": total_gross,  # 총급여(하위호환)
+            "total_gross": total_gross, "total_deduction": total_ded, "total_net": total_net,
+            "note": "급여=근태×단가. 공제: 사업소득3.3% 또는 근로소득 4대보험(국민연금4.5%·건강3.545%·장기요양·고용0.9%)+근로소득세(간이세액 추정). 정확 소득세는 국세청 간이세액표/연말정산 기준."}
 
 
 async def post_payroll_to_accounting(db: AsyncSession, site_id, ym: str, by) -> dict[str, Any]:

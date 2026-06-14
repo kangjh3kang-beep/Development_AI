@@ -249,8 +249,9 @@ function SiteManagePanel({ siteId, onSaved }: { siteId: string; onSaved: () => v
 function PayrollAdSection({ siteId, onPosted }: { siteId: string; onPosted: () => void }) {
   const api = useMemo(() => salesApi(siteId), [siteId]);
   const thisMonth = new Date().toISOString().slice(0, 7);
-  type PayStaff = { staff_id: string; name: string; position?: string | null; days: number; hours: number; wage_type: string; wage_label: string; base_wage: number; amount: number; wage_set: boolean };
-  type Payroll = { year_month: string; staff: PayStaff[]; headcount: number; total_payroll: number; note: string };
+  type Ded = { key: string; label: string; amount: number };
+  type PayStaff = { staff_id: string; name: string; position?: string | null; days: number; hours: number; wage_type: string; wage_label: string; base_wage: number; tax_mode: string; tax_mode_label: string; gross: number; amount: number; deductions: Ded[]; total_deduction: number; net: number; wage_set: boolean };
+  type Payroll = { year_month: string; staff: PayStaff[]; headcount: number; total_payroll: number; total_gross: number; total_deduction: number; total_net: number; note: string };
   type Roi = { budget: number; spend: number; leads: number; visitors: number; contracts: number; cost_per_lead: number; cost_per_visitor: number; cost_per_contract: number; note: string };
   const [ym, setYm] = useState(thisMonth);
   const [pay, setPay] = useState<Payroll | null>(null);
@@ -260,8 +261,8 @@ function PayrollAdSection({ siteId, onPosted }: { siteId: string; onPosted: () =
   const loadPay = useCallback((m: string) => { api.get<Payroll>(`/payroll?ym=${m}`).then(setPay).catch(() => setPay(null)); }, [api]);
   useEffect(() => { loadPay(ym); api.get<Roi>("/ad/roi").then(setRoi).catch(() => setRoi(null)); }, [loadPay, ym, api]);
 
-  const setWage = async (staffId: string, wageType: string, baseWage: number) => {
-    try { await api.post("/staff/wage", { staff_id: staffId, wage_type: wageType, base_wage: baseWage }); loadPay(ym); }
+  const setWage = async (staffId: string, wageType: string, baseWage: number, taxMode: string) => {
+    try { await api.post("/staff/wage", { staff_id: staffId, wage_type: wageType, base_wage: baseWage, tax_mode: taxMode }); loadPay(ym); }
     catch { alert("단가 저장 실패(권한 확인)."); }
   };
   const post = async () => {
@@ -280,7 +281,7 @@ function PayrollAdSection({ siteId, onPosted }: { siteId: string; onPosted: () =
       {/* 급여 */}
       <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-3">
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-          <span className="cc-label text-[0.6rem] text-[var(--text-tertiary)]">급여(근태×단가) {pay ? `· 합계 ${won(pay.total_payroll)}` : ""}</span>
+          <span className="cc-label text-[0.6rem] text-[var(--text-tertiary)]">급여 {pay ? `· 총급여 ${won(pay.total_gross)} · 공제 ${won(pay.total_deduction)} · 실수령 ${won(pay.total_net)}` : ""}</span>
           <div className="flex items-center gap-1">
             <input type="month" value={ym} onChange={(e) => setYm(e.target.value)} className={`${fcls} px-1 py-0.5 text-xs`} />
             <button onClick={post} disabled={busy || !pay || pay.total_payroll <= 0} className="rounded-lg border border-[var(--accent-strong)] px-2 py-1 text-[11px] font-bold text-[var(--accent-strong)] disabled:opacity-40">인건비 전기</button>
@@ -291,22 +292,26 @@ function PayrollAdSection({ siteId, onPosted }: { siteId: string; onPosted: () =
         ) : (
           <div className="max-h-44 overflow-auto">
             <table className="w-full text-[11px]">
-              <thead><tr className="text-[var(--text-hint)]"><th className="text-left font-medium">직원</th><th className="text-right font-medium">출근</th><th className="text-right font-medium">시간</th><th className="text-left font-medium">단가</th><th className="text-right font-medium">급여</th></tr></thead>
+              <thead><tr className="text-[var(--text-hint)]"><th className="text-left font-medium">직원</th><th className="text-right font-medium">출근</th><th className="text-left font-medium">단가·세무</th><th className="text-right font-medium">총급여</th><th className="text-right font-medium">공제</th><th className="text-right font-medium">실수령</th></tr></thead>
               <tbody>
                 {pay.staff.slice(0, 30).map((p) => (
                   <tr key={p.staff_id} className="border-t border-[var(--line)]/50">
                     <td className="py-0.5 text-[var(--text-secondary)]">{p.name}{!p.wage_set && <span className="ml-1 text-[9px] text-[var(--warning)]">단가미설정</span>}</td>
-                    <td className="text-right text-[var(--text-primary)]">{p.days}일</td>
-                    <td className="text-right text-[var(--text-tertiary)]">{p.hours}h</td>
+                    <td className="text-right text-[var(--text-primary)]">{p.days}일<span className="ml-0.5 text-[9px] text-[var(--text-tertiary)]">{p.hours}h</span></td>
                     <td>
-                      <div className="flex items-center gap-1">
-                        <select defaultValue={p.wage_type} onChange={(e) => setWage(p.staff_id, e.target.value, p.base_wage)} className="rounded border border-[var(--line)] bg-[var(--surface-strong)] px-1 py-0.5 text-[10px]">
+                      <div className="flex flex-wrap items-center gap-1">
+                        <select defaultValue={p.wage_type} onChange={(e) => setWage(p.staff_id, e.target.value, p.base_wage, p.tax_mode)} className="rounded border border-[var(--line)] bg-[var(--surface-strong)] px-1 py-0.5 text-[10px]">
                           <option value="DAILY">일급</option><option value="HOURLY">시급</option><option value="MONTHLY">월급</option>
                         </select>
-                        <input defaultValue={p.base_wage || ""} placeholder="단가" onBlur={(e) => { const v = Math.round(Number(e.target.value.replace(/[^0-9]/g, ""))); if (v !== p.base_wage) void setWage(p.staff_id, p.wage_type, v); }} className="w-16 rounded border border-[var(--line)] bg-[var(--surface-strong)] px-1 py-0.5 text-[10px]" inputMode="numeric" />
+                        <input defaultValue={p.base_wage || ""} placeholder="단가" onBlur={(e) => { const v = Math.round(Number(e.target.value.replace(/[^0-9]/g, ""))); if (v !== p.base_wage) void setWage(p.staff_id, p.wage_type, v, p.tax_mode); }} className="w-14 rounded border border-[var(--line)] bg-[var(--surface-strong)] px-1 py-0.5 text-[10px]" inputMode="numeric" />
+                        <select defaultValue={p.tax_mode} onChange={(e) => setWage(p.staff_id, p.wage_type, p.base_wage, e.target.value)} className="rounded border border-[var(--line)] bg-[var(--surface-strong)] px-1 py-0.5 text-[10px]" title="세무 처리방식">
+                          <option value="FREELANCE">3.3%</option><option value="EMPLOYEE">4대보험</option><option value="NONE">공제없음</option>
+                        </select>
                       </div>
                     </td>
-                    <td className="text-right font-bold text-[var(--text-primary)]">{won(p.amount)}</td>
+                    <td className="text-right text-[var(--text-secondary)]">{won(p.gross)}</td>
+                    <td className="text-right text-[var(--error)]" title={p.deductions.map((x) => `${x.label} ${won(x.amount)}`).join("\n")}>{p.total_deduction > 0 ? `-${won(p.total_deduction)}` : "-"}</td>
+                    <td className="text-right font-bold text-[var(--text-primary)]">{won(p.net)}</td>
                   </tr>
                 ))}
               </tbody>
