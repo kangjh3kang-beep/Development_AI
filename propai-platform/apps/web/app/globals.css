@@ -330,16 +330,24 @@ textarea {
 @layer components {
   /* ── 가로 스크롤 탭바(13탭 모바일 대응) ──
      wrap 대신 가로 스크롤 + 스냅 + 스크롤바 숨김. 좌우 페이드로 더 있음을 암시. */
+  /* 기본(태블릿/데스크탑·전폭): 줄바꿈으로 전체 메뉴를 한눈에 — 가로 잘림 없음 */
   .sa-tabbar {
     display: flex;
+    flex-wrap: wrap;
     gap: 0.5rem;
-    overflow-x: auto;
-    scroll-snap-type: x proximity;
-    -webkit-overflow-scrolling: touch;
-    scrollbar-width: none;
-    -webkit-mask-image: linear-gradient(90deg, transparent, #000 1.25rem, #000 calc(100% - 1.25rem), transparent);
-    mask-image: linear-gradient(90deg, transparent, #000 1.25rem, #000 calc(100% - 1.25rem), transparent);
     padding-bottom: 0.625rem;
+  }
+  /* 모바일(좁은 화면): 가로 스크롤 + 양끝 페이드(스와이프) */
+  @media (max-width: 768px) {
+    .sa-tabbar {
+      flex-wrap: nowrap;
+      overflow-x: auto;
+      scroll-snap-type: x proximity;
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: none;
+      -webkit-mask-image: linear-gradient(90deg, transparent, #000 1.25rem, #000 calc(100% - 1.25rem), transparent);
+      mask-image: linear-gradient(90deg, transparent, #000 1.25rem, #000 calc(100% - 1.25rem), transparent);
+    }
   }
   .sa-tabbar::-webkit-scrollbar { display: none; }
 

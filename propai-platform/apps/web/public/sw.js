@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v170-fieldapp-standalone";
+const CACHE_NAME = "propai-v171-fieldapp-menu-window";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

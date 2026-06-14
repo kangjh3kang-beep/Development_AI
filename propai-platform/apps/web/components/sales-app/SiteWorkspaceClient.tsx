@@ -204,13 +204,20 @@ export default function SiteWorkspaceClient({ locale, siteId }: { locale: Locale
                 <span aria-hidden>🛠</span> 현장 비밀번호 설정
               </button>
             )}
-            {/* 앱으로 열기 — 별도 창(앱 모드). 서브도메인(*.4t8t.net) 배선 전이라 현재 경로를 새 창으로.
-                서브도메인 준비 시: window.open(`https://${siteCode}.4t8t.net`, ...)로 자동 연결 가능. */}
+            {/* 앱으로 열기 — 진짜 '별도 창(앱 모드)'. 새 탭이 아니라 브라우저 크롬 없는 팝업
+                윈도우로 띄워(메뉴/툴바/주소창 숨김) 독립 앱처럼 사용. 화면 중앙 배치. */}
             <button
               onClick={() => {
-                if (typeof window !== "undefined") {
-                  window.open(window.location.href, "_blank", "noopener,noreferrer");
-                }
+                if (typeof window === "undefined") return;
+                const w = Math.min(1440, window.screen.availWidth - 40);
+                const h = Math.min(960, window.screen.availHeight - 40);
+                const left = Math.max(0, Math.round((window.screen.availWidth - w) / 2));
+                const top = Math.max(0, Math.round((window.screen.availHeight - h) / 2));
+                const feat = `popup=yes,width=${w},height=${h},left=${left},top=${top},menubar=no,toolbar=no,location=no,status=no,resizable=yes,scrollbars=yes`;
+                const win = window.open(window.location.href, "propai-field-app", feat);
+                // 팝업 차단되면 새 탭 폴백(기능 보존).
+                if (!win) window.open(window.location.href, "_blank", "noopener,noreferrer");
+                else win.focus();
               }}
               className="inline-flex min-h-[40px] items-center gap-1 rounded-lg border border-[var(--line-strong)] bg-[var(--surface)] px-3.5 text-xs font-black text-[var(--text-secondary)] transition hover:border-[var(--accent-strong)] hover:text-[var(--accent-strong)] active:scale-95"
             >
