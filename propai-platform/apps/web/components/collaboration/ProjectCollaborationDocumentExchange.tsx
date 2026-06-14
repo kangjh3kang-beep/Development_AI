@@ -11,6 +11,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useCollaborationStore, type CollabDocument } from "@/store/use-collaboration-store";
 import { DocumentViewerModal } from "@/components/collaboration/DocumentViewerModal";
+import { ReviewCommentThread } from "@/components/collaboration/ReviewCommentThread";
+import { useReviewCommentStore } from "@/store/use-review-comment-store";
 import {
   REVIEW_CATEGORIES,
   categoryLabel,
@@ -63,6 +65,8 @@ export function ProjectCollaborationDocumentExchange({ projectId }: { projectId:
   const [category, setCategory] = useState("");
   const [purpose, setPurpose] = useState<"storage" | "analysis">("storage");
   const [viewerDoc, setViewerDoc] = useState<CollabDocument | null>(null);
+  const [openThreads, setOpenThreads] = useState<Record<string, boolean>>({});
+  const commentsByDoc = useReviewCommentStore((s) => s.commentsByDoc);
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -202,6 +206,27 @@ export function ProjectCollaborationDocumentExchange({ projectId }: { projectId:
                 </div>
                 <div className="mt-1">
                   <AuditView doc={d} />
+                </div>
+                <div className="mt-1">
+                  <button
+                    type="button"
+                    data-testid="collab-doc-comments-toggle"
+                    onClick={() =>
+                      setOpenThreads((m) => ({ ...m, [d.id]: !m[d.id] }))
+                    }
+                    className="text-[10px] font-bold text-[var(--accent-strong)]"
+                  >
+                    {(() => {
+                      const n = (commentsByDoc[d.id] ?? []).filter(
+                        (cm) => cm.status === "active",
+                      ).length;
+                      const open = !!openThreads[d.id];
+                      return `의견교환${n > 0 ? ` (${n})` : ""} ${open ? "▲" : "▼"}`;
+                    })()}
+                  </button>
+                  {openThreads[d.id] && (
+                    <ReviewCommentThread projectId={projectId} docId={d.id} />
+                  )}
                 </div>
               </li>
             );
