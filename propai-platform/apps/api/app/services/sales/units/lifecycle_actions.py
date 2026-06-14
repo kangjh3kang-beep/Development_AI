@@ -14,7 +14,7 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.sales.units.event_ledger import append_event
+from app.services.sales.units.event_ledger import _ensure, append_event
 
 # 액션 → (허용 from 상태들, 도달 to 상태). NOTE 는 상태 변화 없음.
 _TRANSITIONS: dict[str, tuple[set[str], str]] = {
@@ -31,6 +31,9 @@ async def unit_action(db: AsyncSession, site_id, unit_id, action: str,
                       message: str | None = None, by=None) -> dict[str, Any]:
     """세대 1건에 액션 수행 — 상태전이(검증) + 이벤트 원장 + 상태로그. NOTE 는 특이사항만 기록."""
     act = (action or "").upper()
+    # 테이블 보장(DDL)은 트랜잭션 작업 전에 1회 끝낸다 — _ensure 의 첫 호출 commit 이
+    # 아래 전이 UPDATE 를 조기 커밋해 원자성을 깨는 것을 방지(프로세스당 최초 1회 갭 차단).
+    await _ensure(db)
     row = (await db.execute(text(
         "SELECT status FROM sales_unit_inventory WHERE id=:u AND site_id=:s AND deleted_at IS NULL"),
         {"u": str(unit_id), "s": str(site_id)})).first()

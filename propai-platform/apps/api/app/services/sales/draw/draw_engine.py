@@ -79,7 +79,8 @@ async def list_groups(db: AsyncSession, site_id) -> list[dict[str, Any]]:
     rows = (await db.execute(text(
         "SELECT g.id, g.name, g.status, g.created_at, "
         "  (SELECT count(*) FROM sales_draw_candidates c WHERE c.group_id=g.id) AS cand, "
-        "  (SELECT count(*) FROM sales_draw_candidates c WHERE c.group_id=g.id AND c.assigned_unit_id IS NOT NULL) AS drawn "
+        "  (SELECT count(*) FROM sales_draw_candidates c "
+        "     WHERE c.group_id=g.id AND c.assigned_unit_id IS NOT NULL) AS drawn "
         "FROM sales_draw_groups g WHERE g.site_id=:s ORDER BY g.created_at DESC"),
         {"s": str(site_id)})).all()
     return [{"id": str(r[0]), "name": r[1], "status": r[2], "created_at": str(r[3]),

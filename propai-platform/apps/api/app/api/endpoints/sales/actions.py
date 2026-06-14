@@ -1,7 +1,7 @@
 """sales 도메인 전용 액션 — 조직/동호생성/분양가/계약/홀드/수수료검증."""
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, File, UploadFile
 from sqlalchemy import select, text
@@ -9,14 +9,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
 from app.api.deps_sales import SalesCtx, require_role, sales_ctx
-from apps.api.database.models.sales.units_pricing import SalesUnitGeneration, SalesUnitPriceTable
 from app.services.sales.contract.service import cancel_contract, create_contract, sign_contract
 from app.services.sales.org.service import create_node, move_subtree, seed_default_org
 from app.services.sales.pricing.engine import (
-    apply_group_pricing, generate_price_table, project_revenue, solve_base_for_target,
+    apply_group_pricing,
+    generate_price_table,
+    project_revenue,
+    solve_base_for_target,
 )
 from app.services.sales.pricing.suggest import suggest_base_price
 from app.services.sales.units.generation import generate_units
+from apps.api.database.models.sales.units_pricing import SalesUnitGeneration, SalesUnitPriceTable
 
 actions_router = APIRouter(tags=["sales-actions"])
 
@@ -30,10 +33,17 @@ _REGISTER_MATRIX = {
     "MEMBER": {"TEAM_LEADER", "GM_DIRECTOR", "AGENCY", "SUBAGENCY", "DEVELOPER", "SUPERADMIN"},
 }
 
+# 자주 쓰는 역할 집합(시그니처 길이·중복 축소). require_role(*상수) 로 전개.
+_R_ORG_ADD = ("AGENCY", "SUBAGENCY", "DIRECTOR", "GM_DIRECTOR", "TEAM_LEADER", "DEVELOPER")
+_R_TEAM = ("TEAM_LEADER", "DIRECTOR", "GM_DIRECTOR", "SUBAGENCY", "AGENCY", "DEVELOPER", "SUPERADMIN")
+_R_SALES_ALL = ("MEMBER", "TEAM_LEADER", "GM_DIRECTOR", "SUBAGENCY", "AGENCY", "DEVELOPER", "SUPERADMIN")
+_R_CONTRACT = ("MEMBER", "TEAM_LEADER", "DIRECTOR", "SUBAGENCY", "AGENCY", "DEVELOPER")
+_R_TAXPREF = ("DEVELOPER", "AGENCY", "GM_DIRECTOR", "TEAM_LEADER", "MEMBER")
+
 
 @actions_router.post("/org/nodes")
 async def add_node(body: dict, db: AsyncSession = Depends(get_db),
-                   ctx: SalesCtx = Depends(require_role("AGENCY", "SUBAGENCY", "DIRECTOR", "GM_DIRECTOR", "TEAM_LEADER", "DEVELOPER"))):
+                   ctx: SalesCtx = Depends(require_role(*_R_ORG_ADD))):
     ntype = body["node_type"]
     allowed = _REGISTER_MATRIX.get(ntype)
     if allowed is not None and ctx.role not in allowed:
@@ -48,8 +58,7 @@ async def add_node(body: dict, db: AsyncSession = Depends(get_db),
 
 @actions_router.get("/org/team-overview")
 async def org_team_overview(db: AsyncSession = Depends(get_db),
-                            ctx: SalesCtx = Depends(require_role(
-                                "TEAM_LEADER", "DIRECTOR", "GM_DIRECTOR", "SUBAGENCY", "AGENCY", "DEVELOPER", "SUPERADMIN"))):
+                            ctx: SalesCtx = Depends(require_role(*_R_TEAM))):
     """P2-3 내 하위 조직 인원의 계약·고객·업무일지 집계+로스터(직급별 관리)."""
     from app.services.sales.org.overview import team_overview
     return await team_overview(db, ctx.site_id, getattr(ctx, "org_path", None) or None)
@@ -84,13 +93,14 @@ async def accounting_entry(body: dict, db: AsyncSession = Depends(get_db),
                                "GM_DIRECTOR", "SUBAGENCY", "AGENCY", "DEVELOPER", "SUPERADMIN"))):
     """현장 회계 항목 등록(인건비/경비/공과금/광고비/기타)."""
     from fastapi import HTTPException
+
     from app.services.sales.admin.console import add_accounting_entry
     try:
         return await add_accounting_entry(
             db, ctx.site_id, body.get("entry_type", ""), int(body.get("amount", 0)),
             body.get("memo"), body.get("entry_date"), getattr(ctx.user, "id", None))
     except ValueError as e:
-        raise HTTPException(400, str(e))
+        raise HTTPException(400, str(e)) from e
 
 
 @actions_router.get("/accounting/summary")
@@ -111,13 +121,14 @@ async def staff_wage_set(body: dict, db: AsyncSession = Depends(get_db),
                              "TEAM_LEADER", "GM_DIRECTOR", "SUBAGENCY", "AGENCY", "DEVELOPER", "SUPERADMIN"))):
     """직원 단가 설정(일급/시급/월급) — 급여 자동산정 기준."""
     from fastapi import HTTPException
+
     from app.services.sales.admin.console import set_staff_wage
     try:
         return await set_staff_wage(db, ctx.site_id, body["staff_id"],
                                     body.get("wage_type", "DAILY"), int(body.get("base_wage", 0)),
                                     tax_mode=body.get("tax_mode", "FREELANCE"))
     except (ValueError, KeyError) as e:
-        raise HTTPException(400, f"입력 오류: {e}")
+        raise HTTPException(400, f"입력 오류: {e}") from e
 
 
 @actions_router.get("/payroll")
@@ -135,6 +146,7 @@ async def payroll_post(body: dict, db: AsyncSession = Depends(get_db),
                            "GM_DIRECTOR", "SUBAGENCY", "AGENCY", "DEVELOPER", "SUPERADMIN"))):
     """산정 급여 총액을 회계 인건비(LABOR)로 자동전기(월 중복 방지). body.ym=YYYY-MM."""
     from fastapi import HTTPException
+
     from app.services.sales.admin.console import post_payroll_to_accounting
     ym = body.get("ym")
     if not ym:
@@ -252,7 +264,7 @@ async def set_unit_price_mode(unit_id: uuid.UUID, body: dict, db: AsyncSession =
         pt.override_price = body["override_price"]
         pt.override_reason = body.get("reason")
         pt.override_by = ctx.user.id
-        pt.override_at = datetime.now(timezone.utc)
+        pt.override_at = datetime.now(UTC)
         pt.total_price = body["override_price"]
     await db.commit()
     return {"ok": True}
@@ -265,7 +277,7 @@ async def set_unit_price_mode(unit_id: uuid.UUID, body: dict, db: AsyncSession =
 
 @actions_router.post("/contracts")
 async def contract_create(body: dict, db: AsyncSession = Depends(get_db),
-                          ctx: SalesCtx = Depends(require_role("MEMBER", "TEAM_LEADER", "DIRECTOR", "SUBAGENCY", "AGENCY", "DEVELOPER"))):
+                          ctx: SalesCtx = Depends(require_role(*_R_CONTRACT))):
     """계약 체결(최초 생성) — 세대+고객으로 계약 1건 생성(전주기 연결의 시작점).
 
     body: { unit_id(필수), customer_id?, round_id?, total_price? }
@@ -275,7 +287,7 @@ async def contract_create(body: dict, db: AsyncSession = Depends(get_db),
     try:
         unit_id = uuid.UUID(str(body["unit_id"]))
     except (KeyError, ValueError, TypeError):
-        raise HTTPException(400, "세대(unit_id)를 선택하세요.")
+        raise HTTPException(400, "세대(unit_id)를 선택하세요.") from None
     cust = body.get("customer_id")
     rnd = body.get("round_id")
     mnode = body.get("member_node_id")  # 담당 영업사원 노드(있으면 계약 체결 시 수수료가 배분됨)
@@ -288,7 +300,7 @@ async def contract_create(body: dict, db: AsyncSession = Depends(get_db),
             total_price=body.get("total_price"), by=ctx.user.id)
     except ValueError as e:
         await db.rollback()
-        raise HTTPException(409, str(e))
+        raise HTTPException(409, str(e)) from e
     await db.commit()
     return {"id": str(c.id), "stage": c.stage, "total_price": int(c.total_price or 0)}
 
@@ -301,7 +313,7 @@ async def contract_sign(contract_id: uuid.UUID, db: AsyncSession = Depends(get_d
         c = await sign_contract(db, ctx.site_id, contract_id, by=ctx.user.id)
     except ValueError as e:
         await db.rollback()
-        raise HTTPException(409, str(e))  # 중복 서명·잘못된 상태는 409로 명확히
+        raise HTTPException(409, str(e)) from e # 중복 서명·잘못된 상태는 409로 명확히
     await db.commit()
     return {"id": str(c.id), "stage": c.stage}
 
@@ -331,7 +343,7 @@ async def provision(body: dict, db: AsyncSession = Depends(get_db), user=Depends
     try:
         pid = uuid.UUID(pid_raw)
     except (ValueError, AttributeError, TypeError):
-        raise HTTPException(400, "유효한 프로젝트 번호가 아닙니다. 프로젝트 관리에서 저장(동기화)된 프로젝트를 선택하세요.")
+        raise HTTPException(400, "유효한 프로젝트 번호가 아닙니다. 저장(동기화)된 프로젝트를 선택하세요.") from None
     if not str(body.get("site_name") or "").strip():
         raise HTTPException(400, "현장 이름을 입력하세요.")
     if not getattr(user, "tenant_id", None):
@@ -363,14 +375,15 @@ async def get_tax_pref(node_id: str, db: AsyncSession = Depends(get_db), ctx: Sa
 
 @actions_router.post("/commission/tax-pref")
 async def set_tax_pref(body: dict, db: AsyncSession = Depends(get_db),
-                       ctx: SalesCtx = Depends(require_role("DEVELOPER", "AGENCY", "GM_DIRECTOR", "TEAM_LEADER", "MEMBER"))):
+                       ctx: SalesCtx = Depends(require_role(*_R_TAXPREF))):
     """수령자 세금유형 설정 — 3.3% 원천징수(WITHHOLDING) 또는 부가세 10%(VAT) 중 선택."""
     from fastapi import HTTPException
+
     from app.services.sales.commission.engine import set_node_tax_type
     try:
         tt = await set_node_tax_type(db, ctx.site_id, uuid.UUID(body["node_id"]), body.get("tax_type", ""))
     except (KeyError, ValueError) as e:
-        raise HTTPException(400, str(e) or "node_id·tax_type(WITHHOLDING/VAT) 필요")
+        raise HTTPException(400, str(e) or "node_id·tax_type(WITHHOLDING/VAT) 필요") from e
     await db.commit()
     return {"ok": True, "node_id": body["node_id"], "tax_type": tt}
 
@@ -390,17 +403,17 @@ async def validate_distribution(body: dict, db: AsyncSession = Depends(get_db), 
 # ── 세대 상태전이 액션 + 이벤트 원장(동호지정·계약 컨텍스트 메뉴) ───────────────
 @actions_router.post("/units/{unit_id}/action")
 async def unit_lifecycle_action(unit_id: uuid.UUID, body: dict, db: AsyncSession = Depends(get_db),
-                                ctx: SalesCtx = Depends(require_role(
-                                    "MEMBER", "TEAM_LEADER", "GM_DIRECTOR", "SUBAGENCY", "AGENCY", "DEVELOPER", "SUPERADMIN"))):
+                                ctx: SalesCtx = Depends(require_role(*_R_SALES_ALL))):
     """세대 클릭 메뉴 액션 — HOLD_REQUEST(지정대기)/HOLD_CANCEL/CONTRACT_WAIT(계약대기)/
     CONTRACT_CANCEL/CONTRACT_SIGN(계약체결)/CONTRACT_TERMINATE/NOTE(특이사항). 상태전이+해시체인 원장."""
     from fastapi import HTTPException
+
     from app.services.sales.units.lifecycle_actions import unit_action
     try:
         return await unit_action(db, ctx.site_id, unit_id, body.get("action", ""),
                                   message=body.get("message"), by=getattr(ctx.user, "id", None))
     except ValueError as e:
-        raise HTTPException(400, str(e))
+        raise HTTPException(400, str(e)) from e
 
 
 @actions_router.get("/units/{unit_id}/events")
@@ -432,11 +445,12 @@ async def draw_groups_list(db: AsyncSession = Depends(get_db), ctx: SalesCtx = D
 async def draw_group_create(body: dict, db: AsyncSession = Depends(get_db),
                             ctx: SalesCtx = Depends(require_role(*_DRAW_MGR))):
     from fastapi import HTTPException
+
     from app.services.sales.draw.draw_engine import create_group
     try:
         return await create_group(db, ctx.site_id, body.get("name", ""))
     except ValueError as e:
-        raise HTTPException(400, str(e))
+        raise HTTPException(400, str(e)) from e
 
 
 @actions_router.post("/draw/groups/{group_id}/pool")
@@ -468,12 +482,13 @@ async def draw_import_excel(group_id: uuid.UUID, file: UploadFile = File(...), d
                             ctx: SalesCtx = Depends(require_role(*_DRAW_MGR))):
     """고객명부 Excel(.xlsx) 업로드 → 대상자 등록(이름·연락처 자동인식)."""
     from fastapi import HTTPException
-    from app.services.sales.draw.draw_engine import parse_excel, add_candidates
+
+    from app.services.sales.draw.draw_engine import add_candidates, parse_excel
     try:
         content = await file.read()
         rows = parse_excel(content)
     except Exception as e:  # noqa: BLE001
-        raise HTTPException(400, f"엑셀 파싱 실패: {str(e)[:120]}")
+        raise HTTPException(400, f"엑셀 파싱 실패: {str(e)[:120]}") from e
     if not rows:
         raise HTTPException(400, "엑셀에서 대상자를 찾지 못했습니다(1행 헤더: 이름/연락처).")
     return await add_candidates(db, ctx.site_id, group_id, rows)
@@ -484,19 +499,22 @@ async def draw_run(group_id: uuid.UUID, candidate_id: uuid.UUID, db: AsyncSessio
                    ctx: SalesCtx = Depends(require_role("MEMBER", *_DRAW_MGR))):
     """즉석추첨 — 대상자가 누르면 남은 동호 중 무작위 1개 배정·공개(seed 해시체인 감사)."""
     from fastapi import HTTPException
+
     from app.services.sales.draw.draw_engine import draw_for_candidate
     try:
         return await draw_for_candidate(db, ctx.site_id, group_id, candidate_id, by=getattr(ctx.user, "id", None))
     except ValueError as e:
-        raise HTTPException(400, str(e))
+        raise HTTPException(400, str(e)) from e
 
 
 @actions_router.get("/draw/groups/{group_id}/status")
-async def draw_group_status(group_id: uuid.UUID, db: AsyncSession = Depends(get_db), ctx: SalesCtx = Depends(sales_ctx)):
+async def draw_group_status(group_id: uuid.UUID, db: AsyncSession = Depends(get_db),
+                            ctx: SalesCtx = Depends(sales_ctx)):
     """추첨그룹 현황 — 대상자 순번·배정세대·진행률·남은 세대."""
     from fastapi import HTTPException
+
     from app.services.sales.draw.draw_engine import group_status
     try:
         return await group_status(db, ctx.site_id, group_id)
     except ValueError as e:
-        raise HTTPException(400, str(e))
+        raise HTTPException(400, str(e)) from e
