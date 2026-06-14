@@ -75,3 +75,11 @@ class DocumentReviewUpdate(BaseModel):
     """표기용 심의 상태 전이 요청 — 전진(requested→acknowledged→addressed)만 허용(자동판정 아님)."""
 
     target_state: str = Field(..., min_length=1, max_length=20)
+
+
+class DocumentShapesOut(BaseModel):
+    """저장된 DXF 설계파일의 CAD2.0 셰이프(읽기전용 뷰어용) — 실파싱 결과만(가짜 기하 금지)."""
+
+    shapes: list[dict] = Field(default_factory=list)
+    bounds_px: Optional[dict] = None
+    scale_px_per_m: Optional[float] = None

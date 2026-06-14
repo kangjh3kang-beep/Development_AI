@@ -9,6 +9,7 @@
 
 import dynamic from "next/dynamic";
 import type { CollabDocument } from "@/store/use-collaboration-store";
+import { CadDocViewer } from "./CadDocViewer";
 
 const PdfDocViewer = dynamic(
   () => import("./PdfDocViewer").then((m) => m.PdfDocViewer),
@@ -20,6 +21,9 @@ function isImage(ct: string | null | undefined, name: string): boolean {
 }
 function isPdf(ct: string | null | undefined, name: string): boolean {
   return (ct ?? "").includes("pdf") || /\.pdf$/i.test(name);
+}
+function isDxf(name: string): boolean {
+  return /\.dxf$/i.test(name);
 }
 
 export function DocumentViewerModal({
@@ -76,6 +80,8 @@ export function DocumentViewerModal({
             <img src={url} alt={name} className="max-h-[78vh] max-w-full rounded-lg" />
           ) : isPdf(doc.content_type, name) ? (
             <PdfDocViewer url={url} />
+          ) : isDxf(name) ? (
+            <CadDocViewer projectId={doc.project_id} docId={doc.id} />
           ) : (
             <div className="py-8 text-center text-sm text-[var(--text-hint)]">
               이 형식은 내장 미리보기를 지원하지 않습니다.

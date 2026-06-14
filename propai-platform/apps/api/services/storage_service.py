@@ -264,6 +264,18 @@ async def sign_collab_document(path: str, ttl_days: int = 14) -> str:
         return await _sign_collab_path(client, base, auth, path, ttl_days)
 
 
+async def download_collab_document(path: str) -> bytes:
+    """비공개 버킷의 협업 문서를 다운로드한다(단기 서명 후 GET) — 서버측 재파싱(뷰어)용."""
+    base, key = _sb_conf()
+    auth = {"Authorization": f"Bearer {key}", "apikey": key}
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        url = await _sign_collab_path(client, base, auth, path, 1)  # 1일 단기 서명
+        resp = await client.get(url)
+        if resp.status_code != 200:
+            raise StorageError(f"문서 다운로드 실패: {resp.status_code} {resp.text[:120]}")
+        return resp.content
+
+
 async def _sign_collab_path(
     client: httpx.AsyncClient, base: str, auth: dict, path: str, ttl_days: int
 ) -> str:

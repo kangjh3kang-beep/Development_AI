@@ -16,7 +16,11 @@ import structlog
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apps.api.services.storage_service import StorageError, upload_collab_document
+from apps.api.services.storage_service import (
+    StorageError,
+    download_collab_document,
+    upload_collab_document,
+)
 from app.api.deps_collaboration import require_project_member
 from app.core.database import get_db
 from app.models.collaboration import PROJECT_ROLES, REVIEW_CATEGORIES
@@ -24,6 +28,7 @@ from app.schemas.collaboration import (
     DocumentActionResult,
     DocumentOut,
     DocumentReviewUpdate,
+    DocumentShapesOut,
     InviteActionResult,
     InviteCreate,
     InviteOut,
@@ -38,7 +43,10 @@ from app.services.collaboration.collaboration_rules import (
     normalize_document_category,
     normalize_purpose,
 )
-from app.services.collaboration.document_audit_service import run_design_document_audit
+from app.services.collaboration.document_audit_service import (
+    parse_design_shapes,
+    run_design_document_audit,
+)
 from app.services.collaboration.collaboration_service import (
     accept_invite_result,
     build_invite_fields,
@@ -330,3 +338,46 @@ async def set_document_review_state(
         db, doc, body.target_state, member.user_id, datetime.utcnow()
     )
     return _document_out(doc2)
+
+
+@router.get("/projects/{project_id}/documents/{doc_id}/shapes", response_model=DocumentShapesOut)
+async def get_document_shapes(
+    project_id: str,
+    doc_id: str,
+    _member=Depends(_require_member),
+    db: AsyncSession = Depends(get_db),
+):
+    """저장된 DXF 설계파일을 파싱해 CAD2.0 셰이프를 반환 — 회의방 경량 CAD 뷰어용(읽기전용).
+
+    재서명 후 비공개 버킷에서 다운로드 → parse_design_shapes(결정론). DXF만 지원(IFC·문서는 415).
+    실파싱 결과만 반환(가짜 기하 금지) — 빈/무효 DXF는 422.
+    """
+    try:
+        did = uuid.UUID(doc_id)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=404, detail="문서를 찾을 수 없습니다") from exc
+
+    doc = await repo.get_document(db, did)
+    if doc is None or str(doc.project_id) != str(uuid.UUID(project_id)) or doc.status != "active":
+        raise HTTPException(status_code=404, detail="문서를 찾을 수 없습니다")
+
+    name = (doc.original_filename or "").lower()
+    if doc.doc_kind != "design" or not name.endswith(".dxf"):
+        raise HTTPException(status_code=415, detail="DXF 설계파일만 도면 미리보기를 지원합니다.")
+
+    try:
+        data = await download_collab_document(doc.storage_path)
+    except StorageError as exc:
+        logger.warning("collab_document_download_failed", error=str(exc))
+        raise HTTPException(status_code=502, detail=f"문서 다운로드 실패: {exc}") from exc
+
+    try:
+        result = parse_design_shapes(data)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"DXF 파싱 실패: {str(exc)[:120]}") from exc
+
+    return DocumentShapesOut(
+        shapes=list(result.get("shapes") or []),
+        bounds_px=result.get("bounds_px"),
+        scale_px_per_m=result.get("scale_px_per_m"),
+    )

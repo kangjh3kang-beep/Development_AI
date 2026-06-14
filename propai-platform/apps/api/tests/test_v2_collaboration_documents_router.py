@@ -45,6 +45,7 @@ class _Doc:
         self.reviewed_at = None
         self.created_at = None
         self.status = "active"
+        self.storage_path = "collab/x/test.dxf"
         for k, v in (fields or {}).items():
             setattr(self, k, v)
         for k, v in over.items():
@@ -99,9 +100,25 @@ def _build_client(monkeypatch, *, member=None, get_doc=None, docs=None):
     monkeypatch.setattr(repo, "insert_document", _fake_insert)
     monkeypatch.setattr(repo, "list_documents", _fake_list)
     monkeypatch.setattr(repo, "get_document", _fake_get)
+    async def _fake_download(path):
+        return b"DXFBYTES"
+
+    def _fake_parse(data):
+        return {
+            "shapes": [
+                {"id": "s1", "kind": "polygon", "layer": "outline",
+                 "points": [{"id": "p1", "x": 0, "y": 0}, {"id": "p2", "x": 10, "y": 0},
+                            {"id": "p3", "x": 10, "y": 8}]},
+            ],
+            "bounds_px": {"width": 100, "height": 80},
+            "scale_px_per_m": 10,
+        }
+
     monkeypatch.setattr(repo, "soft_delete_document", _fake_soft_delete)
     monkeypatch.setattr(repo, "update_document_audit", _fake_update_audit)
     monkeypatch.setattr(repo, "set_document_review_state", _fake_set_review)
+    monkeypatch.setattr(v2mod, "download_collab_document", _fake_download)
+    monkeypatch.setattr(v2mod, "parse_design_shapes", _fake_parse)
     return TestClient(app)
 
 
@@ -273,3 +290,34 @@ class TestReviewState:
         client = _build_client(monkeypatch, member=_Member(role="owner"), get_doc=None)
         r = self._post(client, uuid.uuid4(), "acknowledged")
         assert r.status_code == 404
+
+
+class TestDocumentShapes:
+    """DXF 경량 CAD 뷰어용 셰이프 — DXF만 지원(IFC·문서는 415)."""
+
+    def _get(self, client, doc_id):
+        return client.get(f"/api/v2/collaboration/projects/{PID}/documents/{doc_id}/shapes")
+
+    def test_dxf_returns_shapes(self, monkeypatch):
+        doc = _Doc(project_id=PID, doc_kind="design", original_filename="plan.dxf", status="active")
+        client = _build_client(monkeypatch, get_doc=doc)
+        r = self._get(client, doc.id)
+        assert r.status_code == 200, r.text
+        j = r.json()
+        assert len(j["shapes"]) == 1
+        assert j["bounds_px"]["width"] == 100
+
+    def test_document_kind_415(self, monkeypatch):
+        doc = _Doc(project_id=PID, doc_kind="document", original_filename="report.pdf", status="active")
+        client = _build_client(monkeypatch, get_doc=doc)
+        assert self._get(client, doc.id).status_code == 415
+
+    def test_ifc_415(self, monkeypatch):
+        # 설계파일이라도 IFC는 2D 셰이프 미지원 → 415
+        doc = _Doc(project_id=PID, doc_kind="design", original_filename="model.ifc", status="active")
+        client = _build_client(monkeypatch, get_doc=doc)
+        assert self._get(client, doc.id).status_code == 415
+
+    def test_missing_404(self, monkeypatch):
+        client = _build_client(monkeypatch, get_doc=None)
+        assert self._get(client, uuid.uuid4()).status_code == 404

@@ -48,6 +48,16 @@ def _convert_dxf(data: bytes):
     return geometry, rooms
 
 
+def parse_design_shapes(data: bytes) -> dict:
+    """저장된 DXF 바이트 → CAD2.0 셰이프(읽기전용 뷰어용). parse_dxf_to_shapes 위임(결정론).
+
+    반환: {shapes, bounds_px, scale_px_per_m, ...}. 빈/무효 DXF는 ValueError(가짜 기하 금지).
+    """
+    from app.services.cad.dxf_import_service import parse_dxf_to_shapes
+
+    return parse_dxf_to_shapes(data)
+
+
 def _default_orchestrator():
     from app.services.design_audit.design_audit_orchestrator import DesignAuditOrchestrator
 
