@@ -523,6 +523,19 @@ async def draw_run(group_id: uuid.UUID, candidate_id: uuid.UUID, db: AsyncSessio
         raise HTTPException(400, str(e)) from e
 
 
+@actions_router.post("/draw/groups/{group_id}/candidates/{candidate_id}/contract")
+async def draw_candidate_contract(group_id: uuid.UUID, candidate_id: uuid.UUID, db: AsyncSession = Depends(get_db),
+                                  ctx: SalesCtx = Depends(require_role(*_DRAW_MGR))):
+    """추첨 배정(HOLD) 당첨자 → 계약 생성(청약→당첨→동·호배정→계약 완결). 멱등(기존 계약 시 반환)."""
+    from fastapi import HTTPException
+
+    from app.services.sales.draw.draw_engine import contract_from_candidate
+    try:
+        return await contract_from_candidate(db, ctx.site_id, group_id, candidate_id, by=getattr(ctx.user, "id", None))
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+
+
 @actions_router.get("/draw/groups/{group_id}/status")
 async def draw_group_status(group_id: uuid.UUID, db: AsyncSession = Depends(get_db),
                             ctx: SalesCtx = Depends(sales_ctx)):

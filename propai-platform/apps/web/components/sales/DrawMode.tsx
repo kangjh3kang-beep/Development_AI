@@ -10,7 +10,7 @@ import { salesApi } from "@/lib/salesApi";
 
 interface Group { id: string; name: string; status: string; candidates: number; drawn: number }
 interface Ann { id: string; announce_no?: string; status: string }
-interface RosterItem { id: string; seq: number; name: string; phone?: string; assigned_unit_id?: string | null; assigned_label?: string | null; seed?: string | null; done: boolean }
+interface RosterItem { id: string; seq: number; name: string; phone?: string; assigned_unit_id?: string | null; assigned_label?: string | null; seed?: string | null; done: boolean; contract_id?: string | null }
 interface Status { group_id: string; name: string; candidates: number; drawn: number; remaining_units: number; roster: RosterItem[] }
 interface DrawResult { candidate: { seq: number; name: string }; assigned_unit: { dong?: string; ho?: string }; seed: string; pool_size: number; remaining_after: number }
 
@@ -101,6 +101,17 @@ export default function DrawMode({ siteCode }: { siteCode: string }) {
     }
   };
 
+  // 추첨 배정(HOLD) 당첨자 → 계약 생성(청약→당첨→동·호배정→계약 완결).
+  const makeContract = async (cid: string) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const r = await api.post<{ existing?: boolean; stage?: string }>(`/draw/groups/${gid}/candidates/${cid}/contract`, {});
+      alert(r?.existing ? "이미 계약이 생성된 세대입니다." : `계약 생성 완료(${r?.stage ?? "RESERVED"}) — 수납·대출 화면에서 이어집니다.`);
+      loadStatus(gid);
+    } catch (e) { alert(e instanceof Error && e.message ? e.message : "계약 생성 실패"); } finally { setBusy(false); }
+  };
+
   const nextTurn = st?.roster.find((r) => !r.done);
   const progress = st && st.candidates ? Math.round((st.drawn / st.candidates) * 100) : 0;
 
@@ -182,6 +193,12 @@ export default function DrawMode({ siteCode }: { siteCode: string }) {
                     <span className="flex items-center gap-2">
                       <b className="text-[var(--accent-strong)]">{r.assigned_label}</b>
                       {r.seed && <span className="font-mono text-[9px] text-[var(--text-hint)]" title="추첨 seed(감사·재현검증)">seed {r.seed.slice(0, 8)}</span>}
+                      {r.contract_id ? (
+                        <span className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-bold text-emerald-400">계약완료</span>
+                      ) : (
+                        <button onClick={() => makeContract(r.id)} disabled={busy}
+                          className="rounded-md border border-[var(--accent-strong)] px-2 py-0.5 text-[10px] font-bold text-[var(--accent-strong)] disabled:opacity-50">계약 생성</button>
+                      )}
                     </span>
                   ) : <span className="text-[10px] text-[var(--text-hint)]">대기</span>}
                 </div>

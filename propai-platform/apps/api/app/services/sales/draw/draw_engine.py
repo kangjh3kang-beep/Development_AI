@@ -278,6 +278,40 @@ async def draw_for_candidate(db: AsyncSession, site_id, group_id, candidate_id, 
     }
 
 
+async def contract_from_candidate(db: AsyncSession, site_id, group_id, candidate_id, by=None) -> dict[str, Any]:
+    """추첨으로 동·호를 배정(HOLD)받은 당첨자를 계약으로 연결 — 청약→당첨→동·호배정→계약 완결.
+
+    배정된 세대(assigned_unit_id)와 대상자의 고객(customer_id, 청약홈 채널이면 없음)으로 계약을 생성한다.
+    이미 그 세대에 활성 계약이 있으면(중복 클릭 등) 새로 만들지 않고 기존 계약을 반환(멱등)."""
+    await _ensure(db)
+    cand = (await db.execute(text(
+        "SELECT name, assigned_unit_id, customer_id FROM sales_draw_candidates "
+        "WHERE id=:c AND group_id=:g AND site_id=:s"),
+        {"c": str(candidate_id), "g": str(group_id), "s": str(site_id)})).first()
+    if not cand:
+        raise ValueError("추첨 대상자를 찾을 수 없습니다")
+    if not cand[1]:
+        raise ValueError("아직 동·호가 배정되지 않은 대상자입니다(먼저 추첨하세요)")
+    unit_id = cand[1]
+    # 멱등: 같은 세대에 이미 활성 계약이 있으면 그대로 반환(중복 생성 방지).
+    existing = (await db.execute(text(
+        "SELECT id, stage, total_price FROM sales_contracts_ext "
+        "WHERE unit_id=:u AND site_id=:s AND status='ACTIVE' ORDER BY created_at DESC LIMIT 1"),
+        {"u": str(unit_id), "s": str(site_id)})).first()
+    if existing:
+        return {"ok": True, "existing": True, "contract_id": str(existing[0]),
+                "unit_id": str(unit_id), "stage": existing[1], "total_price": int(existing[2] or 0)}
+    from app.services.sales.contract.service import create_contract
+    c = await create_contract(db, site_id, unit_id,
+                              customer_id=(cand[2] if cand[2] else None), by=by)
+    # 추첨 당첨자 → 계약 연결을 세대 이벤트 원장에 남겨 사후 추적(감사).
+    await append_event(db, site_id, unit_id, "NOTE",
+                       message=f"추첨 당첨자 계약 연결: {cand[0]}", by=by, do_commit=False)
+    await db.commit()
+    return {"ok": True, "existing": False, "contract_id": str(c.id), "unit_id": str(unit_id),
+            "stage": c.stage, "total_price": int(c.total_price or 0)}
+
+
 async def group_status(db: AsyncSession, site_id, group_id) -> dict[str, Any]:
     """그룹 현황 — 대상자(순번·배정세대)·진행률·남은 세대."""
     await _ensure(db)
@@ -287,15 +321,18 @@ async def group_status(db: AsyncSession, site_id, group_id) -> dict[str, Any]:
     if not g:
         raise ValueError("추첨그룹을 찾을 수 없습니다")
     cands = (await db.execute(text(
-        "SELECT c.seq, c.name, c.phone, c.assigned_unit_id, c.draw_seed, c.drawn_at, u.dong, u.ho, c.id "
-        "FROM sales_draw_candidates c LEFT JOIN sales_unit_inventory u ON u.id=c.assigned_unit_id "
-        "WHERE c.group_id=:g ORDER BY c.seq ASC"), {"g": str(group_id)})).all()
+        "SELECT c.seq, c.name, c.phone, c.assigned_unit_id, c.draw_seed, c.drawn_at, u.dong, u.ho, c.id, ct.id "
+        "FROM sales_draw_candidates c "
+        "LEFT JOIN sales_unit_inventory u ON u.id=c.assigned_unit_id "
+        "LEFT JOIN sales_contracts_ext ct ON ct.unit_id=c.assigned_unit_id AND ct.site_id=:s AND ct.status='ACTIVE' "
+        "WHERE c.group_id=:g ORDER BY c.seq ASC"), {"g": str(group_id), "s": str(site_id)})).all()
     roster = [{
         "id": str(c[8]),  # candidate_id — 프론트 추첨 버튼용
         "seq": int(c[0]), "name": c[1], "phone": c[2],
         "assigned_unit_id": str(c[3]) if c[3] else None,
         "assigned_label": (f"{c[6]}동 {c[7]}호" if c[3] and c[6] else None),
         "seed": c[4], "drawn_at": str(c[5]) if c[5] else None, "done": bool(c[3]),
+        "contract_id": str(c[9]) if c[9] else None,  # 추첨 배정→계약 연결 여부
     } for c in cands]
     remaining = await _remaining_units(db, site_id, group_id)
     drawn = sum(1 for r in roster if r["done"])
