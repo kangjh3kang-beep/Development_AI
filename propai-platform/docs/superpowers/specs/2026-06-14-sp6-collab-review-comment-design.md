@@ -63,7 +63,7 @@ F3 회의방 자료교환(SP3) 위에 **문서별·지적별 의견교환 스레
 |---|---|---|
 | `GET …/documents/{doc_id}/comments` | `_require_member` + scope | flat 목록(created_at asc; **전체 행 active+deleted**, deleted 본문은 null). deleted 가시성(잎 숨김/플레이스홀더)은 클라이언트 `buildCommentTree`가 결정 |
 | `POST …/documents/{doc_id}/comments` | `_require_commenter` + scope | 생성. `{body, parent_id?, anchor?}` |
-| `PATCH …/comments/{comment_id}` | 작성자 본인 | 본문 수정 → `edited=true` |
+| `PUT …/comments/{comment_id}` | 작성자 본인 | 본문 수정 → `edited=true`(apiClient `putV2` 재사용, `patchV2` 부재) |
 | `DELETE …/comments/{comment_id}` | 작성자 또는 admin(owner/manager) | 소프트삭제 |
 | `POST …/comments/{comment_id}/resolve` | `_require_reviewer` + scope | `{resolved: bool}` 토글, **루트만**(답변 409) |
 
@@ -84,7 +84,7 @@ F3 회의방 자료교환(SP3) 위에 **문서별·지적별 의견교환 스레
 
 ## 6. 프론트엔드
 - **순수코어 `apps/web/lib/review-comments.ts`** (vitest): 타입 `ReviewComment`, `buildCommentTree(flat)→nested`(parent_id로 트리 조립, created_at 정렬; **자식 있는 deleted=플레이스홀더 유지, 자식 없는 deleted 잎=제외**), `commentStateBadge(resolved, status)`, `canResolve(parentId)`, `INDENT_CAP`(시각 들여쓰기 상한). `lib/collaboration.ts`와 동형.
-- **스토어 `apps/web/store/use-review-comment-store.ts`** (Zustand+immer): `commentsByDoc: Record<string, ReviewComment[]>`, `loadingByDoc`/`errorByDoc`, 액션 `loadComments(projectId, docId)` / `postComment(projectId, docId, {body, parentId?, anchor?})` / `editComment(projectId, docId, commentId, body)` / `deleteComment(projectId, docId, commentId)` / `resolveComment(projectId, docId, commentId, resolved)`. `apiClient` 사용 — 수정은 PATCH(없으면 POST 폴백, 구현 시 `lib/api-client.ts` 확인).
+- **스토어 `apps/web/store/use-review-comment-store.ts`** (Zustand+immer): `commentsByDoc: Record<string, ReviewComment[]>`, `loadingByDoc`/`errorByDoc`, 액션 `loadComments(projectId, docId)` / `postComment(projectId, docId, {body, parentId?, anchor?})` / `editComment(projectId, docId, commentId, body)` / `deleteComment(projectId, docId, commentId)` / `resolveComment(projectId, docId, commentId, resolved)`. `apiClient` 사용 — 수정은 **PUT**(`putV2`; `lib/api-client.ts`에 `patchV2` 없음 확인됨, api-client 무수정).
 - **컴포넌트 `apps/web/components/collaboration/ReviewCommentThread.tsx`**: `ProjectCollaborationDocumentExchange.tsx`의 각 문서 행 아래 **"의견교환 (N)" 토글**로 펼침(additive·최소변경). 재귀 트리 렌더(들여쓰기 캡) + 답변창 + 작성자 수정/삭제 + 심의자 해결 토글 + "수정됨"/"삭제된 댓글"/resolved 배지. 루트 작성 시 "지적 앵커(선택)" 자유문자열 입력(정직: 자동연결 아님). CSS 변수·data-testid.
 
 ## 7. 유닛 분해 (TDD 단위)
@@ -113,4 +113,4 @@ F3 회의방 자료교환(SP3) 위에 **문서별·지적별 의견교환 스레
 - **anchor 과대표기 방지**: findings 자동연결로 오해되지 않도록 "표기용·수동입력" 명시. 향후 findings 1급화 시 anchor를 구조화 가능(하위호환 여지).
 - **scope 일관성**: 댓글 읽기/쓰기/해결 모두 문서 `document_in_scope` 동일 게이트 통과 — 외부 게스트 누출 방지(문서와 동일 보안경계).
 - **소프트삭제 트리**: 자식 있는 deleted는 본문만 가리고 행 보존 → 트리 무결성. 자식 없는 deleted 잎은 UI 비표시.
-- **apiClient PATCH 부재 가능성**: 없으면 수정 엔드포인트를 POST로 폴백(구현 시 확인) — 계약·테스트 일관 유지.
+- **apiClient PATCH 부재(해소)**: `patchV2` 없음 확인 → 수정 엔드포인트는 **PUT**(`putV2`)로 확정. 공유 `api-client.ts` 무수정(claim 불필요).
