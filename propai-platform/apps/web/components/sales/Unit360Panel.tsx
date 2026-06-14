@@ -12,13 +12,46 @@ interface Detail {
   history?: { ts: string; from_status?: string; to_status?: string }[];
 }
 
+interface UnitEvent {
+  seq: number; event_type: string; event_label: string;
+  from_status?: string; to_status?: string; message?: string;
+  occurred_at: string; content_hash: string;
+}
+const STATUS_LABEL: Record<string, string> = {
+  AVAILABLE: "분양가능", HOLD: "동·호지정 대기", APPLIED: "계약 대기", CONTRACTED: "계약 체결", CANCELLED: "취소",
+};
+// 현재 상태에서 가능한 액션(컨텍스트 메뉴).
+const ACTIONS_BY_STATUS: Record<string, { action: string; label: string; tone: "accent" | "warn" | "danger" }[]> = {
+  AVAILABLE: [{ action: "HOLD_REQUEST", label: "동·호지정 대기", tone: "accent" }],
+  HOLD: [
+    { action: "CONTRACT_WAIT", label: "계약 대기", tone: "accent" },
+    { action: "HOLD_CANCEL", label: "동·호지정 취소", tone: "warn" },
+  ],
+  APPLIED: [
+    { action: "CONTRACT_SIGN", label: "계약 체결", tone: "accent" },
+    { action: "CONTRACT_CANCEL", label: "계약 취소", tone: "warn" },
+  ],
+  CONTRACTED: [{ action: "CONTRACT_TERMINATE", label: "계약 해지", tone: "danger" }],
+};
+
 export default function Unit360Panel({ siteCode }: { siteCode: string }) {
   const selectedUnit = useSalesStore((s) => s.selectedUnit);
   const select = useSalesStore((s) => s.select);
+  const units = useSalesStore((s) => s.units);
+  const setUnits = useSalesStore((s) => s.setUnits);
   const [d, setD] = useState<Detail | null>(null);
   // 계약 체결 진행/결과 메시지(버튼 중복클릭 방지 + 성공/실패 안내).
   const [signing, setSigning] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  // 세대 액션·특이사항·이벤트 타임라인.
+  const [events, setEvents] = useState<UnitEvent[]>([]);
+  const [note, setNote] = useState("");
+  const [acting, setActing] = useState(false);
+  const status = selectedUnit?.status || "AVAILABLE";
+
+  const loadEvents = (uid: string) => {
+    salesApi(siteCode).get<UnitEvent[]>(`/units/${uid}/events`).then((r) => setEvents(r || [])).catch(() => setEvents([]));
+  };
 
   // 세대 상세를 다시 불러온다(계약 체결 직후 '계약' 섹션을 갱신하기 위해).
   const reload = () => {
@@ -27,13 +60,33 @@ export default function Unit360Panel({ siteCode }: { siteCode: string }) {
   };
 
   useEffect(() => {
-    setMsg(null);
+    setMsg(null); setEvents([]); setNote("");
     if (!selectedUnit) { setD(null); return; }
     let alive = true;
     salesApi(siteCode).get<Detail>(`/units/${selectedUnit.id}/detail`)
       .then((r) => { if (alive) setD(r); }).catch(() => { if (alive) setD(null); });
+    loadEvents(selectedUnit.id);
     return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedUnit, siteCode]);
+
+  // 세대 액션(상태전이/특이사항) — POST /units/{id}/action → 상태·타임라인 즉시 갱신.
+  const doAction = async (action: string, message?: string) => {
+    if (!selectedUnit || acting) return;
+    setActing(true); setMsg(null);
+    try {
+      const r = await salesApi(siteCode).post<{ status?: string }>(`/units/${selectedUnit.id}/action`, { action, message });
+      const newStatus = (r?.status || status) as typeof selectedUnit.status;
+      select({ ...selectedUnit, status: newStatus });   // 패널 상태 즉시 반영
+      setUnits((units || []).map((u) => (u.id === selectedUnit.id ? { ...u, status: newStatus } : u)));  // 보드 색상 즉시 반영
+      loadEvents(selectedUnit.id);
+      reload();
+      if (action === "NOTE") setNote("");
+      setMsg({ ok: true, text: action === "NOTE" ? "특이사항이 원장에 등록되었습니다(년월일·시분·해시)." : "처리되었습니다." });
+    } catch (e) {
+      setMsg({ ok: false, text: e instanceof Error && e.message ? e.message : "처리에 실패했습니다." });
+    } finally { setActing(false); }
+  };
 
   // 계약 체결 — 선택한 세대로 계약 1건을 만든다(이후 수납·대출·전매 화면에서 선택 가능).
   const createContract = async () => {
@@ -57,8 +110,36 @@ export default function Unit360Panel({ siteCode }: { siteCode: string }) {
       </div>
       <Section title="기본">
         <Row k="층/라인/향" v={`${selectedUnit.floor}F / ${selectedUnit.line} / ${selectedUnit.aspect ?? "-"}`} />
-        <Row k="상태" v={selectedUnit.status} />
+        <Row k="상태" v={STATUS_LABEL[status] || status} />
         <Row k="분양가" v={d?.price ? won(d.price.total_price) : "-"} />
+      </Section>
+
+      {/* 세대 액션 — 현재 상태에서 가능한 컨텍스트 메뉴(상태전이). 각 이벤트는 원장에 년월일·시분 기록 */}
+      <Section title="세대 액션">
+        <div className="flex flex-wrap gap-2">
+          {(ACTIONS_BY_STATUS[status] || []).map((a) => (
+            <button key={a.action} onClick={() => doAction(a.action)} disabled={acting}
+              className={`rounded-lg px-3 py-2 text-xs font-black text-white disabled:opacity-50 ${
+                a.tone === "danger" ? "bg-[var(--error)]" : a.tone === "warn" ? "bg-amber-500" : "bg-[var(--accent-strong)]"}`}>
+              {a.label}
+            </button>
+          ))}
+          {(ACTIONS_BY_STATUS[status] || []).length === 0 && (
+            <span className="text-xs text-[var(--text-tertiary)]">현재 상태에서 가능한 동작이 없습니다.</span>
+          )}
+        </div>
+      </Section>
+
+      {/* 특이사항 — 블록체인식 원장에 메시지 등록(년월일·시분·해시) */}
+      <Section title="특이사항 등록">
+        <div className="flex gap-2">
+          <input value={note} onChange={(e) => setNote(e.target.value)}
+            placeholder="예: VIP 고객, 계약금 입금대기"
+            onKeyDown={(e) => { if (e.key === "Enter" && note.trim()) void doAction("NOTE", note.trim()); }}
+            className="flex-1 rounded-lg border border-[var(--line)] bg-[var(--surface-strong)] px-2.5 py-2 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]" />
+          <button onClick={() => note.trim() && doAction("NOTE", note.trim())} disabled={acting || !note.trim()}
+            className="rounded-lg bg-[var(--surface-strong)] border border-[var(--line)] px-3 py-2 text-xs font-bold text-[var(--text-secondary)] disabled:opacity-50">등록</button>
+        </div>
       </Section>
       {d?.price?.breakdown?.length ? (
         <Section title="분양가 구성">
@@ -90,13 +171,26 @@ export default function Unit360Panel({ siteCode }: { siteCode: string }) {
           {msg.text}
         </p>
       )}
-      {d?.history?.length ? (
-        <Section title="상태 이력">
-          {(d.history ?? []).map((h, i) => (
-            <Row key={i} k={new Date(h.ts).toLocaleString("ko-KR")} v={`${h.from_status ?? "-"} → ${h.to_status}`} />
-          ))}
-        </Section>
-      ) : null}
+      {/* 이벤트 타임라인 — 블록체인식 원장(년월일·시분 + 해시체인). 모든 액션·특이사항·추첨 기록 */}
+      <Section title="이벤트 타임라인 (원장)">
+        {events.length === 0 ? (
+          <p className="text-xs text-[var(--text-tertiary)]">기록된 이벤트가 없습니다.</p>
+        ) : (
+          <ol className="relative space-y-2 border-l border-[var(--line)] pl-3">
+            {events.slice().reverse().map((e) => (
+              <li key={e.seq} className="relative">
+                <span className="absolute -left-[1.07rem] top-1 h-2 w-2 rounded-full bg-[var(--accent-strong)]" aria-hidden />
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-bold text-[var(--text-primary)]">{e.event_label}{e.to_status ? ` · ${STATUS_LABEL[e.to_status] || e.to_status}` : ""}</span>
+                  <span className="text-[10px] tabular-nums text-[var(--text-tertiary)]">{new Date(e.occurred_at).toLocaleString("ko-KR", { dateStyle: "short", timeStyle: "short" })}</span>
+                </div>
+                {e.message && <p className="mt-0.5 text-[11px] text-[var(--text-secondary)]">{e.message}</p>}
+                <p className="mt-0.5 font-mono text-[9px] text-[var(--text-hint)]" title="content_hash(블록체인식 변조탐지)">#{e.seq} · {e.content_hash.slice(0, 12)}</p>
+              </li>
+            ))}
+          </ol>
+        )}
+      </Section>
     </div>
   );
 }
