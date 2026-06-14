@@ -358,6 +358,22 @@ async def analyze_zoning(req: ZoningAnalyzeRequest):
     service = AutoZoningService()
     result = await service.analyze_by_address(req.address)
 
+    # ── 조례 용적률 SSOT(단일출처) ──
+    # regulation/analyze 와 동일한 ordinance_service 를 조회해 local_ordinance(조례 한도)를 주입한다.
+    # 이전: local_ordinance 가 비어 far_tier 가 법정상한(예 일반상업 1300%)으로 폴백 → regulation 의
+    # 조례값(의정부 일반상업 900%)과 같은 필지에서 400%p 충돌·최대연면적 60,000㎡ 괴리. 단일출처로 통일.
+    try:
+        lo = result.get("local_ordinance")
+        has_ord = isinstance(lo, dict) and lo.get("ordinance_far")
+        if not has_ord and result.get("zone_type"):
+            from app.services.land_intelligence.ordinance_service import OrdinanceService
+
+            _ord = await OrdinanceService().get_ordinance_limits(req.address, result.get("zone_type") or "")
+            if isinstance(_ord, dict) and _ord.get("ordinance_far"):
+                result["local_ordinance"] = _ord  # far_tier 가 effective_far=min(법정,조례) 로 채택
+    except Exception:  # noqa: BLE001 — 조례 조회 실패 시 기존 폴백 유지(무손상)
+        pass
+
     # ── 특이부지 감지(규칙기반·additive) ──
     # 지목/용도/구역/접도에서 비일상 토지상태(학교용지·공공용지·농지·산지·맹지·규제구역)를 잡아
     # 법적·인허가 특이사항 + 개발가능성 게이트 + 해결방안 + 정직 고지를 부착한다.
