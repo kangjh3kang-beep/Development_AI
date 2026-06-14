@@ -305,6 +305,13 @@ class SVGDrawingService:
         parking_count = project_data.get("parking_count", 50)
         drawings["C-03"] = self.generate_parking_layout(parking_count)
 
+        # B-05: 반사천장도(RCP), B-06: 설비도(MEP) — §4-D 결정론 schematic
+        try:
+            drawings["B-05-RCP"] = self.generate_rcp(bw, bd)
+            drawings["B-06-MEP"] = self.generate_mep(bw, bd)
+        except Exception:  # noqa: BLE001 — 도면 생성 실패는 셋 전체를 막지 않는다
+            pass
+
         # 모든 도면을 반응형(viewBox+100%)으로 — 화면에 작게 뜨던 문제 해결
         for _code in list(drawings.keys()):
             drawings[_code] = _make_responsive(drawings[_code])
@@ -1555,6 +1562,133 @@ class SVGDrawingService:
                         text_anchor="middle", font_weight="bold"))
 
         return dwg.tostring()
+
+    # ── §4-D: 반사천장도(RCP) ──
+
+    def generate_rcp(
+        self,
+        building_width_m: float,
+        building_depth_m: float,
+        *,
+        tile_m: float = 0.6,
+        fixture_spacing_m: float = 2.4,
+    ) -> str:
+        """반사천장도(RCP) SVG — 천장 텍스 그리드 + 조명·디퓨저·스프링클러 배치(결정론).
+
+        정직: 기구 배치는 표준 격자 기반 schematic(조도·풍량 산정 미연동 — 표기용).
+        """
+        if svgwrite is None:
+            return SVG_PLACEHOLDER
+        s = SCALE_PX_PER_M
+        bw = building_width_m * s
+        bd = building_depth_m * s
+        cw = int(bw + MARGIN * 2)
+        ch = int(bd + MARGIN * 2 + 30)
+        dwg = svgwrite.Drawing(size=(f"{cw}px", f"{ch}px"))
+        dwg.add(dwg.rect(insert=(0, 0), size=(cw, ch), fill="white"))
+        g = dwg.g(transform=f"translate({MARGIN},{MARGIN})")
+        dwg.add(g)
+        g.add(dwg.rect(insert=(0, 0), size=(bw, bd), stroke=C_TEXT, stroke_width=2, fill="none"))
+        # 천장 텍스 그리드
+        tile = max(4.0, tile_m * s)
+        x = tile
+        while x < bw:
+            g.add(dwg.line(start=(x, 0), end=(x, bd), stroke="#dfe6e9", stroke_width=0.4))
+            x += tile
+        y = tile
+        while y < bd:
+            g.add(dwg.line(start=(0, y), end=(bw, y), stroke="#dfe6e9", stroke_width=0.4))
+            y += tile
+        # 천장 기구 — fixture_spacing 격자(조명/디퓨저/스프링클러 순환)
+        fs = max(12.0, fixture_spacing_m * s)
+        idx = 0
+        fx = fs
+        while fx < bw:
+            fy = fs
+            while fy < bd:
+                kind = idx % 3
+                if kind == 0:  # 조명(매입등)
+                    g.add(dwg.rect(insert=(fx - 9, fy - 3), size=(18, 6),
+                                   stroke="#f0a500", stroke_width=1, fill="#ffeaa7"))
+                elif kind == 1:  # 디퓨저(공조 취출구) — 사각 + X
+                    g.add(dwg.rect(insert=(fx - 7, fy - 7), size=(14, 14),
+                                   stroke="#0984e3", stroke_width=1, fill="none"))
+                    g.add(dwg.line(start=(fx - 7, fy - 7), end=(fx + 7, fy + 7),
+                                   stroke="#0984e3", stroke_width=0.6))
+                    g.add(dwg.line(start=(fx - 7, fy + 7), end=(fx + 7, fy - 7),
+                                   stroke="#0984e3", stroke_width=0.6))
+                else:  # 스프링클러(소방)
+                    g.add(dwg.circle(center=(fx, fy), r=3.5, stroke="#d63031",
+                                     stroke_width=1, fill="none"))
+                    g.add(dwg.circle(center=(fx, fy), r=1, fill="#d63031"))
+                idx += 1
+                fy += fs
+            fx += fs
+        # 제목 + 범례
+        g.add(dwg.text("반사천장도 (RCP)", insert=(bw / 2, -10), font_size="11px",
+                       font_family=FONT, fill=C_TEXT, text_anchor="middle", font_weight="bold"))
+        ly = bd + 16
+        for label, color in (("■ 조명", "#f0a500"), ("⊠ 디퓨저", "#0984e3"),
+                             ("⊙ 스프링클러", "#d63031")):
+            g.add(dwg.text(label, insert=(0 if "조명" in label else (bw * 0.34 if "디퓨저" in label else bw * 0.68), ly),
+                           font_size="9px", font_family=FONT, fill=color))
+        return _make_responsive(dwg.tostring())
+
+    # ── §4-D: 설비도(MEP) ──
+
+    def generate_mep(
+        self,
+        building_width_m: float,
+        building_depth_m: float,
+        *,
+        floor_height_m: float = 3.0,
+    ) -> str:
+        """설비도(MEP) SVG — 급배기 덕트 간선 + 급수/오수 배관 경로(결정론).
+
+        정직: 라우팅은 표준 코어·복도 기반 개략(schematic) — 덕트 사이징·배관 부하 산정 미연동.
+        """
+        if svgwrite is None:
+            return SVG_PLACEHOLDER
+        s = SCALE_PX_PER_M
+        bw = building_width_m * s
+        bd = building_depth_m * s
+        cw = int(bw + MARGIN * 2)
+        ch = int(bd + MARGIN * 2 + 40)
+        dwg = svgwrite.Drawing(size=(f"{cw}px", f"{ch}px"))
+        dwg.add(dwg.rect(insert=(0, 0), size=(cw, ch), fill="white"))
+        g = dwg.g(transform=f"translate({MARGIN},{MARGIN})")
+        dwg.add(g)
+        g.add(dwg.rect(insert=(0, 0), size=(bw, bd), stroke=C_TEXT, stroke_width=2, fill="none"))
+        mid_y = bd / 2
+        # 급기 덕트 간선(중앙 수평) — 굵은 청색
+        g.add(dwg.line(start=(0, mid_y - 6), end=(bw, mid_y - 6),
+                       stroke="#0984e3", stroke_width=3))
+        g.add(dwg.text("급기 덕트", insert=(6, mid_y - 9), font_size="8px",
+                       font_family=FONT, fill="#0984e3", font_weight="bold"))
+        # 배기 덕트 간선(중앙 수평) — 굵은 회색 점선
+        g.add(dwg.line(start=(0, mid_y + 6), end=(bw, mid_y + 6),
+                       stroke="#636e72", stroke_width=3, stroke_dasharray="6,3"))
+        g.add(dwg.text("배기 덕트", insert=(6, mid_y + 16), font_size="8px",
+                       font_family=FONT, fill="#636e72", font_weight="bold"))
+        # 급수/오수 배관(수직 간선) — 코어 위치 가정(중앙) + 양측
+        for px, label, color in ((bw * 0.5, "급수", "#00b894"), (bw * 0.5 + 10, "오수", "#6c5ce7")):
+            g.add(dwg.line(start=(px, 0), end=(px, bd), stroke=color, stroke_width=1.5,
+                           stroke_dasharray="2,2"))
+        g.add(dwg.text("급수 배관", insert=(bw * 0.5 - 30, 14), font_size="8px",
+                       font_family=FONT, fill="#00b894"))
+        g.add(dwg.text("오수 배관", insert=(bw * 0.5 + 14, 14), font_size="8px",
+                       font_family=FONT, fill="#6c5ce7"))
+        # 기계실(좌하단 schematic)
+        g.add(dwg.rect(insert=(4, bd - 30), size=(60, 26), stroke="#2d3436",
+                       stroke_width=1, fill="#dfe6e9", opacity=0.5))
+        g.add(dwg.text("기계실", insert=(34, bd - 15), font_size="8px",
+                       font_family=FONT, fill=C_TEXT, text_anchor="middle"))
+        # 제목 + 정직 표기
+        g.add(dwg.text("설비도 (MEP)", insert=(bw / 2, -10), font_size="11px",
+                       font_family=FONT, fill=C_TEXT, text_anchor="middle", font_weight="bold"))
+        g.add(dwg.text("※ 개략(schematic) — 덕트 사이징·배관 부하 산정 미연동(표기용)",
+                       insert=(0, bd + 18), font_size="7px", font_family=FONT, fill=C_WALL_INT))
+        return _make_responsive(dwg.tostring())
 
     # ── 주차장 배치도 ──
 
