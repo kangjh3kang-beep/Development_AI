@@ -7,6 +7,7 @@
 
 import { useEffect, useState } from "react";
 import { useCollaborationStore } from "@/store/use-collaboration-store";
+import { ProjectCollaborationDocumentExchange } from "@/components/collaboration/ProjectCollaborationDocumentExchange";
 import {
   REVIEW_CATEGORIES,
   roleLabel,
@@ -152,9 +153,13 @@ export function ProjectCollaborationWorkspaceClient({ projectId }: { projectId: 
         )}
       </section>
 
-      {/* 후속 단계 정직 표기 */}
+      {/* SP3 자료교환(협력업체 업로드자료) + 정직 8엔진 검증·표기용 심의상태 */}
+      <ProjectCollaborationDocumentExchange projectId={projectId} />
+
+      {/* 후속 단계 정직 표기 — 자료교환·8엔진 검증은 구현됨(위), 나머지만 후속 */}
       <p className="text-[11px] text-[var(--text-hint)]">
-        ※ 화상회의(LiveKit)·자료교환·의견교환·협력업체 심의자료 8엔진 검증은 후속 단계(Phase 2/3) 예정.
+        ※ 화상회의(LiveKit)·의견교환(스레드)은 후속 단계(Phase 2/3) 예정. 자료교환과 설계파일 8엔진
+        자동검증은 위에서 제공됩니다(문서형식은 심의자 표기용).
       </p>
 
       {error && (
