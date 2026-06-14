@@ -32,15 +32,16 @@
 - **NAV IA**(`30810c6`): 좌측 사이드바를 접이식 그룹형 SSOT(`components/layout/nav-config.tsx`)로 전면 재작성 + 원칙문서. 라우트·게이팅 보존.
 - **SP4-2/3**(`7962da8`·`6fe1df6`): 문서뷰어 — 이미지`<img>`/PDF(react-pdf@10)/**DXF 경량 CAD 뷰어**(GET `/documents/{id}/shapes` 서버 재파싱 + read-only SVG, CADEditor와 동일 cad-shapes 모델).
 - **SP5**(`c61f29e`, alembic **028**): 협력업체 문서 scope 영속·강제 — ProjectMember.scope_categories + `document_in_scope`(외부 협력업체만 제한) + 목록필터·문서별 404. 적대적 리뷰 high 결함 수정.
+- **SP6**(`1c63e3c`~`adbf021`, alembic **029**): 의견교환(심의 스레드) — `ReviewComment`(문서/지적앵커·무제한중첩 parent_id·루트 독립 resolved·소프트삭제) 모델+순수규칙+repo+라우터 `v2_review_comments`(목록/생성/답변/수정/삭제/해결)+프론트 `lib/review-comments`(buildCommentTree)/스토어/`ReviewCommentThread` UI+자료교환 "의견교환" 토글 통합. 게스트 scope내 참여, resolved↔review_state 별개 트랙. 적대적 최종리뷰 **Ready to merge**(보안 우회·scope 누출·정직표기 위반 0).
 
-검증: 백엔드 협업 회귀 **83 passed**, 프론트 lib vitest 18 + nav 7, tsc 0, next build 0, 회의방/회의방랜딩 Playwright 스모크 통과.
+검증: 백엔드 협업 회귀 **83→112 passed**(SP6 포함), 프론트 lib vitest 18+nav 7+**review-comments 9 = 34**, tsc 0, eslint 0(신규), next build 0, 회의방/회의방랜딩 Playwright 스모크 통과.
 
 ## 4. 현재 상태
-- **미배포**. 배포 담당이 해야 할 것: main 머지 + **alembic 025·026·027·028 적용**(체인 024→025→026→027→028 단일 head) + `pnpm install`(신규 `react-pdf@10`) + 프론트 재빌드. 상세는 배포 인계노트.
+- **미배포**. 배포 담당이 해야 할 것: main 머지 + **alembic 025·026·027·028·029 적용**(체인 024→025→026→027→028→029 단일 head) + `pnpm install`(신규 `react-pdf@10`) + 프론트 재빌드. 상세는 배포 인계노트.
 - Supabase 비공개 버킷 `propai-collab-docs`(최초 업로드 시 자동생성, SUPABASE_URL/SERVICE_ROLE_KEY 필요).
 
 ## 5. 다음 단계 후보 (우선순위)
-1. **의견교환(심의 스레드)** — Phase 2 회의방. `ReviewComment`(문서/지적별 댓글·답변) 모델+엔드포인트+UI. 자연스러운 F3 다음.
+1. ✅ **의견교환(심의 스레드)** — **완료(SP6, 미배포)**. `ReviewComment` 모델+엔드포인트+UI end-to-end. → 다음은 아래 2~4.
 2. **화상회의(LiveKit)** — Phase 3. 룸·토큰·녹화보관·UI(사용자가 LiveKit 선택). 최대 작업.
 3. **NAV IA 확장** — 프로젝트 상세 탭에 접이식 IA 원칙 적용(원칙문서가 명시).
 4. **배포 준비 검증 스윕** — 전체 회귀·alembic 체인·빌드·핸드오프 완결성.

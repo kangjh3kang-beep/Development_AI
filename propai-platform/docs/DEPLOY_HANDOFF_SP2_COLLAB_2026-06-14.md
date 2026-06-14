@@ -89,5 +89,27 @@
 ## 8. 네비게이션 IA 재편 (추가 푸시됨)
 - `30810c6` 좌측 사이드바를 **접이식 그룹형(SSOT nav-config)**로 전면 재작성 + 원칙문서 `docs/design/navigation-ia-system.md`. 라우트·역할게이팅 보존(additive). 프론트 재빌드만.
 
-## 9. 범위 경계
+## 9. SP6 의견교환(심의 스레드) (추가 푸시됨 — ⚠️신규 마이그레이션 029)
+| 커밋 | 내용 |
+|---|---|
+| `1c63e3c` | **SP6-1** ReviewComment 모델 + **alembic 029_review_comments**(review_comments 테이블 + RLS) |
+| `95f33a1`·`21037dc` | **SP6-2** 순수규칙(본문검증·앵커/해결 루트제약·부모검증·삭제본문 은닉) |
+| `f021ab6`·`e15072e` | **SP6-3** 스키마 5종 + review_comment_repo(DB I/O) |
+| `2d78070`·`7ea290f` | **SP6-4** 라우터 v2_review_comments(목록/생성/답변/수정/삭제/해결) + main 배선 + 계약·보안테스트 |
+| `74d41b2`·`6185fcb` | **SP6-5** 프론트 순수코어 lib/review-comments(buildCommentTree·배지) |
+| `a581ca7`·`94369e9` | **SP6-6** Zustand 스토어(문서별 댓글) |
+| `f850731`·`adbf021` | **SP6-7** ReviewCommentThread UI + 자료교환 "의견교환" 토글 통합 |
+
+배포 담당 추가 체크리스트:
+- [ ] ⚠️**alembic 029 적용**: `alembic upgrade head` → `review_comments` 테이블 + RLS 생성. (현재 head=`029_review_comments`, down=`028_project_member_scope`. 체인 024→025→026→027→028→**029** 단일 head.)
+- [ ] **신규 마이그레이션 외 추가 의존성 없음** — 프론트 전용 추가(컴포넌트/스토어/lib). `next build`만.
+- [ ] 라우터 마운트 확인 — `/api/v2/collaboration/projects/{pid}/documents/{did}/comments` 가 prod 앱에 마운트(import 폴백 try/except).
+- [ ] 스모크: `POST .../documents/{did}/comments {body:"의견"}` → 201 루트 생성, `parent_id` 동봉 → 답변, `PUT .../comments/{cid} {body}` → 수정(edited=true), `POST .../comments/{cid}/resolve {resolved:true}` → 해결(루트만, 답변은 409), `GET .../comments` → flat 목록(삭제분 body=null).
+
+정직 경계(과대표기 금지):
+- **resolved(스레드 해결)와 문서 review_state는 별개 사람주도 트랙** — 자동연동·자동판정 없음(LLM=0). anchor(지적 포인터)는 표기용 자유문자열(8엔진 findings 자동연결 아님).
+- 외부 협력업체는 scope내 문서의 댓글만 조회·작성·해결 가능(scope 밖 404 — 자료교환과 동일 경계).
+- 검증(trust-infra): 백엔드 협업 회귀 **112 passed**, 프론트 vitest 27(review-comments 9+collaboration 18), tsc 0·eslint 0(신규)·next build 0. 적대적 최종 리뷰 — 보안 우회·scope 누출·정직표기 위반 0(Ready to merge).
+
+## 10. 범위 경계
 - trust-infra는 배포 안 함. 배포·롤백·prod 환경변수는 배포 담당 책임.

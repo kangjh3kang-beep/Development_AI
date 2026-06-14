@@ -146,7 +146,9 @@ async def create_comment(
         if parent is None or not parent_is_valid(parent.status, parent.document_id, doc.id):
             raise HTTPException(status_code=404, detail="부모 댓글을 찾을 수 없습니다")
 
-    if body.anchor is not None and not anchor_allowed(parent_id):
+    # 빈/공백 앵커는 미지정(None)으로 정규화(표기용 포인터 — 빈 문자열 저장 방지).
+    anchor = (body.anchor or "").strip() or None
+    if anchor is not None and not anchor_allowed(parent_id):
         raise HTTPException(status_code=400, detail="답변에는 지적 앵커를 붙일 수 없습니다(루트 전용)")
 
     fields = {
@@ -154,7 +156,7 @@ async def create_comment(
         "organization_id": member.organization_id,
         "document_id": doc.id,
         "parent_id": parent_id,
-        "anchor": body.anchor,
+        "anchor": anchor,
         "author_id": user.id,
         "body": text,
         "resolved": False,
