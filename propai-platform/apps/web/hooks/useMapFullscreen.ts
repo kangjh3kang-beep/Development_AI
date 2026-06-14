@@ -14,7 +14,10 @@
  *     <MapFullscreenButton fs={fs} />   // 또는 fs.toggle() 직접 호출
  *   </div>
  *
- * - 토글 시 카카오맵 `relayout()`을 호출해 새 크기를 반영(필수).
+ * - 토글 시 지도 엔진별로 크기를 재계산한다(필수):
+ *     · 카카오맵: `relayout()` + `setCenter()` (중심 보정 필요)
+ *     · Leaflet:  `invalidateSize()` (중심 자동 유지)
+ *   둘 중 인스턴스에 존재하는 메서드를 호출한다(카카오·Leaflet 양립).
  * - 풀스크린 동안 body 스크롤 잠금.
  * - ESC 키로 해제.
  */
@@ -36,17 +39,26 @@ export function useMapFullscreen(mapRef: { current: any }): MapFullscreen {
   const [isFull, setIsFull] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // 토글 직후 카카오맵 크기 재계산(relayout). 레이아웃 전환이 페인트된 뒤
-  // 호출해야 하므로 약간의 지연을 둔다. 직전 예약 타이머는 정리(언마운트 누수 방지).
+  // 토글 직후 지도 크기 재계산. 레이아웃 전환이 페인트된 뒤 호출해야 하므로
+  // 약간의 지연을 둔다. 직전 예약 타이머는 정리(언마운트 누수 방지).
+  // 카카오맵(relayout)과 Leaflet(invalidateSize) 둘 다 지원 — 존재하는 메서드만 호출.
   const relayoutSoon = useCallback(() => {
     const map = mapRef.current;
-    if (!map?.relayout) return;
-    const center = map.getCenter?.();
+    if (!map) return;
+    if (!map.relayout && !map.invalidateSize) return;
+    // 카카오는 relayout 후 중심이 틀어질 수 있어 미리 중심을 잡아둔다.
+    const center = map.relayout ? map.getCenter?.() : undefined;
     if (timerRef.current) clearTimeout(timerRef.current);
     timerRef.current = setTimeout(() => {
       try {
-        map.relayout();
-        if (center) map.setCenter(center);
+        if (map.relayout) {
+          // 카카오맵: 재배치 후 중심 보정
+          map.relayout();
+          if (center) map.setCenter(center);
+        } else if (map.invalidateSize) {
+          // Leaflet: 컨테이너 크기 재인식(중심은 자동 유지)
+          map.invalidateSize();
+        }
       } catch {
         /* noop */
       }
