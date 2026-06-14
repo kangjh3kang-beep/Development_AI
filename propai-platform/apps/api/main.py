@@ -126,6 +126,15 @@ except ImportError:
     except ImportError:
         v2_collaboration_router = None
 
+# v2 review comments (회의방 의견교환/심의 스레드 — 자체 prefix /api/v2/collaboration)
+try:
+    from apps.api.app.routers.v2_review_comments import router as v2_review_comments_router
+except ImportError:
+    try:
+        from app.routers.v2_review_comments import router as v2_review_comments_router
+    except ImportError:
+        v2_review_comments_router = None
+
 # v2 pipeline (자체 prefix 포함)
 try:
     from apps.api.app.routers.pipeline import router as pipeline_router
@@ -631,6 +640,8 @@ if v2_feasibility_router is not None:
     app.include_router(v2_feasibility_router)  # 자체 prefix: /api/v2/feasibility
 if v2_collaboration_router is not None:
     app.include_router(v2_collaboration_router)  # 자체 prefix: /api/v2/collaboration
+if v2_review_comments_router is not None:
+    app.include_router(v2_review_comments_router)  # 자체 prefix: /api/v2/collaboration
 if pipeline_router is not None:
     app.include_router(pipeline_router)  # 자체 prefix: /api/v2/pipeline
 if comprehensive_analysis_router is not None:
