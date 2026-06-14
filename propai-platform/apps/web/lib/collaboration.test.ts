@@ -6,6 +6,11 @@ import {
   isValidEmail,
   toggleCategory,
   memberStatusBadge,
+  isDesignKind,
+  auditStatusBadge,
+  reviewStateBadge,
+  nextReviewState,
+  formatBytes,
 } from "./collaboration";
 
 describe("roleLabel / categoryLabel", () => {
@@ -57,5 +62,54 @@ describe("memberStatusBadge", () => {
   });
   it("미지 상태는 원문·muted", () => {
     expect(memberStatusBadge("weird")).toEqual({ label: "weird", tone: "muted" });
+  });
+});
+
+describe("isDesignKind", () => {
+  it("design만 8엔진 대상", () => {
+    expect(isDesignKind("design")).toBe(true);
+    expect(isDesignKind("document")).toBe(false);
+  });
+});
+
+describe("auditStatusBadge", () => {
+  it("상태→배지", () => {
+    expect(auditStatusBadge("completed")).toEqual({ label: "8엔진 검증완료", tone: "ok" });
+    expect(auditStatusBadge("failed")).toEqual({ label: "검증 실패", tone: "warn" });
+    expect(auditStatusBadge("unsupported")).toEqual({
+      label: "자동검증 미지원 형식",
+      tone: "muted",
+    });
+  });
+  it("null/미지는 배지 없음(과대표기 금지)", () => {
+    expect(auditStatusBadge(null)).toBeNull();
+    expect(auditStatusBadge(undefined)).toBeNull();
+    expect(auditStatusBadge("weird")).toBeNull();
+  });
+});
+
+describe("reviewStateBadge / nextReviewState", () => {
+  it("심의 상태→배지(표기용)", () => {
+    expect(reviewStateBadge("requested")).toEqual({ label: "검토요청", tone: "warn" });
+    expect(reviewStateBadge("acknowledged")).toEqual({ label: "확인됨", tone: "muted" });
+    expect(reviewStateBadge("addressed")).toEqual({ label: "처리완료", tone: "ok" });
+  });
+  it("다음 상태는 전진 전용(백엔드 규칙 정합)", () => {
+    expect(nextReviewState("requested")).toBe("acknowledged");
+    expect(nextReviewState("acknowledged")).toBe("addressed");
+    expect(nextReviewState("addressed")).toBeNull(); // 종료
+    expect(nextReviewState("weird")).toBeNull();
+  });
+});
+
+describe("formatBytes", () => {
+  it("사람이 읽는 크기", () => {
+    expect(formatBytes(512)).toBe("512 B");
+    expect(formatBytes(2048)).toBe("2.0 KB");
+    expect(formatBytes(3 * 1024 * 1024)).toBe("3.0 MB");
+  });
+  it("비정상은 —", () => {
+    expect(formatBytes(null)).toBe("—");
+    expect(formatBytes(-1)).toBe("—");
   });
 });
