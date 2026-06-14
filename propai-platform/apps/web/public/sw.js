@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v169-payroll-deduct";
+const CACHE_NAME = "propai-v170-fieldapp-standalone";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",
