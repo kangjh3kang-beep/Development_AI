@@ -385,3 +385,33 @@ async def validate_distribution(body: dict, db: AsyncSession = Depends(get_db), 
     by_node, by_type = await _rules(db, ctx.site_id, m.id)
     s = sum(_amount(r, total) for r in list(by_node.values()) + list(by_type.values()))
     return {"total": int(total), "allocated": int(s), "valid": s <= total}
+
+
+# ── 세대 상태전이 액션 + 이벤트 원장(동호지정·계약 컨텍스트 메뉴) ───────────────
+@actions_router.post("/units/{unit_id}/action")
+async def unit_lifecycle_action(unit_id: uuid.UUID, body: dict, db: AsyncSession = Depends(get_db),
+                                ctx: SalesCtx = Depends(require_role(
+                                    "MEMBER", "TEAM_LEADER", "GM_DIRECTOR", "SUBAGENCY", "AGENCY", "DEVELOPER", "SUPERADMIN"))):
+    """세대 클릭 메뉴 액션 — HOLD_REQUEST(지정대기)/HOLD_CANCEL/CONTRACT_WAIT(계약대기)/
+    CONTRACT_CANCEL/CONTRACT_SIGN(계약체결)/CONTRACT_TERMINATE/NOTE(특이사항). 상태전이+해시체인 원장."""
+    from fastapi import HTTPException
+    from app.services.sales.units.lifecycle_actions import unit_action
+    try:
+        return await unit_action(db, ctx.site_id, unit_id, body.get("action", ""),
+                                  message=body.get("message"), by=getattr(ctx.user, "id", None))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@actions_router.get("/units/{unit_id}/events")
+async def unit_events(unit_id: uuid.UUID, db: AsyncSession = Depends(get_db), ctx: SalesCtx = Depends(sales_ctx)):
+    """세대 이벤트 타임라인(년월일·시분 + 해시체인) — 특이사항·상태이력."""
+    from app.services.sales.units.event_ledger import unit_timeline
+    return await unit_timeline(db, unit_id)
+
+
+@actions_router.get("/units/{unit_id}/verify-chain")
+async def unit_verify_chain(unit_id: uuid.UUID, db: AsyncSession = Depends(get_db), ctx: SalesCtx = Depends(sales_ctx)):
+    """세대 이벤트 해시체인 무결성 검증(변조탐지) — 감사/공정성."""
+    from app.services.sales.units.event_ledger import verify_chain
+    return await verify_chain(db, unit_id)
