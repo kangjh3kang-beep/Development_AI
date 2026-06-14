@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 import app.routers.v2_collaboration as v2mod
 import app.services.collaboration.collaboration_repo as repo
 from app.core.database import get_db
-from app.routers.v2_collaboration import router, _require_member
+from app.routers.v2_collaboration import router, _require_member, _require_reviewer
 from app.services.auth.auth_service import get_current_user
 
 OID = uuid.uuid4()
@@ -55,6 +55,7 @@ def _build_client(monkeypatch, *, member=None, get_doc=None, docs=None):
     app = FastAPI()
     app.include_router(router)
     app.dependency_overrides[_require_member] = lambda: member or _Member()
+    app.dependency_overrides[_require_reviewer] = lambda: member or _Member()
     app.dependency_overrides[get_current_user] = lambda: _User()
 
     async def _fake_db():
@@ -77,6 +78,12 @@ def _build_client(monkeypatch, *, member=None, get_doc=None, docs=None):
     async def _fake_soft_delete(db, doc):
         doc.status = "deleted"
 
+    async def _fake_set_review(db, doc, target, reviewed_by, now):
+        doc.review_state = target
+        doc.reviewed_by = reviewed_by
+        doc.reviewed_at = now
+        return doc
+
     async def _fake_audit(db, *, filename, data):
         # SP3-4 8엔진 투입을 결정론 fake로 대체(실 orchestrator/ezdxf 불필요).
         return ("completed", {"verdict": "적합", "findings_count": 1,
@@ -94,6 +101,7 @@ def _build_client(monkeypatch, *, member=None, get_doc=None, docs=None):
     monkeypatch.setattr(repo, "get_document", _fake_get)
     monkeypatch.setattr(repo, "soft_delete_document", _fake_soft_delete)
     monkeypatch.setattr(repo, "update_document_audit", _fake_update_audit)
+    monkeypatch.setattr(repo, "set_document_review_state", _fake_set_review)
     return TestClient(app)
 
 
@@ -183,4 +191,48 @@ class TestDeleteDocument:
     def test_missing_doc_404(self, monkeypatch):
         client = _build_client(monkeypatch, member=_Member(role="owner"), get_doc=None)
         r = client.delete(f"/api/v2/collaboration/projects/{PID}/documents/{uuid.uuid4()}")
+        assert r.status_code == 404
+
+
+class TestReviewState:
+    """표기용 심의 상태 전이(자동판정 아님) — 전진만 허용."""
+
+    def _doc(self, state="requested"):
+        return _Doc(project_id=PID, review_state=state, doc_kind="document",
+                    original_filename="r.pdf", status="active", uploaded_by=UID)
+
+    def _post(self, client, doc_id, target):
+        return client.post(
+            f"/api/v2/collaboration/projects/{PID}/documents/{doc_id}/review-state",
+            json={"target_state": target},
+        )
+
+    def test_forward_transition_ok(self, monkeypatch):
+        doc = self._doc("requested")
+        client = _build_client(monkeypatch, member=_Member(role="reviewer_internal"), get_doc=doc)
+        r = self._post(client, doc.id, "acknowledged")
+        assert r.status_code == 200, r.text
+        assert r.json()["review_state"] == "acknowledged"
+
+    def test_skip_rejected_409(self, monkeypatch):
+        doc = self._doc("requested")
+        client = _build_client(monkeypatch, member=_Member(role="owner"), get_doc=doc)
+        r = self._post(client, doc.id, "addressed")  # 스킵
+        assert r.status_code == 409
+
+    def test_backward_rejected_409(self, monkeypatch):
+        doc = self._doc("addressed")
+        client = _build_client(monkeypatch, member=_Member(role="owner"), get_doc=doc)
+        r = self._post(client, doc.id, "acknowledged")  # 역행
+        assert r.status_code == 409
+
+    def test_unknown_target_409(self, monkeypatch):
+        doc = self._doc("requested")
+        client = _build_client(monkeypatch, member=_Member(role="manager"), get_doc=doc)
+        r = self._post(client, doc.id, "bogus")
+        assert r.status_code == 409
+
+    def test_missing_doc_404(self, monkeypatch):
+        client = _build_client(monkeypatch, member=_Member(role="owner"), get_doc=None)
+        r = self._post(client, uuid.uuid4(), "acknowledged")
         assert r.status_code == 404

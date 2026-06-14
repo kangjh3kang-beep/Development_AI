@@ -68,3 +68,9 @@ class DocumentActionResult(BaseModel):
     ok: bool
     status: str
     detail: Optional[str] = None
+
+
+class DocumentReviewUpdate(BaseModel):
+    """표기용 심의 상태 전이 요청 — 전진(requested→acknowledged→addressed)만 허용(자동판정 아님)."""
+
+    target_state: str = Field(..., min_length=1, max_length=20)
