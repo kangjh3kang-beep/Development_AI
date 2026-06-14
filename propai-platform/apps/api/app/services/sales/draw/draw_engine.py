@@ -154,7 +154,7 @@ def parse_excel(content: bytes) -> list[dict]:
 async def from_customers(db: AsyncSession, site_id, group_id, customer_ids: list[str] | None = None) -> dict[str, Any]:
     """계약자/고객 명부에서 대상자 선별 등록. customer_ids 미지정 시 현장 전체 고객."""
     await _ensure(db)
-    q = "SELECT id, name, phone FROM sales_customers WHERE site_id=:s AND deleted_at IS NULL"
+    q = "SELECT id, name, phone_e164 FROM sales_customers WHERE site_id=:s AND deleted_at IS NULL"
     params: dict[str, Any] = {"s": str(site_id)}
     if customer_ids:
         q += " AND id = ANY(:ids)"
@@ -178,7 +178,7 @@ async def from_winners(db: AsyncSession, site_id, group_id, announcement_id) -> 
     무관하게 '사람'만 대상자로 시드하므로 비파괴(동·호 풀은 set_pool 로 별도 지정)."""
     await _ensure(db)
     rows = (await db.execute(text(
-        "SELECT w.id, a.customer_id, c.name, c.phone, COALESCE(a.rank,9) AS rk, COALESCE(a.gajeom_score,0) AS gj "
+        "SELECT w.id, a.customer_id, c.name, c.phone_e164, COALESCE(a.rank,9) AS rk, COALESCE(a.gajeom_score,0) AS gj "
         "FROM sales_subscription_winners w "
         "JOIN sales_subscription_applications a ON a.id = w.application_id "
         "LEFT JOIN sales_customers c ON c.id = a.customer_id "
