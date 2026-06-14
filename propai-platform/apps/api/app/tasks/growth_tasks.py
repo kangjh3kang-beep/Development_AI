@@ -75,9 +75,53 @@ def flush_growth_events() -> dict:
     return {"flushed": flushed}
 
 
+# ── 분석 배치(Phase 2, 설계서 §5.1) ─────────────────────────────────────────
+# flush 와 달리 analyze 는 DB(platform_events)를 읽어 인사이트를 산출하므로
+# 별도 Celery 워커에서도 정상 동작한다(프로세스-로컬 큐에 의존하지 않음).
+
+async def _analyze_async(window_hours: int = 1) -> int:
+    """직전 window_hours 시간을 분석해 platform_insights 를 생성한다."""
+    from apps.api.database.session import AsyncSessionLocal
+    from app.services.growth import analyzer
+
+    w0, w1 = analyzer.default_window(hours=window_hours)
+    async with AsyncSessionLocal() as session:
+        insights = await analyzer.analyze_window(session, w0, w1)
+    return len(insights)
+
+
+def analyze_growth(window_hours: int = 1) -> dict:
+    """platform_events → platform_insights 분석 배치. Beat hourly/daily 호출.
+
+    반환: {"insights": N}. 동기 진입점(Celery 워커)에서 asyncio.run 으로 구동.
+    best-effort: 어떤 예외도 워커를 죽이지 않는다.
+    """
+    import asyncio
+
+    try:
+        n = asyncio.run(_analyze_async(window_hours))
+    except RuntimeError:
+        # 이미 이벤트 루프가 도는 환경 — 새 루프로 격리(flush 선례 동일).
+        loop = asyncio.new_event_loop()
+        try:
+            n = loop.run_until_complete(_analyze_async(window_hours))
+        finally:
+            loop.close()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("analyze_growth 실패: %s", str(e)[:160])
+        return {"insights": 0, "error": str(e)[:160]}
+
+    if n:
+        logger.info("growth 인사이트 %d건 생성", n)
+    return {"insights": n}
+
+
 # Celery 태스크 등록(앱이 있을 때만; 미설치 환경에서도 함수는 직접 호출 가능).
 _celery = _get_celery_app()
 if _celery is not None:
     flush_growth_events = _celery.task(
         name="app.tasks.growth_tasks.flush_growth_events"
     )(flush_growth_events)
+    analyze_growth = _celery.task(
+        name="app.tasks.growth_tasks.analyze_growth"
+    )(analyze_growth)
