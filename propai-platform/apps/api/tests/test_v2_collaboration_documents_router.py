@@ -177,6 +177,14 @@ class TestUploadDocument:
         r = _upload(client, filename="empty.pdf", content_type="application/pdf", content=b"")
         assert r.status_code == 400
 
+    def test_filename_path_stripped(self, monkeypatch):
+        # 경로 traversal·표시 위조 차단 — basename만 보관
+        client = _build_client(monkeypatch)
+        r = _upload(client, filename="../../etc/passwd.pdf", content_type="application/pdf",
+                    purpose="storage")
+        assert r.status_code == 200, r.text
+        assert r.json()["original_filename"] == "passwd.pdf"
+
 
 class TestListDocuments:
     def test_list_returns_active(self, monkeypatch):

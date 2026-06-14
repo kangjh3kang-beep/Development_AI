@@ -76,12 +76,19 @@ async def run_design_document_audit(
     if ext == "dxf":
         geometry, rooms = (convert_dxf or _convert_dxf)(data)
         result = await orch.run(db, geometry=geometry, rooms=rooms)
-    else:  # ifc
+    else:  # ifc — 임시파일 경로로 전달 후 예외에도 반드시 정리(디스크 누수 방지)
+        import os
         import tempfile
 
         tmp = tempfile.NamedTemporaryFile(suffix=".ifc", delete=False)
-        tmp.write(data)
-        tmp.close()
-        result = await orch.run(db, ifc_file_url=tmp.name)
+        try:
+            tmp.write(data)
+            tmp.close()
+            result = await orch.run(db, ifc_file_url=tmp.name)
+        finally:
+            try:
+                os.unlink(tmp.name)
+            except OSError:
+                pass
 
     return ("completed", summarize_audit(result))

@@ -7,6 +7,7 @@ collaboration_service, DB I/O는 collaboration_repo로 분리.
 
 from __future__ import annotations
 
+import os
 import secrets
 import uuid
 from datetime import datetime
@@ -218,7 +219,8 @@ async def upload_project_document(
         logger.warning("collab_document_upload_failed", error=str(exc))
         raise HTTPException(status_code=502, detail=f"스토리지 업로드 실패: {exc}") from exc
 
-    safe_name = filename.replace("\\", "/").rsplit("/", 1)[-1][:255]
+    # 파일명 정규화 — null-byte 제거 + basename(경로 traversal·표시 위조 차단). 빈값은 'upload'.
+    safe_name = os.path.basename(filename.replace("\\", "/")).split("\x00", 1)[0][:255] or "upload"
     fields = {
         "project_id": uuid.UUID(project_id),
         "organization_id": member.organization_id,
