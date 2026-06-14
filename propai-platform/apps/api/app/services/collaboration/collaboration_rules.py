@@ -81,6 +81,20 @@ def analysis_allows_kind(doc_kind: str) -> bool:
     return doc_kind == "design"
 
 
+def document_in_scope(project_role: str, member_scope, doc_category) -> bool:
+    """문서가 멤버의 허용 범위 안인지 — 외부 협력업체(external_reviewer)만 scope 제한(보안).
+
+    내부 역할(owner/manager/contributor/reviewer_internal/viewer)은 프로젝트 전체 접근(True).
+    external_reviewer는 문서 카테고리가 자신의 허용 scope에 포함될 때만 True — 미분류(category=None)
+    문서는 외부 게스트에 비노출(보수적 기본: 명시 허용 범위만 노출, 누출 방지).
+    """
+    if project_role != "external_reviewer":
+        return True
+    if not doc_category:
+        return False
+    return doc_category in set(member_scope or [])
+
+
 # 표기용 심의 상태(사람 심의자 주도, 자동판정 아님). 전진 전용 선형 상태머신.
 REVIEW_STATES = ("requested", "acknowledged", "addressed")
 _REVIEW_TRANSITIONS = {

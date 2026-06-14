@@ -24,11 +24,12 @@ PID = str(uuid.uuid4())
 
 
 class _Member:
-    def __init__(self, role="owner", uid=UID):
+    def __init__(self, role="owner", uid=UID, scope=None):
         self.organization_id = OID
         self.project_id = PID
         self.project_role = role
         self.user_id = uid
+        self.scope_categories = scope  # 외부 협력업체 허용 심의범위(SP5)
 
 
 class _User:
@@ -321,3 +322,54 @@ class TestDocumentShapes:
     def test_missing_404(self, monkeypatch):
         client = _build_client(monkeypatch, get_doc=None)
         assert self._get(client, uuid.uuid4()).status_code == 404
+
+
+class TestScopeEnforcement:
+    """SP5 — 외부 협력업체(external_reviewer)는 허용 scope 문서만 조회·접근."""
+
+    def test_list_filters_for_external_reviewer(self, monkeypatch):
+        docs = [
+            _Doc(project_id=PID, category="traffic", doc_kind="document",
+                 review_state="requested", original_filename="t.pdf"),
+            _Doc(project_id=PID, category="fire", doc_kind="document",
+                 review_state="requested", original_filename="f.pdf"),
+            _Doc(project_id=PID, category=None, doc_kind="document",
+                 review_state="requested", original_filename="x.pdf"),
+        ]
+        client = _build_client(
+            monkeypatch, member=_Member(role="external_reviewer", scope=["traffic"]), docs=docs
+        )
+        r = client.get(f"/api/v2/collaboration/projects/{PID}/documents")
+        assert r.status_code == 200, r.text
+        cats = [d["original_filename"] for d in r.json()]
+        assert cats == ["t.pdf"]  # traffic만(fire·미분류 제외)
+
+    def test_internal_sees_all(self, monkeypatch):
+        docs = [
+            _Doc(project_id=PID, category="fire", doc_kind="document",
+                 review_state="requested", original_filename="f.pdf"),
+            _Doc(project_id=PID, category=None, doc_kind="document",
+                 review_state="requested", original_filename="x.pdf"),
+        ]
+        client = _build_client(monkeypatch, member=_Member(role="manager"), docs=docs)
+        r = client.get(f"/api/v2/collaboration/projects/{PID}/documents")
+        assert len(r.json()) == 2  # 내부 역할은 전체
+
+    def test_out_of_scope_delete_404(self, monkeypatch):
+        doc = _Doc(project_id=PID, category="fire", uploaded_by=UID, doc_kind="document",
+                   review_state="requested", original_filename="f.pdf", status="active")
+        client = _build_client(
+            monkeypatch, member=_Member(role="external_reviewer", uid=UID, scope=["traffic"]),
+            get_doc=doc,
+        )
+        r = client.delete(f"/api/v2/collaboration/projects/{PID}/documents/{doc.id}")
+        assert r.status_code == 404  # scope 밖 → 존재 비노출
+
+    def test_out_of_scope_shapes_404(self, monkeypatch):
+        doc = _Doc(project_id=PID, category="fire", doc_kind="design",
+                   review_state="requested", original_filename="plan.dxf", status="active")
+        client = _build_client(
+            monkeypatch, member=_Member(role="external_reviewer", scope=["traffic"]), get_doc=doc
+        )
+        r = client.get(f"/api/v2/collaboration/projects/{PID}/documents/{doc.id}/shapes")
+        assert r.status_code == 404

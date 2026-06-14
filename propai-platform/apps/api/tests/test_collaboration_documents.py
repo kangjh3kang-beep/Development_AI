@@ -14,6 +14,7 @@ from app.services.collaboration.collaboration_rules import (
     is_allowed_review_transition,
     normalize_purpose,
     analysis_allows_kind,
+    document_in_scope,
     REVIEW_STATES,
 )
 
@@ -100,6 +101,25 @@ class TestUploadPurpose:
     def test_analysis_allows_only_design(self):
         assert analysis_allows_kind("design") is True
         assert analysis_allows_kind("document") is False
+
+
+class TestDocumentScope:
+    """외부 협력업체(external_reviewer)만 scope 제한 — 내부 역할은 전체 접근."""
+
+    def test_internal_roles_see_all(self):
+        for role in ("owner", "manager", "contributor", "reviewer_internal", "viewer"):
+            assert document_in_scope(role, [], "traffic") is True
+            assert document_in_scope(role, None, None) is True
+
+    def test_external_reviewer_scope_match(self):
+        assert document_in_scope("external_reviewer", ["traffic", "fire"], "traffic") is True
+        assert document_in_scope("external_reviewer", ["traffic"], "environment") is False
+
+    def test_external_uncategorized_hidden(self):
+        # 미분류 문서는 외부 게스트에 비노출(보수적)
+        assert document_in_scope("external_reviewer", ["traffic"], None) is False
+        assert document_in_scope("external_reviewer", [], "traffic") is False
+        assert document_in_scope("external_reviewer", None, "traffic") is False
 
 
 class TestReviewStateMachine:

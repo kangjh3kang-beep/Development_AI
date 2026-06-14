@@ -30,7 +30,7 @@ class TestModelStructure:
         assert ProjectMember.__tablename__ == "project_members"
         cols = set(ProjectMember.__table__.columns.keys())
         for c in ("id", "project_id", "organization_id", "user_id", "project_role",
-                  "status", "invited_by", "created_at"):
+                  "status", "scope_categories", "invited_by", "created_at"):
             assert c in cols, f"ProjectMember 컬럼 누락: {c}"
 
     def test_collaborator_invite_table_and_columns(self):

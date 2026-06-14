@@ -54,6 +54,7 @@ async def accept_invite_persist(
         user_id=user_id,
         project_role=invite.project_role,
         status="active",
+        scope_categories=list(invite.scope_categories or []),  # 초대 허용범위 영속(scope 강제용)
         invited_by=invite.invited_by,
     )
     db.add(member)

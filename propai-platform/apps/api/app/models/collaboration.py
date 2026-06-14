@@ -54,6 +54,8 @@ class ProjectMember(Base):
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     project_role = Column(String(30), nullable=False, default="viewer")
     status = Column(String(20), nullable=False, default="active")  # active/suspended/removed
+    # 외부 협력업체(external_reviewer)의 허용 심의 카테고리(초대 scope에서 영속). null=제한 없음(내부 역할).
+    scope_categories = Column(JSON, nullable=True)
     invited_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

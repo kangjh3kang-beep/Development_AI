@@ -39,6 +39,7 @@ from app.services.collaboration import collaboration_repo as repo
 from app.services.collaboration.collaboration_rules import (
     analysis_allows_kind,
     classify_doc_kind,
+    document_in_scope,
     is_allowed_review_transition,
     normalize_document_category,
     normalize_purpose,
@@ -167,6 +168,13 @@ async def revoke_invite(
 
 # ── SP3 자료교환(협력업체 업로드자료) ──
 
+def _doc_in_member_scope(member, doc) -> bool:
+    """문서가 멤버 허용 범위 안인지 — 외부 협력업체(external_reviewer) scope 강제(SP5)."""
+    return document_in_scope(
+        member.project_role, getattr(member, "scope_categories", None), getattr(doc, "category", None)
+    )
+
+
 def _document_out(d) -> DocumentOut:
     return DocumentOut(
         id=str(d.id),
@@ -265,16 +273,16 @@ async def upload_project_document(
 @router.get("/projects/{project_id}/documents", response_model=list[DocumentOut])
 async def list_project_documents(
     project_id: str,
-    _member=Depends(_require_member),
+    member=Depends(_require_member),
     db: AsyncSession = Depends(get_db),
 ):
-    """자료교환 문서 목록(활성, 최신순). file_url은 마지막 발급 서명URL이다.
+    """자료교환 문서 목록(활성, 최신순). 외부 협력업체는 허용 심의범위(scope) 문서만 노출(SP5).
 
     정직: 서명URL은 TTL(14일) 후 만료된다. 만료분 재서명은 후속(sign_collab_document 존재) — 본
     MVP는 마지막 발급 URL을 그대로 반환한다(과대표기 금지: 영구 URL 아님).
     """
     docs = await repo.list_documents(db, uuid.UUID(project_id))
-    return [_document_out(d) for d in docs]
+    return [_document_out(d) for d in docs if _doc_in_member_scope(member, d)]
 
 
 @router.delete("/projects/{project_id}/documents/{doc_id}", response_model=DocumentActionResult)
@@ -293,6 +301,8 @@ async def delete_project_document(
     doc = await repo.get_document(db, did)
     if doc is None or str(doc.project_id) != str(uuid.UUID(project_id)) or doc.status != "active":
         raise HTTPException(status_code=404, detail="문서를 찾을 수 없습니다")
+    if not _doc_in_member_scope(member, doc):
+        raise HTTPException(status_code=404, detail="문서를 찾을 수 없습니다")  # scope 밖(존재 비노출)
 
     is_admin = member.project_role in ("owner", "manager")
     is_uploader = (
@@ -327,6 +337,8 @@ async def set_document_review_state(
     doc = await repo.get_document(db, did)
     if doc is None or str(doc.project_id) != str(uuid.UUID(project_id)) or doc.status != "active":
         raise HTTPException(status_code=404, detail="문서를 찾을 수 없습니다")
+    if not _doc_in_member_scope(member, doc):
+        raise HTTPException(status_code=404, detail="문서를 찾을 수 없습니다")  # scope 밖(존재 비노출)
 
     if not is_allowed_review_transition(doc.review_state, body.target_state):
         raise HTTPException(
@@ -344,7 +356,7 @@ async def set_document_review_state(
 async def get_document_shapes(
     project_id: str,
     doc_id: str,
-    _member=Depends(_require_member),
+    member=Depends(_require_member),
     db: AsyncSession = Depends(get_db),
 ):
     """저장된 DXF 설계파일을 파싱해 CAD2.0 셰이프를 반환 — 회의방 경량 CAD 뷰어용(읽기전용).
@@ -360,6 +372,8 @@ async def get_document_shapes(
     doc = await repo.get_document(db, did)
     if doc is None or str(doc.project_id) != str(uuid.UUID(project_id)) or doc.status != "active":
         raise HTTPException(status_code=404, detail="문서를 찾을 수 없습니다")
+    if not _doc_in_member_scope(member, doc):
+        raise HTTPException(status_code=404, detail="문서를 찾을 수 없습니다")  # scope 밖(존재 비노출)
 
     name = (doc.original_filename or "").lower()
     if doc.doc_kind != "design" or not name.endswith(".dxf"):
