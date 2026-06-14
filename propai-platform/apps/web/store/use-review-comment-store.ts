@@ -33,6 +33,7 @@ interface ReviewCommentState {
     commentId: string,
     resolved: boolean,
   ) => Promise<ReviewComment | null>;
+  reset: () => void;
 }
 
 const base = (projectId: string, docId: string) =>
@@ -115,7 +116,11 @@ export const useReviewCommentStore = create<ReviewCommentState>()(
           const list = s.commentsByDoc[docId];
           if (list) {
             const i = list.findIndex((x) => x.id === commentId);
-            if (i >= 0) list[i] = { ...list[i], status: "deleted", body: null }; // 소프트삭제 로컬 반영
+            if (i >= 0) {
+              // 소프트삭제 로컬 반영(immer 관용 mutation — 구조적 공유 보존)
+              list[i].status = "deleted";
+              list[i].body = null;
+            }
           }
         });
       } catch (e: unknown) {
@@ -145,6 +150,14 @@ export const useReviewCommentStore = create<ReviewCommentState>()(
         });
         return null;
       }
+    },
+
+    reset() {
+      set((s) => {
+        s.commentsByDoc = {};
+        s.loadingByDoc = {};
+        s.errorByDoc = {};
+      });
     },
   })),
 );
