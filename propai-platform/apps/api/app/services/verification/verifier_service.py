@@ -15,6 +15,25 @@ import structlog
 
 logger = structlog.get_logger(__name__)
 
+
+def _emit_growth_verdict(analysis_type: str, verdict: str) -> None:
+    """자가성장 엔진에 검증판정 이벤트 1건 발행(best-effort, 로직불변).
+
+    Phase 2 quality_drop 인사이트의 데이터원 일부(verify fail/warn 비율)를 채운다.
+    capture_service 큐에 논블로킹 push 만(동기 INSERT 없음). 어떤 예외도 호출경로로
+    전파하지 않는다 — 검증 반환값/판정에 영향 없음.
+    """
+    try:
+        from app.services.growth import capture_service
+
+        capture_service.record_event("verify_result", {
+            "surface": "api", "service": analysis_type, "severity": verdict,
+            "payload": {"verdict": verdict},
+        })
+    except Exception:  # noqa: BLE001
+        pass
+
+
 _SYSTEM = """\
 당신은 부동산개발 분석의 '검증관'입니다. 아래 [분석 출력]이 [원본 데이터]에 실제로
 근거하는지 엄격히 검증합니다. 다음을 탐지하세요:
@@ -133,6 +152,7 @@ class VerifierService:
                 verdict = "fail"
             elif "medium" in sev and verdict == "pass":
                 verdict = "warn"
+            _emit_growth_verdict(analysis_type, verdict)  # 성장엔진 품질신호(best-effort)
             return {
                 "generated": True,
                 "verdict": verdict,
@@ -144,9 +164,11 @@ class VerifierService:
             }
         except Exception as e:  # noqa: BLE001
             logger.warning("검증 LLM 실패, 규칙기반 폴백", err=str(e)[:100])
+            _fb_verdict = "fail" if any(i["severity"] == "high" for i in pre) else ("warn" if pre else "pass")
+            _emit_growth_verdict(analysis_type, _fb_verdict)  # 성장엔진 품질신호(best-effort)
             return {
                 "generated": False,
-                "verdict": "fail" if any(i["severity"] == "high" for i in pre) else ("warn" if pre else "pass"),
+                "verdict": _fb_verdict,
                 "grounded_score": None,
                 "issues": pre,
                 "summary": (

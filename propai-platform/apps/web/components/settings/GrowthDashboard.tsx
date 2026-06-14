@@ -6,6 +6,10 @@
  * GET  /growth/insights            → { items: GrowthInsight[], total } (관리자=전역 전체)
  * POST /growth/insights/{id}/ack   → { status: "acknowledged"|"dismissed", note? }
  *
+ * [Phase 3 추가] 자가치유 현황(설계서 §6.1):
+ * GET  /growth/heal-log            → { actions: HealAction[], active_flags: ActiveFlag[], total }
+ * POST /growth/heal/{id}/rollback  → { action_id, rolled_back, setting_key, detail }
+ *
  * 백엔드(apps/api/app/routers/growth.py)가 주기 배치로 platform_insights 를 산출하면
  * 이 화면이 소비한다. 무목업: 실 API만 사용하며, 수집/분석 데이터가 없으면 정직하게
  * "아직 축적 전"임을 표기한다(목업 금지). metrics_json 은 insight_type 별로 방어적
@@ -198,11 +202,377 @@ function InsightMetrics({ insight }: { insight: GrowthInsight }) {
   );
 }
 
+/* ================================================================== */
+/*  Phase 3 — 자가치유(heal) 현황                                      */
+/*  백엔드 계약: growth.py HealActionOut / ActiveFlagOut / HealLogOut  */
+/* ================================================================== */
+
+type HealActionType =
+  | "threshold_relax"
+  | "cache_warm"
+  | "stale_reanalysis"
+  | "circuit_observe"
+  | (string & {});
+
+// growth.py HealActionOut 와 1:1. action_id 등 다수 nullable, ttl_expires_at 은 string|null.
+type HealAction = {
+  action_id: string | null;
+  action_type: HealActionType | null;
+  severity: string | null;
+  service: string | null;
+  rollbackable: boolean;
+  setting_key: string | null;
+  ttl_expires_at: string | null;
+  params: Record<string, unknown> | null;
+  created_at: string | null;
+};
+
+// growth.py ActiveFlagOut 와 1:1. value 는 object|null, updated_by 는 string|null.
+type ActiveFlag = {
+  key: string;
+  scope: string;
+  value: Record<string, unknown> | null;
+  ttl_expires_at: string | null;
+  updated_by: string | null;
+};
+
+type HealLog = { actions: HealAction[]; active_flags: ActiveFlag[]; total: number };
+type RollbackResult = {
+  action_id: string;
+  rolled_back: boolean;
+  setting_key: string | null;
+  detail: string | null;
+};
+
+// action_type → 아이콘(이모지 대신 단순 글리프)·라벨. 미지정/미래값은 graceful.
+const HEAL_TYPE_META: Record<string, { icon: string; label: string; advisoryOnly?: boolean }> = {
+  threshold_relax: { icon: "⊟", label: "임계 완화" },
+  cache_warm: { icon: "≈", label: "캐시 예열" },
+  stale_reanalysis: { icon: "↻", label: "재분석 제안", advisoryOnly: true },
+  circuit_observe: { icon: "◎", label: "서킷 관찰" },
+};
+
+function healTypeMeta(t: string | null) {
+  return (t && HEAL_TYPE_META[t]) || { icon: "•", label: t ?? "미분류" };
+}
+
+// 활성 플래그 TTL 남은시간 사람친화 표기. NULL=영구, 과거=만료.
+function ttlRemaining(iso: string | null): string {
+  if (!iso) return "영구";
+  const ms = new Date(iso).getTime() - Date.now();
+  if (Number.isNaN(ms)) return "-";
+  if (ms <= 0) return "만료됨";
+  const min = Math.floor(ms / 60000);
+  if (min < 60) return `${min}분 남음`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}시간 ${min % 60}분 남음`;
+  return `${Math.floor(hr / 24)}일 ${hr % 24}시간 남음`;
+}
+
+// params 객체를 "키 값 · 키 값" 요약(최대 4개). 중첩/긴 값은 절단.
+function summarizeParams(p: Record<string, unknown> | null): string {
+  if (!p) return "";
+  const parts: string[] = [];
+  for (const [k, v] of Object.entries(p)) {
+    if (parts.length >= 4) break;
+    let val: string;
+    if (v === null || v === undefined) continue;
+    else if (typeof v === "object") val = JSON.stringify(v);
+    else val = String(v);
+    if (val.length > 24) val = `${val.slice(0, 24)}…`;
+    parts.push(`${k} ${val}`);
+  }
+  return parts.join(" · ");
+}
+
+function HealSection() {
+  const [actions, setActions] = useState<HealAction[]>([]);
+  const [flags, setFlags] = useState<ActiveFlag[]>([]);
+  const [total, setTotal] = useState(0);
+  const [isLoading, setIsLoading] = useState(true);
+  const [authed, setAuthed] = useState(true);
+  const [error, setError] = useState("");
+  const [rollingId, setRollingId] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setIsLoading(true);
+    setError("");
+    try {
+      const res = await apiClient.get<HealLog>("/growth/heal-log?limit=200", {
+        useMock: false,
+      });
+      setActions(res.actions ?? []);
+      setFlags(res.active_flags ?? []);
+      setTotal(res.total ?? 0);
+      setAuthed(true);
+    } catch (e) {
+      if (e instanceof ApiClientError && (e.status === 401 || e.status === 403)) {
+        setAuthed(false);
+      } else {
+        setError("자가치유 현황을 불러오지 못했습니다.");
+      }
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  // 롤백 — POST 후 권위 있는 상태로 refetch(낙관적 제거 후 실패 시 refetch 가 원복).
+  const rollback = useCallback(
+    async (actionId: string) => {
+      setRollingId(actionId);
+      setError("");
+      try {
+        const res = await apiClient.post<RollbackResult>(
+          `/growth/heal/${encodeURIComponent(actionId)}/rollback`,
+          { useMock: false },
+        );
+        if (!res.rolled_back) {
+          setError(res.detail || "롤백이 적용되지 않았습니다.");
+        }
+      } catch (e) {
+        if (e instanceof ApiClientError && e.status === 404) {
+          setError("해당 heal 액션을 찾을 수 없습니다.");
+        } else {
+          setError("롤백에 실패했습니다.");
+        }
+      } finally {
+        setRollingId(null);
+        await load(); // 활성 플래그·로그를 서버 권위 상태로 재동기화.
+      }
+    },
+    [load],
+  );
+
+  /* ---- 로딩 ---- */
+  if (isLoading) {
+    return (
+      <div className="space-y-4">
+        <div className="h-24 animate-pulse rounded-2xl bg-[var(--surface-soft)]" />
+        {[1, 2, 3].map((n) => (
+          <div key={n} className="h-16 animate-pulse rounded-2xl bg-[var(--surface-soft)]" />
+        ))}
+      </div>
+    );
+  }
+
+  /* ---- 권한 없음(401/403) ---- */
+  if (!authed) {
+    return (
+      <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-8 text-center text-sm text-[var(--text-secondary)]">
+        자가치유 현황은 플랫폼 총괄관리자만 열람할 수 있습니다.
+      </div>
+    );
+  }
+
+  /* ---- 오류(전체 로드 실패) ---- */
+  if (error && actions.length === 0 && flags.length === 0) {
+    return (
+      <div className="rounded-2xl border border-[rgba(217,119,6,0.28)] bg-[rgba(217,119,6,0.08)] p-8 text-center text-sm text-[var(--spot)]">
+        {error}
+      </div>
+    );
+  }
+
+  const hasAny = actions.length > 0 || flags.length > 0;
+
+  return (
+    <div className="space-y-6">
+      {/* 비치명 오류(롤백 실패 등) 인라인 표기 */}
+      {error && (
+        <div className="rounded-xl border border-[rgba(217,119,6,0.28)] bg-[rgba(217,119,6,0.08)] px-4 py-2.5 text-xs text-[var(--spot)]">
+          {error}
+        </div>
+      )}
+
+      {/* 데이터 미축적 — 정직 표기(목업 금지) */}
+      {!hasAny && (
+        <Card>
+          <CardContent className="p-8 text-center">
+            <p className="text-sm font-medium text-[var(--text-secondary)]">
+              자가치유 조치 없음 — 장애 발생 시 자동 기록
+            </p>
+            <p className="mt-1.5 text-xs text-[var(--text-hint)]">
+              임계 완화·캐시 예열·서킷 관찰 등의 자동 조치가 발생하면 여기에 이력과
+              현재 활성 플래그가 표시됩니다. (재분석은 제안만 하며 자동 실행하지 않습니다)
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* 현재 활성 플래그 — TTL·롤백 */}
+      {flags.length > 0 && (
+        <Card>
+          <CardContent className="p-6">
+            <div className="flex items-center justify-between">
+              <p className="cc-label">현재 활성 플래그</p>
+              <span className="text-xs text-[var(--text-hint)]">
+                {flags.length.toLocaleString("ko-KR")}건 적용 중
+              </span>
+            </div>
+            <div className="mt-4 space-y-3">
+              {flags.map((f) => {
+                // 이 플래그를 만든 rollbackable heal 액션 중 가장 최근 것을 매칭(setting_key === f.key).
+                const owner = actions.find(
+                  (a) => a.rollbackable && a.setting_key === f.key && a.action_id,
+                );
+                const expired = (() => {
+                  if (!f.ttl_expires_at) return false;
+                  const t = new Date(f.ttl_expires_at).getTime();
+                  return !Number.isNaN(t) && t <= Date.now();
+                })();
+                const busy = owner?.action_id != null && rollingId === owner.action_id;
+                return (
+                  <div
+                    key={`${f.scope}:${f.key}`}
+                    className="rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-4"
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-sm font-bold text-[var(--text-primary)] break-all">
+                            {f.key}
+                          </span>
+                          <span className="rounded-md bg-[var(--surface-muted)] px-2 py-0.5 text-[11px] font-medium text-[var(--text-tertiary)]">
+                            {f.scope}
+                          </span>
+                          <span
+                            className={`rounded-md border px-2 py-0.5 text-[11px] font-bold ${
+                              expired
+                                ? "border-[var(--line)] bg-[var(--surface-muted)] text-[var(--text-hint)]"
+                                : "border-[var(--accent-strong)]/30 bg-[var(--accent-soft)] text-[var(--accent-strong)]"
+                            }`}
+                          >
+                            {ttlRemaining(f.ttl_expires_at)}
+                          </span>
+                        </div>
+                        {f.value && summarizeParams(f.value) && (
+                          <p className="mt-2 text-xs text-[var(--text-hint)]">
+                            <span className="cc-num text-[var(--text-secondary)]">
+                              {summarizeParams(f.value)}
+                            </span>
+                          </p>
+                        )}
+                        {f.updated_by && (
+                          <p className="mt-1 text-[11px] text-[var(--text-hint)]">
+                            적용 주체 {f.updated_by}
+                          </p>
+                        )}
+                      </div>
+                      {owner?.action_id && (
+                        <button
+                          onClick={() => rollback(owner.action_id as string)}
+                          disabled={busy}
+                          className="shrink-0 rounded-xl border border-[var(--line-strong)] bg-[var(--surface-muted)] px-3 py-2 text-xs font-bold text-[var(--text-secondary)] transition-all hover:text-[var(--text-primary)] disabled:opacity-50"
+                        >
+                          {busy ? "롤백 중…" : "롤백"}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* 치유 액션 로그 */}
+      {actions.length > 0 && (
+        <Card>
+          <CardContent className="p-6">
+            <div className="flex items-center justify-between">
+              <p className="cc-label">치유 액션 로그</p>
+              <span className="text-xs text-[var(--text-hint)]">총 {total.toLocaleString("ko-KR")}건</span>
+            </div>
+            <div className="mt-4 space-y-3">
+              {actions.map((a, idx) => {
+                const meta = healTypeMeta(a.action_type);
+                const params = summarizeParams(a.params);
+                const busy = a.action_id != null && rollingId === a.action_id;
+                return (
+                  <div
+                    key={a.action_id ?? `${a.action_type}-${a.created_at}-${idx}`}
+                    className="rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-4"
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span
+                            className={`rounded-md border px-2 py-0.5 text-[11px] font-bold ${severityClasses(a.severity)}`}
+                          >
+                            {SEVERITY_LABELS[a.severity ?? ""] ?? a.severity ?? "미분류"}
+                          </span>
+                          <span className="text-sm font-bold text-[var(--text-primary)]">
+                            <span className="mr-1.5 text-[var(--text-tertiary)]">{meta.icon}</span>
+                            {meta.label}
+                          </span>
+                          {a.service && (
+                            <span className="rounded-md bg-[var(--surface-muted)] px-2 py-0.5 text-[11px] font-medium text-[var(--text-tertiary)]">
+                              {a.service}
+                            </span>
+                          )}
+                          {meta.advisoryOnly && (
+                            <span className="rounded-md border border-[var(--accent-strong)]/30 bg-[var(--accent-soft)] px-2 py-0.5 text-[11px] font-medium text-[var(--accent-strong)]">
+                              제안(자동실행 안 함)
+                            </span>
+                          )}
+                        </div>
+                        {a.setting_key && (
+                          <p className="mt-2 text-xs text-[var(--text-hint)]">
+                            설정 키{" "}
+                            <span className="cc-num font-bold text-[var(--text-secondary)] break-all">
+                              {a.setting_key}
+                            </span>
+                          </p>
+                        )}
+                        {params && (
+                          <p className="mt-1 text-xs text-[var(--text-hint)]">
+                            <span className="cc-num text-[var(--text-secondary)]">{params}</span>
+                          </p>
+                        )}
+                        <p className="mt-2 text-[11px] text-[var(--text-hint)]">
+                          <span className="cc-num">{fmtDate(a.created_at)}</span>
+                          {a.ttl_expires_at && (
+                            <>
+                              {" · TTL "}
+                              <span className="cc-num">{ttlRemaining(a.ttl_expires_at)}</span>
+                            </>
+                          )}
+                        </p>
+                      </div>
+                      {a.rollbackable && a.action_id && (
+                        <button
+                          onClick={() => rollback(a.action_id as string)}
+                          disabled={busy}
+                          className="shrink-0 rounded-xl border border-[var(--line-strong)] bg-[var(--surface-muted)] px-3 py-2 text-xs font-bold text-[var(--text-secondary)] transition-all hover:text-[var(--text-primary)] disabled:opacity-50"
+                        >
+                          {busy ? "롤백 중…" : "롤백"}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+}
+
 /* ------------------------------------------------------------------ */
 /*  메인 컴포넌트                                                       */
 /* ------------------------------------------------------------------ */
 
+type GrowthTab = "insights" | "heal";
+
 export function GrowthDashboard() {
+  const [tab, setTab] = useState<GrowthTab>("insights");
   const [insights, setInsights] = useState<GrowthInsight[]>([]);
   const [total, setTotal] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
@@ -258,6 +628,8 @@ export function GrowthDashboard() {
     [insights],
   );
 
+  /* ---- 인사이트 탭 본문 렌더 ---- */
+  const renderInsights = () => {
   /* ---- 로딩 ---- */
   if (isLoading) {
     return (
@@ -535,6 +907,27 @@ export function GrowthDashboard() {
           </Card>
         </>
       )}
+    </div>
+  );
+  };
+
+  /* ---- 탭 래퍼: 인사이트(기존) / 자가치유(Phase 3) ---- */
+  const tabBtn = (key: GrowthTab) =>
+    tab === key
+      ? "rounded-xl bg-[var(--accent-strong)] px-4 py-2 text-xs font-bold text-white"
+      : "rounded-xl border border-[var(--line-strong)] bg-[var(--surface-muted)] px-4 py-2 text-xs font-bold text-[var(--text-secondary)] transition-all hover:text-[var(--text-primary)]";
+
+  return (
+    <div className="space-y-6">
+      <div className="flex gap-2">
+        <button type="button" onClick={() => setTab("insights")} className={tabBtn("insights")}>
+          성장 인사이트
+        </button>
+        <button type="button" onClick={() => setTab("heal")} className={tabBtn("heal")}>
+          자가치유 현황
+        </button>
+      </div>
+      {tab === "insights" ? renderInsights() : <HealSection />}
     </div>
   );
 }

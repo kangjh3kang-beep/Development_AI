@@ -116,6 +116,48 @@ def analyze_growth(window_hours: int = 1) -> dict:
     return {"insights": n}
 
 
+# ── 자가치유 평가 배치(Phase 3, 설계서 §6.1) ────────────────────────────────
+# healing_rules.evaluate 가 open 인사이트/이벤트를 보고 heal 액션을 결정·실행한다.
+# analyze 와 동일하게 DB(platform_insights/platform_events)를 읽으므로 별도 Celery
+# 워커에서도 정상 동작(프로세스-로컬 큐 비의존). 각 액션 실행은 best-effort 예외격리.
+
+async def _heal_async() -> dict:
+    """1회 heal 평가 사이클을 새 AsyncSession 으로 구동한다."""
+    from apps.api.database.session import AsyncSessionLocal
+    from app.services.growth import healing_rules
+
+    async with AsyncSessionLocal() as session:
+        return await healing_rules.evaluate(session)
+
+
+def evaluate_healing() -> dict:
+    """heal 평가 배치(healing_rules → heal_actions). Beat 10분 주기 호출.
+
+    반환: healing_rules.evaluate 요약 dict. 동기 진입점에서 asyncio.run 구동.
+    best-effort: 어떤 예외도 워커를 죽이지 않는다.
+    """
+    import asyncio
+
+    try:
+        result = asyncio.run(_heal_async())
+    except RuntimeError:
+        # 이미 이벤트 루프가 도는 환경 — 새 루프로 격리(flush/analyze 선례 동일).
+        loop = asyncio.new_event_loop()
+        try:
+            result = loop.run_until_complete(_heal_async())
+        finally:
+            loop.close()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("evaluate_healing 실패: %s", str(e)[:160])
+        return {"executed": 0, "error": str(e)[:160]}
+
+    if result.get("executed") or result.get("escalated"):
+        logger.info("growth heal: 실행 %d / 차단 %d / 에스컬레이션 %d",
+                    result.get("executed", 0), result.get("blocked", 0),
+                    result.get("escalated", 0))
+    return result
+
+
 # Celery 태스크 등록(앱이 있을 때만; 미설치 환경에서도 함수는 직접 호출 가능).
 _celery = _get_celery_app()
 if _celery is not None:
@@ -125,3 +167,6 @@ if _celery is not None:
     analyze_growth = _celery.task(
         name="app.tasks.growth_tasks.analyze_growth"
     )(analyze_growth)
+    evaluate_healing = _celery.task(
+        name="app.tasks.growth_tasks.evaluate_healing"
+    )(evaluate_healing)

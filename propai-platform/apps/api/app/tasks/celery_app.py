@@ -92,6 +92,14 @@ def _create_app() -> "Celery":
             "kwargs": {"window_hours": 24},
             "options": {"queue": "growth"},
         },
+        # 자가치유 평가(Phase 3, §6.1) — open 인사이트/이벤트 → heal 액션(무인 L0).
+        # analyze 와 동일하게 DB 를 읽으므로 별도 Celery 워커에서도 정상 동작.
+        # 10분 주기: 가드(시간당 캡·쿨다운)가 빈번 실행을 자체 차단하므로 안전.
+        "evaluate-healing": {
+            "task": "app.tasks.growth_tasks.evaluate_healing",
+            "schedule": crontab(minute="*/10"),  # 10분마다
+            "options": {"queue": "growth"},
+        },
     }
 
     _app.autodiscover_tasks(["app.tasks"])
@@ -114,6 +122,7 @@ BEAT_SCHEDULE_NAMES = [
     "flush-growth-events",
     "analyze-growth-hourly",
     "analyze-growth-daily",
+    "evaluate-healing",
 ]
 
 TASK_NAMES = [
@@ -123,4 +132,6 @@ TASK_NAMES = [
     "app.tasks.cost_tasks.recalculate_project_cost",
     "app.tasks.auction_sync_task.sync_onbid_auctions",
     "app.tasks.growth_tasks.flush_growth_events",
+    "app.tasks.growth_tasks.analyze_growth",
+    "app.tasks.growth_tasks.evaluate_healing",
 ]

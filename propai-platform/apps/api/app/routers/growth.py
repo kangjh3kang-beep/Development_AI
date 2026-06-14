@@ -291,3 +291,148 @@ async def ack_insight(
         pass
 
     return InsightAckResult(id=str(row[0]), status=str(row[1]))
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# 자가치유 heal-log·롤백 (Phase 3, 관리자 전용 — 설계서 §6.1)
+# ════════════════════════════════════════════════════════════════════════════
+# heal-log: heal_action 이벤트 이력 + 현재 활성 플래그(platform_settings, TTL 미만료).
+# rollback: action_id 의 setting_key 를 platform_settings 에서 즉시 원복 + 감사기록.
+
+class HealActionOut(BaseModel):
+    """heal_action 이벤트 1건(프론트 heal-log 계약)."""
+
+    action_id: str | None = None
+    action_type: str | None = None
+    severity: str | None = None
+    service: str | None = None
+    rollbackable: bool = False
+    setting_key: str | None = None
+    ttl_expires_at: str | None = None
+    params: dict | None = None
+    created_at: datetime | None = None
+
+
+class ActiveFlagOut(BaseModel):
+    """현재 활성(미만료) platform_settings 플래그 1건."""
+
+    key: str
+    scope: str
+    value: dict | None = None
+    ttl_expires_at: datetime | None = None
+    updated_by: str | None = None
+
+
+class HealLogOut(BaseModel):
+    """GET /growth/heal-log 응답(프론트 계약)."""
+
+    actions: list[HealActionOut]
+    active_flags: list[ActiveFlagOut]
+    total: int
+
+
+class RollbackResult(BaseModel):
+    """POST /growth/heal/{action_id}/rollback 응답."""
+
+    action_id: str
+    rolled_back: bool
+    setting_key: str | None = None
+    detail: str | None = None
+
+
+@router.get("/heal-log", response_model=HealLogOut)
+async def heal_log(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    action_type: str | None = Query(default=None),
+    since: datetime | None = Query(default=None, description="created_at >= since"),
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+) -> HealLogOut:
+    """heal_action 이벤트 이력 + 현재 활성 플래그(미만료) 조회. 관리자 전용."""
+    import json as _json
+
+    from sqlalchemy import text
+
+    await _require_admin(request, db)
+
+    where = ["event_type = 'heal_action'"]
+    params: dict = {}
+    if action_type:
+        where.append("payload->>'action_type' = :at")
+        params["at"] = action_type
+    if since is not None:
+        where.append("created_at >= :since")
+        params["since"] = since
+    where_sql = " AND ".join(where)
+
+    total = (await db.execute(
+        text(f"SELECT COUNT(*) FROM platform_events WHERE {where_sql}"), params
+    )).scalar() or 0
+
+    params["limit"] = limit
+    params["offset"] = offset
+    rows = (await db.execute(text(
+        "SELECT severity, service, payload, created_at FROM platform_events "
+        f"WHERE {where_sql} ORDER BY created_at DESC LIMIT :limit OFFSET :offset"
+    ), params)).fetchall()
+
+    actions: list[HealActionOut] = []
+    for r in rows:
+        pl = r[2]
+        if isinstance(pl, str):
+            try:
+                pl = _json.loads(pl)
+            except Exception:  # noqa: BLE001
+                pl = {}
+        pl = pl or {}
+        actions.append(HealActionOut(
+            action_id=pl.get("action_id"), action_type=pl.get("action_type"),
+            severity=r[0], service=r[1],
+            rollbackable=bool(pl.get("rollbackable")),
+            setting_key=pl.get("setting_key"), ttl_expires_at=pl.get("ttl_expires_at"),
+            params=pl.get("params") if isinstance(pl.get("params"), dict) else None,
+            created_at=r[3],
+        ))
+
+    # 현재 활성(미만료) 플래그 — TTL 이 NULL 이거나 미래인 것만.
+    flag_rows = (await db.execute(text(
+        "SELECT key, scope, value, ttl_expires_at, updated_by FROM platform_settings "
+        "WHERE ttl_expires_at IS NULL OR ttl_expires_at > now() "
+        "ORDER BY updated_at DESC LIMIT 200"
+    ))).fetchall()
+    active_flags = [
+        ActiveFlagOut(
+            key=fr[0], scope=fr[1],
+            value=fr[2] if isinstance(fr[2], dict) else None,
+            ttl_expires_at=fr[3], updated_by=fr[4],
+        )
+        for fr in flag_rows
+    ]
+
+    return HealLogOut(actions=actions, active_flags=active_flags, total=int(total))
+
+
+@router.post("/heal/{action_id}/rollback", response_model=RollbackResult)
+async def rollback_heal(
+    action_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> RollbackResult:
+    """heal_action 즉시 롤백(platform_settings 원복) + 감사기록. 관리자 전용."""
+    from app.services.growth import heal_actions
+
+    user_id = await _require_admin(request, db)
+    result = await heal_actions.rollback(db, action_id, actor_id=user_id)
+
+    if not result.get("rolled_back") and result.get("detail") == "action_not_found":
+        raise HTTPException(status_code=404, detail="heal 액션을 찾을 수 없습니다.")
+    detail = result.get("detail")
+    if isinstance(detail, dict):
+        detail = None  # 성공 메타는 본문에 노출 안 함(setting_key 로 충분).
+    return RollbackResult(
+        action_id=action_id,
+        rolled_back=bool(result.get("rolled_back")),
+        setting_key=result.get("setting_key"),
+        detail=detail if isinstance(detail, str) else None,
+    )
