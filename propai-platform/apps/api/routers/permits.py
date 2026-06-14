@@ -243,6 +243,7 @@ class AIPermitAnalysisRequest(BaseModel):
     site: dict[str, Any] | None = None  # 부지분석 결과(있으면 재수집 생략)
     parcels: list[str] | None = None  # 다필지 통합 개발 시 추가 필지 주소(2개 이상이면 통합 용적률 산정)
     use_llm: bool = True  # AI 내러티브(개발방식별 LLM 분석) 포함 여부(사용자 선택)
+    refresh: bool = False  # True이면 저장본을 무시하고 재분석 후 덮어씀
 
 
 @router.post("/ai-analysis", dependencies=[Depends(enforce_llm_quota)])
@@ -254,11 +255,30 @@ async def ai_permit_analysis(
 
     parcels에 2개 이상의 필지 주소가 오면 용도지역이 다른 토지를 통합 개발할 때의
     면적가중평균(법정)·최적·최고 용적률을 관련법규와 함께 산정한다.
+
+    첫 호출만 느리고, 이후 같은 입력은 저장본을 즉시 반환한다.
+    req.refresh=True 를 보내면 재분석 후 저장본을 덮어쓴다.
     """
+    from app.services.common.analysis_cache import _key, cache_get, cache_put
     from app.services.permit.permit_analysis_service import PermitAnalysisService
 
     if not req.address or not req.address.strip():
         raise HTTPException(status_code=400, detail="주소가 필요합니다.")
-    return await PermitAnalysisService().analyze(
-        req.address.strip(), req.site or {}, parcels=req.parcels, use_llm=req.use_llm
+
+    addr = req.address.strip()
+    # parcels를 정렬해 순서 무관하게 동일 키가 나오게 한다
+    parcels_str = ",".join(sorted(req.parcels or []))
+    cache_key = _key(addr, str(req.pnu), str(req.use_llm), parcels_str)
+
+    # 저장본이 있고 재분석 요청이 아니면 즉시 반환
+    if not req.refresh:
+        cached = await cache_get("permit_ai_analysis", cache_key)
+        if cached is not None:
+            return cached
+
+    # 실제 분석 실행 → 저장 → 반환
+    result = await PermitAnalysisService().analyze(
+        addr, req.site or {}, parcels=req.parcels, use_llm=req.use_llm
     )
+    await cache_put("permit_ai_analysis", cache_key, result)
+    return result

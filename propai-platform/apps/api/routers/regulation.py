@@ -31,6 +31,7 @@ class RegulationAnalyzeRequest(BaseModel):
     bcode: str | None = None
     jibun_address: str | None = None
     use_llm: bool = True
+    refresh: bool = False  # True이면 저장본을 무시하고 재분석 후 덮어씀
 
 
 @router.post(
@@ -40,9 +41,14 @@ class RegulationAnalyzeRequest(BaseModel):
 )
 async def analyze_regulation(body: RegulationAnalyzeRequest) -> dict:
     """부지에 적용되는 상위법령·도시계획·조례·개별규제를 계층으로 정리하고
-    정량 한도(건폐/용적/높이/주차)와 AI 통합 해석을 반환한다."""
+    정량 한도(건폐/용적/높이/주차)와 AI 통합 해석을 반환한다.
+
+    첫 호출만 느리고, 이후 같은 입력은 저장본을 즉시 반환한다.
+    body.refresh=True 를 보내면 재분석 후 저장본을 덮어쓴다.
+    """
     import re as _re
 
+    from app.services.common.analysis_cache import _key, cache_get, cache_put
     from app.services.regulation.regulation_analysis_service import (
         RegulationAnalysisService,
     )
@@ -56,9 +62,20 @@ async def analyze_regulation(body: RegulationAnalyzeRequest) -> dict:
     if not body.address or not body.address.strip():
         from fastapi import HTTPException
         raise HTTPException(status_code=400, detail="주소가 필요합니다.")
-    return await RegulationAnalysisService().analyze(
-        body.address.strip(), pnu=pnu, use_llm=body.use_llm
-    )
+
+    addr = body.address.strip()
+    cache_key = _key(addr, str(pnu), str(body.use_llm))
+
+    # 저장본이 있고 재분석 요청이 아니면 즉시 반환
+    if not body.refresh:
+        cached = await cache_get("regulation_analyze", cache_key)
+        if cached is not None:
+            return cached
+
+    # 실제 분석 실행 → 저장 → 반환
+    result = await RegulationAnalysisService().analyze(addr, pnu=pnu, use_llm=body.use_llm)
+    await cache_put("regulation_analyze", cache_key, result)
+    return result
 
 
 @router.post("/check", response_model=RegulationCheckResponse)
