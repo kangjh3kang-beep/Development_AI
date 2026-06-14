@@ -1,6 +1,6 @@
 """SP6 회의방 의견교환 순수 규칙 — 본문검증·앵커/해결 루트제약·부모검증·삭제본문 은닉(결정론·부작용 0).
 
-라우터가 본 규칙으로 입력을 검증한다. anchor·resolved는 루트(parent_id=None) 전용. 본문은 trim 후
+라우터가 본 규칙으로 입력을 검증한다. 규칙 함수는 True/False(또는 ValueError)만 반환하며 실제 거부(HTTP 4xx)는 라우터가 수행한다. anchor·resolved는 루트(parent_id=None) 전용. 본문은 trim 후
 비어있지 않고 최대 길이 이내. 삭제(soft) 댓글의 본문은 응답에서 가린다(트리 보존·정직 표기).
 """
 
@@ -37,7 +37,12 @@ def resolve_allowed(parent_id) -> bool:
 
 
 def parent_is_valid(parent_status: Optional[str], parent_document_id, document_id) -> bool:
-    """답변의 부모 유효성 — 부모가 active이고 동일 문서일 때만(타문서·삭제부모 금지)."""
+    """답변의 부모 유효성 — 부모가 active이고 동일 문서일 때만(타문서·삭제·미존재 부모 금지).
+
+    parent_status가 None이면 부모 미존재로 간주해 False(방어적 — None==active 우연 안전에 의존 안 함).
+    """
+    if parent_status is None:
+        return False
     return parent_status == "active" and str(parent_document_id) == str(document_id)
 
 

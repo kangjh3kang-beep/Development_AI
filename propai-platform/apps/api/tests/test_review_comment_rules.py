@@ -49,6 +49,12 @@ class TestParentValidation:
         assert parent_is_valid("deleted", "doc-1", "doc-1") is False
         assert parent_is_valid("active", "doc-2", "doc-1") is False
 
+    def test_invalid_when_parent_not_found(self):
+        assert parent_is_valid(None, "doc-1", "doc-1") is False
+
+    def test_invalid_when_deleted_and_other_document(self):
+        assert parent_is_valid("deleted", "doc-2", "doc-1") is False
+
 
 class TestVisibleBody:
     def test_active_shows_body(self):
@@ -56,3 +62,6 @@ class TestVisibleBody:
 
     def test_deleted_hides_body(self):
         assert visible_body("deleted", "hello") is None
+
+    def test_active_with_none_body(self):
+        assert visible_body("active", None) is None
