@@ -94,6 +94,8 @@ class ReviewCommentCreate(BaseModel):
 
 
 class ReviewCommentEdit(BaseModel):
+    """수정 페이로드 — body만 변경 가능(parent_id·anchor는 생성 이후 불변)."""
+
     body: str = Field(..., min_length=1, max_length=4000)
 
 
@@ -102,7 +104,7 @@ class ReviewCommentResolve(BaseModel):
 
 
 class ReviewCommentOut(BaseModel):
-    """의견교환 댓글 뷰 — 삭제(soft) 시 body=null(visible_body)."""
+    """의견교환 댓글 뷰 — 삭제(soft) 시 body=null. 은닉은 직렬화 계층(라우터 _comment_out의 visible_body) 책임."""
 
     id: str
     project_id: str
