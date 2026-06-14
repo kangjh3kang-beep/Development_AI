@@ -32,7 +32,28 @@
 - **신규 마이그레이션 없음** — 프론트 전용. 배포는 **프론트엔드 재빌드/재배포**만 하면 됨(`apps/web` `next build`).
 - 두 라우트 모두 `/api/v2/collaboration/*` 백엔드(§1·2)에 의존 → **alembic 025 적용 + 라우터 마운트가 선행**되어야 실제 동작(미적용 시 명부 빈 목록·초대 발급 500).
 - 프론트 검증(trust-infra): SP2-4 vitest 9·스모크 1 passed, SP2-5 스모크 1 passed, tsc 0·next build 0(두 라우트 빌드 확인).
-- 후속(Phase 2/3, 미구현·UI에 정직 표기): 자료교환·의견교환·화상회의(LiveKit)·8엔진 심의검증·보정 상태머신.
+- 후속(Phase 2/3): 의견교환(스레드)·화상회의(LiveKit). (자료교환·8엔진 검증은 SP3에서 구현 — §5.)
 
-## 5. 범위 경계
+## 5. SP3 자료교환 + 8엔진 심의검증 (추가 푸시됨 — ⚠️신규 마이그레이션 026)
+| 커밋 | 내용 |
+|---|---|
+| `f8c9a73` | **SP3-1** ProjectDocument 모델 + **alembic 026_collaboration_documents**(project_documents + RLS) |
+| `8f474b5` | **SP3-2** repo+순수코어(classify_doc_kind·review 상태전이)+`storage_service.upload_collab_document`(비공개버킷) |
+| `34cc24f` | **SP3-3** CRUD 라우터 POST/GET/DELETE `/api/v2/collaboration/projects/{id}/documents` |
+| `de92130` | **SP3-4** 8엔진 투입 — design(DXF/IFC) 업로드 시 DesignAuditOrchestrator 실투입(결정론) |
+| `fbc4801` | **SP3-5** 표기용 심의 상태전이 `POST .../documents/{doc_id}/review-state` |
+| `c9453bb`·`e2b1b73` | **SP3-6·7** 프론트 스토어+자료교환 섹션(회의방 워크스페이스 내) |
+
+배포 담당 추가 체크리스트:
+- [ ] ⚠️**alembic 026 적용**: `alembic upgrade head` → `project_documents` 테이블 + RLS 생성. (현재 head=`026_collaboration_documents`, down=`025_collaboration_tables`. 체인 024→025→026 단일 head.)
+- [ ] **Supabase 비공개 버킷** `propai-collab-docs` — 최초 업로드 시 `_ensure_private_bucket`가 자동 생성(별도 수작업 불요). `SUPABASE_URL`+`SUPABASE_SERVICE_ROLE_KEY` 필요(등기부 PDF와 동일 자격).
+- [ ] 스모크: 실 DB+Supabase로 `POST .../documents`(DXF 첨부)→ doc_kind=design·audit_status=completed(8엔진 실행), PDF 첨부→ doc_kind=document·audit_status=unsupported. `GET .../documents` 목록, `POST .../documents/{id}/review-state {target_state:"acknowledged"}` 전이.
+
+정직 경계(과대표기 금지 — 배포 공지 시 준수):
+- **8엔진 자동검증은 설계파일(DXF/IFC)만**. 보고서 PDF 등 문서는 8엔진 미투입(`unsupported`) — 사람 심의자가 review_state(요청→확인→처리완료)로 표기. UI 배지에 명시됨. "모든 협력업체 문서 자동검증"으로 표방 금지.
+- 8엔진은 결정론(orchestrator.run이 use_llm 폐기, LLM=0). site/params 없는 엔진은 정직 `skipped`.
+- **악성파일 스캔 미적용**(확장자+크기 30MB+magic-byte만). ClamAV 등은 범위 밖 — 운영 시 별도 검토 권장.
+- 프론트 검증(trust-infra): 백엔드 협업 회귀 63 passed, document_audit 서비스 5, lib vitest 16, tsc 0·next build 0, 회의방 Playwright 스모크 1 passed(자료교환·8엔진 배지 포함).
+
+## 6. 범위 경계
 - trust-infra는 배포 안 함. 배포·롤백·prod 환경변수는 배포 담당 책임.
