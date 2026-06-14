@@ -56,6 +56,7 @@ export default function LoanPanel({ siteCode }: { siteCode: string }) {
           </div>
           <ul className="mt-3 space-y-1 text-sm text-[var(--text-secondary)]">
             {programs.map((p) => <li key={p.id}>· {p.bank_name} ({p.guarantee_type}) — {p.status} <span className="text-[10px] text-[var(--text-tertiary)]">{p.id.slice(0, 8)}</span></li>)}
+            {programs.length === 0 && <li className="text-[var(--text-tertiary)]">아직 등록된 은행 협약이 없습니다.</li>}
           </ul>
         </div>
         <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-4">
@@ -78,6 +79,7 @@ export default function LoanPanel({ siteCode }: { siteCode: string }) {
           </div>
           <ul className="mt-3 space-y-1 text-sm text-[var(--text-secondary)]">
             {agreements.map((a) => <li key={a.id}>· {won(a.approved_amount || 0)} — {a.status} <span className="text-[10px] text-[var(--text-tertiary)]">{a.id.slice(0, 8)}</span></li>)}
+            {agreements.length === 0 && <li className="text-[var(--text-tertiary)]">아직 등록된 차주 약정이 없습니다.</li>}
           </ul>
         </div>
       </div>

@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v175-menu-headers";
+const CACHE_NAME = "propai-v176-panel-consistency";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

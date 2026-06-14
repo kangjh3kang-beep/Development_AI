@@ -42,6 +42,16 @@ export default function IntegrityGuard({ siteCode }: { siteCode: string }) {
         </button>
       </div>
 
+      {busy && ok === null && (
+        <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-5 text-center text-sm text-[var(--text-secondary)]">무결성 점검 중…</div>
+      )}
+
+      {ok === null && !busy && (
+        <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-4 text-sm text-[var(--text-secondary)]">
+          점검 결과를 불러오지 못했습니다. ‘재점검’을 눌러 다시 시도하세요.
+        </div>
+      )}
+
       {ok === true && (
         <div className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-5 text-center">
           <p className="text-2xl">✅</p>
