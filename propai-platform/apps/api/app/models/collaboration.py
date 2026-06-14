@@ -8,7 +8,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, JSON, String, UniqueConstraint
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 
 from app.core.database import Base
@@ -118,6 +118,34 @@ class ProjectDocument(Base):
     review_state = Column(String(20), nullable=False, default="requested")  # requested/acknowledged/addressed(표기용)
     reviewed_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     reviewed_at = Column(DateTime, nullable=True)
+    status = Column(String(20), nullable=False, default="active")  # active/deleted(소프트삭제)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ReviewComment(Base):
+    """SP6 회의방 의견교환(심의 스레드) — 문서/지적별 댓글·답변(무제한 중첩).
+
+    project_documents 위에 부착되는 토론 스레드. parent_id self-FK로 무제한 중첩(append-only라
+    순환 불가). anchor는 특정 지적(8엔진 finding)을 가리키는 *표기용* 자유문자열(루트 전용) — findings는
+    1급 행이 아니므로 FK가 아닌 포인터다(정직). resolved(루트 전용)는 문서 review_state와 별개 사람주도
+    트랙(자동연동·자동판정 없음, LLM=0). 삭제는 소프트(status=deleted, 트리 보존).
+    """
+
+    __tablename__ = "review_comments"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False, index=True)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False)
+    document_id = Column(UUID(as_uuid=True), ForeignKey("project_documents.id"), nullable=False, index=True)
+    parent_id = Column(UUID(as_uuid=True), ForeignKey("review_comments.id"), nullable=True)
+    anchor = Column(String(200), nullable=True)          # 지적 포인터(표기용·루트 전용). null=문서레벨
+    author_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    body = Column(Text, nullable=False)
+    resolved = Column(Boolean, nullable=False, default=False)   # 루트 전용 스레드 해결
+    resolved_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    resolved_at = Column(DateTime, nullable=True)
+    edited = Column(Boolean, nullable=False, default=False)
     status = Column(String(20), nullable=False, default="active")  # active/deleted(소프트삭제)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
