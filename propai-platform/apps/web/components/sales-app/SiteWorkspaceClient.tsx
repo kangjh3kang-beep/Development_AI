@@ -70,6 +70,8 @@ export default function SiteWorkspaceClient({ locale, siteId }: { locale: Locale
   const [needEnter, setNeedEnter] = useState(false);
   const [pwOpen, setPwOpen] = useState(false);
   const [tab, setTab] = useState<string>("units");
+  // 세대 탭 보드 전환: 실시간 선점(live) ↔ 배치도·상세(grid). 두 보드 동시 렌더(중복) 방지.
+  const [unitView, setUnitView] = useState<"live" | "grid">("live");
   const [err, setErr] = useState("");
 
   // 분양가 탭용 차수(round) 로딩 — 기존 SalesSiteWorkspace 동일 방식.
@@ -276,12 +278,25 @@ export default function SiteWorkspaceClient({ locale, siteId }: { locale: Locale
 
           {/* 탭 ↔ 기존 패널 연결. siteCode 자리에 현장 UUID(siteId) 전달. */}
           {tab === "units" && (
-            <>
-              {/* Phase 1-C — 실시간 동호수 선점(hold/release/reserve)·TTL 카운트다운·WS 동기화. */}
-              <UnitLiveBoard siteCode={siteId} />
-              <UnitGrid siteCode={siteId} />
-              <Unit360Panel siteCode={siteId} />
-            </>
+            <div className="space-y-4">
+              {/* 보드 전환 — 한 번에 하나만 표시(그리드 중복 제거). 선점=실시간 hold/예약, 배치도=2D/3D+계약상세 */}
+              <div className="sa-seg w-fit" role="tablist" aria-label="세대 보드 전환">
+                <button role="tab" aria-selected={unitView === "live"} data-active={unitView === "live"}
+                  onClick={() => setUnitView("live")} className="sa-seg__item">🟢 실시간 선점</button>
+                <button role="tab" aria-selected={unitView === "grid"} data-active={unitView === "grid"}
+                  onClick={() => setUnitView("grid")} className="sa-seg__item">🗺️ 배치도·상세</button>
+              </div>
+              {unitView === "live" ? (
+                /* Phase 1-C — 실시간 동호수 선점(hold/release/reserve)·TTL·WS 동기화 */
+                <UnitLiveBoard siteCode={siteId} />
+              ) : (
+                <>
+                  {/* 2D/3D 배치도(확대·축소) + 클릭 시 세대 상세(분양가·계약) */}
+                  <UnitGrid siteCode={siteId} />
+                  <Unit360Panel siteCode={siteId} />
+                </>
+              )}
+            </div>
           )}
 
           {tab === "customers" && <CrmPanel siteCode={siteId} />}

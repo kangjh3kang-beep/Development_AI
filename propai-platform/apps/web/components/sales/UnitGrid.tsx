@@ -30,6 +30,7 @@ export default function UnitGrid({ siteCode }: { siteCode: string }) {
   const select = useSalesStore((s) => s.select);
   const setUnits = useSalesStore((s) => s.setUnits);
   const [view, setView] = useState<"2D" | "3D">("2D");
+  const [zoom, setZoom] = useState(1); // 배치도 확대/축소(0.5~1.5)
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -87,6 +88,18 @@ export default function UnitGrid({ siteCode }: { siteCode: string }) {
             {v}
           </button>
         ))}
+        {view === "2D" && (
+          <div className="flex items-center gap-1 rounded-lg border border-[var(--line)] bg-[var(--surface-strong)] p-1" role="group" aria-label="배치도 확대/축소">
+            <button onClick={() => setZoom((z) => Math.max(0.5, Math.round((z - 0.1) * 10) / 10))}
+              className="flex h-7 w-7 items-center justify-center rounded text-base font-black text-[var(--text-secondary)] hover:bg-[var(--surface)]" aria-label="축소">−</button>
+            <span className="w-10 text-center text-xs font-bold text-[var(--text-secondary)] tabular-nums">{Math.round(zoom * 100)}%</span>
+            <button onClick={() => setZoom((z) => Math.min(1.5, Math.round((z + 0.1) * 10) / 10))}
+              className="flex h-7 w-7 items-center justify-center rounded text-base font-black text-[var(--text-secondary)] hover:bg-[var(--surface)]" aria-label="확대">＋</button>
+            {zoom !== 1 && (
+              <button onClick={() => setZoom(1)} className="ml-0.5 rounded px-1.5 text-[10px] font-bold text-[var(--text-tertiary)] hover:text-[var(--accent-strong)]" aria-label="기본">리셋</button>
+            )}
+          </div>
+        )}
         <div className="ml-auto flex flex-wrap gap-3 text-xs">
           {Object.entries(LABELS).map(([k, v]) => (
             <span key={k} className="flex items-center gap-1.5 text-[var(--text-secondary)]">
@@ -104,7 +117,8 @@ export default function UnitGrid({ siteCode }: { siteCode: string }) {
       )}
 
       {!loading && units.length > 0 && (view === "2D" ? (
-        <div className="space-y-6">
+        <div className="overflow-auto">
+        <div className="space-y-6 origin-top-left transition-transform" style={{ transform: `scale(${zoom})`, width: `${100 / zoom}%` }}>
           {Object.entries(byDong).map(([dong, floors]) => (
             <div key={dong} className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-3">
               <h3 className="mb-2 font-bold text-[var(--text-primary)]">{dong}동</h3>
@@ -123,6 +137,7 @@ export default function UnitGrid({ siteCode }: { siteCode: string }) {
               </div>
             </div>
           ))}
+        </div>
         </div>
       ) : (
         <Grid3D units={units} onSelect={select} />

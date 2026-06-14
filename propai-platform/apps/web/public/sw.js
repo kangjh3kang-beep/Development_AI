@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v171-fieldapp-menu-window";
+const CACHE_NAME = "propai-v172-units-dedupe-zoom";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",
