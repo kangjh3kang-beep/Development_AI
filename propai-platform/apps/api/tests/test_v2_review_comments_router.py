@@ -234,3 +234,38 @@ def test_document_not_found_404(monkeypatch):
     c = _client(monkeypatch, doc=None)
     r = c.get(_url())
     assert r.status_code == 404
+
+
+def test_post_out_of_scope_404(monkeypatch):
+    # 외부 게스트가 scope 밖 문서에 댓글 작성 시도 → 404(쓰기도 scope 강제)
+    member = _Member(role="external_reviewer", scope=["fire"])
+    doc = _Doc(category="traffic")
+    c = _client(monkeypatch, member=member, doc=doc)
+    r = c.post(_url(), json={"body": "scope밖 작성 시도"})
+    assert r.status_code == 404
+
+
+def test_delete_out_of_scope_404(monkeypatch):
+    # 외부 게스트가 scope 밖 문서 댓글 삭제 시도 → 404
+    member = _Member(role="external_reviewer", scope=["fire"])
+    doc = _Doc(category="traffic")
+    target = _Comment(author_id=UID)
+    c = _client(monkeypatch, member=member, doc=doc, get_comment=target)
+    r = c.request("DELETE", _url(f"/{target.id}"))
+    assert r.status_code == 404
+
+
+def test_edit_cross_document_comment_404(monkeypatch):
+    # 댓글이 다른 문서 소속 → URL의 문서로 접근 불가(comment_id 우회 차단)
+    other = _Comment(document_id=uuid.uuid4(), author_id=UID)
+    c = _client(monkeypatch, get_comment=other)
+    r = c.put(_url(f"/{other.id}"), json={"body": "수정"})
+    assert r.status_code == 404
+
+
+def test_resolve_cross_document_comment_404(monkeypatch):
+    # 다른 문서 소속 댓글 해결 시도 → 404
+    other = _Comment(document_id=uuid.uuid4(), parent_id=None)
+    c = _client(monkeypatch, get_comment=other)
+    r = c.post(_url(f"/{other.id}/resolve"), json={"resolved": True})
+    assert r.status_code == 404
