@@ -79,3 +79,57 @@ class TestRequireProjectMember:
 
     def test_inactive_member_forbidden_even_if_role_ok(self):
         assert _client(_member("manager", status="removed")).get(f"/p/{PID}/guard").status_code == 403
+
+
+class _Project:
+    def __init__(self, organization_id):
+        self.organization_id = organization_id
+
+
+class _SeqSession:
+    """execute() 순서대로 미리 정한 결과를 돌려주는 가짜(1차 멤버조회→2차 프로젝트조회)."""
+
+    def __init__(self, *results):
+        self._results = list(results)
+
+    async def execute(self, *a, **k):
+        return _FakeResult(self._results.pop(0) if self._results else None)
+
+
+def _org_client(member, project, *, user_tenant) -> TestClient:
+    app = FastAPI()
+
+    @app.get("/p/{project_id}/guard")
+    async def guarded(m: ProjectMember = Depends(require_project_member("owner", "manager"))):
+        return {"role": m.project_role}
+
+    class _OrgUser:
+        id = UID
+        tenant_id = user_tenant
+
+    async def _fake_db():
+        yield _SeqSession(member, project)
+
+    app.dependency_overrides[get_db] = _fake_db
+    app.dependency_overrides[get_current_user] = lambda: _OrgUser()
+    return TestClient(app)
+
+
+class TestOrgImplicitMembership:
+    """프로젝트 소유자/내부팀(멤버 행 없음)도 자기 조직 프로젝트엔 owner로 접근 — 403 회의방 버그 수정."""
+
+    def test_org_user_without_membership_gets_owner(self):
+        org = uuid.uuid4()
+        r = _org_client(None, _Project(org), user_tenant=org).get(f"/p/{PID}/guard")
+        assert r.status_code == 200
+        assert r.json()["role"] == "owner"
+
+    def test_other_org_user_forbidden(self):
+        # 프로젝트가 다른 조직 소유 → 암묵 멤버십 불가
+        r = _org_client(None, _Project(uuid.uuid4()), user_tenant=uuid.uuid4()).get(f"/p/{PID}/guard")
+        assert r.status_code == 403
+
+    def test_no_tenant_user_forbidden(self):
+        # tenant_id 없는 사용자(이상 케이스)는 암묵 멤버십 불가
+        r = _org_client(None, _Project(uuid.uuid4()), user_tenant=None).get(f"/p/{PID}/guard")
+        assert r.status_code == 403
