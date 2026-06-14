@@ -12,6 +12,8 @@ from app.services.collaboration.collaboration_rules import (
     classify_doc_kind,
     normalize_document_category,
     is_allowed_review_transition,
+    normalize_purpose,
+    analysis_allows_kind,
     REVIEW_STATES,
 )
 
@@ -23,7 +25,7 @@ class TestProjectDocumentStructure:
         for c in (
             "id", "project_id", "organization_id", "uploaded_by",
             "storage_path", "file_url", "original_filename", "content_type",
-            "size_bytes", "category", "doc_kind", "audit_status", "audit_summary",
+            "size_bytes", "category", "purpose", "doc_kind", "audit_status", "audit_summary",
             "review_state", "reviewed_by", "reviewed_at", "status",
             "created_at", "updated_at",
         ):
@@ -77,11 +79,27 @@ class TestCategoryNormalization:
     def test_valid_category_kept(self):
         assert normalize_document_category("traffic") == "traffic"
         assert normalize_document_category("fire") == "fire"
+        assert normalize_document_category("architectural_design") == "architectural_design"
 
     def test_invalid_or_empty_to_none(self):
         assert normalize_document_category("hacking") is None
         assert normalize_document_category(None) is None
         assert normalize_document_category("") is None
+
+
+class TestUploadPurpose:
+    """분석용(8엔진, 설계파일만)/저장용(무제한) 구분 — 안전 기본은 storage."""
+
+    def test_normalize_purpose(self):
+        assert normalize_purpose("analysis") == "analysis"
+        assert normalize_purpose("storage") == "storage"
+        assert normalize_purpose("weird") == "storage"  # 미지값→안전 기본
+        assert normalize_purpose(None) == "storage"
+        assert normalize_purpose("") == "storage"
+
+    def test_analysis_allows_only_design(self):
+        assert analysis_allows_kind("design") is True
+        assert analysis_allows_kind("document") is False
 
 
 class TestReviewStateMachine:

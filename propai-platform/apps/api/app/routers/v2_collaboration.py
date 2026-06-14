@@ -31,9 +31,11 @@ from app.schemas.collaboration import (
 from app.services.auth.auth_service import get_current_user
 from app.services.collaboration import collaboration_repo as repo
 from app.services.collaboration.collaboration_rules import (
+    analysis_allows_kind,
     classify_doc_kind,
     is_allowed_review_transition,
     normalize_document_category,
+    normalize_purpose,
 )
 from app.services.collaboration.document_audit_service import run_design_document_audit
 from app.services.collaboration.collaboration_service import (
@@ -165,6 +167,7 @@ def _document_out(d) -> DocumentOut:
         content_type=getattr(d, "content_type", None),
         size_bytes=getattr(d, "size_bytes", None),
         category=getattr(d, "category", None),
+        purpose=getattr(d, "purpose", "storage"),
         doc_kind=d.doc_kind,
         audit_status=getattr(d, "audit_status", None),
         audit_summary=getattr(d, "audit_summary", None),
@@ -181,15 +184,18 @@ async def upload_project_document(
     project_id: str,
     file: UploadFile = File(...),
     category: str | None = Form(None),
+    purpose: str = Form("storage"),
     member=Depends(_require_member),
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
 ):
     """협력업체 자료(문서) 업로드 — 활성 멤버. 실파일은 비공개 버킷(서명URL), DB엔 메타+path만.
 
-    doc_kind=design(DXF/IFC)은 8엔진 자동검증 대상(audit_status='pending' — SP3-4가 실투입),
-    document(PDF 등)은 8엔진 미지원이라 audit_status='unsupported'(사람 심의자 review_state로 처리).
+    purpose 구분(SP4): analysis(8엔진 자동검증 대상 — DXF/IFC 설계파일만 허용, 그 외 400) /
+    storage(공유·저장 전용 — 임의 형식 무제한, 8엔진 미투입). analysis+design만 업로드 시 8엔진을
+    결정론 투입한다(audit_status pending→completed/failed). storage는 audit_status=null(미검증).
     """
+    purpose = normalize_purpose(purpose)
     filename = file.filename or "upload"
     data = await file.read()
     if not data:
@@ -198,6 +204,14 @@ async def upload_project_document(
         raise HTTPException(status_code=413, detail="문서가 너무 큽니다(최대 30MB).")
 
     doc_kind = classify_doc_kind(file.content_type, filename)
+    run_audit = purpose == "analysis" and doc_kind == "design"
+    if purpose == "analysis" and not analysis_allows_kind(doc_kind):
+        # 분석용은 8엔진이 입력으로 받는 설계파일(DXF/IFC)만 — 보고서·문서는 거부(과대표기 금지).
+        raise HTTPException(
+            status_code=400,
+            detail="분석용 업로드는 DXF/IFC 설계파일만 가능합니다. 보고서·문서는 '저장·공유용'으로 올려주세요.",
+        )
+
     try:
         up = await upload_collab_document(data, file.content_type or "", filename, ttl_days=14)
     except StorageError as exc:
@@ -215,16 +229,17 @@ async def upload_project_document(
         "content_type": file.content_type,
         "size_bytes": len(data),
         "category": normalize_document_category(category),
+        "purpose": purpose,
         "doc_kind": doc_kind,
-        "audit_status": "unsupported" if doc_kind == "document" else "pending",
+        "audit_status": "pending" if run_audit else None,  # 저장용/미검증은 null(정직)
         "review_state": "requested",
         "status": "active",
     }
     doc = await repo.insert_document(db, fields)
 
-    # SP3-4 정직 type-routing — 설계파일(DXF/IFC)은 8엔진 실투입(결정론·LLM 0). 업로드는 이미
-    # 성공했으므로 감사는 best-effort(실패 시 audit_status='failed'로 정직 표기, 업로드 무중단).
-    if doc_kind == "design":
+    # SP3-4/SP4-1 — 분석용 설계파일만 8엔진 실투입(결정론·LLM 0). 업로드는 이미 성공했으므로 감사는
+    # best-effort(실패 시 audit_status='failed' 정직 표기, 업로드 무중단).
+    if run_audit:
         try:
             a_status, a_summary = await run_design_document_audit(
                 db, filename=filename, data=data

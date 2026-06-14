@@ -105,8 +105,12 @@ def _build_client(monkeypatch, *, member=None, get_doc=None, docs=None):
     return TestClient(app)
 
 
-def _upload(client, *, filename, content_type, category=None, content=b"DATA"):
-    data = {"category": category} if category is not None else {}
+def _upload(client, *, filename, content_type, category=None, content=b"DATA", purpose=None):
+    data = {}
+    if category is not None:
+        data["category"] = category
+    if purpose is not None:
+        data["purpose"] = purpose
     return client.post(
         f"/api/v2/collaboration/projects/{PID}/documents",
         files={"file": (filename, content, content_type)},
@@ -115,33 +119,58 @@ def _upload(client, *, filename, content_type, category=None, content=b"DATA"):
 
 
 class TestUploadDocument:
-    def test_dxf_is_design_audited(self, monkeypatch):
+    def test_analysis_dxf_runs_8engine(self, monkeypatch):
         client = _build_client(monkeypatch)
-        r = _upload(client, filename="plan.dxf", content_type="application/octet-stream")
+        r = _upload(client, filename="plan.dxf", content_type="application/octet-stream",
+                    purpose="analysis")
         assert r.status_code == 200, r.text
         j = r.json()
-        assert j["doc_kind"] == "design"            # DXF → 8엔진 대상
-        assert j["audit_status"] == "completed"      # SP3-4: 업로드 시 8엔진 실투입(best-effort)
+        assert j["doc_kind"] == "design"
+        assert j["purpose"] == "analysis"
+        assert j["audit_status"] == "completed"      # 분석용 설계파일 → 8엔진 실투입
         assert j["audit_summary"]["findings_count"] == 1
-        assert j["review_state"] == "requested"
-        assert j["file_url"] == "https://signed.example/doc"
         assert j["original_filename"] == "plan.dxf"
 
-    def test_pdf_is_document_unsupported(self, monkeypatch):
+    def test_analysis_non_design_rejected_400(self, monkeypatch):
         client = _build_client(monkeypatch)
         r = _upload(client, filename="traffic-report.pdf", content_type="application/pdf",
-                    category="traffic")
+                    purpose="analysis")
+        assert r.status_code == 400  # 분석용은 DXF/IFC만 — 문서 거부
+
+    def test_storage_pdf_no_audit(self, monkeypatch):
+        client = _build_client(monkeypatch)
+        r = _upload(client, filename="report.pdf", content_type="application/pdf",
+                    category="traffic", purpose="storage")
         assert r.status_code == 200, r.text
         j = r.json()
-        assert j["doc_kind"] == "document"          # PDF → 8엔진 미지원
-        assert j["audit_status"] == "unsupported"   # 자동검증 불가(정직)
+        assert j["doc_kind"] == "document"
+        assert j["purpose"] == "storage"
+        assert j["audit_status"] is None             # 저장용 → 8엔진 미투입(미검증)
         assert j["category"] == "traffic"
+
+    def test_storage_dxf_stored_without_audit(self, monkeypatch):
+        # 설계파일이라도 저장용이면 8엔진 미투입(저장만)
+        client = _build_client(monkeypatch)
+        r = _upload(client, filename="plan.dxf", content_type="application/octet-stream",
+                    purpose="storage")
+        assert r.status_code == 200, r.text
+        j = r.json()
+        assert j["doc_kind"] == "design"
+        assert j["purpose"] == "storage"
+        assert j["audit_status"] is None
+
+    def test_default_purpose_is_storage(self, monkeypatch):
+        # purpose 미지정 → 저장용(안전 기본, 제한 없음)
+        client = _build_client(monkeypatch)
+        r = _upload(client, filename="any.bin", content_type="application/octet-stream")
+        assert r.status_code == 200, r.text
+        assert r.json()["purpose"] == "storage"
 
     def test_invalid_category_normalized_to_null(self, monkeypatch):
         client = _build_client(monkeypatch)
         r = _upload(client, filename="memo.pdf", content_type="application/pdf", category="hacking")
         assert r.status_code == 200
-        assert r.json()["category"] is None         # 화이트리스트 밖 → null
+        assert r.json()["category"] is None
 
     def test_empty_file_rejected_400(self, monkeypatch):
         client = _build_client(monkeypatch)

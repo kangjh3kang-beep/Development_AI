@@ -63,8 +63,22 @@ def classify_doc_kind(content_type, filename) -> str:
 
 
 def normalize_document_category(category) -> str | None:
-    """문서 심의 카테고리 정규화 — REVIEW_CATEGORIES(6종) 화이트리스트 외/빈값은 None(가짜 금지)."""
+    """문서 심의 카테고리 정규화 — REVIEW_CATEGORIES 화이트리스트 외/빈값은 None(가짜 금지)."""
     return category if category in REVIEW_CATEGORIES else None
+
+
+# 업로드 용도 — analysis(8엔진 자동검증 대상)/storage(공유·저장 전용). 미지값은 storage(안전 기본).
+UPLOAD_PURPOSES = ("analysis", "storage")
+
+
+def normalize_purpose(purpose) -> str:
+    """업로드 용도 정규화 — analysis/storage 외/빈값은 'storage'(제한 없는 안전 기본)."""
+    return purpose if purpose in UPLOAD_PURPOSES else "storage"
+
+
+def analysis_allows_kind(doc_kind: str) -> bool:
+    """분석용(8엔진) 허용 형식 — 설계파일(DXF/IFC=design)만. 그 외(document)는 분석 불가."""
+    return doc_kind == "design"
 
 
 # 표기용 심의 상태(사람 심의자 주도, 자동판정 아님). 전진 전용 선형 상태머신.

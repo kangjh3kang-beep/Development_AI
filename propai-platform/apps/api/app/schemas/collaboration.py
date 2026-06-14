@@ -54,6 +54,7 @@ class DocumentOut(BaseModel):
     content_type: Optional[str] = None
     size_bytes: Optional[int] = None
     category: Optional[str] = None  # REVIEW_CATEGORIES 화이트리스트 or null
+    purpose: str = "storage"        # analysis(8엔진) / storage(공유·저장)
     doc_kind: str                   # design(DXF/IFC, 8엔진 대상) / document(표기용)
     audit_status: Optional[str] = None   # null/pending/completed/skipped/unsupported
     audit_summary: Optional[dict] = None

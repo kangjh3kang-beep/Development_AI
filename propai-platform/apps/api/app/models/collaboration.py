@@ -109,6 +109,7 @@ class ProjectDocument(Base):
     content_type = Column(String(120), nullable=True)
     size_bytes = Column(Integer, nullable=True)
     category = Column(String(30), nullable=True)          # REVIEW_CATEGORIES 화이트리스트 or null
+    purpose = Column(String(20), nullable=False, default="storage")  # analysis(8엔진)/storage(공유·저장)
     doc_kind = Column(String(20), nullable=False, default="document")  # design/document
     audit_status = Column(String(20), nullable=True)      # null/pending/completed/skipped/unsupported
     audit_summary = Column(JSON, nullable=True)           # {overall, findings_count, engines_run, engines_skipped}
