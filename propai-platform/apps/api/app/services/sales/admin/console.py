@@ -7,7 +7,7 @@
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any
 
 from sqlalchemy import text
@@ -46,10 +46,12 @@ async def add_accounting_entry(db: AsyncSession, site_id, entry_type: str, amoun
     if et not in _ENTRY_TYPES or int(amount) <= 0:
         raise ValueError("entry_type(LABOR/EXPENSE/UTILITY/AD/ETC)·amount(양수) 필요")
     await _ensure_acct(db)
+    # asyncpg는 date 컬럼 파라미터에 문자열을 받으면 toordinal 오류 → date 객체로 변환(없으면 NULL→오늘).
+    ed = date.fromisoformat(entry_date) if entry_date else None
     await db.execute(text(
         "INSERT INTO sales_site_accounting (site_id, entry_type, amount, memo, entry_date, created_by) "
-        "VALUES (:s,:t,:a,:m,COALESCE(CAST(:d AS date), current_date),:u)"),
-        {"s": str(site_id), "t": et, "a": int(amount), "m": memo, "d": entry_date, "u": str(by) if by else None})
+        "VALUES (:s,:t,:a,:m,COALESCE(:d, current_date),:u)"),
+        {"s": str(site_id), "t": et, "a": int(amount), "m": memo, "d": ed, "u": str(by) if by else None})
     await db.commit()
     return {"ok": True, "entry_type": et, "amount": int(amount)}
 
@@ -77,7 +79,7 @@ async def _scalar(db: AsyncSession, sql: str, **p) -> int:
 async def site_management_detail(db: AsyncSession, site_id) -> dict[str, Any]:
     """현장 1곳의 통합 관리 지표 — 담당자·근태·계약·매출·수수료·방문·광고·회계·손익."""
     s = str(site_id)
-    today = datetime.now(timezone.utc).date().isoformat()
+    today = datetime.now(timezone.utc).date()  # date 객체(asyncpg 바인딩 안전)
     staff = await _scalar(db, "SELECT count(*) FROM sales_org_nodes WHERE site_id=:s AND user_id IS NOT NULL AND deleted_at IS NULL", s=s)
     contracts = await _scalar(db, "SELECT count(*) FROM sales_contracts_ext WHERE site_id=:s AND status='ACTIVE'", s=s)
     revenue = await _scalar(db, "SELECT COALESCE(SUM(total_price),0) FROM sales_contracts_ext WHERE site_id=:s AND status='ACTIVE'", s=s)
@@ -87,7 +89,7 @@ async def site_management_detail(db: AsyncSession, site_id) -> dict[str, Any]:
         "JOIN sales_commission_events e ON e.id=sp.event_id "
         "JOIN sales_contracts_ext c ON c.id=e.contract_ext_id WHERE c.site_id=:s", s=s)
     visitors = await _scalar(db, "SELECT count(*) FROM mh_visitors WHERE site_id=:s", s=s)
-    attend_today = await _scalar(db, "SELECT count(*) FROM sales_staff_attendance WHERE site_id=:s AND check_in::date=CAST(:d AS date)", s=s, d=today)
+    attend_today = await _scalar(db, "SELECT count(*) FROM sales_staff_attendance WHERE site_id=:s AND check_in::date=:d", s=s, d=today)
     ad_budget = await _scalar(db, "SELECT COALESCE(SUM(budget),0) FROM sales_ad_campaigns WHERE site_id=:s", s=s)
 
     cost = await _cost_by_type(db, site_id)
@@ -191,11 +193,11 @@ def _deductions(gross: int, mode: str) -> dict[str, Any]:
     return {"items": items, "total_deduction": total, "net": g - total}
 
 
-def _month_bounds(ym: str) -> tuple[str, str]:
-    """'YYYY-MM' → (이달1일, 다음달1일) ISO 문자열."""
+def _month_bounds(ym: str) -> tuple[date, date]:
+    """'YYYY-MM' → (이달1일, 다음달1일) date 객체(asyncpg 바인딩 안전)."""
     y, m = int(ym[:4]), int(ym[5:7])
     ny, nm = (y + 1, 1) if m == 12 else (y, m + 1)
-    return f"{y:04d}-{m:02d}-01", f"{ny:04d}-{nm:02d}-01"
+    return date(y, m, 1), date(ny, nm, 1)
 
 
 async def set_staff_wage(db: AsyncSession, site_id, staff_id, wage_type: str, base_wage: int,
@@ -225,7 +227,7 @@ async def compute_payroll(db: AsyncSession, site_id, ym: str) -> dict[str, Any]:
         "  COALESCE(sum(a.work_minutes),0) AS minutes "
         "FROM sales_staff s "
         "LEFT JOIN sales_staff_attendance a ON a.staff_id=s.id "
-        "  AND a.check_in >= CAST(:start AS date) AND a.check_in < CAST(:end AS date) "
+        "  AND a.check_in >= :start AND a.check_in < :end "
         "WHERE s.site_id=:s AND s.deleted_at IS NULL AND s.status='ACTIVE' "
         "GROUP BY s.id, s.name, s.position ORDER BY s.name"),
         {"s": s, "start": start, "end": end})).all()
