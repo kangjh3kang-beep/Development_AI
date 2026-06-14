@@ -67,6 +67,89 @@ def _emit_growth_fallback(service_name: str, circuit_state: Any) -> None:
         pass
 
 
+# threshold_relax effector multiplier 범위 가드(폭주·역효과 방지).
+# 참고(M-1): rate_limit_multiplier 는 현재 BaseAPIClient 에 클라측 rate limiter 가
+# 없어 미적용(예약 필드)이다. 실효 멀티플라이어는 timeout_multiplier 뿐이다.
+_RELAX_MULT_MIN = 0.5
+_RELAX_MULT_MAX = 3.0
+
+# 핫패스 DB 오버헤드 방지용 프로세스-로컬 TTL 캐시(M-2).
+# relax 값은 분 단위로 바뀌므로 짧은 TTL 캐시로 매 _request 마다의 platform_settings
+# 조회(재시도 포함 최대 6 SELECT)를 제거한다. 캐시 미스/만료 시에만 DB 를 조회한다.
+# 만료를 monotonic 시계로 판정하므로 TTL 경과 후 자동 재조회 → 자동 원복 의미 보존.
+_RELAX_CACHE_TTL = 10.0  # 초
+_relax_cache: dict[str, tuple[dict[str, float], float]] = {}
+
+
+def _clamp_relax_mult(x: float) -> float:
+    """multiplier 범위 가드(0.5~3.0). NaN 등 비정상은 기본값 1.0 으로."""
+    try:
+        if x != x:  # NaN
+            return 1.0
+        return max(_RELAX_MULT_MIN, min(_RELAX_MULT_MAX, x))
+    except Exception:  # noqa: BLE001
+        return 1.0
+
+
+async def _read_relax_multipliers(service_name: str) -> dict[str, float]:
+    """자가치유 threshold_relax 가 platform_settings 에 쓴 값을 best-effort 로 읽는다.
+
+    heal_actions._do_threshold_relax 가 쓰는 키/값 구조와 정합:
+      setting_key = f"relax.{service}" (service 없으면 "relax.global")
+      value       = {"rate_limit_multiplier": float, "timeout_multiplier": float}
+    TTL 만료 시 get_setting 이 None → 기본값(1.0) = 자동 원복.
+
+    핫패스 보호(M-2): service_name 단위 프로세스-로컬 TTL 캐시(약 10초)를 먼저 본다.
+    캐시 히트면 DB 미조회. 미스/만료 시에만 새 AsyncSession 1개를 짧게 열고 닫는다.
+    캐시 조회/저장도 best-effort(예외 시 기본 1.0). 시계는 time.monotonic() 사용.
+
+    반드시 best-effort: import 순환·DB 미가용·키 부재·예외 시 기본 {1.0, 1.0} 반환
+    (기존 timeout/재시도 동작 그대로).
+    service 전용 키가 없으면 relax.global 로 폴백. multiplier 는 범위로 클램프.
+    """
+    # 1) 프로세스-로컬 TTL 캐시 조회(best-effort). 히트 시 DB 미조회.
+    try:
+        now = time.monotonic()
+        cached = _relax_cache.get(service_name)
+        if cached is not None and cached[1] > now:
+            return cached[0]
+    except Exception:  # noqa: BLE001 — 캐시 조회 실패는 DB 조회로 폴백.
+        pass
+
+    timeout_mult = 1.0
+    rate_mult = 1.0
+    try:
+        from apps.api.database.session import AsyncSessionLocal
+        from app.services.growth import schema_guard
+
+        async with AsyncSessionLocal() as _s:
+            val = await schema_guard.get_setting(_s, f"relax.{service_name}")
+            if not isinstance(val, dict):
+                val = await schema_guard.get_setting(_s, "relax.global")
+        if isinstance(val, dict):
+            try:
+                timeout_mult = float(val.get("timeout_multiplier", 1.0))
+            except (TypeError, ValueError):
+                timeout_mult = 1.0
+            try:
+                rate_mult = float(val.get("rate_limit_multiplier", 1.0))
+            except (TypeError, ValueError):
+                rate_mult = 1.0
+    except Exception:  # noqa: BLE001 — 효과기는 절대 호출경로를 깨뜨리면 안 됨.
+        return {"timeout_multiplier": 1.0, "rate_limit_multiplier": 1.0}
+
+    result = {"timeout_multiplier": _clamp_relax_mult(timeout_mult),
+              "rate_limit_multiplier": _clamp_relax_mult(rate_mult)}
+
+    # 2) 캐시 저장(best-effort). 저장 실패해도 결과 반환에는 영향 없음.
+    try:
+        _relax_cache[service_name] = (result, time.monotonic() + _RELAX_CACHE_TTL)
+    except Exception:  # noqa: BLE001
+        pass
+
+    return result
+
+
 class CircuitState(StrEnum):
     CLOSED = "closed"
     OPEN = "open"
@@ -232,10 +315,27 @@ class BaseAPIClient:
         client = await self._get_client()
         start = time.perf_counter()
 
+        # 자가치유 threshold_relax effector(best-effort·로직불변): platform_settings 의
+        # relax.{service} timeout_multiplier 가 살아있으면 이 요청의 read 타임아웃을
+        # 일시 상향(TTL 만료 시 자동 1.0 복귀). 실패·키부재 시 기본 타임아웃 그대로.
+        request_kwargs: dict[str, Any] = {"params": params, "json": json_data}
         try:
-            response = await client.request(
-                method, path, params=params, json=json_data,
-            )
+            relax = await _read_relax_multipliers(self.service_name)
+            # relax(완화)=상향만 의미. 하한 1.0 으로 클램프해 timeout 단축(0.5~1.0)을
+            # 방지한다(클램프 상수는 그대로, 적용 지점에서만 하한 1.0). rate_limit 는 별개.
+            tmult = max(1.0, relax.get("timeout_multiplier", 1.0))
+            if tmult != 1.0:
+                base_read = float(getattr(self, "timeout", 30.0) or 30.0)
+                request_kwargs["timeout"] = httpx.Timeout(
+                    connect=5.0, read=base_read * tmult, write=10.0, pool=5.0
+                )
+                logger.debug("threshold_relax 적용", service=self.service_name,
+                             timeout_multiplier=tmult)
+        except Exception:  # noqa: BLE001 — effector 실패는 기본 동작으로.
+            pass
+
+        try:
+            response = await client.request(method, path, **request_kwargs)
             response.raise_for_status()
             data: dict[str, Any] = response.json()
 
