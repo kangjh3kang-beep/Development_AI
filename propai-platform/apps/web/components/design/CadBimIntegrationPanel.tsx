@@ -280,6 +280,15 @@ function ElementGizmo({
     if (cc) cc.enabled = !dragging;  // 드래그 동안 카메라 회전/줌 잠금(핸들 조작 우선)
     invalidate();
   }, [camControlsRef, invalidate]);
+  // 안전망: gizmo 언마운트(선택 해제·모드 종료) 시 카메라를 무조건 복구한다.
+  // 드래그가 캔버스 밖에서 끝나 onMouseUp이 누락돼도 카메라가 영구 잠금되지 않도록.
+  useEffect(() => {
+    return () => {
+      const cc = camControlsRef.current;
+      if (cc) cc.enabled = true;
+      invalidate();
+    };
+  }, [camControlsRef, invalidate]);
   return (
     <TransformControls
       object={object}
@@ -1375,6 +1384,8 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
                         >
                           해제
                         </button>
+                        {/* 정직: 변환은 시점 편집(미저장) — 버튼 툴팁뿐 아니라 화면에도 명시 */}
+                        <span className="text-white/40">· 미저장(시점)</span>
                       </>
                     )}
                   </span>

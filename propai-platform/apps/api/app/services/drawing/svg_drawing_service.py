@@ -306,11 +306,12 @@ class SVGDrawingService:
         drawings["C-03"] = self.generate_parking_layout(parking_count)
 
         # B-05: 반사천장도(RCP), B-06: 설비도(MEP) — §4-D 결정론 schematic
+        # 실패해도 셋 전체를 막지 않되, 조용히 사라지지 않도록 경고 로그를 남긴다(정직 — 무음실패 금지).
         try:
             drawings["B-05-RCP"] = self.generate_rcp(bw, bd)
             drawings["B-06-MEP"] = self.generate_mep(bw, bd)
-        except Exception:  # noqa: BLE001 — 도면 생성 실패는 셋 전체를 막지 않는다
-            pass
+        except Exception as exc:  # noqa: BLE001 — RCP/MEP만 격리(기존 키 영향 없음)
+            logger.warning("rcp_mep_generation_failed", error=str(exc))
 
         # 모든 도면을 반응형(viewBox+100%)으로 — 화면에 작게 뜨던 문제 해결
         for _code in list(drawings.keys()):
@@ -1632,6 +1633,9 @@ class SVGDrawingService:
                              ("⊙ 스프링클러", "#d63031")):
             g.add(dwg.text(label, insert=(0 if "조명" in label else (bw * 0.34 if "디퓨저" in label else bw * 0.68), ly),
                            font_size="9px", font_family=FONT, fill=color))
+        # 정직 표기 — 렌더 출력에 명시(MEP와 동일). 비전문가가 엔지니어링 산정으로 오인하지 않도록.
+        g.add(dwg.text("※ 표준 격자 배치(개략) — 조도·풍량 산정 미연동(표기용)",
+                       insert=(0, bd + 30), font_size="7px", font_family=FONT, fill=C_WALL_INT))
         return _make_responsive(dwg.tostring())
 
     # ── §4-D: 설비도(MEP) ──

@@ -139,6 +139,8 @@ def _add_slab_rebar(msp: Modelspace, building_width_m: float, slab_top_y: float,
     주근은 spacing 간격의 원(단면), 상/하부 배력근은 전폭 수평선. 간격·피복은 표준 가정값
     (구조계산 미연동 — 표기용). 좌표는 단면 모델 좌표(m).
     """
+    # 얇은 슬래브에서 피복이 두께의 절반을 넘으면 상/하부근이 뒤집힌다 — cover를 안전 상한으로 클램프.
+    cover = max(0.0, min(cover, slab_t / 2.0 - bar_r))
     top_y = slab_top_y - cover
     bot_y = slab_top_y - slab_t + cover
     x = cover
@@ -149,6 +151,14 @@ def _add_slab_rebar(msp: Modelspace, building_width_m: float, slab_top_y: float,
     # 배력근(전폭 수평선) — 상/하부
     msp.add_line((cover, top_y), (building_width_m - cover, top_y), dxfattribs={"layer": "REBAR"})
     msp.add_line((cover, bot_y), (building_width_m - cover, bot_y), dxfattribs={"layer": "REBAR"})
+    # 정직 표기 — 도면에 표준배근(구조계산 미연동)임을 명시(DXF TEXT, REBAR 레이어).
+    try:
+        msp.add_text(
+            "표준배근(구조계산 미연동)",
+            dxfattribs={"layer": "REBAR", "height": 0.12},
+        ).set_placement((cover, slab_top_y + 0.05))
+    except Exception:  # noqa: BLE001 — 일부 ezdxf 버전 텍스트 배치 차이는 무시(배근 자체는 유지)
+        pass
 
 
 def _draw_door(msp: Modelspace, x: float, y: float,
