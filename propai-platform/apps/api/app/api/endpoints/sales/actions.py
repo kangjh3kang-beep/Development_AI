@@ -64,6 +64,36 @@ async def org_team_overview(db: AsyncSession = Depends(get_db),
     return await team_overview(db, ctx.site_id, getattr(ctx, "org_path", None) or None)
 
 
+@actions_router.post("/org/nodes/{node_id}/assign")
+async def org_assign_user(node_id: uuid.UUID, body: dict, db: AsyncSession = Depends(get_db),
+                          ctx: SalesCtx = Depends(require_role(*_R_ORG_ADD))):
+    """P2-3 노드 인원배정 — 같은 조직 사용자를 이메일로 노드에 배정(미배정 해소). body.email"""
+    from fastapi import HTTPException
+
+    from app.services.sales.org.service import assign_user_to_node
+    try:
+        res = await assign_user_to_node(db, ctx.site_id, node_id, body.get("email", ""))
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    await db.commit()
+    return res
+
+
+@actions_router.post("/org/nodes/{node_id}/unassign")
+async def org_unassign_user(node_id: uuid.UUID, db: AsyncSession = Depends(get_db),
+                            ctx: SalesCtx = Depends(require_role(*_R_ORG_ADD))):
+    """P2-3 노드 인원배정 해제 — 노드를 미배정으로 되돌림(노드·실적 유지)."""
+    from fastapi import HTTPException
+
+    from app.services.sales.org.service import unassign_user
+    try:
+        res = await unassign_user(db, ctx.site_id, node_id, by=getattr(ctx.user, "id", None))
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    await db.commit()
+    return res
+
+
 @actions_router.post("/org/seed-default")
 async def org_seed_default(body: dict | None = None, db: AsyncSession = Depends(get_db),
                            ctx: SalesCtx = Depends(require_role("DEVELOPER", "AGENCY", "SUPERADMIN"))):

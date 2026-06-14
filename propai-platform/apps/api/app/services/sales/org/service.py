@@ -5,7 +5,7 @@ import uuid
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apps.api.database.models.sales.site_org import SalesOrgNode, SalesOrgMembershipHistory
+from apps.api.database.models.sales.site_org import SalesOrgMembershipHistory, SalesOrgNode
 
 
 def _label(node_type: str, id_: uuid.UUID) -> str:
@@ -23,6 +23,52 @@ async def create_node(db: AsyncSession, site_id, node_type, parent_id=None, **kw
     node.path = f"{parent.path}.{label}" if parent else label
     await db.flush()
     return node
+
+
+async def assign_user_to_node(db: AsyncSession, site_id, node_id, email: str) -> dict:
+    """org 노드에 같은 조직(테넌트)의 플랫폼 사용자를 이메일로 배정(미배정 해소).
+
+    배정하면 그 사용자가 로그인 시 본인 노드의 실적(계약·고객·업무일지)을 본다. 교차테넌트
+    배정은 차단(같은 organization 사용자만)하고, 배정 이력을 남긴다(감사)."""
+    from sqlalchemy import func
+
+    from app.models.auth import User
+    node = (await db.execute(select(SalesOrgNode).where(
+        SalesOrgNode.id == node_id, SalesOrgNode.site_id == site_id,
+        SalesOrgNode.deleted_at.is_(None)))).scalar_one_or_none()
+    if node is None:
+        raise ValueError("조직 노드를 찾을 수 없습니다")
+    em = (email or "").strip()
+    if not em:
+        raise ValueError("배정할 사용자의 이메일을 입력하세요")
+    u = (await db.execute(select(User).where(func.lower(User.email) == em.lower()))).scalar_one_or_none()
+    if u is None:
+        raise ValueError(f"'{em}' 사용자를 찾을 수 없습니다(플랫폼 가입 이메일을 확인하세요)")
+    # 같은 조직(테넌트)인지 확인 — site.organization_id == user.organization_id (교차테넌트 차단).
+    org_id = (await db.execute(text("SELECT organization_id FROM sales_sites WHERE id=:s"),
+                               {"s": str(site_id)})).scalar()
+    if org_id and getattr(u, "organization_id", None) and str(u.organization_id) != str(org_id):
+        raise ValueError("같은 조직(테넌트)에 속한 사용자만 배정할 수 있습니다")
+    node.user_id = u.id
+    if not node.display_name:
+        node.display_name = u.full_name
+    db.add(SalesOrgMembershipHistory(node_id=node.id, action="ASSIGN", to_path=node.path, by=u.id))
+    await db.flush()
+    return {"ok": True, "node_id": str(node.id), "user_id": str(u.id),
+            "name": node.display_name, "email": u.email}
+
+
+async def unassign_user(db: AsyncSession, site_id, node_id, by=None) -> dict:
+    """노드에서 배정 사용자 해제(미배정으로 되돌림). 노드·display_name·실적은 유지."""
+    node = (await db.execute(select(SalesOrgNode).where(
+        SalesOrgNode.id == node_id, SalesOrgNode.site_id == site_id,
+        SalesOrgNode.deleted_at.is_(None)))).scalar_one_or_none()
+    if node is None:
+        raise ValueError("조직 노드를 찾을 수 없습니다")
+    node.user_id = None
+    db.add(SalesOrgMembershipHistory(node_id=node.id, action="UNASSIGN", to_path=node.path, by=by))
+    await db.flush()
+    return {"ok": True, "node_id": str(node.id)}
 
 
 async def seed_default_org(db: AsyncSession, site_id, teams: int = 5, members_per_team: int = 10) -> dict:

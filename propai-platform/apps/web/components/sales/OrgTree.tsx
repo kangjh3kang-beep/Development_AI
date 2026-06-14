@@ -45,6 +45,18 @@ export default function OrgTree({ siteCode }: { siteCode: string }) {
     try { await api.post("/commission/tax-pref", { node_id: nodeId, tax_type: taxType }); load(); }
     catch { alert("세금유형 저장 실패(권한 확인)"); }
   };
+  // P2-3 인원배정: 같은 조직 사용자를 이메일로 노드에 배정/해제(미배정 해소).
+  const assignUser = async (nodeId: string) => {
+    const email = prompt("배정할 사용자의 이메일(같은 조직 가입자)")?.trim();
+    if (!email) return;
+    try { const r = await api.post<{ name: string }>(`/org/nodes/${nodeId}/assign`, { email }); alert(`배정 완료: ${r?.name ?? email}`); load(); }
+    catch (e) { alert(e instanceof Error && e.message ? e.message : "배정 실패"); }
+  };
+  const unassignUser = async (nodeId: string) => {
+    if (!confirm("이 인원 배정을 해제할까요? (노드·실적은 유지)")) return;
+    try { await api.post(`/org/nodes/${nodeId}/unassign`, {}); load(); }
+    catch (e) { alert(e instanceof Error && e.message ? e.message : "해제 실패"); }
+  };
 
   const tree = nodes.slice().sort((a, b) => a.path.localeCompare(b.path));
   const depth = (p: string) => p.split(".").length - 1;
@@ -89,12 +101,19 @@ export default function OrgTree({ siteCode }: { siteCode: string }) {
           </div>
           <div className="max-h-40 overflow-auto">
             <table className="w-full text-[11px]">
-              <thead><tr className="text-[var(--text-hint)]"><th className="text-left font-medium">직급</th><th className="text-left font-medium">이름</th><th className="text-right font-medium">계약</th><th className="text-right font-medium">고객</th><th className="text-right font-medium">업무일지</th><th className="text-right font-medium">수수료세금</th></tr></thead>
+              <thead><tr className="text-[var(--text-hint)]"><th className="text-left font-medium">직급</th><th className="text-left font-medium">이름</th><th className="text-center font-medium">인원</th><th className="text-right font-medium">계약</th><th className="text-right font-medium">고객</th><th className="text-right font-medium">업무일지</th><th className="text-right font-medium">수수료세금</th></tr></thead>
               <tbody>
                 {ov.roster.slice(0, 30).map((r, i) => (
                   <tr key={i} className="border-t border-[var(--line)]/50">
                     <td className="py-0.5 text-[var(--text-tertiary)]">{r.role_label}</td>
                     <td className="text-[var(--text-secondary)]">{r.name}{!r.assigned && <span className="ml-1 text-[9px] text-[var(--text-hint)]">(미배정)</span>}</td>
+                    <td className="text-center">
+                      {r.assigned ? (
+                        <button onClick={() => unassignUser(r.node_id)} className="rounded border border-[var(--line)] px-1.5 py-0.5 text-[9px] text-[var(--text-tertiary)]" title="배정 해제">해제</button>
+                      ) : (
+                        <button onClick={() => assignUser(r.node_id)} className="rounded border border-[var(--accent-strong)] px-1.5 py-0.5 text-[9px] font-bold text-[var(--accent-strong)]">배정</button>
+                      )}
+                    </td>
                     <td className="text-right text-[var(--text-primary)]">{r.contracts}</td>
                     <td className="text-right text-[var(--text-primary)]">{r.customers}</td>
                     <td className="text-right text-[var(--text-primary)]">{r.work_logs}</td>
