@@ -74,8 +74,20 @@
 - **magic-byte/악성파일 스캔 미적용**: 확장자+크기(30MB)+content_type만. 분석용 DXF/IFC는 parse 실패 시 audit failed로 일부 방어. 임의 저장 파일은 스캔 없음(ClamAV 등 별도 인프라 필요).
 - **repo 함수 organization_id 미필터**: list/get/soft_delete_document는 app-level require_project_member·RLS(026/027)에 격리 의존(기존 SP2 list_members와 동일 아키텍처). dep 우회 시에만 위험.
 
-## 7. 미구현(후속) — 문서 뷰어
-- 플랫폼 내부 문서 뷰어(이미지/PDF=react-pdf/DXF=경량 CadShape 뷰어)는 설계·승인 완료, 구현 예정(SP4-2/3). 현재는 서명URL '열기'(새 탭)만 제공.
+## 7. 플랫폼 내부 문서 뷰어 (SP4-2·SP4-3 — 추가 푸시됨)
+| 커밋 | 내용 |
+|---|---|
+| `7962da8` | **SP4-2** 이미지/PDF 뷰어 모달 — react-pdf@10(텍스트/주석 레이어 off), 이미지 `<img>`, 그 외 다운로드 폴백 |
+| `6fe1df6` | **SP4-3** DXF 경량 CAD 뷰어 — GET `/documents/{id}/shapes`(서버 재파싱) + CadDocViewer read-only SVG |
 
-## 8. 범위 경계
+배포 담당 주의:
+- **신규 프론트 의존성 `react-pdf@10`** (pnpm-lock 갱신됨) — `pnpm install` 후 `next build`.
+- ⚠️**PDF 워커 CDN**: `PdfDocViewer.tsx`가 pdf.js 워커를 `https://unpkg.com/pdfjs-dist@<버전>/build/pdf.worker.min.mjs`(동일 버전)에서 로드. **prod CSP가 unpkg를 막으면** PDF 미리보기가 실패(graceful degrade — “새 탭” 안내). 차단 시 워커를 `apps/web/public/`에 복사해 동일오리진(`/pdf.worker.min.mjs`)으로 전환 권장.
+- `/documents/{id}/shapes`는 DXF만(IFC·문서 415). 비공개버킷 재서명·다운로드 필요(Supabase 자격 동일).
+- 검증(trust-infra): 백엔드 회귀 76 passed, tsc 0·next build 0, 회의방 스모크 1 passed(이미지/PDF 모달 + DXF 뷰어 렌더).
+
+## 8. 네비게이션 IA 재편 (추가 푸시됨)
+- `30810c6` 좌측 사이드바를 **접이식 그룹형(SSOT nav-config)**로 전면 재작성 + 원칙문서 `docs/design/navigation-ia-system.md`. 라우트·역할게이팅 보존(additive). 프론트 재빌드만.
+
+## 9. 범위 경계
 - trust-infra는 배포 안 함. 배포·롤백·prod 환경변수는 배포 담당 책임.
