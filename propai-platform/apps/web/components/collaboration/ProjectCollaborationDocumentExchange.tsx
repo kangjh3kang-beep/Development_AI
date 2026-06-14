@@ -10,6 +10,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useCollaborationStore, type CollabDocument } from "@/store/use-collaboration-store";
+import { DocumentViewerModal } from "@/components/collaboration/DocumentViewerModal";
 import {
   REVIEW_CATEGORIES,
   categoryLabel,
@@ -61,6 +62,7 @@ export function ProjectCollaborationDocumentExchange({ projectId }: { projectId:
 
   const [category, setCategory] = useState("");
   const [purpose, setPurpose] = useState<"storage" | "analysis">("storage");
+  const [viewerDoc, setViewerDoc] = useState<CollabDocument | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -180,14 +182,14 @@ export function ProjectCollaborationDocumentExchange({ projectId }: { projectId:
                       </button>
                     )}
                     {d.file_url && (
-                      <a
-                        href={d.file_url}
-                        target="_blank"
-                        rel="noopener noreferrer"
+                      <button
+                        type="button"
+                        data-testid="collab-doc-preview"
+                        onClick={() => setViewerDoc(d)}
                         className="text-[10px] font-bold text-[var(--accent-strong)]"
                       >
-                        열기
-                      </a>
+                        미리보기
+                      </button>
                     )}
                     <button
                       type="button"
@@ -212,6 +214,8 @@ export function ProjectCollaborationDocumentExchange({ projectId }: { projectId:
           {docError}
         </p>
       )}
+
+      <DocumentViewerModal doc={viewerDoc} onClose={() => setViewerDoc(null)} />
     </section>
   );
 }

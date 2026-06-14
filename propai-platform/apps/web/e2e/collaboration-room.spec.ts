@@ -88,6 +88,12 @@ test.describe("프로젝트 회의방 스모크", () => {
     await expect(item).toContainText("8엔진 검증완료");
     await expect(item).toContainText("조건부적합");
 
+    // SP4-2 문서 뷰어 모달 — 미리보기 열기/닫기 무크래시(dxf는 내장 미리보기 폴백)
+    await item.getByTestId("collab-doc-preview").click();
+    await expect(page.getByTestId("doc-viewer-modal")).toBeVisible();
+    await page.getByTestId("doc-viewer-close").click();
+    await expect(page.getByTestId("doc-viewer-modal")).toHaveCount(0);
+
     expect(pageErrors, `uncaught page errors: ${pageErrors.join(" | ")}`).toEqual([]);
   });
 });
