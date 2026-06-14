@@ -945,6 +945,46 @@ export default function DigitalTwinScene({
 
       {payload && (
         <>
+          {/* SP1: 준공 전/후 비교 — building 레이어 가시성을 세그먼트로 제어(신규 상태·fetch 0, additive).
+              '전'=필지·항공만, '후'=+AI 절차생성 매스(인허가 아님·정직 표기). hasBuildingGlb일 때만. */}
+          {hasBuildingGlb && (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="mr-1 text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)]">준공 비교</span>
+              <div
+                data-testid="dt-beforeafter"
+                className="inline-flex rounded-full border border-[var(--line)] bg-[var(--surface-soft)] p-0.5"
+              >
+                <button
+                  type="button"
+                  data-testid="dt-before"
+                  onClick={() => setLayers((p) => ({ ...p, building: false }))}
+                  className={`rounded-full px-3 py-1.5 text-[10px] font-black uppercase tracking-widest transition-all ${
+                    !layers.building
+                      ? "bg-[var(--accent-soft)] text-[var(--accent-strong)]"
+                      : "text-[var(--text-hint)] hover:text-[var(--text-primary)]"
+                  }`}
+                >
+                  준공 전
+                </button>
+                <button
+                  type="button"
+                  data-testid="dt-after"
+                  onClick={() => setLayers((p) => ({ ...p, building: true }))}
+                  className={`rounded-full px-3 py-1.5 text-[10px] font-black uppercase tracking-widest transition-all ${
+                    layers.building
+                      ? "bg-[var(--accent-soft)] text-[var(--accent-strong)]"
+                      : "text-[var(--text-hint)] hover:text-[var(--text-primary)]"
+                  }`}
+                >
+                  준공 후
+                </button>
+              </div>
+              <span className="text-[10px] font-bold text-[var(--text-hint)]">
+                {layers.building ? "필지·항공 + AI 매스(절차생성·인허가 아님)" : "필지·항공(현 상태)"}
+              </span>
+            </div>
+          )}
+
           {/* 레이어 토글 */}
           <div className="flex flex-wrap items-center gap-2">
             <span className="mr-1 text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)]">레이어</span>
