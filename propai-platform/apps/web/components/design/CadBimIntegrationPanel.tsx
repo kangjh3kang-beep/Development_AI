@@ -1,13 +1,14 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { Canvas, useThree } from "@react-three/fiber";
-import { CameraControls, Grid } from "@react-three/drei";
+import { Canvas, useThree, type ThreeEvent } from "@react-three/fiber";
+import { CameraControls, Grid, Line, Html, Sphere } from "@react-three/drei";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import * as THREE from "three";
 import { motion } from "framer-motion";
 import CADEditor, { type CADEditorMetrics } from "./CADEditor";
 import { sectionCutHeightM, visibleFloorCount } from "./bimSection";
+import { distance3D, formatLength, midpoint3D, type Vec3 } from "./bimMeasure";
 import { GenerativeDesignPanel } from "@/components/cad/GenerativeDesignPanel";
 import { DesignOutcomeSummary } from "@/components/design/DesignOutcomeSummary";
 import { UnitMixSimulatorPanel } from "@/components/design/UnitMixSimulatorPanel";
@@ -192,6 +193,43 @@ function SectionClipper({ enabled, cutHeight }: { enabled: boolean; cutHeight: n
     };
   }, [gl, invalidate, enabled, cutHeight]);
   return null;
+}
+
+// §4-E 측정: 픽한 점(들)에 마커·연결선·거리 라벨을 그린다. 2점이면 점-점 거리(formatLength).
+// frameloop="demand"라 점 변경 시 invalidate. Canvas 내부에서만 사용.
+function MeasureOverlay({ points }: { points: Vec3[] }) {
+  const invalidate = useThree((s) => s.invalidate);
+  useEffect(() => {
+    invalidate();
+  }, [points, invalidate]);
+  if (points.length === 0) return null;
+  const mid = points.length === 2 ? midpoint3D(points[0], points[1]) : null;
+  return (
+    <>
+      {points.map((p, i) => (
+        <Sphere key={i} args={[0.4, 12, 12]} position={[p.x, p.y, p.z]}>
+          <meshBasicMaterial color="#f59e0b" />
+        </Sphere>
+      ))}
+      {points.length === 2 && (
+        <Line
+          points={[
+            [points[0].x, points[0].y, points[0].z],
+            [points[1].x, points[1].y, points[1].z],
+          ]}
+          color="#f59e0b"
+          lineWidth={2}
+        />
+      )}
+      {mid && (
+        <Html position={[mid.x, mid.y, mid.z]} center distanceFactor={28} zIndexRange={[20, 0]}>
+          <div className="whitespace-nowrap rounded-md bg-[#f59e0b] px-1.5 py-0.5 text-[10px] font-black text-black shadow-lg">
+            {formatLength(distance3D(points[0], points[1]))}
+          </div>
+        </Html>
+      )}
+    </>
+  );
 }
 
 // ── 카메라 시점 프리셋(비전문가용 시점 전환) ──────────────────────
@@ -384,6 +422,9 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
   // §4-E: 단면(slicer) — 절단선 위를 잘라 내부를 본다. pct 100=전체(절단 없음).
   const [sectionOn, setSectionOn] = useState(false);
   const [sectionPct, setSectionPct] = useState(100);
+  // §4-E 측정: 모델 표면 두 점을 클릭해 거리를 잰다. 3번째 클릭은 새 측정 시작.
+  const [measureMode, setMeasureMode] = useState(false);
+  const [measurePoints, setMeasurePoints] = useState<Vec3[]>([]);
 
   // 시점 프리셋 버튼 핸들러: 같은 프리셋 재선택도 보간 재적용(seq 증가).
   const applyPreset = useCallback((key: CamPresetKey) => {
@@ -1041,7 +1082,22 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
                 height={modelDims.height}
                 autoRotate={autoRotate}
               />
-              <BuildingModel scene={bimScene} spec={spec} />
+              {/* §4-E 측정: measureMode면 모델 클릭 위치(world)를 점으로 수집(2점→거리) */}
+              <group
+                onClick={(e: ThreeEvent<MouseEvent>) => {
+                  if (!measureMode) return;
+                  e.stopPropagation();
+                  const p = e.point;
+                  setMeasurePoints((prev) =>
+                    prev.length >= 2
+                      ? [{ x: p.x, y: p.y, z: p.z }]
+                      : [...prev, { x: p.x, y: p.y, z: p.z }],
+                  );
+                }}
+              >
+                <BuildingModel scene={bimScene} spec={spec} />
+              </group>
+              <MeasureOverlay points={measurePoints} />
               {/* §4-E 단면: 절단선을 모델 실측 base(minY)에 접지 — world-y = minY + 상대절단높이.
                   서버 glTF가 Y중심화돼 base가 y=0이 아니어도 슬라이더 전 범위가 정확히 작동한다. */}
               <SectionClipper
@@ -1111,6 +1167,41 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
                 >
                   {sectionOn ? "■ 단면 ON" : "▤ 단면"}
                 </button>
+                {/* §4-E 측정 — 모델 두 점을 클릭해 거리를 잰다 */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMeasureMode((v) => !v);
+                    setMeasurePoints([]);
+                  }}
+                  aria-pressed={measureMode}
+                  title="모델 표면 두 점을 클릭해 거리를 측정합니다"
+                  className={`rounded-full px-3 py-1.5 text-[10px] font-black uppercase tracking-widest transition-colors ${
+                    measureMode
+                      ? "bg-[#f59e0b] text-black"
+                      : "text-white/55 hover:text-white hover:bg-white/10"
+                  }`}
+                >
+                  {measureMode ? "■ 측정 ON" : "📏 측정"}
+                </button>
+                {measureMode && (
+                  <span className="whitespace-nowrap text-[10px] font-bold text-white/70">
+                    {measurePoints.length === 0
+                      ? "첫 점을 클릭"
+                      : measurePoints.length === 1
+                        ? "둘째 점을 클릭"
+                        : `거리 ${formatLength(distance3D(measurePoints[0], measurePoints[1]))} · 다시 클릭=새 측정`}
+                    {measurePoints.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setMeasurePoints([])}
+                        className="ml-2 rounded px-1.5 py-0.5 text-white/50 hover:text-white hover:bg-white/10"
+                      >
+                        초기화
+                      </button>
+                    )}
+                  </span>
+                )}
                 {sectionOn && (
                   <>
                     <input
