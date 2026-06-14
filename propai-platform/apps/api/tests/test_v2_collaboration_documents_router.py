@@ -77,11 +77,23 @@ def _build_client(monkeypatch, *, member=None, get_doc=None, docs=None):
     async def _fake_soft_delete(db, doc):
         doc.status = "deleted"
 
+    async def _fake_audit(db, *, filename, data):
+        # SP3-4 8엔진 투입을 결정론 fake로 대체(실 orchestrator/ezdxf 불필요).
+        return ("completed", {"verdict": "적합", "findings_count": 1,
+                              "engines_run": 1, "engines_skipped": 7})
+
+    async def _fake_update_audit(db, doc, audit_status, audit_summary):
+        doc.audit_status = audit_status
+        doc.audit_summary = audit_summary
+        return doc
+
     monkeypatch.setattr(v2mod, "upload_collab_document", _fake_upload)
+    monkeypatch.setattr(v2mod, "run_design_document_audit", _fake_audit)
     monkeypatch.setattr(repo, "insert_document", _fake_insert)
     monkeypatch.setattr(repo, "list_documents", _fake_list)
     monkeypatch.setattr(repo, "get_document", _fake_get)
     monkeypatch.setattr(repo, "soft_delete_document", _fake_soft_delete)
+    monkeypatch.setattr(repo, "update_document_audit", _fake_update_audit)
     return TestClient(app)
 
 
@@ -95,13 +107,14 @@ def _upload(client, *, filename, content_type, category=None, content=b"DATA"):
 
 
 class TestUploadDocument:
-    def test_dxf_is_design_pending(self, monkeypatch):
+    def test_dxf_is_design_audited(self, monkeypatch):
         client = _build_client(monkeypatch)
         r = _upload(client, filename="plan.dxf", content_type="application/octet-stream")
         assert r.status_code == 200, r.text
         j = r.json()
-        assert j["doc_kind"] == "design"          # DXF → 8엔진 대상
-        assert j["audit_status"] == "pending"      # SP3-4가 실투입
+        assert j["doc_kind"] == "design"            # DXF → 8엔진 대상
+        assert j["audit_status"] == "completed"      # SP3-4: 업로드 시 8엔진 실투입(best-effort)
+        assert j["audit_summary"]["findings_count"] == 1
         assert j["review_state"] == "requested"
         assert j["file_url"] == "https://signed.example/doc"
         assert j["original_filename"] == "plan.dxf"

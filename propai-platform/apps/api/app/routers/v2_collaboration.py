@@ -33,6 +33,7 @@ from app.services.collaboration.collaboration_rules import (
     classify_doc_kind,
     normalize_document_category,
 )
+from app.services.collaboration.document_audit_service import run_design_document_audit
 from app.services.collaboration.collaboration_service import (
     accept_invite_result,
     build_invite_fields,
@@ -214,6 +215,19 @@ async def upload_project_document(
         "status": "active",
     }
     doc = await repo.insert_document(db, fields)
+
+    # SP3-4 정직 type-routing — 설계파일(DXF/IFC)은 8엔진 실투입(결정론·LLM 0). 업로드는 이미
+    # 성공했으므로 감사는 best-effort(실패 시 audit_status='failed'로 정직 표기, 업로드 무중단).
+    if doc_kind == "design":
+        try:
+            a_status, a_summary = await run_design_document_audit(
+                db, filename=filename, data=data
+            )
+        except Exception as exc:  # noqa: BLE001 — best-effort: 업로드 성공 보존, 정직 표기
+            logger.warning("collab_document_audit_failed", error=str(exc)[:200])
+            a_status, a_summary = "failed", {"error": str(exc)[:160]}
+        doc = await repo.update_document_audit(db, doc, a_status, a_summary)
+
     return _document_out(doc)
 
 
