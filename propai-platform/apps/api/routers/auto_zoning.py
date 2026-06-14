@@ -19,6 +19,7 @@ class ZoningAnalyzeRequest(BaseModel):
     pnu: str | None = None
     bcode: str | None = None  # 카카오 법정동 코드 (10자리)
     jibun_address: str | None = None  # 카카오 지번 주소
+    refresh: bool = False  # True면 저장된 조례 해석을 무시하고 재조사(사용자 '재분석' 실행)
 
 
 def _zone_limits_compact(zone_type: str | None) -> dict | None:
@@ -368,9 +369,11 @@ async def analyze_zoning(req: ZoningAnalyzeRequest):
         if not has_ord and result.get("zone_type"):
             from app.services.land_intelligence.ordinance_service import OrdinanceService
 
-            _ord = await OrdinanceService().get_ordinance_limits(req.address, result.get("zone_type") or "")
+            _ord = await OrdinanceService().get_ordinance_limits(
+                req.address, result.get("zone_type") or "", force_refresh=bool(req.refresh))
             if isinstance(_ord, dict) and _ord.get("ordinance_far"):
                 result["local_ordinance"] = _ord  # far_tier 가 effective_far=min(법정,조례) 로 채택
+                result["ordinance_provenance"] = _ord.get("provenance")  # 출처·신뢰도·재확인 표기(정직)
     except Exception:  # noqa: BLE001 — 조례 조회 실패 시 기존 폴백 유지(무손상)
         pass
 
