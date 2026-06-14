@@ -24,6 +24,7 @@ import UnitGrid from "@/components/sales/UnitGrid";
 // Phase 1-C — 세대배치도 실시간 선점 보드(hold/release/reserve·TTL·WS).
 import UnitLiveBoard from "@/components/sales/UnitLiveBoard";
 import Unit360Panel from "@/components/sales/Unit360Panel";
+import DrawMode from "@/components/sales/DrawMode";
 import PriceTableEditor from "@/components/sales/PriceTableEditor";
 import PriceGroupingPanel from "@/components/sales/PriceGroupingPanel";
 import PricingConfigPanel from "@/components/sales/PricingConfigPanel";
@@ -71,7 +72,7 @@ export default function SiteWorkspaceClient({ locale, siteId }: { locale: Locale
   const [pwOpen, setPwOpen] = useState(false);
   const [tab, setTab] = useState<string>("units");
   // 세대 탭 보드 전환: 실시간 선점(live) ↔ 배치도·상세(grid). 두 보드 동시 렌더(중복) 방지.
-  const [unitView, setUnitView] = useState<"live" | "grid">("live");
+  const [unitView, setUnitView] = useState<"live" | "grid" | "draw">("live");
   const [err, setErr] = useState("");
 
   // 분양가 탭용 차수(round) 로딩 — 기존 SalesSiteWorkspace 동일 방식.
@@ -284,14 +285,19 @@ export default function SiteWorkspaceClient({ locale, siteId }: { locale: Locale
                 <button role="tab" aria-selected={unitView === "live"} data-active={unitView === "live"}
                   onClick={() => setUnitView("live")} className="sa-seg__item">🟢 실시간 선점</button>
                 <button role="tab" aria-selected={unitView === "grid"} data-active={unitView === "grid"}
-                  onClick={() => setUnitView("grid")} className="sa-seg__item">🗺️ 배치도·상세</button>
+                  onClick={() => setUnitView("grid")} className="sa-seg__item">🗺️ 동·호지정</button>
+                <button role="tab" aria-selected={unitView === "draw"} data-active={unitView === "draw"}
+                  onClick={() => setUnitView("draw")} className="sa-seg__item">🎲 동·호추첨</button>
               </div>
               {unitView === "live" ? (
                 /* Phase 1-C — 실시간 동호수 선점(hold/release/reserve)·TTL·WS 동기화 */
                 <UnitLiveBoard siteCode={siteId} />
+              ) : unitView === "draw" ? (
+                /* 동·호추첨 모드 — 추첨그룹·대상자·즉석추첨(무작위 공개)·seed 감사 */
+                <DrawMode siteCode={siteId} />
               ) : (
                 <>
-                  {/* 2D/3D 배치도(확대·축소) + 클릭 시 세대 상세(분양가·계약) */}
+                  {/* 동·호지정 모드 — 2D/3D 배치도(확대·축소) + 클릭 시 액션메뉴·특이사항·계약상세·타임라인 */}
                   <UnitGrid siteCode={siteId} />
                   <Unit360Panel siteCode={siteId} />
                 </>

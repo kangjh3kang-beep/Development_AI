@@ -421,6 +421,13 @@ async def unit_verify_chain(unit_id: uuid.UUID, db: AsyncSession = Depends(get_d
 _DRAW_MGR = ("TEAM_LEADER", "GM_DIRECTOR", "SUBAGENCY", "AGENCY", "DEVELOPER", "SUPERADMIN")
 
 
+@actions_router.get("/draw/groups")
+async def draw_groups_list(db: AsyncSession = Depends(get_db), ctx: SalesCtx = Depends(sales_ctx)):
+    """현장 추첨그룹 목록."""
+    from app.services.sales.draw.draw_engine import list_groups
+    return await list_groups(db, ctx.site_id)
+
+
 @actions_router.post("/draw/groups")
 async def draw_group_create(body: dict, db: AsyncSession = Depends(get_db),
                             ctx: SalesCtx = Depends(require_role(*_DRAW_MGR))):

@@ -73,6 +73,19 @@ async def create_group(db: AsyncSession, site_id, name: str) -> dict[str, Any]:
     return {"id": str(row[0]), "name": name.strip(), "status": "OPEN"}
 
 
+async def list_groups(db: AsyncSession, site_id) -> list[dict[str, Any]]:
+    """현장 추첨그룹 목록(대상자수·완료수 포함)."""
+    await _ensure(db)
+    rows = (await db.execute(text(
+        "SELECT g.id, g.name, g.status, g.created_at, "
+        "  (SELECT count(*) FROM sales_draw_candidates c WHERE c.group_id=g.id) AS cand, "
+        "  (SELECT count(*) FROM sales_draw_candidates c WHERE c.group_id=g.id AND c.assigned_unit_id IS NOT NULL) AS drawn "
+        "FROM sales_draw_groups g WHERE g.site_id=:s ORDER BY g.created_at DESC"),
+        {"s": str(site_id)})).all()
+    return [{"id": str(r[0]), "name": r[1], "status": r[2], "created_at": str(r[3]),
+             "candidates": int(r[4]), "drawn": int(r[5])} for r in rows]
+
+
 async def set_pool(db: AsyncSession, site_id, group_id, unit_ids: list[str]) -> dict[str, Any]:
     """그룹 동·호판(추첨 대상 세대 집합) 지정."""
     await _ensure(db)
@@ -232,10 +245,11 @@ async def group_status(db: AsyncSession, site_id, group_id) -> dict[str, Any]:
     if not g:
         raise ValueError("추첨그룹을 찾을 수 없습니다")
     cands = (await db.execute(text(
-        "SELECT c.seq, c.name, c.phone, c.assigned_unit_id, c.draw_seed, c.drawn_at, u.dong, u.ho "
+        "SELECT c.seq, c.name, c.phone, c.assigned_unit_id, c.draw_seed, c.drawn_at, u.dong, u.ho, c.id "
         "FROM sales_draw_candidates c LEFT JOIN sales_unit_inventory u ON u.id=c.assigned_unit_id "
         "WHERE c.group_id=:g ORDER BY c.seq ASC"), {"g": str(group_id)})).all()
     roster = [{
+        "id": str(c[8]),  # candidate_id — 프론트 추첨 버튼용
         "seq": int(c[0]), "name": c[1], "phone": c[2],
         "assigned_unit_id": str(c[3]) if c[3] else None,
         "assigned_label": (f"{c[6]}동 {c[7]}호" if c[3] and c[6] else None),

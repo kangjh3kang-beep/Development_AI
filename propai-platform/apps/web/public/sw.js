@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v173-unit-lifecycle";
+const CACHE_NAME = "propai-v174-draw-mode";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",
