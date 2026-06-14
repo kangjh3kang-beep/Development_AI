@@ -23,6 +23,16 @@
 - 백엔드 로직·계약: **29 passed**(모델·서비스코어·의존성·라우터 contract). alembic heads=025·체인 유효·import OK.
 - ⚠️ **DB-apply·DB CRUD 통합은 미검증**(격리 worktree에 Postgres 없음) → 배포 시점에 위 스모크로 1차 확인 필요.
 
-## 4. 범위 경계
-- 본 인계는 **백엔드 회의방 MVP**(멤버/초대). 화상회의(LiveKit)·자료교환·보정 상태머신·프론트 회의방 탭은 후속(SP2-4~Phase2/3) — 별도 배포.
+## 4. 프론트 회의방 (SP2-4·SP2-5 — 추가 푸시됨)
+| 커밋 | 내용 |
+|---|---|
+| `3f6f3d0` | **SP2-4** 회의방 워크스페이스 — 라우트 `/[locale]/projects/[id]/collaboration` + 팀·협력업체 명부 + 외부 협력업체 심의 초대폼(이메일·6카테고리·만료·토큰 1회노출) + use-collaboration-store + lib/collaboration 순수코어 |
+| `c75ef33` | **SP2-5** 좌측 사이드바 `설계 참고 > 프로젝트 회의방` 진입 + `/[locale]/meeting-rooms` 리스트 랜딩(프로젝트→회의방 연결) |
+
+- **신규 마이그레이션 없음** — 프론트 전용. 배포는 **프론트엔드 재빌드/재배포**만 하면 됨(`apps/web` `next build`).
+- 두 라우트 모두 `/api/v2/collaboration/*` 백엔드(§1·2)에 의존 → **alembic 025 적용 + 라우터 마운트가 선행**되어야 실제 동작(미적용 시 명부 빈 목록·초대 발급 500).
+- 프론트 검증(trust-infra): SP2-4 vitest 9·스모크 1 passed, SP2-5 스모크 1 passed, tsc 0·next build 0(두 라우트 빌드 확인).
+- 후속(Phase 2/3, 미구현·UI에 정직 표기): 자료교환·의견교환·화상회의(LiveKit)·8엔진 심의검증·보정 상태머신.
+
+## 5. 범위 경계
 - trust-infra는 배포 안 함. 배포·롤백·prod 환경변수는 배포 담당 책임.
