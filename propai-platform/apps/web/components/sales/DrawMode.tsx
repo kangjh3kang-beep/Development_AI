@@ -1,13 +1,15 @@
 "use client";
 
 /**
- * 동·호 추첨 모드 — 추첨그룹·대상자(수기/Excel/계약자명부)·순번 즉석추첨(무작위 동호 공개)·seed 감사.
- * 백엔드: /sales/draw/groups(목록·생성)·/{id}/candidates(+excel·from-customers)·/{id}/candidates/{cid}/draw·/status
+ * 동·호 추첨 모드 — 추첨그룹·대상자(수기/Excel/계약자명부/청약당첨자)·순번 즉석추첨(무작위 동호 공개)·seed 감사.
+ * 청약→당첨→동·호배정 흐름 연결: 청약 당첨자 명부를 당첨 우선순위 순번대로 추첨 대상자로 자동 시드.
+ * 백엔드: /sales/draw/groups(목록·생성)·/{id}/candidates(+excel·from-customers·from-winners)·/{id}/candidates/{cid}/draw·/status
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { salesApi } from "@/lib/salesApi";
 
 interface Group { id: string; name: string; status: string; candidates: number; drawn: number }
+interface Ann { id: string; announce_no?: string; status: string }
 interface RosterItem { id: string; seq: number; name: string; phone?: string; assigned_unit_id?: string | null; assigned_label?: string | null; seed?: string | null; done: boolean }
 interface Status { group_id: string; name: string; candidates: number; drawn: number; remaining_units: number; roster: RosterItem[] }
 interface DrawResult { candidate: { seq: number; name: string }; assigned_unit: { dong?: string; ho?: string }; seed: string; pool_size: number; remaining_after: number }
@@ -19,6 +21,8 @@ export default function DrawMode({ siteCode }: { siteCode: string }) {
   const [st, setSt] = useState<Status | null>(null);
   const [newName, setNewName] = useState("");
   const [manual, setManual] = useState("");
+  const [anns, setAnns] = useState<Ann[]>([]);
+  const [annId, setAnnId] = useState("");
   const [busy, setBusy] = useState(false);
   const [reveal, setReveal] = useState<DrawResult | null>(null);
   const [rolling, setRolling] = useState(false);
@@ -36,6 +40,10 @@ export default function DrawMode({ siteCode }: { siteCode: string }) {
 
   useEffect(() => { loadGroups(); }, [loadGroups]);
   useEffect(() => { loadStatus(gid); }, [gid, loadStatus]);
+  useEffect(() => {
+    api.get<Ann[]>("/subscription/announcements").then((a) => setAnns(a || [])).catch(() => setAnns([]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [siteCode]);
 
   const createGroup = async () => {
     if (!newName.trim()) return;
@@ -60,6 +68,16 @@ export default function DrawMode({ siteCode }: { siteCode: string }) {
     setBusy(true);
     try { const r = await api.post<{ added: number }>(`/draw/groups/${gid}/candidates/from-customers`, {}); alert(`${r?.added ?? 0}명 등록`); loadStatus(gid); }
     catch { alert("명부 등록 실패"); } finally { setBusy(false); }
+  };
+  // 청약→당첨→동·호배정 연계: 선택 공고의 당첨자를 당첨 우선순위 순번대로 추첨 대상자로 시드.
+  const fromWinners = async () => {
+    if (!annId) { alert("청약 공고를 선택하세요"); return; }
+    setBusy(true);
+    try {
+      const r = await api.post<{ added: number; note?: string }>(`/draw/groups/${gid}/candidates/from-winners`, { announcement_id: annId });
+      alert(r?.note ? r.note : `청약 당첨자 ${r?.added ?? 0}명을 추첨 대상자로 등록(당첨 우선순위 순번)`);
+      loadStatus(gid); loadGroups();
+    } catch (e) { alert(e instanceof Error && e.message ? e.message : "당첨자 등록 실패"); } finally { setBusy(false); }
   };
   const uploadExcel = async (file: File) => {
     setBusy(true);
@@ -118,6 +136,16 @@ export default function DrawMode({ siteCode }: { siteCode: string }) {
                 <input ref={fileRef} type="file" accept=".xlsx" onChange={(e) => e.target.files?.[0] && uploadExcel(e.target.files[0])} className="text-xs" />
                 <button onClick={fromCustomers} disabled={busy} className="rounded-lg border border-[var(--line)] px-3 py-1.5 text-xs font-bold text-[var(--text-secondary)] disabled:opacity-50">계약자명부 전체</button>
               </div>
+            </div>
+            {/* 청약→당첨→동·호배정 연계: 당첨자 명부를 당첨 우선순위 순번대로 시드 */}
+            <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-[var(--line)] pt-2">
+              <span className="text-[10px] text-[var(--text-tertiary)]">🎟️ 청약 연계</span>
+              <select value={annId} onChange={(e) => setAnnId(e.target.value)} className="rounded-lg border border-[var(--line)] bg-[var(--surface-strong)] px-2 py-1.5 text-xs">
+                <option value="">청약 공고 선택…</option>
+                {anns.map((a) => <option key={a.id} value={a.id}>{a.announce_no ?? a.id.slice(0, 8)} · {a.status}</option>)}
+              </select>
+              <button onClick={fromWinners} disabled={busy || !annId} className="rounded-lg border border-[var(--accent-strong)] px-3 py-1.5 text-xs font-bold text-[var(--accent-strong)] disabled:opacity-50">당첨자 시드</button>
+              <span className="text-[10px] text-[var(--text-hint)]">당첨 우선순위(순위·가점)대로 추첨 대상자 자동 등록</span>
             </div>
           </div>
 

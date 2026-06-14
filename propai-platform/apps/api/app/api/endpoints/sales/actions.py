@@ -477,6 +477,22 @@ async def draw_from_customers(group_id: uuid.UUID, body: dict, db: AsyncSession 
     return await from_customers(db, ctx.site_id, group_id, body.get("customer_ids"))
 
 
+@actions_router.post("/draw/groups/{group_id}/candidates/from-winners")
+async def draw_from_winners(group_id: uuid.UUID, body: dict, db: AsyncSession = Depends(get_db),
+                            ctx: SalesCtx = Depends(require_role(*_DRAW_MGR))):
+    """청약 당첨자 명부 → 동·호 추첨 대상자 시드(청약→당첨→동·호배정 흐름 연결). body.announcement_id 필수."""
+    from fastapi import HTTPException
+
+    from app.services.sales.draw.draw_engine import from_winners
+    ann = body.get("announcement_id")
+    if not ann:
+        raise HTTPException(400, "announcement_id(청약 공고) 필요")
+    try:
+        return await from_winners(db, ctx.site_id, group_id, ann)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+
+
 @actions_router.post("/draw/groups/{group_id}/candidates/excel")
 async def draw_import_excel(group_id: uuid.UUID, file: UploadFile = File(...), db: AsyncSession = Depends(get_db),
                             ctx: SalesCtx = Depends(require_role(*_DRAW_MGR))):

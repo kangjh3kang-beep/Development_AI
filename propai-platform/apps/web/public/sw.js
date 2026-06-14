@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v176-panel-consistency";
+const CACHE_NAME = "propai-v177-subscription-draw-link";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

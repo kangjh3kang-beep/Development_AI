@@ -169,6 +169,32 @@ async def from_customers(db: AsyncSession, site_id, group_id, customer_ids: list
     return await add_candidates(db, site_id, group_id, cands)
 
 
+async def from_winners(db: AsyncSession, site_id, group_id, announcement_id) -> dict[str, Any]:
+    """청약 당첨자 명부 → 동·호 추첨 대상자 시드(흐름 연결: 청약→당첨→동·호배정).
+
+    당첨자(sales_subscription_winners)를 당첨 우선순위(순위 rank↑, 가점 gajeom_score↓)대로
+    추첨 대상자로 등록한다 → 순번이 곧 당첨 우선순위. 신청에 고객(customer_id)이 연결돼 있으면
+    이름·연락처를, 없으면(청약홈 채널 등) '당첨자 NNNN'으로 표기한다. run_draw 의 세대 자동배정과
+    무관하게 '사람'만 대상자로 시드하므로 비파괴(동·호 풀은 set_pool 로 별도 지정)."""
+    await _ensure(db)
+    rows = (await db.execute(text(
+        "SELECT w.id, a.customer_id, c.name, c.phone, COALESCE(a.rank,9) AS rk, COALESCE(a.gajeom_score,0) AS gj "
+        "FROM sales_subscription_winners w "
+        "JOIN sales_subscription_applications a ON a.id = w.application_id "
+        "LEFT JOIN sales_customers c ON c.id = a.customer_id "
+        "WHERE w.site_id=:s AND a.announcement_id=:ann "
+        "ORDER BY rk ASC, gj DESC, w.decided_at ASC"),
+        {"s": str(site_id), "ann": str(announcement_id)})).all()
+    cands = [{
+        "name": (r[2] or f"당첨자 {str(r[0])[:4]}"),
+        "phone": r[3],
+        "customer_id": (str(r[1]) if r[1] else None),
+    } for r in rows]
+    if not cands:
+        return {"ok": True, "added": 0, "note": "해당 공고의 당첨자가 없습니다(추첨 실행 전이거나 당첨 0)."}
+    return await add_candidates(db, site_id, group_id, cands)
+
+
 async def _remaining_units(db: AsyncSession, site_id, group_id) -> list[str]:
     """그룹 동·호판에서 아직 배정되지 않은(AVAILABLE) 세대 목록."""
     import json
