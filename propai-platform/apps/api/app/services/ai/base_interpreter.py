@@ -382,12 +382,28 @@ class BaseInterpreter:
         except Exception:  # noqa: BLE001
             _trace_cfg = {}
 
+        _t0 = time.monotonic()
         try:
             response = await asyncio.wait_for(
                 llm.ainvoke(messages, config=_trace_cfg), timeout=self._timeout_sec
             )
         except Exception as e:  # noqa: BLE001
             logger.warning("인터프리터 LLM 호출 실패", interp=self.name, error=str(e)[:120])
+            # 자가성장 텔레메트리: 호출 실패도 품질 신호로 1줄 기록(예외 안전).
+            try:
+                from app.services.growth import capture_service as _gcap
+                _gcap.record_event(
+                    "llm_call",
+                    {
+                        "surface": "api",
+                        "service": self.name,
+                        "severity": "error",
+                        "latency_ms": int((time.monotonic() - _t0) * 1000),
+                        "payload": {"ok": False, "error": str(e)[:120]},
+                    },
+                )
+            except Exception:  # noqa: BLE001
+                pass
             return {}
 
         raw_text = response.content if hasattr(response, "content") else str(response)
@@ -412,6 +428,31 @@ class BaseInterpreter:
         )
         cached_total = cache_read + cache_creation
         cache_hit_ratio = round(cache_read / cached_total, 3) if cached_total else 0.0
+
+        # 자가성장 텔레메트리(설계서 §3.2): 빌링 정본(llm_usage_log)은 위에서 기록하고,
+        # 여기서는 품질·지연 신호만 platform_events 에 1줄 push(논블로킹, 예외 안전).
+        # ⚠️ 토큰/비용 중복 INSERT 아님 — 신호용 부가 이벤트.
+        try:
+            from app.services.growth import capture_service as _gcap
+            _gcap.record_event(
+                "llm_call",
+                {
+                    "surface": "api",
+                    "service": self.name,
+                    "severity": "info",
+                    "latency_ms": int((time.monotonic() - _t0) * 1000),
+                    "payload": {
+                        "ok": True,
+                        "input_tokens": input_tokens,
+                        "output_tokens": output_tokens,
+                        "cache_hit": cache_hit_ratio,
+                        "cache_read": cache_read,
+                        "retry": bool(self._retry_feedback),
+                    },
+                },
+            )
+        except Exception:  # noqa: BLE001 — 텔레메트리 실패가 추론을 깨뜨리지 않음.
+            pass
         logger.info(
             "인터프리터 LLM 완료",
             interp=self.name,

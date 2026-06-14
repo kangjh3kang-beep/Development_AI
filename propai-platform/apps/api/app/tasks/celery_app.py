@@ -64,6 +64,16 @@ def _create_app() -> "Celery":
             "schedule": crontab(hour=4, minute=0),
             "options": {"queue": "auction"},
         },
+        # 자가성장 엔진 — 텔레메트리 큐 → platform_events 배치 적재(5초 주기).
+        # ⚠️ Phase 1 정본은 main.py 인프로세스 flush 루프(같은 프로세스 deque 드레인)다.
+        #    capture_service 큐는 프로세스-로컬이라 별도 Celery 워커에는 API 가 쌓은
+        #    이벤트가 보이지 않아 이 스케줄은 현재 무동작이다. 향후 Redis 공유큐 전환
+        #    시 활성화된다(스케줄은 등록만 유지).
+        "flush-growth-events": {
+            "task": "app.tasks.growth_tasks.flush_growth_events",
+            "schedule": 5.0,  # 5초 주기(초 단위 float)
+            "options": {"queue": "growth"},
+        },
     }
 
     _app.autodiscover_tasks(["app.tasks"])
@@ -83,6 +93,7 @@ BEAT_SCHEDULE_NAMES = [
     "check-standard-prices-weekly",
     "check-pension-increase-monthly",
     "sync-onbid-auctions-daily",
+    "flush-growth-events",
 ]
 
 TASK_NAMES = [
@@ -91,4 +102,5 @@ TASK_NAMES = [
     "app.tasks.rate_tasks.check_pension_increase",
     "app.tasks.cost_tasks.recalculate_project_cost",
     "app.tasks.auction_sync_task.sync_onbid_auctions",
+    "app.tasks.growth_tasks.flush_growth_events",
 ]

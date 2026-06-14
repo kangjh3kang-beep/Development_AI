@@ -1,5 +1,8 @@
 "use client";
 
+import { useEffect } from "react";
+import { trackEvent } from "@/lib/growth/event-collector";
+
 export default function DashboardError({
   error,
   reset,
@@ -7,6 +10,23 @@ export default function DashboardError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  // 자가성장 엔진: 대시보드 렌더 에러를 js_error 로 계측(논블로킹·UI 영향 없음).
+  useEffect(() => {
+    try {
+      trackEvent("js_error", {
+        severity: "error",
+        payload: {
+          scope: "dashboard-error",
+          message: error?.message ?? "",
+          digest: error?.digest ?? null,
+          stack: error?.stack ? error.stack.slice(0, 2000) : null,
+        },
+      });
+    } catch {
+      /* noop */
+    }
+  }, [error]);
+
   return (
     <div className="flex flex-col items-center justify-center min-h-[60vh] gap-6 p-8">
       <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-red-500/10 text-red-400">

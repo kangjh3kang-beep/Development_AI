@@ -234,6 +234,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except Exception:
         logger.warning("플랫폼 시크릿 env 로드 실패 — .env 값으로 시작")
 
+    # 자가성장 엔진 — 텔레메트리 3 테이블 멱등 보장(마이그레이션 미적용 환경 안전망).
+    try:
+        from apps.api.database.session import AsyncSessionLocal
+        from app.services.growth import schema_guard
+        async with AsyncSessionLocal() as _s:
+            ok = await schema_guard.ensure_schema(_s)
+        logger.info("growth schema_guard", ensured=ok)
+    except Exception:
+        logger.warning("growth schema_guard 호출 실패 — 마이그레이션에 의존")
+
     # LangSmith LLM 추적 활성화(키 있을 때만). load_into_env 이후여야 관리자 키가 반영됨.
     try:
         from apps.api.core.observability import init_langsmith
@@ -263,12 +273,52 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except Exception:  # noqa: BLE001
         logger.warning("분양 모니터링 루프 시작 실패")
 
+    # 자가성장 엔진 — 텔레메트리 큐 → platform_events 인프로세스 주기 flush.
+    # Celery Beat(5초)가 정본이지만, Celery 미배포 환경에서도 적재되도록
+    # _presale_monitor_loop 와 동일한 asyncio 폴백을 둔다(단일 워커 1개 루프).
+    async def _growth_flush_loop() -> None:
+        from apps.api.database.session import AsyncSessionLocal
+        from app.services.growth import capture_service
+        while True:
+            await _asyncio.sleep(5)
+            try:
+                if capture_service.queue_size() == 0:
+                    continue
+                async with AsyncSessionLocal() as _s:
+                    for _ in range(20):
+                        n = await capture_service.flush_batch(_s)
+                        if n < 500:
+                            break
+            except Exception as e:  # noqa: BLE001
+                logger.warning("growth flush 루프 오류: %s", str(e)[:160])
+
+    try:
+        app.state.growth_flush_task = _asyncio.create_task(_growth_flush_loop())
+    except Exception:  # noqa: BLE001
+        logger.warning("growth flush 루프 시작 실패")
+
     yield
 
     # ── 종료 ──
     _t = getattr(app.state, "presale_monitor_task", None)
     if _t is not None:
         _t.cancel()
+    _gt = getattr(app.state, "growth_flush_task", None)
+    if _gt is not None:
+        _gt.cancel()
+        # 루프 cancel 직후 마지막 동기 flush 1회 — 종료 시 큐 잔여 이벤트 유실 방지.
+        # best-effort: 어떤 예외도 종료를 막지 않는다.
+        try:
+            from apps.api.database.session import AsyncSessionLocal
+            from app.services.growth import capture_service
+            if capture_service.queue_size() > 0:
+                async with AsyncSessionLocal() as _fs:
+                    for _ in range(20):
+                        n = await capture_service.flush_batch(_fs)
+                        if n < 500:
+                            break
+        except Exception as e:  # noqa: BLE001
+            logger.warning("growth 종료 flush 오류: %s", str(e)[:160])
     logger.info("PropAI API 종료")
 
 
@@ -287,13 +337,22 @@ app = FastAPI(
 setup_middlewares(app)
 app.add_middleware(VersionHeaderMiddleware)
 
+# 자가성장 엔진 — 요청 텔레메트리 수집(논블로킹 큐 push만, 동기 INSERT 없음).
+# 헬스/메트릭/자기수집 경로는 미들웨어 내부 화이트리스트로 제외. best-effort 등록.
+try:
+    from apps.api.app.middleware.growth_telemetry import GrowthTelemetryMiddleware
+    app.add_middleware(GrowthTelemetryMiddleware)
+except Exception as _e:  # noqa: BLE001
+    logger.warning("growth 텔레메트리 미들웨어 등록 실패", err=str(_e)[:160])
+
 
 # 인증 사용자 ID를 요청 컨텍스트에 주입 (LLM 과금 누적·한도 차단용, best-effort)
 @app.middleware("http")
 async def _inject_user_context(request, call_next):
-    from app.core.request_context import set_current_user_id
+    from app.core.request_context import set_current_tenant_id, set_current_user_id
 
     set_current_user_id(None)
+    set_current_tenant_id(None)
     auth = request.headers.get("authorization") or request.headers.get("Authorization")
     if auth and auth.lower().startswith("bearer "):
         try:
@@ -302,6 +361,9 @@ async def _inject_user_context(request, call_next):
             payload = decode_token(auth.split(" ", 1)[1].strip())
             if getattr(payload, "sub", None):
                 set_current_user_id(str(payload.sub))
+            # 자가성장 텔레메트리 귀속용 테넌트 ID(best-effort).
+            if getattr(payload, "tenant_id", None):
+                set_current_tenant_id(str(payload.tenant_id))
         except Exception:  # noqa: BLE001 — 토큰 없음/무효는 무시(비로그인 허용)
             pass
     return await call_next(request)
@@ -480,6 +542,13 @@ try:
     app.include_router(admin_secrets_router, tags=["관리자·API키"])  # 자체 prefix
 except Exception as _e:  # noqa: BLE001
     logger.warning("admin_secrets 라우터 등록 실패", err=str(_e)[:160])
+
+# 자가성장 엔진 — 프론트 텔레메트리 수신 → /api/v1/growth/events (익명 허용)
+try:
+    from apps.api.app.routers.growth import router as growth_router
+    app.include_router(growth_router, prefix="/api/v1", tags=["자가성장 텔레메트리"])
+except Exception as _e:  # noqa: BLE001
+    logger.warning("growth 라우터 등록 실패", err=str(_e)[:160])
 
 # 관리자 — 분양(sales) RLS 부트스트랩(적용/상태/롤백) → /api/v1/admin/sales-rls/*
 try:
