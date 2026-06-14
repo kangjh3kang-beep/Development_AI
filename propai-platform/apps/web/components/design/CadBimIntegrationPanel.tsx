@@ -1278,6 +1278,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
               <div className="absolute bottom-6 left-1/2 z-30 flex -translate-x-1/2 items-center gap-3 rounded-2xl border border-white/10 bg-black/45 px-4 py-2 backdrop-blur-xl shadow-2xl">
                 <button
                   type="button"
+                  data-testid="bim3d-section"
                   onClick={() => setSectionOn((v) => !v)}
                   aria-pressed={sectionOn}
                   title="건물을 수평으로 잘라 내부(층별)를 봅니다"
@@ -1292,6 +1293,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
                 {/* §4-E 측정 — 모델 두 점을 클릭해 거리를 잰다 */}
                 <button
                   type="button"
+                  data-testid="bim3d-measure"
                   onClick={() => {
                     setMeasureMode((v) => {
                       const next = !v;
@@ -1331,6 +1333,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
                 {/* §4-D 요소 편집(gizmo) — 요소를 클릭 선택해 이동/회전(뷰포트 시점 편집·미저장) */}
                 <button
                   type="button"
+                  data-testid="bim3d-gizmo"
                   onClick={() => {
                     setGizmoMode((v) => {
                       const next = !v;
@@ -1735,6 +1738,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
             </button>
             <button
               type="button"
+              data-testid="cadbim-to-3d"
               onClick={() => { setEditMode(false); setViewMode("bim_3d"); }}
               className={`rounded-xl px-4 py-2 text-[10px] font-black uppercase tracking-widest transition-colors ${
                 viewMode === "bim_3d"
