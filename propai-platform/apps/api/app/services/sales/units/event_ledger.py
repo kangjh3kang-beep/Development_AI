@@ -83,15 +83,16 @@ async def append_event(db: AsyncSession, site_id, unit_id, event_type: str,
         {"u": uid})).first()
     seq = (int(last[0]) + 1) if last else 1
     prev_hash = last[1] if last else None
-    occurred_at = datetime.now(timezone.utc).isoformat()
+    occurred_dt = datetime.now(timezone.utc)          # timestamptz 컬럼용 datetime(asyncpg 네이티브)
+    occurred_at = occurred_dt.isoformat()              # 해시·occurred_iso 용 정확한 문자열
     chash = _hash(prev_hash, uid, seq, event_type, to_status, message, occurred_at, meta)
     await db.execute(text(
         "INSERT INTO sales_unit_events (site_id, unit_id, seq, event_type, from_status, to_status, "
         "  message, meta, created_by, occurred_at, occurred_iso, content_hash, prev_hash) "
-        "VALUES (:s,:u,:seq,:et,:fs,:ts,:msg,CAST(:meta AS jsonb),:by,CAST(:at AS timestamptz),:at,:ch,:ph)"),
+        "VALUES (:s,:u,:seq,:et,:fs,:ts,:msg,CAST(:meta AS jsonb),:by,:dt,:iso,:ch,:ph)"),
         {"s": str(site_id), "u": uid, "seq": seq, "et": event_type, "fs": from_status, "ts": to_status,
          "msg": message, "meta": json.dumps(meta, ensure_ascii=False) if meta else None,
-         "by": str(by) if by else None, "at": occurred_at, "ch": chash, "ph": prev_hash})
+         "by": str(by) if by else None, "dt": occurred_dt, "iso": occurred_at, "ch": chash, "ph": prev_hash})
     await db.commit()
     return {"seq": seq, "content_hash": chash, "prev_hash": prev_hash, "occurred_at": occurred_at}
 
