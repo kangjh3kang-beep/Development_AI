@@ -29,7 +29,7 @@ export interface ReviewCommentNode extends ReviewComment {
   depth: number;
 }
 
-/** 시각 들여쓰기 상한(데이터는 무제한 중첩, 렌더 깊이만 캡). */
+/** 시각 들여쓰기 상한(데이터는 무제한 중첩, 렌더 깊이만 캡). 렌더 레이어에서 Math.min(depth, INDENT_CAP)로 클램프. */
 export const INDENT_CAP = 5;
 
 /**
@@ -61,7 +61,8 @@ export function buildCommentTree(flat: ReviewComment[]): ReviewCommentNode[] {
   return prune(roots, 0);
 }
 
-/** 댓글 상태 배지 — 삭제/해결 표기(정직). 평범한 active는 배지 없음. */
+/** 댓글 상태 배지 — 삭제/해결 표기(정직). 평범한 active는 배지 없음.
+ *  우선순위 삭제>해결: 삭제된 스레드는 resolved 여부와 무관하게 "삭제됨"(본문이 사라졌으므로 삭제가 지배 상태). */
 export function commentStateBadge(
   c: Pick<ReviewComment, "resolved" | "status">,
 ): { label: string; tone: StatusTone } | null {
