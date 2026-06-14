@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v177-subscription-draw-link";
+const CACHE_NAME = "propai-v178-installment-schedule";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

@@ -1,7 +1,7 @@
 """Part5 라이프사이클 액션 — 청약 배정/예비/선착순 + 옵션 + 대출실행 + 수납(VA/대사/수동매칭)."""
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import select, text
@@ -66,7 +66,7 @@ async def va_issue(body: dict, db: AsyncSession = Depends(get_db),
     try:
         cid = uuid.UUID(str(body["contract_id"]))
     except (KeyError, ValueError, TypeError):
-        raise HTTPException(400, "contract_id가 올바르지 않습니다.")
+        raise HTTPException(400, "contract_id가 올바르지 않습니다.") from None
     if not body.get("bank") or not body.get("va_number"):
         raise HTTPException(400, "은행·가상계좌번호는 필수입니다.")
     await issue_va(db, ctx.site_id, cid, body["bank"],
@@ -86,13 +86,14 @@ async def payments_webhook(body: dict, db: AsyncSession = Depends(get_db), ctx: 
 async def manual_match(payment_id: uuid.UUID, body: dict, db: AsyncSession = Depends(get_db),
                        ctx: SalesCtx = Depends(require_role("AGENCY", "DIRECTOR", "DEVELOPER"))):
     from fastapi import HTTPException
+
     from apps.api.database.models.sales.contract_crm_ad import SalesContractExt, SalesContractInstallment
     from apps.api.database.models.sales.payment import SalesPayment
     try:
         inst_id = uuid.UUID(str(body["installment_id"]))
         contract_id = uuid.UUID(str(body["contract_id"]))
     except (KeyError, ValueError, TypeError):
-        raise HTTPException(400, "installment_id·contract_id가 올바르지 않습니다.")
+        raise HTTPException(400, "installment_id·contract_id가 올바르지 않습니다.") from None
     # 같은 현장(site_id)의 결제만 수동매칭 허용 — 타 현장 결제 위조 차단.
     p = (await db.execute(select(SalesPayment).where(
         SalesPayment.id == payment_id, SalesPayment.site_id == ctx.site_id))).scalar_one_or_none()
@@ -112,7 +113,7 @@ async def manual_match(payment_id: uuid.UUID, body: dict, db: AsyncSession = Dep
     p.contract_ext_id = contract_id
     p.matched = True
     it.paid_amount = (it.paid_amount or 0) + (p.amount or 0)
-    it.paid_at = datetime.now(timezone.utc)
+    it.paid_at = datetime.now(UTC)
     await db.commit()
     return {"matched": True}
 
@@ -155,7 +156,7 @@ async def payment_adjustment(body: dict, db: AsyncSession = Depends(get_db),
         atype = str(body["adj_type"]).upper()
         amount = int(body["amount"])
     except (KeyError, ValueError, TypeError):
-        raise HTTPException(400, "contract_ext_id·adj_type(DISCOUNT/REFUND)·amount 필요")
+        raise HTTPException(400, "contract_ext_id·adj_type(DISCOUNT/REFUND)·amount 필요") from None
     if atype not in ("DISCOUNT", "REFUND") or amount <= 0:
         raise HTTPException(400, "adj_type은 DISCOUNT/REFUND, amount는 양수여야 합니다.")
     await db.execute(text(
@@ -184,7 +185,7 @@ async def payment_contract_summary(contract_id: str, db: AsyncSession = Depends(
         .order_by(SalesContractInstallment.seq))).scalars())
     billed = sum(int(i.amount or 0) for i in insts)
     paid = sum(int(i.paid_amount or 0) for i in insts)
-    today = datetime.now(timezone.utc).date()
+    today = datetime.now(UTC).date()
     overdue = [{"seq": i.seq, "due_date": str(i.due_date), "unpaid": int((i.amount or 0) - (i.paid_amount or 0))}
                for i in insts if i.due_date and i.due_date < today and (i.paid_amount or 0) < (i.amount or 0)]
     adj = (await db.execute(text(
@@ -200,4 +201,65 @@ async def payment_contract_summary(contract_id: str, db: AsyncSession = Depends(
                     "unpaid_amount": sum(o["unpaid"] for o in overdue)},
         "discount": adj_map.get("DISCOUNT", {"count": 0, "amount": 0}),
         "refund": adj_map.get("REFUND", {"count": 0, "amount": 0}),
+    }
+
+
+@r5.get("/payments/installments")
+async def payment_installments(contract_id: str, db: AsyncSession = Depends(get_db),
+                               ctx: SalesCtx = Depends(sales_ctx)):
+    """계약 회차별 납부 스케줄 — 계약금·중도금·잔금 회차의 약정일·금액·납부·미납·상태(PAID/PARTIAL/UNPAID/OVERDUE)
+    + 연체(일수·이자)를 오늘 기준으로 실시간 산출. 자금이동 미수행(현황·산출만)."""
+    from decimal import Decimal
+
+    from fastapi import HTTPException
+
+    from apps.api.database.models.sales.contract_crm_ad import SalesContractExt, SalesContractInstallment
+    from apps.api.database.models.sales.site_org import SalesSiteConfig
+    cid = uuid.UUID(contract_id)
+    c = (await db.execute(select(SalesContractExt).where(
+        SalesContractExt.id == cid, SalesContractExt.site_id == ctx.site_id))).scalar_one_or_none()
+    if not c:
+        raise HTTPException(404, "해당 현장의 계약을 찾을 수 없습니다.")
+    cfg = (await db.execute(select(SalesSiteConfig).where(
+        SalesSiteConfig.site_id == ctx.site_id))).scalar_one_or_none()
+    # 연체이율(약관 파라미터, 0이면 미설정 → 이자 0).
+    rate = float(((cfg.stage_def if cfg else None) or {}).get("overdue_rate", 0))
+    insts = list((await db.execute(select(SalesContractInstallment).where(
+        SalesContractInstallment.contract_ext_id == cid).order_by(SalesContractInstallment.seq))).scalars())
+    today = datetime.now(UTC).date()
+    kind_label = {"DOWN": "계약금", "MIDDLE": "중도금", "BALANCE": "잔금", "OPTION": "옵션"}
+    rows = []
+    t_billed = t_paid = t_unpaid = t_interest = 0
+    for it in insts:
+        amt = int(it.amount or 0)
+        paid = int(it.paid_amount or 0)
+        unpaid = amt - paid
+        overdue_days = 0
+        interest = 0
+        if unpaid <= 0:
+            status = "PAID"
+        elif paid > 0:
+            status = "PARTIAL"
+        else:
+            status = "UNPAID"
+        if unpaid > 0 and it.due_date and it.due_date < today:
+            status = "OVERDUE"
+            overdue_days = (today - it.due_date).days
+            interest = int(Decimal(unpaid) * overdue_days * (Decimal(str(rate)) / Decimal(365)))
+        rows.append({
+            "seq": it.seq, "kind": it.kind,
+            "kind_label": kind_label.get((it.kind or "").upper(), it.kind),
+            "amount": amt, "paid_amount": paid, "unpaid": unpaid,
+            "due_date": str(it.due_date) if it.due_date else None,
+            "paid_at": str(it.paid_at) if it.paid_at else None,
+            "status": status, "overdue_days": overdue_days, "overdue_interest": interest,
+        })
+        t_billed += amt
+        t_paid += paid
+        t_unpaid += unpaid
+        t_interest += interest
+    return {
+        "contract_id": str(cid), "total_price": int(c.total_price or 0),
+        "overdue_rate": rate, "as_of": str(today), "count": len(rows), "installments": rows,
+        "totals": {"billed": t_billed, "paid": t_paid, "unpaid": t_unpaid, "overdue_interest": t_interest},
     }

@@ -106,21 +106,45 @@ type SummaryT = {
   refund: { count: number; amount: number };
 };
 
+type InstRow = {
+  seq: number; kind_label: string; amount: number; paid_amount: number; unpaid: number;
+  due_date: string | null; paid_at: string | null; status: string;
+  overdue_days: number; overdue_interest: number;
+};
+type InstResp = {
+  installments: InstRow[]; overdue_rate: number; as_of: string;
+  totals: { billed: number; paid: number; unpaid: number; overdue_interest: number };
+};
+// 회차 상태 배지(라벨·색).
+const INST_STATUS: Record<string, { label: string; cls: string }> = {
+  PAID: { label: "완납", cls: "text-emerald-400" },
+  PARTIAL: { label: "부분납", cls: "text-sky-400" },
+  UNPAID: { label: "납부예정", cls: "text-[var(--text-secondary)]" },
+  OVERDUE: { label: "연체", cls: "text-rose-400 font-bold" },
+};
+
 // 계약자(계약) 기준 통합 수납현황 + 할인/환급 등록.
 function ContractSummarySection({ api, contracts, onChanged }: {
   api: ReturnType<typeof salesApi>; contracts: { id: string; label: string; status?: string }[]; onChanged: () => void;
 }) {
   const [cid, setCid] = useState("");
   const [sum, setSum] = useState<SummaryT | null>(null);
+  const [inst, setInst] = useState<InstResp | null>(null);
   const [busy, setBusy] = useState(false);
   const [adj, setAdj] = useState<{ type: "DISCOUNT" | "REFUND"; amount: number | null; reason: string }>({ type: "DISCOUNT", amount: null, reason: "" });
   const [msg, setMsg] = useState("");
 
   const loadSummary = async (id: string) => {
-    setCid(id); setSum(null); setMsg("");
+    setCid(id); setSum(null); setInst(null); setMsg("");
     if (!id) return;
-    try { setSum(await api.get<SummaryT>(`/payments/contract-summary?contract_id=${id}`)); }
-    catch { setMsg("현황 조회 실패(계약 확인)."); }
+    try {
+      // 통합현황 + 회차 스케줄을 함께 조회(계약금·중도금·잔금 회차별 상태·연체).
+      const [s, i] = await Promise.all([
+        api.get<SummaryT>(`/payments/contract-summary?contract_id=${id}`),
+        api.get<InstResp>(`/payments/installments?contract_id=${id}`).catch(() => null),
+      ]);
+      setSum(s); setInst(i);
+    } catch { setMsg("현황 조회 실패(계약 확인)."); }
   };
   const addAdj = async () => {
     if (!cid || !adj.amount) { setMsg("계약과 금액을 입력하세요."); return; }
@@ -156,6 +180,44 @@ function ContractSummarySection({ api, contracts, onChanged }: {
             <Card label={`연체(${sum.overdue.count})`} value={won(sum.overdue.unpaid_amount)} tone="text-rose-400" />
             <Card label={`할인/환급`} value={`${won(sum.discount.amount)} / ${won(sum.refund.amount)}`} />
           </div>
+          {/* 회차별 납부 스케줄 — 계약금·중도금·잔금 회차의 약정일·납부·미납·상태·연체(실시간) */}
+          {inst && inst.installments.length > 0 && (
+            <div className="mt-3 overflow-x-auto rounded-lg border border-[var(--line)]">
+              <table className="w-full text-xs">
+                <thead><tr className="border-b border-[var(--line)] bg-[var(--surface-strong)] text-left text-[var(--text-secondary)]">
+                  <th className="px-2 py-1.5">회차</th><th className="px-2 py-1.5">구분</th><th className="px-2 py-1.5">약정일</th>
+                  <th className="px-2 py-1.5 text-right">금액</th><th className="px-2 py-1.5 text-right">납부</th>
+                  <th className="px-2 py-1.5 text-right">미납</th><th className="px-2 py-1.5 text-center">상태</th>
+                  <th className="px-2 py-1.5 text-right">연체</th>
+                </tr></thead>
+                <tbody>
+                  {inst.installments.map((r) => (
+                    <tr key={r.seq} className="border-b border-[var(--line)] text-[var(--text-primary)]">
+                      <td className="px-2 py-1.5">{r.seq}</td>
+                      <td className="px-2 py-1.5">{r.kind_label}</td>
+                      <td className="px-2 py-1.5 text-[var(--text-secondary)]">{r.due_date ?? "-"}</td>
+                      <td className="px-2 py-1.5 text-right">{won(r.amount)}</td>
+                      <td className="px-2 py-1.5 text-right text-emerald-400">{won(r.paid_amount)}</td>
+                      <td className="px-2 py-1.5 text-right text-amber-400">{won(r.unpaid)}</td>
+                      <td className={`px-2 py-1.5 text-center ${INST_STATUS[r.status]?.cls ?? ""}`}>{INST_STATUS[r.status]?.label ?? r.status}</td>
+                      <td className="px-2 py-1.5 text-right text-rose-400">{r.overdue_days > 0 ? `${r.overdue_days}일 · ${won(r.overdue_interest)}` : "-"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot><tr className="bg-[var(--surface-strong)] font-bold text-[var(--text-primary)]">
+                  <td className="px-2 py-1.5" colSpan={3}>합계 · 연체이율 {(inst.overdue_rate * 100).toFixed(1)}% (기준 {inst.as_of})</td>
+                  <td className="px-2 py-1.5 text-right">{won(inst.totals.billed)}</td>
+                  <td className="px-2 py-1.5 text-right text-emerald-400">{won(inst.totals.paid)}</td>
+                  <td className="px-2 py-1.5 text-right text-amber-400">{won(inst.totals.unpaid)}</td>
+                  <td className="px-2 py-1.5" />
+                  <td className="px-2 py-1.5 text-right text-rose-400">{won(inst.totals.overdue_interest)}</td>
+                </tr></tfoot>
+              </table>
+            </div>
+          )}
+          {inst && inst.installments.length === 0 && (
+            <p className="mt-3 text-xs text-[var(--text-tertiary)]">회차 스케줄이 없습니다 — 계약 서명 시 자동 생성됩니다.</p>
+          )}
           <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-[var(--line)] pt-3">
             <select value={adj.type} onChange={(e) => setAdj({ ...adj, type: e.target.value as "DISCOUNT" | "REFUND" })} className={`${IN} py-1`}>
               <option value="DISCOUNT">할인</option><option value="REFUND">환급</option>
