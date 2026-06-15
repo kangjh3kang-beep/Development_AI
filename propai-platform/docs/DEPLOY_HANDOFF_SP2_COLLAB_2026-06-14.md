@@ -82,7 +82,7 @@
 
 배포 담당 주의:
 - **신규 프론트 의존성 `react-pdf@10`** (pnpm-lock 갱신됨) — `pnpm install` 후 `next build`.
-- ⚠️**PDF 워커 CDN**: `PdfDocViewer.tsx`가 pdf.js 워커를 `https://unpkg.com/pdfjs-dist@<버전>/build/pdf.worker.min.mjs`(동일 버전)에서 로드. **prod CSP가 unpkg를 막으면** PDF 미리보기가 실패(graceful degrade — “새 탭” 안내). 차단 시 워커를 `apps/web/public/`에 복사해 동일오리진(`/pdf.worker.min.mjs`)으로 전환 권장.
+- ⚠️**PDF 워커 CDN(+env 오버라이드)**: `PdfDocViewer.tsx`가 워커를 기본 unpkg(동일 pdfjs 버전)에서 로드, 실패 시 graceful degrade(“새 탭”). **prod CSP가 unpkg를 막으면** — pdfjs 워커(`pdf.worker.min.mjs`)를 `apps/web/public/`에 복사하고 **`NEXT_PUBLIC_PDF_WORKER_SRC=/pdf.worker.min.mjs`** 만 설정하면 동일오리진 전환(코드 변경 0). (worker 파일은 react-pdf 번들 pdfjs 버전과 일치해야 함.)
 - `/documents/{id}/shapes`는 DXF만(IFC·문서 415). 비공개버킷 재서명·다운로드 필요(Supabase 자격 동일).
 - 검증(trust-infra): 백엔드 회귀 76 passed, tsc 0·next build 0, 회의방 스모크 1 passed(이미지/PDF 모달 + DXF 뷰어 렌더).
 

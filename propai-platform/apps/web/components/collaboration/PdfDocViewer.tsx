@@ -10,10 +10,12 @@
 import { useState } from "react";
 import { Document, Page, pdfjs } from "react-pdf";
 
-// 워커는 설치된 pdfjs-dist와 동일 버전을 CDN에서 로드(Turbopack의 import.meta.url 번들 미해결 회피).
-// 워커 로드 실패 시 onLoadError로 graceful degrade(상단 '새 탭'). prod CSP가 unpkg를 막으면
-// public/ 동일오리진 워커로 전환(핸드오프 참고).
-pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
+// 워커 소스 — 기본은 동일 pdfjs 버전 CDN(unpkg). prod CSP가 unpkg를 막으면 워커를 apps/web/public/에
+// 복사하고 NEXT_PUBLIC_PDF_WORKER_SRC=/pdf.worker.min.mjs 만 설정하면 동일오리진 전환(코드 변경 0).
+// Turbopack은 new URL(...,import.meta.url) 워커 번들을 미해결하므로 URL 문자열 방식 사용.
+pdfjs.GlobalWorkerOptions.workerSrc =
+  process.env.NEXT_PUBLIC_PDF_WORKER_SRC ||
+  `https://unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
 
 export function PdfDocViewer({ url }: { url: string }) {
   const [numPages, setNumPages] = useState(0);
