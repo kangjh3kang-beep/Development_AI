@@ -32,6 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.api.auth.jwt_handler import CurrentUser, get_current_user
 from apps.api.database.session import get_db
+from datetime import UTC
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/api/v1/design-audit", tags=["설계심사(Design Audit)"])
@@ -651,7 +652,7 @@ async def run_design_audit_upload(
     resp["id"] = resp.get("audit_id")
     resp["verdict"] = resp.get("overall")
     resp["sections"] = _build_report_sections(resp)
-    resp["generated_at"] = datetime.now(_tz.utc).isoformat()
+    resp["generated_at"] = datetime.now(UTC).isoformat()
     if dxf_import is not None:
         resp["dxf_import"] = dxf_import  # UP4 additive — DXF 적용 내역 투명 보고
     return resp

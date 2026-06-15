@@ -8,7 +8,7 @@ class RealtimeOptimizer:
     """RealtimeTwinOptimizer 호환 별칭."""
 
     def optimize_hvac(self, current_temp: float, target_temp: float, occupancy: float = 50,
-                      current_energy_kwh: float = 100.0) -> Dict:
+                      current_energy_kwh: float = 100.0) -> dict:
         diff = abs(current_temp - target_temp)
         if diff > 3:
             mode = "cooling" if current_temp > target_temp else "heating"
@@ -27,7 +27,7 @@ class RealtimeTwinOptimizer:
     """디지털 트윈 실시간 운영 최적화 (IFC 4.3)"""
 
     def optimize_hvac(self, outdoor_temp_c: float, indoor_temp_c: float,
-                      occupancy_rate: float, current_energy_kwh: float) -> Dict:
+                      occupancy_rate: float, current_energy_kwh: float) -> dict:
         target_temp = 22.0
         occupancy_factor = max(0.3, occupancy_rate)
         baseline_energy = current_energy_kwh

@@ -1,7 +1,7 @@
 """Deterministic chatbot session service for G95."""
 
-from datetime import datetime, timezone
-UTC = timezone.utc
+from datetime import datetime, timezone, UTC
+UTC = UTC
 from uuid import UUID
 
 from sqlalchemy import select

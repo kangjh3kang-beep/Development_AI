@@ -5,7 +5,7 @@ from typing import Dict, List
 class ContractService:
     """공사 계약 + 기성금 지급 스케줄 관리."""
 
-    def create_contract(self, project_id: str, contract_type: str, details: Dict) -> Dict:
+    def create_contract(self, project_id: str, contract_type: str, details: dict) -> dict:
         return {
             "project_id": project_id,
             "contract_type": contract_type,
@@ -14,7 +14,7 @@ class ContractService:
             "status": "draft",
         }
 
-    def schedule_payments(self, total_amount: float, milestones: List[Dict]) -> List[Dict]:
+    def schedule_payments(self, total_amount: float, milestones: list[dict]) -> list[dict]:
         payments = []
         for m in milestones:
             pct = m.get("pct", 0)

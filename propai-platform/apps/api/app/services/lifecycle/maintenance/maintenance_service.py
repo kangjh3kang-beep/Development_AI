@@ -1,5 +1,5 @@
 """유지보수 관리 서비스."""
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 from typing import Dict, List
 
 
@@ -14,26 +14,26 @@ class MaintenanceService:
         {"component": "방수", "interval_months": 120, "priority": "medium"},
     ]
 
-    def create_plan(self, project_id: str, components: List[Dict] = None) -> Dict:
+    def create_plan(self, project_id: str, components: list[dict] = None) -> dict:
         comps = components or self.DEFAULT_COMPONENTS
         return {"project_id": project_id, "components": comps, "total_components": len(comps)}
 
-    def schedule_maintenance(self, plan: Dict) -> List[Dict]:
-        now = datetime.now(timezone.utc).isoformat()
+    def schedule_maintenance(self, plan: dict) -> list[dict]:
+        now = datetime.now(UTC).isoformat()
         return [
             {**c, "next_due": now}
             for c in plan.get("components", [])
         ]
 
-    def record_maintenance(self, record: Dict) -> Dict:
+    def record_maintenance(self, record: dict) -> dict:
         return {
             "component": record.get("component", ""),
-            "performed_at": datetime.now(timezone.utc).isoformat(),
+            "performed_at": datetime.now(UTC).isoformat(),
             "cost": record.get("cost", 0),
             "status": "completed",
         }
 
-    def calculate_costs(self, records: List[Dict], period_months: int = 12) -> Dict:
+    def calculate_costs(self, records: list[dict], period_months: int = 12) -> dict:
         total = sum(r.get("cost", 0) for r in records)
         monthly = total / period_months if period_months > 0 else 0
         return {

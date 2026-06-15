@@ -4,8 +4,8 @@ factory-boy 대신 간단한 팩토리 함수로 구현한다.
 서비스 테스트에서 DB 모델 인스턴스를 빠르게 생성하기 위한 용도.
 """
 
-from datetime import datetime, timezone
-UTC = timezone.utc
+from datetime import datetime, timezone, UTC
+UTC = UTC
 from uuid import UUID, uuid4
 
 from apps.api.tests.conftest import TEST_PROJECT_ID, TEST_TENANT_ID, TEST_USER_ID

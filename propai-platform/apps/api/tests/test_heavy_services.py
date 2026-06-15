@@ -8,8 +8,8 @@ construction, drone, chatbot, contractor, webhook, design 서비스의
 import os
 import re
 import sys
-from datetime import datetime, timezone
-UTC = timezone.utc
+from datetime import datetime, timezone, UTC
+UTC = UTC
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
@@ -706,7 +706,7 @@ class TestContractorServiceScore:
         c.category = kwargs.get("category", "general_contractor")
         c.specialties_json = kwargs.get("specialties_json", [])
         c.address = kwargs.get("address", "")
-        c.rating = kwargs.get("rating", None)
+        c.rating = kwargs.get("rating")
         return c
 
     def test_score_category_aligned(self):

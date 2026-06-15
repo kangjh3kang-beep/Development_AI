@@ -15,7 +15,7 @@ class SpatialService:
         return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
     def find_nearby_projects(self, lat: float, lon: float, radius_km: float,
-                             projects: List[Dict]) -> List[Dict]:
+                             projects: list[dict]) -> list[dict]:
         results = []
         for p in projects:
             plat = p.get("lat", p.get("latitude", 0))

@@ -28,7 +28,7 @@ class ZoningSignalsRequest(BaseModel):
     radius_m: int = 300
 
     @model_validator(mode="after")
-    def _require_locator(self) -> "ZoningSignalsRequest":
+    def _require_locator(self) -> ZoningSignalsRequest:
         if not (self.address and self.address.strip()) and not (self.pnu and self.pnu.strip()):
             raise ValueError("address 또는 pnu 중 하나는 필수입니다.")
         return self

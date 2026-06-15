@@ -3,7 +3,7 @@
 모든 발송은 MhNotification 에 채널별 상태(SENT/SKIPPED/FAILED)로 기록한다.
 """
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -38,7 +38,7 @@ async def notify_designated(db: AsyncSession, site_id, visitor_id, staff_id, mas
                                    {"type": "DESIGNATED_VISITOR", "visitor": disp, "staff": staff.name})
         db.add(MhNotification(site_id=site_id, visitor_id=visitor_id, target_staff_id=staff_id,
                channel="GROUP", payload={"channel_id": desk.channel_id}, status="SENT",
-               sent_at=datetime.now(timezone.utc)))
+               sent_at=datetime.now(UTC)))
     await db.flush()
 
 
@@ -59,7 +59,7 @@ async def _send_fcm(db, staff, title, body, site_id, visitor_id):
             status = "FAILED"
     db.add(MhNotification(site_id=site_id, visitor_id=visitor_id, target_staff_id=staff.id,
            channel="PUSH", payload={"title": title, "body": body}, status=status,
-           sent_at=datetime.now(timezone.utc)))
+           sent_at=datetime.now(UTC)))
 
 
 async def _send_alimtalk(db, site_id, visitor_id, staff, body):
@@ -81,4 +81,4 @@ async def _send_alimtalk(db, site_id, visitor_id, staff, body):
         status = "SKIPPED"
     db.add(MhNotification(site_id=site_id, visitor_id=visitor_id, target_staff_id=staff.id,
            channel="ALIMTALK", payload={"to": phone}, status=status,
-           sent_at=datetime.now(timezone.utc)))
+           sent_at=datetime.now(UTC)))

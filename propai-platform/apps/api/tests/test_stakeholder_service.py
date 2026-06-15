@@ -1,4 +1,7 @@
-import os, sys, uuid, pytest
+import os
+import sys
+import uuid
+import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
@@ -20,9 +23,9 @@ def _mock_stakeholder(**overrides):
     m.organization = overrides.get("organization", "PropAI")
     m.email = overrides.get("email", "hong@propai.kr")
     m.phone = overrides.get("phone", "010-1234-5678")
-    m.responsibility = overrides.get("responsibility", None)
+    m.responsibility = overrides.get("responsibility")
     m.is_active = overrides.get("is_active", True)
-    m.notes = overrides.get("notes", None)
+    m.notes = overrides.get("notes")
     return m
 
 

@@ -41,7 +41,7 @@ def test_check_natural_green_far_200_flagged():
     issues = check_against_legal("자연녹지지역", far_pct=200)
     assert len(issues) == 1
     assert issues[0]["severity"] == "high"
-    assert "법정한도초과" == issues[0]["type"]
+    assert issues[0]["type"] == "법정한도초과"
     assert "100%" in issues[0]["note"]
 
 

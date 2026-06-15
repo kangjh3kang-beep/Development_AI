@@ -22,12 +22,12 @@ from __future__ import annotations
 
 import bisect
 import math
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 from typing import Any, Iterable, Sequence
 
 import structlog
 
-UTC = timezone.utc
+UTC = UTC
 logger = structlog.get_logger(__name__)
 
 # ── 상수 ──

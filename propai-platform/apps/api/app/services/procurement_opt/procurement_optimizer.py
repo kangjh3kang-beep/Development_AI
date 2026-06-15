@@ -14,7 +14,7 @@ class ProcurementOptimizer:
     }
 
     def calculate_eoq(self, annual_demand: float, order_cost_krw: float,
-                      holding_cost_pct: float = 0.25) -> Dict:
+                      holding_cost_pct: float = 0.25) -> dict:
         holding_cost = order_cost_krw * holding_cost_pct
         eoq = np.sqrt(2 * annual_demand * order_cost_krw / holding_cost) if holding_cost > 0 else 0
         freq = annual_demand / eoq if eoq > 0 else 0
@@ -28,7 +28,7 @@ class ProcurementOptimizer:
         }
 
     def predict_optimal_order_timing(self, material_name: str, current_ppi: float,
-                                      forecast_months: int = 6) -> Dict:
+                                      forecast_months: int = 6) -> dict:
         base_ppi = self.PPI_BASE_INDEX.get(material_name, 130.0)
         ppi_trend = (current_ppi - base_ppi) / base_ppi
         if ppi_trend > 0.1:

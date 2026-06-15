@@ -1,7 +1,7 @@
 """Part5 라이프사이클 액션 — 청약 배정/예비/선착순 + 옵션 + 대출실행 + 수납(VA/대사/수동매칭)."""
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import select, text
@@ -112,7 +112,7 @@ async def manual_match(payment_id: uuid.UUID, body: dict, db: AsyncSession = Dep
     p.contract_ext_id = contract_id
     p.matched = True
     it.paid_amount = (it.paid_amount or 0) + (p.amount or 0)
-    it.paid_at = datetime.now(timezone.utc)
+    it.paid_at = datetime.now(UTC)
     await db.commit()
     return {"matched": True}
 
@@ -184,7 +184,7 @@ async def payment_contract_summary(contract_id: str, db: AsyncSession = Depends(
         .order_by(SalesContractInstallment.seq))).scalars())
     billed = sum(int(i.amount or 0) for i in insts)
     paid = sum(int(i.paid_amount or 0) for i in insts)
-    today = datetime.now(timezone.utc).date()
+    today = datetime.now(UTC).date()
     overdue = [{"seq": i.seq, "due_date": str(i.due_date), "unpaid": int((i.amount or 0) - (i.paid_amount or 0))}
                for i in insts if i.due_date and i.due_date < today and (i.paid_amount or 0) < (i.amount or 0)]
     adj = (await db.execute(text(

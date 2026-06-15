@@ -115,7 +115,7 @@ def validate_spec(spec: DesignSpec) -> list[Violation]:
     if spec.zone_code not in ZONE_LIMITS:
         out.append(Violation(
             field="zone_code", rule="용도지역", legal="/".join(ZONE_LIMITS), actual=spec.zone_code,
-            severity="warn", message=f"알 수 없는 용도지역 코드 — 기본 한도로 대체합니다.",
+            severity="warn", message="알 수 없는 용도지역 코드 — 기본 한도로 대체합니다.",
         ))
 
     # 복도폭 ≥ 용도별 최소

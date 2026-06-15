@@ -1,6 +1,6 @@
 """데스크 운영 — 방문통계/물품수불/출퇴근."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,7 +30,7 @@ async def inventory_txn(db: AsyncSession, item_id, txn_type, qty, staff_id=None,
 
 async def attendance_check(db: AsyncSession, site_id, staff_id, kind, lat=None, lng=None):
     if kind == "IN":
-        a = SalesStaffAttendance(site_id=site_id, staff_id=staff_id, check_in=datetime.now(timezone.utc),
+        a = SalesStaffAttendance(site_id=site_id, staff_id=staff_id, check_in=datetime.now(UTC),
                                  method="QR", geo=(f"POINT({lng} {lat})" if lat and lng else None))
         db.add(a)
         await db.flush()
@@ -39,7 +39,7 @@ async def attendance_check(db: AsyncSession, site_id, staff_id, kind, lat=None, 
         SalesStaffAttendance.staff_id == staff_id, SalesStaffAttendance.check_out.is_(None))
         .order_by(SalesStaffAttendance.check_in.desc()).limit(1))).scalar_one_or_none()
     if a:
-        a.check_out = datetime.now(timezone.utc)
+        a.check_out = datetime.now(UTC)
         a.work_minutes = int((a.check_out - a.check_in).total_seconds() // 60)
     await db.flush()
     return a

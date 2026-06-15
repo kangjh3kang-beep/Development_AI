@@ -1,7 +1,7 @@
 """청약 배정 엔진 — 가점/추첨/특공 + 예비순번 + 선착순/무순위. 추첨은 시드 고정(감사 가능)."""
 
 import hashlib
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, UTC
 from itertools import groupby
 
 from sqlalchemy import select
@@ -56,7 +56,7 @@ async def run_draw(db: AsyncSession, site_id, announcement_id, seed: str | None 
             a.result = "WIN"
             db.add(SalesSubscriptionWinner(
                 site_id=site_id, application_id=a.id, unit_id=unit.id, win_type=wtype, status="NOTIFIED",
-                contract_due=(ann.contract_end or (datetime.now(timezone.utc).date() + timedelta(days=7)))))
+                contract_due=(ann.contract_end or (datetime.now(UTC).date() + timedelta(days=7)))))
             unit.status = "APPLIED"
             total_win += 1
         for i, a in enumerate(_rest_gen, start=1):
@@ -92,7 +92,7 @@ async def claim_offer(db: AsyncSession, site_id, unit_id, customer_id, kind="FCF
         raise ValueError("이미 점유된 세대")
     if kind == "UNRANKED":
         db.add(SalesUnrankedOffer(site_id=site_id, unit_id=unit_id, claimed_by=customer_id,
-               claimed_at=datetime.now(timezone.utc)))
+               claimed_at=datetime.now(UTC)))
     unit.status = "APPLIED"
     await db.flush()
     return unit_id

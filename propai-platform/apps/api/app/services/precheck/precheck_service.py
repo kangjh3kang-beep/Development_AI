@@ -516,7 +516,7 @@ async def run_instant_precheck(
         if resolved_area is None:
             resolved_area = zoning.get("land_area_sqm")
         sources.append("auto_zoning_service")
-    except asyncio.TimeoutError:
+    except TimeoutError:
         sources.append("auto_zoning_service(timeout)")
     except Exception:  # noqa: BLE001
         sources.append("auto_zoning_service(error)")

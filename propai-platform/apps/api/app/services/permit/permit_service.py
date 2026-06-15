@@ -22,7 +22,7 @@ PERMIT_REQUIREMENTS = {
 class PermitService:
     """인허가 요건 점검 서비스."""
 
-    def check_requirements(self, permit_type: str, submitted: List[str] = None) -> Dict:
+    def check_requirements(self, permit_type: str, submitted: list[str] = None) -> dict:
         submitted = submitted or []
         reqs = PERMIT_REQUIREMENTS.get(permit_type, PERMIT_REQUIREMENTS["building"])
         required_docs = [r["doc"] for r in reqs if r["required"]]

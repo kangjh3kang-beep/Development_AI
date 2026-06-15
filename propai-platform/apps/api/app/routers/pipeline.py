@@ -379,7 +379,7 @@ async def _gather_report_narratives(result_dict: dict[str, Any], timeout: float 
         for (stg, _), r in zip(jobs, results):
             if isinstance(r, dict) and r.get("ok") and isinstance(r.get("sections"), dict):
                 out[stg] = r["sections"]
-    except asyncio.TimeoutError:
+    except TimeoutError:
         pass
     return out
 

@@ -1,6 +1,6 @@
 """실거래신고/전매제한 — 신고기한(파라미터) 산정, 전매제한 검사로 명의변경 차단/허용. 기록만."""
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone, UTC
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,7 +16,7 @@ async def create_realtx_report(db: AsyncSession, site_id, contract_id):
     cfg = (await db.execute(select(SalesSiteConfig).where(SalesSiteConfig.site_id == site_id))).scalar_one_or_none()
     report_days = int(((cfg.stage_def if cfg else None) or {}).get("realtx_report_days", 30))  # 신고기한(파라미터)
     c = (await db.execute(select(SalesContractExt).where(SalesContractExt.id == contract_id))).scalar_one()
-    base = (c.signed_at or datetime.now(timezone.utc)).date()
+    base = (c.signed_at or datetime.now(UTC)).date()
     db.add(SalesRealtxReport(site_id=site_id, contract_ext_id=contract_id, status="PENDING",
            due_date=base + timedelta(days=report_days),
            payload={"unit_id": str(c.unit_id), "amount": int(c.total_price or 0)}))
@@ -27,7 +27,7 @@ async def submit_realtx(db: AsyncSession, site_id, report_id, irts_result: dict)
     rpt = (await db.execute(select(SalesRealtxReport).where(SalesRealtxReport.id == report_id))).scalar_one()
     rpt.status = irts_result.get("status", "SUBMITTED")
     rpt.report_no = irts_result.get("report_no")
-    rpt.reported_at = datetime.now(timezone.utc)
+    rpt.reported_at = datetime.now(UTC)
     await db.flush()
 
 
@@ -64,7 +64,7 @@ async def decide_transfer(db: AsyncSession, transfer_id, allowed: bool, reason: 
         raise ValueError("전매 요청을 찾을 수 없습니다")
     t.allowed = allowed
     t.reason = reason
-    t.decided_at = datetime.now(timezone.utc)
+    t.decided_at = datetime.now(UTC)
     if allowed:  # 명의변경 반영
         c = (await db.execute(select(SalesContractExt).where(SalesContractExt.id == t.contract_ext_id))).scalar_one()
         c.customer_id = t.to_customer

@@ -1,6 +1,6 @@
 """AI 사용량 추적기."""
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 
 
 MODEL_COSTS = {
@@ -39,7 +39,7 @@ class UsageRecord:
         self.cost_usd = (
             input_tokens * costs["input"] + output_tokens * costs["output"]
         ) / 1_000_000
-        self.timestamp = datetime.now(timezone.utc)
+        self.timestamp = datetime.now(UTC)
         self.user_id = user_id
         self.purpose = purpose
 
@@ -98,7 +98,7 @@ class AIUsageTracker:
     def get_daily_summary(self, date=None) -> dict:
         """일별 요약 조회."""
         if date is None:
-            date = datetime.now(timezone.utc).date()
+            date = datetime.now(UTC).date()
         day_records = [r for r in self._records if r.timestamp.date() == date]
         total_cost = sum(r.cost_usd for r in day_records)
         return {

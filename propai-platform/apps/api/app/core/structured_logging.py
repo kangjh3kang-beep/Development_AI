@@ -7,7 +7,7 @@ JSON 포맷으로 request_id, tenant_id를 바인딩하며,
 import json
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 from typing import Optional
 
 
@@ -42,7 +42,7 @@ class StructuredLogger:
 
     def _make_entry(self, level: str, message: str, **extra) -> dict:
         entry = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "level": level.upper(),
             "service": self.service_name,
             "message": message,

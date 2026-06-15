@@ -3,8 +3,8 @@
 CRUD + 상태 전환 + 소프트 삭제.
 """
 
-from datetime import datetime, timezone
-UTC = timezone.utc
+from datetime import datetime, timezone, UTC
+UTC = UTC
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status

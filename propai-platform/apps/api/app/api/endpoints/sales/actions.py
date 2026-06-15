@@ -1,7 +1,7 @@
 """sales 도메인 전용 액션 — 조직/동호생성/분양가/계약/홀드/수수료검증."""
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import select, text
@@ -252,7 +252,7 @@ async def set_unit_price_mode(unit_id: uuid.UUID, body: dict, db: AsyncSession =
         pt.override_price = body["override_price"]
         pt.override_reason = body.get("reason")
         pt.override_by = ctx.user.id
-        pt.override_at = datetime.now(timezone.utc)
+        pt.override_at = datetime.now(UTC)
         pt.total_price = body["override_price"]
     await db.commit()
     return {"ok": True}

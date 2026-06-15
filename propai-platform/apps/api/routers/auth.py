@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, UTC
 import re
 from uuid import UUID
 
@@ -47,7 +47,7 @@ def _verify_password(password: str, hashed: str) -> bool:
         return False
 
 
-UTC = timezone.utc
+UTC = UTC
 
 
 class LoginRequest(BaseModel):

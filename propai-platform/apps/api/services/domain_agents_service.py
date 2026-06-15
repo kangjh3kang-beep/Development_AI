@@ -1,7 +1,7 @@
 """Domain agent analysis service for Part F."""
 
-from datetime import datetime, timezone
-UTC = timezone.utc
+from datetime import datetime, timezone, UTC
+UTC = UTC
 from uuid import UUID
 
 import structlog

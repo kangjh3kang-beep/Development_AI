@@ -7,8 +7,8 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
-UTC = timezone.utc
+from datetime import datetime, timezone, UTC
+UTC = UTC
 from uuid import UUID
 
 import structlog

@@ -153,7 +153,7 @@ class BidInterpreter:
             result["generated"] = True
             logger.info("입찰 AI 해석 완료", keys=list(result.keys()))
             return result
-        except (asyncio.TimeoutError, TimeoutError):
+        except TimeoutError:
             logger.warning("입찰 AI 해석 타임아웃(%.0fs 초과)", self._timeout_sec)
             return None
         except Exception as e:

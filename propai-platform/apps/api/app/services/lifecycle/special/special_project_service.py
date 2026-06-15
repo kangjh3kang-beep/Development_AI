@@ -10,7 +10,7 @@ class SpecialProjectService:
         "D": "상당한 손상", "E": "위험",
     }
 
-    def evaluate_reconstruction(self, building_data: Dict) -> Dict:
+    def evaluate_reconstruction(self, building_data: dict) -> dict:
         age = building_data.get("age_years", 30)
         grade = building_data.get("safety_grade", "D")
         eligible = age >= 30 and grade in ("D", "E")
@@ -23,7 +23,7 @@ class SpecialProjectService:
             "legal_basis": "도시 및 주거환경정비법 제2조",
         }
 
-    def plan_remodeling(self, project_data: Dict, scope: str) -> Dict:
+    def plan_remodeling(self, project_data: dict, scope: str) -> dict:
         area = project_data.get("area_sqm", 1000)
         costs = {"interior": 800_000, "structural": 2_000_000, "exterior": 1_200_000}
         timelines = {"interior": 3, "structural": 12, "exterior": 6}
@@ -33,7 +33,7 @@ class SpecialProjectService:
             "timeline_months": timelines.get(scope, 6), "area_sqm": area,
         }
 
-    def estimate_special_costs(self, project_type: str, area_sqm: float) -> Dict:
+    def estimate_special_costs(self, project_type: str, area_sqm: float) -> dict:
         rates = {"reconstruction": 3_500_000, "remodeling": 1_500_000, "maintenance": 500_000}
         cost_per_sqm = rates.get(project_type, 2_000_000)
         return {
@@ -41,7 +41,7 @@ class SpecialProjectService:
             "cost_per_sqm": cost_per_sqm, "total_cost": area_sqm * cost_per_sqm,
         }
 
-    def track_approval(self, approval_data: Dict) -> Dict:
+    def track_approval(self, approval_data: dict) -> dict:
         total = approval_data.get("total_steps", 5)
         completed = approval_data.get("completed_steps", 0)
         return {

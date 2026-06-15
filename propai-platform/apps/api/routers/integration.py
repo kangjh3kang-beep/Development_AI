@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends
@@ -17,7 +17,7 @@ from apps.api.config import get_settings
 from apps.api.database.init_qdrant import check_qdrant_health
 from apps.api.database.session import engine
 
-UTC = timezone.utc
+UTC = UTC
 router = APIRouter()
 
 

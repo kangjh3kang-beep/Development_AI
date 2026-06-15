@@ -1164,9 +1164,7 @@ class AuctionStep1Service:
             tgt_addr = tgt.get("address")
             for it in items:
                 hit = False
-                if tgt_pnu and it.get("pnu") and str(it["pnu"]) == str(tgt_pnu):
-                    hit = True
-                elif tgt_addr and address_matches(tgt_addr, it.get("address")):
+                if tgt_pnu and it.get("pnu") and str(it["pnu"]) == str(tgt_pnu) or tgt_addr and address_matches(tgt_addr, it.get("address")):
                     hit = True
                 if hit:
                     key = (src, int(it["id"]))

@@ -10,7 +10,7 @@ class LCCService:
     def calculate_lcc(self, construction_cost_krw: float = 0, annual_maintenance_krw: float = 0,
                       annual_energy_krw: float = 0, lifecycle_years: int = 50,
                       discount_rate: float = 0.03, inflation_rate: float = 0.02,
-                      **kwargs) -> Dict:
+                      **kwargs) -> dict:
         if isinstance(construction_cost_krw, dict):
             d = construction_cost_krw
             construction_cost_krw = d.get("initial_cost_krw", d.get("construction_cost_krw", 0))

@@ -1,7 +1,7 @@
 """제너릭 CRUD 베이스 — 전 sales 엔티티 공통 영속 로직."""
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 from typing import Generic, Type, TypeVar
 
 from sqlalchemy import select
@@ -11,7 +11,7 @@ M = TypeVar("M")
 
 
 class CRUDBase(Generic[M]):
-    def __init__(self, model: Type[M]):
+    def __init__(self, model: type[M]):
         self.model = model
 
     async def get(self, db: AsyncSession, id_: uuid.UUID, site_id=None) -> M | None:
@@ -59,7 +59,7 @@ class CRUDBase(Generic[M]):
         if not obj:
             return False
         if hasattr(obj, "deleted_at"):
-            obj.deleted_at = datetime.now(timezone.utc)  # soft-delete
+            obj.deleted_at = datetime.now(UTC)  # soft-delete
         else:
             await db.delete(obj)
         await db.flush()

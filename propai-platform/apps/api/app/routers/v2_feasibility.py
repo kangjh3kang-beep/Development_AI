@@ -1061,7 +1061,7 @@ class CashflowRequest(BaseModel):
     tax_inputs: dict | None = None
 
 
-def _build_cashflow(req: "CashflowRequest") -> dict:
+def _build_cashflow(req: CashflowRequest) -> dict:
     from app.services.feasibility.cashflow_generator import (
         CashflowGenerator,
         build_tax_schedule_from_integrated,
@@ -1131,7 +1131,7 @@ class DevelopmentFinanceRequest(BaseModel):
     pf_months: int = 30
 
 
-def _build_development_finance(req: "DevelopmentFinanceRequest") -> dict:
+def _build_development_finance(req: DevelopmentFinanceRequest) -> dict:
     """finance_cost_engine 재사용 — PF/브릿지/이자, LTV/DSCR(표준 비율식)."""
     from app.services.feasibility.finance_cost_engine import (
         calculate_bridge_loan,

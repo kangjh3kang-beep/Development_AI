@@ -7,7 +7,7 @@ logger = structlog.get_logger()
 class SupervisionService:
     """AI 감리 + EVM 공정 관리 (PMBOK 7th)"""
 
-    def calculate_evm(self, bac_krw: float, pv_krw: float, ev_pct: float, ac_krw: float) -> Dict:
+    def calculate_evm(self, bac_krw: float, pv_krw: float, ev_pct: float, ac_krw: float) -> dict:
         """EV=BAC*pct, SV=EV-PV, CV=EV-AC, CPI=EV/AC"""
         ev = bac_krw * ev_pct / 100
         sv = ev - pv_krw
@@ -26,7 +26,7 @@ class SupervisionService:
             "method": "EVM (PMBOK 7th Edition)"
         }
 
-    def analyze_photo_for_progress(self, image_path: str) -> Dict:
+    def analyze_photo_for_progress(self, image_path: str) -> dict:
         try:
             import cv2
             import numpy as np

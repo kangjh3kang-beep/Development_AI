@@ -23,7 +23,7 @@
 """
 
 import uuid
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime, time, timezone, UTC
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
@@ -328,7 +328,7 @@ async def send_message(customer_id: uuid.UUID, body: MessageSend,
 
     if not consent_ok:
         status, blocked_reason = "BLOCKED", "수신동의(MARKETING)가 없어 광고성 발송이 차단되었습니다"
-    elif _night_guard(datetime.now(timezone.utc)):
+    elif _night_guard(datetime.now(UTC)):
         status, blocked_reason = "BLOCKED", "야간(21~08시) 광고성 발송 제한(정보통신망법)"
     elif not sales_settings.kakao_sender_key:
         # 발신번호(발신프로필) 사전등록 전제 — 미등록 시 안전 폴백(기록만)

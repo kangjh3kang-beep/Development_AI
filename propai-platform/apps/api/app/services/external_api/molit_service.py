@@ -19,23 +19,23 @@ class MOLITService:
     def __init__(self) -> None:
         self._client = MolitClient()
 
-    async def get_apt_transactions(self, region_code: str, year_month: str) -> List[Dict]:
+    async def get_apt_transactions(self, region_code: str, year_month: str) -> list[dict]:
         """아파트 매매 실거래가 조회 (정규화)."""
         return await self._client.get_transactions(region_code, year_month, prop_type="apt")
 
-    async def get_officetel_transactions(self, region_code: str, year_month: str) -> List[Dict]:
+    async def get_officetel_transactions(self, region_code: str, year_month: str) -> list[dict]:
         """오피스텔 매매 실거래가 조회 (정규화)."""
         return await self._client.get_transactions(region_code, year_month, prop_type="officetel")
 
-    async def get_villa_transactions(self, region_code: str, year_month: str) -> List[Dict]:
+    async def get_villa_transactions(self, region_code: str, year_month: str) -> list[dict]:
         """연립/다세대 매매 실거래가 조회 (정규화)."""
         return await self._client.get_transactions(region_code, year_month, prop_type="villa")
 
-    async def get_commercial_transactions(self, region_code: str, year_month: str) -> List[Dict]:
+    async def get_commercial_transactions(self, region_code: str, year_month: str) -> list[dict]:
         """상업/업무용 부동산 매매 실거래가 조회 (정규화)."""
         return await self._client.get_transactions(region_code, year_month, prop_type="commercial")
 
-    async def get_land_transactions(self, region_code: str, year_month: str) -> List[Dict]:
+    async def get_land_transactions(self, region_code: str, year_month: str) -> list[dict]:
         """토지 매매 실거래가 조회 (정규화).
 
         아파트(getRTMSDataSvcAptTradeDev)와 별개 오퍼레이션인
@@ -44,7 +44,7 @@ class MOLITService:
         """
         return await self._client.get_transactions(region_code, year_month, prop_type="land")
 
-    async def get_official_land_price(self, pnu_code: str) -> Optional[Dict]:
+    async def get_official_land_price(self, pnu_code: str) -> Optional[dict]:
         """표준 공시지가 조회"""
         params = {
             "serviceKey": settings.MOLIT_API_KEY,

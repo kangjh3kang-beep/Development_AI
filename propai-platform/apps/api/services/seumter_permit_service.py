@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime, timezone
-UTC = timezone.utc
+from datetime import datetime, timezone, UTC
+UTC = UTC
 from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4

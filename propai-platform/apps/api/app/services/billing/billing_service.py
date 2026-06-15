@@ -15,7 +15,7 @@ LLM 실계측: 모든 LLM 호출은 llm_usage_log에 service 귀속으로 1건 I
 사용자 청구사용량에 누적된다.
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, UTC
 from typing import Any
 
 import structlog
@@ -122,7 +122,7 @@ async def ensure_cycle(db: AsyncSession, user_id: Any):
     tier, billed = row[0], float(row[1])
     budget, cycle = float(row[2]), row[3]
     monthly_base, topup = float(row[4]), float(row[5])
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     rollover = cycle is None or (cycle.year, cycle.month) != (now.year, now.month)
     if rollover and is_metered_tier(tier):
         monthly_base = tier_included_budget_krw(tier)  # 월기본만 리셋
@@ -330,7 +330,7 @@ async def token_usage(
     """
     await ensure_schema(db)
     days = max(1, min(int(days or 30), 365))
-    since = datetime.now(timezone.utc) - timedelta(days=days)
+    since = datetime.now(UTC) - timedelta(days=days)
     # ★platform_wide면 user_id 조건 제거(전체 집계). 식별자는 코드 상수라 SQL 인젝션 무관.
     user_cond = "" if platform_wide else "user_id=:id AND "
     params: dict[str, Any] = {"since": since}
@@ -567,6 +567,6 @@ async def set_tier(db: AsyncSession, user_id: Any, tier: str) -> None:
             "billing_budget_krw=:b, billing_cycle_start=:c WHERE id=:id"
         ),
         {"t": tier, "m": monthly_base, "b": _sync_budget(monthly_base, topup),
-         "c": datetime.now(timezone.utc), "id": str(user_id)},
+         "c": datetime.now(UTC), "id": str(user_id)},
     )
     await db.commit()

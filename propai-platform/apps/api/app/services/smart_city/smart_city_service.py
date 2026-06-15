@@ -12,7 +12,7 @@ class SmartCityService:
         "energy_infrastructure": 0.15, "digital_infrastructure": 0.10
     }
 
-    def calculate_location_score(self, smart_city_data: Dict) -> Dict:
+    def calculate_location_score(self, smart_city_data: dict) -> dict:
         total_score = 0.0
         breakdown = {}
         for indicator, weight in self.SCORE_WEIGHTS.items():

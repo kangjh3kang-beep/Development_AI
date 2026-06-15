@@ -12,7 +12,7 @@ XGBoost 기반 부동산 시세 추정.
 """
 
 import math
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 from typing import Any
 from uuid import UUID
 
@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from apps.api.config import get_settings
 from apps.api.database.models.avm_valuation import AVMValuation
 
-UTC = timezone.utc
+UTC = UTC
 
 logger = structlog.get_logger(__name__)
 

@@ -1,7 +1,7 @@
 """수납 — 가상계좌 발급/입금 대사(미납 회차 충당)/연체이자 산정. 자금이체 미수행(기록·대사·산출)."""
 
 from decimal import Decimal
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -56,7 +56,7 @@ async def ingest_payment(db: AsyncSession, site_id, payload: dict) -> dict:
         applied = min(Decimal(due), remaining)
         it.paid_amount = (it.paid_amount or 0) + int(applied)
         if applied >= due:
-            it.paid_at = paid_at or datetime.now(timezone.utc)
+            it.paid_at = paid_at or datetime.now(UTC)
         pay_inst_id = pay_inst_id or it.id
         remaining -= applied
         if remaining <= 0:

@@ -54,7 +54,7 @@ class FeasibilityService:
     def __init__(self) -> None:
         pass
 
-    def _estimate_zoning_parameters(self, zone_type: str) -> Dict[str, Any]:
+    def _estimate_zoning_parameters(self, zone_type: str) -> dict[str, Any]:
         """용도지역 이름에서 기본 건폐율(BCA)·용적률(FAR) 추정(개략값)."""
         zone = zone_type or ""
         # 준주거는 "주거"를 포함하므로 먼저 판정해야 제2종주거로 오분류되지 않는다.
@@ -80,7 +80,7 @@ class FeasibilityService:
         zone_type: str,
         avg_pyeong_price_manwon: float,
         official_price_per_sqm: float = 0
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """보고서용 개략 사업타당성 계산(참고용). 반환 단위: 만원(10k won).
 
         정밀 수지는 FeasibilityServiceV2 를 사용한다(상단 docstring 참조).

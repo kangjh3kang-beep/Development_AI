@@ -3,7 +3,7 @@
 """
 
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, UTC
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -78,12 +78,12 @@ async def sign_contract(db: AsyncSession, site_id, contract_id, by=None):
     if c.stage != "RESERVED" or c.status != "ACTIVE":
         raise ValueError(f"서명할 수 없는 계약 상태입니다(현재 단계={c.stage}, 상태={c.status}). 예약(RESERVED) 상태에서만 서명 가능합니다.")
     c.stage = "SIGNED"
-    c.signed_at = datetime.now(timezone.utc)
+    c.signed_at = datetime.now(UTC)
     await _set_unit_status(db, c.unit_id, "CONTRACTED", by)  # 동호 유니크로 1호 1계약 보장
 
     cfg = (await db.execute(select(SalesSiteConfig).where(SalesSiteConfig.site_id == site_id))).scalar_one_or_none()
     sched = ((cfg.installment_schedule if cfg else None) or {}).get("default", [])
-    base = datetime.now(timezone.utc).date()
+    base = datetime.now(UTC).date()
     for i, s in enumerate(sched, start=1):
         db.add(SalesContractInstallment(
             contract_ext_id=c.id, seq=i, kind=s["kind"],
@@ -100,7 +100,7 @@ async def sign_contract(db: AsyncSession, site_id, contract_id, by=None):
 async def cancel_contract(db: AsyncSession, site_id, contract_id, reason: str, by=None):
     c = (await db.execute(select(SalesContractExt).where(SalesContractExt.id == contract_id))).scalar_one()
     db.add(SalesContractChange(
-        contract_ext_id=c.id, change_type="CANCEL", effective_at=datetime.now(timezone.utc),
+        contract_ext_id=c.id, change_type="CANCEL", effective_at=datetime.now(UTC),
         reason=reason, prev_snapshot={"stage": c.stage, "total_price": int(c.total_price or 0)},
     ))
     c.status = "CANCELLED"

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, UTC
 
 import httpx
 import structlog
@@ -25,7 +25,7 @@ from apps.api.database.models.tenant import Tenant
 from apps.api.database.models.user import User
 
 logger = structlog.get_logger(__name__)
-UTC = timezone.utc
+UTC = UTC
 
 KAKAO_TOKEN_URL = "https://kauth.kakao.com/oauth/token"
 KAKAO_USER_INFO_URL = "https://kapi.kakao.com/v2/user/me"

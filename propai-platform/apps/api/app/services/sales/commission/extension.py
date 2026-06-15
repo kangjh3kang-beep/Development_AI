@@ -1,7 +1,7 @@
 """수수료 분할지급/유보 — 마일스톤 스케줄(합계≤1) + 유보 차감 + 도래분 지급(원천징수). 취소시 환수 연계."""
 
 from decimal import Decimal
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timezone, UTC
 
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,7 +30,7 @@ async def set_holdback(db: AsyncSession, split_id, reason, amount, release_condi
 async def release_holdback(db: AsyncSession, holdback_id):
     h = (await db.execute(select(SalesCommissionHoldback).where(
         SalesCommissionHoldback.id == holdback_id))).scalar_one()
-    h.released_at = datetime.now(timezone.utc)
+    h.released_at = datetime.now(UTC)
     await db.flush()
     return h
 
@@ -57,7 +57,7 @@ async def run_due_payouts(db: AsyncSession, site_id, as_of: date, wh_rate=Decima
         net = payout_net(gross, tt)
         po = SalesCommissionPayout(claim_id=None, gross=int(net["gross"]),
              withholding=int(net["withholding"]), net=int(net["net"]),
-             paid_at=datetime.now(timezone.utc), method="SCHEDULE")
+             paid_at=datetime.now(UTC), method="SCHEDULE")
         db.add(po)
         await db.flush()
         # tax_type/vat 는 모델 외 컬럼 — 멱등 ALTER 후 raw 갱신(부가세 가산 지급액 추적).

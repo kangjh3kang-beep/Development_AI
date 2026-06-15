@@ -20,7 +20,7 @@ CONSTRUCTION_START_CHECKLIST = [
 class ConstructionStartService:
     """AI 착공 지원 (건축법 제21조 + 건설기술진흥법 제62조)"""
 
-    def generate_checklist(self, project_type: str, project_cost_krw: float) -> Dict:
+    def generate_checklist(self, project_type: str, project_cost_krw: float) -> dict:
         required = [i for i in CONSTRUCTION_START_CHECKLIST if i["required"]]
         optional = [i for i in CONSTRUCTION_START_CHECKLIST if not i["required"]]
         safety_plan_required = project_cost_krw >= 50_000_000_000
@@ -40,7 +40,7 @@ class ConstructionStartService:
         }
 
     def auto_generate_safety_plan(self, project_id: str, project_name: str,
-                                   floor_count: int, excavation_depth_m: float) -> Dict:
+                                   floor_count: int, excavation_depth_m: float) -> dict:
         high_risk_works = []
         if floor_count >= 11:
             high_risk_works.append("11층 이상 고층 공사")

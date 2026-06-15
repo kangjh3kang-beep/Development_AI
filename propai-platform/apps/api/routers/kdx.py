@@ -2,9 +2,9 @@
 
 import asyncio
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 from uuid import UUID
-UTC = timezone.utc
+UTC = UTC
 
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 from packages.schemas.models import KDXOverviewResponse

@@ -48,7 +48,7 @@ class LCAMaterialItem(BaseModel):
 class LCARequest(BaseModel):
     project_id: str
     # 자재별 수량(dict) 또는 제품 EPD 포함 리스트(제품수준 EPD)
-    material_quantities: Union[Dict[str, float], List[LCAMaterialItem]]
+    material_quantities: dict[str, float] | list[LCAMaterialItem]
     floor_area_sqm: float
     building_type: str = "apartment"
     # BEEC 1차에너지 원단위(kWh/㎡·yr) — 에너지 분석 결과 연동(없으면 표준 원단위)
@@ -62,7 +62,7 @@ class LCCRequest(BaseModel):
     discount_rate: float = 0.03
 
 class EPDRequest(BaseModel):
-    material_list: List[Dict]
+    material_list: list[dict]
 
 @router.post("/lca/calculate")
 async def calculate_lca(req: LCARequest, current_user: User = Depends(get_current_user)):

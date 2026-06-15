@@ -85,7 +85,7 @@ def _rule_by_land_category(cat: str) -> dict[str, Any] | None:
             "legal_basis": ["농지법 제34조(농지전용허가)·제38조(농지보전부담금)"],
             "permit_prerequisites": ["농지전용허가/협의", "농지보전부담금 산정"],
         }
-    if "임야" in c or "산" == c[:1]:
+    if "임야" in c or c[:1] == "산":
         return {
             "category": "임야(산지)", "developability": "CONDITIONAL",
             "implications": ["지목이 임야로, 개발을 위해서는 산지전용허가가 필요하며 경사도·표고·입목축적 기준을 충족해야 합니다.",

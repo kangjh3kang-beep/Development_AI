@@ -10,10 +10,10 @@ D4(시장가 3중비교): 각 항목에 standard / market(KCCI 변동모델) / a
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 from typing import Any
 
-UTC = timezone.utc
+UTC = UTC
 
 _BT_KR = {
     "apartment": "공동주택", "officetel": "오피스텔", "office": "근린생활시설",

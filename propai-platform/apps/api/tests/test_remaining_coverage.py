@@ -9,8 +9,8 @@ chatbot, predictive_maintenance, webrtc router 핸들러 등
 
 import os
 import sys
-from datetime import datetime, timezone
-UTC = timezone.utc
+from datetime import datetime, timezone, UTC
+UTC = UTC
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4

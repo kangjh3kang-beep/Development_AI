@@ -107,11 +107,7 @@ class PermitPackageService:
             applicable = item["required"]
             if not applicable:
                 # 조건부 서류 적용 판단
-                if "200㎡" in item.get("description", "") and building_area_sqm >= 200:
-                    applicable = True
-                elif "공공건축물" in item.get("description", "") and is_public:
-                    applicable = True
-                elif "농지" in item.get("description", "") and is_agricultural:
+                if "200㎡" in item.get("description", "") and building_area_sqm >= 200 or "공공건축물" in item.get("description", "") and is_public or "농지" in item.get("description", "") and is_agricultural:
                     applicable = True
 
             items.append({

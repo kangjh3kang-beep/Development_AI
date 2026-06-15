@@ -5,7 +5,7 @@ from typing import Dict
 class FeasibilityService:
     """NPV/IRR/Payback 사업 타당성 검토."""
 
-    def run_feasibility_study(self, project_id: str, params: Dict) -> Dict:
+    def run_feasibility_study(self, project_id: str, params: dict) -> dict:
         total_investment = params.get("total_investment", 0)
         expected_revenue = params.get("expected_revenue", 0)
         discount_rate = params.get("discount_rate", 0.08)

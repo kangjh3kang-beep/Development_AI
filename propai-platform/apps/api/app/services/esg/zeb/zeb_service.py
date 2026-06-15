@@ -14,7 +14,7 @@ class ZEBService:
         5: (20, "5등급: 에너지자립률 20~40%"),
     }
 
-    def evaluate_zeb_grade(self, energy_data: Dict) -> Dict:
+    def evaluate_zeb_grade(self, energy_data: dict) -> dict:
         primary = energy_data.get("primary_energy_kwh_sqm_yr", 0)
         renewable = energy_data.get("renewable_generation_kwh_sqm_yr", 0)
         independence = (renewable / primary * 100) if primary > 0 else 0
@@ -31,13 +31,13 @@ class ZEBService:
             "legal_basis": "녹색건축물 조성 지원법 시행령 제12조",
         }
 
-    def calculate_primary_energy(self, building_data: Dict) -> Dict:
+    def calculate_primary_energy(self, building_data: dict) -> dict:
         area = building_data.get("total_area_sqm", 1000)
         kwh_per_sqm = building_data.get("energy_per_sqm_kwh", 120)
         total = area * kwh_per_sqm
         return {"total_kwh": total, "per_sqm_yr": kwh_per_sqm, "area_sqm": area}
 
-    def optimize_envelope(self, current_data: Dict) -> List[Dict]:
+    def optimize_envelope(self, current_data: dict) -> list[dict]:
         improvements = []
         u_wall = current_data.get("u_wall", 0.3)
         u_window = current_data.get("u_window", 1.5)
@@ -50,7 +50,7 @@ class ZEBService:
             improvements.append({"item": "기밀성 강화", "current": ach, "target": 1.0, "saving_pct": round((1 - 1.0 / ach) * 15, 1)})
         return improvements
 
-    def forecast_certification(self, current_grade: int, improvements: List[Dict]) -> Dict:
+    def forecast_certification(self, current_grade: int, improvements: list[dict]) -> dict:
         total_saving = sum(i.get("saving_pct", 0) for i in improvements)
         achievable = current_grade - max(1, int(total_saving / 20))
         return {

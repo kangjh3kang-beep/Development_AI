@@ -22,7 +22,7 @@ class TestPremiumAndBasis:
 
     def test_공급면적_상수(self):
         assert _REF_EXCLUSIVE_SQM == 84.0 and _REF_SUPPLY_SQM == 112.4
-        assert _REF_SUPPLY_PYEONG == round(112.4 / 3.305785, 1)
+        assert round(112.4 / 3.305785, 1) == _REF_SUPPLY_PYEONG
         assert 0.7 <= _JEONYULRYUL <= 0.8
 
     def test_상업은_분양면적(self):

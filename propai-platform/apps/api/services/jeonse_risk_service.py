@@ -11,8 +11,8 @@
 """
 
 import asyncio
-from datetime import datetime, timezone
-UTC = timezone.utc
+from datetime import datetime, timezone, UTC
+UTC = UTC
 from typing import Any
 from uuid import UUID
 

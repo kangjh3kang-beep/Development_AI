@@ -17,7 +17,7 @@ class DisasterRiskService:
     }
 
     def assess_disaster_risk(self, region: str, land_use: str,
-                              floor_count: int, distance_to_river_m: float = 500) -> Dict:
+                              floor_count: int, distance_to_river_m: float = 500) -> dict:
         hazard = self.REGIONAL_HAZARD_INDEX.get(region, self.REGIONAL_HAZARD_INDEX["default"])
         flood_exposure = max(0.1, 1.0 - distance_to_river_m / 1000)
         seismic_vulnerability = min(0.9, floor_count * 0.05)

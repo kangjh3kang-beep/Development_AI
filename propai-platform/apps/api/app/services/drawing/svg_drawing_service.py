@@ -38,11 +38,11 @@ C_SETBACK = "#d63031"
 C_OK = "#00b894"    # pass (적합 — 녹)
 C_WARN = "#e17055"  # warning (조건부 — 주황)
 C_BAD = "#d63031"   # fail (부적합 — 적)
-_STATUS_ICON: Dict[str, str] = {"pass": "✓", "warning": "⚠", "fail": "✗"}
-_STATUS_COLOR: Dict[str, str] = {"pass": C_OK, "warning": C_WARN, "fail": C_BAD}
+_STATUS_ICON: dict[str, str] = {"pass": "✓", "warning": "⚠", "fail": "✗"}
+_STATUS_COLOR: dict[str, str] = {"pass": C_OK, "warning": C_WARN, "fail": C_BAD}
 # 엔진명 → 사람이 읽는 라벨(check_id 접미사가 더 구체적이면 그쪽 우선).
 # 실제 design_audit_orchestrator가 emit하는 엔진명 기준(solar_envelope·design_review 등).
-_ENGINE_LABELS: Dict[str, str] = {
+_ENGINE_LABELS: dict[str, str] = {
     "rules8": "법규",
     "solar": "정북일조",
     "solar_envelope": "정북일조",
@@ -359,7 +359,7 @@ class SVGDrawingService:
         building_depth_m: float,
         setback_m: float = 3.0,
         *,
-        findings: Optional[List[dict]] = None,
+        findings: Optional[list[dict]] = None,
         verdict: Optional[str] = None,
     ) -> str:
         """배치도에 설계심사(8엔진) findings를 결정론으로 주석화한다(audit↔drawing 연결).
@@ -562,7 +562,7 @@ class SVGDrawingService:
         core_depth_m: float = 6.0,
         units: list[dict] | None = None,
         *,
-        findings: Optional[List[dict]] = None,
+        findings: Optional[list[dict]] = None,
     ) -> str:
         """상세 평면도 SVG — 벽체(200mm), 문(900mm), 창호(1200mm), 코어, 복도, 치수선.
 
@@ -1187,13 +1187,13 @@ class SVGDrawingService:
 
     def generate_unit_plan_rooms(
         self,
-        rooms: List[dict],
+        rooms: list[dict],
         body_width_m: Optional[float] = None,
         body_depth_m: Optional[float] = None,
         *,
         unit_type: str = "",
         area_sqm: float = 0.0,
-        balconies: Optional[List[dict]] = None,
+        balconies: Optional[list[dict]] = None,
         boundaries: list[dict] | None = None,
         openings: list[dict] | None = None,
         project_name: str = "PropAI",
