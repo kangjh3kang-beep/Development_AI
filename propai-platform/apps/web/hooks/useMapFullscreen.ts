@@ -29,6 +29,8 @@ export type MapFullscreen = {
   toggle: () => void;
   enter: () => void;
   exit: () => void;
+  /** 풀스크린 대상 래퍼 ref — 이 div에 attach. 네이티브 Fullscreen API가 이 요소를 전체화면화한다. */
+  wrapperRef: { current: HTMLDivElement | null };
   /** 지도 래퍼(부모 relative)에 입힐 클래스 — 풀스크린 시 화면 전체 오버레이. */
   wrapperClass: (base?: string) => string;
   /** 지도 div에 입힐 클래스 — 풀스크린 시 높이를 화면 전체로. */
@@ -37,6 +39,10 @@ export type MapFullscreen = {
 
 export function useMapFullscreen(mapRef: { current: any }): MapFullscreen {
   const [isFull, setIsFull] = useState(false);
+  // nativeFs=true면 브라우저 네이티브 Fullscreen API로 전체화면(상위 transform/backdrop-filter가
+  // position:fixed를 클리핑하는 버그를 원천 회피 — 진짜 뷰포트 전체). 실패 시 CSS 오버레이 폴백.
+  const [nativeFs, setNativeFs] = useState(false);
+  const wrapperRef = useRef<HTMLDivElement | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // 토글 직후 지도 크기 재계산. 레이아웃 전환이 페인트된 뒤 호출해야 하므로
@@ -68,13 +74,46 @@ export function useMapFullscreen(mapRef: { current: any }): MapFullscreen {
   // 언마운트 시 예약된 relayout 타이머 정리.
   useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current); }, []);
 
-  const enter = useCallback(() => { setIsFull(true); relayoutSoon(); }, [relayoutSoon]);
-  const exit = useCallback(() => { setIsFull(false); relayoutSoon(); }, [relayoutSoon]);
-  const toggle = useCallback(() => { setIsFull((v) => !v); relayoutSoon(); }, [relayoutSoon]);
+  // enter: 네이티브 Fullscreen API 우선(상위 transform 클리핑 회피). 미지원/실패 시 CSS 오버레이 폴백.
+  const enter = useCallback(() => {
+    const el = wrapperRef.current;
+    const req = el && (el.requestFullscreen || (el as any).webkitRequestFullscreen);
+    if (el && req) {
+      Promise.resolve(req.call(el)).then(() => setNativeFs(true)).catch(() => {
+        setNativeFs(false); setIsFull(true); relayoutSoon();
+      });
+    } else {
+      setNativeFs(false); setIsFull(true); relayoutSoon();
+    }
+  }, [relayoutSoon]);
 
-  // 풀스크린 동안: body 스크롤 잠금 + ESC 해제.
+  const exit = useCallback(() => {
+    if (document.fullscreenElement) {
+      Promise.resolve(document.exitFullscreen()).catch(() => {});
+    }
+    setNativeFs(false); setIsFull(false); relayoutSoon();
+  }, [relayoutSoon]);
+
+  const toggle = useCallback(() => {
+    if (isFull || document.fullscreenElement) exit();
+    else enter();
+  }, [isFull, enter, exit]);
+
+  // 네이티브 fullscreenchange 동기화 — 브라우저 UI(ESC·F11)로 해제돼도 상태 일치 + 지도 relayout.
   useEffect(() => {
-    if (!isFull) return;
+    const onFsChange = () => {
+      const on = !!document.fullscreenElement;
+      setIsFull(on);
+      setNativeFs(on);
+      relayoutSoon();
+    };
+    document.addEventListener("fullscreenchange", onFsChange);
+    return () => document.removeEventListener("fullscreenchange", onFsChange);
+  }, [relayoutSoon]);
+
+  // CSS 폴백 오버레이 동안에만: body 스크롤 잠금 + ESC 해제(네이티브는 브라우저가 처리).
+  useEffect(() => {
+    if (!isFull || nativeFs) return;
     const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     const onKey = (e: KeyboardEvent) => {
@@ -85,20 +124,23 @@ export function useMapFullscreen(mapRef: { current: any }): MapFullscreen {
       document.body.style.overflow = prevOverflow;
       window.removeEventListener("keydown", onKey);
     };
-  }, [isFull, relayoutSoon]);
+  }, [isFull, nativeFs, relayoutSoon]);
 
   const wrapperClass = useCallback(
-    (base = "") =>
-      isFull
-        ? `${base} fixed inset-0 z-[100] m-0 bg-[var(--surface-base,#0b0e14)] p-3 sm:p-4`
-        : base,
-    [isFull],
+    (base = "") => {
+      // 네이티브 풀스크린: 브라우저가 요소를 뷰포트 전체로 만들므로 채움(h/w-full)+배경+flex만.
+      if (nativeFs) return `${base} h-full w-full m-0 bg-[var(--surface-base,#0b0e14)] p-3 sm:p-4 flex flex-col`;
+      // CSS 폴백 오버레이.
+      if (isFull) return `${base} fixed inset-0 z-[100] m-0 bg-[var(--surface-base,#0b0e14)] p-3 sm:p-4`;
+      return base;
+    },
+    [isFull, nativeFs],
   );
 
   const mapClass = useCallback(
-    (base = "") => (isFull ? `${base} !h-full flex-1` : base),
-    [isFull],
+    (base = "") => (isFull || nativeFs ? `${base} !h-full flex-1` : base),
+    [isFull, nativeFs],
   );
 
-  return { isFull, toggle, enter, exit, wrapperClass, mapClass };
+  return { isFull: isFull || nativeFs, toggle, enter, exit, wrapperRef, wrapperClass, mapClass };
 }

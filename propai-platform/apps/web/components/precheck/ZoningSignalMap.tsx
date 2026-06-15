@@ -128,7 +128,7 @@ export function ZoningSignalMap({
   }, [JSON.stringify(geojson), JSON.stringify(pnuLevel), centerHint?.lat, centerHint?.lon]);
 
   return (
-    <div className={fs.wrapperClass("relative flex flex-col")}>
+    <div ref={fs.wrapperRef} className={fs.wrapperClass("relative flex flex-col")}>
       <div
         ref={mapEl}
         className={fs.mapClass("h-[360px] w-full overflow-hidden rounded-xl border border-[var(--line)]")}

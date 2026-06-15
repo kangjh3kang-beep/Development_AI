@@ -402,7 +402,7 @@ export function NearbyTransactionsMap({
         </div>
       )}
 
-      <div className={fs.wrapperClass("relative flex flex-col")}>
+      <div ref={fs.wrapperRef} className={fs.wrapperClass("relative flex flex-col")}>
         <div
           ref={mapEl}
           className={fs.mapClass("w-full rounded-xl overflow-hidden border border-[var(--line-strong)] z-0")}

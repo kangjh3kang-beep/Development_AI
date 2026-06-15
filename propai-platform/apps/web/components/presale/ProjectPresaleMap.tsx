@@ -132,7 +132,7 @@ export function ProjectPresaleMap({
         ))}
         <span className="text-[var(--text-hint)]">· 반경 {radiusM / 1000}km · 마커 클릭 시 상세</span>
       </div>
-      <div className={fs.wrapperClass("relative flex flex-col")}>
+      <div ref={fs.wrapperRef} className={fs.wrapperClass("relative flex flex-col")}>
         <div
           ref={mapEl}
           className={fs.mapClass("w-full rounded-xl border border-[var(--line-strong)]")}

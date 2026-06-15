@@ -290,7 +290,7 @@ export function ParcelBoundaryMap({
           <span className="ml-auto text-[var(--text-hint)]">지적도(VWorld) 벡터 · 위성 베이스 권장</span>
         </div>
       )}
-      <div className={fs.wrapperClass("relative flex flex-col")}>
+      <div ref={fs.wrapperRef} className={fs.wrapperClass("relative flex flex-col")}>
         <div ref={mapEl} className={fs.mapClass("h-[340px] w-full overflow-hidden rounded-xl border border-[var(--line)]")} />
         <KakaoMapControls mapRef={mapRef} ready={mapReady} onFullscreen={fs.toggle} isFullscreen={fs.isFull} />
         {/* 로딩/빈결과 오버레이 — 무한 '불러오는 중' 방지 */}

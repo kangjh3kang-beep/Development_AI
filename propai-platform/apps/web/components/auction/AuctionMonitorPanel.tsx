@@ -841,7 +841,7 @@ export function AuctionMonitorPanel({ locale, canUseLiveApi }: { locale: Locale;
           </div>
         </div>
 
-        <div className={fs.wrapperClass("relative flex flex-col")}>
+        <div ref={fs.wrapperRef} className={fs.wrapperClass("relative flex flex-col")}>
           <div
             ref={mapEl}
             className={fs.mapClass("z-0 w-full overflow-hidden rounded-xl border border-[var(--line-strong)]")}
