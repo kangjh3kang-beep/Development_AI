@@ -12,6 +12,10 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
+import structlog
+
+logger = structlog.get_logger(__name__)
+
 
 def summarize_audit(result: dict) -> dict:
     """orchestrator.run 결과 → 자료교환 문서에 부착할 8엔진 요약(결정론·LLM 0).
@@ -71,6 +75,9 @@ async def run_design_document_audit(
     data: bytes,
     convert_dxf=None,
     orchestrator=None,
+    project_id: Optional[str] = None,    # Phase 0 unit d: 원장 backlink context(호출처 thread-through)
+    tenant_id: Optional[str] = None,
+    created_by: Optional[str] = None,
 ) -> tuple[str, Optional[dict]]:
     """설계파일(DXF/IFC) 8엔진 투입 → (audit_status, audit_summary).
 
@@ -100,5 +107,16 @@ async def run_design_document_audit(
                 os.unlink(tmp.name)
             except OSError:
                 pass
+
+    # Phase 0 unit d: design_audit raw 결과를 원장 단일 SSOT에 best-effort 일원화(실패 무중단).
+    try:
+        from app.services.ledger.ledger_adapters import record_design_audit
+
+        await record_design_audit(
+            result=result, tenant_id=tenant_id, project_id=project_id,
+            created_by=created_by,
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("원장 배선 append 실패(design_audit/document)", err=str(e)[:160])
 
     return ("completed", summarize_audit(result))

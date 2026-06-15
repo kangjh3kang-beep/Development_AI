@@ -271,7 +271,10 @@ async def upload_project_document(
     if run_audit:
         try:
             a_status, a_summary = await run_design_document_audit(
-                db, filename=filename, data=data
+                db, filename=filename, data=data,
+                project_id=project_id,                       # Phase 0 unit d: 원장 backlink context
+                tenant_id=str(member.organization_id),
+                created_by=str(user.id),
             )
         except Exception as exc:  # noqa: BLE001 — best-effort: 업로드 성공 보존, 정직 표기
             logger.warning("collab_document_audit_failed", error=str(exc)[:200])
