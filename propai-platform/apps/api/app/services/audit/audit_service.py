@@ -66,7 +66,12 @@ class AuditEntry:
 
 
 class AuditTrailService:
-    """불변 감사 추적 (append-only, SHA-256 해시 체인)."""
+    """불변 감사 추적 (append-only, SHA-256 해시 체인).
+
+    ⚠️ 레거시·비-SSOT: 본 클래스는 in-memory 전용(영속 없음)이며 무결성 SSOT가 아니다.
+    영속 감사 경로는 app.services.ledger.audit_ledger.append_audit(원장 흡수, Phase 0)다.
+    하위호환을 위해 보존하되 신규 코드는 audit_ledger를 사용할 것.
+    """
 
     ACTIONS = [
         "CREATE", "READ", "UPDATE", "DELETE",
