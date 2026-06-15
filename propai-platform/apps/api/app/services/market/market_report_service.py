@@ -85,6 +85,145 @@ def _eok(man: float) -> str:
     return f"{int(man):,}만"
 
 
+# ── raw_data 빌더(순수 함수·네트워크 없음) ──────────────────────────────────
+# 프론트(P3)·export(P4)가 dict 를 재가공하지 않도록 표(row 배열)로 평탄화한다.
+# 가짜 데이터 금지: provider 가 안 준 값은 None, 미선택 분류는 키 자체를 생략한다(아래 규칙).
+
+def _re_per_pyeong(price_10k: float, area_m2: float) -> float | None:
+    """총액(만원)·면적(㎡) → 평당가(만원/평). 값이 유효할 때만 반올림 정수."""
+    if price_10k and area_m2 and price_10k > 0 and area_m2 > 0:
+        return round(price_10k / (area_m2 / PYEONG_SQM))
+    return None
+
+
+def _build_trade_table(trade: dict[str, Any]) -> list[dict[str, Any]]:
+    """stats['trade'] → 행 배열. 각 유형의 건수·총액통계·평균면적·평당가를 평탄화."""
+    rows: list[dict[str, Any]] = []
+    for label, s in (trade or {}).items():
+        pp = (s.get("per_pyeong") or {}).get("avg")
+        rows.append({
+            "type": label,
+            "count": s.get("count", 0),
+            "avg_10k": s.get("avg", 0),
+            "min_10k": s.get("min", 0),
+            "max_10k": s.get("max", 0),
+            "avg_area_m2": s.get("avg_area_m2", 0),
+            "per_pyeong_manwon": pp if pp else None,
+        })
+    return rows
+
+
+def _build_rent_table(rent: dict[str, Any]) -> list[dict[str, Any]]:
+    """stats['rent'] → 행 배열. 보증금 통계(있는 필드만)."""
+    rows: list[dict[str, Any]] = []
+    for label, s in (rent or {}).items():
+        rows.append({
+            "type": label,
+            "count": s.get("count", 0),
+            "avg_10k": s.get("avg", 0),
+            "min_10k": s.get("min", 0),
+            "max_10k": s.get("max", 0),
+        })
+    return rows
+
+
+def _build_trend_series(apt_trend: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """apt_trend(과거→현재 정렬됨) → {ym, per_pyeong_manwon, mom_pct} 행 배열.
+
+    mom_pct(전월대비 증감률 %) = ((현재-직전)/직전*100) 반올림 1자리. 첫 항목은 None(직전 없음).
+    직전 평당가가 0/None 이면 분모 0 방지로 None.
+    """
+    out: list[dict[str, Any]] = []
+    prev: float | None = None
+    for t in (apt_trend or []):
+        cur = t.get("avg_per_pyeong")
+        mom = None
+        if prev and cur and prev > 0:
+            mom = round((cur - prev) / prev * 100, 1)
+        out.append({
+            "ym": t.get("ym"),
+            "per_pyeong_manwon": cur if cur else None,
+            "mom_pct": mom,
+        })
+        if cur:
+            prev = cur
+    return out
+
+
+def _build_population_block(demographics: dict[str, Any] | None) -> dict[str, Any] | None:
+    """demographics.population/migration → 표 평탄화 블록.
+
+    미선택 분류(population 비어 있고 data_source 없음)면 None 반환 → 호출측에서 키 생략.
+    선택했으나 provider 실패면 data_source='unavailable'/'fallback' 등으로 정직 표기.
+    """
+    pop = (demographics or {}).get("population") or {}
+    mig = (demographics or {}).get("migration") or {}
+    pop_src = pop.get("data_source")
+    mig_src = mig.get("data_source")
+    # 둘 다 data_source 가 없으면 = 미선택(호출 자체를 안 함) → 키 생략 신호로 None.
+    if pop_src is None and mig_src is None:
+        return None
+
+    # 연령분포: SGIS 는 {label: count} dict(예: {"0-9": n, ...}) → 행 배열.
+    age_dist = pop.get("age_distribution") or {}
+    age_rows = [{"label": k, "count": v} for k, v in age_dist.items()] if isinstance(age_dist, dict) else []
+
+    # 가구원수 분포: {"1_person","2_person","3_person","4_over"} 비율(%) → 행 배열.
+    #   SGIS 미제공이라 평균 가구원수 기반 '추정'(estimated=true) — note 로도 명시됨.
+    ht = pop.get("household_types") or {}
+    _ht_label = {"1_person": "1인", "2_person": "2인", "3_person": "3인", "4_over": "4인+"}
+    household_rows = (
+        [{"label": _ht_label.get(k, k), "ratio": v, "estimated": True} for k, v in ht.items()]
+        if isinstance(ht, dict) else []
+    )
+
+    return {
+        "summary": {
+            "total_population": pop.get("total_population") or None,
+            "household_count": pop.get("household_count") or None,
+            "avg_household_size": pop.get("avg_household_size") or None,
+        },
+        "age_distribution": age_rows,
+        "household_types": household_rows,
+        "migration": {
+            "total_inflow": mig.get("total_inflow") if mig_src is not None else None,
+            "total_outflow": mig.get("total_outflow") if mig_src is not None else None,
+            "net_migration": mig.get("net_migration") if mig_src is not None else None,
+        },
+        "source": "통계청 인구주택총조사 / 국내인구이동통계",
+        # population 자체의 출처. 미선택(호출 안 함)이라 None 이면 정직하게 unavailable.
+        "data_source": pop_src or "unavailable",
+        "migration_data_source": mig_src or "unavailable",
+    }
+
+
+def _build_income_block(demographics: dict[str, Any] | None) -> dict[str, Any] | None:
+    """demographics.macro_income → 소득 블록. 미선택(data_source 없음)이면 None(키 생략).
+
+    KOSIS 국세청 표는 평균 총급여만 산출 가능(중위는 평균×0.85 추정). 인원/총급여 원수치는
+    모델에 보존되지 않으므로 basis.persons/total_salary_10k 는 None(가짜 금지). bracket_ratio 미제공→null.
+    """
+    mi = (demographics or {}).get("macro_income") or {}
+    src = mi.get("data_source")
+    if src is None:
+        return None
+    avg = mi.get("avg_income_10k") or None
+    med = mi.get("median_income_10k") or None
+    # income_bracket_ratio 가 비어 있으면(미제공) 정직 null.
+    bracket = mi.get("income_bracket_ratio") or None
+    return {
+        "avg_income_10k": avg,
+        "median_income_10k": med,
+        # 중위는 평균×0.85 결정론 추정값 — 실측 아님을 명시.
+        "median_estimated": True,
+        # 인원/총급여 원수치는 모델에 보존되지 않음(KosisClient 내부 계산값) → 정직 None.
+        "basis": {"persons": None, "total_salary_10k": None},
+        "bracket_ratio": bracket,
+        "source": "국세청 근로소득",
+        "data_source": src,
+    }
+
+
 class MarketReportService:
     def __init__(self) -> None:
         from apps.api.integrations.molit_client import MolitClient
@@ -245,6 +384,30 @@ class MarketReportService:
         options = options or {}
         use_sgis = options.get("sgis", False)
         use_kosis = options.get("kosis", False)
+        # 항목 단위 게이팅: 프론트(P1)가 보내는 세부 선택. 없을 수도 있음(하위호환).
+        #   detail = {pop_age, pop_household, pop_migration, income_avg, income_basis}
+        #   detail 이 제공되면 항목 기준으로, 없으면 기존 분류 boolean(use_sgis/use_kosis)으로 폴백한다.
+        #   → detail 미전달 시 기존 호출 동작 100% 무회귀.
+        detail = options.get("detail") or {}
+
+        def _want(key: str, fallback: bool) -> bool:
+            """detail 에 항목이 명시되면 그 값, 없으면 fallback(분류 boolean)."""
+            return bool(detail[key]) if key in detail else fallback
+
+        # 인구규모/연령/가구원수는 SGIS 단일 호출이라 연령·가구 둘 중 하나라도 ON 이면 호출.
+        want_pop = (
+            (_want("pop_age", use_sgis) or _want("pop_household", use_sgis))
+            if ("pop_age" in detail or "pop_household" in detail)
+            else use_sgis
+        )
+        # 인구이동: detail.pop_migration 명시 시 그 값, 비면 기존 use_sgis/use_kosis 폴백.
+        want_mig = _want("pop_migration", use_sgis or use_kosis)
+        # 소득: detail.income_avg 또는 income_basis 명시 시 그 값, 비면 기존 use_kosis 폴백.
+        want_inc = (
+            (_want("income_avg", use_kosis) or _want("income_basis", use_kosis))
+            if ("income_avg" in detail or "income_basis" in detail)
+            else use_kosis
+        )
 
         comp = {}
         try:
@@ -265,7 +428,7 @@ class MarketReportService:
         
         # 병렬로 인구이동, 연령통계, 거시소득 호출 (옵션 선택 여부에 따라 분기)
         demographics: dict[str, Any] | None = None
-        if use_sgis or use_kosis:
+        if want_pop or want_mig or want_inc:
             try:
                 # use_mock=None: 클라이언트가 키 존재 여부로 실연동/폴백을 자동 결정한다.
                 #   (과거 use_mock=True 하드코딩으로 키가 있어도 항상 Mock만 나오던 G1 결함 제거)
@@ -273,8 +436,10 @@ class MarketReportService:
                 # 통합시(수원/성남 등) 표기차 흡수: KOSIS=시 단위, SGIS=시+구.
                 kosis_nm, sgis_nm = _extract_region_keys(address)
 
+                # 항목 단위 게이팅: 미선택 항목은 provider 호출을 생략해 불필요한 외부 API
+                #   호출을 줄인다(빈 메타 dict 반환 → 모델 기본값으로 unavailable 표기됨).
                 async def fetch_mig():
-                    if not use_sgis and not use_kosis:
+                    if not want_mig:
                         return {"target_adm_cd": lawd_cd, "year": cur_year}
                     # I2: 인구이동은 SGIS 미제공 → KOSIS 「시군구별 이동자수」로 대상 시군구의
                     #     총전입·총전출·순이동(유입세)을 산출. 주소에서 시군구명을 추출해 식별한다.
@@ -284,12 +449,12 @@ class MarketReportService:
                     # KOSIS 미확정/실패 시 SGIS 정직 폴백(가짜 금지).
                     return await sgis.get_migration_stats(lawd_cd, cur_year) if use_sgis else od
                 async def fetch_pop():
-                    if not use_sgis:
+                    if not want_pop:
                         return {"target_adm_cd": lawd_cd, "year": cur_year}
                     return await sgis.get_population_stats(
                         lawd_cd, cur_year, region_name=sgis_nm)
                 async def fetch_inc():
-                    if not use_kosis:
+                    if not want_inc:
                         return {"sigungu_cd": lawd_cd[:5], "year": cur_year}
                     return await kosis.get_macro_income_stats(
                         lawd_cd[:5], cur_year, region_name=kosis_nm)
@@ -408,6 +573,35 @@ class MarketReportService:
             "opportunities": [], "risks": [], "price_trend": "", "target_persona": "AI 분석 미포함"
         }
 
+        # ── 단일 소비원(raw_data + analysis) 구성 ──
+        # 프론트(P3)·export(P4)가 dict 를 재가공하지 않도록 표(row 배열)로 평탄화한다.
+        # 미선택 분류 처리 규칙(일관): population/income 블록은 '미선택(provider 호출 안 함)'이면
+        #   키 자체를 생략하고, '선택했으나 provider 실패'면 키는 두되 data_source 로 정직 표기한다.
+        raw_data: dict[str, Any] = {
+            "real_estate": {
+                "trade_table": _build_trade_table(stats["trade"]),
+                "rent_table": _build_rent_table(stats["rent"]),
+                "trend_series": _build_trend_series(stats.get("apt_trend") or []),
+                "source": "국토교통부 실거래가",
+                "data_source": "live",
+            },
+        }
+        _pop_block = _build_population_block(demographics)
+        if _pop_block is not None:  # 미선택이면 키 생략(정직)
+            raw_data["population"] = _pop_block
+        _inc_block = _build_income_block(demographics)
+        if _inc_block is not None:  # 미선택이면 키 생략(정직)
+            raw_data["income"] = _inc_block
+
+        # analysis: 기존 산출을 묶기만(중복 계산 금지, 같은 객체 참조).
+        analysis: dict[str, Any] = {
+            "narrative": narrative,
+            "feasibility": feasibility,
+            "pricing_band": pricing_band,
+            "unit_mix": unit_mix_recommendation,
+            "target_persona": (narrative or {}).get("target_persona"),
+        }
+
         return {
             "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
             "address": address,
@@ -425,6 +619,9 @@ class MarketReportService:
             "feasibility_analysis": feasibility,
             "pricing_band": pricing_band,
             "unit_mix_recommendation": unit_mix_recommendation,
+            # ── 신규(하위호환): 단일 소비원 ──
+            "raw_data": raw_data,
+            "analysis": analysis,
         }
 
     # ── 정적 지도 이미지(OSM 타일 합성, Pillow) ──
