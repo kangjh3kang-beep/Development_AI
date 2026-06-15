@@ -791,15 +791,83 @@ class MarketReportService:
             story.append(d)
             story.append(Spacer(1, 8))
 
-        story.append(Paragraph("5. 기회 요인", h2))
+        # ── 인구·소득 섹션(선택형) — raw_data 의 평탄화 블록을 표로 추가 ──
+        cap = ParagraphStyle("cap", parent=body, fontSize=7.5, textColor=colors.HexColor("#888888"), leading=11)
+
+        def _simple_table(rows: list, col_widths: list):
+            t = Table(rows, colWidths=col_widths)
+            t.setStyle(TableStyle([
+                ("FONTNAME", (0, 0), (-1, -1), font), ("FONTSIZE", (0, 0), (-1, -1), 9),
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0e7490")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#cbd5e1")),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f1f5f9")]),
+                ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
+            ]))
+            return t
+
+        raw = rep.get("raw_data") or {}
+        pop = raw.get("population")
+        if pop:
+            story.append(Paragraph("5. 인구 규모·분포", h2))
+            summ = pop.get("summary") or {}
+            srows = [["구분", "값"],
+                     ["총인구", f"{summ.get('total_population'):,}명" if summ.get("total_population") else "데이터 없음"],
+                     ["가구수", f"{summ.get('household_count'):,}가구" if summ.get("household_count") else "데이터 없음"],
+                     ["평균 가구원수", f"{summ.get('avg_household_size')}명" if summ.get("avg_household_size") else "데이터 없음"]]
+            story.append(_simple_table(srows, [70 * mm, 100 * mm]))
+            story.append(Spacer(1, 4))
+            age = pop.get("age_distribution") or []
+            if age:
+                arows = [["연령대", "인구수"]] + [[a.get("label", "-"), f"{a.get('count'):,}" if a.get("count") else "-"] for a in age]
+                story.append(Paragraph("연령 분포", body))
+                story.append(_simple_table(arows, [85 * mm, 85 * mm]))
+                story.append(Spacer(1, 4))
+            ht = pop.get("household_types") or []
+            if ht:
+                hrows = [["가구원수", "비율(%)"]] + [[h.get("label", "-"), f"{h.get('ratio')}%(추정)" if h.get("ratio") is not None else "-"] for h in ht]
+                story.append(Paragraph("가구원수 분포", body))
+                story.append(_simple_table(hrows, [85 * mm, 85 * mm]))
+                story.append(Spacer(1, 4))
+            mig = pop.get("migration") or {}
+            mrows = [["순유입(전입-전출)", "전입", "전출"],
+                     [f"{mig.get('net_migration'):,}" if mig.get("net_migration") is not None else "데이터 없음",
+                      f"{mig.get('total_inflow'):,}" if mig.get("total_inflow") is not None else "-",
+                      f"{mig.get('total_outflow'):,}" if mig.get("total_outflow") is not None else "-"]]
+            story.append(Paragraph("인구 이동", body))
+            story.append(_simple_table(mrows, [60 * mm, 55 * mm, 55 * mm]))
+            story.append(Paragraph(f"출처: {pop.get('source', '-')} ({pop.get('data_source', '-')})", cap))
+            story.append(Spacer(1, 8))
+
+        inc = raw.get("income")
+        if inc:
+            story.append(Paragraph("6. 소득 수준", h2))
+            avg = inc.get("avg_income_10k")
+            med = inc.get("median_income_10k")
+            irows = [["구분", "연소득"],
+                     ["평균 소득", f"{_eok(avg)}원" if avg else "데이터 없음"],
+                     ["중위 소득" + ("(추정)" if inc.get("median_estimated") else ""), f"{_eok(med)}원" if med else "데이터 없음"]]
+            story.append(_simple_table(irows, [80 * mm, 90 * mm]))
+            story.append(Paragraph(f"출처: {inc.get('source', '-')} ({inc.get('data_source', '-')})", cap))
+            story.append(Spacer(1, 8))
+
+        # 적정 분양가(있을 때만)
+        pb = (rep.get("pricing_band") or {})
+        if pb and pb.get("data_source") not in (None, "unavailable") and pb.get("fair_price_10k"):
+            story.append(Paragraph("7. 적정 분양가(거래사례비교)", h2))
+            story.append(Paragraph(f"적정 분양가: {_eok(pb['fair_price_10k'])}원 · 지불여력 판정: {pb.get('affordability_verdict', '-')}", body))
+            story.append(Paragraph(pb.get("note", ""), cap))
+            story.append(Spacer(1, 8))
+
+        story.append(Paragraph("8. 기회 요인", h2))
         for o in (nar.get("opportunities") or ["-"]):
             story.append(Paragraph(f"· {o}", body))
         story.append(Spacer(1, 4))
-        story.append(Paragraph("6. 리스크 요인", h2))
+        story.append(Paragraph("9. 리스크 요인", h2))
         for r in (nar.get("risks") or ["-"]):
             story.append(Paragraph(f"· {r}", body))
         story.append(Spacer(1, 4))
-        story.append(Paragraph("7. 가격 동향", h2))
+        story.append(Paragraph("10. 가격 동향", h2))
         story.append(Paragraph(nar.get("price_trend") or "-", body))
 
         # 면책 고지
@@ -937,8 +1005,33 @@ class MarketReportService:
             s.shapes.add_chart(XL_CHART_TYPE.COLUMN_CLUSTERED, Inches(0.8), Inches(1.5), Inches(11.7), Inches(5), cd)
             brand_footer(s)
 
+        def kv_table_slide(title: str, header: list[str], data_rows: list[list[str]], caption: str | None = None):
+            """2~N열 일반 표 슬라이드(인구·소득 등). data_rows 는 문자열 행 배열."""
+            s = prs.slides.add_slide(prs.slide_layouts[6])
+            header_bar(s, title)
+            rows = len(data_rows) + 1
+            ncol = len(header)
+            tbl = s.shapes.add_table(rows, ncol, Inches(0.8), Inches(1.5), Inches(11.7), Inches(min(0.5 * rows, 5))).table
+            for c, h in enumerate(header):
+                cell = tbl.cell(0, c)
+                cell.text = h
+                cell.fill.solid(); cell.fill.fore_color.rgb = accent
+                cell.text_frame.paragraphs[0].font.color.rgb = WHITE
+                cell.text_frame.paragraphs[0].font.bold = True
+            for r, row in enumerate(data_rows, start=1):
+                for c, val in enumerate(row):
+                    tbl.cell(r, c).text = str(val)
+            if caption:
+                capbox = s.shapes.add_textbox(Inches(0.8), Inches(6.5), Inches(11.7), Inches(0.5)).text_frame
+                capbox.word_wrap = True
+                capbox.text = caption
+                capbox.paragraphs[0].font.size = Pt(9)
+                capbox.paragraphs[0].font.color.rgb = RGBColor(0x94, 0xA3, 0xB8)
+            brand_footer(s)
+
         nar = rep.get("narrative") or {}
         trend = [x for x in (rep.get("apt_trend") or []) if x.get("avg_per_pyeong") or x.get("avg")]
+        raw = rep.get("raw_data") or {}
         title_slide()
         map_slide()
         text_slide("1. 시장 요약", [nar.get("summary") or "-", f"용도지역: {rep.get('zone_type') or '-'}"])
@@ -946,10 +1039,228 @@ class MarketReportService:
         table_slide("3. 전월세 보증금 (유형별)", rep.get("rent") or {})
         if trend:
             chart_slide("4. 매매 시세 추이 (아파트 월별 평당가)", trend)
-        text_slide("5. 기회 요인", [f"· {o}" for o in (nar.get("opportunities") or ["-"])])
-        text_slide("6. 리스크 요인", [f"· {r}" for r in (nar.get("risks") or ["-"])])
-        text_slide("7. 가격 동향", [nar.get("price_trend") or "-"])
+
+        # 인구 섹션(선택형) — 미선택이면 raw_data 에 population 키 자체가 없어 건너뜀.
+        pop = raw.get("population")
+        if pop:
+            summ = pop.get("summary") or {}
+            prows = [
+                ["총인구", f"{summ.get('total_population'):,}명" if summ.get("total_population") else "데이터 없음"],
+                ["가구수", f"{summ.get('household_count'):,}가구" if summ.get("household_count") else "데이터 없음"],
+                ["평균 가구원수", f"{summ.get('avg_household_size')}명" if summ.get("avg_household_size") else "데이터 없음"],
+            ]
+            for a in (pop.get("age_distribution") or []):
+                prows.append([f"연령 {a.get('label', '-')}", f"{a.get('count'):,}명" if a.get("count") else "-"])
+            for h in (pop.get("household_types") or []):
+                prows.append([f"가구원 {h.get('label', '-')}", f"{h.get('ratio')}%(추정)" if h.get("ratio") is not None else "-"])
+            mig = pop.get("migration") or {}
+            prows.append(["순유입(전입-전출)", f"{mig.get('net_migration'):,}명" if mig.get("net_migration") is not None else "데이터 없음"])
+            kv_table_slide("5. 인구 규모·분포", ["구분", "값"], prows,
+                           caption=f"출처: {pop.get('source', '-')} ({pop.get('data_source', '-')})")
+
+        # 소득 섹션(선택형)
+        inc = raw.get("income")
+        if inc:
+            avg = inc.get("avg_income_10k")
+            med = inc.get("median_income_10k")
+            irows = [
+                ["평균 소득", f"{_eok(avg)}원" if avg else "데이터 없음"],
+                ["중위 소득" + ("(추정)" if inc.get("median_estimated") else ""), f"{_eok(med)}원" if med else "데이터 없음"],
+            ]
+            kv_table_slide("6. 소득 수준", ["구분", "연소득"], irows,
+                           caption=f"출처: {inc.get('source', '-')} ({inc.get('data_source', '-')})")
+
+        text_slide("7. 기회 요인", [f"· {o}" for o in (nar.get("opportunities") or ["-"])])
+        text_slide("8. 리스크 요인", [f"· {r}" for r in (nar.get("risks") or ["-"])])
+        text_slide("9. 가격 동향", [nar.get("price_trend") or "-"])
 
         buf = io.BytesIO()
         prs.save(buf)
+        return buf.getvalue()
+
+    # ── DOCX (python-docx) ──
+    def to_docx(self, rep: dict[str, Any]) -> bytes:
+        """시장조사보고서 Word(.docx) 생성. PDF/PPTX 와 동일 데이터(raw_data·analysis)·동일 섹션 구성.
+
+        가짜 데이터 금지: 값이 없으면 '-'/'데이터 없음', 미선택 분류(키 없음)는 섹션 자체를 정직 표기.
+        """
+        from docx import Document
+        from docx.shared import Pt, RGBColor
+
+        doc = Document()
+
+        # months 는 실제 rep 에선 리스트(개월 코드 배열), 스모크에선 정수일 수 있어 둘 다 허용.
+        months = rep.get("months")
+        months_n = len(months) if isinstance(months, (list, tuple)) else (months or 0)
+
+        ACCENT = RGBColor(0x0E, 0x74, 0x90)
+
+        def _h(text: str, level: int = 1):
+            h = doc.add_heading(text, level=level)
+            for run in h.runs:
+                run.font.color.rgb = ACCENT
+            return h
+
+        def _table(header: list[str], data_rows: list[list[str]]):
+            """기본 스타일 표. 첫 행=헤더. 셀 값은 문자열로 강제(가짜 금지·None→'-')."""
+            t = doc.add_table(rows=1, cols=len(header))
+            try:
+                t.style = "Light Grid Accent 1"
+            except Exception:  # noqa: BLE001  # 스타일 없으면 기본 스타일 유지
+                pass
+            for c, htxt in enumerate(header):
+                t.rows[0].cells[c].text = htxt
+            for row in data_rows:
+                cells = t.add_row().cells
+                for c, val in enumerate(row):
+                    cells[c].text = "-" if val is None else str(val)
+            doc.add_paragraph()
+            return t
+
+        def _caption(text: str):
+            p = doc.add_paragraph(text)
+            run = p.runs[0] if p.runs else p.add_run(text)
+            run.font.size = Pt(8)
+            run.font.color.rgb = RGBColor(0x88, 0x88, 0x88)
+
+        # ── ① 표지 ──
+        title = doc.add_heading("시장조사보고서", level=0)
+        for run in title.runs:
+            run.font.color.rgb = ACCENT
+        doc.add_paragraph(f"대상지: {rep.get('address') or '-'}")
+        doc.add_paragraph(f"생성일: {rep.get('generated_at') or '-'}")
+        doc.add_paragraph(f"분석기간: 최근 {months_n}개월")
+        doc.add_paragraph()
+
+        nar = rep.get("narrative") or {}
+        raw = rep.get("raw_data") or {}
+        re_block = raw.get("real_estate") or {}
+
+        # ── ② 핵심 요약 ──
+        _h("1. 핵심 요약", 1)
+        doc.add_paragraph(nar.get("summary") or "AI 내러티브 분석 미포함(use_llm=false) — 실데이터 표만 제공합니다.")
+        if rep.get("zone_type") or rep.get("official_price_per_sqm"):
+            opp = rep.get("official_price_per_sqm")
+            doc.add_paragraph(
+                f"용도지역: {rep.get('zone_type') or '-'} · "
+                f"공시지가(㎡): {_eok((opp or 0) / 10000) + '원' if opp else '-'}"
+            )
+
+        # ── ③ 실데이터 섹션 ──
+        _h("2. 매매 시세 (유형별 · 평당가 기준)", 1)
+        trade_rows = re_block.get("trade_table") or []
+        if trade_rows:
+            rows = []
+            for s in trade_rows:
+                pp = s.get("per_pyeong_manwon")
+                area = s.get("avg_area_m2") or 0
+                rows.append([
+                    s.get("type", "-"),
+                    f"{s.get('count', 0)}건",
+                    f"{int(pp):,}만원/평" if pp else "-",
+                    f"{_eok(s.get('avg_10k', 0))}원" if s.get("avg_10k") else "-",
+                    f"{area:.1f}㎡({round(area / PYEONG_SQM)}평)" if area else "-",
+                ])
+            _table(["유형", "건수", "평당가(만원/평)", "총액 평균", "평균면적"], rows)
+        else:
+            doc.add_paragraph("데이터 없음")
+        _caption(f"출처: {re_block.get('source', '국토교통부 실거래가')} ({re_block.get('data_source', '-')})")
+
+        _h("3. 전월세 보증금 (유형별)", 1)
+        rent_rows = re_block.get("rent_table") or []
+        if rent_rows:
+            rows = [[
+                s.get("type", "-"),
+                f"{s.get('count', 0)}건",
+                f"{_eok(s.get('avg_10k', 0))}원" if s.get("avg_10k") else "-",
+                f"{_eok(s.get('min_10k', 0))}원" if s.get("min_10k") else "-",
+                f"{_eok(s.get('max_10k', 0))}원" if s.get("max_10k") else "-",
+            ] for s in rent_rows]
+            _table(["유형", "건수", "평균", "최저", "최고"], rows)
+        else:
+            doc.add_paragraph("데이터 없음")
+
+        _h("4. 매매 시세 추이 (월별 평당가)", 1)
+        trend = [t for t in (re_block.get("trend_series") or []) if t.get("per_pyeong_manwon")]
+        if trend:
+            rows = [[
+                t.get("ym", "-"),
+                f"{int(t['per_pyeong_manwon']):,}만원/평" if t.get("per_pyeong_manwon") else "-",
+                f"{t['mom_pct']:+.1f}%" if t.get("mom_pct") is not None else "-",
+            ] for t in trend]
+            _table(["연월", "평당가(만원/평)", "전월대비"], rows)
+        else:
+            doc.add_paragraph("데이터 없음")
+
+        # 인구(선택형) — 미선택이면 raw_data 에 population 키 자체가 없음 → 정직 표기.
+        _h("5. 인구 규모·분포", 1)
+        pop = raw.get("population")
+        if pop:
+            summ = pop.get("summary") or {}
+            _table(["구분", "값"], [
+                ["총인구", f"{summ.get('total_population'):,}명" if summ.get("total_population") else "데이터 없음"],
+                ["가구수", f"{summ.get('household_count'):,}가구" if summ.get("household_count") else "데이터 없음"],
+                ["평균 가구원수", f"{summ.get('avg_household_size')}명" if summ.get("avg_household_size") else "데이터 없음"],
+            ])
+            age = pop.get("age_distribution") or []
+            if age:
+                doc.add_paragraph("연령 분포")
+                _table(["연령대", "인구수"], [[a.get("label", "-"), f"{a.get('count'):,}명" if a.get("count") else "-"] for a in age])
+            ht = pop.get("household_types") or []
+            if ht:
+                doc.add_paragraph("가구원수 분포")
+                _table(["가구원수", "비율(%)"], [[h.get("label", "-"), f"{h.get('ratio')}%(추정)" if h.get("ratio") is not None else "-"] for h in ht])
+            mig = pop.get("migration") or {}
+            doc.add_paragraph("인구 이동")
+            _table(["순유입(전입-전출)", "전입", "전출"], [[
+                f"{mig.get('net_migration'):,}명" if mig.get("net_migration") is not None else "데이터 없음",
+                f"{mig.get('total_inflow'):,}명" if mig.get("total_inflow") is not None else "-",
+                f"{mig.get('total_outflow'):,}명" if mig.get("total_outflow") is not None else "-",
+            ]])
+            _caption(f"출처: {pop.get('source', '-')} ({pop.get('data_source', '-')})")
+        else:
+            doc.add_paragraph("데이터 없음 / 연동 예정 (인구 분석 미선택)")
+
+        # 소득(선택형)
+        _h("6. 소득 수준", 1)
+        inc = raw.get("income")
+        if inc:
+            avg = inc.get("avg_income_10k")
+            med = inc.get("median_income_10k")
+            _table(["구분", "연소득"], [
+                ["평균 소득", f"{_eok(avg)}원" if avg else "데이터 없음"],
+                ["중위 소득" + ("(추정)" if inc.get("median_estimated") else ""), f"{_eok(med)}원" if med else "데이터 없음"],
+            ])
+            _caption(f"산출근거: {inc.get('source', '-')} ({inc.get('data_source', '-')})")
+        else:
+            doc.add_paragraph("데이터 없음 / 연동 예정 (소득 분석 미선택)")
+
+        # ── ④ 분석 섹션 ──
+        _h("7. 기회 요인", 1)
+        for o in (nar.get("opportunities") or ["-"]):
+            doc.add_paragraph(o, style="List Bullet")
+        _h("8. 리스크 요인", 1)
+        for r in (nar.get("risks") or ["-"]):
+            doc.add_paragraph(r, style="List Bullet")
+        _h("9. 가격 동향", 1)
+        doc.add_paragraph(nar.get("price_trend") or "-")
+        _h("10. 추천 분양 타겟(페르소나)", 1)
+        doc.add_paragraph(nar.get("target_persona") or (rep.get("analysis") or {}).get("target_persona") or "-")
+
+        _h("11. 적정 분양가(거래사례비교)", 1)
+        pb = rep.get("pricing_band") or (rep.get("analysis") or {}).get("pricing_band") or {}
+        if pb and pb.get("data_source") not in (None, "unavailable") and pb.get("fair_price_10k"):
+            doc.add_paragraph(f"적정 분양가: {_eok(pb['fair_price_10k'])}원")
+            doc.add_paragraph(f"지불여력 판정: {pb.get('affordability_verdict', '-')}")
+            _caption(pb.get("note", ""))
+        else:
+            doc.add_paragraph(pb.get("note") if pb.get("note") else "적정 분양가 산출 불가(비교 데이터 부족) — 가짜값 미생성")
+
+        # ── ⑤ 출처·면책 ──
+        _h("12. 출처 및 면책", 1)
+        doc.add_paragraph(f"실거래 출처: {re_block.get('source', '국토교통부 실거래가')}")
+        _caption(DISCLAIMER_TEXT)
+
+        buf = io.BytesIO()
+        doc.save(buf)
         return buf.getvalue()

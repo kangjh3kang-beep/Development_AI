@@ -233,7 +233,7 @@ export function MarketInsightsWorkspaceClient() {
   const [mapPayload, setMapPayload] = useState<NearbyMapPayload | null>(null);
   const [mapLoading, setMapLoading] = useState(false);
   const [report, setReport] = useState<any | null>(null);
-  const [genState, setGenState] = useState<"" | "report" | "pdf" | "pptx">("");
+  const [genState, setGenState] = useState<"" | "report" | "pdf" | "pptx" | "docx">("");
   const [useLlm, setUseLlm] = useState(true);
   // 선택 상태(말단 항목 기준 평탄 boolean 맵). 분류 sgis/kosis는 자식들에서 파생해 전송한다.
   //   population(인구/가구) 자식: pop_age / pop_household / pop_migration
@@ -387,7 +387,7 @@ export function MarketInsightsWorkspaceClient() {
   }, [address, siteAnalysis?.pnu, useLlm, buildOptionsPayload]);
 
   // PDF/PPTX 다운로드(바이너리)
-  const downloadReport = useCallback(async (fmt: "pdf" | "pptx") => {
+  const downloadReport = useCallback(async (fmt: "pdf" | "pptx" | "docx") => {
     if (!address) return;
     setGenState(fmt);
     try {
@@ -516,6 +516,10 @@ export function MarketInsightsWorkspaceClient() {
                 <button onClick={() => downloadReport("pptx")} disabled={!!genState}
                   className="whitespace-nowrap rounded-xl bg-gradient-to-r from-[var(--accent-strong)] to-[var(--data-accent)] px-4 py-2 text-xs font-black text-white hover:opacity-90 disabled:opacity-50">
                   {genState === "pptx" ? "PPT 생성 중…" : "PPT 다운로드"}
+                </button>
+                <button onClick={() => downloadReport("docx")} disabled={!!genState}
+                  className="whitespace-nowrap rounded-xl border border-[var(--line-strong)] px-4 py-2 text-xs font-bold text-[var(--text-secondary)] hover:border-[var(--accent-strong)] disabled:opacity-50">
+                  {genState === "docx" ? "DOCX 생성 중…" : "DOCX 다운로드"}
                 </button>
               </div>
             </div>
@@ -828,6 +832,10 @@ export function MarketInsightsWorkspaceClient() {
                 <button onClick={() => downloadReport("pptx")} disabled={!!genState}
                   className="whitespace-nowrap rounded-xl bg-gradient-to-r from-[var(--accent-strong)] to-[var(--data-accent)] px-4 py-2 text-xs font-black text-white hover:opacity-90 disabled:opacity-50">
                   {genState === "pptx" ? "PPT 생성 중…" : "PPT 다운로드"}
+                </button>
+                <button onClick={() => downloadReport("docx")} disabled={!!genState}
+                  className="whitespace-nowrap rounded-xl border border-[var(--line-strong)] px-4 py-2 text-xs font-bold text-[var(--text-secondary)] hover:border-[var(--accent-strong)] disabled:opacity-50">
+                  {genState === "docx" ? "DOCX 생성 중…" : "DOCX 다운로드"}
                 </button>
               </div>
             </div>

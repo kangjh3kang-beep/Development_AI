@@ -19,7 +19,9 @@ class MarketReportRequest(BaseModel):
     bcode: str | None = None
     jibun_address: str | None = None
     use_llm: bool = True  # AI 내러티브 분석 포함 여부(사용자 선택)
-    options: dict[str, bool] | None = None  # 선택형 분석 모듈 옵션 (sgis, kosis 등)
+    # 선택형 분석 모듈 옵션. 프론트(P1)가 중첩 dict(detail 등)를 보내므로 dict[str, bool]로
+    #   제한하면 Pydantic 422가 발생한다 → 값 타입을 풀어 어떤 형태의 옵션도 받도록 완화.
+    options: dict | None = None
 
 
 def _pnu_from_bcode(bcode: str, jibun: str) -> str | None:
@@ -78,4 +80,20 @@ async def market_report_pptx(
         iter([pptx]),
         media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
         headers={"Content-Disposition": 'attachment; filename="market_report.pptx"'},
+    )
+
+
+@router.post("/report/docx", dependencies=[Depends(enforce_llm_quota)])
+async def market_report_docx(
+    req: MarketReportRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    lawd_cd, pnu = _resolve(req)
+    svc = MarketReportService()
+    rep = await svc.build_report(req.address, lawd_cd, pnu, use_llm=req.use_llm, options=req.options or {})
+    docx = svc.to_docx(rep)
+    return StreamingResponse(
+        iter([docx]),
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": 'attachment; filename="market_report.docx"'},
     )
