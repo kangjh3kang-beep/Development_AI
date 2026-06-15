@@ -97,11 +97,25 @@ class TestRBACEngine:
 class TestRequireRole:
     """require_role 의존성 테스트."""
 
-    def test_require_role_no_request(self):
+    async def test_require_admin_denies_non_superuser(self):
+        """P0-5: 인증돼도 superuser 아니면 403 (fail-open·헤더신뢰 제거)."""
+        from types import SimpleNamespace
+        from fastapi import HTTPException
         from app.core.rbac import require_role, Role
+
         dep = require_role(Role.ADMIN)
-        result = dep(request=None)
-        assert result is True
+        with pytest.raises(HTTPException) as exc:
+            await dep(current_user=SimpleNamespace(is_superuser=False, email="u@x.com"))
+        assert exc.value.status_code == 403
+
+    async def test_require_admin_allows_superuser(self):
+        """superuser는 통과하고 인증 사용자를 반환."""
+        from types import SimpleNamespace
+        from app.core.rbac import require_role, Role
+
+        dep = require_role(Role.ADMIN)
+        user = SimpleNamespace(is_superuser=True, email="admin@x.com")
+        assert await dep(current_user=user) is user
 
     def test_get_rbac_engine(self):
         from app.core.rbac import get_rbac_engine, RBACEngine
