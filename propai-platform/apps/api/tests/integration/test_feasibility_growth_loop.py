@@ -7,7 +7,8 @@ pytestmark = pytest.mark.asyncio
 async def _db_available() -> bool:
     try:
         from sqlalchemy import text
-        from app.core.database import async_session_factory
+        from app.core.database import async_session_factory, engine
+        await engine.dispose()  # 교차-이벤트루프 풀 바인딩 초기화(테스트 격리 — 현재 루프에 재바인딩)
         async with async_session_factory() as db:
             await db.execute(text("SELECT 1"))
         return True
