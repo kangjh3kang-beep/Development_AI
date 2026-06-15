@@ -512,3 +512,55 @@ async def auction_monitor_run(
             "note": "관심대상을 등록하면 매칭 결과를 지속 모니터링해 제공합니다."
             f" (일시 동기화 실패: {str(e)[:120]})",
         }
+
+
+# 지오코딩 결과 인메모리 캐시(주소→좌표). 워커별·재배포 시 휘발(가벼운 캐시, 폭주 방지).
+_GEOCODE_CACHE: dict[str, dict | None] = {}
+
+
+@router.post("/geocode", summary="경공매 물건 주소 → 좌표(지도 마커용, VWorld·캐시·실패스킵)")
+async def auction_geocode_items(body: dict = Body(...)) -> dict[str, Any]:
+    """경공매 물건 목록의 주소를 좌표로 변환해 지도에 마커로 찍을 수 있게 한다.
+
+    입력: { items: [{ key, address }] } (최대 60건). 출력: { located: [{key,lat,lon,pnu}], ... }.
+    ★VWorld 지오코딩 재사용 + 인메모리 캐시. 실패/주소없음은 스킵 + 미확인 건수 note(가짜 좌표 금지).
+    """
+    import asyncio
+
+    from app.services.external_api.vworld_service import VWorldService
+
+    items = body.get("items") or []
+    if not isinstance(items, list):
+        return {"located": [], "total": 0, "ok_count": 0, "note": "items 배열이 필요합니다."}
+    items = items[:60]  # 지오코딩 폭주 방지(페이지 단위)
+    vworld = VWorldService()
+    sem = asyncio.Semaphore(5)
+
+    async def _one(it: dict) -> dict | None:
+        key = it.get("key")
+        addr = (it.get("address") or "").strip()
+        if not key or not addr:
+            return None
+        if addr in _GEOCODE_CACHE:
+            c = _GEOCODE_CACHE[addr]
+            return {"key": key, **c} if c else None
+        async with sem:
+            try:
+                r = await vworld.geocode_address(addr)
+            except Exception:  # noqa: BLE001 — 개별 실패는 스킵(전체 200 유지)
+                r = None
+        coord = {"lat": r["lat"], "lon": r["lon"], "pnu": r.get("pnu")} if r else None
+        _GEOCODE_CACHE[addr] = coord  # 실패(None)도 캐시해 재시도 폭주 방지
+        return {"key": key, **coord} if coord else None
+
+    results = await asyncio.gather(*[_one(it) for it in items])
+    located = [r for r in results if r]
+    return {
+        "located": located,
+        "total": len(items),
+        "ok_count": len(located),
+        "note": (
+            f"{len(items)}건 중 {len(located)}건 위치 확인."
+            + (f" {len(items) - len(located)}건은 주소 미확인으로 지도 미표시." if len(located) < len(items) else "")
+        ),
+    }

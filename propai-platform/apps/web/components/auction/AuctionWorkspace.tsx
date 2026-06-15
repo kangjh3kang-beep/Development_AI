@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { AuctionItemsMap, type AuctionMapItem } from "@/components/auction/AuctionItemsMap";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
@@ -310,6 +311,8 @@ export function AuctionWorkspace({ locale }: AuctionWorkspaceProps) {
   const [saveError, setSaveError] = useState("");
 
   const [selected, setSelected] = useState<AuctionItem | null>(null);
+  // 전국 조건검색 결과 보기 모드: 목록(표) / 지도(지역별 물건 위치 마커).
+  const [searchView, setSearchView] = useState<"list" | "map">("list");
 
   // --- 탭 A: 내 경공매 ---
   const myQuery = useQuery({
@@ -720,12 +723,46 @@ export function AuctionWorkspace({ locale }: AuctionWorkspaceProps) {
                 </p>
               ) : null}
               {(bidResultsQuery.data.items ?? []).length ? (
-                <AuctionTable
-                  items={bidResultsQuery.data.items ?? []}
-                  locale={locale}
-                  variant="results"
-                  onSelect={setSelected}
-                />
+                <div className="space-y-3">
+                  {/* 목록/지도 보기 토글 — 지도는 물건을 지역별 위치 마커로 표시 */}
+                  <div className="flex items-center justify-end gap-1">
+                    {(["list", "map"] as const).map((v) => (
+                      <button
+                        key={v}
+                        type="button"
+                        onClick={() => setSearchView(v)}
+                        className={`rounded-lg border px-3 py-1.5 text-xs font-bold transition-colors ${
+                          searchView === v
+                            ? "border-[var(--accent-strong)] bg-[var(--accent-soft)] text-[var(--accent-strong)]"
+                            : "border-[var(--line)] text-[var(--text-secondary)] hover:border-[var(--text-tertiary)]"
+                        }`}
+                      >
+                        {v === "list" ? "목록" : "🗺️ 지도"}
+                      </button>
+                    ))}
+                  </div>
+                  {searchView === "map" ? (
+                    <AuctionItemsMap
+                      items={(bidResultsQuery.data.items ?? []).map((it): AuctionMapItem => ({
+                        key: it.cltr_mng_no ?? it.cltrMngNo ?? it.address ?? "",
+                        address: it.address,
+                        usage: it.usage,
+                        min_bid_price: it.min_bid_price,
+                        discount_rate: it.discount_rate,
+                        fail_count: it.fail_count,
+                        status: it.status,
+                      }))}
+                      onSelect={(key) => {
+                        const found = (bidResultsQuery.data?.items ?? []).find(
+                          (it) => (it.cltr_mng_no ?? it.cltrMngNo ?? it.address) === key,
+                        );
+                        if (found) setSelected(found);
+                      }}
+                    />
+                  ) : (
+                    <AuctionTable items={bidResultsQuery.data.items ?? []} locale={locale} variant="results" onSelect={setSelected} />
+                  )}
+                </div>
               ) : (
                 <EmptyState message="조건에 맞는 온비드 물건이 없습니다." />
               )}
