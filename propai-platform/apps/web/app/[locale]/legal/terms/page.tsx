@@ -1,25 +1,26 @@
 import type { Metadata } from "next";
-import { AdminFillBanner, Article, DocHeader, Fill, OL, UL } from "@/components/legal/LegalParts";
+import { Article, DocHeader, OL, UL } from "@/components/legal/LegalParts";
 
 export const metadata: Metadata = {
   title: "서비스이용약관 | PropAI",
   description: "PropAI 부동산개발 AI 플랫폼 서비스이용약관 — 이용계약, 유료 요금, AI 분석 결과의 성격과 면책, 권리·의무.",
 };
 
+const EFFECTIVE = "2026.06.15";
+
 export default function TermsPage() {
   return (
     <article>
       <DocHeader
         title="서비스이용약관"
-        effectiveDate={<Fill label="시행일(YYYY.MM.DD)" />}
+        effectiveDate={EFFECTIVE}
         intro={
           <p>
-            본 약관은 PropAI(이하 &lsquo;회사&rsquo;, <Fill label="상호" />)가 제공하는 부동산개발 AI 자동화 플랫폼 및 관련 제반 서비스(이하 &lsquo;서비스&rsquo;)의
-            이용과 관련하여 회사와 이용자 간의 권리·의무 및 책임사항을 규정함을 목적으로 합니다. 본 약관은 <Fill label="시행일(YYYY.MM.DD)" />부터 적용됩니다.
+            본 약관은 사통팔땅(브랜드: PropAI, 이하 &lsquo;회사&rsquo;)이 제공하는 부동산개발 AI 자동화 플랫폼 및 관련 제반 서비스(이하 &lsquo;서비스&rsquo;)의
+            이용과 관련하여 회사와 이용자 간의 권리·의무 및 책임사항을 규정함을 목적으로 합니다. 본 약관은 {EFFECTIVE}부터 적용됩니다.
           </p>
         }
       />
-      <AdminFillBanner />
 
       <Article no={1} title="목적">
         <p>본 약관은 회사가 제공하는 서비스의 이용조건 및 절차, 회사와 이용자의 권리·의무·책임사항, 기타 필요한 사항을 규정함을 목적으로 합니다.</p>
@@ -147,7 +148,12 @@ export default function TermsPage() {
       </Article>
 
       <Article no="칙" title="부칙">
-        <p>본 약관은 <Fill label="시행일(YYYY.MM.DD)" />부터 시행합니다. 종전 약관은 본 약관으로 대체됩니다.</p>
+        <p>본 약관은 {EFFECTIVE}부터 시행합니다. 종전 약관은 본 약관으로 대체됩니다.</p>
+        <UL>
+          <li>상호: 사통팔땅 (브랜드: PropAI) · 대표자: 강재희</li>
+          <li>사업자등록번호: 682-38-01463</li>
+          <li>주소: 경기도 광주시 회안대로 637-36, 207동 1301호</li>
+        </UL>
       </Article>
     </article>
   );

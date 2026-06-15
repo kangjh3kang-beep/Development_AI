@@ -1,28 +1,27 @@
 import type { Metadata } from "next";
-import { AdminFillBanner, Article, DocHeader, Fill, OL, Table, UL } from "@/components/legal/LegalParts";
+import { Article, DocHeader, OL, Table, UL } from "@/components/legal/LegalParts";
 
 export const metadata: Metadata = {
   title: "개인정보처리방침 | PropAI",
   description: "PropAI 부동산개발 AI 플랫폼 개인정보처리방침 — 수집 항목, 이용 목적, 보유기간, 처리위탁, 국외이전, 정보주체 권리.",
 };
 
-const EFFECTIVE = <Fill label="시행일(YYYY.MM.DD)" />;
+const EFFECTIVE = "2026.06.15";
 
 export default function PrivacyPolicyPage() {
   return (
     <article>
       <DocHeader
         title="개인정보처리방침"
-        effectiveDate={<Fill label="시행일(YYYY.MM.DD)" />}
+        effectiveDate={EFFECTIVE}
         intro={
           <p>
-            PropAI(이하 &lsquo;회사&rsquo;, <Fill label="상호" />)는 「개인정보 보호법」 제30조에 따라 정보주체의 개인정보를 보호하고
+            사통팔땅(브랜드: PropAI, 이하 &lsquo;회사&rsquo;)은 「개인정보 보호법」 제30조에 따라 정보주체의 개인정보를 보호하고
             이와 관련한 고충을 신속하고 원활하게 처리할 수 있도록 다음과 같이 개인정보처리방침을 수립·공개합니다.
-            본 방침은 <Fill label="시행일(YYYY.MM.DD)" />부터 적용됩니다.
+            본 방침은 {EFFECTIVE}부터 적용됩니다.
           </p>
         }
       />
-      <AdminFillBanner />
 
       <Article no={1} title="개인정보의 처리 목적">
         <p>회사는 다음의 목적을 위하여 개인정보를 처리하며, 목적이 변경되는 경우 「개인정보 보호법」 제18조에 따라 별도의 동의를 받는 등 필요한 조치를 이행합니다.</p>
@@ -144,9 +143,12 @@ export default function PrivacyPolicyPage() {
       <Article no={11} title="개인정보 보호책임자 및 담당부서">
         <p>회사는 개인정보 처리에 관한 업무를 총괄하여 책임지고, 정보주체의 불만처리 및 피해구제를 위하여 아래와 같이 개인정보 보호책임자를 지정하고 있습니다.</p>
         <UL>
-          <li>개인정보 보호책임자: <Fill label="성명/직책" /></li>
-          <li>연락처: <Fill label="전화" /> / <Fill label="이메일" /></li>
-          <li>담당부서: <Fill label="부서명" /></li>
+          <li>상호: 사통팔땅 (브랜드: PropAI)</li>
+          <li>대표자: 강재희</li>
+          <li>사업자등록번호: 682-38-01463</li>
+          <li>주소: 경기도 광주시 회안대로 637-36, 207동 1301호</li>
+          <li>개인정보 보호책임자: 강재희 (대표자)</li>
+          <li>연락처: 1666-0916 / k3880@kakao.com</li>
         </UL>
         <p>정보주체는 서비스 이용 중 발생한 모든 개인정보 보호 관련 문의·불만·피해구제를 보호책임자에게 문의할 수 있으며, 회사는 지체 없이 답변·처리합니다.</p>
       </Article>
