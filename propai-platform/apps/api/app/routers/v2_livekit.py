@@ -126,13 +126,17 @@ async def stop_recording(
     if rec is None or str(rec.project_id) != str(uuid.UUID(project_id)):
         raise HTTPException(status_code=404, detail="녹화를 찾을 수 없습니다")
 
-    try:
-        if rec.egress_id:
+    # 정직: 실제 Egress 중지가 성공했을 때만 'completed'. egress_id가 없거나(추적 안 됨) 중지 실패면
+    # 'failed'로 기록(녹화물 존재를 과대표기하지 않음 — 모델 vocab의 failed 사용).
+    stopped_ok = False
+    if rec.egress_id:
+        try:
             await livekit_service.stop_recording(rec.egress_id)
-    except RuntimeError as exc:
-        logger.warning("livekit_egress_stop_failed", error=str(exc))  # 메타는 닫되 정직 경고
+            stopped_ok = True
+        except RuntimeError as exc:
+            logger.warning("livekit_egress_stop_failed", error=str(exc))
 
-    rec.status = "completed"
+    rec.status = "completed" if stopped_ok else "failed"
     rec.ended_at = datetime.utcnow()
     await db.commit()
     await db.refresh(rec)
