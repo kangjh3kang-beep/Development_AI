@@ -527,10 +527,19 @@ async def charge_service(db: AsyncSession, user_id: Any, action: str) -> dict[st
     calc = compute_service_fee(tier, action, acount)
     fee = calc["fee_krw"]
     if action == "land_analysis" and calc.get("free"):
-        await db.execute(
-            text("UPDATE public.users SET analysis_count = COALESCE(analysis_count,0)+1 WHERE id=:id"),
-            {"id": str(user_id)},
+        # P2-3: read-check-increment TOCTOU 제거 — 원자 조건부 증가(한도 미만일 때만 +1).
+        quota = free_tier_analysis_quota(tier)
+        res = await db.execute(
+            text(
+                "UPDATE public.users SET analysis_count = COALESCE(analysis_count,0)+1 "
+                "WHERE id=:id AND COALESCE(analysis_count,0) < :quota"
+            ),
+            {"id": str(user_id), "quota": int(quota)},
         )
+        if (res.rowcount or 0) == 0:
+            # 동시호출 경쟁에서 졌음 — 이미 무료 한도 소진 → 유료로 정직 재계산(무료 초과 방지).
+            calc = {"fee_krw": free_tier_analysis_fee(tier), "free": False, "free_remaining": 0}
+            fee = calc["fee_krw"]
     if fee > 0:
         await db.execute(
             text("UPDATE public.users SET service_fee_krw = COALESCE(service_fee_krw,0)+:f WHERE id=:id"),
