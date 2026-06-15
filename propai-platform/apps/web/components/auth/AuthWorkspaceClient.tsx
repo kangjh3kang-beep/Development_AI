@@ -927,6 +927,16 @@ export function AuthWorkspaceClient({
               </span>
             </div>
 
+            {/* 법적 고지 — 가입·이용 시 동의 대상 문서 링크(비로그인 열람 가능) */}
+            <div className="mt-4 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[11px] text-[var(--text-tertiary)]">
+              <span>가입·이용 시 아래 약관에 동의하는 것으로 간주됩니다.</span>
+              <span className="flex items-center gap-2">
+                <Link href={`/${locale}/legal/terms`} className="text-[var(--text-secondary)] underline-offset-4 hover:text-[var(--text-primary)] hover:underline">서비스이용약관</Link>
+                <span aria-hidden>·</span>
+                <Link href={`/${locale}/legal/privacy`} className="text-[var(--text-secondary)] underline-offset-4 hover:text-[var(--text-primary)] hover:underline">개인정보처리방침</Link>
+              </span>
+            </div>
+
           </CardContent>
         </Card>
 
