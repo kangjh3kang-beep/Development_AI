@@ -108,3 +108,35 @@ async def record_domain_agent_task(
         tenant_id=tenant_id, project_id=project_id,
         source="domain_agents", created_by=created_by,
     )
+
+
+# ── Phase 1: read 성장루프용 매퍼+래퍼(write/read 쌍 신설·SSOT 합류) ──
+
+def feasibility_result_to_ledger(result: dict[str, Any]) -> dict[str, Any]:
+    """수지분석 결과(ModuleOutput dict) → 원장 payload(재무 성장루프 read 대상)."""
+    return {
+        "kind": "feasibility", "schema_version": "feasibility/v1",
+        "development_type": result.get("development_type"),
+        "total_revenue_won": result.get("total_revenue_won"),
+        "net_profit_won": result.get("net_profit_won"),
+        "profit_rate_pct": result.get("profit_rate_pct"),
+        "npv_won": result.get("npv_won"), "grade": result.get("grade"),
+        "findings_brief": [
+            {"check_id": "PROFIT_RATE", "status": "info",
+             "current": result.get("profit_rate_pct"), "limit": None},
+            {"check_id": "NPV", "status": "info", "current": result.get("npv_won"), "limit": None},
+        ],
+    }
+
+
+async def record_feasibility_result(
+    *, result: dict[str, Any], tenant_id: str | None = None,
+    project_id: str | None = None, pnu: str | None = None, address: str | None = None,
+    created_by: str | None = None,
+) -> dict[str, Any]:
+    # analysis_type="feasibility" (VCS 메타 'feasibility_vcs'와 분리 — read 성장루프 재무 체인)
+    return await ledger.append_analysis(
+        analysis_type="feasibility", payload=feasibility_result_to_ledger(result),
+        tenant_id=tenant_id, project_id=project_id, pnu=pnu, address=address,
+        source="feasibility", created_by=created_by,
+    )

@@ -881,6 +881,19 @@ async def vcs_commit(
         )
     except Exception as e:  # noqa: BLE001 — 원장 적재 실패가 커밋을 막지 않음
         logger.warning("원장 배선 append 실패(feasibility_vcs): %s", str(e)[:160])
+    # Phase 1 성장루프: 수지 결과 자체를 'feasibility' 체인에 적재(read 대상) + 직전 prior read(best-effort).
+    try:
+        from app.services.ledger.ledger_adapters import record_feasibility_result
+        from app.services.ledger.prior_context import load_prior
+
+        _tid = str(current_user.tenant_id) if current_user.tenant_id else None
+        _pid = str(_parse_project_id(project_id))
+        prior = await load_prior(analysis_type="feasibility", tenant_id=_tid, project_id=_pid)
+        await record_feasibility_result(result=req.snapshot, tenant_id=_tid, project_id=_pid)
+        if prior:
+            logger.info("feasibility 성장루프 — 직전 수지 prior 적용", prior_version=prior.get("version"))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("feasibility 성장루프 배선 실패 — skipped: %s", str(e)[:160])
     return {"sha": result["sha"], "message": result["message"], "timestamp": result.get("timestamp", "")}
 
 
