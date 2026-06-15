@@ -2,6 +2,7 @@ import { isValidLocale } from "@/i18n/config";
 import Link from "next/link";
 import { ProjectAddressBar } from "@/components/projects/ProjectAddressBar";
 import { LifecycleProgressRail } from "@/components/lifecycle/LifecycleProgressRail";
+import { ProjectToolIndex } from "@/components/projects/ProjectToolIndex";
 import { ProjectContextBinder } from "@/components/projects/ProjectContextBinder";
 import { ProjectExistenceGuard } from "@/components/projects/ProjectExistenceGuard";
 import React from "react";
@@ -43,6 +44,9 @@ export default async function ProjectLayout({
         </Link>
       </div>
       <LifecycleProgressRail locale={locale} projectId={id} />
+      {/* 진행레일(11단계)에 없는 독립 도구(CAD·회의방·공사비·BOQ·다필지·블록체인·에이전트)를
+          접이식 인덱스로 surface. 레일·STAGE_GROUPS 무수정(additive). IA §5.5 동일 NavNode 개념 재사용. */}
+      <ProjectToolIndex locale={locale} projectId={id} />
       <ProjectAddressBar />
       <div className="min-w-0 transition-all duration-500 animate-in fade-in slide-in-from-bottom-4">
         {/* 존재하지 않는(404) 프로젝트 직접진입 시 graceful not-found(크래시·무한스피너 방지). */}

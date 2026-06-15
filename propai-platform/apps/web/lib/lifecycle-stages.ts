@@ -155,3 +155,34 @@ export const STAGE_GROUPS: StageGroup[] = [
     ],
   },
 ];
+
+/**
+ * 프로젝트 도구(독립 라우트) — 라이프사이클 11단계(STAGE_META)에도, STAGE_GROUPS의
+ * extraRoutes(contracts·supervision·drone)에도 속하지 않아 **어느 네비에도 노출되지 않던**
+ * 프로젝트 상세 하위 라우트들. "프로젝트 도구 인덱스"(접이식, ProjectToolIndex)로 surface한다.
+ *
+ *  - route: 실제 존재하는 서브라우트 세그먼트(404 방지). STAGE_META 단계와 중복 없음(additive).
+ *  - label: 해당 라우트 page.tsx의 실제 제목/용도 기준(정직).
+ *  - icon: components/common/StageIcon.tsx의 ICONS 키(tool_*).
+ * 진행레일·STAGE_GROUPS는 무수정 — 본 구조만 신설한다.
+ */
+export interface ProjectTool {
+  route: string;
+  label: string;
+  icon: string;
+}
+
+export const PROJECT_TOOLS: ProjectTool[] = [
+  { route: "cad", label: "설계도면(CAD)", icon: "tool_cad" },
+  { route: "collaboration", label: "회의방", icon: "tool_collab" },
+  { route: "cost", label: "공사비", icon: "tool_cost" },
+  { route: "boq", label: "공내역서(BOQ)", icon: "tool_boq" },
+  { route: "multi-parcel", label: "다필지 통합", icon: "tool_parcel" },
+  { route: "blockchain", label: "블록체인", icon: "tool_chain" },
+  { route: "agent", label: "AI 에이전트", icon: "tool_agent" },
+];
+
+/** 프로젝트 도구 라우트(프로젝트 상세 하위 절대경로 빌더). */
+export function projectToolHref(locale: string, projectId: string, route: string): string {
+  return `/${locale}/projects/${projectId}/${route}`;
+}
