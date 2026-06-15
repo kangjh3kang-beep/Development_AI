@@ -9,23 +9,18 @@
 
 from __future__ import annotations
 
-import hashlib
-import re
-from datetime import datetime, timedelta, timezone
-
 import httpx
 import structlog
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apps.api.auth.jwt_handler import create_access_token, create_refresh_token
+from apps.api.auth.oauth_common import (
+    finalize_oauth_login,
+    get_or_create_oauth_user,
+)
 from apps.api.config import Settings
-from apps.api.database.models.refresh_token import RefreshToken
-from apps.api.database.models.tenant import Tenant
 from apps.api.database.models.user import User
 
 logger = structlog.get_logger(__name__)
-UTC = timezone.utc
 
 KAKAO_TOKEN_URL = "https://kauth.kakao.com/oauth/token"
 KAKAO_USER_INFO_URL = "https://kapi.kakao.com/v2/user/me"
@@ -126,87 +121,25 @@ def extract_user_profile(kakao_data: dict) -> dict:
     }
 
 
-def _slugify_tenant_name(value: str) -> str:
-    slug = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
-    if not slug:
-        return "tenant"
-    return slug[:84].strip("-") or "tenant"
-
-
-async def _build_unique_tenant_slug(db: AsyncSession, base_value: str) -> str:
-    base_slug = _slugify_tenant_name(base_value)
-    candidate = base_slug
-    suffix = 2
-
-    while True:
-        result = await db.execute(select(Tenant).where(Tenant.slug == candidate))
-        if result.scalar_one_or_none() is None:
-            return candidate
-        candidate = f"{base_slug[:80]}-{suffix}"
-        suffix += 1
-
-
 async def get_or_create_user(
     db: AsyncSession,
     profile: dict,
 ) -> User:
-    """카카오 프로필로 사용자를 조회하거나 새로 생성한다.
+    """카카오 프로필로 사용자를 조회하거나 새로 생성한다(공용 로직 위임).
 
-    - kakao_id 기반 매칭 (oauth_provider + oauth_id)
-    - email 기반 기존 계정 매칭
-    - 신규 사용자는 개인 테넌트를 자동 생성
+    profile은 {"kakao_id", "email", "nickname"} 형태(extract_user_profile 산출물).
+    내부적으로 provider="kakao", provider_id=kakao_id 로 공용 함수에 위임한다.
+    동작(매핑 조회·이메일 병합·개인 테넌트 생성·role)은 기존과 동일하다.
     """
-    # 1. OAuth 매핑 사용자 우선 조회
-    result = await db.execute(
-        select(User).where(
-            User.oauth_provider == "kakao",
-            User.oauth_id == profile["kakao_id"],
-        )
+    return await get_or_create_oauth_user(
+        db,
+        "kakao",
+        {
+            "provider_id": profile["kakao_id"],
+            "email": profile.get("email"),
+            "nickname": profile["nickname"],
+        },
     )
-    oauth_user = result.scalar_one_or_none()
-    if oauth_user is not None:
-        return oauth_user
-
-    # 2. 기존 사용자 조회 (이메일 기반)
-    if profile.get("email"):
-        result = await db.execute(
-            select(User).where(
-                User.email == profile["email"],
-            )
-        )
-        existing = result.scalar_one_or_none()
-        if existing is not None:
-            # 기존 계정에 Kakao 식별자를 연결한다.
-            existing.oauth_provider = "kakao"
-            existing.oauth_id = profile["kakao_id"]
-            await db.flush()
-            return existing
-
-    # 3. 신규 사용자용 개인 테넌트 생성
-    tenant_name = f"{profile['nickname']} 워크스페이스"
-    tenant = Tenant(
-        name=tenant_name,
-        slug=await _build_unique_tenant_slug(db, tenant_name),
-        plan="free",
-        is_active=True,
-    )
-    db.add(tenant)
-    await db.flush()
-
-    # 4. 신규 사용자 생성
-    new_user = User(
-        tenant_id=tenant.id,
-        email=profile.get("email") or f"kakao_{profile['kakao_id']}@propai.local",
-        name=profile["nickname"],
-        hashed_password="",  # 소셜 로그인이므로 비밀번호 없음
-        role="admin",
-        is_active=True,
-        oauth_provider="kakao",
-        oauth_id=profile["kakao_id"],
-    )
-    db.add(new_user)
-    await db.flush()
-    return new_user
 
 
 async def process_kakao_callback(
@@ -245,32 +178,7 @@ async def process_kakao_callback(
     # 3. DB 사용자 조회/생성
     user = await get_or_create_user(db, profile)
 
-    # 4. JWT 발급
-    access = create_access_token(user.id, user.tenant_id, user.role, settings)
-    refresh = create_refresh_token(user.id, user.tenant_id, user.role, settings)
-
-    # 5. 리프레시 토큰 DB 저장
-    token_hash = hashlib.sha256(refresh.encode()).hexdigest()
-    db_token = RefreshToken(
-        user_id=user.id,
-        tenant_id=user.tenant_id,
-        token_hash=token_hash,
-        expires_at=datetime.now(UTC) + timedelta(days=settings.jwt_refresh_token_expire_days),
-        device_info=f"kakao_oauth:{profile['kakao_id']}",
+    # 4. JWT 발급 + 리프레시 토큰 DB 저장(공용)
+    return await finalize_oauth_login(
+        db, user, settings, provider="kakao", provider_id=profile["kakao_id"],
     )
-    db.add(db_token)
-    await db.commit()
-
-    logger.info("카카오 로그인 성공", user_id=str(user.id), kakao_id=profile["kakao_id"])
-
-    return {
-        "access_token": access,
-        "refresh_token": refresh,
-        "token_type": "bearer",
-        "user": {
-            "id": str(user.id),
-            "email": user.email,
-            "name": user.name,
-            "role": user.role,
-        },
-    }

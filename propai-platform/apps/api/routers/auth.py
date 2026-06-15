@@ -23,7 +23,9 @@ from apps.api.auth.jwt_handler import (
     decode_token,
     get_current_user,
 )
+from apps.api.auth.google_handler import GoogleOAuthError, process_google_callback
 from apps.api.auth.kakao_handler import KakaoOAuthError, process_kakao_callback
+from apps.api.auth.naver_handler import NaverOAuthError, process_naver_callback
 from apps.api.config import Settings, get_settings
 from apps.api.database.models.refresh_token import RefreshToken
 from apps.api.database.models.tenant import Tenant
@@ -429,6 +431,142 @@ async def kakao_callback(
             status_code=exc.status_code,
             detail=exc.message,
         ) from exc
+
+    return TokenResponse(
+        access_token=result["access_token"],
+        refresh_token=result["refresh_token"],
+        expires_in=settings.jwt_access_token_expire_minutes * 60,
+    )
+
+
+# ── 구글 OAuth ──
+
+_OAUTH_PLACEHOLDERS = {
+    "your-client-id", "your-google-client-id", "your-naver-client-id",
+    "changeme", "dummy",
+}
+
+
+class GoogleCallbackRequest(BaseModel):
+    """Request body for Google OAuth callback completion."""
+
+    code: str
+    redirect_uri: str | None = None
+
+
+@router.get("/google/login-url")
+async def google_login_url(
+    redirect_uri: str | None = None,
+    settings: Settings = Depends(get_settings),
+) -> dict[str, str]:
+    """구글 인가 페이지 URL을 생성해 반환한다(client_id 서버에서 조립).
+
+    프론트 '구글 로그인' 버튼이 이 URL로 이동 → 구글 동의 → 콜백(code) → /google/callback 교환.
+    """
+    import os
+    from urllib.parse import urlencode
+
+    # ★os.environ 라이브 우선(관리자 키화면 즉시 반영) → settings 폴백.
+    client_id = (os.environ.get("GOOGLE_CLIENT_ID") or settings.google_client_id or "").strip()
+    if not client_id or client_id.lower() in _OAUTH_PLACEHOLDERS:
+        raise HTTPException(status_code=503, detail="구글 로그인 미설정(GOOGLE_CLIENT_ID) — 관리자 키 설정이 필요합니다.")
+    ruri = redirect_uri or os.environ.get("GOOGLE_REDIRECT_URI") or settings.google_redirect_uri
+    params = {
+        "client_id": client_id,
+        "redirect_uri": ruri,
+        "response_type": "code",
+        "scope": "openid email profile",
+        "access_type": "offline",
+    }
+    url = f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(params)}"
+    return {"url": url, "redirect_uri": ruri}
+
+
+@router.post("/google/callback", response_model=TokenResponse)
+async def google_callback(
+    body: GoogleCallbackRequest,
+    db: AsyncSession = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> TokenResponse:
+    """Exchange a Google OAuth code for PropAI JWT credentials."""
+    import os
+    redirect_uri = body.redirect_uri or os.environ.get("GOOGLE_REDIRECT_URI") or settings.google_redirect_uri
+    try:
+        result = await process_google_callback(
+            code=body.code,
+            redirect_uri=redirect_uri,
+            db=db,
+            settings=settings,
+        )
+    except GoogleOAuthError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+    return TokenResponse(
+        access_token=result["access_token"],
+        refresh_token=result["refresh_token"],
+        expires_in=settings.jwt_access_token_expire_minutes * 60,
+    )
+
+
+# ── 네이버 OAuth (state CSRF 필수) ──
+
+
+class NaverCallbackRequest(BaseModel):
+    """Request body for Naver OAuth callback completion."""
+
+    code: str
+    state: str
+    redirect_uri: str | None = None
+
+
+@router.get("/naver/login-url")
+async def naver_login_url(
+    redirect_uri: str | None = None,
+    settings: Settings = Depends(get_settings),
+) -> dict[str, str]:
+    """네이버 인가 페이지 URL을 생성해 반환한다(state CSRF 토큰 생성·반환).
+
+    프론트는 반환된 state를 보관했다가 콜백 시 그대로 /naver/callback에 전달해 위변조를 방지한다.
+    """
+    import os
+    import secrets as _secrets
+    from urllib.parse import urlencode
+
+    # ★os.environ 라이브 우선(관리자 키화면 즉시 반영) → settings 폴백.
+    client_id = (os.environ.get("NAVER_CLIENT_ID") or settings.naver_client_id or "").strip()
+    if not client_id or client_id.lower() in _OAUTH_PLACEHOLDERS:
+        raise HTTPException(status_code=503, detail="네이버 로그인 미설정(NAVER_CLIENT_ID) — 관리자 키 설정이 필요합니다.")
+    ruri = redirect_uri or os.environ.get("NAVER_REDIRECT_URI") or settings.naver_redirect_uri
+    state = _secrets.token_urlsafe(16)
+    params = {
+        "response_type": "code",
+        "client_id": client_id,
+        "redirect_uri": ruri,
+        "state": state,
+    }
+    url = f"https://nid.naver.com/oauth2.0/authorize?{urlencode(params)}"
+    return {"url": url, "redirect_uri": ruri, "state": state}
+
+
+@router.post("/naver/callback", response_model=TokenResponse)
+async def naver_callback(
+    body: NaverCallbackRequest,
+    db: AsyncSession = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> TokenResponse:
+    """Exchange a Naver OAuth code(+state) for PropAI JWT credentials."""
+    import os
+    redirect_uri = body.redirect_uri or os.environ.get("NAVER_REDIRECT_URI") or settings.naver_redirect_uri
+    try:
+        result = await process_naver_callback(
+            code=body.code,
+            state=body.state,
+            redirect_uri=redirect_uri,
+            db=db,
+            settings=settings,
+        )
+    except NaverOAuthError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
     return TokenResponse(
         access_token=result["access_token"],
