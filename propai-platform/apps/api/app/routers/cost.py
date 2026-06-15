@@ -14,11 +14,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.api.database.session import get_db
 
+from app.services.auth.auth_service import get_current_user
 from app.services.cost.origin_cost_calculator import OriginCostCalculator, CostItem
 from app.services.cost.cost_monte_carlo import CostMonteCarlo
 from app.services.bim.bim_service import BIMService
 
-router = APIRouter(prefix="/api/v1/cost", tags=["v61 공사비"])
+# P0-4 보안: cost 전 라우트 인증 강제(무인증 기성 영속 + 무결성 해시체인 적재 오염 차단).
+# 라우터 레벨 의존성 → 모든 cost 라우트(기성/원가/BOQ/몬테카를로)가 유효 JWT 요구.
+# (project_id가 사용자 tenant 소유인지 검증하는 테넌트 스코핑은 P1 후속.)
+router = APIRouter(
+    prefix="/api/v1/cost",
+    tags=["v61 공사비"],
+    dependencies=[Depends(get_current_user)],
+)
 cost_calc = OriginCostCalculator()
 bim_service = BIMService()
 
