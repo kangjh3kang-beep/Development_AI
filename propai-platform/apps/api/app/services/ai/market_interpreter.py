@@ -97,7 +97,7 @@ class MarketInterpreter(BaseInterpreter):
     ]
 
 
-    async def generate_interpretation(self, market_data: dict) -> dict[str, str]:
+    async def generate_interpretation(self, market_data: dict, *, prior_context: str | None = None) -> dict[str, str]:
         """실거래가/시세 데이터를 해석하여 시장 분석 내러티브를 생성.
 
         Args:
@@ -131,7 +131,8 @@ class MarketInterpreter(BaseInterpreter):
         )
 
         return await self._invoke(
-            user_prompt, cache_data=compact, evidence_data=market_data
+            user_prompt, cache_data=compact, evidence_data=market_data,
+            prior_context=prior_context,
         )
 
     def _evidence(self, data: dict) -> str | None:

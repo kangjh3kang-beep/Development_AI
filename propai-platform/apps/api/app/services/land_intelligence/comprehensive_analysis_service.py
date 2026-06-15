@@ -131,6 +131,9 @@ class ComprehensiveAnalysisService:
         address: str,
         llm_provider: str | None = None,
         llm_model: str | None = None,
+        *,
+        tenant_id: str | None = None,
+        project_id: str | None = None,
     ) -> dict[str, Any]:
         logger.info(
             "종합분석 시작",
@@ -141,6 +144,15 @@ class ComprehensiveAnalysisService:
 
         # Phase 1: 기본 데이터 수집 (LandInfoService 재사용)
         base = await self.land_info.collect_comprehensive(address)
+
+        # Phase 1 성장루프: 직전 분석 prior read(best-effort, 없으면 None — 무중단)
+        from app.services.ledger.prior_context import build_prior_block, load_prior
+        _pnu = base.get("pnu")
+        prior = await load_prior(
+            analysis_type="site_analysis", tenant_id=tenant_id,
+            pnu=_pnu, address=address, project_id=project_id,
+        )
+        prior_block = build_prior_block(prior)
 
         zone_type = base.get("zone_type", "")
         land_area = 0.0
@@ -222,7 +234,7 @@ class ComprehensiveAnalysisService:
             interpreter = SiteAnalysisInterpreter()
             if custom_llm is not None:
                 interpreter._llm = custom_llm
-            ai_interpretation = await interpreter.generate_interpretation(result)
+            ai_interpretation = await interpreter.generate_interpretation(result, prior_context=prior_block)
             result["ai_interpretation"] = ai_interpretation
         except Exception as e:
             logger.warning("AI 해석 생성 스킵", error=str(e))
@@ -234,12 +246,32 @@ class ComprehensiveAnalysisService:
             market_interpreter = MarketInterpreter()
             if custom_llm is not None:
                 market_interpreter._llm = custom_llm
-            market_interpretation = await market_interpreter.generate_interpretation(result)
+            market_interpretation = await market_interpreter.generate_interpretation(result, prior_context=prior_block)
             result["market_interpretation"] = market_interpretation
         except Exception as e:
             logger.warning("시장분석 AI 해석 생성 스킵", error=str(e))
             result["market_interpretation"] = None
 
+        # Phase 1 성장루프: prior 첨부(주입 증거) + write-back(다음 회차 prior가 됨, best-effort)
+        result["prior_analysis"] = prior
+        from app.services.ledger import analysis_ledger_service as ledger
+        await ledger.append_analysis(
+            analysis_type="site_analysis",
+            payload={
+                "kind": "site_analysis", "schema_version": "site_analysis/v1",
+                "zone_type": result.get("zone_type"),
+                "effective_far": result.get("effective_far"),
+                "land_area_sqm": result.get("land_area_sqm"),
+                "potential_far_range": result.get("potential_far_range"),
+                "findings_brief": [
+                    {"check_id": "ZONE", "status": "info",
+                     "current": (result.get("effective_far") or {}).get("effective_far_pct"),
+                     "limit": None},
+                ],
+            },
+            tenant_id=tenant_id, pnu=_pnu, address=address, project_id=project_id,
+            source="comprehensive", created_by=None,
+        )
         return result
 
     # ────────────────────────────────────────────
