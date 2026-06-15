@@ -56,3 +56,16 @@ class TestCanRecord:
         assert can_record("manager") is True
         for role in ("contributor", "reviewer_internal", "external_reviewer", "viewer", "bogus"):
             assert can_record(role) is False
+
+
+class TestRecordingModel:
+    def test_table_and_columns(self):
+        from app.models.livekit import Recording
+
+        assert Recording.__tablename__ == "livekit_recordings"
+        cols = set(Recording.__table__.columns.keys())
+        for c in ("id", "project_id", "organization_id", "room", "egress_id",
+                  "s3_key", "status", "started_by", "started_at", "ended_at"):
+            assert c in cols, f"Recording 컬럼 누락: {c}"
+        assert Recording.__table__.columns["room"].nullable is False
+        assert Recording.__table__.columns["status"].default.arg == "recording"
