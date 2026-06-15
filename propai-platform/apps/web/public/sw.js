@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v196-kakao-callback";
+const CACHE_NAME = "propai-v197-security-hardening";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",
