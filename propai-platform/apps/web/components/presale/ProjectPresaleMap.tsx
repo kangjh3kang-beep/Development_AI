@@ -9,6 +9,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { loadKakaoMap } from "@/lib/kakao-map";
+import { useMapFullscreen } from "@/hooks/useMapFullscreen";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 declare global { interface Window { kakao: any } }
@@ -41,6 +42,7 @@ export function ProjectPresaleMap({
   const mapRef = useRef<any>(null);
   const overlaysRef = useRef<any[]>([]);
   const infoRef = useRef<any>(null);
+  const fs = useMapFullscreen(mapRef);
   const [sdkReady, setSdkReady] = useState(false);
   // 상태 필터(분양중/분양예정/분양완료) — 기본 모두 표시.
   const [active, setActive] = useState<Set<string>>(new Set(STATUS_ORDER));
@@ -130,8 +132,31 @@ export function ProjectPresaleMap({
         ))}
         <span className="text-[var(--text-hint)]">· 반경 {radiusM / 1000}km · 마커 클릭 시 상세</span>
       </div>
-      <div className="relative">
-        <div ref={mapEl} className="w-full rounded-xl border border-[var(--line-strong)]" style={{ height: 380 }} />
+      <div className={fs.wrapperClass("relative flex flex-col")}>
+        <div
+          ref={mapEl}
+          className={fs.mapClass("w-full rounded-xl border border-[var(--line-strong)]")}
+          style={fs.isFull ? undefined : { height: 380 }}
+        />
+        {/* 풀스크린 토글 — KakaoMapControls 미사용 단독 지도라 버튼 직접 배치 */}
+        {sdkReady && (
+          <button
+            type="button"
+            onClick={fs.toggle}
+            aria-label={fs.isFull ? "원래 크기로" : "전체화면"}
+            className="absolute right-2 top-2 z-[470] flex h-9 w-9 items-center justify-center rounded-md border border-black/10 bg-white text-slate-700 shadow transition-colors hover:bg-slate-100"
+          >
+            {fs.isFull ? (
+              <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M9 3v3a3 3 0 0 1-3 3H3M21 9h-3a3 3 0 0 1-3-3V3M3 15h3a3 3 0 0 1 3 3v3M15 21v-3a3 3 0 0 1 3-3h3" />
+              </svg>
+            ) : (
+              <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3" />
+              </svg>
+            )}
+          </button>
+        )}
         {!sdkReady && <div className="absolute inset-0 flex items-center justify-center rounded-xl bg-black/30 text-sm font-bold text-white">지도 로딩…</div>}
         {sdkReady && items.length === 0 && <div className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full bg-black/60 px-4 py-1.5 text-xs font-bold text-white">반경 내 분양 단지 없음</div>}
       </div>

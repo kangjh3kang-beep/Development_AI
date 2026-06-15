@@ -21,6 +21,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import { ApiClientError, apiClient } from "@/lib/api-client";
+import { useMapFullscreen } from "@/hooks/useMapFullscreen";
 import type { Locale } from "@/i18n/config";
 
 declare global {
@@ -271,6 +272,7 @@ export function AuctionMonitorPanel({ locale, canUseLiveApi }: { locale: Locale;
 
   const mapEl = useRef<HTMLDivElement>(null);
   const mapRef = useRef<any>(null);
+  const fs = useMapFullscreen(mapRef); // 지도 풀스크린(Leaflet invalidateSize)
   const savedLayerRef = useRef<any>(null); // 저장된 구역 레이어
   const draftMarkersRef = useRef<any[]>([]); // 그리는 중 정점 마커
   const draftLineRef = useRef<any>(null); // 그리는 중 폴리라인
@@ -839,12 +841,30 @@ export function AuctionMonitorPanel({ locale, canUseLiveApi }: { locale: Locale;
           </div>
         </div>
 
-        <div className="relative">
+        <div className={fs.wrapperClass("relative flex flex-col")}>
           <div
             ref={mapEl}
-            className="z-0 w-full overflow-hidden rounded-xl border border-[var(--line-strong)]"
-            style={{ height: 400 }}
+            className={fs.mapClass("z-0 w-full overflow-hidden rounded-xl border border-[var(--line-strong)]")}
+            style={fs.isFull ? undefined : { height: 400 }}
           />
+          {/* 지도 풀스크린 토글 — 모든 지도기능 풀스크린 일관 제공 */}
+          <button
+            type="button"
+            onClick={fs.toggle}
+            aria-label={fs.isFull ? "원래 크기로" : "전체화면"}
+            title={fs.isFull ? "원래 크기로" : "전체화면"}
+            className="absolute right-3 top-3 z-[480] rounded-lg border border-[var(--line)] bg-[var(--surface)]/90 p-2 text-[var(--text-secondary)] shadow-sm backdrop-blur transition-colors hover:text-[var(--accent-strong)]"
+          >
+            {fs.isFull ? (
+              <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M9 9H4M9 9V4M9 9 4 4M15 9h5M15 9V4m0 5 5-5M9 15H4m5 0v5m0-5-5 5m11-5h5m-5 0v5m0-5 5 5" />
+              </svg>
+            ) : (
+              <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M4 9V4h5M20 9V4h-5M4 15v5h5m11-5v5h-5" />
+              </svg>
+            )}
+          </button>
           {!sdkReady && !mapError ? (
             <div className="absolute inset-0 z-[400] flex items-center justify-center rounded-xl bg-black/40 backdrop-blur-sm">
               <span className="flex items-center gap-2 text-sm font-bold text-white">
