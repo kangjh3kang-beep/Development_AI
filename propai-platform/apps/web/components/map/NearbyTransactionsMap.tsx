@@ -124,8 +124,10 @@ export function NearbyTransactionsMap({
   const [payload, setPayload] = useState<MapPayload | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [kind, setKind] = useState<"trade" | "rent" | "presale">("trade");
+  const [kind, setKind] = useState<"trade" | "rent">("trade");
   const [type, setType] = useState("apt");
+  // P2 통합 오버레이: 분양은 배타 탭이 아니라 실거래 위에 겹쳐 보이는 독립 레이어 토글.
+  const [showPresale, setShowPresale] = useState(false);
   const [presale, setPresale] = useState<PresaleItem[] | null>(null);
   const [presaleLoading, setPresaleLoading] = useState(false);
   const [sdkReady, setSdkReady] = useState(false);
@@ -191,8 +193,8 @@ export function NearbyTransactionsMap({
   }, [payload?.center?.lat, payload?.center?.lon, payload?.lawd_cd]);
 
   useEffect(() => {
-    if (kind === "presale" && presale === null) fetchPresale();
-  }, [kind, presale, fetchPresale]);
+    if (showPresale && presale === null) fetchPresale();
+  }, [showPresale, presale, fetchPresale]);
 
   // 정보창 열기(이전 것 닫고 위치 기반으로 표시) — Leaflet bindPopup 대응.
   const openInfo = useCallback((latlng: any, html: string) => {
@@ -271,19 +273,24 @@ export function NearbyTransactionsMap({
     overlaysRef.current = [];
     try { infoRef.current?.close(); } catch { /* noop */ }
 
-    // 분양 카테고리 — 청약홈 분양 단지 마커(상태별 색, 마름모 형태로 실거래와 구분)
-    if (kind === "presale") {
-      const ppts: Array<[number, number]> = [];
-      if (payload?.center?.lat != null && payload?.center?.lon != null) ppts.push([payload.center.lat, payload.center.lon]);
+    // ── P2 통합 오버레이: 실거래(매매/전월세) 레이어를 항상 렌더하고,
+    //    분양 레이어(showPresale)를 그 위에 동시 오버레이한다(마름모·상태색으로 구분).
+    const pts: Array<[number, number]> = [];
+    if (payload?.center?.lat != null && payload?.center?.lon != null) {
+      pts.push([payload.center.lat, payload.center.lon]);
+    }
+
+    // 분양 오버레이 렌더(실거래와 동시) — 마름모, 청약홈 상태색.
+    if (showPresale) {
       (presale || []).forEach((it) => {
         if (!it.lat || !it.lon) return;
-        ppts.push([it.lat, it.lon]);
+        pts.push([it.lat, it.lon]);
         const col = PRESALE_COLOR[it.status] || "#f59e0b";
         const href = safeUrl(it.url);
         const html = `<div style="min-width:200px;max-width:270px;font-family:sans-serif;">
             <div style="font-weight:700;font-size:13px;color:#0f172a;">${escapeHtml(it.name)}</div>
             <div style="font-size:11px;color:#64748b;margin:2px 0 6px;">${escapeHtml(it.area_name)} · ${escapeHtml(it.address)}</div>
-            <div style="font-size:12px;color:${col};font-weight:700;">${escapeHtml(it.status)}</div>
+            <div style="font-size:12px;color:${col};font-weight:700;">분양 · ${escapeHtml(it.status)}</div>
             <div style="font-size:11px;color:#475569;">접수 ${escapeHtml(it.receipt_begin || "-")} ~ ${escapeHtml(it.receipt_end || "-")}</div>
             <div style="font-size:11px;color:#475569;">공급 ${escapeHtml(it.total_households || "-")}세대 · ${Math.round((it.distance_m || 0) / 100) / 10}km</div>
             ${href ? `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer" style="font-size:11px;color:#2563eb;font-weight:700;">청약홈 공고 ↗</a>` : ""}
@@ -296,18 +303,10 @@ export function NearbyTransactionsMap({
         ov.setMap(mapRef.current);
         overlaysRef.current.push(ov);
       });
-      if (ppts.length > 1) {
-        try { const b = new kakao.maps.LatLngBounds(); ppts.forEach(([la, lo]) => b.extend(new kakao.maps.LatLng(la, lo))); mapRef.current.setBounds(b, 40, 40, 40, 40); } catch { /* noop */ }
-      }
-      return;
     }
 
     const groups = activeCategory?.groups || [];
     const color = (kind === "trade" ? TRADE_TYPES : RENT_TYPES).find((t) => t.key === type)?.color || "#14b8a6";
-    const pts: Array<[number, number]> = [];
-    if (payload?.center?.lat != null && payload?.center?.lon != null) {
-      pts.push([payload.center.lat, payload.center.lon]);
-    }
 
     groups.forEach((g) => {
       if (!g.lat || !g.lon) return;
@@ -356,7 +355,7 @@ export function NearbyTransactionsMap({
     }
     // openInfo는 안정적이라 의존성 제외.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeCategory, kind, type, payload, presale]);
+  }, [activeCategory, kind, type, payload, presale, showPresale]);
 
   const typeList = kind === "trade" ? TRADE_TYPES : RENT_TYPES;
 
@@ -373,40 +372,52 @@ export function NearbyTransactionsMap({
             {payload?.center?.address || address} 중심 · 반경 {(payload?.radius_m || 1000) / 1000}km · 최근 {payload?.months?.length || 3}개월 · 마커 클릭 시 상세
           </p>
         </div>
-        <div className="flex rounded-xl border border-[var(--line-strong)] overflow-hidden">
-          {(["trade", "rent", "presale"] as const).map((k) => (
-            <button key={k} onClick={() => { setKind(k); if (k === "rent" && ["land", "commercial"].includes(type)) setType("apt"); }}
-              className={`px-4 py-1.5 text-xs font-bold transition-colors ${kind === k ? "bg-[var(--accent-strong)] text-white" : "bg-[var(--surface-muted)] text-[var(--text-secondary)]"}`}>
-              {k === "trade" ? "매매" : k === "rent" ? "전월세" : "분양"}
-            </button>
-          ))}
+        {/* 실거래 종류(매매/전월세) + 분양 동시 오버레이 토글 */}
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex rounded-xl border border-[var(--line-strong)] overflow-hidden">
+            {(["trade", "rent"] as const).map((k) => (
+              <button key={k} onClick={() => { setKind(k); if (k === "rent" && ["land", "commercial"].includes(type)) setType("apt"); }}
+                className={`px-4 py-1.5 text-xs font-bold transition-colors ${kind === k ? "bg-[var(--accent-strong)] text-white" : "bg-[var(--surface-muted)] text-[var(--text-secondary)]"}`}>
+                {k === "trade" ? "매매" : "전월세"}
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowPresale((v) => !v)}
+            aria-pressed={showPresale}
+            className={`flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-bold transition-colors ${showPresale ? "border-transparent bg-[#f59e0b] text-white" : "border-[var(--line-strong)] bg-[var(--surface-muted)] text-[var(--text-secondary)] hover:border-[var(--text-tertiary)]"}`}
+          >
+            <span className="inline-block h-2 w-2 rotate-45 bg-current" />
+            분양 {showPresale ? `ON${presale?.length ? ` · ${presale.length}곳` : ""}` : "겹쳐보기"}
+          </button>
         </div>
       </div>
 
-      {kind !== "presale" ? (
-        <div className="flex flex-wrap gap-1.5 mb-3">
-          {typeList.map((t) => {
-            const cnt = payload?.categories?.[`${t.key}_${kind}`]?.count ?? 0;
-            const active = type === t.key;
-            return (
-              <button key={t.key} onClick={() => setType(t.key)}
-                className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold border transition-all ${active ? "border-transparent text-white" : "border-[var(--line)] text-[var(--text-secondary)] bg-[var(--surface-muted)] hover:border-[var(--text-tertiary)]"}`}
-                style={active ? { backgroundColor: t.color } : undefined}>
-                <span className="h-2 w-2 rounded-full" style={{ backgroundColor: t.color }} />
-                {t.label}<span className="opacity-70">{cnt}</span>
-              </button>
-            );
-          })}
-        </div>
-      ) : (
-        <div className="flex flex-wrap items-center gap-3 mb-3 text-[11px] text-[var(--text-secondary)]">
-          <span className="font-bold text-[var(--text-primary)]">분양 단지 {presale?.length ?? 0}곳</span>
-          {(["접수중", "접수예정", "마감"] as const).map((s) => (
-            <span key={s} className="flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{ backgroundColor: PRESALE_COLOR[s] }} />{s}</span>
-          ))}
-          <span className="text-[var(--text-hint)]">청약홈 · 반경 3km · 최근 12개월</span>
-        </div>
-      )}
+      {/* 레이어 범례: 실거래 유형(원) + 분양 상태(마름모) 동시 표기 */}
+      <div className="flex flex-wrap items-center gap-1.5 mb-3">
+        {typeList.map((t) => {
+          const cnt = payload?.categories?.[`${t.key}_${kind}`]?.count ?? 0;
+          const active = type === t.key;
+          return (
+            <button key={t.key} onClick={() => setType(t.key)}
+              className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold border transition-all ${active ? "border-transparent text-white" : "border-[var(--line)] text-[var(--text-secondary)] bg-[var(--surface-muted)] hover:border-[var(--text-tertiary)]"}`}
+              style={active ? { backgroundColor: t.color } : undefined}>
+              <span className="h-2 w-2 rounded-full" style={{ backgroundColor: t.color }} />
+              {t.label}<span className="opacity-70">{cnt}</span>
+            </button>
+          );
+        })}
+        {showPresale && (
+          <span className="ml-1 flex flex-wrap items-center gap-2 border-l border-[var(--line)] pl-2 text-[11px] text-[var(--text-secondary)]">
+            <span className="font-bold text-[#f59e0b]">분양</span>
+            {(["접수중", "접수예정", "마감"] as const).map((s) => (
+              <span key={s} className="flex items-center gap-1"><span className="h-2 w-2 rotate-45" style={{ backgroundColor: PRESALE_COLOR[s] }} />{s}</span>
+            ))}
+            <span className="text-[var(--text-hint)]">청약홈·반경3km</span>
+          </span>
+        )}
+      </div>
 
       <div ref={fs.wrapperRef} className={fs.wrapperClass("relative flex flex-col")}>
         <div
@@ -429,18 +440,18 @@ export function NearbyTransactionsMap({
             <button onClick={fetchData} className="rounded-lg bg-[var(--accent-strong)] px-4 py-1.5 text-xs font-bold text-white">다시 시도</button>
           </div>
         )}
-        {payload && !loading && kind !== "presale" && payload.fetch_failed && (
+        {payload && !loading && payload.fetch_failed && (
           <div className="absolute bottom-3 left-1/2 z-[400] flex max-w-[92%] -translate-x-1/2 items-center gap-2 rounded-xl border border-amber-400/40 bg-amber-500/15 px-4 py-2 text-center text-xs font-bold text-amber-200 backdrop-blur">
             ⚠️ {payload.note || "국토부 실거래 공공데이터가 일시적으로 응답하지 않습니다. 거래가 없는 것이 아니라 조회 실패이며, 잠시 후 다시 시도해 주세요."}
           </div>
         )}
-        {payload && !loading && kind !== "presale" && !payload.fetch_failed && activeCategory && activeCategory.groups?.length === 0 && (
+        {payload && !loading && !payload.fetch_failed && activeCategory && activeCategory.groups?.length === 0 && (
           <div className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full bg-black/60 px-4 py-1.5 text-xs font-bold text-white z-[400]">
             해당 유형 최근 거래 없음
           </div>
         )}
-        {kind === "presale" && !presaleLoading && presale && presale.length === 0 && (
-          <div className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full bg-black/60 px-4 py-1.5 text-xs font-bold text-white z-[400]">
+        {showPresale && !presaleLoading && presale && presale.length === 0 && (
+          <div className="absolute bottom-12 left-1/2 -translate-x-1/2 rounded-full bg-[#f59e0b]/80 px-4 py-1.5 text-xs font-bold text-white z-[400]">
             반경 내 분양 단지 없음 (청약홈 키 미설정 시 표시 안 됨)
           </div>
         )}
