@@ -315,6 +315,17 @@ async def _execute_run(
     if req.rooms is not None:
         run_kwargs["rooms"] = req.rooms
 
+    # Phase 1 성장루프: 직전 design_audit prior read(best-effort).
+    # write(record_design_audit)가 tenant+project_id 키만 쓰므로 read도 동일 키로 같은 체인 매칭.
+    from app.services.ledger.prior_context import load_prior
+    _prior = await load_prior(
+        analysis_type="design_audit",
+        tenant_id=str(getattr(current, "tenant_id", "") or "") or None,
+        project_id=req.project_id,
+    )
+    if _prior:
+        run_kwargs["prior_context"] = _prior
+
     try:
         result = await orchestrator.run(db, **run_kwargs)
     except HTTPException:
