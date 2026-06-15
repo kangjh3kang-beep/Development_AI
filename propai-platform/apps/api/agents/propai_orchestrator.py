@@ -558,3 +558,18 @@ class PropAIOrchestrator:
             completed_steps=state.current_step,
             errors=len(state.errors),
         )
+
+        # P2-13: 종료 요약 이벤트 — 클라이언트가 success/partial·실패단계를 명시 인지(중간 실패 은폐 방지).
+        # step_index는 모델 제약(le=6) 준수, status는 계약 허용값('completed'), 실제 결과는 data.overall_status.
+        yield AgentStepEvent(
+            event_type="pipeline_summary",
+            step_index=len(STEPS) - 1,
+            step_name="summary",
+            status="completed",
+            progress_pct=1.0,
+            data={
+                "overall_status": status,
+                "completed_steps": state.current_step,
+                "errors": state.errors,
+            },
+        )
