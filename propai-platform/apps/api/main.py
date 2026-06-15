@@ -306,12 +306,122 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except Exception:  # noqa: BLE001
         logger.warning("growth flush 루프 시작 실패")
 
+    # 자가성장 엔진 — analyze/heal/correct/learn 주기 잡 인프로세스 스케줄러(Path B).
+    # 운영 Micro 는 uvicorn --workers 1 만 돌고 Celery worker/beat·Redis 가 없어
+    # Celery Beat 에만 걸린 분석/치유/수정/학습이 실제로는 잠들어 있다. _growth_flush_loop
+    # 와 동일한 asyncio 폴백으로, Celery 태스크 래퍼가 아니라 그 안의 async 코어
+    # (_analyze_async/_heal_async/_correct_async + learning_loop.run_learning_cycle)를
+    # 같은 프로세스에서 직접 await 해 자율 구동한다. ENV(GROWTH_INPROCESS_SCHED, 기본 on)로 off 가능.
+    #
+    # 멀티워커 안전: 각 사이클 진입 전 Postgres advisory lock(pg_try_advisory_lock)을
+    # best-effort 로 시도해, 다른 워커가 잡았으면 그 사이클을 skip 한다(중복실행 방지).
+    # Micro 는 단일워커라 항상 획득. lock 획득/해제 실패·예외는 안전하게 무시(단일워커 폴백).
+    import os as _os
+
+    # advisory lock 키(상수) — 잡별로 구분(동일 잡만 상호배제, 잡 간 병렬 허용).
+    _GROWTH_LOCK_KEYS = {
+        "analyze": 911_000_001,
+        "heal": 911_000_002,
+        "correct": 911_000_003,
+        "learn": 911_000_004,
+    }
+
+    async def _growth_try_lock(session, key: int) -> bool:
+        """pg_try_advisory_lock 시도. 획득 True / 실패·예외 False(best-effort)."""
+        try:
+            from sqlalchemy import text as _text
+            row = (await session.execute(
+                _text("SELECT pg_try_advisory_lock(:k)"), {"k": key}
+            )).scalar()
+            return bool(row)
+        except Exception:  # noqa: BLE001 — lock 실패는 안전하게 skip.
+            return False
+
+    async def _growth_unlock(session, key: int) -> None:
+        """pg_advisory_unlock(best-effort, 예외 무시)."""
+        try:
+            from sqlalchemy import text as _text
+            await session.execute(_text("SELECT pg_advisory_unlock(:k)"), {"k": key})
+        except Exception:  # noqa: BLE001
+            pass
+
+    async def _growth_run_locked(job_name: str, coro_factory) -> None:
+        """advisory lock 획득 시에만 async 코어를 1회 실행한다(잡 단위 격리).
+
+        coro_factory(session) -> awaitable. 한 세션 안에서 lock→실행→unlock 을 묶어
+        다른 워커와 상호배제. 어떤 예외도 스케줄러를 죽이지 않는다(잡별 try/except).
+        """
+        from apps.api.database.session import AsyncSessionLocal
+        key = _GROWTH_LOCK_KEYS[job_name]
+        try:
+            async with AsyncSessionLocal() as _s:
+                got = await _growth_try_lock(_s, key)
+                if not got:
+                    logger.debug("growth 스케줄러 skip(다른 워커 보유): %s", job_name)
+                    return
+                try:
+                    res = await coro_factory()
+                    logger.info("growth 인프로세스 잡 완료", job=job_name, result=str(res)[:200])
+                finally:
+                    await _growth_unlock(_s, key)
+        except Exception as e:  # noqa: BLE001 — 한 잡 실패가 다른 잡·앱을 깨지 않게.
+            logger.warning("growth 인프로세스 잡 실패(%s): %s", job_name, str(e)[:160])
+
+    async def _growth_scheduler_loop() -> None:
+        """analyze(매시)·heal(10분)·correct(15분)·learn(주간) 주기 구동.
+
+        heal/correct 는 analyze 가 만든 open 인사이트를 읽으므로, 매 틱마다 먼저
+        analyze 가 시간경계를 넘었으면 analyze 를 돌린 직후 heal/correct 가 최신
+        인사이트를 보게 순서를 보장한다(tick=60초 단위 시계). 부팅 안정화 초기 지연.
+        """
+        from app.tasks import growth_tasks
+        from app.services.growth import learning_loop
+        from apps.api.database.session import AsyncSessionLocal
+
+        await _asyncio.sleep(120)  # 부팅 안정화 후 시작(flush 루프보다 늦게).
+
+        tick = 0  # 60초 단위 카운터.
+        while True:
+            try:
+                run_analyze = (tick % 60 == 0)   # 매시(60분).
+                run_heal = (tick % 10 == 0)      # 10분.
+                run_correct = (tick % 15 == 0)   # 15분.
+                run_learn = (tick % 10080 == 0 and tick > 0)  # 주간(7일=10080분).
+
+                # 순서 보장: analyze 를 먼저 끝낸 뒤 heal/correct 가 최신 인사이트를 본다.
+                if run_analyze:
+                    await _growth_run_locked(
+                        "analyze", lambda: growth_tasks._analyze_async(window_hours=1)
+                    )
+                if run_heal:
+                    await _growth_run_locked("heal", growth_tasks._heal_async)
+                if run_correct:
+                    await _growth_run_locked("correct", growth_tasks._correct_async)
+                if run_learn:
+                    async def _learn_core():
+                        async with AsyncSessionLocal() as _s:
+                            return await learning_loop.run_learning_cycle(_s)
+                    await _growth_run_locked("learn", _learn_core)
+            except Exception as e:  # noqa: BLE001 — 루프 자체는 절대 죽지 않게.
+                logger.warning("growth 스케줄러 틱 오류: %s", str(e)[:160])
+            tick += 1
+            await _asyncio.sleep(60)  # 1분 틱.
+
+    if _os.getenv("GROWTH_INPROCESS_SCHED", "1") != "0":
+        try:
+            app.state.growth_scheduler_task = _asyncio.create_task(_growth_scheduler_loop())
+        except Exception:  # noqa: BLE001
+            logger.warning("growth 인프로세스 스케줄러 시작 실패")
+
     yield
 
     # ── 종료 ──
     _t = getattr(app.state, "presale_monitor_task", None)
     if _t is not None:
         _t.cancel()
+    _st = getattr(app.state, "growth_scheduler_task", None)
+    if _st is not None:
+        _st.cancel()
     _gt = getattr(app.state, "growth_flush_task", None)
     if _gt is not None:
         _gt.cancel()
