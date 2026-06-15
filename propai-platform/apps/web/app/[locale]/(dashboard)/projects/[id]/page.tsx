@@ -109,7 +109,43 @@ export default function ProjectDetailPage() {
         });
       }
       const design = r.summary?.design;
-      if (design) st.updateDesignData({ totalGfaSqm: design.total_gfa_sqm ?? null, floorCount: design.floor_count ?? null, buildingType: design.building_type ?? null, bcr: design.bcr ?? null, far: design.far ?? null });
+      // 설계 STAGE data(요약엔 없는 산출): 유닛믹스·법규검증 — 단선 해소(파이프라인 산출 프론트 소비).
+      const designStage = r.stages?.find((s) => s.stage === "design")?.data ?? {};
+      // 평형믹스: 백엔드 unit_types[{code:"S84",count}] → CAD/ProForma 컨벤션 ["84A",...](count>0).
+      const unitTypes: string[] | undefined = Array.isArray(designStage.unit_types)
+        ? designStage.unit_types
+            .filter((u: any) => Number(u?.count ?? 0) > 0)
+            .map((u: any) => `${String(u?.code ?? "").replace(/^S/, "")}A`)
+            .filter((s: string) => s.length > 1)
+        : undefined;
+      if (design || (unitTypes && unitTypes.length > 0)) {
+        st.updateDesignData({
+          totalGfaSqm: design?.total_gfa_sqm ?? null,
+          floorCount: design?.floor_count ?? null,
+          buildingType: design?.building_type ?? null,
+          bcr: design?.bcr ?? null,
+          far: design?.far ?? null,
+          ...(unitTypes && unitTypes.length > 0 ? { unitTypes } : {}),
+        });
+      }
+      // 법규검증(compliance): 백엔드 results[rule_id BL-001건폐율/002용적률/003높이] → ComplianceData 안전 매핑.
+      const comp = designStage.compliance;
+      if (comp && Array.isArray(comp.results)) {
+        const statusOf = (rid: string): boolean | null => {
+          const hit = comp.results.find((x: any) => x?.rule_id === rid);
+          return hit ? hit.status === "pass" : null;
+        };
+        const violations: string[] = comp.results
+          .filter((x: any) => x?.status && x.status !== "pass")
+          .map((x: any) => String(x?.message || x?.rule_name || "").trim())
+          .filter((s: string) => s.length > 0);
+        st.updateComplianceData({
+          bcrCompliant: statusOf("BL-001"),
+          farCompliant: statusOf("BL-002"),
+          heightCompliant: statusOf("BL-003"),
+          violations,
+        });
+      }
       const feas = r.summary?.feasibility;
       if (feas) st.updateFeasibilityData({ totalCostWon: feas.total_cost_won ?? null, totalRevenueWon: feas.total_revenue_won ?? null, profitRatePct: feas.profit_rate_pct ?? null, grade: feas.grade ?? null });
       const esg = r.summary?.esg_carbon;

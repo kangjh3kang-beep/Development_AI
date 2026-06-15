@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v197-security-hardening";
+const CACHE_NAME = "propai-v198-pipeline-wiring";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",
