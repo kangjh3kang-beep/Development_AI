@@ -19,8 +19,9 @@ def test_build_audit_payload_is_deterministic():
         changes={"k": "v"}, metadata={"ip": "1.2.3.4"},
     )
     assert p == {
-        "kind": "audit", "action": "EXPORT", "resource_type": "project",
-        "resource_id": "p1", "user_id": "u1", "event_id": "e1", "event_ts": 123.0,
+        "kind": "audit", "schema_version": "audit/v1", "action": "EXPORT",
+        "resource_type": "project", "resource_id": "p1", "user_id": "u1",
+        "event_id": "e1", "event_ts": 123.0,
         "changes": {"k": "v"}, "metadata": {"ip": "1.2.3.4"},
     }
     # None → 빈 dict 정규화.

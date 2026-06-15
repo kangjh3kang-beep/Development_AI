@@ -37,6 +37,7 @@ def build_audit_payload(
     """감사 1건의 결정적 원장 payload. event_id/event_ts는 호출부 주입(테스트 결정성)."""
     return {
         "kind": "audit",
+        "schema_version": "audit/v1",
         "action": action,
         "resource_type": resource_type,
         "resource_id": resource_id,
