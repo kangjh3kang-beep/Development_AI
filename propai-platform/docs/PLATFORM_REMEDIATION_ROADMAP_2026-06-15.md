@@ -20,6 +20,34 @@
 
 ---
 
+## 📊 진행 현황 — 2026-06-16 (15커밋 착수·푸시)
+
+> 브랜치 `feature/trust-infra-2026-06-11`에 **15커밋(`a1f3e31`…`d46f3de`) 적용·푸시 완료**. 각 커밋은 (a) 실제 diff 대조 + (b) 16-에이전트 적대적 검증 워크플로 + (c) overstated 판정 2건은 작성자 직접 재확인까지 거침. **무DB·무빌드 환경에서 안전 검증 가능한 범위까지만** 진행했고, 나머지는 라이브 환경(Postgres/CI/npm build) 필요로 보류.
+
+| 커밋 | finding | 분류 | 검증 결과 | 주의·잔존 |
+|---|---|---|---|---|
+| `a1f3e31` | P0-5 | 보안→**위생 재분류** | ⚠️ fail-open 제거 코드는 정확하나 **패치 대상이 데드코드**(미마운트 `app/routers/auth.py`만 소비). **라이브 admin은 무관**하게 이미 안전 — 아래 P0-5 정정 참조 | P0급 라이브 취약점 아님. `require_role` 3중복 통합 + 데드 `app/routers/auth.py` 제거 권고 |
+| `3324d72` | P0-4 | 보안 | ✅ cost 라우터 무인증→인증강제(실효 401). 부모 무인증 확인 | 테넌트 스코핑 후속(P1) |
+| `c50bb7d` | P0-1/2 | 의존성 | ✅ `arq`·`prometheus-client` 선언(worker Dockerfile이 requirements.txt 소비→부팅크래시 실재). 순수 additive | 신규 2줄만 `>=` 핀(무해 스타일) |
+| `4ff29fc` | P1-1 | 보안 | ✅ project_dashboard 3라우트 무인증 IDOR→인증강제 | BOLA(테넌트 스코프) 후속 |
+| `73006a0` | P1-3/P3-10 | 보안 | ✅ g2b 인증강제. ⚠️ router-level이라 **읽기 GET까지 전부 인증화**(subject보다 범위 넓음) | 익명 공개페이지 존재 시 401 회귀 가능 — **배포 시 확인 필수**. DELETE BOLA 후속 |
+| `9c59ab2` | P2-2 | 보안 | ✅ comprehensive 무인증 LLM 비용남용→인증강제(이중 마운트 양쪽 커버) | 사용자별 LLM 쿼터 후속 |
+| `7d25c28` | P1-2 | 보안 | ✅ orchestrator 교차테넌트 fail-closed 게이트. `tenant_id` 매핑 정합 직접 확인 | DB 일시장애 시 정상유저 차단(의도된 가용성 trade-off) |
+| `96d00a8` | P1-6/P2-11 | 동시성 | ✅ record_usage 충전잔액 lost-update 원자화 + config silent→logger | `add_topup` 절댓값 write 경로 후속(저빈도) |
+| `fdc6117` | P2-10 | 신뢰성 | ✅ comprehensive_report 실패 silent pass→logger + skipped_reason | — |
+| `380dc68` | P1-9 | 보안 | ✅ BankReadyReport PDF document.write DOM XSS — 서버 leaf 전부 `esc()` | — |
+| `e9c802e` | P2-3 | 동시성 | ✅ charge 무료분석 TOCTOU 조건부 원자 UPDATE + 경쟁 패자 유료 재계산 | 비-Postgres 백엔드면 보장 약화 |
+| `bc626f8` | P2-13 | 신뢰성 | ✅ orchestrator 종료 `pipeline_summary` 이벤트(스키마 `le=6` 충족) | — |
+| `4ee21c2` | P2-9 | 보안 | ✅ 비파괴 보안헤더 5종(클릭재킹/MIME/Referrer/HSTS) | `source:"/:path*"`는 Next 공식 전경로 패턴(zero-segment로 `/` 포함). CSP는 nonce 롤아웃 후속 |
+| `bb21959` | P2-4 | 성능 | ✅ 해촉 PDF/이미지 blocking→`anyio.to_thread`(스레드로 넘기는 `db` 인자 미사용=스레드안전) | — |
+| `d46f3de` | P3-1 부분 | 스타일 | ✅ ruff 안전 현대화 148파일 447건. **F401(import 제거)·I001(재정렬) 의도적 제외** | `boq_builder.py` `UTC=UTC` 무해 데드라인 1줄 |
+
+**보류(라이브 환경 필요):** P0-3(CI 양트리 수집 — 적용 시 숨은 ~78% 테스트 노출로 CI red 가능, 담당자가 CI 관찰하며) · P1-5(ledger UNIQUE — 레거시 중복행 충돌, 데이터 정리 선행) · P1-7/P1-10(이중 Base·import 루트, L 규모 리팩토링) · P2-8(SVG DOMPurify — dep 추가+build 검증) · P2-14(WS rate limit — slowapi 미설치+커스텀) · F401/I001 잔여 · P2-9 CSP enforce. **공통 사유: 이 환경은 무DB·무빌드라 전체 테스트/빌드 검증 불가 → 회귀를 잡을 수 없는 변경은 블라인드 미적용.**
+
+**검증 방법 주의:** 위 ✅는 *diff가 주장대로이고 additive(동작보존)임*을 정적 확인한 것. 백엔드 통합테스트는 무DB로 미실행이므로 머지 전 라이브 환경 회귀 테스트 권장(특히 `73006a0` 익명 GET 회귀).
+
+---
+
 ## 2. 🔴 P0 — 보안/정합/무결성 차단 (즉시)
 
 ### P0-1. arq 미선언으로 worker 부팅 크래시 — 모든 스케줄 작업 죽음 · effort S
@@ -46,6 +74,11 @@
 - `app/core/rbac.py:106-108`(`if request is None: return True`), 사용 `app/routers/auth.py:14`(`require_admin = require_role(Role.ADMIN)`), `test_rbac.py:101-105`.
 - require_role이 (a) request 미주입 시 무조건 통과, (b) `x-user-role` 헤더 신뢰 → 인증 무력화. admin/users(auth.py:115)가 이 게이트를 거침.
 - 수정: require_role을 JWT 기반(`get_current_user`의 role/tier)으로 재구현, 헤더 신뢰·None 폴스루 제거. test를 실제 인증요구 검증으로 교체.
+- **🔎 2026-06-16 검증 정정(중요):** 수정(`a1f3e31`)은 적용했으나, 적대적 검증 + 작성자 직접 재확인 결과 **이 finding은 라이브 P0 취약점이 아니라 데드코드 위생 문제로 재분류**해야 함:
+  - 패치한 `app/core/rbac.py::require_role`의 **유일 소비자는 `app/routers/auth.py`인데 이 라우터는 `main.py`에 마운트되지 않음**(미사용). `main.py:29-37`이 마운트하는 인증 라우터는 **다른 경로 `apps/api/routers/auth.py`**이며 `require_role`을 전혀 쓰지 않음.
+  - **라이브 `/admin/users`(`apps/api/routers/auth.py:459`)는 이미 안전:** `Depends(get_current_user)`(401) + `role not in (admin,owner)→403` + `is_super_admin(tier)` 판별 + 비-super는 `User.tenant_id` 스코프. 즉 fail-open 게이트와 무관하게 보호됨.
+  - 따라서 ① 원 finding의 "admin/users가 이 게이트를 거침"은 **데드코드(`app/routers/auth.py`)를 본 것**으로 부정확, ② 본 커밋은 위생 개선(폴스루 제거)일 뿐 라이브 보안태세 무변경.
+  - **후속 권고:** 동명 `require_role` 3중복(`app/core/rbac.py`·`app/api/deps_sales.py`·미마운트 소비)을 정리하고 데드 라우터 `app/routers/auth.py`를 제거(데드코드 정합).
 
 ---
 
@@ -144,4 +177,4 @@
 
 ---
 
-*검증 메모: ① admin/users는 select(User) 직전 require_admin을 거침(auth.py:118) — 근본문제는 rbac.py:107의 `request=None→True` 폴스루(P0-5로 격상). ② 031 migration에 UNIQUE 부재를 인덱스 정의에서 직접 확인(P1-5). ③ Base 이중성은 두 DeclarativeBase + env target이 후자만 가리킴 확인(P1-7). 나머지 발견은 인용 file:line에서 코드 일치 확인.*
+*검증 메모: ① ~~admin/users는 select(User) 직전 require_admin을 거침(auth.py:118)~~ → **2026-06-16 정정:** 이 경로(`app/routers/auth.py:118`)는 미마운트 데드코드였음. 라이브 `/admin/users`는 `apps/api/routers/auth.py:459`로 `require_admin` 없이 `get_current_user`+`is_super_admin(tier)`+tenant 스코프로 이미 보호됨 → P0-5는 데드코드 위생으로 재분류(§2 P0-5 정정 블록 참조). ② 031 migration에 UNIQUE 부재를 인덱스 정의에서 직접 확인(P1-5). ③ Base 이중성은 두 DeclarativeBase + env target이 후자만 가리킴 확인(P1-7). 나머지 발견은 인용 file:line에서 코드 일치 확인.*
