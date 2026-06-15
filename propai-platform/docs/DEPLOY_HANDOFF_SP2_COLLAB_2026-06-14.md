@@ -111,5 +111,22 @@
 - 외부 협력업체는 scope내 문서의 댓글만 조회·작성·해결 가능(scope 밖 404 — 자료교환과 동일 경계).
 - 검증(trust-infra): 백엔드 협업 회귀 **112 passed**, 프론트 vitest 27(review-comments 9+collaboration 18), tsc 0·eslint 0(신규)·next build 0. 적대적 최종 리뷰 — 보안 우회·scope 누출·정직표기 위반 0(Ready to merge).
 
-## 10. 범위 경계
+## 10. 화상회의 LiveKit Phase 3 (추가 푸시됨 — ⚠️신규 마이그레이션 030 + 신규 의존성 2 + env)
+| 커밋 | 내용 |
+|---|---|
+| `9a8fc6a` | T1 순수 권한규칙(`livekit_rules`) + T4 프론트 lib(`lib/livekit.ts`) — 키 독립 |
+| `6207e20` | T2 토큰/녹화 서비스+라우터(`v2_livekit`) + T3 Recording 모델 + **alembic 030** |
+| `1119cc4` | T5 `LiveKitRoom` 컴포넌트 + T7 회의방 통합 |
+
+배포 담당 추가 체크리스트:
+- [ ] ⚠️**alembic 030 적용**: `alembic upgrade head` → `livekit_recordings`(+RLS). 체인 024→…→029→**030** 단일 head.
+- [ ] **신규 의존성**: 백엔드 `livekit-api==1.1.0`(requirements.txt) → `pip install`. 프론트 `livekit-client@2.19.2`(pnpm-lock) → `pnpm install`.
+- [ ] **env(사용자 제공)**: `LIVEKIT_URL`(wss://…livekit.cloud)·`LIVEKIT_API_KEY`·`LIVEKIT_API_SECRET` + 녹화용 `LIVEKIT_EGRESS_S3_BUCKET/_REGION/_ACCESS_KEY/_SECRET`. **미설정 시 토큰 503·녹화 503·프론트 입장 정직 degrade(크래시 없음)**.
+- [ ] ⚠️**스테이징 실연결 검증 필요**: 토큰 발급·room connect·트랙·Egress 녹화는 LiveKit Cloud 키 + 브라우저 카메라 권한 하에서만 실동작. trust-infra는 **코드 완성 + 가드/권한 단위검증만**(라우터 가드 4·규칙 7·모델 1·lib vitest 3). 실연결은 미검증 — 스테이징에서 확인할 것.
+
+정직 경계:
+- 권한은 결정론 규칙(`video_grant`: host=roomAdmin·발화, viewer=시청만 / `can_record`: host만). 멤버십은 require_project_member 1차.
+- **T6(원격감리 RemoteSupervisionRoom 전환)은 N/A** — 해당 컴포넌트는 어떤 페이지도 렌더하지 않는 고아(테스트 목만 참조). 공용 `LiveKitRoom`은 추후 배선 시 재사용 가능.
+
+## 11. 범위 경계
 - trust-infra는 배포 안 함. 배포·롤백·prod 환경변수는 배포 담당 책임.
