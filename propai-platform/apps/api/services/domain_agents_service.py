@@ -4,10 +4,13 @@ from datetime import datetime, timezone
 UTC = timezone.utc
 from uuid import UUID
 
+import structlog
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.api.database.models.phase_f_domain_agents import DomainAgentApproval, DomainAgentTask
+
+logger = structlog.get_logger(__name__)
 
 _DOMAIN_LABELS = {
     "asset": "asset management",
@@ -103,6 +106,25 @@ class DomainAgentsService:
         await self.db.refresh(task)
         if approval is not None:
             await self.db.refresh(approval)
+
+        # Phase 0 unit d: 산출물 요약을 원장 단일 SSOT에 best-effort 일원화(실패 무중단).
+        try:
+            from app.services.ledger.ledger_adapters import record_domain_agent_task
+
+            await record_domain_agent_task(
+                task={
+                    "domain": task.domain, "task_type": task.task_type,
+                    "status": task.status, "confidence_score": task.confidence_score,
+                    "recommendation": task.recommendation,
+                    "requires_approval": task.requires_approval,
+                    "id": str(task.id),
+                },
+                tenant_id=str(tenant_id), project_id=str(project_id),
+                created_by=None,
+            )
+        except Exception as e:  # noqa: BLE001 — 원장 적재 실패가 도메인 분석을 막지 않음
+            logger.warning("원장 배선 append 실패(domain_agent)", err=str(e)[:160])
+
         return task, approval
 
     async def list_history(

@@ -6,9 +6,12 @@ INSERT-ONLY 패턴: 규제 준수를 위해 삭제/수정 불가.
 
 from uuid import UUID
 
+import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.api.database.models.legal_audit_trail import LegalAuditTrail
+
+logger = structlog.get_logger(__name__)
 
 
 async def record_audit(
@@ -38,4 +41,17 @@ async def record_audit(
     )
     db.add(trail)
     await db.flush()
+
+    # Phase 0 unit b2: legal 감사 이벤트를 원장 단일 SSOT에도 흡수(best-effort).
+    try:
+        from app.services.ledger.audit_ledger import append_audit
+        await append_audit(
+            action=action, user_id=str(actor_id), resource_type=entity_type,
+            resource_id=str(entity_id), tenant_id=str(tenant_id),
+            changes={"before": before_state, "after": after_state},
+            metadata={"reason": reason, "ip_address": ip_address},
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("감사 원장 흡수 실패", err=str(e)[:120])
+
     return trail

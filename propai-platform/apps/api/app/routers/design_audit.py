@@ -373,6 +373,20 @@ async def _execute_run(
     except Exception as e:  # noqa: BLE001 — 저장 실패해도 결과 반환(무중단)
         logger.warning("design_audits 저장 실패 — 결과는 반환", error=str(e)[:120])
 
+    # Phase 0 unit d: design_audit raw 결과를 원장 단일 SSOT에 best-effort 일원화(실패 무중단).
+    # _save_audit가 commit하므로 audit_id 행은 영속 → backlink 안전. RunRequest엔 pnu 없음(pnu 미전달).
+    try:
+        from app.services.ledger.ledger_adapters import record_design_audit
+
+        await record_design_audit(
+            result=result, audit_id=audit_id,
+            tenant_id=str(getattr(current, "tenant_id", "") or "") or None,
+            project_id=req.project_id,
+            created_by=str(getattr(current, "user_id", "") or "") or None,
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("원장 배선 append 실패(design_audit)", err=str(e)[:160])
+
     return {
         "ok": True,
         "audit_id": audit_id,

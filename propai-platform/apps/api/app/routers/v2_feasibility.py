@@ -868,6 +868,19 @@ async def vcs_commit(
     """수지분석 커밋."""
     vcs = FeasibilityVCSDB(db, project_id=_parse_project_id(project_id), tenant_id=current_user.tenant_id)
     result = await vcs.commit(req.snapshot, req.message)
+    await db.commit()                      # 외부 트랜잭션 확정 — 이후에만 원장 적재(고아 방지)
+    # Phase 0 unit d: feasibility 커밋을 원장 단일 SSOT에 best-effort 일원화(실패 무중단).
+    try:
+        from app.services.ledger.ledger_adapters import record_feasibility_commit
+
+        await record_feasibility_commit(
+            commit=result,
+            tenant_id=str(current_user.tenant_id) if current_user.tenant_id else None,
+            project_id=str(_parse_project_id(project_id)),
+            created_by=None,
+        )
+    except Exception as e:  # noqa: BLE001 — 원장 적재 실패가 커밋을 막지 않음
+        logger.warning("원장 배선 append 실패(feasibility_vcs): %s", str(e)[:160])
     return {"sha": result["sha"], "message": result["message"], "timestamp": result.get("timestamp", "")}
 
 
@@ -883,6 +896,19 @@ async def vcs_rollback(
     result = await vcs.rollback(req.target_sha)
     if not result:
         raise HTTPException(status_code=404, detail="커밋을 찾을 수 없습니다")
+    await db.commit()                      # rollback도 신규 commit row 생성 — 확정 후 원장 적재
+    # Phase 0 unit d: rollback 커밋도 원장 단일 SSOT에 best-effort 일원화(실패 무중단).
+    try:
+        from app.services.ledger.ledger_adapters import record_feasibility_commit
+
+        await record_feasibility_commit(
+            commit=result,
+            tenant_id=str(current_user.tenant_id) if current_user.tenant_id else None,
+            project_id=str(_parse_project_id(project_id)),
+            created_by=None,
+        )
+    except Exception as e:  # noqa: BLE001 — 원장 적재 실패가 롤백을 막지 않음
+        logger.warning("원장 배선 append 실패(feasibility_vcs/rollback): %s", str(e)[:160])
     return {"sha": result["sha"], "message": result["message"]}
 
 

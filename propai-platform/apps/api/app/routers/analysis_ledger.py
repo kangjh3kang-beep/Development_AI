@@ -93,6 +93,14 @@ async def verify(
     )
 
 
+@router.get("/verify-all", summary="전 체인 무결성 일괄검증(테넌트/프로젝트)")
+async def verify_all(
+    project_id: str | None = None,
+    current: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    return await ledger.verify_all_chains(tenant_id=_tid(current), project_id=project_id)
+
+
 # ── 사용 용량(구독자별) 제한·삭제·상향 ──
 @router.get("/usage", summary="저장 사용량/한도 조회")
 async def usage(current: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:

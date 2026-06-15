@@ -71,9 +71,11 @@ def _chain_where(pnu: str | None, address_norm: str, project_id: str | None) -> 
     if pnu:
         key_sql = "pnu = :pnu"
         params["pnu"] = pnu
-    else:
+    elif address_norm:  # 비어있지 않은 주소만 동등 비교
         key_sql = "address_norm = :addr"
         params["addr"] = address_norm
+    else:  # pnu·address 모두 없음 → NULL 저장행과 정합(Phase 0 carve-out 버그픽스)
+        key_sql = "address_norm IS NULL"
     if project_id:
         key_sql += " AND project_id = :pid"
         params["pid"] = project_id
@@ -339,4 +341,74 @@ async def verify_chain(
                     "message": "무결성 체인 정상(변조 없음)" if not broken else f"무결성 이상 {len(broken)}건 탐지"}
     except Exception as e:  # noqa: BLE001
         logger.warning("분석원장 검증 실패", err=str(e)[:160])
+        return {"ok": False, "message": str(e)[:160]}
+
+
+async def verify_all_chains(
+    *, tenant_id: str | None = None, project_id: str | None = None,
+) -> dict[str, Any]:
+    """테넌트(옵션: 프로젝트)의 모든 체인을 일괄 무결성 검증.
+
+    단일 패스 SELECT로 전 행을 읽어(N+1 라운드트립 제거) 파이썬에서 verify_chain과 '동일한 체인 키
+    규칙'(_chain_where: pnu 있으면 pnu, 없으면 address_norm; +project_id, analysis_type)으로 그룹핑해
+    검증한다 → 단건 verify_chain과 판정 일치. 검증은 prev_hash 연속성 + content_hash 재계산에 더해
+    동일 version 중복(동시 append 경쟁조건 사후탐지)까지 본다. 기존 verify_chain은 불변(별도 함수).
+    """
+    try:
+        from sqlalchemy import text
+        from app.core.database import async_session_factory
+
+        async with async_session_factory() as db:
+            await _ensure(db)
+            tenant_sql = "tenant_id = :tid" if tenant_id else "tenant_id IS NULL"
+            params: dict[str, Any] = {"tid": tenant_id}
+            proj_sql = ""
+            if project_id:
+                proj_sql = " AND project_id = :pid"
+                params["pid"] = project_id
+            rows = (await db.execute(text(
+                f"SELECT pnu, address_norm, project_id, analysis_type, version, "
+                f"payload, content_hash, prev_hash FROM analysis_ledger "
+                f"WHERE {tenant_sql}{proj_sql}"), params)).all()
+
+            # _chain_where와 동일한 체인 키(pnu 우선, 없으면 address_norm)로 그룹핑.
+            chains: dict[tuple[Any, Any, Any], dict[str, Any]] = {}
+            for r in rows:
+                pnu_v, addr_v, pid_v, atype = r[0], r[1], r[2], r[3]
+                pnu_key = pnu_v or None    # 빈문자열 pnu도 address 분기로(=_chain_where `if pnu:` 동형)
+                key = (pnu_key if pnu_key is not None else f"@addr:{addr_v}", pid_v, atype)
+                chains.setdefault(key, {
+                    "pnu": pnu_v, "address_norm": addr_v, "project_id": pid_v,
+                    "analysis_type": atype, "rows": [],
+                })["rows"].append((int(r[4]), r[5], r[6], r[7]))
+
+            broken_chains: list[dict[str, Any]] = []
+            for ch in chains.values():
+                broken: list[dict[str, Any]] = []
+                prev_hash = None
+                seen: set[int] = set()
+                for ver, payload, stored_hash, ph in sorted(ch["rows"], key=lambda x: x[0]):
+                    if ver in seen:
+                        broken.append({"version": ver, "issue": "duplicate_version"})
+                    seen.add(ver)
+                    if _content_hash(payload) != stored_hash:
+                        broken.append({"version": ver, "issue": "payload_tampered"})
+                    if ph != prev_hash:
+                        broken.append({"version": ver, "issue": "chain_broken"})
+                    prev_hash = stored_hash
+                if broken:
+                    broken_chains.append({
+                        "analysis_type": ch["analysis_type"], "pnu": ch["pnu"],
+                        "address_norm": ch["address_norm"], "project_id": ch["project_id"],
+                        "broken": broken,
+                    })
+
+            return {
+                "ok": True, "verified": not broken_chains,
+                "chains_checked": len(chains), "broken_chains": broken_chains,
+                "message": ("전 체인 무결성 정상(변조 없음)" if not broken_chains
+                            else f"무결성 이상 체인 {len(broken_chains)}건 탐지"),
+            }
+    except Exception as e:  # noqa: BLE001
+        logger.warning("분석원장 전체검증 실패", err=str(e)[:160])
         return {"ok": False, "message": str(e)[:160]}

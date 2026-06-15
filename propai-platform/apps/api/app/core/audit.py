@@ -37,5 +37,15 @@ async def audit_admin_action(
                 {"a": actor_id, "r": actor_role, "t": tenant_id, "ac": action, "tg": target,
                  "d": _json.dumps(detail or {}, ensure_ascii=False)})
             await db.commit()
+            # Phase 0 unit b2: admin 감사 이벤트를 원장 단일 SSOT에도 흡수(best-effort, 실패 무중단).
+            try:
+                from app.services.ledger.audit_ledger import append_audit
+                await append_audit(
+                    action=action, user_id=actor_id, resource_type="admin",
+                    resource_id=target, tenant_id=tenant_id,
+                    metadata={"actor_role": actor_role, "detail": detail or {}},
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.warning("감사 원장 흡수 실패", action=action, err=str(e)[:120])
     except Exception as e:  # noqa: BLE001
         logger.warning("감사로그 기록 실패", action=action, err=str(e)[:120])
