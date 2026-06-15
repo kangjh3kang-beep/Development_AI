@@ -407,11 +407,20 @@ export function BankReadyReportBuilder() {
     const printWindow = window.open("", "_blank");
     if (!printWindow) return;
 
+    // P1-9: 서버 제공 보고서 데이터를 document.write에 주입하기 전 HTML 이스케이프(DOM XSS 차단).
+    const esc = (v: unknown): string =>
+      String(v ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+
     const sectionsHtml = report.sections
       .map(
         (s) => `
       <div style="page-break-inside:avoid;margin-bottom:24px;">
-        <h2 style="font-size:16px;font-weight:bold;border-bottom:2px solid #1e3a5f;padding-bottom:4px;margin-bottom:12px;">${s.title}</h2>
+        <h2 style="font-size:16px;font-weight:bold;border-bottom:2px solid #1e3a5f;padding-bottom:4px;margin-bottom:12px;">${esc(s.title)}</h2>
         ${
           s.has_data
             ? `<table style="width:100%;border-collapse:collapse;font-size:13px;">
@@ -419,7 +428,7 @@ export function BankReadyReportBuilder() {
                   .filter(([, v]) => v != null && v !== "" && !(Array.isArray(v) && v.length === 0))
                   .map(
                     ([k, v]) =>
-                      `<tr><td style="padding:4px 8px;font-weight:500;color:#555;width:40%;border-bottom:1px solid #eee;">${k}</td><td style="padding:4px 8px;border-bottom:1px solid #eee;">${typeof v === "object" ? JSON.stringify(v) : v}</td></tr>`,
+                      `<tr><td style="padding:4px 8px;font-weight:500;color:#555;width:40%;border-bottom:1px solid #eee;">${esc(k)}</td><td style="padding:4px 8px;border-bottom:1px solid #eee;">${esc(typeof v === "object" ? JSON.stringify(v) : v)}</td></tr>`,
                   )
                   .join("")}
                </table>`
@@ -429,15 +438,15 @@ export function BankReadyReportBuilder() {
       )
       .join("");
 
-    printWindow.document.write(`<!DOCTYPE html><html><head><title>${report.meta.title}</title>
+    printWindow.document.write(`<!DOCTYPE html><html><head><title>${esc(report.meta.title)}</title>
       <style>body{font-family:'Noto Sans KR',sans-serif;max-width:800px;margin:40px auto;color:#222;}
       @media print{body{margin:20px;}}</style></head><body>
-      <h1 style="font-size:22px;text-align:center;color:#1e3a5f;">${report.meta.title}</h1>
-      <p style="text-align:center;color:#777;font-size:12px;">생성일: ${report.meta.data_basis_date} | ${report.meta.generated_by} | 완성도: ${report.completeness.pct}%</p>
+      <h1 style="font-size:22px;text-align:center;color:#1e3a5f;">${esc(report.meta.title)}</h1>
+      <p style="text-align:center;color:#777;font-size:12px;">생성일: ${esc(report.meta.data_basis_date)} | ${esc(report.meta.generated_by)} | 완성도: ${esc(report.completeness.pct)}%</p>
       <hr style="border:1px solid #1e3a5f;margin:20px 0;"/>
       ${sectionsHtml}
       <hr style="border:1px solid #ccc;margin:20px 0;"/>
-      <p style="font-size:11px;color:#999;">${report.meta.legal_disclaimer}</p>
+      <p style="font-size:11px;color:#999;">${esc(report.meta.legal_disclaimer)}</p>
       </body></html>`);
     printWindow.document.close();
     printWindow.print();
