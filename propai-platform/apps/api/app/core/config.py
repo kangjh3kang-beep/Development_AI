@@ -11,8 +11,8 @@ class Settings(BaseSettings):
     APP_HOST: str = "0.0.0.0"
     APP_PORT: int = 8000
 
-    DATABASE_URL: str = "postgresql+asyncpg://propai:propai_dev_pass@localhost:5432/propai_db"
-    SYNC_DATABASE_URL: str = "postgresql+psycopg2://propai:propai_dev_pass@localhost:5432/propai_db"
+    DATABASE_URL: str = "postgresql+asyncpg://propai_user:propai_pass_dev@localhost:5432/propai_db"
+    SYNC_DATABASE_URL: str = "postgresql+psycopg2://propai_user:propai_pass_dev@localhost:5432/propai_db"
     DB_POOL_SIZE: int = 20
     DB_MAX_OVERFLOW: int = 10
     REDIS_URL: str = "redis://redis:6379/0"
