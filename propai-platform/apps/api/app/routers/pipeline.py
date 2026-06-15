@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
@@ -21,6 +22,7 @@ from app.services.report.pipeline_report_service import (
 )
 
 router = APIRouter(prefix="/api/v2/pipeline", tags=["pipeline"])
+logger = structlog.get_logger(__name__)
 
 
 # ── Request / Response 모델 ──────────────────────────────────
@@ -431,8 +433,8 @@ async def _autoload_ledger(stage: str, data: dict[str, Any], sections: dict[str,
             project_id=str(data.get("project_id")) if data.get("project_id") else None,
             source="interpreter",
         )
-    except Exception:  # noqa: BLE001 — 자동적재 실패는 무시(본 흐름 무중단)
-        pass
+    except Exception as e:  # noqa: BLE001 — 자동적재 실패는 본 흐름 무중단(정직표기)
+        logger.warning("파이프라인 단계 원장 자동적재 실패 — skipped", stage=stage, err=str(e)[:200])
 
 
 @router.post("/interpret", summary="단계 AI 해석 온디맨드 생성(타임아웃 안전)")
