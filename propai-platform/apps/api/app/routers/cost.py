@@ -712,6 +712,12 @@ async def create_boq(project_id: str, req: BoqRequest) -> dict[str, Any]:
             summary=boq["summary"], badges=boq["badges"],
         )
         estimate_id = saved.get("estimate_id")
+        # Phase 1: 원가추정 SSOT 합류(best-effort — append_analysis가 예외 흡수, 무중단)
+        from app.services.ledger.ledger_adapters import record_cost_estimate
+        await record_cost_estimate(
+            summary=boq["summary"], header=boq["header"], estimate_id=estimate_id,
+            tenant_id=req.tenant_id, project_id=project_id,
+        )
 
     # D6 AI 해석(BOQ) — 실패해도 결과는 정상 반환(graceful)
     ai_analysis: Optional[str] = None

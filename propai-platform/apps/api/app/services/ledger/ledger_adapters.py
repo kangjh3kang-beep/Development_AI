@@ -140,3 +140,54 @@ async def record_feasibility_result(
         tenant_id=tenant_id, project_id=project_id, pnu=pnu, address=address,
         source="feasibility", created_by=created_by,
     )
+
+
+def pricing_revenue_to_ledger(rev: dict[str, Any], *, round_id: str | None = None) -> dict[str, Any]:
+    """분양가 산정 매출 산출 dict → 원장 payload(W1 미배선 합류 — sales_revenue 체인)."""
+    return {
+        "kind": "sales_revenue", "schema_version": "sales_revenue/v1",
+        "round_id": rev.get("round_id") or round_id, "units_priced": rev.get("units_priced"),
+        "total_revenue_10k": rev.get("total_revenue_10k"), "avg_unit_10k": rev.get("avg_unit_10k"),
+        "by_type": rev.get("by_type") or {},
+        "findings_brief": [
+            {"check_id": "TOTAL_REVENUE", "status": "info", "current": rev.get("total_revenue_10k"), "limit": None},
+        ],
+    }
+
+
+async def record_pricing_revenue(
+    *, rev: dict[str, Any], round_id: str | None = None, tenant_id: str | None = None,
+    project_id: str | None = None, created_by: str | None = None,
+) -> dict[str, Any]:
+    return await ledger.append_analysis(
+        analysis_type="sales_revenue", payload=pricing_revenue_to_ledger(rev, round_id=round_id),
+        tenant_id=tenant_id, project_id=project_id, source="sales_pricing", created_by=created_by,
+    )
+
+
+def cost_estimate_to_ledger(*, summary: dict[str, Any], header: dict[str, Any],
+                            estimate_id: str | None = None) -> dict[str, Any]:
+    """BOQ 원가추정 요약 → 원장 payload(W1 미배선 합류 — cost_estimate 체인)."""
+    payload: dict[str, Any] = {
+        "kind": "cost_estimate", "schema_version": "cost_estimate/v1",
+        "building_type": header.get("building_type"), "structure_type": header.get("structure_type"),
+        "total_gfa_sqm": header.get("total_gfa_sqm"), "confidence_grade": summary.get("confidence_grade"),
+        "direct": summary.get("direct"), "indirect": summary.get("indirect"), "total": summary.get("total"),
+        "findings_brief": [
+            {"check_id": "TOTAL_COST", "status": "info", "current": summary.get("total"), "limit": None},
+        ],
+    }
+    if estimate_id is not None:                  # 원본 cost_estimate 행 역추적(없으면 생략)
+        payload["estimate_id"] = estimate_id
+    return payload
+
+
+async def record_cost_estimate(
+    *, summary: dict[str, Any], header: dict[str, Any], estimate_id: str | None = None,
+    tenant_id: str | None = None, project_id: str | None = None, created_by: str | None = None,
+) -> dict[str, Any]:
+    return await ledger.append_analysis(
+        analysis_type="cost_estimate",
+        payload=cost_estimate_to_ledger(summary=summary, header=header, estimate_id=estimate_id),
+        tenant_id=tenant_id, project_id=project_id, source="cost_boq", created_by=created_by,
+    )
