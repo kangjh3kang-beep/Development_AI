@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v190-market-pro";
+const CACHE_NAME = "propai-v191-market-selector";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",
