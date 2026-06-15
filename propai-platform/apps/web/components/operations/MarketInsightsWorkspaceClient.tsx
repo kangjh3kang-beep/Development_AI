@@ -277,9 +277,9 @@ export function MarketInsightsWorkspaceClient() {
   //   관리자 미설정 시 0 → 셀렉터가 "추가 비용 없음"으로 표기(허위 표시값 제거).
   const fee = useCallback((k: string) => balance?.module_fees?.[k] ?? 0, [balance]);
   const analysisModules: AnalysisModuleOption[] = useMemo(() => [
-    { key: "base", label: "기본 부동산 분석", description: "주변 실거래·AI 시세·입지 인프라", required: true, estimatedSeconds: 8 },
+    { key: "base", label: "기본 부동산 분석", description: "주변 실거래·AI 시세·입지 인프라", required: true, estimatedSeconds: 8, icon: "🏘️" },
     {
-      key: "population", label: "인구/가구 분석", description: "유입 인구와 가구 구성을 분석",
+      key: "population", label: "인구/가구 분석", description: "유입 인구와 가구 구성을 분석", icon: "👥",
       children: [
         { key: "pop_age", label: "연령·인구 분포", description: "연령대별 인구 구성비", coinCost: fee("pop_age"), estimatedSeconds: 3 },
         { key: "pop_household", label: "가구원수·가구 구성", description: "1~4인+ 가구 구성비", coinCost: fee("pop_household"), estimatedSeconds: 3 },
@@ -287,13 +287,13 @@ export function MarketInsightsWorkspaceClient() {
       ],
     },
     {
-      key: "income", label: "거시 소득 지표", description: "지역 소득 수준으로 지불여력 추정",
+      key: "income", label: "거시 소득 지표", description: "지역 소득 수준으로 지불여력 추정", icon: "💰",
       children: [
         { key: "income_avg", label: "평균 연소득", description: "시군구 평균 연소득", coinCost: fee("income_avg"), estimatedSeconds: 3 },
         { key: "income_basis", label: "산출근거(인원·총급여)", description: "근로소득 인원·총급여 원천", coinCost: fee("income_basis"), estimatedSeconds: 2 },
       ],
     },
-    { key: "katlas", label: "마이크로 타겟팅", description: "초정밀 금융·소비 데이터 (K-Atlas)", locked: !isPremiumUser, coinCost: fee("katlas"), estimatedSeconds: 6, lockedCtaLabel: "프리미엄 전용" },
+    { key: "katlas", label: "마이크로 타겟팅", description: "초정밀 금융·소비 데이터 (K-Atlas)", locked: !isPremiumUser, coinCost: fee("katlas"), estimatedSeconds: 6, lockedCtaLabel: "프리미엄 전용", icon: "🎯" },
   ], [isPremiumUser, fee]);
 
   // 선택 변경 — 공용 컴포넌트의 selected 맵을 그대로 반영(말단 항목 평탄 맵).

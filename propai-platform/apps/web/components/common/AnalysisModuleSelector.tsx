@@ -15,7 +15,7 @@
  * 색상은 토큰만 사용(하드코딩 금지), WCAG AA 대비 유지.
  */
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Card, CardContent } from "@propai/ui";
 
 /** 단일 분석 모듈 정의. */
@@ -36,6 +36,8 @@ export interface AnalysisModuleOption {
   locked?: boolean;
   /** 잠금 해제 CTA 문구(locked일 때만). */
   lockedCtaLabel?: string;
+  /** 카드 헤더 아이콘(직관 — 이모지/짧은 기호). 순수 표시용. */
+  icon?: string;
   /**
    * 하위 항목(1단계 깊이만). 있으면 이 모듈은 "분류"가 되고 자식은 "항목"이 된다.
    * 부모 체크박스는 3-state(전체선택/부분/해제)로 동작한다.
@@ -129,6 +131,14 @@ export function AnalysisModuleSelector({
     onChange(next);
   };
 
+  // 아코디언 — 분류(자식 보유) 카드의 펼침 상태. 기본 전체 펼침(처음 진입 시 모든 항목 노출).
+  const parentKeys = modules.filter((m) => (m.children?.length ?? 0) > 0).map((m) => m.key);
+  const [expanded, setExpanded] = useState<Record<string, boolean>>(
+    () => Object.fromEntries(parentKeys.map((k) => [k, true])),
+  );
+  const toggleExpand = (key: string) => setExpanded((prev) => ({ ...prev, [key]: prev[key] === false }));
+  const isExpanded = (key: string) => expanded[key] !== false;
+
   return (
     <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
       <CardContent className="p-5">
@@ -142,11 +152,11 @@ export function AnalysisModuleSelector({
           </span>
         </div>
 
-        {/* 모듈 카탈로그 그리드 */}
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {/* 모듈 카탈로그 — 균형 2열 그리드(분류·단일 모두 1칸, 시선축 단일화). 분류는 아코디언. */}
+        <div className="grid items-start gap-3 sm:grid-cols-2">
           {modules.map((m) => {
             const kids = m.children || [];
-            // 분류(자식 있음)는 부모 카드 + 들여쓰기 자식 목록으로 렌더 — 그리드 한 칸을 통째로 차지.
+            // 분류(자식 있음)는 아코디언 카드(헤더 클릭 펼침/접힘). 단일 칸을 차지해 좌우 균형 유지.
             if (kids.length > 0) {
               return (
                 <ParentModuleCard
@@ -154,6 +164,8 @@ export function AnalysisModuleSelector({
                   module={m}
                   isOn={isOn}
                   won={won}
+                  expanded={isExpanded(m.key)}
+                  onToggleExpand={() => toggleExpand(m.key)}
                   onToggleParent={toggleParent}
                   onToggleChild={toggleChild}
                 />
@@ -182,6 +194,7 @@ export function AnalysisModuleSelector({
                 />
                 <div className="min-w-0">
                   <p className="flex items-center gap-1.5 text-sm font-bold text-[var(--text-primary)]">
+                    {m.icon && <span aria-hidden className="text-[var(--text-secondary)]">{m.icon}</span>}
                     {m.label}
                     {m.locked && (
                       <span className="rounded-full bg-[var(--surface-muted)] px-1.5 py-0.5 text-[10px] font-bold text-[var(--text-tertiary)]">
@@ -279,17 +292,22 @@ function IndeterminateCheckbox({
   );
 }
 
-/** 분류(자식 있음) 카드 — 부모 3-state 체크박스 + 들여쓰기된 자식 항목 목록. */
+/** 분류(자식 있음) 카드 — 부모 3-state 체크박스 + 아코디언(헤더 우측 chevron 펼침/접힘) + 자식 목록.
+ *  선택용 체크박스와 펼침용 chevron을 분리해, 체크는 선택만·chevron은 펼침만 담당(혼동 방지). */
 function ParentModuleCard({
   module: m,
   isOn,
   won,
+  expanded,
+  onToggleExpand,
   onToggleParent,
   onToggleChild,
 }: {
   module: AnalysisModuleOption;
   isOn: (m: AnalysisModuleOption) => boolean;
   won: (n: number) => string;
+  expanded: boolean;
+  onToggleExpand: () => void;
   onToggleParent: (parent: AnalysisModuleOption, checked: boolean) => void;
   onToggleChild: (child: AnalysisModuleOption, checked: boolean) => void;
 }) {
@@ -302,33 +320,48 @@ function ParentModuleCard({
   const parentDisabled = m.locked || toggleable.length === 0;
 
   return (
-    <div className="rounded-xl border border-[var(--line-strong)] bg-[var(--surface-soft)] p-3 sm:col-span-2 lg:col-span-2">
-      {/* 부모(분류) 헤더 — 전체선택/부분/해제 3-state */}
-      <label className={`flex items-start gap-3 ${parentDisabled ? "cursor-not-allowed" : "cursor-pointer"}`}>
+    <div className="rounded-xl border border-[var(--line-strong)] bg-[var(--surface-soft)] p-3">
+      {/* 부모(분류) 헤더 — 좌측 3-state 체크박스(전체선택/부분/해제) + 우측 펼침 chevron */}
+      <div className="flex items-start gap-3">
         <IndeterminateCheckbox
           checked={allOn}
           indeterminate={someOn}
           disabled={parentDisabled}
           onChange={parentDisabled ? undefined : (c) => onToggleParent(m, c)}
           ariaLabel={m.label}
-          className="mt-0.5 h-4 w-4 accent-[var(--accent-strong)]"
+          className="mt-0.5 h-4 w-4 shrink-0 accent-[var(--accent-strong)]"
         />
-        <div className="min-w-0">
-          <p className="flex items-center gap-1.5 text-sm font-bold text-[var(--text-primary)]">
-            {m.label}
-            {m.locked && (
-              <span className="rounded-full bg-[var(--surface-muted)] px-1.5 py-0.5 text-[10px] font-bold text-[var(--text-tertiary)]">
-                잠금
+        <button
+          type="button"
+          onClick={onToggleExpand}
+          aria-expanded={expanded}
+          className="flex min-w-0 flex-1 items-start justify-between gap-2 text-left"
+        >
+          <div className="min-w-0">
+            <p className="flex items-center gap-1.5 text-sm font-bold text-[var(--text-primary)]">
+              {m.icon && <span aria-hidden className="text-[var(--text-secondary)]">{m.icon}</span>}
+              {m.label}
+              <span className="rounded-full bg-[var(--surface-muted)] px-1.5 py-0.5 text-[9px] font-semibold text-[var(--text-tertiary)]">
+                {onCount}/{toggleable.length}
               </span>
+              {m.locked && (
+                <span className="rounded-full bg-[var(--surface-muted)] px-1.5 py-0.5 text-[10px] font-bold text-[var(--text-tertiary)]">
+                  잠금
+                </span>
+              )}
+            </p>
+            {m.description && (
+              <p className="mt-0.5 text-[11px] leading-snug text-[var(--text-secondary)]">{m.description}</p>
             )}
-          </p>
-          {m.description && (
-            <p className="mt-0.5 text-[11px] leading-snug text-[var(--text-secondary)]">{m.description}</p>
-          )}
-        </div>
-      </label>
+          </div>
+          <span aria-hidden className="mt-0.5 shrink-0 text-xs text-[var(--text-tertiary)] transition-transform">
+            {expanded ? "▾" : "▸"}
+          </span>
+        </button>
+      </div>
 
-      {/* 자식(항목) 목록 — 들여쓰기 체크박스 */}
+      {/* 자식(항목) 목록 — 펼침 상태에서만 노출(아코디언) */}
+      {expanded && (
       <div className="mt-2.5 space-y-1.5 border-l border-[var(--line)] pl-3 ml-2">
         {kids.map((c) => {
           const checked = isOn(c);
@@ -373,6 +406,7 @@ function ParentModuleCard({
           );
         })}
       </div>
+      )}
     </div>
   );
 }
