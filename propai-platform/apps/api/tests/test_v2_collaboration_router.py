@@ -63,6 +63,70 @@ def _post(client, **body):
     return client.post(f"/api/v2/collaboration/projects/{PID}/invites", json=body)
 
 
+# ── 명부 scope(SP5 연장) — 외부 협력업체는 다른 외부 협력업체 명부 비노출 ──
+
+SELF_UID = uuid.uuid4()
+
+
+class _RoleMember:
+    def __init__(self, role, uid):
+        self.organization_id = OID
+        self.project_id = PID
+        self.project_role = role
+        self.user_id = uid
+
+
+class _RosterRow:
+    def __init__(self, role, uid):
+        self.id = uuid.uuid4()
+        self.project_id = PID
+        self.user_id = uid
+        self.project_role = role
+        self.status = "active"
+        self.created_at = None
+
+
+def _list_client(monkeypatch, viewer):
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[_require_member] = lambda: viewer
+    app.dependency_overrides[get_current_user] = lambda: _User()
+
+    async def _fake_db():
+        yield None
+
+    app.dependency_overrides[get_db] = _fake_db
+
+    roster = [
+        _RosterRow("owner", uuid.uuid4()),
+        _RosterRow("manager", uuid.uuid4()),
+        _RosterRow("external_reviewer", SELF_UID),       # 본인
+        _RosterRow("external_reviewer", uuid.uuid4()),   # 다른 외부 협력업체
+    ]
+
+    async def _fake_list(db, pid):
+        return roster
+
+    monkeypatch.setattr(repo, "list_members", _fake_list)
+    return TestClient(app)
+
+
+class TestListMembersScope:
+    def test_internal_sees_full_roster(self, monkeypatch):
+        c = _list_client(monkeypatch, _RoleMember("manager", uuid.uuid4()))
+        r = c.get(f"/api/v2/collaboration/projects/{PID}/members")
+        assert r.status_code == 200, r.text
+        assert len(r.json()) == 4  # 내부 역할은 전체
+
+    def test_external_hides_other_externals(self, monkeypatch):
+        c = _list_client(monkeypatch, _RoleMember("external_reviewer", SELF_UID))
+        r = c.get(f"/api/v2/collaboration/projects/{PID}/members")
+        assert r.status_code == 200, r.text
+        rows = r.json()
+        assert len(rows) == 3  # 내부 2 + 본인 1, 다른 외부 협력업체 제외
+        assert [m["project_role"] for m in rows].count("external_reviewer") == 1
+
+
 class TestCreateInvite:
     def test_creates_with_filtered_scope_and_token(self, client):
         r = _post(

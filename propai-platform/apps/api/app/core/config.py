@@ -102,6 +102,16 @@ class Settings(BaseSettings):
     # Sentry
     SENTRY_DSN: str = ""
 
+    # LiveKit 화상회의 (Phase 3) — 미설정 시 토큰/녹화 엔드포인트 503 가드(크래시 금지).
+    LIVEKIT_URL: str = ""          # wss://...livekit.cloud
+    LIVEKIT_API_KEY: str = ""
+    LIVEKIT_API_SECRET: str = ""
+    # 녹화(Egress) → S3
+    LIVEKIT_EGRESS_S3_BUCKET: str = ""
+    LIVEKIT_EGRESS_S3_REGION: str = ""
+    LIVEKIT_EGRESS_S3_ACCESS_KEY: str = ""
+    LIVEKIT_EGRESS_S3_SECRET: str = ""
+
     class Config:
         env_file = ".env" if __import__("os").path.exists(".env") else None
         case_sensitive = True

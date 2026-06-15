@@ -2,19 +2,7 @@
 
 import { useState } from "react";
 import { SidebarNav } from "./SidebarNav";
-
-type NavItem = {
-  href: string;
-  label: string;
-  icon: React.ReactNode;
-};
-
-type NavSection = {
-  title: string;
-  items: NavItem[];
-  adminOnly?: boolean;
-  assetOpsOnly?: boolean;
-};
+import { type NavSection } from "./nav-config";
 
 export function MobileSidebarToggle({ sections }: { sections: NavSection[] }) {
   const [open, setOpen] = useState(false);

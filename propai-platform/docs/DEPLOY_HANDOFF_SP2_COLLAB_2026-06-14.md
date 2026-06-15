@@ -32,7 +32,112 @@
 - **신규 마이그레이션 없음** — 프론트 전용. 배포는 **프론트엔드 재빌드/재배포**만 하면 됨(`apps/web` `next build`).
 - 두 라우트 모두 `/api/v2/collaboration/*` 백엔드(§1·2)에 의존 → **alembic 025 적용 + 라우터 마운트가 선행**되어야 실제 동작(미적용 시 명부 빈 목록·초대 발급 500).
 - 프론트 검증(trust-infra): SP2-4 vitest 9·스모크 1 passed, SP2-5 스모크 1 passed, tsc 0·next build 0(두 라우트 빌드 확인).
-- 후속(Phase 2/3, 미구현·UI에 정직 표기): 자료교환·의견교환·화상회의(LiveKit)·8엔진 심의검증·보정 상태머신.
+- 후속(Phase 2/3): 의견교환(스레드)·화상회의(LiveKit). (자료교환·8엔진 검증은 SP3에서 구현 — §5.)
 
-## 5. 범위 경계
+## 5. SP3 자료교환 + 8엔진 심의검증 (추가 푸시됨 — ⚠️신규 마이그레이션 026)
+| 커밋 | 내용 |
+|---|---|
+| `f8c9a73` | **SP3-1** ProjectDocument 모델 + **alembic 026_collaboration_documents**(project_documents + RLS) |
+| `8f474b5` | **SP3-2** repo+순수코어(classify_doc_kind·review 상태전이)+`storage_service.upload_collab_document`(비공개버킷) |
+| `34cc24f` | **SP3-3** CRUD 라우터 POST/GET/DELETE `/api/v2/collaboration/projects/{id}/documents` |
+| `de92130` | **SP3-4** 8엔진 투입 — design(DXF/IFC) 업로드 시 DesignAuditOrchestrator 실투입(결정론) |
+| `fbc4801` | **SP3-5** 표기용 심의 상태전이 `POST .../documents/{doc_id}/review-state` |
+| `c9453bb`·`e2b1b73` | **SP3-6·7** 프론트 스토어+자료교환 섹션(회의방 워크스페이스 내) |
+
+배포 담당 추가 체크리스트:
+- [ ] ⚠️**alembic 026 적용**: `alembic upgrade head` → `project_documents` 테이블 + RLS 생성. (현재 head=`026_collaboration_documents`, down=`025_collaboration_tables`. 체인 024→025→026 단일 head.)
+- [ ] **Supabase 비공개 버킷** `propai-collab-docs` — 최초 업로드 시 `_ensure_private_bucket`가 자동 생성(별도 수작업 불요). `SUPABASE_URL`+`SUPABASE_SERVICE_ROLE_KEY` 필요(등기부 PDF와 동일 자격).
+- [ ] 스모크: 실 DB+Supabase로 `POST .../documents`(DXF 첨부)→ doc_kind=design·audit_status=completed(8엔진 실행), PDF 첨부→ doc_kind=document·audit_status=unsupported. `GET .../documents` 목록, `POST .../documents/{id}/review-state {target_state:"acknowledged"}` 전이.
+
+정직 경계(과대표기 금지 — 배포 공지 시 준수):
+- **8엔진 자동검증은 설계파일(DXF/IFC)만**. 보고서 PDF 등 문서는 8엔진 미투입(`unsupported`) — 사람 심의자가 review_state(요청→확인→처리완료)로 표기. UI 배지에 명시됨. "모든 협력업체 문서 자동검증"으로 표방 금지.
+- 8엔진은 결정론(orchestrator.run이 use_llm 폐기, LLM=0). site/params 없는 엔진은 정직 `skipped`.
+- **악성파일 1차 차단 적용**(후속 `f20d1c0`): 실행/스크립트 시그니처(PE/ELF/Mach-O/shebang)+확장자(exe/dll/sh/jar…) 차단(`is_blocked_upload`). ClamAV급 종합스캔(zip내장·polyglot·SVG스크립트)은 여전히 범위 밖 — 운영 시 별도 레이어 권장. storage 업로드는 임의 문서형식 무제한이되 **실행·스크립트만 제외**.
+- 프론트 검증(trust-infra): 백엔드 협업 회귀 63 passed, document_audit 서비스 5, lib vitest 16, tsc 0·next build 0, 회의방 Playwright 스모크 1 passed(자료교환·8엔진 배지 포함).
+
+## 6. 버그수정 + SP4(분석/저장 구분) + 보안 하드닝 (추가 푸시됨)
+| 커밋 | 내용 |
+|---|---|
+| `049b97a` | **FIX 회의방 API 403** — 프로젝트는 organization_id로 조직 소유(개인 owner 컬럼 없음)인데 ProjectMember는 초대수락에서만 생성돼 생성자/내부팀이 전원 403이던 근본버그. require_project_member에 *조직 내부 사용자 암묵 owner 멤버십*(user.tenant_id==project.organization_id) 추가. |
+| `d5d9134` | 심의 카테고리 **건축설계·도시계획** 추가(6→8종). |
+| `d5c25c2` | **SP4-1** 분석/저장 purpose 구분 + **alembic 027**(project_documents.purpose 컬럼). |
+| `66b6f4a` | 보안 하드닝 — IFC tempfile 정리(누수)·파일명 basename+null-byte. |
+| `055ad47` | SP4-1 프론트 분석/저장 토글. |
+
+배포 담당 추가 체크리스트:
+- [ ] ⚠️**alembic 027·028 적용**: `alembic upgrade head` → `project_documents.purpose`(027) + `project_members.scope_categories`(028). (현재 head=`028_project_member_scope`, 체인 024→025→026→027→028 단일.)
+- [ ] **회의방 403 회귀 확인**: 프로젝트 생성자(조직 내부 사용자)가 `GET /api/v2/collaboration/projects/{id}/members` → 200(빈 목록 가능)·403 아님. (이전 배포에서 "API 요청 처리에 실패했습니다"의 근본원인.)
+- [ ] purpose 스모크: `POST .../documents` purpose=analysis+PDF → 400, analysis+DXF → 8엔진 실행, storage+임의 → 저장(audit_status null).
+
+⚠️ **알려진 보안 한계(적대적 리뷰 — 정직 문서화, 운영 전 검토 권장):**
+- ✅ **external_reviewer 문서 scope** — **SP5(`c61f29e`)에서 수정**. ProjectMember.scope_categories(alembic **028**) 영속 + 목록 필터·문서별 404 가드. 외부 협력업체는 허용 심의범위 문서만 조회·심의·삭제 가능.
+- **악성파일 1차 차단(시그니처+확장자) 적용**(`f20d1c0`): `is_blocked_upload`가 실행/스크립트 차단. ClamAV급 심층스캔(zip내장·polyglot)은 미적용(별도 인프라 — 운영 권장). 분석용 DXF/IFC는 parse 실패 시 audit failed로 추가 방어.
+- **repo 함수 organization_id 미필터**: list/get/soft_delete_document는 app-level require_project_member·RLS(026/027)에 격리 의존(기존 SP2 list_members와 동일 아키텍처). dep 우회 시에만 위험.
+
+## 7. 플랫폼 내부 문서 뷰어 (SP4-2·SP4-3 — 추가 푸시됨)
+| 커밋 | 내용 |
+|---|---|
+| `7962da8` | **SP4-2** 이미지/PDF 뷰어 모달 — react-pdf@10(텍스트/주석 레이어 off), 이미지 `<img>`, 그 외 다운로드 폴백 |
+| `6fe1df6` | **SP4-3** DXF 경량 CAD 뷰어 — GET `/documents/{id}/shapes`(서버 재파싱) + CadDocViewer read-only SVG |
+
+배포 담당 주의:
+- **신규 프론트 의존성 `react-pdf@10`** (pnpm-lock 갱신됨) — `pnpm install` 후 `next build`.
+- ⚠️**PDF 워커 CDN(+env 오버라이드)**: `PdfDocViewer.tsx`가 워커를 기본 unpkg(동일 pdfjs 버전)에서 로드, 실패 시 graceful degrade(“새 탭”). **prod CSP가 unpkg를 막으면** — pdfjs 워커(`pdf.worker.min.mjs`)를 `apps/web/public/`에 복사하고 **`NEXT_PUBLIC_PDF_WORKER_SRC=/pdf.worker.min.mjs`** 만 설정하면 동일오리진 전환(코드 변경 0). (worker 파일은 react-pdf 번들 pdfjs 버전과 일치해야 함.)
+- `/documents/{id}/shapes`는 DXF만(IFC·문서 415). 비공개버킷 재서명·다운로드 필요(Supabase 자격 동일).
+- 검증(trust-infra): 백엔드 회귀 76 passed, tsc 0·next build 0, 회의방 스모크 1 passed(이미지/PDF 모달 + DXF 뷰어 렌더).
+
+## 8. 네비게이션 IA 재편 (추가 푸시됨)
+- `30810c6` 좌측 사이드바를 **접이식 그룹형(SSOT nav-config)**로 전면 재작성 + 원칙문서 `docs/design/navigation-ia-system.md`. 라우트·역할게이팅 보존(additive). 프론트 재빌드만.
+
+## 9. SP6 의견교환(심의 스레드) (추가 푸시됨 — ⚠️신규 마이그레이션 029)
+| 커밋 | 내용 |
+|---|---|
+| `1c63e3c` | **SP6-1** ReviewComment 모델 + **alembic 029_review_comments**(review_comments 테이블 + RLS) |
+| `95f33a1`·`21037dc` | **SP6-2** 순수규칙(본문검증·앵커/해결 루트제약·부모검증·삭제본문 은닉) |
+| `f021ab6`·`e15072e` | **SP6-3** 스키마 5종 + review_comment_repo(DB I/O) |
+| `2d78070`·`7ea290f` | **SP6-4** 라우터 v2_review_comments(목록/생성/답변/수정/삭제/해결) + main 배선 + 계약·보안테스트 |
+| `74d41b2`·`6185fcb` | **SP6-5** 프론트 순수코어 lib/review-comments(buildCommentTree·배지) |
+| `a581ca7`·`94369e9` | **SP6-6** Zustand 스토어(문서별 댓글) |
+| `f850731`·`adbf021` | **SP6-7** ReviewCommentThread UI + 자료교환 "의견교환" 토글 통합 |
+
+배포 담당 추가 체크리스트:
+- [ ] ⚠️**alembic 029 적용**: `alembic upgrade head` → `review_comments` 테이블 + RLS 생성. (현재 head=`029_review_comments`, down=`028_project_member_scope`. 체인 024→025→026→027→028→**029** 단일 head.)
+- [ ] **신규 마이그레이션 외 추가 의존성 없음** — 프론트 전용 추가(컴포넌트/스토어/lib). `next build`만.
+- [ ] 라우터 마운트 확인 — `/api/v2/collaboration/projects/{pid}/documents/{did}/comments` 가 prod 앱에 마운트(import 폴백 try/except).
+- [ ] 스모크: `POST .../documents/{did}/comments {body:"의견"}` → 201 루트 생성, `parent_id` 동봉 → 답변, `PUT .../comments/{cid} {body}` → 수정(edited=true), `POST .../comments/{cid}/resolve {resolved:true}` → 해결(루트만, 답변은 409), `GET .../comments` → flat 목록(삭제분 body=null).
+
+정직 경계(과대표기 금지):
+- **resolved(스레드 해결)와 문서 review_state는 별개 사람주도 트랙** — 자동연동·자동판정 없음(LLM=0). anchor(지적 포인터)는 표기용 자유문자열(8엔진 findings 자동연결 아님).
+- 외부 협력업체는 scope내 문서의 댓글만 조회·작성·해결 가능(scope 밖 404 — 자료교환과 동일 경계).
+- 검증(trust-infra): 백엔드 협업 회귀 **112 passed**, 프론트 vitest 27(review-comments 9+collaboration 18), tsc 0·eslint 0(신규)·next build 0. 적대적 최종 리뷰 — 보안 우회·scope 누출·정직표기 위반 0(Ready to merge).
+
+## 10. 화상회의 LiveKit Phase 3 (추가 푸시됨 — ⚠️신규 마이그레이션 030 + 신규 의존성 2 + env)
+| 커밋 | 내용 |
+|---|---|
+| `9a8fc6a` | T1 순수 권한규칙(`livekit_rules`) + T4 프론트 lib(`lib/livekit.ts`) — 키 독립 |
+| `6207e20` | T2 토큰/녹화 서비스+라우터(`v2_livekit`) + T3 Recording 모델 + **alembic 030** |
+| `1119cc4` | T5 `LiveKitRoom` 컴포넌트 + T7 회의방 통합 |
+
+배포 담당 추가 체크리스트:
+- [ ] ⚠️**alembic 030 적용**: `alembic upgrade head` → `livekit_recordings`(+RLS). 체인 024→…→029→**030** 단일 head.
+- [ ] **신규 의존성**: 백엔드 `livekit-api==1.1.0`(requirements.txt) → `pip install`. 프론트 `livekit-client@2.19.2`(pnpm-lock) → `pnpm install`.
+- [ ] **env(사용자 제공)**: `LIVEKIT_URL`(wss://…livekit.cloud)·`LIVEKIT_API_KEY`·`LIVEKIT_API_SECRET` + 녹화용 `LIVEKIT_EGRESS_S3_BUCKET/_REGION/_ACCESS_KEY/_SECRET`. **미설정 시 토큰 503·녹화 503·프론트 입장 정직 degrade(크래시 없음)**.
+- [ ] ⚠️**스테이징 실연결 검증 필요**: 토큰 발급·room connect·트랙·Egress 녹화는 LiveKit Cloud 키 + 브라우저 카메라 권한 하에서만 실동작. trust-infra는 **코드 완성 + 가드/권한 단위검증만**(라우터 가드 4·규칙 7·모델 1·lib vitest 3). 실연결은 미검증 — 스테이징에서 확인할 것.
+
+정직 경계:
+- 권한은 결정론 규칙(`video_grant`: host=roomAdmin·발화, viewer=시청만 / `can_record`: host만). 멤버십은 require_project_member 1차.
+- **T6(원격감리 RemoteSupervisionRoom 전환)은 완료**(`333e2a4`): 가짜 시뮬레이션 제거→공용 `LiveKitRoom` 재사용. 단 RemoteSupervisionRoom 자체는 여전히 페이지 미배선(고아) — 라우트 배선 시 실동작(STT 패널은 백엔드 미구현이라 `8fbf965`에서 '데모·STT 미구현' 정직 표기).
+
+## 11. 배포 준비 검증(deploy-readiness audit) 결과 + 후속 수정
+멀티에이전트 종합 검증(20 agents) — **판정 CONDITIONAL-GO → 후속 수정 후 GO**. critical/high 0.
+- 실측 통과: 백엔드 협업+livekit 회귀 **133 passed**, alembic 단일 head 030(024→030 선형), 프론트 tsc 0·vitest 42·next build 0, 라우터 배선·의존성 선언 정상.
+- 적대적 리뷰 실결함 → **trust-infra 후속 수정 완료(푸시됨)**:
+  - `8baac86` (A, 권한): require_project_member에서 명시적 suspended/removed/강등 멤버가 암묵 owner로 복원되던 권한상승 차단(명시 행 우선). PoC 재현→수정.
+  - `7394fda` (B, 정직): 녹화 정지가 egress 없음/실패에도 completed 표기 → failed로 정직화.
+  - `8fbf965` (C, 정직): 원격감리 STT 패널 mock을 '데모·STT 미구현' 표기.
+  - `0941b08` (D, 보안): list_members가 external_reviewer에 전체 명부 노출 → 내부팀+본인만.
+- 잔여(조치 불요/문서): 악성파일 1차 차단은 정직 표기됨(ClamAV급 미적용은 문서화). 
+- ⚠️**마이그레이션 디렉터리 주의**: 실제 마이그레이션은 `apps/api/database/migrations/versions/`(alembic.ini `script_location=database/migrations`). `apps/api/alembic/versions/`에는 레거시 004/005만 — 혼동 금지.
+
+## 12. 범위 경계
 - trust-infra는 배포 안 함. 배포·롤백·prod 환경변수는 배포 담당 책임.
