@@ -32,6 +32,8 @@ type AuctionItem = {
   bid_start?: string | null;
   bid_end?: string | null;
   est_win?: number | null;
+  est_win_low?: number | null;
+  est_win_high?: number | null;
   // 조건검색(bid-results) 추가 필드
   fail_count?: number | null;
   win_rate?: number | null;
@@ -313,6 +315,8 @@ export function AuctionWorkspace({ locale }: AuctionWorkspaceProps) {
   const [selected, setSelected] = useState<AuctionItem | null>(null);
   // 전국 조건검색 결과 보기 모드: 목록(표) / 지도(지역별 물건 위치 마커).
   const [searchView, setSearchView] = useState<"list" | "map">("list");
+  // 전국 순위 결과 보기 모드: 목록(랭킹카드) / 지도(지역별 물건 위치 마커).
+  const [rankingView, setRankingView] = useState<"list" | "map">("list");
 
   // --- 탭 A: 내 경공매 ---
   const myQuery = useQuery({
@@ -775,7 +779,7 @@ export function AuctionWorkspace({ locale }: AuctionWorkspaceProps) {
       {activeTab === "ranking" ? (
         <div className="space-y-5">
           <p className="rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)]/40 px-4 py-3 text-xs leading-relaxed text-[var(--text-secondary)]">
-            🏆 전국 공매 부동산을 <strong className="text-[var(--text-primary)]">조회수·관심·최저가·할인율</strong> 순으로 보여줍니다. 감정가 대비 저가 기회를 한눈에 파악하세요.
+            🏆 전국 공매 부동산을 <strong className="text-[var(--text-primary)]">조회수·관심·최저가·할인율</strong> 순으로 보여줍니다. 온비드는 진행중 물건의 <strong className="text-[var(--text-primary)]">최저입찰가를 비공개</strong>하므로, 감정가(실데이터)와 <strong className="text-[var(--text-primary)]">예상낙찰가·예상할인(추정)</strong>으로 저가 기회를 안내합니다.
           </p>
           <div className="flex flex-wrap gap-2">
             {RANKING_OPTIONS.map((opt) => (
@@ -809,6 +813,43 @@ export function AuctionWorkspace({ locale }: AuctionWorkspaceProps) {
           {rankingQuery.data ? (
             (rankingQuery.data.items ?? []).length ? (
               <div className="space-y-3">
+                {/* 목록/지도 보기 토글 — 순위 물건을 지역별 위치 마커로 표시(주소 기반) */}
+                <div className="flex items-center justify-end gap-1">
+                  {(["list", "map"] as const).map((v) => (
+                    <button
+                      key={v}
+                      type="button"
+                      onClick={() => setRankingView(v)}
+                      className={`rounded-lg border px-3 py-1.5 text-xs font-bold transition-colors ${
+                        rankingView === v
+                          ? "border-[var(--accent-strong)] bg-[var(--accent-soft)] text-[var(--accent-strong)]"
+                          : "border-[var(--line)] text-[var(--text-secondary)] hover:border-[var(--text-tertiary)]"
+                      }`}
+                    >
+                      {v === "list" ? "목록" : "🗺️ 지도"}
+                    </button>
+                  ))}
+                </div>
+                {rankingView === "map" ? (
+                  <AuctionItemsMap
+                    items={(rankingQuery.data.items ?? []).map((it): AuctionMapItem => ({
+                      key: it.cltr_mng_no ?? it.cltrMngNo ?? it.address ?? "",
+                      address: it.address,
+                      usage: it.usage,
+                      min_bid_price: it.est_win ?? it.min_bid_price,
+                      discount_rate: it.discount_rate,
+                      fail_count: it.fail_count,
+                      status: it.status,
+                    }))}
+                    onSelect={(key) => {
+                      const found = (rankingQuery.data?.items ?? []).find(
+                        (it) => (it.cltr_mng_no ?? it.cltrMngNo ?? it.address) === key,
+                      );
+                      if (found) setSelected(found);
+                    }}
+                  />
+                ) : (
+                  <>
                 {(rankingQuery.data.items ?? []).map((item, idx) => (
                   <button
                     type="button"
@@ -840,25 +881,42 @@ export function AuctionWorkspace({ locale }: AuctionWorkspaceProps) {
                         {formatText(item.usage)} · {formatText(item.status)}
                       </p>
                     </div>
-                    {/* 우측 핵심 지표 — eyebrow 라벨 + mono·tabular 값(할인율만 액센트 강조) */}
-                    <div className="hidden shrink-0 flex-col items-end gap-0.5 sm:flex">
-                      <span className="sa-di-eyebrow">감정가</span>
-                      <span className="font-mono text-sm font-bold tabular-nums text-[var(--text-primary)]">
-                        {formatCurrency(locale, item.appraisal_price)}
-                      </span>
-                    </div>
-                    <div className="hidden shrink-0 flex-col items-end gap-0.5 sm:flex">
-                      <span className="sa-di-eyebrow">할인율</span>
-                      <span className="font-mono text-sm font-bold tabular-nums text-[var(--data-accent)]">
-                        {formatPercent(item.discount_rate)}
-                      </span>
-                    </div>
-                    <div className="flex shrink-0 flex-col items-end gap-0.5">
-                      <span className="sa-di-eyebrow">최저입찰가</span>
-                      <span className="font-mono text-sm font-bold tabular-nums text-[var(--text-primary)]">
-                        {formatBidPrice(item.min_bid_price, locale)}
-                      </span>
-                    </div>
+                    {/* 우측 핵심 지표 — 온비드가 최저입찰가를 비공개하므로, 감정가(실)와
+                        감정가 기반 예상낙찰가/예상할인(추정·is_estimate)으로 정직 안내한다. */}
+                    {(() => {
+                      // 예상할인율 = 1 − 예상낙찰가/감정가(둘 다 있을 때). 실 할인율이 있으면 우선.
+                      const ap = item.appraisal_price ?? null;
+                      const ew = item.est_win ?? null;
+                      const realDisc = item.discount_rate ?? null;
+                      const estDisc =
+                        realDisc != null
+                          ? realDisc
+                          : ap && ew
+                            ? Math.round((1 - ew / ap) * 100)
+                            : null;
+                      return (
+                        <>
+                          <div className="hidden shrink-0 flex-col items-end gap-0.5 sm:flex">
+                            <span className="sa-di-eyebrow">감정가</span>
+                            <span className="font-mono text-sm font-bold tabular-nums text-[var(--text-primary)]">
+                              {formatCurrency(locale, ap)}
+                            </span>
+                          </div>
+                          <div className="hidden shrink-0 flex-col items-end gap-0.5 sm:flex">
+                            <span className="sa-di-eyebrow">{realDisc != null ? "할인율" : "예상할인"}</span>
+                            <span className="font-mono text-sm font-bold tabular-nums text-[var(--data-accent)]">
+                              {estDisc != null ? `${realDisc != null ? "" : "~"}${estDisc}%` : "-"}
+                            </span>
+                          </div>
+                          <div className="flex shrink-0 flex-col items-end gap-0.5">
+                            <span className="sa-di-eyebrow">{ew ? "예상낙찰가" : "최저입찰가"}</span>
+                            <span className="font-mono text-sm font-bold tabular-nums text-[var(--text-primary)]">
+                              {ew ? formatCurrency(locale, ew) : formatBidPrice(item.min_bid_price, locale)}
+                            </span>
+                          </div>
+                        </>
+                      );
+                    })()}
                   </button>
                 ))}
                 {rankingQuery.data.data_source ? (
@@ -866,6 +924,8 @@ export function AuctionWorkspace({ locale }: AuctionWorkspaceProps) {
                     출처: {rankingQuery.data.data_source}
                   </p>
                 ) : null}
+                  </>
+                )}
               </div>
             ) : (
               <EmptyState message="온비드 순위 데이터가 없습니다. API 키 연결을 확인하세요." />

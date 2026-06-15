@@ -204,7 +204,35 @@ async def auction_ranking(
         return await service.ranking_live(
             service_key=_onbid_service_key(), by=by, limit=limit,
         )
-    return await service.ranking(region=region, kind=kind, by=by, limit=limit)
+    # min_bid / discount_rate: 캐시(auction_items) 우선. 단 온비드가 진행중 물건의
+    # 최저입찰가를 OpenAPI로 비공개하여 캐시가 비는 경우가 많다 → 그 땐 조회수 실데이터에
+    # 감정가 기반 예상낙찰가(est_win·추정)로 폴백 정렬한다(빈 화면 방지·정직 표기).
+    cached = await service.ranking(region=region, kind=kind, by=by, limit=limit)
+    if cached.get("items"):
+        return cached
+    live = await service.ranking_live(
+        service_key=_onbid_service_key(), by="views", limit=max(limit, 50),
+    )
+    items = [it for it in (live.get("items") or []) if it.get("est_win")]
+    if by == "discount_rate":
+        # 예상할인율 = 1 − 예상낙찰가/감정가 (큰 순). 감정가 없으면 후순위.
+        def _disc(it: dict[str, Any]) -> float:
+            ap, ew = it.get("appraisal_price"), it.get("est_win")
+            return (1.0 - float(ew) / float(ap)) if ap and ew else -1.0
+        items.sort(key=_disc, reverse=True)
+    else:  # min_bid → 예상낙찰가(est_win) 낮은 순(저가 기회)
+        items.sort(key=lambda it: it.get("est_win") or 10**18)
+    items = items[:limit]
+    return {
+        "items": items,
+        "by": by,
+        "total": len(items),
+        "data_source": live.get("data_source", "unavailable"),
+        "note": (
+            "온비드가 진행중 물건의 최저입찰가를 OpenAPI로 비공개하여, "
+            "감정가 기반 예상낙찰가(추정)로 정렬했습니다(가정 포함·참고용)."
+        ),
+    }
 
 
 @router.get("/bid-results", summary="④ 물건 입찰결과 조건검색(유찰·낙찰가율·감정가)")
