@@ -71,9 +71,11 @@ def _chain_where(pnu: str | None, address_norm: str, project_id: str | None) -> 
     if pnu:
         key_sql = "pnu = :pnu"
         params["pnu"] = pnu
-    else:
+    elif address_norm:  # 비어있지 않은 주소만 동등 비교
         key_sql = "address_norm = :addr"
         params["addr"] = address_norm
+    else:  # pnu·address 모두 없음 → NULL 저장행과 정합(Phase 0 carve-out 버그픽스)
+        key_sql = "address_norm IS NULL"
     if project_id:
         key_sql += " AND project_id = :pid"
         params["pid"] = project_id
