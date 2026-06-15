@@ -44,6 +44,12 @@ export type NearbyMapPayload = {
   center: { lat: number | null; lon: number | null; address?: string } | null;
   radius_m: number; lawd_cd: string; months: string[];
   categories: Record<string, Category>;
+  // 정직 표기: 공공데이터(국토부 실거래) 조회 실패 시 백엔드가 채운다.
+  // fetch_failed=true면 "거래 0건"이 아니라 API 미응답 — 빈 표시는 거짓이므로 구분 안내.
+  data_source?: string;
+  fetch_failed?: boolean;
+  partial_failed?: boolean;
+  note?: string;
 };
 type MapPayload = NearbyMapPayload;
 type PresaleItem = {
@@ -423,7 +429,12 @@ export function NearbyTransactionsMap({
             <button onClick={fetchData} className="rounded-lg bg-[var(--accent-strong)] px-4 py-1.5 text-xs font-bold text-white">다시 시도</button>
           </div>
         )}
-        {payload && !loading && kind !== "presale" && activeCategory && activeCategory.groups?.length === 0 && (
+        {payload && !loading && kind !== "presale" && payload.fetch_failed && (
+          <div className="absolute bottom-3 left-1/2 z-[400] flex max-w-[92%] -translate-x-1/2 items-center gap-2 rounded-xl border border-amber-400/40 bg-amber-500/15 px-4 py-2 text-center text-xs font-bold text-amber-200 backdrop-blur">
+            ⚠️ {payload.note || "국토부 실거래 공공데이터가 일시적으로 응답하지 않습니다. 거래가 없는 것이 아니라 조회 실패이며, 잠시 후 다시 시도해 주세요."}
+          </div>
+        )}
+        {payload && !loading && kind !== "presale" && !payload.fetch_failed && activeCategory && activeCategory.groups?.length === 0 && (
           <div className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full bg-black/60 px-4 py-1.5 text-xs font-bold text-white z-[400]">
             해당 유형 최근 거래 없음
           </div>

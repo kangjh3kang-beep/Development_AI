@@ -76,11 +76,13 @@ class NearbyMapService:
 
         ym_list = self._recent_months(months)
 
-        # 1) 카테고리별 실거래 수집(병렬)
-        trade_raw, rent_raw = await asyncio.gather(
+        # 1) 카테고리별 실거래 수집(병렬) + 시도/실패 집계
+        trade_res, rent_res = await asyncio.gather(
             self._collect(self.molit.get_transactions, _TRADE_TYPES, lawd_cd, ym_list),
             self._collect(self.molit.get_rent_transactions, _RENT_TYPES, lawd_cd, ym_list),
         )
+        trade_raw, t_fail, t_att = trade_res
+        rent_raw, r_fail, r_att = rent_res
 
         # 2) 건물단위 그룹핑
         categories: dict[str, dict[str, Any]] = {}
@@ -112,7 +114,7 @@ class NearbyMapService:
             cat["groups"] = resolved
             cat["count"] = sum(g["count"] for g in resolved)
 
-        result = {
+        result: dict[str, Any] = {
             "center": center or {"lat": None, "lon": None, "address": address},
             "radius_m": radius_m,
             "lawd_cd": lawd_cd,
@@ -120,11 +122,35 @@ class NearbyMapService:
             "categories": categories,
         }
 
-        # 결과 캐시 저장(+ 상한 초과 시 가장 오래된 항목 제거)
-        _BUILD_CACHE[cache_key] = (time.monotonic(), result)
-        if len(_BUILD_CACHE) > _BUILD_CACHE_MAX:
-            oldest = min(_BUILD_CACHE, key=lambda k: _BUILD_CACHE[k][0])
-            _BUILD_CACHE.pop(oldest, None)
+        # ★정직 표기: 공공데이터 조회 실패와 "거래 0건(실제 없음)"을 구분한다.
+        #   - 전건 실패 = 국토부 실거래 API 무응답/서킷OPEN → data_source=unavailable(빈 표시는 거짓).
+        #   - 일부 실패 = 표시 건수가 일부일 수 있음.
+        total_att = t_att + r_att
+        total_fail = t_fail + r_fail
+        fetch_failed = total_att > 0 and total_fail >= total_att
+        if fetch_failed:
+            result["data_source"] = "unavailable"
+            result["fetch_failed"] = True
+            result["note"] = (
+                "국토부 실거래 공공데이터가 응답하지 않습니다(데이터포털 지연·점검 추정). "
+                "거래가 없는 것이 아니라 일시적 조회 실패이며, 잠시 후 다시 시도해 주세요."
+            )
+        else:
+            result["data_source"] = "molit_live"
+            if total_fail > 0:
+                result["partial_failed"] = True
+                result["note"] = (
+                    "일부 유형의 실거래 데이터를 불러오지 못했습니다(공공데이터 응답 지연). "
+                    "표시된 건수는 일부일 수 있습니다."
+                )
+
+        # 결과 캐시 저장(+ 상한 초과 시 가장 오래된 항목 제거).
+        # ★실패 결과는 캐싱하지 않는다 — 복구 후에도 TTL 동안 거짓 빈값이 고정되는 것 방지.
+        if not fetch_failed:
+            _BUILD_CACHE[cache_key] = (time.monotonic(), result)
+            if len(_BUILD_CACHE) > _BUILD_CACHE_MAX:
+                oldest = min(_BUILD_CACHE, key=lambda k: _BUILD_CACHE[k][0])
+                _BUILD_CACHE.pop(oldest, None)
         return result
 
     # ── 수집 ──
@@ -146,18 +172,25 @@ class NearbyMapService:
                 y -= 1
         return out
 
-    async def _collect(self, fetch, types, lawd_cd, ym_list) -> dict[str, list]:
+    async def _collect(self, fetch, types, lawd_cd, ym_list) -> tuple[dict[str, list], int, int]:
+        # 호출 시도/실패 수를 함께 집계한다. MOLIT 클라이언트는 타임아웃·서킷OPEN 시
+        # ExternalServiceError 를 던지므로(그것이 여기 except 로 옴), 이를 세어
+        # "거래 0건(실제 없음)" 과 "공공데이터 조회 실패(빈 표시는 거짓)" 를 구분한다.
+        stats = {"fail": 0, "attempt": 0}
+
         async def one(pt: str) -> tuple[str, list]:
             rows: list = []
             for ym in ym_list:
+                stats["attempt"] += 1
                 try:
                     rows.extend(await fetch(lawd_cd, ym, prop_type=pt, num_rows=1000))
                 except Exception as e:  # noqa: BLE001
+                    stats["fail"] += 1
                     logger.debug("실거래 수집 실패", pt=pt, ym=ym, err=str(e)[:60])
             return pt, rows
 
         results = await asyncio.gather(*[one(pt) for pt, _ in types])
-        return dict(results)
+        return dict(results), stats["fail"], stats["attempt"]
 
     # ── 그룹핑 ──
     def _query_for(self, sigungu: str, dong: str, jibun: str, name: str) -> str:
