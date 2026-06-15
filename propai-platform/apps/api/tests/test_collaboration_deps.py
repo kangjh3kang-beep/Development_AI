@@ -133,3 +133,15 @@ class TestOrgImplicitMembership:
         # tenant_id 없는 사용자(이상 케이스)는 암묵 멤버십 불가
         r = _org_client(None, _Project(uuid.uuid4()), user_tenant=None).get(f"/p/{PID}/guard")
         assert r.status_code == 403
+
+    def test_explicit_removed_member_not_escalated_via_fallback(self):
+        # 명시적 removed 멤버는 같은 조직이라도 암묵 owner 폴백으로 복원되면 안 됨(권한상승 방지)
+        org = uuid.uuid4()
+        r = _org_client(_member("manager", status="removed"), _Project(org), user_tenant=org).get(f"/p/{PID}/guard")
+        assert r.status_code == 403
+
+    def test_explicit_viewer_not_escalated_to_owner(self):
+        # active이지만 허용역할(owner/manager) 아닌 명시 멤버가 owner로 상승되면 안 됨
+        org = uuid.uuid4()
+        r = _org_client(_member("viewer", status="active"), _Project(org), user_tenant=org).get(f"/p/{PID}/guard")
+        assert r.status_code == 403

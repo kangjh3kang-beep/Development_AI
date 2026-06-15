@@ -64,10 +64,14 @@ def require_project_member(*allowed_roles: str) -> Callable:
             )
         ).scalar_one_or_none()
 
-        if row is not None and member_allows(row.project_role, allowed_roles, row.status):
-            return row
+        # 명시적 멤버십 행이 있으면 그 행으로만 판정한다 — suspended/removed/강등 행이 아래 암묵
+        # owner 폴백으로 복원되는 권한상승을 차단(허용역할·active면 통과, 아니면 403, 폴백 금지).
+        if row is not None:
+            if member_allows(row.project_role, allowed_roles, row.status):
+                return row
+            raise HTTPException(status_code=403, detail="이 프로젝트에 대한 권한이 없습니다")
 
-        # 2차: 조직 내부 사용자 암묵 owner 멤버십(프로젝트가 사용자 테넌트=조직 소유일 때).
+        # 2차(명시적 행이 없을 때만): 조직 내부 사용자 암묵 owner 멤버십(생성자/내부팀 — 행 미생성).
         user_tenant = getattr(user, "tenant_id", None)
         if user_tenant is not None and ("owner" in allowed_roles or not allowed_roles):
             proj = (
