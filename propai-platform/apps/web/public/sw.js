@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v189-trust-infra-livekit";
+const CACHE_NAME = "propai-v190-market-pro";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",
