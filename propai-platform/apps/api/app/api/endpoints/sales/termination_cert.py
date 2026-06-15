@@ -19,6 +19,7 @@
   cert_requests             : 프리랜서 발급신청(user·site·기간·status)
 """
 
+import anyio
 import uuid
 from datetime import datetime
 
@@ -439,7 +440,7 @@ async def cert_pdf(cert_id: uuid.UUID, db: AsyncSession = Depends(get_db),
         raise HTTPException(404, "증명서를 찾을 수 없습니다")
     if not _can_access_cert(cert, ctx):
         raise HTTPException(403, "본인 또는 발급 현장 관리자만 열람할 수 있습니다")
-    pdf = _build_pdf(cert, db)
+    pdf = await anyio.to_thread.run_sync(_build_pdf, cert, db)  # P2-4: reportlab/urllib blocking → 스레드 오프로드(이벤트루프 비차단)
     return Response(content=pdf, media_type="application/pdf",
                     headers={"Content-Disposition": f'inline; filename="{cert["certificate_no"]}.pdf"'})
 
@@ -470,7 +471,7 @@ async def cert_image(cert_id: uuid.UUID, fmt: str = "png", db: AsyncSession = De
         raise HTTPException(404, "증명서를 찾을 수 없습니다")
     if not _can_access_cert(cert, ctx):
         raise HTTPException(403, "본인 또는 발급 현장 관리자만 열람할 수 있습니다")
-    img, mime = _build_image(cert, db, (fmt or "png").lower())
+    img, mime = await anyio.to_thread.run_sync(_build_image, cert, db, (fmt or "png").lower())  # P2-4: PyMuPDF blocking 오프로드
     ext = "jpg" if mime == "image/jpeg" else "png"
     return Response(content=img, media_type=mime,
                     headers={"Content-Disposition": f'inline; filename="{cert["certificate_no"]}.{ext}"'})
@@ -493,7 +494,8 @@ async def bulk_pdf(body: BulkPdfRequest, db: AsyncSession = Depends(get_db),
             cert = await _load_cert(db, cid)
             if not cert or not _can_access_cert(cert, ctx):
                 continue  # 접근 불가/없는 항목은 조용히 제외(타인 증명서 노출 차단)
-            zf.writestr(f"{cert['certificate_no']}.pdf", _build_pdf(cert, db))
+            pdf_bytes = await anyio.to_thread.run_sync(_build_pdf, cert, db)  # P2-4: blocking 오프로드(일괄 N건)
+            zf.writestr(f"{cert['certificate_no']}.pdf", pdf_bytes)
             n += 1
     if n == 0:
         raise HTTPException(403, "다운로드 가능한 증명서가 없습니다")
