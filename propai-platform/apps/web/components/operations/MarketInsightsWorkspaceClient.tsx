@@ -28,7 +28,6 @@ import { AnalysisModuleSelector, type AnalysisModuleOption } from "@/components/
 import { DemographicPanel } from "@/components/operations/market/DemographicPanel";
 import { PricingBandPanel } from "@/components/operations/market/PricingBandPanel";
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
 // PDF/PPTX 바이너리 다운로드용 API 베이스 (api-client 로직 미러)
 function marketApiBase(): string {
   if (typeof window !== "undefined") {
@@ -186,6 +185,8 @@ type Balance = {
   topup_remaining: number;
   markup_pct: number;
   unlimited?: boolean; // 비과금 등급(super_admin 등) — 코인 게이트 면제
+  // 관리자가 설정한 분석 모듈 사용료 맵(미설정 시 빈 dict = 전부 무료).
+  module_fees?: Record<string, number>;
 };
 
 const won = (n: number) => (n ?? 0).toLocaleString("ko-KR") + "원";
@@ -218,9 +219,16 @@ export function MarketInsightsWorkspaceClient() {
   const [report, setReport] = useState<any | null>(null);
   const [genState, setGenState] = useState<"" | "report" | "pdf" | "pptx">("");
   const [useLlm, setUseLlm] = useState(true);
-  const [analysisOptions, setAnalysisOptions] = useState({
-    sgis: false,
-    kosis: false,
+  // 선택 상태(말단 항목 기준 평탄 boolean 맵). 분류 sgis/kosis는 자식들에서 파생해 전송한다.
+  //   population(인구/가구) 자식: pop_age / pop_household / pop_migration
+  //   income(거시 소득) 자식: income_avg / income_basis
+  //   katlas: 마이크로 타겟팅(프리미엄)
+  const [analysisOptions, setAnalysisOptions] = useState<Record<string, boolean>>({
+    pop_age: false,
+    pop_household: false,
+    pop_migration: false,
+    income_avg: false,
+    income_basis: false,
     katlas: false,
   });
   const [error, setError] = useState("");
@@ -249,21 +257,72 @@ export function MarketInsightsWorkspaceClient() {
   // ── 선택형 분석 모듈 카탈로그(공용 AnalysisModuleSelector 주입용) ──
   // 사용자 핵심지침 "선택형 상세분석을 전 시스템 기본으로" — 필요한 모듈만 체크→선택분만 실행·과금.
   // coinCost/estimatedSeconds는 선택 수→예상 코인·시간 실시간 표시에 사용(안내용 추정치).
+  //   각 항목 coinCost는 하드코딩 금지 → 관리자 설정값(balance.module_fees)에서 채운다.
+  //   관리자 미설정 시 0 → 셀렉터가 "추가 비용 없음"으로 표기(허위 표시값 제거).
+  const fee = useCallback((k: string) => balance?.module_fees?.[k] ?? 0, [balance]);
   const analysisModules: AnalysisModuleOption[] = useMemo(() => [
     { key: "base", label: "기본 부동산 분석", description: "주변 실거래·AI 시세·입지 인프라", required: true, estimatedSeconds: 8 },
-    { key: "sgis", label: "인구/가구 분석 (SGIS)", description: "인구 이동망·연령/가구 구성비", coinCost: 300, estimatedSeconds: 5 },
-    { key: "kosis", label: "거시 소득 지표 (KOSIS)", description: "시군구 평균·중위 연소득", coinCost: 300, estimatedSeconds: 5 },
-    { key: "katlas", label: "마이크로 타겟팅", description: "초정밀 금융·소비 데이터 (K-Atlas)", locked: !isPremiumUser, coinCost: 2000, estimatedSeconds: 6, lockedCtaLabel: "프리미엄 전용" },
-  ], [isPremiumUser]);
+    {
+      key: "population", label: "인구/가구 분석", description: "유입 인구와 가구 구성을 분석",
+      children: [
+        { key: "pop_age", label: "연령·인구 분포", description: "연령대별 인구 구성비", coinCost: fee("pop_age"), estimatedSeconds: 3 },
+        { key: "pop_household", label: "가구원수·가구 구성", description: "1~4인+ 가구 구성비", coinCost: fee("pop_household"), estimatedSeconds: 3 },
+        { key: "pop_migration", label: "전입·전출·순이동", description: "지역 인구 유입세(순이동)", coinCost: fee("pop_migration"), estimatedSeconds: 4 },
+      ],
+    },
+    {
+      key: "income", label: "거시 소득 지표", description: "지역 소득 수준으로 지불여력 추정",
+      children: [
+        { key: "income_avg", label: "평균 연소득", description: "시군구 평균 연소득", coinCost: fee("income_avg"), estimatedSeconds: 3 },
+        { key: "income_basis", label: "산출근거(인원·총급여)", description: "근로소득 인원·총급여 원천", coinCost: fee("income_basis"), estimatedSeconds: 2 },
+      ],
+    },
+    { key: "katlas", label: "마이크로 타겟팅", description: "초정밀 금융·소비 데이터 (K-Atlas)", locked: !isPremiumUser, coinCost: fee("katlas"), estimatedSeconds: 6, lockedCtaLabel: "프리미엄 전용" },
+  ], [isPremiumUser, fee]);
 
-  // 선택 변경 — 공용 컴포넌트의 selected 맵을 analysisOptions(sgis/kosis/katlas)로 반영.
+  // 선택 변경 — 공용 컴포넌트의 selected 맵을 그대로 반영(말단 항목 평탄 맵).
   const onModulesChange = useCallback((next: Record<string, boolean>) => {
-    setAnalysisOptions({ sgis: !!next.sgis, kosis: !!next.kosis, katlas: !!next.katlas });
+    setAnalysisOptions({
+      pop_age: !!next.pop_age,
+      pop_household: !!next.pop_household,
+      pop_migration: !!next.pop_migration,
+      income_avg: !!next.income_avg,
+      income_basis: !!next.income_basis,
+      katlas: !!next.katlas,
+    });
   }, []);
-  // 전체 자동분석 — 가능한 모듈 전부 선택(잠금 모듈은 프리미엄일 때만).
+  // 전체 자동분석 — 가능한 항목 전부 선택(잠금 모듈은 프리미엄일 때만).
   const onSelectAll = useCallback(() => {
-    setAnalysisOptions({ sgis: true, kosis: true, katlas: isPremiumUser });
+    setAnalysisOptions({
+      pop_age: true,
+      pop_household: true,
+      pop_migration: true,
+      income_avg: true,
+      income_basis: true,
+      katlas: isPremiumUser,
+    });
   }, [isPremiumUser]);
+
+  // 백엔드 build_report 전송용 옵션 payload — 하위호환 sgis/kosis(분류 단위) + 신규 detail(세부).
+  //   sgis = 인구/가구 분류 중 하나라도 켜짐, kosis = 소득 분류 중 하나라도 켜짐.
+  //   기존 백엔드 분기(sgis/kosis boolean)는 그대로 동작하고, detail은 추가 정보로 전달한다.
+  const buildOptionsPayload = useCallback(() => {
+    const o = analysisOptions;
+    const sgis = !!(o.pop_age || o.pop_household || o.pop_migration);
+    const kosis = !!(o.income_avg || o.income_basis);
+    return {
+      sgis,
+      kosis,
+      katlas: !!o.katlas,
+      detail: {
+        pop_age: !!o.pop_age,
+        pop_household: !!o.pop_household,
+        pop_migration: !!o.pop_migration,
+        income_avg: !!o.income_avg,
+        income_basis: !!o.income_basis,
+      },
+    };
+  }, [analysisOptions]);
 
   // 코인 잔액(월기본+충전) 안내용 — 차감은 백엔드(BaseInterpreter)가 LLM 호출 시 자동 처리.
   useEffect(() => {
@@ -296,7 +355,7 @@ export function MarketInsightsWorkspaceClient() {
     setGenState("report");
     try {
       const r = await apiClient.post<any>("/market/report", {
-        body: { address, pnu: siteAnalysis?.pnu || undefined, use_llm: useLlm, options: analysisOptions },
+        body: { address, pnu: siteAnalysis?.pnu || undefined, use_llm: useLlm, options: buildOptionsPayload() },
         useMock: false, timeoutMs: 120000,
       });
       setReport(r);
@@ -309,7 +368,7 @@ export function MarketInsightsWorkspaceClient() {
     } finally {
       setGenState("");
     }
-  }, [address, siteAnalysis?.pnu, useLlm]);
+  }, [address, siteAnalysis?.pnu, useLlm, buildOptionsPayload]);
 
   // PDF/PPTX 다운로드(바이너리)
   const downloadReport = useCallback(async (fmt: "pdf" | "pptx") => {
@@ -320,7 +379,8 @@ export function MarketInsightsWorkspaceClient() {
       const res = await fetch(`${marketApiBase()}/market/report/${fmt}`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-        body: JSON.stringify({ address, pnu: siteAnalysis?.pnu || undefined, use_llm: useLlm }),
+        // ★다운로드도 options를 포함해야 PDF/PPTX에 인구·소득 데이터가 누락되지 않는다(미리보기와 동일 payload).
+        body: JSON.stringify({ address, pnu: siteAnalysis?.pnu || undefined, use_llm: useLlm, options: buildOptionsPayload() }),
       });
       if (!res.ok) throw new Error(String(res.status));
       const blob = await res.blob();
@@ -335,7 +395,7 @@ export function MarketInsightsWorkspaceClient() {
     } finally {
       setGenState("");
     }
-  }, [address, siteAnalysis?.pnu, useLlm]);
+  }, [address, siteAnalysis?.pnu, useLlm, buildOptionsPayload]);
 
   return (
     <section className="grid gap-6">

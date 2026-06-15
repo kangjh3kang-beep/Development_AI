@@ -57,7 +57,7 @@ async def market_report_pdf(
 ):
     lawd_cd, pnu = _resolve(req)
     svc = MarketReportService()
-    rep = await svc.build_report(req.address, lawd_cd, pnu, use_llm=req.use_llm)
+    rep = await svc.build_report(req.address, lawd_cd, pnu, use_llm=req.use_llm, options=req.options or {})
     pdf = svc.to_pdf(rep)
     return StreamingResponse(
         iter([pdf]), media_type="application/pdf",
@@ -72,7 +72,7 @@ async def market_report_pptx(
 ):
     lawd_cd, pnu = _resolve(req)
     svc = MarketReportService()
-    rep = await svc.build_report(req.address, lawd_cd, pnu, use_llm=req.use_llm)
+    rep = await svc.build_report(req.address, lawd_cd, pnu, use_llm=req.use_llm, options=req.options or {})
     pptx = svc.to_pptx(rep)
     return StreamingResponse(
         iter([pptx]),

@@ -25,6 +25,7 @@ import json
 
 from app.core.billing import (
     TIER_BILLING,
+    analysis_module_fees,
     apply_config,
     billed_krw,
     get_config,
@@ -409,6 +410,7 @@ async def get_balance(db: AsyncSession, user_id: Any) -> dict[str, Any]:
             "tier": "guest", "tier_label": "비회원", "monthly_base_krw": 0,
             "monthly_base_remaining": 0, "topup_krw": 0, "used_this_cycle_krw": 0,
             "cycle_start": None,
+            "module_fees": {},
         }
     tier, billed = row[0], float(row[1])
     cycle = row[3]
@@ -429,6 +431,9 @@ async def get_balance(db: AsyncSession, user_id: Any) -> dict[str, Any]:
         "topup_remaining": round(topup_remaining),
         "used_this_cycle_krw": round(billed),
         "cycle_start": cycle.isoformat() if cycle else None,
+        # 관리자가 설정한 분석 모듈 사용료 맵(미설정 시 빈 dict = 전부 무료).
+        # 프론트 셀렉터가 모듈별 추가 비용 표시에 사용한다.
+        "module_fees": analysis_module_fees(),
     }
 
 
