@@ -8,6 +8,7 @@
 import { useEffect, useState } from "react";
 import { useCollaborationStore } from "@/store/use-collaboration-store";
 import { ProjectCollaborationDocumentExchange } from "@/components/collaboration/ProjectCollaborationDocumentExchange";
+import { LiveKitRoom } from "@/features/webrtc/LiveKitRoom";
 import {
   REVIEW_CATEGORIES,
   roleLabel,
@@ -153,13 +154,16 @@ export function ProjectCollaborationWorkspaceClient({ projectId }: { projectId: 
         )}
       </section>
 
-      {/* SP3 자료교환(협력업체 업로드자료) + 정직 8엔진 검증·표기용 심의상태 */}
+      {/* SP3 자료교환(협력업체 업로드자료) + 정직 8엔진 검증·표기용 심의상태 + 의견교환(SP6 토글) */}
       <ProjectCollaborationDocumentExchange projectId={projectId} />
 
-      {/* 후속 단계 정직 표기 — 자료교환·8엔진 검증은 구현됨(위), 나머지만 후속 */}
+      {/* LiveKit 화상회의 — 구성(키) 시 동작, 미구성 시 입장에서 정직 degrade */}
+      <LiveKitRoom projectId={projectId} />
+
+      {/* 정직 표기 — 자료교환·8엔진 검증·의견교환은 위 제공, 화상회의는 LiveKit 구성 시 동작 */}
       <p className="text-[11px] text-[var(--text-hint)]">
-        ※ 화상회의(LiveKit)·의견교환(스레드)은 후속 단계(Phase 2/3) 예정. 자료교환과 설계파일 8엔진
-        자동검증은 위에서 제공됩니다(문서형식은 심의자 표기용).
+        ※ 화상회의는 LiveKit 구성(관리자) 후 동작합니다. 자료교환·설계파일 8엔진 자동검증·의견교환은
+        위에서 제공됩니다(문서형식은 심의자 표기용).
       </p>
 
       {error && (
