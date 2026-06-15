@@ -236,7 +236,14 @@ export function ApprovalsWorkspaceClient({
       apiClient.get<ProjectResponse[]>("/projects", { useMock: false }),
   });
 
-  const projects = projectsQuery.data ?? [];
+  // GET /projects 는 PaginatedResponse({ items, ... }) 반환 — 배열/페이지네이션 양쪽 안전 흡수
+  // (과거 data 를 배열로 단정해 .map 호출 시 페이지가 죽던 문제 방지).
+  const rawProjects = projectsQuery.data as unknown;
+  const projects = Array.isArray(rawProjects)
+    ? (rawProjects as ProjectResponse[])
+    : Array.isArray((rawProjects as { items?: ProjectResponse[] } | null)?.items)
+      ? (rawProjects as { items: ProjectResponse[] }).items
+      : [];
   const approvalItems: ApprovalItem[] = projects.map((p) => ({
     projectId: p.id,
     projectName: p.name,

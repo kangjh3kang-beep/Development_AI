@@ -169,9 +169,17 @@ export function TenantWorkspaceClient({
       apiClient.get<ProjectResponse[]>("/projects", { useMock: false }),
   });
 
-  const projects = projectsQuery.data ?? [];
+  // GET /projects 는 PaginatedResponse({ items, total, ... }) 를 반환한다.
+  // 과거엔 data 를 배열로 단정해 .filter 호출 시 'm.filter is not a function' 으로 페이지가 죽었다.
+  // → 배열/페이지네이션 객체 양쪽을 안전하게 흡수한다(하위호환).
+  const rawProjects = projectsQuery.data as unknown;
+  const projects: ProjectResponse[] = Array.isArray(rawProjects)
+    ? (rawProjects as ProjectResponse[])
+    : Array.isArray((rawProjects as { items?: ProjectResponse[] } | null)?.items)
+      ? (rawProjects as { items: ProjectResponse[] }).items
+      : [];
   const activeCount = projects.filter(
-    (p) => p.status.toLowerCase() === "active" || p.status === "운영중",
+    (p) => (p.status ?? "").toLowerCase() === "active" || p.status === "운영중",
   ).length;
   const vacantCount = projects.length - activeCount;
 
