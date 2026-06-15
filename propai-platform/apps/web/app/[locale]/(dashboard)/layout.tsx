@@ -114,14 +114,15 @@ export default async function DashboardLayout({
     { href: `/${locale}/desk-appraisal`, label: "└ AI 시세추정 보고서", icon: <IconPermit /> },
     { href: `/${locale}/analytics/investment`, label: "투자 수익성 (ROI)", icon: <IconROI /> },
     { href: `/${locale}/auction`, label: "경매·공매", icon: <IconAuction /> },
+    // 공공입찰(나라장터)은 경매·공매와 같은 '사업 획득 채널'이라 토지·자금에 함께 둔다(IA 정합).
+    { href: `/${locale}/g2b`, label: "공공입찰 (나라장터)", icon: <IconAuction /> },
   ];
 
-  // 3. 실행 — 분양·공공입찰
+  // 3. 실행 — 분양
   const executionNavigation = [
     { href: `/${locale}/sales`, label: "분양 현장 관리", icon: <IconProject /> },
     { href: `/${locale}/sales/sites`, label: "└ 내 분양 현장(현장앱)", icon: <IconProject /> },
     { href: `/${locale}/sales/projection`, label: "└ 분양관리요약(관리자)", icon: <IconMarket /> },
-    { href: `/${locale}/g2b`, label: "공공입찰 (나라장터)", icon: <IconAuction /> },
     // 팀 관리(공유 워크스페이스)는 MY PAGE(구독 패널 → MY PAGE)에서만 관리. 좌측메뉴 제거.
   ];
 

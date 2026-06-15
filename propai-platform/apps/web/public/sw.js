@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v185-tenant-crash-fix";
+const CACHE_NAME = "propai-v186-nav-tenant-refactor";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",
