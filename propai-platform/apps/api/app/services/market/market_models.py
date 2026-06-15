@@ -15,7 +15,7 @@ class MigrationData(BaseModel):
     total_inflow: int = Field(0, description="총 전입 인구")
     total_outflow: int = Field(0, description="총 전출 인구")
     net_migration: int = Field(0, description="순이동 인구")
-    top_inflow_regions: List[dict] = Field(default_factory=list, description="주요 전입 출발지 Top 3")
+    top_inflow_regions: list[dict] = Field(default_factory=list, description="주요 전입 출발지 Top 3")
     # 데이터 출처 플래그: 'live'(실데이터) | 'fallback'(합성·대체값) | 'mock'(개발용) | 'unavailable'(데이터 없음·정직표기)
     # 옵셔널·하위호환: 기존 응답을 깨지 않으면서 실데이터/가짜값을 구분하기 위한 가산 필드.
     data_source: Optional[str] = Field(None, description="데이터 출처 구분 플래그")

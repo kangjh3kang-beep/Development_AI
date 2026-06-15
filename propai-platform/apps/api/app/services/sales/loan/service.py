@@ -1,6 +1,6 @@
 """중도금 집단대출 — 은행 실행분을 해당 회차 납입처리(method=LOAN, 차주 자납과 구분). 기록만."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,7 +15,7 @@ async def execute_disbursement(db: AsyncSession, site_id, agreement_id, installm
     inst = (await db.execute(select(SalesContractInstallment).where(
         SalesContractInstallment.contract_ext_id == ag.contract_ext_id,
         SalesContractInstallment.seq == installment_seq))).scalar_one()
-    when = disbursed_at or datetime.now(timezone.utc)
+    when = disbursed_at or datetime.now(UTC)
     db.add(SalesLoanDisbursement(agreement_id=agreement_id, installment_seq=installment_seq,
            amount=amount, disbursed_at=when))
     inst.paid_amount = (inst.paid_amount or 0) + int(amount)

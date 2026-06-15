@@ -34,7 +34,7 @@
 """
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 
 from fastapi import (
     APIRouter,
@@ -570,7 +570,7 @@ async def send_message(room_id: uuid.UUID, body: MessageCreate, db: AsyncSession
     if kind not in ("text", "image"):
         kind = "text"
     mid = uuid.uuid4()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     await db.execute(text(
         "INSERT INTO chat_messages (id, room_id, sender_user_id, body, media_urls, kind, created_at) "
         "VALUES (:id, :r, :s, :b, :media, :k, :ts)"
@@ -641,7 +641,7 @@ async def invite_members(room_id: uuid.UUID, body: InviteBody, db: AsyncSession 
     if added:
         # system 메시지로 입장 알림(영속 + 브로드캐스트)
         sid = uuid.uuid4()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         await db.execute(text(
             "INSERT INTO chat_messages (id, room_id, sender_user_id, body, kind, created_at) "
             "VALUES (:id, :r, NULL, :b, 'system', :ts)"
@@ -703,7 +703,7 @@ async def broadcast(body: BroadcastBody, db: AsyncSession = Depends(get_db),
     # 광고성 발송 동의·야간 가드
     if not body.consent:
         raise HTTPException(status_code=400, detail="수신동의(consent) 확인이 필요합니다")
-    hour = datetime.now(timezone.utc).astimezone().hour
+    hour = datetime.now(UTC).astimezone().hour
     is_night = hour >= _NIGHT_START_HOUR or hour < _NIGHT_END_HOUR
     if is_night and not body.force_night:
         raise HTTPException(status_code=403, detail="야간(21~08시) 광고성 발송은 제한됩니다")

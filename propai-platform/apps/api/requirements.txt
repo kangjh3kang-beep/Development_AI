@@ -16,6 +16,8 @@ psycopg2-binary==2.9.10
 redis==5.2.0
 celery==5.3.6
 flower==2.0.1
+arq>=0.25  # P0-1: apps/worker/main.py가 arq.cron 사용 — 미선언 시 worker 부팅 크래시
+prometheus-client>=0.20.0  # P0-2: metrics.py/main.py unguarded import — 미선언 시 API 부팅 실패(매니페스트 SSOT drift)
 
 # AI/ML
 torch==2.4.1

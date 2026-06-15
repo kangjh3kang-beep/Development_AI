@@ -19,7 +19,7 @@ class RiskService:
         "자연재해": {"likelihood": 0.1, "impact": 0.9, "category": "환경"},
     }
 
-    def calculate_risk_scores(self) -> Dict:
+    def calculate_risk_scores(self) -> dict:
         risks = []
         for risk_name, params in self.RISK_MATRIX.items():
             score = params["likelihood"] * params["impact"]

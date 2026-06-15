@@ -43,13 +43,7 @@ def _match_weights(unit, weights, group_map):
     out = []
     for w in weights:
         d, k = w.dimension, (w.match_key or "")
-        if d == "FLOOR" and str(unit.floor) == k:
-            out.append(w)
-        elif d == "LINE" and (unit.line or "") == k:
-            out.append(w)
-        elif d == "ASPECT" and (unit.aspect or "") == k:
-            out.append(w)
-        elif d == "CUSTOM":
+        if d == "FLOOR" and str(unit.floor) == k or d == "LINE" and (unit.line or "") == k or d == "ASPECT" and (unit.aspect or "") == k or d == "CUSTOM":
             out.append(w)
     out += group_map.get(unit.id, [])
     out.sort(key=lambda x: -(x.priority or 0))

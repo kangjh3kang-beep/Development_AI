@@ -13,7 +13,7 @@ class MonteCarloService:
     def run_simulation(self, total_cost_krw: float = 0, expected_revenue_krw: float = 0,
                        construction_period_months: int = 36, discount_rate_mean: float = 0.08,
                        discount_rate_std: float = 0.02, revenue_uncertainty: float = 0.15,
-                       n_simulations: int = 10000, iterations: int = 0, **kwargs) -> Dict:
+                       n_simulations: int = 10000, iterations: int = 0, **kwargs) -> dict:
         if isinstance(total_cost_krw, dict):
             d = total_cost_krw
             total_cost_krw = d.get("initial_investment", d.get("total_cost_krw", 0))
@@ -67,9 +67,9 @@ class MonteCarloService:
         }
 
     def sensitivity_analysis(self, base_cost_krw: float, base_revenue_krw: float,
-                              variables: List[str], range_pct: float = 0.20,
+                              variables: list[str], range_pct: float = 0.20,
                               discount_rate: float = 0.08,
-                              period_months: int = 36) -> Dict:
+                              period_months: int = 36) -> dict:
         """변수별 ±range_pct 변동 시 NPV를 실제 재계산하는 일변량 민감도 분석.
 
         (이전 구현은 변수와 무관하게 base_npv×(1±20%)를 반환해 sensitivity가

@@ -58,7 +58,7 @@ def _setup_layers(doc: ezdxf.document.Drawing) -> None:
 
 # CAD2.0 셰이프 레이어 → DXF 표준 레이어 매핑
 # (dxf_import_service._DXF_LAYER_TO_SHAPE가 역매핑 — 왕복 시 레이어 보존)
-SHAPE_LAYER_MAP: Dict[str, str] = {
+SHAPE_LAYER_MAP: dict[str, str] = {
     "outline": "WALL",
     "wall": "WALL_INTERIOR",
     "dim": "DIM",
@@ -66,7 +66,7 @@ SHAPE_LAYER_MAP: Dict[str, str] = {
 }
 
 # 정식 DIMENSION 공통 스타일 오버라이드 — 기존 간이 치수선 표기와 시각 일관 유지
-_DIM_STYLE_OVERRIDE: Dict[str, Any] = {
+_DIM_STYLE_OVERRIDE: dict[str, Any] = {
     "dimtxt": 0.25,  # 치수문자 높이 (기존 add_text height=0.25와 동일)
     "dimasz": 0.25,  # 화살표 크기
     "dimexo": 0.1,   # 치수보조선 이격
@@ -76,8 +76,8 @@ _DIM_STYLE_OVERRIDE: Dict[str, Any] = {
 }
 
 
-def _render_linear_dim(msp: Modelspace, base: Tuple[float, float],
-                       p1: Tuple[float, float], p2: Tuple[float, float],
+def _render_linear_dim(msp: Modelspace, base: tuple[float, float],
+                       p1: tuple[float, float], p2: tuple[float, float],
                        angle: float = 0.0) -> None:
     """ezdxf 정식 선형 DIMENSION을 렌더링한다.
 
@@ -203,10 +203,10 @@ def _write_dxf(doc: ezdxf.document.Drawing) -> bytes:
     return buf.getvalue().encode("utf-8")
 
 
-_DEFAULT_SETBACK: Dict[str, float] = {"north": 3.0, "south": 2.0, "east": 1.5, "west": 1.5}
+_DEFAULT_SETBACK: dict[str, float] = {"north": 3.0, "south": 2.0, "east": 1.5, "west": 1.5}
 
 
-def _normalize_setback(setback_m: Optional[Dict[str, float] | float]) -> Dict[str, float]:
+def _normalize_setback(setback_m: Optional[dict[str, float] | float]) -> dict[str, float]:
     """세트백 입력을 방위별 dict로 정규화한다.
 
     - None → 기본 세트백(_DEFAULT_SETBACK).
@@ -235,7 +235,7 @@ class BuildingModel:
         self.depth = depth
         self.floors = floors
         self.floor_height = floor_height
-        self.setback_distances: Dict[str, float] = {
+        self.setback_distances: dict[str, float] = {
             "north": 3.0, "south": 3.0, "east": 3.0, "west": 3.0,
         }
 
@@ -785,7 +785,7 @@ class ParametricCADService:
         site_depth_m: float,
         building_width_m: float,
         building_depth_m: float,
-        setback_m: Optional[Dict[str, float] | float] = None,
+        setback_m: Optional[dict[str, float] | float] = None,
         parking_count: int = 0,
         parking_type: str = "자주식",
         landscape_ratio: float = 0.15,
@@ -957,10 +957,10 @@ class ParametricCADService:
 
     def create_dxf_from_edited_points(
         self,
-        points: List[Dict[str, Any]],
-        surfaces: Optional[List[Dict[str, Any]]] = None,
+        points: list[dict[str, Any]],
+        surfaces: Optional[list[dict[str, Any]]] = None,
         scale_px_per_m: float = 10.0,
-        shapes: Optional[List[Dict[str, Any]]] = None,
+        shapes: Optional[list[dict[str, Any]]] = None,
     ) -> bytes:
         """CADEditor 편집 좌표(px, 캔버스 y축 하향)를 DXF(m, y축 상향)로 직변환한다.
 
@@ -979,12 +979,12 @@ class ParametricCADService:
         if shapes:
             return self._create_dxf_from_shapes(shapes, scale_px_per_m)
 
-        pmap: Dict[str, Dict[str, Any]] = {}
+        pmap: dict[str, dict[str, Any]] = {}
         for p in points or []:
             if isinstance(p, dict) and "x" in p and "y" in p:
                 pmap[str(p.get("id"))] = p
 
-        order: List[str] = []
+        order: list[str] = []
         if surfaces and isinstance(surfaces[0], dict):
             order = [str(pid) for pid in (surfaces[0].get("point_ids") or [])]
         if not order:
@@ -992,7 +992,7 @@ class ParametricCADService:
         if len(order) >= 2 and order[0] == order[-1]:
             order = order[:-1]  # 닫힘 중복점 제거 — LWPOLYLINE close=True가 닫음
 
-        ring_px: List[Tuple[float, float]] = []
+        ring_px: list[tuple[float, float]] = []
         for pid in order:
             p = pmap.get(pid)
             if p is not None:
@@ -1006,7 +1006,7 @@ class ParametricCADService:
 
         min_x = min(x for x, _ in ring_px)
         max_y = max(y for _, y in ring_px)
-        ring_m: List[Tuple[float, float]] = [
+        ring_m: list[tuple[float, float]] = [
             ((x - min_x) / scale_px_per_m, (max_y - y) / scale_px_per_m)
             for x, y in ring_px
         ]
@@ -1025,7 +1025,7 @@ class ParametricCADService:
         return _write_dxf(doc)
 
     @staticmethod
-    def _add_ring_dimensions(msp: Modelspace, ring_m: List[Tuple[float, float]]) -> None:
+    def _add_ring_dimensions(msp: Modelspace, ring_m: list[tuple[float, float]]) -> None:
         """닫힌 링(m)의 각 변에 정식 aligned DIMENSION을 외측 배치한다.
 
         폴리곤 방향(shoelace)으로 외측 오프셋 부호를 결정 — 기존 점 경로의
@@ -1071,7 +1071,7 @@ class ParametricCADService:
 
     def _create_dxf_from_shapes(
         self,
-        shapes: List[Dict[str, Any]],
+        shapes: list[dict[str, Any]],
         scale_px_per_m: float,
     ) -> bytes:
         """CAD2.0 셰이프(px, 캔버스 y축 하향)를 DXF(m, y축 상향)로 직변환한다.
@@ -1085,8 +1085,8 @@ class ParametricCADService:
         - $INSUNITS=6(m) 기록 — 재가져오기 시 단위가 휴리스틱 없이 확정된다.
         - 유효 셰이프가 하나도 없으면 ValueError(가짜 도면 생성 금지).
         """
-        anchors: List[Tuple[float, float]] = []
-        parsed: List[Dict[str, Any]] = []
+        anchors: list[tuple[float, float]] = []
+        parsed: list[dict[str, Any]] = []
 
         for s in shapes:
             if not isinstance(s, dict):
@@ -1155,7 +1155,7 @@ class ParametricCADService:
         min_x = min(x for x, _ in anchors)
         max_y = max(y for _, y in anchors)
 
-        def to_m(pt: Tuple[float, float]) -> Tuple[float, float]:
+        def to_m(pt: tuple[float, float]) -> tuple[float, float]:
             return ((pt[0] - min_x) / scale_px_per_m, (max_y - pt[1]) / scale_px_per_m)
 
         doc = ezdxf.new("R2010")
@@ -1167,7 +1167,7 @@ class ParametricCADService:
             layer = item["layer"]
             if item["etype"] == "poly":
                 ring_m = [to_m(p) for p in item["points"]]
-                attrs: Dict[str, Any] = {"layer": layer}
+                attrs: dict[str, Any] = {"layer": layer}
                 if layer == "WALL":
                     attrs["lineweight"] = 50  # 기존 points 경로 외곽선과 동일 표기
                 msp.add_lwpolyline(ring_m, close=item["closed"], dxfattribs=attrs)
@@ -1196,9 +1196,9 @@ class ParametricCADService:
         max_far: float,
         max_bcr: float,
         site_area_sqm: float,
-    ) -> Tuple[bytes, List[str]]:
+    ) -> tuple[bytes, list[str]]:
         """법규 위반 자동 보정 결과를 반환한다."""
-        corrections: List[str] = []
+        corrections: list[str] = []
         max_footprint = site_area_sqm * max_bcr / 100
         max_total_floor = site_area_sqm * max_far / 100
         corrections.append(f"최대 건축면적: {max_footprint:.1f}sqm (건폐율 {max_bcr}%)")
@@ -1214,7 +1214,7 @@ class ParametricCADService:
         limits: dict,
     ) -> dict:
         """BuildingModel에 대해 법규 보정을 수행하고 결과를 반환한다."""
-        corrections: List[dict] = []
+        corrections: list[dict] = []
 
         # 높이 제한 보정
         max_height = limits.get("max_height_m", 0)
@@ -1252,7 +1252,7 @@ class ParametricCADService:
         min_setback_m: float,
     ) -> dict:
         """세트백 법규 준수 여부를 검증한다."""
-        violations: List[dict] = []
+        violations: list[dict] = []
         for direction, distance in model.setback_distances.items():
             if distance < min_setback_m:
                 violations.append({

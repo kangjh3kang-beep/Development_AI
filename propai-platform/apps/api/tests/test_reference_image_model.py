@@ -1,4 +1,6 @@
-import os, sys, pytest
+import os
+import sys
+import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 from apps.api.database.models.reference_image import ReferenceImage
 

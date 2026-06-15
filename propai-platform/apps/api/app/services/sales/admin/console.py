@@ -7,7 +7,7 @@
 """
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timezone, UTC
 from typing import Any
 
 from sqlalchemy import text
@@ -79,7 +79,7 @@ async def _scalar(db: AsyncSession, sql: str, **p) -> int:
 async def site_management_detail(db: AsyncSession, site_id) -> dict[str, Any]:
     """현장 1곳의 통합 관리 지표 — 담당자·근태·계약·매출·수수료·방문·광고·회계·손익."""
     s = str(site_id)
-    today = datetime.now(timezone.utc).date()  # date 객체(asyncpg 바인딩 안전)
+    today = datetime.now(UTC).date()  # date 객체(asyncpg 바인딩 안전)
     staff = await _scalar(db, "SELECT count(*) FROM sales_org_nodes WHERE site_id=:s AND user_id IS NOT NULL AND deleted_at IS NULL", s=s)
     contracts = await _scalar(db, "SELECT count(*) FROM sales_contracts_ext WHERE site_id=:s AND status='ACTIVE'", s=s)
     revenue = await _scalar(db, "SELECT COALESCE(SUM(total_price),0) FROM sales_contracts_ext WHERE site_id=:s AND status='ACTIVE'", s=s)

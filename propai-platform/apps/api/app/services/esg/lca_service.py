@@ -41,7 +41,7 @@ def _resolve_ef(material: str) -> tuple[float, str]:
 class LCAService:
     """LCA 탄소 자동 계산 (ISO 14040:2006, IPCC AR6)"""
 
-    def calculate_a1_a3(self, material_quantities) -> Dict:
+    def calculate_a1_a3(self, material_quantities) -> dict:
         """A1-A3 자재 생산 단계 GWP = sum(m_i × EF_i).
 
         제품수준 EPD: 입력이 리스트이고 각 항목에 epd_kgco2e(제품별 실측 EPD)가 있으면
@@ -95,7 +95,7 @@ class LCAService:
     def calculate_b6_operational_energy(self, floor_area_sqm: float,
                                          energy_intensity_kwh_per_sqm: float = 120.0,
                                          grid_emission_factor: float = 0.4781,
-                                         intensity_source: str = "기본추정(주거 1차에너지 120)") -> Dict:
+                                         intensity_source: str = "기본추정(주거 1차에너지 120)") -> dict:
         """B6 운영 에너지 GWP (한국 전력 배출계수 0.4781).
 
         energy_intensity_kwh_per_sqm은 BEEC 1차에너지 원단위(kWh/㎡·yr)를 받는다.
@@ -124,7 +124,7 @@ class LCAService:
     }
     _STAGE_D_RATIO = (-0.08, "재활용·재사용 크레딧(시스템 경계 외, 총계 제외)")
 
-    def calculate_whole_life(self, a1a3_total: float, b6_lifecycle: float) -> Dict:
+    def calculate_whole_life(self, a1a3_total: float, b6_lifecycle: float) -> dict:
         """EN 15978 전생애(whole-life) 단계 — A1-A3·B6 외 단계를 비율기반 추정."""
         stages = {}
         embodied_extra = 0.0
@@ -164,10 +164,10 @@ class LCAService:
         except Exception:
             return 120.0, "기본추정(주거 1차에너지 120)"
 
-    def calculate_total_lca(self, material_quantities: Dict[str, float],
+    def calculate_total_lca(self, material_quantities: dict[str, float],
                             floor_area_sqm: float,
                             building_type: str = "apartment",
-                            energy_intensity_kwh_per_sqm: float | None = None) -> Dict:
+                            energy_intensity_kwh_per_sqm: float | None = None) -> dict:
         """전생애(whole-life) LCA.
 
         B6 운영에너지는 energy_service(BEEC)의 1차에너지 원단위와 디커플링한다.

@@ -40,7 +40,7 @@ class CNNDesignService:
         model.eval()
         return model.to(self.device)
 
-    def extract_features(self, image_path=None) -> Dict:
+    def extract_features(self, image_path=None) -> dict:
         """ResNet-50 2048차원 특징 벡터 추출"""
         if torch is None:
             vec = np.random.RandomState(42).randn(2048).astype(np.float32)
@@ -71,7 +71,7 @@ class CNNDesignService:
 
     def generate_design_parameters(self, feature_vector, site_area_sqm: float,
                                     zone_type: str, max_far: float, max_bcr: float,
-                                    building_use: str) -> Dict:
+                                    building_use: str) -> dict:
         if isinstance(feature_vector, dict):
             feature_vector = feature_vector.get("feature_vector", [0] * 2048)
         feature_vector = np.array(feature_vector) if not isinstance(feature_vector, np.ndarray) else feature_vector

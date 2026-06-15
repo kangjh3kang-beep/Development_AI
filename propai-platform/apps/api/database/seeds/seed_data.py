@@ -6,8 +6,8 @@ python -m apps.api.database.seeds.seed_data 로 실행.
 import asyncio
 import hashlib
 import uuid
-from datetime import datetime, timedelta, timezone
-UTC = timezone.utc
+from datetime import datetime, timedelta, timezone, UTC
+UTC = UTC
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -173,7 +173,7 @@ async def run_seed() -> None:
         await seed_avm_valuations(db)
         await db.commit()
 
-    print(f"시드 완료: 테넌트 1, 사용자 3, 프로젝트 2, AVM 2")
+    print("시드 완료: 테넌트 1, 사용자 3, 프로젝트 2, AVM 2")
 
 
 if __name__ == "__main__":

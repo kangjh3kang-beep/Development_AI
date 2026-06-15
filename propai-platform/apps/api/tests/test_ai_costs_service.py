@@ -5,8 +5,8 @@
 
 import os
 import sys
-from datetime import datetime, timezone
-UTC = timezone.utc
+from datetime import datetime, timezone, UTC
+UTC = UTC
 
 import pytest
 

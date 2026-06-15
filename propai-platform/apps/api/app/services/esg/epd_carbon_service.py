@@ -26,7 +26,7 @@ EPD_KOREA_DATABASE = {
 class EPDCarbonService:
     """건축자재 EPD 탄소발자국 추적 (ISO 21930:2017)"""
 
-    def calculate_material_carbon(self, material_list: List[Dict]) -> Dict:
+    def calculate_material_carbon(self, material_list: list[dict]) -> dict:
         total_carbon = 0.0
         breakdown = []
         for item in material_list:
@@ -51,7 +51,7 @@ class EPDCarbonService:
             "standard": "ISO 21930:2017", "data_source": "EPD Korea Database"
         }
 
-    def recommend_low_carbon_alternatives(self, material_name: str, quantity_kg: float = 1000.0) -> Dict:
+    def recommend_low_carbon_alternatives(self, material_name: str, quantity_kg: float = 1000.0) -> dict:
         current = EPD_KOREA_DATABASE.get(material_name, {})
         current_cf = quantity_kg * current.get("epd_kgco2e", 0)
         alternatives = []

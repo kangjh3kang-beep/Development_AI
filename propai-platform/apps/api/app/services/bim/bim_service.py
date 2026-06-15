@@ -5,13 +5,13 @@ from typing import Any, Dict, List
 class BIMService:
     """IFC 파싱 + 물량 산출 서비스."""
 
-    def parse_ifc_metadata(self, ifc_path: str) -> Dict:
+    def parse_ifc_metadata(self, ifc_path: str) -> dict:
         """IFC 파일 메타데이터를 실제로 읽는다(ifcopenshell).
 
         읽기 실패(라이브러리 미설치·손상 파일 등) 시 가짜 도구명(예: 'Revit 2024')을
         지어내지 않고 정직하게 None(미상)으로 표기한다 — 할루시네이션 금지.
         """
-        meta: Dict[str, Any] = {
+        meta: dict[str, Any] = {
             "schema": None, "file_path": ifc_path,
             "authoring_tool": None, "project_name": None, "element_count": None,
         }
@@ -33,7 +33,7 @@ class BIMService:
             pass
         return meta
 
-    def extract_quantities(self, elements: List[Dict]) -> Dict:
+    def extract_quantities(self, elements: list[dict]) -> dict:
         quantities = {}
         for e in elements:
             etype = e.get("element_type", "unknown")
@@ -46,15 +46,15 @@ class BIMService:
         }
 
     def extract_quantities_with_work_codes(
-        self, elements: List[Dict[str, Any]],
-    ) -> List[Dict[str, Any]]:
+        self, elements: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
         """IFC 요소에 공종코드를 매핑하여 물량을 산출한다.
 
         각 element dict에 'element_type' (IFC 유형)과 'quantity' 필드가 필요하다.
         """
         from app.services.cost.ifc_work_map import map_ifc_to_work_codes
 
-        result: List[Dict[str, Any]] = []
+        result: list[dict[str, Any]] = []
         for elem in elements:
             ifc_type = elem.get("element_type", "")
             qty = elem.get("quantity", 0)

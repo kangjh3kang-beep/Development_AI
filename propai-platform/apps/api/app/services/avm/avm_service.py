@@ -87,7 +87,7 @@ class AVMService:
                 self.model = None
 
     def idw_estimate(self, target_lat: float, target_lon: float,
-                     comparables: List[Dict], epsilon: float = 1e-6) -> float:
+                     comparables: list[dict], epsilon: float = 1e-6) -> float:
         """역거리 가중법 (IDW) P_est = sum(w_i * P_i) / sum(w_i)"""
         if not comparables:
             return 0.0
@@ -111,8 +111,8 @@ class AVMService:
         a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlambda/2)**2
         return 2 * R * math.atan2(math.sqrt(a), math.sqrt(1-a))
 
-    def estimate_value(self, features: Dict, comparables: List[Dict],
-                       target_lat: float = None, target_lon: float = None) -> Dict:
+    def estimate_value(self, features: dict, comparables: list[dict],
+                       target_lat: float = None, target_lon: float = None) -> dict:
         """복합 AVM 추정치 산출"""
         if target_lat is None:
             target_lat = features.get("latitude", 37.5665)
@@ -177,7 +177,7 @@ class AVMService:
             "method_note": "신뢰도·범위는 comparable 표본수·가격분산 기반 실측치. 앙상블은 모델↔지역 실거래 교차검증(이상치 모델 배제). 학습 R²는 train_model 시에만 산출.",
         }
 
-    def train_model(self, X_train: Any, y_train: Any) -> Dict:
+    def train_model(self, X_train: Any, y_train: Any) -> dict:
         """XGBoost 모델 학습 + MLflow 추적"""
         _mlflow = _ensure_mlflow()
         with _mlflow.start_run():

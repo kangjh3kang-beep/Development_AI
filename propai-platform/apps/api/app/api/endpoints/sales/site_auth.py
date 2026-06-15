@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, UTC
 
 import bcrypt
 from fastapi import APIRouter, Depends, HTTPException
@@ -157,7 +157,7 @@ def issue_site_token(user_id, tenant_id, site_id, role: str, org_path: str) -> s
     auth_service.get_current_user 와 호환되도록 type='access' + token_kind 를 유지하되,
     scope='sales_site' 로 일반 액세스와 구분한다(이 토큰은 site 컨텍스트 전용).
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     payload = {
         "sub": str(user_id),
         "tenant_id": str(tenant_id) if tenant_id else None,
@@ -282,7 +282,7 @@ async def enter_site(site_id: str, body: EnterRequest,
     if not role:
         raise HTTPException(403, "이 현장의 멤버가 아닙니다")
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     # rate-limit: 잠금 여부 확인
     att = (await db.execute(text(
         "SELECT fail_count, locked_until FROM sales_site_login_attempts WHERE site_id=:s AND user_id=:u"
@@ -290,7 +290,7 @@ async def enter_site(site_id: str, body: EnterRequest,
     if att and att.locked_until is not None:
         locked_until = att.locked_until
         if locked_until.tzinfo is None:
-            locked_until = locked_until.replace(tzinfo=timezone.utc)
+            locked_until = locked_until.replace(tzinfo=UTC)
         if locked_until > now:
             wait = int((locked_until - now).total_seconds() // 60) + 1
             raise HTTPException(429, f"진입 시도가 많아 잠겼습니다. {wait}분 후 다시 시도하세요")

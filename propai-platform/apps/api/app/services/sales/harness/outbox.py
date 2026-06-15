@@ -6,7 +6,7 @@
 """
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -48,12 +48,12 @@ async def emit_outbox(db: AsyncSession, site_id: uuid.UUID, event_type: str, pay
     clean = {k: v for k, v in (payload or {}).items() if k in allow}
     db.add(SalesHarnessOutbox(
         site_id=site_id, event_type=event_type, payload=clean,
-        status="PUBLISHED", published_at=datetime.now(timezone.utc),
+        status="PUBLISHED", published_at=datetime.now(UTC),
     ))
     delta = _project(event_type, payload or {})
     if delta is not None:
         db.add(SalesSiteSummary(
-            site_id=site_id, ts=datetime.now(timezone.utc),
+            site_id=site_id, ts=datetime.now(UTC),
             visitors=delta.get("visitors", 0), contracts_cnt=delta.get("contracts_cnt", 0),
             contract_amt=delta.get("contract_amt", 0), staff_cnt=delta.get("staff_cnt", 0),
             commission_paid=delta.get("commission_paid", 0), commission_due=0,

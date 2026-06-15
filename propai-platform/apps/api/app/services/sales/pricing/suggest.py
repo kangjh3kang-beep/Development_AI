@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from apps.api.database.models.sales.site_org import SalesSite
 from apps.api.integrations.region_codes import pnu_to_bcode
 from app.services.data_validation.trust import Signal, cross_validate
+from datetime import UTC
 
 PYEONG_SQM = 3.305785
 _REF_EXCLUSIVE_SQM = 84.0          # 84타입 전용면적
@@ -78,7 +79,7 @@ async def _trade_per_pyeong(sigungu5: str, dong: str | None, prop_type: str) -> 
     from apps.api.integrations.molit_client import MolitClient
     m = MolitClient()
     # 최근 8개월(YYYYMM) 조회 — 표본 확보. MOLIT는 신고지연이 있어 최신월은 적을 수 있어 넉넉히.
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     yms = []
     y, mo = now.year, now.month
     for _ in range(8):

@@ -74,7 +74,7 @@ class TestParseWatchlist:
         assert res["rows"][0]["label"] == "역삼동 토지"
 
     def test_주소컬럼_csv_파싱(self):
-        csv = "소재지,비고\n서울시 강남구 역삼동 100,A\n,빈주소\n".encode("utf-8")
+        csv = "소재지,비고\n서울시 강남구 역삼동 100,A\n,빈주소\n".encode()
         res = parse_watchlist_excel(csv, "list.csv")
         assert res["detected_columns"]["address"] == "소재지"
         # 빈 주소·빈 PNU 행은 스킵.

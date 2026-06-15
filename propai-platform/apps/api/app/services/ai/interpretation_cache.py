@@ -24,7 +24,7 @@ _TTL = 30 * 24 * 3600
 
 def cache_key(stage: str, data: dict[str, Any]) -> str:
     canon = json.dumps(data, sort_keys=True, ensure_ascii=False, separators=(",", ":"), default=str)
-    return hashlib.sha256(f"{stage}|{canon}".encode("utf-8")).hexdigest()
+    return hashlib.sha256(f"{stage}|{canon}".encode()).hexdigest()
 
 
 async def get_cached(key: str) -> dict[str, Any] | None:

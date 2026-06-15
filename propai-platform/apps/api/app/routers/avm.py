@@ -10,8 +10,8 @@ avm_service = AVMService()
 
 class AVMRequest(BaseModel):
     pnu_code: str
-    features: Dict
-    comparables: List[Dict]
+    features: dict
+    comparables: list[dict]
     target_lat: float
     target_lon: float
 

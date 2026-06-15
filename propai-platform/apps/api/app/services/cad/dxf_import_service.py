@@ -30,7 +30,7 @@ logger = structlog.get_logger()
 # ── 단위 ──
 
 # $INSUNITS 코드 → (단위명, m 환산계수). 지원 외 코드/0(무단위)은 bbox 휴리스틱.
-_INSUNITS_TO_M: Dict[int, Tuple[str, float]] = {
+_INSUNITS_TO_M: dict[int, tuple[str, float]] = {
     1: ("inch", 0.0254),
     4: ("mm", 0.001),
     5: ("cm", 0.01),
@@ -42,7 +42,7 @@ _HEURISTIC_MM_THRESHOLD = 500.0
 
 # DXF 표준 레이어 → CAD2.0 셰이프 레이어 역매핑
 # (parametric_cad_service.SHAPE_LAYER_MAP의 역 — 왕복 시 레이어 보존)
-_DXF_LAYER_TO_SHAPE: Dict[str, str] = {
+_DXF_LAYER_TO_SHAPE: dict[str, str] = {
     "WALL": "outline",
     "WALL_INTERIOR": "wall",
     "DIM": "dim",
@@ -81,14 +81,14 @@ def _read_document(dxf_bytes: bytes) -> Any:
 
 def _extract_raw_entities(
     msp: Any, max_entities: int
-) -> Tuple[List[Dict[str, Any]], Dict[str, int], bool]:
+) -> tuple[list[dict[str, Any]], dict[str, int], bool]:
     """모델스페이스에서 지원 엔티티를 원시좌표(도면 단위)로 추출한다.
 
     반환: (raw 엔트리 목록, ignored {타입: 개수}, truncated 여부).
     개별 엔티티 결함은 전체 실패 대신 ignored로 계수(부분 성공 허용).
     """
-    raw: List[Dict[str, Any]] = []
-    ignored: Dict[str, int] = {}
+    raw: list[dict[str, Any]] = []
+    ignored: dict[str, int] = {}
     truncated = False
     scanned = 0
 
@@ -141,7 +141,7 @@ def _extract_raw_entities(
     return raw, ignored, truncated
 
 
-def _anchors_of(entry: Dict[str, Any]) -> List[Tuple[float, float]]:
+def _anchors_of(entry: dict[str, Any]) -> list[tuple[float, float]]:
     """bbox 정규화 기준 앵커 좌표 — create_dxf_from_edited_points와 동일 규약.
 
     폴리라인=꼭짓점, 선=양 끝점, 원=중심(반경 제외), 라벨=삽입점.
@@ -156,7 +156,7 @@ def _anchors_of(entry: Dict[str, Any]) -> List[Tuple[float, float]]:
     return [entry["pos"]]  # label
 
 
-def _detect_unit(doc: Any, anchors: List[Tuple[float, float]]) -> Tuple[str, float, str]:
+def _detect_unit(doc: Any, anchors: list[tuple[float, float]]) -> tuple[str, float, str]:
     """단위 확정: $INSUNITS 매핑 우선, 0/미상은 bbox 최대변 휴리스틱.
 
     반환: (단위명, m 환산계수, 출처 "insunits"|"heuristic").
@@ -181,7 +181,7 @@ def _detect_unit(doc: Any, anchors: List[Tuple[float, float]]) -> Tuple[str, flo
     return "m", 1.0, "heuristic"
 
 
-def _shoelace_area_px(points: List[Dict[str, float]]) -> float:
+def _shoelace_area_px(points: list[dict[str, float]]) -> float:
     """px 폴리곤의 신발끈 면적(절댓값)."""
     n = len(points)
     if n < 3:
@@ -194,7 +194,7 @@ def _shoelace_area_px(points: List[Dict[str, float]]) -> float:
     return abs(area2) / 2.0
 
 
-def _main_outline_index(shapes: List[Dict[str, Any]]) -> Optional[int]:
+def _main_outline_index(shapes: list[dict[str, Any]]) -> Optional[int]:
     """닫힌 폴리라인 중 신발끈 면적 최대 셰이프의 인덱스(메인 외곽선). 없으면 None."""
     best_idx: Optional[int] = None
     best_area = 0.0
@@ -212,7 +212,7 @@ def parse_dxf_to_shapes(
     dxf_bytes: bytes,
     scale_px_per_m: float = 10.0,
     max_entities: int = 5000,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """DXF 바이트를 CAD2.0 셰이프(px 좌표, 캔버스 y축 하향)로 파싱한다.
 
     - 좌표 변환: 도면단위 → m(단위 확정) → x_px=(x−minX)·scale,
@@ -250,13 +250,13 @@ def parse_dxf_to_shapes(
     else:
         min_x_m = max_x_m = min_y_m = max_y_m = 0.0
 
-    def to_px(raw_pt: Tuple[float, float]) -> Tuple[float, float]:
+    def to_px(raw_pt: tuple[float, float]) -> tuple[float, float]:
         x_m = raw_pt[0] * factor
         y_m = raw_pt[1] * factor
         return (round((x_m - min_x_m) * scale_px_per_m, 4),
                 round((max_y_m - y_m) * scale_px_per_m, 4))
 
-    shapes: List[Dict[str, Any]] = []
+    shapes: list[dict[str, Any]] = []
     for entry in raw:
         kind = entry["kind"]
         layer_raw = str(entry.get("layer") or "")

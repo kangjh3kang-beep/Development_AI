@@ -31,7 +31,7 @@ class DroneIoTService:
         self.db = db
         self.settings = get_settings()
 
-    async def _detect_defects(self, image_url: str) -> Union[list[dict], dict]:
+    async def _detect_defects(self, image_url: str) -> list[dict] | dict:
         """Roboflow API로 하자를 탐지한다.
 
         Returns:

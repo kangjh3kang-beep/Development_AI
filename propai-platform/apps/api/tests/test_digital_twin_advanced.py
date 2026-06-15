@@ -6,8 +6,8 @@ calculate_realtime_carbon 테스트.
 
 import os
 import sys
-from datetime import datetime, timezone
-UTC = timezone.utc
+from datetime import datetime, timezone, UTC
+UTC = UTC
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 

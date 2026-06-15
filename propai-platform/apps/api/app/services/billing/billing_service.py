@@ -15,13 +15,16 @@ LLM 실계측: 모든 LLM 호출은 llm_usage_log에 service 귀속으로 1건 I
 사용자 청구사용량에 누적된다.
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, UTC
 from typing import Any
 
+import structlog
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import json
+
+logger = structlog.get_logger(__name__)
 
 from app.core.billing import (
     TIER_BILLING,
@@ -120,7 +123,7 @@ async def ensure_cycle(db: AsyncSession, user_id: Any):
     tier, billed = row[0], float(row[1])
     budget, cycle = float(row[2]), row[3]
     monthly_base, topup = float(row[4]), float(row[5])
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     rollover = cycle is None or (cycle.year, cycle.month) != (now.year, now.month)
     if rollover and is_metered_tier(tier):
         monthly_base = tier_included_budget_krw(tier)  # 월기본만 리셋
@@ -244,21 +247,23 @@ async def record_usage_usd(
     if not is_metered_tier(tier):
         return None
     billed_before = float(row[1])
-    monthly_base, topup = float(row[3]), float(row[4])  # ensure_cycle 반환순서: (tier,billed,budget,base,topup)
+    monthly_base = float(row[3])  # ensure_cycle 반환순서: (tier,billed,budget,base,topup); topup(row[4])은 아래 원자 UPDATE에서 직접 차감
     rate = await get_usd_krw_rate()
     add = billed_krw(real_cost_usd, tier, rate)
 
     # 월기본 → 충전 차감순서: billed_after가 월기본을 넘는 초과분만 충전에서 차감.
     billed_after = billed_before + add
     topup_draw = max(0.0, billed_after - monthly_base) - max(0.0, billed_before - monthly_base)
-    new_topup = max(0.0, topup - topup_draw)
-
+    # P1-6: topup/budget 절댓값 쓰기(read-modify-write)는 동시 호출 시 lost-update → 원자 컬럼식 차감.
+    # billed는 이미 증분(COALESCE+:a). topup도 라이브 값에서 :draw 차감, budget=base+post-topup(=_sync_budget) 재계산.
     await db.execute(
         text(
             "UPDATE public.users SET llm_billed_krw = COALESCE(llm_billed_krw,0) + :a, "
-            "topup_krw = :t, billing_budget_krw = :b WHERE id=:id"
+            "topup_krw = GREATEST(0, COALESCE(topup_krw,0) - :draw), "
+            "billing_budget_krw = :base + GREATEST(0, COALESCE(topup_krw,0) - :draw) "
+            "WHERE id=:id"
         ),
-        {"a": add, "t": new_topup, "b": _sync_budget(monthly_base, new_topup), "id": str(user_id)},
+        {"a": add, "draw": topup_draw, "base": monthly_base, "id": str(user_id)},
     )
 
     if service:
@@ -326,7 +331,7 @@ async def token_usage(
     """
     await ensure_schema(db)
     days = max(1, min(int(days or 30), 365))
-    since = datetime.now(timezone.utc) - timedelta(days=days)
+    since = datetime.now(UTC) - timedelta(days=days)
     # ★platform_wide면 user_id 조건 제거(전체 집계). 식별자는 코드 상수라 SQL 인젝션 무관.
     user_cond = "" if platform_wide else "user_id=:id AND "
     params: dict[str, Any] = {"since": since}
@@ -455,8 +460,8 @@ async def load_config(db: AsyncSession, force: bool = False) -> None:
             cfg = row[0] if isinstance(row[0], dict) else json.loads(row[0])
             apply_config(cfg)
         _config_loaded = True
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as e:  # noqa: BLE001
+        logger.warning("빌링 설정 로드 실패 — 기본값 유지", err=str(e)[:160])
 
 
 async def save_config(db: AsyncSession, override: dict[str, Any]) -> dict[str, Any]:
@@ -527,10 +532,19 @@ async def charge_service(db: AsyncSession, user_id: Any, action: str) -> dict[st
     calc = compute_service_fee(tier, action, acount)
     fee = calc["fee_krw"]
     if action == "land_analysis" and calc.get("free"):
-        await db.execute(
-            text("UPDATE public.users SET analysis_count = COALESCE(analysis_count,0)+1 WHERE id=:id"),
-            {"id": str(user_id)},
+        # P2-3: read-check-increment TOCTOU 제거 — 원자 조건부 증가(한도 미만일 때만 +1).
+        quota = free_tier_analysis_quota(tier)
+        res = await db.execute(
+            text(
+                "UPDATE public.users SET analysis_count = COALESCE(analysis_count,0)+1 "
+                "WHERE id=:id AND COALESCE(analysis_count,0) < :quota"
+            ),
+            {"id": str(user_id), "quota": int(quota)},
         )
+        if (res.rowcount or 0) == 0:
+            # 동시호출 경쟁에서 졌음 — 이미 무료 한도 소진 → 유료로 정직 재계산(무료 초과 방지).
+            calc = {"fee_krw": free_tier_analysis_fee(tier), "free": False, "free_remaining": 0}
+            fee = calc["fee_krw"]
     if fee > 0:
         await db.execute(
             text("UPDATE public.users SET service_fee_krw = COALESCE(service_fee_krw,0)+:f WHERE id=:id"),
@@ -558,6 +572,6 @@ async def set_tier(db: AsyncSession, user_id: Any, tier: str) -> None:
             "billing_budget_krw=:b, billing_cycle_start=:c WHERE id=:id"
         ),
         {"t": tier, "m": monthly_base, "b": _sync_budget(monthly_base, topup),
-         "c": datetime.now(timezone.utc), "id": str(user_id)},
+         "c": datetime.now(UTC), "id": str(user_id)},
     )
     await db.commit()

@@ -5,7 +5,7 @@
 """
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 
 import pytest
 
@@ -77,7 +77,7 @@ class FakeSession:
 
 
 def _now():
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 # ── 월기본 → 충전 차감순서 ──
@@ -232,7 +232,7 @@ class TestMonthlyReset:
         from app.core.billing import tier_included_budget_krw
 
         # 지난달 사이클 → 리셋 트리거
-        last_month = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        last_month = datetime(2026, 1, 1, tzinfo=UTC)
         row = ("power", 9999.0, 14999.0, last_month, 9999.0, 5000.0)
         sess = FakeSession(responses=[("FROM public.users WHERE id", _FakeResult(row=row))])
         result = await bs.ensure_cycle(sess, "u1")

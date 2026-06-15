@@ -10,8 +10,8 @@ WebRTCService의 모든 메서드를 검증한다:
 
 import os
 import sys
-from datetime import datetime, timedelta, timezone
-UTC = timezone.utc
+from datetime import datetime, timedelta, timezone, UTC
+UTC = UTC
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 

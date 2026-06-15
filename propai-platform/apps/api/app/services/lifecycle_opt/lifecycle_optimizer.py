@@ -15,7 +15,7 @@ class LifecycleOptimizer:
 
     def optimize_replacement_schedule(self, total_construction_cost_krw: float,
                                        building_lifespan_years: int = 50,
-                                       discount_rate: float = 0.03) -> Dict:
+                                       discount_rate: float = 0.03) -> dict:
         schedule = {}
         total_pv = 0.0
         for component, lifespan in self.COMPONENT_LIFESPAN.items():

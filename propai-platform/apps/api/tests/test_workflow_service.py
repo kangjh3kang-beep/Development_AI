@@ -1,4 +1,7 @@
-import os, sys, uuid, pytest
+import os
+import sys
+import uuid
+import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
@@ -21,11 +24,11 @@ def _mock_workflow(**overrides):
     m.current_stage = overrides.get("current_stage", "init")
     m.stage_index = overrides.get("stage_index", 0)
     m.stages_json = overrides.get("stages_json", ["A", "B", "C"])
-    m.started_at = overrides.get("started_at", None)
-    m.completed_at = overrides.get("completed_at", None)
-    m.assigned_to = overrides.get("assigned_to", None)
+    m.started_at = overrides.get("started_at")
+    m.completed_at = overrides.get("completed_at")
+    m.assigned_to = overrides.get("assigned_to")
     m.status = overrides.get("status", "pending")
-    m.notes = overrides.get("notes", None)
+    m.notes = overrides.get("notes")
     return m
 
 

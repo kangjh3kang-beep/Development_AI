@@ -87,7 +87,7 @@ class TestAliasBackwardCompat:
             ("land", 3, False): (0.080, 0.0, 0.004, 0.006),
             ("land", 3, True): (0.120, 0.0, 0.004, 0.010),
         }
-        assert ACQUISITION_TAX_MATRIX == expected
+        assert expected == ACQUISITION_TAX_MATRIX
 
     def test_capital_gains_brackets_exact(self):
         assert CAPITAL_GAINS_BRACKETS == [
@@ -104,11 +104,11 @@ class TestAliasBackwardCompat:
     def test_land_comprehensive_constants_exact(self):
         assert LAND_COMPREHENSIVE_DEDUCTION_WON == 500_000_000
         assert LAND_FAIR_MARKET_RATIO == 1.0
-        assert LAND_COMPREHENSIVE_TAX_BRACKETS == [
+        assert [
             (1_500_000_000, 0.010, 0),
             (4_500_000_000, 0.020, 15_000_000),
             (float("inf"), 0.030, 60_000_000),
-        ]
+        ] == LAND_COMPREHENSIVE_TAX_BRACKETS
 
     def test_acquisition_rates_pinned(self):
         """기존 함수 경로 정답값(별칭 경유) 불변."""

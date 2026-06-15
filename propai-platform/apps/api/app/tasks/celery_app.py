@@ -21,7 +21,7 @@ BROKER_URL = os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0")
 RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", "redis://localhost:6379/1")
 
 
-def _create_app() -> "Celery":
+def _create_app() -> Celery:
     """Celery 앱 인스턴스를 생성한다."""
     if Celery is None:
         raise RuntimeError("celery 패키지가 설치되지 않았습니다.")
@@ -132,7 +132,7 @@ def _create_app() -> "Celery":
 
 
 # 모듈 레벨 앱 (celery가 설치된 경우에만)
-app: "Celery | None" = None
+app: Celery | None = None
 if Celery is not None:
     app = _create_app()
 

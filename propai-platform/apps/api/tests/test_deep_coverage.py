@@ -7,8 +7,8 @@ domain_agents, webrtc, routers 핸들러 내부 경로를 커버한다.
 
 import os
 import sys
-from datetime import datetime, timezone
-UTC = timezone.utc
+from datetime import datetime, timezone, UTC
+UTC = UTC
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4

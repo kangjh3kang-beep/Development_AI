@@ -841,7 +841,7 @@ def _enrich_interior(mass: dict[str, Any], building_use: str = "공동주택") -
     return mass
 
 
-def _resolve_mass(req: "BimGenerateRequest") -> dict[str, Any]:
+def _resolve_mass(req: BimGenerateRequest) -> dict[str, Any]:
     """요청에서 건축 매스를 확정한다. 매스 직접입력 우선, 없으면 대지정보로 자동산출.
 
     확정된 매스에 실내 요소(코어·복도·창호)를 _enrich_interior로 보강한다.

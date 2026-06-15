@@ -146,11 +146,11 @@ def simulate_far_scenarios(
     scenarios = list(DEFAULT_SCENARIOS)
     if zone_type in USE_BASED_FAR:
         scenarios.append(ScenarioInput(
-            f"용도용적제 (상업60%+주거40%)",
+            "용도용적제 (상업60%+주거40%)",
             use_mix={"상업": 0.6, "주거": 0.4},
         ))
         scenarios.append(ScenarioInput(
-            f"용도용적제 (상업40%+주거50%+업무10%)",
+            "용도용적제 (상업40%+주거50%+업무10%)",
             use_mix={"상업": 0.4, "주거": 0.5, "업무": 0.1},
         ))
 

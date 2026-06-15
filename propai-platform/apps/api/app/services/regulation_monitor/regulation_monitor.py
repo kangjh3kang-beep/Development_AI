@@ -18,7 +18,7 @@ MONITORED_LAWS = [
 class RegulationMonitorService:
     """40개 법령 변경 자동 감지 (법제처 API)"""
 
-    def check_for_changes(self, days_back: int = 7) -> List[Dict]:
+    def check_for_changes(self, days_back: int = 7) -> list[dict]:
         """동기 버전 — 모니터링 중인 법령 목록 반환."""
         return [
             {"law_name": law["name"], "law_id": law["id"], "critical": law["critical"],
@@ -26,7 +26,7 @@ class RegulationMonitorService:
             for law in MONITORED_LAWS
         ]
 
-    def assess_impact(self, project: Dict, changes: List[Dict]) -> Dict:
+    def assess_impact(self, project: dict, changes: list[dict]) -> dict:
         """프로젝트 영향도 평가."""
         impacts = []
         for c in changes:
@@ -41,7 +41,7 @@ class RegulationMonitorService:
             "project_id": project.get("project_id", ""),
         }
 
-    async def check_law_updates(self, days_back: int = 7) -> List[Dict]:
+    async def check_law_updates(self, days_back: int = 7) -> list[dict]:
         updated_laws = []
         cutoff_date = datetime.now() - timedelta(days=days_back)
         async with httpx.AsyncClient(timeout=30.0) as client:
@@ -69,7 +69,7 @@ class RegulationMonitorService:
                     logger.error("법규 변경 감지 실패", law=law["name"], error=str(e))
         return updated_laws
 
-    def analyze_impact(self, changed_laws: List[Dict]) -> Dict:
+    def analyze_impact(self, changed_laws: list[dict]) -> dict:
         high_impact = [l for l in changed_laws if l.get("impact_level") == "high"]
         return {
             "total_changes": len(changed_laws),

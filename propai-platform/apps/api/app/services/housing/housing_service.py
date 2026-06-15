@@ -5,7 +5,7 @@ from typing import Dict, List
 class HousingService:
     """분양 세대 생성 + 관리."""
 
-    def create_units(self, project_id: str, type_counts: Dict[str, int]) -> List[Dict]:
+    def create_units(self, project_id: str, type_counts: dict[str, int]) -> list[dict]:
         units = []
         seq = 1
         for unit_type, count in type_counts.items():

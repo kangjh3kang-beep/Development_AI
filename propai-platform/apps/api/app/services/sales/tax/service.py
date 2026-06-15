@@ -1,6 +1,6 @@
 """세무 — 지급명세서(수수료 원천징수 집계)/세금계산서(건물 과세·토지 면세). 산출/기록만, 제출은 어댑터+승인."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,7 +30,7 @@ async def issue_tax_invoice(db: AsyncSession, site_id, direction, counterparty_b
                             supply_amount, vat_amount, item):
     inv = SalesTaxInvoice(site_id=site_id, direction=direction, counterparty_biz_no=counterparty_biz_no,
                           supply_amount=supply_amount, vat_amount=vat_amount, item=item,
-                          issued_at=datetime.now(timezone.utc), status="DRAFT")
+                          issued_at=datetime.now(UTC), status="DRAFT")
     db.add(inv)
     await db.flush()
     return inv

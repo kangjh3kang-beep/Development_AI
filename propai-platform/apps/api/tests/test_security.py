@@ -5,8 +5,8 @@ CORS, JWT, Rate Limit, 인증 헤더 검증을 다룬다.
 
 import os
 import sys
-from datetime import datetime, timedelta, timezone
-UTC = timezone.utc
+from datetime import datetime, timedelta, timezone, UTC
+UTC = UTC
 from uuid import uuid4
 
 import pytest

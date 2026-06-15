@@ -6,7 +6,7 @@ Celery 미배포(결정) → async 함수로 제공. API 액션/기존 스케줄
 """
 
 import secrets
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -70,7 +70,7 @@ async def provision_site(db: AsyncSession, project_id, organization_id, site_nam
 
 # ── 배치 함수(스케줄러/수동 호출) ──
 async def expire_holds(db: AsyncSession, site_id, now: datetime | None = None) -> int:
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     holds = list((await db.execute(select(SalesUnitHold).where(
         SalesUnitHold.site_id == site_id, SalesUnitHold.expires_at < now))).scalars())
     n = 0

@@ -1,7 +1,7 @@
 """모델하우스 데스크 라우터 (sales_router 하위 /mh)."""
 
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, UTC
 
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy import select
@@ -65,7 +65,7 @@ async def desk_notify(body: dict, db: AsyncSession = Depends(get_db), ctx: Sales
 
 @mh_router.get("/stats")
 async def desk_stats(hours: int = 24, db: AsyncSession = Depends(get_db), ctx: SalesCtx = Depends(sales_ctx)):
-    until = datetime.now(timezone.utc)
+    until = datetime.now(UTC)
     since = until - timedelta(hours=hours)
     return await visit_stats(db, ctx.site_id, since, until)
 

@@ -1,6 +1,6 @@
 """개발 워크플로 관리 서비스."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 from uuid import UUID, uuid4
 
 from sqlalchemy import select
@@ -44,7 +44,7 @@ class WorkflowService:
             current_stage=stages[0] if stages else "init",
             stage_index=0,
             status="pending",
-            started_at=datetime.now(timezone.utc),
+            started_at=datetime.now(UTC),
         )
         self.db.add(record)
         await self.db.commit()
@@ -77,7 +77,7 @@ class WorkflowService:
 
         if next_index >= len(stages):
             record.status = "completed"
-            record.completed_at = datetime.now(timezone.utc)
+            record.completed_at = datetime.now(UTC)
         else:
             record.stage_index = next_index
             record.current_stage = stages[next_index]
@@ -100,7 +100,7 @@ class WorkflowService:
 
         record.status = status
         if status == "completed":
-            record.completed_at = datetime.now(timezone.utc)
+            record.completed_at = datetime.now(UTC)
         await self.db.commit()
         await self.db.refresh(record)
         return self._to_dict(record)

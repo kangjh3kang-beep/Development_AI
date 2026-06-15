@@ -41,7 +41,7 @@ class EnergyService:
         "default": 2.5,
     }
 
-    def simulate_energy(self, building_data: Dict, building_type: str = "apartment") -> Dict:
+    def simulate_energy(self, building_data: dict, building_type: str = "apartment") -> dict:
         area = building_data.get("total_area_sqm", 5000)
         floors = building_data.get("floors", 10)
         grade = building_data.get("insulation_grade", "standard")
@@ -72,7 +72,7 @@ class EnergyService:
             "building_type": building_type,
         }
 
-    def calculate_beec_rating(self, primary_energy_kwh_sqm_yr: float) -> Dict:
+    def calculate_beec_rating(self, primary_energy_kwh_sqm_yr: float) -> dict:
         grade = "7"
         for threshold, g in self.BEEC_GRADES:
             if primary_energy_kwh_sqm_yr < threshold:
@@ -80,14 +80,14 @@ class EnergyService:
                 break
         return {"primary_energy": primary_energy_kwh_sqm_yr, "grade": grade}
 
-    def calculate_peak_demand(self, annual_kwh: float, peak_factor: float = 2.5, building_type: str = "apartment") -> Dict:
+    def calculate_peak_demand(self, annual_kwh: float, peak_factor: float = 2.5, building_type: str = "apartment") -> dict:
         if peak_factor == 2.5:
             # Use building-type specific factor if caller didn't override
             peak_factor = self.PEAK_FACTORS.get(building_type, self.PEAK_FACTORS["default"])
         avg = annual_kwh / 8760
         return {"avg_demand_kw": round(avg, 2), "peak_demand_kw": round(avg * peak_factor, 2), "peak_factor": peak_factor}
 
-    def recommend_improvements(self, current_energy: Dict, building_type: str = "apartment") -> List[Dict]:
+    def recommend_improvements(self, current_energy: dict, building_type: str = "apartment") -> list[dict]:
         recommendations = []
         grade = current_energy.get("beec_grade", "5")
         kwh_sqm = current_energy.get("annual_kwh_per_sqm", 300)

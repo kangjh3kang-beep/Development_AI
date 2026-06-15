@@ -16,7 +16,7 @@ class PNURequest(BaseModel):
     address: str | None = None   # PNU 미보유 시 주소→PNU 지오코딩 폴백
 
 class MergeRequest(BaseModel):
-    pnu_codes: List[str]
+    pnu_codes: list[str]
 
 @router.post("/parcel/info")
 async def get_parcel_info(req: PNURequest, current_user: User = Depends(get_current_user)):

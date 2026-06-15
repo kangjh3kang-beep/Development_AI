@@ -18,7 +18,7 @@ class VWorldService:
     """VWORLD API (국토지리정보원) 연동 서비스"""
     BASE_URL = settings.VWORLD_BASE_URL
 
-    async def get_parcel_by_pnu(self, pnu_code: str) -> Optional[Dict]:
+    async def get_parcel_by_pnu(self, pnu_code: str) -> Optional[dict]:
         """PNU 코드로 필지 정보 조회"""
         params = {
             "service": "data",
@@ -43,7 +43,7 @@ class VWorldService:
                 logger.error("VWORLD 네트워크 오류", pnu=pnu_code, error=str(e))
                 return None
 
-    async def merge_parcels_gis_union(self, pnu_codes: List[str]) -> Optional[Dict]:
+    async def merge_parcels_gis_union(self, pnu_codes: list[str]) -> Optional[dict]:
         """다필지 GIS Union 통합 경계 산출"""
         geometries = []
         for pnu in pnu_codes:
@@ -67,7 +67,7 @@ class VWorldService:
     # 등록 도메인: developmentai-production.up.railway.app
     HEADERS = {"Referer": "https://www.4t8t.net"}
 
-    async def geocode_address(self, address: str) -> Optional[Dict]:
+    async def geocode_address(self, address: str) -> Optional[dict]:
         """주소를 좌표+PNU로 변환 (지오코딩).
 
         PARCEL 타입 우선 시도 (PNU 포함) → 실패 시 ROAD 타입 폴백.
@@ -129,7 +129,7 @@ class VWorldService:
                     continue
             return None
 
-    async def get_land_info(self, pnu: str) -> Optional[Dict]:
+    async def get_land_info(self, pnu: str) -> Optional[dict]:
         """PNU로 토지정보(지목, 면적, 소유구분, 이용상황, 공시지가) 조회"""
         if not settings.VWORLD_API_KEY:
             return None
@@ -177,7 +177,7 @@ class VWorldService:
                 logger.error("VWORLD 토지정보 조회 실패", pnu=pnu, error=str(e))
                 return None
 
-    async def get_parcel_by_point(self, lat: float, lon: float) -> Optional[Dict]:
+    async def get_parcel_by_point(self, lat: float, lon: float) -> Optional[dict]:
         """좌표(점)가 포함된 필지를 조회 (도로명주소 등 PNU 미확보 시 폴백).
 
         VWORLD 지적도 LP_PA_CBND_BUBUN에 geomFilter=POINT 질의 → pnu+geometry 반환.
@@ -211,7 +211,7 @@ class VWorldService:
         self,
         min_lon: float, min_lat: float, max_lon: float, max_lat: float,
         max_count: int = 100,
-    ) -> List[Dict]:
+    ) -> list[dict]:
         """bbox 내 필지 목록 조회 (geometry + 지목).
 
         연속지적도(LP_PA_CBND_BUBUN)에서 bbox에 걸치는 필지를 가져온다.
@@ -260,7 +260,7 @@ class VWorldService:
             logger.warning("bbox 필지 조회 실패: %s", str(e))
             return []
 
-    async def get_land_use_districts(self, pnu: str) -> List[Dict]:
+    async def get_land_use_districts(self, pnu: str) -> list[dict]:
         """PNU로 용도지구/구역 (UD802, UD803) 목록 조회"""
         results = []
         for data_code, category in [("LT_C_UD802", "용도지구"), ("LT_C_UD803", "용도구역")]:
@@ -294,7 +294,7 @@ class VWorldService:
                 pass  # 용도지구 없는 필지는 정상
         return results
 
-    async def get_land_use_zone(self, x: float, y: float) -> Optional[Dict]:
+    async def get_land_use_zone(self, x: float, y: float) -> Optional[dict]:
         """좌표 기반 용도지역 조회"""
         params = {
             "service": "data",
@@ -320,7 +320,7 @@ class VWorldService:
     # ── VWORLD NED API (공시지가, 토지이용계획) ──
     NED_BASE_URL = "https://api.vworld.kr/ned/data"
 
-    async def get_individual_land_price(self, pnu: str, year: int = 2025) -> Optional[Dict]:
+    async def get_individual_land_price(self, pnu: str, year: int = 2025) -> Optional[dict]:
         """PNU 기반 개별공시지가 조회.
 
         반환: { pnu, year, price_per_sqm, land_code, land_name, ... }
@@ -358,7 +358,7 @@ class VWorldService:
             logger.error("개별공시지가 조회 실패: %s (%s)", pnu, str(e))
             return None
 
-    async def get_land_characteristics(self, pnu: str, year: int = 2025) -> Optional[Dict]:
+    async def get_land_characteristics(self, pnu: str, year: int = 2025) -> Optional[dict]:
         """PNU 기반 토지특성정보 조회 (NED getLandCharacteristics).
 
         면적·지목·용도지역(1·2)·이용상황·도로접면·지형·공시지가를 한 번에 반환.
@@ -408,7 +408,7 @@ class VWorldService:
             logger.error("토지특성 조회 실패: %s (%s)", pnu, str(e))
             return None
 
-    async def get_land_use_plan(self, pnu: str) -> List[Dict]:
+    async def get_land_use_plan(self, pnu: str) -> list[dict]:
         """PNU 기반 토지이용계획 조회 (용도지역/지구/구역 + 기타 규제 전부).
 
         하나의 필지에 중첩된 모든 규제를 배열로 반환.
@@ -459,7 +459,7 @@ class VWorldService:
         zoom: int = 18,
         size: int = 512,
         basemap: str = "PHOTO",
-    ) -> Optional[Dict]:
+    ) -> Optional[dict]:
         """좌표 중심 정사영상(항공/위성) PNG 취득 (VWorld static image getmap).
 
         라이브 검증 결과: service=image&request=getmap, center=lon,lat(필수),

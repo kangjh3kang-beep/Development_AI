@@ -38,7 +38,7 @@ class ALRISService:
             self.vectorstore = FAISS.from_documents(chunks, self.embeddings)
             logger.info("법규 벡터 DB 초기화 완료", chunk_count=len(chunks))
 
-    def _load_legal_documents(self) -> List[Document]:
+    def _load_legal_documents(self) -> list[Document]:
         return [
             Document(page_content="""건축법 제56조 (건축물의 용적률)
             용도지역별 용적률 기준 (국토의 계획 및 이용에 관한 법률 제78조):
@@ -59,7 +59,7 @@ class ALRISService:
         ]
 
     async def check_compliance(self, zone_type: str, floor_area_ratio: float,
-                                building_coverage_ratio: float, height_m: float) -> Dict:
+                                building_coverage_ratio: float, height_m: float) -> dict:
         zone_rules = {
             "제1종전용주거지역": {"max_far": 100, "max_bcr": 40, "max_height": 10},
             "제2종전용주거지역": {"max_far": 150, "max_bcr": 50, "max_height": 12},
@@ -104,7 +104,7 @@ class ALRISService:
             "legal_basis": "건축법 제55조, 제56조"
         }
 
-    async def rag_legal_query(self, query: str) -> Dict:
+    async def rag_legal_query(self, query: str) -> dict:
         if not self.vectorstore:
             return {"answer": "법규 DB 초기화 필요", "sources": []}
         relevant_docs = self.vectorstore.similarity_search(query, k=3)

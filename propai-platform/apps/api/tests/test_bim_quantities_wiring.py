@@ -22,6 +22,7 @@ from fastapi.testclient import TestClient
 from app.routers.cost import _BIM_WORKCODE_TO_PRICE_KEY, router
 from app.services.cost.standard_quantity_estimator import UNIT_PRICES_2026
 from apps.api.database.session import get_db
+from datetime import UTC
 
 TEST_PROJECT_ID = str(uuid.uuid4())
 TEST_TENANT_ID = uuid.uuid4()
@@ -169,7 +170,7 @@ def _mock_db_with_refresh():
         if not getattr(obj, "id", None):
             obj.id = uuid.uuid4()
         if not getattr(obj, "created_at", None):
-            obj.created_at = datetime.now(tz=timezone.utc)
+            obj.created_at = datetime.now(tz=UTC)
 
     mock_db.refresh = AsyncMock(side_effect=_set_attrs)
     return mock_db

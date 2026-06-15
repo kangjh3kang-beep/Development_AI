@@ -345,7 +345,7 @@ class G2BBidAnalyzeResponse(BaseModel):
     analysis_warnings: list[str] = Field(default_factory=list)
 
     # ── LLM 자연어 해석 (정밀분석 + include_ai_interpretation=True 시 채워짐) ──
-    ai_interpretation: Optional["BidInterpretation"] = None
+    ai_interpretation: Optional[BidInterpretation] = None
 
 
 # ── 대시보드 통계 ──

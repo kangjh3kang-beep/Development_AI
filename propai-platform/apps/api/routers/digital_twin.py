@@ -22,6 +22,7 @@ from apps.api.auth.rbac import RequirePermission
 from apps.api.database.session import get_db
 from apps.api.services.asset_intelligence_service import AssetIntelligenceService
 from apps.api.services.digital_twin_status_service import DigitalTwinStatusService
+from datetime import UTC
 
 router = APIRouter()
 
@@ -123,7 +124,7 @@ async def get_digital_twin_anomalies(
 
     from apps.api.database.models.digital_twin_anomaly import DigitalTwinAnomaly
 
-    utc = timezone.utc
+    utc = UTC
     since = datetime.now(utc) - timedelta(days=30)
     query = select(DigitalTwinAnomaly).where(
         DigitalTwinAnomaly.tenant_id == current_user.tenant_id,

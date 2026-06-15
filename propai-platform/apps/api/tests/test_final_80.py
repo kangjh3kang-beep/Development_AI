@@ -7,8 +7,8 @@ bim_ifc analyze_ifc, 추가 라우터 엔드포인트를 커버한다.
 import os
 import random
 import sys
-from datetime import datetime, timezone
-UTC = timezone.utc
+from datetime import datetime, timezone, UTC
+UTC = UTC
 from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 from uuid import UUID, uuid4
 

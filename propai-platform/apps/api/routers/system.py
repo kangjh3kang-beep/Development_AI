@@ -1,7 +1,7 @@
 """System status and version endpoints."""
 
-from datetime import datetime, timezone
-UTC = timezone.utc
+from datetime import datetime, timezone, UTC
+UTC = UTC
 
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends

@@ -47,7 +47,7 @@ class FloorPlan:
     building_width_m: float
     building_depth_m: float
     floor_height_m: float
-    rooms: List[RoomSpec] = field(default_factory=list)
+    rooms: list[RoomSpec] = field(default_factory=list)
     core_count: int = 0
     corridor_width_m: float = 0.0
     unit_count: int = 0
@@ -64,7 +64,7 @@ class FloorPlan:
 @dataclass
 class BuildingFloorSet:
     """건물 전체 층별 평면 세트."""
-    floors: List[FloorPlan] = field(default_factory=list)
+    floors: list[FloorPlan] = field(default_factory=list)
     total_gross_area_sqm: float = 0.0
     total_parking_count: int = 0
     building_use: str = "공동주택"
@@ -94,7 +94,7 @@ class FloorTypeGenerator:
         parking_type: str = "자주식",
     ) -> BuildingFloorSet:
         """전체 층별 평면을 생성한다."""
-        floors: List[FloorPlan] = []
+        floors: list[FloorPlan] = []
 
         # ── 지하층 ──
         for bi in range(basement_floors, 0, -1):
@@ -173,7 +173,7 @@ class FloorTypeGenerator:
         basement_index: int,
         total_basements: int,
     ) -> FloorPlan:
-        rooms: List[RoomSpec] = []
+        rooms: list[RoomSpec] = []
         gross = building_width_m * building_depth_m
 
         # 기계실+전기실은 최하층에 배치
@@ -227,7 +227,7 @@ class FloorTypeGenerator:
         core_count: int,
         unit_width_m: float,
     ) -> FloorPlan:
-        rooms: List[RoomSpec] = []
+        rooms: list[RoomSpec] = []
         gross = building_width_m * building_depth_m
 
         if first_floor_use == "piloti":
@@ -291,7 +291,7 @@ class FloorTypeGenerator:
         corridor_width_m: float,
         core_count: int,
     ) -> FloorPlan:
-        rooms: List[RoomSpec] = []
+        rooms: list[RoomSpec] = []
         wt = 0.2  # 벽두께
 
         # 복도 면적
@@ -347,7 +347,7 @@ class FloorTypeGenerator:
         floor_height_m: float,
         core_count: int,
     ) -> FloorPlan:
-        rooms: List[RoomSpec] = []
+        rooms: list[RoomSpec] = []
         wt = 0.2
 
         # 펜트하우스: 기준층 대비 넓은 세대 (2배 폭)
@@ -410,7 +410,7 @@ class FloorTypeGenerator:
         area_per_slot = PARKING_AREA_SQM.get(parking_type, 33.0)
         return parking_count * area_per_slot
 
-    def to_summary(self, floor_set: BuildingFloorSet) -> Dict:
+    def to_summary(self, floor_set: BuildingFloorSet) -> dict:
         """층별 요약 정보를 반환한다."""
         return {
             "building_use": floor_set.building_use,

@@ -7,8 +7,8 @@
 import os
 import re
 import sys
-from datetime import datetime, timedelta, timezone
-UTC = timezone.utc
+from datetime import datetime, timedelta, timezone, UTC
+UTC = UTC
 from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 from uuid import UUID, uuid4
 

@@ -11,7 +11,7 @@ import math
 import os
 import sys
 import types
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 from types import SimpleNamespace
 
 import pytest
@@ -31,7 +31,7 @@ from app.services.feasibility.market_revaluation_service import (
     MarketRevaluationService,
 )
 
-UTC = timezone.utc
+UTC = UTC
 
 
 # ── 헬퍼: 가짜 MLflow 모듈 (호출 기록) ──

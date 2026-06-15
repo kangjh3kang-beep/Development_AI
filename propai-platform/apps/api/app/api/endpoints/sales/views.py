@@ -16,6 +16,7 @@ from apps.api.database.models.sales.units_pricing import (
 from apps.api.database.models.sales.commission_mh_harness import (
     SalesCommissionMaster, SalesCommissionDistribution,
 )
+from datetime import UTC
 
 views_router = APIRouter(tags=["sales-views"])
 
@@ -100,7 +101,7 @@ async def crm_grade_suggestions(db: AsyncSession = Depends(get_db), ctx: SalesCt
         SalesCustomer, SalesCustomerCall, SalesCustomerConsent, SalesCustomerConsultation,
     )
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     customers = list((await db.execute(select(SalesCustomer).where(
         SalesCustomer.site_id == ctx.site_id, SalesCustomer.deleted_at.is_(None)))).scalars())
     out = []
@@ -123,7 +124,7 @@ async def crm_grade_suggestions(db: AsyncSession = Depends(get_db), ctx: SalesCt
             score += 15; reasons.append("마케팅 수신동의")
         last = max((x.consulted_at for x in consults if x.consulted_at), default=None)
         if last:
-            days = (now - (last if last.tzinfo else last.replace(tzinfo=timezone.utc))).days
+            days = (now - (last if last.tzinfo else last.replace(tzinfo=UTC))).days
             if days <= 7:
                 score += 20; reasons.append("최근 7일 내 상담")
             elif days <= 30:

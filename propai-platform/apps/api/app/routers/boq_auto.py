@@ -196,7 +196,7 @@ def _call_adaptive(fn: Any, /, **kwargs: Any) -> Any:
     return fn(**{k: v for k, v in kwargs.items() if k in params})
 
 
-async def _invoke_draft_fn(fn: Any, req: "BoqDraftRequest") -> Any:
+async def _invoke_draft_fn(fn: Any, req: BoqDraftRequest) -> Any:
     """B2 함수(generate_draft/build_xlsx) 호출 — sync/async 모두 지원."""
     try:
         result = _call_adaptive(

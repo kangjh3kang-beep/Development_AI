@@ -1,7 +1,7 @@
 """Predictive maintenance service for G88."""
 
-from datetime import datetime, timezone
-UTC = timezone.utc
+from datetime import datetime, timezone, UTC
+UTC = UTC
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession

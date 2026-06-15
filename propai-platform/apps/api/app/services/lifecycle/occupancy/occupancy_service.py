@@ -5,7 +5,7 @@ from typing import Dict, List
 class OccupancyService:
     """입주자 관리 + 임대 + 공실률 추적."""
 
-    def register_tenant(self, unit_id: str, tenant_data: Dict) -> Dict:
+    def register_tenant(self, unit_id: str, tenant_data: dict) -> dict:
         return {
             "unit_id": unit_id,
             "tenant_name": tenant_data.get("name", ""),
@@ -16,7 +16,7 @@ class OccupancyService:
             "status": "active",
         }
 
-    def manage_lease(self, lease: Dict, action: str) -> Dict:
+    def manage_lease(self, lease: dict, action: str) -> dict:
         result = {**lease}
         if action == "renew":
             result["status"] = "renewed"
@@ -26,7 +26,7 @@ class OccupancyService:
             result["status"] = "extended"
         return result
 
-    def calculate_occupancy_rate(self, units: List[Dict]) -> Dict:
+    def calculate_occupancy_rate(self, units: list[dict]) -> dict:
         total = len(units)
         occupied = sum(1 for u in units if u.get("status") in ("occupied", "active"))
         vacant = total - occupied
@@ -36,7 +36,7 @@ class OccupancyService:
             "occupancy_rate": round(rate, 1), "vacancy_rate": round(100 - rate, 1),
         }
 
-    def track_rent_collection(self, payments: List[Dict]) -> Dict:
+    def track_rent_collection(self, payments: list[dict]) -> dict:
         total_due = sum(p.get("due", 0) for p in payments)
         total_paid = sum(p.get("paid", 0) for p in payments)
         outstanding = total_due - total_paid

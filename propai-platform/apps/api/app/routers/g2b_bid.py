@@ -21,9 +21,12 @@ from app.schemas.g2b_bid import (
     G2BBidResponse,
     G2BDashboardStats,
 )
+from app.services.auth.auth_service import get_current_user
 from app.services.g2b_bid_service import G2BBidService, build_detail_sections
 
-router = APIRouter(prefix="/g2b", tags=["공공입찰(G2B)"])
+# P1-3/P3-10 보안: g2b 전 라우트 인증 강제(무인증 분석 DELETE·sync 외부크롤+DB쓰기·analyze 차단).
+# g2b 모델에 소유자 컬럼 부재 → 테넌트 스코핑 불가, 최소 인증으로 익명 조작·삭제 차단.
+router = APIRouter(prefix="/g2b", tags=["공공입찰(G2B)"], dependencies=[Depends(get_current_user)])
 
 
 def _get_service(db: AsyncSession = Depends(get_db)) -> G2BBidService:

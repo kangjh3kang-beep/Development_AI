@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from typing import Dict, Any
 from app.core.database import get_db
+from app.services.auth.auth_service import get_current_user
 
 
 async def _fetch_project_lite(db: AsyncSession, project_id: str) -> dict | None:
@@ -26,10 +27,13 @@ async def _fetch_project_lite(db: AsyncSession, project_id: str) -> dict | None:
         "address": row[4],  # 분양가 지역시세(regional_pricing) 매칭용 — 없으면 None
     }
 
+# P1-1 보안: 전 라우트 인증 강제(무인증 IDOR — 임의 project_id 건축개요·수지·일정 노출 차단).
+# (projects 테이블에 organization_id가 없어 테넌트별 소유권 스코핑은 소유권/멤버십 모델 확립 후 후속.)
 router = APIRouter(
     prefix="/projects",
     tags=["project_dashboard"],
     responses={404: {"description": "Not found"}},
+    dependencies=[Depends(get_current_user)],
 )
 
 def _building_type_code(project_type: str | None) -> str:
@@ -87,7 +91,7 @@ async def _resolve_overview(db: AsyncSession, project_id: str, proj: dict) -> di
 
 
 @router.get("/{project_id}/bim-takeoff")
-async def get_bim_takeoff(project_id: str, db: AsyncSession = Depends(get_db)) -> Dict[str, Any]:
+async def get_bim_takeoff(project_id: str, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
     """실 QTO 엔진(/cost/estimate-overview)으로 프로젝트 건축개요 기반 항목별 물량·공사비 산출.
     (목업 고정배열 제거 — 프로젝트별 연면적·유형·설계 매스로 변별)"""
     proj = await _fetch_project_lite(db, project_id)
@@ -119,7 +123,7 @@ async def get_bim_takeoff(project_id: str, db: AsyncSession = Depends(get_db)) -
     }
 
 @router.post("/{project_id}/simulate-feasibility")
-async def run_feasibility_simulation(project_id: str, db: AsyncSession = Depends(get_db)) -> Dict[str, Any]:
+async def run_feasibility_simulation(project_id: str, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
     """실계산 사업성 시뮬레이션 (스텁 오케스트레이터 청산 — WP-11).
 
     - 공사비: /cost/estimate-overview와 동일 엔진(건축개요 적산) 재사용.
@@ -228,7 +232,7 @@ async def run_feasibility_simulation(project_id: str, db: AsyncSession = Depends
             "message": "프로젝트 분석 중 오류가 발생했습니다."
         }
 
-def _estimate_schedule(gfa_sqm: float, floors_above: int, floors_below: int) -> Dict[str, Any]:
+def _estimate_schedule(gfa_sqm: float, floors_above: int, floors_below: int) -> dict[str, Any]:
     """결정론적 공정 추정(표준공기 기반) — 실 Gantt 엔진 부재 시.
     규모(연면적·층수)로 총공기(월)를 산정하고 표준 공종 순서·비중으로 분배한다.
     프로젝트별로 결과가 달라지며, '추정(표준공기 기반)' 라벨로 정직 표기.
@@ -287,7 +291,7 @@ def _estimate_schedule(gfa_sqm: float, floors_above: int, floors_below: int) -> 
 
 
 @router.get("/{project_id}/construction/schedule")
-async def get_construction_schedule(project_id: str, db: AsyncSession = Depends(get_db)) -> Dict[str, Any]:
+async def get_construction_schedule(project_id: str, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
     """프로젝트 실데이터(연면적·층수·유형)로 결정론적 공정(공기) 추정.
     (목업 고정 task 제거 — 프로젝트별 변별. '추정(표준공기 기반)' 라벨)"""
     proj = await _fetch_project_lite(db, project_id)
