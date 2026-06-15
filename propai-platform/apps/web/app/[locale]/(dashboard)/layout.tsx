@@ -152,12 +152,16 @@ export default async function DashboardLayout({
     { href: `/${locale}/settings/lists`, label: "📋 편집 목록 관리", icon: <IconSRE /> },
   ];
 
+  // 자산 운영(임대·임차인/임차인포털/시설유지보수/디지털트윈)은 준공 후 운영 단계로,
+  // 현재 코어 워크플로우(개발→분양)와 단절돼 있고 미성숙해 네비에서 숨긴다.
+  // ★라우트·컴포넌트·assetOpsNavigation 정의는 보존 — 향후 운영단계 확장 시 아래 한 줄만 복원.
+  void assetOpsNavigation;
   const sections = [
     { title: "사업 검토", items: reviewNavigation },
     { title: "토지·자금", items: landFinanceNavigation },
     { title: "실행", items: executionNavigation },
     { title: "설계 참고", items: designNavigation },
-    { title: "자산 운영", items: assetOpsNavigation, assetOpsOnly: true },
+    // { title: "자산 운영", items: assetOpsNavigation, assetOpsOnly: true },  // 숨김(복원 시 주석 해제)
     { title: "관리", items: adminNavigation, adminOnly: true },
   ];
 

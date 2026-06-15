@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v186-nav-tenant-refactor";
+const CACHE_NAME = "propai-v187-hide-assetops";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",
