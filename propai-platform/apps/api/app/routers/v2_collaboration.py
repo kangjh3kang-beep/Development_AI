@@ -96,11 +96,19 @@ def _invite_out(inv, *, with_token: bool) -> InviteOut:
 @router.get("/projects/{project_id}/members", response_model=list[MemberOut])
 async def list_members(
     project_id: str,
-    _member=Depends(_require_member),
+    member=Depends(_require_member),
     db: AsyncSession = Depends(get_db),
 ):
-    """프로젝트 팀 멤버(내부+외부 게스트) 목록 — 활성 멤버만 조회 가능."""
+    """프로젝트 팀 멤버 목록. 외부 협력업체(external_reviewer)는 내부 팀 + 본인만(SP5 scope 연장 —
+    다른 외부 협력업체/경쟁사 명부 열람 차단). 내부 역할은 전체 조회."""
     members = await repo.list_members(db, uuid.UUID(project_id))
+    if member.project_role == "external_reviewer":
+        members = [
+            m
+            for m in members
+            if m.project_role != "external_reviewer"
+            or str(getattr(m, "user_id", "")) == str(getattr(member, "user_id", ""))
+        ]
     return [_member_out(m) for m in members]
 
 
