@@ -159,6 +159,28 @@ class Settings(BaseSettings):
     kakao_client_secret: str = ""
     kakao_redirect_uri: str = "http://localhost:3000/auth/kakao/callback"
 
+    # ── 구글 OAuth ──
+    google_client_id: str = Field(
+        default="",
+        validation_alias=AliasChoices("google_client_id", "GOOGLE_CLIENT_ID"),
+    )
+    google_client_secret: str = Field(
+        default="",
+        validation_alias=AliasChoices("google_client_secret", "GOOGLE_CLIENT_SECRET"),
+    )
+    google_redirect_uri: str = "http://localhost:3000/auth/google/callback"
+
+    # ── 네이버 OAuth ──
+    naver_client_id: str = Field(
+        default="",
+        validation_alias=AliasChoices("naver_client_id", "NAVER_CLIENT_ID"),
+    )
+    naver_client_secret: str = Field(
+        default="",
+        validation_alias=AliasChoices("naver_client_secret", "NAVER_CLIENT_SECRET"),
+    )
+    naver_redirect_uri: str = "http://localhost:3000/auth/naver/callback"
+
     # ── CORS ──
     cors_origins: str = Field(
         default="http://localhost:3000,http://localhost:3001,https://propai.kr,https://www.propai.kr,https://propai-web.pages.dev,https://4t8t.net,https://www.4t8t.net",

@@ -872,8 +872,29 @@ export function AuthWorkspaceClient({
                         type="button"
                         className="flex w-full items-center justify-center gap-2 rounded-[var(--radius-md)] px-4 py-2.5 text-sm font-semibold transition-all hover:brightness-95 active:scale-[0.98]"
                         style={{ backgroundColor: "#03C75A", color: "#FFFFFF" }}
-                        onClick={() => {
-                          window.location.href = `${process.env.NEXT_PUBLIC_API_URL || ""}/api/auth/naver/login`;
+                        onClick={async () => {
+                          try {
+                            // ★카카오와 동일 패턴: 현재 도메인 기준 콜백주소를 명시 전달해야
+                            //  토큰 교환 때와 정확히 일치한다(불일치=CSRF/redirect 오류).
+                            const redirectUri = `${window.location.origin}/${locale}/naver/callback`;
+                            // 서버가 client_id로 인가 URL을 조립해 반환(키 비노출) + state(CSRF) 발급.
+                            const res = await apiClient.get<{ url: string; state?: string }>(
+                              `/auth/naver/login-url?redirect_uri=${encodeURIComponent(redirectUri)}`,
+                              { useMock: false },
+                            );
+                            // ★네이버 state는 콜백에서 회신·검증해야 하므로 sessionStorage에 보관(CSRF 방지).
+                            if (res?.state) {
+                              window.sessionStorage.setItem("naver_oauth_state", res.state);
+                            }
+                            if (res?.url) window.location.href = res.url;
+                          } catch (error) {
+                            // 키 미등록(503) → 관리자 안내. 그 외도 동일 안내.
+                            const msg =
+                              error instanceof ApiClientError && error.status === 503
+                                ? "네이버 로그인 미설정(관리자 키 등록 필요)입니다."
+                                : "네이버 로그인 준비 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.";
+                            alert(msg);
+                          }
                         }}
                       >
                         <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="currentColor">
@@ -884,8 +905,23 @@ export function AuthWorkspaceClient({
                       <button
                         type="button"
                         className="flex w-full items-center justify-center gap-2 rounded-[var(--radius-md)] border border-[var(--line)] bg-white px-4 py-2.5 text-sm font-semibold text-black transition-all hover:bg-gray-50 active:scale-[0.98]"
-                        onClick={() => {
-                          window.location.href = `${process.env.NEXT_PUBLIC_API_URL || ""}/api/auth/google/login`;
+                        onClick={async () => {
+                          try {
+                            // ★카카오와 동일 패턴: 현재 도메인 기준 콜백주소 명시 전달(교환 시 1:1 일치).
+                            const redirectUri = `${window.location.origin}/${locale}/google/callback`;
+                            // 서버가 client_id로 인가 URL을 조립해 반환(키 비노출) → 이동.
+                            const res = await apiClient.get<{ url: string }>(
+                              `/auth/google/login-url?redirect_uri=${encodeURIComponent(redirectUri)}`,
+                              { useMock: false },
+                            );
+                            if (res?.url) window.location.href = res.url;
+                          } catch (error) {
+                            const msg =
+                              error instanceof ApiClientError && error.status === 503
+                                ? "구글 로그인 미설정(관리자 키 등록 필요)입니다."
+                                : "구글 로그인 준비 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.";
+                            alert(msg);
+                          }
                         }}
                       >
                         <svg viewBox="0 0 24 24" className="h-4 w-4" fill="currentColor">
