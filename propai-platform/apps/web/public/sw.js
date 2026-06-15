@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v187-hide-assetops";
+const CACHE_NAME = "propai-v188-social-login";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",
