@@ -52,7 +52,7 @@
 정직 경계(과대표기 금지 — 배포 공지 시 준수):
 - **8엔진 자동검증은 설계파일(DXF/IFC)만**. 보고서 PDF 등 문서는 8엔진 미투입(`unsupported`) — 사람 심의자가 review_state(요청→확인→처리완료)로 표기. UI 배지에 명시됨. "모든 협력업체 문서 자동검증"으로 표방 금지.
 - 8엔진은 결정론(orchestrator.run이 use_llm 폐기, LLM=0). site/params 없는 엔진은 정직 `skipped`.
-- **악성파일 스캔 미적용**(확장자+크기 30MB+magic-byte만). ClamAV 등은 범위 밖 — 운영 시 별도 검토 권장.
+- **악성파일 1차 차단 적용**(후속 `f20d1c0`): 실행/스크립트 시그니처(PE/ELF/Mach-O/shebang)+확장자(exe/dll/sh/jar…) 차단(`is_blocked_upload`). ClamAV급 종합스캔(zip내장·polyglot·SVG스크립트)은 여전히 범위 밖 — 운영 시 별도 레이어 권장. storage 업로드는 임의 문서형식 무제한이되 **실행·스크립트만 제외**.
 - 프론트 검증(trust-infra): 백엔드 협업 회귀 63 passed, document_audit 서비스 5, lib vitest 16, tsc 0·next build 0, 회의방 Playwright 스모크 1 passed(자료교환·8엔진 배지 포함).
 
 ## 6. 버그수정 + SP4(분석/저장 구분) + 보안 하드닝 (추가 푸시됨)
@@ -71,7 +71,7 @@
 
 ⚠️ **알려진 보안 한계(적대적 리뷰 — 정직 문서화, 운영 전 검토 권장):**
 - ✅ **external_reviewer 문서 scope** — **SP5(`c61f29e`)에서 수정**. ProjectMember.scope_categories(alembic **028**) 영속 + 목록 필터·문서별 404 가드. 외부 협력업체는 허용 심의범위 문서만 조회·심의·삭제 가능.
-- **magic-byte/악성파일 스캔 미적용**: 확장자+크기(30MB)+content_type만. 분석용 DXF/IFC는 parse 실패 시 audit failed로 일부 방어. 임의 저장 파일은 스캔 없음(ClamAV 등 별도 인프라 필요).
+- **악성파일 1차 차단(시그니처+확장자) 적용**(`f20d1c0`): `is_blocked_upload`가 실행/스크립트 차단. ClamAV급 심층스캔(zip내장·polyglot)은 미적용(별도 인프라 — 운영 권장). 분석용 DXF/IFC는 parse 실패 시 audit failed로 추가 방어.
 - **repo 함수 organization_id 미필터**: list/get/soft_delete_document는 app-level require_project_member·RLS(026/027)에 격리 의존(기존 SP2 list_members와 동일 아키텍처). dep 우회 시에만 위험.
 
 ## 7. 플랫폼 내부 문서 뷰어 (SP4-2·SP4-3 — 추가 푸시됨)
@@ -126,7 +126,18 @@
 
 정직 경계:
 - 권한은 결정론 규칙(`video_grant`: host=roomAdmin·발화, viewer=시청만 / `can_record`: host만). 멤버십은 require_project_member 1차.
-- **T6(원격감리 RemoteSupervisionRoom 전환)은 N/A** — 해당 컴포넌트는 어떤 페이지도 렌더하지 않는 고아(테스트 목만 참조). 공용 `LiveKitRoom`은 추후 배선 시 재사용 가능.
+- **T6(원격감리 RemoteSupervisionRoom 전환)은 완료**(`333e2a4`): 가짜 시뮬레이션 제거→공용 `LiveKitRoom` 재사용. 단 RemoteSupervisionRoom 자체는 여전히 페이지 미배선(고아) — 라우트 배선 시 실동작(STT 패널은 백엔드 미구현이라 `8fbf965`에서 '데모·STT 미구현' 정직 표기).
 
-## 11. 범위 경계
+## 11. 배포 준비 검증(deploy-readiness audit) 결과 + 후속 수정
+멀티에이전트 종합 검증(20 agents) — **판정 CONDITIONAL-GO → 후속 수정 후 GO**. critical/high 0.
+- 실측 통과: 백엔드 협업+livekit 회귀 **133 passed**, alembic 단일 head 030(024→030 선형), 프론트 tsc 0·vitest 42·next build 0, 라우터 배선·의존성 선언 정상.
+- 적대적 리뷰 실결함 → **trust-infra 후속 수정 완료(푸시됨)**:
+  - `8baac86` (A, 권한): require_project_member에서 명시적 suspended/removed/강등 멤버가 암묵 owner로 복원되던 권한상승 차단(명시 행 우선). PoC 재현→수정.
+  - `7394fda` (B, 정직): 녹화 정지가 egress 없음/실패에도 completed 표기 → failed로 정직화.
+  - `8fbf965` (C, 정직): 원격감리 STT 패널 mock을 '데모·STT 미구현' 표기.
+  - `0941b08` (D, 보안): list_members가 external_reviewer에 전체 명부 노출 → 내부팀+본인만.
+- 잔여(조치 불요/문서): 악성파일 1차 차단은 정직 표기됨(ClamAV급 미적용은 문서화). 
+- ⚠️**마이그레이션 디렉터리 주의**: 실제 마이그레이션은 `apps/api/database/migrations/versions/`(alembic.ini `script_location=database/migrations`). `apps/api/alembic/versions/`에는 레거시 004/005만 — 혼동 금지.
+
+## 12. 범위 경계
 - trust-infra는 배포 안 함. 배포·롤백·prod 환경변수는 배포 담당 책임.
