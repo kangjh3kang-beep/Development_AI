@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v181-commission-settlement";
+const CACHE_NAME = "propai-v182-map-fullscreen";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",
