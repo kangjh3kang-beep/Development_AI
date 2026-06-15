@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from typing import Dict, Any
 from app.core.database import get_db
+from app.services.auth.auth_service import get_current_user
 
 
 async def _fetch_project_lite(db: AsyncSession, project_id: str) -> dict | None:
@@ -26,10 +27,13 @@ async def _fetch_project_lite(db: AsyncSession, project_id: str) -> dict | None:
         "address": row[4],  # 분양가 지역시세(regional_pricing) 매칭용 — 없으면 None
     }
 
+# P1-1 보안: 전 라우트 인증 강제(무인증 IDOR — 임의 project_id 건축개요·수지·일정 노출 차단).
+# (projects 테이블에 organization_id가 없어 테넌트별 소유권 스코핑은 소유권/멤버십 모델 확립 후 후속.)
 router = APIRouter(
     prefix="/projects",
     tags=["project_dashboard"],
     responses={404: {"description": "Not found"}},
+    dependencies=[Depends(get_current_user)],
 )
 
 def _building_type_code(project_type: str | None) -> str:
