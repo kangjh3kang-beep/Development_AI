@@ -474,6 +474,24 @@ class PropAIOrchestrator:
 
     # ── 메인 실행 ──
 
+    async def _verify_project_tenant(self, project_id: UUID, tenant_id: UUID) -> bool:
+        """프로젝트가 해당 테넌트 소유인지 확인 — 교차 테넌트 실행 차단(fail-closed).
+
+        canonical projects 테이블은 tenant_id 컬럼(database/models/project.py, TenantMixin)이며
+        JWT(state.tenant_id)와 동일 식별자다. 예외 시 False(보안 기본=차단).
+        """
+        from sqlalchemy import text
+
+        try:
+            row = (await self.db.execute(
+                text("SELECT 1 FROM projects WHERE id = :pid AND tenant_id = :tid"),
+                {"pid": str(project_id), "tid": str(tenant_id)},
+            )).first()
+            return row is not None
+        except Exception:  # noqa: BLE001 — 검증 실패는 차단(fail-closed)
+            logger.warning("프로젝트 테넌트 검증 실패", project_id=str(project_id))
+            return False
+
     async def run(
         self,
         project_id: UUID,
@@ -482,6 +500,19 @@ class PropAIOrchestrator:
         """7단계 파이프라인을 실행하며 각 단계를 SSE로 스트리밍한다."""
         logger.info("오케스트레이터 시작", project_id=str(project_id))
         state = OrchestratorState(project_id, tenant_id)
+
+        # P1-2 보안: 프로젝트가 요청 테넌트 소유인지 게이트 — 불일치 시 파이프라인 미실행(교차 테넌트 차단).
+        if not await self._verify_project_tenant(project_id, tenant_id):
+            logger.warning("교차 테넌트 오케스트레이터 차단",
+                           project_id=str(project_id), tenant_id=str(tenant_id))
+            yield AgentStepEvent(
+                step_index=0,
+                step_name="auth",
+                status="error",
+                progress_pct=0.0,
+                error_message="해당 프로젝트에 대한 권한이 없습니다(테넌트 불일치).",
+            )
+            return
 
         for i, step_name in enumerate(STEPS):
             # 시작 이벤트
