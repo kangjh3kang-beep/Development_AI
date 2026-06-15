@@ -15,6 +15,7 @@ from app.services.collaboration.collaboration_rules import (
     normalize_purpose,
     analysis_allows_kind,
     document_in_scope,
+    is_blocked_upload,
     REVIEW_STATES,
 )
 
@@ -101,6 +102,27 @@ class TestUploadPurpose:
     def test_analysis_allows_only_design(self):
         assert analysis_allows_kind("design") is True
         assert analysis_allows_kind("document") is False
+
+
+class TestBlockedUpload:
+    """악성/실행 파일 1차 차단(시그니처+확장자) — 정상 문서·이미지·설계파일은 통과."""
+
+    def test_blocks_executable_signatures(self):
+        assert is_blocked_upload(b"MZ\x90\x00", "a.bin") is True       # Windows PE
+        assert is_blocked_upload(b"\x7fELF\x02", "a.bin") is True       # Linux ELF
+        assert is_blocked_upload(b"\xca\xfe\xba\xbe", "a.bin") is True   # Mach-O fat/java
+        assert is_blocked_upload(b"#!/bin/sh\n", "a") is True            # shebang
+
+    def test_blocks_executable_extensions(self):
+        for name in ("x.exe", "x.DLL", "x.bat", "x.sh", "x.msi", "x.jar", "x.ps1"):
+            assert is_blocked_upload(b"%PDF-1.4", name) is True          # 확장자 우선 차단
+
+    def test_allows_legitimate_files(self):
+        assert is_blocked_upload(b"%PDF-1.7\n...", "report.pdf") is False
+        assert is_blocked_upload(b"\x89PNG\r\n\x1a\n", "photo.png") is False
+        assert is_blocked_upload(b"PK\x03\x04....", "doc.docx") is False  # zip기반 문서 통과
+        assert is_blocked_upload(b"0\nSECTION\n...", "plan.dxf") is False
+        assert is_blocked_upload(b"", "empty.pdf") is False              # 빈 데이터는 별도 처리
 
 
 class TestDocumentScope:

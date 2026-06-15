@@ -81,6 +81,34 @@ def analysis_allows_kind(doc_kind: str) -> bool:
     return doc_kind == "design"
 
 
+# 악성/실행 파일 1차 차단 — 실행 확장자(zip기반 .jar 포함)·실행 시그니처. ClamAV 아님(시그니처 기반).
+_BLOCKED_UPLOAD_EXTS = (
+    "exe", "dll", "so", "dylib", "bat", "cmd", "com", "scr", "msi", "sh", "ps1", "jar", "app",
+)
+
+
+def is_blocked_upload(data: bytes, filename: str) -> bool:
+    """업로드 파일이 실행/스크립트(악성 가능)인지 — 1차 차단(저장용 무제한 의도는 정상 문서엔 유지).
+
+    실행 확장자 또는 실행 시그니처(PE 'MZ'/ELF/Mach-O/shebang '#!')면 차단. zip기반 문서(docx/xlsx/
+    hwpx PK)·PDF·이미지·DXF 등 정상 형식은 통과. 빈 데이터는 차단 아님(빈파일 검증은 별도).
+    """
+    name = (filename or "").lower()
+    ext = name.rsplit(".", 1)[-1] if "." in name else ""
+    if ext in _BLOCKED_UPLOAD_EXTS:
+        return True
+    head = (data or b"")[:4]
+    if head[:2] == b"MZ":  # Windows PE(.exe/.dll)
+        return True
+    if head == b"\x7fELF":  # Linux ELF
+        return True
+    if head in (b"\xfe\xed\xfa\xce", b"\xfe\xed\xfa\xcf", b"\xca\xfe\xba\xbe", b"\xcf\xfa\xed\xfe"):
+        return True  # Mach-O / fat binary / java class
+    if (data or b"")[:2] == b"#!":  # shell/script shebang
+        return True
+    return False
+
+
 def document_in_scope(project_role: str, member_scope, doc_category) -> bool:
     """문서가 멤버의 허용 범위 안인지 — 외부 협력업체(external_reviewer)만 scope 제한(보안).
 

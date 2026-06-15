@@ -195,6 +195,14 @@ class TestUploadDocument:
         r = _upload(client, filename="empty.pdf", content_type="application/pdf", content=b"")
         assert r.status_code == 400
 
+    def test_executable_rejected_400(self, monkeypatch):
+        # 실행 시그니처(PE) 또는 실행 확장자 → 400(악성파일 1차 차단)
+        client = _build_client(monkeypatch)
+        assert _upload(client, filename="x.pdf", content_type="application/pdf",
+                       content=b"MZ\x90\x00evil").status_code == 400
+        assert _upload(client, filename="setup.exe", content_type="application/octet-stream",
+                       content=b"anything").status_code == 400
+
     def test_filename_path_stripped(self, monkeypatch):
         # 경로 traversal·표시 위조 차단 — basename만 보관
         client = _build_client(monkeypatch)

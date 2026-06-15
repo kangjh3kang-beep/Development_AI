@@ -41,6 +41,7 @@ from app.services.collaboration.collaboration_rules import (
     classify_doc_kind,
     document_in_scope,
     is_allowed_review_transition,
+    is_blocked_upload,
     normalize_document_category,
     normalize_purpose,
 )
@@ -219,6 +220,8 @@ async def upload_project_document(
         raise HTTPException(status_code=400, detail="빈 파일입니다.")
     if len(data) > _MAX_DOC_BYTES:
         raise HTTPException(status_code=413, detail="문서가 너무 큽니다(최대 30MB).")
+    if is_blocked_upload(data, filename):
+        raise HTTPException(status_code=400, detail="실행·스크립트 파일은 업로드할 수 없습니다.")
 
     doc_kind = classify_doc_kind(file.content_type, filename)
     run_audit = purpose == "analysis" and doc_kind == "design"
