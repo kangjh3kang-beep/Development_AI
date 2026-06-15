@@ -27,8 +27,8 @@ import { FeasibilityDashboard } from "@/components/feasibility/FeasibilityDashbo
 import { AnalysisModuleSelector, type AnalysisModuleOption } from "@/components/common/AnalysisModuleSelector";
 import { DemographicPanel } from "@/components/operations/market/DemographicPanel";
 import { PricingBandPanel } from "@/components/operations/market/PricingBandPanel";
+import { RawDataTables, type RawData } from "@/components/operations/market/RawDataTables";
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
 // PDF/PPTX 바이너리 다운로드용 API 베이스 (api-client 로직 미러)
 function marketApiBase(): string {
   if (typeof window !== "undefined") {
@@ -186,6 +186,8 @@ type Balance = {
   topup_remaining: number;
   markup_pct: number;
   unlimited?: boolean; // 비과금 등급(super_admin 등) — 코인 게이트 면제
+  // 관리자가 설정한 분석 모듈 사용료 맵(미설정 시 빈 dict = 전부 무료).
+  module_fees?: Record<string, number>;
 };
 
 const won = (n: number) => (n ?? 0).toLocaleString("ko-KR") + "원";
@@ -197,6 +199,21 @@ function MetricTile({ label, value, accent = false }: { label: string; value: st
     <div className={`sa-di-tile${accent ? " sa-di-tile--accent" : ""}`}>
       <span className="sa-di-tile__label">{label}</span>
       <span className="sa-di-tile__value">{value || "-"}</span>
+    </div>
+  );
+}
+
+/* ── 섹션 구분 헤더 ──
+   보고서를 "실데이터(RAW) → 분석(ANALYSIS)" 두 구간으로 시각 분리한다.
+   토큰 색만 사용한 단순 divider + eyebrow 라벨(과한 장식 금지). */
+function SectionDivider({ kr, en }: { kr: string; en: string }) {
+  return (
+    <div className="mt-2 flex items-center gap-3">
+      <div className="flex flex-col">
+        <span className="sa-di-eyebrow">{en}</span>
+        <span className="text-base font-black text-[var(--text-primary)]">{kr}</span>
+      </div>
+      <div className="h-px flex-1 bg-[var(--line)]" aria-hidden />
     </div>
   );
 }
@@ -216,11 +233,18 @@ export function MarketInsightsWorkspaceClient() {
   const [mapPayload, setMapPayload] = useState<NearbyMapPayload | null>(null);
   const [mapLoading, setMapLoading] = useState(false);
   const [report, setReport] = useState<any | null>(null);
-  const [genState, setGenState] = useState<"" | "report" | "pdf" | "pptx">("");
+  const [genState, setGenState] = useState<"" | "report" | "pdf" | "pptx" | "docx">("");
   const [useLlm, setUseLlm] = useState(true);
-  const [analysisOptions, setAnalysisOptions] = useState({
-    sgis: false,
-    kosis: false,
+  // 선택 상태(말단 항목 기준 평탄 boolean 맵). 분류 sgis/kosis는 자식들에서 파생해 전송한다.
+  //   population(인구/가구) 자식: pop_age / pop_household / pop_migration
+  //   income(거시 소득) 자식: income_avg / income_basis
+  //   katlas: 마이크로 타겟팅(프리미엄)
+  const [analysisOptions, setAnalysisOptions] = useState<Record<string, boolean>>({
+    pop_age: false,
+    pop_household: false,
+    pop_migration: false,
+    income_avg: false,
+    income_basis: false,
     katlas: false,
   });
   const [error, setError] = useState("");
@@ -249,21 +273,72 @@ export function MarketInsightsWorkspaceClient() {
   // ── 선택형 분석 모듈 카탈로그(공용 AnalysisModuleSelector 주입용) ──
   // 사용자 핵심지침 "선택형 상세분석을 전 시스템 기본으로" — 필요한 모듈만 체크→선택분만 실행·과금.
   // coinCost/estimatedSeconds는 선택 수→예상 코인·시간 실시간 표시에 사용(안내용 추정치).
+  //   각 항목 coinCost는 하드코딩 금지 → 관리자 설정값(balance.module_fees)에서 채운다.
+  //   관리자 미설정 시 0 → 셀렉터가 "추가 비용 없음"으로 표기(허위 표시값 제거).
+  const fee = useCallback((k: string) => balance?.module_fees?.[k] ?? 0, [balance]);
   const analysisModules: AnalysisModuleOption[] = useMemo(() => [
     { key: "base", label: "기본 부동산 분석", description: "주변 실거래·AI 시세·입지 인프라", required: true, estimatedSeconds: 8 },
-    { key: "sgis", label: "인구/가구 분석 (SGIS)", description: "인구 이동망·연령/가구 구성비", coinCost: 300, estimatedSeconds: 5 },
-    { key: "kosis", label: "거시 소득 지표 (KOSIS)", description: "시군구 평균·중위 연소득", coinCost: 300, estimatedSeconds: 5 },
-    { key: "katlas", label: "마이크로 타겟팅", description: "초정밀 금융·소비 데이터 (K-Atlas)", locked: !isPremiumUser, coinCost: 2000, estimatedSeconds: 6, lockedCtaLabel: "프리미엄 전용" },
-  ], [isPremiumUser]);
+    {
+      key: "population", label: "인구/가구 분석", description: "유입 인구와 가구 구성을 분석",
+      children: [
+        { key: "pop_age", label: "연령·인구 분포", description: "연령대별 인구 구성비", coinCost: fee("pop_age"), estimatedSeconds: 3 },
+        { key: "pop_household", label: "가구원수·가구 구성", description: "1~4인+ 가구 구성비", coinCost: fee("pop_household"), estimatedSeconds: 3 },
+        { key: "pop_migration", label: "전입·전출·순이동", description: "지역 인구 유입세(순이동)", coinCost: fee("pop_migration"), estimatedSeconds: 4 },
+      ],
+    },
+    {
+      key: "income", label: "거시 소득 지표", description: "지역 소득 수준으로 지불여력 추정",
+      children: [
+        { key: "income_avg", label: "평균 연소득", description: "시군구 평균 연소득", coinCost: fee("income_avg"), estimatedSeconds: 3 },
+        { key: "income_basis", label: "산출근거(인원·총급여)", description: "근로소득 인원·총급여 원천", coinCost: fee("income_basis"), estimatedSeconds: 2 },
+      ],
+    },
+    { key: "katlas", label: "마이크로 타겟팅", description: "초정밀 금융·소비 데이터 (K-Atlas)", locked: !isPremiumUser, coinCost: fee("katlas"), estimatedSeconds: 6, lockedCtaLabel: "프리미엄 전용" },
+  ], [isPremiumUser, fee]);
 
-  // 선택 변경 — 공용 컴포넌트의 selected 맵을 analysisOptions(sgis/kosis/katlas)로 반영.
+  // 선택 변경 — 공용 컴포넌트의 selected 맵을 그대로 반영(말단 항목 평탄 맵).
   const onModulesChange = useCallback((next: Record<string, boolean>) => {
-    setAnalysisOptions({ sgis: !!next.sgis, kosis: !!next.kosis, katlas: !!next.katlas });
+    setAnalysisOptions({
+      pop_age: !!next.pop_age,
+      pop_household: !!next.pop_household,
+      pop_migration: !!next.pop_migration,
+      income_avg: !!next.income_avg,
+      income_basis: !!next.income_basis,
+      katlas: !!next.katlas,
+    });
   }, []);
-  // 전체 자동분석 — 가능한 모듈 전부 선택(잠금 모듈은 프리미엄일 때만).
+  // 전체 자동분석 — 가능한 항목 전부 선택(잠금 모듈은 프리미엄일 때만).
   const onSelectAll = useCallback(() => {
-    setAnalysisOptions({ sgis: true, kosis: true, katlas: isPremiumUser });
+    setAnalysisOptions({
+      pop_age: true,
+      pop_household: true,
+      pop_migration: true,
+      income_avg: true,
+      income_basis: true,
+      katlas: isPremiumUser,
+    });
   }, [isPremiumUser]);
+
+  // 백엔드 build_report 전송용 옵션 payload — 하위호환 sgis/kosis(분류 단위) + 신규 detail(세부).
+  //   sgis = 인구/가구 분류 중 하나라도 켜짐, kosis = 소득 분류 중 하나라도 켜짐.
+  //   기존 백엔드 분기(sgis/kosis boolean)는 그대로 동작하고, detail은 추가 정보로 전달한다.
+  const buildOptionsPayload = useCallback(() => {
+    const o = analysisOptions;
+    const sgis = !!(o.pop_age || o.pop_household || o.pop_migration);
+    const kosis = !!(o.income_avg || o.income_basis);
+    return {
+      sgis,
+      kosis,
+      katlas: !!o.katlas,
+      detail: {
+        pop_age: !!o.pop_age,
+        pop_household: !!o.pop_household,
+        pop_migration: !!o.pop_migration,
+        income_avg: !!o.income_avg,
+        income_basis: !!o.income_basis,
+      },
+    };
+  }, [analysisOptions]);
 
   // 코인 잔액(월기본+충전) 안내용 — 차감은 백엔드(BaseInterpreter)가 LLM 호출 시 자동 처리.
   useEffect(() => {
@@ -296,7 +371,7 @@ export function MarketInsightsWorkspaceClient() {
     setGenState("report");
     try {
       const r = await apiClient.post<any>("/market/report", {
-        body: { address, pnu: siteAnalysis?.pnu || undefined, use_llm: useLlm, options: analysisOptions },
+        body: { address, pnu: siteAnalysis?.pnu || undefined, use_llm: useLlm, options: buildOptionsPayload() },
         useMock: false, timeoutMs: 120000,
       });
       setReport(r);
@@ -309,10 +384,10 @@ export function MarketInsightsWorkspaceClient() {
     } finally {
       setGenState("");
     }
-  }, [address, siteAnalysis?.pnu, useLlm]);
+  }, [address, siteAnalysis?.pnu, useLlm, buildOptionsPayload]);
 
   // PDF/PPTX 다운로드(바이너리)
-  const downloadReport = useCallback(async (fmt: "pdf" | "pptx") => {
+  const downloadReport = useCallback(async (fmt: "pdf" | "pptx" | "docx") => {
     if (!address) return;
     setGenState(fmt);
     try {
@@ -320,7 +395,8 @@ export function MarketInsightsWorkspaceClient() {
       const res = await fetch(`${marketApiBase()}/market/report/${fmt}`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-        body: JSON.stringify({ address, pnu: siteAnalysis?.pnu || undefined, use_llm: useLlm }),
+        // ★다운로드도 options를 포함해야 PDF/PPTX에 인구·소득 데이터가 누락되지 않는다(미리보기와 동일 payload).
+        body: JSON.stringify({ address, pnu: siteAnalysis?.pnu || undefined, use_llm: useLlm, options: buildOptionsPayload() }),
       });
       if (!res.ok) throw new Error(String(res.status));
       const blob = await res.blob();
@@ -335,7 +411,7 @@ export function MarketInsightsWorkspaceClient() {
     } finally {
       setGenState("");
     }
-  }, [address, siteAnalysis?.pnu, useLlm]);
+  }, [address, siteAnalysis?.pnu, useLlm, buildOptionsPayload]);
 
   return (
     <section className="grid gap-6">
@@ -414,7 +490,7 @@ export function MarketInsightsWorkspaceClient() {
       {/* 주변 실거래 지도 — 단일 데이터원(payload를 부모와 공유), 주소/pnu 직접 주입 */}
       <NearbyTransactionsMap address={address} pnu={mapPnu} onPayload={setMapPayload} onLoading={setMapLoading} />
 
-      {/* 시장조사보고서 생성 (PDF / PPT) */}
+      {/* 시장조사보고서 생성 트리거 (미리보기/PDF/PPT) — 분석 실행 버튼(기능 영역) */}
       {address && (
         <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
           <CardContent className="p-6">
@@ -441,51 +517,14 @@ export function MarketInsightsWorkspaceClient() {
                   className="whitespace-nowrap rounded-xl bg-gradient-to-r from-[var(--accent-strong)] to-[var(--data-accent)] px-4 py-2 text-xs font-black text-white hover:opacity-90 disabled:opacity-50">
                   {genState === "pptx" ? "PPT 생성 중…" : "PPT 다운로드"}
                 </button>
+                <button onClick={() => downloadReport("docx")} disabled={!!genState}
+                  className="whitespace-nowrap rounded-xl border border-[var(--line-strong)] px-4 py-2 text-xs font-bold text-[var(--text-secondary)] hover:border-[var(--accent-strong)] disabled:opacity-50">
+                  {genState === "docx" ? "DOCX 생성 중…" : "DOCX 다운로드"}
+                </button>
               </div>
             </div>
-
-            {report && (
-              <div className="mt-5 space-y-4 border-t border-[var(--line)] pt-4">
-                <div>
-                  <p className="sa-di-eyebrow">MARKET SUMMARY · 시장 요약</p>
-                  <p className="mt-1.5 text-sm leading-relaxed text-[var(--text-secondary)]">{report.narrative?.summary || "-"}</p>
-                </div>
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div>
-                    <p className="sa-di-eyebrow">OPPORTUNITIES · 기회 요인</p>
-                    <ul className="mt-1.5 space-y-0.5 text-xs text-[var(--text-secondary)]">
-                      {(report.narrative?.opportunities || []).map((o: string, i: number) => <li key={i}>· {o}</li>)}
-                    </ul>
-                  </div>
-                  <div>
-                    <p className="sa-di-eyebrow" style={{ color: "var(--status-warning)" }}>RISKS · 리스크 요인</p>
-                    <ul className="mt-1.5 space-y-0.5 text-xs text-[var(--text-secondary)]">
-                      {(report.narrative?.risks || []).map((r: string, i: number) => <li key={i}>· {r}</li>)}
-                    </ul>
-                  </div>
-                </div>
-                {report.narrative?.price_trend && (
-                  <div>
-                    <p className="sa-di-eyebrow">PRICE TREND · 가격 동향</p>
-                    <p className="mt-1.5 text-sm leading-relaxed text-[var(--text-secondary)]">{report.narrative.price_trend}</p>
-                  </div>
-                )}
-                {report.narrative?.target_persona && (
-                  <div className="rounded-xl border border-[var(--accent-strong)]/30 bg-[var(--accent-strong)]/5 p-4">
-                    <p className="sa-di-eyebrow text-[var(--accent-strong)]">TARGET PERSONA · 추천 타겟 고객층</p>
-                    <p className="mt-1 text-sm font-bold leading-relaxed text-[var(--text-primary)]">{report.narrative.target_persona}</p>
-                  </div>
-                )}
-              </div>
-            )}
           </CardContent>
         </Card>
-      )}
-
-      {/* AI 검증 + 전문가 패널 (보고서 생성 시) */}
-      {report && <VerificationBadge analysisType="market" context={report as unknown as Record<string, unknown>} />}
-      {report && (
-        <ExpertPanelCard analysisType="market" address={address} context={report as unknown as Record<string, unknown>} />
       )}
 
       {/* 에러 */}
@@ -495,34 +534,11 @@ export function MarketInsightsWorkspaceClient() {
         </div>
       )}
 
-      {/* AI 시세 추정 — 데이터 인텔리전스 metric 블록 */}
-      <div className="sa-di-block">
-        <header className="sa-di-block__head" style={{ cursor: "default" }}>
-          <span className="sa-di-block__icon" aria-hidden>₩</span>
-          <span className="sa-di-block__title">AI 시세 추정</span>
-          <span className="sa-di-eyebrow">AVM · ESTIMATE</span>
-        </header>
-        <div className="sa-di-block__body">
-          {results?.avm ? (
-            <>
-              <div className="sa-di-tiles sa-di-tiles--4">
-                {/* 추정 시세만 accent — 핵심 KPI 1개 강조 */}
-                <MetricTile label="추정 시세 (84㎡)" value={formatCurrency(results.avm.estimated_price)} accent />
-                <MetricTile label="㎡당 시세" value={formatCurrency(results.avm.price_per_sqm)} />
-                <MetricTile label="신뢰도" value={`${(results.avm.confidence_score * 100).toFixed(0)}%`} />
-                <MetricTile label="비교 사례" value={`${results.avm.comparable_count.toLocaleString()}건`} />
-              </div>
-              <p className="mt-3 text-[11px] text-[var(--text-hint)]">※ 주변 아파트 실거래 평당가 가중평균을 84㎡ 기준으로 환산한 참고 추정치입니다.</p>
-            </>
-          ) : mapLoading || (address && !mapPayload) ? (
-            <p className="sa-di-empty">주변 실거래를 수집해 시세를 추정하는 중…</p>
-          ) : (
-            <p className="sa-di-empty">
-              {address ? "주변 아파트 실거래가 없어 시세를 추정할 수 없습니다." : "주소 입력 후 「분석 시작」을 누르면 AI 시세가 표시됩니다."}
-            </p>
-          )}
-        </div>
-      </div>
+      {/* ================================================================ */}
+      {/*  [실데이터 · RAW DATA] — 가공 전 원천 데이터를 먼저 나열한다.       */}
+      {/*  사용자 핵심지침: "실데이터 표 먼저 → 분석은 그 다음".            */}
+      {/* ================================================================ */}
+      <SectionDivider kr="실데이터" en="RAW DATA · 원천 데이터" />
 
       {/* 주변 실거래 현황 — 반경별 거래량·평균가를 데이터 인텔리전스로 */}
       <div className="sa-di-block">
@@ -622,7 +638,88 @@ export function MarketInsightsWorkspaceClient() {
           </div>
         </div>
       )}
-      
+
+      {/* 보고서 원천 데이터 표 — 백엔드 report.raw_data(P2 신설)를 표로 먼저 나열.
+          유형별 매매·전월세·시세추이 + (선택 시) 인구·소득. provider 미제공 값은 "-"·"데이터 없음"으로 정직 표기. */}
+      {report && <RawDataTables raw={report.raw_data as RawData | undefined} />}
+
+      {/* ================================================================ */}
+      {/*  [분석 · ANALYSIS] — 위 실데이터를 해석한 결과를 그 다음에 둔다.    */}
+      {/* ================================================================ */}
+      <SectionDivider kr="분석" en="ANALYSIS · 해석·전망" />
+
+      {/* AI 시세 추정 — 데이터 인텔리전스 metric 블록(실거래 기반 해석값이므로 분석으로 재배치) */}
+      <div className="sa-di-block">
+        <header className="sa-di-block__head" style={{ cursor: "default" }}>
+          <span className="sa-di-block__icon" aria-hidden>₩</span>
+          <span className="sa-di-block__title">AI 시세 추정</span>
+          <span className="sa-di-eyebrow">AVM · ESTIMATE</span>
+        </header>
+        <div className="sa-di-block__body">
+          {results?.avm ? (
+            <>
+              <div className="sa-di-tiles sa-di-tiles--4">
+                {/* 추정 시세만 accent — 핵심 KPI 1개 강조 */}
+                <MetricTile label="추정 시세 (84㎡)" value={formatCurrency(results.avm.estimated_price)} accent />
+                <MetricTile label="㎡당 시세" value={formatCurrency(results.avm.price_per_sqm)} />
+                <MetricTile label="신뢰도" value={`${(results.avm.confidence_score * 100).toFixed(0)}%`} />
+                <MetricTile label="비교 사례" value={`${results.avm.comparable_count.toLocaleString()}건`} />
+              </div>
+              <p className="mt-3 text-[11px] text-[var(--text-hint)]">※ 주변 아파트 실거래 평당가 가중평균을 84㎡ 기준으로 환산한 참고 추정치입니다.</p>
+            </>
+          ) : mapLoading || (address && !mapPayload) ? (
+            <p className="sa-di-empty">주변 실거래를 수집해 시세를 추정하는 중…</p>
+          ) : (
+            <p className="sa-di-empty">
+              {address ? "주변 아파트 실거래가 없어 시세를 추정할 수 없습니다." : "주소 입력 후 「분석 시작」을 누르면 AI 시세가 표시됩니다."}
+            </p>
+          )}
+        </div>
+      </div>
+
+      {/* 시장조사보고서 미리보기 — LLM 내러티브(요약/기회/리스크/가격동향/타겟). 보고서 생성 시에만. */}
+      {report && (
+        <div className="sa-di-block">
+          <header className="sa-di-block__head" style={{ cursor: "default" }}>
+            <span className="sa-di-block__icon" aria-hidden>📝</span>
+            <span className="sa-di-block__title">시장조사보고서 미리보기</span>
+            <span className="sa-di-eyebrow">AI NARRATIVE</span>
+          </header>
+          <div className="sa-di-block__body space-y-4">
+            <div>
+              <p className="sa-di-eyebrow">MARKET SUMMARY · 시장 요약</p>
+              <p className="mt-1.5 text-sm leading-relaxed text-[var(--text-secondary)]">{report.narrative?.summary || "-"}</p>
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div>
+                <p className="sa-di-eyebrow">OPPORTUNITIES · 기회 요인</p>
+                <ul className="mt-1.5 space-y-0.5 text-xs text-[var(--text-secondary)]">
+                  {(report.narrative?.opportunities || []).map((o: string, i: number) => <li key={i}>· {o}</li>)}
+                </ul>
+              </div>
+              <div>
+                <p className="sa-di-eyebrow" style={{ color: "var(--status-warning)" }}>RISKS · 리스크 요인</p>
+                <ul className="mt-1.5 space-y-0.5 text-xs text-[var(--text-secondary)]">
+                  {(report.narrative?.risks || []).map((r: string, i: number) => <li key={i}>· {r}</li>)}
+                </ul>
+              </div>
+            </div>
+            {report.narrative?.price_trend && (
+              <div>
+                <p className="sa-di-eyebrow">PRICE TREND · 가격 동향</p>
+                <p className="mt-1.5 text-sm leading-relaxed text-[var(--text-secondary)]">{report.narrative.price_trend}</p>
+              </div>
+            )}
+            {report.narrative?.target_persona && (
+              <div className="rounded-xl border border-[var(--accent-strong)]/30 bg-[var(--accent-strong)]/5 p-4">
+                <p className="sa-di-eyebrow text-[var(--accent-strong)]">TARGET PERSONA · 추천 타겟 고객층</p>
+                <p className="mt-1 text-sm font-bold leading-relaxed text-[var(--text-primary)]">{report.narrative.target_persona}</p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* ── Phase 3: AI 사업 타당성 엔진 (Feasibility, 공급측) ── */}
       {report?.feasibility_analysis && (
         <FeasibilityDashboard
@@ -634,7 +731,7 @@ export function MarketInsightsWorkspaceClient() {
       {/* ── M3: 적정 분양가 밴드 (수요측 지불여력 — 공급측 타당성과 결합) ── */}
       {report?.pricing_band && <PricingBandPanel data={report.pricing_band} />}
 
-      {/* 실데이터 연동 영역 (Phase 2) — 인구·가구·소득 시각화(Recharts) + 데이터 출처 정직 배지 */}
+      {/* 인구·가구·소득 시각화(Recharts) — 분석 보조로 재배치(원천 표는 RAW에 별도). 데이터 출처 정직 배지 */}
       {report?.demographics && <DemographicPanel data={report.demographics} unitMix={report.unit_mix_recommendation} />}
 
       {/* 인구 이동(OD) — 현재 SGIS 미제공·행안부/KOSIS OD 미연동이라 정직하게 안내(가짜 Top3 금지) */}
@@ -710,6 +807,40 @@ export function MarketInsightsWorkspaceClient() {
             </div>
           )}
         </div>
+      )}
+
+      {/* AI 검증 + 전문가 패널 (보고서 생성 시) — 분석 신뢰성 검증 */}
+      {report && <VerificationBadge analysisType="market" context={report as unknown as Record<string, unknown>} />}
+      {report && (
+        <ExpertPanelCard analysisType="market" address={address} context={report as unknown as Record<string, unknown>} />
+      )}
+
+      {/* 보고서 다운로드 — ANALYSIS 말미(P4에서 DOCX 버튼 추가 예정이라 구조 유지). 보고서 생성 시에만. */}
+      {report && (
+        <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
+          <CardContent className="p-5">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-bold text-[var(--text-primary)]">📥 보고서 다운로드</p>
+                <p className="mt-0.5 text-xs text-[var(--text-secondary)]">위 분석 결과를 PDF/PPT 문서로 저장합니다.</p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button onClick={() => downloadReport("pdf")} disabled={!!genState}
+                  className="whitespace-nowrap rounded-xl bg-[var(--accent-strong)] px-4 py-2 text-xs font-black text-white hover:opacity-90 disabled:opacity-50">
+                  {genState === "pdf" ? "PDF 생성 중…" : "PDF 다운로드"}
+                </button>
+                <button onClick={() => downloadReport("pptx")} disabled={!!genState}
+                  className="whitespace-nowrap rounded-xl bg-gradient-to-r from-[var(--accent-strong)] to-[var(--data-accent)] px-4 py-2 text-xs font-black text-white hover:opacity-90 disabled:opacity-50">
+                  {genState === "pptx" ? "PPT 생성 중…" : "PPT 다운로드"}
+                </button>
+                <button onClick={() => downloadReport("docx")} disabled={!!genState}
+                  className="whitespace-nowrap rounded-xl border border-[var(--line-strong)] px-4 py-2 text-xs font-bold text-[var(--text-secondary)] hover:border-[var(--accent-strong)] disabled:opacity-50">
+                  {genState === "docx" ? "DOCX 생성 중…" : "DOCX 다운로드"}
+                </button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
       )}
     </section>
   );

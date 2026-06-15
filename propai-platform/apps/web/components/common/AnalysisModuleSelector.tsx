@@ -15,6 +15,7 @@
  * 색상은 토큰만 사용(하드코딩 금지), WCAG AA 대비 유지.
  */
 
+import { useEffect, useRef } from "react";
 import { Card, CardContent } from "@propai/ui";
 
 /** 단일 분석 모듈 정의. */
@@ -35,6 +36,11 @@ export interface AnalysisModuleOption {
   locked?: boolean;
   /** 잠금 해제 CTA 문구(locked일 때만). */
   lockedCtaLabel?: string;
+  /**
+   * 하위 항목(1단계 깊이만). 있으면 이 모듈은 "분류"가 되고 자식은 "항목"이 된다.
+   * 부모 체크박스는 3-state(전체선택/부분/해제)로 동작한다.
+   */
+  children?: AnalysisModuleOption[];
 }
 
 export interface AnalysisModuleSelectorProps {
@@ -83,15 +89,44 @@ export function AnalysisModuleSelector({
   // required는 항상 선택된 것으로 간주. locked는 선택 불가.
   const isOn = (m: AnalysisModuleOption) => m.required || (!m.locked && !!selected[m.key]);
 
-  // 선택분 합계 코인·예상시간 실시간 계산.
-  const activeModules = modules.filter((m) => isOn(m));
-  const totalCoin = activeModules.reduce((acc, m) => acc + (m.coinCost || 0), 0);
-  const totalSeconds = activeModules.reduce((acc, m) => acc + (m.estimatedSeconds || 0), 0);
-  const selectedCount = activeModules.length;
+  // 말단(leaf) 모듈만 모은다 — 자식이 있으면 자식들이 말단, 없으면 자신이 말단.
+  // 코인·시간 합계와 "선택 N개"는 모두 이 말단 기준으로 계산한다.
+  const leafModules: AnalysisModuleOption[] = [];
+  for (const m of modules) {
+    if (m.children && m.children.length > 0) {
+      leafModules.push(...m.children);
+    } else {
+      leafModules.push(m);
+    }
+  }
 
+  // 선택분 합계 코인·예상시간 실시간 계산(말단 기준).
+  const activeLeaves = leafModules.filter((m) => isOn(m));
+  const totalCoin = activeLeaves.reduce((acc, m) => acc + (m.coinCost || 0), 0);
+  const totalSeconds = activeLeaves.reduce((acc, m) => acc + (m.estimatedSeconds || 0), 0);
+  const selectedCount = activeLeaves.length;
+
+  // 단일(자식 없는) 모듈 토글 — 기존 동작 100% 동일.
   const toggle = (m: AnalysisModuleOption, checked: boolean) => {
     if (m.required || m.locked) return; // 필수/잠금은 변경 불가
     onChange({ ...selected, [m.key]: checked });
+  };
+
+  // 자식 항목 토글 — 해당 자식 키만 갱신(부모 상태는 자식들에서 파생).
+  const toggleChild = (child: AnalysisModuleOption, checked: boolean) => {
+    if (child.required || child.locked) return;
+    onChange({ ...selected, [child.key]: checked });
+  };
+
+  // 부모(분류) 토글 — 모든 (잠기지 않은) 자식을 동반 토글한다.
+  const toggleParent = (parent: AnalysisModuleOption, checked: boolean) => {
+    if (parent.locked) return;
+    const next = { ...selected };
+    for (const c of parent.children || []) {
+      if (c.locked || c.required) continue;
+      next[c.key] = checked;
+    }
+    onChange(next);
   };
 
   return (
@@ -110,6 +145,21 @@ export function AnalysisModuleSelector({
         {/* 모듈 카탈로그 그리드 */}
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {modules.map((m) => {
+            const kids = m.children || [];
+            // 분류(자식 있음)는 부모 카드 + 들여쓰기 자식 목록으로 렌더 — 그리드 한 칸을 통째로 차지.
+            if (kids.length > 0) {
+              return (
+                <ParentModuleCard
+                  key={m.key}
+                  module={m}
+                  isOn={isOn}
+                  won={won}
+                  onToggleParent={toggleParent}
+                  onToggleChild={toggleChild}
+                />
+              );
+            }
+            // 단일 모듈(자식 없음) — 기존 동작 100% 동일.
             const checked = isOn(m);
             const interactive = !m.required && !m.locked;
             const base =
@@ -191,5 +241,138 @@ export function AnalysisModuleSelector({
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+/** indeterminate(부분선택)를 지원하는 체크박스 — input.indeterminate는 DOM 속성이라 ref로 설정. */
+function IndeterminateCheckbox({
+  checked,
+  indeterminate,
+  disabled,
+  onChange,
+  ariaLabel,
+  className,
+}: {
+  checked: boolean;
+  indeterminate?: boolean;
+  disabled?: boolean;
+  onChange?: (checked: boolean) => void;
+  ariaLabel?: string;
+  className?: string;
+}) {
+  const ref = useRef<HTMLInputElement>(null);
+  // indeterminate는 React prop이 없어 effect에서 DOM에 직접 반영(동기 setState 아님 — set-state-in-effect 무관).
+  useEffect(() => {
+    if (ref.current) ref.current.indeterminate = !!indeterminate && !checked;
+  }, [indeterminate, checked]);
+  return (
+    <input
+      ref={ref}
+      type="checkbox"
+      checked={checked}
+      disabled={disabled}
+      readOnly={!onChange}
+      onChange={(e) => onChange?.(e.target.checked)}
+      className={className}
+      aria-label={ariaLabel}
+    />
+  );
+}
+
+/** 분류(자식 있음) 카드 — 부모 3-state 체크박스 + 들여쓰기된 자식 항목 목록. */
+function ParentModuleCard({
+  module: m,
+  isOn,
+  won,
+  onToggleParent,
+  onToggleChild,
+}: {
+  module: AnalysisModuleOption;
+  isOn: (m: AnalysisModuleOption) => boolean;
+  won: (n: number) => string;
+  onToggleParent: (parent: AnalysisModuleOption, checked: boolean) => void;
+  onToggleChild: (child: AnalysisModuleOption, checked: boolean) => void;
+}) {
+  const kids = m.children || [];
+  // 토글 가능한 자식(잠금/필수 제외) 기준으로 부모 3-state 파생.
+  const toggleable = kids.filter((c) => !c.locked && !c.required);
+  const onCount = toggleable.filter((c) => isOn(c)).length;
+  const allOn = toggleable.length > 0 && onCount === toggleable.length;
+  const someOn = onCount > 0 && !allOn;
+  const parentDisabled = m.locked || toggleable.length === 0;
+
+  return (
+    <div className="rounded-xl border border-[var(--line-strong)] bg-[var(--surface-soft)] p-3 sm:col-span-2 lg:col-span-2">
+      {/* 부모(분류) 헤더 — 전체선택/부분/해제 3-state */}
+      <label className={`flex items-start gap-3 ${parentDisabled ? "cursor-not-allowed" : "cursor-pointer"}`}>
+        <IndeterminateCheckbox
+          checked={allOn}
+          indeterminate={someOn}
+          disabled={parentDisabled}
+          onChange={parentDisabled ? undefined : (c) => onToggleParent(m, c)}
+          ariaLabel={m.label}
+          className="mt-0.5 h-4 w-4 accent-[var(--accent-strong)]"
+        />
+        <div className="min-w-0">
+          <p className="flex items-center gap-1.5 text-sm font-bold text-[var(--text-primary)]">
+            {m.label}
+            {m.locked && (
+              <span className="rounded-full bg-[var(--surface-muted)] px-1.5 py-0.5 text-[10px] font-bold text-[var(--text-tertiary)]">
+                잠금
+              </span>
+            )}
+          </p>
+          {m.description && (
+            <p className="mt-0.5 text-[11px] leading-snug text-[var(--text-secondary)]">{m.description}</p>
+          )}
+        </div>
+      </label>
+
+      {/* 자식(항목) 목록 — 들여쓰기 체크박스 */}
+      <div className="mt-2.5 space-y-1.5 border-l border-[var(--line)] pl-3 ml-2">
+        {kids.map((c) => {
+          const checked = isOn(c);
+          const interactive = !c.required && !c.locked;
+          return (
+            <label
+              key={c.key}
+              className={`flex items-start gap-2.5 ${interactive ? "cursor-pointer" : "cursor-not-allowed opacity-70"}`}
+            >
+              <input
+                type="checkbox"
+                checked={checked}
+                readOnly={!interactive}
+                disabled={!interactive}
+                onChange={(e) => onToggleChild(c, e.target.checked)}
+                className="mt-0.5 h-3.5 w-3.5 accent-[var(--accent-strong)]"
+                aria-label={c.label}
+              />
+              <div className="min-w-0">
+                <p className="flex items-center gap-1.5 text-[13px] font-semibold text-[var(--text-primary)]">
+                  {c.label}
+                  {c.locked && (
+                    <span className="rounded-full bg-[var(--surface-muted)] px-1.5 py-0.5 text-[9px] font-bold text-[var(--text-tertiary)]">
+                      잠금
+                    </span>
+                  )}
+                </p>
+                {c.description && (
+                  <p className="mt-0.5 text-[10px] leading-snug text-[var(--text-secondary)]">{c.description}</p>
+                )}
+                <p className="mt-0.5 text-[10px] font-semibold text-[var(--text-tertiary)]">
+                  {c.required
+                    ? "기본 포함"
+                    : c.locked
+                      ? (c.lockedCtaLabel || "프리미엄 전용")
+                      : c.coinCost
+                        ? `+${won(c.coinCost)}`
+                        : "추가 비용 없음"}
+                </p>
+              </div>
+            </label>
+          );
+        })}
+      </div>
+    </div>
   );
 }

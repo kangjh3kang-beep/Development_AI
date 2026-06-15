@@ -38,6 +38,9 @@ _DEFAULT_CONFIG: dict[str, Any] = {
         "registry_issue": 1200,           # 등기부등본 발급·열람 건당(AI 분석 없음)
         "registry_analysis": 2000,        # 등기부등본 권리분석(AI) 건당 — 발급/열람과 차별화
         "stages": {s: 2000 for s in _PIPELINE_STAGES},  # 파이프라인 단계별 건당
+        # 분석 모듈(시장 인구/소득 등) 건당 사용료 맵. 기본 빈 dict = 전부 무료.
+        # 관리자가 설정한 키만 과금되고, 미설정 키는 0원(무료·실행).
+        "analysis_modules": {},
     },
     "free_tier": {
         "analysis_fee": {"free": 5000, "guest": 10000},  # 무료 소진 후 토지분석 단가
@@ -57,6 +60,7 @@ _CONFIG: dict[str, Any] = {
         "registry_issue": _DEFAULT_CONFIG["service_fees"]["registry_issue"],
         "registry_analysis": _DEFAULT_CONFIG["service_fees"]["registry_analysis"],
         "stages": dict(_DEFAULT_CONFIG["service_fees"]["stages"]),
+        "analysis_modules": dict(_DEFAULT_CONFIG["service_fees"]["analysis_modules"]),
     },
     "free_tier": {
         "analysis_fee": dict(_DEFAULT_CONFIG["free_tier"]["analysis_fee"]),
@@ -104,6 +108,14 @@ def apply_config(override: dict[str, Any]) -> None:
     for s, v in (sf.get("stages") or {}).items():
         if s in _CONFIG["service_fees"]["stages"]:
             _CONFIG["service_fees"]["stages"][s] = v
+    # 분석 모듈 사용료 병합 — 관리자가 보낸 키:값(원)을 set한다.
+    # 숫자로 변환 가능할 때만, 음수는 0으로 방지(허위 마이너스 차감 차단).
+    am = _CONFIG["service_fees"].setdefault("analysis_modules", {})
+    for k, v in (sf.get("analysis_modules") or {}).items():
+        try:
+            am[k] = max(0.0, float(v))
+        except (ValueError, TypeError):
+            pass
     ft = override.get("free_tier") or {}
     for sub in ("analysis_fee", "analysis_quota"):
         for t, v in (ft.get(sub) or {}).items():
@@ -137,6 +149,19 @@ def service_fee_registry_issue() -> float:
 
 def service_fee_stage(stage: str) -> float:
     return float(_CONFIG["service_fees"].get("stages", {}).get(stage, 0))
+
+
+def service_fee_analysis_module(key: str) -> float:
+    """분석 모듈(시장 인구/소득 등) 건당 사용료. 관리자 미설정 시 0원(무료·실행)."""
+    try:
+        return max(0.0, float(_CONFIG["service_fees"].get("analysis_modules", {}).get(key, 0) or 0))
+    except (ValueError, TypeError):
+        return 0.0
+
+
+def analysis_module_fees() -> dict:
+    """관리자가 설정한 분석 모듈 사용료 맵(미설정 시 빈 dict = 전부 무료)."""
+    return {k: float(v) for k, v in (_CONFIG["service_fees"].get("analysis_modules", {}) or {}).items()}
 
 
 def free_tier_analysis_fee(tier: str) -> float:
