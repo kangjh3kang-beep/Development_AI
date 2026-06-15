@@ -4,10 +4,14 @@
 LLM 프로바이더를 선택하여 AI 해석에 사용할 모델을 지정할 수 있다.
 """
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
-router = APIRouter()
+from app.services.auth.auth_service import get_current_user
+
+# P2-2 보안: 종합분석 LLM 호출 라우트 인증 강제(무인증·무쿼터 LLM 호출 → 미과금 비용남용 차단).
+# (사용자별 LLM 쿼터 enforce는 후속 — 우선 익명 호출 차단 + 호출자 귀속.)
+router = APIRouter(dependencies=[Depends(get_current_user)])
 
 
 class ComprehensiveAnalysisRequest(BaseModel):
