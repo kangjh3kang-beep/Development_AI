@@ -11,7 +11,10 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
+import structlog
 from pydantic import BaseModel, Field
+
+logger = structlog.get_logger(__name__)
 
 # ── Payload 인터페이스: 모듈 간 데이터 전달 계약 ──
 
@@ -679,8 +682,9 @@ class ProjectPipeline:
             from app.services.land_intelligence.comprehensive_analysis_service import ComprehensiveAnalysisService
             comp_svc = ComprehensiveAnalysisService()
             comprehensive_report = await comp_svc.analyze(state.address)
-        except Exception:
-            pass
+        except Exception as e:  # noqa: BLE001 — 종합분석 실패가 파이프라인을 막지 않음(정직 degrade)
+            logger.warning("종합분석 보고서 생성 실패 — skipped 표기", err=str(e)[:160])
+            comprehensive_report = {"skipped_reason": f"comprehensive_analysis_failed: {str(e)[:120]}"}
 
         zone_limits = zoning.get("zone_limits", {})
         zone_type = zoning.get("zone_type", "")
