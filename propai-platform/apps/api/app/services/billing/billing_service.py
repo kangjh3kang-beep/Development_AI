@@ -18,10 +18,13 @@ LLM 실계측: 모든 LLM 호출은 llm_usage_log에 service 귀속으로 1건 I
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+import structlog
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import json
+
+logger = structlog.get_logger(__name__)
 
 from app.core.billing import (
     TIER_BILLING,
@@ -243,21 +246,23 @@ async def record_usage_usd(
     if not is_metered_tier(tier):
         return None
     billed_before = float(row[1])
-    monthly_base, topup = float(row[3]), float(row[4])  # ensure_cycle 반환순서: (tier,billed,budget,base,topup)
+    monthly_base = float(row[3])  # ensure_cycle 반환순서: (tier,billed,budget,base,topup); topup(row[4])은 아래 원자 UPDATE에서 직접 차감
     rate = await get_usd_krw_rate()
     add = billed_krw(real_cost_usd, tier, rate)
 
     # 월기본 → 충전 차감순서: billed_after가 월기본을 넘는 초과분만 충전에서 차감.
     billed_after = billed_before + add
     topup_draw = max(0.0, billed_after - monthly_base) - max(0.0, billed_before - monthly_base)
-    new_topup = max(0.0, topup - topup_draw)
-
+    # P1-6: topup/budget 절댓값 쓰기(read-modify-write)는 동시 호출 시 lost-update → 원자 컬럼식 차감.
+    # billed는 이미 증분(COALESCE+:a). topup도 라이브 값에서 :draw 차감, budget=base+post-topup(=_sync_budget) 재계산.
     await db.execute(
         text(
             "UPDATE public.users SET llm_billed_krw = COALESCE(llm_billed_krw,0) + :a, "
-            "topup_krw = :t, billing_budget_krw = :b WHERE id=:id"
+            "topup_krw = GREATEST(0, COALESCE(topup_krw,0) - :draw), "
+            "billing_budget_krw = :base + GREATEST(0, COALESCE(topup_krw,0) - :draw) "
+            "WHERE id=:id"
         ),
-        {"a": add, "t": new_topup, "b": _sync_budget(monthly_base, new_topup), "id": str(user_id)},
+        {"a": add, "draw": topup_draw, "base": monthly_base, "id": str(user_id)},
     )
 
     if service:
@@ -450,8 +455,8 @@ async def load_config(db: AsyncSession, force: bool = False) -> None:
             cfg = row[0] if isinstance(row[0], dict) else json.loads(row[0])
             apply_config(cfg)
         _config_loaded = True
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as e:  # noqa: BLE001
+        logger.warning("빌링 설정 로드 실패 — 기본값 유지", err=str(e)[:160])
 
 
 async def save_config(db: AsyncSession, override: dict[str, Any]) -> dict[str, Any]:
