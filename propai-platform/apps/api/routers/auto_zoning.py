@@ -3,7 +3,8 @@
 import asyncio
 import re
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, File, UploadFile
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from apps.api.app.services.zoning.auto_zoning_service import AutoZoningService
@@ -860,3 +861,41 @@ async def nearby_transactions_map(req: NearbyMapRequest):
         address=req.address, lawd_cd=lawd_cd,
         months=req.months, radius_m=req.radius_m, sigungu_hint=sigungu_hint,
     )
+
+
+# ─────────────────────────────────────────────────────────────
+# 다필지 토지조서 엑셀 — 표준 양식 다운로드 + 업로드 파싱(주소·필지 추출)
+# ─────────────────────────────────────────────────────────────
+@router.get("/land-schedule-template")
+async def land_schedule_template():
+    """플랫폼 최적 다필지 토지조서 엑셀 양식 다운로드(작성안내 포함)."""
+    from apps.api.app.services.land_intelligence.parcel_excel_service import (
+        build_template_xlsx,
+    )
+
+    data = build_template_xlsx()
+    return StreamingResponse(
+        iter([data]),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="PropAI_land_schedule_template.xlsx"'},
+    )
+
+
+@router.post("/parse-parcels")
+async def parse_parcels(file: UploadFile = File(...)):
+    """업로드된 토지조서 엑셀/CSV → 필지 목록(주소·PNU·bcode·면적·지목·소유구분) 추출.
+
+    PNU 우선순위: PNU열 > 법정동코드+지번 구성 > 주소 지오코딩. 무자료/실패는 status로 정직 표기.
+    LLM 미사용(데이터 추출)이라 과금 게이트 없음.
+    """
+    from apps.api.app.services.land_intelligence.parcel_excel_service import (
+        ParcelExcelService,
+    )
+
+    try:
+        raw = await file.read()
+    except Exception as e:  # noqa: BLE001
+        return {"error": f"파일 읽기 실패: {str(e)[:120]}", "parcels": []}
+    if not raw:
+        return {"error": "빈 파일입니다.", "parcels": []}
+    return await ParcelExcelService().parse(raw, file.filename or "upload.xlsx")

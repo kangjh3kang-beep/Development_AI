@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v202-density-layer";
+const CACHE_NAME = "propai-v203-parcel-excel";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

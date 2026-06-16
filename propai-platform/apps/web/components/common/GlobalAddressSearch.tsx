@@ -14,10 +14,10 @@
  * - Progressive Disclosure (Jakob Nielsen, 1995)
  */
 
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { KakaoAddressSearch, type KakaoAddressResult } from "@/components/ui/KakaoAddressSearch";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
-import { apiClient } from "@/lib/api-client";
+import { apiClient, apiV1BaseUrl } from "@/lib/api-client";
 
 export interface AddressEntry {
   fullAddress: string;
@@ -254,6 +254,63 @@ export function GlobalAddressSearch({
       : null
     : localAnalysis;
 
+  // ── 다필지 엑셀 업로드 — 토지조서 양식 업로드 → 필지 추출(주소만 적어도 PNU·면적·용도 자동보강) ──
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadInfo, setUploadInfo] = useState<{ note: string; registry?: string } | null>(null);
+
+  const handleExcelUpload = useCallback(async (file: File) => {
+    setUploading(true);
+    setUploadInfo(null);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await apiClient.post<{
+        parcels?: Array<{ address?: string | null; jibun?: string | null; bcode?: string | null; pnu?: string | null; area_sqm?: number | null }>;
+        note?: string; error?: string; registry_guidance?: { message?: string };
+      }>("/zoning/parse-parcels", { body: fd, useMock: false, timeoutMs: 120000 });
+      if (res.error) { setUploadInfo({ note: res.error }); return; }
+      const entries: AddressEntry[] = (res.parcels ?? [])
+        .filter((p) => (p.address || p.pnu))
+        .map((p) => ({
+          fullAddress: p.address || p.pnu || "",
+          jibunAddress: p.jibun || p.address || "",
+          roadAddress: "", sido: "", sigungu: "", bname: "", zonecode: "",
+          bcode: p.bcode || "",
+          ...(p.area_sqm ? { areaSqm: p.area_sqm } : {}),
+        }));
+      const merged = single
+        ? entries.slice(0, 1)
+        : [...addresses, ...entries.filter((e) => !addresses.some((a) => a.fullAddress === e.fullAddress))];
+      setAddresses(merged);
+      onChange?.(merged);
+      setUploadInfo({ note: res.note || `${entries.length}필지 등록`, registry: res.registry_guidance?.message });
+    } catch (e: any) {
+      setUploadInfo({ note: e?.message || "엑셀 처리 실패" });
+    } finally {
+      setUploading(false);
+    }
+  }, [single, addresses, onChange]);
+
+  const downloadTemplate = useCallback(async () => {
+    try {
+      const token = (typeof window !== "undefined" && localStorage.getItem("propai_access_token")) || "";
+      const res = await fetch(`${apiV1BaseUrl()}/zoning/land-schedule-template`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) throw new Error(String(res.status));
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "PropAI_토지조서_양식.xlsx";
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      setUploadInfo({ note: "양식 다운로드 실패 — 잠시 후 다시 시도해 주세요." });
+    }
+  }, []);
+
   return (
     <div className={`flex flex-col gap-2 ${className}`}>
       {/* 등록된 필지 목록 */}
@@ -321,6 +378,43 @@ export function GlobalAddressSearch({
               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
               필지 추가
             </button>
+          )}
+        </div>
+      )}
+
+      {/* 다필지 엑셀 등록 — 토지조서 양식 업로드/다운로드(주소만 적어도 PNU·면적·용도·공시지가 자동보강) */}
+      {!single && (
+        <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)]/40 px-3 py-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              ref={fileRef}
+              type="file"
+              accept=".xlsx,.xls,.csv"
+              className="hidden"
+              onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleExcelUpload(f); e.target.value = ""; }}
+            />
+            <button
+              type="button"
+              disabled={uploading}
+              onClick={() => fileRef.current?.click()}
+              className="rounded-lg border border-[var(--line-strong)] bg-[var(--surface)] px-3 py-1.5 text-[11px] font-bold text-[var(--text-primary)] hover:border-[var(--accent-strong)] disabled:opacity-50"
+            >
+              📊 {uploading ? "처리 중…" : "엑셀로 다필지 등록"}
+            </button>
+            <button
+              type="button"
+              onClick={() => void downloadTemplate()}
+              className="text-[11px] font-semibold text-[var(--accent-strong)] underline-offset-2 hover:underline"
+            >
+              양식 다운로드 ↓
+            </button>
+            <span className="text-[10px] text-[var(--text-hint)]">주소·지번만 적어도 PNU·면적·용도지역·공시지가 자동수집</span>
+          </div>
+          {uploadInfo && (
+            <div className="mt-2 rounded-md border border-[var(--line)] bg-[var(--surface)]/60 px-2.5 py-1.5 text-[11px] text-[var(--text-secondary)]">
+              <p>📍 {uploadInfo.note}</p>
+              {uploadInfo.registry && <p className="mt-1 font-semibold text-amber-500">🏛️ {uploadInfo.registry}</p>}
+            </div>
           )}
         </div>
       )}
