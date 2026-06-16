@@ -170,6 +170,11 @@ class DbJobStore(JobStore):
                 job_row.completeness = record.job.completeness.value
                 job_row.counts = counts
 
+            # 잡 헤더를 먼저 DB에 반영(flush)해야 자식(item/aggregate)의 FK가 만족된다.
+            # (한 트랜잭션 안에서도 PostgreSQL은 INSERT마다 FK를 즉시 검사하므로
+            #  부모 행을 명시적으로 먼저 flush 하지 않으면 자식 INSERT가 먼저 나가 위반 가능.)
+            await session.flush()
+
             # 필지 결과는 통째로 교체(멱등 갱신).
             await session.execute(
                 delete(BatchItemResultRow).where(
