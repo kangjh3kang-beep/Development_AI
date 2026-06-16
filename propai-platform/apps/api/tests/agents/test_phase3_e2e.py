@@ -116,3 +116,37 @@ async def test_multi_domain_dispatch_all_cite_ledger():
         assert parents and parents[0]["max_severity"] == "high"
     finally:
         await _cleanup(tid)
+
+
+async def test_domain_agents_record_enriched_with_findings_and_lineage():
+    # #1 합류: record_domain_agent_task(domain_agents_service가 호출)가 도메인별 체인 +
+    # findings_brief + prior 모순/lineage로 보강됨(서비스 자동 수혜).
+    if not await _db():
+        pytest.skip("DB 미가용 — Postgres 기동 후 실행")
+    from app.services.ledger import analysis_ledger_service as ledger
+    from app.services.ledger import lineage
+    from app.services.ledger.ledger_adapters import record_domain_agent_task
+
+    tid, pid = f"t-da-{uuid.uuid4().hex[:8]}", f"PRJ-{uuid.uuid4().hex[:8]}"
+    try:
+        r1 = await record_domain_agent_task(
+            task={"domain": "finance", "task_type": "analysis", "status": "completed",
+                  "confidence_score": 0.82, "recommendation": "proceed",
+                  "requires_approval": False, "id": "T1"},
+            tenant_id=tid, project_id=pid)
+        assert r1["ok"] is True and r1["contradictions"]["has_contradiction"] is False
+        latest1 = await ledger.get_latest(analysis_type="domain_agent_finance", tenant_id=tid, project_id=pid)
+        assert latest1["payload"]["findings_brief"][0]["check_id"] == "RECOMMENDATION"
+
+        # 2회차: 권고 플립(proceed→escalate) + confidence 하락 → 모순 + lineage
+        r2 = await record_domain_agent_task(
+            task={"domain": "finance", "task_type": "analysis", "status": "completed",
+                  "confidence_score": 0.40, "recommendation": "escalate",
+                  "requires_approval": True, "id": "T2"},
+            tenant_id=tid, project_id=pid)
+        assert r2["contradictions"]["has_contradiction"] is True
+        latest2 = await ledger.get_latest(analysis_type="domain_agent_finance", tenant_id=tid, project_id=pid)
+        parents = await lineage.get_parents(child_hash=latest2["content_hash"], tenant_id=tid)
+        assert parents
+    finally:
+        await _cleanup(tid)
