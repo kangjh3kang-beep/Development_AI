@@ -85,3 +85,34 @@ async def test_w4_closed_specialist_dispatch_cites_ledger_with_lineage():
         assert vr["verified"] is True        # 무결성 불변
     finally:
         await _cleanup(tid)
+
+
+async def test_multi_domain_dispatch_all_cite_ledger():
+    # Phase 3.2: permit·zoning·far 3도메인 모두 coordinator 디스패치로 원장 cite + far 2회차 모순/lineage.
+    if not await _db():
+        pytest.skip("DB 미가용 — Postgres 기동 후 실행")
+    from apps.api.core.coordinator import AgentCoordinator
+    from app.services.ledger import analysis_ledger_service as ledger
+    from app.services.ledger import lineage
+
+    tid, pnu = f"t-p32-{uuid.uuid4().hex[:8]}", f"P{uuid.uuid4().hex[:10]}"
+    coord = AgentCoordinator()
+    try:
+        for domain, data in [
+            ("permit", {"dev_type": "M06", "zone_type": "제2종일반주거지역"}),
+            ("zoning", {"zone_type": "제2종일반주거지역"}),
+            ("far", {"zone_type": "제2종일반주거지역"}),     # far=250
+        ]:
+            r = await coord.dispatch(domain, data, tenant_id=tid, pnu=pnu)
+            assert r["ok"] and r["ledger"]["ok"]
+            latest = await ledger.get_latest(analysis_type=f"domain_agent_{domain}", tenant_id=tid, pnu=pnu)
+            assert latest is not None and latest["payload"]["domain"] == domain
+
+        # far 2회차: 다른 용도지역(제1종전용 far=100) → 수치 델타(250→100) 모순 + lineage
+        r2 = await coord.dispatch("far", {"zone_type": "제1종전용주거지역"}, tenant_id=tid, pnu=pnu)
+        assert r2["contradictions"]["has_contradiction"] is True
+        latest_far = await ledger.get_latest(analysis_type="domain_agent_far", tenant_id=tid, pnu=pnu)
+        parents = await lineage.get_parents(child_hash=latest_far["content_hash"], tenant_id=tid)
+        assert parents and parents[0]["max_severity"] == "high"
+    finally:
+        await _cleanup(tid)
