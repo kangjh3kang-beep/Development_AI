@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v199-market-overlay";
+const CACHE_NAME = "propai-v200-market-3zone";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

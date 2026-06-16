@@ -435,6 +435,15 @@ export function MarketInsightsWorkspaceClient() {
         placeholder="주소를 검색하세요 (예: 서울 강남구 역삼동)"
       />
 
+      {/* P3 Zone B — 분석 후 지도를 주소 바로 아래(최상단)에 크게 노출해 스크롤 없이 즉시 보이게.
+          실거래+분양 통합 오버레이 지도 → 필지 구획도 순. 분석 전(address 없음)엔 숨겨 셀렉터가 상단. */}
+      {address && (
+        <div className="grid gap-4">
+          <NearbyTransactionsMap address={address} pnu={mapPnu} onPayload={setMapPayload} onLoading={setMapLoading} />
+          <ParcelBoundaryMap parcels={[address]} />
+        </div>
+      )}
+
       {/* 선택형 분석 모듈 — 공용 AnalysisModuleSelector(선택형이 기본 진입). 선택분만 실행·과금. */}
       <AnalysisModuleSelector
         modules={analysisModules}
@@ -484,11 +493,7 @@ export function MarketInsightsWorkspaceClient() {
         </CardContent>
       </Card>
 
-      {/* 필지 구획도 (경계·용도지역·면적) */}
-      {address && <ParcelBoundaryMap parcels={[address]} />}
-
-      {/* 주변 실거래 지도 — 단일 데이터원(payload를 부모와 공유), 주소/pnu 직접 주입 */}
-      <NearbyTransactionsMap address={address} pnu={mapPnu} onPayload={setMapPayload} onLoading={setMapLoading} />
+      {/* (지도는 위 Zone B로 이동 — 분석 후 상단 노출) */}
 
       {/* 시장조사보고서 생성 트리거 (미리보기/PDF/PPT) — 분석 실행 버튼(기능 영역) */}
       {address && (
