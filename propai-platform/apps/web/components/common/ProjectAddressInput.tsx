@@ -34,12 +34,16 @@ interface ProjectAddressInputProps {
   /** 프로젝트 선택 드롭다운 앞 라벨 (기본 없음) */
   pickerLabel?: string;
   /**
-   * 대량 다필지 모드 — true면 다중 필지 검색 + 엑셀 일괄 등록을 노출한다.
-   * 기본 false(단일 필지, 기존 동작 불변 — 회귀 방지).
+   * (호환용) 과거 multi 옵트인 prop — 현재는 전 플랫폼이 항상 다필지 UI라 무시된다.
    */
   multi?: boolean;
-  /** 다필지 목록 변경 콜백(multi 모드) — 등록된 전 필지 주소 배열 전달 */
+  /** 다필지 목록 변경 콜백 — 등록된 전 필지 주소 배열 전달(옵션) */
   onParcelsChange?: (addresses: string[]) => void;
+  /**
+   * ProjectContextStore(SSOT) 기록 여부 — 기본 true(프로젝트 주소바는 primary를 store에 기록).
+   * 활성 프로젝트와 무관한 탐색용이면 false로 끌 수 있다.
+   */
+  writeToContext?: boolean;
 }
 
 export function ProjectAddressInput({
@@ -51,9 +55,11 @@ export function ProjectAddressInput({
   disabled = false,
   hideProjectPicker = false,
   pickerLabel,
-  multi = false,
+  multi: _multi,
   onParcelsChange,
+  writeToContext = true,
 }: ProjectAddressInputProps) {
+  void _multi; // 호환용(무시) — 항상 다필지 UI
   const projects = useProjectStore((s) => s.projects);
   const snapshots = useProjectContextStore((s) => s.snapshots);
   const setProject = useProjectContextStore((s) => s.setProject);
@@ -100,13 +106,11 @@ export function ProjectAddressInput({
       ? (entries[0].jibunAddress || entries[0].fullAddress || entries[0].roadAddress)
       : "";
     onChange(primary);
-    if (multi) {
-      // 다필지: 등록된 전 필지 주소 배열을 호스트로 전달.
-      const all = entries
-        .map((e) => e.jibunAddress || e.fullAddress || e.roadAddress)
-        .filter(Boolean);
-      onParcelsChange?.(all);
-    }
+    // 다필지: 등록된 전 필지 주소 배열을 호스트로 전달(호스트가 쓰면 활용).
+    const all = entries
+      .map((e) => e.jibunAddress || e.fullAddress || e.roadAddress)
+      .filter(Boolean);
+    onParcelsChange?.(all);
   };
 
   return (
@@ -140,13 +144,16 @@ export function ProjectAddressInput({
 
       {/* single 모드: key={value}로 프로젝트 선택/자동로드 시 재마운트해 initialAddress 갱신.
           multi 모드: 안정 key로 유지(값 변경에 필지 목록이 초기화되지 않도록). */}
+      {/* 전 플랫폼 공통: 항상 다필지 UI(검색 추가 + 엑셀 일괄등록).
+          key는 프로젝트 전환 시에만 재마운트(편집 중 필지 목록 유지),
+          writeToContext=true로 primary 주소를 store(SSOT)에 기록(단일 동작 보존). */}
       <GlobalAddressSearch
-        key={multi ? "multi" : (value || "empty")}
-        single={!multi}
-        initialAddress={!multi && value ? value : undefined}
+        key={ctxProjectId || "addr"}
+        single={false}
+        initialAddress={value || undefined}
         placeholder={placeholder}
         disabled={disabled}
-        writeToContext={!multi}
+        writeToContext={writeToContext}
         onChange={handleAddressChange}
       />
     </div>
