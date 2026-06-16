@@ -609,10 +609,15 @@ async def parcel_boundaries(req: ParcelBoundariesRequest):
         if need_li and isinstance(li_res, dict):
             geometry = li_res.get("geometry")
             li_area = float((li_res.get("properties") or {}).get("area") or 0)
+        official_price_per_sqm = None
         if isinstance(lc_res, dict):
             lc_area = float(lc_res.get("area_sqm") or 0)
             zone_type = lc_res.get("zone_type") or None
             zone_type_2 = lc_res.get("zone_type_2") or None
+            # 공시지가(개별공시지가, 원/㎡) — get_land_characteristics가 이미 반환(추가 호출 0).
+            #  P4 공시지가 레이어용. 0/누락은 None(가짜값 금지).
+            _op = lc_res.get("official_price_per_sqm")
+            official_price_per_sqm = int(_op) if _op else None
         # 권위 우선: 토지대장(lc_area) → 지적등록(li_area)
         area_sqm = lc_area or li_area
         area_source = "토지대장(토지특성)" if lc_area else ("지적도 등록면적" if li_area else "미확인")
@@ -653,6 +658,7 @@ async def parcel_boundaries(req: ParcelBoundariesRequest):
             "zone_type": zone_type,
             "zone_type_2": zone_type_2,
             "zone_limits": _zone_limits_compact(zone_type),
+            "official_price_per_sqm": official_price_per_sqm,
             "geometry": geometry,
         }
 

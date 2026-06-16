@@ -31,6 +31,7 @@ type Feature = {
   zone_type: string | null;
   zone_type_2: string | null;
   zone_limits: { max_bcr_pct?: number; max_far_pct?: number } | null;
+  official_price_per_sqm?: number | null;   // 개별공시지가(원/㎡) — P4 공시지가 레이어
   geometry: any;
 };
 type Adjacency = { contiguous: boolean | null; components: number | null; note: string };
@@ -57,6 +58,19 @@ function zoneColor(zone: string | null, i: number): string {
 }
 function pyeong(sqm: number): string {
   return sqm ? `${Math.round(sqm / 3.305785).toLocaleString()}평` : "-";
+}
+// P4 공시지가 코로플레스: 데이터 min~max 대비 5단계 색(연한 청 → 진한 적). 무자료=회색.
+const PRICE_RAMP = ["#bae6fd", "#7dd3fc", "#38bdf8", "#fb923c", "#ef4444"];
+function priceColor(price: number | null | undefined, min: number, max: number): string {
+  if (!price || price <= 0) return "#94a3b8";       // 공시지가 무자료=회색(가짜 금지)
+  if (max <= min) return PRICE_RAMP[2];
+  const t = (price - min) / (max - min);            // 0~1 정규화
+  return PRICE_RAMP[Math.min(PRICE_RAMP.length - 1, Math.max(0, Math.floor(t * PRICE_RAMP.length)))];
+}
+// 공시지가 만원/평 표기(원/㎡ → 만원/평).
+function priceManPyeong(perSqm: number | null | undefined): string {
+  if (!perSqm || perSqm <= 0) return "-";
+  return `${Math.round((perSqm * 3.305785) / 1e4).toLocaleString()}만원/평`;
 }
 
 export function ParcelBoundaryMap({
@@ -91,6 +105,16 @@ export function ParcelBoundaryMap({
   const [data, setData] = useState<Boundaries | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  // P4: 구획도 색상 모드 — 용도지역(기본) / 공시지가 코로플레스.
+  const [colorMode, setColorMode] = useState<"zone" | "price">("zone");
+  // 공시지가 색 정규화용 min/max(0 제외). 데이터 변경 시 재계산.
+  const priceRange = useMemo(() => {
+    const ps = (data?.features ?? [])
+      .map((f) => f.official_price_per_sqm || 0)
+      .filter((p) => p > 0);
+    return ps.length ? { min: Math.min(...ps), max: Math.max(...ps) } : { min: 0, max: 0 };
+  }, [data]);
+  const hasPrice = priceRange.max > 0;
   const mapEl = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<any>(null);
   const polysRef = useRef<any[]>([]);
@@ -176,7 +200,10 @@ export function ParcelBoundaryMap({
         if (!f.geometry) return;
         const zoneDisp = effZone(f, i);
         const sc = statusColors?.[f.address || ""];
-        const color = sc || zoneColor(zoneDisp, i);
+        // P4: 공시지가 모드면 코로플레스 색(상태강조색 sc는 항상 우선).
+        const color = sc || (colorMode === "price"
+          ? priceColor(f.official_price_per_sqm, priceRange.min, priceRange.max)
+          : zoneColor(zoneDisp, i));
         const isHi = !!highlight && f.address === highlight;
         const z2 = f.zone_type_2 ? ` / ${f.zone_type_2}` : "";
         const stat = statusLabels?.[f.address || ""];
@@ -184,7 +211,9 @@ export function ParcelBoundaryMap({
           `<div style="padding:6px 10px;font-size:12px;min-width:160px;">` +
           `<b>${i + 1}. ${f.address || f.pnu}</b>` + (stat ? ` <span style="color:#0e7490">[${stat}]</span>` : "") +
           `<br/>용도지역: ${zoneDisp || "-"}${z2}<br/>` +
-          `면적: ${f.area_sqm?.toLocaleString()}㎡ (${pyeong(f.area_sqm)})</div>`;
+          `면적: ${f.area_sqm?.toLocaleString()}㎡ (${pyeong(f.area_sqm)})` +
+          (f.official_price_per_sqm ? `<br/>공시지가: ${priceManPyeong(f.official_price_per_sqm)} (${f.official_price_per_sqm.toLocaleString()}원/㎡)` : "") +
+          `</div>`;
         geoJsonToKakaoRings(kakao, f.geometry).forEach((path) => {
           const poly = new kakao.maps.Polygon({
             path, strokeWeight: isHi ? 4 : 2, strokeColor: isHi ? "#ef4444" : color,
@@ -236,7 +265,7 @@ export function ParcelBoundaryMap({
       polysRef.current = [];
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, highlight, primaryZone, JSON.stringify(statusColors)]);
+  }, [data, highlight, primaryZone, colorMode, priceRange.min, priceRange.max, JSON.stringify(statusColors)]);
 
   if (!list.length) return null;
 
@@ -288,6 +317,30 @@ export function ParcelBoundaryMap({
             <span className="flex items-center gap-1"><span className="inline-block h-0 w-3 border-t-2 border-dashed border-sky-500" />통합개발 경계</span>
           )}
           <span className="ml-auto text-[var(--text-hint)]">지적도(VWorld) 벡터 · 위성 베이스 권장</span>
+        </div>
+      )}
+      {/* P4: 색상 모드 토글(용도지역/공시지가) + 공시지가 코로플레스 범례 */}
+      {data && data.features?.length > 0 && (
+        <div className="mb-2 flex flex-wrap items-center gap-2 px-1">
+          <div className="flex overflow-hidden rounded-lg border border-[var(--line-strong)]">
+            <button type="button" onClick={() => setColorMode("zone")}
+              className={`px-3 py-1 text-[11px] font-bold transition-colors ${colorMode === "zone" ? "bg-[var(--accent-strong)] text-white" : "bg-[var(--surface-muted)] text-[var(--text-secondary)]"}`}>
+              용도지역
+            </button>
+            <button type="button" onClick={() => hasPrice && setColorMode("price")} disabled={!hasPrice}
+              title={hasPrice ? "" : "공시지가 데이터 없음(VWorld 미제공)"}
+              className={`px-3 py-1 text-[11px] font-bold transition-colors disabled:opacity-40 ${colorMode === "price" ? "bg-[var(--accent-strong)] text-white" : "bg-[var(--surface-muted)] text-[var(--text-secondary)]"}`}>
+              공시지가
+            </button>
+          </div>
+          {colorMode === "price" && hasPrice && (
+            <span className="flex flex-wrap items-center gap-1.5 text-[10px] text-[var(--text-hint)]">
+              <span className="text-[var(--text-secondary)]">낮음</span>
+              {PRICE_RAMP.map((c) => <span key={c} className="inline-block h-2.5 w-4" style={{ backgroundColor: c }} />)}
+              <span className="text-[var(--text-secondary)]">높음</span>
+              <span className="ml-1">{priceManPyeong(priceRange.min)} ~ {priceManPyeong(priceRange.max)}</span>
+            </span>
+          )}
         </div>
       )}
       <div ref={fs.wrapperRef} className={fs.wrapperClass("relative flex flex-col")}>
