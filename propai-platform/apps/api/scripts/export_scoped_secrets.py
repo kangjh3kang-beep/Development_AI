@@ -64,6 +64,23 @@ _DEFAULT_ENV_FILES = [
 ]
 
 
+def _parse_env_value(raw: str) -> str:
+    """.env 값 파싱 — 따옴표 보존(내부 # 유지), 따옴표 없으면 인라인 주석(' #') 제거."""
+    v = raw.strip()
+    if not v:
+        return ""
+    if v[0] in "\"'":  # 따옴표로 감싼 값 → 닫는 따옴표까지(내부 # 그대로)
+        q = v[0]
+        end = v.find(q, 1)
+        return v[1:end] if end > 0 else v[1:]
+    # 따옴표 없는 값: 공백+# / 탭+# 이후는 인라인 주석으로 간주해 제거
+    for sep in (" #", "\t#"):
+        idx = v.find(sep)
+        if idx >= 0:
+            v = v[:idx]
+    return v.strip()
+
+
 def _parse_env_file(path: str) -> dict[str, str]:
     kv: dict[str, str] = {}
     try:
@@ -73,7 +90,7 @@ def _parse_env_file(path: str) -> dict[str, str]:
                 if not line or line.startswith("#") or "=" not in line:
                     continue
                 k, v = line.split("=", 1)
-                kv[k.strip()] = v.strip().strip('"').strip("'")
+                kv[k.strip()] = _parse_env_value(v)
     except OSError:
         return {}
     return kv
@@ -102,13 +119,37 @@ def _load_baseline(env_files: list[str]) -> list[str]:
     return seen
 
 
-async def _overlay_db() -> int:
-    """관리자 입력(DB 암호화) 키를 플랫폼과 동일 로직으로 os.environ에 오버레이. best-effort."""
-    from app.services.secrets import secret_store
-    from apps.api.database.session import AsyncSessionLocal
+def _asyncpg_url(db_url: str) -> str:
+    """DATABASE_URL을 asyncpg 드라이버로 정규화(psycopg/sync → asyncpg)."""
+    for prefix in ("postgresql+psycopg2://", "postgresql+psycopg://", "postgresql://"):
+        if db_url.startswith(prefix):
+            return "postgresql+asyncpg://" + db_url[len(prefix):]
+    return db_url
 
-    async with AsyncSessionLocal() as session:
-        return await secret_store.load_into_env(session)
+
+async def _overlay_db() -> int:
+    """관리자 입력(DB 암호화) 키를 secret_store 동일 로직으로 오버레이.
+
+    플랫폼 settings(database/session.py) 전체 로드는 필수 env 부족으로 실패할 수 있어,
+    DATABASE_URL(베이스라인 .env)로 직접 async engine을 만들어 우회한다. secret_store의
+    복호화/오버레이 로직은 그대로 재사용(마스터키는 os.environ의 SECRET_STORE_KEY 등).
+    """
+    import os
+
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from app.services.secrets import secret_store
+
+    db_url = os.environ.get("DATABASE_URL", "")
+    if not db_url:
+        raise RuntimeError("DATABASE_URL 없음(베이스라인 .env에서 적재 실패)")
+    engine = create_async_engine(_asyncpg_url(db_url))
+    try:
+        session_factory = async_sessionmaker(engine, expire_on_commit=False)
+        async with session_factory() as session:
+            return await secret_store.load_into_env(session)
+    finally:
+        await engine.dispose()
 
 
 def _atomic_write(target: str, lines: list[str]) -> None:
