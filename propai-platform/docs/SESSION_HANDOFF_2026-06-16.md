@@ -95,7 +95,15 @@ asyncio.run(m())"
 - **TDD·실DB**: 이제 DB 가용 → 통합테스트 skipped==0 가능. Phase 1 plan 구조를 템플릿으로.
 - **스펙 근거**: `docs/superpowers/specs/2026-06-15-living-agent-knowledge-platform-design.md`(P2 = Lineage DAG·모순감지). 메모리 [[propai-living-agent-platform-spec]].
 
-### Phase 3 — SpecialistAgent + coordinator 실구현 (W4 닫기)
+### Phase 3 — SpecialistAgent + coordinator 실구현 ✅ 완료(2026-06-16, e7d368e→1ceb0b5, plan+5커밋)
+**구현·푸시 완료 — W4(계층3→원장 cite) 닫음.** plan=`docs/superpowers/plans/2026-06-16-phase3-specialist-agent-coordinator.md`.
+- 신규 `app/services/agents/specialist_agent.py`(SpecialistAgent: 계층1 결정론 도구→prior read→LLM+citation_gate grounded 발언→Phase2 원장 cite, 의존성주입 DI) · `registry.py`(permit specialist=`check_permit_feasibility` 결정론 도구).
+- `apps/api/core/coordinator.py` `dispatch()` 실구현(데드 `pass` stub 격상, `request_domain_agent` 불변) · `ledger_adapters.record_specialist_result`(`_append_with_lineage` 공개 래퍼).
+- **검증: 실DB `tests/agents`+`tests/ledger` 53 passed skipped==0 + 회귀(core_modules stub·Phase1 통합·full_pipeline) 72 passed.** 결정론 수치 불변(계층1 도구만)·LLM citation_gate enforce·additive·LLM부재 graceful. 미배포.
+- 🔎 그라운딩 실측 보정(6-에이전트): 데드 coordinator와 별개로 `apps/api/services/domain_agents_service.py`가 이미 결정론 `_score`+W3 cite 중이었음(prior/lineage/citation_gate 미연동) → Phase3=신규 SpecialistAgent 경로(기존 불변).
+- **다음(Phase 3.2 후보):** 다도메인 specialist + expert_panel ROSTER 토론 + domain_agents_service 합류 + 라우터 마운트. → Phase 4.
+
+(원 계획 — 참고)
 - 현황: `apps/api/core/coordinator.py:9`는 `pass` **데드코드**(프로덕션 호출자 0), `app/services/agents/`는 빈 폴더 — 계층3이 원장을 read/cite 안 함(W4=STUB/DEAD).
 - Phase 3 = coordinator(supervisor: 원장 prior_context 읽어 domain agent 디스패치) + SpecialistAgent(계층1 결정론 도구 호출 + citation_gate로 근거 매핑된 발언만). expert_panel(`app/services/expert_panel/`) 토론 ROSTER 재활용. **결정론 코어 불변·LLM 수치 비생성** 유지.
 - 규모 큼 → 별도 plan(writing-plans) + 그라운딩 선행 권장.
