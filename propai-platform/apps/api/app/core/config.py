@@ -66,6 +66,11 @@ class Settings(BaseSettings):
     # KOSIS 국가통계포털 API Key
     KOSIS_API_KEY: str = ""
 
+    # Phase 4 위험알림·예측(선택) — 미설정 시 graceful no-op(telegram)·휴리스틱(예측).
+    TELEGRAM_BOT_TOKEN: str = ""
+    TELEGRAM_CHAT_ID: str = ""
+    RISK_MODEL_PATH: str = ""
+
     AWS_ACCESS_KEY_ID: str = ""
     AWS_SECRET_ACCESS_KEY: str = ""
     AWS_S3_BUCKET: str = "propai-files"
