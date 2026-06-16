@@ -69,3 +69,36 @@ async def test_comprehensive_surfaces_contradiction_and_records_lineage(monkeypa
         assert parents[0]["contradiction_count"] >= 1
     finally:
         await _cleanup(tid)
+
+
+async def test_feasibility_writeback_contradiction_and_lineage():
+    if not await _db():
+        pytest.skip("DB 미가용 — Postgres 기동 후 실행")
+    from app.services.ledger import analysis_ledger_service as ledger
+    from app.services.ledger import lineage
+    from app.services.ledger.ledger_adapters import record_feasibility_result
+
+    tid = f"t-p2-feas-{uuid.uuid4().hex[:8]}"
+    pid = f"proj-{uuid.uuid4().hex[:8]}"
+    try:
+        # 1회차 — prior 없음 → 모순 없음
+        r1 = await record_feasibility_result(
+            result={"development_type": "다세대", "total_revenue_won": 5_000_000_000,
+                    "net_profit_won": 800_000_000, "profit_rate_pct": 18.0,
+                    "npv_won": 600_000_000, "grade": "B"},
+            tenant_id=tid, project_id=pid)
+        assert r1["contradictions"]["has_contradiction"] is False
+
+        # 2회차 — profit_rate 18→11(7%p, 절대임계 5%p 초과) 등 → 모순 + lineage 엣지
+        r2 = await record_feasibility_result(
+            result={"development_type": "다세대", "total_revenue_won": 4_000_000_000,
+                    "net_profit_won": 300_000_000, "profit_rate_pct": 11.0,
+                    "npv_won": 200_000_000, "grade": "D"},
+            tenant_id=tid, project_id=pid)
+        assert r2["contradictions"]["has_contradiction"] is True
+
+        latest = await ledger.get_latest(analysis_type="feasibility", tenant_id=tid, project_id=pid)
+        parents = await lineage.get_parents(child_hash=latest["content_hash"], tenant_id=tid)
+        assert parents and parents[0]["contradiction_count"] >= 1
+    finally:
+        await _cleanup(tid)

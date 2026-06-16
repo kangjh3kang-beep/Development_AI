@@ -129,17 +129,51 @@ def feasibility_result_to_ledger(result: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+async def _append_with_lineage(
+    *, analysis_type: str, payload: dict[str, Any], tenant_id: str | None, project_id: str | None,
+    pnu: str | None, address: str | None, source: str, created_by: str | None,
+    abs_thresholds: dict[str, float] | None = None,
+) -> dict[str, Any]:
+    """Phase 2: prior read → 결정론 모순 탐지 → append → 파생 lineage 엣지(best-effort).
+
+    결정론 수치/판정 불변(모순은 비교·표면화 전용). 반환에 'contradictions' 가산(additive).
+    """
+    from app.services.ledger import lineage
+    from app.services.ledger.contradiction import detect_contradictions
+    try:
+        prior = await ledger.get_latest(
+            analysis_type=analysis_type, tenant_id=tenant_id,
+            pnu=pnu, address=address, project_id=project_id)
+    except Exception:  # noqa: BLE001 — prior read 실패는 무중단(정직 degrade)
+        prior = None
+    contradictions = detect_contradictions(prior, payload, abs_thresholds=abs_thresholds)
+    wb = await ledger.append_analysis(
+        analysis_type=analysis_type, payload=payload,
+        tenant_id=tenant_id, project_id=project_id, pnu=pnu, address=address,
+        source=source, created_by=created_by)
+    if (isinstance(wb, dict) and wb.get("ok") and not wb.get("unchanged")
+            and wb.get("content_hash") and prior and prior.get("content_hash")):
+        await lineage.record_edge(
+            child_hash=wb["content_hash"], child_type=analysis_type,
+            parent_hash=prior["content_hash"], parent_type=prior.get("analysis_type", analysis_type),
+            tenant_id=tenant_id,
+            contradiction_count=len(contradictions["contradictions"]),
+            max_severity=contradictions["max_severity"])
+    return {**wb, "contradictions": contradictions} if isinstance(wb, dict) else wb
+
+
 async def record_feasibility_result(
     *, result: dict[str, Any], tenant_id: str | None = None,
     project_id: str | None = None, pnu: str | None = None, address: str | None = None,
     created_by: str | None = None,
 ) -> dict[str, Any]:
     # analysis_type="feasibility" (VCS 메타 'feasibility_vcs'와 분리 — read 성장루프 재무 체인)
-    return await ledger.append_analysis(
+    # Phase 2: prior 대비 결정론 모순 + 파생 lineage(profit_rate 5%p 절대임계 포함).
+    return await _append_with_lineage(
         analysis_type="feasibility", payload=feasibility_result_to_ledger(result),
         tenant_id=tenant_id, project_id=project_id, pnu=pnu, address=address,
         source="feasibility", created_by=created_by,
-    )
+        abs_thresholds={"profit_rate_pct": 5.0})
 
 
 def pricing_revenue_to_ledger(rev: dict[str, Any], *, round_id: str | None = None) -> dict[str, Any]:
