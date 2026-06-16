@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useEffect } from "react";
 import { GlobalAddressSearch } from "@/components/common/GlobalAddressSearch";
+import { DevelopmentScenarioCard } from "@/components/common/DevelopmentScenarioCard";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { apiClient } from "@/lib/api-client";
 
@@ -137,6 +138,8 @@ type AnalysisResult = Record<string, any>;
 export function ComprehensiveAnalysisPanel() {
   const ctxStore = useProjectContextStore();
   const [address, setAddress] = useState(ctxStore.siteAnalysis?.address ?? "");
+  // 다필지: 검색·엑셀로 등록된 전 필지 주소(2필지↑ 시 통합 개발방식 분석 노출)
+  const [parcels, setParcels] = useState<string[]>([]);
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -193,10 +196,12 @@ export function ComprehensiveAnalysisPanel() {
         <div className="flex gap-3 items-end">
           <div className="flex-1">
             <GlobalAddressSearch
-              single
-              initialAddress={address}
-              onChange={(entries) => { if (entries.length > 0) setAddress(entries[0].fullAddress); }}
-              placeholder="분석할 주소를 검색하세요"
+              writeToContext={false}
+              onChange={(entries) => {
+                if (entries.length > 0) setAddress(entries[0].jibunAddress || entries[0].fullAddress);
+                setParcels(entries.map((e) => e.jibunAddress || e.fullAddress || e.roadAddress).filter(Boolean));
+              }}
+              placeholder="분석할 주소 검색 · 다필지는 엑셀로 일괄 등록"
             />
           </div>
           <button
@@ -244,6 +249,11 @@ export function ComprehensiveAnalysisPanel() {
           <p className="text-[10px] text-[var(--text-hint)] mt-2">AI 해석: API 키 미설정 (규칙 기반 분석만 제공)</p>
         )}
       </div>
+
+      {/* 다필지(2필지↑) 통합 개발방식 분석 — 검색·엑셀로 등록 시 자동 노출 */}
+      {parcels.length > 1 && (
+        <DevelopmentScenarioCard address={address} parcels={parcels} />
+      )}
 
       {error && (
         <div className="rounded-xl bg-red-500/10 border border-red-500/30 p-4 text-sm text-red-400">{error}</div>
