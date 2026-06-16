@@ -7,6 +7,19 @@ import structlog
 
 logger = structlog.get_logger()
 
+# 필지(지적도) 프로세스 캐시 — PNU→feature(dict). 필지는 거의 불변이라 대량 다필지
+# 분석 시 동일 PNU 반복/중복 호출을 제거(N+1 완화). 무한증식 방지로 상한 둠.
+_PARCEL_CACHE: Dict[str, dict] = {}
+_PARCEL_CACHE_MAX = 20000
+
+
+def _parcel_cache_put(pnu: str, value: dict) -> None:
+    """필지 캐시에 저장. 상한 초과 시 단순 초기화(LRU 미도입 — 정적 데이터라 충분)."""
+    if len(_PARCEL_CACHE) >= _PARCEL_CACHE_MAX:
+        _PARCEL_CACHE.clear()
+    _PARCEL_CACHE[pnu] = value
+
+
 def _wgs84_area_to_sqm(area_deg2: float, center_lat: float) -> float:
     """WGS84 도(degree) 단위 면적을 m² 단위로 변환."""
     lat_m = 111_320  # 위도 1도 ≈ 111,320m (거의 일정)
@@ -19,7 +32,17 @@ class VWorldService:
     BASE_URL = settings.VWORLD_BASE_URL
 
     async def get_parcel_by_pnu(self, pnu_code: str) -> Optional[dict]:
-        """PNU 코드로 필지 정보 조회"""
+        """PNU 코드로 필지 정보 조회.
+
+        필지(지적도)는 거의 바뀌지 않으므로 프로세스 캐시로 중복/반복 호출을 제거한다
+        (대량 다필지 분석 시 동일 PNU 재조회·N+1 완화). 캐시는 PNU→feature.
+        """
+        if not pnu_code:
+            return None
+        cached = _PARCEL_CACHE.get(pnu_code)
+        if cached is not None:
+            # 빈 결과(None 못찾음)도 빈 dict로 캐시해 반복 실패호출 방지.
+            return cached or None
         params = {
             "service": "data",
             "request": "GetFeature",
@@ -35,7 +58,9 @@ class VWorldService:
                 resp.raise_for_status()
                 data = resp.json()
                 features = data.get("response", {}).get("result", {}).get("featureCollection", {}).get("features", [])
-                return features[0] if features else None
+                result = features[0] if features else None
+                _parcel_cache_put(pnu_code, result or {})
+                return result
             except httpx.HTTPStatusError as e:
                 logger.error("VWORLD HTTP 오류", pnu=pnu_code, status=e.response.status_code)
                 return None
@@ -44,12 +69,24 @@ class VWorldService:
                 return None
 
     async def merge_parcels_gis_union(self, pnu_codes: list[str]) -> Optional[dict]:
-        """다필지 GIS Union 통합 경계 산출"""
-        geometries = []
-        for pnu in pnu_codes:
-            parcel = await self.get_parcel_by_pnu(pnu)
-            if parcel:
-                geometries.append(parcel.get("geometry"))
+        """다필지 GIS Union 통합 경계 산출.
+
+        대량 다필지에서 필지 경계를 PNU별로 순차 조회하면 N+1 지연(수백 필지=수십 초)이
+        발생하므로, 동시성 제한(Semaphore) 하에 병렬 조회한다(캐시와 결합해 반복 제거).
+        """
+        import asyncio
+
+        sem = asyncio.Semaphore(8)  # VWorld 보호용 동시 호출 상한
+
+        async def _one(pnu: str):
+            async with sem:
+                return await self.get_parcel_by_pnu(pnu)
+
+        parcels = await asyncio.gather(*[_one(p) for p in pnu_codes], return_exceptions=True)
+        geometries = [
+            p.get("geometry") for p in parcels
+            if isinstance(p, dict) and p.get("geometry")
+        ]
         if not geometries:
             return None
         from shapely.geometry import shape, mapping
