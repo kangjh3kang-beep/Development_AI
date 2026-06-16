@@ -33,6 +33,13 @@ interface ProjectAddressInputProps {
   hideProjectPicker?: boolean;
   /** 프로젝트 선택 드롭다운 앞 라벨 (기본 없음) */
   pickerLabel?: string;
+  /**
+   * 대량 다필지 모드 — true면 다중 필지 검색 + 엑셀 일괄 등록을 노출한다.
+   * 기본 false(단일 필지, 기존 동작 불변 — 회귀 방지).
+   */
+  multi?: boolean;
+  /** 다필지 목록 변경 콜백(multi 모드) — 등록된 전 필지 주소 배열 전달 */
+  onParcelsChange?: (addresses: string[]) => void;
 }
 
 export function ProjectAddressInput({
@@ -44,6 +51,8 @@ export function ProjectAddressInput({
   disabled = false,
   hideProjectPicker = false,
   pickerLabel,
+  multi = false,
+  onParcelsChange,
 }: ProjectAddressInputProps) {
   const projects = useProjectStore((s) => s.projects);
   const snapshots = useProjectContextStore((s) => s.snapshots);
@@ -87,7 +96,17 @@ export function ProjectAddressInput({
   };
 
   const handleAddressChange = (entries: AddressEntry[]) => {
-    onChange(entries.length > 0 ? entries[0].fullAddress : "");
+    const primary = entries.length > 0
+      ? (entries[0].jibunAddress || entries[0].fullAddress || entries[0].roadAddress)
+      : "";
+    onChange(primary);
+    if (multi) {
+      // 다필지: 등록된 전 필지 주소 배열을 호스트로 전달.
+      const all = entries
+        .map((e) => e.jibunAddress || e.fullAddress || e.roadAddress)
+        .filter(Boolean);
+      onParcelsChange?.(all);
+    }
   };
 
   return (
@@ -119,14 +138,15 @@ export function ProjectAddressInput({
         )}
       </div>
 
-      {/* key={value}로 프로젝트 선택/자동로드 시 GlobalAddressSearch를 재마운트해
-          initialAddress(최초 1회만 반영)를 갱신한다. */}
+      {/* single 모드: key={value}로 프로젝트 선택/자동로드 시 재마운트해 initialAddress 갱신.
+          multi 모드: 안정 key로 유지(값 변경에 필지 목록이 초기화되지 않도록). */}
       <GlobalAddressSearch
-        key={value || "empty"}
-        single
-        initialAddress={value || undefined}
+        key={multi ? "multi" : (value || "empty")}
+        single={!multi}
+        initialAddress={!multi && value ? value : undefined}
         placeholder={placeholder}
         disabled={disabled}
+        writeToContext={!multi}
         onChange={handleAddressChange}
       />
     </div>
