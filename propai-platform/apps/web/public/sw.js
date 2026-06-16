@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v213-bulk-parcel-regionmap";
+const CACHE_NAME = "propai-v214-multiparcel-hint";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

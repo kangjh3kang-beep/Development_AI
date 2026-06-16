@@ -351,6 +351,17 @@ export function GlobalAddressSearch({
         </div>
       )}
 
+      {/* 다필지 안내 — 검색 추가와 엑셀 일괄등록이 병행됨을 명시(단일 모드는 숨김) */}
+      {!single && (
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-[var(--text-secondary)]">
+          <span className="font-bold text-[var(--text-primary)]">다필지 등록</span>
+          <span className="rounded bg-[var(--accent-soft)] px-1.5 py-0.5 font-semibold text-[var(--accent-strong)]">🔍 검색으로 한 필지씩 추가</span>
+          <span className="text-[var(--text-hint)]">또는</span>
+          <span className="rounded bg-[var(--accent-soft)] px-1.5 py-0.5 font-semibold text-[var(--accent-strong)]">📊 엑셀로 일괄 등록</span>
+          <span className="text-[var(--text-hint)]">— 둘 다 사용 가능(혼용 OK)</span>
+        </div>
+      )}
+
       {/* 주소 검색 입력 */}
       {(isSearching || displayAddresses.length === 0) ? (
         <KakaoAddressSearch
