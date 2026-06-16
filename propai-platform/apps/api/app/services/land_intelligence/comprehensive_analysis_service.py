@@ -255,23 +255,41 @@ class ComprehensiveAnalysisService:
         # Phase 1 성장루프: prior 첨부(주입 증거) + write-back(다음 회차 prior가 됨, best-effort)
         result["prior_analysis"] = prior
         from app.services.ledger import analysis_ledger_service as ledger
-        await ledger.append_analysis(
-            analysis_type="site_analysis",
-            payload={
-                "kind": "site_analysis", "schema_version": "site_analysis/v1",
-                "zone_type": result.get("zone_type"),
-                "effective_far": result.get("effective_far"),
-                "land_area_sqm": result.get("land_area_sqm"),
-                "potential_far_range": result.get("potential_far_range"),
-                "findings_brief": [
-                    {"check_id": "ZONE", "status": "info",
-                     "current": (result.get("effective_far") or {}).get("effective_far_pct"),
-                     "limit": None},
-                ],
-            },
+        from app.services.ledger import lineage
+        from app.services.ledger.contradiction import detect_contradictions
+
+        wb_payload = {
+            "kind": "site_analysis", "schema_version": "site_analysis/v1",
+            "zone_type": result.get("zone_type"),
+            "effective_far": result.get("effective_far"),
+            "land_area_sqm": result.get("land_area_sqm"),
+            "potential_far_range": result.get("potential_far_range"),
+            "findings_brief": [
+                {"check_id": "ZONE", "status": "info",
+                 "current": (result.get("effective_far") or {}).get("effective_far_pct"),
+                 "limit": None},
+            ],
+        }
+        # Phase 2: prior 대비 결정론 모순 표면화(판정/수치 불변 — 비교 전용)
+        contradictions = detect_contradictions(prior, wb_payload)
+        result["contradictions"] = contradictions
+
+        wb = await ledger.append_analysis(
+            analysis_type="site_analysis", payload=wb_payload,
             tenant_id=tenant_id, pnu=_pnu, address=address, project_id=project_id,
             source="comprehensive", created_by=None,
         )
+        # Phase 2: 파생 lineage 엣지(child=이번 write-back, parent=prior) — best-effort
+        if (prior and prior.get("content_hash") and wb.get("ok")
+                and not wb.get("unchanged") and wb.get("content_hash")):
+            await lineage.record_edge(
+                child_hash=wb["content_hash"], child_type="site_analysis",
+                parent_hash=prior["content_hash"],
+                parent_type=prior.get("analysis_type", "site_analysis"),
+                tenant_id=tenant_id,
+                contradiction_count=len(contradictions["contradictions"]),
+                max_severity=contradictions["max_severity"],
+            )
         return result
 
     # ────────────────────────────────────────────

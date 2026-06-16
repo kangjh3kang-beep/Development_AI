@@ -1,0 +1,71 @@
+"""Phase 2 e2e — comprehensive 배선(모순 표면화 + lineage write-back)을 실DB로 검증.
+
+Phase 1 패턴: engine.dispose() 루프격리 + collect_comprehensive monkeypatch(경량 호출).
+"""
+import uuid
+
+import pytest
+
+pytestmark = pytest.mark.asyncio
+
+
+async def _db() -> bool:
+    try:
+        from sqlalchemy import text
+        from app.core.database import async_session_factory, engine
+        await engine.dispose()  # 교차-이벤트루프 풀 바인딩 초기화(테스트 격리 — 현재 루프 재바인딩)
+        async with async_session_factory() as db:
+            await db.execute(text("SELECT 1"))
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+async def _cleanup(tid: str) -> None:
+    from sqlalchemy import text
+    from app.core.database import async_session_factory
+    async with async_session_factory() as db:
+        await db.execute(text("DELETE FROM analysis_lineage WHERE tenant_id = :t"), {"t": tid})
+        await db.execute(text("DELETE FROM analysis_ledger WHERE tenant_id = :t"), {"t": tid})
+        await db.commit()
+
+
+async def test_comprehensive_surfaces_contradiction_and_records_lineage(monkeypatch):
+    if not await _db():
+        pytest.skip("DB 미가용 — Postgres 기동 후 실행")
+    from app.services.ledger import analysis_ledger_service as ledger
+    from app.services.ledger import lineage
+    from app.services.land_intelligence.comprehensive_analysis_service import ComprehensiveAnalysisService
+
+    pnu = f"111501030010{uuid.uuid4().hex[:7]}"
+    addr = f"의정부동 224-{uuid.uuid4().hex[:6]}"
+    tid = f"t-p2-comp-{uuid.uuid4().hex[:8]}"
+    svc = ComprehensiveAnalysisService()
+    far = {"v": 200.0}
+
+    async def _fake_collect(self, address, pnu_arg=None):
+        return {"pnu": pnu, "zone_type": "제2종일반주거지역",
+                "land_register": {"area_sqm": 300.0},
+                "effective_far": {"effective_far_pct": far["v"], "effective_bcr_pct": 60.0},
+                "warnings": []}
+
+    monkeypatch.setattr(type(svc.land_info), "collect_comprehensive", _fake_collect, raising=True)
+
+    try:
+        # 1회차 — prior 없음 → 모순 없음
+        r1 = await svc.analyze(addr, tenant_id=tid, project_id=None)
+        assert r1["contradictions"]["has_contradiction"] is False
+
+        # 2회차 — FAR 200→260(30%↑) → 모순(high) + lineage 엣지
+        far["v"] = 260.0
+        r2 = await svc.analyze(addr, tenant_id=tid, project_id=None)
+        assert r2["contradictions"]["has_contradiction"] is True
+        assert r2["contradictions"]["max_severity"] == "high"
+
+        latest = await ledger.get_latest(analysis_type="site_analysis", tenant_id=tid,
+                                         pnu=pnu, address=addr, project_id=None)
+        parents = await lineage.get_parents(child_hash=latest["content_hash"], tenant_id=tid)
+        assert parents and parents[0]["max_severity"] == "high"
+        assert parents[0]["contradiction_count"] >= 1
+    finally:
+        await _cleanup(tid)
