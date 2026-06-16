@@ -26,7 +26,10 @@ class NormalizeResult:
         pnus: list[str],
         degraded: bool = False,
         reason: Optional[str] = None,
+        geo: Optional[dict] = None,
     ) -> None:
+        # geo: 지도 미리보기용 해석 좌표 — {center:{lat,lon}, bbox:[minlon,minlat,maxlon,maxlat], radius_m}
+        self.geo = geo
         # PNU 중복 제거(순서 보존). VWorld bbox는 다부분 필지를 같은 PNU로 여러 번
         # 반환할 수 있어, 중복이 남으면 len(items)<len(target)로 완결성이 영원히 PARTIAL에
         # 갇힌다(state RUNNING 고착). 여기서 1회 정규화한다.
@@ -69,6 +72,8 @@ async def normalize(inp: BatchInput, vworld: Any = None) -> NormalizeResult:
     # ── 2) bbox ──
     if inp.bbox is not None:
         min_lon, min_lat, max_lon, max_lat = inp.bbox
+        geo = {"bbox": [min_lon, min_lat, max_lon, max_lat],
+               "center": {"lat": (min_lat + max_lat) / 2, "lon": (min_lon + max_lon) / 2}}
         parcels = await vworld.get_parcels_in_bbox(
             min_lon, min_lat, max_lon, max_lat, max_count=1000
         )
@@ -76,10 +81,10 @@ async def normalize(inp: BatchInput, vworld: Any = None) -> NormalizeResult:
         if not pnus:
             # 외부 미가용/미적재 → 정직 degrade(가짜 생성 금지)
             return NormalizeResult(
-                pnus=[], degraded=True,
+                pnus=[], degraded=True, geo=geo,
                 reason="bbox 영역에서 필지를 찾지 못했습니다(외부 데이터 미가용 또는 빈 영역).",
             )
-        return NormalizeResult(pnus=pnus)
+        return NormalizeResult(pnus=pnus, geo=geo)
 
     # ── 3) polygon ──
     if inp.polygon is not None:
@@ -133,16 +138,21 @@ async def normalize(inp: BatchInput, vworld: Any = None) -> NormalizeResult:
         # 위경도 1도 ≈ 111,320m. 경도는 위도 코사인 보정.
         dlat = radius / 111_320.0
         dlon = radius / (111_320.0 * max(math.cos(math.radians(lat)), 0.01))
+        geo = {
+            "center": {"lat": lat, "lon": lon},
+            "bbox": [lon - dlon, lat - dlat, lon + dlon, lat + dlat],
+            "radius_m": radius,
+        }
         parcels = await vworld.get_parcels_in_bbox(
             lon - dlon, lat - dlat, lon + dlon, lat + dlat, max_count=1000
         )
         pnus = [p.get("pnu", "") for p in (parcels or []) if p.get("pnu")]
         if not pnus:
             return NormalizeResult(
-                pnus=[], degraded=True,
+                pnus=[], degraded=True, geo=geo,
                 reason=f"'{inp.center_address}' 반경 {radius}m 내 필지를 찾지 못했습니다(외부 데이터 미가용 또는 빈 영역).",
             )
-        return NormalizeResult(pnus=pnus)
+        return NormalizeResult(pnus=pnus, geo=geo)
 
     # ── 4) admin_code / district_code → 정직 degrade ──
     if inp.admin_code is not None:

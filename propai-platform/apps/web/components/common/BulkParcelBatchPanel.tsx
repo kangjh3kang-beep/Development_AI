@@ -11,8 +11,15 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import dynamic from "next/dynamic";
 import { apiClient } from "@/lib/api-client";
 import { GlobalAddressSearch } from "@/components/common/GlobalAddressSearch";
+
+// 구역 미리보기 지도 — SSR 비활성(Kakao SDK는 클라이언트 전용).
+const BatchRegionMap = dynamic(
+  () => import("@/components/map/BatchRegionMap").then((m) => m.BatchRegionMap),
+  { ssr: false, loading: () => <div className="h-[280px] rounded-xl bg-[var(--surface-strong)]" /> },
+);
 
 type ItemStatus = "confirmed" | "ambiguous" | "not_found" | "error";
 type BatchItem = { pnu: string; status: ItemStatus; address?: string | null; area_sqm?: number | null; reason?: string | null };
@@ -29,6 +36,7 @@ type BatchResult = {
   outliers?: { pnu: string; address?: string | null; area_sqm?: number; median_sqm?: number; ratio?: number; reason?: string }[];
   fee_per_unit_krw?: number;
   estimated_fee_krw?: number;
+  region_geo?: { center?: { lat: number; lon: number } | null; bbox?: number[] | null; radius_m?: number | null } | null;
   page?: number;
   size?: number;
   has_next?: boolean;
@@ -222,6 +230,11 @@ export function BulkParcelBatchPanel({ className = "" }: { className?: string })
               <p className="text-[var(--text-secondary)]">집계 대기 중</p>
             )}
           </div>
+
+          {/* 구역 미리보기 지도 — 분석한 구역(중심+반경/bbox) 시각화 */}
+          {result.region_geo?.center?.lat ? (
+            <BatchRegionMap geo={result.region_geo} />
+          ) : null}
 
           {/* 신뢰루프: 면적 이상치(검토 권고) */}
           {(result.outliers?.length ?? 0) > 0 && (

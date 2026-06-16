@@ -113,6 +113,9 @@ class BatchService:
         norm = await region_normalizer.normalize(inp, vworld=self._vworld)
         record.target_pnus = norm.pnus
         record.degrade_reason = norm.reason if norm.degraded else None
+        if norm.geo:
+            # 지도 미리보기용 해석 좌표를 region_input에 보관(결과로 노출).
+            job.region_input = {**region_input, "_geo": norm.geo}
 
         await self.store.save(record)
         await self.store.bind_idempotency(key, job.id)
@@ -209,6 +212,7 @@ class BatchService:
             outliers=_area_outliers(record.items),
             fee_per_unit_krw=per_unit,
             estimated_fee_krw=estimated_fee,
+            region_geo=(record.job.region_input or {}).get("_geo"),
             page=page,
             size=size,
             has_next=has_next,
