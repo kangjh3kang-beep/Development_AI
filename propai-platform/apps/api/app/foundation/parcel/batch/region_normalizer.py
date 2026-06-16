@@ -27,7 +27,16 @@ class NormalizeResult:
         degraded: bool = False,
         reason: Optional[str] = None,
     ) -> None:
-        self.pnus = pnus
+        # PNU 중복 제거(순서 보존). VWorld bbox는 다부분 필지를 같은 PNU로 여러 번
+        # 반환할 수 있어, 중복이 남으면 len(items)<len(target)로 완결성이 영원히 PARTIAL에
+        # 갇힌다(state RUNNING 고착). 여기서 1회 정규화한다.
+        seen: set[str] = set()
+        deduped: list[str] = []
+        for p in pnus:
+            if p and p not in seen:
+                seen.add(p)
+                deduped.append(p)
+        self.pnus = deduped
         self.degraded = degraded
         self.reason = reason
 
