@@ -118,6 +118,7 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
         area_sqm: r.area_sqm ?? null, owner_type: (r.owner_type as LandRow["owner_type"]) || "",
         expected_price: r.expected_price ?? null, purchase_price: r.purchase_price ?? null,
         contracted: !!r.contracted, land_use_consent: !!r.land_use_consent, district_consent: !!r.district_consent,
+        operator_consent: !!r.operator_consent,
       }));
       if (imported.length) setRows(projectId, [...rows, ...imported]);
       else alert("가져올 행이 없습니다. '지번' 컬럼이 있는 엑셀인지 확인하세요.");
@@ -137,10 +138,12 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
     const contracted = rows.filter((r) => r.contracted).length;
     const useC = rows.filter((r) => r.land_use_consent).length;
     const distC = rows.filter((r) => r.district_consent).length;
+    const operC = rows.filter((r) => r.operator_consent).length;
     const expSum = rows.reduce((a, r) => a + (r.expected_price || 0), 0);
     const purSum = rows.reduce((a, r) => a + (r.purchase_price || 0), 0);
-    return { n, area, priv, pub, contracted, useC, distC, expSum, purSum,
-      contractRatio: n ? contracted / n : 0, useRatio: n ? useC / n : 0, distRatio: n ? distC / n : 0 };
+    return { n, area, priv, pub, contracted, useC, distC, operC, expSum, purSum,
+      contractRatio: n ? contracted / n : 0, useRatio: n ? useC / n : 0, distRatio: n ? distC / n : 0,
+      operRatio: n ? operC / n : 0 };
   }, [rows]);
 
   const add = useCallback(() => {
@@ -159,7 +162,7 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
       id: Math.random().toString(36).slice(2, 9),
       jibun, owner: "", share: "", area_sqm: area, owner_type: toOwnerType(ot),
       expected_price: null, purchase_price: null,
-      contracted: false, land_use_consent: false, district_consent: false, pdf_url: null,
+      contracted: false, land_use_consent: false, district_consent: false, operator_consent: false, pdf_url: null,
     });
     const parcels = siteAnalysis?.parcels;
     if (parcels && parcels.length) {
@@ -347,7 +350,7 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
               <table className="w-full min-w-[980px] text-[11px]">
                 <thead>
                   <tr className="border-b border-[var(--line)] text-[var(--text-tertiary)]">
-                    {["#", "지번", "소유자", "지분", "면적㎡", "소유구분", "매입예정가(원)", "매입가(원)", "계약", "토지사용", "지구단위", "등기분석", ""].map((h) => (
+                    {["#", "지번", "소유자", "지분", "면적㎡", "소유구분", "매입예정가(원)", "매입가(원)", "계약", "토지사용", "지구단위", "시행자지정", "등기분석", ""].map((h) => (
                       <th key={h} className="px-1.5 py-2 text-left font-semibold whitespace-nowrap">{h}</th>
                     ))}
                   </tr>
@@ -381,6 +384,7 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
                       <td className="px-1.5 py-1 text-center"><input type="checkbox" checked={r.contracted} onChange={(e) => updateRow(projectId, r.id, { contracted: e.target.checked })} /></td>
                       <td className="px-1.5 py-1 text-center"><input type="checkbox" checked={r.land_use_consent} onChange={(e) => updateRow(projectId, r.id, { land_use_consent: e.target.checked })} /></td>
                       <td className="px-1.5 py-1 text-center"><input type="checkbox" checked={r.district_consent} onChange={(e) => updateRow(projectId, r.id, { district_consent: e.target.checked })} /></td>
+                      <td className="px-1.5 py-1 text-center"><input title="시행자지정동의서" type="checkbox" checked={r.operator_consent} onChange={(e) => updateRow(projectId, r.id, { operator_consent: e.target.checked })} /></td>
                       <td className="px-1.5 py-1 whitespace-nowrap">
                         <button onClick={() => autofill(r)} disabled={busy === r.id} title="등기 권리분석으로 소유자·지분·면적 자동채움" className="mr-1 cursor-pointer rounded bg-[var(--surface-strong)] px-1.5 py-0.5 text-[10px] font-bold text-[var(--accent-strong)] disabled:opacity-50">{busy === r.id ? "…" : "자동채움"}</button>
                         <button onClick={() => openAnalysis(r.jibun)} title="등기 권리분석 상세 페이지로 이동" className="cursor-pointer rounded bg-[var(--accent-soft)] px-1.5 py-0.5 text-[10px] font-bold text-[var(--accent-strong)]">분석 ↗</button>
@@ -416,10 +420,11 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
                   </div>
                 ))}
               </div>
-              <div className="mt-4 grid gap-3 sm:grid-cols-3">
+              <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                 <Bar label="확보비율(계약확정)" ratio={agg.contractRatio} color="var(--status-success)" />
                 <Bar label="토지사용 동의율" ratio={agg.useRatio} color="var(--status-info)" />
                 <Bar label="지구단위 동의율" ratio={agg.distRatio} color="var(--data-accent)" />
+                <Bar label="시행자지정 동의율" ratio={agg.operRatio} color="var(--status-warning)" />
               </div>
               <div className="mt-4 flex flex-wrap gap-4 text-xs">
                 <span className="text-[var(--text-secondary)]">보상비(매입가) 합계: <b className="cc-num text-[var(--text-primary)]">{won(agg.purSum)}원</b></span>

@@ -29,6 +29,9 @@ TEMPLATE_COLUMNS = [
     ("지목", "대"),
     ("면적(㎡)", "14959"),
     ("소유구분", "사유"),
+    ("토지사용동의(O/X)", "X"),
+    ("지구단위계획동의(O/X)", "X"),
+    ("시행자지정동의(O/X)", "X"),
     ("비고", ""),
 ]
 _MAX_ROWS = 500  # 업로드 행 상한(과도 방지)
@@ -43,6 +46,22 @@ _H_JIMOK = {"지목", "지목명", "landcategory", "jimok"}
 _H_AREA = {"면적", "면적㎡", "면적m2", "토지면적", "area", "areasqm", "대지면적"}
 _H_OWNER = {"소유구분", "소유", "ownertype", "소유자구분"}
 _H_LABEL = {"비고", "라벨", "명칭", "메모", "note", "label"}
+# 동의서 3종(O/X·Y/N·동의/미동의 체크) — 정비/도시개발·지구단위·시행자지정 동의율 산정용.
+_H_CONSENT_LAND = {"토지사용동의", "토지사용동의서", "사용동의", "토지동의", "landconsent"}
+_H_CONSENT_DISTRICT = {"지구단위계획동의", "지구단위동의", "지구단위계획동의서", "지구단위동의서", "districtconsent"}
+_H_CONSENT_OPERATOR = {"시행자지정동의", "시행자지정동의서", "시행자동의", "사업시행자동의", "operatorconsent"}
+
+
+def _to_consent(v: Any) -> bool | None:
+    """동의 체크 셀 → True/False/None(미기재). O·Y·동의·1·V·체크=동의."""
+    s = str(v or "").strip().lower()
+    if not s:
+        return None
+    if s in {"o", "ㅇ", "y", "yes", "동의", "1", "v", "✓", "true", "t", "체크", "있음"}:
+        return True
+    if s in {"x", "ㅌ", "n", "no", "미동의", "0", "false", "f", "없음", "-"}:
+        return False
+    return None
 
 
 def _norm(h: Any) -> str:
@@ -54,6 +73,8 @@ def _detect_columns(headers: list[Any]) -> dict[str, str | None]:
     sets = {
         "address": _H_ADDR, "jibun": _H_JIBUN, "bcode": _H_BCODE, "pnu": _H_PNU,
         "jimok": _H_JIMOK, "area": _H_AREA, "owner": _H_OWNER, "label": _H_LABEL,
+        "consent_land": _H_CONSENT_LAND, "consent_district": _H_CONSENT_DISTRICT,
+        "consent_operator": _H_CONSENT_OPERATOR,
     }
     found: dict[str, str | None] = {k: None for k in sets}
     for h in headers:
@@ -104,7 +125,7 @@ def build_template_xlsx() -> bytes:
         ws.column_dimensions[c.column_letter].width = max(12, len(name) + 4)
     # 예시 2행(작성 가이드).
     ws.append([ex for _n, ex in TEMPLATE_COLUMNS])
-    ws.append(["2", "서울특별시 강남구 역삼동 737", "737", "1168010100", "", "대", "8500", "사유", "예: 본번만"])
+    ws.append(["2", "서울특별시 강남구 역삼동 737", "737", "1168010100", "", "대", "8500", "사유", "O", "X", "X", "예: 본번만"])
     for r in (2, 3):
         for col in range(1, len(TEMPLATE_COLUMNS) + 1):
             ws.cell(row=r, column=col).font = Font(italic=True, color="888888")
@@ -120,7 +141,9 @@ def build_template_xlsx() -> bytes:
         "4) 둘 다 없으면 [소재지(주소)] 를 좌표·필지로 자동 조회합니다(다소 느릴 수 있음).",
         "5) '산' 지번은 지번 칸에 '산12-3' 처럼 적으세요.",
         "6) 면적은 ㎡ 기준 숫자만(콤마 가능).",
-        f"7) 한 번에 최대 {_MAX_ROWS}필지까지 업로드됩니다.",
+        "7) [토지사용동의]·[지구단위계획동의]·[시행자지정동의] 는 O(동의) / X(미동의)로 표기하세요.",
+        "   → 정비·도시개발사업의 동의율(소유자 동의 비율) 산정과 시행자 지정요건 판정에 활용됩니다.",
+        f"8) 한 번에 최대 {_MAX_ROWS}필지까지 업로드됩니다.",
         "",
         "※ 예시행(2~3행)은 삭제하고 실제 필지를 입력하세요.",
     ]
@@ -176,6 +199,10 @@ class ParcelExcelService:
             jimok = _g(row, "jimok") or None
             owner = _g(row, "owner") or None
             label = _g(row, "label") or None
+            # 동의서 3종 체크(O/X·동의/미동의) — 정비·도시개발 동의율 산정에 활용.
+            consent_land = _to_consent(_g(row, "consent_land"))
+            consent_district = _to_consent(_g(row, "consent_district"))
+            consent_operator = _to_consent(_g(row, "consent_operator"))
             if not (address or pnu_raw or bcode):
                 continue  # 완전 빈 행 스킵
             pnu = pnu_raw if len(pnu_raw) == 19 else (_pnu_from_bcode(bcode, jibun) if bcode else None)
@@ -185,6 +212,10 @@ class ParcelExcelService:
                 "bcode": (bcode[:10] if len(bcode) >= 10 else None),
                 "pnu": pnu, "area_sqm": area, "jimok": jimok,
                 "owner_type": owner, "label": label,
+                # 동의서 3종(True=동의/False=미동의/None=미기재).
+                "consent_land": consent_land,
+                "consent_district": consent_district,
+                "consent_operator": consent_operator,
                 # ★자동 보강 필드(주소만 입력해도 PNU 확보 후 채워짐). 무자료=None(가짜 금지).
                 "zone_type": None, "official_price_per_sqm": None,
                 # 소유자·권리관계는 공공API로 확보 불가 → 등기부등본 열람/발급 필요(사용자 안내).

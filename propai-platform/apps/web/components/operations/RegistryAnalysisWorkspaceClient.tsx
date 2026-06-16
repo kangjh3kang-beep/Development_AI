@@ -124,7 +124,7 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
     const mk = (jibun: string, area: number | null, ot: string): LandRow => ({
       id: Math.random().toString(36).slice(2, 9), jibun, owner: "", share: "",
       area_sqm: area, owner_type: toOwnerType(ot), expected_price: null, purchase_price: null,
-      contracted: false, land_use_consent: false, district_consent: false, pdf_url: null,
+      contracted: false, land_use_consent: false, district_consent: false, operator_consent: false, pdf_url: null,
     });
     if (parcels && parcels.length) setRows(projectId, parcels.map((p) => mk(p.address, p.areaSqm ?? null, p.ownerType)));
     else if (siteAnalysis?.address) setRows(projectId, [mk(siteAnalysis.address, siteAnalysis.landAreaSqm ?? null, "")]);

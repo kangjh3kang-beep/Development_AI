@@ -21,6 +21,7 @@ export type LandRow = {
   contracted: boolean; // 매입계약 확정여부
   land_use_consent: boolean; // 토지사용동의서
   district_consent: boolean; // 지구단위(정비) 동의서
+  operator_consent: boolean; // 시행자지정동의서(사업시행자 지정 동의)
   pdf_url?: string | null; // 발급 등기부등본 PDF(서버 저장, TTL)
   note?: string;
 };
@@ -51,7 +52,7 @@ export const useLandScheduleStore = create<State>()(
             id: Math.random().toString(36).slice(2, 9),
             jibun: "", owner: "", share: "", area_sqm: null, owner_type: "",
             expected_price: null, purchase_price: null, contracted: false,
-            land_use_consent: false, district_consent: false,
+            land_use_consent: false, district_consent: false, operator_consent: false,
             ...row,
           };
           return { byProject: { ...s.byProject, [k]: [...cur, newRow] } };

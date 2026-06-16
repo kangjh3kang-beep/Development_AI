@@ -25,6 +25,7 @@ import {
   type AddressEntry,
 } from "@/components/common/GlobalAddressSearch";
 import { FieldSourceBadge } from "@/components/common/FieldSourceBadge";
+import { DevelopmentScenarioCard } from "@/components/common/DevelopmentScenarioCard";
 import { LegalRefChip } from "@/components/common/LegalRefChip";
 import { EvidencePanel, type EvidenceItem } from "@/components/common/EvidencePanel";
 import type {
@@ -91,6 +92,8 @@ export function PreCheckWorkspace() {
   const { locale } = useParams() as { locale: string };
 
   const [address, setAddress] = useState("");
+  // 다필지: 엑셀 업로드/다중 검색으로 등록된 전체 필지 주소(통합 개발방식 분석에 사용)
+  const [parcels, setParcels] = useState<string[]>([]);
   const [areaSqm, setAreaSqm] = useState<number | null>(null);
   // 면적 출처: 주소검색의 토지특성 자동반영(auto) vs 사용자 직접입력(user)
   const [areaSource, setAreaSource] = useState<"auto" | "user" | null>(null);
@@ -105,6 +108,11 @@ export function PreCheckWorkspace() {
 
   /** 주소검색 선택 → 주소·면적 자동입력 (사용자 수동값은 덮지 않음) */
   function handleAddressChange(entries: AddressEntry[]) {
+    // 다필지: 등록된 전 필지 주소 목록 갱신(엑셀 업로드/다중 검색)
+    const all = entries
+      .map((e) => e.jibunAddress || e.fullAddress || e.roadAddress)
+      .filter(Boolean);
+    setParcels(all);
     const entry = entries[0];
     if (!entry) return;
     const picked = entry.jibunAddress || entry.fullAddress || entry.roadAddress;
@@ -251,15 +259,14 @@ export function PreCheckWorkspace() {
                 WP-D: PreCheck는 탐색 도구(활성 프로젝트와 무관한 임의 주소 진단)이므로
                 store 비기록(writeToContext=false) — 면적 자동채움은 onAnalyzed 콜백으로 유지. */}
             <GlobalAddressSearch
-              single
               writeToContext={false}
               onChange={handleAddressChange}
               onAnalyzed={handleAnalyzed}
-              placeholder="예) 서울특별시 강남구 테헤란로 152"
+              placeholder="예) 서울특별시 강남구 테헤란로 152 · 다필지는 엑셀로 일괄 등록"
             />
             {address && (
               <p className="truncate text-[11px] text-[var(--text-hint)]" title={address}>
-                선택됨: {address}
+                선택됨: {address}{parcels.length > 1 ? ` 외 ${parcels.length - 1}필지 (통합 분석)` : ""}
               </p>
             )}
           </div>
@@ -301,6 +308,11 @@ export function PreCheckWorkspace() {
           AI 한 줄 요약 포함(소폭 지연)
         </label>
       </section>
+
+      {/* ── 다필지 통합 개발방식 분석 — 엑셀/다중검색으로 2필지 이상 등록 시 ── */}
+      {parcels.length > 1 && (
+        <DevelopmentScenarioCard address={address} parcels={parcels} />
+      )}
 
       {/* ── 탭 ── */}
       {(instant || zoning || instantLoading || zoningLoading || instantError || zoningError) && (
