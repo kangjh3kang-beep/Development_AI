@@ -53,10 +53,17 @@ class BatchService:
     async def submit(
         self, inp: BatchInput, snapshot_id: Optional[str] = None
     ) -> ParcelBatchJob:
-        """배치 잡을 등록한다(멱등). snapshot_id 없으면 고정 생성(INV-M3)."""
+        """배치 잡을 등록한다(멱등). snapshot_id 없으면 고정 생성(INV-M3).
+
+        멱등키 규칙:
+        - snapshot_id 명시 → (region+snapshot) 기준(스펙: 마스터 버전별 재분석 허용).
+        - snapshot_id 미지정 → region 기준만(같은 구역 중복 제출 방지). 잡 자체에는
+          여전히 고정 snapshot_id(uuid)를 부여해 INV-M3(배치 내 단일 버전)를 지킨다.
+        """
+        explicit_snapshot = snapshot_id is not None
         snapshot_id = snapshot_id or uuid.uuid4().hex
         region_input = inp.normalized()
-        key = idempotency_key(region_input, snapshot_id)
+        key = idempotency_key(region_input, snapshot_id if explicit_snapshot else "")
 
         # 멱등: 동일 키 잡이 있으면 그대로 반환(중복 작업 미생성).
         existing = await self.store.find_by_idempotency(key)
