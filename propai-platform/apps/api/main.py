@@ -229,6 +229,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     setup_logging(json_output=settings.environment != "development")
     logger.info("PropAI API 시작", version=settings.app_version, env=settings.environment)
 
+    # Phase 4: 위험알림 기본 채널(telegram/ws) 등록(graceful·env-gated — 무설정 시 no-op)
+    try:
+        from app.services.ledger.risk_monitor import setup_default_notifiers
+        setup_default_notifiers()
+    except Exception:  # noqa: BLE001
+        pass
+
     # Sentry 에러 추적 초기화
     if settings.sentry_dsn:
         import sentry_sdk

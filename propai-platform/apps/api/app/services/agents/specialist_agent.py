@@ -34,6 +34,7 @@ class SpecialistAgent:
         interpreter: Any | None = None,
         recorder: Callable[..., Any] | None = None,
         prior_loader: Callable[..., Any] | None = None,
+        panel: Callable[..., Any] | None = None,
     ) -> None:
         self.domain = domain
         self.task_type = task_type
@@ -41,6 +42,7 @@ class SpecialistAgent:
         self._interpreter = interpreter
         self._recorder = recorder
         self._prior_loader = prior_loader
+        self._panel = panel
 
     @property
     def analysis_type(self) -> str:
@@ -99,6 +101,17 @@ class SpecialistAgent:
             tenant_id=tenant_id, project_id=project_id, pnu=pnu, address=address,
             source=f"specialist_{self.domain}", created_by=created_by)
         wb = wb if isinstance(wb, dict) else {}
+
+        # 5) 다관점 패널(선택) — 결정론 findings/원장과 별개(LLM 판단), graceful
+        panel_out = None
+        if self._panel is not None:
+            try:
+                panel_out = await self._panel(
+                    self.domain, {"findings": findings, "summary": tool_out.get("summary") or {}})
+            except Exception as e:  # noqa: BLE001
+                logger.warning("specialist panel 스킵(graceful)", domain=self.domain, err=str(e)[:160])
+                panel_out = None
+
         return {
             "domain": self.domain, "task_type": self.task_type,
             "findings": findings, "claims": claims,
@@ -106,4 +119,5 @@ class SpecialistAgent:
             "contradictions": wb.get("contradictions"),
             "ledger": {"ok": wb.get("ok"), "version": wb.get("version"),
                        "content_hash": wb.get("content_hash")},
+            "panel": panel_out,
         }

@@ -60,3 +60,31 @@ def test_dispatch_unknown_domain_returns_400(monkeypatch):
     c = TestClient(app)
     r = c.post("/api/v1/agents/specialist/dispatch", json={"domain": "x", "data": {}})
     assert r.status_code == 400
+
+
+# ── #2 prod RBAC(domain_agents:write) — casbin 가용 seam을 monkeypatch로 검증 ──
+
+def test_dispatch_rbac_denied_returns_403(monkeypatch):
+    from apps.api.routers import specialist_agents as mod
+    monkeypatch.setattr(mod, "_rbac_check", lambda role, res, act: False)  # 권한 거부 시뮬
+    app = _app()
+    app.dependency_overrides[get_current_user] = lambda: _FakeUser()
+    c = TestClient(app)
+    r = c.post("/api/v1/agents/specialist/dispatch", json={"domain": "permit", "data": {}})
+    assert r.status_code == 403   # RBAC 거부 → coordinator 호출 전 차단
+
+
+def test_dispatch_rbac_allowed_passes(monkeypatch):
+    from apps.api.routers import specialist_agents as mod
+    from apps.api.core.coordinator import AgentCoordinator
+    monkeypatch.setattr(mod, "_rbac_check", lambda role, res, act: True)
+
+    async def fake(self, domain, data, **ctx):
+        return {"ok": True, "domain": domain, "ledger": {"ok": True}}
+
+    monkeypatch.setattr(AgentCoordinator, "dispatch", fake)
+    app = _app()
+    app.dependency_overrides[get_current_user] = lambda: _FakeUser()
+    c = TestClient(app)
+    r = c.post("/api/v1/agents/specialist/dispatch", json={"domain": "permit", "data": {}})
+    assert r.status_code == 200 and r.json()["ok"] is True

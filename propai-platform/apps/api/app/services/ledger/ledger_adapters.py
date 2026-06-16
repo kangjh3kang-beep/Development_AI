@@ -99,15 +99,33 @@ async def record_feasibility_commit(
     )
 
 
+def _domain_rec_to_status(rec: str | None) -> str:
+    """권고(recommendation) → 모순감지용 status. proceed=pass, 조건부=warning, 그 외(escalate/review)=fail."""
+    r = (rec or "").lower()
+    if r == "proceed":
+        return "pass"
+    if "condition" in r:
+        return "warning"
+    return "fail"
+
+
 async def record_domain_agent_task(
     *, task: dict[str, Any], tenant_id: str | None = None,
     project_id: str | None = None, created_by: str | None = None,
 ) -> dict[str, Any]:
-    return await ledger.append_analysis(
-        analysis_type="domain_agent", payload=domain_agent_task_to_ledger(task),
-        tenant_id=tenant_id, project_id=project_id,
-        source="domain_agents", created_by=created_by,
-    )
+    # Phase 3.2 합류: 도메인별 체인(domain_agent_{domain}) + findings_brief(권고·신뢰도) 보강 +
+    # prior 모순/lineage(_append_with_lineage). 기존 매퍼(domain_agent_task_to_ledger)·서비스 계약 불변.
+    domain = task.get("domain") or "unknown"
+    payload = domain_agent_task_to_ledger(task)
+    payload["findings_brief"] = [{
+        "check_id": "RECOMMENDATION",
+        "status": _domain_rec_to_status(task.get("recommendation")),
+        "current": task.get("confidence_score"), "limit": None,
+    }]
+    return await _append_with_lineage(
+        analysis_type=f"domain_agent_{domain}", payload=payload,
+        tenant_id=tenant_id, project_id=project_id, pnu=None, address=None,
+        source="domain_agents", created_by=created_by)
 
 
 # ── Phase 1: read 성장루프용 매퍼+래퍼(write/read 쌍 신설·SSOT 합류) ──
@@ -159,7 +177,17 @@ async def _append_with_lineage(
             tenant_id=tenant_id,
             contradiction_count=len(contradictions["contradictions"]),
             max_severity=contradictions["max_severity"])
-    return {**wb, "contradictions": contradictions} if isinstance(wb, dict) else wb
+    out = {**wb, "contradictions": contradictions} if isinstance(wb, dict) else wb
+    # Phase 4.2: append 이벤트 훅 — 위험평가 + 고위험 알림(best-effort, 이벤트 구동).
+    if isinstance(out, dict):
+        try:
+            from app.services.ledger.risk_monitor import on_analysis_appended
+            out["risk"] = await on_analysis_appended(
+                analysis_type=analysis_type, tenant_id=tenant_id,
+                pnu=pnu, address=address, project_id=project_id)
+        except Exception:  # noqa: BLE001 — 위험 훅 실패가 append를 막지 않음
+            pass
+    return out
 
 
 async def record_feasibility_result(

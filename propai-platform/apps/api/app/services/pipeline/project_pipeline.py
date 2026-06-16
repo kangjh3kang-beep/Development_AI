@@ -292,6 +292,72 @@ class ProjectPipeline:
         payload = m.get(stage)
         return payload.model_dump() if payload is not None else None
 
+    # ── P5 T3: 공공데이터 cross_validate 신뢰가드(site_analysis) ──
+
+    @staticmethod
+    def _nearby_price_median(nt: Any) -> float | None:
+        """nearby_transactions에서 ㎡당 가격 중앙값 추출(불가 시 None — 가짜값 생성 금지)."""
+        import statistics
+        items = nt if isinstance(nt, list) else (nt.get("items") if isinstance(nt, dict) else None)
+        vals: list[float] = []
+        if isinstance(items, list):
+            for it in items:
+                if isinstance(it, dict):
+                    v = it.get("price_per_sqm") or it.get("price_per_sqm_won")
+                    if isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0:
+                        vals.append(float(v))
+        return statistics.median(vals) if vals else None
+
+    def _build_price_signals(self, data: dict[str, Any]) -> list[Any]:
+        """site stage data의 가격 신호(공시지가·인근실거래) 수집 — cross_validate 입력."""
+        from app.services.data_validation.trust import Signal
+        pricing = data.get("pricing") if isinstance(data.get("pricing"), dict) else {}
+        signals: list[Any] = []
+        op = pricing.get("official_price_per_sqm")
+        if isinstance(op, (int, float)) and not isinstance(op, bool) and op > 0:
+            signals.append(Signal(name="공시지가", value=float(op), sample_size=1, source="공시지가", weight=1.0))
+        med = self._nearby_price_median(pricing.get("nearby_transactions"))
+        if med is not None and med > 0:
+            signals.append(Signal(name="인근실거래", value=float(med), sample_size=3, source="실거래", weight=1.2))
+        return signals
+
+    def _attach_trust_guard(self, state: PipelineState) -> None:
+        """site_analysis 공공데이터(가격)에 cross_validate 신뢰가드를 additive 부착(값 불변).
+
+        가정 기본값(assumed_defaults)·신호 부족이면 진짜 가드를 붙이지 않는다(정직 skip).
+        freshness(FreshnessChecker)는 per-source 타임스탬프 필요 → stage data에 없어 미적용
+        (출처 수집층 public_data_registry에서 적용됨). 결정론·LLM 비개입.
+        """
+        try:
+            sr = state.stages.get("site_analysis")
+            if sr is None or not isinstance(sr.data, dict):
+                return
+            data = sr.data
+            if data.get("data_quality") == "assumed_defaults":
+                data.setdefault("trust_guard", {"skipped": True, "reason": "assumed_defaults"})
+                return
+            signals = self._build_price_signals(data)
+            if not signals:
+                data.setdefault("trust_guard", {"skipped": True, "reason": "no_price_signal"})
+                return
+            from app.services.data_validation.trust import cross_validate
+            result = cross_validate(signals, plausible_min=0.0)
+            pricing = data.get("pricing") if isinstance(data.get("pricing"), dict) else {}
+            data["trust_guard"] = {
+                "price_cross_validation": result.to_dict(),
+                "data_sources": {
+                    "official_land_price": bool(pricing.get("official_price_per_sqm")),
+                    "nearby_transactions": self._nearby_price_median(
+                        pricing.get("nearby_transactions")) is not None,
+                    "assumed_fields": list(data.get("assumed_fields") or []),
+                },
+                "freshness": {"applied": False,
+                              "note": "per-source 타임스탬프 부재 — 출처 수집층(public_data_registry)에서 적용"},
+            }
+        except Exception as e:  # noqa: BLE001
+            import logging
+            logging.getLogger(__name__).warning("신뢰가드 부착 스킵: %s", str(e)[:140])
+
     # ── 재실행(rerun) 지원: stage_overrides 소비·previous_stage_data 복원 헬퍼 ──
 
     @staticmethod
@@ -1117,6 +1183,8 @@ class ProjectPipeline:
             data = state.stages["site_analysis"].data
             if not isinstance(data, dict):
                 return
+
+            self._attach_trust_guard(state)   # P5 T3: 공공데이터 cross_validate 신뢰가드(additive)
 
             # E7: 가정값(폴백 기본치)이면 진짜 법령링크/근거를 붙이지 않는다(빈 배열).
             if data.get("data_quality") == "assumed_defaults" or data.get("assumed_fields"):

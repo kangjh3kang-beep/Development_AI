@@ -18,6 +18,26 @@ from apps.api.auth.jwt_handler import CurrentUser, get_current_user
 router = APIRouter()
 
 
+def _rbac_check(role: Any, resource: str, action: str) -> bool | None:
+    """RBAC 권한 확인. casbin 가용 시 bool, 부재(이 env 등) 시 None(=RBAC 미적용·인증만)."""
+    try:
+        from apps.api.auth.rbac import check_permission
+    except Exception:  # noqa: BLE001 — casbin 미설치 등 → RBAC 미적용(인증은 유지)
+        return None
+    return check_permission(str(role), resource, action)
+
+
+async def require_specialist_write(
+    current_user: CurrentUser = Depends(get_current_user),
+) -> CurrentUser:
+    """인증(get_current_user 필수) + RBAC(domain_agents:write, casbin 가용 prod). 거부 시 403."""
+    allowed = _rbac_check(getattr(current_user, "role", None), "domain_agents", "write")
+    if allowed is False:
+        raise HTTPException(status_code=403,
+                            detail="'domain_agents' 리소스에 대한 'write' 권한이 없습니다")
+    return current_user
+
+
 class SpecialistDispatchRequest(BaseModel):
     domain: str
     data: dict[str, Any] = Field(default_factory=dict)
@@ -29,7 +49,7 @@ class SpecialistDispatchRequest(BaseModel):
 @router.post("/dispatch")
 async def dispatch_specialist(
     body: SpecialistDispatchRequest,
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(require_specialist_write),
 ) -> dict[str, Any]:
     """도메인 SpecialistAgent 디스패치. 미등록 도메인은 400(정직)."""
     from apps.api.core.coordinator import AgentCoordinator
