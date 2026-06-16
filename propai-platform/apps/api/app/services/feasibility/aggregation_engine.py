@@ -78,9 +78,13 @@ def aggregate_feasibility(
     # 수익률 = 순이익 / 총수입 × 100
     profit_rate = (net_profit / total_revenue_won * 100) if total_revenue_won > 0 else 0.0
 
-    # ROI = 순이익 / 투입자본 × 100 (자기자본 없으면 총사업비 사용)
-    invest_base = equity_won if equity_won > 0 else total_cost
-    roi = (net_profit / invest_base * 100) if invest_base > 0 else 0.0
+    # ROI(사업수익률) = 순이익 / 총사업비 × 100 — 경로 간 비교 가능한 표준 정의로 통일.
+    #   ★과거 자기자본 제공 시 분모를 자기자본으로 바꿔, precheck/top3가 같은 roi_pct 필드에
+    #     서로 다른 값(예: 235% vs 536%)을 담던 비교불가 문제를 해소. grade는 수익률(순이익/총수입)
+    #     기준이라 본 변경에 영향 없음.
+    roi = (net_profit / total_cost * 100) if total_cost > 0 else 0.0
+    # ROE(자기자본수익률) = 순이익 / 자기자본 × 100 — 레버리지 반영(자기자본 제공 시만, 별도 필드).
+    roe = (net_profit / equity_won * 100) if equity_won > 0 else None
 
     # 단순 NPV (단일 기간, 사업 종료 시 현금흐름 발생 가정)
     years = project_months / 12
@@ -106,6 +110,7 @@ def aggregate_feasibility(
         "net_profit_won": net_profit,
         "profit_rate_pct": round(profit_rate, 2),
         "roi_pct": round(roi, 2),
+        "roe_pct": round(roe, 2) if roe is not None else None,
         "npv_won": npv,
         "grade": grade,
         "cost_breakdown_won": cost_breakdown,
