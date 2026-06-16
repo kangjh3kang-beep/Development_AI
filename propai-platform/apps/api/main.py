@@ -59,6 +59,7 @@ from apps.api.routers import (
     development_methods,
     digital_twin,
     domain_agents,
+    specialist_agents,
     drone,
     energy,
     environment,
@@ -448,6 +449,7 @@ app.include_router(lease_ops.router, prefix="/api/v1/lease-ops", tags=["lease-op
 app.include_router(esg.router, prefix="/api/v1/esg", tags=["esg"])
 app.include_router(marketing.router, prefix="/api/v1/marketing", tags=["marketing"])
 app.include_router(domain_agents.router, prefix="/api/v1/agents/domain", tags=["domain-agents"])
+app.include_router(specialist_agents.router, prefix="/api/v1/agents/specialist", tags=["specialist-agents"])
 app.include_router(maintenance.router, prefix="/api/v1/maintenance", tags=["maintenance"])
 app.include_router(tenant.router, prefix="/api/v1/tenant", tags=["tenant-experience"])
 app.include_router(digital_twin.router, prefix="/api/v1/digital-twin", tags=["digital-twin"])
