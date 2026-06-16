@@ -20,6 +20,40 @@ def _parcel_cache_put(pnu: str, value: dict) -> None:
     _PARCEL_CACHE[pnu] = value
 
 
+async def _vworld_get_json(client, url: str, params: dict, *, retries: int = 2) -> Optional[dict]:
+    """VWorld GET → JSON. 대량 동시호출 시 레이트리밋(429)·일시오류(5xx)·타임아웃을
+    지수 백오프+지터로 재시도한다(무목업: 끝내 실패하면 None, 가짜 생성 금지).
+    Retry-After 헤더가 있으면 우선 적용. 단일 호출에는 영향 없음(성공 시 즉시 반환).
+    """
+    import asyncio
+    import random
+
+    for attempt in range(retries + 1):
+        try:
+            resp = await client.get(url, params=params)
+            if resp.status_code in (429, 500, 502, 503, 504) and attempt < retries:
+                ra = resp.headers.get("Retry-After")
+                if ra and ra.replace(".", "", 1).isdigit():
+                    delay = float(ra)
+                else:
+                    delay = (2 ** attempt) + random.uniform(0, 0.3)
+                logger.warning("VWORLD 재시도", status=resp.status_code, attempt=attempt, delay=round(delay, 2))
+                await asyncio.sleep(min(delay, 5.0))
+                continue
+            resp.raise_for_status()
+            return resp.json()
+        except (httpx.TimeoutException, httpx.RequestError) as e:
+            if attempt < retries:
+                await asyncio.sleep((2 ** attempt) + random.uniform(0, 0.3))
+                continue
+            logger.error("VWORLD 요청 실패(재시도 소진)", error=str(e))
+            return None
+        except httpx.HTTPStatusError as e:
+            logger.error("VWORLD HTTP 오류", status=e.response.status_code)
+            return None
+    return None
+
+
 def _wgs84_area_to_sqm(area_deg2: float, center_lat: float) -> float:
     """WGS84 도(degree) 단위 면적을 m² 단위로 변환."""
     lat_m = 111_320  # 위도 1도 ≈ 111,320m (거의 일정)
@@ -53,20 +87,13 @@ class VWorldService:
             "attrFilter": f"pnu:=:{pnu_code}",
         }
         async with httpx.AsyncClient(timeout=12.0, headers=self.HEADERS) as client:
-            try:
-                resp = await client.get(f"{self.BASE_URL}/data", params=params)
-                resp.raise_for_status()
-                data = resp.json()
-                features = data.get("response", {}).get("result", {}).get("featureCollection", {}).get("features", [])
-                result = features[0] if features else None
-                _parcel_cache_put(pnu_code, result or {})
-                return result
-            except httpx.HTTPStatusError as e:
-                logger.error("VWORLD HTTP 오류", pnu=pnu_code, status=e.response.status_code)
-                return None
-            except httpx.RequestError as e:
-                logger.error("VWORLD 네트워크 오류", pnu=pnu_code, error=str(e))
-                return None
+            data = await _vworld_get_json(client, f"{self.BASE_URL}/data", params)
+            if data is None:
+                return None  # 재시도 소진/오류 — 캐시하지 않음(일시오류일 수 있음)
+            features = data.get("response", {}).get("result", {}).get("featureCollection", {}).get("features", [])
+            result = features[0] if features else None
+            _parcel_cache_put(pnu_code, result or {})
+            return result
 
     async def merge_parcels_gis_union(self, pnu_codes: list[str]) -> Optional[dict]:
         """다필지 GIS Union 통합 경계 산출.

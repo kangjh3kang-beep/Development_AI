@@ -35,7 +35,7 @@ TEMPLATE_COLUMNS = [
     ("비고", ""),
 ]
 _MAX_ROWS = 500  # 업로드 행 상한(과도 방지)
-_GEOCODE_CONCURRENCY = 5
+_GEOCODE_CONCURRENCY = 8  # VWorld 재시도(백오프) 보호하에 상향 — 대량 엑셀 처리 가속
 
 # 헤더 자동감지 — 정규화(공백/특수문자 제거·소문자) 후 후보집합 매칭.
 _H_ADDR = {"소재지", "소재지주소", "주소", "지번주소", "도로명주소", "address", "소재"}
