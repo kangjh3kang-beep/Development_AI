@@ -73,6 +73,16 @@ USER_PROMPT_TEMPLATE = """\
 결정·인허가 필요)를 동반, ④"~가능성", "~예상", "전제 충족 시" 등 비단정 표현 사용. **종상향이
 확정/보장된 것처럼 단정 금지.** scenarios가 비어있으면 "정형 종상향 경로 미매핑 — 지자체 확인 필요"로 안내.
 
+## 특이부지 게이트(★최우선 — 위반 시 할루시네이션)
+페이로드에 `special_parcel`이 있으면 이 부지는 학교용지·개발제한구역(GB)·농지·산지·맹지·문화재·
+공공기반시설 등 **비일상 토지특성**이 감지된 것이다. 이 경우 **반드시**:
+①`developability`(BLOCKED/PRECONDITION/CONDITIONAL/POSSIBLE)와 `honest_disclosure`를 그대로 반영하라.
+②BLOCKED/PRECONDITION이면 "법정 최대 용적률/연면적이 그대로 실현됨"을 **단정 금지** — 선행절차
+(도시계획시설 폐지·용도변경·농지/산지전용·GB해제 등) 통과를 **전제**로만 잠재 규모를 언급하고,
+미충족 시 개발 불가/제한을 명시하라. ③`development_caveat`를 supply_area_interpretation과
+overall_summary에 반드시 포함하라. ④해결불가(resolvable=NO) 요인이 있으면 "현 상태 일반 분양개발
+불가"를 분명히 고지하고 무리한 개발규모(예: 'OO평 가능')를 제시하지 말라. `special_parcel`이 없으면 일상 개발부지로 본다.
+
 ## 분석 데이터
 {analysis_json}
 
@@ -275,6 +285,27 @@ class SiteAnalysisInterpreter(BaseInterpreter):
             compact["development_plans"] = {
                 "special_districts": dev.get("special_districts", []),
                 "land_use_regulations": dev.get("land_use_regulations", []),
+            }
+
+        # Section 7-2: 특이부지 감지(학교·GB·농지·산지·맹지·문화재 등) — ★LLM 그라운딩 필수.
+        #   이 블록을 프롬프트에 넣지 않으면 LLM이 '최대 연면적 가능'류를 독자 서술하는
+        #   할루시네이션이 발생한다(감사 적발: 의정부동224 학교용지 오분석 회귀 위험).
+        sp = data.get("special_parcel")
+        if isinstance(sp, dict) and sp.get("is_special"):
+            compact["special_parcel"] = {
+                "developability": sp.get("developability"),
+                "severity_label": sp.get("severity_label"),
+                "resolvable": sp.get("resolvable"),
+                "development_caveat": sp.get("development_caveat"),
+                "honest_disclosure": sp.get("honest_disclosure"),
+                "factors": [
+                    {
+                        "category": f.get("category"),
+                        "developability": f.get("developability"),
+                        "resolvable": f.get("resolvable"),
+                    }
+                    for f in (sp.get("factors") or [])[:5]
+                ],
             }
 
         # Section 8: 종상향/종변경 잠재력(★예상치 — 현행과 분리)
