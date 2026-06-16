@@ -67,3 +67,16 @@ def test_detect_contradictions_aggregates_and_summarizes():
 
 def test_detect_contradictions_empty_when_no_prior():
     assert C.detect_contradictions(None, {"payload": {"x": 1}})["has_contradiction"] is False
+
+
+def test_compare_with_prior_adds_contradictions_keeping_status_changes():
+    # T3: design_audit seed(_compare_with_prior)에 모순 플래그 additive 합류(기존 키 불변)
+    from app.services.design_audit.design_audit_orchestrator import _compare_with_prior
+    prior = {"version": 1, "payload": {"verdict": "적합",
+             "findings_brief": [{"check_id": "far", "status": "pass"}]}}
+    findings = [{"check_id": "far", "status": "fail"}]
+    out = _compare_with_prior(prior, findings)
+    assert out["status_changes"] == [{"check_id": "far", "prev_status": "pass", "now_status": "fail"}]
+    assert out["contradictions"]["has_contradiction"] is True
+    assert out["contradictions"]["max_severity"] == "high"
+    assert out["prior_verdict"] == "적합"   # 기존 키 불변

@@ -206,7 +206,8 @@ def _efficiency_metrics(params: dict[str, Any]) -> dict[str, Any]:
 
 
 def _compare_with_prior(prior: dict[str, Any], findings: list[dict[str, Any]]) -> dict[str, Any]:
-    """Phase 1: prior findings_brief vs 현재 findings의 status 변화 표면화(판정 미반영, 순수)."""
+    """Phase 1: status 변화 표면화 + Phase 2: 결정론 모순 플래그(additive, 판정 미반영, 순수)."""
+    from app.services.ledger.contradiction import detect_contradictions
     payload = (prior or {}).get("payload") or {}
     prev = {f.get("check_id"): f for f in (payload.get("findings_brief") or [])}
     cur = {f.get("check_id"): f for f in findings}
@@ -215,11 +216,15 @@ def _compare_with_prior(prior: dict[str, Any], findings: list[dict[str, Any]]) -
         p = prev.get(cid)
         if p and p.get("status") != c.get("status"):
             changes.append({"check_id": cid, "prev_status": p.get("status"), "now_status": c.get("status")})
+    # Phase 2: prior vs 현재 findings의 결정론 모순(status 플립·수치 델타) — 현재 findings만 비교
+    # (현재 verdict는 이 시점 미전달 → 주입 오염 방지; verdict 모순은 findings status 플립으로 감지).
+    contradictions = detect_contradictions(prior, {"findings_brief": findings})
     return {
         "prior_version": prior.get("version"),
         "prior_verdict": payload.get("verdict"),
         "status_changes": changes,
-        "note": "이전 대비 상태 변화(참고용) — 종합판정은 현재 결정론 결과를 따른다",
+        "contradictions": contradictions,
+        "note": "이전 대비 상태 변화·모순(참고용) — 종합판정은 현재 결정론 결과를 따른다",
     }
 
 
