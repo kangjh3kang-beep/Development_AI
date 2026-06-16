@@ -6,7 +6,6 @@
 
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { ProjectSwitcher } from "@/components/common/ProjectSwitcher";
-import { VisionBanner } from "@/components/common/VisionBanner";
 import { DesignStudio } from "@/components/design/DesignStudio";
 import { CadBimIntegrationPanel } from "@/components/design/CadBimIntegrationPanel";
 
@@ -14,7 +13,6 @@ export default function DesignStudioPage() {
   const projectId = useProjectContextStore((s) => s.projectId);
   return (
     <div className="grid gap-6 p-1">
-      <VisionBanner variant="design" />
       <ProjectSwitcher />
       {projectId ? (
         <>
