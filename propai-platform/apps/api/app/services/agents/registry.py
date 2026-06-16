@@ -69,7 +69,49 @@ def _build_far() -> SpecialistAgent:
                            tool=_far_tool, interpreter=None)
 
 
-_FACTORIES = {"permit": _build_permit, "zoning": _build_zoning, "far": _build_far}
+# ── Phase 3.2 잔여: cost·market 도구 + 다관점 패널 어댑터 ──
+
+def _cost_tool(data: dict[str, Any]) -> dict[str, Any]:
+    """계층1 결정론 공사비 도구(CONSTRUCTION_COST_PER_SQM) → findings/summary. 수치=상수×면적만."""
+    from app.services.land_intelligence.comprehensive_analysis_service import CONSTRUCTION_COST_PER_SQM
+    dev_type = data.get("dev_type", "")
+    gfa = float(data.get("gfa_sqm") or data.get("total_gfa_sqm") or 0)
+    per_sqm = CONSTRUCTION_COST_PER_SQM.get(dev_type, 2_400_000)
+    total = gfa * per_sqm
+    return {
+        "findings": [{"check_id": "COST", "status": "info", "current": total, "limit": None}],
+        "summary": {"gfa_sqm": gfa, "cost_per_sqm": per_sqm,
+                    "total_construction_cost": total, "dev_type": dev_type},
+    }
+
+
+def _market_tool(data: dict[str, Any]) -> dict[str, Any]:
+    """결정론: 제공된 시장 신호를 findings로 표면화(수치 생성 X — 입력 그대로). 판단은 panel이 담당."""
+    op = data.get("official_price_per_sqm")
+    findings: list[dict[str, Any]] = []
+    if isinstance(op, (int, float)) and not isinstance(op, bool) and op > 0:
+        findings.append({"check_id": "MARKET_PRICE", "status": "info", "current": float(op), "limit": None})
+    return {"findings": findings, "summary": {"official_price_per_sqm": op, "signal_count": len(findings)}}
+
+
+async def _default_panel(domain: str, context: dict[str, Any]) -> dict[str, Any]:
+    """ExpertPanelService 다관점(GROUNDING_RULE+할루시네이션 게이트). LLM 부재 시 graceful fallback 구조."""
+    from app.services.expert_panel.expert_panel_service import ExpertPanelService
+    return await ExpertPanelService().analyze(domain, context, mode="single")
+
+
+def _build_cost() -> SpecialistAgent:
+    return SpecialistAgent(domain="cost", task_type="construction_cost",
+                           tool=_cost_tool, interpreter=None, panel=_default_panel)
+
+
+def _build_market() -> SpecialistAgent:
+    return SpecialistAgent(domain="market", task_type="market_analysis",
+                           tool=_market_tool, interpreter=None, panel=_default_panel)
+
+
+_FACTORIES = {"permit": _build_permit, "zoning": _build_zoning, "far": _build_far,
+              "cost": _build_cost, "market": _build_market}
 AVAILABLE_DOMAINS = tuple(_FACTORIES.keys())
 
 

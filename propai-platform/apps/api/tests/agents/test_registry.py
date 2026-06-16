@@ -57,3 +57,26 @@ def test_far_tool_effective_far_deterministic():
     assert o["findings"][0]["check_id"] == "FAR"
     assert o["findings"][0]["current"] == 250.0 and o["findings"][0]["status"] == "pass"
     assert o["summary"]["effective_far_pct"] == 250.0
+
+
+# ── Phase 3.2 잔여: cost·market 도메인 ──
+
+def test_cost_and_market_domains_registered():
+    assert {"cost", "market"} <= set(AVAILABLE_DOMAINS)
+    assert get_specialist("cost").analysis_type == "domain_agent_cost"
+    assert get_specialist("market").analysis_type == "domain_agent_market"
+
+
+def test_cost_tool_deterministic():
+    from app.services.agents.registry import _cost_tool
+    o = _cost_tool({"dev_type": "M06", "gfa_sqm": 1000})
+    assert o["findings"][0]["check_id"] == "COST"
+    assert o["summary"]["total_construction_cost"] == 1000 * 2_400_000   # M06=2.4M/㎡
+    assert o == _cost_tool({"dev_type": "M06", "gfa_sqm": 1000})         # 결정론
+
+
+def test_market_tool_surfaces_signals_no_fabrication():
+    from app.services.agents.registry import _market_tool
+    o = _market_tool({"official_price_per_sqm": 5_000_000})
+    assert o["findings"][0]["check_id"] == "MARKET_PRICE" and o["findings"][0]["current"] == 5_000_000.0
+    assert _market_tool({})["findings"] == []        # 신호 없으면 빈 findings(가짜 생성 X)

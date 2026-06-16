@@ -76,3 +76,44 @@ async def test_interpreter_failure_is_graceful():
     out = await agent.run({"ok": True}, tenant_id="t", pnu="P1")
     assert out["claims"] == []           # LLM 실패 → 발언 없음(결정론 findings는 유지)
     assert out["findings"]               # 결정론 산출은 무중단
+
+
+# ── Phase 3.2 잔여: expert_panel 다관점 통합(panel DI, 선택·graceful) ──
+
+async def _rec_ok(*, analysis_type, payload, **kw):
+    return {"ok": True, "version": 1, "content_hash": "h",
+            "contradictions": {"has_contradiction": False}}
+
+
+async def _prior_none(**kw):
+    return None
+
+
+async def test_panel_output_attached_when_provided():
+    captured = {}
+
+    async def _panel(domain, context):
+        captured["domain"] = domain
+        return {"consensus": "조건부 진행", "experts": [{"role": "디벨로퍼"}], "generated": False}
+
+    agent = SpecialistAgent(domain="market", task_type="analysis", tool=_tool,
+                            interpreter=None, recorder=_rec_ok, prior_loader=_prior_none, panel=_panel)
+    out = await agent.run({"ok": True}, tenant_id="t", pnu="P1")
+    assert out["panel"]["consensus"] == "조건부 진행" and captured["domain"] == "market"
+
+
+async def test_panel_failure_is_graceful():
+    async def _boom(domain, context):
+        raise RuntimeError("panel down")
+
+    agent = SpecialistAgent(domain="market", task_type="analysis", tool=_tool,
+                            interpreter=None, recorder=_rec_ok, prior_loader=_prior_none, panel=_boom)
+    out = await agent.run({"ok": True}, tenant_id="t", pnu="P1")
+    assert out["panel"] is None and out["findings"]   # 패널 실패해도 결정론 findings 유지
+
+
+async def test_no_panel_key_is_none_when_not_provided():
+    agent = SpecialistAgent(domain="permit", task_type="feasibility", tool=_tool,
+                            interpreter=None, recorder=_rec_ok, prior_loader=_prior_none)
+    out = await agent.run({"ok": True}, tenant_id="t", pnu="P1")
+    assert out["panel"] is None   # panel 미주입 → None(additive·기존 불변)
