@@ -34,6 +34,7 @@ type Scenario = {
   scheme: string; applicable: string; est_far: number | null;
   contribution_pct: number | null; requirements?: string[];
   pros?: string[]; cons?: string[]; notes?: string; magdo?: Magdo | null;
+  buildable_types?: string[];
 };
 type SimResult = {
   site: {
@@ -210,6 +211,14 @@ export function DevelopmentScenarioCard({
                   </div>
                 </div>
                 {s.notes && <p className="mt-1 text-[11px] text-[var(--text-secondary)]">{s.notes}</p>}
+                {s.applicable !== "불가" && (s.buildable_types?.length ?? 0) > 0 && (
+                  <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                    <span className="text-[10px] font-bold text-[var(--text-tertiary)]">🏢 건축 가능</span>
+                    {s.buildable_types!.map((t, j) => (
+                      <span key={j} className="rounded-md bg-[var(--accent-soft)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--accent-strong)]">{t}</span>
+                    ))}
+                  </div>
+                )}
                 {s.applicable !== "불가" && (
                   <div className="mt-1.5 grid gap-1 text-[11px] md:grid-cols-2">
                     {(s.requirements?.length ?? 0) > 0 && (
