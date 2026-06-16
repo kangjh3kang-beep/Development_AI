@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v204-multiparcel-analysis";
+const CACHE_NAME = "propai-v205-devmethods-consent";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",
