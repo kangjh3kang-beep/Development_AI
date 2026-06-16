@@ -102,3 +102,23 @@ async def test_feasibility_writeback_contradiction_and_lineage():
         assert parents and parents[0]["contradiction_count"] >= 1
     finally:
         await _cleanup(tid)
+
+
+async def test_contradiction_detection_does_not_mutate_ledger_chain_or_verdict():
+    # T6 불변: 모순탐지/lineage는 read·부가 기록 전용 — 원장 체인 무결성·결정론 판정 절대 불변.
+    if not await _db():
+        pytest.skip("DB 미가용 — Postgres 기동 후 실행")
+    from app.services.ledger import analysis_ledger_service as ledger
+    tid = f"t-p2-inv-{uuid.uuid4().hex[:8]}"
+    pnu = f"111501030010{uuid.uuid4().hex[:7]}"
+    try:
+        await ledger.append_analysis(analysis_type="site_analysis", tenant_id=tid, pnu=pnu,
+                                     payload={"far": 100.0, "verdict": "적합"})
+        await ledger.append_analysis(analysis_type="site_analysis", tenant_id=tid, pnu=pnu,
+                                     payload={"far": 150.0, "verdict": "부적합"})
+        vr = await ledger.verify_chain(analysis_type="site_analysis", tenant_id=tid, pnu=pnu)
+        assert vr["verified"] is True and vr["length"] == 2
+        latest = await ledger.get_latest(analysis_type="site_analysis", tenant_id=tid, pnu=pnu)
+        assert latest["payload"]["verdict"] == "부적합"   # 결정론 판정 불변(탐지기 비개입)
+    finally:
+        await _cleanup(tid)
