@@ -21,6 +21,7 @@ const ParcelBoundaryMap = dynamicMap<React.ComponentProps<typeof ParcelBoundaryM
   { pick: "ParcelBoundaryMap", height: 360, loadingMessage: "필지 구획도 로딩…" },
 );
 import { AnalysisVerdict } from "@/components/analysis/AnalysisVerdict";
+import { VisionBanner } from "@/components/common/VisionBanner";
 import { RegulationHierarchyView, type RegResult } from "@/components/regulation/RegulationHierarchyView";
 import { ApiClientError, apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
@@ -83,6 +84,7 @@ export function RegulationsWorkspaceClient({ locale }: { locale: Locale }) {
 
   return (
     <div className="grid gap-6">
+      <VisionBanner variant="permit" />
       {/* Hero + 입력 — 규제 관제 콘솔 헤더 */}
       <Card className="cc-bracketed overflow-hidden rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
         <i className="cc-bracket cc-bracket--tl" />

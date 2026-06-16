@@ -1,5 +1,6 @@
 import { isValidLocale } from "@/i18n/config";
 import { MeetingRoomsListClient } from "@/components/collaboration/MeetingRoomsListClient";
+import { VisionBanner } from "@/components/common/VisionBanner";
 
 type Props = {
   params: Promise<{ locale: string }>;
@@ -13,6 +14,7 @@ export default async function MeetingRoomsPage({ params }: Props) {
 
   return (
     <div className="flex flex-col gap-8 min-h-screen pb-20">
+      <VisionBanner variant="meeting" />
       <div>
         <h1 className="text-2xl font-black text-[var(--text-primary)]">프로젝트 회의방</h1>
         <p className="mt-1 max-w-2xl text-sm text-[var(--text-secondary)]">
