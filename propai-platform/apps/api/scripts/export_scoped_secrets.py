@@ -41,9 +41,10 @@ for p in (str(_API_DIR), str(_REPO_ROOT)):
 # 심의분석엔진이 실제 쓰는 키만(과다노출 금지). 필요 시 --allow 로 확장.
 DEFAULT_ALLOWLIST = [
     "ANTHROPIC_API_KEY",   # VLLM 시트 분류(멀티모달 해석)
-    "OPENAI_API_KEY",      # LLM 대체 공급자(선택)
+    "OPENAI_API_KEY",      # 의미 임베딩(유사사례 검색)
     "VWORLD_API_KEY",      # 관할/용도지역 해석
     "MOLIT_API_KEY",       # 규제/실거래 등 공공데이터(선택)
+    "MOLEG_API_KEY",       # 국가법령정보센터(법제처 law.go.kr) OC — 법령 교차검증
 ]
 # 인프라/마스터 키는 절대 내보내지 않음(스코프 export의 핵심).
 _HARD_DENY = {
@@ -59,6 +60,7 @@ _MYP = _HERE.parents[5] if len(_HERE.parents) > 5 else _REPO_ROOT.parent
 _DEFAULT_ENV_FILES = [
     str(_MYP / "Development_AI" / ".env"),                      # 마스터키(SECRET_STORE_KEY) 등 공통
     str(_MYP / "Development_AI" / "propai-platform" / ".env"),  # 키가 채워진 .env(현재 위치)
+    str(_MYP / "Development_AI" / "propai-platform" / "apps" / "api" / ".env"),  # 백엔드 키(MOLEG 등)
     str(_REPO_ROOT / ".env"),                                   # 이 worktree(있으면 최우선)
     str(_REPO_ROOT / "apps" / "api" / ".env"),
 ]
