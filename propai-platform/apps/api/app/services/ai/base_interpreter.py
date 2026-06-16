@@ -332,7 +332,16 @@ class BaseInterpreter:
         완전 격리: import 순환·DB 미가용 등 어떤 예외도 기본 버전으로 폴백한다.
         후보군이 비어 있으면(현 기본 상태) 즉시 기본 캐시 → 기존 동작 완전 불변.
         """
+        # ★A/B store 단일화: 소비자(_PROMPT_AB_CANDIDATES)와 게이트(feature_flags.PROMPT_AB_CANDIDATES)가
+        #   각각 빈 dict로 분리돼 있던 구조적 단절(감사 적발)을 해소 — 둘을 합쳐 단일 출처로 본다.
+        #   지연 import로 순환·부팅순서 안전. 둘 다 비면 기존 동작 완전 불변(후보 없으면 기본 버전).
         candidates = _PROMPT_AB_CANDIDATES.get(self.name)
+        if not candidates:
+            try:
+                from app.services.growth.feature_flags import PROMPT_AB_CANDIDATES as _gate_cands
+                candidates = _gate_cands.get(self.name)
+            except Exception:  # noqa: BLE001 — 게이트 registry 조회 실패는 기본 폴백.
+                candidates = None
         if not candidates:
             self._active_prompt_version = _PROMPT_VERSION
             return _PROMPT_VERSION
