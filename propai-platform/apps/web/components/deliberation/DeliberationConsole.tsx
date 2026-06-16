@@ -9,8 +9,9 @@
 
 import { useState } from "react";
 
+// || (??가 아니라) — 빈 문자열/미설정 모두 기본값으로. 항상 절대 URL이어야 fetch 파싱 가능.
 const ENGINE_URL =
-  process.env.NEXT_PUBLIC_DELIBERATION_ENGINE_URL ?? "http://localhost:8801";
+  process.env.NEXT_PUBLIC_DELIBERATION_ENGINE_URL || "http://localhost:8801";
 
 type Finding = {
   rule_id: string;
