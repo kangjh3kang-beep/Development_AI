@@ -10,6 +10,7 @@ import type {
   NearbyMapPayload,
 } from "@/components/map/NearbyTransactionsMap";
 import type { ParcelBoundaryMap as ParcelBoundaryMapType } from "@/components/map/ParcelBoundaryMap";
+import type { PopulationDensityMap as PopulationDensityMapType } from "@/components/map/PopulationDensityMap";
 import { ExpertPanelCard } from "@/components/common/ExpertPanelCard";
 
 // 지도는 SSR 없이 동적 로드(SSR throw 차단 + 로딩 스켈레톤). 동작·props 불변.
@@ -20,6 +21,10 @@ const NearbyTransactionsMap = dynamicMap<React.ComponentProps<typeof NearbyTrans
 const ParcelBoundaryMap = dynamicMap<React.ComponentProps<typeof ParcelBoundaryMapType>>(
   () => import("@/components/map/ParcelBoundaryMap"),
   { pick: "ParcelBoundaryMap", height: 360, loadingMessage: "필지 구획도 로딩…" },
+);
+const PopulationDensityMap = dynamicMap<React.ComponentProps<typeof PopulationDensityMapType>>(
+  () => import("@/components/map/PopulationDensityMap"),
+  { pick: "PopulationDensityMap", height: 360, loadingMessage: "인구밀도 지도 로딩…" },
 );
 import { VerificationBadge } from "@/components/common/VerificationBadge";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
@@ -256,6 +261,9 @@ export function MarketInsightsWorkspaceClient() {
   const address = runAddress;
   // 지도/보고서용 pnu: GlobalAddressSearch가 현재 검색의 pnu를 store에 기록 → 현재 검색분 사용
   const mapPnu = (rawSite?.pnu as string) || "";
+  // P4-B 인구밀도: bcode(법정동 10자리) = PNU 앞 10자리. 동시표시 토글(지연로드).
+  const mapBcode = mapPnu.slice(0, 10);
+  const [showDensity, setShowDensity] = useState(false);
   const results = useMemo(() => deriveResults(mapPayload, address), [mapPayload, address]);
 
   const totalRemaining = balance
@@ -441,6 +449,22 @@ export function MarketInsightsWorkspaceClient() {
         <div className="grid gap-4">
           <NearbyTransactionsMap address={address} pnu={mapPnu} onPayload={setMapPayload} onLoading={setMapLoading} />
           <ParcelBoundaryMap parcels={[address]} />
+          {/* P4-B 인구밀도 코로플레스 — 지연로드 토글(SGIS 호출 비용 절약). */}
+          <div className="rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-soft)] p-3">
+            <button
+              type="button"
+              onClick={() => setShowDensity((v) => !v)}
+              className="flex w-full items-center justify-between gap-2 text-left text-sm font-bold text-[var(--text-primary)]"
+            >
+              <span>👥 인구밀도 (행정동) <span className="ml-1 text-xs font-normal text-[var(--text-hint)]">SGIS 경계+인구 코로플레스</span></span>
+              <span className="text-[var(--accent-strong)]">{showDensity ? "▾ 닫기" : "▸ 보기"}</span>
+            </button>
+            {showDensity && (
+              <div className="mt-3">
+                <PopulationDensityMap address={address} bcode={mapBcode} />
+              </div>
+            )}
+          </div>
         </div>
       )}
 
