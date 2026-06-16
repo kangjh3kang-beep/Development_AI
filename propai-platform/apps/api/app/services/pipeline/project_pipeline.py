@@ -197,6 +197,7 @@ class ProjectPipeline:
                     await self._run_report(state, opts)
 
                 stage_result.status = PipelineStatus.COMPLETED
+                await self._verify_stage(state, stage)   # P5: 단계 산출 검증(additive)
             except Exception as e:
                 stage_result.status = PipelineStatus.FAILED
                 stage_result.error = str(e)[:500]
@@ -257,6 +258,39 @@ class ProjectPipeline:
         except Exception as e:  # noqa: BLE001
             import logging
             logging.getLogger(__name__).warning("단계 AI 해석 부착 스킵: %s", str(e)[:140])
+
+    # ── P5: 단계별 검증 강제(VerifierService) ──
+
+    async def _verify_stage(self, state: PipelineState, stage: PipelineStage) -> None:
+        """P5: 단계 산출을 VerifierService로 검증해 stage.data['verification']에 additive 부착.
+
+        LLM 부재 시 규칙기반(_prescan+calc_ledger+range_rules) verdict — graceful. 결정론 산출
+        수치는 변경하지 않는다(read·표면화 전용). COMPLETED 단계만 검증(skip/실패 단계 제외 — 정직).
+        """
+        try:
+            sr = state.stages.get(stage.value)
+            if sr is None or sr.status != PipelineStatus.COMPLETED:
+                return
+            data = sr.data if isinstance(sr.data, dict) else {}
+            if not data:
+                return
+            from app.services.verification.verifier_service import VerifierService
+            source = self._verify_source_for(state, stage) or data
+            result = await VerifierService().verify(stage.value, source, data)
+            data["verification"] = result
+        except Exception as e:  # noqa: BLE001
+            import logging
+            logging.getLogger(__name__).warning("단계 검증 스킵: %s", str(e)[:140])
+
+    def _verify_source_for(self, state: PipelineState, stage: PipelineStage) -> dict | None:
+        """검증 source(근거 입력) 선택 — 단계간 payload 우선(없으면 None → 자기일관성)."""
+        m = {
+            PipelineStage.DESIGN: state.site_to_design,
+            PipelineStage.COST: state.design_to_cost,
+            PipelineStage.FEASIBILITY: state.cost_to_feasibility,
+        }
+        payload = m.get(stage)
+        return payload.model_dump() if payload is not None else None
 
     # ── 재실행(rerun) 지원: stage_overrides 소비·previous_stage_data 복원 헬퍼 ──
 

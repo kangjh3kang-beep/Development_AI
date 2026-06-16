@@ -20,8 +20,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 @pytest.fixture
 async def ledger_db():
     """실 Postgres 세션(없으면 skip). 시드·검증·정리 전용(원장 함수와는 별도 세션)."""
-    from app.core.database import async_session_factory
+    from app.core.database import async_session_factory, engine
 
+    # 교차-이벤트루프 풀 바인딩 초기화(테스트 격리 — 현재 루프 재바인딩). dispose 사용 테스트와
+    # 같은 세션에서 실행 순서가 섞여도 spurious skip이 없도록(skipped==0 안정화).
+    await engine.dispose()
     try:
         async with async_session_factory() as probe:
             await probe.execute(text("SELECT 1"))

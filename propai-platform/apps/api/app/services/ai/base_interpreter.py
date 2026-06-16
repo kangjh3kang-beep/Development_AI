@@ -346,6 +346,7 @@ class BaseInterpreter:
         cache_data: Any = None,
         evidence_data: dict | None = None,
         evidence_text: str | None = None,
+        prior_context: str | None = None,
     ) -> dict[str, str]:
         """시스템/유저 프롬프트로 LLM을 호출하고 파싱된 dict를 반환.
 
@@ -372,6 +373,9 @@ class BaseInterpreter:
         # 검증 재생성 피드백도 결과를 바꾸므로 캐시 키에 포함 → 기존 캐시 우회(재호출 강제).
         if cache_data is not None and self._retry_feedback:
             cache_data = {"_data": cache_data, "_retry": self._retry_feedback}
+        # Phase 1: prior_context도 결과를 바꾸므로 캐시키에 포함(prior 다르면 캐시 분리).
+        if cache_data is not None and prior_context:
+            cache_data = {"_data": cache_data, "_prior": prior_context}
 
         # P4: L1(in-process) → L2(Redis) 순으로 조회. 적중 시 LLM 스킵.
         cache_key = self._cache_key(cache_data) if cache_data is not None else None
@@ -396,6 +400,8 @@ class BaseInterpreter:
                 evidences.append(extra)
         if evidence_text:
             evidences.append(evidence_text)
+        if prior_context:  # Phase 1: 원장 prior 근거블록(additive)
+            evidences.append(prior_context)
         if evidences:
             joined = "\n".join(evidences)
             user_prompt = f"{user_prompt}\n\n## 추가 근거 자료\n{joined}"

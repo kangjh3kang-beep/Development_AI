@@ -7,15 +7,15 @@ services:
     restart: always
     environment:
       POSTGRES_DB: propai_db
-      POSTGRES_USER: propai
-      POSTGRES_PASSWORD: propai_dev_pass
+      POSTGRES_USER: propai_user
+      POSTGRES_PASSWORD: propai_pass_dev
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./init-postgis.sql:/docker-entrypoint-initdb.d/init-postgis.sql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U propai -d propai_db"]
+      test: ["CMD-SHELL", "pg_isready -U propai_user -d propai_db"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -123,14 +123,14 @@ services:
     ports:
       - "5000:5000"
     environment:
-      MLFLOW_BACKEND_STORE_URI: postgresql://propai:propai_dev_pass@postgres:5432/propai_db
+      MLFLOW_BACKEND_STORE_URI: postgresql://propai_user:propai_pass_dev@postgres:5432/propai_db
       MLFLOW_DEFAULT_ARTIFACT_ROOT: /mlflow/artifacts
     volumes:
       - mlflow_data:/mlflow/artifacts
     depends_on:
       postgres:
         condition: service_healthy
-    command: mlflow server --host 0.0.0.0 --port 5000 --backend-store-uri postgresql://propai:propai_dev_pass@postgres:5432/propai_db --default-artifact-root /mlflow/artifacts
+    command: mlflow server --host 0.0.0.0 --port 5000 --backend-store-uri postgresql://propai_user:propai_pass_dev@postgres:5432/propai_db --default-artifact-root /mlflow/artifacts
 
   prometheus:
     image: prom/prometheus:v2.55.0

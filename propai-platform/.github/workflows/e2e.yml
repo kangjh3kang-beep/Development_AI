@@ -17,8 +17,8 @@ jobs:
       postgres:
         image: postgres:16
         env:
-          POSTGRES_USER: propai
-          POSTGRES_PASSWORD: propai_password
+          POSTGRES_USER: propai_user
+          POSTGRES_PASSWORD: propai_pass_dev
           POSTGRES_DB: propai_db
         ports:
           - 5432:5432
@@ -67,7 +67,7 @@ jobs:
 
       - name: Start API server
         env:
-          DATABASE_URL: postgresql+asyncpg://propai:propai_password@localhost:5432/propai_db
+          DATABASE_URL: postgresql+asyncpg://propai_user:propai_pass_dev@localhost:5432/propai_db
           REDIS_URL: redis://localhost:6379/0
           JWT_SECRET: e2e-test-secret-key
           ENVIRONMENT: test

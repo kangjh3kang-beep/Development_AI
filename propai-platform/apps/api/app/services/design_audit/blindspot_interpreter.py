@@ -257,6 +257,8 @@ def citation_gate(
     items: list[dict[str, str]],
     findings: Any,
     derived_signals: Any = None,
+    *,
+    prior_evidence: Any = None,
 ) -> list[dict[str, Any]]:
     """결정론 인용 검문 — 미근거 수치·법조문을 '전문가 확인 필요'로 치환.
 
@@ -283,6 +285,14 @@ def citation_gate(
     evidence_norm = _norm_law(
         json.dumps([findings, derived_signals], ensure_ascii=False, default=str)
     )
+    if prior_evidence is not None:  # Phase 1: 원장 prior 수치/법조문을 grounded corpus에 합류
+        from app.services.ledger.prior_context import prior_numbers
+        for _n in prior_numbers(prior_evidence):
+            evidence_numbers.add(_n)
+        evidence_norm = _norm_law(
+            evidence_norm
+            + json.dumps(prior_evidence.get("payload", prior_evidence), ensure_ascii=False, default=str)
+        )
     known_ids = _known_check_ids(findings)
     registry_pairs = _registry_pairs()
 
