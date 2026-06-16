@@ -225,3 +225,21 @@ async def record_cost_estimate(
         payload=cost_estimate_to_ledger(summary=summary, header=header, estimate_id=estimate_id),
         tenant_id=tenant_id, project_id=project_id, source="cost_boq", created_by=created_by,
     )
+
+
+# ── Phase 3: 계층3 SpecialistAgent 산출 → 원장 cite(W4 닫기) ──
+
+async def record_specialist_result(
+    *, analysis_type: str, payload: dict[str, Any], tenant_id: str | None = None,
+    project_id: str | None = None, pnu: str | None = None, address: str | None = None,
+    source: str = "specialist", created_by: str | None = None,
+) -> dict[str, Any]:
+    """Phase 3 계층3 SpecialistAgent 산출 → 원장 cite(prior 모순 + lineage). W4 닫기.
+
+    payload는 SpecialistAgent가 만든 domain_agent/v2(findings_brief 포함). 기본 상대임계 모순탐지
+    (도메인별 절대임계 필요 시 abs_thresholds 확장). 반환에 contradictions 가산(additive).
+    """
+    return await _append_with_lineage(
+        analysis_type=analysis_type, payload=payload,
+        tenant_id=tenant_id, project_id=project_id, pnu=pnu, address=address,
+        source=source, created_by=created_by)
