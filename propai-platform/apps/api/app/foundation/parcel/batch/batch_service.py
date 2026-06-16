@@ -35,6 +35,15 @@ from app.foundation.parcel.contracts.batch import (
 )
 
 
+def _batch_input_from_region(region_input: dict[str, Any]) -> BatchInput:
+    """저장된 region_input(정규화 dict)에서 내부 키(_geo/_target_pnus/_normalized)를
+    걷어내고 BatchInput을 재구성한다 — run()의 지연 정규화에 사용."""
+    fields = ("pnu_list", "polygon", "bbox", "admin_code", "district_code",
+              "center_address", "radius_m")
+    kwargs = {k: region_input[k] for k in fields if region_input.get(k) is not None}
+    return BatchInput(**kwargs)
+
+
 def _area_outliers(items: list[BatchItemResult]) -> list[dict[str, Any]]:
     """신뢰루프: 확정 필지들의 면적 분포에서 이상치를 표시한다(검토 권고, 배제 아님).
 
@@ -109,14 +118,8 @@ class BatchService:
         )
         record = JobRecord(job=job)
 
-        # 대상 PNU 정규화(외부 미가용이면 degrade).
-        norm = await region_normalizer.normalize(inp, vworld=self._vworld)
-        record.target_pnus = norm.pnus
-        record.degrade_reason = norm.reason if norm.degraded else None
-        if norm.geo:
-            # 지도 미리보기용 해석 좌표를 region_input에 보관(결과로 노출).
-            job.region_input = {**region_input, "_geo": norm.geo}
-
+        # ★정규화(geocode+bbox 조회=무거움)는 submit에서 하지 않고 run()(백그라운드)으로 미룬다.
+        #   submit은 즉시 QUEUED 잡만 만들어 응답 → UI 반응성 확보(동기 19s 지연 제거).
         await self.store.save(record)
         await self.store.bind_idempotency(key, job.id)
         return job
@@ -131,6 +134,19 @@ class BatchService:
             record.mark_state_from_progress()
             await self.store.save(record)
             return record
+
+        # ★정규화(submit에서 이전) — 아직 정규화 전이면 여기서 geocode+bbox 조회를 수행.
+        ri = record.job.region_input or {}
+        if not ri.get("_normalized"):
+            inp = _batch_input_from_region(ri)
+            norm = await region_normalizer.normalize(inp, vworld=self._vworld)
+            record.target_pnus = norm.pnus
+            record.degrade_reason = norm.reason if norm.degraded else None
+            new_ri = {**ri, "_normalized": True}
+            if norm.geo:
+                new_ri["_geo"] = norm.geo
+            record.job.region_input = new_ri
+            await self.store.save(record)
 
         # 대상이 없으면(예: degrade) 바로 PARTIAL 로 마감(부분/공백).
         if not record.target_pnus:
