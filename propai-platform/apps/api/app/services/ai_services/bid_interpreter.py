@@ -147,6 +147,9 @@ class BidInterpreter:
             response = await asyncio.wait_for(
                 llm.ainvoke(messages), timeout=self._timeout_sec
             )
+            # 계측: BaseInterpreter 밖 직접 호출도 동일하게 토큰·과금 기록(best-effort)
+            from app.services.ai.base_interpreter import record_llm_response_billing
+            await record_llm_response_billing(llm, response, service="bid")
             raw_text = response.content if hasattr(response, "content") else str(response)
             result: dict[str, Any] = dict(self._parse_response(raw_text))
             result["model_used"] = model_id

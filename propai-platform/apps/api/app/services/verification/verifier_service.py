@@ -143,6 +143,9 @@ class VerifierService:
             )
             llm = get_llm(timeout=50, max_tokens=1500)
             resp = await llm.ainvoke([SystemMessage(content=_SYSTEM), HumanMessage(content=user)])
+            # 계측: BaseInterpreter 밖 직접 호출도 동일하게 토큰·과금 기록(best-effort)
+            from app.services.ai.base_interpreter import record_llm_response_billing
+            await record_llm_response_billing(llm, resp, service="verifier")
             data = json.loads(_strip_json(resp.content if hasattr(resp, "content") else str(resp)))
             issues = list(data.get("issues") or []) + pre
             # 판정 보정(사전검사 high 반영)

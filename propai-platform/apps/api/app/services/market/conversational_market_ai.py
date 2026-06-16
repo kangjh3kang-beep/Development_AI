@@ -228,6 +228,9 @@ class ConversationalMarketAI:
             resp = await llm.ainvoke(
                 [SystemMessage(content=sys_msg), HumanMessage(content=usr_msg)]
             )
+            # 계측: BaseInterpreter 밖 직접 호출도 동일하게 토큰·과금 기록(best-effort)
+            from app.services.ai.base_interpreter import record_llm_response_billing
+            await record_llm_response_billing(llm, resp, service="market_ai")
             raw = resp.content if hasattr(resp, "content") else str(resp)
             txt = str(raw).strip()
             if txt.startswith("```"):

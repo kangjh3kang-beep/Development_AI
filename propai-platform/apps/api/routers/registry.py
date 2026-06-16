@@ -476,6 +476,9 @@ async def _llm_extract_land_schedule(all_rows: list[list[str]]) -> list[dict[str
         resp = await llm.ainvoke(
             [SystemMessage(content=sys), HumanMessage(content=human)]
         )
+        # 계측: BaseInterpreter 밖 직접 호출도 동일하게 토큰·과금 기록(best-effort)
+        from app.services.ai.base_interpreter import record_llm_response_billing
+        await record_llm_response_billing(llm, resp, service="registry")
         text = resp.content if isinstance(resp.content, str) else str(resp.content)
         import json
         import re

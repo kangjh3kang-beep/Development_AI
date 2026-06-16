@@ -644,6 +644,9 @@ async def _llm_one_liner(
             + " 한 문장 요약."
         ))
         resp = await asyncio.wait_for(llm.ainvoke([system, human]), timeout=_LLM_TIMEOUT)
+        # 계측: BaseInterpreter 밖 직접 호출도 동일하게 토큰·과금 기록(best-effort)
+        from app.services.ai.base_interpreter import record_llm_response_billing
+        await record_llm_response_billing(llm, resp, service="precheck")
         text = getattr(resp, "content", None)
         if isinstance(text, list):  # 일부 프로바이더는 블록 리스트 반환
             text = " ".join(str(b.get("text", b)) if isinstance(b, dict) else str(b) for b in text)

@@ -478,6 +478,9 @@ def _llm_narrative(ins: dict[str, Any]) -> str | None:
             + json.dumps(ins.get("metrics_json") or {}, ensure_ascii=False, default=str)
         )
         resp = llm.invoke(prompt)
+        # 계측: 동기 호출도 토큰·과금 기록(실행 루프 있으면 예약, 없으면 생략·best-effort)
+        from app.services.ai.base_interpreter import record_llm_response_billing_sync
+        record_llm_response_billing_sync(llm, resp, service="growth_analyze")
         text_out = getattr(resp, "content", None) or str(resp)
         return str(text_out).strip()[:1000] or None
     except Exception as e:  # noqa: BLE001

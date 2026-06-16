@@ -317,6 +317,9 @@ class MarketReportService:
                    "★target_persona에는 유입 인구의 주 연령대, 거시적 평균 소득을 고려해 가장 분양 가능성이 높은 고객의 직업군/가구형태/특화설계 제안을 포함하라.")
             usr = f"## 시장 데이터\n{json.dumps(ctx, ensure_ascii=False)[:4000]}"
             resp = await llm.ainvoke([SystemMessage(content=sys), HumanMessage(content=usr)])
+            # 계측: BaseInterpreter 밖 직접 호출도 동일하게 토큰·과금 기록(best-effort)
+            from app.services.ai.base_interpreter import record_llm_response_billing
+            await record_llm_response_billing(llm, resp, service="market_report")
             raw = resp.content if hasattr(resp, "content") else str(resp)
             txt = raw.strip()
             if txt.startswith("```"):
