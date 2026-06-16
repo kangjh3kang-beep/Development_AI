@@ -120,3 +120,88 @@ async def scan_project_risks(
     except Exception as e:  # noqa: BLE001
         logger.warning("risk 스캔 실패(graceful)", project_id=project_id, err=str(e)[:160])
         return {"project_id": project_id, "chains_at_risk": 0, "risk_level": "none", "reason": "error"}
+
+
+# ── Phase 4.2: append 이벤트 훅 + 알림 채널(best-effort, 등록형) ──
+
+import inspect  # noqa: E402
+
+_NOTIFIERS: list = []
+
+
+def register_notifier(fn) -> None:
+    """알림 채널 등록(sync/async 콜러블 alert→None)."""
+    if fn not in _NOTIFIERS:
+        _NOTIFIERS.append(fn)
+
+
+def clear_notifiers() -> None:
+    _NOTIFIERS.clear()
+
+
+async def dispatch_risk_alert(*, project_id: Any, analysis_type: str, risk: dict[str, Any]) -> dict[str, Any]:
+    """위험수준 high/medium이면 등록 notifier로 알림(best-effort). low/none은 미발송(정직)."""
+    level = (risk or {}).get("risk_level", "none")
+    if level not in ("high", "medium"):
+        return {"dispatched": 0, "level": level, "skipped": True}
+    alert = {"project_id": project_id, "analysis_type": analysis_type,
+             "risk_level": level, "risks": (risk or {}).get("risks", [])}
+    sent = 0
+    for fn in list(_NOTIFIERS):
+        try:
+            r = fn(alert)
+            if inspect.isawaitable(r):
+                await r
+            sent += 1
+        except Exception as e:  # noqa: BLE001
+            logger.warning("risk 알림 채널 실패(graceful)", err=str(e)[:120])
+    logger.warning("RISK_ALERT", project_id=str(project_id), analysis_type=analysis_type, level=level)
+    return {"dispatched": sent, "level": level}
+
+
+async def on_analysis_appended(
+    *, analysis_type: str, tenant_id: str | None = None, pnu: str | None = None,
+    address: str | None = None, project_id: str | None = None,
+) -> dict[str, Any]:
+    """append 이벤트 훅 — 체인 위험평가 + 고위험 알림(이벤트 구동). best-effort."""
+    risk = await evaluate_chain_risk(analysis_type=analysis_type, tenant_id=tenant_id,
+                                     pnu=pnu, address=address, project_id=project_id)
+    try:
+        notify = await dispatch_risk_alert(project_id=project_id, analysis_type=analysis_type, risk=risk)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("risk 알림 디스패치 실패(graceful)", err=str(e)[:120])
+        notify = {"dispatched": 0, "error": True}
+    return {**risk, "notify": notify}
+
+
+async def _telegram_notifier(alert: dict[str, Any]) -> None:
+    """텔레그램 webhook 알림(설정 시). 무설정 시 no-op(정직)."""
+    try:
+        from app.core.config import settings
+        token = getattr(settings, "TELEGRAM_BOT_TOKEN", None)
+        chat = getattr(settings, "TELEGRAM_CHAT_ID", None)
+    except Exception:  # noqa: BLE001
+        return
+    if not (token and chat):
+        return
+    import httpx
+    text = (f"⚠️ RISK[{alert.get('risk_level')}] {alert.get('analysis_type')} "
+            f"project={alert.get('project_id')} — {len(alert.get('risks') or [])} signal(s)")
+    async with httpx.AsyncClient(timeout=5) as c:
+        await c.post(f"https://api.telegram.org/bot{token}/sendMessage",
+                     json={"chat_id": chat, "text": text})
+
+
+def _ws_notifier(alert: dict[str, Any]):
+    """WebSocket 브로드캐스트(매니저 존재 시). 부재 시 no-op(정직). 반환은 awaitable일 수 있음."""
+    try:
+        from app.services.realtime.ws_manager import broadcast_risk_alert
+    except Exception:  # noqa: BLE001
+        return None
+    return broadcast_risk_alert(alert)
+
+
+def setup_default_notifiers() -> None:
+    """앱 시작 시 호출 — telegram/ws 기본 채널 등록(둘 다 graceful·env-gated)."""
+    register_notifier(_telegram_notifier)
+    register_notifier(_ws_notifier)

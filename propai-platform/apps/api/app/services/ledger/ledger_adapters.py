@@ -177,7 +177,17 @@ async def _append_with_lineage(
             tenant_id=tenant_id,
             contradiction_count=len(contradictions["contradictions"]),
             max_severity=contradictions["max_severity"])
-    return {**wb, "contradictions": contradictions} if isinstance(wb, dict) else wb
+    out = {**wb, "contradictions": contradictions} if isinstance(wb, dict) else wb
+    # Phase 4.2: append 이벤트 훅 — 위험평가 + 고위험 알림(best-effort, 이벤트 구동).
+    if isinstance(out, dict):
+        try:
+            from app.services.ledger.risk_monitor import on_analysis_appended
+            out["risk"] = await on_analysis_appended(
+                analysis_type=analysis_type, tenant_id=tenant_id,
+                pnu=pnu, address=address, project_id=project_id)
+        except Exception:  # noqa: BLE001 — 위험 훅 실패가 append를 막지 않음
+            pass
+    return out
 
 
 async def record_feasibility_result(

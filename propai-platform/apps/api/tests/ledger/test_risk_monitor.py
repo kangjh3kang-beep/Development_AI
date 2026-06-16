@@ -84,3 +84,55 @@ async def test_scan_project_risks_aggregates():
         assert scan["chains_at_risk"] == 2 and scan["risk_level"] == "high"
     finally:
         await _cleanup(tid)
+
+
+# ── Phase 4.2 #1·#2: append 훅(이벤트 구동) + 알림 채널 ──
+
+async def test_dispatch_risk_alert_notifies_high_only():
+    R.clear_notifiers()
+    captured: list = []
+    R.register_notifier(lambda alert: captured.append(alert))
+    try:
+        hi = await R.dispatch_risk_alert(project_id="P", analysis_type="x",
+            risk={"risk_level": "high", "risks": [{"type": "status_fail"}]})
+        assert hi["dispatched"] == 1 and len(captured) == 1
+        lo = await R.dispatch_risk_alert(project_id="P", analysis_type="x",
+            risk={"risk_level": "none", "risks": []})
+        assert lo.get("skipped") is True and len(captured) == 1   # low/none은 미발송(정직)
+    finally:
+        R.clear_notifiers()
+
+
+async def test_on_analysis_appended_evaluates_and_notifies():
+    if not await _db():
+        pytest.skip("DB 미가용")
+    from app.services.ledger.ledger_adapters import record_specialist_result
+    R.clear_notifiers()
+    captured: list = []
+    R.register_notifier(lambda a: captured.append(a))
+    at, tid, pnu = "domain_agent_hook", f"t-rm-{uuid.uuid4().hex[:8]}", f"P{uuid.uuid4().hex[:10]}"
+    try:
+        await record_specialist_result(analysis_type=at, tenant_id=tid, pnu=pnu, source="t",
+            payload={"kind": "domain_agent", "verdict": "부적합",
+                     "findings_brief": [{"check_id": "X", "status": "fail", "current": 300.0, "limit": 250.0}]})
+        ev = await R.on_analysis_appended(analysis_type=at, tenant_id=tid, pnu=pnu)
+        assert ev["risk_level"] == "high" and ev["notify"]["dispatched"] >= 1
+        assert captured  # 고위험 → 알림 발송
+    finally:
+        R.clear_notifiers()
+        await _cleanup(tid)
+
+
+async def test_append_with_lineage_attaches_risk_automatically():
+    # #1 배선: record_specialist_result(=_append_with_lineage) 결과에 risk 자동 부착(이벤트 구동)
+    if not await _db():
+        pytest.skip("DB 미가용")
+    from app.services.ledger.ledger_adapters import record_specialist_result
+    at, tid, pnu = "domain_agent_wire", f"t-rm-{uuid.uuid4().hex[:8]}", f"P{uuid.uuid4().hex[:10]}"
+    try:
+        wb = await record_specialist_result(analysis_type=at, tenant_id=tid, pnu=pnu, source="t",
+            payload={"kind": "domain_agent", "verdict": "부적합",
+                     "findings_brief": [{"check_id": "X", "status": "fail", "current": 300.0, "limit": 250.0}]})
+        assert "risk" in wb and wb["risk"]["risk_level"] == "high"
+    finally:
+        await _cleanup(tid)
