@@ -26,6 +26,7 @@ import {
 } from "@/components/common/GlobalAddressSearch";
 import { FieldSourceBadge } from "@/components/common/FieldSourceBadge";
 import { DevelopmentScenarioCard } from "@/components/common/DevelopmentScenarioCard";
+import { BulkParcelBatchPanel } from "@/components/common/BulkParcelBatchPanel";
 import { LegalRefChip } from "@/components/common/LegalRefChip";
 import { EvidencePanel, type EvidenceItem } from "@/components/common/EvidencePanel";
 import type {
@@ -313,6 +314,9 @@ export function PreCheckWorkspace() {
       {parcels.length > 1 && (
         <DevelopmentScenarioCard address={address} parcels={parcels} />
       )}
+
+      {/* ── 대량 구역 일괄 분석 — 수백~수천 필지(PNU 목록/구역 bbox) 비동기 배치 ── */}
+      <BulkParcelBatchPanel />
 
       {/* ── 탭 ── */}
       {(instant || zoning || instantLoading || zoningLoading || instantError || zoningError) && (
