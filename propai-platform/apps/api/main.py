@@ -207,6 +207,15 @@ except ImportError:
         from app.routers.ai_analyze import router as ai_analyze_router
     except ImportError:
         ai_analyze_router = None
+
+# 대량 다필지 배치(F-Parcel ParcelBatchJob) — 구역/수천 필지 비동기 취합·집계
+try:
+    from apps.api.app.routers.parcel_batch import router as parcel_batch_router
+except ImportError:
+    try:
+        from app.routers.parcel_batch import router as parcel_batch_router
+    except ImportError:
+        parcel_batch_router = None
 from apps.api.versioning import VersionHeaderMiddleware, create_latest_redirect_router
 
 settings = get_settings()
@@ -730,6 +739,8 @@ if cost_router is not None:
     app.include_router(cost_router, tags=["v61 공사비"])  # 자체 prefix=/api/v1/cost
 if ai_analyze_router is not None:
     app.include_router(ai_analyze_router, tags=["ai"])  # 자체 prefix=/api/v1/ai
+if parcel_batch_router is not None:
+    app.include_router(parcel_batch_router, tags=["대량 다필지 배치"])  # 자체 prefix=/api/v1/parcels/batch
 if market_router is not None:
     # PUBLIC 마켓(구인구직·프로필·홍보) — 자체 prefix=/api/v1/market, 현장 격리 없음
     app.include_router(market_router, tags=["구인구직 마켓(public)"])
