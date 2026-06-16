@@ -26,6 +26,7 @@ type BatchResult = {
   items: BatchItem[];
   aggregate?: Aggregate | null;
   pending?: string[];
+  outliers?: { pnu: string; address?: string | null; area_sqm?: number; median_sqm?: number; ratio?: number; reason?: string }[];
   page?: number;
   size?: number;
   has_next?: boolean;
@@ -212,6 +213,19 @@ export function BulkParcelBatchPanel({ className = "" }: { className?: string })
               <p className="text-[var(--text-secondary)]">집계 대기 중</p>
             )}
           </div>
+
+          {/* 신뢰루프: 면적 이상치(검토 권고) */}
+          {(result.outliers?.length ?? 0) > 0 && (
+            <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-[11px]">
+              <p className="font-bold text-amber-500">⚠ 면적 이상치 {result.outliers!.length}건 — 데이터 확인 권고(자동 배제 안 함)</p>
+              <ul className="mt-1 space-y-0.5 text-[var(--text-secondary)]">
+                {result.outliers!.slice(0, 5).map((o, i) => (
+                  <li key={i} className="truncate" title={o.reason || o.pnu}>· {o.address || o.pnu} — {o.area_sqm?.toLocaleString()}㎡ ({o.ratio}×)</li>
+                ))}
+                {result.outliers!.length > 5 && <li className="opacity-70">…외 {result.outliers!.length - 5}건</li>}
+              </ul>
+            </div>
+          )}
 
           {/* 필지별 상태 */}
           <div className="max-h-72 space-y-1 overflow-y-auto">

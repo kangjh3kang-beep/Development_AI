@@ -35,6 +35,36 @@ from app.foundation.parcel.contracts.batch import (
 )
 
 
+def _area_outliers(items: list[BatchItemResult]) -> list[dict[str, Any]]:
+    """신뢰루프: 확정 필지들의 면적 분포에서 이상치를 표시한다(검토 권고, 배제 아님).
+
+    중앙값(median) 기준 robust 비교 — 면적이 중앙값의 5배 초과 또는 1/5 미만이면 이상치.
+    표본이 적으면(<5) 통계 불안정이라 건너뛴다(과경보 방지). 무목업: 가짜 보정 없이 '플래그'만.
+    """
+    areas = sorted(
+        (it.area_sqm, it.pnu, it.address)
+        for it in items
+        if it.status.value == "confirmed" and it.area_sqm and it.area_sqm > 0
+    )
+    if len(areas) < 5:
+        return []
+    vals = [a for a, _, _ in areas]
+    mid = len(vals) // 2
+    median = vals[mid] if len(vals) % 2 else (vals[mid - 1] + vals[mid]) / 2
+    if median <= 0:
+        return []
+    out: list[dict[str, Any]] = []
+    for area, pnu, addr in areas:
+        ratio = area / median
+        if ratio > 5 or ratio < 0.2:
+            out.append({
+                "pnu": pnu, "address": addr, "area_sqm": round(area, 1),
+                "median_sqm": round(median, 1), "ratio": round(ratio, 2),
+                "reason": f"면적이 구역 중앙값({round(median)}㎡)의 {round(ratio, 1)}배 — 데이터 확인 권고",
+            })
+    return out
+
+
 class BatchService:
     """대량 다필지 배치 서비스."""
 
@@ -168,6 +198,7 @@ class BatchService:
             items=page_items,
             aggregate=record.aggregate,
             pending=record.pending_pnus(),
+            outliers=_area_outliers(record.items),
             page=page,
             size=size,
             has_next=has_next,

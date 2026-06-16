@@ -170,6 +170,7 @@ class BatchResult(BaseModel):
     items: list[BatchItemResult]
     aggregate: BatchAggregate
     pending: list[str] = Field(default_factory=list)   # 미처리/미확정 pnu 목록(INV-M4)
+    outliers: list[dict[str, Any]] = Field(default_factory=list)  # 신뢰루프: 면적 이상치 필지(검토 권고)
     page: int = 1
     size: int = 500
     has_next: bool = False
