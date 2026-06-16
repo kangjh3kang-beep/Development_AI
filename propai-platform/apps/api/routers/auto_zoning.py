@@ -611,6 +611,7 @@ async def parcel_boundaries(req: ParcelBoundariesRequest):
             geometry = li_res.get("geometry")
             li_area = float((li_res.get("properties") or {}).get("area") or 0)
         official_price_per_sqm = None
+        jimok = land_use_situation = terrain = None
         if isinstance(lc_res, dict):
             lc_area = float(lc_res.get("area_sqm") or 0)
             zone_type = lc_res.get("zone_type") or None
@@ -619,6 +620,10 @@ async def parcel_boundaries(req: ParcelBoundariesRequest):
             #  P4 공시지가 레이어용. 0/누락은 None(가짜값 금지).
             _op = lc_res.get("official_price_per_sqm")
             official_price_per_sqm = int(_op) if _op else None
+            # 다필지 종합분석용 필지속성·형질(이미 fetch된 토지특성 재사용·추가 호출 0).
+            jimok = lc_res.get("land_category") or None             # 지목(대/전/답…)
+            land_use_situation = lc_res.get("land_use_situation") or None  # 이용상황
+            terrain = lc_res.get("terrain_form") or lc_res.get("terrain_height") or None  # 형상·지세
         # 권위 우선: 토지대장(lc_area) → 지적등록(li_area)
         area_sqm = lc_area or li_area
         area_source = "토지대장(토지특성)" if lc_area else ("지적도 등록면적" if li_area else "미확인")
@@ -660,6 +665,9 @@ async def parcel_boundaries(req: ParcelBoundariesRequest):
             "zone_type_2": zone_type_2,
             "zone_limits": _zone_limits_compact(zone_type),
             "official_price_per_sqm": official_price_per_sqm,
+            "jimok": jimok,                          # 지목(다필지 종합분석)
+            "land_use_situation": land_use_situation,  # 이용상황
+            "terrain": terrain,                      # 형상·지세
             "geometry": geometry,
         }
 
@@ -752,11 +760,85 @@ async def parcel_boundaries(req: ParcelBoundariesRequest):
     except Exception:  # noqa: BLE001 — 정밀 레이어 실패해도 기본 구획도는 반환
         pass
 
+    # ── 다필지 종합분석 — 필지별 속성·형질 차이 + 통합 지표(개발사업분석 기반) ──
+    integrated_analysis = None
+    if features:
+        zone_set = sorted({f["zone_type"] for f in features if f.get("zone_type")})
+        jimok_set = sorted({f["jimok"] for f in features if f.get("jimok")})
+        priced = [(f["official_price_per_sqm"], f.get("area_sqm") or 0)
+                  for f in features if f.get("official_price_per_sqm")]
+        pvals = [p for p, _a in priced]
+        wsum = sum(p * a for p, a in priced)
+        asum = sum(a for _p, a in priced if a)
+        notes: list[str] = []
+        if len(zone_set) > 1:
+            notes.append(f"용도지역 상이({'·'.join(zone_set)}) — 필지별 건폐율·용적률 한도 차이, 통합 시 가중·분리 검토")
+        if len(jimok_set) > 1:
+            notes.append(f"지목 상이({'·'.join(jimok_set)}) — 형질변경·지목변경 필요 가능")
+        if adjacency.get("contiguous") is False:
+            notes.append("필지 비인접 — 통합개발 제약(분리개발 또는 진입로 확보 검토)")
+        elif adjacency.get("contiguous") is True and len(features) >= 2:
+            notes.append("필지 인접 — 통합개발 가능(합필·공동개발 검토)")
+        # ── 면적가중 실질 건폐율·용적률 + 가능 건축규모(개발사업분석 핵심) ──
+        #  필지별 용도지역 한도가 다르면 단순 적용 불가 → 면적가중으로 통합 실질치를 산정한다.
+        #  통합 건축면적 = Σ(필지면적×건폐율), 통합 연면적 = Σ(필지면적×용적률) → 합을 총면적으로 나눠 실질%.
+        lim = [(f.get("area_sqm") or 0, (f.get("zone_limits") or {})) for f in features]
+        a_for_limit = sum(a for a, zl in lim if a and zl.get("max_bcr_pct"))
+        buildable_area = sum(a * (zl.get("max_bcr_pct") or 0) / 100 for a, zl in lim)
+        total_gfa = sum(a * (zl.get("max_far_pct") or 0) / 100 for a, zl in lim)
+        eff_bcr = round(buildable_area / a_for_limit * 100, 1) if a_for_limit else None
+        eff_far = round(total_gfa / a_for_limit * 100, 1) if a_for_limit else None
+
+        # ── 개발가능방법 + 최적추진방안 제안(총면적·인접성·용도혼재 기반) ──
+        methods: list[str] = []
+        recommendation = ""
+        if adjacency.get("contiguous") is False:
+            methods.append("분리개발(필지별)")
+            recommendation = ("필지가 비인접 — 통합개발 전 합필·진입로(맹지 해소) 선행 또는 필지별 분리개발. "
+                              "인접성 확보 시 아래 통합방안 적용 가능.")
+        else:
+            if total_area >= 10000:
+                methods += ["지구단위계획", "도시개발사업"]
+                recommendation = f"총 {round(total_area/3.305785):,}평(대규모) — 지구단위계획/도시개발사업으로 통합개발 권장."
+            elif total_area >= 1000:
+                methods += ["가로주택정비사업", "소규모재건축", "지구단위계획"]
+                recommendation = f"총 {round(total_area/3.305785):,}평(중소규모) — 가로주택정비·소규모정비 또는 지구단위 검토."
+            else:
+                methods.append("일반 건축(소규모)")
+                recommendation = f"총 {round(total_area/3.305785):,}평(소규모) — 일반 건축허가로 단독·통합 개발."
+            if len(zone_set) > 1:
+                methods.append("지구단위계획(용도혼재 통합관리)")
+                recommendation += " 용도지역 혼재로 실질 한도는 면적가중치이며, 지구단위계획으로 통합 관리 시 최적."
+
+        integrated_analysis = {
+            "parcel_count": len(features),
+            "total_area_sqm": round(total_area, 1),
+            "total_area_pyeong": round(total_area / 3.305785, 1),
+            "zone_types": zone_set,
+            "zone_mixed": len(zone_set) > 1,        # ★용도지역 혼재 여부(종합분석 핵심)
+            "jimoks": jimok_set,
+            "official_price_min": min(pvals) if pvals else None,
+            "official_price_max": max(pvals) if pvals else None,
+            "official_price_weighted_avg": round(wsum / asum) if asum else None,  # 면적가중 평균공시지가
+            "contiguous": adjacency.get("contiguous"),
+            # ★실질 건폐율·용적률(면적가중) + 가능 건축규모 — 다필지 통합 개발 기준.
+            "effective_bcr_pct": eff_bcr,
+            "effective_far_pct": eff_far,
+            "buildable_area_sqm": round(buildable_area, 1) if buildable_area else None,
+            "total_gfa_sqm": round(total_gfa, 1) if total_gfa else None,
+            # ★개발가능방법 + 최적추진방안.
+            "development_methods": methods,
+            "recommendation": recommendation,
+            "methods_note": "정밀 적용판정은 /development-methods/scenarios(인접성·정책 시뮬)로 확인하세요.",
+            "notes": notes,
+        }
+
     return {
         "features": features,
         "center": center,
         "total_area_sqm": round(total_area, 1),
         "parcel_count": len(features),
+        "integrated_analysis": integrated_analysis,  # ★다필지 종합분석(속성·형질 차이+통합지표)
         "adjacency": adjacency,
         "neighbors": neighbors,            # A+D: 주변 필지·도로(연회색/도로색) 벡터 지적도
         "merged_geometry": merged_geometry,  # B: 통합개발 외곽선
