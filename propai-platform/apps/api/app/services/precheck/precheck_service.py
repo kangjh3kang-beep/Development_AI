@@ -507,6 +507,8 @@ async def run_instant_precheck(
     zone_type: Optional[str] = None
     resolved_pnu = pnu
     resolved_area = area_sqm
+    # 공시지가(개별공시지가, 원/㎡) — 수지 밴드의 토지비 산정 근거. 없으면 밴드는 생략(과대 ROI 방지).
+    official_price: Optional[float] = None
     try:
         zoning = await asyncio.wait_for(
             AutoZoningService().analyze_by_address(address), timeout=_ZONING_TIMEOUT
@@ -515,6 +517,7 @@ async def run_instant_precheck(
         resolved_pnu = resolved_pnu or zoning.get("pnu")
         if resolved_area is None:
             resolved_area = zoning.get("land_area_sqm")
+        official_price = zoning.get("official_price_per_sqm")
         sources.append("auto_zoning_service")
     except TimeoutError:
         sources.append("auto_zoning_service(timeout)")
@@ -582,7 +585,7 @@ async def run_instant_precheck(
     # 전부 가산 필드. 조립 실패해도 기존 응답은 무손상(graceful).
     inputs = _build_inputs(
         zone_type=zone_type, resolved_pnu=resolved_pnu, resolved_area=resolved_area,
-        official_price=None,
+        official_price=official_price,
     )
     legal_refs = _build_legal_refs(legal)
     # 정량 신뢰 가능 여부 = 기존 pnu 차단 분기(:194)와 동일 조건(pnu 확인). 여기 도달=확인됨.
@@ -594,7 +597,7 @@ async def run_instant_precheck(
     feasibility_band = _build_feasibility_band(
         best_code=best, zone_type=zone_type, legal=legal,
         area_sqm=resolved_area, address=address,
-        official_price_per_sqm=None,
+        official_price_per_sqm=official_price,
         quantitative_reliable=quantitative_reliable,
     )
     evidence = _build_evidence(
@@ -705,7 +708,7 @@ def _build_band_module_input(
         avg_sale_price_per_pyeong=svc._get_regional_price(best_code, region, address or ""),
         avg_area_pyeong=(avg_unit_area / eff_ratio) / 3.305785,
         sale_ratio=0.95 if best_code not in ("M14", "M15") else 0.0,
-        official_price_per_sqm=official_price_per_sqm or 1_500_000,
+        official_price_per_sqm=official_price_per_sqm,
         price_multiplier=1.1,
         building_type=svc._get_building_type(best_code),
         sido_name=region,
@@ -733,6 +736,12 @@ def _build_feasibility_band(
     best 없거나 면적 미확정·정량 신뢰불가면 None(밴드 생략 — 빈 결과/과장 금지).
     """
     if not best_code or not zone_type or not area_sqm or not quantitative_reliable:
+        return None
+    # ★가격 신뢰성 게이트: 개별공시지가(토지비 근거)가 없으면 밴드를 생략한다.
+    #   과거 결함 — 공시지가 미확보 시 1,500,000원/㎡ 묵시폴백으로 토지비가 실가의 1/10이 되어
+    #   ROI가 비현실적으로 과대(예: 강남 235%·전부 grade A)하게 산출됐다. 토지비 없는 수지는
+    #   해석 불가 → 가짜 낙관 대신 정직하게 밴드를 비운다(할루시네이션 방지).
+    if not official_price_per_sqm or official_price_per_sqm <= 0:
         return None
     try:
         svc, base_inp = _build_band_module_input(
