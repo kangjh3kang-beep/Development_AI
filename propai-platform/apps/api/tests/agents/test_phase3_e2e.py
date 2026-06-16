@@ -56,3 +56,32 @@ async def test_record_specialist_result_writes_findings_and_lineage():
         assert parents and parents[0]["max_severity"] == "high"
     finally:
         await _cleanup(tid)
+
+
+async def test_w4_closed_specialist_dispatch_cites_ledger_with_lineage():
+    # T5: coordinator.dispatch → SpecialistAgent → 계층1 도구 → 원장 cite(+lineage+contradiction). W4 닫힘.
+    if not await _db():
+        pytest.skip("DB 미가용 — Postgres 기동 후 실행")
+    from apps.api.core.coordinator import AgentCoordinator
+    from app.services.ledger import analysis_ledger_service as ledger
+    from app.services.ledger import lineage
+
+    tid, pnu = f"t-p3e2e-{uuid.uuid4().hex[:8]}", f"P{uuid.uuid4().hex[:10]}"
+    coord = AgentCoordinator()
+    try:
+        # 1회차: M06(일반분양) 허용 → pass, prior 없음
+        r1 = await coord.dispatch("permit", {"dev_type": "M06", "zone_type": "제2종일반주거지역"},
+                                  tenant_id=tid, pnu=pnu)
+        assert r1["ok"] and r1["ledger"]["ok"] and r1["findings"][0]["status"] == "pass"
+        # 2회차: M09(지식산업센터) 불허 → fail (status flip 모순 + lineage)
+        r2 = await coord.dispatch("permit", {"dev_type": "M09", "zone_type": "제2종일반주거지역"},
+                                  tenant_id=tid, pnu=pnu)
+        assert r2["findings"][0]["status"] == "fail"
+        assert r2["contradictions"]["has_contradiction"] is True
+        latest = await ledger.get_latest(analysis_type="domain_agent_permit", tenant_id=tid, pnu=pnu)
+        parents = await lineage.get_parents(child_hash=latest["content_hash"], tenant_id=tid)
+        assert parents                       # W4: 계층3가 원장에 cite + 파생 엣지
+        vr = await ledger.verify_chain(analysis_type="domain_agent_permit", tenant_id=tid, pnu=pnu)
+        assert vr["verified"] is True        # 무결성 불변
+    finally:
+        await _cleanup(tid)
