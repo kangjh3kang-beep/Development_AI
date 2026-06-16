@@ -27,6 +27,8 @@ type BatchResult = {
   aggregate?: Aggregate | null;
   pending?: string[];
   outliers?: { pnu: string; address?: string | null; area_sqm?: number; median_sqm?: number; ratio?: number; reason?: string }[];
+  fee_per_unit_krw?: number;
+  estimated_fee_krw?: number;
   page?: number;
   size?: number;
   has_next?: boolean;
@@ -192,6 +194,13 @@ export function BulkParcelBatchPanel({ className = "" }: { className?: string })
             <span className="text-[var(--text-secondary)]">
               총 {c.total} · 확정 {c.confirmed} · 모호 {c.ambiguous} · 미발견 {c.not_found} · 오류 {c.error}
             </span>
+          </div>
+          {/* 사용료 — 관리자 미책정 시 무료(하드코딩 아님: 서버 단가 반영) */}
+          <div className="text-[11px] text-[var(--text-secondary)]">
+            예상 사용료: {(result.estimated_fee_krw ?? 0) > 0
+              ? <b className="text-[var(--accent-strong)]">₩{Math.round(result.estimated_fee_krw!).toLocaleString()}</b>
+              : <b className="text-emerald-400">무료</b>}
+            {(result.fee_per_unit_krw ?? 0) > 0 ? ` (필지당 ₩${Math.round(result.fee_per_unit_krw!).toLocaleString()} × 확정 ${c.confirmed})` : " (관리자 미책정)"}
           </div>
           <div className="flex h-2.5 w-full overflow-hidden rounded-full bg-[var(--surface-strong)]">
             <div style={{ width: pct(c.confirmed) }} className="bg-emerald-500" />

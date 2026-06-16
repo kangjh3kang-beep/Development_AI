@@ -190,6 +190,14 @@ class BatchService:
         page_items = record.items[start:end]
         has_next = end < len(record.items)
 
+        # 과금: 필지당 단가(관리자 설정·미설정 0=무료) × 확정 필지수. 하드코딩 금지.
+        try:
+            from app.core.billing import service_fee_bulk_parcel_per_unit
+            per_unit = service_fee_bulk_parcel_per_unit()
+        except Exception:  # noqa: BLE001 - 빌링 모듈 미가용(테스트 등) → 무료
+            per_unit = 0.0
+        estimated_fee = per_unit * float(record.job.counts.confirmed)
+
         return BatchResult(
             job_id=record.job.id,
             state=record.job.state,
@@ -199,6 +207,8 @@ class BatchService:
             aggregate=record.aggregate,
             pending=record.pending_pnus(),
             outliers=_area_outliers(record.items),
+            fee_per_unit_krw=per_unit,
+            estimated_fee_krw=estimated_fee,
             page=page,
             size=size,
             has_next=has_next,

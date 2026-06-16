@@ -171,6 +171,8 @@ class BatchResult(BaseModel):
     aggregate: BatchAggregate
     pending: list[str] = Field(default_factory=list)   # 미처리/미확정 pnu 목록(INV-M4)
     outliers: list[dict[str, Any]] = Field(default_factory=list)  # 신뢰루프: 면적 이상치 필지(검토 권고)
+    fee_per_unit_krw: float = 0.0       # 필지당 단가(관리자 설정·미설정 0=무료)
+    estimated_fee_krw: float = 0.0      # 예상 사용료 = 단가 × 확정 필지수(0=무료)
     page: int = 1
     size: int = 500
     has_next: bool = False
