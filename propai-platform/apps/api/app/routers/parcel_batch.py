@@ -68,8 +68,13 @@ async def submit_batch(
     service = _service()
     job = await service.submit(inp, snapshot_id=snapshot_id)
 
-    # 가용한 실행 경로를 모두 시도(둘 다 멱등이라 중복 처리해도 결과는 동일).
-    enqueued = _enqueue_celery(job.id)
+    # 실행 경로: Celery 워커가 준비된 경우에만 enqueue(env 플래그). 미설정 시 인프로세스 백그라운드.
+    # (브로커 미가동 시 Celery delay 가 ~20s 블록하므로, 플래그로 게이팅해 submit 즉시 응답 보장.
+    #  제미나이 인프라트랙에서 워커·Redis 준비 후 PARCEL_BATCH_USE_CELERY=1 로 컷오버.)
+    import os
+    enqueued = False
+    if os.getenv("PARCEL_BATCH_USE_CELERY", "").strip() in ("1", "true", "yes", "on"):
+        enqueued = _enqueue_celery(job.id)
     if not enqueued:
         background.add_task(_run_inprocess, job.id)
 
