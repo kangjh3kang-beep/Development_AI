@@ -78,8 +78,28 @@ export function VerificationBadge({
     if (!context) return;
     setLoading(true);
     try {
+      // ★source(원천 데이터)와 output(LLM 산출 주장)을 분리해야 교차검증이 성립한다.
+      //   과거 source=output=context(동일 객체)라 LLM이 자기 자신과 비교 → 변별력 0이었다.
+      //   컨텍스트에서 LLM 산출 키(narrative·*_interpretation 등)를 output으로, 나머지를
+      //   원천 source로 가른다. 분리할 LLM 키가 없으면 기존 동작(전체=source=output)으로 폴백.
+      const LLM_OUTPUT_KEYS = new Set([
+        "narrative", "ai_interpretation", "interpretation", "analysis", "summary",
+        "expert_panel", "target_persona", "opportunities", "risks", "price_trend",
+        "market_interpretation",
+      ]);
+      const src: Record<string, unknown> = {};
+      const out: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(context)) {
+        if (LLM_OUTPUT_KEYS.has(k) || k.endsWith("_interpretation")) out[k] = v;
+        else src[k] = v;
+      }
+      const hasSplit = Object.keys(out).length > 0 && Object.keys(src).length > 0;
       const r = await apiClient.post<VerifyResult>("/verify/analysis", {
-        body: { analysis_type: analysisType, source: context, output: context },
+        body: {
+          analysis_type: analysisType,
+          source: hasSplit ? src : context,
+          output: hasSplit ? out : context,
+        },
         useMock: false, timeoutMs: 80000,
       });
       setResult(r);

@@ -85,7 +85,7 @@ def _rule_by_land_category(cat: str) -> dict[str, Any] | None:
             "legal_basis": ["농지법 제34조(농지전용허가)·제38조(농지보전부담금)"],
             "permit_prerequisites": ["농지전용허가/협의", "농지보전부담금 산정"],
         }
-    if "임야" in c or c[:1] == "산":
+    if "임야" in c or "산림" in c:  # ★'산' 접두 매칭 제거 — 지목 "산업용지"(공업)를 임야로 오탐하던 버그.
         return {
             "category": "임야(산지)", "developability": "CONDITIONAL",
             "implications": ["지목이 임야로, 개발을 위해서는 산지전용허가가 필요하며 경사도·표고·입목축적 기준을 충족해야 합니다.",
@@ -127,7 +127,11 @@ def _rule_by_road(result: dict) -> dict[str, Any] | None:
     """접도(맹지) 판정 — 도로 미접이면 건축법 접도의무 미충족."""
     # road_contact/road_width/abutting_road 등 가용 필드에서 접도 여부 추정.
     rc = result.get("road_contact")
-    rw = result.get("road_width_m") or result.get("road_width")
+    # ★0(도로 미접)이 falsy라 `a or b`로 묶으면 road_width_m=0이 b로 새어 맹지를 놓친다.
+    #   None일 때만 대체값을 쓰도록 분리해 0을 보존한다.
+    rw = result.get("road_width_m")
+    if rw is None:
+        rw = result.get("road_width")
     if rc is False or (isinstance(rw, (int, float)) and rw == 0):
         return {
             "category": "맹지(도로 미접)", "developability": "CONDITIONAL",
@@ -188,16 +192,24 @@ def detect_special_parcel(result: dict) -> dict[str, Any] | None:
     if mismatch:
         warnings.append(f"[특이조합] {mismatch}")
 
-    caveat = (
-        "이 부지는 특이 토지특성으로 인해 용도지역상 법정 최대 연면적/용적률이 그대로 실현되지 않을 수 있습니다. "
-        f"개발가능성: {label}. 아래 선행절차 통과 여부에 따라 실제 개발규모가 결정됩니다."
-        if gate in ("PRECONDITION", "BLOCKED", "CONDITIONAL") else
-        "사전확인 사항이 있으나 일반 개발은 가능합니다."
-    )
-
     # 해결가능성 종합(정직 고지) — 해결불가(NO) 요인이 있으면 명시 고지해 할루시네이션 차단.
     worst_resolvable = min((_RES_RANK.get(f.get("resolvable", "YES"), 2) for f in factors), default=2)
     resolvable_overall = {0: "NO", 1: "CONDITIONAL", 2: "YES"}[worst_resolvable]
+
+    # 고지 정합: 해결불가(NO)면 게이트와 무관하게 '불가'로 단일화한다(caveat=게이트 기준,
+    #   honest=resolvable 기준이라 BLOCKED↔CONDITIONAL에서 메시지가 엇갈리던 모순 제거).
+    if resolvable_overall == "NO":
+        caveat = (
+            f"개발가능성: {label}. 통상적 절차로 해결 불가능한 제약이 포함되어 현 상태로는 일반 "
+            "분양개발이 불가합니다. 개발규모를 단정해 제시하지 않습니다."
+        )
+    elif gate in ("PRECONDITION", "BLOCKED", "CONDITIONAL"):
+        caveat = (
+            "이 부지는 특이 토지특성으로 인해 용도지역상 법정 최대 연면적/용적률이 그대로 실현되지 "
+            f"않을 수 있습니다. 개발가능성: {label}. 선행절차 통과 여부에 따라 실제 개발규모가 결정됩니다."
+        )
+    else:
+        caveat = "사전확인 사항이 있으나 일반 개발은 가능합니다."
     if resolvable_overall == "NO":
         honest = ("⚠ 정직 고지: 이 부지에는 통상적 절차로 해결 불가능한 제약(예: 개발제한구역·공공기반시설 용지)이 "
                   "포함되어 있어, 현 상태로는 일반 분양개발이 불가합니다. 무리한 개발규모 산정은 제시하지 않습니다.")
