@@ -108,6 +108,33 @@ async def normalize(inp: BatchInput, vworld: Any = None) -> NormalizeResult:
                 continue
         return NormalizeResult(pnus=pnus)
 
+    # ── 3.5) center_address + radius → 지오코딩 후 반경 bbox 필지 ──
+    if inp.center_address is not None:
+        import math
+
+        geo = await vworld.geocode_address(inp.center_address)
+        lat = (geo or {}).get("lat")
+        lon = (geo or {}).get("lon")
+        if lat is None or lon is None:
+            return NormalizeResult(
+                pnus=[], degraded=True,
+                reason=f"중심 주소 '{inp.center_address}' 지오코딩 실패(좌표 미확보).",
+            )
+        radius = int(inp.radius_m or 500)
+        # 위경도 1도 ≈ 111,320m. 경도는 위도 코사인 보정.
+        dlat = radius / 111_320.0
+        dlon = radius / (111_320.0 * max(math.cos(math.radians(lat)), 0.01))
+        parcels = await vworld.get_parcels_in_bbox(
+            lon - dlon, lat - dlat, lon + dlon, lat + dlat, max_count=1000
+        )
+        pnus = [p.get("pnu", "") for p in (parcels or []) if p.get("pnu")]
+        if not pnus:
+            return NormalizeResult(
+                pnus=[], degraded=True,
+                reason=f"'{inp.center_address}' 반경 {radius}m 내 필지를 찾지 못했습니다(외부 데이터 미가용 또는 빈 영역).",
+            )
+        return NormalizeResult(pnus=pnus)
+
     # ── 4) admin_code / district_code → 정직 degrade ──
     if inp.admin_code is not None:
         # TODO: 행정구역(bcode) → 필지목록 직접 API 확보 시 구현(현재 미지원).

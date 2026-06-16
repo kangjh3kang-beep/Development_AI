@@ -12,6 +12,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiClient } from "@/lib/api-client";
+import { GlobalAddressSearch } from "@/components/common/GlobalAddressSearch";
 
 type ItemStatus = "confirmed" | "ambiguous" | "not_found" | "error";
 type BatchItem = { pnu: string; status: ItemStatus; address?: string | null; area_sqm?: number | null; reason?: string | null };
@@ -41,9 +42,11 @@ const STATUS_LABEL: Record<ItemStatus, string> = {
 };
 
 export function BulkParcelBatchPanel({ className = "" }: { className?: string }) {
-  const [mode, setMode] = useState<"pnu" | "bbox">("pnu");
+  const [mode, setMode] = useState<"center" | "pnu" | "bbox">("center");
   const [pnuText, setPnuText] = useState("");
   const [bbox, setBbox] = useState<[string, string, string, string]>(["", "", "", ""]);
+  const [centerAddr, setCenterAddr] = useState("");
+  const [radiusM, setRadiusM] = useState(500);
   const [jobId, setJobId] = useState<string | null>(null);
   const [result, setResult] = useState<BatchResult | null>(null);
   const [loading, setLoading] = useState(false);
@@ -71,7 +74,10 @@ export function BulkParcelBatchPanel({ className = "" }: { className?: string })
   const submit = useCallback(async () => {
     setError(""); setResult(null); stop();
     let body: Record<string, unknown>;
-    if (mode === "pnu") {
+    if (mode === "center") {
+      if (!centerAddr.trim()) { setError("중심 주소를 검색하세요."); return; }
+      body = { center_address: centerAddr.trim(), radius_m: radiusM };
+    } else if (mode === "pnu") {
       const list = pnuText.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean);
       if (list.length === 0) { setError("PNU(19자리)를 한 줄에 하나씩 입력하세요."); return; }
       body = { pnu_list: list };
@@ -89,7 +95,7 @@ export function BulkParcelBatchPanel({ className = "" }: { className?: string })
     } catch {
       setLoading(false); setError("배치 제출에 실패했습니다. 입력을 확인하세요.");
     }
-  }, [mode, pnuText, bbox, poll, stop]);
+  }, [mode, pnuText, bbox, centerAddr, radiusM, poll, stop]);
 
   const cancel = useCallback(async () => {
     if (!jobId) return;
@@ -107,22 +113,42 @@ export function BulkParcelBatchPanel({ className = "" }: { className?: string })
         <div>
           <p className="text-sm font-black text-[var(--text-primary)]">🗺 대량 구역 일괄 분석</p>
           <p className="mt-0.5 text-[11px] text-[var(--text-secondary)]">
-            수백~수천 필지(PNU 목록 또는 구역 bbox)를 비동기로 일괄 해석합니다. 일부 실패해도 분류는 보존되며, 전 필지 확정 시 통합 집계를 산출합니다.
+수백~수천 필지(주소+반경·PNU 목록·구역 bbox)를 비동기로 일괄 해석합니다. 일부 실패해도 분류는 보존되며, 전 필지 확정 시 통합 집계를 산출합니다.
           </p>
         </div>
       </div>
 
       {/* 입력 모드 */}
-      <div className="mt-4 flex gap-2">
-        {(["pnu", "bbox"] as const).map((m) => (
-          <button key={m} onClick={() => setMode(m)}
-            className={`rounded-lg border px-3 py-1.5 text-xs font-bold ${mode === m ? "border-[var(--accent-strong)]/40 bg-[var(--accent-soft)] text-[var(--accent-strong)]" : "border-[var(--line)] text-[var(--text-secondary)]"}`}>
-            {m === "pnu" ? "PNU 목록" : "구역(bbox)"}
+      <div className="mt-4 flex flex-wrap gap-2">
+        {(["center", "pnu", "bbox"] as const).map((m) => (
+          <button key={m} onClick={() => setMode(m)} disabled={loading}
+            className={`rounded-lg border px-3 py-1.5 text-xs font-bold disabled:opacity-50 ${mode === m ? "border-[var(--accent-strong)]/40 bg-[var(--accent-soft)] text-[var(--accent-strong)]" : "border-[var(--line)] text-[var(--text-secondary)]"}`}>
+            {m === "center" ? "주소+반경" : m === "pnu" ? "PNU 목록" : "구역(bbox)"}
           </button>
         ))}
       </div>
 
-      {mode === "pnu" ? (
+      {mode === "center" ? (
+        <div className="mt-2 space-y-2">
+          <GlobalAddressSearch
+            single
+            writeToContext={false}
+            disabled={loading}
+            placeholder="구역 중심 주소를 검색하세요"
+            onChange={(entries) => setCenterAddr(entries.length > 0 ? (entries[0].jibunAddress || entries[0].fullAddress) : "")}
+          />
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] font-bold text-[var(--text-tertiary)]">반경</span>
+            {[300, 500, 1000, 2000].map((r) => (
+              <button key={r} onClick={() => setRadiusM(r)} disabled={loading}
+                className={`rounded-lg border px-2.5 py-1 text-[11px] font-bold disabled:opacity-50 ${radiusM === r ? "border-[var(--accent-strong)]/40 bg-[var(--accent-soft)] text-[var(--accent-strong)]" : "border-[var(--line)] text-[var(--text-secondary)]"}`}>
+                {r >= 1000 ? `${r / 1000}km` : `${r}m`}
+              </button>
+            ))}
+            {centerAddr && <span className="truncate text-[11px] text-[var(--text-hint)]" title={centerAddr}>· {centerAddr}</span>}
+          </div>
+        </div>
+      ) : mode === "pnu" ? (
         <textarea value={pnuText} onChange={(e) => setPnuText(e.target.value)} rows={4} disabled={loading}
           placeholder="PNU(19자리)를 줄/콤마로 구분해 입력&#10;예) 4115010100102240000"
           className="mt-2 w-full rounded-xl border border-[var(--line)] bg-[var(--surface-strong)] px-3 py-2 text-xs text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]" />

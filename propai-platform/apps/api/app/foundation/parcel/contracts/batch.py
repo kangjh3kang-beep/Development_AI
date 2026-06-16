@@ -54,6 +54,7 @@ class BatchInput(BaseModel):
     - bbox: (min_lon, min_lat, max_lon, max_lat) 사각 영역.
     - admin_code: 행정구역 법정동코드(bcode). ※직접 필지목록 API 없음 → 정직 degrade.
     - district_code: 지구단위계획 구역코드. ※동일하게 degrade.
+    - center_address: 중심 주소(지오코딩) + radius_m 반경 → 사각 영역 필지. (실용 구역 선택)
     """
 
     pnu_list: Optional[list[str]] = None
@@ -61,17 +62,19 @@ class BatchInput(BaseModel):
     bbox: Optional[tuple[float, float, float, float]] = None
     admin_code: Optional[str] = None
     district_code: Optional[str] = None
+    center_address: Optional[str] = None
+    radius_m: Optional[int] = None  # center_address 보조(기본 500m) — 단독 모드 아님
 
     @model_validator(mode="after")
     def _exactly_one(self) -> "BatchInput":
-        """4지(+2) 택1 검증 — 정확히 하나만 지정해야 한다."""
+        """택1 검증 — 입력 모드 중 정확히 하나만 지정(radius_m은 center_address 보조라 제외)."""
         provided = [
-            f for f in ("pnu_list", "polygon", "bbox", "admin_code", "district_code")
+            f for f in ("pnu_list", "polygon", "bbox", "admin_code", "district_code", "center_address")
             if getattr(self, f) not in (None, [], (), "")
         ]
         if len(provided) != 1:
             raise ValueError(
-                "BatchInput 은 pnu_list/polygon/bbox/admin_code/district_code 중 "
+                "BatchInput 은 pnu_list/polygon/bbox/admin_code/district_code/center_address 중 "
                 f"정확히 하나만 지정해야 합니다(지정됨: {provided})."
             )
         return self
@@ -90,6 +93,9 @@ class BatchInput(BaseModel):
             out["admin_code"] = str(self.admin_code)
         if self.district_code is not None:
             out["district_code"] = str(self.district_code)
+        if self.center_address is not None:
+            out["center_address"] = str(self.center_address)
+            out["radius_m"] = int(self.radius_m or 500)
         return out
 
 
