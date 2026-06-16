@@ -143,7 +143,13 @@ async def _overlay_db() -> int:
     db_url = os.environ.get("DATABASE_URL", "")
     if not db_url:
         raise RuntimeError("DATABASE_URL 없음(베이스라인 .env에서 적재 실패)")
-    engine = create_async_engine(_asyncpg_url(db_url))
+    # pgbouncer(transaction pooling) 호환 — asyncpg prepared statement 캐시 비활성
+    # (DuplicatePreparedStatementError 방지). NullPool로 연결 재사용 충돌도 회피.
+    from sqlalchemy.pool import NullPool
+    engine = create_async_engine(
+        _asyncpg_url(db_url), poolclass=NullPool,
+        connect_args={"statement_cache_size": 0, "prepared_statement_cache_size": 0},
+    )
     try:
         session_factory = async_sessionmaker(engine, expire_on_commit=False)
         async with session_factory() as session:
@@ -183,6 +189,7 @@ def main() -> int:
     allow = [a for a in dict.fromkeys(allow) if a not in _HARD_DENY]  # 중복 제거 + 하드 디나이 제외
 
     read_files = _load_baseline(env_files)
+    before_db = {k: (os.environ.get(k) or "") for k in allow}  # DB 오버레이 전 값(출처 판정용)
     db_applied = 0
     if args.with_db:
         try:
@@ -192,16 +199,23 @@ def main() -> int:
 
     lines = ["# 자동 생성 — 플랫폼 export_scoped_secrets.py (편집 금지, 재실행으로 갱신)\n",
              "# 허용목록 키만 포함. 마스터키/인프라 키 없음.\n"]
-    summary: list[tuple[str, str, str]] = []
+    summary: list[tuple[str, str, str, str]] = []
     written = 0
     for name in allow:
         val = (os.environ.get(name) or "").strip()
+        # 출처: DB 오버레이가 값을 바꿨으면 DB, 아니면 baseline(.env), 빈값은 미설정.
+        if args.with_db and before_db.get(name, "") != (os.environ.get(name) or ""):
+            src = "DB(관리자)"
+        elif val:
+            src = "env(.env)"
+        else:
+            src = "-"
         if not val:
-            summary.append((name, "unset", ""))
+            summary.append((name, "unset", "", src))
             continue
         lines.append(f"{name}={val}\n")
         written += 1
-        summary.append((name, "set", _mask(val)))
+        summary.append((name, "set", _mask(val), src))
 
     _atomic_write(args.target, lines)
 
@@ -209,8 +223,8 @@ def main() -> int:
     print(f"  베이스라인 .env: {len(read_files)}개 읽음 | DB 오버레이: {db_applied}개 | 기록된 키: {written}/{len(allow)}")
     for path in read_files:
         print(f"    · {path}")
-    for name, state, masked in summary:
-        print(f"  - {name}: {state}{(' ' + masked) if masked else ''}")
+    for name, state, masked, src in summary:
+        print(f"  - {name}: {state}{(' ' + masked) if masked else ''}  [출처={src}, len={len((os.environ.get(name) or '').strip())}]")
     return 0
 
 
