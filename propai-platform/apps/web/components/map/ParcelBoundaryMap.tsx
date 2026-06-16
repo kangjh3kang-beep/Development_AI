@@ -45,6 +45,18 @@ type Boundaries = {
   neighbors?: Neighbor[];       // A+D: 주변 필지·도로(벡터 지적도)
   merged_geometry?: any;        // B: 통합개발 외곽선
   min_gap_m?: number | null;    // C: 실제 최소 이격(m)
+  // 다필지 종합분석(실질용적률·건폐율·개발방법·추진방안)
+  integrated_analysis?: {
+    total_area_pyeong?: number | null;
+    zone_types?: string[];
+    zone_mixed?: boolean;
+    effective_bcr_pct?: number | null;
+    effective_far_pct?: number | null;
+    total_gfa_sqm?: number | null;
+    development_methods?: string[];
+    recommendation?: string;
+    notes?: string[];
+  } | null;
 };
 
 const PALETTE = ["#14b8a6", "#3b82f6", "#f59e0b", "#8b5cf6", "#ec4899", "#65a30d"];
@@ -305,6 +317,30 @@ export function ParcelBoundaryMap({
         }`}>
           {data.adjacency.contiguous === true ? "🔗 통합개발 가능 — " : data.adjacency.contiguous === false ? "✂ 통합개발 불가 — " : "❔ 인접성 미상 — "}
           {data.adjacency.note}
+        </div>
+      )}
+
+      {/* 다필지 종합분석 — 실질 건폐율/용적률 + 개발방법 + 최적추진방안(개발사업분석 핵심) */}
+      {data?.integrated_analysis && (data.parcel_count >= 2 || data.integrated_analysis.effective_far_pct) && (
+        <div className="mb-2 rounded-lg border border-[var(--accent-strong)]/30 bg-[var(--accent-soft)] px-3 py-2.5">
+          <p className="mb-1.5 text-[11px] font-bold text-[var(--accent-strong)]">📊 통합 종합분석</p>
+          <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-[var(--text-secondary)]">
+            <span>총 <b className="text-[var(--text-primary)]">{data.integrated_analysis.total_area_pyeong?.toLocaleString()}평</b></span>
+            {data.integrated_analysis.effective_bcr_pct != null && <span>실질 건폐율 <b className="text-[var(--text-primary)]">{data.integrated_analysis.effective_bcr_pct}%</b></span>}
+            {data.integrated_analysis.effective_far_pct != null && <span>실질 용적률 <b className="text-[var(--text-primary)]">{data.integrated_analysis.effective_far_pct}%</b></span>}
+            {data.integrated_analysis.total_gfa_sqm != null && <span>가능 연면적 <b className="text-[var(--text-primary)]">{Math.round(data.integrated_analysis.total_gfa_sqm).toLocaleString()}㎡</b></span>}
+            {data.integrated_analysis.zone_mixed && <span className="text-amber-500">⚠️ 용도지역 혼재({data.integrated_analysis.zone_types?.join("·")})</span>}
+          </div>
+          {data.integrated_analysis.development_methods && data.integrated_analysis.development_methods.length > 0 && (
+            <p className="mt-1.5 text-[11px] text-[var(--text-secondary)]">
+              개발방법: {data.integrated_analysis.development_methods.map((m) => (
+                <span key={m} className="mr-1 inline-block rounded bg-[var(--surface-muted)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--text-primary)]">{m}</span>
+              ))}
+            </p>
+          )}
+          {data.integrated_analysis.recommendation && (
+            <p className="mt-1.5 text-[11px] font-semibold text-[var(--text-primary)]">💡 {data.integrated_analysis.recommendation}</p>
+          )}
         </div>
       )}
       {/* 정밀 구획도 범례 — 주변 필지·도로(벡터 지적도) + 통합 외곽선 */}

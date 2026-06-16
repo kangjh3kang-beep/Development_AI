@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v203-parcel-excel";
+const CACHE_NAME = "propai-v204-multiparcel-analysis";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",
