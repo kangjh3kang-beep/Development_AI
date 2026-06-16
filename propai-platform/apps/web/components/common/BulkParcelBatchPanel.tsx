@@ -62,8 +62,9 @@ export function BulkParcelBatchPanel({ className = "" }: { className?: string })
     try {
       const r = await apiClient.get<BatchResult>(`/parcels/batch/${id}?page=1&size=200`, { useMock: false, timeoutMs: 60000 });
       setResult(r);
-      // 종료 조건: 완결 또는 터미널 상태
-      if (r.completeness === "complete" || ["complete", "failed", "cancelled", "expired"].includes(r.state)) {
+      // 종료 조건: 진행상태(queued/running)가 아니면 터미널.
+      // state=partial 은 "전 필지 처리됐으나 일부 미확정"인 종료 상태(INV-M4) — 무한폴링 방지.
+      if (!["queued", "running"].includes(r.state)) {
         stop(); setLoading(false);
       }
     } catch {
@@ -181,7 +182,11 @@ export function BulkParcelBatchPanel({ className = "" }: { className?: string })
         <div className="mt-4 space-y-3">
           <div className="flex items-center justify-between text-[11px]">
             <span className="font-bold text-[var(--text-primary)]">
-              {result.completeness === "complete" ? "✅ 완료" : "⏳ 진행"} · {result.state}
+              {["queued", "running"].includes(result.state)
+                ? "⏳ 진행"
+                : result.completeness === "complete"
+                  ? "✅ 완료(전 필지 확정)"
+                  : "✅ 완료(일부 미확정)"} · {result.state}
             </span>
             <span className="text-[var(--text-secondary)]">
               총 {c.total} · 확정 {c.confirmed} · 모호 {c.ambiguous} · 미발견 {c.not_found} · 오류 {c.error}
