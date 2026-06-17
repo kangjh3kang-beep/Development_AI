@@ -1111,6 +1111,56 @@ async def parcels_info(req: ParcelsInfoRequest):
     return {"parcels": out}
 
 
+class ParcelAtPointRequest(BaseModel):
+    """지도 클릭 좌표 → 필지 조회(다필지 지도 클릭선택용)."""
+    lat: float
+    lon: float
+
+
+@router.post("/parcel-at-point")
+async def parcel_at_point(req: ParcelAtPointRequest):
+    """지도에서 클릭한 좌표(lat/lon)가 속한 필지를 조회·보강(지번·면적·용도지역·건폐/용적·구획도).
+
+    지도 클릭선택 입력 UX 지원. 무목업: 필지 미확인 시 found=false 정직 반환(가짜 생성 금지).
+    """
+    from apps.api.app.services.external_api.vworld_service import VWorldService
+    from apps.api.app.services.zoning.auto_zoning_service import ZONE_LIMITS
+
+    if not (-90 <= req.lat <= 90 and -180 <= req.lon <= 180):
+        return {"found": False, "reason": "좌표 범위 오류."}
+    vworld = VWorldService()
+    try:
+        pp = await vworld.get_parcel_by_point(req.lat, req.lon)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("점→필지 조회 실패: %s,%s (%s)", req.lat, req.lon, str(e))
+        pp = None
+    if not pp or not pp.get("pnu"):
+        return {"found": False, "reason": "클릭 지점에서 필지를 찾지 못했습니다(지적도 외 영역일 수 있음)."}
+    pnu = str(pp["pnu"])
+    area_sqm = zone_type = jimok = None
+    try:
+        lc = await vworld.get_land_characteristics(pnu)
+        if isinstance(lc, dict):
+            area_sqm = lc.get("area_sqm") or None
+            zone_type = lc.get("zone_type") or None
+            jimok = lc.get("land_category") or None
+    except Exception:  # noqa: BLE001
+        pass
+    bcr = far = None
+    if zone_type:
+        z = zone_type.replace(" ", "").strip()
+        key = z if z in ZONE_LIMITS else max([k for k in ZONE_LIMITS if k in z] or [""], key=len) or None
+        if key:
+            bcr, far = ZONE_LIMITS[key]["max_bcr"], ZONE_LIMITS[key]["max_far"]
+    return {
+        "found": True, "pnu": pnu,
+        "address": pp.get("address") or "", "jibun": pp.get("address") or "",
+        "bcode": pnu[:10], "area_sqm": area_sqm, "zone_type": zone_type, "jimok": jimok,
+        "bcr_pct": bcr, "far_pct": far, "geometry": pp.get("geometry"),
+        "lat": req.lat, "lon": req.lon,
+    }
+
+
 class LandReportRequest(BaseModel):
     """토지분석보고서 PDF 생성 요청 — 토지조서 필지 목록."""
     project_name: str = "토지분석보고서"
