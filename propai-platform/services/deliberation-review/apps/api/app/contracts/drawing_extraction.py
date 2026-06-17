@@ -49,11 +49,13 @@ class ExtractedElement(BaseModel):
     hint_strength: Probability = 0.0
     area: float | None = None
     quantity: float | None = None
-    length: float | None = None            # EAVE 처마 제외길이 산정용
-    depth: float | None = None             # BALCONY 발코니 깊이 산정용
+    length: float | None = None            # EAVE 처마 제외길이 산정용(실척)
+    depth: float | None = None             # BALCONY 발코니 깊이 산정용(실척)
+    area_px: float | None = None           # 도면단위 면적(축척 환산 전, INC-4)
+    length_px: float | None = None         # 도면단위 길이(축척 환산 전, INC-4)
     underground: bool | None = None        # PARKING 지하 여부(용적률 제외 적격성)
     accessory: bool | None = None          # PARKING 부속 여부(용적률 제외 적격성)
-    provenance: dict = Field(default_factory=dict)  # {sheet, src: vision|hint}
+    provenance: dict = Field(default_factory=dict)  # {sheet, src: vision|hint, scale_*}
 
 
 class DrawingExtraction(BaseModel):
