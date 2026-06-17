@@ -15,8 +15,8 @@ _LEGAL_KEYWORDS = (
     "exclusion", "relax", "incentive", "tol", "pct", "percent",
 )
 
-# 명백한 인덱스/플래그/초기값만 과탐 제외 — 법정값일 수 있는 100/10/1000/0.5는 제외 금지(INV-3 누수 방지).
-_BENIGN = {"0", "1", "2", "1.0", "0.0"}
+# (benign 값 면제 제거 — 법정키워드 매칭 식별자는 0/1/1.0 등 benign값도 INV-3 누수이므로 무조건 탐지.
+#  측정치/지역변수 false positive는 호출측 allowlist로 제외.)
 
 
 def _number(node: ast.AST) -> float | int | None:
@@ -52,11 +52,9 @@ def scan_for_numeric_legal_constants(source: str, allowlist: tuple[str, ...] = (
     def check(name: str | None, value: float | int) -> None:
         if name is None or name in allowlist:
             return
-        sval = _fmt(value)
-        if sval in _BENIGN:
-            return
+        # 비법정 식별자는 무관(benign 무의미). 법정키워드 매칭 식별자는 benign값(0/1/1.0 등)도 INV-3 누수 → 면제 없음.
         if any(k in name.lower() for k in _LEGAL_KEYWORDS):
-            hits.append(f"{name}={sval}")
+            hits.append(f"{name}={_fmt(value)}")
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Assign):

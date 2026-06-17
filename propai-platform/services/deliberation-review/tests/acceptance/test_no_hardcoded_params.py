@@ -5,7 +5,7 @@ from tools.static_scan import scan_for_numeric_legal_constants
 
 _APP_DIR = pathlib.Path(__file__).resolve().parents[2] / "apps" / "api" / "app"
 # 법정상수 아닌 정당한 예외(부동소수 비교 오차 등) — AST 스캐너가 지수표기까지 잡으므로 명시 제외.
-_ALLOW = ("_FLOAT_TOL",)
+_ALLOW = ("_FLOAT_TOL", "area", "depth", "sunny_hours", "shaded_ratio")  # 측정치/지역변수(법정상수 아님)
 
 
 def test_no_hardcoded_legal_params():
