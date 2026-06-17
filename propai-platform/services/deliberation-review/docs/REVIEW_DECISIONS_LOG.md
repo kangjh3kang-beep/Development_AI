@@ -29,9 +29,10 @@
 | 13 | `fcb5da3b` | 테스트·정확성 | static_scan AST 확장(함수기본값·call-kwarg·튜플언패킹·튜플/리스트 값) — 시그니처 사각지대 차단 + shadow_3d 하드코딩 5종(floor_height_m=3.0·sunlight_threshold=0.5·min_hours=4.0·관측창 9~15) → sim_params.json SSOT 주입(INV-20)·회귀가드 5 | 316 |
 | 14 | `76ab59db` | 견고성·계약 | egress 보행속도/유동계수 비양수 가드(walk_speed≤0→0division 500·flow<0→음수시간 무음오판 차단, UNAVAILABLE+invalid_egress_params, INV-21)·가드 테스트 | 317 |
 | 15 | `56caf153` | security | 레이트리밋(FixedWindowRateLimiter 인메모리 고정창)·미들웨어 배선(클라이언트별 분당 상한, /health 면제, 429+Retry-After)·REQUESTS_PER_MINUTE 설정(0=비활성 기본)·리미터 단위(clock주입 결정론)+미들웨어 통합 테스트 5 | 322 |
-| 16 | `(this)` | 계약 | SimMetric.unit str→MetricUnit enum(""/s/hours/m/ratio) — 임의 단위 무음 통과 차단·계약 강제. str,Enum이라 JSON은 값('s')로 직렬화(프런트 ui/index.html `m.unit` 호환 byte-동일)·계약 테스트(유효 강제·비계약 거부) | 323 |
+| 16 | `8bceda90` | 계약 | SimMetric.unit str→MetricUnit enum(""/s/hours/m/ratio) — 임의 단위 무음 통과 차단·계약 강제. str,Enum이라 JSON은 값('s')로 직렬화(프런트 ui/index.html `m.unit` 호환 byte-동일)·계약 테스트(유효 강제·비계약 거부) | 323 |
+| 17 | `(this)` | 정확성 | PARKING 전량제외 무음 거짓적합 제거 — CalcElement underground/accessory + parking_far_eligibility(지하·부속만 제외/지상·독립 산입/미상 HELD), CalcEngine far 주차 미상→held. far_parking_held trace 표면화·테스트 3(적격제외/지상산입/미상HELD) | 325 |
 
-**재리뷰 점수 추이**: security 3.0→4.0→4.5(iter15 레이트리밋), 계약 3.0→3.5→3.8→4.4→4.5(iter16 SimMetric.unit enum 계약강제), 정확성 3.0→3.5→4.0→4.3(iter13 shadow_3d INV-20),
+**재리뷰 점수 추이**: security 3.0→4.0→4.5(iter15 레이트리밋), 계약 3.0→3.5→3.8→4.4→4.5(iter16 SimMetric.unit enum 계약강제), 정확성 3.0→3.5→4.0→4.3→4.5(iter17 PARKING 거짓적합 제거: 지상주차 산입·미상 HELD),
 테스트 3.5→3.7→4.2→4.5(iter12~13 스캐너 사각지대 제거: 함수기본값/call-kwarg 하드코딩까지 게이트), 아키텍처 3.0→3.2→4.2, 견고성 3.5→4.2→4.5(iter14 egress 비양수 가드: 0division/음수시간 무음오판 제거),
 security 3.0→4.0→4.5(iter15 레이트리밋: 외부 1차출처 쿼터/비용 폭주 방어, /health 면제). 결정론 4.5·설명가능성 4.0 유지.
 
@@ -51,17 +52,17 @@ security 3.0→4.0→4.5(iter15 레이트리밋: 외부 1차출처 쿼터/비용
    - **재작업 조건**: AnalysisInput에 축척(scale) 입력 경로를 정비한 뒤, preflight 거부 시 도면-파생 LegalQuantity를
      status=HELD로 강등·전파(enforcement). 그 전엔 advisory 유지.
 
-2. **정확성 PARKING 계산 수정 → 경고만** (재리뷰6 high 잔존)
-   - 미적용 이유: `SemanticType`에 지하/지상·부속/비부속 구분이 없어, 지상 비부속 주차 산입 로직을 만들 수 없음.
-     현재는 area_calculator note 경고만(전량 차감 유지).
-   - **재작업 조건**: `SemanticType`에 PARKING_UNDERGROUND/PARKING_GROUND(또는 attached 플래그) 추가 →
-     지하·부속만 제외, 지상·비부속 산입, **유형 미상 시 calc held=True(status=HELD)**로 무음 AGREED 금지.
+2. **정확성 PARKING 계산 수정 → ✅ 적용** (`(this)`, iter17)
+   - SemanticType에 새 enum 추가 대신 **CalcElement에 `underground`/`accessory` bool|None 필드**로 표현(요소 속성이
+     의미타입보다 적합). area_calculator `parking_far_eligibility()`: 지하 AND 부속만 제외(ELIGIBLE), 지상·독립 산입
+     (INELIGIBLE), 미상(UNKNOWN)은 무음 전량제외 금지(보수적 산입)+CalcEngine held=True(status=HELD). far_parking_held
+     trace로 표면화. 전량차감 거짓적합(FAR 과소) 제거.
+   - 잔여: underground/accessory를 상류(도면추출/분류 provenance)에서 채우는 배선은 별도(현재 미주입 시 미상→HELD가 안전기본).
 
-3. **테스트 static_scan 함수 기본인자 탐지 → 보류** (재리뷰6 high)
-   - 미적용 이유: 탐지 추가 시 shadow_3d의 `min_hours=4.0`·`sunlight_threshold=0.5`·`floor_height_m=3.0` 함수
-     기본값이 잡혀 `test_no_hardcoded_params` 실패. param화 연쇄(sim_params.json + pipeline 주입)가 선행돼야 함.
-   - **재작업 조건**: shadow_3d 법정 임계(min_hours)를 `param('sunlight_min_hours_winter')`로 외부화하고 pipeline이
-     주입하도록 변경한 뒤, static_scan에 `ast.arguments(defaults/kw_defaults)` 순회 추가 + 회귀 가드.
+3. **테스트 static_scan 함수 기본인자 탐지 → ✅ 적용** (`fcb5da3b`, iter13)
+   - shadow_3d 법정 임계 5종(min_hours/sunlight_threshold/floor_height_m/관측창)을 sim_params.json SSOT로 외부화(동일값
+     이전=결정론 보존) 후, static_scan에 FunctionDef defaults/kw_defaults + call-kwarg + 튜플언패킹 + 튜플/리스트 값
+     순회 추가 + 회귀가드 5. 측정치 함수기본값(existing_floor_area=0.0 등)은 allowlist(정확한 이름만).
 
 4. **아키텍처 dual_path 배선 → 보류** (재리뷰6 high)
    - 미적용 이유: DualPathCheck는 구현됐으나, 명기(면적표) 값과 기하(산정) 값을 대조하려면 **명기 최종값 데이터 모델**
@@ -73,10 +74,12 @@ security 3.0→4.0→4.5(iter15 레이트리밋: 외부 1차출처 쿼터/비용
    - upzoning ORDINANCE_BCR(서울 §54 건폐율) + remaining_capacity BCR 조례 우선·미등록 시 시행령+caveat(FAR과 대칭).
    - 잔여: 서울 외 시도 건폐율 조례 미등록(미등록 시 caveat 표면화 중). 재리뷰로 정확성 점수 확인 예정.
 
-6. **security 레이트리밋·CORS 운영제한 → 미구현** (pnu·예외에코는 ✅적용 05920fdd/b999a055)
-   - ✅ pnu: AnalysisInput.pnu Field(pattern) 적용(iter10, address-only 테스트 pnu='unknown'→''). 예외에코 코드만(iter7s).
-   - 미적용 이유: 레이트리밋은 의존성(slowapi) 추가 필요. CORS는 production validator(와일드카드 거부) 있음 — 추가 운영 제한 보류.
-   - **재작업 조건**: /analyze·/analyze/async에 per-IP/token 레이트리밋(slowapi). production CORS 명시 도메인 목록.
+6. **security 레이트리밋 → ✅ 적용**(`56caf153`, iter15) / CORS는 production validator로 충분
+   - ✅ pnu: AnalysisInput.pnu Field(pattern) 적용(iter10). 예외에코 코드만(iter7s).
+   - ✅ 레이트리밋: **slowapi 의존성 대신 무의존 인메모리 FixedWindowRateLimiter**(core/rate_limit) + http 미들웨어
+     채택(클라별 분당 상한·/health 면제·429). REQUESTS_PER_MINUTE(0=비활성). ⚠️**방식 차이 기록**: 프로세스 로컬이라
+     분산 강제 아님 — 다중 워커 운영은 Redis 백엔드 필요(미구현, docstring 명시). slowapi는 추가 의존성·동일 분산한계라 무의존 선택.
+   - CORS: production validator(와일드카드/무인증 거부, settings._production_fail_closed)로 충분 — 추가 미들웨어 불요.
 
 7. **계약 측정치 nan/inf → ✅ 적용** (`832c9acd`, iter11): _types.FiniteFloat(allow_inf_nan=False)를
    EvalCase/Finding measured_value·limit_value·SimMetric.value·LegalQuantity.value에 적용(nan≤limit 무음 오판 차단).
