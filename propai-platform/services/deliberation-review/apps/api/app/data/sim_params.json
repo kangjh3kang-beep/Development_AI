@@ -42,5 +42,31 @@
     "unit": "m",
     "basis_article": "주차장법 시행규칙",
     "description": "주차 통로 최소 폭."
+  },
+  "shadow3d_floor_height_m": {
+    "value": 3.0,
+    "unit": "m",
+    "description": "층수→높이 환산 표준 층고(height_m 결손 시 사용)."
+  },
+  "shadow3d_sunlight_threshold": {
+    "value": 0.5,
+    "unit": "ratio",
+    "description": "과반일조 판정 일영비율 임계(이 값 미만이면 일조시각 계상)."
+  },
+  "shadow3d_min_sunny_hours": {
+    "value": 4.0,
+    "unit": "hours",
+    "basis_article": "건축법 제61조(관련)",
+    "description": "동지 9~15시 일조시각 최소 기준(미달 시 flag)."
+  },
+  "shadow3d_obs_hour_start": {
+    "value": 9.0,
+    "unit": "hour",
+    "description": "일조분석 관측 시작시각(동지, 비법정 근사창)."
+  },
+  "shadow3d_obs_hour_end": {
+    "value": 15.0,
+    "unit": "hour",
+    "description": "일조분석 관측 종료시각(동지, 비법정 근사창)."
   }
 }

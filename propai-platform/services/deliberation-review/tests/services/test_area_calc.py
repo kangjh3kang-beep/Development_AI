@@ -43,10 +43,10 @@ def test_exclusion_threshold_is_parameterized():
     r2 = CalcEngine(params={"balcony_exclusion_depth": 1.0}).compute(
         target=CalcTarget.BUILDING_AREA, payload=payload, elements=balcony)
     assert r1.value != r2.value
-    # 법정 임계 하드코딩 부재(legal_calc 소스).
+    # 법정 임계 하드코딩 부재(legal_calc 소스). rooftop_area는 면적 측정 입력(기본 0.0=부재) — 법정상수 아님.
     offenders = {}
     for py in _LEGAL_CALC_DIR.rglob("*.py"):
-        hits = scan_for_numeric_legal_constants(py.read_text(encoding="utf-8"))
+        hits = scan_for_numeric_legal_constants(py.read_text(encoding="utf-8"), allowlist=("rooftop_area",))
         if hits:
             offenders[py.name] = hits
     assert offenders == {}

@@ -84,6 +84,8 @@ def test_sunlight_analysis_rationale_and_threshold():
     rat = out["rationale"]
     assert any(lb["ref_id"] == "건축법§61" for lb in rat["legal_basis"])
     assert any("연속" in c for c in rat["caveats"])  # 연속성 한계 표면화(무음 오판 제거)
-    # 임계 파라미터화(INV-20) — 주입 시 method/계상에 반영.
-    out2 = sunlight_analysis(target, [bld], 37.58, sunlight_threshold=0.3)
+    # 임계 파라미터화(INV-20) — sim_params SSOT override 주입 시 method/계상에 반영(하드코딩 0건).
+    from app.services.sim.sim_params import SimParamSource
+    out2 = sunlight_analysis(target, [bld], 37.58,
+                             params=SimParamSource(overrides={"shadow3d_sunlight_threshold": 0.3}))
     assert "0.3" in out2["method"]
