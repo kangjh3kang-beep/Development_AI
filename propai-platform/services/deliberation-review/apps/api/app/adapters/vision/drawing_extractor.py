@@ -13,6 +13,7 @@ from app.contracts.drawing_extraction import (
     ExtractedElement,
     normalize_semantic_hint,
 )
+from app.core.confidence import clamp01
 from app.settings import env_or_setting, settings
 
 
@@ -28,7 +29,7 @@ def _from_hints(sheet: DrawingSheet) -> list[ExtractedElement]:
         out.append(ExtractedElement(
             element_id=f"{sheet.sheet_id}-h{i}",
             semantic_hint=normalize_semantic_hint(h.get("semantic_hint")),
-            hint_strength=float(h.get("hint_strength", 0.0) or 0.0),
+            hint_strength=clamp01(float(h.get("hint_strength", 0.0) or 0.0)),
             area=h.get("area"),
             quantity=h.get("quantity"),
             provenance={"sheet": sheet.sheet_id, "src": "hint", "role": sheet.sheet_role},
@@ -42,7 +43,7 @@ def _from_vision(sheet: DrawingSheet, raw: list[dict]) -> list[ExtractedElement]
         out.append(ExtractedElement(
             element_id=f"{sheet.sheet_id}-v{i}",
             semantic_hint=normalize_semantic_hint(r.get("type") or r.get("semantic_hint")),
-            hint_strength=float(r.get("confidence", 0.0) or 0.0),
+            hint_strength=clamp01(float(r.get("confidence", 0.0) or 0.0)),
             area=r.get("area"),
             quantity=r.get("quantity"),
             provenance={"sheet": sheet.sheet_id, "src": "vision", "role": sheet.sheet_role},

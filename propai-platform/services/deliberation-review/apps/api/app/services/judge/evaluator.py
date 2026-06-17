@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from app.contracts._types import Probability
 from app.contracts.enums import Comparator
 from app.contracts.finding import Finding, Verdict
 from app.contracts.rule import Rule
@@ -19,7 +20,7 @@ class EvalCase(BaseModel):
     measured_value: float | None = None
     limit_value: float | None = None
     relaxation_states: dict[str, str] = Field(default_factory=dict)
-    input_confidence: float = 1.0
+    input_confidence: Probability = 1.0
     conflicts: list[str] = Field(default_factory=list)
 
 
