@@ -73,8 +73,15 @@ def run_analysis(inp: AnalysisInput) -> AnalysisResult:
     if inp.drawings:
         from app.adapters.vision.drawing_extractor import build_drawing_extractor
         from app.contracts.drawing_extraction import DrawingSheet
+        # 축척 방어적 해소(미확정이면 None — 픽셀 측정치는 미환산/미승계, 날조 금지). 픽셀→실척 환산(INC-4).
+        draw_scale = None
+        try:
+            from app.services.preflight.scale_unit import ScaleUnitResolver
+            draw_scale = ScaleUnitResolver().resolve(inp.drawing)
+        except PreflightRefused:
+            draw_scale = None
         extractor = build_drawing_extractor()
-        dext = extractor.extract([DrawingSheet(**d) for d in inp.drawings])
+        dext = extractor.extract([DrawingSheet(**d) for d in inp.drawings], scale=draw_scale)
         drawing_source = dext.source
         auto_elements = dext.to_pipeline_elements()
         if dext.source == "none":

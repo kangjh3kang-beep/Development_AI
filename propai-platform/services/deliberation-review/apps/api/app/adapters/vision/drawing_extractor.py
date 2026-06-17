@@ -24,9 +24,10 @@ class DrawingVisionClient(Protocol):
 
 
 def _measurements(d: dict) -> dict:
-    """제외 산정 측정치 매핑 — 미상 키는 None 유지(무음 추정 금지)."""
+    """제외 산정 측정치 매핑 — 미상 키는 None 유지(무음 추정 금지). area_px/length_px는 축척 환산 전 도면단위."""
     return {
         "length": d.get("length"), "depth": d.get("depth"),
+        "area_px": d.get("area_px"), "length_px": d.get("length_px"),
         "underground": d.get("underground"), "accessory": d.get("accessory"),
     }
 
@@ -67,7 +68,7 @@ class DrawingExtractor:
     def __init__(self, vision_client: DrawingVisionClient | None = None) -> None:
         self.vision_client = vision_client
 
-    def extract(self, sheets: list[DrawingSheet]) -> DrawingExtraction:
+    def extract(self, sheets: list[DrawingSheet], scale=None) -> DrawingExtraction:
         elements: list[ExtractedElement] = []
         area_tables: list[dict] = []
         notes: list[str] = []
@@ -91,7 +92,10 @@ class DrawingExtractor:
             elif not (self.vision_client is not None and sh.image_ref):
                 notes.append(f"{sh.sheet_id}: 이미지/힌트 없음 → 추출 불가(날조 금지)")
         source = "VLLM_VISION" if used_vision else ("HINTS" if used_hints else "none")
-        return DrawingExtraction(source=source, elements=elements, area_tables=area_tables, notes=notes)
+        ext = DrawingExtraction(source=source, elements=elements, area_tables=area_tables, notes=notes)
+        # 축척 주입 시 픽셀/도면단위 측정치를 실척으로 결정론 환산(INC-4). scale 없으면 무변환.
+        from app.services.extraction.scale_convert import apply_scale
+        return apply_scale(ext, scale)
 
 
 class AnthropicDrawingVisionClient:
