@@ -20,11 +20,22 @@ router = APIRouter(prefix="/api/v1", tags=["analysis"])
 
 @router.post("/analyze", response_model=AnalysisResult, dependencies=[Depends(require_token)])
 async def analyze(payload: AnalysisInput, session: AsyncSession = Depends(get_session)) -> AnalysisResult:
+    # INC-11: 분석 전 캐시 적재(L2→L1, snapshot 결속) · 분석 후 신규 fetch 영속(L1→L2). 모두 best-effort
+    # (캐시는 데이터 확보 단계만 — 실패해도 분석 진행, 결정론 영향 0).
+    from app.adapters.cache.source_cache import flush_to_db, warm_from_db
+    try:
+        await warm_from_db(session, payload.snapshot_id)
+    except Exception:
+        await session.rollback()  # 캐시 적재 실패 → 직접 fetch 경로로 degrade(무음 단정 금지: 분석은 진행)
     try:
         result = run_analysis(payload)
     except DomainError as exc:
         # 예외 원문(내부 식별자/경로) 노출 금지 — 안정 코드만 반환(원문은 서버 추적 from exc).
         raise HTTPException(status_code=422, detail=f"domain_error:{type(exc).__name__}") from exc
+    try:
+        await flush_to_db(session)
+    except Exception:
+        await session.rollback()  # 캐시 영속 실패 → 다음 분석이 재fetch(분석 결과엔 무영향)
     return await save_analysis(session, result)
 
 

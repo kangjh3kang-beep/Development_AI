@@ -28,19 +28,12 @@ class VworldLandPriceSource:
         """PNU 개별공시지가(원/㎡). 미적용 키/결손/비정상 resultCode는 None."""
         if not self.key or len(pnu) < 19:
             return None
-        try:
-            import httpx
-        except ImportError:
-            return None
-        try:
-            r = httpx.get(
-                f"{self.base}/getIndvdLandPriceAttr",
-                params={"key": self.key, "pnu": pnu, "stdrYear": stdr_year,
-                        "format": "json", "numOfRows": "1"},
-                headers=self.headers, timeout=15.0)
-            r.raise_for_status()
-            data = r.json()
-        except Exception:
+        from app.adapters.cache.source_cache import cached_get
+        data = cached_get(
+            self.name, f"{self.base}/getIndvdLandPriceAttr",
+            {"key": self.key, "pnu": pnu, "stdrYear": stdr_year, "format": "json", "numOfRows": "1"},
+            secret_param_keys=("key",), headers=self.headers, timeout=15.0)
+        if data is None:
             return None
         body = data.get("indvdLandPrices") or data.get("indvdLandPrice") or {}
         code = str(body.get("resultCode", ""))

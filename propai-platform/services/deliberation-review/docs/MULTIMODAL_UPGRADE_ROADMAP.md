@@ -241,11 +241,12 @@ P-멀티모달정확도 기반    │        (측정치·축척·sanity가      
 
 P-가시성과 병렬 착수 가능하나, static_scan(INC-15)은 캐시(INC-11) 선행.
 
-**INC-11 [high/M] 외부 1차출처 응답 캐시 계층(source cache 테이블 + AdapterCache)**
+**INC-11 [high/M] ✅ 완료 — 외부 1차출처 응답 캐시 계층(source cache 테이블 + AdapterCache)**
 - 대상: 신규 `external_source_cache` 테이블(alembic 신규: cache_key=adapter+endpoint+정규화params 해시, payload, content_hash, etag, fetched_at, snapshot_id, status) · 신규 `adapters/cache/source_cache.py`(get/put, TTL·snapshot 결속) · molit_building.py / vworld_*.py / law_go_kr.py의 직접 httpx.get을 캐시 경유로.
 - 불변식: 캐시는 데이터 확보 단계만 — 적중 후 동일 입력→동일 출력(결정론 영향 0). 미스/만료는 재호출→실패 시 기존 graceful None(무음0). payload에 ref/etag/fetched_at 보존(1차출처·설명가능성). snapshot_id 결속(재현성).
 - 리스크: 중(7개 어댑터 호출부 교체·DB 세션). 라이브 키 없는 테스트는 캐시 미스→기존 경로라 337 비파괴.
 - 효과: 분석마다 재호출(쿼터/지연/비용) 제거. INC-12 신선도·INC-15 static_scan의 토대.
+- **구현 노트**: sync 어댑터 ↔ async DB 경계 분리 — **L1 프로세스 인메모리**(어댑터 sync 경로, 결정론) + **L2 DB 영속**(`warm_from_db`/`flush_to_db`를 async `analyze` 라우트 경계에서 호출, snapshot 결속). 공유 `cached_get(adapter,url,params,secret_param_keys,...)` 헬퍼로 8개 어댑터 일괄 경유(원 httpx 시그니처/예외 보존 — headers 조건부, etag 방어적). **secret(OC/key/serviceKey)는 cache_key·DB에서 제외**(비유출). jurisdiction/vworld.py는 계약 상이(AdapterTimeout)로 제외. 적대적 리뷰 통과(gate 4.8/determinism 8.7/quality 8.5) — LOW 3건(flush dirty-clear는 commit 후로·만료 eviction·warm rollback) 반영. **379 passed**(370→+INC-11 9), ruff clean, static_scan 0, alembic 0013 up/down 가역.
 
 **INC-12 [high/S] 수집 신선도(collected_at/data_vintage/max_age) + 노후 NEEDS_REVIEW**
 - 대상: cross_validation.py `SourceValue`에 collected_at·data_vintage·max_age_days · land_card.py `LandCard`에 collected_at·max_age_days · validator.py:25 합의 직전 staleness 게이트.

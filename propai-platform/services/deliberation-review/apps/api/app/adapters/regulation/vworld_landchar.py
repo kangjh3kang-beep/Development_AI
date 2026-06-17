@@ -26,19 +26,12 @@ class VworldLandCharSource:
         """토지특성 → {지목, 경사, 도로접면, 용도지역, 이용상황, 공시지가}. 결손/오류 None."""
         if not self.key or len(pnu) < 19:
             return None
-        try:
-            import httpx
-        except ImportError:
-            return None
-        try:
-            r = httpx.get(
-                f"{self.base}/getLandCharacteristics",
-                params={"key": self.key, "pnu": pnu, "stdrYear": stdr_year,
-                        "format": "json", "numOfRows": "1"},
-                headers=self.headers, timeout=15.0)
-            r.raise_for_status()
-            data = r.json()
-        except Exception:
+        from app.adapters.cache.source_cache import cached_get
+        data = cached_get(
+            self.name, f"{self.base}/getLandCharacteristics",
+            {"key": self.key, "pnu": pnu, "stdrYear": stdr_year, "format": "json", "numOfRows": "1"},
+            secret_param_keys=("key",), headers=self.headers, timeout=15.0)
+        if data is None:
             return None
         body = data.get("landCharacteristicss") or data.get("landCharacteristics") or {}
         code = str(body.get("resultCode", ""))
