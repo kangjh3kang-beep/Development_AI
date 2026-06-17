@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v215-multiparcel-platformwide";
+const CACHE_NAME = "propai-v216-jibun-direct-search";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",
