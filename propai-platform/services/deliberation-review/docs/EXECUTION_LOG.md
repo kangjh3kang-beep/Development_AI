@@ -301,6 +301,20 @@
 - precedent_source=VECTOR_SEARCH(P-C 배선), 도면 자동(S8) drawing_source=HINTS→extraction VLLM.
 - **결정론 보존**(hash_equal·full_equal=true), 순수계산 51ms. 모든 신규 배선이 무음 오판 0·결정론 불변식 유지.
 
+### ✅ 멀티모달 고도화 INC-10 — 추출 오케스트레이터(P-에이전트 완료)
+- **계약**: 신규 `contracts/extraction_bundle.py`(ExtractionBundle/ExtractionStage). `AnalysisResult.extraction_trace` 가산.
+- **구현**: 신규 `services/extraction/extraction_orchestrator.py` `orchestrate_extraction(...)->ExtractionBundle` —
+  인라인 0a(도면추출)/P-A.2(calc_target)/0b(이중경로)를 6단계 명시 파이프라인으로 분리:
+  ①role_resolve(SheetRoleResolver 관측·재사용) ②extract(추출가) ③verify(cross_sheet 관측) ④aggregate(취합가)
+  ⑤calc_target ⑥dual_path. 단계 타이밍·강등사유를 `trace`로 노출(관측성). `analysis_pipeline.py`는 인라인 39줄 →
+  오케스트레이터 호출 13줄로 단순화.
+- **불변식 보존**: **취합가는 LLM 미관여**(`merge_with_consensus`=CrossSourceValidator 결정론). 단일 패스는 SINGLE
+  (원순서·값 보존, consensus_status 메타만 — `to_pipeline_elements`/`calc_target_builder` 비소비로 산출 비누수).
+  N-패스는 `vision_consensus_passes`(기본 1) param + 비전 경로만(동일 캐시입력 INC-8 → 재현). `extraction_trace`는
+  비결정 timing 제외 결정론 투영(완전동치 보존). CONFLICT→needs_review를 trace status + skipped로 표면화(무음0).
+- **검증**: AT 8(특성화 2 + 오케스트레이터 6) + 전체 **370 passed**(362→370), ruff clean, static_scan 0. 적대적 다관점
+  리뷰(behavior 4.7/gate 4.7/quality 4.5, min 4.5 ≥ 게이트) — 10개 엣지 입력 byte 동일(0 mismatch), 결정론 2회 동일 확인.
+
 ## 5. 남은 항목 (운영 연결/결정 필요)
 - **단선 해소 완료(코드)**: P-A·P-A.2·P-C·P-D·P-E 모두 계약→구현→AT→검증 완결, mock→live 스위치 +
   결정론 보존. **인프라/키 가동만 남음**: P-B 실키(사용자 1회 export), P-C 실 임베더+Qdrant,

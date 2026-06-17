@@ -82,5 +82,11 @@
     "unit": "count",
     "mode": "threshold",
     "description": "유사사례 통계 제시 최소 사례수. 미달 시 INSUFFICIENT(thin-data 날조 금지, INV-22)."
+  },
+  "vision_consensus_passes": {
+    "value": 1,
+    "unit": "count",
+    "mode": "count",
+    "description": "비전 추출가 N-패스 수(INC-10 취합가 합의 입력). 기본 1=단일 패스(현행, 출력 동일성 보존). >1이면 동일 캐시입력(INC-8) 다중 패스를 결정론 합의(merge_with_consensus)로 취합."
   }
 }
