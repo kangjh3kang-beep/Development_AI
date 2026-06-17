@@ -55,8 +55,20 @@ def _area_outliers(items: list[BatchItemResult]) -> list[dict[str, Any]]:
         for it in items
         if it.status.value == "confirmed" and it.area_sqm and it.area_sqm > 0
     )
+    # H1: 동일값 군집 — 확정 필지의 면적이 과반 동일하면(오매칭/중복 정황) 정직 경고.
+    #     중앙값 비교(분산 이상치)는 '전부 동일' 케이스를 못 잡으므로 별도 검사.
+    uniform: list[dict[str, Any]] = []
+    if len(areas) >= 3:
+        from collections import Counter
+        vc = Counter(round(a, 1) for a, _, _ in areas)
+        top_val, top_cnt = vc.most_common(1)[0]
+        if top_cnt >= max(3, int(len(areas) * 0.6)):
+            uniform.append({
+                "kind": "uniform_area", "area_sqm": top_val, "count": top_cnt, "total": len(areas),
+                "reason": f"{len(areas)}필지 중 {top_cnt}필지가 동일 면적({top_val}㎡) — 오매칭/중복 정황, 주소 정밀화 권고",
+            })
     if len(areas) < 5:
-        return []
+        return uniform
     vals = [a for a, _, _ in areas]
     mid = len(vals) // 2
     median = vals[mid] if len(vals) % 2 else (vals[mid - 1] + vals[mid]) / 2
@@ -71,7 +83,7 @@ def _area_outliers(items: list[BatchItemResult]) -> list[dict[str, Any]]:
                 "median_sqm": round(median, 1), "ratio": round(ratio, 2),
                 "reason": f"면적이 구역 중앙값({round(median)}㎡)의 {round(ratio, 1)}배 — 데이터 확인 권고",
             })
-    return out
+    return uniform + out
 
 
 class BatchService:
@@ -105,9 +117,20 @@ class BatchService:
         key = idempotency_key(region_input, snapshot_id if explicit_snapshot else "")
 
         # 멱등: 동일 키 잡이 있으면 그대로 반환(중복 작업 미생성).
+        # H2: 단, degrade(미해석)·전건 미확정(confirmed=0)·실패 잡은 재사용 금지 — 잘못된 결과가
+        #     멱등으로 영구 고착되는 것을 막고 새 잡으로 재시도(사용자가 주소 보완 후 재실행 가능).
         existing = await self.store.find_by_idempotency(key)
         if existing is not None:
-            return existing.job
+            ej = existing.job
+            # 진행 중(QUEUED/RUNNING)이거나 정상 종료면 재사용. 터미널인데 degrade·전건미확정·실패면
+            # 잘못된 결과 고착이므로 멱등 해제 후 새 잡 생성(사용자 주소 보완 재시도 허용).
+            in_progress = ej.state in (JobState.QUEUED, JobState.RUNNING)
+            bad_terminal = (not in_progress) and (
+                bool(existing.degrade_reason) or ej.counts.confirmed == 0 or ej.state == JobState.FAILED
+            )
+            if not bad_terminal:
+                return ej
+            await self.store.unbind_idempotency(key)
 
         job = ParcelBatchJob(
             id=str(uuid.uuid4()),

@@ -234,6 +234,25 @@ class ParcelExcelService:
         #    토지특성(NED)으로 자동 채운다. 사용자는 주소만 적으면 나머지는 시스템이 조회.
         await self._enrich_fill(parcels)
 
+        # C3: 중복 PNU 탐지 — 서로 다른 행이 같은 PNU로 해석되면 거의 항상 오매칭(동명이의·
+        #     번지누락). 2건 이상 동일 PNU는 ambiguous로 강등(가짜 확신 차단). 1필지만 같은 PNU면 정상.
+        from collections import Counter
+        pnu_counts = Counter(p["pnu"] for p in parcels if p.get("pnu"))
+        dup_pnus = {pnu for pnu, c in pnu_counts.items() if c >= 2}
+        dup_warning = None
+        if dup_pnus:
+            dup_n = 0
+            for p in parcels:
+                if p.get("pnu") in dup_pnus:
+                    p["status"] = "ambiguous"
+                    p["reason"] = (p.get("reason") or
+                                   "여러 필지가 동일 PNU로 해석됨 — 번지 누락/동명이의 가능. "
+                                   "시·군·구+번지 포함 정확한 주소로 보완하세요.")
+                    p["pnu"] = None  # 오매칭 PNU 제거(잘못된 면적/용도 보강 차단)
+                    p["area_sqm"] = None  # 오매칭 면적 제거(동일평수 오표시 차단)
+                    dup_n += 1
+            dup_warning = f"동일 PNU로 중복 해석된 {dup_n}필지를 '모호'로 표기했습니다(오매칭 방지)."
+
         ok = sum(1 for p in parcels if p["status"] == "ok")
         enriched = sum(1 for p in parcels if p.get("zone_type") or p.get("official_price_per_sqm"))
         return {
@@ -243,6 +262,7 @@ class ParcelExcelService:
             "resolved_count": ok,
             "enriched_count": enriched,
             "detected_columns": cols,
+            "duplicate_pnu_warning": dup_warning,
             "examples": parcels[:3],
             # 소유자·권리관계(근저당·지상권 등)는 공공API 미제공 → 등기부등본 열람/발급으로 확보.
             "registry_guidance": {
@@ -267,19 +287,42 @@ class ParcelExcelService:
 
         async def one(i: int) -> None:
             p = parcels[i]
+            # C1: 지번을 결합해 모호성 감소(번지 없는 동명만 입력 시 동명이의 오매칭 방지).
+            addr = p["address"] or ""
+            jibun = (p.get("jibun") or "").strip()
+            query = f"{addr} {jibun}".strip() if (jibun and jibun not in addr) else addr
             async with sem:
                 try:
-                    geo = await vworld.geocode_address(p["address"] or "")
+                    geo = await vworld.geocode_address(query)
+                    if not geo and query != addr:  # 결합 실패 시 원주소 폴백
+                        geo = await vworld.geocode_address(addr)
                 except Exception:  # noqa: BLE001
                     geo = None
-            if geo:
-                gp = geo.get("pnu") or ""
-                if len(str(gp)) == 19:
-                    p["pnu"] = str(gp)
-                    p["bcode"] = p["bcode"] or str(gp)[:10]
-                    p["status"] = "ok"
-                p["lat"] = geo.get("lat")
-                p["lon"] = geo.get("lon")
+            if not geo:
+                return
+            p["lat"] = geo.get("lat")
+            p["lon"] = geo.get("lon")
+            gp = str(geo.get("pnu") or "")
+            if len(gp) != 19:
+                return
+            # C2: 지역 검증 — 입력 bcode가 있으면 시군구(앞5자리)까지 대조. 불일치=동명이의 오매칭
+            #     가능 → 자동확정 금지, ambiguous 정직표기(가짜 확신 금지).
+            in_bcode = (p.get("bcode") or "")
+            if in_bcode and len(in_bcode) >= 5 and not gp.startswith(in_bcode[:5]):
+                p["status"] = "ambiguous"
+                p["reason"] = (f"지오코딩 결과 지역({gp[:5]})이 입력 법정동({in_bcode[:5]})과 불일치 — "
+                               "동명이의 가능. 시·군·구 포함 정확한 주소로 보완하세요.")
+                return
+            # C2 보강: bcode가 없고 주소에 시/도·시/군/구 행정접두가 없는 '순수 동명'은
+            # 동명이의 오매칭 위험이 크므로 자동확정 금지(번지만으론 지역 특정 불가).
+            if not in_bcode and not re.search(r"(특별시|광역시|특별자치시|특별자치도|[가-힣]+도)\s|[가-힣]+시\s|[가-힣]+군\s|[가-힣]+구\s", (addr + " ")):
+                p["status"] = "ambiguous"
+                p["reason"] = ("시·군·구가 없는 동명만 입력 — 동명이의(예: 여러 지역의 동일 동명) 오매칭 "
+                               "위험으로 자동확정하지 않음. 시·군·구를 포함한 주소로 보완하세요.")
+                return
+            p["pnu"] = gp
+            p["bcode"] = p["bcode"] or gp[:10]
+            p["status"] = "ok"
 
         await asyncio.gather(*[one(i) for i in idxs], return_exceptions=True)
 

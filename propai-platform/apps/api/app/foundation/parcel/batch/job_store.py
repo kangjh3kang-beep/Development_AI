@@ -56,6 +56,10 @@ class JobStore(ABC):
     async def bind_idempotency(self, key: str, job_id: str) -> None:
         """멱등키 ↔ 잡 ID 매핑 등록."""
 
+    async def unbind_idempotency(self, key: str) -> None:
+        """멱등키 매핑 해제(잘못된 잡 재사용 방지 — 기본 no-op, 구현체가 override)."""
+        return None
+
 
 class InMemoryJobStore(JobStore):
     """메모리 저장소 — 테스트 및 단일 프로세스 폴백."""
@@ -76,6 +80,9 @@ class InMemoryJobStore(JobStore):
 
     async def bind_idempotency(self, key: str, job_id: str) -> None:
         self._idem[key] = job_id
+
+    async def unbind_idempotency(self, key: str) -> None:
+        self._idem.pop(key, None)
 
 
 class DbJobStore(JobStore):
@@ -182,12 +189,19 @@ class DbJobStore(JobStore):
                 )
             )
             for it in record.items:
+                # area_sqm/address는 전용 컬럼이 없어 record_ref(JSON)에 실어 영속화
+                # (마이그레이션 없이 DB 라운드트립 보존 → 이상치/동일값 경고가 prod서 실동작).
+                ref = dict(it.record_ref or {})
+                if it.area_sqm is not None:
+                    ref["_area_sqm"] = it.area_sqm
+                if it.address:
+                    ref["_address"] = it.address
                 session.add(BatchItemResultRow(
                     id=str(uuid.uuid4()),
                     job_id=record.job.id,
                     pnu=it.pnu,
                     status=it.status.value,
-                    record_ref=it.record_ref,
+                    record_ref=ref or None,
                     reason=it.reason,
                 ))
 
@@ -238,6 +252,21 @@ class DbJobStore(JobStore):
                 job_row.idempotency_key = key
                 await session.commit()
 
+    async def unbind_idempotency(self, key: str) -> None:
+        from sqlalchemy import select
+
+        from app.models.parcel_batch import ParcelBatchJobRow
+
+        async with self._sf()() as session:
+            job_row = (
+                await session.execute(
+                    select(ParcelBatchJobRow).where(ParcelBatchJobRow.idempotency_key == key)
+                )
+            ).scalar_one_or_none()
+            if job_row is not None:
+                job_row.idempotency_key = None  # 키 해제 → 새 잡이 동일 키 재사용 가능
+                await session.commit()
+
     def _to_record(self, job_row: Any, item_rows: Any, agg_row: Any) -> JobRecord:
         """DB 행들을 런타임 JobRecord 로 복원한다."""
         region = dict(job_row.region_input or {})
@@ -251,15 +280,20 @@ class DbJobStore(JobStore):
             completeness=Completeness(job_row.completeness),
             counts=BatchCounts(**counts_data) if counts_data else BatchCounts(),
         )
-        items = [
-            BatchItemResult(
+        items = []
+        for r in item_rows:
+            ref = dict(r.record_ref or {})
+            # area_sqm/address 복원(save에서 record_ref에 실어둠) — 이상치/동일값 경고 실동작.
+            area = ref.pop("_area_sqm", None)
+            addr = ref.pop("_address", None)
+            items.append(BatchItemResult(
                 pnu=r.pnu,
                 status=ItemStatus(r.status),
-                record_ref=r.record_ref,
+                address=addr,
+                area_sqm=area,
+                record_ref=ref or None,
                 reason=r.reason,
-            )
-            for r in item_rows
-        ]
+            ))
         aggregate = BatchAggregate(held=True)
         if agg_row is not None:
             aggregate = BatchAggregate(
