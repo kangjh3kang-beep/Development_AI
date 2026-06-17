@@ -315,6 +315,22 @@
 - **검증**: AT 8(특성화 2 + 오케스트레이터 6) + 전체 **370 passed**(362→370), ruff clean, static_scan 0. 적대적 다관점
   리뷰(behavior 4.7/gate 4.7/quality 4.5, min 4.5 ≥ 게이트) — 10개 엣지 입력 byte 동일(0 mismatch), 결정론 2회 동일 확인.
 
+### ✅ 멀티모달 고도화 INC-11 — 외부 1차출처 응답 캐시 계층(P-데이터 착수)
+- **계약/스키마**: 신규 `contracts`-급 `db/models/cache_models.ExternalSourceCacheModel`(external_source_cache:
+  cache_key uniq·adapter·endpoint·params_hash·payload JSONB·content_hash·etag·fetched_at·snapshot_id·status)
+  + **alembic 0013_external_source_cache**(revises 0012, review schema, up/down 가역).
+- **구현**: 신규 `adapters/cache/source_cache.py` — vision_cache(INC-8)의 분산/영속 확장. **L1 프로세스 인메모리**
+  (sync `cached_get` — 어댑터 동기 httpx 경로, 적중→동일 출력 결정론, TTL·만료 회수·상한 eviction) +
+  **L2 DB 영속**(async `warm_from_db`/`flush_to_db` — `analyze` 라우트 경계에서 best-effort, snapshot 결속).
+  8개 어댑터(law_go_kr·molit_building·vworld_landprice/landuse/landchar/building/nearby/geocoder)의 인라인
+  httpx.get을 공유 `cached_get` 경유로(원 시그니처/예외 보존). run_analysis가 `set_snapshot`로 snapshot 결속.
+- **불변식**: 캐시는 데이터 확보 단계만 — **결정론 영향 0**(적중→동일 입력→동일 출력). 미스/실패→graceful None
+  (무음0, None 미캐시→재시도). **secret(OC/key/serviceKey)는 cache_key·DB에서 제외**(비유출, 실 호출엔 포함).
+  jurisdiction/vworld.py는 계약 상이(AdapterTimeout)로 의도적 제외. 테스트 간 캐시 격리(conftest autouse clear).
+- **검증**: AT 9(적중·시크릿제외·None미캐시·TTL·어댑터경유·키없음·만료회수·flush-commit실패보존·DB라운드트립) + 전체
+  **379 passed**(370→379), ruff clean, static_scan 0. 적대적 다관점 리뷰(gate 4.8·determinism 8.7·quality 8.5,
+  전부 gate_pass) — 시크릿 비유출·결정론 코드 증명, 7건 기각·LOW 3건 반영(flush dirty-clear→commit 후, 만료 eviction, warm rollback).
+
 ## 5. 남은 항목 (운영 연결/결정 필요)
 - **단선 해소 완료(코드)**: P-A·P-A.2·P-C·P-D·P-E 모두 계약→구현→AT→검증 완결, mock→live 스위치 +
   결정론 보존. **인프라/키 가동만 남음**: P-B 실키(사용자 1회 export), P-C 실 임베더+Qdrant,

@@ -41,18 +41,12 @@ class VworldBuildingSource:
         """기존 건물 제원(다동 합산). 무건축물/오류 None."""
         if not self.key or len(pnu) < 19:
             return None
-        try:
-            import httpx
-        except ImportError:
-            return None
-        try:
-            r = httpx.get(
-                f"{self.base}/getBuildingUse",
-                params={"key": self.key, "pnu": pnu, "format": "json", "numOfRows": "100"},
-                headers=self.headers, timeout=15.0)
-            r.raise_for_status()
-            data = r.json()
-        except Exception:
+        from app.adapters.cache.source_cache import cached_get
+        data = cached_get(
+            self.name, f"{self.base}/getBuildingUse",
+            {"key": self.key, "pnu": pnu, "format": "json", "numOfRows": "100"},
+            secret_param_keys=("key",), headers=self.headers, timeout=15.0)
+        if data is None:
             return None
         body = data.get("buildingUses") or data.get("buildingUse") or {}
         resp = data.get("response") or {}

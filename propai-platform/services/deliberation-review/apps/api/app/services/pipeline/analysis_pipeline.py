@@ -55,6 +55,9 @@ def _grade(confidence: float) -> str:
 def run_analysis(inp: AnalysisInput) -> AnalysisResult:
     skipped: list[str] = []
     ih = input_hash({"input": inp.model_dump(mode="json")})
+    # INC-11: 외부 1차출처 캐시 항목을 현재 snapshot에 결속(어댑터 fetch가 contextvar 참조 — 시그니처 미변경).
+    from app.adapters.cache.source_cache import set_snapshot
+    set_snapshot(inp.snapshot_id)
 
     # 버전축 스냅샷(산정규칙=법규셋 동일 axis, INV-6).
     axis = inp.axis_date or inp.application_date or date(2026, 1, 1)

@@ -30,20 +30,14 @@ class MolitBuildingSource:
         """건축물대장 표제부 → {far_pct, bcr_pct, total_area, main_purpose}. 미승인/무건축물 None."""
         if not self.key or len(pnu) < 19:
             return None
-        try:
-            import httpx
-        except ImportError:
-            return None
         sigungu, bjdong, bun, ji = self._pnu_parts(pnu)
-        try:
-            r = httpx.get(
-                f"{self.base}/getBrBasisOulnInfo",
-                params={"serviceKey": self.key, "sigunguCd": sigungu, "bjdongCd": bjdong,
-                        "bun": bun, "ji": ji, "numOfRows": "1", "pageNo": "1", "_type": "json"},
-                timeout=15.0)
-            r.raise_for_status()
-            data = r.json()
-        except Exception:
+        from app.adapters.cache.source_cache import cached_get
+        data = cached_get(
+            self.name, f"{self.base}/getBrBasisOulnInfo",
+            {"serviceKey": self.key, "sigunguCd": sigungu, "bjdongCd": bjdong,
+             "bun": bun, "ji": ji, "numOfRows": "1", "pageNo": "1", "_type": "json"},
+            secret_param_keys=("serviceKey",), timeout=15.0)
+        if data is None:
             return None
         header = data.get("response", {}).get("header", {})
         if header.get("resultCode") != "00":
