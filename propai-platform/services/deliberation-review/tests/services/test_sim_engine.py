@@ -73,6 +73,16 @@ def test_egress_missing_distance_unavailable():
     assert "missing_travel_distance" in m.flags
 
 
+def test_egress_nonpositive_speed_unavailable():
+    # 보행속도 0/음수 주입 → 0division(500)/음수시간 무음 오판 없이 UNAVAILABLE(INV-21 견고성).
+    m0 = SimEngine(params={"egress_walk_speed_mps": 0}).run_egress(PLAN_WITH_STAIR)
+    assert m0.status == MetricStatus.UNAVAILABLE
+    assert "invalid_egress_params" in m0.flags
+    assert m0.value is None
+    mneg = SimEngine(params={"egress_flow_coefficient": -1.0}).run_egress(PLAN_WITH_STAIR)
+    assert mneg.status == MetricStatus.UNAVAILABLE  # 음수 flow → 음수시간 차단
+
+
 def test_sunlight_trace_surfaces_model_limitation():
     # 모델 한계(정오 단일 그림자 근사)가 method_trace로 표면화(감사 D절/INV-19).
     m = SimEngine().run_sunlight(SITE_WITH_ADJACENT)

@@ -38,6 +38,16 @@ def run(plan: dict, params: SimParamSource) -> SimMetric:
     travel_distance = float(plan["travel_distance"])
     walk_speed = params.get("egress_walk_speed_mps")
     flow = params.get("egress_flow_coefficient")
+    if walk_speed <= 0 or flow <= 0:
+        # 피난 파라미터 비양수(오주입) — 0division(500)/음수시간 무음 오판 차단, 확인불가로 표면화(INV-21).
+        return SimMetric(
+            metric_id="egress_time", value=None, unit="s",
+            status=MetricStatus.UNAVAILABLE, confidence=geom_conf,
+            method_trace=MethodTrace(
+                model="walking_time_approx",
+                assumptions=[f"피난 파라미터 비양수(walk_speed={walk_speed}, flow={flow}) — 계산 불가"], inputs={}),
+            flags=["invalid_egress_params"],
+        )
     egress_time = (travel_distance / walk_speed) * flow
 
     required = params.get("egress_max_travel_distance_m")
