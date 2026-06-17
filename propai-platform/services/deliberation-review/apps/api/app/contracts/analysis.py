@@ -24,7 +24,7 @@ from app.contracts.sim_metric import SimMetric
 
 class AnalysisInput(BaseModel):
     # Preflight / version axis
-    pnu: str
+    pnu: str = Field(default="", pattern=r"^([0-9]{19})?$")  # 19자리 PNU 또는 빈(주소 도출). 비19자리 거부
     application_date: date | None = None
     axis_date: date | None = None
     snapshot_id: str = "snap-1"
