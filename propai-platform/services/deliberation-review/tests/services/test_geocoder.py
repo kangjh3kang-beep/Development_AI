@@ -87,7 +87,7 @@ def test_pipeline_address_to_land_card(monkeypatch):
 
     import httpx
     monkeypatch.setattr(httpx, "get", _get)
-    r = run_analysis(AnalysisInput(pnu="unknown", application_date=date(2026, 1, 1),
+    r = run_analysis(AnalysisInput(pnu="", application_date=date(2026, 1, 1),
                                    address="서울특별시 종로구 청운동 1", collect_land_card=True))
     assert r.geocoded["pnu"] == _PNU
     assert r.land_card is not None and r.land_card.use_zone == "제1종일반주거지역"
