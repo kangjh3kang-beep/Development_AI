@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from app.contracts.drawing_extraction import DrawingExtraction
+from app.services.extraction.area_sanity import area_sanity_notes
 
 
 def build_calc_targets_from_drawing(ext: DrawingExtraction) -> tuple[list[dict], list[str]]:
@@ -29,6 +30,8 @@ def build_calc_targets_from_drawing(ext: DrawingExtraction) -> tuple[list[dict],
         if outer is None:
             notes.append(f"면적표({at.get('target')}): outer_area 없음 → skip")
             continue
+        # 비전 추출 area sanity — 모순/환각 면적을 표면화(무음 승계 차단, 드롭은 안 함).
+        notes.extend(area_sanity_notes(float(outer), excl))
         targets.append({
             "target": at.get("target", "building_area"),
             "payload": {"outer_area": float(outer)},
