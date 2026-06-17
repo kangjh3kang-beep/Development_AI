@@ -1,0 +1,78 @@
+# 코드리뷰 반복 개선 루프 — 결정 로그 (적용 / 미적용 / 보류)
+
+목적: `/loop` 코드리뷰 개선의 **적용·미적용·보류 결정을 모두 기록**해 공유하고, 향후 미적용분의
+**재작업·중복시도를 방지**한다. (정본 = `services/deliberation-review`, 브랜치 `feature/deliberation-review`)
+
+통과기준: 4.0 → **4.5**(2026-06-17 사용자 상향). 규칙: 개선→검증(테스트·ruff)→재리뷰로 점수상승 확인 시 반영, 아니면 롤백.
+
+---
+
+## 1. 적용된 개선 (커밋, 검증 통과)
+
+| iter | 커밋 | 차원 | 내용 | 검증 |
+|------|------|------|------|------|
+| 1 | `3a78f2df` | 계약·정확성·security | Comparator enum(무음 != 폴백 제거)·confidence Probability(5파일)·sunlight §61 비법정근사·PARKING 경고·remaining raw 비교·image_source SSRF/경로차단·deps 상수시간·settings https/production fail-closed | 287 |
+| 2 | `0a20b50b` | 계약·정확성 | confidence 14필드 Probability/Similarity·BCR 판정(시행령§84)·egress 오라벨·matcher cosine clamp | 290 |
+| 2b | `5fb4c55e` | 계약 | element_classifier confidence clamp(Probability 부작용 방어) | 290 |
+| 3 | `11523124` | 테스트·아키텍처 | static_scan regex→AST(음수/dict/+=/지수)·preflight_blocked 표면화 | 297 |
+| 4 | `1900f568` | 테스트 | static_scan benign 축소(법정명+benign값 탐지)·인증 require_token positive/개방/scheme | 301 |
+| 5 | `d459a0a0` | 아키텍처 | ConfidenceComposer(충돌 패널티)·FindingGate(gated_status 박제 해소) pipeline 배선 | 303 |
+| 6 | `e45590e9` | 후속 | SimMetric 래핑(shadow_3d.sunlight_metric/skyline.protrusion_metric emit 게이트) | 305 |
+| 6 | `32183706` | 견고성 | land_card 어댑터 실패↔결손↔미설정 구분·calc_engine 필수키→RuleContractError(500 방지)·citation ISO 날짜 | 307 |
+| 7 | `c59efa1c` | 계약 | eval.accuracy/drawing_extraction.hint_strength/preflight.area_ratio/EvalCase.input_confidence Probability + drawing_extractor clamp | 307 |
+| 7 | `b999a055` | security | 예외 원문 에코 제거(domain_error:<타입> 코드만) | 307 |
+
+**재리뷰 점수 추이**: security 3.0→4.0, 계약 3.0→3.5→3.8→4.4(iter7로 4.5향), 정확성 3.0→3.5→4.0,
+테스트 3.5→3.7→4.2, 아키텍처 3.0→3.2→4.2, 견고성 3.5→4.2. 결정론 4.5·설명가능성 4.0 유지.
+
+---
+
+## 2. 미적용 / 완화 / 보류 (이유 + 재작업 조건)
+
+> ⚠️ 아래는 **의도적으로 적용하지 않았거나 다른 방식으로 완화**한 항목. 동일 방식 재시도 금지, 조건 충족 시에만 재작업.
+
+1. **아키텍처 preflight 전면 차단 → 표면화로 완화** (`11523124`)
+   - 미적용 이유: 축척 입력 경로가 없어 PreflightRefused 시 도면 자동산정을 전면 차단하면 기능이 무력화됨
+     (`test_calc_target_auto_from_area_table` 회귀). 차단 대신 `preflight_blocked` 플래그 + 신뢰 제한 advisory로.
+   - **재작업 조건**: AnalysisInput에 축척(scale) 입력 경로를 정비한 뒤, preflight 거부 시 도면-파생 LegalQuantity를
+     status=HELD로 강등·전파(enforcement). 그 전엔 advisory 유지.
+
+2. **정확성 PARKING 계산 수정 → 경고만** (재리뷰6 high 잔존)
+   - 미적용 이유: `SemanticType`에 지하/지상·부속/비부속 구분이 없어, 지상 비부속 주차 산입 로직을 만들 수 없음.
+     현재는 area_calculator note 경고만(전량 차감 유지).
+   - **재작업 조건**: `SemanticType`에 PARKING_UNDERGROUND/PARKING_GROUND(또는 attached 플래그) 추가 →
+     지하·부속만 제외, 지상·비부속 산입, **유형 미상 시 calc held=True(status=HELD)**로 무음 AGREED 금지.
+
+3. **테스트 static_scan 함수 기본인자 탐지 → 보류** (재리뷰6 high)
+   - 미적용 이유: 탐지 추가 시 shadow_3d의 `min_hours=4.0`·`sunlight_threshold=0.5`·`floor_height_m=3.0` 함수
+     기본값이 잡혀 `test_no_hardcoded_params` 실패. param화 연쇄(sim_params.json + pipeline 주입)가 선행돼야 함.
+   - **재작업 조건**: shadow_3d 법정 임계(min_hours)를 `param('sunlight_min_hours_winter')`로 외부화하고 pipeline이
+     주입하도록 변경한 뒤, static_scan에 `ast.arguments(defaults/kw_defaults)` 순회 추가 + 회귀 가드.
+
+4. **아키텍처 dual_path 배선 → 보류** (재리뷰6 high)
+   - 미적용 이유: DualPathCheck는 구현됐으나, 명기(면적표) 값과 기하(산정) 값을 대조하려면 **명기 최종값 데이터 모델**
+     (drawings area_table에 declared_total 등)이 필요. 현재 area_table은 outer_area(입력)만 보유.
+   - **재작업 조건**: drawings area_table/calc_target에 명기 최종 면적 필드 추가 → legal_quantities(geom) vs 명기(table)
+     DualPathCheck(tol=param) 대조 → finding별 dual_path_status 채워 GateItem 전달.
+
+5. **BCR 조례(ordinance_bcr) → 미구현** (재리뷰6 high)
+   - 미적용 이유: 시간/범위. FAR은 ordinance_far(조례 우선)이나 BCR은 시행령 상한만 사용 → 조례 강화 시 과대관대 가능.
+   - **재작업 조건**: upzoning에 ORDINANCE_BCR(시도 조례 건폐율) 추가 → remaining_capacity가 조례 우선,
+     미등록 시 caveat에 'BCR 시행령 기준 — 조례 강화 시 하향 가능'(FAR caveat와 대칭).
+
+6. **security 레이트리밋·pnu 패턴검증·CORS 운영제한 → 미구현** (재리뷰6 잔존)
+   - 미적용 이유: 레이트리밋은 의존성(slowapi 등) 추가 필요. pnu 패턴은 다수 테스트 영향 확인 필요(보류).
+   - **재작업 조건**: /analyze·/analyze/async에 per-IP/token 레이트리밋. AnalysisInput.pnu에 `Field(pattern=r'^([0-9]{19})?$')`
+     (빈=address 도출 허용) — 단 기존 테스트 pnu 값 전수 확인 후.
+
+---
+
+## 3. 정정·교훈 (방식 자체가 틀려 변경한 것 — 동일 실수 방지)
+
+- **similarity는 Probability(ge=0) 부적합 → Similarity[-1,1]**: cosine 유사도는 음수 가능. `_types.Similarity`로 정정.
+  추가로 부동소수 오차로 |cos|>1 미세초과 → matcher에서 `max(-1,min(1,score))` clamp.
+- **인증 positive를 client 기반 테스트 → require_token 단위 테스트**: client+settings 전체 실행 시 격리 간섭으로 flaky.
+  단위 테스트로 견고화.
+- **⚠️ 재리뷰 워크플로 경로 오류**: 워크플로 리뷰 에이전트가 BASE(정본 Development_AI_deliberation) 대신 **원본
+  propai-review(phase/pipeline)를 읽어** 정확성을 "BCR 미반영"이라 허위 판정(실제 정본엔 실재). → 재리뷰 프롬프트에
+  **"git 명령 금지, BASE UNC만 Read, 다른 repo/브랜치 접근 금지"** 강제. verify-gaps-with-real-code로 직접 Grep 병행.
