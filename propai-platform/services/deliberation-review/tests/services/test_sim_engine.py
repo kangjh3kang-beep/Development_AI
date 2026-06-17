@@ -4,7 +4,7 @@ import pathlib
 
 import pytest
 
-from app.contracts.sim_metric import MetricStatus, SimMetric, emit
+from app.contracts.sim_metric import MetricStatus, MetricUnit, SimMetric, emit
 from app.core.errors import MethodTraceMissing
 from app.services.sim.sim_engine import SimEngine
 from tools.static_scan import scan_for_numeric_legal_constants
@@ -87,3 +87,13 @@ def test_sunlight_trace_surfaces_model_limitation():
     # 모델 한계(정오 단일 그림자 근사)가 method_trace로 표면화(감사 D절/INV-19).
     m = SimEngine().run_sunlight(SITE_WITH_ADJACENT)
     assert any("근사" in a for a in m.method_trace.assumptions)
+
+
+def test_sim_metric_unit_enum_contract():
+    # 계약 강제: 유효 문자열 단위는 enum으로 변환, JSON은 값('s')로 직렬화(프런트 호환), 임의 단위 거부.
+    from pydantic import ValidationError
+    m = SimMetric(metric_id="x", unit="s")
+    assert m.unit is MetricUnit.SECONDS and m.unit == "s"
+    assert m.model_dump(mode="json")["unit"] == "s"
+    with pytest.raises(ValidationError):
+        SimMetric(metric_id="x", unit="furlongs")  # 비계약 단위 — 무음 통과 차단

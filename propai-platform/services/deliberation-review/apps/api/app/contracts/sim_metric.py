@@ -18,6 +18,16 @@ class MetricStatus(str, Enum):
     HELD = "HELD"
 
 
+class MetricUnit(str, Enum):
+    """시뮬 지표 단위(계약 강제 — 임의 문자열 단위 차단). str 하위라 JSON은 값으로 직렬화('s' 등)."""
+
+    NONE = ""        # 무차원/미지정
+    SECONDS = "s"    # 피난시간 등
+    HOURS = "hours"  # 일조시각 등
+    METERS = "m"     # 회전반경/거리 등
+    RATIO = "ratio"  # 일영비율/돌출도 등
+
+
 class MethodTrace(BaseModel):
     """시뮬 지표의 근거 — 사용 모델 + 가정 + 입력."""
 
@@ -30,7 +40,7 @@ class MethodTrace(BaseModel):
 class SimMetric(BaseModel):
     metric_id: str
     value: FiniteFloat | None = None
-    unit: str = ""
+    unit: MetricUnit = MetricUnit.NONE  # 계약 enum — 문자열 's'/'hours'/'m'/'ratio'는 pydantic이 검증·강제
     status: MetricStatus = MetricStatus.OK
     confidence: Probability = 1.0
     method_trace: MethodTrace | None = None
