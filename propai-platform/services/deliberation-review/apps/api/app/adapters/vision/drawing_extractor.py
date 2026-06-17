@@ -24,10 +24,17 @@ class DrawingVisionClient(Protocol):
 
 
 def _measurements(d: dict) -> dict:
-    """제외 산정 측정치 매핑 — 미상 키는 None 유지(무음 추정 금지). area_px/length_px는 축척 환산 전 도면단위."""
+    """제외 산정 측정치 매핑 — 미상 키는 None 유지(무음 추정 금지). area_px/length_px는 축척 환산 전 도면단위.
+
+    polygon(도면 경계좌표) 제공 시 슈레이스로 area_px 결정론 산출(INC-5b) → 축척 환산은 apply_scale(INC-4).
+    """
+    area_px = d.get("area_px")
+    if area_px is None and d.get("polygon"):
+        from app.services.extraction.geometry_area import shoelace_area
+        area_px = shoelace_area(d["polygon"])
     return {
         "length": d.get("length"), "depth": d.get("depth"),
-        "area_px": d.get("area_px"), "length_px": d.get("length_px"),
+        "area_px": area_px, "length_px": d.get("length_px"),
         "underground": d.get("underground"), "accessory": d.get("accessory"),
     }
 
