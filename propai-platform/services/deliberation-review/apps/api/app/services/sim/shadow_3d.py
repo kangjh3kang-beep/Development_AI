@@ -8,6 +8,9 @@ from __future__ import annotations
 
 import math
 
+from app.contracts.rationale import Rationale, RationaleInput
+from app.services.explain.legal_refs import refs
+
 _DECL_WINTER = -23.44   # 동지 적위(deg) — 천문 상수
 _LAT_M_PER_DEG = 110540.0  # 위도 1도≈미터(WGS84) — 측지 상수
 _LON_M_PER_DEG = 111320.0  # 경도 1도≈미터(적도) — 측지 상수
@@ -59,11 +62,12 @@ def building_shadow(footprint, height_m: float, sun_alt_deg: float, sun_azim_deg
 
 
 def sunlight_analysis(target_geometry: dict, buildings: list[dict], latitude: float,
-                      floor_height_m: float = 3.0,
+                      floor_height_m: float = 3.0, sunlight_threshold: float = 0.5,
                       hours: tuple[int, ...] = (9, 10, 11, 12, 13, 14, 15)) -> dict | None:
-    """대상 대지 + 주변 건물 → 동지 시각별 일영 비율 + 연속 일조시간(건축법 일조권). 결손 None.
+    """대상 대지 + 주변 건물 → 동지 시각별 일영 비율 + 일조시각 수(건축법 일조권 기초) + rationale. 결손 None.
 
     floor_height_m: 층수→높이 환산 표준 층고(법규성 파라미터, 호출자 주입). height_m 있으면 우선.
+    sunlight_threshold: 일영비율 이 값 미만이면 '과반 일조' 시각으로 계상(법규성 파라미터, 주입).
     """
     try:
         from shapely.ops import unary_union
@@ -105,17 +109,42 @@ def sunlight_analysis(target_geometry: dict, buildings: list[dict], latitude: fl
             shadow_union = unary_union(shadows)
             inter = target.intersection(shadow_union)
             shaded_ratio = round(inter.area / target.area, 3) if not inter.is_empty else 0.0
-        if shaded_ratio < 0.5:  # 과반 일조 시 '일조시간'으로 계상
+        if shaded_ratio < sunlight_threshold:  # 과반 일조 시 '일조시각'으로 계상
             sunny_hours += 1.0
         per_hour.append({"hour": hour, "shaded_ratio": shaded_ratio, "sun_alt": round(alt, 1)})
 
+    rationale = Rationale(
+        summary=(f"동지 9~15시 중 과반일조(일영<{sunlight_threshold}) {sunny_hours:.0f}/{len(hours)}시각 "
+                 f"— 주변 매스 {len(masses)}동 그림자 기준"),
+        formula=(f"시각별 일영비율=대지∩그림자합집합÷대지면적; 일조시각=일영<{sunlight_threshold}인 시각 수; "
+                 f"그림자길이=높이÷tan(태양고도)"),
+        inputs=[
+            RationaleInput(name="대지면적(㎡,로컬평면근사)", value=round(target.area, 1),
+                           source="VWORLD 필지 geometry(WGS84 미터근사)"),
+            RationaleInput(name="주변 매스 수", value=len(masses),
+                           source="VWORLD lt_c_bldginfo 높이/층수×층고"),
+            RationaleInput(name="위도(°)", value=round(latitude, 4)),
+            RationaleInput(name="동지 적위(°)", value=_DECL_WINTER, source="천문 상수(IAU 황도경사)"),
+            RationaleInput(name="과반일조 임계", value=sunlight_threshold),
+            RationaleInput(name="표준 층고(m)", value=floor_height_m),
+        ],
+        legal_basis=refs("건축법§61", "건축법시행령§86"),
+        caveats=[
+            "동지(최악) 기준 — 타 절기는 일조 양호",
+            "sunny_hours_9to15는 '연속'이 아닌 과반일조 시각의 총합 — 건축법 시행령 §86의 "
+            "'연속 일조시간' 판정과 별개(연속성 미검증)",
+            "대지면적은 위경도→로컬미터 평면 근사(지적면적 아님)",
+            "그림자는 footprint 압출 매스 — 실 입면 형상·발코니 등 미반영",
+        ],
+    )
     return {
         "latitude": latitude,
         "lot_area_m2": round(target.area, 1),
         "nearby_masses": len(masses),
         "per_hour": per_hour,
         "sunny_hours_9to15": sunny_hours,
-        "method": "동지 9~15시 그림자 투영(shapely), 과반 일조 시각을 일조시간 계상, 층수×3.0m 매스",
+        "method": f"동지 9~15시 그림자 투영(shapely), 일영<{sunlight_threshold} 시각을 일조시각 계상, 층수×{floor_height_m}m 매스",
+        "rationale": rationale.model_dump(),
     }
 
 
