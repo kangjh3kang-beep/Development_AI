@@ -19,9 +19,10 @@ def test_detects_scientific():
 
 
 def test_benign_not_flagged():
-    assert not scan("idx = 1")
-    assert not scan("ratio = 1.0")   # benign 1.0
-    assert not scan("count = 100")
+    assert not scan("idx = 1")       # 비법정 식별자 — 무탐
+    assert not scan("count = 100")   # 비법정 식별자 — 무탐
+    assert scan("ratio = 1.0")       # 법정명+benign값도 탐지(INV-3 누수 방지 — _BENIGN 면제 제거)
+    assert scan("far_limit = 1.0")   # far_limit=1.0 같은 법정값 탈출 차단
 
 
 def test_allowlist_excluded():

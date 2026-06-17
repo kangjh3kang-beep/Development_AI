@@ -31,8 +31,10 @@ def test_sim_constants_parameterized():
     r2 = SimEngine(params={"egress_walk_speed_mps": 0.8}).run_egress(PLAN_WITH_STAIR)
     assert r1.value != r2.value
     offenders = {}
+    # 측정치/지역변수(법정상수 아님) — static_scan이 법정명+benign값까지 잡으므로 명시 제외.
+    allow = ("sunny_hours", "shaded_ratio", "area", "depth")
     for py in _SIM_DIR.rglob("*.py"):
-        hits = scan_for_numeric_legal_constants(py.read_text(encoding="utf-8"))
+        hits = scan_for_numeric_legal_constants(py.read_text(encoding="utf-8"), allowlist=allow)
         if hits:
             offenders[py.name] = hits
     assert offenders == {}

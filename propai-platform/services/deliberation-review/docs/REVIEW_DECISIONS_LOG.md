@@ -22,6 +22,9 @@
 | 7 | `c59efa1c` | 계약 | eval.accuracy/drawing_extraction.hint_strength/preflight.area_ratio/EvalCase.input_confidence Probability + drawing_extractor clamp | 307 |
 | 7 | `b999a055` | security | 예외 원문 에코 제거(domain_error:<타입> 코드만) | 307 |
 | 8 | `da3fe354` | 정확성 | BCR 조례 ordinance_bcr(서울 §54 건폐율 상업 80→60 강화)·egress 보행거리 30m 기저 보수성 caveat | 309 |
+| 9 | `43fc06e0` | 견고성·문서 | 결정로그 iter7~8 기록 + geocode/surrounding 어댑터 '키있음+결과없음(장애/결손 미상)'↔'키없음(미설정)' 구분 | 309 |
+| 10 | `05920fdd` | security | AnalysisInput.pnu 패턴(19자리 또는 빈, 비19자리 거부) — 외부 API 무검증 유입·쿼터낭비 차단 | 310 |
+| 11 | `832c9acd` | 계약 | FiniteFloat(allow_inf_nan=False) — 측정치 nan/inf 거부(nan≤limit→무음 COMPLIANT 오판 차단) | 312 |
 
 **재리뷰 점수 추이**: security 3.0→4.0, 계약 3.0→3.5→3.8→4.4(iter7로 4.5향), 정확성 3.0→3.5→4.0,
 테스트 3.5→3.7→4.2, 아키텍처 3.0→3.2→4.2, 견고성 3.5→4.2. 결정론 4.5·설명가능성 4.0 유지.
@@ -60,10 +63,14 @@
    - upzoning ORDINANCE_BCR(서울 §54 건폐율) + remaining_capacity BCR 조례 우선·미등록 시 시행령+caveat(FAR과 대칭).
    - 잔여: 서울 외 시도 건폐율 조례 미등록(미등록 시 caveat 표면화 중). 재리뷰로 정확성 점수 확인 예정.
 
-6. **security 레이트리밋·pnu 패턴검증·CORS 운영제한 → 미구현** (재리뷰6 잔존)
-   - 미적용 이유: 레이트리밋은 의존성(slowapi 등) 추가 필요. pnu 패턴은 다수 테스트 영향 확인 필요(보류).
-   - **재작업 조건**: /analyze·/analyze/async에 per-IP/token 레이트리밋. AnalysisInput.pnu에 `Field(pattern=r'^([0-9]{19})?$')`
-     (빈=address 도출 허용) — 단 기존 테스트 pnu 값 전수 확인 후.
+6. **security 레이트리밋·CORS 운영제한 → 미구현** (pnu·예외에코는 ✅적용 05920fdd/b999a055)
+   - ✅ pnu: AnalysisInput.pnu Field(pattern) 적용(iter10, address-only 테스트 pnu='unknown'→''). 예외에코 코드만(iter7s).
+   - 미적용 이유: 레이트리밋은 의존성(slowapi) 추가 필요. CORS는 production validator(와일드카드 거부) 있음 — 추가 운영 제한 보류.
+   - **재작업 조건**: /analyze·/analyze/async에 per-IP/token 레이트리밋(slowapi). production CORS 명시 도메인 목록.
+
+7. **계약 측정치 nan/inf → ✅ 적용** (`832c9acd`, iter11): _types.FiniteFloat(allow_inf_nan=False)를
+   EvalCase/Finding measured_value·limit_value·SimMetric.value·LegalQuantity.value에 적용(nan≤limit 무음 오판 차단).
+   잔여: SimMetric.unit raw str(medium, Unit enum화)·CalcTraceEntry 수치필드 FiniteFloat 확대.
 
 ---
 
