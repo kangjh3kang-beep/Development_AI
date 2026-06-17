@@ -1,6 +1,24 @@
 # 세션 기록 — 대량 다필지 + 입지분석 고도화 + 심의엔진 편입 (2026-06-16~17)
 
-> 원칙: 모든 과정·결과·특이사항 기록·공유. 무목업·라이브검증·완결게이트. main HEAD=08f421d1, 프론트 sw=v221.
+> 원칙: 모든 과정·결과·특이사항 기록·공유. 무목업·라이브검증·완결게이트.
+
+---
+## 🔴🔴 중요도 CRITICAL — 모두 반드시 공유·준수 🔴🔴
+
+1. **[🔴 운영 재발위험] 서버 `.env`(gitignored) 인라인 주석 오염 → 전 백엔드 배포 마비.**
+   - 증상: trust-infra 머지 이후 모든 blue-green 배포가 health 게이트서 막힘. 진짜 원인=서버 `~/Development_AI/propai-platform/.env`의 **40개 라인에 `# → fieldname` 인라인 주석 + 22개 값 앞뒤공백**(시크릿 export/오버레이 작업 부작용). `DATABASE_URL=...//postgres  # → ...`→DB명 깨짐(login 500·postgres unhealthy), `VWORLD_API_KEY= E98…`(선행공백)→"등록 안 된 인증키"(geocode 전멸).
+   - 조치: .env 전 라인 주석/공백 정리(백업 `.env.bak*`) + Dockerfile.oracle `ENV PYTHONPATH=/app:/app/apps/api` 추가 + config.py 인라인주석 방어 validator.
+   - **★재발방지(필수): secrets export 스크립트가 `.env`에 `# →` 주석을 다시 쓰면 즉시 재발. export는 반드시 주석 없는 `KEY=VALUE`만 쓰도록 보장(제미나이/시크릿 트랙 조율).**
+
+2. **[🔴 보안] 마스터키 `SECRET_STORE_KEY`·`ENCRYPTION_KEY`는 env-only·평문 비노출.** export_scoped_secrets는 `_HARD_DENY`로 하드차단(--allow로도 export 불가). 절대 외부서비스/관리자화면/DB/로그 노출 금지.
+
+3. **[🔴 배포] 백엔드·프론트 모두 SSH 수동(Oracle A1).** 백엔드 `bash ~/deploy.sh`(blue-green, 게이트 `curl localhost:NEW/health` 60×3s=180s, 부팅 정상 시 ~15초). 프론트 `bash ~/safe-deploy.sh`(sw CACHE_NAME 올림). GitHub push만으론 반영 안 됨.
+
+4. **[🟠 정확성] 토지조서/대량필지=무목업·정직표기.** 동명이의 오매칭·동일평수는 ambiguous로 강등(가짜 확신 금지). 공동주택은 세대 대지지분 합 = 실토지면적 검증 필수.
+
+---
+
+> main HEAD=08f421d1+, 프론트 sw=v221+. 백엔드 A1 활성 healthy.
 
 ## 0. 한눈에
 - **대량 다필지(F-Parcel) 전구간**(Wave 0~5) + **전 플랫폼 주소입력 다필지+엑셀+지번직접검색 전환** + **입지분석 고도화(Kakao Local POI·통합점수·실소요시간·공원)** + **버그 2건 근본수정** + **trust-infra 9커밋 머지** + **심의분석엔진 모노레포 편입**.
