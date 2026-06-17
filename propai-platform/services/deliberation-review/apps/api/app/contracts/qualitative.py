@@ -8,6 +8,7 @@ from enum import Enum
 
 from pydantic import BaseModel
 
+from app.contracts._types import Probability
 from app.core.errors import CitationRequired
 
 
@@ -35,7 +36,7 @@ class QualAssessment(BaseModel):
     item: str | None = None
     grade: QualGrade | None = None
     citation: RubricCitation | None = None
-    confidence: float = 0.0
+    confidence: Probability = 0.0
     status: QualStatus = QualStatus.GRADED
     is_grade: bool = True               # 등급 표현(INV-33)
     asserts_legal_verdict: bool = False  # 법적 단정 금지(항상 False, INV-33)

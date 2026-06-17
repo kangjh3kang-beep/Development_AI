@@ -48,7 +48,8 @@ def collect_land_card(pnu: str, stdr_year: str = "2024",
             upzoning_scenarios,
             upzoning_signals,
         )
-        rc = remaining_capacity(c["use_zone"], c["area"], existing_floor, pnu, as_of)
+        existing_bcr = building.get("bcr_pct") if building else None
+        rc = remaining_capacity(c["use_zone"], c["area"], existing_floor, pnu, as_of, existing_bcr)
         if rc is not None:
             sources.append("zone_limits")
         # 종상향 시나리오 + 가능성 신호 + 다중경로(지구단위/정비/역세권/사전협상/입규최소) — 다층/다각.

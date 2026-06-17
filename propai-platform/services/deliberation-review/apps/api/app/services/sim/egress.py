@@ -7,7 +7,7 @@ from __future__ import annotations
 from app.contracts.sim_metric import MethodTrace, MetricStatus, SimMetric, emit
 from app.services.sim.sim_params import SimParamSource
 
-_BASIS = "건축법 시행령(피난)"
+_BASIS = "건축법 시행령(피난 보행거리 한도 참고) — 보행시간은 비법정 근사(SFPE 유동모델 아님)"
 
 
 def _has_core_stair(elements: list) -> bool:
@@ -22,7 +22,7 @@ def run(plan: dict, params: SimParamSource) -> SimMetric:
         return SimMetric(
             metric_id="egress_time", value=None, unit="s",
             status=MetricStatus.UNAVAILABLE, confidence=geom_conf,
-            method_trace=MethodTrace(model="egress_sfpe", assumptions=["직통계단 필요"], inputs={}),
+            method_trace=MethodTrace(model="walking_time_approx", assumptions=["직통계단 필요"], inputs={}),
             flags=["missing_core_stair"],
         )
 
@@ -31,7 +31,7 @@ def run(plan: dict, params: SimParamSource) -> SimMetric:
         return SimMetric(
             metric_id="egress_time", value=None, unit="s",
             status=MetricStatus.UNAVAILABLE, confidence=geom_conf,
-            method_trace=MethodTrace(model="egress_sfpe", assumptions=["보행거리 입력 결손"], inputs={}),
+            method_trace=MethodTrace(model="walking_time_approx", assumptions=["보행거리 입력 결손"], inputs={}),
             flags=["missing_travel_distance"],
         )
 
@@ -44,8 +44,12 @@ def run(plan: dict, params: SimParamSource) -> SimMetric:
     flags = ["travel_distance_exceeded"] if travel_distance > required else []
 
     trace = MethodTrace(
-        model="egress_sfpe",
-        assumptions=[f"walk_speed={walk_speed}", f"flow_coefficient={flow}"],
+        model="walking_time_approx",
+        assumptions=[
+            "⚠️ SFPE 유동모델(재실인원·유효폭·비유동 persons/m/s) 미구현 — 보행거리÷속도 근사. "
+            "flow_coefficient는 병목 보정 배수일 뿐 대기·합류 미반영(엄밀 SFPE 아님)",
+            f"walk_speed={walk_speed}", f"flow_coefficient={flow}",
+        ],
         inputs={"travel_distance": travel_distance},
         basis_article=_BASIS,
     )

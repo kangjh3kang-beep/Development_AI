@@ -20,7 +20,8 @@ class Matcher:
         return [
             PrecedentMatch(
                 case_id=cid,
-                similarity=score,
+                # 부동소수 오차로 |cos|가 1을 미세 초과(예: 1.0000000000000002)할 수 있어 [-1,1]로 보정.
+                similarity=max(-1.0, min(1.0, float(score))),
                 is_candidate=True,  # 적용 단정 금지 — 후보 표기
                 source=payload["source"],
             )
