@@ -1,0 +1,363 @@
+"""심의분석 파이프라인 오케스트레이터 — 11계층 배선.
+
+Preflight(R0) → 법정 산정(R1.5) → 판정(R3) → 공학 시뮬(L3-B) → 유사사례(L4) →
+검증(L5) → 정성(L3-C) → 최종 게이팅 → 산출 리포트(L6).
+
+원칙 승계: 결정론(동일 입력 동일 결과), 무음 skip 금지(skipped 표면화), 미검증/저신뢰/충돌 → 분리,
+근거 동반 출력. 미제공 계층은 graceful degrade(거부/결손을 명시).
+"""
+from __future__ import annotations
+
+from datetime import date
+
+from app.contracts.analysis import AnalysisInput, AnalysisResult
+from app.contracts.calc_rule import CalcRuleSet
+from app.contracts.finding import Finding
+from app.contracts.legal_quantity import CalcElement, CalcTarget, LegalQuantity
+from app.contracts.mirror import MirrorSnapshot
+from app.contracts.precedent import PrecedentCase, PrecedentStat
+from app.contracts.preflight import PreflightContext
+from app.contracts.qualitative import QualAssessment
+from app.contracts.report import ReviewReport
+from app.contracts.rule import Rule
+from app.contracts.sim_metric import SimMetric
+from app.contracts.verification import GateItem
+from app.contracts.versioning import Snapshot, Version
+from app.core.errors import PreflightRefused
+from app.core.hashing import input_hash
+from app.services.extraction.dual_path import resolve_elements
+from app.services.judge.evaluator import EvalCase, Evaluator
+from app.services.legal_calc.calc_engine import CalcEngine
+from app.services.legal_calc.variable_seed import build_calc_variable_registry
+from app.services.precedent.stat_aggregator import StatAggregator
+from app.services.qualitative.qual_evaluator import QualEvaluator
+from app.services.reg_graph.builder import build_reg_graph
+from app.services.report.report_builder import ReportBuilder
+from app.services.sim.sim_engine import SimEngine
+from app.services.verify.citation_check import CitationCheck
+from app.services.verify.final_gate import FinalGate
+
+
+def _grade(confidence: float) -> str:
+    if confidence >= 0.8:
+        return "HIGH"
+    if confidence >= 0.5:
+        return "MEDIUM"
+    return "LOW"
+
+
+def run_analysis(inp: AnalysisInput) -> AnalysisResult:
+    skipped: list[str] = []
+    ih = input_hash({"input": inp.model_dump(mode="json")})
+
+    # 버전축 스냅샷(산정규칙=법규셋 동일 axis, INV-6).
+    axis = inp.axis_date or inp.application_date or date(2026, 1, 1)
+    version = Version(version=f"v-{inp.snapshot_id}", axis_date=axis)
+    snapshot = Snapshot(
+        snapshot_id=inp.snapshot_id, effective_date=axis,
+        ruleset_version=version, calc_rule_version=version,
+    )
+
+    payload = {"pnu": inp.pnu, "application_date": inp.application_date, "drawing": inp.drawing or {}}
+
+    # 0a) 멀티모달 도면 자동해석 (P-A) — 도면 시트 → 구조화 요소(없으면 빈, 날조 금지).
+    drawing_source: str | None = None
+    auto_elements: list[dict] = []
+    dext = None
+    if inp.drawings:
+        from app.adapters.vision.drawing_extractor import build_drawing_extractor
+        from app.contracts.drawing_extraction import DrawingSheet
+        extractor = build_drawing_extractor()
+        dext = extractor.extract([DrawingSheet(**d) for d in inp.drawings])
+        drawing_source = dext.source
+        auto_elements = dext.to_pipeline_elements()
+        if dext.source == "none":
+            skipped.append("drawing_extract: 도면 이미지/힌트 없음 (요소 자동추출 불가)")
+        for note in dext.notes:
+            skipped.append(f"drawing_extract: {note}")
+
+    # P-A.2) 도면 면적표 + 추출요소 → calc_targets 자동구성(명시 입력 우선, 없으면 도면 자동).
+    calc_targets = list(inp.calc_targets)
+    calc_targets_source: str | None = "INPUT" if inp.calc_targets else None
+    if not calc_targets and dext is not None:
+        from app.services.extraction.calc_target_builder import build_calc_targets_from_drawing
+        auto_ct, ct_notes = build_calc_targets_from_drawing(dext)
+        if auto_ct:
+            calc_targets = auto_ct
+            calc_targets_source = "DRAWING_AUTO"
+        for n in ct_notes:
+            skipped.append(f"calc_target_auto: {n}")
+
+    # 0b) 이중경로 추출 (P1) — BIM(IFC) 우선, 없으면 VLLM/2D(도면 자동추출 + 직접입력). source 표면화.
+    extraction = resolve_elements({"ifc": inp.ifc, "elements": auto_elements + inp.elements})
+    if extraction.source == "none":
+        skipped.append("extraction: no ifc/elements/drawings (산정/판정은 calc_targets/rules 직접 입력 사용)")
+
+    # 1) Preflight (R0) — 거부 시 비차단 표면화.
+    preflight: PreflightContext | None = None
+    from app.services.preflight.preflight_gate import run_preflight
+    try:
+        preflight = run_preflight(payload, snapshot)
+    except PreflightRefused as exc:
+        skipped.append(f"preflight_refused: {exc}")
+
+    # 2) 법정 산정 (R1.5) — 명시 calc_targets 또는 도면 자동구성(P-A.2)
+    legal_quantities: list[LegalQuantity] = []
+    if calc_targets:
+        registry = build_calc_variable_registry()
+        rule_set = CalcRuleSet(versions=[])  # 기본 파라미터(JSON) 사용
+        engine = CalcEngine(base_date=inp.application_date, registry=registry) if not rule_set.versions \
+            else CalcEngine(rule_set=rule_set, base_date=inp.application_date, registry=registry)
+        for t in calc_targets:
+            elements = [CalcElement(**e) for e in t.get("elements", [])]
+            legal_quantities.append(
+                engine.compute(CalcTarget(t["target"]), payload=t.get("payload", {}),
+                               elements=elements, snapshot=snapshot)
+            )
+    else:
+        skipped.append("legal_calc: no calc_targets")
+
+    # 3) 판정 (R3) — 3값, 거짓 불합격 금지.
+    findings: list[Finding] = []
+    parsed_rules: list[Rule] = []
+    if inp.rules:
+        evaluator = Evaluator()
+        for r in inp.rules:
+            rule = Rule(**r["rule"])
+            parsed_rules.append(rule)
+            case = EvalCase(
+                rule=rule,
+                measured_value=r.get("measured"),
+                limit_value=r.get("limit"),
+                relaxation_states=r.get("relaxation_states", {}),
+                input_confidence=r.get("confidence", 1.0),
+                conflicts=r.get("conflicts", []),
+            )
+            findings.append(evaluator.eval(case))
+    else:
+        skipped.append("judge: no rules")
+
+    # 4) 공학 시뮬 (L3-B)
+    sim_metrics: list[SimMetric] = []
+    sim = SimEngine()
+    if inp.sim_inputs.get("sunlight"):
+        sim_metrics.append(sim.run_sunlight(inp.sim_inputs["sunlight"]))
+    if inp.sim_inputs.get("egress"):
+        sim_metrics.append(sim.run_egress(inp.sim_inputs["egress"]))
+    if inp.sim_inputs.get("parking"):
+        sim_metrics.append(sim.run_parking(inp.sim_inputs["parking"]))
+    if not sim_metrics:
+        skipped.append("sim: no sim_inputs")
+
+    # 5) 유사사례 (L4) — Qdrant 벡터검색(P-C)으로 유사사례 선별 후 성숙도 게이팅.
+    precedent: PrecedentStat | None = None
+    precedent_source: str | None = None
+    if inp.issue and inp.corpus:
+        from app.services.precedent.precedent_search import PrecedentSearch
+        corpus = [PrecedentCase(**c) for c in inp.corpus]
+        matched, matches = PrecedentSearch().search_cases(inp.issue, corpus)
+        if matched:
+            precedent = StatAggregator().aggregate(inp.issue, matched)
+            precedent_source = "VECTOR_SEARCH"
+        else:
+            skipped.append(f"precedent: 벡터검색 매칭 0 (corpus {len(corpus)}건, 유사도 임계 미달)")
+    else:
+        skipped.append("precedent: no issue/corpus")
+
+    # 6) 검증 (L5) — 인용 미러 대조(라이브 없음). 적재된 규제(supply mirror_store) 자동 조회(P-E).
+    mirror_source: str | None = None
+    if inp.mirror_rules:
+        mirror = MirrorSnapshot(snapshot_id=inp.snapshot_id, jurisdiction=inp.pnu, rules=inp.mirror_rules)
+        mirror_source = "INPUT"
+    else:
+        from app.supply.mirror.mirror_store import default_store
+        stored = default_store().get(inp.pnu)
+        if stored is not None:
+            mirror = stored  # 공급측이 수집·적재한 규제(소비측 읽기 전용, INV-13)
+            mirror_source = "SUPPLY_STORE"
+        else:
+            mirror = MirrorSnapshot(snapshot_id=inp.snapshot_id, jurisdiction=inp.pnu, rules=[])
+            if inp.citations:
+                skipped.append("verify: mirror 미적재(규제 수집 필요) → 인용 미검증 보수 게이팅")
+    citation_checks = {}
+    checker = CitationCheck()
+    for c in inp.citations:
+        citation_checks[c.get("ref")] = checker.verify(c, snapshot=mirror, base_date=inp.application_date)
+    if not inp.citations:
+        skipped.append("verify: no citations (findings → 미검증 보수 게이팅)")
+
+    # 6.35) 지오코딩 (VWORLD) — address 있고 PNU 미상 시 주소→PNU 자동 도출(진입점).
+    geocoded = None
+    effective_pnu = inp.pnu
+    if inp.address and len(inp.pnu) < 19:
+        from app.adapters.regulation.vworld_geocoder import build_geocoder
+        gc = build_geocoder()
+        if gc.available:
+            geocoded = gc.address_to_pnu(inp.address)
+            if geocoded and geocoded.get("pnu"):
+                effective_pnu = geocoded["pnu"]
+            else:
+                skipped.append("geocode: 주소→PNU 도출 실패")
+
+    # 6.36) 주변 건물 스카이라인 + 3D 일조 시뮬 (VWORLD lt_c_bldginfo + shapely). 좌표(geocoded) 필요.
+    surrounding_context = None
+    if inp.collect_surrounding and geocoded and geocoded.get("lon"):
+        from app.adapters.regulation.vworld_nearby import build_nearby
+        nb = build_nearby()
+        if nb.available:
+            buildings = nb.buildings_near(geocoded["lon"], geocoded["lat"], inp.surrounding_radius_m)
+            if buildings:
+                surrounding_context = nb.skyline_from(buildings, inp.surrounding_radius_m)
+                # 대상지 필지 geometry 있으면 3D 일조(동지 9~15시 그림자) 분석.
+                if geocoded.get("site_geometry"):
+                    from app.services.sim.shadow_3d import sunlight_analysis
+                    sun = sunlight_analysis(geocoded["site_geometry"], buildings, geocoded["lat"])
+                    if sun is not None:
+                        surrounding_context["sunlight"] = sun
+                # 신축안 층수 → 주변 스카이라인 대비 돌출도(경관심의 참고).
+                if inp.proposed_floors:
+                    from app.services.sim.skyline_protrusion import skyline_protrusion
+                    prot = skyline_protrusion(surrounding_context, inp.proposed_floors)
+                    if prot is not None:
+                        surrounding_context["protrusion"] = prot
+            else:
+                skipped.append("surrounding: 주변 건물 수집 결손")
+
+    # 6.4) 대지 규제 카드 자동수집 (VWORLD NED 토지특성+토지이용계획) — 심의 입력 전제 1차출처 고정.
+    land_card = None
+    if inp.collect_land_card and len(effective_pnu) >= 19:
+        from app.services.land.land_card import collect_land_card
+        land_card = collect_land_card(effective_pnu, inp.land_year or "2024")
+        if land_card is None:
+            skipped.append("land_card: 토지특성/토지이용계획 결손(키/PNU 확인)")
+
+    # 6.5) 다중출처 교차검증 — 같은 사실을 N개 1차출처에서 합의 판정(신뢰도↑, 불일치 표면화).
+    cross_validations = []
+    if inp.cross_facts:
+        from app.contracts.cross_validation import SourceValue
+        from app.services.cross_validate.validator import CrossSourceValidator
+        cv = CrossSourceValidator()
+        law_src = None
+        from app.adapters.legal.law_go_kr import build_law_source
+        _ls = build_law_source()
+        if _ls.available:
+            law_src = _ls  # 국가법령정보(law.go.kr) 키 있으면 자동 출처로 합류
+        molit_src = None
+        from app.adapters.regulation.molit_building import build_molit_source
+        _ms = build_molit_source()
+        if _ms.available:
+            molit_src = _ms  # 국토부 건축물대장(MOLIT) 키 있으면 자동 출처로 합류
+        lp_src = None
+        from app.adapters.regulation.vworld_landprice import build_vworld_landprice
+        _lp = build_vworld_landprice()
+        if _lp.available:
+            lp_src = _lp  # VWORLD NED 개별공시지가 키 있으면 자동 출처로 합류
+        lu_src = None
+        from app.adapters.regulation.vworld_landuse import build_vworld_landuse
+        _lu = build_vworld_landuse()
+        if _lu.available:
+            lu_src = _lu  # VWORLD NED 토지이용계획(용도지역/지구) 키 있으면 자동 합류
+        for cf in inp.cross_facts:
+            svs = [SourceValue(**s) for s in cf.get("sources", [])]
+            if law_src is not None and cf.get("law_query"):
+                exists = law_src.law_exists(cf["law_query"])
+                if exists is not None:
+                    svs.append(SourceValue(source="law_go_kr", value=cf.get("law_expect", exists),
+                                           ref=f"law.go.kr:{cf['law_query']}"))
+            if molit_src is not None and cf.get("building_pnu") and cf.get("building_metric"):
+                mval = molit_src.metric(cf["building_pnu"], cf["building_metric"])
+                if mval is not None:
+                    svs.append(SourceValue(source="molit_building", value=mval,
+                                           ref=f"건축물대장:{cf['building_pnu']}"))
+            if lp_src is not None and cf.get("land_pnu"):
+                lval = lp_src.land_price(cf["land_pnu"], cf.get("land_year", "2024"))
+                if lval is not None:
+                    svs.append(SourceValue(source="vworld_landprice", value=lval,
+                                           ref=f"개별공시지가:{cf['land_pnu']}"))
+            if lu_src is not None and cf.get("land_use_pnu") and cf.get("land_use_contains"):
+                has = lu_src.has_zone(cf["land_use_pnu"], cf["land_use_contains"])
+                if has is not None:
+                    svs.append(SourceValue(source="vworld_landuse", value=has,
+                                           ref=f"토지이용계획:{cf['land_use_pnu']}"))
+            cross_validations.append(cv.validate(cf["fact_key"], svs))
+
+    # 7) 정성 (L3-C) — 인용접지 등급화.
+    qualitative: list[QualAssessment] = []
+    if inp.qual_facts:
+        qual_eval = QualEvaluator()
+        for f in inp.qual_facts:
+            qualitative.append(qual_eval.evaluate(f, snapshot=inp.snapshot_id, model=inp.model_version))
+    else:
+        skipped.append("qualitative: no qual_facts")
+
+    # 8) 최종 게이팅 + 산출 리포트 (L5 FinalGate → L6 ReportBuilder)
+    gate = FinalGate()
+    items: list[dict] = []
+    for fnd in findings:
+        verification = citation_checks.get(fnd.basis_article)
+        gated = gate.apply(GateItem(
+            composite_confidence=fnd.composite_confidence,
+            conflicts=fnd.conflicts,
+            verification=verification,
+            dual_path_status=None,
+        ))
+        items.append({
+            "item_id": fnd.rule_id,
+            "verdict": fnd.verdict.value,
+            "status": gated.status.value,
+            "confidence_grade": _grade(fnd.composite_confidence),
+            "basis_article": fnd.basis_article,
+            "evidence": {
+                "basis_article": fnd.basis_article,
+                "measured": fnd.measured_value,
+                "limit": fnd.limit_value,
+                "requires_committee": fnd.requires_committee,
+                "conditional_relaxations": fnd.conditional_relaxations,
+                "verified": verification.passed if verification else False,
+            },
+        })
+    # 플래그된 공학 지표는 '확인 필요' 항목으로 합류(무음 통과 금지).
+    for m in sim_metrics:
+        if m.flags:
+            items.append({
+                "item_id": m.metric_id,
+                "status": "NEEDS_REVIEW",
+                "confidence_grade": _grade(m.confidence),
+                "evidence": {"metric": m.metric_id, "value": m.value, "required": m.required,
+                             "flags": m.flags, "model": m.method_trace.model if m.method_trace else None},
+            })
+
+    report: ReviewReport = ReportBuilder().build(
+        items, snapshot_id=inp.snapshot_id, model_version=inp.model_version
+    )
+
+    # 9) 규제 지식그래프 (P3) — 조문↔룰↔변수↔완화.
+    reg_graph = (
+        build_reg_graph(parsed_rules, inp.mirror_rules)
+        if (parsed_rules or inp.mirror_rules) else None
+    )
+
+    return AnalysisResult(
+        snapshot_id=inp.snapshot_id,
+        input_hash=ih,
+        drawing_source=drawing_source,
+        drawing_elements_n=len(auto_elements),
+        calc_targets_source=calc_targets_source,
+        extraction_source=extraction.source,
+        bim_elements=(extraction.bim.elements if extraction.bim else []),
+        preflight=preflight,
+        legal_quantities=legal_quantities,
+        findings=findings,
+        sim_metrics=sim_metrics,
+        precedent=precedent,
+        precedent_source=precedent_source,
+        mirror_source=mirror_source,
+        cross_validations=cross_validations,
+        land_card=land_card,
+        geocoded=geocoded,
+        surrounding_context=surrounding_context,
+        qualitative=qualitative,
+        reg_graph=reg_graph,
+        report=report,
+        skipped=skipped,
+    )

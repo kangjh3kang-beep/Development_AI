@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PropAI 심의분석 엔진 — 콘솔</title>
+  <style>
+    :root { --bg:#0f1620; --panel:#16202c; --line:#26333f; --text:#e6edf3; --sub:#9fb0c0; --accent:#4ea1ff; --ok:#3fb950; --warn:#d29922; --bad:#f85149; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--bg); color:var(--text); font:14px/1.5 -apple-system,Segoe UI,Roboto,'Noto Sans KR',sans-serif; }
+    header { padding:18px 24px; border-bottom:1px solid var(--line); }
+    header .badge { color:var(--accent); font-weight:800; font-size:12px; letter-spacing:.04em; }
+    header h1 { margin:6px 0 2px; font-size:20px; }
+    header p { margin:0; color:var(--sub); font-size:13px; }
+    main { display:grid; grid-template-columns:minmax(320px,1fr) minmax(360px,1.4fr); gap:16px; padding:16px 24px; }
+    .panel { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:14px; }
+    .panel h2 { margin:0 0 10px; font-size:13px; color:var(--sub); text-transform:uppercase; letter-spacing:.05em; }
+    textarea { width:100%; height:340px; background:#0c131b; color:var(--text); border:1px solid var(--line); border-radius:8px; padding:10px; font:12px/1.4 ui-monospace,Menlo,monospace; resize:vertical; }
+    button { margin-top:10px; background:var(--accent); color:#04111f; border:0; border-radius:8px; padding:10px 16px; font-weight:800; cursor:pointer; }
+    button:disabled { opacity:.5; cursor:default; }
+    .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+    .tag { display:inline-block; padding:1px 8px; border-radius:999px; font-size:12px; font-weight:700; border:1px solid var(--line); }
+    .CONFIRMED { color:var(--ok); border-color:var(--ok); }
+    .NEEDS_REVIEW { color:var(--warn); border-color:var(--warn); }
+    .BLOCKED, .NON_COMPLIANT { color:var(--bad); border-color:var(--bad); }
+    .DISCRETION_HELD { color:var(--sub); }
+    .COMPLIANT { color:var(--ok); border-color:var(--ok); }
+    .CONDITIONAL { color:var(--warn); border-color:var(--warn); }
+    table { width:100%; border-collapse:collapse; font-size:13px; }
+    th,td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+    th { color:var(--sub); font-weight:600; }
+    .kv { display:grid; grid-template-columns:130px 1fr; gap:4px 10px; font-size:13px; }
+    .kv div:nth-child(odd){ color:var(--sub); }
+    .muted { color:var(--sub); font-size:12px; }
+    .sec { margin-bottom:16px; }
+    code { color:var(--accent); }
+    .err { color:var(--bad); white-space:pre-wrap; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="badge">VLLM · 차세대 심의분석 엔진</div>
+    <h1>설계도서 자동해석 · 심의분석 콘솔</h1>
+    <p>원시 입력 → 11계층(Preflight·법정산정·판정·공학시뮬·유사사례·검증·정성·게이팅·리포트) → 구획 보고서. 결정론·근거추적·무음 오판 0.</p>
+  </header>
+  <main>
+    <section class="panel">
+      <h2>분석 입력 (JSON)</h2>
+      <textarea id="input" spellcheck="false"></textarea>
+      <div class="row">
+        <button id="run">심의분석 실행</button>
+        <button id="reset" style="background:#26333f;color:var(--text)">샘플 복원</button>
+        <span id="status" class="muted"></span>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <label class="muted" for="engine">엔진 주소</label>
+        <input id="engine" spellcheck="false"
+          style="flex:1;min-width:200px;background:#0c131b;color:var(--text);border:1px solid var(--line);border-radius:6px;padding:6px 8px;font:12px ui-monospace,monospace" />
+      </div>
+    </section>
+    <section class="panel">
+      <h2>분석 결과</h2>
+      <div id="out"><p class="muted">좌측 입력으로 분석을 실행하세요.</p></div>
+    </section>
+  </main>
+
+  <script>
+    const SAMPLE = {
+      pnu: "1111010100100000002",
+      application_date: "2026-01-01", axis_date: "2026-01-01",
+      drawing: { scale_text: "1:100" },
+      calc_targets: [{ target: "building_area", payload: { outer_area: 600.0 },
+        elements: [{ semantic_type: "PILOTIS", area: 100.0, confidence: 0.95 }] }],
+      rules: [
+        { rule: { rule_id: "far_limit", comparator: "<=", basis_article: "국토계획법 시행령",
+            relaxations: [{ relaxation_id: "far_relax", prerequisite_rule_id: "public_space" }] },
+          measured: 250.0, limit: 200.0, relaxation_states: { public_space: "MET" }, confidence: 0.9 },
+        { rule: { rule_id: "height_limit", comparator: "<=", basis_article: "건축법 시행령" },
+          measured: 30.0, limit: 20.0, confidence: 0.9 }
+      ],
+      sim_inputs: {
+        sunlight: { latitude: 37.5, building_height: 30.0, adjacent_distance: 12.0, geom_confidence: 0.9 },
+        parking: { turn_radius: 5.0, geom_confidence: 0.9 }
+      },
+      issue: "FAR_DISPUTE",
+      corpus: Array.from({ length: 6 }, (_, i) => ({ case_id: "c" + i, source: "의결서-" + i,
+        decision_type: i === 2 ? "APPROVED" : "CONDITIONAL", issue_labels: ["FAR_DISPUTE"], conditions: ["공개공지 확대"] })),
+      mirror_rules: [{ ref: "건축법 시행령", effective_date: "2025-01-01" }],
+      citations: [{ ref: "건축법 시행령" }],
+      qual_facts: [{ feature: "경관조화", candidate_rubric: "경관 심의기준 3.1", mapping_confidence: 0.9, compatibility: 0.8, criterion_exists: true }]
+    };
+    const $ = (s) => document.querySelector(s);
+    const esc = (s) => String(s).replace(/[&<>]/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;" }[c]));
+    const tag = (s) => `<span class="tag ${esc(s)}">${esc(s)}</span>`;
+    function loadSample(){ $("#input").value = JSON.stringify(SAMPLE, null, 2); }
+    loadSample();
+    $("#reset").onclick = loadSample;
+
+    // 엔진 base URL — 실제 http(s) origin이면 그대로, 아니면(미리보기/file 등) localhost:8801 기본.
+    function engineBase(){
+      const o = location.origin;
+      return (location.protocol.indexOf("http") === 0 && o && o !== "null") ? o : "http://localhost:8801";
+    }
+    $("#engine").value = engineBase();
+
+    function render(d){
+      const sec = d.report.sections || {};
+      const findRows = (d.findings||[]).map(f =>
+        `<tr><td>${esc(f.rule_id)}</td><td>${tag(f.verdict)}</td><td>${f.measured_value ?? "-"} / ${f.limit_value ?? "-"}</td><td>${esc(f.basis_article||"-")}</td><td>${f.requires_committee ? "위원확인" : ""}</td></tr>`).join("");
+      const simRows = (d.sim_metrics||[]).map(m =>
+        `<tr><td>${esc(m.metric_id)}</td><td>${m.value ?? "-"} ${m.unit||""}</td><td>${esc(m.status)}</td><td>${(m.flags||[]).map(tag).join(" ")||"-"}</td></tr>`).join("");
+      const qualRows = (d.qualitative||[]).map(q =>
+        `<tr><td>${esc(q.item)}</td><td>${tag(q.status)}</td><td>${esc(q.grade||"-")}</td><td>${q.citation ? esc(q.citation.rubric_item) : "-"}</td></tr>`).join("");
+      const secHtml = Object.entries(sec).filter(([,v])=>v.length)
+        .map(([k,v]) => `<div class="row"><span>${tag(k)}</span> <span class="muted">${v.map(i=>esc(i.item_id)).join(", ")}</span></div>`).join("");
+      const prec = d.precedent ? `${tag(d.precedent.status)} n=${d.precedent.n} ${esc(JSON.stringify(d.precedent.distribution||{}))}` : "<span class='muted'>없음</span>";
+      $("#out").innerHTML = `
+        <div class="sec kv">
+          <div>input_hash</div><div><code>${esc((d.input_hash||"").slice(0,18))}…</code></div>
+          <div>snapshot</div><div>${esc(d.snapshot_id)}</div>
+          <div>Preflight</div><div>${d.preflight ? ("blocked="+d.preflight.blocked+", assumed="+JSON.stringify(d.preflight.assumed_fields)) : tag("REFUSED")}</div>
+          <div>산정값</div><div>${(d.legal_quantities||[]).map(q=>esc(q.variable_id)+"="+q.value+" "+tag(q.status)).join("  ")||"-"}</div>
+        </div>
+        <div class="sec"><h2>최종 구획(L5/L6)</h2>${secHtml||"<span class='muted'>항목 없음</span>"}</div>
+        <div class="sec"><h2>판정(R3)</h2><table><tr><th>룰</th><th>판정</th><th>측정/기준</th><th>근거</th><th></th></tr>${findRows||""}</table></div>
+        <div class="sec"><h2>공학지표(L3-B)</h2><table><tr><th>지표</th><th>값</th><th>상태</th><th>플래그</th></tr>${simRows||""}</table></div>
+        <div class="sec"><h2>유사사례(L4)</h2><div>${prec}</div></div>
+        <div class="sec"><h2>정성(L3-C)</h2><table><tr><th>항목</th><th>상태</th><th>등급</th><th>인용</th></tr>${qualRows||""}</table></div>
+        ${ (d.skipped||[]).length ? `<div class="sec"><h2>미수행 계층(표면화)</h2><span class="muted">${d.skipped.map(esc).join(" · ")}</span></div>` : "" }
+      `;
+    }
+
+    $("#run").onclick = async () => {
+      const btn = $("#run"); btn.disabled = true; $("#status").textContent = "분석 중…";
+      let body;
+      try { body = JSON.parse($("#input").value); }
+      catch (e) { $("#out").innerHTML = `<p class="err">입력 JSON 파싱 오류: ${esc(e.message)}</p>`; btn.disabled=false; $("#status").textContent=""; return; }
+      const base = (($("#engine").value || engineBase()).trim()).replace(/\/+$/, "");
+      try {
+        const t0 = performance.now();
+        const res = await fetch(base + "/api/v1/analyze", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify(body) });
+        const ms = Math.round(performance.now()-t0);
+        if (!res.ok) { const txt = await res.text(); $("#out").innerHTML = `<p class="err">HTTP ${res.status}\n${esc(txt)}</p>`; }
+        else { render(await res.json()); $("#status").textContent = `완료 (${ms}ms)`; }
+      } catch (e) {
+        $("#out").innerHTML = `<p class="err">엔진 연결 실패: ${esc(e.message)}\n\n· 엔진 주소: ${esc(base)}\n· 엔진을 먼저 구동하세요(propai-review/apps/api):\n  uvicorn app.main:app --port 8801\n· 미리보기 패널에서는 호출이 불가하니, 브라우저로 ${esc(base)}/ 를 직접 여세요.</p>`;
+      }
+      finally { btn.disabled = false; }
+    };
+  </script>
+</body>
+</html>

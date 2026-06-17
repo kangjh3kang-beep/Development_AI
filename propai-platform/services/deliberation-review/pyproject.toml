@@ -1,0 +1,30 @@
+[project]
+name = "propai-review"
+version = "0.0.1"
+description = "PropAI 심의분석 엔진 — 하네스 부트스트랩(Phase 0)"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn",
+    "sqlalchemy[asyncio]>=2.0",
+    "asyncpg",
+    "pydantic>=2",
+    "pydantic-settings>=2",
+    "alembic",
+    "redis",
+    "celery>=5.4",
+    "structlog",
+    "geoalchemy2",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-asyncio", "httpx", "ruff"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+pythonpath = ["apps/api", "."]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"

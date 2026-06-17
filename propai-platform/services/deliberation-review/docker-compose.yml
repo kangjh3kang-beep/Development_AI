@@ -1,0 +1,19 @@
+# Docker 가용 환경용(현재 dev는 Docker 미가용 → 시스템 Postgres/Redis 사용, .env 참조).
+services:
+  postgres:
+    image: postgis/postgis:16-3.4
+    environment:
+      POSTGRES_USER: propai_user
+      POSTGRES_PASSWORD: propai_pass_dev
+      POSTGRES_DB: propai_review
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+  redis:
+    image: redis:7.4
+    ports:
+      - "6379:6379"
+
+volumes:
+  pgdata:

@@ -1,0 +1,80 @@
+{
+  "area_tol": {
+    "value": 0.05,
+    "unit": "ratio",
+    "mode": "relative",
+    "description": "면적 변수 허용오차 밴드(상대비). 밴드 초과 시 충돌 보류(HELD)."
+  },
+  "length_tol": {
+    "value": 0.02,
+    "unit": "ratio",
+    "mode": "relative",
+    "description": "길이 변수 허용오차 밴드(상대비)."
+  },
+  "conflict_penalty_factor": {
+    "value": 0.5,
+    "unit": "ratio",
+    "mode": "factor",
+    "description": "충돌 보류(HELD) 시 채택값 신뢰도 하향 계수."
+  },
+  "element_classify_min_confidence": {
+    "value": 0.5,
+    "unit": "ratio",
+    "mode": "threshold",
+    "description": "요소 의미분류 채택 최소 신뢰도. 미달 시 UNKNOWN(임의 타입 금지, INV-9)."
+  },
+  "cross_sheet_unmatched_penalty": {
+    "value": 0.5,
+    "unit": "ratio",
+    "mode": "factor",
+    "description": "cross-sheet 매칭 실패(UNMATCHED) 시 신뢰도 하향 계수."
+  },
+  "calc_min_input_confidence": {
+    "value": 0.5,
+    "unit": "ratio",
+    "mode": "threshold",
+    "description": "법정 산정 입력 요소 최소 신뢰도. 미달/UNKNOWN 시 산정값 HELD(INV-12)."
+  },
+  "hitl_priority_high_threshold": {
+    "value": 1.0,
+    "unit": "score",
+    "mode": "threshold",
+    "description": "HITL 우선순위 HIGH 승격 점수 임계."
+  },
+  "hitl_priority_medium_threshold": {
+    "value": 0.5,
+    "unit": "score",
+    "mode": "threshold",
+    "description": "HITL 우선순위 MEDIUM 승격 점수 임계."
+  },
+  "hitl_imminent_weight": {
+    "value": 1.0,
+    "unit": "score",
+    "mode": "weight",
+    "description": "임박 사업 가중치(HITL 우선순위 점수 가산)."
+  },
+  "harvest_eta_business_days": {
+    "value": 5,
+    "unit": "days",
+    "mode": "eta",
+    "description": "미수집 관할 수집 ETA(영업일). degraded 응답에 표기."
+  },
+  "finding_confidence_threshold": {
+    "value": 0.7,
+    "unit": "ratio",
+    "mode": "threshold",
+    "description": "최종 finding 합성 신뢰도 임계. 미달/충돌 시 NEEDS_REVIEW 분리(INV-18)."
+  },
+  "mapping_confidence_threshold": {
+    "value": 0.7,
+    "unit": "ratio",
+    "mode": "threshold",
+    "description": "지자체기준→표준항목 매핑 신뢰도 임계. 미달 시 정성 보류(HELD)."
+  },
+  "precedent_min_cases": {
+    "value": 5,
+    "unit": "count",
+    "mode": "threshold",
+    "description": "유사사례 통계 제시 최소 사례수. 미달 시 INSUFFICIENT(thin-data 날조 금지, INV-22)."
+  }
+}
