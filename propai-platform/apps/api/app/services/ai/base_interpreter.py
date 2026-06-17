@@ -193,6 +193,38 @@ async def _record_llm_billing(
         pass
 
 
+async def record_llm_response_billing(llm, response, service: str | None = None) -> None:
+    """BaseInterpreter 밖에서 llm.ainvoke()를 직접 호출한 서비스도 동일하게 계측·과금한다.
+
+    response.usage_metadata에서 토큰을 추출해 _record_llm_billing으로 위임(best-effort, 실패무시).
+    토큰이 없거나(캐시 등) 비로그인이면 _record_llm_billing 내부에서 자동 무동작한다.
+    """
+    try:
+        meta = getattr(response, "usage_metadata", None) or {}
+        input_tokens = int(meta.get("input_tokens", 0) or 0) if isinstance(meta, dict) else 0
+        output_tokens = int(meta.get("output_tokens", 0) or 0) if isinstance(meta, dict) else 0
+        model = getattr(llm, "model", "") or getattr(llm, "model_name", "") or ""
+        await _record_llm_billing(model, input_tokens, output_tokens, service=service)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def record_llm_response_billing_sync(llm, response, service: str | None = None) -> None:
+    """동기(.invoke) 호출처용 계측 — 실행 중인 이벤트 루프가 있으면 과금 코루틴을 예약한다.
+
+    동기 함수라 await 불가한 자리에서 쓴다. 루프가 없으면(순수 동기 컨텍스트) 조용히 생략.
+    행위·결과 불변, 실패는 전부 삼킨다.
+    """
+    try:
+        import asyncio
+
+        loop = asyncio.get_running_loop()
+        loop.create_task(record_llm_response_billing(llm, response, service=service))
+    except Exception:  # noqa: BLE001
+        # 실행 중 루프 없음(RuntimeError) 등 — 계측 생략(본기능 회귀 0)
+        pass
+
+
 class BaseInterpreter:
     """LLM 해석 인터프리터의 공통 기반."""
 
@@ -300,7 +332,16 @@ class BaseInterpreter:
         완전 격리: import 순환·DB 미가용 등 어떤 예외도 기본 버전으로 폴백한다.
         후보군이 비어 있으면(현 기본 상태) 즉시 기본 캐시 → 기존 동작 완전 불변.
         """
+        # ★A/B store 단일화: 소비자(_PROMPT_AB_CANDIDATES)와 게이트(feature_flags.PROMPT_AB_CANDIDATES)가
+        #   각각 빈 dict로 분리돼 있던 구조적 단절(감사 적발)을 해소 — 둘을 합쳐 단일 출처로 본다.
+        #   지연 import로 순환·부팅순서 안전. 둘 다 비면 기존 동작 완전 불변(후보 없으면 기본 버전).
         candidates = _PROMPT_AB_CANDIDATES.get(self.name)
+        if not candidates:
+            try:
+                from app.services.growth.feature_flags import PROMPT_AB_CANDIDATES as _gate_cands
+                candidates = _gate_cands.get(self.name)
+            except Exception:  # noqa: BLE001 — 게이트 registry 조회 실패는 기본 폴백.
+                candidates = None
         if not candidates:
             self._active_prompt_version = _PROMPT_VERSION
             return _PROMPT_VERSION

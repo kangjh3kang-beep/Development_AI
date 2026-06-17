@@ -5,6 +5,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from app.core.billing_deps import enforce_llm_quota
 from app.services.expert_panel.expert_panel_service import ExpertPanelService
 from apps.api.auth.jwt_handler import CurrentUser, get_current_user
 
@@ -18,7 +19,7 @@ class ExpertPanelRequest(BaseModel):
     mode: str = "single"  # single | deep(정밀 다중 에이전트)
 
 
-@router.post("/analyze", summary="전문가 패널 다관점 분석·검증")
+@router.post("/analyze", summary="전문가 패널 다관점 분석·검증", dependencies=[Depends(enforce_llm_quota)])
 async def analyze_panel(
     req: ExpertPanelRequest,
     current_user: CurrentUser = Depends(get_current_user),

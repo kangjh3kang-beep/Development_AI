@@ -126,6 +126,11 @@ class FeasibilityServiceV2:
         max_far = ordinance_far or zone_limits.get("max_far_pct", 250)
         max_bcr = ordinance_bcr or zone_limits.get("max_bcr_pct", 60)
 
+        # 토지비 신뢰성 — 공시지가 미확보 시 1.5M 묵시폴백이 들어가므로 절대 수익성(ROI·순이익)은
+        #   '참고용'임을 정직 표기한다(랭킹은 profit_rate 상대비교라 유지). 가짜 확정값 노출 방지.
+        official_price = zoning.get("official_price_per_sqm")
+        land_price_reliable = bool(official_price and official_price > 0)
+
         results: list[dict[str, Any]] = []
         for dev_type in permitted_types:
             try:
@@ -175,7 +180,8 @@ class FeasibilityServiceV2:
                         "total_cost_won": output.total_cost_won,
                         "net_profit_won": output.net_profit_won,
                         "profit_rate_pct": output.profit_rate_pct,
-                        "roi_pct": output.roi_pct,
+                        "roi_pct": output.roi_pct,            # 사업수익률=순이익/총사업비(경로 간 비교 표준)
+                        "roe_pct": output.roe_pct,            # 자기자본수익률(레버리지, 자기자본 제공 시만)
                         "npv_won": output.npv_won,
                         "grade": output.grade,
                     },
@@ -204,6 +210,8 @@ class FeasibilityServiceV2:
             "permitted_types": len(permitted_types),
             "recommendations": top3,
             "all_results": results,  # Full ranking for reference
+            # 토지비 신뢰성 — False면 공시지가 미확보로 절대 수익성(ROI·순이익)은 참고용(랭킹은 상대비교 유효).
+            "land_price_reliable": land_price_reliable,
         }
 
         # Step 5: AI 해석 생성 — 명시실행(use_llm=False면 규칙기반 결과만, LLM 생략)

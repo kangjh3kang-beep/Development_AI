@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v235-landschedule-project-gate";
+const CACHE_NAME = "propai-v236-innovation-critical";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

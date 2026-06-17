@@ -105,6 +105,9 @@ async def _experts_node(state: PanelState) -> dict[str, Any]:
                                         context=state["ctx"])
         llm = get_llm(timeout=60, max_tokens=1000)
         resp = await llm.ainvoke([SystemMessage(content=_EXPERT_SYSTEM + GROUNDING_RULE), HumanMessage(content=user)])
+        # 계측: BaseInterpreter 밖 직접 호출도 동일하게 토큰·과금 기록(best-effort)
+        from app.services.ai.base_interpreter import record_llm_response_billing
+        await record_llm_response_billing(llm, resp, service="expert_panel")
         try:
             d = json.loads(_strip_json(resp.content if hasattr(resp, "content") else str(resp)))
             d.setdefault("role", r["role"])
@@ -132,6 +135,8 @@ async def _verify_node(state: PanelState) -> dict[str, Any]:
     llm = get_llm(timeout=60, max_tokens=1200)
     try:
         resp = await llm.ainvoke([SystemMessage(content=_VERIFY_SYSTEM), HumanMessage(content=user)])
+        from app.services.ai.base_interpreter import record_llm_response_billing
+        await record_llm_response_billing(llm, resp, service="expert_panel")
         report = json.loads(_strip_json(resp.content if hasattr(resp, "content") else str(resp)))
     except Exception:  # noqa: BLE001
         report = {"verified": [], "overall_confidence": None, "notes": "검증 일시 불가"}
@@ -163,6 +168,8 @@ async def _synth_node(state: PanelState) -> dict[str, Any]:
     synth: dict[str, Any] = {}
     try:
         resp = await llm.ainvoke([SystemMessage(content=_SYNTH_SYSTEM + GROUNDING_RULE), HumanMessage(content=user)])
+        from app.services.ai.base_interpreter import record_llm_response_billing
+        await record_llm_response_billing(llm, resp, service="expert_panel")
         synth = json.loads(_strip_json(resp.content if hasattr(resp, "content") else str(resp)))
     except Exception:  # noqa: BLE001
         synth = {}

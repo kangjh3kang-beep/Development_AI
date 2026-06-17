@@ -162,6 +162,9 @@ async def _llm_proposal(insight: dict[str, Any], source_path: str | None,
             + (f"[관련 소스: {source_path}]\n{source_text}\n" if source_text else "[관련 소스 없음]\n")
         )
         resp = llm.invoke(prompt)
+        # 계측: 동기 호출도 토큰·과금 기록(실행 루프 있으면 예약, 없으면 생략·best-effort)
+        from app.services.ai.base_interpreter import record_llm_response_billing_sync
+        record_llm_response_billing_sync(llm, resp, service="growth_improve")
         raw = getattr(resp, "content", None) or str(resp)
         raw = str(raw).strip()
         # ```json 블록 제거(base_interpreter 파서와 동일 관용구).
@@ -356,6 +359,9 @@ async def _llm_prompt_candidate(service: str, samples: dict[str, Any]) -> dict[s
             f"{json.dumps(samples.get('corrections') or [], ensure_ascii=False)}\n"
         )
         resp = llm.invoke(prompt)
+        # 계측: 동기 호출도 토큰·과금 기록(실행 루프 있으면 예약, 없으면 생략·best-effort)
+        from app.services.ai.base_interpreter import record_llm_response_billing_sync
+        record_llm_response_billing_sync(llm, resp, service="growth_improve")
         raw = getattr(resp, "content", None) or str(resp)
         raw = str(raw).strip()
         if raw.startswith("```"):

@@ -141,6 +141,10 @@ function currentSnapshot(): Record<string, unknown> {
     currentStage: s.currentStage ?? null,
     analysisResults: s.analysisResults ?? [],
     updatedAt: s.updatedAt ?? {},
+    // 필드 provenance(manualFields)·무거운 분석 캐시(analysisCache)도 함께 영속한다.
+    //   서버 왕복에서 누락되면 merge 가드(수동입력 보존)와 캐시 재사용이 무력화된다(감사 적발).
+    manualFields: s.manualFields ?? {},
+    analysisCache: s.analysisCache ?? {},
   };
 }
 
@@ -340,6 +344,9 @@ export function applyRemoteSnapshot(
     currentStage: (effective.currentStage ?? null) as never,
     analysisResults: (effective.analysisResults ?? []) as never,
     updatedAt: (effective.updatedAt ?? {}) as never,
+    // provenance·캐시 복원(currentSnapshot과 대칭) — 구 스냅샷(필드 부재)은 ?? {} 폴백.
+    manualFields: (effective.manualFields ?? {}) as never,
+    analysisCache: (effective.analysisCache ?? {}) as never,
   } as never);
 }
 

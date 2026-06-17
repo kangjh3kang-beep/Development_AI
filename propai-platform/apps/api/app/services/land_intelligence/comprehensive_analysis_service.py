@@ -211,6 +211,32 @@ class ComprehensiveAnalysisService:
             "warnings": base.get("warnings", []),
         }
 
+        # ── 특이부지 감지(학교·GB·농지·산지·맹지·문화재 등) — ★LLM 그라운딩용 배선 ──
+        #   감사 적발(orphan handoff): 종합분석이 special_parcel을 결과에 넣지 않아
+        #   site_analysis_interpreter가 특이제약을 인지 못하고 '최대 연면적 가능'류를 독자
+        #   서술하는 할루시네이션 위험. 여기서 감지해 result에 부착하면 인터프리터가 그라운딩한다.
+        try:
+            from app.services.zoning.special_parcel import detect_special_parcel
+
+            _lr = base.get("land_register") if isinstance(base.get("land_register"), dict) else {}
+            _sp_input = {
+                "zone_type": zone_type,
+                "land_category": _lr.get("land_category") or "",
+                "special_districts": base.get("special_districts")
+                or (sec7.get("special_districts") if isinstance(sec7, dict) else [])
+                or [],
+                "road_contact": base.get("road_contact"),
+                "road_width_m": base.get("road_width_m") or _lr.get("road_width_m"),
+            }
+            special = detect_special_parcel(_sp_input)
+            if special:
+                result["special_parcel"] = special
+                _warns = result.get("warnings")
+                result["warnings"] = (_warns if isinstance(_warns, list) else []) + special.get("warnings", [])
+                result["developability"] = special.get("developability")
+        except Exception:  # noqa: BLE001 — 특이부지 감지 실패는 무손상(기존 분석 유지)
+            pass
+
         # Phase 3: AI 해석 생성 (선택적 — API 키 있을 때만)
         # llm_provider/llm_model이 지정된 경우 get_llm()으로 커스텀 LLM 생성
         custom_llm = None

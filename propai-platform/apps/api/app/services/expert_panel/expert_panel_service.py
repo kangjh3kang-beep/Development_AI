@@ -218,6 +218,9 @@ class ExpertPanelService:
             resp = await llm.ainvoke(
                 [SystemMessage(content=_PANEL_SYSTEM + GROUNDING_RULE), HumanMessage(content=user)]
             )
+            # 계측: BaseInterpreter 밖 직접 호출도 동일하게 토큰·과금 기록(best-effort)
+            from app.services.ai.base_interpreter import record_llm_response_billing
+            await record_llm_response_billing(llm, resp, service="expert_panel")
             data = json.loads(_strip_json(resp.content if hasattr(resp, "content") else str(resp)))
             if not isinstance(data.get("experts"), list):
                 raise ValueError("experts 누락")
@@ -240,6 +243,8 @@ class ExpertPanelService:
                 resp = await llm.ainvoke(
                     [SystemMessage(content=_EXPERT_SYSTEM + GROUNDING_RULE), HumanMessage(content=user)]
                 )
+                from app.services.ai.base_interpreter import record_llm_response_billing
+                await record_llm_response_billing(llm, resp, service="expert_panel")
                 try:
                     d = json.loads(_strip_json(resp.content if hasattr(resp, "content") else str(resp)))
                     d.setdefault("role", r["role"])
@@ -262,6 +267,8 @@ class ExpertPanelService:
             resp = await llm.ainvoke(
                 [SystemMessage(content=_SYNTH_SYSTEM + GROUNDING_RULE), HumanMessage(content=synth_user)]
             )
+            from app.services.ai.base_interpreter import record_llm_response_billing
+            await record_llm_response_billing(llm, resp, service="expert_panel")
             synth = json.loads(_strip_json(resp.content if hasattr(resp, "content") else str(resp)))
             return {
                 "generated": True,

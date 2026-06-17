@@ -111,4 +111,7 @@ class ALRISService:
         context = "\n\n".join([doc.page_content for doc in relevant_docs])
         prompt = f"다음 건축 법규를 참조하여 질문에 답변하시오.\n\n[참조 법규]\n{context}\n\n[질문]\n{query}"
         response = await self.llm.ainvoke(prompt)
+        # 계측: BaseInterpreter 밖 직접 호출도 동일하게 토큰·과금 기록(best-effort)
+        from app.services.ai.base_interpreter import record_llm_response_billing
+        await record_llm_response_billing(self.llm, response, service="alris")
         return {"answer": response.content, "sources": [doc.metadata for doc in relevant_docs]}

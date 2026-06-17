@@ -354,6 +354,9 @@ class RegulationAnalysisService:
             resp = await llm.ainvoke(
                 [SystemMessage(content=_SYSTEM + GROUNDING_RULE), HumanMessage(content=user)]
             )
+            # 계측: BaseInterpreter 밖 직접 호출도 동일하게 토큰·과금 기록(best-effort)
+            from app.services.ai.base_interpreter import record_llm_response_billing
+            await record_llm_response_billing(llm, resp, service="regulation")
             raw = (resp.content if hasattr(resp, "content") else str(resp)).strip()
             if raw.startswith("```"):
                 raw = raw.split("```")[1]

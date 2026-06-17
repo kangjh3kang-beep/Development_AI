@@ -79,7 +79,8 @@ class ModuleOutput:
     # KPI
     net_profit_won: int = 0
     profit_rate_pct: float = 0.0
-    roi_pct: float = 0.0
+    roi_pct: float = 0.0            # 사업수익률 = 순이익/총사업비 (경로 간 비교 표준)
+    roe_pct: float | None = None   # 자기자본수익률 = 순이익/자기자본 (레버리지, 자기자본 제공 시만)
     npv_won: int = 0
     grade: str = "F"
 

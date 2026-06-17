@@ -56,6 +56,7 @@ class M04UnionHousing(BaseModule):
             net_profit_won=agg["net_profit_won"],
             profit_rate_pct=agg["profit_rate_pct"],
             roi_pct=agg["roi_pct"],
+            roe_pct=agg.get("roe_pct"),
             npv_won=agg["npv_won"],
             grade=agg["grade"],
             cost_detail=agg["cost_breakdown_won"],

@@ -359,6 +359,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         "heal": 911_000_002,
         "correct": 911_000_003,
         "learn": 911_000_004,
+        "improve": 911_000_005,  # L2 개선제안(Draft PR 봇) — Celery 미배포 환경 인프로세스 배선.
     }
 
     async def _growth_try_lock(session, key: int) -> bool:
@@ -422,6 +423,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 run_heal = (tick % 10 == 0)      # 10분.
                 run_correct = (tick % 15 == 0)   # 15분.
                 run_learn = (tick % 10080 == 0 and tick > 0)  # 주간(7일=10080분).
+                run_improve = (tick % 1440 == 0 and tick > 0)  # 일배치(24h=1440분) — L2 개선제안.
 
                 # 순서 보장: analyze 를 먼저 끝낸 뒤 heal/correct 가 최신 인사이트를 본다.
                 if run_analyze:
@@ -437,6 +439,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                         async with AsyncSessionLocal() as _s:
                             return await learning_loop.run_learning_cycle(_s)
                     await _growth_run_locked("learn", _learn_core)
+                if run_improve:
+                    # L2 개선제안 — improvement_agent.generate_proposals(requires_approval=True 인간게이트).
+                    #   GH_TOKEN 없으면 PR 생성 스킵·아티팩트만 기록(graceful). main push·자동머지 없음.
+                    await _growth_run_locked("improve", growth_tasks._improve_async)
             except Exception as e:  # noqa: BLE001 — 루프 자체는 절대 죽지 않게.
                 logger.warning("growth 스케줄러 틱 오류: %s", str(e)[:160])
             tick += 1
