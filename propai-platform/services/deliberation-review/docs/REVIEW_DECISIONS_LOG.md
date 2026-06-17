@@ -30,11 +30,14 @@
 | 14 | `76ab59db` | 견고성·계약 | egress 보행속도/유동계수 비양수 가드(walk_speed≤0→0division 500·flow<0→음수시간 무음오판 차단, UNAVAILABLE+invalid_egress_params, INV-21)·가드 테스트 | 317 |
 | 15 | `56caf153` | security | 레이트리밋(FixedWindowRateLimiter 인메모리 고정창)·미들웨어 배선(클라이언트별 분당 상한, /health 면제, 429+Retry-After)·REQUESTS_PER_MINUTE 설정(0=비활성 기본)·리미터 단위(clock주입 결정론)+미들웨어 통합 테스트 5 | 322 |
 | 16 | `8bceda90` | 계약 | SimMetric.unit str→MetricUnit enum(""/s/hours/m/ratio) — 임의 단위 무음 통과 차단·계약 강제. str,Enum이라 JSON은 값('s')로 직렬화(프런트 ui/index.html `m.unit` 호환 byte-동일)·계약 테스트(유효 강제·비계약 거부) | 323 |
-| 17 | `(this)` | 정확성 | PARKING 전량제외 무음 거짓적합 제거 — CalcElement underground/accessory + parking_far_eligibility(지하·부속만 제외/지상·독립 산입/미상 HELD), CalcEngine far 주차 미상→held. far_parking_held trace 표면화·테스트 3(적격제외/지상산입/미상HELD) | 325 |
+| 17 | `8f6b06db` | 정확성 | PARKING 전량제외 무음 거짓적합 제거 — CalcElement underground/accessory + parking_far_eligibility(지하·부속만 제외/지상·독립 산입/미상 HELD), CalcEngine far 주차 미상→held. far_parking_held trace 표면화·테스트 3(적격제외/지상산입/미상HELD) | 325 |
+| 18 | `(this)` | 설명가능성 | (멀티에이전트 감사 w6r4klvk1 28갭 기반 S1+legal_calc) P1 gate_reason 노출·P2 sim basis_article/legal_basis 노출(이미 산출값 노출만)·P6 옥탑 산입/결손 trace(height_rooftop_included/unknown 대칭)·P8 gfa 층별 measured/제외단계 caveat·P18 pilotis/basement 개방·전량제외 전제 caveat. 산출값 불변(설명 메타만)·가드 3 | 328 |
 
 **재리뷰 점수 추이**: security 3.0→4.0→4.5(iter15 레이트리밋), 계약 3.0→3.5→3.8→4.4→4.5(iter16 SimMetric.unit enum 계약강제), 정확성 3.0→3.5→4.0→4.3→4.5(iter17 PARKING 거짓적합 제거: 지상주차 산입·미상 HELD),
 테스트 3.5→3.7→4.2→4.5(iter12~13 스캐너 사각지대 제거: 함수기본값/call-kwarg 하드코딩까지 게이트), 아키텍처 3.0→3.2→4.2, 견고성 3.5→4.2→4.5(iter14 egress 비양수 가드: 0division/음수시간 무음오판 제거),
-security 3.0→4.0→4.5(iter15 레이트리밋: 외부 1차출처 쿼터/비용 폭주 방어, /health 면제). 결정론 4.5·설명가능성 4.0 유지.
+security 3.0→4.0→4.5(iter15 레이트리밋: 외부 1차출처 쿼터/비용 폭주 방어, /health 면제). 결정론 4.5 유지·설명가능성 4.0→(iter18~ 진행: 감사 28갭 순차해소).
+
+**★설명가능성 감사(2026-06-17, 멀티에이전트 워크플로 w6r4klvk1, 14에이전트)**: 6영역 전수감사+반증검증으로 **28개 확정 갭**(전부 file:line 검증) + dual_path 평가. 모든 수정은 **산출값 불변·설명 메타(rationale/legal_basis/caveats/reason/trace)만 추가**. 우선순위 P1~P22(TIER1 노출만→…→dual_path 결선). dual_path 핵심: 부품(DualPathCheck·게이트강등·area_tol·명기 outer_area) 다 EXISTS, **pipeline 결선만 MISSING**(analysis_pipeline `dual_path_status=None` 하드코딩+기하 geom 산정경로 부재). iter18=P1·P2·P6·P8·P18 적용.
 
 **iter15 주의(정직)**: 레이트리미터는 **프로세스 로컬 카운터** — 다중 워커/인스턴스 분산 강제 아님(각자 셈). 운영 분산은 Redis 등 공유 스토어 필요(미구현, app.core.rate_limit docstring 명시). 기본 0=비활성(기존 스위트/배포 무영향), 운영 활성화는 REQUESTS_PER_MINUTE 설정. 설정변수명은 'limit' 법정키워드 회피(REQUESTS_PER_MINUTE) — 스캐너 희석 없이 INV-3 엄격 유지.
 

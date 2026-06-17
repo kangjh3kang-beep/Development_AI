@@ -48,7 +48,9 @@ class AreaCalculator:
                 entries.append(CalcTraceEntry(
                     rule_id="ba_pilotis", basis_article=_BASIS_119,
                     excluded_elements=[SemanticType.PILOTIS],
-                    excluded_amount=round(el.area, 2), note="필로티(개방) 건축면적 제외"))
+                    excluded_amount=round(el.area, 2),
+                    note="필로티 건축면적 전량 제외 — 개방형 구조 전제(3면 이상 개방·벽체 미설치 시). "
+                         "임계 비교가 아닌 개방 판정 결과(벽체로 구획 시 산입 대상, 별도 확인 필요)"))
             elif el.semantic_type == SemanticType.EAVE:
                 em = self.params.meta("eave_exclusion_length")
                 limit_len = em["value"]
@@ -79,7 +81,10 @@ class AreaCalculator:
         self, floor_areas: list[float]
     ) -> tuple[float, list[CalcTraceEntry]]:
         entries = [CalcTraceEntry(
-            rule_id="gfa_sum", basis_article=_BASIS_119, note="각 층 바닥면적 합")]
+            rule_id="gfa_sum", basis_article=_BASIS_119,
+            measured=float(len(floor_areas)),
+            note=(f"각 층 바닥면적 단순 합(층수={len(floor_areas)}, 층별={[round(a, 2) for a in floor_areas]}) — "
+                  "용적률 제외(지하·부속주차)는 far_floor_area 단계에서 별도 적용"))]
         return float(sum(floor_areas)), entries
 
     def far_floor_area(
@@ -95,7 +100,9 @@ class AreaCalculator:
                 entries.append(CalcTraceEntry(
                     rule_id="far_basement", basis_article=_BASIS_119,
                     excluded_elements=[SemanticType.BASEMENT],
-                    excluded_amount=round(el.area, 2), note="지하층 용적률 산정 연면적 제외"))
+                    excluded_amount=round(el.area, 2),
+                    note="지하층 용적률 산정 연면적 전량 제외(시행령 §119①3의2) — 층 전체가 지하로 확정된 경우 전제. "
+                         "반지하·부분지하는 별도 판정 필요"))
             elif el.semantic_type == SemanticType.PARKING:
                 # 시행령 §119①4 주차 제외는 '지하 AND 부속'만 — 지상·독립은 산입, 미상은 무음제외 금지(HELD).
                 elig = parking_far_eligibility(el)
