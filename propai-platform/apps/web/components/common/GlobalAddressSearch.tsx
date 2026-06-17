@@ -441,7 +441,7 @@ export function GlobalAddressSearch({
     searchTimer.current = setTimeout(() => void runSearch(v), 350);
   }, [runSearch]);
 
-  // 지도 클릭 필지 선택 → KakaoAddressResult 형태로 변환 후 기존 추가 로직 재사용.
+  // 지도 단일 클릭 필지 선택(하위호환) → KakaoAddressResult 형태로 변환 후 기존 추가 로직 재사용.
   // bcode는 PNU 앞 10자리로 구성(pickCandidate 패턴 동일).
   const handleMapPick = useCallback((parcel: ParcelAtPointResult) => {
     if (!parcel.found || !parcel.address) return;
@@ -456,6 +456,65 @@ export function GlobalAddressSearch({
     // 지도 패널은 필지 추가 후 닫는다(사용자가 원하면 다시 열 수 있음)
     setShowMapPicker(false);
   }, [handleAddressSelect]);
+
+  // 지도 다중 선택 완료 콜백 — staged 배열을 일괄로 기존 handleAddressSelect 경로에 넣는다.
+  // 각 필지를 KakaoAddressResult 형태로 변환해 순차 추가(중복은 handleAddressSelect 내부에서 방지).
+  const handleMapPickMany = useCallback((parcels: ParcelAtPointResult[]) => {
+    if (parcels.length === 0) return;
+
+    // 현재 addresses를 읽어 중복 체크용 Set 생성(함수 호출 시점 스냅샷).
+    // handleAddressSelect 내부에서도 중복 체크하므로 실질적으로 이중 방어.
+    const existingAddresses = new Set(addresses.map((a) => a.fullAddress));
+
+    let merged = [...addresses];
+
+    for (const parcel of parcels) {
+      if (!parcel.found || !parcel.address) continue;
+      const fullAddress = parcel.address;
+      if (existingAddresses.has(fullAddress)) continue; // 이미 있으면 건너뜀
+      existingAddresses.add(fullAddress);
+
+      const bcode = parcel.bcode || (parcel.pnu && parcel.pnu.length >= 10 ? parcel.pnu.slice(0, 10) : "");
+      const entry: AddressEntry = {
+        __uid: newUid(),
+        fullAddress,
+        jibunAddress: parcel.jibun || fullAddress,
+        roadAddress: "",
+        sido: "", sigungu: "", bname: "", zonecode: "", bcode,
+        pnu: parcel.pnu,
+        // parcel-at-point가 이미 반환한 토지정보 활용(enrichParcels 부담 최소화)
+        ...(parcel.area_sqm != null ? { areaSqm: parcel.area_sqm, areaPyeong: parcel.area_sqm / 3.305785 } : {}),
+        ...(parcel.zone_type ? { zoneCode: parcel.zone_type } : {}),
+        ...(parcel.jimok ? { jimok: parcel.jimok } : {}),
+        ...(parcel.bcr_pct != null ? { bcrPct: parcel.bcr_pct } : {}),
+        ...(parcel.far_pct != null ? { farPct: parcel.far_pct } : {}),
+      };
+      merged = [...merged, entry];
+    }
+
+    if (merged.length === addresses.length) {
+      // 새로 추가된 필지가 없으면 패널만 닫음
+      setShowMapPicker(false);
+      return;
+    }
+
+    setAddresses(merged);
+
+    // 대표 필지(첫 번째)로 store·종합분석 갱신(기존 handleAddressSelect 동작 동일)
+    const primary = merged[0];
+    if (primary) {
+      if (writeToContext) {
+        updateSiteAnalysis({ address: primary.fullAddress });
+      }
+      triggerComprehensiveAnalysis(primary.fullAddress, primary.bcode, primary.jibunAddress);
+    }
+
+    // 토지정보가 완전히 채워지지 않은 필지 보강(면적·용도지역 등)
+    if (!single) void enrichParcels(merged);
+
+    onChange?.(merged);
+    setShowMapPicker(false);
+  }, [addresses, single, writeToContext, updateSiteAnalysis, triggerComprehensiveAnalysis, enrichParcels, onChange]);
 
   // 후보 선택 → 필지로 추가(PNU 보유 시 bcode 직접 구성, 종합분석 재실행).
   const pickCandidate = useCallback((c: AddrCandidate) => {
@@ -753,7 +812,7 @@ export function GlobalAddressSearch({
           {showMapPicker && (
             <div className="mt-2">
               <MapShell height={360} label="필지 선택 지도" loadingMessage="필지 선택 지도 로딩…">
-                <ParcelPickerMapDynamic onPick={handleMapPick} height={360} />
+                <ParcelPickerMapDynamic onPick={handleMapPick} onPickMany={handleMapPickMany} height={360} />
               </MapShell>
             </div>
           )}

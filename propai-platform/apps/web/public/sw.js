@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v231-map-picker";
+const CACHE_NAME = "propai-v232-map-multiselect";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",
