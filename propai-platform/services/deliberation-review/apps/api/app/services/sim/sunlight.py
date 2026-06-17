@@ -13,7 +13,7 @@ from app.contracts.sim_metric import MethodTrace, MetricStatus, SimMetric, emit
 from app.core.confidence import clamp01
 from app.services.sim.sim_params import SimParamSource
 
-_BASIS = "건축법 제61조"
+_BASIS = "건축법 제61조(관련) — 비법정 근사 스크리닝(정북이격 판정 아님)"
 
 
 def run(site: dict, params: SimParamSource) -> SimMetric:
@@ -46,6 +46,8 @@ def run(site: dict, params: SimParamSource) -> SimMetric:
     trace = MethodTrace(
         model="solar_orbit_approx",
         assumptions=[
+            "⚠️ 비법정 근사 — 건축법 제61조/시행령 제86조의 정북방향 이격거리 판정이 아님(참고용 일조 스크리닝). "
+            "정식 일조권은 shadow_3d(정북 이격/연속 일조시간)로 별도 검증 필요",
             "동지 정오 태양고도 단일 그림자 근사(일중 시간별 변화 미반영) — 보수적 추정",
             "인접건물 단일 차폐, 지형/식재 무시",
             "노출비례 선형 근사",

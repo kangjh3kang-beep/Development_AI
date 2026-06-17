@@ -6,6 +6,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from app.contracts.enums import Comparator
+
 
 class Relaxation(BaseModel):
     """완화/특례 1건. 전제 룰 결과를 참조하여 적용 여부 결정."""
@@ -21,7 +23,7 @@ class Rule(BaseModel):
 
     rule_id: str
     target_variable: str | None = None
-    comparator: str = "<="  # measured (comparator) limit → COMPLIANT
+    comparator: Comparator = Comparator.LE  # measured (comparator) limit → COMPLIANT. 미정의값 거부
     depends_on: list[str] = Field(default_factory=list)
     relaxations: list[Relaxation] = Field(default_factory=list)
     basis_article: str | None = None

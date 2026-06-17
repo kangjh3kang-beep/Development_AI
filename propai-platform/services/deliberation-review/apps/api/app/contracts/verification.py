@@ -8,6 +8,8 @@ from enum import Enum
 
 from pydantic import BaseModel, Field
 
+from app.contracts._types import Probability
+
 
 class VerificationResult(BaseModel):
     citation_ref: str | None = None
@@ -30,7 +32,7 @@ class FinalStatus(str, Enum):
 
 class GateItem(BaseModel):
     item_id: str | None = None
-    composite_confidence: float = 0.0
+    composite_confidence: Probability = 0.0
     conflicts: list = Field(default_factory=list)
     verification: VerificationResult | None = None
     dual_path_status: str | None = None  # 정량 이중경로 결과(HELD면 확정 불가)
@@ -38,5 +40,5 @@ class GateItem(BaseModel):
 
 class GateResult(BaseModel):
     status: FinalStatus
-    composite_confidence: float = 0.0
+    composite_confidence: Probability = 0.0
     reason: str | None = None

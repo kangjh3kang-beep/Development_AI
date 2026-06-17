@@ -52,3 +52,16 @@ class ScaleSource(str, Enum):
     NOTATION = "NOTATION"
     USER = "USER"
     CADASTRAL_CROSSCHECK = "CADASTRAL_CROSSCHECK"
+
+
+class Comparator(str, Enum):
+    """판정 비교연산자(고정). measured (comparator) limit → 적합. 미정의 값은 pydantic 거부.
+
+    free-form str의 오타가 무음으로 동등성(!=) 폴백되던 결함 차단(무음 오판 0).
+    """
+
+    LE = "<="
+    GE = ">="
+    LT = "<"
+    GT = ">"
+    EQ = "=="

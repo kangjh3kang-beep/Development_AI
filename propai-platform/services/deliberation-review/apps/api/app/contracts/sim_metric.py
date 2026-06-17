@@ -8,6 +8,7 @@ from enum import Enum
 
 from pydantic import BaseModel, Field
 
+from app.contracts._types import Probability
 from app.core.errors import MethodTraceMissing
 
 
@@ -31,7 +32,7 @@ class SimMetric(BaseModel):
     value: float | None = None
     unit: str = ""
     status: MetricStatus = MetricStatus.OK
-    confidence: float = 1.0
+    confidence: Probability = 1.0
     method_trace: MethodTrace | None = None
     flags: list[str] = Field(default_factory=list)
     required: float | None = None  # 기준값(회전반경/기준시간 등)

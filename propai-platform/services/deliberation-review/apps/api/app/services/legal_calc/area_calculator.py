@@ -75,11 +75,15 @@ class AreaCalculator:
         for el in elements:
             if el.semantic_type in _FAR_EXCLUDED:
                 excluded += el.area
+                note = f"{el.semantic_type.value} 용적률 산정 연면적 제외"
+                if el.semantic_type == SemanticType.PARKING:
+                    # 건축법 시행령 §119①4 주차 제외는 지하/부속 주차 한정 — 지상·비부속(독립 주차전용)은 산입.
+                    note = ("주차 용적률 산정 제외 — ⚠️ 시행령 §119①4는 지하/부속 주차에 한정. 지상·비부속 주차는 "
+                            "산입 대상이므로 주차 유형 확인 필요(전량 제외 시 FAR 과소·거짓적합 위험)")
                 entries.append(CalcTraceEntry(
                     rule_id=f"far_{el.semantic_type.value.lower()}",
                     basis_article=_BASIS_119, excluded_elements=[el.semantic_type],
-                    excluded_amount=round(el.area, 2),
-                    note=f"{el.semantic_type.value} 용적률 산정 연면적 제외"))
+                    excluded_amount=round(el.area, 2), note=note))
 
         return gross_floor_area - excluded, entries
 
