@@ -12,6 +12,10 @@ RUN apt-get update && apt-get install -y \
     curl && rm -rf /var/lib/apt/lists/*
 
 ENV PYTHONUNBUFFERED=1
+# ★app(=apps/api/app) 패키지 import 보장. uvicorn은 cwd(/app)만 path에 넣어 `apps.api.*`는
+#   되지만 `from app.core.config`(코드 다수 사용)는 apps/api가 path에 있어야 한다.
+#   .env/compose 의존성 제거 — 이미지가 자족적으로 import path 보장(blue-green 부팅 안정).
+ENV PYTHONPATH=/app:/app/apps/api
 
 COPY --chown=propai:propai apps/api/requirements.oracle.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
