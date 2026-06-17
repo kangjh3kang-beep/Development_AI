@@ -384,7 +384,33 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
     } catch { /* noop */ } finally { setBusy(null); }
   }, [rows, projectName]);
 
-  const inputCls = "w-full rounded-md border border-[var(--line)] bg-[var(--surface-strong)] px-1.5 py-1 text-[11px] text-[var(--text-primary)] outline-none";
+  // 토지분석보고서 PDF — 필지(세대행 제외)를 보내 종합보고서 생성·다운로드.
+  const downloadReport = useCallback(async () => {
+    const parcels = rows.filter((r) => r.jibun.trim() && !r.unit_label)
+      .map((r) => ({ address: r.jibun.trim(), jibun: r.jibun.trim(), pnu: r.pnu || undefined }));
+    if (parcels.length === 0) { setNotice({ kind: "warn", text: "보고서를 만들 필지가 없습니다. 먼저 필지를 등록하세요." }); return; }
+    setBusy("report");
+    try {
+      const token = (typeof window !== "undefined" && localStorage.getItem("propai_access_token")) || "";
+      const res = await fetch(`${apiBase()}/zoning/land-report`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ project_name: projectName || "토지분석보고서", parcels }),
+      });
+      const ct = res.headers.get("content-type") || "";
+      if (!res.ok || !ct.includes("pdf")) throw new Error();
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = `토지분석보고서_${projectName || "프로젝트"}.pdf`; a.click();
+      URL.revokeObjectURL(url);
+      setNotice({ kind: "info", text: `토지분석보고서(PDF)를 생성했습니다 — ${parcels.length}필지 종합(필지요약·토지정보·규제/개발가능성·대지지분·종합의견).` });
+    } catch {
+      setNotice({ kind: "warn", text: "토지분석보고서 생성에 실패했습니다. 잠시 후 다시 시도하세요." });
+    } finally { setBusy(null); }
+  }, [rows, projectName]);
+
+  const inputCls ="w-full rounded-md border border-[var(--line)] bg-[var(--surface-strong)] px-1.5 py-1 text-[11px] text-[var(--text-primary)] outline-none";
 
   return (
     <div className="grid gap-6">
@@ -431,6 +457,11 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
             <button onClick={downloadExcel} disabled={!!busy || rows.length === 0}
               className="rounded-xl bg-[var(--accent-strong)] px-4 py-2 text-xs font-black text-white hover:opacity-90 disabled:opacity-50">
               {busy === "excel" ? "생성 중…" : "📊 토지조서 엑셀"}
+            </button>
+            <button onClick={downloadReport} disabled={!!busy || rows.length === 0}
+              title="등록된 필지의 종합 토지분석보고서(필지요약·토지정보·규제/개발가능성·대지지분·종합의견) PDF 생성"
+              className="rounded-xl border border-[var(--accent-strong)] px-4 py-2 text-xs font-black text-[var(--accent-strong)] hover:bg-[var(--accent-soft)] disabled:opacity-50">
+              {busy === "report" ? "생성 중…" : "📄 토지분석보고서"}
             </button>
           </div>
         </CardContent>

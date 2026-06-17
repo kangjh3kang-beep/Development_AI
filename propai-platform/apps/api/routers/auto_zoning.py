@@ -1111,6 +1111,77 @@ async def parcels_info(req: ParcelsInfoRequest):
     return {"parcels": out}
 
 
+class LandReportRequest(BaseModel):
+    """토지분석보고서 PDF 생성 요청 — 토지조서 필지 목록."""
+    project_name: str = "토지분석보고서"
+    parcels: list[dict] = []  # [{address?, jibun?, pnu?, bcode?}]
+
+
+@router.post("/land-report")
+async def land_report(req: LandReportRequest):
+    """다필지 → 종합 토지분석보고서 PDF(필지요약·토지정보·권리안내·규제/개발가능성·대지지분·종합).
+
+    필지별 토지정보(/parcels-info 로직 재사용)+집합건물 세대 대지지분(land-share)을 모아 PDF 생성.
+    무목업: 무자료는 보고서에 '-'/'보완필요'로 정직 표기.
+    """
+    from fastapi.responses import StreamingResponse as _SR
+    from apps.api.app.services.land_intelligence.parcel_excel_service import ParcelExcelService
+    from apps.api.app.services.land_intelligence.land_analysis_report_pdf import build_land_analysis_report
+    from apps.api.app.services.land_intelligence.land_share_service import LandShareService
+    from apps.api.app.services.zoning.auto_zoning_service import ZONE_LIMITS
+
+    items = (req.parcels or [])[:120]
+    if not items:
+        return {"error": "필지가 없습니다."}
+
+    def _limits(zone):
+        if not zone:
+            return (None, None)
+        z = zone.replace(" ", "").strip()
+        if z in ZONE_LIMITS:
+            key = z
+        else:
+            cands = [k for k in ZONE_LIMITS if k in z]
+            key = max(cands, key=len) if cands else None
+        return (ZONE_LIMITS[key]["max_bcr"], ZONE_LIMITS[key]["max_far"]) if key else (None, None)
+
+    enriched = await ParcelExcelService().enrich_parcel_list(items, with_building=True)
+    parcels = []
+    units_by: dict[str, dict] = {}
+    svc = LandShareService()
+    for p in enriched:
+        bcr, far = _limits(p.get("zone_type"))
+        bld = p.get("building") or None
+        is_agg = bool(bld and bld.get("is_aggregate"))
+        jb = p.get("jibun") or p.get("address") or ""
+        parcels.append({
+            "jibun": jb, "address": p.get("address"), "area_sqm": p.get("area_sqm"),
+            "zone_type": p.get("zone_type"), "bcr_pct": bcr, "far_pct": far,
+            "jimok": p.get("jimok"), "official_price_per_sqm": p.get("official_price_per_sqm"),
+            "parcel_case": "aggregate" if is_agg else ("building" if bld else "land"),
+            "building": bld, "status": p.get("status", "ok"), "reason": p.get("reason"),
+        })
+        # 집합건물은 세대 대지지분 상세 부착(전유부 전수).
+        if is_agg and p.get("pnu"):
+            try:
+                ls = await svc.analyze_by_pnu(str(p["pnu"]))
+                if ls.get("is_aggregate"):
+                    units_by[jb] = {
+                        "plat_area_sqm": ls.get("plat_area_sqm"), "unit_count": ls.get("unit_count"),
+                        "units": ls.get("units") or [], "validation": ls.get("validation") or {},
+                    }
+            except Exception as e:  # noqa: BLE001
+                logger.warning("보고서 대지지분 조회 실패: %s (%s)", jb, str(e))
+
+    try:
+        pdf = build_land_analysis_report({"project_name": req.project_name, "parcels": parcels, "units_by_parcel": units_by})
+    except Exception as e:  # noqa: BLE001
+        logger.warning("토지분석보고서 생성 실패: %s", str(e))
+        return {"error": "보고서 생성에 실패했습니다."}
+    return _SR(iter([pdf]), media_type="application/pdf",
+               headers={"Content-Disposition": 'attachment; filename="land_analysis_report.pdf"'})
+
+
 @router.post("/parse-parcels")
 async def parse_parcels(file: UploadFile = File(...)):
     """업로드된 토지조서 엑셀/CSV → 필지 목록(주소·PNU·bcode·면적·지목·소유구분) 추출.
