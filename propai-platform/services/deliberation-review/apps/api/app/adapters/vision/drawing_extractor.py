@@ -116,22 +116,27 @@ class AnthropicDrawingVisionClient:
             f"표제란/역할 힌트: {hint_text or '(없음)'}."
         )
         from app.adapters.vision.image_source import build_content
+        from app.adapters.vision.vision_cache import cache_key, get_or_call
         content = build_content(image_ref, prompt)  # 이미지면 멀티모달 [image, text]
-        try:
-            resp = httpx.post(
-                "https://api.anthropic.com/v1/messages",
-                headers={"x-api-key": self.api_key, "anthropic-version": "2023-06-01"},
-                json={"model": self.model, "max_tokens": 1024,
-                      "messages": [{"role": "user", "content": content}]},
-                timeout=40.0,
-            )
-            resp.raise_for_status()
-            text = resp.json()["content"][0]["text"]
-            import json as _json
-            parsed = _json.loads(text[text.find("["): text.rfind("]") + 1])
-            return parsed if isinstance(parsed, list) else None
-        except Exception:
-            return None  # 라이브 실패 → degrade(상위가 힌트 폴백/결손 처리)
+
+        def _call() -> list[dict] | None:
+            try:
+                resp = httpx.post(
+                    "https://api.anthropic.com/v1/messages",
+                    headers={"x-api-key": self.api_key, "anthropic-version": "2023-06-01"},
+                    json={"model": self.model, "max_tokens": 1024, "temperature": 0,  # 결정론(샘플링 제거)
+                          "messages": [{"role": "user", "content": content}]},
+                    timeout=40.0,
+                )
+                resp.raise_for_status()
+                text = resp.json()["content"][0]["text"]
+                import json as _json
+                parsed = _json.loads(text[text.find("["): text.rfind("]") + 1])
+                return parsed if isinstance(parsed, list) else None
+            except Exception:
+                return None  # 라이브 실패 → degrade(상위가 힌트 폴백/결손 처리)
+        # 동일 도면 재분석 시 캐시 적중 → 재현성·비용절감(temperature=0과 함께 INV-1 복원).
+        return get_or_call(cache_key(self.model, image_ref, prompt), _call)
 
 
 def build_drawing_extractor(vision_client: DrawingVisionClient | None = None) -> DrawingExtractor:
