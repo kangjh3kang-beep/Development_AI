@@ -227,7 +227,7 @@ def run_analysis(inp: AnalysisInput) -> AnalysisResult:
     land_card = None
     if inp.collect_land_card and len(effective_pnu) >= 19:
         from app.services.land.land_card import collect_land_card
-        land_card = collect_land_card(effective_pnu, inp.land_year or "2024")
+        land_card = collect_land_card(effective_pnu, inp.land_year or "2024", as_of=inp.application_date)
         if land_card is None:
             skipped.append("land_card: 토지특성/토지이용계획 결손(키/PNU 확인)")
 

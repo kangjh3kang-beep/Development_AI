@@ -256,7 +256,25 @@
 - skyline_protrusion(skyline, proposed_floors): 신축안 층수 vs 주변 평균(ratio_vs_avg)·최고(exceeds_context_max)
   → 등급(LOW 최고이내 / MEDIUM 최고초과 / HIGH 최고 2배초과). 결손 None, 부분 스카이라인도 가능항목만 산출.
 - 배선: AnalysisInput.proposed_floors → pipeline 6.36 surrounding_context["protrusion"]. AT 3, 전체 270 passed, ruff clean.
-- 후속: 조례 시점태깅(서울 2025~28 한시완화) · 역세권 거리요건(250~350m, 지하철역 데이터) 정량 필터.
+- 후속: 역세권 거리요건(250~350m, 지하철역 데이터) 정량 게이팅.
+
+### ✅ 설명가능성 표준 + 토지/종상향 영역 적용 + 조례 시점태깅
+- 워크플로 2종: ① 서울 한시완화·역세권 거리 1차출처 검증(HIGH) → docs/VERIFIED_FACTS_zoning.md.
+  ② 엔진 전 산출물 근거동반 현황 전수매핑(4영역) — 공통결손: 법령ID만 흐름·도출식 부재·INV-20 하드코딩·
+  심의민감 산출(shadow/skyline)이 근거게이트 우회·무음 강등.
+- 표준 3종: **contracts/rationale.py**(LegalRef·RationaleInput·Rationale[summary·formula·inputs·legal_basis·caveats]),
+  **services/explain/legal_refs.py**(조문ID→법령명·조항호·요지·시행일·1차출처 사전 22종, 미등록 placeholder 표면화).
+- 적용: remaining_capacity·multipath 각 산출에 rationale 동반. **조례 연결**(잔여용량이 시행령만 쓰던 모순
+  해소 — PNU 시도 조례 우선). **조례 시점태깅** ordinance_far(as_of) + 한시완화 '조건부 가능' 표면화(단정 금지).
+  pipeline application_date→as_of 배선.
+- 검증: 실 청운동 유사(제1종일반 150% vs 기존 323.6% 초과 / 역세권활성화 근린상업 600% 순증 35,149㎡) rationale
+  동반 출력 확인. AT 5(test_explainability) + 전체 **275 passed, ruff clean**.
+### ✅ 설명가능성 확장 — sim(일조/경관)
+- shadow_3d.sunlight_analysis·skyline_protrusion 반환에 rationale 동반(건축법§61·시행령§86 / 경관법§9·건축법§60).
+- 무음 오판 수정: sunny_hours_9to15가 '연속'이 아닌 과반일조 시각 총합임을 caveat로 표면화(시행령§86 연속판정과 별개).
+- INV-20: sunlight_threshold(과반임계) 함수 파라미터화 + method에 동적 반영. AT 2 + 전체 **277 passed, ruff clean**.
+- 후속(설명가능성 확장): legal_calc CalcTrace 임계·제외수치 전파 · report basis_article 본문 해소 ·
+  final_gate 강등사유 라벨 · cross_validation 출처 ref 보존.
 
 ### 통합 최종 스냅샷(diag)
 - 전 출처 표면화: drawing_source/calc_targets_source/precedent_source/mirror_source.
