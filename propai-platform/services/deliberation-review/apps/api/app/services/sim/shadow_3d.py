@@ -151,3 +151,26 @@ def sunlight_analysis(target_geometry: dict, buildings: list[dict], latitude: fl
 def _sun(latitude: float, hour_angle_deg: float) -> tuple[float, float]:
     from app.adapters.solar.sun_position import sun_altitude_azimuth
     return sun_altitude_azimuth(latitude, _DECL_WINTER, hour_angle_deg)
+
+
+def sunlight_metric(sun: dict | None, min_hours: float = 4.0):
+    """sunlight_analysis 결과 → SimMetric(emit 게이트로 근거 강제·일조 미달 flag). 결손 None.
+
+    min_hours: 동지 9~15시 일조시각 기준(법규성 파라미터, 호출자 주입). 미달 시 flag로 '확인 필요' 표면화.
+    """
+    if sun is None:
+        return None
+    from app.contracts.sim_metric import MethodTrace, MetricStatus, SimMetric, emit
+    r = sun.get("rationale", {})
+    val = sun.get("sunny_hours_9to15")
+    flags = ["sunlight_below_min"] if (val is not None and val < min_hours) else []
+    return emit(SimMetric(
+        metric_id="sunlight_3d", value=val, unit="hours",
+        status=MetricStatus.OK if val is not None else MetricStatus.UNAVAILABLE,
+        method_trace=MethodTrace(
+            model="shadow_3d_winter_9to15",
+            assumptions=r.get("caveats", []),
+            inputs={i["name"]: i["value"] for i in r.get("inputs", [])},
+            basis_article="건축법 제61조(관련) — 비법정 근사(정북이격 판정 아님)"),
+        flags=flags, required=min_hours,
+    ))
