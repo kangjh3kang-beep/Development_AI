@@ -12,3 +12,5 @@ from pydantic import Field
 Probability = Annotated[float, Field(ge=0.0, le=1.0)]
 # 유사도(코사인 등) — 음수 허용([-1,1]). 1 초과/-1 미만은 무음 범위이탈로 거부.
 Similarity = Annotated[float, Field(ge=-1.0, le=1.0)]
+# 측정치/한계치/시뮬값 — nan/inf 거부. nan<=limit이 False로 평가돼 무음 COMPLIANT 오판정되던 것 차단.
+FiniteFloat = Annotated[float, Field(allow_inf_nan=False)]
