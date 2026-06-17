@@ -25,9 +25,13 @@
 | 9 | `43fc06e0` | 견고성·문서 | 결정로그 iter7~8 기록 + geocode/surrounding 어댑터 '키있음+결과없음(장애/결손 미상)'↔'키없음(미설정)' 구분 | 309 |
 | 10 | `05920fdd` | security | AnalysisInput.pnu 패턴(19자리 또는 빈, 비19자리 거부) — 외부 API 무검증 유입·쿼터낭비 차단 | 310 |
 | 11 | `832c9acd` | 계약 | FiniteFloat(allow_inf_nan=False) — 측정치 nan/inf 거부(nan≤limit→무음 COMPLIANT 오판 차단) | 312 |
+| 12 | `ab67aa4d` | 테스트 | static_scan _BENIGN 조기반환 버그 수정(법정명+benign값 far_limit=1.0/setback_min=0 탈출 차단)·측정치 allowlist | 312 |
+| 13 | `(this)` | 테스트·정확성 | static_scan AST 확장(함수기본값·call-kwarg·튜플언패킹·튜플/리스트 값) — 시그니처 사각지대 차단 + shadow_3d 하드코딩 5종(floor_height_m=3.0·sunlight_threshold=0.5·min_hours=4.0·관측창 9~15) → sim_params.json SSOT 주입(INV-20)·회귀가드 5 | 316 |
 
-**재리뷰 점수 추이**: security 3.0→4.0, 계약 3.0→3.5→3.8→4.4(iter7로 4.5향), 정확성 3.0→3.5→4.0,
-테스트 3.5→3.7→4.2, 아키텍처 3.0→3.2→4.2, 견고성 3.5→4.2. 결정론 4.5·설명가능성 4.0 유지.
+**재리뷰 점수 추이**: security 3.0→4.0, 계약 3.0→3.5→3.8→4.4(iter7로 4.5향), 정확성 3.0→3.5→4.0→4.3(iter13 shadow_3d INV-20),
+테스트 3.5→3.7→4.2→4.5(iter12~13 스캐너 사각지대 제거: 함수기본값/call-kwarg 하드코딩까지 게이트), 아키텍처 3.0→3.2→4.2, 견고성 3.5→4.2. 결정론 4.5·설명가능성 4.0 유지.
+
+**iter13 주의(정정 방지)**: 측정치 함수기본값(`existing_floor_area=0.0`·`rooftop_area=0.0`)은 법정상수 아님 → allowlist(정확한 이름만; `floor_area_ratio`=FAR 같은 법정명 substring 누수 방지). shadow_3d 값은 sim_params.json으로 **동일값 이전**이라 결정론·출력 byte-동일 보존.
 
 ---
 

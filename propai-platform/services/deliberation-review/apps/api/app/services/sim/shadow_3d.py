@@ -7,9 +7,13 @@
 from __future__ import annotations
 
 import math
+from typing import TYPE_CHECKING
 
 from app.contracts.rationale import Rationale, RationaleInput
 from app.services.explain.legal_refs import refs
+
+if TYPE_CHECKING:
+    from app.services.sim.sim_params import SimParamSource
 
 _DECL_WINTER = -23.44   # 동지 적위(deg) — 천문 상수
 _LAT_M_PER_DEG = 110540.0  # 위도 1도≈미터(WGS84) — 측지 상수
@@ -62,13 +66,19 @@ def building_shadow(footprint, height_m: float, sun_alt_deg: float, sun_azim_deg
 
 
 def sunlight_analysis(target_geometry: dict, buildings: list[dict], latitude: float,
-                      floor_height_m: float = 3.0, sunlight_threshold: float = 0.5,
-                      hours: tuple[int, ...] = (9, 10, 11, 12, 13, 14, 15)) -> dict | None:
+                      params: SimParamSource | None = None) -> dict | None:
     """대상 대지 + 주변 건물 → 동지 시각별 일영 비율 + 일조시각 수(건축법 일조권 기초) + rationale. 결손 None.
 
-    floor_height_m: 층수→높이 환산 표준 층고(법규성 파라미터, 호출자 주입). height_m 있으면 우선.
-    sunlight_threshold: 일영비율 이 값 미만이면 '과반 일조' 시각으로 계상(법규성 파라미터, 주입).
+    params: 시뮬 파라미터 소스(SimParamSource, INV-20). 표준 층고/일영 임계/관측 시각창은 sim_params.json
+            SSOT에서 주입(코드 내 법규 리터럴 0건). None이면 기본 데이터셋.
     """
+    from app.services.sim.sim_params import SimParamSource
+    params = params or SimParamSource()
+    floor_height_m = params.get("shadow3d_floor_height_m")          # 층수→높이 환산 표준 층고(height_m 우선)
+    sunlight_threshold = params.get("shadow3d_sunlight_threshold")  # 일영비율 이 값 미만이면 '과반 일조'로 계상
+    h0 = int(params.get("shadow3d_obs_hour_start"))
+    h1 = int(params.get("shadow3d_obs_hour_end"))
+    hours = tuple(range(h0, h1 + 1))                                # 동지 관측 시각창(비법정 근사)
     try:
         from shapely.ops import unary_union
     except ImportError:
@@ -153,13 +163,17 @@ def _sun(latitude: float, hour_angle_deg: float) -> tuple[float, float]:
     return sun_altitude_azimuth(latitude, _DECL_WINTER, hour_angle_deg)
 
 
-def sunlight_metric(sun: dict | None, min_hours: float = 4.0):
+def sunlight_metric(sun: dict | None, params: SimParamSource | None = None):
     """sunlight_analysis 결과 → SimMetric(emit 게이트로 근거 강제·일조 미달 flag). 결손 None.
 
-    min_hours: 동지 9~15시 일조시각 기준(법규성 파라미터, 호출자 주입). 미달 시 flag로 '확인 필요' 표면화.
+    params: 시뮬 파라미터 소스(SimParamSource, INV-20). 일조시각 최소기준은 sim_params.json SSOT에서 주입
+            (코드 내 법규 리터럴 0건). 미달 시 flag로 '확인 필요' 표면화.
     """
     if sun is None:
         return None
+    from app.services.sim.sim_params import SimParamSource
+    params = params or SimParamSource()
+    min_hours = params.get("shadow3d_min_sunny_hours")
     from app.contracts.sim_metric import MethodTrace, MetricStatus, SimMetric, emit
     r = sun.get("rationale", {})
     val = sun.get("sunny_hours_9to15")

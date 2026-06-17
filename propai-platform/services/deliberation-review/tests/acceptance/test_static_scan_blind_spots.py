@@ -41,3 +41,38 @@ def test_legal_name_with_benign_value_detected():
     assert scan("height_limit = 10")
     # 명백한 인덱스/플래그(법정키워드 미포함)는 여전히 무탐.
     assert not scan("idx = 100") and not scan("count = 10")
+
+
+def test_detects_function_default():
+    # 함수 시그니처 기본값에 숨은 법정 리터럴(floor_height_m=3.0) — 시그니처 사각지대 차단.
+    assert any("floor_height_m" in h for h in scan("def f(floor_height_m: float = 3.0): pass"))
+    assert any("sunlight_threshold" in h for h in scan("def f(a, sunlight_threshold=0.5): pass"))
+    # 키워드 전용 인자 기본값도.
+    assert any("min_hours" in h for h in scan("def f(*, min_hours=4.0): pass"))
+    # 비법정 인자 기본값(idx=0)은 무탐.
+    assert not scan("def f(idx=0, n=10): pass")
+
+
+def test_detects_call_kwarg():
+    # 호출 키워드 인자에 박힌 하드코딩(build(far_limit=250)) — 주입처럼 보이지만 리터럴.
+    assert any("far_limit" in h for h in scan("build(far_limit=250)"))
+    assert any("height_limit" in h for h in scan("compute(x, height_limit=10.0)"))
+    # 비법정 kwarg(timeout=30)·Name값(far_limit=cfg)은 무탐.
+    assert not scan("build(timeout=30)")
+    assert not scan("build(far_limit=cfg)")
+
+
+def test_detects_tuple_unpack():
+    # 튜플 언패킹: far, bcr = 250, 60 → 각 이름·값 짝 탐지.
+    hits = scan("far_limit, bcr_limit = 250, 60")
+    assert any("far_limit=250" in h for h in hits) and any("bcr_limit=60" in h for h in hits)
+    # 측정 이름은 무탐.
+    assert not scan("idx, n = 1, 2")
+
+
+def test_detects_tuple_list_value():
+    # 수치 튜플/리스트 값(hours=(9,10,11)) — 관측창 등 법정명 컨테이너 탐지.
+    assert any("hours" in h for h in scan("obs_hours = (9, 10, 11, 12)"))
+    assert any("limit" in h for h in scan("height_limits = [10, 20, 30]"))
+    # 비법정명 컨테이너는 무탐.
+    assert not scan("indices = (0, 1, 2)")

@@ -4,9 +4,10 @@ from app.services.sim.skyline_protrusion import protrusion_metric
 
 
 def test_sunlight_metric_emit_and_flag():
+    from app.services.sim.sim_params import SimParamSource
     sun = {"sunny_hours_9to15": 2.0,
            "rationale": {"caveats": ["근사"], "inputs": [{"name": "위도", "value": 37.5}]}}
-    m = sunlight_metric(sun, min_hours=4.0)
+    m = sunlight_metric(sun, params=SimParamSource(overrides={"shadow3d_min_sunny_hours": 4.0}))
     assert m.metric_id == "sunlight_3d" and m.value == 2.0
     assert m.method_trace.basis_article  # emit 게이트 — 근거 강제
     assert "sunlight_below_min" in m.flags  # 2 < 4 → 미달 표면화
