@@ -27,7 +27,7 @@ from app.core.errors import PreflightRefused
 from app.core.hashing import input_hash
 from app.core.parameters import param
 from app.services.explain.legal_refs import resolve_text
-from app.services.extraction.dual_path import resolve_elements
+from app.services.extraction.extraction_orchestrator import orchestrate_extraction
 from app.services.gate.confidence_composer import ConfidenceComposer
 from app.services.gate.finding_gate import FindingGate
 from app.services.judge.evaluator import EvalCase, Evaluator
@@ -66,45 +66,19 @@ def run_analysis(inp: AnalysisInput) -> AnalysisResult:
 
     payload = {"pnu": inp.pnu, "application_date": inp.application_date, "drawing": inp.drawing or {}}
 
-    # 0a) 멀티모달 도면 자동해석 (P-A) — 도면 시트 → 구조화 요소(없으면 빈, 날조 금지).
-    drawing_source: str | None = None
-    auto_elements: list[dict] = []
-    dext = None
-    if inp.drawings:
-        from app.adapters.vision.drawing_extractor import build_drawing_extractor
-        from app.contracts.drawing_extraction import DrawingSheet
-        # 축척 방어적 해소(미확정이면 None — 픽셀 측정치는 미환산/미승계, 날조 금지). 픽셀→실척 환산(INC-4).
-        draw_scale = None
-        try:
-            from app.services.preflight.scale_unit import ScaleUnitResolver
-            draw_scale = ScaleUnitResolver().resolve(inp.drawing)
-        except PreflightRefused:
-            draw_scale = None
-        extractor = build_drawing_extractor()
-        dext = extractor.extract([DrawingSheet(**d) for d in inp.drawings], scale=draw_scale)
-        drawing_source = dext.source
-        auto_elements = dext.to_pipeline_elements()
-        if dext.source == "none":
-            skipped.append("drawing_extract: 도면 이미지/힌트 없음 (요소 자동추출 불가)")
-        for note in dext.notes:
-            skipped.append(f"drawing_extract: {note}")
-
-    # P-A.2) 도면 면적표 + 추출요소 → calc_targets 자동구성(명시 입력 우선, 없으면 도면 자동).
-    calc_targets = list(inp.calc_targets)
-    calc_targets_source: str | None = "INPUT" if inp.calc_targets else None
-    if not calc_targets and dext is not None:
-        from app.services.extraction.calc_target_builder import build_calc_targets_from_drawing
-        auto_ct, ct_notes = build_calc_targets_from_drawing(dext)
-        if auto_ct:
-            calc_targets = auto_ct
-            calc_targets_source = "DRAWING_AUTO"
-        for n in ct_notes:
-            skipped.append(f"calc_target_auto: {n}")
-
-    # 0b) 이중경로 추출 (P1) — BIM(IFC) 우선, 없으면 VLLM/2D(도면 자동추출 + 직접입력). source 표면화.
-    extraction = resolve_elements({"ifc": inp.ifc, "elements": auto_elements + inp.elements})
-    if extraction.source == "none":
-        skipped.append("extraction: no ifc/elements/drawings (산정/판정은 calc_targets/rules 직접 입력 사용)")
+    # 0a/P-A.2/0b) 추출 오케스트레이터 (INC-10) — 도면 자동해석·calc_target 자동구성·이중경로를
+    # 명시적 에이전트 파이프라인(역할합의→추출가→취합가→calc_target→이중경로→검증가)으로 실체화.
+    # 취합가는 LLM이 아니라 결정론 합의(CrossSourceValidator). 단계 타이밍·강등사유는 extraction_trace로 노출.
+    bundle = orchestrate_extraction(
+        drawings=inp.drawings, drawing=inp.drawing, explicit_calc_targets=inp.calc_targets,
+        ifc=inp.ifc, direct_elements=inp.elements,
+    )
+    drawing_source = bundle.drawing_source
+    auto_elements = bundle.drawing_elements
+    calc_targets = bundle.calc_targets
+    calc_targets_source = bundle.calc_targets_source
+    extraction = bundle.extraction
+    skipped.extend(bundle.skipped)
 
     # 1) Preflight (R0) — 거부 시 비차단 표면화.
     preflight: PreflightContext | None = None
@@ -441,6 +415,7 @@ def run_analysis(inp: AnalysisInput) -> AnalysisResult:
         drawing_source=drawing_source,
         drawing_elements_n=len(auto_elements),
         calc_targets_source=calc_targets_source,
+        extraction_trace=bundle.deterministic_trace(),
         extraction_source=extraction.source,
         bim_elements=(extraction.bim.elements if extraction.bim else []),
         preflight=preflight,

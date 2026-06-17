@@ -225,14 +225,15 @@ P-멀티모달정확도 기반    │        (측정치·축척·sanity가      
 - 리스크: 중(요소키 정의·N-패스 비용). INC-8(캐시) 없으면 N-패스가 재현 불가 → INC-8 선행 필수.
 - 효과: 시트역할 3원 합의(sheet_role_resolver.py)·N-출처 합의(validator.py)를 '비전 추출' 영역으로 일반화. 멀티에이전트 고도화의 결정론-보존 척추.
 
-**INC-10 [medium/M] 추출 오케스트레이터 — 인라인 비전블록을 명시적 에이전트 파이프라인으로**
+**INC-10 [medium/M] ✅ 완료 — 추출 오케스트레이터(인라인 비전블록을 명시적 에이전트 파이프라인으로)**
 - 대상: 신규 `services/extraction/extraction_orchestrator.py` · analysis_pipeline.py:68-99(0a/P-A.2/0b 인라인)를 `orchestrate_extraction(drawings,ifc,hints)->ExtractionBundle`로 추출.
 - 단계: ① 시트역할 합의(SheetRoleResolver 재사용) ② 추출가(INC-9 N-패스) ③ 검증가(INC-6 sanity + cross_sheet_identity.py) ④ 결정론 취합가 ⑤ calc_target 승계. 각 단계 타이밍·강등사유를 `ExtractionBundle.trace`로 노출.
 - 불변식: 순서·입력 불변 리팩터 → 출력 동일성(INV-1). 단계 skipped/강등 trace 표면화(무음0). step provenance 누적.
 - 리스크: 중(대형 함수 리팩터). 골든 입력 출력 동일성으로 회귀 고정.
 - 효과: 에이전트 협업 실체화 + 관측성. INC-9·INC-6을 단계로 흡수.
+- **구현 노트**: 6단계(role_resolve/extract/aggregate/calc_target/dual_path/verify). 취합가④=`merge_with_consensus`(CrossSourceValidator, LLM 미관여). 단일 패스는 SINGLE(원순서·값 보존, consensus_status 메타만 — to_pipeline_elements/calc_target 비소비). N-패스는 `vision_consensus_passes`(기본 1) param + 비전 경로만. `extraction_trace`는 timing 제외 결정론 투영(완전동치 보존). cross_sheet③은 관측만(값 미변형, 단일시트 n/a). skipped 문자열·순서 인라인과 byte 동일.
 
-> **P-에이전트 완료 게이트**: 코드리뷰 ≥4.5(취합가가 LLM 아님을 증명, 캐시키 설명가능성, CONFLICT→needs_review 무음0). 합의 결정론을 동일 캐시입력 2회로 입증. 337 + 신규 통과.
+> **P-에이전트 완료 게이트 ✅ 충족**: 적대적 다관점 리뷰(behavior 4.7·gate 4.7·quality 4.5, min 4.5 ≥4.5) — 취합가 LLM 미관여 코드증명·캐시키(sha256 model‖image_ref‖prompt) 설명가능성·CONFLICT→needs_review(trace status + skipped) 무음0·합의 결정론 동일입력 2회 동일 확인. **370 passed**(362→+특성화2+오케스트레이터6), ruff clean, static_scan 0. 10개 엣지 입력 byte 동일(0 mismatch).
 
 ---
 
