@@ -24,6 +24,78 @@ async def site_score(req: SiteScoreRequest):
     return compute_site_score(req.context, req.region_baseline)
 
 
+class PoiInfraRequest(BaseModel):
+    address: str | None = None     # 주소/지번(좌표 없으면 VWorld 지오코딩)
+    lat: float | None = None
+    lon: float | None = None
+    radius_m: int = 1000
+
+
+# 입지 POI 카테고리 가중치(접근성 점수용) — 지하철·교육·의료·생활 비중.
+_POI_WEIGHTS: dict[str, float] = {
+    "SW8": 2.2, "SC4": 1.6, "HP8": 1.4, "MT1": 1.2, "PM9": 0.9, "BK9": 0.9,
+    "PO3": 0.8, "CT1": 0.8, "CS2": 0.6, "AC5": 0.7, "AT4": 0.5, "FD6": 0.5, "CE7": 0.4,
+}
+
+
+def _poi_accessibility_score(categories: dict[str, Any]) -> dict[str, Any]:
+    """POI 인벤토리 → 0~100 접근성 점수(거리감쇠×가중). 설명가능 기여도 동반."""
+    def band(m: float | None) -> float:
+        if m is None:
+            return 0.0
+        for thr, n in [(250, 1.0), (500, 0.85), (1000, 0.6), (1500, 0.35), (2500, 0.1)]:
+            if m <= thr:
+                return n
+        return 0.0
+
+    contribs: list[dict[str, Any]] = []
+    wsum = 0.0
+    acc = 0.0
+    for code, w in _POI_WEIGHTS.items():
+        c = categories.get(code) or {}
+        nearest = c.get("nearest_m")
+        cnt = c.get("count") or 0
+        # 근접도 + 밀도(개수) 약간 가산.
+        n = band(nearest)
+        if cnt > 1:
+            n = min(1.0, n + min(0.12, 0.02 * (cnt - 1)))
+        wsum += w
+        acc += w * n
+        if cnt > 0:
+            contribs.append({"category": c.get("label", code), "count": cnt,
+                             "nearest_m": nearest, "norm": round(n, 2)})
+    score = round(100 * acc / wsum, 1) if wsum else 0.0
+    contribs.sort(key=lambda x: -(x["norm"] or 0))
+    return {"poi_accessibility_score": score, "contributions": contribs}
+
+
+@router.post("/poi-infra")
+async def poi_infra(req: PoiInfraRequest):
+    """입지 인프라(POI) 인벤토리 + 접근성 점수 — Kakao Local 카테고리 반경검색.
+
+    좌표 미지정 시 주소/지번을 VWorld 로 지오코딩(Daum 미검색 지번도 OK).
+    무목업: Kakao 키 미설정/조회 실패 시 정직 표기.
+    """
+    lat, lon = req.lat, req.lon
+    geocoded_from: str | None = None
+    if (lat is None or lon is None) and req.address:
+        from app.services.external_api.vworld_service import VWorldService
+        geo = await VWorldService().geocode_address(req.address.strip())
+        if geo and geo.get("lat"):
+            lat, lon = geo["lat"], geo["lon"]
+            geocoded_from = "vworld"
+    if lat is None or lon is None:
+        return {"available": False, "reason": "좌표 또는 지오코딩 가능한 주소가 필요합니다."}
+
+    from app.services.external_api.kakao_local_service import KakaoLocalService
+    inv = await KakaoLocalService().poi_inventory(lat, lon, radius=req.radius_m)
+    if not inv.get("available"):
+        return {**inv, "coordinates": {"lat": lat, "lon": lon}, "geocoded_from": geocoded_from}
+
+    scored = _poi_accessibility_score(inv.get("categories", {}))
+    return {**inv, **scored, "geocoded_from": geocoded_from}
+
+
 class EnvelopeRequest(BaseModel):
     land_area_sqm: float = 0
     zone: str = ""
