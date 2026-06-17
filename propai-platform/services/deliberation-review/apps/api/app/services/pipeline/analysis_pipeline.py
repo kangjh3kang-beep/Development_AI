@@ -206,7 +206,9 @@ def run_analysis(inp: AnalysisInput) -> AnalysisResult:
             if geocoded and geocoded.get("pnu"):
                 effective_pnu = geocoded["pnu"]
             else:
-                skipped.append("geocode: 주소→PNU 도출 실패")
+                skipped.append("geocode: 주소→PNU 조회 결과 없음 — 키 설정됨(외부 장애/주소 미해소 미상)")
+        else:
+            skipped.append("geocode: 지오코더 미설정(키 없음) — 주소→PNU 도출 불가")
 
     # 6.36) 주변 건물 스카이라인 + 3D 일조 시뮬 (VWORLD lt_c_bldginfo + shapely). 좌표(geocoded) 필요.
     surrounding_context = None
@@ -236,7 +238,9 @@ def run_analysis(inp: AnalysisInput) -> AnalysisResult:
                         if pm is not None:
                             sim_metrics.append(pm)
             else:
-                skipped.append("surrounding: 주변 건물 수집 결손")
+                skipped.append("surrounding: 주변 건물 조회 결과 없음 — 키 설정됨(외부 장애/결손 미상)")
+        else:
+            skipped.append("surrounding: 주변건물 어댑터 미설정(키 없음)")
 
     # 6.4) 대지 규제 카드 자동수집 (VWORLD NED 토지특성+토지이용계획) — 심의 입력 전제 1차출처 고정.
     land_card = None
