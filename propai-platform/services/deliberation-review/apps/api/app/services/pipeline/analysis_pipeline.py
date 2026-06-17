@@ -36,6 +36,7 @@ from app.services.legal_calc.variable_seed import build_calc_variable_registry
 from app.services.precedent.stat_aggregator import StatAggregator
 from app.services.qualitative.qual_evaluator import QualEvaluator
 from app.services.reg_graph.builder import build_reg_graph
+from app.services.report.labels import label_for
 from app.services.report.report_builder import ReportBuilder
 from app.services.sim.sim_engine import SimEngine
 from app.services.verify.citation_check import CitationCheck
@@ -352,8 +353,11 @@ def run_analysis(inp: AnalysisInput) -> AnalysisResult:
         legal_basis = resolve_text(fnd.basis_article) or {
             "ref": fnd.basis_article, "resolved": None,
             "note": "법령 본문 미해소 — basis_article 조문 단위 정밀화 필요"}
+        _flbl = label_for(fnd.rule_id) or {}
         items.append({
             "item_id": fnd.rule_id,
+            "title": _flbl.get("title"),                  # 사람친화 라벨(미등록=None→UI item_id 폴백)
+            "recommendation": _flbl.get("recommendation"),
             "verdict": fnd.verdict.value,
             "status": gated.status.value,
             "confidence_grade": _grade(fnd.composite_confidence),
@@ -382,8 +386,11 @@ def run_analysis(inp: AnalysisInput) -> AnalysisResult:
     # 플래그된 공학 지표는 '확인 필요' 항목으로 합류(무음 통과 금지).
     for m in sim_metrics:
         if m.flags:
+            _mlbl = label_for(m.metric_id) or {}
             items.append({
                 "item_id": m.metric_id,
+                "title": _mlbl.get("title"),
+                "recommendation": _mlbl.get("recommendation"),
                 "status": "NEEDS_REVIEW",
                 "confidence_grade": _grade(m.confidence),
                 "evidence": {"metric": m.metric_id, "value": m.value, "required": m.required,
@@ -398,6 +405,7 @@ def run_analysis(inp: AnalysisInput) -> AnalysisResult:
     if precedent is not None and precedent.status == StatStatus.SUFFICIENT:
         items.append({
             "item_id": f"precedent:{inp.issue}",
+            "title": f"유사사례 통계 — {inp.issue}",
             "status": "NEEDS_REVIEW",  # 참고 항목 — 확정 아님(INV-24 후보)
             "evidence": {
                 "distribution": precedent.distribution,
