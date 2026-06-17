@@ -269,11 +269,12 @@ P-가시성과 병렬 착수 가능하나, static_scan(INC-15)은 캐시(INC-11)
 - 리스크: L(broker·LiveNetwork 실구현·INC-13 의존). 운영 배선 비중 큼.
 - 효과: 주기 수집·정합 실가동.
 
-**INC-15 [medium/S] INV-13 정적검사(regulation/land/cross_validate 소비경로 + 캐시 경유 강제)**
+**INC-15 [medium/S] ✅ 완료 — INV-13 정적검사(regulation/land/cross_validate 소비경로 + 캐시 경유 강제)**
 - 대상: 신규 `services/static_scan/live_call_scan.py`(현재 부재) · 스캔 대상에 adapters/regulation·services/land·services/cross_validate 포함, '키 가드+graceful None+AdapterCache 경유'를 허용 패턴, 캐시 우회 직접 httpx.get을 위반으로.
 - 불변식: 정적검사가 INV-13 무음 라이브 차단을 코드화(결정론·무음0 강화).
 - 리스크: 낮음. **INC-11 선행 필수**(허용 패턴 '캐시 경유'가 존재해야).
 - 효과: 소비경로 무라이브 보증 범위 확대.
+- **구현 노트**: AST 스캐너 `tools/live_call_scan.py`(기존 tools/static_scan.py 선례 위치) — 소비경로의 직접 `httpx.*`/`requests.*` 네트워크 호출 탐지(별칭 import 미탐 한계 명시). 강제 테스트 `tests/acceptance/test_live_call_scan.py`가 **adapters/regulation·adapters/legal·services/land·services/cross_validate** 스캔→위반 0 + 스캐너 자기검증 4(탐지·cached_get 허용·allowlist). 프로덕션 코드 변경 0(dev/CI 가드). 현 소비경로는 INC-11로 전부 cached_get 경유라 위반 0. **396 passed**(391→+5), ruff clean.
 
 **INC-16 [medium/M] 아웃바운드 공통 래퍼(retry+백오프+토큰버킷 RPS+서킷브레이커)** *(선택, 운영 강건)*
 - 대상: 신규 `adapters/http_client.py robust_get` · 7개 어댑터 개별 httpx.get(각 15s)을 단일 경유로. 불변식: 전송 계층만(결정론 영향 0), 재시도 소진 후 기존 graceful None(무음0). 효과: 쿼터 보호·회복력. INC-11과 결합 시 최적.
