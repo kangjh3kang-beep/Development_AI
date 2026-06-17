@@ -27,3 +27,8 @@ class CorpusIngest:
             )
             count += 1
         return count
+
+    async def persist_to_db(self, session, cases: list[PrecedentCase]) -> int:
+        """INC-13 — 코퍼스를 관계형 DB(precedent_case)에도 영속(Qdrant 벡터는 ingest 담당). 출처 강제(INV-23)."""
+        from app.supply.db_persist import persist_cases
+        return await persist_cases(session, cases)
