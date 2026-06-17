@@ -15,8 +15,8 @@ _LEGAL_KEYWORDS = (
     "exclusion", "relax", "incentive", "tol", "pct", "percent",
 )
 
-# 의미 없는 일반 상수(인덱스·배수 등)는 과탐 제외.
-_BENIGN = {"0", "1", "2", "100", "1000", "10", "1.0", "0.0", "0.5"}
+# 명백한 인덱스/플래그/초기값만 과탐 제외 — 법정값일 수 있는 100/10/1000/0.5는 제외 금지(INV-3 누수 방지).
+_BENIGN = {"0", "1", "2", "1.0", "0.0"}
 
 
 def _number(node: ast.AST) -> float | int | None:
