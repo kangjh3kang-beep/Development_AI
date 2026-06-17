@@ -93,7 +93,20 @@ class CalcEngine:
         )
         return emit(q)
 
+    _REQUIRED = {
+        CalcTarget.BUILDING_AREA: ("outer_area",),
+        CalcTarget.GROSS_FLOOR_AREA: ("floor_areas",),
+        CalcTarget.FAR_FLOOR_AREA: ("gross_floor_area",),
+        CalcTarget.PLOT_AREA: ("parcel_area",),
+        CalcTarget.BUILDING_HEIGHT: ("raw_height",),
+        CalcTarget.FLOOR_COUNT: ("above_ground_floors",),
+    }
+
     def _dispatch(self, target, payload, elements):
+        # 필수 페이로드 키 검증 — 결손 시 무음 KeyError(→500 붕괴) 대신 RuleContractError(→422 DomainError).
+        for key in self._REQUIRED.get(target, ()):
+            if key not in payload:
+                raise RuleContractError(f"calc target {target.value} requires payload['{key}'] (결손)")
         if target == CalcTarget.BUILDING_AREA:
             return self.area.building_area(payload["outer_area"], elements)
         if target == CalcTarget.GROSS_FLOOR_AREA:

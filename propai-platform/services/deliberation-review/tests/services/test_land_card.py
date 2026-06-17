@@ -69,7 +69,8 @@ def test_land_card_partial(monkeypatch):
     monkeypatch.setattr(httpx, "get", _get)
     card = collect_land_card(_PNU, "2024")
     assert card.jimok == "대"
-    assert any("토지이용계획 결손" in n for n in card.notes)
+    # 키 설정됨 + 조회 결과 없음 → '결과 없음(장애/결손 미상)'으로 구분 표면화(무규제 단정 금지).
+    assert any("토지이용계획" in n and "결과 없음" in n for n in card.notes)
 
 
 def test_pipeline_land_card(monkeypatch):
