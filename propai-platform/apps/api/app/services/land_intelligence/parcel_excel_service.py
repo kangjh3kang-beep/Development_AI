@@ -107,6 +107,87 @@ def _to_float(v: Any) -> float | None:
         return None
 
 
+_LLM_ROLES = {
+    "address", "jibun", "bcode", "pnu", "jimok", "area", "owner", "label",
+    "consent_land", "consent_district", "consent_operator",
+}
+# 헤더 시그니처별 LLM 분류 결과 캐시 — 동일 양식 반복 업로드 시 LLM 재호출/비용 방지.
+_COL_CACHE: dict[tuple, dict[str, str]] = {}
+
+
+async def _llm_detect_columns(headers: list[str], sample_rows: list[dict]) -> dict[str, str]:
+    """규칙기반 컬럼감지 실패 시 LLM 에이전트가 헤더+샘플행을 분석해 컬럼→역할을 매핑.
+
+    임의 양식(비표준 헤더, 영문/약어/병합 등)도 분류. 환각 방지: LLM이 답한 컬럼명이 실제
+    headers에 존재할 때만 채택. 키 미설정/실패/무효 → {} 반환(현행 규칙기반 폴백 유지·무목업).
+    동일 헤더 시그니처는 캐시 재사용(LLM 재호출 방지). LLM 토큰은 _record_llm_billing 계측.
+    """
+    if not headers:
+        return {}
+    cache_key = tuple(headers)
+    if cache_key in _COL_CACHE:
+        return dict(_COL_CACHE[cache_key])
+    try:
+        from app.services.ai.llm_provider import get_llm
+        from langchain_core.messages import HumanMessage, SystemMessage
+    except Exception:  # noqa: BLE001
+        return {}
+    try:
+        llm = get_llm(timeout=40, max_tokens=600)
+    except Exception:  # noqa: BLE001
+        logger.info("엑셀 LLM 컬럼분류 생략 — 사용가능 LLM 키 없음(규칙기반 폴백)")
+        return {}
+    import json as _json
+    sample = []
+    for r in sample_rows[:3]:
+        sample.append({str(k): str(v)[:40] for k, v in r.items()})
+    sys = (
+        "너는 한국 부동산 '토지조서' 엑셀의 컬럼을 표준 역할로 분류하는 분석 에이전트다. "
+        "헤더와 샘플행 값을 보고 각 표준 역할에 해당하는 '실제 컬럼명'을 고른다. JSON만 출력한다."
+    )
+    human = (
+        f"헤더: {headers}\n샘플행(최대3): {sample}\n\n"
+        "표준 역할(해당 없으면 생략): "
+        "address(소재지/주소), jibun(지번), bcode(법정동코드 10자리), pnu(필지고유번호 19자리), "
+        "jimok(지목), area(면적㎡), owner(소유자 또는 소유구분), label(동·호·건물명칭), "
+        "consent_land(토지사용동의), consent_district(지구단위/정비동의), consent_operator(시행자지정동의).\n"
+        '반드시 JSON 객체만 출력. 예: {"address":"소재지","jibun":"지번","area":"면적(㎡)"}'
+    )
+    try:
+        resp = await llm.ainvoke([SystemMessage(content=sys), HumanMessage(content=human)])
+        text = resp.content if hasattr(resp, "content") else str(resp)
+        m = re.search(r"\{.*\}", str(text), re.S)
+        if not m:
+            return {}
+        data = _json.loads(m.group(0))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("엑셀 LLM 컬럼분류 실패: %s", str(e)[:160])
+        return {}
+
+    # ★LLM 토큰 사용량을 표준 계측 경로(_record_llm_billing→llm_usage_log)에 best-effort 기록.
+    #   (BaseInterpreter 단일경유 원칙 — 직접 ainvoke라도 사용량은 누락 없이 계측. 실패는 무시.)
+    try:
+        usage = getattr(resp, "usage_metadata", None) or {}
+        in_tok = int(usage.get("input_tokens", 0) or 0)
+        out_tok = int(usage.get("output_tokens", 0) or 0)
+        if in_tok or out_tok:
+            from app.services.ai.base_interpreter import _record_llm_billing
+            model = getattr(llm, "model", None) or getattr(llm, "model_name", "") or "unknown"
+            await _record_llm_billing(str(model), in_tok, out_tok, service="parcel_excel_column_detect")
+    except Exception:  # noqa: BLE001
+        pass
+
+    out: dict[str, str] = {}
+    for role, col in (data or {}).items():
+        # 환각 차단: 답한 컬럼명이 실제 헤더에 존재할 때만 채택.
+        if role in _LLM_ROLES and isinstance(col, str) and col in headers:
+            out[role] = col
+    if len(_COL_CACHE) > 256:  # 장수명 워커 무한증가 방지(상한 초과 시 비움)
+        _COL_CACHE.clear()
+    _COL_CACHE[cache_key] = dict(out)  # 동일 양식 재업로드 시 LLM 재호출 방지
+    return out
+
+
 def build_template_xlsx() -> bytes:
     """토지조서 다필지 업로드용 표준 엑셀 양식(예시행 + 안내 시트) 생성."""
     from openpyxl import Workbook
@@ -174,11 +255,21 @@ class ParcelExcelService:
             return {"error": f"엑셀/CSV를 읽지 못했습니다: {str(e)[:120]}", "parcels": []}
 
         df = df.fillna("")
-        headers = list(df.columns)
+        headers = [str(h) for h in df.columns]
         cols = _detect_columns(headers)
+        engine = "rule"
+        # ★규칙기반이 필수컬럼(주소/PNU/법정동코드)을 못 찾으면 LLM 에이전트가 헤더+샘플행을
+        #   분석해 임의 양식의 컬럼을 표준 역할로 분류(엑셀 스마트 분류). 빈칸 역할만 보강.
+        if not cols["address"] and not cols["pnu"] and not cols["bcode"]:
+            llm_cols = await _llm_detect_columns(headers, df.to_dict("records")[:3])
+            if llm_cols:
+                for role, col in llm_cols.items():
+                    if not cols.get(role):
+                        cols[role] = col
+                engine = "rule+llm"
         if not cols["address"] and not cols["pnu"] and not cols["bcode"]:
             return {
-                "error": "필수 컬럼을 찾지 못했습니다 — 최소 [소재지(주소)] 또는 [PNU] 또는 [법정동코드]가 필요합니다. 표준 양식을 내려받아 작성해 주세요.",
+                "error": "필수 컬럼을 찾지 못했습니다 — 최소 [소재지(주소)] 또는 [PNU] 또는 [법정동코드]가 필요합니다. 표준 양식을 내려받아 작성하거나, 헤더에 '소재지/지번/면적' 등을 명시해 주세요.",
                 "detected_columns": cols, "headers": headers, "parcels": [],
             }
 
@@ -262,6 +353,7 @@ class ParcelExcelService:
             "resolved_count": ok,
             "enriched_count": enriched,
             "detected_columns": cols,
+            "column_engine": engine,  # rule | rule+llm (LLM 에이전트가 컬럼 분류에 관여했는지)
             "duplicate_pnu_warning": dup_warning,
             "examples": parcels[:3],
             # 소유자·권리관계(근저당·지상권 등)는 공공API 미제공 → 등기부등본 열람/발급으로 확보.
@@ -272,7 +364,8 @@ class ParcelExcelService:
                             "토지조서 화면의 '등기부등본 열람/발급'으로 확보하세요."),
             },
             "note": (f"{len(parcels)}필지 인식 · PNU 확정 {ok}건 · 면적/용도/공시지가 자동보강 {enriched}건. "
-                     "주소·지번만 입력해도 좌표·PNU·면적·용도지역·공시지가는 자동 수집됩니다. "
+                     + ("🤖 비표준 양식이라 LLM 에이전트가 컬럼을 자동 분류했습니다. " if engine == "rule+llm" else "")
+                     + "주소·지번만 입력해도 좌표·PNU·면적·용도지역·공시지가는 자동 수집됩니다. "
                      "소유자·권리관계는 등기부등본 열람/발급으로 확인하세요. "
                      "status=failed 행은 주소를 보완해 주세요(가짜값 없음)."),
         }

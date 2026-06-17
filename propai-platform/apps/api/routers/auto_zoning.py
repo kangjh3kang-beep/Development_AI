@@ -1116,7 +1116,10 @@ async def parse_parcels(file: UploadFile = File(...)):
     """업로드된 토지조서 엑셀/CSV → 필지 목록(주소·PNU·bcode·면적·지목·소유구분) 추출.
 
     PNU 우선순위: PNU열 > 법정동코드+지번 구성 > 주소 지오코딩. 무자료/실패는 status로 정직 표기.
-    LLM 미사용(데이터 추출)이라 과금 게이트 없음.
+    표준 양식은 규칙기반 컬럼감지(LLM 미사용). ★비표준 양식이라 규칙기반이 필수컬럼을 못 찾을
+    때만 LLM 에이전트가 컬럼을 1회 분류(헤더 시그니처 캐시로 재호출 방지). LLM 토큰은
+    _record_llm_billing으로 계측·귀속(service=parcel_excel_column_detect). 과금 정책상 컬럼분류는
+    저비용 보조기능으로 별도 차감 게이트 없음(관리자 미설정 시 무료 원칙).
     """
     from apps.api.app.services.land_intelligence.parcel_excel_service import (
         ParcelExcelService,
