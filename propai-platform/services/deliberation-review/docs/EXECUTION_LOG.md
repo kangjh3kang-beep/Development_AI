@@ -273,8 +273,16 @@
 - shadow_3d.sunlight_analysis·skyline_protrusion 반환에 rationale 동반(건축법§61·시행령§86 / 경관법§9·건축법§60).
 - 무음 오판 수정: sunny_hours_9to15가 '연속'이 아닌 과반일조 시각 총합임을 caveat로 표면화(시행령§86 연속판정과 별개).
 - INV-20: sunlight_threshold(과반임계) 함수 파라미터화 + method에 동적 반영. AT 2 + 전체 **277 passed, ruff clean**.
-- 후속(설명가능성 확장): legal_calc CalcTrace 임계·제외수치 전파 · report basis_article 본문 해소 ·
-  final_gate 강등사유 라벨 · cross_validation 출처 ref 보존.
+### ✅ 설명가능성 확장 — report/reg_graph basis_article 본문 해소 (★작업경로=모노레포 정본)
+- **작업 경로 이전**: 정본=모노레포 `services/deliberation-review`(독립 워크트리 Development_AI_deliberation,
+  브랜치 feature/deliberation-review). 원본 propai-review는 보관. 원본 068c3af→정본 rsync 동기화.
+- legal_refs에 **법령 수준 키 4종**(국토계획법시행령/국토계획법/건축법시행령/건축법) + **resolve_text()** —
+  거친 basis_article("국토계획법 시행령" 등 조문번호 없음)을 best-effort 해소, match=exact/law_level 정직 표기.
+- reg_graph RegNode에 law/article/summary/effective_date/source/resolved 속성 → ARTICLE 노드가 법령 본문·출처
+  동반(ID만 흐르던 결손 해소). pipeline evidence에 legal_basis 결속, 미해소는 표면화(무음 금지).
+- 검증: AT 2(test_basis_resolve) + 전체 **279 passed, ruff clean**(정본 워크트리).
+- 후속(설명가능성 확장): legal_calc CalcTrace 임계·제외수치 전파 · final_gate 강등사유 라벨 ·
+  cross_validation 출처 ref 보존.
 
 ### 통합 최종 스냅샷(diag)
 - 전 출처 표면화: drawing_source/calc_targets_source/precedent_source/mirror_source.

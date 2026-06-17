@@ -20,6 +20,13 @@ class RegNode(BaseModel):
     id: str
     kind: NodeKind
     label: str | None = None
+    # ARTICLE 노드 법령 해소(설명가능성, legal_refs). 미해소 시 resolved=None(label만 — 표면화).
+    law: str | None = None
+    article: str | None = None
+    summary: str | None = None
+    effective_date: str | None = None
+    source: str | None = None
+    resolved: str | None = None  # exact | law_level | None
 
 
 class RegEdge(BaseModel):
