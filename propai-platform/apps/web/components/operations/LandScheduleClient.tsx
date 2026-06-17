@@ -471,38 +471,64 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
               <p className="mt-0.5 text-xs text-[var(--text-secondary)]">필지별 소유·지분·매입가·계약/동의 관리 + 집계 + 구획도 + 엑셀. 등기정보분석과 상호 연동.</p>
             </div>
           </div>
-          <div className="relative z-10 mt-4 flex flex-wrap items-end gap-2">
-            <div className="min-w-[260px] flex-1">
-              <ProjectAddressInput value={addr} onChange={setAddr} label="필지 추가(지번)" placeholder="지번 주소 검색" pickerLabel="분석 히스토리" />
+          {/* 컨트롤 영역 재구성: 넓은 화면(xl)에서 좌(필지 등록) | 우(작업·내보내기) 2열,
+              좁은 화면에서는 세로로 자연스럽게 접힘. 라벨 줄바꿈 방지 위해 버튼 whitespace-nowrap. */}
+          <div className="relative z-10 mt-4 grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_auto]">
+            {/* ── 좌측: 필지 등록(지번 검색 + 추가 + 프로젝트 불러오기 + 엑셀 업로드) ── */}
+            <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)]/50 p-3">
+              <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-[var(--text-tertiary)]">필지 등록</p>
+              <div className="flex flex-wrap items-end gap-2">
+                <div className="min-w-[220px] flex-1">
+                  <ProjectAddressInput value={addr} onChange={setAddr} label="필지 추가(지번)" placeholder="지번 주소 검색" pickerLabel="분석 히스토리" />
+                </div>
+                <button onClick={add} className="whitespace-nowrap rounded-xl border border-dashed border-[var(--line-strong)] px-3.5 py-2 text-xs font-bold text-[var(--text-secondary)] hover:border-[var(--accent-strong)] hover:text-[var(--accent-strong)]">＋ 필지 추가</button>
+                {(siteAnalysis?.parcels?.length || siteAnalysis?.address) && (
+                  <button onClick={loadFromProject} title="프로젝트 부지분석의 필지(다필지 포함)를 토지조서로 불러옵니다"
+                    className="whitespace-nowrap rounded-xl border border-[var(--line-strong)] px-3.5 py-2 text-xs font-bold text-[var(--accent-strong)] hover:border-[var(--accent-strong)]">
+                    ⤵ 프로젝트 필지 불러오기{siteAnalysis?.parcels?.length ? ` (${siteAnalysis.parcels?.length})` : ""}
+                  </button>
+                )}
+                <input ref={fileRef} type="file" accept=".xlsx,.xls" className="hidden"
+                  onChange={(e) => { const f = e.target.files?.[0]; if (f) void importExcel(f); }} />
+                <button onClick={() => fileRef.current?.click()} disabled={!!busy}
+                  className="whitespace-nowrap rounded-xl border border-[var(--line-strong)] px-4 py-2 text-xs font-bold text-[var(--text-secondary)] hover:border-[var(--accent-strong)] disabled:opacity-50">
+                  {busy === "import" ? "업로드 중…" : "⬆ 엑셀 업로드"}
+                </button>
+              </div>
             </div>
-            <button onClick={add} className="rounded-xl border border-dashed border-[var(--line-strong)] px-3.5 py-2 text-xs font-bold text-[var(--text-secondary)] hover:border-[var(--accent-strong)]">＋ 필지 추가</button>
-            {(siteAnalysis?.parcels?.length || siteAnalysis?.address) && (
-              <button onClick={loadFromProject} title="프로젝트 부지분석의 필지(다필지 포함)를 토지조서로 불러옵니다"
-                className="rounded-xl border border-[var(--line-strong)] px-3.5 py-2 text-xs font-bold text-[var(--accent-strong)] hover:border-[var(--accent-strong)]">
-                ⤵ 프로젝트 필지 불러오기{siteAnalysis?.parcels?.length ? ` (${siteAnalysis.parcels?.length})` : ""}
-              </button>
-            )}
-            <input ref={fileRef} type="file" accept=".xlsx,.xls" className="hidden"
-              onChange={(e) => { const f = e.target.files?.[0]; if (f) void importExcel(f); }} />
-            <button onClick={() => fileRef.current?.click()} disabled={!!busy}
-              className="rounded-xl border border-[var(--line-strong)] px-4 py-2 text-xs font-bold text-[var(--text-secondary)] hover:border-[var(--accent-strong)] disabled:opacity-50">
-              {busy === "import" ? "업로드 중…" : "⬆ 엑셀 업로드"}
-            </button>
-            <button onClick={() => void classifyRows(true)} disabled={!!busy || rows.length === 0}
-              title="등록된 필지의 유형(토지/단일건물/공동주택)과 용도지역·면적을 자동감지·보강합니다"
-              className="rounded-xl border border-[var(--line-strong)] px-3.5 py-2 text-xs font-bold text-[var(--text-secondary)] hover:border-[var(--accent-strong)] disabled:opacity-50">
-              {busy === "classify" ? "감지 중…" : "🔎 유형 자동감지"}
-            </button>
-            <button onClick={downloadExcel} disabled={!!busy || rows.length === 0}
-              className="rounded-xl bg-[var(--accent-strong)] px-4 py-2 text-xs font-black text-white hover:opacity-90 disabled:opacity-50">
-              {busy === "excel" ? "생성 중…" : "📊 토지조서 엑셀"}
-            </button>
-            <button onClick={downloadReport} disabled={!!busy || rows.length === 0}
-              title="등록된 필지의 종합 토지분석보고서(필지요약·토지정보·규제/개발가능성·대지지분·종합의견) PDF 생성"
-              className="rounded-xl border border-[var(--accent-strong)] px-4 py-2 text-xs font-black text-[var(--accent-strong)] hover:bg-[var(--accent-soft)] disabled:opacity-50">
-              {busy === "report" ? "생성 중…" : "📄 토지분석보고서"}
-            </button>
+            {/* ── 우측: 작업·내보내기(유형 자동감지 + 엑셀 + 보고서). 좁은 화면에서 좌측 아래로 접힘 ── */}
+            <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)]/50 p-3 xl:w-[340px]">
+              <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-[var(--text-tertiary)]">집계 · 내보내기</p>
+              <div className="flex flex-wrap items-center gap-2">
+                <button onClick={() => void classifyRows(true)} disabled={!!busy || rows.length === 0}
+                  title="등록된 필지의 유형(토지/단일건물/공동주택)과 용도지역·면적을 자동감지·보강합니다"
+                  className="whitespace-nowrap rounded-xl border border-[var(--line-strong)] px-3.5 py-2 text-xs font-bold text-[var(--text-secondary)] hover:border-[var(--accent-strong)] disabled:opacity-50">
+                  {busy === "classify" ? "감지 중…" : "🔎 유형 자동감지"}
+                </button>
+                <button onClick={downloadExcel} disabled={!!busy || rows.length === 0}
+                  className="whitespace-nowrap rounded-xl bg-[var(--accent-strong)] px-4 py-2 text-xs font-black text-white hover:opacity-90 disabled:opacity-50">
+                  {busy === "excel" ? "생성 중…" : "📊 토지조서 엑셀"}
+                </button>
+                <button onClick={downloadReport} disabled={!!busy || rows.length === 0}
+                  title="등록된 필지의 종합 토지분석보고서(필지요약·토지정보·규제/개발가능성·대지지분·종합의견) PDF 생성"
+                  className="whitespace-nowrap rounded-xl border border-[var(--accent-strong)] px-4 py-2 text-xs font-black text-[var(--accent-strong)] hover:bg-[var(--accent-soft)] disabled:opacity-50">
+                  {busy === "report" ? "생성 중…" : "📄 토지분석보고서"}
+                </button>
+              </div>
+            </div>
           </div>
+
+          {/* 행 0개 빈 상태 — 무엇을 해야 하는지 친절히 안내(행이 1개라도 있으면 숨김) */}
+          {rows.length === 0 && (
+            <div className="relative z-10 mt-4 rounded-xl border border-dashed border-[var(--line-strong)] bg-[var(--surface-soft)]/30 px-6 py-8 text-center">
+              <div className="text-3xl">🗂️</div>
+              <p className="mt-2 text-sm font-bold text-[var(--text-primary)]">아직 등록된 필지가 없습니다</p>
+              <p className="mt-1 text-xs leading-relaxed text-[var(--text-secondary)]">
+                위에서 <b className="text-[var(--accent-strong)]">지번 주소 검색</b>, <b className="text-[var(--accent-strong)]">엑셀 업로드</b>, 또는 <b className="text-[var(--accent-strong)]">프로젝트 필지 불러오기</b>로 편입토지를 등록하세요.
+              </p>
+              <p className="mt-1.5 text-[11px] text-[var(--text-hint)]">필지를 등록하면 소유·지분·매입가·계약/동의 관리, 집계, 구획도, 엑셀/보고서 기능이 활성화됩니다.</p>
+            </div>
+          )}
         </CardContent>
       </Card>
 

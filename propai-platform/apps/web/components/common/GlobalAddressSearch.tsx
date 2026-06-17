@@ -699,11 +699,11 @@ export function GlobalAddressSearch({
 
       {/* 다필지 안내 — 검색 추가와 엑셀 일괄등록이 병행됨을 명시(단일 모드는 숨김) */}
       {!single && (
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-[var(--text-secondary)]">
-          <span className="font-bold text-[var(--text-primary)]">다필지 등록</span>
-          <span className="rounded bg-[var(--accent-soft)] px-1.5 py-0.5 font-semibold text-[var(--accent-strong)]">🔍 검색으로 한 필지씩 추가</span>
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 text-[12px] text-[var(--text-secondary)]">
+          <span className="text-[13px] font-bold text-[var(--text-primary)]">다필지 등록</span>
+          <span className="rounded-md bg-[var(--accent-soft)] px-2 py-0.5 font-semibold text-[var(--accent-strong)]">🔍 검색으로 한 필지씩 추가</span>
           <span className="text-[var(--text-hint)]">또는</span>
-          <span className="rounded bg-[var(--accent-soft)] px-1.5 py-0.5 font-semibold text-[var(--accent-strong)]">📊 엑셀로 일괄 등록</span>
+          <span className="rounded-md bg-[var(--accent-soft)] px-2 py-0.5 font-semibold text-[var(--accent-strong)]">📊 엑셀로 일괄 등록</span>
           <span className="text-[var(--text-hint)]">— 둘 다 사용 가능(혼용 OK)</span>
         </div>
       )}
@@ -739,13 +739,17 @@ export function GlobalAddressSearch({
         </div>
       )}
 
+      {/* 다필지 등록 입력부 — 반응형 그리드: 모바일 1열, md 이상 2열.
+          토지지번검색·엑셀등록 카드가 나란히 배치되고, 지도 패널은 행 전체(2열)를 span.
+          (single 모드는 이 그리드 자체를 렌더하지 않아 기존 단일 입력만 노출 — 회귀 없음) */}
+      {!single && (
+      <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
       {/* 토지지번검색(VWorld 자동완성) — 타이핑하면 후보를 띄워 선택(다음 주소검색 UX).
           Daum이 못 찾는 지번·산·농지도 직접 검색·선택해 추가(다필지 누적). */}
-      {!single && (
-        <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)]/40 px-3 py-2">
+        <div className="flex h-full flex-col rounded-lg border border-[var(--line)] bg-[var(--surface-muted)]/40 px-3 py-2.5">
+          <span className="mb-1.5 text-[12px] font-bold text-[var(--text-secondary)]">📍 토지지번 검색</span>
           <div className="relative flex flex-wrap items-center gap-2">
-            <span className="text-[11px] font-bold text-[var(--text-secondary)]">📍 토지지번 검색</span>
-            <div className="relative min-w-[180px] flex-1">
+            <div className="relative min-w-[160px] flex-1">
               <input
                 value={directQuery}
                 disabled={disabled || directBusy}
@@ -754,7 +758,7 @@ export function GlobalAddressSearch({
                 onBlur={() => setTimeout(() => setShowCandidates(false), 150)}
                 onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); if (candidates.length) pickCandidate(candidates[0]); else void handleDirectAdd(); } }}
                 placeholder="예) 의정부동 224, 산 12-3 — 입력하면 후보가 표시됩니다"
-                className="w-full rounded-lg border border-[var(--line-strong)] bg-[var(--surface)] px-2.5 py-1.5 text-[11px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
+                className="w-full rounded-lg border border-[var(--line-strong)] bg-[var(--surface)] px-2.5 py-1.5 text-[12px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
               />
               {/* 자동완성 후보 드롭다운 */}
               {showCandidates && (candidates.length > 0 || searching) && (
@@ -784,19 +788,54 @@ export function GlobalAddressSearch({
               {directBusy ? "검색 중…" : "＋ 추가"}
             </button>
           </div>
-          {directMsg && <p className="mt-1 text-[11px] font-semibold text-amber-500">⚠ {directMsg}</p>}
+          {directMsg && <p className="mt-1 text-[12px] font-semibold text-amber-500">⚠ {directMsg}</p>}
         </div>
-      )}
 
-      {/* 지도에서 선택 — 지도를 직접 클릭해 필지를 추가(다필지 모드 전용) */}
-      {!single && (
-        <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)]/40 px-3 py-2">
+      {/* 다필지 엑셀 등록 — 토지조서 양식 업로드/다운로드(주소만 적어도 PNU·면적·용도·공시지가 자동보강).
+          토지지번검색 카드와 나란히(2열) 배치. */}
+        <div className="flex h-full flex-col rounded-lg border border-[var(--line)] bg-[var(--surface-muted)]/40 px-3 py-2.5">
+          <span className="mb-1.5 text-[12px] font-bold text-[var(--text-secondary)]">📊 엑셀로 다필지 등록</span>
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              ref={fileRef}
+              type="file"
+              accept=".xlsx,.xls,.csv"
+              className="hidden"
+              onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleExcelUpload(f); e.target.value = ""; }}
+            />
+            <button
+              type="button"
+              disabled={uploading}
+              onClick={() => fileRef.current?.click()}
+              className="rounded-lg border border-[var(--line-strong)] bg-[var(--surface)] px-3 py-1.5 text-[12px] font-bold text-[var(--text-primary)] hover:border-[var(--accent-strong)] disabled:opacity-50"
+            >
+              📊 {uploading ? "처리 중…" : "엑셀 파일 선택"}
+            </button>
+            <button
+              type="button"
+              onClick={() => void downloadTemplate()}
+              className="text-[12px] font-semibold text-[var(--accent-strong)] underline-offset-2 hover:underline"
+            >
+              양식 다운로드 ↓
+            </button>
+          </div>
+          <span className="mt-1.5 text-[11px] text-[var(--text-hint)]">주소·지번만 적어도 PNU·면적·용도지역·공시지가 자동수집</span>
+          {uploadInfo && (
+            <div className="mt-2 rounded-md border border-[var(--line)] bg-[var(--surface)]/60 px-2.5 py-1.5 text-[12px] text-[var(--text-secondary)]">
+              <p>📍 {uploadInfo.note}</p>
+              {uploadInfo.registry && <p className="mt-1 font-semibold text-amber-500">🏛️ {uploadInfo.registry}</p>}
+            </div>
+          )}
+        </div>
+
+      {/* 지도에서 선택 — 지도를 직접 클릭해 필지를 추가(다필지 모드 전용). 행 전체(2열) span. */}
+        <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)]/40 px-3 py-2.5 md:col-span-2">
           {/* 토글 헤더 버튼 */}
           <button
             type="button"
             disabled={disabled}
             onClick={() => setShowMapPicker((v) => !v)}
-            className="flex w-full items-center justify-between gap-2 text-[11px] font-bold text-[var(--text-secondary)] hover:text-[var(--accent-strong)] transition-colors disabled:opacity-50"
+            className="flex w-full items-center justify-between gap-2 text-[12px] font-bold text-[var(--text-secondary)] hover:text-[var(--accent-strong)] transition-colors disabled:opacity-50"
           >
             <span className="flex items-center gap-1.5">
               <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="3 6 9 3 15 6 21 3 21 18 15 21 9 18 3 21"/><line x1="9" y1="3" x2="9" y2="18"/><line x1="15" y1="6" x2="15" y2="21"/></svg>
@@ -817,43 +856,7 @@ export function GlobalAddressSearch({
             </div>
           )}
         </div>
-      )}
-
-      {/* 다필지 엑셀 등록 — 토지조서 양식 업로드/다운로드(주소만 적어도 PNU·면적·용도·공시지가 자동보강) */}
-      {!single && (
-        <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)]/40 px-3 py-2">
-          <div className="flex flex-wrap items-center gap-2">
-            <input
-              ref={fileRef}
-              type="file"
-              accept=".xlsx,.xls,.csv"
-              className="hidden"
-              onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleExcelUpload(f); e.target.value = ""; }}
-            />
-            <button
-              type="button"
-              disabled={uploading}
-              onClick={() => fileRef.current?.click()}
-              className="rounded-lg border border-[var(--line-strong)] bg-[var(--surface)] px-3 py-1.5 text-[11px] font-bold text-[var(--text-primary)] hover:border-[var(--accent-strong)] disabled:opacity-50"
-            >
-              📊 {uploading ? "처리 중…" : "엑셀로 다필지 등록"}
-            </button>
-            <button
-              type="button"
-              onClick={() => void downloadTemplate()}
-              className="text-[11px] font-semibold text-[var(--accent-strong)] underline-offset-2 hover:underline"
-            >
-              양식 다운로드 ↓
-            </button>
-            <span className="text-[10px] text-[var(--text-hint)]">주소·지번만 적어도 PNU·면적·용도지역·공시지가 자동수집</span>
-          </div>
-          {uploadInfo && (
-            <div className="mt-2 rounded-md border border-[var(--line)] bg-[var(--surface)]/60 px-2.5 py-1.5 text-[11px] text-[var(--text-secondary)]">
-              <p>📍 {uploadInfo.note}</p>
-              {uploadInfo.registry && <p className="mt-1 font-semibold text-amber-500">🏛️ {uploadInfo.registry}</p>}
-            </div>
-          )}
-        </div>
+      </div>
       )}
 
       {/* 분석 중 표시 */}

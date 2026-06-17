@@ -38,14 +38,29 @@ _MAX_ROWS = 500  # 업로드 행 상한(과도 방지)
 _GEOCODE_CONCURRENCY = 8  # VWorld 재시도(백오프) 보호하에 상향 — 대량 엑셀 처리 가속
 
 # 헤더 자동감지 — 정규화(공백/특수문자 제거·소문자) 후 후보집합 매칭.
-_H_ADDR = {"소재지", "소재지주소", "주소", "지번주소", "도로명주소", "address", "소재"}
-_H_JIBUN = {"지번", "번지", "지번번지", "jibun", "lot"}
-_H_BCODE = {"법정동코드", "bcode", "법정동코드10자리", "법정동", "동코드", "admcd"}
-_H_PNU = {"pnu", "필지고유번호", "pnu코드", "고유번호", "필지번호"}
+_H_ADDR = {"소재지", "소재지주소", "주소", "지번주소", "도로명주소", "address", "소재",
+           "토지소재지", "부동산소재지", "물건소재지", "토지소재", "위치", "소재지번", "물건지"}
+_H_JIBUN = {"지번", "번지", "지번번지", "jibun", "lot", "지번지", "지번(번지)", "본번부번"}
+_H_BCODE = {"법정동코드", "bcode", "법정동코드10자리", "법정동", "동코드", "admcd", "법정동코드bcode10자리"}
+_H_PNU = {"pnu", "필지고유번호", "pnu코드", "고유번호", "필지번호", "필지고유번호19자리"}
 _H_JIMOK = {"지목", "지목명", "landcategory", "jimok"}
-_H_AREA = {"면적", "면적㎡", "면적m2", "토지면적", "area", "areasqm", "대지면적"}
+_H_AREA = {"면적", "면적㎡", "면적m2", "토지면적", "area", "areasqm", "대지면적", "공부면적", "지적면적", "실면적", "면적m²"}
 _H_OWNER = {"소유구분", "소유", "ownertype", "소유자구분"}
 _H_LABEL = {"비고", "라벨", "명칭", "메모", "note", "label"}
+
+# 전각 숫자·하이픈 → 반각(엑셀에 전각으로 입력된 지번 대응). 예: ２２４－１ → 224-1
+_FW_DIGITS = str.maketrans("０１２３４５６７８９－‐―ー", "0123456789----")
+
+
+def _clean_num_str(s: Any) -> str:
+    """코드성 문자열(지번·법정동코드·PNU) 정리: 전각→반각, 엑셀이 숫자로 읽어 붙은 '.0' 꼬리 제거.
+
+    엑셀에서 224를 숫자로 저장하면 dtype=str로 읽을 때 '224.0'이 되어 지오코딩이 깨진다.
+    면적(소수 가능)에는 적용하지 않는다(별도 _to_float 사용).
+    """
+    t = str(s or "").strip().translate(_FW_DIGITS)
+    t = re.sub(r"\.0+$", "", t)  # '224.0' → '224' (정수형 꼬리만)
+    return t
 # 동의서 3종(O/X·Y/N·동의/미동의 체크) — 정비/도시개발·지구단위·시행자지정 동의율 산정용.
 _H_CONSENT_LAND = {"토지사용동의", "토지사용동의서", "사용동의", "토지동의", "landconsent"}
 _H_CONSENT_DISTRICT = {"지구단위계획동의", "지구단위동의", "지구단위계획동의서", "지구단위동의서", "districtconsent"}
@@ -83,7 +98,54 @@ def _detect_columns(headers: list[Any]) -> dict[str, str | None]:
             if found[role] is None and n in candidates:
                 found[role] = h
                 break
+    # 2차: 정확매칭 실패 역할은 부분문자열로 추정(헤더가 변형돼도 최대한 매핑).
+    #   ★PNU·법정동을 지번보다 먼저 검사해 '필지고유번호'가 '지번'으로 오인되지 않게 한다.
+    sub_rules = [
+        ("pnu", ("pnu", "고유번호")),
+        ("bcode", ("법정동", "동코드")),
+        ("address", ("소재", "주소", "위치")),
+        ("jibun", ("지번", "번지")),
+        ("area", ("면적",)),
+        ("owner", ("소유",)),
+        ("jimok", ("지목",)),
+        ("consent_land", ("토지사용",)),
+        ("consent_district", ("지구단위",)),
+        ("consent_operator", ("시행자",)),
+    ]
+    used = {v for v in found.values() if v}
+    for h in headers:
+        if h in used:
+            continue
+        n = _norm(h)
+        for role, subs in sub_rules:
+            if found[role] is None and any(s in n for s in subs):
+                found[role] = h
+                used.add(h)
+                break
     return found
+
+
+def _detect_header_row(df0: Any) -> int:
+    """헤더 키워드(소재지/지번/면적/PNU/법정동/소유/지목)가 가장 많이 등장하는 행을 헤더로 본다.
+
+    실무 토지조서는 1행에 '○○구역 토지조서' 같은 제목·설명행을 두고 머리글이 2~3행에
+    오는 경우가 흔하다. pd.read_excel은 기본 1행을 헤더로 쓰므로 그대로면 컬럼이 전부
+    오인식된다. 앞 8행을 훑어 헤더다운 행의 0-based 인덱스를 반환(없으면 0=기존 동작).
+    """
+    sub_keys = ("소재", "지번", "번지", "면적", "법정동", "pnu", "고유번호", "소유", "지목")
+    best_i, best_score = 0, -1
+    try:
+        scan = min(len(df0), 8)
+        for i in range(scan):
+            cells = [_norm(v) for v in df0.iloc[i].tolist()]
+            score = sum(1 for c in cells if c and any(k in c for k in sub_keys))
+            if score > best_score:
+                best_score, best_i = score, i
+            if score >= 3:  # 충분히 헤더다움 → 즉시 채택
+                return i
+    except Exception:  # noqa: BLE001
+        return 0
+    return best_i if best_score > 0 else 0
 
 
 def _pnu_from_bcode(bcode: str, jibun: str) -> str | None:
@@ -105,6 +167,46 @@ def _to_float(v: Any) -> float | None:
         return f if f > 0 else None
     except (ValueError, TypeError):
         return None
+
+
+def _expand_merged_cells(raw: bytes, df: Any, header_row: int = 0) -> Any:
+    """엑셀 병합 셀의 좌상단 값을 병합범위 전체 셀에 채운다(forward-fill).
+
+    토지조서 엑셀은 한 필지(지번)에 소유자가 여럿이면 여러 행을 두고 지번·소재지 칸을
+    세로로 '병합'하는 경우가 흔하다. pandas(read_excel)는 병합 시 좌상단 셀에만 값을
+    넣고 나머지 행은 NaN(빈값)으로 둔다 → 병합된 '지번'이 소실돼 그 행들이 소재지(동)만
+    남고, 번지가 없어 '동 단위 수렴'으로 보완필요 처리되던 근본버그.
+    openpyxl로 병합범위를 읽어 좌상단 값을 같은 범위의 모든 데이터 셀(빈칸)에 채운다.
+
+    header_row(0-based)는 머리글 행 위치. 데이터 첫 행은 엑셀 (header_row+2)행 = df index 0.
+    """
+    try:
+        from openpyxl import load_workbook
+
+        # read_only=False 여야 merged_cells.ranges가 채워진다. data_only=True=캐시값(수식 대비).
+        wb = load_workbook(io.BytesIO(raw), data_only=True, read_only=False)
+        ws = wb.worksheets[0]
+        nrows, ncols = len(df), df.shape[1]
+        base = header_row + 2  # 엑셀(1-based) 데이터 첫 행 → df index 0
+        for rng in list(ws.merged_cells.ranges):
+            top = ws.cell(row=rng.min_row, column=rng.min_col).value
+            if top is None or str(top).strip() == "":
+                continue
+            for r in range(rng.min_row, rng.max_row + 1):
+                df_row = r - base
+                if df_row < 0 or df_row >= nrows:
+                    continue  # 헤더/제목 병합·범위초과는 무시
+                for c in range(rng.min_col, rng.max_col + 1):
+                    df_col = c - 1  # 엑셀 1열(A)=df 0열
+                    if df_col < 0 or df_col >= ncols:
+                        continue
+                    cur = df.iat[df_row, df_col]
+                    # 빈칸(NaN·""·"nan")만 채우고 기존 값은 보존.
+                    if cur is None or str(cur).strip() == "" or str(cur).strip().lower() == "nan":
+                        df.iat[df_row, df_col] = str(top)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("excel_merged_expand_failed", error=str(e)[:120])
+    return df
 
 
 _LLM_ROLES = {
@@ -248,11 +350,34 @@ class ParcelExcelService:
         name = (filename or "").lower()
         try:
             if name.endswith(".csv"):
-                df = pd.read_csv(io.BytesIO(raw), dtype=str, keep_default_na=False)
+                # ★CSV 인코딩 폴백 — 한국 엑셀이 내보낸 CSV는 CP949/EUC-KR가 흔하다(UTF-8만
+                #   시도하면 한글이 깨지거나 읽기 실패). 머리글 위치도 자동탐지(제목행 대응).
+                df0 = None
+                used_enc = "utf-8-sig"
+                for enc in ("utf-8-sig", "cp949", "euc-kr", "latin1"):
+                    try:
+                        df0 = pd.read_csv(io.BytesIO(raw), dtype=str, keep_default_na=False,
+                                          header=None, encoding=enc)
+                        used_enc = enc
+                        break
+                    except (UnicodeDecodeError, ValueError):
+                        continue
+                if df0 is None:
+                    return {"error": "CSV 인코딩을 인식하지 못했습니다(UTF-8/CP949). 엑셀(.xlsx)로 저장해 올려보세요.", "parcels": []}
+                hdr = _detect_header_row(df0)
+                df = pd.read_csv(io.BytesIO(raw), dtype=str, keep_default_na=False,
+                                 header=hdr, encoding=used_enc)
             else:
-                df = pd.read_excel(io.BytesIO(raw), dtype=str, engine="openpyxl")
+                # ★머리글 행 자동탐지 — 제목·설명행이 앞에 있는 양식이면 헤더가 1행이 아니다.
+                #   먼저 헤더 없이 읽어 헤더다운 행을 찾고, 그 행을 머리글로 다시 읽는다.
+                df0 = pd.read_excel(io.BytesIO(raw), dtype=str, engine="openpyxl", header=None)
+                hdr = _detect_header_row(df0)
+                df = pd.read_excel(io.BytesIO(raw), dtype=str, engine="openpyxl", header=hdr)
+                # ★병합 셀 forward-fill — 한 지번을 여러 행에 '병합'한 토지조서에서 병합
+                #   연속행의 지번이 소실(NaN)돼 보완필요로 빠지던 근본버그를 차단(지번 기준 복원).
+                df = _expand_merged_cells(raw, df, header_row=hdr)
         except Exception as e:  # noqa: BLE001
-            return {"error": f"엑셀/CSV를 읽지 못했습니다: {str(e)[:120]}", "parcels": []}
+            return {"error": f"엑셀/CSV를 읽지 못했습니다: {str(e)[:120]} — 엑셀(.xlsx)로 저장해 다시 시도해 주세요.", "parcels": []}
 
         df = df.fillna("")
         headers = [str(h) for h in df.columns]
@@ -282,10 +407,11 @@ class ParcelExcelService:
             return str(row.get(col, "")).strip() if col else ""
 
         for row in rows:
-            address = _g(row, "address")
-            jibun = _g(row, "jibun")
-            bcode = re.sub(r"\D", "", _g(row, "bcode"))
-            pnu_raw = re.sub(r"\D", "", _g(row, "pnu"))
+            # 전각숫자→반각, 숫자형 '224.0'→'224' 정규화(코드성 칸). 면적은 _to_float가 별도 처리.
+            address = _g(row, "address").translate(_FW_DIGITS)
+            jibun = _clean_num_str(_g(row, "jibun"))
+            bcode = re.sub(r"\D", "", _clean_num_str(_g(row, "bcode")))
+            pnu_raw = re.sub(r"\D", "", _clean_num_str(_g(row, "pnu")))
             area = _to_float(_g(row, "area"))
             jimok = _g(row, "jimok") or None
             owner = _g(row, "owner") or None
@@ -296,6 +422,13 @@ class ParcelExcelService:
             consent_operator = _to_consent(_g(row, "consent_operator"))
             if not (address or pnu_raw or bcode):
                 continue  # 완전 빈 행 스킵
+            # 합계·소계 등 푸터/요약행 스킵(주소칸이 집계 표기뿐인 행 — 필지로 오인 방지).
+            _ax = address.replace(" ", "")
+            if not jibun and not pnu_raw and not bcode and (
+                _ax in {"합계", "소계", "총계", "총합", "계", "합산", "total", "sum"}
+                or _ax.startswith("합계") or _ax.startswith("소계") or _ax.startswith("총계")
+            ):
+                continue
             pnu = pnu_raw if len(pnu_raw) == 19 else (_pnu_from_bcode(bcode, jibun) if bcode else None)
             status = "ok" if pnu else ("need_geocode" if address else "failed")
             p = {
@@ -328,13 +461,43 @@ class ParcelExcelService:
         # C3: 중복 PNU 탐지 — 서로 다른 행이 같은 PNU로 해석되면 거의 항상 오매칭(동명이의·
         #     번지누락). 2건 이상 동일 PNU는 ambiguous로 강등(가짜 확신 차단). 1필지만 같은 PNU면 정상.
         from collections import Counter
+
+        def _input_key(p: dict) -> str:
+            # 입력 주소+지번을 공백 제거해 비교(같은 필지를 가리키는 행인지 판정).
+            a = re.sub(r"\s+", "", (p.get("address") or ""))
+            j = re.sub(r"\s+", "", (p.get("jibun") or ""))
+            return f"{a}|{j}"
+
         pnu_counts = Counter(p["pnu"] for p in parcels if p.get("pnu"))
         dup_pnus = {pnu for pnu, c in pnu_counts.items() if c >= 2}
         dup_warning = None
         if dup_pnus:
-            dup_n = 0
-            for p in parcels:
-                if p.get("pnu") in dup_pnus:
+            dup_n = 0  # 오매칭으로 강등한 행
+            co_n = 0   # 같은 필지의 공유지분 등으로 정상 유지한 행
+            for pnu in dup_pnus:
+                group = [p for p in parcels if p.get("pnu") == pnu]
+                keys = {_input_key(p) for p in group}
+                if len(keys) == 1:
+                    # 동일 입력(주소+지번)이 같은 PNU → 같은 필지의 공유지분·다소유자 행
+                    #   (지번 병합 토지조서 등)으로 '의도된 중복' → 강등하지 않고 표시만.
+                    for p in group:
+                        p["co_owner"] = True
+                    group[0]["co_owner_rep"] = True  # 대표 행(면적 1회 반영 기준)
+                    # ★면적 중복합산 방지: 그룹의 면적이 모두 같으면(대표 필지면적이 병합/자동보강
+                    #   으로 행마다 복제된 것) 대표 행만 남기고 나머지는 None — 부지면적이 N배로
+                    #   과대 합산되는 것을 막는다. 행마다 면적이 다르면 소유자별 '지분면적'으로 보고
+                    #   그대로 보존한다(합이 곧 필지면적이라 정상).
+                    nonnull = [round(p["area_sqm"], 1) for p in group if p.get("area_sqm")]
+                    if nonnull and len(set(nonnull)) == 1:
+                        for p in group[1:]:
+                            p["area_sqm"] = None
+                            p["reason"] = (p.get("reason") or
+                                           "동일 필지의 공유지분(다소유자) 행 — 면적은 대표 행에 "
+                                           "1회만 반영(부지면적 중복합산 방지).")
+                    co_n += len(group)
+                    continue
+                # 서로 다른 입력이 같은 PNU로 수렴 → 번지누락/동명이의 오매칭 → 강등.
+                for p in group:
                     p["status"] = "ambiguous"
                     p["reason"] = (p.get("reason") or
                                    "여러 필지가 동일 PNU로 해석됨 — 번지 누락/동명이의 가능. "
@@ -342,7 +505,12 @@ class ParcelExcelService:
                     p["pnu"] = None  # 오매칭 PNU 제거(잘못된 면적/용도 보강 차단)
                     p["area_sqm"] = None  # 오매칭 면적 제거(동일평수 오표시 차단)
                     dup_n += 1
-            dup_warning = f"동일 PNU로 중복 해석된 {dup_n}필지를 '모호'로 표기했습니다(오매칭 방지)."
+            parts = []
+            if dup_n:
+                parts.append(f"동일 PNU로 중복 해석된 {dup_n}필지를 '모호'로 표기(오매칭 방지)")
+            if co_n:
+                parts.append(f"같은 필지의 공유지분 등 {co_n}행은 정상 등록")
+            dup_warning = (" · ".join(parts) + ".") if parts else None
 
         ok = sum(1 for p in parcels if p["status"] == "ok")
         enriched = sum(1 for p in parcels if p.get("zone_type") or p.get("official_price_per_sqm"))

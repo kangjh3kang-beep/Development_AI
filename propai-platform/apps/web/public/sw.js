@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v232-map-multiselect";
+const CACHE_NAME = "propai-v233-excel-robust-responsive";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",
