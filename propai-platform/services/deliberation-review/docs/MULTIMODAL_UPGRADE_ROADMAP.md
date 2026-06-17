@@ -248,12 +248,13 @@ P-가시성과 병렬 착수 가능하나, static_scan(INC-15)은 캐시(INC-11)
 - 효과: 분석마다 재호출(쿼터/지연/비용) 제거. INC-12 신선도·INC-15 static_scan의 토대.
 - **구현 노트**: sync 어댑터 ↔ async DB 경계 분리 — **L1 프로세스 인메모리**(어댑터 sync 경로, 결정론) + **L2 DB 영속**(`warm_from_db`/`flush_to_db`를 async `analyze` 라우트 경계에서 호출, snapshot 결속). 공유 `cached_get(adapter,url,params,secret_param_keys,...)` 헬퍼로 8개 어댑터 일괄 경유(원 httpx 시그니처/예외 보존 — headers 조건부, etag 방어적). **secret(OC/key/serviceKey)는 cache_key·DB에서 제외**(비유출). jurisdiction/vworld.py는 계약 상이(AdapterTimeout)로 제외. 적대적 리뷰 통과(gate 4.8/determinism 8.7/quality 8.5) — LOW 3건(flush dirty-clear는 commit 후로·만료 eviction·warm rollback) 반영. **379 passed**(370→+INC-11 9), ruff clean, static_scan 0, alembic 0013 up/down 가역.
 
-**INC-12 [high/S] 수집 신선도(collected_at/data_vintage/max_age) + 노후 NEEDS_REVIEW**
+**INC-12 [high/S] ✅ 완료 — 수집 신선도(collected_at/data_vintage/max_age) + 노후 NEEDS_REVIEW**
 - 대상: cross_validation.py `SourceValue`에 collected_at·data_vintage·max_age_days · land_card.py `LandCard`에 collected_at·max_age_days · validator.py:25 합의 직전 staleness 게이트.
 - 변경: vintage가 snapshot 기준일(as_of) 대비 max_age 초과 시 SourceValue STALE 표시 + CrossValidation.status를 NEEDS_REVIEW 보수화. 공시지가 stdr_year 노후 note.
 - 불변식: 메타 비교 결정론. 노후→무음 사용 아닌 NEEDS_REVIEW 표면화(무음0 연장). vintage/collected_at provenance(설명가능성).
 - 리스크: 낮음. INC-11 fetched_at을 collected_at으로 승계 시 시너지(독립 가능).
 - 효과: 오래된 공시지가/대장 무표면화 제거.
+- **구현 노트**: `SourceValue.is_stale(as_of)`(data_vintage→collected_at 우선, max_age_days 초과; wall-clock 미사용 결정론) + `CrossValidation.stale_sources`·`needs_review`에 stale 포함. `validate(...,as_of=None)` — **as_of None이면 미평가(후방호환, vision_consensus 무영향)**, status는 합의 결과 정직 보존(노후를 CONFLICT로 위장 안 함). 파이프라인 cross_facts가 `as_of=application_date` 전달, landprice SourceValue에 data_vintage(land_year)/max_age 730. `LandCard.is_stale(as_of)`(stdr_year 기준) + collect_land_card 노후 note(max_age 365 동일 임계). 적대적 리뷰 4.7(gate_pass) — LOW(LandCard dead 필드) 해소(collected_at 제거·is_stale로 max_age 소비). **385 passed**(379→+6), ruff clean, static_scan 0.
 
 **INC-13 [high/M] 수집 데이터 DB 영속화(MirrorWriter/Harvester/CorpusIngest에 AsyncSession)**
 - 대상: mirror_store.py `_DEFAULT_STORE`(in-memory)를 DB-backed로 · MirrorWriter.write·Harvester.run·CorpusIngest.ingest에 AsyncSession 주입(mirror_snapshot/source_document/harvest_job 테이블, mirror_store.py 주석상 0005 존재) · 소비측 `default_store().get`(analysis_pipeline.py:195)을 DB read-only 조회로.

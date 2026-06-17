@@ -293,16 +293,23 @@ def run_analysis(inp: AnalysisInput) -> AnalysisResult:
                     svs.append(SourceValue(source="molit_building", value=mval,
                                            ref=f"건축물대장:{cf['building_pnu']}"))
             if lp_src is not None and cf.get("land_pnu"):
-                lval = lp_src.land_price(cf["land_pnu"], cf.get("land_year", "2024"))
+                _ly = cf.get("land_year", "2024")
+                lval = lp_src.land_price(cf["land_pnu"], _ly)
                 if lval is not None:
+                    try:
+                        _vintage = date(int(_ly), 1, 1)  # 공시지가 기준연도 → 신선도 비교 기준일
+                    except (TypeError, ValueError):
+                        _vintage = None
                     svs.append(SourceValue(source="vworld_landprice", value=lval,
-                                           ref=f"개별공시지가:{cf['land_pnu']}"))
+                                           ref=f"개별공시지가:{cf['land_pnu']}",
+                                           data_vintage=_vintage, max_age_days=730))  # 연1회 갱신 → 2년 허용
             if lu_src is not None and cf.get("land_use_pnu") and cf.get("land_use_contains"):
                 has = lu_src.has_zone(cf["land_use_pnu"], cf["land_use_contains"])
                 if has is not None:
                     svs.append(SourceValue(source="vworld_landuse", value=has,
                                            ref=f"토지이용계획:{cf['land_use_pnu']}"))
-            cross_validations.append(cv.validate(cf["fact_key"], svs))
+            # INC-12: 합의 직전 신선도 게이트 — as_of(신청일) 대비 노후 출처 표면화(NEEDS_REVIEW 보수화).
+            cross_validations.append(cv.validate(cf["fact_key"], svs, as_of=inp.application_date))
 
     # 7) 정성 (L3-C) — 인용접지 등급화.
     qualitative: list[QualAssessment] = []
