@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v227-excel-fulladdr";
+const CACHE_NAME = "propai-v228-consent-preset";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

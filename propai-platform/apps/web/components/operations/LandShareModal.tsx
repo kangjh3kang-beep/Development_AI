@@ -47,7 +47,7 @@ export function LandShareModal({
   jibun: string; pnu?: string | null;
   onClose: () => void;
   onApplyArea: (platAreaSqm: number) => void;
-  /** 세대별로 토지조서에 펼쳐 반영(현재 행 대체) — 실별 대지지분·전유면적을 행으로 기록 */
+  /** 세대별로 토지조서에 펼쳐 반영(부모 필지 보존·하단에 세대행 중첩 배열) — 실별 대지지분·전유면적을 행으로 기록 */
   onExpandUnits?: (units: LandShareUnit[], buildingName: string) => void;
 }) {
   const [loading, setLoading] = useState(true);

@@ -27,7 +27,7 @@ const NearbyTransactionsMap = dynamicMap<React.ComponentProps<typeof NearbyTrans
 );
 import { analyzeRegistry } from "@/lib/registry-analyze";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
-import { useLandScheduleStore, type LandRow } from "@/store/useLandScheduleStore";
+import { useLandScheduleStore, type LandRow, BIZ_METHODS, BIZ_METHOD_PRESETS, DEFAULT_BIZ_METHOD } from "@/store/useLandScheduleStore";
 import type { Locale } from "@/i18n/config";
 
 const EMPTY_ROWS: LandRow[] = []; // zustand v5: 안정적 참조(매 렌더 새 [] 반환→무한루프 방지)
@@ -75,6 +75,32 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
   const updateRow = useLandScheduleStore((s) => s.updateRow);
   const removeRow = useLandScheduleStore((s) => s.removeRow);
   const setRows = useLandScheduleStore((s) => s.setRows);
+  // ── 사업방식별 동의 프리셋(동적 동의 컬럼) ──
+  const bizMethodMap = useLandScheduleStore((s) => s.bizMethodByProject);
+  const consentTypeMap = useLandScheduleStore((s) => s.consentTypesByProject);
+  const setBizMethod = useLandScheduleStore((s) => s.setBizMethod);
+  const addConsentType = useLandScheduleStore((s) => s.addConsentType);
+  const removeConsentType = useLandScheduleStore((s) => s.removeConsentType);
+  const _pid = projectId || "_default";
+  const bizMethod = bizMethodMap[_pid] || DEFAULT_BIZ_METHOD;
+  const consentTypes = useMemo(
+    () => consentTypeMap[_pid] ?? (BIZ_METHOD_PRESETS[bizMethod] || BIZ_METHOD_PRESETS[DEFAULT_BIZ_METHOD]),
+    [consentTypeMap, _pid, bizMethod],
+  );
+  // 동의값 접근(레거시 3종은 boolean 필드와 동기 — agg/지도/엑셀 하위호환).
+  const _LEGACY: Record<string, "land_use_consent" | "district_consent" | "operator_consent"> = {
+    land_use: "land_use_consent", district_unit: "district_consent", operator: "operator_consent",
+  };
+  const consentVal = useCallback((r: LandRow, id: string): boolean =>
+    (r.consents && id in r.consents) ? !!r.consents[id] : (_LEGACY[id] ? !!r[_LEGACY[id]] : false),
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  []);
+  const setConsentVal = useCallback((r: LandRow, id: string, v: boolean) => {
+    const patch: Partial<LandRow> = { consents: { ...(r.consents || {}), [id]: v } };
+    if (_LEGACY[id]) patch[_LEGACY[id]] = v;
+    updateRow(projectId, r.id, patch);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, updateRow]);
   const [addr, setAddr] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [highlight, setHighlight] = useState("");
@@ -273,6 +299,7 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
       id: Math.random().toString(36).slice(2, 9),
       jibun: `${base} ${u.unit_label}`.trim(),
       pnu: parent.pnu ?? null,
+      parent_id: parent.id, // 부모 필지 하단에 중첩 배열
       owner: "", share: `${(u.share_ratio * 100).toFixed(3)}%`,
       area_sqm: u.land_share_sqm,
       exclusive_area_sqm: u.exclusive_area_sqm,
@@ -281,16 +308,28 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
       expected_price: null, purchase_price: null,
       contracted: false, land_use_consent: false, district_consent: false, operator_consent: false, pdf_url: null,
     }));
-    // 부모(필지) 행을 세대행들로 치환(위치 보존).
-    const idx = rows.findIndex((r) => r.id === parent.id);
-    const next = idx >= 0 ? [...rows.slice(0, idx), ...unitRows, ...rows.slice(idx + 1)] : [...rows, ...unitRows];
+    // ★부모(필지) 행을 보존하고 그 '바로 아래'에 세대행을 중첩 배열(기존 자식행은 교체).
+    const cleaned = rows.filter((r) => r.parent_id !== parent.id); // 기존 자식 제거(부모 유지)
+    const pIdx = cleaned.findIndex((r) => r.id === parent.id);
+    const next = pIdx >= 0
+      ? [...cleaned.slice(0, pIdx + 1), ...unitRows, ...cleaned.slice(pIdx + 1)]
+      : [...cleaned, ...unitRows];
     setRows(projectId, next);
     setNotice({
       kind: "info",
-      text: `「${base}」 ${unitRows.length}개 세대를 토지조서에 반영했습니다(각 행=동·호·세대면적·대지지분). ` +
-            "세대별 대지지분 합계가 실토지면적과 일치하도록 펼쳤습니다. 소유자·계약/동의는 세대별로 관리하세요.",
+      text: `「${base}」 ${unitRows.length}개 세대를 필지 하단에 중첩 배열했습니다(동·호·세대면적·대지지분). ` +
+            "각 세대별로 소유자·매입·동의 현황을 관리하세요(세대 대지지분 합 = 실토지면적).",
     });
   }, [projectId, rows, setRows]);
+
+  // 행 삭제 — 부모(필지) 삭제 시 하위 호실(parent_id) 행까지 캐스케이드(고아 방지·집계 정합 유지).
+  const handleRemoveRow = useCallback((r: LandRow) => {
+    if (!r.parent_id) {
+      setRows(projectId, rows.filter((x) => x.id !== r.id && x.parent_id !== r.id));
+    } else {
+      removeRow(projectId, r.id);
+    }
+  }, [projectId, rows, setRows, removeRow]);
 
   const openAnalysis = (jibun: string) => {
     router.push(`/${rl || locale}/registry-analysis?addr=${encodeURIComponent(jibun)}`);
@@ -483,27 +522,58 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
 
       {rows.length > 0 && (
         <>
+          {/* 사업방식 → 동의서 항목 프리셋(공간효율) + 동의항목 추가/삭제 */}
+          <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
+            <CardContent className="flex flex-wrap items-center gap-x-3 gap-y-2 p-4 text-[11px]">
+              <span className="font-bold text-[var(--text-primary)]">사업방식</span>
+              <select
+                value={bizMethod}
+                onChange={(e) => setBizMethod(projectId, e.target.value)}
+                title="사업방식을 선택하면 통상의 동의서 항목이 자동 표시됩니다(토지사용은 공통 필수)"
+                className="rounded-lg border border-[var(--line-strong)] bg-[var(--surface-strong)] px-2.5 py-1 text-[11px] font-semibold text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
+              >
+                {BIZ_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}
+              </select>
+              <span className="text-[var(--text-hint)]">동의항목:</span>
+              <div className="flex flex-wrap items-center gap-1">
+                {consentTypes.map((c) => (
+                  <span key={c.id} className="inline-flex items-center gap-1 rounded-full bg-[var(--accent-soft)] px-2 py-0.5 font-semibold text-[var(--accent-strong)]">
+                    {c.label}{c.fixed && <span className="text-[9px] text-[var(--text-hint)]">(필수)</span>}
+                    {!c.fixed && (
+                      <button onClick={() => removeConsentType(projectId, c.id)} title="동의항목 삭제" className="text-[var(--text-hint)] hover:text-[var(--status-error)]">✕</button>
+                    )}
+                  </span>
+                ))}
+                <button
+                  onClick={() => { const l = window.prompt("추가할 동의서 항목명(예: 도시개발구역지정)"); if (l && l.trim()) addConsentType(projectId, l.trim()); }}
+                  className="rounded-full border border-dashed border-[var(--line-strong)] px-2 py-0.5 font-bold text-[var(--text-secondary)] hover:border-[var(--accent-strong)]"
+                >＋ 항목 추가</button>
+              </div>
+            </CardContent>
+          </Card>
+
           {/* 표 */}
           <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
             <CardContent className="p-4 overflow-x-auto">
               <table className="w-full min-w-[980px] text-[11px]">
                 <thead>
                   <tr className="border-b border-[var(--line)] text-[var(--text-tertiary)]">
-                    {["#", "지번", "소유자", "지분", "면적㎡(대지)", "세대면적㎡", "소유구분", "매입예정가(원)", "매입가(원)", "계약", "토지사용", "지구단위", "시행자지정", "등기분석", ""].map((h) => (
-                      <th key={h} className="px-1.5 py-2 text-left font-semibold whitespace-nowrap">{h}</th>
+                    {["#", "지번", "소유자", "지분", "면적㎡(대지)", "세대면적㎡", "소유구분", "매입예정가(원)", "매입가(원)", "계약",
+                      ...consentTypes.map((c) => c.label), "등기분석", ""].map((h, hi) => (
+                      <th key={hi} className="px-1.5 py-2 text-left font-semibold whitespace-nowrap">{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
                   {rows.map((r, i) => (
-                    <tr key={r.id} className={`border-b border-[var(--line)]/50 ${highlight && highlight === r.jibun ? "bg-[var(--accent-soft)]" : ""}`}>
+                    <tr key={r.id} className={`border-b border-[var(--line)]/50 ${r.parent_id ? "bg-[var(--surface-soft)]/40" : ""} ${highlight && highlight === r.jibun ? "bg-[var(--accent-soft)]" : ""}`}>
                       <td className="px-1.5 py-1">
                         <button onClick={() => setHighlight(r.jibun)} title="지도에서 강조" className="flex items-center gap-1">
                           <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: rowStatus(r).color }} />
-                          <span className="text-[var(--text-tertiary)]">{i + 1}</span>
+                          <span className="text-[var(--text-tertiary)]">{r.parent_id ? `└ ${r.unit_label || ""}` : i + 1}</span>
                         </button>
                       </td>
-                      <td className="px-1.5 py-1 min-w-[160px]">
+                      <td className={`px-1.5 py-1 min-w-[160px] ${r.parent_id ? "pl-4" : ""}`}>
                         <input title={r.jibun || "지번"} className={inputCls} value={r.jibun} onChange={(e) => updateRow(projectId, r.id, { jibun: e.target.value })} />
                         {/* S3 케이스 배지: 토지/단일건물/공동주택 자동분류 */}
                         {r.parcel_case && !r.unit_label && (
@@ -543,9 +613,11 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
                       </td>
                       <td className="px-1.5 py-1 w-28"><input title={r.purchase_price ? `${r.purchase_price.toLocaleString()}원` : "매입가"} className={`${inputCls} text-right`} inputMode="numeric" value={fmtNum(r.purchase_price)} onChange={(e) => updateRow(projectId, r.id, { purchase_price: parseNum(e.target.value) })} /></td>
                       <td className="px-1.5 py-1 text-center"><input type="checkbox" checked={r.contracted} onChange={(e) => updateRow(projectId, r.id, { contracted: e.target.checked })} /></td>
-                      <td className="px-1.5 py-1 text-center"><input type="checkbox" checked={r.land_use_consent} onChange={(e) => updateRow(projectId, r.id, { land_use_consent: e.target.checked })} /></td>
-                      <td className="px-1.5 py-1 text-center"><input type="checkbox" checked={r.district_consent} onChange={(e) => updateRow(projectId, r.id, { district_consent: e.target.checked })} /></td>
-                      <td className="px-1.5 py-1 text-center"><input title="시행자지정동의서" type="checkbox" checked={r.operator_consent} onChange={(e) => updateRow(projectId, r.id, { operator_consent: e.target.checked })} /></td>
+                      {consentTypes.map((c) => (
+                        <td key={c.id} className="px-1.5 py-1 text-center">
+                          <input type="checkbox" title={`${c.label} 동의`} checked={consentVal(r, c.id)} onChange={(e) => setConsentVal(r, c.id, e.target.checked)} />
+                        </td>
+                      ))}
                       <td className="px-1.5 py-1 whitespace-nowrap">
                         <button onClick={() => autofill(r)} disabled={!!busy} title="등기 권리분석으로 소유자·지분·면적 자동채움" className="mr-1 cursor-pointer rounded bg-[var(--surface-strong)] px-1.5 py-0.5 text-[10px] font-bold text-[var(--accent-strong)] disabled:opacity-50">{busy === r.id ? "…" : "자동채움"}</button>
                         <button onClick={() => openAnalysis(r.jibun)} title="등기 권리분석 상세 페이지로 이동" className="cursor-pointer rounded bg-[var(--accent-soft)] px-1.5 py-0.5 text-[10px] font-bold text-[var(--accent-strong)]">분석 ↗</button>
@@ -570,7 +642,7 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
                           <a href={r.pdf_url} target="_blank" rel="noopener noreferrer" title="발급 등기부등본 PDF" className="ml-1 cursor-pointer rounded border border-[var(--accent-strong)]/40 px-1.5 py-0.5 text-[10px] font-bold text-[var(--accent-strong)]">PDF ↓</a>
                         )}
                       </td>
-                      <td className="px-1.5 py-1"><button onClick={() => removeRow(projectId, r.id)} className="text-[var(--status-error)]">✕</button></td>
+                      <td className="px-1.5 py-1"><button onClick={() => handleRemoveRow(r)} title={r.parent_id ? "세대행 삭제" : "필지 삭제(공동주택이면 하위 세대행도 함께 삭제)"} className="text-[var(--status-error)]">✕</button></td>
                     </tr>
                   ))}
                 </tbody>
@@ -600,9 +672,13 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
               </div>
               <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                 <Bar label="확보비율(계약확정)" ratio={agg.contractRatio} color="var(--status-success)" />
-                <Bar label="토지사용 동의율" ratio={agg.useRatio} color="var(--status-info)" />
-                <Bar label="지구단위 동의율" ratio={agg.distRatio} color="var(--data-accent)" />
-                <Bar label="시행자지정 동의율" ratio={agg.operRatio} color="var(--status-warning)" />
+                {/* 사업방식 동의 항목별 동의율(동적) */}
+                {consentTypes.map((c, ci) => {
+                  const denom = rows.length || 1;
+                  const got = rows.filter((r) => consentVal(r, c.id)).length;
+                  const palette = ["var(--status-info)", "var(--data-accent)", "var(--status-warning)", "var(--accent-strong)", "var(--status-success)"];
+                  return <Bar key={c.id} label={`${c.label} 동의율`} ratio={got / denom} color={palette[ci % palette.length]} />;
+                })}
               </div>
               <div className="mt-4 flex flex-wrap gap-4 text-xs">
                 <span className="text-[var(--text-secondary)]">보상비(매입가) 합계: <b className="cc-num text-[var(--text-primary)]">{won(agg.purSum)}원</b></span>
