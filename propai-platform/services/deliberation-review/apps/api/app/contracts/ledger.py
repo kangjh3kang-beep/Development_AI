@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from app.contracts._types import Probability
 from app.contracts.enums import Method, RecordStatus, Unit
 
 
@@ -17,7 +18,7 @@ class QuantityRecord(BaseModel):
     unit: Unit = Unit.NONE
     source_sheet: str | None = None
     method: Method
-    confidence: float = 1.0
+    confidence: Probability = 1.0
 
 
 class ConflictNote(BaseModel):
@@ -35,6 +36,6 @@ class ResolvedQuantity(BaseModel):
     value: float | None = None
     unit: Unit | None = None
     status: RecordStatus
-    confidence: float = 0.0
+    confidence: Probability = 0.0
     method: Method | None = None
     conflicts: list[ConflictNote] = Field(default_factory=list)

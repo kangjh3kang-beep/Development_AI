@@ -8,6 +8,8 @@ from enum import Enum
 
 from pydantic import BaseModel, Field
 
+from app.contracts._types import Probability
+
 
 class CandidateStatus(str, Enum):
     DRAFT = "DRAFT"
@@ -21,5 +23,5 @@ class RuleCandidate(BaseModel):
     target_variable: str | None = None
     content: dict = Field(default_factory=dict)
     source_doc_id: str | None = None
-    confidence: float = 0.0
+    confidence: Probability = 0.0
     jurisdiction: str | None = None

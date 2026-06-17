@@ -8,6 +8,8 @@ from enum import Enum
 
 from pydantic import BaseModel, Field
 
+from app.contracts._types import Probability
+
 
 class SheetRole(str, Enum):
     """도면 시트 역할(고정 enum)."""
@@ -29,6 +31,6 @@ class SheetRoleAssignment(BaseModel):
     role: SheetRole | None = None
     isolated: bool = False
     method: list[str] = Field(default_factory=list)  # 기여 신호(CLASSIFIER/TITLEBLOCK/CONTENT)
-    confidence: float = 0.0
+    confidence: Probability = 0.0
     flags: list[str] = Field(default_factory=list)
     provenance: dict = Field(default_factory=dict)  # 신호별 원시 판정

@@ -9,6 +9,8 @@ from enum import Enum
 
 from pydantic import BaseModel, Field
 
+from app.contracts._types import Probability
+
 
 class SemanticType(str, Enum):
     """요소 의미타입. UNKNOWN은 불확실의 명시(임의 기본값 금지)."""
@@ -38,7 +40,7 @@ class SemanticElement(BaseModel):
 
     element_id: str
     semantic_type: SemanticType
-    confidence: float = 0.0
+    confidence: Probability = 0.0
     identity_status: IdentityStatus = IdentityStatus.SINGLE
     source_sheets: list[str] = Field(default_factory=list)
     provenance: dict = Field(default_factory=dict)

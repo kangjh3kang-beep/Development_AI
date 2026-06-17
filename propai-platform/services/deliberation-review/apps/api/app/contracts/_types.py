@@ -10,3 +10,5 @@ from typing import Annotated
 from pydantic import Field
 
 Probability = Annotated[float, Field(ge=0.0, le=1.0)]
+# 유사도(코사인 등) — 음수 허용([-1,1]). 1 초과/-1 미만은 무음 범위이탈로 거부.
+Similarity = Annotated[float, Field(ge=-1.0, le=1.0)]

@@ -8,6 +8,7 @@ from enum import Enum
 
 from pydantic import BaseModel, Field
 
+from app.contracts._types import Similarity
 from app.core.errors import SourceMissing
 
 
@@ -34,7 +35,7 @@ class PrecedentCase(BaseModel):
 
 class PrecedentMatch(BaseModel):
     case_id: str
-    similarity: float
+    similarity: Similarity
     is_candidate: bool = True  # 항상 후보(적용 단정 금지, INV-24)
     source: str | None = None
 

@@ -17,10 +17,12 @@ from app.services.land.zone_limits import lookup_zone_limit
 
 def remaining_capacity(zone_name: str | None, lot_area: float | None,
                        existing_floor_area: float | None,
-                       pnu: str | None = None, as_of: date | None = None) -> dict | None:
-    """{법정한도·기존용적률·잔여FAR·최대연면적·잔여연면적·초과여부·rationale}. 매칭/면적 결손 None.
+                       pnu: str | None = None, as_of: date | None = None,
+                       existing_bcr: float | None = None) -> dict | None:
+    """{법정한도·기존용적률·잔여FAR·건폐율판정·최대연면적·잔여연면적·초과여부·rationale}. 매칭/면적 결손 None.
 
     pnu 제공 시 조례 용적률 우선(없으면 시행령 상한), as_of 제공 시 한시완화(조건부) 표면화.
+    existing_bcr(기존 건폐율%) 제공 시 건폐율 상한 대비 판정(국토계획법 §77/시행령 §84), 결손 시 미판정 표면화.
     """
     limit = lookup_zone_limit(zone_name)
     if limit is None or not lot_area or lot_area <= 0:
@@ -36,12 +38,17 @@ def remaining_capacity(zone_name: str | None, lot_area: float | None,
     over = existing_far_raw > far_limit
     remaining_far = round(far_limit - existing_far_raw, 1)
     remaining_floor = round(max_total - existing, 1)
+    # 건폐율(BCR) 판정 — 기존 건폐율 제공 시(국토계획법 §77/시행령 §84). 결손 시 미판정 표면화(무음 추정 금지).
+    bcr_limit = limit["bcr_limit_pct"]
+    bcr_over = existing_bcr > bcr_limit if existing_bcr is not None else None
+    remaining_bcr = round(bcr_limit - existing_bcr, 1) if existing_bcr is not None else None
 
     basis_ids: list[str] = []
     if of and of.get("ref_id"):
         basis_ids.append(of["ref_id"])
     if "국토계획법시행령§85" not in basis_ids:
         basis_ids.append("국토계획법시행령§85")
+    basis_ids.append("국토계획법시행령§84")  # 건폐율 한도
     basis_ids.append("건축법시행령§119")  # 용적률 산정 연면적 정의
     if over:
         basis_ids.append("건축법§6")
@@ -55,6 +62,10 @@ def remaining_capacity(zone_name: str | None, lot_area: float | None,
     if over:
         caveats.append("기존 상한 초과(기존불적합) — 과거 더 높은 상한에서 합법 건축 추정, "
                        "증축 제한·재건축 시 규모 축소(건축법 §6 특례)")
+    if existing_bcr is None:
+        caveats.append("건폐율(BCR) 미판정 — 기존 건폐율 결손(무음 추정 금지)")
+    elif bcr_over:
+        caveats.append(f"기존 건폐율 {round(existing_bcr, 1)}% > 법정 {bcr_limit}% — 건폐율 초과(기존불적합)")
     if of and of.get("temporary_relaxation"):
         tr = of["temporary_relaxation"]
         caveats.append(f"한시완화 가능(조건부): {tr['far_pct']}%까지({tr['until']}) — {tr['condition']}")
@@ -77,7 +88,10 @@ def remaining_capacity(zone_name: str | None, lot_area: float | None,
         "zone_matched": zone,
         "far_limit_pct": far_limit,
         "far_source": far_source,
-        "bcr_limit_pct": limit["bcr_limit_pct"],
+        "bcr_limit_pct": bcr_limit,
+        "existing_bcr_pct": round(existing_bcr, 1) if existing_bcr is not None else None,
+        "bcr_over_limit": bcr_over,
+        "remaining_bcr_pct": remaining_bcr,
         "lot_area": round(lot_area, 1),
         "existing_floor_area": round(existing, 1),
         "existing_far_pct": existing_far,
