@@ -23,7 +23,7 @@
 - **푸시 경로**: repo 루트 `~/My_Projects/Development_AI_deliberation`, **origin = `git@github.com:kangjh3kang-beep/Development_AI.git`(SSH)**, 추적 브랜치 `origin/feature/deliberation-review`. 명령=`git -C ~/My_Projects/Development_AI_deliberation push origin feature/deliberation-review`.
   - ⚠️ **SSH로만 push**(gh 인증계정=kangjh3kang-beep; gh 토큰에 workflow scope 없어 **https push는 `.github/workflows/ci.yml` 거부**됨 — origin이 이미 SSH라 그대로 push). 
   - **푸시는 사용자 확인 후**(이 시리즈는 로컬 커밋 우선 정책).
-  - 🔴 **현재 미푸시(로컬 전용) 6커밋**: `2bac55e4`(INC-10)·`2433711f`(INC-11)·`cc377cc1`(INC-12)·`02df218c`(INC-13)·`af0bb77f`(INC-15)·`078cdcd9`(핸드오프) — origin보다 6 ahead. 새 세션/사용자가 승인 시 push 필요.
+  - ✅ **2026-06-18 세션 커밋 origin 푸시 완료**(INC-10·11·12·13·15 + 핸드오프, ~`c727c365`). 이후 push 상태는 `git -C ~/My_Projects/Development_AI_deliberation log @{u}..HEAD`로 확인.
 
 ## 3. INC-14 스펙 [high/L]
 **reconcile_mirror 완결(라이브 diff→미러 갱신→영향 finding 재분석).**
