@@ -9,6 +9,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { Card, CardContent } from "@propai/ui";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
+import { ProjectSwitcher } from "@/components/common/ProjectSwitcher";
 import { NumberInput } from "@/components/common/NumberInput";
 import { dynamicMap } from "@/components/common/MapShell";
 import type { ParcelBoundaryMap as ParcelBoundaryMapType } from "@/components/map/ParcelBoundaryMap";
@@ -70,6 +71,8 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
   const projectId = useProjectContextStore((s) => s.projectId);
   const projectName = useProjectContextStore((s) => s.projectName);
   const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
+  // projectId가 없으면 아래 게이트에서 편집을 막으므로 "_default" 폴백은 사실상 dead-path
+  //   (하위호환 잔존). 신규 데이터는 항상 실제 projectId 버킷에만 기록된다(고아 데이터 방지).
   const rows = useLandScheduleStore((s) => s.byProject[projectId || "_default"] ?? EMPTY_ROWS);
   const addRow = useLandScheduleStore((s) => s.addRow);
   const updateRow = useLandScheduleStore((s) => s.updateRow);
@@ -450,6 +453,53 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
   }, [rows, projectName]);
 
   const inputCls ="w-full rounded-md border border-[var(--line)] bg-[var(--surface-strong)] px-1.5 py-1 text-[11px] text-[var(--text-primary)] outline-none";
+
+  // ★프로젝트 필수 게이팅 — 토지조서는 '프로젝트별'로 관리한다. 프로젝트가 없으면 편집을
+  //   허용하지 않고(고아 데이터 방지) 선택/생성을 안내한다. 중앙분석센터의 부지분석은 분석이력에
+  //   저장되며, 프로젝트 선택 뒤 토지조서의 '프로젝트 필지 불러오기'로만 명시적 반영한다(자동연동 없음).
+  if (!projectId) {
+    return (
+      <div className="grid gap-6">
+        <Card className="cc-bracketed overflow-hidden rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
+          <i className="cc-bracket cc-bracket--tl" />
+          <i className="cc-bracket cc-bracket--tr" />
+          <i className="cc-bracket cc-bracket--bl" />
+          <i className="cc-bracket cc-bracket--br" />
+          <CardContent className="relative p-6">
+            <div className="cc-grid-bg opacity-40" />
+            <div className="relative z-10 flex items-center justify-between gap-3">
+              <span className="cc-meta">LAND · ACQUISITION SCHEDULE</span>
+            </div>
+            <div className="relative z-10 mt-3 flex items-center gap-3">
+              <span className="text-2xl">🗂️</span>
+              <div>
+                <h1 className="text-lg font-black text-[var(--text-primary)]">토지조서 (편입토지 관리)</h1>
+                <p className="mt-0.5 text-xs text-[var(--text-secondary)]">필지별 소유·지분·매입가·계약/동의 관리 + 집계 + 구획도 + 엑셀.</p>
+              </div>
+            </div>
+            <div className="relative z-10 mx-auto mt-6 max-w-xl rounded-xl border border-dashed border-[var(--line-strong)] bg-[var(--surface-soft)]/40 px-6 py-10 text-center">
+              <div className="text-4xl">📁</div>
+              <p className="mt-3 text-base font-black text-[var(--text-primary)]">먼저 프로젝트를 선택하거나 만들어 주세요</p>
+              <p className="mx-auto mt-2 max-w-md text-xs leading-relaxed text-[var(--text-secondary)]">
+                토지조서는 <b className="text-[var(--accent-strong)]">프로젝트별로</b> 관리됩니다. 중앙분석센터의 부지분석 결과는
+                <b> 분석이력</b>에 저장되며, 프로젝트를 선택·생성한 뒤 토지조서의 <b className="text-[var(--accent-strong)]">‘프로젝트 필지 불러오기’</b>로 반영하세요.
+              </p>
+              <div className="mx-auto mt-5 flex max-w-md flex-col items-stretch gap-2.5">
+                <ProjectSwitcher />
+                <button
+                  type="button"
+                  onClick={() => router.push(`/${rl || locale}/projects`)}
+                  className="whitespace-nowrap rounded-xl bg-[var(--accent-strong)] px-4 py-2.5 text-sm font-black text-white hover:opacity-90"
+                >
+                  ＋ 프로젝트 관리로 이동(생성·선택)
+                </button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="grid gap-6">
