@@ -11,12 +11,29 @@ import re
 from app.contracts.bim import BimElement, BimModel
 from app.contracts.semantic_element import SemanticType
 
-# IFC 엔티티: #12= IFCWALLSTANDARDCASE('guid',#5,'외벽-1',$,...);
+# IFC 엔티티: #12= IFCWALLSTANDARDCASE('guid',#5,'외벽-1',$,...); — ref·타입·인자 캡처.
 _ENTITY_RE = re.compile(
-    r"#\d+\s*=\s*(IFC[A-Z0-9]+)\s*\((.*?)\)\s*;", re.IGNORECASE | re.DOTALL
+    r"(#\d+)\s*=\s*(IFC[A-Z0-9]+)\s*\((.*?)\)\s*;", re.IGNORECASE | re.DOTALL
 )
 # 인자 내 첫 두 따옴표 문자열(guid, name 추정).
 _STR_RE = re.compile(r"'((?:[^']|'')*)'")
+# 엔티티 참조(#n). 정량 관계 결합용.
+_REF_RE = re.compile(r"#\d+")
+# 정량 그래프에서 BimElement로 만들지 않는 보조 엔티티.
+_SKIP_TYPES = {
+    "IFCPROJECT", "IFCOWNERHISTORY", "IFCQUANTITYAREA", "IFCQUANTITYLENGTH",
+    "IFCELEMENTQUANTITY", "IFCRELDEFINESBYPROPERTIES",
+}
+
+
+def _first_real(args: str) -> float | None:
+    """인자에서 첫 REAL 값(소수). #참조 정수는 제외(결정론)."""
+    for m in re.finditer(r"(?<![#\w])-?\d+\.\d*", args):
+        try:
+            return float(m.group(0))
+        except ValueError:
+            continue
+    return None
 
 # 명확한 타입만 매핑(나머지 UNKNOWN).
 _TYPE_MAP = {
@@ -48,18 +65,52 @@ def _semantic_for(ifc_type: str, name: str | None) -> SemanticType:
 
 class IfcParser:
     def parse(self, ifc_text: str) -> BimModel:
+        # 1패스: 엔티티 수집 + 정량 그래프(IFCQUANTITYAREA/LENGTH → IFCELEMENTQUANTITY → IFCRELDEFINESBYPROPERTIES).
+        entities = [(m.group(1), m.group(2).upper(), m.group(3))
+                    for m in _ENTITY_RE.finditer(ifc_text or "")]
+        area_q: dict[str, float] = {}     # quantity_ref → area 값
+        length_q: dict[str, float] = {}   # quantity_ref → length 값
+        elem_quant: dict[str, list[str]] = {}  # elementquantity_ref → [quantity_refs]
+        rel: dict[str, str] = {}          # element_ref → elementquantity_ref(propset)
+        for ref, typ, args in entities:
+            if typ == "IFCQUANTITYAREA":
+                v = _first_real(args)
+                if v is not None:
+                    area_q[ref] = v
+            elif typ == "IFCQUANTITYLENGTH":
+                v = _first_real(args)
+                if v is not None:
+                    length_q[ref] = v
+            elif typ == "IFCELEMENTQUANTITY":
+                elem_quant[ref] = _REF_RE.findall(args)
+            elif typ == "IFCRELDEFINESBYPROPERTIES":
+                refs = _REF_RE.findall(args)
+                if len(refs) >= 2:  # 마지막=propset, 그 앞=관련 요소들
+                    for er in refs[:-1]:
+                        rel[er] = refs[-1]
+
+        # 2패스: BimElement 생성 + 정량 결합(관계 따라 area/length 채움. 미연결은 None 유지=무음0).
         elements: list[BimElement] = []
-        for m in _ENTITY_RE.finditer(ifc_text or ""):
-            ifc_type = m.group(1).upper()
-            if ifc_type in ("IFCPROJECT", "IFCOWNERHISTORY", "IFCQUANTITYAREA"):
+        for ref, ifc_type, args in entities:
+            if ifc_type in _SKIP_TYPES:
                 continue
-            strings = _STR_RE.findall(m.group(2))
+            strings = _STR_RE.findall(args)
             guid = strings[0] if strings else None
             name = strings[1] if len(strings) > 1 else None
+            area = length = None
+            propset = rel.get(ref)
+            if propset and propset in elem_quant:
+                for qref in elem_quant[propset]:
+                    if area is None and qref in area_q:
+                        area = area_q[qref]
+                    if length is None and qref in length_q:
+                        length = length_q[qref]
             elements.append(BimElement(
                 ifc_type=ifc_type,
                 semantic_type=_semantic_for(ifc_type, name),
                 name=name,
                 guid=guid,
+                area=area,
+                length=length,
             ))
         return BimModel(elements=elements, source="BIM")
