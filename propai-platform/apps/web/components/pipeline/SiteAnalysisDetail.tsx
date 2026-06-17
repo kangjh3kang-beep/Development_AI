@@ -275,13 +275,17 @@ export function SiteAnalysisDetail({ data, hideInterpretation = false, parcels }
 
   // 2. 용도지역/법규한도
   const zoning = obj(data.zoning);
+  // ★백엔드 far_tier 산출물(effective_far 객체)이 법정/조례/실효를 교차검증해 분리 제공한다.
+  //   (national_far_pct=법정상한·ordinance_far_pct=조례·effective_far_pct=min). 이 SSOT를 1순위로
+  //   읽어 '법정 용적률' 타일에 조례값(예 200)이 잘못 매핑되던 버그를 근본수정.
+  const ef = obj(zoning.effective_far ?? data.effective_far);
   const zoneType = s(zoning.zone_type || data.zone_type);
-  const nationalBcr = n(zoning.national_bcr ?? data.national_bcr);
-  const nationalFar = n(zoning.national_far ?? data.national_far);
-  const ordinanceBcr = n(zoning.ordinance_bcr ?? data.ordinance_bcr);
-  const ordinanceFar = n(zoning.ordinance_far ?? data.ordinance_far);
-  const effectiveBcr = n(zoning.effective_bcr ?? data.max_bcr ?? data.effective_bcr);
-  const effectiveFar = n(zoning.effective_far ?? data.max_far ?? data.effective_far);
+  const nationalBcr = n(ef.national_bcr_pct ?? zoning.national_bcr ?? data.national_bcr);
+  const nationalFar = n(ef.national_far_pct ?? zoning.national_far ?? data.national_far);
+  const ordinanceBcr = n(ef.ordinance_bcr_pct ?? zoning.ordinance_bcr ?? data.ordinance_bcr);
+  const ordinanceFar = n(ef.ordinance_far_pct ?? zoning.ordinance_far ?? data.ordinance_far);
+  const effectiveBcr = n(ef.effective_bcr_pct ?? zoning.effective_bcr ?? data.max_bcr ?? data.effective_bcr);
+  const effectiveFar = n(ef.effective_far_pct ?? zoning.effective_far ?? data.max_far ?? data.effective_far);
   const heightLimit = n(zoning.height_limit ?? data.height_limit);
   const baseFar = n(zoning.base_far ?? data.base_far) ?? effectiveFar;
   const allowedFar = n(zoning.allowed_far ?? data.allowed_far);

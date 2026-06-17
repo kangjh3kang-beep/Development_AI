@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v228-consent-preset";
+const CACHE_NAME = "propai-v229-far-mapping";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",
