@@ -480,10 +480,16 @@ export function GlobalAddressSearch({
       // parse-parcels가 이미 채운 면적·용도지역·지목·공시지가를 보존(이전엔 areaSqm만 받고 폐기).
       const entries: AddressEntry[] = (res.parcels ?? [])
         .filter((p) => (p.address || p.pnu))
-        .map((p) => ({
+        .map((p) => {
+          // ★소재지(동)와 지번(번지)이 분리된 양식이면 결합해 '완전한 지번주소'를 fullAddress로.
+          //   (이게 누락돼 동 단위 주소만 들어가 부지분석·구획도가 동 대표필지로 수렴하던 근본버그.)
+          const addr = (p.address || "").trim();
+          const jb = (p.jibun || "").trim();
+          const full = (jb && addr && !addr.includes(jb)) ? `${addr} ${jb}` : (addr || jb || p.pnu || "");
+          return ({
           __uid: newUid(),
-          fullAddress: p.address || p.pnu || "",
-          jibunAddress: p.jibun || p.address || "",
+          fullAddress: full,
+          jibunAddress: jb || addr || "",
           roadAddress: "", sido: "", sigungu: "", bname: "", zonecode: "",
           bcode: p.bcode || "",
           pnu: p.pnu || undefined,
@@ -491,7 +497,8 @@ export function GlobalAddressSearch({
           ...(p.zone_type ? { zoneCode: p.zone_type } : {}),
           ...(p.jimok ? { jimok: p.jimok } : {}),
           ...(p.official_price_per_sqm ? { officialPrice: p.official_price_per_sqm } : {}),
-        }));
+        });
+        });
       // ★업로드한 필지를 앞에 둔다(기존 검색분은 뒤로 보존, 혼용 가능). 방금 올린 토지조서가
       //   대표(primary)가 되어 이전에 검색한 주소가 분석에 잔류하는 오류를 막는다.
       const merged = single

@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v226-land-report";
+const CACHE_NAME = "propai-v227-excel-fulladdr";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",
