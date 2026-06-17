@@ -55,6 +55,9 @@ class Settings(BaseSettings):
     VLLM_MODEL: str = "claude-sonnet-4-6"
     # /api/v1/analyze 베어러 토큰. 빈 값 = 개방(dev). 설정 시 'Authorization: Bearer <token>' 요구.
     API_TOKEN: str = ""
+    # 클라이언트별 분당 요청 상한(레이트리밋). 0=비활성(기본). 외부 1차출처 쿼터/비용 폭주 방어.
+    # ⚠️ 프로세스 로컬 카운터 — 다중 워커 분산 강제는 Redis 등 필요(app.core.rate_limit 한계 참조).
+    REQUESTS_PER_MINUTE: int = 0
     # 관할 해석 외부 어댑터: mock | vworld. vworld는 VWORLD_API_KEY 있으면 실 호출, 없으면 fallback.
     JURISDICTION_ADAPTER: str = "mock"
     VWORLD_API_KEY: str = ""
