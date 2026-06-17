@@ -27,6 +27,8 @@ from app.core.errors import PreflightRefused
 from app.core.hashing import input_hash
 from app.services.explain.legal_refs import resolve_text
 from app.services.extraction.dual_path import resolve_elements
+from app.services.gate.confidence_composer import ConfidenceComposer
+from app.services.gate.finding_gate import FindingGate
 from app.services.judge.evaluator import EvalCase, Evaluator
 from app.services.legal_calc.calc_engine import CalcEngine
 from app.services.legal_calc.variable_seed import build_calc_variable_registry
@@ -297,10 +299,17 @@ def run_analysis(inp: AnalysisInput) -> AnalysisResult:
     else:
         skipped.append("qualitative: no qual_facts")
 
-    # 8) 최종 게이팅 + 산출 리포트 (L5 FinalGate → L6 ReportBuilder)
+    # 8) 신뢰도 합성(R3) + finding 게이팅 + 최종 게이팅 (ConfidenceComposer/FindingGate → L5 FinalGate → L6)
+    composer = ConfidenceComposer()
+    fgate = FindingGate()
     gate = FinalGate()
+    gated_findings: list[Finding] = []
     items: list[dict] = []
     for fnd in findings:
+        # R3 신뢰도 합성 — 충돌 패널티·하드게이트 반영(원시 input_confidence 통과 해소).
+        composed = composer.compose([fnd.composite_confidence], conflicts=fnd.conflicts)
+        fnd = fgate.apply(fnd.model_copy(update={"composite_confidence": composed}))  # gated_status 채움(박제 해소)
+        gated_findings.append(fnd)
         verification = citation_checks.get(fnd.basis_article)
         gated = gate.apply(GateItem(
             composite_confidence=fnd.composite_confidence,
@@ -328,6 +337,8 @@ def run_analysis(inp: AnalysisInput) -> AnalysisResult:
                 "verified": verification.passed if verification else False,
             },
         })
+    findings = gated_findings  # result.findings에 합성 confidence·gated_status 반영(박제 해소)
+
     # 플래그된 공학 지표는 '확인 필요' 항목으로 합류(무음 통과 금지).
     for m in sim_metrics:
         if m.flags:
