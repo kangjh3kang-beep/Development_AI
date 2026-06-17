@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v221-stale-invalidation";
+const CACHE_NAME = "propai-v222-land-share";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",
