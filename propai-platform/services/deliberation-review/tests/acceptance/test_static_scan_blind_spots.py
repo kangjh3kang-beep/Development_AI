@@ -31,3 +31,12 @@ def test_allowlist_excluded():
 def test_plain_assignment_still_detected():
     # 기존 regex 동작도 유지(회귀).
     assert "far_limit=300" in scan("far_limit = 300")
+
+
+def test_legal_name_with_benign_value_detected():
+    # 법정명+benign값(far_limit=100·coverage_ratio=0.5)도 탐지 — benign은 비법정 식별자에만(INV-3 누수 방지).
+    assert scan("far_limit = 100")
+    assert scan("coverage_ratio = 0.5")
+    assert scan("height_limit = 10")
+    # 명백한 인덱스/플래그(법정키워드 미포함)는 여전히 무탐.
+    assert not scan("idx = 100") and not scan("count = 10")

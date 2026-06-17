@@ -20,3 +20,23 @@ def test_get_run_rejects_without_token_when_configured(client, monkeypatch):
     monkeypatch.setattr(deps.settings, "API_TOKEN", "secret-token")
     resp = client.get("/api/v1/analyze/00000000-0000-0000-0000-000000000000")
     assert resp.status_code == 401
+
+
+def test_require_token_accepts_valid(monkeypatch):
+    # positive — 올바른 Bearer는 통과(예외 없음). 인증이 전부 거부로 깨지면 실패.
+    monkeypatch.setattr(deps.settings, "API_TOKEN", "secret-token")
+    deps.require_token("Bearer secret-token")  # raise 없으면 통과
+
+
+def test_require_token_open_when_unset(monkeypatch):
+    # 개방 모드 — API_TOKEN 미설정 시 무토큰도 통과(독스트링 계약).
+    monkeypatch.setattr(deps.settings, "API_TOKEN", "")
+    deps.require_token(None)  # raise 없으면 통과
+
+
+def test_require_token_rejects_wrong_scheme(monkeypatch):
+    import pytest
+    from fastapi import HTTPException
+    monkeypatch.setattr(deps.settings, "API_TOKEN", "secret-token")
+    with pytest.raises(HTTPException):
+        deps.require_token("Basic secret-token")  # scheme 불일치 거부
