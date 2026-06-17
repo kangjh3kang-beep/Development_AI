@@ -3,6 +3,7 @@
 import { useState, useCallback, useEffect } from "react";
 import { GlobalAddressSearch } from "@/components/common/GlobalAddressSearch";
 import { DevelopmentScenarioCard } from "@/components/common/DevelopmentScenarioCard";
+import { SiteInfraPoiCard } from "@/components/site/SiteInfraPoiCard";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { apiClient } from "@/lib/api-client";
 
@@ -249,6 +250,9 @@ export function ComprehensiveAnalysisPanel() {
           <p className="text-[10px] text-[var(--text-hint)] mt-2">AI 해석: API 키 미설정 (규칙 기반 분석만 제공)</p>
         )}
       </div>
+
+      {/* 입지 인프라(POI) 분석 — 주소 선택 시 */}
+      {address.trim() && <SiteInfraPoiCard address={address} />}
 
       {/* 다필지(2필지↑) 통합 개발방식 분석 — 검색·엑셀로 등록 시 자동 노출 */}
       {parcels.length > 1 && (
