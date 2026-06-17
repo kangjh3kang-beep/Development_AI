@@ -117,6 +117,26 @@ def test_calc_target_builder_carries_measurements():
     assert el["underground"] is True and el["accessory"] is True
 
 
+def test_area_sanity_flags_contradiction_and_ratio():
+    # INC-6: 제외 area 합 > 외곽 → 모순, 단일 area/외곽 > 상한 → 환각 의심(둘 다 무음 승계 차단).
+    from app.services.extraction.area_sanity import area_sanity_notes
+    contradiction = area_sanity_notes(100.0, [{"area": 150.0}])
+    assert any("모순" in n for n in contradiction)
+    ratio = area_sanity_notes(100.0, [{"area": 95.0}])  # 0.95 > 0.9 상한
+    assert any("환각 의심" in n for n in ratio)
+    assert area_sanity_notes(100.0, [{"area": 30.0}]) == []  # 정상 → 무경고
+
+
+def test_area_sanity_surfaced_in_pipeline():
+    # 도면 자동경로의 모순 면적이 r.skipped로 표면화(무음0).
+    r = run_analysis(AnalysisInput(
+        pnu="1111010100100000002", application_date=date(2026, 1, 1),
+        drawings=[{"sheet_id": "A-AREA", "sheet_role": "AREA_TABLE",
+                   "area_table": {"target": "building_area", "outer_area": 100.0},
+                   "element_hints": [{"semantic_hint": "PILOTIS", "hint_strength": 0.9, "area": 150.0}]}]))
+    assert any("area_sanity" in s for s in r.skipped)
+
+
 def test_calc_target_explicit_input_wins():
     # 명시 calc_targets가 있으면 도면 자동구성보다 우선(INPUT).
     r = run_analysis(AnalysisInput(
