@@ -15,6 +15,11 @@
    - 조치: .env `ALLOWED_ORIGINS`에 프로덕션 도메인 추가(주석없는 KEY=VALUE, 백업 `.env.bak.cors.*`) + deploy.sh 재배포(--env-file 재적용). 검증: OPTIONS 200+`access-control-allow-origin: https://4t8t.net`, 브라우저 fetch 200.
    - **★재발방지(필수): .env 정리/secrets export가 `ALLOWED_ORIGINS`를 localhost-only로 되돌리면 즉시 전역 CORS 장애 재발(=1번 인라인주석과 동일 클래스). export/정리 시 프로덕션 도메인 보존 필수. 코드기본값(config.py)엔 이미 4t8t.net 포함 — .env에서 이 키를 아예 빼면 코드기본값이 적용돼 안전.**
 
+1-C. **[🟠 전수조사] 서버 `.env` `# →` 인라인주석 오염 다수 잔존(이전 정리가 일부만 처리) → 안전분 정리 완료.**
+   - 발견(실행 컨테이너 os.environ 기준): `ENCRYPTION_KEY`(len18 가비지)·공공데이터 7키(KMA/HUG/LH/COURT/NICE/GIR/MOIS)·REPLICATE/ROBOFLOW/SLACK/STAGING_*/PRODUCTION_*/RELEASE_* 가 전부 `# → 필드명` **가비지 리터럴**(빈 플레이스홀더, 실값 유실 아님). pydantic/os.environ이 이걸 실제 값으로 읽어 공공API에 가비지 키 전송 → 해당 통합 실패 가능. **MOLIT(64)·VWORLD(36)은 정상**이라 검색·건축물대장·지오코드는 동작.
+   - 조치: 마스터키 제외 **20줄 빈값 정리**(`KEY=`)+재배포. 검증: 7키 EMPTY·MOLIT/VWORLD SET 유지·CORS/검색 정상. 백업 `.env.bak.cleanup.*`.
+   - **★마스터키 `ENCRYPTION_KEY`(L128)는 의도적 미수정**(가비지지만 함부로 고치면 시크릿 복호화 영향). `SECRET_STORE_KEY`는 .env에 **부재(MISSING)** — 시크릿 DB 복호화 경로/오버레이 동작은 secrets 트랙 점검 필요(별도). 공공데이터 7키 실값은 관리자 시크릿 UI(platform_secrets)에서 재입력해야 해당 기능 복구.
+
 2. **[🔴 보안] 마스터키 `SECRET_STORE_KEY`·`ENCRYPTION_KEY`는 env-only·평문 비노출.** export_scoped_secrets는 `_HARD_DENY`로 하드차단(--allow로도 export 불가). 절대 외부서비스/관리자화면/DB/로그 노출 금지.
 
 3. **[🔴 배포] 백엔드·프론트 모두 SSH 수동(Oracle A1).** 백엔드 `bash ~/deploy.sh`(blue-green, 게이트 `curl localhost:NEW/health` 60×3s=180s, 부팅 정상 시 ~15초). 프론트 `bash ~/safe-deploy.sh`(sw CACHE_NAME 올림). GitHub push만으론 반영 안 됨.
