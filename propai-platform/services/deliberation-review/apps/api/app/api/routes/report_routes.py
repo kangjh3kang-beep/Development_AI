@@ -35,7 +35,8 @@ def build_report(req: BuildRequest) -> BuildResponse:
             req.items, snapshot_id=req.snapshot_id, model_version=req.model_version
         )
     except EvidenceMissing as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        # 예외 원문 노출 금지 — 안정 코드만(원문은 서버 추적).
+        raise HTTPException(status_code=400, detail="evidence_missing") from exc
     return BuildResponse(
         report=report,
         checklist=to_checklist(report),

@@ -23,7 +23,8 @@ async def analyze(payload: AnalysisInput, session: AsyncSession = Depends(get_se
     try:
         result = run_analysis(payload)
     except DomainError as exc:
-        raise HTTPException(status_code=422, detail=f"{type(exc).__name__}: {exc}") from exc
+        # 예외 원문(내부 식별자/경로) 노출 금지 — 안정 코드만 반환(원문은 서버 추적 from exc).
+        raise HTTPException(status_code=422, detail=f"domain_error:{type(exc).__name__}") from exc
     return await save_analysis(session, result)
 
 
