@@ -9,6 +9,7 @@ from datetime import date
 
 from pydantic import BaseModel, Field
 
+from app.contracts._types import Probability
 from app.contracts.enums import JurisdictionSource, ScaleSource
 
 
@@ -16,7 +17,7 @@ class Zone(BaseModel):
     """용도지역/지구 1건(면적비 보존)."""
 
     zone_code: str
-    area_ratio: float | None = None
+    area_ratio: Probability | None = None
 
 
 class JurisdictionContext(BaseModel):

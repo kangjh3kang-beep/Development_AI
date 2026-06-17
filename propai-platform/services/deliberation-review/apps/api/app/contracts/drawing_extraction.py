@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from app.contracts._types import Probability
+
 _VALID_TYPES = {
     "PILOTIS", "BALCONY", "EAVE", "BASEMENT", "PARKING", "CORE_STAIR",
     "EXT_WALL", "PLOT_BOUNDARY", "BUILDING_LINE", "UNKNOWN",
@@ -40,7 +42,7 @@ class ExtractedElement(BaseModel):
 
     element_id: str
     semantic_hint: str                     # SemanticType 이름 또는 UNKNOWN
-    hint_strength: float = 0.0
+    hint_strength: Probability = 0.0
     area: float | None = None
     quantity: float | None = None
     provenance: dict = Field(default_factory=dict)  # {sheet, src: vision|hint}

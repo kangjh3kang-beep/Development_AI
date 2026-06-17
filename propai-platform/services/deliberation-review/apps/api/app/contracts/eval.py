@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from app.contracts._types import Probability
+
 
 class GoldenItem(BaseModel):
     item_id: str
@@ -15,6 +17,6 @@ class EvalReport(BaseModel):
     kind: str
     total: int
     correct: int
-    accuracy: float
+    accuracy: Probability
     per_type: dict = Field(default_factory=dict)      # expected타입 → {total, correct, accuracy}
     mismatches: list = Field(default_factory=list)     # [{item_id, expected, predicted}]
