@@ -30,23 +30,31 @@ class AreaCalculator:
                 excluded += el.area
                 entries.append(CalcTraceEntry(
                     rule_id="ba_pilotis", basis_article=_BASIS_119,
-                    excluded_elements=[SemanticType.PILOTIS]))
+                    excluded_elements=[SemanticType.PILOTIS],
+                    excluded_amount=round(el.area, 2), note="필로티(개방) 건축면적 제외"))
             elif el.semantic_type == SemanticType.EAVE:
-                limit_len = self.params.get("eave_exclusion_length")
+                em = self.params.meta("eave_exclusion_length")
+                limit_len = em["value"]
                 ratio = (min(el.length, limit_len) / el.length) if el.length else 0.0
-                excluded += el.area * ratio
+                exc = el.area * ratio
+                excluded += exc
                 entries.append(CalcTraceEntry(
-                    rule_id="ba_eave", basis_article=_BASIS_119,
+                    rule_id="ba_eave", basis_article=em.get("basis_article", _BASIS_119),
                     excluded_elements=[SemanticType.EAVE],
-                    note="처마 제외길이 이내 분"))
+                    threshold=limit_len, threshold_unit=em.get("unit"),
+                    measured=el.length, excluded_amount=round(exc, 2),
+                    note=f"처마 제외길이 {min(el.length, limit_len)}m/{el.length}m({em.get('description', '')})"))
             elif el.semantic_type == SemanticType.BALCONY:
-                depth_limit = self.params.get("balcony_exclusion_depth")
+                bm = self.params.meta("balcony_exclusion_depth")
+                depth_limit = bm["value"]
                 if el.depth <= depth_limit:
                     excluded += el.area
                     entries.append(CalcTraceEntry(
-                        rule_id="ba_balcony", basis_article=_BASIS_119,
+                        rule_id="ba_balcony", basis_article=bm.get("basis_article", _BASIS_119),
                         excluded_elements=[SemanticType.BALCONY],
-                        note="발코니 제외 깊이 이내"))
+                        threshold=depth_limit, threshold_unit=bm.get("unit"),
+                        measured=el.depth, excluded_amount=round(el.area, 2),
+                        note=f"발코니 깊이 {el.depth}m ≤ 기준 {depth_limit}m({bm.get('description', '')})"))
 
         return outer_area - excluded, entries
 
@@ -69,7 +77,9 @@ class AreaCalculator:
                 excluded += el.area
                 entries.append(CalcTraceEntry(
                     rule_id=f"far_{el.semantic_type.value.lower()}",
-                    basis_article=_BASIS_119, excluded_elements=[el.semantic_type]))
+                    basis_article=_BASIS_119, excluded_elements=[el.semantic_type],
+                    excluded_amount=round(el.area, 2),
+                    note=f"{el.semantic_type.value} 용적률 산정 연면적 제외"))
 
         return gross_floor_area - excluded, entries
 
@@ -85,7 +95,7 @@ class AreaCalculator:
                 deducted += el.area
                 entries.append(CalcTraceEntry(
                     rule_id="plot_deduction", basis_article="건축법 제46조/도시계획",
-                    excluded_elements=[el.semantic_type],
-                    note="건축선 후퇴분/도시계획시설 저촉분"))
+                    excluded_elements=[el.semantic_type], excluded_amount=round(el.area, 2),
+                    note="건축선 후퇴분/도시계획시설 저촉분 차감"))
 
         return parcel_area - deducted, entries

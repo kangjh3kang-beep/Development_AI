@@ -281,8 +281,13 @@
 - reg_graph RegNode에 law/article/summary/effective_date/source/resolved 속성 → ARTICLE 노드가 법령 본문·출처
   동반(ID만 흐르던 결손 해소). pipeline evidence에 legal_basis 결속, 미해소는 표면화(무음 금지).
 - 검증: AT 2(test_basis_resolve) + 전체 **279 passed, ruff clean**(정본 워크트리).
-- 후속(설명가능성 확장): legal_calc CalcTrace 임계·제외수치 전파 · final_gate 강등사유 라벨 ·
-  cross_validation 출처 ref 보존.
+### ✅ 설명가능성 확장 — legal_calc CalcTrace 제외 정량
+- CalcTraceEntry에 threshold/threshold_unit/measured/excluded_amount 필드 + calc_params.meta()로
+  basis_article·description·value 전파(calc_params.json의 근거가 출력에 소실되던 결손 해소).
+- area_calculator(처마/발코니/필로티/지하·주차/건축선)·height_floor_calc(옥탑 비율) 각 제외에 임계·실측·차감량·근거 동반.
+  예: "발코니 깊이 1.2m ≤ 기준 1.5m(건축법 시행령 제119조)".
+- AT 4(test_calc_trace_explain) + 전체 **283 passed, ruff clean**.
+- 후속(설명가능성 확장): final_gate 강등사유 라벨 · cross_validation 출처 ref 보존.
 
 ### 통합 최종 스냅샷(diag)
 - 전 출처 표면화: drawing_source/calc_targets_source/precedent_source/mirror_source.
