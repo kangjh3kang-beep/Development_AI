@@ -219,16 +219,22 @@ def run_analysis(inp: AnalysisInput) -> AnalysisResult:
                 surrounding_context = nb.skyline_from(buildings, inp.surrounding_radius_m)
                 # 대상지 필지 geometry 있으면 3D 일조(동지 9~15시 그림자) 분석.
                 if geocoded.get("site_geometry"):
-                    from app.services.sim.shadow_3d import sunlight_analysis
+                    from app.services.sim.shadow_3d import sunlight_analysis, sunlight_metric
                     sun = sunlight_analysis(geocoded["site_geometry"], buildings, geocoded["lat"])
                     if sun is not None:
                         surrounding_context["sunlight"] = sun
+                        sm = sunlight_metric(sun)  # SimMetric emit 게이트(근거 강제·미달 flag)
+                        if sm is not None:
+                            sim_metrics.append(sm)
                 # 신축안 층수 → 주변 스카이라인 대비 돌출도(경관심의 참고).
                 if inp.proposed_floors:
-                    from app.services.sim.skyline_protrusion import skyline_protrusion
+                    from app.services.sim.skyline_protrusion import protrusion_metric, skyline_protrusion
                     prot = skyline_protrusion(surrounding_context, inp.proposed_floors)
                     if prot is not None:
                         surrounding_context["protrusion"] = prot
+                        pm = protrusion_metric(prot)  # SimMetric emit 게이트(돌출 flag)
+                        if pm is not None:
+                            sim_metrics.append(pm)
             else:
                 skipped.append("surrounding: 주변 건물 수집 결손")
 

@@ -52,3 +52,24 @@ def skyline_protrusion(skyline: dict | None, proposed_floors: int | None,
         ],
     ).model_dump()
     return out
+
+
+def protrusion_metric(prot: dict | None):
+    """skyline_protrusion 결과 → SimMetric(emit 게이트로 근거 강제·돌출 flag). 결손 None."""
+    if prot is None:
+        return None
+    from app.contracts.sim_metric import MethodTrace, MetricStatus, SimMetric, emit
+    r = prot.get("rationale", {})
+    val = prot.get("ratio_vs_avg")
+    level = prot.get("protrusion_level")
+    flags = [f"skyline_protrusion_{level.lower()}"] if level in ("HIGH", "MEDIUM") else []
+    return emit(SimMetric(
+        metric_id="skyline_protrusion", value=val, unit="ratio",
+        status=MetricStatus.OK if val is not None else MetricStatus.UNAVAILABLE,
+        method_trace=MethodTrace(
+            model="skyline_vs_context",
+            assumptions=r.get("caveats", []),
+            inputs={i["name"]: i["value"] for i in r.get("inputs", [])},
+            basis_article="경관법 제9조·지자체 경관조례"),
+        flags=flags,
+    ))
