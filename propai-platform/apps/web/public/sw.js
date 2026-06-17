@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v217-site-poi-infra";
+const CACHE_NAME = "propai-v218-integrated-location";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

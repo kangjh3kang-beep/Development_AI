@@ -251,8 +251,13 @@ export function ComprehensiveAnalysisPanel() {
         )}
       </div>
 
-      {/* 입지 인프라(POI) 분석 — 주소 선택 시 */}
-      {address.trim() && <SiteInfraPoiCard address={address} />}
+      {/* 입지 인프라(POI) 분석 — 주소 선택 시. 분석결과 있으면 context로 통합 입지점수 산출 */}
+      {address.trim() && (
+        <SiteInfraPoiCard
+          address={address}
+          context={result ? (result as unknown as Record<string, unknown>) : undefined}
+        />
+      )}
 
       {/* 다필지(2필지↑) 통합 개발방식 분석 — 검색·엑셀로 등록 시 자동 노출 */}
       {parcels.length > 1 && (

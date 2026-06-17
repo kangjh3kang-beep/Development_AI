@@ -17,6 +17,9 @@ type Resp = {
   reason?: string;
   radius_m?: number;
   poi_accessibility_score?: number;
+  integrated_location_score?: number | null;
+  score_basis?: string;
+  transit_time?: { to?: string; driving_min?: number; distance_m?: number } | null;
   categories?: Record<string, Cat>;
   geocoded_from?: string | null;
   coordinates?: { lat: number; lon: number };
@@ -31,7 +34,7 @@ function scoreColor(s: number): string {
   return "text-rose-400";
 }
 
-export function SiteInfraPoiCard({ address, className = "" }: { address?: string; className?: string }) {
+export function SiteInfraPoiCard({ address, context, className = "" }: { address?: string; context?: Record<string, unknown>; className?: string }) {
   const [radius, setRadius] = useState(1000);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -42,7 +45,7 @@ export function SiteInfraPoiCard({ address, className = "" }: { address?: string
     setLoading(true); setError(""); setData(null);
     try {
       const res = await apiClient.post<Resp>("/site-score/poi-infra", {
-        body: { address: address.trim(), radius_m: r },
+        body: { address: address.trim(), radius_m: r, ...(context ? { context } : {}) },
         useMock: false, timeoutMs: 40000,
       });
       setData(res);
@@ -51,7 +54,7 @@ export function SiteInfraPoiCard({ address, className = "" }: { address?: string
     } finally {
       setLoading(false);
     }
-  }, [address]);
+  }, [address, context]);
 
   return (
     <div className={`rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-5 ${className}`}>
@@ -84,12 +87,22 @@ export function SiteInfraPoiCard({ address, className = "" }: { address?: string
 
       {data && data.available && (
         <div className="mt-4 space-y-3">
-          <div className="flex items-baseline gap-3">
-            <span className="text-[11px] font-bold text-[var(--text-tertiary)]">POI 접근성 점수</span>
-            <span className={`cc-num text-2xl font-black ${scoreColor(data.poi_accessibility_score ?? 0)}`}>
-              {data.poi_accessibility_score ?? 0}
+          <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
+            {data.integrated_location_score != null && (
+              <span className="flex items-baseline gap-1.5">
+                <span className="text-[11px] font-bold text-[var(--text-tertiary)]">통합 입지점수</span>
+                <span className={`cc-num text-2xl font-black ${scoreColor(data.integrated_location_score)}`}>{data.integrated_location_score}</span>
+                <span className="text-[10px] text-[var(--text-hint)]">/100</span>
+              </span>
+            )}
+            <span className="flex items-baseline gap-1.5">
+              <span className="text-[11px] font-bold text-[var(--text-tertiary)]">POI 접근성</span>
+              <span className={`cc-num text-xl font-black ${scoreColor(data.poi_accessibility_score ?? 0)}`}>{data.poi_accessibility_score ?? 0}</span>
             </span>
-            <span className="text-[11px] text-[var(--text-hint)]">/ 100 · 반경 {data.radius_m}m{data.geocoded_from ? ` · 좌표 ${data.geocoded_from}` : ""}</span>
+            {data.transit_time?.driving_min != null && (
+              <span className="text-[11px] text-[var(--text-secondary)]">🚇 {data.transit_time.to} 차량 <b className="text-[var(--accent-strong)]">{data.transit_time.driving_min}분</b></span>
+            )}
+            <span className="text-[10px] text-[var(--text-hint)]">반경 {data.radius_m}m{data.geocoded_from ? ` · 좌표 ${data.geocoded_from}` : ""}{data.score_basis ? ` · ${data.score_basis}` : ""}</span>
           </div>
           <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3 lg:grid-cols-4">
             {Object.entries(data.categories ?? {}).map(([code, c]) => (
