@@ -29,6 +29,29 @@ def test_ifc_parse_maps_types():
     assert by_type["IFCBUILDINGELEMENTPROXY"] == SemanticType.UNKNOWN  # 미매핑→UNKNOWN(INV-9)
 
 
+_IFC_QTY = """ISO-10303-21;
+DATA;
+#9= IFCOWNERHISTORY($,$,$,$,$,$,$,$);
+#1= IFCSLAB('guid-b1',#9,'지하층 슬래브',$,$);
+#10= IFCQUANTITYAREA('GrossArea',$,$,150.5,$);
+#13= IFCQUANTITYLENGTH('Perimeter',$,$,48.0,$);
+#11= IFCELEMENTQUANTITY('guid-eq',#9,'BaseQuantities',$,$,(#10,#13));
+#12= IFCRELDEFINESBYPROPERTIES('guid-rel',#9,$,$,(#1),#11);
+ENDSEC;
+END-ISO-10303-21;
+"""
+
+
+def test_ifc_parse_extracts_quantity_area_length():
+    # INC-5a: IFCQUANTITYAREA/LENGTH를 관계(IFCELEMENTQUANTITY/IFCRELDEFINESBYPROPERTIES)로 BimElement에 결합.
+    model = IfcParser().parse(_IFC_QTY)
+    slab = next(e for e in model.elements if e.ifc_type == "IFCSLAB")
+    assert slab.area == 150.5 and slab.length == 48.0  # 1차출처 정량(결정론)
+    assert slab.semantic_type == SemanticType.BASEMENT
+    # 정량 미연결 요소는 area=None(무음 추정 금지).
+    assert IfcParser().parse(_IFC).elements[0].area is None
+
+
 def test_dual_path_prefers_bim():
     r = resolve_elements({"ifc": _IFC, "elements": [{"element_id": "e1", "features": {}}]})
     assert r.source == "BIM"
