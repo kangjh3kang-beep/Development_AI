@@ -114,6 +114,8 @@ export function GlobalAddressSearch({
   });
   const [isSearching, setIsSearching] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  // 다음(Daum) 팝업 외부제어 — 통합검색에서 '건물명·아파트로 찾기' 보조링크로만 연다.
+  const [kakaoOpen, setKakaoOpen] = useState(false);
   // 지번 직접검색(VWorld) — Daum이 못 찾는 지번·산·농지 등을 직접 입력으로 해석.
   const [directQuery, setDirectQuery] = useState("");
   const [directBusy, setDirectBusy] = useState(false);
@@ -730,46 +732,36 @@ export function GlobalAddressSearch({
         </div>
       )}
 
-      {/* 주소 검색 입력 */}
-      {(isSearching || displayAddresses.length === 0) ? (
-        <KakaoAddressSearch
-          onSelect={handleAddressSelect}
-          placeholder={placeholder}
-          disabled={disabled}
-        />
+      {/* 주소·지번 검색
+          · 단일 모드: 기존 다음(Daum) 주소검색 박스(회귀 없음)
+          · 다필지 모드: 통합 스마트 검색 — VWorld 지번·도로명 자동완성(기본, 산·농지·맹지·나대지까지)
+            + '건물명·아파트로 찾기'(다음, 보조). 두 검색을 한 입력 프레임으로 통합(중복 제거). */}
+      {single ? (
+        (isSearching || displayAddresses.length === 0) ? (
+          <KakaoAddressSearch onSelect={handleAddressSelect} placeholder={placeholder} disabled={disabled} />
+        ) : (
+          <button
+            type="button"
+            onClick={() => setIsSearching(true)}
+            className="w-full rounded-xl border border-dashed border-[var(--line-strong)] px-4 py-2.5 text-xs font-bold text-[var(--text-secondary)] hover:border-[var(--accent-strong)] hover:text-[var(--accent-strong)] hover:bg-[var(--accent-soft)] transition-all"
+          >
+            주소 변경
+          </button>
+        )
       ) : (
-        <div className="flex gap-2">
-          {/* 주소 변경 (단일) 또는 필지 추가 (다필지) */}
-          {single ? (
+        <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)]/40 px-3 py-2.5">
+          <div className="mb-1.5 flex items-center justify-between gap-2">
+            <span className="text-[12px] font-bold text-[var(--text-secondary)]">🔍 지번·주소 검색</span>
+            {/* 보조: 건물명·아파트는 다음(Daum)이 강함 → 팝업으로 보완(데이터소스 보완) */}
             <button
               type="button"
-              onClick={() => setIsSearching(true)}
-              className="flex-1 rounded-xl border border-dashed border-[var(--line-strong)] px-4 py-2.5 text-xs font-bold text-[var(--text-secondary)] hover:border-[var(--accent-strong)] hover:text-[var(--accent-strong)] hover:bg-[var(--accent-soft)] transition-all"
+              disabled={disabled}
+              onClick={() => setKakaoOpen(true)}
+              className="whitespace-nowrap text-[11px] font-semibold text-[var(--accent-strong)] hover:underline disabled:opacity-50"
             >
-              주소 변경
+              🏢 건물명·아파트로 찾기 →
             </button>
-          ) : (
-            <button
-              type="button"
-              onClick={() => setIsSearching(true)}
-              className="flex-1 rounded-xl border border-dashed border-[var(--line-strong)] px-4 py-2.5 text-xs font-bold text-[var(--text-secondary)] hover:border-[var(--accent-strong)] hover:text-[var(--accent-strong)] hover:bg-[var(--accent-soft)] transition-all flex items-center justify-center gap-2"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
-              필지 추가
-            </button>
-          )}
-        </div>
-      )}
-
-      {/* 다필지 등록 입력부 — 반응형 그리드: 모바일 1열, md 이상 2열.
-          토지지번검색·엑셀등록 카드가 나란히 배치되고, 지도 패널은 행 전체(2열)를 span.
-          (single 모드는 이 그리드 자체를 렌더하지 않아 기존 단일 입력만 노출 — 회귀 없음) */}
-      {!single && (
-      <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
-      {/* 토지지번검색(VWorld 자동완성) — 타이핑하면 후보를 띄워 선택(다음 주소검색 UX).
-          Daum이 못 찾는 지번·산·농지도 직접 검색·선택해 추가(다필지 누적). */}
-        <div className="flex h-full flex-col rounded-lg border border-[var(--line)] bg-[var(--surface-muted)]/40 px-3 py-2.5">
-          <span className="mb-1.5 text-[12px] font-bold text-[var(--text-secondary)]">📍 토지지번 검색</span>
+          </div>
           <div className="relative flex flex-wrap items-center gap-2">
             <div className="relative min-w-[160px] flex-1">
               <input
@@ -779,7 +771,8 @@ export function GlobalAddressSearch({
                 onFocus={() => { if (candidates.length) setShowCandidates(true); }}
                 onBlur={() => setTimeout(() => setShowCandidates(false), 150)}
                 onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); if (candidates.length) pickCandidate(candidates[0]); else void handleDirectAdd(); } }}
-                placeholder="예) 의정부동 224, 산 12-3 — 입력하면 후보가 표시됩니다"
+                placeholder="지번·도로명 검색 (예: 의정부동 224, 산 12-3, 판교역로 166)"
+                aria-label="지번·도로명 주소 검색"
                 className="w-full rounded-lg border border-[var(--line-strong)] bg-[var(--surface)] px-2.5 py-1.5 text-[12px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
               />
               {/* 자동완성 후보 드롭다운 */}
@@ -811,10 +804,18 @@ export function GlobalAddressSearch({
             </button>
           </div>
           {directMsg && <p className="mt-1 text-[12px] font-semibold text-amber-500">⚠ {directMsg}</p>}
+          <p className="mt-1 text-[10px] text-[var(--text-hint)]">지번·산·농지·맹지·나대지는 지번검색, 아파트·건물명은 ‘건물명·아파트로 찾기’(다음)를 쓰세요.</p>
+          {/* 다음(Daum) 팝업 — 외부제어(보조): 건물명·아파트 검색. 닫힘 시 트리거 박스 미표시. */}
+          <KakaoAddressSearch open={kakaoOpen} onOpenChange={setKakaoOpen} onSelect={handleAddressSelect} disabled={disabled} />
         </div>
+      )}
 
+      {/* 다른 등록 방식 — 엑셀 일괄 등록 + 지도 클릭 선택(전체폭 스택).
+          (주소·지번 검색은 위 통합 검색으로 일원화. single 모드는 이 영역 미렌더 — 회귀 없음) */}
+      {!single && (
+      <div className="grid grid-cols-1 gap-2">
       {/* 다필지 엑셀 등록 — 토지조서 양식 업로드/다운로드(주소만 적어도 PNU·면적·용도·공시지가 자동보강).
-          토지지번검색 카드와 나란히(2열) 배치. */}
+          주소·지번 검색은 위 통합 검색(VWorld 자동완성 + 다음 보조)으로 일원화 — 여긴 엑셀·지도만. */}
         <div className="flex h-full flex-col rounded-lg border border-[var(--line)] bg-[var(--surface-muted)]/40 px-3 py-2.5">
           <span className="mb-1.5 text-[12px] font-bold text-[var(--text-secondary)]">📊 엑셀로 다필지 등록</span>
           <div className="flex flex-wrap items-center gap-2">

@@ -63,6 +63,10 @@ interface KakaoAddressSearchProps {
   className?: string;
   /** 비활성화 */
   disabled?: boolean;
+  /** ★외부 제어 모드 — open이 정의되면 내부 박스 트리거를 숨기고 부모가 팝업 개폐를 제어한다.
+   *   (통합 검색에서 '건물명·아파트로 찾기' 보조 링크로 다음 팝업만 열 때 사용) */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }
 
 /* ── Daum Postcode 스크립트 로드 ── */
@@ -102,10 +106,20 @@ export function KakaoAddressSearch({
   placeholder = "주소를 검색하세요 (클릭하면 검색창이 열립니다)",
   className = "",
   disabled = false,
+  open: openProp,
+  onOpenChange,
 }: KakaoAddressSearchProps) {
   const [displayValue, setDisplayValue] = useState(value);
-  const [open, setOpen] = useState(false);
+  const [openState, setOpenState] = useState(false);
   const boxRef = useRef<HTMLDivElement | null>(null);
+
+  // 외부 제어 모드(open prop 정의) ↔ 내부 상태 모드. 기존 사용처는 prop 미전달=내부 모드(하위호환).
+  const controlled = openProp !== undefined;
+  const open = controlled ? !!openProp : openState;
+  const setOpen = useCallback((v: boolean) => {
+    if (controlled) onOpenChange?.(v);
+    else setOpenState(v);
+  }, [controlled, onOpenChange]);
 
   // 외부 value 변경 시 동기화
   useEffect(() => {
@@ -114,7 +128,7 @@ export function KakaoAddressSearch({
 
   const openSearch = useCallback(() => {
     if (!disabled) setOpen(true);
-  }, [disabled]);
+  }, [disabled, setOpen]);
 
   /* ── 모바일 안전: 별도 팝업(.open) 대신 인라인 임베드(.embed).
         .open() 은 모바일에서 oncomplete 콜백이 원래 페이지로 안정적으로 돌아오지 않아
@@ -152,11 +166,12 @@ export function KakaoAddressSearch({
       }).embed(boxRef.current, { autoClose: false });
     })();
     return () => { cancelled = true; };
-  }, [open, onSelect]);
+  }, [open, onSelect, setOpen]);
 
   return (
     <div className="space-y-2">
-      {/* 주소 입력/표시 필드 */}
+      {/* 주소 입력/표시 필드 — 외부 제어 모드(open prop)에선 숨김(부모가 별도 버튼으로 팝업을 연다) */}
+      {!controlled && (
       <div
         onClick={openSearch}
         className={`
@@ -200,6 +215,7 @@ export function KakaoAddressSearch({
           </span>
         )}
       </div>
+      )}
 
       {/* 주소 검색 오버레이 — Portal로 body에 렌더.
           (backdrop-blur/transform 조상이 있으면 fixed가 그 안에 갇혀 검색창이
