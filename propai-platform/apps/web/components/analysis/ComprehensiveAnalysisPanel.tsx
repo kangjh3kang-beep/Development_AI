@@ -199,7 +199,10 @@ export function ComprehensiveAnalysisPanel() {
             <GlobalAddressSearch
               writeToContext={false}
               onChange={(entries) => {
-                if (entries.length > 0) setAddress(entries[0].jibunAddress || entries[0].fullAddress);
+                const next = entries.length > 0 ? (entries[0].jibunAddress || entries[0].fullAddress) : "";
+                // 새 주소 입력 시 이전 분석결과를 무효화(stale 표시 방지 — SSOT 정합).
+                if (next && next !== address) { setResult(null); setError(null); }
+                if (next) setAddress(next);
                 setParcels(entries.map((e) => e.jibunAddress || e.fullAddress || e.roadAddress).filter(Boolean));
               }}
               placeholder="분석할 주소 검색 · 다필지는 엑셀로 일괄 등록"

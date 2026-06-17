@@ -438,7 +438,12 @@ export function AutoRecommendPanel({ onClose, isModal = false, embedded = false 
                 writeToContext={false}
                 onChange={(entries) => {
                   if (entries.length > 0) {
-                    setAddress(entries[0].jibunAddress || entries[0].fullAddress);
+                    const next = entries[0].jibunAddress || entries[0].fullAddress;
+                    // 새 주소 입력 시 이전 추천결과 무효화(stale 표시 방지 — SSOT 정합).
+                    if (next && next !== address) {
+                      setTopModels([]); setAllModels([]); setAiInterpretation(null); setError(null);
+                    }
+                    setAddress(next);
                     // 시도 자동 설정
                     if (entries[0].sido) {
                       const matchedRegion = REGIONS.find((r) => entries[0].sido.includes(r) || r.includes(entries[0].sido));
