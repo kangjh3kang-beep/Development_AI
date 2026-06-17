@@ -331,6 +331,17 @@
   **379 passed**(370→379), ruff clean, static_scan 0. 적대적 다관점 리뷰(gate 4.8·determinism 8.7·quality 8.5,
   전부 gate_pass) — 시크릿 비유출·결정론 코드 증명, 7건 기각·LOW 3건 반영(flush dirty-clear→commit 후, 만료 eviction, warm rollback).
 
+### ✅ 멀티모달 고도화 INC-12 — 수집 신선도 게이트(P-데이터)
+- **변경**: `SourceValue`에 collected_at/data_vintage/max_age_days + **is_stale(as_of)**(data_vintage→collected_at 우선,
+  max_age_days 초과; **wall-clock 미사용 순수 메타 비교=결정론**). `CrossValidation.stale_sources` + needs_review에 stale 포함.
+  `validator.validate(fact_key, values, as_of=None)` — 합의 직전 노후 출처 표면화. `LandCard`에 max_age_days + **is_stale(as_of)**.
+- **배선**: 파이프라인 cross_facts가 `as_of=application_date` 전달 + landprice SourceValue에 data_vintage(land_year)/max_age 730.
+  collect_land_card가 stdr_year vs as_of 노후 시 note(max_age 365, is_stale과 동일 임계).
+- **불변식**: **as_of None이면 신선도 미평가**(후방호환 — vision_consensus의 merge_with_consensus 등 기존 호출자 무영향).
+  status는 합의 결과 정직 보존(노후를 CONFLICT로 위장 안 함), 노후는 stale_sources+needs_review로만 표면화(무음0). 결정론.
+- **검증**: AT 6(is_stale·validator 게이트·as_of 무전달 호환·결정론·LandCard.is_stale·파이프라인 e2e) + 전체 **385 passed**
+  (379→385), ruff clean, static_scan 0. 적대적 집중 리뷰 4.7(gate_pass) — LOW(LandCard dead 필드) 해소(collected_at 제거·is_stale로 max_age 소비).
+
 ## 5. 남은 항목 (운영 연결/결정 필요)
 - **단선 해소 완료(코드)**: P-A·P-A.2·P-C·P-D·P-E 모두 계약→구현→AT→검증 완결, mock→live 스위치 +
   결정론 보존. **인프라/키 가동만 남음**: P-B 실키(사용자 1회 export), P-C 실 임베더+Qdrant,

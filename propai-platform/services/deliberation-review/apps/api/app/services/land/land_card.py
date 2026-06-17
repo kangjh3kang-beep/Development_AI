@@ -71,11 +71,23 @@ def collect_land_card(pnu: str, stdr_year: str = "2024",
             if multipath is not None:
                 upz["multipath"] = multipath["pathways"]
 
+    # INC-12 신선도 — 토지자료 기준연도가 신청일(as_of) 대비 노후면 표면화(무음 사용 금지).
+    eff_stdr = c.get("stdr_year") or stdr_year
+    land_max_age_days = 365  # 토지자료 연1회 갱신 — 1년 초과 시 노후(LandCard.is_stale과 동일 임계)
+    if as_of is not None and eff_stdr:
+        try:
+            if (as_of - date(int(eff_stdr), 1, 1)).days > land_max_age_days:
+                notes.append(f"신선도: 토지자료 기준연도 {eff_stdr}이 신청일({as_of.isoformat()}) 대비 노후"
+                             "(>1년) — 최신 공시/대장 확인 권장")
+        except (TypeError, ValueError):
+            pass
+
     return LandCard(
         existing_building=building,
         remaining_capacity=rc,
         upzoning=upz,
         pnu=pnu,
+        max_age_days=land_max_age_days,
         jimok=c.get("jimok"),
         use_zone=c.get("use_zone"),
         use_zones_all=zones or [],

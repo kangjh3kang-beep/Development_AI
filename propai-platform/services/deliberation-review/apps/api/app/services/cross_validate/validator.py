@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from datetime import date
 
 from app.contracts.cross_validation import CrossStatus, CrossValidation, SourceValue
 
@@ -22,19 +23,24 @@ def _norm(value: object) -> str:
 
 
 class CrossSourceValidator:
-    def validate(self, fact_key: str, values: list[SourceValue]) -> CrossValidation:
+    def validate(self, fact_key: str, values: list[SourceValue],
+                 as_of: date | None = None) -> CrossValidation:
         present = [v for v in values if v.value is not None]
         by_source = {v.source: v.value for v in present}
         n = len(present)
+        # INC-12 신선도 게이트 — as_of 대비 노후 출처를 합의 직전 표면화(무음0, 결정론). as_of None이면 미평가.
+        stale_sources = sorted(v.source for v in present if v.is_stale(as_of))
 
         if n == 0:
             return CrossValidation(fact_key=fact_key, status=CrossStatus.ABSENT,
-                                   confidence=0.0, sources_present=0, by_source={}, sources=values)
+                                   confidence=0.0, sources_present=0, by_source={}, sources=values,
+                                   stale_sources=stale_sources)
         if n == 1:
             # 단일 출처 — 교차검증 불가(보수). 값은 제시하되 확신 낮음.
             return CrossValidation(fact_key=fact_key, status=CrossStatus.SINGLE,
                                    agreed_value=present[0].value, confidence=0.5,
-                                   sources_present=1, by_source=by_source, sources=values)
+                                   sources_present=1, by_source=by_source, sources=values,
+                                   stale_sources=stale_sources)
 
         counts = Counter(_norm(v.value) for v in present)
         top_norm, top_n = counts.most_common(1)[0]
@@ -51,4 +57,5 @@ class CrossSourceValidator:
         return CrossValidation(
             fact_key=fact_key, status=status, agreed_value=agreed, confidence=conf,
             sources_present=n, by_source=by_source, sources=values, dissent=dissent,
+            stale_sources=stale_sources,
         )
