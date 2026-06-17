@@ -42,7 +42,8 @@ async def analyze(payload: AnalysisInput, session: AsyncSession = Depends(get_se
         await flush_to_db(session)
     except Exception:
         await session.rollback()  # 캐시 영속 실패 → 다음 분석이 재fetch(분석 결과엔 무영향)
-    return await save_analysis(session, result)
+    # INC-14: 원시 입력 보존 — reconcile 불일치 시 이 관할(pnu) 분석을 동일입력으로 재실행(결정론).
+    return await save_analysis(session, result, input_payload=payload.model_dump(mode="json"))
 
 
 @router.get("/analyze/{run_id}", response_model=AnalysisResult, dependencies=[Depends(require_token)])

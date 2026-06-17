@@ -62,6 +62,7 @@ async def write_snapshot_to_db(session, snapshot: MirrorSnapshot) -> None:
         id=uuid.uuid4(), snapshot_id=snapshot.snapshot_id, jurisdiction=snapshot.jurisdiction,
         version=snapshot.version, rules=list(snapshot.rules),
         active_candidate_ids=list(snapshot.active_candidate_ids),
+        content_hash=snapshot.content_hash,  # INC-14: 라이브 본문 해시 provenance(reconcile diff 기준)
     ).on_conflict_do_nothing(constraint="uq_mirror_snapshot_jur_sid")
     await session.execute(stmt)
     await session.commit()
@@ -80,7 +81,8 @@ async def load_active_snapshot_from_db(session, jurisdiction: str) -> MirrorSnap
         return None
     return MirrorSnapshot(snapshot_id=row.snapshot_id, jurisdiction=row.jurisdiction,
                           version=row.version or "v1", rules=row.rules or [],
-                          active_candidate_ids=row.active_candidate_ids or [])
+                          active_candidate_ids=row.active_candidate_ids or [],
+                          content_hash=row.content_hash)
 
 
 async def warm_mirror_from_db(session, jurisdiction: str) -> bool:

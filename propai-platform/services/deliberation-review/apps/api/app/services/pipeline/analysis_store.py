@@ -9,8 +9,13 @@ from app.contracts.analysis import AnalysisResult
 from app.db.models.analysis_models import AnalysisRunModel
 
 
-async def save_analysis(session: AsyncSession, result: AnalysisResult) -> AnalysisResult:
-    """결과 저장 → run_id 부여한 결과 반환(저장본도 run_id 포함)."""
+async def save_analysis(session: AsyncSession, result: AnalysisResult,
+                        input_payload: dict | None = None) -> AnalysisResult:
+    """결과 저장 → run_id 부여한 결과 반환(저장본도 run_id 포함).
+
+    input_payload(원시 입력)는 INC-14 reconcile 불일치 시 동일입력 재실행(결정론)에 사용 — 미전달 시 None
+    (재실행 불가로 표면화). 결과 JSON엔 원시 입력이 없어 별도 컬럼에 보존.
+    """
     run_id = uuid.uuid4()
     stored = result.model_copy(update={"run_id": str(run_id)})
     row = AnalysisRunModel(
@@ -19,6 +24,7 @@ async def save_analysis(session: AsyncSession, result: AnalysisResult) -> Analys
         input_hash=result.input_hash,
         status="DONE",
         result=stored.model_dump(mode="json"),
+        input_payload=input_payload,
     )
     session.add(row)
     await session.commit()

@@ -31,6 +31,13 @@ class Settings(BaseSettings):
     USE_MOCK_ADAPTERS: bool = True
     # 비동기(Celery): 기본 eager(브로커 없는 dev는 동기 폴백). 운영은 false + worker+redis로 진짜 비동기.
     CELERY_TASK_ALWAYS_EAGER: bool = True
+    # INC-14: 라이브 외부 호출(LiveNetwork) 토글 — 기본 False=mock(NetworkError). 공급측 reconcile/harvester
+    # 한정(INV-13: 소비경로는 이 플래그와 무관하게 라이브 미호출). True 시 실 httpx GET.
+    LIVE_NETWORK: bool = False
+    # reconcile 주기잡(celery beat) 간격(초). 운영 인프라 cadence(법정 수치 아님, INV-3 비대상).
+    RECONCILE_INTERVAL_SECONDS: int = 86400
+    # reconcile 불일치 시 단일 관할 재분석 디스패치 상한(큐 폭주 방어). 초과분은 로깅 후 절단(무음0). 인프라 수치.
+    RECONCILE_MAX_REANALYZE: int = 100
     # 유사사례 임베더: hash(결정론 폴백) | openai(실 의미 임베딩). openai는 OPENAI_API_KEY 필요.
     EMBEDDER: str = "hash"
     OPENAI_API_KEY: str = ""

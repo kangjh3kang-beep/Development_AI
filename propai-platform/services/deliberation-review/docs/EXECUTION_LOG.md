@@ -367,6 +367,19 @@
 - **검증**: AT 5 + 전체 **396 passed**(391→396), ruff clean. 현 소비경로는 INC-11로 전부 cached_get 경유라 위반 0.
   저리스크·무프로덕션변경 + 스캐너 자기검증 → 전체 워크플로 생략(비례), 자기리뷰.
 
+### ✅ 멀티모달 고도화 INC-14 — reconcile_mirror 완결(P-데이터 마지막 무거운 항목)
+- **구현**: 라이브 1차출처 재대조 → content_hash diff → 불일치 시 미러 새 snapshot append → 영향 분석 재실행.
+  - alembic **0015**: `mirror_snapshot.content_hash`(라이브 본문 해시 provenance·diff 기준) + `analysis_run.input_payload`(동일입력 재실행 보존), 둘 다 nullable(legacy 비파괴)·down 가역. MirrorSnapshot 계약+write/load store 배선.
+  - **LiveNetwork.get**: env 게이트 `LIVE_NETWORK`(기본 False=mock NetworkError; True=실 httpx GET, follow_redirects=False, 실패는 NetworkError 일원화). INV-13 정적검사 그린(adapters/network.py·tasks/는 소비 스캔 대상 외).
+  - **reconcile_mirror_db**(순수 async DB): 미러 로드→content_hash diff→불일치 시 결정론 snapshot_id `rcl-<hash[:16]>` append(on_conflict_do_nothing 멱등)→영향 run(input_payload.pnu==jurisdiction) 조회→reconcile_log(관측성). match/no_baseline/no_mirror/no_jurisdiction 전부 reason 표면화(무음0).
+  - **reconcile_mirror**(sync Celery): 라이브 게이트→`_body_hash`(sha256)→`_run_reconcile_db`(NullPool 교차루프 안전+running-loop 가드)→default_store put(공급측 writer)→재분석 dedup+상한(`RECONCILE_MAX_REANALYZE`) 절단 로깅 후 reanalyze_task 디스패치. citation_ref urlencode.
+  - **reanalyze_task**: DB 최신 미러 warm(H1 다중워커 stale 방지)→동일입력 run_analysis(결정론)→결과 save_analysis append(H2 미영속 해소). warm/persist best-effort(NullPool), 실패 표면화.
+  - **reconcile_all** + celery **beat_schedule**(`RECONCILE_INTERVAL_SECONDS`): 미러 보유 distinct 관할 fan-out(주기 진입점, beat 기동 시만 발화).
+- **적대적 다관점 리뷰**(결정론·INV13 6.5 / 영속·멱등 5.5 / 무음실패·품질 6.0, 전체 6.0 gate_pass) — 확인 5건 해소:
+  **(HIGH)** 다중워커서 재분석이 stale 인메모리 미러 사용(analyze_task가 DB warm 안 함) → 별도 **reanalyze_task가 DB warm 후 실행**; **(HIGH)** 재분석 결과 fire-and-forget(어디에도 미영속) → **save_analysis로 새 run append**; **(MED)** snapshot_id 주입이 input_hash 변경+rules verbatim 복사=라벨회전인데 주석은 "재평가" 과장 → **docstring 정직 정정**(본문→rules 재파싱은 재하베스트 몫, lineage 후속 명시); **(MED)** citation_ref 미인코딩 URL 인젝션 → **urlencode + follow_redirects=False**; **(MED)** 단일 관할 재분석 fan-out 무상한 → **dedup(동일입력 1회)+상한 절단 로깅**.
+- **검증**: 신규 AT 18(test_reconcile_mirror 14·test_live_network 3·input_payload 1) + 전체 **414 passed**(396→414, skipped 0), ruff clean, static_scan 0, test_consume_static·test_live_call_scan 그린, alembic 0015 down(0014)→up(0015) 가역.
+- **운영 잔여**: 실 worker+redis(CELERY_TASK_ALWAYS_EAGER=false)+celery beat 기동 · `LIVE_NETWORK=on`+실 law.go.kr/ELIS 연동(키·URL 확정) · reanalysis lineage(old→new run 링크).
+
 ## 5. 남은 항목 (운영 연결/결정 필요)
 - **단선 해소 완료(코드)**: P-A·P-A.2·P-C·P-D·P-E 모두 계약→구현→AT→검증 완결, mock→live 스위치 +
   결정론 보존. **인프라/키 가동만 남음**: P-B 실키(사용자 1회 export), P-C 실 임베더+Qdrant,

@@ -18,3 +18,6 @@ class AnalysisRunModel(Base, CommonMixin):
     input_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     status: Mapped[str | None] = mapped_column(String(16), nullable=True)
     result: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # INC-14: 원시 입력(AnalysisInput) 보존 — reconcile 불일치 시 동일입력 재실행(결정론)을 위해 필요.
+    # None=legacy(0015 이전) 또는 미보존 → reconcile는 재실행 불가로 카운트 표면화(무음0).
+    input_payload: Mapped[dict | None] = mapped_column(JSONB, nullable=True)

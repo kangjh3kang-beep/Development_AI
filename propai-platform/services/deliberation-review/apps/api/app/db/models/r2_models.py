@@ -47,6 +47,8 @@ class MirrorSnapshotModel(Base, CommonMixin):
     version: Mapped[str | None] = mapped_column(String(32), nullable=True)
     rules: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     active_candidate_ids: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    # INC-14: 라이브 본문 해시 provenance(reconcile diff 기준, 0015). nullable=legacy/미설정 허용.
+    content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
 class HITLTaskModel(Base, CommonMixin):
