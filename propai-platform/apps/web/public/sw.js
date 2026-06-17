@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v233-excel-robust-responsive";
+const CACHE_NAME = "propai-v234-parcel-list-fix";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

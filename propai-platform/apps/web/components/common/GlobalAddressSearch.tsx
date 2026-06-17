@@ -141,7 +141,15 @@ export function GlobalAddressSearch({
   // 대량(수백 필지) 가독성: 요약 헤더 + 스크롤 컴팩트 리스트로 일목요연하게.
   const parcelRows = useMemo(() =>
     displayAddresses.map((a) => {
-      const label = (a.jibunAddress || a.fullAddress || "").trim(); // 번지 포함 지번 우선
+      // 라벨 = 법정동(소재지)+지번이 모두 보이게. 엑셀(소재지·지번 분리 양식)은 jibunAddress가
+      //   번지만("211-443")이라 법정동이 빠진다 → fullAddress가 그 번지를 포함하고 더 길면
+      //   fullAddress("서울특별시 동작구 상도동 211-443")를 쓴다. 검색분(도로명 fullAddress)은
+      //   지번을 포함하지 않으므로 jibunAddress(지번) 유지.
+      const jb = (a.jibunAddress || "").trim();
+      const full = (a.fullAddress || "").trim();
+      const label = (full && jb && full.includes(jb) && full.length > jb.length)
+        ? full
+        : (jb || full);
       return {
         label: label || "(주소 미상)",
         areaSqm: a.areaSqm ?? null,
@@ -584,11 +592,23 @@ export function GlobalAddressSearch({
           ...(p.official_price_per_sqm ? { officialPrice: p.official_price_per_sqm } : {}),
         });
         });
+      // ★같은 필지가 여러 행(공유지분·다소유자)으로 들어오면 병합셀 forward-fill 후 같은
+      //   지번으로 복원돼 분석 목록에 중복 표시된다(211-443이 5번 등). 분석 목록은 '필지 단위'
+      //   이므로 PNU(없으면 주소)로 1필지=1행 정리한다. 소유자별·세대별 상세(대지지분 등)는
+      //   토지조서 메뉴에서 관리한다(중앙분석센터=부지분석, 토지조서=권리/세대 관리로 역할분리).
+      const seenKey = new Set<string>();
+      const uniqEntries = entries.filter((e) => {
+        const key = (e.pnu || e.fullAddress || "").replace(/\s+/g, "");
+        if (key && seenKey.has(key)) return false; // 키 있고 이미 본 필지만 중복 제거
+        if (key) seenKey.add(key);
+        return true; // 빈 키(주소·PNU 모두 없는 행)는 제거하지 않고 보존(데이터 손실 방지)
+      });
+      const dupRemoved = entries.length - uniqEntries.length;
       // ★업로드한 필지를 앞에 둔다(기존 검색분은 뒤로 보존, 혼용 가능). 방금 올린 토지조서가
       //   대표(primary)가 되어 이전에 검색한 주소가 분석에 잔류하는 오류를 막는다.
       const merged = single
-        ? entries.slice(0, 1)
-        : [...entries, ...addresses.filter((a) => !entries.some((e) => e.fullAddress === a.fullAddress))];
+        ? uniqEntries.slice(0, 1)
+        : [...uniqEntries, ...addresses.filter((a) => !uniqEntries.some((e) => e.fullAddress === a.fullAddress))];
       setAddresses(merged);
 
       // ★검색 경로(handleAddressSelect)와 동일하게 대표 필지로 store 갱신 + 종합분석 재실행.
@@ -599,7 +619,9 @@ export function GlobalAddressSearch({
         triggerComprehensiveAnalysis(primary.fullAddress, primary.bcode, primary.jibunAddress);
       }
       onChange?.(merged);
-      setUploadInfo({ note: res.note || `${entries.length}필지 등록`, registry: res.registry_guidance?.message });
+      // 중복(같은 필지 다중행)을 정리했으면 안내에 표기 — 사용자가 '왜 줄었지' 혼란 방지.
+      const dupNote = dupRemoved > 0 ? ` · 동일 필지 ${dupRemoved}행 통합(공유지분 등은 토지조서에서 관리)` : "";
+      setUploadInfo({ note: (res.note || `${uniqEntries.length}필지 등록`) + dupNote, registry: res.registry_guidance?.message });
       // 건폐율/용적률·집합건물(빌라) 여부 보강 — parse-parcels엔 없는 항목을 일괄 채운다.
       if (!single) void enrichParcels(merged);
     } catch (e: any) {
