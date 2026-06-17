@@ -527,6 +527,42 @@ async def comprehensive_land_analysis(req: ZoningAnalyzeRequest):
     return _attach_trust_blocks(result)
 
 
+class GeocodeRequest(BaseModel):
+    """지번/주소 직접검색 — VWorld 지오코딩(Daum이 못 찾는 지번·산·농지도 해석)."""
+    query: str
+
+
+@router.post("/geocode")
+async def geocode_query(req: GeocodeRequest):
+    """주소/지번 텍스트 → 좌표·PNU·법정동코드 해석(VWorld).
+
+    Daum 우편번호 위젯이 못 찾는 지번(산·농지·나대지 등)을 직접 입력으로 해석한다.
+    무목업: 못 찾으면 found=false 정직 반환(가짜 좌표 생성 금지).
+    """
+    from apps.api.app.services.external_api.vworld_service import VWorldService
+
+    q = (req.query or "").strip()
+    if not q:
+        return {"found": False, "query": q, "reason": "검색어가 비었습니다."}
+    vworld = VWorldService()
+    geo = await vworld.geocode_address(q)
+    if not geo or not geo.get("lat"):
+        return {"found": False, "query": q,
+                "reason": "VWorld에서도 해당 주소/지번을 찾지 못했습니다. 지번 형식(예: 의정부동 224, 산 12-3)을 확인해 주세요."}
+    pnu = geo.get("pnu")
+    bcode = (pnu[:10] if pnu and len(pnu) >= 10 else None)
+    return {
+        "found": True,
+        "query": q,
+        "address": geo.get("address") or q,
+        "jibun_address": geo.get("address") or q,
+        "pnu": pnu,
+        "bcode": bcode,
+        "lat": geo.get("lat"),
+        "lon": geo.get("lon"),
+    }
+
+
 class ParcelBoundariesRequest(BaseModel):
     """필지 경계(구획도) 요청 — 단필지/다필지."""
 

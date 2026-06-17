@@ -84,6 +84,10 @@ export function GlobalAddressSearch({
   });
   const [isSearching, setIsSearching] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  // 지번 직접검색(VWorld) — Daum이 못 찾는 지번·산·농지 등을 직접 입력으로 해석.
+  const [directQuery, setDirectQuery] = useState("");
+  const [directBusy, setDirectBusy] = useState(false);
+  const [directMsg, setDirectMsg] = useState("");
   // WP-D: store 비기록 모드(writeToContext=false)의 요약 표시·콜백용 로컬 분석값.
   const [localAnalysis, setLocalAnalysis] = useState<AddressAnalysisSummary | null>(null);
   const updateSiteAnalysis = useProjectContextStore((s) => s.updateSiteAnalysis);
@@ -240,6 +244,38 @@ export function GlobalAddressSearch({
     onChange?.(newAddresses);
   }, [addresses, siteAnalysis, updateSiteAnalysis, onChange, writeToContext]);
 
+  // 지번/주소 직접검색(VWorld) → 해석되면 필지로 추가(Daum이 못 찾는 지번 대응).
+  const handleDirectAdd = useCallback(async () => {
+    const q = directQuery.trim();
+    if (!q || directBusy) return;
+    setDirectBusy(true);
+    setDirectMsg("");
+    try {
+      const r = await apiClient.post<{
+        found: boolean; address?: string; jibun_address?: string;
+        pnu?: string | null; bcode?: string | null; reason?: string;
+      }>("/zoning/geocode", { body: { query: q }, useMock: false, timeoutMs: 30000 });
+      if (!r.found) {
+        setDirectMsg(r.reason || "해당 주소/지번을 찾지 못했습니다.");
+        return;
+      }
+      // KakaoAddressResult 형태로 변환해 기존 추가 로직(handleAddressSelect) 재사용.
+      handleAddressSelect({
+        fullAddress: r.address || q,
+        jibunAddress: r.jibun_address || r.address || q,
+        roadAddress: "",
+        sido: "", sigungu: "", bname: "", buildingName: "",
+        zonecode: "", bcode: r.bcode || "",
+      });
+      setDirectQuery("");
+      setDirectMsg("");
+    } catch {
+      setDirectMsg("검색 중 오류가 발생했습니다. 잠시 후 다시 시도하세요.");
+    } finally {
+      setDirectBusy(false);
+    }
+  }, [directQuery, directBusy, handleAddressSelect]);
+
   // 하단 요약 표시용 — store 기록 모드면 SSOT(siteAnalysis), 비기록 모드면 로컬 분석값만
   // 사용한다(무관 프로젝트의 store 데이터가 비기록 화면에 표시되는 혼선 방지).
   const displayAnalysis = writeToContext
@@ -390,6 +426,32 @@ export function GlobalAddressSearch({
               필지 추가
             </button>
           )}
+        </div>
+      )}
+
+      {/* 지번 직접입력(VWorld) — Daum이 못 찾는 지번·산·농지도 직접 입력해 추가(다필지 누적) */}
+      {!single && (
+        <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)]/40 px-3 py-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-[11px] font-bold text-[var(--text-secondary)]">📍 지번 직접입력</span>
+            <input
+              value={directQuery}
+              disabled={disabled || directBusy}
+              onChange={(e) => setDirectQuery(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void handleDirectAdd(); } }}
+              placeholder="예) 의정부동 224, 산 12-3 — Daum 미검색 지번도 OK"
+              className="min-w-[180px] flex-1 rounded-lg border border-[var(--line-strong)] bg-[var(--surface)] px-2.5 py-1.5 text-[11px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
+            />
+            <button
+              type="button"
+              disabled={disabled || directBusy || !directQuery.trim()}
+              onClick={() => void handleDirectAdd()}
+              className="rounded-lg bg-[var(--accent-strong)] px-3 py-1.5 text-[11px] font-bold text-white hover:opacity-90 disabled:opacity-50"
+            >
+              {directBusy ? "검색 중…" : "＋ 추가"}
+            </button>
+          </div>
+          {directMsg && <p className="mt-1 text-[11px] font-semibold text-amber-500">⚠ {directMsg}</p>}
         </div>
       )}
 
