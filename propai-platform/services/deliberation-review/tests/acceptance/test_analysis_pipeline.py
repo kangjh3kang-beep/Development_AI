@@ -108,6 +108,16 @@ def test_pipeline_dual_path_match_agreed():
     assert "dual_path_HELD" not in (item.evidence["gate_reason"] or "")
 
 
+def test_report_item_human_labels():
+    # INC-2: 등록된 룰/지표 id는 사람친화 title/recommendation 동반(결정론 룰→라벨). 미등록은 None(item_id 폴백).
+    from app.services.report.labels import label_for
+    assert label_for("far_limit")["title"] == "용적률 한도"
+    assert label_for("unknown_rule_xyz") is None
+    r = run_analysis(_INPUT)
+    far = r.report.find("far_limit")
+    assert far.title == "용적률 한도" and far.recommendation
+
+
 def test_pipeline_view_sim_wired_and_unhandled_surfaced():
     # INC-1: view 시뮬이 실제 호출되어 SimMetric 산출(이전 미배선 데드패스). 미배선 키는 skipped로 표면화.
     r = run_analysis(AnalysisInput(

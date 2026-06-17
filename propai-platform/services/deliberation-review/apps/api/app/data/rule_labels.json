@@ -1,0 +1,12 @@
+{
+  "_comment": "INC-2 — 룰/지표 id → 사람친화 라벨(결정론 룰→라벨, LLM 미사용). 미등록 id는 title=None(UI는 item_id 폴백).",
+  "far_limit": {"title": "용적률 한도", "recommendation": "용적률 초과 시 연면적 축소 또는 용도지역 종상향·완화 검토."},
+  "height_limit": {"title": "높이 한도", "recommendation": "높이 초과 시 층수 조정 또는 가로구역 최고높이·일조 검토."},
+  "bcr_limit": {"title": "건폐율 한도", "recommendation": "건폐율 초과 시 건축면적 축소 또는 배치 조정."},
+  "continuous_sunlight_hours": {"title": "연속 일조시간", "recommendation": "동지 연속 일조 미달 시 배치·이격 조정(건축법 제61조 정북이격 별도 검증)."},
+  "sunlight_3d": {"title": "3D 일조(동지 그림자)", "recommendation": "주변 매스 그림자로 일조 미달 시 배치·높이 조정 검토(비법정 근사)."},
+  "egress_time": {"title": "피난 보행시간", "recommendation": "보행거리 한도 초과 시 직통계단 추가·동선 단축(구조별 한도 확인)."},
+  "parking_turn_radius": {"title": "주차 회전반경", "recommendation": "회전반경 미달 시 주차구획·차로 폭 조정(주차장법 시행규칙 제6조)."},
+  "facade_occupancy_ratio": {"title": "가로 입면 점유율", "recommendation": "점유율 과다 시 입면 분절·이격으로 가로경관 완화(경관법 제9조)."},
+  "skyline_protrusion": {"title": "스카이라인 돌출도", "recommendation": "주변 대비 돌출 과다 시 높이 조정·경관심의 협의."}
+}
