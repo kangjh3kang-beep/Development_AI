@@ -14,6 +14,7 @@ import { dynamicMap } from "@/components/common/MapShell";
 import type { ParcelBoundaryMap as ParcelBoundaryMapType } from "@/components/map/ParcelBoundaryMap";
 import type { NearbyTransactionsMap as NearbyTransactionsMapType } from "@/components/map/NearbyTransactionsMap";
 import { DeskAppraisalModal } from "@/components/operations/DeskAppraisalModal";
+import { LandShareModal, type LandShareUnit } from "@/components/operations/LandShareModal";
 
 // 지도는 SSR 없이 동적 로드(SSR throw 차단 + 로딩 스켈레톤). 동작·props 불변.
 const ParcelBoundaryMap = dynamicMap<React.ComponentProps<typeof ParcelBoundaryMapType>>(
@@ -80,6 +81,7 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
   // 안내 메시지: kind=info(설명·결과, 비경고)·warn(주의·실패). 충실한 설명을 비경고 톤으로.
   const [notice, setNotice] = useState<{ kind: "info" | "warn"; text: string } | null>(null);
   const [modalRow, setModalRow] = useState<LandRow | null>(null);
+  const [shareRow, setShareRow] = useState<LandRow | null>(null); // 대지지분 분석 대상 행
   const fileRef = useRef<HTMLInputElement | null>(null);
 
   // 필지 상태(계약/동의) → 색상·라벨 (Leaflet 지도 마커·표 강조).
@@ -115,7 +117,8 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
       const imported: LandRow[] = (data.rows || []).map((r: Partial<LandRow>) => ({
         id: Math.random().toString(36).slice(2, 9),
         jibun: r.jibun || "", owner: r.owner || "", share: r.share || "",
-        area_sqm: r.area_sqm ?? null, owner_type: (r.owner_type as LandRow["owner_type"]) || "",
+        area_sqm: r.area_sqm ?? null, exclusive_area_sqm: r.exclusive_area_sqm ?? null, unit_label: r.unit_label,
+        owner_type: (r.owner_type as LandRow["owner_type"]) || "",
         expected_price: r.expected_price ?? null, purchase_price: r.purchase_price ?? null,
         contracted: !!r.contracted, land_use_consent: !!r.land_use_consent, district_consent: !!r.district_consent,
         operator_consent: !!r.operator_consent,
@@ -141,7 +144,8 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
     const operC = rows.filter((r) => r.operator_consent).length;
     const expSum = rows.reduce((a, r) => a + (r.expected_price || 0), 0);
     const purSum = rows.reduce((a, r) => a + (r.purchase_price || 0), 0);
-    return { n, area, priv, pub, contracted, useC, distC, operC, expSum, purSum,
+    const exclArea = rows.reduce((a, r) => a + (r.exclusive_area_sqm || 0), 0); // 세대 전유면적 합(집합건물)
+    return { n, area, priv, pub, contracted, useC, distC, operC, expSum, purSum, exclArea,
       contractRatio: n ? contracted / n : 0, useRatio: n ? useC / n : 0, distRatio: n ? distC / n : 0,
       operRatio: n ? operC / n : 0 };
   }, [rows]);
@@ -158,17 +162,17 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
 
   // 부지분석(프로젝트) → 토지조서 행 시드. 다필지면 전부, 단일이면 1행. (#1·#2·#4)
   const loadFromProject = useCallback(() => {
-    const mk = (jibun: string, area: number | null, ot: string): LandRow => ({
+    const mk = (jibun: string, area: number | null, ot: string, pnu?: string | null): LandRow => ({
       id: Math.random().toString(36).slice(2, 9),
-      jibun, owner: "", share: "", area_sqm: area, owner_type: toOwnerType(ot),
+      jibun, pnu: pnu || null, owner: "", share: "", area_sqm: area, owner_type: toOwnerType(ot),
       expected_price: null, purchase_price: null,
       contracted: false, land_use_consent: false, district_consent: false, operator_consent: false, pdf_url: null,
     });
     const parcels = siteAnalysis?.parcels;
     if (parcels && parcels.length) {
-      setRows(projectId, parcels.map((p) => mk(p.address, p.areaSqm ?? null, p.ownerType)));
+      setRows(projectId, parcels.map((p) => mk(p.address, p.areaSqm ?? null, p.ownerType, p.pnu)));
     } else if (siteAnalysis?.address) {
-      setRows(projectId, [mk(siteAnalysis.address, siteAnalysis.landAreaSqm ?? null, "")]);
+      setRows(projectId, [mk(siteAnalysis.address, siteAnalysis.landAreaSqm ?? null, "", siteAnalysis.pnu)]);
     }
   }, [projectId, siteAnalysis, setRows]);
 
@@ -258,6 +262,35 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
       setNotice({ kind: "warn", text: `「${r.jibun}」 적정가 추정에 실패했습니다. 잠시 후 다시 시도하세요.` });
     } finally { setBusy(null); }
   }, [projectId, updateRow]);
+
+  // 집합건물 세대별 펼쳐 반영 — 현재 필지 행을 세대별 행으로 대체.
+  // 각 세대행: 지번=건물명/지번+동호, 면적=대지지분(실토지 기여분), 지분=대지권비율%,
+  // 전유면적=세대면적. Σ세대 대지지분 = 실토지면적이 되어 집계가 정합한다.
+  const expandUnits = useCallback((parent: LandRow, units: LandShareUnit[], buildingName: string) => {
+    if (!units.length) return;
+    const base = buildingName || parent.jibun;
+    const unitRows: LandRow[] = units.map((u) => ({
+      id: Math.random().toString(36).slice(2, 9),
+      jibun: `${base} ${u.unit_label}`.trim(),
+      pnu: parent.pnu ?? null,
+      owner: "", share: `${(u.share_ratio * 100).toFixed(3)}%`,
+      area_sqm: u.land_share_sqm,
+      exclusive_area_sqm: u.exclusive_area_sqm,
+      unit_label: u.unit_label,
+      owner_type: parent.owner_type || "사유지",
+      expected_price: null, purchase_price: null,
+      contracted: false, land_use_consent: false, district_consent: false, operator_consent: false, pdf_url: null,
+    }));
+    // 부모(필지) 행을 세대행들로 치환(위치 보존).
+    const idx = rows.findIndex((r) => r.id === parent.id);
+    const next = idx >= 0 ? [...rows.slice(0, idx), ...unitRows, ...rows.slice(idx + 1)] : [...rows, ...unitRows];
+    setRows(projectId, next);
+    setNotice({
+      kind: "info",
+      text: `「${base}」 ${unitRows.length}개 세대를 토지조서에 반영했습니다(각 행=동·호·세대면적·대지지분). ` +
+            "세대별 대지지분 합계가 실토지면적과 일치하도록 펼쳤습니다. 소유자·계약/동의는 세대별로 관리하세요.",
+    });
+  }, [projectId, rows, setRows]);
 
   const openAnalysis = (jibun: string) => {
     router.push(`/${rl || locale}/registry-analysis?addr=${encodeURIComponent(jibun)}`);
@@ -350,7 +383,7 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
               <table className="w-full min-w-[980px] text-[11px]">
                 <thead>
                   <tr className="border-b border-[var(--line)] text-[var(--text-tertiary)]">
-                    {["#", "지번", "소유자", "지분", "면적㎡", "소유구분", "매입예정가(원)", "매입가(원)", "계약", "토지사용", "지구단위", "시행자지정", "등기분석", ""].map((h) => (
+                    {["#", "지번", "소유자", "지분", "면적㎡(대지)", "세대면적㎡", "소유구분", "매입예정가(원)", "매입가(원)", "계약", "토지사용", "지구단위", "시행자지정", "등기분석", ""].map((h) => (
                       <th key={h} className="px-1.5 py-2 text-left font-semibold whitespace-nowrap">{h}</th>
                     ))}
                   </tr>
@@ -367,7 +400,14 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
                       <td className="px-1.5 py-1 min-w-[160px]"><input title={r.jibun || "지번"} className={inputCls} value={r.jibun} onChange={(e) => updateRow(projectId, r.id, { jibun: e.target.value })} /></td>
                       <td className="px-1.5 py-1 min-w-[90px]"><input title={r.owner || "소유자"} className={inputCls} value={r.owner} onChange={(e) => updateRow(projectId, r.id, { owner: e.target.value })} /></td>
                       <td className="px-1.5 py-1 w-16"><input title={r.share || "지분"} className={inputCls} value={r.share} onChange={(e) => updateRow(projectId, r.id, { share: e.target.value })} /></td>
-                      <td className="px-1.5 py-1 w-20"><NumberInput allowDecimal title={r.area_sqm != null ? `${r.area_sqm.toLocaleString()}㎡` : "면적"} className={inputCls} value={r.area_sqm} onChange={(n) => updateRow(projectId, r.id, { area_sqm: n })} /></td>
+                      <td className="px-1.5 py-1 w-20">
+                        <NumberInput allowDecimal title={r.area_sqm != null ? `${r.area_sqm.toLocaleString()}㎡ (집합건물 세대행은 대지지분)` : "면적(대지)"} className={inputCls} value={r.area_sqm} onChange={(n) => updateRow(projectId, r.id, { area_sqm: n })} />
+                        {r.area_sqm != null && r.area_sqm > 0 && <div className="mt-0.5 text-right text-[9px] text-[var(--text-hint)]">{(r.area_sqm / 3.305785).toFixed(2)}평</div>}
+                      </td>
+                      <td className="px-1.5 py-1 w-20">
+                        <NumberInput allowDecimal title={r.exclusive_area_sqm != null ? `${r.exclusive_area_sqm.toLocaleString()}㎡ 세대 전유면적` : "세대 전유면적(집합건물)"} placeholder="—" className={inputCls} value={r.exclusive_area_sqm ?? null} onChange={(n) => updateRow(projectId, r.id, { exclusive_area_sqm: n })} />
+                        {r.exclusive_area_sqm != null && r.exclusive_area_sqm > 0 && <div className="mt-0.5 text-right text-[9px] text-[var(--text-hint)]">{(r.exclusive_area_sqm / 3.305785).toFixed(2)}평</div>}
+                      </td>
                       <td className="px-1.5 py-1 w-24">
                         <select title={r.owner_type || "소유구분"} className={inputCls} value={r.owner_type} onChange={(e) => updateRow(projectId, r.id, { owner_type: e.target.value as LandRow["owner_type"] })}>
                           <option value="">-</option><option value="사유지">사유지</option><option value="국공유지">국공유지</option>
@@ -388,6 +428,7 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
                       <td className="px-1.5 py-1 whitespace-nowrap">
                         <button onClick={() => autofill(r)} disabled={busy === r.id} title="등기 권리분석으로 소유자·지분·면적 자동채움" className="mr-1 cursor-pointer rounded bg-[var(--surface-strong)] px-1.5 py-0.5 text-[10px] font-bold text-[var(--accent-strong)] disabled:opacity-50">{busy === r.id ? "…" : "자동채움"}</button>
                         <button onClick={() => openAnalysis(r.jibun)} title="등기 권리분석 상세 페이지로 이동" className="cursor-pointer rounded bg-[var(--accent-soft)] px-1.5 py-0.5 text-[10px] font-bold text-[var(--accent-strong)]">분석 ↗</button>
+                        <button onClick={() => setShareRow(r)} disabled={!r.jibun.trim()} title="공동주택·다세대·집합상가의 호별 대지지분(동·호·세대면적)을 건축물대장으로 분석. Σ세대 대지지분=대지면적 검증" className="ml-1 cursor-pointer rounded border border-[var(--accent-strong)]/40 px-1.5 py-0.5 text-[10px] font-bold text-[var(--accent-strong)] disabled:opacity-50">대지지분</button>
                         {r.pdf_url && (
                           <a href={r.pdf_url} target="_blank" rel="noopener noreferrer" title="발급 등기부등본 PDF" className="ml-1 cursor-pointer rounded border border-[var(--accent-strong)]/40 px-1.5 py-0.5 text-[10px] font-bold text-[var(--accent-strong)]">PDF ↓</a>
                         )}
@@ -429,6 +470,9 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
               <div className="mt-4 flex flex-wrap gap-4 text-xs">
                 <span className="text-[var(--text-secondary)]">보상비(매입가) 합계: <b className="cc-num text-[var(--text-primary)]">{won(agg.purSum)}원</b></span>
                 <span className="text-[var(--text-secondary)]">미확보 잔여(예정−매입): <b className="cc-num text-[var(--status-warning)]">{won(agg.expSum - agg.purSum)}원</b></span>
+                {agg.exclArea > 0 && (
+                  <span className="text-[var(--text-secondary)]">세대 전유면적 합(집합건물): <b className="cc-num text-[var(--text-primary)]">{Math.round(agg.exclArea).toLocaleString()}㎡</b></span>
+                )}
               </div>
             </CardContent>
           </Card>
@@ -468,6 +512,16 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
           areaSqm={modalRow.area_sqm ?? null}
           onClose={() => setModalRow(null)}
           onApply={(total) => updateRow(projectId, modalRow.id, { expected_price: total })}
+        />
+      )}
+
+      {shareRow && (
+        <LandShareModal
+          jibun={shareRow.jibun}
+          pnu={shareRow.pnu}
+          onClose={() => setShareRow(null)}
+          onApplyArea={(platArea) => updateRow(projectId, shareRow.id, { area_sqm: platArea })}
+          onExpandUnits={(units, buildingName) => expandUnits(shareRow, units, buildingName)}
         />
       )}
     </div>

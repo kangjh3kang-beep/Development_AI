@@ -12,9 +12,12 @@ import { persist } from "zustand/middleware";
 export type LandRow = {
   id: string;
   jibun: string; // 지번(주소)
+  pnu?: string | null; // PNU(19자리) — 있으면 대지지분 등 분석에서 재지오코딩 생략(빠른 경로)
   owner: string; // 소유자
-  share: string; // 소유지분
-  area_sqm: number | null; // 면적
+  share: string; // 소유지분(집합건물 세대행은 대지권 비율 %)
+  area_sqm: number | null; // 면적(집합건물 세대행은 '대지지분 면적'=실토지 기여분)
+  exclusive_area_sqm?: number | null; // 세대 전유면적(집합건물 세대행만) — 대지지분 산정근거
+  unit_label?: string; // 동·호(집합건물 세대행만, 예: "101동 1502호")
   owner_type: "사유지" | "국공유지" | ""; // 소유구분
   expected_price: number | null; // 매입예정가(원)
   purchase_price: number | null; // 매입가(원)

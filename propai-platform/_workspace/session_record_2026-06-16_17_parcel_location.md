@@ -70,3 +70,33 @@
 ## 9. 배포·검증 상태
 - origin/main `08f421d1`. 프론트 sw `propai-v221-stale-invalidation`. 백엔드 A1 활성 8001 healthy(/health 200).
 - 라이브검증: parcels/batch(200/1000필지)·geocode·poi-infra(통합91.1)·상도동 geocode 전부 OK.
+
+---
+## 10. 공동주택 대지지분(대지권) 분석 + 토지지번검색 자동완성 (2026-06-17)
+
+> 사용자 요구: 토지조서=실토지면적 확보 목적. 공동주택·다세대·집합상가 필지는 세대(동·호)에
+> 대지지분 배정 → **Σ세대 대지지분 = 대지(필지)면적**이어야 정확한 토지조서. 건축물대장으로
+> 호별 동·호·세대(전유)면적·대지지분 확보·반영, **실별 대지지분을 평으로 환산**, 토지조서에 실반영.
+> 추가: 토지지번입력에 다음 주소검색처럼 **토지지번검색(자동완성)**.
+
+### 도메인 메모(사용자 Q&A)
+- 대지지분(대지권)이 생기는 건물 = **구분소유가 성립하는 집합건물**(공동주택 아파트·연립·다세대, 집합상가, 오피스텔). 「집합건물법」 적용.
+- **비구분(일반)건물**(단독·다가구·근생 통건물)은 대지지분 개념 없음 → 필지면적 자체가 실토지면적.
+- 단, 모든 집합건물에 대지권이 등기된 건 아님(대지권 미등기). **정확 대지권비율은 등기부 대지권등록부(유료)**. 건축물대장 전유면적으로는 비례 추정만 가능 → 정직 표기.
+
+### 백엔드
+- `building_registry_service.py`: `get_exclusive_units_by_pnu(pnu)` 신규 — getBrExposPubuseAreaInfo(전유공용면적)로 호별 **전유부만** 집계(공용 제외). `_parse_title_items`에 `plat_area_sqm`(platArea=대지면적) 추가.
+- `land_share_service.py`(신규): 표제부 대지면적+전유부 → 호별 대지지분 **전유 비례(area-weighted)** 산정 + 평 환산(`PYEONG_SQM=3.305785`). plat_area 폴백(표제부→VWorld 토지특성). **검증 2분리**: `sum_match`(합계=정의상 성립, 정확성 증명 아님) + `count_match`(표제부 hhldCnt/hoCnt vs 전유부 호수 **방향성 교차검증** — 누락만 비신뢰, 근생 초과는 정상). `reliable=sum_match and count_match`.
+- `vworld_service.py`: `search_address(query)` 신규 — VWorld 검색API(parcel→road) 후보 목록(주소·PNU·좌표). 키 prefix 로깅 제거(보안).
+- `auto_zoning.py`: `POST /zoning/search`(자동완성), `POST /zoning/land-share`(pnu/address). try/except 정직 분기(raw 500 차단)+모듈 logger.
+- `registry.py`: 토지조서 엑셀에 대지지분(㎡)·**대지지분(평)**·세대전유면적(㎡) 컬럼, LandRow 스키마에 exclusive_area_sqm/unit_label, import pick에 exclude(대지지분 우선·전유/평 제외), 푸터 스킵 '평' 제거(평창동 오스킵 방지).
+
+### 프론트
+- `LandShareModal.tsx`(신규): 호별 동·호·전유면적·지분율·**대지지분(㎡/평)** 표 + 요약(대지면적·세대수 전유부/표제부·전유합) + 검증배지(비례배분 완료 + count_note 교차검증) + "실토지면적으로 반영"/**"세대별 펼쳐 반영"**.
+- `LandScheduleClient.tsx`: 행별 '대지지분' 버튼, `expandUnits`(부모 필지행을 세대별 행으로 위치보존 치환: 지번=건물명+동·호·면적=대지지분·지분=대지권비율%·전유면적·unit_label), '세대면적㎡' 컬럼 + 대지지분/세대면적 **평 환산 표기**, 집계에 전유면적 합.
+- `GlobalAddressSearch.tsx`: 지번 직접입력 → **토지지번검색 자동완성**(디바운스 350ms·`searchSeq` stale 가드·후보 드롭다운·PNU 직결). useLandScheduleStore에 pnu/exclusive_area_sqm/unit_label.
+
+### 코드리뷰 개선루프
+- 1차 **4.1/5**(HIGH-1 modal pnu 미배선·HIGH-2 subscript 500위험·MED-1 검증 tautology·MED-4 자동완성 race) → 수정.
+- 2차 **4.4/5**(평 상수 혼용·Excel '평' 푸터·키 prefix 로깅·count_tol 소규모 오경고) → 수정(평 상수 통일·푸터토큰·로깅제거·방향성 교차검증).
+- 3차 재채점 진행. 단위테스트: 1000㎡·4세대(84/84/59/59)→Σ=1000.0·101호 88.846평, 누락4→3 reliable=False, 혼합5→6 True, 대규모100→99 True.

@@ -131,6 +131,63 @@ class VWorldService:
     # 등록 도메인: developmentai-production.up.railway.app
     HEADERS = {"Referer": "https://www.4t8t.net"}
 
+    async def search_address(self, query: str, size: int = 8) -> list[dict]:
+        """지번/도로명 검색 — 다음 주소검색처럼 후보 목록을 반환(자동완성용).
+
+        VWORLD 검색 API(service=search). 지번(parcel) 우선, 부족하면 도로명(road) 보강.
+        반환: [{address(지번주소), road_address, pnu, lat, lon, kind}] (최대 size).
+        키 미설정/무자료/오류 → [](가짜 후보 생성 금지).
+        """
+        q = (query or "").strip()
+        if not settings.VWORLD_API_KEY or len(q) < 2:
+            return []
+
+        results: list[dict] = []
+        seen: set[str] = set()
+        async with httpx.AsyncClient(timeout=10.0, headers=self.HEADERS) as client:
+            for category in ("parcel", "road"):
+                if len(results) >= size:
+                    break
+                try:
+                    params = {
+                        "service": "search", "request": "search", "version": "2.0",
+                        "crs": "EPSG:4326", "size": str(size), "page": "1",
+                        "query": q, "type": "address", "category": category,
+                        "format": "json", "key": settings.VWORLD_API_KEY,
+                    }
+                    resp = await client.get(f"{self.BASE_URL}/search", params=params)
+                    resp.raise_for_status()
+                    response = resp.json().get("response", {})
+                    if response.get("status") != "OK":
+                        continue
+                    items = response.get("result", {}).get("items", []) or []
+                    for it in items:
+                        addr = it.get("address", {}) or {}
+                        parcel = addr.get("parcel") or ""
+                        road = addr.get("road") or ""
+                        label = parcel or road
+                        if not label or label in seen:
+                            continue
+                        seen.add(label)
+                        point = it.get("point", {}) or {}
+                        # parcel 검색의 id는 PNU(19자리). road는 PNU 없음.
+                        rid = str(it.get("id", "") or "")
+                        pnu = rid if (category == "parcel" and len(rid) >= 19) else None
+                        results.append({
+                            "address": parcel or road,
+                            "road_address": road,
+                            "pnu": pnu,
+                            "lat": float(point.get("y", 0) or 0) or None,
+                            "lon": float(point.get("x", 0) or 0) or None,
+                            "kind": "지번" if category == "parcel" else "도로명",
+                        })
+                        if len(results) >= size:
+                            break
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("VWORLD 주소검색 실패(%s): %s (%s)", category, q[:30], str(e)[:200])
+                    continue
+        return results[:size]
+
     async def geocode_address(self, address: str) -> Optional[dict]:
         """주소를 좌표+PNU로 변환 (지오코딩).
 
@@ -140,10 +197,10 @@ class VWorldService:
             return None
 
         vworld_key = settings.VWORLD_API_KEY
+        # 키 값(prefix 포함)은 로그에 남기지 않는다 — 설정 여부만 기록(부분 키 노출 방지).
         logger.info(
-            "VWORLD geocode 시작: address=%s, key_len=%d, key_prefix=%s",
-            address[:30], len(vworld_key) if vworld_key else 0,
-            vworld_key[:8] if vworld_key and len(vworld_key) > 8 else "EMPTY",
+            "VWORLD geocode 시작: address=%s, key_set=%s",
+            address[:30], bool(vworld_key),
         )
 
         async with httpx.AsyncClient(timeout=12.0, headers=self.HEADERS) as client:

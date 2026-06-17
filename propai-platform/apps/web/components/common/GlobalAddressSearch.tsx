@@ -88,6 +88,13 @@ export function GlobalAddressSearch({
   const [directQuery, setDirectQuery] = useState("");
   const [directBusy, setDirectBusy] = useState(false);
   const [directMsg, setDirectMsg] = useState("");
+  // 토지지번검색(자동완성) — 타이핑하면 후보를 띄워 선택(다음 주소검색 UX).
+  type AddrCandidate = { address: string; road_address?: string; pnu?: string | null; lat?: number | null; lon?: number | null; kind?: string };
+  const [candidates, setCandidates] = useState<AddrCandidate[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [showCandidates, setShowCandidates] = useState(false);
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const searchSeq = useRef(0); // 응답 경합 가드: 마지막 요청만 반영(stale 응답 무시)
   // WP-D: store 비기록 모드(writeToContext=false)의 요약 표시·콜백용 로컬 분석값.
   const [localAnalysis, setLocalAnalysis] = useState<AddressAnalysisSummary | null>(null);
   const updateSiteAnalysis = useProjectContextStore((s) => s.updateSiteAnalysis);
@@ -276,6 +283,49 @@ export function GlobalAddressSearch({
     }
   }, [directQuery, directBusy, handleAddressSelect]);
 
+  // 토지지번검색 자동완성 — 입력 디바운스(350ms) 후 후보 조회(다음 주소검색처럼).
+  const runSearch = useCallback(async (q: string) => {
+    const query = q.trim();
+    if (query.length < 2) { setCandidates([]); setShowCandidates(false); return; }
+    const mySeq = ++searchSeq.current; // 이 요청의 순번
+    setSearching(true);
+    try {
+      const r = await apiClient.post<{ candidates: AddrCandidate[] }>(
+        "/zoning/search", { body: { query, size: 8 }, useMock: false, timeoutMs: 15000 },
+      );
+      if (mySeq !== searchSeq.current) return; // 더 새로운 요청이 떴으면 stale 응답 폐기
+      setCandidates(r.candidates || []);
+      setShowCandidates(true);
+    } catch {
+      if (mySeq === searchSeq.current) setCandidates([]);
+    } finally {
+      if (mySeq === searchSeq.current) setSearching(false);
+    }
+  }, []);
+
+  const onDirectChange = useCallback((v: string) => {
+    setDirectQuery(v);
+    setDirectMsg("");
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    searchTimer.current = setTimeout(() => void runSearch(v), 350);
+  }, [runSearch]);
+
+  // 후보 선택 → 필지로 추가(PNU 보유 시 bcode 직접 구성, 종합분석 재실행).
+  const pickCandidate = useCallback((c: AddrCandidate) => {
+    const bcode = c.pnu && c.pnu.length >= 10 ? c.pnu.slice(0, 10) : "";
+    handleAddressSelect({
+      fullAddress: c.address,
+      jibunAddress: c.address,
+      roadAddress: c.road_address || "",
+      sido: "", sigungu: "", bname: "", buildingName: "",
+      zonecode: "", bcode,
+    });
+    setDirectQuery("");
+    setCandidates([]);
+    setShowCandidates(false);
+    setDirectMsg("");
+  }, [handleAddressSelect]);
+
   // 하단 요약 표시용 — store 기록 모드면 SSOT(siteAnalysis), 비기록 모드면 로컬 분석값만
   // 사용한다(무관 프로젝트의 store 데이터가 비기록 화면에 표시되는 혼선 방지).
   const displayAnalysis = writeToContext
@@ -439,23 +489,46 @@ export function GlobalAddressSearch({
         </div>
       )}
 
-      {/* 지번 직접입력(VWorld) — Daum이 못 찾는 지번·산·농지도 직접 입력해 추가(다필지 누적) */}
+      {/* 토지지번검색(VWorld 자동완성) — 타이핑하면 후보를 띄워 선택(다음 주소검색 UX).
+          Daum이 못 찾는 지번·산·농지도 직접 검색·선택해 추가(다필지 누적). */}
       {!single && (
         <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)]/40 px-3 py-2">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-[11px] font-bold text-[var(--text-secondary)]">📍 지번 직접입력</span>
-            <input
-              value={directQuery}
-              disabled={disabled || directBusy}
-              onChange={(e) => setDirectQuery(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void handleDirectAdd(); } }}
-              placeholder="예) 의정부동 224, 산 12-3 — Daum 미검색 지번도 OK"
-              className="min-w-[180px] flex-1 rounded-lg border border-[var(--line-strong)] bg-[var(--surface)] px-2.5 py-1.5 text-[11px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
-            />
+          <div className="relative flex flex-wrap items-center gap-2">
+            <span className="text-[11px] font-bold text-[var(--text-secondary)]">📍 토지지번 검색</span>
+            <div className="relative min-w-[180px] flex-1">
+              <input
+                value={directQuery}
+                disabled={disabled || directBusy}
+                onChange={(e) => onDirectChange(e.target.value)}
+                onFocus={() => { if (candidates.length) setShowCandidates(true); }}
+                onBlur={() => setTimeout(() => setShowCandidates(false), 150)}
+                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); if (candidates.length) pickCandidate(candidates[0]); else void handleDirectAdd(); } }}
+                placeholder="예) 의정부동 224, 산 12-3 — 입력하면 후보가 표시됩니다"
+                className="w-full rounded-lg border border-[var(--line-strong)] bg-[var(--surface)] px-2.5 py-1.5 text-[11px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
+              />
+              {/* 자동완성 후보 드롭다운 */}
+              {showCandidates && (candidates.length > 0 || searching) && (
+                <ul className="absolute left-0 right-0 top-full z-30 mt-1 max-h-64 overflow-y-auto rounded-lg border border-[var(--line-strong)] bg-[var(--surface)] shadow-[var(--shadow-lg)]">
+                  {searching && <li className="px-3 py-2 text-[11px] text-[var(--text-tertiary)]">검색 중…</li>}
+                  {candidates.map((c, i) => (
+                    <li key={`${c.address}-${i}`}>
+                      <button
+                        type="button"
+                        onMouseDown={(e) => { e.preventDefault(); pickCandidate(c); }}
+                        className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-[11px] hover:bg-[var(--accent-soft)]"
+                      >
+                        <span className="truncate text-[var(--text-primary)]">{c.address}</span>
+                        <span className="shrink-0 rounded bg-[var(--surface-strong)] px-1.5 py-0.5 text-[9px] font-bold text-[var(--text-tertiary)]">{c.kind || "지번"}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
             <button
               type="button"
               disabled={disabled || directBusy || !directQuery.trim()}
-              onClick={() => void handleDirectAdd()}
+              onClick={() => { if (candidates.length) pickCandidate(candidates[0]); else void handleDirectAdd(); }}
               className="rounded-lg bg-[var(--accent-strong)] px-3 py-1.5 text-[11px] font-bold text-white hover:opacity-90 disabled:opacity-50"
             >
               {directBusy ? "검색 중…" : "＋ 추가"}

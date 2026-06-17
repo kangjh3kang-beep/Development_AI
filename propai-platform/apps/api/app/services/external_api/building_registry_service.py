@@ -143,6 +143,58 @@ class BuildingRegistryService:
             logger.warning("표제부 조회 실패: %s (%s)", pnu, str(e))
             return None
 
+    async def get_exclusive_units_by_pnu(self, pnu: str, max_rows: int = 3000) -> list[dict[str, Any]] | None:
+        """PNU 기반 집합건축물 전유공용면적(getBrExposPubuseAreaInfo) → 호별 전유면적 집계.
+
+        공동주택/다세대/집합상가의 동·호별 전유면적을 확보해 대지지분 산정에 쓴다.
+        반환: [{dong, ho, exclusive_area_sqm, purpose}] (전유부만, 호 단위 합산).
+        키 미설정/실패/무자료 → None(가짜 생성 금지).
+        """
+        if len(pnu) < 19 or not settings.MOLIT_API_KEY:
+            return None
+        params = {
+            "serviceKey": settings.MOLIT_API_KEY,
+            "sigunguCd": pnu[:5], "bjdongCd": pnu[5:10],
+            "bun": pnu[11:15], "ji": pnu[15:19],
+            "numOfRows": str(max_rows), "pageNo": "1", "_type": "json",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=20.0) as client:
+                resp = await client.get(f"{BASE_URL}/getBrExposPubuseAreaInfo", params=params)
+                resp.raise_for_status()
+                items = (resp.json().get("response", {}).get("body", {})
+                         .get("items", {}) or {}).get("item")
+        except Exception as e:  # noqa: BLE001
+            logger.warning("전유공용면적 조회 실패: %s (%s)", pnu, str(e))
+            return None
+        if not items:
+            return None
+        rows = items if isinstance(items, list) else [items]
+
+        def _f(x: dict, k: str) -> float:
+            try:
+                return float(x.get(k, 0) or 0)
+            except (TypeError, ValueError):
+                return 0.0
+
+        # 호 단위로 전유면적 합산(전유부만). exposPubuseGbCdNm: '전유'/'공용'.
+        agg: dict[tuple, dict[str, Any]] = {}
+        for r in rows:
+            gb = str(r.get("exposPubuseGbCdNm", "") or "")
+            if "전유" not in gb:
+                continue  # 공용부 제외(대지지분은 전유 기준)
+            dong = str(r.get("dongNm", "") or "").strip()
+            ho = str(r.get("hoNm", "") or "").strip()
+            key = (dong, ho)
+            cur = agg.setdefault(key, {"dong": dong, "ho": ho, "exclusive_area_sqm": 0.0, "purpose": str(r.get("mainPurpsCdNm", "") or "")})
+            cur["exclusive_area_sqm"] += _f(r, "area")
+        units = [
+            {**u, "exclusive_area_sqm": round(u["exclusive_area_sqm"], 4)}
+            for u in agg.values() if u["exclusive_area_sqm"] > 0
+        ]
+        units.sort(key=lambda u: (u["dong"], u["ho"]))
+        return units or None
+
     @staticmethod
     def _parse_title_items(items: Any) -> dict[str, Any] | None:
         """getBrTitleInfo item(s)를 표제부 상세 dict로 파싱(순수함수, 외부호출 없음).
@@ -187,6 +239,7 @@ class BuildingRegistryService:
             "ground_floors": int(_f(main, "grndFlrCnt")),
             "underground_floors": int(_f(main, "ugrndFlrCnt")),
             "total_area_sqm": _f(main, "totArea"),
+            "plat_area_sqm": _f(main, "platArea"),   # 대지면적(공동주택 대지지분 산정 기준)
             "household_count": int(_f(main, "hhldCnt")),
             "ho_count": int(_f(main, "hoCnt")),
             "family_count": int(_f(main, "fmlyCnt")),

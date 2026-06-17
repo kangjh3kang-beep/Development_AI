@@ -1,6 +1,7 @@
 """자동 용도지역 감지 + 종합 토지정보 라우터."""
 
 import asyncio
+import logging
 import re
 
 from fastapi import APIRouter, Depends, File, UploadFile
@@ -11,6 +12,7 @@ from apps.api.app.services.zoning.auto_zoning_service import AutoZoningService
 from apps.api.app.services.land_intelligence.land_info_service import LandInfoService
 from app.core.billing_deps import enforce_llm_quota
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -561,6 +563,65 @@ async def geocode_query(req: GeocodeRequest):
         "lat": geo.get("lat"),
         "lon": geo.get("lon"),
     }
+
+
+class AddressSearchRequest(BaseModel):
+    """지번/도로명 검색 — 다음 주소검색처럼 후보 목록(자동완성)."""
+    query: str
+    size: int = 8
+
+
+@router.post("/search")
+async def search_address(req: AddressSearchRequest):
+    """지번/주소 자동완성 검색 → 후보 목록(주소·PNU·좌표).
+
+    토지지번입력에서 타이핑하면 후보를 띄워 선택하게 한다(Daum 주소검색 UX).
+    무목업: 후보 없으면 빈 배열 정직 반환(가짜 후보 생성 금지).
+    """
+    from apps.api.app.services.external_api.vworld_service import VWorldService
+
+    q = (req.query or "").strip()
+    if len(q) < 2:
+        return {"query": q, "candidates": []}
+    size = max(1, min(20, req.size or 8))
+    candidates = await VWorldService().search_address(q, size=size)
+    return {"query": q, "candidates": candidates}
+
+
+class LandShareRequest(BaseModel):
+    """대지지분(대지권) 분석 요청 — 공동주택/집합건물 호별 대지지분 산정.
+
+    토지조서 정확화: 세대(동·호)별 대지지분 합 = 대지(필지)면적 검증.
+    pnu 우선, 없으면 address/jibun을 VWorld 지오코딩으로 PNU 확보.
+    """
+    pnu: str | None = None
+    address: str | None = None
+
+
+@router.post("/land-share")
+async def land_share(req: LandShareRequest):
+    """공동주택/집합건물 세대별 대지지분 분석(토지조서 보강).
+
+    건축물대장 표제부(대지면적)+전유공용면적(호별 전유면적)으로 호별 대지지분을
+    전유 비례 산정하고, Σ세대 대지지분 = 대지면적 정합을 검증한다.
+    무목업: 전유부 무자료=토지/단독으로 정직 분기(is_aggregate=false).
+    """
+    from apps.api.app.services.land_intelligence.land_share_service import LandShareService
+
+    svc = LandShareService()
+    pnu = (req.pnu or "").strip()
+    addr = (req.address or "").strip()
+    if not (pnu and len(pnu) >= 19) and not addr:
+        return {"is_aggregate": False, "reason": "pnu(19자리) 또는 address가 필요합니다."}
+    # 예외를 raw 500으로 흘리지 않고 무목업 정직 분기로 반환(가짜 생성 금지).
+    try:
+        if pnu and len(pnu) >= 19:
+            return await svc.analyze_by_pnu(pnu)
+        return await svc.analyze_by_address(addr)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("대지지분 분석 실패: %s (%s)", pnu or addr, str(e))
+        return {"is_aggregate": False, "pnu": pnu or None, "address": addr or None,
+                "reason": "대지지분 분석 중 오류가 발생했습니다. 잠시 후 다시 시도하세요."}
 
 
 class ParcelBoundariesRequest(BaseModel):
