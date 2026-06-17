@@ -364,3 +364,83 @@ class ParcelExcelService:
                 p["official_price_per_sqm"] = int(lc["official_price_per_sqm"])
 
         await asyncio.gather(*[one(i) for i in targets], return_exceptions=True)
+
+    async def enrich_parcel_list(
+        self, items: list[dict[str, Any]], with_building: bool = True,
+    ) -> list[dict[str, Any]]:
+        """주소/지번/PNU 목록 → 필지별 토지정보(면적·지목·용도지역·공시지가) 일괄 보강.
+
+        개별등록·엑셀 공통 경로. PNU 없으면 지번결합 지오코딩(_geocode_fill) 후 NED 토지특성
+        보강(_enrich_fill). with_building=True면 건축물대장 표제부로 집합건물(공동주택·빌라)
+        여부·건물명·용도·세대수를 best-effort 부착(호실/대지지분 안내용, 1콜/필지·동시성 제한).
+        무목업: 실패는 status="failed"+reason 정직표기(가짜값 금지).
+        """
+        parcels: list[dict[str, Any]] = []
+        for it in items:
+            pnu = str(it.get("pnu") or "").strip()
+            parcels.append({
+                "rid": it.get("__rid"),  # 호출측 행 식별자 — 응답에서 그대로 echo(주소 충돌 매칭 회피)
+                "address": str(it.get("address") or "").strip(),
+                "jibun": str(it.get("jibun") or "").strip(),
+                "bcode": str(it.get("bcode") or "").strip(),
+                "pnu": pnu if len(pnu) == 19 else None,
+                "area_sqm": None, "zone_type": None, "jimok": None,
+                "official_price_per_sqm": None,
+                "status": "ok" if len(pnu) == 19 else "pending",
+            })
+
+        need_geocode = [i for i, p in enumerate(parcels) if not p["pnu"]]
+        if need_geocode:
+            await self._geocode_fill(parcels, need_geocode)
+        await self._enrich_fill(parcels)
+
+        # PNU 미확보(지오코딩 실패) → 정직 실패표기. ambiguous는 _geocode_fill이 이미 표기.
+        for p in parcels:
+            if p["status"] == "pending":
+                if p["pnu"]:
+                    p["status"] = "ok"
+                else:
+                    p["status"] = "failed"
+                    p.setdefault("reason", "PNU 미확보 — 시·군·구 포함 정확한 주소로 보완하세요.")
+
+        if with_building:
+            await self._building_fill(parcels)
+        return parcels
+
+    async def _building_fill(self, parcels: list[dict[str, Any]]) -> None:
+        """PNU 확보 필지에 건축물대장 표제부로 집합건물(공동주택·빌라) 여부·건물명·세대수 부착.
+
+        is_aggregate는 용도(공동주택/다세대/연립/아파트) 또는 세대/호수>1로 best-effort 판정.
+        정확한 호별 대지지분은 화면에서 /zoning/land-share(전유부 전수)로 확정(여기선 가벼운 플래그만).
+        """
+        targets = [i for i, p in enumerate(parcels) if p.get("pnu")]
+        if not targets:
+            return
+        try:
+            from app.services.external_api.building_registry_service import BuildingRegistryService
+        except Exception:  # noqa: BLE001
+            return
+        breg = BuildingRegistryService()
+        sem = asyncio.Semaphore(_GEOCODE_CONCURRENCY)
+        _AGG = ("공동주택", "다세대", "연립", "아파트", "도시형생활주택", "오피스텔")
+
+        async def one(i: int) -> None:
+            p = parcels[i]
+            async with sem:
+                try:
+                    t = await breg.get_title_by_pnu(p["pnu"])
+                except Exception:  # noqa: BLE001
+                    t = None
+            if not isinstance(t, dict):
+                return
+            purpose = str(t.get("main_purpose", "") or "")
+            units = max(int(t.get("household_count") or 0), int(t.get("ho_count") or 0))
+            is_agg = any(k in purpose for k in _AGG) or units > 1
+            p["building"] = {
+                "is_aggregate": bool(is_agg),
+                "building_name": t.get("building_name", ""),
+                "main_purpose": purpose,
+                "unit_count": units or None,
+            }
+
+        await asyncio.gather(*[one(i) for i in targets], return_exceptions=True)

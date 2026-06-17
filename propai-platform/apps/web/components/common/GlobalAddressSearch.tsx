@@ -18,8 +18,17 @@ import { useCallback, useMemo, useRef, useState } from "react";
 import { KakaoAddressSearch, type KakaoAddressResult } from "@/components/ui/KakaoAddressSearch";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { apiClient, apiV1BaseUrl } from "@/lib/api-client";
+import { LandShareModal } from "@/components/operations/LandShareModal";
+
+// 행 불변 식별자 — 객체 spread({...a})로 보존되므로 참조 교체에 영향받지 않는 안정 매칭 키.
+let _uidSeq = 0;
+function newUid(): string {
+  _uidSeq += 1;
+  return `p${_uidSeq}_${Math.floor(Math.random() * 1e6)}`;
+}
 
 export interface AddressEntry {
+  __uid?: string; // 행 불변 식별자(토지정보 보강 매칭용)
   fullAddress: string;
   jibunAddress: string;
   roadAddress: string;
@@ -30,6 +39,19 @@ export interface AddressEntry {
   bcode: string; // 법정동 코드 (10자리) — PNU 구성에 사용
   areaSqm?: number; // 면적 (m²) — API에서 자동 반영
   areaPyeong?: number; // 면적 (평) — 자동 환산
+  // ── 필지별 토지정보(/zoning/parcels-info 일괄 보강) — 등록된 모든 필지가 갖는다 ──
+  pnu?: string; // PNU(19자리)
+  zoneCode?: string; // 용도지역
+  bcrPct?: number; // 건폐율 상한(%)
+  farPct?: number; // 용적률 상한(%)
+  jimok?: string; // 지목(형질)
+  officialPrice?: number; // 개별공시지가(원/㎡)
+  // ── 집합건물(공동주택·빌라) 플래그 — 호실/대지지분 안내용 ──
+  isAggregate?: boolean;
+  buildingName?: string;
+  mainPurpose?: string;
+  unitCount?: number;
+  infoStatus?: "ok" | "ambiguous" | "failed"; // 토지정보 보강 결과
 }
 
 /** 종합 토지분석 결과 요약 — onAnalyzed 콜백으로 전달(store 비기록 모드에서도 면적 자동채움 등 유지) */
@@ -78,7 +100,7 @@ export function GlobalAddressSearch({
 }: GlobalAddressSearchProps) {
   const [addresses, setAddresses] = useState<AddressEntry[]>(() => {
     if (initialAddress) {
-      return [{ fullAddress: initialAddress, jibunAddress: "", roadAddress: "", sido: "", sigungu: "", bname: "", zonecode: "", bcode: "" }];
+      return [{ __uid: newUid(), fullAddress: initialAddress, jibunAddress: "", roadAddress: "", sido: "", sigungu: "", bname: "", zonecode: "", bcode: "" }];
     }
     return [];
   });
@@ -95,6 +117,8 @@ export function GlobalAddressSearch({
   const [showCandidates, setShowCandidates] = useState(false);
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const searchSeq = useRef(0); // 응답 경합 가드: 마지막 요청만 반영(stale 응답 무시)
+  const [shareParcel, setShareParcel] = useState<AddressEntry | null>(null); // 호실/대지지분 모달 대상
+  const enrichSeq = useRef(0); // 토지정보 보강 응답 경합 가드(stale 머지 차단)
   // WP-D: store 비기록 모드(writeToContext=false)의 요약 표시·콜백용 로컬 분석값.
   const [localAnalysis, setLocalAnalysis] = useState<AddressAnalysisSummary | null>(null);
   const updateSiteAnalysis = useProjectContextStore((s) => s.updateSiteAnalysis);
@@ -108,7 +132,18 @@ export function GlobalAddressSearch({
   const parcelRows = useMemo(() =>
     displayAddresses.map((a) => {
       const label = (a.jibunAddress || a.fullAddress || "").trim(); // 번지 포함 지번 우선
-      return { label: label || "(주소 미상)", areaSqm: a.areaSqm ?? null };
+      return {
+        label: label || "(주소 미상)",
+        areaSqm: a.areaSqm ?? null,
+        zoneCode: a.zoneCode ?? null,
+        bcrPct: a.bcrPct ?? null,
+        farPct: a.farPct ?? null,
+        jimok: a.jimok ?? null,
+        isAggregate: a.isAggregate ?? false,
+        unitCount: a.unitCount ?? null,
+        pnu: a.pnu ?? null,
+        entry: a,
+      };
     }), [displayAddresses]);
 
   const parcelStats = useMemo(() => {
@@ -211,8 +246,71 @@ export function GlobalAddressSearch({
     }
   }, [siteAnalysis, updateSiteAnalysis, writeToContext, onAnalyzed]);
 
+  // ★등록된 '모든' 필지의 토지정보(면적·용도지역·건폐/용적·지목·공시지가)+집합건물 여부 일괄 보강.
+  //   (처음 1필지만 분석되던 근본문제 해결 — 개별등록·엑셀 공통). 주소 매칭으로 머지.
+  const enrichParcels = useCallback(async (entries: AddressEntry[]) => {
+    // 토지정보(면적·용도지역) 또는 건폐/용적·집합건물 플래그가 없는 행만 보강(엑셀 완전입력행도 bcr/far·빌라 보강).
+    const need = entries.filter((e) =>
+      (e.fullAddress || e.jibunAddress) &&
+      (!e.areaSqm || !e.zoneCode || e.bcrPct == null || e.isAggregate === undefined),
+    );
+    if (need.length === 0) return;
+    type P = {
+      __rid?: number; area_sqm?: number | null; zone_type?: string | null; jimok?: string | null;
+      pnu?: string | null; official_price_per_sqm?: number | null; bcr_pct?: number | null; far_pct?: number | null;
+      building?: { is_aggregate?: boolean; building_name?: string; main_purpose?: string; unit_count?: number | null } | null;
+      status?: string | null;
+    };
+    const seq = ++enrichSeq.current;
+    const CHUNK = 60; // 필지당 최대 3 외부콜 — 타임아웃 회피 위해 분할 호출(부분결과 즉시 반영)
+    // need 내 인덱스(=__rid)와 entry 참조를 함께 보존 → 주소 충돌 없이 정확 매칭.
+    for (let start = 0; start < need.length; start += CHUNK) {
+      const slice = need.slice(start, start + CHUNK);
+      let parcels: P[] = [];
+      try {
+        const r = await apiClient.post<{ parcels: P[] }>("/zoning/parcels-info", {
+          body: { parcels: slice.map((e, i) => ({ __rid: i, address: e.fullAddress, jibun: e.jibunAddress, pnu: e.pnu, bcode: e.bcode })) },
+          useMock: false, timeoutMs: 90000,
+        });
+        parcels = r.parcels || [];
+      } catch {
+        continue; // 이 청크 실패는 '보완필요'로 남김(가짜 생성 없음)
+      }
+      if (seq !== enrichSeq.current) return; // 더 새로운 보강이 시작됐으면 stale 머지 폐기
+      // 결과 __rid(슬라이스 인덱스)→해당 행의 불변 uid로 변환해 매칭.
+      //   (참조매칭은 triggerComprehensiveAnalysis가 객체를 교체하면 깨지지만, uid는 spread로 보존돼 안전.)
+      const byUid = new Map<string, P>();
+      for (const p of parcels) {
+        if (typeof p.__rid !== "number") continue;
+        const uid = slice[p.__rid]?.__uid;
+        if (uid) byUid.set(uid, p);
+      }
+      setAddresses((prev) => prev.map((a) => {
+        const m = a.__uid ? byUid.get(a.__uid) : undefined;
+        if (!m) return a;
+        return {
+          ...a,
+          areaSqm: m.area_sqm ?? a.areaSqm,
+          areaPyeong: m.area_sqm ? m.area_sqm / 3.305785 : a.areaPyeong,
+          pnu: m.pnu || a.pnu,
+          zoneCode: m.zone_type || a.zoneCode,
+          bcrPct: m.bcr_pct ?? a.bcrPct,
+          farPct: m.far_pct ?? a.farPct,
+          jimok: m.jimok || a.jimok,
+          officialPrice: m.official_price_per_sqm ?? a.officialPrice,
+          isAggregate: m.building?.is_aggregate ?? a.isAggregate ?? false,
+          buildingName: m.building?.building_name || a.buildingName,
+          mainPurpose: m.building?.main_purpose || a.mainPurpose,
+          unitCount: m.building?.unit_count ?? a.unitCount,
+          infoStatus: (m.status as AddressEntry["infoStatus"]) || a.infoStatus,
+        };
+      }));
+    }
+  }, []);
+
   const handleAddressSelect = useCallback((result: KakaoAddressResult) => {
     const entry: AddressEntry = {
+      __uid: newUid(),
       fullAddress: result.fullAddress,
       jibunAddress: result.jibunAddress,
       roadAddress: result.roadAddress,
@@ -227,9 +325,13 @@ export function GlobalAddressSearch({
     if (single) {
       newAddresses = [entry];
     } else {
-      // 다필지: 중복 방지 후 추가
-      const exists = addresses.some((a) => a.fullAddress === entry.fullAddress);
-      newAddresses = exists ? addresses : [...addresses, entry];
+      // 다필지: 중복이면 조기 반환(불필요한 종합분석·보강 재발사 차단).
+      if (addresses.some((a) => a.fullAddress === entry.fullAddress)) {
+        setIsSearching(false);
+        onChange?.(addresses);
+        return;
+      }
+      newAddresses = [...addresses, entry];
     }
 
     setAddresses(newAddresses);
@@ -246,12 +348,14 @@ export function GlobalAddressSearch({
         });
       }
 
-      // 자동 종합 분석 트리거 (bcode + 지번주소 포함)
+      // 자동 종합 분석 트리거 (bcode + 지번주소 포함) — 대표 필지는 store/파이프라인용 풀분석.
       triggerComprehensiveAnalysis(primary.fullAddress, primary.bcode, primary.jibunAddress);
     }
+    // ★등록된 모든 필지(대표 포함)의 토지정보 일괄 보강 — 비대표 필지도 면적·용도·건폐/용적이 채워진다.
+    if (!single) void enrichParcels(newAddresses);
 
     onChange?.(newAddresses);
-  }, [single, addresses, siteAnalysis, updateSiteAnalysis, onChange, writeToContext, triggerComprehensiveAnalysis]);
+  }, [single, addresses, siteAnalysis, updateSiteAnalysis, onChange, writeToContext, triggerComprehensiveAnalysis, enrichParcels]);
 
   const handleRemove = useCallback((index: number) => {
     const newAddresses = addresses.filter((_, i) => i !== index);
@@ -369,18 +473,24 @@ export function GlobalAddressSearch({
       const fd = new FormData();
       fd.append("file", file);
       const res = await apiClient.post<{
-        parcels?: Array<{ address?: string | null; jibun?: string | null; bcode?: string | null; pnu?: string | null; area_sqm?: number | null }>;
+        parcels?: Array<{ address?: string | null; jibun?: string | null; bcode?: string | null; pnu?: string | null; area_sqm?: number | null; zone_type?: string | null; jimok?: string | null; official_price_per_sqm?: number | null }>;
         note?: string; error?: string; registry_guidance?: { message?: string };
       }>("/zoning/parse-parcels", { body: fd, useMock: false, timeoutMs: 120000 });
       if (res.error) { setUploadInfo({ note: res.error }); return; }
+      // parse-parcels가 이미 채운 면적·용도지역·지목·공시지가를 보존(이전엔 areaSqm만 받고 폐기).
       const entries: AddressEntry[] = (res.parcels ?? [])
         .filter((p) => (p.address || p.pnu))
         .map((p) => ({
+          __uid: newUid(),
           fullAddress: p.address || p.pnu || "",
           jibunAddress: p.jibun || p.address || "",
           roadAddress: "", sido: "", sigungu: "", bname: "", zonecode: "",
           bcode: p.bcode || "",
-          ...(p.area_sqm ? { areaSqm: p.area_sqm } : {}),
+          pnu: p.pnu || undefined,
+          ...(p.area_sqm ? { areaSqm: p.area_sqm, areaPyeong: p.area_sqm / 3.305785 } : {}),
+          ...(p.zone_type ? { zoneCode: p.zone_type } : {}),
+          ...(p.jimok ? { jimok: p.jimok } : {}),
+          ...(p.official_price_per_sqm ? { officialPrice: p.official_price_per_sqm } : {}),
         }));
       // ★업로드한 필지를 앞에 둔다(기존 검색분은 뒤로 보존, 혼용 가능). 방금 올린 토지조서가
       //   대표(primary)가 되어 이전에 검색한 주소가 분석에 잔류하는 오류를 막는다.
@@ -398,12 +508,14 @@ export function GlobalAddressSearch({
       }
       onChange?.(merged);
       setUploadInfo({ note: res.note || `${entries.length}필지 등록`, registry: res.registry_guidance?.message });
+      // 건폐율/용적률·집합건물(빌라) 여부 보강 — parse-parcels엔 없는 항목을 일괄 채운다.
+      if (!single) void enrichParcels(merged);
     } catch (e: any) {
       setUploadInfo({ note: e?.message || "엑셀 처리 실패" });
     } finally {
       setUploading(false);
     }
-  }, [single, addresses, onChange, writeToContext, updateSiteAnalysis, triggerComprehensiveAnalysis]);
+  }, [single, addresses, onChange, writeToContext, updateSiteAnalysis, triggerComprehensiveAnalysis, enrichParcels]);
 
   const downloadTemplate = useCallback(async () => {
     try {
@@ -443,23 +555,46 @@ export function GlobalAddressSearch({
               )}
             </div>
           )}
-          {/* 컴팩트 리스트: 행 높이 축소 + 최대높이 스크롤(수백 필지가 화면을 잠식하지 않도록) */}
-          <ul className={`divide-y divide-[var(--line)]/60 ${displayAddresses.length > 8 ? "max-h-[320px] overflow-y-auto" : ""}`}>
+          {/* 컴팩트 리스트: 지번 + 토지정보(면적·용도지역·건폐/용적·지목) 2행 + 공동주택(호실·대지지분) */}
+          <ul className={`divide-y divide-[var(--line)]/60 ${displayAddresses.length > 8 ? "max-h-[360px] overflow-y-auto" : ""}`}>
             {parcelRows.map((row, idx) => (
-              <li key={`${row.label}-${idx}`} className="flex items-center gap-2 px-3 py-1.5 hover:bg-[var(--surface-muted)]/40">
-                <span className="w-7 shrink-0 text-right text-[10px] tabular-nums text-[var(--text-hint)]">{idx + 1}</span>
-                <span className="flex-1 truncate text-[12px] text-[var(--text-primary)]" title={row.label}>{row.label}</span>
-                {row.areaSqm && row.areaSqm > 0 ? (
-                  <span className="shrink-0 text-[10px] font-bold tabular-nums text-[var(--accent-strong)]">
-                    {Math.round(row.areaSqm).toLocaleString()}㎡ · {(row.areaSqm / 3.305785).toFixed(1)}평
-                  </span>
-                ) : (
-                  <span className="shrink-0 rounded bg-[color-mix(in_srgb,var(--status-warning)_12%,transparent)] px-1 py-0.5 text-[9px] font-semibold text-[var(--status-warning)]">보완필요</span>
-                )}
+              <li key={`${row.label}-${idx}`} className="flex items-start gap-2 px-3 py-1.5 hover:bg-[var(--surface-muted)]/40">
+                <span className="mt-0.5 w-7 shrink-0 text-right text-[10px] tabular-nums text-[var(--text-hint)]">{idx + 1}</span>
+                <div className="min-w-0 flex-1">
+                  {/* 1행: 지번 + 면적 */}
+                  <div className="flex items-center gap-2">
+                    <span className="flex-1 truncate text-[12px] font-medium text-[var(--text-primary)]" title={row.label}>{row.label}</span>
+                    {row.areaSqm && row.areaSqm > 0 ? (
+                      <span className="shrink-0 text-[10px] font-bold tabular-nums text-[var(--accent-strong)]">
+                        {Math.round(row.areaSqm).toLocaleString()}㎡ · {(row.areaSqm / 3.305785).toFixed(1)}평
+                      </span>
+                    ) : (
+                      <span className="shrink-0 rounded bg-[color-mix(in_srgb,var(--status-warning)_12%,transparent)] px-1 py-0.5 text-[9px] font-semibold text-[var(--status-warning)]">{isAnalyzing ? "조회중…" : "보완필요"}</span>
+                    )}
+                  </div>
+                  {/* 2행: 용도지역·건폐/용적·지목 + 공동주택(빌라) 배지 */}
+                  {(row.zoneCode || row.bcrPct || row.jimok || row.isAggregate) && (
+                    <div className="mt-0.5 flex flex-wrap items-center gap-1 text-[9.5px] text-[var(--text-secondary)]">
+                      {row.zoneCode && <span className="rounded bg-[var(--accent-soft)] px-1 py-0.5 font-semibold text-[var(--accent-strong)]">{row.zoneCode}</span>}
+                      {(row.bcrPct || row.farPct) && <span>건폐 {row.bcrPct ?? "—"}% · 용적 {row.farPct ?? "—"}%</span>}
+                      {row.jimok && <span>지목 {row.jimok}</span>}
+                      {row.isAggregate && (
+                        <button
+                          type="button"
+                          onClick={() => setShareParcel(row.entry)}
+                          title="공동주택(빌라) — 호실·세대 대지지분 보기/반영"
+                          className="rounded bg-[color-mix(in_srgb,var(--accent-strong)_14%,transparent)] px-1.5 py-0.5 font-bold text-[var(--accent-strong)] hover:bg-[color-mix(in_srgb,var(--accent-strong)_24%,transparent)]"
+                        >
+                          🏢 공동주택{row.unitCount ? ` ${row.unitCount}세대` : ""} · 호실/대지지분 ▸
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
                 <button
                   type="button"
                   onClick={() => handleRemove(idx)}
-                  className="shrink-0 rounded p-0.5 text-[var(--text-hint)] hover:bg-red-500/10 hover:text-red-500 transition-colors"
+                  className="mt-0.5 shrink-0 rounded p-0.5 text-[var(--text-hint)] hover:bg-red-500/10 hover:text-red-500 transition-colors"
                   aria-label="필지 삭제"
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
@@ -630,6 +765,15 @@ export function GlobalAddressSearch({
         </div>
       )}
 
+      {/* 공동주택(빌라) 호실·세대 대지지분 모달 — 검색/등록한 필지에서 바로 호실 분석/반영 */}
+      {shareParcel && (
+        <LandShareModal
+          jibun={shareParcel.jibunAddress || shareParcel.fullAddress}
+          pnu={shareParcel.pnu}
+          onClose={() => setShareParcel(null)}
+          onApplyArea={() => { /* 검색 컨텍스트에선 행 면적 갱신 불필요(토지조서에서 반영) */ }}
+        />
+      )}
     </div>
   );
 }

@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v223-parcel-list";
+const CACHE_NAME = "propai-v224-parcel-landinfo";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

@@ -1060,6 +1060,57 @@ async def land_schedule_template():
     )
 
 
+class ParcelsInfoRequest(BaseModel):
+    """다필지 토지정보 일괄 보강 요청 — 개별등록·엑셀 공통."""
+    parcels: list[dict] = []  # [{address?, jibun?, pnu?, bcode?}]
+
+
+@router.post("/parcels-info")
+async def parcels_info(req: ParcelsInfoRequest):
+    """다필지 각각의 토지정보(면적·용도지역·건폐율·용적률·지목·공시지가)+집합건물 여부 일괄 보강.
+
+    ★처음 1필지만 분석되던 문제 근본수정: 등록된 모든 필지가 부지정보를 갖도록 일괄 조회.
+    건폐율/용적률은 용도지역 법정상한(ZONE_LIMITS)으로 산출. 공동주택(빌라)이면 building 플래그로
+    호실·대지지분 안내. 무목업: 실패 필지는 status로 정직표기(가짜값 금지). LLM 미사용=과금 없음.
+    """
+    from apps.api.app.services.land_intelligence.parcel_excel_service import ParcelExcelService
+    from apps.api.app.services.zoning.auto_zoning_service import ZONE_LIMITS
+
+    items = (req.parcels or [])[:120]  # 1회 상한(필지당 최대 3 외부콜 — 대량은 클라가 분할 호출)
+    if not items:
+        return {"parcels": []}
+
+    def _limits(zone: str | None) -> tuple[int | None, int | None]:
+        if not zone:
+            return (None, None)
+        z = zone.replace(" ", "").strip()
+        # 정확일치 우선 → '입력값이 정식 용도지역명을 포함'(key in z)만 폴백.
+        #   (z in k 방향은 짧은/깨진 문자열의 과매칭 위험이라 제거. 후보 다수면 최장명 우선.)
+        if z in ZONE_LIMITS:
+            key = z
+        else:
+            cands = [k for k in ZONE_LIMITS if k in z]
+            key = max(cands, key=len) if cands else None
+        if not key:
+            return (None, None)
+        return (ZONE_LIMITS[key]["max_bcr"], ZONE_LIMITS[key]["max_far"])
+
+    enriched = await ParcelExcelService().enrich_parcel_list(items, with_building=True)
+    out = []
+    for p in enriched:
+        bcr, far = _limits(p.get("zone_type"))
+        out.append({
+            "__rid": p.get("rid"),  # 호출측 행 식별자 echo — 주소 충돌 없이 정확 매칭
+            "address": p.get("address"), "jibun": p.get("jibun"), "pnu": p.get("pnu"),
+            "area_sqm": p.get("area_sqm"), "zone_type": p.get("zone_type"),
+            "jimok": p.get("jimok"), "official_price_per_sqm": p.get("official_price_per_sqm"),
+            "bcr_pct": bcr, "far_pct": far,
+            "building": p.get("building"),
+            "status": p.get("status", "ok"), "reason": p.get("reason"),
+        })
+    return {"parcels": out}
+
+
 @router.post("/parse-parcels")
 async def parse_parcels(file: UploadFile = File(...)):
     """업로드된 토지조서 엑셀/CSV → 필지 목록(주소·PNU·bcode·면적·지목·소유구분) 추출.
