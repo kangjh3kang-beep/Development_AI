@@ -59,11 +59,12 @@ _HARD_DENY = {
 _MYP = _HERE.parents[5] if len(_HERE.parents) > 5 else _REPO_ROOT.parent
 _DEFAULT_ENV_FILES = [
     str(_MYP / "Development_AI" / ".env"),                      # 마스터키(SECRET_STORE_KEY) 등 공통
-    str(_MYP / "Development_AI" / "propai-platform" / ".env"),  # 키가 채워진 .env(현재 위치)
-    str(_MYP / "Development_AI" / "propai-platform" / "apps" / "api" / ".env"),  # 백엔드 키(MOLEG 등)
+    str(_MYP / "Development_AI" / "propai-platform" / ".env"),  # 키가 채워진 .env(실값)
     str(_REPO_ROOT / ".env"),                                   # 이 worktree(있으면 최우선)
     str(_REPO_ROOT / "apps" / "api" / ".env"),
 ]
+# 주의: Development_AI/propai-platform/apps/api/.env는 placeholder(dummy) 모음이라
+# 베이스라인에 넣으면 실값(MOLIT 64자 등)을 덮어쓴다 → 제외. 실값은 platform/.env + DB(--with-db).
 
 
 def _parse_env_value(raw: str) -> str:
