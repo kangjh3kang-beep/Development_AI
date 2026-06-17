@@ -11,7 +11,7 @@ from datetime import date
 
 from app.contracts.rationale import Rationale, RationaleInput
 from app.services.explain.legal_refs import refs
-from app.services.land.upzoning import ordinance_far
+from app.services.land.upzoning import ordinance_bcr, ordinance_far
 from app.services.land.zone_limits import lookup_zone_limit
 
 
@@ -29,6 +29,7 @@ def remaining_capacity(zone_name: str | None, lot_area: float | None,
         return None
     zone = limit["zone_matched"]
     of = ordinance_far(pnu, zone, as_of) if pnu else None
+    obcr = ordinance_bcr(pnu, zone) if pnu else None
     far_limit = of["far_pct"] if of else limit["far_limit_pct"]
     far_source = of["source"] if of else "시행령 상한"
     existing = existing_floor_area or 0.0
@@ -39,7 +40,8 @@ def remaining_capacity(zone_name: str | None, lot_area: float | None,
     remaining_far = round(far_limit - existing_far_raw, 1)
     remaining_floor = round(max_total - existing, 1)
     # 건폐율(BCR) 판정 — 기존 건폐율 제공 시(국토계획법 §77/시행령 §84). 결손 시 미판정 표면화(무음 추정 금지).
-    bcr_limit = limit["bcr_limit_pct"]
+    bcr_limit = obcr["bcr_pct"] if obcr else limit["bcr_limit_pct"]
+    bcr_source = obcr["source"] if obcr else "시행령 상한"
     bcr_over = existing_bcr > bcr_limit if existing_bcr is not None else None
     remaining_bcr = round(bcr_limit - existing_bcr, 1) if existing_bcr is not None else None
 
@@ -48,7 +50,7 @@ def remaining_capacity(zone_name: str | None, lot_area: float | None,
         basis_ids.append(of["ref_id"])
     if "국토계획법시행령§85" not in basis_ids:
         basis_ids.append("국토계획법시행령§85")
-    basis_ids.append("국토계획법시행령§84")  # 건폐율 한도
+    basis_ids.append(obcr["ref_id"] if obcr and obcr.get("ref_id") else "국토계획법시행령§84")  # 건폐율 한도
     basis_ids.append("건축법시행령§119")  # 용적률 산정 연면적 정의
     if over:
         basis_ids.append("건축법§6")
@@ -65,7 +67,9 @@ def remaining_capacity(zone_name: str | None, lot_area: float | None,
     if existing_bcr is None:
         caveats.append("건폐율(BCR) 미판정 — 기존 건폐율 결손(무음 추정 금지)")
     elif bcr_over:
-        caveats.append(f"기존 건폐율 {round(existing_bcr, 1)}% > 법정 {bcr_limit}% — 건폐율 초과(기존불적합)")
+        caveats.append(f"기존 건폐율 {round(existing_bcr, 1)}% > 법정 {bcr_limit}%({bcr_source}) — 건폐율 초과(기존불적합)")
+    if existing_bcr is not None and pnu and bcr_source == "시행령 상한":
+        caveats.append("건폐율 시행령 상한 기준 — 시도 조례 미등록(조례 강화 시 실제 한도 하향 가능)")
     if of and of.get("temporary_relaxation"):
         tr = of["temporary_relaxation"]
         caveats.append(f"한시완화 가능(조건부): {tr['far_pct']}%까지({tr['until']}) — {tr['condition']}")
@@ -89,6 +93,7 @@ def remaining_capacity(zone_name: str | None, lot_area: float | None,
         "far_limit_pct": far_limit,
         "far_source": far_source,
         "bcr_limit_pct": bcr_limit,
+        "bcr_source": bcr_source,
         "existing_bcr_pct": round(existing_bcr, 1) if existing_bcr is not None else None,
         "bcr_over_limit": bcr_over,
         "remaining_bcr_pct": remaining_bcr,
