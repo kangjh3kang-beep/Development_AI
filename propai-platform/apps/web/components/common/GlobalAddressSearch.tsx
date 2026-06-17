@@ -19,6 +19,14 @@ import { KakaoAddressSearch, type KakaoAddressResult } from "@/components/ui/Kak
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { apiClient, apiV1BaseUrl } from "@/lib/api-client";
 import { LandShareModal } from "@/components/operations/LandShareModal";
+import { dynamicMap, MapShell } from "@/components/common/MapShell";
+import type { ParcelAtPointResult } from "@/components/map/ParcelPickerMap";
+
+// 지도 클릭 필지 선택 컴포넌트 — SSR 없이 동적 로드(Leaflet은 window 필요)
+const ParcelPickerMapDynamic = dynamicMap(
+  () => import("@/components/map/ParcelPickerMap"),
+  { pick: "ParcelPickerMap", height: 360, loadingMessage: "필지 선택 지도 로딩…" },
+);
 
 // 행 불변 식별자 — 객체 spread({...a})로 보존되므로 참조 교체에 영향받지 않는 안정 매칭 키.
 let _uidSeq = 0;
@@ -121,6 +129,8 @@ export function GlobalAddressSearch({
   const enrichSeq = useRef(0); // 토지정보 보강 응답 경합 가드(stale 머지 차단)
   // WP-D: store 비기록 모드(writeToContext=false)의 요약 표시·콜백용 로컬 분석값.
   const [localAnalysis, setLocalAnalysis] = useState<AddressAnalysisSummary | null>(null);
+  // 지도 클릭 필지 선택 패널 표시 여부(다필지 모드 전용)
+  const [showMapPicker, setShowMapPicker] = useState(false);
   const updateSiteAnalysis = useProjectContextStore((s) => s.updateSiteAnalysis);
   const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
 
@@ -431,6 +441,22 @@ export function GlobalAddressSearch({
     searchTimer.current = setTimeout(() => void runSearch(v), 350);
   }, [runSearch]);
 
+  // 지도 클릭 필지 선택 → KakaoAddressResult 형태로 변환 후 기존 추가 로직 재사용.
+  // bcode는 PNU 앞 10자리로 구성(pickCandidate 패턴 동일).
+  const handleMapPick = useCallback((parcel: ParcelAtPointResult) => {
+    if (!parcel.found || !parcel.address) return;
+    const bcode = parcel.bcode || (parcel.pnu && parcel.pnu.length >= 10 ? parcel.pnu.slice(0, 10) : "");
+    handleAddressSelect({
+      fullAddress: parcel.address,
+      jibunAddress: parcel.jibun || parcel.address,
+      roadAddress: "",
+      sido: "", sigungu: "", bname: "", buildingName: "",
+      zonecode: "", bcode,
+    });
+    // 지도 패널은 필지 추가 후 닫는다(사용자가 원하면 다시 열 수 있음)
+    setShowMapPicker(false);
+  }, [handleAddressSelect]);
+
   // 후보 선택 → 필지로 추가(PNU 보유 시 bcode 직접 구성, 종합분석 재실행).
   const pickCandidate = useCallback((c: AddrCandidate) => {
     const bcode = c.pnu && c.pnu.length >= 10 ? c.pnu.slice(0, 10) : "";
@@ -700,6 +726,37 @@ export function GlobalAddressSearch({
             </button>
           </div>
           {directMsg && <p className="mt-1 text-[11px] font-semibold text-amber-500">⚠ {directMsg}</p>}
+        </div>
+      )}
+
+      {/* 지도에서 선택 — 지도를 직접 클릭해 필지를 추가(다필지 모드 전용) */}
+      {!single && (
+        <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)]/40 px-3 py-2">
+          {/* 토글 헤더 버튼 */}
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={() => setShowMapPicker((v) => !v)}
+            className="flex w-full items-center justify-between gap-2 text-[11px] font-bold text-[var(--text-secondary)] hover:text-[var(--accent-strong)] transition-colors disabled:opacity-50"
+          >
+            <span className="flex items-center gap-1.5">
+              <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="3 6 9 3 15 6 21 3 21 18 15 21 9 18 3 21"/><line x1="9" y1="3" x2="9" y2="18"/><line x1="15" y1="6" x2="15" y2="21"/></svg>
+              지도에서 선택
+            </span>
+            {/* 열림/닫힘 화살표 */}
+            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+              style={{ transform: showMapPicker ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.2s" }}>
+              <path d="m6 9 6 6 6-6"/>
+            </svg>
+          </button>
+          {/* 지도 패널 — 토글 열릴 때만 마운트(Leaflet은 DOM 필요) */}
+          {showMapPicker && (
+            <div className="mt-2">
+              <MapShell height={360} label="필지 선택 지도" loadingMessage="필지 선택 지도 로딩…">
+                <ParcelPickerMapDynamic onPick={handleMapPick} height={360} />
+              </MapShell>
+            </div>
+          )}
         </div>
       )}
 

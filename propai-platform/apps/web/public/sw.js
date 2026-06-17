@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v230-multiparcel-banner";
+const CACHE_NAME = "propai-v231-map-picker";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",
