@@ -296,6 +296,76 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
     router.push(`/${rl || locale}/registry-analysis?addr=${encodeURIComponent(jibun)}`);
   };
 
+  // ── S3 케이스 분기 자동감지·토지정보 보강 ──
+  // 세대행(unit_label 보유)을 제외한 '필지행'에 대해 /zoning/parcels-info로 면적·용도지역·건물·
+  // 집합건물 여부를 일괄 조회하고, parcel_case(land/building/aggregate)를 분류해 행에 반영한다.
+  // 무목업: 조회 실패행은 보강하지 않고 그대로 둔다(가짜 분류 금지).
+  const classifyRows = useCallback(async (force = false) => {
+    // 분류 대상: 지번이 있고 세대행이 아니며(unit_label 없음), 아직 미분류이거나 강제 재분류.
+    const targets = rows.filter((r) => r.jibun.trim() && !r.unit_label && (force || !r.parcel_case));
+    if (targets.length === 0) return;
+    type ParcelInfo = {
+      __rid?: string; area_sqm?: number | null; zone_type?: string | null; pnu?: string | null;
+      building?: { is_aggregate?: boolean; building_name?: string; unit_count?: number | null } | null;
+      status?: string | null;
+    };
+    setBusy("classify");
+    try {
+      const token = (typeof window !== "undefined" && localStorage.getItem("propai_access_token")) || "";
+      // __rid=행 id로 매칭(주소 충돌·순서 변동에도 안전).
+      const res = await fetch(`${apiBase()}/zoning/parcels-info`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ parcels: targets.map((r) => ({ __rid: r.id, address: r.jibun.trim(), pnu: r.pnu || undefined })) }),
+      });
+      const d: { parcels?: ParcelInfo[] } = await res.json();
+      const byId = new Map<string, ParcelInfo>();
+      for (const p of d.parcels || []) if (p.__rid) byId.set(String(p.__rid), p);
+      // ★성공(status=ok)행만 분류·보강 — 실패행은 가짜 'land' 분류 금지(무목업). 패치를 모아 1회 setRows(렌더 1회).
+      const patch = new Map<string, Partial<LandRow>>();
+      let okN = 0, aggN = 0, failN = 0;
+      for (const r of targets) {
+        const m = byId.get(r.id);
+        if (!m || m.status !== "ok") { failN += 1; continue; }
+        const bld = m.building || null;
+        const isAgg = !!bld?.is_aggregate;
+        const pcase: LandRow["parcel_case"] = isAgg ? "aggregate" : (bld ? "building" : "land");
+        if (isAgg) aggN += 1;
+        okN += 1;
+        patch.set(r.id, {
+          parcel_case: pcase,
+          zone_code: m.zone_type || r.zone_code,
+          is_aggregate: isAgg,
+          building_name: bld?.building_name || r.building_name,
+          unit_count: bld?.unit_count ?? r.unit_count,
+          ...(r.area_sqm == null && m.area_sqm ? { area_sqm: m.area_sqm } : {}), // 빈 칸만 보강(입력값 보존)
+          pnu: m.pnu || r.pnu,
+        });
+      }
+      if (patch.size > 0) {
+        setRows(projectId, rows.map((r) => (patch.has(r.id) ? { ...r, ...patch.get(r.id) } : r)));
+      }
+      setNotice({
+        kind: failN > 0 && okN === 0 ? "warn" : "info",
+        text: `필지 유형 자동감지 — ${okN}필지 분류(토지/단일건물/공동주택)` +
+              (failN > 0 ? `, ${failN}필지는 주소 보완 필요(분류 보류)` : "") + ". " +
+              (aggN > 0 ? `공동주택 ${aggN}필지는 '세대별 대지지분 펼치기'로 동·호 대지지분을 반영하세요.` : "건물 없는 토지는 필지면적이 곧 실토지면적입니다."),
+      });
+    } catch {
+      setNotice({ kind: "warn", text: "필지 유형 자동감지에 실패했습니다. 잠시 후 다시 시도하세요." });
+    } finally {
+      setBusy(null);
+    }
+  }, [rows, projectId, setRows]);
+
+  // 행이 생기면(불러오기/엑셀/추가) 미분류 필지행을 1회 자동 분류.
+  useEffect(() => {
+    if (rows.some((r) => r.jibun.trim() && !r.unit_label && !r.parcel_case)) {
+      void classifyRows(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows.length]);
+
   const downloadExcel = useCallback(async () => {
     setBusy("excel");
     try {
@@ -349,11 +419,16 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
             )}
             <input ref={fileRef} type="file" accept=".xlsx,.xls" className="hidden"
               onChange={(e) => { const f = e.target.files?.[0]; if (f) void importExcel(f); }} />
-            <button onClick={() => fileRef.current?.click()} disabled={busy === "import"}
+            <button onClick={() => fileRef.current?.click()} disabled={!!busy}
               className="rounded-xl border border-[var(--line-strong)] px-4 py-2 text-xs font-bold text-[var(--text-secondary)] hover:border-[var(--accent-strong)] disabled:opacity-50">
               {busy === "import" ? "업로드 중…" : "⬆ 엑셀 업로드"}
             </button>
-            <button onClick={downloadExcel} disabled={busy === "excel" || rows.length === 0}
+            <button onClick={() => void classifyRows(true)} disabled={!!busy || rows.length === 0}
+              title="등록된 필지의 유형(토지/단일건물/공동주택)과 용도지역·면적을 자동감지·보강합니다"
+              className="rounded-xl border border-[var(--line-strong)] px-3.5 py-2 text-xs font-bold text-[var(--text-secondary)] hover:border-[var(--accent-strong)] disabled:opacity-50">
+              {busy === "classify" ? "감지 중…" : "🔎 유형 자동감지"}
+            </button>
+            <button onClick={downloadExcel} disabled={!!busy || rows.length === 0}
               className="rounded-xl bg-[var(--accent-strong)] px-4 py-2 text-xs font-black text-white hover:opacity-90 disabled:opacity-50">
               {busy === "excel" ? "생성 중…" : "📊 토지조서 엑셀"}
             </button>
@@ -397,7 +472,22 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
                           <span className="text-[var(--text-tertiary)]">{i + 1}</span>
                         </button>
                       </td>
-                      <td className="px-1.5 py-1 min-w-[160px]"><input title={r.jibun || "지번"} className={inputCls} value={r.jibun} onChange={(e) => updateRow(projectId, r.id, { jibun: e.target.value })} /></td>
+                      <td className="px-1.5 py-1 min-w-[160px]">
+                        <input title={r.jibun || "지번"} className={inputCls} value={r.jibun} onChange={(e) => updateRow(projectId, r.id, { jibun: e.target.value })} />
+                        {/* S3 케이스 배지: 토지/단일건물/공동주택 자동분류 */}
+                        {r.parcel_case && !r.unit_label && (
+                          <div className="mt-0.5 flex flex-wrap items-center gap-1 text-[9px]">
+                            {r.parcel_case === "aggregate" ? (
+                              <span className="rounded bg-[color-mix(in_srgb,var(--accent-strong)_16%,transparent)] px-1 py-0.5 font-bold text-[var(--accent-strong)]">🏢 공동주택{r.unit_count ? ` ${r.unit_count}세대` : ""}</span>
+                            ) : r.parcel_case === "building" ? (
+                              <span className="rounded bg-[var(--surface-strong)] px-1 py-0.5 font-semibold text-[var(--text-secondary)]">🏠 단일건물</span>
+                            ) : (
+                              <span className="rounded bg-[var(--surface-strong)] px-1 py-0.5 font-semibold text-[var(--text-secondary)]">🟩 토지</span>
+                            )}
+                            {r.zone_code && <span className="text-[var(--text-hint)]">{r.zone_code}</span>}
+                          </div>
+                        )}
+                      </td>
                       <td className="px-1.5 py-1 min-w-[90px]"><input title={r.owner || "소유자"} className={inputCls} value={r.owner} onChange={(e) => updateRow(projectId, r.id, { owner: e.target.value })} /></td>
                       <td className="px-1.5 py-1 w-16"><input title={r.share || "지분"} className={inputCls} value={r.share} onChange={(e) => updateRow(projectId, r.id, { share: e.target.value })} /></td>
                       <td className="px-1.5 py-1 w-20">
@@ -416,7 +506,7 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
                       <td className="px-1.5 py-1 w-36">
                         <input title={r.expected_price ? `${r.expected_price.toLocaleString()}원` : "매입예정가"} className={`${inputCls} text-right`} inputMode="numeric" value={fmtNum(r.expected_price)} onChange={(e) => updateRow(projectId, r.id, { expected_price: parseNum(e.target.value) })} />
                         <div className="mt-0.5 flex flex-wrap items-center gap-1">
-                          <button onClick={() => estimatePrice(r)} disabled={busy === r.id} title="공시지가×지역 시세보정 기반 적정 매입가(수정가능)" className="cursor-pointer rounded bg-[var(--accent-soft)] px-1 py-0.5 text-[9px] font-bold text-[var(--accent-strong)] disabled:opacity-50">적정</button>
+                          <button onClick={() => estimatePrice(r)} disabled={!!busy} title="공시지가×지역 시세보정 기반 적정 매입가(수정가능)" className="cursor-pointer rounded bg-[var(--accent-soft)] px-1 py-0.5 text-[9px] font-bold text-[var(--accent-strong)] disabled:opacity-50">적정</button>
                           <button onClick={() => setModalRow(r)} title="예상 시세 추정 상세(5방법 비교·건물/임대·신뢰도 게이지·리포트 PDF) — 감정평가 아님" className="cursor-pointer rounded border border-[var(--accent-strong)]/40 px-1 py-0.5 text-[9px] font-bold text-[var(--accent-strong)] disabled:opacity-50">상세추정</button>
                         </div>
                       </td>
@@ -426,9 +516,25 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
                       <td className="px-1.5 py-1 text-center"><input type="checkbox" checked={r.district_consent} onChange={(e) => updateRow(projectId, r.id, { district_consent: e.target.checked })} /></td>
                       <td className="px-1.5 py-1 text-center"><input title="시행자지정동의서" type="checkbox" checked={r.operator_consent} onChange={(e) => updateRow(projectId, r.id, { operator_consent: e.target.checked })} /></td>
                       <td className="px-1.5 py-1 whitespace-nowrap">
-                        <button onClick={() => autofill(r)} disabled={busy === r.id} title="등기 권리분석으로 소유자·지분·면적 자동채움" className="mr-1 cursor-pointer rounded bg-[var(--surface-strong)] px-1.5 py-0.5 text-[10px] font-bold text-[var(--accent-strong)] disabled:opacity-50">{busy === r.id ? "…" : "자동채움"}</button>
+                        <button onClick={() => autofill(r)} disabled={!!busy} title="등기 권리분석으로 소유자·지분·면적 자동채움" className="mr-1 cursor-pointer rounded bg-[var(--surface-strong)] px-1.5 py-0.5 text-[10px] font-bold text-[var(--accent-strong)] disabled:opacity-50">{busy === r.id ? "…" : "자동채움"}</button>
                         <button onClick={() => openAnalysis(r.jibun)} title="등기 권리분석 상세 페이지로 이동" className="cursor-pointer rounded bg-[var(--accent-soft)] px-1.5 py-0.5 text-[10px] font-bold text-[var(--accent-strong)]">분석 ↗</button>
-                        <button onClick={() => setShareRow(r)} disabled={!r.jibun.trim()} title="공동주택·다세대·집합상가의 호별 대지지분(동·호·세대면적)을 건축물대장으로 분석. Σ세대 대지지분=대지면적 검증" className="ml-1 cursor-pointer rounded border border-[var(--accent-strong)]/40 px-1.5 py-0.5 text-[10px] font-bold text-[var(--accent-strong)] disabled:opacity-50">대지지분</button>
+                        {/* S3 케이스 분기: 공동주택은 '세대 대지지분 펼치기' 강조, 그 외엔 보조 표기 */}
+                        {!r.unit_label && (
+                          <button
+                            onClick={() => setShareRow(r)}
+                            disabled={!r.jibun.trim()}
+                            title={r.parcel_case === "aggregate"
+                              ? "공동주택 — 호별 대지지분(동·호·세대면적)을 건축물대장으로 분석해 세대별로 펼쳐 반영(Σ대지지분=대지면적 검증)"
+                              : "집합건물(공동주택·다세대·집합상가)이면 호별 대지지분을 분석합니다(토지·단일건물은 분할 없음)"}
+                            className={`ml-1 cursor-pointer rounded px-1.5 py-0.5 text-[10px] font-bold disabled:opacity-50 ${
+                              r.parcel_case === "aggregate"
+                                ? "bg-[var(--accent-strong)] text-white hover:opacity-90"
+                                : "border border-[var(--accent-strong)]/40 text-[var(--accent-strong)]"
+                            }`}
+                          >
+                            {r.parcel_case === "aggregate" ? "🏢 세대 대지지분" : "대지지분"}
+                          </button>
+                        )}
                         {r.pdf_url && (
                           <a href={r.pdf_url} target="_blank" rel="noopener noreferrer" title="발급 등기부등본 PDF" className="ml-1 cursor-pointer rounded border border-[var(--accent-strong)]/40 px-1.5 py-0.5 text-[10px] font-bold text-[var(--accent-strong)]">PDF ↓</a>
                         )}

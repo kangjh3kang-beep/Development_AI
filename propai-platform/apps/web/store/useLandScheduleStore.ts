@@ -18,6 +18,12 @@ export type LandRow = {
   area_sqm: number | null; // 면적(집합건물 세대행은 '대지지분 면적'=실토지 기여분)
   exclusive_area_sqm?: number | null; // 세대 전유면적(집합건물 세대행만) — 대지지분 산정근거
   unit_label?: string; // 동·호(집합건물 세대행만, 예: "101동 1502호")
+  // ── S3 케이스 분기: 필지 유형 자동감지(토지만/단일필지건물/집합건물) ──
+  parcel_case?: "land" | "building" | "aggregate";
+  zone_code?: string; // 용도지역(자동보강)
+  is_aggregate?: boolean; // 집합건물(공동주택·다세대·집합상가) 여부
+  building_name?: string; // 건물명
+  unit_count?: number | null; // 세대/호수(집합건물)
   owner_type: "사유지" | "국공유지" | ""; // 소유구분
   expected_price: number | null; // 매입예정가(원)
   purchase_price: number | null; // 매입가(원)
