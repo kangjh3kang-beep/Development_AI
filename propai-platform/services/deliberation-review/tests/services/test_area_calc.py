@@ -50,6 +50,15 @@ def test_far_aboveground_parking_included_not_deducted():
     assert q.status == RecordStatus.AGREED
 
 
+def test_held_reason_recorded_in_trace():
+    # UNKNOWN 요소 → HELD + 강등 사유가 calc_trace에 명시(무라벨 HELD 제거).
+    q = CalcEngine().compute(
+        target=CalcTarget.BUILDING_AREA, payload={"outer_area": 600.0},
+        elements=[CalcElement(semantic_type=SemanticType.UNKNOWN, area=10.0, confidence=0.9)])
+    assert q.status == RecordStatus.HELD
+    assert any(e.rule_id == "held_reason" and "UNKNOWN" in (e.note or "") for e in q.calc_trace.entries)
+
+
 def test_far_unknown_parking_held_and_not_excluded():
     # 주차 지하/부속 미상 → 무음 전량제외 금지(보수적 산입) + HELD(확인 필요).
     q = CalcEngine().compute(
