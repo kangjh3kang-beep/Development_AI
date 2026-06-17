@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import pathlib
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # apps/api/app/settings.py → repo root(propai-review)/.env
@@ -38,10 +39,10 @@ class Settings(BaseSettings):
     QDRANT_URL: str = ""
     # 국가법령정보센터(법제처 law.go.kr DRF) — OC=MOLEG_API_KEY. 법령 교차검증 1차출처.
     MOLEG_API_KEY: str = ""
-    MOLEG_BASE_URL: str = "http://www.law.go.kr/DRF"
+    MOLEG_BASE_URL: str = "https://www.law.go.kr/DRF"  # https — API 키 평문 전송 MITM 방지
     # 국토부 건축물대장(data.go.kr) — serviceKey=MOLIT_API_KEY. 용적률/건폐율 교차검증 1차출처.
     MOLIT_API_KEY: str = ""
-    MOLIT_BLD_URL: str = "http://apis.data.go.kr/1613000/BldRgstHubService"
+    MOLIT_BLD_URL: str = "https://apis.data.go.kr/1613000/BldRgstHubService"  # https
     # VWORLD NED(공시지가/토지이용계획) — key=VWORLD_API_KEY + Referer 도메인 검증(필수).
     VWORLD_NED_URL: str = "https://api.vworld.kr/ned/data"
     VWORLD_REQ_URL: str = "https://api.vworld.kr/req"  # 지오코더(address)·2D데이터(data) 공통 base
@@ -66,6 +67,16 @@ class Settings(BaseSettings):
     JWT_SECRET_KEY: str = ""  # 마스터키 폴백 3순위(플랫폼 _fernet 우선순위와 동일)
     # 플랫폼 .env(들)에서 마스터키를 런타임 참조(복사 없이 단일 출처). 쉼표구분 경로. 값 아님(경로).
     PLATFORM_ENV_FILE: str = ""
+
+    @model_validator(mode="after")
+    def _production_fail_closed(self) -> "Settings":
+        """운영(production) 부팅 시 무인증·와일드카드 CORS 거부(무음 개방 차단)."""
+        if self.ENV == "production":
+            if not self.API_TOKEN:
+                raise ValueError("production은 API_TOKEN 필수(인증 fail-closed)")
+            if self.CORS_ORIGINS.strip() == "*":
+                raise ValueError("production은 와일드카드 CORS_ORIGINS 금지(명시 도메인 목록 필요)")
+        return self
 
     @property
     def cors_origins(self) -> list[str]:

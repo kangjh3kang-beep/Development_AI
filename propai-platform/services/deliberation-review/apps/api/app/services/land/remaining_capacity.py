@@ -30,10 +30,11 @@ def remaining_capacity(zone_name: str | None, lot_area: float | None,
     far_limit = of["far_pct"] if of else limit["far_limit_pct"]
     far_source = of["source"] if of else "시행령 상한"
     existing = existing_floor_area or 0.0
-    existing_far = round(existing / lot_area * 100, 1)
+    existing_far_raw = existing / lot_area * 100  # 미반올림 — 경계 비교/차감에 사용(반올림 경계 무음오판 방지)
+    existing_far = round(existing_far_raw, 1)      # 표시용
     max_total = round(far_limit / 100 * lot_area, 1)
-    over = existing_far > far_limit
-    remaining_far = round(far_limit - existing_far, 1)
+    over = existing_far_raw > far_limit
+    remaining_far = round(far_limit - existing_far_raw, 1)
     remaining_floor = round(max_total - existing, 1)
 
     basis_ids: list[str] = []

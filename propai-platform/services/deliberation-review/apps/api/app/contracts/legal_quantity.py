@@ -9,6 +9,7 @@ from enum import Enum
 
 from pydantic import BaseModel, Field
 
+from app.contracts._types import Probability
 from app.contracts.enums import RecordStatus, Unit
 from app.contracts.semantic_element import SemanticElement, SemanticType
 from app.core.errors import CalcTraceMissing
@@ -56,7 +57,7 @@ class CalcElement(BaseModel):
     """산정 입력 요소 — 의미타입 + 제외 측정치 + 분류 신뢰도(상속용)."""
 
     semantic_type: SemanticType
-    confidence: float = 1.0
+    confidence: Probability = 1.0
     area: float = 0.0
     length: float = 0.0
     depth: float = 0.0
@@ -87,7 +88,7 @@ class LegalQuantity(BaseModel):
     value: float | None = None
     unit: Unit = Unit.M2
     status: RecordStatus = RecordStatus.AGREED
-    confidence: float = 0.0
+    confidence: Probability = 0.0
     calc_trace: CalcTrace | None = None
     calc_rule_version: str | None = None
     snapshot_id: str | None = None

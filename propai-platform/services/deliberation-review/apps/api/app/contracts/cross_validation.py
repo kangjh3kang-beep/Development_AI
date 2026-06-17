@@ -9,6 +9,8 @@ from enum import Enum
 
 from pydantic import BaseModel, Field
 
+from app.contracts._types import Probability
+
 
 class SourceValue(BaseModel):
     """단일 출처에서 가져온 사실 1건(값 + 1차출처 근거)."""
@@ -32,7 +34,7 @@ class CrossValidation(BaseModel):
     fact_key: str
     status: CrossStatus
     agreed_value: str | float | int | None = None
-    confidence: float = 0.0
+    confidence: Probability = 0.0
     sources_present: int = 0
     by_source: dict[str, str | float | int | None] = Field(default_factory=dict)
     sources: list[SourceValue] = Field(default_factory=list)  # 출처별 값+1차출처 ref(역추적 보존)
