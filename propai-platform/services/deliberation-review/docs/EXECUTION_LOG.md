@@ -357,6 +357,16 @@
   제약 부재) → **alembic 0014 (jurisdiction,snapshot_id) 유니크 + on_conflict_do_nothing**(원자 멱등, 중복정리 가역); **(LOW)**
   MirrorStore eviction 상한 + harvest 영속 회귀 테스트. 7건 기각(load tie-break 단일writer 도달불가 등).
 
+### ✅ 멀티모달 고도화 INC-15 — INV-13 라이브 호출 정적검사(P-데이터)
+- **구현**: AST 스캐너 `tools/live_call_scan.py`(기존 tools/static_scan.py 선례 위치) — 소비경로의 직접
+  `httpx.*`/`requests.*` 네트워크 호출(캐시 우회)을 위반으로 탐지. 허용=AdapterCache(`cached_get`, 스캔 대상 외).
+- **강제**: `tests/acceptance/test_live_call_scan.py` — adapters/regulation·adapters/legal·services/land·
+  services/cross_validate 스캔 → 위반 0 + 스캐너 자기검증 4(httpx/requests/Client 탐지·cached_get 허용·allowlist).
+- **불변식**: INV-13(소비측 라이브 미호출·무음0)을 코드로 강제 — 캐시 우회 httpx.get을 소비경로에 추가하면 AT 차단.
+  프로덕션 코드 변경 0(dev/CI 가드). 별칭 import 미탐 한계 docstring 명시(정직).
+- **검증**: AT 5 + 전체 **396 passed**(391→396), ruff clean. 현 소비경로는 INC-11로 전부 cached_get 경유라 위반 0.
+  저리스크·무프로덕션변경 + 스캐너 자기검증 → 전체 워크플로 생략(비례), 자기리뷰.
+
 ## 5. 남은 항목 (운영 연결/결정 필요)
 - **단선 해소 완료(코드)**: P-A·P-A.2·P-C·P-D·P-E 모두 계약→구현→AT→검증 완결, mock→live 스위치 +
   결정론 보존. **인프라/키 가동만 남음**: P-B 실키(사용자 1회 export), P-C 실 임베더+Qdrant,
