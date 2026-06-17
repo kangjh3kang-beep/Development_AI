@@ -25,6 +25,7 @@ from app.contracts.verification import GateItem
 from app.contracts.versioning import Snapshot, Version
 from app.core.errors import PreflightRefused
 from app.core.hashing import input_hash
+from app.services.explain.legal_refs import resolve_text
 from app.services.extraction.dual_path import resolve_elements
 from app.services.judge.evaluator import EvalCase, Evaluator
 from app.services.legal_calc.calc_engine import CalcEngine
@@ -301,6 +302,10 @@ def run_analysis(inp: AnalysisInput) -> AnalysisResult:
             verification=verification,
             dual_path_status=None,
         ))
+        # basis_article(조문 ID) → 법령 본문 해소(설명가능성). 미해소 시 표면화(무음 금지).
+        legal_basis = resolve_text(fnd.basis_article) or {
+            "ref": fnd.basis_article, "resolved": None,
+            "note": "법령 본문 미해소 — basis_article 조문 단위 정밀화 필요"}
         items.append({
             "item_id": fnd.rule_id,
             "verdict": fnd.verdict.value,
@@ -309,6 +314,7 @@ def run_analysis(inp: AnalysisInput) -> AnalysisResult:
             "basis_article": fnd.basis_article,
             "evidence": {
                 "basis_article": fnd.basis_article,
+                "legal_basis": legal_basis,
                 "measured": fnd.measured_value,
                 "limit": fnd.limit_value,
                 "requires_committee": fnd.requires_committee,

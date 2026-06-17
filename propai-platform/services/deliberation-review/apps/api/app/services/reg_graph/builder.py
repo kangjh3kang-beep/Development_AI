@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from app.contracts.reg_graph import NodeKind, RegEdge, RegGraph, RegNode
 from app.contracts.rule import Rule
+from app.services.explain.legal_refs import resolve_text
 
 
 def build_reg_graph(rules: list[Rule], mirror_rules: list[dict] | None = None) -> RegGraph:
@@ -14,7 +15,16 @@ def build_reg_graph(rules: list[Rule], mirror_rules: list[dict] | None = None) -
     edges: list[RegEdge] = []
 
     def add(node_id: str, kind: NodeKind, label: str | None = None) -> None:
-        nodes.setdefault(node_id, RegNode(id=node_id, kind=kind, label=label))
+        if node_id in nodes:
+            return
+        extra: dict = {}
+        if kind == NodeKind.ARTICLE and label:  # 조문 ID → 법령 본문 해소(설명가능성)
+            r = resolve_text(label)
+            if r:
+                extra = {"law": r["law"], "article": r["article"], "summary": r["summary"],
+                         "effective_date": r.get("effective_date"), "source": r["source"],
+                         "resolved": r["match"]}
+        nodes[node_id] = RegNode(id=node_id, kind=kind, label=label, **extra)
 
     for r in rules:
         rid = f"rule:{r.rule_id}"

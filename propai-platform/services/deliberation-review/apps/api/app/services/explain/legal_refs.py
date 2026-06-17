@@ -109,6 +109,27 @@ _REFS: dict[str, LegalRef] = {
         ref_id="경관법§9", law="경관법", article="제9조(경관계획)·지자체 경관조례·경관심의",
         summary="가로경관 연속성·스카이라인 관리. 절대 높이제한과 별개로 주변 대비 돌출을 경관심의로 조정.",
         source=f"{_LAW}/법령/경관법"),
+    # 법령 수준(조문 무관) — basis_article이 조문번호 없이 법령명만일 때(R3 룰 등) 해소용(match=law_level).
+    "국토계획법시행령": LegalRef(
+        ref_id="국토계획법시행령", law="국토의 계획 및 이용에 관한 법률 시행령",
+        article="제84조(건폐율)·제85조(용적률) 등",
+        summary="용도지역별 건폐율·용적률 최대한도를 정하고 구체 수치는 시·도 조례로 위임.",
+        source=f"{_LAW}/법령/국토의계획및이용에관한법률시행령"),
+    "국토계획법": LegalRef(
+        ref_id="국토계획법", law="국토의 계획 및 이용에 관한 법률",
+        article="제36조·제76~78조 등",
+        summary="용도지역 지정·용도지역별 건축제한·건폐율/용적률 조례 위임 등 도시계획 기본법.",
+        source=f"{_LAW}/법령/국토의계획및이용에관한법률"),
+    "건축법시행령": LegalRef(
+        ref_id="건축법시행령", law="건축법 시행령",
+        article="제86조(일조 높이제한)·제119조(면적·높이·층수 산정) 등",
+        summary="면적·높이·층수 산정방법, 일조 등 확보 높이제한 등 건축법 위임사항.",
+        source=f"{_LAW}/법령/건축법시행령"),
+    "건축법": LegalRef(
+        ref_id="건축법", law="건축법",
+        article="제46조(건축선)·제60조(높이제한)·제61조(일조) 등",
+        summary="건축선·대지안의 공지·높이·일조 등 건축물 일반 규제.",
+        source=f"{_LAW}/법령/건축법"),
 }
 
 
@@ -125,3 +146,28 @@ def refs(*ref_ids: str) -> list[LegalRef]:
         out.append(r if r is not None else LegalRef(
             ref_id=rid, law="(미등록)", article=rid, summary="법령 사전 미등록 — 보완 필요"))
     return out
+
+
+def resolve_text(text: str | None) -> dict | None:
+    """거친 basis_article 문자열(조문번호 없는 법령명 등, R3 룰)을 best-effort 해소.
+
+    반환: LegalRef 필드 + match. match=exact(정확 키) | law_level(법령 수준 — 조문 미특정, 대표 요지).
+    해소 실패 None(소비측에서 '본문 미해소'로 표면화 — 무음 금지). 결정론(사전 고정).
+    """
+    if not text:
+        return None
+    if text in _REFS:
+        return {**_REFS[text].model_dump(), "match": "exact"}
+    norm = "".join(text.split())
+    # 1) 법령 수준 키 정확 매칭(§ 없는 키)
+    if norm in _REFS:
+        return {**_REFS[norm].model_dump(), "match": "law_level"}
+    # 2) 정밀 키의 법령부(§ 앞)가 norm과 동일 → 법령 수준 폴백
+    for k, ref in _REFS.items():
+        if "§" in k and k.split("§", 1)[0] == norm:
+            return {**ref.model_dump(), "match": "law_level"}
+    # 3) 법령 수준 키가 norm에 포함(예: '건축법 제46조/도시계획' → '건축법')
+    for k, ref in _REFS.items():
+        if "§" not in k and k in norm:
+            return {**ref.model_dump(), "match": "law_level"}
+    return None
