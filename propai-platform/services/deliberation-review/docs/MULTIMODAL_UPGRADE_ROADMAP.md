@@ -256,11 +256,12 @@ P-가시성과 병렬 착수 가능하나, static_scan(INC-15)은 캐시(INC-11)
 - 효과: 오래된 공시지가/대장 무표면화 제거.
 - **구현 노트**: `SourceValue.is_stale(as_of)`(data_vintage→collected_at 우선, max_age_days 초과; wall-clock 미사용 결정론) + `CrossValidation.stale_sources`·`needs_review`에 stale 포함. `validate(...,as_of=None)` — **as_of None이면 미평가(후방호환, vision_consensus 무영향)**, status는 합의 결과 정직 보존(노후를 CONFLICT로 위장 안 함). 파이프라인 cross_facts가 `as_of=application_date` 전달, landprice SourceValue에 data_vintage(land_year)/max_age 730. `LandCard.is_stale(as_of)`(stdr_year 기준) + collect_land_card 노후 note(max_age 365 동일 임계). 적대적 리뷰 4.7(gate_pass) — LOW(LandCard dead 필드) 해소(collected_at 제거·is_stale로 max_age 소비). **385 passed**(379→+6), ruff clean, static_scan 0.
 
-**INC-13 [high/M] 수집 데이터 DB 영속화(MirrorWriter/Harvester/CorpusIngest에 AsyncSession)**
+**INC-13 [high/M] ✅ 완료 — 수집 데이터 DB 영속화(MirrorWriter/Harvester/CorpusIngest에 AsyncSession)**
 - 대상: mirror_store.py `_DEFAULT_STORE`(in-memory)를 DB-backed로 · MirrorWriter.write·Harvester.run·CorpusIngest.ingest에 AsyncSession 주입(mirror_snapshot/source_document/harvest_job 테이블, mirror_store.py 주석상 0005 존재) · 소비측 `default_store().get`(analysis_pipeline.py:195)을 DB read-only 조회로.
 - 불변식: 소비측 read-only get(INV-13 라이브 미호출 유지). ACTIVE-only 적재(미승인 룰 비노출). snapshot_id/content_hash 재현성.
 - 리스크: 중(세션 인프라). 테스트는 in-memory 폴백 유지로 337 비파괴.
 - 효과: 프로세스 재시작 휘발 제거·다중워커 공유.
+- **구현 노트**: INC-11 warm 패턴 재사용 — **L1 in-memory(MirrorStore, 폴백/테스트) + L2 DB(mirror_snapshot)**. mirror_store에 async write/load/`warm_mirror_from_db`, analyze 라우트가 warm(DB→in-memory) → **소비측 run_analysis 불변**(default_store().get 그대로, INV-13 read-only). MirrorWriter.persist_to_db·CorpusIngest.persist_to_db(async). 공급측 `supply/db_persist.py`(source_document/precedent_case upsert, emit INV-23). 적대적 리뷰(inv13 8.5·persist 8.2·quality 7.5, gate_pass) — 확인 3건 해소: **(HIGH)** run_harvest_job asyncio.run 글로벌 엔진 교차루프 무음실패 → 일회용 NullPool 엔진+실패 로깅; **(MED)** mirror_snapshot 동시writer 중복 → **alembic 0014 (jurisdiction,snapshot_id) 유니크 + on_conflict_do_nothing**(원자 멱등); **(LOW)** MirrorStore 상한+harvest 회귀 테스트. **391 passed**(385→+6), ruff clean, static_scan 0, alembic 0014 up/down 가역.
 
 **INC-14 [high/L] reconcile_mirror 완결(라이브 diff→미러 갱신→영향 finding 재분석)**
 - 대상: reconcile_tasks.py:11-22(현재 live_ok bool 스텁) · network.py LiveNetwork.get에 공급측 한정 실 httpx 주입 · 라이브 본문 vs mirror_snapshot content_hash diff · 불일치 시 새 snapshot_id upsert · 영향 finding `analyze_task.delay` 트리거.

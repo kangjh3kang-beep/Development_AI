@@ -27,6 +27,12 @@ async def analyze(payload: AnalysisInput, session: AsyncSession = Depends(get_se
         await warm_from_db(session, payload.snapshot_id)
     except Exception:
         await session.rollback()  # 캐시 적재 실패 → 직접 fetch 경로로 degrade(무음 단정 금지: 분석은 진행)
+    # INC-13: 적재된 미러(공급측 DB)를 in-memory로 warm → 소비측 sync get이 DB-backed 미러를 읽음(INV-13 read-only).
+    try:
+        from app.supply.mirror.mirror_store import warm_mirror_from_db
+        await warm_mirror_from_db(session, payload.pnu)
+    except Exception:
+        await session.rollback()  # 미러 적재 실패 → 미적재 보수 게이팅으로 degrade(분석 진행)
     try:
         result = run_analysis(payload)
     except DomainError as exc:

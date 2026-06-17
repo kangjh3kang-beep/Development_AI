@@ -30,3 +30,8 @@ class MirrorWriter:
         )
         self.store.put(snapshot)
         return snapshot
+
+    async def persist_to_db(self, session, snapshot: MirrorSnapshot) -> None:
+        """INC-13 — write()로 만든 미러를 DB에 영속(재시작·다중워커 공유). ACTIVE-only는 write가 이미 보장."""
+        from app.supply.mirror.mirror_store import write_snapshot_to_db
+        await write_snapshot_to_db(session, snapshot)

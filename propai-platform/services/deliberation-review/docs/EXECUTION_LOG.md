@@ -342,6 +342,21 @@
 - **검증**: AT 6(is_stale·validator 게이트·as_of 무전달 호환·결정론·LandCard.is_stale·파이프라인 e2e) + 전체 **385 passed**
   (379→385), ruff clean, static_scan 0. 적대적 집중 리뷰 4.7(gate_pass) — LOW(LandCard dead 필드) 해소(collected_at 제거·is_stale로 max_age 소비).
 
+### ✅ 멀티모달 고도화 INC-13 — 수집 데이터 DB 영속화(P-데이터)
+- **구현**: INC-11 warm 패턴 재사용 — **L1 in-memory(MirrorStore, 폴백/테스트) + L2 DB(mirror_snapshot)**.
+  mirror_store에 async write_snapshot_to_db/load_active_snapshot_from_db/warm_mirror_from_db. **소비측
+  run_analysis 불변**(여전히 default_store().get) — analyze 라우트가 warm(DB→in-memory)으로 DB-backed 미러 가시화
+  (INV-13 read-only, 라이브 미호출). MirrorWriter.persist_to_db·CorpusIngest.persist_to_db(async). 공급측
+  `supply/db_persist.py`(source_document/precedent_case upsert, emit INV-23). run_harvest_job이 source_document 영속.
+- **불변식**: 소비측 read-only(INV-13). ACTIVE-only(writer). in-memory 폴백 유지(직접 run_analysis 비파괴). 멱등.
+  신규 마이그레이션 없음(테이블 0005/0008 기존) — 단, 리뷰 후 동시성 보강용 0014 추가(아래).
+- **검증**: AT 6(DB 라운드트립·폴백·문서/사례 멱등·출처강제·harvest 교차루프 회귀·MirrorStore 상한) + 전체 **391 passed**
+  (385→391), ruff clean, static_scan 0. 적대적 다관점 리뷰(inv13 8.5·persist 8.2·quality 7.5, 전부 gate_pass) — 확인 3건 해소:
+  **(HIGH)** run_harvest_job asyncio.run이 글로벌 async 엔진 풀을 새 루프서 재사용 → 장수 워커 2회차+ 'Event loop is
+  closed' 무음 실패 → **일회용 NullPool 엔진 + 실패 로깅**(무음0); **(MED)** mirror_snapshot 동시 writer 중복 행(유니크
+  제약 부재) → **alembic 0014 (jurisdiction,snapshot_id) 유니크 + on_conflict_do_nothing**(원자 멱등, 중복정리 가역); **(LOW)**
+  MirrorStore eviction 상한 + harvest 영속 회귀 테스트. 7건 기각(load tie-break 단일writer 도달불가 등).
+
 ## 5. 남은 항목 (운영 연결/결정 필요)
 - **단선 해소 완료(코드)**: P-A·P-A.2·P-C·P-D·P-E 모두 계약→구현→AT→검증 완결, mock→live 스위치 +
   결정론 보존. **인프라/키 가동만 남음**: P-B 실키(사용자 1회 export), P-C 실 임베더+Qdrant,
