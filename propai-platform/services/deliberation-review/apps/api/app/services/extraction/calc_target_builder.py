@@ -27,14 +27,25 @@ def build_calc_targets_from_drawing(ext: DrawingExtraction) -> tuple[list[dict],
     targets: list[dict] = []
     for at in ext.area_tables:
         outer = at.get("outer_area")
-        if outer is None:
-            notes.append(f"면적표({at.get('target')}): outer_area 없음 → skip")
-            continue
-        # 비전 추출 area sanity — 모순/환각 면적을 표면화(무음 승계 차단, 드롭은 안 함).
-        notes.extend(area_sanity_notes(float(outer), excl))
-        targets.append({
-            "target": at.get("target", "building_area"),
-            "payload": {"outer_area": float(outer)},
-            "elements": excl,
-        })
+        if outer is not None:
+            # 단일 외곽면적 → 건축면적 산정(제외 측정치 승계). area sanity로 모순/환각 표면화.
+            notes.extend(area_sanity_notes(float(outer), excl))
+            targets.append({
+                "target": at.get("target", "building_area"),
+                "payload": {"outer_area": float(outer)},
+                "elements": excl,
+            })
+        elif at.get("rows"):
+            # 다행(층별) 면적표 → 연면적 산정(각 층 바닥면적 합). 층 면적 결손은 표면화(무음0, INC-7).
+            floor_areas = [float(r["area"]) for r in at["rows"] if r.get("area") is not None]
+            if floor_areas:
+                targets.append({
+                    "target": at.get("target", "gross_floor_area"),
+                    "payload": {"floor_areas": floor_areas},
+                    "elements": [],
+                })
+            else:
+                notes.append(f"면적표({at.get('target')}): 층별 면적 결손 → 연면적 자동산정 skip")
+        else:
+            notes.append(f"면적표({at.get('target')}): outer_area/rows 없음 → skip")
     return targets, notes
