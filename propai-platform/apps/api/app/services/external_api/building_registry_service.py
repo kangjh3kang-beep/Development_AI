@@ -143,33 +143,17 @@ class BuildingRegistryService:
             logger.warning("표제부 조회 실패: %s (%s)", pnu, str(e))
             return None
 
-    async def get_exclusive_units_by_pnu(self, pnu: str, max_rows: int = 3000) -> list[dict[str, Any]] | None:
+    async def get_exclusive_units_by_pnu(self, pnu: str, page_size: int = 1000, max_pages: int = 30) -> list[dict[str, Any]] | None:
         """PNU 기반 집합건축물 전유공용면적(getBrExposPubuseAreaInfo) → 호별 전유면적 집계.
 
-        공동주택/다세대/집합상가의 동·호별 전유면적을 확보해 대지지분 산정에 쓴다.
+        공동주택/집합상가는 한 단지에 전유+공용 행이 수만 건(예: 1,584세대=10,494행)이라
+        ★반드시 totalCount까지 페이지네이션해야 모든 세대를 빠짐없이 집계한다(단일 호출 시
+        앞쪽 공용 행에 밀려 일부 세대만 잡혀 대지지분이 과대 배분되는 버그가 생긴다).
         반환: [{dong, ho, exclusive_area_sqm, purpose}] (전유부만, 호 단위 합산).
         키 미설정/실패/무자료 → None(가짜 생성 금지).
         """
         if len(pnu) < 19 or not settings.MOLIT_API_KEY:
             return None
-        params = {
-            "serviceKey": settings.MOLIT_API_KEY,
-            "sigunguCd": pnu[:5], "bjdongCd": pnu[5:10],
-            "bun": pnu[11:15], "ji": pnu[15:19],
-            "numOfRows": str(max_rows), "pageNo": "1", "_type": "json",
-        }
-        try:
-            async with httpx.AsyncClient(timeout=20.0) as client:
-                resp = await client.get(f"{BASE_URL}/getBrExposPubuseAreaInfo", params=params)
-                resp.raise_for_status()
-                items = (resp.json().get("response", {}).get("body", {})
-                         .get("items", {}) or {}).get("item")
-        except Exception as e:  # noqa: BLE001
-            logger.warning("전유공용면적 조회 실패: %s (%s)", pnu, str(e))
-            return None
-        if not items:
-            return None
-        rows = items if isinstance(items, list) else [items]
 
         def _f(x: dict, k: str) -> float:
             try:
@@ -177,17 +161,56 @@ class BuildingRegistryService:
             except (TypeError, ValueError):
                 return 0.0
 
-        # 호 단위로 전유면적 합산(전유부만). exposPubuseGbCdNm: '전유'/'공용'.
+        base_params = {
+            "serviceKey": settings.MOLIT_API_KEY,
+            "sigunguCd": pnu[:5], "bjdongCd": pnu[5:10],
+            "bun": pnu[11:15], "ji": pnu[15:19],
+            "numOfRows": str(page_size), "_type": "json",
+        }
         agg: dict[tuple, dict[str, Any]] = {}
-        for r in rows:
-            gb = str(r.get("exposPubuseGbCdNm", "") or "")
-            if "전유" not in gb:
-                continue  # 공용부 제외(대지지분은 전유 기준)
-            dong = str(r.get("dongNm", "") or "").strip()
-            ho = str(r.get("hoNm", "") or "").strip()
-            key = (dong, ho)
-            cur = agg.setdefault(key, {"dong": dong, "ho": ho, "exclusive_area_sqm": 0.0, "purpose": str(r.get("mainPurpsCdNm", "") or "")})
-            cur["exclusive_area_sqm"] += _f(r, "area")
+        collected = 0
+        total_count = None
+        try:
+            async with httpx.AsyncClient(timeout=25.0) as client:
+                for page in range(1, max_pages + 1):
+                    resp = await client.get(
+                        f"{BASE_URL}/getBrExposPubuseAreaInfo",
+                        params={**base_params, "pageNo": str(page)},
+                    )
+                    resp.raise_for_status()
+                    body = resp.json().get("response", {}).get("body", {}) or {}
+                    if total_count is None:
+                        try:
+                            total_count = int(body.get("totalCount") or 0)
+                        except (TypeError, ValueError):
+                            total_count = 0
+                    items = (body.get("items", {}) or {}).get("item")
+                    if not items:
+                        break
+                    rows = items if isinstance(items, list) else [items]
+                    collected += len(rows)
+                    for r in rows:
+                        gb = str(r.get("exposPubuseGbCdNm", "") or "")
+                        if "전유" not in gb:
+                            continue  # 공용부 제외(대지지분은 전유 기준)
+                        dong = str(r.get("dongNm", "") or "").strip()
+                        ho = str(r.get("hoNm", "") or "").strip()
+                        key = (dong, ho)
+                        cur = agg.setdefault(key, {"dong": dong, "ho": ho, "exclusive_area_sqm": 0.0, "purpose": str(r.get("mainPurpsCdNm", "") or "")})
+                        cur["exclusive_area_sqm"] += _f(r, "area")
+                    # totalCount까지 다 모았으면 종료(불필요한 호출 방지).
+                    if total_count and collected >= total_count:
+                        break
+                else:
+                    # max_pages 소진(초대형 단지) — 일부 누락 가능. count 교차검증이 비신뢰로 표기.
+                    logger.warning("전유공용면적 페이지 상한 도달(%s rows≥%s, total=%s) — 일부 누락 가능: %s",
+                                   collected, page_size * max_pages, total_count, pnu)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("전유공용면적 조회 실패: %s (%s)", pnu, str(e))
+            # 부분 수집이라도 있으면 활용(교차검증이 신뢰도 판단). 없으면 None.
+            if not agg:
+                return None
+
         units = [
             {**u, "exclusive_area_sqm": round(u["exclusive_area_sqm"], 4)}
             for u in agg.values() if u["exclusive_area_sqm"] > 0
