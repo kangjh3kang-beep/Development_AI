@@ -65,6 +65,18 @@ def test_parking_turn_radius_flag():
     assert m.value < m.required
 
 
+def test_parking_view_basis_resolves_and_scope_caveat():
+    # 주차/조망 지표가 법령본문 해소 가능 + 범위 한계 caveat 동반(법령접지·무음 미흡 제거).
+    from app.services.explain.legal_refs import resolve_text
+    assert resolve_text("주차장법시행규칙§6") is not None
+    assert resolve_text("경관법§9") is not None
+    pm = SimEngine().run_parking({"turn_radius": 5.0, "geom_confidence": 0.9})
+    assert any("통로폭" in a for a in pm.method_trace.assumptions)  # 범위 한계 표면화
+    vm = SimEngine().run_view({"facade_width": 10.0, "street_width": 20.0, "geom_confidence": 0.9})
+    assert vm.method_trace.basis_article == "경관법§9"
+    assert any("통경축" in a for a in vm.method_trace.assumptions)
+
+
 def test_egress_missing_distance_unavailable():
     # 보행거리 결손 → 크래시 없이 UNAVAILABLE(INV-21).
     plan = {"elements": ["CORE_STAIR"], "geom_confidence": 0.9}

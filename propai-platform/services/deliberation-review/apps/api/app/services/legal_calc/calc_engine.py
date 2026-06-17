@@ -14,6 +14,7 @@ from app.contracts.legal_quantity import (
     CalcElement,
     CalcTarget,
     CalcTrace,
+    CalcTraceEntry,
     LegalQuantity,
     emit,
 )
@@ -80,16 +81,27 @@ class CalcEngine:
         # INV-12: 분류 confidence 상속 + 불확실/UNKNOWN → HELD.
         min_conf = min((e.confidence for e in elements), default=1.0)
         has_unknown = any(e.semantic_type == SemanticType.UNKNOWN for e in elements)
-        held = has_unknown or min_conf < float(param("calc_min_input_confidence"))
+        threshold = float(param("calc_min_input_confidence"))
+        # HELD 사유를 누적 — status=HELD만으로 '왜 HELD인지' 식별 못 하던 갭 해소(설명가능성).
+        held_reasons: list[str] = []
+        if has_unknown:
+            held_reasons.append("입력 요소에 UNKNOWN(의미 미분류) 포함")
+        if min_conf < threshold:
+            held_reasons.append(f"입력 분류 신뢰도 {round(min_conf, 2)} < 임계 {threshold}")
         # 용적률 산정 시 주차 제외 적격성 미상(지하/부속 미확인) → HELD(전량제외 무음 거짓적합 방지).
         if target == CalcTarget.FAR_FLOOR_AREA and any(
             e.semantic_type == SemanticType.PARKING
             and parking_far_eligibility(e) is ParkingFarEligibility.UNKNOWN
             for e in elements
         ):
-            held = True
+            held_reasons.append("주차 제외 적격성 미상(지하/부속 미확인)")
+        held = bool(held_reasons)
 
         value, entries = self._dispatch(target, payload, elements)
+        if held_reasons:  # 강등 사유를 calc_trace에 명시(무라벨 HELD 제거).
+            entries.append(CalcTraceEntry(
+                rule_id="held_reason", basis_article="INV-12(분류 confidence 상속·불확실→HELD)",
+                note="HELD 강등 사유 — " + "; ".join(held_reasons)))
 
         status = RecordStatus.HELD if held else RecordStatus.AGREED
         q = LegalQuantity(
