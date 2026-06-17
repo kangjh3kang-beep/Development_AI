@@ -1,0 +1,20 @@
+{
+  "balcony_exclusion_depth": {
+    "value": 1.5,
+    "unit": "m",
+    "basis_article": "건축법 시행령 제119조",
+    "description": "발코니 바닥면적 제외 기준 깊이(외벽 중심선 기준)."
+  },
+  "eave_exclusion_length": {
+    "value": 1.0,
+    "unit": "m",
+    "basis_article": "건축법 시행령 제119조",
+    "description": "처마/차양 건축면적 제외 기준 길이."
+  },
+  "rooftop_height_exclusion_ratio": {
+    "value": 0.125,
+    "unit": "ratio",
+    "basis_article": "건축법 시행령 제119조",
+    "description": "옥탑 높이/층수 산정 제외 기준(건축면적 대비 비율)."
+  }
+}

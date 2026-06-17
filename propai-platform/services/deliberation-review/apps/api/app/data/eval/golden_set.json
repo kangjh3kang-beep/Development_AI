@@ -1,0 +1,20 @@
+{
+  "sheet_role": [
+    {"item_id": "sr1", "kind": "sheet_role", "expected": "PLAN",
+     "input": {"sheet_id": "A-101", "classifier_role": "PLAN", "titleblock_text": "평면도", "content_role": "PLAN"}},
+    {"item_id": "sr2", "kind": "sheet_role", "expected": "SECTION",
+     "input": {"sheet_id": "A-201", "classifier_role": "SECTION", "titleblock_text": "단면도", "content_role": "SECTION"}},
+    {"item_id": "sr3", "kind": "sheet_role", "expected": "SECTION",
+     "input": {"sheet_id": "A-301", "classifier_role": "ELEVATION", "titleblock_text": "단면도", "content_role": "SECTION"}},
+    {"item_id": "sr4", "kind": "sheet_role", "expected": "AREA_TABLE",
+     "input": {"sheet_id": "A-401", "classifier_role": "AREA_TABLE", "titleblock_text": "면적표", "content_role": "AREA_TABLE"}}
+  ],
+  "element": [
+    {"item_id": "el1", "kind": "element", "expected": "PILOTIS",
+     "input": {"element_id": "e1", "features": {"semantic_hint": "PILOTIS", "hint_strength": 0.9}}},
+    {"item_id": "el2", "kind": "element", "expected": "UNKNOWN",
+     "input": {"element_id": "e2", "features": {"hint_strength": 0.3}}},
+    {"item_id": "el3", "kind": "element", "expected": "BALCONY",
+     "input": {"element_id": "e3", "features": {"semantic_hint": "BALCONY", "hint_strength": 0.85}}}
+  ]
+}

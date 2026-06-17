@@ -59,6 +59,7 @@ from apps.api.routers import (
     development_methods,
     digital_twin,
     domain_agents,
+    specialist_agents,
     drone,
     energy,
     environment,
@@ -206,6 +207,15 @@ except ImportError:
         from app.routers.ai_analyze import router as ai_analyze_router
     except ImportError:
         ai_analyze_router = None
+
+# 대량 다필지 배치(F-Parcel ParcelBatchJob) — 구역/수천 필지 비동기 취합·집계
+try:
+    from apps.api.app.routers.parcel_batch import router as parcel_batch_router
+except ImportError:
+    try:
+        from app.routers.parcel_batch import router as parcel_batch_router
+    except ImportError:
+        parcel_batch_router = None
 from apps.api.versioning import VersionHeaderMiddleware, create_latest_redirect_router
 
 settings = get_settings()
@@ -218,6 +228,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # ── 시작 ──
     setup_logging(json_output=settings.environment != "development")
     logger.info("PropAI API 시작", version=settings.app_version, env=settings.environment)
+
+    # Phase 4: 위험알림 기본 채널(telegram/ws) 등록(graceful·env-gated — 무설정 시 no-op)
+    try:
+        from app.services.ledger.risk_monitor import setup_default_notifiers
+        setup_default_notifiers()
+    except Exception:  # noqa: BLE001
+        pass
 
     # Sentry 에러 추적 초기화
     if settings.sentry_dsn:
@@ -626,6 +643,7 @@ app.include_router(lease_ops.router, prefix="/api/v1/lease-ops", tags=["lease-op
 app.include_router(esg.router, prefix="/api/v1/esg", tags=["esg"])
 app.include_router(marketing.router, prefix="/api/v1/marketing", tags=["marketing"])
 app.include_router(domain_agents.router, prefix="/api/v1/agents/domain", tags=["domain-agents"])
+app.include_router(specialist_agents.router, prefix="/api/v1/agents/specialist", tags=["specialist-agents"])
 app.include_router(maintenance.router, prefix="/api/v1/maintenance", tags=["maintenance"])
 app.include_router(tenant.router, prefix="/api/v1/tenant", tags=["tenant-experience"])
 app.include_router(digital_twin.router, prefix="/api/v1/digital-twin", tags=["digital-twin"])
@@ -734,6 +752,8 @@ if cost_router is not None:
     app.include_router(cost_router, tags=["v61 공사비"])  # 자체 prefix=/api/v1/cost
 if ai_analyze_router is not None:
     app.include_router(ai_analyze_router, tags=["ai"])  # 자체 prefix=/api/v1/ai
+if parcel_batch_router is not None:
+    app.include_router(parcel_batch_router, tags=["대량 다필지 배치"])  # 자체 prefix=/api/v1/parcels/batch
 if market_router is not None:
     # PUBLIC 마켓(구인구직·프로필·홍보) — 자체 prefix=/api/v1/market, 현장 격리 없음
     app.include_router(market_router, tags=["구인구직 마켓(public)"])

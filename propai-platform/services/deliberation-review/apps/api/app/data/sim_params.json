@@ -1,0 +1,46 @@
+{
+  "solar_axial_tilt_deg": {
+    "value": 23.44,
+    "unit": "deg",
+    "description": "지축 경사(동지 태양고도 근사 모델 상수)."
+  },
+  "degrees_per_hour": {
+    "value": 15.0,
+    "unit": "deg/h",
+    "description": "시간당 태양 시간각(지구 자전)."
+  },
+  "sunlight_min_continuous_hours": {
+    "value": 2.0,
+    "unit": "hours",
+    "basis_article": "건축법 제61조",
+    "description": "동지 연속 일조 기준시간."
+  },
+  "egress_walk_speed_mps": {
+    "value": 1.2,
+    "unit": "m/s",
+    "description": "피난 보행속도(SFPE 계열)."
+  },
+  "egress_flow_coefficient": {
+    "value": 1.3,
+    "unit": "ratio",
+    "description": "피난 유동계수(병목 보정)."
+  },
+  "egress_max_travel_distance_m": {
+    "value": 30.0,
+    "unit": "m",
+    "basis_article": "건축법 시행령",
+    "description": "거실→직통계단 보행거리 한도."
+  },
+  "parking_min_turn_radius_m": {
+    "value": 6.0,
+    "unit": "m",
+    "basis_article": "주차장법 시행규칙",
+    "description": "주차장 회전반경 최소 기준."
+  },
+  "parking_min_aisle_width_m": {
+    "value": 6.0,
+    "unit": "m",
+    "basis_article": "주차장법 시행규칙",
+    "description": "주차 통로 최소 폭."
+  }
+}

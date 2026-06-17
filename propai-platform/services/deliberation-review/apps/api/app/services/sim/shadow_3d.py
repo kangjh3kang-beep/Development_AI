@@ -1,0 +1,124 @@
+"""3D 일조/그림자 정밀 시뮬 — shapely 기하. 주변 건물 footprint+층수 → 매스 압출 → 그림자 투영.
+
+동지(최악) 9~15시 태양위치별로 주변 건물 그림자 폴리곤을 생성·합집합하고, 대상 대지와의 교차로
+일영 비율·연속 일조시간을 산정(건축법 일조권 판정 기초). 위경도→로컬 미터 평면 근사(소영역 정확).
+결정론(고정 동지 적위·시각). shapely 미설치/결손 시 graceful.
+"""
+from __future__ import annotations
+
+import math
+
+_DECL_WINTER = -23.44   # 동지 적위(deg) — 천문 상수
+_LAT_M_PER_DEG = 110540.0  # 위도 1도≈미터(WGS84) — 측지 상수
+_LON_M_PER_DEG = 111320.0  # 경도 1도≈미터(적도) — 측지 상수
+# 표준 층고(층수→높이 근사)는 법규성 파라미터 → 모듈 상수 아닌 함수 인자로 주입(INV-20).
+
+
+def _to_local_m(lon: float, lat: float, lon0: float, lat0: float) -> tuple[float, float]:
+    """위경도 → 대상지 중심 기준 로컬 미터(x=동, y=북)."""
+    x = (lon - lon0) * _LON_M_PER_DEG * math.cos(math.radians(lat0))
+    y = (lat - lat0) * _LAT_M_PER_DEG
+    return x, y
+
+
+def _ring_to_local(coords, lon0: float, lat0: float):
+    return [_to_local_m(c[0], c[1], lon0, lat0) for c in coords]
+
+
+def _geom_to_polygon(geometry: dict, lon0: float, lat0: float):
+    """GeoJSON Polygon/MultiPolygon → shapely(로컬 미터). 실패 None."""
+    try:
+        from shapely.geometry import MultiPolygon, Polygon
+    except ImportError:
+        return None
+    if not geometry:
+        return None
+    gtype = geometry.get("type")
+    coords = geometry.get("coordinates")
+    try:
+        if gtype == "Polygon":
+            return Polygon(_ring_to_local(coords[0], lon0, lat0))
+        if gtype == "MultiPolygon":
+            return MultiPolygon([Polygon(_ring_to_local(poly[0], lon0, lat0)) for poly in coords])
+    except Exception:  # noqa: BLE001
+        return None
+    return None
+
+
+def building_shadow(footprint, height_m: float, sun_alt_deg: float, sun_azim_deg: float):
+    """건물 footprint(shapely, 미터) → 그림자 폴리곤. 태양 반대로 길이만큼 투영한 매스의 convex hull."""
+    if sun_alt_deg <= 0 or height_m <= 0:
+        return None
+    from shapely.affinity import translate
+    length = height_m / math.tan(math.radians(sun_alt_deg))
+    rad = math.radians(sun_azim_deg + 180.0)  # 그림자 방향=태양 반대
+    dx = length * math.sin(rad)
+    dy = length * math.cos(rad)
+    moved = translate(footprint, xoff=dx, yoff=dy)
+    return footprint.union(moved).convex_hull
+
+
+def sunlight_analysis(target_geometry: dict, buildings: list[dict], latitude: float,
+                      floor_height_m: float = 3.0,
+                      hours: tuple[int, ...] = (9, 10, 11, 12, 13, 14, 15)) -> dict | None:
+    """대상 대지 + 주변 건물 → 동지 시각별 일영 비율 + 연속 일조시간(건축법 일조권). 결손 None.
+
+    floor_height_m: 층수→높이 환산 표준 층고(법규성 파라미터, 호출자 주입). height_m 있으면 우선.
+    """
+    try:
+        from shapely.ops import unary_union
+    except ImportError:
+        return None
+    # 대상지 중심을 로컬 원점으로
+    tcoords = (target_geometry or {}).get("coordinates")
+    if not tcoords:
+        return None
+    flat = tcoords[0] if (target_geometry.get("type") == "Polygon") else tcoords[0][0]
+    lon0 = sum(c[0] for c in flat) / len(flat)
+    lat0 = sum(c[1] for c in flat) / len(flat)
+    target = _geom_to_polygon(target_geometry, lon0, lat0)
+    if target is None or target.area <= 0:
+        return None
+
+    masses = []
+    for b in buildings:
+        poly = _geom_to_polygon(b.get("geometry"), lon0, lat0)
+        if poly is None or poly.area <= 0:
+            continue
+        h = b.get("height_m") or 0.0
+        if not h:
+            h = (b.get("floors") or 0) * floor_height_m
+        if h > 0:
+            masses.append((poly, h))
+
+    per_hour = []
+    sunny_hours = 0.0
+    for hour in hours:
+        ha = (hour - 12) * 15.0
+        alt, az = _sun(latitude, ha)
+        if alt <= 0:
+            per_hour.append({"hour": hour, "shaded_ratio": 1.0, "sun_alt": round(alt, 1)})
+            continue
+        shadows = [s for (fp, h) in masses if (s := building_shadow(fp, h, alt, az)) is not None]
+        shaded_ratio = 0.0
+        if shadows:
+            shadow_union = unary_union(shadows)
+            inter = target.intersection(shadow_union)
+            shaded_ratio = round(inter.area / target.area, 3) if not inter.is_empty else 0.0
+        if shaded_ratio < 0.5:  # 과반 일조 시 '일조시간'으로 계상
+            sunny_hours += 1.0
+        per_hour.append({"hour": hour, "shaded_ratio": shaded_ratio, "sun_alt": round(alt, 1)})
+
+    return {
+        "latitude": latitude,
+        "lot_area_m2": round(target.area, 1),
+        "nearby_masses": len(masses),
+        "per_hour": per_hour,
+        "sunny_hours_9to15": sunny_hours,
+        "method": "동지 9~15시 그림자 투영(shapely), 과반 일조 시각을 일조시간 계상, 층수×3.0m 매스",
+    }
+
+
+def _sun(latitude: float, hour_angle_deg: float) -> tuple[float, float]:
+    from app.adapters.solar.sun_position import sun_altitude_azimuth
+    return sun_altitude_azimuth(latitude, _DECL_WINTER, hour_angle_deg)

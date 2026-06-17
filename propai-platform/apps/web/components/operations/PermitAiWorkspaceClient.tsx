@@ -11,7 +11,6 @@
 import { useCallback, useState } from "react";
 import { Card, CardContent } from "@propai/ui";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
-import { GlobalAddressSearch, type AddressEntry } from "@/components/common/GlobalAddressSearch";
 import { dynamicMap } from "@/components/common/MapShell";
 import type { ParcelBoundaryMap as ParcelBoundaryMapType } from "@/components/map/ParcelBoundaryMap";
 import { SolarEnvelopeCard } from "@/components/projects/SolarEnvelopeCard";
@@ -90,13 +89,6 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<PermitAnalysis | null>(null);
-
-  const addParcel = useCallback(() => setExtra((p) => [...p, ""]), []);
-  const removeParcel = useCallback((i: number) => setExtra((p) => p.filter((_, idx) => idx !== i)), []);
-  const setParcel = useCallback(
-    (i: number, v: string) => setExtra((p) => p.map((x, idx) => (idx === i ? v : x))),
-    [],
-  );
 
   const run = useCallback(async () => {
     const target = addr || siteAnalysis?.address || "";
@@ -179,50 +171,25 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
             <ProjectAddressInput
               value={addr}
               onChange={setAddr}
-              label="분석 대상지 주소 (1필지)"
-              placeholder="프로젝트를 선택하거나 주소를 검색/입력하세요"
+              label="분석 대상지 주소 (단일·다필지)"
+              placeholder="주소 검색 또는 엑셀로 다필지 일괄 등록"
               pickerLabel="분석 히스토리"
               disabled={loading}
+              multi
+              onParcelsChange={(all) => {
+                // 다필지: 첫 필지=대표주소, 나머지=통합개발 추가필지(extra).
+                setAddr(all[0] || "");
+                setExtra(all.slice(1));
+              }}
             />
           </div>
 
-          {/* 다필지(여러 필지) 추가 — 용도지역이 다른 토지 통합 개발 분석 */}
-          {extra.map((p, i) => (
-            <div key={i} className="relative z-10 mt-3">
-              <div className="mb-1 flex items-center justify-between">
-                <span className="text-xs font-bold uppercase tracking-widest text-[var(--text-tertiary)]">
-                  추가 필지 {i + 2}
-                </span>
-                <button
-                  onClick={() => removeParcel(i)}
-                  disabled={loading}
-                  className="text-[11px] font-semibold text-[var(--status-error)] hover:underline disabled:opacity-50"
-                >
-                  ✕ 제거
-                </button>
-              </div>
-              <GlobalAddressSearch
-                single
-                initialAddress={p || undefined}
-                placeholder="통합 개발할 필지 주소를 검색하세요"
-                disabled={loading}
-                onChange={(e: AddressEntry[]) => setParcel(i, e.length > 0 ? e[0].fullAddress : "")}
-              />
-            </div>
-          ))}
-
-          <div className="relative z-10 mt-3 flex flex-wrap items-center gap-3">
-            <button
-              onClick={addParcel}
-              disabled={loading}
-              className="rounded-xl border border-dashed border-[var(--line-strong)] px-3.5 py-1.5 text-xs font-bold text-[var(--text-secondary)] hover:border-[var(--accent-strong)] hover:text-[var(--accent-strong)] disabled:opacity-50"
-            >
-              ＋ 주소 추가 (다필지 통합 분석)
-            </button>
+          {/* 다필지 통합개발 상태 — 위 주소바(다필지·엑셀)에서 등록한 필지 수 표시 */}
+          <div className="relative z-10 mt-3">
             <span className="text-[11px] text-[var(--text-tertiary)]">
               {extra.length > 0
                 ? `${extra.length + 1}개 필지 통합 — 용도지역이 다른 토지의 최적·최고 용적률을 함께 산정합니다`
-                : "필지를 추가하면 통합 개발 시 최적 용적률을 분석합니다 (단일필지는 추가 없이 실행)"}
+                : "주소를 추가 검색하거나 엑셀로 다필지를 올리면 통합 개발 시 최적 용적률을 분석합니다 (단일필지는 그대로 실행)"}
             </span>
           </div>
 

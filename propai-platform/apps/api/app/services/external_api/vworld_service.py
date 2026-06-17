@@ -7,6 +7,53 @@ import structlog
 
 logger = structlog.get_logger()
 
+# 필지(지적도) 프로세스 캐시 — PNU→feature(dict). 필지는 거의 불변이라 대량 다필지
+# 분석 시 동일 PNU 반복/중복 호출을 제거(N+1 완화). 무한증식 방지로 상한 둠.
+_PARCEL_CACHE: Dict[str, dict] = {}
+_PARCEL_CACHE_MAX = 20000
+
+
+def _parcel_cache_put(pnu: str, value: dict) -> None:
+    """필지 캐시에 저장. 상한 초과 시 단순 초기화(LRU 미도입 — 정적 데이터라 충분)."""
+    if len(_PARCEL_CACHE) >= _PARCEL_CACHE_MAX:
+        _PARCEL_CACHE.clear()
+    _PARCEL_CACHE[pnu] = value
+
+
+async def _vworld_get_json(client, url: str, params: dict, *, retries: int = 2) -> Optional[dict]:
+    """VWorld GET → JSON. 대량 동시호출 시 레이트리밋(429)·일시오류(5xx)·타임아웃을
+    지수 백오프+지터로 재시도한다(무목업: 끝내 실패하면 None, 가짜 생성 금지).
+    Retry-After 헤더가 있으면 우선 적용. 단일 호출에는 영향 없음(성공 시 즉시 반환).
+    """
+    import asyncio
+    import random
+
+    for attempt in range(retries + 1):
+        try:
+            resp = await client.get(url, params=params)
+            if resp.status_code in (429, 500, 502, 503, 504) and attempt < retries:
+                ra = resp.headers.get("Retry-After")
+                if ra and ra.replace(".", "", 1).isdigit():
+                    delay = float(ra)
+                else:
+                    delay = (2 ** attempt) + random.uniform(0, 0.3)
+                logger.warning("VWORLD 재시도", status=resp.status_code, attempt=attempt, delay=round(delay, 2))
+                await asyncio.sleep(min(delay, 5.0))
+                continue
+            resp.raise_for_status()
+            return resp.json()
+        except (httpx.TimeoutException, httpx.RequestError) as e:
+            if attempt < retries:
+                await asyncio.sleep((2 ** attempt) + random.uniform(0, 0.3))
+                continue
+            logger.error("VWORLD 요청 실패(재시도 소진)", error=str(e))
+            return None
+        except httpx.HTTPStatusError as e:
+            logger.error("VWORLD HTTP 오류", status=e.response.status_code)
+            return None
+    return None
+
+
 def _wgs84_area_to_sqm(area_deg2: float, center_lat: float) -> float:
     """WGS84 도(degree) 단위 면적을 m² 단위로 변환."""
     lat_m = 111_320  # 위도 1도 ≈ 111,320m (거의 일정)
@@ -19,7 +66,17 @@ class VWorldService:
     BASE_URL = settings.VWORLD_BASE_URL
 
     async def get_parcel_by_pnu(self, pnu_code: str) -> Optional[dict]:
-        """PNU 코드로 필지 정보 조회"""
+        """PNU 코드로 필지 정보 조회.
+
+        필지(지적도)는 거의 바뀌지 않으므로 프로세스 캐시로 중복/반복 호출을 제거한다
+        (대량 다필지 분석 시 동일 PNU 재조회·N+1 완화). 캐시는 PNU→feature.
+        """
+        if not pnu_code:
+            return None
+        cached = _PARCEL_CACHE.get(pnu_code)
+        if cached is not None:
+            # 빈 결과(None 못찾음)도 빈 dict로 캐시해 반복 실패호출 방지.
+            return cached or None
         params = {
             "service": "data",
             "request": "GetFeature",
@@ -30,26 +87,33 @@ class VWorldService:
             "attrFilter": f"pnu:=:{pnu_code}",
         }
         async with httpx.AsyncClient(timeout=12.0, headers=self.HEADERS) as client:
-            try:
-                resp = await client.get(f"{self.BASE_URL}/data", params=params)
-                resp.raise_for_status()
-                data = resp.json()
-                features = data.get("response", {}).get("result", {}).get("featureCollection", {}).get("features", [])
-                return features[0] if features else None
-            except httpx.HTTPStatusError as e:
-                logger.error("VWORLD HTTP 오류", pnu=pnu_code, status=e.response.status_code)
-                return None
-            except httpx.RequestError as e:
-                logger.error("VWORLD 네트워크 오류", pnu=pnu_code, error=str(e))
-                return None
+            data = await _vworld_get_json(client, f"{self.BASE_URL}/data", params)
+            if data is None:
+                return None  # 재시도 소진/오류 — 캐시하지 않음(일시오류일 수 있음)
+            features = data.get("response", {}).get("result", {}).get("featureCollection", {}).get("features", [])
+            result = features[0] if features else None
+            _parcel_cache_put(pnu_code, result or {})
+            return result
 
     async def merge_parcels_gis_union(self, pnu_codes: list[str]) -> Optional[dict]:
-        """다필지 GIS Union 통합 경계 산출"""
-        geometries = []
-        for pnu in pnu_codes:
-            parcel = await self.get_parcel_by_pnu(pnu)
-            if parcel:
-                geometries.append(parcel.get("geometry"))
+        """다필지 GIS Union 통합 경계 산출.
+
+        대량 다필지에서 필지 경계를 PNU별로 순차 조회하면 N+1 지연(수백 필지=수십 초)이
+        발생하므로, 동시성 제한(Semaphore) 하에 병렬 조회한다(캐시와 결합해 반복 제거).
+        """
+        import asyncio
+
+        sem = asyncio.Semaphore(8)  # VWorld 보호용 동시 호출 상한
+
+        async def _one(pnu: str):
+            async with sem:
+                return await self.get_parcel_by_pnu(pnu)
+
+        parcels = await asyncio.gather(*[_one(p) for p in pnu_codes], return_exceptions=True)
+        geometries = [
+            p.get("geometry") for p in parcels
+            if isinstance(p, dict) and p.get("geometry")
+        ]
         if not geometries:
             return None
         from shapely.geometry import shape, mapping
@@ -67,6 +131,63 @@ class VWorldService:
     # 등록 도메인: developmentai-production.up.railway.app
     HEADERS = {"Referer": "https://www.4t8t.net"}
 
+    async def search_address(self, query: str, size: int = 8) -> list[dict]:
+        """지번/도로명 검색 — 다음 주소검색처럼 후보 목록을 반환(자동완성용).
+
+        VWORLD 검색 API(service=search). 지번(parcel) 우선, 부족하면 도로명(road) 보강.
+        반환: [{address(지번주소), road_address, pnu, lat, lon, kind}] (최대 size).
+        키 미설정/무자료/오류 → [](가짜 후보 생성 금지).
+        """
+        q = (query or "").strip()
+        if not settings.VWORLD_API_KEY or len(q) < 2:
+            return []
+
+        results: list[dict] = []
+        seen: set[str] = set()
+        async with httpx.AsyncClient(timeout=10.0, headers=self.HEADERS) as client:
+            for category in ("parcel", "road"):
+                if len(results) >= size:
+                    break
+                try:
+                    params = {
+                        "service": "search", "request": "search", "version": "2.0",
+                        "crs": "EPSG:4326", "size": str(size), "page": "1",
+                        "query": q, "type": "address", "category": category,
+                        "format": "json", "key": settings.VWORLD_API_KEY,
+                    }
+                    resp = await client.get(f"{self.BASE_URL}/search", params=params)
+                    resp.raise_for_status()
+                    response = resp.json().get("response", {})
+                    if response.get("status") != "OK":
+                        continue
+                    items = response.get("result", {}).get("items", []) or []
+                    for it in items:
+                        addr = it.get("address", {}) or {}
+                        parcel = addr.get("parcel") or ""
+                        road = addr.get("road") or ""
+                        label = parcel or road
+                        if not label or label in seen:
+                            continue
+                        seen.add(label)
+                        point = it.get("point", {}) or {}
+                        # parcel 검색의 id는 PNU(19자리). road는 PNU 없음.
+                        rid = str(it.get("id", "") or "")
+                        pnu = rid if (category == "parcel" and len(rid) >= 19) else None
+                        results.append({
+                            "address": parcel or road,
+                            "road_address": road,
+                            "pnu": pnu,
+                            "lat": float(point.get("y", 0) or 0) or None,
+                            "lon": float(point.get("x", 0) or 0) or None,
+                            "kind": "지번" if category == "parcel" else "도로명",
+                        })
+                        if len(results) >= size:
+                            break
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("VWORLD 주소검색 실패(%s): %s (%s)", category, q[:30], str(e)[:200])
+                    continue
+        return results[:size]
+
     async def geocode_address(self, address: str) -> Optional[dict]:
         """주소를 좌표+PNU로 변환 (지오코딩).
 
@@ -76,10 +197,10 @@ class VWorldService:
             return None
 
         vworld_key = settings.VWORLD_API_KEY
+        # 키 값(prefix 포함)은 로그에 남기지 않는다 — 설정 여부만 기록(부분 키 노출 방지).
         logger.info(
-            "VWORLD geocode 시작: address=%s, key_len=%d, key_prefix=%s",
-            address[:30], len(vworld_key) if vworld_key else 0,
-            vworld_key[:8] if vworld_key and len(vworld_key) > 8 else "EMPTY",
+            "VWORLD geocode 시작: address=%s, key_set=%s",
+            address[:30], bool(vworld_key),
         )
 
         async with httpx.AsyncClient(timeout=12.0, headers=self.HEADERS) as client:

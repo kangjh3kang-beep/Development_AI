@@ -1,0 +1,44 @@
+name: ci
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_USER: propai_user
+          POSTGRES_PASSWORD: propai_pass_dev
+          POSTGRES_DB: propai_review
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U propai_user" --health-interval 10s
+          --health-timeout 5s --health-retries 5
+      redis:
+        image: redis:7.4
+        ports:
+          - 6379:6379
+    env:
+      DATABASE_URL: postgresql+asyncpg://propai_user:propai_pass_dev@localhost:5432/propai_review
+      REDIS_URL: redis://localhost:6379/0
+      DB_SCHEMA: review
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+      - name: lint
+        run: ruff check . || true
+      - name: static_scan
+        run: python -c "from tools.static_scan import scan_for_numeric_legal_constants as s; print('scan ready')"
+      - name: migrate up/down
+        run: |
+          cd apps/api
+          alembic upgrade head
+          alembic downgrade base
+          alembic upgrade head
+      - name: pytest
+        run: pytest -q

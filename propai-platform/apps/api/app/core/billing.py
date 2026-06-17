@@ -41,6 +41,8 @@ _DEFAULT_CONFIG: dict[str, Any] = {
         # 분석 모듈(시장 인구/소득 등) 건당 사용료 맵. 기본 빈 dict = 전부 무료.
         # 관리자가 설정한 키만 과금되고, 미설정 키는 0원(무료·실행).
         "analysis_modules": {},
+        # 대량 다필지 배치 — 필지당 단가(원). 기본 0 = 무료(관리자 미책정 시 무료 실행).
+        "bulk_parcel_per_unit": 0,
     },
     "free_tier": {
         "analysis_fee": {"free": 5000, "guest": 10000},  # 무료 소진 후 토지분석 단가
@@ -61,6 +63,7 @@ _CONFIG: dict[str, Any] = {
         "registry_analysis": _DEFAULT_CONFIG["service_fees"]["registry_analysis"],
         "stages": dict(_DEFAULT_CONFIG["service_fees"]["stages"]),
         "analysis_modules": dict(_DEFAULT_CONFIG["service_fees"]["analysis_modules"]),
+        "bulk_parcel_per_unit": _DEFAULT_CONFIG["service_fees"]["bulk_parcel_per_unit"],
     },
     "free_tier": {
         "analysis_fee": dict(_DEFAULT_CONFIG["free_tier"]["analysis_fee"]),
@@ -102,9 +105,12 @@ def apply_config(override: dict[str, Any]) -> None:
             _CONFIG["tiers"].pop(tier, None)
     sf = override.get("service_fees") or {}
     for k in ("project_create", "land_analysis", "sales_provision", "photoreal_render",
-              "registry_issue", "registry_analysis"):
+              "registry_issue", "registry_analysis", "bulk_parcel_per_unit"):
         if k in sf:
-            _CONFIG["service_fees"][k] = sf[k]
+            try:
+                _CONFIG["service_fees"][k] = max(0.0, float(sf[k]))  # 음수 차단
+            except (ValueError, TypeError):
+                _CONFIG["service_fees"][k] = sf[k]
     for s, v in (sf.get("stages") or {}).items():
         if s in _CONFIG["service_fees"]["stages"]:
             _CONFIG["service_fees"]["stages"][s] = v
@@ -123,6 +129,11 @@ def apply_config(override: dict[str, Any]) -> None:
 
 
 # ── 서비스 사용료 접근자(설정 기반) ──
+def service_fee_bulk_parcel_per_unit() -> float:
+    """대량 다필지 배치 — 필지당 단가(원). 미설정 시 0(무료)."""
+    return max(0.0, float(_CONFIG["service_fees"].get("bulk_parcel_per_unit", 0) or 0))
+
+
 def service_fee_project_create() -> float:
     return float(_CONFIG["service_fees"].get("project_create", 0))
 

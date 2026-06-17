@@ -22,6 +22,16 @@ export type CommonDictionary = {
     primaryCta: string;
     secondaryCta: string;
   };
+  vision: {
+    badge: string;
+    title: string;
+    lead: string;
+    areas: Record<string, string>;
+    pillars: Record<string, { title: string; desc: string }>;
+    engineTitle: string;
+    engineNote: string;
+    layers: string[];
+  };
   nav: {
     locale: string;
     dashboard: string;

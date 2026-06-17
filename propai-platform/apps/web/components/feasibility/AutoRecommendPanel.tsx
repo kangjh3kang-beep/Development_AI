@@ -8,6 +8,7 @@ import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { useFeasibilityV2Store } from "@/store/use-feasibility-v2-store";
 import { apiClient } from "@/lib/api-client";
 import { GlobalAddressSearch } from "@/components/common/GlobalAddressSearch";
+import { DevelopmentScenarioCard } from "@/components/common/DevelopmentScenarioCard";
 import { NumberInput } from "@/components/common/NumberInput";
 import { BusinessModelRefineModal } from "./BusinessModelRefineModal";
 
@@ -187,6 +188,8 @@ export function AutoRecommendPanel({ onClose, isModal = false, embedded = false 
 
   // Input state — siteAnalysis에서 자동 반영
   const [address, setAddress] = useState(ctxStore.siteAnalysis?.address ?? "");
+  // 다필지: 검색·엑셀 등록 필지(2필지↑ 시 통합 개발방식 분석 노출)
+  const [parcels, setParcels] = useState<string[]>([]);
   const [region, setRegion] = useState(() => {
     const addr = ctxStore.siteAnalysis?.address ?? "";
     const match = REGIONS.find((r) => addr.includes(r) || addr.includes(r.replace("특별시","").replace("광역시","").replace("도","")));
@@ -430,21 +433,26 @@ export function AutoRecommendPanel({ onClose, isModal = false, embedded = false 
               <label className="mb-2 block text-[10px] font-[900] uppercase tracking-[0.3em] text-[var(--text-hint)]">
                 주소 입력
               </label>
-              {/* 주소 검색 (GlobalAddressSearch — 단일/다필지 지원) */}
+              {/* 주소 검색 (GlobalAddressSearch — 단일/다필지·엑셀 지원) */}
               <GlobalAddressSearch
-                single
-                initialAddress={address}
+                writeToContext={false}
                 onChange={(entries) => {
                   if (entries.length > 0) {
-                    setAddress(entries[0].fullAddress);
+                    const next = entries[0].jibunAddress || entries[0].fullAddress;
+                    // 새 주소 입력 시 이전 추천결과 무효화(stale 표시 방지 — SSOT 정합).
+                    if (next && next !== address) {
+                      setTopModels([]); setAllModels([]); setAiInterpretation(null); setError(null);
+                    }
+                    setAddress(next);
                     // 시도 자동 설정
                     if (entries[0].sido) {
                       const matchedRegion = REGIONS.find((r) => entries[0].sido.includes(r) || r.includes(entries[0].sido));
                       if (matchedRegion) setRegion(matchedRegion);
                     }
                   }
+                  setParcels(entries.map((e) => e.jibunAddress || e.fullAddress || e.roadAddress).filter(Boolean));
                 }}
-                placeholder="주소를 검색하세요"
+                placeholder="주소 검색 · 다필지는 엑셀로 일괄 등록"
               />
             </div>
             <div className="w-full lg:w-56">
@@ -492,6 +500,13 @@ export function AutoRecommendPanel({ onClose, isModal = false, embedded = false 
               분석 시작
             </button>
           </div>
+
+          {/* 다필지(2필지↑) 통합 개발방식 분석 — 검색·엑셀 등록 시 자동 노출 */}
+          {parcels.length > 1 && (
+            <div className="mt-4">
+              <DevelopmentScenarioCard address={address} parcels={parcels} />
+            </div>
+          )}
 
         </div>
       </div>

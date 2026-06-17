@@ -46,7 +46,8 @@ class Settings(BaseSettings):
             return bool(value)
 
         if isinstance(value, str):
-            normalized = value.strip().lower()
+            # .env 인라인 주석(예: "true   # → debug") 방어 — '#' 이후 제거.
+            normalized = value.split("#", 1)[0].strip().lower()
 
             if normalized in {"1", "true", "yes", "y", "on", "debug", "dev", "development"}:
                 return True
@@ -54,6 +55,22 @@ class Settings(BaseSettings):
                 return False
 
         raise ValueError("debug must be a boolean or boolean-like string")
+
+    @field_validator(
+        "ai_cache_ttl_seconds", "ai_daily_token_budget", "qdrant_port",
+        "jwt_access_token_expire_minutes", "jwt_refresh_token_expire_days",
+        mode="before",
+    )
+    @classmethod
+    def strip_inline_comment_int(cls, value: Any) -> Any:
+        """.env 숫자 설정의 인라인 주석(예: "6333   # → qdrant_port")을 방어적으로 제거.
+
+        숫자 값은 '#'을 포함하지 않으므로 안전하다(시크릿/URL 값엔 적용 안 됨).
+        pydantic-settings DotEnv 파서가 인라인 주석을 떼지 않아 int 파싱이 실패하던 것을 보정.
+        """
+        if isinstance(value, str) and "#" in value:
+            return value.split("#", 1)[0].strip()
+        return value
 
     # ── 데이터베이스 ──
     database_url: str = "postgresql+asyncpg://propai_user:propai_pass_dev@localhost:5444/propai_db"

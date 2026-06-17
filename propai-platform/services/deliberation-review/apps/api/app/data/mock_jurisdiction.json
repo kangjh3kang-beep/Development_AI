@@ -1,0 +1,17 @@
+{
+  "1111010100100000001": {
+    "sido_code": "11",
+    "sigungu_code": "11110",
+    "zones": [
+      {"zone_code": "제2종일반주거지역", "area_ratio": 0.6},
+      {"zone_code": "제3종일반주거지역", "area_ratio": 0.4}
+    ]
+  },
+  "1111010100100000002": {
+    "sido_code": "11",
+    "sigungu_code": "11110",
+    "zones": [
+      {"zone_code": "제2종일반주거지역", "area_ratio": 1.0}
+    ]
+  }
+}

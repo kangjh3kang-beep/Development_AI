@@ -30,8 +30,8 @@ depends_on = None
 def _sales_tables():
     from apps.api.database.models.base import Base
     import apps.api.database.models.sales  # noqa: F401  (66 모델 등록)
-    return [t for n, t in Base.metadata.sorted_tables
-            if n.startswith("sales_") or n.startswith("mh_")]
+    return [t for t in Base.metadata.sorted_tables
+            if t.name.startswith("sales_") or t.name.startswith("mh_")]
 
 
 def upgrade() -> None:

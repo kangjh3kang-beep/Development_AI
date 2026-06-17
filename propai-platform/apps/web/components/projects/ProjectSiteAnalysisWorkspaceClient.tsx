@@ -858,10 +858,9 @@ export function ProjectSiteAnalysisWorkspaceClient({
               </p>
               <form className="mt-4 grid gap-3" onSubmit={handleSubmit}>
                 <GlobalAddressSearch
-                  single
                   onChange={(entries) => {
                     if (entries.length > 0) {
-                      setForm((current) => ({ ...current, address: entries[0].fullAddress }));
+                      setForm((current) => ({ ...current, address: entries[0].jibunAddress || entries[0].fullAddress }));
                     }
                   }}
                   placeholder={labels.addressLabel}

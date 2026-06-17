@@ -263,6 +263,13 @@ async def pricing_solve_base(body: dict, db: AsyncSession = Depends(get_db),
                                       int(body["target_total_10k"]), by=ctx.user.id)
     if res.get("ok"):
         await db.commit()
+        # Phase 1: 분양매출 SSOT 합류(best-effort) — solve_base는 achieved_total_10k를 total로 정규화
+        from app.services.ledger.ledger_adapters import record_pricing_revenue
+        await record_pricing_revenue(
+            rev={**res, "total_revenue_10k": res.get("achieved_total_10k")},
+            round_id=str(body["round_id"]),
+            tenant_id=str(getattr(ctx.user, "tenant_id", "") or "") or None,
+            project_id=str(ctx.site_id), created_by=str(ctx.user.id))
     return res
 
 
@@ -277,6 +284,12 @@ async def pricing_group_apply(body: dict, db: AsyncSession = Depends(get_db),
         group_name=body.get("group_name"), by=ctx.user.id)
     if res.get("ok"):
         await db.commit()
+        # Phase 1: 분양매출 SSOT 합류(best-effort 무중단 — append_analysis가 예외 흡수)
+        from app.services.ledger.ledger_adapters import record_pricing_revenue
+        await record_pricing_revenue(
+            rev=res, round_id=str(body["round_id"]),
+            tenant_id=str(getattr(ctx.user, "tenant_id", "") or "") or None,
+            project_id=str(ctx.site_id), created_by=str(ctx.user.id))
     return res
 
 

@@ -99,12 +99,175 @@ async def record_feasibility_commit(
     )
 
 
+def _domain_rec_to_status(rec: str | None) -> str:
+    """권고(recommendation) → 모순감지용 status. proceed=pass, 조건부=warning, 그 외(escalate/review)=fail."""
+    r = (rec or "").lower()
+    if r == "proceed":
+        return "pass"
+    if "condition" in r:
+        return "warning"
+    return "fail"
+
+
 async def record_domain_agent_task(
     *, task: dict[str, Any], tenant_id: str | None = None,
     project_id: str | None = None, created_by: str | None = None,
 ) -> dict[str, Any]:
+    # Phase 3.2 합류: 도메인별 체인(domain_agent_{domain}) + findings_brief(권고·신뢰도) 보강 +
+    # prior 모순/lineage(_append_with_lineage). 기존 매퍼(domain_agent_task_to_ledger)·서비스 계약 불변.
+    domain = task.get("domain") or "unknown"
+    payload = domain_agent_task_to_ledger(task)
+    payload["findings_brief"] = [{
+        "check_id": "RECOMMENDATION",
+        "status": _domain_rec_to_status(task.get("recommendation")),
+        "current": task.get("confidence_score"), "limit": None,
+    }]
+    return await _append_with_lineage(
+        analysis_type=f"domain_agent_{domain}", payload=payload,
+        tenant_id=tenant_id, project_id=project_id, pnu=None, address=None,
+        source="domain_agents", created_by=created_by)
+
+
+# ── Phase 1: read 성장루프용 매퍼+래퍼(write/read 쌍 신설·SSOT 합류) ──
+
+def feasibility_result_to_ledger(result: dict[str, Any]) -> dict[str, Any]:
+    """수지분석 결과(ModuleOutput dict) → 원장 payload(재무 성장루프 read 대상)."""
+    return {
+        "kind": "feasibility", "schema_version": "feasibility/v1",
+        "development_type": result.get("development_type"),
+        "total_revenue_won": result.get("total_revenue_won"),
+        "net_profit_won": result.get("net_profit_won"),
+        "profit_rate_pct": result.get("profit_rate_pct"),
+        "npv_won": result.get("npv_won"), "grade": result.get("grade"),
+        "findings_brief": [
+            {"check_id": "PROFIT_RATE", "status": "info",
+             "current": result.get("profit_rate_pct"), "limit": None},
+            {"check_id": "NPV", "status": "info", "current": result.get("npv_won"), "limit": None},
+        ],
+    }
+
+
+async def _append_with_lineage(
+    *, analysis_type: str, payload: dict[str, Any], tenant_id: str | None, project_id: str | None,
+    pnu: str | None, address: str | None, source: str, created_by: str | None,
+    abs_thresholds: dict[str, float] | None = None,
+) -> dict[str, Any]:
+    """Phase 2: prior read → 결정론 모순 탐지 → append → 파생 lineage 엣지(best-effort).
+
+    결정론 수치/판정 불변(모순은 비교·표면화 전용). 반환에 'contradictions' 가산(additive).
+    """
+    from app.services.ledger import lineage
+    from app.services.ledger.contradiction import detect_contradictions
+    try:
+        prior = await ledger.get_latest(
+            analysis_type=analysis_type, tenant_id=tenant_id,
+            pnu=pnu, address=address, project_id=project_id)
+    except Exception:  # noqa: BLE001 — prior read 실패는 무중단(정직 degrade)
+        prior = None
+    contradictions = detect_contradictions(prior, payload, abs_thresholds=abs_thresholds)
+    wb = await ledger.append_analysis(
+        analysis_type=analysis_type, payload=payload,
+        tenant_id=tenant_id, project_id=project_id, pnu=pnu, address=address,
+        source=source, created_by=created_by)
+    if (isinstance(wb, dict) and wb.get("ok") and not wb.get("unchanged")
+            and wb.get("content_hash") and prior and prior.get("content_hash")):
+        await lineage.record_edge(
+            child_hash=wb["content_hash"], child_type=analysis_type,
+            parent_hash=prior["content_hash"], parent_type=prior.get("analysis_type", analysis_type),
+            tenant_id=tenant_id,
+            contradiction_count=len(contradictions["contradictions"]),
+            max_severity=contradictions["max_severity"])
+    out = {**wb, "contradictions": contradictions} if isinstance(wb, dict) else wb
+    # Phase 4.2: append 이벤트 훅 — 위험평가 + 고위험 알림(best-effort, 이벤트 구동).
+    if isinstance(out, dict):
+        try:
+            from app.services.ledger.risk_monitor import on_analysis_appended
+            out["risk"] = await on_analysis_appended(
+                analysis_type=analysis_type, tenant_id=tenant_id,
+                pnu=pnu, address=address, project_id=project_id)
+        except Exception:  # noqa: BLE001 — 위험 훅 실패가 append를 막지 않음
+            pass
+    return out
+
+
+async def record_feasibility_result(
+    *, result: dict[str, Any], tenant_id: str | None = None,
+    project_id: str | None = None, pnu: str | None = None, address: str | None = None,
+    created_by: str | None = None,
+) -> dict[str, Any]:
+    # analysis_type="feasibility" (VCS 메타 'feasibility_vcs'와 분리 — read 성장루프 재무 체인)
+    # Phase 2: prior 대비 결정론 모순 + 파생 lineage(profit_rate 5%p 절대임계 포함).
+    return await _append_with_lineage(
+        analysis_type="feasibility", payload=feasibility_result_to_ledger(result),
+        tenant_id=tenant_id, project_id=project_id, pnu=pnu, address=address,
+        source="feasibility", created_by=created_by,
+        abs_thresholds={"profit_rate_pct": 5.0})
+
+
+def pricing_revenue_to_ledger(rev: dict[str, Any], *, round_id: str | None = None) -> dict[str, Any]:
+    """분양가 산정 매출 산출 dict → 원장 payload(W1 미배선 합류 — sales_revenue 체인)."""
+    return {
+        "kind": "sales_revenue", "schema_version": "sales_revenue/v1",
+        "round_id": rev.get("round_id") or round_id, "units_priced": rev.get("units_priced"),
+        "total_revenue_10k": rev.get("total_revenue_10k"), "avg_unit_10k": rev.get("avg_unit_10k"),
+        "by_type": rev.get("by_type") or {},
+        "findings_brief": [
+            {"check_id": "TOTAL_REVENUE", "status": "info", "current": rev.get("total_revenue_10k"), "limit": None},
+        ],
+    }
+
+
+async def record_pricing_revenue(
+    *, rev: dict[str, Any], round_id: str | None = None, tenant_id: str | None = None,
+    project_id: str | None = None, created_by: str | None = None,
+) -> dict[str, Any]:
     return await ledger.append_analysis(
-        analysis_type="domain_agent", payload=domain_agent_task_to_ledger(task),
-        tenant_id=tenant_id, project_id=project_id,
-        source="domain_agents", created_by=created_by,
+        analysis_type="sales_revenue", payload=pricing_revenue_to_ledger(rev, round_id=round_id),
+        tenant_id=tenant_id, project_id=project_id, source="sales_pricing", created_by=created_by,
     )
+
+
+def cost_estimate_to_ledger(*, summary: dict[str, Any], header: dict[str, Any],
+                            estimate_id: str | None = None) -> dict[str, Any]:
+    """BOQ 원가추정 요약 → 원장 payload(W1 미배선 합류 — cost_estimate 체인)."""
+    payload: dict[str, Any] = {
+        "kind": "cost_estimate", "schema_version": "cost_estimate/v1",
+        "building_type": header.get("building_type"), "structure_type": header.get("structure_type"),
+        "total_gfa_sqm": header.get("total_gfa_sqm"), "confidence_grade": summary.get("confidence_grade"),
+        "direct": summary.get("direct"), "indirect": summary.get("indirect"), "total": summary.get("total"),
+        "findings_brief": [
+            {"check_id": "TOTAL_COST", "status": "info", "current": summary.get("total"), "limit": None},
+        ],
+    }
+    if estimate_id is not None:                  # 원본 cost_estimate 행 역추적(없으면 생략)
+        payload["estimate_id"] = estimate_id
+    return payload
+
+
+async def record_cost_estimate(
+    *, summary: dict[str, Any], header: dict[str, Any], estimate_id: str | None = None,
+    tenant_id: str | None = None, project_id: str | None = None, created_by: str | None = None,
+) -> dict[str, Any]:
+    return await ledger.append_analysis(
+        analysis_type="cost_estimate",
+        payload=cost_estimate_to_ledger(summary=summary, header=header, estimate_id=estimate_id),
+        tenant_id=tenant_id, project_id=project_id, source="cost_boq", created_by=created_by,
+    )
+
+
+# ── Phase 3: 계층3 SpecialistAgent 산출 → 원장 cite(W4 닫기) ──
+
+async def record_specialist_result(
+    *, analysis_type: str, payload: dict[str, Any], tenant_id: str | None = None,
+    project_id: str | None = None, pnu: str | None = None, address: str | None = None,
+    source: str = "specialist", created_by: str | None = None,
+) -> dict[str, Any]:
+    """Phase 3 계층3 SpecialistAgent 산출 → 원장 cite(prior 모순 + lineage). W4 닫기.
+
+    payload는 SpecialistAgent가 만든 domain_agent/v2(findings_brief 포함). 기본 상대임계 모순탐지
+    (도메인별 절대임계 필요 시 abs_thresholds 확장). 반환에 contradictions 가산(additive).
+    """
+    return await _append_with_lineage(
+        analysis_type=analysis_type, payload=payload,
+        tenant_id=tenant_id, project_id=project_id, pnu=pnu, address=address,
+        source=source, created_by=created_by)

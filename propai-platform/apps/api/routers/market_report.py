@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from app.core.billing_deps import enforce_llm_quota
 from app.services.market.market_report_service import MarketReportService
+from app.services.market.population_density_service import PopulationDensityService
 from apps.api.auth.jwt_handler import CurrentUser, get_current_user
 
 router = APIRouter(prefix="/api/v1/market", tags=["시장조사보고서"])
@@ -50,6 +51,38 @@ async def market_report(
 ):
     lawd_cd, pnu = _resolve(req)
     return await MarketReportService().build_report(req.address, lawd_cd, pnu, use_llm=req.use_llm, options=req.options)
+
+
+class PopulationDensityRequest(BaseModel):
+    address: str | None = None
+    pnu: str | None = None
+    bcode: str | None = None
+    jibun_address: str | None = None
+
+
+def _region_name(address: str | None) -> str | None:
+    """주소에서 SGIS 시군구 해석용 시/군/구 토큰 추출(예: '의정부시','강남구')."""
+    if not address:
+        return None
+    m = re.findall(r"([가-힣]+(?:시|군|구))", address)
+    # 통합시 자치구(예: '수원시 장안구')는 마지막 구 토큰이 더 구체적.
+    return m[-1] if m else None
+
+
+@router.post("/population-density")
+async def population_density(
+    req: PopulationDensityRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """P4-B 인구밀도 레이어 데이터 — SGIS 행정동 경계(WGS84)+인구 → 밀도 코로플레스.
+
+    LLM 미사용(데이터 조회) → 과금 게이트 없음. 무자료/키없음은 data_source=unavailable.
+    """
+    pnu = req.pnu
+    if not pnu and req.bcode and req.jibun_address:
+        pnu = _pnu_from_bcode(req.bcode, req.jibun_address)
+    bcode = ((pnu or "")[:10] if pnu else (req.bcode or "")) or ""
+    return await PopulationDensityService().build(bcode=bcode, region_name=_region_name(req.address))
 
 
 @router.post("/report/pdf", dependencies=[Depends(enforce_llm_quota)])

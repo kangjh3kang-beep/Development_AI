@@ -205,6 +205,29 @@ def _efficiency_metrics(params: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _compare_with_prior(prior: dict[str, Any], findings: list[dict[str, Any]]) -> dict[str, Any]:
+    """Phase 1: status 변화 표면화 + Phase 2: 결정론 모순 플래그(additive, 판정 미반영, 순수)."""
+    from app.services.ledger.contradiction import detect_contradictions
+    payload = (prior or {}).get("payload") or {}
+    prev = {f.get("check_id"): f for f in (payload.get("findings_brief") or [])}
+    cur = {f.get("check_id"): f for f in findings}
+    changes = []
+    for cid, c in cur.items():
+        p = prev.get(cid)
+        if p and p.get("status") != c.get("status"):
+            changes.append({"check_id": cid, "prev_status": p.get("status"), "now_status": c.get("status")})
+    # Phase 2: prior vs 현재 findings의 결정론 모순(status 플립·수치 델타) — 현재 findings만 비교
+    # (현재 verdict는 이 시점 미전달 → 주입 오염 방지; verdict 모순은 findings status 플립으로 감지).
+    contradictions = detect_contradictions(prior, {"findings_brief": findings})
+    return {
+        "prior_version": prior.get("version"),
+        "prior_verdict": payload.get("verdict"),
+        "status_changes": changes,
+        "contradictions": contradictions,
+        "note": "이전 대비 상태 변화·모순(참고용) — 종합판정은 현재 결정론 결과를 따른다",
+    }
+
+
 class DesignAuditOrchestrator:
     """설계심사 오케스트레이터 — 조례 실효한도 선행 + 8엔진 병렬 + 결정론 판정."""
 
@@ -225,6 +248,7 @@ class DesignAuditOrchestrator:
         plan_payload: Any = None,
         case_service: Any = None,
         rooms: list[dict[str, Any]] | None = None,
+        prior_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """설계 파라미터·기하·맥락으로 8엔진 설계심사를 수행한다.
 
@@ -326,6 +350,10 @@ class DesignAuditOrchestrator:
         else:
             verdict = "판정불가"  # 전 엔진 skipped/info — 데이터 부족을 정직하게 표기
 
+        # Phase 1 성장루프: prior 비교 표면화(verdict/counts 결정론 결과는 절대 미변경, sections만 가산)
+        if prior_context:
+            sections["prior_comparison"] = _compare_with_prior(prior_context, findings)
+
         return {
             "schema_version": "design_audit/v1",
             "zone_type": zone_type,
@@ -362,6 +390,7 @@ class DesignAuditOrchestrator:
         use_llm: bool = True,
         use_verification_retry: bool = True,
         rooms: list[dict[str, Any]] | None = None,
+        prior_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """라우터 계약(run) → 기존 audit() 위임 어댑터(additive — audit 시그니처 불변).
 
@@ -404,6 +433,7 @@ class DesignAuditOrchestrator:
             pnu=site.get("pnu"),
             shapes=geometry,
             rooms=rooms,
+            prior_context=prior_context,
         )
 
         overall = result.get("overall")

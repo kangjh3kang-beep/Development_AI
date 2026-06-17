@@ -4,6 +4,34 @@
     "siteName": "Sa-Tong-Pal-Ttang",
     "description": "Premium real-estate development AI platform connecting every corner of the world."
   },
+  "vision": {
+    "badge": "VLLM · Next-Gen Deliberation Engine",
+    "title": "A next-generation deliberation-analysis engine that auto-interprets design documents with multimodal AI",
+    "lead": "A future-extensible architecture leading the open frontier of Korea's commercial and public systems.",
+    "areas": {
+      "permit": "Evidence-traceable basis for permit & regulation judgment",
+      "meeting": "Hub for collaboration & deliberation verification",
+      "engine": "Zero silent misjudgment · deterministic & evidence-traced"
+    },
+    "pillars": {
+      "multimodal": { "title": "Multimodal auto-interpretation", "desc": "VLLM interprets design documents (drawings, tables, HWP) at the sheet and element level." },
+      "deterministic": { "title": "Deterministic & evidence-traced", "desc": "Statutory computation and verdicts run on a deterministic core; every output carries its basis (article, trace)." },
+      "frontier": { "title": "Commercial & public frontier", "desc": "Standardized deliberation analysis leads the open frontier of domestic commercial and public systems." }
+    },
+    "engineTitle": "Deliberation engine composition",
+    "engineNote": "Engine core implemented · platform integration pending",
+    "layers": [
+      "Preflight (jurisdiction · base date · scale)",
+      "Sheet role · element classification",
+      "Statutory computation (Enforcement Decree Art. 119)",
+      "Verdict (rule DAG · 3-value · gating)",
+      "Engineering sim (sunlight · egress · parking)",
+      "Precedent · maturity",
+      "Verification (citation · dual-path)",
+      "Report · audit",
+      "Qualitative (citation-grounded)"
+    ]
+  },
   "hero": {
     "badge": "Next.js Frontend Setup",
     "title": "An operational workspace that aligns language routing and product flow",

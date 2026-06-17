@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
+import { useParams } from "next/navigation";
 import { dynamicMap } from "@/components/common/MapShell";
 import type { NearbyTransactionsMap as NearbyTransactionsMapType } from "@/components/map/NearbyTransactionsMap";
 import type { ParcelBoundaryMap as ParcelBoundaryMapType } from "@/components/map/ParcelBoundaryMap";
@@ -262,6 +264,10 @@ function DonationSimTable({ baseFar, capFar }: { baseFar: number; capFar: number
 /* ── Main Component ── */
 
 export function SiteAnalysisDetail({ data, hideInterpretation = false, parcels }: SiteAnalysisDetailProps) {
+  // 로케일 읽기 — URL에서 자동추출(예: /ko/pipeline → "ko"). 없으면 "ko" 기본값.
+  const { locale: routeLocale } = (useParams() as { locale?: string }) || {};
+  const locale = routeLocale ?? "ko";
+
   // 1. 기본 토지정보
   const basic = obj(data.basic);
   const landAddress = s(basic.address || data.address);
@@ -275,13 +281,17 @@ export function SiteAnalysisDetail({ data, hideInterpretation = false, parcels }
 
   // 2. 용도지역/법규한도
   const zoning = obj(data.zoning);
+  // ★백엔드 far_tier 산출물(effective_far 객체)이 법정/조례/실효를 교차검증해 분리 제공한다.
+  //   (national_far_pct=법정상한·ordinance_far_pct=조례·effective_far_pct=min). 이 SSOT를 1순위로
+  //   읽어 '법정 용적률' 타일에 조례값(예 200)이 잘못 매핑되던 버그를 근본수정.
+  const ef = obj(zoning.effective_far ?? data.effective_far);
   const zoneType = s(zoning.zone_type || data.zone_type);
-  const nationalBcr = n(zoning.national_bcr ?? data.national_bcr);
-  const nationalFar = n(zoning.national_far ?? data.national_far);
-  const ordinanceBcr = n(zoning.ordinance_bcr ?? data.ordinance_bcr);
-  const ordinanceFar = n(zoning.ordinance_far ?? data.ordinance_far);
-  const effectiveBcr = n(zoning.effective_bcr ?? data.max_bcr ?? data.effective_bcr);
-  const effectiveFar = n(zoning.effective_far ?? data.max_far ?? data.effective_far);
+  const nationalBcr = n(ef.national_bcr_pct ?? zoning.national_bcr ?? data.national_bcr);
+  const nationalFar = n(ef.national_far_pct ?? zoning.national_far ?? data.national_far);
+  const ordinanceBcr = n(ef.ordinance_bcr_pct ?? zoning.ordinance_bcr ?? data.ordinance_bcr);
+  const ordinanceFar = n(ef.ordinance_far_pct ?? zoning.ordinance_far ?? data.ordinance_far);
+  const effectiveBcr = n(ef.effective_bcr_pct ?? zoning.effective_bcr ?? data.max_bcr ?? data.effective_bcr);
+  const effectiveFar = n(ef.effective_far_pct ?? zoning.effective_far ?? data.max_far ?? data.effective_far);
   const heightLimit = n(zoning.height_limit ?? data.height_limit);
   const baseFar = n(zoning.base_far ?? data.base_far) ?? effectiveFar;
   const allowedFar = n(zoning.allowed_far ?? data.allowed_far);
@@ -416,6 +426,43 @@ export function SiteAnalysisDetail({ data, hideInterpretation = false, parcels }
           <NoData />
         )}
       </CategoryCard>
+
+      {/* 대량필지 안내 배너 — 대표 1필지 데이터임을 명확히 알려준다.
+          parcels가 2개 이상일 때만 표시. 단일필지에서는 숨김. */}
+      {parcels && parcels.length > 1 && !hideInterpretation && (() => {
+        // 대표필지: 배열 첫 번째 주소 (백엔드도 첫 번째 필지를 기준으로 분석함)
+        const repParcel = parcels[0];
+        // 총 면적: 백엔드가 이미 합산했으면 landAreaSqm에 들어 있음
+        const totalAreaStr = landAreaSqm && landAreaSqm > 0 ? formatArea(landAreaSqm) : null;
+        return (
+          <div
+            className="flex flex-wrap items-center justify-between gap-2 rounded-lg px-3 py-2.5 text-[11px]"
+            style={{
+              background: "var(--surface-2, rgba(255,255,255,0.04))",
+              border: "1px solid var(--border-accent, rgba(180,197,255,0.25))",
+              color: "var(--text-secondary)",
+            }}
+          >
+            <span>
+              {/* 대표필지 이름과 전체 필지 수를 함께 표시 */}
+              <span style={{ color: "var(--text-primary)", fontWeight: 600 }}>대표필지({repParcel})</span>
+              {" "}기준 &middot; 아래 분석은 대표 1필지 데이터입니다.
+              {" "}전체 {parcels.length}필지{totalAreaStr ? ` · 합산 면적 ${totalAreaStr}` : ""}
+            </span>
+            {/* 토지조서 링크 — 필지별 상세 확인 동선 */}
+            <Link
+              href={`/${locale}/land-schedule`}
+              className="shrink-0 rounded px-2 py-1 text-[11px] font-semibold"
+              style={{
+                background: "var(--accent-strong, #3b82f6)",
+                color: "#fff",
+              }}
+            >
+              각 필지별 상세 →&nbsp;토지조서
+            </Link>
+          </div>
+        );
+      })()}
 
       {/* 3. 개발 가능 유형 — 추천(★)은 accent, 제한은 점선+취소선 토큰 */}
       <CategoryCard title="개발 가능 유형" eyebrow="DEV TYPES" icon={IconBuilding}>

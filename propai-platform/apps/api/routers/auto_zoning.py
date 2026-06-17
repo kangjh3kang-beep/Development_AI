@@ -1,15 +1,18 @@
 """자동 용도지역 감지 + 종합 토지정보 라우터."""
 
 import asyncio
+import logging
 import re
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, File, UploadFile
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from apps.api.app.services.zoning.auto_zoning_service import AutoZoningService
 from apps.api.app.services.land_intelligence.land_info_service import LandInfoService
 from app.core.billing_deps import enforce_llm_quota
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -526,6 +529,101 @@ async def comprehensive_land_analysis(req: ZoningAnalyzeRequest):
     return _attach_trust_blocks(result)
 
 
+class GeocodeRequest(BaseModel):
+    """지번/주소 직접검색 — VWorld 지오코딩(Daum이 못 찾는 지번·산·농지도 해석)."""
+    query: str
+
+
+@router.post("/geocode")
+async def geocode_query(req: GeocodeRequest):
+    """주소/지번 텍스트 → 좌표·PNU·법정동코드 해석(VWorld).
+
+    Daum 우편번호 위젯이 못 찾는 지번(산·농지·나대지 등)을 직접 입력으로 해석한다.
+    무목업: 못 찾으면 found=false 정직 반환(가짜 좌표 생성 금지).
+    """
+    from apps.api.app.services.external_api.vworld_service import VWorldService
+
+    q = (req.query or "").strip()
+    if not q:
+        return {"found": False, "query": q, "reason": "검색어가 비었습니다."}
+    vworld = VWorldService()
+    geo = await vworld.geocode_address(q)
+    if not geo or not geo.get("lat"):
+        return {"found": False, "query": q,
+                "reason": "VWorld에서도 해당 주소/지번을 찾지 못했습니다. 지번 형식(예: 의정부동 224, 산 12-3)을 확인해 주세요."}
+    pnu = geo.get("pnu")
+    bcode = (pnu[:10] if pnu and len(pnu) >= 10 else None)
+    return {
+        "found": True,
+        "query": q,
+        "address": geo.get("address") or q,
+        "jibun_address": geo.get("address") or q,
+        "pnu": pnu,
+        "bcode": bcode,
+        "lat": geo.get("lat"),
+        "lon": geo.get("lon"),
+    }
+
+
+class AddressSearchRequest(BaseModel):
+    """지번/도로명 검색 — 다음 주소검색처럼 후보 목록(자동완성)."""
+    query: str
+    size: int = 8
+
+
+@router.post("/search")
+async def search_address(req: AddressSearchRequest):
+    """지번/주소 자동완성 검색 → 후보 목록(주소·PNU·좌표).
+
+    토지지번입력에서 타이핑하면 후보를 띄워 선택하게 한다(Daum 주소검색 UX).
+    무목업: 후보 없으면 빈 배열 정직 반환(가짜 후보 생성 금지).
+    """
+    from apps.api.app.services.external_api.vworld_service import VWorldService
+
+    q = (req.query or "").strip()
+    if len(q) < 2:
+        return {"query": q, "candidates": []}
+    size = max(1, min(20, req.size or 8))
+    candidates = await VWorldService().search_address(q, size=size)
+    return {"query": q, "candidates": candidates}
+
+
+class LandShareRequest(BaseModel):
+    """대지지분(대지권) 분석 요청 — 공동주택/집합건물 호별 대지지분 산정.
+
+    토지조서 정확화: 세대(동·호)별 대지지분 합 = 대지(필지)면적 검증.
+    pnu 우선, 없으면 address/jibun을 VWorld 지오코딩으로 PNU 확보.
+    """
+    pnu: str | None = None
+    address: str | None = None
+
+
+@router.post("/land-share")
+async def land_share(req: LandShareRequest):
+    """공동주택/집합건물 세대별 대지지분 분석(토지조서 보강).
+
+    건축물대장 표제부(대지면적)+전유공용면적(호별 전유면적)으로 호별 대지지분을
+    전유 비례 산정하고, Σ세대 대지지분 = 대지면적 정합을 검증한다.
+    무목업: 전유부 무자료=토지/단독으로 정직 분기(is_aggregate=false).
+    """
+    from apps.api.app.services.land_intelligence.land_share_service import LandShareService
+
+    svc = LandShareService()
+    pnu = (req.pnu or "").strip()
+    addr = (req.address or "").strip()
+    if not (pnu and len(pnu) >= 19) and not addr:
+        return {"is_aggregate": False, "reason": "pnu(19자리) 또는 address가 필요합니다."}
+    # 예외를 raw 500으로 흘리지 않고 무목업 정직 분기로 반환(가짜 생성 금지).
+    try:
+        if pnu and len(pnu) >= 19:
+            return await svc.analyze_by_pnu(pnu)
+        return await svc.analyze_by_address(addr)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("대지지분 분석 실패: %s (%s)", pnu or addr, str(e))
+        return {"is_aggregate": False, "pnu": pnu or None, "address": addr or None,
+                "reason": "대지지분 분석 중 오류가 발생했습니다. 잠시 후 다시 시도하세요."}
+
+
 class ParcelBoundariesRequest(BaseModel):
     """필지 경계(구획도) 요청 — 단필지/다필지."""
 
@@ -610,6 +708,7 @@ async def parcel_boundaries(req: ParcelBoundariesRequest):
             geometry = li_res.get("geometry")
             li_area = float((li_res.get("properties") or {}).get("area") or 0)
         official_price_per_sqm = None
+        jimok = land_use_situation = terrain = None
         if isinstance(lc_res, dict):
             lc_area = float(lc_res.get("area_sqm") or 0)
             zone_type = lc_res.get("zone_type") or None
@@ -618,6 +717,10 @@ async def parcel_boundaries(req: ParcelBoundariesRequest):
             #  P4 공시지가 레이어용. 0/누락은 None(가짜값 금지).
             _op = lc_res.get("official_price_per_sqm")
             official_price_per_sqm = int(_op) if _op else None
+            # 다필지 종합분석용 필지속성·형질(이미 fetch된 토지특성 재사용·추가 호출 0).
+            jimok = lc_res.get("land_category") or None             # 지목(대/전/답…)
+            land_use_situation = lc_res.get("land_use_situation") or None  # 이용상황
+            terrain = lc_res.get("terrain_form") or lc_res.get("terrain_height") or None  # 형상·지세
         # 권위 우선: 토지대장(lc_area) → 지적등록(li_area)
         area_sqm = lc_area or li_area
         area_source = "토지대장(토지특성)" if lc_area else ("지적도 등록면적" if li_area else "미확인")
@@ -659,6 +762,9 @@ async def parcel_boundaries(req: ParcelBoundariesRequest):
             "zone_type_2": zone_type_2,
             "zone_limits": _zone_limits_compact(zone_type),
             "official_price_per_sqm": official_price_per_sqm,
+            "jimok": jimok,                          # 지목(다필지 종합분석)
+            "land_use_situation": land_use_situation,  # 이용상황
+            "terrain": terrain,                      # 형상·지세
             "geometry": geometry,
         }
 
@@ -751,11 +857,85 @@ async def parcel_boundaries(req: ParcelBoundariesRequest):
     except Exception:  # noqa: BLE001 — 정밀 레이어 실패해도 기본 구획도는 반환
         pass
 
+    # ── 다필지 종합분석 — 필지별 속성·형질 차이 + 통합 지표(개발사업분석 기반) ──
+    integrated_analysis = None
+    if features:
+        zone_set = sorted({f["zone_type"] for f in features if f.get("zone_type")})
+        jimok_set = sorted({f["jimok"] for f in features if f.get("jimok")})
+        priced = [(f["official_price_per_sqm"], f.get("area_sqm") or 0)
+                  for f in features if f.get("official_price_per_sqm")]
+        pvals = [p for p, _a in priced]
+        wsum = sum(p * a for p, a in priced)
+        asum = sum(a for _p, a in priced if a)
+        notes: list[str] = []
+        if len(zone_set) > 1:
+            notes.append(f"용도지역 상이({'·'.join(zone_set)}) — 필지별 건폐율·용적률 한도 차이, 통합 시 가중·분리 검토")
+        if len(jimok_set) > 1:
+            notes.append(f"지목 상이({'·'.join(jimok_set)}) — 형질변경·지목변경 필요 가능")
+        if adjacency.get("contiguous") is False:
+            notes.append("필지 비인접 — 통합개발 제약(분리개발 또는 진입로 확보 검토)")
+        elif adjacency.get("contiguous") is True and len(features) >= 2:
+            notes.append("필지 인접 — 통합개발 가능(합필·공동개발 검토)")
+        # ── 면적가중 실질 건폐율·용적률 + 가능 건축규모(개발사업분석 핵심) ──
+        #  필지별 용도지역 한도가 다르면 단순 적용 불가 → 면적가중으로 통합 실질치를 산정한다.
+        #  통합 건축면적 = Σ(필지면적×건폐율), 통합 연면적 = Σ(필지면적×용적률) → 합을 총면적으로 나눠 실질%.
+        lim = [(f.get("area_sqm") or 0, (f.get("zone_limits") or {})) for f in features]
+        a_for_limit = sum(a for a, zl in lim if a and zl.get("max_bcr_pct"))
+        buildable_area = sum(a * (zl.get("max_bcr_pct") or 0) / 100 for a, zl in lim)
+        total_gfa = sum(a * (zl.get("max_far_pct") or 0) / 100 for a, zl in lim)
+        eff_bcr = round(buildable_area / a_for_limit * 100, 1) if a_for_limit else None
+        eff_far = round(total_gfa / a_for_limit * 100, 1) if a_for_limit else None
+
+        # ── 개발가능방법 + 최적추진방안 제안(총면적·인접성·용도혼재 기반) ──
+        methods: list[str] = []
+        recommendation = ""
+        if adjacency.get("contiguous") is False:
+            methods.append("분리개발(필지별)")
+            recommendation = ("필지가 비인접 — 통합개발 전 합필·진입로(맹지 해소) 선행 또는 필지별 분리개발. "
+                              "인접성 확보 시 아래 통합방안 적용 가능.")
+        else:
+            if total_area >= 10000:
+                methods += ["지구단위계획", "도시개발사업"]
+                recommendation = f"총 {round(total_area/3.305785):,}평(대규모) — 지구단위계획/도시개발사업으로 통합개발 권장."
+            elif total_area >= 1000:
+                methods += ["가로주택정비사업", "소규모재건축", "지구단위계획"]
+                recommendation = f"총 {round(total_area/3.305785):,}평(중소규모) — 가로주택정비·소규모정비 또는 지구단위 검토."
+            else:
+                methods.append("일반 건축(소규모)")
+                recommendation = f"총 {round(total_area/3.305785):,}평(소규모) — 일반 건축허가로 단독·통합 개발."
+            if len(zone_set) > 1:
+                methods.append("지구단위계획(용도혼재 통합관리)")
+                recommendation += " 용도지역 혼재로 실질 한도는 면적가중치이며, 지구단위계획으로 통합 관리 시 최적."
+
+        integrated_analysis = {
+            "parcel_count": len(features),
+            "total_area_sqm": round(total_area, 1),
+            "total_area_pyeong": round(total_area / 3.305785, 1),
+            "zone_types": zone_set,
+            "zone_mixed": len(zone_set) > 1,        # ★용도지역 혼재 여부(종합분석 핵심)
+            "jimoks": jimok_set,
+            "official_price_min": min(pvals) if pvals else None,
+            "official_price_max": max(pvals) if pvals else None,
+            "official_price_weighted_avg": round(wsum / asum) if asum else None,  # 면적가중 평균공시지가
+            "contiguous": adjacency.get("contiguous"),
+            # ★실질 건폐율·용적률(면적가중) + 가능 건축규모 — 다필지 통합 개발 기준.
+            "effective_bcr_pct": eff_bcr,
+            "effective_far_pct": eff_far,
+            "buildable_area_sqm": round(buildable_area, 1) if buildable_area else None,
+            "total_gfa_sqm": round(total_gfa, 1) if total_gfa else None,
+            # ★개발가능방법 + 최적추진방안.
+            "development_methods": methods,
+            "recommendation": recommendation,
+            "methods_note": "정밀 적용판정은 /development-methods/scenarios(인접성·정책 시뮬)로 확인하세요.",
+            "notes": notes,
+        }
+
     return {
         "features": features,
         "center": center,
         "total_area_sqm": round(total_area, 1),
         "parcel_count": len(features),
+        "integrated_analysis": integrated_analysis,  # ★다필지 종합분석(속성·형질 차이+통합지표)
         "adjacency": adjacency,
         "neighbors": neighbors,            # A+D: 주변 필지·도로(연회색/도로색) 벡터 지적도
         "merged_geometry": merged_geometry,  # B: 통합개발 외곽선
@@ -860,3 +1040,216 @@ async def nearby_transactions_map(req: NearbyMapRequest):
         address=req.address, lawd_cd=lawd_cd,
         months=req.months, radius_m=req.radius_m, sigungu_hint=sigungu_hint,
     )
+
+
+# ─────────────────────────────────────────────────────────────
+# 다필지 토지조서 엑셀 — 표준 양식 다운로드 + 업로드 파싱(주소·필지 추출)
+# ─────────────────────────────────────────────────────────────
+@router.get("/land-schedule-template")
+async def land_schedule_template():
+    """플랫폼 최적 다필지 토지조서 엑셀 양식 다운로드(작성안내 포함)."""
+    from apps.api.app.services.land_intelligence.parcel_excel_service import (
+        build_template_xlsx,
+    )
+
+    data = build_template_xlsx()
+    return StreamingResponse(
+        iter([data]),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="PropAI_land_schedule_template.xlsx"'},
+    )
+
+
+class ParcelsInfoRequest(BaseModel):
+    """다필지 토지정보 일괄 보강 요청 — 개별등록·엑셀 공통."""
+    parcels: list[dict] = []  # [{address?, jibun?, pnu?, bcode?}]
+
+
+@router.post("/parcels-info")
+async def parcels_info(req: ParcelsInfoRequest):
+    """다필지 각각의 토지정보(면적·용도지역·건폐율·용적률·지목·공시지가)+집합건물 여부 일괄 보강.
+
+    ★처음 1필지만 분석되던 문제 근본수정: 등록된 모든 필지가 부지정보를 갖도록 일괄 조회.
+    건폐율/용적률은 용도지역 법정상한(ZONE_LIMITS)으로 산출. 공동주택(빌라)이면 building 플래그로
+    호실·대지지분 안내. 무목업: 실패 필지는 status로 정직표기(가짜값 금지). LLM 미사용=과금 없음.
+    """
+    from apps.api.app.services.land_intelligence.parcel_excel_service import ParcelExcelService
+    from apps.api.app.services.zoning.auto_zoning_service import ZONE_LIMITS
+
+    items = (req.parcels or [])[:120]  # 1회 상한(필지당 최대 3 외부콜 — 대량은 클라가 분할 호출)
+    if not items:
+        return {"parcels": []}
+
+    def _limits(zone: str | None) -> tuple[int | None, int | None]:
+        if not zone:
+            return (None, None)
+        z = zone.replace(" ", "").strip()
+        # 정확일치 우선 → '입력값이 정식 용도지역명을 포함'(key in z)만 폴백.
+        #   (z in k 방향은 짧은/깨진 문자열의 과매칭 위험이라 제거. 후보 다수면 최장명 우선.)
+        if z in ZONE_LIMITS:
+            key = z
+        else:
+            cands = [k for k in ZONE_LIMITS if k in z]
+            key = max(cands, key=len) if cands else None
+        if not key:
+            return (None, None)
+        return (ZONE_LIMITS[key]["max_bcr"], ZONE_LIMITS[key]["max_far"])
+
+    enriched = await ParcelExcelService().enrich_parcel_list(items, with_building=True)
+    out = []
+    for p in enriched:
+        bcr, far = _limits(p.get("zone_type"))
+        out.append({
+            "__rid": p.get("rid"),  # 호출측 행 식별자 echo — 주소 충돌 없이 정확 매칭
+            "address": p.get("address"), "jibun": p.get("jibun"), "pnu": p.get("pnu"),
+            "area_sqm": p.get("area_sqm"), "zone_type": p.get("zone_type"),
+            "jimok": p.get("jimok"), "official_price_per_sqm": p.get("official_price_per_sqm"),
+            "bcr_pct": bcr, "far_pct": far,
+            "building": p.get("building"),
+            "status": p.get("status", "ok"), "reason": p.get("reason"),
+        })
+    return {"parcels": out}
+
+
+class ParcelAtPointRequest(BaseModel):
+    """지도 클릭 좌표 → 필지 조회(다필지 지도 클릭선택용)."""
+    lat: float
+    lon: float
+
+
+@router.post("/parcel-at-point")
+async def parcel_at_point(req: ParcelAtPointRequest):
+    """지도에서 클릭한 좌표(lat/lon)가 속한 필지를 조회·보강(지번·면적·용도지역·건폐/용적·구획도).
+
+    지도 클릭선택 입력 UX 지원. 무목업: 필지 미확인 시 found=false 정직 반환(가짜 생성 금지).
+    """
+    from apps.api.app.services.external_api.vworld_service import VWorldService
+    from apps.api.app.services.zoning.auto_zoning_service import ZONE_LIMITS
+
+    if not (-90 <= req.lat <= 90 and -180 <= req.lon <= 180):
+        return {"found": False, "reason": "좌표 범위 오류."}
+    vworld = VWorldService()
+    try:
+        pp = await vworld.get_parcel_by_point(req.lat, req.lon)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("점→필지 조회 실패: %s,%s (%s)", req.lat, req.lon, str(e))
+        pp = None
+    if not pp or not pp.get("pnu"):
+        return {"found": False, "reason": "클릭 지점에서 필지를 찾지 못했습니다(지적도 외 영역일 수 있음)."}
+    pnu = str(pp["pnu"])
+    area_sqm = zone_type = jimok = None
+    try:
+        lc = await vworld.get_land_characteristics(pnu)
+        if isinstance(lc, dict):
+            area_sqm = lc.get("area_sqm") or None
+            zone_type = lc.get("zone_type") or None
+            jimok = lc.get("land_category") or None
+    except Exception:  # noqa: BLE001
+        pass
+    bcr = far = None
+    if zone_type:
+        z = zone_type.replace(" ", "").strip()
+        key = z if z in ZONE_LIMITS else max([k for k in ZONE_LIMITS if k in z] or [""], key=len) or None
+        if key:
+            bcr, far = ZONE_LIMITS[key]["max_bcr"], ZONE_LIMITS[key]["max_far"]
+    return {
+        "found": True, "pnu": pnu,
+        "address": pp.get("address") or "", "jibun": pp.get("address") or "",
+        "bcode": pnu[:10], "area_sqm": area_sqm, "zone_type": zone_type, "jimok": jimok,
+        "bcr_pct": bcr, "far_pct": far, "geometry": pp.get("geometry"),
+        "lat": req.lat, "lon": req.lon,
+    }
+
+
+class LandReportRequest(BaseModel):
+    """토지분석보고서 PDF 생성 요청 — 토지조서 필지 목록."""
+    project_name: str = "토지분석보고서"
+    parcels: list[dict] = []  # [{address?, jibun?, pnu?, bcode?}]
+
+
+@router.post("/land-report")
+async def land_report(req: LandReportRequest):
+    """다필지 → 종합 토지분석보고서 PDF(필지요약·토지정보·권리안내·규제/개발가능성·대지지분·종합).
+
+    필지별 토지정보(/parcels-info 로직 재사용)+집합건물 세대 대지지분(land-share)을 모아 PDF 생성.
+    무목업: 무자료는 보고서에 '-'/'보완필요'로 정직 표기.
+    """
+    from fastapi.responses import StreamingResponse as _SR
+    from apps.api.app.services.land_intelligence.parcel_excel_service import ParcelExcelService
+    from apps.api.app.services.land_intelligence.land_analysis_report_pdf import build_land_analysis_report
+    from apps.api.app.services.land_intelligence.land_share_service import LandShareService
+    from apps.api.app.services.zoning.auto_zoning_service import ZONE_LIMITS
+
+    items = (req.parcels or [])[:120]
+    if not items:
+        return {"error": "필지가 없습니다."}
+
+    def _limits(zone):
+        if not zone:
+            return (None, None)
+        z = zone.replace(" ", "").strip()
+        if z in ZONE_LIMITS:
+            key = z
+        else:
+            cands = [k for k in ZONE_LIMITS if k in z]
+            key = max(cands, key=len) if cands else None
+        return (ZONE_LIMITS[key]["max_bcr"], ZONE_LIMITS[key]["max_far"]) if key else (None, None)
+
+    enriched = await ParcelExcelService().enrich_parcel_list(items, with_building=True)
+    parcels = []
+    units_by: dict[str, dict] = {}
+    svc = LandShareService()
+    for p in enriched:
+        bcr, far = _limits(p.get("zone_type"))
+        bld = p.get("building") or None
+        is_agg = bool(bld and bld.get("is_aggregate"))
+        jb = p.get("jibun") or p.get("address") or ""
+        parcels.append({
+            "jibun": jb, "address": p.get("address"), "area_sqm": p.get("area_sqm"),
+            "zone_type": p.get("zone_type"), "bcr_pct": bcr, "far_pct": far,
+            "jimok": p.get("jimok"), "official_price_per_sqm": p.get("official_price_per_sqm"),
+            "parcel_case": "aggregate" if is_agg else ("building" if bld else "land"),
+            "building": bld, "status": p.get("status", "ok"), "reason": p.get("reason"),
+        })
+        # 집합건물은 세대 대지지분 상세 부착(전유부 전수).
+        if is_agg and p.get("pnu"):
+            try:
+                ls = await svc.analyze_by_pnu(str(p["pnu"]))
+                if ls.get("is_aggregate"):
+                    units_by[jb] = {
+                        "plat_area_sqm": ls.get("plat_area_sqm"), "unit_count": ls.get("unit_count"),
+                        "units": ls.get("units") or [], "validation": ls.get("validation") or {},
+                    }
+            except Exception as e:  # noqa: BLE001
+                logger.warning("보고서 대지지분 조회 실패: %s (%s)", jb, str(e))
+
+    try:
+        pdf = build_land_analysis_report({"project_name": req.project_name, "parcels": parcels, "units_by_parcel": units_by})
+    except Exception as e:  # noqa: BLE001
+        logger.warning("토지분석보고서 생성 실패: %s", str(e))
+        return {"error": "보고서 생성에 실패했습니다."}
+    return _SR(iter([pdf]), media_type="application/pdf",
+               headers={"Content-Disposition": 'attachment; filename="land_analysis_report.pdf"'})
+
+
+@router.post("/parse-parcels")
+async def parse_parcels(file: UploadFile = File(...)):
+    """업로드된 토지조서 엑셀/CSV → 필지 목록(주소·PNU·bcode·면적·지목·소유구분) 추출.
+
+    PNU 우선순위: PNU열 > 법정동코드+지번 구성 > 주소 지오코딩. 무자료/실패는 status로 정직 표기.
+    표준 양식은 규칙기반 컬럼감지(LLM 미사용). ★비표준 양식이라 규칙기반이 필수컬럼을 못 찾을
+    때만 LLM 에이전트가 컬럼을 1회 분류(헤더 시그니처 캐시로 재호출 방지). LLM 토큰은
+    _record_llm_billing으로 계측·귀속(service=parcel_excel_column_detect). 과금 정책상 컬럼분류는
+    저비용 보조기능으로 별도 차감 게이트 없음(관리자 미설정 시 무료 원칙).
+    """
+    from apps.api.app.services.land_intelligence.parcel_excel_service import (
+        ParcelExcelService,
+    )
+
+    try:
+        raw = await file.read()
+    except Exception as e:  # noqa: BLE001
+        return {"error": f"파일 읽기 실패: {str(e)[:120]}", "parcels": []}
+    if not raw:
+        return {"error": "빈 파일입니다.", "parcels": []}
+    return await ParcelExcelService().parse(raw, file.filename or "upload.xlsx")

@@ -30,7 +30,7 @@ python -c "
 import asyncio, asyncpg, os
 async def check():
     try:
-        conn = await asyncpg.connect(os.environ.get('DATABASE_URL', 'postgresql+asyncpg://propai:propai_password@localhost:5432/propai_db').replace('postgresql+asyncpg', 'postgres'))
+        conn = await asyncpg.connect(os.environ.get('DATABASE_URL', 'postgresql+asyncpg://propai_user:propai_pass_dev@localhost:5432/propai_db').replace('postgresql+asyncpg', 'postgres'))
         r = await conn.fetchval(\"SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name='properties' AND column_name='is_disposed')\")
         assert r, 'S01: is_disposed 컬럼 없음'
         r = await conn.fetchval(\"SELECT EXISTS(SELECT 1 FROM pg_indexes WHERE indexname='idx_equipment_sensors_equip_time')\")

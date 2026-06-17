@@ -143,6 +143,81 @@ class BuildingRegistryService:
             logger.warning("표제부 조회 실패: %s (%s)", pnu, str(e))
             return None
 
+    async def get_exclusive_units_by_pnu(self, pnu: str, page_size: int = 1000, max_pages: int = 30) -> list[dict[str, Any]] | None:
+        """PNU 기반 집합건축물 전유공용면적(getBrExposPubuseAreaInfo) → 호별 전유면적 집계.
+
+        공동주택/집합상가는 한 단지에 전유+공용 행이 수만 건(예: 1,584세대=10,494행)이라
+        ★반드시 totalCount까지 페이지네이션해야 모든 세대를 빠짐없이 집계한다(단일 호출 시
+        앞쪽 공용 행에 밀려 일부 세대만 잡혀 대지지분이 과대 배분되는 버그가 생긴다).
+        반환: [{dong, ho, exclusive_area_sqm, purpose}] (전유부만, 호 단위 합산).
+        키 미설정/실패/무자료 → None(가짜 생성 금지).
+        """
+        if len(pnu) < 19 or not settings.MOLIT_API_KEY:
+            return None
+
+        def _f(x: dict, k: str) -> float:
+            try:
+                return float(x.get(k, 0) or 0)
+            except (TypeError, ValueError):
+                return 0.0
+
+        base_params = {
+            "serviceKey": settings.MOLIT_API_KEY,
+            "sigunguCd": pnu[:5], "bjdongCd": pnu[5:10],
+            "bun": pnu[11:15], "ji": pnu[15:19],
+            "numOfRows": str(page_size), "_type": "json",
+        }
+        agg: dict[tuple, dict[str, Any]] = {}
+        collected = 0
+        total_count = None
+        try:
+            async with httpx.AsyncClient(timeout=25.0) as client:
+                for page in range(1, max_pages + 1):
+                    resp = await client.get(
+                        f"{BASE_URL}/getBrExposPubuseAreaInfo",
+                        params={**base_params, "pageNo": str(page)},
+                    )
+                    resp.raise_for_status()
+                    body = resp.json().get("response", {}).get("body", {}) or {}
+                    if total_count is None:
+                        try:
+                            total_count = int(body.get("totalCount") or 0)
+                        except (TypeError, ValueError):
+                            total_count = 0
+                    items = (body.get("items", {}) or {}).get("item")
+                    if not items:
+                        break
+                    rows = items if isinstance(items, list) else [items]
+                    collected += len(rows)
+                    for r in rows:
+                        gb = str(r.get("exposPubuseGbCdNm", "") or "")
+                        if "전유" not in gb:
+                            continue  # 공용부 제외(대지지분은 전유 기준)
+                        dong = str(r.get("dongNm", "") or "").strip()
+                        ho = str(r.get("hoNm", "") or "").strip()
+                        key = (dong, ho)
+                        cur = agg.setdefault(key, {"dong": dong, "ho": ho, "exclusive_area_sqm": 0.0, "purpose": str(r.get("mainPurpsCdNm", "") or "")})
+                        cur["exclusive_area_sqm"] += _f(r, "area")
+                    # totalCount까지 다 모았으면 종료(불필요한 호출 방지).
+                    if total_count and collected >= total_count:
+                        break
+                else:
+                    # max_pages 소진(초대형 단지) — 일부 누락 가능. count 교차검증이 비신뢰로 표기.
+                    logger.warning("전유공용면적 페이지 상한 도달(%s rows≥%s, total=%s) — 일부 누락 가능: %s",
+                                   collected, page_size * max_pages, total_count, pnu)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("전유공용면적 조회 실패: %s (%s)", pnu, str(e))
+            # 부분 수집이라도 있으면 활용(교차검증이 신뢰도 판단). 없으면 None.
+            if not agg:
+                return None
+
+        units = [
+            {**u, "exclusive_area_sqm": round(u["exclusive_area_sqm"], 4)}
+            for u in agg.values() if u["exclusive_area_sqm"] > 0
+        ]
+        units.sort(key=lambda u: (u["dong"], u["ho"]))
+        return units or None
+
     @staticmethod
     def _parse_title_items(items: Any) -> dict[str, Any] | None:
         """getBrTitleInfo item(s)를 표제부 상세 dict로 파싱(순수함수, 외부호출 없음).
@@ -187,6 +262,7 @@ class BuildingRegistryService:
             "ground_floors": int(_f(main, "grndFlrCnt")),
             "underground_floors": int(_f(main, "ugrndFlrCnt")),
             "total_area_sqm": _f(main, "totArea"),
+            "plat_area_sqm": _f(main, "platArea"),   # 대지면적(공동주택 대지지분 산정 기준)
             "household_count": int(_f(main, "hhldCnt")),
             "ho_count": int(_f(main, "hoCnt")),
             "family_count": int(_f(main, "fmlyCnt")),

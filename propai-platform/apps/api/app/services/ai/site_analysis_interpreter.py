@@ -127,7 +127,7 @@ class SiteAnalysisInterpreter(BaseInterpreter):
     system_prompt = SYSTEM_PROMPT
 
 
-    async def generate_interpretation(self, analysis_data: dict) -> dict[str, str]:
+    async def generate_interpretation(self, analysis_data: dict, *, prior_context: str | None = None) -> dict[str, str]:
         """7개 섹션 각각에 대한 해석 텍스트를 생성.
 
         Args:
@@ -156,7 +156,8 @@ class SiteAnalysisInterpreter(BaseInterpreter):
         )
 
         return await self._invoke(
-            user_prompt, cache_data=compact, evidence_data=analysis_data
+            user_prompt, cache_data=compact, evidence_data=analysis_data,
+            prior_context=prior_context,
         )
 
     @staticmethod

@@ -266,7 +266,9 @@ class LandRow(BaseModel):
     jibun: str = ""
     owner: str = ""
     share: str = ""
-    area_sqm: float | None = None
+    area_sqm: float | None = None  # 면적(집합건물 세대행은 대지지분 면적=실토지 기여분)
+    exclusive_area_sqm: float | None = None  # 세대 전유면적(집합건물 세대행)
+    unit_label: str = ""  # 동·호(집합건물 세대행)
     owner_type: str = ""
     expected_price: float | None = None
     purchase_price: float | None = None
@@ -293,10 +295,13 @@ async def land_schedule_excel(req: LandScheduleExcelRequest):
 
     title = f"토지조서 — {req.project_name}"
     ws.append([title])
-    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=11)
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=14)
     ws["A1"].font = Font(size=14, bold=True)
 
-    headers = ["번호", "지번", "소유자", "소유지분", "면적(㎡)", "소유구분",
+    # 대지지분(평)·세대면적: 집합건물(공동주택·다세대·집합상가) 세대행에서 채워진다.
+    PY = 3.305785  # 1평 = 3.305785㎡
+    headers = ["번호", "지번/동·호", "소유자", "대지권비율/지분", "대지지분(㎡)", "대지지분(평)",
+               "세대전유면적(㎡)", "소유구분",
                "매입예정가(원)", "매입가(원)", "계약확정", "토지사용동의", "지구단위동의"]
     ws.append(headers)
     hdr_fill = PatternFill("solid", fgColor="0E7490")
@@ -306,12 +311,14 @@ async def land_schedule_excel(req: LandScheduleExcelRequest):
         cell.font = Font(color="FFFFFF", bold=True)
         cell.alignment = Alignment(horizontal="center")
 
-    tot_area = priv_area = pub_area = 0.0
+    tot_area = priv_area = pub_area = excl_area = 0.0
     sum_expected = sum_purchase = 0.0
     contracted_n = use_consent_n = dist_consent_n = 0
     for i, r in enumerate(req.rows, start=1):
         area = r.area_sqm or 0
         tot_area += area
+        excl = r.exclusive_area_sqm or 0
+        excl_area += excl
         if r.owner_type == "국공유지":
             pub_area += area
         elif r.owner_type == "사유지":
@@ -322,7 +329,9 @@ async def land_schedule_excel(req: LandScheduleExcelRequest):
         use_consent_n += 1 if r.land_use_consent else 0
         dist_consent_n += 1 if r.district_consent else 0
         ws.append([
-            i, r.jibun, r.owner, r.share, round(area, 1), r.owner_type,
+            i, r.jibun, r.owner, r.share,
+            round(area, 2), round(area / PY, 3),  # 대지지분 ㎡ / 평
+            round(excl, 2) if excl else "", r.owner_type,
             int(r.expected_price) if r.expected_price else "",
             int(r.purchase_price) if r.purchase_price else "",
             "○" if r.contracted else "", "○" if r.land_use_consent else "",
@@ -333,10 +342,11 @@ async def land_schedule_excel(req: LandScheduleExcelRequest):
     pct = lambda a, b: f"{round(a / b * 100, 1)}%" if b else "-"  # noqa: E731
     ws.append([])
     summary = [
-        ["총 필지수", f"{n}필지"],
-        ["부지면적 합계", f"{round(tot_area):,}㎡ ({round(tot_area / 3.305785):,}평)"],
+        ["총 필지/세대수", f"{n}건"],
+        ["대지면적 합계(Σ대지지분=실토지면적)", f"{round(tot_area):,}㎡ ({round(tot_area / PY):,}평)"],
         ["  - 사유지", f"{round(priv_area):,}㎡"],
         ["  - 국공유지", f"{round(pub_area):,}㎡"],
+        ["세대 전유면적 합계(집합건물)", f"{round(excl_area):,}㎡ ({round(excl_area / PY):,}평)" if excl_area else "-"],
         ["확보비율(계약확정)", f"{pct(contracted_n, n)} ({contracted_n}/{n})"],
         ["토지사용 동의율", f"{pct(use_consent_n, n)} ({use_consent_n}/{n})"],
         ["지구단위 동의율", f"{pct(dist_consent_n, n)} ({dist_consent_n}/{n})"],
@@ -348,7 +358,7 @@ async def land_schedule_excel(req: LandScheduleExcelRequest):
         ws.append([label, val])
         ws.cell(row=ws.max_row, column=1).font = Font(bold=True)
 
-    widths = [6, 26, 14, 10, 11, 10, 16, 16, 9, 12, 12]
+    widths = [6, 28, 14, 14, 12, 11, 14, 10, 16, 16, 9, 12, 12]
     for idx, w in enumerate(widths, start=1):
         ws.column_dimensions[chr(64 + idx)].width = w
 
@@ -403,23 +413,27 @@ async def land_schedule_import(file: UploadFile = File(...)) -> dict[str, Any]:
             break
         rd = {headers[i]: (cells[i] if i < len(cells) else "") for i in range(len(headers))}
 
-        def pick(*keys: str) -> str:
+        def pick(*keys: str, exclude: tuple[str, ...] = ()) -> str:
             for k, v in rd.items():
-                if any(key in k for key in keys):
+                if any(key in k for key in keys) and not any(e in k for e in exclude):
                     return v
             return ""
 
         jibun = pick("지번", "주소")
-        # 집계 푸터 잔재(필지수·면적·비율·금액 등) 방어적 스킵
-        if not jibun or any(t in jibun for t in ("필지", "㎡", "%", "원", "평")):
+        # 집계 푸터 잔재(필지수·면적·비율·금액 등) 방어적 스킵.
+        # '평'은 정상 지번(평창동·평택 등)을 오스킵하므로 제외 — ㎡/원/%로 면적·금액 푸터를 잡는다.
+        if not jibun or any(t in jibun for t in ("필지", "㎡", "%", "원")):
             continue
         ot = pick("소유구분")
         owner_type = "국공유지" if ("국" in ot or "공" in ot) else ("사유지" if ot else "")
+        # 면적: 신규 양식의 '대지지분(㎡)' 우선, 없으면 '면적'(단 '전유'·'평' 컬럼 제외).
+        area_val = pick("대지지분", exclude=("평",)) or pick("면적", exclude=("전유", "평"))
         out.append({
             "jibun": jibun,
             "owner": pick("소유자"),
-            "share": pick("지분"),
-            "area_sqm": _num(pick("면적")),
+            "share": pick("지분", "대지권비율"),
+            "area_sqm": _num(area_val),
+            "exclusive_area_sqm": _num(pick("전유")),  # 세대 전유면적(집합건물 세대행)
             "owner_type": owner_type,
             "expected_price": _num(pick("매입예정")),
             "purchase_price": _num(pick("매입가")),

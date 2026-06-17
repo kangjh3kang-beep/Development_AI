@@ -22,19 +22,25 @@ class ComprehensiveAnalysisRequest(BaseModel):
     llm_model: str | None = Field(
         None, description="LLM 모델 ID (예: claude-sonnet-4-20250514, gpt-4o-mini). 미지정 시 프로바이더 기본 모델 사용."
     )
+    project_id: str | None = Field(
+        None, description="프로젝트 ID(원장 성장루프 체인 스코프). 미지정 시 주소/PNU 기반 체인."
+    )
 
 
 @router.post("/comprehensive")
-async def run_comprehensive_analysis(req: ComprehensiveAnalysisRequest):
+async def run_comprehensive_analysis(req: ComprehensiveAnalysisRequest, current_user=Depends(get_current_user)):
     from app.services.land_intelligence.comprehensive_analysis_service import (
         ComprehensiveAnalysisService,
     )
 
     service = ComprehensiveAnalysisService()
+    # Phase 1: 성장루프 체인 스코프(tenant_id+project_id)를 분석에 배선
     return await service.analyze(
         address=req.address,
         llm_provider=req.llm_provider,
         llm_model=req.llm_model,
+        tenant_id=str(getattr(current_user, "tenant_id", "") or "") or None,
+        project_id=req.project_id,
     )
 
 
