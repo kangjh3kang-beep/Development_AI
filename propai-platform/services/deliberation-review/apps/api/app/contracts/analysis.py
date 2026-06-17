@@ -75,6 +75,7 @@ class AnalysisResult(BaseModel):
     extraction_source: str | None = None  # P1: BIM | VLLM | none
     bim_elements: list[BimElement] = Field(default_factory=list)
     preflight: PreflightContext | None = None
+    preflight_blocked: bool = False  # 게이트 선행 — 전제(축척/관할) 미해소로 도면 자동산정 차단됨(무음 강등 금지)
     legal_quantities: list[LegalQuantity] = Field(default_factory=list)
     findings: list[Finding] = Field(default_factory=list)
     sim_metrics: list[SimMetric] = Field(default_factory=list)

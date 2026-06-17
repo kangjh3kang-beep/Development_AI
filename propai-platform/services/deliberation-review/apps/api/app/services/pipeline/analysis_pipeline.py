@@ -96,14 +96,20 @@ def run_analysis(inp: AnalysisInput) -> AnalysisResult:
 
     # 1) Preflight (R0) — 거부 시 비차단 표면화.
     preflight: PreflightContext | None = None
+    preflight_blocked = False
     from app.services.preflight.preflight_gate import run_preflight
     try:
         preflight = run_preflight(payload, snapshot)
     except PreflightRefused as exc:
-        skipped.append(f"preflight_refused: {exc}")
+        preflight_blocked = True  # 게이트 선행 — 도면 전제(축척/관할) 미해소 → 도면 자동산정 차단 신호
+        skipped.append(f"preflight_refused: {exc} — 도면 전제(축척/관할 등) 미해소")
 
     # 2) 법정 산정 (R1.5) — 명시 calc_targets 또는 도면 자동구성(P-A.2)
     legal_quantities: list[LegalQuantity] = []
+    # 게이트 선행 — preflight 거부 상태의 '도면 자동' 산정은 전제(축척/관할) 미해소로 신뢰 제한 표면화(무음 강등 금지).
+    if preflight_blocked and calc_targets_source == "DRAWING_AUTO":
+        skipped.append("legal_calc: ⚠️ preflight 거부 상태 도면 자동산정 — 전제(축척/관할) 미해소, "
+                       "결과 신뢰 제한(preflight_blocked)")
     if calc_targets:
         registry = build_calc_variable_registry()
         rule_set = CalcRuleSet(versions=[])  # 기본 파라미터(JSON) 사용
@@ -352,6 +358,7 @@ def run_analysis(inp: AnalysisInput) -> AnalysisResult:
         extraction_source=extraction.source,
         bim_elements=(extraction.bim.elements if extraction.bim else []),
         preflight=preflight,
+        preflight_blocked=preflight_blocked,
         legal_quantities=legal_quantities,
         findings=findings,
         sim_metrics=sim_metrics,
