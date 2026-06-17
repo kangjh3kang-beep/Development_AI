@@ -12,6 +12,7 @@ from typing import Any
 _DATA_PATH = pathlib.Path(__file__).resolve().parents[2] / "data" / "calc_params.json"
 
 _defaults_cache: dict[str, float] | None = None
+_meta_cache: dict[str, dict] | None = None
 
 
 def _defaults() -> dict[str, float]:
@@ -20,6 +21,13 @@ def _defaults() -> dict[str, float]:
         raw = json.loads(_DATA_PATH.read_text(encoding="utf-8"))
         _defaults_cache = {k: v["value"] for k, v in raw.items()}
     return _defaults_cache
+
+
+def _all_meta() -> dict[str, dict]:
+    global _meta_cache
+    if _meta_cache is None:
+        _meta_cache = json.loads(_DATA_PATH.read_text(encoding="utf-8"))
+    return _meta_cache
 
 
 class CalcParamSource:
@@ -40,3 +48,11 @@ class CalcParamSource:
         if name in defaults:
             return float(defaults[name])
         raise KeyError(f"unknown calc param: {name}")
+
+    def meta(self, name: str) -> dict:
+        """파라미터 근거 메타 {value(적용값)·unit·basis_article·description}. 설명가능성 전파용.
+
+        value는 get()(override 우선) 적용값, 나머지 근거는 데이터파일(calc_params.json)에서.
+        """
+        base_meta = _all_meta().get(name, {})
+        return {**base_meta, "value": self.get(name)}

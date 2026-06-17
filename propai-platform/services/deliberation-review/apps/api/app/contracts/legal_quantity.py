@@ -15,12 +15,17 @@ from app.core.errors import CalcTraceMissing
 
 
 class CalcTraceEntry(BaseModel):
-    """단일 산정 규칙 적용 기록(근거조문 + 제외 요소)."""
+    """단일 산정 규칙 적용 기록(근거조문 + 제외 요소 + 정량 근거)."""
 
     rule_id: str
     basis_article: str
     excluded_elements: list[SemanticType] = Field(default_factory=list)
     note: str | None = None
+    # 제외 정량 근거(설명가능성) — 적용 임계·단위·실측·차감량. 재현·검증 가능하게.
+    threshold: float | None = None
+    threshold_unit: str | None = None
+    measured: float | None = None
+    excluded_amount: float | None = None
 
 
 class CalcTrace(BaseModel):
