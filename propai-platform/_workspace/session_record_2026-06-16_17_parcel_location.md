@@ -10,6 +10,11 @@
    - 조치: .env 전 라인 주석/공백 정리(백업 `.env.bak*`) + Dockerfile.oracle `ENV PYTHONPATH=/app:/app/apps/api` 추가 + config.py 인라인주석 방어 validator.
    - **★재발방지(필수): secrets export 스크립트가 `.env`에 `# →` 주석을 다시 쓰면 즉시 재발. export는 반드시 주석 없는 `KEY=VALUE`만 쓰도록 보장(제미나이/시크릿 트랙 조율).**
 
+1-B. **[🔴 운영 전역장애] 서버 `.env` `ALLOWED_ORIGINS`가 localhost만 → 브라우저 전 cross-origin 호출 CORS 차단.**
+   - 증상: 프론트(4t8t.net)에서 토지지번 검색 등 모든 apiClient 호출이 "검색 중 오류"/Failed to fetch. curl(Origin헤더 없음)은 200이라 은닉됨. 진짜 원인=서버 `~/Development_AI/propai-platform/.env`의 **`ALLOWED_ORIGINS=http://localhost:3000,3001,8080`** (프로덕션 도메인 4t8t.net/www/propai.kr 전부 누락). 이 .env 값이 config.py 코드기본값(4t8t.net 포함)을 **덮어씀**. 백엔드 OPTIONS 프리플라이트가 "Disallowed CORS origin" 400 반환 → 브라우저 차단. (토큰 캐시로 로그인 상태처럼 보였을 뿐 라이브 호출 실패).
+   - 조치: .env `ALLOWED_ORIGINS`에 프로덕션 도메인 추가(주석없는 KEY=VALUE, 백업 `.env.bak.cors.*`) + deploy.sh 재배포(--env-file 재적용). 검증: OPTIONS 200+`access-control-allow-origin: https://4t8t.net`, 브라우저 fetch 200.
+   - **★재발방지(필수): .env 정리/secrets export가 `ALLOWED_ORIGINS`를 localhost-only로 되돌리면 즉시 전역 CORS 장애 재발(=1번 인라인주석과 동일 클래스). export/정리 시 프로덕션 도메인 보존 필수. 코드기본값(config.py)엔 이미 4t8t.net 포함 — .env에서 이 키를 아예 빼면 코드기본값이 적용돼 안전.**
+
 2. **[🔴 보안] 마스터키 `SECRET_STORE_KEY`·`ENCRYPTION_KEY`는 env-only·평문 비노출.** export_scoped_secrets는 `_HARD_DENY`로 하드차단(--allow로도 export 불가). 절대 외부서비스/관리자화면/DB/로그 노출 금지.
 
 3. **[🔴 배포] 백엔드·프론트 모두 SSH 수동(Oracle A1).** 백엔드 `bash ~/deploy.sh`(blue-green, 게이트 `curl localhost:NEW/health` 60×3s=180s, 부팅 정상 시 ~15초). 프론트 `bash ~/safe-deploy.sh`(sw CACHE_NAME 올림). GitHub push만으론 반영 안 됨.
