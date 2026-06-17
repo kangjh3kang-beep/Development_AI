@@ -166,6 +166,12 @@ def run_analysis(inp: AnalysisInput) -> AnalysisResult:
         sim_metrics.append(sim.run_egress(inp.sim_inputs["egress"]))
     if inp.sim_inputs.get("parking"):
         sim_metrics.append(sim.run_parking(inp.sim_inputs["parking"]))
+    if inp.sim_inputs.get("view"):
+        sim_metrics.append(sim.run_view(inp.sim_inputs["view"]))  # 조망/스카이라인(이전 미배선 데드패스 해소)
+    # 미배선 sim_inputs 키는 무음 무시 금지 — 표면화(무음0).
+    _unhandled = [k for k in inp.sim_inputs if k not in {"sunlight", "egress", "parking", "view"}]
+    if _unhandled:
+        skipped.append(f"sim: 미배선 입력 키 무시 — {_unhandled}")
     if not sim_metrics:
         skipped.append("sim: no sim_inputs")
 
