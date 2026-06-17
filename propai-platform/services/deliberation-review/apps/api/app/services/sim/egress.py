@@ -48,6 +48,8 @@ def run(plan: dict, params: SimParamSource) -> SimMetric:
         assumptions=[
             "⚠️ SFPE 유동모델(재실인원·유효폭·비유동 persons/m/s) 미구현 — 보행거리÷속도 근사. "
             "flow_coefficient는 병목 보정 배수일 뿐 대기·합류 미반영(엄밀 SFPE 아님)",
+            "보행거리 한도는 기저값(시행령 §34) 적용 — 주요구조부 내화/불연 50m·공동주택 16층↑ 75m 조건 "
+            "미반영(보수적, 실제 한도 상향 가능 — 거짓 부적합 주의)",
             f"walk_speed={walk_speed}", f"flow_coefficient={flow}",
         ],
         inputs={"travel_distance": travel_distance},

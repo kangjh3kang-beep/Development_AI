@@ -137,6 +137,31 @@ def ordinance_far(pnu: str | None, zone_name: str | None, as_of: date | None = N
     return base
 
 
+# 시도 도시계획조례 건폐율(%) — 시행령 §84 범위 내. 서울=상업 대폭 강화(시행령 80%→60%). 검증: 서울 조례 §54.
+ORDINANCE_BCR: dict[str, dict[str, int]] = {
+    "11": {  # 서울특별시(도시계획조례 §54)
+        "제1종전용주거지역": 50, "제2종전용주거지역": 40, "제1종일반주거지역": 60,
+        "제2종일반주거지역": 60, "제3종일반주거지역": 50, "준주거지역": 60,
+        "근린상업지역": 60, "일반상업지역": 60, "중심상업지역": 60, "유통상업지역": 60,
+        "전용공업지역": 60, "일반공업지역": 60, "준공업지역": 60,
+        "보전녹지지역": 20, "생산녹지지역": 20, "자연녹지지역": 20,
+    },
+}
+
+
+def ordinance_bcr(pnu: str | None, zone_name: str | None) -> dict | None:
+    """시도 조례 건폐율(우선) 또는 시행령 상한. {bcr_pct, source, ref_id}. 결손 None."""
+    sido = (pnu or "")[:2]
+    table = ORDINANCE_BCR.get(sido)
+    if table and zone_name:
+        for k, v in table.items():
+            if k in zone_name or zone_name in k:
+                ref = "서울도시계획조례§54" if sido == "11" else None
+                return {"bcr_pct": v, "source": f"{sido} 조례", "ref_id": ref}
+    z = lookup_zone_limit(zone_name)
+    return {"bcr_pct": z["bcr_limit_pct"], "source": "시행령 상한", "ref_id": "국토계획법시행령§84"} if z else None
+
+
 def multipath_scenarios(current_zone: str | None, area: float | None, signals: dict,
                         pnu: str | None = None, max_jump: int = 4,
                         as_of: date | None = None) -> dict | None:
