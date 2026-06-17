@@ -23,6 +23,14 @@ class DrawingVisionClient(Protocol):
     def extract_elements(self, image_ref: str, hint_text: str | None) -> list[dict] | None: ...
 
 
+def _measurements(d: dict) -> dict:
+    """제외 산정 측정치 매핑 — 미상 키는 None 유지(무음 추정 금지)."""
+    return {
+        "length": d.get("length"), "depth": d.get("depth"),
+        "underground": d.get("underground"), "accessory": d.get("accessory"),
+    }
+
+
 def _from_hints(sheet: DrawingSheet) -> list[ExtractedElement]:
     out: list[ExtractedElement] = []
     for i, h in enumerate(sheet.element_hints):
@@ -32,6 +40,7 @@ def _from_hints(sheet: DrawingSheet) -> list[ExtractedElement]:
             hint_strength=clamp01(float(h.get("hint_strength", 0.0) or 0.0)),
             area=h.get("area"),
             quantity=h.get("quantity"),
+            **_measurements(h),
             provenance={"sheet": sheet.sheet_id, "src": "hint", "role": sheet.sheet_role},
         ))
     return out
@@ -46,6 +55,7 @@ def _from_vision(sheet: DrawingSheet, raw: list[dict]) -> list[ExtractedElement]
             hint_strength=clamp01(float(r.get("confidence", 0.0) or 0.0)),
             area=r.get("area"),
             quantity=r.get("quantity"),
+            **_measurements(r),
             provenance={"sheet": sheet.sheet_id, "src": "vision", "role": sheet.sheet_role},
         ))
     return out

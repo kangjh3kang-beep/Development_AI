@@ -90,6 +90,33 @@ def test_calc_target_auto_from_area_table():
     assert r.legal_quantities[0].value == 500.0  # 600 - 100(필로티 제외)
 
 
+def test_drawing_auto_balcony_depth_passthrough():
+    # INC-3: 도면 자동경로에서 BALCONY 깊이(depth) 승계 검증 — 깊이 2.0 > 기준 1.5 → 제외 안함.
+    # (측정치 승계 전엔 depth가 소실돼 0.0으로 잘못 제외됐음 → 592. 이제 600 유지.)
+    r = run_analysis(AnalysisInput(
+        pnu="1111010100100000002", application_date=date(2026, 1, 1),
+        drawings=[{"sheet_id": "A-AREA", "sheet_role": "AREA_TABLE",
+                   "area_table": {"target": "building_area", "outer_area": 600.0},
+                   "element_hints": [{"semantic_hint": "BALCONY", "hint_strength": 0.9,
+                                      "area": 8.0, "depth": 2.0}]}]))
+    assert r.calc_targets_source == "DRAWING_AUTO"
+    assert r.legal_quantities[0].value == 600.0  # 깊이 2.0 > 1.5 → 제외 대상 아님
+
+
+def test_calc_target_builder_carries_measurements():
+    # INC-3: build_calc_targets_from_drawing이 length/depth/underground/accessory를 excl로 승계(미상=None).
+    from app.contracts.drawing_extraction import DrawingExtraction, ExtractedElement
+    from app.services.extraction.calc_target_builder import build_calc_targets_from_drawing
+    ext = DrawingExtraction(
+        source="HINTS",
+        area_tables=[{"target": "building_area", "outer_area": 600.0}],
+        elements=[ExtractedElement(element_id="e1", semantic_hint="PARKING", hint_strength=0.9,
+                                   area=150.0, underground=True, accessory=True)])
+    targets, _ = build_calc_targets_from_drawing(ext)
+    el = targets[0]["elements"][0]
+    assert el["underground"] is True and el["accessory"] is True
+
+
 def test_calc_target_explicit_input_wins():
     # 명시 calc_targets가 있으면 도면 자동구성보다 우선(INPUT).
     r = run_analysis(AnalysisInput(
