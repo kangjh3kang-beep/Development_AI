@@ -9,7 +9,7 @@ from enum import Enum
 
 from pydantic import BaseModel, Field
 
-from app.contracts._types import Probability
+from app.contracts._types import FiniteFloat, Probability
 from app.contracts.enums import RecordStatus, Unit
 from app.contracts.semantic_element import SemanticElement, SemanticType
 from app.core.errors import CalcTraceMissing
@@ -85,7 +85,7 @@ class LegalQuantity(BaseModel):
     """법정 산정값 1건(변수사전 id 바인딩 + 근거추적 + 상태)."""
 
     variable_id: str
-    value: float | None = None
+    value: FiniteFloat | None = None
     unit: Unit = Unit.M2
     status: RecordStatus = RecordStatus.AGREED
     confidence: Probability = 0.0

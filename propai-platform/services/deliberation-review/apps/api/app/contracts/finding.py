@@ -8,7 +8,7 @@ from enum import Enum
 
 from pydantic import BaseModel, Field
 
-from app.contracts._types import Probability
+from app.contracts._types import FiniteFloat, Probability
 
 
 class Verdict(str, Enum):
@@ -32,5 +32,5 @@ class Finding(BaseModel):
     gated_status: GatedStatus = GatedStatus.NEEDS_REVIEW
     conflicts: list[str] = Field(default_factory=list)
     basis_article: str | None = None
-    measured_value: float | None = None
-    limit_value: float | None = None
+    measured_value: FiniteFloat | None = None
+    limit_value: FiniteFloat | None = None

@@ -8,7 +8,7 @@ from enum import Enum
 
 from pydantic import BaseModel, Field
 
-from app.contracts._types import Probability
+from app.contracts._types import FiniteFloat, Probability
 from app.core.errors import MethodTraceMissing
 
 
@@ -29,7 +29,7 @@ class MethodTrace(BaseModel):
 
 class SimMetric(BaseModel):
     metric_id: str
-    value: float | None = None
+    value: FiniteFloat | None = None
     unit: str = ""
     status: MetricStatus = MetricStatus.OK
     confidence: Probability = 1.0
