@@ -55,6 +55,7 @@ class ExtractedElement(BaseModel):
     length_px: float | None = None         # 도면단위 길이(축척 환산 전, INC-4)
     underground: bool | None = None        # PARKING 지하 여부(용적률 제외 적격성)
     accessory: bool | None = None          # PARKING 부속 여부(용적률 제외 적격성)
+    consensus_status: str | None = None    # N-패스 합의(UNANIMOUS/MAJORITY/CONFLICT/SINGLE, INC-9)
     provenance: dict = Field(default_factory=dict)  # {sheet, src: vision|hint, scale_*}
 
 
