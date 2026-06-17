@@ -20,6 +20,9 @@ class MirrorSnapshot(BaseModel):
     version: str = "v1"
     rules: list[dict] = Field(default_factory=list)
     active_candidate_ids: list[str] = Field(default_factory=list)
+    # INC-14: 미러 적재 시점 라이브 1차출처 본문 해시(provenance). reconcile가 라이브 재대조 시 diff 기준.
+    # None=미기록(legacy/하베스트 미설정) — reconcile는 diff 불가로 표면화(무음 단정 금지).
+    content_hash: str | None = None
 
 
 class RulesetLoad(BaseModel):
