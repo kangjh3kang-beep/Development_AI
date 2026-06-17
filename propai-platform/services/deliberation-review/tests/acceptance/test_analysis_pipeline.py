@@ -106,3 +106,13 @@ def test_pipeline_dual_path_match_agreed():
     dp = item.evidence["dual_path"]
     assert dp is not None and dp["status"] == "AGREED"
     assert "dual_path_HELD" not in (item.evidence["gate_reason"] or "")
+
+
+def test_pipeline_view_sim_wired_and_unhandled_surfaced():
+    # INC-1: view 시뮬이 실제 호출되어 SimMetric 산출(이전 미배선 데드패스). 미배선 키는 skipped로 표면화.
+    r = run_analysis(AnalysisInput(
+        pnu="1111010100100000002", application_date=date(2026, 1, 1),
+        sim_inputs={"view": {"facade_width": 10.0, "street_width": 20.0, "geom_confidence": 0.9},
+                    "unknown_metric": {"x": 1}}))
+    assert any(m.metric_id == "facade_occupancy_ratio" for m in r.sim_metrics)
+    assert any("미배선 입력 키" in s for s in r.skipped)
