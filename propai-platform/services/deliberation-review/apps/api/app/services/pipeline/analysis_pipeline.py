@@ -345,6 +345,9 @@ def run_analysis(inp: AnalysisInput) -> AnalysisResult:
                 "requires_committee": fnd.requires_committee,
                 "conditional_relaxations": fnd.conditional_relaxations,
                 "verified": verification.passed if verification else False,
+                # 게이트 강등 사유(below_threshold/conflict/unverified/dual_path_HELD 등) 표면화 —
+                # FinalGate가 이미 산출한 reason을 노출만(무음 강등 제거).
+                "gate_reason": gated.reason,
             },
         })
     findings = gated_findings  # result.findings에 합성 confidence·gated_status 반영(박제 해소)
@@ -357,7 +360,11 @@ def run_analysis(inp: AnalysisInput) -> AnalysisResult:
                 "status": "NEEDS_REVIEW",
                 "confidence_grade": _grade(m.confidence),
                 "evidence": {"metric": m.metric_id, "value": m.value, "required": m.required,
-                             "flags": m.flags, "model": m.method_trace.model if m.method_trace else None},
+                             "flags": m.flags, "model": m.method_trace.model if m.method_trace else None,
+                             # finding item과 대칭 — MethodTrace에 이미 담긴 법령근거 노출(미설정 시 None 표면화).
+                             "basis_article": m.method_trace.basis_article if m.method_trace else None,
+                             "legal_basis": (resolve_text(m.method_trace.basis_article)
+                                             if (m.method_trace and m.method_trace.basis_article) else None)},
             })
 
     report: ReviewReport = ReportBuilder().build(

@@ -33,6 +33,16 @@ class HeightFloorCalc:
                     basis_article=rm.get("basis_article", _BASIS_119),
                     threshold=ratio_limit, threshold_unit=rm.get("unit"), measured=round(ratio, 3),
                     note=f"옥탑 면적비 {round(ratio, 3)} ≤ 기준 {ratio_limit}({rm.get('description', '')}) → 높이 산정 제외"))
+            else:  # 비율 초과 → 산입(왜 산입했는지 명시 — far_parking_included 대칭)
+                entries.append(CalcTraceEntry(
+                    rule_id="height_rooftop_included",
+                    basis_article=rm.get("basis_article", _BASIS_119),
+                    threshold=ratio_limit, threshold_unit=rm.get("unit"), measured=round(ratio, 3),
+                    note=f"옥탑 면적비 {round(ratio, 3)} > 기준 {ratio_limit} → 높이 산정 산입(제외 대상 아님)"))
+        elif rooftop_area:  # 옥탑 있으나 건축면적 결손 → 제외비율 판정 불가
+            entries.append(CalcTraceEntry(
+                rule_id="height_rooftop_unknown", basis_article=_BASIS_119,
+                note="옥탑 존재하나 건축면적 결손 — 제외 비율 판정 불가, 보수적 산입(HELD 검토 필요)"))
 
         return raw_height, entries
 
@@ -55,5 +65,15 @@ class HeightFloorCalc:
                     basis_article=rm.get("basis_article", _BASIS_119),
                     threshold=ratio_limit, threshold_unit=rm.get("unit"), measured=round(ratio, 3),
                     note=f"옥탑 면적비 {round(ratio, 3)} ≤ 기준 {ratio_limit} → 층수 산정 제외"))
+            else:  # 비율 초과 → 산입
+                entries.append(CalcTraceEntry(
+                    rule_id="floor_rooftop_included",
+                    basis_article=rm.get("basis_article", _BASIS_119),
+                    threshold=ratio_limit, threshold_unit=rm.get("unit"), measured=round(ratio, 3),
+                    note=f"옥탑 면적비 {round(ratio, 3)} > 기준 {ratio_limit} → 층수 산정 산입(제외 대상 아님)"))
+        elif rooftop_area:  # 옥탑 있으나 건축면적 결손 → 제외비율 판정 불가
+            entries.append(CalcTraceEntry(
+                rule_id="floor_rooftop_unknown", basis_article=_BASIS_119,
+                note="옥탑 존재하나 건축면적 결손 — 제외 비율 판정 불가, 보수적 산입(HELD 검토 필요)"))
 
         return above_ground_floors, entries

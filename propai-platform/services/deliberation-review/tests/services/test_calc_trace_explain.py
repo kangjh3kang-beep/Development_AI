@@ -35,6 +35,31 @@ def test_rooftop_ratio_quantified():
     assert rt.threshold == 0.125 and rt.measured == 0.1 and "0.1" in rt.note
 
 
+def test_rooftop_included_when_over_ratio():
+    # 옥탑 면적비 0.2 > 기준 0.125 → 산입 — '왜 산입인지' trace 동반(무라벨 산입 제거).
+    calc = HeightFloorCalc(CalcParamSource())
+    h, entries = calc.building_height(30.0, rooftop_area=20.0, building_area=100.0)
+    assert h == 30.0  # 반환값 불변(설명 메타만 추가)
+    inc = next(e for e in entries if e.rule_id == "height_rooftop_included")
+    assert inc.measured == 0.2 and "산입" in inc.note
+
+
+def test_rooftop_unknown_when_building_area_missing():
+    # 옥탑 있으나 건축면적 결손 → 제외 판정 불가, 보수적 산입 사유 trace.
+    calc = HeightFloorCalc(CalcParamSource())
+    _, entries = calc.floor_count(5, rooftop_area=20.0, building_area=None)
+    assert any(e.rule_id == "floor_rooftop_unknown" for e in entries)
+
+
+def test_gfa_records_floor_breakdown():
+    # 연면적 trace에 층수(measured)·층별 분해·제외 단계 안내 동반(재현성).
+    calc = AreaCalculator(CalcParamSource())
+    value, entries = calc.gross_floor_area([100.0, 120.0, 80.0])
+    assert value == 300.0  # 합산 불변
+    gfa = next(e for e in entries if e.rule_id == "gfa_sum")
+    assert gfa.measured == 3.0 and "far_floor_area" in gfa.note
+
+
 def test_param_meta_carries_basis():
     p = CalcParamSource()
     m = p.meta("balcony_exclusion_depth")
