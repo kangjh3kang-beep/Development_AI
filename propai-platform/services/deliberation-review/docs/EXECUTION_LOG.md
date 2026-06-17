@@ -287,7 +287,14 @@
 - area_calculator(처마/발코니/필로티/지하·주차/건축선)·height_floor_calc(옥탑 비율) 각 제외에 임계·실측·차감량·근거 동반.
   예: "발코니 깊이 1.2m ≤ 기준 1.5m(건축법 시행령 제119조)".
 - AT 4(test_calc_trace_explain) + 전체 **283 passed, ruff clean**.
-- 후속(설명가능성 확장): final_gate 강등사유 라벨 · cross_validation 출처 ref 보존.
+### ✅ 설명가능성 확장 — final_gate 강등사유 + cross_validation 출처 ref (★전 영역 완료)
+- final_gate: NEEDS_REVIEW 강등 시 reason 라벨(unverified / below_threshold(값<임계) / conflict /
+  dual_path_HELD) — 무음 강등 제거.
+- cross_validation: CrossValidation.sources(SourceValue 값+1차출처 ref) 보존 — by_source가 값만 담아
+  역추적 불가하던 결손 해소.
+- AT 2(test_gate_xval_explain) + 전체 **285 passed, ruff clean**.
+- **★설명가능성 전 영역 완료**: land·sim·report/reg_graph·legal_calc·final_gate·cross_validation 모든
+  핵심 산출에 도출이유(summary·formula·inputs)·법령(legal_basis 본문·출처)·한계(caveats)·정량근거 동반.
 
 ### 통합 최종 스냅샷(diag)
 - 전 출처 표면화: drawing_source/calc_targets_source/precedent_source/mirror_source.
