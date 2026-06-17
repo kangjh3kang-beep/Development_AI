@@ -21,6 +21,7 @@
 | 6 | `32183706` | 견고성 | land_card 어댑터 실패↔결손↔미설정 구분·calc_engine 필수키→RuleContractError(500 방지)·citation ISO 날짜 | 307 |
 | 7 | `c59efa1c` | 계약 | eval.accuracy/drawing_extraction.hint_strength/preflight.area_ratio/EvalCase.input_confidence Probability + drawing_extractor clamp | 307 |
 | 7 | `b999a055` | security | 예외 원문 에코 제거(domain_error:<타입> 코드만) | 307 |
+| 8 | `da3fe354` | 정확성 | BCR 조례 ordinance_bcr(서울 §54 건폐율 상업 80→60 강화)·egress 보행거리 30m 기저 보수성 caveat | 309 |
 
 **재리뷰 점수 추이**: security 3.0→4.0, 계약 3.0→3.5→3.8→4.4(iter7로 4.5향), 정확성 3.0→3.5→4.0,
 테스트 3.5→3.7→4.2, 아키텍처 3.0→3.2→4.2, 견고성 3.5→4.2. 결정론 4.5·설명가능성 4.0 유지.
@@ -55,10 +56,9 @@
    - **재작업 조건**: drawings area_table/calc_target에 명기 최종 면적 필드 추가 → legal_quantities(geom) vs 명기(table)
      DualPathCheck(tol=param) 대조 → finding별 dual_path_status 채워 GateItem 전달.
 
-5. **BCR 조례(ordinance_bcr) → 미구현** (재리뷰6 high)
-   - 미적용 이유: 시간/범위. FAR은 ordinance_far(조례 우선)이나 BCR은 시행령 상한만 사용 → 조례 강화 시 과대관대 가능.
-   - **재작업 조건**: upzoning에 ORDINANCE_BCR(시도 조례 건폐율) 추가 → remaining_capacity가 조례 우선,
-     미등록 시 caveat에 'BCR 시행령 기준 — 조례 강화 시 하향 가능'(FAR caveat와 대칭).
+5. **BCR 조례(ordinance_bcr) → ✅ 적용됨** (`da3fe354`, iter8)
+   - upzoning ORDINANCE_BCR(서울 §54 건폐율) + remaining_capacity BCR 조례 우선·미등록 시 시행령+caveat(FAR과 대칭).
+   - 잔여: 서울 외 시도 건폐율 조례 미등록(미등록 시 caveat 표면화 중). 재리뷰로 정확성 점수 확인 예정.
 
 6. **security 레이트리밋·pnu 패턴검증·CORS 운영제한 → 미구현** (재리뷰6 잔존)
    - 미적용 이유: 레이트리밋은 의존성(slowapi 등) 추가 필요. pnu 패턴은 다수 테스트 영향 확인 필요(보류).
