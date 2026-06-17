@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from app.contracts.semantic_element import SemanticElement, SemanticType
+from app.core.confidence import clamp01
 from app.core.parameters import param
 
 
@@ -29,17 +30,15 @@ class ElementClassifier:
 
             if hint in SemanticType.__members__ and hint != "UNKNOWN" and strength >= min_conf:
                 stype = SemanticType[hint]
-                confidence = strength
             else:
                 # 불확실 — 임의 타입 금지, UNKNOWN으로 하향 표면화.
                 stype = SemanticType.UNKNOWN
-                confidence = strength
 
             out.append(
                 SemanticElement(
                     element_id=el["element_id"],
                     semantic_type=stype,
-                    confidence=confidence,
+                    confidence=clamp01(strength),  # 외부 hint_strength 범위이탈 방어(Probability 계약)
                     source_sheets=el.get("present_in_sheets", []),
                     provenance={"hint": hint, "strength": strength},
                 )
