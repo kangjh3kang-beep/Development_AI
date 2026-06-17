@@ -14,7 +14,7 @@
  * - Progressive Disclosure (Jakob Nielsen, 1995)
  */
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { KakaoAddressSearch, type KakaoAddressResult } from "@/components/ui/KakaoAddressSearch";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { apiClient, apiV1BaseUrl } from "@/lib/api-client";
@@ -102,6 +102,23 @@ export function GlobalAddressSearch({
 
   // 로컬 state가 있으면 그것을 표시, 없으면 빈 상태 (siteAnalysis 참조 제거 — 새 프로젝트 시 이전 데이터 잔류 방지)
   const displayAddresses = addresses;
+
+  // 다필지 표시용 행 데이터 — 지번(번지) 우선 + 면적/평 + 상태(면적확보/보완필요).
+  // 대량(수백 필지) 가독성: 요약 헤더 + 스크롤 컴팩트 리스트로 일목요연하게.
+  const parcelRows = useMemo(() =>
+    displayAddresses.map((a) => {
+      const label = (a.jibunAddress || a.fullAddress || "").trim(); // 번지 포함 지번 우선
+      return { label: label || "(주소 미상)", areaSqm: a.areaSqm ?? null };
+    }), [displayAddresses]);
+
+  const parcelStats = useMemo(() => {
+    const n = parcelRows.length;
+    const withArea = parcelRows.filter((r) => r.areaSqm && r.areaSqm > 0);
+    const totalSqm = withArea.reduce((s, r) => s + (r.areaSqm || 0), 0);
+    // 지역(시군구) 수 — "시 구" 앞 2토큰 기준
+    const regions = new Set(parcelRows.map((r) => r.label.split(" ").slice(0, 2).join(" ")).filter(Boolean));
+    return { n, withAreaCnt: withArea.length, needFixCnt: n - withArea.length, totalSqm, regionCnt: regions.size };
+  }, [parcelRows]);
 
   // 종합 토지 분석 자동 트리거 (주소 입력 즉시 백그라운드 실행)
   // 카카오에서 얻은 bcode(법정동코드) + 지번주소를 백엔드에 전달하여 토지정보 조회
@@ -409,41 +426,47 @@ export function GlobalAddressSearch({
 
   return (
     <div className={`flex flex-col gap-2 ${className}`}>
-      {/* 등록된 필지 목록 */}
+      {/* 등록된 필지 목록 — 요약 헤더 + 컴팩트 스크롤 리스트(대량 필지 가독성 극대화) */}
       {displayAddresses.length > 0 && (
-        <div className="flex flex-col gap-1.5">
-          {displayAddresses.map((addr, idx) => (
-            <div
-              key={`${addr.fullAddress}-${idx}`}
-              className="flex items-center gap-2 rounded-lg border border-[var(--line)] bg-[var(--surface-soft)] px-3 py-2"
-            >
-              <span className="flex h-5 w-5 items-center justify-center rounded-md bg-[var(--accent-strong)] text-[10px] font-bold text-white flex-shrink-0">
-                {idx + 1}
-              </span>
-              <span className="text-sm text-[var(--text-primary)] truncate flex-1">
-                {addr.fullAddress}
-              </span>
-              {addr.areaSqm ? (
-                <span className="text-[10px] text-[var(--accent-strong)] font-bold flex-shrink-0">
-                  {addr.areaSqm.toLocaleString()}m² ({(addr.areaSqm / 3.305785).toFixed(1)}평)
-                </span>
-              ) : addr.sido ? (
-                <span className="text-[10px] text-[var(--text-hint)] flex-shrink-0">
-                  {addr.sido} {addr.sigungu}
-                </span>
-              ) : null}
-              {addresses.length > 0 && (
+        <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-soft)] overflow-hidden">
+          {/* 요약 헤더: 필지수·합계면적·면적확보/보완필요·지역수 */}
+          {displayAddresses.length > 1 && (
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-[var(--line)] bg-[var(--surface-muted)]/50 px-3 py-2 text-[11px]">
+              <span className="font-bold text-[var(--text-primary)]">필지 {parcelStats.n.toLocaleString()}개</span>
+              {parcelStats.totalSqm > 0 && (
+                <span className="text-[var(--accent-strong)] font-bold">합계 {Math.round(parcelStats.totalSqm).toLocaleString()}㎡ ({(parcelStats.totalSqm / 3.305785).toFixed(1)}평)</span>
+              )}
+              {parcelStats.regionCnt > 0 && <span className="text-[var(--text-secondary)]">지역 {parcelStats.regionCnt}곳</span>}
+              <span className="text-[var(--text-secondary)]">면적확보 <b className="text-[var(--text-primary)]">{parcelStats.withAreaCnt}</b></span>
+              {parcelStats.needFixCnt > 0 && (
+                <span className="rounded bg-[color-mix(in_srgb,var(--status-warning)_15%,transparent)] px-1.5 py-0.5 font-semibold text-[var(--status-warning)]">보완필요 {parcelStats.needFixCnt}</span>
+              )}
+            </div>
+          )}
+          {/* 컴팩트 리스트: 행 높이 축소 + 최대높이 스크롤(수백 필지가 화면을 잠식하지 않도록) */}
+          <ul className={`divide-y divide-[var(--line)]/60 ${displayAddresses.length > 8 ? "max-h-[320px] overflow-y-auto" : ""}`}>
+            {parcelRows.map((row, idx) => (
+              <li key={`${row.label}-${idx}`} className="flex items-center gap-2 px-3 py-1.5 hover:bg-[var(--surface-muted)]/40">
+                <span className="w-7 shrink-0 text-right text-[10px] tabular-nums text-[var(--text-hint)]">{idx + 1}</span>
+                <span className="flex-1 truncate text-[12px] text-[var(--text-primary)]" title={row.label}>{row.label}</span>
+                {row.areaSqm && row.areaSqm > 0 ? (
+                  <span className="shrink-0 text-[10px] font-bold tabular-nums text-[var(--accent-strong)]">
+                    {Math.round(row.areaSqm).toLocaleString()}㎡ · {(row.areaSqm / 3.305785).toFixed(1)}평
+                  </span>
+                ) : (
+                  <span className="shrink-0 rounded bg-[color-mix(in_srgb,var(--status-warning)_12%,transparent)] px-1 py-0.5 text-[9px] font-semibold text-[var(--status-warning)]">보완필요</span>
+                )}
                 <button
                   type="button"
                   onClick={() => handleRemove(idx)}
-                  className="flex-shrink-0 rounded-md p-0.5 text-[var(--text-hint)] hover:text-red-500 hover:bg-red-500/10 transition-colors"
+                  className="shrink-0 rounded p-0.5 text-[var(--text-hint)] hover:bg-red-500/10 hover:text-red-500 transition-colors"
                   aria-label="필지 삭제"
                 >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+                  <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
                 </button>
-              )}
-            </div>
-          ))}
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 
@@ -607,24 +630,6 @@ export function GlobalAddressSearch({
         </div>
       )}
 
-      {/* 다필지 요약 + 면적 합계 */}
-      {!single && displayAddresses.length > 1 && (() => {
-        const totalSqm = displayAddresses.reduce((sum, a) => sum + (a.areaSqm || 0), 0);
-        return (
-          <div className="rounded-lg bg-[var(--surface-soft)] p-2.5 text-[10px]">
-            <div className="flex items-center justify-between">
-              <span className="text-[var(--text-secondary)] font-bold">
-                {displayAddresses.length}개 필지 등록
-              </span>
-              {totalSqm > 0 && (
-                <span className="text-[var(--accent-strong)] font-bold">
-                  합계: {totalSqm.toLocaleString()}m² ({(totalSqm / 3.305785).toFixed(1)}평)
-                </span>
-              )}
-            </div>
-          </div>
-        );
-      })()}
     </div>
   );
 }

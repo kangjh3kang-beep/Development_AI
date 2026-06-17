@@ -1156,7 +1156,8 @@ export function ProjectPipelinePanel({
               {allAddresses.length === 1 ? (
                 <p>선택된 주소: <span className="text-[var(--accent-strong)]">{address}</span></p>
               ) : (
-                <p>선택된 필지: <span className="text-[var(--accent-strong)]">{allAddresses.length}개</span> — {allAddresses.map((a) => a.fullAddress).join(", ")}</p>
+                // 대량 필지: 전체 주소를 콤마로 나열하지 않고 대표 + "외 N필지"로 간결 표기(가독성).
+                <p>선택된 필지: <span className="text-[var(--accent-strong)]">{allAddresses.length}개</span> — {(allAddresses[0]?.jibunAddress || allAddresses[0]?.fullAddress || address)}{allAddresses.length > 1 ? ` 외 ${allAddresses.length - 1}필지` : ""}</p>
               )}
             </div>
           )}
