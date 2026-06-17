@@ -9,6 +9,7 @@ from enum import Enum
 from pydantic import BaseModel, Field
 
 from app.contracts._types import Similarity
+from app.contracts.rationale import Rationale
 from app.core.errors import SourceMissing
 
 
@@ -38,6 +39,8 @@ class PrecedentMatch(BaseModel):
     similarity: Similarity
     is_candidate: bool = True  # 항상 후보(적용 단정 금지, INV-24)
     source: str | None = None
+    method: str | None = None  # 산출 방식(임베더+거리척도) — 설명가능성
+    caveats: list[str] = Field(default_factory=list)  # 한계(클램프·절단·후보성)
 
 
 class PrecedentStat(BaseModel):
@@ -46,6 +49,7 @@ class PrecedentStat(BaseModel):
     n: int = 0
     distribution: dict | None = None        # 의결유형 분포(부족 시 None)
     common_conditions: list[str] | None = None  # 반복 보완패턴(부족 시 None)
+    rationale: Rationale | None = None      # 분포 도출이유·과반근거·한계(설명가능성)
 
 
 def emit(case: PrecedentCase) -> PrecedentCase:

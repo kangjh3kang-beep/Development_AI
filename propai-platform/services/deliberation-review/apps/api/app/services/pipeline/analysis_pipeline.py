@@ -15,7 +15,7 @@ from app.contracts.calc_rule import CalcRuleSet
 from app.contracts.finding import Finding
 from app.contracts.legal_quantity import CalcElement, CalcTarget, LegalQuantity
 from app.contracts.mirror import MirrorSnapshot
-from app.contracts.precedent import PrecedentCase, PrecedentStat
+from app.contracts.precedent import PrecedentCase, PrecedentStat, StatStatus
 from app.contracts.preflight import PreflightContext
 from app.contracts.qualitative import QualAssessment
 from app.contracts.report import ReviewReport
@@ -172,10 +172,12 @@ def run_analysis(inp: AnalysisInput) -> AnalysisResult:
     # 5) 유사사례 (L4) — Qdrant 벡터검색(P-C)으로 유사사례 선별 후 성숙도 게이팅.
     precedent: PrecedentStat | None = None
     precedent_source: str | None = None
+    precedent_search_meta: dict | None = None
     if inp.issue and inp.corpus:
         from app.services.precedent.precedent_search import PrecedentSearch
         corpus = [PrecedentCase(**c) for c in inp.corpus]
-        matched, matches = PrecedentSearch().search_cases(inp.issue, corpus)
+        matched, matches, precedent_search_meta = PrecedentSearch().search_cases(
+            inp.issue, corpus, return_meta=True)  # 임계·탈락분·선택사유 동반(설명가능성)
         if matched:
             precedent = StatAggregator().aggregate(inp.issue, matched)
             precedent_source = "VECTOR_SEARCH"
@@ -385,6 +387,22 @@ def run_analysis(inp: AnalysisInput) -> AnalysisResult:
                              "legal_basis": (resolve_text(m.method_trace.basis_article)
                                              if (m.method_trace and m.method_trace.basis_article) else None)},
             })
+
+    # 유사사례 통계도 report 항목으로 합류 — 분포·반복조건의 도출이유·한계·출처 동반(VECTOR_SEARCH 단일 문자열로만 부착되던 갭 해소).
+    if precedent is not None and precedent.status == StatStatus.SUFFICIENT:
+        items.append({
+            "item_id": f"precedent:{inp.issue}",
+            "status": "NEEDS_REVIEW",  # 참고 항목 — 확정 아님(INV-24 후보)
+            "evidence": {
+                "distribution": precedent.distribution,
+                "common_conditions": precedent.common_conditions,
+                "n": precedent.n,
+                "source": precedent_source,
+                "search_meta": precedent_search_meta,
+                "rationale": precedent.rationale.model_dump() if precedent.rationale else None,
+                "caveats": ["유사사례 통계는 참고 — 규범적 구속력 없음(INV-24)"],
+            },
+        })
 
     report: ReviewReport = ReportBuilder().build(
         items, snapshot_id=inp.snapshot_id, model_version=inp.model_version
