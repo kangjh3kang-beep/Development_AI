@@ -82,10 +82,14 @@ class DrawingExtractor:
         used_vision = False
         used_hints = False
         for sh in sheets:
-            if sh.area_table and sh.area_table.get("outer_area") is not None:
-                area_tables.append({"target": sh.area_table.get("target", "building_area"),
-                                    "outer_area": float(sh.area_table["outer_area"]),
+            at = sh.area_table
+            if at and at.get("outer_area") is not None:
+                area_tables.append({"target": at.get("target", "building_area"),
+                                    "outer_area": float(at["outer_area"]),
                                     "sheet": sh.sheet_id})
+            elif at and at.get("rows"):  # 다행 면적표(층별) — 연면적 자동산정용(INC-7)
+                area_tables.append({"target": at.get("target", "gross_floor_area"),
+                                    "rows": at["rows"], "sheet": sh.sheet_id})
             if self.vision_client is not None and sh.image_ref:
                 raw = self.vision_client.extract_elements(sh.image_ref, sh.titleblock_text or sh.sheet_role)
                 if raw:

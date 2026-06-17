@@ -117,6 +117,20 @@ def test_calc_target_builder_carries_measurements():
     assert el["underground"] is True and el["accessory"] is True
 
 
+def test_drawing_auto_multirow_gross_floor_area():
+    # INC-7: 다행(층별) 면적표 → 연면적 자동산정(각 층 바닥면적 합).
+    r = run_analysis(AnalysisInput(
+        pnu="1111010100100000002", application_date=date(2026, 1, 1),
+        drawings=[{"sheet_id": "A-AREA", "sheet_role": "AREA_TABLE",
+                   "area_table": {"target": "gross_floor_area",
+                                  "rows": [{"floor": "1F", "area": 100.0},
+                                           {"floor": "2F", "area": 120.0},
+                                           {"floor": "3F", "area": 80.0}]}}]))
+    assert r.calc_targets_source == "DRAWING_AUTO"
+    gfa = r.legal_quantities[0]
+    assert gfa.variable_id == "gross_floor_area" and gfa.value == 300.0
+
+
 def test_area_sanity_flags_contradiction_and_ratio():
     # INC-6: 제외 area 합 > 외곽 → 모순, 단일 area/외곽 > 상한 → 환각 의심(둘 다 무음 승계 차단).
     from app.services.extraction.area_sanity import area_sanity_notes
