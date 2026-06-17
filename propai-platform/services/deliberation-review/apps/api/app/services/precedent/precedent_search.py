@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from app.adapters.vector.qdrant_client import build_qdrant
-from app.contracts.precedent import PrecedentCase, PrecedentMatch
+from app.contracts.precedent import PrecedentCase
 from app.services.precedent.corpus_ingest import CorpusIngest
 from app.services.precedent.embedder import Embedder, build_embedder
 from app.services.precedent.matcher import Matcher
@@ -27,18 +27,32 @@ class PrecedentSearch:
 
     def search_cases(
         self, issue: object, corpus: list[PrecedentCase],
-        top: int = 50, min_similarity: float | None = None,
-    ) -> tuple[list[PrecedentCase], list[PrecedentMatch]]:
+        top: int = 50, min_similarity: float | None = None, return_meta: bool = False,
+    ):
         """corpus 제공 시 즉석 적재 후 검색. 임계값 이상 유사사례만 반환(+매칭 메타).
 
         임계 자동: 실 의미 임베더면 0.75(의미유사), 해시 폴백이면 0.99(정확 쟁점일치 —
         양수벡터라 변별력 낮음). min_similarity 명시 시 그 값을 사용.
+        return_meta=True면 (matched, matches, search_meta) 3-튜플 — 적용 임계·탈락분·선택사유 동반(설명가능성).
+        기본 False는 (matched, matches) 2-튜플(하위호환).
         """
         if min_similarity is None:
             min_similarity = 0.75 if self.embedder.is_semantic else 0.99
         if corpus:
             self.ingest.ingest(corpus)
-        matches = [m for m in self.matcher.search(issue, top=top) if m.similarity >= min_similarity]
+        all_matches = self.matcher.search(issue, top=top)
+        matches = [m for m in all_matches if m.similarity >= min_similarity]
+        rejected = [m for m in all_matches if m.similarity < min_similarity]
         by_id = {c.case_id: c for c in corpus}
         matched = [by_id[m.case_id] for m in matches if m.case_id in by_id]
-        return matched, matches
+        if not return_meta:
+            return matched, matches
+        search_meta = {
+            "min_similarity": min_similarity,
+            "is_semantic": self.embedder.is_semantic,
+            "threshold_reason": ("의미유사 0.75" if self.embedder.is_semantic
+                                 else "정확 쟁점일치 0.99(해시 폴백 — 양수벡터 변별력 낮음)"),
+            "selected": len(matches), "rejected": len(rejected),
+            "rejected_cases": [{"case_id": m.case_id, "similarity": round(m.similarity, 4)} for m in rejected],
+        }
+        return matched, matches, search_meta

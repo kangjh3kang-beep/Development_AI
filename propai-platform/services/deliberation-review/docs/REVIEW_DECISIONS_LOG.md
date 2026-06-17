@@ -33,11 +33,12 @@
 | 17 | `8f6b06db` | 정확성 | PARKING 전량제외 무음 거짓적합 제거 — CalcElement underground/accessory + parking_far_eligibility(지하·부속만 제외/지상·독립 산입/미상 HELD), CalcEngine far 주차 미상→held. far_parking_held trace 표면화·테스트 3(적격제외/지상산입/미상HELD) | 325 |
 | 18 | `0b11bd0c` | 설명가능성 | (멀티에이전트 감사 w6r4klvk1 28갭 기반 S1+legal_calc) P1 gate_reason 노출·P2 sim basis_article/legal_basis 노출(이미 산출값 노출만)·P6 옥탑 산입/결손 trace(height_rooftop_included/unknown 대칭)·P8 gfa 층별 measured/제외단계 caveat·P18 pilotis/basement 개방·전량제외 전제 caveat. 산출값 불변(설명 메타만)·가드 3 | 328 |
 | 19 | `db358daa` | 아키텍처·설명가능성 | ★P-DUAL: DualPathCheck 파이프라인 결선(dual_path_status=None 박제 해소) — calc_target.declared(명기 면적표값) vs 산정 lq.value 대조(area_tol 밴드), rule.target_variable↔lq.variable_id 매핑으로 finding별 dual_path_status 주입, 불일치 HELD→final_gate NEEDS_REVIEW. evidence에 dual_path(table/geom/delta/status/자기참조 caveat). 통합테스트 2(불일치HELD/일치AGREED). declared 미제공 시 None 유지(기존 동작·결정론 보존) | 330 |
-| 20 | `(this)` | 설명가능성 | (감사 P21·P22) upzoning_scenarios 각 시나리오에 Rationale(도출식·국토계획법시행령§85/§78·이론상최대 한계) 부착·upzoning_signals에 legal_basis(국토계획법§78·도시정비법 기본+매칭신호 §52/건축법§60/경관법§9, 등록본만·미상 placeholder). land_card free dict 노출 보강·가드 2 | 332 |
+| 20 | `e1b9ba5e` | 설명가능성 | (감사 P21·P22) upzoning_scenarios 각 시나리오에 Rationale(도출식·국토계획법시행령§85/§78·이론상최대 한계) 부착·upzoning_signals에 legal_basis(국토계획법§78·도시정비법 기본+매칭신호 §52/건축법§60/경관법§9, 등록본만·미상 placeholder). land_card free dict 노출 보강·가드 2 | 332 |
+| 21 | `(this)` | 설명가능성·아키텍처 | (감사 P3·P4·P5 — 마지막 high 갭) PrecedentStat.rationale(분포 도출이유·과반근거·구속력없음 한계, SUFFICIENT/INSUFFICIENT)·PrecedentMatch.method/caveats(임베더+코사인·클램프·절단)·search_cases(return_meta=True 3튜플: 임계·선택사유·탈락분, 2튜플 하위호환)·precedent를 report item으로 합류(VECTOR_SEARCH 단일문자열→도출맥락 동반). 가드 3 | 335 |
 
 **재리뷰 점수 추이**: security 3.0→4.0→4.5(iter15 레이트리밋), 계약 3.0→3.5→3.8→4.4→4.5(iter16 SimMetric.unit enum 계약강제), 정확성 3.0→3.5→4.0→4.3→4.5(iter17 PARKING 거짓적합 제거: 지상주차 산입·미상 HELD),
 테스트 3.5→3.7→4.2→4.5(iter12~13 스캐너 사각지대 제거: 함수기본값/call-kwarg 하드코딩까지 게이트), 아키텍처 3.0→3.2→4.2→4.5(iter19 P-DUAL 결선: dual_path_status 박제 해소·명기vs산정 대조), 견고성 3.5→4.2→4.5(iter14 egress 비양수 가드: 0division/음수시간 무음오판 제거),
-security 3.0→4.0→4.5(iter15 레이트리밋: 외부 1차출처 쿼터/비용 폭주 방어, /health 면제). 결정론 4.5 유지·설명가능성 4.0→(iter18~ 진행: 감사 28갭 순차해소).
+security 3.0→4.0→4.5(iter15 레이트리밋: 외부 1차출처 쿼터/비용 폭주 방어, /health 면제). 결정론 4.5 유지·설명가능성 4.0→4.5(iter18~21: 감사 28갭 중 high 전부+다수 해소 — P1·P2·P6·P8·P18·P21·P22·P3·P4·P5).
 
 **★설명가능성 감사(2026-06-17, 멀티에이전트 워크플로 w6r4klvk1, 14에이전트)**: 6영역 전수감사+반증검증으로 **28개 확정 갭**(전부 file:line 검증) + dual_path 평가. 모든 수정은 **산출값 불변·설명 메타(rationale/legal_basis/caveats/reason/trace)만 추가**. 우선순위 P1~P22(TIER1 노출만→…→dual_path 결선). dual_path 핵심: 부품(DualPathCheck·게이트강등·area_tol·명기 outer_area) 다 EXISTS, **pipeline 결선만 MISSING**(analysis_pipeline `dual_path_status=None` 하드코딩+기하 geom 산정경로 부재). iter18=P1·P2·P6·P8·P18 적용.
 
