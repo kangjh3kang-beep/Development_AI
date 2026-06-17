@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v219-deliberation-console";
+const CACHE_NAME = "propai-v220-excel-stale-fix";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

@@ -315,10 +315,20 @@ export function GlobalAddressSearch({
           bcode: p.bcode || "",
           ...(p.area_sqm ? { areaSqm: p.area_sqm } : {}),
         }));
+      // ★업로드한 필지를 앞에 둔다(기존 검색분은 뒤로 보존, 혼용 가능). 방금 올린 토지조서가
+      //   대표(primary)가 되어 이전에 검색한 주소가 분석에 잔류하는 오류를 막는다.
       const merged = single
         ? entries.slice(0, 1)
-        : [...addresses, ...entries.filter((e) => !addresses.some((a) => a.fullAddress === e.fullAddress))];
+        : [...entries, ...addresses.filter((a) => !entries.some((e) => e.fullAddress === a.fullAddress))];
       setAddresses(merged);
+
+      // ★검색 경로(handleAddressSelect)와 동일하게 대표 필지로 store 갱신 + 종합분석 재실행.
+      //   (이게 누락돼 엑셀 업로드 시 이전 검색 주소의 분석이 그대로 표시되던 버그를 근본수정.)
+      const primary = merged[0];
+      if (primary) {
+        if (writeToContext) updateSiteAnalysis({ address: primary.fullAddress });
+        triggerComprehensiveAnalysis(primary.fullAddress, primary.bcode, primary.jibunAddress);
+      }
       onChange?.(merged);
       setUploadInfo({ note: res.note || `${entries.length}필지 등록`, registry: res.registry_guidance?.message });
     } catch (e: any) {
@@ -326,7 +336,7 @@ export function GlobalAddressSearch({
     } finally {
       setUploading(false);
     }
-  }, [single, addresses, onChange]);
+  }, [single, addresses, onChange, writeToContext, updateSiteAnalysis, triggerComprehensiveAnalysis]);
 
   const downloadTemplate = useCallback(async () => {
     try {
