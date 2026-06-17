@@ -108,6 +108,7 @@ export function buildPrimaryNav(locale: string): NavSection[] {
       items: [
         { id: "design-studio", label: "AI 설계도면(CAD)", href: p("/design-studio"), icon: <IconDesign /> },
         { id: "design-audit", label: "AI 설계분석", href: p("/design-audit"), icon: <IconPermit /> },
+        { id: "deliberation-review", label: "AI 심의분석 엔진", href: p("/deliberation-review"), icon: <IconRegulation /> },
         { id: "bim-studio", label: "3D 모델·공사물량(BIM·적산)", href: p("/bim-studio"), icon: <IconCost /> },
         { id: "meeting-rooms", label: "프로젝트 회의방", href: p("/meeting-rooms"), icon: <IconProject /> },
         { id: "design-refs", label: "표준설계 라이브러리", href: p("/settings/design-references"), icon: <IconDesign /> },

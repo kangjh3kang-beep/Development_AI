@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v218-integrated-location";
+const CACHE_NAME = "propai-v219-deliberation-console";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",
