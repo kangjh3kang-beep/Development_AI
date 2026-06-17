@@ -68,3 +68,22 @@ def test_promote_signals_expanded():
     # 워크플로우 확장 신호 인식.
     for z in ("재정비촉진지구", "개발진흥지구", "입지규제최소구역", "정비예정구역"):
         assert upzoning_signals([z])["promote_signals"] == [z]
+
+
+def test_scenarios_carry_rationale():
+    # 각 시나리오에 도출이유·도출식·법령근거·한계 동반(설명가능성 — land_card free dict 노출 보강).
+    out = upzoning_scenarios("제1종일반주거지역", 1000.0, 0.0, max_steps=2)
+    rat = out["scenarios"][1]["rationale"]
+    assert rat["formula"] and rat["caveats"]
+    assert any(lb["ref_id"] == "국토계획법시행령§85" for lb in rat["legal_basis"])
+    assert any("이론상 최대" in c for c in rat["caveats"])
+
+
+def test_signals_carry_legal_basis():
+    # likelihood/신호 분류에 법령근거 동반(국토계획법§78·도시정비법 기본 + 매칭 신호 §52).
+    sig = upzoning_signals(["제2종일반주거지역", "지구단위계획구역", "재개발구역"])
+    ids = [lb["ref_id"] for lb in sig["legal_basis"]]
+    assert "국토계획법§78" in ids and "도시정비법" in ids
+    assert "국토계획법§52" in ids  # 지구단위계획 → §52
+    # 미등록 법령은 placeholder로 표면화(무음 금지) — 등록본은 (미등록) 아님.
+    assert all(lb["law"] != "(미등록)" for lb in sig["legal_basis"])
