@@ -25,6 +25,7 @@ from app.contracts.verification import GateItem
 from app.contracts.versioning import Snapshot, Version
 from app.core.errors import PreflightRefused
 from app.core.hashing import input_hash
+from app.core.parameters import param
 from app.services.explain.legal_refs import resolve_text
 from app.services.extraction.dual_path import resolve_elements
 from app.services.gate.confidence_composer import ConfidenceComposer
@@ -38,6 +39,7 @@ from app.services.reg_graph.builder import build_reg_graph
 from app.services.report.report_builder import ReportBuilder
 from app.services.sim.sim_engine import SimEngine
 from app.services.verify.citation_check import CitationCheck
+from app.services.verify.dual_path_check import DualPathCheck, DualPathResult
 from app.services.verify.final_gate import FinalGate
 
 
@@ -112,6 +114,8 @@ def run_analysis(inp: AnalysisInput) -> AnalysisResult:
     if preflight_blocked and calc_targets_source == "DRAWING_AUTO":
         skipped.append("legal_calc: ⚠️ preflight 거부 상태 도면 자동산정 — 전제(축척/관할) 미해소, "
                        "결과 신뢰 제한(preflight_blocked)")
+    # L5 정량 이중경로 — 명기(면적표 최종값) vs 산정값 대조 결과(변수별). 명기 없으면 빈 채로 None 유지(날조 금지).
+    dual_path_by_variable: dict[str, DualPathResult] = {}
     if calc_targets:
         registry = build_calc_variable_registry()
         rule_set = CalcRuleSet(versions=[])  # 기본 파라미터(JSON) 사용
@@ -119,21 +123,28 @@ def run_analysis(inp: AnalysisInput) -> AnalysisResult:
             else CalcEngine(rule_set=rule_set, base_date=inp.application_date, registry=registry)
         for t in calc_targets:
             elements = [CalcElement(**e) for e in t.get("elements", [])]
-            legal_quantities.append(
-                engine.compute(CalcTarget(t["target"]), payload=t.get("payload", {}),
-                               elements=elements, snapshot=snapshot)
-            )
+            lq = engine.compute(CalcTarget(t["target"]), payload=t.get("payload", {}),
+                                elements=elements, snapshot=snapshot)
+            legal_quantities.append(lq)
+            # 면적표 명기 최종값(declared) 제공 시 산정값(lq.value)과 대조 — 밴드(area_tol) 초과 시 HELD.
+            declared = t.get("declared")
+            if declared is not None and lq.value is not None:
+                dual_path_by_variable[lq.variable_id] = DualPathCheck(
+                    tol=float(param("area_tol"))).check(table=float(declared), geom=lq.value)
     else:
         skipped.append("legal_calc: no calc_targets")
 
     # 3) 판정 (R3) — 3값, 거짓 불합격 금지.
     findings: list[Finding] = []
     parsed_rules: list[Rule] = []
+    rule_id_to_variable: dict[str, str] = {}  # finding↔이중경로(변수) 매핑용
     if inp.rules:
         evaluator = Evaluator()
         for r in inp.rules:
             rule = Rule(**r["rule"])
             parsed_rules.append(rule)
+            if rule.target_variable:
+                rule_id_to_variable[rule.rule_id] = rule.target_variable
             case = EvalCase(
                 rule=rule,
                 measured_value=r.get("measured"),
@@ -321,11 +332,13 @@ def run_analysis(inp: AnalysisInput) -> AnalysisResult:
         fnd = fgate.apply(fnd.model_copy(update={"composite_confidence": composed}))  # gated_status 채움(박제 해소)
         gated_findings.append(fnd)
         verification = citation_checks.get(fnd.basis_article)
+        # 이 finding의 대상 변수에 명기 vs 산정 이중경로 결과가 있으면 게이트에 반영(불일치 HELD→NEEDS_REVIEW).
+        dp = dual_path_by_variable.get(rule_id_to_variable.get(fnd.rule_id, ""))
         gated = gate.apply(GateItem(
             composite_confidence=fnd.composite_confidence,
             conflicts=fnd.conflicts,
             verification=verification,
-            dual_path_status=None,
+            dual_path_status=dp.status.value if dp else None,
         ))
         # basis_article(조문 ID) → 법령 본문 해소(설명가능성). 미해소 시 표면화(무음 금지).
         legal_basis = resolve_text(fnd.basis_article) or {
@@ -348,6 +361,12 @@ def run_analysis(inp: AnalysisInput) -> AnalysisResult:
                 # 게이트 강등 사유(below_threshold/conflict/unverified/dual_path_HELD 등) 표면화 —
                 # FinalGate가 이미 산출한 reason을 노출만(무음 강등 제거).
                 "gate_reason": gated.reason,
+                # 정량 이중경로(명기 vs 산정) 대조 근거 — delta·tol 초과 시 HELD 사유 정량화.
+                "dual_path": ({"table_value": dp.table_value, "geom_value": dp.geom_value,
+                               "delta": round(dp.delta, 4), "status": dp.status.value,
+                               "caveat": "명기(면적표 선언값) vs 산정값 대조(밴드 area_tol). 산정 geom이 "
+                                         "명기 입력 기반이면 자기참조 주의 — 독립 기하경로(shoelace 등)는 후속"}
+                              if dp else None),
             },
         })
     findings = gated_findings  # result.findings에 합성 confidence·gated_status 반영(박제 해소)

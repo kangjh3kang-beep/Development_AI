@@ -37,8 +37,8 @@ class AnalysisInput(BaseModel):
     ifc: str | None = None
     elements: list[dict] = Field(default_factory=list)
 
-    # R1.5 법정 산정
-    calc_targets: list[dict] = Field(default_factory=list)  # [{target, payload, elements:[CalcElement]}]
+    # R1.5 법정 산정 (declared 선택: 면적표 명기 최종값 → 산정값과 L5 이중경로 대조, 불일치 시 dual_path HELD)
+    calc_targets: list[dict] = Field(default_factory=list)  # [{target, payload, elements:[CalcElement], declared?}]
     # R3 판정
     rules: list[dict] = Field(default_factory=list)         # [{rule, measured, limit, relaxation_states, ...}]
     # L3-B 공학 시뮬

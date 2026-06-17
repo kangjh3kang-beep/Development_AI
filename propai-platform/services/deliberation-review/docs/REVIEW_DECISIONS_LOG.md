@@ -31,10 +31,11 @@
 | 15 | `56caf153` | security | 레이트리밋(FixedWindowRateLimiter 인메모리 고정창)·미들웨어 배선(클라이언트별 분당 상한, /health 면제, 429+Retry-After)·REQUESTS_PER_MINUTE 설정(0=비활성 기본)·리미터 단위(clock주입 결정론)+미들웨어 통합 테스트 5 | 322 |
 | 16 | `8bceda90` | 계약 | SimMetric.unit str→MetricUnit enum(""/s/hours/m/ratio) — 임의 단위 무음 통과 차단·계약 강제. str,Enum이라 JSON은 값('s')로 직렬화(프런트 ui/index.html `m.unit` 호환 byte-동일)·계약 테스트(유효 강제·비계약 거부) | 323 |
 | 17 | `8f6b06db` | 정확성 | PARKING 전량제외 무음 거짓적합 제거 — CalcElement underground/accessory + parking_far_eligibility(지하·부속만 제외/지상·독립 산입/미상 HELD), CalcEngine far 주차 미상→held. far_parking_held trace 표면화·테스트 3(적격제외/지상산입/미상HELD) | 325 |
-| 18 | `(this)` | 설명가능성 | (멀티에이전트 감사 w6r4klvk1 28갭 기반 S1+legal_calc) P1 gate_reason 노출·P2 sim basis_article/legal_basis 노출(이미 산출값 노출만)·P6 옥탑 산입/결손 trace(height_rooftop_included/unknown 대칭)·P8 gfa 층별 measured/제외단계 caveat·P18 pilotis/basement 개방·전량제외 전제 caveat. 산출값 불변(설명 메타만)·가드 3 | 328 |
+| 18 | `0b11bd0c` | 설명가능성 | (멀티에이전트 감사 w6r4klvk1 28갭 기반 S1+legal_calc) P1 gate_reason 노출·P2 sim basis_article/legal_basis 노출(이미 산출값 노출만)·P6 옥탑 산입/결손 trace(height_rooftop_included/unknown 대칭)·P8 gfa 층별 measured/제외단계 caveat·P18 pilotis/basement 개방·전량제외 전제 caveat. 산출값 불변(설명 메타만)·가드 3 | 328 |
+| 19 | `(this)` | 아키텍처·설명가능성 | ★P-DUAL: DualPathCheck 파이프라인 결선(dual_path_status=None 박제 해소) — calc_target.declared(명기 면적표값) vs 산정 lq.value 대조(area_tol 밴드), rule.target_variable↔lq.variable_id 매핑으로 finding별 dual_path_status 주입, 불일치 HELD→final_gate NEEDS_REVIEW. evidence에 dual_path(table/geom/delta/status/자기참조 caveat). 통합테스트 2(불일치HELD/일치AGREED). declared 미제공 시 None 유지(기존 동작·결정론 보존) | 330 |
 
 **재리뷰 점수 추이**: security 3.0→4.0→4.5(iter15 레이트리밋), 계약 3.0→3.5→3.8→4.4→4.5(iter16 SimMetric.unit enum 계약강제), 정확성 3.0→3.5→4.0→4.3→4.5(iter17 PARKING 거짓적합 제거: 지상주차 산입·미상 HELD),
-테스트 3.5→3.7→4.2→4.5(iter12~13 스캐너 사각지대 제거: 함수기본값/call-kwarg 하드코딩까지 게이트), 아키텍처 3.0→3.2→4.2, 견고성 3.5→4.2→4.5(iter14 egress 비양수 가드: 0division/음수시간 무음오판 제거),
+테스트 3.5→3.7→4.2→4.5(iter12~13 스캐너 사각지대 제거: 함수기본값/call-kwarg 하드코딩까지 게이트), 아키텍처 3.0→3.2→4.2→4.5(iter19 P-DUAL 결선: dual_path_status 박제 해소·명기vs산정 대조), 견고성 3.5→4.2→4.5(iter14 egress 비양수 가드: 0division/음수시간 무음오판 제거),
 security 3.0→4.0→4.5(iter15 레이트리밋: 외부 1차출처 쿼터/비용 폭주 방어, /health 면제). 결정론 4.5 유지·설명가능성 4.0→(iter18~ 진행: 감사 28갭 순차해소).
 
 **★설명가능성 감사(2026-06-17, 멀티에이전트 워크플로 w6r4klvk1, 14에이전트)**: 6영역 전수감사+반증검증으로 **28개 확정 갭**(전부 file:line 검증) + dual_path 평가. 모든 수정은 **산출값 불변·설명 메타(rationale/legal_basis/caveats/reason/trace)만 추가**. 우선순위 P1~P22(TIER1 노출만→…→dual_path 결선). dual_path 핵심: 부품(DualPathCheck·게이트강등·area_tol·명기 outer_area) 다 EXISTS, **pipeline 결선만 MISSING**(analysis_pipeline `dual_path_status=None` 하드코딩+기하 geom 산정경로 부재). iter18=P1·P2·P6·P8·P18 적용.
@@ -67,11 +68,14 @@ security 3.0→4.0→4.5(iter15 레이트리밋: 외부 1차출처 쿼터/비용
      이전=결정론 보존) 후, static_scan에 FunctionDef defaults/kw_defaults + call-kwarg + 튜플언패킹 + 튜플/리스트 값
      순회 추가 + 회귀가드 5. 측정치 함수기본값(existing_floor_area=0.0 등)은 allowlist(정확한 이름만).
 
-4. **아키텍처 dual_path 배선 → 보류** (재리뷰6 high)
-   - 미적용 이유: DualPathCheck는 구현됐으나, 명기(면적표) 값과 기하(산정) 값을 대조하려면 **명기 최종값 데이터 모델**
-     (drawings area_table에 declared_total 등)이 필요. 현재 area_table은 outer_area(입력)만 보유.
-   - **재작업 조건**: drawings area_table/calc_target에 명기 최종 면적 필드 추가 → legal_quantities(geom) vs 명기(table)
-     DualPathCheck(tol=param) 대조 → finding별 dual_path_status 채워 GateItem 전달.
+4. **아키텍처 dual_path 배선 → ✅ 적용** (`(this)`, iter19)
+   - calc_target dict에 선택 `declared`(명기 면적표 최종값) 키 추가(별도 데이터모델 신설 대신 기존 calc_targets 통과 활용).
+     pipeline에서 `DualPathCheck(tol=param('area_tol')).check(table=declared, geom=lq.value)` 대조 → `dual_path_by_variable`,
+     rule.target_variable↔lq.variable_id 매핑으로 finding별 `dual_path_status` 주입(`:328` None 박제 해소). 불일치 HELD→
+     final_gate NEEDS_REVIEW(이미 EXISTS). evidence에 DualPathResult 동반.
+   - **잔여(정직 명시)**: 현 geom=명기 입력(outer_area) 차감값이라 declared와 동일 출처면 자기참조 → caveat로 고지.
+     **독립 기하 산정경로(shoelace/polygon_area)**는 후속(면적표 declared와 진짜 독립 대조하려면 필요). declared_* 자동
+     추출(area_table 채우기)도 후속 — 현재는 calc_target에 명시 주입 시 동작.
 
 5. **BCR 조례(ordinance_bcr) → ✅ 적용됨** (`da3fe354`, iter8)
    - upzoning ORDINANCE_BCR(서울 §54 건폐율) + remaining_capacity BCR 조례 우선·미등록 시 시행령+caveat(FAR과 대칭).
