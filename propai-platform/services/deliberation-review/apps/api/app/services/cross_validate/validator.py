@@ -29,12 +29,12 @@ class CrossSourceValidator:
 
         if n == 0:
             return CrossValidation(fact_key=fact_key, status=CrossStatus.ABSENT,
-                                   confidence=0.0, sources_present=0, by_source={})
+                                   confidence=0.0, sources_present=0, by_source={}, sources=values)
         if n == 1:
             # 단일 출처 — 교차검증 불가(보수). 값은 제시하되 확신 낮음.
             return CrossValidation(fact_key=fact_key, status=CrossStatus.SINGLE,
                                    agreed_value=present[0].value, confidence=0.5,
-                                   sources_present=1, by_source=by_source)
+                                   sources_present=1, by_source=by_source, sources=values)
 
         counts = Counter(_norm(v.value) for v in present)
         top_norm, top_n = counts.most_common(1)[0]
@@ -50,5 +50,5 @@ class CrossSourceValidator:
 
         return CrossValidation(
             fact_key=fact_key, status=status, agreed_value=agreed, confidence=conf,
-            sources_present=n, by_source=by_source, dissent=dissent,
+            sources_present=n, by_source=by_source, sources=values, dissent=dissent,
         )

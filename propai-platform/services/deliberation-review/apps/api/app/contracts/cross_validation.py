@@ -35,6 +35,7 @@ class CrossValidation(BaseModel):
     confidence: float = 0.0
     sources_present: int = 0
     by_source: dict[str, str | float | int | None] = Field(default_factory=dict)
+    sources: list[SourceValue] = Field(default_factory=list)  # 출처별 값+1차출처 ref(역추적 보존)
     dissent: list[str] = Field(default_factory=list)  # 합의와 다른 값을 낸 출처들
 
     @property
