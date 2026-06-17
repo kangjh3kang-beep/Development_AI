@@ -1,11 +1,12 @@
 """Phase 0 — 법정/도메인 수치 하드코딩 정적 스캐너(INV-3).
 
-소스 텍스트에서 '법정/도메인 키워드 이름 = 수치 리터럴' 할당을 탐지해 "name=value" 목록 반환.
-허용리스트 제외. AT-9류(각 페이즈) 테스트가 src에 대해 호출하여 하드코딩 부재를 강제한다.
+AST 기반 — 할당(=)·증분대입(+=)·주석할당(: T =)·dict 리터럴에서 '법정키워드 이름/키 = 수치'를 탐지.
+음수(UnaryOp)·dict 값·증분대입·지수표기까지 포착(regex 맹점 제거). 허용리스트/일반상수 제외.
+AT-9류(각 페이즈) 테스트가 src에 대해 호출해 하드코딩 부재를 강제한다.
 """
 from __future__ import annotations
 
-import re
+import ast
 
 # 법정/도메인 수치를 시사하는 식별자 키워드(부분일치).
 _LEGAL_KEYWORDS = (
@@ -17,19 +18,62 @@ _LEGAL_KEYWORDS = (
 # 의미 없는 일반 상수(인덱스·배수 등)는 과탐 제외.
 _BENIGN = {"0", "1", "2", "100", "1000", "10", "1.0", "0.0", "0.5"}
 
-_ASSIGN_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(\d+(?:\.\d+)?)")
+
+def _number(node: ast.AST) -> float | int | None:
+    """수치 리터럴(음수 UnaryOp 포함) → 값, 아니면 None. bool 제외."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)) and not isinstance(node.value, bool):
+        return node.value
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
+        inner = _number(node.operand)
+        return -inner if inner is not None else None
+    return None
+
+
+def _name(node: ast.AST) -> str | None:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    return None
+
+
+def _fmt(value: float | int) -> str:
+    return repr(value) if isinstance(value, float) else str(value)
 
 
 def scan_for_numeric_legal_constants(source: str, allowlist: tuple[str, ...] = ()) -> list[str]:
-    """source에서 하드코딩 의심 수치 할당 목록("name=value") 반환. 없으면 []."""
+    """source에서 하드코딩 의심 수치 할당 목록("name=value") 반환. 없으면 []. 파싱 실패 시 []."""
     hits: list[str] = []
-    for m in _ASSIGN_RE.finditer(source or ""):
-        name, value = m.group(1), m.group(2)
-        low = name.lower()
-        if name in allowlist or value in _BENIGN:
-            continue
-        if any(k in low for k in _LEGAL_KEYWORDS):
-            hits.append(f"{name}={value}")
+    try:
+        tree = ast.parse(source or "")
+    except SyntaxError:
+        return hits
+
+    def check(name: str | None, value: float | int) -> None:
+        if name is None or name in allowlist:
+            return
+        sval = _fmt(value)
+        if sval in _BENIGN:
+            return
+        if any(k in name.lower() for k in _LEGAL_KEYWORDS):
+            hits.append(f"{name}={sval}")
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            num = _number(node.value)
+            if num is not None:
+                for t in node.targets:
+                    check(_name(t), num)
+        elif isinstance(node, (ast.AugAssign, ast.AnnAssign)) and node.value is not None:
+            num = _number(node.value)
+            if num is not None:
+                check(_name(node.target), num)
+        elif isinstance(node, ast.Dict):
+            for k, v in zip(node.keys, node.values):
+                if isinstance(k, ast.Constant) and isinstance(k.value, str):
+                    num = _number(v)
+                    if num is not None:
+                        check(k.value, num)
     return hits
 
 
