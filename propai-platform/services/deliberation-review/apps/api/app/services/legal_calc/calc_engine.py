@@ -21,7 +21,11 @@ from app.contracts.semantic_element import SemanticType
 from app.contracts.versioning import Snapshot
 from app.core.errors import RuleContractError
 from app.core.parameters import param
-from app.services.legal_calc.area_calculator import AreaCalculator
+from app.services.legal_calc.area_calculator import (
+    AreaCalculator,
+    ParkingFarEligibility,
+    parking_far_eligibility,
+)
 from app.services.legal_calc.calc_params import CalcParamSource
 from app.services.legal_calc.height_floor_calc import HeightFloorCalc
 
@@ -77,6 +81,13 @@ class CalcEngine:
         min_conf = min((e.confidence for e in elements), default=1.0)
         has_unknown = any(e.semantic_type == SemanticType.UNKNOWN for e in elements)
         held = has_unknown or min_conf < float(param("calc_min_input_confidence"))
+        # 용적률 산정 시 주차 제외 적격성 미상(지하/부속 미확인) → HELD(전량제외 무음 거짓적합 방지).
+        if target == CalcTarget.FAR_FLOOR_AREA and any(
+            e.semantic_type == SemanticType.PARKING
+            and parking_far_eligibility(e) is ParkingFarEligibility.UNKNOWN
+            for e in elements
+        ):
+            held = True
 
         value, entries = self._dispatch(target, payload, elements)
 

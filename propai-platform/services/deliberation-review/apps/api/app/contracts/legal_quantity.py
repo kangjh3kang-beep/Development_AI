@@ -54,7 +54,11 @@ class CalcTarget(str, Enum):
 
 
 class CalcElement(BaseModel):
-    """산정 입력 요소 — 의미타입 + 제외 측정치 + 분류 신뢰도(상속용)."""
+    """산정 입력 요소 — 의미타입 + 제외 측정치 + 분류 신뢰도(상속용).
+
+    underground/accessory: 주차의 용적률 제외 적격성 판정용(시행령 §119①4: 지하 AND 부속만 제외).
+    None=미상 → 무음 전량제외 금지(거짓적합 방지), 산정은 HELD로 표면화.
+    """
 
     semantic_type: SemanticType
     confidence: Probability = 1.0
@@ -62,6 +66,8 @@ class CalcElement(BaseModel):
     length: float = 0.0
     depth: float = 0.0
     element_id: str | None = None
+    underground: bool | None = None  # 지하 여부(주차 제외 적격성). None=미상
+    accessory: bool | None = None    # 부속(비독립) 여부(주차 제외 적격성). None=미상
 
     @classmethod
     def from_semantic(
@@ -70,6 +76,8 @@ class CalcElement(BaseModel):
         area: float = 0.0,
         length: float = 0.0,
         depth: float = 0.0,
+        underground: bool | None = None,
+        accessory: bool | None = None,
     ) -> "CalcElement":
         return cls(
             semantic_type=se.semantic_type,
@@ -78,6 +86,8 @@ class CalcElement(BaseModel):
             length=length,
             depth=depth,
             element_id=se.element_id,
+            underground=underground,
+            accessory=accessory,
         )
 
 

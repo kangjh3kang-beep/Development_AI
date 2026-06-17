@@ -4,15 +4,32 @@
 """
 from __future__ import annotations
 
+from enum import Enum
+
 from app.contracts.legal_quantity import CalcElement, CalcTraceEntry
 from app.contracts.semantic_element import SemanticType
 from app.services.legal_calc.calc_params import CalcParamSource
 
 _BASIS_119 = "건축법 시행령 제119조"
-# 용적률 산정 연면적에서 제외하는 요소타입(지하층/부속주차장 등).
-_FAR_EXCLUDED = (SemanticType.BASEMENT, SemanticType.PARKING)
 # 대지면적에서 차감하는 요소타입(건축선 후퇴분/도시계획시설 저촉분).
 _PLOT_DEDUCTED = (SemanticType.BUILDING_LINE, SemanticType.PLOT_BOUNDARY)
+
+
+class ParkingFarEligibility(str, Enum):
+    """주차의 용적률 산정 연면적 제외 적격성(시행령 §119①4: 지하 AND 부속만 제외)."""
+
+    ELIGIBLE = "ELIGIBLE"      # 지하 AND 부속 → 제외 대상
+    INELIGIBLE = "INELIGIBLE"  # 지상 또는 비부속(독립) → 산입 대상
+    UNKNOWN = "UNKNOWN"        # 미상 → 무음 전량제외 금지(거짓적합 방지), HELD
+
+
+def parking_far_eligibility(el: CalcElement) -> ParkingFarEligibility:
+    """주차 요소의 §119①4 제외 적격성. 지하·부속 둘 다 확정돼야 제외, 하나라도 부정이면 산입, 미상은 UNKNOWN."""
+    if el.underground is True and el.accessory is True:
+        return ParkingFarEligibility.ELIGIBLE
+    if el.underground is False or el.accessory is False:
+        return ParkingFarEligibility.INELIGIBLE
+    return ParkingFarEligibility.UNKNOWN
 
 
 class AreaCalculator:
@@ -73,17 +90,31 @@ class AreaCalculator:
         excluded = 0.0
 
         for el in elements:
-            if el.semantic_type in _FAR_EXCLUDED:
+            if el.semantic_type == SemanticType.BASEMENT:
                 excluded += el.area
-                note = f"{el.semantic_type.value} 용적률 산정 연면적 제외"
-                if el.semantic_type == SemanticType.PARKING:
-                    # 건축법 시행령 §119①4 주차 제외는 지하/부속 주차 한정 — 지상·비부속(독립 주차전용)은 산입.
-                    note = ("주차 용적률 산정 제외 — ⚠️ 시행령 §119①4는 지하/부속 주차에 한정. 지상·비부속 주차는 "
-                            "산입 대상이므로 주차 유형 확인 필요(전량 제외 시 FAR 과소·거짓적합 위험)")
                 entries.append(CalcTraceEntry(
-                    rule_id=f"far_{el.semantic_type.value.lower()}",
-                    basis_article=_BASIS_119, excluded_elements=[el.semantic_type],
-                    excluded_amount=round(el.area, 2), note=note))
+                    rule_id="far_basement", basis_article=_BASIS_119,
+                    excluded_elements=[SemanticType.BASEMENT],
+                    excluded_amount=round(el.area, 2), note="지하층 용적률 산정 연면적 제외"))
+            elif el.semantic_type == SemanticType.PARKING:
+                # 시행령 §119①4 주차 제외는 '지하 AND 부속'만 — 지상·독립은 산입, 미상은 무음제외 금지(HELD).
+                elig = parking_far_eligibility(el)
+                if elig is ParkingFarEligibility.ELIGIBLE:
+                    excluded += el.area
+                    entries.append(CalcTraceEntry(
+                        rule_id="far_parking", basis_article=_BASIS_119,
+                        excluded_elements=[SemanticType.PARKING],
+                        excluded_amount=round(el.area, 2),
+                        note="지하·부속 주차 용적률 산정 제외(시행령 §119①4)"))
+                elif elig is ParkingFarEligibility.INELIGIBLE:
+                    entries.append(CalcTraceEntry(
+                        rule_id="far_parking_included", basis_article=_BASIS_119,
+                        note="지상·비부속(독립) 주차는 §119①4 제외 대상 아님 — 용적률 산정 연면적 산입"))
+                else:  # UNKNOWN — 지하/부속 여부 미확인
+                    entries.append(CalcTraceEntry(
+                        rule_id="far_parking_held", basis_article=_BASIS_119,
+                        note="⚠️ 주차 제외 적격성 미상(지하/부속 여부 미확인) — 무음 전량제외 금지(FAR 과소·거짓적합 "
+                             "방지), 보수적 산입 후 확인 필요(HELD)"))
 
         return gross_floor_area - excluded, entries
 
