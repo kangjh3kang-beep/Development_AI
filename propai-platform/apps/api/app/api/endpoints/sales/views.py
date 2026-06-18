@@ -3,23 +3,27 @@
 import contextlib
 import logging
 import uuid
+from datetime import UTC
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
 from app.api.deps_sales import SalesCtx, sales_ctx
+from apps.api.database.models.sales.commission_mh_harness import (
+    SalesCommissionDistribution,
+    SalesCommissionMaster,
+)
 from apps.api.database.models.sales.contract_crm_ad import SalesContractExt, SalesContractInstallment
 from apps.api.database.models.sales.site_org import SalesOrgNode, SalesSite, SalesSiteSummary
 from apps.api.database.models.sales.units_pricing import (
-    SalesUnitInventory, SalesUnitPriceBreakdown, SalesUnitPriceTable, SalesUnitStatusLog,
+    SalesUnitInventory,
+    SalesUnitPriceBreakdown,
+    SalesUnitPriceTable,
+    SalesUnitStatusLog,
 )
-from apps.api.database.models.sales.commission_mh_harness import (
-    SalesCommissionMaster, SalesCommissionDistribution,
-)
-from datetime import UTC
 
 views_router = APIRouter(tags=["sales-views"])
 
@@ -48,6 +52,50 @@ def _classify_error(exc: BaseException) -> str:
             return "DB_CONNECTION"
         return "DB_ERROR"
     return "INTERNAL"
+
+
+# ── [보안 HIGH] 시행사 연결결산(통합회계) 조회 권한 게이트 ─────────────────────────
+#   projection_summary / projection_accounting_rollup 은 '단일 현장'이 아니라 한 테넌트가
+#   보유한 모든 현장의 연결결산(매출·비용·수수료·손익)을 노출한다. 따라서 actions.py 의
+#   현장단위 형제(/admin/site-detail·/accounting/*)와 동일한 등급
+#   (GM_DIRECTOR/SUBAGENCY/AGENCY/DEVELOPER/SUPERADMIN)으로 보호해야 한다.
+#
+#   ★주의(왜 require_role 을 직접 못 쓰나): require_role→sales_ctx→resolve_site 는 '단일 현장
+#     컨텍스트(X-Site-Code/경로 site_id/서브도메인)'를 강제하는데, 이 두 엔드포인트는
+#     테넌트 전역(현장 컨텍스트 없음·salesGlobal 가 X-Site-Code 미전송)이라 그대로 붙이면
+#     resolve_site 가 400 으로 전 응답을 깨뜨린다(회귀). 그래서 동일 '등급 강제'를 테넌트
+#     스코프로 환원한 게이트를 둔다 — get_current_user 로 테넌트(user.tenant_id) 스코프를
+#     유지하면서, 플랫폼 등급(superadmin/developer) 또는 '본인 테넌트 현장 소유(시행사)'만
+#     허용한다. 이는 sales_ctx 의 분류(_SUPERADMIN_ROLES/_DEVELOPER_ROLES/owns_site→DEVELOPER)
+#     와 동일 의미다. 순수 viewer(영업직/구독 최하위, 소유현장 0)는 403 으로 차단(권한상승 방지).
+_TENANT_FINANCE_ROLES = {
+    "superadmin", "super_admin", "admin", "owner", "총괄관리자", "platform_admin",
+    "developer", "시행사", "dev",
+}
+
+
+async def require_tenant_finance(
+    db: AsyncSession = Depends(get_db), user=Depends(get_current_user),
+):
+    """테넌트 연결결산 조회 게이트 — 플랫폼 등급 또는 본인 테넌트 현장 소유자만 허용.
+
+    현장 컨텍스트 없는 테넌트 전역 집계라 require_role(현장 게이트)를 쓸 수 없어, 동일 등급
+    의도(GM_DIRECTOR/SUBAGENCY/AGENCY/DEVELOPER/SUPERADMIN)를 테넌트 스코프로 강제한다.
+    허용: ①플랫폼 role 이 superadmin/developer 계열 ②또는 본인 테넌트가 현장 1곳 이상 소유(시행사).
+    차단: 순수 viewer(영업직/구독 최하위, 소유 현장 0) → 403(연결결산 권한상승 방지).
+    """
+    role_lower = (getattr(user, "role", "") or "").lower()
+    if role_lower in _TENANT_FINANCE_ROLES:
+        return user
+    # 본인 테넌트가 소유한 현장이 1곳이라도 있으면 시행사(DEVELOPER)로 인정(sales_ctx owns_site 와 동일).
+    #   소유 판정은 SalesSite.organization_id == user.tenant_id (provision 시 저장되는 소유 테넌트).
+    tenant_id = getattr(user, "tenant_id", None)
+    if tenant_id:
+        owns = (await db.execute(select(func.count()).select_from(SalesSite).where(
+            SalesSite.organization_id == tenant_id, SalesSite.deleted_at.is_(None)))).scalar() or 0
+        if owns > 0:
+            return user
+    raise HTTPException(403, "시행사 연결결산(통합회계) 조회 권한이 없습니다(시행사·관리자 등급 전용).")
 
 
 @views_router.get("/integrity/check")
@@ -125,9 +173,13 @@ async def integrity_check(db: AsyncSession = Depends(get_db), ctx: SalesCtx = De
 @views_router.get("/crm/grade-suggestions")
 async def crm_grade_suggestions(db: AsyncSession = Depends(get_db), ctx: SalesCtx = Depends(sales_ctx)):
     """AI 가망고객 예측 — 상담·통화·재방문·마케팅동의·최근성 가중 점수로 등급(A/B/C)·다음액션 제안."""
-    from datetime import datetime, timezone
+    from datetime import datetime
+
     from apps.api.database.models.sales.contract_crm_ad import (
-        SalesCustomer, SalesCustomerCall, SalesCustomerConsent, SalesCustomerConsultation,
+        SalesCustomer,
+        SalesCustomerCall,
+        SalesCustomerConsent,
+        SalesCustomerConsultation,
     )
 
     now = datetime.now(UTC)
@@ -247,8 +299,11 @@ async def unit_detail(unit_id: uuid.UUID, db: AsyncSession = Depends(get_db),
 
 
 @views_router.get("/projection/summary")
-async def projection_summary(db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
-    """시행사 투영 — 현장별 누적 집계(개인정보 없음). sales_site_summary 증분행 합산."""
+async def projection_summary(db: AsyncSession = Depends(get_db), user=Depends(require_tenant_finance)):
+    """시행사 투영 — 현장별 누적 집계(개인정보 없음). sales_site_summary 증분행 합산.
+
+    [보안] 테넌트 연결결산 조회는 require_tenant_finance 로 보호(시행사·관리자 등급 전용).
+    """
     site_rows = (await db.execute(select(SalesSite).where(
         SalesSite.organization_id == user.tenant_id, SalesSite.deleted_at.is_(None)))).scalars().all()
     out = []
@@ -273,11 +328,14 @@ async def projection_summary(db: AsyncSession = Depends(get_db), user=Depends(ge
 
 
 @views_router.get("/projection/accounting-rollup")
-async def projection_accounting_rollup(db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
+async def projection_accounting_rollup(db: AsyncSession = Depends(get_db), user=Depends(require_tenant_finance)):
     """시행사 통합회계 — 보유 현장 회계(매출·비용항목별·수수료·손익)를 유기적으로 합산(연결결산).
 
     각 현장 ERP가 단일 원장(sales_site_accounting)에 기록한 비용 + 계약 매출·수수료배분을
     현장별로 집계(site_management_detail)하고, 시행사 레벨로 롤업한다. '같이(통합)·따로(현장별)'.
+
+    [보안] 연결결산(매출·비용·수수료·손익) 전체 노출 → require_tenant_finance 로 보호
+      (시행사·관리자 등급 전용, 순수 viewer/영업직 403). actions.py 형제 엔드포인트와 동일 등급.
     """
     from app.services.sales.admin.console import site_management_detail
     log = _log
@@ -292,6 +350,13 @@ async def projection_accounting_rollup(db: AsyncSession = Depends(get_db), user=
            "cash_collected": 0, "cash_profit": 0, "deferred_revenue": 0, "receivable": 0}
     by_type: dict[str, int] = {}
     errors: list[dict[str, str]] = []  # 현장별 부분내결함 표기(은폐 금지: 응답+로깅)
+    # 독립 대사(reconciliation) 실패 현장 수 — site_management_detail 의 reconciliation.balanced
+    #   가 False(약정-계약/비율/수납초과 불일치 또는 '서명매출>0인데 약정표 누락')인 현장의 합.
+    #   지금까지 reconciliation 은 응답에 실려 있었으나 프론트가 전혀 소비하지 않는 dead output
+    #   이었다(grep 소비 0). 이를 consolidated.reconcile_failed_count(머신리더블)로 전파해
+    #   '연결결산 정합 경고' 배너를 결정적으로 띄운다(은폐 금지). balanced=None(판정보류)은 실패가
+    #   아니므로 세지 않는다(약정표 부재로 대사 불가일 뿐, 데이터 불일치는 아님).
+    reconcile_failed_count = 0
     for sid, sname, sstatus in rows:
         # [부분내결함] 한 현장의 비-미존재 DB오류(권한·연결)가 전체 롤업 500 을 유발하지 않도록
         # 현장 단위로 격리한다. 실패 현장은 error 로 표기하고 나머지는 정상 합산한다(은폐 금지).
@@ -308,19 +373,18 @@ async def projection_accounting_rollup(db: AsyncSession = Depends(get_db), user=
             corr_id = uuid.uuid4().hex[:12]
             log.error("accounting-rollup 현장(%s) 집계 실패(격리) code=%s corr=%s: %s",
                       sid, error_code, corr_id, str(e)[:300])
+            # 실패 현장은 errors[] 단일출처로만 표기한다(프론트 통합회계 배너가 errors[] 를
+            #   조인 없이 직접 렌더 — ERROR 배지+분류코드+상관ID). sites[] 에는 합산 가능한
+            #   '데이터 행'만 넣으므로 실패 현장은 sites[] 에서 제외해 dead output(status='ERROR'·
+            #   site_status·error_code·correlation_id 미소비)을 완전 제거한다(타입-데이터 정합).
             errors.append({"site_id": str(sid), "site_name": sname,
                            "error_code": error_code, "correlation_id": corr_id})
-            sites.append({
-                "site_id": str(sid), "site_name": sname,
-                # [강신호] 실패 현장은 status='ERROR' 로 덮어써 '매출0원'(정상)과 시각적으로 구분.
-                #   운영자가 집계실패를 '실적 0' 으로 오인하지 않도록 한다(아래 0 은 미집계 표기).
-                "status": "ERROR", "site_status": sstatus,
-                "error_code": error_code, "correlation_id": corr_id,
-                "revenue": 0, "cost_total": 0, "commission": 0, "profit_estimate": 0,
-            })
             continue
         cf = d.get("cash_flow") or {}
         acc = d.get("accrual") or {}
+        rec = d.get("reconciliation") or {}
+        if rec.get("balanced") is False:  # None(판정보류)·True(통과)는 제외, False(불일치)만 카운트
+            reconcile_failed_count += 1
         for t in d["accounting"]["by_type"]:
             by_type[t["label"]] = by_type.get(t["label"], 0) + int(t["amount"])
         con["revenue"] += int(d["revenue"])
@@ -338,6 +402,9 @@ async def projection_accounting_rollup(db: AsyncSession = Depends(get_db), user=
             # 손익 2-뷰 + 선수금/미수금 — 현장별 드릴다운에서도 동일 3지표 표기.
             "cash_flow": cf, "accrual": acc, "deferred_revenue": d.get("deferred_revenue", 0),
             "by_type": d["accounting"]["by_type"],
+            # 독립 대사 결과 — 프론트 현장 드릴다운/배너가 balanced·discrepancies(약정표 누락·수납초과)
+            #   를 가시화한다(dead output 해소). 합산 불가 메타라 con 에는 넣지 않고 행에만 동봉.
+            "reconciliation": rec,
         })
     # ── 통합총계 완전성 플래그(머신리더블) — dead output 해소 ──────────────────────
     #   실패 현장은 continue 로 합산에서 제외돼 consolidated 가 '과소계상'된다. 이 사실이
@@ -348,13 +415,19 @@ async def projection_accounting_rollup(db: AsyncSession = Depends(get_db), user=
     complete = failed_count == 0
     return {
         "consolidated": {**con, "by_type": [{"label": k, "amount": v} for k, v in sorted(by_type.items())],
-                         "complete": complete, "failed_count": failed_count, "partial": not complete},
+                         "complete": complete, "failed_count": failed_count, "partial": not complete,
+                         # 독립 대사 불일치 현장 수(reconciliation.balanced=False 합). 집계실패(failed_count)
+                         #   와 별개 신호 — 합산은 됐지만 현장 원장 정합이 깨진 곳이 있음을 알린다.
+                         "reconcile_failed_count": reconcile_failed_count},
         "sites": sites,
         "errors": errors,
         "note": ("통합회계 = 보유 현장 연결결산. 손익 2-뷰: profit_estimate=발생주의(계약매출 기준, "
                  "미수금 포함 과대계상 가능)·cash_profit=현금흐름(실수납 기준). 선수금(deferred_revenue)·"
                  "미수금(receivable) 별도 표기. 현장 ERP 원장 단일출처 합산. "
-                 "일부 현장 집계 실패 시 errors 에 분류코드(error_code)+상관ID(correlation_id)로 표기하고 "
-                 "나머지는 합산(부분내결함). consolidated.complete/failed_count/partial 로 과소계상 여부를 "
-                 "머신리더블 신호로 제공. 실패 현장 status='ERROR'(매출0원 오인 방지·원문은 서버로그만)."),
+                 "일부 현장 집계 실패 시 errors[] 에 분류코드(error_code)+상관ID(correlation_id)로 표기하고 "
+                 "나머지는 합산(부분내결함). 실패 현장은 sites[] 에서 제외(errors[] 단일출처). "
+                 "consolidated.complete/failed_count/partial 로 과소계상 여부를 머신리더블 신호로 제공 "
+                 "(원문은 서버로그만, 응답엔 분류코드+상관ID). 또한 각 현장의 독립 대사 결과는 "
+                 "sites[].reconciliation 에 동봉하고, 불일치(balanced=False) 현장 수는 "
+                 "consolidated.reconcile_failed_count 로 제공(합산은 됐으나 원장 정합 경고)."),
     }

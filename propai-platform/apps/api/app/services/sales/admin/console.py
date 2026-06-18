@@ -22,6 +22,24 @@ logger = logging.getLogger(__name__)
 
 _ENTRY_TYPES = {"LABOR": "인건비", "EXPENSE": "경비", "UTILITY": "공과금", "AD": "광고비", "ETC": "기타"}
 
+# ── 독립 대사(reconcile) 범위: '회차가 실재하는 계약단계' ────────────────────────
+#   ★SSOT 확인(contract/service.py): contract.stage 상태기계는 RESERVED→SIGNED→CANCELLED
+#     만 생성한다. sign_contract() 만이 분납 회차(sales_contract_installments)를 만들고
+#     stage='SIGNED' 로 둔다. MIDDLE/BALANCE 는 contract.stage 가 아니라 '회차 종류'
+#     (installment.kind, sign_contract 의 s["kind"]) 개념이며, stage 로 설정되는 코드 경로가
+#     전혀 없다(모델 주석 'RESERVED/SIGNED/MIDDLE/BALANCE' 는 미실현 표기). 따라서 회차가
+#     실재하는 단계는 'SIGNED' 하나뿐이라 그 범위로만 정렬해 대사한다(MIDDLE/BALANCE 를 넣으면
+#     영구히 매치되지 않는 dead 분기). 향후 stage 에 중도금/잔금 전이가 '실제로' 추가되면
+#     이 튜플에만 단계를 더하면 전체 대사 쿼리가 일괄 정합 확장된다(단일 변경점).
+#   ※ f-string 리터럴 대신 모듈 상수 튜플 — 값은 전부 하드코딩 리터럴(외부입력 0)이라
+#     SQL 주입 위험이 없고, IN 절은 _stage_in_clause() 로 1곳에서 안전 조립한다.
+_RECONCILE_STAGES: tuple[str, ...] = ("SIGNED",)
+
+
+def _stage_in_clause(stages: tuple[str, ...] = _RECONCILE_STAGES) -> str:
+    """하드코딩 stage 리터럴 튜플 → SQL IN 절 문자열('SIGNED','MIDDLE',...). 외부입력 없음(주입無)."""
+    return "(" + ",".join(f"'{st}'" for st in stages) + ")"
+
 # 귀속월(ym) 형식 검증: 정확히 'YYYY-MM' 이고 월은 01~12 만 허용한다.
 # 비정상 ym(예 2026-13·2026/06·2026-6)은 유니크키 분기(uq_site_acct_site_ym_type)를
 # 우회해 멱등을 깨뜨릴 수 있으므로 입력 단계에서 차단한다(은폐 금지=ValueError).
@@ -241,29 +259,57 @@ def _reconcile(revenue_signed: int, scheduled_total: int, installment_paid: int,
 
     ★iter-5 회귀수정 — 두 가지를 분리/완화한다.
       (회귀1·거짓경보) 회차 약정금은 amount=int(round(total_price×ratio))로 '반올림'되어
-        저장된다. 회차 N개면 합계에 최대 약 N/2(보수적으로 N)원의 반올림 잔차가 생겨
+        저장된다. 회차 N개면 합계에 최대 약 N/2 원의 반올림 잔차가 생겨
         약정총액(scheduled_total)이 계약총액(revenue_signed)과 몇 원 어긋날 수 있다.
         엄격 '!=' 비교는 이 정상 잔차를 거짓 불일치(discrepancy·balanced=False)로 올린다.
-        → 허용오차 tol = max(installment_count, eps) 이내의 차이는 '반올림오차'로 흡수(통과).
       (계약결함 분리) 약정 ratio 합이 1.0 이 아니어서 회차합이 계약총액과 '크게' 어긋나는
         계약(tol 초과)은 진짜 데이터 결함이다. 이건 별도 규칙 schedule_ratio_invalid 로
         분리 제시해 운영자가 '반올림오차(무시 가능)'와 '계약결함(점검 필요)'을 구분하게 한다.
+
+    허용오차 tol = (installment_count + 1) // 2 + 1  (= ceil(N/2)+1, 회차 0개면 1=eps).
+      누적 반올림 잔차의 수학적 상한(±N/2)은 흡수하되 그 이상은 실불일치로 본다(탐지력↑).
+      ①약정-계약 차이(schedule_vs_contract)와 ③수납-약정 초과(paid_exceeds_schedule) 양쪽에
+      대칭으로 같은 tol 을 적용한다(반올림 비대칭으로 인한 거짓경보 제거).
 
     인자:
       revenue_signed     : SIGNED(회차 실생성) 계약의 계약총액 합(독립대사 비교 기준).
       scheduled_total    : 같은 범위 회차 약정금 합(독립 제3 출처).
       installment_paid   : 같은 범위 회차 실수납 합(matched 입금).
-      installment_count  : 같은 범위 회차 행 수(반올림 허용오차 산정용).
+      installment_count  : 같은 범위 회차 행 수(반올림 허용오차 tol 산정용).
       ratio_invalid_count: 계약별 회차합이 자기 계약총액과 tol 초과로 어긋난 '결함 계약' 수.
 
-    반환: balanced(True 통과 / False 적발 / None 약정표 부재), discrepancies[], tolerance.
+    반환: balanced, discrepancies[], tolerance.
+      balanced 의미:
+        None  = '서명매출도 0(revenue_signed==0)' → 서명계약 자체가 없어 판정보류(N/A, 거짓안심 금지).
+        False = '약정표 누락(scheduled_total==0)인데 서명매출>0'(schedule_missing_for_signed) 또는
+                약정-계약/비율/수납초과 불일치(discrepancies 적발).
+        True  = 독립 출처(약정표) 존재 + tol 흡수 후 불일치 0(대사 통과).
     """
-    eps = 1  # 회차 0개라도 1원 잔차는 흡수(정수 반올림 하한).
-    tol = max(int(installment_count), eps)
+    # 허용오차 tol — 회차 약정금은 round(계약총액×비율) 저장이라 회차마다 ±0.5원 반올림 잔차가
+    #   누적된다. N회차면 최악 누적 잔차는 ±N/2 원이므로 ceil(N/2)+1 이 수학적으로 충분한 상한이다.
+    #   ★iter-6 타이트화(탐지력↑): 종전 tol=max(N, eps)는 다회차(예 1000회) 계약에서 최대 ±1000원의
+    #     '진짜 불일치'까지 흡수해 탐지를 무디게 했다. ceil(N/2)+1 로 절반 수준으로 좁혀 반올림
+    #     잔차(±N/2)는 그대로 흡수하면서 그 이상의 실불일치 탐지력을 높인다. 회차 0개여도 +1 로
+    #     최소 1원 잔차(eps)는 보장(정수 반올림 하한).
+    tol = (installment_count + 1) // 2 + 1
     schedule_present = scheduled_total > 0
     discrepancies: list[dict[str, Any]] = []
     if not schedule_present:
-        # 독립 출처(분납 약정표) 부재 → 판정 보류(미탐지를 '정합'으로 위장 금지).
+        # 독립 출처(분납 약정표) 부재.
+        #   ★iter-6: 두 경우를 분리한다(조용한 과소대사 승격).
+        #     ① 서명매출도 0(revenue_signed==0) → 아직 서명계약 자체가 없음 → 진짜 판정보류(None).
+        #     ② 서명매출>0 인데 약정표가 비었음(scheduled_total==0) → '서명했는데 분납약정표 미생성'
+        #        이라는 실데이터 결함이다. 이를 None('N/A')로 숨기면 약정표 누락이 정합처럼 보여
+        #        조용한 과소대사가 된다. 그래서 schedule_missing_for_signed 경고로 승격(balanced=False).
+        if revenue_signed > 0:
+            discrepancies.append({
+                "key": "schedule_missing_for_signed",
+                "detail": f"SIGNED 계약총액({revenue_signed:,}) 존재하나 분납 약정표가 비어 있음 "
+                          f"(약정표 미생성 — 독립 대사 불가, 회차 생성 점검 필요)",
+                "delta": revenue_signed,
+            })
+            return {"balanced": False, "discrepancies": discrepancies, "tolerance": tol}
+        # 서명매출도 0 → 독립 출처 부재로 판정 보류(미탐지를 '정합'으로 위장 금지).
         return {"balanced": None, "discrepancies": [], "tolerance": tol}
     delta_sc = scheduled_total - revenue_signed
     # ① 약정총액 vs 계약총액(SIGNED) — 반올림 잔차(±tol)는 흡수, 그 이상만 불일치로 본다.
@@ -283,11 +329,16 @@ def _reconcile(revenue_signed: int, scheduled_total: int, installment_paid: int,
                       f"(회차합이 계약총액과 허용오차 초과로 불일치 — 계약결함)",
             "count": ratio_invalid_count,
         })
-    # ③ 회차 실수납이 약정총액 초과(중복/오대사 신호) — 반올림과 무관하므로 엄격 비교.
-    if installment_paid > scheduled_total:
+    # ③ 회차 실수납이 약정총액 초과(중복/오대사 신호).
+    #   ★iter-6 회귀수정(거짓경보 비대칭): 약정총액(scheduled_total)은 Σround(계약총액×비율)이라
+    #     반올림으로 '하향'(최대 N원 부족)될 수 있다. 반면 완납 계약의 회차 실수납(installment_paid)은
+    #     실제 입금액(보통 계약총액=Σ원래금액)이라 scheduled_total 보다 몇 원 클 수 있다.
+    #     엄격 '>' 비교는 이 정상 반올림 잔차를 거짓 적발(paid_exceeds_schedule)로 올린다.
+    #     →  ① 약정총액(±tol) 흡수와 대칭이 되도록 동일 tol 을 적용한다(그 이상만 진짜 초과로 본다).
+    if installment_paid > scheduled_total + tol:
         discrepancies.append({
             "key": "paid_exceeds_schedule",
-            "detail": f"회차 실수납({installment_paid:,}) > 약정총액({scheduled_total:,})",
+            "detail": f"회차 실수납({installment_paid:,}) > 약정총액({scheduled_total:,}, 허용오차 +{tol:,})",
             "delta": installment_paid - scheduled_total,
         })
     return {"balanced": len(discrepancies) == 0, "discrepancies": discrepancies, "tolerance": tol}
@@ -320,30 +371,38 @@ async def site_management_detail(db: AsyncSession, site_id) -> dict[str, Any]:
     # ── 독립 약정총액(분납 회차합) — reconcile 실불일치 탐지용 '제3의 출처' ───────────
     #   sales_contract_installments(계약 회차별 약정금)은 계약총액(total_price)과도, 실수납과도
     #   별개로 기록되는 독립 원장이다.
-    #   ★iter-5 범위정렬(회귀3): 회차(installment)는 '서명(SIGNED)' 시점에만 생성된다
+    #   ★iter-5 범위정렬(회귀3): 회차(installment)는 '서명(SIGNED)' 시점에 생성된다
     #     (contract.service.sign_contract). 그런데 revenue/scheduled_total 를 status='ACTIVE'
     #     로 집계하면 미서명 ACTIVE(예약·RESERVED)까지 매출엔 잡히는데 회차는 없어
     #     scheduled_total < revenue 거짓 불일치가 난다. 독립대사는 회차가 실재하는
-    #     SIGNED 범위로 매출·약정·수납을 '같은 범위'로 정렬해 비교한다.
-    #   원장 미존재(분납표 미생성) 시 0 폴백(정상) → 그 경우 독립대사는 'N/A' 로 표기(거짓안심 금지).
+    #     'SIGNED' 범위로 매출·약정·수납을 '같은 범위'로 정렬해 비교한다.
+    #   ★iter-7 SSOT 정정(투기적 스코프 제거): 회차가 실재하는 contract.stage 는 'SIGNED'
+    #     하나뿐이다(_RECONCILE_STAGES 주석의 service.py 근거 참조). 직전 iter-6 의
+    #     stage IN ('SIGNED','MIDDLE','BALANCE') 확장은 MIDDLE/BALANCE 가 stage 로 설정되는
+    #     코드가 없어 영구 dead 분기였고, installment.kind 와 stage 를 혼동한 것이었다 →
+    #     실재 단계(_RECONCILE_STAGES)로 복원한다. 미래에 stage 전이가 '실제로' 추가되면
+    #     _RECONCILE_STAGES 튜플 1곳만 늘리면 전체 대사 쿼리가 일괄 정합 확장된다.
+    #   원장 미존재(분납표 미생성) 시 0 폴백(정상) → 그 경우 _reconcile 가 서명매출 유무로
+    #     '판정보류(None)' vs '약정표 누락 경고(False)'를 분리한다(거짓안심 금지).
+    _stage_signed = _stage_in_clause()  # 회차 실재 단계 IN 절('SIGNED'). 외부입력 없음(주입無)
     revenue_signed = await _scalar(db,
         "SELECT COALESCE(SUM(total_price),0) FROM sales_contracts_ext "
-        "WHERE site_id=:s AND status='ACTIVE' AND stage='SIGNED'", s=s)
+        f"WHERE site_id=:s AND status='ACTIVE' AND stage IN {_stage_signed}", s=s)
     scheduled_total = await _scalar(db,
         "SELECT COALESCE(SUM(i.amount),0) FROM sales_contract_installments i "
         "JOIN sales_contracts_ext c ON c.id=i.contract_ext_id "
-        "WHERE c.site_id=:s AND c.status='ACTIVE' AND c.stage='SIGNED'", s=s)
-    # 회차 행 수 — 반올림 허용오차 tol=max(회차수, eps) 산정용(SIGNED 범위로 정렬).
+        f"WHERE c.site_id=:s AND c.status='ACTIVE' AND c.stage IN {_stage_signed}", s=s)
+    # 회차 행 수 — 반올림 허용오차 tol=ceil(N/2)+1 산정용(SIGNED 범위로 정렬, _reconcile 참조).
     installment_count = await _scalar(db,
         "SELECT count(*) FROM sales_contract_installments i "
         "JOIN sales_contracts_ext c ON c.id=i.contract_ext_id "
-        "WHERE c.site_id=:s AND c.status='ACTIVE' AND c.stage='SIGNED'", s=s)
+        f"WHERE c.site_id=:s AND c.status='ACTIVE' AND c.stage IN {_stage_signed}", s=s)
     # 회차별 실수납 합(installment_id 로 연결된 matched 입금). 약정 대비 수납 진척의 독립 출처.
     installment_paid = await _scalar(db,
         "SELECT COALESCE(SUM(p.amount),0) FROM sales_payments p "
         "JOIN sales_contract_installments i ON i.id=p.installment_id "
         "JOIN sales_contracts_ext c ON c.id=i.contract_ext_id "
-        "WHERE c.site_id=:s AND c.status='ACTIVE' AND c.stage='SIGNED' AND p.matched=true", s=s)
+        f"WHERE c.site_id=:s AND c.status='ACTIVE' AND c.stage IN {_stage_signed} AND p.matched=true", s=s)
     # 계약별 회차합이 '자기 계약총액'과 반올림 허용오차(회차수)를 초과해 어긋난 '결함 계약' 수.
     #   amount=round(total_price×ratio) 저장이므로 회차합과 계약총액 차이는 보통 ≤ 회차수(반올림).
     #   그 초과는 ratio 합≠1.0(계약결함)을 시사 → schedule_ratio_invalid 로 분리 제시.
@@ -353,7 +412,7 @@ async def site_management_detail(db: AsyncSession, site_id) -> dict[str, Any]:
         "         count(i.id) AS n "
         "  FROM sales_contracts_ext c "
         "  JOIN sales_contract_installments i ON i.contract_ext_id=c.id "
-        "  WHERE c.site_id=:s AND c.status='ACTIVE' AND c.stage='SIGNED' "
+        f"  WHERE c.site_id=:s AND c.status='ACTIVE' AND c.stage IN {_stage_signed} "
         "  GROUP BY c.id"
         ") t WHERE t.diff > greatest(t.n, 1)", s=s)
 
@@ -460,9 +519,11 @@ async def site_management_detail(db: AsyncSession, site_id) -> dict[str, Any]:
             "discrepancies": discrepancies,
             "note": ("독립 대사(자기참조 항등식 아님): 분납 약정표(scheduled_total)를 "
                      "SIGNED 계약총액(revenue_signed)·실수납(installment_paid)과 대조해 실불일치를 탐지. "
-                     "회차 약정금은 round(계약총액×비율) 저장이라 ±회차수(tolerance) 반올림 잔차는 흡수하고, "
-                     "그를 초과하는 약정-계약 불일치는 계약결함(schedule_ratio_invalid)으로 분리 제시. "
-                     "balanced=True 통과·False 적발(discrepancies)·None 약정표 부재(판정보류). "
+                     "회차 약정금은 round(계약총액×비율) 저장이라 ±tol(=ceil(회차수/2)+1, 회차0이면1) "
+                     "반올림 잔차는 흡수하고(약정-계약·수납초과 양쪽 대칭 적용), 그를 초과하는 약정-계약 "
+                     "불일치는 계약결함(schedule_ratio_invalid)으로 분리 제시. balanced: True=대사통과 / "
+                     "False=불일치 적발 또는 '서명매출>0인데 약정표 누락'(schedule_missing_for_signed) / "
+                     "None=서명매출도 0(서명계약 부재로 판정보류). "
                      "선수금/미수금 분해(deferred_revenue/receivable)는 두 출처 차액 표기이며 "
                      "그 자체로는 정합을 보장하지 않는다(독립 대사로 별도 검증)."),
         },

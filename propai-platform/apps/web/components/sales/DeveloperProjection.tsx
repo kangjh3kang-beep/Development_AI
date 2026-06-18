@@ -21,15 +21,30 @@ interface ByType { label: string; amount: number; type?: string }
 // 손익 2-뷰: 현금흐름(현금주의)·발생주의(계약매출). 백엔드 site_management_detail 와 동일 키.
 interface CashFlow { cash_collected: number; cost_total: number; commission: number; profit: number; note?: string }
 interface Accrual { revenue_recognized: number; cost_total: number; commission: number; profit: number; receivable: number; note?: string }
-// 집계 실패 현장: status='ERROR'(매출0원 정상과 구분), site_status=원래 현장상태,
-// error_code=분류코드(PERMISSION/DB_CONNECTION/DB_ERROR/INTERNAL), correlation_id=서버로그 역추적용.
-interface RollupSite { site_id: string; site_name: string; status: string; revenue: number; cost_total: number; commission: number; profit_estimate: number; by_type: ByType[]; cash_flow?: CashFlow; accrual?: Accrual; deferred_revenue?: number; error_code?: string; correlation_id?: string; site_status?: string }
+// 독립 대사(reconciliation) — 백엔드 site_management_detail.reconciliation 과 동일 키.
+//   balanced: true=대사통과 / false=불일치 적발(discrepancies) 또는 약정표 누락 / null=서명매출 0(판정보류).
+//   discrepancies[].key 주요값: schedule_missing_for_signed(서명매출>0인데 약정표 누락)·
+//   schedule_vs_contract(약정총액≠계약총액)·schedule_ratio_invalid(비율결함)·paid_exceeds_schedule(수납>약정).
+interface ReconDiscrepancy { key: string; detail?: string; delta?: number; count?: number }
+interface Reconciliation { balanced: boolean | null; discrepancies?: ReconDiscrepancy[]; schedule_present?: boolean; scheduled_total?: number; installment_paid?: number; tolerance?: number; note?: string }
+// sites[] 는 합산 가능한 '정상 데이터 행'만 담는다. 집계 실패 현장은 sites[] 에서 제외되고
+// roll.errors[] 단일출처로만 표기된다(아래 통합회계 배너가 errors[] 를 직접 렌더). 따라서
+// 행 레벨 ERROR 필드(status='ERROR'·error_code·correlation_id·site_status)는 두지 않는다(타입-데이터 정합).
+interface RollupSite { site_id: string; site_name: string; status: string; revenue: number; cost_total: number; commission: number; profit_estimate: number; by_type: ByType[]; cash_flow?: CashFlow; accrual?: Accrual; deferred_revenue?: number; reconciliation?: Reconciliation }
 // consolidated.complete/failed_count/partial: 통합총계 완전성(머신리더블). partial=일부 현장 누락(과소계상).
-interface RollupConsolidated { revenue: number; cost_total: number; commission: number; profit_estimate: number; by_type: ByType[]; cash_collected?: number; cash_profit?: number; deferred_revenue?: number; receivable?: number; complete?: boolean; failed_count?: number; partial?: boolean }
+// reconcile_failed_count: 합산은 됐으나 독립 대사 불일치(balanced=false)인 현장 수(원장 정합 경고).
+interface RollupConsolidated { revenue: number; cost_total: number; commission: number; profit_estimate: number; by_type: ByType[]; cash_collected?: number; cash_profit?: number; deferred_revenue?: number; receivable?: number; complete?: boolean; failed_count?: number; partial?: boolean; reconcile_failed_count?: number }
 interface RollupError { site_id: string; site_name: string; error_code: string; correlation_id: string }
 interface Rollup { consolidated: RollupConsolidated; sites: RollupSite[]; errors?: RollupError[]; note: string }
 // 분류코드 → 운영자용 한국어 라벨(원문 비노출, 안전한 카테고리만).
 const ERR_LABEL: Record<string, string> = { PERMISSION: "권한 부족", DB_CONNECTION: "DB 연결 오류", DB_ERROR: "DB 오류", INTERNAL: "내부 오류" };
+// 독립 대사 불일치 key → 운영자용 한국어 라벨(드릴다운 칩 표기).
+const RECON_LABEL: Record<string, string> = {
+  schedule_missing_for_signed: "약정표 누락(서명계약 분납표 미생성)",
+  schedule_vs_contract: "약정총액≠계약총액",
+  schedule_ratio_invalid: "약정 비율결함(합≠100%)",
+  paid_exceeds_schedule: "수납액 > 약정총액",
+};
 
 const STATUS: Record<string, string> = { PREP: "준비중", OPEN: "분양중", CLOSED: "분양종료" };
 const ENTRY_TYPES = [
@@ -143,6 +158,17 @@ export default function DeveloperProjection() {
               </div>
             </div>
           )}
+          {/* 독립 대사 정합 경고(은폐 금지·dead output 해소): 합산은 됐으나 현장 원장 대사가
+              불일치(balanced=false)인 현장 수를 머신리더블 신호(reconcile_failed_count)로 띄운다.
+              아래 현장 드릴다운(관리 ▾)에서 불일치 항목(약정표 누락·수납초과 등)을 확인. */}
+          {(con.reconcile_failed_count ?? 0) > 0 && (
+            <div className="mt-2 rounded-lg border border-[var(--warning)]/40 bg-[var(--warning)]/10 px-2.5 py-2 text-[11px] text-[var(--warning)]">
+              <b>독립 대사 불일치 · 현장 {con.reconcile_failed_count}곳</b>
+              <span className="ml-1 text-[var(--text-secondary)]">
+                합산은 정상이나 현장 원장(계약·분납약정·수납)이 서로 맞지 않습니다. 각 현장 ‘관리 ▾’에서 불일치 항목(약정표 누락·수납 초과 등)을 확인하세요.
+              </span>
+            </div>
+          )}
           <p className="mt-2 text-[10px] text-[var(--text-hint)]">{roll?.note}</p>
         </section>
       )}
@@ -242,11 +268,53 @@ function ProfitTriView({ cashProfit, accrualProfit, deferred, receivable }: {
   );
 }
 
+/**
+ * 독립 대사 결과 가시화 — 계약총액·분납약정표·실수납을 제3출처로 대조한 결과를 렌더한다.
+ *  balanced=true → 정합(통과) 배지 / false → 불일치 항목(약정표 누락·수납초과 등) 칩 + detail /
+ *  null → 판정보류(서명계약 없음). 백엔드 site_management_detail.reconciliation 소비처(dead output 해소).
+ */
+function ReconciliationView({ rec }: { rec?: Reconciliation }) {
+  if (!rec) return null;
+  const balanced = rec.balanced;
+  const disc = rec.discrepancies ?? [];
+  // 판정보류(null·서명계약 없음)는 경고가 아니라 'N/A'로만 표기(거짓경보 금지).
+  if (balanced === null) {
+    return (
+      <p className="rounded-lg border border-[var(--line)] bg-[var(--surface-soft)] px-2.5 py-1.5 text-[11px] text-[var(--text-hint)]">
+        독립 대사: 판정보류(서명·분납약정이 아직 없어 대조 불가).
+      </p>
+    );
+  }
+  if (balanced === true) {
+    return (
+      <p className="flex items-center gap-1.5 rounded-lg border border-[var(--success)]/40 bg-[var(--success)]/10 px-2.5 py-1.5 text-[11px] font-semibold text-[var(--success)]">
+        <span aria-hidden>✓</span>독립 대사 통과 — 계약·분납약정·수납이 서로 정합합니다.
+      </p>
+    );
+  }
+  // balanced === false → 불일치. 각 discrepancy 를 라벨 칩 + 상세로 렌더(은폐 금지).
+  return (
+    <div className="rounded-lg border border-[var(--warning)]/40 bg-[var(--warning)]/10 px-2.5 py-2 text-[11px] text-[var(--warning)]">
+      <b className="flex items-center gap-1.5"><span aria-hidden>⚠</span>독립 대사 불일치 — 현장 원장 점검 필요</b>
+      <div className="mt-1.5 flex flex-col gap-1">
+        {disc.map((x, i) => (
+          <span key={`${x.key}-${i}`} className="inline-flex flex-wrap items-baseline gap-1">
+            <b className="rounded border border-[var(--warning)]/50 bg-[var(--warning)]/15 px-1.5 py-0.5 text-[10px] font-bold text-[var(--warning)]">
+              {RECON_LABEL[x.key] ?? x.key}
+            </b>
+            {x.detail && <span className="text-[var(--text-secondary)]">{x.detail}</span>}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /** 현장 1곳 통합 관리 드릴다운 — 담당자·근태·계약·매출·수수료·방문·광고·회계 + 회계항목 등록. */
 function SiteManagePanel({ siteId, onSaved }: { siteId: string; onSaved: () => void }) {
   // X-Site-Code 헤더에 site_id(UUID)를 넘기면 백엔드 resolve_site 가 UUID로 현장을 해석한다.
   const api = useMemo(() => salesApi(siteId), [siteId]);
-  type Detail = { staff_assigned: number; contracts: number; revenue: number; commission: number; visitors: number; attendance_today: number; ad_budget: number; accounting: { by_type: ByType[]; cost_total: number }; profit_estimate: number; cash_flow?: CashFlow; accrual?: Accrual; deferred_revenue?: number };
+  type Detail = { staff_assigned: number; contracts: number; revenue: number; commission: number; visitors: number; attendance_today: number; ad_budget: number; accounting: { by_type: ByType[]; cost_total: number }; profit_estimate: number; cash_flow?: CashFlow; accrual?: Accrual; deferred_revenue?: number; reconciliation?: Reconciliation };
   const [d, setD] = useState<Detail | null>(null);
   const [err, setErr] = useState(false);
   const [et, setEt] = useState("LABOR");
@@ -294,6 +362,8 @@ function SiteManagePanel({ siteId, onSaved }: { siteId: string; onSaved: () => v
         deferred={d.deferred_revenue ?? 0}
         receivable={d.accrual?.receivable ?? 0}
       />
+      {/* 독립 대사(계약·분납약정·수납 제3출처 대조) — dead output 해소: 불일치 가시 렌더 */}
+      <ReconciliationView rec={d.reconciliation} />
       {/* 회계 원장 — 항목별 비용 + 직접 등록 */}
       <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-3">
         <div className="mb-2 flex flex-wrap items-center gap-2">
