@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import { apiClient } from "@/lib/api-client"; // 다필지 지번별 용도지역·법규한도 조회(/zoning/parcels-info)
 import { dynamicMap } from "@/components/common/MapShell";
 import type { NearbyTransactionsMap as NearbyTransactionsMapType } from "@/components/map/NearbyTransactionsMap";
 import type { ParcelBoundaryMap as ParcelBoundaryMapType } from "@/components/map/ParcelBoundaryMap";
@@ -261,6 +262,230 @@ function DonationSimTable({ baseFar, capFar }: { baseFar: number; capFar: number
   );
 }
 
+/* ── 다필지 지번별 용도지역·법규한도 표 ──
+   다필지(2개 이상) 분석 시, 대표 1필지만 보이던 한계를 보완한다.
+   /zoning/parcels-info로 지번별 용도지역·법정 건폐/용적을 일괄 조회해 표로 보여주고,
+   용도지역이 혼재(예: 제1종+제2종)할 때 면적가중 통합 한도를 함께 안내한다.
+   무목업: 조회 실패/면적 결측은 정직 표기하고, 결측 행은 통합계산에서 제외한다. */
+
+// /zoning/parcels-info 응답 1건의 모양(백엔드 parcels_info 핸들러와 동일 필드).
+//   bcr_pct/far_pct = 용도지역 법정상한(ZONE_LIMITS). max_bcr_pct/max_far_pct는 혹시 모를 별칭 폴백.
+interface ParcelInfoRow {
+  __rid?: number;
+  address?: string | null;
+  jibun?: string | null;
+  pnu?: string | null;
+  area_sqm?: number | null;
+  zone_type?: string | null;
+  bcr_pct?: number | null;
+  far_pct?: number | null;
+  max_bcr_pct?: number | null;
+  max_far_pct?: number | null;
+  status?: string | null;
+  reason?: string | null;
+}
+
+// 표에 쓰기 좋게 정규화한 행(원본 필드명을 화면 표시용으로 정리).
+interface NormalizedParcelRow {
+  label: string; // 지번(우선) 또는 주소
+  zoneType: string;
+  areaSqm: number | null;
+  bcr: number | null;
+  far: number | null;
+  failed: boolean; // 조회 실패 여부(정직 표기용)
+}
+
+function ParcelZoningTable({ parcels }: { parcels: string[] }) {
+  const [rows, setRows] = useState<NormalizedParcelRow[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(false);
+  const [open, setOpen] = useState(false); // 다필지는 길 수 있어 기본 접힘(공간효율)
+  // 같은 필지 배열에 대한 중복 호출 방지 + 늦게 도착한 stale 응답 폐기용 시퀀스 가드.
+  const seqRef = useRef(0);
+  const fetchedKeyRef = useRef<string>("");
+
+  // parcels는 매 렌더 새 배열참조라 deps에 직접 넣으면 펼침 중 매 렌더마다 effect 재실행
+  //   → 안정 문자열 키로 deps를 고정(중복 in-flight 요청 창 제거).
+  const parcelsKey = parcels.join("|");
+  useEffect(() => {
+    // 패널을 펼칠 때 1회만 조회(접힌 상태에선 네트워크 호출 안 함).
+    if (!open) return;
+    if (fetchedKeyRef.current === parcelsKey) return; // 동일 필지는 시도 후 재진입 차단(중복요청 방지)
+    fetchedKeyRef.current = parcelsKey;
+    const seq = ++seqRef.current;
+    setLoading(true);
+    setError(false);
+    (async () => {
+      try {
+        const r = await apiClient.post<{ parcels: ParcelInfoRow[] }>("/zoning/parcels-info", {
+          // __rid로 입력 순서를 echo 매칭(주소 충돌 없이 정확 정렬). 다필지 분석은 보통 주소만 보유.
+          body: { parcels: parcels.map((address, i) => ({ __rid: i, address })) },
+          useMock: false,
+          timeoutMs: 90000,
+        });
+        if (seq !== seqRef.current) return; // 더 새로운 조회가 시작됐으면 폐기
+        const list = r.parcels || [];
+        // __rid 순서로 정렬(누락 시 입력 순서 유지).
+        const byRid = new Map<number, ParcelInfoRow>();
+        list.forEach((p, idx) => byRid.set(typeof p.__rid === "number" ? p.__rid : idx, p));
+        const normalized: NormalizedParcelRow[] = parcels.map((address, i) => {
+          const p = byRid.get(i);
+          const failed = !p || (p.status != null && p.status !== "ok" && p.status !== "");
+          return {
+            label: s(p?.jibun || p?.address || address),
+            zoneType: s(p?.zone_type),
+            areaSqm: n(p?.area_sqm),
+            bcr: n(p?.bcr_pct ?? p?.max_bcr_pct),
+            far: n(p?.far_pct ?? p?.max_far_pct),
+            failed: Boolean(failed),
+          };
+        });
+        setRows(normalized);
+      } catch {
+        if (seq !== seqRef.current) return;
+        setError(true);
+        setRows(null);
+        fetchedKeyRef.current = ""; // 실패 시 키 해제 → 접었다 다시 펼치면 재시도 가능
+      } finally {
+        if (seq === seqRef.current) setLoading(false);
+      }
+    })();
+  }, [open, parcelsKey]);
+
+  // 용도지역이 2종 이상이면 '혼재'로 판정(실제로 표시된 용도지역 종류 수).
+  const distinctZones = rows
+    ? Array.from(new Set(rows.map((r) => r.zoneType).filter(Boolean)))
+    : [];
+  const mixed = distinctZones.length > 1;
+
+  // 면적가중 통합 한도 — 면적·한도가 모두 있는 행만 가중에 포함(결측은 제외하고 그 사실을 표기).
+  let sumArea = 0;
+  let sumAreaBcr = 0;
+  let sumAreaFar = 0;
+  let excludedCount = 0; // 면적/한도 결측으로 통합에서 제외된 행 수
+  if (rows) {
+    for (const r of rows) {
+      if (r.areaSqm != null && r.areaSqm > 0 && r.bcr != null && r.far != null) {
+        sumArea += r.areaSqm;
+        sumAreaBcr += r.areaSqm * r.bcr;
+        sumAreaFar += r.areaSqm * r.far;
+      } else {
+        excludedCount += 1;
+      }
+    }
+  }
+  const aggBcr = sumArea > 0 ? sumAreaBcr / sumArea : null;
+  const aggFar = sumArea > 0 ? sumAreaFar / sumArea : null;
+
+  return (
+    <div className="sa-di-sub mt-3">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className="sa-di-block__head"
+        aria-expanded={open}
+        style={{ width: "100%", padding: 0, background: "transparent" }}
+      >
+        <span className="sa-di-eyebrow">지번별 용도지역 · 법규한도 ({parcels.length}필지)</span>
+        <svg
+          width="14" height="14" viewBox="0 0 24 24"
+          fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+          className="sa-di-block__chevron" data-open={open}
+        >
+          <path d="m6 9 6 6 6-6" />
+        </svg>
+      </button>
+      {open && (
+        <div className="mt-2">
+          {loading && <p className="sa-di-empty">지번별 용도지역 조회 중…</p>}
+          {error && !loading && (
+            <p className="sa-di-empty">지번별 용도지역 조회 실패 — 잠시 후 다시 시도해 주세요.</p>
+          )}
+          {!loading && !error && rows && rows.length > 0 && (
+            <>
+              <div className="overflow-x-auto" style={{ maxHeight: 320, overflowY: "auto" }}>
+                <table className="sa-di-table">
+                  <thead>
+                    <tr>
+                      <th>지번</th>
+                      <th>용도지역</th>
+                      <th className="sa-di-num">면적(㎡)</th>
+                      <th className="sa-di-num">법정 건폐%</th>
+                      <th className="sa-di-num">법정 용적%</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((r, i) => (
+                      <tr key={i}>
+                        <td>{r.label || "-"}</td>
+                        <td>
+                          {/* 용도지역 혼재 시 시각적으로 구분(토큰 배지). 실패 행은 정직 표기. */}
+                          {r.failed ? (
+                            <span style={{ color: "var(--text-hint)" }}>조회 실패</span>
+                          ) : r.zoneType ? (
+                            <span
+                              className="sa-di-token"
+                              style={mixed ? { borderColor: "var(--accent-strong)" } : undefined}
+                            >
+                              {r.zoneType}
+                            </span>
+                          ) : (
+                            <span style={{ color: "var(--text-hint)" }}>미확보</span>
+                          )}
+                        </td>
+                        <td className="sa-di-num">
+                          {r.areaSqm != null && r.areaSqm > 0 ? r.areaSqm.toLocaleString("ko-KR") : "-"}
+                        </td>
+                        <td className="sa-di-num">{r.bcr != null ? `${r.bcr}` : "-"}</td>
+                        <td className="sa-di-num">{r.far != null ? `${r.far}` : "-"}</td>
+                      </tr>
+                    ))}
+                    {/* 통합(면적가중) 행 — 혼재 시 단순 적용 불가하므로 면적가중 실질치를 별도 행으로 제시. */}
+                    {aggBcr != null && aggFar != null && (
+                      <tr style={{ background: "var(--surface-soft)" }}>
+                        <td style={{ fontWeight: 700, color: "var(--accent-strong)" }}>
+                          통합(면적가중)
+                        </td>
+                        <td style={{ color: "var(--text-secondary)" }}>
+                          {mixed ? `혼재 ${distinctZones.length}종` : "단일"}
+                        </td>
+                        <td className="sa-di-num">{sumArea.toLocaleString("ko-KR")}</td>
+                        <td className="sa-di-num" style={{ color: "var(--accent-strong)" }}>
+                          {aggBcr.toFixed(1)}
+                        </td>
+                        <td className="sa-di-num" style={{ color: "var(--accent-strong)" }}>
+                          {aggFar.toFixed(1)}
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+              {/* 혼재 안내 + 통합계산 제외분 정직 표기(가짜 보정 없음). */}
+              {mixed && (
+                <p className="sa-di-eyebrow mt-2">
+                  용도지역 혼재 {distinctZones.length}종 — 통합개발 시 면적가중 한도(Σ면적×한도÷Σ면적)
+                </p>
+              )}
+              {excludedCount > 0 && (
+                <p className="sa-di-eyebrow mt-1" style={{ color: "var(--text-hint)" }}>
+                  ※ 면적·한도 미확보 {excludedCount}필지는 통합(면적가중) 계산에서 제외했습니다.
+                </p>
+              )}
+              {aggBcr == null && (
+                <p className="sa-di-empty">면적·한도가 확보된 필지가 없어 통합 한도를 산출할 수 없습니다.</p>
+              )}
+            </>
+          )}
+          {!loading && !error && rows && rows.length === 0 && (
+            <p className="sa-di-empty">지번별 용도지역 데이터를 확보하지 못했습니다.</p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ── Main Component ── */
 
 export function SiteAnalysisDetail({ data, hideInterpretation = false, parcels }: SiteAnalysisDetailProps) {
@@ -402,6 +627,19 @@ export function SiteAnalysisDetail({ data, hideInterpretation = false, parcels }
       <CategoryCard title="용도지역 · 법규한도" eyebrow="ZONING · LIMITS" icon={IconRuler} defaultOpen={true}>
         {hasZoning ? (
           <div className="space-y-3">
+            {/* 대표필지 기준 명시 — 아래 법정/조례/실효 타일이 어느 지번 기준인지 분명히 한다.
+                다필지면 대표필지(첫 필지) 기준임을, 단일필지면 그 지번을 보여준다. */}
+            {(() => {
+              const repLabel = (parcels && parcels.length > 0 ? parcels[0] : "") || landAddress;
+              if (!repLabel) return null;
+              return (
+                <p className="sa-di-eyebrow">
+                  {parcels && parcels.length > 1 ? "대표필지 " : "필지 "}
+                  <span style={{ color: "var(--text-primary)", fontWeight: 600 }}>{repLabel}</span>
+                  {" "}기준
+                </p>
+              );
+            })()}
             <div className="sa-di-tiles">
               {zoneType && <Tile label="용도지역" value={zoneType} text />}
               {nationalBcr != null && <Tile label="법정 건폐율 (국토계획법)" value={formatPct(nationalBcr)} />}
@@ -421,6 +659,9 @@ export function SiteAnalysisDetail({ data, hideInterpretation = false, parcels }
                 <DonationSimTable baseFar={baseFar} capFar={capFar} />
               </>
             )}
+            {/* 다필지(2개 이상)일 때만 지번별 표 + 면적가중 통합 한도를 추가 표시.
+                단일필지는 위 대표 타일만으로 충분하므로 표 미표시(기존 동작 보존). */}
+            {parcels && parcels.length > 1 && <ParcelZoningTable parcels={parcels} />}
           </div>
         ) : (
           <NoData />

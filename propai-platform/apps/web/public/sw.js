@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v238-interpret-timeout";
+const CACHE_NAME = "propai-v239-parcel-zoning";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",
