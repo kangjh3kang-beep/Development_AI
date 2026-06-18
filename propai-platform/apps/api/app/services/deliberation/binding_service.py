@@ -40,16 +40,25 @@ _IDX = (
 )
 
 
+# 스키마는 alembic 032_deliberation_binding이 1차 보장. _ensure는 마이그레이션 미적용 환경(테스트/구배포)용
+# 멱등 폴백이며, 핫패스 DDL 왕복(카탈로그 잠금·지연)을 막기 위해 **프로세스 1회만** 실행한다.
+_ensured = False
+
+
 async def _ensure(db) -> None:
+    global _ensured
+    if _ensured:
+        return
     from sqlalchemy import text
 
     await db.execute(text(_DDL))
-    # 기존 테이블 진화(런타임 _ensure 멱등) — 컬럼 보강 + 구 비-partial 인덱스 제거 후 partial 재생성.
+    # 기존 테이블 진화(멱등) — 컬럼 보강 + 구 비-partial 인덱스 제거 후 partial 재생성.
     await db.execute(text(
         "ALTER TABLE engine_run_binding ADD COLUMN IF NOT EXISTS deterministic boolean NOT NULL DEFAULT true"))
     await db.execute(text("DROP INDEX IF EXISTS ux_run_binding_idem"))
     await db.execute(text(_UX))
     await db.execute(text(_IDX))
+    _ensured = True
 
 
 async def lookup(*, tenant_id: str, content_input_hash: str, snapshot_id: str | None) -> dict[str, Any] | None:

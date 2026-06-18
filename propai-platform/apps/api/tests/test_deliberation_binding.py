@@ -5,12 +5,40 @@
 """
 from __future__ import annotations
 
+import pathlib
 import uuid
 
 import pytest
 from sqlalchemy import text
 
 from app.services.deliberation import binding_service as b
+
+
+async def test_ensure_runs_ddl_once_per_process(monkeypatch):
+    # 핫패스 병목 해소 — _ensure는 프로세스 1회만 DDL 실행(이후 호출은 왕복 0). DB 불요 단위검증.
+    monkeypatch.setattr(b, "_ensured", False)
+    calls = {"n": 0}
+
+    class _FakeDb:
+        async def execute(self, *a, **k):
+            calls["n"] += 1
+
+    db = _FakeDb()
+    await b._ensure(db)
+    first = calls["n"]
+    await b._ensure(db)
+    assert first == 5 and calls["n"] == 5  # 2번째 호출은 DDL 미실행
+
+
+def test_migration_032_wired_into_chain():
+    # 배포 단선 해소 — engine_run_binding이 alembic 032로 배선됐고 031에 연결됨(런타임 _ensure 의존 제거).
+    p = pathlib.Path(__file__).resolve().parents[1] / "database/migrations/versions/032_deliberation_binding.py"
+    src = p.read_text(encoding="utf-8")
+    assert 'revision = "032_deliberation_binding"' in src
+    assert 'down_revision = "031_analysis_ledger"' in src
+    assert "CREATE TABLE IF NOT EXISTS engine_run_binding" in src
+    assert "ux_run_binding_idem_det" in src and "WHERE deterministic" in src
+    assert "DROP TABLE IF EXISTS engine_run_binding" in src  # downgrade 가역
 
 
 @pytest.fixture
