@@ -325,3 +325,104 @@ def test_analyze_prevalidate_target_enum_and_fact_key(monkeypatch):
     r2 = c.post("/api/v1/deliberation/analyze",
                 json={"pnu": "1111010100100000002", "cross_facts": [{"x": 1}]})
     assert r2.status_code == 422 and "fact_key_missing" in r2.json()["detail"]
+
+
+# ── race 경로 무결성/정직성(MED 2건) ──
+
+
+def test_analyze_race_winner_parity_fail_degrades(monkeypatch):
+    # 경합 패배 후 승자 결속 result의 input_hash가 binding과 불일치 → invalid_response(재사용 경로와 대칭).
+    ih = analysis_input_hash(build_input_dump(_PAYLOAD))
+    seq = {"n": 0}
+
+    async def lookup(**kw):
+        seq["n"] += 1
+        if seq["n"] == 1:
+            return None
+        return {"run_id": "WINNER", "source": "sync",
+                "result": {"input_hash": "A", "report": {}}, "input_hash": "B"}  # parity 불일치
+    async def post(dump):
+        return _engine_result(ih), "ok"
+    async def insert(**kw):
+        return False  # 경합 패배
+    c = _client(monkeypatch, lookup=lookup, post=post, insert=insert)
+    r = c.post("/api/v1/deliberation/analyze", json=_PAYLOAD)
+    body = r.json()
+    assert body["degraded"] is True and body["reason"] == "invalid_response" and body["run_id"] == "WINNER"
+
+
+def test_analyze_race_winner_unresolved_does_not_return_loser_result(monkeypatch):
+    # 승자 result=None + 엔진 GET 실패 → loser res를 권위본으로 쓰지 않고 정직 degrade(run_id·result 일관 보존).
+    ih = analysis_input_hash(build_input_dump(_PAYLOAD))
+    seq = {"n": 0}
+
+    async def lookup(**kw):
+        seq["n"] += 1
+        return None if seq["n"] == 1 else {"run_id": "WINNER", "source": "sync",
+                                           "result": None, "input_hash": ih}
+    async def post(dump):
+        return _engine_result(ih), "ok"
+    async def insert(**kw):
+        return False
+    async def get(rid):
+        return None, "engine_unreachable"
+    c = _client(monkeypatch, lookup=lookup, post=post, insert=insert, get=get)
+    r = c.post("/api/v1/deliberation/analyze", json=_PAYLOAD)
+    body = r.json()
+    assert body["degraded"] is True and body["reason"] == "engine_unreachable"
+    assert body["run_id"] == "WINNER" and body["result"] is None  # loser res 누출 금지
+
+
+def test_analyze_integrity_violation_trips_breaker(monkeypatch):
+    # 200이지만 parity 위반 = 엔진 계약 장애 → record_failure(반복 시 circuit 개방·무음 지속 차단).
+    calls = {"fail": 0}
+    monkeypatch.setattr(delib._breaker, "record_failure",
+                        lambda: calls.__setitem__("fail", calls["fail"] + 1))
+
+    async def lookup(**kw):
+        return None
+    async def post(dump):
+        return _engine_result("WRONG-HASH"), "ok"  # parity 위반(200)
+    c = _client(monkeypatch, lookup=lookup, post=post)
+    r = c.post("/api/v1/deliberation/analyze", json=_PAYLOAD)
+    assert r.json()["reason"] == "invalid_response" and calls["fail"] == 1
+
+
+def test_analyze_build_dump_server_bug_is_500_not_422(monkeypatch):
+    # 미러/덤프 내부 버그(ValidationError 아님)는 클라이언트 422로 위장하지 않고 500으로 전파.
+    def boom(_payload):
+        raise AttributeError("mirror regression")
+    monkeypatch.setattr(delib, "build_input_dump", boom)
+    app = _app()
+    app.dependency_overrides[get_current_user] = lambda: _FakeUser()
+    client = TestClient(app, raise_server_exceptions=False)
+    r = client.post("/api/v1/deliberation/analyze", json=_PAYLOAD)
+    assert r.status_code == 500
+
+
+def test_get_404_surfaces_audit_degraded(monkeypatch):
+    # 미존재/타테넌트 404이되 read-감사 degrade는 폐기하지 않고 detail로 표면화(무음0).
+    async def lookup_by_run(**kw):
+        return None
+    async def audit(**kw):
+        return {"ok": False}  # not_ok → read는 표면화(fail_closed=False)
+    monkeypatch.setattr(delib.binding_service, "lookup_by_run", lookup_by_run)
+    monkeypatch.setattr(delib, "append_audit", audit)
+    app = _app()
+    app.dependency_overrides[get_current_user] = lambda: _FakeUser()
+    r = TestClient(app).get("/api/v1/deliberation/analyze/run-x")
+    assert r.status_code == 404 and r.json()["detail"]["audit_degraded"] is True
+
+
+def test_get_degraded_reason_engine_rejected(monkeypatch):
+    # 저장 result 없음 + 엔진 GET 4xx(토큰/계약) → engine_rejected로 정직 표면화(미연결과 구분).
+    async def lookup_by_run(**kw):
+        return {"run_id": "run-1", "source": "sync", "result": None, "input_hash": "ih"}
+    async def get(rid):
+        return None, "engine_rejected"
+    monkeypatch.setattr(delib.binding_service, "lookup_by_run", lookup_by_run)
+    monkeypatch.setattr(delib, "_engine_get_analysis", get)
+    app = _app()
+    app.dependency_overrides[get_current_user] = lambda: _FakeUser()
+    r = TestClient(app).get("/api/v1/deliberation/analyze/run-1")
+    assert r.json()["degraded"] is True and r.json()["reason"] == "engine_rejected"

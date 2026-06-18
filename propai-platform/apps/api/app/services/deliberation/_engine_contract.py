@@ -2,8 +2,13 @@
 
 엔진 `core/hashing`(canonical/input_hash)을 **비트동일**하게 복제. BFF 멱등성(engine_run_binding)·
 부분응답 input_hash parity 검증의 단일 출처. ⚠️ 엔진과 직렬화 3파라미터(sort_keys·ensure_ascii·
-separators) 글자단위 동일해야 함 — drift는 parity 단위테스트(엔진 골든값 대조)가 CI에서 차단.
-설계: docs/CENTRAL_ENGINE_INTEGRATION_DESIGN.md §5 패키지격리·§9 R7.
+separators) 글자단위 동일해야 함.
+
+drift 차단(살아있는 가드, 2단): (1) `mirror_contract_fingerprint()`가 커밋된 engine fixture
+(tests/fixtures/engine_input_contract.json)와 비트동일 — 미러가 fixture에서 벗어나면 RED.
+(2) 엔진 워크트리 존재 시 실 `AnalysisInput` 모델을 재덤프해 fixture와 대조 — 엔진이 필드/기본값을
+추가하면 RED(fixture 재생성 강제). 두 테스트가 엔진→fixture→미러 체인을 닫아 골든 stale을 막는다.
+설계: docs/CENTRAL_ENGINE_INTEGRATION_DESIGN.md §5 패키지격리·§9 R7·§13 parity.
 """
 from __future__ import annotations
 
@@ -95,6 +100,33 @@ def build_input_dump(payload: dict[str, Any]) -> dict[str, Any]:
     return MirrorAnalysisInput(**payload).model_dump(mode="json")
 
 
+def _manifest_default(field: Any) -> Any:
+    """FieldInfo → json-safe 기본값(factory는 호출). 엔진 매니페스트 generator와 동일 규칙."""
+    v = field.default_factory() if field.default_factory is not None else field.default
+    try:
+        return json.loads(json.dumps(v, default=str))
+    except (TypeError, ValueError):
+        return str(v)
+
+
+def mirror_field_manifest() -> dict[str, Any]:
+    """미러 모델 필드 매니페스트(이름·기본값·hashing 핀). 엔진 실모델 generator와 동일 산식 →
+    커밋된 engine fixture와 비트동일해야(drift=필드추가/기본값변경 시 parity 단위테스트 RED). 살아있는 가드의 미러측."""
+    fields = {n: _manifest_default(f) for n, f in MirrorAnalysisInput.model_fields.items()}
+    names = sorted(fields)
+    return {"field_names": names, "defaults": {k: fields[k] for k in names},
+            "hashing": ENGINE_HASHING_PINNED}
+
+
+def mirror_contract_fingerprint() -> str:
+    """매니페스트(field_names+defaults)의 안정 sha256 — 엔진 fixture.fingerprint와 대조(드리프트 차단).
+    ENGINE_HASHING_PINNED를 매니페스트에 실어 dead 상수가 아니라 활성 어서션 대상이 된다."""
+    m = mirror_field_manifest()
+    canon = json.dumps({"field_names": m["field_names"], "defaults": m["defaults"]},
+                       sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(canon.encode("utf-8")).hexdigest()
+
+
 def is_deterministic_path(dump: dict[str, Any]) -> bool:
     """순수(결정론) 경로 여부 — 멱등 재사용 적용 가능 입력만 True(§3·§9 R7).
 
@@ -106,9 +138,7 @@ def is_deterministic_path(dump: dict[str, Any]) -> bool:
     if dump.get("cross_facts") or dump.get("collect_land_card") or dump.get("collect_surrounding"):
         return False  # 라이브 다중출처/수집
     # address는 pnu가 19자리가 아닐 때만 라이브 지오코딩 발화(엔진 pipeline:205).
-    if dump.get("address") and len(str(dump.get("pnu") or "")) != 19:
-        return False
-    return True
+    return not (dump.get("address") and len(str(dump.get("pnu") or "")) != 19)
 
 
 def _finite(v: Any) -> bool:

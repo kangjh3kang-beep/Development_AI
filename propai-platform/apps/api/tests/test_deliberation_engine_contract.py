@@ -3,14 +3,34 @@
 골든값은 엔진 실제 `core/hashing`로 산출(deliberation 워크트리, propai-review venv):
   input_hash({"input": {대표입력}}) = 15f70dde...  → vendored가 비트동일해야(drift 차단).
 """
+import json
+import os
+import pathlib
+import subprocess
+import sys
+
+import pytest
+
 from app.services.deliberation._engine_contract import (
+    ENGINE_HASHING_PINNED,
     analysis_input_hash,
     build_input_dump,
     canonical,
     content_input_hash,
     is_deterministic_path,
+    mirror_contract_fingerprint,
+    mirror_field_manifest,
     prevalidate,
 )
+
+_FIXTURE = pathlib.Path(__file__).parent / "fixtures" / "engine_input_contract.json"
+_ENGINE_API = (pathlib.Path.home()
+               / "My_Projects/Development_AI_deliberation/propai-platform"
+               / "services/deliberation-review/apps/api")
+
+
+def _load_fixture() -> dict:
+    return json.loads(_FIXTURE.read_text(encoding="utf-8"))
 
 # 엔진 대조 입력(한글·리스트 순서·중첩) — 직렬화 규칙 전수 검증.
 _SAMPLE = {
@@ -95,6 +115,45 @@ def test_prevalidate_rejects_bad_values():
     assert "confidence" in prevalidate(_d(
         calc_targets=[{"target": "building_area", "elements": [{"confidence": 1.5}]}]))
     assert "nonfinite" in prevalidate({"pnu": "", "rules": [{"rule": {}, "measured": float("inf")}]})
+
+
+# ── 살아있는 parity 가드(HIGH): frozen 골든 stale 방지 2단 체인 ──
+
+
+def test_mirror_matches_committed_engine_contract():
+    # (1단) 미러 매니페스트가 커밋된 엔진 fixture와 비트동일 — 미러 필드/기본값 drift 시 RED.
+    fx = _load_fixture()
+    m = mirror_field_manifest()
+    assert m["field_names"] == fx["field_names"]          # 필드 추가/삭제 즉시 RED
+    assert m["defaults"] == fx["defaults"]                 # 기본값 drift 즉시 RED
+    assert mirror_contract_fingerprint() == fx["fingerprint"]
+    assert fx["hashing"] == ENGINE_HASHING_PINNED          # dead 상수 → 활성 어서션
+
+
+def test_engine_live_contract_matches_fixture():
+    """(2단) 엔진 워크트리가 있으면 실 AnalysisInput을 재덤프해 fixture와 대조 — 엔진이 필드/기본값을
+    추가하면 RED(fixture 재생성 강제). 엔진 미체크아웃(CI 등) 시 명시적 skip(무음 green 아님)."""
+    if not (_ENGINE_API / "app/contracts/analysis.py").exists():
+        pytest.skip(f"engine worktree absent: {_ENGINE_API}")
+    code = (
+        "import hashlib,json;"
+        "from app.contracts.analysis import AnalysisInput as A;"
+        "d={n:(g.default_factory() if g.default_factory is not None else g.default)"
+        " for n,g in A.model_fields.items()};"
+        "d={k:json.loads(json.dumps(v,default=str)) for k,v in d.items()};"
+        "names=sorted(d);"
+        "c=json.dumps({'field_names':names,'defaults':{k:d[k] for k in names}},"
+        "sort_keys=True,ensure_ascii=False,separators=(',',':'));"
+        "print(json.dumps({'field_names':names,'fingerprint':hashlib.sha256(c.encode()).hexdigest()}))"
+    )
+    env = dict(os.environ, PYTHONPATH=str(_ENGINE_API))
+    proc = subprocess.run([sys.executable, "-c", code], cwd=str(_ENGINE_API), env=env,
+                          capture_output=True, text=True, timeout=90)
+    assert proc.returncode == 0, proc.stderr[-800:]
+    live = json.loads(proc.stdout.strip().splitlines()[-1])
+    fx = _load_fixture()
+    assert live["field_names"] == fx["field_names"]        # 엔진 실모델 필드 drift → RED
+    assert live["fingerprint"] == fx["fingerprint"]        # 엔진 실모델 기본값 drift → RED
 
 
 def test_is_deterministic_path():

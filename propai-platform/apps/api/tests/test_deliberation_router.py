@@ -31,7 +31,7 @@ def test_health_requires_auth():
 
 def test_health_returns_only_whitelisted_status(monkeypatch):
     async def fake_doctor():
-        return {
+        return ({
             "api_auth": {"enabled": False},          # 핑거프린트 — 비노출이어야
             "master_key_present": True,              # 비노출
             "openai_key_present": True,              # 비노출
@@ -39,7 +39,7 @@ def test_health_returns_only_whitelisted_status(monkeypatch):
             "jurisdiction": {"live": False},
             "embedder": {"semantic": True},
             "database": {"configured": True},
-        }
+        }, "ok")
     monkeypatch.setattr(delib, "_fetch_engine_doctor", fake_doctor)
     app = _app()
     app.dependency_overrides[get_current_user] = lambda: _FakeUser()
@@ -60,7 +60,7 @@ def test_health_returns_only_whitelisted_status(monkeypatch):
 
 def test_health_degraded_when_engine_unreachable(monkeypatch):
     async def none_doctor():
-        return None  # 미연결/실패
+        return None, "engine_unreachable"  # 미연결/실패
     monkeypatch.setattr(delib, "_fetch_engine_doctor", none_doctor)
     app = _app()
     app.dependency_overrides[get_current_user] = lambda: _FakeUser()
@@ -69,3 +69,15 @@ def test_health_degraded_when_engine_unreachable(monkeypatch):
     body = r.json()
     assert body["status"] == "degraded" and body["reason"] == "engine_unreachable"
     assert body["engine"] is None
+
+
+def test_health_degraded_distinguishes_engine_rejected(monkeypatch):
+    # 토큰 오설정(401/403)은 미연결과 구분 — 운영자가 토큰 결함을 찾을 수 있게 정직하게 표면화.
+    async def rejected_doctor():
+        return None, "engine_rejected"
+    monkeypatch.setattr(delib, "_fetch_engine_doctor", rejected_doctor)
+    app = _app()
+    app.dependency_overrides[get_current_user] = lambda: _FakeUser()
+    r = TestClient(app).get("/api/v1/deliberation/health")
+    body = r.json()
+    assert body["status"] == "degraded" and body["reason"] == "engine_rejected"
