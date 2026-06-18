@@ -1103,6 +1103,8 @@ async def parcels_info(req: ParcelsInfoRequest):
             "__rid": p.get("rid"),  # 호출측 행 식별자 echo — 주소 충돌 없이 정확 매칭
             "address": p.get("address"), "jibun": p.get("jibun"), "pnu": p.get("pnu"),
             "area_sqm": p.get("area_sqm"), "zone_type": p.get("zone_type"),
+            # 입력 면적이 공부상과 크게 달라 보정한 경우 — 입력값·경고를 함께 노출(정직 교차검증).
+            "area_input_sqm": p.get("area_input_sqm"), "area_warning": p.get("area_warning"),
             "jimok": p.get("jimok"), "official_price_per_sqm": p.get("official_price_per_sqm"),
             "bcr_pct": bcr, "far_pct": far,
             "building": p.get("building"),

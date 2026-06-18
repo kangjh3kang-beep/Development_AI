@@ -649,8 +649,24 @@ class ParcelExcelService:
                     lc = None
             if not isinstance(lc, dict):
                 return
-            if not p.get("area_sqm") and lc.get("area_sqm"):
-                p["area_sqm"] = round(float(lc["area_sqm"]), 1)
+            # ★면적 교차검증(신뢰루프): 입력 면적(엑셀)이 있으면 공부상(VWorld 토지특성)과 대조.
+            #   빈칸이면 공부상으로 보강. 큰 괴리(>50%)면 입력 오기로 보고 공부상 우선 채택 +
+            #   정직 경고(단일 오기가 합계를 부풀리는 것 방지 — 예 211-204 엑셀 8,500 vs 공부상 236).
+            lc_area = lc.get("area_sqm")
+            if lc_area:
+                lc_area = round(float(lc_area), 1)
+                excel_area = p.get("area_sqm")
+                if not excel_area:
+                    p["area_sqm"] = lc_area
+                elif lc_area > 0:
+                    ratio = excel_area / lc_area
+                    if ratio > 1.5 or ratio < 0.67:
+                        p["area_input_sqm"] = excel_area  # 입력값 보존(참고용)
+                        p["area_sqm"] = lc_area            # 공부상(권원) 면적 채택
+                        p["area_warning"] = (
+                            f"입력 면적 {excel_area:g}㎡가 공부상 면적 {lc_area:g}㎡와 "
+                            f"{ratio:.1f}배 차이 — 공부상 면적으로 보정했습니다(입력값 점검 필요)."
+                        )
             if not p.get("jimok") and lc.get("land_category"):
                 p["jimok"] = lc["land_category"]
             if lc.get("zone_type"):
