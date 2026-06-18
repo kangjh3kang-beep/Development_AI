@@ -50,8 +50,20 @@ export interface AddressEntry {
   // ── 필지별 토지정보(/zoning/parcels-info 일괄 보강) — 등록된 모든 필지가 갖는다 ──
   pnu?: string; // PNU(19자리)
   zoneCode?: string; // 용도지역
-  bcrPct?: number; // 건폐율 상한(%)
-  farPct?: number; // 용적률 상한(%)
+  bcrPct?: number; // 건폐율 — 실효값(조례 반영, 단일분석과 일치)
+  farPct?: number; // 용적률 — 실효값(조례 반영, 단일분석과 일치)
+  bcrLegalPct?: number; // 건폐율 법정상한(보조 라벨용)
+  farLegalPct?: number; // 용적률 법정상한(보조 라벨용)
+  // ── 특이부지(임야·산지/농지/GB/맹지/학교용지 등) — 단일분석과 동일 게이트 요약 ──
+  specialParcel?: {
+    is_special?: boolean;
+    developability?: string | null;
+    resolvable?: string | null;
+    severity_label?: string | null;
+    factors?: string[];
+    warning?: string | null;
+    honest_disclosure?: string | null;
+  } | null;
   jimok?: string; // 지목(형질)
   officialPrice?: number; // 개별공시지가(원/㎡)
   // ── 집합건물(공동주택·빌라) 플래그 — 호실/대지지분 안내용 ──
@@ -157,7 +169,10 @@ export function GlobalAddressSearch({
         areaSqm: a.areaSqm ?? null,
         zoneCode: a.zoneCode ?? null,
         bcrPct: a.bcrPct ?? null,
-        farPct: a.farPct ?? null,
+        farPct: a.farPct ?? null,             // 실효값(조례 반영)
+        bcrLegalPct: a.bcrLegalPct ?? null,   // 건폐율 법정상한(보조 표기)
+        farLegalPct: a.farLegalPct ?? null,   // 용적률 법정상한(보조 표기)
+        specialParcel: a.specialParcel ?? null,
         jimok: a.jimok ?? null,
         isAggregate: a.isAggregate ?? false,
         unitCount: a.unitCount ?? null,
@@ -301,6 +316,12 @@ export function GlobalAddressSearch({
     type P = {
       __rid?: number; area_sqm?: number | null; zone_type?: string | null; jimok?: string | null;
       pnu?: string | null; official_price_per_sqm?: number | null; bcr_pct?: number | null; far_pct?: number | null;
+      // bcr_pct/far_pct = 실효값(조례 반영). 법정상한은 *_legal_pct(보조 라벨용).
+      bcr_legal_pct?: number | null; far_legal_pct?: number | null;
+      special_parcel?: {
+        is_special?: boolean; developability?: string | null; resolvable?: string | null;
+        severity_label?: string | null; factors?: string[]; warning?: string | null; honest_disclosure?: string | null;
+      } | null;
       building?: { is_aggregate?: boolean; building_name?: string; main_purpose?: string; unit_count?: number | null } | null;
       status?: string | null;
     };
@@ -341,6 +362,9 @@ export function GlobalAddressSearch({
           zoneCode: m.zone_type || a.zoneCode,
           bcrPct: m.bcr_pct ?? a.bcrPct,
           farPct: m.far_pct ?? a.farPct,
+          bcrLegalPct: m.bcr_legal_pct ?? a.bcrLegalPct,
+          farLegalPct: m.far_legal_pct ?? a.farLegalPct,
+          specialParcel: m.special_parcel ?? a.specialParcel,
           jimok: m.jimok || a.jimok,
           officialPrice: m.official_price_per_sqm ?? a.officialPrice,
           isAggregate: m.building?.is_aggregate ?? a.isAggregate ?? false,
@@ -749,11 +773,20 @@ export function GlobalAddressSearch({
                       <span className="shrink-0 rounded bg-[color-mix(in_srgb,var(--status-warning)_12%,transparent)] px-1 py-0.5 text-[9px] font-semibold text-[var(--status-warning)]">{isAnalyzing ? "조회중…" : "보완필요"}</span>
                     )}
                   </div>
-                  {/* 2행: 용도지역·건폐/용적·지목 + 공동주택(빌라) 배지 */}
+                  {/* 2행: 용도지역·건폐/용적(실효)·지목 + 공동주택(빌라) 배지 */}
                   {(row.zoneCode || row.bcrPct || row.jimok || row.isAggregate) && (
                     <div className="mt-0.5 flex flex-wrap items-center gap-1 text-[9.5px] text-[var(--text-secondary)]">
                       {row.zoneCode && <span className="rounded bg-[var(--accent-soft)] px-1 py-0.5 font-semibold text-[var(--accent-strong)]">{row.zoneCode}</span>}
-                      {(row.bcrPct || row.farPct) && <span>건폐 {row.bcrPct ?? "—"}% · 용적 {row.farPct ?? "—"}%</span>}
+                      {(row.bcrPct || row.farPct) && (
+                        <span>
+                          건폐 {row.bcrPct ?? "—"}% · 용적 {row.farPct ?? "—"}%
+                          {row.farPct != null && <span className="text-[var(--text-hint)]">(실효)</span>}
+                          {/* 실효가 법정상한보다 낮을 때만 법정상한을 보조로 병기(정직·과다표시 방지) */}
+                          {row.farLegalPct != null && row.farPct != null && row.farLegalPct > row.farPct && (
+                            <span className="text-[var(--text-hint)]"> · 법정상한 {row.farLegalPct}%</span>
+                          )}
+                        </span>
+                      )}
                       {row.jimok && <span>지목 {row.jimok}</span>}
                       {row.isAggregate && (
                         <button
@@ -764,6 +797,24 @@ export function GlobalAddressSearch({
                         >
                           🏢 공동주택{row.unitCount ? ` ${row.unitCount}세대` : ""} · 호실/대지지분 ▸
                         </button>
+                      )}
+                    </div>
+                  )}
+                  {/* 3행: 특이부지(임야·산지/농지/GB/맹지/학교용지 등) 배지 + 경고 — 단일분석과 동일 게이트 */}
+                  {row.specialParcel?.is_special && (
+                    <div className="mt-0.5 flex flex-wrap items-start gap-1 text-[9.5px]">
+                      <span
+                        className="shrink-0 rounded bg-[color-mix(in_srgb,var(--status-warning)_16%,transparent)] px-1 py-0.5 font-bold text-[var(--status-warning)]"
+                        title={row.specialParcel.honest_disclosure || undefined}
+                      >
+                        ⚠ 특이부지
+                        {row.specialParcel.factors?.length ? ` · ${row.specialParcel.factors.join("·")}` : ""}
+                        {row.specialParcel.severity_label ? ` (${row.specialParcel.severity_label})` : ""}
+                      </span>
+                      {row.specialParcel.warning && (
+                        <span className="min-w-0 flex-1 text-[var(--status-warning)]" title={row.specialParcel.warning}>
+                          {row.specialParcel.warning.replace(/^\[특이부지\]\s*/, "")}
+                        </span>
                       )}
                     </div>
                   )}

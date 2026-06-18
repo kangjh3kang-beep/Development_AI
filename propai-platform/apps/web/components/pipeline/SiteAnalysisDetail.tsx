@@ -306,7 +306,8 @@ function DonationSimTable({ baseFar, capFar }: { baseFar: number; capFar: number
    무목업: 조회 실패/면적 결측은 정직 표기하고, 결측 행은 통합계산에서 제외한다. */
 
 // /zoning/parcels-info 응답 1건의 모양(백엔드 parcels_info 핸들러와 동일 필드).
-//   bcr_pct/far_pct = 용도지역 법정상한(ZONE_LIMITS). max_bcr_pct/max_far_pct는 혹시 모를 별칭 폴백.
+//   bcr_pct/far_pct = 실효값(조례 반영, 단일분석과 일치). 법정상한은 bcr_legal_pct/far_legal_pct로 분리.
+//   max_bcr_pct/max_far_pct는 혹시 모를 별칭 폴백.
 interface ParcelInfoRow {
   __rid?: number;
   address?: string | null;
@@ -316,6 +317,8 @@ interface ParcelInfoRow {
   zone_type?: string | null;
   bcr_pct?: number | null;
   far_pct?: number | null;
+  bcr_legal_pct?: number | null; // 법정상한(보조 — 실효=법정이면 동일)
+  far_legal_pct?: number | null;
   max_bcr_pct?: number | null;
   max_far_pct?: number | null;
   status?: string | null;
@@ -447,8 +450,8 @@ function ParcelZoningTable({ parcels }: { parcels: string[] }) {
                       <th>지번</th>
                       <th>용도지역</th>
                       <th className="sa-di-num">면적(㎡)</th>
-                      <th className="sa-di-num">법정 건폐%</th>
-                      <th className="sa-di-num">법정 용적%</th>
+                      <th className="sa-di-num">실효 건폐%</th>
+                      <th className="sa-di-num">실효 용적%</th>
                     </tr>
                   </thead>
                   <tbody>

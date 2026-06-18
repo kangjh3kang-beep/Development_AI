@@ -1060,6 +1060,126 @@ async def land_schedule_template():
     )
 
 
+def _zone_legal_limits(zone: str | None) -> tuple[int | None, int | None]:
+    """용도지역명 → 법정 (건폐율, 용적률) 상한(ZONE_LIMITS). 정확일치 우선·최장명 폴백."""
+    from apps.api.app.services.zoning.auto_zoning_service import ZONE_LIMITS
+    if not zone:
+        return (None, None)
+    z = zone.replace(" ", "").strip()
+    # 정확일치 우선 → '입력값이 정식 용도지역명을 포함'(key in z)만 폴백.
+    #   (z in k 방향은 짧은/깨진 문자열의 과매칭 위험이라 제거. 후보 다수면 최장명 우선.)
+    if z in ZONE_LIMITS:
+        key = z
+    else:
+        cands = [k for k in ZONE_LIMITS if k in z]
+        key = max(cands, key=len) if cands else None
+    if not key:
+        return (None, None)
+    return (ZONE_LIMITS[key]["max_bcr"], ZONE_LIMITS[key]["max_far"])
+
+
+async def _enrich_effective_and_special(enriched: list[dict]) -> None:
+    """enrich_parcel_list 결과 각 필지에 실효 용적률/건폐율(조례 반영)+특이부지 게이트를 in-place 부착.
+
+    ★parcels-info·land-report 공용(단일출처) — 두 소비처가 far_pct/bcr_pct(실효)·
+    far_legal_pct/bcr_legal_pct(법정상한)·special_parcel을 동일한 의미로 받게 한다.
+    각 dict에 채우는 키: bcr_legal/far_legal·bcr_eff/far_eff·far_basis·special.
+    calc_effective_far는 순수 동기 함수(이벤트루프 미접촉)라 async 핸들러에서 await 없이 안전.
+    OrdinanceService.get_ordinance_limits만 async → await. 무목업: 실패는 법정값 폴백(정직).
+    """
+    from apps.api.app.services.zoning.special_parcel import detect_special_parcel
+    from apps.api.app.services.land_intelligence.far_tier_service import calc_effective_far
+    from apps.api.app.services.land_intelligence.ordinance_service import OrdinanceService
+
+    # ── 조례(실효 용적률/건폐율) 조회는 시·군·구별로 1회만(필지마다 외부콜 금지).
+    #    같은 (지역 키, 용도지역) 조합은 캐시 재사용해 대량 다필지에서도 외부콜을 최소화한다.
+    ord_svc = OrdinanceService()
+    ord_cache: dict[tuple[str, str], dict | None] = {}
+
+    async def _ordinance_for(addr: str | None, zone: str | None) -> dict | None:
+        """주소(시군구 추출)+용도지역 → 조례 effective_far/bcr. (지역,용도) 캐시 재사용."""
+        if not zone or not addr:
+            return None
+        # 지역 키: OrdinanceService 와 동일한 시군구 추출을 캐시키로 사용(주소 전체 대신 시군구).
+        try:
+            region = ord_svc._extract_region(addr)  # noqa: SLF001 — 캐시키 일관성용 내부 추출 재사용
+            region_key = f"{region.get('sido') or ''}|{region.get('sigungu') or ''}"
+        except Exception:  # noqa: BLE001
+            region_key = addr.strip()
+        ck = (region_key, zone)
+        if ck in ord_cache:
+            return ord_cache[ck]
+        try:
+            res = await ord_svc.get_ordinance_limits(addr, zone)
+        except Exception:  # noqa: BLE001 — 조례 조회 실패는 법정값 폴백(정직)
+            res = None
+        ord_cache[ck] = res
+        return res
+
+    for p in enriched:
+        zone = p.get("zone_type")
+        bcr_legal, far_legal = _zone_legal_limits(zone)
+
+        # ── 실효 용적률/건폐율(조례 반영) — 미확보 지역은 effective=legal 폴백(정직).
+        bcr_eff = bcr_legal
+        far_eff = far_legal
+        far_basis = None
+        if zone:
+            ordinance = await _ordinance_for(p.get("address") or p.get("jibun"), zone)
+            try:
+                eff = calc_effective_far(
+                    {"local_ordinance": ordinance or {}, "zone_limits": {}, "special_districts": []},
+                    zone_type=zone,
+                    land_area=float(p.get("area_sqm") or 0) or 0,
+                )
+                # 실효값은 calc_effective_far 가 용도지역 법정 SSOT(legal_*)로 산출 — 값이 나오면 채택.
+                if eff.get("effective_far_pct") is not None:
+                    far_eff = eff.get("effective_far_pct")
+                if eff.get("effective_bcr_pct") is not None:
+                    bcr_eff = eff.get("effective_bcr_pct")
+                far_basis = eff.get("far_basis")
+            except Exception:  # noqa: BLE001 — 실효 산출 실패는 법정값 유지(무손상)
+                pass
+
+        # ── 특이부지 감지(임야/산지·농지·GB·맹지·학교용지 등) — 단일분석과 동일 게이트.
+        #    입력은 보유값으로만 구성(road 정보 None → 맹지 오탐 방지, special_districts 미보유=[]).
+        special = None
+        sp = None
+        try:
+            sp = detect_special_parcel({
+                "zone_type": zone,
+                "land_category": p.get("jimok"),
+                "special_districts": [],
+                "road_contact": None,
+                "road_width_m": None,
+            })
+        except Exception:  # noqa: BLE001 — 감지 실패는 정직하게 미표기(가짜 생성 금지)
+            sp = None
+        if sp and sp.get("is_special"):
+            # 카드용 요약(가벼운 핵심만) — 상세는 단일분석 화면에서 제공.
+            special = {
+                "is_special": True,
+                "developability": sp.get("developability"),
+                "resolvable": sp.get("resolvable"),
+                "severity_label": sp.get("severity_label"),
+                # factors 의 category 만 추려 배지 라벨로(전체 implications/legal_basis 는 제외해 페이로드 경량화).
+                "factors": [f.get("category") for f in (sp.get("factors") or []) if f.get("category")],
+                "honest_disclosure": sp.get("honest_disclosure"),
+            }
+            # 특이부지면 경고를 필지 reason 에도 합류(기존 reason 보존 — 앞에 덧붙임).
+            warn = (sp.get("warnings") or [None])[0] or sp.get("development_caveat")
+            if warn:
+                special["warning"] = warn
+
+        # in-place 부착(소비처가 동일 의미로 꺼내 쓴다).
+        p["_bcr_legal"] = bcr_legal
+        p["_far_legal"] = far_legal
+        p["_bcr_eff"] = bcr_eff
+        p["_far_eff"] = far_eff
+        p["_far_basis"] = far_basis
+        p["_special"] = special
+
+
 class ParcelsInfoRequest(BaseModel):
     """다필지 토지정보 일괄 보강 요청 — 개별등록·엑셀 공통."""
     parcels: list[dict] = []  # [{address?, jibun?, pnu?, bcode?}]
@@ -1070,35 +1190,23 @@ async def parcels_info(req: ParcelsInfoRequest):
     """다필지 각각의 토지정보(면적·용도지역·건폐율·용적률·지목·공시지가)+집합건물 여부 일괄 보강.
 
     ★처음 1필지만 분석되던 문제 근본수정: 등록된 모든 필지가 부지정보를 갖도록 일괄 조회.
-    건폐율/용적률은 용도지역 법정상한(ZONE_LIMITS)으로 산출. 공동주택(빌라)이면 building 플래그로
-    호실·대지지분 안내. 무목업: 실패 필지는 status로 정직표기(가짜값 금지). LLM 미사용=과금 없음.
+    건폐율/용적률(far_pct/bcr_pct)은 실효값(조례 반영, 단일분석 수준)으로 산출하고, 법정상한은
+    far_legal_pct/bcr_legal_pct로 분리 노출(land-report와 동일 의미·공용 헬퍼). 공동주택(빌라)이면
+    building 플래그로 호실·대지지분 안내. 무목업: 실패 필지는 status로 정직표기(가짜값 금지).
+    LLM 미사용=과금 없음.
     """
     from apps.api.app.services.land_intelligence.parcel_excel_service import ParcelExcelService
-    from apps.api.app.services.zoning.auto_zoning_service import ZONE_LIMITS
 
     items = (req.parcels or [])[:120]  # 1회 상한(필지당 최대 3 외부콜 — 대량은 클라가 분할 호출)
     if not items:
         return {"parcels": []}
 
-    def _limits(zone: str | None) -> tuple[int | None, int | None]:
-        if not zone:
-            return (None, None)
-        z = zone.replace(" ", "").strip()
-        # 정확일치 우선 → '입력값이 정식 용도지역명을 포함'(key in z)만 폴백.
-        #   (z in k 방향은 짧은/깨진 문자열의 과매칭 위험이라 제거. 후보 다수면 최장명 우선.)
-        if z in ZONE_LIMITS:
-            key = z
-        else:
-            cands = [k for k in ZONE_LIMITS if k in z]
-            key = max(cands, key=len) if cands else None
-        if not key:
-            return (None, None)
-        return (ZONE_LIMITS[key]["max_bcr"], ZONE_LIMITS[key]["max_far"])
-
     enriched = await ParcelExcelService().enrich_parcel_list(items, with_building=True)
+    # 실효 용적률/건폐율(조례 반영)+특이부지 게이트를 공용 헬퍼로 부착(land-report와 동일 의미).
+    await _enrich_effective_and_special(enriched)
+
     out = []
     for p in enriched:
-        bcr, far = _limits(p.get("zone_type"))
         out.append({
             "__rid": p.get("rid"),  # 호출측 행 식별자 echo — 주소 충돌 없이 정확 매칭
             "address": p.get("address"), "jibun": p.get("jibun"), "pnu": p.get("pnu"),
@@ -1106,7 +1214,13 @@ async def parcels_info(req: ParcelsInfoRequest):
             # 입력 면적이 공부상과 크게 달라 보정한 경우 — 입력값·경고를 함께 노출(정직 교차검증).
             "area_input_sqm": p.get("area_input_sqm"), "area_warning": p.get("area_warning"),
             "jimok": p.get("jimok"), "official_price_per_sqm": p.get("official_price_per_sqm"),
-            "bcr_pct": bcr, "far_pct": far,
+            # ★ far_pct/bcr_pct = 실효값(조례 반영) — 카드 하단요약과 일치(단일분석 수준).
+            #    법정상한은 far_legal_pct/bcr_legal_pct 로 분리 노출(보조 라벨용). 실효=법정이면 동일.
+            "bcr_pct": p.get("_bcr_eff"), "far_pct": p.get("_far_eff"),
+            "bcr_legal_pct": p.get("_bcr_legal"), "far_legal_pct": p.get("_far_legal"),
+            "bcr_effective_pct": p.get("_bcr_eff"), "far_effective_pct": p.get("_far_eff"),
+            "far_basis": p.get("_far_basis"),
+            "special_parcel": p.get("_special"),  # None 이면 일상 필지(특이 없음)
             "building": p.get("building"),
             "status": p.get("status", "ok"), "reason": p.get("reason"),
         })
@@ -1212,35 +1326,27 @@ async def land_report(req: LandReportRequest):
     from apps.api.app.services.land_intelligence.parcel_excel_service import ParcelExcelService
     from apps.api.app.services.land_intelligence.land_analysis_report_pdf import build_land_analysis_report
     from apps.api.app.services.land_intelligence.land_share_service import LandShareService
-    from apps.api.app.services.zoning.auto_zoning_service import ZONE_LIMITS
 
     items = (req.parcels or [])[:120]
     if not items:
         return {"error": "필지가 없습니다."}
 
-    def _limits(zone):
-        if not zone:
-            return (None, None)
-        z = zone.replace(" ", "").strip()
-        if z in ZONE_LIMITS:
-            key = z
-        else:
-            cands = [k for k in ZONE_LIMITS if k in z]
-            key = max(cands, key=len) if cands else None
-        return (ZONE_LIMITS[key]["max_bcr"], ZONE_LIMITS[key]["max_far"]) if key else (None, None)
-
     enriched = await ParcelExcelService().enrich_parcel_list(items, with_building=True)
+    # 실효 용적률/건폐율(조례 반영)+특이부지를 공용 헬퍼로 부착(parcels-info와 동일 의미).
+    #   ★PDF가 bcr_pct/far_pct로 건축면적·연면적을 산출하므로 법정 과대표기 제거 위해 실효값 사용.
+    await _enrich_effective_and_special(enriched)
     parcels = []
     units_by: dict[str, dict] = {}
     svc = LandShareService()
     for p in enriched:
-        bcr, far = _limits(p.get("zone_type"))
+        bcr, far = p.get("_bcr_eff"), p.get("_far_eff")  # 실효(조례 반영) — 법정상한 과대표기 제거
         bld = p.get("building") or None
         is_agg = bool(bld and bld.get("is_aggregate"))
         jb = p.get("jibun") or p.get("address") or ""
         parcels.append({
             "jibun": jb, "address": p.get("address"), "area_sqm": p.get("area_sqm"),
             "zone_type": p.get("zone_type"), "bcr_pct": bcr, "far_pct": far,
+            "bcr_legal_pct": p.get("_bcr_legal"), "far_legal_pct": p.get("_far_legal"),
             "jimok": p.get("jimok"), "official_price_per_sqm": p.get("official_price_per_sqm"),
             "parcel_case": "aggregate" if is_agg else ("building" if bld else "land"),
             "building": bld, "status": p.get("status", "ok"), "reason": p.get("reason"),
