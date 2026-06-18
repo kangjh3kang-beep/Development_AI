@@ -159,7 +159,18 @@ def is_deterministic_path(dump: dict[str, Any]) -> bool:
 
 
 def _finite(v: Any) -> bool:
+    """유한 수치(bool·nan·inf 거부). ⚠️ BFF는 엔진보다 **의도적으로 엄격**: 엔진은 area/length를 plain float로
+    nan 수용·confidence bool→coerce하나, BFF는 nan/bool을 422로 거부(거짓 COMPLIANT·무의미 정량 방어, 정책)."""
     return not isinstance(v, bool) and isinstance(v, (int, float)) and math.isfinite(v)
+
+
+def _floatable(v: Any) -> bool:
+    """엔진 `float(v)` 수용 여부 — 비숫자(ValueError)만 거부(숫자문자열/nan/bool은 엔진과 동일 통과·false-422 회피)."""
+    try:
+        float(v)
+        return True
+    except (ValueError, TypeError):
+        return False
 
 
 def prevalidate(dump: dict[str, Any]) -> str | None:
@@ -201,6 +212,10 @@ def prevalidate(dump: dict[str, Any]) -> str | None:
     for i, e in enumerate(dump.get("elements") or []):
         if not isinstance(e, dict) or not e.get("element_id"):
             return f"invalid_input:elements[{i}].element_id_missing"  # 엔진 element_classifier KeyError
+        feats = e.get("features")
+        if isinstance(feats, dict) and "hint_strength" in feats and not _floatable(feats["hint_strength"]):
+            # 엔진 element_classifier.py:29 `float(features["hint_strength"])` 비숫자 → ValueError→500 차단.
+            return f"invalid_input:elements[{i}].features.hint_strength_type"
 
     for i, cf in enumerate(dump.get("cross_facts") or []):
         if not isinstance(cf, dict) or "fact_key" not in cf:

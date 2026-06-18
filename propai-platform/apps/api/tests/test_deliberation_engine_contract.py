@@ -140,6 +140,11 @@ def test_prevalidate_rejects_bad_values():
     # 유효 date(ISO)·value None은 통과(false-422 회피).
     assert prevalidate(_d(cross_facts=[{"fact_key": "k", "sources": [
         {"source": "s", "value": None, "collected_at": "2024-01-01", "max_age_days": 30}]}])) is None
+    # elements features.hint_strength: 엔진 float() 비숫자→500 차단(숫자문자열/숫자는 통과=false-422 회피).
+    assert "hint_strength_type" in prevalidate(_d(
+        elements=[{"element_id": "e1", "features": {"hint_strength": "abc"}}]))
+    assert prevalidate(_d(elements=[{"element_id": "e1", "features": {"hint_strength": "0.5"}}])) is None
+    assert prevalidate(_d(elements=[{"element_id": "e1", "features": {"hint_strength": 0.8}}])) is None
 
 
 # ── 살아있는 parity 가드(HIGH): frozen 골든 stale 방지 2단 체인 ──

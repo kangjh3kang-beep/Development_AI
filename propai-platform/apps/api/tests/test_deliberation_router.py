@@ -4,6 +4,7 @@
 (api_auth.enabled·*_key_present·master_key·model 등 보안태세 핑거프린트 비노출). 엔진 미연결 시 degraded.
 격리 FastAPI 앱 + dependency_overrides(인증) + _fetch_engine_doctor monkeypatch(엔진 비의존).
 """
+import httpx
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -81,3 +82,79 @@ def test_health_degraded_distinguishes_engine_rejected(monkeypatch):
     r = TestClient(app).get("/api/v1/deliberation/health")
     body = r.json()
     assert body["status"] == "degraded" and body["reason"] == "engine_rejected"
+
+
+class _FakeSettings:
+    def __init__(self, url="http://engine.local", token="tok"):
+        self.deliberation_engine_url = url
+        self.deliberation_engine_api_token = token
+
+
+def test_health_warns_engine_token_missing(monkeypatch):
+    # URL 설정·토큰 미설정 = 무인증 엔진 호출 → warnings 표면화(운영자 인지).
+    monkeypatch.setattr(delib, "get_settings", lambda: _FakeSettings(token=""))
+    async def ok_doctor():
+        return {"database": {"configured": True}}, "ok"
+    monkeypatch.setattr(delib, "_fetch_engine_doctor", ok_doctor)
+    app = _app()
+    app.dependency_overrides[get_current_user] = lambda: _FakeUser()
+    r = TestClient(app).get("/api/v1/deliberation/health")
+    assert r.json()["warnings"] == ["engine_token_missing"]
+
+
+def test_health_no_warning_when_token_set(monkeypatch):
+    monkeypatch.setattr(delib, "get_settings", lambda: _FakeSettings(token="tok"))
+    async def ok_doctor():
+        return {"database": {"configured": True}}, "ok"
+    monkeypatch.setattr(delib, "_fetch_engine_doctor", ok_doctor)
+    app = _app()
+    app.dependency_overrides[get_current_user] = lambda: _FakeUser()
+    r = TestClient(app).get("/api/v1/deliberation/health")
+    assert r.json()["warnings"] == []
+
+
+class _FakeFullSettings(_FakeSettings):
+    deliberation_engine_connect_timeout_s = 5.0
+    deliberation_engine_read_timeout_s = 30.0
+    deliberation_engine_async_read_timeout_s = 60.0
+
+
+class _FakeResp:
+    def __init__(self, status_code, payload=None, raise_json=False):
+        self.status_code, self._payload, self._raise = status_code, payload, raise_json
+
+    def json(self):
+        if self._raise:
+            raise ValueError("malformed")
+        return self._payload
+
+
+class _FakeClient:
+    def __init__(self, resp):
+        self._resp = resp
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
+
+    async def get(self, url, **kw):
+        if isinstance(self._resp, Exception):
+            raise self._resp
+        return self._resp
+
+
+async def test_doctor_malformed_200_is_invalid_response(monkeypatch):
+    # 엔진 도달했으나 본문 계약위반(비-JSON/비-dict) → invalid_response(미연결과 구분, analyze와 대칭).
+    monkeypatch.setattr(delib, "get_settings", lambda: _FakeFullSettings())
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: _FakeClient(_FakeResp(200, raise_json=True)))
+    data, reason = await delib._fetch_engine_doctor()
+    assert data is None and reason == "invalid_response"
+
+
+async def test_doctor_timeout_distinct_reason(monkeypatch):
+    monkeypatch.setattr(delib, "get_settings", lambda: _FakeFullSettings())
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: _FakeClient(httpx.TimeoutException("t")))
+    data, reason = await delib._fetch_engine_doctor()
+    assert data is None and reason == "timeout"

@@ -439,6 +439,7 @@ def test_get_404_surfaces_audit_degraded(monkeypatch):
     app.dependency_overrides[get_current_user] = lambda: _FakeUser()
     r = TestClient(app).get("/api/v1/deliberation/analyze/run-x")
     assert r.status_code == 404 and r.json()["detail"]["audit_degraded"] is True
+    assert r.json()["detail"]["audit_skipped"] == ["audit:not_ok"]  # skip 사유 라벨까지 고정
 
 
 def test_get_degraded_reason_engine_rejected(monkeypatch):
@@ -482,6 +483,7 @@ def test_get_audit_failure_surfaces_not_502(monkeypatch):
     app.dependency_overrides[get_current_user] = lambda: _FakeUser()
     r = TestClient(app).get("/api/v1/deliberation/analyze/run-1")
     assert r.status_code == 200 and r.json()["audit_degraded"] is True
+    assert r.json()["audit_skipped"] == ["audit:write_failed"]  # 예외→write_failed 라벨 고정
 
 
 # ── _engine_post_analyze breaker/HTTP 분기(스텁 미사용·httpx mock으로 실분기 실행) ──
@@ -590,6 +592,30 @@ def test_analyze_report_missing_is_invalid_response(monkeypatch):
         return {"run_id": str(uuid.uuid4()), "input_hash": ih, "snapshot_id": "snap-1"}, "ok"  # report 없음
     c = _client(monkeypatch, lookup=lookup, post=post)
     r = c.post("/api/v1/deliberation/analyze", json=_PAYLOAD)
+    assert r.json()["degraded"] is True and r.json()["reason"] == "invalid_response"
+
+
+def test_get_stored_result_parity_fail_degrades(monkeypatch):
+    # ★저장 영속본(async writer)도 input_hash parity 불일치면 무검증 disclose 금지(reuse 경로와 대칭).
+    async def lookup_by_run(**kw):
+        return {"run_id": "run-1", "source": "async",
+                "result": {"input_hash": "STALE", "report": {}}, "input_hash": "ih"}
+    monkeypatch.setattr(delib.binding_service, "lookup_by_run", lookup_by_run)
+    app = _app()
+    app.dependency_overrides[get_current_user] = lambda: _FakeUser()
+    r = TestClient(app).get("/api/v1/deliberation/analyze/run-1")
+    assert r.json()["degraded"] is True and r.json()["reason"] == "invalid_response"
+
+
+def test_get_stored_result_report_missing_degrades(monkeypatch):
+    # 저장 영속본의 report 결손(부분응답)도 disclose 금지.
+    async def lookup_by_run(**kw):
+        return {"run_id": "run-1", "source": "async",
+                "result": {"input_hash": "ih"}, "input_hash": "ih"}  # report 없음
+    monkeypatch.setattr(delib.binding_service, "lookup_by_run", lookup_by_run)
+    app = _app()
+    app.dependency_overrides[get_current_user] = lambda: _FakeUser()
+    r = TestClient(app).get("/api/v1/deliberation/analyze/run-1")
     assert r.json()["degraded"] is True and r.json()["reason"] == "invalid_response"
 
 
