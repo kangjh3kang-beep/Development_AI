@@ -167,11 +167,20 @@ async def _ledger(ctx: SalesCtx, agreement_id: uuid.UUID, event: str, payload: d
     if failure_reason is None:
         return
     # ★봉인 실패 = 은폐 금지: WARN + 감사기록(audit) 강제 — 분쟁 대비 '봉인 실패' 흔적 보존.
-    logger.warning("수수료 합의 원장 봉인 실패 — audit 로 승격", event=event,
+    #   structlog 는 첫 인자(메시지)를 내부적으로 'event' 로 쓰므로, 우리 도메인 이벤트는
+    #   반드시 다른 키(ledger_event)로 넘긴다 — event= 키 충돌 시 TypeError 로 로깅 자체가 깨져
+    #   '봉인 실패 흔적'을 또 잃는다(은폐의 재은폐). 그래서 키명을 분리한다.
+    logger.warning("수수료 합의 원장 봉인 실패 — audit 로 승격", ledger_event=event,
                    agreement_id=str(agreement_id), reason=failure_reason)
+    # ★[은폐의 재은폐 차단] append_audit 도 내부에서 예외를 흡수하고 {ok: False}(특히 quota_exceeded)
+    #   를 돌려줄 수 있다. 봉인 실패의 가장 흔한 원인이 '쿼터 초과'인데, audit 적재 역시 같은 쿼터에
+    #   걸리면 raise 없이 {ok: False} 만 돌아와 '봉인 실패 흔적'까지 조용히 사라진다.
+    #   → 예외(append_audit raise) 와 'ok:False 반환'을 동일하게 취급해 최종 WARN 으로 강등한다
+    #     (둘 다 실패해도 최소 1줄 로그는 남겨 무음소실을 막는다).
+    audit_failed_reason: str | None = None
     try:
         from app.services.ledger import audit_ledger
-        await audit_ledger.append_audit(
+        ares = await audit_ledger.append_audit(
             action=f"commission_agreement.ledger_seal_failed:{event}",
             user_id=str(ctx.user.id),
             resource_type="commission_agreement",
@@ -179,9 +188,19 @@ async def _ledger(ctx: SalesCtx, agreement_id: uuid.UUID, event: str, payload: d
             tenant_id=tid,
             metadata={"site_id": str(ctx.site_id), "event": event, "reason": failure_reason},
         )
+        # append_audit → append_analysis 도 {ok: False, ...} 를 돌려줄 수 있다(예: quota_exceeded).
+        if isinstance(ares, dict) and ares.get("ok") is False:
+            audit_failed_reason = ares.get("message") or (
+                "quota_exceeded" if ares.get("quota_exceeded") else "audit_append_failed")
     except Exception as e2:  # noqa: BLE001 — audit 까지 실패하면 그때만 WARN 후 통과(본 흐름 무영향)
-        logger.warning("수수료 합의 봉인실패 audit 기록도 실패 — skipped",
-                       event=event, agreement_id=str(agreement_id), err=str(e2)[:200])
+        audit_failed_reason = str(e2)[:200]
+
+    if audit_failed_reason is not None:
+        # 봉인도 실패, audit 승격도 실패 — 최소 로그(sealed_failed_and_audit_skipped)로 강등.
+        #   (ledger_event 키 사용 — structlog 의 예약 키 'event'(메시지) 충돌 방지.)
+        logger.warning("수수료 합의 봉인실패 audit 기록도 실패 — sealed_failed_and_audit_skipped",
+                       ledger_event=event, agreement_id=str(agreement_id),
+                       seal_reason=failure_reason, audit_reason=audit_failed_reason)
 
 
 # ── 조회 헬퍼 ────────────────────────────────────────────────────────────────

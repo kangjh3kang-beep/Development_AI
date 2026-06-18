@@ -9,7 +9,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.sales.commission.engine import payout_net
 from apps.api.database.models.sales.commission_ext import SalesCommissionHoldback, SalesCommissionPayoutSchedule
-from apps.api.database.models.sales.commission_mh_harness import SalesCommissionPayout, SalesCommissionSplit
+from apps.api.database.models.sales.commission_mh_harness import (
+    SalesCommissionEvent,
+    SalesCommissionPayout,
+    SalesCommissionSplit,
+)
 
 # ── 지급 테이블 부가컬럼(tax_type/vat) 멱등 보장 — 정본은 Alembic 033 ─────────────
 # ★기존엔 run_due_payouts 의 지급 루프 '매 건' ALTER TABLE ADD COLUMN IF NOT EXISTS 가
@@ -20,12 +24,17 @@ _PAYOUT_COLS_READY = False
 _payout_cols_lock = asyncio.Lock()
 
 
-async def _ensure_payout_columns(db: AsyncSession) -> None:
+async def _ensure_payout_columns(db: AsyncSession | None = None) -> None:
     """sales_commission_payouts 의 tax_type/vat 컬럼 멱등 보장(부팅 안전망) — 프로세스 1회.
 
     정본은 Alembic 033. 마이그레이션 미적용 환경 대비 ADD COLUMN IF NOT EXISTS 만 수행한다
     (파괴적 변경 없음). 최초 1회 성공 후엔 즉시 반환(no-op) — 지급 루프 매 건 ALTER/직렬화 제거.
     동시 부팅 race 는 advisory-lock(트랜잭션 종료 시 자동해제), 코루틴 경합은 asyncio.Lock 으로 막는다.
+
+    ★[부분커밋 차단] DDL+commit 을 '호출자 세션(db)'에서 하면, run_due_payouts 가 같은 세션에서
+      쌓던 지급(Payout) 행이 이 commit 에 휩쓸려 조기 부분커밋된다(이후 오류 시 일부만 남는 위험).
+      그래서 DDL 은 항상 '별도 단명 세션'(async_session_factory)에서 수행해 호출자 트랜잭션 경계를
+      건드리지 않는다(append_analysis 패턴). 인자 db 는 하위호환 위해 받지만 사용하지 않는다.
     """
     global _PAYOUT_COLS_READY
     if _PAYOUT_COLS_READY:
@@ -33,12 +42,17 @@ async def _ensure_payout_columns(db: AsyncSession) -> None:
     async with _payout_cols_lock:
         if _PAYOUT_COLS_READY:
             return
-        await db.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": _LOCK_PAYOUT_COLS})
-        await db.execute(text(
-            "ALTER TABLE sales_commission_payouts ADD COLUMN IF NOT EXISTS tax_type varchar(16) DEFAULT 'WITHHOLDING'"))
-        await db.execute(text(
-            "ALTER TABLE sales_commission_payouts ADD COLUMN IF NOT EXISTS vat numeric(16,0) DEFAULT 0"))
-        await db.commit()
+        # ★별도 단명 세션 — 호출자(run_due_payouts) 세션의 미커밋 지급행을 휩쓸지 않도록 격리.
+        from app.core.database import async_session_factory
+        async with async_session_factory() as ddl_db:
+            await ddl_db.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": _LOCK_PAYOUT_COLS})
+            await ddl_db.execute(text(
+                "ALTER TABLE sales_commission_payouts ADD COLUMN IF NOT EXISTS "
+                "tax_type varchar(16) DEFAULT 'WITHHOLDING'"))
+            await ddl_db.execute(text(
+                "ALTER TABLE sales_commission_payouts ADD COLUMN IF NOT EXISTS "
+                "vat numeric(16,0) DEFAULT 0"))
+            await ddl_db.commit()
         _PAYOUT_COLS_READY = True
 
 
@@ -67,9 +81,18 @@ async def release_holdback(db: AsyncSession, holdback_id):
 
 
 async def run_due_payouts(db: AsyncSession, site_id, as_of: date, wh_rate=Decimal("0.033")) -> int:
-    rows = list((await db.execute(select(SalesCommissionPayoutSchedule).where(
-        SalesCommissionPayoutSchedule.status == "PLANNED",
-        SalesCommissionPayoutSchedule.planned_at <= as_of))).scalars())
+    # ★[현장 격리·머니패스] 도래분 지급 스케줄은 '이 현장(site_id)' 것만 선택한다.
+    #   schedule → split → event 경로로 event.site_id 를 조인해 본 현장 due 만 지급한다.
+    #   (격리 없이 status/planned_at 만 필터하면 한 현장 운영자가 정산 실행 시 전 현장 due 가
+    #    일괄 지급돼 교차현장 과처리·원천징수 오산이 발생한다 — 머니패스 격리 마감.)
+    rows = list((await db.execute(
+        select(SalesCommissionPayoutSchedule)
+        .join(SalesCommissionSplit, SalesCommissionSplit.id == SalesCommissionPayoutSchedule.split_id)
+        .join(SalesCommissionEvent, SalesCommissionEvent.id == SalesCommissionSplit.event_id)
+        .where(
+            SalesCommissionPayoutSchedule.status == "PLANNED",
+            SalesCommissionPayoutSchedule.planned_at <= as_of,
+            SalesCommissionEvent.site_id == site_id))).scalars())
     paid = 0  # 지급 건수 누적(silent-fail 아님 — 단순 카운터 초기값).
     if rows:
         # 지급 부가컬럼(tax_type/vat) 보장은 루프 진입 전 '한 번만'(매 건 ALTER race/직렬화 제거).
@@ -86,8 +109,10 @@ async def run_due_payouts(db: AsyncSession, site_id, as_of: date, wh_rate=Decima
             sch.status = "PAID"
             continue
         # 수령자(노드) 세금유형 선택: WITHHOLDING(3.3% 원천) 또는 VAT(부가세 10% 가산).
+        # ★[현장 격리] site_id 를 함께 넘겨 타 현장이 적재한 동일 node_id 의 세금유형을
+        #   잘못 열람·적용하지 않게 한다(머니패스 격리 — 원천/부가세 오산 차단).
         from app.services.sales.commission.engine import get_node_tax_type
-        tt = await get_node_tax_type(db, split.node_id)
+        tt = await get_node_tax_type(db, split.node_id, site_id=site_id)
         net = payout_net(gross, tt)
         po = SalesCommissionPayout(claim_id=None, gross=int(net["gross"]),
              withholding=int(net["withholding"]), net=int(net["net"]),

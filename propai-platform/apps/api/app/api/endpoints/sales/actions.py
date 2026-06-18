@@ -431,7 +431,9 @@ async def provision(body: dict, db: AsyncSession = Depends(get_db), user=Depends
 async def get_tax_pref(node_id: str, db: AsyncSession = Depends(get_db), ctx: SalesCtx = Depends(sales_ctx)):
     """수령자(노드) 수수료 세금유형 조회 — WITHHOLDING(3.3% 원천) | VAT(부가세 10%)."""
     from app.services.sales.commission.engine import get_node_tax_type
-    return {"node_id": node_id, "tax_type": await get_node_tax_type(db, uuid.UUID(node_id))}
+    # 현장 격리: ctx.site_id 로 본 현장 행만 조회(타 현장 노드 세금유형 열람 차단).
+    return {"node_id": node_id,
+            "tax_type": await get_node_tax_type(db, uuid.UUID(node_id), site_id=ctx.site_id)}
 
 
 @actions_router.get("/commission/settle-summary")
@@ -451,8 +453,16 @@ async def set_tax_pref(body: dict, db: AsyncSession = Depends(get_db),
     from app.services.sales.commission.engine import set_node_tax_type
     try:
         tt = await set_node_tax_type(db, ctx.site_id, uuid.UUID(body["node_id"]), body.get("tax_type", ""))
-    except (KeyError, ValueError) as e:
-        raise HTTPException(400, str(e) or "node_id·tax_type(WITHHOLDING/VAT) 필요") from e
+    except ValueError as e:
+        # ★예외 분기(응답계약): '다른 현장 소유' 충돌은 권한/리소스 충돌(409 Conflict)로,
+        #   그 외 입력검증 실패(잘못된 tax_type 등)는 400 Bad Request 로 매핑한다.
+        #   (현장 격리 위반을 400 으로 뭉뚱그리지 않고 충돌로 정직 고지 — 머니패스 격리.)
+        if "다른 현장" in str(e):
+            raise HTTPException(409, str(e)) from e
+        raise HTTPException(400, str(e) or "tax_type(WITHHOLDING/VAT)이 올바르지 않습니다") from e
+    except KeyError as e:
+        # node_id 누락 등 필수 입력 결손 → 400.
+        raise HTTPException(400, "node_id·tax_type(WITHHOLDING/VAT) 필요") from e
     await db.commit()
     return {"ok": True, "node_id": body["node_id"], "tax_type": tt}
 
