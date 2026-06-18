@@ -73,10 +73,15 @@ async def reconcile_mirror_db(session, *, citation_ref: str, jurisdiction: str, 
                  "affected_payloads": [], "affected_total": 0}
     if not jurisdiction:
         out["reason"] = "no_jurisdiction"
+        # 무음0 일관성 — 정합 시도(라이브 성공)했으나 관할 부재를 reconcile_log에 영속(관측).
+        await _write_reconcile_log(session, citation_ref=citation_ref, live_reconciled=True,
+                                   mismatch=False, detail={"reason": "no_jurisdiction"})
         return out
     snap = await load_active_snapshot_from_db(session, jurisdiction)
     if snap is None:
         out["reason"] = "no_mirror"  # 미러 부재 — diff 불가 표면화(무음0)
+        await _write_reconcile_log(session, citation_ref=citation_ref, live_reconciled=True,
+                                   mismatch=False, detail={"reason": "no_mirror", "live_hash": live_hash})
         return out
     out["old_snapshot_id"] = snap.snapshot_id
     if snap.content_hash is None:

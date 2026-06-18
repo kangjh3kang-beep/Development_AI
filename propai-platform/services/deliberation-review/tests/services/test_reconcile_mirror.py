@@ -82,6 +82,11 @@ async def test_reconcile_db_no_mirror_surfaces(db):
     await _clean(db, jur)
     out = await reconcile_mirror_db(db, citation_ref=jur, jurisdiction=jur, live_hash="HASH-X")
     assert out["mismatch"] is False and out["reason"] == "no_mirror"
+    # 무음0 일관성: no_mirror도 reconcile_log에 영속(no_baseline/match/mismatch와 대칭, 시도 관측).
+    logs = (await db.execute(select(ReconcileLogModel).where(
+        ReconcileLogModel.citation_ref == jur))).scalars().all()
+    assert any((lg.detail or {}).get("reason") == "no_mirror" for lg in logs)
+    await _clean(db, jur)
 
 
 async def test_reconcile_db_mismatch_appends_and_flags_affected(db):
