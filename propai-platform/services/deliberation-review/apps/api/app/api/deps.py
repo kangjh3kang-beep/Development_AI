@@ -5,6 +5,7 @@ require_token: settings.API_TOKEN 미설정(빈 값) = 개방(dev). 설정 시 '
 from __future__ import annotations
 
 import hmac
+import uuid
 from collections.abc import AsyncIterator
 
 from fastapi import Header, HTTPException
@@ -17,6 +18,17 @@ from app.settings import settings
 async def get_session() -> AsyncIterator[AsyncSession]:
     async with async_session() as session:
         yield session
+
+
+def get_tenant_id(x_tenant_id: str | None = Header(default=None, alias="X-Tenant-Id")) -> uuid.UUID | None:
+    """BFF가 전달한 테넌트 컨텍스트(#8a 심층방어). 미설정=레거시/직접호출(격리 미적용, 후방호환).
+    설정 시 save_analysis가 organization_id로 적재, get_analysis가 소유 필터(교차테넌트 차단). hex/하이픈 모두 수용."""
+    if not x_tenant_id:
+        return None
+    try:
+        return uuid.UUID(x_tenant_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="invalid X-Tenant-Id") from exc
 
 
 def require_token(authorization: str | None = Header(default=None)) -> None:

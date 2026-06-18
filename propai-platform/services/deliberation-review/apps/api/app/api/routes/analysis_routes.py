@@ -8,7 +8,9 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_session, require_token
+import uuid
+
+from app.api.deps import get_session, get_tenant_id, require_token
 from app.contracts.analysis import AnalysisInput, AnalysisResult
 from app.core.errors import DomainError
 from app.services.pipeline.analysis_pipeline import run_analysis
@@ -19,7 +21,8 @@ router = APIRouter(prefix="/api/v1", tags=["analysis"])
 
 
 @router.post("/analyze", response_model=AnalysisResult, dependencies=[Depends(require_token)])
-async def analyze(payload: AnalysisInput, session: AsyncSession = Depends(get_session)) -> AnalysisResult:
+async def analyze(payload: AnalysisInput, session: AsyncSession = Depends(get_session),
+                  tenant_id: uuid.UUID | None = Depends(get_tenant_id)) -> AnalysisResult:
     # INC-11: 분석 전 캐시 적재(L2→L1, snapshot 결속) · 분석 후 신규 fetch 영속(L1→L2). 모두 best-effort
     # (캐시는 데이터 확보 단계만 — 실패해도 분석 진행, 결정론 영향 0).
     from app.adapters.cache.source_cache import flush_to_db, warm_from_db
@@ -43,12 +46,16 @@ async def analyze(payload: AnalysisInput, session: AsyncSession = Depends(get_se
     except Exception:
         await session.rollback()  # 캐시 영속 실패 → 다음 분석이 재fetch(분석 결과엔 무영향)
     # INC-14: 원시 입력 보존 — reconcile 불일치 시 이 관할(pnu) 분석을 동일입력으로 재실행(결정론).
-    return await save_analysis(session, result, input_payload=payload.model_dump(mode="json"))
+    # #8a: BFF가 보낸 X-Tenant-Id를 organization_id로 적재(테넌트 격리 키).
+    return await save_analysis(session, result, input_payload=payload.model_dump(mode="json"),
+                               tenant_id=tenant_id)
 
 
 @router.get("/analyze/{run_id}", response_model=AnalysisResult, dependencies=[Depends(require_token)])
-async def get_analysis_run(run_id: str, session: AsyncSession = Depends(get_session)) -> AnalysisResult:
-    result = await get_analysis(session, run_id)
+async def get_analysis_run(run_id: str, session: AsyncSession = Depends(get_session),
+                           tenant_id: uuid.UUID | None = Depends(get_tenant_id)) -> AnalysisResult:
+    # #8a: tenant_id 제공 시 소유 필터(교차테넌트 조회 차단·심층방어). 미존재/타테넌트 동일 404(존재은닉).
+    result = await get_analysis(session, run_id, tenant_id=tenant_id)
     if result is None:
         raise HTTPException(status_code=404, detail="analysis run not found")
     return result
