@@ -317,6 +317,50 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except Exception:  # noqa: BLE001
         logger.warning("분양 모니터링 루프 시작 실패")
 
+    # #4 수납 — 분양현장 연체이자 일배치(인프로세스 폴백). 미납 회차의 연체이자를 매일 1회
+    # '오늘 기준'으로 산정·적재한다(자금이동 없음, 산출만). overdue_calc 가 멱등이라
+    # (site_id,installment_id,calc_date) UNIQUE 로 같은 날 재실행해도 행이 중복되지 않는다.
+    # 멀티워커 안전: pg_try_advisory_lock 으로 한 워커만 돌린다(획득 실패 시 skip). 단일워커는 항상 획득.
+    # 환경(SALES_OVERDUE_INPROCESS, 기본 on)으로 off 가능. 현장/미납 없으면 즉시 0 반환(유휴비용 0).
+    # advisory lock 키 — lifecycle_p5 수동 트리거와 '같은' 키로 상호배제(SSOT: payment/locks.py).
+    from app.services.sales.payment.locks import OVERDUE_LOCK_KEY as _OVERDUE_LOCK_KEY  # noqa: N806
+
+    async def _overdue_batch_loop() -> None:
+        import os as _os2
+
+        from sqlalchemy import text as _text  # advisory lock SQL 용.
+        if _os2.getenv("SALES_OVERDUE_INPROCESS", "1") == "0":
+            return
+        from apps.api.database.session import AsyncSessionLocal
+        from app.services.sales.payment.service import run_overdue_all_sites
+        await _asyncio.sleep(420)  # 부팅 안정화 후 시작(다른 루프와 시차).
+        while True:
+            try:
+                async with AsyncSessionLocal() as _s:
+                    # ★lifecycle_p5 수동 트리거와 통일: pg_try_advisory_xact_lock(트랜잭션 종료 시
+                    #   자동해제)으로 잡는다. 기존 세션락 + finally 수동 unlock 은 run_overdue_all_sites
+                    #   가 내부에서 commit/rollback(테이블 미존재 폴백 등)으로 트랜잭션 경계를 바꾼 뒤
+                    #   세션락이 잔존하거나 unlock 이 빗나갈 위험이 있었다. xact 락은 commit/rollback
+                    #   어느 쪽으로 끝나도 자동해제돼 락 누수가 원천 차단된다(별도 unlock 불필요).
+                    got = bool((await _s.execute(
+                        _text("SELECT pg_try_advisory_xact_lock(:k)"), {"k": _OVERDUE_LOCK_KEY})).scalar())
+                    if got:
+                        res = await run_overdue_all_sites(_s)
+                        logger.info("연체이자 일배치 완료", **res)
+                    else:
+                        # 다른 워커가 보유 중 → skip. 이 세션은 락만 시도하고 끝나며,
+                        # 세션 종료(async with 이탈) 시 트랜잭션이 정리돼 시도분도 자동해제된다.
+                        await _s.rollback()
+                        logger.debug("연체 일배치 skip(다른 워커 보유)")
+            except Exception as e:  # noqa: BLE001 — 루프는 절대 죽지 않게(분류는 서비스 내부에서 처리).
+                logger.warning("연체이자 일배치 실패: %s", str(e)[:160])
+            await _asyncio.sleep(24 * 3600)  # 하루 1회 주기.
+
+    try:
+        app.state.overdue_batch_task = _asyncio.create_task(_overdue_batch_loop())
+    except Exception:  # noqa: BLE001
+        logger.warning("연체이자 일배치 루프 시작 실패")
+
     # 자가성장 엔진 — 텔레메트리 큐 → platform_events 인프로세스 주기 flush.
     # Celery Beat(5초)가 정본이지만, Celery 미배포 환경에서도 적재되도록
     # _presale_monitor_loop 와 동일한 asyncio 폴백을 둔다(단일 워커 1개 루프).
@@ -460,6 +504,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     _t = getattr(app.state, "presale_monitor_task", None)
     if _t is not None:
         _t.cancel()
+    _ot = getattr(app.state, "overdue_batch_task", None)
+    if _ot is not None:
+        _ot.cancel()
     _st = getattr(app.state, "growth_scheduler_task", None)
     if _st is not None:
         _st.cancel()

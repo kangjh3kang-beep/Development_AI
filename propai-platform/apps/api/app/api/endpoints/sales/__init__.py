@@ -23,7 +23,7 @@ from apps.api.database.models.sales import (
     commission_mh_harness as cm, contract_crm_ad as cc, site_org as so, staff as st, units_pricing as up,
 )
 from apps.api.database.models.sales import (
-    loan as ln, options as opn, payment as pm, subscription as sub,
+    loan as ln, options as opn, subscription as sub,
 )
 from apps.api.database.models.sales import (
     commission_ext as ce, guarantee as gu, resale as rs, tax as tx,
@@ -59,7 +59,11 @@ REGISTRY = [
     (sub.SalesSubscriptionWinner, "subscription/winners"),
     (opn.SalesOptionCatalog, "options/catalog"),
     (ln.SalesLoanProgram, "loan/programs"), (ln.SalesLoanAgreement, "loan/agreements"),
-    (pm.SalesOverdueInterest, "payments/overdue"),
+    # ★payments/overdue 는 자동 CRUD 에서 제거했다(예전엔 (pm.SalesOverdueInterest, "payments/overdue")).
+    #   r5(lifecycle_p5)의 전용 GET 핸들러가 회차별 최신 calc_date 1건만(DISTINCT ON) 돌려주는데,
+    #   자동 CRUD 가 같은 prefix 로 GET/POST 를 또 찍어내면 (등록순서로 r5 가 이기긴 하지만) 같은
+    #   경로를 두 writer 가 소유하는 모호함이 남았다. 등록순서 의존을 없애고 r5 가 단독 소유하게
+    #   REGISTRY 에서 뺀다(POST 도 멱등 핸들러 webhook/run-overdue 로만 — 자동 CRUD POST shadow 제거).
     # Part6 [T]보증/신탁 [V]실거래/전매 [W]수수료확장 [X]세무
     (gu.SalesGuaranteePolicy, "guarantee/policies"), (gu.SalesTrustAccount, "trust/accounts"),
     (rs.SalesRealtxReport, "realtx/reports"), (rs.SalesResaleRestriction, "resale/restrictions"),

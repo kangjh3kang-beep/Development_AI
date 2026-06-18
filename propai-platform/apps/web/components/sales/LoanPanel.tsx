@@ -8,6 +8,8 @@ import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 interface Program { id: string; bank_name?: string; guarantee_type?: string; status: string }
 interface Agreement { id: string; approved_amount?: number; status: string; program_id?: string }
 interface ContractOpt { id: string; label: string; status?: string }
+// POST /loan/repay 응답 계약(LoanRepayResponse). 키집합은 백엔드 Pydantic 과 1:1.
+interface RepayResult { status: string; applied: number; fully_repaid: boolean; duplicate: boolean; disbursed: number; repaid: number; outstanding: number }
 const IN = "rounded-lg border border-[var(--line-strong)] bg-[var(--surface-strong)] px-3 py-2 text-sm text-[var(--text-primary)]";
 const BTN = "rounded-lg bg-[var(--accent-strong)] px-3 py-1.5 text-sm font-bold text-white disabled:opacity-50";
 
@@ -21,6 +23,9 @@ export default function LoanPanel({ siteCode }: { siteCode: string }) {
   const [prog, setProg] = useState({ bank_name: "", guarantee_type: "HUG" });
   const [ag, setAg] = useState<{ contract_ext_id: string; program_id: string; approved_amount: number | null }>({ contract_ext_id: "", program_id: "", approved_amount: null });
   const [dis, setDis] = useState<{ agreement_id: string; installment_seq: string; amount: number | null }>({ agreement_id: "", installment_seq: "", amount: null });
+  // 대출 상환 입력(약정·상환액·상환일 옵션) — POST /loan/repay 머니패스.
+  const [rep, setRep] = useState<{ agreement_id: string; amount: number | null; repaid_at: string }>({ agreement_id: "", amount: null, repaid_at: "" });
+  const [repRes, setRepRes] = useState<RepayResult | null>(null);
   const [msg, setMsg] = useState("");
 
   const load = useCallback(() => {
@@ -38,6 +43,21 @@ export default function LoanPanel({ siteCode }: { siteCode: string }) {
     if (!dis.agreement_id) return;
     await api.post("/loan/disburse", { agreement_id: dis.agreement_id, installment_seq: Number(dis.installment_seq), amount: dis.amount ?? 0 });
     setMsg("실행 기록 완료(회차 납입처리)"); setDis({ agreement_id: "", installment_seq: "", amount: null }); load();
+  };
+  // 대출 상환 기록(부분/전액) — 전액 상환 시 약정 status=REPAID 로 전이. 자금이동 없음.
+  const repay = async () => {
+    if (!rep.agreement_id || !rep.amount) { setMsg("약정과 상환액을 입력하세요."); return; }
+    setRepRes(null); setMsg("");
+    try {
+      const r = await api.post<RepayResult>("/loan/repay", {
+        agreement_id: rep.agreement_id,
+        amount: rep.amount,
+        repaid_at: rep.repaid_at || undefined,
+      });
+      setRepRes(r);
+      setMsg(r.duplicate ? "이미 전액 상환된 약정입니다(추가 충당 없음)." : r.fully_repaid ? "전액 상환 완료(약정 상환완료 전이)." : "부분 상환 기록 완료.");
+      setRep({ agreement_id: "", amount: null, repaid_at: "" }); load();
+    } catch { setMsg("상환 기록 실패(약정·금액·권한 확인)."); }
   };
 
   // 아직 처음 불러오는 중이면 회색 자리표시(스켈레톤)를 보여줘 빈 화면 깜빡임을 막는다.
@@ -96,6 +116,27 @@ export default function LoanPanel({ siteCode }: { siteCode: string }) {
         </div>
         {msg && <p className="mt-2 text-sm font-semibold text-emerald-400">{msg}</p>}
         <p className="mt-1 text-[11px] text-[var(--text-tertiary)]">※ 은행 실행분 기록(method=LOAN). 자금이체는 시스템이 수행하지 않습니다.</p>
+      </div>
+      <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-4">
+        <h3 className="mb-3 font-bold text-[var(--text-primary)]">대출 상환(기록)</h3>
+        <div className="flex flex-wrap items-end gap-2">
+          <select value={rep.agreement_id} onChange={(e) => setRep({ ...rep, agreement_id: e.target.value })} className={IN}>
+            <option value="">약정 선택…</option>
+            {agreements.map((a) => <option key={a.id} value={a.id}>{won(a.approved_amount || 0)} · {a.status}</option>)}
+          </select>
+          <NumberInput value={rep.amount} onChange={(n) => setRep({ ...rep, amount: n })} placeholder="상환액(원)" className={IN} />
+          <input value={rep.repaid_at} onChange={(e) => setRep({ ...rep, repaid_at: e.target.value })} type="date" className={`${IN} w-40`} title="상환일(선택)" />
+          <button onClick={repay} className={BTN}>상환 기록</button>
+        </div>
+        {repRes && (
+          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-strong)] p-2.5 text-center"><p className="text-[10px] text-[var(--text-tertiary)]">실행 총액</p><p className="mt-0.5 text-sm font-black text-[var(--text-primary)]">{won(repRes.disbursed)}</p></div>
+            <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-strong)] p-2.5 text-center"><p className="text-[10px] text-[var(--text-tertiary)]">상환 누적</p><p className="mt-0.5 text-sm font-black text-emerald-400">{won(repRes.repaid)}</p></div>
+            <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-strong)] p-2.5 text-center"><p className="text-[10px] text-[var(--text-tertiary)]">미상환 잔액</p><p className="mt-0.5 text-sm font-black text-amber-400">{won(repRes.outstanding)}</p></div>
+            <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-strong)] p-2.5 text-center"><p className="text-[10px] text-[var(--text-tertiary)]">상태</p><p className={`mt-0.5 text-sm font-black ${repRes.fully_repaid ? "text-emerald-400" : "text-sky-400"}`}>{repRes.fully_repaid ? "상환완료" : repRes.status}</p></div>
+          </div>
+        )}
+        <p className="mt-1 text-[11px] text-[var(--text-tertiary)]">※ 상환 '기록'만 — 부분/전액 상환을 멱등 처리하며 전액 상환 시 약정이 상환완료로 전이됩니다.</p>
       </div>
     </div>
   );

@@ -96,3 +96,16 @@ P0: (a)마이그레이션·부트스트랩 FORCE를 **정책 보유 테이블에
 
 검증: 4 .py py_compile OK. console ruff clean. _validate_ym/_month_bounds 라이브 스모크(정상3통과·비정규8차단). reconciliation 항등식 6케이스 정합. views/actions 모듈 import OK. TSX는 main워크트리 tsconfig로 단일파일 tsc → 오류0(복원검증). **deploy-pending**: 라이브 DB E2E(롤업 errors 실발생·2뷰 실수치·032 upgrade head 실행)·프론트 빌드/배포는 샌드박스 제약으로 미수행.
 제거한 안티패턴: silent-fail 0(신규)·미배선 0(2뷰 화면연결 완료)·DDL race(advisory-lock 기존유지)·docstring 허위(2번 사실확인·정정).
+
+---
+## 진행 현황 요약 (2026-06-19 갱신)
+| # | 서브시스템 | 전 | 후 | critical/high | 커밋 | 비고 |
+|--|--|:--:|:--:|:--:|--|--|
+| 10 | 회계 통합콘솔 | 5.8 | 7.5 | 0 | 3cadfed2 등 3 | 7 iter. 잔여 9.5갭=K-IFRS 진행기준(deploy-pending) |
+| 1 | RLS 보안 | 6.8 | 8.5 | 0 | 9a84254a 등 4 | 6 iter. security·correctness 9.0. 잔여=ux진단화면·라이브RLS(deploy-pending) |
+| 3 | 수수료·원천징수 | 6.2 | 8.0 | 0 | 22092bd8 등 3 | 8 iter. 머니패스 다중버그 마감. backlog=build 가드·income_type collapse·TOTAL_POOL |
+| 4 | 수납·대출·보증 | 6.5 | (진행) | | | overdue_calc/대출상환 미배선 |
+
+**큐**: #4 → #5(조직도 5.8) → #7(계약CRM 6.8) → #2(워크스페이스 7.8) → #8(분양가 7.1) → #9(해촉외 7.2) → #6(세대 8.1)
+**효율정책**: 각 서브시스템 critical/high 0까지 2-3 iter 수렴 후 IMPROVED 커밋·이동, medium/low는 backlog 정직표기, 라이브검증은 deploy-pending. **검증 통과(IMPROVED↑)분만 커밋·푸시**(main 직푸시X·머지=통합자).
+**누적**: 커밋 10건, 위험/무진전 22회 차단(앱브릭·권한상승·false assurance·머니패스 누수·반쪽출하 등).
