@@ -415,6 +415,156 @@ class VWorldService:
                 pass  # 용도지구 없는 필지는 정상
         return results
 
+    async def get_planning_facilities(
+        self, lat: float, lon: float, radius_m: int = 1000
+    ) -> list[dict]:
+        """입지 좌표 주변의 도시계획시설(특히 철도·역사·도시철도 계획결정)을 best-effort로 조회한다.
+
+        VWorld data API GetFeature + geomFilter(BBOX)로 좌표 반경 내 도시계획시설을 받아
+        철도/역사/도시철도 관련 시설만 골라 '주변 개발계획' 후보로 반환한다.
+
+        ★레이어 코드/속성명이 확실치 않으므로 여러 후보 레이어를 차례로 시도하고, 응답
+          status가 OK이고 features가 있을 때만 채택한다(어떤 후보도 안 되면 빈 배열).
+        무목업: 키 미설정·무자료·오류 시 가짜 시설을 생성하지 않고 [] 반환(엔드포인트가 정직 note 처리).
+
+        반환: [{type(시설구분), name, status('계획'/'결정'/'운영' 등 속성 그대로·불명시 '확인필요'),
+                distance_m, source:'vworld_도시계획시설'}]
+        """
+        if not settings.VWORLD_API_KEY or not lat or not lon:
+            return []
+
+        # 반경(m)을 위경도 박스로 환산(위도 1도 ≈ 111,320m). 경도는 위도 보정.
+        d_lat = radius_m / 111_320
+        d_lon = radius_m / (111_320 * max(0.1, math.cos(math.radians(lat))))
+        min_lat, max_lat = lat - d_lat, lat + d_lat
+        min_lon, max_lon = lon - d_lon, lon + d_lon
+        box = f"BOX({min_lon},{min_lat},{max_lon},{max_lat})"
+
+        # 도시계획시설 계열 후보 레이어(확실치 않아 순차 시도) — VWorld 데이터목록 기준.
+        candidate_layers = [
+            "LT_C_UQ111",       # 도시계획시설(점/면)
+            "LT_C_UQ112",
+            "LT_C_UPISUQ151",   # 도시계획시설(UPIS) 계열
+            "LT_C_UPISUQ153",
+        ]
+        # 철도/역사/도시철도 판별 키워드(시설명/시설구분 기준).
+        rail_kw = ("철도", "역", "도시철도", "전철", "지하철", "광역철도", "고속철도", "역사")
+
+        facilities: list[dict] = []
+        seen: set[str] = set()  # 동일 시설 중복 제거(name+type)
+        for layer in candidate_layers:
+            params = {
+                "service": "data",
+                "request": "GetFeature",
+                "data": layer,
+                "key": settings.VWORLD_API_KEY,
+                "format": "json",
+                "crs": "EPSG:4326",
+                "geomFilter": box,
+                "geometry": "true",
+                "attribute": "true",
+                "size": "100",
+            }
+            try:
+                async with httpx.AsyncClient(timeout=12.0, headers=self.HEADERS) as client:
+                    resp = await client.get(f"{self.BASE_URL}/data", params=params)
+                    resp.raise_for_status()
+                    data = resp.json()
+                # 응답 status가 OK일 때만 채택(레이어 미존재·오류면 NOT_FOUND/ERROR).
+                status = data.get("response", {}).get("status")
+                if status != "OK":
+                    continue
+                features = (
+                    data.get("response", {})
+                    .get("result", {})
+                    .get("featureCollection", {})
+                    .get("features", [])
+                )
+                if not features:
+                    continue
+                for feat in features:
+                    props = feat.get("properties", {}) or {}
+                    # 시설명/시설구분 후보 속성(레이어마다 키가 달라 폭넓게 탐색).
+                    name = (
+                        props.get("dgm_nm") or props.get("fac_nm") or props.get("uname")
+                        or props.get("ntfc_nm") or props.get("ucode_nm") or props.get("name") or ""
+                    )
+                    fac_type = (
+                        props.get("dgm_knd") or props.get("fac_knd") or props.get("ucode_nm")
+                        or props.get("knd_nm") or props.get("uname") or ""
+                    )
+                    blob = f"{name} {fac_type}"
+                    # 철도/역사/도시철도 관련만 채택.
+                    if not any(kw in blob for kw in rail_kw):
+                        continue
+                    # 상태(계획/결정/운영 등) 속성 그대로 — 없으면 '확인필요'(가짜 단정 금지).
+                    fac_status = (
+                        props.get("prog_se") or props.get("ntfc_se") or props.get("dgm_se")
+                        or props.get("status") or "확인필요"
+                    )
+                    # 시설 대표 좌표로 입지까지 거리 산출(geometry 첫 좌표 추출).
+                    f_lat, f_lon = self._first_coord(feat.get("geometry"))
+                    distance_m = None
+                    if f_lat is not None and f_lon is not None:
+                        distance_m = round(self._haversine_m(lat, lon, f_lat, f_lon))
+                    dedup_key = f"{name}|{fac_type}"
+                    if dedup_key in seen:
+                        continue
+                    seen.add(dedup_key)
+                    facilities.append({
+                        "type": str(fac_type).strip() or "도시계획시설",
+                        "name": str(name).strip() or "(명칭 미상)",
+                        "status": str(fac_status).strip() or "확인필요",
+                        "distance_m": distance_m,
+                        "source": "vworld_도시계획시설",
+                    })
+            except Exception as e:  # noqa: BLE001 — 후보 레이어 실패는 다음 후보로(가짜 생성 금지).
+                logger.warning("도시계획시설 후보 레이어 조회 실패", layer=layer, error=str(e)[:120])
+                continue
+        if not facilities:
+            logger.info("주변 도시계획시설(철도 등) 자동수집 결과 없음", lat=lat, lon=lon, radius_m=radius_m)
+        # 가까운 순으로 정렬(거리 미상은 뒤로).
+        facilities.sort(key=lambda f: (f["distance_m"] is None, f["distance_m"] or 0))
+        return facilities
+
+    @staticmethod
+    def _first_coord(geom: Optional[dict]) -> tuple[Optional[float], Optional[float]]:
+        """GeoJSON geometry에서 대표 좌표(lat, lon)를 추출.
+
+        면(역사 부지 등)은 경계 한 꼭짓점보다 **중심점(centroid)**이 입지~시설 거리를
+        더 정확히 준다(경계점은 수백 m 오차 가능) → shapely centroid 우선, 실패 시 첫 좌표 폴백.
+        """
+        if not isinstance(geom, dict):
+            return (None, None)
+        # 1순위: shapely centroid(면·선의 중심) — 거리 정확도↑
+        try:
+            from shapely.geometry import shape
+            c = shape(geom).centroid
+            if c and not c.is_empty:
+                return (float(c.y), float(c.x))
+        except Exception:  # noqa: BLE001 — geometry 이상/shapely 미가용 시 첫 좌표 폴백
+            pass
+        # 폴백: 중첩 리스트를 끝까지 파고들어 [lon, lat] 쌍을 찾는다.
+        pt = geom.get("coordinates")
+        try:
+            while isinstance(pt, list) and pt and isinstance(pt[0], list):
+                pt = pt[0]
+            if isinstance(pt, list) and len(pt) >= 2:
+                return (float(pt[1]), float(pt[0]))  # GeoJSON은 [lon, lat] 순서
+        except (TypeError, ValueError, IndexError):
+            return (None, None)
+        return (None, None)
+
+    @staticmethod
+    def _haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+        """두 경위도 좌표 간 거리(m) — 입지~시설 거리 산출용."""
+        R = 6_371_000
+        phi1, phi2 = math.radians(lat1), math.radians(lat2)
+        d_phi = math.radians(lat2 - lat1)
+        d_lam = math.radians(lon2 - lon1)
+        a = math.sin(d_phi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(d_lam / 2) ** 2
+        return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
     async def get_land_use_zone(self, x: float, y: float) -> Optional[dict]:
         """좌표 기반 용도지역 조회"""
         params = {

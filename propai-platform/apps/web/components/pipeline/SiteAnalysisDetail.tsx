@@ -8,6 +8,16 @@ import { dynamicMap } from "@/components/common/MapShell";
 import type { NearbyTransactionsMap as NearbyTransactionsMapType } from "@/components/map/NearbyTransactionsMap";
 import type { ParcelBoundaryMap as ParcelBoundaryMapType } from "@/components/map/ParcelBoundaryMap";
 import { ExpertPanelCard } from "@/components/common/ExpertPanelCard";
+import { useProjectContextStore } from "@/store/useProjectContextStore"; // 현행 좌표(SSOT)·projectId
+import {
+  useDevelopmentPlanStore,
+  devPlanKindLabel,
+  DEV_PLAN_KINDS,
+  DEV_PLAN_STATUSES,
+  type DevPlanItem,
+  type DevPlanKind,
+  type DevPlanStatus,
+} from "@/store/useDevelopmentPlanStore"; // 주변 개발계획(신설역 등) — 역세권 시나리오 근거
 
 // 지도는 SSR 없이 동적 로드(SSR 단계 throw 차단 + 로딩 스켈레톤). 동작·props 불변.
 const NearbyTransactionsMap = dynamicMap<React.ComponentProps<typeof NearbyTransactionsMapType>>(
@@ -67,6 +77,26 @@ function s(value: unknown): string {
   if (value == null) return "";
   if (typeof value === "string") return value;
   return String(value);
+}
+
+/* ── 역세권(TOD) 등급 산정 — 백엔드와 동일 기준 ──
+   초역세권≤300m / 우수<500m / 보통<1000m / 비역세권≥1000m.
+   거리 미상(null)이면 등급을 매기지 않는다(가짜 등급 금지). */
+
+type TodGrade = "초역세권" | "우수" | "보통" | "비역세권";
+
+function todGrade(distance_m: number | null): TodGrade | null {
+  if (distance_m == null || !Number.isFinite(distance_m) || distance_m < 0) return null;
+  if (distance_m < 300) return "초역세권";  // 백엔드 comprehensive(<300)와 경계 통일
+  if (distance_m < 500) return "우수";
+  if (distance_m < 1000) return "보통";
+  return "비역세권";
+}
+
+// 역세권활성화(요건) 충족 여부 — 통상 500m 이내(초역세권·우수)를 요건 범위로 본다.
+function todQualifies(distance_m: number | null): boolean {
+  const g = todGrade(distance_m);
+  return g === "초역세권" || g === "우수";
 }
 
 /* ── Resolve nested or flat data helpers ── */
@@ -199,6 +229,13 @@ const IconSubway = (
 const IconWarning = (
   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" /><path d="M12 9v4" /><path d="M12 17h.01" />
+  </svg>
+);
+
+// 개발계획·TOD(노선 분기) 아이콘
+const IconRoute = (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <circle cx="6" cy="19" r="3" /><path d="M9 19h8.5a3.5 3.5 0 0 0 0-7h-11a3.5 3.5 0 0 1 0-7H15" /><circle cx="18" cy="5" r="3" />
   </svg>
 );
 
@@ -771,12 +808,376 @@ function ParcelBuildingTable({ parcels }: { parcels: string[] }) {
   );
 }
 
+/* ── 주변 개발계획 · 역세권 시나리오 카드 ──
+   현행 역세권(SSOT=infra.nearest_subway)은 그대로 보존하고,
+   신설 계획역 등 '주변 개발계획'을 자동수집(VWorld)+수동입력으로 모아
+   '계획 반영 역세권 시나리오'를 별도로 제시한다(현행 판정과 분리·정직 고지).
+
+   무목업·정직 원칙:
+   · 계획역은 '운영'이 아니면 단정 판정이 아닌 '시나리오/가능'으로만 표시.
+   · 거리 미상(null) 항목은 역세권 등급 산정에서 제외.
+   · 자동수집 결과가 없으면 백엔드 note를 그대로 노출(가짜 시설 생성 금지).
+   · 좌표가 없으면 자동수집 버튼을 비활성화하고 안내. */
+
+type DevFacility = { type?: string; name?: string; status?: string; distance_m?: number | null; source?: string };
+
+function gradeBadge(grade: TodGrade): string {
+  // 요건 충족(초역세권·우수)은 accent, 아니면 off 토큰.
+  return grade === "초역세권" || grade === "우수" ? "sa-di-token--accent" : "sa-di-token--off";
+}
+
+function DevelopmentPlanCard({
+  projectId,
+  lat,
+  lon,
+  nearestStationName,
+  nearestStationDistance,
+}: {
+  projectId: string | null;
+  lat: number | null;
+  lon: number | null;
+  nearestStationName: string;
+  nearestStationDistance: number | null;
+}) {
+  const items = useDevelopmentPlanStore((st) => st.getByProject(projectId));
+  const addItem = useDevelopmentPlanStore((st) => st.add);
+  const removeItem = useDevelopmentPlanStore((st) => st.remove);
+
+  // 자동수집 상태
+  const [fetching, setFetching] = useState(false);
+  const [facilities, setFacilities] = useState<DevFacility[] | null>(null);
+  const [fetchNote, setFetchNote] = useState<string>("");
+  const [fetchError, setFetchError] = useState(false);
+
+  // 수동입력 폼 상태
+  const [mName, setMName] = useState("");
+  const [mKind, setMKind] = useState<DevPlanKind>("station");
+  const [mStatus, setMStatus] = useState<DevPlanStatus>("계획");
+  const [mDist, setMDist] = useState<string>(""); // 빈 문자열=미상
+  const [mYear, setMYear] = useState<string>("");
+
+  const hasCoords = lat != null && lon != null && Number.isFinite(lat) && Number.isFinite(lon);
+
+  // 현행 역세권 등급(SSOT)
+  const curGrade = todGrade(nearestStationDistance);
+
+  // 계획 반영 역세권 시나리오 — 등록된 'station' 중 거리 최소(거리 미상은 제외).
+  const planStations = items.filter((it) => it.kind === "station" && it.distance_m != null);
+  let bestPlan: DevPlanItem | null = null;
+  for (const ps of planStations) {
+    if (bestPlan == null || (ps.distance_m as number) < (bestPlan.distance_m as number)) bestPlan = ps;
+  }
+  // 시나리오 후보 = 현행 최근접 vs 계획역 중 더 가까운 쪽.
+  const planGrade = bestPlan ? todGrade(bestPlan.distance_m) : null;
+  // 계획역이 현행보다 가까워야(또는 현행 정보가 없어야) '개선 시나리오'로서 의미가 있다.
+  const planImproves =
+    bestPlan != null &&
+    planGrade != null &&
+    (nearestStationDistance == null || (bestPlan.distance_m as number) < nearestStationDistance);
+  const planIsOperating = bestPlan?.status === "운영";
+
+  async function runAutoCollect() {
+    if (!hasCoords || fetching) return;
+    setFetching(true);
+    setFetchError(false);
+    setFacilities(null);
+    setFetchNote("");
+    try {
+      const r = await apiClient.post<{ facilities: DevFacility[]; note?: string }>(
+        "/zoning/development-facilities",
+        { body: { lat, lon, radius_m: 1000 }, useMock: false, timeoutMs: 30000 },
+      );
+      setFacilities(Array.isArray(r.facilities) ? r.facilities : []);
+      setFetchNote(s(r.note));
+    } catch {
+      setFetchError(true);
+      setFacilities([]);
+      setFetchNote("자동수집 호출 실패 — 잠시 후 다시 시도하거나 수동으로 입력하세요.");
+    } finally {
+      setFetching(false);
+    }
+  }
+
+  // 자동수집 후보 → 개발계획에 추가(거리 미상이면 null 유지, 가짜 거리 생성 금지).
+  function addFromFacility(f: DevFacility) {
+    const fname = s(f.name).trim();
+    const fdist = typeof f.distance_m === "number" ? f.distance_m : null;
+    // 시설구분이 역/철도면 station, 도로면 road, 그 외 district로 추정(원본 type은 note에 보존).
+    const t = s(f.type);
+    const kind: DevPlanKind =
+      /역|철도|전철|지하철/.test(t) || /역|철도|전철|지하철/.test(fname)
+        ? "station"
+        : /도로|road/i.test(t)
+          ? "road"
+          : "district";
+    addItem(projectId, {
+      kind,
+      name: fname || "(명칭 미상)",
+      // 백엔드 status 문자열을 우리 enum에 매핑(불명은 '계획'으로 보수적 처리).
+      status: (["계획", "추진", "고시", "운영"] as DevPlanStatus[]).includes(s(f.status) as DevPlanStatus)
+        ? (s(f.status) as DevPlanStatus)
+        : "계획",
+      distance_m: fdist,
+      open_year: null,
+      source: "auto",
+      note: [t && `구분:${t}`, f.status && `원본상태:${s(f.status)}`, f.source && `출처:${s(f.source)}`]
+        .filter(Boolean)
+        .join(" · "),
+    });
+  }
+
+  function addManual() {
+    const nm = mName.trim();
+    if (!nm) return;
+    const distNum = mDist.trim() === "" ? null : Number(mDist);
+    const yearNum = mYear.trim() === "" ? null : Number(mYear);
+    addItem(projectId, {
+      kind: mKind,
+      name: nm,
+      status: mStatus,
+      distance_m: distNum != null && Number.isFinite(distNum) && distNum >= 0 ? distNum : null,
+      open_year: yearNum != null && Number.isFinite(yearNum) ? yearNum : null,
+      source: "manual",
+    });
+    setMName("");
+    setMDist("");
+    setMYear("");
+  }
+
+  return (
+    <CategoryCard title="주변 개발계획 · 역세권 시나리오" eyebrow="DEV PLAN · TOD" icon={IconRoute}>
+      <div className="space-y-3">
+        {/* ① 현행 역세권(자동·SSOT) */}
+        <div className="sa-di-sub">
+          <p className="sa-di-eyebrow mb-2">현행 역세권(SSOT · 운영 중 역 기준)</p>
+          {nearestStationName ? (
+            <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-[var(--text-primary)]">
+              <span>
+                현행 <strong>{nearestStationName}</strong>{" "}
+                {nearestStationDistance != null ? `${nearestStationDistance}m` : "(거리 미상)"}
+              </span>
+              {curGrade ? (
+                <>
+                  <span className="text-[var(--text-hint)]">→</span>
+                  <span className={`sa-di-token ${gradeBadge(curGrade)}`}>{curGrade}</span>
+                  <span className="text-[var(--text-hint)]">
+                    {todQualifies(nearestStationDistance) ? "(역세권 요건 충족)" : "(요건 미달)"}
+                  </span>
+                </>
+              ) : (
+                <span className="text-[var(--text-hint)]">— 거리 미상으로 등급 산정 제외</span>
+              )}
+            </div>
+          ) : (
+            <p className="sa-di-empty">최근접 역 정보 없음 — 인프라 분석에서 역 데이터를 확보하지 못했습니다.</p>
+          )}
+        </div>
+
+        {/* ② 계획 포함 역세권 시나리오(핵심) — 단정 금지·정직 고지 */}
+        {bestPlan && planGrade && (
+          <div className="sa-di-alert" style={{ borderColor: "var(--data-accent-line)", background: "var(--data-accent-soft)" }}>
+            <p className="sa-di-alert__title mb-2" style={{ color: "var(--data-accent)" }}>
+              계획 반영 역세권 시나리오
+            </p>
+            <div className="space-y-1 text-[11px] text-[var(--text-primary)]">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span>
+                  <strong>{bestPlan.name}</strong> 신설(상태:{bestPlan.status}) 반영 시{" "}
+                  <strong>{bestPlan.distance_m}m</strong>
+                </span>
+                <span className="text-[var(--text-hint)]">→</span>
+                <span className={`sa-di-token ${gradeBadge(planGrade)}`}>{planGrade}</span>
+              </div>
+              {planIsOperating ? (
+                <p>
+                  · 해당 역은 <strong>운영</strong> 상태 — 현행 역세권 판정에 반영 가능.
+                </p>
+              ) : (
+                <p>
+                  ·{" "}
+                  {todQualifies(bestPlan.distance_m)
+                    ? "역세권활성화 요건 충족 가능."
+                    : `해당 등급(${planGrade}) 시나리오.`}{" "}
+                  단 <strong>계획단계({bestPlan.status})</strong>로 <strong>현행 판정엔 미반영</strong> — 고시·개통 시 확정됩니다.
+                </p>
+              )}
+              {!planImproves && nearestStationDistance != null && (
+                <p className="text-[var(--text-hint)]">
+                  · 참고: 현행 최근접({nearestStationDistance}m)이 더 가까워 시나리오 등급이 개선되지 않습니다.
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ③ 자동수집 — 좌표 기반 도시계획시설 후보 */}
+        <div className="sa-di-sub">
+          <div className="sa-di-sub__head">
+            <p className="sa-di-eyebrow">자동수집(도시계획시설 · VWorld)</p>
+            <button
+              type="button"
+              onClick={runAutoCollect}
+              disabled={!hasCoords || fetching}
+              className="sa-di-token sa-di-token--accent disabled:opacity-50 disabled:cursor-not-allowed"
+              style={{ cursor: hasCoords && !fetching ? "pointer" : undefined }}
+            >
+              {fetching ? "수집 중…" : "주변 개발계획 자동수집"}
+            </button>
+          </div>
+          {!hasCoords && (
+            <p className="sa-di-empty">입지 좌표가 없어 자동수집을 사용할 수 없습니다 — 아래에서 수동으로 입력하세요.</p>
+          )}
+          {facilities != null && (
+            <div className="space-y-2">
+              {facilities.length > 0 ? (
+                <div className="sa-di-rows">
+                  {facilities.map((f, i) => {
+                    const fdist = typeof f.distance_m === "number" ? f.distance_m : null;
+                    return (
+                      <div key={i} className="sa-di-row">
+                        <span className="sa-di-row__label">
+                          {s(f.name) || "(명칭 미상)"}
+                          {f.type && <span className="ml-1 text-[var(--text-hint)]">({s(f.type)})</span>}
+                          {f.status && <span className="ml-1 text-[var(--text-hint)]">· {s(f.status)}</span>}
+                        </span>
+                        <span className="flex items-center gap-2">
+                          <span className="sa-di-row__value">{fdist != null ? `${fdist}m` : "거리 미상"}</span>
+                          <button
+                            type="button"
+                            onClick={() => addFromFacility(f)}
+                            className="sa-di-token"
+                            style={{ cursor: "pointer" }}
+                          >
+                            개발계획에 추가
+                          </button>
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : null}
+              {/* note는 정직 표기 — empty여도 백엔드 안내문 그대로 노출 */}
+              {fetchNote && (
+                <p className={fetchError ? "sa-di-empty" : "text-[11px] text-[var(--text-hint)]"}>{fetchNote}</p>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* ④ 수동입력 — 신설역 등 직접 추가 */}
+        <div className="sa-di-sub">
+          <p className="sa-di-eyebrow mb-2">수동입력(신설역·구역지정 등)</p>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <input
+              value={mName}
+              onChange={(e) => setMName(e.target.value)}
+              placeholder="명칭(예: 신상도역)"
+              className="col-span-2 rounded-md border border-[var(--line)] bg-[var(--surface)] px-2 py-1 text-[11px] text-[var(--text-primary)] placeholder:text-[var(--text-hint)]"
+            />
+            <select
+              value={mKind}
+              onChange={(e) => setMKind(e.target.value as DevPlanKind)}
+              className="rounded-md border border-[var(--line)] bg-[var(--surface)] px-2 py-1 text-[11px] text-[var(--text-primary)]"
+            >
+              {DEV_PLAN_KINDS.map((k) => (
+                <option key={k.value} value={k.value}>
+                  {k.label}
+                </option>
+              ))}
+            </select>
+            <select
+              value={mStatus}
+              onChange={(e) => setMStatus(e.target.value as DevPlanStatus)}
+              className="rounded-md border border-[var(--line)] bg-[var(--surface)] px-2 py-1 text-[11px] text-[var(--text-primary)]"
+            >
+              {DEV_PLAN_STATUSES.map((st) => (
+                <option key={st} value={st}>
+                  {st}
+                </option>
+              ))}
+            </select>
+            <input
+              value={mDist}
+              onChange={(e) => setMDist(e.target.value)}
+              inputMode="numeric"
+              placeholder="거리 m(미상 비움)"
+              className="rounded-md border border-[var(--line)] bg-[var(--surface)] px-2 py-1 text-[11px] text-[var(--text-primary)] placeholder:text-[var(--text-hint)]"
+            />
+            <input
+              value={mYear}
+              onChange={(e) => setMYear(e.target.value)}
+              inputMode="numeric"
+              placeholder="개통예정 연도"
+              className="rounded-md border border-[var(--line)] bg-[var(--surface)] px-2 py-1 text-[11px] text-[var(--text-primary)] placeholder:text-[var(--text-hint)]"
+            />
+            <button
+              type="button"
+              onClick={addManual}
+              disabled={!mName.trim()}
+              className="sa-di-token sa-di-token--accent disabled:opacity-50 disabled:cursor-not-allowed"
+              style={{ cursor: mName.trim() ? "pointer" : undefined }}
+            >
+              개발계획 추가
+            </button>
+          </div>
+          <p className="mt-1.5 text-[10px] text-[var(--text-hint)]">
+            거리를 비우면 ‘미상’으로 저장되어 역세권 등급 산정에서 제외됩니다(가짜 거리 입력 금지).
+          </p>
+        </div>
+
+        {/* ⑤ 등록된 개발계획 목록(수동+자동) — 삭제 가능 */}
+        <div className="sa-di-sub">
+          <p className="sa-di-eyebrow mb-2">등록된 개발계획 ({items.length})</p>
+          {items.length > 0 ? (
+            <div className="sa-di-rows">
+              {items.map((it) => {
+                const g = it.kind === "station" ? todGrade(it.distance_m) : null;
+                return (
+                  <div key={it.id} className="sa-di-row">
+                    <span className="sa-di-row__label">
+                      {it.name}
+                      <span className="ml-1 text-[var(--text-hint)]">
+                        ({devPlanKindLabel(it.kind)} · {it.status}
+                        {it.source === "auto" ? " · 자동" : " · 수동"}
+                        {it.open_year != null ? ` · ${it.open_year}년` : ""})
+                      </span>
+                      {g && <span className={`ml-1.5 sa-di-token ${gradeBadge(g)}`}>{g}</span>}
+                    </span>
+                    <span className="flex items-center gap-2">
+                      <span className="sa-di-row__value">{it.distance_m != null ? `${it.distance_m}m` : "거리 미상"}</span>
+                      <button
+                        type="button"
+                        onClick={() => removeItem(projectId, it.id)}
+                        className="sa-di-token sa-di-token--off"
+                        style={{ cursor: "pointer", textDecoration: "none" }}
+                        aria-label={`${it.name} 삭제`}
+                      >
+                        삭제
+                      </button>
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="sa-di-empty">등록된 개발계획 없음 — 자동수집 또는 수동입력으로 추가하세요.</p>
+          )}
+        </div>
+      </div>
+    </CategoryCard>
+  );
+}
+
 /* ── Main Component ── */
 
 export function SiteAnalysisDetail({ data, hideInterpretation = false, parcels }: SiteAnalysisDetailProps) {
   // 로케일 읽기 — URL에서 자동추출(예: /ko/pipeline → "ko"). 없으면 "ko" 기본값.
   const { locale: routeLocale } = (useParams() as { locale?: string }) || {};
   const locale = routeLocale ?? "ko";
+
+  // 개발계획 카드용 — projectId(이력 격리)·현행 좌표(SSOT). rules-of-hooks: 최상위 무조건 호출.
+  const ctxProjectId = useProjectContextStore((st) => st.projectId);
+  const ctxCoords = useProjectContextStore((st) => st.siteAnalysis?.coordinates ?? null);
 
   // 1. 기본 토지정보
   const basic = obj(data.basic);
@@ -825,6 +1226,17 @@ export function SiteAnalysisDetail({ data, hideInterpretation = false, parcels }
 
   // 6. 주변 인프라
   const infra = obj(data.infrastructure);
+  // 현행 최근접 역(SSOT) — 개발계획 카드의 '현행 역세권' 판정 근거.
+  const nearestSubway = obj(infra.nearest_subway);
+  const nearestStationName = s(nearestSubway.name);
+  const nearestStationDistance = n(nearestSubway.distance_m);
+  // 입지 좌표 — 저장본(data) 우선, 없으면 프로젝트 컨텍스트 store의 좌표(SSOT)로 폴백.
+  // 가짜 좌표 생성 금지: 어느 쪽에도 없으면 null(자동수집 버튼 비활성).
+  const dataCoords = obj(data.coordinates);
+  const siteLat =
+    n(dataCoords.lat) ?? n(basic.lat) ?? n(data.lat) ?? n(infra.lat) ?? (ctxCoords ? n(ctxCoords.lat) : null);
+  const siteLon =
+    n(dataCoords.lon) ?? n(basic.lon) ?? n(data.lon) ?? n(infra.lon) ?? (ctxCoords ? n(ctxCoords.lon) : null);
 
   // 7. 규제 사항
   const regulations = obj(data.regulations);
@@ -1203,6 +1615,15 @@ export function SiteAnalysisDetail({ data, hideInterpretation = false, parcels }
           <NoData />
         )}
       </CategoryCard>
+
+      {/* 6.5 주변 개발계획 · 역세권 시나리오 — 신설 계획역 반영(현행 판정과 분리·정직 고지) */}
+      <DevelopmentPlanCard
+        projectId={ctxProjectId}
+        lat={siteLat}
+        lon={siteLon}
+        nearestStationName={nearestStationName}
+        nearestStationDistance={nearestStationDistance}
+      />
 
       {/* 7. 규제 사항 — 특수구역은 경고색 토큰, 경고 사항은 alert 패널 */}
       <CategoryCard title="규제 사항" eyebrow="REGULATIONS" icon={IconWarning}>

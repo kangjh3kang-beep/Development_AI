@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v241-dong-autoresolve";
+const CACHE_NAME = "propai-v242-devplan-tod";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

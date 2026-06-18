@@ -1163,6 +1163,38 @@ async def parcel_at_point(req: ParcelAtPointRequest):
     }
 
 
+class DevelopmentFacilitiesRequest(BaseModel):
+    """주변 개발계획(도시계획시설 — 철도·역사 등) 자동수집 요청."""
+    lat: float
+    lon: float
+    radius_m: int = 1000
+
+
+@router.post("/development-facilities")
+async def development_facilities(req: DevelopmentFacilitiesRequest):
+    """입지 좌표 주변의 도시계획시설(특히 철도·역사·도시철도 계획결정)을 best-effort로 자동수집.
+
+    VWorld 공간정보로 반경 내 도시계획시설을 조회해 '주변 개발계획' 후보로 반환한다.
+    무목업·정직표기: 데이터가 없으면 가짜 시설을 생성하지 않고 빈 배열 + note로 정직 고지한다.
+    """
+    from apps.api.app.services.external_api.vworld_service import VWorldService
+
+    if not (-90 <= req.lat <= 90 and -180 <= req.lon <= 180):
+        return {"facilities": [], "note": "좌표 범위 오류 — 위도(-90~90)/경도(-180~180)를 확인하세요."}
+    radius_m = max(100, min(5000, req.radius_m or 1000))  # 1회 조회 부담 낮게(과도 반경 제한)
+    try:
+        facilities = await VWorldService().get_planning_facilities(req.lat, req.lon, radius_m=radius_m)
+    except Exception as e:  # noqa: BLE001 — 외부 조회 실패는 정직 empty로(가짜 생성 금지).
+        logger.warning("주변 도시계획시설 자동수집 실패: %s,%s (%s)", req.lat, req.lon, str(e))
+        facilities = []
+    if facilities:
+        note = f"VWorld 도시계획시설 {len(facilities)}건(참고 — 확정 고시 여부는 별도 확인)"
+    else:
+        note = ("주변 도시계획시설(철도 등) 자동수집 결과 없음 — 계획 고시 전이거나 "
+                "공간정보 미등재일 수 있습니다. 수동으로 개발계획을 입력하세요.")
+    return {"facilities": facilities, "note": note}
+
+
 class LandReportRequest(BaseModel):
     """토지분석보고서 PDF 생성 요청 — 토지조서 필지 목록."""
     project_name: str = "토지분석보고서"
