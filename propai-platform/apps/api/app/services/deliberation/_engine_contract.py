@@ -9,7 +9,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import date
 from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field
 
 # 엔진 버전 핀(이 골든이 깨지면 엔진 hashing 변경 → 동기화 필요). 골든=엔진 input_hash({"input": <대표입력>}).
 ENGINE_HASHING_PINNED = "core.hashing@v1"
@@ -39,3 +42,44 @@ def content_input_hash(analysis_input: dict[str, Any]) -> str:
     바뀌어도 동일 사안을 같은 lineage로 묶음). engine_run_binding UNIQUE(tenant, content_input_hash, snapshot_id).
     """
     return input_hash({k: v for k, v in analysis_input.items() if k != "snapshot_id"})
+
+
+class MirrorAnalysisInput(BaseModel):
+    """엔진 `contracts/analysis.AnalysisInput`의 **필드·기본값 미러**(import 불가→vendoring).
+
+    `model_dump(mode="json")`가 엔진과 동일 dict를 내야 input_hash가 비트동일(parity 테스트로 drift 차단).
+    extra="ignore"(엔진 기본과 동일 — 플랫폼이 보낸 잉여 키는 양측 모두 무시). pnu 패턴 등 엔진 validator는
+    미적용(유효 입력은 값 동일 통과; 무효는 BFF 선검증/엔진 422가 별도로 처리).
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    pnu: str = ""
+    application_date: date | None = None
+    axis_date: date | None = None
+    snapshot_id: str = "snap-1"
+    drawing: dict = Field(default_factory=dict)
+    model_version: str = "engine-v1"
+    drawings: list = Field(default_factory=list)
+    ifc: str | None = None
+    elements: list = Field(default_factory=list)
+    calc_targets: list = Field(default_factory=list)
+    rules: list = Field(default_factory=list)
+    sim_inputs: dict = Field(default_factory=dict)
+    issue: str | None = None
+    corpus: list = Field(default_factory=list)
+    mirror_rules: list = Field(default_factory=list)
+    citations: list = Field(default_factory=list)
+    cross_facts: list = Field(default_factory=list)
+    collect_land_card: bool = False
+    land_year: str | None = None
+    address: str | None = None
+    collect_surrounding: bool = False
+    surrounding_radius_m: int = 150
+    proposed_floors: int | None = None
+    qual_facts: list = Field(default_factory=list)
+
+
+def build_input_dump(payload: dict[str, Any]) -> dict[str, Any]:
+    """플랫폼 입력 dict → 엔진 기본값 채운 정규 dump(엔진 model_dump(mode="json")와 동일)."""
+    return MirrorAnalysisInput(**payload).model_dump(mode="json")

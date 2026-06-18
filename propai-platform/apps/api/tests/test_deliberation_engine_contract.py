@@ -5,6 +5,7 @@
 """
 from app.services.deliberation._engine_contract import (
     analysis_input_hash,
+    build_input_dump,
     canonical,
     content_input_hash,
 )
@@ -43,3 +44,27 @@ def test_content_input_hash_excludes_only_snapshot_id():
     assert analysis_input_hash(a) != analysis_input_hash(b)
     # 다른 입력은 content_input_hash도 달라야.
     assert content_input_hash(a) != content_input_hash({"pnu": "Q", "snapshot_id": "s1", "x": 1})
+
+
+# 엔진 AnalysisInput(pnu, application_date, calc_targets) 실측 model_dump → input_hash 골든.
+_GOLDEN_MIRROR_IHASH = "cecb96fedce399960665dbbf193c8f12286163719ea6df94670f47c0d08714af"
+
+
+def test_mirror_fills_defaults_and_matches_engine_input_hash():
+    # 플랫폼 부분입력 → 미러가 엔진 기본값(snapshot_id "snap-1"·model_version·surrounding_radius_m 150 등)
+    # 동일하게 채워 model_dump → analysis_input_hash가 엔진과 비트동일(멱등/parity 토대).
+    payload = {
+        "pnu": "1111010100100000002",
+        "application_date": "2026-01-01",
+        "calc_targets": [{"target": "building_area", "payload": {"outer_area": 500.0}}],
+    }
+    dump = build_input_dump(payload)
+    assert dump["snapshot_id"] == "snap-1" and dump["surrounding_radius_m"] == 150
+    assert analysis_input_hash(dump) == _GOLDEN_MIRROR_IHASH
+
+
+def test_mirror_ignores_extra_keys():
+    # 플랫폼 잉여 키는 엔진처럼 무시(extra=ignore) → 해시 오염 없음.
+    base = build_input_dump({"pnu": "P"})
+    with_extra = build_input_dump({"pnu": "P", "platform_only_field": "x"})
+    assert analysis_input_hash(base) == analysis_input_hash(with_extra)
