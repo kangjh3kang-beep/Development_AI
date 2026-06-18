@@ -346,8 +346,11 @@ export function G2BBidAnalysisModal({
               {result.zoning && (
                 <MiniCard title="용도지역">
                   {result.zoning.zone_type || "미상"}
+                  {/* 법정상한 명시 — G2B는 현장지역명 근사라 조례 실효치가 아닌 용도지역 법정 한도.
+                      라벨 없이 '건폐/용적'만 보이면 실효치로 오인하므로 '(법정상한)'으로 정직 표기. */}
                   <div className="text-xs text-[var(--text-hint)] mt-1">
                     건폐 {fmtPct(result.zoning.max_bcr_pct)} / 용적 {fmtPct(result.zoning.max_far_pct)}
+                    <span className="ml-1">(법정상한)</span>
                   </div>
                 </MiniCard>
               )}

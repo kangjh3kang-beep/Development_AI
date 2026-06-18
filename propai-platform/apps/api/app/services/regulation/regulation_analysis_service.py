@@ -107,13 +107,21 @@ class RegulationAnalysisService:
         self._attach_node_legal_refs(hierarchy, zone_type, sigungu, zl)
         evidence = self._build_evidence(zone_type, limits, sigungu)
 
+        land_category = lr.get("land_category") or lc.get("land_category")
+
+        # 특이부지 감지(additive) — 지목 기반 비일상 토지(임야·농지·학교용지 등) 게이트를
+        # 규제 계층 응답에도 부착한다. 정량 한도(FAR 등) 표기는 변경하지 않고, is_special일
+        # 때만 별도 노드/경고로 가산해 "법정 한도가 그대로 실현되지 않을 수 있음"을 정직 고지한다.
+        # 접도(road)는 규제분석 단계에서 미수집이라 None 전달(맹지 판정은 건너뜀).
+        special_parcel = self._detect_special(land_category, zone_type, districts_raw)
+
         result: dict[str, Any] = {
             "address": address,
             "pnu": comp.get("pnu") or pnu,
             "zone_type": zone_type or None,
             "zone_type_secondary": zone_2 or None,
             "land_area_sqm": area,
-            "land_category": lr.get("land_category") or lc.get("land_category"),
+            "land_category": land_category,
             "land_use_situation": lr.get("land_use_situation") or lc.get("land_use_situation"),
             "limits": limits,
             "hierarchy": hierarchy,
@@ -122,12 +130,43 @@ class RegulationAnalysisService:
             # 한도(건폐/용적) 산출 근거 트레이스 — EvidencePanel 소비 구조. zone_type 미확정 시 빈 배열.
             "evidence": evidence,
         }
+        # is_special일 때만 부착(무목업) — 일상 부지면 키 자체를 넣지 않아 하위호환·무회귀.
+        if special_parcel:
+            result["special_parcel"] = special_parcel
 
         if use_llm:
             result["ai"] = await self._llm(address, zone_type, zone_2, area, limits, districts)
         else:
             result["ai"] = None
         return result
+
+    @staticmethod
+    def _detect_special(
+        land_category: str | None, zone_type: str, districts_raw: list
+    ) -> dict[str, Any] | None:
+        """지목·용도지역·구역으로 특이부지 감지(zoning.special_parcel 재사용).
+
+        규제분석 단계에서 미수집인 접도(road_contact/road_width_m)는 None으로 넘겨
+        맹지 판정을 건너뛴다(가짜 판정 방지). special_districts는 land_use_plan의
+        districts 원본 이름 목록으로 구성한다. 예외 시 None(graceful·무회귀).
+        """
+        try:
+            from app.services.zoning.special_parcel import detect_special_parcel
+
+            sd = []
+            for d in districts_raw or []:
+                name = (d.get("district_name") if isinstance(d, dict) else str(d)) or ""
+                if name:
+                    sd.append(name)
+            return detect_special_parcel({
+                "land_category": land_category,
+                "zone_type": zone_type,
+                "special_districts": sd,
+                "road_contact": None,
+                "road_width_m": None,
+            })
+        except Exception:  # noqa: BLE001
+            return None
 
     @staticmethod
     def _limits(zl: dict) -> dict[str, Any]:

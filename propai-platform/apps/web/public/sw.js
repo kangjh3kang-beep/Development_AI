@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v247-shallow-zone-frontend-parity";
+const CACHE_NAME = "propai-v248-shallow-zone-wave4";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",
