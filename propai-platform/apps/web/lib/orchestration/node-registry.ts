@@ -248,7 +248,7 @@ export const NODES: AnalysisNode[] = [
     label: "분양성·분양가",
     storyOrder: 6,
     storylineStage: "feasibility",
-    moduleKey: null, // 피드 노드 — feasibilityData 매출만 부분패치(stamp 안 찍음)
+    moduleKey: null, // 피드 노드 — 데이터 SSOT 비기록(결과는 orchestration nodeResult에만)
     upstream: ["land", "design"],
     ssotInputs: [
       {
@@ -264,8 +264,11 @@ export const NODES: AnalysisNode[] = [
         provenanceGuarded: true,
       },
     ],
-    // 매출만 부분패치(partial). ROI 최종 stamp는 feasibility 노드가 담당(슬롯 경합 회피).
-    ssotOutputs: [{ updateAction: "updateFeasibilityData", source: "auto", partial: true }],
+    // 매출→feasibility 주입은 Phase C(backend 매출 주입 지원과 함께). B2는 stamp 오염/가짜주입
+    // 회피 위해 데이터 미기록 — 결과는 orchestration nodeResult에만.
+    // (이유: updateFeasibilityData(partial)이 항상 feasibility를 stamp → feasibility 노드가
+    //  skipped-fresh로 영영 건너뛰어져 ROI가 실행되지 않던 결함. 주입은 C로 미룬다.)
+    ssotOutputs: [],
     runner: {
       method: "POST",
       path: "/api/v1/market/report",
@@ -346,14 +349,9 @@ export const NODES: AnalysisNode[] = [
         resolution: ["ssot", "upstream-suggest"],
         provenanceGuarded: false,
       },
-      {
-        // sales가 매출(totalRevenueWon)을 부분패치 → feasibility가 ROI 최종 산출에 소비.
-        slot: "feasibilityData",
-        field: "totalRevenueWon",
-        readyCheck: hasFeasibilityRevenue,
-        resolution: ["ssot", "upstream-suggest"],
-        provenanceGuarded: false,
-      },
+      // 매출(feasibilityData.totalRevenueWon) 입력 제거: feasibility는 backend가 regional_pricing으로
+      // 매출 자체를 산출한다(siteAnalysis/designData/costData만 사실근거). sales가 매출을 stamp하지 않으므로
+      // resolveInputs가 feasibility를 영구 needs-input으로 막지 않는다. sales→매출 주입은 Phase C.
     ],
     ssotOutputs: [{ updateAction: "updateFeasibilityData", source: "auto" }],
     runner: {
