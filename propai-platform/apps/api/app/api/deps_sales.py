@@ -31,9 +31,29 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_user, get_db
 from apps.api.database.models.sales.site_org import SalesOrgNode, SalesSite
 
-# 플랫폼 User.role → sales 역할 매핑(조직노드 없을 때 폴백)
+# ★SSOT(단일 출처): 플랫폼 User.role → sales 폴백 역할 매핑(조직노드 없을 때).
+# deps_sales 가 sales 인증의 최하위 모듈이므로 여기서 1회 정의하고, site_auth 등 상위 모듈은
+# 이 집합을 import 해 재사용한다(과거 deps_sales·site_auth 중복정의로 드리프트 위험이 있었음).
 _SUPERADMIN_ROLES = {"superadmin", "super_admin", "admin", "owner", "총괄관리자", "platform_admin"}
 _DEVELOPER_ROLES = {"developer", "시행사", "dev"}
+
+# 한 사용자가 같은 현장에 복수의 살아있는 조직노드를 가질 수 있다((site_id,user_id) UNIQUE 부재).
+# 그때 결정적으로 '상위 권한' 노드를 고르기 위한 우선순위(작을수록 상위). 목록에 없는 값은
+# 맨 뒤(낮은 우선순위)로 정렬한다. scalar_one_or_none() 의 MultipleResultsFound(500) 위험을
+# scalars().first() + 이 정렬로 대체한다.
+_NODE_TYPE_PRIORITY = {
+    "AGENCY": 0,
+    "SUBAGENCY": 1,
+    "GM_DIRECTOR": 2,
+    "DIRECTOR": 3,
+    "TEAM_LEADER": 4,
+    "MEMBER": 5,
+}
+
+
+def _node_priority(node_type: str) -> int:
+    """조직노드 권한 우선순위(작을수록 상위). 미등록 타입은 가장 낮은 우선순위로."""
+    return _NODE_TYPE_PRIORITY.get(node_type, len(_NODE_TYPE_PRIORITY))
 
 # RLS 정책이 읽는 세션변수 키(정책 USING 절과 1:1 — v62_2_sales_rls.py / sales_rls_bootstrap.py).
 _CTX_SITE_KEY = "app.site_id"
@@ -43,6 +63,13 @@ _CTX_ROLE_KEY = "app.role"
 # 세션 info 에 보관하는 키: 직전 주입한 RLS 컨텍스트 + 리스너 1회 등록 가드.
 _INFO_CTX_KEY = "sales_rls_ctx"
 _INFO_LISTENER_KEY = "sales_rls_reapply_registered"
+
+# ★토큰 경로 sentinel: '토큰 없음(비토큰 경로로)' 과 '토큰 유효하나 멤버십 없음(즉시 403)' 을
+# 구분한다. 과거엔 둘 다 None 을 반환해 sales_ctx 가 멤버십 SELECT 를 재실행(중복 2쿼리)했다.
+# - _NO_TOKEN : 유효 토큰이 없음 → sales_ctx 가 비토큰 분기에서 멤버십을 '한 번' 해석.
+# - None      : 유효 토큰은 있으나 멤버십이 사라짐(해촉/soft-delete/폴백없음) → 즉시 403(재쿼리 X).
+# - (org_path, role) : 토큰 유효 + 멤버십 존재.
+_NO_TOKEN = object()
 
 
 def _ctx_values(site_id, org_path, role) -> dict[str, str]:
@@ -126,6 +153,55 @@ class SalesCtx:
         await _apply_session_ctx(db, site_id=self.site_id, org_path=self.org_path, role=self.role)
 
 
+async def resolve_site_membership(db: AsyncSession, site, user):
+    """현 사용자의 그 현장 (org_path, role) 을 단일 기준으로 해석. 권한 없으면 None.
+
+    ★3중복 SELECT 일원화(코드로 1:1 보장): deps_sales.sales_ctx·_site_token_ctx 와
+    site_auth._resolve_role 이 동일한 멤버십 판정(조직노드 → 플랫폼 폴백)을 각자 SELECT 로
+    중복 수행하던 것을 본 공용 헬퍼로 모은다. '1:1 일원화'를 주석이 아닌 코드로 보장한다.
+    (멤버십 SELECT 의 단일 출처 = 본 헬퍼 1곳. 호출부는 재조회하지 않는다.)
+
+    판정 순서(단일 기준):
+      1) 살아있는 조직노드(active=True, deleted_at IS NULL) → (str(node.path), node.node_type).
+         강등/이동도 DB 최신값을 그대로 반영(토큰 클레임 미신뢰).
+      2) 노드 없음 → 플랫폼 폴백: user.role 이 SUPERADMIN 군이면 ('', 'SUPERADMIN'),
+         DEVELOPER 군 또는 owns_site(본인 테넌트 소유 현장)면 ('', 'DEVELOPER').
+      3) 어느 것도 아니면 None(=멤버 아님 → 호출부가 403/거부 처리).
+
+    ★복수 노드 안전(런타임 500 방지): (site_id,user_id) UNIQUE 가 없어 한 사용자가 같은
+    현장에 살아있는 노드를 2개 이상 가질 수 있다. scalar_one_or_none() 은 그 경우
+    MultipleResultsFound(=500)를 던진다. 그래서 scalars().first() 로 받고, 권한 우선순위
+    (_node_priority)로 정렬해 '상위 권한' 노드를 결정적으로 선택한다(비결정 정렬 제거).
+    """
+    nodes = (await db.execute(
+        select(SalesOrgNode).where(
+            SalesOrgNode.site_id == site.id,
+            SalesOrgNode.user_id == user.id,
+            SalesOrgNode.active.is_(True),
+            # soft-deleted 노드는 멤버십으로 인정하지 않는다(_resolve_role·my_sites 동일 기준).
+            SalesOrgNode.deleted_at.is_(None),
+        )
+        # 상위 권한 우선 → 같은 현장 복수 노드여도 결정적으로 최상위 역할을 고른다.
+        .order_by(SalesOrgNode.node_type)
+    )).scalars().all()
+    # DB order_by(node_type)는 알파벳 정렬이라 권한순이 아님 → 파이썬에서 권한 우선순위로 재정렬.
+    node = min(nodes, key=lambda n: _node_priority(n.node_type)) if nodes else None
+
+    if node is not None:
+        return str(node.path), node.node_type
+
+    role_lower = (getattr(user, "role", "") or "").lower()
+    user_tenant = getattr(user, "tenant_id", None)
+    # SalesSite의 소유 테넌트는 organization_id 컬럼(=provision 시 user.tenant_id)으로 저장됨.
+    owns_site = bool(user_tenant) and str(getattr(site, "organization_id", "") or "") == str(user_tenant)
+    if role_lower in _SUPERADMIN_ROLES:
+        return "", "SUPERADMIN"
+    if role_lower in _DEVELOPER_ROLES or owns_site:
+        # 본인 테넌트가 소유한 현장 → 시행사(DEVELOPER)로 인정(구독자가 만든 현장을 운영 가능).
+        return "", "DEVELOPER"
+    return None  # 멤버 아님 → 호출부가 거부/403 처리.
+
+
 async def resolve_site(request: Request, db: AsyncSession) -> SalesSite:
     """우선순위: 경로변수 site_id → 헤더 X-Site-Code → 서브도메인(host). site_code 또는 UUID 허용."""
     site_code = request.path_params.get("site_id") or request.headers.get("x-site-code")
@@ -148,49 +224,44 @@ async def resolve_site(request: Request, db: AsyncSession) -> SalesSite:
     return site
 
 
-async def _site_token_ctx(request: Request, db: AsyncSession, user, site_id):
-    """X-Site-Token(현장 세션토큰)이 있고 멤버십이 살아있으면 (org_path, role) 을 반환, 아니면 None.
+async def _site_token_ctx(request: Request, db: AsyncSession, user, site):
+    """X-Site-Token(현장 세션토큰) 경로 해석. 반환은 3치(_NO_TOKEN / None / (org_path, role)).
 
     Phase1-A 현장 2차인증으로 발급된 단기 토큰(8h). 토큰에는 발급 시점의 멤버십·역할이
     담겨 있지만, 그 자체만 신뢰하면 해촉/강등/soft-delete 된 직원이 토큰 만료(8h)까지
     권한을 유지하는 '8h 권한지연' 위험이 있다(deleted_at 게이트 우회).
 
-    ★그래서 토큰 디코드 직후에도 멤버십을 DB로 1쿼리 재검증한다(가벼운 검증).
-    - SalesOrgNode(site_id, user_id, active=True, deleted_at IS NULL) 이 존재하면 그 노드의
-      최신 (path, node_type) 을 그대로 사용한다 → 강등(역할 변경)도 즉시 반영된다.
-    - 노드가 없으면(=해촉/삭제) 멤버십 폴백(SUPERADMIN/DEVELOPER/owns_site)을 확인하고,
-      그래도 권한이 없으면 토큰을 거부(None 반환)해 비토큰 경로의 401/403 게이트로 넘긴다.
-    - 즉 토큰 경로와 비토큰 멤버십 게이트의 판정 기준을 1:1 로 일원화한다(토큰만 신뢰 금지).
+    ★그래서 토큰 디코드 직후에도 멤버십을 DB로 1쿼리 재검증한다(가벼운 검증). 판정은 공용
+    헬퍼 resolve_site_membership 로 일원화한다(비토큰 경로와 동일 기준).
+    - 살아있는 조직노드(active=True, deleted_at IS NULL)가 있으면 그 노드의 최신
+      (path, node_type) 을 사용한다 → 강등(역할 변경)도 즉시 반영된다.
+    - 노드가 없으면(=해촉/삭제) 헬퍼가 플랫폼 폴백(SUPERADMIN/DEVELOPER/owns_site)을 판정한다.
+
+    ★반환 sentinel 구분(중복 SELECT 제거 = 정확성):
+      - _NO_TOKEN : 유효한 토큰이 없음(헤더 무·디코드 실패·site/user 불일치). sales_ctx 는
+        비토큰 분기에서 멤버십을 '한 번' 해석한다(여기서는 멤버십 SELECT 미수행).
+      - None      : 토큰은 유효하나 멤버십이 사라짐(헬퍼가 None) → sales_ctx 가 '즉시 403'.
+        과거엔 이 경우도 None 을 돌려줘 sales_ctx 가 동일 멤버십 SELECT 를 '한 번 더' 실행
+        (중복 2쿼리)했다. sentinel 로 '토큰 없음' 과 분리해 재쿼리를 제거한다.
+      - (org_path, role) : 토큰 유효 + 멤버십 존재.
+    토큰 클레임(org_path/site_role)은 신뢰하지 않고 DB 최신 멤버십/폴백만 사용한다.
     """
     raw = request.headers.get("x-site-token")
     if not raw:
-        return None
+        return _NO_TOKEN
     from app.api.endpoints.sales.site_auth import decode_site_token  # 지연 import(순환 방지)
     payload = decode_site_token(raw)
     if not payload:
-        return None
-    # 토큰의 site/사용자 정합 — 다른 현장·다른 사용자 토큰 차단
-    if str(payload.get("site_id")) != str(site_id):
-        return None
+        return _NO_TOKEN
+    # 토큰의 site/사용자 정합 — 다른 현장·다른 사용자 토큰 차단(유효 토큰 아님 → 비토큰 경로로).
+    if str(payload.get("site_id")) != str(site.id):
+        return _NO_TOKEN
     if str(payload.get("sub")) != str(getattr(user, "id", "")):
-        return None
+        return _NO_TOKEN
 
-    # ★멤버십 DB 재검증(8h 권한지연 제거): 살아있는 조직노드가 있으면 그 최신 역할을 사용.
-    node = (await db.execute(
-        select(SalesOrgNode).where(
-            SalesOrgNode.site_id == site_id,
-            SalesOrgNode.user_id == user.id,
-            SalesOrgNode.active.is_(True),
-            SalesOrgNode.deleted_at.is_(None),
-        )
-    )).scalar_one_or_none()
-    if node is not None:
-        # 토큰 클레임이 아닌 DB 최신값을 신뢰 — 강등/이동도 즉시 반영.
-        return (str(node.path), node.node_type)
-
-    # 조직노드가 없는 토큰: 플랫폼 폴백 역할(SUPERADMIN/DEVELOPER/owns_site)만 허용한다.
-    # 폴백 자격도 없으면 토큰 거부(None) → 비토큰 경로에서 403 재판정.
-    return None
+    # ★멤버십 DB 재검증(8h 권한지연 제거) — 멤버십 SELECT 단일 출처(공용 헬퍼) 1회.
+    # 토큰 유효 + 멤버십 없음이면 헬퍼가 None → 그대로 None 반환(sales_ctx 즉시 403, 재쿼리 X).
+    return await resolve_site_membership(db, site, user)
 
 
 async def sales_ctx(request: Request, db: AsyncSession = Depends(get_db),
@@ -199,38 +270,22 @@ async def sales_ctx(request: Request, db: AsyncSession = Depends(get_db),
     site_id = site.id
 
     # ── 토큰 우선: 현장 세션토큰(X-Site-Token) + 멤버십 DB 재검증(8h 권한지연 제거) ──
-    # 토큰만 신뢰하지 않고 살아있는 조직노드를 1쿼리 재확인한다. 노드 없으면(해촉/삭제)
-    # None 을 받아 아래 비토큰 분기(폴백 역할 재판정 + 403 게이트)로 일원화 처리한다.
-    tok = await _site_token_ctx(request, db, user, site_id)
-    if tok is not None:
-        org_path, role = tok
-    else:
-        node = (await db.execute(
-            select(SalesOrgNode).where(
-                SalesOrgNode.site_id == site_id,
-                SalesOrgNode.user_id == user.id,
-                SalesOrgNode.active.is_(True),
-                # soft-deleted 노드는 멤버십으로 인정하지 않는다(_resolve_role·my_sites 와 동일 기준).
-                # 누락 시 삭제된 노드가 RLS 세션변수+SalesCtx 를 부여받는 격리 위험이 있었다.
-                SalesOrgNode.deleted_at.is_(None),
-            )
-        )).scalar_one_or_none()
-
-        role_lower = (getattr(user, "role", "") or "").lower()
-        user_tenant = getattr(user, "tenant_id", None)
-        # SalesSite의 소유 테넌트는 organization_id 컬럼(=provision 시 user.tenant_id) 으로 저장됨.
-        owns_site = bool(user_tenant) and str(getattr(site, "organization_id", "") or "") == str(user_tenant)
-        if node:
-            org_path, role = str(node.path), node.node_type
-        elif role_lower in _SUPERADMIN_ROLES:
-            org_path, role = "", "SUPERADMIN"
-        elif role_lower in _DEVELOPER_ROLES:
-            org_path, role = "", "DEVELOPER"
-        elif owns_site:
-            # 본인 테넌트가 소유한 현장 → 시행사(DEVELOPER)로 인정(구독자가 만든 현장을 운영 가능)
-            org_path, role = "", "DEVELOPER"
-        else:
+    # 멤버십 SELECT 는 토큰/비토큰 어느 경로든 '정확히 1회'만 수행한다(중복 2쿼리 제거):
+    #  - _NO_TOKEN : 토큰 없음 → 비토큰 분기에서 멤버십을 1회 해석.
+    #  - None      : 토큰 유효하나 멤버십 없음 → 즉시 403(재쿼리하지 않음).
+    #  - (op, role): 토큰 유효 + 멤버십 존재 → 그대로 사용.
+    tok = await _site_token_ctx(request, db, user, site)
+    if tok is _NO_TOKEN:
+        # 비토큰 경로도 토큰 경로와 동일한 공용 헬퍼로 멤버십(노드 → 폴백)을 판정한다(1:1 일원화).
+        membership = await resolve_site_membership(db, site, user)
+        if membership is None:
             raise HTTPException(403, "이 현장에 대한 분양(sales) 권한이 없습니다")
+        org_path, role = membership
+    elif tok is None:
+        # 토큰은 유효했으나 멤버십이 사라짐(해촉/soft-delete/폴백없음) → 즉시 거부(재쿼리 없음).
+        raise HTTPException(403, "이 현장에 대한 분양(sales) 권한이 없습니다")
+    else:
+        org_path, role = tok
 
     # RLS 세션변수 주입(트랜잭션 로컬·단일 헬퍼) — 활성화 시 즉시 적용, 풀러 누수 없음
     await _apply_session_ctx(db, site_id=site_id, org_path=org_path, role=role)

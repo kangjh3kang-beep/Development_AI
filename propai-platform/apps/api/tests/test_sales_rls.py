@@ -292,11 +292,65 @@ def test_key_fail_fast_in_production_when_unset(monkeypatch):
 
 
 def test_key_uses_env_in_production(monkeypatch):
-    """프로덕션이라도 강한 키가 설정돼 있으면 그 키를 사용(폴백 아님)."""
+    """프로덕션이라도 강한 키(≥32자)가 설정돼 있으면 그 키를 사용(폴백 아님)."""
+    strong = "a" * 32  # config._validate_secret 하한(32자) 충족.
     monkeypatch.setenv("APP_ENV", "production")
-    monkeypatch.setenv("SALES_ENC_KEY", "a-strong-production-key")
+    monkeypatch.setenv("SALES_ENC_KEY", strong)
     monkeypatch.delenv("APP_SECRET_KEY", raising=False)
-    assert sales_crypto._key() == b"a-strong-production-key"
+    assert sales_crypto._key() == strong.encode()
+
+
+def test_key_rejects_short_key_in_production(monkeypatch):
+    """★프로덕션 + 짧은 키(예: 'x' 1자, <32자) → 예외로 차단(약한 키 fail-fast).
+
+    과거 'if not k'(존재만) 검사는 단키를 통과시켜 폴백키 차단 취지를 무력화했다.
+    """
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("SALES_ENC_KEY", "x")  # 1자 = 약한 키.
+    monkeypatch.delenv("APP_SECRET_KEY", raising=False)
+    with pytest.raises(RuntimeError):
+        sales_crypto._key()
+
+
+def test_key_short_key_allowed_in_dev(monkeypatch):
+    """dev/test 는 길이 하한을 강제하지 않는다(개발 편의 — 무회귀)."""
+    monkeypatch.setenv("APP_ENV", "development")
+    monkeypatch.setenv("SALES_ENC_KEY", "x")
+    monkeypatch.delenv("APP_SECRET_KEY", raising=False)
+    assert sales_crypto._key() == b"x"
+
+
+def test_key_rejects_leaked_example_key_in_production(monkeypatch):
+    """★9.5 게이트: prod + 유출 예제키(50자, 길이는 통과)는 거부해야 한다(denylist 일치).
+
+    과거 _key() 는 길이(≥32)만 복제하고 config._KNOWN_WEAK_SECRETS denylist 는 미복제라,
+    config 가 거부하는 유출 예제키 'propai_secret_key_change_in_production_32chars_min'(50자)를
+    ACCEPT 하는 false-assurance 가 있었다. 이제 config._validate_secret 직접 재사용으로 일치.
+    """
+    leaked = "propai_secret_key_change_in_production_32chars_min"  # 50자(길이는 충분).
+    assert len(leaked) >= 32  # 길이 검사만으론 통과하던 키임을 명시.
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("SALES_ENC_KEY", leaked)
+    monkeypatch.delenv("APP_SECRET_KEY", raising=False)
+    with pytest.raises(RuntimeError):
+        sales_crypto._key()
+
+
+def test_key_validation_reuses_config_validate_secret(monkeypatch):
+    """prod 키 검증이 config._validate_secret 을 '직접 재사용'(denylist+길이 드리프트 0)."""
+    import inspect
+
+    from app.core import config
+
+    src = inspect.getsource(sales_crypto._key)
+    assert "_validate_secret" in src  # 길이 복제가 아니라 config 함수 직접 호출.
+    # config denylist 의 다른 항목도 _key() 가 거부하는지(일치 확인).
+    sample = next(iter(config._KNOWN_WEAK_SECRETS))
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("SALES_ENC_KEY", sample)
+    monkeypatch.delenv("APP_SECRET_KEY", raising=False)
+    with pytest.raises(RuntimeError):
+        sales_crypto._key()
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -438,16 +492,21 @@ async def test_sales_ctx_reapply_uses_single_helper():
 # (4) sales_ctx 멤버십 조회 — soft-deleted 노드 제외(deleted_at.is_(None)) 일원화.
 # ──────────────────────────────────────────────────────────────────────────────
 def test_sales_ctx_membership_filters_soft_deleted():
-    """sales_ctx 의 SalesOrgNode 멤버십 조회 소스에 deleted_at.is_(None) 필터가 있어야 한다.
+    """sales_ctx 멤버십 판정의 단일 소스(공용 헬퍼)에 deleted_at.is_(None) 필터가 있어야 한다.
 
     누락 시 soft-deleted 노드가 RLS 세션변수+SalesCtx 를 부여받는 격리 위험(MEDIUM).
-    _resolve_role/my_sites 와 동일 기준으로 일원화.
+    멤버십 SELECT 는 resolve_site_membership 로 일원화됐으므로 거기서 필터를 검사한다.
+    _resolve_role/my_sites/_site_token_ctx 와 동일 기준으로 일원화.
     """
     import inspect
 
+    # sales_ctx 는 공용 헬퍼를 경유한다.
     src = inspect.getsource(deps_sales.sales_ctx)
-    assert "SalesOrgNode.deleted_at.is_(None)" in src
-    assert "SalesOrgNode.active.is_(True)" in src  # 기존 필터 보존(무회귀).
+    assert "resolve_site_membership" in src
+    # 단일 소스(헬퍼)에 soft-delete/active 게이트가 존재해야 한다.
+    hsrc = inspect.getsource(deps_sales.resolve_site_membership)
+    assert "SalesOrgNode.deleted_at.is_(None)" in hsrc
+    assert "SalesOrgNode.active.is_(True)" in hsrc  # 기존 필터 보존(무회귀).
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -455,17 +514,32 @@ def test_sales_ctx_membership_filters_soft_deleted():
 #     8h 권한지연 제거(해촉/soft-delete 직원은 토큰 만료 전에도 즉시 거부).
 # ──────────────────────────────────────────────────────────────────────────────
 class _TokenFakeDB:
-    """_site_token_ctx 의 멤버십 SELECT 결과만 제어하는 가짜 async DB."""
+    """_site_token_ctx / resolve_site_membership 의 멤버십 SELECT 결과만 제어하는 가짜 async DB.
 
-    def __init__(self, node):
-        self._node = node
+    resolve_site_membership 가 scalars().all() 로 노드 목록을 받으므로(복수노드 안전), 본
+    더블도 그 형태를 흉내낸다. nodes 인자(목록)면 그대로, node(단일/None)면 [node]/[] 로 감싼다.
+    """
+
+    def __init__(self, node=None, nodes=None):
+        if nodes is not None:
+            self._nodes = list(nodes)
+        else:
+            self._nodes = [node] if node is not None else []
 
     async def execute(self, statement, params=None):
-        node = self._node
+        rows = self._nodes
+
+        class _Scalars:
+            def all(self):
+                return rows
 
         class _R:
+            def scalars(self):
+                return _Scalars()
+
+            # 일부 경로(resolve_site 등)의 단건 조회 호환(미사용 시 무해).
             def scalar_one_or_none(self):
-                return node
+                return rows[0] if rows else None
 
         return _R()
 
@@ -486,15 +560,29 @@ class _Node:
         self.node_type = node_type
 
 
+class _Site:
+    """_site_token_ctx/resolve_site_membership 가 읽는 SalesSite 최소 형태(id·organization_id)."""
+
+    def __init__(self, sid, organization_id=None):
+        self.id = sid
+        self.organization_id = organization_id
+
+
 def test_site_token_ctx_reverifies_membership_in_db_marker():
-    """소스 가드: _site_token_ctx 가 토큰 디코드 후 SalesOrgNode + deleted_at.is_(None) 을 재조회한다."""
+    """소스 가드: _site_token_ctx 가 토큰 디코드 후 공용 헬퍼로 멤버십을 재검증한다(토큰 클레임 미신뢰).
+
+    멤버십 SELECT(active/deleted_at 필터)는 resolve_site_membership 로 일원화됐으므로 거기서 검사한다.
+    """
     import inspect
 
+    # 토큰 함수는 공용 헬퍼를 호출하고, 토큰 클레임(site_role)을 그대로 신뢰하지 않아야 한다.
     src = inspect.getsource(deps_sales._site_token_ctx)
-    assert "SalesOrgNode.deleted_at.is_(None)" in src
-    assert "SalesOrgNode.active.is_(True)" in src
-    # 토큰 클레임(org_path/site_role)만 그대로 신뢰하는 과거 경로가 남으면 회귀.
+    assert "resolve_site_membership" in src
     assert 'payload.get("site_role")' not in src
+    # 멤버십 판정의 단일 소스(공용 헬퍼)에 active/deleted_at 게이트가 있어야 한다.
+    hsrc = inspect.getsource(deps_sales.resolve_site_membership)
+    assert "SalesOrgNode.deleted_at.is_(None)" in hsrc
+    assert "SalesOrgNode.active.is_(True)" in hsrc
 
 
 @pytest.mark.asyncio
@@ -509,7 +597,7 @@ async def test_site_token_ctx_live_node_returns_db_role(monkeypatch):
         lambda raw: {"site_id": sid, "sub": uid, "org_path": "root.old", "site_role": "AGENCY"},
     )
     db = _TokenFakeDB(node=_Node("root.new.member", "MEMBER"))
-    res = await deps_sales._site_token_ctx(_Req("tok"), db, _User(uid), sid)
+    res = await deps_sales._site_token_ctx(_Req("tok"), db, _User(uid), _Site(sid))
     assert res == ("root.new.member", "MEMBER")  # 토큰의 AGENCY/root.old 가 아닌 DB 최신값.
 
 
@@ -525,21 +613,21 @@ async def test_site_token_ctx_soft_deleted_member_rejected(monkeypatch):
         lambda raw: {"site_id": sid, "sub": uid, "org_path": "root.old", "site_role": "AGENCY"},
     )
     db = _TokenFakeDB(node=None)  # 멤버십 없음(해촉/삭제)
-    res = await deps_sales._site_token_ctx(_Req("tok"), db, _User(uid), sid)
+    res = await deps_sales._site_token_ctx(_Req("tok"), db, _User(uid), _Site(sid))
     assert res is None
 
 
 @pytest.mark.asyncio
-async def test_site_token_ctx_no_token_returns_none():
-    """X-Site-Token 헤더 없으면 None(비토큰 경로로 진행)."""
+async def test_site_token_ctx_no_token_returns_no_token_sentinel():
+    """X-Site-Token 헤더 없으면 _NO_TOKEN sentinel(비토큰 경로로 진행, None 과 구분)."""
     db = _TokenFakeDB(node=_Node("p", "MEMBER"))
-    res = await deps_sales._site_token_ctx(_Req(None), db, _User("u"), "s")
-    assert res is None
+    res = await deps_sales._site_token_ctx(_Req(None), db, _User("u"), _Site("s"))
+    assert res is deps_sales._NO_TOKEN  # 'None=멤버없음' 과 구분되는 '토큰없음' sentinel.
 
 
 @pytest.mark.asyncio
-async def test_site_token_ctx_wrong_site_or_user_returns_none(monkeypatch):
-    """다른 현장/사용자 토큰은 거부(None)."""
+async def test_site_token_ctx_wrong_site_or_user_returns_no_token_sentinel(monkeypatch):
+    """다른 현장/사용자 토큰은 유효 토큰 아님 → _NO_TOKEN(비토큰 경로로). member-none(None)과 구분."""
     from app.api.endpoints.sales import site_auth
 
     monkeypatch.setattr(
@@ -547,8 +635,212 @@ async def test_site_token_ctx_wrong_site_or_user_returns_none(monkeypatch):
         lambda raw: {"site_id": "other-site", "sub": "u1", "org_path": "", "site_role": "MEMBER"},
     )
     db = _TokenFakeDB(node=_Node("p", "MEMBER"))
-    # site 불일치
-    assert await deps_sales._site_token_ctx(_Req("tok"), db, _User("u1"), "this-site") is None
+    # site 불일치 → 유효 토큰 아님 → _NO_TOKEN sentinel.
+    res = await deps_sales._site_token_ctx(_Req("tok"), db, _User("u1"), _Site("this-site"))
+    assert res is deps_sales._NO_TOKEN
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# (4) resolve_site_membership — 공용 헬퍼 동치(토큰/비토큰/site_auth 1:1 일원화).
+# ──────────────────────────────────────────────────────────────────────────────
+class _MemberUser:
+    def __init__(self, uid, role="", tenant_id=None):
+        self.id = uid
+        self.role = role
+        self.tenant_id = tenant_id
+
+
+@pytest.mark.asyncio
+async def test_resolve_site_membership_node_query_single():
+    """멤버십 SELECT 단일 출처(헬퍼)에서 1쿼리로 노드를 조회해 사용(node= dead 파라미터 제거)."""
+    db = _TokenFakeDB(node=_Node("root.y", "DIRECTOR"))
+    res = await deps_sales.resolve_site_membership(db, _Site("sid"), _MemberUser("u"))
+    assert res == ("root.y", "DIRECTOR")
+
+
+def test_resolve_site_membership_has_no_node_param_yagni():
+    """node= 는 호출부 0건의 dead 파라미터였어 제거(YAGNI). 재추가 회귀 차단."""
+    import inspect
+
+    params = inspect.signature(deps_sales.resolve_site_membership).parameters
+    assert "node" not in params
+
+
+@pytest.mark.asyncio
+async def test_resolve_site_membership_multiple_nodes_picks_highest_priority():
+    """★복수 살아있는 노드(=(site_id,user_id) UNIQUE 부재)여도 500 없이 '상위 권한'을 결정적 선택.
+
+    과거 scalar_one_or_none() 은 MultipleResultsFound(500)를 던졌다. scalars().first()+우선순위
+    정렬로 정정 — MEMBER 와 GM_DIRECTOR 가 함께 있으면 상위(GM_DIRECTOR)를 고른다.
+    """
+    db = _TokenFakeDB(nodes=[_Node("root.m", "MEMBER"), _Node("root.gm", "GM_DIRECTOR")])
+    res = await deps_sales.resolve_site_membership(db, _Site("sid"), _MemberUser("u"))
+    assert res == ("root.gm", "GM_DIRECTOR")  # 상위 권한 우선(알파벳 정렬 아님).
+
+
+def test_node_priority_order_superior_first():
+    """권한 우선순위: AGENCY < ... < MEMBER(작을수록 상위). 미등록 타입은 맨 뒤."""
+    assert deps_sales._node_priority("AGENCY") < deps_sales._node_priority("MEMBER")
+    assert deps_sales._node_priority("GM_DIRECTOR") < deps_sales._node_priority("TEAM_LEADER")
+    assert deps_sales._node_priority("UNKNOWN") >= deps_sales._node_priority("MEMBER")
+
+
+@pytest.mark.asyncio
+async def test_resolve_site_membership_superadmin_fallback():
+    """노드 없음 + user.role 이 SUPERADMIN 군 → ('', 'SUPERADMIN')."""
+    db = _TokenFakeDB(node=None)
+    res = await deps_sales.resolve_site_membership(db, _Site("sid"), _MemberUser("u", role="admin"))
+    assert res == ("", "SUPERADMIN")
+
+
+@pytest.mark.asyncio
+async def test_resolve_site_membership_owns_site_developer():
+    """노드 없음 + owns_site(테넌트 소유) → ('', 'DEVELOPER')."""
+    db = _TokenFakeDB(node=None)
+    site = _Site("sid", organization_id="tenant-1")
+    user = _MemberUser("u", role="", tenant_id="tenant-1")
+    res = await deps_sales.resolve_site_membership(db, site, user)
+    assert res == ("", "DEVELOPER")
+
+
+@pytest.mark.asyncio
+async def test_resolve_site_membership_none_when_not_member():
+    """노드 없음 + 폴백 자격 없음 → None(호출부가 403/거부)."""
+    db = _TokenFakeDB(node=None)
+    res = await deps_sales.resolve_site_membership(db, _Site("sid"), _MemberUser("u", role="viewer"))
+    assert res is None
+
+
+def test_site_auth_resolve_role_delegates_to_shared_helper():
+    """site_auth._resolve_role 가 공용 헬퍼 resolve_site_membership 를 경유(3중복 SELECT 제거)."""
+    import inspect
+
+    from app.api.endpoints.sales import site_auth
+
+    src = inspect.getsource(site_auth._resolve_role)
+    assert "resolve_site_membership" in src
+    # 멤버 아님 계약(('', '')) 보존 — 호출부 `if not role` 게이트 무회귀.
+    assert '"", ""' in src
+
+
+def test_sales_ctx_uses_shared_membership_helper():
+    """sales_ctx 비토큰 분기도 공용 헬퍼로 멤버십을 판정(토큰/비토큰 1:1 일원화)."""
+    import inspect
+
+    src = inspect.getsource(deps_sales.sales_ctx)
+    assert "resolve_site_membership" in src
+    # 권한 없으면 403(거부 게이트 소재지는 sales_ctx).
+    assert "이 현장에 대한 분양(sales) 권한이 없습니다" in src
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# (5) SSOT — _SUPERADMIN_ROLES/_DEVELOPER_ROLES 단일 출처(deps_sales) 일원화.
+# ──────────────────────────────────────────────────────────────────────────────
+def test_role_sets_ssot_single_source_in_deps_sales():
+    """site_auth 가 deps_sales 의 _SUPERADMIN_ROLES 를 import(중복정의 드리프트 제거)."""
+    from app.api.endpoints.sales import site_auth
+
+    # 동일 객체(import) — 값 복제(중복정의)가 아님.
+    assert site_auth._SUPERADMIN_ROLES is deps_sales._SUPERADMIN_ROLES
+
+
+def test_site_auth_dead_developer_roles_removed():
+    """site_auth 의 dead(미사용) _DEVELOPER_ROLES 중복정의는 제거됐다(재추가 회귀 차단)."""
+    from app.api.endpoints.sales import site_auth
+
+    assert not hasattr(site_auth, "_DEVELOPER_ROLES")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# (4) sales_ctx — 토큰 sentinel 흐름: 멤버십 SELECT '정확히 1회'(중복 2쿼리 제거).
+# ──────────────────────────────────────────────────────────────────────────────
+class _CountingReq:
+    """X-Site-Token 헤더만 제어하는 요청 더블(resolve_site 는 monkeypatch 로 우회)."""
+
+    def __init__(self, token):
+        self.headers = {"x-site-token": token} if token else {}
+        self.path_params = {}
+
+
+class _CountingDB:
+    """resolve_site_membership 의 멤버십 SELECT 호출횟수만 센다(중복쿼리 회귀 차단).
+
+    _apply_session_ctx 의 set_config 주입은 별도(text SQL)라 멤버십 카운트와 분리한다.
+    sync_session/commit 도 흉내내 sales_ctx 전체 경로가 돌게 한다.
+    """
+
+    def __init__(self, nodes):
+        self._nodes = list(nodes)
+        self.membership_selects = 0
+        self.sync_session = _OrmSession()
+        self.committed = 0
+
+    async def execute(self, statement, params=None):
+        sql = str(getattr(statement, "text", statement))
+        # set_config 주입은 멤버십 SELECT 가 아니므로 카운트 제외.
+        if "set_config" not in sql:
+            self.membership_selects += 1
+        rows = self._nodes
+
+        class _Scalars:
+            def all(self):
+                return rows
+
+        class _R:
+            def scalars(self):
+                return _Scalars()
+
+        return _R()
+
+    async def commit(self):
+        self.committed += 1
+
+
+@pytest.mark.asyncio
+async def test_sales_ctx_token_member_none_403_without_requery(monkeypatch):
+    """토큰 유효 + 멤버십 없음 → 즉시 403, 멤버십 SELECT 는 1회만(재쿼리 없음)."""
+    sid = "11111111-1111-1111-1111-111111111111"
+    uid = "22222222-2222-2222-2222-222222222222"
+    from app.api.endpoints.sales import site_auth
+
+    site = _Site(sid)
+    monkeypatch.setattr(deps_sales, "resolve_site", lambda req, db: _async_ret(site))
+    monkeypatch.setattr(
+        site_auth, "decode_site_token",
+        lambda raw: {"site_id": sid, "sub": uid, "org_path": "", "site_role": "MEMBER"},
+    )
+    db = _CountingDB(nodes=[])  # 멤버십 없음(해촉/soft-delete)
+    user = _MemberUser(uid, role="viewer")  # 폴백 자격도 없음
+    with pytest.raises(deps_sales.HTTPException) as ei:
+        await deps_sales.sales_ctx(_CountingReq("tok"), db=db, user=user)
+    assert ei.value.status_code == 403
+    # ★중복 2쿼리 회귀 차단: 토큰 경로에서 1회만 조회하고 비토큰 분기 재쿼리 없음.
+    assert db.membership_selects == 1
+
+
+@pytest.mark.asyncio
+async def test_sales_ctx_no_token_resolves_membership_once(monkeypatch):
+    """토큰 없음 → 비토큰 분기에서 멤버십 1회 해석(권한 있으면 통과)."""
+    sid = "11111111-1111-1111-1111-111111111111"
+    uid = "22222222-2222-2222-2222-222222222222"
+    site = _Site(sid)
+    monkeypatch.setattr(deps_sales, "resolve_site", lambda req, db: _async_ret(site))
+    # _apply_session_ctx 는 set_config 만 — _CountingDB 가 execute 를 받으므로 호출수에 포함될 수
+    # 있어, 멤버십 SELECT 만 별도로 센다(여기선 nodes 1건 → 멤버십 1회).
+    db = _CountingDB(nodes=[_Node("root.a", "AGENCY")])
+    user = _MemberUser(uid, role="")
+    ctx = await deps_sales.sales_ctx(_CountingReq(None), db=db, user=user)
+    assert ctx.role == "AGENCY"
+    # 멤버십 SELECT 는 1회(이후 execute 는 set_config 주입이라 멤버십 카운트엔 무관).
+    assert db.membership_selects >= 1
+
+
+def _async_ret(value):
+    """monkeypatch 용: 코루틴으로 값을 즉시 반환하는 헬퍼."""
+    async def _coro():
+        return value
+
+    return _coro()
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -586,9 +878,10 @@ class _StatusFakeDB:
 
 
 class _Bypass:
-    def __init__(self, current_user, bypassrls):
+    def __init__(self, current_user, bypassrls, superuser=False):
         self.current_user = current_user
         self.bypassrls = bypassrls
+        self.superuser = superuser
 
 
 @pytest.mark.asyncio
@@ -600,19 +893,101 @@ async def test_rls_status_exposes_bypassrls_and_warns_when_ineffective():
     assert res["forced"] == 1
     assert res["current_user"] == "propai_user"
     assert res["bypassrls"] is True
+    assert res["is_superuser"] is False
     assert res["isolation_effective"] is False
     assert res["isolation_warning"]  # 경고 메시지 비어있지 않음.
 
 
 @pytest.mark.asyncio
 async def test_rls_status_effective_when_non_bypass_role():
-    """non-bypassrls role + forced → isolation_effective=true(경고 없음)."""
+    """non-bypassrls/non-superuser role + forced → isolation_effective=true(경고 없음)."""
     status_rows = [("sales_units", True, True, 1)]
-    db = _StatusFakeDB(status_rows, _Bypass("propai_app", False))
+    db = _StatusFakeDB(status_rows, _Bypass("propai_app", False, superuser=False))
     res = await boot.rls_status(db)
     assert res["bypassrls"] is False
+    assert res["is_superuser"] is False
     assert res["isolation_effective"] is True
     assert res["isolation_warning"] is None
+
+
+@pytest.mark.asyncio
+async def test_rls_status_superuser_is_ineffective_even_without_bypassrls():
+    """★슈퍼유저(rolsuper)는 rolbypassrls 무관하게 FORCE 포함 RLS 우회 → isolation_effective=false."""
+    status_rows = [("sales_units", True, True, 1)]
+    db = _StatusFakeDB(status_rows, _Bypass("postgres", False, superuser=True))
+    res = await boot.rls_status(db)
+    assert res["bypassrls"] is False
+    assert res["is_superuser"] is True
+    assert res["isolation_effective"] is False
+    assert "SUPERUSER" in res["isolation_warning"]
+
+
+@pytest.mark.asyncio
+async def test_rls_status_unknown_role_state_is_failopen_conservative():
+    """★fail-open 제거: role 행 없음(상태불명) → effective=false + 상태확인불가 경고."""
+    status_rows = [("sales_units", True, True, 1)]
+    db = _StatusFakeDB(status_rows, None)  # bypass_row 없음(role 행 무)
+    res = await boot.rls_status(db)
+    assert res["bypassrls"] is None
+    assert res["is_superuser"] is None
+    assert res["role_state_unknown"] is True
+    assert res["isolation_effective"] is False
+    assert "확인불가" in res["isolation_warning"]
+
+
+@pytest.mark.asyncio
+async def test_rls_status_null_flags_is_failopen_conservative():
+    """★두 플래그 모두 NULL(상태불명) → effective=false(상태불명을 안전으로 가정 안 함)."""
+    status_rows = [("sales_units", True, True, 1)]
+    db = _StatusFakeDB(status_rows, _Bypass("role_x", None, superuser=None))
+    res = await boot.rls_status(db)
+    assert res["bypassrls"] is None
+    assert res["is_superuser"] is None
+    assert res["role_state_unknown"] is True
+    assert res["isolation_effective"] is False
+    assert res["isolation_warning"]
+
+
+@pytest.mark.asyncio
+async def test_rls_status_forced_policyless_warns_even_when_role_ok():
+    """★(선택) role 정상이라도 forced+policy_count=0 테이블이 있으면 경고에 포함(앱 브릭 위험)."""
+    # sales_units: forced + policy 1(정상), sales_weird: forced + policy 0(이상).
+    status_rows = [("sales_units", True, True, 1), ("sales_weird", True, True, 0)]
+    db = _StatusFakeDB(status_rows, _Bypass("propai_app", False, superuser=False))
+    res = await boot.rls_status(db)
+    assert res["isolation_effective"] is True   # role 정상 → 격리 자체는 실효.
+    assert "sales_weird" in res["forced_policyless"]
+    assert "sales_weird" in res["isolation_warning"]
+
+
+@pytest.mark.asyncio
+async def test_rls_status_forced_zero_is_ineffective_even_with_good_role():
+    """★9.5 게이트: 어떤 테이블도 FORCE 미적용(forced==0)이면 role 정상이어도 effective=False.
+
+    코드베이스 실제 deploy-pending 상태(FORCE 0)에서 과거엔 effective=True+무경고로 보고해
+    '한 테이블도 강제 안 했는데 격리 실효' 라는 가장 흔한 false-assurance 가 났다.
+    이제 isolation_effective 의 1차 조건이 forced>0 이라 forced==0 → False + 명시 경고.
+    """
+    # rls_enabled=True 이나 rls_forced=False(=FORCE 미적용) → forced 집계 0.
+    status_rows = [("sales_units", True, False, 1), ("sales_contracts", True, False, 1)]
+    db = _StatusFakeDB(status_rows, _Bypass("propai_app", False, superuser=False))
+    res = await boot.rls_status(db)
+    assert res["forced"] == 0
+    assert res["bypassrls"] is False and res["is_superuser"] is False
+    assert res["isolation_effective"] is False          # ★role 정상이어도 미실효.
+    assert "FORCE 미적용" in res["isolation_warning"]    # deploy-pending 경고 노출.
+
+
+@pytest.mark.asyncio
+async def test_rls_status_multi_reason_warning_accumulates():
+    """★다중 사유 누적(elif 가림 제거): forced==0 + BYPASSRLS 동시 → 두 사유 모두 노출."""
+    # forced==0(FORCE 미적용) + 접속 role BYPASSRLS → 두 경고가 함께 떠야 한다.
+    status_rows = [("sales_units", True, False, 1)]
+    db = _StatusFakeDB(status_rows, _Bypass("propai_user", True, superuser=False))
+    res = await boot.rls_status(db)
+    assert res["isolation_effective"] is False
+    assert "FORCE 미적용" in res["isolation_warning"]    # 사유1.
+    assert "BYPASSRLS" in res["isolation_warning"]       # 사유2(elif 로 가려지지 않음).
 
 
 # ──────────────────────────────────────────────────────────────────────────────

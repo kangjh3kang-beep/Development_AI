@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta, timezone, UTC
+from datetime import UTC, datetime, timedelta
 
 import bcrypt
 from fastapi import APIRouter, Depends, HTTPException
@@ -27,6 +27,10 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
+
+# ★SSOT: 폴백 역할 집합은 deps_sales 한 곳에서만 정의(중복정의 드리프트 제거). 여기서 재정의
+# 하지 않고 import 해 my_sites 가 동일 기준(_SUPERADMIN_ROLES)을 쓰게 한다.
+from app.api.deps_sales import _SUPERADMIN_ROLES
 from app.core.config import settings
 from apps.api.database.models.sales.site_org import SalesOrgNode, SalesSite
 
@@ -36,8 +40,9 @@ site_auth_router = APIRouter(tags=["sales-auth"])
 # 현장 내 조직 node_type: AGENCY(대행본사)/SUBAGENCY(대행지사)/GM_DIRECTOR(본부장)/
 #                         DIRECTOR(팀장급 이사)/TEAM_LEADER(팀장)/MEMBER(직원)
 # 플랫폼 폴백: DEVELOPER(시행/현장소유), SUPERADMIN(관리자)
-_SUPERADMIN_ROLES = {"superadmin", "super_admin", "admin", "owner", "총괄관리자", "platform_admin"}
-_DEVELOPER_ROLES = {"developer", "시행사", "dev"}
+# (폴백 역할 집합 _SUPERADMIN_ROLES/_DEVELOPER_ROLES 는 deps_sales SSOT 사용. site_auth 의
+#  과거 _DEVELOPER_ROLES 중복정의는 dead(미사용)였어 제거했다 — my_sites 는 _SUPERADMIN_ROLES
+#  만 쓰고, 멤버십/폴백 판정은 resolve_site_membership 헬퍼가 담당한다.)
 
 # 현장 관리권한(2차비번 설정 가능) = 시행/대행 본부장↑ 또는 admin
 _MANAGE_ROLES = {"SUPERADMIN", "DEVELOPER", "AGENCY", "GM_DIRECTOR"}
@@ -109,27 +114,18 @@ async def _ensure(db: AsyncSession) -> None:
 
 # ── 역할 해석(deps_sales 와 동일 규칙 — 단일 기준) ────────────────────────────
 async def _resolve_role(db: AsyncSession, site: SalesSite, user) -> tuple[str, str]:
-    """현 사용자의 그 현장 역할을 (org_path, role) 로 반환. 멤버 아니면 ('', '') 반환은 호출부에서 처리."""
-    node = (await db.execute(
-        select(SalesOrgNode).where(
-            SalesOrgNode.site_id == site.id,
-            SalesOrgNode.user_id == user.id,
-            SalesOrgNode.active.is_(True),
-            SalesOrgNode.deleted_at.is_(None),
-        )
-    )).scalar_one_or_none()
+    """현 사용자의 그 현장 역할을 (org_path, role) 로 반환. 멤버 아니면 ('', '') 반환은 호출부에서 처리.
 
-    role_lower = (getattr(user, "role", "") or "").lower()
-    user_tenant = getattr(user, "tenant_id", None)
-    owns_site = bool(user_tenant) and str(getattr(site, "organization_id", "") or "") == str(user_tenant)
+    ★일원화(코드로 1:1 보장): 멤버십(노드 → 플랫폼 폴백) 판정을 deps_sales 의 공용 헬퍼
+    resolve_site_membership 로 위임한다(중복 SELECT 제거). 본 함수는 호출부 기존 계약을
+    보존하기 위해 None → ('', '')(멤버 아님) 로만 변환한다(무회귀).
+    """
+    from app.api.deps_sales import resolve_site_membership  # 지연 import(순환 방지)
 
-    if node:
-        return str(node.path), node.node_type
-    if role_lower in _SUPERADMIN_ROLES:
-        return "", "SUPERADMIN"
-    if role_lower in _DEVELOPER_ROLES or owns_site:
-        return "", "DEVELOPER"
-    return "", ""  # 멤버 아님
+    membership = await resolve_site_membership(db, site, user)
+    if membership is None:
+        return "", ""  # 멤버 아님(호출부에서 처리)
+    return membership
 
 
 async def _get_site(db: AsyncSession, site_id) -> SalesSite:
