@@ -254,6 +254,9 @@ class DevelopmentScenarioSimulator:
         breg = BuildingRegistryService()
 
         from app.services.land_intelligence.far_tier_service import calc_effective_far
+        from app.services.land_intelligence.ordinance_service import OrdinanceService
+
+        _ord_svc = OrdinanceService()
 
         async def one(a: str) -> dict:
             try:
@@ -269,12 +272,18 @@ class DevelopmentScenarioSimulator:
                 zone_type = r.get("zone_type") or ""
                 far = far_legal
                 if zone_type:
+                    # ★조례 실효 반영 — local_ordinance가 비면 calc_effective_far가 법정값을 반환하므로,
+                    #   OrdinanceService로 조례 한도를 조회해 주입(permits/parcels-info와 동일 — 서울 제1종 150 등 실효).
+                    try:
+                        ordinance = await _ord_svc.get_ordinance_limits(a, zone_type)
+                    except Exception:  # noqa: BLE001 — 조례 조회 실패는 법정 폴백(정직)
+                        ordinance = None
                     try:
                         eff = calc_effective_far(
                             {
                                 "zone_limits": zl,
                                 "special_districts": r.get("special_districts") or [],
-                                "local_ordinance": {},
+                                "local_ordinance": ordinance or {},
                             },
                             zone_type,
                             r.get("land_area_sqm") or 0,
