@@ -45,8 +45,10 @@ export interface AddressEntry {
   bname: string;
   zonecode: string;
   bcode: string; // 법정동 코드 (10자리) — PNU 구성에 사용
-  areaSqm?: number; // 면적 (m²) — API에서 자동 반영
+  areaSqm?: number; // 면적 (m²) — 공공데이터(공부상) 우선. API에서 자동 반영
   areaPyeong?: number; // 면적 (평) — 자동 환산
+  areaInputSqm?: number; // 엑셀 입력 면적(비권위·참고용) — 공부상과 크게 다르면 보존
+  areaWarning?: string | null; // 엑셀 입력↔공부상 면적 괴리 경고(공부상 채택했음을 정직 고지)
   // ── 필지별 토지정보(/zoning/parcels-info 일괄 보강) — 등록된 모든 필지가 갖는다 ──
   pnu?: string; // PNU(19자리)
   zoneCode?: string; // 용도지역
@@ -167,6 +169,8 @@ export function GlobalAddressSearch({
       return {
         label: label || "(주소 미상)",
         areaSqm: a.areaSqm ?? null,
+        areaInputSqm: a.areaInputSqm ?? null,
+        areaWarning: a.areaWarning ?? null,
         zoneCode: a.zoneCode ?? null,
         bcrPct: a.bcrPct ?? null,
         farPct: a.farPct ?? null,             // 실효값(조례 반영)
@@ -288,10 +292,13 @@ export function GlobalAddressSearch({
     //   다른 프로젝트로 전환하면, 통합 면적 기록이 무관 프로젝트 SSOT(및 스냅샷)를 오염시키지
     //   않도록 기록 직전 재확인한다(triggerComprehensiveAnalysis와 동일 패턴 — 계정격리).
     const triggeredProjectId = useProjectContextStore.getState().projectId;
-    // 토지정보(면적·용도지역) 또는 건폐/용적·집합건물 플래그가 없는 행만 보강(엑셀 완전입력행도 bcr/far·빌라 보강).
+    // ★공공데이터(공부상) 우선 원칙: 엑셀/parse-parcels가 채운 면적·용도지역은 '비권위 입력'이라
+    //   신뢰하지 않는다. 주소나 PNU로 조회 가능한 필지는, 엑셀에 면적·용도가 이미 차 있어도
+    //   1회 공공데이터 조회로 교차검증한다(괴리 시 공부상 채택+경고). 이미 공공데이터로 검증된
+    //   행(infoStatus==="ok")만 재조회를 건너뛴다(중복 외부콜 방지). 이게 누락돼 엑셀 잔여값
+    //   (예 상도동 210-453=543·211-204=8500)이 영구 미검증으로 남던 근본버그를 해소한다.
     const need = entries.filter((e) =>
-      (e.fullAddress || e.jibunAddress) &&
-      (!e.areaSqm || !e.zoneCode || e.bcrPct == null || e.isAggregate === undefined),
+      (e.fullAddress || e.jibunAddress || e.pnu) && e.infoStatus !== "ok",
     );
     if (need.length === 0) return;
     // ★같은 동(법정동명) 형제 bcode 전파 — "○○동 번지"만(시·군·구 없이) 입력된 필지는
@@ -314,7 +321,8 @@ export function GlobalAddressSearch({
       return (d && dongBcode.get(d)) || "";
     };
     type P = {
-      __rid?: number; area_sqm?: number | null; zone_type?: string | null; jimok?: string | null;
+      __rid?: number; area_sqm?: number | null; area_input_sqm?: number | null; area_warning?: string | null;
+      zone_type?: string | null; jimok?: string | null;
       pnu?: string | null; official_price_per_sqm?: number | null; bcr_pct?: number | null; far_pct?: number | null;
       // bcr_pct/far_pct = 실효값(조례 반영). 법정상한은 *_legal_pct(보조 라벨용).
       bcr_legal_pct?: number | null; far_legal_pct?: number | null;
@@ -335,7 +343,9 @@ export function GlobalAddressSearch({
       let parcels: P[] = [];
       try {
         const r = await apiClient.post<{ parcels: P[] }>("/zoning/parcels-info", {
-          body: { parcels: slice.map((e, i) => ({ __rid: i, address: e.fullAddress, jibun: e.jibunAddress || e.fullAddress, pnu: e.pnu, bcode: bcodeFor(e) })) },
+          // area_input_sqm: 엑셀 입력 면적(비권위)을 함께 보내 백엔드가 공부상과 교차검증→괴리 시
+          //   공부상 채택 + area_warning 생성하게 한다(_enrich_fill 신뢰루프 활성화).
+          body: { parcels: slice.map((e, i) => ({ __rid: i, address: e.fullAddress, jibun: e.jibunAddress || e.fullAddress, pnu: e.pnu, bcode: bcodeFor(e), area_input_sqm: e.areaInputSqm ?? e.areaSqm ?? null })) },
           useMock: false, timeoutMs: 90000,
         });
         parcels = r.parcels || [];
@@ -354,10 +364,20 @@ export function GlobalAddressSearch({
       setAddresses((prev) => prev.map((a) => {
         const m = a.__uid ? byUid.get(a.__uid) : undefined;
         if (!m) return a;
+        // ★공공데이터(공부상) 우선: parcels-info status=ok이고 공부상 면적이 있으면 엑셀 입력값을
+        //   '덮어쓴다'(엑셀은 비권위). 백엔드가 괴리(>1.5x)를 감지하면 area_input_sqm(원입력)과
+        //   area_warning을 함께 반환 → 입력값 보존+정직 경고. 백엔드 미보정(경고 없음)이라도
+        //   공부상 면적이 오면 그 값을 채택한다(엑셀 잔류 방지). status가 ok가 아니면(애매/실패)
+        //   공부상 미확보이므로 기존 엑셀값을 유지(가짜값 금지).
+        const publicArea = m.status === "ok" ? m.area_sqm : null;
+        const nextArea = publicArea ?? a.areaSqm;
         return {
           ...a,
-          areaSqm: m.area_sqm ?? a.areaSqm,
-          areaPyeong: m.area_sqm ? m.area_sqm / 3.305785 : a.areaPyeong,
+          areaSqm: nextArea,
+          areaPyeong: nextArea ? nextArea / 3.305785 : a.areaPyeong,
+          // 엑셀 입력값 보존(참고용) — 백엔드가 보정한 경우 그 원입력, 아니면 직전 areaSqm.
+          areaInputSqm: m.area_input_sqm ?? a.areaInputSqm,
+          areaWarning: m.area_warning ?? a.areaWarning ?? null,
           pnu: m.pnu || a.pnu,
           zoneCode: m.zone_type || a.zoneCode,
           bcrPct: m.bcr_pct ?? a.bcrPct,
@@ -773,6 +793,15 @@ export function GlobalAddressSearch({
                       <span className="shrink-0 rounded bg-[color-mix(in_srgb,var(--status-warning)_12%,transparent)] px-1 py-0.5 text-[9px] font-semibold text-[var(--status-warning)]">{isAnalyzing ? "조회중…" : "보완필요"}</span>
                     )}
                   </div>
+                  {/* 엑셀 입력↔공부상 면적 괴리 경고 — 공부상(권원) 채택했음을 정직 고지(입력값 참고 보존) */}
+                  {row.areaWarning && (
+                    <div className="mt-0.5 flex items-start gap-1 text-[9.5px] text-[var(--status-warning)]" title={row.areaWarning}>
+                      <span className="shrink-0 rounded bg-[color-mix(in_srgb,var(--status-warning)_14%,transparent)] px-1 py-0.5 font-bold">⚠ 면적 보정</span>
+                      <span className="min-w-0 flex-1">
+                        입력 {row.areaInputSqm ? Math.round(row.areaInputSqm).toLocaleString() : "—"}㎡ → 공부상 채택(입력값 점검 필요)
+                      </span>
+                    </div>
+                  )}
                   {/* 2행: 용도지역·건폐/용적(실효)·지목 + 공동주택(빌라) 배지 */}
                   {(row.zoneCode || row.bcrPct || row.jimok || row.isAggregate) && (
                     <div className="mt-0.5 flex flex-wrap items-center gap-1 text-[9.5px] text-[var(--text-secondary)]">

@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v248-shallow-zone-wave4";
+const CACHE_NAME = "propai-v249-excel-public-area-road-abolition";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

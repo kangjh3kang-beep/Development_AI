@@ -692,13 +692,21 @@ class ParcelExcelService:
         parcels: list[dict[str, Any]] = []
         for it in items:
             pnu = str(it.get("pnu") or "").strip()
+            # ★엑셀 입력 면적(비권위)을 area_sqm 초기값으로 실어 _enrich_fill 교차검증을 활성화한다.
+            #   PNU가 있으면 _enrich_fill이 공부상과 대조→큰 괴리는 공부상 채택+area_warning 생성,
+            #   PNU가 없으면(_enrich_fill 미적용) 이 입력 면적이 그대로 area_sqm로 남는다(참고 보존).
+            try:
+                area_in = float(it.get("area_input_sqm")) if it.get("area_input_sqm") is not None else None
+            except (TypeError, ValueError):
+                area_in = None
             parcels.append({
                 "rid": it.get("__rid"),  # 호출측 행 식별자 — 응답에서 그대로 echo(주소 충돌 매칭 회피)
                 "address": str(it.get("address") or "").strip(),
                 "jibun": str(it.get("jibun") or "").strip(),
                 "bcode": str(it.get("bcode") or "").strip(),
                 "pnu": pnu if len(pnu) == 19 else None,
-                "area_sqm": None, "zone_type": None, "jimok": None,
+                "area_sqm": area_in if (area_in and area_in > 0) else None,
+                "zone_type": None, "jimok": None,
                 "official_price_per_sqm": None,
                 "status": "ok" if len(pnu) == 19 else "pending",
             })
