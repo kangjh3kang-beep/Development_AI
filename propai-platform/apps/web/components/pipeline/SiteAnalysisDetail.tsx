@@ -486,6 +486,291 @@ function ParcelZoningTable({ parcels }: { parcels: string[] }) {
   );
 }
 
+/* ── 다필지 건축물현황 요약(건물 동수·건축연한·노후도) ──
+   정비사업(재개발/재건축) 판정의 핵심 정보. 대량필지일 때 대표 건물 1개만 보이던 한계를 보완한다.
+   /zoning/parcels-info의 parcels[].building(건축물대장 표제부 실값)을 일괄 조회해
+   ① 집계 요약(동수·건축연한 분포·노후도)과 ② 건물별 표를 보여준다.
+   무목업: 무자료=미확보/나대지, 준공일 부재=건축연한 '미상'(가짜 연도 금지),
+   노후도는 '참고'(법정 노후도 판정은 지자체 조례 기준이므로 단정하지 않음). 표시 위주 컴포넌트. */
+
+// parcels-info 응답 1건의 building 객체(백엔드 parcel_excel_service._attach_building 필드와 동일).
+interface ParcelBuildingObj {
+  is_aggregate?: boolean | null;
+  building_name?: string | null;
+  main_purpose?: string | null;
+  unit_count?: number | null;
+  use_approval_date?: string | null; // 사용승인일(YYYYMMDD) → 준공년도·건축연한 산출
+  ground_floors?: number | null;
+  underground_floors?: number | null;
+  total_area_sqm?: number | null;
+  structure?: string | null;
+  dong_count?: number | null; // 표제부 동수
+  is_demolished?: boolean | null;
+}
+
+// parcels-info 응답 1건(건축물 표시에 필요한 필드만 — ParcelInfoRow와 동일 출처).
+interface ParcelBuildingInfoRow {
+  __rid?: number;
+  address?: string | null;
+  jibun?: string | null;
+  status?: string | null;
+  building?: ParcelBuildingObj | null;
+}
+
+// 표에 쓰기 좋게 정규화한 건물 행.
+interface NormalizedBuildingRow {
+  label: string; // 지번(우선) 또는 주소
+  failed: boolean; // 조회 실패(정직 표기)
+  hasBuilding: boolean; // 건물 등재 여부(false=나대지)
+  name: string;
+  purpose: string;
+  groundFloors: number | null;
+  undergroundFloors: number | null;
+  dongCount: number | null; // 표제부 동수
+  builtYear: number | null; // 준공년도(use_approval_date 앞4자리). 없으면 null='미상'
+  ageYears: number | null; // 건축연한(현재연도-준공년도). 준공일 없으면 null='미상'
+  isOld30: boolean; // 30년 이상(재건축 노후도 참고기준)
+  isDemolished: boolean; // 멸실
+}
+
+function ParcelBuildingTable({ parcels }: { parcels: string[] }) {
+  const [rows, setRows] = useState<NormalizedBuildingRow[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(false);
+  const [open, setOpen] = useState(false); // 길 수 있어 기본 접힘
+  // ParcelZoningTable과 동일한 가드 — 중복 in-flight 호출 방지 + stale 응답 폐기.
+  const seqRef = useRef(0);
+  const fetchedKeyRef = useRef<string>("");
+
+  const parcelsKey = parcels.join("|");
+  useEffect(() => {
+    // 패널을 펼칠 때 1회만 조회(접힌 상태에선 호출 안 함).
+    if (!open) return;
+    if (fetchedKeyRef.current === parcelsKey) return; // 동일 필지는 재진입 차단
+    fetchedKeyRef.current = parcelsKey;
+    const seq = ++seqRef.current;
+    setLoading(true);
+    setError(false);
+    (async () => {
+      try {
+        const r = await apiClient.post<{ parcels: ParcelBuildingInfoRow[] }>("/zoning/parcels-info", {
+          // __rid로 입력 순서를 echo 매칭(주소 충돌 없이 정확 정렬).
+          body: { parcels: parcels.map((address, i) => ({ __rid: i, address })) },
+          useMock: false,
+          timeoutMs: 90000,
+        });
+        if (seq !== seqRef.current) return; // 더 새로운 조회가 시작됐으면 폐기
+        const list = r.parcels || [];
+        const byRid = new Map<number, ParcelBuildingInfoRow>();
+        list.forEach((p, idx) => byRid.set(typeof p.__rid === "number" ? p.__rid : idx, p));
+        const nowYear = new Date().getFullYear();
+        const normalized: NormalizedBuildingRow[] = parcels.map((address, i) => {
+          const p = byRid.get(i);
+          const failed = !p || (p.status != null && p.status !== "ok" && p.status !== "");
+          const b = p?.building || null;
+          const hasBuilding = Boolean(b);
+          // 준공년도 = 사용승인일(YYYYMMDD) 앞4자리. 형식 불량/부재 시 null(가짜 연도 금지).
+          const approval = s(b?.use_approval_date);
+          const yearStr = approval.slice(0, 4);
+          const builtYear =
+            /^\d{4}$/.test(yearStr) && Number(yearStr) >= 1900 && Number(yearStr) <= nowYear + 1
+              ? Number(yearStr)
+              : null;
+          const ageYears = builtYear != null ? nowYear - builtYear : null;
+          return {
+            label: s(p?.jibun || p?.address || address),
+            failed: Boolean(failed),
+            hasBuilding,
+            name: s(b?.building_name),
+            purpose: s(b?.main_purpose),
+            groundFloors: n(b?.ground_floors),
+            undergroundFloors: n(b?.underground_floors),
+            dongCount: n(b?.dong_count),
+            builtYear,
+            ageYears,
+            isOld30: ageYears != null && ageYears >= 30,
+            isDemolished: Boolean(b?.is_demolished),
+          };
+        });
+        setRows(normalized);
+      } catch {
+        if (seq !== seqRef.current) return;
+        setError(true);
+        setRows(null);
+        fetchedKeyRef.current = ""; // 실패 시 키 해제 → 다시 펼치면 재시도 가능
+      } finally {
+        if (seq === seqRef.current) setLoading(false);
+      }
+    })();
+  }, [open, parcelsKey]);
+
+  // ── 집계 요약 산출(건물 등재 필지만 대상, 결측은 정직 제외) ──
+  const usable = rows ? rows.filter((r) => !r.failed) : [];
+  const withBuilding = usable.filter((r) => r.hasBuilding);
+  const landOnlyCount = usable.filter((r) => !r.hasBuilding).length; // 나대지 필지 수
+  const buildingParcelCount = withBuilding.length; // 건물 있는 필지 수
+  // 동수 합 = 표제부 dong_count 합(미등록은 건물 1동으로 간주하지 않고 합산에서 제외 → 정직).
+  const totalDongCount = withBuilding.reduce((acc, r) => acc + (r.dongCount ?? 0), 0);
+  const dongKnownCount = withBuilding.filter((r) => r.dongCount != null && r.dongCount > 0).length;
+  const demolishedCount = withBuilding.filter((r) => r.isDemolished).length; // 멸실 건물 수
+  // 건축연한 분포 — 준공년도 확보 건물만(미상은 평균/최고령에서 제외).
+  const aged = withBuilding.filter((r) => r.ageYears != null);
+  const avgAge =
+    aged.length > 0 ? Math.round(aged.reduce((acc, r) => acc + (r.ageYears ?? 0), 0) / aged.length) : null;
+  const maxAge = aged.length > 0 ? Math.max(...aged.map((r) => r.ageYears ?? 0)) : null;
+  // 노후도(참고) — 준공년도 확보 건물 중 30년↑/20년↑ 비율.
+  const old30Count = aged.filter((r) => (r.ageYears ?? 0) >= 30).length;
+  const old20Count = aged.filter((r) => (r.ageYears ?? 0) >= 20).length;
+  const old30Pct = aged.length > 0 ? (old30Count / aged.length) * 100 : null;
+  const old20Pct = aged.length > 0 ? (old20Count / aged.length) * 100 : null;
+  const ageUnknownCount = buildingParcelCount - aged.length; // 준공일 미상 건물 수
+
+  return (
+    <div className="sa-di-sub mt-3">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className="sa-di-block__head"
+        aria-expanded={open}
+        style={{ width: "100%", padding: 0, background: "transparent" }}
+      >
+        <span className="sa-di-eyebrow">건축물현황 요약 · 동수 · 건축연한 · 노후도 ({parcels.length}필지)</span>
+        <svg
+          width="14" height="14" viewBox="0 0 24 24"
+          fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+          className="sa-di-block__chevron" data-open={open}
+        >
+          <path d="m6 9 6 6 6-6" />
+        </svg>
+      </button>
+      {open && (
+        <div className="mt-2">
+          {loading && <p className="sa-di-empty">필지별 건축물현황 조회 중…</p>}
+          {error && !loading && (
+            <p className="sa-di-empty">필지별 건축물현황 조회 실패 — 잠시 후 다시 시도해 주세요.</p>
+          )}
+          {!loading && !error && rows && rows.length > 0 && (
+            <>
+              {/* ① 집계 요약 — 동수·건축연한 분포·노후도(참고) */}
+              <div className="sa-di-tiles">
+                <Tile
+                  label="건물 동수"
+                  value={
+                    dongKnownCount > 0
+                      ? `${buildingParcelCount}필지 · ${totalDongCount}개동`
+                      : `${buildingParcelCount}필지 (동수 미등록)`
+                  }
+                  text
+                />
+                <Tile label="나대지(건물 없음)" value={`${landOnlyCount}필지`} />
+                <Tile
+                  label="평균 건축연한"
+                  value={avgAge != null ? `${avgAge}년 (최고령 ${maxAge}년)` : "미상"}
+                  text
+                />
+                <Tile
+                  label="노후 30년↑ (참고)"
+                  value={old30Pct != null ? `${old30Pct.toFixed(0)}% (${old30Count}/${aged.length}동)` : "미상"}
+                  text
+                />
+              </div>
+              {/* 노후도는 '참고' — 법정 노후도 판정은 지자체 조례 기준임을 정직 고지(단정 금지). */}
+              {aged.length > 0 && (
+                <p className="sa-di-eyebrow mt-2">
+                  노후도 참고: 20년↑ {old20Pct != null ? `${old20Pct.toFixed(0)}%(${old20Count}동)` : "-"} ·
+                  30년↑ {old30Pct != null ? `${old30Pct.toFixed(0)}%(${old30Count}동)` : "-"}
+                  <br />
+                  <span style={{ color: "var(--text-hint)" }}>
+                    ※ 정비사업 노후도 요건 참고용. 법정 노후도 판정은 지자체 조례 기준(건축연한 산정·동수 산입 방식)에 따릅니다.
+                  </span>
+                </p>
+              )}
+              {(ageUnknownCount > 0 || demolishedCount > 0) && (
+                <p className="sa-di-eyebrow mt-1" style={{ color: "var(--text-hint)" }}>
+                  {ageUnknownCount > 0 && `※ 준공일 미확보 ${ageUnknownCount}동은 건축연한·노후도 산정에서 제외. `}
+                  {demolishedCount > 0 && `※ 멸실 ${demolishedCount}동 포함(별도 표기).`}
+                </p>
+              )}
+
+              {/* ② 건물별 표 — 접이식 본문 안에서 스크롤 */}
+              <div className="overflow-x-auto mt-2" style={{ maxHeight: 320, overflowY: "auto" }}>
+                <table className="sa-di-table">
+                  <thead>
+                    <tr>
+                      <th>지번</th>
+                      <th>건물명</th>
+                      <th>주용도</th>
+                      <th className="sa-di-num">지상/지하</th>
+                      <th className="sa-di-num">준공년도</th>
+                      <th className="sa-di-num">건축연한</th>
+                      <th>노후</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((r, i) => (
+                      <tr key={i}>
+                        <td>{r.label || "-"}</td>
+                        {r.failed ? (
+                          // 조회 실패 행은 정직 표기(나머지 칸 병합).
+                          <td colSpan={6} style={{ color: "var(--text-hint)" }}>
+                            조회 실패
+                          </td>
+                        ) : !r.hasBuilding ? (
+                          // 건물 미등재 = 나대지(정직 표기).
+                          <td colSpan={6} style={{ color: "var(--text-hint)" }}>
+                            나대지 (등재 건축물 없음)
+                          </td>
+                        ) : (
+                          <>
+                            <td>
+                              {r.name || <span style={{ color: "var(--text-hint)" }}>미상</span>}
+                              {r.isDemolished && (
+                                <span className="ml-1" style={{ color: "var(--text-hint)" }}>
+                                  (멸실)
+                                </span>
+                              )}
+                            </td>
+                            <td>{r.purpose || <span style={{ color: "var(--text-hint)" }}>미상</span>}</td>
+                            <td className="sa-di-num">
+                              {r.groundFloors != null || r.undergroundFloors != null
+                                ? `${r.groundFloors ?? "-"}/${r.undergroundFloors ?? 0}`
+                                : "-"}
+                            </td>
+                            <td className="sa-di-num">
+                              {r.builtYear != null ? r.builtYear : <span style={{ color: "var(--text-hint)" }}>미상</span>}
+                            </td>
+                            <td className="sa-di-num">
+                              {r.ageYears != null ? `${r.ageYears}년` : <span style={{ color: "var(--text-hint)" }}>미상</span>}
+                            </td>
+                            <td>
+                              {r.ageYears == null ? (
+                                <span style={{ color: "var(--text-hint)" }}>-</span>
+                              ) : r.isOld30 ? (
+                                <span className="sa-di-token" style={{ borderColor: "var(--accent-strong)", color: "var(--accent-strong)" }}>
+                                  30년↑
+                                </span>
+                              ) : (
+                                <span style={{ color: "var(--text-secondary)" }}>해당없음</span>
+                              )}
+                            </td>
+                          </>
+                        )}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+          {!loading && !error && rows && rows.length === 0 && (
+            <p className="sa-di-empty">필지별 건축물현황 데이터를 확보하지 못했습니다.</p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ── Main Component ── */
 
 export function SiteAnalysisDetail({ data, hideInterpretation = false, parcels }: SiteAnalysisDetailProps) {
@@ -877,6 +1162,9 @@ export function SiteAnalysisDetail({ data, hideInterpretation = false, parcels }
             return <p className="sa-di-empty">기존 건축물 없음 (나대지)</p>;
           })()
         )}
+        {/* 다필지(2개 이상)일 때만 필지별 건축물현황 요약(동수·건축연한·노후도) 추가 표시.
+            단일필지는 위 대표 건물 표시만으로 충분하므로 미표시(기존 동작 보존). */}
+        {parcels && parcels.length > 1 && <ParcelBuildingTable parcels={parcels} />}
       </CategoryCard>
 
       {/* 6. 주변 인프라 */}

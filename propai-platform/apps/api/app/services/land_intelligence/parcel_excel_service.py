@@ -710,6 +710,14 @@ class ParcelExcelService:
                 "building_name": t.get("building_name", ""),
                 "main_purpose": purpose,
                 "unit_count": units or None,
+                # ★건축물현황(동수·건축연한·노후도) 산출용 — 표제부 실값 그대로 전달(가짜 금지).
+                "use_approval_date": t.get("use_approval_date", "") or "",  # 사용승인일(YYYYMMDD) → 건축연한
+                "ground_floors": t.get("ground_floors"),       # 0층 보존(or None 금지 — 0이 소실됨)
+                "underground_floors": t.get("underground_floors"),
+                "total_area_sqm": t.get("total_area_sqm") or None,  # 연면적(0=무자료)
+                "structure": t.get("structure", "") or "",
+                "dong_count": t.get("dong_count") or None,        # 표제부 동수
+                "is_demolished": bool(t.get("is_demolished")),     # 멸실(추정)
             }
 
         await asyncio.gather(*[one(i) for i in targets], return_exceptions=True)
