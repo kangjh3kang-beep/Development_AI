@@ -523,6 +523,283 @@ function ParcelZoningTable({ parcels }: { parcels: string[] }) {
   );
 }
 
+/* ── 다필지 '기본 토지정보' 통합 요약 ──
+   대표 1필지(주소·용도지역·면적 543㎡ 등)만 보여 사용자가 단일 필지로 오해하던 한계를 보완한다.
+   ★표시 위주(기존 로직 보존): /zoning/parcels-info를 1회 조회해 전 필지를 합산·집계한 요약을
+   '기본 토지정보' 카드 상단에 함께 보여준다 — 통합 필지수 · 통합 면적(Σarea, ok 필지만) ·
+   용도지역 혼재(종류별 필지수) · 지목 분포 · 면적가중 건폐/용적 한도.
+   무목업·정직: 합산·가중은 면적/한도가 확보된 'ok' 필지만 포함하고, 미확보 N필지는 제외 사실을
+   정직 표기한다(가짜 면적/한도 생성 금지). ParcelZoningTable과 동일한 면적가중식(Σ면적×한도÷Σ면적)·
+   동일한 fetch 가드(seqRef/fetchedKeyRef/parcelsKey deps/__rid echo 매칭)를 그대로 차용한다.
+   각 필지별 상세는 아래 '용도지역·법규한도' 표(ParcelZoningTable)로 안내한다. */
+
+// parcels-info 응답 1건 중 통합 요약에 필요한 필드(백엔드 parcels_info 핸들러와 동일).
+//   jimok=지목(예: 대·도로), official_price_per_sqm는 요약엔 미사용(필지별 표가 담당).
+interface ParcelOverviewRow {
+  __rid?: number;
+  address?: string | null;
+  jibun?: string | null;
+  area_sqm?: number | null;
+  zone_type?: string | null;
+  bcr_pct?: number | null;
+  far_pct?: number | null;
+  max_bcr_pct?: number | null;
+  max_far_pct?: number | null;
+  jimok?: string | null;
+  status?: string | null;
+}
+
+// 합산·집계용으로 정규화한 행(원본 필드명을 화면 표시용으로 정리).
+interface NormalizedOverviewRow {
+  zoneType: string;
+  areaSqm: number | null;
+  bcr: number | null;
+  far: number | null;
+  jimok: string;
+  failed: boolean; // 조회 실패(면적/한도 합산·가중에서 제외 + 정직 표기)
+}
+
+function ParcelLandOverviewSummary({
+  parcels,
+  repLabel,
+}: {
+  parcels: string[];
+  /** 대표필지 라벨(대표 543㎡가 어느 지번인지 명시) — 단일필지 오해 방지용. */
+  repLabel?: string;
+}) {
+  const [rows, setRows] = useState<NormalizedOverviewRow[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(false);
+  // ★다필지인데 단일로 오해하는 게 핵심 신고라, 통합 요약은 기본 펼침(즉시 노출).
+  const [open, setOpen] = useState(true);
+  // ParcelZoningTable과 동일한 가드 — 중복 in-flight 호출 방지 + 늦게 도착한 stale 응답 폐기.
+  const seqRef = useRef(0);
+  const fetchedKeyRef = useRef<string>("");
+
+  // parcels는 매 렌더 새 배열참조라 안정 문자열 키로 deps 고정(펼침 중 매 렌더 재실행/중복요청 방지).
+  const parcelsKey = parcels.join("|");
+  useEffect(() => {
+    if (!open) return; // 접힌 상태에선 네트워크 호출 안 함
+    if (fetchedKeyRef.current === parcelsKey) return; // 동일 필지는 시도 후 재진입 차단(중복요청 방지)
+    fetchedKeyRef.current = parcelsKey;
+    const seq = ++seqRef.current;
+    setLoading(true);
+    setError(false);
+    (async () => {
+      try {
+        const r = await apiClient.post<{ parcels: ParcelOverviewRow[] }>("/zoning/parcels-info", {
+          // __rid로 입력 순서를 echo 매칭(주소 충돌 없이 정확 정렬). 다필지 분석은 보통 주소만 보유.
+          body: { parcels: parcels.map((address, i) => ({ __rid: i, address })) },
+          useMock: false,
+          timeoutMs: 90000,
+        });
+        if (seq !== seqRef.current) return; // 더 새로운 조회가 시작됐으면 폐기
+        const list = r.parcels || [];
+        const byRid = new Map<number, ParcelOverviewRow>();
+        list.forEach((p, idx) => byRid.set(typeof p.__rid === "number" ? p.__rid : idx, p));
+        const normalized: NormalizedOverviewRow[] = parcels.map((address, i) => {
+          const p = byRid.get(i);
+          const failed = !p || (p.status != null && p.status !== "ok" && p.status !== "");
+          return {
+            zoneType: s(p?.zone_type),
+            areaSqm: n(p?.area_sqm),
+            bcr: n(p?.bcr_pct ?? p?.max_bcr_pct),
+            far: n(p?.far_pct ?? p?.max_far_pct),
+            jimok: s(p?.jimok),
+            failed: Boolean(failed),
+          };
+        });
+        setRows(normalized);
+      } catch {
+        if (seq !== seqRef.current) return;
+        setError(true);
+        setRows(null);
+        fetchedKeyRef.current = ""; // 실패 시 키 해제 → 접었다 다시 펼치면 재시도 가능
+      } finally {
+        if (seq === seqRef.current) setLoading(false);
+      }
+    })();
+  }, [open, parcelsKey]);
+
+  // ── 집계(표시 위주, 가짜값 생성 없음) ──
+  // 용도지역 종류별 필지수(혼재 판정 + 종별 분포). 빈 값은 집계 제외.
+  const zoneCounts = new Map<string, number>();
+  // 지목 분포(예: 대 30·도로 3). 빈 값은 집계 제외.
+  const jimokCounts = new Map<string, number>();
+  // 면적가중 통합 한도 — 면적·한도가 모두 있는 행만 가중 포함(결측은 제외 + 그 사실 표기).
+  let sumArea = 0;
+  let sumAreaWeighted = 0; // 가중대상(면적+한도 모두 보유) 면적합 — 면적가중 분모
+  let sumAreaBcr = 0;
+  let sumAreaFar = 0;
+  let okAreaCount = 0; // 면적 합산에 포함된(면적>0) 필지 수
+  let weightedExcluded = 0; // 면적/한도 결측으로 면적가중에서 제외된 필지 수
+  let failedCount = 0; // 조회 실패(status!=ok) 필지 수 — 정직 표기
+  if (rows) {
+    for (const r of rows) {
+      if (r.failed) failedCount += 1;
+      if (r.zoneType) zoneCounts.set(r.zoneType, (zoneCounts.get(r.zoneType) ?? 0) + 1);
+      if (r.jimok) jimokCounts.set(r.jimok, (jimokCounts.get(r.jimok) ?? 0) + 1);
+      // 면적 합산: ok 필지(실패 제외) + 면적>0 만.
+      if (!r.failed && r.areaSqm != null && r.areaSqm > 0) {
+        sumArea += r.areaSqm;
+        okAreaCount += 1;
+        // 면적가중: 면적·건폐·용적이 모두 있는 행만 분자·분모 동시 포함(없으면 가중 제외 — 분모 희석 방지).
+        if (r.bcr != null && r.far != null) {
+          sumAreaWeighted += r.areaSqm;
+          sumAreaBcr += r.areaSqm * r.bcr;
+          sumAreaFar += r.areaSqm * r.far;
+        } else {
+          weightedExcluded += 1;
+        }
+      } else {
+        weightedExcluded += 1;
+      }
+    }
+  }
+  // 분모=가중대상 면적합(분자와 동일 필지집합) → 한도 0%(보전·미지정 등 합법값)도 정확 반영, 희석 없음.
+  const aggBcr = sumAreaWeighted > 0 ? sumAreaBcr / sumAreaWeighted : null;
+  const aggFar = sumAreaWeighted > 0 ? sumAreaFar / sumAreaWeighted : null;
+  // 면적 미확보(합산 제외) 필지 수 = 전체 − 면적합산 포함분.
+  const areaMissingCount = rows ? rows.length - okAreaCount : 0;
+  const distinctZones = Array.from(zoneCounts.keys());
+  const mixed = distinctZones.length > 1;
+
+  return (
+    <div className="sa-di-sub" style={{ marginBottom: 12 }}>
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className="sa-di-block__head"
+        aria-expanded={open}
+        style={{ width: "100%", padding: 0, background: "transparent" }}
+      >
+        <span className="sa-di-eyebrow">통합 토지 요약 ({parcels.length}필지)</span>
+        <svg
+          width="14" height="14" viewBox="0 0 24 24"
+          fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+          className="sa-di-block__chevron" data-open={open}
+        >
+          <path d="m6 9 6 6 6-6" />
+        </svg>
+      </button>
+      {open && (
+        <div className="mt-2">
+          {loading && <p className="sa-di-empty">전체 필지 통합 요약 조회 중…</p>}
+          {error && !loading && (
+            <p className="sa-di-empty">통합 요약 조회 실패 — 잠시 후 다시 시도해 주세요.</p>
+          )}
+          {!loading && !error && rows && rows.length > 0 && (
+            <>
+              {/* 통합 지표 타일 — 단일 필지 오해 방지의 핵심 블록 */}
+              <div className="sa-di-tiles">
+                <Tile label="통합 필지수" value={`${parcels.length}필지`} accent />
+                <Tile
+                  label="통합 면적(전체 합계)"
+                  value={
+                    sumArea > 0
+                      ? `${formatArea(sumArea)}${areaMissingCount > 0 ? ` (면적 미확보 ${areaMissingCount}필지 제외)` : ""}`
+                      : "면적 미확보"
+                  }
+                  accent
+                />
+                <Tile
+                  label="용도지역"
+                  value={
+                    distinctZones.length === 0
+                      ? "미확보"
+                      : mixed
+                      ? `혼재 ${distinctZones.length}종`
+                      : distinctZones[0]
+                  }
+                  text
+                />
+                {aggBcr != null && (
+                  <Tile label="면적가중 건폐율" value={`${aggBcr.toFixed(1)}%`} accent />
+                )}
+                {aggFar != null && (
+                  <Tile label="면적가중 용적률" value={`${aggFar.toFixed(1)}%`} accent />
+                )}
+              </div>
+
+              {/* 대표 면적과 통합 면적을 함께 명시 — '대표 543㎡ · 통합 N필지 합계 ○○㎡'로 단일필지 오해 차단 */}
+              <p className="sa-di-eyebrow mt-2" style={{ color: "var(--text-secondary)" }}>
+                {repLabel ? (
+                  <>
+                    대표필지 <span style={{ color: "var(--text-primary)", fontWeight: 600 }}>{repLabel}</span> 외{" "}
+                  </>
+                ) : (
+                  "대표 1필지 외 "
+                )}
+                {parcels.length - 1}필지 ·{" "}
+                {sumArea > 0
+                  ? <>통합 {parcels.length}필지 합계 <span style={{ color: "var(--accent-strong)", fontWeight: 700 }}>{sumArea.toLocaleString("ko-KR")}㎡ ({sqmToPyeong(sumArea)}평)</span></>
+                  : "통합 면적은 면적이 확보된 필지가 없어 산출 불가"}
+              </p>
+
+              {/* 용도지역 혼재 시 종류별 필지수 분포 */}
+              {mixed && (
+                <div className="mt-2">
+                  <p className="sa-di-eyebrow mb-1">용도지역 분포(혼재 {distinctZones.length}종)</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {distinctZones.map((z) => (
+                      <span
+                        key={z}
+                        className="sa-di-token"
+                        style={{ borderColor: "var(--accent-strong)" }}
+                      >
+                        {z} · {zoneCounts.get(z)}필지
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* 지목 분포(예: 대 30·도로 3) */}
+              {jimokCounts.size > 0 && (
+                <div className="mt-2">
+                  <p className="sa-di-eyebrow mb-1">지목 분포</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {Array.from(jimokCounts.entries())
+                      .sort((a, b) => b[1] - a[1])
+                      .map(([j, c]) => (
+                        <span key={j} className="sa-di-token">
+                          {j} · {c}필지
+                        </span>
+                      ))}
+                  </div>
+                </div>
+              )}
+
+              {/* 정직 표기 — 가중/합산 제외분, 조회 실패분, 연결 안내 (산출 성공 여부와 독립적으로 고지) */}
+              {weightedExcluded > 0 && (
+                <p className="sa-di-eyebrow mt-2" style={{ color: "var(--text-hint)" }}>
+                  ※ 면적·한도 미확보 {weightedExcluded}필지는 면적가중 한도 계산에서 제외했습니다.
+                </p>
+              )}
+              {aggFar == null && (
+                <p className="sa-di-eyebrow mt-2" style={{ color: "var(--text-hint)" }}>
+                  ※ 면적·한도가 확보된 필지가 없어 면적가중 통합 한도를 산출할 수 없습니다.
+                </p>
+              )}
+              {failedCount > 0 && (
+                <p className="sa-di-eyebrow mt-1" style={{ color: "var(--text-hint)" }}>
+                  ※ {failedCount}필지는 토지정보 조회에 실패해 통합 집계에서 제외했습니다.
+                </p>
+              )}
+              <p className="sa-di-eyebrow mt-2">
+                각 필지별 상세(지번별 용도지역·법규한도)는 아래 ‘용도지역·법규한도’ 표를 참조하세요.
+              </p>
+            </>
+          )}
+          {!loading && !error && rows && rows.length === 0 && (
+            <p className="sa-di-empty">전체 필지 통합 요약 데이터를 확보하지 못했습니다.</p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ── 다필지 건축물현황 요약(건물 동수·건축연한·노후도) ──
    정비사업(재개발/재건축) 판정의 핵심 정보. 대량필지일 때 대표 건물 1개만 보이던 한계를 보완한다.
    /zoning/parcels-info의 parcels[].building(건축물대장 표제부 실값)을 일괄 조회해
@@ -1278,18 +1555,35 @@ export function SiteAnalysisDetail({ data, hideInterpretation = false, parcels }
       {/* 1. 기본 토지정보 — 주소/PNU는 본문체(text), 면적은 mono 정렬 */}
       <CategoryCard title="기본 토지정보" eyebrow="LAND OVERVIEW" icon={IconPin} defaultOpen={true}>
         {hasBasic ? (
-          <div className="sa-di-tiles">
-            {landAddress && <Tile label="주소" value={landAddress} text />}
-            {zoneType && <Tile label="용도지역" value={zoneType} accent />}
-            {landAreaSqm != null && landAreaSqm > 0 && <Tile label="면적" value={formatArea(landAreaSqm)} accent />}
-            {officialPrice != null && officialPrice > 0 && <Tile label="공시지가(㎡당)" value={formatWon(officialPrice)} accent />}
-            {landCategory && <Tile label="지목" value={landCategory} text />}
-            {/* PNU는 19자리 코드일 때만 표시(데이터 누락 시 '0' 등 노출 방지) */}
-            {pnu && s(pnu).replace(/[^0-9]/g, "").length >= 10 && (
-              <Tile label="PNU" value={typeof pnu === "string" && pnu.startsWith("[") ? pnu : s(pnu)} text />
+          <>
+            {/* 다필지(2개 이상)일 때만: 카드 상단에 전체 필지 통합 요약을 먼저 보여준다.
+                아래 대표 타일(대표 543㎡ 등)이 1필지로 오해되던 한계를 보완(표시 위주). 단일필지는 미표시(회귀 0). */}
+            {parcels && parcels.length > 1 && (
+              <ParcelLandOverviewSummary
+                parcels={parcels}
+                repLabel={parcels[0] || landAddress || undefined}
+              />
             )}
-            {ownerType && <Tile label="소유구분" value={ownerType} text />}
-          </div>
+            <div className="sa-di-tiles">
+              {/* 다필지면 이 주소가 '대표필지' 1개임을 라벨로 명시(단일필지면 기존 '주소' 유지). */}
+              {landAddress && (
+                <Tile
+                  label={parcels && parcels.length > 1 ? "대표필지 주소" : "주소"}
+                  value={landAddress}
+                  text
+                />
+              )}
+              {zoneType && <Tile label={parcels && parcels.length > 1 ? "용도지역(대표필지)" : "용도지역"} value={zoneType} accent />}
+              {landAreaSqm != null && landAreaSqm > 0 && <Tile label={parcels && parcels.length > 1 ? "면적(대표필지)" : "면적"} value={formatArea(landAreaSqm)} accent />}
+              {officialPrice != null && officialPrice > 0 && <Tile label="공시지가(㎡당)" value={formatWon(officialPrice)} accent />}
+              {landCategory && <Tile label="지목" value={landCategory} text />}
+              {/* PNU는 19자리 코드일 때만 표시(데이터 누락 시 '0' 등 노출 방지) */}
+              {pnu && s(pnu).replace(/[^0-9]/g, "").length >= 10 && (
+                <Tile label="PNU" value={typeof pnu === "string" && pnu.startsWith("[") ? pnu : s(pnu)} text />
+              )}
+              {ownerType && <Tile label="소유구분" value={ownerType} text />}
+            </div>
+          </>
         ) : (
           <NoData />
         )}
