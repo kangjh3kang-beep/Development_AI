@@ -377,8 +377,10 @@
   - **reconcile_all** + celery **beat_schedule**(`RECONCILE_INTERVAL_SECONDS`): 미러 보유 distinct 관할 fan-out(주기 진입점, beat 기동 시만 발화).
 - **적대적 다관점 리뷰**(결정론·INV13 6.5 / 영속·멱등 5.5 / 무음실패·품질 6.0, 전체 6.0 gate_pass) — 확인 5건 해소:
   **(HIGH)** 다중워커서 재분석이 stale 인메모리 미러 사용(analyze_task가 DB warm 안 함) → 별도 **reanalyze_task가 DB warm 후 실행**; **(HIGH)** 재분석 결과 fire-and-forget(어디에도 미영속) → **save_analysis로 새 run append**; **(MED)** snapshot_id 주입이 input_hash 변경+rules verbatim 복사=라벨회전인데 주석은 "재평가" 과장 → **docstring 정직 정정**(본문→rules 재파싱은 재하베스트 몫, lineage 후속 명시); **(MED)** citation_ref 미인코딩 URL 인젝션 → **urlencode + follow_redirects=False**; **(MED)** 단일 관할 재분석 fan-out 무상한 → **dedup(동일입력 1회)+상한 절단 로깅**.
-- **검증**: 신규 AT 18(test_reconcile_mirror 14·test_live_network 3·input_payload 1) + 전체 **414 passed**(396→414, skipped 0), ruff clean, static_scan 0, test_consume_static·test_live_call_scan 그린, alembic 0015 down(0014)→up(0015) 가역.
-- **운영 잔여**: 실 worker+redis(CELERY_TASK_ALWAYS_EAGER=false)+celery beat 기동 · `LIVE_NETWORK=on`+실 law.go.kr/ELIS 연동(키·URL 확정) · reanalysis lineage(old→new run 링크).
+- **검증**: 신규 AT + 전체 **414 passed**(396→414, skipped 0), ruff clean, static_scan 0, test_consume_static·test_live_call_scan 그린, alembic 0015 down(0014)→up(0015) 가역.
+- **★성장루프 재검증(5렌즈 적대 워크플로 + 결함 재검증, 25 에이전트)**: gate_pass(HIGH 0; determinism 7.5·persist 8.5·silent 7·security 7.5·fix-correctness 8.5, 거짓양성 14건 기각). 확인 비블로킹 보강(커밋 `101a205d`): **(MED 보안)** `LiveNetwork.get` 임의 url 수용 → https 강제 + 1차출처 호스트 정확/접미사 화이트리스트(`host_allowed`, law/elis/eum.go.kr, substring 우회 `law.go.kr.evil.com` 차단) · Tier2 하베스터 동일 적용; **(LOW 관측성)** reconcile_log에 no_mirror/no_jurisdiction 기록(no_baseline/match/mismatch 대칭, 무음0 일관성). **보류(문서화)**: input_payload `address` PII 평문(재실행 결정론과 충돌·테넌트 RLS는 플랫폼 전역 사안) · reconcile_all 관할 fan-out 상한(신뢰소스 LOW). 보강 후 **419 passed**, ruff clean.
+- **푸시**: HEAD **`101a205d`**(INC-14 `a0cf3838` + 보강 `101a205d`) → origin `feature/deliberation-review` (kangjh3kang-beep/Development_AI, SSH) 동기화 완료.
+- **운영 잔여**: 실 worker+redis(CELERY_TASK_ALWAYS_EAGER=false)+celery beat 기동 · `LIVE_NETWORK=on`+실 law.go.kr/ELIS 연동(키·URL 확정) · reanalysis lineage(old→new run 링크) · (보류) PII 최소화·테넌트 귀속.
 
 ## 5. 남은 항목 (운영 연결/결정 필요)
 - **단선 해소 완료(코드)**: P-A·P-A.2·P-C·P-D·P-E 모두 계약→구현→AT→검증 완결, mock→live 스위치 +
