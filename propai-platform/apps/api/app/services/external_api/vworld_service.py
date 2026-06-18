@@ -1,4 +1,5 @@
 import math
+import re
 
 import httpx
 from typing import Optional, List, Dict, Any
@@ -448,7 +449,20 @@ class VWorldService:
             "LT_C_UPISUQ153",
         ]
         # 철도/역사/도시철도 판별 키워드(시설명/시설구분 기준).
-        rail_kw = ("철도", "역", "도시철도", "전철", "지하철", "광역철도", "고속철도", "역사")
+        # 철도 전용 키워드 — ★바 '역'은 '지역(용도지역)'에 오탐되므로 제외. 명시적 철도용어만.
+        rail_kw = ("철도", "도시철도", "전철", "지하철", "광역철도", "고속철도", "경전철", "전동차")
+        # 용도지역/지구/공원 등은 도시계획시설(철도)이 아니므로 제외(오탐 차단).
+        rail_exclude = ("지역", "지구", "공원", "녹지", "광장", "주차장", "학교", "도로")
+
+        def _is_rail(blob: str) -> bool:
+            if any(x in blob for x in rail_exclude):
+                # 단, '○○역'(역명)이 명시되고 제외어가 우연히 섞인 경우는 철도용어 우선.
+                if not any(kw in blob for kw in rail_kw):
+                    return False
+            if any(kw in blob for kw in rail_kw):
+                return True
+            # 역명(…역) 패턴 — '지역/역사공원/역세권' 등은 위 제외어로 이미 걸러짐.
+            return bool(re.search(r"[가-힣]{1,6}역(\s|$|\d)", blob)) and "지역" not in blob
 
         facilities: list[dict] = []
         seen: set[str] = set()  # 동일 시설 중복 제거(name+type)
@@ -494,8 +508,8 @@ class VWorldService:
                         or props.get("knd_nm") or props.get("uname") or ""
                     )
                     blob = f"{name} {fac_type}"
-                    # 철도/역사/도시철도 관련만 채택.
-                    if not any(kw in blob for kw in rail_kw):
+                    # 철도 관련만 채택(용도지역/지구/공원 오탐 제외).
+                    if not _is_rail(blob):
                         continue
                     # 상태(계획/결정/운영 등) 속성 그대로 — 없으면 '확인필요'(가짜 단정 금지).
                     fac_status = (
