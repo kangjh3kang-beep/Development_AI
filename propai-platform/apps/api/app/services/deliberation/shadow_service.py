@@ -109,6 +109,51 @@ async def record(*, tenant_id: str, domain: str, platform_verdict: Any, engine_v
     return {"id": row_id, **div}
 
 
+async def divergence_stats(*, domain: str | None = None, tenant_id: str | None = None,
+                           min_n: int = 0) -> list[dict[str, Any]]:
+    """shadow_comparison 도메인별 집계 — authoritative 승격 판단 근거(stage3). 도메인마다
+    {domain, n(관측수), matched_n, match_rate(0~1), avg_divergence, avg_quant_rel_err}. min_n 미만 도메인 제외.
+
+    승격 의사결정: 충분한 n + 높은 match_rate(예 ≥0.99) + 낮은 avg_divergence가 도메인 cutover의 정량 게이트.
+    """
+    from sqlalchemy import text
+
+    from app.core.database import async_session_factory
+
+    where, params = [], {}
+    if domain:
+        where.append("domain = :d")
+        params["d"] = domain
+    if tenant_id:
+        where.append("tenant_id = :t")
+        params["t"] = tenant_id
+    clause = (" WHERE " + " AND ".join(where)) if where else ""
+    async with async_session_factory() as db:
+        await _ensure(db)
+        rows = (await db.execute(
+            text(
+                "SELECT domain, count(*) AS n, "
+                "count(*) FILTER (WHERE matched) AS matched_n, "
+                "avg(divergence_score) AS avg_div, avg(quant_rel_err) AS avg_qre "
+                "FROM shadow_comparison" + clause + " GROUP BY domain HAVING count(*) >= :min_n "
+                "ORDER BY domain"
+            ),
+            {**params, "min_n": min_n},
+        )).all()
+        await db.commit()
+    out = []
+    for r in rows:
+        n = int(r[1] or 0)
+        matched_n = int(r[2] or 0)
+        out.append({
+            "domain": r[0], "n": n, "matched_n": matched_n,
+            "match_rate": (matched_n / n) if n else 0.0,
+            "avg_divergence": float(r[3]) if r[3] is not None else None,
+            "avg_quant_rel_err": float(r[4]) if r[4] is not None else None,
+        })
+    return out
+
+
 async def _ensure(db) -> None:
     global _ensured
     if _ensured:

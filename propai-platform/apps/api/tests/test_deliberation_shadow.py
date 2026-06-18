@@ -384,3 +384,27 @@ async def test_record_persists_null_verdict(shadow_db):
         await db.execute(text("DELETE FROM shadow_comparison WHERE tenant_id = :t"), {"t": tnt})
         await db.commit()
     assert row[0] is None and row[1] == 1.0  # NULL 저장·불일치
+
+
+async def test_divergence_stats_aggregates(shadow_db):
+    # stage3 승격 근거 — 도메인별 관측수·일치율 집계. 같은 테넌트에 일치 2 + 불일치 1 → match_rate 2/3.
+    import uuid as _uuid
+
+    from app.core.database import async_session_factory
+    tnt = f"test-{_uuid.uuid4().hex[:12]}"
+    await s.record(tenant_id=tnt, domain="design_audit", platform_verdict="fail", engine_verdict="fail")        # 일치
+    await s.record(tenant_id=tnt, domain="design_audit", platform_verdict="pass", engine_verdict="compliant")  # 동치
+    await s.record(tenant_id=tnt, domain="design_audit", platform_verdict="fail", engine_verdict="compliant")   # 불일치
+    try:
+        stats = await s.divergence_stats(tenant_id=tnt, domain="design_audit")
+        assert len(stats) == 1
+        st = stats[0]
+        assert st["domain"] == "design_audit" and st["n"] == 3 and st["matched_n"] == 2
+        assert abs(st["match_rate"] - 2 / 3) < 1e-9
+        assert abs(st["avg_divergence"] - 1 / 3) < 1e-9  # (0+0+1)/3
+        # min_n 게이트: 4 이상만 → 제외(승격 전 충분 관측 강제).
+        assert await s.divergence_stats(tenant_id=tnt, domain="design_audit", min_n=4) == []
+    finally:
+        async with async_session_factory() as db:
+            await db.execute(text("DELETE FROM shadow_comparison WHERE tenant_id = :t"), {"t": tnt})
+            await db.commit()
