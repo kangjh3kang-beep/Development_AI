@@ -1,11 +1,13 @@
 """관리자 전용 — 분양(sales)/모델하우스(mh) RLS 부트스트랩 운영 엔드포인트.
 
 엔드포인트(prefix=/api/v1/admin/sales-rls):
-- GET  /status   : sales_/mh_ 테이블 rowsecurity·정책수 집계.
-- POST /apply    : RLS ENABLE + p_site/p_org 멱등 적용(only_table 카나리·dry_run 지원).
+- GET  /status   : sales_/mh_ 테이블 rowsecurity·force·정책수 집계.
+- POST /apply    : RLS ENABLE+FORCE + p_site/p_org 멱등 적용(only_table 카나리·dry_run 지원).
 - POST /rollback : 전 sales_/mh_ 테이블 RLS DISABLE + 정책 DROP(1콜 롤백).
 
-권한: role ∈ 관리자군(JWT). ★FORCE 미적용. 멱등·무파괴.
+권한: role ∈ 관리자군(JWT). ★ENABLE+FORCE 적용. 멱등·무파괴.
+★실효 전제: 앱 DB 접속 role 이 'BYPASSRLS 아님'이어야 FORCE 가 의미를 가진다
+(앱 전용 non-bypassrls role 분리는 인프라 = deploy-pending).
 """
 
 from __future__ import annotations

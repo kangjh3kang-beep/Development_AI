@@ -1,21 +1,54 @@
 """Phase 0 — 분양(sales)/모델하우스(mh) RLS(행수준 보안) 부트스트랩.
 
-권위소스(정책 정의):
-- database/migrations/versions/v62_2_sales_rls.py : p_site / p_org USING 절
+권위소스(정책 정의)는 마이그레이션이 정본(定本)이다:
+- database/migrations/versions/v62_2_sales_rls.py : p_site / p_org USING 절 + FORCE
 - app/api/deps_sales.py : set_config('app.site_id'|'app.org_path'|'app.role', ..., true)
 
-본 모듈은 v62_2 의 정책을 멱등(idempotent) 부트스트랩으로 재현하되,
-★FORCE ROW LEVEL SECURITY 는 적용하지 않는다(앱 DB role=postgres 는 bypassrls=True 라
-ENABLE 만으로 무중단 — 앱 쿼리는 우회하고 PostgREST anon/authenticated 표면만 보호).
+본 모듈은 v62_2(정본)와 동일한 정책을 멱등(idempotent) 런타임 부트스트랩으로 재현한다.
+샌드박스/신규 DB에서 마이그레이션 미적용 시의 보완 경로이며, advisory-lock 으로
+프로세스 동시 호출의 race 만 제거한다. 마이그레이션이 항상 정본이다.
 
-USING 절은 deps_sales 가 주입하는 세션변수와 정확히 일치해야 한다:
+★FORCE ROW LEVEL SECURITY 를 적용한다(이번 변경의 핵심).
+  - ENABLE 만으로는 테이블 소유자/BYPASSRLS role 이 정책을 우회하므로 격리 실효가 없다.
+  - 따라서 모든 sales_/mh_ RLS 테이블에 'ALTER TABLE ... FORCE ROW LEVEL SECURITY' 를
+    함께 적용해 소유자 쿼리도 정책을 거치게 한다.
+  - ★운영 전제(실효 조건): 앱이 DB에 접속하는 role 은 반드시 'BYPASSRLS 아님'이어야 한다.
+    (앱 전용 non-bypassrls role 분리는 인프라 작업 = deploy-pending.) BYPASSRLS role 로
+    접속하면 FORCE 여부와 무관하게 정책이 무시되어 get_current_user/세션기반 격리가
+    무력화된다. 즉 'FORCE 적용(코드)' + '앱 role=non-bypassrls(인프라)' 둘 다 충족돼야
+    deps_sales 의 set_config 세션격리가 실제로 강제된다.
+
+USING 절은 deps_sales 가 주입하는 세션변수와 정확히 일치하며, 모두 fail-closed(미설정 시
+전부 거부)다. 3치논리(NULL) 가드를 nullif 로 적용한다:
 - p_site: site_id = nullif(current_setting('app.site_id', true),'')::uuid
           OR current_setting('app.role', true) = 'SUPERADMIN'
-- p_org : current_setting('app.role', true) IN ('AGENCY','DEVELOPER','SUPERADMIN')
-          OR path <@ current_setting('app.org_path', true)::ltree
+          → app.site_id 미설정(NULL)/빈문자열이면 좌변=NULL, role 미설정이면 우변=NULL,
+            'NULL OR NULL = NULL' 이므로 행 비노출(fail-closed). 빈문자열은 nullif 로
+            NULL 화해 '::uuid 캐스트 에러' 도 방지한다.
+- p_org : ★RESTRICTIVE(AND 결합) 정책이다. sales_org_nodes 는 p_site(PERMISSIVE)와
+          p_org 가 함께 걸리는데, p_org 가 PERMISSIVE 면 둘이 OR 로 결합돼
+          'role IN (AGENCY,DEVELOPER,SUPERADMIN)' 광역분기가 p_site 의 현장 스코프를
+          무력화(타 현장 조직노드 노출)한다. 그래서 p_org 를 RESTRICTIVE 로 만들어
+          'p_site AND p_org' 가 되게 하고, USING 절에도 현장 스코프
+          'site_id = nullif(app.site_id,'')::uuid' 를 직접 강제한다:
+            (site_id = nullif(current_setting('app.site_id', true),'')::uuid
+             OR current_setting('app.role', true) = 'SUPERADMIN')
+            AND (current_setting('app.role', true) IN ('AGENCY','DEVELOPER','SUPERADMIN')
+                 OR path <@ nullif(current_setting('app.org_path', true),'')::ltree)
+          → 1차로 현장 스코프(SUPERADMIN 제외)를 강제하고, 2차로 역할 광역/조직경로 가시성을
+            제한한다. 모든 세션변수 미설정 시 'NULL'/false 로 행 비노출(fail-closed).
 
 site_id 컬럼은 information_schema 로 동적 조회하므로 컬럼이 없는 테이블엔 p_site 를
 적용하지 않는다(미보유 테이블에 site_id 정책 적용 시 에러 방지).
+
+★ENABLE+FORCE 적용범위 = '정책이 실제 생기는 테이블'로 한정한다(단일 출처):
+  - p_site 대상 = site_id 보유 sales_/mh_ 테이블(information_schema 동적).
+  - p_org  대상 = sales_org_nodes.
+  - 정책 0개 테이블(site_id 미보유·org 아님: 예 sales_commission_holdback,
+    sales_contract_installments, mh_inventory_txns 등)에는 ENABLE/FORCE 를 적용하지
+    않는다. FORCE+정책0 이면 non-bypassrls role 에서 '전 행 거부'(소유자 포함)되어
+    앱 전체가 404 로 브릭되기 때문이다. 마이그레이션(v62_2_sales_rls.py)도 동일 기준으로
+    정책 거는 테이블에만 ENABLE+FORCE 를 적용한다(범위 1:1 정합).
 """
 
 from __future__ import annotations
@@ -24,14 +57,21 @@ from typing import Any
 
 from sqlalchemy import text
 
-# ── 정책 USING 절(v62_2 일치, nullif 가드 추가 — 빈문자열→NULL 캐스트 에러 방지) ──
+# ── 정책 USING 절(v62_2 정본과 1:1 일치) ──
+# nullif 가드: 세션변수 미설정/빈문자열을 NULL 로 만들어 ① '::uuid|::ltree 캐스트 에러' 방지
+# ② 3치논리상 'NULL OR NULL = NULL' → 행 비노출(fail-closed) 보장.
 _P_SITE_USING = (
     "(site_id = nullif(current_setting('app.site_id', true),'')::uuid "
     "OR current_setting('app.role', true) = 'SUPERADMIN')"
 )
+# ★p_org 는 RESTRICTIVE(AND 결합)다. PERMISSIVE 이면 p_site 와 OR 로 묶여 role-IN 광역분기가
+# 현장 스코프를 무력화(타 현장 조직노드 노출)하므로, USING 절에 현장 스코프(site_id 일치)를
+# 직접 AND 로 강제해 '현장 + 조직경로/역할' 둘 다 만족해야만 노출되게 한다.
 _P_ORG_USING = (
-    "(current_setting('app.role', true) IN ('AGENCY','DEVELOPER','SUPERADMIN') "
-    "OR path <@ current_setting('app.org_path', true)::ltree)"
+    "((site_id = nullif(current_setting('app.site_id', true),'')::uuid "
+    "OR current_setting('app.role', true) = 'SUPERADMIN') "
+    "AND (current_setting('app.role', true) IN ('AGENCY','DEVELOPER','SUPERADMIN') "
+    "OR path <@ nullif(current_setting('app.org_path', true),'')::ltree))"
 )
 
 # sales_/mh_ 테이블 + site_id 컬럼 보유 동적 조회(public 스키마).
@@ -73,6 +113,11 @@ ORDER BY c.relname
 
 _ORG_TABLE = "sales_org_nodes"
 
+# 부트스트랩 DDL 의 프로세스/요청 동시 호출 race 제거용 전역 advisory lock 키(임의 상수).
+# pg_advisory_xact_lock 은 트랜잭션 종료(commit/rollback) 시 자동 해제되므로 누수 없음.
+# ★마이그레이션이 정본이며, 본 lock 은 런타임 부트스트랩 중복 실행의 race 만 막는다.
+_BOOTSTRAP_LOCK_KEY = 760_201_062  # 'sales rls bootstrap' 식별용 임의 키
+
 
 def _quote_ident(name: str) -> str:
     """식별자 안전 인용(정적 information_schema 결과만 사용하나 방어적으로 처리)."""
@@ -80,22 +125,33 @@ def _quote_ident(name: str) -> str:
 
 
 def _site_statements(table: str) -> list[str]:
-    """site_id 보유 테이블의 멱등 p_site 부트스트랩 SQL(★FORCE 없음)."""
+    """site_id 보유 테이블의 멱등 p_site 부트스트랩 SQL(★ENABLE+FORCE).
+
+    ENABLE 만으로는 소유자/BYPASSRLS role 이 우회하므로 FORCE 까지 적용한다.
+    ENABLE·FORCE 반복 적용은 무해(멱등), 정책은 DROP IF EXISTS + CREATE 로 멱등.
+    """
     q = _quote_ident(table)
     return [
         f"ALTER TABLE {q} ENABLE ROW LEVEL SECURITY;",
+        f"ALTER TABLE {q} FORCE ROW LEVEL SECURITY;",
         f"DROP POLICY IF EXISTS p_site ON {q};",
         f"CREATE POLICY p_site ON {q} USING {_P_SITE_USING};",
     ]
 
 
 def _org_statements() -> list[str]:
-    """sales_org_nodes 의 멱등 p_org 부트스트랩 SQL(★FORCE 없음)."""
+    """sales_org_nodes 의 멱등 p_org 부트스트랩 SQL(★ENABLE+FORCE, p_org=RESTRICTIVE).
+
+    p_org 는 RESTRICTIVE 로 만들어 p_site(PERMISSIVE)와 AND 결합되게 한다(현장 스코프
+    무력화 차단). sales_org_nodes 는 site_id 보유 테이블이므로 _site_statements 에서
+    p_site 도 함께 적용된다(둘 다 RESTRICTIVE×PERMISSIVE 로 AND).
+    """
     q = _quote_ident(_ORG_TABLE)
     return [
         f"ALTER TABLE {q} ENABLE ROW LEVEL SECURITY;",
+        f"ALTER TABLE {q} FORCE ROW LEVEL SECURITY;",
         f"DROP POLICY IF EXISTS p_org ON {q};",
-        f"CREATE POLICY p_org ON {q} USING {_P_ORG_USING};",
+        f"CREATE POLICY p_org ON {q} AS RESTRICTIVE USING {_P_ORG_USING};",
     ]
 
 
@@ -110,19 +166,22 @@ async def ensure_sales_rls(
     only_table: str | None = None,
     dry_run: bool = False,
 ) -> dict[str, Any]:
-    """sales_/mh_ 테이블에 RLS ENABLE + p_site/p_org 정책을 멱등 적용한다.
+    """sales_/mh_ 테이블에 RLS ENABLE+FORCE + p_site/p_org 정책을 멱등 적용한다.
 
     - site_id 보유 테이블 → p_site (information_schema 동적 조회).
     - sales_org_nodes    → p_org.
-    - ★FORCE 미적용(ENABLE 만). 멱등(DROP IF EXISTS + CREATE, ENABLE 반복 무해).
+    - ★ENABLE+FORCE 적용(소유자/BYPASSRLS 우회 차단). 멱등(DROP IF EXISTS + CREATE,
+      ENABLE·FORCE 반복 무해).
+    - 실DDL 경로는 pg_advisory_xact_lock 으로 동시 호출 race 만 제거(트랜잭션 종료 시 자동 해제).
+      마이그레이션이 정본이며 본 경로는 보완(샌드박스/신규 DB)이다.
 
     Args:
         only_table: 지정 시 그 1개 테이블만 적용(카나리). site_id 보유 또는
                     sales_org_nodes 여야 함. 미보유면 skipped 처리.
-        dry_run:    True 면 SQL 만 생성·반환하고 실행하지 않는다.
+        dry_run:    True 면 SQL 만 생성·반환하고 실행하지 않는다(lock 미획득).
 
     Returns:
-        {applied, skipped, policies, org_applied, dry_sql?}
+        {applied, skipped, policies, org_applied, force, dry_sql?}
     """
     site_tables = await _fetch_site_tables(db)
 
@@ -142,6 +201,13 @@ async def ensure_sales_rls(
     else:
         do_sites = site_tables
         do_org = True
+
+    # 실행 경로만 advisory lock 획득(dry_run 은 SQL 생성만 하므로 lock 불필요).
+    # pg_advisory_xact_lock 은 아래 commit/rollback 으로 트랜잭션이 끝날 때 자동 해제된다.
+    if not dry_run:
+        await db.execute(
+            text("SELECT pg_advisory_xact_lock(:k)"), {"k": _BOOTSTRAP_LOCK_KEY}
+        )
 
     for t in do_sites:
         stmts = _site_statements(t)
@@ -169,7 +235,7 @@ async def ensure_sales_rls(
         "skipped": skipped,
         "org_applied": org_applied,
         "policies": {"p_site": _P_SITE_USING, "p_org": _P_ORG_USING},
-        "force": False,
+        "force": True,
         "dry_run": dry_run,
         "site_table_count": len(site_tables),
     }
