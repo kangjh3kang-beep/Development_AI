@@ -572,3 +572,85 @@ async def test_engine_post_4xx_is_engine_rejected_no_breaker(monkeypatch):
         data, reason = await delib._engine_post_analyze({"pnu": "x"})
         assert data is None and reason == "engine_rejected"
     assert br.can_execute()  # 4xx는 record_success(breaker 제외) → 5회에도 CLOSED
+
+
+async def test_engine_get_non_dict_is_invalid_response(monkeypatch):
+    # GET 200+비-dict(계약위반)는 POST와 대칭으로 invalid_response(미연결 아님).
+    br, calls = _install_engine(monkeypatch, _FakeResp(200, ["not", "a", "dict"]))
+    data, reason = await delib._engine_get_analysis("run-1")
+    assert data is None and reason == "invalid_response"
+
+
+def test_analyze_report_missing_is_invalid_response(monkeypatch):
+    # 엔진 200이나 필수 report 결손(부분응답) → 공시 금지·invalid_response degrade.
+    ih = analysis_input_hash(build_input_dump(_PAYLOAD))
+    async def lookup(**kw):
+        return None
+    async def post(dump, deterministic=True):
+        return {"run_id": str(uuid.uuid4()), "input_hash": ih, "snapshot_id": "snap-1"}, "ok"  # report 없음
+    c = _client(monkeypatch, lookup=lookup, post=post)
+    r = c.post("/api/v1/deliberation/analyze", json=_PAYLOAD)
+    assert r.json()["degraded"] is True and r.json()["reason"] == "invalid_response"
+
+
+def test_get_circuit_open_reason(monkeypatch):
+    async def lookup_by_run(**kw):
+        return {"run_id": "run-1", "source": "sync", "result": None, "input_hash": "ih"}
+    async def get(rid):
+        return None, "circuit_open"
+    monkeypatch.setattr(delib.binding_service, "lookup_by_run", lookup_by_run)
+    monkeypatch.setattr(delib, "_engine_get_analysis", get)
+    app = _app()
+    app.dependency_overrides[get_current_user] = lambda: _FakeUser()
+    r = TestClient(app).get("/api/v1/deliberation/analyze/run-1")
+    assert r.json()["degraded"] is True and r.json()["reason"] == "circuit_open"
+
+
+def test_analyze_audit_unchanged_passes(monkeypatch):
+    ih = analysis_input_hash(build_input_dump(_PAYLOAD))
+    async def lookup(**kw):
+        return None
+    async def post(dump, deterministic=True):
+        return _engine_result(ih), "ok"
+    async def insert(**kw):
+        return True
+    async def audit(**kw):
+        return {"unchanged": True}  # 멱등 재기록 → 통과(degraded 아님)
+    c = _client(monkeypatch, lookup=lookup, post=post, insert=insert, audit=audit)
+    r = c.post("/api/v1/deliberation/analyze", json=_PAYLOAD)
+    assert r.status_code == 200 and r.json()["audit_degraded"] is False
+
+
+def test_analyze_audit_not_ok_write_is_502(monkeypatch):
+    # not_ok(quota 아님)도 write 경로는 502 fail-closed.
+    ih = analysis_input_hash(build_input_dump(_PAYLOAD))
+    async def lookup(**kw):
+        return None
+    async def post(dump, deterministic=True):
+        return _engine_result(ih), "ok"
+    async def insert(**kw):
+        return True
+    async def audit(**kw):
+        return {"ok": False}
+    c = _client(monkeypatch, lookup=lookup, post=post, insert=insert, audit=audit)
+    r = c.post("/api/v1/deliberation/analyze", json=_PAYLOAD)
+    assert r.status_code == 502
+
+
+def test_analyze_audit_records_authoritative_with_ih(monkeypatch):
+    # fail-closed 감사의 신뢰가치=무엇이 기록되는가 — action/decision/input_hash 내용 검증.
+    ih = analysis_input_hash(build_input_dump(_PAYLOAD))
+    captured: dict = {}
+    async def lookup(**kw):
+        return None
+    async def post(dump, deterministic=True):
+        return _engine_result(ih), "ok"
+    async def insert(**kw):
+        return True
+    async def audit(**kw):
+        captured.update(kw)
+        return {"ok": True}
+    c = _client(monkeypatch, lookup=lookup, post=post, insert=insert, audit=audit)
+    c.post("/api/v1/deliberation/analyze", json=_PAYLOAD)
+    assert captured["action"] == "analyze" and captured["resource_type"] == "deliberation"
+    assert captured["metadata"]["decision"] == "authoritative" and captured["metadata"]["input_hash"] == ih

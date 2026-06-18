@@ -139,6 +139,12 @@ def is_deterministic_path(dump: dict[str, Any]) -> bool:
     - address & pnu 비19자리: 라이브 지오코딩(pipeline:205)
     순수=pnu(19자리)·application_date·axis_date·snapshot_id·calc_targets·rules·sim_inputs·qual_facts
     (·citations는 mirror_rules 동반 시에만 순수).
+
+    ⚠️ 알려진 한계(parity, 비차단): mirror_rules 미제공 + citations 없음 입력은 결정론으로 캐싱되나,
+    엔진은 이때도 default_store().get(pnu)(SUPPLY_STORE 가변)를 읽어 결과의 mirror_source **라벨**을
+    시점의존적으로 채운다(첫 호출 None이 캐시되면 이후 공급 적재돼도 stale). citations가 없으면 CitationCheck
+    미실행이라 게이팅/findings는 불변 — 드리프트는 provenance 라벨에 한정. 정합 해법=엔진이 결과에
+    mirror_version 노출 → content_input_hash lineage에 반영(엔진 수정 #8 트랙). 그 전까지 라벨 stale 수용.
     """
     if dump.get("drawings") or dump.get("ifc") or dump.get("elements"):
         return False  # VLLM/이중경로 추출(비결정 가능)
@@ -178,6 +184,9 @@ def prevalidate(dump: dict[str, Any]) -> str | None:
         for k in ("measured", "limit"):
             if r.get(k) is not None and not _finite(r[k]):
                 return f"invalid_input:rules[{i}].{k}_nonfinite"
+        c = r.get("confidence")  # row-level → 엔진 EvalCase.input_confidence: Probability(ge0 le1)
+        if c is not None and (not _finite(c) or not 0.0 <= float(c) <= 1.0):
+            return f"invalid_input:rules[{i}].confidence"
 
     for i, t in enumerate(dump.get("calc_targets") or []):
         if not isinstance(t, dict) or "target" not in t:
@@ -197,10 +206,9 @@ def prevalidate(dump: dict[str, Any]) -> str | None:
         if not isinstance(cf, dict) or "fact_key" not in cf:
             return f"invalid_input:cross_facts[{i}].fact_key_missing"
         for k, s in enumerate(cf.get("sources") or []):
-            if not isinstance(s, dict) or "source" not in s:
-                return f"invalid_input:cross_facts[{i}].sources[{k}].source_missing"
-            if "value" not in s:  # 엔진 SourceValue 필수(source+value), 키 부재→500
-                return f"invalid_input:cross_facts[{i}].sources[{k}].value_missing"
+            err = _validate_source(s, f"cross_facts[{i}].sources[{k}]")
+            if err:
+                return err
 
     # corpus는 issue 동반 시에만 엔진이 PrecedentCase(**c)로 소비(pipeline:167-169) — 그때만 case_id 강제.
     if dump.get("issue"):
@@ -208,6 +216,36 @@ def prevalidate(dump: dict[str, Any]) -> str | None:
             if not isinstance(c, dict) or not c.get("case_id"):
                 return f"invalid_input:corpus[{i}].case_id_missing"  # 엔진 PrecedentCase 필수
     return None
+
+
+def _validate_source(s: Any, path: str) -> str | None:
+    """엔진 SourceValue 선검증(부재/타입 오류→엔진 500 차단): source+value 필수, value∈str|int|float|None,
+    max_age_days∈int|None, collected_at/data_vintage∈ISO date|None."""
+    if not isinstance(s, dict) or "source" not in s:
+        return f"invalid_input:{path}.source_missing"
+    if "value" not in s:  # 엔진 SourceValue 필수(source+value)
+        return f"invalid_input:{path}.value_missing"
+    v = s.get("value")
+    if v is not None and not isinstance(v, (str, int, float)):  # bool은 int 하위 — 허용
+        return f"invalid_input:{path}.value_type"
+    m = s.get("max_age_days")
+    if m is not None and not isinstance(m, int):
+        return f"invalid_input:{path}.max_age_days_type"
+    for k in ("collected_at", "data_vintage"):
+        d = s.get(k)
+        if d is not None and not _is_iso_date(d):
+            return f"invalid_input:{path}.{k}_invalid"
+    return None
+
+
+def _is_iso_date(v: Any) -> bool:
+    if isinstance(v, date):
+        return True
+    try:
+        date.fromisoformat(str(v))
+        return True
+    except (ValueError, TypeError):
+        return False
 
 
 def _validate_calc_element(e: Any, path: str) -> str | None:

@@ -128,6 +128,18 @@ def test_prevalidate_rejects_bad_values():
                        "elements": [{"semantic_type": "EXT_WALL", "confidence": 1.5}]}]))
     assert "case_id_missing" in prevalidate(_d(issue="x", corpus=[{"summary": "no id"}]))  # 엔진 PrecedentCase 필수
     assert "nonfinite" in prevalidate({"pnu": "", "rules": [{"rule": {"rule_id": "r1"}, "measured": float("inf")}]})
+    # rules row-level confidence(엔진 EvalCase.input_confidence: Probability ge0 le1)
+    assert "confidence" in prevalidate(_d(rules=[{"rule": {"rule_id": "r1"}, "confidence": 1.5}]))
+    # SourceValue 타입(value∈str|int|float|None, max_age_days∈int, dates ISO)
+    assert "value_type" in prevalidate(_d(
+        cross_facts=[{"fact_key": "k", "sources": [{"source": "s", "value": [1, 2]}]}]))
+    assert "max_age_days_type" in prevalidate(_d(
+        cross_facts=[{"fact_key": "k", "sources": [{"source": "s", "value": 1, "max_age_days": "x"}]}]))
+    assert "collected_at_invalid" in prevalidate(_d(
+        cross_facts=[{"fact_key": "k", "sources": [{"source": "s", "value": 1, "collected_at": "not-a-date"}]}]))
+    # 유효 date(ISO)·value None은 통과(false-422 회피).
+    assert prevalidate(_d(cross_facts=[{"fact_key": "k", "sources": [
+        {"source": "s", "value": None, "collected_at": "2024-01-01", "max_age_days": 30}]}])) is None
 
 
 # ── 살아있는 parity 가드(HIGH): frozen 골든 stale 방지 2단 체인 ──
@@ -151,13 +163,18 @@ def test_engine_live_contract_matches_fixture():
     code = (
         "import hashlib,json;"
         "from app.contracts.analysis import AnalysisInput as A;"
+        "from app.core.hashing import input_hash as eih;"  # 엔진 실 hashing(직렬화 3파라미터) 직접 호출
         "d={n:(g.default_factory() if g.default_factory is not None else g.default)"
         " for n,g in A.model_fields.items()};"
         "d={k:json.loads(json.dumps(v,default=str)) for k,v in d.items()};"
         "names=sorted(d);"
         "c=json.dumps({'field_names':names,'defaults':{k:d[k] for k in names}},"
         "sort_keys=True,ensure_ascii=False,separators=(',',':'));"
-        "print(json.dumps({'field_names':names,'fingerprint':hashlib.sha256(c.encode()).hexdigest()}))"
+        "sample={'pnu':'1111010100100000002','snapshot_id':'snap-1','nums':[3,1,2],'ko':'한글','nested':{'b':2,'a':1}};"
+        "g1=A(pnu='1111010100100000002',application_date='2026-01-01',"
+        "calc_targets=[{'target':'building_area','payload':{'outer_area':500.0}}]);"
+        "print(json.dumps({'field_names':names,'fingerprint':hashlib.sha256(c.encode()).hexdigest(),"
+        "'golden_ihash':eih({'input':sample}),'golden_mirror_ihash':eih({'input':g1.model_dump(mode='json')})}))"
     )
     env = dict(os.environ, PYTHONPATH=str(_ENGINE_API))
     proc = subprocess.run([sys.executable, "-c", code], cwd=str(_ENGINE_API), env=env,
@@ -167,6 +184,9 @@ def test_engine_live_contract_matches_fixture():
     fx = _load_fixture()
     assert live["field_names"] == fx["field_names"]        # 엔진 실모델 필드 drift → RED
     assert live["fingerprint"] == fx["fingerprint"]        # 엔진 실모델 기본값 drift → RED
+    # 엔진 실 core.hashing.input_hash로 골든 재도출 → 직렬화 파라미터(sort_keys/ensure_ascii/separators) drift도 RED.
+    assert live["golden_ihash"] == _GOLDEN_IHASH
+    assert live["golden_mirror_ihash"] == _GOLDEN_MIRROR_IHASH
 
 
 def test_is_deterministic_path():

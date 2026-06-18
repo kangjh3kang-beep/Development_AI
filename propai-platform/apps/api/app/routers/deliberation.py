@@ -89,11 +89,15 @@ def _whitelist_health(doctor: dict[str, Any]) -> dict[str, Any]:
 
 @router.get("/health")
 async def deliberation_health(_user=Depends(get_current_user)) -> dict[str, Any]:
-    """엔진 헬스(화이트리스트). 인증 필수. 미연결/거부 시 degraded(reason 구분·무음0)."""
+    """엔진 헬스(화이트리스트). 인증 필수. 미연결/거부 시 degraded(reason 구분·무음0). 토큰 미설정 경고 표면화."""
+    s = get_settings()
+    warnings: list[str] = []
+    if s.deliberation_engine_url and not s.deliberation_engine_api_token:
+        warnings.append("engine_token_missing")  # URL 설정·토큰 미설정 → 무인증 호출(운영자 인지)
     doctor, reason = await _fetch_engine_doctor()
     if doctor is None:
-        return {"status": "degraded", "reason": reason, "engine": None}
-    return {"status": "ok", "engine": _whitelist_health(doctor)}
+        return {"status": "degraded", "reason": reason, "engine": None, "warnings": warnings}
+    return {"status": "ok", "engine": _whitelist_health(doctor), "warnings": warnings}
 
 
 # ── analyze BFF(§5) ────────────────────────────────────────────────────────────
@@ -181,20 +185,24 @@ async def _engine_post_analyze(dump: dict[str, Any], deterministic: bool = True)
 
         async with httpx.AsyncClient(timeout=_engine_timeout(s, deterministic), follow_redirects=False) as c:
             r = await c.post(f"{base}/api/v1/analyze", json=dump, headers=_engine_headers(s))
-        if r.status_code >= 500:
-            _breaker.record_failure()
-            logger.warning("deliberation_engine_5xx", status=r.status_code)
-            return None, "engine_unreachable"
-        _breaker.record_success()
-        if r.status_code != 200:
-            logger.warning("deliberation_engine_4xx", status=r.status_code)  # 본문 미기록(테넌트 입력 PII 누출 방지)
-            return None, "engine_rejected"  # 계약/매핑 — breaker 제외
-        data = r.json()
-        return (data, "ok") if isinstance(data, dict) else (None, "invalid_response")
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001 — 연결/타임아웃(인프라 미연결)만 breaker failure
         _breaker.record_failure()
         logger.warning("deliberation_engine_post_failed", err=str(exc)[:200])
         return None, "engine_unreachable"
+    if r.status_code >= 500:
+        _breaker.record_failure()
+        logger.warning("deliberation_engine_5xx", status=r.status_code)
+        return None, "engine_unreachable"
+    _breaker.record_success()  # 엔진 도달(<500) → 회복(4xx/malformed-200도 도달이므로 success·중립)
+    if r.status_code != 200:
+        logger.warning("deliberation_engine_4xx", status=r.status_code)  # 본문 미기록(테넌트 입력 PII 누출 방지)
+        return None, "engine_rejected"  # 계약/매핑 — breaker 제외
+    try:
+        data = r.json()
+    except ValueError:  # malformed-200 = 본문 계약위반(중립) — record_failure 이중기록·오라벨 방지
+        logger.warning("deliberation_engine_malformed_200")
+        return None, "invalid_response"
+    return (data, "ok") if isinstance(data, dict) else (None, "invalid_response")
 
 
 async def _engine_get_analysis(run_id: str) -> tuple[dict[str, Any] | None, str]:
@@ -212,34 +220,41 @@ async def _engine_get_analysis(run_id: str) -> tuple[dict[str, Any] | None, str]
         # run_id URL 인코딩(defense-in-depth) — DB-출처/UUID이나 경로 주입/SSRF 표면 사전 차단.
         async with httpx.AsyncClient(timeout=_engine_timeout(s), follow_redirects=False) as c:
             r = await c.get(f"{base}/api/v1/analyze/{quote(run_id, safe='')}", headers=_engine_headers(s))
-        if r.status_code >= 500:
-            _breaker.record_failure()
-            logger.warning("deliberation_engine_get_5xx", run_id=run_id, status=r.status_code)
-            return None, "engine_unreachable"
-        _breaker.record_success()  # 엔진 도달(2xx/4xx) → 회복 카운트
-        if r.status_code == 404:
-            logger.warning("deliberation_engine_run_missing", run_id=run_id)
-            return None, "not_found"
-        if r.status_code != 200:
-            logger.warning("deliberation_engine_get_4xx", run_id=run_id, status=r.status_code)
-            return None, "engine_rejected"
-        data = r.json()
-        return (data, "ok") if isinstance(data, dict) else (None, "engine_unreachable")
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001 — 연결/타임아웃만 breaker failure
         _breaker.record_failure()
         logger.warning("deliberation_engine_get_failed", run_id=run_id, err=str(exc)[:200])
         return None, "engine_unreachable"
+    if r.status_code >= 500:
+        _breaker.record_failure()
+        logger.warning("deliberation_engine_get_5xx", run_id=run_id, status=r.status_code)
+        return None, "engine_unreachable"
+    _breaker.record_success()  # 엔진 도달(2xx/4xx) → 회복 카운트
+    if r.status_code == 404:
+        logger.warning("deliberation_engine_run_missing", run_id=run_id)
+        return None, "not_found"
+    if r.status_code != 200:
+        logger.warning("deliberation_engine_get_4xx", run_id=run_id, status=r.status_code)
+        return None, "engine_rejected"
+    try:
+        data = r.json()
+    except ValueError:  # malformed-200 — POST와 대칭(계약위반=invalid_response, 미연결 아님)
+        logger.warning("deliberation_engine_get_malformed_200", run_id=run_id)
+        return None, "invalid_response"
+    return (data, "ok") if isinstance(data, dict) else (None, "invalid_response")
 
 
 def _get_degrade_reason(greason: str) -> str:
-    """엔진 GET reason → degrade 봉투 reason 매핑(정직성: 404=결과없음·4xx=거부·circuit=차단·그외=미연결)."""
+    """엔진 GET reason → degrade reason 매핑(404·4xx·circuit·계약위반 구분 보존, 그외 engine_unreachable)."""
     return {"not_found": "result_missing", "engine_rejected": "engine_rejected",
-            "circuit_open": "circuit_open"}.get(greason, "engine_unreachable")
+            "circuit_open": "circuit_open", "invalid_response": "invalid_response"}.get(greason, "engine_unreachable")
 
 
 def _integrity_ok(result: dict[str, Any] | None, expected_ih: str | None) -> bool:
-    """엔진 결과 무결성 — dict이고, expected_ih가 있으면 input_hash parity 일치(엔진 run_id 혼선/덮어쓰기 탐지)."""
+    """엔진 결과 무결성 — dict + report 필수(엔진 AnalysisResult 필수=snapshot_id·input_hash·report) +
+    expected_ih 있으면 input_hash parity 일치(엔진 run_id 혼선/덮어쓰기·부분응답 탐지). 위반=공시 금지."""
     if not isinstance(result, dict):
+        return False
+    if result.get("report") is None:  # 필수 report 결손 → 부분응답(공시 금지)
         return False
     return not (expected_ih and result.get("input_hash") != expected_ih)
 
@@ -322,6 +337,12 @@ async def deliberation_analyze(payload: dict = Body(...), user=Depends(get_curre
                 return _degrade(reason, audit_degraded=ad, audit_skipped=sk,
                                 reused=True, run_id=run_id, deterministic=deterministic)
             result = won
+        else:
+            # insert=False인데 멱등키 행이 안 보임(승자 행 삭제 등 비정상) — 미결속 패자 run_id를 권위 공시 금지.
+            ad, sk = await _record_audit(user, tenant, action="analyze", run_id=None,
+                                         input_hash=ih, decision="degraded", http_status=200)
+            return _degrade("invalid_response", audit_degraded=ad, audit_skipped=sk,
+                            reused=True, deterministic=deterministic)
 
     ad, sk = await _record_audit(user, tenant, action="analyze", run_id=run_id,
                                  input_hash=ih, decision="authoritative", http_status=200)

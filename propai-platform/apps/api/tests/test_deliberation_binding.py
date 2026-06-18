@@ -73,3 +73,26 @@ async def test_tenant_isolation_lookup(tnt):
     # run_id 소유 검증: 소유 테넌트만, 타테넌트는 None(→404).
     assert (await b.lookup_by_run(tenant_id=tnt, run_id="run-x"))["run_id"] == "run-x"
     assert await b.lookup_by_run(tenant_id="other-tenant", run_id="run-x") is None
+
+
+async def test_nondeterministic_runs_bypass_idempotent_dedup(tnt):
+    # ★핵심 안전속성: 부분 유니크 'WHERE deterministic' — 비결정(VLLM/라이브) run은 동일 멱등키라도
+    # 매 호출 별 행(둘 다 True). 'WHERE deterministic'가 빠지면 두 번째가 False가 되어 RED.
+    cih, sid = "cih-nondet", "snap-1"
+    assert await b.insert(run_id="nd-1", tenant_id=tnt, content_input_hash=cih, snapshot_id=sid,
+                          input_hash="ih-1", source="sync", deterministic=False) is True
+    assert await b.insert(run_id="nd-2", tenant_id=tnt, content_input_hash=cih, snapshot_id=sid,
+                          input_hash="ih-2", source="sync", deterministic=False) is True
+    # 두 비결정 run 모두 결속 조회 가능(run_id PK 유일).
+    assert (await b.lookup_by_run(tenant_id=tnt, run_id="nd-1"))["run_id"] == "nd-1"
+    assert (await b.lookup_by_run(tenant_id=tnt, run_id="nd-2"))["run_id"] == "nd-2"
+
+
+async def test_result_jsonb_roundtrip(tnt):
+    # 재사용/GET이 권위본으로 반환하는 result(jsonb) 라운드트립 — 중첩/한글 보존 + status.
+    cih, sid = "cih-json", "snap-1"
+    payload = {"input_hash": "ih-1", "report": {"items": [1, 2], "note": "한글 근거"}, "skipped": []}
+    assert await b.insert(run_id="run-j", tenant_id=tnt, content_input_hash=cih, snapshot_id=sid,
+                          input_hash="ih-1", source="async", status="DONE", result=payload) is True
+    row = await b.lookup_by_run(tenant_id=tnt, run_id="run-j")
+    assert row["result"] == payload and row["status"] == "DONE"
