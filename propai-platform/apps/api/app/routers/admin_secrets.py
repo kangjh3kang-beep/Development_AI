@@ -67,6 +67,59 @@ async def list_secrets(
     return {"groups": groups, "items": items}
 
 
+@router.get("/llm-health")
+async def llm_health(
+    provider: str = "anthropic",
+    current: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """관리자 LLM 연결 진단 — 키 유효성·계정 상태를 '실호출(PONG)'로 확인한다(평문 키 비노출).
+
+    'AI 해석이 생성되지 않음'의 진짜 원인을 1회 호출로 식별: 키 미설정 / 키 무효(401) /
+    크레딧·레이트(402·429) / 모델 거부. 인터프리터가 실패를 삼켜 '지연'으로만 보이던 문제를
+    관리자가 즉시 진단할 수 있게 한다. 반환에 키 값은 절대 포함하지 않는다(길이·존재여부만).
+    """
+    await _require_admin(current, db)
+    import asyncio
+    import os as _os
+    from app.services.ai.key_sanitizer import get_clean_env_key
+
+    env_map = {"anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY", "google": "GOOGLE_API_KEY"}
+    env_name = env_map.get(provider, "ANTHROPIC_API_KEY")
+    key = get_clean_env_key(env_name)
+    raw_present = bool((_os.environ.get(env_name) or "").strip())
+    out: dict = {
+        "provider": provider, "env_name": env_name,
+        "key_present": bool(key), "key_len": len(key or ""),
+        "raw_env_present": raw_present,  # sanitize 전 원본 env 존재여부(오버레이 적용 확인용)
+    }
+    if not key:
+        out["ok"] = False
+        out["error_type"] = "key_not_configured"
+        out["error"] = (f"{env_name}가 실행 환경(os.environ)에 비어 있습니다. 키 입력 후에도 비어 있으면 "
+                        "시크릿 오버레이 미적용/복호화 실패 — 백엔드 재시작 또는 SECRET_STORE_KEY 점검 필요.")
+        return out
+    try:
+        from langchain_core.messages import HumanMessage
+
+        from app.services.ai.llm_provider import get_llm
+        llm = get_llm(provider=provider, timeout=20, max_tokens=16)
+        out["model"] = getattr(llm, "model", getattr(llm, "model_name", None))
+        r = await asyncio.wait_for(
+            llm.ainvoke([HumanMessage(content="Reply with one word: PONG")]), timeout=25
+        )
+        out["ok"] = True
+        out["reply"] = str(getattr(r, "content", r))[:40]
+    except Exception as e:  # noqa: BLE001
+        msg = str(e)[:260]
+        if key:
+            msg = msg.replace(key, "***")  # 만일을 대비해 키 값 스크럽(에러에 키 echo 방지)
+        out["ok"] = False
+        out["error_type"] = type(e).__name__
+        out["error"] = msg
+    return out
+
+
 @router.put("/{name}")
 async def set_secret(
     name: str,
