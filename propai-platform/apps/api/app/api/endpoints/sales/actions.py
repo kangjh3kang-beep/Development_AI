@@ -140,8 +140,11 @@ async def accounting_summary(db: AsyncSession = Depends(get_db),
     """현장 회계 비용 집계(항목별)+매출·수수료·손익 — site-detail 와 동일 원장 기준."""
     from app.services.sales.admin.console import site_management_detail
     d = await site_management_detail(db, ctx.site_id)
+    # 손익 2-뷰(현금흐름·발생주의)+선수금·미수금 함께 반환. profit_estimate(=발생주의)는 하위호환 유지.
     return {"accounting": d["accounting"], "revenue": d["revenue"],
-            "commission": d["commission"], "profit_estimate": d["profit_estimate"], "note": d["note"]}
+            "commission": d["commission"], "profit_estimate": d["profit_estimate"],
+            "cash_flow": d.get("cash_flow"), "accrual": d.get("accrual"),
+            "deferred_revenue": d.get("deferred_revenue"), "note": d["note"]}
 
 
 # ── 급여관리(근태×단가 자동산정) + 광고 ROI ──────────────────────────────────
@@ -177,10 +180,16 @@ async def payroll_post(body: dict, db: AsyncSession = Depends(get_db),
     """산정 급여 총액을 회계 인건비(LABOR)로 자동전기(월 중복 방지). body.ym=YYYY-MM."""
     from fastapi import HTTPException
 
-    from app.services.sales.admin.console import post_payroll_to_accounting
+    from app.services.sales.admin.console import _validate_ym, post_payroll_to_accounting
     ym = body.get("ym")
     if not ym:
         raise HTTPException(400, "ym(YYYY-MM) 필요")
+    # ym 형식 검증(YYYY-MM·월01~12). 비정규 ym(2026-13·2026/06·2026-6)은 멱등 귀속키를
+    # 우회하므로 서비스 진입 전 400 으로 차단(은폐 금지=명시적 오류 반환).
+    try:
+        _validate_ym(ym)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
     return await post_payroll_to_accounting(db, ctx.site_id, ym, getattr(ctx.user, "id", None))
 
 

@@ -1,5 +1,6 @@
 """sales 읽기 뷰 — 프론트(현장목록/조직트리/Unit360/분양가표/시행사 투영) 지원 집계 엔드포인트."""
 
+import contextlib
 import uuid
 
 from fastapi import APIRouter, Depends
@@ -250,31 +251,64 @@ async def projection_accounting_rollup(db: AsyncSession = Depends(get_db), user=
     각 현장 ERP가 단일 원장(sales_site_accounting)에 기록한 비용 + 계약 매출·수수료배분을
     현장별로 집계(site_management_detail)하고, 시행사 레벨로 롤업한다. '같이(통합)·따로(현장별)'.
     """
+    import logging
+
     from app.services.sales.admin.console import site_management_detail
+    log = logging.getLogger(__name__)
     # site_management_detail 내부 _scalar 가 오류 시 rollback 하면 ORM 객체가 만료돼
     # 이후 s.id/s.site_name 접근이 lazy load(MissingGreenlet) 된다. 루프 전에 평문 추출.
     rows = (await db.execute(select(
         SalesSite.id, SalesSite.site_name, SalesSite.status).where(
         SalesSite.organization_id == user.tenant_id, SalesSite.deleted_at.is_(None)))).all()
-    sites = []
-    con = {"revenue": 0, "cost_total": 0, "commission": 0, "profit_estimate": 0}
+    sites: list[dict] = []
+    # 연결결산 합산기 — 발생주의(profit_estimate=accrual)는 하위호환 유지, 현금흐름·선수금·미수금 추가.
+    con = {"revenue": 0, "cost_total": 0, "commission": 0, "profit_estimate": 0,
+           "cash_collected": 0, "cash_profit": 0, "deferred_revenue": 0, "receivable": 0}
     by_type: dict[str, int] = {}
+    errors: list[dict[str, str]] = []  # 현장별 부분내결함 표기(은폐 금지: 응답+로깅)
     for sid, sname, sstatus in rows:
-        d = await site_management_detail(db, sid)
+        # [부분내결함] 한 현장의 비-미존재 DB오류(권한·연결)가 전체 롤업 500 을 유발하지 않도록
+        # 현장 단위로 격리한다. 실패 현장은 error 로 표기하고 나머지는 정상 합산한다(은폐 금지).
+        try:
+            d = await site_management_detail(db, sid)
+        except Exception as e:  # noqa: BLE001 — 분류 로깅+응답 표기 후 다음 현장 진행(전체 500 방지).
+            # _scalar 가 전파한 실오류로 트랜잭션이 오염됐을 수 있어 롤백 후 다음 현장 계속.
+            with contextlib.suppress(Exception):
+                await db.rollback()
+            msg = str(e)[:200]
+            log.error("accounting-rollup 현장(%s) 집계 실패(격리): %s", sid, msg)
+            errors.append({"site_id": str(sid), "site_name": sname, "error": msg})
+            sites.append({
+                "site_id": str(sid), "site_name": sname, "status": sstatus,
+                "error": msg, "revenue": 0, "cost_total": 0, "commission": 0, "profit_estimate": 0,
+            })
+            continue
+        cf = d.get("cash_flow") or {}
+        acc = d.get("accrual") or {}
         for t in d["accounting"]["by_type"]:
             by_type[t["label"]] = by_type.get(t["label"], 0) + int(t["amount"])
         con["revenue"] += int(d["revenue"])
         con["commission"] += int(d["commission"])
         con["profit_estimate"] += int(d["profit_estimate"])
         con["cost_total"] += int(d["accounting"]["cost_total"])
+        con["cash_collected"] += int(cf.get("cash_collected", 0))
+        con["cash_profit"] += int(cf.get("profit", 0))
+        con["deferred_revenue"] += int(d.get("deferred_revenue", 0))
+        con["receivable"] += int(acc.get("receivable", 0))
         sites.append({
             "site_id": str(sid), "site_name": sname, "status": sstatus,
             "revenue": d["revenue"], "cost_total": d["accounting"]["cost_total"],
             "commission": d["commission"], "profit_estimate": d["profit_estimate"],
+            # 손익 2-뷰 + 선수금/미수금 — 현장별 드릴다운에서도 동일 3지표 표기.
+            "cash_flow": cf, "accrual": acc, "deferred_revenue": d.get("deferred_revenue", 0),
             "by_type": d["accounting"]["by_type"],
         })
     return {
         "consolidated": {**con, "by_type": [{"label": k, "amount": v} for k, v in sorted(by_type.items())]},
         "sites": sites,
-        "note": "통합회계 = 보유 현장 연결결산(매출 − 회계비용 − 수수료배분). 현장 ERP 원장 단일출처 합산.",
+        "errors": errors,
+        "note": ("통합회계 = 보유 현장 연결결산. 손익 2-뷰: profit_estimate=발생주의(계약매출 기준, "
+                 "미수금 포함 과대계상 가능)·cash_profit=현금흐름(실수납 기준). 선수금(deferred_revenue)·"
+                 "미수금(receivable) 별도 표기. 현장 ERP 원장 단일출처 합산. "
+                 "일부 현장 집계 실패 시 errors 에 표기하고 나머지는 합산(부분내결함)."),
     }

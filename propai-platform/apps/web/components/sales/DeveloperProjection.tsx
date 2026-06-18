@@ -18,8 +18,13 @@ interface SiteSummary {
   sold_ratio: number; commission_paid: number; commission_due: number;
 }
 interface ByType { label: string; amount: number; type?: string }
-interface RollupSite { site_id: string; site_name: string; status: string; revenue: number; cost_total: number; commission: number; profit_estimate: number; by_type: ByType[] }
-interface Rollup { consolidated: { revenue: number; cost_total: number; commission: number; profit_estimate: number; by_type: ByType[] }; sites: RollupSite[]; note: string }
+// 손익 2-뷰: 현금흐름(현금주의)·발생주의(계약매출). 백엔드 site_management_detail 와 동일 키.
+interface CashFlow { cash_collected: number; cost_total: number; commission: number; profit: number; note?: string }
+interface Accrual { revenue_recognized: number; cost_total: number; commission: number; profit: number; receivable: number; note?: string }
+interface RollupSite { site_id: string; site_name: string; status: string; revenue: number; cost_total: number; commission: number; profit_estimate: number; by_type: ByType[]; cash_flow?: CashFlow; accrual?: Accrual; deferred_revenue?: number; error?: string }
+interface RollupConsolidated { revenue: number; cost_total: number; commission: number; profit_estimate: number; by_type: ByType[]; cash_collected?: number; cash_profit?: number; deferred_revenue?: number; receivable?: number }
+interface RollupError { site_id: string; site_name: string; error: string }
+interface Rollup { consolidated: RollupConsolidated; sites: RollupSite[]; errors?: RollupError[]; note: string }
 
 const STATUS: Record<string, string> = { PREP: "준비중", OPEN: "분양중", CLOSED: "분양종료" };
 const ENTRY_TYPES = [
@@ -93,7 +98,7 @@ export default function DeveloperProjection() {
               ["매출(계약)", won(con.revenue), "text-[var(--text-primary)]"],
               ["회계비용", won(con.cost_total), "text-[var(--text-secondary)]"],
               ["수수료배분", won(con.commission), "text-[var(--text-secondary)]"],
-              ["손익(개략)", won(con.profit_estimate), con.profit_estimate >= 0 ? "text-[var(--success)]" : "text-[var(--error)]"],
+              ["실수납", won(con.cash_collected ?? 0), "text-[var(--text-primary)]"],
             ].map(([k, v, cls]) => (
               <div key={k} className="bg-[var(--surface-soft)] px-4 py-3 text-center">
                 <p className="cc-label text-[0.6rem] text-[var(--text-tertiary)]">{k}</p>
@@ -101,11 +106,25 @@ export default function DeveloperProjection() {
               </div>
             ))}
           </div>
+          {/* 손익 2-뷰(현금흐름/발생주의) + 선수금·미수금 — 발생주의 과대계상 경고 배지 */}
+          <ProfitTriView
+            cashProfit={con.cash_profit ?? (con.cash_collected ?? 0) - con.cost_total - con.commission}
+            accrualProfit={con.profit_estimate}
+            deferred={con.deferred_revenue ?? 0}
+            receivable={con.receivable ?? 0}
+          />
           {con.by_type.length > 0 && (
             <div className="mt-3 flex flex-wrap gap-2">
               {con.by_type.map((b) => (
                 <span key={b.label} className="sa-chip sa-chip--muted text-[11px]">{b.label} <b className="ml-1 text-[var(--text-primary)]">{won(b.amount)}</b></span>
               ))}
+            </div>
+          )}
+          {/* 부분내결함 표기(은폐 금지): 일부 현장 집계 실패 시 명시 — 나머지는 정상 합산됨 */}
+          {roll?.errors && roll.errors.length > 0 && (
+            <div className="mt-2 rounded-lg border border-[var(--error)]/40 bg-[var(--error)]/10 px-2.5 py-1.5 text-[11px] text-[var(--error)]">
+              <b>일부 현장 집계 실패({roll.errors.length}곳)</b> — 아래 현장은 합산에서 0 처리되었습니다(권한·연결 확인). 나머지 현장은 정상 합산됩니다.
+              <span className="ml-1 text-[var(--text-hint)]">{roll.errors.map((e) => e.site_name).join(", ")}</span>
             </div>
           )}
           <p className="mt-2 text-[10px] text-[var(--text-hint)]">{roll?.note}</p>
@@ -170,11 +189,48 @@ export default function DeveloperProjection() {
   );
 }
 
+/**
+ * 손익 3지표 나란히 표기 — 현금흐름(현금주의)·발생주의(계약매출)·선수금/미수금.
+ * 발생주의 손익이 현금흐름 손익보다 큰 경우(미수금 존재) '과대계상 주의' 경고 배지를 띄운다.
+ * 단일 profit 대신 두 관점을 함께 보여 의사결정 왜곡(미수금까지 이익으로 착시)을 방지.
+ */
+function ProfitTriView({ cashProfit, accrualProfit, deferred, receivable }: {
+  cashProfit: number; accrualProfit: number; deferred: number; receivable: number;
+}) {
+  // 발생주의가 현금흐름보다 크고 미수금이 있으면 과대계상 소지(받지 못한 매출까지 이익 반영).
+  const overstated = accrualProfit > cashProfit && receivable > 0;
+  const cls = (v: number) => (v >= 0 ? "text-[var(--success)]" : "text-[var(--error)]");
+  return (
+    <div className="mt-2 space-y-2">
+      <div className="grid grid-cols-2 gap-px overflow-hidden rounded-xl bg-[var(--line-subtle)] sm:grid-cols-4">
+        {[
+          ["현금흐름 손익", won(cashProfit), cls(cashProfit), "실수납 기준(현금주의)"],
+          ["발생주의 손익", won(accrualProfit), cls(accrualProfit), "계약매출 기준"],
+          ["선수금", won(deferred), "text-[var(--text-secondary)]", "받았으나 미인식(부채)"],
+          ["미수금", won(receivable), "text-[var(--text-secondary)]", "인식했으나 미수납"],
+        ].map(([k, v, c, sub]) => (
+          <div key={k} className="bg-[var(--surface-soft)] px-4 py-3 text-center">
+            <p className="cc-label text-[0.6rem] text-[var(--text-tertiary)]">{k}</p>
+            <p className={`mt-1 cc-num text-base font-black ${c}`}>{v}</p>
+            <p className="mt-0.5 text-[9px] text-[var(--text-hint)]">{sub}</p>
+          </div>
+        ))}
+      </div>
+      {overstated && (
+        <p className="flex items-center gap-1.5 rounded-lg border border-[var(--warning)]/40 bg-[var(--warning)]/10 px-2.5 py-1.5 text-[11px] font-semibold text-[var(--warning)]">
+          <span aria-hidden>⚠</span>
+          발생주의 손익이 현금흐름 손익보다 큽니다 — 미수금({won(receivable)})까지 매출로 인식된 과대계상 소지가 있습니다. 실수납 기준(현금흐름)을 함께 확인하세요.
+        </p>
+      )}
+    </div>
+  );
+}
+
 /** 현장 1곳 통합 관리 드릴다운 — 담당자·근태·계약·매출·수수료·방문·광고·회계 + 회계항목 등록. */
 function SiteManagePanel({ siteId, onSaved }: { siteId: string; onSaved: () => void }) {
   // X-Site-Code 헤더에 site_id(UUID)를 넘기면 백엔드 resolve_site 가 UUID로 현장을 해석한다.
   const api = useMemo(() => salesApi(siteId), [siteId]);
-  type Detail = { staff_assigned: number; contracts: number; revenue: number; commission: number; visitors: number; attendance_today: number; ad_budget: number; accounting: { by_type: ByType[]; cost_total: number }; profit_estimate: number };
+  type Detail = { staff_assigned: number; contracts: number; revenue: number; commission: number; visitors: number; attendance_today: number; ad_budget: number; accounting: { by_type: ByType[]; cost_total: number }; profit_estimate: number; cash_flow?: CashFlow; accrual?: Accrual; deferred_revenue?: number };
   const [d, setD] = useState<Detail | null>(null);
   const [err, setErr] = useState(false);
   const [et, setEt] = useState("LABOR");
@@ -213,8 +269,15 @@ function SiteManagePanel({ siteId, onSaved }: { siteId: string; onSaved: () => v
         {metric("수수료", won(d.commission))}
         {metric("방문", `${d.visitors}`)}
         {metric("광고예산", won(d.ad_budget))}
-        {metric("손익", won(d.profit_estimate))}
+        {metric("손익(발생주의)", won(d.profit_estimate))}
       </div>
+      {/* 손익 2-뷰(현금흐름/발생주의)+선수금·미수금 — 발생주의 과대계상 경고 */}
+      <ProfitTriView
+        cashProfit={d.cash_flow?.profit ?? (d.cash_flow?.cash_collected ?? 0) - d.accounting.cost_total - d.commission}
+        accrualProfit={d.profit_estimate}
+        deferred={d.deferred_revenue ?? 0}
+        receivable={d.accrual?.receivable ?? 0}
+      />
       {/* 회계 원장 — 항목별 비용 + 직접 등록 */}
       <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-3">
         <div className="mb-2 flex flex-wrap items-center gap-2">
