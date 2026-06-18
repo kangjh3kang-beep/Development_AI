@@ -59,10 +59,10 @@ def design_audit(result: dict[str, Any]) -> Mapped | None:
     setback/sunlight는 >= comparator. 수치 finding 없으면 None(생략)."""
     rules = []
     worst_status, worst_sev = "", -1
-    for f in result.get("findings") or []:
+    for i, f in enumerate(result.get("findings") or []):
         if not isinstance(f, dict):
             continue
-        rid = str(f.get("check_id") or f.get("engine") or "").strip() or "chk"
+        rid = str(f.get("check_id") or f.get("engine") or "").strip() or f"chk{i}"  # 폴백도 고유(rule dedup 방지)
         r = _rule(rid, _comparator_for(rid), f.get("current"), f.get("limit"))
         if not r:
             continue  # 비수치(parking/permit/solar/grammar 등) — 엔진 rule 변환 불가 → subset 제외
