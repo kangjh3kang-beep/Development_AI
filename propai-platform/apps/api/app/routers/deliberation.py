@@ -254,3 +254,20 @@ async def deliberation_analyze(payload: dict = Body(...), user=Depends(get_curre
                                          input_hash=ih, decision="authoritative", http_status=200)
     return {"degraded": False, "reused": False, "run_id": run_id,
             "result": res, "audit_degraded": audit_degraded}
+
+
+@router.get("/analyze/{run_id}")
+async def deliberation_get_analysis(run_id: str, user=Depends(get_current_user)) -> dict[str, Any]:
+    """저장 분석 조회 — **테넌트 소유 검증 후에만** 엔진 결과 반환(교차테넌트 read 차단).
+
+    엔진 get_analysis는 테넌트 무필터이므로 BFF가 engine_run_binding(tenant,run_id) 소유를 게이트한다.
+    미존재/타테넌트는 동일 404(존재은닉). 엔진 GET은 외부 비노출 전제.
+    """
+    tenant = _tenant(user)
+    binding = await binding_service.lookup_by_run(tenant_id=tenant, run_id=run_id)
+    if binding is None:
+        raise HTTPException(status_code=404, detail="not_found")
+    result = binding.get("result") or await _engine_get_analysis(run_id)
+    if result is None:
+        return _degrade("engine_unreachable")
+    return {"degraded": False, "run_id": run_id, "result": result}

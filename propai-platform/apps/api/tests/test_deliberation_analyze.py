@@ -152,3 +152,45 @@ def test_analyze_prevalidate_rules_missing_rule_key(monkeypatch):
     bad = {"pnu": "1111010100100000002", "rules": [{"measured": 1}]}  # 'rule' 키 결손 → KeyError→500 회피
     r = c.post("/api/v1/deliberation/analyze", json=bad)
     assert r.status_code == 422
+
+
+# ── GET /analyze/{run_id} (binding 소유검증→엔진 프록시) ──
+
+
+def test_get_requires_auth():
+    r = TestClient(_app()).get("/api/v1/deliberation/analyze/run-1")
+    assert r.status_code in (401, 403)
+
+
+def test_get_not_found_or_cross_tenant_returns_404(monkeypatch):
+    async def lookup_by_run(**kw):
+        return None  # 미존재 또는 타테넌트 — 동일 404(존재은닉)
+    monkeypatch.setattr(delib.binding_service, "lookup_by_run", lookup_by_run)
+    app = _app()
+    app.dependency_overrides[get_current_user] = lambda: _FakeUser()
+    r = TestClient(app).get("/api/v1/deliberation/analyze/run-x")
+    assert r.status_code == 404
+
+
+def test_get_returns_stored_result(monkeypatch):
+    async def lookup_by_run(**kw):
+        return {"run_id": "run-1", "source": "async", "status": "DONE",
+                "result": {"input_hash": "ih", "report": {"items": []}}}
+    monkeypatch.setattr(delib.binding_service, "lookup_by_run", lookup_by_run)
+    app = _app()
+    app.dependency_overrides[get_current_user] = lambda: _FakeUser()
+    r = TestClient(app).get("/api/v1/deliberation/analyze/run-1")
+    assert r.status_code == 200 and r.json()["result"]["input_hash"] == "ih"
+
+
+def test_get_proxies_engine_when_no_stored_result(monkeypatch):
+    async def lookup_by_run(**kw):
+        return {"run_id": "run-1", "source": "sync", "status": "DONE", "result": None}
+    async def get(rid):
+        return {"run_id": rid, "report": {"x": 1}}
+    monkeypatch.setattr(delib.binding_service, "lookup_by_run", lookup_by_run)
+    monkeypatch.setattr(delib, "_engine_get_analysis", get)
+    app = _app()
+    app.dependency_overrides[get_current_user] = lambda: _FakeUser()
+    r = TestClient(app).get("/api/v1/deliberation/analyze/run-1")
+    assert r.status_code == 200 and r.json()["result"]["report"] == {"x": 1}
