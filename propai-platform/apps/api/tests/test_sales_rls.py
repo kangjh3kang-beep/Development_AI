@@ -555,9 +555,12 @@ class _User:
 
 
 class _Node:
-    def __init__(self, path, node_type):
+    def __init__(self, path, node_type, id=None):
         self.path = path
         self.node_type = node_type
+        # resolve_site_membership 의 동률 결정화 키 (priority, str(path), str(id)) 에 쓰임.
+        # 미지정 시 path 로 대체(고유성 보장)해 기존 단일/우선순위 테스트는 무회귀.
+        self.id = id if id is not None else path
 
 
 class _Site:
@@ -686,6 +689,36 @@ def test_node_priority_order_superior_first():
 
 
 @pytest.mark.asyncio
+async def test_resolve_site_membership_same_type_tie_is_deterministic():
+    """★결정성(MEDIUM): 같은 node_type 복수 노드(priority 동률)도 입력 순서와 무관하게 항상
+    동일한 (org_path, role) 을 반환해야 한다(선택 path 가 RLS app.org_path 로 주입되므로
+    실행 간 흔들리면 RLS 가시 서브트리가 비결정). (path, id)로 동률을 깬다.
+    """
+    n_a = _Node("root.a", "MEMBER", id="11")
+    n_b = _Node("root.b", "MEMBER", id="22")
+    # 입력 순서를 뒤집어도 동일 결과여야 함(행순 의존 제거 확인).
+    db1 = _TokenFakeDB(nodes=[n_a, n_b])
+    db2 = _TokenFakeDB(nodes=[n_b, n_a])
+    res1 = await deps_sales.resolve_site_membership(db1, _Site("sid"), _MemberUser("u"))
+    res2 = await deps_sales.resolve_site_membership(db2, _Site("sid"), _MemberUser("u"))
+    assert res1 == res2
+    # 동률 결정화 키 (priority, str(path), str(id)) → str(path) 최소값('root.a') 선택.
+    assert res1 == ("root.a", "MEMBER")
+
+
+@pytest.mark.asyncio
+async def test_resolve_site_membership_tie_breaks_by_id_when_path_equal():
+    """path 까지 동률이면 마지막 키 str(id)로 결정화(완전 결정성)."""
+    n1 = _Node("root.same", "MEMBER", id="aaa")
+    n2 = _Node("root.same", "MEMBER", id="bbb")
+    db1 = _TokenFakeDB(nodes=[n1, n2])
+    db2 = _TokenFakeDB(nodes=[n2, n1])
+    res1 = await deps_sales.resolve_site_membership(db1, _Site("sid"), _MemberUser("u"))
+    res2 = await deps_sales.resolve_site_membership(db2, _Site("sid"), _MemberUser("u"))
+    assert res1 == res2 == ("root.same", "MEMBER")
+
+
+@pytest.mark.asyncio
 async def test_resolve_site_membership_superadmin_fallback():
     """노드 없음 + user.role 이 SUPERADMIN 군 → ('', 'SUPERADMIN')."""
     db = _TokenFakeDB(node=None)
@@ -744,11 +777,113 @@ def test_role_sets_ssot_single_source_in_deps_sales():
     assert site_auth._SUPERADMIN_ROLES is deps_sales._SUPERADMIN_ROLES
 
 
+def test_crm_enhance_imports_role_sets_from_deps_sales():
+    """★SSOT(MEDIUM): crm_enhance 가 자체 리터럴이 아니라 deps_sales 의 역할 집합을 import.
+
+    과거 crm_enhance 는 _SUPERADMIN_ROLES/_DEVELOPER_ROLES 를 동일 리터럴로 중복정의해
+    한쪽만 수정 시 드리프트 위험이 있었다. 동일 객체(is)여야 단일 출처임이 보장된다.
+    """
+    from app.api.endpoints.sales import crm_enhance
+
+    assert crm_enhance._SUPERADMIN_ROLES is deps_sales._SUPERADMIN_ROLES
+    assert crm_enhance._DEVELOPER_ROLES is deps_sales._DEVELOPER_ROLES
+
+
 def test_site_auth_dead_developer_roles_removed():
     """site_auth 의 dead(미사용) _DEVELOPER_ROLES 중복정의는 제거됐다(재추가 회귀 차단)."""
     from app.api.endpoints.sales import site_auth
 
     assert not hasattr(site_auth, "_DEVELOPER_ROLES")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# (6) my_sites — 복수 노드 사용자의 '표시 역할' = resolve_site_membership '적용 역할'(상위 권한).
+# ──────────────────────────────────────────────────────────────────────────────
+class _MySite:
+    """my_sites 가 읽는 SalesSite 최소 형태."""
+
+    def __init__(self, sid, code="C", name="N", dev="APT", status="ACTIVE", organization_id=None):
+        self.id = sid
+        self.site_code = code
+        self.site_name = name
+        self.development_type = dev
+        self.status = status
+        self.organization_id = organization_id
+        self.created_at = None
+
+
+class _MyNode:
+    def __init__(self, site_id, node_type, path, id):
+        self.site_id = site_id
+        self.user_id = None
+        self.node_type = node_type
+        self.path = path
+        self.id = id
+
+
+class _MySitesDB:
+    """my_sites 의 3 SELECT 중 (a) org-node join 만 행을 돌려준다(소유/super 분기는 빈 결과).
+
+    첫 execute = node_rows(.all()), 이후 execute = 빈 scalars().all().
+    """
+
+    def __init__(self, node_site_rows):
+        self._rows = node_site_rows
+        self._calls = 0
+
+    async def execute(self, statement, params=None):
+        self._calls += 1
+        rows = self._rows if self._calls == 1 else []
+
+        class _R:
+            def all(self):
+                return rows
+
+            def scalars(self):
+                class _S:
+                    def all(self):
+                        return []
+                return _S()
+
+        return _R()
+
+
+@pytest.mark.asyncio
+async def test_my_sites_shows_highest_priority_role_for_multinode_user():
+    """★표시=적용(LOW UX): 같은 현장 복수 노드(MEMBER+GM_DIRECTOR)면 상위(GM_DIRECTOR)를 표시.
+
+    과거엔 루프 마지막 노드가 덮어써져 '표시 역할' 이 임의(=적용 역할과 불일치)였다.
+    이제 resolve_site_membership 과 동일 기준(상위 권한 우선)으로 골라 표시한다.
+    """
+    from app.api.endpoints.sales import site_auth
+
+    sid = "site-1"
+    site = _MySite(sid)
+    # 입력 순서를 상위→하위로 줘서, 단순 last-wins 였다면 하위(MEMBER)가 표시됐을 상황.
+    rows = [
+        (_MyNode(sid, "GM_DIRECTOR", "root.gm", "1"), site),
+        (_MyNode(sid, "MEMBER", "root.m", "2"), site),
+    ]
+    db = _MySitesDB(rows)
+    user = _MemberUser("u", role="", tenant_id=None)
+    out = await site_auth.my_sites(db=db, user=user)
+    assert len(out) == 1
+    assert out[0]["role"] == "GM_DIRECTOR"  # 상위 권한 표시(적용 역할과 일치).
+
+
+@pytest.mark.asyncio
+async def test_my_sites_multinode_role_is_deterministic_regardless_of_order():
+    """같은 node_type 복수 노드(priority 동률)면 입력 순서와 무관하게 동일 노드 표시(결정성)."""
+    from app.api.endpoints.sales import site_auth
+
+    sid = "site-2"
+    site = _MySite(sid)
+    n_a = (_MyNode(sid, "MEMBER", "root.a", "11"), site)
+    n_b = (_MyNode(sid, "MEMBER", "root.b", "22"), site)
+    out1 = await site_auth.my_sites(db=_MySitesDB([n_a, n_b]), user=_MemberUser("u"))
+    out2 = await site_auth.my_sites(db=_MySitesDB([n_b, n_a]), user=_MemberUser("u"))
+    # 동률 결정화 키 (priority, str(path), str(id)) → 둘 다 동일 결과여야 함.
+    assert out1[0]["role"] == out2[0]["role"] == "MEMBER"
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -946,6 +1081,22 @@ async def test_rls_status_null_flags_is_failopen_conservative():
     assert res["role_state_unknown"] is True
     assert res["isolation_effective"] is False
     assert res["isolation_warning"]
+
+
+@pytest.mark.asyncio
+async def test_rls_status_partial_null_flag_is_unknown_conservative():
+    """★fail-open 완전성(LOW): 한쪽 플래그만 NULL(예: bypassrls=False, superuser=None)도
+    상태불명으로 보수 처리(OR). 과거 AND 판정은 한쪽만 NULL 이면 '상태확인됨' 으로 간주해,
+    확인 못한 superuser 가 실제 True 여도 격리 실효로 낙관(fail-open)할 수 있었다.
+    """
+    status_rows = [("sales_units", True, True, 1)]
+    db = _StatusFakeDB(status_rows, _Bypass("role_x", False, superuser=None))
+    res = await boot.rls_status(db)
+    assert res["bypassrls"] is False
+    assert res["is_superuser"] is None
+    assert res["role_state_unknown"] is True       # 한쪽 NULL → 불명(보수).
+    assert res["isolation_effective"] is False      # 불명이면 격리 실효 낙관 금지.
+    assert "확인불가" in res["isolation_warning"]
 
 
 @pytest.mark.asyncio

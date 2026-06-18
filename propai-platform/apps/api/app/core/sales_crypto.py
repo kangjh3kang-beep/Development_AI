@@ -31,18 +31,17 @@ import hmac
 import os
 import warnings
 
-from app.core.config import _validate_secret
+# ★config import 는 _key() 내부 지연 import 로 미룬다(이번 변경).
+#   'from app.core.config import _validate_secret' 를 모듈 최상단에서 하면, config.py 가
+#   import 시점에 'settings = get_settings()' 로 프로덕션 시크릿 검증(prod 에서 약한 키면
+#   RuntimeError)을 즉시 실행하는 부수효과와 결합된다. 그러면 sales_crypto 를 import 하는
+#   것만으로 config 의 prod 검증이 트리거돼, 본 모듈의 단위테스트가 환경에 취약해진다.
+#   → 검증이 실제 필요한 프로덕션 경로(_key 내부)에서만 지연 import 한다(부수효과 분리).
 
 # 키 미설정 시 개발용 폴백(★프로덕션은 환경변수 필수). dev/test 외 환경에서 폴백이
 # silent 하게 쓰이면 약한 키로 VA 블라인드 인덱스가 생성되므로, 프로덕션에서는 예외로
 # 막는다(config.py 의 _validate_secret 차단 방식과 동일 정신).
 _DEV_FALLBACK_KEY = "propai-dev-sales-key"
-
-# 프로덕션 키 길이 하한(config._validate_secret 와 동일=32자). 짧은 키(예: 'x' 1자)는
-# 무차별 추측에 취약해 약한 폴백키와 다를 바 없으므로, 직접 경로에도 동일 하한을 강제한다.
-# ★주의: 실제 prod 검증은 _validate_secret 을 '직접 호출'한다(길이+denylist 동시). 이 상수는
-#   하위호환(테스트 노출)·문서용으로만 남긴다.
-_MIN_KEY_LEN = 32
 
 # 폴백키 경고는 프로세스당 1회만(매 encrypt 호출마다 경고 스팸 방지).
 _FALLBACK_WARNED = False
@@ -92,6 +91,9 @@ def _key() -> bytes:
         # 키는 있으나 약할 수 있음(짧음 또는 유출/예제 denylist). 프로덕션에서는 config 와
         # '동일 함수'로 검사해 약한 폴백키와 동일하게 차단한다(길이+denylist 일치 보장).
         # _validate_secret 은 빈값/denylist/len<32 에 RuntimeError 를 던진다.
+        # ★지연 import: config import 의 prod 부수효과(settings=get_settings())와 본 모듈
+        #   import 를 분리하기 위해, 검증이 실제 필요한 이 시점에만 가져온다(드리프트 0 유지).
+        from app.core.config import _validate_secret
         _validate_secret("SALES_ENC_KEY(또는 APP_SECRET_KEY)", k)
     return k.encode()
 

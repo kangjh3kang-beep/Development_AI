@@ -170,8 +170,16 @@ async def resolve_site_membership(db: AsyncSession, site, user):
 
     ★복수 노드 안전(런타임 500 방지): (site_id,user_id) UNIQUE 가 없어 한 사용자가 같은
     현장에 살아있는 노드를 2개 이상 가질 수 있다. scalar_one_or_none() 은 그 경우
-    MultipleResultsFound(=500)를 던진다. 그래서 scalars().first() 로 받고, 권한 우선순위
+    MultipleResultsFound(=500)를 던진다. 그래서 scalars().all() 로 받고, 권한 우선순위
     (_node_priority)로 정렬해 '상위 권한' 노드를 결정적으로 선택한다(비결정 정렬 제거).
+
+    ★결정성(이번 변경): 같은 node_type 노드가 2개 이상이면(예: MEMBER root.a / MEMBER
+    root.b) priority 가 동률이라 min() 이 '입력 순서(=DB 행순)'에 의존해 비결정적이었다.
+    선택된 node.path 는 RLS 세션변수 app.org_path 로 주입되므로, 동률에서 흔들리면 같은
+    site/user 인데도 실행마다 RLS 가시 서브트리가 달라진다(격리 비결정). 이를 막기 위해
+    ① SQL .order_by 를 (node_type, path, id) 로 의미화하고 ② 파이썬 정렬 키도
+    (priority, str(path), str(id)) 튜플로 동률을 완전히 깨, 입력 순서와 무관하게 항상 같은
+    노드를 고른다.
     """
     nodes = (await db.execute(
         select(SalesOrgNode).where(
@@ -182,10 +190,15 @@ async def resolve_site_membership(db: AsyncSession, site, user):
             SalesOrgNode.deleted_at.is_(None),
         )
         # 상위 권한 우선 → 같은 현장 복수 노드여도 결정적으로 최상위 역할을 고른다.
-        .order_by(SalesOrgNode.node_type)
+        # node_type 만으론 같은 타입 복수 노드에서 행순 의존(비결정) → (path, id)까지 의미화.
+        .order_by(SalesOrgNode.node_type, SalesOrgNode.path, SalesOrgNode.id)
     )).scalars().all()
     # DB order_by(node_type)는 알파벳 정렬이라 권한순이 아님 → 파이썬에서 권한 우선순위로 재정렬.
-    node = min(nodes, key=lambda n: _node_priority(n.node_type)) if nodes else None
+    # ★동률 결정화: priority 동률(같은 node_type)이면 (path, id)로 깨 입력 순서 무관·항상 동일 선택.
+    node = (
+        min(nodes, key=lambda n: (_node_priority(n.node_type), str(n.path), str(n.id)))
+        if nodes else None
+    )
 
     if node is not None:
         return str(node.path), node.node_type

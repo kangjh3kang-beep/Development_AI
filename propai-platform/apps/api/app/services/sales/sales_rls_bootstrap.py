@@ -275,6 +275,13 @@ async def rls_status(db) -> dict[str, Any]:
     ★(선택) forced 인데 policy_count=0 인 테이블이 있으면 경고에 포함한다. 부트스트랩/마이그
     레이션이 정책 0개 테이블엔 FORCE 를 걸지 않으므로 정상 경로에선 발생 가능성이 낮으나,
     수동 DDL 등으로 생기면 non-bypassrls role 에서 '전 행 거부'(앱 브릭)가 되므로 노출한다.
+
+    ★응답계약(소비 SSOT — 못박음): 자동화/프론트가 판정에 쓰는 '진실의 출처' 는 구조화 필드
+    (role_state_unknown / forced_policyless / is_superuser / bypassrls / isolation_effective)
+    '뿐' 이다. isolation_warning 은 사람이 읽는 표시전용 문자열(여러 사유를 ' / ' 로 합침)이라
+    포맷이 바뀔 수 있으므로, 절대 문자열 파싱으로 분기하지 말 것(예: '격리 OK 여부' 는
+    isolation_effective 불리언으로만 판정). 표시 문자열과 구조화 필드는 동일 사실의 두 표현이며
+    구조화 필드가 정본이다.
     """
     rows = (await db.execute(text(_SQL_STATUS))).fetchall()
     tables = [
@@ -297,9 +304,14 @@ async def rls_status(db) -> dict[str, Any]:
     bypassrls = bool(br.bypassrls) if br is not None and br.bypassrls is not None else None
     superuser = bool(br.superuser) if br is not None and br.superuser is not None else None
 
-    # role 상태 확인불가 = 행 무(無) 또는 두 플래그가 모두 NULL(상태불명).
+    # role 상태 확인불가 = 행 무(無) 또는 두 플래그 중 '하나라도' NULL(상태불명).
+    # ★보수화(이번 변경, OR): 과거엔 '두 플래그 모두 NULL(AND)' 일 때만 불명으로 봤다.
+    #   그러면 한쪽만 NULL(예: bypassrls=False, superuser=None)이면 상태확인됨으로 간주돼,
+    #   확인 못한 superuser 가 실제 True 여도 fail-open(격리 실효로 낙관)할 수 있었다.
+    #   둘 중 하나라도 NULL 이면 안전 가정 금지 → 보수적으로 '불명' 처리한다(fail-open 차단).
+    #   (br is None = role 행 자체 없음도 불명.)
     role_state_unknown = (
-        br is None or (bypassrls is None and superuser is None)
+        br is None or bypassrls is None or superuser is None
     )
 
     # 격리 실효 판정(보수적, 3조건 AND):

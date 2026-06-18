@@ -31,7 +31,16 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
-from app.api.deps_sales import SalesCtx, resolve_site, sales_ctx
+
+# ★SSOT(단일 출처): 폴백 역할 집합은 deps_sales 한 곳에서만 정의한다. 과거 본 모듈이 동일
+# 리터럴을 중복정의해 드리프트(한쪽만 수정 시 불일치) 위험이 있었어 import 로 전환한다.
+from app.api.deps_sales import (
+    _DEVELOPER_ROLES,
+    _SUPERADMIN_ROLES,
+    SalesCtx,
+    resolve_site,
+    sales_ctx,
+)
 from apps.api.database.models.sales.contract_crm_ad import SalesCustomer
 from apps.api.database.models.sales.site_org import SalesOrgNode, SalesSite
 
@@ -41,9 +50,8 @@ crm_enhance_router = APIRouter(tags=["sales-crm-enhance"])
 _STAGES = {"LEAD", "CONSULT", "VISIT", "RESERVED", "SIGNED", "MIDDLE", "BALANCE", "CLOSED", "DROPPED"}
 # 히스토리 종류
 _KINDS = {"consult", "visit", "stage", "message", "note"}
-# 플랫폼 User.role → sales 전역역할 폴백(현장 노드 없을 때)
-_SUPERADMIN_ROLES = {"superadmin", "super_admin", "admin", "owner", "총괄관리자", "platform_admin"}
-_DEVELOPER_ROLES = {"developer", "시행사", "dev"}
+# 플랫폼 User.role → sales 전역역할 폴백(현장 노드 없을 때)은 deps_sales SSOT 사용
+# (_SUPERADMIN_ROLES/_DEVELOPER_ROLES import). 본 모듈 중복정의는 제거(드리프트 차단).
 
 
 # ── 멱등 테이블/컬럼(_ensure) ────────────────────────────────────────────────

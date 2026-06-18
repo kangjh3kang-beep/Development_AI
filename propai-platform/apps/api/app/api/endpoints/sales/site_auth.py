@@ -30,7 +30,9 @@ from app.api.deps import get_current_user, get_db
 
 # ★SSOT: 폴백 역할 집합은 deps_sales 한 곳에서만 정의(중복정의 드리프트 제거). 여기서 재정의
 # 하지 않고 import 해 my_sites 가 동일 기준(_SUPERADMIN_ROLES)을 쓰게 한다.
-from app.api.deps_sales import _SUPERADMIN_ROLES
+# _node_priority 도 import 해 my_sites 의 '표시 역할' 을 resolve_site_membership 의 '적용 역할'
+# 선택 기준(상위 권한 우선)과 일치시킨다(표시=적용 일관).
+from app.api.deps_sales import _SUPERADMIN_ROLES, _node_priority
 from app.core.config import settings
 from apps.api.database.models.sales.site_org import SalesOrgNode, SalesSite
 
@@ -233,9 +235,25 @@ async def my_sites(db: AsyncSession = Depends(get_db), user=Depends(get_current_
             SalesSite.deleted_at.is_(None),
         )
     )).all()
+    # ★표시=적용 일관: 한 사용자가 같은 현장에 복수 노드를 가지면(과거엔 루프 마지막 노드가
+    #   덮어써져 '표시 역할' 이 임의였다), resolve_site_membership 과 동일하게 '상위 권한' 노드를
+    #   결정적으로 골라 표시한다. 동률(같은 node_type)은 (path, id)로 깨 입력 순서와 무관.
+    best_node: dict[str, SalesOrgNode] = {}
+    site_by_id: dict[str, SalesSite] = {}
     for node, site in node_rows:
-        out[str(site.id)] = {
-            "site_id": str(site.id), "site_code": site.site_code, "site_name": site.site_name,
+        sid = str(site.id)
+        site_by_id[sid] = site
+        cur = best_node.get(sid)
+        if cur is None or (
+            _node_priority(node.node_type), str(node.path), str(node.id)
+        ) < (
+            _node_priority(cur.node_type), str(cur.path), str(cur.id)
+        ):
+            best_node[sid] = node
+    for sid, node in best_node.items():
+        site = site_by_id[sid]
+        out[sid] = {
+            "site_id": sid, "site_code": site.site_code, "site_name": site.site_name,
             "development_type": site.development_type, "status": site.status,
             "role": node.node_type, "role_label": _ROLE_LABEL.get(node.node_type, node.node_type),
             "membership": "org",
