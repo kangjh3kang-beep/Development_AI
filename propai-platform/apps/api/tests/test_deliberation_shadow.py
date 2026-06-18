@@ -10,8 +10,36 @@ import pytest
 from sqlalchemy import text
 
 from app.services.deliberation import shadow_integration as si
+from app.services.deliberation import shadow_mappers as sm
 from app.services.deliberation import shadow_service as s
 from apps.api.app.routers import deliberation as delib
+
+
+def _ef(far, far_lim, bcr, bcr_lim, pnu="1111010100100000002"):
+    return {"pnu": pnu, "effective_far": {
+        "effective_far_pct": far, "effective_bcr_pct": bcr,
+        "far_basis_detail": {"법정범위": {"max_far_pct": far_lim, "max_bcr_pct": bcr_lim}}}}
+
+
+def test_mapper_comprehensive_compliant():
+    v, payload, val = sm.comprehensive(_ef(180.0, 200.0, 50.0, 60.0))
+    assert v == "compliant" and len(payload["rules"]) == 2 and payload["pnu"] == "1111010100100000002"
+    assert payload["rules"][0]["rule"]["rule_id"] == "FAR" and val == 180.0
+
+
+def test_mapper_comprehensive_non_compliant_on_far_over():
+    v, payload, _ = sm.comprehensive(_ef(250.0, 200.0, 50.0, 60.0))
+    assert v == "non_compliant"
+
+
+def test_mapper_comprehensive_skips_when_no_metrics():
+    assert sm.comprehensive({"effective_far": None}) is None
+    assert sm.comprehensive({"effective_far": {"effective_far_pct": "x"}}) is None  # 비수치 → 룰 없음 → None
+
+
+def test_mapper_comprehensive_excludes_non19_pnu():
+    _, payload, _ = sm.comprehensive(_ef(180.0, 200.0, 50.0, 60.0, pnu="123"))
+    assert "pnu" not in payload  # 19자리 아니면 lineage 생략(prevalidate 패턴)
 
 
 def test_norm_verdict_maps_equivalents():
