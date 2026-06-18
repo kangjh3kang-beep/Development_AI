@@ -70,6 +70,7 @@ async def list_secrets(
 @router.get("/llm-health")
 async def llm_health(
     provider: str = "anthropic",
+    model: str | None = None,
     current: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -103,7 +104,8 @@ async def llm_health(
         from langchain_core.messages import HumanMessage
 
         from app.services.ai.llm_provider import get_llm
-        llm = get_llm(provider=provider, timeout=20, max_tokens=16)
+        llm = get_llm(provider=provider, model=model, timeout=20, max_tokens=16) if model \
+            else get_llm(provider=provider, timeout=20, max_tokens=16)
         out["model"] = getattr(llm, "model", getattr(llm, "model_name", None))
         r = await asyncio.wait_for(
             llm.ainvoke([HumanMessage(content="Reply with one word: PONG")]), timeout=25

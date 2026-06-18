@@ -1,7 +1,7 @@
 """LLM 멀티 프로바이더 관리.
 
 지원 프로바이더:
-- anthropic: Claude (claude-sonnet-4-20250514, claude-opus-4-20250514)
+- anthropic: Claude (claude-sonnet-4-6, claude-opus-4-8, claude-haiku-4-5-20251001)
 - openai: GPT (gpt-4o, gpt-4o-mini)
 - google: Gemini (gemini-2.0-flash, gemini-2.5-pro)
 
@@ -25,12 +25,15 @@ from typing import Any
 PROVIDERS: dict[str, dict[str, Any]] = {
     "anthropic": {
         "name": "Anthropic Claude",
+        # ★모델 ID는 Anthropic이 구버전을 퇴역(404 not_found)시키므로 현행 ID로 유지해야 한다.
+        #   (구 claude-sonnet-4-20250514/opus-4-20250514는 퇴역 → 전 인터프리터 빈결과 유발).
         "models": [
-            {"id": "claude-sonnet-4-20250514", "name": "Claude Sonnet 4", "tier": "standard"},
-            {"id": "claude-opus-4-20250514", "name": "Claude Opus 4", "tier": "premium"},
+            {"id": "claude-sonnet-4-6", "name": "Claude Sonnet 4.6", "tier": "standard"},
+            {"id": "claude-opus-4-8", "name": "Claude Opus 4.8", "tier": "premium"},
+            {"id": "claude-haiku-4-5-20251001", "name": "Claude Haiku 4.5", "tier": "economy"},
         ],
         "env_key": "ANTHROPIC_API_KEY",
-        "default_model": "claude-sonnet-4-20250514",
+        "default_model": "claude-sonnet-4-6",
     },
     "openai": {
         "name": "OpenAI GPT",
