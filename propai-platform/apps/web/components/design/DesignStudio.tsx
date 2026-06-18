@@ -346,10 +346,20 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
     const area = Number(form.landArea) || 0;
     const spec = getZoningSpec(effectiveZoning);
     if (!spec || area <= 0) return null;
-    const maxGross = calcMaxGrossArea(area, effectiveZoning);
+    // 실효 용적률 우선: 부지분석(special_parcel/조례/계획 반영) effectiveFarPct가 있으면
+    // 법정상한(kr-building-regulations spec.floorAreaRatioMax) 대신 이를 진실원으로 쓴다.
+    // 주소 불일치 잔류 스냅샷이 다른 부지값을 구동하지 않도록 일치(또는 미실행) 시에만 적용.
+    // 미확보 시 기존 동작(법정상한 폴백) 유지 — 무회귀.
+    const effFarPct =
+      siteMatch !== "mismatch" && typeof siteAnalysis?.effectiveFarPct === "number" && siteAnalysis.effectiveFarPct > 0
+        ? siteAnalysis.effectiveFarPct
+        : null;
+    const farUsed = effFarPct ?? spec.floorAreaRatioMax; // 적용 용적률(%) — 실효 우선, 법정 폴백
+    const farIsEffective = effFarPct != null;            // 실효값 적용 여부(라벨·근거 표기용)
+    const maxGross = effFarPct != null ? area * (effFarPct / 100) : calcMaxGrossArea(area, effectiveZoning);
     const parking = calcParkingRequired(maxGross, form.buildingUse);
     const buildableArea = area * (spec.buildingCoverageMax / 100);
-    const minFloorsFromFar = spec.floorAreaRatioMax > 0 ? Math.ceil(maxGross / buildableArea) : 1;
+    const minFloorsFromFar = farUsed > 0 ? Math.ceil(maxGross / buildableArea) : 1;
     const heightPerFloor = 3.3;
     const maxFloorsByHeight = spec.heightLimit ? Math.floor(spec.heightLimit / heightPerFloor) : 25;
     const maxFloors = Math.min(minFloorsFromFar, maxFloorsByHeight);
@@ -360,7 +370,8 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
     const footprintFor = (floors: number) =>
       Math.min(maxGross / Math.max(floors, 1), buildableArea);
     return {
-      buildingCoverage: spec.buildingCoverageMax, floorAreaRatio: spec.floorAreaRatioMax,
+      buildingCoverage: spec.buildingCoverageMax, floorAreaRatio: farUsed,
+      farIsEffective, farLegalMax: spec.floorAreaRatioMax,
       maxFloors, maxHeight: Math.round(maxHeight * 10) / 10,
       buildableArea: Math.round(buildableArea * 10) / 10, maxGrossArea: Math.round(maxGross * 10) / 10,
       parking, heightNote, siteSide, setbacks: { front: 6, side: 1.5, rear: 2, unit: "m" },
@@ -370,7 +381,7 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
         { name: "ㄱ자형", description: `${maxFloors}층, 소음차폐 배치`, efficiency: 75, geom: buildMassingGeom("lshape", footprintFor(maxFloors), siteSide, maxFloors) },
       ],
     };
-  }, [form.landArea, effectiveZoning, form.buildingUse]);
+  }, [form.landArea, effectiveZoning, form.buildingUse, siteAnalysis?.effectiveFarPct, siteMatch]);
 
   const handleAIAnalyze = () => {
     mutate({ domain: "design", context: { landArea: `${form.landArea}㎡`, zoningDistrict: form.zoning, buildingUse: form.buildingUse, projectId } });
@@ -462,6 +473,23 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
             <Link href={siteAnalysisHref} className="font-bold text-[var(--accent-strong)] underline underline-offset-2">부지분석 실행하기 ↗</Link>
           </p>
         )}
+        {/* 특이부지 경고 — 학교용지·개발제한·농지·맹지 등은 일반 설계 산출이 부정확할 수 있음 */}
+        {siteMatch !== "mismatch" && siteAnalysis?.specialParcel?.isSpecial && (
+          <div className="mt-3 rounded-xl border border-amber-500/40 bg-amber-500/10 px-3.5 py-2.5 text-xs text-amber-500">
+            <p className="flex flex-wrap items-center gap-1.5 font-bold">
+              <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber-500" />
+              ⚠ 특이부지 감지
+              {siteAnalysis.specialParcel.developability ? ` · 개발가능성 ${siteAnalysis.specialParcel.developability}` : ""}
+              {siteAnalysis.specialParcel.factors?.length ? ` (${siteAnalysis.specialParcel.factors.join(", ")})` : ""}
+            </p>
+            {siteAnalysis.specialParcel.honest && (
+              <p className="mt-1 leading-snug text-amber-500/90">{siteAnalysis.specialParcel.honest}</p>
+            )}
+            <p className="mt-1 leading-snug text-[var(--text-hint)]">
+              아래 자동 산출값은 일반 용도지역 가정 기반이라 실제와 다를 수 있습니다 — 부지분석의 특이부지 진단을 우선 검토하세요.
+            </p>
+          </div>
+        )}
       </motion.div>
 
       <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.1 }} className="glass rounded-3xl p-8 border border-[var(--line-strong)]">
@@ -511,7 +539,7 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             {[
               { label: "건폐율", val: `${calc.buildingCoverage}%`, sub: `최대 ${calc.buildingCoverage}%`, color: "text-blue-400" },
-              { label: "용적률", val: `${calc.floorAreaRatio}%`, sub: `최대 ${calc.floorAreaRatio}%`, color: "text-emerald-400" },
+              { label: "용적률", val: `${calc.floorAreaRatio}%`, sub: calc.farIsEffective ? `실효(법정상한 ${calc.farLegalMax}%)` : `법정상한 ${calc.farLegalMax}%`, color: "text-emerald-400" },
               { label: "예상 층수", val: `${calc.maxFloors}층`, sub: `${calc.maxHeight}m (${calc.heightNote})`, color: "text-purple-400" },
               { label: "주차 대수", val: `${calc.parking}대`, sub: "주차장법 기준", color: "text-amber-400" },
             ].map((k) => (
@@ -534,7 +562,7 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
             <div className="space-y-1.5">
               {[
                 { k: "건폐율", v: calc.buildingCoverage, max: calc.buildingCoverage, u: "%" },
-                { k: "용적률", v: calc.floorAreaRatio, max: calc.floorAreaRatio, u: "%" },
+                { k: "용적률", v: calc.floorAreaRatio, max: calc.farLegalMax, u: "%" },
                 { k: "높이", v: calc.maxHeight, max: calc.maxHeight, u: "m" },
                 { k: "주차", v: calc.parking, max: calc.parking, u: "대" },
               ].map((row) => {

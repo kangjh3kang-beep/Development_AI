@@ -101,6 +101,20 @@ export function ProjectAnalysisSummary() {
   const school = (Array.isArray(infra.schools) ? infra.schools[0] : undefined) as { name?: string; distance_m?: number } | undefined;
   const officialPrice = site?.officialPrices?.[0]?.pricePerSqm ?? null;
 
+  // 건폐/용적 한도 라벨 정직표기 — 값은 effectiveBcr/effectiveFar(실효)인데 기존엔 '법정 한도'로
+  // 역방향 오라벨이었다. ordinance.source/seededFromLegal에 따라 실제 성격에 맞춰 라벨을 정한다.
+  //  · seededFromLegal=true → 조례·계획 승격 전 잠정 법정상한 → '잠정 법정상한(건폐/용적)'
+  //  · 조례 확정값(ordinanceFar/Bcr) 존재 → '실효 한도(건폐/용적·조례반영)'
+  //  · 그 외(실효 산출) → '실효 한도(건폐/용적)'
+  const ord = site?.ordinance ?? null;
+  const limitLabel = ord
+    ? ord.seededFromLegal
+      ? "잠정 법정상한(건폐/용적)"
+      : ord.ordinanceFar != null || ord.ordinanceBcr != null
+        ? "실효 한도(건폐/용적·조례반영)"
+        : "실효 한도(건폐/용적)"
+    : "실효 한도(건폐/용적)";
+
   return (
     <section className="rounded-[2rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-7 shadow-[var(--shadow-lg)]">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -171,7 +185,7 @@ export function ProjectAnalysisSummary() {
             ["층수", design?.floorCount != null ? num(design.floorCount, "층") : "—"],
             ["건폐율", pct(design?.bcr)],
             ["용적률", pct(design?.far)],
-            ["법정 한도(건폐/용적)", site?.ordinance ? `${pct(site.ordinance.effectiveBcr)} / ${pct(site.ordinance.effectiveFar)}` : "—"],
+            [limitLabel, site?.ordinance ? `${pct(site.ordinance.effectiveBcr)} / ${pct(site.ordinance.effectiveFar)}` : "—"],
           ]}
         />
         <Section

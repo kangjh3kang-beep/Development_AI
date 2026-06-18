@@ -26,11 +26,21 @@ export function SiteInitiator({ onInitiate, loading }: SiteInitiatorProps) {
   const [activeTab, setActiveTab] = useState<"search" | "upload">("search");
 
   // 실시간 용도지역 프리뷰 (주소 입력 시 자동 조회)
+  // 실효 우선·특이부지 게이트 — 법정상한을 '개발 가능 한도'로 단정하지 않도록 SiteAnalysisDetail/
+  //   GlobalAddressSearch 정답 패턴을 복제(effective_far·special_parcel 캡처).
   const [zoningPreview, setZoningPreview] = useState<{
     zoneType: string | null;
-    maxBcr: number | null;
-    maxFar: number | null;
+    effBcr: number | null;   // 실효 건폐율(%) — 없으면 null
+    effFar: number | null;   // 실효 용적률(%) — 없으면 null
+    legalBcr: number | null; // 법정상한 건폐율(%)
+    legalFar: number | null; // 법정상한 용적률(%)
     landCategory: string | null;
+    special: {
+      isSpecial: boolean;
+      developability: string | null;
+      factors: string[];
+      honest: string | null;
+    } | null;
   } | null>(null);
   const [zoningPreviewLoading, setZoningPreviewLoading] = useState(false);
 
@@ -47,13 +57,46 @@ export function SiteInitiator({ onInitiate, loading }: SiteInitiatorProps) {
           zone_type: string | null;
           zone_limits: { max_bcr_pct: number; max_far_pct: number } | null;
           land_category: string | null;
+          effective_far?: {
+            national_bcr_pct?: number | null;
+            national_far_pct?: number | null;
+            effective_bcr_pct?: number | null;
+            effective_far_pct?: number | null;
+          } | null;
+          special_parcel?: {
+            is_special?: boolean | null;
+            developability?: string | null;
+            severity_label?: string | null;
+            factors?: Array<{ category?: string | null } | string> | null;
+            honest_disclosure?: string | null;
+          } | null;
         }>("/zoning/analyze", { useMock: false, body: { address: address.trim() } });
         if (!cancelled) {
+          const ef = res.effective_far ?? null;
+          const sp = res.special_parcel ?? null;
+          const factors = (sp?.factors ?? [])
+            .map((f) => (typeof f === "string" ? f.trim() : (f?.category ?? "").toString().trim()))
+            .filter((t) => t.length > 0);
           setZoningPreview({
             zoneType: res.zone_type,
-            maxBcr: res.zone_limits?.max_bcr_pct ?? null,
-            maxFar: res.zone_limits?.max_far_pct ?? null,
+            effBcr: typeof ef?.effective_bcr_pct === "number" ? ef.effective_bcr_pct : null,
+            effFar: typeof ef?.effective_far_pct === "number" ? ef.effective_far_pct : null,
+            legalBcr:
+              (typeof ef?.national_bcr_pct === "number" ? ef.national_bcr_pct : null) ??
+              res.zone_limits?.max_bcr_pct ?? null,
+            legalFar:
+              (typeof ef?.national_far_pct === "number" ? ef.national_far_pct : null) ??
+              res.zone_limits?.max_far_pct ?? null,
             landCategory: res.land_category,
+            special:
+              sp?.is_special === true
+                ? {
+                    isSpecial: true,
+                    developability: sp.developability ?? sp.severity_label ?? null,
+                    factors,
+                    honest: sp.honest_disclosure ?? null,
+                  }
+                : null,
           });
         }
       } catch {
@@ -64,6 +107,15 @@ export function SiteInitiator({ onInitiate, loading }: SiteInitiatorProps) {
     }, 800);
     return () => { cancelled = true; clearTimeout(timer); };
   }, [address]);
+
+  // developability(영문 게이트) → 한국어 라벨(없으면 원문 폴백).
+  const DEVELOPABILITY_LABEL: Record<string, string> = {
+    POSSIBLE: "개발 가능",
+    CONDITIONAL: "조건부 가능",
+    PRECONDITION: "선행절차 필요",
+    RESTRICTED: "제한적",
+    BLOCKED: "개발 불가",
+  };
 
   const handleSearch = () => {
     if (!address) return;
@@ -131,15 +183,47 @@ export function SiteInitiator({ onInitiate, loading }: SiteInitiatorProps) {
                           용도지역 실시간 조회 중...
                         </p>
                       ) : zoningPreview?.zoneType ? (
-                        <p className="text-xs leading-relaxed text-[var(--text-secondary)] font-medium">
-                          해당 부지의 현재 용도지역은 <span className="text-[var(--accent-strong)] font-bold">'{zoningPreview.zoneType}'</span>입니다.
-                          {zoningPreview.maxBcr != null && zoningPreview.maxFar != null && (
-                            <> 건폐율 <span className="font-bold">{zoningPreview.maxBcr}%</span>, 용적률 <span className="font-bold">{zoningPreview.maxFar}%</span> 이하 개발이 가능합니다.</>
+                        <div className="flex flex-col gap-1.5">
+                          <p className="text-xs leading-relaxed text-[var(--text-secondary)] font-medium">
+                            해당 부지의 현재 용도지역은 <span className="text-[var(--accent-strong)] font-bold">'{zoningPreview.zoneType}'</span>입니다.
+                            {/* 실효 우선 — 실효값이 있으면 '실효 한도'로 정직 표기(법정상한을 개발가능 한도로 단정하지 않음).
+                                실효<법정이면 법정상한을 보조로 병기. 실효값이 없으면 '법정상한(조례 별도)'로 명시. */}
+                            {(() => {
+                              const bcr = zoningPreview.effBcr ?? zoningPreview.legalBcr;
+                              const far = zoningPreview.effFar ?? zoningPreview.legalFar;
+                              if (bcr == null && far == null) return null;
+                              const isEffective = zoningPreview.effBcr != null || zoningPreview.effFar != null;
+                              return (
+                                <>
+                                  {" "}{isEffective ? "현행 실효" : "법정상한"} 건폐율 <span className="font-bold">{bcr ?? "—"}%</span>, 용적률 <span className="font-bold">{far ?? "—"}%</span>
+                                  {!isEffective ? <> (조례·계획에 따라 별도 적용).</> : <>.</>}
+                                  {isEffective && zoningPreview.legalFar != null && zoningPreview.effFar != null && zoningPreview.legalFar > zoningPreview.effFar && (
+                                    <span className="text-[var(--text-hint)]"> 법정상한 용적률 {zoningPreview.legalFar}%.</span>
+                                  )}
+                                </>
+                              );
+                            })()}
+                            {zoningPreview.landCategory && (
+                              <> 지목: <span className="font-bold">{zoningPreview.landCategory}</span>.</>
+                            )}
+                          </p>
+                          {/* 특이부지 게이트 — 임야·학교용지·GB·맹지 등은 '개발 가능' 단정 대신 개발가능성·정직고지로 표기. */}
+                          {zoningPreview.special?.isSpecial && (
+                            <div className="flex flex-col gap-1 rounded-xl border border-[color-mix(in_srgb,var(--status-warning)_36%,transparent)] bg-[color-mix(in_srgb,var(--status-warning)_10%,transparent)] px-3 py-2">
+                              <p className="text-[11px] font-bold text-[var(--status-warning)]">
+                                ⚠ 특이부지{zoningPreview.special.factors.length > 0 ? ` · ${zoningPreview.special.factors.join(" · ")}` : ""}
+                                {zoningPreview.special.developability && (
+                                  <span className="font-semibold"> — {DEVELOPABILITY_LABEL[zoningPreview.special.developability] ?? zoningPreview.special.developability}</span>
+                                )}
+                              </p>
+                              {zoningPreview.special.honest && (
+                                <p className="text-[10px] leading-5 text-[var(--text-secondary)] font-medium">
+                                  {zoningPreview.special.honest}
+                                </p>
+                              )}
+                            </div>
                           )}
-                          {zoningPreview.landCategory && (
-                            <> 지목: <span className="font-bold">{zoningPreview.landCategory}</span>.</>
-                          )}
-                        </p>
+                        </div>
                       ) : address.length >= 5 ? (
                         <p className="text-xs leading-relaxed text-[var(--text-secondary)] font-medium">
                           용도지역 정보를 조회할 수 없습니다. 분석 시작 후 상세 결과를 확인하세요.

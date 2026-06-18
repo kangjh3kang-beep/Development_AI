@@ -758,6 +758,9 @@ export default function SiteAnalysisPage() {
               effectiveFar: effFarSeed ?? null,
               source: zl?.max_far_pct != null ? "법정상한(zoning/analyze)" : "법정상한(용도지역 추정)",
               legalBasis: zl?.legal_basis || "국토계획법 시행령 제85조(용적률)",
+              // 이 effective*는 아직 법정상한 시드(조례/계획 승격 전 잠정값)임을 명시 —
+              // 하류가 승격 전 값을 '확정 실효'로 오인하지 않도록 구분(L818~ 승격 시 false).
+              seededFromLegal: true,
             }
           : null;
       updateSiteAnalysis({
@@ -833,6 +836,8 @@ export default function SiteAnalysisPage() {
               effectiveFar: efPct ?? prev?.effectiveFar ?? 0,
               source: ef?.far_basis ?? (ef?.ordinance_confirmed ? "조례확정(zoning/comprehensive)" : (prev?.source ?? "실효용적률(zoning/comprehensive)")),
               legalBasis: prev?.legalBasis ?? "국토계획법 시행령 제85조(용적률)",
+              // 실효용적률 실값 승격 — 더 이상 법정상한 잠정 시드가 아님.
+              seededFromLegal: false,
             },
           });
         }

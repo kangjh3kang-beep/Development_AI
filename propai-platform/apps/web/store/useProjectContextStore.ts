@@ -38,6 +38,10 @@ interface OrdinanceData {
   effectiveFar: number | null;
   source: string; // "법제처API" | "캐시DB" | "법정상한"
   legalBasis: string;
+  // 실효값이 아직 '법정상한 시드'(조례/계획 승격 전 잠정값)인지 표기.
+  // true면 하류·표시단이 effectiveBcr/Far를 '확정 실효'가 아닌 '잠정 법정상한'으로 구분해야 한다.
+  // calc_effective_far 실값 승격(zoning/comprehensive) 시 false 또는 미설정으로 갱신.
+  seededFromLegal?: boolean;
 }
 
 /** 건축물대장 정보 */

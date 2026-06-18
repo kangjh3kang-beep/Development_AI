@@ -21,6 +21,25 @@ type SpecialDistrict = {
   bonus_far: number | null;
 };
 
+/** far_tier_service.calc_effective_far 산출(법정/조례/실효 분리). 옵셔널·하위호환 — 구버전 백엔드는 부재. */
+type EffectiveFar = {
+  national_far_pct?: number | null;   // 법정 상한 용적률
+  national_bcr_pct?: number | null;   // 법정 상한 건폐율
+  effective_far_pct?: number | null;  // 실효 용적률(min 법정/조례/계획)
+  effective_bcr_pct?: number | null;  // 실효 건폐율
+  far_basis?: string | null;
+};
+
+/** special_parcel.detect_special_parcel 산출(임야·학교용지·GB·맹지 등 특이부지 게이트). 옵셔널. */
+type SpecialParcel = {
+  is_special?: boolean | null;
+  developability?: string | null;     // POSSIBLE|CONDITIONAL|PRECONDITION|RESTRICTED|BLOCKED
+  resolvable?: string | null;         // YES|CONDITIONAL|NO
+  severity_label?: string | null;
+  factors?: Array<{ category?: string | null } | string> | null;
+  honest_disclosure?: string | null;
+};
+
 /** 법령 원문링크 근거(레지스트리 get_legal_refs 출력) — 옵셔널·하위호환.
  * url은 백엔드가 검증한 값만 들어오며(프론트 조립 금지), 없으면 LegalRefChip이
  * 자동으로 텍스트 폴백한다(할루시네이션 링크 금지). 구버전 백엔드는 이 필드 부재. */
@@ -45,6 +64,10 @@ type ZoningAnalysisResponse = {
   warnings: string[];
   /** WP-D 신뢰 메타데이터(가산·옵셔널) — 없으면(구버전) 렌더 생략. */
   legal_refs?: LegalRef[] | null;
+  /** 실효용적률 계층(가산·옵셔널) — 법정상한을 실효처럼 오인하지 않도록 분리 제공. */
+  effective_far?: EffectiveFar | null;
+  /** 특이부지 게이트(가산·옵셔널) — is_special일 때만 배지/경고 렌더(무목업). */
+  special_parcel?: SpecialParcel | null;
 };
 
 /* ── Component ── */
@@ -141,6 +164,46 @@ export function AutoZoningBadge({ address }: { address: string }) {
 
   const limits = result.zone_limits;
 
+  // 실효 우선 표시 — 실효용적률 계층(effective_far)이 있으면 실효값, 없으면 법정상한(zone_limits)으로 폴백.
+  //   법정상한을 라벨 없이 '용적률'로 표시해 사용자가 실효로 오인하던 결함을 SiteAnalysisDetail/GlobalAddressSearch
+  //   정답 패턴으로 교정한다(실효<법정이면 법정상한을 보조로 병기, 무목업·과다표시 방지).
+  const ef = result.effective_far ?? null;
+  const effBcr =
+    typeof ef?.effective_bcr_pct === "number" ? ef.effective_bcr_pct : null;
+  const effFar =
+    typeof ef?.effective_far_pct === "number" ? ef.effective_far_pct : null;
+  const legalBcr =
+    (typeof ef?.national_bcr_pct === "number" ? ef.national_bcr_pct : null) ??
+    limits?.max_bcr_pct ??
+    null;
+  const legalFar =
+    (typeof ef?.national_far_pct === "number" ? ef.national_far_pct : null) ??
+    limits?.max_far_pct ??
+    null;
+  // 칩에 쓸 대표값: 실효 우선, 없으면 법정상한.
+  const showBcr = effBcr ?? legalBcr;
+  const showFar = effFar ?? legalFar;
+
+  // 특이부지 게이트 — is_special일 때만 배지/경고 렌더(없으면 미표시, 가짜 금지).
+  const sp = result.special_parcel ?? null;
+  const isSpecial = sp?.is_special === true;
+  const spFactors = (sp?.factors ?? [])
+    .map((f) =>
+      typeof f === "string" ? f.trim() : (f?.category ?? "").toString().trim(),
+    )
+    .filter((t) => t.length > 0);
+  // developability(영문 게이트) → 한국어 라벨. 미지/누락 시 severity_label 폴백, 그것도 없으면 미표기.
+  const DEVELOPABILITY_LABEL: Record<string, string> = {
+    POSSIBLE: "개발 가능",
+    CONDITIONAL: "조건부 가능",
+    PRECONDITION: "선행절차 필요",
+    RESTRICTED: "제한적",
+    BLOCKED: "개발 불가",
+  };
+  const developabilityLabel =
+    (sp?.developability && DEVELOPABILITY_LABEL[sp.developability]) ||
+    (typeof sp?.severity_label === "string" ? sp.severity_label : null);
+
   // 법령 원문링크 근거 — 백엔드(get_legal_refs)가 보낸 검증 url만 사용(프론트 조립 금지).
   // law_name이 있는 항목만 칩으로 렌더(빈 항목 방지). 구버전 백엔드는 빈 배열 → 미표시.
   const legalRefs = (result.legal_refs ?? []).filter(
@@ -156,15 +219,32 @@ export function AutoZoningBadge({ address }: { address: string }) {
           {result.zone_type}
         </span>
 
-        {/* Compact metric tiles */}
-        {limits && (
-          <>
-            <MetricChip label="건폐율" value={`${limits.max_bcr_pct}%`} />
-            <MetricChip label="용적률" value={`${limits.max_far_pct}%`} />
-            {limits.max_height_m != null && (
-              <MetricChip label="높이" value={`${limits.max_height_m}m`} />
-            )}
-          </>
+        {/* Compact metric tiles — 실효 우선 표시(실효 라벨), 실효<법정이면 법정상한 보조 병기.
+            실효값이 없으면(구버전 백엔드) 법정상한을 '법정상한' 라벨로 명시(실효 오인 방지). */}
+        {showBcr != null && (
+          <MetricChip
+            label={effBcr != null ? "건폐율(실효)" : "건폐율(법정상한)"}
+            value={`${showBcr}%`}
+            sub={
+              effBcr != null && legalBcr != null && legalBcr > effBcr
+                ? `법정 ${legalBcr}%`
+                : undefined
+            }
+          />
+        )}
+        {showFar != null && (
+          <MetricChip
+            label={effFar != null ? "용적률(실효)" : "용적률(법정상한)"}
+            value={`${showFar}%`}
+            sub={
+              effFar != null && legalFar != null && legalFar > effFar
+                ? `법정 ${legalFar}%`
+                : undefined
+            }
+          />
+        )}
+        {limits?.max_height_m != null && (
+          <MetricChip label="높이" value={`${limits.max_height_m}m`} />
         )}
 
         {/* Land area if available */}
@@ -194,6 +274,30 @@ export function AutoZoningBadge({ address }: { address: string }) {
             /* 구버전 백엔드(legal_refs 부재): legal_basis 텍스트만 칩으로 표기(url 없음 → 텍스트 폴백). */
             <LegalRefChip lawName={limits.legal_basis} />
           ) : null}
+        </div>
+      )}
+
+      {/* 특이부지 게이트 — is_special일 때만 배지+경고. 임야·학교용지·GB·맹지 등은 법정상한이
+          그대로 실현되지 않으므로 개발가능성(developability)·정직고지(honest_disclosure)를 표시한다.
+          SiteAnalysisDetail/GlobalAddressSearch 정답 패턴 복제(--status-warning 토큰). */}
+      {isSpecial && (
+        <div className="space-y-1.5 rounded-[var(--radius-lg)] border border-[color-mix(in_srgb,var(--status-warning)_36%,transparent)] bg-[color-mix(in_srgb,var(--status-warning)_10%,transparent)] px-3 py-2.5">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="rounded-full bg-[color-mix(in_srgb,var(--status-warning)_18%,transparent)] px-2.5 py-1 text-[10px] font-bold text-[var(--status-warning)]">
+              ⚠ 특이부지
+              {spFactors.length > 0 ? ` · ${spFactors.join(" · ")}` : ""}
+            </span>
+            {developabilityLabel && (
+              <span className="text-[10px] font-semibold text-[var(--status-warning)]">
+                개발가능성: {developabilityLabel}
+              </span>
+            )}
+          </div>
+          {sp?.honest_disclosure && (
+            <p className="text-[10px] leading-5 text-[var(--text-secondary)]">
+              {sp.honest_disclosure}
+            </p>
+          )}
         </div>
       )}
 
@@ -231,15 +335,27 @@ export function AutoZoningBadge({ address }: { address: string }) {
 
 /* ── MetricChip ── */
 
-function MetricChip({ label, value }: { label: string; value: string }) {
+function MetricChip({
+  label,
+  value,
+  sub,
+}: {
+  label: string;
+  value: string;
+  sub?: string;
+}) {
   return (
     <span className="inline-flex items-center gap-1.5 rounded-[var(--radius-lg)] bg-[var(--surface-soft)] px-3 py-1.5">
-      <span className="text-[10px] uppercase tracking-[0.16em] text-[var(--text-tertiary)]">
+      <span className="text-[10px] tracking-[0.12em] text-[var(--text-tertiary)]">
         {label}
       </span>
       <span className="text-xs font-semibold text-[var(--text-primary)]">
         {value}
       </span>
+      {/* 실효<법정일 때만 법정상한을 보조로 병기(정직 표기·과다표시 방지) */}
+      {sub && (
+        <span className="text-[10px] text-[var(--text-hint)]">{sub}</span>
+      )}
     </span>
   );
 }

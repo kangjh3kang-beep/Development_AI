@@ -45,6 +45,23 @@ type ZoningAnalysisResponse = {
   official_price_per_sqm: number | null;
   special_districts: Array<{ name: string; bonus_far: number | null }>;
   warnings: string[];
+  // 실효용적률 계층(가산·옵셔널) — 법정상한을 실효처럼 표시하지 않도록 분리 제공.
+  effective_far?: {
+    national_bcr_pct?: number | null;
+    national_far_pct?: number | null;
+    effective_bcr_pct?: number | null;
+    effective_far_pct?: number | null;
+    far_basis?: string | null;
+  } | null;
+  // 특이부지 게이트(가산·옵셔널) — is_special일 때만 게이트 카드 렌더(무목업).
+  special_parcel?: {
+    is_special?: boolean | null;
+    developability?: string | null;
+    resolvable?: string | null;
+    severity_label?: string | null;
+    factors?: Array<{ category?: string | null } | string> | null;
+    honest_disclosure?: string | null;
+  } | null;
 };
 
 type TransactionItem = {
@@ -502,12 +519,66 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
       { label: "높이 제한", value: "—", status: "warning" as const },
     ],
     summary: aiData?.summary || localResult?.summary || null,
-    buildingCoverageMax: zoningData?.zone_limits?.max_bcr_pct ?? localResult?.buildingCoverageMax ?? 0,
-    floorAreaRatioMax: zoningData?.zone_limits?.max_far_pct ?? localResult?.floorAreaRatioMax ?? 0,
+    // ── 용적/건폐 한도: 실효 우선(법정상한을 실효처럼 표시하던 결함 교정) ──
+    //   1순위 실효(effective_far 또는 store effectiveBcrPct/effectiveFarPct), 없으면 법정상한(zone_limits)/로컬.
+    //   buildingCoverageMax/floorAreaRatioMax는 화면 표시용 "실효 우선" 값이고,
+    //   legal*Max는 법정상한 보조 라벨용(실효<법정일 때만 병기).
+    buildingCoverageMax:
+      zoningData?.effective_far?.effective_bcr_pct ??
+      siteAnalysis?.effectiveBcrPct ??
+      zoningData?.zone_limits?.max_bcr_pct ??
+      localResult?.buildingCoverageMax ?? 0,
+    floorAreaRatioMax:
+      zoningData?.effective_far?.effective_far_pct ??
+      siteAnalysis?.effectiveFarPct ??
+      zoningData?.zone_limits?.max_far_pct ??
+      localResult?.floorAreaRatioMax ?? 0,
+    isEffectiveBcr:
+      zoningData?.effective_far?.effective_bcr_pct != null ||
+      siteAnalysis?.effectiveBcrPct != null,
+    isEffectiveFar:
+      zoningData?.effective_far?.effective_far_pct != null ||
+      siteAnalysis?.effectiveFarPct != null,
+    legalBcrMax:
+      zoningData?.effective_far?.national_bcr_pct ??
+      siteAnalysis?.nationalBcrPct ??
+      zoningData?.zone_limits?.max_bcr_pct ?? null,
+    legalFarMax:
+      zoningData?.effective_far?.national_far_pct ??
+      siteAnalysis?.nationalFarPct ??
+      zoningData?.zone_limits?.max_far_pct ?? null,
     heightLimit: zoningData?.zone_limits?.max_height_m ?? localResult?.heightLimit,
     officialPricePerSqm: zoningData?.official_price_per_sqm ?? null,
     landAreaSqm: zoningData?.land_area_sqm ?? null,
   };
+
+  // ── 특이부지 게이트 — API 응답 우선, 없으면 store(specialParcel) 폴백. is_special일 때만 카드 렌더. ──
+  const DEVELOPABILITY_LABEL: Record<string, string> = {
+    POSSIBLE: "개발 가능",
+    CONDITIONAL: "조건부 가능",
+    PRECONDITION: "선행절차 필요",
+    RESTRICTED: "제한적",
+    BLOCKED: "개발 불가",
+  };
+  const specialParcel = useMemo(() => {
+    const api = zoningData?.special_parcel;
+    if (api?.is_special === true) {
+      const factors = (api.factors ?? [])
+        .map((f) => (typeof f === "string" ? f.trim() : (f?.category ?? "").toString().trim()))
+        .filter((t) => t.length > 0);
+      return {
+        developability: api.developability ?? api.severity_label ?? null,
+        factors,
+        honest: api.honest_disclosure ?? null,
+      };
+    }
+    // store 폴백(mapZoningRich가 기록): isSpecial true일 때만.
+    const st = siteAnalysis?.specialParcel;
+    if (st?.isSpecial) {
+      return { developability: st.developability, factors: st.factors ?? [], honest: st.honest };
+    }
+    return null;
+  }, [zoningData?.special_parcel, siteAnalysis?.specialParcel]);
 
   const hasData = !!localResult || !!zoningData;
   const hasZoningApi = !!zoningData;
@@ -560,19 +631,50 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
               {hasData && (
                 <div className="grid grid-cols-2 gap-3">
                   <div className="rounded-xl bg-[var(--surface-muted)] p-4 border border-[var(--line)] text-center">
-                    <p className="text-[9px] font-black text-blue-400 uppercase tracking-widest mb-1">건폐율 한도</p>
+                    {/* 실효 우선 — 라벨로 실효/법정상한을 구분(법정상한을 실효처럼 오인하던 결함 교정) */}
+                    <p className="text-[9px] font-black text-blue-400 uppercase tracking-widest mb-1">
+                      건폐율 {analysis.isEffectiveBcr ? "(실효)" : "(법정상한)"}
+                    </p>
                     <p className="text-2xl font-black text-[var(--text-primary)]">
                       {analysis.buildingCoverageMax}<span className="text-xs ml-0.5">%</span>
                     </p>
+                    {/* 실효<법정일 때만 법정상한 보조 병기 */}
+                    {analysis.isEffectiveBcr && analysis.legalBcrMax != null && analysis.legalBcrMax > analysis.buildingCoverageMax && (
+                      <span className="text-[8px] text-[var(--text-hint)]">법정상한 {analysis.legalBcrMax}%</span>
+                    )}
                     {zoningLoading && <span className="text-[8px] text-[var(--text-hint)]">조회 중...</span>}
                   </div>
                   <div className="rounded-xl bg-[var(--surface-muted)] p-4 border border-[var(--line)] text-center">
-                    <p className="text-[9px] font-black text-emerald-400 uppercase tracking-widest mb-1">용적률 한도</p>
+                    <p className="text-[9px] font-black text-emerald-400 uppercase tracking-widest mb-1">
+                      용적률 {analysis.isEffectiveFar ? "(실효)" : "(법정상한)"}
+                    </p>
                     <p className="text-2xl font-black text-[var(--text-primary)]">
                       {analysis.floorAreaRatioMax}<span className="text-xs ml-0.5">%</span>
                     </p>
+                    {analysis.isEffectiveFar && analysis.legalFarMax != null && analysis.legalFarMax > analysis.floorAreaRatioMax && (
+                      <span className="text-[8px] text-[var(--text-hint)]">법정상한 {analysis.legalFarMax}%</span>
+                    )}
                     {zoningLoading && <span className="text-[8px] text-[var(--text-hint)]">조회 중...</span>}
                   </div>
+                </div>
+              )}
+
+              {/* 특이부지 게이트 카드 — is_special일 때만. 임야·학교용지·GB·맹지 등은 법정/실효 한도가
+                  그대로 실현되지 않으므로 개발가능성·정직고지를 표시(무목업: 특이 없으면 미표시). */}
+              {specialParcel && (
+                <div className="rounded-xl border border-[color-mix(in_srgb,var(--status-warning)_36%,transparent)] bg-[color-mix(in_srgb,var(--status-warning)_10%,transparent)] p-4">
+                  <p className="text-[10px] font-black text-[var(--status-warning)] uppercase tracking-widest mb-1.5 flex items-center gap-1.5">
+                    <Icons.AlertCircle />
+                    특이부지{specialParcel.factors.length > 0 ? ` · ${specialParcel.factors.join(" · ")}` : ""}
+                    {specialParcel.developability && (
+                      <span className="normal-case tracking-normal"> — {DEVELOPABILITY_LABEL[specialParcel.developability] ?? specialParcel.developability}</span>
+                    )}
+                  </p>
+                  {specialParcel.honest && (
+                    <p className="text-[10px] leading-relaxed text-[var(--text-secondary)] font-medium">
+                      {specialParcel.honest}
+                    </p>
+                  )}
                 </div>
               )}
 
@@ -747,8 +849,9 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
               <p className="text-sm font-bold text-[var(--text-secondary)]">{displayAddress}</p>
               {hasData && (
                 <p className="text-[10px] text-emerald-400 mt-1 font-bold">
-                  {analysis.zoning.current} · 건폐율 {analysis.buildingCoverageMax}% · 용적률 {analysis.floorAreaRatioMax}%
+                  {analysis.zoning.current} · 건폐율 {analysis.buildingCoverageMax}%{analysis.isEffectiveBcr ? "(실효)" : "(법정)"} · 용적률 {analysis.floorAreaRatioMax}%{analysis.isEffectiveFar ? "(실효)" : "(법정)"}
                   {analysis.landAreaSqm != null && ` · ${analysis.landAreaSqm.toLocaleString()}m²`}
+                  {specialParcel && <span className="text-[var(--status-warning)]"> · ⚠ 특이부지</span>}
                 </p>
               )}
             </div>
@@ -805,11 +908,11 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
                   <p className="font-bold text-[var(--text-primary)] mt-1">{analysis.zoning.current}</p>
                 </div>
                 <div>
-                  <p className="text-[9px] font-black text-[var(--text-hint)] uppercase">건폐율</p>
+                  <p className="text-[9px] font-black text-[var(--text-hint)] uppercase">건폐율 {analysis.isEffectiveBcr ? "(실효)" : "(법정상한)"}</p>
                   <p className="font-bold text-[var(--text-primary)] mt-1">{analysis.buildingCoverageMax}%</p>
                 </div>
                 <div>
-                  <p className="text-[9px] font-black text-[var(--text-hint)] uppercase">용적률</p>
+                  <p className="text-[9px] font-black text-[var(--text-hint)] uppercase">용적률 {analysis.isEffectiveFar ? "(실효)" : "(법정상한)"}</p>
                   <p className="font-bold text-[var(--text-primary)] mt-1">{analysis.floorAreaRatioMax}%</p>
                 </div>
                 <div>
