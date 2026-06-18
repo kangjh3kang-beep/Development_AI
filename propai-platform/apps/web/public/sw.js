@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v240-building-status";
+const CACHE_NAME = "propai-v241-dong-autoresolve";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

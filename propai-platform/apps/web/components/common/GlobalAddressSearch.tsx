@@ -275,6 +275,25 @@ export function GlobalAddressSearch({
       (!e.areaSqm || !e.zoneCode || e.bcrPct == null || e.isAggregate === undefined),
     );
     if (need.length === 0) return;
+    // ★같은 동(법정동명) 형제 bcode 전파 — "○○동 번지"만(시·군·구 없이) 입력된 필지는
+    //   동명이의 가드로 ambiguous→면적 미적재된다. 같은 배치에 동일 동명으로 bcode(또는 pnu
+    //   앞10자리)가 확보된 형제가 있으면 그 bcode를 물려받아(동일 동명=동일 bcode) 백엔드가
+    //   bcode+지번으로 정밀 적재하게 한다. 시군구 없는 무더기 입력(예 상도동 211-xxx) 자동복구.
+    const dongOf = (addr: string): string => {
+      const m = (addr || "").match(/([가-힣]+(?:동|읍|면|리))(?:\s|$)/);
+      return m ? m[1] : "";
+    };
+    const dongBcode = new Map<string, string>();
+    for (const e of entries) {
+      const b = e.bcode || (e.pnu && e.pnu.length >= 10 ? e.pnu.slice(0, 10) : "");
+      const d = dongOf(e.fullAddress || e.jibunAddress || "");
+      if (b && b.length >= 10 && d && !dongBcode.has(d)) dongBcode.set(d, b.slice(0, 10));
+    }
+    const bcodeFor = (e: AddressEntry): string => {
+      if (e.bcode) return e.bcode;
+      const d = dongOf(e.fullAddress || e.jibunAddress || "");
+      return (d && dongBcode.get(d)) || "";
+    };
     type P = {
       __rid?: number; area_sqm?: number | null; zone_type?: string | null; jimok?: string | null;
       pnu?: string | null; official_price_per_sqm?: number | null; bcr_pct?: number | null; far_pct?: number | null;
@@ -289,7 +308,7 @@ export function GlobalAddressSearch({
       let parcels: P[] = [];
       try {
         const r = await apiClient.post<{ parcels: P[] }>("/zoning/parcels-info", {
-          body: { parcels: slice.map((e, i) => ({ __rid: i, address: e.fullAddress, jibun: e.jibunAddress, pnu: e.pnu, bcode: e.bcode })) },
+          body: { parcels: slice.map((e, i) => ({ __rid: i, address: e.fullAddress, jibun: e.jibunAddress || e.fullAddress, pnu: e.pnu, bcode: bcodeFor(e) })) },
           useMock: false, timeoutMs: 90000,
         });
         parcels = r.parcels || [];

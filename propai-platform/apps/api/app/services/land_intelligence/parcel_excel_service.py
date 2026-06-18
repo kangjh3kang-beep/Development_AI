@@ -574,13 +574,39 @@ class ParcelExcelService:
                 p["reason"] = (f"지오코딩 결과 지역({gp[:5]})이 입력 법정동({in_bcode[:5]})과 불일치 — "
                                "동명이의 가능. 시·군·구 포함 정확한 주소로 보완하세요.")
                 return
-            # C2 보강: bcode가 없고 주소에 시/도·시/군/구 행정접두가 없는 '순수 동명'은
-            # 동명이의 오매칭 위험이 크므로 자동확정 금지(번지만으론 지역 특정 불가).
-            if not in_bcode and not re.search(r"(특별시|광역시|특별자치시|특별자치도|[가-힣]+도)\s|[가-힣]+시\s|[가-힣]+군\s|[가-힣]+구\s", (addr + " ")):
-                p["status"] = "ambiguous"
-                p["reason"] = ("시·군·구가 없는 동명만 입력 — 동명이의(예: 여러 지역의 동일 동명) 오매칭 "
-                               "위험으로 자동확정하지 않음. 시·군·구를 포함한 주소로 보완하세요.")
-                return
+            # C2 보강(★사용자요청 — 법정동+번지 자동해석): bcode·시군구 없는 '순수 동명'이라도 번지가
+            #   있으면 검색 API(search_address) 후보가 '단일 법정동(동일 bcode 10자리)'으로 수렴하는지
+            #   확인한다. 단일 수렴=동명이의 아님 → 그 필지로 자동확정 + 전체 시군구 주소 자동보완.
+            #   복수 법정동(진짜 동명이의)이면 ambiguous 정직표기(가짜 확신 금지).
+            _has_sigungu = re.search(
+                r"(특별시|광역시|특별자치시|특별자치도|[가-힣]+도)\s|[가-힣]+시\s|[가-힣]+군\s|[가-힣]+구\s",
+                (addr + " "),
+            )
+            if not in_bcode and not _has_sigungu:
+                resolved = False
+                if re.search(r"\d", f"{addr} {jibun}"):  # 번지(숫자) 있어야 의미
+                    try:
+                        async with sem:
+                            cands = await vworld.search_address(query, size=8)
+                    except Exception:  # noqa: BLE001
+                        cands = []
+                    cand_pnus = [str(c.get("pnu") or "") for c in cands if len(str(c.get("pnu") or "")) == 19]
+                    bcodes = {cp[:10] for cp in cand_pnus}
+                    if len(bcodes) == 1 and cand_pnus:
+                        # 단일 법정동 수렴 → 최적 후보(첫 후보=검색 best match)로 확정.
+                        chosen = next((c for c in cands if str(c.get("pnu") or "") in cand_pnus), cands[0])
+                        gp = str(chosen.get("pnu") or "") or gp
+                        p["address"] = chosen.get("address") or addr  # 전체 시군구 주소 자동보완
+                        if chosen.get("lat"):
+                            p["lat"] = chosen.get("lat")
+                        if chosen.get("lon"):
+                            p["lon"] = chosen.get("lon")
+                        resolved = True
+                if not resolved:
+                    p["status"] = "ambiguous"
+                    p["reason"] = ("시·군·구 없는 동명 — 검색 결과가 여러 법정동(동명이의)으로 갈려 자동확정하지 "
+                                   "않음. 시·군·구를 포함하거나 정확한 지번을 선택해 주세요.")
+                    return
             # C2-2: 번지(본번) 숫자가 전혀 없는 '동·읍·면 단위' 주소는 지오코딩이 동 대표지점
             #   1필지로 수렴 → 여러 행이 같은 필지(동일 면적·지목)로 잘못 매핑된다(예: '서울 동작구
             #   상도동' 53㎡·지목 전이 반복). 자동확정 금지(번지 필요). 도로명·지번은 숫자를 포함.
