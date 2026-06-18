@@ -54,7 +54,13 @@ async def sales_rls_apply(
     current: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """RLS ENABLE + p_site/p_org 멱등 적용. only_table(카나리)·dry_run 지원."""
+    """RLS ENABLE+FORCE + p_site/p_org 멱등 적용. only_table(카나리)·dry_run 지원.
+
+    ★권한거부 응답계약 구분 신호: 이 관리자 엔드포인트는 app 계층(_require_admin)에서
+    권한 미달 시 403 을 반환한다. 반면 일반 sales 업무 엔드포인트의 '데이터 거부'는
+    RLS 정책이 0행(빈 결과)으로 fail-closed 시킨다(403 아님). 즉 403=app계층 권한거부,
+    0행=RLS 격리거부 로 신호가 다르다(둘을 혼동하지 말 것).
+    """
     await _require_admin(current, db)
     return await sales_rls_bootstrap.ensure_sales_rls(
         db, only_table=req.only_table, dry_run=req.dry_run

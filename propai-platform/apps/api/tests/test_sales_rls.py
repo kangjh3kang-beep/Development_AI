@@ -6,7 +6,11 @@
 - 마이그레이션 정본(v62_2_sales_rls)과 런타임 부트스트랩의 USING 절이 1:1 일치하는지.
 - deps_sales._apply_session_ctx 가 set_config(..., is_local=true)=SET LOCAL 로만 주입하는지
   (풀러 누수 방지) + 빈 org_path 를 'none' 센티넬이 아닌 ''(→정책 nullif→NULL) 로 주입하는지.
-- sales_crypto: 평문 미저장·timing-safe verify(hmac.compare_digest).
+- deps_sales._site_token_ctx 가 토큰만 신뢰하지 않고 멤버십(deleted_at IS NULL)을 DB
+  재검증하는지(8h 권한지연 제거).
+- sales_crypto: 평문 미저장·결정적 블라인드 인덱스·프로덕션 폴백키 fail-fast.
+- rls_status 가 접속 role BYPASSRLS 를 노출하고 isolation_effective 경고를 내는지(false assurance 차단).
+- v62_2 downgrade(_DISABLE)가 RLS DISABLE 뿐 아니라 정책 DROP 까지 수행하는지(orphan 정책 차단).
 
 ★deploy-pending(샌드박스 불가) = skip: 실제 RLS 행노출(FORCE 실효·풀러 세션 누수)은 라이브
 PostgreSQL + non-bypassrls role 이 있어야 검증 가능하다. 해당 테스트는 명시적 skip 마크.
@@ -258,16 +262,41 @@ def test_encrypt_none_is_empty():
     assert sales_crypto.encrypt(None) == ""
 
 
-def test_verify_is_timing_safe_and_correct():
-    blind = sales_crypto.encrypt("acct-9999")
-    assert sales_crypto.verify("acct-9999", blind) is True
-    assert sales_crypto.verify("acct-0000", blind) is False
-    assert sales_crypto.verify(None, blind) is False
-    assert sales_crypto.verify("acct-9999", None) is False
+def test_verify_helper_removed_yagni():
+    """미배선 timing-safe verify 헬퍼는 YAGNI 로 제거됐다(호출부 0건). 재추가 회귀 차단."""
+    assert not hasattr(sales_crypto, "verify")
 
 
 def test_decrypt_unsupported_returns_none():
     assert sales_crypto.decrypt("anything") is None
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# (4) sales_crypto._key — 프로덕션 폴백키 silent 사용 차단(fail-fast).
+# ──────────────────────────────────────────────────────────────────────────────
+def test_key_falls_back_in_dev(monkeypatch):
+    """dev/test 환경 + 키 미설정 → 폴백키 사용(예외 없음). 명시 경고는 1회."""
+    monkeypatch.delenv("SALES_ENC_KEY", raising=False)
+    monkeypatch.delenv("APP_SECRET_KEY", raising=False)
+    monkeypatch.setenv("APP_ENV", "development")
+    assert sales_crypto._key() == sales_crypto._DEV_FALLBACK_KEY.encode()
+
+
+def test_key_fail_fast_in_production_when_unset(monkeypatch):
+    """프로덕션(APP_ENV≠dev/test) + 키 미설정 → 예외로 차단(약한 폴백키 silent 사용 금지)."""
+    monkeypatch.delenv("SALES_ENC_KEY", raising=False)
+    monkeypatch.delenv("APP_SECRET_KEY", raising=False)
+    monkeypatch.setenv("APP_ENV", "production")
+    with pytest.raises(RuntimeError):
+        sales_crypto._key()
+
+
+def test_key_uses_env_in_production(monkeypatch):
+    """프로덕션이라도 강한 키가 설정돼 있으면 그 키를 사용(폴백 아님)."""
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("SALES_ENC_KEY", "a-strong-production-key")
+    monkeypatch.delenv("APP_SECRET_KEY", raising=False)
+    assert sales_crypto._key() == b"a-strong-production-key"
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -283,8 +312,10 @@ def test_migration_force_only_inside_site_id_guard():
     sql = _read_migration_sql()
     # FORCE 는 등장하되, IF EXISTS(site_id) 가드 블록 '뒤'에 위치해야 한다(가드 안에서 실행).
     assert "FORCE ROW LEVEL SECURITY" in sql
-    guard = "WHERE table_name=r.tablename AND column_name='site_id'"
+    # site_id 검출 가드(IF EXISTS) — public 스키마 한정자 포함(부트스트랩과 드리프트 제거).
+    guard = "column_name='site_id'"
     assert guard in sql
+    assert "table_schema='public'" in sql  # 가드가 public 스키마로 한정됨.
     # 가드보다 먼저 나오는 FORCE 가 있으면(=루프 상단 무차별 적용) 회귀.
     first_guard = sql.index(guard)
     first_force = sql.index("FORCE ROW LEVEL SECURITY")
@@ -417,6 +448,189 @@ def test_sales_ctx_membership_filters_soft_deleted():
     src = inspect.getsource(deps_sales.sales_ctx)
     assert "SalesOrgNode.deleted_at.is_(None)" in src
     assert "SalesOrgNode.active.is_(True)" in src  # 기존 필터 보존(무회귀).
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# (1) _site_token_ctx — 토큰만 신뢰 금지: 멤버십(deleted_at IS NULL) DB 재검증.
+#     8h 권한지연 제거(해촉/soft-delete 직원은 토큰 만료 전에도 즉시 거부).
+# ──────────────────────────────────────────────────────────────────────────────
+class _TokenFakeDB:
+    """_site_token_ctx 의 멤버십 SELECT 결과만 제어하는 가짜 async DB."""
+
+    def __init__(self, node):
+        self._node = node
+
+    async def execute(self, statement, params=None):
+        node = self._node
+
+        class _R:
+            def scalar_one_or_none(self):
+                return node
+
+        return _R()
+
+
+class _Req:
+    def __init__(self, token):
+        self.headers = {"x-site-token": token} if token else {}
+
+
+class _User:
+    def __init__(self, uid):
+        self.id = uid
+
+
+class _Node:
+    def __init__(self, path, node_type):
+        self.path = path
+        self.node_type = node_type
+
+
+def test_site_token_ctx_reverifies_membership_in_db_marker():
+    """소스 가드: _site_token_ctx 가 토큰 디코드 후 SalesOrgNode + deleted_at.is_(None) 을 재조회한다."""
+    import inspect
+
+    src = inspect.getsource(deps_sales._site_token_ctx)
+    assert "SalesOrgNode.deleted_at.is_(None)" in src
+    assert "SalesOrgNode.active.is_(True)" in src
+    # 토큰 클레임(org_path/site_role)만 그대로 신뢰하는 과거 경로가 남으면 회귀.
+    assert 'payload.get("site_role")' not in src
+
+
+@pytest.mark.asyncio
+async def test_site_token_ctx_live_node_returns_db_role(monkeypatch):
+    """살아있는 노드가 있으면 토큰 클레임이 아닌 DB 최신 (path, node_type) 을 반환(강등 즉시반영)."""
+    sid = "11111111-1111-1111-1111-111111111111"
+    uid = "22222222-2222-2222-2222-222222222222"
+    from app.api.endpoints.sales import site_auth
+
+    monkeypatch.setattr(
+        site_auth, "decode_site_token",
+        lambda raw: {"site_id": sid, "sub": uid, "org_path": "root.old", "site_role": "AGENCY"},
+    )
+    db = _TokenFakeDB(node=_Node("root.new.member", "MEMBER"))
+    res = await deps_sales._site_token_ctx(_Req("tok"), db, _User(uid), sid)
+    assert res == ("root.new.member", "MEMBER")  # 토큰의 AGENCY/root.old 가 아닌 DB 최신값.
+
+
+@pytest.mark.asyncio
+async def test_site_token_ctx_soft_deleted_member_rejected(monkeypatch):
+    """해촉/soft-delete(노드 없음) → None 반환 → 비토큰 경로 403 게이트로 일원화(8h 지연 제거)."""
+    sid = "11111111-1111-1111-1111-111111111111"
+    uid = "22222222-2222-2222-2222-222222222222"
+    from app.api.endpoints.sales import site_auth
+
+    monkeypatch.setattr(
+        site_auth, "decode_site_token",
+        lambda raw: {"site_id": sid, "sub": uid, "org_path": "root.old", "site_role": "AGENCY"},
+    )
+    db = _TokenFakeDB(node=None)  # 멤버십 없음(해촉/삭제)
+    res = await deps_sales._site_token_ctx(_Req("tok"), db, _User(uid), sid)
+    assert res is None
+
+
+@pytest.mark.asyncio
+async def test_site_token_ctx_no_token_returns_none():
+    """X-Site-Token 헤더 없으면 None(비토큰 경로로 진행)."""
+    db = _TokenFakeDB(node=_Node("p", "MEMBER"))
+    res = await deps_sales._site_token_ctx(_Req(None), db, _User("u"), "s")
+    assert res is None
+
+
+@pytest.mark.asyncio
+async def test_site_token_ctx_wrong_site_or_user_returns_none(monkeypatch):
+    """다른 현장/사용자 토큰은 거부(None)."""
+    from app.api.endpoints.sales import site_auth
+
+    monkeypatch.setattr(
+        site_auth, "decode_site_token",
+        lambda raw: {"site_id": "other-site", "sub": "u1", "org_path": "", "site_role": "MEMBER"},
+    )
+    db = _TokenFakeDB(node=_Node("p", "MEMBER"))
+    # site 불일치
+    assert await deps_sales._site_token_ctx(_Req("tok"), db, _User("u1"), "this-site") is None
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# (2) rls_status — 접속 role BYPASSRLS 노출 + isolation_effective 경고(false assurance 차단).
+# ──────────────────────────────────────────────────────────────────────────────
+class _StatusFakeDB:
+    """rls_status 의 _SQL_STATUS / _SQL_BYPASSRLS 결과를 제어하는 가짜 async DB."""
+
+    def __init__(self, status_rows, bypass_row):
+        self._status = status_rows
+        self._bypass = bypass_row
+
+    async def execute(self, statement, params=None):
+        sql = str(getattr(statement, "text", statement))
+        rows = self._status
+        bypass = self._bypass
+
+        class _R:
+            def fetchall(self):
+                return rows
+
+            def first(self):
+                return bypass
+
+        if "rolbypassrls" in sql:
+            class _B:
+                def fetchall(self):
+                    return [bypass] if bypass else []
+
+                def first(self):
+                    return bypass
+
+            return _B()
+        return _R()
+
+
+class _Bypass:
+    def __init__(self, current_user, bypassrls):
+        self.current_user = current_user
+        self.bypassrls = bypassrls
+
+
+@pytest.mark.asyncio
+async def test_rls_status_exposes_bypassrls_and_warns_when_ineffective():
+    """forced 테이블이 있는데 접속 role 이 BYPASSRLS → isolation_effective=false + 경고."""
+    status_rows = [("sales_units", True, True, 1)]  # rls_enabled, forced, policy_count
+    db = _StatusFakeDB(status_rows, _Bypass("propai_user", True))
+    res = await boot.rls_status(db)
+    assert res["forced"] == 1
+    assert res["current_user"] == "propai_user"
+    assert res["bypassrls"] is True
+    assert res["isolation_effective"] is False
+    assert res["isolation_warning"]  # 경고 메시지 비어있지 않음.
+
+
+@pytest.mark.asyncio
+async def test_rls_status_effective_when_non_bypass_role():
+    """non-bypassrls role + forced → isolation_effective=true(경고 없음)."""
+    status_rows = [("sales_units", True, True, 1)]
+    db = _StatusFakeDB(status_rows, _Bypass("propai_app", False))
+    res = await boot.rls_status(db)
+    assert res["bypassrls"] is False
+    assert res["isolation_effective"] is True
+    assert res["isolation_warning"] is None
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# (3) v62_2 downgrade(_DISABLE) — DISABLE 뿐 아니라 정책 DROP 까지(orphan 정책 차단).
+#     + _ENABLE IF EXISTS 에 table_schema='public' 한정자(부트스트랩과 드리프트 제거).
+# ──────────────────────────────────────────────────────────────────────────────
+def test_migration_downgrade_drops_policies():
+    sql = _read_migration_sql()
+    # _DISABLE 블록(downgrade)에 정책 DROP 이 포함돼야 함(런타임 disable_sales_rls 와 정합).
+    assert "DROP POLICY IF EXISTS p_site ON %I" in sql
+    assert "DROP POLICY IF EXISTS p_org ON %I" in sql
+    assert "DISABLE ROW LEVEL SECURITY" in sql
+
+
+def test_migration_enable_guard_qualifies_public_schema():
+    sql = _read_migration_sql()
+    # site_id 판정 IF EXISTS 가 table_schema='public' 로 한정돼야 함(부트스트랩 _SQL_SITE_TABLES 정합).
+    assert "table_schema='public' AND table_name=r.tablename" in sql
 
 
 # ──────────────────────────────────────────────────────────────────────────────

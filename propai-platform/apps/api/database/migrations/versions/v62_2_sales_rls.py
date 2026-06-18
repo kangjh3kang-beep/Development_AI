@@ -57,8 +57,11 @@ BEGIN
   LOOP
     -- ★ENABLE+FORCE 는 site_id 보유 테이블(=p_site 가 실제 생기는 테이블)에만 적용한다.
     --   정책 0개 테이블에 FORCE 를 걸면 non-bypassrls role 에서 '전 행 거부'로 앱이 브릭된다.
+    -- ★table_schema='public' 한정자: 부트스트랩 _SQL_SITE_TABLES 와 동일 스키마 기준으로
+    --   판정해 다른 스키마의 동명 테이블이 끼어드는 드리프트를 제거한다(범위 1:1 정합).
     IF EXISTS (SELECT 1 FROM information_schema.columns
-               WHERE table_name=r.tablename AND column_name='site_id') THEN
+               WHERE table_schema='public' AND table_name=r.tablename
+                 AND column_name='site_id') THEN
       EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY;', r.tablename);
       EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY;', r.tablename);
       EXECUTE format('DROP POLICY IF EXISTS p_site ON %I;', r.tablename);
@@ -83,7 +86,14 @@ DO $$ DECLARE r record;
 BEGIN
   FOR r IN SELECT tablename FROM pg_tables
            WHERE schemaname='public' AND (tablename LIKE 'sales\_%' OR tablename LIKE 'mh\_%')
-  LOOP EXECUTE format('ALTER TABLE %I DISABLE ROW LEVEL SECURITY;', r.tablename); END LOOP;
+  LOOP
+    -- ★정책 DROP 까지 수행해 런타임 disable_sales_rls(DROP 포함)와 1:1 정합화한다.
+    --   DISABLE 만 하면 정책(p_site/p_org)이 orphan 으로 남아 재ENABLE 시 의도치 않게
+    --   되살아난다(롤백 불완전). DROP IF EXISTS 로 멱등하게 제거한다.
+    EXECUTE format('DROP POLICY IF EXISTS p_site ON %I;', r.tablename);
+    EXECUTE format('DROP POLICY IF EXISTS p_org ON %I;', r.tablename);
+    EXECUTE format('ALTER TABLE %I DISABLE ROW LEVEL SECURITY;', r.tablename);
+  END LOOP;
 END $$;
 """
 

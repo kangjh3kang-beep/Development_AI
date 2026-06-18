@@ -97,6 +97,15 @@ WHERE t.table_schema = 'public'
 ORDER BY t.table_name
 """
 
+# 접속 role 의 BYPASSRLS 여부(★false assurance 방지). BYPASSRLS role 이면 FORCE 여부와
+# 무관하게 정책이 전부 우회되므로, forced=true 만으로 '격리 실효'를 보고하면 오인이다.
+_SQL_BYPASSRLS = """
+SELECT current_user AS current_user,
+       rolbypassrls AS bypassrls
+FROM pg_roles
+WHERE rolname = current_user
+"""
+
 # 상태 집계: rowsecurity 플래그 + 정책수.
 _SQL_STATUS = """
 SELECT c.relname AS table_name,
@@ -245,7 +254,13 @@ async def ensure_sales_rls(
 
 
 async def rls_status(db) -> dict[str, Any]:
-    """sales_/mh_ 테이블별 rowsecurity·force·정책수 집계."""
+    """sales_/mh_ 테이블별 rowsecurity·force·정책수 집계 + 접속 role BYPASSRLS 노출.
+
+    ★false assurance 방지: forced=true 만 보고하면 'BYPASSRLS role 로 접속 중'인 경우
+    정책이 전부 우회됨에도 격리가 실효된 것으로 오인한다. current_user/rolbypassrls 를
+    함께 노출하고, forced 테이블이 있는데 bypassrls=true 면 isolation_effective=false 로
+    명시 경고한다(코드상 검증 — 라이브 role 분리는 deploy-pending).
+    """
     rows = (await db.execute(text(_SQL_STATUS))).fetchall()
     tables = [
         {
@@ -258,12 +273,31 @@ async def rls_status(db) -> dict[str, Any]:
     ]
     enabled = sum(1 for t in tables if t["rls_enabled"])
     with_policy = sum(1 for t in tables if t["policy_count"] > 0)
+    forced = sum(1 for t in tables if t["rls_forced"])
+
+    # 접속 role 의 BYPASSRLS 여부 조회(연결 사용자가 정책을 우회하는지).
+    br = (await db.execute(text(_SQL_BYPASSRLS))).first()
+    current_user = br.current_user if br else None
+    bypassrls = bool(br.bypassrls) if br is not None and br.bypassrls is not None else None
+
+    # 격리 실효 판정: FORCE 가 걸린 테이블이 있어도 접속 role 이 BYPASSRLS 면 정책 전부 우회됨.
+    isolation_effective = not (forced > 0 and bypassrls is True)
+
     return {
         "total": len(tables),
         "rls_enabled": enabled,
         "with_policy": with_policy,
-        "forced": sum(1 for t in tables if t["rls_forced"]),
+        "forced": forced,
         "tables": tables,
+        # ★접속 role 컨텍스트(false assurance 차단).
+        "current_user": current_user,
+        "bypassrls": bypassrls,
+        "isolation_effective": isolation_effective,
+        "isolation_warning": (
+            None if isolation_effective
+            else "접속 role 이 BYPASSRLS 입니다 — FORCE 가 걸려도 정책이 전부 우회됩니다. "
+                 "앱 전용 non-bypassrls role 로 접속해야 세션기반 격리가 실효됩니다(deploy-pending)."
+        ),
     }
 
 

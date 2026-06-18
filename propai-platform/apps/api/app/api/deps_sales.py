@@ -148,11 +148,19 @@ async def resolve_site(request: Request, db: AsyncSession) -> SalesSite:
     return site
 
 
-def _site_token_ctx(request: Request, user, site_id):
-    """X-Site-Token(현장 세션토큰)이 있고 site_id가 일치하면 (org_path, role) 을 반환, 아니면 None.
+async def _site_token_ctx(request: Request, db: AsyncSession, user, site_id):
+    """X-Site-Token(현장 세션토큰)이 있고 멤버십이 살아있으면 (org_path, role) 을 반환, 아니면 None.
 
-    Phase1-A 현장 2차인증으로 발급된 단기 토큰. 검증된 멤버십·역할을 담고 있어
-    진입 후 매 요청 멤버십 재조회 없이 토큰 우선으로 컨텍스트를 세팅한다.
+    Phase1-A 현장 2차인증으로 발급된 단기 토큰(8h). 토큰에는 발급 시점의 멤버십·역할이
+    담겨 있지만, 그 자체만 신뢰하면 해촉/강등/soft-delete 된 직원이 토큰 만료(8h)까지
+    권한을 유지하는 '8h 권한지연' 위험이 있다(deleted_at 게이트 우회).
+
+    ★그래서 토큰 디코드 직후에도 멤버십을 DB로 1쿼리 재검증한다(가벼운 검증).
+    - SalesOrgNode(site_id, user_id, active=True, deleted_at IS NULL) 이 존재하면 그 노드의
+      최신 (path, node_type) 을 그대로 사용한다 → 강등(역할 변경)도 즉시 반영된다.
+    - 노드가 없으면(=해촉/삭제) 멤버십 폴백(SUPERADMIN/DEVELOPER/owns_site)을 확인하고,
+      그래도 권한이 없으면 토큰을 거부(None 반환)해 비토큰 경로의 401/403 게이트로 넘긴다.
+    - 즉 토큰 경로와 비토큰 멤버십 게이트의 판정 기준을 1:1 로 일원화한다(토큰만 신뢰 금지).
     """
     raw = request.headers.get("x-site-token")
     if not raw:
@@ -166,7 +174,23 @@ def _site_token_ctx(request: Request, user, site_id):
         return None
     if str(payload.get("sub")) != str(getattr(user, "id", "")):
         return None
-    return (payload.get("org_path") or "", payload.get("site_role") or "")
+
+    # ★멤버십 DB 재검증(8h 권한지연 제거): 살아있는 조직노드가 있으면 그 최신 역할을 사용.
+    node = (await db.execute(
+        select(SalesOrgNode).where(
+            SalesOrgNode.site_id == site_id,
+            SalesOrgNode.user_id == user.id,
+            SalesOrgNode.active.is_(True),
+            SalesOrgNode.deleted_at.is_(None),
+        )
+    )).scalar_one_or_none()
+    if node is not None:
+        # 토큰 클레임이 아닌 DB 최신값을 신뢰 — 강등/이동도 즉시 반영.
+        return (str(node.path), node.node_type)
+
+    # 조직노드가 없는 토큰: 플랫폼 폴백 역할(SUPERADMIN/DEVELOPER/owns_site)만 허용한다.
+    # 폴백 자격도 없으면 토큰 거부(None) → 비토큰 경로에서 403 재판정.
+    return None
 
 
 async def sales_ctx(request: Request, db: AsyncSession = Depends(get_db),
@@ -174,8 +198,10 @@ async def sales_ctx(request: Request, db: AsyncSession = Depends(get_db),
     site = await resolve_site(request, db)
     site_id = site.id
 
-    # ── 토큰 우선: 현장 세션토큰(X-Site-Token)이 유효하면 멤버십 재조회 없이 컨텍스트 세팅 ──
-    tok = _site_token_ctx(request, user, site_id)
+    # ── 토큰 우선: 현장 세션토큰(X-Site-Token) + 멤버십 DB 재검증(8h 권한지연 제거) ──
+    # 토큰만 신뢰하지 않고 살아있는 조직노드를 1쿼리 재확인한다. 노드 없으면(해촉/삭제)
+    # None 을 받아 아래 비토큰 분기(폴백 역할 재판정 + 403 게이트)로 일원화 처리한다.
+    tok = await _site_token_ctx(request, db, user, site_id)
     if tok is not None:
         org_path, role = tok
     else:
