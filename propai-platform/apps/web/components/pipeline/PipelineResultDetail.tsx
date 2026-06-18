@@ -428,7 +428,9 @@ export function PipelineResultDetail({ result, onRerun, addresses }: PipelineRes
         .postV2<{ ok?: boolean; sections?: Record<string, string> }>("/pipeline/interpret", {
           // E1: use_verification_retry=true → 검증관(VerifierService)이 fail/high 판정 시
           // LLM 1회 재생성하는 기 구현 피드백루프를 활성화한다(없으면 단발 생성).
-          body: { stage: stg, data, context, use_verification_retry: true }, useMock: false, timeoutMs: 35000,
+          // 11개 섹션 + 검증 재생성은 첫 생성이 ~60~90초 걸릴 수 있다(이후 서버 캐시로 즉시).
+          // 35s면 정상 생성도 타임아웃→'지연' 오표시되므로 120s로 상향(서버는 완료 후 캐시).
+          body: { stage: stg, data, context, use_verification_retry: true }, useMock: false, timeoutMs: 120000,
         })
         .then((r) => {
           const secs = (r?.sections || {}) as Record<string, string>;
@@ -853,7 +855,7 @@ export function PipelineResultDetail({ result, onRerun, addresses }: PipelineRes
               <div className="flex items-center gap-2">
                 <span className="text-[var(--accent-strong)]"><IconSparkle /></span>
                 <h4 className="text-sm font-bold text-[var(--accent-strong)]">AI 상세 해석</h4>
-                {isLoading && <span className="text-[11px] text-[var(--text-hint)]">생성 중…</span>}
+                {isLoading && <span className="text-[11px] text-[var(--text-hint)]">생성 중… (최대 1~2분, 완료 후 자동 표시)</span>}
               </div>
               {narr.map((n, i) => (
                 <div key={i} className="rounded-xl border border-[var(--accent-strong)]/15 bg-[var(--accent-soft)]/30 p-4">
@@ -870,7 +872,7 @@ export function PipelineResultDetail({ result, onRerun, addresses }: PipelineRes
               )}
               {hasErr && (
                 <div className="flex items-center gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-400">
-                  <span>해석 생성이 지연되었습니다.</span>
+                  <span>해석 생성이 길어지고 있습니다 — 잠시 후 재시도하면 (서버에 생성·캐시된) 결과가 즉시 표시됩니다.</span>
                   <button onClick={() => fetchNarr(stg, true, true)} className="rounded-md border border-amber-500/40 px-2.5 py-1 font-bold hover:bg-amber-500/10">↻ 재시도</button>
                 </div>
               )}
