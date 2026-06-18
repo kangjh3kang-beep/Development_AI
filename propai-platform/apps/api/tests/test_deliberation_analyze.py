@@ -718,6 +718,26 @@ def test_analyze_audit_records_authoritative_with_ih(monkeypatch):
     assert captured["metadata"]["decision"] == "authoritative" and captured["metadata"]["input_hash"] == ih
 
 
+def test_analyze_audit_chain_key_matches_platform_canonical(monkeypatch):
+    # 감사 체인 키=플랫폼 표준 str(tenant_id)(하이픈) — hex/하이픈 분열 방지. binding hex는 metadata 교차참조.
+    ih = analysis_input_hash(build_input_dump(_PAYLOAD))
+    captured: dict = {}
+    async def lookup(**kw):
+        return None
+    async def post(dump, deterministic=True, tenant=None):
+        return _engine_result(ih), "ok"
+    async def insert(**kw):
+        return True
+    async def audit(**kw):
+        captured.update(kw)
+        return {"ok": True}
+    c = _client(monkeypatch, lookup=lookup, post=post, insert=insert, audit=audit)
+    c.post("/api/v1/deliberation/analyze", json=_PAYLOAD)
+    assert captured["tenant_id"] == str(_TID)              # 하이픈 UUID(플랫폼 audit 표준 == str(tenant_id))
+    assert "-" in captured["tenant_id"]                     # hex 아님(체인 통일)
+    assert captured["metadata"]["binding_tenant"] == _TID.hex  # 결속 hex 교차참조 보존
+
+
 # ── 비동기 경로(클러스터 D): POST /analyze/async · GET /analyze/task/{run_id} ──
 
 

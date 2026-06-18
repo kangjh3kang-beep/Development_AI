@@ -113,11 +113,18 @@ async def deliberation_health(_user=Depends(get_current_user)) -> dict[str, Any]
 
 
 def _tenant(user: Any) -> str:
-    """테넌트 정규화 키(32자 소문자, 하이픈 없음) — 결속·격리 일관."""
+    """테넌트 정규화 키(32자 소문자, 하이픈 없음) — 결속(engine_run_binding)·엔진 X-Tenant-Id 격리 일관."""
     tid = getattr(user, "tenant_id", None)
     if isinstance(tid, uuid.UUID):
         return tid.hex
     return str(tid or "").replace("-", "").lower()
+
+
+def _audit_tenant(user: Any) -> str:
+    """감사 체인 키 — 플랫폼 표준(append_audit(tenant_id=str(tenant_id)), 하이픈 UUID)과 동일 표기.
+    ⚠️ _tenant(hex)와 분리: 동일 테넌트의 심의 감사가 플랫폼 타 감사와 같은 audit_stream(__audit__/<tenant>)에
+    적재돼 단일 verify_audit_chain으로 검증되도록(hex/하이픈 분열 방지). binding 키는 hex 유지(metadata 교차참조)."""
+    return str(getattr(user, "tenant_id", "") or "")
 
 
 def _is_uuid(value: Any) -> bool:
@@ -145,8 +152,9 @@ async def _record_audit(user: Any, tenant: str, *, action: str, run_id: str | No
     try:
         r = await append_audit(
             action=action, user_id=str(getattr(user, "id", "")), resource_type="deliberation",
-            resource_id=str(run_id or "none"), tenant_id=tenant,
-            metadata={"input_hash": input_hash, "decision": decision, "http_status": http_status},
+            resource_id=str(run_id or "none"), tenant_id=_audit_tenant(user),  # 플랫폼 표준 체인 키
+            metadata={"input_hash": input_hash, "decision": decision, "http_status": http_status,
+                      "binding_tenant": tenant},  # 결속 hex 교차참조(체인 키와 분리)
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("deliberation_audit_failed", action=action, err=str(exc)[:200])
