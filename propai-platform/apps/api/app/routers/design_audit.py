@@ -399,6 +399,20 @@ async def _execute_run(
     except Exception as e:  # noqa: BLE001
         logger.warning("원장 배선 append 실패(design_audit)", err=str(e)[:160])
 
+    # 중심엔진 수렴 관측(shadow, 기본 off·best-effort·무중단): 종합 verdict + 체크별 current/limit를 엔진과 대조.
+    try:
+        from app.services.deliberation import shadow_integration, shadow_mappers
+
+        _tid = str(getattr(current, "tenant_id", "") or "") or None
+        mapped = shadow_mappers.design_audit({"overall": overall, "findings": findings})
+        if mapped and _tid:
+            _v, _payload, _val = mapped
+            await shadow_integration.shadow_compare(
+                tenant_id=_tid, domain="design_audit",
+                platform_verdict=_v, engine_payload=_payload, platform_value=_val)
+    except Exception as e:  # noqa: BLE001 — 관측은 심사 흐름 절대 방해 금지
+        logger.warning("shadow 관측 실패(design_audit)", err=str(e)[:120])
+
     return {
         "ok": True,
         "audit_id": audit_id,

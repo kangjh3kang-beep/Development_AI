@@ -52,3 +52,25 @@ def comprehensive(result: dict[str, Any]) -> Mapped | None:
     if isinstance(pnu, str) and len(pnu) == 19:
         payload["pnu"] = pnu  # lineage(19자리만 — prevalidate 패턴)
     return verdict, payload, rules[0]["measured"]
+
+
+def design_audit(result: dict[str, Any]) -> Mapped | None:
+    """설계심사 → overall.verdict_en(pass/fail/conditional) + 체크별 current/limit를 엔진 rules로 매핑.
+    norm_verdict가 pass→compliant·fail→non_compliant·conditional→needs_review. 수치 finding 없으면 None."""
+    overall = result.get("overall")
+    if not isinstance(overall, dict):
+        return None
+    verdict = overall.get("verdict_en")  # 판정불가는 None → skip
+    if not verdict:
+        return None
+    rules = []
+    for f in result.get("findings") or []:
+        if not isinstance(f, dict):
+            continue
+        rid = str(f.get("check_id") or f.get("engine") or "").strip() or "chk"
+        r = _le_rule(rid, f.get("current"), f.get("limit"))
+        if r:
+            rules.append(r)
+    if not rules:
+        return None  # 비교 가능한 정량 체크 없음 → 생략(거짓발산 방지)
+    return str(verdict), {"rules": rules}, rules[0]["measured"]

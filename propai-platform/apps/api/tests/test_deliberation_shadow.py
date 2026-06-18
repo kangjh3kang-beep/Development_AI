@@ -42,6 +42,22 @@ def test_mapper_comprehensive_excludes_non19_pnu():
     assert "pnu" not in payload  # 19자리 아니면 lineage 생략(prevalidate 패턴)
 
 
+def test_mapper_design_audit_maps_verdict_and_findings():
+    result = {"overall": {"verdict": "부적합", "verdict_en": "fail"},
+              "findings": [{"check_id": "FAR", "current": 250.0, "limit": 200.0, "status": "fail"},
+                           {"check_id": "H", "current": 30.0, "limit": 20.0},
+                           {"check_id": "qual", "current": None, "limit": None}]}  # 비수치 → 제외
+    v, payload, val = sm.design_audit(result)
+    assert v == "fail" and len(payload["rules"]) == 2
+    assert payload["rules"][0]["rule"]["rule_id"] == "FAR" and val == 250.0
+
+
+def test_mapper_design_audit_skips_when_no_verdict_or_no_numeric():
+    assert sm.design_audit({"overall": {"verdict": "판정불가"}}) is None        # verdict_en 부재
+    assert sm.design_audit({"overall": {"verdict_en": "pass"}, "findings": []}) is None  # 수치 체크 없음
+    assert sm.design_audit({"overall": None}) is None
+
+
 def test_norm_verdict_maps_equivalents():
     # 다른 표기를 동치군으로 — 거짓 divergence 방지.
     assert s.norm_verdict("COMPLIANT") == s.norm_verdict("approved") == "compliant"
