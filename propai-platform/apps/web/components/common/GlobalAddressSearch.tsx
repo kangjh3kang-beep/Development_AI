@@ -269,6 +269,10 @@ export function GlobalAddressSearch({
   // ★등록된 '모든' 필지의 토지정보(면적·용도지역·건폐/용적·지목·공시지가)+집합건물 여부 일괄 보강.
   //   (처음 1필지만 분석되던 근본문제 해결 — 개별등록·엑셀 공통). 주소 매칭으로 머지.
   const enrichParcels = useCallback(async (entries: AddressEntry[]) => {
+    // WP-D race 가드: 진입 시점의 활성 projectId 캡처 — 장시간 보강(청크당 90s) 중 사용자가
+    //   다른 프로젝트로 전환하면, 통합 면적 기록이 무관 프로젝트 SSOT(및 스냅샷)를 오염시키지
+    //   않도록 기록 직전 재확인한다(triggerComprehensiveAnalysis와 동일 패턴 — 계정격리).
+    const triggeredProjectId = useProjectContextStore.getState().projectId;
     // 토지정보(면적·용도지역) 또는 건폐/용적·집합건물 플래그가 없는 행만 보강(엑셀 완전입력행도 bcr/far·빌라 보강).
     const need = entries.filter((e) =>
       (e.fullAddress || e.jibunAddress) &&
@@ -302,6 +306,8 @@ export function GlobalAddressSearch({
     };
     const seq = ++enrichSeq.current;
     const CHUNK = 60; // 필지당 최대 3 외부콜 — 타임아웃 회피 위해 분할 호출(부분결과 즉시 반영)
+    // 전 청크 보강 결과를 uid별로 누적(통합 면적은 청크별 중간이 아니라 '완료 후 1회'만 기록).
+    const enrichedByUid = new Map<string, P>();
     // need 내 인덱스(=__rid)와 entry 참조를 함께 보존 → 주소 충돌 없이 정확 매칭.
     for (let start = 0; start < need.length; start += CHUNK) {
       const slice = need.slice(start, start + CHUNK);
@@ -322,7 +328,7 @@ export function GlobalAddressSearch({
       for (const p of parcels) {
         if (typeof p.__rid !== "number") continue;
         const uid = slice[p.__rid]?.__uid;
-        if (uid) byUid.set(uid, p);
+        if (uid) { byUid.set(uid, p); enrichedByUid.set(uid, p); }
       }
       setAddresses((prev) => prev.map((a) => {
         const m = a.__uid ? byUid.get(a.__uid) : undefined;
@@ -345,7 +351,43 @@ export function GlobalAddressSearch({
         };
       }));
     }
-  }, []);
+
+    // ── 전 청크 완료 후 통합 면적 기록(SSOT) — 1회만 ──
+    // WP-D: store 비기록 모드면 생략(콜백 전용). 단일/미확보 회귀 0: 유효필지 2개 미만이면 변경 없음.
+    if (!writeToContext) return;
+    if (seq !== enrichSeq.current) return; // 더 새로운 보강이 시작됐으면 통합 기록도 폐기
+    // 프로젝트 전환 중이면 기록 중단(무관 프로젝트 SSOT 오염 차단 — 계정격리).
+    if (useProjectContextStore.getState().projectId !== triggeredProjectId) return;
+    // entries(전체 필지)의 기존값 + 이번 보강 누적값을 병합해 '최종 유효 면적'을 산출.
+    //   무목업: status ok(애매·실패 제외) + 면적>0 필지만 합산(미확보 필지는 제외).
+    const valid = entries
+      .map((e) => {
+        const m = e.__uid ? enrichedByUid.get(e.__uid) : undefined;
+        const area = (m?.area_sqm ?? e.areaSqm) ?? 0;
+        const status = (m?.status ?? e.infoStatus) ?? null;
+        const zone = m?.zone_type ?? e.zoneCode ?? null;
+        return { area, status, zone };
+      })
+      // status가 명시적으로 ok가 아닌 경우(ambiguous/failed)는 제외, 면적>0만.
+      .filter((p) => p.area > 0 && (p.status == null || p.status === "ok"));
+
+    // 유효 필지 1개 이하(단일/미확보) → SSOT 변경 없음(기존 대표 landAreaSqm 유지).
+    if (valid.length < 2) return;
+
+    const totalSqm = valid.reduce((s, p) => s + p.area, 0);
+    const repArea = valid[0]?.area ?? null; // 대표 = 첫 유효 필지 면적
+    const zones = new Set(valid.map((p) => p.zone).filter((z): z is string => !!z));
+
+    // ★대표 분석(triggerComprehensiveAnalysis)이 landAreaSqm=대표를 쓴 뒤 여기서 통합으로 갱신.
+    //   경합 시 통합이 최종(이 호출이 enrichParcels 완료 시점 = 대표 분석 이후).
+    updateSiteAnalysis({
+      landAreaSqm: totalSqm,
+      landAreaSqmTotal: totalSqm,
+      repLandAreaSqm: repArea,
+      parcelCount: valid.length,
+      zoneMixed: zones.size >= 2,
+    });
+  }, [writeToContext, updateSiteAnalysis]);
 
   const handleAddressSelect = useCallback((result: KakaoAddressResult) => {
     const entry: AddressEntry = {

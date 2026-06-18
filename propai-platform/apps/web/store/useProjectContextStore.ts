@@ -61,10 +61,21 @@ interface OfficialPriceData {
 interface SiteAnalysisData {
   // 기본 정보
   estimatedValue: number | null;
+  // ★다필지면 통합 합계가 들어온다(대표 1필지 아님). 하류(수지·설계·공사비)는 이 값을 부지면적으로 본다.
   landAreaSqm: number | null;
   zoneCode: string | null;
   address: string | null;
   pnu: string | null;
+
+  // ── 다필지 통합 면적 메타(additive·하위호환) — 단일필지면 미기록(아래 전부 부재) ──
+  // 통합 합계 면적(㎡): landAreaSqm와 동일값을 별도로 명시 보관(통합인지 명확히 구분용).
+  landAreaSqmTotal?: number | null;
+  // 대표 1필지 면적(㎡): 통합 전 "첫 필지" 면적(참고·비교용).
+  repLandAreaSqm?: number | null;
+  // 유효 필지 수(면적>0·status ok만 집계).
+  parcelCount?: number | null;
+  // 용도지역이 2종 이상 섞였는지(혼합지). 하류가 단일 용도 가정을 피하도록 신호.
+  zoneMixed?: boolean;
 
   // 다필지 정보 (LAYER 0) — 선택적 (점진적 확장)
   parcels?: ParcelData[];

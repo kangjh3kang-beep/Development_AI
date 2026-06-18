@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v243-landoverview-integrated";
+const CACHE_NAME = "propai-v244-ssot-integrated-area";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",
