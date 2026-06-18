@@ -134,32 +134,16 @@ class FeasibilityServiceV2:
         results: list[dict[str, Any]] = []
         for dev_type in permitted_types:
             try:
-                # Auto-generate input based on zone constraints
-                effective_far = min(max_far, self._get_type_typical_far(dev_type))
-                total_gfa = site_area * effective_far / 100
-                # 세대수 = 전용 가용면적(연면적×전용률) ÷ 전용면적
-                # (전용률 미반영 시 공용면적 무시로 세대수 ~30% 과대 → 세대당 부담금·주차 왜곡)
-                eff_ratio = self._get_type_efficiency_ratio(dev_type)
-                avg_unit_area = self._get_type_avg_unit_area(dev_type)
-                total_hh = max(1, int(total_gfa * eff_ratio / avg_unit_area))
-
-                inp = ModuleInput(
-                    development_type=dev_type,
-                    total_land_area_sqm=site_area,
-                    total_gfa_sqm=total_gfa,
-                    total_households=total_hh,
-                    avg_sale_price_per_pyeong=self._get_regional_price(dev_type, region, address),
-                    # 분양가(원/평)는 공급면적 기준 시세 → 면적도 공급평수(전용/전용률)로 통일
-                    avg_area_pyeong=(avg_unit_area / eff_ratio) / 3.305785,
-                    sale_ratio=0.95 if dev_type not in ("M14", "M15") else 0.0,
-                    official_price_per_sqm=zoning.get("official_price_per_sqm") or 1_500_000,
-                    price_multiplier=1.1,
-                    building_type=self._get_building_type(dev_type),
-                    sido_name=region,
-                    sigungu_name="",
-                    project_months=self._get_type_project_months(dev_type),
-                    discount_rate=0.08,
+                # 입력 생성은 공용 헬퍼(build_module_input)로 일원화 — 추천/통합추천이
+                # 동일한 FAR→GFA→세대수→ModuleInput 변환을 쓰도록(로직 복제 방지).
+                inp = self.build_module_input(
+                    dev_type=dev_type,
+                    site_area_sqm=site_area,
+                    max_far_pct=max_far,
+                    region=region,
+                    address=address,
                     equity_won=equity_won,
+                    official_price_per_sqm=zoning.get("official_price_per_sqm"),
                 )
 
                 output = self.calculate(inp)
@@ -187,8 +171,8 @@ class FeasibilityServiceV2:
                     },
                     "permit": permit,
                     "unit_summary": {
-                        "total_gfa_sqm": round(total_gfa, 1),
-                        "total_households": total_hh,
+                        "total_gfa_sqm": round(inp.total_gfa_sqm, 1),
+                        "total_households": inp.total_households,
                         "avg_area_pyeong": round(inp.avg_area_pyeong, 1),
                     },
                     "composite_score": round(composite, 1),
@@ -228,6 +212,65 @@ class FeasibilityServiceV2:
             result["ai_interpretation"] = None
 
         return result
+
+    # ------------------------------------------------------------------
+    # 공용 입력 빌더 (auto_recommend_top3 + 통합추천 공유)
+    # ------------------------------------------------------------------
+
+    def build_module_input(
+        self,
+        dev_type: str,
+        site_area_sqm: float,
+        max_far_pct: float,
+        region: str,
+        address: str = "",
+        equity_won: int | None = None,
+        official_price_per_sqm: float | None = None,
+    ) -> ModuleInput:
+        """용도지역 한도 기반으로 개발유형별 ModuleInput을 자동 생성한다.
+
+        FAR→GFA→세대수→ModuleInput 변환을 한 곳에 모아, 추천(auto_recommend_top3)과
+        다필지 통합추천이 동일 로직을 쓰도록 한다(로직 복제 방지·결과 정합).
+
+        ★calculate/UnitMix 입력은 target_far가 아니라 total_gfa_sqm 임에 유의:
+          total_gfa = 부지면적 × 실효용적률(%) ÷ 100. 세대수는 전용률 역산.
+
+        Args:
+            dev_type: 개발유형 코드(M01~M15).
+            site_area_sqm: 부지(통합) 면적(㎡).
+            max_far_pct: 적용 용적률 상한(%). 개발유형 일반치와 min으로 클램프.
+            region: 지역(분양가 테이블 키).
+            address: 주소(지역 분양가 보정용).
+            equity_won: 자기자본(원). None이면 ModuleInput 기본(0).
+            official_price_per_sqm: 공시지가(원/㎡). 미확보 시 1.5M 묵시폴백(절대수익성은 참고용).
+        """
+        # 적용 용적률 = 용도지역 상한과 개발유형 일반치 중 낮은 값(과대 산정 방지).
+        effective_far = min(max_far_pct, self._get_type_typical_far(dev_type))
+        total_gfa = site_area_sqm * effective_far / 100
+        # 세대수 = 전용 가용면적(연면적×전용률) ÷ 전용면적
+        # (전용률 미반영 시 공용면적 무시로 세대수 ~30% 과대 → 세대당 부담금·주차 왜곡)
+        eff_ratio = self._get_type_efficiency_ratio(dev_type)
+        avg_unit_area = self._get_type_avg_unit_area(dev_type)
+        total_hh = max(1, int(total_gfa * eff_ratio / avg_unit_area))
+
+        return ModuleInput(
+            development_type=dev_type,
+            total_land_area_sqm=site_area_sqm,
+            total_gfa_sqm=total_gfa,
+            total_households=total_hh,
+            avg_sale_price_per_pyeong=self._get_regional_price(dev_type, region, address),
+            # 분양가(원/평)는 공급면적 기준 시세 → 면적도 공급평수(전용/전용률)로 통일
+            avg_area_pyeong=(avg_unit_area / eff_ratio) / 3.305785,
+            sale_ratio=0.95 if dev_type not in ("M14", "M15") else 0.0,
+            official_price_per_sqm=official_price_per_sqm or 1_500_000,
+            price_multiplier=1.1,
+            building_type=self._get_building_type(dev_type),
+            sido_name=region,
+            sigungu_name="",
+            project_months=self._get_type_project_months(dev_type),
+            discount_rate=0.08,
+            equity_won=equity_won or 0,
+        )
 
     # ------------------------------------------------------------------
     # Helper methods for auto-generation

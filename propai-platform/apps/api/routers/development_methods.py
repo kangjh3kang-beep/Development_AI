@@ -170,3 +170,37 @@ async def development_scenarios(body: ScenarioSimRequest) -> dict[str, Any]:
     return await DevelopmentScenarioSimulator().simulate(
         body.address.strip(), parcels=body.parcels, site=body.site or {}, use_llm=body.use_llm
     )
+
+
+# ── 다필지 통합 → 개발방식별 용적률·수지 순위 추천 (1차 증분) ──
+
+class OptimalRecommendRequest(BaseModel):
+    """다필지 통합 개발방식 추천 요청 (인증 불필요·부지 공개데이터 기반)."""
+
+    addresses: list[str]
+    parcel_subset_policy: str = "전체"
+
+
+@router.post(
+    "/optimal-recommend",
+    summary="다필지 통합 → 특이부지 게이트 → 개발방식별 현행 실효용적률 기준 수지 순위",
+)
+async def optimal_recommend(body: OptimalRecommendRequest) -> dict[str, Any]:
+    """다필지 주소를 통합해 특이부지 게이트(할루시네이션 차단)를 통과한 경우에만,
+    허용 개발유형별로 현행 실효용적률 기준 수지를 평가하고 순위를 반환한다.
+
+    게이트(통상 절차로 해결 불가/원칙적 개발 불가)에 걸리면 개발규모·수지를 산정하지
+    않고 정직 고지만 반환한다(무목업). 공시지가 미확보 시 절대 수익성은 참고용으로 표기한다.
+    """
+    from fastapi import HTTPException
+
+    from app.services.development.integrated_recommender.orchestrator import (
+        IntegratedRecommender,
+    )
+
+    addrs = [a for a in (body.addresses or []) if a and a.strip()]
+    if not addrs:
+        raise HTTPException(status_code=400, detail="주소가 1개 이상 필요합니다.")
+    return await IntegratedRecommender().recommend(
+        addresses=addrs, parcel_subset_policy=body.parcel_subset_policy
+    )
