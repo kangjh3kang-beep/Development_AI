@@ -320,6 +320,8 @@ async def deliberation_analyze(payload: dict = Body(...), user=Depends(get_curre
                                 reused=True, run_id=run_id)
             ad, sk = await _record_audit(user, tenant, action="analyze_reuse", run_id=run_id,
                                          input_hash=ih, decision="reuse", http_status=200)
+            logger.info("deliberation_analyze", path="reuse", reused=True, deterministic=True,
+                        run_id=run_id, cache_hit=True)  # 멱등 적중률 관측
             return {"degraded": False, "reused": True, "deterministic": True, "run_id": run_id,
                     "result": result, "audit_degraded": ad, "audit_skipped": sk}
 
@@ -369,6 +371,8 @@ async def deliberation_analyze(payload: dict = Body(...), user=Depends(get_curre
 
     ad, sk = await _record_audit(user, tenant, action="analyze", run_id=run_id,
                                  input_hash=ih, decision="authoritative", http_status=200)
+    logger.info("deliberation_analyze", path="authoritative", reused=False,
+                deterministic=deterministic, run_id=run_id, cache_hit=False)  # 신규 산출 관측
     return {"degraded": False, "reused": False, "deterministic": deterministic, "run_id": run_id,
             "result": result, "audit_degraded": ad, "audit_skipped": sk}
 
