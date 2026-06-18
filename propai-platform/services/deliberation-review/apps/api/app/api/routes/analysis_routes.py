@@ -5,10 +5,11 @@ POST /api/v1/analyze: 분석 실행 + 영속화(run_id 반환). GET /api/v1/anal
 """
 from __future__ import annotations
 
+import uuid
+
+import anyio
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-
-import uuid
 
 from app.api.deps import get_session, get_tenant_id, require_token
 from app.contracts.analysis import AnalysisInput, AnalysisResult
@@ -37,7 +38,9 @@ async def analyze(payload: AnalysisInput, session: AsyncSession = Depends(get_se
     except Exception:
         await session.rollback()  # 미러 적재 실패 → 미적재 보수 게이팅으로 degrade(분석 진행)
     try:
-        result = run_analysis(payload)
+        # 동기·장시간(VLLM/라이브 네트워크) 분석을 threadpool로 오프로드 → 이벤트루프 비블로킹
+        # (단일 워커 루프 점유로 인한 동시요청 직렬화 방지·throughput 회복).
+        result = await anyio.to_thread.run_sync(run_analysis, payload)
     except DomainError as exc:
         # 예외 원문(내부 식별자/경로) 노출 금지 — 안정 코드만 반환(원문은 서버 추적 from exc).
         raise HTTPException(status_code=422, detail=f"domain_error:{type(exc).__name__}") from exc
