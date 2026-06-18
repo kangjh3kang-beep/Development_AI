@@ -234,6 +234,78 @@ def test_observe_noop_when_no_mapping_or_tenant(monkeypatch):
     assert calls["n"] == 0
 
 
+async def test_shadow_compare_never_raises_on_record_failure(monkeypatch):
+    # ★운영 무중단 핵심 — DB record 장애도 도메인 흐름으로 전파 금지(엔진 예외와 함께 가장 흔한 실패축).
+    async def _post(dump, deterministic=True, tenant=None, breaker=None):
+        return {"findings": [{"verdict": "COMPLIANT"}], "report": {}}, "ok"
+    async def _rec_fail(**kw):
+        raise RuntimeError("db down")
+    monkeypatch.setattr(si, "get_settings", lambda: _FakeS())
+    monkeypatch.setattr(delib, "_engine_post_analyze", _post)
+    monkeypatch.setattr(s, "record", _rec_fail)
+    out = await si.shadow_compare(tenant_id="t", domain="design_audit",
+                                  platform_verdict="pass", engine_payload=_VALID_PAYLOAD)
+    assert out is None  # record 예외 삼킴(never-raise)
+
+
+async def test_design_audit_router_hook_invokes_observe(monkeypatch):
+    # ★거짓-green 해소 — 실제 라우터(_execute_run)가 enable 시 observe를 정확한 domain/verdict로 1회 호출.
+    import app.services.ledger.ledger_adapters as la
+    import app.services.ledger.prior_context as pc
+    import apps.api.config as cfg
+    from apps.api.app.routers import design_audit as da
+
+    class _Orch:
+        async def run(self, db, **kw):
+            return {"overall": {"verdict_en": "fail"}, "derived_signals": {},
+                    "findings": [{"check_id": "rules8_far", "current": 250.0, "limit": 200.0, "status": "fail"}]}
+    monkeypatch.setattr(da, "_get_orchestrator", lambda: _Orch())
+
+    async def _save(*a, **k):
+        return "aid"
+    async def _none(**k):
+        return None
+    monkeypatch.setattr(da, "_save_audit", _save)
+    monkeypatch.setattr(pc, "load_prior", _none)
+    monkeypatch.setattr(la, "record_design_audit", _none)
+    monkeypatch.setattr(cfg, "get_settings", lambda: _FakeS(enabled=True))
+    captured = {}
+    monkeypatch.setattr(si, "observe", lambda *a, **k: captured.update(args=a))
+    req = da.RunRequest(use_llm=False, project_id="p1")
+    current = type("U", (), {"tenant_id": "tnt-1", "user_id": "u1"})()
+    out = await da._execute_run(req, current, object())
+    assert out["ok"] is True                                  # 도메인 응답 정상(무중단)
+    assert captured["args"][0] == "design_audit"              # domain 문자열
+    assert captured["args"][1] == "tnt-1"                     # tenant
+    assert captured["args"][2][0] == "fail"                   # mapped verdict(subset worst status)
+
+
+async def test_design_audit_router_hook_skips_when_disabled(monkeypatch):
+    import app.services.ledger.ledger_adapters as la
+    import app.services.ledger.prior_context as pc
+    import apps.api.config as cfg
+    from apps.api.app.routers import design_audit as da
+
+    class _Orch:
+        async def run(self, db, **kw):
+            return {"overall": {"verdict_en": "fail"}, "derived_signals": {}, "findings": []}
+    async def _save(*a, **k):
+        return "aid"
+    async def _none(**k):
+        return None
+    monkeypatch.setattr(da, "_get_orchestrator", lambda: _Orch())
+    monkeypatch.setattr(da, "_save_audit", _save)
+    monkeypatch.setattr(pc, "load_prior", _none)
+    monkeypatch.setattr(la, "record_design_audit", _none)
+    monkeypatch.setattr(cfg, "get_settings", lambda: _FakeS(enabled=False))  # gate off
+    calls = {"n": 0}
+    monkeypatch.setattr(si, "observe", lambda *a, **k: calls.__setitem__("n", calls["n"] + 1))
+    req = da.RunRequest(use_llm=False, project_id="p1")
+    current = type("U", (), {"tenant_id": "tnt-1", "user_id": "u1"})()
+    await da._execute_run(req, current, object())
+    assert calls["n"] == 0  # gate-first: off면 매퍼/observe 미발생
+
+
 async def test_shadow_compare_timeout_is_skipped(monkeypatch):
     # 느린 엔진(상한 초과) → wait_for 타임아웃 → None(도메인 흐름 무영향, 거짓적재 없음).
     import asyncio as _aio
@@ -282,10 +354,33 @@ async def test_record_persists_divergence(shadow_db):
     assert out["matched"] is True and out["divergence_score"] == 0.0  # 동치군 일치
     async with async_session_factory() as db:
         row = (await db.execute(
-            text("SELECT domain, matched, quant_rel_err, detail FROM shadow_comparison WHERE id = :i"),
+            text("SELECT domain, matched, quant_rel_err, detail, platform_verdict, engine_verdict, "
+                 "divergence_score, input_hash FROM shadow_comparison WHERE id = :i"),
             {"i": out["id"]},
         )).first()
         await db.execute(text("DELETE FROM shadow_comparison WHERE tenant_id = :t"), {"t": tnt})
         await db.commit()
     assert row is not None and row[0] == "comprehensive" and row[1] is True
     assert abs(row[2] - 0.025) < 1e-6 and row[3]["note"] == "한글 상세"
+    # 컬럼-매핑 바인딩 회귀 가드: 핵심 산출 컬럼 전수 라운드트립.
+    assert row[4] == "CONDITIONAL" and row[5] == "NEEDS_REVIEW"  # 원문 verdict 보존
+    assert row[6] == 0.0 and row[7] == "ih1"                      # divergence_score·lineage
+
+
+async def test_record_persists_null_verdict(shadow_db):
+    # platform_verdict=None → 컬럼 NULL 저장(str(None) 오저장 회귀 방지). matched=False(None≠'x').
+    import uuid as _uuid
+
+    from app.core.database import async_session_factory
+    tnt = f"test-{_uuid.uuid4().hex[:12]}"
+    out = await s.record(tenant_id=tnt, domain="design_audit",
+                         platform_verdict=None, engine_verdict="compliant")
+    assert out["matched"] is False
+    async with async_session_factory() as db:
+        row = (await db.execute(
+            text("SELECT platform_verdict, divergence_score FROM shadow_comparison WHERE id = :i"),
+            {"i": out["id"]},
+        )).first()
+        await db.execute(text("DELETE FROM shadow_comparison WHERE tenant_id = :t"), {"t": tnt})
+        await db.commit()
+    assert row[0] is None and row[1] == 1.0  # NULL 저장·불일치
