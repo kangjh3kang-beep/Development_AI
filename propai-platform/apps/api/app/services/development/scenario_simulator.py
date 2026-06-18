@@ -107,12 +107,61 @@ class DevelopmentScenarioSimulator:
         # 부지 정보 수집(단일/다필지)
         enriched, subway_m = await self._collect(addrs, site)
         total_area = sum(p.get("area") or 0 for p in enriched)
-        far_legal = self._blended_far(enriched)
+        # ★용적률 출처: 실효(현행·조례 반영)를 시나리오 기준으로 사용(결함A 교정).
+        #   법정상한은 라벨 구분용으로 별도 보관.
+        far_effective = self._blended_far(enriched, "max_far")
+        far_legal = self._blended_far(enriched, "max_far_legal")
         zones = [p.get("zone") for p in enriched if p.get("zone")]
         primary_zone = zones[0] if zones else (site.get("zone_type") or "")
         near_station = (subway_m is not None and subway_m <= 500) or any(
             "역세권" in (p.get("zone") or "") for p in enriched
         )
+
+        # ── 특이부지 게이트(orchestrator.recommend:66-84 패턴 복제·비대칭 해소) ──
+        #   임야/산지/농지/GB/맹지/학교용지 등 비일상 토지에도 20개 시나리오를 찍어내던 결함B 차단.
+        #   developability∈{BLOCKED} 또는 resolvable∈{NO}면 시나리오 생성 중단·정직고지(가짜 면적/규모 미산정).
+        #   CONDITIONAL/PRECONDITION은 시나리오를 생성하되 경고·선행절차를 동반(아래 ctx로 전파).
+        from app.services.zoning.special_parcel import (
+            detect_multi_parcel,
+            detect_special_parcel,
+        )
+
+        if multi:
+            special_gate = detect_multi_parcel(enriched)
+        else:
+            sp = detect_special_parcel(enriched[0]) if enriched else None
+            special_gate = sp  # None이면 일상 부지(특이 없음)
+
+        if special_gate and (
+            special_gate.get("developability") in {"BLOCKED"}
+            or special_gate.get("resolvable") in {"NO"}
+        ):
+            # 후보생성 중단 — 개발규모/시나리오 미산정(정직). 게이트·정직고지만 반환.
+            #   ★recommended는 null이 아닌 '정직 고지' 형태로 유지(프론트 contract 보존·회귀0):
+            #     scheme="개발 불가(특이부지)"·est_far=None으로 가짜 개발규모를 산정하지 않는다.
+            disclosure = special_gate.get("honest_disclosure") or (
+                "통상 절차로 해결 불가능한 제약이 포함되어 개발방식 시나리오를 산정하지 않습니다."
+            )
+            return {
+                "site": {
+                    "address": address, "region": self._region(address),
+                    "multi": multi, "parcel_count": len(addrs),
+                    "total_area_sqm": round(total_area, 1) if total_area else None,
+                    "primary_zone": primary_zone, "zones": zones,
+                    "special_parcel_gate": special_gate,
+                },
+                "special_parcel_gate": special_gate,
+                "scenarios": [],  # 가짜 시나리오 미생성(무목업)
+                "recommended": {
+                    "scheme": "개발 불가(특이부지)",
+                    "est_far": None,
+                    "reason": disclosure,
+                },
+                "fallback_simple_build": None,
+                "magdo_summary": None,
+                "honest_disclosure": disclosure,
+                "blocked": True,
+            }
 
         # 인접성: 통합개발(합필/일단지)은 필지가 맞닿아야 가능
         adjacency = self._adjacency(enriched) if multi else {"contiguous": True, "components": 1, "note": "단일 필지"}
@@ -132,12 +181,17 @@ class DevelopmentScenarioSimulator:
             "multi": multi, "parcel_count": len(addrs),
             "total_area_sqm": round(total_area, 1) if total_area else None,
             "primary_zone": primary_zone, "zones": zones,
+            # ★시나리오 산정 기준 = 실효 용적률(현행·조례 반영). 법정상한은 라벨 구분용으로 병기.
+            "far_effective_blended": far_effective,
             "far_legal_blended": far_legal,
             "near_station_m": subway_m, "near_station": near_station,
             "adjacency": adjacency, "integration_feasible": integration_ok,
             "buildings": buildings, "block_aging": block,
+            # 특이부지 게이트(통과/조건부) 결과 — CONDITIONAL/PRECONDITION이면 경고·선행절차 동반.
+            "special_parcel_gate": special_gate,
             "parcels": [{"address": p.get("address"), "zone": p.get("zone"),
                          "area": p.get("area"), "max_far": p.get("max_far"),
+                         "max_far_legal": p.get("max_far_legal"),
                          "owner_type": p.get("owner_type"), "bldg_year": p.get("bldg_year"),
                          "units": p.get("units")} for p in enriched],
         }
@@ -154,7 +208,7 @@ class DevelopmentScenarioSimulator:
         # 매도청구 요약(추천안 기준 + 다필지 잔여 추정)
         magdo_summary = self._magdo_summary(recommended, ctx)
 
-        result = {
+        result: dict[str, Any] = {
             "site": ctx,
             "scenarios": scenarios,
             "recommended": {"scheme": recommended["scheme"], "est_far": recommended.get("est_far"),
@@ -162,6 +216,16 @@ class DevelopmentScenarioSimulator:
             "fallback_simple_build": next(s for s in scenarios if s["scheme"] == "단순 건축"),
             "magdo_summary": magdo_summary,
         }
+        # 특이부지가 조건부/선행절차 부지면 정직 고지를 최상위로 노출(시나리오는 산정하되 경고 동반).
+        #   산지전용·농지전용·도시계획시설 폐지 등 선행절차 통과를 전제로만 개발 가능함을 명시.
+        if special_gate and special_gate.get("developability") in (
+            "CONDITIONAL", "PRECONDITION", "CAUTION"
+        ):
+            result["special_parcel_gate"] = special_gate
+            result["honest_disclosure"] = special_gate.get("honest_disclosure") or (
+                "특이 토지특성으로 인허가·전용·도시계획 변경 등 선행절차 통과를 조건으로만 개발이 가능합니다. "
+                "아래 시나리오의 개발규모는 선행절차 통과를 전제로 한 잠재치입니다."
+            )
         if use_llm:
             result["ai"] = await self._llm(ctx, scenarios)
         return result
@@ -189,14 +253,37 @@ class DevelopmentScenarioSimulator:
         vworld = VWorldService()
         breg = BuildingRegistryService()
 
+        from app.services.land_intelligence.far_tier_service import calc_effective_far
+
         async def one(a: str) -> dict:
             try:
                 r = await az.analyze_by_address(a)
                 zl = r.get("zone_limits") or {}
-                far = zl.get("max_far_pct") or zl.get("max_far")
-                if not far and r.get("zone_type"):
+                # 법정상한(라벨/ZONE_LIMITS 기준) — 별도 보관(라벨 구분용).
+                far_legal = zl.get("max_far_pct") or zl.get("max_far")
+                if not far_legal and r.get("zone_type"):
                     lim = ZONE_LIMITS.get((r["zone_type"] or "").replace(" ", ""))
-                    far = lim.get("max_far") if lim else None
+                    far_legal = lim.get("max_far") if lim else None
+                # ★실효 용적률(현행 baseline·조례 반영) — orchestrator._baseline_far와 동일 SSOT.
+                #   법정상한만 쓰던 결함A 교정. 조회 실패/미산정 시 법정상한으로 폴백(회귀0).
+                zone_type = r.get("zone_type") or ""
+                far = far_legal
+                if zone_type:
+                    try:
+                        eff = calc_effective_far(
+                            {
+                                "zone_limits": zl,
+                                "special_districts": r.get("special_districts") or [],
+                                "local_ordinance": {},
+                            },
+                            zone_type,
+                            r.get("land_area_sqm") or 0,
+                        )
+                        eff_far = eff.get("effective_far_pct")
+                        if eff_far is not None and eff_far > 0:
+                            far = float(eff_far)
+                    except Exception:  # noqa: BLE001
+                        pass
                 pnu = r.get("pnu")
                 coords = r.get("coordinates") or {}
                 geometry = None
@@ -226,12 +313,27 @@ class DevelopmentScenarioSimulator:
                 except Exception:  # noqa: BLE001
                     pass
                 return {"address": a, "zone": r.get("zone_type"),
-                        "area": r.get("land_area_sqm"), "max_far": far,
+                        "area": r.get("land_area_sqm"),
+                        "max_far": far,            # 실효 용적률(현행·조례 반영) — 시나리오 산정 기준
+                        "max_far_legal": far_legal,  # 법정상한(라벨 구분용)
                         "pnu": pnu, "geometry": geometry, "owner_type": owner_type,
                         "bldg_year": bldg_year, "units": units, "structure": structure,
-                        "coords": coords}
+                        "coords": coords,
+                        # ── 특이부지 게이트 입력 키(detect_special_parcel/detect_multi_parcel 정합) ──
+                        "land_category": r.get("land_category") or "",
+                        "special_districts": r.get("special_districts") or [],
+                        "zone_limits": zl,
+                        "official_price_per_sqm": r.get("official_price_per_sqm"),
+                        # 접도 미확보 → None(맹지 오탐 방지). orchestrator._enrich_context와 동일 정책.
+                        "road_contact": None, "road_width_m": None,
+                        # 게이트는 zone_type 키로 읽으므로 동봉(zone과 동일값).
+                        "zone_type": r.get("zone_type") or ""}
             except Exception:  # noqa: BLE001
-                return {"address": a, "zone": None, "area": None, "max_far": None, "geometry": None}
+                return {"address": a, "zone": None, "area": None, "max_far": None,
+                        "max_far_legal": None, "geometry": None,
+                        "land_category": "", "special_districts": [], "zone_limits": {},
+                        "official_price_per_sqm": None, "road_contact": None,
+                        "road_width_m": None, "zone_type": ""}
 
         enriched = await asyncio.gather(*[one(a) for a in addrs])
         enriched = list(enriched)
@@ -442,8 +544,10 @@ class DevelopmentScenarioSimulator:
         }
 
     @staticmethod
-    def _blended_far(parcels: list[dict]) -> float | None:
-        w = [(p.get("area"), p.get("max_far")) for p in parcels if p.get("max_far")]
+    def _blended_far(parcels: list[dict], key: str = "max_far") -> float | None:
+        """면적가중 평균 용적률. key='max_far'면 실효(현행·조례 반영, 시나리오 기준),
+        key='max_far_legal'이면 법정상한(라벨 구분용)."""
+        w = [(p.get("area"), p.get(key)) for p in parcels if p.get(key)]
         if not w:
             return None
         if all(a for a, _ in w):
@@ -456,7 +560,8 @@ class DevelopmentScenarioSimulator:
     def _scenarios(self, c: dict) -> list[dict]:
         area = c.get("total_area_sqm") or 0
         zone = c.get("primary_zone") or ""
-        far = c.get("far_legal_blended") or 0
+        # ★시나리오 est_far 기준 = 실효 용적률(현행·조례 반영). 미산정 시 법정상한 폴백(회귀0).
+        far = c.get("far_effective_blended") or c.get("far_legal_blended") or 0
         multi = c.get("multi")
         station = c.get("near_station")
         integration_ok = c.get("integration_feasible", True)

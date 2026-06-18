@@ -43,6 +43,28 @@ class ComplianceCheckResponse(BaseModel):
     overall_status: str = "pass"
     summary: str = ""
     checked_at: str = ""
+    # ── additive(하위호환): 실효/법정/특이부지 정직 반영 필드 ──
+    # 기존 프론트는 위 필드만 읽으므로 아래는 옵셔널 가산 — 미상이면 None/빈 배열(가짜값 금지).
+    zone_source: str | None = None          # 용도지역 출처(입력값/주소자동조회/미상)
+    effective_far_pct: float | None = None  # 실효 용적률(법정·조례 중 낮은 값 + 계획상한)
+    effective_bcr_pct: float | None = None  # 실효 건폐율
+    legal_far_pct: float | None = None       # 법정상한 용적률(국토계획법, 라벨 전용)
+    legal_bcr_pct: float | None = None       # 법정상한 건폐율
+    far_basis: str | None = None             # 실효 산정 근거(법정/조례/계획상한 등)
+    developability: str | None = None        # 특이부지 게이트(POSSIBLE/CONDITIONAL/...)
+    special_parcel: dict[str, Any] | None = None  # 특이부지 감지 결과(경고·해결방안·정직고지)
+
+
+def _normalize_zone(zone: str | None) -> str | None:
+    """입력 용도지역명을 법정 표준키로 정규화. 미매칭이면 None(미상으로 정직 처리)."""
+    if not zone or not zone.strip():
+        return None
+    try:
+        from app.services.zoning.legal_zone_limits import normalize_zone_name
+
+        return normalize_zone_name(zone)
+    except Exception:  # noqa: BLE001
+        return None
 
 
 @router.post(
@@ -55,65 +77,193 @@ async def check_building_compliance(
 ):
     """주소 기반 건축법규 준수 여부를 검증한다.
 
-    용도지역·프로젝트 유형·층수 정보를 기반으로
-    건폐율·용적률·높이제한 등 기본 법규를 검증한다.
+    실효 용적률/건폐율(법정범위→조례→계획상한)·특이부지(학교용지·산지·맹지 등) 게이트를
+    실제 용도지역 기반으로 산출한다. 하드코딩 한도 테이블·'일반상업지역' 디폴트는 쓰지 않으며,
+    용도지역을 확정하지 못하면 한도를 단정하지 않고 '미상'으로 정직 고지한다(할루시네이션 차단).
     """
-    zoning = req.zoning_district or "일반상업지역"
-    # 용도지역별 기본 법규 한도 (간이 참조 테이블)
-    zoning_limits: dict[str, dict[str, Any]] = {
-        "제1종전용주거지역": {"bcr": 50, "far": 100, "max_floors": 4},
-        "제2종전용주거지역": {"bcr": 50, "far": 150, "max_floors": 7},
-        "제1종일반주거지역": {"bcr": 60, "far": 200, "max_floors": 7},
-        "제2종일반주거지역": {"bcr": 60, "far": 250, "max_floors": 15},
-        "제3종일반주거지역": {"bcr": 50, "far": 300, "max_floors": 20},
-        "준주거지역": {"bcr": 70, "far": 500, "max_floors": 25},
-        "일반상업지역": {"bcr": 80, "far": 1300, "max_floors": 40},
-        "근린상업지역": {"bcr": 70, "far": 900, "max_floors": 30},
-        "준공업지역": {"bcr": 70, "far": 400, "max_floors": 20},
-    }
-    limits = zoning_limits.get(zoning, {"bcr": 60, "far": 300, "max_floors": 15})
+    # ── 1) 용도지역 확정: 입력값 우선, 미입력 시 주소 자동조회(AutoZoningService) ──
+    # 절대 '일반상업지역' 같은 가짜 디폴트로 채우지 않는다. 못 구하면 None(미상).
+    zone = _normalize_zone(req.zoning_district)
+    zone_source = "입력값" if zone else None
+    land_category: str | None = None
+    special_districts: list = []
+    land_area = 0.0
+    zoning_base: dict[str, Any] = {}
+
+    if not zone and req.address:
+        try:
+            from apps.api.app.services.zoning.auto_zoning_service import AutoZoningService
+
+            zoning_base = await AutoZoningService().analyze_by_address(req.address) or {}
+            zone = _normalize_zone(zoning_base.get("zone_type"))
+            if zone:
+                zone_source = "주소자동조회"
+            land_category = zoning_base.get("land_category")
+            special_districts = zoning_base.get("special_districts") or []
+            land_area = float(zoning_base.get("land_area_sqm") or 0)
+        except Exception:  # noqa: BLE001 — 조회 실패는 미상으로 정직 처리(가짜값 금지)
+            zoning_base = {}
 
     results: list[ComplianceItemResult] = []
     overall = "pass"
 
-    # 층수 검증
-    if req.floor_count and req.floor_count > limits["max_floors"]:
-        overall = "fail"
+    # ── 2) 용도지역 미상 — 한도 단정 불가(정직 처리) ──
+    if not zone:
         results.append(ComplianceItemResult(
-            category="높이제한",
-            rule=f"{zoning} 최대 {limits['max_floors']}층",
-            status="fail",
-            detail=f"요청 {req.floor_count}층은 최대 {limits['max_floors']}층을 초과합니다.",
+            category="용도지역",
+            rule="용도지역 미상",
+            status="info",
+            detail=(
+                "용도지역을 확정하지 못해 건폐율·용적률·높이 한도를 단정할 수 없습니다. "
+                "정확한 용도지역(예: 제2종일반주거지역)을 입력하거나, 토지이용계획확인원으로 "
+                "용도지역을 확인한 뒤 다시 검증해 주세요."
+            ),
         ))
-    else:
+        return ComplianceCheckResponse(
+            address=req.address,
+            zoning_district=None,
+            results=results,
+            overall_status="pass",
+            summary="용도지역 미상 — 한도 단정 불가(정직 고지). 용도지역 확정 후 정밀 검증 가능합니다.",
+            checked_at=datetime.now().isoformat(),
+            zone_source="미상",
+        )
+
+    # ── 3) 법정상한(라벨 전용) + 실효 용적률/건폐율(법정→조례→계획상한) 산출 ──
+    legal_far = legal_bcr = None
+    try:
+        from app.services.zoning.legal_zone_limits import legal_limits_for
+
+        legal = legal_limits_for(zone) or {}
+        legal_far = legal.get("max_far_pct")
+        legal_bcr = legal.get("max_bcr_pct")
+    except Exception:  # noqa: BLE001
+        legal = {}
+
+    # 조례 SSOT 주입(analyze_zoning과 동일 패턴) — local_ordinance 없으면 OrdinanceService 조회.
+    try:
+        lo = zoning_base.get("local_ordinance")
+        has_ord = isinstance(lo, dict) and lo.get("ordinance_far")
+        if not has_ord and req.address:
+            from app.services.land_intelligence.ordinance_service import OrdinanceService
+
+            _ord = await OrdinanceService().get_ordinance_limits(req.address, zone)
+            if isinstance(_ord, dict) and _ord.get("ordinance_far"):
+                zoning_base["local_ordinance"] = _ord
+    except Exception:  # noqa: BLE001 — 조례 조회 실패 시 법정값 폴백(무손상)
+        pass
+
+    # 실효 용적률 계층(far_tier_service 단일출처) — base에 zone_type/zone_limits/조례/구역 포함.
+    eff_far = eff_bcr = far_basis = None
+    try:
+        from app.services.land_intelligence import far_tier_service
+
+        zoning_base.setdefault("zone_type", zone)
+        eff = far_tier_service.calc_effective_far(zoning_base, zone, land_area)
+        eff_far = eff.get("effective_far_pct")
+        eff_bcr = eff.get("effective_bcr_pct")
+        far_basis = eff.get("far_basis")
+        if legal_far is None:
+            legal_far = eff.get("legal_max_far_pct")
+    except Exception:  # noqa: BLE001 — 실효 산정 실패 시 법정상한만 표기(미상 아님)
+        pass
+
+    # ── 4) 특이부지 게이트(학교용지·산지·맹지·규제구역 등) — 개발가능 단정 차단 ──
+    special: dict[str, Any] | None = None
+    try:
+        from app.services.zoning.special_parcel import detect_special_parcel
+
+        special = detect_special_parcel({
+            "zone_type": zone,
+            "land_category": land_category,
+            "special_districts": special_districts,
+            "road_contact": None,
+            "road_width_m": None,
+        })
+    except Exception:  # noqa: BLE001
+        special = None
+
+    # ── 5) 결과 항목 구성 ──
+    # 건폐율·용적률: 실효값 우선 표기, 법정상한은 별도 라벨로만(조례 실효 미반영 오류 차단).
+    if eff_far is not None:
+        far_detail = f"실효 용적률 한도는 {eff_far:g}%입니다"
+        if far_basis:
+            far_detail += f" (근거: {far_basis})"
+        if legal_far is not None and float(legal_far) != float(eff_far):
+            far_detail += f". 법정상한은 {float(legal_far):g}%입니다(조례·계획에 따라 실효값이 다를 수 있음)"
+        far_detail += ". 설계 데이터 입력 시 정밀 검증 가능합니다."
         results.append(ComplianceItemResult(
-            category="높이제한",
-            rule=f"{zoning} 최대 {limits['max_floors']}층",
-            status="pass",
-            detail=f"요청 {req.floor_count or '-'}층은 기준 이내입니다.",
+            category="용적률", rule=f"{zone} 실효 {eff_far:g}%", status="info", detail=far_detail,
+        ))
+    elif legal_far is not None:
+        results.append(ComplianceItemResult(
+            category="용적률", rule=f"{zone} 법정상한 {float(legal_far):g}%", status="info",
+            detail=(f"법정상한 용적률은 {float(legal_far):g}%입니다(조례 실효값 미확인 — 지자체 도시계획 "
+                    "조례 확인 시 더 낮아질 수 있음). 설계 데이터 입력 시 정밀 검증 가능합니다."),
         ))
 
-    # 건폐율·용적률 기준 안내
-    results.append(ComplianceItemResult(
-        category="건폐율",
-        rule=f"{zoning} 최대 {limits['bcr']}%",
-        status="info",
-        detail=f"건폐율 한도는 {limits['bcr']}%입니다. 설계 데이터 입력 시 정밀 검증 가능합니다.",
-    ))
-    results.append(ComplianceItemResult(
-        category="용적률",
-        rule=f"{zoning} 최대 {limits['far']}%",
-        status="info",
-        detail=f"용적률 한도는 {limits['far']}%입니다. 설계 데이터 입력 시 정밀 검증 가능합니다.",
-    ))
+    if eff_bcr is not None:
+        bcr_detail = f"실효 건폐율 한도는 {eff_bcr:g}%입니다"
+        if legal_bcr is not None and float(legal_bcr) != float(eff_bcr):
+            bcr_detail += f" (법정상한 {float(legal_bcr):g}%)"
+        bcr_detail += ". 설계 데이터 입력 시 정밀 검증 가능합니다."
+        results.append(ComplianceItemResult(
+            category="건폐율", rule=f"{zone} 실효 {eff_bcr:g}%", status="info", detail=bcr_detail,
+        ))
+    elif legal_bcr is not None:
+        results.append(ComplianceItemResult(
+            category="건폐율", rule=f"{zone} 법정상한 {float(legal_bcr):g}%", status="info",
+            detail=(f"법정상한 건폐율은 {float(legal_bcr):g}%입니다(조례 실효값 미확인). "
+                    "설계 데이터 입력 시 정밀 검증 가능합니다."),
+        ))
+
+    # 층수 검증: 높이 한도는 용도지역만으로 단정 불가(지구·일조·도로사선 의존) → 단정 표기 금지.
+    if req.floor_count:
+        results.append(ComplianceItemResult(
+            category="높이제한",
+            rule=f"{zone} 높이·층수 제한(개별 검토)",
+            status="info",
+            detail=(f"요청 {req.floor_count}층의 적합 여부는 용도지역만으로 단정할 수 없습니다"
+                    "(지구단위계획·일조권·도로사선·고도지구 등 적용). 설계 데이터 입력 시 정밀 검증 가능합니다."),
+        ))
+
+    # 특이부지 경고: 개발가능성 게이트가 POSSIBLE이 아니면 '개발가능'으로 단정하지 않고 정직 고지.
+    if special and special.get("developability") and special.get("developability") != "POSSIBLE":
+        overall = "warn"
+        gate = special.get("developability")
+        warn_lines = list(special.get("warnings") or [])
+        caveat = special.get("development_caveat") or ""
+        honest = special.get("honest_disclosure") or ""
+        detail = " ".join([x for x in ([caveat, honest] + warn_lines) if x]) or \
+            "특이 토지특성이 감지되어 법정/실효 한도가 그대로 실현되지 않을 수 있습니다."
+        results.append(ComplianceItemResult(
+            category="특이부지",
+            rule=f"개발가능성: {special.get('severity_label') or gate}",
+            status="warn",
+            detail=detail,
+        ))
+
+    summary = f"{zone} 기준 법규 검증 완료"
+    if overall == "warn":
+        summary += " — 특이 토지특성 경고 있음(개발가능성·선행절차 확인 필요)"
+    else:
+        summary += " (적합)"
 
     return ComplianceCheckResponse(
         address=req.address,
-        zoning_district=zoning,
+        zoning_district=zone,
         results=results,
         overall_status=overall,
-        summary=f"{zoning} 기준 법규 검증 완료 ({'위반 사항 있음' if overall == 'fail' else '적합'})",
+        summary=summary,
         checked_at=datetime.now().isoformat(),
+        zone_source=zone_source,
+        effective_far_pct=float(eff_far) if eff_far is not None else None,
+        effective_bcr_pct=float(eff_bcr) if eff_bcr is not None else None,
+        legal_far_pct=float(legal_far) if legal_far is not None else None,
+        legal_bcr_pct=float(legal_bcr) if legal_bcr is not None else None,
+        far_basis=far_basis,
+        developability=(special.get("developability") if special else "POSSIBLE"),
+        special_parcel=special,
     )
 
 
