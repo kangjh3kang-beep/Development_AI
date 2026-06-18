@@ -97,24 +97,37 @@ def _d(**kw):
 
 
 def test_prevalidate_accepts_clean_pure_input():
+    # 엔진 필수 필드(rule_id·semantic_type·case_id·sources.value)를 모두 갖춘 순수 입력 → 통과.
     assert prevalidate(_d(pnu="1111010100100000002",
-                          calc_targets=[{"target": "building_area", "payload": {"outer_area": 5.0}}],
-                          rules=[{"rule": {"comparator": "<="}, "measured": 1.0, "limit": 2.0}])) is None
+                          calc_targets=[{"target": "building_area", "payload": {"outer_area": 5.0},
+                                         "elements": [{"semantic_type": "EXT_WALL", "confidence": 0.9}]}],
+                          rules=[{"rule": {"rule_id": "r1", "comparator": "<="},
+                                  "measured": 1.0, "limit": 2.0}],
+                          issue="x", corpus=[{"case_id": "c1"}],
+                          cross_facts=[{"fact_key": "k", "sources": [{"source": "s", "value": 1}]}])) is None
 
 
 def test_prevalidate_rejects_bad_values():
-    # §6 체크리스트 — 키 존재가 아니라 값/enum까지(엔진 500 회피).
-    assert prevalidate(_d(pnu="123"))[:].startswith("invalid_input:pnu_invalid")  # 19자리 아님
+    # §6 체크리스트 — 키 존재가 아니라 값/enum + 엔진 필수필드 부재(부재→엔진 500)까지 선차단.
+    assert prevalidate(_d(pnu="123")).startswith("invalid_input:pnu_invalid")  # 19자리 아님
     assert "target_enum" in prevalidate(_d(calc_targets=[{"target": "BOGUS"}]))
-    assert "comparator" in prevalidate(_d(rules=[{"rule": {"comparator": "≈"}}]))
+    assert "comparator" in prevalidate(_d(rules=[{"rule": {"rule_id": "r1", "comparator": "≈"}}]))
     assert "rule_missing" in prevalidate(_d(rules=[{"measured": 1}]))
+    assert "rule_id_missing" in prevalidate(_d(rules=[{"rule": {"comparator": "<="}}]))  # 엔진 Rule 필수
     assert "fact_key_missing" in prevalidate(_d(cross_facts=[{"x": 1}]))
+    assert "source_missing" in prevalidate(_d(cross_facts=[{"fact_key": "k", "sources": [{"value": 1}]}]))
+    assert "value_missing" in prevalidate(_d(  # 엔진 SourceValue 필수(source+value)
+        cross_facts=[{"fact_key": "k", "sources": [{"source": "s"}]}]))
     assert "element_id_missing" in prevalidate(_d(elements=[{"features": {}}]))
+    assert "semantic_type_missing" in prevalidate(_d(  # 엔진 CalcElement 필수
+        calc_targets=[{"target": "building_area", "elements": [{"confidence": 0.5}]}]))
     assert "semantic_type" in prevalidate(_d(
         calc_targets=[{"target": "building_area", "elements": [{"semantic_type": "NOPE"}]}]))
     assert "confidence" in prevalidate(_d(
-        calc_targets=[{"target": "building_area", "elements": [{"confidence": 1.5}]}]))
-    assert "nonfinite" in prevalidate({"pnu": "", "rules": [{"rule": {}, "measured": float("inf")}]})
+        calc_targets=[{"target": "building_area",
+                       "elements": [{"semantic_type": "EXT_WALL", "confidence": 1.5}]}]))
+    assert "case_id_missing" in prevalidate(_d(issue="x", corpus=[{"summary": "no id"}]))  # 엔진 PrecedentCase 필수
+    assert "nonfinite" in prevalidate({"pnu": "", "rules": [{"rule": {"rule_id": "r1"}, "measured": float("inf")}]})
 
 
 # ── 살아있는 parity 가드(HIGH): frozen 골든 stale 방지 2단 체인 ──
@@ -168,6 +181,13 @@ def test_is_deterministic_path():
     assert is_deterministic_path(_d(cross_facts=[{"fact_key": "k"}])) is False
     assert is_deterministic_path(_d(collect_land_card=True)) is False
     assert is_deterministic_path(_d(collect_surrounding=True)) is False
+    # L4 유사사례: issue+corpus = 라이브 의미임베딩(OpenAI) → 비결정.
+    assert is_deterministic_path(_d(issue="민원", corpus=[{"case_id": "c1"}])) is False
+    assert is_deterministic_path(_d(issue="민원")) is True            # corpus 없으면 검색 미발화 → 순수
+    # citations 단독(mirror_rules 미제공) = 공급측 가변 미러(SUPPLY_STORE) 의존 → 비결정.
+    assert is_deterministic_path(_d(citations=[{"ref": "조문"}])) is False
+    assert is_deterministic_path(_d(citations=[{"ref": "조문"}],
+                                    mirror_rules=[{"rule_id": "m1"}])) is True  # 미러 입력 동반 → 순수
     # address는 pnu 19자리면 지오코딩 미발화 → 결정론; 비19자리면 라이브 → 비결정.
     assert is_deterministic_path(_d(pnu="1111010100100000002", address="서울 어딘가")) is True
     assert is_deterministic_path(_d(address="서울 어딘가")) is False

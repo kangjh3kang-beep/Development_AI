@@ -128,15 +128,26 @@ def mirror_contract_fingerprint() -> str:
 
 
 def is_deterministic_path(dump: dict[str, Any]) -> bool:
-    """순수(결정론) 경로 여부 — 멱등 재사용 적용 가능 입력만 True(§3·§9 R7).
+    """순수(결정론) 경로만 True — 멱등 재사용 가능. 라이브 발화(VLLM·네트워크·가변 공급미러·임베딩)
+    중 하나라도 있으면 False → 매 호출 엔진 위임(캐싱/부분유니크 dedup 금지, §3·§9 R7).
 
-    비결정 발화 필드(VLLM 도면추출·라이브 네트워크) 중 하나라도 있으면 False → 매 호출 엔진 위임(캐싱 금지).
-    순수=pnu(19자리)·application_date·axis_date·snapshot_id·calc_targets·rules·sim_inputs·citations·qual_facts.
+    비결정 사유(엔진 analysis_pipeline 대조):
+    - drawings/ifc/elements: VLLM·이중경로 추출(도면 자동해석, 비결정 가능)
+    - cross_facts/collect_land_card/collect_surrounding: 라이브 다중출처/VWORLD 수집
+    - issue & corpus: L4 유사사례 의미임베딩(OpenAI 라이브 가능; 폴백 전환 시 매칭사례 변동, pipeline:167-176)
+    - citations & mirror_rules 미제공: SUPPLY_STORE 가변 미러 게이팅(시점 의존, pipeline:186-200)
+    - address & pnu 비19자리: 라이브 지오코딩(pipeline:205)
+    순수=pnu(19자리)·application_date·axis_date·snapshot_id·calc_targets·rules·sim_inputs·qual_facts
+    (·citations는 mirror_rules 동반 시에만 순수).
     """
     if dump.get("drawings") or dump.get("ifc") or dump.get("elements"):
         return False  # VLLM/이중경로 추출(비결정 가능)
     if dump.get("cross_facts") or dump.get("collect_land_card") or dump.get("collect_surrounding"):
         return False  # 라이브 다중출처/수집
+    if dump.get("issue") and dump.get("corpus"):
+        return False  # L4 유사사례 라이브 임베딩(보수적 — BFF는 EMBEDDER 모드 미확신)
+    if dump.get("citations") and not dump.get("mirror_rules"):
+        return False  # 공급측 가변 미러(SUPPLY_STORE) 의존 게이팅
     # address는 pnu가 19자리가 아닐 때만 라이브 지오코딩 발화(엔진 pipeline:205).
     return not (dump.get("address") and len(str(dump.get("pnu") or "")) != 19)
 
@@ -159,6 +170,8 @@ def prevalidate(dump: dict[str, Any]) -> str | None:
         rule = r["rule"]
         if not isinstance(rule, dict):
             return f"invalid_input:rules[{i}].rule_type"
+        if not rule.get("rule_id"):
+            return f"invalid_input:rules[{i}].rule.rule_id_missing"  # 엔진 Rule 필수 필드(부재→500)
         comp = rule.get("comparator")
         if comp is not None and comp not in _COMPARATORS:
             return f"invalid_input:rules[{i}].comparator"
@@ -186,6 +199,14 @@ def prevalidate(dump: dict[str, Any]) -> str | None:
         for k, s in enumerate(cf.get("sources") or []):
             if not isinstance(s, dict) or "source" not in s:
                 return f"invalid_input:cross_facts[{i}].sources[{k}].source_missing"
+            if "value" not in s:  # 엔진 SourceValue 필수(source+value), 키 부재→500
+                return f"invalid_input:cross_facts[{i}].sources[{k}].value_missing"
+
+    # corpus는 issue 동반 시에만 엔진이 PrecedentCase(**c)로 소비(pipeline:167-169) — 그때만 case_id 강제.
+    if dump.get("issue"):
+        for i, c in enumerate(dump.get("corpus") or []):
+            if not isinstance(c, dict) or not c.get("case_id"):
+                return f"invalid_input:corpus[{i}].case_id_missing"  # 엔진 PrecedentCase 필수
     return None
 
 
@@ -193,7 +214,9 @@ def _validate_calc_element(e: Any, path: str) -> str | None:
     if not isinstance(e, dict):
         return f"invalid_input:{path}.type"
     st = e.get("semantic_type")
-    if st is not None and st not in _SEMANTIC_TYPES:
+    if not st:
+        return f"invalid_input:{path}.semantic_type_missing"  # 엔진 CalcElement 필수(부재→500)
+    if st not in _SEMANTIC_TYPES:
         return f"invalid_input:{path}.semantic_type"
     c = e.get("confidence")
     if c is not None and (not _finite(c) or not 0.0 <= float(c) <= 1.0):

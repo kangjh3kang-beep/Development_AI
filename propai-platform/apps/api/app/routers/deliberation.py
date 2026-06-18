@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import uuid
 from typing import Any
+from urllib.parse import quote
 
 import structlog
 from fastapi import APIRouter, Body, Depends, HTTPException
@@ -143,6 +144,9 @@ async def _record_audit(user: Any, tenant: str, *, action: str, run_id: str | No
         return False, []
     if isinstance(r, dict) and r.get("quota_exceeded"):
         logger.warning("deliberation_audit_quota_exceeded", tenant=tenant, action=action)
+        # write 경로(fail_closed): 쿼터로 원장 미적재면 감사 없는 권위 판정 제공 금지(write_failed와 위험 동일).
+        if fail_closed:
+            raise HTTPException(status_code=502, detail="audit_quota_exceeded")
         return True, ["audit:quota_exceeded"]
     logger.warning("deliberation_audit_not_ok", action=action, ret=str(r)[:120])
     if fail_closed:
@@ -154,15 +158,18 @@ def _engine_headers(s: Any) -> dict[str, str]:
     return {"Authorization": f"Bearer {s.deliberation_engine_api_token}"} if s.deliberation_engine_api_token else {}
 
 
-def _engine_timeout(s: Any):
+def _engine_timeout(s: Any, deterministic: bool = True):
     import httpx
-    return httpx.Timeout(connect=s.deliberation_engine_connect_timeout_s, read=s.deliberation_engine_read_timeout_s,
-                         write=s.deliberation_engine_read_timeout_s, pool=s.deliberation_engine_connect_timeout_s)
+    # 비결정(라이브 네트워크: 지오코딩/VWORLD/임베딩) 경로는 더 긴 async read 타임아웃 — 조기 타임아웃→오탐 차단.
+    read = s.deliberation_engine_read_timeout_s if deterministic else s.deliberation_engine_async_read_timeout_s
+    return httpx.Timeout(connect=s.deliberation_engine_connect_timeout_s, read=read,
+                         write=read, pool=s.deliberation_engine_connect_timeout_s)
 
 
-async def _engine_post_analyze(dump: dict[str, Any]) -> tuple[dict[str, Any] | None, str]:
+async def _engine_post_analyze(dump: dict[str, Any], deterministic: bool = True) -> tuple[dict[str, Any] | None, str]:
     """엔진 POST /api/v1/analyze → (data, reason). reason: ok·circuit_open·engine_unreachable(5xx/타임아웃/연결)
-    ·engine_rejected(4xx=계약/매핑, breaker 제외). 4xx와 인프라 미연결을 구분(무음0·정직)."""
+    ·engine_rejected(4xx=계약/매핑, breaker 제외). 4xx와 인프라 미연결을 구분(무음0·정직).
+    deterministic=False면 async read 타임아웃 적용(라이브 네트워크 경로 조기 타임아웃 방지)."""
     s = get_settings()
     base = (s.deliberation_engine_url or "").rstrip("/")
     if not base:
@@ -172,7 +179,7 @@ async def _engine_post_analyze(dump: dict[str, Any]) -> tuple[dict[str, Any] | N
     try:
         import httpx
 
-        async with httpx.AsyncClient(timeout=_engine_timeout(s), follow_redirects=False) as c:
+        async with httpx.AsyncClient(timeout=_engine_timeout(s, deterministic), follow_redirects=False) as c:
             r = await c.post(f"{base}/api/v1/analyze", json=dump, headers=_engine_headers(s))
         if r.status_code >= 500:
             _breaker.record_failure()
@@ -180,7 +187,7 @@ async def _engine_post_analyze(dump: dict[str, Any]) -> tuple[dict[str, Any] | N
             return None, "engine_unreachable"
         _breaker.record_success()
         if r.status_code != 200:
-            logger.warning("deliberation_engine_4xx", status=r.status_code, body=str(r.text)[:200])
+            logger.warning("deliberation_engine_4xx", status=r.status_code)  # 본문 미기록(테넌트 입력 PII 누출 방지)
             return None, "engine_rejected"  # 계약/매핑 — breaker 제외
         data = r.json()
         return (data, "ok") if isinstance(data, dict) else (None, "invalid_response")
@@ -191,35 +198,43 @@ async def _engine_post_analyze(dump: dict[str, Any]) -> tuple[dict[str, Any] | N
 
 
 async def _engine_get_analysis(run_id: str) -> tuple[dict[str, Any] | None, str]:
-    """엔진 GET /api/v1/analyze/{run_id} → (data, reason). reason: ok·not_found(404 정합성 경고)
-    ·engine_rejected(그 외 4xx=토큰/계약)·engine_unreachable(5xx/타임아웃/연결). POST와 동일하게 4xx 구분."""
+    """엔진 GET /api/v1/analyze/{run_id} → (data, reason). reason: ok·circuit_open·not_found(404 정합성 경고)
+    ·engine_rejected(그 외 4xx=토큰/계약)·engine_unreachable(5xx/타임아웃/연결). POST와 breaker fault 카운팅 대칭."""
     s = get_settings()
     base = (s.deliberation_engine_url or "").rstrip("/")
     if not base:
         return None, "engine_unreachable"
+    if not _breaker.can_execute():
+        return None, "circuit_open"  # reuse/GET 경로도 폭주 차단(post와 대칭)
     try:
         import httpx
 
+        # run_id URL 인코딩(defense-in-depth) — DB-출처/UUID이나 경로 주입/SSRF 표면 사전 차단.
         async with httpx.AsyncClient(timeout=_engine_timeout(s), follow_redirects=False) as c:
-            r = await c.get(f"{base}/api/v1/analyze/{run_id}", headers=_engine_headers(s))
+            r = await c.get(f"{base}/api/v1/analyze/{quote(run_id, safe='')}", headers=_engine_headers(s))
+        if r.status_code >= 500:
+            _breaker.record_failure()
+            logger.warning("deliberation_engine_get_5xx", run_id=run_id, status=r.status_code)
+            return None, "engine_unreachable"
+        _breaker.record_success()  # 엔진 도달(2xx/4xx) → 회복 카운트
         if r.status_code == 404:
             logger.warning("deliberation_engine_run_missing", run_id=run_id)
             return None, "not_found"
-        if r.status_code >= 500:
-            return None, "engine_unreachable"
         if r.status_code != 200:
             logger.warning("deliberation_engine_get_4xx", run_id=run_id, status=r.status_code)
             return None, "engine_rejected"
         data = r.json()
         return (data, "ok") if isinstance(data, dict) else (None, "engine_unreachable")
     except Exception as exc:  # noqa: BLE001
+        _breaker.record_failure()
         logger.warning("deliberation_engine_get_failed", run_id=run_id, err=str(exc)[:200])
         return None, "engine_unreachable"
 
 
 def _get_degrade_reason(greason: str) -> str:
-    """엔진 GET reason → degrade 봉투 reason 매핑(정직성: 404=결과없음·4xx=거부·그외=미연결)."""
-    return {"not_found": "result_missing", "engine_rejected": "engine_rejected"}.get(greason, "engine_unreachable")
+    """엔진 GET reason → degrade 봉투 reason 매핑(정직성: 404=결과없음·4xx=거부·circuit=차단·그외=미연결)."""
+    return {"not_found": "result_missing", "engine_rejected": "engine_rejected",
+            "circuit_open": "circuit_open"}.get(greason, "engine_unreachable")
 
 
 def _integrity_ok(result: dict[str, Any] | None, expected_ih: str | None) -> bool:
@@ -259,17 +274,18 @@ async def deliberation_analyze(payload: dict = Body(...), user=Depends(get_curre
                                                  input_hash=ih, decision="degraded", http_status=200)
                     return _degrade(_get_degrade_reason(greason),
                                     audit_degraded=ad, audit_skipped=sk, reused=True, run_id=run_id)
-                if not _integrity_ok(result, existing.get("input_hash")):
-                    ad, sk = await _record_audit(user, tenant, action="analyze_reuse", run_id=run_id,
-                                                 input_hash=ih, decision="degraded", http_status=200)
-                    return _degrade("invalid_response", audit_degraded=ad, audit_skipped=sk,
-                                    reused=True, run_id=run_id)
+            # 저장 영속본(async writer)·라이브 조회분 모두 parity 재검증 — corrupt/drift blob 무음 disclose 금지.
+            if not _integrity_ok(result, existing.get("input_hash")):
+                ad, sk = await _record_audit(user, tenant, action="analyze_reuse", run_id=run_id,
+                                             input_hash=ih, decision="degraded", http_status=200)
+                return _degrade("invalid_response", audit_degraded=ad, audit_skipped=sk,
+                                reused=True, run_id=run_id)
             ad, sk = await _record_audit(user, tenant, action="analyze_reuse", run_id=run_id,
                                          input_hash=ih, decision="reuse", http_status=200)
             return {"degraded": False, "reused": True, "deterministic": True, "run_id": run_id,
                     "result": result, "audit_degraded": ad, "audit_skipped": sk}
 
-    res, reason = await _engine_post_analyze(dump)
+    res, reason = await _engine_post_analyze(dump, deterministic=deterministic)
     if res is None:
         ad, sk = await _record_audit(user, tenant, action="analyze", run_id=None,
                                      input_hash=ih, decision="degraded", http_status=200)

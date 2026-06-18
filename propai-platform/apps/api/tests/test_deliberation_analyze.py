@@ -7,12 +7,14 @@ from __future__ import annotations
 
 import uuid
 
+import httpx
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.services.auth.auth_service import get_current_user
 from app.services.deliberation._engine_contract import analysis_input_hash, build_input_dump
 from apps.api.app.routers import deliberation as delib
+from apps.api.integrations.base_client import CircuitBreaker
 
 _TID = uuid.UUID("11111111111111111111111111111111")
 
@@ -68,7 +70,7 @@ def test_analyze_success_new(monkeypatch):
 
     async def lookup(**kw):
         return None  # 신규
-    async def post(dump):
+    async def post(dump, deterministic=True):
         posted["dump"] = dump
         return _engine_result(ih), "ok"
     inserted = {}
@@ -91,7 +93,7 @@ def test_analyze_idempotent_reuse(monkeypatch):
 
     async def lookup(**kw):
         return {"run_id": existing_run, "source": "sync", "status": "DONE", "result": None}
-    async def post(dump):
+    async def post(dump, deterministic=True):
         called["post"] += 1
         return _engine_result(ih), "ok"
     async def get(run_id):
@@ -105,7 +107,7 @@ def test_analyze_idempotent_reuse(monkeypatch):
 def test_analyze_degraded_when_engine_unreachable(monkeypatch):
     async def lookup(**kw):
         return None
-    async def post(dump):
+    async def post(dump, deterministic=True):
         return None, "engine_unreachable"  # 미연결/타임아웃/circuit
     c = _client(monkeypatch, lookup=lookup, post=post)
     r = c.post("/api/v1/deliberation/analyze", json=_PAYLOAD)
@@ -118,7 +120,7 @@ def test_analyze_degraded_when_engine_unreachable(monkeypatch):
 def test_analyze_invalid_response_input_hash_mismatch(monkeypatch):
     async def lookup(**kw):
         return None
-    async def post(dump):
+    async def post(dump, deterministic=True):
         return _engine_result("WRONG-HASH"), "ok"  # 응답 input_hash 불일치
     inserted = {"n": 0}
     async def insert(**kw):
@@ -136,7 +138,7 @@ def test_analyze_invalid_response_run_id_none(monkeypatch):
     ih = analysis_input_hash(build_input_dump(_PAYLOAD))
     async def lookup(**kw):
         return None
-    async def post(dump):
+    async def post(dump, deterministic=True):
         return _engine_result(ih, run_id=None), "ok"  # run_id 없음(엔진 계약 위반)
     async def insert(**kw):
         return True
@@ -220,7 +222,7 @@ def test_analyze_nondeterministic_skips_idempotency(monkeypatch):
     async def lookup(**kw):
         looked["n"] += 1
         return {"run_id": "STALE", "source": "sync", "result": None}  # 있어도 무시돼야
-    async def post(dump):
+    async def post(dump, deterministic=True):
         return _engine_result(ih), "ok"
     inserted = {}
     async def insert(**kw):
@@ -265,7 +267,7 @@ def test_analyze_insert_race_uses_winner_run_id(monkeypatch):
         seq["n"] += 1
         return None if seq["n"] == 1 else {"run_id": "WINNER", "source": "sync",
                                            "result": {"input_hash": ih, "report": {}}, "input_hash": ih}
-    async def post(dump):
+    async def post(dump, deterministic=True):
         return _engine_result(ih), "ok"
     async def insert(**kw):
         return False  # 경합 패배
@@ -279,7 +281,7 @@ def test_analyze_audit_failure_is_fail_closed_502(monkeypatch):
     ih = analysis_input_hash(build_input_dump(_PAYLOAD))
     async def lookup(**kw):
         return None
-    async def post(dump):
+    async def post(dump, deterministic=True):
         return _engine_result(ih), "ok"
     async def insert(**kw):
         return True
@@ -290,11 +292,12 @@ def test_analyze_audit_failure_is_fail_closed_502(monkeypatch):
     assert r.status_code == 502  # 감사 없는 판정 제공 금지(fail-closed)
 
 
-def test_analyze_audit_quota_surfaces_not_blocks(monkeypatch):
+def test_analyze_audit_quota_write_is_fail_closed_502(monkeypatch):
+    # write 경로: 쿼터로 원장 미적재 = 감사 없는 권위 판정 → 502 차단(write_failed와 위험 동일).
     ih = analysis_input_hash(build_input_dump(_PAYLOAD))
     async def lookup(**kw):
         return None
-    async def post(dump):
+    async def post(dump, deterministic=True):
         return _engine_result(ih), "ok"
     async def insert(**kw):
         return True
@@ -302,13 +305,37 @@ def test_analyze_audit_quota_surfaces_not_blocks(monkeypatch):
         return {"ok": False, "quota_exceeded": True}
     c = _client(monkeypatch, lookup=lookup, post=post, insert=insert, audit=audit)
     r = c.post("/api/v1/deliberation/analyze", json=_PAYLOAD)
-    assert r.status_code == 200 and r.json()["audit_degraded"] is True  # 감사 한도 표면화·분석은 제공
+    assert r.status_code == 502  # 감사 없는 판정 제공 금지(quota도 fail-closed)
+
+
+def test_analyze_reuse_stored_result_parity_fail_degrades(monkeypatch):
+    # 저장 영속본(async writer)이 채운 result라도 input_hash parity 불일치면 degrade(무음 disclose 금지).
+    ih = analysis_input_hash(build_input_dump(_PAYLOAD))
+    async def lookup(**kw):
+        return {"run_id": "run-1", "source": "sync",
+                "result": {"input_hash": "STALE", "report": {}}, "input_hash": ih}  # 저장본 parity 불일치
+    c = _client(monkeypatch, lookup=lookup)
+    r = c.post("/api/v1/deliberation/analyze", json=_PAYLOAD)
+    assert r.json()["degraded"] is True and r.json()["reason"] == "invalid_response"
+
+
+def test_analyze_reuse_audit_failure_is_fail_closed_502(monkeypatch):
+    # 재사용도 write 경로(fail_closed) — 감사 예외 시 502(신규 경로와 대칭).
+    ih = analysis_input_hash(build_input_dump(_PAYLOAD))
+    async def lookup(**kw):
+        return {"run_id": "run-1", "source": "sync",
+                "result": {"input_hash": ih, "report": {}}, "input_hash": ih}
+    async def audit(**kw):
+        raise RuntimeError("ledger down")
+    c = _client(monkeypatch, lookup=lookup, audit=audit)
+    r = c.post("/api/v1/deliberation/analyze", json=_PAYLOAD)
+    assert r.status_code == 502
 
 
 def test_analyze_engine_rejected_4xx_distinct_reason(monkeypatch):
     async def lookup(**kw):
         return None
-    async def post(dump):
+    async def post(dump, deterministic=True):
         return None, "engine_rejected"  # 엔진 4xx(계약/매핑) — 미연결과 구분
     c = _client(monkeypatch, lookup=lookup, post=post)
     r = c.post("/api/v1/deliberation/analyze", json=_PAYLOAD)
@@ -341,7 +368,7 @@ def test_analyze_race_winner_parity_fail_degrades(monkeypatch):
             return None
         return {"run_id": "WINNER", "source": "sync",
                 "result": {"input_hash": "A", "report": {}}, "input_hash": "B"}  # parity 불일치
-    async def post(dump):
+    async def post(dump, deterministic=True):
         return _engine_result(ih), "ok"
     async def insert(**kw):
         return False  # 경합 패배
@@ -360,7 +387,7 @@ def test_analyze_race_winner_unresolved_does_not_return_loser_result(monkeypatch
         seq["n"] += 1
         return None if seq["n"] == 1 else {"run_id": "WINNER", "source": "sync",
                                            "result": None, "input_hash": ih}
-    async def post(dump):
+    async def post(dump, deterministic=True):
         return _engine_result(ih), "ok"
     async def insert(**kw):
         return False
@@ -381,7 +408,7 @@ def test_analyze_integrity_violation_trips_breaker(monkeypatch):
 
     async def lookup(**kw):
         return None
-    async def post(dump):
+    async def post(dump, deterministic=True):
         return _engine_result("WRONG-HASH"), "ok"  # parity 위반(200)
     c = _client(monkeypatch, lookup=lookup, post=post)
     r = c.post("/api/v1/deliberation/analyze", json=_PAYLOAD)
@@ -426,3 +453,122 @@ def test_get_degraded_reason_engine_rejected(monkeypatch):
     app.dependency_overrides[get_current_user] = lambda: _FakeUser()
     r = TestClient(app).get("/api/v1/deliberation/analyze/run-1")
     assert r.json()["degraded"] is True and r.json()["reason"] == "engine_rejected"
+
+
+def test_get_result_missing_when_engine_404(monkeypatch):
+    # binding 존재하나 엔진이 run 분실(404) → result_missing(정합성 경고)로 정직 표면화.
+    async def lookup_by_run(**kw):
+        return {"run_id": "run-1", "source": "sync", "result": None, "input_hash": "ih"}
+    async def get(rid):
+        return None, "not_found"
+    monkeypatch.setattr(delib.binding_service, "lookup_by_run", lookup_by_run)
+    monkeypatch.setattr(delib, "_engine_get_analysis", get)
+    app = _app()
+    app.dependency_overrides[get_current_user] = lambda: _FakeUser()
+    r = TestClient(app).get("/api/v1/deliberation/analyze/run-1")
+    assert r.json()["degraded"] is True and r.json()["reason"] == "result_missing" and r.json()["run_id"] == "run-1"
+
+
+def test_get_audit_failure_surfaces_not_502(monkeypatch):
+    # read 경로(fail_closed=False) — 감사 예외는 502가 아니라 audit_degraded 표면화(write와 대칭의 반대).
+    async def lookup_by_run(**kw):
+        return {"run_id": "run-1", "source": "sync",
+                "result": {"input_hash": "ih", "report": {}}, "input_hash": "ih"}
+    async def audit(**kw):
+        raise RuntimeError("ledger down")
+    monkeypatch.setattr(delib.binding_service, "lookup_by_run", lookup_by_run)
+    monkeypatch.setattr(delib, "append_audit", audit)
+    app = _app()
+    app.dependency_overrides[get_current_user] = lambda: _FakeUser()
+    r = TestClient(app).get("/api/v1/deliberation/analyze/run-1")
+    assert r.status_code == 200 and r.json()["audit_degraded"] is True
+
+
+# ── _engine_post_analyze breaker/HTTP 분기(스텁 미사용·httpx mock으로 실분기 실행) ──
+
+
+class _FakeSettings:
+    deliberation_engine_url = "http://engine.local"
+    deliberation_engine_api_token = "tok"
+    deliberation_engine_connect_timeout_s = 5.0
+    deliberation_engine_read_timeout_s = 30.0
+    deliberation_engine_async_read_timeout_s = 60.0
+
+
+class _FakeResp:
+    def __init__(self, status_code: int, payload=None):
+        self.status_code = status_code
+        self._payload = payload if payload is not None else {}
+        self.text = "engine-body"
+
+    def json(self):
+        return self._payload
+
+
+class _FakeClient:
+    def __init__(self, resp, calls):
+        self._resp, self._calls = resp, calls
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
+
+    async def _do(self, kind, url):
+        self._calls.append((kind, url))
+        if isinstance(self._resp, Exception):
+            raise self._resp
+        return self._resp
+
+    async def post(self, url, **kw):
+        return await self._do("post", url)
+
+    async def get(self, url, **kw):
+        return await self._do("get", url)
+
+
+def _install_engine(monkeypatch, resp, *, threshold=5):
+    monkeypatch.setattr(delib, "get_settings", lambda: _FakeSettings())
+    br = CircuitBreaker(failure_threshold=threshold, recovery_timeout=9999.0, half_open_max=1)
+    monkeypatch.setattr(delib, "_breaker", br)
+    calls: list = []
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: _FakeClient(resp, calls))
+    return br, calls
+
+
+def test_engine_timeout_uses_async_read_for_nondeterministic():
+    s = _FakeSettings()
+    assert delib._engine_timeout(s, deterministic=True).read == 30.0
+    assert delib._engine_timeout(s, deterministic=False).read == 60.0  # 라이브 경로 60s
+
+
+async def test_engine_post_circuit_open_shortcircuits(monkeypatch):
+    br, calls = _install_engine(monkeypatch, _FakeResp(200, {"run_id": "x"}), threshold=1)
+    for _ in range(2):
+        br.record_failure()  # circuit OPEN(threshold 1)
+    data, reason = await delib._engine_post_analyze({"pnu": "x"})
+    assert reason == "circuit_open" and data is None and calls == []  # httpx 미호출(폭주 차단)
+
+
+async def test_engine_post_5xx_counts_failure_until_open(monkeypatch):
+    br, calls = _install_engine(monkeypatch, _FakeResp(503), threshold=5)
+    for _ in range(5):
+        data, reason = await delib._engine_post_analyze({"pnu": "x"})
+        assert data is None and reason == "engine_unreachable"
+    assert not br.can_execute()  # 5xx 5회 → record_failure 누적 → circuit OPEN
+
+
+async def test_engine_post_200_returns_ok(monkeypatch):
+    payload = {"run_id": str(uuid.uuid4()), "input_hash": "ih", "report": {}}
+    br, calls = _install_engine(monkeypatch, _FakeResp(200, payload))
+    data, reason = await delib._engine_post_analyze({"pnu": "x"})
+    assert reason == "ok" and data == payload and calls and br.can_execute()  # record_success → CLOSED 유지
+
+
+async def test_engine_post_4xx_is_engine_rejected_no_breaker(monkeypatch):
+    br, calls = _install_engine(monkeypatch, _FakeResp(422), threshold=5)
+    for _ in range(5):
+        data, reason = await delib._engine_post_analyze({"pnu": "x"})
+        assert data is None and reason == "engine_rejected"
+    assert br.can_execute()  # 4xx는 record_success(breaker 제외) → 5회에도 CLOSED
