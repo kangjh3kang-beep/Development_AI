@@ -20,6 +20,7 @@ _VERDICT_NORM = {
     "rejected": "non_compliant", "violation": "non_compliant", "부적합": "non_compliant",
     "needs_review": "needs_review", "conditional": "needs_review", "held": "needs_review",
     "discretion_held": "needs_review", "review": "needs_review", "조건부": "needs_review", "보류": "needs_review",
+    "warning": "needs_review", "warn": "needs_review",
 }
 
 _DDL = (

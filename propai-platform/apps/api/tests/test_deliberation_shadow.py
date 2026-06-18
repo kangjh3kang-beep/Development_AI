@@ -15,29 +15,31 @@ from app.services.deliberation import shadow_service as s
 from apps.api.app.routers import deliberation as delib
 
 
-def test_mapper_design_audit_maps_verdict_and_findings():
+def test_mapper_design_audit_maps_numeric_subset_and_comparator():
     result = {"overall": {"verdict": "부적합", "verdict_en": "fail"},
               "findings": [{"check_id": "rules8_far", "current": 250.0, "limit": 200.0, "status": "fail"},
-                           {"check_id": "rules8_setback", "current": 2.0, "limit": 3.0},  # 최소요건 → >=
-                           {"check_id": "qual", "current": None, "limit": None}]}  # 비수치 → 제외
+                           {"check_id": "rules8_setback", "current": 2.0, "limit": 3.0, "status": "pass"},  # >=
+                           {"check_id": "qual", "current": None, "limit": None, "status": "fail"}]}  # 비수치 제외
     v, payload, val = sm.design_audit(result)
-    assert v == "fail" and len(payload["rules"]) == 2
+    assert v == "fail" and len(payload["rules"]) == 2  # 수치 subset worst status(far=fail)
     assert payload["rules"][0]["rule"]["rule_id"] == "rules8_far" and val == 250.0
     assert payload["rules"][0]["rule"]["comparator"] == "<="
     assert payload["rules"][1]["rule"]["comparator"] == ">="  # setback → 최소요건
 
 
-def test_mapper_design_audit_verdict_is_passthrough():
-    # verdict_en이 단일 비교축 — rules over 여부와 무관하게 verdict_en 그대로(rules는 정량 동반).
-    result = {"overall": {"verdict_en": "pass"},
-              "findings": [{"check_id": "c", "current": 9.0, "limit": 5.0}]}  # current>limit이나 verdict=pass
-    v, _, _ = sm.design_audit(result)
-    assert v == "pass"  # 합성 아님(플랫폼 판정 그대로)
+def test_mapper_design_audit_verdict_is_scoped_to_numeric_subset():
+    # ★scope 정합: 종합 verdict는 비수치 parking 'fail'로 부적합이나, 엔진이 보는 수치 subset은 pass뿐
+    # → platform_verdict는 subset 기준 'pass'(엔진과 동일 범위, 거짓 divergence 방지). 종합 verdict_en 미사용.
+    result = {"overall": {"verdict": "부적합", "verdict_en": "fail"},
+              "findings": [{"check_id": "parking", "current": "5대", "limit": "8대", "status": "fail"},  # 비수치
+                           {"check_id": "rules8_bcr", "current": 0.5, "limit": 0.6, "status": "pass"}]}
+    v, payload, _ = sm.design_audit(result)
+    assert v == "pass" and len(payload["rules"]) == 1  # 비수치 fail 제외 → subset=pass
 
 
-def test_mapper_design_audit_skips_when_no_verdict_or_no_numeric():
-    assert sm.design_audit({"overall": {"verdict": "판정불가"}}) is None        # verdict_en 부재
-    assert sm.design_audit({"overall": {"verdict_en": "pass"}, "findings": []}) is None  # 수치 체크 없음
+def test_mapper_design_audit_skips_when_no_numeric():
+    assert sm.design_audit({"findings": []}) is None
+    assert sm.design_audit({"findings": [{"check_id": "q", "current": None, "limit": None}]}) is None
     assert sm.design_audit({"overall": None}) is None
 
 
@@ -105,6 +107,10 @@ _VALID_PAYLOAD = {"pnu": "1111010100100000002"}
 def test_engine_overall_verdict_is_worst_of_findings():
     result = {"findings": [{"verdict": "COMPLIANT"}, {"verdict": "NEEDS_REVIEW"}, {"verdict": "compliant"}]}
     assert si.engine_overall_verdict(result) == "needs_review"   # 최악 우선(보수적)
+    # non_compliant(sev3)가 needs_review·compliant를 이김.
+    assert si.engine_overall_verdict(
+        {"findings": [{"verdict": "COMPLIANT"}, {"verdict": "NON_COMPLIANT"}, {"verdict": "NEEDS_REVIEW"}]}
+    ) == "non_compliant"
     assert si.engine_overall_verdict({"findings": []}) is None
     assert si.engine_overall_verdict("nope") is None
 

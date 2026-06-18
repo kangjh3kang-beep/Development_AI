@@ -312,8 +312,9 @@ async def check_compliance(
                         tenant_id=tid.hex if hasattr(tid, "hex") else str(tid),
                         domain="building_compliance",
                         platform_verdict=_v, engine_payload=_payload, platform_value=_val)
-    except Exception:  # noqa: BLE001 — 관측은 법규검증 흐름 절대 방해 금지
-        pass
+    except Exception as _e:  # noqa: BLE001 — 관측은 법규검증 흐름 절대 방해 금지(로그만, design_audit와 대칭)
+        import structlog
+        structlog.get_logger(__name__).warning("shadow 관측 실패(building_compliance)", err=str(_e)[:120])
 
     # ── 프론트(ComplianceCheckResponse) 계약으로 변환 ──
     checks = [

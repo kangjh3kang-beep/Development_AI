@@ -59,7 +59,14 @@ def fire_shadow_compare(**kwargs: Any) -> asyncio.Task | None:
         return None
     task = loop.create_task(shadow_compare(**kwargs))
     _bg_tasks.add(task)
-    task.add_done_callback(_bg_tasks.discard)
+
+    def _on_done(t: asyncio.Task) -> None:
+        _bg_tasks.discard(t)
+        exc = None if t.cancelled() else t.exception()
+        if exc is not None:  # shadow_compare는 자체 never-raise이나 스케줄 단계 예외는 여기서 표면화(무음 유실 방지)
+            logger.warning("shadow_task_unhandled", err=str(exc)[:200])
+
+    task.add_done_callback(_on_done)
     return task
 
 

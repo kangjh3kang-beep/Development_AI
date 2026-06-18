@@ -48,27 +48,33 @@ def _comparator_for(rule_id: str) -> str:
     return ">=" if any(g in rule_id for g in _GE_TYPES) else "<="
 
 
+# finding status → 등급(엔진이 보는 수치 finding subset의 worst status로 scope-정합 verdict 산출).
+_STATUS_SEV = {"fail": 3, "warning": 2, "pass": 1}
+
+
 def design_audit(result: dict[str, Any]) -> Mapped | None:
-    """설계심사 → overall.verdict_en(pass/fail/conditional) + 체크별 current/limit를 엔진 rules로 매핑.
-    norm_verdict가 pass→compliant·fail→non_compliant·conditional→needs_review. verdict_en이 단일 비교축
-    (rules는 정량 동반용). setback/sunlight 체크는 >= comparator. 수치 finding 없으면 None."""
-    overall = result.get("overall")
-    if not isinstance(overall, dict):
-        return None
-    verdict = overall.get("verdict_en")  # 판정불가는 None → skip
-    if not verdict:
-        return None
+    """설계심사 → 엔진 rules로 변환되는 **수치 finding subset**만 비교(scope-정합). platform_verdict는
+    overall.verdict_en(전 체크 종합, 비수치 parking/permit/solar 포함)이 아니라 그 subset의 worst status로
+    산출 → 엔진이 같은 rules로 도출한 verdict와 apples-to-apples(범위 불일치 거짓발산 제거).
+    setback/sunlight는 >= comparator. 수치 finding 없으면 None(생략)."""
     rules = []
+    worst_status, worst_sev = "", -1
     for f in result.get("findings") or []:
         if not isinstance(f, dict):
             continue
         rid = str(f.get("check_id") or f.get("engine") or "").strip() or "chk"
         r = _rule(rid, _comparator_for(rid), f.get("current"), f.get("limit"))
-        if r:
-            rules.append(r)
+        if not r:
+            continue  # 비수치(parking/permit/solar/grammar 등) — 엔진 rule 변환 불가 → subset 제외
+        rules.append(r)
+        st = str(f.get("status") or "").lower()
+        sev = _STATUS_SEV.get(st, 0)
+        if sev > worst_sev:
+            worst_sev, worst_status = sev, st
     if not rules:
         return None  # 비교 가능한 정량 체크 없음 → 생략(거짓발산 방지)
-    return str(verdict), {"rules": rules}, rules[0]["measured"]
+    # subset worst status가 곧 platform이 그 rules에 내린 판정(엔진과 동일 범위).
+    return worst_status or "pass", {"rules": rules}, rules[0]["measured"]
 
 
 def building_compliance(raw: dict[str, Any]) -> Mapped | None:
