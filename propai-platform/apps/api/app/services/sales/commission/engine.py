@@ -24,6 +24,16 @@ logger = logging.getLogger(__name__)
 
 Q = Decimal("1")
 
+
+class CrossSiteOwnershipError(ValueError):
+    """교차현장 소유 위반 — 타 현장이 소유한 머니패스 행(세금유형 등)을 덮어쓰려 할 때 raise.
+
+    ★응답계약 SSOT: 이 예외는 엔드포인트에서 409(Conflict)로 매핑한다(권한/리소스 충돌).
+      과거엔 한국어 메시지 부분문자열('다른 현장' in str(e))로 409/400 을 분기했는데, 문구가
+      바뀌면 상태코드가 흔들렸다. 전용 예외클래스로 분기를 코드화해 문구 변경에도 상태코드를
+      불변으로 만든다. ValueError 를 상속하므로 기존 'except ValueError' 경로와도 하위호환된다.
+    """
+
 # 테이블/컬럼 미존재 PostgreSQL SQLSTATE(asyncpg). 이것만 '정상 0'(아직 안 만든 테이블)으로 본다.
 # 42P01=undefined_table, 42703=undefined_column. 그 외 DB 오류는 은폐 금지(분류 로깅 후 전파).
 _MISSING_OBJECT_SQLSTATES = frozenset({"42P01", "42703"})
@@ -272,6 +282,12 @@ async def set_node_tax_type(db, site_id, node_id, tax_type: str) -> str:
       막기 위해, ON CONFLICT DO UPDATE 에도 'WHERE …site_id=:s' 조건을 건다. 충돌 시점에 기존
       행이 타 현장 소유면 UPDATE 가 적용되지 않으므로(영향 행 0), 선검사를 통과한 뒤 경합으로
       타 현장 행이 끼어들어도 무단 덮어쓰기가 원천 차단된다(SELECT 선검사에만 의존하지 않음).
+
+    ★[silent no-op 차단] 위 ON CONFLICT…WHERE site_id 가드가 경합으로 막히면(타 현장 행이
+      끼어든 경우) Postgres 는 '0행 갱신·무예외'로 조용히 끝낸다. 이때 함수가 그대로 tt 를
+      반환하면 엔드포인트가 {ok:True} 로 응답해 '차단된 머니패스 write 를 성공으로 위장'한다
+      (silent no-op). 그래서 result.rowcount 를 확인해, 0행이면(=실제 갱신/삽입 안 됨)
+      CrossSiteOwnershipError 로 명시 거부한다(409 매핑). 성공을 위장하지 않는다.
     """
     tt = (tax_type or "").upper()
     if tt not in ("WITHHOLDING", "VAT"):
@@ -282,15 +298,20 @@ async def set_node_tax_type(db, site_id, node_id, tax_type: str) -> str:
         "SELECT site_id FROM sales_commission_tax_pref WHERE node_id=:n"),
         {"n": str(node_id)})).first()
     if owner is not None and str(owner[0]) != str(site_id):
-        raise ValueError("이 노드의 세금유형은 다른 현장 소유입니다 — 변경할 수 없습니다")
+        raise CrossSiteOwnershipError("이 노드의 세금유형은 다른 현장 소유입니다 — 변경할 수 없습니다")
     # ON CONFLICT DO UPDATE 에 site_id 가드 — 경합(TOCTOU)으로 타 현장 행이 끼어들어도
     # 그 행은 UPDATE 대상에서 제외(WHERE 불일치)되어 무단 덮어쓰기가 차단된다.
-    await db.execute(text(
+    result = await db.execute(text(
         "INSERT INTO sales_commission_tax_pref (site_id, node_id, tax_type, updated_at) "
         "VALUES (:s,:n,:t, now()) ON CONFLICT (node_id) DO UPDATE SET "
         "site_id=:s, tax_type=:t, updated_at=now() "
         "WHERE sales_commission_tax_pref.site_id=:s"),
         {"s": str(site_id), "n": str(node_id), "t": tt})
+    # ★rowcount==0 = 경합으로 갱신/삽입이 차단됨(타 현장 행 선점). 성공 위장 금지 → 명시 거부.
+    #   (rowcount 가 -1/None 인 일부 드라이버는 '미지원'이므로 0 일 때만 거부 — 정상 경로 오탐 방지.)
+    if getattr(result, "rowcount", -1) == 0:
+        raise CrossSiteOwnershipError(
+            "이 노드의 세금유형은 다른 현장 소유입니다 — 변경할 수 없습니다(경합 차단)")
     return tt
 
 
@@ -311,11 +332,39 @@ async def settle_summary(db: AsyncSession, site_id, node_id) -> dict:
         "WHERE e.site_id=:s AND s.node_id=:n AND e.status='SPLIT'"),
         {"s": str(site_id), "n": str(node_id)})).scalar() or 0)
     try:
+        # ★[현장 격리·대칭] earned 집계는 e.site_id=:s 로 격리하는데 paid 집계는 s.node_id 만
+        #   걸려 비대칭이었다(타 현장에서 같은 node_id 로 지급된 행이 있으면 paid 에 새어 들어와
+        #   미지급 잔액을 과소 산정 → 정산 오판). event(e)까지 조인해 e.site_id=:s 격리를 더해
+        #   earned 와 동일 기준으로 맞춘다(머니패스 격리 대칭 복원).
+        #
+        # ★[지급 2소스 합산 — 구조적 누락 해소(iter-5 HIGH)] 지급(payout)은 두 경로로 생긴다.
+        #   ① claim 승인 경로: payout.claim_id 가 채워져 claim→split→event 로 잇는다(아래 첫 SELECT).
+        #   ② 마일스톤 스케줄 경로(run_due_payouts): payout.claim_id=NULL, method='SCHEDULE' 로
+        #      생성되고, sales_commission_payout_schedule.paid_payout_id 가 그 payout 을 가리킨다
+        #      (schedule→split→event 로 site/node 를 잇는다, 아래 UNION ALL 둘째 SELECT).
+        #   기존 paid 집계는 'JOIN claims c ON c.id=p.claim_id' INNER JOIN 체인이라 claim_id=NULL 인
+        #   스케줄 지급분이 전량 누락됐다 → 이미 지급한 돈이 미지급(outstanding)으로 과대 표시되어
+        #   해촉/정산 명세의 핵심숫자(미지급 잔액)를 오판했다. 두 소스를 UNION ALL 로 합산해
+        #   '실제 지급된 모든 현금(공급가액 기준)'을 paid 로 집계한다.
+        #   - 중복합산 차단: ① 경로는 claim_id 가 채워진 payout 만, ② 경로는 claim_id IS NULL 인
+        #     payout 만 집계하므로 같은 payout 이 두 소스에 동시에 잡히지 않는다(상호배타).
+        #   - 두 소스 모두 s.node_id=:n + e.site_id=:s 로 earned 와 동일한 현장·노드 격리를 건다
+        #     (집계규약 통일: earned/paid 모두 'SPLIT 이벤트의 node 귀속 + 현장 격리').
         paid = int((await db.execute(text(
-            "SELECT COALESCE(SUM(p.gross),0) FROM sales_commission_payouts p "
-            "JOIN sales_commission_claims c ON c.id=p.claim_id "
-            "JOIN sales_commission_splits s ON s.id=c.split_id "
-            "WHERE s.node_id=:n"), {"n": str(node_id)})).scalar() or 0)
+            "SELECT COALESCE(SUM(g),0) FROM ("
+            "  SELECT p.gross AS g FROM sales_commission_payouts p "
+            "  JOIN sales_commission_claims c ON c.id=p.claim_id "
+            "  JOIN sales_commission_splits s ON s.id=c.split_id "
+            "  JOIN sales_commission_events e ON e.id=s.event_id "
+            "  WHERE s.node_id=:n AND e.site_id=:s "
+            "  UNION ALL "
+            "  SELECT p.gross AS g FROM sales_commission_payouts p "
+            "  JOIN sales_commission_payout_schedule sch ON sch.paid_payout_id=p.id "
+            "  JOIN sales_commission_splits s ON s.id=sch.split_id "
+            "  JOIN sales_commission_events e ON e.id=s.event_id "
+            "  WHERE s.node_id=:n AND e.site_id=:s AND p.claim_id IS NULL"
+            ") u"),
+            {"n": str(node_id), "s": str(site_id)})).scalar() or 0)
     except DBAPIError as e:
         # 트랜잭션 오염 방지 롤백(미존재/전파 공통). 롤백 자체 실패는 무시.
         with contextlib.suppress(Exception):
@@ -330,12 +379,45 @@ async def settle_summary(db: AsyncSession, site_id, node_id) -> dict:
             #   분류 로깅 후 호출자에게 전파한다(0 으로 흡수 금지).
             logger.error("settle_summary 지급집계 DB오류(전파): node=%s err=%s", str(node_id), str(e)[:200])
             raise
+    # ★[clawback 후 과지급 클램프 — 의도동작 명시(iter-6 관찰)] earned 는 e.status='SPLIT' 만 합산하므로
+    #   환수(clawback)된 이벤트는 earned 에서 빠진다. 그런데 paid 는 그 이벤트에 이미 지급된 payout 을
+    #   계속 포함한다(REVERSED 미반영). 따라서 환수 후엔 earned < paid 가 될 수 있고, outstanding 은
+    #   max(0,..) 로 0 에 클램프된다 — 즉 '미지급 잔액'은 0 으로만 표시되고 '과지급(환수대상)'은 이 숫자에
+    #   드러나지 않는다. 이는 의도된 동작이다: 이 명세의 outstanding 은 '아직 줘야 할 돈(≥0)'을 뜻하며,
+    #   과지급 회수는 별도 환수 원장(clawback/REVERSED)이 담당한다(여기서 음수로 섞으면 미지급과 환수를
+    #   혼동). 회귀테스트(test_outstanding_clamped_to_zero_after_overpay)로 이 클램프를 고정한다.
     outstanding = max(0, earned - paid)
+    # ★[과지급 가시화(iter-7 completeness)] outstanding 은 max(0,..) 로 클램프돼 '아직 줘야 할 돈(≥0)'만
+    #   표시하므로, earned<paid(환수 후 등) 상황의 '과지급(환수대상)'이 이 화면에서 보이지 않았다.
+    #   의도분리(미지급≥0 / 환수는 별도 원장)는 유지하되, 운영자가 이 정산명세 화면만으로 과지급을 인지
+    #   하도록 overpaid 신호를 함께 노출한다. overpaid = max(0, paid-earned)(0 이면 과지급 없음).
+    #   clawback_total = '환수(REVERSED)된 이벤트의 배분 합'(별도 환수 원장 합계) — 과지급의 근거숫자.
+    #   둘 다 '신호 노출'일 뿐 outstanding/settlement(미지급 분개)에는 섞지 않는다(혼동 차단).
+    overpaid = max(0, paid - earned)
+    try:
+        clawback_total = int((await db.execute(text(
+            "SELECT COALESCE(SUM(s.amount),0) FROM sales_commission_splits s "
+            "JOIN sales_commission_events e ON e.id=s.event_id "
+            "WHERE e.site_id=:s AND s.node_id=:n AND e.status='REVERSED'"),
+            {"s": str(site_id), "n": str(node_id)})).scalar() or 0)
+    except DBAPIError as e:
+        # 환수합 집계도 동일 분류 — 미존재(아직 환수 도메인 미생성)만 0(정상), 실오류는 전파(은폐 금지).
+        with contextlib.suppress(Exception):
+            await db.rollback()
+        code = _missing_object_sqlstate(e)
+        if code is not None:
+            logger.debug("settle_summary 환수합 미존재객체(%s) → clawback_total=0(node=%s)", code, str(node_id))
+            clawback_total = 0
+        else:
+            logger.error("settle_summary 환수합 DB오류(전파): node=%s err=%s", str(node_id), str(e)[:200])
+            raise
     tax_type = await get_node_tax_type(db, node_id, site_id=site_id)  # 현장 격리 조회
     net = payout_net(Decimal(outstanding), tax_type)
     return {
         "node_id": str(node_id), "tax_type": tax_type, "contracts": contracts,
         "earned_gross": earned, "paid_gross": paid, "outstanding_gross": outstanding,
+        # 과지급 신호(운영자 인지용) — outstanding/settlement 와 분리(환수 회수는 별도 원장).
+        "overpaid_gross": overpaid, "clawback_total": clawback_total,
         "settlement": {k: (int(v) if isinstance(v, Decimal) else v) for k, v in net.items()},
     }
 

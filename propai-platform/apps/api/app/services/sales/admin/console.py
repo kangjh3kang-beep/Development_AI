@@ -355,10 +355,39 @@ async def site_management_detail(db: AsyncSession, site_id) -> dict[str, Any]:
     revenue = await _scalar(db,
         "SELECT COALESCE(SUM(total_price),0) FROM sales_contracts_ext WHERE site_id=:s AND status='ACTIVE'", s=s)
     # 수수료 이벤트엔 site_id 가 없으므로 계약(contract_ext_id)을 경유해 현장을 잇는다.
+    # commission(발생주의 수수료) = 배분(split) 합. accrual.profit 에 쓴다(아직 미지급분 포함).
     commission = await _scalar(db,
         "SELECT COALESCE(SUM(sp.amount),0) FROM sales_commission_splits sp "
         "JOIN sales_commission_events e ON e.id=sp.event_id "
         "JOIN sales_contracts_ext c ON c.id=e.contract_ext_id WHERE c.site_id=:s", s=s)
+    # ── 수수료 '실지급 현금'(현금흐름용) — VAT 포함(gross+vat=total_paid_of 규약) ─────────────
+    #   ★[VAT 과소집계 해소(iter-5 HIGH·완결)] cash_profit(현금흐름 손익)의 수수료 현금유출을
+    #     발생주의 split 합(commission)으로 빼면 두 가지가 어긋난다: ① split 은 '발생'이라 아직
+    #     지급 안 된 분까지 현금유출로 과대 차감되고, ② VAT 수령자가 실제로 지급받은 부가세(현금)가
+    #     반영되지 않는다. 현금흐름은 '실제로 빠져나간 돈' = 지급(payout) 의 gross+vat 합이어야 한다
+    #     (extension.total_paid_of 규약과 동일: WITHHOLDING 은 vat=0 이라 gross 와 같고, VAT 수령자는
+    #      부가세만큼 현금유출이 더 크다). 지급은 2소스(claim 승인·마일스톤 스케줄)이며 둘 다 합산한다.
+    #   - claim 경로: payout.claim_id → claim → split → event → contract(현장).
+    #   - 스케줄 경로: payout(claim_id NULL) ← schedule.paid_payout_id → split → event → contract.
+    #     (settle_summary 의 2소스 UNION 규약과 동일. 같은 payout 이 두 소스에 동시 잡히지 않도록
+    #      스케줄 경로는 p.claim_id IS NULL 로 상호배타.)
+    #   - vat 컬럼은 정본 033 마이그레이션 이후 존재. 미적용 클린 DB(컬럼 부재 42703)나 지급 테이블
+    #     미존재(42P01)는 _scalar 가 '정상 0'(아직 지급 없음)으로 폴백한다(silent-fail 아님 — 실오류는 전파).
+    commission_paid_cash = await _scalar(db,
+        "SELECT COALESCE(SUM(g),0) FROM ("
+        "  SELECT COALESCE(p.gross,0)+COALESCE(p.vat,0) AS g FROM sales_commission_payouts p "
+        "  JOIN sales_commission_claims cl ON cl.id=p.claim_id "
+        "  JOIN sales_commission_splits sp ON sp.id=cl.split_id "
+        "  JOIN sales_commission_events e ON e.id=sp.event_id "
+        "  JOIN sales_contracts_ext c ON c.id=e.contract_ext_id WHERE c.site_id=:s "
+        "  UNION ALL "
+        "  SELECT COALESCE(p.gross,0)+COALESCE(p.vat,0) AS g FROM sales_commission_payouts p "
+        "  JOIN sales_commission_payout_schedule sch ON sch.paid_payout_id=p.id "
+        "  JOIN sales_commission_splits sp ON sp.id=sch.split_id "
+        "  JOIN sales_commission_events e ON e.id=sp.event_id "
+        "  JOIN sales_contracts_ext c ON c.id=e.contract_ext_id "
+        "  WHERE c.site_id=:s AND p.claim_id IS NULL"
+        ") u", s=s)
     visitors = await _scalar(db, "SELECT count(*) FROM mh_visitors WHERE site_id=:s", s=s)
     attend_today = await _scalar(db,
         "SELECT count(*) FROM sales_staff_attendance WHERE site_id=:s AND check_in::date=:d", s=s, d=today)
@@ -422,8 +451,12 @@ async def site_management_detail(db: AsyncSession, site_id) -> dict[str, Any]:
     #   주의: 계약총액 즉시인식은 미수금까지 매출로 잡아 과대계상될 수 있다(K-IFRS 1115 는
     #   '이행의무 충족 시점' 인식 — 분양은 통상 진행기준/인도시점). 아래 cash_flow 와 분리 표기.
     profit = revenue - cost_total - commission
-    # [현금흐름손익=현금주의] 실수납액 − 회계비용 − 수수료배분. 실제 들어온 돈 기준.
-    cash_profit = cash_collected - cost_total - commission
+    # [현금흐름손익=현금주의] 실수납액 − 회계비용 − '실지급 수수료 현금'(payout gross+vat).
+    #   ★iter-5: 수수료 현금유출은 발생주의 배분(commission=Σsplit)이 아니라 '실제 지급(payout)'으로
+    #     뺀다. 그래야 ① 아직 미지급분이 현금유출로 과대차감되지 않고, ② VAT 수령자에게 실제로 나간
+    #     부가세(현금)가 반영된다(gross-only 대비 vat 만큼 현금유출 ↑). 미지급분은 cash_flow 에서 빠지지
+    #     않는 게 정합(아직 돈이 안 나갔으므로). 발생주의 commission 은 accrual.profit 에 그대로 쓴다.
+    cash_profit = cash_collected - cost_total - commission_paid_cash
     # ── 실수납·인식매출 차액 정밀화(단순 등치 제거) ─────────────────────────────
     #   두 값은 출처가 다르다: revenue_recognized=계약총액(sales_contracts_ext.total_price,
     #   발생주의 즉시인식), cash_collected=실수납(sales_payments.matched 입금).
@@ -468,9 +501,18 @@ async def site_management_detail(db: AsyncSession, site_id) -> dict[str, Any]:
             # 현금흐름 손익: 실제 수납된 돈 기준. 납입원장 없으면 cash_collected=0(정직).
             "cash_collected": cash_collected,
             "cost_total": cost_total,
-            "commission": commission,
+            # ★iter-5: 'commission' 키는 이제 '실지급 수수료 현금'(payout gross+vat)을 담는다.
+            #   현금흐름 관점에선 발생주의 배분(Σsplit)이 아니라 실제 지급된 돈만 빼야 정합이다
+            #   (미지급분 제외 + VAT 수령자 부가세 현금 포함). 하위호환을 위해 기존 키 이름
+            #   'commission' 을 그대로 유지하되(프론트 CashFlow.commission 참조 무파괴), 값의 의미를
+            #   '현금흐름상 실지급액'으로 교체한다. 'commission_paid' 별칭도 함께 노출해 의미를 명시한다.
+            #   발생주의 배분 원값은 accrual.commission 에서 별도로 본다(두 관점 분리).
+            "commission": commission_paid_cash,
+            "commission_paid": commission_paid_cash,
             "profit": cash_profit,
-            "note": "현금흐름 손익 = 실수납액(대사완료 입금) − 회계비용 − 수수료배분. 납입원장 미기록 시 0.",
+            "note": ("현금흐름 손익 = 실수납액(대사완료 입금) − 회계비용 − 실지급 수수료(payout gross+vat). "
+                     "수수료는 발생주의 배분(accrual.commission)이 아닌 '실제 지급분'만 차감(VAT 포함). "
+                     "납입원장·지급원장 미기록 시 0."),
         },
         "accrual": {
             # 회계 손익: 계약 매출(발생주의) 기준. 미수금 포함 과대계상 주의.

@@ -9,13 +9,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_db
 from app.api.deps_sales import SalesCtx, require_role, sales_ctx
 from app.services.sales.commission.extension import (
-    create_schedule, release_holdback, run_due_payouts, set_holdback,
+    create_schedule,
+    release_holdback,
+    run_due_payouts,
+    set_holdback,
 )
 from app.services.sales.guarantee.service import guarantee_check
 from app.services.sales.resale.service import (
-    create_realtx_report, decide_transfer, request_transfer, submit_realtx,
+    create_realtx_report,
+    decide_transfer,
+    request_transfer,
+    submit_realtx,
 )
-from app.services.sales.tax.service import build_withholding_statements, issue_tax_invoice
+from app.services.sales.tax.service import (
+    build_withholding_statements,
+    issue_tax_invoice,
+    read_withholding_statements,
+)
 
 r6 = APIRouter(tags=["sales-p6"])
 
@@ -57,7 +67,7 @@ async def resale_decide(transfer_id: uuid.UUID, body: dict, db: AsyncSession = D
         await decide_transfer(db, transfer_id, bool(body.get("allowed")), body.get("reason", ""), site_id=ctx.site_id)
     except ValueError as e:
         await db.rollback()
-        raise HTTPException(404, str(e))
+        raise HTTPException(404, str(e)) from e
     await db.commit()
     return {"ok": True}
 
@@ -98,9 +108,33 @@ async def comm_payouts_run(db: AsyncSession = Depends(get_db),
 @r6.get("/tax/withholding-statements")
 async def tax_wh(period: str, db: AsyncSession = Depends(get_db),
                  ctx: SalesCtx = Depends(require_role("AGENCY", "DEVELOPER"))):
-    st = await build_withholding_statements(db, ctx.site_id, period)
+    # ★[GET 시맨틱 복원(iter-7 HIGH)] 과거엔 GET 이 build(db.add+commit)를 호출하는 비멱등 쓰기였고,
+    #   (site,period,node) 유니크가 없어 재호출마다 명세가 중복누적됐다(법적 서류 중복). 이제 GET 은
+    #   '적재된 명세 조회 전용'(쓰기 없음)이고, 빌드(쓰기)는 아래 POST /build 로 분리됐다.
+    #   응답계약(period/gross/withholding 합계 + items)은 동일 유지(무회귀). 아직 빌드 전이면 빈 items.
+    items = await read_withholding_statements(db, ctx.site_id, period)
+    gross = sum(it["gross"] for it in items)
+    withholding = sum(it["withholding"] for it in items)
+    return {"period": period, "gross": gross, "withholding": withholding, "items": items}
+
+
+@r6.post("/tax/withholding-statements/build")
+async def tax_wh_build(body: dict, db: AsyncSession = Depends(get_db),
+                       ctx: SalesCtx = Depends(require_role("AGENCY", "DEVELOPER"))):
+    # ★[쓰기 분리·멱등(iter-7 HIGH)] 지급명세서 적재(쓰기)는 POST 로만 한다. build 는 동일 (site,period)
+    #   명세를 delete-before-insert 로 재집계하므로 같은 기간을 몇 번 빌드해도 행수·합계가 불변이다
+    #   (정본 멱등키는 Alembic 034 — 동시 빌드 race 까지 차단). 응답은 빌드된 노드별 내역 + 합계.
+    from fastapi import HTTPException
+    period = body.get("period")
+    if not period:
+        raise HTTPException(400, "period(YYYY-MM)가 필요합니다")
+    sts = await build_withholding_statements(db, ctx.site_id, period)
     await db.commit()
-    return {"period": st.period, "gross": int(st.gross or 0), "withholding": int(st.withholding or 0)}
+    gross = sum(int(s.gross or 0) for s in sts)
+    withholding = sum(int(s.withholding or 0) for s in sts)
+    return {"period": period, "gross": gross, "withholding": withholding,
+            "items": [{"payee_node_id": str(s.payee_node_id) if s.payee_node_id else None,
+                       "gross": int(s.gross or 0), "withholding": int(s.withholding or 0)} for s in sts]}
 
 
 @r6.post("/tax/invoices")

@@ -46,14 +46,63 @@ async def _ensure_payout_columns(db: AsyncSession | None = None) -> None:
         from app.core.database import async_session_factory
         async with async_session_factory() as ddl_db:
             await ddl_db.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": _LOCK_PAYOUT_COLS})
-            await ddl_db.execute(text(
-                "ALTER TABLE sales_commission_payouts ADD COLUMN IF NOT EXISTS "
-                "tax_type varchar(16) DEFAULT 'WITHHOLDING'"))
-            await ddl_db.execute(text(
-                "ALTER TABLE sales_commission_payouts ADD COLUMN IF NOT EXISTS "
-                "vat numeric(16,0) DEFAULT 0"))
+            # ★[테이블 부재 가드] ALTER TABLE ADD COLUMN IF NOT EXISTS 는 '컬럼' 부재만 무시할 뿐,
+            #   '테이블' 자체가 없으면(클린 DB·정본 033 미적용) 42P01(undefined_table)로 실패한다.
+            #   그래서 to_regclass 로 테이블 존재를 먼저 확인하고, 없으면 ALTER 를 건너뛴다(정본은
+            #   Alembic 033 의 create_table). 테이블 부재는 '아직 지급 도메인 미생성'이라 정상 0 상황
+            #   이므로 게이트만 닫아(다음 호출 재시도 없이) 조용히 통과한다 — silent-fail 아님(실오류는
+            #   여전히 전파). 호출부(run_due_payouts)는 rows 가 있을 때만 이 함수를 부르므로, 테이블이
+            #   정말 없으면 그 SELECT 조인(events)도 정상 0건이라 부가컬럼 UPDATE 경로에 도달하지 않는다.
+            exists = (await ddl_db.execute(text(
+                "SELECT to_regclass('public.sales_commission_payouts')"))).scalar()
+            if exists is not None:
+                await ddl_db.execute(text(
+                    "ALTER TABLE sales_commission_payouts ADD COLUMN IF NOT EXISTS "
+                    "tax_type varchar(16) DEFAULT 'WITHHOLDING'"))
+                await ddl_db.execute(text(
+                    "ALTER TABLE sales_commission_payouts ADD COLUMN IF NOT EXISTS "
+                    "vat numeric(16,0) DEFAULT 0"))
             await ddl_db.commit()
         _PAYOUT_COLS_READY = True
+
+
+def total_paid_of(gross, vat=0) -> int:
+    """실지급 현금(총지급액) = 공급가액(gross) + 부가세(vat). 집계 규약(문서/테스트 전용 헬퍼).
+
+    ★[SSOT 과대표현 정정(iter-6)] 이 헬퍼는 'Python 값(gross, vat)'을 받아 합산한다. 그러나 실제
+      현금흐름·정산·증명서 집계는 모두 SQL 집계(COALESCE(SUM(p.gross),0)+COALESCE(SUM(p.vat),0)
+      형태)로 DB 안에서 이뤄지므로 이 Python 헬퍼를 호출하지 못한다(현재 production 호출처 0건).
+      따라서 이 함수는 '집계 규약을 코드로 문서화'하고 단위테스트로 그 규약(gross+vat·음수가드·
+      Decimal 정규화)을 고정하는 용도다 — '집계의 SSOT(단일 진실 원천)'가 아니다. 아래 음수가드
+      (ValueError)는 이 헬퍼를 직접 부르는 코드만 보호하며, SQL 집계 경로의 음수 데이터는 막지
+      못한다(그 보호는 payout_net 의 입력 가드가 담당). SQL 집계와 본 헬퍼는 'gross+vat' 라는
+      동일 규약을 공유하되, 실 집계는 SQL 쪽이 정본임을 명시한다.
+
+    ★[정합·집계 규약 명시] sales_commission_payouts 는 'gross'(공급가액=원천징수 전 보수)와
+      'vat'(부가세 가산분)을 분리 저장한다. net 컬럼은 'gross 기준 실수령'(WITHHOLDING 은
+      gross−원천, VAT 는 gross)이라, VAT 수령자의 '실제로 빠져나간 현금'(total_paid=gross+vat)을
+      담지 않는다. 따라서 하류에서 'net/gross 만' 합산하면 VAT 수령자의 부가세가 과소집계된다.
+
+      → '총지급 현금'을 합산해야 하는 회계/현금흐름 집계는 컬럼을 직접 더하지 말고 본 헬퍼로
+        (gross + vat)를 산출한다(payout_net 의 total_paid 와 동일 규약). WITHHOLDING 은 vat=0
+        이라 gross 와 같다. 이로써 '집계 규약'을 코드 한 곳에 고정해 과소집계 회귀를 막는다.
+      (settle_summary 의 paid_gross 는 '공급가액 기준' 잔액계산용이라 의도적으로 gross 만 쓴다 —
+       그 컬럼의 의미는 '공급가액'이며 본 헬퍼는 '총지급 현금'으로 의미가 다름을 명확히 한다.)
+
+    [입력 정규화·가드(iter-5)]
+      - float 등 비정밀 입력은 Decimal(str(x)) 로 정규화해 부동소수 오차를 배제한다
+        (payout_net 의 Decimal 규약과 정합).
+      - 음수 vat 는 잘못된 데이터다(환수·차감은 별도 경로). payout_net 의 음수 gross 거부와 대칭으로
+        ValueError 로 즉시 거부한다 — 0/빈값으로 흡수하면 현금유출이 과소집계되는 silent-fail 이 된다.
+        (gross 는 settle/현금흐름 합산에서 자연스레 0 이상이 정상이나, 음수 gross 도 동일 사유로 거부.)
+    """
+    g = Decimal(str(gross)) if gross is not None else Decimal(0)
+    v = Decimal(str(vat)) if vat is not None else Decimal(0)
+    if g < 0:
+        raise ValueError(f"total_paid_of: gross(공급가액)는 음수가 될 수 없습니다(받은 값 {gross})")
+    if v < 0:
+        raise ValueError(f"total_paid_of: vat(부가세)는 음수가 될 수 없습니다(받은 값 {vat})")
+    return int(g + v)
 
 
 async def create_schedule(db: AsyncSession, split_id, milestones: list[dict]):
@@ -121,6 +170,8 @@ async def run_due_payouts(db: AsyncSession, site_id, as_of: date, wh_rate=Decima
         await db.flush()
         # tax_type/vat 는 모델 외 컬럼(정본=Alembic 033). 컬럼 보장은 루프 진입 전 1회 수행했으므로
         # 여기선 부가세 가산 지급액만 raw 갱신한다(매 건 ALTER 제거).
+        # ★집계 규약: '실지급 현금'(VAT 포함) 은 gross+vat = total_paid_of(gross, vat). 하류 현금흐름
+        #   집계는 컬럼 직접합산 대신 total_paid_of 를 써야 VAT 수령자 부가세 과소집계가 안 난다.
         await db.execute(text(
             "UPDATE sales_commission_payouts SET tax_type=:t, vat=:v WHERE id=:i"),
             {"t": net["tax_type"], "v": int(net["vat"]), "i": str(po.id)})

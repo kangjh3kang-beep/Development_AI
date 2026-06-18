@@ -38,7 +38,13 @@ _R_ORG_ADD = ("AGENCY", "SUBAGENCY", "DIRECTOR", "GM_DIRECTOR", "TEAM_LEADER", "
 _R_TEAM = ("TEAM_LEADER", "DIRECTOR", "GM_DIRECTOR", "SUBAGENCY", "AGENCY", "DEVELOPER", "SUPERADMIN")
 _R_SALES_ALL = ("MEMBER", "TEAM_LEADER", "GM_DIRECTOR", "SUBAGENCY", "AGENCY", "DEVELOPER", "SUPERADMIN")
 _R_CONTRACT = ("MEMBER", "TEAM_LEADER", "DIRECTOR", "SUBAGENCY", "AGENCY", "DEVELOPER")
-_R_TAXPREF = ("DEVELOPER", "AGENCY", "GM_DIRECTOR", "TEAM_LEADER", "MEMBER")
+# ★세금유형 변경/조회는 머니패스(원천/부가세 분개) write·열람이라 최하위 영업사원(MEMBER)을
+#   제거하고 최소 TEAM_LEADER 이상으로 제한한다(조회도 동일 게이트 — 타인 세금유형 무단 열람 차단).
+# ★[권한사다리 역전 해소(iter-5)] DIRECTOR 는 _R_ORG_ADD/_R_TEAM/_R_CONTRACT 에 모두 포함된
+#   상위 관리직인데 _R_TAXPREF 에서만 누락돼, 하급 TEAM_LEADER 는 통과하고 상급 DIRECTOR 는 403
+#   인 사다리 역전이 있었다. DIRECTOR 를 추가해 '상위 직급은 하위가 가능한 머니패스 열람/설정을
+#   항상 할 수 있다'는 권한 단조성을 복원한다(역전 제거).
+_R_TAXPREF = ("DEVELOPER", "AGENCY", "SUBAGENCY", "GM_DIRECTOR", "DIRECTOR", "TEAM_LEADER")
 
 
 @actions_router.post("/org/nodes")
@@ -428,20 +434,43 @@ async def provision(body: dict, db: AsyncSession = Depends(get_db), user=Depends
 
 
 @actions_router.get("/commission/tax-pref")
-async def get_tax_pref(node_id: str, db: AsyncSession = Depends(get_db), ctx: SalesCtx = Depends(sales_ctx)):
-    """수령자(노드) 수수료 세금유형 조회 — WITHHOLDING(3.3% 원천) | VAT(부가세 10%)."""
+async def get_tax_pref(node_id: str, db: AsyncSession = Depends(get_db),
+                       ctx: SalesCtx = Depends(require_role(*_R_TAXPREF))):
+    """수령자(노드) 수수료 세금유형 조회 — WITHHOLDING(3.3% 원천) | VAT(부가세 10%).
+
+    ★머니패스 열람 게이트: 과거엔 sales_ctx(현장 멤버십)만 의존해 역할 게이트가 전무했다
+      (최하위 MEMBER 도 타인 세금유형 열람 가능). 설정(POST)과 동일하게 _R_TAXPREF(TEAM_LEADER+)
+      게이트를 걸어 조회/설정 권한을 대칭으로 맞춘다(타인 분개정보 무단 열람 차단)."""
+    from fastapi import HTTPException
+
     from app.services.sales.commission.engine import get_node_tax_type
+    # ★[UUID 가드 대칭(iter-6)] set_tax_pref 와 동일하게 node_id 파싱 실패를 전용 400 으로 돌린다.
+    #   과거엔 uuid.UUID(node_id) 무가드 호출이 잘못된 쿼리파라미터(비-UUID)에서 ValueError 를 던져
+    #   전역 핸들러 500 으로 빠졌다(클라이언트 입력오류를 서버오류로 오표시). KeyError 는 FastAPI 가
+    #   필수 쿼리파라미터로 이미 422 처리하므로 여기선 형식오류(ValueError·TypeError)만 400 으로 잡는다.
+    try:
+        nid = uuid.UUID(node_id)
+    except (ValueError, TypeError) as e:
+        raise HTTPException(400, "node_id 형식이 올바르지 않습니다(UUID 필요)") from e
     # 현장 격리: ctx.site_id 로 본 현장 행만 조회(타 현장 노드 세금유형 열람 차단).
     return {"node_id": node_id,
-            "tax_type": await get_node_tax_type(db, uuid.UUID(node_id), site_id=ctx.site_id)}
+            "tax_type": await get_node_tax_type(db, nid, site_id=ctx.site_id)}
 
 
 @actions_router.get("/commission/settle-summary")
 async def commission_settle_summary(node_id: str, db: AsyncSession = Depends(get_db),
                                     ctx: SalesCtx = Depends(require_role(*_R_TEAM))):
     """#5 해촉/정산 — 노드(영업사원) 수수료 정산 명세(기발생−기지급=미지급, 원천/부가세 분개)."""
+    from fastapi import HTTPException
+
     from app.services.sales.commission.engine import settle_summary
-    return await settle_summary(db, ctx.site_id, uuid.UUID(node_id))
+    # ★[UUID 가드 대칭(iter-6)] get_tax_pref/set_tax_pref 와 동일하게 node_id 형식오류를 전용 400 으로.
+    #   무가드 uuid.UUID(node_id)는 비-UUID 쿼리파라미터에서 전역핸들러 500(클라이언트 입력오류 오표시).
+    try:
+        nid = uuid.UUID(node_id)
+    except (ValueError, TypeError) as e:
+        raise HTTPException(400, "node_id 형식이 올바르지 않습니다(UUID 필요)") from e
+    return await settle_summary(db, ctx.site_id, nid)
 
 
 @actions_router.post("/commission/tax-pref")
@@ -450,21 +479,33 @@ async def set_tax_pref(body: dict, db: AsyncSession = Depends(get_db),
     """수령자 세금유형 설정 — 3.3% 원천징수(WITHHOLDING) 또는 부가세 10%(VAT) 중 선택."""
     from fastapi import HTTPException
 
-    from app.services.sales.commission.engine import set_node_tax_type
+    from app.services.sales.commission.engine import CrossSiteOwnershipError, set_node_tax_type
+    # ★[오안내 해소(iter-5)] node_id 의 UUID 파싱을 try 진입 전에 분리한다. 과거엔 try 안에서
+    #   uuid.UUID(body["node_id"]) 가 던지는 ValueError 가 아래 'except ValueError → tax_type 이
+    #   올바르지 않습니다' 핸들러로 빨려 들어가, 실제로는 node_id 형식이 잘못된 건데 'tax_type 오류'
+    #   로 잘못 안내됐다. 파싱을 분리하고 전용 메시지로 400 을 돌려준다(KeyError=누락, ValueError·
+    #   TypeError=형식오류 — 둘 다 node_id 전용 안내).
     try:
-        tt = await set_node_tax_type(db, ctx.site_id, uuid.UUID(body["node_id"]), body.get("tax_type", ""))
-    except ValueError as e:
-        # ★예외 분기(응답계약): '다른 현장 소유' 충돌은 권한/리소스 충돌(409 Conflict)로,
-        #   그 외 입력검증 실패(잘못된 tax_type 등)는 400 Bad Request 로 매핑한다.
-        #   (현장 격리 위반을 400 으로 뭉뚱그리지 않고 충돌로 정직 고지 — 머니패스 격리.)
-        if "다른 현장" in str(e):
-            raise HTTPException(409, str(e)) from e
-        raise HTTPException(400, str(e) or "tax_type(WITHHOLDING/VAT)이 올바르지 않습니다") from e
+        node_id = uuid.UUID(str(body["node_id"]))
     except KeyError as e:
-        # node_id 누락 등 필수 입력 결손 → 400.
-        raise HTTPException(400, "node_id·tax_type(WITHHOLDING/VAT) 필요") from e
+        raise HTTPException(400, "node_id(노드 식별자) 필요") from e
+    except (ValueError, TypeError) as e:
+        raise HTTPException(400, "node_id 형식이 올바르지 않습니다(UUID 필요)") from e
+    try:
+        tt = await set_node_tax_type(db, ctx.site_id, node_id, body.get("tax_type", ""))
+    except CrossSiteOwnershipError as e:
+        # ★예외 분기(응답계약 SSOT): 교차현장 소유 충돌은 전용 예외클래스로 식별해 409(Conflict)
+        #   로 매핑한다. (과거엔 한국어 메시지 '다른 현장' 부분문자열 매칭이라 문구 변경 시
+        #   상태코드가 흔들렸다 — 전용 예외 isinstance 분기로 문구와 무관하게 409 불변.)
+        #   CrossSiteOwnershipError 가 ValueError 하위라 반드시 아래 ValueError 핸들러보다 앞에 둔다.
+        raise HTTPException(409, str(e)) from e
+    except ValueError as e:
+        # 그 외 입력검증 실패(잘못된 tax_type 등)는 400 Bad Request 로 매핑한다.
+        raise HTTPException(400, str(e) or "tax_type(WITHHOLDING/VAT)이 올바르지 않습니다") from e
+    # (node_id 의 KeyError/형식오류는 위 별도 try 에서 이미 전용 400 으로 처리됐으므로
+    #  여기서는 set_node_tax_type 가 던질 일이 없는 KeyError 핸들러를 두지 않는다 — dead 분기 제거.)
     await db.commit()
-    return {"ok": True, "node_id": body["node_id"], "tax_type": tt}
+    return {"ok": True, "node_id": str(node_id), "tax_type": tt}
 
 
 @actions_router.post("/commission/distribution/validate")

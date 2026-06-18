@@ -19,22 +19,45 @@
   cert_requests             : 프리랜서 발급신청(user·site·기간·status)
 """
 
-import anyio
+import contextlib
+import logging
 import uuid
 from datetime import datetime
 
+import anyio
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
 from app.api.deps_sales import SalesCtx, sales_ctx
 
+logger = logging.getLogger(__name__)
+
 termination_cert_router = APIRouter(tags=["sales-termination-cert"])
 
 # 발급주체 등록 / 발급을 할 수 있는 현장 관리자 역할
 _ISSUER_ROLES = {"SUPERADMIN", "DEVELOPER", "AGENCY", "GM_DIRECTOR"}
+
+# 테이블/컬럼 미존재 PostgreSQL SQLSTATE(asyncpg). 이것만 '정상 0'(아직 안 만든 테이블)으로 본다.
+# 42P01=undefined_table, 42703=undefined_column. 그 외 DB 오류는 은폐 금지(분류 로깅 후 전파).
+# (settle_summary / admin.console 의 검증된 분류 패턴과 동일.)
+_MISSING_OBJECT_SQLSTATES = frozenset({"42P01", "42703"})
+
+
+def _missing_object_sqlstate(exc: BaseException) -> str | None:
+    """예외가 '테이블/컬럼 미존재'(42P01/42703)면 해당 SQLSTATE, 아니면 None.
+
+    asyncpg 의 원본 예외는 SQLAlchemy DBAPIError.orig 에 래핑된다. orig.sqlstate
+    (또는 pgcode)로 분류한다. 이 두 코드만 '정상 0'(지급 전이라 아직 없는 테이블)으로 본다.
+    """
+    orig = getattr(exc, "orig", None) or exc
+    code = getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None)
+    if code in _MISSING_OBJECT_SQLSTATES:
+        return code
+    return None
 
 
 # ── 멱등 테이블(_ensure) ─────────────────────────────────────────────────────
@@ -165,35 +188,90 @@ async def _income_for(db: AsyncSession, user_id: uuid.UUID, site_id: uuid.UUID,
     year_sql = ""
     params: dict = {"uid": str(user_id), "sid": str(site_id)}
     if tax_year:
-        year_sql = " AND extract(year FROM p.paid_at) = :yr"
+        # ★[KST 세무연도 고정(iter-8 MEDIUM·correctness·TZ)] extract(year FROM p.paid_at) 은 DB 세션
+        #   타임존에 의존해, 세션 UTC 면 한국시간 연초/연말 자정 근처(예: KST 1/1 08:00 = UTC 전년 12/31
+        #   23:00) 지급이 전년으로 귀속돼 다른 세무연도에 잡힌다. 한국 원천징수영수증은 KST(달력) 기준이라
+        #   AT TIME ZONE 'Asia/Seoul' 로 KST 변환 후 연도를 뽑아 세션TZ 무관하게 고정한다(연 경계 귀속 오류 차단).
+        year_sql = " AND extract(year FROM (p.paid_at AT TIME ZONE 'Asia/Seoul')) = :yr"
         params["yr"] = tax_year
-    # 경로: payout → claim → split → event(site) ; claimant_node 의 user 와 매칭
+    # 경로: payout → (claim 또는 스케줄) → split → event(site) ; split.node→user 와 매칭
+    #   ★[원천징수증명 정합] 소득증명(원천징수영수증)은 '공급가액 기준'(gross)이 정합이다 — 부가세(vat)는
+    #     수령자(사업자)가 별도 신고하는 매출세액이지 본인의 소득/원천징수 대상이 아니므로 gross 만 합산한다.
+    #     (extension.total_paid_of=gross+vat 는 '현금흐름' 집계용이라 의도가 다르다. 여기서는 손대지 않는다.)
+    #   ★[지급 2소스 합산 — 구조적 누락 해소(iter-6 HIGH·법적 세무서류 정확성)] 지급(payout)은 두 경로로
+    #     생긴다. 기존 1차 쿼리는 'INNER JOIN claims c ON c.id=p.claim_id' 만 사용했는데, 전 코드베이스에서
+    #     payout 은 항상 마일스톤 스케줄 경로(extension.run_due_payouts → claim_id=None)로만 생성된다.
+    #     그 결과 INNER JOIN claims 가 실재 지급 전량을 0 으로 떨궈, 분할지급 프리랜서의 원천징수영수증/
+    #     해촉증명서 income_total·withholding_total 이 0 으로 과소표시됐다(법적 세무서류 오류).
+    #     → settle_summary 와 동일하게 2소스 UNION ALL 로 합산한다.
+    #       ① claim 경로 : payout.claim_id → claim → split → event(site) ; split.node→user.
+    #       ② 스케줄 경로: payout(claim_id NULL) ← schedule.paid_payout_id → split → event(site) ;
+    #                       split.node→user.
+    #     중복합산 차단: ① 경로는 claim_id 가 채워진 payout 만, ② 경로는 p.claim_id IS NULL 만 집계해
+    #     같은 payout 이 두 소스에 동시 잡히지 않게 한다(상호배타). 두 경로 모두 e.site_id=:sid +
+    #     n.user_id=:uid 로 현장·사용자 격리를 동일하게 유지한다(원천징수증명은 gross-only — vat 미가산).
     try:
         row = (await db.execute(text(
-            "SELECT coalesce(sum(p.gross),0), coalesce(sum(p.withholding),0), coalesce(sum(p.net),0)"
-            "  FROM sales_commission_payouts p"
-            "  JOIN sales_commission_claims c ON c.id = p.claim_id"
-            "  JOIN sales_commission_splits sp ON sp.id = c.split_id"
-            "  JOIN sales_commission_events e ON e.id = sp.event_id"
-            "  JOIN sales_org_nodes n ON n.id = c.claimant_node_id"
-            f" WHERE e.site_id = :sid AND n.user_id = :uid{year_sql}"), params)).first()
+            "SELECT coalesce(sum(g),0), coalesce(sum(wh),0), coalesce(sum(nt),0) FROM ("
+            "  SELECT p.gross AS g, p.withholding AS wh, p.net AS nt"
+            "    FROM sales_commission_payouts p"
+            "    JOIN sales_commission_claims c ON c.id = p.claim_id"
+            "    JOIN sales_commission_splits sp ON sp.id = c.split_id"
+            "    JOIN sales_commission_events e ON e.id = sp.event_id"
+            "    JOIN sales_org_nodes n ON n.id = sp.node_id"
+            f"   WHERE e.site_id = :sid AND n.user_id = :uid{year_sql}"
+            "  UNION ALL "
+            "  SELECT p.gross AS g, p.withholding AS wh, p.net AS nt"
+            "    FROM sales_commission_payouts p"
+            "    JOIN sales_commission_payout_schedule sch ON sch.paid_payout_id = p.id"
+            "    JOIN sales_commission_splits sp ON sp.id = sch.split_id"
+            "    JOIN sales_commission_events e ON e.id = sp.event_id"
+            "    JOIN sales_org_nodes n ON n.id = sp.node_id"
+            f"   WHERE e.site_id = :sid AND n.user_id = :uid AND p.claim_id IS NULL{year_sql}"
+            ") u"), params)).first()
         if row and (row[0] or row[1] or row[2]):
             return {"income_total": int(row[0]), "withholding_total": int(row[1]), "net_total": int(row[2])}
-    except Exception:  # noqa: BLE001 — 스키마 경로 차이 시 폴백
-        pass
+    except DBAPIError as e:
+        # ★silent-fail 차단(iter-5): 과거엔 bare 'except Exception: pass' 로 모든 DB 오류를 삼켜
+        #   소득=0 으로 은폐했다(증명서 금액 오판). settle_summary 와 동일하게 분류한다 —
+        #   테이블/컬럼 미존재(42P01/42703)만 '정상 0'(아직 지급 도메인 미생성)으로 보고 폴백 경로로
+        #   넘어가고, 권한·문법·연결 등 실오류는 0 으로 흡수하지 않고 전파한다.
+        with contextlib.suppress(Exception):
+            await db.rollback()  # 트랜잭션 오염 방지 롤백(미존재/전파 공통). 롤백 자체 실패는 무시.
+        if _missing_object_sqlstate(e) is None:
+            logger.error("_income_for 1차 소득집계 DB오류(전파): user=%s err=%s", str(user_id), str(e)[:200])
+            raise
+        logger.debug("_income_for 1차 소득집계 미존재객체 → 폴백 경로로 진행(user=%s)", str(user_id))
     # 폴백: withholding_statements(payee_node → user) 집계
+    #   ★[폴백 year 누락 해소(iter-7 HIGH·correctness)] 1차 쿼리는 tax_year 를 p.paid_at 으로 거는데,
+    #     폴백 쿼리엔 period/tax_year 필터가 전무했다. 그래서 폴백이 발화하면(1차 미존재 등) '전 기간'
+    #     명세를 SUM 해, 특정 tax_year 의 원천징수영수증 income_total/withholding_total 이 과대표시됐다
+    #     (예: 2025·2026 두 해 명세가 다 합산). statement.period(YYYY-MM)의 앞 4자리(연도)를 tax_year 로
+    #     제약해 1차 쿼리와 동일한 연도 집계 기준을 맞춘다. period NULL 행은 연도불명이라 tax_year
+    #     지정 시 자동 제외된다(left(NULL,4)=NULL → '<>' 비교 거짓). tax_year 미지정이면 기존 동작(전 기간).
+    fb_year_sql = ""
+    fb_params: dict = {"uid": str(user_id), "sid": str(site_id)}
+    if tax_year:
+        fb_year_sql = " AND left(w.period, 4) = :yr_str"
+        fb_params["yr_str"] = str(tax_year)
     try:
         row = (await db.execute(text(
             "SELECT coalesce(sum(w.gross),0), coalesce(sum(w.withholding),0)"
             "  FROM sales_withholding_statements w"
             "  JOIN sales_org_nodes n ON n.id = w.payee_node_id"
-            " WHERE w.site_id = :sid AND n.user_id = :uid"),
-            {"uid": str(user_id), "sid": str(site_id)})).first()
+            f" WHERE w.site_id = :sid AND n.user_id = :uid{fb_year_sql}"),
+            fb_params)).first()
         if row:
             g, wh = int(row[0] or 0), int(row[1] or 0)
             return {"income_total": g, "withholding_total": wh, "net_total": g - wh}
-    except Exception:  # noqa: BLE001
-        pass
+    except DBAPIError as e:
+        # ★silent-fail 차단(iter-5): 폴백 집계도 동일 분류 — 미존재만 0(정상), 실오류는 전파.
+        with contextlib.suppress(Exception):
+            await db.rollback()
+        if _missing_object_sqlstate(e) is None:
+            logger.error("_income_for 폴백 소득집계 DB오류(전파): user=%s err=%s", str(user_id), str(e)[:200])
+            raise
+        logger.debug("_income_for 폴백 소득집계 미존재객체 → 0 폴백(user=%s)", str(user_id))
     return {"income_total": 0, "withholding_total": 0, "net_total": 0}
 
 
@@ -440,7 +518,8 @@ async def cert_pdf(cert_id: uuid.UUID, db: AsyncSession = Depends(get_db),
         raise HTTPException(404, "증명서를 찾을 수 없습니다")
     if not _can_access_cert(cert, ctx):
         raise HTTPException(403, "본인 또는 발급 현장 관리자만 열람할 수 있습니다")
-    pdf = await anyio.to_thread.run_sync(_build_pdf, cert, db)  # P2-4: reportlab/urllib blocking → 스레드 오프로드(이벤트루프 비차단)
+    # P2-4: reportlab/urllib blocking → 스레드 오프로드(이벤트루프 비차단)
+    pdf = await anyio.to_thread.run_sync(_build_pdf, cert, db)
     return Response(content=pdf, media_type="application/pdf",
                     headers={"Content-Disposition": f'inline; filename="{cert["certificate_no"]}.pdf"'})
 
@@ -471,7 +550,8 @@ async def cert_image(cert_id: uuid.UUID, fmt: str = "png", db: AsyncSession = De
         raise HTTPException(404, "증명서를 찾을 수 없습니다")
     if not _can_access_cert(cert, ctx):
         raise HTTPException(403, "본인 또는 발급 현장 관리자만 열람할 수 있습니다")
-    img, mime = await anyio.to_thread.run_sync(_build_image, cert, db, (fmt or "png").lower())  # P2-4: PyMuPDF blocking 오프로드
+    # P2-4: PyMuPDF blocking 오프로드(이벤트루프 비차단)
+    img, mime = await anyio.to_thread.run_sync(_build_image, cert, db, (fmt or "png").lower())
     ext = "jpg" if mime == "image/jpeg" else "png"
     return Response(content=img, media_type=mime,
                     headers={"Content-Disposition": f'inline; filename="{cert["certificate_no"]}.{ext}"'})
