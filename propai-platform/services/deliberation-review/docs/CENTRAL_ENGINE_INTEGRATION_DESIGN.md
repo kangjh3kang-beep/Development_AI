@@ -1,182 +1,204 @@
-# 중심 엔진 통합 설계 (Central Analysis Engine Integration Design) — v2
+# 중심 엔진 통합 설계 (Central Analysis Engine Integration Design) — v4
 
-> 작성: 2026-06-18. 근거: 9-에이전트 통합설계 워크플로(플랫폼 50+ 분석 서브시스템 5클러스터 매핑 → 3안 설계 → 심사) + 4-렌즈 코드대조 검증 워크플로(정정 HIGH 7 반영).
-> 상태: **설계문서(코딩 전 검토용)**. 구현은 별도 트랙(trust_infra 기반 신규 통합 워크트리)에서 단계별 착수.
-> 결정(2026-06-18): 전환방식=**상세 설계 먼저**, 협업도구=**Workflow**, 작업브랜치=**trust_infra 기반 신규 통합 워크트리**.
-> **경로 규약**: 엔진 코드 인용은 모두 `services/deliberation-review/apps/api/app/` 하위(이하 "엔진 …"으로 축약). 플랫폼은 `apps/api/...`·`apps/web/...`.
+> 근거: 9-에이전트 설계 + 4-렌즈 코드대조 + **7-렌즈 9.5 시뮬레이션 2라운드**(R1 36결함·R2 29결함 정정). R2 점수: code-fact 9.0/contract 7.5/impl 8.0/failure 8.0/invariant 8.5/security 8.0/completeness 8.5.
+> 상태: **9.5 수렴 중**(목표 전 렌즈 ≥9.5). 품질기준=[[quality-gate-95]].
+> 결정: 전환=상세설계먼저, 협업=Workflow, 플랫폼 브랜치=trust_infra 기반 신규 통합 워크트리.
+> **경로 규약**: 엔진=`services/deliberation-review/apps/api/app/`("엔진 …"). 플랫폼은 `apps/api/app/...`와 `apps/api/{services,routers,database}/...` **직속 혼재** — 경로 정확 표기.
 
-## 0. 요약 (TL;DR)
+## 0. 요약
+엔진=분석 커널(결정론 판정·정량·설명 두뇌), 플랫폼=수집·UI·오케스트레이션. 점진 어댑터(additive)+circuit-breaker/degrade/shadow+3경계. 판정 SSOT는 shadow→authoritative, 엔진 미연결/무결성실패→무음 폴백 금지·`NEEDS_REVIEW`+사유.
 
-심의/설계도면 자동분석 엔진을 플랫폼의 **분석 커널(결정론 판정·정량·설명 두뇌)**로 삼고, 플랫폼의 흩어진 분석 기능을 그 위의 **얇은 어댑터(입력 수집·도메인 프레이밍·표현)**로 점진 재편한다.
+⚠️ **"엔진 무수정"의 정직한 경계** — 다음은 무수정 불가, BFF 우회 또는 **엔진 소규모 수정 Phase(§10 결정#8)**: (1) 비동기 결과 영속(`analyze_task` 미저장), (2) `get_analysis` 테넌트 필터(교차read), (3) mirror가 `inp.pnu` 사용(address-only 무음공백), (4) `cached_get`이 `LIVE_NETWORK`·snapshot_id 무시(라이브 오프 불가·교차스냅샷 오염), (5) 비-analyze 라우트(/doctor,/reports,/UI) 무인증. (2)(4)는 컬럼 추가가 아니라 **쓰기/조회 경로 수정 수준**(엔진 `analysis_run`은 CommonMixin으로 org 컬럼 이미 보유, `base.py`).
 
-- **방식**: 점진 어댑터(additive, **엔진 코드 무수정 목표**, 엔진 전체 스위트 무회귀 — 현 419 테스트 함수, CI 기준선)를 골격으로, 통합안의 *circuit-breaker/degrade/shadow*와 척추안의 *3경계(추출/판정/라이브공급) 분리* 접목.
-- **판정 SSOT 전환**(플랫폼 8엔진 심사 → 엔진 R3+FinalGate)은 **반드시 shadow(비교만)→authoritative 승격** 순서. 엔진 미연결 시 **무음 폴백 금지 → `NEEDS_REVIEW`+사유**.
-- **효과**: 중복 제거 + "중심 한 번 개선 → 전 분석 향상". 단 이는 **도메인별 마이그레이션의 종착점**이며 라우팅·계약 어댑터 자체가 일회성 작업(회귀 안전 필수)이다(정직).
-- ⚠️ **"엔진 무수정"의 한계**: 테넌트 격리·운영 영속(아래 §9 R-멀티테넌시)에서 엔진 수정이 필요할 수 있음 — 그 지점은 별도 Phase로 명시하고 무수정 가정을 깨는 비용을 인정한다.
+## 1. 배경 — 중복 현실 (코드 실측)
+1. **종합 판정**: 플랫폼 `apps/api/app/services/design_audit/design_audit_orchestrator.py`(8엔진, 1066줄) ↔ 엔진 `services/pipeline/analysis_pipeline.py:run_analysis`(447줄) — 평행 두뇌.
+2. **면적 정량**: 엔진 `services/extraction/geometry_area.py`+`area_sanity.py`+`services/legal_calc/area_calculator.py`(§119+CalcTrace) ↔ 플랫폼 **전용 라우트 없음**: `apps/api/app/services/pipeline/project_pipeline.py:1084 _calculate_area_from_geometry`(슈레이스, sanity·§119 미적용)+`design_audit` efficiency_metrics. (초안 `routers/drawing.py /calculate-area` **부재** → Phase 3 BFF 신규.)
+3. **도면 자동해석**: 엔진 `adapters/vision/drawing_extractor.py`(VLLM→ExtractedElement) ↔ 플랫폼 `dxf_import_service`+`cad_upload_hub`+`cnn_design_service`(ResNet-50). 의미타입 vs 기하좌표 — 비호환(§6).
+4. **BIM/IFC**: 엔진 `adapters/bim/ifc_parser.py`(경량 STEP) ↔ 플랫폼 BIM 2스택 — (a) `apps/api/app/services/bim/{ifc_generator_service.py(생성), ifc_to_gltf_service.py(glTF), bim_service.py}`, (b) `apps/api/services/bim_ifc_service.py:25 class BIMIFCService`(ifcopenshell 파싱·물량, 반환=`packages.schemas.models.BIMQuantityResponse`). 출력은 STEP 아닌 **BIMQuantityResponse(물량 dict)** → 엔진 `ifc`(STEP 원문)와 비호환(§6 (b) CalcElement 변환).
+5. **규제 룰셋 중복**: `ZONE_LIMITS` apps/api 전역 **19파일**(비테스트 16): `apps/api/services/building_compliance_service.py:384`(정의)·`apps/api/app/services/{zoning/legal_zone_limits,zoning/auto_zoning_service,zoning/far_incentive_calculator,zoning/development_type_analyzer,cad/auto_design_engine,cad/design_spec,design_risk/design_change_predictor,land_intelligence/land_info_service,precheck/precheck_service,development/scenario_simulator,design_audit/brief_extractor}.py`·`apps/api/app/routers/v2_feasibility.py`·`apps/api/routers/{drawing,building_compliance,auto_zoning}.py`(`permit/building_code_rules.py`엔 없음). → P5 단일주입 회귀범위 큼.
 
-## 1. 배경 — 현 중복 현실 (워크플로 + 코드대조 확인)
+**엔진 대비 결손**: 재현성(input_hash/snapshot) 부재·area sanity·§119·체계적 cross-validate 부재·무음(FAILED후진행/None/섹션결손). 플랫폼 `analysis_ledger`는 content_hash/prev_hash 해시체인 보유(P5).
 
-플랫폼은 이미 엔진과 **심하게 겹치는 분석 기능을 분산 보유**한다. 핵심 충돌 4축:
+## 2. 목표·비목표
+목표=설계/규제/검증/정량의 단일 판정·정량·설명 SSOT, 중복 제거, 엔진 원칙 전역 확산. 비목표=UI/협업/빌링/시장수집 중심 아님; 감정/시장/재무는 품질 레이어; 일괄 전환 아님(도메인별 파리티 후 컷오버).
 
-1. **종합 판정 오케스트레이션**: 플랫폼 `apps/api/app/services/design_audit/design_audit_orchestrator.py`(8엔진 병렬 설계심사 + 결정론 verdict + legal_refs + 모순감지, 1066줄)가 엔진 `services/pipeline/analysis_pipeline.py:run_analysis`(11계층, 447줄)와 **사실상 동일 철학·역할** — 두 '심사 두뇌'가 평행 존재.
-2. **면적 정량산정**: 엔진 `services/extraction/geometry_area.py`(슈레이스)+`area_sanity.py`(제외area≤외곽 부등식 게이트)+`services/legal_calc/area_calculator.py`(건축법 시행령 §119 제외규정+CalcTrace+param 주입)가 플랫폼 `routers/drawing.py /calculate-area`·`design_audit` efficiency_metrics(전용률)와 직접 경합. **엔진이 압도적 엄밀**(플랫폼은 area sanity·법령 제외규정 미적용).
-3. **도면 자동해석**: 엔진 `adapters/vision/drawing_extractor.py`(VLLM→ExtractedElement, provenance/UNKNOWN 날조금지)가 플랫폼 `dxf_import_service`+`cad_upload_hub`+`cnn_design_service`(ResNet-50)와 같은 '도면→구조화요소' 문제. 엔진=의미타입·provenance, 플랫폼=기하좌표(px/DXF) — **상보적이나 스키마 비호환**(아래 §6 매핑 함정).
-4. **BIM/IFC·규제 룰셋**: 엔진 `adapters/bim/ifc_parser.py`(경량 STEP, 보수적 의미분류) ↔ 플랫폼 `bim_ifc_service`(ifcopenshell 물량/glTF, 강). **`ZONE_LIMITS` 리터럴이 10+개 파일에 분산 중복**(zoning/ 클러스터 중심: `zoning/auto_zoning_service.py`·`zoning/legal_zone_limits.py`·`zoning/far_incentive_calculator.py`·`zoning/development_type_analyzer.py`·`cad/auto_design_engine.py`·`cad/design_spec.py`·`services/building_compliance_service.py`·`design_risk/design_change_predictor.py`·`land_intelligence/land_info_service.py`·`precheck/precheck_service.py`·`development/scenario_simulator.py` 등; `permit/building_code_rules.py`엔 없음). → Phase 5 단일주입 작업량이 문서 초안보다 큼.
+## 3. 보존 불변식 (코드 정합)
+- **결정론(3튜플)**: `input_hash`=AnalysisInput만 해싱(`analysis_pipeline.py:57`). 라이브 어댑터 산출(geocode/land_card/surrounding/cross_facts via `cached_get`) 반영 시 input_hash 동일≠결과 동일. **진짜 단위=(input_hash, snapshot_id, source_cache 적재상태)**. ⚠️ **`cached_get` L1 조회키=cache_key(adapter,endpoint,params)로 snapshot_id 미포함**(`source_cache.py:62-69,91-99`) → 스냅샷 A 캐시가 B 분석에 반환되는 교차스냅샷 오염 가능. 운영 재현성 보증엔 (a) cache_key에 snapshot 결합(엔진 수정#8) 또는 (b) 스냅샷 경계마다 `source_cache.clear()+warm_from_db(snapshot_id)`. 결정론 게이트는 **순수 경로(rules/calc_targets만)**에서만 input_hash 동치 검증; 네트워크 경로는 snapshot 워밍으로만.
+- **무음0**: `skipped[]` 보존. 매핑 실패는 **자동 422 아님**(§6 KeyError→500) → BFF 선검증으로 422/skipped.
+- **INV-13(실계약)**: ='소비경로 직접 httpx 금지, 외부접근은 `cached_get`(source_cache) choke point 경유'(`tests/acceptance/test_consume_static.py:19`, `test_live_call_scan.py`) — *라이브 0 아님*. run_analysis는 키 보유 시 `cached_get→httpx.get`(`source_cache.py:157`)로 law/molit/vworld/geocode/land_card fetch. **`LIVE_NETWORK`은 공급 `network.py`(LiveNetwork)만 게이트; cached_get 별개·미게이트**. 운영 라이브 차단엔 cached_get 토글 신설(엔진 수정#8).
+- **설명가능성(중첩)**: 최상위=`findings[]`·`legal_quantities[]`·`cross_validations[]`·`reg_graph`·`report`·`skipped[]`. 중첩=`legal_basis`/`gate_reason`/`dual_path`(`report.items[].evidence`), `CalcTrace`(`legal_quantities[].calc_trace`), `rationale`(`precedent.rationale`). BFF 평탄화 금지·report 전체 직렬화. TS=evidence 스키마 기준(§6).
 
-### 엔진 원칙 대비 플랫폼 결손 (품질 갭)
-- **재현성**: design_audit는 모순감지(ledger)는 있으나 엔진식 `input_hash`/`snapshot` 재현 보증이 명시적이지 않음. (플랫폼 `analysis_ledger`는 content_hash/prev_hash 해시체인 보유 — §7 Phase 5 참조.)
-- **area sanity 미적용**: 플랫폼 면적계산에 '제외 area 합 ≤ 외곽면적' 결정론 부등식 게이트 부재 → 환각/모순 면적 무음 승계 위험.
-- **법령 제외규정 부재**: 플랫폼은 슈레이스 면적만 — §119 제외규정·CalcTrace 근거기록 없음.
-- **교차검증 부재**: 단일 출처 산정 다수. IFC면적 vs 도면면적 vs 입력 파라미터 체계적 cross-validate 없음.
-- **무음 위험**: `project_pipeline`의 'FAILED 마킹 후 계속 진행', `comprehensive`의 'AI해석 실패 시 None', 보고서 섹션 결손 무음.
-
-## 2. 목표 · 비목표
-
-**목표**: 엔진을 설계/규제/검증/정량 도메인의 **단일 판정·정량·설명 SSOT**로. 중복 제거 → 한 번 개선이 전 기능 반영. 결정론·무음0·설명가능성·교차검증·재현성을 **플랫폼 전역 확산**.
-
-**비목표(정직한 경계)**: 엔진이 UI·협업·빌링·시장데이터 수집의 중심은 아님(그것들은 엔진을 소비/공급). 감정평가/시장/재무/사업성은 엔진의 **검증·교차검증·설명 품질 레이어**(전면 대체 아님). "한 번에 다 바꾸기" 아님 — 도메인별 파리티 후 컷오버.
-
-## 3. 보존 불변식 (절대 제약)
-
-- **결정론**: 엔진 `core/hashing.input_hash`(canonical sort_keys sha256)·`snapshot_id` 유지. 어댑터는 **순수함수**, 비결정 입력(`datetime.now`·LLM 서술·MLflow 분기)은 AnalysisInput 진입 전 `as_of`/결정론 도구값으로 정규화해 해시 오염 차단. BFF는 변환만, 산정 미개입.
-- **무음0**: `run_analysis`의 미제공/거부 계층 `skipped[]` 표면화 계약 보존. 플랫폼의 무음(FAILED 후 진행·None·섹션 결손)을 엔진 게이트의 `SKIPPED`+사유로 **대체**해 무음0 전역 확산. 어댑터 매핑 실패도 `skipped`/422 표면화.
-- **INV-13(라이브 공급측 한정)**: 엔진 `settings.USE_MOCK_ADAPTERS=True`·`LIVE_NETWORK=False` 기본과 `supply/mirror` read-only(소비측 sync get은 DB-backed 미러만, `warm_mirror_from_db`) 경계 불가침. **플랫폼/BFF는 라이브 fetch 미수행**.
-- **설명가능성 — ⚠️ 중첩 구조 보존(검증 정정)**: 엔진 `AnalysisResult` **최상위 필드는** `findings[]`(Finding)·`legal_quantities[]`·`cross_validations[]`·`reg_graph`·`report`·`skipped[]` 등. 그러나 **`legal_basis` 본문·`gate_reason`·`dual_path`는 `report.items[].evidence{}` dict 키**(`analysis_pipeline.py:344/359/366`), **`CalcTrace`는 `legal_quantities[].calc_trace`**, **`rationale`는 `precedent.rationale`(및 `contracts/rationale.py`)**에 중첩된다 — AnalysisResult 직속이 아님. → **BFF는 이 중첩 구조를 평탄화하지 말고 그대로 직렬화**해야 설명 손실 0. TS 타입(§11)은 `report.items[].evidence` dict 스키마 기준으로 설계.
-
-## 4. 아키텍처 — 엔진=두뇌, 플랫폼=수집/UI/오케스트레이션
-
+## 4. 아키텍처
 ```
-[apps/web]  DeliberationConsole · 도메인 화면들
-    │ (브라우저→내부 BFF만; 엔진 직결 제거)
-    ▼
-[apps/api]  BFF: POST /api/v1/deliberation/analyze   ← 인증·테넌트·RBAC·감사 경계
-    │  + 입력 어댑터(플랫폼 컨텍스트→AnalysisInput)   ← 순수변환, 결정론 정규화, pydantic 검증
-    │  + circuit-breaker / degrade(엔진 down→NEEDS_REVIEW+사유)
-    │  + shadow 비교기(엔진 vs 기존 플랫폼 판정 로깅, §5)
-    │  + run_id↔tenant 결속(엔진이 테넌트-블라인드 → 플랫폼이 격리 강제, §9)
-    ▼ (서버사이드 httpx, Bearer=API_TOKEN; 소형=sync, 네트워크입력=async+run_id)
-[engine]    POST /api/v1/analyze (run_analysis 11계층)   ← 결정론 판정·정량·설명 SSOT
-    │  R0~L3-C 게이트 · area_sanity · §119 CalcTrace · cross_validate · FinalGate
-    ▼  공급측 adapters(VWORLD/MOLIT/law.go.kr) · mirror(read-only 소비) · reconcile(라이브)
+[apps/web] DeliberationConsole → (동일출처) BFF만
+[apps/api] BFF POST /api/v1/deliberation/analyze ← 인증·테넌트·RBAC·감사·run_id↔tenant·input_hash 선계산
+   + 입력 어댑터(pydantic 선검증) + 공유 circuit-breaker(Redis) + degrade 봉투 + shadow 비교기
+   ▼ httpx(Bearer=DELIBERATION_ENGINE_API_TOKEN; 순수=sync, 네트워크입력=async+task 폴링)
+[engine] POST /api/v1/analyze(run_analysis 11계층) ← 결정론 판정·정량·설명 SSOT
+   ▼ 공급 adapters(LIVE_NETWORK 게이트) · cached_get(별개) · mirror(read-only) · reconcile(라이브)
 ```
+**3경계**: 추출(플랫폼)/판정(엔진)/라이브공급(엔진, INV-13).
+**배포**: 동일 `propai_db` 공유·엔진 schema `review`/플랫폼 public 격리(분리 DB 아님). 일관성 리스크=HTTP 경계 비원자 2단계 쓰기(§9 R7).
+**현 보안**: `CORS=*`는 엔진 dev 기본, `ENV=production`은 와일드카드 CORS·무토큰 fail-closed(`settings.py:84-89`). `/analyze*` 4개만 `require_token`; **`/api/v1/doctor`(`ops_routes.py:11`)·`/reports/build`·`/`(UI) 무인증**(integration_status가 api_auth.enabled·*_key_present 평문 노출 → 핑거프린트, §10#8서 require_token 추가). → 엔진 **외부 비노출 네트워크+BFF만 접근**(1차), /doctor 인증(2차).
+> (플랫폼) `apps/api/app/routers/ai_analyze.py:22 POST /api/v1/ai/llm`은 `get_current_user`만 있고 RBAC/테넌트/레이트리밋 없음 — **엔진 아님, Phase 6 플랫폼 수렴 대상**.
 
-**3경계 분리**(척추안 접목): 추출(플랫폼 수집·정규화) / 판정(엔진 결정론 게이트) / 라이브공급(엔진 공급측만, INV-13).
+## 5. 통합 패턴 (구체 계약)
 
-**배포 사실(검증 정정)**: 엔진과 플랫폼은 **분리된 DB가 아니라 동일 물리 인스턴스 `propai_db`를 공유**하고 **schema만 `review`로 격리**(엔진 `settings.DATABASE_URL=…propai_db`, `DB_SCHEMA='review'`). 따라서 진짜 일관성 리스크는 'DB 분리'가 아니라 **BFF↔엔진 HTTP 경계로 인한 비원자적 2단계 쓰기**(엔진 `analysis_run` 저장 vs 플랫폼 `analysis_ledger` append)다 — §9 참조.
+### BFF (`apps/api/app/routers/deliberation.py`)
+- **인증**: `from app.services.auth.auth_service import get_current_user`(core/rbac와 동일 출처). 반환=`apps.api.database.models.user.User`(TenantMixin, `tenant_id:UUID`). `jwt_handler.py:110 CurrentUser`(동명 별개) 사용 금지. **RBAC**: admin 전용 아님 → `require_role` 미적용(인증 사용자 허용; `rbac.py:100-125` 비-ADMIN 통과). 세분화는 Phase1 비범위.
+- **토큰**: API_TOKEN(≥32B 랜덤)은 운영자가 1회 생성해 **엔진 `.env.secrets`와 플랫폼 BFF `.env`(`DELIBERATION_ENGINE_API_TOKEN`·`DELIBERATION_ENGINE_URL`) 두 곳 수기 동일값**. `export_scoped_secrets.py`는 플랫폼→엔진 단방향(`docstring:3-8`)이라 엔진 자체 생성 토큰엔 **미사용**(--allow 금지). 회전 시 두 .env 동시 갱신+엔진 재시작.
+- **circuit-breaker**: 재사용=`apps/api/integrations/base_client.py:159-216 CircuitBreaker`(`:153` CircuitState 별개; `can_execute()/record_success()/record_failure()`만, httpx 미래핑). ⚠️ **인스턴스 상태=프로세스 로컬**(`settings.py:66` 레이트리밋 한계 선례) → 다중워커 미공유. → **Redis 공유 breaker**(키 `deliberation_engine:cb`, INCR/SETEX) 신설 권장(또는 단일워커). deliberation 전용 인스턴스(`service_name="deliberation_engine"`)로 타서비스 실패 카운트 분리. 파라미터: `failure_threshold=5, recovery_timeout=75(>15×N), half_open_max=3`. OPEN 중=엔진 skip→shadow기 폴백/authoritative기 즉시 NEEDS_REVIEW(큐잉·무음 금지).
+- **타임아웃**: connect=5s; 순수 동기 read=30s; 네트워크입력 동기는 누적 15~20s×N(N≈3) → read=60s 또는 async 강제. settings 노출.
+- **degrade 봉투**: HTTP **200**, `{"degraded":true,"final_status":"NEEDS_REVIEW","reason":"engine_unreachable|timeout|circuit_open|invalid_response|engine_task_failed|async_result_lost|async_timeout","engine_url":<url>,"result":null}`. 정상=`{"degraded":false,"result":<AnalysisResult>}`. 합성 AnalysisResult 미생성(report 필수·emit EvidenceMissing 회피, `analysis.py:94`/`report.py:43`).
+- **부분응답**: HTTP200이나 본문 결손/파손 → pydantic `AnalysisResult` strict 역직렬화, ValidationError·필수(run_id/input_hash/report) 결손 시 NEEDS_REVIEW+`invalid_response`(shadow는 별도 기록=false divergence 차단), 절단은 breaker 실패 카운트.
+- **감사(audit)**: raw INSERT 금지. **`app.services.ledger.audit_ledger.append_audit(action, user_id, resource_type="deliberation", resource_id=engine_run_id, tenant_id=str(user.tenant_id), metadata={input_hash,http_status,decision,engine_url,request_id})`** 호출(내부적으로 append_analysis 경유, event_id/event_ts 유일→dedup collapse 회피). ⚠️ **append_analysis는 raise 안 함**(`analysis_ledger_service.py:242-246` 전예외 catch→`{ok:False}`; `:218-221` content_hash 동일 시 `unchanged`; `:226-228` `quota_exceeded`) → **BFF가 반환 dict 검사**: `ok is not True and not unchanged` → 502+사유(fail-closed). `quota_exceeded`는 별도 경보. 또 **audit은 분석과 ledger quota 공유**(`:227`) → audit 전용 보존/quota 우회 분기 필요(Phase0서 `analysis_type!="audit"` quota 필터 보정).
 
-**현 보안 상태(검증 정정, 과장 제거)**: 브라우저 직결의 `CORS=*`는 **엔진 개발 기본값**(`settings.CORS_ORIGINS="*"`)이며, **`ENV=production` 부팅 시 와일드카드 CORS·무토큰을 fail-closed 거부**(`settings.py` model_validator). 또 `/api/v1/analyze`는 `require_token` 의존이라 **API_TOKEN 설정 시 콘솔 직결 fetch(Authorization 헤더 미전송)는 401**. → 보안 구멍은 **dev 기본 상태에 한정**되나, BFF로 인증·테넌트·감사 경계를 일원화하는 것은 여전히 정당.
+### 동기/비동기 (코드 현실)
+- 분류: 네트워크 의존 입력(collect_land_card/collect_surrounding/address/실어댑터)→**async 강제**; 동기는 순수 결정론 입력만. (엔진 `analysis_routes.py`가 `async def`인데 `run_analysis` 동기 호출+동기 httpx 15~20s+`run_in_executor` 부재 → 이벤트루프 블로킹.)
+- ⚠️ **run_id는 동기 `save_analysis`(`analysis_store.py:19`)에서만 부여**. async `/analyze/async`(`analysis_routes.py:57-65`)는 `{task_id}` 반환·`analyze_task`는 결과 미저장(run_id None, `analysis.py:69`). → **run_id↔tenant 결속·GET 프록시는 동기 전용**. async 필요 시: BFF가 task SUCCESS 수신 시 `platform_run_id=uuid4()` 발급, `engine_run_binding(run_id=platform_run_id, engine_task_id=task_id, source='async')` 저장+결과 플랫폼 영속, GET은 BFF 영속본 반환(엔진 미저장). 폴링 분기: `status==FAILURE`→즉시 `engine_task_failed`; `SUCCESS and result is None`→`async_result_lost`(redis TTL); `PENDING/STARTED/RETRY and <timeout`→재폴링; `≥timeout`→`async_timeout`. (엔진 비동기 영속 원하면 엔진 수정#8.)
 
-**additive 원칙**: 기존 플랫폼 분석 경로는 **병존**(무손상). 엔진 호출은 신규 경로로 추가되고, 도메인별 shadow→authoritative 승격 시에만 기존 판정 대체.
+### shadow 모드 (데이터모델 §12)
+- 비교: verdict·핵심정량(면적/far/bcr)·FinalStatus·cross_validation. 동치=정량 허용오차(`area_tol` 등 param).
+- **환경 분리**: `engine_degraded/mirror_loaded/cache_warm`(doctor/skipped[] 도출) 기록 → `engine_degraded OR not mirror_loaded`=`environmental`로 승격 모수 제외(미러 미적재 시 엔진 보수판정→체계적 divergence).
+- **storm 가드**: divergence율 임계 초과 시 도메인 자동 warn-only+알림.
+- **승격(측정)**: `SELECT count(*) FROM shadow_comparison WHERE domain=? AND tenant_id=? AND divergence_score<:eps AND environmental=false ORDER BY ts DESC LIMIT :N` — 최근 N건 전부 <ε이면 후보(사람 확인). 기본: 면적 N=50/ε=0.01, 법규 N=100/ε=0.
 
-## 5. 통합 패턴
+## 6. 계약 매핑 (목표 9.5)
 
-- **BFF 프록시**(`apps/api/app/routers/deliberation.py`): `get_current_user`(JWT)+테넌트+RBAC+감사 → 서버사이드 `httpx.AsyncClient`로 엔진 호출. 단일 진입점.
-- **입력 어댑터**: 플랫폼 컨텍스트→`AnalysisInput`(평평한 dict 다발) 자동 매핑. **pydantic 서브모델 검증**으로 타입 단절 방어, 매핑 실패는 422/skipped 표면화(§6 함정 주의).
-- **shadow 모드 — ⚠️ 데이터모델 정의 필요(검증 정정 HIGH)**: 현재 shadow 비교의 스키마·저장처·divergence 기준이 **어디에도 없다**(빈 약속). 본 설계가 정의:
-  - **저장처**: 플랫폼 신규 테이블 `shadow_comparison`(신규 alembic).
-  - **스키마(안)**: `{run_id, domain, tenant, engine_verdict, platform_verdict, field_diffs[](field, engine_val, platform_val), divergence_score, as_of, ts}`.
-  - **비교 대상**: verdict(준수)·핵심 정량(면적/far/bcr)·FinalStatus·주요 cross_validation 결과. 동치 판정은 정량 허용오차(엔진 `area_tol` 등 param 재사용).
-  - **승격 기준**: 도메인별 'N건 연속 divergence_score<ε' 충족 시 authoritative 후보(사람 확인 후 flag).
-- **circuit-breaker / degrade**: 엔진 타임아웃/장애 — shadow 단계면 기존 경로 폴백, authoritative 단계면 `NEEDS_REVIEW`+'엔진 미가동' 사유(무음 폴백 금지). `GET /api/v1/doctor` 상태를 헬스카드로 표면화.
-- **동기/비동기 — ⚠️ 기준 재정의(검증 정정)**: 위험의 핵심은 산정 길이가 아니라 **동기 블로킹 네트워크 I/O가 async 라우트 이벤트루프를 막는 것**(엔진 `analysis_routes.py`는 `async def`인데 `run_analysis`를 `await` 없이 동기 호출, 내부 geocode/collect_land_card/collect_surrounding가 동기 httpx timeout=15s, `run_in_executor` 부재). → **분류 기준**: `collect_land_card`/`collect_surrounding`/`address`(geocode)/실어댑터 등 **네트워크 의존 입력이 있으면 무조건 async**(`/analyze/async`+run_id 폴링). 동기 경로는 **순수 결정론 입력(rules/calc_targets만)**으로 한정. BFF circuit-breaker 타임아웃은 누적 외부 타임아웃(15s×N)보다 크게.
-
-## 6. 계약 매핑 (플랫폼 ↔ 엔진) — ⚠️ 검증 반영(가장 약했던 영역, accuracy 6.5)
-
-엔진 입력 `AnalysisInput`(`contracts/analysis.py`, 평평한 dict 다발)·출력 `AnalysisResult`. **무음 손실 지점을 명시**한다.
-
-### 입력 매핑 (함정 포함)
-| 플랫폼 산출 | → 엔진 입력 | 함정/보강 |
+### 입력 `AnalysisInput`(`contracts/analysis.py:25-65`) — 전 필드 출처/도출
+| AnalysisInput 필드 | 플랫폼 출처/도출 | 미제공 시 |
 |---|---|---|
-| `design_audit` RunRequest{site, params(far_pct/bcr_pct/building_height_m), geometry, ifc} | `rules[]`, `calc_targets[]`, (`pnu`) | **RunRequest엔 pnu 없음** → `site.pnu`(있으면) 또는 address→PNU 지오코딩(Phase2)으로 도출. `params`는 **measured(제안값)만** 보유; **limit은 RunRequest에 없고** `applicable_limits_for(zone_type)`/zone_rules로 별도 도출(아래 행). |
-| `rules[]` 항목 (엔진) | — | **중첩 구조**(검증 HIGH): `{rule:{rule_id, target_variable, comparator, depends_on, relaxations, basis_article}, measured, limit, relaxation_states, confidence, conflicts}`(`analysis_pipeline.py:128`, `rule.py`). 플랫폼 AuditFinding은 평탄 `{check_id, status, current, limit, legal_refs, improvement}`. → **measured/limit만 직결 가능**; `comparator`·`target_variable`·`relaxations`·`relaxation_states`는 **check_id별 정적 룰 카탈로그로 어댑터가 합성** 필요(없으면 완화판정·이중경로 누락). |
-| `cad_upload_hub` design_raw(px points/lines/surfaces)·params_hint(building_width/area_sqm) | `calc_targets[].payload` / `rules[].measured` (design_raw는 직매핑 불가) | **검증 HIGH**: design_raw·params_hint는 **의미타입 없는 순수 기하/수치** → 엔진 `elements[]`(CalcElement는 `semantic_type` enum 필요)에 **직접 매핑 불가**. params_hint→`rules[].measured`/`calc_targets[].payload`로, design_raw→**의미분류(VLLM/라벨링) 후에만** `elements[]`. |
-| `bim_ifc_service` 물량(IFC) | `ifc`(STEP 원문) **또는** `calc_targets[].elements` | 엔진 `ifc`는 **STEP 텍스트 문자열**(엔진 ifc_parser가 BimElement 해석). 그러나 bim_ifc_service 출력은 STEP이 아니라 ifcopenshell 파싱 dict `{element_type, quantity, unit, global_id}`. → **(a)** 원본 IFC STEP을 엔진 `ifc`로 그대로(중복 파싱 감수) **또는 (b)** `{element_type,quantity}`→CalcElement 변환 어댑터(IFC타입→SemanticType + underground/accessory 추론) 신설(의미·플래그 합성이 막히는 지점). |
-| `zone_rules`/ZONE_LIMITS (출처: alris/design_review/zoning) | `rules[].limit`, `mirror_rules[]` | 규제 한도. design_audit가 아니라 zone 한도 resolution이 출처. |
-| 다출처 fact(VWORLD/MOLIT/law) | `cross_facts[]`(fact_key+sources) | 교차검증 투입. |
+| `pnu` | `site.pnu`(`design_audit_orchestrator.py:433` 존재) 또는 address→PNU 지오코딩(Phase2, BFF 선해소) | 빈값 → 미러 무음공백 → BFF가 422/skipped |
+| `application_date` | design_audit `params.application_date`/신청서 | `axis_date`→`date(2026,1,1)` 폴백(`pipeline:63`) |
+| `axis_date` | 규제 적용시점(BFF 고정) | application_date |
+| `snapshot_id` | BFF가 `snap-<tenant>-<yyyymmdd>` 결정론 생성(`set_snapshot`, `pipeline:60`) | "snap-1" |
+| `model_version` | 'engine-v1'(미주입) | — |
+| `drawing` | 축척/관할 힌트 dict(scale_unit/preflight, `pipeline:164`) | preflight skipped 표면화 |
+| `drawings[].image_ref` | ⚠️SSRF(아래) | — |
+| `ifc` | design_audit `ifc_file_url`(URL) **다운로드 후 STEP 텍스트** 또는 §6(b) | extraction BIM skip |
+| `elements[]` | 의미분류 후(아래 어댑터) | VLLM/elements skip |
+| `calc_targets[]` | 아래 스키마 | calc skip |
+| `rules[]` | 정적 룰 카탈로그+design_audit findings measured/limit(아래) | 판정 skip |
+| `sim_inputs` | {sunlight,egress,parking,view} 키만(`pipeline:148-157`) | 그 외 키 skipped |
+| `issue`/`corpus` | 유사사례(L4) | skipped 'precedent: no issue/corpus' |
+| `citations` | 미러검증 인용 [{ref}] | 'verify: no citations' 보수게이팅 |
+| `cross_facts[]` | 다출처 fact(VWORLD/MOLIT/law)[{fact_key,sources}] | cross-validate skip |
+| `collect_land_card`/`collect_surrounding` | BFF 기본 False(라이브 게이트, async) | — |
+| `land_year` | '2024' 기본(`pipeline:253`) | — |
+| `surrounding_radius_m` | 150 기본 | — |
+| `proposed_floors` | 경관심의(collect_surrounding 동반) | skip |
+| `qual_facts` | 정성(L3-C) | skip |
 
-### 출력 매핑 (검증 정정)
-| 엔진 출력 | → 플랫폼 표현 | 비고 |
-|---|---|---|
-| `report.items[]`( verdict·status·`evidence.legal_basis`·`evidence.gate_reason`·`evidence.dual_path` ) | `AuditFinding[]` | **검증 HIGH**: status/legal_basis는 원시 `findings[]`(Finding: rule_id/verdict/gated_status/measured_value/limit_value/basis_article)에 **없고** `report.items[].evidence` dict에 있음. BFF는 report 전체를 통과(평탄화 금지). |
-| `cross_validations[]`, `reg_graph`, `skipped[]` (최상위) | 교차검증·근거그래프·결손 UI | 실제 최상위 필드(정확). |
-| `legal_quantities[].calc_trace`(CalcTrace), `precedent.rationale` | 정량 근거·유사사례 근거 | 중첩 — 경로대로 직렬화. |
+**design_audit RunRequest 실제 필드**(`design_audit.py:257-275`): `{project_id, site, params(far_pct/bcr_pct/building_height_m), geometry?, ifc_file_url?(URL), rooms?, use_llm, use_verification_retry}` — ⚠️ `ifc` 필드 없음(`ifc_file_url`만 → BFF 다운로드 필요), `site.pnu` 존재.
 
-### 어휘 3축 매핑 (검증 추가 — 무음 손실 방지)
-판정 어휘가 **3개 독립 체계**라 1:1이 아니다. **둘 다 보존**해야 한다(verdict=준수 차원, FinalStatus=검증신뢰 차원).
-- 플랫폼 `overall.verdict`: 부적합 / 조건부적합 / 적합 / 판정불가 (영문 fail/conditional/pass/None)
-- 엔진 `Finding.verdict`: COMPLIANT / NON_COMPLIANT / CONDITIONAL
-- 엔진 `FinalStatus`: CONFIRMED / NEEDS_REVIEW / BLOCKED
-→ 예: `verdict=CONDITIONAL` + `status=NEEDS_REVIEW`를 **동시 표현**(준수성·신뢰도 분리). §3 설명가능성·§12 무음0 게이트와 연결.
+**`calc_targets[]`**(`calc_engine.py:119-149`): `{target(CalcTarget enum: building_area|gross_floor_area|far_floor_area|plot_area|building_height|floor_count), payload(target별 필수키), elements:[CalcElement], declared?}`. 필수 payload: building_area→`outer_area`; gross_floor_area→`floor_areas`; far_floor_area→`gross_floor_area`; plot_area→`parcel_area`; building_height→`raw_height`; floor_count→`above_ground_floors`. **결손→RuleContractError→422**. `CalcElement`={semantic_type(SemanticType enum, `semantic_element.py:15-27`), confidence, area, length, depth, element_id?, underground?(None=미상), accessory?(None=미상)}.
 
-**판정 SSOT 전환 방식(결정 #2, 추천 B)**: design_audit 8엔진 산출을 폐기 않고 `rules[]`/`sim_inputs[]`/`calc_targets[]`로 **변환**해 엔진 게이팅 통과. ⚠️ 단 위 'rules[] 중첩·정적 룰 카탈로그' 보강이 전제.
+**`rules[]` 정적 룰 카탈로그**(check_id→Rule): `{rule:{rule_id, target_variable, comparator(Comparator enum `<= >= < > ==`, `enums.py:57-69`), depends_on:[], relaxations:[{relaxation_id, prerequisite_rule_id, effect, basis_article}], basis_article}, measured, limit, relaxation_states, confidence, conflicts}`(`analysis_pipeline.py:128`, `rule.py:12-29`). **relaxation_states**(`relaxation.py:13-55`): `dict[str,str]`, 키=`prerequisite_rule_id or relaxation_id`, 값∈{MET,PROVIDED,UNVERIFIABLE,UNMET}, **누락=UNVERIFIABLE**(거짓불합격 금지); MET→완화해소, PROVIDED→CONDITIONAL, UNVERIFIABLE→CONDITIONAL+requires_committee, 전부 UNMET→완화 미적용. ⚠️ **매핑 실패=KeyError→500**(`rules[i]["rule"]`/`calc_targets[i]["target"]` 결손; `/analyze`는 DomainError만 422, `analysis_routes.py:36-40`) → **BFF 어댑터가 pydantic 서브모델(Rule/CalcTarget) 선검증해 422/skipped**.
 
-## 7. 단계별 로드맵 (Phase 0~6)
+### 의미분류 어댑터 I/O 계약
+- **elements[] 입력**(`dual_path.py:13`, `element_classifier.py:26-44`): 요소 dict=`{element_id, features:{semantic_hint(SemanticType 이름 또는 UNKNOWN), hint_strength(0~1)}, present_in_sheets?}`; hint이 SemanticType 멤버+strength≥param('element_classify_min_confidence')여야 채택, 아니면 UNKNOWN 하향. cad_upload_hub design_raw(px)·params_hint는 의미타입 없음 → **직매핑 불가**, 의미분류 후에만.
+- **IFC**(`ifc_parser.py:39-116`): 엔진 `ifc`=STEP 텍스트 → `BimModel{elements:[BimElement{ifc_type, semantic_type, name, guid, storey, area, length}], source}`(타입맵 IFCWALL→EXT_WALL + 이름키워드 '지하'→BASEMENT, 미매핑 UNKNOWN). ⚠️ **BimElement엔 underground/accessory/depth 없음**(`bim.py:12-19`) → FAR 제외적격(§119①4 지하AND부속) CalcElement 변환은 name/storey 키워드로 추론하되 **미상은 None 유지→CalcEngine HELD 표면화**(`calc_engine.py:92-97`). 이 BimElement→CalcElement 규칙을 어댑터 계약으로 명문화.
 
-각 Phase는 **additive·회귀게이트 통과**를 완결 조건으로.
+### 출력 `report.items[]`(3종 evidence 전수) — `analysis_pipeline.py:348-410`
+- ReportItem 직속(`report.py:21-32`): `{item_id,title,verdict,status,confidence_grade,recommendation,basis_article,snapshot_id,model_version,input_hash,evidence}`.
+- ① finding evidence(`:356-373`): `{basis_article, legal_basis(dict 또는 {ref,resolved:None,note}), measured, limit, requires_committee, conditional_relaxations, verified, gate_reason(|None), dual_path({table_value,geom_value,delta,status,caveat}|None)}`.
+- ② sim_metric evidence(`:387-392`): `{metric, value, required, flags, model, basis_article, legal_basis}`.
+- ③ precedent evidence(`:401-409`): `{distribution, common_conditions, n, source, search_meta, rationale, caveats}`.
+- 최상위 `cross_validations[]`·`reg_graph`·`skipped[]`; 중첩 `legal_quantities[].calc_trace`·`precedent.rationale`. BFF 평탄화 금지.
 
-- **Phase 0** (무코드~소, 즉시): `export_scoped_secrets.py`로 엔진 `API_TOKEN`을 `apps/api`에 주입, `NEXT_PUBLIC_DELIBERATION_ENGINE_URL` 실설정, **`GET /api/v1/doctor`**를 `project_dashboard` 헬스카드로 노출(live/mock·키 가시화). 엔진 `ENV=production` fail-closed 확인.
-- **Phase 1** (BFF 교두보): `apps/api/app/routers/deliberation.py` — `POST /api/v1/deliberation/analyze`(JWT+RBAC+테넌트+감사). 서버사이드 httpx 프록시. `DeliberationConsole`을 내부 엔드포인트로 전환(브라우저 직결 제거). `AnalysisResult` 풍부 출력(**중첩 evidence 포함**)을 TS 타입에 반영. **run_id↔tenant 결속**(§9). 기존 경로 무손상.
-- **Phase 2** (입력 어댑터, 원클릭): 플랫폼 컨텍스트→`AnalysisInput` 자동매핑(§6 함정 반영: pnu 도출·rules[] 카탈로그·의미분류). address→PNU·collect_land_card 자동 ON(단 네트워크 입력 → async 경로, §5).
-- **Phase 3** (면적·검증 위임, 최대 품질점프, shadow): `drawing /calculate-area`·`design_audit` efficiency_metrics가 엔진 `geometry_area`+`area_sanity`+§119+`CalcTrace`를 **shadow로** 호출(비교 로깅). `VerifierService`/`calc_ledger`/`range_rules`를 엔진 `final_gate`/`cross_validate` thin client로.
-- **Phase 4** (Blocking 게이트 + 판정 SSOT): `_verify_stage` fail/강등 시 후속 `SKIPPED`+사유(무음0 실현). `design_audit_orchestrator` 8엔진 판정을 엔진 R3+FinalGate로 (변환)위임. **warn-only→enforce 단계 적용**(결정 #4).
-- **Phase 5** (교차검증·SSOT·재현성 일원화): 1차출처 어댑터(VWORLD/MOLIT/law.go.kr) 호출 엔진 일원화(중복 호출 제거). **`ZONE_LIMITS` 10+곳→엔진 reg_graph R3 룰셋 단일주입**(작업량 큼). **플랫폼 `analysis_ledger`(이미 존재 — `031_analysis_ledger`, content_hash/prev_hash 해시체인)에 엔진 `input_hash`/`snapshot_id` 컬럼을 additive 추가하는 신규 alembic**(신규 테이블 아님). `regulation_monitor` 변경감지→미러 reconcile 트리거.
-- **Phase 6** (오케스트레이션 진입점 통일): `comprehensive_analysis`·`pipeline`·`ai_analyze`가 엔진을 백엔드로 호출하는 게이트웨이로 수렴. 분양가/공사비 단일상수(`SIGUNGU_BASE_PRICES`)→엔진 다출처 교차검증. `BaseInterpreter` 9종·`ExpertPanel`을 엔진 `Rationale`/`legal_refs`/`CalcTrace` 스키마로 정규화. 가드 전무한 `ai_analyze.py` 프록시 흡수.
+### 어휘 4축 매핑 (무손실)
+- ①**Verdict**(준수, `finding.py:14-17` COMPLIANT/NON_COMPLIANT/CONDITIONAL; `evaluator.py:42-55`).
+- ②**GatedStatus**(finding 신뢰, `finding.py:20-22` CONFIRMED/NEEDS_REVIEW; FindingGate→`result.findings`에만, `pipeline:332`; **report item.status로 미사용** — 혼동 금지).
+- ③**FinalStatus**(검증신뢰, `verification.py:27-30` CONFIRMED/NEEDS_REVIEW/BLOCKED; FinalGate `final_gate.py:18-47`; report item.status 실제 출처 `pipeline:354 gated.status.value`; BLOCKED 사유 incl `citation_unverified` `final_gate.py:23`).
+- ④**ReportStatus**(`report.py:14-18` +**DISCRETION_HELD**; `report_builder.py:_STATUS_MAP`가 FinalStatus 매핑, no_criterion/discretion→DISCRETION_HELD+verdict=None `:24-27,41`).
+- 플랫폼 `overall.verdict`(부적합/조건부적합/적합/판정불가=fail/conditional/pass/None). → Verdict와 status는 독립 차원, **둘 다 보존**(DISCRETION_HELD는 verdict=None 예외).
 
-## 8. 도메인 수렴 순서 (shadow→authoritative)
+### image_ref SSRF (전면 차단)
+BFF는 외부 URL을 엔진에 전달하지 않는다. 허용=플랫폼 스토리지 객체키(`^storage://<bucket>/<tenant_id>/.+`, tenant 일치로 IDOR 차단)만 → **BFF가 서버측 직접 읽어 `data:image/<mime>;base64,...`로 변환해 `drawings[].image_ref`에 주입**(엔진 외부 fetch 0 → SSRF/DNS rebinding 무효; 엔진 `image_source.py:56-66` data: 분기만). http(s)·외부도메인 전면 422. 엔진 `_is_safe_url`(`:37-48` 디나이리스트, DNS rebinding 취약)은 방어심화로만.
 
-품질 갭이 크고 위험이 낮은 순: **① 면적 정량**(area_sanity·§119 부재 명확) → **② 법규 판정**(rules[] 변환+정적 룰 카탈로그) → **③ 교차검증**(Phase 5) → **④ 도면 자동해석·BIM**(스키마 통합 필요). 각 도메인: shadow(차이 로깅) → divergence 분석 → warn-only → authoritative 승격.
+## 7. 로드맵 (Phase 0~6)
+- **P0**: API_TOKEN(≥32B) 엔진 `.env.secrets`+플랫폼 `.env` 수기 동일값(export 스크립트 미사용). `project_dashboard` 헬스카드(BFF `/deliberation/health`가 엔진 `/api/v1/doctor` 인증 후 **화이트리스트 필드만**{database.configured,sheet_classifier.live,jurisdiction.live,embedder.semantic} 재발행; api_auth.enabled·*_key_present·model 미전달). 게이트: 무토큰 `/analyze`→401; staging도 ENV=production/토큰 강제.
+- **P1**(BFF): `routers/deliberation.py` — §5 계약(인증·degrade·breaker·감사·input_hash 선계산·run_id↔tenant). `DeliberationConsole.tsx`: `${ENGINE_URL}/api/v1/analyze` 직결(`:138`)→동일출처 `/api/v1/deliberation/analyze`(ENGINE_URL/NEXT_PUBLIC_* 제거); TS 타입=§6 evidence 1:1. 기존 경로 무손상.
+- **P2**(입력 어댑터): 컨텍스트→AnalysisInput(§6 전 필드, pnu 선해소·rules 카탈로그·의미분류). 네트워크 입력→async.
+- **P3**(면적·검증 shadow): `project_pipeline._calculate_area_from_geometry`·efficiency_metrics→엔진 geometry_area+area_sanity+§119+CalcTrace shadow(BFF). VerifierService/calc_ledger/range_rules→엔진 final_gate/cross_validate thin.
+- **P4**(Blocking+SSOT): `_verify_stage` fail→후속 SKIPPED+사유. 8엔진→엔진 R3+FinalGate (변환)위임. warn-only→enforce.
+- **P5**(교차검증·SSOT·재현성): 1차출처 어댑터 엔진 일원화. **ZONE_LIMITS 16곳→reg_graph 단일주입**. 플랫폼 `analysis_ledger`(public, 031)에 `input_hash`/`snapshot_id` 컬럼 additive(`ADD COLUMN IF NOT EXISTS`, downgrade 무동작). `regulation_monitor`→reconcile 트리거.
+- **P6**(오케스트레이션 통일): comprehensive/pipeline/ai_analyze→엔진 게이트웨이. SIGUNGU_BASE_PRICES→교차검증. BaseInterpreter 9종·ExpertPanel→Rationale/legal_refs/CalcTrace.
 
-## 9. 리스크 · 완화 · 롤백 (검증 보강)
+## 8. 도메인 수렴
+① 면적 → ② 법규(rules 카탈로그) → ③ 교차검증(P5) → ④ 도면·BIM. 각 shadow→divergence→warn-only→authoritative.
 
+## 9. 리스크·완화·롤백
 | 리스크 | 완화 |
 |---|---|
-| (1) 단일 진입점 집중(엔진 장애=전 분석 정지) | BFF circuit-breaker + degrade(shadow기 폴백, auth기 NEEDS_REVIEW+사유) + 엔진 /async 격리 |
-| (2) 계약 타입 안전성 단절(dict[] 다발·중첩 rules[]) | 어댑터 pydantic 서브모델 검증, **check_id별 정적 룰 카탈로그**, 매핑 실패 422/skipped(무음 통과 금지) |
-| (3) 이중 호출·성능(같은 1차출처 중복 fetch) | Phase 5 엔진 adapters 일원화(캐시 경유)까지 한시 비용 |
-| (4) 결정론 오염(datetime.now·MLflow·LLM 경로) | 어댑터 as_of 치환·LLM 산출 엔진 입력 배제 |
-| (5) 판정 SSOT 전환 회귀 | **shadow 병존 + divergence 로깅 후 전환**(즉시 대체 금지) |
-| (6) **멀티테넌시 — 엔진 테넌트-블라인드(검증 HIGH)** | 엔진 `analysis_run`은 org_id NULL 저장·`get_analysis(run_id)` 테넌트 필터 없음·RLS 없음 → **run_id 유출 시 교차테넌트 조회 가능**. 완화: BFF가 run_id↔tenant 매핑을 **플랫폼 측 테이블(analysis_ledger 등)에서 강제**(엔진 run_id를 플랫폼 원장에 결속), 또는 `save_analysis`에 org/project 주입을 위한 **엔진 수정(=무수정 가정 깨짐)을 별도 Phase로**. 플랫폼 BFF는 자기 run_id만 조회 허용. |
-| (7) **비원자적 2단계 쓰기(검증)** | 동일 propai_db이나 HTTP 경계라 엔진 `analysis_run` 커밋 vs 플랫폼 `analysis_ledger` append가 분리 세션 → 부분실패 비원자. saga/보상 또는 엔진 run_id 사후 결속 + 멱등 재시도. |
-| (8) **동기 이벤트루프 블로킹(검증)** | 네트워크 의존 입력은 async 강제(§5). 동기는 순수 결정론 입력 한정. |
+|(1) 단일 진입점|Redis 공유 breaker(§5)+degrade+/async 격리|
+|(2) 계약 단절·중첩 rules[]|pydantic 선검증+정적 카탈로그+422/skipped(KeyError→500 우회)|
+|(3) 이중 호출|P5 어댑터 일원화까지 한시|
+|(4) 결정론 오염|as_of 치환·LLM 배제·3튜플·cached_get 교차스냅샷 가드(§3)|
+|(5) 판정 SSOT 회귀|shadow 병존+divergence 후 전환|
+|(6) 멀티테넌시|엔진 `analysis_run` org 컬럼 보유(`base.py`)나 save 미채움·get 무필터·RLS 없음 → BFF `engine_run_binding`로 1차 강제 + **#8 엔진 get_analysis(org 필터) 병행 필수**(BFF 단일계층은 토큰유출/네트워크누락 단일실패 취약). 테넌트 정규화=`tenant_id.hex`(32자 소문자) 고정|
+|(7) 비원자 2단계 쓰기|**input_hash BFF 선계산**(엔진 `core/hashing.py:9-16`+`pipeline:57`과 비트동일 canonical 공유헬퍼) → (tenant,content_input_hash) 조회 후 미존재 시만 엔진 호출 → 응답 input_hash==선계산 검증 → UNIQUE INSERT, IntegrityError 시 기존 재사용. **content_input_hash=snapshot_id 제외 정규화 해시**(reconcile가 snapshot 주입해 input_hash 변동, `reconcile_tasks.py:191`)|
+|(8) 이벤트루프 블로킹|네트워크 입력 async 강제|
+|(9) image_ref SSRF|storage:// 객체키만→BFF data-uri 변환(§6)|
+|(10) 비동기 결과 유실|task SUCCESS시 BFF 영속+platform run_id, FAILURE/TTL/timeout 분기(§5)|
+|(11) 부분응답 무음|pydantic strict→NEEDS_REVIEW|
+**롤백**: feature flag 병존 원복. 엔진 수정 Phase(#8)는 별도 합의.
 
-**롤백**: 각 도메인 authoritative 승격 전까지 기존 경로 병존 → feature flag 즉시 원복. 엔진 무수정 구간은 엔진 롤백 불필요(테넌시 Phase는 예외).
+## 10. 미해결 결정 (추천)
+1. 전환: A 점진→B 수렴 [추천]. 2. SSOT: B 변환 [추천]. 3. 재현성 컬럼: P5 [추천]. 4. 게이트: warn-only→enforce [추천]. 5. 실연동 인프라(운영/데이터팀). 6. 동기/async [추천]. 7. 테넌트: BFF binding [추천]+#8 병행.
+8. **엔진 소규모 수정 묶음 승인**(BFF 우회로 1차 가능하나 근본 해결): (a) `get_analysis` org 필터(교차read 차단), (b) `cached_get` 라이브토글+snapshot 결합키(라이브 오프·교차스냅샷), (c) 비동기 결과 영속, (d) `/doctor` require_token. — 묶어 별도 Phase로 할지.
 
-## 10. 미해결 결정 (사용자 확정 필요, 추천 포함)
+## 11. 첫 증분 (P0+P1) — 구현 가능 수준
+- **P0**: 엔진 `.env.secrets` API_TOKEN(≥32B)+플랫폼 `.env` 수기 동일값. `/deliberation/health`(엔진 doctor 인증후 화이트리스트 재발행). 게이트=무토큰 401.
+- **P1**: `routers/deliberation.py`
+  - `POST /deliberation/analyze`: `Depends(get_current_user)`(auth_service) → 입력 pydantic 선검증 → **input_hash 선계산**(canonical 공유헬퍼) → `engine_run_binding`(tenant,content_input_hash) 조회(있으면 GET 재사용) → httpx(Bearer, §5 timeout/breaker) → 응답 strict 역직렬화·input_hash 검증 → 정상/`degraded` 봉투 → UNIQUE INSERT(IntegrityError 시 재조회) → `append_audit`(반환 dict ok 검사, fail-closed).
+  - `GET /deliberation/analyze/{run_id}`: `engine_run_binding`(tenant 일치, `tenant_id.hex`) 확인 후만 엔진 GET 프록시(source=async면 BFF 영속본); 불일치/미존재 404. 엔진 GET 외부 비노출.
+  - `DeliberationConsole.tsx` 직결 제거; TS 타입 §6.
+  - RBAC 세분화·비-analyze 인증·엔진수정(#8)은 P1 비범위.
 
-1. **전환 속도/권위 모델**: (A)점진 어댑터→도메인별 B 수렴 **[추천]** vs (B)즉시 전면 척추화.
-2. **판정 SSOT 전환 방식**: (A)8엔진 대체 vs **(B)8엔진 산출을 rules[]/sim_inputs[]로 변환 [추천]** — ⚠️ rules[] 중첩·정적 룰 카탈로그 보강 전제.
-3. **재현성 일원화 시점**: 플랫폼 `analysis_ledger`(이미 존재)에 input_hash/snapshot **컬럼 additive 추가**를 Phase 1 동반 vs **Phase 5 [추천]**.
-4. **blocking 게이트 수위**: 처음부터 enforce vs **warn-only→blocking 단계 [추천]**.
-5. **실연동 인프라 가동 책임/시점**: VWORLD/MOLIT/law.go.kr 키·Qdrant·Celery broker·실 VLLM(운영/데이터팀 병렬; 엔진 기본 mock).
-6. **엔진 호출 동기/비동기**: 순수 결정론 입력=동기 / 네트워크 의존 입력=async+run_id 폴링 **[추천]**.
-7. **(신규) 테넌트 격리 방식**: BFF가 플랫폼 측에서 run_id↔tenant 강제 **[추천, 엔진 무수정 유지]** vs 엔진 `save_analysis`에 org/project 주입(엔진 수정).
+## 12. 데이터모델 (신규 alembic — 플랫폼 **public** 스키마)
+⚠️ 신규 리비전 전 `alembic heads` 실행(작성시점 실측 head 6: `015_patch_s06_backup_logs,019_spatial,021_v62_design_tables,022_user_project_store,031_analysis_ledger,v62_7_learning_examples` — 시점에 따라 변함). 신규 객체는 이 head들을 단일 down_revision으로 묶는 **merge 리비전 선행** 후 그 위에. `v62_1_sales_tables`는 head 아님. 신규 3객체는 **플랫폼 public**(엔진 review 아님); run_id는 `review.analysis_run.id`를 논리참조하나 **외래키 두지 않음**(엔진 무수정+BFF가 응답 후 INSERT). `gen_random_uuid` 플랫폼 가용(001 등 확인).
+```sql
+CREATE TABLE engine_run_binding (
+  run_id UUID PRIMARY KEY,            -- sync=엔진 analysis_run.id, async=BFF 발급 uuid
+  engine_task_id TEXT, source TEXT NOT NULL CHECK(source IN ('sync','async')),
+  tenant_id TEXT NOT NULL,            -- current_user.tenant_id.hex (32자 소문자)
+  project_id TEXT, created_by TEXT,
+  input_hash TEXT NOT NULL,           -- 엔진 AnalysisResult.input_hash
+  content_input_hash TEXT NOT NULL,   -- snapshot_id 제외 정규화 해시(멱등·lineage)
+  snapshot_id TEXT, status TEXT,
+  result JSONB,                       -- async 영속본(엔진 미저장 대비)
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT ux_run_tenant_content UNIQUE (tenant_id, content_input_hash, snapshot_id)
+);
+CREATE INDEX idx_binding_tenant_run ON engine_run_binding(tenant_id, run_id);
 
-## 11. 첫 증분 상세 (Phase 0 + Phase 1)
+CREATE TABLE shadow_comparison (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  run_id UUID NOT NULL, tenant_id TEXT NOT NULL, domain TEXT NOT NULL,
+  engine_verdict TEXT, platform_verdict TEXT,
+  field_diffs JSONB NOT NULL DEFAULT '[]', divergence_score NUMERIC(6,4) NOT NULL,
+  environmental BOOLEAN NOT NULL DEFAULT false,
+  engine_degraded BOOLEAN NOT NULL DEFAULT false, mirror_loaded BOOLEAN, cache_warm BOOLEAN,
+  as_of DATE, ts TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_shadow_domain ON shadow_comparison(tenant_id, domain, ts DESC);
 
-**왜 1순위인가**: 엔진 무수정(전체 스위트 무회귀) · 전부 신규 additive(기존 50+ 분석 산출 불변) · 즉시 인증/테넌트/감사 경계 확보 · 이후 모든 어댑터·게이트 위임의 단일 진입점.
+ALTER TABLE analysis_ledger ADD COLUMN IF NOT EXISTS input_hash TEXT;
+ALTER TABLE analysis_ledger ADD COLUMN IF NOT EXISTS snapshot_id TEXT;  -- downgrade 무동작(031 정책)
+```
+감사는 신규 컬럼 없이 **append_audit→payload JSONB**에 {engine_run_id,action,input_hash,http_status,decision,request_id,ts} 적재(전용 컬럼 없음; ts/request_id 유일로 dedup 회피). audit은 `analysis_type="deliberation_audit"`, pnu=None 체인.
 
-- **Phase 0**: `project_dashboard`에 엔진 **`GET /api/v1/doctor`** 헬스카드(live/mock·키). `export_scoped_secrets`로 `API_TOKEN` 주입, `ENGINE_URL` 설정.
-- **Phase 1**: `apps/api/app/routers/deliberation.py` 신설
-  - `POST /api/v1/deliberation/analyze`: `Depends(get_current_user)`+RBAC+테넌트+감사 → `httpx.AsyncClient`로 엔진 **`POST /api/v1/analyze`**(Bearer=API_TOKEN, timeout, circuit-breaker) → 엔진 미연결 시 `NEEDS_REVIEW`+사유(무음0). **run_id를 플랫폼 원장에 tenant와 결속**(§9 R6).
-  - `DeliberationConsole.tsx`: 브라우저 직결(현 ENGINE_URL·fetch) → 내부 엔드포인트로 전환.
-  - **TS 타입은 `report.items[].evidence` 중첩 스키마 기준**(legal_basis·gate_reason·dual_path) + 최상위(cross_validations·reg_graph·skipped) 반영(무음 손실 0).
-
-## 12. 검증 게이트 (각 Phase 완결 조건)
-
-- 엔진 **전체 스위트 무회귀**(현 419 테스트 함수, CI 기준; 엔진 무수정 구간) + 플랫폼 신규 테스트(BFF 인증/degrade/매핑 422/테넌트 격리) green.
-- **결정론**: 동일 입력 동일 결과(BFF 변환 input_hash 오염 0).
-- **무음0**: 엔진 미연결·매핑 실패·계층 결손 전부 표면화(NEEDS_REVIEW/skipped/422, 무음 폴백 0).
-- **INV-13**: 플랫폼/BFF 라이브 호출 0.
-- **테넌트 격리**: run_id 교차테넌트 조회 차단 테스트.
-- **shadow**: 측정 가능한 divergence 스키마·기준 충족 후에만 authoritative.
-- 각 Phase 적대적 다관점 리뷰(determinism/무음0/보안/회귀) gate 통과.
+## 13. 검증 게이트 (9.5)
+- 엔진 전체 스위트 무회귀(현 419, 무수정 구간)+플랫폼 신규 테스트(BFF 인증·degrade 봉투·매핑 422·부분응답·테넌트 격리 404·감사 fail-closed·**input_hash canonical parity**·**교차스냅샷 캐시 격리**) green.
+- 결정론: 순수 경로 input_hash 동치; 네트워크 경로는 snapshot 워밍.
+- 무음0: 엔진 미연결·무결성·매핑·계층결손·감사실패(dict ok 검사) 전부 표면화.
+- INV-13: 소비경로 직접 httpx 0(정적스캔)+cached_get 토글 OFF시 fetch 0.
+- 테넌트: run_id 교차테넌트 404(`tenant_id.hex` 정규화) + (#8 채택 시) 엔진 get_analysis org 필터.
+- 감사: 모든 요청 audit 행, write 실패 시 거부.
+- shadow: `shadow_comparison` 집계 승격 쿼리·(N,ε)·environmental 제외.
+- 각 Phase 적대 리뷰 **전 렌즈 ≥9.5**.
 
 ---
-
-### 부록 A. 작업 트랙
-- 플랫폼측 통합 코드: **trust_infra 기반 신규 통합 워크트리**(`feature/trust-infra-2026-06-11`에서 분기). 엔진은 `feature/deliberation-review`에서 **무수정 유지**(테넌시 Phase는 예외로 별도 합의).
-- 협업: Workflow 멀티에이전트 오케스트레이션(팬아웃·shadow 비교·적대 검증).
-
-### 부록 B. 근거 · 검증
-- 통합설계 워크플로(9 에이전트): maps(5클러스터)·designs(incremental 8.7 / unified 7.9 / spine 7.2)·verdict.
-- 코드대조 검증 워크플로(4 렌즈): platform 8.5 / engine 7.5 / contract-mapping 6.5 / completeness 7.5 → **HIGH 7건 등 정정 반영**(analysis_ledger 기존 존재·rules[] 중첩·findings 비보유·cad 의미부재·테넌트-블라인드·동기 이벤트루프·shadow 모델 부재·DB 공유·ZONE_LIMITS 10+곳·doctor 경로·테스트 수). 본 v2는 그 합성.
+부록 A. 트랙: 플랫폼=trust_infra 기반 신규 통합 워크트리, 엔진=`feature/deliberation-review` 무수정(엔진수정#8 별도 합의). 협업=Workflow.
+부록 B. 근거: 9-에이전트 설계+4-렌즈 코드대조+7-렌즈 9.5 시뮬 2R(65결함 정정). 다음 라운드 코드 재대조로 ≥9.5 수렴 확인.
