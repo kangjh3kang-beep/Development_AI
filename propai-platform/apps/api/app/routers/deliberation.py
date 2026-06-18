@@ -185,34 +185,37 @@ def _engine_timeout(s: Any, deterministic: bool = True):
 
 
 async def _engine_post_analyze(dump: dict[str, Any], deterministic: bool = True,
-                               *, tenant: str | None = None) -> tuple[dict[str, Any] | None, str]:
+                               *, tenant: str | None = None,
+                               breaker: CircuitBreaker | None = None) -> tuple[dict[str, Any] | None, str]:
     """엔진 POST /api/v1/analyze → (data, reason). reason: ok·circuit_open·timeout·engine_unreachable(5xx/연결)
     ·engine_rejected(4xx 계약/매핑, breaker 제외)·invalid_response(malformed-200). 4xx와 미연결 구분(무음0).
-    deterministic=False면 async read 타임아웃 적용(라이브 네트워크 경로 조기 타임아웃 방지)."""
+    deterministic=False면 async read 타임아웃 적용(라이브 네트워크 경로 조기 타임아웃 방지).
+    breaker 주입 시 권위 _breaker 대신 사용(관측/shadow 경로가 운영 회로를 오염시키지 않도록 격리)."""
     import httpx
 
+    bk = breaker or _breaker
     s = get_settings()
     base = (s.deliberation_engine_url or "").rstrip("/")
     if not base:
         return None, "engine_unreachable"
-    if not _breaker.can_execute():
+    if not bk.can_execute():
         return None, "circuit_open"
     try:
         async with httpx.AsyncClient(timeout=_engine_timeout(s, deterministic), follow_redirects=False) as c:
             r = await c.post(f"{base}/api/v1/analyze", json=dump, headers=_engine_headers(s, tenant))
     except httpx.TimeoutException:  # 타임아웃 별도 표면화(연결실패와 구분)
-        _breaker.record_failure()
+        bk.record_failure()
         logger.warning("deliberation_engine_post_timeout")
         return None, "timeout"
     except httpx.HTTPError as exc:  # 연결/전송 오류만 breaker failure(내부 버그는 전파)
-        _breaker.record_failure()
+        bk.record_failure()
         logger.warning("deliberation_engine_post_failed", err=str(exc)[:200])
         return None, "engine_unreachable"
     if r.status_code >= 500:
-        _breaker.record_failure()
+        bk.record_failure()
         logger.warning("deliberation_engine_5xx", status=r.status_code)
         return None, "engine_unreachable"
-    _breaker.record_success()  # 엔진 도달(<500) → 회복(4xx/malformed-200도 도달이므로 success·중립)
+    bk.record_success()  # 엔진 도달(<500) → 회복(4xx/malformed-200도 도달이므로 success·중립)
     if r.status_code != 200:
         logger.warning("deliberation_engine_4xx", status=r.status_code)  # 본문 미기록(테넌트 입력 PII 누출 방지)
         return None, "engine_rejected"  # 계약/매핑 — breaker 제외

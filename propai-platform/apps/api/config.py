@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     deliberation_engine_async_read_timeout_s: float = 60.0  # 네트워크 의존 입력
     deliberation_async_result_timeout_s: float = 900.0      # 비동기 task 결과 대기 상한(초과→async_timeout degrade)
     deliberation_shadow_enabled: bool = False               # 중심엔진 수렴 shadow 비교 적재(기본 off·운영 무중단)
+    deliberation_shadow_engine_timeout_s: float = 5.0       # shadow 엔진 호출 상한(관측이 도메인 응답 지연 금지)
 
     @field_validator("debug", mode="before")
     @classmethod

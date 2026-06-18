@@ -34,33 +34,24 @@ def _le_rule(rule_id: str, measured: Any, limit: Any) -> dict[str, Any] | None:
     return _rule(rule_id, "<=", measured, limit)
 
 
-def comprehensive(result: dict[str, Any]) -> Mapped | None:
-    """종합 부지분석 → FAR/BCR 적합 비교. effective_far_pct/bcr_pct vs 법정범위 max_*_pct(동일 단위 %)."""
-    ef = result.get("effective_far")
-    if not isinstance(ef, dict):
-        return None
-    legal = ((ef.get("far_basis_detail") or {}).get("법정범위")) or {}
-    rules = []
-    far = _le_rule("FAR", ef.get("effective_far_pct"), legal.get("max_far_pct"))
-    bcr = _le_rule("BCR", ef.get("effective_bcr_pct"), legal.get("max_bcr_pct"))
-    if far:
-        rules.append(far)
-    if bcr:
-        rules.append(bcr)
-    if not rules:
-        return None  # 비교 가능한 정량 없음 → shadow 생략
-    over = any(r["measured"] > r["limit"] for r in rules)
-    verdict = "non_compliant" if over else "compliant"
-    payload: dict[str, Any] = {"rules": rules}
-    pnu = result.get("pnu")
-    if isinstance(pnu, str) and len(pnu) == 19:
-        payload["pnu"] = pnu  # lineage(19자리만 — prevalidate 패턴)
-    return verdict, payload, rules[0]["measured"]
+# 최소요건(>=) 위반 유형 — 그 외는 상한(<=) 초과. design_audit/building_compliance 공유.
+_GE_TYPES = {"setback", "sunlight"}
+
+# ⚠️ comprehensive_analysis는 shadow 대상에서 제외(정직): 플랫폼에 FAR/BCR '적합 verdict'가 없고,
+# effective_far는 합법 완화근거(지구단위계획 상한·기부채납)로 법정상한을 정당히 초과할 수 있어
+# (far_tier_service: 법정상한의 최대 2배) 법정 대비 단순 비교는 거짓 발산만 낳는다. verdict 합성 불가 →
+# 미배선. 정량(effective vs 적용한도) 관측 shadow는 엔진 정량 노출 후속 트랙에서 재검토.
+
+
+def _comparator_for(rule_id: str) -> str:
+    """check_id/type에 setback·sunlight(최소요건)이 포함되면 >=, 그 외 상한 <=."""
+    return ">=" if any(g in rule_id for g in _GE_TYPES) else "<="
 
 
 def design_audit(result: dict[str, Any]) -> Mapped | None:
     """설계심사 → overall.verdict_en(pass/fail/conditional) + 체크별 current/limit를 엔진 rules로 매핑.
-    norm_verdict가 pass→compliant·fail→non_compliant·conditional→needs_review. 수치 finding 없으면 None."""
+    norm_verdict가 pass→compliant·fail→non_compliant·conditional→needs_review. verdict_en이 단일 비교축
+    (rules는 정량 동반용). setback/sunlight 체크는 >= comparator. 수치 finding 없으면 None."""
     overall = result.get("overall")
     if not isinstance(overall, dict):
         return None
@@ -72,16 +63,12 @@ def design_audit(result: dict[str, Any]) -> Mapped | None:
         if not isinstance(f, dict):
             continue
         rid = str(f.get("check_id") or f.get("engine") or "").strip() or "chk"
-        r = _le_rule(rid, f.get("current"), f.get("limit"))
+        r = _rule(rid, _comparator_for(rid), f.get("current"), f.get("limit"))
         if r:
             rules.append(r)
     if not rules:
         return None  # 비교 가능한 정량 체크 없음 → 생략(거짓발산 방지)
     return str(verdict), {"rules": rules}, rules[0]["measured"]
-
-
-# 최소요건(>=) 위반 유형 — 그 외는 상한(<=) 초과.
-_GE_TYPES = {"setback", "sunlight"}
 
 
 def building_compliance(raw: dict[str, Any]) -> Mapped | None:

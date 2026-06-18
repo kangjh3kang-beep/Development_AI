@@ -308,7 +308,7 @@ async def check_compliance(
                     select(Project.tenant_id).where(Project.id == req.project_id))).scalar_one_or_none()
                 if tid is not None:
                     _v, _payload, _val = mapped
-                    await shadow_integration.shadow_compare(
+                    shadow_integration.fire_shadow_compare(  # 비차단 — 엔진 RTT가 검증 응답을 막지 않음
                         tenant_id=tid.hex if hasattr(tid, "hex") else str(tid),
                         domain="building_compliance",
                         platform_verdict=_v, engine_payload=_payload, platform_value=_val)

@@ -15,41 +15,24 @@ from app.services.deliberation import shadow_service as s
 from apps.api.app.routers import deliberation as delib
 
 
-def _ef(far, far_lim, bcr, bcr_lim, pnu="1111010100100000002"):
-    return {"pnu": pnu, "effective_far": {
-        "effective_far_pct": far, "effective_bcr_pct": bcr,
-        "far_basis_detail": {"법정범위": {"max_far_pct": far_lim, "max_bcr_pct": bcr_lim}}}}
-
-
-def test_mapper_comprehensive_compliant():
-    v, payload, val = sm.comprehensive(_ef(180.0, 200.0, 50.0, 60.0))
-    assert v == "compliant" and len(payload["rules"]) == 2 and payload["pnu"] == "1111010100100000002"
-    assert payload["rules"][0]["rule"]["rule_id"] == "FAR" and val == 180.0
-
-
-def test_mapper_comprehensive_non_compliant_on_far_over():
-    v, payload, _ = sm.comprehensive(_ef(250.0, 200.0, 50.0, 60.0))
-    assert v == "non_compliant"
-
-
-def test_mapper_comprehensive_skips_when_no_metrics():
-    assert sm.comprehensive({"effective_far": None}) is None
-    assert sm.comprehensive({"effective_far": {"effective_far_pct": "x"}}) is None  # 비수치 → 룰 없음 → None
-
-
-def test_mapper_comprehensive_excludes_non19_pnu():
-    _, payload, _ = sm.comprehensive(_ef(180.0, 200.0, 50.0, 60.0, pnu="123"))
-    assert "pnu" not in payload  # 19자리 아니면 lineage 생략(prevalidate 패턴)
-
-
 def test_mapper_design_audit_maps_verdict_and_findings():
     result = {"overall": {"verdict": "부적합", "verdict_en": "fail"},
-              "findings": [{"check_id": "FAR", "current": 250.0, "limit": 200.0, "status": "fail"},
-                           {"check_id": "H", "current": 30.0, "limit": 20.0},
+              "findings": [{"check_id": "rules8_far", "current": 250.0, "limit": 200.0, "status": "fail"},
+                           {"check_id": "rules8_setback", "current": 2.0, "limit": 3.0},  # 최소요건 → >=
                            {"check_id": "qual", "current": None, "limit": None}]}  # 비수치 → 제외
     v, payload, val = sm.design_audit(result)
     assert v == "fail" and len(payload["rules"]) == 2
-    assert payload["rules"][0]["rule"]["rule_id"] == "FAR" and val == 250.0
+    assert payload["rules"][0]["rule"]["rule_id"] == "rules8_far" and val == 250.0
+    assert payload["rules"][0]["rule"]["comparator"] == "<="
+    assert payload["rules"][1]["rule"]["comparator"] == ">="  # setback → 최소요건
+
+
+def test_mapper_design_audit_verdict_is_passthrough():
+    # verdict_en이 단일 비교축 — rules over 여부와 무관하게 verdict_en 그대로(rules는 정량 동반).
+    result = {"overall": {"verdict_en": "pass"},
+              "findings": [{"check_id": "c", "current": 9.0, "limit": 5.0}]}  # current>limit이나 verdict=pass
+    v, _, _ = sm.design_audit(result)
+    assert v == "pass"  # 합성 아님(플랫폼 판정 그대로)
 
 
 def test_mapper_design_audit_skips_when_no_verdict_or_no_numeric():
@@ -140,7 +123,7 @@ async def test_shadow_compare_noop_when_disabled(monkeypatch):
 
 async def test_shadow_compare_records_divergence_when_enabled(monkeypatch):
     captured = {}
-    async def _post(dump, deterministic=True, tenant=None):
+    async def _post(dump, deterministic=True, tenant=None, breaker=None):
         return {"findings": [{"verdict": "NON_COMPLIANT"}], "report": {}}, "ok"
     async def _rec(**kw):
         captured.update(kw)
@@ -148,15 +131,16 @@ async def test_shadow_compare_records_divergence_when_enabled(monkeypatch):
     monkeypatch.setattr(si, "get_settings", lambda: _FakeS())
     monkeypatch.setattr(delib, "_engine_post_analyze", _post)
     monkeypatch.setattr(s, "record", _rec)
-    out = await si.shadow_compare(tenant_id="t", domain="comprehensive",
+    out = await si.shadow_compare(tenant_id="t", domain="design_audit",
                                   platform_verdict="REJECTED", engine_payload=_VALID_PAYLOAD)
     assert out is not None
-    assert captured["domain"] == "comprehensive" and captured["engine_verdict"] == "non_compliant"
-    assert captured["input_hash"]  # lineage 동반
+    assert captured["domain"] == "design_audit" and captured["engine_verdict"] == "non_compliant"
+    assert captured["input_hash"] and captured["detail"]["engine_reason"] == "ok"  # lineage·사유 동반
+    assert captured["tenant_id"] == "t"
 
 
 async def test_shadow_compare_skips_when_engine_unavailable(monkeypatch):
-    async def _post(dump, deterministic=True, tenant=None):
+    async def _post(dump, deterministic=True, tenant=None, breaker=None):
         return None, "engine_unreachable"
     recorded = {"n": 0}
     async def _rec(**kw):
@@ -179,14 +163,67 @@ async def test_shadow_compare_skips_on_bad_mapping(monkeypatch):
 
 
 async def test_shadow_compare_never_raises(monkeypatch):
-    async def _boom(dump, deterministic=True, tenant=None):
+    async def _boom(dump, deterministic=True, tenant=None, breaker=None):
         raise RuntimeError("engine blew up")
     monkeypatch.setattr(si, "get_settings", lambda: _FakeS())
     monkeypatch.setattr(delib, "_engine_post_analyze", _boom)
     # 엔진 예외도 도메인 흐름으로 전파 금지 → None.
-    out = await si.shadow_compare(tenant_id="t", domain="comprehensive",
+    out = await si.shadow_compare(tenant_id="t", domain="design_audit",
                                   platform_verdict="COMPLIANT", engine_payload=_VALID_PAYLOAD)
     assert out is None
+
+
+async def test_shadow_compare_normalizes_tenant(monkeypatch):
+    # 도메인별 hex/대시형 불일치 정규화(32자 무대시 소문자) — per-tenant 집계 분열 방지.
+    captured = {}
+    async def _post(dump, deterministic=True, tenant=None, breaker=None):
+        captured["tenant_header"] = tenant
+        return {"findings": [{"verdict": "COMPLIANT"}], "report": {}}, "ok"
+    async def _rec(**kw):
+        captured.update(kw)
+        return {"id": "x"}
+    monkeypatch.setattr(si, "get_settings", lambda: _FakeS())
+    monkeypatch.setattr(delib, "_engine_post_analyze", _post)
+    monkeypatch.setattr(s, "record", _rec)
+    await si.shadow_compare(tenant_id="12345678-90AB-cdef-1234-567890ABCDEF",  # 대시·대문자
+                            domain="design_audit", platform_verdict="pass", engine_payload=_VALID_PAYLOAD)
+    assert captured["tenant_id"] == "1234567890abcdef1234567890abcdef"  # hex 정규화
+    assert captured["tenant_header"] == "1234567890abcdef1234567890abcdef"  # 엔진 X-Tenant-Id도 동일
+
+
+async def test_fire_shadow_compare_is_nonblocking(monkeypatch):
+    # fire-and-forget — 즉시 task 반환(도메인 응답 비차단), await 시 적재 완료.
+    rec = {"n": 0}
+    async def _post(dump, deterministic=True, tenant=None, breaker=None):
+        return {"findings": [{"verdict": "COMPLIANT"}], "report": {}}, "ok"
+    async def _rec(**kw):
+        rec["n"] += 1
+        return {"id": "x"}
+    monkeypatch.setattr(si, "get_settings", lambda: _FakeS())
+    monkeypatch.setattr(delib, "_engine_post_analyze", _post)
+    monkeypatch.setattr(s, "record", _rec)
+    task = si.fire_shadow_compare(tenant_id="t", domain="design_audit",
+                                  platform_verdict="pass", engine_payload=_VALID_PAYLOAD)
+    assert task is not None and not task.done()  # 즉시 반환(아직 미완 — 비차단)
+    await task
+    assert rec["n"] == 1  # 백그라운드 적재 완료
+
+
+async def test_shadow_compare_timeout_is_skipped(monkeypatch):
+    # 느린 엔진(상한 초과) → wait_for 타임아웃 → None(도메인 흐름 무영향, 거짓적재 없음).
+    import asyncio as _aio
+
+    async def _slow(dump, deterministic=True, tenant=None, breaker=None):
+        await _aio.sleep(0.2)
+        return {"findings": []}, "ok"
+
+    class _S(_FakeS):
+        deliberation_shadow_engine_timeout_s = 0.01  # 10ms 상한
+    monkeypatch.setattr(si, "get_settings", lambda: _S())
+    monkeypatch.setattr(delib, "_engine_post_analyze", _slow)
+    out = await si.shadow_compare(tenant_id="t", domain="design_audit",
+                                  platform_verdict="pass", engine_payload=_VALID_PAYLOAD)
+    assert out is None  # 타임아웃 → 생략
 
 
 # ── 실 DB 적재 라운드트립(없으면 skip — 거짓통과 금지) ──
