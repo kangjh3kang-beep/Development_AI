@@ -84,7 +84,8 @@ async def lookup(*, tenant_id: str, content_input_hash: str, snapshot_id: str | 
 
 
 async def lookup_by_run(*, tenant_id: str, run_id: str) -> dict[str, Any] | None:
-    """GET 프록시 테넌트 소유 검증 — (tenant, run_id) 일치 시만 반환(불일치/미존재 None→404)."""
+    """GET 프록시 테넌트 소유 검증 — (tenant, run_id) 일치 시만 반환(불일치/미존재 None→404).
+    async 폴링용 engine_task_id·created_at 동반(엔진 task 조회·async_timeout 판정)."""
     from sqlalchemy import text
 
     from app.core.database import async_session_factory
@@ -93,15 +94,37 @@ async def lookup_by_run(*, tenant_id: str, run_id: str) -> dict[str, Any] | None
         await _ensure(db)
         row = (await db.execute(
             text(
-                "SELECT run_id, source, status, result, input_hash FROM engine_run_binding "
-                "WHERE tenant_id = :t AND run_id = :r"
+                "SELECT run_id, source, status, result, input_hash, engine_task_id, created_at "
+                "FROM engine_run_binding WHERE tenant_id = :t AND run_id = :r"
             ),
             {"t": tenant_id, "r": run_id},
         )).first()
         await db.commit()
     if row is None:
         return None
-    return {"run_id": row[0], "source": row[1], "status": row[2], "result": row[3], "input_hash": row[4]}
+    return {"run_id": row[0], "source": row[1], "status": row[2], "result": row[3],
+            "input_hash": row[4], "engine_task_id": row[5], "created_at": row[6]}
+
+
+async def update_result(*, tenant_id: str, run_id: str, result: dict[str, Any], status: str) -> bool:
+    """async 폴링 중 엔진 SUCCESS 수신 시 결과를 결속에 영속(테넌트 스코프 UPDATE). True=갱신됨.
+
+    엔진은 async 결과를 미영속(run_id None)하므로 BFF가 평소 조회 권위본을 보관한다. 테넌트 일치 행만 갱신."""
+    import json
+
+    from sqlalchemy import text
+
+    from app.core.database import async_session_factory
+
+    async with async_session_factory() as db:
+        await _ensure(db)
+        res = await db.execute(
+            text("UPDATE engine_run_binding SET result = cast(:res as jsonb), status = :st "
+                 "WHERE tenant_id = :t AND run_id = :r"),
+            {"res": json.dumps(result), "st": status, "t": tenant_id, "r": run_id},
+        )
+        await db.commit()
+        return (res.rowcount or 0) > 0
 
 
 async def insert(

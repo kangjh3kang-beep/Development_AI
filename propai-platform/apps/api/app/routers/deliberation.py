@@ -8,6 +8,7 @@ Phase 0: `GET /health` — 엔진 `/api/v1/doctor`를 인증 후 프록시하되
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import quote
 
@@ -272,6 +273,78 @@ def _get_degrade_reason(greason: str) -> str:
             "timeout": "timeout"}.get(greason, "engine_unreachable")
 
 
+async def _engine_post_async(dump: dict[str, Any], *, tenant: str | None = None) -> tuple[dict[str, Any] | None, str]:
+    """엔진 POST /api/v1/analyze/async → ({task_id,status,eager,result?}, reason). breaker 대칭.
+    비결정/대용량 경로라 async read 타임아웃 적용. eager(broker 없음)면 result 즉시 포함."""
+    import httpx
+
+    s = get_settings()
+    base = (s.deliberation_engine_url or "").rstrip("/")
+    if not base:
+        return None, "engine_unreachable"
+    if not _breaker.can_execute():
+        return None, "circuit_open"
+    try:
+        async with httpx.AsyncClient(timeout=_engine_timeout(s, deterministic=False), follow_redirects=False) as c:
+            r = await c.post(f"{base}/api/v1/analyze/async", json=dump, headers=_engine_headers(s, tenant))
+    except httpx.TimeoutException:
+        _breaker.record_failure()
+        logger.warning("deliberation_async_post_timeout")
+        return None, "timeout"
+    except httpx.HTTPError as exc:
+        _breaker.record_failure()
+        logger.warning("deliberation_async_post_failed", err=str(exc)[:200])
+        return None, "engine_unreachable"
+    if r.status_code >= 500:
+        _breaker.record_failure()
+        logger.warning("deliberation_async_5xx", status=r.status_code)
+        return None, "engine_unreachable"
+    _breaker.record_success()
+    if r.status_code != 200:
+        logger.warning("deliberation_async_4xx", status=r.status_code)
+        return None, "engine_rejected"
+    try:
+        data = r.json()
+    except ValueError:
+        return None, "invalid_response"
+    return (data, "ok") if isinstance(data, dict) and data.get("task_id") else (None, "invalid_response")
+
+
+async def _engine_get_task(task_id: str, *, tenant: str | None = None) -> tuple[dict[str, Any] | None, str]:
+    """엔진 GET /api/v1/analyze/task/{task_id} → ({task_id,status,ready,result}, reason). breaker 대칭."""
+    import httpx
+
+    s = get_settings()
+    base = (s.deliberation_engine_url or "").rstrip("/")
+    if not base:
+        return None, "engine_unreachable"
+    if not _breaker.can_execute():
+        return None, "circuit_open"
+    try:
+        async with httpx.AsyncClient(timeout=_engine_timeout(s), follow_redirects=False) as c:
+            r = await c.get(f"{base}/api/v1/analyze/task/{quote(task_id, safe='')}", headers=_engine_headers(s, tenant))
+    except httpx.TimeoutException:
+        _breaker.record_failure()
+        return None, "timeout"
+    except httpx.HTTPError as exc:
+        _breaker.record_failure()
+        logger.warning("deliberation_task_get_failed", err=str(exc)[:200])
+        return None, "engine_unreachable"
+    if r.status_code >= 500:
+        _breaker.record_failure()
+        return None, "engine_unreachable"
+    _breaker.record_success()
+    if r.status_code == 404:
+        return None, "not_found"
+    if r.status_code != 200:
+        return None, "engine_rejected"
+    try:
+        data = r.json()
+    except ValueError:
+        return None, "invalid_response"
+    return (data, "ok") if isinstance(data, dict) else (None, "invalid_response")
+
+
 def _integrity_ok(result: dict[str, Any] | None, expected_ih: str | None) -> bool:
     """엔진 결과 무결성 — dict + report 필수(엔진 AnalysisResult 필수=snapshot_id·input_hash·report) +
     expected_ih 있으면 input_hash parity 일치(엔진 run_id 혼선/덮어쓰기·부분응답 탐지). 위반=공시 금지."""
@@ -412,3 +485,127 @@ async def deliberation_get_analysis(run_id: str, user=Depends(get_current_user))
                                  http_status=200, fail_closed=False)
     return {"degraded": False, "run_id": run_id, "result": result,
             "audit_degraded": ad, "audit_skipped": sk}
+
+
+# ── 비동기 경로(§9 R-async) — 대용량 도면/라이브 LLM: 동기 타임아웃 병목 해소 ───────────────────
+
+
+@router.post("/analyze/async")
+async def deliberation_analyze_async(payload: dict = Body(...), user=Depends(get_current_user)) -> dict[str, Any]:
+    """비동기 심의분석 — 인증·선검증·엔진 task 큐잉·platform run_id 결속(source=async)·감사. 폴링은
+    GET /analyze/task/{run_id}. eager(broker 미가동)면 결과 즉시 영속·반환. 엔진은 async 결과 미영속→BFF가 보관."""
+    tenant = _tenant(user)
+    try:
+        dump = build_input_dump(payload)
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail="invalid_input") from exc
+    err = prevalidate(dump)
+    if err:
+        raise HTTPException(status_code=422, detail=err)
+    ih = analysis_input_hash(dump)
+    cih = content_input_hash(dump)
+    snapshot = dump.get("snapshot_id")
+
+    data, reason = await _engine_post_async(dump, tenant=tenant)
+    if data is None:
+        ad, sk = await _record_audit(user, tenant, action="analyze_async", run_id=None,
+                                     input_hash=ih, decision="degraded", http_status=200)
+        return _degrade(reason, audit_degraded=ad, audit_skipped=sk)
+
+    run_id = str(uuid.uuid4())  # 플랫폼 발급(엔진 async는 run_id 미부여) — 결속·폴링 키
+    task_id = str(data.get("task_id"))
+    eager_result = data.get("result")  # eager면 AnalysisResult dict 즉시 포함
+    if eager_result is not None:
+        if not _integrity_ok(eager_result, ih):
+            _breaker.record_failure()
+            logger.error("deliberation_async_integrity_violation", expected_ih=ih)
+            ad, sk = await _record_audit(user, tenant, action="analyze_async", run_id=None,
+                                         input_hash=ih, decision="degraded", http_status=200)
+            return _degrade("invalid_response", audit_degraded=ad, audit_skipped=sk)
+        await binding_service.insert(
+            run_id=run_id, tenant_id=tenant, content_input_hash=cih, snapshot_id=snapshot,
+            input_hash=ih, source="async", engine_task_id=task_id, status="DONE", result=eager_result,
+            created_by=str(getattr(user, "id", "")), deterministic=False)
+        ad, sk = await _record_audit(user, tenant, action="analyze_async", run_id=run_id,
+                                     input_hash=ih, decision="authoritative", http_status=200)
+        logger.info("deliberation_analyze_async", path="eager", run_id=run_id)
+        return {"degraded": False, "async": True, "status": "DONE", "run_id": run_id,
+                "result": eager_result, "audit_degraded": ad, "audit_skipped": sk}
+
+    # 진정 비동기(broker+worker) — 접수만 결속. 폴링으로 결과 수령.
+    await binding_service.insert(
+        run_id=run_id, tenant_id=tenant, content_input_hash=cih, snapshot_id=snapshot,
+        input_hash=ih, source="async", engine_task_id=task_id, status=str(data.get("status") or "PENDING"),
+        result=None, created_by=str(getattr(user, "id", "")), deterministic=False)
+    ad, sk = await _record_audit(user, tenant, action="analyze_async", run_id=run_id,
+                                 input_hash=ih, decision="accepted", http_status=200)
+    logger.info("deliberation_analyze_async", path="queued", run_id=run_id)
+    return {"degraded": False, "async": True, "status": "PENDING", "run_id": run_id,
+            "result": None, "audit_degraded": ad, "audit_skipped": sk}
+
+
+@router.get("/analyze/task/{run_id}")
+async def deliberation_analyze_task(run_id: str, user=Depends(get_current_user)) -> dict[str, Any]:
+    """비동기 폴링 — 테넌트 소유검증(source=async) 후 영속본 또는 엔진 task 프록시. SUCCESS 시 BFF 영속·반환.
+    정직 degrade: engine_task_failed/async_result_lost/async_timeout/invalid_response."""
+    tenant = _tenant(user)
+    binding = await binding_service.lookup_by_run(tenant_id=tenant, run_id=run_id)
+    if binding is None or binding.get("source") != "async":
+        ad, sk = await _record_audit(user, tenant, action="analyze_async_poll", run_id=run_id,
+                                     input_hash="", decision="not_found", http_status=404, fail_closed=False)
+        detail: Any = {"error": "not_found", "audit_degraded": ad, "audit_skipped": sk} if ad else "not_found"
+        raise HTTPException(status_code=404, detail=detail)
+    bih = str(binding.get("input_hash") or "")
+
+    stored = binding.get("result")  # eager 또는 이전 폴링 SUCCESS로 영속됨
+    if stored is not None:
+        if not _integrity_ok(stored, binding.get("input_hash")):
+            ad, sk = await _record_audit(user, tenant, action="analyze_async_poll", run_id=run_id,
+                                         input_hash=bih, decision="degraded", http_status=200, fail_closed=False)
+            return _degrade("invalid_response", audit_degraded=ad, audit_skipped=sk, run_id=run_id)
+        ad, sk = await _record_audit(user, tenant, action="analyze_async_poll", run_id=run_id,
+                                     input_hash=bih, decision="disclosed", http_status=200, fail_closed=False)
+        return {"degraded": False, "async": True, "status": "DONE", "run_id": run_id,
+                "result": stored, "audit_degraded": ad, "audit_skipped": sk}
+
+    data, reason = await _engine_get_task(str(binding.get("engine_task_id") or ""), tenant=tenant)
+    if data is None:
+        ad, sk = await _record_audit(user, tenant, action="analyze_async_poll", run_id=run_id,
+                                     input_hash=bih, decision="degraded", http_status=200, fail_closed=False)
+        return _degrade(_get_degrade_reason(reason), audit_degraded=ad, audit_skipped=sk, run_id=run_id)
+
+    status = str(data.get("status") or "").upper()
+    if status in ("FAILURE", "REVOKED"):
+        ad, sk = await _record_audit(user, tenant, action="analyze_async_poll", run_id=run_id,
+                                     input_hash=bih, decision="degraded", http_status=200, fail_closed=False)
+        return _degrade("engine_task_failed", audit_degraded=ad, audit_skipped=sk, run_id=run_id)
+    if data.get("ready"):
+        result = data.get("result")
+        if result is None:  # SUCCESS인데 결과 유실(backend TTL 등)
+            ad, sk = await _record_audit(user, tenant, action="analyze_async_poll", run_id=run_id,
+                                         input_hash=bih, decision="degraded", http_status=200, fail_closed=False)
+            return _degrade("async_result_lost", audit_degraded=ad, audit_skipped=sk, run_id=run_id)
+        if not _integrity_ok(result, binding.get("input_hash")):
+            _breaker.record_failure()
+            ad, sk = await _record_audit(user, tenant, action="analyze_async_poll", run_id=run_id,
+                                         input_hash=bih, decision="degraded", http_status=200, fail_closed=False)
+            return _degrade("invalid_response", audit_degraded=ad, audit_skipped=sk, run_id=run_id)
+        await binding_service.update_result(tenant_id=tenant, run_id=run_id, result=result, status="DONE")
+        ad, sk = await _record_audit(user, tenant, action="analyze_async_poll", run_id=run_id,
+                                     input_hash=bih, decision="authoritative", http_status=200)
+        logger.info("deliberation_analyze_async", path="resolved", run_id=run_id)
+        return {"degraded": False, "async": True, "status": "DONE", "run_id": run_id,
+                "result": result, "audit_degraded": ad, "audit_skipped": sk}
+
+    # 미완 — 경과시간 상한 초과면 async_timeout(정직), 아니면 PENDING(재폴링 유도).
+    created = binding.get("created_at")
+    if isinstance(created, datetime):
+        ref = created if created.tzinfo else created.replace(tzinfo=UTC)
+        if (datetime.now(UTC) - ref).total_seconds() > get_settings().deliberation_async_result_timeout_s:
+            ad, sk = await _record_audit(user, tenant, action="analyze_async_poll", run_id=run_id,
+                                         input_hash=bih, decision="degraded", http_status=200, fail_closed=False)
+            return _degrade("async_timeout", audit_degraded=ad, audit_skipped=sk, run_id=run_id)
+    ad, sk = await _record_audit(user, tenant, action="analyze_async_poll", run_id=run_id,
+                                 input_hash=bih, decision="pending", http_status=200, fail_closed=False)
+    return {"degraded": False, "async": True, "status": status or "PENDING", "run_id": run_id,
+            "result": None, "audit_degraded": ad, "audit_skipped": sk}

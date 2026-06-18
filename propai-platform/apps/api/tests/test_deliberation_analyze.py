@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import UTC
 
 import httpx
 from fastapi import FastAPI
@@ -715,3 +716,170 @@ def test_analyze_audit_records_authoritative_with_ih(monkeypatch):
     c.post("/api/v1/deliberation/analyze", json=_PAYLOAD)
     assert captured["action"] == "analyze" and captured["resource_type"] == "deliberation"
     assert captured["metadata"]["decision"] == "authoritative" and captured["metadata"]["input_hash"] == ih
+
+
+# ── 비동기 경로(클러스터 D): POST /analyze/async · GET /analyze/task/{run_id} ──
+
+
+def _ares(ih: str) -> dict:
+    return {"run_id": str(uuid.uuid4()), "snapshot_id": "snap-1", "input_hash": ih,
+            "report": {"sections": {}}, "skipped": []}
+
+
+def _async_client(monkeypatch, **p):
+    """async 경로 스텁(post_async/get_task/binding) 주입 후 인증 오버라이드 TestClient."""
+    async def _audit_ok(**_):
+        return {"ok": True}
+    monkeypatch.setattr(delib, "append_audit", p.get("audit", _audit_ok))
+    if "post_async" in p:
+        monkeypatch.setattr(delib, "_engine_post_async", p["post_async"])
+    if "get_task" in p:
+        monkeypatch.setattr(delib, "_engine_get_task", p["get_task"])
+    if "insert" in p:
+        monkeypatch.setattr(delib.binding_service, "insert", p["insert"])
+    if "lookup_by_run" in p:
+        monkeypatch.setattr(delib.binding_service, "lookup_by_run", p["lookup_by_run"])
+    if "update_result" in p:
+        monkeypatch.setattr(delib.binding_service, "update_result", p["update_result"])
+    app = _app()
+    app.dependency_overrides[get_current_user] = lambda: _FakeUser()
+    return TestClient(app)
+
+
+def test_async_eager_success_persists_and_returns(monkeypatch):
+    ih = analysis_input_hash(build_input_dump(_PAYLOAD))
+    inserted = {}
+    async def post_async(dump, *, tenant=None):
+        return {"task_id": "tk1", "status": "SUCCESS", "eager": True, "result": _ares(ih)}, "ok"
+    async def insert(**kw):
+        inserted.update(kw)
+        return True
+    c = _async_client(monkeypatch, post_async=post_async, insert=insert)
+    r = c.post("/api/v1/deliberation/analyze/async", json=_PAYLOAD)
+    body = r.json()
+    assert body["degraded"] is False and body["status"] == "DONE" and body["result"]["input_hash"] == ih
+    assert inserted["source"] == "async" and inserted["deterministic"] is False and inserted["engine_task_id"] == "tk1"
+
+
+def test_async_queued_returns_pending(monkeypatch):
+    async def post_async(dump, *, tenant=None):
+        return {"task_id": "tk2", "status": "PENDING", "eager": False}, "ok"  # 결과 없음(broker)
+    async def insert(**kw):
+        return True
+    c = _async_client(monkeypatch, post_async=post_async, insert=insert)
+    r = c.post("/api/v1/deliberation/analyze/async", json=_PAYLOAD)
+    body = r.json()
+    assert body["degraded"] is False and body["status"] == "PENDING" and body["result"] is None and body["run_id"]
+
+
+def test_async_post_degrade_when_engine_down(monkeypatch):
+    async def post_async(dump, *, tenant=None):
+        return None, "engine_unreachable"
+    c = _async_client(monkeypatch, post_async=post_async)
+    r = c.post("/api/v1/deliberation/analyze/async", json=_PAYLOAD)
+    assert r.json()["degraded"] is True and r.json()["reason"] == "engine_unreachable"
+
+
+def test_async_eager_integrity_fail_degrades(monkeypatch):
+    async def post_async(dump, *, tenant=None):
+        return {"task_id": "tk3", "eager": True, "result": _ares("WRONG-HASH")}, "ok"  # parity 위반
+    c = _async_client(monkeypatch, post_async=post_async)
+    r = c.post("/api/v1/deliberation/analyze/async", json=_PAYLOAD)
+    assert r.json()["degraded"] is True and r.json()["reason"] == "invalid_response"
+
+
+def test_async_prevalidate_422(monkeypatch):
+    c = _async_client(monkeypatch)
+    r = c.post("/api/v1/deliberation/analyze/async",
+               json={"pnu": "1111010100100000002", "calc_targets": [{"target": "BOGUS"}]})
+    assert r.status_code == 422 and "target_enum" in r.json()["detail"]
+
+
+def test_task_returns_stored_result(monkeypatch):
+    ih = "ih-x"
+    async def lookup_by_run(**kw):
+        return {"run_id": "r1", "source": "async", "status": "DONE",
+                "result": {"input_hash": ih, "report": {}}, "input_hash": ih,
+                "engine_task_id": "tk", "created_at": None}
+    c = _async_client(monkeypatch, lookup_by_run=lookup_by_run)
+    r = c.get("/api/v1/deliberation/analyze/task/r1")
+    assert r.json()["degraded"] is False and r.json()["status"] == "DONE" and r.json()["result"]["input_hash"] == ih
+
+
+def test_task_resolves_engine_success_and_persists(monkeypatch):
+    ih = "ih-y"
+    updated = {}
+    async def lookup_by_run(**kw):
+        return {"run_id": "r1", "source": "async", "status": "PENDING", "result": None,
+                "input_hash": ih, "engine_task_id": "tk", "created_at": None}
+    async def get_task(task_id, *, tenant=None):
+        return {"task_id": task_id, "status": "SUCCESS", "ready": True,
+                "result": {"input_hash": ih, "report": {}}}, "ok"
+    async def update_result(**kw):
+        updated.update(kw)
+        return True
+    c = _async_client(monkeypatch, lookup_by_run=lookup_by_run, get_task=get_task, update_result=update_result)
+    r = c.get("/api/v1/deliberation/analyze/task/r1")
+    assert r.json()["status"] == "DONE" and r.json()["result"]["input_hash"] == ih
+    assert updated["run_id"] == "r1" and updated["status"] == "DONE"  # BFF 영속
+
+
+def test_task_failure_is_engine_task_failed(monkeypatch):
+    async def lookup_by_run(**kw):
+        return {"run_id": "r1", "source": "async", "result": None, "input_hash": "ih",
+                "engine_task_id": "tk", "created_at": None}
+    async def get_task(task_id, *, tenant=None):
+        return {"status": "FAILURE", "ready": True, "result": None}, "ok"
+    c = _async_client(monkeypatch, lookup_by_run=lookup_by_run, get_task=get_task)
+    r = c.get("/api/v1/deliberation/analyze/task/r1")
+    assert r.json()["degraded"] is True and r.json()["reason"] == "engine_task_failed"
+
+
+def test_task_ready_but_result_none_is_async_result_lost(monkeypatch):
+    async def lookup_by_run(**kw):
+        return {"run_id": "r1", "source": "async", "result": None, "input_hash": "ih",
+                "engine_task_id": "tk", "created_at": None}
+    async def get_task(task_id, *, tenant=None):
+        return {"status": "SUCCESS", "ready": True, "result": None}, "ok"
+    c = _async_client(monkeypatch, lookup_by_run=lookup_by_run, get_task=get_task)
+    r = c.get("/api/v1/deliberation/analyze/task/r1")
+    assert r.json()["degraded"] is True and r.json()["reason"] == "async_result_lost"
+
+
+def test_task_pending_returns_pending(monkeypatch):
+    async def lookup_by_run(**kw):
+        from datetime import datetime
+        return {"run_id": "r1", "source": "async", "result": None, "input_hash": "ih",
+                "engine_task_id": "tk", "created_at": datetime.now(UTC)}
+    async def get_task(task_id, *, tenant=None):
+        return {"status": "STARTED", "ready": False, "result": None}, "ok"
+    c = _async_client(monkeypatch, lookup_by_run=lookup_by_run, get_task=get_task)
+    r = c.get("/api/v1/deliberation/analyze/task/r1")
+    assert r.json()["degraded"] is False and r.json()["status"] == "STARTED" and r.json()["result"] is None
+
+
+def test_task_timeout_when_pending_too_long(monkeypatch):
+    from datetime import datetime, timedelta
+    async def lookup_by_run(**kw):
+        return {"run_id": "r1", "source": "async", "result": None, "input_hash": "ih",
+                "engine_task_id": "tk", "created_at": datetime.now(UTC) - timedelta(seconds=99999)}
+    async def get_task(task_id, *, tenant=None):
+        return {"status": "PENDING", "ready": False, "result": None}, "ok"
+    c = _async_client(monkeypatch, lookup_by_run=lookup_by_run, get_task=get_task)
+    r = c.get("/api/v1/deliberation/analyze/task/r1")
+    assert r.json()["degraded"] is True and r.json()["reason"] == "async_timeout"
+
+
+def test_task_ownership_404(monkeypatch):
+    async def lookup_by_run(**kw):
+        return None  # 미존재/타테넌트
+    c = _async_client(monkeypatch, lookup_by_run=lookup_by_run)
+    assert c.get("/api/v1/deliberation/analyze/task/r1").status_code == 404
+
+
+def test_task_rejects_non_async_binding(monkeypatch):
+    async def lookup_by_run(**kw):
+        return {"run_id": "r1", "source": "sync", "result": None, "input_hash": "ih",
+                "engine_task_id": None, "created_at": None}  # sync 결속은 task 경로 대상 아님
+    c = _async_client(monkeypatch, lookup_by_run=lookup_by_run)
+    assert c.get("/api/v1/deliberation/analyze/task/r1").status_code == 404

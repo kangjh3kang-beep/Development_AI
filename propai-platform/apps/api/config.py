@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     deliberation_engine_connect_timeout_s: float = 5.0
     deliberation_engine_read_timeout_s: float = 30.0       # 순수 결정론 입력(동기)
     deliberation_engine_async_read_timeout_s: float = 60.0  # 네트워크 의존 입력
+    deliberation_async_result_timeout_s: float = 900.0      # 비동기 task 결과 대기 상한(초과→async_timeout degrade)
 
     @field_validator("debug", mode="before")
     @classmethod
