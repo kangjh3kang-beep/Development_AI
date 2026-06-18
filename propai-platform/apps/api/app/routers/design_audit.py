@@ -21,7 +21,8 @@ from __future__ import annotations
 import json
 import re
 import uuid as _uuid
-from typing import Any, Optional
+from datetime import UTC
+from typing import Any
 
 import structlog
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
@@ -32,7 +33,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.api.auth.jwt_handler import CurrentUser, get_current_user
 from apps.api.database.session import get_db
-from datetime import UTC
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/api/v1/design-audit", tags=["설계심사(Design Audit)"])
@@ -257,18 +257,18 @@ async def extract_brief(
 class RunRequest(BaseModel):
     """설계심사 실행 요청 — U5 오케스트레이터 run() 계약과 1:1."""
 
-    project_id: Optional[str] = Field(None, description="프로젝트 ID(선택)")
+    project_id: str | None = Field(None, description="프로젝트 ID(선택)")
     site: dict[str, Any] = Field(
         default_factory=dict, description="부지 정보(주소·용도지역·대지면적 등)"
     )
     params: dict[str, Any] = Field(
         default_factory=dict, description="설계 개요 파라미터(extract-brief 출력 등)"
     )
-    geometry: Optional[dict[str, Any]] = Field(None, description="설계 지오메트리(선택)")
-    ifc_file_url: Optional[str] = Field(None, description="IFC 파일 URL(선택)")
+    geometry: dict[str, Any] | None = Field(None, description="설계 지오메트리(선택)")
+    ifc_file_url: str | None = Field(None, description="IFC 파일 URL(선택)")
     # UP4(WI-7) additive — 실(室) 목록(UP1 extract_rooms 출력의 rooms 등).
     # 제공 시에만 orchestrator.run(rooms=...)으로 가산 전달(미제공 시 기존 호출 동일).
-    rooms: Optional[list[dict[str, Any]]] = Field(
+    rooms: list[dict[str, Any]] | None = Field(
         None, description="실(室) 목록(DXF rooms 역추출 등 — 선택, grammar 검증용)"
     )
     use_llm: bool = Field(True, description="AI 보조(사각지대 쟁점 생성) 사용 여부")
@@ -671,7 +671,7 @@ async def run_design_audit_upload(
     resp = await _execute_run(req, current, db)
 
     # 프론트(AuditReportView) 계약 별칭 — 기존 키 전부 유지(additive)
-    from datetime import datetime, timezone as _tz
+    from datetime import datetime
 
     resp["id"] = resp.get("audit_id")
     resp["verdict"] = resp.get("overall")
