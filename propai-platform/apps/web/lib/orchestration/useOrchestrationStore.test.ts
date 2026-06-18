@@ -171,6 +171,33 @@ describe("buildPlan — 폐포 + 위상정렬 + 신선분 스킵 + 과금표시"
   });
 });
 
+describe("previewPlan — 순수 미리보기(store 미변경·수정3)", () => {
+  it("previewPlan은 buildPlan과 동일한 steps를 반환하되 plan/runMode를 변경하지 않는다", () => {
+    useOrchestrationStore.getState().setPicked({ qto: true });
+    // 초기 휘발 상태(runMode=guided, plan=[]).
+    const before = useOrchestrationStore.getState();
+    expect(before.runMode).toBe("guided");
+    expect(before.plan).toEqual([]);
+
+    const preview = useOrchestrationStore.getState().previewPlan("selective");
+    const after = useOrchestrationStore.getState();
+    // ★store 미변경(렌더 안전): runMode·plan 그대로.
+    expect(after.runMode).toBe("guided");
+    expect(after.plan).toEqual([]);
+    // 그러나 계획 자체는 buildPlan과 동일(폐포·스킵·과금표시 일치).
+    const built = useOrchestrationStore.getState().buildPlan("selective");
+    expect(preview.map((s) => s.node)).toEqual(built.map((s) => s.node));
+    expect(preview.map((s) => s.skipped)).toEqual(built.map((s) => s.skipped));
+    expect(preview.map((s) => s.chargeable)).toEqual(built.map((s) => s.chargeable));
+  });
+
+  it("standalone seed 미리보기도 store를 변경하지 않는다", () => {
+    const preview = useOrchestrationStore.getState().previewPlan("standalone", ["design"]);
+    expect(preview.map((s) => s.node)).toContain("design");
+    expect(useOrchestrationStore.getState().plan).toEqual([]); // set 미수행
+  });
+});
+
 describe("resolveInputs — SSOT read → ready/missing", () => {
   it("부지 미확보 시 land 입력은 missing, 상류 후보는 빈배열(land는 upstream 없음)", () => {
     const r = useOrchestrationStore.getState().resolveInputs("land");

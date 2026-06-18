@@ -33,6 +33,10 @@ import { AnalysisModuleSelector, type AnalysisModuleOption } from "@/components/
 import { DemographicPanel } from "@/components/operations/market/DemographicPanel";
 import { PricingBandPanel } from "@/components/operations/market/PricingBandPanel";
 import { RawDataTables, type RawData } from "@/components/operations/market/RawDataTables";
+// B3 채택(additive·무회귀): 오케스트레이션 레지스트리 구동 셀렉터/실행 컨테이너.
+// 기존 도메인 셀렉터(SGIS/KOSIS market 서브모듈)·buildOptionsPayload·/market/report 흐름은 불변.
+// 이 패널은 별도 store(propai-orchestration)·별도 실행경로라 기존 과금/실행과 결선되지 않는다.
+import { OrchestratorPanel } from "@/components/orchestration/OrchestratorPanel";
 
 // PDF/PPTX 바이너리 다운로드용 API 베이스 (api-client 로직 미러)
 function marketApiBase(): string {
@@ -476,6 +480,17 @@ export function MarketInsightsWorkspaceClient() {
         onSelectAll={onSelectAll}
         unlimited={!!balance?.unlimited}
         subtitle="필요한 분석만 선택하세요. 선택한 항목만 실행·과금됩니다. (전체 자동분석은 우측 버튼)"
+      />
+
+      {/* B3 채택(additive): 오케스트레이션 노드 기반 분석 실행 — 분양성·분양가(sales) 스코프.
+          기존 시장보고서 흐름과 별개 경로(별도 store). nodesToOptions가 레지스트리에서 옵션을 자동 생성하고,
+          폐포(상류 의존)·신선스킵·과금합계를 선표시한 뒤 동의 실행한다. balance.module_fees(미설정 0=무료) 재사용. */}
+      <OrchestratorPanel
+        scopeNodes={["sales"]}
+        balance={balance}
+        runDisabled={!inputAddress || insufficient}
+        title="오케스트레이션 분석(베타)"
+        subtitle="분양성·분양가 분석을 레지스트리 기반으로 실행합니다. 상류(부지·설계) 의존은 자동 포함됩니다."
       />
 
       {/* 명시 실행 패널 — 자동 실행 제거. 코인 차감 안내 + 잔액 부족 시 충전 유도. */}

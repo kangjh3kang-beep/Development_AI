@@ -136,8 +136,13 @@ interface OrchestrationState {
   setNodeOrder: (order: NodeId[]) => void;
 
   /* ── 핵심 메서드 ── */
-  /** 폐포+topo+신선스킵+과금표시 → 실행 미리보기. plan(state)도 갱신한다. */
+  /** 폐포+topo+신선스킵+과금표시 → 실행 미리보기. plan(state)도 갱신한다(실행 확정 시에만 호출). */
   buildPlan: (mode: RunMode, seed?: NodeId[]) => RunStep[];
+  /**
+   * buildPlan과 동일 계산이되 store(plan/runMode)를 변경하지 않는 순수 미리보기.
+   * React 렌더(useMemo)에서 안전하게 호출 가능(렌더 중 set 금지 위반 회피 — 수정3).
+   */
+  previewPlan: (mode: RunMode, seed?: NodeId[]) => RunStep[];
   /** 입력 자동해소 — SSOT read → 미확보 시 업스트림 제안/수동입력 후보. */
   resolveInputs: (id: NodeId) => ResolveInputsResult;
   /** moduleKey=null 노드의 staleness 파생(입력 시그니처 변화 감지). */
@@ -207,6 +212,99 @@ function derivedFresh(id: NodeId, state: OrchestrationState, s: ProjectContextSt
   return last.inputSignature === currentSignature(id, s);
 }
 
+/**
+ * 실행계획 순수 계산(set 미수행) — buildPlan/previewPlan 공용 코어.
+ * 폐포 → 위상정렬 → 모드별 순서 재배열 → 신선/미가용 스킵·과금 표시까지 산출하되
+ * store 상태는 절대 변경하지 않는다. ordered(plan 후보)와 steps를 함께 반환한다.
+ */
+function computePlan(
+  mode: RunMode,
+  seed: NodeId[] | undefined,
+  state: OrchestrationState,
+  s: ProjectContextState,
+): { ordered: NodeId[]; steps: RunStep[] } {
+  const seeds = seedNodes(
+    mode,
+    state.picked,
+    state.activeProfileId,
+    state.customProfiles,
+    seed,
+  );
+  // 폐포(상류 전이 포함) → 위상정렬 실행순서.
+  const closure = computeClosure(seeds);
+  let ordered = topoSort(closure);
+
+  // [graft C] 가이드/프로필 순서 재배열 주입.
+  if (mode === "guided") {
+    // 가이드는 스토리라인 위상순으로 안내(전노드 정렬). 폐포 노드만 남긴다.
+    const guideSet = new Set(closure);
+    ordered = guidedOrder().filter((id) => guideSet.has(id));
+  } else if (mode === "profile") {
+    const p = state.customProfiles.find((x) => x.id === state.activeProfileId);
+    if (p?.order && p.order.length) {
+      const orderSet = new Set(closure);
+      const head = p.order.filter((id) => orderSet.has(id));
+      const tail = ordered.filter((id) => !head.includes(id));
+      ordered = [...head, ...tail];
+    }
+  } else if (state.nodeOrder.length) {
+    // 사용자 재배열이 있으면 그 순서를 우선(폐포에 속한 것만).
+    const orderSet = new Set(closure);
+    const head = state.nodeOrder.filter((id) => orderSet.has(id));
+    const tail = ordered.filter((id) => !head.includes(id));
+    ordered = [...head, ...tail];
+  }
+
+  const seedSet = new Set(seeds);
+  const steps: RunStep[] = ordered.map((id) => {
+    const node = BY_ID[id];
+    const reason: RunStep["reason"] =
+      mode === "guided"
+        ? "guide"
+        : seedSet.has(id)
+          ? "selected"
+          : "closure";
+
+    // (2) available 가드 — 미가용(audit 등)은 unavailable 스킵(0 강제 금지).
+    if (!node.available) {
+      return {
+        node: id,
+        reason,
+        skipped: true,
+        skipReason: "unavailable",
+        chargeable: false,
+        estimatedKrw: 0,
+      };
+    }
+
+    // (1) 신선분 스킵 — moduleKey 위임 또는 시그니처 파생.
+    const mk = moduleKeyOf(id);
+    const fresh = mk ? moduleFresh(mk, s) : derivedFresh(id, state, s);
+    if (fresh) {
+      return {
+        node: id,
+        reason,
+        skipped: true,
+        skipReason: "fresh",
+        chargeable: false,
+        estimatedKrw: 0,
+      };
+    }
+
+    // 실행 대상 — 과금 표시(billingKey 있을 때만). 예상액은 관리자 미설정 0(프론트 추정 금지).
+    const chargeable = !!node.billingKey;
+    return {
+      node: id,
+      reason,
+      skipped: false,
+      chargeable,
+      estimatedKrw: 0,
+    };
+  });
+
+  return { ordered, steps };
+}
+
 /* ── store ── */
 
 export const useOrchestrationStore = create<OrchestrationState>()(
@@ -234,91 +332,16 @@ export const useOrchestrationStore = create<OrchestrationState>()(
       setActiveProfile: (profileId) => set({ activeProfileId: profileId }),
       setNodeOrder: (order) => set({ nodeOrder: order }),
 
-      /* ── buildPlan ── */
+      /* ── buildPlan(실행 확정 — set 수행) ── */
       buildPlan: (mode, seed) => {
-        const state = get();
-        const s = ctx();
-        const seeds = seedNodes(
-          mode,
-          state.picked,
-          state.activeProfileId,
-          state.customProfiles,
-          seed,
-        );
-        // 폐포(상류 전이 포함) → 위상정렬 실행순서.
-        const closure = computeClosure(seeds);
-        let ordered = topoSort(closure);
-
-        // [graft C] 가이드/프로필 순서 재배열 주입.
-        if (mode === "guided") {
-          // 가이드는 스토리라인 위상순으로 안내(전노드 정렬). 폐포 노드만 남긴다.
-          const guideSet = new Set(closure);
-          ordered = guidedOrder().filter((id) => guideSet.has(id));
-        } else if (mode === "profile") {
-          const p = state.customProfiles.find((x) => x.id === state.activeProfileId);
-          if (p?.order && p.order.length) {
-            const orderSet = new Set(closure);
-            const head = p.order.filter((id) => orderSet.has(id));
-            const tail = ordered.filter((id) => !head.includes(id));
-            ordered = [...head, ...tail];
-          }
-        } else if (state.nodeOrder.length) {
-          // 사용자 재배열이 있으면 그 순서를 우선(폐포에 속한 것만).
-          const orderSet = new Set(closure);
-          const head = state.nodeOrder.filter((id) => orderSet.has(id));
-          const tail = ordered.filter((id) => !head.includes(id));
-          ordered = [...head, ...tail];
-        }
-
-        const seedSet = new Set(seeds);
-        const steps: RunStep[] = ordered.map((id) => {
-          const node = BY_ID[id];
-          const reason: RunStep["reason"] =
-            mode === "guided"
-              ? "guide"
-              : seedSet.has(id)
-                ? "selected"
-                : "closure";
-
-          // (2) available 가드 — 미가용(audit 등)은 unavailable 스킵(0 강제 금지).
-          if (!node.available) {
-            return {
-              node: id,
-              reason,
-              skipped: true,
-              skipReason: "unavailable",
-              chargeable: false,
-              estimatedKrw: 0,
-            };
-          }
-
-          // (1) 신선분 스킵 — moduleKey 위임 또는 시그니처 파생.
-          const mk = moduleKeyOf(id);
-          const fresh = mk ? moduleFresh(mk, s) : derivedFresh(id, state, s);
-          if (fresh) {
-            return {
-              node: id,
-              reason,
-              skipped: true,
-              skipReason: "fresh",
-              chargeable: false,
-              estimatedKrw: 0,
-            };
-          }
-
-          // 실행 대상 — 과금 표시(billingKey 있을 때만). 예상액은 관리자 미설정 0(프론트 추정 금지).
-          const chargeable = !!node.billingKey;
-          return {
-            node: id,
-            reason,
-            skipped: false,
-            chargeable,
-            estimatedKrw: 0,
-          };
-        });
-
+        const { ordered, steps } = computePlan(mode, seed, get(), ctx());
         set({ runMode: mode, plan: ordered });
         return steps;
+      },
+
+      /* ── previewPlan(순수 미리보기 — set 미수행, 렌더 안전) ── */
+      previewPlan: (mode, seed) => {
+        return computePlan(mode, seed, get(), ctx()).steps;
       },
 
       /* ── resolveInputs ── */
