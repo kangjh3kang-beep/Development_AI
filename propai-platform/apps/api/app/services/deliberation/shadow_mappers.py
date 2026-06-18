@@ -22,12 +22,16 @@ def _finite_num(v: Any) -> float | None:
     return float(v) if math.isfinite(v) else None
 
 
-def _le_rule(rule_id: str, measured: Any, limit: Any) -> dict[str, Any] | None:
-    """measured<=limit 룰 1행(둘 다 유한 수치일 때만). 엔진 prevalidate 통과 형식."""
+def _rule(rule_id: str, comparator: str, measured: Any, limit: Any) -> dict[str, Any] | None:
+    """엔진 rules 1행(measured/limit 유한 수치일 때만). prevalidate 통과 형식(rule_id 필수·comparator∈집합)."""
     m, lim = _finite_num(measured), _finite_num(limit)
     if m is None or lim is None:
         return None
-    return {"rule": {"rule_id": rule_id, "comparator": "<="}, "measured": m, "limit": lim}
+    return {"rule": {"rule_id": rule_id, "comparator": comparator}, "measured": m, "limit": lim}
+
+
+def _le_rule(rule_id: str, measured: Any, limit: Any) -> dict[str, Any] | None:
+    return _rule(rule_id, "<=", measured, limit)
 
 
 def comprehensive(result: dict[str, Any]) -> Mapped | None:
@@ -74,3 +78,25 @@ def design_audit(result: dict[str, Any]) -> Mapped | None:
     if not rules:
         return None  # 비교 가능한 정량 체크 없음 → 생략(거짓발산 방지)
     return str(verdict), {"rules": rules}, rules[0]["measured"]
+
+
+# 최소요건(>=) 위반 유형 — 그 외는 상한(<=) 초과.
+_GE_TYPES = {"setback", "sunlight"}
+
+
+def building_compliance(raw: dict[str, Any]) -> Mapped | None:
+    """건축 법규검증 → 위반 케이스만 엔진 rules로 대조(적합 시 비교 데이터 없어 None=생략, 거짓발산 방지).
+    violations[].current_value/limit_value + 유형별 comparator(setback/sunlight=>=, 그외 <=). sanity shadow."""
+    if not isinstance(raw, dict) or raw.get("compliant"):
+        return None  # 적합 → 위반 0건 → 비교 rule 없음 → 생략
+    rules = []
+    for v in raw.get("violations") or []:
+        if not isinstance(v, dict):
+            continue
+        comp = ">=" if str(v.get("type")) in _GE_TYPES else "<="
+        r = _rule(str(v.get("type") or "viol"), comp, v.get("current_value"), v.get("limit_value"))
+        if r:
+            rules.append(r)
+    if not rules:
+        return None
+    return "non_compliant", {"rules": rules}, rules[0]["measured"]

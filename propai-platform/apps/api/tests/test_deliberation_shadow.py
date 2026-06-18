@@ -58,6 +58,23 @@ def test_mapper_design_audit_skips_when_no_verdict_or_no_numeric():
     assert sm.design_audit({"overall": None}) is None
 
 
+def test_mapper_building_compliance_violations_to_rules():
+    raw = {"compliant": False, "violations": [
+        {"type": "building_coverage", "current_value": 0.7, "limit_value": 0.6},
+        {"type": "setback", "current_value": 2.0, "limit_value": 3.0},  # 최소요건 → >=
+        {"type": "qual", "current_value": None, "limit_value": None}]}   # 비수치 제외
+    v, payload, val = sm.building_compliance(raw)
+    assert v == "non_compliant" and len(payload["rules"]) == 2
+    assert payload["rules"][0]["rule"]["comparator"] == "<=" and val == 0.7
+    assert payload["rules"][1]["rule"]["comparator"] == ">="  # setback
+
+
+def test_mapper_building_compliance_skips_when_compliant():
+    # 적합 케이스는 비교 rule 없음 → 생략(거짓발산 방지). 위반 없는 dict도 None.
+    assert sm.building_compliance({"compliant": True, "violations": []}) is None
+    assert sm.building_compliance({"compliant": False, "violations": []}) is None
+
+
 def test_norm_verdict_maps_equivalents():
     # 다른 표기를 동치군으로 — 거짓 divergence 방지.
     assert s.norm_verdict("COMPLIANT") == s.norm_verdict("approved") == "compliant"
