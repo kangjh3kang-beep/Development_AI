@@ -70,7 +70,7 @@ def test_analyze_success_new(monkeypatch):
 
     async def lookup(**kw):
         return None  # 신규
-    async def post(dump, deterministic=True):
+    async def post(dump, deterministic=True, tenant=None):
         posted["dump"] = dump
         return _engine_result(ih), "ok"
     inserted = {}
@@ -93,10 +93,10 @@ def test_analyze_idempotent_reuse(monkeypatch):
 
     async def lookup(**kw):
         return {"run_id": existing_run, "source": "sync", "status": "DONE", "result": None}
-    async def post(dump, deterministic=True):
+    async def post(dump, deterministic=True, tenant=None):
         called["post"] += 1
         return _engine_result(ih), "ok"
-    async def get(run_id):
+    async def get(run_id, tenant=None):
         return _engine_result(ih, run_id=run_id), "ok"
     c = _client(monkeypatch, lookup=lookup, post=post, get=get)
     r = c.post("/api/v1/deliberation/analyze", json=_PAYLOAD)
@@ -107,7 +107,7 @@ def test_analyze_idempotent_reuse(monkeypatch):
 def test_analyze_degraded_when_engine_unreachable(monkeypatch):
     async def lookup(**kw):
         return None
-    async def post(dump, deterministic=True):
+    async def post(dump, deterministic=True, tenant=None):
         return None, "engine_unreachable"  # 미연결/타임아웃/circuit
     c = _client(monkeypatch, lookup=lookup, post=post)
     r = c.post("/api/v1/deliberation/analyze", json=_PAYLOAD)
@@ -120,7 +120,7 @@ def test_analyze_degraded_when_engine_unreachable(monkeypatch):
 def test_analyze_invalid_response_input_hash_mismatch(monkeypatch):
     async def lookup(**kw):
         return None
-    async def post(dump, deterministic=True):
+    async def post(dump, deterministic=True, tenant=None):
         return _engine_result("WRONG-HASH"), "ok"  # 응답 input_hash 불일치
     inserted = {"n": 0}
     async def insert(**kw):
@@ -138,7 +138,7 @@ def test_analyze_invalid_response_run_id_none(monkeypatch):
     ih = analysis_input_hash(build_input_dump(_PAYLOAD))
     async def lookup(**kw):
         return None
-    async def post(dump, deterministic=True):
+    async def post(dump, deterministic=True, tenant=None):
         return _engine_result(ih, run_id=None), "ok"  # run_id 없음(엔진 계약 위반)
     async def insert(**kw):
         return True
@@ -188,7 +188,7 @@ def test_get_returns_stored_result(monkeypatch):
 def test_get_proxies_engine_when_no_stored_result(monkeypatch):
     async def lookup_by_run(**kw):
         return {"run_id": "run-1", "source": "sync", "status": "DONE", "result": None}
-    async def get(rid):
+    async def get(rid, tenant=None):
         return {"run_id": rid, "report": {"x": 1}}, "ok"
     monkeypatch.setattr(delib.binding_service, "lookup_by_run", lookup_by_run)
     monkeypatch.setattr(delib, "_engine_get_analysis", get)
@@ -201,7 +201,7 @@ def test_get_proxies_engine_when_no_stored_result(monkeypatch):
 def test_get_degraded_when_no_stored_and_engine_down(monkeypatch):
     async def lookup_by_run(**kw):
         return {"run_id": "run-1", "source": "sync", "status": "DONE", "result": None, "input_hash": "ih"}
-    async def get(rid):
+    async def get(rid, tenant=None):
         return None, "engine_unreachable"
     monkeypatch.setattr(delib.binding_service, "lookup_by_run", lookup_by_run)
     monkeypatch.setattr(delib, "_engine_get_analysis", get)
@@ -222,7 +222,7 @@ def test_analyze_nondeterministic_skips_idempotency(monkeypatch):
     async def lookup(**kw):
         looked["n"] += 1
         return {"run_id": "STALE", "source": "sync", "result": None}  # 있어도 무시돼야
-    async def post(dump, deterministic=True):
+    async def post(dump, deterministic=True, tenant=None):
         return _engine_result(ih), "ok"
     inserted = {}
     async def insert(**kw):
@@ -241,7 +241,7 @@ def test_analyze_reuse_degrades_when_engine_get_fails(monkeypatch):
     ih = analysis_input_hash(build_input_dump(_PAYLOAD))
     async def lookup(**kw):
         return {"run_id": "run-1", "source": "sync", "result": None, "input_hash": ih}
-    async def get(run_id):
+    async def get(run_id, tenant=None):
         return None, "engine_unreachable"
     c = _client(monkeypatch, lookup=lookup, get=get)
     r = c.post("/api/v1/deliberation/analyze", json=_PAYLOAD)
@@ -252,7 +252,7 @@ def test_analyze_reuse_parity_fail_invalid_response(monkeypatch):
     ih = analysis_input_hash(build_input_dump(_PAYLOAD))
     async def lookup(**kw):
         return {"run_id": "run-1", "source": "sync", "result": None, "input_hash": ih}
-    async def get(run_id):
+    async def get(run_id, tenant=None):
         return _engine_result("DIFFERENT-HASH", run_id=run_id), "ok"  # binding input_hash와 불일치
     c = _client(monkeypatch, lookup=lookup, get=get)
     r = c.post("/api/v1/deliberation/analyze", json=_PAYLOAD)
@@ -267,7 +267,7 @@ def test_analyze_insert_race_uses_winner_run_id(monkeypatch):
         seq["n"] += 1
         return None if seq["n"] == 1 else {"run_id": "WINNER", "source": "sync",
                                            "result": {"input_hash": ih, "report": {}}, "input_hash": ih}
-    async def post(dump, deterministic=True):
+    async def post(dump, deterministic=True, tenant=None):
         return _engine_result(ih), "ok"
     async def insert(**kw):
         return False  # 경합 패배
@@ -281,7 +281,7 @@ def test_analyze_audit_failure_is_fail_closed_502(monkeypatch):
     ih = analysis_input_hash(build_input_dump(_PAYLOAD))
     async def lookup(**kw):
         return None
-    async def post(dump, deterministic=True):
+    async def post(dump, deterministic=True, tenant=None):
         return _engine_result(ih), "ok"
     async def insert(**kw):
         return True
@@ -297,7 +297,7 @@ def test_analyze_audit_quota_write_is_fail_closed_502(monkeypatch):
     ih = analysis_input_hash(build_input_dump(_PAYLOAD))
     async def lookup(**kw):
         return None
-    async def post(dump, deterministic=True):
+    async def post(dump, deterministic=True, tenant=None):
         return _engine_result(ih), "ok"
     async def insert(**kw):
         return True
@@ -335,7 +335,7 @@ def test_analyze_reuse_audit_failure_is_fail_closed_502(monkeypatch):
 def test_analyze_engine_rejected_4xx_distinct_reason(monkeypatch):
     async def lookup(**kw):
         return None
-    async def post(dump, deterministic=True):
+    async def post(dump, deterministic=True, tenant=None):
         return None, "engine_rejected"  # 엔진 4xx(계약/매핑) — 미연결과 구분
     c = _client(monkeypatch, lookup=lookup, post=post)
     r = c.post("/api/v1/deliberation/analyze", json=_PAYLOAD)
@@ -368,7 +368,7 @@ def test_analyze_race_winner_parity_fail_degrades(monkeypatch):
             return None
         return {"run_id": "WINNER", "source": "sync",
                 "result": {"input_hash": "A", "report": {}}, "input_hash": "B"}  # parity 불일치
-    async def post(dump, deterministic=True):
+    async def post(dump, deterministic=True, tenant=None):
         return _engine_result(ih), "ok"
     async def insert(**kw):
         return False  # 경합 패배
@@ -387,11 +387,11 @@ def test_analyze_race_winner_unresolved_does_not_return_loser_result(monkeypatch
         seq["n"] += 1
         return None if seq["n"] == 1 else {"run_id": "WINNER", "source": "sync",
                                            "result": None, "input_hash": ih}
-    async def post(dump, deterministic=True):
+    async def post(dump, deterministic=True, tenant=None):
         return _engine_result(ih), "ok"
     async def insert(**kw):
         return False
-    async def get(rid):
+    async def get(rid, tenant=None):
         return None, "engine_unreachable"
     c = _client(monkeypatch, lookup=lookup, post=post, insert=insert, get=get)
     r = c.post("/api/v1/deliberation/analyze", json=_PAYLOAD)
@@ -408,7 +408,7 @@ def test_analyze_integrity_violation_trips_breaker(monkeypatch):
 
     async def lookup(**kw):
         return None
-    async def post(dump, deterministic=True):
+    async def post(dump, deterministic=True, tenant=None):
         return _engine_result("WRONG-HASH"), "ok"  # parity 위반(200)
     c = _client(monkeypatch, lookup=lookup, post=post)
     r = c.post("/api/v1/deliberation/analyze", json=_PAYLOAD)
@@ -446,7 +446,7 @@ def test_get_degraded_reason_engine_rejected(monkeypatch):
     # 저장 result 없음 + 엔진 GET 4xx(토큰/계약) → engine_rejected로 정직 표면화(미연결과 구분).
     async def lookup_by_run(**kw):
         return {"run_id": "run-1", "source": "sync", "result": None, "input_hash": "ih"}
-    async def get(rid):
+    async def get(rid, tenant=None):
         return None, "engine_rejected"
     monkeypatch.setattr(delib.binding_service, "lookup_by_run", lookup_by_run)
     monkeypatch.setattr(delib, "_engine_get_analysis", get)
@@ -460,7 +460,7 @@ def test_get_result_missing_when_engine_404(monkeypatch):
     # binding 존재하나 엔진이 run 분실(404) → result_missing(정합성 경고)로 정직 표면화.
     async def lookup_by_run(**kw):
         return {"run_id": "run-1", "source": "sync", "result": None, "input_hash": "ih"}
-    async def get(rid):
+    async def get(rid, tenant=None):
         return None, "not_found"
     monkeypatch.setattr(delib.binding_service, "lookup_by_run", lookup_by_run)
     monkeypatch.setattr(delib, "_engine_get_analysis", get)
@@ -568,6 +568,41 @@ async def test_engine_post_200_returns_ok(monkeypatch):
     assert reason == "ok" and data == payload and calls and br.can_execute()  # record_success → CLOSED 유지
 
 
+async def test_engine_post_sends_x_tenant_id(monkeypatch):
+    # #8a — BFF가 엔진 호출 시 X-Tenant-Id(정규화 테넌트)를 전송(엔진 organization_id 적재·소유필터의 키).
+    captured: dict = {}
+    payload = {"run_id": str(uuid.uuid4()), "input_hash": "ih", "report": {}}
+
+    class _CapClient(_FakeClient):
+        async def post(self, url, **kw):
+            captured.update(kw)
+            return await self._do("post", url)
+
+    monkeypatch.setattr(delib, "get_settings", lambda: _FakeSettings())
+    monkeypatch.setattr(delib, "_breaker",
+                        CircuitBreaker(failure_threshold=5, recovery_timeout=9999.0, half_open_max=1))
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: _CapClient(_FakeResp(200, payload), []))
+    await delib._engine_post_analyze({"pnu": "x"}, tenant="1111111111111111ffff1111111111ff")
+    assert captured["headers"].get("X-Tenant-Id") == "1111111111111111ffff1111111111ff"
+    assert captured["headers"].get("Authorization", "").startswith("Bearer ")  # 토큰도 동봉
+
+
+async def test_engine_get_sends_x_tenant_id(monkeypatch):
+    captured: dict = {}
+
+    class _CapClient(_FakeClient):
+        async def get(self, url, **kw):
+            captured.update(kw)
+            return await self._do("get", url)
+
+    monkeypatch.setattr(delib, "get_settings", lambda: _FakeSettings())
+    monkeypatch.setattr(delib, "_breaker",
+                        CircuitBreaker(failure_threshold=5, recovery_timeout=9999.0, half_open_max=1))
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: _CapClient(_FakeResp(404), []))
+    await delib._engine_get_analysis("run-1", tenant="abc123")
+    assert captured["headers"].get("X-Tenant-Id") == "abc123"
+
+
 async def test_engine_post_4xx_is_engine_rejected_no_breaker(monkeypatch):
     br, calls = _install_engine(monkeypatch, _FakeResp(422), threshold=5)
     for _ in range(5):
@@ -588,7 +623,7 @@ def test_analyze_report_missing_is_invalid_response(monkeypatch):
     ih = analysis_input_hash(build_input_dump(_PAYLOAD))
     async def lookup(**kw):
         return None
-    async def post(dump, deterministic=True):
+    async def post(dump, deterministic=True, tenant=None):
         return {"run_id": str(uuid.uuid4()), "input_hash": ih, "snapshot_id": "snap-1"}, "ok"  # report 없음
     c = _client(monkeypatch, lookup=lookup, post=post)
     r = c.post("/api/v1/deliberation/analyze", json=_PAYLOAD)
@@ -622,7 +657,7 @@ def test_get_stored_result_report_missing_degrades(monkeypatch):
 def test_get_circuit_open_reason(monkeypatch):
     async def lookup_by_run(**kw):
         return {"run_id": "run-1", "source": "sync", "result": None, "input_hash": "ih"}
-    async def get(rid):
+    async def get(rid, tenant=None):
         return None, "circuit_open"
     monkeypatch.setattr(delib.binding_service, "lookup_by_run", lookup_by_run)
     monkeypatch.setattr(delib, "_engine_get_analysis", get)
@@ -636,7 +671,7 @@ def test_analyze_audit_unchanged_passes(monkeypatch):
     ih = analysis_input_hash(build_input_dump(_PAYLOAD))
     async def lookup(**kw):
         return None
-    async def post(dump, deterministic=True):
+    async def post(dump, deterministic=True, tenant=None):
         return _engine_result(ih), "ok"
     async def insert(**kw):
         return True
@@ -652,7 +687,7 @@ def test_analyze_audit_not_ok_write_is_502(monkeypatch):
     ih = analysis_input_hash(build_input_dump(_PAYLOAD))
     async def lookup(**kw):
         return None
-    async def post(dump, deterministic=True):
+    async def post(dump, deterministic=True, tenant=None):
         return _engine_result(ih), "ok"
     async def insert(**kw):
         return True
@@ -669,7 +704,7 @@ def test_analyze_audit_records_authoritative_with_ih(monkeypatch):
     captured: dict = {}
     async def lookup(**kw):
         return None
-    async def post(dump, deterministic=True):
+    async def post(dump, deterministic=True, tenant=None):
         return _engine_result(ih), "ok"
     async def insert(**kw):
         return True
