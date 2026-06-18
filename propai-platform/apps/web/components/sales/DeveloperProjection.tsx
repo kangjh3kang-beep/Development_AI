@@ -21,10 +21,15 @@ interface ByType { label: string; amount: number; type?: string }
 // 손익 2-뷰: 현금흐름(현금주의)·발생주의(계약매출). 백엔드 site_management_detail 와 동일 키.
 interface CashFlow { cash_collected: number; cost_total: number; commission: number; profit: number; note?: string }
 interface Accrual { revenue_recognized: number; cost_total: number; commission: number; profit: number; receivable: number; note?: string }
-interface RollupSite { site_id: string; site_name: string; status: string; revenue: number; cost_total: number; commission: number; profit_estimate: number; by_type: ByType[]; cash_flow?: CashFlow; accrual?: Accrual; deferred_revenue?: number; error?: string }
-interface RollupConsolidated { revenue: number; cost_total: number; commission: number; profit_estimate: number; by_type: ByType[]; cash_collected?: number; cash_profit?: number; deferred_revenue?: number; receivable?: number }
-interface RollupError { site_id: string; site_name: string; error: string }
+// 집계 실패 현장: status='ERROR'(매출0원 정상과 구분), site_status=원래 현장상태,
+// error_code=분류코드(PERMISSION/DB_CONNECTION/DB_ERROR/INTERNAL), correlation_id=서버로그 역추적용.
+interface RollupSite { site_id: string; site_name: string; status: string; revenue: number; cost_total: number; commission: number; profit_estimate: number; by_type: ByType[]; cash_flow?: CashFlow; accrual?: Accrual; deferred_revenue?: number; error_code?: string; correlation_id?: string; site_status?: string }
+// consolidated.complete/failed_count/partial: 통합총계 완전성(머신리더블). partial=일부 현장 누락(과소계상).
+interface RollupConsolidated { revenue: number; cost_total: number; commission: number; profit_estimate: number; by_type: ByType[]; cash_collected?: number; cash_profit?: number; deferred_revenue?: number; receivable?: number; complete?: boolean; failed_count?: number; partial?: boolean }
+interface RollupError { site_id: string; site_name: string; error_code: string; correlation_id: string }
 interface Rollup { consolidated: RollupConsolidated; sites: RollupSite[]; errors?: RollupError[]; note: string }
+// 분류코드 → 운영자용 한국어 라벨(원문 비노출, 안전한 카테고리만).
+const ERR_LABEL: Record<string, string> = { PERMISSION: "권한 부족", DB_CONNECTION: "DB 연결 오류", DB_ERROR: "DB 오류", INTERNAL: "내부 오류" };
 
 const STATUS: Record<string, string> = { PREP: "준비중", OPEN: "분양중", CLOSED: "분양종료" };
 const ENTRY_TYPES = [
@@ -120,11 +125,22 @@ export default function DeveloperProjection() {
               ))}
             </div>
           )}
-          {/* 부분내결함 표기(은폐 금지): 일부 현장 집계 실패 시 명시 — 나머지는 정상 합산됨 */}
-          {roll?.errors && roll.errors.length > 0 && (
-            <div className="mt-2 rounded-lg border border-[var(--error)]/40 bg-[var(--error)]/10 px-2.5 py-1.5 text-[11px] text-[var(--error)]">
-              <b>일부 현장 집계 실패({roll.errors.length}곳)</b> — 아래 현장은 합산에서 0 처리되었습니다(권한·연결 확인). 나머지 현장은 정상 합산됩니다.
-              <span className="ml-1 text-[var(--text-hint)]">{roll.errors.map((e) => e.site_name).join(", ")}</span>
+          {/* 부분내결함 표기(은폐 금지·dead output 해소): consolidated.partial(머신리더블)로 판별.
+              실패 현장별 ERROR 배지 + 분류코드 + 상관ID(서버로그 역추적) 노출 — 나머지는 정상 합산. */}
+          {(con.partial || (roll?.errors && roll.errors.length > 0)) && (
+            <div className="mt-2 rounded-lg border border-[var(--error)]/40 bg-[var(--error)]/10 px-2.5 py-2 text-[11px] text-[var(--error)]">
+              <b>통합총계 일부 누락 · 현장 집계 실패({con.failed_count ?? roll?.errors?.length ?? 0}곳)</b>
+              <span className="ml-1 text-[var(--text-secondary)]">아래 현장은 합산에서 제외(과소계상)되었습니다. 나머지 현장은 정상 합산됩니다.</span>
+              <div className="mt-1.5 flex flex-wrap gap-1.5">
+                {(roll?.errors ?? []).map((e) => (
+                  <span key={e.site_id} className="inline-flex items-center gap-1 rounded border border-[var(--error)]/50 bg-[var(--error)]/15 px-1.5 py-0.5">
+                    <b className="rounded bg-[var(--error)] px-1 text-[9px] font-black text-white">ERROR</b>
+                    <span className="text-[var(--text-primary)]">{e.site_name}</span>
+                    <span className="text-[var(--text-secondary)]">· {ERR_LABEL[e.error_code] ?? e.error_code}</span>
+                    <span className="text-[var(--text-hint)]" title="서버 로그 역추적용 상관ID">#{e.correlation_id}</span>
+                  </span>
+                ))}
+              </div>
             </div>
           )}
           <p className="mt-2 text-[10px] text-[var(--text-hint)]">{roll?.note}</p>

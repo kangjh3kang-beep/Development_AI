@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import logging
 import re
@@ -24,7 +25,11 @@ _ENTRY_TYPES = {"LABOR": "인건비", "EXPENSE": "경비", "UTILITY": "공과금
 # 귀속월(ym) 형식 검증: 정확히 'YYYY-MM' 이고 월은 01~12 만 허용한다.
 # 비정상 ym(예 2026-13·2026/06·2026-6)은 유니크키 분기(uq_site_acct_site_ym_type)를
 # 우회해 멱등을 깨뜨릴 수 있으므로 입력 단계에서 차단한다(은폐 금지=ValueError).
-_YM_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
+# ★iter-5 회귀수정: 끝을 '$' 로 두면 후행 개행 1개('2026-06\n')를 허용한다(파이썬 정규식에서
+#   '$'는 문자열 끝 '또는' 마지막 개행 직전에 매치). 그러면 '2026-06\n' 같은 값이 PASS 되어
+#   부분 유니크키(uq_site_acct_site_ym_type)를 우회 → 멱등이 깨진다. 문자열 절대 끝만 매치하는
+#   '\Z' 로 바꿔 후행 개행/공백을 전부 차단한다(아래는 re.fullmatch 로 처음~끝 강제도 병행).
+_YM_RE = re.compile(r"\d{4}-(0[1-9]|1[0-2])")
 
 
 def _validate_ym(ym: str) -> str:
@@ -32,8 +37,10 @@ def _validate_ym(ym: str) -> str:
 
     멱등 귀속키/월 경계 계산의 단일 진입 검증점. actions.py·add_accounting_entry·
     _month_bounds 가 모두 이 함수를 거쳐 비정규 ym 우회를 차단한다.
+    ★iter-5: re.fullmatch 로 '문자열 처음~절대 끝' 전체 일치만 통과시킨다. 이로써
+      '2026-06\\n'(후행 개행)·'2026-06 '(후행 공백)·' 2026-06'(선행 공백) 전부 REJECT 된다.
     """
-    if not isinstance(ym, str) or not _YM_RE.match(ym):
+    if not isinstance(ym, str) or not _YM_RE.fullmatch(ym):
         raise ValueError("ym 형식 오류: 'YYYY-MM'(월 01~12)이어야 합니다(예: 2026-06).")
     return ym
 
@@ -46,6 +53,20 @@ _MISSING_OBJECT_SQLSTATES = frozenset({"42P01", "42703"})
 # 에서만 부팅 안전망으로 동작하며, 동시 부팅 시 advisory-lock 으로 중복 DDL race 를 제거한다.
 _LOCK_ACCT = 880421001
 _LOCK_WAGE = 880421002
+
+# ── 프로세스 1회 게이트(읽기경로 DDL race 잔재 제거) ────────────────────────────
+# iter-4: _ensure_acct/_ensure_wage 가 호출될 때마다 advisory-lock+CREATE/ALTER+commit 을
+#   직렬 실행하던 것이 문제였다(특히 롤업이 N현장×_cost_by_type 마다 반복 → 직렬화 비용).
+#   해결: 프로세스당 '최초 1회'만 실제 DDL 을 수행하고, 성공 후엔 즉시 반환(no-op)한다.
+#   - 정본은 032 마이그레이션이므로 운영(마이그레이션 적용) 환경에선 DDL 자체가 IF NOT EXISTS
+#     로 무변경이며, 게이트 덕분에 매 요청 advisory-lock/commit 비용도 사라진다.
+#   - asyncio.Lock 으로 동시 첫 호출(코루틴 경합)도 1회로 합류시킨다(워커=단일 이벤트루프).
+#   - 멀티프로세스 동시 부팅 race 는 기존 advisory-lock 이 그대로 막는다(게이트는 in-process).
+#   읽기경로(_cost_by_type 등)에서는 보장 호출 자체를 제거했고, 쓰기경로만 1회 게이트를 거친다.
+_acct_ready = False
+_wage_ready = False
+_acct_lock = asyncio.Lock()
+_wage_lock = asyncio.Lock()
 
 _ACCT_DDL = (
     "CREATE TABLE IF NOT EXISTS sales_site_accounting ("
@@ -63,22 +84,31 @@ _ACCT_DDL = (
 
 
 async def _ensure_acct(db: AsyncSession) -> None:
-    """sales_site_accounting 멱등 보장(부팅 안전망). advisory-lock 으로 동시부팅 race 제거.
+    """sales_site_accounting 멱등 보장(부팅 안전망) — 프로세스 1회만 실제 DDL 수행.
 
     정본은 Alembic 032_sales_admin_accounting. 여기서는 마이그레이션 미적용 환경 대비
     CREATE/ALTER IF NOT EXISTS 만 수행한다(파괴적 변경 없음).
+    ★iter-4: 최초 1회 성공 후엔 즉시 반환(no-op) — 매 호출 advisory-lock/commit 직렬화 제거.
+    쓰기경로(add_accounting_entry·post_payroll)에서만 호출하며, 읽기경로는 호출하지 않는다.
     """
-    # advisory-lock: 트랜잭션 종료(commit/rollback) 시 자동 해제(pg_advisory_xact_lock).
-    await db.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": _LOCK_ACCT})
-    await db.execute(text(_ACCT_DDL))
-    # 기존(구버전) 테이블에 ym 컬럼 멱등 추가.
-    await db.execute(text("ALTER TABLE sales_site_accounting ADD COLUMN IF NOT EXISTS ym varchar(7)"))
-    await db.execute(text("CREATE INDEX IF NOT EXISTS ix_site_acct_site ON sales_site_accounting(site_id)"))
-    # 자동전기 멱등 인덱스 — 동일 (site_id, ym, entry_type) 중복 차단. ym NULL(수기)은 미적용.
-    await db.execute(text(
-        "CREATE UNIQUE INDEX IF NOT EXISTS uq_site_acct_site_ym_type "
-        "ON sales_site_accounting (site_id, ym, entry_type) WHERE ym IS NOT NULL"))
-    await db.commit()
+    global _acct_ready
+    if _acct_ready:  # 이미 보장됨 → DB 왕복 없이 즉시 반환.
+        return
+    async with _acct_lock:  # 동시 첫 호출(코루틴 경합)을 1회로 합류.
+        if _acct_ready:
+            return
+        # advisory-lock: 트랜잭션 종료(commit/rollback) 시 자동 해제(pg_advisory_xact_lock).
+        await db.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": _LOCK_ACCT})
+        await db.execute(text(_ACCT_DDL))
+        # 기존(구버전) 테이블에 ym 컬럼 멱등 추가.
+        await db.execute(text("ALTER TABLE sales_site_accounting ADD COLUMN IF NOT EXISTS ym varchar(7)"))
+        await db.execute(text("CREATE INDEX IF NOT EXISTS ix_site_acct_site ON sales_site_accounting(site_id)"))
+        # 자동전기 멱등 인덱스 — 동일 (site_id, ym, entry_type) 중복 차단. ym NULL(수기)은 미적용.
+        await db.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_site_acct_site_ym_type "
+            "ON sales_site_accounting (site_id, ym, entry_type) WHERE ym IS NOT NULL"))
+        await db.commit()
+        _acct_ready = True  # 성공 시에만 게이트 닫음(실패 시 다음 쓰기 호출이 재시도).
 
 
 async def add_accounting_entry(db: AsyncSession, site_id, entry_type: str, amount: int,
@@ -117,11 +147,56 @@ async def add_accounting_entry(db: AsyncSession, site_id, entry_type: str, amoun
 
 
 async def _cost_by_type(db: AsyncSession, site_id) -> dict[str, int]:
-    await _ensure_acct(db)
-    rows = (await db.execute(text(
-        "SELECT entry_type, COALESCE(SUM(amount),0) FROM sales_site_accounting WHERE site_id=:s GROUP BY entry_type"),
-        {"s": str(site_id)})).all()
+    """현장 비용 항목별 합계 — 순수 읽기경로(DDL 보장 호출 안 함).
+
+    ★iter-4: 여기서 _ensure_acct 를 호출하면 롤업 N현장마다 advisory-lock+DDL+commit 이
+      직렬 반복된다. 테이블 미존재(42P01)는 아래 _scalar 와 동일 정책으로 graceful 0 폴백한다
+      (DBAPIError→미존재면 빈 dict). 테이블 생성 책임은 쓰기경로(_ensure_acct)·032 마이그레이션.
+    """
+    try:
+        rows = (await db.execute(text(
+            "SELECT entry_type, COALESCE(SUM(amount),0) FROM sales_site_accounting "
+            "WHERE site_id=:s GROUP BY entry_type"),
+            {"s": str(site_id)})).all()
+    except DBAPIError as e:
+        # 트랜잭션 오염 방지 롤백(미존재/전파 공통). 롤백 자체 실패는 무시.
+        with contextlib.suppress(Exception):
+            await db.rollback()
+        code = _missing_object_sqlstate(e)
+        if code is not None:
+            # 정상 0: 회계 원장 미생성 환경(아직 쓰기 1건도 없음). 빈 dict.
+            logger.debug("_cost_by_type 미존재객체(%s) → 빈 dict 폴백", code)
+            return {}
+        # 실오류는 은폐 금지 — 분류 로깅 후 호출자에게 전파.
+        logger.error("_cost_by_type DB오류(전파): err=%s", str(e)[:200])
+        raise
     return {t: int(a) for t, a in rows}
+
+
+async def _load_wages(db: AsyncSession, site_id) -> dict[str, tuple[str, int, str]]:
+    """현장 직원 단가표 읽기 — 순수 읽기경로(DDL 보장 호출 안 함).
+
+    ★iter-5(작업5): compute_payroll(GET /payroll)이 _ensure_wage 로 읽기경로에서 DDL을
+      돌리던 것을 제거하고, _cost_by_type 와 동일한 graceful 폴백으로 강등한다.
+      sales_staff_wage 미존재(42P01)/컬럼 미존재(42703)는 '단가 미설정'(정상 0) → 빈 dict.
+      → 단가 미설정 직원은 base_wage=0 으로 산정(무급, 정직). 테이블 생성 책임은
+      쓰기경로(set_staff_wage→_ensure_wage)·032 마이그레이션이 진다(읽기경로 DDL 완전강등).
+      그 외 실오류(권한·연결)는 은폐 금지 — 분류 로깅 후 전파.
+    """
+    try:
+        rows = (await db.execute(text(
+            "SELECT staff_id, wage_type, base_wage, tax_mode FROM sales_staff_wage WHERE site_id=:s"),
+            {"s": str(site_id)})).all()
+    except DBAPIError as e:
+        with contextlib.suppress(Exception):
+            await db.rollback()
+        code = _missing_object_sqlstate(e)
+        if code is not None:
+            logger.debug("_load_wages 미존재객체(%s) → 빈 dict 폴백(단가 미설정)", code)
+            return {}
+        logger.error("_load_wages DB오류(전파): err=%s", str(e)[:200])
+        raise
+    return {str(k): (wt, int(w), tm) for k, wt, w, tm in rows}
 
 
 def _missing_object_sqlstate(exc: BaseException) -> str | None:
@@ -160,6 +235,64 @@ async def _scalar(db: AsyncSession, sql: str, **p) -> int:
         raise
 
 
+def _reconcile(revenue_signed: int, scheduled_total: int, installment_paid: int,
+               installment_count: int, ratio_invalid_count: int) -> dict[str, Any]:
+    """독립 대사(실불일치 탐지) — 순수 로직(DB 무관, 단위테스트 대상).
+
+    ★iter-5 회귀수정 — 두 가지를 분리/완화한다.
+      (회귀1·거짓경보) 회차 약정금은 amount=int(round(total_price×ratio))로 '반올림'되어
+        저장된다. 회차 N개면 합계에 최대 약 N/2(보수적으로 N)원의 반올림 잔차가 생겨
+        약정총액(scheduled_total)이 계약총액(revenue_signed)과 몇 원 어긋날 수 있다.
+        엄격 '!=' 비교는 이 정상 잔차를 거짓 불일치(discrepancy·balanced=False)로 올린다.
+        → 허용오차 tol = max(installment_count, eps) 이내의 차이는 '반올림오차'로 흡수(통과).
+      (계약결함 분리) 약정 ratio 합이 1.0 이 아니어서 회차합이 계약총액과 '크게' 어긋나는
+        계약(tol 초과)은 진짜 데이터 결함이다. 이건 별도 규칙 schedule_ratio_invalid 로
+        분리 제시해 운영자가 '반올림오차(무시 가능)'와 '계약결함(점검 필요)'을 구분하게 한다.
+
+    인자:
+      revenue_signed     : SIGNED(회차 실생성) 계약의 계약총액 합(독립대사 비교 기준).
+      scheduled_total    : 같은 범위 회차 약정금 합(독립 제3 출처).
+      installment_paid   : 같은 범위 회차 실수납 합(matched 입금).
+      installment_count  : 같은 범위 회차 행 수(반올림 허용오차 산정용).
+      ratio_invalid_count: 계약별 회차합이 자기 계약총액과 tol 초과로 어긋난 '결함 계약' 수.
+
+    반환: balanced(True 통과 / False 적발 / None 약정표 부재), discrepancies[], tolerance.
+    """
+    eps = 1  # 회차 0개라도 1원 잔차는 흡수(정수 반올림 하한).
+    tol = max(int(installment_count), eps)
+    schedule_present = scheduled_total > 0
+    discrepancies: list[dict[str, Any]] = []
+    if not schedule_present:
+        # 독립 출처(분납 약정표) 부재 → 판정 보류(미탐지를 '정합'으로 위장 금지).
+        return {"balanced": None, "discrepancies": [], "tolerance": tol}
+    delta_sc = scheduled_total - revenue_signed
+    # ① 약정총액 vs 계약총액(SIGNED) — 반올림 잔차(±tol)는 흡수, 그 이상만 불일치로 본다.
+    if abs(delta_sc) > tol:
+        discrepancies.append({
+            "key": "schedule_vs_contract",
+            "detail": f"분납 약정총액({scheduled_total:,}) ≠ SIGNED 계약총액({revenue_signed:,}) "
+                      f"(차이 {delta_sc:+,}, 허용오차 ±{tol:,})",
+            "delta": delta_sc,
+        })
+    # ② 약정 ratio 합 결함(계약별 회차합이 자기 계약총액과 tol 초과로 어긋난 계약 존재).
+    #    '반올림오차'와 구분되는 진짜 계약결함 — 별도 규칙으로 분리 제시.
+    if ratio_invalid_count > 0:
+        discrepancies.append({
+            "key": "schedule_ratio_invalid",
+            "detail": f"분납 약정 비율 합≠100% 의심 계약 {ratio_invalid_count}건 "
+                      f"(회차합이 계약총액과 허용오차 초과로 불일치 — 계약결함)",
+            "count": ratio_invalid_count,
+        })
+    # ③ 회차 실수납이 약정총액 초과(중복/오대사 신호) — 반올림과 무관하므로 엄격 비교.
+    if installment_paid > scheduled_total:
+        discrepancies.append({
+            "key": "paid_exceeds_schedule",
+            "detail": f"회차 실수납({installment_paid:,}) > 약정총액({scheduled_total:,})",
+            "delta": installment_paid - scheduled_total,
+        })
+    return {"balanced": len(discrepancies) == 0, "discrepancies": discrepancies, "tolerance": tol}
+
+
 async def site_management_detail(db: AsyncSession, site_id) -> dict[str, Any]:
     """현장 1곳의 통합 관리 지표 — 담당자·근태·계약·매출·수수료·방문·광고·회계·손익."""
     s = str(site_id)
@@ -184,6 +317,45 @@ async def site_management_detail(db: AsyncSession, site_id) -> dict[str, Any]:
     # 입금만 인정. 미수금은 매출로 잡지 않는다(현금주의). 원장 미존재 시 _scalar 가 0 폴백.
     cash_collected = await _scalar(db,
         "SELECT COALESCE(SUM(amount),0) FROM sales_payments WHERE site_id=:s AND matched=true", s=s)
+    # ── 독립 약정총액(분납 회차합) — reconcile 실불일치 탐지용 '제3의 출처' ───────────
+    #   sales_contract_installments(계약 회차별 약정금)은 계약총액(total_price)과도, 실수납과도
+    #   별개로 기록되는 독립 원장이다.
+    #   ★iter-5 범위정렬(회귀3): 회차(installment)는 '서명(SIGNED)' 시점에만 생성된다
+    #     (contract.service.sign_contract). 그런데 revenue/scheduled_total 를 status='ACTIVE'
+    #     로 집계하면 미서명 ACTIVE(예약·RESERVED)까지 매출엔 잡히는데 회차는 없어
+    #     scheduled_total < revenue 거짓 불일치가 난다. 독립대사는 회차가 실재하는
+    #     SIGNED 범위로 매출·약정·수납을 '같은 범위'로 정렬해 비교한다.
+    #   원장 미존재(분납표 미생성) 시 0 폴백(정상) → 그 경우 독립대사는 'N/A' 로 표기(거짓안심 금지).
+    revenue_signed = await _scalar(db,
+        "SELECT COALESCE(SUM(total_price),0) FROM sales_contracts_ext "
+        "WHERE site_id=:s AND status='ACTIVE' AND stage='SIGNED'", s=s)
+    scheduled_total = await _scalar(db,
+        "SELECT COALESCE(SUM(i.amount),0) FROM sales_contract_installments i "
+        "JOIN sales_contracts_ext c ON c.id=i.contract_ext_id "
+        "WHERE c.site_id=:s AND c.status='ACTIVE' AND c.stage='SIGNED'", s=s)
+    # 회차 행 수 — 반올림 허용오차 tol=max(회차수, eps) 산정용(SIGNED 범위로 정렬).
+    installment_count = await _scalar(db,
+        "SELECT count(*) FROM sales_contract_installments i "
+        "JOIN sales_contracts_ext c ON c.id=i.contract_ext_id "
+        "WHERE c.site_id=:s AND c.status='ACTIVE' AND c.stage='SIGNED'", s=s)
+    # 회차별 실수납 합(installment_id 로 연결된 matched 입금). 약정 대비 수납 진척의 독립 출처.
+    installment_paid = await _scalar(db,
+        "SELECT COALESCE(SUM(p.amount),0) FROM sales_payments p "
+        "JOIN sales_contract_installments i ON i.id=p.installment_id "
+        "JOIN sales_contracts_ext c ON c.id=i.contract_ext_id "
+        "WHERE c.site_id=:s AND c.status='ACTIVE' AND c.stage='SIGNED' AND p.matched=true", s=s)
+    # 계약별 회차합이 '자기 계약총액'과 반올림 허용오차(회차수)를 초과해 어긋난 '결함 계약' 수.
+    #   amount=round(total_price×ratio) 저장이므로 회차합과 계약총액 차이는 보통 ≤ 회차수(반올림).
+    #   그 초과는 ratio 합≠1.0(계약결함)을 시사 → schedule_ratio_invalid 로 분리 제시.
+    ratio_invalid_count = await _scalar(db,
+        "SELECT count(*) FROM ("
+        "  SELECT c.id, abs(COALESCE(SUM(i.amount),0) - COALESCE(MAX(c.total_price),0)) AS diff, "
+        "         count(i.id) AS n "
+        "  FROM sales_contracts_ext c "
+        "  JOIN sales_contract_installments i ON i.contract_ext_id=c.id "
+        "  WHERE c.site_id=:s AND c.status='ACTIVE' AND c.stage='SIGNED' "
+        "  GROUP BY c.id"
+        ") t WHERE t.diff > greatest(t.n, 1)", s=s)
 
     cost = await _cost_by_type(db, site_id)
     cost_total = sum(cost.values())
@@ -202,8 +374,20 @@ async def site_management_detail(db: AsyncSession, site_id) -> dict[str, Any]:
     #   (인도시점/진행기준 인식으로 정밀화하면 선수금이 실재화 — 그때 동일 식으로 자동 반영됨.)
     receivable = max(revenue - cash_collected, 0)
     deferred_revenue = max(cash_collected - revenue, 0)
-    # 검산 정합: 인식매출 = 실수납 − 선수금 + 미수금 (출처 상이 차액의 항등식).
-    reconcile_ok = (revenue == cash_collected - deferred_revenue + receivable)
+    # ── 독립 대사(실불일치 탐지) — 항등식 거짓안심 제거 + 반올림오차/계약결함 분리 ─────────
+    #   [거짓안심 제거] receivable=max(rev−cash,0)·deferred=max(cash−rev,0) 정의상
+    #     revenue == cash − deferred + receivable 는 모든 부호조합에서 '대수 항등식'이라
+    #     항상 참 → 절대 불일치를 못 잡는다(자기참조 검산). 그래서 출처가 다른
+    #     '제3의 독립 원장'(분납 약정표)으로 실제 불일치를 탐지한다.
+    #   ★iter-5: 순수 로직 _reconcile 로 분리(단위테스트 대상). SIGNED 범위로 정렬한
+    #     매출/약정/수납을 받아 — 반올림 잔차(±회차수)는 흡수하고, 그를 초과하는 약정-계약
+    #     불일치(계약결함=schedule_ratio_invalid)·수납초과(paid_exceeds_schedule)만 적발한다.
+    #     분납표 미생성(scheduled_total==0)이면 balanced=None('N/A', 거짓안심 금지).
+    rec = _reconcile(revenue_signed, scheduled_total, installment_paid,
+                     installment_count, ratio_invalid_count)
+    reconcile_ok = rec["balanced"]
+    discrepancies = rec["discrepancies"]
+    schedule_present = scheduled_total > 0
     by_type_list = [{"type": t, "label": _ENTRY_TYPES.get(t, t), "amount": a} for t, a in sorted(cost.items())]
     return {
         "site_id": s,
@@ -237,22 +421,50 @@ async def site_management_detail(db: AsyncSession, site_id) -> dict[str, Any]:
             "profit": profit,
             # 미수금 = 인식매출 − 실수납(양수). 발생주의 매출 중 아직 못 받은 부분.
             "receivable": receivable,
+            # [K-IFRS 1115 경고] 계약총액 즉시 전액인식은 '이행의무 충족 시점' 인식 원칙과 불일치.
+            #   분양은 통상 공정 진행기준(over time)·인도시점(point in time)으로 인식해야 하며,
+            #   즉시인식은 매출을 선반영(과대계상)한다. 운영 의사결정 시 cash_flow(현금흐름)·
+            #   미수금(receivable)을 반드시 병독할 것.
+            "revenue_overstated_warning": True,
+            "recognition_basis": "CONTRACT_TOTAL_IMMEDIATE",  # 현재 모델(즉시인식). 정밀화 전 단계.
+            # 진행기준/인도시점 정밀 인식(공정률·인도 이벤트 연동)은 deploy-pending(스키마/이벤트 필요).
+            "ifrs1115_compliant": False,
             "note": ("회계 손익 = 계약 매출(발생주의) − 회계비용 − 수수료배분. "
-                     "계약총액 즉시인식이라 미수금(receivable)까지 매출 반영(과대계상 가능)."),
+                     "★K-IFRS 1115 미준수: 계약총액 즉시 전액인식이라 미수금(receivable)까지 매출에 "
+                     "선반영(과대계상). 1115 는 이행의무 충족 시점(분양=진행기준/인도시점) 인식을 요구. "
+                     "진행기준/인도시점 정밀화는 deploy-pending(공정률·인도 이벤트 원장 연동 필요)."),
         },
         # 선수금(부채): 실수납 − 인식매출(양수). 받았으나 아직 인식 안 한 돈(K-IFRS 1115 선수금).
         #   현재 계약총액 즉시인식 모델에선 통상 0(미수금 측이 양수). 단순 등치(=실수납) 아님.
         "deferred_revenue": deferred_revenue,
-        # 검산 정합: 인식매출 = 실수납 − 선수금 + 미수금. 출처 상이(계약/입금) 차액의 항등식 검증.
+        # ── 독립 대사(실불일치 탐지) — 자기참조 항등식이 아닌 '제3 원장' 대조 ──────────
+        #   balanced: True=독립 대사 통과 / False=실불일치 적발(discrepancies 참조) /
+        #             None=독립 출처(분납 약정표) 부재로 판정 보류('N/A', 거짓안심 금지).
         "reconciliation": {
             "revenue_recognized": revenue,
+            # ★iter-5: 독립대사 비교는 회차가 실재하는 SIGNED 범위(revenue_signed)와 정렬.
+            #   revenue_recognized(ACTIVE 전체)는 표시용, 대사 판정은 revenue_signed 기준.
+            "revenue_signed": revenue_signed,
             "cash_collected": cash_collected,
             "deferred_revenue": deferred_revenue,
             "receivable": receivable,
+            # 독립 제3 출처: 분납 약정표(계약총액·실수납과 별개 입력 원장).
+            "scheduled_total": scheduled_total,
+            "installment_paid": installment_paid,
+            "installment_count": installment_count,
+            # 반올림 허용오차(±회차수) 흡수 후에도 자기 계약총액과 어긋난 '계약결함' 계약 수.
+            "ratio_invalid_count": ratio_invalid_count,
+            "tolerance": rec["tolerance"],
+            "schedule_present": schedule_present,
             "balanced": reconcile_ok,
-            "note": ("검산: 인식매출 = 실수납 − 선수금 + 미수금. "
-                     "revenue_recognized(계약총액)와 cash_collected(실수납)는 출처가 달라, "
-                     "차액은 선수금/미수금으로 분해되어 정합한다."),
+            "discrepancies": discrepancies,
+            "note": ("독립 대사(자기참조 항등식 아님): 분납 약정표(scheduled_total)를 "
+                     "SIGNED 계약총액(revenue_signed)·실수납(installment_paid)과 대조해 실불일치를 탐지. "
+                     "회차 약정금은 round(계약총액×비율) 저장이라 ±회차수(tolerance) 반올림 잔차는 흡수하고, "
+                     "그를 초과하는 약정-계약 불일치는 계약결함(schedule_ratio_invalid)으로 분리 제시. "
+                     "balanced=True 통과·False 적발(discrepancies)·None 약정표 부재(판정보류). "
+                     "선수금/미수금 분해(deferred_revenue/receivable)는 두 출처 차액 표기이며 "
+                     "그 자체로는 정합을 보장하지 않는다(독립 대사로 별도 검증)."),
         },
         "note": ("손익은 두 관점으로 분리: ①현금흐름(cash_flow, 실수납 기준) "
                  "②회계/발생주의(accrual, 계약매출 기준). profit_estimate=accrual.profit(하위호환). "
@@ -293,19 +505,29 @@ _WAGE_DDL = (
 
 
 async def _ensure_wage(db: AsyncSession) -> None:
-    """sales_staff_wage 멱등 보장(부팅 안전망). advisory-lock 으로 동시부팅 race 제거.
+    """sales_staff_wage 멱등 보장(부팅 안전망) — 프로세스 1회만 실제 DDL 수행.
 
     정본은 Alembic 032_sales_admin_accounting. 마이그레이션 미적용 환경 대비
     CREATE/ALTER IF NOT EXISTS 만 수행한다(파괴적 변경 없음).
+    ★iter-4: 최초 1회 성공 후엔 즉시 반환(no-op).
+    ★iter-5(작업5): 쓰기경로(set_staff_wage)에서만 호출한다. compute_payroll(읽기경로)은
+      _load_wages 의 graceful 폴백으로 전환해 더 이상 이 함수를 부르지 않는다(읽기경로 DDL 강등).
     """
-    await db.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": _LOCK_WAGE})
-    await db.execute(text(_WAGE_DDL))
-    # 기존 테이블에 tax_mode 컬럼 멱등 추가.
-    await db.execute(text(
-        "ALTER TABLE sales_staff_wage ADD COLUMN IF NOT EXISTS tax_mode "
-        "varchar(12) NOT NULL DEFAULT 'FREELANCE'"))
-    await db.execute(text("CREATE INDEX IF NOT EXISTS ix_staff_wage_site ON sales_staff_wage(site_id)"))
-    await db.commit()
+    global _wage_ready
+    if _wage_ready:
+        return
+    async with _wage_lock:
+        if _wage_ready:
+            return
+        await db.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": _LOCK_WAGE})
+        await db.execute(text(_WAGE_DDL))
+        # 기존 테이블에 tax_mode 컬럼 멱등 추가.
+        await db.execute(text(
+            "ALTER TABLE sales_staff_wage ADD COLUMN IF NOT EXISTS tax_mode "
+            "varchar(12) NOT NULL DEFAULT 'FREELANCE'"))
+        await db.execute(text("CREATE INDEX IF NOT EXISTS ix_staff_wage_site ON sales_staff_wage(site_id)"))
+        await db.commit()
+        _wage_ready = True
 
 
 def _est_income_tax(gross: int) -> int:
@@ -384,8 +606,12 @@ async def set_staff_wage(db: AsyncSession, site_id, staff_id, wage_type: str, ba
 
 
 async def compute_payroll(db: AsyncSession, site_id, ym: str) -> dict[str, Any]:
-    """현장 직원별 급여 자동산정 — 근태(출근일수·근무분) × 단가. 회계 인건비 후보."""
-    await _ensure_wage(db)
+    """현장 직원별 급여 자동산정 — 근태(출근일수·근무분) × 단가. 회계 인건비 후보.
+
+    ★iter-5(작업5): 읽기경로에서 _ensure_wage(DDL) 호출을 제거한다. 단가표는 _load_wages
+      가 graceful 폴백(테이블 미존재=단가 미설정)으로 읽으므로, 조회용 GET /payroll 이
+      DDL/advisory-lock/commit 을 트리거하지 않는다(읽기경로 DDL 완전강등).
+    """
     start, end = _month_bounds(ym)
     s = str(site_id)
     rows = (await db.execute(text(
@@ -398,8 +624,8 @@ async def compute_payroll(db: AsyncSession, site_id, ym: str) -> dict[str, Any]:
         "WHERE s.site_id=:s AND s.deleted_at IS NULL AND s.status='ACTIVE' "
         "GROUP BY s.id, s.name, s.position ORDER BY s.name"),
         {"s": s, "start": start, "end": end})).all()
-    wages = {str(k): (wt, int(w), tm) for k, wt, w, tm in (await db.execute(text(
-        "SELECT staff_id, wage_type, base_wage, tax_mode FROM sales_staff_wage WHERE site_id=:s"), {"s": s})).all()}
+    # 단가표는 읽기 graceful 폴백(미존재=단가 미설정). 쓰기경로(set_staff_wage)가 테이블을 보장.
+    wages = await _load_wages(db, site_id)
     staff = []
     total_gross = total_ded = total_net = 0
     for sid, name, pos, days, minutes in rows:

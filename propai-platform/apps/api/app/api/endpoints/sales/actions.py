@@ -169,7 +169,16 @@ async def payroll_compute(ym: str, db: AsyncSession = Depends(get_db),
                           ctx: SalesCtx = Depends(require_role(
                               "TEAM_LEADER", "GM_DIRECTOR", "SUBAGENCY", "AGENCY", "DEVELOPER", "SUPERADMIN"))):
     """직원별 급여 자동산정(근태×단가). ym=YYYY-MM."""
-    from app.services.sales.admin.console import compute_payroll
+    from fastapi import HTTPException
+
+    from app.services.sales.admin.console import _validate_ym, compute_payroll
+    # ym 형식 검증(YYYY-MM·월01~12). 가드가 없으면 compute_payroll→_month_bounds→_validate_ym
+    # 에서 비정규 ym(2026-13·2026/06·2026-6·공백)이 ValueError→HTTP500 으로 누출된다.
+    # POST(/payroll/post·/accounting/entry)와 동일하게 진입 전 400 으로 차단(은폐 금지=명시 오류).
+    try:
+        _validate_ym(ym)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
     return await compute_payroll(db, ctx.site_id, ym)
 
 

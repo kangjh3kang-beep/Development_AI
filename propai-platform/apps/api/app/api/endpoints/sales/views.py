@@ -1,10 +1,12 @@
 """sales 읽기 뷰 — 프론트(현장목록/조직트리/Unit360/분양가표/시행사 투영) 지원 집계 엔드포인트."""
 
 import contextlib
+import logging
 import uuid
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
@@ -20,6 +22,32 @@ from apps.api.database.models.sales.commission_mh_harness import (
 from datetime import UTC
 
 views_router = APIRouter(tags=["sales-views"])
+
+_log = logging.getLogger(__name__)
+
+# 운영자에게 노출해도 안전한 오류 분류 코드(원문은 서버 로그만). SQLSTATE/스키마/테이블명 미노출.
+#   42501=insufficient_privilege(권한) → PERMISSION
+#   08xxx=connection_exception 계열 → DB_CONNECTION
+#   그 외 DBAPIError → DB_ERROR, 비-DB 예외 → INTERNAL
+def _classify_error(exc: BaseException) -> str:
+    """예외를 운영자 노출용 분류코드로 환원(원문 비노출). 분류 근거=SQLSTATE 접두.
+
+    원문(str(exc))에는 컬럼/테이블/스키마/SQLSTATE 가 포함될 수 있어 그대로 응답에 실으면
+    내부 구조가 누출된다. 여기서는 안전한 카테고리만 반환하고, 원문은 호출부에서 로그로만 남긴다.
+    """
+    if isinstance(exc, DBAPIError):
+        orig = getattr(exc, "orig", None) or exc
+        raw = getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None) or ""
+        # asyncpg는 보통 sqlstate 를 문자열로 주지만, 일부 드라이버/경로는 int 로 줄 수 있다.
+        # int 42501 이 그대로 비교되면 PERMISSION 을 놓쳐 generic DB_ERROR 로 오분류된다 →
+        # 문자열로 통일해 int/str 양쪽 모두 정확히 분류한다(은폐 금지=정밀 분류).
+        code = str(raw)
+        if code == "42501":
+            return "PERMISSION"
+        if code.startswith("08"):
+            return "DB_CONNECTION"
+        return "DB_ERROR"
+    return "INTERNAL"
 
 
 @views_router.get("/integrity/check")
@@ -251,10 +279,8 @@ async def projection_accounting_rollup(db: AsyncSession = Depends(get_db), user=
     각 현장 ERP가 단일 원장(sales_site_accounting)에 기록한 비용 + 계약 매출·수수료배분을
     현장별로 집계(site_management_detail)하고, 시행사 레벨로 롤업한다. '같이(통합)·따로(현장별)'.
     """
-    import logging
-
     from app.services.sales.admin.console import site_management_detail
-    log = logging.getLogger(__name__)
+    log = _log
     # site_management_detail 내부 _scalar 가 오류 시 rollback 하면 ORM 객체가 만료돼
     # 이후 s.id/s.site_name 접근이 lazy load(MissingGreenlet) 된다. 루프 전에 평문 추출.
     rows = (await db.execute(select(
@@ -275,12 +301,22 @@ async def projection_accounting_rollup(db: AsyncSession = Depends(get_db), user=
             # _scalar 가 전파한 실오류로 트랜잭션이 오염됐을 수 있어 롤백 후 다음 현장 계속.
             with contextlib.suppress(Exception):
                 await db.rollback()
-            msg = str(e)[:200]
-            log.error("accounting-rollup 현장(%s) 집계 실패(격리): %s", sid, msg)
-            errors.append({"site_id": str(sid), "site_name": sname, "error": msg})
+            # [오류원문 비노출] str(e) 원문에는 SQLSTATE/테이블/컬럼/스키마가 섞여 내부구조를
+            #   누출한다 → 응답엔 안전한 분류코드(error_code)+상관ID(correlation_id)만 싣고,
+            #   원문은 서버 로그에만 남긴다(운영자가 로그에서 correlation_id 로 역추적).
+            error_code = _classify_error(e)
+            corr_id = uuid.uuid4().hex[:12]
+            log.error("accounting-rollup 현장(%s) 집계 실패(격리) code=%s corr=%s: %s",
+                      sid, error_code, corr_id, str(e)[:300])
+            errors.append({"site_id": str(sid), "site_name": sname,
+                           "error_code": error_code, "correlation_id": corr_id})
             sites.append({
-                "site_id": str(sid), "site_name": sname, "status": sstatus,
-                "error": msg, "revenue": 0, "cost_total": 0, "commission": 0, "profit_estimate": 0,
+                "site_id": str(sid), "site_name": sname,
+                # [강신호] 실패 현장은 status='ERROR' 로 덮어써 '매출0원'(정상)과 시각적으로 구분.
+                #   운영자가 집계실패를 '실적 0' 으로 오인하지 않도록 한다(아래 0 은 미집계 표기).
+                "status": "ERROR", "site_status": sstatus,
+                "error_code": error_code, "correlation_id": corr_id,
+                "revenue": 0, "cost_total": 0, "commission": 0, "profit_estimate": 0,
             })
             continue
         cf = d.get("cash_flow") or {}
@@ -303,12 +339,22 @@ async def projection_accounting_rollup(db: AsyncSession = Depends(get_db), user=
             "cash_flow": cf, "accrual": acc, "deferred_revenue": d.get("deferred_revenue", 0),
             "by_type": d["accounting"]["by_type"],
         })
+    # ── 통합총계 완전성 플래그(머신리더블) — dead output 해소 ──────────────────────
+    #   실패 현장은 continue 로 합산에서 제외돼 consolidated 가 '과소계상'된다. 이 사실이
+    #   지금까지 note(산문)에만 있어 클라이언트가 코드로 판별할 수 없었다(dead output).
+    #   complete=실패 0건(전부 합산), failed_count=실패 현장 수, partial=일부만 합산(과소계상).
+    #   프론트는 이 플래그로 '통합총계가 일부 누락' 배너를 결정적으로 띄운다.
+    failed_count = len(errors)
+    complete = failed_count == 0
     return {
-        "consolidated": {**con, "by_type": [{"label": k, "amount": v} for k, v in sorted(by_type.items())]},
+        "consolidated": {**con, "by_type": [{"label": k, "amount": v} for k, v in sorted(by_type.items())],
+                         "complete": complete, "failed_count": failed_count, "partial": not complete},
         "sites": sites,
         "errors": errors,
         "note": ("통합회계 = 보유 현장 연결결산. 손익 2-뷰: profit_estimate=발생주의(계약매출 기준, "
                  "미수금 포함 과대계상 가능)·cash_profit=현금흐름(실수납 기준). 선수금(deferred_revenue)·"
                  "미수금(receivable) 별도 표기. 현장 ERP 원장 단일출처 합산. "
-                 "일부 현장 집계 실패 시 errors 에 표기하고 나머지는 합산(부분내결함)."),
+                 "일부 현장 집계 실패 시 errors 에 분류코드(error_code)+상관ID(correlation_id)로 표기하고 "
+                 "나머지는 합산(부분내결함). consolidated.complete/failed_count/partial 로 과소계상 여부를 "
+                 "머신리더블 신호로 제공. 실패 현장 status='ERROR'(매출0원 오인 방지·원문은 서버로그만)."),
     }
