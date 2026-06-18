@@ -23,13 +23,16 @@ _DDL = (
     "  snapshot_id text,"
     "  status text,"
     "  result jsonb,"                      # async 영속본(엔진 미저장 대비)
+    "  deterministic boolean NOT NULL DEFAULT true,"  # 비결정(VLLM/라이브) run은 멱등 dedup 제외
     "  created_at timestamptz DEFAULT now()"
     ")"
 )
-# 멱등키 — coalesce(snapshot_id,'')로 NULL 중복 회피. ON CONFLICT 타깃과 표현식 동일해야 함.
+# ★부분 유니크 — deterministic run만 (tenant, content_input_hash, snapshot) 멱등 dedup. 비결정 run은
+# PK(run_id)로만 유일(매 호출 별 행 — VLLM/라이브 재분석 차단 금지, §3·§9 R7). coalesce로 NULL 중복 회피.
 _UX = (
-    "CREATE UNIQUE INDEX IF NOT EXISTS ux_run_binding_idem "
-    "ON engine_run_binding(tenant_id, content_input_hash, coalesce(snapshot_id, ''))"
+    "CREATE UNIQUE INDEX IF NOT EXISTS ux_run_binding_idem_det "
+    "ON engine_run_binding(tenant_id, content_input_hash, coalesce(snapshot_id, '')) "
+    "WHERE deterministic"
 )
 _IDX = (
     "CREATE INDEX IF NOT EXISTS idx_run_binding_tenant_run "
@@ -41,6 +44,10 @@ async def _ensure(db) -> None:
     from sqlalchemy import text
 
     await db.execute(text(_DDL))
+    # 기존 테이블 진화(런타임 _ensure 멱등) — 컬럼 보강 + 구 비-partial 인덱스 제거 후 partial 재생성.
+    await db.execute(text(
+        "ALTER TABLE engine_run_binding ADD COLUMN IF NOT EXISTS deterministic boolean NOT NULL DEFAULT true"))
+    await db.execute(text("DROP INDEX IF EXISTS ux_run_binding_idem"))
     await db.execute(text(_UX))
     await db.execute(text(_IDX))
 
@@ -55,7 +62,7 @@ async def lookup(*, tenant_id: str, content_input_hash: str, snapshot_id: str | 
         await _ensure(db)
         row = (await db.execute(
             text(
-                "SELECT run_id, source, status, result FROM engine_run_binding "
+                "SELECT run_id, source, status, result, input_hash FROM engine_run_binding "
                 "WHERE tenant_id = :t AND content_input_hash = :c "
                 "AND coalesce(snapshot_id, '') = coalesce(:s, '')"
             ),
@@ -64,7 +71,7 @@ async def lookup(*, tenant_id: str, content_input_hash: str, snapshot_id: str | 
         await db.commit()
     if row is None:
         return None
-    return {"run_id": row[0], "source": row[1], "status": row[2], "result": row[3]}
+    return {"run_id": row[0], "source": row[1], "status": row[2], "result": row[3], "input_hash": row[4]}
 
 
 async def lookup_by_run(*, tenant_id: str, run_id: str) -> dict[str, Any] | None:
@@ -77,7 +84,7 @@ async def lookup_by_run(*, tenant_id: str, run_id: str) -> dict[str, Any] | None
         await _ensure(db)
         row = (await db.execute(
             text(
-                "SELECT run_id, source, status, result FROM engine_run_binding "
+                "SELECT run_id, source, status, result, input_hash FROM engine_run_binding "
                 "WHERE tenant_id = :t AND run_id = :r"
             ),
             {"t": tenant_id, "r": run_id},
@@ -85,7 +92,7 @@ async def lookup_by_run(*, tenant_id: str, run_id: str) -> dict[str, Any] | None
         await db.commit()
     if row is None:
         return None
-    return {"run_id": row[0], "source": row[1], "status": row[2], "result": row[3]}
+    return {"run_id": row[0], "source": row[1], "status": row[2], "result": row[3], "input_hash": row[4]}
 
 
 async def insert(
@@ -101,8 +108,12 @@ async def insert(
     status: str | None = None,
     engine_task_id: str | None = None,
     result: dict[str, Any] | None = None,
+    deterministic: bool = True,
 ) -> bool:
-    """멱등 결속 삽입. True=신규 삽입, False=기존 존재(ON CONFLICT DO NOTHING — 동시성·재시도 안전)."""
+    """멱등 결속 삽입. True=신규 삽입, False=기존 존재(deterministic run만 ON CONFLICT DO NOTHING).
+
+    deterministic=False(VLLM/라이브)는 부분 유니크 인덱스 대상 외 → 매 호출 신규 행(PK run_id 유일).
+    """
     from sqlalchemy import text
 
     from app.core.database import async_session_factory
@@ -113,16 +124,18 @@ async def insert(
             text(
                 "INSERT INTO engine_run_binding"
                 "(run_id, engine_task_id, source, tenant_id, project_id, created_by,"
-                " input_hash, content_input_hash, snapshot_id, status, result) "
+                " input_hash, content_input_hash, snapshot_id, status, result, deterministic) "
                 "VALUES (:run_id, :etid, :src, :t, :pid, :cb,"
-                " :ih, :cih, :sid, :st, cast(:res as jsonb)) "
-                "ON CONFLICT (tenant_id, content_input_hash, coalesce(snapshot_id, '')) DO NOTHING"
+                " :ih, :cih, :sid, :st, cast(:res as jsonb), :det) "
+                "ON CONFLICT (tenant_id, content_input_hash, coalesce(snapshot_id, '')) "
+                "WHERE deterministic DO NOTHING"
             ),
             {
                 "run_id": run_id, "etid": engine_task_id, "src": source, "t": tenant_id,
                 "pid": project_id, "cb": created_by, "ih": input_hash,
                 "cih": content_input_hash, "sid": snapshot_id, "st": status,
                 "res": json.dumps(result) if result is not None else None,
+                "det": deterministic,
             },
         )
         await db.commit()

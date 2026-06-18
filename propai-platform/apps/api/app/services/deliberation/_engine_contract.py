@@ -9,10 +9,20 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
+import re
 from datetime import date
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
+
+# 엔진 enum 실측(vendoring). drift 시 prevalidate 테스트가 차단.
+_CALC_TARGETS = frozenset({"building_area", "gross_floor_area", "far_floor_area",
+                           "plot_area", "building_height", "floor_count"})
+_SEMANTIC_TYPES = frozenset({"PILOTIS", "BALCONY", "EAVE", "BASEMENT", "PARKING",
+                             "CORE_STAIR", "EXT_WALL", "PLOT_BOUNDARY", "BUILDING_LINE", "UNKNOWN"})
+_COMPARATORS = frozenset({"<=", ">=", "<", ">", "=="})
+_PNU_RE = re.compile(r"^([0-9]{19})?$")
 
 # 엔진 버전 핀(이 골든이 깨지면 엔진 hashing 변경 → 동기화 필요). 골든=엔진 input_hash({"input": <대표입력>}).
 ENGINE_HASHING_PINNED = "core.hashing@v1"
@@ -83,3 +93,82 @@ class MirrorAnalysisInput(BaseModel):
 def build_input_dump(payload: dict[str, Any]) -> dict[str, Any]:
     """플랫폼 입력 dict → 엔진 기본값 채운 정규 dump(엔진 model_dump(mode="json")와 동일)."""
     return MirrorAnalysisInput(**payload).model_dump(mode="json")
+
+
+def is_deterministic_path(dump: dict[str, Any]) -> bool:
+    """순수(결정론) 경로 여부 — 멱등 재사용 적용 가능 입력만 True(§3·§9 R7).
+
+    비결정 발화 필드(VLLM 도면추출·라이브 네트워크) 중 하나라도 있으면 False → 매 호출 엔진 위임(캐싱 금지).
+    순수=pnu(19자리)·application_date·axis_date·snapshot_id·calc_targets·rules·sim_inputs·citations·qual_facts.
+    """
+    if dump.get("drawings") or dump.get("ifc") or dump.get("elements"):
+        return False  # VLLM/이중경로 추출(비결정 가능)
+    if dump.get("cross_facts") or dump.get("collect_land_card") or dump.get("collect_surrounding"):
+        return False  # 라이브 다중출처/수집
+    # address는 pnu가 19자리가 아닐 때만 라이브 지오코딩 발화(엔진 pipeline:205).
+    if dump.get("address") and len(str(dump.get("pnu") or "")) != 19:
+        return False
+    return True
+
+
+def _finite(v: Any) -> bool:
+    return not isinstance(v, bool) and isinstance(v, (int, float)) and math.isfinite(v)
+
+
+def prevalidate(dump: dict[str, Any]) -> str | None:
+    """엔진 KeyError/ValidationError/ValueError→500을 BFF가 422로 선차단(§6 전체 체크리스트, §5 breaker 오카운트 방지).
+
+    위반 시 'invalid_input:<path>' 문자열, 정상이면 None. 엔진을 import하지 않고 vendored enum/규칙으로 검증.
+    """
+    if not _PNU_RE.match(str(dump.get("pnu") or "")):
+        return "invalid_input:pnu_invalid"
+
+    for i, r in enumerate(dump.get("rules") or []):
+        if not isinstance(r, dict) or "rule" not in r:
+            return f"invalid_input:rules[{i}].rule_missing"
+        rule = r["rule"]
+        if not isinstance(rule, dict):
+            return f"invalid_input:rules[{i}].rule_type"
+        comp = rule.get("comparator")
+        if comp is not None and comp not in _COMPARATORS:
+            return f"invalid_input:rules[{i}].comparator"
+        for k in ("measured", "limit"):
+            if r.get(k) is not None and not _finite(r[k]):
+                return f"invalid_input:rules[{i}].{k}_nonfinite"
+
+    for i, t in enumerate(dump.get("calc_targets") or []):
+        if not isinstance(t, dict) or "target" not in t:
+            return f"invalid_input:calc_targets[{i}].target_missing"
+        if t["target"] not in _CALC_TARGETS:
+            return f"invalid_input:calc_targets[{i}].target_enum"
+        for j, e in enumerate(t.get("elements") or []):
+            err = _validate_calc_element(e, f"calc_targets[{i}].elements[{j}]")
+            if err:
+                return err
+
+    for i, e in enumerate(dump.get("elements") or []):
+        if not isinstance(e, dict) or not e.get("element_id"):
+            return f"invalid_input:elements[{i}].element_id_missing"  # 엔진 element_classifier KeyError
+
+    for i, cf in enumerate(dump.get("cross_facts") or []):
+        if not isinstance(cf, dict) or "fact_key" not in cf:
+            return f"invalid_input:cross_facts[{i}].fact_key_missing"
+        for k, s in enumerate(cf.get("sources") or []):
+            if not isinstance(s, dict) or "source" not in s:
+                return f"invalid_input:cross_facts[{i}].sources[{k}].source_missing"
+    return None
+
+
+def _validate_calc_element(e: Any, path: str) -> str | None:
+    if not isinstance(e, dict):
+        return f"invalid_input:{path}.type"
+    st = e.get("semantic_type")
+    if st is not None and st not in _SEMANTIC_TYPES:
+        return f"invalid_input:{path}.semantic_type"
+    c = e.get("confidence")
+    if c is not None and (not _finite(c) or not 0.0 <= float(c) <= 1.0):
+        return f"invalid_input:{path}.confidence"
+    for k in ("area", "length", "depth"):
+        if e.get(k) is not None and not _finite(e[k]):
+            return f"invalid_input:{path}.{k}_nonfinite"
+    return None

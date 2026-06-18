@@ -8,6 +8,8 @@ from app.services.deliberation._engine_contract import (
     build_input_dump,
     canonical,
     content_input_hash,
+    is_deterministic_path,
+    prevalidate,
 )
 
 # 엔진 대조 입력(한글·리스트 순서·중첩) — 직렬화 규칙 전수 검증.
@@ -68,3 +70,45 @@ def test_mirror_ignores_extra_keys():
     base = build_input_dump({"pnu": "P"})
     with_extra = build_input_dump({"pnu": "P", "platform_only_field": "x"})
     assert analysis_input_hash(base) == analysis_input_hash(with_extra)
+
+
+def _d(**kw):
+    return build_input_dump(kw)
+
+
+def test_prevalidate_accepts_clean_pure_input():
+    assert prevalidate(_d(pnu="1111010100100000002",
+                          calc_targets=[{"target": "building_area", "payload": {"outer_area": 5.0}}],
+                          rules=[{"rule": {"comparator": "<="}, "measured": 1.0, "limit": 2.0}])) is None
+
+
+def test_prevalidate_rejects_bad_values():
+    # §6 체크리스트 — 키 존재가 아니라 값/enum까지(엔진 500 회피).
+    assert prevalidate(_d(pnu="123"))[:].startswith("invalid_input:pnu_invalid")  # 19자리 아님
+    assert "target_enum" in prevalidate(_d(calc_targets=[{"target": "BOGUS"}]))
+    assert "comparator" in prevalidate(_d(rules=[{"rule": {"comparator": "≈"}}]))
+    assert "rule_missing" in prevalidate(_d(rules=[{"measured": 1}]))
+    assert "fact_key_missing" in prevalidate(_d(cross_facts=[{"x": 1}]))
+    assert "element_id_missing" in prevalidate(_d(elements=[{"features": {}}]))
+    assert "semantic_type" in prevalidate(_d(
+        calc_targets=[{"target": "building_area", "elements": [{"semantic_type": "NOPE"}]}]))
+    assert "confidence" in prevalidate(_d(
+        calc_targets=[{"target": "building_area", "elements": [{"confidence": 1.5}]}]))
+    assert "nonfinite" in prevalidate({"pnu": "", "rules": [{"rule": {}, "measured": float("inf")}]})
+
+
+def test_is_deterministic_path():
+    # 순수(결정론) 입력만 멱등 캐싱 대상.
+    assert is_deterministic_path(_d(pnu="1111010100100000002",
+                                    calc_targets=[{"target": "building_area"}],
+                                    rules=[{"rule": {}}])) is True
+    # 비결정 발화: VLLM 도면·라이브 수집·다출처.
+    assert is_deterministic_path(_d(drawings=[{"sheet_id": "s1"}])) is False
+    assert is_deterministic_path(_d(ifc="ISO-10303")) is False
+    assert is_deterministic_path(_d(elements=[{"element_id": "e1"}])) is False
+    assert is_deterministic_path(_d(cross_facts=[{"fact_key": "k"}])) is False
+    assert is_deterministic_path(_d(collect_land_card=True)) is False
+    assert is_deterministic_path(_d(collect_surrounding=True)) is False
+    # address는 pnu 19자리면 지오코딩 미발화 → 결정론; 비19자리면 라이브 → 비결정.
+    assert is_deterministic_path(_d(pnu="1111010100100000002", address="서울 어딘가")) is True
+    assert is_deterministic_path(_d(address="서울 어딘가")) is False

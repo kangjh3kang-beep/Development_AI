@@ -19,6 +19,8 @@ from app.services.deliberation._engine_contract import (
     analysis_input_hash,
     build_input_dump,
     content_input_hash,
+    is_deterministic_path,
+    prevalidate,
 )
 from app.services.ledger.audit_ledger import append_audit
 from apps.api.config import get_settings
@@ -107,30 +109,20 @@ def _is_uuid(value: Any) -> bool:
         return False
 
 
-def _prevalidate(dump: dict[str, Any]) -> None:
-    """엔진 KeyError→500 회피 — 필수 키 결손을 BFF에서 422로 선차단(무음0)."""
-    for i, r in enumerate(dump.get("rules") or []):
-        if not isinstance(r, dict) or "rule" not in r:
-            raise HTTPException(status_code=422, detail=f"invalid_input:rules[{i}].rule_missing")
-    for i, t in enumerate(dump.get("calc_targets") or []):
-        if not isinstance(t, dict) or "target" not in t:
-            raise HTTPException(status_code=422, detail=f"invalid_input:calc_targets[{i}].target_missing")
-    for i, cf in enumerate(dump.get("cross_facts") or []):
-        if not isinstance(cf, dict) or "fact_key" not in cf:
-            raise HTTPException(status_code=422, detail=f"invalid_input:cross_facts[{i}].fact_key_missing")
-
-
-def _degrade(reason: str) -> dict[str, Any]:
-    """degrade 봉투(HTTP 200·무음0). 합성 결과 미생성(result=null)."""
+def _degrade(reason: str, *, audit_degraded: bool = False,
+             audit_skipped: list[str] | None = None, **extra: Any) -> dict[str, Any]:
+    """degrade 봉투(HTTP 200·무음0). 합성 결과 미생성(result=null). 내부 URL 비노출(engine_configured bool)."""
     return {"degraded": True, "final_status": "NEEDS_REVIEW", "reason": reason,
-            "engine_url": (get_settings().deliberation_engine_url or None),
-            "result": None, "audit_degraded": False}
+            "engine_configured": bool(get_settings().deliberation_engine_url),
+            "result": None, "audit_degraded": audit_degraded,
+            "audit_skipped": audit_skipped or [], **extra}
 
 
-async def _record_audit(user: Any, tenant: str, *, action: str, run_id: str | None,
-                        input_hash: str, decision: str, http_status: int) -> bool:
-    """모든 요청 감사(append_audit). ok/unchanged 통과, quota_exceeded→audit_degraded(차단X),
-    그 외 실패→502 fail-closed(감사 없는 판정 제공 금지). 반환=audit_degraded."""
+async def _record_audit(user: Any, tenant: str, *, action: str, run_id: str | None, input_hash: str,
+                        decision: str, http_status: int, fail_closed: bool = True) -> tuple[bool, list[str]]:
+    """감사(append_audit). ok/unchanged 통과; quota_exceeded→(audit_degraded, skipped) 표면화(차단X);
+    그 외 실패→write는 502 fail-closed(감사 없는 판정 제공 금지), read는 표면화만(fail_closed=False).
+    반환=(audit_degraded, audit_skipped)."""
     try:
         r = await append_audit(
             action=action, user_id=str(getattr(user, "id", "")), resource_type="deliberation",
@@ -138,122 +130,164 @@ async def _record_audit(user: Any, tenant: str, *, action: str, run_id: str | No
             metadata={"input_hash": input_hash, "decision": decision, "http_status": http_status},
         )
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=502, detail="audit_write_failed") from exc
-    if not isinstance(r, dict):
-        return False
-    if r.get("ok") is True or r.get("unchanged"):
-        return False
-    if r.get("quota_exceeded"):
-        return True  # 감사 한도 — 분석은 제공하되 표면화
-    raise HTTPException(status_code=502, detail="audit_write_failed")
+        logger.warning("deliberation_audit_failed", action=action, err=str(exc)[:200])
+        if fail_closed:
+            raise HTTPException(status_code=502, detail="audit_write_failed") from exc
+        return True, ["audit:write_failed"]
+    if isinstance(r, dict) and (r.get("ok") is True or r.get("unchanged")):
+        return False, []
+    if isinstance(r, dict) and r.get("quota_exceeded"):
+        logger.warning("deliberation_audit_quota_exceeded", tenant=tenant, action=action)
+        return True, ["audit:quota_exceeded"]
+    logger.warning("deliberation_audit_not_ok", action=action, ret=str(r)[:120])
+    if fail_closed:
+        raise HTTPException(status_code=502, detail="audit_write_failed")
+    return True, ["audit:not_ok"]
 
 
-async def _engine_post_analyze(dump: dict[str, Any]) -> dict[str, Any] | None:
-    """엔진 POST /api/v1/analyze. 서버측 장애(5xx/타임아웃/circuit OPEN)→None(degrade). 4xx→None(breaker 제외)."""
-    s = get_settings()
-    base = (s.deliberation_engine_url or "").rstrip("/")
-    if not base or not _breaker.can_execute():
-        return None
-    try:
-        import httpx
-
-        headers = {}
-        if s.deliberation_engine_api_token:
-            headers["Authorization"] = f"Bearer {s.deliberation_engine_api_token}"
-        timeout = httpx.Timeout(
-            connect=s.deliberation_engine_connect_timeout_s, read=s.deliberation_engine_read_timeout_s,
-            write=s.deliberation_engine_read_timeout_s, pool=s.deliberation_engine_connect_timeout_s)
-        async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as c:
-            r = await c.post(f"{base}/api/v1/analyze", json=dump, headers=headers)
-        if r.status_code >= 500:
-            _breaker.record_failure()
-            return None
-        _breaker.record_success()
-        if r.status_code != 200:
-            return None  # 4xx(매핑오류 등) — breaker 제외, degrade로 표면화
-        data = r.json()
-        return data if isinstance(data, dict) else None
-    except Exception:  # noqa: BLE001
-        _breaker.record_failure()
-        return None
+def _engine_headers(s: Any) -> dict[str, str]:
+    return {"Authorization": f"Bearer {s.deliberation_engine_api_token}"} if s.deliberation_engine_api_token else {}
 
 
-async def _engine_get_analysis(run_id: str) -> dict[str, Any] | None:
-    """엔진 GET /api/v1/analyze/{run_id}(저장 결과 조회). 실패 시 None."""
+def _engine_timeout(s: Any):
+    import httpx
+    return httpx.Timeout(connect=s.deliberation_engine_connect_timeout_s, read=s.deliberation_engine_read_timeout_s,
+                         write=s.deliberation_engine_read_timeout_s, pool=s.deliberation_engine_connect_timeout_s)
+
+
+async def _engine_post_analyze(dump: dict[str, Any]) -> tuple[dict[str, Any] | None, str]:
+    """엔진 POST /api/v1/analyze → (data, reason). reason: ok·circuit_open·engine_unreachable(5xx/타임아웃/연결)
+    ·engine_rejected(4xx=계약/매핑, breaker 제외). 4xx와 인프라 미연결을 구분(무음0·정직)."""
     s = get_settings()
     base = (s.deliberation_engine_url or "").rstrip("/")
     if not base:
-        return None
+        return None, "engine_unreachable"
+    if not _breaker.can_execute():
+        return None, "circuit_open"
     try:
         import httpx
 
-        headers = {}
-        if s.deliberation_engine_api_token:
-            headers["Authorization"] = f"Bearer {s.deliberation_engine_api_token}"
-        timeout = httpx.Timeout(connect=s.deliberation_engine_connect_timeout_s,
-                                read=s.deliberation_engine_read_timeout_s,
-                                write=s.deliberation_engine_read_timeout_s,
-                                pool=s.deliberation_engine_connect_timeout_s)
-        async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as c:
-            r = await c.get(f"{base}/api/v1/analyze/{run_id}", headers=headers)
-            r.raise_for_status()
-            data = r.json()
-            return data if isinstance(data, dict) else None
-    except Exception:  # noqa: BLE001
-        return None
+        async with httpx.AsyncClient(timeout=_engine_timeout(s), follow_redirects=False) as c:
+            r = await c.post(f"{base}/api/v1/analyze", json=dump, headers=_engine_headers(s))
+        if r.status_code >= 500:
+            _breaker.record_failure()
+            logger.warning("deliberation_engine_5xx", status=r.status_code)
+            return None, "engine_unreachable"
+        _breaker.record_success()
+        if r.status_code != 200:
+            logger.warning("deliberation_engine_4xx", status=r.status_code, body=str(r.text)[:200])
+            return None, "engine_rejected"  # 계약/매핑 — breaker 제외
+        data = r.json()
+        return (data, "ok") if isinstance(data, dict) else (None, "invalid_response")
+    except Exception as exc:  # noqa: BLE001
+        _breaker.record_failure()
+        logger.warning("deliberation_engine_post_failed", err=str(exc)[:200])
+        return None, "engine_unreachable"
+
+
+async def _engine_get_analysis(run_id: str) -> tuple[dict[str, Any] | None, str]:
+    """엔진 GET /api/v1/analyze/{run_id} → (data, reason). reason: ok·not_found(정합성 경고)·engine_unreachable."""
+    s = get_settings()
+    base = (s.deliberation_engine_url or "").rstrip("/")
+    if not base:
+        return None, "engine_unreachable"
+    try:
+        import httpx
+
+        async with httpx.AsyncClient(timeout=_engine_timeout(s), follow_redirects=False) as c:
+            r = await c.get(f"{base}/api/v1/analyze/{run_id}", headers=_engine_headers(s))
+        if r.status_code == 404:
+            logger.warning("deliberation_engine_run_missing", run_id=run_id)
+            return None, "not_found"
+        if r.status_code != 200:
+            return None, "engine_unreachable"
+        data = r.json()
+        return (data, "ok") if isinstance(data, dict) else (None, "engine_unreachable")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("deliberation_engine_get_failed", run_id=run_id, err=str(exc)[:200])
+        return None, "engine_unreachable"
+
+
+def _integrity_ok(result: dict[str, Any] | None, expected_ih: str | None) -> bool:
+    """엔진 결과 무결성 — dict이고, expected_ih가 있으면 input_hash parity 일치(엔진 run_id 혼선/덮어쓰기 탐지)."""
+    if not isinstance(result, dict):
+        return False
+    if expected_ih and result.get("input_hash") != expected_ih:
+        return False
+    return True
 
 
 @router.post("/analyze")
 async def deliberation_analyze(payload: dict = Body(...), user=Depends(get_current_user)) -> dict[str, Any]:
-    """심의분석 — 인증·미러 정규화·멱등 결속·엔진 프록시·무결성/테넌트 가드·감사. 엔진 무수정(HTTP)."""
+    """심의분석 — 인증·미러 정규화·완전 선검증·(결정론)멱등·엔진 프록시·무결성/테넌트 가드·감사. 엔진 무수정(HTTP)."""
     tenant = _tenant(user)
     try:
         dump = build_input_dump(payload)
-    except HTTPException:
-        raise
     except Exception as exc:  # noqa: BLE001 — pydantic ValidationError 등
         raise HTTPException(status_code=422, detail="invalid_input") from exc
-    _prevalidate(dump)
+    err = prevalidate(dump)
+    if err:
+        raise HTTPException(status_code=422, detail=err)
 
     cih = content_input_hash(dump)
     ih = analysis_input_hash(dump)
     snapshot = dump.get("snapshot_id")
+    deterministic = is_deterministic_path(dump)  # 비결정(VLLM/라이브)은 멱등 캐싱 금지(§3·§9 R7)
 
-    # 멱등 — 동일 입력 재호출 차단(엔진 재호출 없이 기존 결과 재사용).
-    existing = await binding_service.lookup(tenant_id=tenant, content_input_hash=cih, snapshot_id=snapshot)
-    if existing is not None:
-        run_id = existing["run_id"]
-        result = existing.get("result") or await _engine_get_analysis(run_id)
-        audit_degraded = await _record_audit(user, tenant, action="analyze_reuse", run_id=run_id,
-                                              input_hash=ih, decision="reuse", http_status=200)
-        return {"degraded": False, "reused": True, "run_id": run_id,
-                "result": result, "audit_degraded": audit_degraded}
+    # 멱등 — 결정론 경로만. 기존 결속 시 엔진 재호출 없이 재사용(라이브 조회분은 parity 재검증).
+    if deterministic:
+        existing = await binding_service.lookup(tenant_id=tenant, content_input_hash=cih, snapshot_id=snapshot)
+        if existing is not None:
+            run_id = existing["run_id"]
+            result = existing.get("result")
+            if result is None:
+                result, greason = await _engine_get_analysis(run_id)
+                if result is None:
+                    ad, sk = await _record_audit(user, tenant, action="analyze_reuse", run_id=run_id,
+                                                 input_hash=ih, decision="degraded", http_status=200)
+                    return _degrade("result_missing" if greason == "not_found" else "engine_unreachable",
+                                    audit_degraded=ad, audit_skipped=sk, reused=True, run_id=run_id)
+                if not _integrity_ok(result, existing.get("input_hash")):
+                    ad, sk = await _record_audit(user, tenant, action="analyze_reuse", run_id=run_id,
+                                                 input_hash=ih, decision="degraded", http_status=200)
+                    return _degrade("invalid_response", audit_degraded=ad, audit_skipped=sk,
+                                    reused=True, run_id=run_id)
+            ad, sk = await _record_audit(user, tenant, action="analyze_reuse", run_id=run_id,
+                                         input_hash=ih, decision="reuse", http_status=200)
+            return {"degraded": False, "reused": True, "deterministic": True, "run_id": run_id,
+                    "result": result, "audit_degraded": ad, "audit_skipped": sk}
 
-    res = await _engine_post_analyze(dump)
+    res, reason = await _engine_post_analyze(dump)
     if res is None:
-        await _record_audit(user, tenant, action="analyze", run_id=None,
-                            input_hash=ih, decision="degraded", http_status=200)
-        return _degrade("engine_unreachable")
+        ad, sk = await _record_audit(user, tenant, action="analyze", run_id=None,
+                                     input_hash=ih, decision="degraded", http_status=200)
+        return _degrade(reason, audit_degraded=ad, audit_skipped=sk, deterministic=deterministic)
 
     # 무결성 — input_hash parity + run_id 유효(엔진 run_id Optional이라 None 통과 가능). 위반=무음 통과 금지.
-    if res.get("input_hash") != ih or not _is_uuid(res.get("run_id")):
-        await _record_audit(user, tenant, action="analyze", run_id=None,
-                            input_hash=ih, decision="degraded", http_status=200)
-        return _degrade("invalid_response")
+    if not _integrity_ok(res, ih) or not _is_uuid(res.get("run_id")):
+        ad, sk = await _record_audit(user, tenant, action="analyze", run_id=None,
+                                     input_hash=ih, decision="degraded", http_status=200)
+        return _degrade("invalid_response", audit_degraded=ad, audit_skipped=sk, deterministic=deterministic)
 
     run_id = str(res["run_id"])
+    result = res
     inserted = await binding_service.insert(
         run_id=run_id, tenant_id=tenant, content_input_hash=cih, snapshot_id=snapshot,
-        input_hash=ih, source="sync", created_by=str(getattr(user, "id", "")))
-    if not inserted:  # 동시성 경합 — 기존 결속 재사용
+        input_hash=ih, source="sync", created_by=str(getattr(user, "id", "")), deterministic=deterministic)
+    if deterministic and not inserted:  # 동시성 경합 — 승자 결속을 권위본으로(run_id·result 일관)
         again = await binding_service.lookup(tenant_id=tenant, content_input_hash=cih, snapshot_id=snapshot)
         if again is not None:
             run_id = again["run_id"]
+            won = again.get("result")
+            if won is None:
+                won, _gr = await _engine_get_analysis(run_id)
+            if won is not None:
+                result = won
 
-    audit_degraded = await _record_audit(user, tenant, action="analyze", run_id=run_id,
-                                         input_hash=ih, decision="authoritative", http_status=200)
-    return {"degraded": False, "reused": False, "run_id": run_id,
-            "result": res, "audit_degraded": audit_degraded}
+    ad, sk = await _record_audit(user, tenant, action="analyze", run_id=run_id,
+                                 input_hash=ih, decision="authoritative", http_status=200)
+    return {"degraded": False, "reused": False, "deterministic": deterministic, "run_id": run_id,
+            "result": result, "audit_degraded": ad, "audit_skipped": sk}
 
 
 @router.get("/analyze/{run_id}")
@@ -261,13 +295,28 @@ async def deliberation_get_analysis(run_id: str, user=Depends(get_current_user))
     """저장 분석 조회 — **테넌트 소유 검증 후에만** 엔진 결과 반환(교차테넌트 read 차단).
 
     엔진 get_analysis는 테넌트 무필터이므로 BFF가 engine_run_binding(tenant,run_id) 소유를 게이트한다.
-    미존재/타테넌트는 동일 404(존재은닉). 엔진 GET은 외부 비노출 전제.
+    미존재/타테넌트는 동일 404(존재은닉). read 감사는 표면화(fail_closed=False). 엔진 GET은 외부 비노출 전제.
     """
     tenant = _tenant(user)
     binding = await binding_service.lookup_by_run(tenant_id=tenant, run_id=run_id)
     if binding is None:
+        await _record_audit(user, tenant, action="analyze_read", run_id=run_id,
+                            input_hash="", decision="not_found", http_status=404, fail_closed=False)
         raise HTTPException(status_code=404, detail="not_found")
-    result = binding.get("result") or await _engine_get_analysis(run_id)
+    result = binding.get("result")
     if result is None:
-        return _degrade("engine_unreachable")
-    return {"degraded": False, "run_id": run_id, "result": result}
+        result, greason = await _engine_get_analysis(run_id)
+        if result is None:
+            ad, sk = await _record_audit(user, tenant, action="analyze_read", run_id=run_id,
+                                         input_hash="", decision="degraded", http_status=200, fail_closed=False)
+            return _degrade("result_missing" if greason == "not_found" else "engine_unreachable",
+                            audit_degraded=ad, audit_skipped=sk, run_id=run_id)
+        if not _integrity_ok(result, binding.get("input_hash")):
+            ad, sk = await _record_audit(user, tenant, action="analyze_read", run_id=run_id,
+                                         input_hash="", decision="degraded", http_status=200, fail_closed=False)
+            return _degrade("invalid_response", audit_degraded=ad, audit_skipped=sk, run_id=run_id)
+    ad, sk = await _record_audit(user, tenant, action="analyze_read", run_id=run_id,
+                                 input_hash=str(binding.get("input_hash") or ""), decision="disclosed",
+                                 http_status=200, fail_closed=False)
+    return {"degraded": False, "run_id": run_id, "result": result,
+            "audit_degraded": ad, "audit_skipped": sk}

@@ -70,7 +70,7 @@ def test_analyze_success_new(monkeypatch):
         return None  # 신규
     async def post(dump):
         posted["dump"] = dump
-        return _engine_result(ih)
+        return _engine_result(ih), "ok"
     inserted = {}
     async def insert(**kw):
         inserted.update(kw)
@@ -93,9 +93,9 @@ def test_analyze_idempotent_reuse(monkeypatch):
         return {"run_id": existing_run, "source": "sync", "status": "DONE", "result": None}
     async def post(dump):
         called["post"] += 1
-        return _engine_result(ih)
+        return _engine_result(ih), "ok"
     async def get(run_id):
-        return _engine_result(ih, run_id=run_id)
+        return _engine_result(ih, run_id=run_id), "ok"
     c = _client(monkeypatch, lookup=lookup, post=post, get=get)
     r = c.post("/api/v1/deliberation/analyze", json=_PAYLOAD)
     assert r.status_code == 200
@@ -106,7 +106,7 @@ def test_analyze_degraded_when_engine_unreachable(monkeypatch):
     async def lookup(**kw):
         return None
     async def post(dump):
-        return None  # 미연결/타임아웃/circuit
+        return None, "engine_unreachable"  # 미연결/타임아웃/circuit
     c = _client(monkeypatch, lookup=lookup, post=post)
     r = c.post("/api/v1/deliberation/analyze", json=_PAYLOAD)
     assert r.status_code == 200
@@ -119,7 +119,7 @@ def test_analyze_invalid_response_input_hash_mismatch(monkeypatch):
     async def lookup(**kw):
         return None
     async def post(dump):
-        return _engine_result("WRONG-HASH")  # 응답 input_hash 불일치
+        return _engine_result("WRONG-HASH"), "ok"  # 응답 input_hash 불일치
     inserted = {"n": 0}
     async def insert(**kw):
         inserted["n"] += 1
@@ -137,7 +137,7 @@ def test_analyze_invalid_response_run_id_none(monkeypatch):
     async def lookup(**kw):
         return None
     async def post(dump):
-        return _engine_result(ih, run_id=None)  # run_id 없음(엔진 계약 위반)
+        return _engine_result(ih, run_id=None), "ok"  # run_id 없음(엔진 계약 위반)
     async def insert(**kw):
         return True
     c = _client(monkeypatch, lookup=lookup, post=post, insert=insert)
@@ -187,10 +187,141 @@ def test_get_proxies_engine_when_no_stored_result(monkeypatch):
     async def lookup_by_run(**kw):
         return {"run_id": "run-1", "source": "sync", "status": "DONE", "result": None}
     async def get(rid):
-        return {"run_id": rid, "report": {"x": 1}}
+        return {"run_id": rid, "report": {"x": 1}}, "ok"
     monkeypatch.setattr(delib.binding_service, "lookup_by_run", lookup_by_run)
     monkeypatch.setattr(delib, "_engine_get_analysis", get)
     app = _app()
     app.dependency_overrides[get_current_user] = lambda: _FakeUser()
     r = TestClient(app).get("/api/v1/deliberation/analyze/run-1")
     assert r.status_code == 200 and r.json()["result"]["report"] == {"x": 1}
+
+
+def test_get_degraded_when_no_stored_and_engine_down(monkeypatch):
+    async def lookup_by_run(**kw):
+        return {"run_id": "run-1", "source": "sync", "status": "DONE", "result": None, "input_hash": "ih"}
+    async def get(rid):
+        return None, "engine_unreachable"
+    monkeypatch.setattr(delib.binding_service, "lookup_by_run", lookup_by_run)
+    monkeypatch.setattr(delib, "_engine_get_analysis", get)
+    app = _app()
+    app.dependency_overrides[get_current_user] = lambda: _FakeUser()
+    r = TestClient(app).get("/api/v1/deliberation/analyze/run-1")
+    assert r.status_code == 200 and r.json()["degraded"] is True and r.json()["result"] is None
+
+
+# ── 비결정 입력: 멱등 캐싱 스킵(§3·§9 R7) ──
+
+
+def test_analyze_nondeterministic_skips_idempotency(monkeypatch):
+    nondet = {"pnu": "1111010100100000002", "drawings": [{"sheet_id": "s1"}]}  # VLLM 경로
+    ih = analysis_input_hash(build_input_dump(nondet))
+    looked = {"n": 0}
+
+    async def lookup(**kw):
+        looked["n"] += 1
+        return {"run_id": "STALE", "source": "sync", "result": None}  # 있어도 무시돼야
+    async def post(dump):
+        return _engine_result(ih), "ok"
+    inserted = {}
+    async def insert(**kw):
+        inserted.update(kw)
+        return True
+    c = _client(monkeypatch, lookup=lookup, post=post, insert=insert)
+    r = c.post("/api/v1/deliberation/analyze", json=nondet)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["deterministic"] is False and body["reused"] is False
+    assert looked["n"] == 0                       # 멱등 lookup 미수행(비결정)
+    assert inserted["deterministic"] is False      # 결속은 비-멱등으로 기록
+
+
+def test_analyze_reuse_degrades_when_engine_get_fails(monkeypatch):
+    ih = analysis_input_hash(build_input_dump(_PAYLOAD))
+    async def lookup(**kw):
+        return {"run_id": "run-1", "source": "sync", "result": None, "input_hash": ih}
+    async def get(run_id):
+        return None, "engine_unreachable"
+    c = _client(monkeypatch, lookup=lookup, get=get)
+    r = c.post("/api/v1/deliberation/analyze", json=_PAYLOAD)
+    assert r.json()["degraded"] is True and r.json()["result"] is None
+
+
+def test_analyze_reuse_parity_fail_invalid_response(monkeypatch):
+    ih = analysis_input_hash(build_input_dump(_PAYLOAD))
+    async def lookup(**kw):
+        return {"run_id": "run-1", "source": "sync", "result": None, "input_hash": ih}
+    async def get(run_id):
+        return _engine_result("DIFFERENT-HASH", run_id=run_id), "ok"  # binding input_hash와 불일치
+    c = _client(monkeypatch, lookup=lookup, get=get)
+    r = c.post("/api/v1/deliberation/analyze", json=_PAYLOAD)
+    assert r.json()["degraded"] is True and r.json()["reason"] == "invalid_response"
+
+
+def test_analyze_insert_race_uses_winner_run_id(monkeypatch):
+    ih = analysis_input_hash(build_input_dump(_PAYLOAD))
+    seq = {"n": 0}
+
+    async def lookup(**kw):
+        seq["n"] += 1
+        return None if seq["n"] == 1 else {"run_id": "WINNER", "source": "sync",
+                                           "result": {"input_hash": ih, "report": {}}, "input_hash": ih}
+    async def post(dump):
+        return _engine_result(ih), "ok"
+    async def insert(**kw):
+        return False  # 경합 패배
+    c = _client(monkeypatch, lookup=lookup, post=post, insert=insert)
+    r = c.post("/api/v1/deliberation/analyze", json=_PAYLOAD)
+    body = r.json()
+    assert body["run_id"] == "WINNER" and body["result"]["report"] == {}  # 승자 run/result 일관
+
+
+def test_analyze_audit_failure_is_fail_closed_502(monkeypatch):
+    ih = analysis_input_hash(build_input_dump(_PAYLOAD))
+    async def lookup(**kw):
+        return None
+    async def post(dump):
+        return _engine_result(ih), "ok"
+    async def insert(**kw):
+        return True
+    async def audit(**kw):
+        raise RuntimeError("ledger down")
+    c = _client(monkeypatch, lookup=lookup, post=post, insert=insert, audit=audit)
+    r = c.post("/api/v1/deliberation/analyze", json=_PAYLOAD)
+    assert r.status_code == 502  # 감사 없는 판정 제공 금지(fail-closed)
+
+
+def test_analyze_audit_quota_surfaces_not_blocks(monkeypatch):
+    ih = analysis_input_hash(build_input_dump(_PAYLOAD))
+    async def lookup(**kw):
+        return None
+    async def post(dump):
+        return _engine_result(ih), "ok"
+    async def insert(**kw):
+        return True
+    async def audit(**kw):
+        return {"ok": False, "quota_exceeded": True}
+    c = _client(monkeypatch, lookup=lookup, post=post, insert=insert, audit=audit)
+    r = c.post("/api/v1/deliberation/analyze", json=_PAYLOAD)
+    assert r.status_code == 200 and r.json()["audit_degraded"] is True  # 감사 한도 표면화·분석은 제공
+
+
+def test_analyze_engine_rejected_4xx_distinct_reason(monkeypatch):
+    async def lookup(**kw):
+        return None
+    async def post(dump):
+        return None, "engine_rejected"  # 엔진 4xx(계약/매핑) — 미연결과 구분
+    c = _client(monkeypatch, lookup=lookup, post=post)
+    r = c.post("/api/v1/deliberation/analyze", json=_PAYLOAD)
+    assert r.json()["degraded"] is True and r.json()["reason"] == "engine_rejected"
+
+
+def test_analyze_prevalidate_target_enum_and_fact_key(monkeypatch):
+    async def lookup(**kw):
+        return None
+    c = _client(monkeypatch, lookup=lookup)
+    r1 = c.post("/api/v1/deliberation/analyze",
+                json={"pnu": "1111010100100000002", "calc_targets": [{"target": "BOGUS"}]})
+    assert r1.status_code == 422 and "target_enum" in r1.json()["detail"]
+    r2 = c.post("/api/v1/deliberation/analyze",
+                json={"pnu": "1111010100100000002", "cross_facts": [{"x": 1}]})
+    assert r2.status_code == 422 and "fact_key_missing" in r2.json()["detail"]
