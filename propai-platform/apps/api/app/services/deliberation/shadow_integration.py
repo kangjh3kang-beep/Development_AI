@@ -70,6 +70,17 @@ def fire_shadow_compare(**kwargs: Any) -> asyncio.Task | None:
     return task
 
 
+def observe(domain: str, tenant_id: str | None, mapped: tuple[str, dict[str, Any], Any] | None) -> asyncio.Task | None:
+    """후킹 공통 글루 — 매퍼 결과((verdict,payload,value)|None)+테넌트로 fire(비차단). 도메인 라우터가 직접
+    fire 인자를 조립하던 가변부를 단일 함수로 모아 후킹 회귀(domain 오타·인자 누락)를 테스트로 고정한다.
+    mapped/tenant 없으면 no-op(None)."""
+    if not mapped or not tenant_id:
+        return None
+    verdict, payload, value = mapped
+    return fire_shadow_compare(tenant_id=tenant_id, domain=domain,
+                               platform_verdict=verdict, engine_payload=payload, platform_value=value)
+
+
 async def shadow_compare(*, tenant_id: str, domain: str, platform_verdict: Any,
                          engine_payload: dict[str, Any], platform_value: Any = None) -> dict[str, Any] | None:
     """best-effort shadow 비교·적재. 도메인 흐름 절대 방해 금지(off/실패/타임아웃 시 None).

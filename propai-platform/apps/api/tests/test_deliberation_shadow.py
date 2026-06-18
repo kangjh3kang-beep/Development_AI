@@ -215,6 +215,25 @@ async def test_fire_shadow_compare_is_nonblocking(monkeypatch):
     assert rec["n"] == 1  # 백그라운드 적재 완료
 
 
+def test_observe_fires_with_domain_and_unpacks_tuple(monkeypatch):
+    # 후킹 공통 글루 — 매퍼 3-튜플을 domain과 함께 fire로 정확히 전달(domain 오타·인자 누락 회귀 고정).
+    captured = {}
+    monkeypatch.setattr(si, "fire_shadow_compare", lambda **kw: captured.update(kw) or "task")
+    out = si.observe("building_compliance", "tnt", ("non_compliant", {"rules": [1]}, 0.7))
+    assert out == "task"
+    assert captured["domain"] == "building_compliance" and captured["tenant_id"] == "tnt"
+    assert captured["platform_verdict"] == "non_compliant" and captured["platform_value"] == 0.7
+    assert captured["engine_payload"] == {"rules": [1]}
+
+
+def test_observe_noop_when_no_mapping_or_tenant(monkeypatch):
+    calls = {"n": 0}
+    monkeypatch.setattr(si, "fire_shadow_compare", lambda **kw: calls.__setitem__("n", calls["n"] + 1))
+    assert si.observe("d", "t", None) is None        # 매퍼 None(매핑 불가) → no-op
+    assert si.observe("d", None, ("v", {}, 1)) is None  # 테넌트 없음 → no-op
+    assert calls["n"] == 0
+
+
 async def test_shadow_compare_timeout_is_skipped(monkeypatch):
     # 느린 엔진(상한 초과) → wait_for 타임아웃 → None(도메인 흐름 무영향, 거짓적재 없음).
     import asyncio as _aio

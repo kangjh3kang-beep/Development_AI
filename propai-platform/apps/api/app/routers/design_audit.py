@@ -407,12 +407,8 @@ async def _execute_run(
             from app.services.deliberation import shadow_integration, shadow_mappers
 
             _tid = str(getattr(current, "tenant_id", "") or "") or None
-            mapped = shadow_mappers.design_audit({"overall": overall, "findings": findings})
-            if mapped and _tid:
-                _v, _payload, _val = mapped
-                shadow_integration.fire_shadow_compare(  # 비차단 — 엔진 RTT가 심사 응답을 막지 않음
-                    tenant_id=_tid, domain="design_audit",
-                    platform_verdict=_v, engine_payload=_payload, platform_value=_val)
+            shadow_integration.observe(  # 비차단 — 엔진 RTT가 심사 응답을 막지 않음
+                "design_audit", _tid, shadow_mappers.design_audit({"overall": overall, "findings": findings}))
     except Exception as e:  # noqa: BLE001 — 관측은 심사 흐름 절대 방해 금지
         logger.warning("shadow 관측 실패(design_audit)", err=str(e)[:120])
 

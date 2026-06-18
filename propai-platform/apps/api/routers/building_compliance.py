@@ -306,12 +306,11 @@ async def check_compliance(
                 from apps.api.database.models.project import Project
                 tid = (await db.execute(
                     select(Project.tenant_id).where(Project.id == req.project_id))).scalar_one_or_none()
-                if tid is not None:
-                    _v, _payload, _val = mapped
-                    shadow_integration.fire_shadow_compare(  # 비차단 — 엔진 RTT가 검증 응답을 막지 않음
-                        tenant_id=tid.hex if hasattr(tid, "hex") else str(tid),
-                        domain="building_compliance",
-                        platform_verdict=_v, engine_payload=_payload, platform_value=_val)
+                # 비차단 observe(엔진 RTT가 검증 응답을 막지 않음). tid 없으면 no-op.
+                shadow_integration.observe(
+                    "building_compliance",
+                    (tid.hex if hasattr(tid, "hex") else str(tid)) if tid is not None else None,
+                    mapped)
     except Exception as _e:  # noqa: BLE001 — 관측은 법규검증 흐름 절대 방해 금지(로그만, design_audit와 대칭)
         import structlog
         structlog.get_logger(__name__).warning("shadow 관측 실패(building_compliance)", err=str(_e)[:120])
