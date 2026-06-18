@@ -250,6 +250,8 @@ def analyze(
     zone_type: str,
     land_area_sqm: float,
     existing_building: str | None = None,
+    effective_far_pct: float | None = None,
+    effective_bcr_pct: float | None = None,
 ) -> dict[str, Any]:
     """용도지역+대지면적 기반 개발 가능 유형 분석.
 
@@ -257,6 +259,9 @@ def analyze(
         zone_type: 용도지역명 (예: "제2종일반주거지역")
         land_area_sqm: 대지면적 (㎡)
         existing_building: 기존 건축물 용도 (있을 경우)
+        effective_far_pct: 실효 용적률(조례·인센티브 반영, %). 주어지면 max_gfa 산출에
+            법정 대신 이 값을 사용한다(미전달 시 기존 법정값 폴백 — 회귀 0).
+        effective_bcr_pct: 실효 건폐율(%). 주어지면 반환 max_bcr_pct를 실효 기준으로 채운다.
 
     Returns:
         dict: allowed_types, restricted_types, recommended_type, recommendation_reason
@@ -275,9 +280,13 @@ def analyze(
     from .auto_zoning_service import ZONE_LIMITS
 
     zone_limits = ZONE_LIMITS.get(zone_type, {})
-    max_far = zone_limits.get("max_far", 200)
-    max_bcr = zone_limits.get("max_bcr", 60)
+    legal_far: float = zone_limits.get("max_far") or 200.0
+    legal_bcr: float = zone_limits.get("max_bcr") or 60.0
+    # 실효값(조례·인센티브 반영)이 전달되면 우선 사용, 없으면 법정값 폴백(회귀 0).
+    max_far: float = effective_far_pct if effective_far_pct is not None else legal_far
+    max_bcr: float = effective_bcr_pct if effective_bcr_pct is not None else legal_bcr
     max_gfa_sqm = land_area_sqm * (max_far / 100)
+    max_gfa_legal_sqm = land_area_sqm * (legal_far / 100)
 
     allowed_types: list[dict[str, Any]] = []
     for item in raw_allowed:
@@ -312,9 +321,15 @@ def analyze(
     return {
         "zone_type": zone_type,
         "land_area_sqm": land_area_sqm,
+        # 실효 기준(조례·인센티브 반영). effective_* 미전달 시 법정값과 동일(회귀 0).
         "max_gfa_sqm": round(max_gfa_sqm, 1),
         "max_bcr_pct": max_bcr,
         "max_far_pct": max_far,
+        # 법정 상한(additive) — 화면이 실효/법정을 함께 표기할 수 있게 보존.
+        "max_gfa_legal_sqm": round(max_gfa_legal_sqm, 1),
+        "max_bcr_legal_pct": legal_bcr,
+        "max_far_legal_pct": legal_far,
+        "is_effective_applied": effective_far_pct is not None or effective_bcr_pct is not None,
         "allowed_types": allowed_types,
         "restricted_types": restricted_types,
         "recommended_type": recommended_type,

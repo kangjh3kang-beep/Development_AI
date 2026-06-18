@@ -462,6 +462,9 @@ async def baseline_feasibility(req: FeasibilityBaselineRequest):
     official_price = req.official_price_per_sqm or 0
     zone_limits: dict = {}
     sources: dict[str, Any] = {}
+    # 특이부지 게이트 입력(지목·구역) — 자동감지 시 함께 채운다(재호출 0건).
+    land_category: str | None = None
+    special_districts: list = []
 
     # 약식 시도명("서울")을 정식명("서울특별시")으로 보강해 지오코딩 성공률↑
     norm_address = _normalize_address(req.address)
@@ -481,6 +484,8 @@ async def baseline_feasibility(req: FeasibilityBaselineRequest):
             if official_price <= 0 and zoning.get("official_price_per_sqm"):
                 official_price = float(zoning["official_price_per_sqm"])
                 sources["official_price_per_sqm"] = "자동감지(공시지가)"
+            land_category = zoning.get("land_category")
+            special_districts = zoning.get("special_districts") or []
             zone_limits = zoning.get("zone_limits") or {}
         except Exception:  # noqa: BLE001 — 자동감지 실패 시 입력/표준으로 진행
             logger.warning("baseline: 용도지역 자동감지 실패 — 입력/표준값으로 진행")
@@ -525,6 +530,43 @@ async def baseline_feasibility(req: FeasibilityBaselineRequest):
 
     assumptions: dict[str, Any] = {}
     confidence_penalty = 0
+
+    # ── 1-B) 특이부지 게이트(가산) — GFA 역산 전 비일상 토지 차단/경고 ──
+    # 임야·산지·맹지·학교용지·GB 등을 지목/용도지역/구역으로 감지(detect_special_parcel, 규칙기반).
+    # developability=BLOCKED 또는 해결가능성=NO면 baseline 수치를 산출하지 않고 정직 고지한다
+    # (할루시네이션 수지 방지 — 가짜 ROI 대신 0·N/A로 명시). CONDITIONAL/PRECONDITION은 경고 동반·계속.
+    # 접도정보 미수집이라 road_contact/road_width_m 미전달(None)로 맹지 오탐을 막는다.
+    from app.services.zoning.special_parcel import detect_special_parcel
+
+    special_parcel = detect_special_parcel({
+        "zone_type": zone,
+        "land_category": land_category,
+        "special_districts": special_districts,
+    })
+    if special_parcel:
+        assumptions["special_parcel"] = special_parcel
+        gate = special_parcel.get("developability")
+        if gate == "BLOCKED" or special_parcel.get("resolvable") == "NO":
+            # 원칙적 개발 불가 — baseline 미산출(정직). 수치는 0·N/A, 사유 고지.
+            return FeasibilityBaselineResponse(
+                development_type=(req.development_type or "").strip() or "N/A",
+                module_name="특이부지(개발 불가) — baseline 미산출",
+                total_revenue_won=0,
+                total_cost_won=0,
+                net_profit_won=0,
+                profit_rate_pct=0.0,
+                roi_pct=0.0,
+                npv_won=0,
+                grade="N/A",
+                is_baseline=True,
+                confidence="낮음",
+                sources=sources,
+                assumptions={
+                    **assumptions,
+                    "blocked_reason": special_parcel.get("honest_disclosure"),
+                    "developability": gate,
+                },
+            )
 
     # ── 2) 개발유형 선택(용도지역 대표유형) ──
     dev_type = (req.development_type or "").strip()

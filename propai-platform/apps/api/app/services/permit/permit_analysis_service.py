@@ -54,6 +54,7 @@ _USER_TMPL = """\
 - 대지면적: {land_area_sqm}㎡
 - 지자체 조례: {ordinance}
 - 특별지구/지정: {special}
+- 특이부지 감지: {special_parcel}
 
 ## 출력 JSON 스키마
 {{
@@ -133,6 +134,8 @@ class PermitAnalysisService:
             "max_bcr": site.get("max_bcr"),
             "max_far": site.get("max_far"),
             "land_area_sqm": site.get("land_area_sqm"),
+            # 특이부지 게이트(가산) — None이면 일상부지. 정직 고지/할루시네이션 방지.
+            "special_parcel": site.get("special_parcel"),
         }
 
         # 다필지(2개 이상) 통합 개발 → 최적/최고 용적률 산정
@@ -152,7 +155,7 @@ class PermitAnalysisService:
     async def _enrich_site(self, address: str, site: dict[str, Any]) -> dict[str, Any]:
         """부지정보 보강(미제공 시 AutoZoningService)."""
         if site.get("zone_type") and site.get("max_far"):
-            return site
+            return self._attach_special_parcel(site)
         try:
             from app.services.zoning.auto_zoning_service import AutoZoningService
 
@@ -176,11 +179,58 @@ class PermitAnalysisService:
                 "max_far": eff_far,  # 실효(조례 반영) 용적률
                 "legal_max_far": legal_far,
                 "land_area_sqm": az.get("land_area_sqm"),
+                "land_category": az.get("land_category"),  # 지목(특이부지 감지 입력)
                 "special_districts": az.get("special_districts"),
                 **{k: v for k, v in site.items() if v is not None},
             }
         except Exception as e:  # noqa: BLE001
             logger.warning("부지정보 수집 실패", err=str(e)[:80], address=address[:40])
+        return self._attach_special_parcel(site)
+
+    @staticmethod
+    def _special_parcel_grounding(sp: dict[str, Any] | None) -> str:
+        """특이부지 감지 결과 → LLM 프롬프트 그라운딩 문자열(없으면 '특이사항 없음').
+
+        개발가능성·해결가능성과 요인별 필요인허가(예: 산지전용허가)·선행절차를 명시해,
+        특이부지를 일반 개발지처럼 단정하지 않도록 모델을 사실에 묶는다.
+        """
+        if not sp:
+            return "특이사항 없음(일상적 개발부지)"
+        lines: list[str] = [
+            f"개발가능성={sp.get('severity_label') or sp.get('developability')}",
+            f"해결가능성={sp.get('resolvable')}",
+        ]
+        for f in (sp.get("factors") or [])[:4]:
+            prereq = ", ".join(f.get("permit_prerequisites") or [])
+            lines.append(
+                f"· {f.get('category')}: {(f.get('implications') or [''])[0]}"
+                + (f" [필요절차: {prereq}]" if prereq else "")
+            )
+        if sp.get("honest_disclosure"):
+            lines.append(f"⚠ {sp['honest_disclosure']}")
+        return " / ".join(lines)
+
+    @staticmethod
+    def _attach_special_parcel(site: dict[str, Any]) -> dict[str, Any]:
+        """지목·용도지역·구역으로 특이부지(산지·학교용지·GB·맹지 등)를 감지해 site에 가산.
+
+        LLM 그라운딩에 개발가능성·해결가능성·필요인허가·특이요인을 명시 주입해, 비일상 토지를
+        일반 개발지처럼 분석하는 할루시네이션(예: 산지에 산지전용허가 누락)을 방지한다.
+        규칙기반(detect_special_parcel)·가산 필드라 기존 동작 무손상. 접도정보는 미수집이라
+        road_contact/road_width_m 미전달(None)로 맹지 오탐을 막는다.
+        """
+        try:
+            from app.services.zoning.special_parcel import detect_special_parcel
+
+            sp = detect_special_parcel({
+                "zone_type": site.get("zone_type"),
+                "land_category": site.get("land_category"),
+                "special_districts": site.get("special_districts") or [],
+            })
+            if sp:
+                site["special_parcel"] = sp
+        except Exception:  # noqa: BLE001 — 감지 실패해도 인허가 분석은 계속(graceful)
+            pass
         return site
 
     @staticmethod
@@ -273,6 +323,7 @@ class PermitAnalysisService:
                 land_area_sqm=site.get("land_area_sqm") or "-",
                 ordinance=ordinance,
                 special=", ".join(site.get("special_districts") or []) if isinstance(site.get("special_districts"), list) else (site.get("special_districts") or "-"),
+                special_parcel=self._special_parcel_grounding(site.get("special_parcel")),
                 methods=", ".join(DEV_METHODS),
             )
             resp = await llm.ainvoke([SystemMessage(content=_SYSTEM + GROUNDING_RULE), HumanMessage(content=user)])

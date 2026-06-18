@@ -25,6 +25,7 @@ from app.services.feasibility.permit_validator import (
     get_permitted_types,
 )
 from app.services.zoning.auto_zoning_service import ZONE_LIMITS, AutoZoningService
+from app.services.zoning.special_parcel import detect_special_parcel
 
 # 외부 API 가드 타임아웃(90초 SLA 보장)
 _ZONING_TIMEOUT = 30.0
@@ -507,6 +508,9 @@ async def run_instant_precheck(
     zone_type: Optional[str] = None
     resolved_pnu = pnu
     resolved_area = area_sqm
+    # 특이부지 감지 입력(지목·구역) — analyze_by_address가 함께 채워주므로 재호출 0건.
+    land_category: Optional[str] = None
+    special_districts: list = []
     # 공시지가(개별공시지가, 원/㎡) — 수지 밴드의 토지비 산정 근거. 없으면 밴드는 생략(과대 ROI 방지).
     official_price: Optional[float] = None
     try:
@@ -517,6 +521,8 @@ async def run_instant_precheck(
         resolved_pnu = resolved_pnu or zoning.get("pnu")
         if resolved_area is None:
             resolved_area = zoning.get("land_area_sqm")
+        land_category = zoning.get("land_category")
+        special_districts = zoning.get("special_districts") or []
         official_price = zoning.get("official_price_per_sqm")
         sources.append("auto_zoning_service")
     except TimeoutError:
@@ -562,6 +568,17 @@ async def run_instant_precheck(
     # 복잡도 오름차순(쉬운 것 먼저) → pass가 상단
     methods.sort(key=lambda m: (m["signal"] != "pass", m["complexity"]))
 
+    # ── 2-B) 특이부지 게이트(가산) — 지목/용도지역/구역 기반 비일상 토지 감지 ──
+    # 산지·학교용지·GB·맹지 등은 용도지역 신호등만으로 개발가능을 단정하면 할루시네이션이다.
+    # detect_special_parcel(규칙기반)로 개발가능성 게이트를 산정해 신호등에 경고/차단을 반영하고,
+    # 결과(developability·factors·warning)를 응답에 가산한다(기존 필드 불변).
+    # road_contact/road_width_m는 precheck 단계에서 미수집 → 미전달(None)로 맹지 오탐 방지.
+    special_parcel = detect_special_parcel({
+        "zone_type": zone_type,
+        "land_category": land_category,
+        "special_districts": special_districts,
+    })
+
     # ── 3) 요약 ──
     n_pass = sum(1 for m in methods if m["signal"] == "pass")
     n_warn = sum(1 for m in methods if m["signal"] == "warn")
@@ -571,6 +588,27 @@ async def run_instant_precheck(
     summary: dict[str, Any] = {
         "pass": n_pass, "warn": n_warn, "fail": n_fail, "best": best, "llm_note": None,
     }
+
+    # 특이부지면 신호등에 경고/차단을 반영 — BLOCKED/해결불가(NO)는 best 추천을 거두고
+    # 전 후보를 warn 이하로 강등(과대 추천 차단), 그 외 특이는 경고 동반(best 유지).
+    if special_parcel:
+        gate = special_parcel.get("developability")
+        resolvable = special_parcel.get("resolvable")
+        blocking = gate == "BLOCKED" or resolvable == "NO"
+        for m in methods:
+            if blocking:
+                # 원칙적 개발 불가 — pass/warn을 warn으로 강등, 사유에 게이트 명시.
+                if m["signal"] == "pass":
+                    m["signal"] = "warn"
+                m["special_parcel_caveat"] = special_parcel.get("severity_label")
+        if blocking:
+            best = None
+            n_pass = sum(1 for m in methods if m["signal"] == "pass")
+            n_warn = sum(1 for m in methods if m["signal"] == "warn")
+            n_fail = sum(1 for m in methods if m["signal"] == "fail")
+            summary.update({"pass": n_pass, "warn": n_warn, "fail": n_fail, "best": best})
+        summary["special_parcel_warning"] = special_parcel.get("honest_disclosure")
+        summary["developability"] = gate
 
     # ── 4) 선택적 LLM 1줄 요약(과설계 금지) ──
     if use_llm:
@@ -622,6 +660,8 @@ async def run_instant_precheck(
         "legal_refs": legal_refs,
         "evidence": evidence,
         "feasibility_band": feasibility_band,
+        # 특이부지 게이트(가산) — None이면 일상부지(특이 없음). 정직 고지.
+        "special_parcel": special_parcel,
     }
 
 

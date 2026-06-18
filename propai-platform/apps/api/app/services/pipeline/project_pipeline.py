@@ -662,16 +662,40 @@ class ProjectPipeline:
             except Exception:
                 far_incentive = {"error": "인센티브 계산 실패"}
 
-            # 개발 가능 유형 분석
+            # 개발 가능 유형 분석 — 법정 상한이 아닌 실효 BCR/FAR(조례·인센티브 반영, L650-651)을
+            # 주입해 max_gfa를 실효 기준으로 산출(파이프라인 effective vs dta 법정 비대칭 해소).
             development_types: dict[str, Any] = {}
             try:
                 development_types = dta.analyze(
                     zone_type=zone_type,
                     land_area_sqm=float(land_area_sqm),
                     existing_building=pre_collected.get("existing_building"),
+                    effective_far_pct=effective_far,
+                    effective_bcr_pct=effective_bcr,
                 )
             except Exception:
                 development_types = {"error": "개발유형 분석 실패"}
+
+            # 특이부지 게이트(결함B) — 진입부에서 1회만 detect_special_parcel 적용해
+            # 개발가능성·경고를 development_types에 동반(analyze 자체는 가볍게 유지).
+            try:
+                from app.services.zoning.special_parcel import detect_special_parcel
+                _special = detect_special_parcel({
+                    "land_category": pre_collected.get("land_category", ""),
+                    "zone_type": zone_type,
+                    "special_districts": (
+                        pre_collected.get("special_districts")
+                        or comprehensive.get("special_districts")
+                        or []
+                    ),
+                    "road_contact": pre_collected.get("road_contact"),
+                    "road_width_m": pre_collected.get("road_width_m"),
+                    "road_width": pre_collected.get("road_width"),
+                })
+                if _special:
+                    development_types["special_parcel"] = _special
+            except Exception:
+                pass
 
             state.site_to_design = SiteToDesignPayload(
                 pnu_codes=pnu_codes,

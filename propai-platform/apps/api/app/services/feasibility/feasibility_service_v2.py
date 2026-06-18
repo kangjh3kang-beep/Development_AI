@@ -104,8 +104,40 @@ class FeasibilityServiceV2:
         zone_type = zoning.get("zone_type", "")
         zone_limits = zoning.get("zone_limits") or {}
         site_area = land_area_sqm or zoning.get("land_area_sqm") or 1000
+        special_districts = zoning.get("special_districts") or []
+        land_category = zoning.get("land_category") or ""
 
-        # Step 2: 인허가 가능 유형 필터
+        # Step 2: 특이부지 게이트 — 학교·GB·농지·산지·맹지 등 비일상 토지는 Top3 산정 전 차단.
+        # (정답 패턴=integrated_recommender/orchestrator.recommend: BLOCKED/NO면 후보 미생성·정직고지,
+        #  CONDITIONAL/PRECONDITION이면 생성하되 경고 동반. 가짜 사업모델/ROI 노출 방지.)
+        from ..zoning.special_parcel import detect_special_parcel
+        special = detect_special_parcel({
+            "zone_type": zone_type,
+            "land_category": land_category,
+            "special_districts": special_districts,
+            "road_contact": None,   # 추천 입력엔 접도 데이터 없음 → 맹지 오탐 방지(None=미판정)
+            "road_width_m": None,
+        })
+        if special and (
+            special.get("developability") == "BLOCKED"
+            or special.get("resolvable") == "NO"
+        ):
+            # 후보생성 중단 — 개발규모/수지 미산정(정직). 가짜 ROI 금지.
+            return {
+                "address": address,
+                "zone_type": zone_type,
+                "zone_limits": zone_limits,
+                "land_area_sqm": site_area,
+                "recommendations": [],
+                "all_results": [],
+                "special_parcel": special,
+                "honest_disclosure": special.get("honest_disclosure")
+                or "통상 절차로 해결 불가능한 제약이 포함되어 개발규모를 산정하지 않습니다.",
+                "land_price_reliable": False,
+                "ai_interpretation": None,
+            }
+
+        # Step 2.1: 인허가 가능 유형 필터
         from .permit_validator import (
             get_permitted_types,
             check_permit_feasibility,
@@ -119,12 +151,38 @@ class FeasibilityServiceV2:
                 "recommendations": [],
             }
 
-        # Step 2.5: 조례 기반 유효 용적률/건폐율 적용
-        # 조례값이 있으면 법정 상한보다 낮은 값이 실효값
-        ordinance_far = zone_limits.get("ordinance_far_pct")
-        ordinance_bcr = zone_limits.get("ordinance_bcr_pct")
-        max_far = ordinance_far or zone_limits.get("max_far_pct", 250)
-        max_bcr = ordinance_bcr or zone_limits.get("max_bcr_pct", 60)
+        # Step 2.5: 실효 용적률 산정 — 법정범위→조례→계획상한→인센티브 계층(SSOT 공용 모듈).
+        # ★결함A 근본수정: 기존 zone_limits.get("ordinance_far_pct")는 AutoZoningService가 절대
+        #   채우지 않는 키라 항상 법정 폴백(max_far_pct)으로 떨어졌다. 정답 패턴(scenario_simulator/
+        #   permits 검증)=OrdinanceService 조회 후 calc_effective_far에 주입해 실효치를 산출한다.
+        #   ★local_ordinance:{} 빈값 금지 — 빈값이면 calc_effective_far가 법정값을 반환하므로
+        #     반드시 get_ordinance_limits 결과(또는 조회 실패 시 법정 폴백)를 전달한다.
+        from ..land_intelligence.ordinance_service import OrdinanceService
+        from ..land_intelligence.far_tier_service import calc_effective_far
+        try:
+            ordinance = await OrdinanceService().get_ordinance_limits(address, zone_type)
+        except Exception:  # noqa: BLE001 — 조회 실패 시 법정 폴백
+            ordinance = None
+        legal_max_far = zone_limits.get("max_far_pct", 250)  # 법정상한(라벨 보관)
+        max_far = legal_max_far
+        try:
+            eff = calc_effective_far(
+                {
+                    "zone_limits": zone_limits,
+                    "special_districts": special_districts,
+                    "local_ordinance": ordinance or {},
+                },
+                zone_type,
+                site_area,
+            )
+            eff_far = eff.get("effective_far_pct")
+            if eff_far is not None and eff_far > 0:
+                max_far = float(eff_far)  # 실효 용적률을 FAR→GFA→세대수·매출·ROI 전파에 사용
+        except Exception:  # noqa: BLE001 — 산정 실패 시 법정 폴백 유지
+            pass
+        # 주: auto_recommend_top3는 FAR→GFA→세대수→매출→ROI만 사용한다(BCR은 footprint용이라 이 Top3
+        #   산정 경로엔 미사용). 기존 max_bcr는 어떤 하류도 읽지 않던 사장 변수라 제거했다 — BCR 실효화는
+        #   이 함수에선 불필요(리뷰 HIGH는 'BCR이 ROI에 영향' 가정이었으나 실제로는 미사용·무영향).
 
         # 토지비 신뢰성 — 공시지가 미확보 시 1.5M 묵시폴백이 들어가므로 절대 수익성(ROI·순이익)은
         #   '참고용'임을 정직 표기한다(랭킹은 profit_rate 상대비교라 유지). 가짜 확정값 노출 방지.
@@ -190,6 +248,8 @@ class FeasibilityServiceV2:
             "zone_type": zone_type,
             "zone_limits": zone_limits,
             "land_area_sqm": site_area,
+            "effective_far_pct": round(max_far, 1),   # FAR→GFA 산정에 실제 사용한 실효 용적률
+            "legal_max_far_pct": legal_max_far,        # 법정상한(라벨용 — 실효와 다를 수 있음)
             "total_types_analyzed": len(results),
             "permitted_types": len(permitted_types),
             "recommendations": top3,
@@ -197,6 +257,10 @@ class FeasibilityServiceV2:
             # 토지비 신뢰성 — False면 공시지가 미확보로 절대 수익성(ROI·순이익)은 참고용(랭킹은 상대비교 유효).
             "land_price_reliable": land_price_reliable,
         }
+        # 특이부지(CONDITIONAL/PRECONDITION/CAUTION)는 생성하되 경고 동반 — 정직 고지.
+        if special:
+            result["special_parcel"] = special
+            result["honest_disclosure"] = special.get("honest_disclosure")
 
         # Step 5: AI 해석 생성 — 명시실행(use_llm=False면 규칙기반 결과만, LLM 생략)
         if use_llm:
