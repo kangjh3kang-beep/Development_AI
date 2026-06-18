@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { LegalRefChip } from "@/components/common/LegalRefChip";
+import { mapZoningRich } from "@/lib/zoning-ssot";
 
 /* ── Response type ── */
 
@@ -80,14 +81,18 @@ export function AutoZoningBadge({ address }: { address: string }) {
         if (!cancelled) {
           setResult(data);
 
-          // Update project context store with zoning data
+          // Update project context store with zoning data.
+          // 토지/법규 심층 결과(rich)를 SSOT에 보존 — 하류(추천·설계·수지)가 /zoning/analyze
+          // 재호출 없이 읽도록 한다. mapZoningRich는 현재 주소 기준 값 또는 명시적 null로 기록
+          // (주소 변경 시 직전 부지 특이정보 잔류=할루시네이션 가드 오발동 방지, 무목업 유지).
           updateSiteAnalysis({
             estimatedValue: siteAnalysis?.estimatedValue ?? null,
             landAreaSqm: data.land_area_sqm ?? siteAnalysis?.landAreaSqm ?? null,
             zoneCode: data.zone_limits?.zone_key ?? data.zone_type ?? null,
             address: data.address,
             pnu: data.pnu ?? siteAnalysis?.pnu ?? null,
-          });
+            ...mapZoningRich(data),
+          }, { source: "auto" });
         }
       } catch (err) {
         if (!cancelled) {

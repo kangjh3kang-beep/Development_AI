@@ -77,6 +77,24 @@ interface SiteAnalysisData {
   // 용도지역이 2종 이상 섞였는지(혼합지). 하류가 단일 용도 가정을 피하도록 신호.
   zoneMixed?: boolean;
 
+  // ── 토지/법규 심층 결과(rich) — /zoning/analyze 산출물 SSOT 보존(additive·옵셔널) ──
+  // 하류(추천·설계·수지·분석 DAG 노드)가 /zoning/analyze 재호출 없이 읽도록 보존.
+  // 단일필지=해당 필지값, 다필지=대표/통합 기준값. 미확보 시 부재(옵셔널) — 0 강제 금지.
+  nationalFarPct?: number | null;     // 법정 상한 용적률(%)
+  nationalBcrPct?: number | null;     // 법정 상한 건폐율(%)
+  effectiveFarPct?: number | null;    // 현행 실효 용적률(%) — calc_effective_far(min 법정/조례/계획상한)
+  effectiveBcrPct?: number | null;    // 현행 실효 건폐율(%)
+  farBasis?: string | null;           // 실효용적률 최종 근거 라벨
+  upzoningPotentialFarHigh?: number | null;  // 종상향 잠재 상한 용적률(%) (potential_far_range 상단)
+  upzoningFeasibilityTop?: string | null;    // 최상 가능성 등급('상'/'중'/'하') — 없으면 null
+  specialParcel?: {                   // 특이부지 게이트 요약 — 없으면 null
+    isSpecial: boolean;
+    developability: string | null;    // POSSIBLE|CONDITIONAL|PRECONDITION|RESTRICTED|BLOCKED 등
+    resolvable: string | null;        // YES|CONDITIONAL|NO
+    factors: string[];
+    honest: string | null;
+  } | null;
+
   // 다필지 정보 (LAYER 0) — 선택적 (점진적 확장)
   parcels?: ParcelData[];
   landUseDistricts?: LandUseDistrict[];
