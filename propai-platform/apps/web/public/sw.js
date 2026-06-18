@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v244-ssot-integrated-area";
+const CACHE_NAME = "propai-v245-phaseab-orchestration";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",
