@@ -24,3 +24,28 @@ def test_db_override_takes_precedence():
         assert zlp.resolve_zone_limit("제2종일반주거지역", "far_floor_area")[0] == 220.0
     finally:
         zlp._override.pop("제2종일반주거지역", None)
+
+
+def test_partial_override_consistent_across_resolve_and_all():
+    # ★부분 override(far만 강화)는 나머지 지표(bcr)를 데이터파일에서 보존(키 병합) — resolve_zone_limit과
+    # all_zone_limits 두 경로가 **동치**여야 read 표면(P5 divergence)이 엔진 실 계산값을 정직 반영.
+    try:
+        zlp.set_zone_override("제2종일반주거지역", {"far_pct": 220})
+        far = zlp.resolve_zone_limit("제2종일반주거지역", "far_floor_area")
+        bcr = zlp.resolve_zone_limit("제2종일반주거지역", "building_area")
+        z = zlp.all_zone_limits()["zones"]["제2종일반주거지역"]
+        assert far[0] == 220.0 and z["far_floor_area"]["value"] == 220.0          # override 반영(양 경로)
+        assert bcr is not None and bcr[0] == 60.0                                  # bcr 미override → base 보존
+        assert z["building_area"]["value"] == 60.0                                # 양 경로 동치(거짓 None/matched 아님)
+    finally:
+        zlp._override.pop("제2종일반주거지역", None)
+
+
+def test_override_rejects_nonnumeric_limit():
+    # override의 잘못된 타입(bool 등)은 거짓 한도(True→1.0)로 통과 금지 → None(날조 방지).
+    try:
+        zlp.set_zone_override("제2종일반주거지역", {"far_pct": True})
+        assert zlp.resolve_zone_limit("제2종일반주거지역", "far_floor_area") is None
+        assert "far_floor_area" not in zlp.all_zone_limits()["zones"].get("제2종일반주거지역", {})
+    finally:
+        zlp._override.pop("제2종일반주거지역", None)
