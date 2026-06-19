@@ -2,6 +2,7 @@ import { getDictionary } from "@/i18n/get-dictionary";
 import { isValidLocale, type Locale } from "@/i18n/config";
 import { DeliberationConsole } from "@/components/deliberation/DeliberationConsole";
 import { EngineHealthCard } from "@/components/deliberation/EngineHealthCard";
+import { RegDivergenceCard } from "@/components/deliberation/RegDivergenceCard";
 import { ShadowConvergenceCard } from "@/components/deliberation/ShadowConvergenceCard";
 
 /**
@@ -89,10 +90,11 @@ export default async function DeliberationReviewPage({
         </p>
       </section>
 
-      {/* 운영 카드 — 엔진 헬스(BFF health) + 중심엔진 수렴(shadow stats) */}
-      <section className="grid gap-4 md:grid-cols-2">
+      {/* 운영 카드 — 엔진 헬스(BFF health) + 중심엔진 수렴(shadow) + 규제 출처 정합(reg drift) */}
+      <section className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
         <EngineHealthCard />
         <ShadowConvergenceCard />
+        <RegDivergenceCard />
       </section>
 
       {/* 라이브 콘솔 — 중심엔진 BFF /api/v1/deliberation/analyze 경유 */}
