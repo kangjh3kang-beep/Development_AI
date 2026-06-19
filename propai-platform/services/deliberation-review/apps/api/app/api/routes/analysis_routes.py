@@ -8,7 +8,8 @@ from __future__ import annotations
 import uuid
 
 import anyio
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException
+from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_session, get_tenant_id, require_token
@@ -52,6 +53,28 @@ async def analyze(payload: AnalysisInput, session: AsyncSession = Depends(get_se
     # #8a: BFF가 보낸 X-Tenant-Id를 organization_id로 적재(테넌트 격리 키).
     return await save_analysis(session, result, input_payload=payload.model_dump(mode="json"),
                                tenant_id=tenant_id)
+
+
+@router.post("/analyze/upload", response_model=AnalysisResult, dependencies=[Depends(require_token)])
+async def analyze_upload(payload: dict = Body(...), session: AsyncSession = Depends(get_session),
+                         tenant_id: uuid.UUID | None = Depends(get_tenant_id)) -> AnalysisResult:
+    """INC-17 — 도면 업로드 분석(멀티모달 진입점). files(base64 이미지/PDF)를 drawings로 자동 구성 후 동일 run_analysis 위임.
+
+    멀티파트(python-multipart) 의존 없이 JSON base64 수신(프런트 readAsDataURL 호환). 이미지=data-uri 인라인,
+    PDF=PyMuPDF 페이지 분할(미설치 시 422 pdf_split_unavailable graceful degrade). 사용자가 image_ref JSON을
+    손으로 적던 편의성 갭 해소. 보안/멱등/영속/테넌트격리는 위임 대상 analyze가 그대로 보장(중복 0)."""
+    from app.adapters.vision.upload_intake import UploadError, build_drawings
+    files = payload.pop("files", None)
+    try:
+        built = build_drawings(files or [])
+    except UploadError as exc:
+        raise HTTPException(status_code=422, detail=f"upload_error:{exc}") from exc
+    payload["drawings"] = list(payload.get("drawings") or []) + built  # 기존 drawings 보존 + 업로드분 합류
+    try:
+        inp = AnalysisInput(**payload)
+    except ValidationError as exc:  # 입력오류만 422(내부 버그는 500으로 전파)
+        raise HTTPException(status_code=422, detail="invalid_input") from exc
+    return await analyze(payload=inp, session=session, tenant_id=tenant_id)
 
 
 @router.get("/analyze/{run_id}", response_model=AnalysisResult, dependencies=[Depends(require_token)])
