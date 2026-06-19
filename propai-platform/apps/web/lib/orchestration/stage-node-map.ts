@@ -56,6 +56,7 @@ export const NODE_TO_STAGETYPE: Record<NodeId, StageType | null> = {
   land: "site_analysis",
   legal: "legal_compliance",
   recommend: "permit_portal", // recommend는 permit 스토리라인(인허가 포털 탭)
+  permit: "permit_portal", // (B6-3) 인허가 분석도 permit 스토리라인 → 인허가 포털 탭
   design: "design_ai",
   audit: "design_ai",
   sales: "feasibility",

@@ -160,6 +160,54 @@ export const NODES: AnalysisNode[] = [
     icon: "stage_permit_portal",
   },
   {
+    // ── (B6-3) 인허가 분석 노드 ──
+    // 쉬운 설명: 주소(+조례·상위법령)를 종합해 "7개 개발방식"별 가능/문제/해결방안을
+    // 서술형으로 분석한다(POST /api/v1/permits/ai-analysis). 결과는 화면 표시·판단분기용이며,
+    // ★complianceData(건폐/용적 적합·위반 같은 정량 슬롯)는 산출하지 않는다(라이브 응답에 해당 키 부재).
+    // 따라서 store 환류는 하지 않는다(ssotOutputs=[]) — legal 노드가 이미 complianceData 슬롯의
+    // 단일 owner이므로, permit이 같은 슬롯을 중복 소유하지 않도록 표시·판단 전용으로 둔다(무목업·무중복).
+    id: "permit",
+    label: "인허가 분석(개발방식 가능성)",
+    storyOrder: 3.5, // recommend(3)와 design(4) 사이 — 기존 1~9 정수 순서 불변(append-safe)
+    storylineStage: "permit",
+    moduleKey: null, // 표시·판단분기 노드 — store staleness 미참여(L2 nodeUpdatedAt로 파생)
+    upstream: ["land"], // 주소(siteAnalysis.address)가 사실근거 루트(legal과 동일 — 부지만 있으면 가능)
+    ssotInputs: [
+      {
+        // 백엔드 필수★ = address(AIPermitAnalysisRequest.address: str). 부지분석 주소 슬롯으로 충족.
+        slot: "siteAnalysis",
+        field: "address",
+        readyCheck: hasSite,
+        resolution: ["ssot", "upstream-suggest"],
+        manualPrompt: "분석할 토지 주소(부지분석)가 필요합니다",
+        provenanceGuarded: false, // 인허가 분석은 ProvenanceModule 밖(merge가드 없음) → 정직 표기
+      },
+    ],
+    ssotOutputs: [], // 표시·판단분기 — store 비기록(complianceData 중복 owner 회피·정량 키 부재)
+    runner: {
+      method: "POST",
+      path: "/api/v1/permits/ai-analysis",
+      bodyBuilder: "permit", // {address★, pnu?, parcels?} (B6-3)
+    },
+    // /ai-analysis는 PermitInterpreter에 미배선(PermitAnalysisService._llm_analyze가 get_llm 직접 호출,
+    // record_llm_response_billing(service="permit")로 계측). PermitInterpreter는 별도 검증결과 해석 경로용 →
+    // 이 노드 전담 interpreter는 없음(날조 금지) → null.
+    expertInterpreter: null,
+    expertPanel: true, // 7개 개발방식 가능/불가·상위법령↔조례 충돌 다관점 판단분기
+    verify: { crossValidate: true, verifyAnalysis: true },
+    billingKey: "stage:permit",
+    reportContract: {
+      sectionKey: "permit",
+      // 라이브 응답키(ai/summary/methods/recommendation/site) — 서술형 인허가 분석.
+      fields: ["summary", "methods", "recommendation"],
+      unavailableLabel: "인허가 분석 미실행",
+    },
+    lens: "permit",
+    groundingSources: ["용도지역 한도", "자치법규(조례)", "상위법령", "특이부지 게이트"],
+    available: true,
+    icon: "stage_permit_portal",
+  },
+  {
     id: "design",
     label: "건축개요·설계 AI",
     storyOrder: 4,

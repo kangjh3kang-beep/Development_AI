@@ -27,8 +27,9 @@ export type SsotSlot =
   | "financeStamp";
 
 /**
- * 노드 식별자 — 9개 실무 스토리라인 노드.
+ * 노드 식별자 — 실무 스토리라인 노드.
  * store의 ModuleKey(7개)와는 별개 집합이다(노드는 ModuleKey보다 세분화된 오케스트레이션 레이어).
+ * (B6-3) "permit"(인허가 분석)을 표시·판단분기 전용 노드로 추가 — 기존 9노드 불변.
  */
 export type NodeId =
   | "land"
@@ -39,7 +40,8 @@ export type NodeId =
   | "sales"
   | "qto"
   | "feasibility"
-  | "finance";
+  | "finance"
+  | "permit";
 
 /** 전문가 패널 관점(다관점 협업 렌즈). */
 export type Lens =
@@ -49,7 +51,8 @@ export type Lens =
   | "design"
   | "feasibility"
   | "esg"
-  | "construction";
+  | "construction"
+  | "permit"; // (B6-3) 인허가 분석 노드 전용 렌즈(7개 개발방식·상위법령↔조례 다관점)
 
 /**
  * 보고서 참여 계약 — bank-report/generate·report 단계가 수집하는 섹션.

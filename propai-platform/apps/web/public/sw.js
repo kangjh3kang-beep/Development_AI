@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v255-orchestrate-workspace";
+const CACHE_NAME = "propai-v256-permit-node";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

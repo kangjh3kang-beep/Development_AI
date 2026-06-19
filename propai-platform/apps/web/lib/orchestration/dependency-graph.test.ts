@@ -81,8 +81,12 @@ describe("topoSort — 위상정렬(Kahn, storyOrder tie-break)", () => {
   it("전노드 정렬: 모든 upstream이 자기보다 앞", () => {
     const order = topoSort(ALL);
     const pos = new Map(order.map((id, i) => [id, i]));
+    // (B6-3) ALL(정렬 대상 9노드)에 속한 노드·엣지만 검증한다. permit 등 ALL 밖 노드는
+    // 이 정렬에 포함되지 않으므로(topoSort(ALL)) 대상에서 제외(정렬 의도 보존).
     for (const node of NODES) {
+      if (!pos.has(node.id)) continue;
       for (const up of node.upstream) {
+        if (!pos.has(up)) continue;
         expect(pos.get(up)!).toBeLessThan(pos.get(node.id)!);
       }
     }
@@ -119,8 +123,11 @@ describe("topoLevels — 레벨(rank)별 병렬 그룹", () => {
     const levels = topoLevels(ALL);
     const rankOf = new Map<NodeId, number>();
     levels.forEach((lv, r) => lv.forEach((id) => rankOf.set(id, r)));
+    // (B6-3) ALL(레벨 계산 대상 9노드)에 속한 노드·엣지만 검증(permit 등 ALL 밖 노드 제외).
     for (const node of NODES) {
+      if (!rankOf.has(node.id)) continue;
       for (const up of node.upstream) {
+        if (!rankOf.has(up)) continue;
         expect(rankOf.get(node.id)!).toBeGreaterThan(rankOf.get(up)!);
       }
     }
@@ -198,10 +205,13 @@ describe("currentSignature — 입력 시그니처 안정성", () => {
 });
 
 describe("guidedOrder — 가이드 모드 전노드 위상순", () => {
-  it("9개 전노드를 위상순으로 반환", () => {
+  // (B6-3) permit 노드 추가로 전노드는 10개(기존 9 + permit). permit은 표시·판단분기 노드라
+  // 어떤 노드도 upstream으로 갖지 않지만(audit과 동일 말단), guidedOrder는 전 노드를 위상순 나열한다.
+  const ALL_WITH_PERMIT: NodeId[] = [...ALL, "permit"];
+  it("전노드(10개: 기존 9 + permit)를 위상순으로 반환", () => {
     const order = guidedOrder();
-    expect(order).toHaveLength(9);
-    expect(new Set(order)).toEqual(new Set(ALL));
+    expect(order).toHaveLength(10);
+    expect(new Set(order)).toEqual(new Set(ALL_WITH_PERMIT));
   });
 
   it("의존성 보존(upstream이 항상 앞)", () => {

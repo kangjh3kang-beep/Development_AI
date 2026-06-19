@@ -194,6 +194,24 @@ export function buildNodeBody(
       break;
     }
 
+    case "permit": {
+      // {address★, pnu?, parcels?} — 인허가 분석(POST /api/v1/permits/ai-analysis).
+      // address가 백엔드 필수★(없으면 422/400) → 부지분석 주소로 채우고, 미확보면 missing(호출 금지).
+      if (address) body.address = address;
+      else missing.push("address");
+      // pnu는 lawd_cd/필지식별 보조(있으면 전달).
+      if (pnu) body.pnu = pnu;
+      // 다필지 통합개발이면 추가 필지 주소 배열을 전달(2개 이상일 때만 — 단일필지는 생략).
+      // ★site.parcels의 address만 뽑되, 대표 주소(address)와 중복은 빼고 빈 문자열은 거른다(무목업).
+      const parcelAddrs = Array.isArray(site?.parcels)
+        ? site!.parcels!
+            .map((p) => nonEmptyStr(p?.address))
+            .filter((a): a is string => !!a && a !== address)
+        : [];
+      if (parcelAddrs.length >= 1) body.parcels = parcelAddrs;
+      break;
+    }
+
     case "audit":
     default: {
       // audit는 available:false라 호출 경로에 도달하지 않는다(호출측 가드). body 미구성.
