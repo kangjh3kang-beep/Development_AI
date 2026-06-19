@@ -287,6 +287,10 @@ export function GlobalAddressSearch({
 
   // ★등록된 '모든' 필지의 토지정보(면적·용도지역·건폐/용적·지목·공시지가)+집합건물 여부 일괄 보강.
   //   (처음 1필지만 분석되던 근본문제 해결 — 개별등록·엑셀 공통). 주소 매칭으로 머지.
+  // 보강 자기치유 재시도용 — uid별 시도 횟수(무한루프 방지: 최대 2회). 컴포넌트 수명 동안 유지.
+  const enrichTries = useRef<Map<string, number>>(new Map());
+  // enrichParcels 자기참조용 ref(재시도 setTimeout에서 최신 함수를 호출 — 순환 의존 회피).
+  const enrichParcelsRef = useRef<(entries: AddressEntry[]) => Promise<void>>(async () => {});
   const enrichParcels = useCallback(async (entries: AddressEntry[]) => {
     // WP-D race 가드: 진입 시점의 활성 projectId 캡처 — 장시간 보강(청크당 90s) 중 사용자가
     //   다른 프로젝트로 전환하면, 통합 면적 기록이 무관 프로젝트 SSOT(및 스냅샷)를 오염시키지
@@ -301,27 +305,46 @@ export function GlobalAddressSearch({
       (e.fullAddress || e.jibunAddress || e.pnu) && e.infoStatus !== "ok",
     );
     if (need.length === 0) return;
-    // ★같은 동(법정동명) 형제 bcode 전파 — "○○동 번지"만(시·군·구 없이) 입력된 필지는
-    //   동명이의 가드로 ambiguous→면적 미적재된다. 같은 배치에 동일 동명으로 bcode(또는 pnu
-    //   앞10자리)가 확보된 형제가 있으면 그 bcode를 물려받아(동일 동명=동일 bcode) 백엔드가
-    //   bcode+지번으로 정밀 적재하게 한다. 시군구 없는 무더기 입력(예 상도동 211-xxx) 자동복구.
+    // ★형제 bcode 전파는 '시군구가 같은 형제'에 한해서만 — 안전 가드(근본수정).
+    //   [버그] 과거엔 같은 '동명'만으로 형제 bcode를 물려줬다. 그런데 백엔드 _geocode_fill의
+    //   C2 보강(시군구 없는 순수 동명 + 번지 → 단일 법정동 수렴 시 자동확정→ok)은 입력 bcode가
+    //   '없을 때만' 동작한다. 동명만 같고 시군구는 다를 수 있는 bcode를 물려주면, 그 자동확정
+    //   경로가 꺼지고(in_bcode 비어있지 않음) 오히려 시군구 strict 대조(C2)에서 동명이의로
+    //   ambiguous 강등된다. → 시군구 없는 '첫' 짧은주소 필지(예 "상도동 211-204")만 zone·면적이
+    //   누락되던 근본원인. 백엔드는 짧은주소를 단독으로 주면 ok로 잘 해소하므로(라이브 확인),
+    //   '동명만 같은' 불확실 bcode는 물려주지 않고 백엔드 자동해소에 맡긴다.
+    //   전파는 동+시군구가 모두 같은(주소에 시군구 토큰이 실제로 포함된) 형제에게만 허용한다.
     const dongOf = (addr: string): string => {
       const m = (addr || "").match(/([가-힣]+(?:동|읍|면|리))(?:\s|$)/);
       return m ? m[1] : "";
     };
-    const dongBcode = new Map<string, string>();
+    // 시군구 토큰("○○시 ○○구"/"○○군" 등)을 주소에서 추출 — 같은 동명이라도 시군구가 다르면
+    //   전파 금지(동명이의 오매칭 방지). 시군구가 없으면 ""(전파 키에서 제외 → 자동해소 위임).
+    const sigunguOf = (addr: string): string => {
+      const m = (addr || "").match(/((?:[가-힣]+특별자치도|[가-힣]+특별자치시|[가-힣]+특별시|[가-힣]+광역시|[가-힣]+도)\s+)?([가-힣]+시\s+[가-힣]+구|[가-힣]+시|[가-힣]+군|[가-힣]+구)(?:\s|$)/);
+      return m ? (m[0] || "").trim() : "";
+    };
+    // 키 = "시군구|동" 조합(동명만으로는 전파하지 않음). 시군구가 없으면 키를 만들지 않는다.
+    const sgDongBcode = new Map<string, string>();
     for (const e of entries) {
       const b = e.bcode || (e.pnu && e.pnu.length >= 10 ? e.pnu.slice(0, 10) : "");
-      const d = dongOf(e.fullAddress || e.jibunAddress || "");
-      if (b && b.length >= 10 && d && !dongBcode.has(d)) dongBcode.set(d, b.slice(0, 10));
+      const src = e.fullAddress || e.jibunAddress || "";
+      const sg = sigunguOf(src);
+      const d = dongOf(src);
+      if (b && b.length >= 10 && sg && d && !sgDongBcode.has(`${sg}|${d}`)) sgDongBcode.set(`${sg}|${d}`, b.slice(0, 10));
     }
     const bcodeFor = (e: AddressEntry): string => {
-      if (e.bcode) return e.bcode;
-      const d = dongOf(e.fullAddress || e.jibunAddress || "");
-      return (d && dongBcode.get(d)) || "";
+      if (e.bcode) return e.bcode; // 자기 bcode가 있으면 그대로(가장 신뢰 가능).
+      const src = e.fullAddress || e.jibunAddress || "";
+      const sg = sigunguOf(src);
+      // 시군구가 없는 짧은주소는 형제 bcode를 물려받지 않는다 → 백엔드 C2 자동해소(ok)에 위임.
+      if (!sg) return "";
+      const d = dongOf(src);
+      return (d && sgDongBcode.get(`${sg}|${d}`)) || "";
     };
     type P = {
-      __rid?: number; area_sqm?: number | null; area_input_sqm?: number | null; area_warning?: string | null;
+      __rid?: number; address?: string | null; jibun?: string | null;
+      area_sqm?: number | null; area_input_sqm?: number | null; area_warning?: string | null;
       zone_type?: string | null; jimok?: string | null;
       pnu?: string | null; official_price_per_sqm?: number | null; bcr_pct?: number | null; far_pct?: number | null;
       // bcr_pct/far_pct = 실효값(조례 반영). 법정상한은 *_legal_pct(보조 라벨용).
@@ -371,8 +394,14 @@ export function GlobalAddressSearch({
         //   공부상 미확보이므로 기존 엑셀값을 유지(가짜값 금지).
         const publicArea = m.status === "ok" ? m.area_sqm : null;
         const nextArea = publicArea ?? a.areaSqm;
+        // ★백엔드가 시군구 없는 짧은주소("상도동 211-204")를 자동해소하면 전체 시군구 주소
+        //   ("서울특별시 동작구 상도동 211-204")로 반환한다(C2 보강). status=ok일 때만 그 완전한
+        //   주소로 갱신해 라벨·지역수 통계가 정확해지게 한다(기존 입력보다 길/완전할 때만 채택).
+        const resolvedAddr = (m.status === "ok" && m.address && m.address.trim().length > (a.fullAddress || "").trim().length)
+          ? m.address.trim() : null;
         return {
           ...a,
+          fullAddress: resolvedAddr ?? a.fullAddress,
           areaSqm: nextArea,
           areaPyeong: nextArea ? nextArea / 3.305785 : a.areaPyeong,
           // 엑셀 입력값 보존(참고용) — 백엔드가 보정한 경우 그 원입력, 아니면 직전 areaSqm.
@@ -396,15 +425,41 @@ export function GlobalAddressSearch({
       }));
     }
 
+    if (seq !== enrichSeq.current) return; // 더 새로운 보강이 시작됐으면 이후 단계(자기치유·SSOT) 폐기
+
+    // ── 자기치유 재시도: 끝내 ok가 아닌 필지가 있으면 1회 더 보강(모든 필지가 결국 enrich) ──
+    //   무목업: 전송 실패·경합 등 일시 사유로 누락된 필지를 백엔드 단독해소(라이브 검증됨)로 다시
+    //   채운다. uid별 최대 2시도로 무한루프를 막고, 끝내 미해소면 정직하게 '보완필요'로만 남긴다.
+    //   최신 state를 functional updater로 읽어(경합 무관) ok 아닌 필지를 모은다.
+    let latest: AddressEntry[] = [];
+    setAddresses((prev) => { latest = prev; return prev; });
+    if (latest.length > 0) {
+      const stillNeed = latest.filter((a) => {
+        if (!a.__uid) return false;
+        if (a.infoStatus === "ok") return false;
+        if (!(a.fullAddress || a.jibunAddress || a.pnu)) return false;
+        return (enrichTries.current.get(a.__uid) ?? 0) < 2; // 최대 2시도
+      });
+      if (stillNeed.length > 0) {
+        for (const a of stillNeed) {
+          if (a.__uid) enrichTries.current.set(a.__uid, (enrichTries.current.get(a.__uid) ?? 0) + 1);
+        }
+        // 다음 틱에 재보강(현 호출 스택 밖에서 새 seq로 — 경합 가드와 자연스럽게 협조).
+        setTimeout(() => { void enrichParcelsRef.current(stillNeed); }, 400);
+      }
+    }
+
     // ── 전 청크 완료 후 통합 면적 기록(SSOT) — 1회만 ──
     // WP-D: store 비기록 모드면 생략(콜백 전용). 단일/미확보 회귀 0: 유효필지 2개 미만이면 변경 없음.
     if (!writeToContext) return;
-    if (seq !== enrichSeq.current) return; // 더 새로운 보강이 시작됐으면 통합 기록도 폐기
     // 프로젝트 전환 중이면 기록 중단(무관 프로젝트 SSOT 오염 차단 — 계정격리).
     if (useProjectContextStore.getState().projectId !== triggeredProjectId) return;
-    // entries(전체 필지)의 기존값 + 이번 보강 누적값을 병합해 '최종 유효 면적'을 산출.
+    // ★'전체' 필지의 최신 state(latest=방금 functional updater로 읽음) + 이번 보강 누적값을 병합해
+    //   '최종 유효 면적'을 산출한다. entries(이 호출의 입력)는 재시도 시 부분집합일 수 있으므로
+    //   전체 합계는 반드시 latest(전 필지 최신값) 기준으로 계산해야 통합 면적이 정확하다.
     //   무목업: status ok(애매·실패 제외) + 면적>0 필지만 합산(미확보 필지는 제외).
-    const valid = entries
+    const basis = latest.length > 0 ? latest : entries;
+    const valid = basis
       .map((e) => {
         const m = e.__uid ? enrichedByUid.get(e.__uid) : undefined;
         const area = (m?.area_sqm ?? e.areaSqm) ?? 0;
@@ -432,6 +487,8 @@ export function GlobalAddressSearch({
       zoneMixed: zones.size >= 2,
     });
   }, [writeToContext, updateSiteAnalysis]);
+  // 재시도 setTimeout이 항상 최신 enrichParcels를 호출하도록 ref 동기화(렌더마다 갱신).
+  enrichParcelsRef.current = enrichParcels;
 
   const handleAddressSelect = useCallback((result: KakaoAddressResult) => {
     const entry: AddressEntry = {
@@ -730,6 +787,8 @@ export function GlobalAddressSearch({
       const dupNote = dupRemoved > 0 ? ` · 동일 필지 ${dupRemoved}행 통합(공유지분 등은 토지조서에서 관리)` : "";
       setUploadInfo({ note: (res.note || `${uniqEntries.length}필지 등록`) + dupNote, registry: res.registry_guidance?.message });
       // 건폐율/용적률·집합건물(빌라) 여부 보강 — parse-parcels엔 없는 항목을 일괄 채운다.
+      // ★재업로드 시 자기치유 재시도 카운터 초기화 — 직전 업로드에서 2회 소진한 필지도 다시 보강 시도(무한 아님).
+      enrichTries.current.clear();
       if (!single) void enrichParcels(merged);
     } catch (e: any) {
       setUploadInfo({ note: e?.message || "엑셀 처리 실패" });

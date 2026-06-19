@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v250-b4-lifecycle-mockup-purge";
+const CACHE_NAME = "propai-v251-parcel-bcode-selfheal";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",
