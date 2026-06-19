@@ -665,13 +665,20 @@ export default function SiteAnalysisPage() {
     if (!isBound || userInitiated) return;
     const addr = siteAnalysis?.address?.trim();
     if (!addr) return;
-    setSiteData({
-      address: addr,
-      pnu: siteAnalysis?.pnu ?? undefined,
-      zoneType: siteAnalysis?.zoneCode ?? undefined,
-      landAreaSqm: siteAnalysis?.landAreaSqm != null ? String(siteAnalysis.landAreaSqm) : undefined,
-    });
-    setStage("result");
+    const nextPnu = siteAnalysis?.pnu ?? undefined;
+    const nextZone = siteAnalysis?.zoneCode ?? undefined;
+    const nextLandAreaSqm = siteAnalysis?.landAreaSqm != null ? String(siteAnalysis.landAreaSqm) : undefined;
+    // ★#185 렌더루프 가드: 값이 실제로 바뀔 때만 setState. 자식(LandIntelligencePanel·AutoZoningBadge)이
+    //   /zoning/analyze 결과로 updateSiteAnalysis를 호출하면 이 useEffect가 재실행되는데, 매번 '새'
+    //   siteData 객체를 setState하면 자식 리렌더→재호출 순환으로 렌더가 폭주한다(Minified React #185).
+    //   동일 값이면 prev 참조를 유지해 리렌더·순환을 끊는다(무목업·기능 불변, 값 변화 시에는 정상 갱신).
+    setSiteData((prev) =>
+      prev && prev.address === addr && prev.pnu === nextPnu
+        && prev.zoneType === nextZone && prev.landAreaSqm === nextLandAreaSqm
+        ? prev
+        : { address: addr, pnu: nextPnu, zoneType: nextZone, landAreaSqm: nextLandAreaSqm },
+    );
+    setStage((s) => (s === "result" ? s : "result"));
   }, [isBound, userInitiated, siteAnalysis?.address, siteAnalysis?.pnu, siteAnalysis?.zoneCode, siteAnalysis?.landAreaSqm]);
 
   // 결과 단계 진입 시 프로젝트의 최신 설계(design_versions) 존재 여부를 조회.

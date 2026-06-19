@@ -300,11 +300,19 @@ export function GlobalAddressSearch({
         return;
       }
 
-      updateSiteAnalysis({
+      // ★다필지 통합면적 보존 가드(AutoZoningBadge/LandIntelligencePanel과 동일 계약 — 이 경로가
+      //   누락돼 있었다): 이 /zoning/comprehensive는 '대표 1필지' 분석이라 analyzedAreaSqm은 대표
+      //   면적(작은 값)이다. SSOT가 이미 다필지 통합(parcelCount>1 && landAreaSqmTotal>0)이면
+      //   landAreaSqm을 대표값으로 덮으면 통합면적이 무너지고(상도동 11,229㎡→236㎡), enrichParcels의
+      //   통합값과 번갈아 기록돼 useEffect 진동(#185 렌더루프)을 유발한다. 다필지면 landAreaSqm 키를
+      //   빼서 통합 면적/메타를 보존한다(라이브 SSOT를 읽어 stale 클로저 회피).
+      const curSA = useProjectContextStore.getState().siteAnalysis;
+      const isMultiParcel = (curSA?.parcelCount ?? 1) > 1
+        && typeof curSA?.landAreaSqmTotal === "number" && curSA.landAreaSqmTotal > 0;
+      const basePayload = {
         address,
         pnu: data.pnu ?? siteAnalysis?.pnu ?? null,
         estimatedValue: siteAnalysis?.estimatedValue ?? null,
-        landAreaSqm: analyzedAreaSqm ?? siteAnalysis?.landAreaSqm ?? null,
         zoneCode: data.zone_type ?? siteAnalysis?.zoneCode ?? null,
         coordinates: data.coordinates ?? undefined,
         officialPrices: data.official_prices?.map((p) => ({ pnu: p.pnu, year: p.year, pricePerSqm: p.price_per_sqm })),
@@ -330,7 +338,12 @@ export function GlobalAddressSearch({
         } : undefined,
         dataSource: "백엔드 API (bcode:" + (bcode ?? "없음") + ")",
         fetchedAt: new Date().toISOString(),
-      });
+      };
+      updateSiteAnalysis(
+        isMultiParcel
+          ? basePayload // 다필지: landAreaSqm 미포함 → 통합 면적 보존(진동 차단)
+          : { ...basePayload, landAreaSqm: analyzedAreaSqm ?? siteAnalysis?.landAreaSqm ?? null },
+      );
     } catch {
       // 분석 실패해도 주소는 이미 저장됨
     } finally {
