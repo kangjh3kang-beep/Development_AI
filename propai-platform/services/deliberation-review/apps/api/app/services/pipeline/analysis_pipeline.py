@@ -8,6 +8,7 @@ Preflight(R0) → 법정 산정(R1.5) → 판정(R3) → 공학 시뮬(L3-B) →
 """
 from __future__ import annotations
 
+import math
 from datetime import date
 
 from app.contracts.analysis import AnalysisInput, AnalysisResult
@@ -309,7 +310,14 @@ def run_analysis(inp: AnalysisInput) -> AnalysisResult:
                     svs.append(SourceValue(source="vworld_landuse", value=has,
                                            ref=f"토지이용계획:{cf['land_use_pnu']}"))
             # INC-12: 합의 직전 신선도 게이트 — as_of(신청일) 대비 노후 출처 표면화(NEEDS_REVIEW 보수화).
-            cross_validations.append(cv.validate(cf["fact_key"], svs, as_of=inp.application_date))
+            # P4: 실측 사실(면적 등)은 입력 cf.rel_tol(상대오차)로 ±임계 합의 — 정상 측정차의 거짓 CONFLICT 방지.
+            # 안전 read(유한·[0,1] 수치만, 그 외 0.0=정확일치=무회귀). inf/거대값의 거짓 UNANIMOUS 차단.
+            # validator도 동일 방어 clamp(전 호출자) — 여기는 defense-in-depth. 사실별 opt-in이라 일괄 거짓합의 없음.
+            _rt = cf.get("rel_tol")
+            rel_tol = (float(_rt) if (isinstance(_rt, (int, float)) and not isinstance(_rt, bool)
+                                      and math.isfinite(_rt) and 0 <= _rt <= 1.0) else 0.0)
+            cross_validations.append(
+                cv.validate(cf["fact_key"], svs, as_of=inp.application_date, rel_tol=rel_tol))
 
     # 7) 정성 (L3-C) — 인용접지 등급화.
     qualitative: list[QualAssessment] = []
