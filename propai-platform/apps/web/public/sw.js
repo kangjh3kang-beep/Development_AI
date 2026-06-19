@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v264-multiparcel-area-guard-185fix";
+const CACHE_NAME = "propai-v265-dashboard-image-optim";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

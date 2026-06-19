@@ -25,8 +25,11 @@ export function PalatriaBanner() {
           className="palatria-banner__bg"
           aria-hidden="true"
           style={{
+            // ★성능: Supabase image transformation으로 리사이즈+webp 자동변환(브라우저 Accept 기반).
+            //   원본 1.5MB png(object/public)를 그대로 받아 대시보드 첫 로드/전환을 무겁게 하던 것을,
+            //   render/image(width 1600·quality 65)로 약 48KB webp까지 줄인다(약 97% 감소).
             backgroundImage:
-              'url("https://ykmeconwqbathcdejalr.supabase.co/storage/v1/object/public/section-media/images/1778997596187_na152fkgwnp.png")',
+              'url("https://ykmeconwqbathcdejalr.supabase.co/storage/v1/render/image/public/section-media/images/1778997596187_na152fkgwnp.png?width=1600&quality=65")',
             backgroundPosition: "right center",
           }}
         />
@@ -40,6 +43,8 @@ export function PalatriaBanner() {
             src="https://www.skygarage.net/logo-palatria.webp"
             alt="팔라트리아 로고"
             className="palatria-banner__logo"
+            loading="lazy"
+            decoding="async"
           />
           <div className="palatria-banner__brandtext">
             <span className="palatria-banner__eyebrow">SKY GARAGE · 스카이게러지</span>
