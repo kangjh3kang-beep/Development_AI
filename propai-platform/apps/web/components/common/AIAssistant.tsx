@@ -169,12 +169,21 @@ export function AIAssistant() {
         return;
       }
       if (!stream.text) throw new Error("빈 스트림 응답"); // 델타 0건 → 단발 폴백
-    } catch {
+    } catch (sseErr) {
       if (stream.text) {
         // 부분 출력 후 연결 단절 — 폴백하면 중복 답변이 되므로 중단 사실만 정직 표기
         appendDelta("\n\n(연결이 끊겨 응답이 중단되었습니다.)");
         return;
       }
+      // 인증 실패(401/403) 판별 — 로그인 만료/미로그인을 '네트워크 오류'로 오안내하지 않기 위함.
+      // SSE(readSseStream)는 throw 메시지에 '(HTTP 403)' 형태로 상태코드를 담고,
+      // 단발 폴백(apiClient)은 ApiClientError.status로 노출한다. status 우선, 메시지 정규식은 보조.
+      const isAuthFail = (e: unknown): boolean => {
+        const s = (e as { status?: number } | null | undefined)?.status;
+        if (s === 401 || s === 403) return true;
+        const m = e instanceof Error ? e.message : String(e ?? "");
+        return /HTTP 4(01|03)/.test(m);
+      };
       // 스트림 자체 실패(미지원 프록시·네트워크 등) → 기존 단발 /ai/chat 폴백
       try {
         const resp = await apiClient.post<{ ok?: boolean; reply?: string; message?: string }>("/ai/chat", {
@@ -182,8 +191,12 @@ export function AIAssistant() {
         });
         const reply = resp?.ok ? (resp.reply || "(빈 응답)") : (resp?.message || "AI 응답에 실패했습니다.");
         setMessages((c) => [...c, { id: assistantId, role: "assistant", content: reply }]);
-      } catch {
-        setMessages((c) => [...c, { id: assistantId, role: "assistant", content: "네트워크 오류로 응답하지 못했습니다." }]);
+      } catch (postErr) {
+        const authFail = isAuthFail(postErr) || isAuthFail(sseErr);
+        setMessages((c) => [...c, { id: assistantId, role: "assistant",
+          content: authFail
+            ? "로그인이 필요합니다. 다시 로그인한 뒤 이용해 주세요."
+            : "네트워크 오류로 응답하지 못했습니다." }]);
       }
     } finally {
       setIsLoading(false);

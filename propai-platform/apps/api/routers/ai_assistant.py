@@ -5,6 +5,7 @@
 서버 env의 ANTHROPIC/OPENAI 키를 사용하므로 사용자가 별도 키를 넣지 않아도 동작한다.
 """
 
+import contextlib
 import json
 import logging
 import os
@@ -119,6 +120,34 @@ def _sse(payload: dict) -> str:
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
+async def _plain_chat_text(msgs: list) -> str:
+    """단발 채팅(폴백) — 에이전트 미가용 시 기존 동작. 계측 단일경유 부착."""
+    from app.services.ai.base_interpreter import record_llm_response_billing
+    from app.services.ai.llm_provider import get_llm
+
+    llm = get_llm(timeout=30.0, max_tokens=1024)
+    resp = await llm.ainvoke(msgs)
+    with contextlib.suppress(Exception):
+        await record_llm_response_billing(llm, resp, service="ai_assistant")
+    return resp.content if isinstance(resp.content, str) else str(resp.content)
+
+
+async def _plain_chat_stream(msgs: list):
+    """단발 스트리밍(폴백) — 텍스트 청크를 yield. 종료 시 계측 단일경유."""
+    from app.services.ai.base_interpreter import record_llm_response_billing
+    from app.services.ai.llm_provider import get_llm
+
+    llm = get_llm(timeout=60.0, max_tokens=1024)
+    agg = None
+    async for chunk in llm.astream(msgs):
+        text = _chunk_text(chunk)
+        if text:
+            yield text
+        agg = chunk if agg is None else agg + chunk
+    with contextlib.suppress(Exception):
+        await record_llm_response_billing(llm, agg, service="ai_assistant")
+
+
 @router.get("/status")
 async def assistant_status():
     """서버(관리자 설정) LLM 키 가용 여부 — 비서 '연결됨' 판정용."""
@@ -141,15 +170,19 @@ async def assistant_chat(
         return {"ok": False, "reply": "", "error": "no_key",
                 "message": "서버 LLM 키가 설정되지 않았습니다. 관리자 키 설정 후 이용 가능합니다."}
     try:
-        from app.services.ai.llm_provider import get_llm
-
         msgs, has_user = _build_messages(req)
         if not has_user:
             return {"ok": True, "reply": "무엇을 도와드릴까요?"}
 
-        llm = get_llm(timeout=30.0, max_tokens=1024)
-        resp = await llm.ainvoke(msgs)
-        text = resp.content if isinstance(resp.content, str) else str(resp.content)
+        # 에이전트(도구 호출) 우선 — 미가용/실패 시 단발 채팅 폴백(무회귀).
+        # 도구는 읽기 전용이라 폴백 재호출에도 부작용 없음.
+        try:
+            from app.services.ai.assistant_agent import run_agent_collect
+
+            text = await run_agent_collect(msgs, service="ai_assistant")
+        except Exception as agent_err:  # noqa: BLE001
+            logger.info("AI 비서 에이전트 폴백(단발 /chat): %s", str(agent_err)[:120])
+            text = await _plain_chat_text(msgs)
         return {"ok": True, "reply": (text or "").strip() or "(빈 응답)"}
     except Exception as e:  # noqa: BLE001
         logger.warning("AI 비서 LLM 호출 실패: %s", str(e)[:160])
@@ -178,7 +211,7 @@ async def assistant_chat_stream(
             yield _sse({"done": True})
             return
         try:
-            from app.services.ai.llm_provider import get_llm
+            from app.services.ai.assistant_agent import run_agent_events
 
             msgs, has_user = _build_messages(req)
             if not has_user:
@@ -186,13 +219,34 @@ async def assistant_chat_stream(
                 yield _sse({"done": True})
                 return
 
-            llm = get_llm(timeout=60.0, max_tokens=1024)
+            # 에이전트(도구 호출) 우선. 도구 단계는 기존 SSE {"delta": ...} 텍스트로 합성 →
+            # 프론트(AIAssistant.tsx) 무변경. 출력 전 미가용/실패면 단발 스트림으로 폴백.
             emitted = False
-            async for chunk in llm.astream(msgs):
-                text = _chunk_text(chunk)
-                if text:
-                    emitted = True
-                    yield _sse({"delta": text})
+            fallback = False
+            try:
+                async for ev in run_agent_events(msgs, service="ai_assistant"):
+                    kind = ev.get("type")
+                    if kind == "delta":
+                        if ev.get("text"):
+                            emitted = True
+                            yield _sse({"delta": ev["text"]})
+                    elif kind == "tool_start":
+                        yield _sse({"delta": f"\n\n🔍 {ev.get('label', '도구')} 조회 중…\n"})
+                    elif kind == "tool_end":
+                        yield _sse({"delta": f"✓ {ev.get('label', '도구')} 완료\n\n"})
+            except Exception as agent_err:  # noqa: BLE001
+                # 답변 텍스트 출력 전 실패면 단발로 폴백, 이미 출력 후면 정직 중단(상위 except).
+                if emitted:
+                    raise
+                logger.info("AI 비서 에이전트 폴백(스트림): %s", str(agent_err)[:120])
+                fallback = True
+
+            if fallback:
+                async for text in _plain_chat_stream(msgs):
+                    if text:
+                        emitted = True
+                        yield _sse({"delta": text})
+
             if not emitted:
                 yield _sse({"delta": "(빈 응답)"})
             yield _sse({"done": True})
