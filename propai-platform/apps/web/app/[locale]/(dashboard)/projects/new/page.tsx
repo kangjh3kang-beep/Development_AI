@@ -52,6 +52,9 @@ export default function NewProjectPage() {
     if (!name.trim() || !location.trim()) return;
     setIsSubmitting(true);
 
+    // ★항상 '최신' siteAnalysis를 읽는다. 다필지 보강(enrichParcels)은 비동기라, 제출 직전 막
+    //   완료된 통합 면적(landAreaSqm=Σ, landAreaSqmTotal)이 여기 반영돼 있어야 신규 프로젝트로
+    //   정확히 승계된다(대표 1필지 면적이 통합을 덮던 근본버그 방지).
     const currentSiteAnalysis = useProjectContextStore.getState().siteAnalysis;
     let projectId = "";
 
@@ -65,8 +68,14 @@ export default function NewProjectPage() {
         area: currentSiteAnalysis?.landAreaSqm ? String(currentSiteAnalysis.landAreaSqm) : "0",
         type: "mixed",
         siteImageUrl: siteImageUrl || undefined,
-        // 다필지 통합 분석으로 생성된 경우 필지 수 캡처(대표지번 외 N필지 표기용)
-        parcelCount: currentSiteAnalysis?.parcels?.length || undefined,
+        // 다필지 통합 분석으로 생성된 경우 필지 수 캡처(대표지번 외 N필지 표기용).
+        // enrichParcels가 기록하는 통합 메타(parcelCount)를 우선 사용 — parcels 배열은
+        // 다필지 보강 경로에서 채워지지 않으므로(통합은 landAreaSqmTotal/parcelCount로 기록)
+        // parcels?.length만 보면 항상 미설정이라 "외 N필지" 표기가 누락되던 결함을 함께 해소.
+        parcelCount:
+          (currentSiteAnalysis?.parcelCount && currentSiteAnalysis.parcelCount > 1
+            ? currentSiteAnalysis.parcelCount
+            : currentSiteAnalysis?.parcels?.length) || undefined,
       });
     } catch (err) {
       console.error("프로젝트 저장 경고(이동은 계속):", err);
@@ -93,11 +102,17 @@ export default function NewProjectPage() {
     const targetId = backendId || projectId || `tmp-${Date.now()}`;
 
     try {
-      setProject(targetId, name, "draft");
-      const restored = currentSiteAnalysis ?? {
+      // ★setProject(신규 id)는 cross-module을 INITIAL로 리셋하므로, 전환 '직전'의 최신
+      //   siteAnalysis(통합 면적·용도지역 등 다필지 보강 결과 포함)를 캡처해 전환 후 재시드한다.
+      //   (전환 시 통합 분석이 통째로 비워지고 대표 1필지만 남던 근본버그의 직접 방지선.)
+      const latestSite = useProjectContextStore.getState().siteAnalysis ?? currentSiteAnalysis;
+      // address를 함께 넘겨 신규 프로젝트 시드 주소가 비지 않게 한다(빈 시드 → null 잔류 방지).
+      setProject(targetId, name, "draft", location);
+      const restored = latestSite ?? {
         estimatedValue: null, landAreaSqm: null, zoneCode: null, address: location, pnu: null,
       };
       if (!restored.address) restored.address = location;
+      // 통합 면적(landAreaSqm=Σ·landAreaSqmTotal·parcelCount 등 다필지 메타 포함)을 그대로 재시드.
       useProjectContextStore.getState().updateSiteAnalysis(restored);
     } catch (err) {
       console.error("컨텍스트 저장 경고(이동은 계속):", err);

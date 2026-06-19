@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v251-parcel-bcode-selfheal";
+const CACHE_NAME = "propai-v252-multiparcel-integrated-area";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

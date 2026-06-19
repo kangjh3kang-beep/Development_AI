@@ -243,7 +243,14 @@ export function GlobalAddressSearch({
 
       // WP-D 가드: 비기록 모드면 store 기록 생략, 트리거 시점과 활성 프로젝트가
       // 다르면(전환 race) 기록 중단 — 무관 프로젝트 스냅샷 오염 차단.
-      if (!writeToContext || useProjectContextStore.getState().projectId !== triggeredProjectId) {
+      // ★단, '프로젝트 생성 핸드오프'는 예외다: STEP01에서 검색을 시작하면 아직 프로젝트가
+      //   없어 triggeredProjectId=null이고, 사용자가 '프로젝트 시작'을 누르면 null→신규 id로
+      //   전환된다. 이 검색 결과는 바로 그 신규 프로젝트의 것이므로(무관 프로젝트가 아님)
+      //   기록을 막지 말아야 한다. 실제 오염은 '서로 다른 실제 id'로 전환됐을 때만 발생하므로
+      //   triggeredProjectId가 null이면(생성 전 검색) 현재 활성 프로젝트로의 기록을 허용한다.
+      const activePid = useProjectContextStore.getState().projectId;
+      const ownershipMismatch = triggeredProjectId !== null && activePid !== triggeredProjectId;
+      if (!writeToContext || ownershipMismatch) {
         return;
       }
 
@@ -453,7 +460,12 @@ export function GlobalAddressSearch({
     // WP-D: store 비기록 모드면 생략(콜백 전용). 단일/미확보 회귀 0: 유효필지 2개 미만이면 변경 없음.
     if (!writeToContext) return;
     // 프로젝트 전환 중이면 기록 중단(무관 프로젝트 SSOT 오염 차단 — 계정격리).
-    if (useProjectContextStore.getState().projectId !== triggeredProjectId) return;
+    // ★생성 핸드오프 예외: 보강 시작 시점에 프로젝트가 없었으면(triggeredProjectId=null) 그 검색은
+    //   곧 생성될 신규 프로젝트의 것이다. null→신규 id 전환은 '무관 프로젝트로의 전환'이 아니므로
+    //   통합 면적 기록을 막지 않는다(이게 막혀서 통합 11,229이 설계/사업개요에 도달하지 못하던
+    //   근본버그). 실제 오염(서로 다른 실제 id로 전환)일 때만 차단해 계정격리는 유지한다.
+    const activePidForSsot = useProjectContextStore.getState().projectId;
+    if (triggeredProjectId !== null && activePidForSsot !== triggeredProjectId) return;
     // ★'전체' 필지의 최신 state(latest=방금 functional updater로 읽음) + 이번 보강 누적값을 병합해
     //   '최종 유효 면적'을 산출한다. entries(이 호출의 입력)는 재시도 시 부분집합일 수 있으므로
     //   전체 합계는 반드시 latest(전 필지 최신값) 기준으로 계산해야 통합 면적이 정확하다.

@@ -463,9 +463,14 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
       </motion.div>
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
         {siteMatch === "match" && siteAnalysis?.address && (
-          <p className="text-xs text-emerald-500 mt-2 flex items-center gap-1.5">
+          <p className="text-xs text-emerald-500 mt-2 flex flex-wrap items-center gap-1.5">
             <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500" />
-            부지분석 연동: {siteAnalysis.address} ({siteAnalysis.zoneCode || effectiveZoning || "용도지역 미확인"})
+            {/* 다필지(parcelCount>1)면 통합 필지수·통합 대지면적을 정직 표기 — 설계 계산이
+                대표 1필지가 아니라 통합 면적(landAreaSqm=Σ) 기준임을 명확히 한다.
+                단일필지는 종전과 동일(주소·용도지역만) — 무회귀. */}
+            {(siteAnalysis.parcelCount ?? 1) > 1
+              ? `부지분석 연동: ${siteAnalysis.address} 외 ${(siteAnalysis.parcelCount ?? 1) - 1}필지 · 통합 대지면적 ${siteAnalysis.landAreaSqm != null ? `${Math.round(siteAnalysis.landAreaSqm).toLocaleString()}㎡` : "—"} (${siteAnalysis.zoneCode || effectiveZoning || "용도지역 미확인"}${siteAnalysis.zoneMixed ? " 외 혼합지" : ""})`
+              : `부지분석 연동: ${siteAnalysis.address} (${siteAnalysis.zoneCode || effectiveZoning || "용도지역 미확인"})`}
           </p>
         )}
         {siteMatch === "mismatch" && (

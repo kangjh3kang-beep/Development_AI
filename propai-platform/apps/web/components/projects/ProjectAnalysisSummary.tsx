@@ -106,6 +106,17 @@ export function ProjectAnalysisSummary() {
   //  · seededFromLegal=true → 조례·계획 승격 전 잠정 법정상한 → '잠정 법정상한(건폐/용적)'
   //  · 조례 확정값(ordinanceFar/Bcr) 존재 → '실효 한도(건폐/용적·조례반영)'
   //  · 그 외(실효 산출) → '실효 한도(건폐/용적)'
+  // 다필지 통합 면적 정직표기 — parcelCount>1이면 "통합 N필지" 라벨 + 대표면적 보조표기.
+  //   단일필지(parcelCount 미설정/1)는 종전과 동일하게 단일 면적만 표시(무회귀).
+  const isMultiParcel = (site?.parcelCount ?? 1) > 1;
+  const landAreaLabel = isMultiParcel ? `대지면적 (통합 ${site?.parcelCount}필지)` : "대지면적";
+  const landAreaValue =
+    site?.landAreaSqm != null
+      ? isMultiParcel && site?.repLandAreaSqm != null
+        ? `${num(site.landAreaSqm, " ㎡")} (대표 ${num(site.repLandAreaSqm, " ㎡")})`
+        : num(site.landAreaSqm, " ㎡")
+      : "—";
+
   const ord = site?.ordinance ?? null;
   const limitLabel = ord
     ? ord.seededFromLegal
@@ -170,8 +181,8 @@ export function ProjectAnalysisSummary() {
           rows={[
             ["주소", site?.address ?? "—"],
             ["PNU", site?.pnu ?? "—"],
-            ["용도지역", site?.zoneCode ?? "—"],
-            ["대지면적", site?.landAreaSqm != null ? num(site.landAreaSqm, " ㎡") : "—"],
+            ["용도지역", site?.zoneCode ? (site?.zoneMixed ? `${site.zoneCode} 외 (혼합지)` : site.zoneCode) : "—"],
+            [landAreaLabel, landAreaValue],
             ["공시지가(㎡)", officialPrice != null ? num(officialPrice, " 원") : "—"],
             ["최근접 지하철", subway?.name ? `${subway.name} (${num(subway.distance_m, "m")})` : "—"],
             ["최근접 학교", school?.name ? `${school.name} (${num(school.distance_m, "m")})` : "—"],

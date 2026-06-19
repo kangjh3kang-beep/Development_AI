@@ -1130,6 +1130,7 @@ export function ProjectPipelinePanel({
                 onChange={handleAddressChange}
                 placeholder="주소를 검색하세요 (예: 서울 강남구 역삼동)"
                 disabled={isRunning}
+                writeToContext={false}
               />
             </div>
             <button
