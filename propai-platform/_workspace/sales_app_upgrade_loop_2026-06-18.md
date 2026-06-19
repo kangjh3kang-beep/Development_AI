@@ -122,3 +122,8 @@ P0: (a)마이그레이션·부트스트랩 FORCE를 **정책 보유 테이블에
 
 **#7 종료 backlog(MEDIUM/LOW 이연)**: ①create_contract 만료 owner-HOLD 분기 순서(만료-우선 재배치=타직원 재선점 허용, 현재 fail-closed 오차단 — 즉시·무배포 수정) ②expire_holds dead-code(미스케줄+SalesUnitHold만 보고 inventory.held_by 미정리) 실배선 또는 lazy-expire 런타임보장+주석교정 ③claim_offer 서비스계층 customer IDOR 검증 대칭화(현재 엔드포인트만) ④draw 계약경로 ValueError→404 SSOT ⑤NotFoundError 공용 중립모듈 승격(청약→계약 방향결합 해소) ⑥desk_inv 역할게이트 ⑦member_node_id 현장검증 ⑧cancel_contract VOID필터·_set_unit_status DRY·sales_message_log 마이그·MhInventoryTxn site_id·VOID writer. ★전부 deploy-pending(라이브 PG 동시성·037 인덱스 23505강제·실발송 kakaoapi.example치환·tsc).
 **6개 완료**: #10(7.5)·#1(8.5)·#3(8.0)·#4(7.0)·#5(8.0)·#7(8.0). 다음 #2(7.8)→#8(7.1)→#9(7.2)→#6(8.1).
+
+| 2 | 워크스페이스·내비·PWA | 7.8 | 8.3 | 0 | (커밋대기) | 7 iter. WS 현장격리(4401/4403/4429 인증/인가)·★accept-then-close 전송계층 버그수정(pre-accept close→uvicorn 1006변환→프론트 분기 미발화, starlette TestClient 통합테스트로 검증)·연결단 throttle+슬라이딩윈도 rate-limit·RLS ctx 주입(silent-DoS)·유령소켓 finally·메모리누수·공용 _ws_hardening 추출 전역스윕(channel+social)·onAuthError 종단배선·self-heal·sw.js no-store. 41 백+vitest6 |
+
+**#2 종료 backlog(MEDIUM/LOW 이연)**: ①social room_users write-only vestigial(broadcast는 DB _member_ids fan-out이라 도청불가하나 disconnect 미prune 느린 증식)→subscribe/room_users 제거+SUBSCRIBE 화이트리스트서 제외(채널과 일치) ②sw.js X-PropAI-Stale 헤더 소비처 0(dead-wire)→network-first 화면 배지 배선 또는 헤더 제거 ③_authorize_site_channel 광범위 except가 DB일시장애와 비멤버를 동일 4403→인프라장애는 4429(백오프)/비멤버만 4403 분기 ④멀티워커 Redis 전역 throttle ⑤units_live held_by WS 마스킹 ⑥_conn_log LRU캡 ⑦siteCode prop 명명·socialWs onAuthError. ★deploy-pending(라이브 DB 인가·실브라우저 CloseEvent·tsc·sw런타임·멀티워커).
+**7개 완료**: #10(7.5)·#1(8.5)·#3(8.0)·#4(7.0)·#5(8.0)·#7(8.0)·#2(8.3). 다음 #8(7.1)→#9(7.2)→#6(8.1).

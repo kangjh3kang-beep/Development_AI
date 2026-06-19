@@ -17,9 +17,15 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { salesApi } from "@/lib/salesApi";
+import { salesApi, clearSiteToken } from "@/lib/salesApi";
 import { ApiClientError } from "@/lib/api-client";
-import { connectUnitBoardWs, type UnitBoardWsHandle, type UnitBoardWsStatus, type UnitStatusEvent } from "@/lib/unitBoardWs";
+import {
+  connectUnitBoardWs,
+  type UnitBoardWsHandle,
+  type UnitBoardWsStatus,
+  type UnitStatusEvent,
+  type AuthErrorReason,
+} from "@/lib/unitBoardWs";
 
 // ── 보드 모델 ─────────────────────────────────────────────────────
 type BoardStatus = "AVAILABLE" | "HOLD" | "CONTRACTED";
@@ -113,6 +119,9 @@ export default function UnitLiveBoard({ siteCode }: { siteCode: string }) {
   const [err, setErr] = useState("");
   const [holdTokens, setHoldTokens] = useState<HoldTokens>({});
   const [wsStatus, setWsStatus] = useState<UnitBoardWsStatus>("closed");
+  // WS 영구 거부(4401 인증/4403 인가) 사유. null=정상. 설정되면 자동재연결이 멈춘 상태라
+  // 좀비 '재연결 시도' 표기 대신 '조치 필요' 정직표기 + 복구 배너(재로그인/현장 재진입)를 띄운다.
+  const [wsAuthError, setWsAuthError] = useState<AuthErrorReason | null>(null);
   const [busy, setBusy] = useState<string | null>(null); // 진행중 unit_id(중복클릭 방지)
   const [toast, setToast] = useState<Toast | null>(null);
   const [now, setNow] = useState(() => Date.now());
@@ -130,6 +139,38 @@ export default function UnitLiveBoard({ siteCode }: { siteCode: string }) {
     if (toastTimer.current) clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToast(null), 3500);
   }, []);
+
+  // ── WS 영구 거부(4401/4403) 복구 액션 — ★사유별 정합(처방=착지=원인) ──────────────
+  // recoverAuth 는 거부 사유(wsAuthError)에 맞는 토큰을 정리하고 '라벨이 가리키는 화면'으로
+  // 정확히 착지해야 한다(처방-원인-착지 불일치 제거):
+  //   - 'unauthenticated'(4401): 플랫폼 access JWT 만료/무효가 원인 → access 토큰을 폐기하고
+  //     ★플랫폼 로그인 페이지로 직접 이동한다(라벨 '다시 로그인'=착지 일치). 과거엔 reload 만 해서
+  //     상위 SiteWorkspaceClient 가 현장 재진입 모달(SiteEnterModal)로 착지(라벨-착지 불일치)했다.
+  //     현장 토큰은 건드리지 않는다(access 만료가 원인이라 멀쩡한 현장 토큰을 날릴 이유가 없다).
+  //   - 'forbidden'(4403): 그 현장 멤버십 상실이 원인 → 현장 토큰(site_token)만 폐기하고 reload 해
+  //     상위 권한 재조회가 403 을 감지 → 현장 재진입(2차 비밀번호) 흐름으로 유도한다(현행 유지,
+  //     access 토큰은 유효하므로 보존). ★scoped: 전역 apiClient 401 리다이렉트 같은 광범위 변경은
+  //     회귀위험이라 하지 않고, 이 컴포넌트 안에서 4401 만 명시 navigate 한다.
+  const ACCESS_TOKEN_KEY = "propai_access_token"; // 플랫폼 access JWT 보관 키(api-client 와 동일).
+  const recoverAuth = useCallback(() => {
+    if (typeof window === "undefined") return;
+    if (wsAuthError === "unauthenticated") {
+      // 4401: access 토큰 만료 → access 토큰 폐기 후 로그인 페이지로 착지(라벨=착지 일치).
+      try {
+        window.localStorage.removeItem(ACCESS_TOKEN_KEY);
+      } catch {
+        /* localStorage 비활성 환경 무시 */
+      }
+      // 현재 경로의 첫 세그먼트가 로케일(/{locale}/...)이다. 없으면 'ko' 폴백(다른 컴포넌트와 동일 패턴).
+      const seg = window.location.pathname.split("/").filter(Boolean)[0];
+      const locale = seg || "ko";
+      window.location.assign(`/${locale}/login`);
+      return;
+    }
+    // 4403: 현장 멤버십 상실 → 현장 토큰만 폐기 후 reload(상위 권한 재조회 403 감지 → 현장 재진입).
+    clearSiteToken(siteCode);
+    window.location.reload();
+  }, [siteCode, wsAuthError]);
 
   // ── 보드 조회 ───────────────────────────────────────────────────
   const loadBoard = useCallback(
@@ -181,7 +222,16 @@ export default function UnitLiveBoard({ siteCode }: { siteCode: string }) {
       (s) => {
         setWsStatus(s);
         // 재연결(open)되면 그동안 놓친 변경을 보드 재조회로 보정.
-        if (s === "open") loadBoard({ silent: true });
+        // 또한 (일시오류 후) 재연결 성공 시 이전 영구거부 배너가 남아있으면 해제(자기치유).
+        if (s === "open") {
+          setWsAuthError(null);
+          loadBoard({ silent: true });
+        }
+      },
+      // 영구 거부(4401 인증/4403 인가) 시 자동재연결이 멈췄음을 상위에 통지 — 좀비 '재연결 중'
+      // 거짓표기 대신 사유별 복구 배너(재로그인/현장 재진입)를 띄우도록 상태를 세운다.
+      (reason) => {
+        setWsAuthError(reason);
       },
     );
     wsRef.current = handle;
@@ -411,11 +461,24 @@ export default function UnitLiveBoard({ siteCode }: { siteCode: string }) {
         <span className="flex items-center gap-1.5 text-xs font-semibold">
           <i
             className={`inline-block h-2.5 w-2.5 rounded-full ${
-              wsStatus === "open" ? "bg-[var(--status-success)]" : wsStatus === "connecting" ? "animate-pulse bg-[var(--status-warning)]" : "bg-[var(--text-hint)]"
+              wsStatus === "open"
+                ? "bg-[var(--status-success)]"
+                : wsAuthError
+                  ? "bg-[var(--status-error)]"
+                  : wsStatus === "connecting"
+                    ? "animate-pulse bg-[var(--status-warning)]"
+                    : "bg-[var(--text-hint)]"
             }`}
           />
           <span className="text-[var(--text-secondary)]">
-            {wsStatus === "open" ? "실시간 연결됨" : wsStatus === "connecting" ? "연결 중…" : "연결 끊김(재연결 시도)"}
+            {/* ★영구 거부(4401/4403)면 자동재연결을 멈춘 상태 — 거짓 '재연결 시도' 대신 정직표기. */}
+            {wsStatus === "open"
+              ? "실시간 연결됨"
+              : wsAuthError
+                ? "연결 중단(조치 필요)"
+                : wsStatus === "connecting"
+                  ? "연결 중…"
+                  : "연결 끊김(재연결 시도)"}
           </span>
         </span>
         <button
@@ -433,6 +496,28 @@ export default function UnitLiveBoard({ siteCode }: { siteCode: string }) {
           ))}
         </div>
       </div>
+
+      {/* ★WS 영구 거부(4401 인증/4403 인가) 복구 배너 — 자동재연결이 멈춘 상태라 사용자 조치가
+          필요하다. 사유별 안내 + 복구 CTA(재로그인/현장 재진입)로 종단 배선(반쪽출하 금지). */}
+      {wsAuthError && (
+        <div
+          role="alert"
+          className="flex flex-wrap items-center gap-2 rounded-lg border border-[color:color-mix(in_srgb,var(--status-error)_45%,transparent)] bg-[color:color-mix(in_srgb,var(--status-error)_10%,transparent)] px-3 py-2.5 text-xs font-semibold text-[var(--status-error)]"
+        >
+          <span aria-hidden>⚠</span>
+          <span>
+            {wsAuthError === "unauthenticated"
+              ? "세션이 만료되었습니다. 실시간 연결이 중단되었습니다 — 다시 로그인해 주세요."
+              : "이 현장에 접근 권한이 없습니다. 실시간 연결이 중단되었습니다 — 현장에 다시 진입해 주세요."}
+          </span>
+          <button
+            onClick={recoverAuth}
+            className="ml-auto rounded-lg bg-[var(--status-error)] px-3 py-1 font-bold text-white transition hover:opacity-90"
+          >
+            {wsAuthError === "unauthenticated" ? "다시 로그인" : "현장 재진입"}
+          </button>
+        </div>
+      )}
 
       {toast && (
         <div

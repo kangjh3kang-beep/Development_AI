@@ -13,8 +13,12 @@ class WSManager:
     def __init__(self):
         self.channels: dict[str, set[WebSocket]] = defaultdict(set)
 
-    async def connect(self, channel_id: str, ws: WebSocket):
-        await ws.accept()
+    async def connect(self, channel_id: str, ws: WebSocket, already_accepted: bool = False):
+        # already_accepted=True 면 호출부가 이미 ws.accept() 를 끝낸 상태(예: ws_routes 의
+        # accept-then-close 인증/인가 게이트)다. 이때 다시 accept 하면 'WebSocket already accepted'
+        # 계약 위반/RuntimeError 가 나므로 accept 를 건너뛴다. 기본값 False 라 기존 호출부는 무영향.
+        if not already_accepted:
+            await ws.accept()
         self.channels[channel_id].add(ws)
 
     def disconnect(self, channel_id: str, ws: WebSocket):

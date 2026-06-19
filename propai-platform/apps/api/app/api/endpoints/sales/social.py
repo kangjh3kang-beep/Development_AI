@@ -33,8 +33,9 @@
   → Redis Pub/Sub 백플레인(채널=room_id) 도입 필요(아래 _SocialWSManager TODO 참조).
 """
 
+import contextlib
 import uuid
-from datetime import datetime, timezone, UTC
+from datetime import UTC, datetime, timezone
 
 from fastapi import (
     APIRouter,
@@ -49,10 +50,25 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
-from app.core.database import async_session_factory
+from app.api.endpoints.sales._ws_hardening import (
+    WS_CLOSE_THROTTLED,
+    WS_CLOSE_UNAUTHENTICATED,
+    ConnThrottle,
+    InboundLimiter,
+    authenticate_ws,
+)
 from app.core.config_sales import sales_settings
+from app.core.database import async_session_factory
 
 social_router = APIRouter(prefix="/api/v1/social", tags=["sales-social"])
+
+# ── 소셜 WS 인바운드 타입 화이트리스트 + 연결 throttle(공용 하드닝) ──
+# 소셜 WS 클라(lib/socialWs.ts)는 PING(heartbeat)·SUBSCRIBE(방 구독)만 보낸다. 그 외 타입은
+# 무시한다(공격면 협소화). 연결 throttle 은 채널 WS 와 분리된 전용 인스턴스(엔드포인트별 격리).
+_SOCIAL_ALLOWED_CLIENT_TYPES = {"PING", "SUBSCRIBE"}
+_social_conn_throttle = ConnThrottle()
+# ★호환: 운영 디버깅/테스트가 모듈 속성으로 키별 타임스탬프 dict 를 직접 조회/초기화할 수 있게 노출.
+_social_conn_log = _social_conn_throttle._log
 
 # 광고성 다중톡(broadcast) 야간 발송 제한(개인정보보호법·정보통신망법 야간광고 가드)
 _NIGHT_START_HOUR = 21  # 21:00 이후
@@ -149,8 +165,12 @@ class _SocialWSManager:
         # room_id -> 구독 user_id 들
         self.room_users: dict[str, set[str]] = {}
 
-    async def connect(self, user_id: str, ws: WebSocket) -> None:
-        await ws.accept()
+    async def connect(self, user_id: str, ws: WebSocket, already_accepted: bool = False) -> None:
+        # already_accepted=True 면 호출부가 이미 ws.accept() 를 끝낸 상태(accept-then-close 인증
+        # 게이트)다. 이때 다시 accept 하면 'WebSocket already accepted' 계약 위반/RuntimeError 가
+        # 나므로 accept 를 건너뛴다. 기본값 False 라 기존 호출부(있다면)는 무영향.
+        if not already_accepted:
+            await ws.accept()
         self.user_sockets.setdefault(user_id, set()).add(ws)
 
     def disconnect(self, user_id: str, ws: WebSocket) -> None:
@@ -735,32 +755,48 @@ async def broadcast(body: BroadcastBody, db: AsyncSession = Depends(get_db),
 
 
 # ═══════════════════════════════════ WebSocket ════════════════════════════════
-async def _authenticate_ws(token: str) -> str | None:
-    """WS 쿼리 토큰(JWT) 검증 → user_id. get_current_user 와 동일 규칙."""
-    try:
-        from jose import jwt
-        from app.core.config import settings
-        payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
-        user_id = payload.get("sub")
-        kind = payload.get("type") or payload.get("token_type")
-        if not user_id or kind != "access":
-            return None
-        return str(user_id)
-    except Exception:  # noqa: BLE001
-        return None
-
-
 @social_router.websocket("/ws")
 async def social_ws(ws: WebSocket, token: str = Query(...)):
     """소셜 실시간 WS — 토큰 인증 후 내 방 전부 구독. 메시지 POST 시 룸 구독자에게 push.
 
+    ★공용 하드닝(iter-7 — 채널 WS 와 동일 계약): 연결 throttle(4429)·accept-then-close 인증
+      거부(4401)·인바운드 슬라이딩윈도 rate-limit(4429)·바이트 크기캡·타입 화이트리스트
+      ({PING,SUBSCRIBE})를 _ws_hardening 공용 헬퍼로 적용한다. close-code 의미는 채널 WS 와
+      동일(SSOT)이라 프론트(socialWs.ts) 재연결 분기가 일관된다.
+
     ★★단일워커 전제. worker>1 시 Redis Pub/Sub 백플레인 필요(상단 _SocialWSManager 주석).
     """
-    user_id = await _authenticate_ws(token)
-    if not user_id:
-        await ws.close(code=4401)  # Unauthorized
+    # ── 0) 연결 throttle(★accept·인증/DB 조회 이전): 유효 토큰 1개로 무한 재연결 → 매 연결마다
+    #   인증 + 내 방 구독 DB 조회(_ensure + chat_members SELECT)가 증폭돼 silent-DoS 가 된다.
+    #   가장 앞단에서 슬라이딩윈도로 연결을 세고, 한도 초과 시 accept/DB 조회 없이 즉시 4429 로 끊는다.
+    #   ★throttle 만 accept 이전: pre-accept close 는 전송계층(uvicorn)에서 1006 으로 변환되나,
+    #     throttle 클라 동작은 '백오프 재연결'이라 1006 을 받아도 동일해 무방하다(아래 인증 거부는
+    #     accept-then-close 로 4401 코드를 그대로 전달).
+    #   ★키는 토큰 sub 우선. 무효 토큰이면 user_id=None → IP/unknown 키로 throttle(무효 토큰 폭주도 차단).
+    user_id = authenticate_ws(token, require_access_only=True)
+    if not _social_conn_throttle.allowed(_social_conn_throttle.key_for(user_id, ws)):
+        await ws.close(code=WS_CLOSE_THROTTLED)  # 연결 폭주 차단(accept/DB 조회 이전).
         return
-    await social_ws_manager.connect(user_id, ws)
+
+    # ── 1) accept(★전송계층 갭 봉합): 인증 거부 코드(4401)를 클라에 코드 그대로 전달하려면 반드시
+    #   accept(handshake 완료) 이후에 close 해야 한다. accept 이전 close 는 uvicorn 0.42.0
+    #   (websockets 16.0)이 handshake 거부(HTTP 4xx)로 변환해 Close 프레임을 보내지 않으므로
+    #   실브라우저는 1006 만 받고 socialWs.ts 의 4401 분기가 미발화한다. throttle 이 앞단에서
+    #   연결 폭주를 막으므로 accept 후 인증 비용은 제한된다.
+    await ws.accept()
+
+    # ── 2) 인증: 토큰 없으면/무효면 accept 후 close(4401) → 클라가 코드 4401 을 그대로 수신 ──
+    if not user_id:
+        await ws.close(code=WS_CLOSE_UNAUTHENTICATED)  # accept 후이므로 Close 코드가 그대로 전달됨.
+        return
+
+    # 인증 통과 후에만 소켓 등록(이미 accept 했으므로 already_accepted=True 로 이중 accept 방지).
+    await social_ws_manager.connect(user_id, ws, already_accepted=True)
+    # ── 3) 인바운드 rate-limit + 바이트 크기캡 + 타입 화이트리스트(주입/플러딩 방어) ──
+    # ★소켓 해제(유령소켓 방지)는 try/finally 로 단일화한다. rate-limit close(4429) 후 break,
+    #   정상 close, WebSocketDisconnect, 예기치 못한 예외 — 모든 종료 경로가 finally 를 거쳐
+    #   disconnect 를 정확히 1회 호출한다.
+    limiter = InboundLimiter()
     try:
         # 내 방 전체 구독 등록(메시지 라우팅용)
         async with async_session_factory() as db:
@@ -771,13 +807,31 @@ async def social_ws(ws: WebSocket, token: str = Query(...)):
         social_ws_manager.set_rooms([str(r) for r in rooms], user_id)
         await ws.send_json({"type": "READY", "rooms": [str(r) for r in rooms]})
         while True:
-            # 클라이언트 핑/구독갱신 수신(서버→클라 push 가 주, 클라 메시지는 무시·재구독만)
-            msg = await ws.receive_json()
-            if isinstance(msg, dict) and msg.get("type") == "SUBSCRIBE" and msg.get("room_id"):
+            # 클라이언트 핑/구독갱신 수신(서버→클라 push 가 주, 클라 메시지는 PING·SUBSCRIBE 만).
+            # ★receive_json 대신 receive_text 로 받아 바이트 크기캡을 먼저 적용한다(대형 페이로드 차단).
+            raw = await ws.receive_text()
+            # 최근 윈도 구간 메시지 수 초과 시 연결 종료(플러딩 차단).
+            if limiter.over_rate():
+                await ws.close(code=WS_CLOSE_THROTTLED)
+                break
+            # 과도한 페이로드 차단(바이트 길이 기준 — 멀티바이트 한글 과소측정 방지).
+            if limiter.too_large(raw):
+                continue  # 비정상 대형 메시지는 무시.
+            # 허용 스키마만 수용 — 잘못된 JSON·비-dict·미허용 타입은 무시(서버 상태 변경 없음).
+            msg = limiter.parse_allowed(raw, _SOCIAL_ALLOWED_CLIENT_TYPES)
+            if msg is None:
+                continue
+            mtype = msg.get("type")
+            if mtype == "SUBSCRIBE" and msg.get("room_id"):
                 social_ws_manager.subscribe(str(msg["room_id"]), user_id)
-            elif isinstance(msg, dict) and msg.get("type") == "PING":
-                await ws.send_json({"type": "PONG"})
+            elif mtype == "PING":
+                # 전송 실패(소켓 종료 중 등)는 무해 — 다음 루프/onclose 가 정리한다.
+                with contextlib.suppress(Exception):
+                    await ws.send_json({"type": "PONG"})
     except WebSocketDisconnect:
-        social_ws_manager.disconnect(user_id, ws)
-    except Exception:  # noqa: BLE001
+        pass  # 정상 종료 — 소켓 해제는 finally 에서 단일 수행.
+    except Exception:  # noqa: BLE001 - 예기치 못한 오류도 finally 에서 반드시 소켓 해제(유령소켓 방지).
+        pass
+    finally:
+        # ★모든 종료 경로 단일 소켓 해제(break/예외/정상 close 무관). 멱등(disconnect 가 set.discard 류).
         social_ws_manager.disconnect(user_id, ws)

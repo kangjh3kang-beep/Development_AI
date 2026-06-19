@@ -125,6 +125,41 @@ ORDER BY c.relname
 
 _ORG_TABLE = "sales_org_nodes"
 
+
+async def bootstrap_superadmin_ctx(db) -> None:
+    """비-deps_sales 경로(예: WS 인가)의 bare 세션에 SUPERADMIN 부트스트랩 RLS 컨텍스트를 주입한다.
+
+    ★왜 필요한가(silent-DoS 차단):
+      v62_2_sales_rls.py 가 SalesOrgNode(sales_org_nodes)에 ENABLE+FORCE RLS 를 건다(p_site +
+      p_org). SalesSite(sales_sites)는 site_id 컬럼이 없어 v62_2 의 site_id 동적 루프 대상이 아니라
+      RLS 정책이 적용되지 않는다(즉 bare 세션도 평소엔 조회 가능). 다만 ① 향후 정책 추가/수동 DDL,
+      ② resolve_site_membership 내부의 조직노드(sales_org_nodes) 조회가 RLS 보호 대상이라, 운영
+      role 이 'BYPASSRLS 아님'으로 전환되면 세션변수(app.site_id/app.role) 미주입 bare 세션이
+      조직노드를 0행만 보게 되어 membership=None 으로 오판→'정상 멤버 전원 4403' + 지수백오프 재연결
+      폭주(silent-DoS)가 난다. 이를 막기 위해 인가용 조회 직전에 SUPERADMIN 컨텍스트를 명시 주입해,
+      정책 USING 절의 'OR current_setting('app.role') = 'SUPERADMIN'' 분기로 정상 조회하게 한다.
+      (방어 자체는 정당 — 정책 적용 테이블 범위는 site_id 보유 여부에 따라 달라지므로, 'SalesSite·
+       SalesOrgNode 둘 다 RLS' 라는 옛 서술은 부정확이라 정정한다.)
+
+    ★누수 방지: set_config(..., is_local=true) = SET LOCAL 로만 주입 → 트랜잭션 종료 시 자동
+      소멸(풀러 누수 없음). deps_sales._apply_session_ctx 와 동일한 SET LOCAL 계약을 따른다.
+
+    ★commit 경로 안전(계약 통일): 과거엔 raw set_config 3회를 직접 실행해 after_begin 재주입
+      리스너가 등록되지 않았다. 그래서 같은 세션이 commit 을 포함하는 경로에서 재사용되면 첫 commit
+      후 SUPERADMIN 컨텍스트가 소멸→silent RLS 차단(0행) 회귀가 가능했다. 읽기전용 단일 트랜잭션엔
+      무해하나, deps_sales._apply_session_ctx(role=SUPERADMIN) 경유로 통일해 after_begin 자동
+      재주입까지 항구화한다(SET LOCAL 계약·USING 절 키는 동일 — #1 RLS 부트스트랩 정책 불간섭).
+
+    ★site_id/org_path 는 빈문자열('')로 함께 주입한다 — 정책의 nullif(...,'') 가드가 이를 NULL
+      로 만들어 '::uuid/::ltree 캐스트 에러'를 방지한다(role=SUPERADMIN 분기로 통과하므로 값은
+      불필요하나, 캐스트 안전을 위해 명시적으로 비운다).
+    """
+    # ★_apply_session_ctx 경유(commit 후 after_begin 자동 재주입 등록). deps_sales 는 본 모듈을
+    #   import 하지 않으므로(단방향) 순환 없음 — 함수 내 지연 import 로 모듈 로드시 결합도 0 유지.
+    from app.api.deps_sales import _apply_session_ctx
+
+    await _apply_session_ctx(db, site_id="", org_path="", role="SUPERADMIN")
+
 # 부트스트랩 DDL 의 프로세스/요청 동시 호출 race 제거용 전역 advisory lock 키(임의 상수).
 # pg_advisory_xact_lock 은 트랜잭션 종료(commit/rollback) 시 자동 해제되므로 누수 없음.
 # ★마이그레이션이 정본이며, 본 lock 은 런타임 부트스트랩 중복 실행의 race 만 막는다.
