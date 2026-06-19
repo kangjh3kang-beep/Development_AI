@@ -413,9 +413,10 @@ def run_analysis(inp: AnalysisInput) -> AnalysisResult:
         items, snapshot_id=inp.snapshot_id, model_version=inp.model_version
     )
 
-    # 9) 규제 지식그래프 (P3) — 조문↔룰↔변수↔완화.
+    # 9) 규제 지식그래프 (P3) — 조문↔룰↔변수↔완화. land_card 용도지역 시 변수에 국가 규제 상한 독립 부착(P5·1차출처).
     reg_graph = (
-        build_reg_graph(parsed_rules, inp.mirror_rules)
+        build_reg_graph(parsed_rules, inp.mirror_rules,
+                        use_zone=(land_card.use_zone if land_card else None))
         if (parsed_rules or inp.mirror_rules) else None
     )
 

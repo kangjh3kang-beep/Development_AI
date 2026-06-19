@@ -1,0 +1,73 @@
+"""P3+ — 용도지역 국가 규제 상한 제공자(INV-3). 코드 하드코딩 금지 → 버전 데이터파일 로드.
+
+값은 app/data/national_zone_limits.json(시행령 §84/§85 상한·national 베이스라인)에서 로드(parameters.py 패턴).
+DB override(set_override) 가능 — 조례 강화/개정을 코드 변경 없이 주입. 코드 내 법정 수치 리터럴 0건(INV-3 통과).
+엔진이 입력 limit를 echo하지 않고 용도지역에서 **독립** 한도를 해소(reg_graph 수치 한도) → 플랫폼 한도와 divergence(P5).
+"""
+from __future__ import annotations
+
+import json
+import pathlib
+from typing import Any
+
+_DATA_PATH = pathlib.Path(__file__).resolve().parents[2] / "data" / "national_zone_limits.json"
+
+# 산정 변수 → 데이터파일 한도 키(값은 문자열 — INV-3 스캐너 numeric 면제). 비대상 변수(building_height 등)는 미수록.
+_VAR_TO_KEY: dict[str, str] = {
+    "building_area": "bcr_pct",
+    "far_floor_area": "far_pct",
+    "gross_floor_area": "far_pct",
+}
+
+_cache: dict[str, Any] | None = None
+_override: dict[str, dict[str, Any]] = {}
+
+
+def _load() -> dict[str, Any]:
+    global _cache
+    if _cache is None:
+        _cache = json.loads(_DATA_PATH.read_text(encoding="utf-8"))
+    return _cache
+
+
+def reload() -> None:
+    """캐시 무효화(테스트/재적재용)."""
+    global _cache
+    _cache = None
+
+
+def set_zone_override(zone: str, limits: dict[str, Any]) -> None:
+    """DB/런타임 주입값으로 특정 용도지역 한도 override(조례 강화 등). 데이터파일 우선순위 < override."""
+    _override[zone] = limits
+
+
+def _norm_zone(use_zone: str | None, zones: dict[str, Any]) -> str | None:
+    """용도지역 명칭 정규화 — 공백 제거 + '지역' 접미 보정. 데이터 키와 매칭되는 정규명 반환(미매칭 None)."""
+    if not use_zone:
+        return None
+    z = str(use_zone).replace(" ", "").strip()
+    if not z:
+        return None
+    if z in zones or z in _override:
+        return z
+    if (z + "지역") in zones or (z + "지역") in _override:
+        return z + "지역"
+    return None
+
+
+def resolve_zone_limit(use_zone: str | None, target_variable: str | None) -> tuple[float, str] | None:
+    """(용도지역, 산정변수) → (한도%, 출처). 미상 zone/비대상 변수/미수록 → None(날조 금지·표면화)."""
+    key = _VAR_TO_KEY.get(target_variable or "")
+    if not key:
+        return None
+    data = _load()
+    zones = data.get("zones") or {}
+    z = _norm_zone(use_zone, zones)
+    if z is None:
+        return None
+    entry = _override.get(z) or zones.get(z) or {}
+    val = entry.get(key)
+    if val is None:
+        return None
+    src = (data.get("_meta") or {}).get("source") or "national_zone_limits"
+    return float(val), f"{src}:{z}"
