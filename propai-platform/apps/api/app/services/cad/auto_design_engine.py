@@ -21,10 +21,14 @@ import structlog
 logger = structlog.get_logger(__name__)
 
 
-# ── 법규 한도 (building_compliance_service.ZONE_LIMITS 동등) ──
+# ── 설계엔진 기본 한도 — 보수적/전형 조례 수준 베이스라인(국가 시행령 상한 '이하') ──
+# ⚠️ authoritative 국가 상한이 아니다: 국가 시행령 §84/§85 상한은 auto_zoning_service.ZONE_LIMITS /
+#    엔진 national_zone_limits.json(SSOT)에 있다(예: 제2종일반주거 국가상한 far 250%이나 본 설계 기본값은
+#    전형 조례 수준 200%). 조례 실효값은 get_legal_limits 소비측에서 min(기본,조례,목표)로 가감한다.
+#    설계 기본값이 국가 상한을 초과하면 위법 설계 → test_zone_limits_engine_sync 관계 가드(≤)가 차단.
 
 class LegalLimits(NamedTuple):
-    """용도지역별 법규 한도."""
+    """용도지역별 설계엔진 기본 한도(보수적/전형 조례 수준 — 국가 상한 아님)."""
     building_coverage_ratio: float  # 건폐율 (0~1)
     floor_area_ratio: float  # 용적률 (0~N)
     max_height_m: float  # 최고 높이 (m)
@@ -216,12 +220,15 @@ class AutoDesignEngineService:
 
     @staticmethod
     def get_legal_limits(zone_code: str) -> dict[str, Any]:
-        """용도지역 코드로 법규 한도를 조회한다.
+        """용도지역 코드로 설계엔진 기본 한도를 조회한다.
 
-        주의: 본 한도는 ZONE_LIMITS의 국토계획법 시행령 '법정 상한' 기준이며,
-        지자체 도시계획조례·지구단위계획 가감을 반영하지 않는다(설계엔진 경로 한정).
-        조례 실효 한도가 필요한 정밀 산정은 feasibility_service_v2(ordinance_far_pct/
-        ordinance_bcr_pct, land_info_service 출처)를 사용한다. 출처를 정직 표기한다.
+        ⚠️ 본 한도는 ZONE_LIMITS의 **설계엔진 보수적 기본값(전형 조례 수준)** 이며 국가 시행령 '법정 상한'
+        그 자체가 아니다(일부 용도지역은 국가 상한보다 보수적 — 예 제2종일반주거 200% vs 국가상한 250%).
+        authoritative 국가 상한은 auto_zoning_service.ZONE_LIMITS / 엔진 national_zone_limits.json(SSOT).
+        지자체 도시계획조례·지구단위계획 가감은 미반영(설계엔진 경로 한정) — 조례 실효 한도가 필요한 정밀
+        산정은 feasibility_service_v2(ordinance_far_pct/bcr_pct, land_info_service 출처)를 사용한다.
+        ⚠️ 출력 키 statutory_max_*_percent는 본 기본값을 담으며(역사적 명명) 국가 상한과 다를 수 있다(제품 후속:
+        명칭 정정·국가상한 default 채택 여부 검토). 출처(limits_source)를 정직 표기한다.
         """
         limits = ZONE_LIMITS.get(zone_code)
         is_known = limits is not None
