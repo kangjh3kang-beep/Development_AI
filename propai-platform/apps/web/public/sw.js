@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v256-permit-node";
+const CACHE_NAME = "propai-v257-devtype-feedback";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

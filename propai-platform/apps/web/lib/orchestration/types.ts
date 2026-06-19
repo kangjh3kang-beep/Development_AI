@@ -99,7 +99,11 @@ export interface SsotOutputSpec {
     | "updateFeasibilityData"
     | "updateEsgData"
     | "updateComplianceData"
-    | "markFinanceUpdated";
+    | "markFinanceUpdated"
+    // (Phase C-1) 추천 노드 → feasibilityData.developmentType만 부분패치.
+    // updatedAt.feasibility를 stamp하지 않는 전용 액션(setRecommendedDevType)으로 환류해
+    // 파생 노드가 수지 staleness를 오염시키는 함정을 피한다(node-registry 주석 참조).
+    | "setRecommendedDevType";
   /** 노드 산출은 항상 auto(머지가드가 user 입력값을 보존). */
   source: "auto";
   /** true=부분패치(예: sales→feasibilityData의 매출만 갱신). */

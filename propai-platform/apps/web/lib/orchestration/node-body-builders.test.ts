@@ -153,6 +153,76 @@ describe("buildNodeBody — 노드별 평면 body 매핑", () => {
     expect(body.building_type).toBe("공동주택");
   });
 
+  it("feasibility(Phase C-1): 추천 환류값(M08)이 development_type으로 우선 채택", () => {
+    const ctx: NodeBodyContext = {
+      siteAnalysis: multiSite(),
+      designData: design(),
+      // 상류 recommend가 환류한 추천 개발방식(오피스텔=M08).
+      feasibilityData: {
+        totalCostWon: null,
+        totalRevenueWon: null,
+        profitRatePct: null,
+        grade: null,
+        developmentType: "M08",
+      } as FeasibilityData,
+    };
+    const { body, missing } = buildNodeBody("feasibility", ctx, "p1");
+    expect(missing).toEqual([]);
+    expect(body.development_type).toBe("M08"); // ★고정 M06이 아니라 추천값
+  });
+
+  it("feasibility(Phase C-1): 추천 미환류(developmentType 부재)면 백엔드 기본 M06 폴백(무회귀)", () => {
+    const ctx: NodeBodyContext = {
+      siteAnalysis: multiSite(),
+      designData: design(),
+      feasibilityData: {
+        totalCostWon: 100,
+        totalRevenueWon: null,
+        profitRatePct: null,
+        grade: null,
+        // developmentType 미설정(구 스냅샷·추천 미실행).
+      } as FeasibilityData,
+    };
+    const { body } = buildNodeBody("feasibility", ctx, "p1");
+    expect(body.development_type).toBe("M06");
+  });
+
+  it("feasibility(Phase C-1): 비정상 코드(빈/소문자/범위밖)는 M06 폴백(날조 차단)", () => {
+    for (const bad of ["", "  ", "m06", "M00", "M16", "X1", "재개발"]) {
+      const ctx: NodeBodyContext = {
+        siteAnalysis: multiSite(),
+        designData: design(),
+        feasibilityData: {
+          totalCostWon: null,
+          totalRevenueWon: null,
+          profitRatePct: null,
+          grade: null,
+          developmentType: bad,
+        } as FeasibilityData,
+      };
+      const { body } = buildNodeBody("feasibility", ctx, "p1");
+      expect(body.development_type).toBe("M06");
+    }
+  });
+
+  it("feasibility(Phase C-1): 경계 코드 M01·M15는 그대로 채택", () => {
+    for (const ok of ["M01", "M15"]) {
+      const ctx: NodeBodyContext = {
+        siteAnalysis: multiSite(),
+        designData: design(),
+        feasibilityData: {
+          totalCostWon: null,
+          totalRevenueWon: null,
+          profitRatePct: null,
+          grade: null,
+          developmentType: ok,
+        } as FeasibilityData,
+      };
+      const { body } = buildNodeBody("feasibility", ctx, "p1");
+      expect(body.development_type).toBe(ok);
+    }
+  });
+
   it("feasibility: 면적·GFA 둘 다 미확보면 missing 둘 다", () => {
     const { missing } = buildNodeBody(
       "feasibility",

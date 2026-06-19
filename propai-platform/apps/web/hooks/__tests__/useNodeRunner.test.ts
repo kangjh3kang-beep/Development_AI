@@ -16,9 +16,14 @@ vi.mock("@/lib/api-client", () => ({
   resolveApiOrigin: () => "https://api.test",
 }));
 
-import { useNodeRunner, deriveMassGfa } from "@/hooks/useNodeRunner";
+import {
+  useNodeRunner,
+  deriveMassGfa,
+  pickRecommendedDevType,
+} from "@/hooks/useNodeRunner";
 import { useOrchestrationStore } from "@/store/useOrchestrationStore";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { buildNodeBody, type NodeBodyContext } from "@/lib/orchestration/node-body-builders";
 
 function resetData(): void {
   useProjectContextStore.setState({
@@ -260,5 +265,140 @@ describe("deriveMassGfa — design GFA 도출 폴백", () => {
     expect(
       deriveMassGfa({ mass: { building_width_m: 22, building_depth_m: -1, num_floors: 3 } }),
     ).toBeNull();
+  });
+});
+
+// (Phase C-1) recommend 응답에서 최상위 추천 개발방식(ranked[0].method, 현행 우선) 추출.
+describe("pickRecommendedDevType — 추천 개발방식 코드 추출", () => {
+  it("현행 근거(far_basis=현행) 후보를 우선 채택(정렬 순서 보존)", () => {
+    const resp = {
+      ranked: [
+        { method: "M06", far_basis: "현행", composite: 16.0 },
+        { method: "M08", far_basis: "현행", composite: 14.0 },
+      ],
+    };
+    expect(pickRecommendedDevType(resp)).toBe("M06");
+  });
+
+  it("현행 후보가 없으면 ranked[0](정렬 1순위) 폴백", () => {
+    const resp = {
+      ranked: [
+        { method: "M11", far_basis: "종상향", composite: 20.0 },
+        { method: "M06", far_basis: "종상향", composite: 10.0 },
+      ],
+    };
+    expect(pickRecommendedDevType(resp)).toBe("M11");
+  });
+
+  it("종상향이 1순위여도 현행 후보가 있으면 현행을 채택(조건부 시나리오 배제)", () => {
+    const resp = {
+      ranked: [
+        { method: "M11", far_basis: "종상향", composite: 20.0 },
+        { method: "M08", far_basis: "현행", composite: 12.0 },
+      ],
+    };
+    expect(pickRecommendedDevType(resp)).toBe("M08");
+  });
+
+  it("ranked 비었거나 부재(게이트 차단)면 null → 환류 미실행(폴백 유도)", () => {
+    expect(pickRecommendedDevType({ ranked: [] })).toBeNull();
+    expect(pickRecommendedDevType({})).toBeNull();
+    expect(pickRecommendedDevType({ ranked: "nope" } as Record<string, unknown>)).toBeNull();
+  });
+
+  it("method가 비정상(빈/비문자)이면 null", () => {
+    expect(pickRecommendedDevType({ ranked: [{ far_basis: "현행" }] })).toBeNull();
+    expect(pickRecommendedDevType({ ranked: [{ method: "" }] })).toBeNull();
+  });
+});
+
+// (Phase C-1) 폐루프: recommend stamp → feasibility bodyBuilder가 그 development_type 사용.
+describe("recommend → feasibility 폐루프(development_type 환류)", () => {
+  it("recommend 실행이 feasibilityData.developmentType을 stamp하되 updatedAt.feasibility는 오염하지 않는다", async () => {
+    // 부지+법규 확보(recommend 입력 ready) + 기존 수지 데이터(원가) 존재.
+    useProjectContextStore.getState().updateSiteAnalysis({ address: "서울 강남구 역삼동 737", landAreaSqm: 800 });
+    useProjectContextStore.getState().updateComplianceData({
+      bcrCompliant: true,
+      farCompliant: true,
+      heightCompliant: true,
+      violations: [],
+    });
+    useProjectContextStore.getState().updateFeasibilityData({ totalCostWon: 12345 });
+    const stampBefore = useProjectContextStore.getState().updatedAt.feasibility;
+
+    // recommend 라이브 응답 모양(현행 ranked[0]=M06).
+    request.mockResolvedValueOnce({
+      ranked: [
+        { method: "M06", type_name: "일반분양", far_basis: "현행", composite: 16.0 },
+        { method: "M08", type_name: "오피스텔", far_basis: "현행", composite: 14.0 },
+      ],
+    });
+    post.mockResolvedValueOnce({}); // expert-panel(recommend expertPanel:true)
+    post.mockResolvedValueOnce({ verdict: "pass" }); // verify
+
+    const { result } = renderHook(() => useNodeRunner());
+    const res = await result.current.runNode("recommend");
+    expect(res.state).toBe("done");
+
+    const feas = useProjectContextStore.getState().feasibilityData;
+    // 추천값 stamp.
+    expect(feas?.developmentType).toBe("M06");
+    // 기존 수지 슬롯 보존(매출·원가 미접촉).
+    expect(feas?.totalCostWon).toBe(12345);
+    // ★staleness 오염 없음 — updatedAt.feasibility 불변(수지 노드 skipped-fresh 함정 회피).
+    expect(useProjectContextStore.getState().updatedAt.feasibility).toBe(stampBefore);
+  });
+
+  it("폐루프: stamp된 developmentType을 feasibility bodyBuilder가 그대로 development_type으로 전송", async () => {
+    // recommend가 M08을 stamp한 상태로 시드.
+    useProjectContextStore.getState().updateSiteAnalysis({ address: "서울", landAreaSqm: 800 });
+    useProjectContextStore.getState().updateComplianceData({
+      bcrCompliant: true, farCompliant: true, heightCompliant: true, violations: [],
+    });
+    request.mockResolvedValueOnce({
+      ranked: [{ method: "M08", far_basis: "현행", composite: 14.0 }],
+    });
+    post.mockResolvedValueOnce({}); // expert-panel
+    post.mockResolvedValueOnce({ verdict: "pass" }); // verify
+    const { result } = renderHook(() => useNodeRunner());
+    await result.current.runNode("recommend");
+
+    // 이제 feasibility bodyBuilder가 store 슬롯(M08)을 읽어 body.development_type=M08로 전송해야 한다.
+    const s = useProjectContextStore.getState();
+    useProjectContextStore.getState().updateDesignData({
+      totalGfaSqm: 3000, floorCount: 10, buildingType: "공동주택", bcr: 50, far: 200,
+    });
+    const ctx: NodeBodyContext = {
+      siteAnalysis: s.siteAnalysis,
+      designData: useProjectContextStore.getState().designData,
+      feasibilityData: useProjectContextStore.getState().feasibilityData,
+    };
+    const { body } = buildNodeBody("feasibility", ctx, "p1");
+    expect(body.development_type).toBe("M08"); // ★폐루프: 추천값이 수지로 흘러감(M06 고정 해소)
+  });
+
+  it("게이트 차단(ranked 비음)이면 developmentType 미stamp → feasibility는 M06 폴백(무회귀)", async () => {
+    useProjectContextStore.getState().updateSiteAnalysis({ address: "서울", landAreaSqm: 800 });
+    useProjectContextStore.getState().updateComplianceData({
+      bcrCompliant: true, farCompliant: true, heightCompliant: true, violations: [],
+    });
+    request.mockResolvedValueOnce({ ranked: [], gate: { developability: "BLOCKED" } });
+    post.mockResolvedValueOnce({}); // expert-panel
+    post.mockResolvedValueOnce({ verdict: "warn" }); // verify
+    const { result } = renderHook(() => useNodeRunner());
+    await result.current.runNode("recommend");
+
+    // 추천 코드 미산출 → developmentType 미stamp(없음).
+    expect(useProjectContextStore.getState().feasibilityData?.developmentType ?? null).toBeNull();
+    // feasibility bodyBuilder는 백엔드 기본 M06 폴백.
+    useProjectContextStore.getState().updateDesignData({
+      totalGfaSqm: 3000, floorCount: 10, buildingType: "공동주택", bcr: 50, far: 200,
+    });
+    const { body } = buildNodeBody("feasibility", {
+      siteAnalysis: useProjectContextStore.getState().siteAnalysis,
+      designData: useProjectContextStore.getState().designData,
+      feasibilityData: useProjectContextStore.getState().feasibilityData,
+    }, "p1");
+    expect(body.development_type).toBe("M06");
   });
 });

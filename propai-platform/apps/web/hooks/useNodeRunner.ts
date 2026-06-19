@@ -118,6 +118,33 @@ export function deriveMassGfa(resp: Record<string, unknown>): number | null {
 }
 
 /**
+ * recommend 응답(optimal-recommend)의 최상위 추천 개발방식 코드(M01~M15)를 뽑는다.
+ *
+ * 라이브 응답 모양: { ranked: [{ method:"M06", far_basis:"현행", composite:16.0, ... }, ...], ... }.
+ * ranked는 composite 내림차순 정렬(백엔드)이라 ranked[0]이 최상위 추천이다.
+ * ★far_basis가 "현행"인 후보를 우선 채택한다(종상향은 조건부 시나리오라 기본 수지 가정에 부적합).
+ * 현행 후보가 하나도 없으면 정렬 1순위(ranked[0])를 폴백으로 쓴다.
+ * ranked가 비었거나(게이트 차단=BLOCKED/resolvable NO) method가 비정상이면 null
+ *  → 환류측이 미환류(무목업: 추천 없으면 백엔드 기본 M06 폴백 유지).
+ */
+export function pickRecommendedDevType(resp: RunnerResponse): string | null {
+  const ranked = resp.ranked;
+  if (!Array.isArray(ranked) || ranked.length === 0) return null;
+  const methodOf = (item: unknown): string | null => {
+    if (!item || typeof item !== "object") return null;
+    const m = (item as Record<string, unknown>).method;
+    return typeof m === "string" && m.trim() ? m.trim() : null;
+  };
+  const isCurrent = (item: unknown): boolean =>
+    !!item &&
+    typeof item === "object" &&
+    (item as Record<string, unknown>).far_basis === "현행";
+  // 현행 근거 후보 우선(정렬 순서 보존), 없으면 ranked[0] 폴백.
+  const preferred = ranked.find((it) => isCurrent(it) && methodOf(it));
+  return methodOf(preferred ?? ranked[0]);
+}
+
+/**
  * 노드 산출을 데이터 SSOT store로 환류(e). ssotOutputs의 updateAction별로 분기한다.
  * runner 응답 키는 노드마다 다르므로, 흔한 키 후보를 안전하게 읽어 store 슬롯에 채운다.
  * 미확보 필드는 null(0 강제 금지) — store merge 가드가 user 수동값과 기존값을 보존한다.
@@ -242,6 +269,14 @@ function feedbackToStore(
             : [],
         } as ComplianceData);
         break;
+      case "setRecommendedDevType": {
+        // (Phase C-1) 추천 노드 → 최상위 추천 개발방식 코드(M01~M15)만 부분패치.
+        // updatedAt.feasibility를 stamp하지 않는 전용 액션이라 수지 staleness를 오염시키지 않는다.
+        // 코드 미산출(게이트 차단·ranked 비면 null)이면 setRecommendedDevType가 no-op(백엔드 기본 M06 폴백).
+        const devType = pickRecommendedDevType(resp);
+        store.setRecommendedDevType(devType);
+        break;
+      }
       case "markFinanceUpdated":
         store.markFinanceUpdated();
         break;

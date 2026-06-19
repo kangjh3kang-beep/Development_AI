@@ -138,7 +138,13 @@ export const NODES: AnalysisNode[] = [
         provenanceGuarded: false,
       },
     ],
-    ssotOutputs: [], // 표시·선택지 — store 비기록
+    // (Phase C-1) 최상위 추천 개발방식(ranked[0].method)만 feasibilityData.developmentType에 환류.
+    // partial:true·setRecommendedDevType은 updatedAt.feasibility를 stamp하지 않으므로(전용 액션)
+    // 파생(recommend) 노드가 수지 staleness를 오염시켜 수지 노드가 영영 skipped-fresh되는 함정을 피한다.
+    // 매출·원가·ROI 등 다른 수지 슬롯은 일절 건드리지 않는다(merge 보존). 라이브 검증: ranked[0].method=M06 등.
+    ssotOutputs: [
+      { updateAction: "setRecommendedDevType", source: "auto", partial: true },
+    ],
     runner: {
       method: "POST",
       path: "/api/v1/development-methods/optimal-recommend",

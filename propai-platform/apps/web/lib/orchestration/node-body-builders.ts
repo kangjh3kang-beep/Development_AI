@@ -48,10 +48,18 @@ export interface NodeBodyResult {
 /** feasibility 기본 개발유형 — 백엔드가 명시 문서화한 표준 가정(일반분양).
  *  근거: apps/api/app/routers/v2_feasibility.py:578 "일반분양(M06) 표준 가정",
  *        permit_validator.py:47 DEVELOPMENT_TYPE_NAMES["M06"]="일반분양".
- *  ★무목업: recommend(상류 추천)가 store 슬롯에 개발유형을 stamp하지 않으므로(레지스트리
- *  recommend.ssotOutputs=[] — 표시·선택지 전용), 안전한 백엔드 표준 기본값을 사용한다.
- *  임의 코드를 날조하지 않고, 백엔드가 문서화한 기본 development_type만 채택한다. */
+ *  ★무목업: 상류 추천(recommend)이 feasibilityData.developmentType을 환류하면 그 값을 우선 채택하고,
+ *  미환류(추천 미실행·게이트 차단으로 ranked 비음)면 이 백엔드 표준 기본값으로 폴백한다(무회귀).
+ *  임의 코드를 날조하지 않고, 백엔드가 문서화한 기본 development_type만 폴백으로 채택한다. */
 const DEFAULT_DEVELOPMENT_TYPE = "M06";
+
+/** 추천 개발방식 코드가 백엔드가 수용하는 형식(M01~M15)인지 판정. 아니면 null(폴백 유도).
+ *  근거(라이브 검증·permit_validator.py DEVELOPMENT_TYPE_NAMES): M 뒤 2자리 숫자(01~15). */
+function safeDevelopmentType(v: unknown): string | null {
+  const s = nonEmptyStr(v);
+  if (!s) return null;
+  return /^M(0[1-9]|1[0-5])$/.test(s) ? s : null;
+}
 
 /** 문자열 비어있지 않으면 그대로, 아니면 null. */
 function nonEmptyStr(v: unknown): string | null {
@@ -171,9 +179,11 @@ export function buildNodeBody(
     case "feasibility": {
       // {development_type★, total_land_area_sqm★(gt0), total_gfa_sqm★(gt0),
       //  building_type?, avg_sale_price_per_pyeong?, official_price_per_sqm?}.
-      // ★development_type: 상류 추천이 store에 stamp하지 않으므로(recommend.ssotOutputs=[])
-      //  백엔드 표준 기본값(M06=일반분양)을 사용. 백엔드가 허용·문서화한 기본이라 무목업 위배 아님.
-      body.development_type = DEFAULT_DEVELOPMENT_TYPE;
+      // ★development_type: 상류 추천(recommend)이 환류한 feasibilityData.developmentType을 우선 채택하고,
+      //  미확보(추천 미실행·게이트 차단으로 ranked 비음·비정상 코드)면 백엔드 표준 기본값(M06=일반분양)으로 폴백.
+      //  → "모든 수지가 일반분양 고정"이던 결함 해소(무목업: 추천 있으면 추천값, 없으면 백엔드 기본).
+      body.development_type =
+        safeDevelopmentType(feas?.developmentType) ?? DEFAULT_DEVELOPMENT_TYPE;
       if (landAreaSqm != null) body.total_land_area_sqm = landAreaSqm;
       else missing.push("total_land_area_sqm");
       const gfa = positiveNum(design?.totalGfaSqm);

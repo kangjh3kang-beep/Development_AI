@@ -133,6 +133,12 @@ interface FeasibilityData {
   equityWon?: number | null;
   roiPct?: number | null;
   npvWon?: number | null;
+  // (Phase C-1) 추천 개발방식 코드(M01~M15) — 상류 추천 노드가 산출한 최상위 추천 유형.
+  // 수지계산(feasibility) 입력 development_type을 이 값으로 채워(미확보 시 백엔드 기본 M06 폴백),
+  // "모든 수지가 일반분양(M06) 고정"되던 결함을 푼다. optional·하위호환(구 스냅샷=undefined→폴백).
+  // ★stamp 주의: 이 필드는 setRecommendedDevType로만 patch하며 updatedAt.feasibility를 건드리지 않는다
+  // (파생 recommend가 feasibility staleness를 오염시켜 수지 노드가 영영 skipped-fresh되는 함정 회피).
+  developmentType?: string | null;
 }
 
 // 공사비 분석 결과(건축개요 기반) — 수지·사업성과 단일 데이터원으로 연동.
@@ -326,6 +332,12 @@ export interface ProjectContextState {
   // merge 패치 — 부분 writer(UnitMix/AutoRecommend)가 기존 totalCostWon 등을 보존하도록
   // 기존 feasibilityData 위에 병합한다. 전체 객체를 넘기던 기존 호출도 동일하게 동작.
   updateFeasibilityData: (data: Partial<FeasibilityData>) => void;
+  // (Phase C-1) 추천 개발방식 코드(M01~M15)만 feasibilityData.developmentType에 부분패치.
+  // ★updateFeasibilityData와 달리 updatedAt.feasibility를 stamp하지 않는다 —
+  //  파생(recommend) 노드가 수지 staleness를 오염시켜 수지 노드가 영영 skipped-fresh되는
+  //  함정을 피하기 위함. 다른 수지 슬롯(매출·원가·ROI)은 일절 건드리지 않는다(merge 보존).
+  //  빈 문자열/null이면 no-op(무목업: 추천 미확보 시 백엔드 기본 M06 폴백 유지).
+  setRecommendedDevType: (developmentType: string | null) => void;
   // full replace. meta 옵셔널(미전달 = "auto") — 기존 호출 무수정 호환.
   // auto: user 플래그 키의 이전값을 보존한 채 교체(merge 가드).
   // user: 이전값과 달라진 비null 키만 stamp(미변경 키까지 동결하면 자동 환류 무력화).
@@ -988,6 +1000,32 @@ export const useProjectContextStore = create<ProjectContextState>()(
             updatedAt: stampedAt(state, "feasibility"),
           }),
         );
+      },
+
+      // (Phase C-1) 추천 개발방식 코드만 부분패치 — updatedAt 미변경(staleness 오염 회피).
+      setRecommendedDevType: (developmentType) => {
+        // 무목업: 추천 코드가 비었으면(없음) 아무것도 하지 않는다 → 수지는 백엔드 기본(M06) 폴백.
+        const code =
+          typeof developmentType === "string" && developmentType.trim()
+            ? developmentType.trim()
+            : null;
+        if (!code) return;
+        set((state) => {
+          // 값이 같으면 no-op(불필요한 스냅샷 갱신 방지).
+          if (state.feasibilityData?.developmentType === code) return {};
+          return withSnap(state, {
+            // merge: developmentType만 덮고 매출·원가·ROI 등 기존 수지 슬롯은 보존.
+            feasibilityData: {
+              totalCostWon: null,
+              totalRevenueWon: null,
+              profitRatePct: null,
+              grade: null,
+              ...(state.feasibilityData ?? {}),
+              developmentType: code,
+            } as FeasibilityData,
+            // ★updatedAt 미변경 — feasibility staleness를 stamp하지 않는다(함정 회피).
+          });
+        });
       },
       updateCostData: (data, meta) => {
         const source: FieldSource = meta?.source ?? "auto";
