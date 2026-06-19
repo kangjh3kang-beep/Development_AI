@@ -4,6 +4,7 @@ import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { GlobalAddressSearch, type AddressEntry } from "@/components/common/GlobalAddressSearch";
 import { apiClient } from "@/lib/api-client";
+import { DEVELOPABILITY_LABEL } from "@/lib/zoning-ssot";
 
 const Icons = {
   Search: () => <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>,
@@ -109,13 +110,7 @@ export function SiteInitiator({ onInitiate, loading }: SiteInitiatorProps) {
   }, [address]);
 
   // developability(영문 게이트) → 한국어 라벨(없으면 원문 폴백).
-  const DEVELOPABILITY_LABEL: Record<string, string> = {
-    POSSIBLE: "개발 가능",
-    CONDITIONAL: "조건부 가능",
-    PRECONDITION: "선행절차 필요",
-    RESTRICTED: "제한적",
-    BLOCKED: "개발 불가",
-  };
+  // DEVELOPABILITY_LABEL은 zoning-ssot.ts 공용 상수 사용.
 
   const handleSearch = () => {
     if (!address) return;

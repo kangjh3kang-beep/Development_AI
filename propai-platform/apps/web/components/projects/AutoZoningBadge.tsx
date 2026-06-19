@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { LegalRefChip } from "@/components/common/LegalRefChip";
-import { mapZoningRich } from "@/lib/zoning-ssot";
+import { mapZoningRich, DEVELOPABILITY_LABEL } from "@/lib/zoning-ssot";
 
 /* ── Response type ── */
 
@@ -193,13 +193,7 @@ export function AutoZoningBadge({ address }: { address: string }) {
     )
     .filter((t) => t.length > 0);
   // developability(영문 게이트) → 한국어 라벨. 미지/누락 시 severity_label 폴백, 그것도 없으면 미표기.
-  const DEVELOPABILITY_LABEL: Record<string, string> = {
-    POSSIBLE: "개발 가능",
-    CONDITIONAL: "조건부 가능",
-    PRECONDITION: "선행절차 필요",
-    RESTRICTED: "제한적",
-    BLOCKED: "개발 불가",
-  };
+  // DEVELOPABILITY_LABEL은 zoning-ssot.ts 공용 상수 사용.
   const developabilityLabel =
     (sp?.developability && DEVELOPABILITY_LABEL[sp.developability]) ||
     (typeof sp?.severity_label === "string" ? sp.severity_label : null);

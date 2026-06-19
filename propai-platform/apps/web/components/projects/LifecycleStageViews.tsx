@@ -119,6 +119,27 @@ export function LifecycleStageViews({ projectId, dictionary, compact = false }: 
     },
   ];
 
+  // 법규 준수 체크리스트 — 저장된 법규검토 결과(complianceData) 실값만 표시.
+  // 무목업: 분석 전이면 항목을 만들지 않고(빈 배열), 화면에서 정직 CTA를 띄운다.
+  const complianceData = useProjectContextStore((s) => s.complianceData);
+  const complianceHasData =
+    !!complianceData &&
+    (complianceData.bcrCompliant != null ||
+      complianceData.farCompliant != null ||
+      complianceData.heightCompliant != null ||
+      (complianceData.violations?.length ?? 0) > 0);
+  // pass=true → 적합(체크), pass=false → 위반(미체크), null → 미판정(제외).
+  const complianceChecks: { label: string; checked: boolean }[] = complianceHasData
+    ? [
+        { key: "건폐율 적합성", pass: complianceData!.bcrCompliant },
+        { key: "용적률 적합성", pass: complianceData!.farCompliant },
+        { key: "높이제한 적합성", pass: complianceData!.heightCompliant },
+      ]
+        .filter((c) => c.pass != null)
+        .map((c) => ({ label: c.key, checked: !!c.pass }))
+    : [];
+  const complianceViolations = complianceData?.violations ?? [];
+
   // ESG 탄소 — context esgData(있으면 실값). tCO₂e = kg/1000.
   const tco2e = (kg: number | null | undefined) =>
     kg != null ? `${(kg / 1000).toLocaleString(undefined, { maximumFractionDigits: 1 })} tCO₂e` : NA;
@@ -290,34 +311,50 @@ export function LifecycleStageViews({ projectId, dictionary, compact = false }: 
                       ))}
                     </div>
                     <div className="space-y-8">
-                      <h4 className="text-[10px] font-black text-[var(--text-hint)] uppercase tracking-[0.5em] px-4">AI 규제 체크리스트 (VERIFIED)</h4>
-                      <div className="grid gap-4">
-                        {[
-                          { label: "용도지역 및 허용 지번 적합성", checked: true },
-                          { label: "건축법 제 22조 기술 준수", checked: true },
-                          { label: "소방법 및 비상구조 검토", checked: true },
-                          { label: "환경영향평가 (진행 중)", checked: false },
-                          { label: "교통영향평가 및 정체 구역 분석", checked: false },
-                          { label: "일조권 사선 제한 및 시각 분석", checked: true },
-                        ].map((item, i) => (
-                          <motion.div 
-                            key={item.label} 
-                            initial={{ opacity: 0, scale: 0.95 }}
-                            animate={{ opacity: 1, scale: 1 }}
-                            transition={{ delay: 0.5 + i * 0.05 }}
-                            className="flex items-center gap-6 rounded-[2rem] bg-[var(--surface-soft)] px-8 py-5 border border-[var(--line)] transition-all hover:bg-[var(--surface-strong)] hover:translate-x-2"
-                          >
-                            <div className={`flex h-8 w-8 items-center justify-center rounded-xl border-2 transition-all ${
-                              item.checked
-                                ? "border-[var(--success)] bg-[var(--success)]/10 text-[var(--success)] shadow-[0_0_15px_rgba(16,185,129,0.3)]"
-                                : "border-[var(--line-strong)] text-transparent"
-                            }`}>
-                              {item.checked ? <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4"><polyline points="20 6 9 17 4 12"/></svg> : null}
+                      <h4 className="text-[10px] font-black text-[var(--text-hint)] uppercase tracking-[0.5em] px-4">법규 준수 체크리스트</h4>
+                      {complianceHasData ? (
+                        <div className="grid gap-4">
+                          {complianceChecks.map((item, i) => (
+                            <motion.div
+                              key={item.label}
+                              initial={{ opacity: 0, scale: 0.95 }}
+                              animate={{ opacity: 1, scale: 1 }}
+                              transition={{ delay: 0.5 + i * 0.05 }}
+                              className="flex items-center gap-6 rounded-[2rem] bg-[var(--surface-soft)] px-8 py-5 border border-[var(--line)] transition-all hover:bg-[var(--surface-strong)] hover:translate-x-2"
+                            >
+                              <div className={`flex h-8 w-8 items-center justify-center rounded-xl border-2 transition-all ${
+                                item.checked
+                                  ? "border-[var(--status-success)] bg-[var(--status-success)]/10 text-[var(--status-success)] shadow-[0_0_15px_rgba(16,185,129,0.3)]"
+                                  : "border-[var(--status-error)] bg-[var(--status-error)]/10 text-[var(--status-error)]"
+                              }`}>
+                                {item.checked
+                                  ? <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4"><polyline points="20 6 9 17 4 12"/></svg>
+                                  : <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>}
+                              </div>
+                              <span className={`text-[13px] font-black tracking-tight ${item.checked ? "text-[var(--text-primary)]" : "text-[var(--status-error)]"}`}>
+                                {item.label} {item.checked ? "적합" : "위반"}
+                              </span>
+                            </motion.div>
+                          ))}
+                          {complianceViolations.length > 0 && (
+                            <div className="rounded-[2rem] border border-[var(--status-error)]/30 bg-[var(--status-error)]/5 px-8 py-5">
+                              <p className="text-[10px] font-black uppercase tracking-[0.3em] text-[var(--status-error)] mb-3">위반 사항</p>
+                              <ul className="space-y-2">
+                                {complianceViolations.map((v) => (
+                                  <li key={v} className="text-[13px] font-black text-[var(--text-secondary)]">· {v}</li>
+                                ))}
+                              </ul>
                             </div>
-                            <span className={`text-[13px] font-black tracking-tight ${item.checked ? "text-[var(--text-primary)]" : "text-[var(--text-hint)] italic"}`}>{item.label}</span>
-                          </motion.div>
-                        ))}
-                      </div>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="flex flex-col items-center gap-4 rounded-[2.5rem] border border-dashed border-[var(--line-strong)] bg-[var(--surface-soft)] p-10 text-center">
+                          <span className="text-4xl">📋</span>
+                          <p className="text-sm font-black text-[var(--text-primary)]">법규검토 미실행</p>
+                          <p className="text-xs leading-relaxed text-[var(--text-secondary)] max-w-md">아직 이 프로젝트의 법규 준수 검토 결과가 없습니다. ‘법규검토’ 모듈에서 분석을 실행하면 건폐율·용적률·높이제한 적합성과 위반 근거가 여기에 연동됩니다.</p>
+                          <Link href={`/${locale}/projects/${projectId}/legal`} className="rounded-full bg-[var(--accent-strong)] px-6 py-3 text-xs font-black uppercase tracking-[0.2em] text-white">법규 분석 실행 ↗</Link>
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
@@ -360,85 +397,36 @@ export function LifecycleStageViews({ projectId, dictionary, compact = false }: 
                 )}
 
                 {activeStage === "permit_portal" && (
-                  <div className="flex flex-col gap-12 justify-center py-10">
-                    <div className="rounded-[4rem] bg-[var(--surface-soft)] p-16 border border-[var(--line)] shadow-inner">
-                      <h4 className="text-[10px] font-black text-[var(--text-hint)] uppercase tracking-[0.6em] mb-20 text-center">PERMIT WORKFLOW PULSE</h4>
-                      <div className="flex items-center justify-between gap-4 max-w-5xl mx-auto">
-                        {[
-                          { label: "서류 접수", step: 1, current: true, status: "완료" },
-                          { label: "관계 부처 협의", step: 2, current: true, status: "진행중" },
-                          { label: "보완 사항 통보", step: 3, current: false, status: "대기" },
-                          { label: "건축 허가 승인", step: 4, current: false, status: "대기" },
-                          { label: "착공 상세 신고", step: 5, current: false, status: "대기" },
-                        ].map((stage, i, arr) => (
-                          <div key={stage.label} className="flex items-center gap-4 flex-1">
-                            <div className="flex flex-col items-center gap-6 flex-1">
-                              <div className={`relative flex h-16 w-16 items-center justify-center rounded-2xl border-4 text-lg font-black transition-all ${
-                                stage.current 
-                                ? "border-[var(--accent-strong)] text-[var(--accent-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-glow)]" 
-                                : "border-[var(--line-strong)] text-[var(--text-hint)] opacity-30"
-                              }`}>
-                                {stage.step}
-                                {stage.current && <span className="absolute -top-3 -right-3 h-6 w-6 rounded-full bg-[var(--accent-strong)] text-[9px] text-white flex items-center justify-center animate-bounce shadow-lg">✓</span>}
-                              </div>
-                              <div className="flex flex-col items-center gap-1">
-                                <span className={`text-[12px] font-[1000] uppercase tracking-tighter ${stage.current ? "text-[var(--text-primary)]" : "text-[var(--text-hint)]"}`}>{stage.label}</span>
-                                <span className="text-[9px] font-black text-[var(--accent-strong)] uppercase tracking-widest opacity-60 italic">{stage.status}</span>
-                              </div>
-                            </div>
-                            {i < arr.length - 1 && (
-                              <div className={`mb-20 h-1.5 flex-1 rounded-full ${stage.current ? "bg-gradient-to-r from-[var(--accent-strong)] to-[var(--line-strong)]" : "bg-[var(--line-strong)]"} opacity-20`} />
-                            )}
-                          </div>
-                        ))}
-                      </div>
+                  <div className="flex min-h-[420px] flex-col items-center justify-center gap-8 rounded-[3rem] border border-dashed border-[var(--line-strong)] bg-[var(--surface-soft)] p-12 text-center">
+                    <div className="flex h-16 w-16 items-center justify-center rounded-3xl bg-[var(--accent-soft)] text-[var(--accent-strong)] shadow-[var(--shadow-glow)]">
+                      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="m9 15 2 2 4-4"/></svg>
                     </div>
+                    <div className="space-y-3 max-w-xl">
+                      <h4 className="text-2xl font-[1000] tracking-tight text-[var(--text-primary)]">인허가 분석 미실행</h4>
+                      <p className="text-sm leading-relaxed text-[var(--text-secondary)]">
+                        아직 이 프로젝트의 인허가 분석 결과가 없습니다. ‘인허가 포털’ 모듈에서 분석을 실행하면
+                        부지·조례·상위법령을 종합한 <b className="text-[var(--text-primary)]">개발방식별 가능성·문제점·해결방안</b>이 여기에 연동됩니다.
+                      </p>
+                    </div>
+                    <Link href={`/${locale}/projects/${projectId}/permit`}
+                      className="inline-flex h-14 items-center gap-3 rounded-full bg-[var(--accent-strong)] px-9 text-xs font-black uppercase tracking-[0.2em] text-white shadow-[var(--shadow-glow)] transition-all hover:scale-105">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+                      인허가 분석 실행
+                    </Link>
                   </div>
                 )}
 
                 {activeStage === "operations" && (
-                  <div className="grid gap-14 md:grid-cols-2">
-                    <div className="rounded-[3.5rem] bg-[var(--surface-soft)] p-10 border border-[var(--line)] shadow-sm">
-                      <h4 className="text-[10px] font-black text-[var(--text-hint)] uppercase tracking-[0.5em] mb-10">ASSET KPI INTELLIGENCE</h4>
-                      <div className="grid gap-6">
-                        {[ 
-                          { label: "전체 입주 점유율", value: "98.5%", trend: "+2.1%" }, 
-                          { label: "월 평균 순수익률 (NOI)", value: "4.2%", trend: "+0.5%" }, 
-                          { label: "공용 관리비 효율", value: "1,250 ₩/m²", trend: "-120 ₩" }, 
-                          { label: "탄소 배출 에너지 비용", value: "840 ₩/m²", trend: "-15%" } 
-                        ].map((item) => (
-                          <div key={item.label} className="flex items-center justify-between rounded-3xl bg-[var(--surface-strong)] px-8 py-6 border border-[var(--line)] transition-all hover:scale-[1.03] group/item shadow-sm">
-                            <span className="text-[11px] font-black text-[var(--text-hint)] uppercase tracking-widest">{item.label}</span>
-                            <div className="flex flex-col items-end">
-                               <span className="text-xl font-black text-[var(--text-primary)] group-hover/item:text-[var(--accent-strong)] transition-colors italic tracking-tighter">{item.value}</span>
-                               <span className="text-[9px] font-black text-[var(--success)] uppercase tracking-widest">{item.trend}</span>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
+                  <div className="flex min-h-[420px] flex-col items-center justify-center gap-8 rounded-[3rem] border border-dashed border-[var(--line-strong)] bg-[var(--surface-soft)] p-12 text-center">
+                    <div className="flex h-16 w-16 items-center justify-center rounded-3xl bg-[var(--surface-strong)] text-[var(--text-hint)] border border-[var(--line)]">
+                      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
                     </div>
-                    <div className="flex flex-col gap-10">
-                       <div className="rounded-[3.5rem] bg-[var(--surface-soft)] p-10 border border-[var(--line)] shadow-sm">
-                          <h4 className="text-[10px] font-black text-[var(--text-hint)] uppercase tracking-[0.5em] mb-10">IOT SENSOR TELEMETRY</h4>
-                          <div className="grid grid-cols-2 gap-6">
-                             {[ { label: "내부 온도", value: "22.5°C", icon: "🌡️" }, { label: "공기질 (PM2.5)", value: "12 μg/m³", icon: "🍃" } ].map((item) => (
-                               <div key={item.label} className="flex items-center gap-5 rounded-[2.5rem] bg-[var(--surface-strong)] p-8 border border-[var(--line)] shadow-sm">
-                                 <span className="text-4xl filter drop-shadow-lg">{item.icon}</span>
-                                 <div>
-                                   <p className="text-[9px] font-black text-[var(--text-hint)] uppercase tracking-widest mb-1">{item.label}</p>
-                                   <p className="text-lg font-[1000] text-[var(--text-primary)] tracking-tighter italic">{item.value}</p>
-                                 </div>
-                               </div>
-                             ))}
-                          </div>
-                       </div>
-                       <div className="rounded-[2.5rem] p-8 border border-[var(--accent-strong)]/20 flex items-center justify-between bg-[var(--accent-soft)]/5 shadow-inner">
-                          <div className="flex flex-col gap-1">
-                             <span className="text-[9px] font-black text-[var(--text-hint)] uppercase tracking-widest opacity-60">NEXT FACILITY AUDIT</span>
-                             <span className="text-sm font-black text-[var(--text-secondary)] italic">정기 정밀 점검 예정일</span>
-                          </div>
-                          <span className="text-xl font-black text-[var(--accent-strong)] italic tracking-tighter">2026.04.15 <span className="text-[10px] ml-2 opacity-50 NOT-italic">(D-15)</span></span>
-                       </div>
+                    <div className="space-y-3 max-w-xl">
+                      <h4 className="text-2xl font-[1000] tracking-tight text-[var(--text-primary)]">운영 분석 준비중 (데이터 없음)</h4>
+                      <p className="text-sm leading-relaxed text-[var(--text-secondary)]">
+                        준공 이후 자산 운영 단계의 입주율·NOI·관리비 효율·IoT 센서 지표는 운영 데이터가 연동되는 단계에서 제공됩니다.
+                        현재 이 프로젝트에는 운영 실데이터가 없어 지표를 표시하지 않습니다(가짜 수치 표기 금지).
+                      </p>
                     </div>
                   </div>
                 )}

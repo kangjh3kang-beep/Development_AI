@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v249-excel-public-area-road-abolition";
+const CACHE_NAME = "propai-v250-b4-lifecycle-mockup-purge";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

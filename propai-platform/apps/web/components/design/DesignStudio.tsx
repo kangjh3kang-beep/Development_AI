@@ -358,7 +358,16 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
     const farIsEffective = effFarPct != null;            // 실효값 적용 여부(라벨·근거 표기용)
     const maxGross = effFarPct != null ? area * (effFarPct / 100) : calcMaxGrossArea(area, effectiveZoning);
     const parking = calcParkingRequired(maxGross, form.buildingUse);
-    const buildableArea = area * (spec.buildingCoverageMax / 100);
+    // 실효 건폐율 우선: FAR과 동일하게 effectiveBcrPct가 있으면 법정상한(buildingCoverageMax) 대신 사용.
+    // 주소 불일치 잔류 스냅샷 방지를 위해 siteMatch !== "mismatch" 조건 동일하게 적용.
+    // 미확보 시 법정상한 폴백 — 무회귀.
+    const effBcrPct =
+      siteMatch !== "mismatch" && typeof siteAnalysis?.effectiveBcrPct === "number" && siteAnalysis.effectiveBcrPct > 0
+        ? siteAnalysis.effectiveBcrPct
+        : null;
+    const bcrUsed = effBcrPct ?? spec.buildingCoverageMax;  // 적용 건폐율(%) — 실효 우선, 법정 폴백
+    const bcrIsEffective = effBcrPct != null;               // 실효값 적용 여부(라벨·근거 표기용)
+    const buildableArea = area * (bcrUsed / 100);
     const minFloorsFromFar = farUsed > 0 ? Math.ceil(maxGross / buildableArea) : 1;
     const heightPerFloor = 3.3;
     const maxFloorsByHeight = spec.heightLimit ? Math.floor(spec.heightLimit / heightPerFloor) : 25;
@@ -370,7 +379,8 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
     const footprintFor = (floors: number) =>
       Math.min(maxGross / Math.max(floors, 1), buildableArea);
     return {
-      buildingCoverage: spec.buildingCoverageMax, floorAreaRatio: farUsed,
+      buildingCoverage: bcrUsed, floorAreaRatio: farUsed,
+      bcrIsEffective, bcrLegalMax: spec.buildingCoverageMax,
       farIsEffective, farLegalMax: spec.floorAreaRatioMax,
       maxFloors, maxHeight: Math.round(maxHeight * 10) / 10,
       buildableArea: Math.round(buildableArea * 10) / 10, maxGrossArea: Math.round(maxGross * 10) / 10,
@@ -381,7 +391,7 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
         { name: "ㄱ자형", description: `${maxFloors}층, 소음차폐 배치`, efficiency: 75, geom: buildMassingGeom("lshape", footprintFor(maxFloors), siteSide, maxFloors) },
       ],
     };
-  }, [form.landArea, effectiveZoning, form.buildingUse, siteAnalysis?.effectiveFarPct, siteMatch]);
+  }, [form.landArea, effectiveZoning, form.buildingUse, siteAnalysis?.effectiveFarPct, siteAnalysis?.effectiveBcrPct, siteMatch]);
 
   const handleAIAnalyze = () => {
     mutate({ domain: "design", context: { landArea: `${form.landArea}㎡`, zoningDistrict: form.zoning, buildingUse: form.buildingUse, projectId } });
@@ -538,7 +548,7 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
 
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             {[
-              { label: "건폐율", val: `${calc.buildingCoverage}%`, sub: `최대 ${calc.buildingCoverage}%`, color: "text-blue-400" },
+              { label: "건폐율", val: `${calc.buildingCoverage}%`, sub: calc.bcrIsEffective ? `실효(법정상한 ${calc.bcrLegalMax}%)` : `법정상한 ${calc.bcrLegalMax}%`, color: "text-blue-400" },
               { label: "용적률", val: `${calc.floorAreaRatio}%`, sub: calc.farIsEffective ? `실효(법정상한 ${calc.farLegalMax}%)` : `법정상한 ${calc.farLegalMax}%`, color: "text-emerald-400" },
               { label: "예상 층수", val: `${calc.maxFloors}층`, sub: `${calc.maxHeight}m (${calc.heightNote})`, color: "text-purple-400" },
               { label: "주차 대수", val: `${calc.parking}대`, sub: "주차장법 기준", color: "text-amber-400" },

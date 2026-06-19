@@ -159,3 +159,13 @@ export function mapZoningRich(resp: unknown): Partial<SiteAnalysisData> {
 
   return patch;
 }
+
+// 개발가능성 영문 게이트 → 한국어 라벨 공용 맵.
+// AutoZoningBadge, LandIntelligencePanel, SiteInitiator 등 여러 곳에서 공유.
+export const DEVELOPABILITY_LABEL: Record<string, string> = {
+  POSSIBLE: "개발 가능",
+  CONDITIONAL: "조건부 가능",
+  PRECONDITION: "선행절차 필요",
+  RESTRICTED: "제한적",
+  BLOCKED: "개발 불가",
+};

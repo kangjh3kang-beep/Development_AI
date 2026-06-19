@@ -7,6 +7,7 @@ import { analyzeLocally } from "@/lib/kr-building-regulations";
 import { apiClient } from "@/lib/api-client";
 import { getCachedAnalysis, setCachedAnalysis, TTL_30D, TTL_7D, TTL_3D } from "@/lib/analysis-fetch-cache";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { DEVELOPABILITY_LABEL } from "@/lib/zoning-ssot";
 
 // ── Icons ──
 const Icons = {
@@ -553,13 +554,7 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
   };
 
   // ── 특이부지 게이트 — API 응답 우선, 없으면 store(specialParcel) 폴백. is_special일 때만 카드 렌더. ──
-  const DEVELOPABILITY_LABEL: Record<string, string> = {
-    POSSIBLE: "개발 가능",
-    CONDITIONAL: "조건부 가능",
-    PRECONDITION: "선행절차 필요",
-    RESTRICTED: "제한적",
-    BLOCKED: "개발 불가",
-  };
+  // DEVELOPABILITY_LABEL은 zoning-ssot.ts 공용 상수 사용.
   const specialParcel = useMemo(() => {
     const api = zoningData?.special_parcel;
     if (api?.is_special === true) {
@@ -849,7 +844,7 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
               <p className="text-sm font-bold text-[var(--text-secondary)]">{displayAddress}</p>
               {hasData && (
                 <p className="text-[10px] text-emerald-400 mt-1 font-bold">
-                  {analysis.zoning.current} · 건폐율 {analysis.buildingCoverageMax}%{analysis.isEffectiveBcr ? "(실효)" : "(법정)"} · 용적률 {analysis.floorAreaRatioMax}%{analysis.isEffectiveFar ? "(실효)" : "(법정)"}
+                  {analysis.zoning.current} · 건폐율 {analysis.buildingCoverageMax}%{analysis.isEffectiveBcr ? "(실효)" : "(법정상한)"} · 용적률 {analysis.floorAreaRatioMax}%{analysis.isEffectiveFar ? "(실효)" : "(법정상한)"}
                   {analysis.landAreaSqm != null && ` · ${analysis.landAreaSqm.toLocaleString()}m²`}
                   {specialParcel && <span className="text-[var(--status-warning)]"> · ⚠ 특이부지</span>}
                 </p>

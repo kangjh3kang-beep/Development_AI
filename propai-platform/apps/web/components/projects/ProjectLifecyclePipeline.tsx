@@ -47,6 +47,62 @@ export function ProjectLifecyclePipeline({
     (s) => s.getNextRecommendedStage,
   );
 
+  // 진행 배지(additive) — 단계별 store 실데이터 유무. completedStages와 별개로,
+  // "데이터가 실제 채워졌는가"를 정직하게 표시한다(가짜 진행률/수치 없음).
+  // 무거운 마운트·API 호출 없이 이미 영속된 cross-module 상태만 읽는다.
+  const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
+  const designData = useProjectContextStore((s) => s.designData);
+  const feasibilityData = useProjectContextStore((s) => s.feasibilityData);
+  const costData = useProjectContextStore((s) => s.costData);
+  const esgData = useProjectContextStore((s) => s.esgData);
+  const complianceData = useProjectContextStore((s) => s.complianceData);
+  const financeUpdatedAt = useProjectContextStore((s) => s.updatedAt.finance);
+
+  /** 단계 id별 "실데이터 존재" 판정(무목업) — store 값 유무로만 판정. 매핑 없는
+   *  단계는 undefined(배지 미표시) — 가짜 완료 표기를 만들지 않는다. */
+  function stageHasData(stageId: string): boolean | undefined {
+    switch (stageId) {
+      case "site-analysis":
+        return !!(
+          (siteAnalysis?.landAreaSqm && siteAnalysis.landAreaSqm > 0) ||
+          siteAnalysis?.address ||
+          siteAnalysis?.zoneCode
+        );
+      case "legal":
+        return !!(
+          complianceData &&
+          (complianceData.bcrCompliant != null ||
+            complianceData.farCompliant != null ||
+            complianceData.heightCompliant != null ||
+            (complianceData.violations?.length ?? 0) > 0)
+        );
+      case "design":
+      case "bim":
+        return !!(designData?.totalGfaSqm && designData.totalGfaSqm > 0);
+      case "construction":
+        return !!(
+          costData?.totalConstructionCostWon &&
+          costData.totalConstructionCostWon > 0
+        );
+      case "feasibility":
+        return !!(
+          feasibilityData?.totalRevenueWon &&
+          feasibilityData.totalRevenueWon > 0
+        );
+      case "finance":
+        return !!financeUpdatedAt;
+      case "esg":
+        return !!(
+          esgData &&
+          ((esgData.totalCarbonPerSqm ?? 0) > 0 ||
+            (esgData.embodiedCarbonKg ?? 0) > 0)
+        );
+      // report/operations 등 전용 데이터 없는 종합·운영 단계는 배지 미표시.
+      default:
+        return undefined;
+    }
+  }
+
   const stages = getStages(locale, projectId);
   const nextStage = getNextRecommendedStage();
 
@@ -84,6 +140,7 @@ export function ProjectLifecyclePipeline({
                   status={status}
                   index={index}
                   isNext={stage.id === nextStage}
+                  hasData={stageHasData(stage.id)}
                 />
                 {index < stages.length - 1 && (
                   <StageConnector
@@ -109,6 +166,7 @@ export function ProjectLifecyclePipeline({
                   index={index}
                   isNext={stage.id === nextStage}
                   isLast={index === stages.length - 1}
+                  hasData={stageHasData(stage.id)}
                 />
               </div>
             );
@@ -126,11 +184,14 @@ function StageNode({
   status,
   index,
   isNext,
+  hasData,
 }: {
   stage: StageDefinition;
   status: "completed" | "current" | "next" | "pending";
   index: number;
   isNext: boolean;
+  /** 진행 배지(additive): store 실데이터 유무. undefined면 배지 미표시. */
+  hasData?: boolean;
 }) {
   const baseClasses =
     "relative flex flex-col items-center gap-2 rounded-[var(--radius-xl)] px-4 py-3 transition-all duration-300 min-w-[90px]";
@@ -173,6 +234,24 @@ function StageNode({
       <span className="text-[10px] font-bold uppercase tracking-[0.1em] leading-tight text-center whitespace-nowrap">
         {stage.label}
       </span>
+
+      {/* 진행 배지(additive·정직) — store 실데이터 유무. undefined면 미표시. */}
+      {hasData !== undefined && (
+        <span
+          className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[8px] font-black uppercase tracking-[0.1em] ${
+            hasData
+              ? "bg-[var(--status-success)]/12 text-[var(--status-success)]"
+              : "bg-[var(--surface-strong)] text-[var(--text-hint)]"
+          }`}
+        >
+          <span
+            className={`h-1.5 w-1.5 rounded-full ${
+              hasData ? "bg-[var(--status-success)]" : "bg-[var(--line-strong)]"
+            }`}
+          />
+          {hasData ? "완료" : "미실행"}
+        </span>
+      )}
     </motion.div>
   );
 
@@ -218,12 +297,15 @@ function MobileStageRow({
   index,
   isNext,
   isLast,
+  hasData,
 }: {
   stage: StageDefinition;
   status: "completed" | "current" | "next" | "pending";
   index: number;
   isNext: boolean;
   isLast: boolean;
+  /** 진행 배지(additive): store 실데이터 유무. undefined면 배지 미표시. */
+  hasData?: boolean;
 }) {
   const statusColors = {
     completed: "border-[var(--accent-strong)]/40 bg-[var(--accent-strong)]/10",
@@ -260,9 +342,27 @@ function MobileStageRow({
         {stage.label}
       </span>
 
+      {/* 진행 배지(additive·정직) — store 실데이터 유무. undefined면 미표시. */}
+      {hasData !== undefined && (
+        <span
+          className={`ml-auto inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[9px] font-black uppercase tracking-[0.1em] ${
+            hasData
+              ? "bg-[var(--status-success)]/12 text-[var(--status-success)]"
+              : "bg-[var(--surface-strong)] text-[var(--text-hint)]"
+          }`}
+        >
+          <span
+            className={`h-1.5 w-1.5 rounded-full ${
+              hasData ? "bg-[var(--status-success)]" : "bg-[var(--line-strong)]"
+            }`}
+          />
+          {hasData ? "완료" : "미실행"}
+        </span>
+      )}
+
       {/* Current pulse */}
       {status === "current" && (
-        <span className="ml-auto flex h-2.5 w-2.5">
+        <span className={`flex h-2.5 w-2.5 ${hasData === undefined ? "ml-auto" : ""}`}>
           <span className="absolute inline-flex h-2.5 w-2.5 animate-ping rounded-full bg-[var(--accent-strong)] opacity-50" />
           <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-[var(--accent-strong)]" />
         </span>
