@@ -4,7 +4,11 @@
  * 백엔드 계약(_workspace/61 §3·§7):
  *   - 연결: WS {origin}/ws/sales/board:{site_id}  (채널형 ws_manager, 채널=board:{site_id})
  *           토큰은 백엔드 미검증이나 ?token={access_jwt} 로 첨부(향후 게이팅 대비).
- *   - 서버→클라: {type:"UNIT_STATUS", event:HOLD|RELEASE|RESERVE, unit_id, status, held_by, expires_at, ts}
+ *   - 서버→클라: {type:"UNIT_STATUS", event:HOLD|RELEASE|RESERVE, unit_id, status, expires_at, ts}
+ *     ★held_by(점유 직원 UUID)는 broadcast 에 싣지 않는다(개인정보). WS 는 모든 구독자에게 같은
+ *       페이로드를 뿌려 수신자별 권한 마스킹이 불가하므로, 점유여부(status=HOLD)만 보낸다. '내가
+ *       잡았는지'는 클라이언트가 자신의 hold_token 보유로 판단하고, 점유자 신원이 필요하면 권한
+ *       마스킹이 적용된 GET /units/board 를 재조회한다(백엔드 _broadcast 와 응답계약 SSOT 동기화).
  *   - 클라→서버: {type:"PING"}(heartbeat) — 서버 PONG 미보장(채널 broadcast 전용)이라 응답 의존 안 함.
  *
  * 설계(socialWs 패턴 차용):
@@ -22,7 +26,7 @@ export interface UnitStatusEvent {
   event?: "HOLD" | "RELEASE" | "RESERVE" | string;
   unit_id: string;
   status: string;
-  held_by?: string | null;
+  // held_by 는 응답계약에서 의도적으로 제외(개인정보). 백엔드 _broadcast 가 싣지 않으므로 타입에서도 제거.
   expires_at?: string | null;
   ts?: string;
 }

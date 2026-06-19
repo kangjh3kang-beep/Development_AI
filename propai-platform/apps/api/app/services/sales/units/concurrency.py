@@ -18,6 +18,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 import uuid
 
@@ -29,36 +31,67 @@ logger = logging.getLogger(__name__)
 # 임시선점 TTL(분). 좌석예약형 기본 5분.
 HOLD_TTL_MINUTES = 5
 
+# 동시성 컬럼/인덱스 보강을 프로세스당 1회만 하기 위한 플래그(매 요청마다 ALTER 재실행 방지).
+_COLUMNS_READY = False
+# 동일 프로세스 안에서 동시 첫 호출(코루틴 경합)을 1회로 합류시키는 락(_COLUMNS_READY 게이트만으론
+# 동시 첫 요청 2개가 둘 다 통과해 DDL 을 중복 진입할 수 있다).
+_columns_lock = asyncio.Lock()
+# 여러 워커가 동시에 ALTER/CREATE INDEX 를 실행할 때의 DDL race 를 막는 advisory-lock 키.
+# 트랜잭션 스코프(pg_advisory_xact_lock)라 commit/rollback 시 자동 해제된다.
+# 정본(canonical)은 Alembic 마이그레이션이며, 본 함수는 마이그레이션 미적용 환경의 1회성 보강 안전망이다.
+_DDL_LOCK_KEY = 728_311_002
+
 
 # ── 멱등 스키마 보강 ──────────────────────────────────────────────────────────
-async def ensure_unit_concurrency_columns(db: AsyncSession) -> None:
-    """sales_unit_inventory 에 선점 동시성 컬럼을 멱등 추가.
+async def ensure_unit_concurrency_columns(db: AsyncSession | None = None) -> None:
+    """sales_unit_inventory 에 선점 동시성 컬럼을 멱등 추가(프로세스당 1회 + DDL race 제거).
 
     기존 status/hold_id/contract_id 컬럼은 그대로 두고, 본 Phase에 필요한
     held_by/hold_expires_at/hold_token 만 보강한다. (project_id|site_id, unit_no)
     대신 본 스키마는 (site_id, dong, ho) 가 동호 유니크의 자연키이므로 부분 유니크
     인덱스(WHERE deleted_at IS NULL)로 1세대 1행을 보강한다.
+
+    ★[락 스코프·격리] 과거엔 호출자 세션(db)에서 세션 레벨 pg_advisory_lock + 수동 unlock 을 썼는데,
+      Supabase pgbouncer(transaction pooling, database.py)에선 try 안의 commit() 이 물리 backend 를
+      풀로 반환해 finally 의 unlock 이 '다른 backend' 에서 돌아 락이 누수(no-op)됐다. 이제 코드베이스
+      표준(market._ensure / commission)대로 (1) 별도 단명 세션(async_session_factory)에서 (2) 트랜잭션
+      스코프 advisory-lock(pg_advisory_xact_lock — commit/rollback 시 자동 해제) 으로 DDL 을 직렬화한다.
+      호출자 세션에서 DDL/commit 하면 같은 요청의 미커밋 쓰기가 조기 부분커밋 되므로 격리한다(인자 db 는
+      하위호환 위해 받지만 사용하지 않는다). 동일 프로세스 코루틴 경합은 asyncio.Lock 으로 합류한다.
     """
-    await db.execute(text(
-        "ALTER TABLE sales_unit_inventory "
-        "ADD COLUMN IF NOT EXISTS held_by uuid, "
-        "ADD COLUMN IF NOT EXISTS hold_expires_at timestamptz, "
-        "ADD COLUMN IF NOT EXISTS hold_token text"
-    ))
-    # status 기본값 보강(기존 server_default='AVAILABLE'와 동일, 누락행 정리)
-    await db.execute(text(
-        "UPDATE sales_unit_inventory SET status = 'AVAILABLE' WHERE status IS NULL"
-    ))
-    # 1세대(동·호) 1행 — 동호 유니크(확정 1호1계약의 물리적 토대). 부분 유니크.
-    await db.execute(text(
-        "CREATE UNIQUE INDEX IF NOT EXISTS uq_unit_inventory_site_dong_ho "
-        "ON sales_unit_inventory (site_id, dong, ho) WHERE deleted_at IS NULL"
-    ))
-    # 보드 조회 가속(현장별 status).
-    await db.execute(text(
-        "CREATE INDEX IF NOT EXISTS ix_unit_inventory_site_status "
-        "ON sales_unit_inventory (site_id, status)"
-    ))
+    global _COLUMNS_READY
+    if _COLUMNS_READY:  # 이미 보장됨 → DB 왕복 없이 즉시 반환.
+        return
+    async with _columns_lock:  # 동시 첫 호출(코루틴 경합)을 1회로 합류.
+        if _COLUMNS_READY:
+            return
+        # ★별도 단명 세션 — 호출자 세션(db)의 미커밋 쓰기를 휩쓸지 않도록 DDL/commit 을 격리.
+        from app.core.database import async_session_factory  # noqa: PLC0415
+        async with async_session_factory() as ddl_db:
+            # advisory-lock: 트랜잭션 종료(commit/rollback) 시 자동 해제(누수 없음).
+            await ddl_db.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": _DDL_LOCK_KEY})
+            await ddl_db.execute(text(
+                "ALTER TABLE sales_unit_inventory "
+                "ADD COLUMN IF NOT EXISTS held_by uuid, "
+                "ADD COLUMN IF NOT EXISTS hold_expires_at timestamptz, "
+                "ADD COLUMN IF NOT EXISTS hold_token text"
+            ))
+            # status 기본값 보강(기존 server_default='AVAILABLE'와 동일, 누락행 정리)
+            await ddl_db.execute(text(
+                "UPDATE sales_unit_inventory SET status = 'AVAILABLE' WHERE status IS NULL"
+            ))
+            # 1세대(동·호) 1행 — 동호 유니크(확정 1호1계약의 물리적 토대). 부분 유니크.
+            await ddl_db.execute(text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_unit_inventory_site_dong_ho "
+                "ON sales_unit_inventory (site_id, dong, ho) WHERE deleted_at IS NULL"
+            ))
+            # 보드 조회 가속(현장별 status).
+            await ddl_db.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_unit_inventory_site_status "
+                "ON sales_unit_inventory (site_id, status)"
+            ))
+            await ddl_db.commit()
+        _COLUMNS_READY = True  # 성공 시에만 게이트 닫음(실패 시 다음 호출이 재시도).
 
 
 # ── Redis 보조(있으면 가속, 없으면 graceful 폴백) ─────────────────────────────
@@ -93,10 +126,9 @@ async def _redis_try_lock(unit_id: str) -> tuple[object | None, bool]:
 async def _redis_unlock(client: object | None, unit_id: str) -> None:
     if client is None:
         return
-    try:
+    # 보조락 해제 실패는 무해(TTL 로 자연만료). 정확성은 DB 가 보장하므로 조용히 무시.
+    with contextlib.suppress(Exception):
         await client.delete(f"unitlock:{unit_id}")  # type: ignore[attr-defined]
-    except Exception:  # noqa: BLE001
-        pass
 
 
 async def _redis_publish(channel: str, payload: dict) -> None:
@@ -106,10 +138,9 @@ async def _redis_publish(channel: str, payload: dict) -> None:
     client = await _redis()
     if client is None:
         return
-    try:
+    # pub/sub 브로드캐스트 실패는 무해(인프로세스 WS 가 정본). 조용히 무시.
+    with contextlib.suppress(Exception):
         await client.publish(channel, json.dumps(payload, default=str))  # type: ignore[attr-defined]
-    except Exception:  # noqa: BLE001
-        pass
 
 
 # ── 원자 선점/해제/확정(DB-SSOT) ──────────────────────────────────────────────

@@ -137,3 +137,8 @@ P0: (a)마이그레이션·부트스트랩 FORCE를 **정책 보유 테이블에
 
 **#9 종료 backlog(MEDIUM/LOW 이연)**: ①realtx_report/submit_realtx 엔드포인트 {ok:True} 절반배선→resale_decide처럼 응답 SSOT 대칭+ResalePanel.report() 분기(중복/제출됨 표기, 현재 항상 성공토스트) ②submit_realtx status!=PENDING 무조건멱등→상태전이 매트릭스(PENDING→SUBMITTED→ACCEPTED/CORRECTED 허용·report_no None 재제출만 차단) ③SSRF DNS-rebinding IP pin(검사IP를 connect 대상 고정) ④알림톡 kakaoapi.example 플레이스홀더 ⑤resale_request 권한(sales_ctx→require_role 정책결정) ⑥is_blocked_ip 멀티캐스트 주석정정. ★deploy-pending(040 인덱스 alembic·라이브 23505·decide 동시승인·실 FCM/알림톡·tsc).
 **9개 완료**: #10(7.5)·#1(8.5)·#3(8.0)·#4(7.0)·#5(8.0)·#7(8.0)·#2(8.3)·#8(8.3)·#9(7.5). 마지막 #6(8.1).
+
+| 6 | 세대 라이프사이클·추첨 | 8.1 | 8.4 | 0 | (커밋대기) | 2 iter. 해시체인 원장 fork방지(append pg_advisory_xact_lock)·verify_chain seq단조 변조탐지+꼬리절단 정직표기·DDL가드 xact_lock 교체(세션락 누수회귀 해소·pgbouncer안전)+별도세션격리+asyncio coalescing·verify/timeline site_id IDOR·WS held_by 마스킹(평문push 제거)·041 정본마이그. 32테스트. ★전 서브시스템 최고점 |
+
+**#6 종료 backlog(MEDIUM/LOW 이연)**: ①tail-truncation 앵커 실구현(sales_unit_chain_anchor expected_head_seq 영속→verify 교차검증, 현재 끝잘림 self-탐지 불가=정직표기) ②WS HOLD/RELEASE/RESERVE 수신시 디바운스 GET /units/board 자동재조회(관리자 점유자 실시간성) ③_ensure(db)/_broadcast(held_by) 죽은 파라미터 정리 ④DDL 문자열 공유모듈(units/_schema.py)로 런타임·041 단일출처 ⑤lifecycle_actions:34 stale주석 ⑥_redis_unlock/publish debug로그. ★deploy-pending(041 alembic·alembic 7head merge·라이브 동시성·Redis·tsc).
+**★10/10 전체 완료**: #10(7.5)·#1(8.5)·#3(8.0)·#4(7.0)·#5(8.0)·#7(8.0)·#2(8.3)·#8(8.3)·#9(7.5)·#6(8.4). 전부 critical/high 0. 평균 6.81→7.9.

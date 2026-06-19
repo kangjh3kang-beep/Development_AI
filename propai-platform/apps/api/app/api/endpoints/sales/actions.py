@@ -659,16 +659,22 @@ async def unit_lifecycle_action(unit_id: uuid.UUID, body: dict, db: AsyncSession
 
 @actions_router.get("/units/{unit_id}/events")
 async def unit_events(unit_id: uuid.UUID, db: AsyncSession = Depends(get_db), ctx: SalesCtx = Depends(sales_ctx)):
-    """세대 이벤트 타임라인(년월일·시분 + 해시체인) — 특이사항·상태이력."""
+    """세대 이벤트 타임라인(년월일·시분 + 해시체인) — 특이사항·상태이력.
+
+    ★ctx.site_id 를 함께 전달해 '내 현장의 그 세대' 이벤트만 조회한다(교차테넌트 원장 IDOR 차단).
+    """
     from app.services.sales.units.event_ledger import unit_timeline
-    return await unit_timeline(db, unit_id)
+    return await unit_timeline(db, unit_id, site_id=ctx.site_id)
 
 
 @actions_router.get("/units/{unit_id}/verify-chain")
 async def unit_verify_chain(unit_id: uuid.UUID, db: AsyncSession = Depends(get_db), ctx: SalesCtx = Depends(sales_ctx)):
-    """세대 이벤트 해시체인 무결성 검증(변조탐지) — 감사/공정성."""
+    """세대 이벤트 해시체인 무결성 검증(변조탐지) — 감사/공정성.
+
+    ★ctx.site_id 를 함께 전달해 '내 현장의 그 세대' 체인만 검증한다(교차테넌트 원장 IDOR 차단).
+    """
     from app.services.sales.units.event_ledger import verify_chain
-    return await verify_chain(db, unit_id)
+    return await verify_chain(db, unit_id, site_id=ctx.site_id)
 
 
 # ── 동·호 추첨(즉석추첨 + seed 해시체인 감사) ────────────────────────────────

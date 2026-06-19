@@ -9,6 +9,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 from datetime import UTC, datetime
@@ -48,17 +49,49 @@ _DDL = (
     ")"
 )
 _READY = False
+# 동일 프로세스 안에서 동시 첫 호출(코루틴 경합)을 1회로 합류시키는 락. _READY 게이트만으론
+# 동시 첫 요청 2개가 둘 다 게이트를 통과해 DDL 을 중복 진입할 수 있다(asyncio.Lock 으로 합류).
+_ensure_lock = asyncio.Lock()
 
 
-async def _ensure(db: AsyncSession) -> None:
+# 런타임 DDL을 동시에 여러 워커가 실행할 때의 race(같은 IF NOT EXISTS 가 겹쳐 충돌)를 막기 위한
+# advisory-lock 키. 트랜잭션 스코프(pg_advisory_xact_lock)라 commit/rollback 시 자동 해제된다.
+# 정본(canonical)은 Alembic 마이그레이션(041_sales_unit_events_ledger.py)이며, _ensure 는 마이그레이션이
+# 아직 적용되지 않은 환경(샌드박스 등)에서의 1회성 보강 + race 제거용 안전망이다.
+_DDL_LOCK_KEY = 728_311_001
+
+
+async def _ensure(db: AsyncSession | None = None) -> None:
+    """세대 이벤트 원장 테이블/인덱스 멱등 보장(부팅 안전망) — 프로세스 1회만 실제 DDL 수행.
+
+    ★[락 스코프·격리] 과거엔 세션 레벨 pg_advisory_lock + 수동 unlock 을 호출자 세션(db)에서 썼는데,
+      Supabase pgbouncer(transaction pooling, database.py)에선 try 안의 commit() 이 물리 backend 를
+      풀로 반환해 finally 의 unlock 이 '다른 backend' 에서 돌아 락이 누수(no-op)됐다. 이제 코드베이스
+      표준(market._ensure / commission)대로 (1) 별도 단명 세션(async_session_factory)에서 (2) 트랜잭션
+      스코프 advisory-lock(pg_advisory_xact_lock — commit/rollback 시 자동 해제, 풀링 backend 미스매치·
+      commit 예외 시 unlock 추가예외로 원오류 은폐가 동시에 사라짐) 으로 DDL 을 직렬화한다. 호출자 세션
+      (db)에서 DDL/commit 하면 같은 요청의 미커밋 쓰기가 휩쓸려 조기 부분커밋 되므로 격리한다. 인자 db 는
+      하위호환 위해 받지만 사용하지 않는다(별도 세션으로 DDL 수행).
+    동시 부팅(멀티프로세스) race 는 advisory-lock 으로, 동일 프로세스 코루틴 경합은 asyncio.Lock 으로 막는다.
+    """
     global _READY
-    if _READY:
+    if _READY:  # 이미 보장됨 → DB 왕복 없이 즉시 반환.
         return
-    await db.execute(text(_DDL))
-    await db.execute(text("CREATE INDEX IF NOT EXISTS ix_unit_events_unit ON sales_unit_events(unit_id, seq)"))
-    await db.execute(text("CREATE INDEX IF NOT EXISTS ix_unit_events_site ON sales_unit_events(site_id, occurred_at)"))
-    await db.commit()
-    _READY = True
+    async with _ensure_lock:  # 동시 첫 호출(코루틴 경합)을 1회로 합류.
+        if _READY:
+            return
+        # ★별도 단명 세션 — 호출자 세션(db)의 미커밋 쓰기를 휩쓸지 않도록 DDL/commit 을 격리.
+        from app.core.database import async_session_factory  # noqa: PLC0415
+        async with async_session_factory() as ddl_db:
+            # advisory-lock: 트랜잭션 종료(commit/rollback) 시 자동 해제(누수 없음).
+            await ddl_db.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": _DDL_LOCK_KEY})
+            await ddl_db.execute(text(_DDL))
+            await ddl_db.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_unit_events_unit ON sales_unit_events(unit_id, seq)"))
+            await ddl_db.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_unit_events_site ON sales_unit_events(site_id, occurred_at)"))
+            await ddl_db.commit()
+        _READY = True  # 성공 시에만 게이트 닫음(실패 시 다음 호출이 재시도).
 
 
 def _hash(prev_hash: str | None, unit_id: str, seq: int, event_type: str,
@@ -84,6 +117,12 @@ async def append_event(db: AsyncSession, site_id, unit_id, event_type: str,
     """
     await _ensure(db)
     uid = str(unit_id)
+    # ★[correctness·해시체인 fork 방지] 같은 세대에 두 이벤트가 동시에 append 되면, 둘 다 직전 seq(N)을
+    #   읽고 둘 다 seq=N+1·동일 prev_hash 로 INSERT 를 시도한다(체인 fork). UNIQUE(unit_id,seq)가 한쪽을
+    #   막지만 진 쪽은 IntegrityError(500)로 터진다. 트랜잭션 스코프 advisory-lock(같은 unit 키)으로 두
+    #   append 를 직렬화하면, 뒤 트랜잭션은 앞 트랜잭션 커밋까지 대기 → 갱신된 seq(N+1)을 읽어 seq=N+2 로
+    #   잇는다. xact 락이라 commit/rollback 시 자동 해제(누수 없음). 2개 인자(site,unit) 해시로 키 분산.
+    await db.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:u, 0))"), {"u": uid})
     last = (await db.execute(text(
         "SELECT seq, content_hash FROM sales_unit_events WHERE unit_id=:u ORDER BY seq DESC LIMIT 1"),
         {"u": uid})).first()
@@ -104,12 +143,21 @@ async def append_event(db: AsyncSession, site_id, unit_id, event_type: str,
     return {"seq": seq, "content_hash": chash, "prev_hash": prev_hash, "occurred_at": occurred_at}
 
 
-async def unit_timeline(db: AsyncSession, unit_id) -> list[dict[str, Any]]:
-    """세대 1곳의 이벤트 타임라인(오름차순) — 프론트 타임라인 표시용."""
+async def unit_timeline(db: AsyncSession, unit_id, site_id=None) -> list[dict[str, Any]]:
+    """세대 1곳의 이벤트 타임라인(오름차순) — 프론트 타임라인 표시용.
+
+    ★[security·IDOR] site_id 가 주어지면 WHERE 에 site_id=:s 를 더해 '그 현장의 그 세대' 이벤트만
+      돌려준다(교차테넌트 원장 열람 차단). site_id 가 None 이면(내부 호출·테스트) 세대 단위로만 조회한다.
+    """
     await _ensure(db)
-    rows = (await db.execute(text(
-        "SELECT seq, event_type, from_status, to_status, message, meta, created_by, occurred_at, content_hash "
-        "FROM sales_unit_events WHERE unit_id=:u ORDER BY seq ASC"), {"u": str(unit_id)})).all()
+    sql = ("SELECT seq, event_type, from_status, to_status, message, meta, created_by, occurred_at, content_hash "
+           "FROM sales_unit_events WHERE unit_id=:u")
+    params: dict[str, Any] = {"u": str(unit_id)}
+    if site_id is not None:
+        sql += " AND site_id=:s"
+        params["s"] = str(site_id)
+    sql += " ORDER BY seq ASC"
+    rows = (await db.execute(text(sql), params)).all()
     out = []
     for r in rows:
         out.append({
@@ -121,15 +169,35 @@ async def unit_timeline(db: AsyncSession, unit_id) -> list[dict[str, Any]]:
     return out
 
 
-async def verify_chain(db: AsyncSession, unit_id) -> dict[str, Any]:
-    """세대 이벤트 체인 무결성 검증 — content_hash 재계산이 저장값과 모두 일치하는지(변조탐지)."""
+async def verify_chain(db: AsyncSession, unit_id, site_id=None) -> dict[str, Any]:
+    """세대 이벤트 체인 무결성 검증 — content_hash 재계산이 저장값과 모두 일치하는지(변조탐지).
+
+    ★[security·IDOR] site_id 가 주어지면 WHERE 에 site_id=:s 를 더해 '그 현장의 그 세대' 체인만
+      검증한다(교차테넌트 원장 검증 차단). site_id 가 None 이면(내부 호출·테스트) 세대 단위로만 조회.
+
+    ★[탐지 범위·정직] 본 검증은 (1) content_hash 변조 (2) prev_hash 단절 (3) seq 단조성 위반(중간 행
+      삭제·재정렬·중복)을 적발한다. 단, '끝에서 잘라낸 tail-truncation'(가장 최근 N개 이벤트를 통째로
+      삭제)은 앵커(현장/세대별 기대 head seq 영속) 없이 해시체인 자체로는 self-탐지가 불가능하다 —
+      잘린 뒤 남은 1..k 행은 여전히 정합이라 {valid:True} 로 보인다. tail-truncation 실탐지는 외부
+      앵커 교차검증이 필요하며 backlog 로 이연한다(여기선 한계를 정직히 명시하고 미구현으로 둔다).
+    """
     await _ensure(db)
-    rows = (await db.execute(text(
-        "SELECT seq, event_type, to_status, message, meta, occurred_iso, content_hash, prev_hash "
-        "FROM sales_unit_events WHERE unit_id=:u ORDER BY seq ASC"), {"u": str(unit_id)})).all()
+    sql = ("SELECT seq, event_type, to_status, message, meta, occurred_iso, content_hash, prev_hash "
+           "FROM sales_unit_events WHERE unit_id=:u")
+    params: dict[str, Any] = {"u": str(unit_id)}
+    if site_id is not None:
+        sql += " AND site_id=:s"
+        params["s"] = str(site_id)
+    sql += " ORDER BY seq ASC"
+    rows = (await db.execute(text(sql), params)).all()
     prev = None
+    expected_seq = 1  # 세대 체인 seq 는 1,2,3...(append 가 단조 증가로 부여).
     for r in rows:
         seq, et, ts, msg, meta, at_iso, stored, ph = int(r[0]), r[1], r[2], r[3], r[4], r[5], r[6], r[7]
+        # ★[변조탐지] seq 단조성 검사 — 중간 행 삭제(누락)·재정렬·중복으로 seq 가 1,2,3 연속이 아니게
+        #   되면 즉시 깨진 것으로 본다(끝잘림 tail-truncation 은 docstring 명시대로 앵커 없이 미탐지).
+        if seq != expected_seq:
+            return {"valid": False, "broken_at": seq, "reason": "seq 누락·재정렬(단조성 위반)"}
         if (ph or None) != (prev or None):
             return {"valid": False, "broken_at": seq, "reason": "prev_hash 불일치"}
         recalc = _hash(prev, str(unit_id), seq, et, ts, msg, at_iso,
@@ -137,4 +205,5 @@ async def verify_chain(db: AsyncSession, unit_id) -> dict[str, Any]:
         if recalc != stored:
             return {"valid": False, "broken_at": seq, "reason": "content_hash 불일치(변조)"}
         prev = stored
+        expected_seq += 1
     return {"valid": True, "events": len(rows)}
