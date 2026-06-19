@@ -147,8 +147,8 @@ def compute_buildable_envelope(
     applies = any(k in (zone or "") for k in _NORTH_LIGHT_ZONES)
 
     if not applies:
-        # 정북일조 미적용(준주거·상업 등) → 용적률·건폐율로 층수 추정
-        floors = max(1, round(far / bcr)) if bcr > 0 else 1
+        # 정북일조 미적용(준주거·상업 등) → 용적률·건폐율로 층수. ceil=FAR 담는 최소 층수(round 내림 과소산정 방지).
+        floors = max(1, math.ceil(far / bcr)) if bcr > 0 else 1
         return {
             "applies_north_light": False,
             "zone": zone, "bcr_pct": round(bcr * 100, 1), "far_pct": round(far * 100, 1),
@@ -185,8 +185,9 @@ def compute_buildable_envelope(
     effective_gfa = min(envelope_gfa, far_gfa)
     binding = "정북일조" if envelope_gfa < far_gfa else "용적률"
     loss = max(0.0, 1 - envelope_gfa / far_gfa) * 100 if far_gfa > 0 else 0.0
-    # 현실 층수: 유효 연면적 ÷ 건폐율 바닥(전층 동일 가정 근사)
-    realistic_floors = max(1, round(effective_gfa / bcr_footprint)) if bcr_footprint > 0 else 1
+    # 현실 층수: 유효 연면적 ÷ 건폐율 바닥(전층 동일 가정 근사). ★ceil — 연면적을 '담는 데 필요한' 최소 층수
+    # (round 내림 시 4.167→4층이 되어 표시 연면적을 담지 못하는 과소산정. 올림이어야 5층이 effective_gfa 수용).
+    realistic_floors = max(1, math.ceil(effective_gfa / bcr_footprint)) if bcr_footprint > 0 else 1
     daylight_ceiling_floors = max(1, int(max_h / fh))
 
     # 공동주택 인동간격(채광 방향): 건축법 시행령 §86② — 통상 0.8H(무창벽 0.5H).
