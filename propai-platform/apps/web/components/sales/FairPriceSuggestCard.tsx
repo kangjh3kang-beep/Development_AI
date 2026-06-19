@@ -10,12 +10,17 @@ import { useState } from "react";
 import { salesApi } from "@/lib/salesApi";
 import { ApiClientError } from "@/lib/api-client";
 
-type Tier = { tier: string; label: string; premium_pct: number; per_pyeong_10k: number; per_sqm_10k: number; ref_unit_total_10k: number };
+type Tier = { tier: string; label: string; premium_pct: number; per_pyeong_10k: number; per_sqm_10k: number; ref_unit_total_10k: number; construction_cost_ratio_pct?: number; margin_over_construction_pct?: number; cost_viable?: boolean };
+// 2차 가드(원가 회수 검증) — 백엔드 cost_validation 그대로 소비(반쪽출하 방지).
+type CostValidation = {
+  cost_basis?: string; construction_cost_per_supply_pyeong_10k?: number;
+  viable_price_floor_per_pyeong_10k?: number; conservative_viable?: boolean; warning?: string | null;
+};
 type Suggest = {
   data_source: string; address?: string; lawd_cd?: string; area_basis_label?: string;
   market_reference?: { market_pp_supply_10k?: number; market_pp_exclusive_10k?: number; dong?: { median?: number; n?: number }; sigungu?: { median?: number; n?: number } };
   trust?: { confidence?: number; verdict?: string; used_sources?: string[]; excluded_outliers?: { name?: string; reason?: string }[]; warnings?: string[] };
-  tiers?: Tier[]; note?: string;
+  tiers?: Tier[]; cost_validation?: CostValidation | null; note?: string;
 };
 
 const eok = (man?: number) => (man && man > 0 ? `${(man / 10000).toLocaleString(undefined, { maximumFractionDigits: 1 })}억` : "-");
@@ -69,6 +74,22 @@ export default function FairPriceSuggestCard({ siteCode, onAdopt }: { siteCode: 
                 <p className="text-[11px] font-bold text-[var(--text-secondary)]">{t.label} <span className="text-[var(--text-hint)]">+{t.premium_pct}%</span></p>
                 <p className="mt-0.5 text-base font-black text-[var(--text-primary)]">{t.per_pyeong_10k.toLocaleString()}<span className="text-[10px] font-normal">만원/평</span></p>
                 <p className="text-[10px] text-[var(--text-tertiary)]">84타입 {eok(t.ref_unit_total_10k)}</p>
+                {/* ★[iter-2 반쪽출하 해소] 백엔드 cost_validation 이 tier별로 부착하는 원가 회수 지표를 렌더.
+                    cost_viable(원가 회수 가능 여부) 배지 + 원가비율·마진. 데이터 없는 tier 는 정직 생략. */}
+                {t.cost_viable != null && (
+                  <span className={`mt-1 inline-block rounded-full px-1.5 py-0.5 text-[9px] font-bold ${t.cost_viable ? "bg-emerald-500/15 text-emerald-600" : "bg-rose-500/15 text-rose-500"}`}>
+                    {t.cost_viable ? "원가회수 가능" : "원가미회수 ⚠"}
+                  </span>
+                )}
+                {(t.construction_cost_ratio_pct != null || t.margin_over_construction_pct != null) && (
+                  <p className="mt-0.5 text-[9px] leading-tight text-[var(--text-tertiary)]">
+                    {t.construction_cost_ratio_pct != null && <>원가비율 {t.construction_cost_ratio_pct}%</>}
+                    {t.construction_cost_ratio_pct != null && t.margin_over_construction_pct != null && " · "}
+                    {t.margin_over_construction_pct != null && (
+                      <span className={t.margin_over_construction_pct < 0 ? "text-rose-500" : ""}>마진 {t.margin_over_construction_pct}%</span>
+                    )}
+                  </p>
+                )}
                 <button onClick={() => onAdopt(Math.round(t.per_sqm_10k * 10000), t.label)}
                   className="mt-1.5 w-full rounded-md bg-[var(--accent-strong)] px-2 py-1 text-[11px] font-bold text-white hover:opacity-90">채택</button>
               </div>
@@ -77,6 +98,26 @@ export default function FairPriceSuggestCard({ siteCode, onAdopt }: { siteCode: 
 
           {data.trust?.excluded_outliers && data.trust.excluded_outliers.length > 0 && (
             <p className="mt-2 text-[10px] text-amber-500/90">⚠ 이상치 제외: {data.trust.excluded_outliers.map((e) => `${e.name}(${e.reason})`).join(", ")}</p>
+          )}
+
+          {/* 2차 가드: 원가(공사비+간접) 회수 검증 — 시장가가 원가를 못 넘으면 경고(가짜값 아님·정직 표기) */}
+          {data.cost_validation && (
+            <p className={`mt-2 rounded-md px-2 py-1 text-[10px] leading-snug ${data.cost_validation.warning ? "bg-rose-500/10 text-rose-500" : "bg-emerald-500/10 text-emerald-600/90"}`}>
+              {/* ★[iter-3 데드필드 렌더] conservative_viable(보수안 원가회수 가능 여부) 배지 +
+                  construction_cost_per_supply_pyeong_10k(공급평당 원가)을 함께 노출(타입선언만 하고
+                  안 그리던 dead 필드 제거 — 백엔드가 산출한 지표를 화면에 종단배선). */}
+              {data.cost_validation.conservative_viable != null && (
+                <b className={data.cost_validation.conservative_viable ? "text-emerald-600" : "text-rose-500"}>
+                  {data.cost_validation.conservative_viable ? "보수안 원가회수 OK" : "보수안 원가미회수 ⚠"} ·{" "}
+                </b>
+              )}
+              원가검증({data.cost_validation.cost_basis})
+              {data.cost_validation.construction_cost_per_supply_pyeong_10k != null
+                ? ` · 공급평당 원가 ${data.cost_validation.construction_cost_per_supply_pyeong_10k.toLocaleString()}만원/평`
+                : ""}
+              {" · 원가기반 최저선 "}<b>{data.cost_validation.viable_price_floor_per_pyeong_10k?.toLocaleString()}만원/평</b>
+              {data.cost_validation.warning ? ` · ⚠ ${data.cost_validation.warning}` : " · 보수안이 원가 최저선을 충족합니다."}
+            </p>
           )}
 
           <div className="mt-2 flex items-center gap-1.5">

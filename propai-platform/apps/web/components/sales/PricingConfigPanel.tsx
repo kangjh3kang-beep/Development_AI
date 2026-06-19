@@ -31,6 +31,10 @@ export default function PricingConfigPanel({
   const [weights, setWeights] = useState<Weight[]>([]);
   const [comps, setComps] = useState<Comp[]>([]);
   const [msg, setMsg] = useState("");
+  // ★[iter-4 MED·warning 종단배선] /pricing/generate 응답의 원가구성 경고(흡수금지·왜곡·음수clamp)를
+  //   배열로 받아 PriceGroupingPanel 과 동일한 배너로 노출한다(과거엔 폐기돼 화면서 안 보였음 — 재생성/
+  //   AI제안 경로의 dead 채널 해소). 정적 flash 만으론 Σ구성≠분양가·VAT 과소합산 신호를 못 봤다.
+  const [warnings, setWarnings] = useState<{ message: string; unit_count?: number }[]>([]);
 
   const load = useCallback(() => {
     api.get<UnitType[]>("/unit-types?limit=500").then((t) => setTypes(t || [])).catch(() => setTypes([]));
@@ -59,11 +63,17 @@ export default function PricingConfigPanel({
   const saveComp = async (c: Comp) => { if (c.id) await api.patch(`/pricing-composition/${c.id}`, { component_type: c.component_type, label: c.label, basis: c.basis, value: c.value, vat_applicable: c.vat_applicable }); };
   const delComp = async (id?: string) => { if (id) { await api.del(`/pricing-composition/${id}`); load(); } };
 
-  const regenerate = async () => { await api.post("/pricing/generate", { round_id: roundId }); flash("분양가 재생성 완료"); onChanged(); };
+  const regenerate = async () => {
+    setWarnings([]);
+    const r = await api.post<{ priced?: number; warnings?: { message: string; unit_count?: number }[] }>(
+      "/pricing/generate", { round_id: roundId });
+    setWarnings(r?.warnings || []);
+    flash("분양가 재생성 완료"); onChanged();
+  };
 
   // 🤖 AI 분양가 제안 — 공통 LLM으로 기준가(호당)·층 가중치 제안 후 적용+재생성
   const aiSuggest = async () => {
-    setAiBusy(true); setMsg("");
+    setAiBusy(true); setMsg(""); setWarnings([]);
     try {
       const ctx = {
         zone: sa?.zoneCode || "미상", land_area_sqm: sa?.landAreaSqm || null,
@@ -88,7 +98,9 @@ export default function PricingConfigPanel({
       for (const w of (data.floor_weights || [])) {
         if (w.match_key != null) await api.post("/pricing-weights", { round_id: roundId, dimension: "FLOOR", match_key: String(w.match_key), basis: "RATE", value: Number(w.value || 0), priority: 1 });
       }
-      await api.post("/pricing/generate", { round_id: roundId });
+      const gen = await api.post<{ priced?: number; warnings?: { message: string; unit_count?: number }[] }>(
+        "/pricing/generate", { round_id: roundId });
+      setWarnings(gen?.warnings || []);
       flash("AI 제안 적용·재생성 완료"); load(); onChanged();
     } catch {
       setMsg("AI 제안 실패(잠시 후 재시도)");
@@ -103,6 +115,21 @@ export default function PricingConfigPanel({
       </button>
       {open && (
         <div className="space-y-5 border-t border-[var(--line)] p-4">
+          {/* ★[iter-4 warning 배너] 재생성/AI제안의 원가구성 경고(흡수금지·왜곡·음수clamp) 정직 노출 —
+              Σ구성≠분양가·VAT 과세표준 과소합산 신호. PriceGroupingPanel 과 동일 디자인. */}
+          {warnings.length > 0 && (
+            <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-2.5 py-1.5">
+              <p className="text-[11px] font-bold text-amber-600">⚠ 원가구성 경고 — 분양가 합과 구성요소 합이 어긋날 수 있습니다(원가구성 비율 합=1 점검)</p>
+              <ul className="mt-1 space-y-0.5">
+                {warnings.map((w, i) => (
+                  <li key={i} className="text-[10px] leading-snug text-amber-600/90">
+                    · {w.message}{w.unit_count != null ? ` (세대 ${w.unit_count})` : ""}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           {/* ⓪ 적정분양가 추천(주변 실거래 교차검증) → 채택 시 전 타입 기준단가(㎡당) 일괄 반영 */}
           <FairPriceSuggestCard siteCode={siteCode} onAdopt={async (perSqmWon, label) => {
             if (types.length === 0) { flash("타입이 없습니다. 먼저 동·호표를 생성하세요."); return; }

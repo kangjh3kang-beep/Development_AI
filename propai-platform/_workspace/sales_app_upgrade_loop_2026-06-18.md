@@ -127,3 +127,8 @@ P0: (a)마이그레이션·부트스트랩 FORCE를 **정책 보유 테이블에
 
 **#2 종료 backlog(MEDIUM/LOW 이연)**: ①social room_users write-only vestigial(broadcast는 DB _member_ids fan-out이라 도청불가하나 disconnect 미prune 느린 증식)→subscribe/room_users 제거+SUBSCRIBE 화이트리스트서 제외(채널과 일치) ②sw.js X-PropAI-Stale 헤더 소비처 0(dead-wire)→network-first 화면 배지 배선 또는 헤더 제거 ③_authorize_site_channel 광범위 except가 DB일시장애와 비멤버를 동일 4403→인프라장애는 4429(백오프)/비멤버만 4403 분기 ④멀티워커 Redis 전역 throttle ⑤units_live held_by WS 마스킹 ⑥_conn_log LRU캡 ⑦siteCode prop 명명·socialWs onAuthError. ★deploy-pending(라이브 DB 인가·실브라우저 CloseEvent·tsc·sw런타임·멀티워커).
 **7개 완료**: #10(7.5)·#1(8.5)·#3(8.0)·#4(7.0)·#5(8.0)·#7(8.0)·#2(8.3). 다음 #8(7.1)→#9(7.2)→#6(8.1).
+
+| 8 | 적정분양가·매출역산·원가 | 7.1 | 8.3 | 0 | (커밋대기) | 7 iter. Decimal 머니패스 정합·decompose 잔차흡수 4중가드(음수/과배분/팽창/상대편차, 회계전파차단)·매출역산 gap 원기반(floor편향 제거)·멱등 콘텐츠해시(상수붕괴·값정정 복리 차단)·멤버레벨 복리 3겹봉합(_load_group_map dedup+039 UNIQUE+SAVEPOINT graceful)·3경로 공용헬퍼 패리티(_load_group_map/_clamp_price)·warning 종단배선·OVERRIDE value<=0 가드·정직강등(unavailable)·라우터400·engine ruff청소. 88 백+19 인접 |
+
+**#8 종료 backlog(MEDIUM/LOW 이연)**: ①CAP 모드 CUSTOM 제외→ΣRATE<1 왜곡가드 영구 false-positive 잠복(provision.py GENERAL 하드코딩이라 현재 unreachable, CAP 활성시 분기 필요) ②멱등키 클라키(cli:)/자동(auto:) 혼용시 별도그룹 복리(규약주석 의존→by-construction화: 콘텐츠해시 꼬리 1차조회 dedup) ③멤버/그룹 UNIQUE가 마이그038/039만·ORM __table_args__ 미선언(create_all 부트스트랩 SSOT 이원화) ④흡수취소 합계 원장 종단전파 게이트 ⑤reconciles_won 구성정의(전부FIXED) 한정 ⑥gap banker's→HALF_UP ⑦PricingWarningBanner 공용컴포넌트 ⑧PricingConfigPanel regenerate try/catch. ★deploy-pending(라이브 MOLIT 실거래·DB round-trip·038/039 인덱스 alembic·동시성 23505·tsc).
+**8개 완료**: #10(7.5)·#1(8.5)·#3(8.0)·#4(7.0)·#5(8.0)·#7(8.0)·#2(8.3)·#8(8.3). 다음 #9(7.2)→#6(8.1).

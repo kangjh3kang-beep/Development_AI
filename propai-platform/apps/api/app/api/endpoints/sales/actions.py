@@ -320,9 +320,18 @@ async def units_generate(body: dict, db: AsyncSession = Depends(get_db),
 @actions_router.post("/pricing/generate")
 async def pricing_generate(body: dict, db: AsyncSession = Depends(get_db),
                            ctx: SalesCtx = Depends(require_role("DEVELOPER", "AGENCY"))):
-    n = await generate_price_table(db, ctx.site_id, uuid.UUID(body["round_id"]), by=ctx.user.id)
+    # ★[iter-2 500 누출 차단] round_id 누락/형식오류는 가드 없이 역참조하면 KeyError/ValueError →
+    #   500 으로 샌다. 입력 오류이므로 400 으로 명확히 돌려준다(contract_create 패턴).
+    try:
+        round_id = uuid.UUID(str(body["round_id"]))
+    except (KeyError, ValueError, TypeError):
+        raise HTTPException(400, "round_id(분양 차수)가 필요합니다(UUID).") from None
+    # ★[iter-3 warning 종단배선] 엔진이 모은 원가구성 경고(흡수금지·왜곡·음수clamp)를 응답에 실어
+    #   화면에서 운영자가 볼 수 있게 한다(과거엔 폐기돼 dead 채널이었음). collect 리스트로 수집.
+    warnings: list[dict] = []
+    n = await generate_price_table(db, ctx.site_id, round_id, by=ctx.user.id, collect=warnings)
     await db.commit()
-    return {"priced": n}
+    return {"priced": n, "warnings": warnings}
 
 
 @actions_router.get("/pricing/suggest")
@@ -343,15 +352,24 @@ async def pricing_revenue(round_id: str, db: AsyncSession = Depends(get_db),
 async def pricing_solve_base(body: dict, db: AsyncSession = Depends(get_db),
                              ctx: SalesCtx = Depends(require_role("DEVELOPER", "AGENCY"))):
     """P1-3 목표 총매출 → 균일 기준단가 역산·전 타입 반영·재생성 — reverse."""
-    res = await solve_base_for_target(db, ctx.site_id, uuid.UUID(body["round_id"]),
-                                      int(body["target_total_10k"]), by=ctx.user.id)
+    # ★[iter-2 500 누출 차단] round_id·target_total_10k 누락/형식오류는 KeyError/ValueError →
+    #   500 으로 샌다. 입력 오류는 400 으로 명확히. (목표 0 이하는 엔진이 ok:False 로 정직 처리)
+    try:
+        round_id = uuid.UUID(str(body["round_id"]))
+    except (KeyError, ValueError, TypeError):
+        raise HTTPException(400, "round_id(분양 차수)가 필요합니다(UUID).") from None
+    try:
+        target_total_10k = int(body["target_total_10k"])
+    except (KeyError, ValueError, TypeError):
+        raise HTTPException(400, "target_total_10k(목표 총매출, 만원 정수)가 필요합니다.") from None
+    res = await solve_base_for_target(db, ctx.site_id, round_id, target_total_10k, by=ctx.user.id)
     if res.get("ok"):
         await db.commit()
         # Phase 1: 분양매출 SSOT 합류(best-effort) — solve_base는 achieved_total_10k를 total로 정규화
         from app.services.ledger.ledger_adapters import record_pricing_revenue
         await record_pricing_revenue(
             rev={**res, "total_revenue_10k": res.get("achieved_total_10k")},
-            round_id=str(body["round_id"]),
+            round_id=str(round_id),
             tenant_id=str(getattr(ctx.user, "tenant_id", "") or "") or None,
             project_id=str(ctx.site_id), created_by=str(ctx.user.id))
     return res
@@ -361,17 +379,39 @@ async def pricing_solve_base(body: dict, db: AsyncSession = Depends(get_db),
 async def pricing_group_apply(body: dict, db: AsyncSession = Depends(get_db),
                               ctx: SalesCtx = Depends(require_role("DEVELOPER", "AGENCY"))):
     """P1-4 선택 세대 그룹 일괄단가 — mode=RATE(+%)·FIXED(+원)·OVERRIDE_PSQM(절대 평당단가)."""
+    # ★[iter-2 500 누출 차단] round_id·unit_ids·value 형식오류는 가드 없이 역참조하면 500 으로 샌다.
+    #   입력 오류(누락 round_id·잘못된 UUID·숫자아닌 value)는 400 으로 명확히 돌려준다.
+    try:
+        round_id = uuid.UUID(str(body["round_id"]))
+    except (KeyError, ValueError, TypeError):
+        raise HTTPException(400, "round_id(분양 차수)가 필요합니다(UUID).") from None
+    try:
+        unit_ids = [uuid.UUID(str(u)) for u in (body.get("unit_ids") or [])]
+    except (ValueError, TypeError):
+        raise HTTPException(400, "unit_ids(세대 식별자)에 잘못된 UUID 가 있습니다.") from None
+    # ★[iter-5 LOW·silent 0폴백 제거] 과거 body.get("value", 0)은 value 키 자체가 없으면 조용히 0 으로
+    #   떨어져, '값 미입력'이 가산 0(=무효 그룹 생성·아무 변화 없음)으로 은폐됐다. round_id 처럼 누락은
+    #   400 으로 명확히 돌려준다(0 은폐 금지). 0 을 '명시적으로' 보낸 경우만 0 으로 허용한다.
+    if "value" not in body or body.get("value") is None:
+        raise HTTPException(400, "value(가산/단가 값)가 필요합니다.") from None
+    try:
+        value = float(body["value"])
+    except (ValueError, TypeError):
+        raise HTTPException(400, "value(가산/단가 값)는 숫자여야 합니다.") from None
+    # ★[iter-3 멱등성] idempotency_key(선택)를 받아 더블클릭·재시도 시 같은 그룹 재사용→RATE 복리가산
+    #   차단. 미전달 시 엔진이 group_name+mode 로 멱등키를 결정한다(클라가 안 줘도 기본 멱등).
+    idem = body.get("idempotency_key")
     res = await apply_group_pricing(
-        db, ctx.site_id, uuid.UUID(body["round_id"]),
-        [uuid.UUID(str(u)) for u in (body.get("unit_ids") or [])],
-        mode=body.get("mode", "RATE"), value=float(body.get("value", 0)),
-        group_name=body.get("group_name"), by=ctx.user.id)
+        db, ctx.site_id, round_id, unit_ids,
+        mode=body.get("mode", "RATE"), value=value,
+        group_name=body.get("group_name"), by=ctx.user.id,
+        idempotency_key=str(idem) if idem else None)
     if res.get("ok"):
         await db.commit()
         # Phase 1: 분양매출 SSOT 합류(best-effort 무중단 — append_analysis가 예외 흡수)
         from app.services.ledger.ledger_adapters import record_pricing_revenue
         await record_pricing_revenue(
-            rev=res, round_id=str(body["round_id"]),
+            rev=res, round_id=str(round_id),
             tenant_id=str(getattr(ctx.user, "tenant_id", "") or "") or None,
             project_id=str(ctx.site_id), created_by=str(ctx.user.id))
     return res
