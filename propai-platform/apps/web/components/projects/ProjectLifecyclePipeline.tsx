@@ -46,62 +46,10 @@ export function ProjectLifecyclePipeline({
   const getNextRecommendedStage = useProjectContextStore(
     (s) => s.getNextRecommendedStage,
   );
-
-  // 진행 배지(additive) — 단계별 store 실데이터 유무. completedStages와 별개로,
-  // "데이터가 실제 채워졌는가"를 정직하게 표시한다(가짜 진행률/수치 없음).
-  // 무거운 마운트·API 호출 없이 이미 영속된 cross-module 상태만 읽는다.
-  const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
-  const designData = useProjectContextStore((s) => s.designData);
-  const feasibilityData = useProjectContextStore((s) => s.feasibilityData);
-  const costData = useProjectContextStore((s) => s.costData);
-  const esgData = useProjectContextStore((s) => s.esgData);
-  const complianceData = useProjectContextStore((s) => s.complianceData);
-  const financeUpdatedAt = useProjectContextStore((s) => s.updatedAt.finance);
-
-  /** 단계 id별 "실데이터 존재" 판정(무목업) — store 값 유무로만 판정. 매핑 없는
-   *  단계는 undefined(배지 미표시) — 가짜 완료 표기를 만들지 않는다. */
-  function stageHasData(stageId: string): boolean | undefined {
-    switch (stageId) {
-      case "site-analysis":
-        return !!(
-          (siteAnalysis?.landAreaSqm && siteAnalysis.landAreaSqm > 0) ||
-          siteAnalysis?.address ||
-          siteAnalysis?.zoneCode
-        );
-      case "legal":
-        return !!(
-          complianceData &&
-          (complianceData.bcrCompliant != null ||
-            complianceData.farCompliant != null ||
-            complianceData.heightCompliant != null ||
-            (complianceData.violations?.length ?? 0) > 0)
-        );
-      case "design":
-      case "bim":
-        return !!(designData?.totalGfaSqm && designData.totalGfaSqm > 0);
-      case "construction":
-        return !!(
-          costData?.totalConstructionCostWon &&
-          costData.totalConstructionCostWon > 0
-        );
-      case "feasibility":
-        return !!(
-          feasibilityData?.totalRevenueWon &&
-          feasibilityData.totalRevenueWon > 0
-        );
-      case "finance":
-        return !!financeUpdatedAt;
-      case "esg":
-        return !!(
-          esgData &&
-          ((esgData.totalCarbonPerSqm ?? 0) > 0 ||
-            (esgData.embodiedCarbonKg ?? 0) > 0)
-        );
-      // report/operations 등 전용 데이터 없는 종합·운영 단계는 배지 미표시.
-      default:
-        return undefined;
-    }
-  }
+  // 진행 배지·완료 판정의 단일 소비원(SSOT) — store의 데이터유무 판정 선택자.
+  // completedStages가 비어 있어도 "실데이터가 채워진" 단계를 완료로 일관 표시한다
+  // (markStageComplete 미호출 모듈 때문에 0/11 고정되던 버그 해소).
+  const stageHasData = useProjectContextStore((s) => s.stageHasData);
 
   const stages = getStages(locale, projectId);
   const nextStage = getNextRecommendedStage();
@@ -110,7 +58,10 @@ export function ProjectLifecyclePipeline({
   const activeRouteStage = stages.find((s) => pathname.startsWith(s.route));
 
   function getStageStatus(stageId: string): "completed" | "current" | "next" | "pending" {
-    if (completedStages.includes(stageId)) return "completed";
+    // 완료 판정 = 완료 단계 기록(completedStages) OR 실데이터 존재(stageHasData).
+    // markStageComplete를 일관 호출하지 않는 모듈이 있어 데이터유무도 함께 본다.
+    if (completedStages.includes(stageId) || stageHasData(stageId) === true)
+      return "completed";
     if (activeRouteStage?.id === stageId || currentStage === stageId) return "current";
     if (nextStage === stageId) return "next";
     return "pending";
@@ -143,9 +94,7 @@ export function ProjectLifecyclePipeline({
                   hasData={stageHasData(stage.id)}
                 />
                 {index < stages.length - 1 && (
-                  <StageConnector
-                    completed={completedStages.includes(stage.id)}
-                  />
+                  <StageConnector completed={status === "completed"} />
                 )}
               </div>
             );
@@ -255,11 +204,9 @@ function StageNode({
     </motion.div>
   );
 
-  if (status === "completed" || status === "next" || status === "current") {
-    return <Link href={stage.route}>{content}</Link>;
-  }
-
-  return content;
+  // 모든 단계 진입 허용 — 업스트림 미완(pending)이어도 클릭 이동 가능.
+  // 진입한 화면이 데이터 없으면 그 화면이 needs-input(정직 안내)을 담당한다.
+  return <Link href={stage.route}>{content}</Link>;
 }
 
 /* ── Desktop Connector ── */
@@ -370,11 +317,8 @@ function MobileStageRow({
     </motion.div>
   );
 
-  if (status === "completed" || status === "next" || status === "current") {
-    return <Link href={stage.route}>{inner}</Link>;
-  }
-
-  return inner;
+  // 모든 단계 진입 허용(pending 포함) — 진입 화면이 needs-input을 정직 안내.
+  return <Link href={stage.route}>{inner}</Link>;
 }
 
 /* ── Compact Pipeline (for layout breadcrumb) ── */
@@ -400,17 +344,14 @@ function CompactPipeline({
           pending: "bg-[var(--line)]",
         };
 
-        const canNavigate = status === "completed" || status === "current" || status === "next";
-
+        // 모든 단계 진입 허용(pending 포함) — 진입 화면이 needs-input을 정직 안내.
         const dot = (
           <div
             className="group relative flex items-center"
             title={stage.label}
           >
             <div
-              className={`h-2.5 w-2.5 rounded-full transition-all duration-300 ${dotColors[status]} ${
-                canNavigate ? "cursor-pointer hover:scale-150" : ""
-              }`}
+              className={`h-2.5 w-2.5 rounded-full cursor-pointer transition-all duration-300 hover:scale-150 ${dotColors[status]}`}
             />
             {/* Tooltip */}
             <div className="pointer-events-none absolute -top-8 left-1/2 -translate-x-1/2 rounded-lg bg-[var(--surface-strong)] px-2.5 py-1 text-[10px] font-bold text-[var(--text-primary)] opacity-0 shadow-[var(--shadow-lg)] transition-opacity group-hover:opacity-100 whitespace-nowrap border border-[var(--line)]">
@@ -429,15 +370,11 @@ function CompactPipeline({
           </div>
         );
 
-        if (canNavigate) {
-          return (
-            <Link key={stage.id} href={stage.route} className="flex items-center">
-              {dot}
-            </Link>
-          );
-        }
-
-        return <div key={stage.id} className="flex items-center">{dot}</div>;
+        return (
+          <Link key={stage.id} href={stage.route} className="flex items-center">
+            {dot}
+          </Link>
+        );
       })}
     </div>
   );

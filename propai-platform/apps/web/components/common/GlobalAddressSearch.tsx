@@ -477,7 +477,12 @@ export function GlobalAddressSearch({
         const area = (m?.area_sqm ?? e.areaSqm) ?? 0;
         const status = (m?.status ?? e.infoStatus) ?? null;
         const zone = m?.zone_type ?? e.zoneCode ?? null;
-        return { area, status, zone };
+        // 토지조서 SSOT(parcels) 배선용 필지별 데이터 — 보강(m) 우선, 로컬 entry 폴백.
+        //   무목업: 없는 값은 빈 문자열(가짜 미생성). ownerType은 무료 API 미제공이라 항상 "".
+        const pnu = (m?.pnu ?? e.pnu) ?? "";
+        const address = (m?.address ?? e.fullAddress ?? e.jibunAddress) ?? "";
+        const landCategory = (m?.jimok ?? e.jimok) ?? "";
+        return { area, status, zone, pnu, address, landCategory };
       })
       // status가 명시적으로 ok가 아닌 경우(ambiguous/failed)는 제외, 면적>0만.
       .filter((p) => p.area > 0 && (p.status == null || p.status === "ok"));
@@ -497,6 +502,16 @@ export function GlobalAddressSearch({
       repLandAreaSqm: repArea,
       parcelCount: valid.length,
       zoneMixed: zones.size >= 2,
+      // ★토지조서 SSOT 배선: 다필지 배열을 기록해 LandSchedule·Registry 시드 useEffect가
+      //   집계값이 아닌 실제 필지목록으로 표를 자동 복원하게 한다('절반만 배선된 SSOT' 해소).
+      //   ParcelData 타입 정합(pnu/address/areaSqm/landCategory/ownerType), 누락필드는 "".
+      parcels: valid.map((p) => ({
+        pnu: p.pnu,
+        address: p.address,
+        areaSqm: p.area,
+        landCategory: p.landCategory,
+        ownerType: "",
+      })),
     });
   }, [writeToContext, updateSiteAnalysis]);
   // 재시도 setTimeout이 항상 최신 enrichParcels를 호출하도록 ref 동기화(렌더마다 갱신).

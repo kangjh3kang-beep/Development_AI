@@ -53,16 +53,23 @@ export function LifecycleProgressRail({
   const completedStages = useProjectContextStore((s) => s.completedStages);
   const currentStage = useProjectContextStore((s) => s.currentStage);
   const getNextRecommendedStage = useProjectContextStore((s) => s.getNextRecommendedStage);
+  // 진행도·완료 판정의 단일 소비원(SSOT) — store의 데이터유무 판정 선택자.
+  // markStageComplete를 일관 호출하지 않는 모듈 탓에 completedStages가 비어 "0/11 고정"되던
+  // 버그를 해소: 실데이터가 채워진 단계(부지분석 등)를 완료로 일관 표시한다.
+  const stageHasData = useProjectContextStore((s) => s.stageHasData);
 
   // 활성 프로젝트가 없으면 표시하지 않는다(대시보드/레이아웃 무파괴).
   if (!projectId) return null;
 
   const nextStage = getNextRecommendedStage();
-  const completedCount = LIFECYCLE_STAGES.filter((id) => completedStages.includes(id)).length;
+  // 완료 판정 = 완료 단계 기록(completedStages) OR 실데이터 존재(stageHasData).
+  const isDone = (id: LifecycleStage) =>
+    completedStages.includes(id) || stageHasData(id) === true;
+  const completedCount = LIFECYCLE_STAGES.filter((id) => isDone(id)).length;
   const pct = Math.round((completedCount / LIFECYCLE_STAGES.length) * 100);
 
   function statusOf(id: LifecycleStage): StageStatus {
-    if (completedStages.includes(id)) return "completed";
+    if (isDone(id)) return "completed";
     if (currentStage === id) return "current";
     if (nextStage === id) return "next";
     return "pending";
@@ -108,7 +115,6 @@ export function LifecycleProgressRail({
         {LIFECYCLE_STAGES.map((id, index) => {
           const meta = STAGE_META[id];
           const status = statusOf(id);
-          const navigable = status !== "pending";
 
           const node = (
             <motion.div
@@ -117,7 +123,7 @@ export function LifecycleProgressRail({
               transition={{ delay: index * 0.04, duration: 0.25 }}
               className={`relative flex items-center gap-2 rounded-[var(--radius-xl)] px-3 py-2 transition-all duration-300 ${
                 isVertical ? "w-full" : "min-w-[88px] flex-col text-center"
-              } ${STATUS_NODE[status]} ${navigable ? "cursor-pointer" : ""}`}
+              } ${STATUS_NODE[status]} cursor-pointer`}
               title={meta.label}
             >
               {status === "current" && (
@@ -158,12 +164,11 @@ export function LifecycleProgressRail({
             </motion.div>
           );
 
-          const cell = navigable ? (
+          // 모든 단계 진입 허용(pending 포함) — 진입 화면이 needs-input을 정직 안내.
+          const cell = (
             <Link href={`/${locale}/projects/${projectId}/${meta.route}`} className="block">
               {node}
             </Link>
-          ) : (
-            node
           );
 
           return (
@@ -173,7 +178,7 @@ export function LifecycleProgressRail({
                 <span
                   aria-hidden="true"
                   className={`mx-0.5 h-0.5 w-3 shrink-0 rounded-full ${
-                    completedStages.includes(id)
+                    isDone(id)
                       ? "bg-[var(--accent-strong)]"
                       : "bg-[var(--line)]"
                   }`}

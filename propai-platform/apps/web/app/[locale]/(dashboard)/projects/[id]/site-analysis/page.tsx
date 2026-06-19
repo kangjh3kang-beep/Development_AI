@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import dynamic from "next/dynamic";
 import { motion, AnimatePresence } from "framer-motion";
@@ -16,6 +16,7 @@ import { isValidLocale, type Locale } from "@/i18n/config";
 import { useDictionary } from "@/hooks/use-dictionary";
 import { apiClient } from "@/lib/api-client";
 import { useProjectContextStore, type SiteAnalysisData } from "@/store/useProjectContextStore";
+import { analysisSignature } from "@/lib/use-analysis-cache";
 import { farLimitForZone, bcrLimitForZone } from "@/lib/kr-building-regulations";
 
 // 가상준공 3D 디지털트윈 씬 — @react-three/fiber. SSR/1102 회피 위해 ssr:false 동적 마운트.
@@ -645,8 +646,13 @@ export default function SiteAnalysisPage() {
   const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
   const ctxProjectId = useProjectContextStore((s) => s.projectId);
   const updateSiteAnalysis = useProjectContextStore((s) => s.updateSiteAnalysis);
+  // 분석캐시(영속·프로젝트별) 조회/저장 — comprehensive(L3) 결과를 재진입 시 복원하는 안전경로.
+  const getAnalysisCache = useProjectContextStore((s) => s.getAnalysisCache);
+  const setAnalysisCache = useProjectContextStore((s) => s.setAnalysisCache);
   // ProjectContextBinder가 이 프로젝트를 바인딩 완료했는지(레이아웃에서 동기 바인딩).
   const isBound = ctxProjectId === id;
+  // 동일 주소 comprehensive 중복 호출 방지 가드(자동진입 useEffect 재실행·동시성 대비).
+  const l3FetchKeyRef = useRef<string | null>(null);
 
   // 주소 단일화: 바인딩 완료 후 컨텍스트에 주소가 있으면 재입력 없이 결과로 자동진입하고
   // 컨텍스트 데이터를 siteData로 시드한다. 사용자가 직접 '새 분석'을 누른 경우(userInitiated)는 예외.
@@ -689,6 +695,119 @@ export default function SiteAnalysisPage() {
     };
   }, [stage, id]);
 
+  // L3 종합 토지정보(실거래·건축물대장·인프라·실효용적률 계층·종상향·분묘) 단일 수집 함수.
+  // ★단일영점(DRY): 수동 분석(handleInitiate)과 자동진입(아래 useEffect)이 모두 이 함수를 호출한다.
+  // - 성공 시 L3 상태 세팅 + ordinance 승격 + 건축물 영속 + 분석캐시("l3") 영속(재진입 복원용).
+  // - 실패는 무시(기본 분석만 표시 — 무목업: 데이터 없으면 다층카드 미표시).
+  const fetchL3Analysis = useCallback(
+    async (address: string, pnu: string | null | undefined) => {
+      const resolvedAddress = address;
+      const sig = analysisSignature(address, pnu ?? "");
+      try {
+        const landResult = await apiClient.post<{
+          nearby_transactions?: L3SiteData["nearby_transactions"];
+          infrastructure?: L3SiteData["infrastructure"];
+          building_detail?: L3SiteData["building_detail"];
+          effective_far?: L3SiteData["effective_far"];
+          zone_limits?: L3SiteData["zone_limits"];
+          upzoning?: L3SiteData["upzoning"];
+          upzoning_scenarios?: L3SiteData["upzoning_scenarios"];
+          potential_far_range?: L3SiteData["potential_far_range"];
+          upzoning_interpretation?: L3SiteData["upzoning_interpretation"];
+          grave_registry?: L3SiteData["grave_registry"];
+        }>("/zoning/comprehensive", {
+          useMock: false,
+          body: { address, pnu: pnu ?? null },
+        });
+        const next: L3SiteData = {
+          nearby_transactions: landResult.nearby_transactions ?? null,
+          infrastructure: landResult.infrastructure ?? null,
+          building_detail: landResult.building_detail ?? null,
+          effective_far: landResult.effective_far ?? null,
+          zone_limits: landResult.zone_limits ?? null,
+          upzoning: landResult.upzoning ?? null,
+          upzoning_scenarios: landResult.upzoning_scenarios ?? null,
+          potential_far_range: landResult.potential_far_range ?? null,
+          upzoning_interpretation: landResult.upzoning_interpretation ?? null,
+          grave_registry: landResult.grave_registry ?? null,
+        };
+        setL3Data(next);
+        // ★G 영속/복원: comprehensive 결과를 프로젝트별 분석캐시("l3")에 영속 →
+        //  재진입 시 재호출(재분석) 없이 이 캐시에서 복원(아래 useEffect).
+        setAnalysisCache("l3", sig, next);
+
+        // L3에서 확정 실효용적률이 오면 초기 시드 ordinance를 정밀값으로 승격(다른 필드 보존).
+        const ef = landResult.effective_far;
+        const efPct = ef?.effective_far_pct ?? ef?.legal_max_far_pct ?? null;
+        const ebPct = ef?.effective_bcr_pct ?? null;
+        if (efPct != null || ebPct != null) {
+          const prev = useProjectContextStore.getState().siteAnalysis?.ordinance ?? null;
+          updateSiteAnalysis({
+            ordinance: {
+              sido: prev?.sido ?? (resolvedAddress.split(" ")[0] || ""),
+              sigungu: prev?.sigungu ?? (resolvedAddress.split(" ")[1] || null),
+              nationalBcr: prev?.nationalBcr ?? 0,
+              nationalFar: prev?.nationalFar ?? 0,
+              ordinanceBcr: ef?.ordinance_confirmed ? (ebPct ?? prev?.ordinanceBcr ?? null) : (prev?.ordinanceBcr ?? null),
+              ordinanceFar: ef?.ordinance_confirmed ? (efPct ?? prev?.ordinanceFar ?? null) : (prev?.ordinanceFar ?? null),
+              effectiveBcr: ebPct ?? prev?.effectiveBcr ?? 0,
+              effectiveFar: efPct ?? prev?.effectiveFar ?? 0,
+              source: ef?.far_basis ?? (ef?.ordinance_confirmed ? "조례확정(zoning/comprehensive)" : (prev?.source ?? "실효용적률(zoning/comprehensive)")),
+              legalBasis: prev?.legalBasis ?? "국토계획법 시행령 제85조(용적률)",
+              // 실효용적률 실값 승격 — 더 이상 법정상한 잠정 시드가 아님.
+              seededFromLegal: false,
+            },
+          });
+        }
+
+        // 기존 건축물 현황(표제부)을 store에 영속(있을 때만, 과하지 않게) — 후속 단계 참조용.
+        const bd = landResult.building_detail;
+        if (bd && (bd.main_purpose || bd.total_area_sqm)) {
+          updateSiteAnalysis({
+            buildingInfo: {
+              buildingName: bd.building_name ?? "",
+              mainPurpose: bd.main_purpose ?? "",
+              totalAreaSqm: bd.total_area_sqm ?? 0,
+              groundFloors: bd.ground_floors ?? 0,
+              structure: bd.structure ?? "",
+              useApprovalDate: bd.use_approval_date ?? "",
+            },
+          });
+        }
+      } catch {
+        // L3 데이터 실패는 무시 — 기본 분석만 표시
+      }
+    },
+    [setAnalysisCache, updateSiteAnalysis],
+  );
+
+  // ★H 자동진입 다층카드 + G 복원: result뷰 자동진입 시에도 부지분석 다층카드(L3)를 채운다.
+  // - 직전 수정으로 자동진입은 입력창을 건너뛰고 setStage("result")로 직행해 handleInitiate의
+  //   comprehensive 호출이 누락 → l3Data=null → L3EnhancedCards 미표시였다(H 근본원인).
+  // - 안전경로(G): 먼저 프로젝트별 분석캐시("l3")에 같은 주소 결과가 있으면 재호출 없이 복원,
+  //   없으면 fetchL3Analysis로 1회 수집(수집 시 캐시 영속 → 다음 재진입은 복원). 무한루프는
+  //   l3FetchKeyRef(동일 주소 중복 호출 가드)로 차단.
+  // - userInitiated(수동 새 분석)는 handleInitiate가 직접 호출하므로 여기서는 자동진입만 담당.
+  useEffect(() => {
+    if (stage !== "result") return;
+    const addr = siteData?.address?.trim();
+    if (!addr) return;
+    if (l3Data) return; // 이미 표시 중이면 재수집 불필요
+    const pnu = siteData?.pnu;
+    const sig = analysisSignature(addr, pnu ?? "");
+    // 동일 주소를 이미 시도(진행/완료)했으면 재호출 금지(useEffect 재실행·동시성 가드).
+    if (l3FetchKeyRef.current === sig) return;
+    l3FetchKeyRef.current = sig;
+    // ① 영속 캐시 복원 우선(재분석 불필요)
+    const cached = getAnalysisCache("l3");
+    if (cached && cached.signature === sig && cached.data) {
+      setL3Data(cached.data as L3SiteData);
+      return;
+    }
+    // ② 캐시 없음 → 1회 수집(성공 시 fetchL3Analysis가 캐시 영속)
+    void fetchL3Analysis(addr, pnu);
+  }, [stage, siteData?.address, siteData?.pnu, l3Data, getAnalysisCache, fetchL3Analysis]);
+
   if (isLoading || !dictionary) {
     return (
       <div className="flex h-[60vh] items-center justify-center">
@@ -705,6 +824,9 @@ export default function SiteAnalysisPage() {
     setStage("analyzing");
     setAnalysisError(null);
     setSiteData({ address });
+    // 새 분석은 이전 주소의 L3를 깨끗이 비우고 시작(자동진입 useEffect 오복원 방지).
+    setL3Data(null);
+    l3FetchKeyRef.current = null;
 
     try {
       // 실제 용도지역 분석 API 호출
@@ -787,77 +909,11 @@ export default function SiteAnalysisPage() {
         dataSource: "zoning/analyze",
       });
 
-      // L3: 종합 토지정보 비동기 수집 (실거래가, 건축물대장, 인프라)
-      try {
-        const landResult = await apiClient.post<{
-          nearby_transactions?: L3SiteData["nearby_transactions"];
-          infrastructure?: L3SiteData["infrastructure"];
-          building_detail?: L3SiteData["building_detail"];
-          effective_far?: L3SiteData["effective_far"];
-          zone_limits?: L3SiteData["zone_limits"];
-          upzoning?: L3SiteData["upzoning"];
-          upzoning_scenarios?: L3SiteData["upzoning_scenarios"];
-          potential_far_range?: L3SiteData["potential_far_range"];
-          upzoning_interpretation?: L3SiteData["upzoning_interpretation"];
-          grave_registry?: L3SiteData["grave_registry"];
-        }>("/zoning/comprehensive", {
-          useMock: false,
-          body: { address, pnu: zoningResult.pnu },
-        });
-        setL3Data({
-          nearby_transactions: landResult.nearby_transactions ?? null,
-          infrastructure: landResult.infrastructure ?? null,
-          building_detail: landResult.building_detail ?? null,
-          effective_far: landResult.effective_far ?? null,
-          zone_limits: landResult.zone_limits ?? null,
-          upzoning: landResult.upzoning ?? null,
-          upzoning_scenarios: landResult.upzoning_scenarios ?? null,
-          potential_far_range: landResult.potential_far_range ?? null,
-          upzoning_interpretation: landResult.upzoning_interpretation ?? null,
-          grave_registry: landResult.grave_registry ?? null,
-        });
-
-        // L3에서 확정 실효용적률이 오면 초기 시드 ordinance를 정밀값으로 승격(다른 필드 보존).
-        const ef = landResult.effective_far;
-        const efPct = ef?.effective_far_pct ?? ef?.legal_max_far_pct ?? null;
-        const ebPct = ef?.effective_bcr_pct ?? null;
-        if (efPct != null || ebPct != null) {
-          const prev = useProjectContextStore.getState().siteAnalysis?.ordinance ?? null;
-          updateSiteAnalysis({
-            ordinance: {
-              sido: prev?.sido ?? (resolvedAddress.split(" ")[0] || ""),
-              sigungu: prev?.sigungu ?? (resolvedAddress.split(" ")[1] || null),
-              nationalBcr: prev?.nationalBcr ?? 0,
-              nationalFar: prev?.nationalFar ?? 0,
-              ordinanceBcr: ef?.ordinance_confirmed ? (ebPct ?? prev?.ordinanceBcr ?? null) : (prev?.ordinanceBcr ?? null),
-              ordinanceFar: ef?.ordinance_confirmed ? (efPct ?? prev?.ordinanceFar ?? null) : (prev?.ordinanceFar ?? null),
-              effectiveBcr: ebPct ?? prev?.effectiveBcr ?? 0,
-              effectiveFar: efPct ?? prev?.effectiveFar ?? 0,
-              source: ef?.far_basis ?? (ef?.ordinance_confirmed ? "조례확정(zoning/comprehensive)" : (prev?.source ?? "실효용적률(zoning/comprehensive)")),
-              legalBasis: prev?.legalBasis ?? "국토계획법 시행령 제85조(용적률)",
-              // 실효용적률 실값 승격 — 더 이상 법정상한 잠정 시드가 아님.
-              seededFromLegal: false,
-            },
-          });
-        }
-
-        // 기존 건축물 현황(표제부)을 store에 영속(있을 때만, 과하지 않게) — 후속 단계 참조용.
-        const bd = landResult.building_detail;
-        if (bd && (bd.main_purpose || bd.total_area_sqm)) {
-          updateSiteAnalysis({
-            buildingInfo: {
-              buildingName: bd.building_name ?? "",
-              mainPurpose: bd.main_purpose ?? "",
-              totalAreaSqm: bd.total_area_sqm ?? 0,
-              groundFloors: bd.ground_floors ?? 0,
-              structure: bd.structure ?? "",
-              useApprovalDate: bd.use_approval_date ?? "",
-            },
-          });
-        }
-      } catch {
-        // L3 데이터 실패는 무시 — 기본 분석만 표시
-      }
+      // L3: 종합 토지정보 비동기 수집 (실거래가·건축물대장·인프라·실효용적률 계층·종상향·분묘)
+      // ★공유 함수 단일경유 — 자동진입(useEffect)과 동일 함수를 사용한다(DRY·회귀방지).
+      //   여기서 채운 캐시("l3") 덕분에 재진입 시 자동진입 useEffect는 재호출 없이 복원만 한다.
+      l3FetchKeyRef.current = analysisSignature(resolvedAddress, zoningResult.pnu ?? "");
+      await fetchL3Analysis(resolvedAddress, zoningResult.pnu);
     } catch {
       // API 실패 시에도 주소 기반으로 결과 화면 진행 (LandIntelligencePanel이 자체 폴백 보유)
       setAnalysisError("용도지역 API 연결 실패 — 로컬 추정값으로 표시합니다.");
@@ -1000,7 +1056,7 @@ export default function SiteAnalysisPage() {
                   </div>
                </div>
                <button
-                onClick={() => { setUserInitiated(true); setStage("init"); setSiteData(null); setAnalysisError(null); }}
+                onClick={() => { setUserInitiated(true); setStage("init"); setSiteData(null); setAnalysisError(null); setL3Data(null); l3FetchKeyRef.current = null; }}
                 className="group flex h-16 items-center justify-center gap-4 rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-soft)] px-10 text-[11px] font-black text-[var(--text-primary)] hover:text-white uppercase tracking-[0.3em] transition-all hover:bg-[var(--accent-strong)] hover:border-[var(--accent-strong)] active:scale-95 shadow-[var(--shadow-lg)]"
                >
                  <span>새 분석</span>

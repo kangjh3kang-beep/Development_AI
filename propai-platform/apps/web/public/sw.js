@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v260-input-dedup-plain-terms";
+const CACHE_NAME = "propai-v261-lifecycle-landschedule-siteanalysis";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

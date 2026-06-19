@@ -398,6 +398,10 @@ export interface ProjectContextState {
   feasibilityCompleteness: () => FeasibilityCompleteness;
   // 프로젝트 전체 완성도(부지·설계·공사비·법규·금융·ESG·인허가) — 감사 지적 반영.
   projectCompleteness: () => ProjectCompleteness;
+  // 라이프사이클 단계 id(LIFECYCLE_STAGES 11종)별 "실데이터 존재" 판정(무목업·읽기전용).
+  // true=실데이터 있음(완료 표시), false=없음, undefined=전용 데이터 없는 단계(배지 미표시).
+  // 진행레일/파이프라인이 completedStages가 비어도 실데이터 기준으로 완료를 표시하도록 단일소비.
+  stageHasData: (stageId: string) => boolean | undefined;
 }
 
 /* ── 수지 완성도/신뢰도 파생 모델 ──
@@ -1316,6 +1320,55 @@ export const useProjectContextStore = create<ProjectContextState>()(
         const doneCount = stages.filter((st) => st.done).length;
         const pct = total > 0 ? Math.round((doneCount / total) * 100) : 0;
         return { stages, doneCount, total, pct };
+      },
+
+      stageHasData: (stageId) => {
+        const s = get();
+        // 라이프사이클 단계 id(LIFECYCLE_STAGES)별 실데이터 유무를 store 값만으로 판정.
+        // 매핑 없는 종합·운영 단계(report/operations)는 undefined(배지 미표시).
+        switch (stageId) {
+          case "site-analysis":
+            return !!(
+              (s.siteAnalysis?.landAreaSqm && s.siteAnalysis.landAreaSqm > 0) ||
+              s.siteAnalysis?.address ||
+              s.siteAnalysis?.zoneCode
+            );
+          case "legal":
+            return !!(
+              s.complianceData &&
+              (s.complianceData.bcrCompliant != null ||
+                s.complianceData.farCompliant != null ||
+                s.complianceData.heightCompliant != null ||
+                (s.complianceData.violations?.length ?? 0) > 0)
+            );
+          case "design":
+          case "bim":
+            return !!(s.designData?.totalGfaSqm && s.designData.totalGfaSqm > 0);
+          case "construction":
+            return !!(
+              s.costData?.totalConstructionCostWon &&
+              s.costData.totalConstructionCostWon > 0
+            );
+          case "feasibility":
+            return !!(
+              s.feasibilityData?.totalRevenueWon &&
+              s.feasibilityData.totalRevenueWon > 0
+            );
+          case "finance":
+            return !!s.updatedAt.finance;
+          case "esg":
+            return !!(
+              s.esgData &&
+              ((s.esgData.totalCarbonPerSqm ?? 0) > 0 ||
+                (s.esgData.embodiedCarbonKg ?? 0) > 0)
+            );
+          // permit: 전용 데이터 필드가 없어 완료 단계 기록으로만 판정(무목업).
+          case "permit":
+            return s.completedStages.includes("permit");
+          // report/operations 등 종합·운영 단계는 배지 미표시(undefined).
+          default:
+            return undefined;
+        }
       },
     }),
     {
