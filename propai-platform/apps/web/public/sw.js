@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v254-orchestration-runner-wiring";
+const CACHE_NAME = "propai-v255-orchestrate-workspace";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

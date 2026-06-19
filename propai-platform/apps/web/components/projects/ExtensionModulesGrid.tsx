@@ -3,9 +3,10 @@
 /**
  * 확장 모듈 카드 그리드 (WP-07) — 프로젝트 개요의 진입 링크 전용 섹션.
  *
- * 상단탭(라이프사이클 그룹 SSOT)에 포함되지 않아 도달 동선이 없던 서브라우트 9종
- * (agent/cad/cost/contracts/drone/supervision/operations/blockchain/multi-parcel)을
+ * 상단탭(라이프사이클 그룹 SSOT)에 포함되지 않아 도달 동선이 없던 서브라우트
+ * (orchestrate/agent/cad/cost/contracts/drone/supervision/operations/blockchain/multi-parcel)을
  * 링크 카드로 노출한다. 라우트 세그먼트는 전부 실존 디렉터리(404 없음, 실측 확인).
+ * (orchestrate = B6-2 「통합 분석」 신규 진입 — 순수 링크, additive.)
  *
  * 제약:
  *  - 데이터 fetch·store 쓰기 없음(순수 presentational) — 회귀면 0.
@@ -23,6 +24,8 @@ const P = { fill: "none", stroke: "currentColor", strokeWidth: 1.9, strokeLineca
 
 /** 모듈별 아이콘 — 키는 라우트 세그먼트와 1:1. */
 const ICONS: Record<string, JSX.Element> = {
+  // 통합 분석 — 분기 노드(오케스트레이션)
+  orchestrate: <><circle cx="18" cy="18" r="3" /><circle cx="6" cy="6" r="3" /><path d="M6 21V9a9 9 0 0 0 9 9" /></>,
   // AI 에이전트 — 봇
   agent: <><path d="M12 8V4H8" /><rect width="16" height="12" x="4" y="8" rx="2" /><path d="M2 14h2" /><path d="M20 14h2" /><path d="M15 13v2" /><path d="M9 13v2" /></>,
   // CAD 스튜디오 — 코드 브래킷(설계-코드 파이프라인)
@@ -65,8 +68,9 @@ interface ExtensionModule {
   demo?: boolean;
 }
 
-/** 도달불가 서브라우트 9종 — 순서는 여정(설계→적산→계약→시공→운영→부가) 기준. */
+/** 도달불가 서브라우트 — 통합 분석(B6-2 신규 진입) + 부가 작업공간. 순서는 분석→여정(설계→적산→…) 기준. */
 const EXTENSION_MODULES: ExtensionModule[] = [
+  { route: "orchestrate", label: "통합 분석", code: "ORCHESTRATE", description: "토지→법률→설계→분양→수지→금융 9단계를 가이드/별도/선택/프로필로 실행하는 오케스트레이터." },
   { route: "cad", label: "CAD·BIM 스튜디오", code: "CAD", description: "AI 설계안의 CAD 편집·3D 검토·DXF 내보내기 통합 스튜디오." },
   { route: "cost", label: "BIM 5D 적산", code: "COST", description: "BIM 물량 기반 공사비 적산 대시보드(QTO 엔진)." },
   { route: "contracts", label: "전자 계약", code: "CONTRACTS", description: "계약 관리 워크스페이스 — 계약 문서·진행 현황." },
