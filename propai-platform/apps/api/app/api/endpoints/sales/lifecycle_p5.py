@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
 from app.api.deps_sales import SalesCtx, require_role, sales_ctx
+from app.services.sales.contract.service import NotFoundError
 from app.services.sales.loan.service import execute_disbursement, repay_loan
 from app.services.sales.options.service import add_option
 from app.services.sales.payment.locks import ADJ_LOCK_KEY, OVERDUE_LOCK_KEY
@@ -22,6 +23,21 @@ from app.services.sales.payment.service import (
 from app.services.sales.subscription.engine import claim_offer, promote_reserve, run_draw
 
 r5 = APIRouter(tags=["sales-p5"])
+
+# ★[권한 분리·iter-6 HIGH 회귀교정] 청약 라이프사이클의 세 경로는 '민감도가 서로 달라' 같은 역할집합을
+#   공유하면 안 된다. iter-5 가 셋을 단일 상수(_R_SUBSCRIPTION_LIFECYCLE)로 묶으면서, 데스크 담당
+#   (MEMBER/TEAM_LEADER)에게 선착순(claim)뿐 아니라 추첨 실행(draw=전 가용세대 일괄 점유)과 예비 승계
+#   (reserve_promote=당첨자 FORFEITED 강등)까지 열려 '권한 과확장'이 됐다. draw/promote 는 관리·자금
+#   경로라 데스크 권한이면 안 된다. 경로별 민감도에 맞춰 세 집합으로 분리한다(드리프트는 각 상수의
+#   주석·명확한 이름으로 관리). SUPERADMIN 은 require_role 이 항상 통과시키므로 어느 집합에도 생략.
+#
+#   - claim(선착순 점유): 모델하우스 데스크 실무 — 데스크 담당이 워크인 고객을 대신해 FCFS 를 누르는
+#     흐름이 정상이라 데스크 역할을 포함한다(이게 iter-5 가 풀려던 진짜 단절. 보존).
+_R_SUBSCRIPTION_CLAIM = ("MEMBER", "TEAM_LEADER", "DIRECTOR", "GM_DIRECTOR", "SUBAGENCY", "AGENCY", "DEVELOPER")
+#   - draw(추첨 실행): 전 가용세대를 일괄 점유하는 단발성 관리 행위 → 시행/대행 상위 권한만 좁게.
+_R_SUBSCRIPTION_DRAW = ("DEVELOPER", "AGENCY")
+#   - reserve_promote(예비 승계): 기존 당첨자 강등(FORFEITED)+세대 점유전이(머니패스) → 관리 권한만.
+_R_SUBSCRIPTION_RESERVE_PROMOTE = ("DIRECTOR", "GM_DIRECTOR", "SUBAGENCY", "AGENCY", "DEVELOPER")
 
 # 연체 일배치(main.py _overdue_batch_loop)와 '같은' advisory-lock 키 — 수동 트리거와 일배치가
 # 같은 현장·기준일에 동시 진입해도 직렬화되도록 동일 키로 상호배제한다(23505 race 제거 이중방어).
@@ -51,26 +67,86 @@ def _parse_dt(v):
 _AMOUNT_CAP = 1_000_000_000_000
 
 
+# ★[ValueError→409 매핑·iter-2 HIGH] 청약 배정 서비스(run_draw/promote_reserve/claim_offer)는 점유
+#   충돌·잘못된 상태를 ValueError('이미 점유된 세대' 등 친화 한국어)로 던진다. 과거엔 이 세 엔드포인트가
+#   try/except 를 두지 않아 그 ValueError 가 전역 핸들러에서 HTTP500 으로 은폐됐다(친화 메시지 미도달
+#   ·트랜잭션 미정리). actions.py 계약 엔드포인트와 동일하게 ValueError→409(Conflict)+db.rollback()
+#   으로 매핑해, 사용자에게 사유를 정확히 전달하고 트랜잭션 오염을 막는다(상태머신 충돌=409 규약 통일).
 @r5.post("/subscription/{ann_id}/draw")
 async def draw(ann_id: uuid.UUID, body: dict | None = None, db: AsyncSession = Depends(get_db),
-               ctx: SalesCtx = Depends(require_role("DEVELOPER", "AGENCY"))):
-    n = await run_draw(db, ctx.site_id, ann_id, (body or {}).get("seed"))
+               ctx: SalesCtx = Depends(require_role(*_R_SUBSCRIPTION_DRAW))):
+    try:
+        n = await run_draw(db, ctx.site_id, ann_id, (body or {}).get("seed"))
+    except NotFoundError as e:
+        # ★[IDOR·iter-5 HIGH] 미존재/타현장 공고(NotFoundError)는 404 — IDOR 차단(run_draw 가
+        #   공고를 site_id 로 스코프). NotFoundError 가 ValueError 하위라 아래 409 분기보다 먼저 둔다
+        #   (순서가 바뀌면 404 가 409 로 흔들린다 — actions.py 계약 경로와 동일 규약).
+        await db.rollback()
+        raise HTTPException(404, str(e)) from e
+    except ValueError as e:
+        await db.rollback()
+        raise HTTPException(409, str(e)) from e
     await db.commit()
     return {"winners": n}
 
 
 @r5.post("/subscription/reserve/promote")
 async def reserve_promote(body: dict, db: AsyncSession = Depends(get_db),
-                          ctx: SalesCtx = Depends(require_role("DEVELOPER", "AGENCY", "DIRECTOR"))):
-    aid = await promote_reserve(db, ctx.site_id, uuid.UUID(body["unit_id"]), by=ctx.user.id)
+                          ctx: SalesCtx = Depends(require_role(*_R_SUBSCRIPTION_RESERVE_PROMOTE))):
+    # unit_id 누락/형식오류는 클라이언트 입력문제 → 전용 400(전역 500 누출 차단).
+    try:
+        unit_id = uuid.UUID(str(body["unit_id"]))
+    except (KeyError, ValueError, TypeError):
+        raise HTTPException(400, "unit_id(세대 식별자, UUID)가 필요합니다.") from None
+    try:
+        aid = await promote_reserve(db, ctx.site_id, unit_id, by=ctx.user.id)
+    except ValueError as e:
+        await db.rollback()
+        raise HTTPException(409, str(e)) from e
     await db.commit()
     return {"promoted_application": str(aid) if aid else None}
 
 
 @r5.post("/subscription/claim")
-async def subscription_claim(body: dict, db: AsyncSession = Depends(get_db), ctx: SalesCtx = Depends(sales_ctx)):
-    uid = await claim_offer(db, ctx.site_id, uuid.UUID(body["unit_id"]),
-                            body.get("customer_id"), body.get("kind", "FCFS"))
+async def subscription_claim(body: dict, db: AsyncSession = Depends(get_db),
+                             ctx: SalesCtx = Depends(require_role(*_R_SUBSCRIPTION_CLAIM))):
+    # ★[HIGH·security·authz·iter-4→iter-6] 과거엔 Depends(sales_ctx)(현장 멤버십만)로 역할 제한이
+    #   없었고(iter-4 가 (DEVELOPER,AGENCY) 로 좁힘), 그 결과 데스크 담당(MEMBER/TEAM_LEADER)이
+    #   워크인 고객 대신 선착순(FCFS)을 누르는 실무흐름이 403 으로 막혔다. claim 만 데스크 역할을
+    #   포함하는 _R_SUBSCRIPTION_CLAIM 으로 연다(iter-5 는 draw/promote 까지 한 상수로 묶어 데스크에
+    #   추첨실행·강등 권한이 새어, iter-6 에서 경로별 집합으로 분리·교정함). FCFS 점유는 머니패스라
+    #   멤버십+역할 게이트는 유지.
+    # unit_id 누락/형식오류는 클라이언트 입력문제 → 전용 400(전역 500 누출 차단).
+    try:
+        unit_id = uuid.UUID(str(body["unit_id"]))
+    except (KeyError, ValueError, TypeError):
+        raise HTTPException(400, "unit_id(세대 식별자, UUID)가 필요합니다.") from None
+    cust_raw = body.get("customer_id")
+    try:
+        cust = uuid.UUID(str(cust_raw)) if cust_raw else None
+    except (ValueError, TypeError):
+        raise HTTPException(400, "customer_id 형식이 올바르지 않습니다(UUID 필요).") from None
+    # ★[HIGH·security·authz·iter-4] customer_id 를 body 에서 받아 호출자 현장 소속 대조 없이
+    #   claimed_by 로 영속하면, 임의의(타현장) 고객 명의로 FCFS 점유를 위조할 수 있다. 전달된
+    #   customer 가 '본 현장(ctx.site_id) 소속의 살아있는 고객'인지 1쿼리로 인가검증한다(아니면 404).
+    #   customer_id 미전달(익명 선착순)은 기존 거동 유지(검증 대상 아님).
+    if cust is not None:
+        from apps.api.database.models.sales.contract_crm_ad import SalesCustomer
+        owned = (await db.execute(select(SalesCustomer.id).where(
+            SalesCustomer.id == cust,
+            SalesCustomer.site_id == ctx.site_id,
+            SalesCustomer.deleted_at.is_(None)))).scalar_one_or_none()
+        if owned is None:
+            raise HTTPException(404, "해당 현장 소속 고객을 찾을 수 없습니다(타 현장 고객 명의 점유 불가).")
+    try:
+        uid = await claim_offer(db, ctx.site_id, unit_id, cust, body.get("kind", "FCFS"))
+    except NotFoundError as e:
+        # 미존재/타현장 세대(NotFoundError)는 404 — IDOR 차단(claim_offer 가 unit 을 site_id 로 스코프).
+        await db.rollback()
+        raise HTTPException(404, str(e)) from e
+    except ValueError as e:
+        await db.rollback()
+        raise HTTPException(409, str(e)) from e
     await db.commit()
     return {"unit_id": str(uid)}
 

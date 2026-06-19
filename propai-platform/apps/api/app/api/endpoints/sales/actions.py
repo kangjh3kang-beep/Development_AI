@@ -9,7 +9,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
 from app.api.deps_sales import SalesCtx, require_role, sales_ctx
-from app.services.sales.contract.service import cancel_contract, create_contract, sign_contract
+from app.services.sales.contract.service import (
+    NotFoundError,
+    cancel_contract,
+    create_contract,
+    sign_contract,
+)
 from app.services.sales.org.overview import TeamOverviewResponse, team_overview
 from app.services.sales.org.service import (
     OrgCrossSiteError,
@@ -402,8 +407,10 @@ async def contract_create(body: dict, db: AsyncSession = Depends(get_db),
                           ctx: SalesCtx = Depends(require_role(*_R_CONTRACT))):
     """계약 체결(최초 생성) — 세대+고객으로 계약 1건 생성(전주기 연결의 시작점).
 
-    body: { unit_id(필수), customer_id?, round_id?, total_price? }
+    body: { unit_id(필수), customer_id?, round_id?, total_price?, hold_token? }
     금액 미지정 시 세대 가격표에서 자동 산출. 생성 후 수납/대출/전매 화면에서 즉시 선택 가능.
+    hold_token: FCFS 임시선점으로 본인이 잡아둔 HOLD 세대를 계약으로 전환할 때 넘기는 선점 토큰
+    (본인이 직접 잡았으면 토큰 없이도 통과하지만, 토큰을 넘기면 선점 소유권을 그것으로도 증명).
     """
     try:
         unit_id = uuid.UUID(str(body["unit_id"]))
@@ -412,13 +419,20 @@ async def contract_create(body: dict, db: AsyncSession = Depends(get_db),
     cust = body.get("customer_id")
     rnd = body.get("round_id")
     mnode = body.get("member_node_id")  # 담당 영업사원 노드(있으면 계약 체결 시 수수료가 배분됨)
+    htok = body.get("hold_token")       # FCFS 임시선점 토큰(있으면 선점 소유권 증명에 사용)
     try:
         c = await create_contract(
             db, ctx.site_id, unit_id,
             customer_id=uuid.UUID(str(cust)) if cust else None,
             round_id=uuid.UUID(str(rnd)) if rnd else None,
             member_node_id=uuid.UUID(str(mnode)) if mnode else None,
-            total_price=body.get("total_price"), by=ctx.user.id)
+            total_price=body.get("total_price"), by=ctx.user.id,
+            hold_token=str(htok) if htok else None)
+    except NotFoundError as e:
+        # ★[iter-4] 미존재/타현장 세대(NotFoundError)는 404 로 분리(상태충돌 409 와 구분).
+        #   create_contract 가 unit 을 site_id 로 스코프하므로 타현장 unit_id 도 여기서 404 가 된다.
+        await db.rollback()
+        raise HTTPException(404, str(e)) from e
     except ValueError as e:
         await db.rollback()
         raise HTTPException(409, str(e)) from e
@@ -428,12 +442,21 @@ async def contract_create(body: dict, db: AsyncSession = Depends(get_db),
 
 @actions_router.post("/contracts/{contract_id}/sign")
 async def contract_sign(contract_id: uuid.UUID, db: AsyncSession = Depends(get_db),
-                        ctx: SalesCtx = Depends(sales_ctx)):
+                        ctx: SalesCtx = Depends(require_role(*_R_CONTRACT))):
+    # ★[MED·security·authz 대칭·iter-4] 서명은 split_commission(수수료 배분)+할부 회차표를 트리거하는
+    #   머니패스인데, 과거엔 create(require_role(*_R_CONTRACT))·cancel(require_role(...))과 달리
+    #   Depends(sales_ctx)(현장 멤버십만·역할 무제한)로만 게이트돼 권한 비대칭이 있었다(임의 멤버가
+    #   타인이 만든 계약을 서명해 수수료를 발생시킬 수 있음). create 와 동일한 _R_CONTRACT 게이트를
+    #   걸어 '계약을 만들 수 있는 역할만 서명할 수 있다'는 권한 단조성을 맞춘다(create/cancel 과 대칭).
     try:
         c = await sign_contract(db, ctx.site_id, contract_id, by=ctx.user.id)
+    except NotFoundError as e:
+        # 미존재/타현장 계약 — 전용 예외 isinstance 로 404 분기(문구 substring 의존 제거).
+        await db.rollback()
+        raise HTTPException(404, str(e)) from e
     except ValueError as e:
         await db.rollback()
-        raise HTTPException(409, str(e)) from e # 중복 서명·잘못된 상태는 409로 명확히
+        raise HTTPException(409, str(e)) from e  # 중복 서명·잘못된 상태는 409로 명확히
     await db.commit()
     return {"id": str(c.id), "stage": c.stage}
 
@@ -441,7 +464,22 @@ async def contract_sign(contract_id: uuid.UUID, db: AsyncSession = Depends(get_d
 @actions_router.post("/contracts/{contract_id}/cancel")
 async def contract_cancel(contract_id: uuid.UUID, body: dict, db: AsyncSession = Depends(get_db),
                           ctx: SalesCtx = Depends(require_role("DIRECTOR", "SUBAGENCY", "AGENCY", "DEVELOPER"))):
-    c = await cancel_contract(db, ctx.site_id, contract_id, body.get("reason", ""), by=ctx.user.id)
+    # ★[비대칭 미배선 해소·iter-3 HIGH] create/sign 은 ValueError→409+rollback 으로 감싸는데
+    #   cancel 만 try/except 가 없어, cancel_contract 의 scalar_one(미존재)→NoResultFound 와
+    #   상태충돌 ValueError 가 전역핸들러 HTTP500 으로 누출됐다(트랜잭션도 정리 안 됨).
+    #   - 미존재/타현장 계약: 서비스가 NotFoundError 를 던짐 → 404(클라이언트가 없는 계약을 지목
+    #     ·서버오류 아님)로 매핑. ★[anti-pattern 제거·iter-4] 과거엔 한국어 문구 substring
+    #     ('찾을 수 없습니다' in str(e))으로 404↔409 를 갈라, 문구 한 글자만 바뀌어도 상태코드가
+    #     조용히 흔들렸다. 전용 예외 isinstance 분기로 코드화해 문구와 무관하게 404 불변으로 만든다.
+    #   - 그 외 상태충돌 ValueError: create/sign 과 동일하게 409+rollback.
+    try:
+        c = await cancel_contract(db, ctx.site_id, contract_id, body.get("reason", ""), by=ctx.user.id)
+    except NotFoundError as e:
+        await db.rollback()
+        raise HTTPException(404, str(e)) from e
+    except ValueError as e:
+        await db.rollback()
+        raise HTTPException(409, str(e)) from e
     await db.commit()
     return {"id": str(c.id), "status": c.status}
 
@@ -685,7 +723,16 @@ async def draw_candidate_contract(group_id: uuid.UUID, candidate_id: uuid.UUID, 
     from app.services.sales.draw.draw_engine import contract_from_candidate
     try:
         return await contract_from_candidate(db, ctx.site_id, group_id, candidate_id, by=getattr(ctx.user, "id", None))
+    except NotFoundError as e:
+        # ★[응답계약·iter-5 MED] contract_from_candidate 가 호출하는 create_contract 는 미존재/타현장
+        #   세대에서 NotFoundError(ValueError 하위)를 던진다. 과거엔 except ValueError 만이라 이 미존재가
+        #   400 으로 매핑됐다(다른 경로는 404 통일). NotFoundError→404 분기를 ValueError(→400) '앞'에
+        #   둬(하위클래스라 순서 필수) 상태코드를 통일한다. db.rollback() 으로 미커밋 트랜잭션 잔존을
+        #   차단한다(create/sign/cancel·draw·claim 엔드포인트와 일관 — 실패 시 항상 rollback).
+        await db.rollback()
+        raise HTTPException(404, str(e)) from e
     except ValueError as e:
+        await db.rollback()
         raise HTTPException(400, str(e)) from e
 
 

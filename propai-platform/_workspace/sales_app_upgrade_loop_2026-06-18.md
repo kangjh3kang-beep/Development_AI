@@ -117,3 +117,8 @@ P0: (a)마이그레이션·부트스트랩 FORCE를 **정책 보유 테이블에
 
 **#5 종료 backlog(MEDIUM/LOW 이연)**: ①commission_gross status필터(market.py:845 REVERSED 환수분 gross 과대표시 — settle_summary status='SPLIT' 규약과 미배선, WHERE status IN('PENDING','SPLIT') 추가) ②move_subtree 직급위계검증(TEAM_LEADER→AGENCY 단계건너뛰기 이동 가능, 위계단조성+422) ③move_subtree node.path stale refresh ④no-op 이동 early-return ⑤StaffOverviewPanel .catch status분류(OrgTree와 정직성 비대칭) ⑥advisory-lock 키 중앙레지스트리 ⑦라벨 codegen SSOT ⑧staff_overview N+1 동일엔진 세마포어 병렬화. ★전부 deploy-pending(라이브 PG·ltree UPDATE·036마이그·vitest·tsc·동시성).
 **5개 완료**: #10(7.5)·#1(8.5)·#3(8.0)·#4(7.0)·#5(8.0). 다음 #7(6.8)→#2(7.8)→#8(7.1)→#9(7.2)→#6(8.1).
+
+| 7 | 계약·CRM·광고·청약 | 6.8 | 8.0 | 0 | (커밋대기) | 7 iter. 계약 상태머신 멱등·FOR UPDATE·split_commission 멱등가드+DB백스톱(수수료2배 차단)·청약 추첨결정론·FCFS race·promote_reserve FORFEITED 라이프사이클·IDOR 전수스윕 9경로(run_draw·inventory_txn 교차테넌트write·claim·create·sign·cancel·promote)·HOLD 토큰 소유권(점유탈취 차단)·NotFoundError 예외클래스·CRM silent-fail/reason_code 배선·역할 3집합·54테스트 |
+
+**#7 종료 backlog(MEDIUM/LOW 이연)**: ①create_contract 만료 owner-HOLD 분기 순서(만료-우선 재배치=타직원 재선점 허용, 현재 fail-closed 오차단 — 즉시·무배포 수정) ②expire_holds dead-code(미스케줄+SalesUnitHold만 보고 inventory.held_by 미정리) 실배선 또는 lazy-expire 런타임보장+주석교정 ③claim_offer 서비스계층 customer IDOR 검증 대칭화(현재 엔드포인트만) ④draw 계약경로 ValueError→404 SSOT ⑤NotFoundError 공용 중립모듈 승격(청약→계약 방향결합 해소) ⑥desk_inv 역할게이트 ⑦member_node_id 현장검증 ⑧cancel_contract VOID필터·_set_unit_status DRY·sales_message_log 마이그·MhInventoryTxn site_id·VOID writer. ★전부 deploy-pending(라이브 PG 동시성·037 인덱스 23505강제·실발송 kakaoapi.example치환·tsc).
+**6개 완료**: #10(7.5)·#1(8.5)·#3(8.0)·#4(7.0)·#5(8.0)·#7(8.0). 다음 #2(7.8)→#8(7.1)→#9(7.2)→#6(8.1).

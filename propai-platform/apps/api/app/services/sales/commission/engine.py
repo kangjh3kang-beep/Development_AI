@@ -131,6 +131,21 @@ async def _assert_pool_not_exceeded(db: AsyncSession, master, site_id, new_total
 
 
 async def split_commission(db: AsyncSession, site_id, contract):
+    # ★멱등 가드(머니패스 중복 차단·iter-2 HIGH): 이 계약(contract_ext_id)에 대해 이미 발생한
+    #   수수료 이벤트가 있으면 다시 배분하지 않고 그 이벤트를 그대로 반환한다. 동시 더블서명이
+    #   sign_contract 의 계약행 FOR UPDATE 로 직렬화되더라도, 그 외 경로(재처리·재시도·다른 호출부)로
+    #   같은 계약에 split 이 두 번 들어오면 수수료가 2배 배분된다. 여기서 '이미 발생' 을 코드로도
+    #   조기차단하고(애플리케이션 멱등), DB 부분 유니크 인덱스(마이그 037 uq_sales_commission_event_contract,
+    #   WHERE status<>'VOID')가 어떤 경로로든 중복 INSERT 를 23505 로 거부하는 백스톱이 된다.
+    #   환수(REVERSED)는 '발생 후 되돌림' 이므로 여전히 '존재' 로 보아 재발생을 막는다(재계약은 새 계약
+    #   행=새 contract_ext_id 라 무관). VOID(무효처리) 만 제외해 정정 후 재배분을 허용한다.
+    cid = getattr(contract, "id", None)
+    if cid is not None:
+        existing = (await db.execute(select(SalesCommissionEvent).where(
+            SalesCommissionEvent.contract_ext_id == cid,
+            SalesCommissionEvent.status != "VOID"))).scalars().first()
+        if existing is not None:
+            return existing
     total = await resolve_total(db, site_id, contract)
     if total <= 0:
         return None

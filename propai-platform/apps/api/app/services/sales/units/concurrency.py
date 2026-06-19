@@ -157,9 +157,12 @@ async def atomic_reserve(db: AsyncSession, site_id, unit_id, held_by, hold_token
     만료된 hold(hold_expires_at < now())는 RETURNING 0행 → 호출측에서 409.
     status='CONTRACTED' 전이 + (site,dong,ho) 유니크가 영구 1호1계약을 물리 보장한다.
     """
+    # ★[보강·iter-7 MED correctness] 확정(CONTRACTED) 시 임시선점 메타(held_by/hold_token/
+    #   hold_expires_at)도 함께 NULL 로 정리한다 — 확정된 세대에 만료된 선점 흔적이 남아 감사·디버깅을
+    #   혼동시키지 않게. create_contract(HOLD→RESERVED)의 정리와 일관(두 확정 경로 동일 거동).
     row = (await db.execute(text(
         "UPDATE sales_unit_inventory SET "
-        "  status = 'CONTRACTED' "
+        "  status = 'CONTRACTED', held_by = NULL, hold_token = NULL, hold_expires_at = NULL "
         "WHERE id = :id AND site_id = :s AND status = 'HOLD' AND held_by = :u "
         "  AND hold_token = :t AND hold_expires_at IS NOT NULL AND hold_expires_at >= now() "
         "RETURNING id, dong, ho"
