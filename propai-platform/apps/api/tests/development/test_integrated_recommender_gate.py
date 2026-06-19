@@ -4,7 +4,11 @@
 special_districts)를 detect_multi_parcel/detect_special_parcel이 정확히 읽어 PRECONDITION/
 BLOCKED로 게이트하는지 검증한다(키 불일치 시 게이트가 None을 내며 할루시네이션이 새어나감).
 """
-from app.services.zoning.special_parcel import detect_special_parcel, detect_multi_parcel
+from app.services.zoning.special_parcel import (
+    detect_special_parcel,
+    detect_multi_parcel,
+    gate_decision,
+)
 
 
 def test_school_land_category_gates_precondition():
@@ -188,3 +192,73 @@ def test_upzoning_far_basis_uses_scenario_far_not_double_counted():
                 f"{r['method']}: 종상향 적용용적률({r['applied_far_pct']}) "
                 f"< 현행({cur['applied_far_pct']}) — 이중계상/출처 오류 의심"
             )
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# 선행절차형(PRECONDITION) 잠정 강등 — 도로 단독 할루시네이션 차단 핵심 회귀 가드.
+#   기존 결함: 게이트가 BLOCKED/NO만 차단해 도로(PRECONDITION·resolvable CONDITIONAL)가
+#   '통과'→타운하우스88%처럼 확정 % 가 노출됐다. 이제 BLOCK이 아니라 TENTATIVE로 강등되어
+#   후보는 산출하되 '선행절차 전제 잠정치(확정 아님)'로 표기되고 scenario_status=tentative다.
+# ──────────────────────────────────────────────────────────────────────────
+
+
+def test_gate_decision_ssot_classifies_block_tentative_pass():
+    """게이트 정책 SSOT — BLOCKED/NO=BLOCK, PRECONDITION/CONDITIONAL=TENTATIVE, POSSIBLE=PASS."""
+    assert gate_decision("BLOCKED", "NO") == "BLOCK"
+    assert gate_decision("POSSIBLE", "NO") == "BLOCK"            # resolvable NO도 차단
+    assert gate_decision("PRECONDITION", "CONDITIONAL") == "TENTATIVE"  # 도로·학교·공원
+    assert gate_decision("CONDITIONAL", "YES") == "TENTATIVE"          # 농지·임야 등
+    assert gate_decision("CAUTION", "CONDITIONAL") == "TENTATIVE"      # resolvable 조건부(맹지 등)
+    assert gate_decision("POSSIBLE", "YES") == "PASS"
+    assert gate_decision(None, None) == "PASS"
+
+
+def test_road_single_parcel_detects_precondition_not_blocked():
+    """지목 '도로' 단독 → 특이부지 PRECONDITION·resolvable CONDITIONAL(원천 차단 아님→잠정 강등 대상)."""
+    sp = detect_special_parcel({
+        "land_category": "도로", "zone_type": "제2종일반주거지역", "special_districts": [],
+    })
+    assert sp is not None and sp["developability"] == "PRECONDITION", sp
+    assert sp["resolvable"] == "CONDITIONAL", sp["resolvable"]
+    # SSOT 분기 — BLOCK이 아니라 TENTATIVE여야 한다(도로 단독 % 확정 노출 금지·후보는 산출).
+    assert gate_decision(sp["developability"], sp["resolvable"]) == "TENTATIVE"
+
+
+def test_multi_parcel_road_demotes_current_candidates_to_tentative():
+    """다필지 통합에 도로 필지 포함 → 현행 후보가 잠정(tentative)으로 강등되고 scenario_status=tentative.
+    도로는 통합 시 기반시설 편입 전제 — 단독으로 일반 분양개발 % 를 확정 제시하지 않는다(할루시네이션 차단)."""
+    parcels = [
+        {"land_category": "대", "zone_type": "제2종일반주거지역", "special_districts": [],
+         "zone_limits": {}, "land_area_sqm": 9000.0, "official_price_per_sqm": 3_000_000,
+         "pnu": "A0000001", "address": "서울 강남구 일반필지"},
+        {"land_category": "도로", "zone_type": "제2종일반주거지역", "special_districts": [],
+         "zone_limits": {}, "land_area_sqm": 1500.0, "official_price_per_sqm": 3_000_000,
+         "pnu": "A0000002", "address": "서울 강남구 도로필지"},
+    ]
+    out = _run_recommend(parcels)
+    # 후보는 산출되되(차단 아님) — 선행절차 전제 잠정치.
+    assert out["ranked"], "도로 포함이라도 통합 후보는 산출되어야 한다(BLOCK 아님)"
+    assert out.get("scenario_status") == "tentative", out.get("scenario_status")
+    cur = [r for r in out["ranked"] if r.get("far_basis") == "현행"]
+    assert cur, "현행 후보가 있어야 한다"
+    for r in cur:
+        assert r.get("tentative") is True, f"현행 후보는 잠정 강등돼야 한다: {r}"
+        assert r.get("tentative_reason"), "잠정 사유가 부착돼야 한다"
+        assert "확정 아님" in r["tentative_reason"], r["tentative_reason"]
+    # 정직 고지에 선행절차 전제 잠정 안내가 포함된다.
+    assert "잠정" in out["honest_disclosure"], out["honest_disclosure"]
+
+
+def test_normal_multi_parcel_scenario_status_actual_regression_zero():
+    """일상 다필지 → scenario_status=actual, 현행 후보에 tentative 키 없음(회귀0)."""
+    parcels = [
+        {"land_category": "대", "zone_type": "제2종일반주거지역", "special_districts": [],
+         "zone_limits": {}, "land_area_sqm": 9000.0, "official_price_per_sqm": 3_000_000,
+         "pnu": "B0000001", "address": "서울 강남구 일반필지1"},
+        {"land_category": "대", "zone_type": "제2종일반주거지역", "special_districts": [],
+         "zone_limits": {}, "land_area_sqm": 6000.0, "official_price_per_sqm": 3_000_000,
+         "pnu": "B0000002", "address": "서울 강남구 일반필지2"},
+    ]
+    out = _run_recommend(parcels)
+    assert out.get("scenario_status") == "actual", out.get("scenario_status")
+    assert all("tentative" not in r for r in out["ranked"] if r.get("far_basis") == "현행")

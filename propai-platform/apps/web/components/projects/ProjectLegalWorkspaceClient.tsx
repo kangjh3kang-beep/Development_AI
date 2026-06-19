@@ -397,13 +397,35 @@ export function ProjectLegalWorkspaceClient({
   }, [projectQuery.data]);
 
   // Pre-fill from site analysis + design context (capillary network)
+  // ★SSOT 단일소비: 용도지역 코드/계획 건폐·용적은 부지분석(siteAnalysis) 컨텍스트에서 자동 채움.
+  // - zoneCode: siteAnalysis.zoneCode(상단 배지 "제2종 60%·200%"와 동일 SSOT).
+  //   (이전 검색의 form 기본값/제1종 잔존 방지 — SSOT 코드가 있으면 그것으로 채운다.)
+  // - plannedBcr/plannedFar: 조례 실효한도(ordinance.effectiveBcr/Far, 없으면 siteAnalysis.effectiveBcrPct/FarPct)
+  //   → 설계값(designData.bcr/far) 순. ordinance·실효값이 모두 없으면 기존 동작(공란) 유지.
+  // 자동 채움 후에도 사용자가 직접 수정 가능(current 값이 있으면 덮어쓰지 않음).
   useEffect(() => {
+    const ssotEffectiveBcr =
+      siteAnalysis?.ordinance?.effectiveBcr ?? siteAnalysis?.effectiveBcrPct ?? null;
+    const ssotEffectiveFar =
+      siteAnalysis?.ordinance?.effectiveFar ?? siteAnalysis?.effectiveFarPct ?? null;
     setForm((current) => ({
       ...current,
       address: current.address || siteAnalysis?.address || "",
       zoneCode: current.zoneCode || siteAnalysis?.zoneCode || "",
-      plannedBcr: current.plannedBcr || (designData?.bcr ? String(designData.bcr) : ""),
-      plannedFar: current.plannedFar || (designData?.far ? String(designData.far) : ""),
+      plannedBcr:
+        current.plannedBcr ||
+        (ssotEffectiveBcr != null
+          ? String(ssotEffectiveBcr)
+          : designData?.bcr
+            ? String(designData.bcr)
+            : ""),
+      plannedFar:
+        current.plannedFar ||
+        (ssotEffectiveFar != null
+          ? String(ssotEffectiveFar)
+          : designData?.far
+            ? String(designData.far)
+            : ""),
       plannedFloors: current.plannedFloors || (designData?.floorCount ? String(designData.floorCount) : ""),
       plannedHeight:
         current.plannedHeight ||
@@ -773,12 +795,17 @@ export function ProjectLegalWorkspaceClient({
                 {labels.formTitle}
               </p>
               <form className="mt-4 grid gap-3" onSubmit={handleSubmit}>
-                <ProjectAddressInput
-                  value={form.address}
-                  onChange={(address) => setForm((current) => ({ ...current, address }))}
-                  label={labels.addressLabel}
-                  placeholder={labels.addressLabel}
-                />
+                {/* 주소 입력창: 부지분석에서 주소가 확정된 프로젝트 진입 시엔 숨김(불필요 입력 제거).
+                    신규(주소 미보유) 상태에서만 노출해 직접 입력 가능. SSOT 주소(siteAnalysis.address)는
+                    위 useEffect로 form.address에 이미 자동 채워져 제출에 그대로 사용된다. */}
+                {!siteAnalysis?.address ? (
+                  <ProjectAddressInput
+                    value={form.address}
+                    onChange={(address) => setForm((current) => ({ ...current, address }))}
+                    label={labels.addressLabel}
+                    placeholder={labels.addressLabel}
+                  />
+                ) : null}
                 <label className="block text-xs font-semibold text-[var(--text-secondary)]">
                   {labels.zoneCodeLabel}
                   <Input

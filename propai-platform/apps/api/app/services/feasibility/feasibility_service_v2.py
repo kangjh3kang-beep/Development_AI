@@ -107,10 +107,14 @@ class FeasibilityServiceV2:
         special_districts = zoning.get("special_districts") or []
         land_category = zoning.get("land_category") or ""
 
-        # Step 2: 특이부지 게이트 — 학교·GB·농지·산지·맹지 등 비일상 토지는 Top3 산정 전 차단.
-        # (정답 패턴=integrated_recommender/orchestrator.recommend: BLOCKED/NO면 후보 미생성·정직고지,
-        #  CONDITIONAL/PRECONDITION이면 생성하되 경고 동반. 가짜 사업모델/ROI 노출 방지.)
-        from ..zoning.special_parcel import detect_special_parcel
+        # Step 2: 특이부지 게이트 — 학교·도로·GB·농지·산지·맹지 등 비일상 토지는 Top3 산정 정책 분기.
+        # ★게이트 정책 SSOT(special_parcel.gate_decision)로 일원화:
+        #   BLOCK     → 후보 미생성·정직고지(가짜 ROI 금지).
+        #   TENTATIVE → 도로(PRECONDITION·resolvable CONDITIONAL)·학교(PRECONDITION)·맹지 등은 후보를
+        #               '산출하되' 선행절차 전제 '잠정치(확정 아님)'로 강등하고 확신 % 표시를 억제한다.
+        #               (기존 결함: BLOCKED/NO만 차단해 도로 PRECONDITION이 통과→타운하우스88% 할루시네이션.)
+        #   PASS      → 통상 산출.
+        from ..zoning.special_parcel import detect_special_parcel, gate_decision, tentative_marker
         special = detect_special_parcel({
             "zone_type": zone_type,
             "land_category": land_category,
@@ -118,10 +122,11 @@ class FeasibilityServiceV2:
             "road_contact": None,   # 추천 입력엔 접도 데이터 없음 → 맹지 오탐 방지(None=미판정)
             "road_width_m": None,
         })
-        if special and (
-            special.get("developability") == "BLOCKED"
-            or special.get("resolvable") == "NO"
-        ):
+        gate = gate_decision(
+            special.get("developability") if special else None,
+            special.get("resolvable") if special else None,
+        )
+        if special and gate == "BLOCK":
             # 후보생성 중단 — 개발규모/수지 미산정(정직). 가짜 ROI 금지.
             return {
                 "address": address,
@@ -239,6 +244,19 @@ class FeasibilityServiceV2:
             except Exception as e:
                 logger.warning(f"{dev_type} 계산 실패: {e}")
 
+        # Step 3.5: 잠정 강등 — 특이부지가 TENTATIVE면 각 후보를 '선행절차 전제 잠정치(확정 아님)'로
+        #   표시하고, 확신 % 노출을 억제한다(프론트가 확신 % 대신 '잠정' 배지로 렌더하도록 신호).
+        #   ★할루시네이션 차단 핵심: 도로 단독 PRECONDITION에서 타운하우스88%가 '확정치'처럼 보이던 결함을
+        #     데이터 레벨에서 잠정으로 강등(국소 UI 패치가 아니라 응답 계약으로).
+        is_tentative = bool(special) and gate == "TENTATIVE"
+        if is_tentative:
+            t_reason = tentative_marker(
+                special.get("developability"), special.get("resolvable"), special.get("severity_label"),
+            )
+            for r in results:
+                r["tentative"] = True
+                r["tentative_reason"] = t_reason
+
         # Step 4: 정렬 + Top 3
         results.sort(key=lambda r: r["composite_score"], reverse=True)
         top3 = results[:3]
@@ -256,6 +274,8 @@ class FeasibilityServiceV2:
             "all_results": results,  # Full ranking for reference
             # 토지비 신뢰성 — False면 공시지가 미확보로 절대 수익성(ROI·순이익)은 참고용(랭킹은 상대비교 유효).
             "land_price_reliable": land_price_reliable,
+            # 시나리오 상태 — "tentative"면 전 후보가 선행절차 전제 잠정치(확정 아님). 프론트 렌더 분기 신호.
+            "scenario_status": "tentative" if is_tentative else "actual",
         }
         # 특이부지(CONDITIONAL/PRECONDITION/CAUTION)는 생성하되 경고 동반 — 정직 고지.
         if special:

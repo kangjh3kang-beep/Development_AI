@@ -8,6 +8,8 @@ import { ModulePlaceholder } from "@/components/layout/ModulePlaceholder";
 import { ModuleCommandStrip } from "@/components/layout/ModuleCommandStrip";
 import { NextStageCta } from "@/components/projects/NextStageCta";
 import { LandIntelligencePanel } from "@/components/projects/LandIntelligencePanel";
+import { SiteScoreCard } from "@/components/projects/SiteScoreCard";
+import { SiteInfraPoiCard } from "@/components/site/SiteInfraPoiCard";
 import { SiteInitiator } from "@/components/projects/SiteInitiator";
 import { ProjectSiteAnalysisWorkspaceClient } from "@/components/projects/ProjectSiteAnalysisWorkspaceClient";
 import { TerrainAnalysisPanel } from "@/components/terrain/TerrainAnalysisPanel";
@@ -1079,6 +1081,18 @@ export default function SiteAnalysisPage() {
             >
               <LandIntelligencePanel projectId={id} data={siteData} />
             </motion.div>
+
+            {/* ── 입지분석 카드(복원): 입지 점수 + 입지 인프라(POI) ──
+                두 카드 모두 useProjectContextStore.siteAnalysis를 직접 소비해 자동 초기화하므로
+                여기서는 표시 배선(렌더)만 추가한다(엔드포인트·컴포넌트·산식 미접촉, SSOT 읽기소비).
+                · 입지 점수: zoneCode + (pnu 또는 추정가) 충족 시 표시. 미충족이면 카드 자체가 정직 빈상태(null) 처리.
+                · 입지 인프라(POI): 주소가 있으면 on-demand(사용자 조사 버튼) 노출. */}
+            {siteAnalysis?.zoneCode && (siteAnalysis?.pnu || siteAnalysis?.estimatedValue != null) && (
+              <SiteScoreCard />
+            )}
+            {(siteAnalysis?.address?.trim() || siteData.address) && (
+              <SiteInfraPoiCard address={siteAnalysis?.address?.trim() || siteData.address} />
+            )}
 
             {/* ── L3 Enhanced Cards: 실거래가, 건축물대장, 인프라 ── */}
             <L3EnhancedCards l3Data={l3Data} siteAnalysis={siteAnalysis} />

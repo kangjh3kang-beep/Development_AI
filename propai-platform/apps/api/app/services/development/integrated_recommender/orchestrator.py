@@ -30,9 +30,9 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# 게이트 차단 기준 — 통상 절차로 해결 불가(NO) 또는 원칙적 개발 불가(BLOCKED).
-_BLOCK_DEVELOPABILITY = {"BLOCKED"}
-_BLOCK_RESOLVABLE = {"NO"}
+# 게이트 정책은 special_parcel.gate_decision(SSOT)로 일원화한다 — auto_recommend_top3와 동일 기준.
+#   (BLOCK=후보 미생성·정직고지, TENTATIVE=선행절차 전제 잠정치로 강등, PASS=통상 산출.)
+#   ★국소 임계 분기 금지: 도로 PRECONDITION 같은 선행절차형이 한쪽 게이트만 통과하는 회귀를 막는다.
 
 
 class IntegratedRecommender:
@@ -62,15 +62,16 @@ class IntegratedRecommender:
         # 1) 컨텍스트 수집 + 게이트 결손키 정규화 (외부호출 1회/필지).
         parcels = await self._enrich_context(addrs)
 
-        # 2) 다필지 특이부지 게이트.
-        from app.services.zoning.special_parcel import detect_multi_parcel
+        # 2) 다필지 특이부지 게이트 — 통합(전체) 종합 판정. SSOT gate_decision으로 정책 분기.
+        from app.services.zoning.special_parcel import (
+            detect_multi_parcel,
+            gate_decision,
+            tentative_marker,
+        )
 
         gate = detect_multi_parcel(parcels)
-        blocked = (
-            gate.get("developability") in _BLOCK_DEVELOPABILITY
-            or gate.get("resolvable") in _BLOCK_RESOLVABLE
-        )
-        if blocked:
+        decision = gate_decision(gate.get("developability"), gate.get("resolvable"))
+        if decision == "BLOCK":
             # 후보생성 중단 — 개발규모/수지 미산정(정직). 게이트·정직고지만 반환.
             return {
                 "site": {"addresses": addrs, "parcel_count": len(parcels)},
@@ -149,6 +150,21 @@ class IntegratedRecommender:
         )
         ranked.extend(upz_candidates)
 
+        # 4-3) 잠정 강등 — 통합 게이트가 TENTATIVE면(예: 도로 PRECONDITION·맹지·학교 등 선행절차형
+        #   필지가 통합에 포함) 전 현행 후보를 '선행절차 전제 잠정치(확정 아님)'로 강등한다.
+        #   ★도로는 통합 시 기반시설 편입 전제 — 단독으로 일반 분양개발 % 를 확정 제시하지 않는다.
+        #   종상향(far_basis='종상향') 후보는 이미 자체 honest 마커가 있으므로 현행 후보에만 부착한다.
+        is_tentative = decision == "TENTATIVE"
+        if is_tentative:
+            t_reason = tentative_marker(
+                gate.get("developability"), gate.get("resolvable"),
+                gate.get("severity_label"),
+            )
+            for r in ranked:
+                if r.get("far_basis") == "현행":
+                    r["tentative"] = True
+                    r["tentative_reason"] = t_reason
+
         # 현행/잠재 통합 순위(composite 내림차순).
         ranked.sort(key=lambda r: r["composite"], reverse=True)
 
@@ -158,6 +174,9 @@ class IntegratedRecommender:
         has_upzoning = any(r.get("far_basis") == "종상향" for r in ranked)
         honest = (
             "랭킹은 동일 면적·현행 실효용적률 기준 상대비교입니다. "
+            + ("⚠ 이 통합 사업구역에는 선행절차형 특이부지(도로·학교·맹지 등)가 포함되어, 현행 후보는 모두 "
+               "선행절차(폐도·용도폐지·도시계획변경 등) 통과를 전제로 한 잠정치이며 확정이 아닙니다. "
+               if is_tentative else "")
             + ("랭킹에는 현행(far_basis='현행')과 종상향 잠재(far_basis='종상향') 후보가 함께 포함됩니다. "
                "종상향 후보는 고시·심의 통과를 전제로 한 조건부 시나리오이며 단정이 아닙니다. "
                if has_upzoning else "")
@@ -179,6 +198,8 @@ class IntegratedRecommender:
             "integrated_area_sqm": round(integrated_area, 1),
             "baseline_far_pct": baseline_far,
             "ranked": ranked,
+            # 시나리오 상태 — "tentative"면 현행 후보가 선행절차 전제 잠정치(확정 아님). 프론트 렌더 분기 신호.
+            "scenario_status": "tentative" if is_tentative else "actual",
             # 종상향 잠재 시나리오 요약(조회 실패/없음이면 None) — 잠재 후보의 출처·정직 근거.
             "upzoning_scenarios": upzoning,
             "land_price_reliable": land_price_reliable,

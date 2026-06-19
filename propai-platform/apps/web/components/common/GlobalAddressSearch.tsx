@@ -35,6 +35,26 @@ function newUid(): string {
   return `p${_uidSeq}_${Math.floor(Math.random() * 1e6)}`;
 }
 
+// 특이부지(개발 부적합·후순위 대상) 판정 — 다필지에서 '대표' 필지를 고를 때 입력 순서가 아니라
+//   개발가능성 우선으로 정렬하기 위한 진단 헬퍼. 두 신호를 합친다:
+//   (1) 백엔드 enrich가 준 specialParcel.is_special(학교용지·GB·맹지 등 게이트 결과 — 가장 신뢰).
+//   (2) 지목(jimok)이 도로·구거·하천·제방·유지·철도·학교·공원·전·답·임야·산림 등 '단독개발 부적합'.
+//   둘 중 하나라도 해당하면 후순위. (백엔드 게이트가 아직 안 왔어도 지목만으로 1차 차단.)
+const SPECIAL_JIMOK_KEYWORDS = [
+  "도로", "구거", "하천", "제방", "유지", "철도", "철도용지", "수도용지",
+  "학교", "학교용지", "공원", "유원지", "묘지", "종교용지", "사적지",
+  "전", "답", "과수원", "목장용지", "임야", "산림", "광천지", "염전",
+];
+function _isSpecialParcel(opts: { jimok?: string | null; isSpecial?: boolean | null }): boolean {
+  // (1) 백엔드 게이트 결과가 명시적으로 특이부지면 즉시 후순위.
+  if (opts.isSpecial === true) return true;
+  // (2) 지목 키워드 매칭 — 공백 제거 후 정확 일치 우선, 없으면 부분 포함도 검사
+  //     (예 "도로" 단독·"철도용지"). '대' '공장용지' '창고용지' 등 개발 가능 지목은 비대상.
+  const j = (opts.jimok || "").replace(/\s+/g, "");
+  if (!j) return false;
+  return SPECIAL_JIMOK_KEYWORDS.some((kw) => j === kw || j.includes(kw));
+}
+
 export interface AddressEntry {
   __uid?: string; // 행 불변 식별자(토지정보 보강 매칭용)
   fullAddress: string;
@@ -192,6 +212,28 @@ export function GlobalAddressSearch({
     // 지역(시군구) 수 — "시 구" 앞 2토큰 기준
     const regions = new Set(parcelRows.map((r) => r.label.split(" ").slice(0, 2).join(" ")).filter(Boolean));
     return { n, withAreaCnt: withArea.length, needFixCnt: n - withArea.length, totalSqm, regionCnt: regions.size };
+  }, [parcelRows]);
+
+  // ★표시용 '대표' 필지 — enrichParcels의 SSOT 기록과 동일한 개발가능성 우선 정렬을 미러링한다
+  //   (입력 순서 valid[0] 아님). 부지분석/하류는 통합값을 쓰고, 대표는 '표시용 폴백'임을 명확히
+  //   하기 위한 라벨·지목·특이여부만 계산한다. 단일필지/유효<2면 null(기존 단일표시 무회귀).
+  const repInfo = useMemo(() => {
+    const usable = parcelRows
+      .filter((r) => r.areaSqm && r.areaSqm > 0)
+      .map((r) => ({
+        label: r.label,
+        area: r.areaSqm || 0,
+        jimok: r.jimok || "",
+        special: _isSpecialParcel({ jimok: r.jimok, isSpecial: r.specialParcel?.is_special }),
+      }));
+    if (usable.length < 2) return null; // 다필지(유효 2+)에서만 대표 개념 적용
+    const sorted = [...usable].sort((a, b) => {
+      if (a.special !== b.special) return a.special ? 1 : -1;
+      return b.area - a.area;
+    });
+    const rep = sorted.find((p) => !p.special) ?? sorted[0];
+    const allSpecial = sorted.every((p) => p.special); // 전 필지 특이 → 대표도 특이(경고)
+    return { label: rep.label, jimok: rep.jimok, area: rep.area, isSpecial: rep.special, allSpecial, count: usable.length };
   }, [parcelRows]);
 
   // 종합 토지 분석 자동 트리거 (주소 입력 즉시 백그라운드 실행)
@@ -482,7 +524,9 @@ export function GlobalAddressSearch({
         const pnu = (m?.pnu ?? e.pnu) ?? "";
         const address = (m?.address ?? e.fullAddress ?? e.jibunAddress) ?? "";
         const landCategory = (m?.jimok ?? e.jimok) ?? "";
-        return { area, status, zone, pnu, address, landCategory };
+        // 개발가능성 우선정렬용 특이부지 판정(지목 + 백엔드 게이트) — '대표' 선정의 핵심.
+        const special = _isSpecialParcel({ jimok: landCategory, isSpecial: (m?.special_parcel ?? e.specialParcel)?.is_special });
+        return { area, status, zone, pnu, address, landCategory, special };
       })
       // status가 명시적으로 ok가 아닌 경우(ambiguous/failed)는 제외, 면적>0만.
       .filter((p) => p.area > 0 && (p.status == null || p.status === "ok"));
@@ -490,8 +534,24 @@ export function GlobalAddressSearch({
     // 유효 필지 1개 이하(단일/미확보) → SSOT 변경 없음(기존 대표 landAreaSqm 유지).
     if (valid.length < 2) return;
 
+    // ★개발가능성 우선 정렬 — '대표' 필지를 입력 순서(valid[0])가 아니라 '개발 가능한 가장 큰
+    //   필지'로 고른다. (근본버그: 입력 순서가 [도로, 주거]면 도로=특이부지가 대표가 되어 부지분석이
+    //   왜곡됐다.) 1차 키=개발가능(특이부지 후순위), 동급이면 2차 키=면적 큰 순. 안정정렬을 위해
+    //   stable sort(Array.prototype.sort는 ES2019+ 안정)로 동값 입력순서 유지.
+    //   ★주의: 통합 합계(totalSqm)·zoneMixed는 '모든' 유효필지 기준이라 정렬과 무관하게 동일하다.
+    //   parcels 배열도 이 정렬을 반영해 토지조서 시드가 대표 필지를 앞에 두게 한다(일관성).
+    valid.sort((a, b) => {
+      if (a.special !== b.special) return a.special ? 1 : -1; // 특이부지를 뒤로
+      return b.area - a.area; // 동급이면 면적 큰 순
+    });
+
     const totalSqm = valid.reduce((s, p) => s + p.area, 0);
-    const repArea = valid[0]?.area ?? null; // 대표 = 첫 유효 필지 면적
+    // ★대표 = 정렬 후 '개발가능' 첫 필지. 전부 특이부지면(개발가능 필지 없음) 정렬 후 첫 필지를
+    //   표시용 폴백으로 쓰되, 면적 큰 순 첫 항목이 된다(여전히 합계는 통합값 유지).
+    //   (대표 지목·특이여부의 화면 표시는 repInfo 메모가 동일 정렬을 미러링해 처리 — SSOT 스키마
+    //   미변경: 통합 면적 메타만 기록하고 persist/migrate는 미접촉한다.)
+    const repDevelopable = valid.find((p) => !p.special) ?? valid[0];
+    const repArea = repDevelopable?.area ?? null; // 대표 = 개발가능 첫 필지 면적
     const zones = new Set(valid.map((p) => p.zone).filter((z): z is string => !!z));
 
     // ★대표 분석(triggerComprehensiveAnalysis)이 landAreaSqm=대표를 쓴 뒤 여기서 통합으로 갱신.
@@ -862,6 +922,30 @@ export function GlobalAddressSearch({
               )}
             </div>
           )}
+          {/* 대표 필지 안내(다필지 전용) — 부지분석은 '통합' 기준이고, 아래 표기는 표시용 대표(개발가능
+              우선)임을 명확히 한다. 입력 순서가 아니라 '개발 가능한 가장 큰 필지'를 대표로 고른다. */}
+          {repInfo && (
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-[var(--line)] bg-[var(--surface-muted)]/30 px-3 py-1.5 text-[10.5px]">
+              <span className="rounded bg-[var(--accent-soft)] px-1.5 py-0.5 font-bold text-[var(--accent-strong)]">통합 분석</span>
+              <span className="text-[var(--text-secondary)]">부지분석은 <b className="text-[var(--text-primary)]">{repInfo.count}필지 통합</b> 기준</span>
+              <span className="text-[var(--text-hint)]">·</span>
+              <span className="text-[var(--text-secondary)]" title={repInfo.label}>
+                대표(표시용): <b className="text-[var(--text-primary)]">{repInfo.label}</b>
+                {repInfo.jimok ? ` · 지목 ${repInfo.jimok}` : ""}
+              </span>
+              {parcelStats.regionCnt > 1 && (
+                <span className="rounded bg-[color-mix(in_srgb,var(--accent-strong)_12%,transparent)] px-1.5 py-0.5 font-semibold text-[var(--accent-strong)]">혼재 지역 {parcelStats.regionCnt}곳</span>
+              )}
+              {repInfo.allSpecial && (
+                <span
+                  className="rounded bg-[color-mix(in_srgb,var(--status-warning)_16%,transparent)] px-1.5 py-0.5 font-bold text-[var(--status-warning)]"
+                  title="모든 필지가 특이부지(도로·하천·학교용지 등)로 분류됐습니다. 대표는 표시용 폴백이며 단독 개발가능성은 개별 필지 게이트를 확인하세요."
+                >
+                  ⚠ 대표가 특이부지 — 개별 게이트 확인
+                </span>
+              )}
+            </div>
+          )}
           {/* 컴팩트 리스트: 지번 + 토지정보(면적·용도지역·건폐/용적·지목) 2행 + 공동주택(호실·대지지분) */}
           <ul className={`divide-y divide-[var(--line)]/60 ${displayAddresses.length > 8 ? "max-h-[360px] overflow-y-auto" : ""}`}>
             {parcelRows.map((row, idx) => (
@@ -1125,7 +1209,8 @@ export function GlobalAddressSearch({
           </span>
           {displayAnalysis.landAreaSqm && (
             <span className="text-[var(--text-secondary)]">
-              {displayAnalysis.landAreaSqm.toLocaleString()}m²
+              {/* 다필지(repInfo 존재)면 통합 면적임을 명확히 라벨링(대표 1필지 면적 아님) */}
+              {repInfo ? `통합 ${repInfo.count}필지 ` : ""}{displayAnalysis.landAreaSqm.toLocaleString()}m²
             </span>
           )}
           {displayAnalysis.effectiveBcr && (

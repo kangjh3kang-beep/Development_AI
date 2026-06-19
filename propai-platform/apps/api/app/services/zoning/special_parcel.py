@@ -22,6 +22,58 @@ from typing import Any
 _RANK = {"POSSIBLE": 0, "CAUTION": 1, "CONDITIONAL": 2, "PRECONDITION": 3, "BLOCKED": 4}
 
 
+# ──────────────────────────────────────────────────────────────────────────
+# 게이트 정책 SSOT — 특이부지 게이트가 시나리오 산출에 어떻게 반영돼야 하는지의 단일 기준.
+#   (auto_recommend_top3 / integrated_recommender 양쪽이 같은 함수를 써서 정책 분기를 일원화한다.
+#    국소 패치 금지 — 두 게이트가 서로 다른 임계로 갈라지는 회귀를 막는다.)
+# ──────────────────────────────────────────────────────────────────────────
+
+# 원천 차단 — 통상 절차로 해결 불가(NO) 또는 원칙적 개발 불가(BLOCKED). 후보 미생성·정직고지만.
+GATE_BLOCK_DEVELOPABILITY = {"BLOCKED"}
+GATE_BLOCK_RESOLVABLE = {"NO"}
+
+# 잠정(조건부) 강등 — 선행 도시계획변경/시설폐지(PRECONDITION) 또는 인허가·협의·전용(CONDITIONAL),
+#   혹은 해결가능성이 조건부(CONDITIONAL)인 경우. 후보는 산출하되 '확정 아님·선행절차 전제 잠정치'로
+#   강등하고, 비현실 확신 % 표시를 억제한다(도로 단독 PRECONDITION → 타운하우스88% 할루시네이션 차단).
+GATE_TENTATIVE_DEVELOPABILITY = {"PRECONDITION", "CONDITIONAL"}
+GATE_TENTATIVE_RESOLVABLE = {"CONDITIONAL"}
+
+
+def gate_decision(developability: str | None, resolvable: str | None) -> str:
+    """특이부지 게이트(developability·resolvable)를 시나리오 산출 정책으로 환원한다.
+
+    반환:
+      "BLOCK"     — 후보 미생성(개발규모/수지 미산정·정직고지만). 가짜 % 차단.
+      "TENTATIVE" — 후보 산출하되 '선행절차 전제·잠정치(확정 아님)'로 강등 + 확신 % 억제.
+      "PASS"      — 일상 개발부지(특이 없음/경미) — 통상 산출.
+    ★단일 기준: 두 게이트(auto_recommend_top3·integrated_recommender)가 동일 분기를 쓴다.
+    """
+    dev = (developability or "").strip().upper()
+    res = (resolvable or "").strip().upper()
+    if dev in GATE_BLOCK_DEVELOPABILITY or res in GATE_BLOCK_RESOLVABLE:
+        return "BLOCK"
+    if dev in GATE_TENTATIVE_DEVELOPABILITY or res in GATE_TENTATIVE_RESOLVABLE:
+        return "TENTATIVE"
+    return "PASS"
+
+
+def tentative_marker(developability: str | None, resolvable: str | None, severity_label: str | None = None) -> str:
+    """잠정 강등 시나리오에 붙일 정직 사유 문구(확정 아님·선행절차 전제) — UI/응답 공용."""
+    dev = (developability or "").strip().upper()
+    res = (resolvable or "").strip().upper()
+    label = (severity_label or "").strip()
+    if dev == "PRECONDITION":
+        head = "선행 도시계획변경·시설폐지 등 중대한 선행절차 통과를 전제로 한 잠정치입니다(확정 아님)."
+    elif dev == "CONDITIONAL" or res == "CONDITIONAL":
+        # CONDITIONAL(인허가·전용·협의) 또는 해결가능성 조건부(예: 맹지·진입로 확보) — 동일하게 조건부 잠정.
+        head = "인허가·전용·협의 등 선행절차 통과를 조건으로 한 잠정치입니다(확정 아님)."
+    else:
+        head = "선행절차 통과를 전제로 한 잠정치입니다(확정 아님)."
+    if label:
+        head = f"{head} 개발가능성: {label}."
+    return head + " 선행절차가 확정되기 전의 개발규모·수익성은 참고용이며 단정이 아닙니다."
+
+
 def _rule_by_land_category(cat: str) -> dict[str, Any] | None:
     """지목(land_category) 기반 특이 판정. cat 은 NED 토지특성 지목명(예: 학교용지)."""
     c = (cat or "").strip()

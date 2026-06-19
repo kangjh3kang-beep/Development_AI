@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v261-lifecycle-landschedule-siteanalysis";
+const CACHE_NAME = "propai-v262-legal-location-multiparcel-integrated";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

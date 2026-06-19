@@ -99,6 +99,9 @@ type RecommendedModel = {
   avg_sale_price_per_pyeong: number | null;
   composite_score: number | null;
   ai_summary: string;
+  // 특이부지 잠정 강등(도로·학교·맹지 등 선행절차형) — true면 확신 % 대신 '선행절차 전제 잠정' 표기.
+  tentative: boolean;
+  tentative_reason: string | null;
 };
 
 // 백엔드 실제 응답 타입 — 중첩 객체는 에러/부분 응답 시 누락될 수 있어 옵셔널로 선언(런타임 가드와 일치).
@@ -110,12 +113,19 @@ type BackendRecommendItem = {
   unit_summary?: { total_gfa_sqm?: number; total_households?: number; avg_area_pyeong?: number };
   composite_score?: number;
   input_used?: { project_months?: number; avg_sale_price_per_pyeong?: number };
+  // 백엔드 잠정 강등 플래그(특이부지 PRECONDITION/CONDITIONAL).
+  tentative?: boolean;
+  tentative_reason?: string;
 };
 
 type AutoRecommendApiResponse = {
   recommendations: BackendRecommendItem[];
   all_results: BackendRecommendItem[];
   total_types_analyzed: number;
+  // "tentative"면 전 후보가 선행절차 전제 잠정치(확정 아님). 확신 % 렌더 억제 신호.
+  scenario_status?: string;
+  honest_disclosure?: string;
+  special_parcel?: { developability?: string | null; honest_disclosure?: string | null } | null;
 };
 
 function mapBackendToModel(item: BackendRecommendItem, rank: number): RecommendedModel {
@@ -142,6 +152,9 @@ function mapBackendToModel(item: BackendRecommendItem, rank: number): Recommende
     avg_sale_price_per_pyeong: item.input_used?.avg_sale_price_per_pyeong ?? null,
     composite_score: item.composite_score ?? null,
     ai_summary: `${typeName}: ${pm.reason ?? "분석 결과"}`,
+    // 특이부지 잠정 강등 — 백엔드 후보 플래그(없으면 false). 렌더에서 확신 % 억제·잠정 배지.
+    tentative: item.tentative === true,
+    tentative_reason: item.tentative_reason ?? null,
   };
 }
 
@@ -225,7 +238,8 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
   const [txError, setTxError] = useState<string | null>(null);
 
   // ── Auto-recommend (scenarios) API state ──
-  const [scenarioData, setScenarioData] = useState<{ recommendations: RecommendedModel[]; all_models: RecommendedModel[]; analysis_count: number } | null>(null);
+  // scenarioStatus="tentative"면 특이부지(도로·학교·맹지 등)로 전 후보가 선행절차 전제 잠정치.
+  const [scenarioData, setScenarioData] = useState<{ recommendations: RecommendedModel[]; all_models: RecommendedModel[]; analysis_count: number; scenarioStatus: string; honest: string | null } | null>(null);
   const [scenarioLoading, setScenarioLoading] = useState(false);
   const [scenarioError, setScenarioError] = useState<string | null>(null);
 
@@ -240,7 +254,7 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
 
   // ── AI deep analysis state ──
   const [deepAnalysisLoading, setDeepAnalysisLoading] = useState(false);
-  const [deepAnalysisResult, setDeepAnalysisResult] = useState<{ recommendations: RecommendedModel[]; all_models: RecommendedModel[]; analysis_count: number } | null>(null);
+  const [deepAnalysisResult, setDeepAnalysisResult] = useState<{ recommendations: RecommendedModel[]; all_models: RecommendedModel[]; analysis_count: number; scenarioStatus: string; honest: string | null } | null>(null);
   const [deepAnalysisError, setDeepAnalysisError] = useState<string | null>(null);
 
   // ── 1) Fetch zoning data from /zoning/analyze ──
@@ -356,7 +370,7 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
 
     const sAddr = data.address.trim();
     const sKey = `scenario:${sAddr}:${zoningData?.land_area_sqm ?? ""}`;
-    const sCached = getCachedAnalysis<{ recommendations: RecommendedModel[]; all_models: RecommendedModel[]; analysis_count: number }>(sKey, TTL_7D);
+    const sCached = getCachedAnalysis<{ recommendations: RecommendedModel[]; all_models: RecommendedModel[]; analysis_count: number; scenarioStatus: string; honest: string | null }>(sKey, TTL_7D);
     if (sCached) { setScenarioData(sCached); setScenarioLoading(false); return; }
 
     let cancelled = false;
@@ -377,6 +391,9 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
           recommendations: recs.map((item, i) => mapBackendToModel(item, i + 1)),
           all_models: (raw.all_results ?? recs).map((item, i) => mapBackendToModel(item, i + 1)),
           analysis_count: raw.total_types_analyzed ?? recs.length,
+          // 특이부지 잠정 상태 — "tentative"면 전 후보가 선행절차 전제 잠정치(확신 % 억제).
+          scenarioStatus: raw.scenario_status ?? "actual",
+          honest: raw.honest_disclosure ?? raw.special_parcel?.honest_disclosure ?? null,
         };
         if (!cancelled) { setScenarioData(mapped); setCachedAnalysis(sKey, mapped); }
       } catch (err) {
@@ -423,6 +440,8 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
         recommendations: recs.map((item, i) => mapBackendToModel(item, i + 1)),
         all_models: (raw.all_results ?? recs).map((item, i) => mapBackendToModel(item, i + 1)),
         analysis_count: raw.total_types_analyzed ?? recs.length,
+        scenarioStatus: raw.scenario_status ?? "actual",
+        honest: raw.honest_disclosure ?? raw.special_parcel?.honest_disclosure ?? null,
       };
       setDeepAnalysisResult(mapped);
     } catch {
@@ -486,6 +505,8 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
   }, [zoningData]);
 
   // Determine data source for scenarios
+  // 각 시나리오에 tentative(선행절차 전제 잠정)·tentativeReason을 전파해, 렌더에서 확신 % 대신
+  //   '잠정' 배지로 표기한다(도로·학교·맹지 등 특이부지 할루시네이션 차단).
   const scenarioItems = useMemo(() => {
     // Priority 1: deep analysis result
     if (deepAnalysisResult?.recommendations?.length) {
@@ -494,6 +515,8 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
         score: r.composite_score != null ? Math.round(r.composite_score) : 0,
         reason: recommendReason(r),
         isReal: true,
+        tentative: r.tentative,
+        tentativeReason: r.tentative_reason,
       }));
     }
     // Priority 2: auto-recommend API
@@ -503,20 +526,33 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
         score: r.composite_score != null ? Math.round(r.composite_score) : 0,
         reason: recommendReason(r),
         isReal: true,
+        tentative: r.tentative,
+        tentativeReason: r.tentative_reason,
       }));
     }
     // Priority 3: AI analyze client result
     if (aiData?.scenarios?.length) {
-      return (aiData.scenarios ?? []).map(s => ({ ...s, isReal: true }));
+      return (aiData.scenarios ?? []).map(s => ({ ...s, isReal: true, tentative: false, tentativeReason: null as string | null }));
     }
     // Priority 4: local fallback
     if (localResult?.scenarios?.length) {
-      return (localResult.scenarios ?? []).map(s => ({ ...s, isReal: false }));
+      return (localResult.scenarios ?? []).map(s => ({ ...s, isReal: false, tentative: false, tentativeReason: null as string | null }));
     }
     return [];
   }, [deepAnalysisResult, scenarioData, aiData, localResult]);
 
   const isScenarioReal = scenarioItems.length > 0 && scenarioItems[0].isReal;
+  // 시나리오 전체가 선행절차 전제 잠정치인지 — 백엔드 scenario_status 또는 후보 tentative 플래그.
+  const isScenarioTentative = useMemo(() => {
+    const status = deepAnalysisResult?.scenarioStatus ?? scenarioData?.scenarioStatus;
+    if (status === "tentative") return true;
+    return scenarioItems.some((s) => "tentative" in s && s.tentative === true);
+  }, [deepAnalysisResult?.scenarioStatus, scenarioData?.scenarioStatus, scenarioItems]);
+  // 잠정 사유(첫 후보 우선) + 정직고지 — 잠정 안내 배너 표시용.
+  const tentativeDisclosure = useMemo(() => {
+    const fromItem = scenarioItems.find((s) => "tentativeReason" in s && s.tentativeReason)?.tentativeReason as string | undefined;
+    return fromItem ?? deepAnalysisResult?.honest ?? scenarioData?.honest ?? null;
+  }, [scenarioItems, deepAnalysisResult?.honest, scenarioData?.honest]);
 
   const analysis = {
     zoning: {
@@ -789,14 +825,31 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
           >
             <div className="flex items-center justify-between mb-6">
               <h4 className="text-lg font-black text-[var(--text-primary)] tracking-tight">
-                {isScenarioReal ? "실제 분석 기반 시나리오" : scenarioLoading ? "시나리오 분석 중..." : "법규 기반 개발 시나리오"}
+                {scenarioLoading ? "시나리오 분석 중..." :
+                 isScenarioReal && isScenarioTentative ? "선행절차 전제 잠정 시나리오" :
+                 isScenarioReal ? "실제 분석 기반 시나리오" : "법규 기반 개발 시나리오"}
               </h4>
               <div className={`h-2 w-2 rounded-full ${
                 scenarioLoading ? "bg-amber-500 animate-pulse" :
+                isScenarioReal && isScenarioTentative ? "bg-amber-500 shadow-[0_0_10px_rgba(245,158,11,0.9)]" :
                 isScenarioReal ? "bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,1)]" :
                 hasData ? "bg-blue-500" : "bg-slate-500"
               } animate-pulse`} />
             </div>
+
+            {/* 잠정 안내 배너 — 특이부지(도로·학교·맹지 등)로 전 후보가 선행절차 전제 잠정치일 때만.
+                확신 % 를 그대로 노출하지 않고, 확정 아님·선행절차 전제임을 명시(할루시네이션 차단). */}
+            {!scenarioLoading && isScenarioReal && isScenarioTentative && (
+              <div className="mb-4 rounded-xl border border-[color-mix(in_srgb,var(--status-warning)_36%,transparent)] bg-[color-mix(in_srgb,var(--status-warning)_10%,transparent)] p-3">
+                <p className="text-[10px] font-black text-[var(--status-warning)] uppercase tracking-widest mb-1 flex items-center gap-1.5">
+                  <Icons.AlertCircle />선행절차 전제 · 잠정 (확정 아님)
+                </p>
+                <p className="text-[10px] leading-relaxed text-[var(--text-secondary)] font-medium">
+                  {tentativeDisclosure ??
+                    "이 부지는 도로·학교·맹지 등 선행절차형 특이부지로, 아래 시나리오는 폐도·용도폐지·도시계획변경 등 선행절차 통과를 전제로 한 잠정치입니다."}
+                </p>
+              </div>
+            )}
 
             {scenarioLoading ? (
               <div className="flex flex-col items-center gap-3 py-8">
@@ -805,30 +858,46 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
               </div>
             ) : (
               <div className="space-y-5">
-                {scenarioItems.length > 0 ? scenarioItems.map((s, i) => (
+                {scenarioItems.length > 0 ? scenarioItems.map((s, i) => {
+                  const itemTentative = "tentative" in s && s.tentative === true;
+                  return (
                   <div key={i} className="group relative">
                     <div className="flex items-start justify-between mb-2">
                       <div className="flex flex-col gap-1 flex-1 mr-3">
                         <span className="text-base font-[900] text-[var(--text-primary)] group-hover:text-[var(--accent-strong)] transition-colors">
                           {s.title}
                           {!s.isReal && <span className="ml-1.5 text-[9px] font-medium text-[var(--text-hint)]">(로컬 추정)</span>}
+                          {itemTentative && <span className="ml-1.5 text-[9px] font-black text-[var(--status-warning)]">(선행절차 전제·잠정)</span>}
                         </span>
                         <span className="text-[10px] text-[var(--text-hint)] font-medium leading-snug">{s.reason}</span>
                       </div>
-                      <span className={`text-2xl font-black ${s.score >= 80 ? "text-emerald-400" : s.score >= 50 ? "text-amber-400" : "text-red-400"}`}>
-                        {s.score}%
-                      </span>
+                      {/* 잠정 후보는 확신 % 대신 '잠정' 배지 — 확정치처럼 보이는 % 노출을 억제. */}
+                      {itemTentative ? (
+                        <span className="text-[10px] font-black text-[var(--status-warning)] whitespace-nowrap rounded-md border border-[color-mix(in_srgb,var(--status-warning)_36%,transparent)] bg-[color-mix(in_srgb,var(--status-warning)_10%,transparent)] px-2 py-1">
+                          잠정
+                        </span>
+                      ) : (
+                        <span className={`text-2xl font-black ${s.score >= 80 ? "text-emerald-400" : s.score >= 50 ? "text-amber-400" : "text-red-400"}`}>
+                          {s.score}%
+                        </span>
+                      )}
                     </div>
-                    <div className="h-1.5 w-full rounded-full bg-[var(--line)] overflow-hidden">
-                      <motion.div
-                        initial={{ width: 0 }}
-                        animate={{ width: `${s.score}%` }}
-                        transition={{ duration: 1.2, delay: 0.3 + i * 0.15 }}
-                        className={`h-full rounded-full ${s.score >= 80 ? "bg-gradient-to-r from-emerald-500 to-teal-400" : s.score >= 50 ? "bg-gradient-to-r from-amber-500 to-orange-400" : "bg-gradient-to-r from-red-500 to-pink-400"}`}
-                      />
-                    </div>
+                    {/* 잠정 후보는 진행바도 점선·억제 — 확정 점수 막대 미표시. */}
+                    {itemTentative ? (
+                      <div className="h-1.5 w-full rounded-full border border-dashed border-[color-mix(in_srgb,var(--status-warning)_30%,transparent)]" />
+                    ) : (
+                      <div className="h-1.5 w-full rounded-full bg-[var(--line)] overflow-hidden">
+                        <motion.div
+                          initial={{ width: 0 }}
+                          animate={{ width: `${s.score}%` }}
+                          transition={{ duration: 1.2, delay: 0.3 + i * 0.15 }}
+                          className={`h-full rounded-full ${s.score >= 80 ? "bg-gradient-to-r from-emerald-500 to-teal-400" : s.score >= 50 ? "bg-gradient-to-r from-amber-500 to-orange-400" : "bg-gradient-to-r from-red-500 to-pink-400"}`}
+                        />
+                      </div>
+                    )}
                   </div>
-                )) : (
+                  );
+                }) : (
                   <p className="text-sm text-[var(--text-hint)] text-center py-6">주소를 입력하면 자동 분석됩니다</p>
                 )}
 
