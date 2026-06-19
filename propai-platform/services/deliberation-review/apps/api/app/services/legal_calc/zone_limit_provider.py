@@ -55,6 +55,25 @@ def _norm_zone(use_zone: str | None, zones: dict[str, Any]) -> str | None:
     return None
 
 
+def all_zone_limits() -> dict[str, Any]:
+    """전 용도지역 × 산정변수 한도 + provenance 일괄 노출(엔진 규제 SSOT read 표면).
+
+    플랫폼이 자신의 ZONE_LIMITS를 이 1차출처와 대조(reg-source divergence·P5)하는 read-only 소비원.
+    데이터파일 zone ∪ override zone, 변수별 한도(override 우선). 결정론(동일 데이터파일 동일 출력)."""
+    data = _load()
+    meta = dict(data.get("_meta") or {})
+    zones_in = data.get("zones") or {}
+    src = meta.get("source") or "national_zone_limits"
+    out: dict[str, Any] = {}
+    for z in sorted(set(zones_in) | set(_override)):
+        entry = {**(zones_in.get(z) or {}), **(_override.get(z) or {})}
+        vars_out = {var: {"value": float(entry[key]), "unit": "%", "source": f"{src}:{z}"}
+                    for var, key in _VAR_TO_KEY.items() if entry.get(key) is not None}
+        if vars_out:
+            out[z] = vars_out
+    return {"meta": meta, "zones": out}
+
+
 def resolve_zone_limit(use_zone: str | None, target_variable: str | None) -> tuple[float, str] | None:
     """(용도지역, 산정변수) → (한도%, 출처). 미상 zone/비대상 변수/미수록 → None(날조 금지·표면화)."""
     key = _VAR_TO_KEY.get(target_variable or "")
