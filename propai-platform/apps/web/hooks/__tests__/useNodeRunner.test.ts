@@ -16,7 +16,7 @@ vi.mock("@/lib/api-client", () => ({
   resolveApiOrigin: () => "https://api.test",
 }));
 
-import { useNodeRunner } from "@/hooks/useNodeRunner";
+import { useNodeRunner, deriveMassGfa } from "@/hooks/useNodeRunner";
 import { useOrchestrationStore } from "@/store/useOrchestrationStore";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 
@@ -235,5 +235,30 @@ describe("useNodeRunner — 5단계 순서·환류", () => {
     expect(post).not.toHaveBeenCalled();
     expect(res.state).toBe("needs-input");
     expect(res.grounding["input:projectId"]).toBe("unavailable");
+  });
+});
+
+// design bim/generate 응답 mass엔 GFA 키가 없으므로 폭×깊이×층수로 도출(HIGH 결함 수정).
+describe("deriveMassGfa — design GFA 도출 폴백", () => {
+  it("mass 폭×깊이×층수로 GFA 도출(반올림)", () => {
+    const resp = {
+      mass: { building_width_m: 22.5, building_depth_m: 20.7, num_floors: 3 },
+    };
+    expect(deriveMassGfa(resp)).toBe(Math.round(22.5 * 20.7 * 3)); // ≈1397
+  });
+
+  it("폭/깊이/층수 중 하나라도 미확보면 null(0 강제 금지)", () => {
+    expect(deriveMassGfa({ mass: { building_width_m: 22.5, num_floors: 3 } })).toBeNull();
+    expect(deriveMassGfa({ mass: {} })).toBeNull();
+    expect(deriveMassGfa({})).toBeNull();
+  });
+
+  it("비양수(0/음수)면 null(무의미 GFA 방지)", () => {
+    expect(
+      deriveMassGfa({ mass: { building_width_m: 0, building_depth_m: 20, num_floors: 3 } }),
+    ).toBeNull();
+    expect(
+      deriveMassGfa({ mass: { building_width_m: 22, building_depth_m: -1, num_floors: 3 } }),
+    ).toBeNull();
   });
 });

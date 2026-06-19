@@ -24,6 +24,10 @@ import { useCallback } from "react";
 
 import { resolveApiOrigin, apiClient } from "@/lib/api-client";
 import { currentSignature, moduleKeyOf } from "@/lib/orchestration/dependency-graph";
+import {
+  buildNodeBody,
+  type NodeBodyContext,
+} from "@/lib/orchestration/node-body-builders";
 import { NODES } from "@/lib/orchestration/node-registry";
 import type { AnalysisNode, NodeId, SsotOutputSpec } from "@/lib/orchestration/types";
 import {
@@ -85,6 +89,34 @@ function readNum(o: RunnerResponse, ...keys: string[]): number | null {
   return null;
 }
 
+/** 중첩 객체(예: cost 응답의 range:{min_won,max_won})에서 숫자 키를 안전하게 읽는다. */
+function readNestedNum(
+  o: RunnerResponse,
+  parent: string,
+  ...keys: string[]
+): number | null {
+  const child = o[parent];
+  if (!child || typeof child !== "object") return null;
+  return readNum(child as RunnerResponse, ...keys);
+}
+
+/**
+ * design bim/generate 응답의 mass 블록은 GFA(연면적) 키를 직렬화하지 않는다
+ * (building_width_m·building_depth_m·num_floors·floor_height_m·bcr_pct·far_pct·total_units만 포함).
+ * 따라서 GFA는 폭×깊이×층수(footprint×층수 = 지상 연면적 근사)로 도출한다. 셋 중 하나라도
+ * 미확보/비양수면 null(0 강제 금지) — 하류 qto/feasibility는 GFA 미확보 시 needs-input으로 정직 대기.
+ * 응답이 직접 total_floor_area_sqm/total_gfa_sqm을 주면 그 값이 우선(이 도출은 마지막 폴백).
+ */
+export function deriveMassGfa(resp: Record<string, unknown>): number | null {
+  const w = readNestedNum(resp, "mass", "building_width_m");
+  const d = readNestedNum(resp, "mass", "building_depth_m");
+  const f = readNestedNum(resp, "mass", "num_floors");
+  if (w != null && d != null && f != null && w > 0 && d > 0 && f > 0) {
+    return Math.round(w * d * f);
+  }
+  return null;
+}
+
 /**
  * 노드 산출을 데이터 SSOT store로 환류(e). ssotOutputs의 updateAction별로 분기한다.
  * runner 응답 키는 노드마다 다르므로, 흔한 키 후보를 안전하게 읽어 store 슬롯에 채운다.
@@ -98,6 +130,8 @@ function feedbackToStore(
   for (const out of node.ssotOutputs) {
     switch (out.updateAction) {
       case "updateSiteAnalysis":
+        // 백엔드 zoning/analyze 실응답 키: land_area_sqm, zone_type(용도지역명).
+        // (zoneCode/zone_code도 후보 유지 — 다른 산출경로 호환.)
         store.updateSiteAnalysis(
           {
             landAreaSqm: readNum(resp, "landAreaSqm", "land_area_sqm", "area_sqm"),
@@ -106,41 +140,65 @@ function feedbackToStore(
                 ? resp.zoneCode
                 : typeof resp.zone_code === "string"
                   ? (resp.zone_code as string)
-                  : null,
+                  : typeof resp.zone_type === "string"
+                    ? (resp.zone_type as string)
+                    : null,
           },
           { source: "auto" },
         );
         break;
       case "updateDesignData":
+        // 백엔드 design/{id}/bim/generate 실응답은 mass:{building_width_m,building_depth_m,
+        // num_floors,bcr_pct,far_pct,total_units} 중첩 구조다(★GFA 키는 직렬화 안 됨).
+        // 면적·층수·건폐/용적·세대수를 mass에서 보강해 읽고, GFA는 키가 없으므로
+        // deriveMassGfa(폭×깊이×층수)로 도출한다(top-level camelCase 후보도 유지 — 다른 경로 호환).
+        // buildingType/용도는 mass 응답에 없어 null로 둔다 → 하류 qto/feasibility는 백엔드
+        // 기본 용도(apartment)로 폴백한다(용도 SSOT 시드는 Phase C 추천결과 환류 시 보강).
         store.updateDesignData(
           {
-            totalGfaSqm: readNum(resp, "totalGfaSqm", "total_gfa_sqm"),
-            floorCount: readNum(resp, "floorCount", "floor_count"),
+            totalGfaSqm:
+              readNum(resp, "totalGfaSqm", "total_gfa_sqm") ??
+              readNestedNum(resp, "mass", "total_floor_area_sqm", "total_gfa_sqm") ??
+              deriveMassGfa(resp),
+            floorCount:
+              readNum(resp, "floorCount", "floor_count") ??
+              readNestedNum(resp, "mass", "num_floors", "floor_count"),
             buildingType:
               typeof resp.buildingType === "string" ? resp.buildingType : null,
-            bcr: readNum(resp, "bcr"),
-            far: readNum(resp, "far"),
+            bcr: readNum(resp, "bcr") ?? readNestedNum(resp, "mass", "bcr_pct"),
+            far: readNum(resp, "far") ?? readNestedNum(resp, "mass", "far_pct"),
+            unitCount:
+              readNum(resp, "unitCount", "total_units") ??
+              readNestedNum(resp, "mass", "total_units"),
           } as DesignData,
           { source: "auto" },
         );
         break;
       case "updateCostData":
+        // 백엔드 cost/estimate-overview 실응답 키: total_won, per_pyeong_won, unit_cost_per_sqm,
+        // aboveground_won/underground_won/landscape_won/direct_won/indirect_won, range:{min_won,max_won}.
+        // (camelCase 후보도 유지 — 다른 산출경로 호환.)
         store.updateCostData(
           {
             totalConstructionCostWon: readNum(
               resp,
               "totalConstructionCostWon",
               "total_construction_cost_won",
+              "total_won",
             ),
-            perSqmWon: readNum(resp, "perSqmWon", "per_sqm_won"),
+            perSqmWon: readNum(resp, "perSqmWon", "per_sqm_won", "unit_cost_per_sqm"),
             perPyeongWon: readNum(resp, "perPyeongWon", "per_pyeong_won"),
-            abovegroundWon: readNum(resp, "abovegroundWon"),
-            undergroundWon: readNum(resp, "undergroundWon"),
-            landscapeWon: readNum(resp, "landscapeWon"),
-            directWon: readNum(resp, "directWon"),
-            indirectWon: readNum(resp, "indirectWon"),
-            rangeMinWon: readNum(resp, "rangeMinWon", "range_min_won"),
-            rangeMaxWon: readNum(resp, "rangeMaxWon", "range_max_won"),
+            abovegroundWon: readNum(resp, "abovegroundWon", "aboveground_won"),
+            undergroundWon: readNum(resp, "undergroundWon", "underground_won"),
+            landscapeWon: readNum(resp, "landscapeWon", "landscape_won"),
+            directWon: readNum(resp, "directWon", "direct_won"),
+            indirectWon: readNum(resp, "indirectWon", "indirect_won"),
+            rangeMinWon:
+              readNum(resp, "rangeMinWon", "range_min_won") ??
+              readNestedNum(resp, "range", "min_won"),
+            rangeMaxWon:
+              readNum(resp, "rangeMaxWon", "range_max_won") ??
+              readNestedNum(resp, "range", "max_won"),
             source: "overview",
           } as CostData,
           { source: "auto" },
@@ -310,6 +368,34 @@ export function useNodeRunner(): { runNode: (id: NodeId) => Promise<NodeResult> 
       ? rawPath.replace(/\{[^}]+\}/g, projectId as string)
       : rawPath;
 
+    // ── (b-준비) 노드별 백엔드 평면 body 구성(SSOT 슬롯 → 백엔드 필드, B6-1) ──
+    // 예전엔 모든 노드를 { builder, context }로 보내 백엔드가 소비하지 못해 7노드 422·
+    // design 빈결과였다. buildNodeBody가 노드별 정확한 평면 body와 필수 누락(missing)을 만든다.
+    const { body, missing: bodyMissing } = buildNodeBody(
+      id,
+      context as NodeBodyContext,
+      projectId,
+    );
+    // 필수(★)필드를 SSOT에서 못 채웠으면 백엔드를 부르지 않고 needs-input으로 정직 고지(0 강제 금지).
+    if (bodyMissing.length > 0) {
+      const groundingMissing: Record<string, "ok" | "unavailable"> = {
+        ...grounding,
+      };
+      for (const key of bodyMissing) {
+        groundingMissing[`input:${key}`] = "unavailable";
+      }
+      const res: NodeResult = {
+        state: "needs-input",
+        verifyStatus: null,
+        grounding: groundingMissing,
+        chargedKrw: 0,
+        inputSignature,
+        at: now(),
+      };
+      orch.recordNodeResult(id, res);
+      return res;
+    }
+
     try {
       // ── (b) 노드 runner 호출(전담 interpreter 경유) ──
       // 레지스트리 path는 버전 prefix 포함 전체경로(/api/v1|v2/...)라 절대 URL로 호출한다
@@ -317,11 +403,8 @@ export function useNodeRunner(): { runNode: (id: NodeId) => Promise<NodeResult> 
       const url = `${origin}${resolvedPath}`;
       const resp = await apiClient.request<RunnerResponse>(url, {
         method: node.runner.method,
-        body: {
-          // bodyBuilder 식별자 + 상류 컨텍스트를 함께 전달(백엔드가 컨텍스트 소비).
-          builder: node.runner.bodyBuilder,
-          context,
-        },
+        // 노드별 백엔드 평면 body(top-level 필드). 예전 { builder, context } 모양 폐기.
+        body,
         useMock: false,
       });
       const runnerResp: RunnerResponse =
