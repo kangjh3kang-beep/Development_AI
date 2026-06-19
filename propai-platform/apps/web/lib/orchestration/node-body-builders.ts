@@ -201,12 +201,21 @@ export function buildNodeBody(
     }
 
     case "sales": {
-      // {address★, pnu?} (+JWT — apiClient가 Authorization 자동첨부).
-      // 주의: 백엔드 market/report는 lawd_cd 결정에 pnu/bcode가 필요하다(없으면 400).
-      // pnu가 있으면 함께 보내 lawd_cd 도출을 돕는다.
+      // {address★, pnu? 또는 bcode?} (+JWT — apiClient가 Authorization 자동첨부).
+      // 주의: 백엔드 market/report의 _resolve는 lawd_cd(법정동코드 앞5자리)를
+      //   pnu·bcode에서만 도출한다(address는 무시). 둘 다 없으면 HTTP 400이 난다.
+      //   따라서 pnu(또는 bcode)는 사실상 준-필수다 — 둘 다 없으면 호출을 막아
+      //   백엔드 400 대신 needs-input으로 정직하게 처리한다(0·가짜 결과 금지).
       if (address) body.address = address;
       else missing.push("address");
+      // bcode는 SSOT에 별도 슬롯이 없으므로 pnu(19자리) 앞 10자리(=법정동코드)에서 파생한다.
+      // 백엔드 _resolve는 bcode[:5]로 lawd_cd를 얻으므로 이 10자리 bcode면 충분(라이브 검증).
+      const bcode = pnu && pnu.length >= 10 ? pnu.slice(0, 10) : null;
       if (pnu) body.pnu = pnu;
+      // pnu가 없어도 bcode가 있으면 백엔드 bcode 경로로 200을 받는다(둘 다 보내도 무해).
+      if (bcode) body.bcode = bcode;
+      // pnu·bcode 모두 없으면 lawd_cd를 못 구해 백엔드가 400 → 사전에 needs-input 처리.
+      if (!pnu && !bcode) missing.push("pnu");
       break;
     }
 

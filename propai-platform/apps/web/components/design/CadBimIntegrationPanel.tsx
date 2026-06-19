@@ -785,22 +785,34 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
   }, [projectId, spec, drawingBody]);
 
   // 개별 도면 SVG 조회(캐시)
+  // ★무한루프 방지(React #185): 캐시 판정을 "값 진리값(svgMap[code])"이 아니라
+  //  "키 존재(code in m)"로 한다. 빈 문자열 SVG(200 OK + 본문 "")도 한 번 캐시되면
+  //  다시 요청하지 않도록 함수형 setState로 self-가드한다. 또한 deps에서 svgMap을 빼
+  //  loadSvg 함수 정체성을 안정화한다(svgMap이 바뀔 때마다 effect가 재발화하던 원인 제거).
   const loadSvg = useCallback(
     async (code: string) => {
-      if (svgMap[code] || !spec) return;
+      if (!spec) return;
+      // 함수형 업데이트로 현재 캐시를 읽어 self-가드(키가 이미 있으면 재요청 안 함).
+      let already = false;
+      setSvgMap((m) => {
+        already = code in m;
+        return m; // 상태 변경 없음(읽기 전용 가드)
+      });
+      if (already) return;
       try {
         const base = apiV1BaseUrl();
         const res = await fetch(`${base}/design/${encodeURIComponent(projectId)}/drawings/${code}/svg${svgQuery()}`, {
           signal: AbortSignal.timeout(60000),
         });
-        if (!res.ok) return;
-        const svg = await res.text();
-        setSvgMap((m) => ({ ...m, [code]: svg }));
+        // 실패해도 키를 채워 무한 재요청을 막는다(빈 문자열=정직한 빈 도면 표시, 0날조 아님).
+        const svg = res.ok ? await res.text() : "";
+        setSvgMap((m) => (code in m ? m : { ...m, [code]: svg }));
       } catch {
-        // 개별 도면 실패는 무시(다른 도면은 정상 표시)
+        // 개별 도면 실패도 키를 채워 재요청 차단(다른 도면은 정상 표시).
+        setSvgMap((m) => (code in m ? m : { ...m, [code]: "" }));
       }
     },
-    [projectId, svgMap, spec, svgQuery],
+    [projectId, spec, svgQuery],
   );
 
   // 2D 뷰 진입 시(기하 준비 후) 도면 세트 1회 로드 + AI 설계해석
@@ -1581,8 +1593,15 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
                   <img src={activeSvgUrl} alt={DRAWING_LABELS[activeCode] || activeCode} className="max-h-full w-full" />
                 </div>
               )}
-              {!drawingLoading && !drawingError && activeCode && !activeSvgUrl && (
+              {/* 로딩 중: 아직 svgMap에 키가 없음(요청 진행) → 스피너. */}
+              {!drawingLoading && !drawingError && activeCode && !activeSvgUrl && !(activeCode in svgMap) && (
                 <div className="h-10 w-10 animate-spin rounded-full border-4 border-[var(--accent-strong)] border-t-transparent" />
+              )}
+              {/* 빈 도면(정직 표기): 키는 캐시됐으나 본문이 비어 있음 — 없는 도면을 날조하지 않는다. */}
+              {!drawingLoading && !drawingError && activeCode && !activeSvgUrl && (activeCode in svgMap) && (
+                <div className="text-center text-xs text-[var(--text-hint)]">
+                  이 도면은 아직 생성되지 않았습니다.
+                </div>
               )}
             </div>
 

@@ -107,7 +107,7 @@ describe("buildNodeBody — 노드별 평면 body 매핑", () => {
     expect(body.zone_code).toBe("2R");
   });
 
-  it("sales: address★ + pnu(lawd_cd 도출 보조)", () => {
+  it("sales: address★ + pnu(lawd_cd 도출 보조) + pnu 앞10자리 bcode 파생", () => {
     const { body, missing } = buildNodeBody(
       "sales",
       { siteAnalysis: multiSite() },
@@ -116,6 +116,31 @@ describe("buildNodeBody — 노드별 평면 body 매핑", () => {
     expect(missing).toEqual([]);
     expect(body.address).toBe("서울특별시 동작구 상도동 123");
     expect(body.pnu).toBe("1159010300101230000");
+    // ★pnu 앞 10자리(법정동코드)를 bcode로 함께 전송 → 백엔드 _resolve bcode 경로 보조.
+    expect(body.bcode).toBe("1159010300");
+  });
+
+  it("sales(Issue2): pnu·bcode 모두 미확보면 missing=[pnu](백엔드 400 대신 needs-input)", () => {
+    const { body, missing } = buildNodeBody(
+      "sales",
+      // 주소는 있으나 pnu 없음(주소 직접입력 등) → lawd_cd 도출 불가 → 게이트.
+      { siteAnalysis: multiSite({ pnu: null }) },
+      "p1",
+    );
+    expect(missing).toContain("pnu");
+    expect(body.pnu).toBeUndefined();
+    expect(body.bcode).toBeUndefined();
+    // 주소는 그대로 담긴다(누락은 pnu뿐).
+    expect(body.address).toBe("서울특별시 동작구 상도동 123");
+  });
+
+  it("sales(Issue2): pnu 보유 정상 폐포는 무회귀(missing 없음·pnu 전송)", () => {
+    const { missing } = buildNodeBody(
+      "sales",
+      { siteAnalysis: multiSite() },
+      "p1",
+    );
+    expect(missing).toEqual([]);
   });
 
   it("qto: total_gfa_sqm★(gt0) + floor_count_above + building_type", () => {

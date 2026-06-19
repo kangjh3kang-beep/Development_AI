@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v258-saleprice-feedback";
+const CACHE_NAME = "propai-v259-cad-loop-sales-pnu";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",
