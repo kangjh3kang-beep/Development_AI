@@ -148,6 +148,60 @@ async def deliberation_reg_divergence(user=Depends(get_current_user)) -> dict[st
     return {"degraded": False, "engine_meta": engine.get("meta"), **report}
 
 
+@router.get("/reg/baseline-staleness")
+async def deliberation_baseline_staleness(user=Depends(get_current_user)) -> dict[str, Any]:
+    """국가 시행령 baseline(엔진 national_zone_limits.json)이 실시간 법령 변경 대비 stale인지 — regulation_monitor
+    (법제처)의 출처 법령 개정 감지 vs baseline 발효일. 실시간↔정적 baseline의 다리(국가 상한은 의도적 정적이라
+    자동 동기화 안 함 → 개정 시 수동 갱신 검토 신호). 인증 필수·읽기전용.
+
+    정직(무음0): 엔진 미연결·법제처 키 미설정·모니터 실패를 'not stale'로 위장 금지 → degrade로 표면화
+    (변경 감지 불가를 합치로 오인시키지 않음)."""
+    _ = user  # 인증 게이트(테넌트 무관 — 국가 법령 데이터)
+    engine, reason = await _engine_get_zone_limits()
+    if engine is None:
+        return {"degraded": True, "reason": reason,
+                "engine_configured": bool(get_settings().deliberation_engine_url)}
+    meta = engine.get("meta") or {}
+    try:
+        from app.core.config import settings as core_settings
+        if not getattr(core_settings, "MOLEG_API_KEY", ""):
+            # 법제처 키 미설정 → 변경 감지 불가. 'not stale'(거짓 안심) 금지 → degrade 정직 표면화.
+            return {"degraded": True, "reason": "monitor_key_missing",
+                    "baseline_version": meta.get("version"),
+                    "baseline_effective_date": meta.get("effective_date")}
+        import asyncio
+        from datetime import date
+
+        from app.services.deliberation.reg_reconcile import baseline_staleness
+        from app.services.regulation_monitor.regulation_monitor import RegulationMonitorService
+        src = str(meta.get("source") or "")
+        eff_raw = str(meta.get("effective_date") or "")[:10]
+        eff = date.fromisoformat(eff_raw) if eff_raw else None
+        # +1: 정수 절단으로 cutoff가 발효일보다 늦게 잡혀 경계 개정을 놓치지 않도록 보수적 버퍼.
+        days_back = (max(1, (date.today() - eff).days) + 1) if eff else 3650
+        svc = RegulationMonitorService()
+        # ★MED: 라이브 법제처 호출(병렬화해도 최악 ~30s)을 시간 상한으로 감싸 hang→degrade(엔드포인트 무중단).
+        budget = float(getattr(get_settings(), "deliberation_monitor_timeout_s", 20.0))
+        changed = await asyncio.wait_for(svc.check_law_updates(days_back=days_back), timeout=budget)
+        flag = baseline_staleness(changed, source=src, effective_date=str(meta.get("effective_date") or ""))
+    except Exception as exc:  # noqa: BLE001 — best-effort 모니터(타임아웃 포함), 분석 흐름 무관(무중단)
+        logger.warning("deliberation_baseline_staleness_failed", err=str(exc)[:200])
+        return {"degraded": True, "reason": "monitor_unavailable", "baseline_version": meta.get("version")}
+
+    # ★정직(무음0): 양성 신호(감시 법령이 발효일 이후 개정)만 '확정' 보고. 확정 not-stale은 이 약신호로 불가
+    # — 시행령 직접 미감시·부분 fetch 실패·비정형 공포일이 모두 '변경 없음'으로 위장될 수 있어, not-stale을
+    # 합치로 단정하지 않고 monitor_inconclusive로 표면화(거짓 안심 원천 차단). 한 원리로 HIGH/MED 동시 해소.
+    if flag["stale"]:
+        return {"degraded": False, "baseline_version": meta.get("version"),
+                "baseline_effective_date": meta.get("effective_date"), **flag}
+    return {"degraded": True, "reason": "monitor_inconclusive",
+            "baseline_version": meta.get("version"),
+            "baseline_effective_date": meta.get("effective_date"),
+            "monitored_source_laws": [n for n in svc.monitored_law_names() if n in src],
+            "note": "감시 법령 미변경 — 단 baseline 출처 시행령 직접 개정·부분 fetch 실패·비정형 공포일은 미확정"
+                    "(약신호 한계). 정적 baseline은 주기적 수동 검토 권장."}
+
+
 # ── analyze BFF(§5) ────────────────────────────────────────────────────────────
 
 

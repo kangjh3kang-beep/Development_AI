@@ -9,7 +9,13 @@ from fastapi.testclient import TestClient
 
 from app.services.auth.auth_service import get_current_user
 from app.services.deliberation import reg_reconcile
-from app.services.deliberation.reg_reconcile import _classify, _engine_value, _num, compare_zone_limits
+from app.services.deliberation.reg_reconcile import (
+    _classify,
+    _engine_value,
+    _num,
+    baseline_staleness,
+    compare_zone_limits,
+)
 from apps.api.app.routers import deliberation as delib
 from apps.api.integrations.base_client import CircuitBreaker
 
@@ -117,6 +123,179 @@ def test_compare_isolates_malformed_engine_metric_as_platform_only():
     assert rep["matched"] == 1                                  # bcr 정상 대조 유지
     far_row = next(r for r in rep["rows"] if r["metric"] == "FAR")
     assert far_row["status"] == "platform_only"                 # 변형 far → engine 결손(격리)
+
+
+# ── baseline 신선도(실시간 법령변경 ↔ 정적 baseline 다리) ───────────────────────
+
+_SRC = "국토의 계획 및 이용에 관한 법률 시행령 §84·§85"
+
+
+def test_baseline_staleness_flags_amendment_after_effective_date():
+    changed = [{"law_name": "국토의 계획 및 이용에 관한 법률", "promulgation_date": "20250601"}]
+    r = baseline_staleness(changed, source=_SRC, effective_date="2024-01-01")
+    assert r["stale"] is True and r["triggering_laws"][0]["law_name"] == "국토의 계획 및 이용에 관한 법률"
+
+
+def test_baseline_staleness_ignores_unrelated_and_pre_effective():
+    changed = [
+        {"law_name": "건축법", "promulgation_date": "20250601"},                       # baseline 출처 아님
+        {"law_name": "국토의 계획 및 이용에 관한 법률", "promulgation_date": "20230101"},  # 발효일 이전
+    ]
+    r = baseline_staleness(changed, source=_SRC, effective_date="2024-01-01")
+    assert r["stale"] is False and r["triggering_laws"] == []
+
+
+def test_baseline_staleness_conservative_when_date_unparseable():
+    # 공포일 불명 → 보수적 플래그(변경 감지됐는데 날짜 못 읽었다고 'not stale' 위장 금지).
+    changed = [{"law_name": "국토의 계획 및 이용에 관한 법률", "promulgation_date": "bad"}]
+    assert baseline_staleness(changed, source=_SRC, effective_date="2024-01-01")["stale"] is True
+
+
+def test_baseline_staleness_empty_changes_not_stale():
+    assert baseline_staleness([], source=_SRC, effective_date="2024-01-01")["stale"] is False
+
+
+# ── BFF 라우트(/reg/baseline-staleness) ─────────────────────────────────────────
+
+def _meta_env(effective="2024-01-01"):
+    return {"meta": {"source": _SRC, "version": "2024", "effective_date": effective}, "zones": {}}
+
+
+def test_baseline_staleness_requires_auth():
+    r = TestClient(_app()).get("/api/v1/deliberation/reg/baseline-staleness")
+    assert r.status_code in (401, 403)
+
+
+def test_baseline_staleness_degrades_when_engine_down(monkeypatch):
+    async def _down():
+        return None, "circuit_open"
+    monkeypatch.setattr(delib, "_engine_get_zone_limits", _down)
+    app = _app()
+    app.dependency_overrides[get_current_user] = lambda: _FakeUser()
+    r = TestClient(app).get("/api/v1/deliberation/reg/baseline-staleness")
+    assert r.status_code == 200 and r.json()["degraded"] is True and r.json()["reason"] == "circuit_open"
+
+
+def test_baseline_staleness_degrades_when_key_missing(monkeypatch):
+    # 법제처 키 미설정 → 변경 감지 불가를 'not stale'로 위장 금지(정직 degrade).
+    async def _eng():
+        return _meta_env(), "ok"
+    monkeypatch.setattr(delib, "_engine_get_zone_limits", _eng)
+    from app.core.config import settings as cs
+    monkeypatch.setattr(cs, "MOLEG_API_KEY", "")
+    app = _app()
+    app.dependency_overrides[get_current_user] = lambda: _FakeUser()
+    r = TestClient(app).get("/api/v1/deliberation/reg/baseline-staleness")
+    body = r.json()
+    assert r.status_code == 200 and body["degraded"] is True and body["reason"] == "monitor_key_missing"
+    assert body["baseline_version"] == "2024"
+
+
+def test_baseline_staleness_success_reports_stale(monkeypatch):
+    async def _eng():
+        return _meta_env(), "ok"
+    async def _changed(self, days_back=7):
+        return [{"law_name": "국토의 계획 및 이용에 관한 법률", "promulgation_date": "20250601"}]
+    monkeypatch.setattr(delib, "_engine_get_zone_limits", _eng)
+    from app.core.config import settings as cs
+    from app.services.regulation_monitor.regulation_monitor import RegulationMonitorService
+    monkeypatch.setattr(cs, "MOLEG_API_KEY", "key")
+    monkeypatch.setattr(RegulationMonitorService, "check_law_updates", _changed)
+    app = _app()
+    app.dependency_overrides[get_current_user] = lambda: _FakeUser()
+    r = TestClient(app).get("/api/v1/deliberation/reg/baseline-staleness")
+    body = r.json()
+    assert r.status_code == 200 and body["degraded"] is False and body["stale"] is True
+    assert body["baseline_version"] == "2024"
+
+
+def test_baseline_staleness_monitor_failure_degrades(monkeypatch):
+    async def _eng():
+        return _meta_env(), "ok"
+    async def _boom(self, days_back=7):
+        raise RuntimeError("법제처 다운")
+    monkeypatch.setattr(delib, "_engine_get_zone_limits", _eng)
+    from app.core.config import settings as cs
+    from app.services.regulation_monitor.regulation_monitor import RegulationMonitorService
+    monkeypatch.setattr(cs, "MOLEG_API_KEY", "key")
+    monkeypatch.setattr(RegulationMonitorService, "check_law_updates", _boom)
+    app = _app()
+    app.dependency_overrides[get_current_user] = lambda: _FakeUser()
+    r = TestClient(app).get("/api/v1/deliberation/reg/baseline-staleness")
+    assert r.status_code == 200 and r.json()["degraded"] is True and r.json()["reason"] == "monitor_unavailable"
+
+
+def test_baseline_staleness_not_stale_is_inconclusive_not_false_clear(monkeypatch):
+    # ★HIGH/MED 통합 해소: 양성 신호(stale)만 확정. not-stale은 시행령 직접 미감시·부분 fetch 실패·비정형
+    # 공포일이 모두 '변경 없음'으로 위장될 수 있어 '확정 합치'로 단정 금지 → monitor_inconclusive degrade.
+    async def _eng():
+        return _meta_env(), "ok"  # source = "...법률 시행령 §84·§85"
+    async def _no_change(self, days_back=7):
+        return []  # 감시 대상 미변경(또는 부분 fetch 실패로 성공분만 빈 결과)
+    monkeypatch.setattr(delib, "_engine_get_zone_limits", _eng)
+    from app.core.config import settings as cs
+    from app.services.regulation_monitor.regulation_monitor import RegulationMonitorService
+    monkeypatch.setattr(cs, "MOLEG_API_KEY", "key")
+    monkeypatch.setattr(RegulationMonitorService, "check_law_updates", _no_change)
+    app = _app()
+    app.dependency_overrides[get_current_user] = lambda: _FakeUser()
+    r = TestClient(app).get("/api/v1/deliberation/reg/baseline-staleness")
+    body = r.json()
+    assert r.status_code == 200 and body["degraded"] is True  # 확정 not-stale 위장 금지
+    assert body["reason"] == "monitor_inconclusive"
+    assert "국토의 계획 및 이용에 관한 법률" in body["monitored_source_laws"]
+
+
+def test_baseline_staleness_times_out_to_degrade(monkeypatch):
+    # ★MED: 모니터 라이브 호출 hang을 wait_for 상한으로 끊어 monitor_unavailable degrade(엔드포인트 무중단).
+    import asyncio
+    from types import SimpleNamespace
+    async def _eng():
+        return _meta_env(), "ok"
+    async def _slow(self, days_back=7):
+        await asyncio.sleep(5)
+        return []
+    monkeypatch.setattr(delib, "_engine_get_zone_limits", _eng)
+    monkeypatch.setattr(delib, "get_settings",
+                        lambda: SimpleNamespace(deliberation_monitor_timeout_s=0.05, deliberation_engine_url="x"))
+    from app.core.config import settings as cs
+    from app.services.regulation_monitor.regulation_monitor import RegulationMonitorService
+    monkeypatch.setattr(cs, "MOLEG_API_KEY", "key")
+    monkeypatch.setattr(RegulationMonitorService, "check_law_updates", _slow)
+    app = _app()
+    app.dependency_overrides[get_current_user] = lambda: _FakeUser()
+    r = TestClient(app).get("/api/v1/deliberation/reg/baseline-staleness")
+    assert r.status_code == 200 and r.json()["degraded"] is True and r.json()["reason"] == "monitor_unavailable"
+
+
+async def test_check_law_updates_surfaces_total_failure(monkeypatch):
+    # ★HIGH-1: 전건 fetch 실패(예외·非200)를 빈 []로 삼키지 않고 RuntimeError로 표면화(거짓 not-stale 차단).
+    import pytest
+
+    from app.core.config import settings as cs
+    from app.services.regulation_monitor import regulation_monitor as rm
+    monkeypatch.setattr(cs, "MOLEG_API_KEY", "key")
+
+    class _Resp:
+        def raise_for_status(self):
+            raise RuntimeError("403 invalid key")
+
+        def json(self):
+            return {}
+
+    class _Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, *a, **k):
+            return _Resp()
+
+    monkeypatch.setattr(rm.httpx, "AsyncClient", lambda **k: _Client())
+    with pytest.raises(RuntimeError):
+        await rm.RegulationMonitorService().check_law_updates(days_back=30)
 
 
 # ── 엔진 caller(_engine_get_zone_limits) ────────────────────────────────────────

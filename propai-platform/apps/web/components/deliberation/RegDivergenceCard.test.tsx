@@ -8,6 +8,16 @@ vi.mock("@/lib/api-client", () => ({
 
 import { RegDivergenceCard } from "@/components/deliberation/RegDivergenceCard";
 
+// 카드는 2개 엔드포인트를 호출(/reg/divergence + /reg/baseline-staleness). 경로별 응답 매핑 헬퍼.
+function routeMock(map: Record<string, unknown>) {
+  getMock.mockImplementation((path: string) =>
+    path in map ? Promise.resolve(map[path]) : Promise.resolve({ degraded: true, reason: "n/a" }),
+  );
+}
+
+const DIV = "/deliberation/reg/divergence";
+const STALE = "/deliberation/reg/baseline-staleness";
+
 describe("RegDivergenceCard", () => {
   beforeEach(() => getMock.mockReset());
 
@@ -101,6 +111,41 @@ describe("RegDivergenceCard", () => {
     getMock.mockResolvedValue({ degraded: true, reason: "circuit_open", engine_configured: true });
     render(<RegDivergenceCard />);
     expect(await screen.findByText(/엔진 미연결 — 대조 보류\(circuit_open\)/)).toBeInTheDocument();
+  });
+
+  it("baseline 신선도 — 출처 관련 법령 개정 감지 시 별도 경보(role=alert, 실제 법령명 기반)", async () => {
+    routeMock({
+      [DIV]: { degraded: false, compared: 42, drift: 0, match_rate: 1.0, unexpected_platform_only: [] },
+      [STALE]: {
+        degraded: false,
+        stale: true,
+        triggering_laws: [{ law_name: "국토의 계획 및 이용에 관한 법률" }],
+      },
+    });
+    render(<RegDivergenceCard />);
+    expect(await screen.findByText(/출처 관련 법령 개정 감지 — baseline 검토 필요/)).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent(/국토의 계획 및 이용에 관한 법률/);
+    expect(screen.queryByText(/시행령 개정 감지/)).toBeNull(); // '시행령' 단정 오라벨 제거 확인
+  });
+
+  it("baseline 신선도 not-stale(stale=false) — 경보 미표시(거짓 경보 금지)", async () => {
+    routeMock({
+      [DIV]: { degraded: false, compared: 42, drift: 0, match_rate: 1.0, unexpected_platform_only: [] },
+      [STALE]: { degraded: false, stale: false, triggering_laws: [] },
+    });
+    render(<RegDivergenceCard />);
+    expect(await screen.findByText(/100% · 일치/)).toBeInTheDocument();
+    expect(screen.queryByText(/시행령 개정 감지/)).toBeNull();
+  });
+
+  it("baseline 신선도 degraded(법제처 키 미설정 등) — 경보 미표시(감지 불가를 위장 안 함)", async () => {
+    routeMock({
+      [DIV]: { degraded: false, compared: 42, drift: 0, match_rate: 1.0, unexpected_platform_only: [] },
+      [STALE]: { degraded: true, reason: "monitor_key_missing" },
+    });
+    render(<RegDivergenceCard />);
+    expect(await screen.findByText(/100% · 일치/)).toBeInTheDocument();
+    expect(screen.queryByText(/시행령 개정 감지/)).toBeNull();
   });
 
   it("조회 실패도 크래시 없이 표면화", async () => {

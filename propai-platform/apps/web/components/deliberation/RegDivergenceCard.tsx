@@ -31,8 +31,16 @@ type View =
   | { phase: "ready"; data: DivergenceResp }
   | { phase: "error" };
 
+type StalenessResp = {
+  degraded?: boolean;
+  stale?: boolean;
+  triggering_laws?: { law_name?: string }[];
+};
+
 export function RegDivergenceCard() {
   const [view, setView] = useState<View>({ phase: "loading" });
+  // baseline 신선도(실시간 법령변경↔정적 baseline) — 별도 best-effort. stale일 때만 경보(과경보·거짓안심 모두 회피).
+  const [staleLaws, setStaleLaws] = useState<string[] | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -47,6 +55,27 @@ export function RegDivergenceCard() {
         }
       } catch {
         if (alive) setView({ phase: "error" });
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const d = await apiClient.get<StalenessResp>("/deliberation/reg/baseline-staleness");
+        if (!alive) return;
+        // degraded(엔진다운·법제처 키 미설정 등)/not-stale → 조용히(감지 불가를 경보로도, 합치로도 위장 안 함).
+        setStaleLaws(
+          !d.degraded && d.stale
+            ? (d.triggering_laws || []).map((l) => l.law_name || "").filter(Boolean)
+            : null,
+        );
+      } catch {
+        if (alive) setStaleLaws(null);
       }
     })();
     return () => {
@@ -79,6 +108,18 @@ export function RegDivergenceCard() {
         <p className="relative z-10 mt-2 text-[11px] text-[var(--text-tertiary)]">정합 조회 실패</p>
       )}
       {view.phase === "ready" && <ReadyBody data={view.data} />}
+
+      {staleLaws && (
+        // 실시간 법제처 감지: baseline 출처 관련 법령이 발효일 이후 개정 → 정적 baseline 수동 갱신 검토 신호.
+        // ★실제 트리거 법령명 기반(감시는 모법 Act 수준 — '시행령 개정' 단정 금지, 오라벨 회피).
+        <p
+          role="alert"
+          className="relative z-10 mt-2 rounded-lg border border-rose-500/40 bg-rose-500/10 px-2.5 py-1.5 text-[11px] text-rose-500"
+        >
+          ⚠ 출처 관련 법령 개정 감지 — baseline 검토 필요
+          {staleLaws.length ? `: ${staleLaws.join(", ")}` : ""}
+        </p>
+      )}
     </section>
   );
 }

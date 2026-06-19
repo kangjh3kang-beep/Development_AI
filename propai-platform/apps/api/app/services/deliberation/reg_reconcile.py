@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import math
+from datetime import date
 from typing import Any
 
 # (플랫폼 키, 엔진 변수명, 표시 라벨) — FAR/BCR만 국가 상한 대조 대상(height는 엔진 national 미수록).
@@ -103,3 +104,45 @@ def platform_zone_limits() -> dict[str, Any]:
     lazy import(VWorldService 체인 격리) — 호출 시점에만 적재."""
     from app.services.zoning.auto_zoning_service import ZONE_LIMITS
     return ZONE_LIMITS
+
+
+def _iso_date(v: Any) -> date | None:
+    try:
+        return date.fromisoformat(str(v)[:10])
+    except (ValueError, TypeError):
+        return None
+
+
+def _yyyymmdd(v: Any) -> date | None:
+    """법제처 공포일자(YYYYMMDD 문자열) → date. 형식 불명 None."""
+    s = str(v or "").strip()
+    if len(s) != 8 or not s.isdigit():
+        return None
+    try:
+        return date(int(s[:4]), int(s[4:6]), int(s[6:8]))
+    except ValueError:
+        return None
+
+
+def baseline_staleness(changed_laws: list[dict[str, Any]] | None, *,
+                       source: str, effective_date: str) -> dict[str, Any]:
+    """엔진 정적 baseline(national_zone_limits.json) 출처 법령이 baseline 발효일 이후 개정됐는지 판정.
+
+    실시간 법령 변경 감지(regulation_monitor 법제처)와 정적 국가 baseline의 다리 — stale면 baseline 수동
+    갱신 검토 신호(국가 시행령 상한은 의도적 정적 baseline이라 자동 동기화 안 함). 순수·결정론(라이브 호출은 호출측).
+    changed_laws: [{law_name, promulgation_date(YYYYMMDD), ...}]. source: baseline _meta.source(법령명 포함 문자열).
+    매칭=law_name이 source에 포함 + 공포일>발효일(날짜 불명 시 보수적 플래그=거짓 안심 방지).
+    ⚠️ 범위: changed_laws는 호출측(regulation_monitor) 감시 범위에 한정 — baseline 출처가 시행령이나 모니터가
+    법률(Act)만 감시하면 시행령 직접 개정은 changed_laws에 안 들어온다. 이 경우 '확정 not-stale'로 위장하지
+    않도록 호출측(엔드포인트)이 scope_incomplete degrade로 표면화해야 한다(시행령 미감시를 합치로 오인 금지)."""
+    eff = _iso_date(effective_date)
+    src = source or ""
+    triggers = []
+    for law in changed_laws or []:
+        name = str((law or {}).get("law_name") or "").strip()
+        if not name or name not in src:  # baseline 출처 법령군과 매칭되는 변경만
+            continue
+        prom = _yyyymmdd((law or {}).get("promulgation_date"))
+        if eff is None or prom is None or prom > eff:  # 발효일 이후 공포(또는 날짜 불명=보수적 플래그)
+            triggers.append({"law_name": name, "promulgation_date": (law or {}).get("promulgation_date")})
+    return {"stale": bool(triggers), "triggering_laws": triggers, "baseline_effective_date": effective_date}
