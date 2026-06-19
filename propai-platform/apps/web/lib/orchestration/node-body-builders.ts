@@ -61,6 +61,52 @@ function safeDevelopmentType(v: unknown): string | null {
   return /^M(0[1-9]|1[0-5])$/.test(s) ? s : null;
 }
 
+/** 1평(坪) = 3.305785㎡ (백엔드 PYEONG_TO_SQM 상수와 동일값). */
+const PYEONG_TO_SQM = 3.305785;
+
+/**
+ * 건물유형별 표준 전용률(연면적 대비 분양/전용면적 비율, 0~1).
+ *
+ * 왜 필요한가(쉬운 설명): 곱하는 단가(trade.아파트.per_pyeong.avg)는 "전용면적 기준 평당가"인데,
+ * 연면적(GFA)에는 복도·계단·주차 등 공용부가 포함돼 전용면적보다 크다. 연면적 그대로 곱하면
+ * 분양수입이 부풀려진다. 그래서 연면적에 전용률을 곱해 "전용면적"으로 환산한 뒤 전용단가와 곱한다.
+ *
+ * ★무목업(정직 표기): 아래 값은 임의 가정이 아니라 이 플랫폼 백엔드가 이미 쓰는 표준 전용률이다
+ *  (apps/api/app/services/pipeline/project_pipeline.py:89 _SELLABLE_EFFICIENCY_BY_TYPE,
+ *   design_v61.py:347 efficiency_pct 기본 75.0). 백엔드 sellable_area = GFA × 전용률 산식과 동일.
+ *  설계(design)가 실제 전용률(efficiencyPct)을 환류하면 그 실값을 우선 쓰고(아래 sale/feasibility),
+ *  미확보일 때만 이 표준값으로 폴백한다 — 추정임을 정직히 표기.
+ */
+const SELLABLE_EFFICIENCY_BY_TYPE: Record<string, number> = {
+  아파트: 0.75,
+  다세대주택: 0.78,
+  오피스텔: 0.7,
+  공동주택: 0.76,
+  근린생활시설: 0.7,
+};
+/** 유형 미상 시 표준 전용률(백엔드 _SELLABLE_EFFICIENCY_BY_TYPE 기본값 0.75와 동일). */
+const DEFAULT_SELLABLE_EFFICIENCY = 0.75;
+
+/**
+ * 연면적→전용면적 환산에 쓸 전용률(0~1)을 결정한다.
+ *  1순위: 설계(design)가 환류한 실제 전용률(efficiencyPct, %). 백엔드 sellable_efficiency_pct 출처.
+ *  2순위: 건물유형별 표준 전용률(백엔드 동일 테이블). 유형 미상이면 기본 0.75.
+ * 항상 0초과 1이하 값을 반환한다(분양수입 0 방지·과대 방지).
+ */
+function resolveSellableEfficiency(
+  efficiencyPct: unknown,
+  buildingType: unknown,
+): number {
+  const pct = positiveNum(efficiencyPct);
+  // 설계 실값(전용률 %)이 합리적 범위(0~100)면 소수비율로 환산해 우선 채택.
+  if (pct != null && pct <= 100) return pct / 100;
+  const bt = nonEmptyStr(buildingType);
+  if (bt && SELLABLE_EFFICIENCY_BY_TYPE[bt] != null) {
+    return SELLABLE_EFFICIENCY_BY_TYPE[bt];
+  }
+  return DEFAULT_SELLABLE_EFFICIENCY;
+}
+
 /** 문자열 비어있지 않으면 그대로, 아니면 null. */
 function nonEmptyStr(v: unknown): string | null {
   return typeof v === "string" && v.trim() ? v.trim() : null;
@@ -191,6 +237,37 @@ export function buildNodeBody(
       else missing.push("total_gfa_sqm");
       const bt = nonEmptyStr(design?.buildingType);
       if (bt) body.building_type = bt;
+      // (Phase C-2) ★분양수입 폐루프: 매출단가·세대수·세대(전용)면적을 채워 수지가 실거래 기반으로 계산되게 한다.
+      //  근거(코드 확정): 백엔드 revenue = (total_households × sale_ratio) × avg_area_pyeong(평) × avg_sale_price_per_pyeong(원/평)
+      //   (revenue_engine.calculate_sale_revenue / revenue_block.compute_revenue). 면적에 전용률을 별도로 곱하지 않는다.
+      //   ★sale_ratio는 "분양세대/전체세대 비율(세대수 분할)"이지 면적효율이 아니다(기본 1.0). 따라서 면적기준 정합은 우리가 직접 맞춰야 한다.
+      //  셋 중 하나라도 0이면 분양수입=0(백엔드는 avg_area_pyeong 폴백이 없음) → 환류만으로는 효과가 없으므로 세대수·면적도 동반 채운다.
+      //  모두 optional(미확보 시 미주입=백엔드 기본 0 → 종전과 동일 동작, 무회귀·needs-input 유지).
+      // ① 매출단가(원/평): sales가 환류한 적정분양가. store에 백엔드 단위(원/평)로 보관돼 무변환 전달.
+      //   ★이 단가는 "전용면적 기준 평당 실거래가"다(MOLIT excluUseAr=전용면적으로 정규화 — molit_client.py:369,
+      //    market_report_service._per_pyeong_stat). 따라서 곱하는 면적도 "전용면적 평"이어야 기준이 일치한다.
+      const salePriceWon = positiveNum(feas?.salePricePerPyeongWon);
+      if (salePriceWon != null) body.avg_sale_price_per_pyeong = salePriceWon;
+      // ② 세대수: 설계(BIM 매스)가 산출한 총세대수. 없으면 미주입(백엔드 0 → 분양수입 0, 종전과 동일).
+      const households = positiveInt(design?.unitCount);
+      if (households != null) body.total_households = households;
+      // ③ 세대 평균 "전용"면적(평): 연면적(GFA)에 전용률을 곱해 전용면적으로 환산한 뒤 세대수로 나눈다.
+      //    ★면적기준 정합(HIGH 결함 수정): 종전엔 연면적(공용·주차 포함)을 그대로 세대수로 나눠 전용단가와 곱해
+      //     분양수입이 과대 산정됐다. 이제 "전용단가 × 전용면적"으로 기준을 일치시킨다.
+      //     전용면적(평) = GFA(㎡) × 전용률 ÷ 3.305785 ÷ 세대수.
+      //     전용률은 설계 실값(efficiencyPct) 우선, 미확보 시 건물유형 표준값(백엔드 동일 테이블) 폴백.
+      //    GFA·세대수가 모두 양수일 때만(0 강제 금지).
+      if (gfa != null && households != null && households > 0) {
+        const efficiency = resolveSellableEfficiency(
+          design?.efficiencyPct,
+          design?.buildingType,
+        );
+        body.avg_area_pyeong = Number(
+          ((gfa * efficiency) / PYEONG_TO_SQM / households).toFixed(2),
+        );
+      }
+      // LOW(백로그): sales 단가는 현재 trade.아파트.per_pyeong만 추출(useNodeRunner.pickSalesPricePerPyeongWon).
+      //  비아파트(오피스텔·상가 등) 단가 경로는 미동작 — 이번 면적정합 범위 밖(무회귀, 별도 보완).
       break;
     }
 

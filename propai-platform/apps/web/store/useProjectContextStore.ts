@@ -139,6 +139,15 @@ interface FeasibilityData {
   // ★stamp 주의: 이 필드는 setRecommendedDevType로만 patch하며 updatedAt.feasibility를 건드리지 않는다
   // (파생 recommend가 feasibility staleness를 오염시켜 수지 노드가 영영 skipped-fresh되는 함정 회피).
   developmentType?: string | null;
+  // (Phase C-2) 적정분양가 → 수지 매출단가 환류값. 단위=원/평(KRW per pyeong).
+  // 상류 sales(시장보고서)가 산출한 아파트 평당 실거래가(trade.아파트.per_pyeong.avg, 만원/평)를
+  // ×10000 변환해 저장한다 — 백엔드 FeasibilityCalculateRequest.avg_sale_price_per_pyeong과
+  // "동일 단위(원/평)"로 보관해 bodyBuilder가 무변환으로 그대로 전달하게 한다.
+  // 이 값으로 수지가 실거래 기반 매출단가로 계산되어 "수지가 분양가에 무관하던" 결함을 푼다.
+  // optional·하위호환(구 스냅샷=undefined→bodyBuilder가 미주입→백엔드 기본 동작, 무회귀).
+  // ★stamp 주의: setSalesPricePerPyeong로만 patch하며 updatedAt.feasibility를 건드리지 않는다
+  // (파생 sales가 feasibility staleness를 오염시켜 수지 노드가 영영 skipped-fresh되는 함정 회피).
+  salePricePerPyeongWon?: number | null;
 }
 
 // 공사비 분석 결과(건축개요 기반) — 수지·사업성과 단일 데이터원으로 연동.
@@ -338,6 +347,12 @@ export interface ProjectContextState {
   //  함정을 피하기 위함. 다른 수지 슬롯(매출·원가·ROI)은 일절 건드리지 않는다(merge 보존).
   //  빈 문자열/null이면 no-op(무목업: 추천 미확보 시 백엔드 기본 M06 폴백 유지).
   setRecommendedDevType: (developmentType: string | null) => void;
+  // (Phase C-2) 적정분양가(원/평)만 feasibilityData.salePricePerPyeongWon에 부분패치.
+  // ★setRecommendedDevType와 동일하게 updatedAt.feasibility를 stamp하지 않는다 —
+  //  파생(sales) 노드가 수지 staleness를 오염시켜 수지 노드가 영영 skipped-fresh되는
+  //  함정을 피하기 위함. 다른 수지 슬롯(매출·원가·ROI·developmentType)은 일절 건드리지 않는다(merge 보존).
+  //  null/비양수면 no-op(무목업: 실거래 자료 없으면 미환류 → 백엔드 기본 동작).
+  setSalesPricePerPyeong: (won: number | null) => void;
   // full replace. meta 옵셔널(미전달 = "auto") — 기존 호출 무수정 호환.
   // auto: user 플래그 키의 이전값을 보존한 채 교체(merge 가드).
   // user: 이전값과 달라진 비null 키만 stamp(미변경 키까지 동결하면 자동 환류 무력화).
@@ -1022,6 +1037,30 @@ export const useProjectContextStore = create<ProjectContextState>()(
               grade: null,
               ...(state.feasibilityData ?? {}),
               developmentType: code,
+            } as FeasibilityData,
+            // ★updatedAt 미변경 — feasibility staleness를 stamp하지 않는다(함정 회피).
+          });
+        });
+      },
+
+      // (Phase C-2) 적정분양가(원/평)만 부분패치 — updatedAt 미변경(staleness 오염 회피).
+      setSalesPricePerPyeong: (won) => {
+        // 무목업: 분양가가 비었거나 비양수면(실거래 자료 없음) 아무것도 하지 않는다 → 백엔드 기본 동작.
+        const price =
+          typeof won === "number" && Number.isFinite(won) && won > 0 ? won : null;
+        if (price == null) return;
+        set((state) => {
+          // 값이 같으면 no-op(불필요한 스냅샷 갱신 방지).
+          if (state.feasibilityData?.salePricePerPyeongWon === price) return {};
+          return withSnap(state, {
+            // merge: salePricePerPyeongWon만 덮고 매출·원가·ROI·developmentType 등 기존 슬롯은 보존.
+            feasibilityData: {
+              totalCostWon: null,
+              totalRevenueWon: null,
+              profitRatePct: null,
+              grade: null,
+              ...(state.feasibilityData ?? {}),
+              salePricePerPyeongWon: price,
             } as FeasibilityData,
             // ★updatedAt 미변경 — feasibility staleness를 stamp하지 않는다(함정 회피).
           });

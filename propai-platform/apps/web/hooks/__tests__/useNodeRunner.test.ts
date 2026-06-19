@@ -20,6 +20,7 @@ import {
   useNodeRunner,
   deriveMassGfa,
   pickRecommendedDevType,
+  pickSalesPricePerPyeongWon,
 } from "@/hooks/useNodeRunner";
 import { useOrchestrationStore } from "@/store/useOrchestrationStore";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
@@ -170,7 +171,7 @@ describe("useNodeRunner — 5단계 순서·환류", () => {
     expect(useOrchestrationStore.getState().nodeResult["land"]?.state).toBe("error");
   });
 
-  it("sales 노드: feasibilityData를 stamp/오염하지 않는다(ssotOutputs=[] — 매출주입은 Phase C)", async () => {
+  it("sales 노드(Phase C-2): 적정분양가(원/평)만 환류 + 매출·원가·stamp는 오염하지 않는다", async () => {
     // 부지·설계 확보(sales 입력) + 기존 feasibilityData 존재.
     useProjectContextStore.getState().updateSiteAnalysis({ address: "서울", landAreaSqm: 500 });
     useProjectContextStore.getState().updateDesignData({
@@ -182,19 +183,45 @@ describe("useNodeRunner — 5단계 순서·환류", () => {
     });
     useProjectContextStore.getState().updateFeasibilityData({ totalCostWon: 12345 });
     const stampBefore = useProjectContextStore.getState().updatedAt.feasibility;
-    request.mockResolvedValueOnce({ totalRevenueWon: 99999, totalCostWon: 0 });
+    // sales 라이브 응답 모양: trade.아파트.per_pyeong.avg=11161(만원/평) + 매출/원가 오염 시도.
+    request.mockResolvedValueOnce({
+      trade: { 아파트: { per_pyeong: { avg: 11161 } } },
+      totalRevenueWon: 99999,
+      totalCostWon: 0,
+    });
     post.mockResolvedValueOnce({}); // expert-panel(sales expertPanel:true)
     post.mockResolvedValueOnce({ verdict: "pass" }); // verify
 
     const { result } = renderHook(() => useNodeRunner());
     const res = await result.current.runNode("sales");
 
-    // sales는 데이터 SSOT 비기록 → feasibilityData 불변(매출 미주입), stamp 불변(오염 없음).
     const feas = useProjectContextStore.getState().feasibilityData;
-    expect(feas?.totalRevenueWon).not.toBe(99999); // runner 응답(99999) 미주입
+    // ★분양가만 환류(만원/평 11161 → 원/평 ×10000 = 111,610,000).
+    expect(feas?.salePricePerPyeongWon).toBe(111_610_000);
+    // 매출·원가는 미접촉(sales는 매출단가만 시드 — ROI 최종 산출은 feasibility 노드 담당).
+    expect(feas?.totalRevenueWon ?? null).not.toBe(99999); // runner 응답(99999) 미주입
     expect(feas?.totalCostWon).toBe(12345); // 기존값 보존
+    // ★staleness 오염 없음 — updatedAt.feasibility 불변(수지 노드 skipped-fresh 함정 회피).
     expect(useProjectContextStore.getState().updatedAt.feasibility).toBe(stampBefore);
-    // 결과는 orchestration nodeResult에만(done).
+    expect(res.state).toBe("done");
+  });
+
+  it("sales 노드(Phase C-2): 실거래 자료 없으면(trade 부재) 분양가 미환류(무목업·무회귀)", async () => {
+    useProjectContextStore.getState().updateSiteAnalysis({ address: "서울", landAreaSqm: 500 });
+    useProjectContextStore.getState().updateDesignData({
+      totalGfaSqm: 3000, floorCount: 10, buildingType: "공동주택", bcr: 50, far: 200,
+    });
+    const stampBefore = useProjectContextStore.getState().updatedAt.feasibility;
+    request.mockResolvedValueOnce({ pricing_band: { fair_price_10k: 282100 } }); // trade 없음
+    post.mockResolvedValueOnce({}); // expert-panel
+    post.mockResolvedValueOnce({ verdict: "pass" }); // verify
+
+    const { result } = renderHook(() => useNodeRunner());
+    const res = await result.current.runNode("sales");
+
+    // 평당 직접경로 자료가 없으므로 미환류(fair_price_10k는 84㎡ 총액이라 채택하지 않음).
+    expect(useProjectContextStore.getState().feasibilityData?.salePricePerPyeongWon ?? null).toBeNull();
+    expect(useProjectContextStore.getState().updatedAt.feasibility).toBe(stampBefore);
     expect(res.state).toBe("done");
   });
 
@@ -400,5 +427,115 @@ describe("recommend → feasibility 폐루프(development_type 환류)", () => {
       feasibilityData: useProjectContextStore.getState().feasibilityData,
     }, "p1");
     expect(body.development_type).toBe("M06");
+  });
+});
+
+// (Phase C-2) sales 응답에서 적정분양가(trade.아파트.per_pyeong.avg 만원/평 → 원/평) 추출.
+describe("pickSalesPricePerPyeongWon — 적정분양가 단가 추출(만원/평 → 원/평)", () => {
+  it("trade.아파트.per_pyeong.avg(만원/평)를 ×10000(원/평)로 변환", () => {
+    // 라이브 강남 역삼동 예: 11161 만원/평 → 111,610,000 원/평.
+    const resp = { trade: { 아파트: { per_pyeong: { avg: 11161, min: 9000, max: 13000 } } } };
+    expect(pickSalesPricePerPyeongWon(resp)).toBe(111_610_000);
+  });
+
+  it("trade/아파트/per_pyeong/avg 경로가 비면 null(자료 없음 → 미환류)", () => {
+    expect(pickSalesPricePerPyeongWon({})).toBeNull();
+    expect(pickSalesPricePerPyeongWon({ trade: {} })).toBeNull();
+    expect(pickSalesPricePerPyeongWon({ trade: { 아파트: {} } })).toBeNull();
+    expect(pickSalesPricePerPyeongWon({ trade: { 아파트: { per_pyeong: {} } } })).toBeNull();
+  });
+
+  it("avg가 비양수/비숫자면 null(0 강제 금지·날조 배제)", () => {
+    expect(pickSalesPricePerPyeongWon({ trade: { 아파트: { per_pyeong: { avg: 0 } } } })).toBeNull();
+    expect(pickSalesPricePerPyeongWon({ trade: { 아파트: { per_pyeong: { avg: -1 } } } })).toBeNull();
+    expect(
+      pickSalesPricePerPyeongWon({ trade: { 아파트: { per_pyeong: { avg: "11161" } } } } as Record<string, unknown>),
+    ).toBeNull();
+  });
+
+  it("fair_price_10k(84㎡ 총액)는 평당 직접경로가 아니므로 채택하지 않음(부정확 추정 배제)", () => {
+    // trade가 없고 pricing_band만 있어도 평당경로가 없으면 null(무목업).
+    const resp = { pricing_band: { fair_price_10k: 282100 } };
+    expect(pickSalesPricePerPyeongWon(resp)).toBeNull();
+  });
+});
+
+// (Phase C-2) 폐루프: sales 적정분양가 환류 → feasibility bodyBuilder가 그 매출단가(원/평) 사용.
+describe("sales → feasibility 폐루프(적정분양가 환류)", () => {
+  it("sales 실행이 salePricePerPyeongWon을 stamp하되 updatedAt.feasibility는 오염하지 않는다", async () => {
+    useProjectContextStore.getState().updateSiteAnalysis({ address: "서울 강남구 역삼동 736", landAreaSqm: 800 });
+    useProjectContextStore.getState().updateDesignData({
+      totalGfaSqm: 3000, floorCount: 10, buildingType: "공동주택", bcr: 50, far: 200, unitCount: 40,
+    });
+    useProjectContextStore.getState().updateFeasibilityData({ totalCostWon: 12345 });
+    const stampBefore = useProjectContextStore.getState().updatedAt.feasibility;
+
+    request.mockResolvedValueOnce({
+      trade: { 아파트: { per_pyeong: { avg: 11161 } } },
+    });
+    post.mockResolvedValueOnce({}); // expert-panel(sales expertPanel:true)
+    post.mockResolvedValueOnce({ verdict: "pass" }); // verify
+
+    const { result } = renderHook(() => useNodeRunner());
+    const res = await result.current.runNode("sales");
+    expect(res.state).toBe("done");
+
+    const feas = useProjectContextStore.getState().feasibilityData;
+    // 환류값(원/평) stamp.
+    expect(feas?.salePricePerPyeongWon).toBe(111_610_000);
+    // 기존 수지 슬롯 보존(원가 미접촉).
+    expect(feas?.totalCostWon).toBe(12345);
+    // ★staleness 오염 없음 — updatedAt.feasibility 불변(수지 노드 skipped-fresh 함정 회피).
+    expect(useProjectContextStore.getState().updatedAt.feasibility).toBe(stampBefore);
+  });
+
+  it("폐루프: stamp된 분양가(원/평)를 feasibility bodyBuilder가 avg_sale_price_per_pyeong으로 그대로 전송", async () => {
+    useProjectContextStore.getState().updateSiteAnalysis({ address: "서울", landAreaSqm: 800 });
+    useProjectContextStore.getState().updateDesignData({
+      totalGfaSqm: 3000, floorCount: 10, buildingType: "공동주택", bcr: 50, far: 200, unitCount: 40,
+    });
+    request.mockResolvedValueOnce({ trade: { 아파트: { per_pyeong: { avg: 11161 } } } });
+    post.mockResolvedValueOnce({}); // expert-panel
+    post.mockResolvedValueOnce({ verdict: "pass" }); // verify
+    const { result } = renderHook(() => useNodeRunner());
+    await result.current.runNode("sales");
+
+    // feasibility bodyBuilder가 store 슬롯(원/평)을 무변환 전달해야 한다.
+    const s = useProjectContextStore.getState();
+    const ctx: NodeBodyContext = {
+      siteAnalysis: s.siteAnalysis,
+      designData: s.designData,
+      feasibilityData: s.feasibilityData,
+    };
+    const { body } = buildNodeBody("feasibility", ctx, "p1");
+    // ★폐루프: 분양가가 수지 입력단가로 흘러감(수지가 분양가에 무관하던 결함 해소).
+    expect(body.avg_sale_price_per_pyeong).toBe(111_610_000);
+    // 동반 co-requisite: 세대수·세대 전용면적도 함께 채워야 분양수입이 0이 아니게 산출됨(라이브 검증).
+    expect(body.total_households).toBe(40);
+    // ★면적정합(HIGH 수정): 전용단가에 곱하는 면적은 "전용면적 평"(연면적×전용률).
+    //  공동주택 표준 전용률 0.76 → 전용평 = GFA(3000㎡) × 0.76 ÷ 3.305785 ÷ 40세대 ≈ 17.24평.
+    //  (종전 22.68평=연면적 그대로 → 과대. 0.76배로 축소됨.)
+    expect(body.avg_area_pyeong).toBeCloseTo((3000 * 0.76) / 3.305785 / 40, 2);
+  });
+
+  it("실거래 자료 없음(trade 부재)이면 분양가 미stamp → bodyBuilder는 단가 미주입(무회귀)", async () => {
+    useProjectContextStore.getState().updateSiteAnalysis({ address: "서울", landAreaSqm: 800 });
+    useProjectContextStore.getState().updateDesignData({
+      totalGfaSqm: 3000, floorCount: 10, buildingType: "공동주택", bcr: 50, far: 200,
+    });
+    request.mockResolvedValueOnce({ pricing_band: { fair_price_10k: 282100 } }); // 평당경로 없음
+    post.mockResolvedValueOnce({}); // expert-panel
+    post.mockResolvedValueOnce({ verdict: "pass" }); // verify
+    const { result } = renderHook(() => useNodeRunner());
+    await result.current.runNode("sales");
+
+    expect(useProjectContextStore.getState().feasibilityData?.salePricePerPyeongWon ?? null).toBeNull();
+    const { body } = buildNodeBody("feasibility", {
+      siteAnalysis: useProjectContextStore.getState().siteAnalysis,
+      designData: useProjectContextStore.getState().designData,
+      feasibilityData: useProjectContextStore.getState().feasibilityData,
+    }, "p1");
+    // 단가 미주입 → 백엔드 기본 0(종전과 동일 동작, 무회귀).
+    expect(body.avg_sale_price_per_pyeong).toBeUndefined();
   });
 });

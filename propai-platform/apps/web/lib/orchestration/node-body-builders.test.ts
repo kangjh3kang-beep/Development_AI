@@ -223,6 +223,119 @@ describe("buildNodeBody — 노드별 평면 body 매핑", () => {
     }
   });
 
+  it("feasibility(Phase C-2): 분양가(원/평)·세대수·세대 전용면적이 폐루프로 채워진다", () => {
+    const ctx: NodeBodyContext = {
+      siteAnalysis: multiSite(),
+      designData: design({ unitCount: 40 }), // 설계가 산출한 총세대수(buildingType=공동주택)
+      // sales가 환류한 적정분양가(원/평) — store에 백엔드 단위로 보관됨.
+      feasibilityData: {
+        totalCostWon: null,
+        totalRevenueWon: null,
+        profitRatePct: null,
+        grade: null,
+        salePricePerPyeongWon: 111_610_000, // 11161 만원/평 × 10000
+      } as FeasibilityData,
+    };
+    const { body, missing } = buildNodeBody("feasibility", ctx, "p1");
+    expect(missing).toEqual([]);
+    // ★분양가가 무변환으로 그대로 전달(store=백엔드 단위 원/평).
+    expect(body.avg_sale_price_per_pyeong).toBe(111_610_000);
+    // ★co-requisite: 세대수·세대 전용면적도 채워져 분양수입이 0이 아니게 산출됨.
+    expect(body.total_households).toBe(40);
+    // ★면적정합(HIGH 수정): 전용단가에 곱하는 면적은 "전용면적 평"이어야 한다.
+    //  공동주택 표준 전용률 0.76 적용 → 전용평 = GFA(2400㎡) × 0.76 ÷ 3.305785 ÷ 40세대 ≈ 13.79평.
+    //  (종전 18.15평=연면적 그대로 → 과대. 0.76배로 축소됨.)
+    expect(body.avg_area_pyeong).toBeCloseTo((2400 * 0.76) / 3.305785 / 40, 2);
+  });
+
+  it("feasibility(Phase C-2·면적정합): 설계 전용률(efficiencyPct) 실값이 있으면 그 값으로 전용면적 환산", () => {
+    const ctx: NodeBodyContext = {
+      siteAnalysis: multiSite(),
+      // 설계가 실제 전용률 72%를 환류 → 표준 테이블이 아닌 실값을 우선 사용해야 함.
+      designData: design({ unitCount: 40, efficiencyPct: 72 }),
+      feasibilityData: {
+        totalCostWon: null,
+        totalRevenueWon: null,
+        profitRatePct: null,
+        grade: null,
+        salePricePerPyeongWon: 111_610_000,
+      } as FeasibilityData,
+    };
+    const { body } = buildNodeBody("feasibility", ctx, "p1");
+    // 전용평 = GFA(2400㎡) × 0.72 ÷ 3.305785 ÷ 40세대.
+    expect(body.avg_area_pyeong).toBeCloseTo((2400 * 0.72) / 3.305785 / 40, 2);
+  });
+
+  it("feasibility(Phase C-2·면적정합): 전용률·유형 모두 미확보면 표준 기본 전용률(0.75)로 폴백", () => {
+    const ctx: NodeBodyContext = {
+      siteAnalysis: multiSite(),
+      // buildingType 미상(표준 테이블 미적중) + efficiencyPct 미확보 → 기본 0.75.
+      designData: design({ unitCount: 40, buildingType: null, efficiencyPct: null }),
+      feasibilityData: {
+        totalCostWon: null,
+        totalRevenueWon: null,
+        profitRatePct: null,
+        grade: null,
+        salePricePerPyeongWon: 111_610_000,
+      } as FeasibilityData,
+    };
+    const { body } = buildNodeBody("feasibility", ctx, "p1");
+    expect(body.avg_area_pyeong).toBeCloseTo((2400 * 0.75) / 3.305785 / 40, 2);
+  });
+
+  it("feasibility(Phase C-2·면적정합): 전용면적은 항상 종전 연면적 기준보다 작다(과대 해소)", () => {
+    const ctx: NodeBodyContext = {
+      siteAnalysis: multiSite(),
+      designData: design({ unitCount: 40 }), // 공동주택 0.76
+      feasibilityData: {
+        totalCostWon: null,
+        totalRevenueWon: null,
+        profitRatePct: null,
+        grade: null,
+        salePricePerPyeongWon: 111_610_000,
+      } as FeasibilityData,
+    };
+    const { body } = buildNodeBody("feasibility", ctx, "p1");
+    const grossPyeong = 2400 / 3.305785 / 40; // 종전(연면적 그대로)
+    expect(body.avg_area_pyeong as number).toBeLessThan(grossPyeong);
+  });
+
+  it("feasibility(Phase C-2): 분양가/세대수 미확보면 해당 필드 미주입(백엔드 기본 0, 무회귀)", () => {
+    const ctx: NodeBodyContext = {
+      siteAnalysis: multiSite(),
+      designData: design(), // unitCount 미설정
+      // salePricePerPyeongWon 미설정(구 스냅샷·sales 미실행).
+      feasibilityData: {
+        totalCostWon: null,
+        totalRevenueWon: null,
+        profitRatePct: null,
+        grade: null,
+      } as FeasibilityData,
+    };
+    const { body } = buildNodeBody("feasibility", ctx, "p1");
+    expect(body.avg_sale_price_per_pyeong).toBeUndefined();
+    expect(body.total_households).toBeUndefined();
+    expect(body.avg_area_pyeong).toBeUndefined();
+  });
+
+  it("feasibility(Phase C-2): 분양가 비양수(0/음수)는 미주입(0 강제 금지)", () => {
+    for (const bad of [0, -5]) {
+      const ctx: NodeBodyContext = {
+        siteAnalysis: multiSite(),
+        designData: design({ unitCount: 40 }),
+        feasibilityData: {
+          totalCostWon: null,
+          totalRevenueWon: null,
+          profitRatePct: null,
+          grade: null,
+          salePricePerPyeongWon: bad,
+        } as FeasibilityData,
+      };
+      const { body } = buildNodeBody("feasibility", ctx, "p1");
+      expect(body.avg_sale_price_per_pyeong).toBeUndefined();
+    }
+  });
+
   it("feasibility: 면적·GFA 둘 다 미확보면 missing 둘 다", () => {
     const { missing } = buildNodeBody(
       "feasibility",

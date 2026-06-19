@@ -145,6 +145,32 @@ export function pickRecommendedDevType(resp: RunnerResponse): string | null {
 }
 
 /**
+ * (Phase C-2) sales 응답(/api/v1/market/report)에서 수지 매출단가(원/평)를 뽑는다.
+ *
+ * 라이브 응답 모양: { trade: { 아파트: { per_pyeong: { avg: 11161, ... }, ... }, ... }, ... }.
+ * trade.아파트.per_pyeong.avg는 "아파트 평당 실거래가(만원/평)"다(면적 정규화된 평당 단가).
+ * 백엔드 수지(FeasibilityCalculateRequest.avg_sale_price_per_pyeong)는 "원/평"이므로 ×10000 변환한다.
+ *  예) 11161 만원/평 → 111,610,000 원/평.
+ *
+ * ★단가 직접경로(평당)를 1차로 쓴다 — pricing_band.fair_price_10k류는 84㎡ 1세대 '총액(만원)'이라
+ *  평당 환산에 면적가정이 끼어 부정확하므로 채택하지 않는다(무목업: 부정확 추정 배제).
+ * 실거래 자료가 없으면(키 부재·비양수) null → 환류측이 미환류(백엔드 기본 동작 유지).
+ */
+export function pickSalesPricePerPyeongWon(resp: RunnerResponse): number | null {
+  const trade = resp.trade;
+  if (!trade || typeof trade !== "object") return null;
+  const apt = (trade as Record<string, unknown>)["아파트"];
+  if (!apt || typeof apt !== "object") return null;
+  const perPyeong = (apt as Record<string, unknown>).per_pyeong;
+  if (!perPyeong || typeof perPyeong !== "object") return null;
+  const avg = (perPyeong as Record<string, unknown>).avg;
+  // avg는 만원/평. 양의 유한수만 인정(0·음수·비숫자=자료 없음 → null).
+  if (typeof avg !== "number" || !Number.isFinite(avg) || avg <= 0) return null;
+  // 만원/평 → 원/평(×10000). 백엔드 입력단위와 동일하게 변환해 반환한다.
+  return Math.round(avg * 10000);
+}
+
+/**
  * 노드 산출을 데이터 SSOT store로 환류(e). ssotOutputs의 updateAction별로 분기한다.
  * runner 응답 키는 노드마다 다르므로, 흔한 키 후보를 안전하게 읽어 store 슬롯에 채운다.
  * 미확보 필드는 null(0 강제 금지) — store merge 가드가 user 수동값과 기존값을 보존한다.
@@ -275,6 +301,14 @@ function feedbackToStore(
         // 코드 미산출(게이트 차단·ranked 비면 null)이면 setRecommendedDevType가 no-op(백엔드 기본 M06 폴백).
         const devType = pickRecommendedDevType(resp);
         store.setRecommendedDevType(devType);
+        break;
+      }
+      case "setSalesPricePerPyeong": {
+        // (Phase C-2) sales(시장보고서) → 아파트 평당 실거래가(만원/평)를 ×10000(원/평) 변환해 부분패치.
+        // updatedAt.feasibility를 stamp하지 않는 전용 액션이라 수지 staleness를 오염시키지 않는다.
+        // 실거래 자료 없음(키 부재·비양수)이면 null → setSalesPricePerPyeong가 no-op(백엔드 기본 동작).
+        const priceWon = pickSalesPricePerPyeongWon(resp);
+        store.setSalesPricePerPyeong(priceWon);
         break;
       }
       case "markFinanceUpdated":

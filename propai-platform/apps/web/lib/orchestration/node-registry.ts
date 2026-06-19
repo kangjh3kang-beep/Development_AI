@@ -318,11 +318,15 @@ export const NODES: AnalysisNode[] = [
         provenanceGuarded: true,
       },
     ],
-    // 매출→feasibility 주입은 Phase C(backend 매출 주입 지원과 함께). B2는 stamp 오염/가짜주입
-    // 회피 위해 데이터 미기록 — 결과는 orchestration nodeResult에만.
-    // (이유: updateFeasibilityData(partial)이 항상 feasibility를 stamp → feasibility 노드가
-    //  skipped-fresh로 영영 건너뛰어져 ROI가 실행되지 않던 결함. 주입은 C로 미룬다.)
-    ssotOutputs: [],
+    // (Phase C-2) 적정분양가(아파트 평당 실거래가)만 feasibilityData.salePricePerPyeongWon에 환류.
+    // partial:true·setSalesPricePerPyeong은 updatedAt.feasibility를 stamp하지 않으므로(전용 액션)
+    // 파생(sales) 노드가 수지 staleness를 오염시켜 수지 노드가 영영 skipped-fresh되는 함정을 피한다
+    // (C-1 setRecommendedDevType과 동일한 안전 패턴 — 매출·원가·ROI 등 다른 수지 슬롯은 미접촉).
+    // ★매출·ROI 최종 산출은 여전히 feasibility 노드가 담당. 여기서는 "매출단가 입력값"만 시드한다.
+    // 라이브 검증: trade.아파트.per_pyeong.avg=11161(만원/평) → ×10000=111,610,000(원/평).
+    ssotOutputs: [
+      { updateAction: "setSalesPricePerPyeong", source: "auto", partial: true },
+    ],
     runner: {
       method: "POST",
       path: "/api/v1/market/report",
