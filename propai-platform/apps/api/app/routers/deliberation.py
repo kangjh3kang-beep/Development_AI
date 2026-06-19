@@ -34,6 +34,8 @@ router = APIRouter(prefix="/api/v1/deliberation", tags=["심의분석 엔진"])
 
 # 엔진 호출 circuit-breaker(프로세스 로컬·P1 단일워커 전제; 다중워커 Redis는 후속). 서버측 장애만 카운트.
 _breaker = CircuitBreaker(failure_threshold=5, recovery_timeout=75.0, half_open_max=3)
+# ★reg-source 정합 대조(관측 전용) breaker — 모니터링 실패가 권위 analyze 회로(_breaker)를 열지 못하게 격리.
+_reg_breaker = CircuitBreaker(failure_threshold=5, recovery_timeout=75.0, half_open_max=3)
 
 
 async def _fetch_engine_doctor() -> tuple[dict[str, Any] | None, str]:
@@ -123,6 +125,27 @@ async def deliberation_shadow_stats(domain: str | None = None,
         logger.warning("deliberation_shadow_stats_failed", err=str(exc)[:200])
         return {"tenant_scoped": True, "domain": domain, "stats": [], "degraded": True}
     return {"tenant_scoped": True, "domain": domain, "stats": stats}
+
+
+@router.get("/reg/divergence")
+async def deliberation_reg_divergence(user=Depends(get_current_user)) -> dict[str, Any]:
+    """규제 출처 정합 — 플랫폼 ZONE_LIMITS vs 엔진 1차출처(reg/zone-limits) drift 전수 대조(P5 관측).
+
+    엔진 SSOT 일원화(authoritative 승격) 전 두 규제 사본의 비동기화를 표면화. 인증 필수·읽기전용·결정론.
+    엔진 미연결/거부 시 degrade(무음0). 국가 데이터라 테넌트 무관(요청자 인증만)."""
+    _ = user  # 인증 게이트(테넌트 무관 — 국가 규제 데이터)
+    engine, reason = await _engine_get_zone_limits()
+    if engine is None:
+        return {"degraded": True, "reason": reason,
+                "engine_configured": bool(get_settings().deliberation_engine_url)}
+    try:
+        from app.services.deliberation.reg_reconcile import compare_zone_limits, platform_zone_limits
+        report = compare_zone_limits(platform_zone_limits(), engine.get("zones") or {})
+    except Exception as exc:  # noqa: BLE001 — 대조 실패는 정직 degrade(분석 흐름과 무관·무중단)
+        logger.warning("deliberation_reg_divergence_failed", err=str(exc)[:200])
+        return {"degraded": True, "reason": "reconcile_failed",
+                "engine_configured": bool(get_settings().deliberation_engine_url)}
+    return {"degraded": False, "engine_meta": engine.get("meta"), **report}
 
 
 # ── analyze BFF(§5) ────────────────────────────────────────────────────────────
@@ -370,6 +393,47 @@ async def _engine_get_task(task_id: str, *, tenant: str | None = None) -> tuple[
     except ValueError:
         return None, "invalid_response"
     return (data, "ok") if isinstance(data, dict) else (None, "invalid_response")
+
+
+async def _engine_get_zone_limits() -> tuple[dict[str, Any] | None, str]:
+    """엔진 GET /api/v1/reg/zone-limits → (data, reason). 규제 SSOT(국가 용도지역 한도) 조회.
+    관측 전용 → 권위 _breaker와 격리된 _reg_breaker 사용(모니터링 실패가 운영 회로 비오염). 결정론 read이라
+    기본(짧은) 타임아웃. reason 구분은 GET 경로와 동일(circuit_open·timeout·engine_rejected·invalid_response)."""
+    import httpx
+
+    s = get_settings()
+    base = (s.deliberation_engine_url or "").rstrip("/")
+    if not base:
+        return None, "engine_unreachable"
+    if not _reg_breaker.can_execute():
+        return None, "circuit_open"
+    try:
+        async with httpx.AsyncClient(timeout=_engine_timeout(s), follow_redirects=False) as c:
+            r = await c.get(f"{base}/api/v1/reg/zone-limits", headers=_engine_headers(s))
+    except httpx.TimeoutException:
+        _reg_breaker.record_failure()
+        logger.warning("deliberation_reg_get_timeout")
+        return None, "timeout"
+    except httpx.HTTPError as exc:  # 연결/전송 오류만 breaker failure(내부 버그는 전파)
+        _reg_breaker.record_failure()
+        logger.warning("deliberation_reg_get_failed", err=str(exc)[:200])
+        return None, "engine_unreachable"
+    if r.status_code >= 500:
+        _reg_breaker.record_failure()
+        logger.warning("deliberation_reg_get_5xx", status=r.status_code)
+        return None, "engine_unreachable"
+    _reg_breaker.record_success()  # 엔진 도달(<500) → 회복
+    if r.status_code != 200:
+        logger.warning("deliberation_reg_get_4xx", status=r.status_code)
+        return None, "engine_rejected"
+    try:
+        data = r.json()
+    except ValueError:  # malformed-200 — 본문 계약위반(미연결 아님)
+        logger.warning("deliberation_reg_get_malformed_200")
+        return None, "invalid_response"
+    # 계약: {meta, zones}. zones 부재 = 계약위반(거짓 빈 대조 방지).
+    ok = isinstance(data, dict) and isinstance(data.get("zones"), dict)
+    return (data, "ok") if ok else (None, "invalid_response")
 
 
 def _integrity_ok(result: dict[str, Any] | None, expected_ih: str | None) -> bool:
