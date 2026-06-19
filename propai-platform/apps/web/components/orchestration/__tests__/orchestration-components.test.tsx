@@ -76,13 +76,13 @@ describe("NodeRunCard — 상태·검증·그라운딩 정직고지", () => {
   });
 });
 
-describe("RunModeSwitcher — B3 활성/비활성", () => {
-  it("별도·선택은 활성, 가이드(B4)·프로필(B5)은 비활성 정직 표기", () => {
+describe("RunModeSwitcher — 활성/비활성", () => {
+  it("별도·선택·프로필(B5)은 활성, 가이드(B4)만 비활성 정직 표기", () => {
     const onChange = vi.fn();
     render(<RunModeSwitcher value="selective" onChange={onChange} />);
-    // 가이드/프로필 준비중 배지.
+    // 가이드만 준비중 배지(프로필은 B5 활성이라 배지 없음).
     expect(screen.getByText("준비중(B4)")).toBeInTheDocument();
-    expect(screen.getByText("준비중(B5)")).toBeInTheDocument();
+    expect(screen.queryByText("준비중(B5)")).not.toBeInTheDocument();
   });
 
   it("활성 탭 클릭은 onChange 호출, 비활성 탭은 호출 안 함", () => {
@@ -90,6 +90,10 @@ describe("RunModeSwitcher — B3 활성/비활성", () => {
     render(<RunModeSwitcher value="selective" onChange={onChange} />);
     fireEvent.click(screen.getByRole("tab", { name: /별도/ }));
     expect(onChange).toHaveBeenCalledWith("standalone");
+    onChange.mockClear();
+    // 프로필(B5 활성) — 클릭 시 onChange 호출.
+    fireEvent.click(screen.getByRole("tab", { name: /프로필/ }));
+    expect(onChange).toHaveBeenCalledWith("profile");
     onChange.mockClear();
     // 가이드(비활성) — disabled라 클릭해도 onChange 미발생.
     fireEvent.click(screen.getByRole("tab", { name: /가이드/ }));

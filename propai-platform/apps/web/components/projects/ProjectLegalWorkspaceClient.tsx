@@ -9,6 +9,7 @@ import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import { RegulationHierarchyView, type RegResult } from "@/components/regulation/RegulationHierarchyView";
 import { ApiClientError, apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { effectiveLandAreaSqm } from "@/lib/site-area";
 import type { Locale } from "@/i18n/config";
 
 /* ── Response Types ── */
@@ -568,7 +569,8 @@ export function ProjectLegalWorkspaceClient({
             body: {
               // 부지: 용도지역·대지면적·조례한도(있으면). 미입력은 백엔드가 zone_code로 보완.
               zone_code: autoZoneCode,
-              land_area_sqm: siteAnalysis?.landAreaSqm ?? 0,
+              // ★다필지면 통합 면적을 법규 검토 백엔드로 전송(대표값이면 건폐/용적 한도가 통합과 어긋남).
+              land_area_sqm: effectiveLandAreaSqm(siteAnalysis) ?? 0,
               max_bcr: ordinance?.effectiveBcr ?? designData?.bcr ?? null,
               max_far: ordinance?.effectiveFar ?? designData?.far ?? null,
               // 설계: 컨텍스트에 있는 값만. 나머지는 백엔드 graceful(0).

@@ -268,13 +268,29 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
           setZoningData(res);
           setCachedAnalysis(`zoning:${zAddr}`, res);
           // Update project context store
-          updateSiteAnalysis({
-            estimatedValue: siteAnalysis?.estimatedValue ?? null,
-            landAreaSqm: res.land_area_sqm ?? siteAnalysis?.landAreaSqm ?? null,
+          // ★다필지 통합면적 보존 가드(AutoZoningBadge와 동일 계약): 이 /zoning/analyze는
+          //   단일 PNU(대표 1필지) 분석이라 res.land_area_sqm은 대표 면적이다. 현재 SSOT가
+          //   이미 다필지 통합(parcelCount>1 && landAreaSqmTotal>0)이면 landAreaSqm 키를 빼서
+          //   통합 면적/메타를 보존한다(대표값이 통합값을 덮어쓰는 회귀 차단). 라이브 SSOT 사용.
+          const cur = useProjectContextStore.getState().siteAnalysis;
+          const isMultiParcel =
+            (cur?.parcelCount ?? 1) > 1 &&
+            typeof cur?.landAreaSqmTotal === "number" &&
+            cur.landAreaSqmTotal > 0;
+          const zPayload = {
+            estimatedValue: cur?.estimatedValue ?? null,
             zoneCode: res.zone_limits?.zone_key ?? res.zone_type ?? null,
             address: res.address,
-            pnu: res.pnu ?? siteAnalysis?.pnu ?? null,
-          });
+            pnu: res.pnu ?? cur?.pnu ?? null,
+          };
+          updateSiteAnalysis(
+            isMultiParcel
+              ? zPayload // 다필지: landAreaSqm 미포함 → 통합 면적 보존
+              : {
+                  ...zPayload,
+                  landAreaSqm: res.land_area_sqm ?? cur?.landAreaSqm ?? null,
+                },
+          );
         }
       } catch (err) {
         if (!cancelled) {

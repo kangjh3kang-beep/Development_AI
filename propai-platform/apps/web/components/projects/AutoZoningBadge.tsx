@@ -80,7 +80,6 @@ export function AutoZoningBadge({ address }: { address: string }) {
   const updateSiteAnalysis = useProjectContextStore(
     (s) => s.updateSiteAnalysis,
   );
-  const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
 
   useEffect(() => {
     if (!address || address.trim().length < 3) {
@@ -108,14 +107,35 @@ export function AutoZoningBadge({ address }: { address: string }) {
           // 토지/법규 심층 결과(rich)를 SSOT에 보존 — 하류(추천·설계·수지)가 /zoning/analyze
           // 재호출 없이 읽도록 한다. mapZoningRich는 현재 주소 기준 값 또는 명시적 null로 기록
           // (주소 변경 시 직전 부지 특이정보 잔류=할루시네이션 가드 오발동 방지, 무목업 유지).
-          updateSiteAnalysis({
-            estimatedValue: siteAnalysis?.estimatedValue ?? null,
-            landAreaSqm: data.land_area_sqm ?? siteAnalysis?.landAreaSqm ?? null,
+          //
+          // ★다필지 통합면적 보존 가드: 이 호출은 "대표 1필지"(단일 PNU) 분석이라
+          //   data.land_area_sqm은 대표 면적(작은 값)이다. 현재 SSOT가 이미 다필지 통합
+          //   (parcelCount>1 && landAreaSqmTotal>0)이면 landAreaSqm을 대표값으로 덮어쓰면
+          //   설계·수지가 부지를 너무 작게 본다(상도동 779㎡→236㎡ 회귀). 이 경우 landAreaSqm
+          //   키 자체를 페이로드에서 빼서 통합 면적/메타(Total·Rep·parcelCount)를 그대로 보존한다.
+          // 라이브 SSOT를 읽는다(effect deps=[address]라 클로저의 siteAnalysis는 stale일 수 있어,
+          // enrichParcels가 통합값을 막 기록한 직후에도 정확히 판정하려면 getState 사용).
+          const cur = useProjectContextStore.getState().siteAnalysis;
+          const isMultiParcel =
+            (cur?.parcelCount ?? 1) > 1 &&
+            typeof cur?.landAreaSqmTotal === "number" &&
+            cur.landAreaSqmTotal > 0;
+          const basePayload = {
+            estimatedValue: cur?.estimatedValue ?? null,
             zoneCode: data.zone_limits?.zone_key ?? data.zone_type ?? null,
             address: data.address,
-            pnu: data.pnu ?? siteAnalysis?.pnu ?? null,
+            pnu: data.pnu ?? cur?.pnu ?? null,
             ...mapZoningRich(data),
-          }, { source: "auto" });
+          };
+          updateSiteAnalysis(
+            isMultiParcel
+              ? basePayload // 다필지: landAreaSqm 미포함 → 통합 면적 보존
+              : {
+                  ...basePayload,
+                  landAreaSqm: data.land_area_sqm ?? cur?.landAreaSqm ?? null,
+                },
+            { source: "auto" },
+          );
         }
       } catch (err) {
         if (!cancelled) {

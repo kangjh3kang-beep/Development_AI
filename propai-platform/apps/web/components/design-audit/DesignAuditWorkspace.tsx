@@ -20,6 +20,7 @@ import Link from "next/link";
 import { Card, CardContent } from "@propai/ui";
 import { apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { effectiveLandAreaSqm } from "@/lib/site-area";
 import type { Locale } from "@/i18n/config";
 import {
   BriefUploadStep,
@@ -127,7 +128,8 @@ export function DesignAuditWorkspace({ locale }: { locale: Locale }) {
         address: siteAnalysis?.address ?? "",
         pnu: siteAnalysis?.pnu ?? null,
         zoneCode: siteAnalysis?.zoneCode ?? null,
-        landAreaSqm: siteAnalysis?.landAreaSqm ?? null,
+        // ★다필지면 통합 면적 — 심의 면적/도식 footprint가 통합 부지 기준이 되도록.
+        landAreaSqm: effectiveLandAreaSqm(siteAnalysis),
       }
     : {
         address: manualAddress.trim(),
@@ -377,9 +379,13 @@ export function DesignAuditWorkspace({ locale }: { locale: Locale }) {
                               ["용도지역", siteAnalysis.zoneCode || "—"],
                               [
                                 "대지면적",
-                                siteAnalysis.landAreaSqm != null && siteAnalysis.landAreaSqm > 0
-                                  ? `${Math.round(siteAnalysis.landAreaSqm).toLocaleString()}㎡`
-                                  : "—",
+                                (() => {
+                                  // ★다필지면 통합 면적 표시(대표값 표시로 인한 혼동 방지).
+                                  const a = effectiveLandAreaSqm(siteAnalysis);
+                                  return a != null && a > 0
+                                    ? `${Math.round(a).toLocaleString()}㎡`
+                                    : "—";
+                                })(),
                               ],
                               ["PNU", siteAnalysis.pnu || "—"],
                             ] as const

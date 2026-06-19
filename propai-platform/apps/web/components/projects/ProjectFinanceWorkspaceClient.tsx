@@ -9,6 +9,7 @@ import { NumberInput } from "@/components/common/NumberInput";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import { ApiClientError, apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { AnalysisVerdict } from "@/components/analysis/AnalysisVerdict";
 import { DevelopmentFinancePanel } from "@/components/analytics/DevelopmentFinancePanel";
 import type { Locale } from "@/i18n/config";
@@ -307,11 +308,8 @@ export function ProjectFinanceWorkspaceClient({
     setForm((current) => ({
       ...current,
       address: current.address || siteAnalysis.address || "",
-      areaSqm:
-        current.areaSqm ??
-        (siteAnalysis.landAreaSqm != null
-          ? siteAnalysis.landAreaSqm
-          : null),
+      // ★다필지면 통합 면적 — 금융 산정이 통합 부지 기준이 되도록.
+      areaSqm: current.areaSqm ?? effectiveLandAreaSqm(siteAnalysis),
       pnu: current.pnu || siteAnalysis.pnu || "",
     }));
   }, [siteAnalysis]);

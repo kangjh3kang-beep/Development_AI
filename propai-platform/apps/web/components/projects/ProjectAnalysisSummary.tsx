@@ -8,6 +8,7 @@
 
 import { useEffect, useState } from "react";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { verifyLedger } from "@/lib/analysis-ledger";
 import { SiteScoreCard } from "@/components/projects/SiteScoreCard";
 import { BuildableEnvelopeCard } from "@/components/projects/BuildableEnvelopeCard";
@@ -110,11 +111,14 @@ export function ProjectAnalysisSummary() {
   //   단일필지(parcelCount 미설정/1)는 종전과 동일하게 단일 면적만 표시(무회귀).
   const isMultiParcel = (site?.parcelCount ?? 1) > 1;
   const landAreaLabel = isMultiParcel ? `대지면적 (통합 ${site?.parcelCount}필지)` : "대지면적";
+  // ★표시 면적은 effectiveLandAreaSqm(다필지=통합 우선)로 안정화 — 단일 PNU 분석이
+  //   landAreaSqm을 대표값으로 덮어써도 통합 면적이 보존된다. "대표 Y"는 repLandAreaSqm 그대로.
+  const effArea = effectiveLandAreaSqm(site);
   const landAreaValue =
-    site?.landAreaSqm != null
+    effArea != null
       ? isMultiParcel && site?.repLandAreaSqm != null
-        ? `${num(site.landAreaSqm, " ㎡")} (대표 ${num(site.repLandAreaSqm, " ㎡")})`
-        : num(site.landAreaSqm, " ㎡")
+        ? `${num(effArea, " ㎡")} (대표 ${num(site.repLandAreaSqm, " ㎡")})`
+        : num(effArea, " ㎡")
       : "—";
 
   const ord = site?.ordinance ?? null;

@@ -10,6 +10,7 @@ import { useCallback, useEffect, useState } from "react";
 import { salesApi } from "@/lib/salesApi";
 import { apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { effectiveLandAreaSqm } from "@/lib/site-area";
 import FairPriceSuggestCard from "@/components/sales/FairPriceSuggestCard";
 
 type UnitType = { id: string; type_name: string };
@@ -66,7 +67,7 @@ export default function PricingConfigPanel({
     setAiBusy(true); setMsg("");
     try {
       const ctx = {
-        zone: sa?.zoneCode || "미상", land_area_sqm: sa?.landAreaSqm || null,
+        zone: sa?.zoneCode || "미상", land_area_sqm: effectiveLandAreaSqm(sa) || null,
         address: sa?.address || "", types: types.map((t) => t.type_name),
       };
       const system = "너는 한국 분양가 산정 전문가다. 입지·용도지역·평형을 고려해 보수적·현실적 기준가와 층별 가중치를 제안한다. 반드시 JSON만 출력.";

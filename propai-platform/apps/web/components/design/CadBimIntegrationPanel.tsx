@@ -15,6 +15,7 @@ import { DesignOutcomeSummary } from "@/components/design/DesignOutcomeSummary";
 import { UnitMixSimulatorPanel } from "@/components/design/UnitMixSimulatorPanel";
 import { LiveProFormaStrip, type LiveProFormaDesign } from "@/components/design/LiveProFormaStrip";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { apiClient, ApiClientError, apiV1BaseUrl } from "@/lib/api-client";
 
 // 도면 코드 → 한글 명칭 (SVGDrawingService.generate_full_drawing_set 기준)
@@ -553,7 +554,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
   const resolveSpec = useCallback(async () => {
     setSpecLoading(true);
     const base = apiV1BaseUrl();
-    const landArea = siteAnalysis?.landAreaSqm || undefined;
+    const landArea = effectiveLandAreaSqm(siteAnalysis) || undefined; // 다필지=통합 면적 우선
     const zone = siteAnalysis?.zoneCode || "2R";
     const use = mapUse(designData?.buildingType);
     const floors = designData?.floorCount || undefined;

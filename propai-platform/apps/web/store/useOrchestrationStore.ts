@@ -21,6 +21,12 @@ import {
   guidedOrder,
 } from "@/lib/orchestration/dependency-graph";
 import { NODES } from "@/lib/orchestration/node-registry";
+import {
+  PRESET_PROFILES,
+  findProfile,
+  type WorkflowProfile,
+  type ProfileId,
+} from "@/lib/orchestration/profiles";
 import type {
   NodeId,
   AnalysisNode,
@@ -31,6 +37,9 @@ import {
   type ProjectContextState,
   type ModuleKey,
 } from "@/store/useProjectContextStore";
+
+// 기존 import 경로 호환 — WorkflowProfile은 이제 profiles.ts가 SSOT(여기서 재노출).
+export type { WorkflowProfile, ProfileId };
 
 /* ── 타입 ── */
 
@@ -66,18 +75,6 @@ export interface NodeResult {
   at: number | null;
   /** 오류 메시지(state==="error"일 때). */
   error?: string | null;
-}
-
-/** 영속 프로필(§4 — B2는 빈 배열 시드만, UI/프리셋은 B5). */
-export interface WorkflowProfile {
-  id: string;
-  label: string;
-  /** 프로필이 시드하는 노드(leaf). 실행 시 폐포로 확장된다. */
-  nodes: NodeId[];
-  /** 표시·실행 순서 재배열(없으면 topoSort 기본). */
-  order?: NodeId[];
-  /** 진입 시 기본 모드. */
-  defaultMode?: RunMode;
 }
 
 /** buildPlan 미리보기 항목 — 실행 전 화면 표시(과금·스킵 사유). */
@@ -135,6 +132,16 @@ interface OrchestrationState {
   setActiveProfile: (profileId: string | null) => void;
   setNodeOrder: (order: NodeId[]) => void;
 
+  /* ── 프로필 액션(B5) ── */
+  /** 프로필 적용 — picked·nodeOrder·activeProfileId·runMode 세팅(실행은 사용자가 별도). */
+  applyProfile: (id: ProfileId) => void;
+  /** 현재 picked(고른 leaf)를 커스텀 워크플로우로 저장. 반환=새 id(label 빈 문자열이면 ""). */
+  saveCustomProfile: (label: string, description?: string) => string;
+  /** 커스텀 프로필 삭제(프리셋은 무시). 활성 프로필이면 해제. */
+  deleteCustomProfile: (id: ProfileId) => void;
+  /** 프로필 복제(프리셋·커스텀 모두) → 새 커스텀. 반환=새 id. */
+  duplicateProfile: (id: ProfileId, newLabel?: string) => string;
+
   /* ── 핵심 메서드 ── */
   /** 폐포+topo+신선스킵+과금표시 → 실행 미리보기. plan(state)도 갱신한다(실행 확정 시에만 호출). */
   buildPlan: (mode: RunMode, seed?: NodeId[]) => RunStep[];
@@ -186,7 +193,8 @@ function seedNodes(
       // 선택집합의 노드들(leaf) — computeClosure가 상류를 끌어온다.
       return (Object.keys(picked) as NodeId[]).filter((id) => picked[id] && BY_ID[id]);
     case "profile": {
-      const p = profiles.find((x) => x.id === activeProfileId);
+      // 갭(a) 해소: PRESET ∪ custom 조회(이전엔 custom만 봐서 프리셋이 안 잡혔음).
+      const p = findProfile(activeProfileId, profiles);
       return p ? p.nodes.filter((id) => BY_ID[id]) : [];
     }
     default:
@@ -240,10 +248,13 @@ function computePlan(
     const guideSet = new Set(closure);
     ordered = guidedOrder().filter((id) => guideSet.has(id));
   } else if (mode === "profile") {
-    const p = state.customProfiles.find((x) => x.id === state.activeProfileId);
-    if (p?.order && p.order.length) {
+    // 갭(b) 해소: PRESET ∪ custom 조회(이전엔 custom만 봐서 프리셋 order가 안 잡혔음).
+    // 사용자가 NodeOrderEditor로 재배열한 nodeOrder가 있으면 그것을 우선(프로필 order는 기본 힌트).
+    const p = findProfile(state.activeProfileId, state.customProfiles);
+    const orderHint = state.nodeOrder.length ? state.nodeOrder : p?.order ?? [];
+    if (orderHint.length) {
       const orderSet = new Set(closure);
-      const head = p.order.filter((id) => orderSet.has(id));
+      const head = orderHint.filter((id) => orderSet.has(id));
       const tail = ordered.filter((id) => !head.includes(id));
       ordered = [...head, ...tail];
     }
@@ -331,6 +342,93 @@ export const useOrchestrationStore = create<OrchestrationState>()(
         set((state) => ({ picked: { ...state.picked, [id]: !state.picked[id] } })),
       setActiveProfile: (profileId) => set({ activeProfileId: profileId }),
       setNodeOrder: (order) => set({ nodeOrder: order }),
+
+      /* ── 프로필 액션(B5) ── */
+
+      // 프로필 적용 — 프리셋∪커스텀에서 찾아 선택/순서/모드를 세팅한다.
+      // buildPlan은 호출하지 않는다(UI가 picked 반영 후 미리보기는 previewPlan, 실행은 사용자 동작).
+      applyProfile: (id) => {
+        const profile = findProfile(id, get().customProfiles);
+        if (!profile) return; // 없는 id면 무시(가짜 적용 금지)
+        const picked: Record<string, boolean> = {};
+        for (const n of profile.nodes) {
+          if (BY_ID[n]) picked[n] = true; // 유효 NodeId만
+        }
+        set({
+          picked,
+          nodeOrder: [...profile.order], // 표시·실행 순서 힌트(사용자가 NodeOrderEditor로 재배열 가능)
+          activeProfileId: id,
+          // ★프로필 적용은 항상 'profile' 모드로 진입한다. profile.defaultMode가 'guided'여도
+          //   guided 탭(B4)이 아직 비활성이고 OrchestratorPanel에 guided 전용 미리보기 UI가 없어
+          //   guided로 바꾸면 프리셋(디벨로퍼·PF금융)이 빈 화면이 된다. profile 모드는 셀렉터+
+          //   미리보기 기반이라 전 프리셋이 정상 동작한다(폐포는 동일·실행 정확). defaultMode는
+          //   B4 guided 활성 시 진입 모드 힌트로 사용하도록 데이터만 보존한다(블루프린트 §4 정합).
+          runMode: "profile",
+        });
+      },
+
+      // 현재 picked(사용자가 고른 leaf — 폐포 확장 전)를 커스텀 워크플로우로 저장.
+      saveCustomProfile: (label, description) => {
+        const trimmed = (label ?? "").trim();
+        if (!trimmed) return ""; // 빈 라벨은 무시(정직 — 저장 안 함)
+        const state = get();
+        // 고른 노드(leaf) — picked가 true인 유효 NodeId만.
+        const nodes = (Object.keys(state.picked) as NodeId[]).filter(
+          (n) => state.picked[n] && BY_ID[n],
+        );
+        if (nodes.length === 0) return ""; // 빈 워크플로우 저장 방지(정직 — 고른 노드 없음)
+        // 순서: 사용자 재배열(nodeOrder)이 있으면 그것의 picked 부분, 없으면 nodes 순서.
+        const order = state.nodeOrder.length
+          ? state.nodeOrder.filter((n) => nodes.includes(n))
+          : [...nodes];
+        const id = crypto.randomUUID();
+        const profile: WorkflowProfile = {
+          id,
+          label: trimmed,
+          description: (description ?? "").trim(),
+          builtin: false,
+          nodes,
+          order,
+          // 현재 모드가 가이드면 가이드, 아니면 선택(커스텀은 selective 기본).
+          defaultMode: state.runMode === "guided" ? "guided" : "selective",
+          autoRunUpstream: true,
+          createdAt: Date.now(), // 클라이언트 런타임이라 실시각 사용 OK(resume 제약 없음)
+        };
+        set({ customProfiles: [...state.customProfiles, profile] });
+        return id;
+      },
+
+      // 커스텀 프로필 삭제 — 프리셋(builtin)은 삭제 불가(무시). 활성이면 해제.
+      deleteCustomProfile: (id) => {
+        const state = get();
+        // 프리셋은 PRESET_PROFILES에 있으므로 보호(커스텀 목록에만 삭제 적용).
+        if (PRESET_PROFILES.some((p) => p.id === id)) return;
+        const next = state.customProfiles.filter((p) => p.id !== id);
+        if (next.length === state.customProfiles.length) return; // 없던 id면 변경 없음
+        set({
+          customProfiles: next,
+          activeProfileId: state.activeProfileId === id ? null : state.activeProfileId,
+        });
+      },
+
+      // 프로필 복제 — 프리셋·커스텀 모두 새 커스텀으로 복제(새 uuid·builtin:false).
+      duplicateProfile: (id, newLabel) => {
+        const state = get();
+        const src = findProfile(id, state.customProfiles);
+        if (!src) return ""; // 없는 id면 무시
+        const newId = crypto.randomUUID();
+        const copy: WorkflowProfile = {
+          ...src,
+          id: newId,
+          label: (newLabel ?? "").trim() || `(복제) ${src.label}`,
+          builtin: false,
+          nodes: [...src.nodes],
+          order: [...src.order],
+          createdAt: Date.now(),
+        };
+        set({ customProfiles: [...state.customProfiles, copy] });
+        return newId;
+      },
 
       /* ── buildPlan(실행 확정 — set 수행) ── */
       buildPlan: (mode, seed) => {

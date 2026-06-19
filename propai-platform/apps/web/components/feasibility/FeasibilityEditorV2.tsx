@@ -13,6 +13,7 @@ import { ExcelExportButton } from "./ExcelExportButton";
 import { AutoRecommendPanel } from "./AutoRecommendPanel";
 import { EnvironmentSummaryCard } from "@/components/environment/EnvironmentSummaryCard";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { effectiveLandAreaSqm } from "@/lib/site-area";
 
 interface Props {
   projectId: string;
@@ -83,13 +84,16 @@ export function FeasibilityEditorV2({ projectId }: Props) {
     if (result || isCalculating) return;
     const hasSite = !!(siteAnalysis?.address || (siteAnalysis?.landAreaSqm ?? 0) > 0);
     if (!hasSite) return;
-    const sig = `${siteAnalysis?.address ?? ""}|${siteAnalysis?.landAreaSqm ?? 0}|${siteAnalysis?.pnu ?? ""}`;
+    // ★다필지면 통합 면적(effectiveLandAreaSqm)을 수지의 부지면적으로 사용·전송한다.
+    //   대표값(작은 면적)으로 ROI가 통합 기준과 어긋나는 회귀를 막는다. 시그니처도 통합값 기준.
+    const sa = effectiveLandAreaSqm(siteAnalysis) ?? 0;
+    const sig = `${siteAnalysis?.address ?? ""}|${sa}|${siteAnalysis?.pnu ?? ""}`;
     if (baselineTriedSigRef.current === sig) return;
     baselineTriedSigRef.current = sig;
     void runBaseline({
       address: siteAnalysis?.address ?? "",
       zone_code: siteAnalysis?.zoneCode ?? "",
-      land_area_sqm: siteAnalysis?.landAreaSqm ?? 0,
+      land_area_sqm: sa,
       pnu: siteAnalysis?.pnu ?? "",
       official_price_per_sqm: siteAnalysis?.officialPrices?.[0]?.pricePerSqm ?? 0,
     });
@@ -123,7 +127,7 @@ export function FeasibilityEditorV2({ projectId }: Props) {
       void runBaseline({
         address: siteAnalysis?.address ?? "",
         zone_code: siteAnalysis?.zoneCode ?? "",
-        land_area_sqm: siteAnalysis?.landAreaSqm ?? 0,
+        land_area_sqm: effectiveLandAreaSqm(siteAnalysis) ?? 0,
         pnu: siteAnalysis?.pnu ?? "",
         official_price_per_sqm: siteAnalysis?.officialPrices?.[0]?.pricePerSqm ?? 0,
       });

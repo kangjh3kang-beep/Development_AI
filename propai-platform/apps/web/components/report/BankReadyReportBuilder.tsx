@@ -3,6 +3,7 @@
 import { useState, useCallback } from "react";
 import { Button, Card, CardContent, CardTitle } from "@propai/ui";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { TrustBadge } from "@/components/common/TrustBadge";
 import { apiClient, ApiClientError } from "@/lib/api-client";
 
@@ -260,7 +261,8 @@ export function BankReadyReportBuilder() {
         ? {
             address: siteAnalysis.address,
             pnu: siteAnalysis.pnu,
-            land_area_sqm: siteAnalysis.landAreaSqm,
+            // ★다필지면 통합 면적 — 은행제출 보고서 사업규모가 통합 부지 기준이 되도록.
+            land_area_sqm: effectiveLandAreaSqm(siteAnalysis),
             estimated_value: siteAnalysis.estimatedValue,
           }
         : {},

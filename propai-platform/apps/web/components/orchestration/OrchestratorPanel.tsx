@@ -31,6 +31,7 @@ import { RunModeSwitcher } from "./RunModeSwitcher";
 import { PlanPreview } from "./PlanPreview";
 import { RunProgressTimeline } from "./RunProgressTimeline";
 import { InputResolveModal } from "./InputResolveModal";
+import { ProfileManager } from "./ProfileManager";
 import { nodesToOptions } from "@/lib/orchestration/selector-adapter";
 import { computeClosure } from "@/lib/orchestration/dependency-graph";
 import { NODES } from "@/lib/orchestration/node-registry";
@@ -116,8 +117,11 @@ export function OrchestratorPanel({
   const picked = useOrchestrationStore((s) => s.picked);
   const plan = useOrchestrationStore((s) => s.plan);
   const nodeResult = useOrchestrationStore((s) => s.nodeResult);
+  const nodeOrder = useOrchestrationStore((s) => s.nodeOrder);
+  const activeProfileId = useOrchestrationStore((s) => s.activeProfileId);
   const setRunMode = useOrchestrationStore((s) => s.setRunMode);
   const setPicked = useOrchestrationStore((s) => s.setPicked);
+  const setActiveProfile = useOrchestrationStore((s) => s.setActiveProfile);
   const buildPlan = useOrchestrationStore((s) => s.buildPlan);
   const previewPlan = useOrchestrationStore((s) => s.previewPlan);
   const resolveInputs = useOrchestrationStore((s) => s.resolveInputs);
@@ -161,12 +165,14 @@ export function OrchestratorPanel({
   // 실행 계획 미리보기(선택 모드 기준) — ★순수 계산(previewPlan)이라 렌더 중 store 변경 없음(수정3).
   // (이전 buildPlan은 set({runMode,plan})으로 store를 변경 → useMemo에서 React 순수성 위반이었음.)
   const previewSteps: RunStep[] = useMemo(() => {
-    if (runMode === "selective") return previewPlan("selective");
+    // 선택·프로필 모드 모두 picked(프로필은 applyProfile로 시드) 기반 계획 미리보기.
+    if (runMode === "selective" || runMode === "profile") return previewPlan(runMode);
     // 별도 모드는 노드 클릭 시 단건 계획. 미리보기는 빈 계획(클릭 전).
     return [];
-    // previewPlan은 store 상태(picked·nodeResult·데이터 SSOT)를 읽으므로 picked/runMode/nodeResult 변화에 의존.
+    // previewPlan은 store 상태(picked·nodeResult·nodeOrder·activeProfileId·데이터 SSOT)를 읽으므로
+    // picked/runMode/nodeResult/nodeOrder/activeProfileId 변화에 의존.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [runMode, picked, nodeResult, previewPlan]);
+  }, [runMode, picked, nodeResult, nodeOrder, activeProfileId, previewPlan]);
 
   // force(전체 자동분석) 미리보기 — 신선분도 실행 대상으로 보이게 변환(과금합계 선표시·수정5).
   // PlanPreview는 skipped 행을 합계에서 제외하므로, force일 땐 fresh 스킵을 실행 대상으로 풀어 보여준다.
@@ -201,8 +207,12 @@ export function OrchestratorPanel({
       }
       setPicked(cleaned);
       setForcePreview(false); // 선택이 바뀌면 force 미리보기 단계 초기화(계획 재산정).
+      // 사용자가 셀렉터로 선택을 직접 바꾸면 더 이상 '적용된 프로필 그대로'가 아니다.
+      // activeProfileId를 해제해 ProfileManager의 '적용됨' 배지가 picked와 어긋나지 않게 한다
+      // (이 콜백은 사용자 토글 시에만 호출 — applyProfile의 controlled 주입은 onChange를 트리거하지 않음).
+      if (activeProfileId) setActiveProfile(null);
     },
-    [setPicked],
+    [setPicked, setActiveProfile, activeProfileId],
   );
 
   /**
@@ -239,11 +249,13 @@ export function OrchestratorPanel({
   );
 
   // "분석 시작" — 선택분만(신선분 스킵). buildPlan으로 계획 확정 후 동일 steps로 실행(수정1).
+  // 프로필 모드도 picked/closure 기반이라 현재 runMode를 그대로 넘긴다(프로필 시드·순서 반영).
   const onRun = useCallback(() => {
     setForcePreview(false);
-    const steps = buildPlan("selective");
+    const mode = runMode === "profile" ? "profile" : "selective";
+    const steps = buildPlan(mode);
     void executePlan(steps, false);
-  }, [buildPlan, executePlan]);
+  }, [runMode, buildPlan, executePlan]);
 
   // "전체 자동분석" — 먼저 force 계획·과금합계를 PlanPreview에 선표시(1클릭째), 다시 누르면 실행(2클릭째·수정5).
   // (과한 모달 대신 미리보기 확인 단계. forcePreview=true면 PlanPreview가 신선분 포함 합계를 보여준다.)
@@ -253,9 +265,10 @@ export function OrchestratorPanel({
       return;
     }
     setForcePreview(false);
-    const steps = buildPlan("selective");
+    const mode = runMode === "profile" ? "profile" : "selective";
+    const steps = buildPlan(mode);
     void executePlan(steps, true); // 2클릭: 신선분 포함 강제 실행
-  }, [forcePreview, buildPlan, executePlan]);
+  }, [runMode, forcePreview, buildPlan, executePlan]);
 
   // 별도 모드: 노드 단건 실행 요청 → 입력 해소 모달.
   const requestStandalone = useCallback((id: NodeId) => {
@@ -308,7 +321,10 @@ export function OrchestratorPanel({
     <section className="grid gap-4">
       <RunModeSwitcher value={runMode} onChange={onModeChange} />
 
-      {/* 선택 모드: 공용 셀렉터(레지스트리 구동) + 계획 미리보기 */}
+      {/* 프로필 모드: 워크플로우 관리(프리셋·커스텀·순서). 셀렉터 위에 렌더 */}
+      {runMode === "profile" && <ProfileManager />}
+
+      {/* 선택·프로필 모드: 공용 셀렉터(레지스트리 구동) + 계획 미리보기 */}
       {!isStandalone && (
         <>
           <AnalysisModuleSelector

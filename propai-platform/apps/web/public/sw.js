@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v252-multiparcel-integrated-area";
+const CACHE_NAME = "propai-v253-design-area-parity-profiles";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

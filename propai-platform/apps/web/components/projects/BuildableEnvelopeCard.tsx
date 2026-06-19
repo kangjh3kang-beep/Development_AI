@@ -9,6 +9,7 @@
 import { useEffect, useState } from "react";
 import { apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { effectiveLandAreaSqm } from "@/lib/site-area";
 
 type Envelope = {
   applies_north_light: boolean; binding: string; daylight_loss_pct: number;
@@ -30,7 +31,7 @@ export function BuildableEnvelopeCard() {
   const design = useProjectContextStore((s) => s.designData);
   const [res, setRes] = useState<Envelope | null>(null);
 
-  const area = site?.landAreaSqm ?? null;
+  const area = effectiveLandAreaSqm(site);
   const zone = site?.zoneCode ?? "";
   const pnu = site?.pnu ?? null;
 

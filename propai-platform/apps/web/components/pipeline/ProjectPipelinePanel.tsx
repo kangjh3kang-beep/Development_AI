@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, usePathname, useRouter } from "next/navigation";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { appendLedger } from "@/lib/analysis-ledger";
 import { currentUserId } from "@/lib/projectSync";
 import { useProjectStore as useProjectListStore } from "@/store/useProjectStore";
@@ -779,7 +780,8 @@ export function ProjectPipelinePanel({
       // null/0은 undefined로 변환하여 백엔드가 "미제공"으로 인식
       const siteDataForBackend = siteAnalysis ? {
         zone_type: siteAnalysis.zoneCode || undefined,
-        land_area_sqm: siteAnalysis.landAreaSqm || undefined,
+        // ★다필지면 통합 면적을 백엔드에 보낸다(대표값 전송 시 수지·법규가 과소산출).
+        land_area_sqm: effectiveLandAreaSqm(siteAnalysis) || undefined,
         max_bcr: siteAnalysis.ordinance?.effectiveBcr || siteAnalysis.ordinance?.nationalBcr || undefined,
         max_far: siteAnalysis.ordinance?.effectiveFar || siteAnalysis.ordinance?.nationalFar || undefined,
         official_land_price: siteAnalysis.officialPrices?.[0]?.pricePerSqm || undefined,
@@ -846,7 +848,8 @@ export function ProjectPipelinePanel({
       // null/0은 undefined로 변환하여 백엔드가 "미제공"으로 인식
       const siteDataForBackend = siteAnalysis ? {
         zone_type: siteAnalysis.zoneCode || undefined,
-        land_area_sqm: siteAnalysis.landAreaSqm || undefined,
+        // ★다필지면 통합 면적을 백엔드에 보낸다(대표값 전송 시 수지·법규가 과소산출).
+        land_area_sqm: effectiveLandAreaSqm(siteAnalysis) || undefined,
         max_bcr: siteAnalysis.ordinance?.effectiveBcr || undefined,
         max_far: siteAnalysis.ordinance?.effectiveFar || undefined,
         official_land_price: siteAnalysis.officialPrices?.[0]?.pricePerSqm || undefined,
@@ -931,7 +934,7 @@ export function ProjectPipelinePanel({
     writePreCheckHandoff({
       address: addr,
       zoneType: siteAnalysis?.zoneCode ?? null,
-      areaSqm: siteAnalysis?.landAreaSqm ?? null,
+      areaSqm: effectiveLandAreaSqm(siteAnalysis),
       pnu: siteAnalysis?.pnu ?? null,
       bestMethod: null,
       bestMethodName: null,

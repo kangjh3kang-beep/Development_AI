@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Button, Card, CardContent, CardTitle, Input } from "@propai/ui";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { NumberInput } from "@/components/common/NumberInput";
 
 /* ── Types ── */
@@ -113,8 +114,9 @@ export function UnitMixOptimizerPanel() {
     if (designData?.floorCount) {
       setMaxFloors(String(designData.floorCount));
     }
-    if (siteAnalysis?.landAreaSqm) {
-      setLandArea(String(siteAnalysis.landAreaSqm));
+    const eff = effectiveLandAreaSqm(siteAnalysis); // 다필지=통합 면적 우선
+    if (eff) {
+      setLandArea(String(eff));
     }
   }, [designData, siteAnalysis]);
 

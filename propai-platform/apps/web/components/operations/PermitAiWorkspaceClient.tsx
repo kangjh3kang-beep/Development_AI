@@ -26,6 +26,7 @@ import { DevelopmentScenarioCard } from "@/components/common/DevelopmentScenario
 import { RegistryBulkButton } from "@/components/common/RegistryBulkButton";
 import { apiClient, ApiClientError } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { effectiveLandAreaSqm } from "@/lib/site-area";
 import type { Locale } from "@/i18n/config";
 
 type MethodResult = {
@@ -307,7 +308,7 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
             address={site?.address || addr || siteAnalysis?.address || undefined}
             pnu={siteAnalysis?.pnu || undefined}
             zone={site?.zone_type || undefined}
-            landAreaSqm={site?.land_area_sqm ?? siteAnalysis?.landAreaSqm ?? undefined}
+            landAreaSqm={site?.land_area_sqm ?? effectiveLandAreaSqm(siteAnalysis) ?? undefined}
           />
 
           {/* 다필지 통합 개발 — 최적·최고 용적률 산정 */}

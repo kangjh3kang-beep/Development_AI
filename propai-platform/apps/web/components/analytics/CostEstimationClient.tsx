@@ -17,6 +17,7 @@ import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { NumberInput } from "@/components/common/NumberInput";
 import { apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { useStageAutoRecalc } from "@/hooks/useStageAutoRecalc";
 import { getZoningSpec } from "@/lib/kr-building-regulations";
 import { VerificationBadge } from "@/components/common/VerificationBadge";
@@ -148,13 +149,14 @@ export function CostEstimationClient() {
 
   // 부지면적 + 용적률로 GFA 폴백 추정(설계 미완 시 초기값 제안)
   const estimatedGfaFromSite = useMemo(() => {
-    const land = siteAnalysis?.landAreaSqm ?? 0;
+    // ★다필지면 통합 면적으로 GFA 폴백을 역산(대표값 과소산출 방지).
+    const land = effectiveLandAreaSqm(siteAnalysis) ?? 0;
     if (land <= 0) return 0;
     const spec = siteAnalysis?.zoneCode ? getZoningSpec(siteAnalysis.zoneCode) : null;
     const far = spec?.floorAreaRatioMax ?? 0;
     if (far <= 0) return 0;
     return Math.round((land * far) / 100);
-  }, [siteAnalysis?.landAreaSqm, siteAnalysis?.zoneCode]);
+  }, [siteAnalysis]);
 
   // 건축개요 자동 로드(수정한 GFA는 보존). 설계가 있으면 설계 GFA, 없으면 부지×용적률 폴백.
   useEffect(() => {

@@ -12,6 +12,7 @@ import { motion } from "framer-motion";
 import { useAIAnalyze, useAIReady } from "@/lib/ai-analyze-client";
 import { getZoningSpec, calcMaxGrossArea, calcParkingRequired, normalizeZoning } from "@/lib/kr-building-regulations";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { useProjectStore } from "@/store/useProjectStore";
 import { NumberInput } from "@/components/common/NumberInput";
 import { SolarEnvelopeCard } from "@/components/projects/SolarEnvelopeCard";
@@ -324,9 +325,12 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
       return;
     }
     const seededZone = normalizeZoning(siteAnalysis.zoneCode) || siteAnalysis.zoneCode || null;
+    // ★다필지면 통합 면적(effectiveLandAreaSqm)으로 폼을 시드한다 — 단일 PNU 분석이
+    //   landAreaSqm을 대표값으로 덮어써도 설계가 통합 면적 기준으로 GFA를 계산하게.
+    const seedArea = effectiveLandAreaSqm(siteAnalysis);
     setForm((prev) => ({
       ...prev,
-      landArea: siteAnalysis.landAreaSqm ? String(siteAnalysis.landAreaSqm) : prev.landArea,
+      landArea: seedArea ? String(seedArea) : prev.landArea,
       zoning: !zoneEdited && seededZone ? seededZone : prev.zoning,
     }));
   }, [siteAnalysis, zoneEdited, isSiteMatched, userEdited]);
@@ -469,7 +473,7 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
                 대표 1필지가 아니라 통합 면적(landAreaSqm=Σ) 기준임을 명확히 한다.
                 단일필지는 종전과 동일(주소·용도지역만) — 무회귀. */}
             {(siteAnalysis.parcelCount ?? 1) > 1
-              ? `부지분석 연동: ${siteAnalysis.address} 외 ${(siteAnalysis.parcelCount ?? 1) - 1}필지 · 통합 대지면적 ${siteAnalysis.landAreaSqm != null ? `${Math.round(siteAnalysis.landAreaSqm).toLocaleString()}㎡` : "—"} (${siteAnalysis.zoneCode || effectiveZoning || "용도지역 미확인"}${siteAnalysis.zoneMixed ? " 외 혼합지" : ""})`
+              ? `부지분석 연동: ${siteAnalysis.address} 외 ${(siteAnalysis.parcelCount ?? 1) - 1}필지 · 통합 대지면적 ${effectiveLandAreaSqm(siteAnalysis) != null ? `${Math.round(effectiveLandAreaSqm(siteAnalysis)!).toLocaleString()}㎡` : "—"} (${siteAnalysis.zoneCode || effectiveZoning || "용도지역 미확인"}${siteAnalysis.zoneMixed ? " 외 혼합지" : ""})`
               : `부지분석 연동: ${siteAnalysis.address} (${siteAnalysis.zoneCode || effectiveZoning || "용도지역 미확인"})`}
           </p>
         )}
@@ -601,7 +605,7 @@ export function DesignStudio({ projectId }: { projectId?: string }) {
                 address={siteAnalysis?.address || undefined}
                 pnu={siteAnalysis?.pnu || undefined}
                 zone={siteAnalysis?.zoneCode || effectiveZoning}
-                landAreaSqm={siteAnalysis?.landAreaSqm ?? (form.landArea ? Number(form.landArea) : undefined)}
+                landAreaSqm={effectiveLandAreaSqm(siteAnalysis) ?? (form.landArea ? Number(form.landArea) : undefined)}
               />
             </div>
           )}

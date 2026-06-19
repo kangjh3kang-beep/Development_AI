@@ -5,6 +5,7 @@ import { motion } from "framer-motion";
 import { apiClient } from "@/lib/api-client";
 import { formatCurrencyKRW } from "@/lib/formatters";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { getZoningSpec } from "@/lib/kr-building-regulations";
 
 /** estimate-overview 항목별 적산(QTO) 행 — cost.py items[] 스키마 정합. */
@@ -54,13 +55,14 @@ export function CostAndQuantityDashboard({ projectId, dictionary }: { projectId:
 
   // 부지면적 × 용적률로 GFA 폴백(설계 미완 시).
   const fallbackGfa = useMemo(() => {
-    const land = siteAnalysis?.landAreaSqm ?? 0;
+    // ★다필지면 통합 면적으로 적산 GFA를 역산(대표값 과소산출 방지).
+    const land = effectiveLandAreaSqm(siteAnalysis) ?? 0;
     if (land <= 0) return 0;
     const spec = siteAnalysis?.zoneCode ? getZoningSpec(siteAnalysis.zoneCode) : null;
     const far = spec?.floorAreaRatioMax ?? 0;
     if (far <= 0) return 0;
     return Math.round((land * far) / 100);
-  }, [siteAnalysis?.landAreaSqm, siteAnalysis?.zoneCode]);
+  }, [siteAnalysis]);
 
   // 건축개요(설계 우선, 부지 폴백) — estimate-overview 요청 파라미터.
   const overview = useMemo(() => {

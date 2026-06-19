@@ -5,6 +5,7 @@ import { apiClient, ApiClientError } from "@/lib/api-client";
 import { EvidencePanel, type EvidenceItem, type EvidenceLegalRef } from "@/components/common/EvidencePanel";
 import { useSpeechToText } from "@/lib/use-speech-to-text";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { ReferenceAssemblyCard } from "@/components/cad/ReferenceAssemblyCard";
 import { AnnotatedSitePlanCard } from "@/components/cad/AnnotatedSitePlanCard";
 import {
@@ -362,7 +363,7 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
   const markStageComplete = useProjectContextStore((s) => s.markStageComplete);
   const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
 
-  const ctxArea = siteAnalysis?.landAreaSqm ?? null;
+  const ctxArea = effectiveLandAreaSqm(siteAnalysis);
   const ctxZone = mapZoneToCode(siteAnalysis?.zoneCode);
   const ctxAddress = siteAnalysis?.address ?? null;  // §4-B 조례 조회용 대지 주소
 

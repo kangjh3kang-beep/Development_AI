@@ -4,8 +4,8 @@
  * RunModeSwitcher — 4실행모드 탭(가이드/별도/선택/프로필).
  *
  * Phase B 블루프린트 §3-B·§2-C 정합. [graft C] 모드 전환 UI.
- * B3 범위: 별도(standalone)·선택(selective)만 활성. 가이드(guided)=B4, 프로필(profile)=B5라
- * 비활성 + "준비중(B4)/(B5)" 표기로 정직하게 잠근다(가짜 동작 금지).
+ * 활성: 별도(standalone)·선택(selective)·프로필(profile, B5). 가이드(guided)=B4라
+ * 비활성 + "준비중(B4)" 표기로 정직하게 잠근다(가짜 동작 금지).
  *
  * 색상은 토큰만 사용(하드코딩 금지). cc-* 유틸·--accent-strong 채택.
  */
@@ -22,7 +22,7 @@ interface ModeTab {
   pendingLabel?: string;
 }
 
-/** 4모드 정의 — B3는 standalone·selective만 활성. */
+/** 4모드 정의 — standalone·selective·profile 활성(guided=B4 준비중). */
 const MODE_TABS: ModeTab[] = [
   {
     mode: "guided",
@@ -47,8 +47,7 @@ const MODE_TABS: ModeTab[] = [
     mode: "profile",
     label: "프로필",
     hint: "저장한 워크플로우로 실행",
-    enabled: false,
-    pendingLabel: "준비중(B5)",
+    enabled: true,
   },
 ];
 

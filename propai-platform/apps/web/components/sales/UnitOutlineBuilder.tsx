@@ -11,6 +11,7 @@ import { createPortal } from "react-dom";
 import { salesApi } from "@/lib/salesApi";
 import { ApiClientError } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { effectiveLandAreaSqm } from "@/lib/site-area";
 
 // 일시적 인프라 오류(배포 전환·게이트웨이)는 짧게 재시도해 사용자에게 노출하지 않는다.
 const _TRANSIENT = new Set([0, 502, 503, 504]);
@@ -166,7 +167,7 @@ export function UnitOutlineBuilder({
             <p className="text-xs font-bold text-[var(--accent-strong)]">📐 건축개요 (프로젝트 부지분석 연동)</p>
             <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
               {[
-                ["대지면적", sa?.landAreaSqm ? `${sa.landAreaSqm.toLocaleString()}㎡` : "-"],
+                ["대지면적", (() => { const a = effectiveLandAreaSqm(sa); return a ? `${a.toLocaleString()}㎡` : "-"; })()],
                 ["용도지역", sa?.zoneCode || "-"],
                 ["건폐율", sa?.ordinance?.effectiveBcr ? `${sa.ordinance.effectiveBcr}%` : "-"],
                 ["용적률", sa?.ordinance?.effectiveFar ? `${sa.ordinance.effectiveFar}%` : "-"],

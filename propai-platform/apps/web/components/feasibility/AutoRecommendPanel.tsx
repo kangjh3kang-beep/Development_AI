@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useParams, useRouter } from "next/navigation";
 import { TiltCard } from "@/components/ui/TiltCard";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { useFeasibilityV2Store } from "@/store/use-feasibility-v2-store";
 import { apiClient } from "@/lib/api-client";
 import { GlobalAddressSearch } from "@/components/common/GlobalAddressSearch";
@@ -196,7 +197,8 @@ export function AutoRecommendPanel({ onClose, isModal = false, embedded = false 
     return match ?? "서울특별시";
   });
   const [landArea, setLandArea] = useState(() => {
-    const area = ctxStore.siteAnalysis?.landAreaSqm;
+    // ★다필지면 통합 면적 — 대표값으로 추천·수지가 과소산출되지 않게.
+    const area = effectiveLandAreaSqm(ctxStore.siteAnalysis);
     return area && area > 0 ? area.toString() : "";
   });
 
@@ -207,8 +209,9 @@ export function AutoRecommendPanel({ onClose, isModal = false, embedded = false 
     if (site.address && !address) {
       setAddress(site.address);
     }
-    if (site.landAreaSqm && site.landAreaSqm > 0 && !landArea) {
-      setLandArea(site.landAreaSqm.toString());
+    const eff = effectiveLandAreaSqm(site);
+    if (eff && eff > 0 && !landArea) {
+      setLandArea(eff.toString());
     }
     if (site.address) {
       const match = REGIONS.find((r) => site.address!.includes(r) || site.address!.includes(r.replace("특별시","").replace("광역시","").replace("도","")));

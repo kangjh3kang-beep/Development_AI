@@ -8,6 +8,7 @@ import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import { NumberInput } from "@/components/common/NumberInput";
 import { ApiClientError, apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { effectiveLandAreaSqm } from "@/lib/site-area";
 import type { Locale } from "@/i18n/config";
 
 type ProjectResponse = {
@@ -232,7 +233,7 @@ export function ProjectBimWorkspaceClient({
   // 부지분석/설계 데이터 → 폼 자동 반영
   useEffect(() => {
     setForm((current) => {
-      const area = designData?.totalGfaSqm ?? siteAnalysis?.landAreaSqm;
+      const area = designData?.totalGfaSqm ?? effectiveLandAreaSqm(siteAnalysis);
       const floors = designData?.floorCount;
       return {
         ...current,

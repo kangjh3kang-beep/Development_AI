@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useProjectStore } from "@/store/useProjectStore";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { GlobalAddressSearch, type AddressEntry } from "@/components/common/GlobalAddressSearch";
 import { ImageUpload } from "@/components/ui/ImageUpload";
 import { apiClient } from "@/lib/api-client";
@@ -65,7 +66,7 @@ export default function NewProjectPage() {
         name,
         address: location,
         pnu: currentSiteAnalysis?.pnu ?? "",
-        area: currentSiteAnalysis?.landAreaSqm ? String(currentSiteAnalysis.landAreaSqm) : "0",
+        area: effectiveLandAreaSqm(currentSiteAnalysis) ? String(effectiveLandAreaSqm(currentSiteAnalysis)) : "0",
         type: "mixed",
         siteImageUrl: siteImageUrl || undefined,
         // 다필지 통합 분석으로 생성된 경우 필지 수 캡처(대표지번 외 N필지 표기용).
@@ -90,7 +91,7 @@ export default function NewProjectPage() {
     // 부지분석 면적을 시드로 전달(점진 강화의 출발점). best-effort — 실패해도 로컬 ID로 진행.
     let backendId = "";
     try {
-      const areaNum = currentSiteAnalysis?.landAreaSqm ? Number(currentSiteAnalysis.landAreaSqm) : 0;
+      const areaNum = effectiveLandAreaSqm(currentSiteAnalysis) ?? 0;
       const res = await apiClient.post<{ id: string }>("/projects", {
         body: { name, address: location || undefined, ...(areaNum > 0 ? { total_area_sqm: areaNum } : {}) },
         useMock: false,

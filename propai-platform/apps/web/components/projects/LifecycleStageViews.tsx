@@ -9,6 +9,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useQuery } from "@tanstack/react-query";
 import { apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { effectiveLandAreaSqm } from "@/lib/site-area";
 
 const FeasibilitySimulationWidget = dynamic(
   () => import("../finance/FeasibilitySimulationWidget").then(mod => mod.FeasibilitySimulationWidget),
@@ -81,7 +82,7 @@ export function LifecycleStageViews({ projectId, dictionary, compact = false }: 
     },
     {
       label: "면적",
-      value: fmtArea(siteAnalysis?.landAreaSqm) || fmtArea(p.total_area_sqm) || NA,
+      value: fmtArea(effectiveLandAreaSqm(siteAnalysis)) || fmtArea(p.total_area_sqm) || NA,
     },
     {
       label: "공시지가",

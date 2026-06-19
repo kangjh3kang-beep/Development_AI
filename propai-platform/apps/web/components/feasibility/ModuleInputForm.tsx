@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Button, Card, CardContent, Input } from "@propai/ui";
 import { useFeasibilityV2Store, type FeasibilityInput } from "@/store/use-feasibility-v2-store";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { motion } from "framer-motion";
 import { NumberInput as CommaInput } from "@/components/common/NumberInput";
 
@@ -79,7 +80,8 @@ export function ModuleInputForm() {
   // 설계 GFA(없으면 부지면적×용적률 역산). 모세혈관 우선, 데모 추정(폐기) 대신 실데이터.
   const seededGfa = useCallback((): number => {
     if (designData?.totalGfaSqm && designData.totalGfaSqm > 0) return designData.totalGfaSqm;
-    const land = siteAnalysis?.landAreaSqm ?? 0;
+    // ★다필지면 통합 면적으로 GFA를 역산해야 통합 기준 사업규모가 나온다(대표값 과소산출 방지).
+    const land = effectiveLandAreaSqm(siteAnalysis) ?? 0;
     const farPct = designData?.far ?? siteAnalysis?.ordinance?.effectiveFar ?? 0;
     if (land > 0 && farPct > 0) return Math.round((land * farPct) / 100);
     return 0;
@@ -91,7 +93,7 @@ export function ModuleInputForm() {
     const put = (k: keyof FeasibilityInput, v: number | string, cond: boolean) => {
       if (cond && !editedFields.has(k)) (patch as Record<string, unknown>)[k] = v;
     };
-    const land = siteAnalysis?.landAreaSqm ?? 0;
+    const land = effectiveLandAreaSqm(siteAnalysis) ?? 0;
     const gfa = seededGfa();
     const officialP = siteAnalysis?.officialPrices?.[0]?.pricePerSqm ?? 0;
     const sido = siteAnalysis?.address ? siteAnalysis.address.split(" ")[0] : "";
@@ -123,7 +125,8 @@ export function ModuleInputForm() {
   const loadFromSiteAnalysis = useCallback(() => {
     if (!siteAnalysis) return;
     const patch: Partial<FeasibilityInput> = {};
-    if (siteAnalysis.landAreaSqm) patch.total_land_area_sqm = siteAnalysis.landAreaSqm;
+    const land = effectiveLandAreaSqm(siteAnalysis);
+    if (land) patch.total_land_area_sqm = land;
     if (siteAnalysis.address) patch.sido_name = siteAnalysis.address.split(" ")[0] || "";
     if (siteAnalysis.officialPrices?.[0]?.pricePerSqm) {
       patch.official_price_per_sqm = siteAnalysis.officialPrices[0].pricePerSqm;
