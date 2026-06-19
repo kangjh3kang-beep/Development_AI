@@ -9,7 +9,8 @@ import { ShadowConvergenceCard } from "@/components/deliberation/ShadowConvergen
  * AI 심의분석 엔진 — 차세대 비전 페이지.
  *
  * 멀티모달 AI(VLLM) 기반 설계도서 자동해석 → 차세대 심의분석 엔진 비전을 타이틀로 분산배치한다.
- * 엔진 코어(심의분석 11계층)는 별도 백엔드(propai-review)로 구현 완료 · 플랫폼 통합 예정(정직 표기).
+ * 엔진 코어(심의분석 11계층)는 별도 백엔드(propai-review)로 구현 완료 · 플랫폼 통합 배선 완료(BFF degrade-safe,
+ * 운영카드·콘솔 라이브 BFF 경유) · 라이브 산출은 배포(키/인프라) 후(정직 표기).
  */
 export default async function DeliberationReviewPage({
   params,
