@@ -66,6 +66,31 @@ def test_ungrounded_recommendation_held():
     assert rec.text is None
 
 
+def test_overall_status_blocked_governs():
+    # ★대량필지 'most-constrained governs' 차용 — BLOCKED 1건이면 전체 BLOCKED(CONFIRMED에 묻힘=구조적 할루시네이션 차단).
+    r = ReportBuilder().build([CONFIRMED_ITEM, NEEDS_REVIEW_ITEM, BLOCKED_ITEM])
+    assert r.overall_status == ReportStatus.BLOCKED
+
+
+def test_overall_status_worst_of_ranking():
+    assert ReportBuilder().build([CONFIRMED_ITEM, NEEDS_REVIEW_ITEM]).overall_status == ReportStatus.NEEDS_REVIEW
+    assert ReportBuilder().build([CONFIRMED_ITEM]).overall_status == ReportStatus.CONFIRMED
+    # 재량 보류(기준 미존재)는 NEEDS_REVIEW보다 낮은 심각도 — NEEDS_REVIEW 있으면 우선.
+    assert ReportBuilder().build([NO_CRITERION_ITEM, NEEDS_REVIEW_ITEM]).overall_status == ReportStatus.NEEDS_REVIEW
+    assert ReportBuilder().build([CONFIRMED_ITEM, NO_CRITERION_ITEM]).overall_status == ReportStatus.DISCRETION_HELD
+
+
+def test_overall_status_none_when_empty():
+    assert ReportBuilder().build([]).overall_status is None  # 항목 없음 → 요약 불가(정직 None)
+
+
+def test_overall_status_serialized_for_consumers():
+    # 소비자(BFF shadow·프런트)가 JSON으로 집계 신호를 받도록 직렬화 포함(구획 sections도 보존).
+    r = ReportBuilder().build([CONFIRMED_ITEM, BLOCKED_ITEM])
+    assert r.model_dump(mode="json")["overall_status"] == "BLOCKED"
+    assert "BLOCKED" in r.model_dump(mode="json")["sections"]  # 은폐 아님 — 구획 그대로(INV-28)
+
+
 def test_report_route_builds_and_separates_sections(client):
     resp = client.post("/api/v1/reports/build", json={
         "items": [CONFIRMED_ITEM, BLOCKED_ITEM]})
@@ -73,6 +98,7 @@ def test_report_route_builds_and_separates_sections(client):
     body = resp.json()
     assert body["dashboard"]["section_counts"]["BLOCKED"] == 1
     assert body["dashboard"]["section_counts"]["CONFIRMED"] == 1
+    assert body["dashboard"]["overall_status"] == "BLOCKED"  # 집계 신호 노출(BLOCKED 1건이 전체 좌우)
 
 
 def test_report_route_rejects_evidenceless_item(client):
