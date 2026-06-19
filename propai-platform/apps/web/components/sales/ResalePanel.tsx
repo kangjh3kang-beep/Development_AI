@@ -42,14 +42,31 @@ export default function ResalePanel({ siteCode }: { siteCode: string }) {
     setMsg(null);
     if (!tf.contract_id) return;
     try {
-      const r = await api.post<{ allowed: boolean; reason: string }>("/resale/transfer/request",
+      const r = await api.post<{ allowed: boolean; reason: string; duplicate?: boolean; transfer_type?: string }>(
+        "/resale/transfer/request",
         { contract_id: tf.contract_id, to_customer: tf.to_customer || undefined, transfer_type: tf.transfer_type });
-      setMsg({ ok: r.allowed, text: r.allowed ? "전매 요청 — 허용(제한 없음)" : `전매 차단 — ${r.reason}` }); load();
+      // 이미 대기 중인 요청이 있으면(계약당 단일 PENDING 정책) 새 행이 생기지 않으므로 별도 안내한다.
+      if (r.duplicate) {
+        setMsg({ ok: false, text: `이미 대기 중인 전매요청이 있습니다(기존 ${r.transfer_type ?? "-"}). 먼저 결정 후 재요청하세요.` });
+      } else {
+        setMsg({ ok: r.allowed, text: r.allowed ? "전매 요청 — 허용(제한 없음)" : `전매 차단 — ${r.reason}` });
+      }
+      load();
     } catch (e) { setMsg({ ok: false, text: errText(e) }); }
   };
   const decide = async (id: string, allowed: boolean) => {
-    try { await api.post(`/resale/transfer/${id}/decide`, { allowed, reason: allowed ? "승인" : "반려" }); load(); }
-    catch (e) { setMsg({ ok: false, text: errText(e) }); }
+    setMsg(null);
+    try {
+      const r = await api.post<{ allowed: boolean; reason: string; already_decided?: boolean }>(
+        `/resale/transfer/${id}/decide`, { allowed, reason: allowed ? "승인" : "반려" });
+      // 이미 결정된 요청을 다시 처리하면(상태머신 종결) 서버가 already_decided 로 알린다 — 안내만 표기.
+      if (r.already_decided) {
+        setMsg({ ok: false, text: `이미 결정된 요청입니다(판정 ${r.allowed ? "허용" : "차단"} 유지).` });
+      } else {
+        setMsg({ ok: true, text: allowed ? "전매 승인 — 명의변경 반영" : "전매 반려" });
+      }
+      load();
+    } catch (e) { setMsg({ ok: false, text: errText(e) }); }
   };
 
   // 처음 불러오는 중이면 회색 자리표시(스켈레톤)로 빈 화면 깜빡임을 막는다.

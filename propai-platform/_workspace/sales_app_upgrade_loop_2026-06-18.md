@@ -132,3 +132,8 @@ P0: (a)마이그레이션·부트스트랩 FORCE를 **정책 보유 테이블에
 
 **#8 종료 backlog(MEDIUM/LOW 이연)**: ①CAP 모드 CUSTOM 제외→ΣRATE<1 왜곡가드 영구 false-positive 잠복(provision.py GENERAL 하드코딩이라 현재 unreachable, CAP 활성시 분기 필요) ②멱등키 클라키(cli:)/자동(auto:) 혼용시 별도그룹 복리(규약주석 의존→by-construction화: 콘텐츠해시 꼬리 1차조회 dedup) ③멤버/그룹 UNIQUE가 마이그038/039만·ORM __table_args__ 미선언(create_all 부트스트랩 SSOT 이원화) ④흡수취소 합계 원장 종단전파 게이트 ⑤reconciles_won 구성정의(전부FIXED) 한정 ⑥gap banker's→HALF_UP ⑦PricingWarningBanner 공용컴포넌트 ⑧PricingConfigPanel regenerate try/catch. ★deploy-pending(라이브 MOLIT 실거래·DB round-trip·038/039 인덱스 alembic·동시성 23505·tsc).
 **8개 완료**: #10(7.5)·#1(8.5)·#3(8.0)·#4(7.0)·#5(8.0)·#7(8.0)·#2(8.3)·#8(8.3). 다음 #9(7.2)→#6(8.1).
+
+| 9 | 해촉·전매·MH·옵션·추천·소셜·구인 | 7.2 | 7.5 | 0 | (커밋대기) | 2 iter. 전매 IDOR 봉합(_load_contract_scoped)·decide with_for_update 이중명의변경 차단·TOCTOU 2겹(040 부분유니크 WHERE decided_at IS NULL/status=PENDING + SAVEPOINT IntegrityError 재조회)·submit_realtx 종결가드(report_no 소실차단)·transfer_type 노출(과대매칭 해소)·resale_decide 응답계약 배선·해촉증명서 RRN 마스킹·SSRF allowlist(is_global, CGNAT/예약/링크로컬 차단)·발송 silent-fail 분류로깅·notify 로더 graceful. 33테스트 |
+
+**#9 종료 backlog(MEDIUM/LOW 이연)**: ①realtx_report/submit_realtx 엔드포인트 {ok:True} 절반배선→resale_decide처럼 응답 SSOT 대칭+ResalePanel.report() 분기(중복/제출됨 표기, 현재 항상 성공토스트) ②submit_realtx status!=PENDING 무조건멱등→상태전이 매트릭스(PENDING→SUBMITTED→ACCEPTED/CORRECTED 허용·report_no None 재제출만 차단) ③SSRF DNS-rebinding IP pin(검사IP를 connect 대상 고정) ④알림톡 kakaoapi.example 플레이스홀더 ⑤resale_request 권한(sales_ctx→require_role 정책결정) ⑥is_blocked_ip 멀티캐스트 주석정정. ★deploy-pending(040 인덱스 alembic·라이브 23505·decide 동시승인·실 FCM/알림톡·tsc).
+**9개 완료**: #10(7.5)·#1(8.5)·#3(8.0)·#4(7.0)·#5(8.0)·#7(8.0)·#2(8.3)·#8(8.3)·#9(7.5). 마지막 #6(8.1).

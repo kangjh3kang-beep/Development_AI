@@ -64,12 +64,16 @@ async def resale_decide(transfer_id: uuid.UUID, body: dict, db: AsyncSession = D
                         ctx: SalesCtx = Depends(require_role("AGENCY", "DEVELOPER"))):
     from fastapi import HTTPException
     try:
-        await decide_transfer(db, transfer_id, bool(body.get("allowed")), body.get("reason", ""), site_id=ctx.site_id)
+        # ★[응답계약 SSOT(iter-2 MED)] decide_transfer 의 결과(allowed/reason/already_decided)를 버리지
+        #   않고 그대로 응답한다 — resale_request 가 duplicate/transfer_type 을 돌려주는 것과 대칭.
+        #   프론트가 already_decided 를 받아 '이미 결정된 요청' 안내를 띄울 수 있게 한다(silent 성공 위장 금지).
+        res = await decide_transfer(db, transfer_id, bool(body.get("allowed")),
+                                    body.get("reason", ""), site_id=ctx.site_id)
     except ValueError as e:
         await db.rollback()
         raise HTTPException(404, str(e)) from e
     await db.commit()
-    return {"ok": True}
+    return res
 
 
 @r6.post("/commission/splits/{split_id}/schedule")
