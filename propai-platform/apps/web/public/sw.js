@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v262-legal-location-multiparcel-integrated";
+const CACHE_NAME = "propai-v263-scenario-tentative-gate";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

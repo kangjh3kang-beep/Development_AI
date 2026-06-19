@@ -542,17 +542,33 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
   }, [deepAnalysisResult, scenarioData, aiData, localResult]);
 
   const isScenarioReal = scenarioItems.length > 0 && scenarioItems[0].isReal;
-  // 시나리오 전체가 선행절차 전제 잠정치인지 — 백엔드 scenario_status 또는 후보 tentative 플래그.
+  // ── 특이부지 게이트 신호(2차 방어선) — /zoning/analyze(data.address 기준) 또는 store가 준 ──
+  //   special_parcel.developability가 '개발 가능(POSSIBLE)'이 아니면(=선행절차/조건부/제한/불가)
+  //   시나리오 % 를 확정처럼 노출하지 않는다. 시나리오 API가 (대표 재조준 전 등으로) tentative를
+  //   못 채웠어도, 이 게이트만으로 잠정 렌더(배지·점선·배너)를 강제한다 → "도로 타운하우스 88%
+  //   확정" 할루시네이션을 이중으로 차단. (POSSIBLE이면 일반 부지로 간주해 확정% 무회귀 유지.)
+  const specialGateTentative = useMemo(() => {
+    const dev = (zoningData?.special_parcel?.is_special === true)
+      ? (zoningData.special_parcel.developability ?? null)
+      : (siteAnalysis?.specialParcel?.isSpecial ? (siteAnalysis.specialParcel.developability ?? null) : null);
+    if (dev == null) return false;
+    return String(dev).toUpperCase() !== "POSSIBLE"; // POSSIBLE 외 모든 게이트는 잠정 처리
+  }, [zoningData?.special_parcel, siteAnalysis?.specialParcel]);
+  // 시나리오 전체가 선행절차 전제 잠정치인지 — 백엔드 scenario_status·후보 tentative·특이부지 게이트.
   const isScenarioTentative = useMemo(() => {
     const status = deepAnalysisResult?.scenarioStatus ?? scenarioData?.scenarioStatus;
     if (status === "tentative") return true;
+    if (specialGateTentative) return true;
     return scenarioItems.some((s) => "tentative" in s && s.tentative === true);
-  }, [deepAnalysisResult?.scenarioStatus, scenarioData?.scenarioStatus, scenarioItems]);
-  // 잠정 사유(첫 후보 우선) + 정직고지 — 잠정 안내 배너 표시용.
+  }, [deepAnalysisResult?.scenarioStatus, scenarioData?.scenarioStatus, specialGateTentative, scenarioItems]);
+  // 잠정 사유(첫 후보 우선) + 정직고지 — 잠정 안내 배너 표시용. 특이부지 honest_disclosure도 표면화.
   const tentativeDisclosure = useMemo(() => {
     const fromItem = scenarioItems.find((s) => "tentativeReason" in s && s.tentativeReason)?.tentativeReason as string | undefined;
-    return fromItem ?? deepAnalysisResult?.honest ?? scenarioData?.honest ?? null;
-  }, [scenarioItems, deepAnalysisResult?.honest, scenarioData?.honest]);
+    const specialHonest = (zoningData?.special_parcel?.is_special === true)
+      ? (zoningData.special_parcel.honest_disclosure ?? null)
+      : (siteAnalysis?.specialParcel?.isSpecial ? (siteAnalysis.specialParcel.honest ?? null) : null);
+    return fromItem ?? deepAnalysisResult?.honest ?? scenarioData?.honest ?? specialHonest ?? null;
+  }, [scenarioItems, deepAnalysisResult?.honest, scenarioData?.honest, zoningData?.special_parcel, siteAnalysis?.specialParcel]);
 
   const analysis = {
     zoning: {
@@ -859,7 +875,9 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
             ) : (
               <div className="space-y-5">
                 {scenarioItems.length > 0 ? scenarioItems.map((s, i) => {
-                  const itemTentative = "tentative" in s && s.tentative === true;
+                  // 후보별 tentative 또는 부지 전체 잠정(scenario_status·특이부지 게이트) 중 하나라도면 잠정 렌더.
+                  //   → 시나리오 API가 후보 플래그를 못 채웠어도 게이트만으로 모든 항목의 확정% 막대를 억제(일관성).
+                  const itemTentative = (isScenarioReal && isScenarioTentative) || ("tentative" in s && s.tentative === true);
                   return (
                   <div key={i} className="group relative">
                     <div className="flex items-start justify-between mb-2">

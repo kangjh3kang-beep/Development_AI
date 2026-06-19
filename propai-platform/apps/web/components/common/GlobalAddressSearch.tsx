@@ -236,6 +236,10 @@ export function GlobalAddressSearch({
     return { label: rep.label, jimok: rep.jimok, area: rep.area, isSpecial: rep.special, allSpecial, count: usable.length };
   }, [parcelRows]);
 
+  // enrichParcels(다필지 보강 완료 후)가 '대표 개발가능 필지'로 종합분석을 재조준할 때
+  //   최신 triggerComprehensiveAnalysis를 호출하기 위한 ref(선언 순서·useCallback 재생성 무관).
+  const triggerComprehensiveAnalysisRef = useRef<(address: string, bcode?: string, jibunAddress?: string) => Promise<void>>(async () => {});
+
   // 종합 토지 분석 자동 트리거 (주소 입력 즉시 백그라운드 실행)
   // 카카오에서 얻은 bcode(법정동코드) + 지번주소를 백엔드에 전달하여 토지정보 조회
   const triggerComprehensiveAnalysis = useCallback(async (address: string, bcode?: string, jibunAddress?: string) => {
@@ -333,6 +337,8 @@ export function GlobalAddressSearch({
       setIsAnalyzing(false);
     }
   }, [siteAnalysis, updateSiteAnalysis, writeToContext, onAnalyzed]);
+  // 대표 필지 재조준이 항상 최신 triggerComprehensiveAnalysis를 호출하도록 ref 동기화(렌더마다 갱신).
+  triggerComprehensiveAnalysisRef.current = triggerComprehensiveAnalysis;
 
   // ★등록된 '모든' 필지의 토지정보(면적·용도지역·건폐/용적·지목·공시지가)+집합건물 여부 일괄 보강.
   //   (처음 1필지만 분석되던 근본문제 해결 — 개별등록·엑셀 공통). 주소 매칭으로 머지.
@@ -526,7 +532,11 @@ export function GlobalAddressSearch({
         const landCategory = (m?.jimok ?? e.jimok) ?? "";
         // 개발가능성 우선정렬용 특이부지 판정(지목 + 백엔드 게이트) — '대표' 선정의 핵심.
         const special = _isSpecialParcel({ jimok: landCategory, isSpecial: (m?.special_parcel ?? e.specialParcel)?.is_special });
-        return { area, status, zone, pnu, address, landCategory, special };
+        // ★K1: 대표(개발가능 필지)로 종합/시나리오 분석을 '재조준'하기 위해 bcode·지번도 함께 보존.
+        //   (도로 등 특이부지가 입력 1번이라 분석이 거기 고정되던 근본버그 해소 — analysisAddress 보정.)
+        const bcode = (e.bcode || (pnu && pnu.length >= 10 ? pnu.slice(0, 10) : "")) ?? "";
+        const jibun = (e.jibunAddress || address) ?? "";
+        return { area, status, zone, pnu, address, landCategory, special, bcode, jibun };
       })
       // status가 명시적으로 ok가 아닌 경우(ambiguous/failed)는 제외, 면적>0만.
       .filter((p) => p.area > 0 && (p.status == null || p.status === "ok"));
@@ -573,6 +583,27 @@ export function GlobalAddressSearch({
         ownerType: "",
       })),
     });
+
+    // ★K1(핵심): 심층 부지분석/시나리오 카드의 '분석주소'를 대표 개발가능 필지로 재조준한다.
+    //   handleAddressSelect/엑셀/지도 경로는 모두 입력 '첫' 필지(newAddresses[0])로 즉시
+    //   triggerComprehensiveAnalysis를 쏜다(첫 페인트·단일필지 무회귀를 위해 유지). 그런데 지오코딩이
+    //   도로(예 211-376)를 먼저 돌려주면 그 도로가 입력 1번이 되어 /zoning/analyze·/feasibility/
+    //   auto-recommend가 영구히 도로에 고정된다(특이부지 게이트 우회 → "타운하우스 88% 확정"
+    //   할루시네이션). 보강이 끝나 개발가능 정렬이 확정된 지금, 대표(개발가능 첫 필지)가 처음
+    //   분석한 주소와 다르면 SSOT.address를 대표로 갱신하고 종합분석을 그 주소로 다시 실행한다.
+    //   → data.address가 대표(주거 211-204)로 바뀌어 시나리오/용도지역이 대표 기준으로 재계산되고,
+    //     도로가 특이부지면 백엔드가 scenario_status=tentative를 정상 반환(확정% 차단).
+    //   무회귀: 전 필지 특이(repDevelopable=valid[0])여도 '가장 큰' 필지로 재조준되며, 단일/유효<2는
+    //     위 early-return으로 이 경로에 도달하지 않는다. 계정격리: 위 동일 가드(triggeredProjectId)
+    //     통과 후에만 실행되므로 무관 프로젝트 SSOT를 오염시키지 않는다.
+    const repAddress = (repDevelopable?.address || "").trim();
+    if (repAddress) {
+      const curAddr = (useProjectContextStore.getState().siteAnalysis?.address || "").trim();
+      if (curAddr !== repAddress) {
+        updateSiteAnalysis({ address: repAddress });
+        triggerComprehensiveAnalysisRef.current(repAddress, repDevelopable.bcode, repDevelopable.jibun);
+      }
+    }
   }, [writeToContext, updateSiteAnalysis]);
   // 재시도 setTimeout이 항상 최신 enrichParcels를 호출하도록 ref 동기화(렌더마다 갱신).
   enrichParcelsRef.current = enrichParcels;
