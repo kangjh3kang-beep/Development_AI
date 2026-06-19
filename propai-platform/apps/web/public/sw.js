@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v259-cad-loop-sales-pnu";
+const CACHE_NAME = "propai-v260-input-dedup-plain-terms";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

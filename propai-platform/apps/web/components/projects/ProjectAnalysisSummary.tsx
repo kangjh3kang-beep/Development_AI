@@ -21,10 +21,10 @@ const num = (v: number | null | undefined, unit = ""): string => formatAnalysisV
 const pct = (v: number | null | undefined): string =>
   v != null ? `${v.toLocaleString(undefined, { maximumFractionDigits: 1 })}%` : "분석 전";
 
-function Tile({ label, value, sub, accent }: { label: string; value: string; sub?: string; accent?: boolean }) {
+function Tile({ label, value, sub, accent, tip }: { label: string; value: string; sub?: string; accent?: boolean; tip?: string }) {
   return (
     <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] px-5 py-4">
-      <p className="text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)]">{label}</p>
+      <p className="text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)]" title={tip}>{label}</p>
       <p className={`mt-1.5 text-xl font-[1000] tracking-tight ${accent ? "text-[var(--accent-strong)]" : "text-[var(--text-primary)]"}`}>{value}</p>
       {sub ? <p className="mt-0.5 text-[11px] text-[var(--text-secondary)]">{sub}</p> : null}
     </div>
@@ -121,14 +121,17 @@ export function ProjectAnalysisSummary() {
         : num(effArea, " ㎡")
       : "—";
 
+  // 한도 라벨 평이화: 1차 라벨은 쉬운말, 전문용어(실효 한도/법정상한)는 괄호 병기로 유지.
+  //  · 잠정 법정상한 → "국가법 최대치(잠정 법정상한·건폐/용적)"
+  //  · 그 외 실효값 → "실제 적용 한도(실효·건폐/용적)"
   const ord = site?.ordinance ?? null;
   const limitLabel = ord
     ? ord.seededFromLegal
-      ? "잠정 법정상한(건폐/용적)"
+      ? "국가법 최대치(잠정 법정상한·건폐/용적)"
       : ord.ordinanceFar != null || ord.ordinanceBcr != null
-        ? "실효 한도(건폐/용적·조례반영)"
-        : "실효 한도(건폐/용적)"
-    : "실효 한도(건폐/용적)";
+        ? "실제 적용 한도(실효·건폐/용적·조례반영)"
+        : "실제 적용 한도(실효·건폐/용적)"
+    : "실제 적용 한도(실효·건폐/용적)";
 
   return (
     <section className="rounded-[2rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-7 shadow-[var(--shadow-lg)]">
@@ -154,8 +157,11 @@ export function ProjectAnalysisSummary() {
             </span>
           )}
           {feas?.grade ? (
-            <span className="rounded-full bg-[var(--accent-soft)] px-3 py-1 text-xs font-black text-[var(--accent-strong)]">
-              수익률 {pct(feas?.profitRatePct)} ({feas.grade})
+            <span
+              title="투자 수익률과 사업성 등급(투입 대비 남는 비율)"
+              className="rounded-full bg-[var(--accent-soft)] px-3 py-1 text-xs font-black text-[var(--accent-strong)]"
+            >
+              투자 수익률 {pct(feas?.profitRatePct)} (사업성 등급 {feas.grade})
             </span>
           ) : null}
         </div>
@@ -163,10 +169,10 @@ export function ProjectAnalysisSummary() {
 
       {/* 핵심 요약 */}
       <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-5">
-        <Tile label="수익률" value={pct(feas?.profitRatePct)} sub={feas?.grade ? `등급 ${feas.grade}` : undefined} accent />
+        <Tile label="투자 수익률" tip="투입 대비 몇 % 남는지" value={pct(feas?.profitRatePct)} sub={feas?.grade ? `사업성 등급 ${feas.grade}` : undefined} accent />
         <Tile label="총사업비" value={eok(totalCost) ?? "—"} />
         <Tile label="순이익" value={eok(netProfit) ?? "—"} accent />
-        <Tile label="탄소밀도" value={esg?.totalCarbonPerSqm != null ? `${num(esg.totalCarbonPerSqm)} kgCO₂/㎡` : "—"} />
+        <Tile label="면적당 탄소배출(친환경 정도)" tip="단위면적당 탄소배출량 — 낮을수록 친환경" value={esg?.totalCarbonPerSqm != null ? `${num(esg.totalCarbonPerSqm)} kgCO₂/㎡` : "—"} />
         <Tile label="법규준수" value={violations != null ? (violations === 0 ? "적합" : `위반 ${violations}건`) : "—"} />
       </div>
 
@@ -221,8 +227,8 @@ export function ProjectAnalysisSummary() {
             ["총사업비", eok(feas?.totalCostWon) ?? "—"],
             ["분양매출", eok(feas?.totalRevenueWon) ?? "—"],
             ["순이익", eok(netProfit) ?? "—"],
-            ["수익률", pct(feas?.profitRatePct)],
-            ["등급", feas?.grade ?? "—"],
+            ["투자 수익률", pct(feas?.profitRatePct)],
+            ["사업성 등급", feas?.grade ?? "—"],
           ]}
         />
         <Section
@@ -230,7 +236,7 @@ export function ProjectAnalysisSummary() {
           rows={[
             ["내재 탄소", esg?.embodiedCarbonKg != null ? `${(esg.embodiedCarbonKg / 1000).toLocaleString(undefined, { maximumFractionDigits: 1 })} tCO₂e` : "분석 전"],
             ["운영 탄소(연)", esg?.operationalCarbonKg != null ? `${(esg.operationalCarbonKg / 1000).toLocaleString(undefined, { maximumFractionDigits: 1 })} tCO₂e` : "분석 전"],
-            ["단위면적당", esg?.totalCarbonPerSqm != null ? `${num(esg.totalCarbonPerSqm)} kgCO₂/㎡` : "분석 전"],
+            ["면적당 탄소배출(친환경 정도)", esg?.totalCarbonPerSqm != null ? `${num(esg.totalCarbonPerSqm)} kgCO₂/㎡` : "분석 전"],
           ]}
         />
         <Section

@@ -51,7 +51,7 @@ export function SiteScoreCard() {
     <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-5">
       <div className="flex items-center justify-between">
         <div>
-          <h4 className="text-sm font-bold text-[var(--text-primary)]">PropAI 입지점수 (SiteScore)</h4>
+          <h4 className="text-sm font-bold text-[var(--text-primary)]" title="교통·학교·시세를 종합한 위치 점수(100점 만점)">입지 점수(100점)</h4>
           <p className="text-[11px] text-[var(--text-secondary)]">
             연구기반 1차 학습 가중 · {res.covered}/{res.total_features}개 지표{res.calibrated ? " · 지역보정" : ""}
           </p>

@@ -52,7 +52,7 @@ export function BuildableEnvelopeCard() {
     <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-5">
       <div className="flex items-center justify-between">
         <div>
-          <h4 className="text-sm font-bold text-[var(--text-primary)]">빌더블 인벨로프 (정북일조)</h4>
+          <h4 className="text-sm font-bold text-[var(--text-primary)]" title="법규를 지키면서 지을 수 있는 최대 건물 크기(빌더블 인벨로프·정북일조)">건축 가능 범위</h4>
           <p className="text-[11px] text-[var(--text-secondary)]">
             {zone || "용도지역 미상"}{area ? ` · 대지 ${eok(area)}` : ""}
             {res.geometry_source ? ` · ${res.geometry_source}` : ""}
@@ -66,8 +66,8 @@ export function BuildableEnvelopeCard() {
       <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
         <Tile label="건축가능 연면적" value={eok(res.effective_gfa_sqm)} sub={`용적률한도 ${eok(res.far_gfa_sqm)}`} accent />
         <Tile label="현실 최고층" value={`${res.max_floors}층`} sub={`약 ${res.max_height_m}m`} />
-        <Tile label="정북일조 천장" value={res.daylight_ceiling_m != null ? `${res.daylight_ceiling_m}m` : "—"} sub={res.applies_north_light ? "사선 최고선" : "미적용 용도"} />
-        <Tile label="일조 손실률" value={`${res.daylight_loss_pct}%`} sub={lossBinding ? "용적률 대비 손실" : "여유"} accent={lossBinding} />
+        <Tile label="일조 규제 높이 한도" tip="북쪽 햇빛을 보호하기 위한 제한 높이(정북일조 천장)" value={res.daylight_ceiling_m != null ? `${res.daylight_ceiling_m}m` : "—"} sub={res.applies_north_light ? "사선 최고선" : "미적용 용도"} />
+        <Tile label="일조 규제로 줄어든 비율" tip="일조 규제 때문에 줄어든 연면적 비율(일조 손실률)" value={`${res.daylight_loss_pct}%`} sub={lossBinding ? "용적률 대비 손실" : "여유"} accent={lossBinding} />
       </div>
 
       {(res.min_building_spacing_m || res.road_side) && (
@@ -111,10 +111,10 @@ export function BuildableEnvelopeCard() {
   );
 }
 
-function Tile({ label, value, sub, accent }: { label: string; value: string; sub?: string; accent?: boolean }) {
+function Tile({ label, value, sub, accent, tip }: { label: string; value: string; sub?: string; accent?: boolean; tip?: string }) {
   return (
     <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-3">
-      <p className="text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)]">{label}</p>
+      <p className="text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)]" title={tip}>{label}</p>
       <p className={`mt-1 text-base font-[1000] ${accent ? "text-[var(--accent-strong)]" : "text-[var(--text-primary)]"}`}>{value}</p>
       {sub ? <p className="mt-0.5 text-[10px] text-[var(--text-secondary)]">{sub}</p> : null}
     </div>

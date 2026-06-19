@@ -650,21 +650,20 @@ export default function SiteAnalysisPage() {
 
   // 주소 단일화: 바인딩 완료 후 컨텍스트에 주소가 있으면 재입력 없이 결과로 자동진입하고
   // 컨텍스트 데이터를 siteData로 시드한다. 사용자가 직접 '새 분석'을 누른 경우(userInitiated)는 예외.
+  // ★프로젝트 진입(주소 보유) 시에는 주소입력창(SiteInitiator)을 띄우지 않고 곧장 결과뷰로 진입한다.
+  //   기존엔 prev?.address 스킵 조건 때문에 stage="init"이 유지돼 입력창이 중복 표시됐다.
+  //   userInitiated(새 분석/주소 변경)일 때만 입력창을 띄우므로, 여기서는 항상 시드+결과 진입한다.
   useEffect(() => {
     if (!isBound || userInitiated) return;
     const addr = siteAnalysis?.address?.trim();
     if (!addr) return;
-    setSiteData((prev) => {
-      // 이미 결과 데이터가 있으면(분석 진행 중/완료) 덮어쓰지 않는다.
-      if (prev?.address) return prev;
-      return {
-        address: addr,
-        pnu: siteAnalysis?.pnu ?? undefined,
-        zoneType: siteAnalysis?.zoneCode ?? undefined,
-        landAreaSqm: siteAnalysis?.landAreaSqm != null ? String(siteAnalysis.landAreaSqm) : undefined,
-      };
+    setSiteData({
+      address: addr,
+      pnu: siteAnalysis?.pnu ?? undefined,
+      zoneType: siteAnalysis?.zoneCode ?? undefined,
+      landAreaSqm: siteAnalysis?.landAreaSqm != null ? String(siteAnalysis.landAreaSqm) : undefined,
     });
-    setStage((prev) => (prev === "init" ? "result" : prev));
+    setStage("result");
   }, [isBound, userInitiated, siteAnalysis?.address, siteAnalysis?.pnu, siteAnalysis?.zoneCode, siteAnalysis?.landAreaSqm]);
 
   // 결과 단계 진입 시 프로젝트의 최신 설계(design_versions) 존재 여부를 조회.
