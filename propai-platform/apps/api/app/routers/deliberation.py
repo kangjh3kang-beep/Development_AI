@@ -109,6 +109,22 @@ async def deliberation_health(_user=Depends(get_current_user)) -> dict[str, Any]
     return {"status": "ok", "engine": _whitelist_health(doctor), "warnings": warnings}
 
 
+@router.get("/shadow/stats")
+async def deliberation_shadow_stats(domain: str | None = None,
+                                    user=Depends(get_current_user)) -> dict[str, Any]:
+    """중심엔진 수렴 관측 — 호출 테넌트의 shadow divergence 집계(도메인별 n·match_rate·avg_divergence).
+    authoritative 승격(stage3) 결정 모니터링용. 인증 필수·테넌트 스코프(타테넌트 데이터 비노출)·읽기전용.
+    DB 미가용/미적재 시 빈 목록(무음0 — 크래시 금지)."""
+    tenant = _tenant(user)
+    try:
+        from app.services.deliberation import shadow_service
+        stats = await shadow_service.divergence_stats(domain=domain, tenant_id=tenant)
+    except Exception as exc:  # noqa: BLE001 — 관측 조회 실패는 빈 목록으로 정직 표면화(분석 흐름과 무관)
+        logger.warning("deliberation_shadow_stats_failed", err=str(exc)[:200])
+        return {"tenant_scoped": True, "domain": domain, "stats": [], "degraded": True}
+    return {"tenant_scoped": True, "domain": domain, "stats": stats}
+
+
 # ── analyze BFF(§5) ────────────────────────────────────────────────────────────
 
 

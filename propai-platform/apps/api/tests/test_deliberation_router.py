@@ -30,6 +30,42 @@ def test_health_requires_auth():
     assert r.status_code in (401, 403)
 
 
+def test_shadow_stats_requires_auth():
+    r = TestClient(_app()).get("/api/v1/deliberation/shadow/stats")
+    assert r.status_code in (401, 403)
+
+
+def test_shadow_stats_tenant_scoped(monkeypatch):
+    # 인증 후 호출 테넌트로만 집계 — divergence_stats에 tenant_id 전달(타테넌트 비노출).
+    captured = {}
+    async def _stats(*, domain=None, tenant_id=None):
+        captured["domain"] = domain
+        captured["tenant_id"] = tenant_id
+        return [{"domain": "design_audit", "n": 3, "matched_n": 2, "match_rate": 2 / 3,
+                 "avg_divergence": 0.33, "avg_quant_rel_err": None}]
+    from app.services.deliberation import shadow_service
+    monkeypatch.setattr(shadow_service, "divergence_stats", _stats)
+    app = _app()
+    app.dependency_overrides[get_current_user] = lambda: _FakeUser(tenant_id="11111111-1111-1111-1111-111111111111")
+    r = TestClient(app).get("/api/v1/deliberation/shadow/stats?domain=design_audit")
+    body = r.json()
+    assert r.status_code == 200 and body["stats"][0]["match_rate"] == 2 / 3
+    assert captured["domain"] == "design_audit"
+    assert captured["tenant_id"] == "11111111111111111111111111111111"  # 정규화 hex(shadow 적재 키와 일치)
+
+
+def test_shadow_stats_degrades_safely(monkeypatch):
+    # DB 미가용 등 조회 실패 → 빈 목록 degraded(크래시 금지·무음0).
+    async def _boom(**kw):
+        raise RuntimeError("db down")
+    from app.services.deliberation import shadow_service
+    monkeypatch.setattr(shadow_service, "divergence_stats", _boom)
+    app = _app()
+    app.dependency_overrides[get_current_user] = lambda: _FakeUser()
+    r = TestClient(app).get("/api/v1/deliberation/shadow/stats")
+    assert r.status_code == 200 and r.json()["stats"] == [] and r.json()["degraded"] is True
+
+
 def test_health_returns_only_whitelisted_status(monkeypatch):
     async def fake_doctor():
         return ({
