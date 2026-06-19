@@ -28,6 +28,8 @@
   site_promotions     : 분양현장 홍보(B2C 고객유치 + B2B 대행유치)
 """
 
+import asyncio
+import logging
 import uuid
 from datetime import datetime
 
@@ -37,11 +39,48 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
+from apps.api.database.sales_market_ddl import INDEX_DDLS, TABLE_DDLS  # DDL/인덱스 SSOT(036 과 공유)
+
+logger = logging.getLogger(__name__)
 
 market_router = APIRouter(prefix="/api/v1/market", tags=["sales-market"])
 
 # 채용연계(조직도 멤버십 생성) 가능 역할 — 현장 관리자
 _MANAGER_ROLES = {"superadmin", "super_admin", "admin", "owner", "developer", "agency"}
+
+# 테이블/컬럼 미존재 PostgreSQL SQLSTATE(asyncpg) — 이것만 '정상 0/스킵'(아직 안 만든 테이블)으로 본다.
+# 42P01=undefined_table, 42703=undefined_column. 그 외 DB 오류는 은폐 금지(분류 로깅 후 전파).
+# (app/services/sales/payment/service.py·commission/engine.py 의 검증된 분류 패턴과 동일.)
+_MISSING_OBJECT_SQLSTATES = frozenset({"42P01", "42703"})
+
+
+def _missing_object_sqlstate(exc: BaseException) -> str | None:
+    """예외가 '테이블/컬럼 미존재'(42P01/42703)면 해당 SQLSTATE, 아니면 None(전파신호).
+
+    ★이 분류기는 컬럼 미존재(42703)도 '정상 스킵'으로 본다. 채용연계처럼 '조직도 자체가 미설치'를
+      판별하는 곳에 쓴다(테이블/컬럼 어느 쪽이 비어도 미설치로 간주 가능).
+    """
+    orig = getattr(exc, "orig", None) or exc
+    code = getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None)
+    if code in _MISSING_OBJECT_SQLSTATES:
+        return code
+    return None
+
+
+def _missing_table_sqlstate(exc: BaseException) -> str | None:
+    """예외가 '테이블 미존재(42P01)'면 그 SQLSTATE, 아니면 None(전파신호).
+
+    ★[correctness — 컬럼누락 은폐 차단(iter-3)] count(*)/sum() 집계는 특정 컬럼을 지목하지 않으므로,
+      여기서 42703(undefined_column=스키마 드리프트)이 나오면 그건 '정상 0'(아직 안 만든 테이블)이
+      아니라 '있어야 할 컬럼이 사라진 진짜 결함'이다. 공유 _missing_object_sqlstate(42P01+42703)를
+      그대로 쓰면 컬럼 드리프트를 0 으로 흡수해 '계약/매출 0' 으로 은폐된다. 그래서 집계 경로는
+      이 전용 분류기로 '테이블 미존재(42P01)'만 정상 0 으로 보고, 42703 은 전파한다(은폐 금지).
+    """
+    orig = getattr(exc, "orig", None) or exc
+    code = getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None)
+    if code == "42P01":
+        return code
+    return None
 
 # ── 표시광고법·개인정보 동의 고지 문구(홍보 응답에 포함) ───────────────────────
 _PROMO_NOTICE = (
@@ -51,100 +90,53 @@ _PROMO_NOTICE = (
 
 
 # ── 멱등 테이블(_ensure) ─────────────────────────────────────────────────────
-_PROFILE_PERSONAL_DDL = (
-    "CREATE TABLE IF NOT EXISTS profiles_personal ("
-    "  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),"
-    "  user_id uuid NOT NULL UNIQUE,"
-    "  full_name varchar(120),"
-    "  contact varchar(120),"                    # 연락처(전화/카톡 등)
-    "  region varchar(120),"                     # 활동지역
-    "  specialties text[] DEFAULT '{}',"         # 전문분야
-    "  experience_years int DEFAULT 0,"
-    "  achievement_summary text,"                # 실적요약(자기기재)
-    "  certifications text[] DEFAULT '{}',"      # 자격
-    "  desired_conditions text,"                 # 희망조건
-    "  photo_url text,"                          # 프로필 사진 URL
-    "  visibility varchar(12) NOT NULL DEFAULT 'public',"  # public|contacts|private
-    "  mask_contact boolean NOT NULL DEFAULT true,"        # 연락처 마스킹 여부
-    "  created_at timestamptz NOT NULL DEFAULT now(),"
-    "  updated_at timestamptz NOT NULL DEFAULT now()"
-    ")"
-)
-_PROFILE_COMPANY_DDL = (
-    "CREATE TABLE IF NOT EXISTS profiles_company ("
-    "  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),"
-    "  owner_user_id uuid NOT NULL UNIQUE,"
-    "  org_id uuid,"                             # 연계 조직(선택)
-    "  company_name varchar(200),"
-    "  company_type varchar(16) NOT NULL DEFAULT 'AGENCY',"  # DEVELOPER(시행)|AGENCY(대행)
-    "  company_size varchar(40),"
-    "  intro text,"                              # 소개
-    "  active_sites text,"                       # 진행현장(자기기재)
-    "  reputation text,"                         # 평판/실적(자기기재)
-    "  logo_url text,"                           # 회사 로고 URL
-    "  contact varchar(120),"
-    "  region varchar(120),"
-    "  visibility varchar(12) NOT NULL DEFAULT 'public',"
-    "  mask_contact boolean NOT NULL DEFAULT true,"
-    "  created_at timestamptz NOT NULL DEFAULT now(),"
-    "  updated_at timestamptz NOT NULL DEFAULT now()"
-    ")"
-)
-_JOB_POSTS_DDL = (
-    "CREATE TABLE IF NOT EXISTS job_posts ("
-    "  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),"
-    "  author_user_id uuid NOT NULL,"
-    "  kind varchar(16) NOT NULL,"               # hire|seek|promote_site|recruit_agency
-    "  title varchar(200) NOT NULL,"
-    "  body text,"
-    "  region varchar(120),"
-    "  specialty text[] DEFAULT '{}',"
-    "  site_id uuid,"                            # 현장연계(선택, 채용연계 훅에 사용)
-    "  contact_method varchar(200),"            # 연락방식
-    "  status varchar(12) NOT NULL DEFAULT 'open',"  # open|closed
-    "  created_at timestamptz NOT NULL DEFAULT now(),"
-    "  updated_at timestamptz NOT NULL DEFAULT now()"
-    ")"
-)
-_JOB_APPLICATIONS_DDL = (
-    "CREATE TABLE IF NOT EXISTS job_applications ("
-    "  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),"
-    "  post_id uuid NOT NULL,"
-    "  applicant_user_id uuid NOT NULL,"
-    "  profile_personal_id uuid,"               # 불러오기(개인)
-    "  profile_company_id uuid,"                 # 불러오기(회사)
-    "  message text,"
-    "  status varchar(12) NOT NULL DEFAULT 'applied',"  # applied|accepted|rejected
-    "  created_at timestamptz NOT NULL DEFAULT now(),"
-    "  updated_at timestamptz NOT NULL DEFAULT now()"
-    ")"
-)
-_SITE_PROMOTIONS_DDL = (
-    "CREATE TABLE IF NOT EXISTS site_promotions ("
-    "  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),"
-    "  author_user_id uuid NOT NULL,"
-    "  site_id uuid,"
-    "  promo_type varchar(8) NOT NULL DEFAULT 'B2C',"  # B2C(고객유치)|B2B(대행유치)
-    "  title varchar(200) NOT NULL,"
-    "  body text,"
-    "  media_urls text[] DEFAULT '{}',"
-    "  region varchar(120),"
-    "  created_at timestamptz NOT NULL DEFAULT now(),"
-    "  updated_at timestamptz NOT NULL DEFAULT now()"
-    ")"
-)
+# ★[DDL/인덱스 SSOT] 5개 PUBLIC 테이블 DDL + 3개 인덱스는 database/sales_market_ddl.py 단일 정본을
+#   import 한다(상단 import 참조). 과거엔 같은 DDL 이 여기와 036 마이그레이션에 '복붙'으로 중복됐고,
+#   인덱스는 036 에만 있고 여기엔 없어 마이그레이션 미적용 환경에서 인덱스 없이 동작하는 드리프트가
+#   있었다. 정본을 공유 모듈로 추출해 두 소비자(이 _ensure / 036)가 byte-identical 문자열을 쓰도록 강제.
+
+# 런타임 DDL race 제거용 advisory-lock 키(임의 고유 상수, 충돌 회피). 트랜잭션 종료 시 자동 해제.
+_LOCK_MARKET_TABLES = 880421036
+# 프로세스 1회 게이트(읽기경로 매 요청 DDL/commit 직렬화 제거). asyncio.Lock 으로 동시 첫 호출 합류.
+_MARKET_READY = False
+_market_lock = asyncio.Lock()
 
 
-async def _ensure(db: AsyncSession) -> None:
-    """마켓 PUBLIC 테이블 멱등 생성(최초 호출 시 1회). 기존 sales/mh 테이블 무파괴.
+async def _ensure(db: AsyncSession | None = None) -> None:
+    """마켓 PUBLIC 테이블 멱등 보장(부팅 안전망) — 프로세스 1회만 실제 DDL 수행.
+
+    ★정본은 Alembic 036_sales_market_tables. 여기서는 마이그레이션 미적용 환경(개발/신규배포) 대비
+      테이블 5개 + 인덱스 3개를 CREATE ... IF NOT EXISTS 로 보장한다(파괴적 변경 없음). DDL/인덱스
+      문자열은 database/sales_market_ddl.py 정본을 import 해 036 과 byte-identical 로 쓴다(드리프트
+      제거 — 과거엔 인덱스가 036 에만 있고 여기엔 없어 미적용 환경이 인덱스 없이 동작했다). 최초 1회
+      성공 후엔 즉시 반환(no-op)해 '매 요청 DDL/commit'을 없앤다(과거엔 모든 마켓 요청마다 CREATE 반복).
+    동시 부팅(멀티프로세스) race 는 advisory-lock(pg_advisory_xact_lock, 트랜잭션 종료 시 자동해제)으로,
+    코루틴 경합은 asyncio.Lock 으로 막는다.
+
+    ★[부분커밋 차단] DDL+commit 은 항상 '별도 단명 세션'(async_session_factory)에서 수행한다.
+      호출자 세션(db)에서 DDL/commit 하면 같은 요청 안의 호출자 미커밋 쓰기가 휩쓸려 조기 부분커밋
+      되기 때문이다(commission.ensure_tax_pref 의 검증된 패턴). 인자 db 는 하위호환 위해 받지만
+      사용하지 않는다(별도 세션으로 DDL 수행).
 
     ★ 테이블명에 sales_/mh_ 접두를 쓰지 않으므로 RLS 부트스트랩 동적조회에서 자동 제외.
     """
-    await db.execute(text(_PROFILE_PERSONAL_DDL))
-    await db.execute(text(_PROFILE_COMPANY_DDL))
-    await db.execute(text(_JOB_POSTS_DDL))
-    await db.execute(text(_JOB_APPLICATIONS_DDL))
-    await db.execute(text(_SITE_PROMOTIONS_DDL))
+    global _MARKET_READY
+    if _MARKET_READY:  # 이미 보장됨 → DB 왕복 없이 즉시 반환.
+        return
+    async with _market_lock:  # 동시 첫 호출(코루틴 경합)을 1회로 합류.
+        if _MARKET_READY:
+            return
+        # ★별도 단명 세션 — 호출자 세션(db)의 미커밋 쓰기를 휩쓸지 않도록 DDL/commit 을 격리.
+        from app.core.database import async_session_factory
+        async with async_session_factory() as ddl_db:
+            # advisory-lock: 트랜잭션 종료(commit/rollback) 시 자동 해제.
+            await ddl_db.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": _LOCK_MARKET_TABLES})
+            for ddl in TABLE_DDLS:          # 테이블 5개(IF NOT EXISTS) — SSOT 정본.
+                await ddl_db.execute(text(ddl))
+            for idx in INDEX_DDLS:          # ★인덱스 3개 추가(036 과 동일) — 드리프트 해소.
+                await ddl_db.execute(text(idx))
+            await ddl_db.commit()
+        _MARKET_READY = True  # 성공 시에만 게이트 닫음(실패 시 다음 호출이 재시도).
 
 
 # ── 스키마 ───────────────────────────────────────────────────────────────────
@@ -212,6 +204,37 @@ class PromotionCreate(BaseModel):
     body: str | None = None
     media_urls: list[str] = Field(default_factory=list)
     region: str | None = None
+
+
+# ── 직원관리 집계 응답계약(Pydantic) — 프론트 StaffOverviewPanel.tsx 와 1:1 정합 ──
+# ★응답계약 SSOT(역할 분리): 본 staff_overview 는 '여러 현장의 현장 단위' 요약(현장별 멤버·계약·
+#   출근·수수료gross, 다현장 union)이다. 이는 sales/org/overview.py 의 team_overview(=한 현장의
+#   조직 노드 단위 로스터 TeamOverviewResponse)와 입도·범위가 다른 별개 계약으로, 두 응답을 합치지
+#   않고 '명확히 분리'한다. 본 응답의 단일 소비자는 StaffOverviewPanel.tsx 하나뿐이다(이중 구현 금지).
+class SiteStaffSummary(BaseModel):
+    """현장 1곳의 직원관리 요약(멤버·계약·출근·수수료gross)."""
+    site_id: str
+    site_name: str = "-"
+    member_count: int = 0
+    contract_count: int = 0
+    attendance_count: int = 0
+    commission_gross: int = 0
+
+
+class StaffOverviewTotals(BaseModel):
+    """집계 대상 현장들의 합계."""
+    member_count: int = 0
+    contract_count: int = 0
+    attendance_count: int = 0
+    commission_gross: int = 0
+
+
+class StaffOverviewResponse(BaseModel):
+    """직원관리 집계(scope=site|all) — 현장 단위 요약 리스트 + 합계."""
+    scope: str                         # 'site'(단일) | 'all'(내가 관리·소유하는 전 현장)
+    site_count: int = 0
+    sites: list[SiteStaffSummary] = Field(default_factory=list)
+    totals: StaffOverviewTotals = Field(default_factory=StaffOverviewTotals)
 
 
 _VALID_KIND = {"hire", "seek", "promote_site", "recruit_agency"}
@@ -625,6 +648,14 @@ async def _link_membership_on_accept(db: AsyncSession, site_id, applicant_user_i
       - 결정자(공고작성자)가 해당 현장의 관리자 역할이며
       - 지원자가 아직 그 현장에 active 멤버가 아닐 때
     추천코드 귀속·소셜그래프 자동연결은 별도 로직 부재 시 TODO(과설계 금지).
+
+    ★[silent-fail 제거] 과거엔 모든 예외를 무시하고 False 를 돌려, '채용은 accepted 인데 조직노드는
+      안 생긴' 유령 상태(데이터 불일치)를 은폐했다(테이블 부재·권한·구문·연결 오류가 전부 동일하게
+      삼켜짐). 이제 SQLSTATE 로 분류한다:
+        - 조직 테이블 미존재(42P01/42703) → '아직 조직도 미설치' 정상 noop(로그 info + False).
+          이 현장은 조직도를 안 쓰므로 연결할 노드 자체가 없다(채용결정은 정상 진행).
+        - 그 외 DB 오류(권한·연결·구문 등) → 분류 로깅 후 전파(raise). 멤버십 INSERT 가 실제로
+          실패했는데 'accepted' 만 커밋되는 은폐를 막는다(운영자가 실패를 인지하도록).
     """
     if site_id is None or post_kind not in {"hire", "recruit_agency"}:
         return False
@@ -650,6 +681,7 @@ async def _link_membership_on_accept(db: AsyncSession, site_id, applicant_user_i
             return True
 
         # 신규 MEMBER 노드 생성 — ltree path 는 현장 루트 하위 단순경로(고유 라벨).
+        # ★라벨은 영문 'm' 접두(영숫자) — 숫자 시작 라벨은 text2ltree 캐스트가 거부하므로 접두로 방지.
         node_id = uuid.uuid4()
         label = f"m{str(node_id).replace('-', '')[:16]}"
         name_row = (await db.execute(text("SELECT name FROM users WHERE id = :uid"),
@@ -663,8 +695,13 @@ async def _link_membership_on_accept(db: AsyncSession, site_id, applicant_user_i
         # MGM 추천코드 귀속은 Phase1-C referral 모듈로 구현됨(고객 방문/계약 경로에서 귀속).
         # 채용(B2B)은 고객귀속과 별개 흐름이므로 여기서는 멤버십 연결만 수행한다.
         return True
-    except Exception:  # noqa: BLE001 — 멤버십 연결 실패는 채용결정을 막지 않음(best-effort)
-        return False
+    except Exception as e:  # noqa: BLE001 — 분류: 정상 noop(테이블부재)만 흡수, 실오류는 전파
+        code = _missing_object_sqlstate(e)
+        if code:
+            logger.info("채용연계: 조직 테이블 미존재(%s) — 조직도 미설치 현장, 멤버십 연결 noop", code)
+            return False
+        logger.exception("채용연계: 멤버십 연결 실패(테이블부재 외 오류 — 전파, 채용결정과 함께 롤백)")
+        raise
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -754,8 +791,16 @@ async def _managed_site_ids(db: AsyncSession, user) -> list[str]:
     return list(sids)
 
 
-async def _site_staff_summary(db: AsyncSession, site_id: str) -> dict:
-    """현장 1곳의 멤버 실적/출근/계약/수수료 요약 — 기존 sales 집계 재사용(best-effort)."""
+async def _site_staff_summary(db: AsyncSession, site_id: str) -> SiteStaffSummary:
+    """현장 1곳의 멤버 실적/출근/계약/수수료 요약 — 기존 sales 집계 재사용.
+
+    ★[silent-fail 제거] 계약·출근·수수료 집계의 예외를 무조건 0으로 삼던 것을 SQLSTATE 분류로
+      바꾼다. 집계는 count(*)/sum() 이라 특정 컬럼을 지목하지 않으므로, '테이블 미존재(42P01)'만
+      '정상 0(아직 안 만든 집계 대상)'으로 보고 0 을 쓰고, 컬럼 미존재(42703=스키마 드리프트)를
+      포함한 그 외 DB 오류(권한·연결·구문 등)는 분류 로깅 후 전파한다(은폐 금지). 공유
+      _missing_object_sqlstate(42P01+42703) 대신 _missing_table_sqlstate(42P01만)를 쓰는 이유:
+      42703 까지 흡수하면 '있어야 할 컬럼이 사라진' 진짜 결함이 '계약/매출 0' 으로 은폐된다.
+    """
     member_cnt = (await db.execute(text(
         "SELECT count(*) FROM sales_org_nodes WHERE site_id = :sid AND active = true"),
         {"sid": site_id})).scalar() or 0
@@ -766,38 +811,61 @@ async def _site_staff_summary(db: AsyncSession, site_id: str) -> dict:
     try:
         contracts = (await db.execute(text(
             "SELECT count(*) FROM sales_contracts WHERE site_id = :sid"), {"sid": site_id})).scalar() or 0
-    except Exception:  # noqa: BLE001 — 테이블/컬럼 차이 시 0
-        contracts = 0
+    except Exception as e:  # noqa: BLE001 — 테이블부재(42P01)만 정상0, 컬럼누락(42703)·실오류는 전파
+        if _missing_table_sqlstate(e):
+            logger.info("staff_summary: sales_contracts 미존재(42P01) — 계약 0")
+            contracts = 0
+        else:
+            logger.exception("staff_summary: 계약 집계 실패(테이블부재 외 오류 — 전파)")
+            raise
 
     attendance = 0
     try:
         attendance = (await db.execute(text(
             "SELECT count(*) FROM sales_staff_attendance WHERE site_id = :sid"),
             {"sid": site_id})).scalar() or 0
-    except Exception:  # noqa: BLE001
-        attendance = 0
+    except Exception as e:  # noqa: BLE001 — 테이블부재(42P01)만 정상0, 컬럼누락(42703)·실오류는 전파
+        if _missing_table_sqlstate(e):
+            logger.info("staff_summary: sales_staff_attendance 미존재(42P01) — 출근 0")
+            attendance = 0
+        else:
+            logger.exception("staff_summary: 출근 집계 실패(테이블부재 외 오류 — 전파)")
+            raise
 
     commission_gross = 0
     try:
+        # ★[HIGH·correctness(iter-6)] 과거 'sum(e.amount)' 는 sales_commission_events 에 없는 컬럼을
+        #   지목했다(events 엔 base_amount 만 있고 amount 는 sales_commission_splits 의 컬럼이다 —
+        #   commission_mh_harness.py 의 SalesCommissionEvent.base_amount / SalesCommissionSplit.amount).
+        #   iter-3 가 42703(컬럼누락)을 더 이상 흡수하지 않게 바꾸면서, 테이블이 존재하는 모든 라이브
+        #   DB 에서 이 집계가 42703 으로 전파돼 staff_overview 가 500 이 됐다. base_amount(수수료
+        #   베이스액=현장 gross 의미) 로 교정한다 — 컬럼 계약은 test_sales_commission_event_column_contract
+        #   로 고정(ORM introspection 으로 컬럼명 드리프트 차단).
         row = (await db.execute(text(
-            "SELECT coalesce(sum(e.amount),0) FROM sales_commission_events e WHERE e.site_id = :sid"),
+            "SELECT coalesce(sum(e.base_amount),0) FROM sales_commission_events e WHERE e.site_id = :sid"),
             {"sid": site_id})).first()
         commission_gross = int(row[0]) if row and row[0] is not None else 0
-    except Exception:  # noqa: BLE001
-        commission_gross = 0
+    except Exception as e:  # noqa: BLE001 — 테이블부재(42P01)만 정상0, 컬럼누락(42703)·실오류는 전파
+        if _missing_table_sqlstate(e):
+            logger.info("staff_summary: sales_commission_events 미존재(42P01) — 수수료 0")
+            commission_gross = 0
+        else:
+            logger.exception("staff_summary: 수수료 집계 실패(테이블부재 외 오류 — 전파)")
+            raise
 
-    return {
-        "site_id": site_id, "site_name": site_name or "-",
-        "member_count": int(member_cnt), "contract_count": int(contracts),
-        "attendance_count": int(attendance), "commission_gross": commission_gross,
-    }
+    return SiteStaffSummary(
+        site_id=site_id, site_name=site_name or "-",
+        member_count=int(member_cnt), contract_count=int(contracts),
+        attendance_count=int(attendance), commission_gross=commission_gross,
+    )
 
 
-@market_router.get("/staff/overview", summary="직원관리 집계(scope=site|all)")
+@market_router.get("/staff/overview", summary="직원관리 집계(scope=site|all)",
+                   response_model=StaffOverviewResponse)
 async def staff_overview(scope: str = Query(default="all"),
                          site_id: uuid.UUID | None = Query(default=None),
                          db: AsyncSession = Depends(get_db),
-                         user=Depends(get_current_user)) -> dict:
+                         user=Depends(get_current_user)) -> StaffOverviewResponse:
     if scope not in {"site", "all"}:
         raise HTTPException(400, "scope 는 site|all 중 하나여야 합니다")
     await _ensure(db)  # market 테이블 보장(혼합 호출 안전)
@@ -812,11 +880,16 @@ async def staff_overview(scope: str = Query(default="all"),
     else:
         target = managed
 
+    # 현장 N개를 호출자 요청세션(db) 하나로 순차 집계한다. _ensure 와 동일 엔진(app.core.database)을
+    # 재사용해 엔진 혼용(core 5432 vs apps.api 5444)을 원천 차단한다 — _ensure 가 만든 테이블을 같은
+    # 엔진으로 읽으므로 SSOT 일관성이 보장된다.
+    # backlog: 다현장 N+1 직렬 라운드트립은 정확·유계지만, 추후 '동일 엔진' 세마포어 병렬화로 최적화
+    #          (별도 엔진 팬아웃 금지 — SSOT 위반). 이번엔 정확성 우선으로 직렬 유지.
     sites = [await _site_staff_summary(db, sid) for sid in target]
-    totals = {
-        "member_count": sum(s["member_count"] for s in sites),
-        "contract_count": sum(s["contract_count"] for s in sites),
-        "attendance_count": sum(s["attendance_count"] for s in sites),
-        "commission_gross": sum(s["commission_gross"] for s in sites),
-    }
-    return {"scope": scope, "site_count": len(sites), "sites": sites, "totals": totals}
+    totals = StaffOverviewTotals(
+        member_count=sum(s.member_count for s in sites),
+        contract_count=sum(s.contract_count for s in sites),
+        attendance_count=sum(s.attendance_count for s in sites),
+        commission_gross=sum(s.commission_gross for s in sites),
+    )
+    return StaffOverviewResponse(scope=scope, site_count=len(sites), sites=sites, totals=totals)

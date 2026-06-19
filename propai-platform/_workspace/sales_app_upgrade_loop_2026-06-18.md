@@ -109,3 +109,11 @@ P0: (a)마이그레이션·부트스트랩 FORCE를 **정책 보유 테이블에
 **큐**: #4 → #5(조직도 5.8) → #7(계약CRM 6.8) → #2(워크스페이스 7.8) → #8(분양가 7.1) → #9(해촉외 7.2) → #6(세대 8.1)
 **효율정책**: 각 서브시스템 critical/high 0까지 2-3 iter 수렴 후 IMPROVED 커밋·이동, medium/low는 backlog 정직표기, 라이브검증은 deploy-pending. **검증 통과(IMPROVED↑)분만 커밋·푸시**(main 직푸시X·머지=통합자).
 **누적**: 커밋 10건, 위험/무진전 22회 차단(앱브릭·권한상승·false assurance·머니패스 누수·반쪽출하 등).
+
+| 4 | 수납·대출·보증 | 6.5 | 7.0 | 0(잔여 deploy-pending) | 472bea55 | 5 iter(스파이럴→교정탈출). overdue/repay/allocations/프론트 배선. backlog=savepoint flush 의미론(실DB) |
+**4개 완료**: #10(7.5)·#1(8.5)·#3(8.0)·#4(7.0). 다음 #5(조직 5.8)→#7→#2→#8→#9→#6. 커밋 11건.
+
+| 5 | 조직도·직원 | 5.8 | 8.0 | 0 | (커밋대기) | 7 iter. IDOR전수봉합(create_node·move_subtree·descendants·ancestors_path site_id+deleted_at)·사이클가드·fail-closed authz(DIRECTOR키+키셋패리티)·잠복500수정(sum(e.amount)→base_amount)·DDL SSOT(sales_market_ddl+036)·라벨SSOT(DIRECTOR 트리=로스터 정합)·프론트 silent-fail제거·advisory-lock TOCTOU. 49백+9프론트 테스트 |
+
+**#5 종료 backlog(MEDIUM/LOW 이연)**: ①commission_gross status필터(market.py:845 REVERSED 환수분 gross 과대표시 — settle_summary status='SPLIT' 규약과 미배선, WHERE status IN('PENDING','SPLIT') 추가) ②move_subtree 직급위계검증(TEAM_LEADER→AGENCY 단계건너뛰기 이동 가능, 위계단조성+422) ③move_subtree node.path stale refresh ④no-op 이동 early-return ⑤StaffOverviewPanel .catch status분류(OrgTree와 정직성 비대칭) ⑥advisory-lock 키 중앙레지스트리 ⑦라벨 codegen SSOT ⑧staff_overview N+1 동일엔진 세마포어 병렬화. ★전부 deploy-pending(라이브 PG·ltree UPDATE·036마이그·vitest·tsc·동시성).
+**5개 완료**: #10(7.5)·#1(8.5)·#3(8.0)·#4(7.0)·#5(8.0). 다음 #7(6.8)→#2(7.8)→#8(7.1)→#9(7.2)→#6(8.1).

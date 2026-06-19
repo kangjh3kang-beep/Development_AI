@@ -3,14 +3,22 @@
 import uuid
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, File, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
 from app.api.deps_sales import SalesCtx, require_role, sales_ctx
 from app.services.sales.contract.service import cancel_contract, create_contract, sign_contract
-from app.services.sales.org.service import create_node, move_subtree, seed_default_org
+from app.services.sales.org.overview import TeamOverviewResponse, team_overview
+from app.services.sales.org.service import (
+    OrgCrossSiteError,
+    OrgCycleError,
+    OrgNodeNotFoundError,
+    create_node,
+    move_subtree,
+    seed_default_org,
+)
 from app.services.sales.pricing.engine import (
     apply_group_pricing,
     generate_price_table,
@@ -23,14 +31,23 @@ from apps.api.database.models.sales.units_pricing import SalesUnitGeneration, Sa
 
 actions_router = APIRouter(tags=["sales-actions"])
 
-# P2 직급별 등록권한: 각 node_type 을 등록할 수 있는 '최소 상위 역할' 집합.
-# 시행사→대행사, 대행사→본부장, 본부장→팀장, 팀장→직원 (상위 역할·관리자는 항상 허용).
+# P2 직급별 등록권한: 각 node_type 을 등록할 수 있는 '상위 역할' 집합(상위 역할·관리자는 항상 허용).
+# 계층: 시행사(DEVELOPER)＞대행사(AGENCY)＞대대행(SUBAGENCY)＞총괄본부장(GM_DIRECTOR)＞
+#       본부장(DIRECTOR)＞팀장(TEAM_LEADER)＞직원(MEMBER).
+# ★[HIGH·fail-open authz 해소(iter-4)] 과거엔 'DIRECTOR' 키가 없어 add_node 에서
+#   _REGISTER_MATRIX.get('DIRECTOR')=None → 'allowed is not None' 가 False → 등록 권한사다리가
+#   통째로 스킵되고 require_role 게이트만 남았다(권한 우회). DIRECTOR 는 OrgTree.tsx 기본 선택값
+#   (useState('DIRECTOR'))이자 overview._LABEL 의 '이사' 라벨 인식=실사용 경로다. DIRECTOR 키를
+#   더해 권한사다리를 모든 직급에 빠짐없이 적용한다(DIRECTOR 는 GM_DIRECTOR 이상만 등록 가능).
+#   또 DIRECTOR 는 TEAM_LEADER 보다 상위이므로, TEAM_LEADER/MEMBER 등록 가능집합에도 DIRECTOR 를
+#   포함해 '상위 직급은 하위가 가능한 등록을 항상 할 수 있다'는 권한 단조성을 지킨다.
 _REGISTER_MATRIX = {
     "AGENCY": {"DEVELOPER", "SUPERADMIN"},
     "SUBAGENCY": {"AGENCY", "DEVELOPER", "SUPERADMIN"},
     "GM_DIRECTOR": {"AGENCY", "SUBAGENCY", "DEVELOPER", "SUPERADMIN"},
-    "TEAM_LEADER": {"GM_DIRECTOR", "AGENCY", "SUBAGENCY", "DEVELOPER", "SUPERADMIN"},
-    "MEMBER": {"TEAM_LEADER", "GM_DIRECTOR", "AGENCY", "SUBAGENCY", "DEVELOPER", "SUPERADMIN"},
+    "DIRECTOR": {"GM_DIRECTOR", "AGENCY", "SUBAGENCY", "DEVELOPER", "SUPERADMIN"},
+    "TEAM_LEADER": {"DIRECTOR", "GM_DIRECTOR", "AGENCY", "SUBAGENCY", "DEVELOPER", "SUPERADMIN"},
+    "MEMBER": {"TEAM_LEADER", "DIRECTOR", "GM_DIRECTOR", "AGENCY", "SUBAGENCY", "DEVELOPER", "SUPERADMIN"},
 }
 
 # 자주 쓰는 역할 집합(시그니처 길이·중복 축소). require_role(*상수) 로 전개.
@@ -50,23 +67,41 @@ _R_TAXPREF = ("DEVELOPER", "AGENCY", "SUBAGENCY", "GM_DIRECTOR", "DIRECTOR", "TE
 @actions_router.post("/org/nodes")
 async def add_node(body: dict, db: AsyncSession = Depends(get_db),
                    ctx: SalesCtx = Depends(require_role(*_R_ORG_ADD))):
-    ntype = body["node_type"]
+    # ★[입력검증] node_type 직접 인덱싱은 키 누락 시 KeyError→500. body.get + 명시 400 으로 전환.
+    ntype = body.get("node_type")
+    if not ntype:
+        raise HTTPException(400, "node_type(직급 유형) 필요")
+    # ★[fail-closed authz(iter-4)] 과거엔 matrix 미등재 node_type 이면 allowed=None → 권한사다리를
+    #   통째로 스킵(fail-open)했다. 이제 미등재 node_type 은 '거부(403)'가 기본이다. 등록 가능한
+    #   직급은 _REGISTER_MATRIX 에 명시된 키뿐이며, 그 외(오타·미정의 직급)는 require_role 만으로
+    #   통과시키지 않는다(권한 우회 차단). 등재 직급은 caller 역할이 허용집합에 있어야 한다.
     allowed = _REGISTER_MATRIX.get(ntype)
-    if allowed is not None and ctx.role not in allowed:
-        from fastapi import HTTPException
+    if allowed is None or ctx.role not in allowed:
         raise HTTPException(403, f"{ntype} 등록 권한이 없습니다(상위 직급만 등록 가능).")
-    node = await create_node(db, ctx.site_id, ntype, body.get("parent_id"),
-                             user_id=body.get("user_id"), company_id=body.get("company_id"),
-                             display_name=body.get("display_name"))
+    # ★[IDOR·미존재 부모 대칭(iter-3)] create_node 는 parent_id 가 타 현장 노드이거나 미존재면
+    #   ValueError 를 던진다(과거엔 scalar_one 의 NoResultFound→500 누출 + 교차현장 graft 가능).
+    #   node_type 누락(400)과 대칭이 되도록 404(부모 못 찾음)로 매핑한다(클라이언트 입력문제이지
+    #   서버오류가 아님 — 500 누출 차단).
+    try:
+        node = await create_node(db, ctx.site_id, ntype, body.get("parent_id"),
+                                 user_id=body.get("user_id"), company_id=body.get("company_id"),
+                                 display_name=body.get("display_name"))
+    except ValueError as e:
+        await db.rollback()
+        raise HTTPException(404, str(e)) from e
     await db.commit()
     return {"id": str(node.id), "path": str(node.path)}
 
 
-@actions_router.get("/org/team-overview")
+@actions_router.get("/org/team-overview", response_model=TeamOverviewResponse)
 async def org_team_overview(db: AsyncSession = Depends(get_db),
-                            ctx: SalesCtx = Depends(require_role(*_R_TEAM))):
-    """P2-3 내 하위 조직 인원의 계약·고객·업무일지 집계+로스터(직급별 관리)."""
-    from app.services.sales.org.overview import team_overview
+                            ctx: SalesCtx = Depends(require_role(*_R_TEAM))) -> TeamOverviewResponse:
+    """P2-3 내 하위 조직(현장 단위) 노드 로스터+활동 집계(직급별 관리).
+
+    ★응답계약 SSOT: 반환 모델은 TeamOverviewResponse(노드 단위)다. 이는 market.staff_overview
+      (현장 단위 다현장 요약)와 입도·범위가 다른 별개 계약으로, 프론트 OrgTree.tsx 가 단일
+      호출경로로만 소비한다(StaffOverviewPanel 과 혼동·이중 구현 금지). overview.py 문서 참조.
+    """
     return await team_overview(db, ctx.site_id, getattr(ctx, "org_path", None) or None)
 
 
@@ -74,8 +109,6 @@ async def org_team_overview(db: AsyncSession = Depends(get_db),
 async def org_assign_user(node_id: uuid.UUID, body: dict, db: AsyncSession = Depends(get_db),
                           ctx: SalesCtx = Depends(require_role(*_R_ORG_ADD))):
     """P2-3 노드 인원배정 — 같은 조직 사용자를 이메일로 노드에 배정(미배정 해소). body.email"""
-    from fastapi import HTTPException
-
     from app.services.sales.org.service import assign_user_to_node
     try:
         res = await assign_user_to_node(db, ctx.site_id, node_id, body.get("email", ""))
@@ -89,8 +122,6 @@ async def org_assign_user(node_id: uuid.UUID, body: dict, db: AsyncSession = Dep
 async def org_unassign_user(node_id: uuid.UUID, db: AsyncSession = Depends(get_db),
                             ctx: SalesCtx = Depends(require_role(*_R_ORG_ADD))):
     """P2-3 노드 인원배정 해제 — 노드를 미배정으로 되돌림(노드·실적 유지)."""
-    from fastapi import HTTPException
-
     from app.services.sales.org.service import unassign_user
     try:
         res = await unassign_user(db, ctx.site_id, node_id, by=getattr(ctx.user, "id", None))
@@ -128,8 +159,6 @@ async def accounting_entry(body: dict, db: AsyncSession = Depends(get_db),
                            ctx: SalesCtx = Depends(require_role(
                                "GM_DIRECTOR", "SUBAGENCY", "AGENCY", "DEVELOPER", "SUPERADMIN"))):
     """현장 회계 항목 등록(인건비/경비/공과금/광고비/기타)."""
-    from fastapi import HTTPException
-
     from app.services.sales.admin.console import add_accounting_entry
     try:
         return await add_accounting_entry(
@@ -159,8 +188,6 @@ async def staff_wage_set(body: dict, db: AsyncSession = Depends(get_db),
                          ctx: SalesCtx = Depends(require_role(
                              "TEAM_LEADER", "GM_DIRECTOR", "SUBAGENCY", "AGENCY", "DEVELOPER", "SUPERADMIN"))):
     """직원 단가 설정(일급/시급/월급) — 급여 자동산정 기준."""
-    from fastapi import HTTPException
-
     from app.services.sales.admin.console import set_staff_wage
     try:
         return await set_staff_wage(db, ctx.site_id, body["staff_id"],
@@ -175,8 +202,6 @@ async def payroll_compute(ym: str, db: AsyncSession = Depends(get_db),
                           ctx: SalesCtx = Depends(require_role(
                               "TEAM_LEADER", "GM_DIRECTOR", "SUBAGENCY", "AGENCY", "DEVELOPER", "SUPERADMIN"))):
     """직원별 급여 자동산정(근태×단가). ym=YYYY-MM."""
-    from fastapi import HTTPException
-
     from app.services.sales.admin.console import _validate_ym, compute_payroll
     # ym 형식 검증(YYYY-MM·월01~12). 가드가 없으면 compute_payroll→_month_bounds→_validate_ym
     # 에서 비정규 ym(2026-13·2026/06·2026-6·공백)이 ValueError→HTTP500 으로 누출된다.
@@ -193,8 +218,6 @@ async def payroll_post(body: dict, db: AsyncSession = Depends(get_db),
                        ctx: SalesCtx = Depends(require_role(
                            "GM_DIRECTOR", "SUBAGENCY", "AGENCY", "DEVELOPER", "SUPERADMIN"))):
     """산정 급여 총액을 회계 인건비(LABOR)로 자동전기(월 중복 방지). body.ym=YYYY-MM."""
-    from fastapi import HTTPException
-
     from app.services.sales.admin.console import _validate_ym, post_payroll_to_accounting
     ym = body.get("ym")
     if not ym:
@@ -240,7 +263,39 @@ async def list_contracts(db: AsyncSession = Depends(get_db),
 @actions_router.patch("/org/nodes/{node_id}/move")
 async def move_node(node_id: uuid.UUID, body: dict, db: AsyncSession = Depends(get_db),
                     ctx: SalesCtx = Depends(require_role("AGENCY", "DEVELOPER"))):
-    await move_subtree(db, node_id, body["new_parent_id"], by=ctx.user.id)
+    """노드(및 하위)를 새 상위 아래로 이동. body.new_parent_id(UUID 필수).
+
+    ★[입력검증] 과거엔 body['new_parent_id'] 직접 인덱싱 → 키 누락 시 KeyError 가 전역핸들러
+      500 으로 누출됐다(클라이언트 입력오류를 서버오류로 오표시). body.get + UUID 파싱을 분리해
+      누락/형식오류를 400 으로 돌린다.
+    ★[현장격리·사이클] move_subtree 에 ctx.site_id 를 넘겨 교차현장 이동을 차단한다. 서비스가
+      던지는 거부를 사유별로 분리 매핑한다(add_node 404분리와 대칭):
+        - 미존재 노드(OrgNodeNotFoundError) → 404(클라이언트가 없는 노드를 지목 — 서버오류 아님)
+        - 사이클·자기참조(OrgCycleError) → 422(처리 가능한 형식이나 의미상 불가능한 입력)
+        - 타 현장 소속·격리/권한 위반(OrgCrossSiteError·그 외 ValueError) → 403
+      모두 ValueError 하위라 좁은 사유부터(NotFound→Cycle→CrossSite) 먼저 잡고, 남은
+      ValueError 는 격리/권한 위반으로 보아 403 으로 떨어뜨린다(정직성: 사유를 상태코드로 노출).
+    """
+    raw = body.get("new_parent_id")
+    if raw is None:
+        raise HTTPException(400, "new_parent_id(새 상위 노드 식별자) 필요")
+    try:
+        new_parent_id = uuid.UUID(str(raw))
+    except (ValueError, TypeError) as e:
+        raise HTTPException(400, "new_parent_id 형식이 올바르지 않습니다(UUID 필요)") from e
+    try:
+        await move_subtree(db, ctx.site_id, node_id, new_parent_id, by=ctx.user.id)
+    except OrgNodeNotFoundError as e:
+        await db.rollback()
+        raise HTTPException(404, str(e)) from e
+    except OrgCycleError as e:
+        await db.rollback()
+        raise HTTPException(422, str(e)) from e
+    except (OrgCrossSiteError, ValueError) as e:
+        # OrgCrossSiteError(격리)와 그 외 ValueError(권한 등) — 모두 403. CrossSite 가 ValueError
+        # 하위라 같은 핸들러로 묶어도 동일 결과지만, 의도를 명시하려 함께 나열한다.
+        await db.rollback()
+        raise HTTPException(403, str(e)) from e
     await db.commit()
     return {"ok": True}
 
@@ -350,7 +405,6 @@ async def contract_create(body: dict, db: AsyncSession = Depends(get_db),
     body: { unit_id(필수), customer_id?, round_id?, total_price? }
     금액 미지정 시 세대 가격표에서 자동 산출. 생성 후 수납/대출/전매 화면에서 즉시 선택 가능.
     """
-    from fastapi import HTTPException
     try:
         unit_id = uuid.UUID(str(body["unit_id"]))
     except (KeyError, ValueError, TypeError):
@@ -375,7 +429,6 @@ async def contract_create(body: dict, db: AsyncSession = Depends(get_db),
 @actions_router.post("/contracts/{contract_id}/sign")
 async def contract_sign(contract_id: uuid.UUID, db: AsyncSession = Depends(get_db),
                         ctx: SalesCtx = Depends(sales_ctx)):
-    from fastapi import HTTPException
     try:
         c = await sign_contract(db, ctx.site_id, contract_id, by=ctx.user.id)
     except ValueError as e:
@@ -400,8 +453,6 @@ async def provision(body: dict, db: AsyncSession = Depends(get_db), user=Depends
     구독자 포함 인증 사용자 누구나 본인 테넌트에 현장을 만들 수 있고, 생성 시
     관리자 책정 '분양현장 생성 사용료'(billing service_fees.sales_provision)가 부과된다.
     생성한 현장은 본인 테넌트 소유 → sales_ctx가 DEVELOPER로 인정(운영까지 일관 동작)."""
-    from fastapi import HTTPException
-
     from app.services.billing import billing_service
     from app.services.sales.provision import provision_site
 
@@ -441,8 +492,6 @@ async def get_tax_pref(node_id: str, db: AsyncSession = Depends(get_db),
     ★머니패스 열람 게이트: 과거엔 sales_ctx(현장 멤버십)만 의존해 역할 게이트가 전무했다
       (최하위 MEMBER 도 타인 세금유형 열람 가능). 설정(POST)과 동일하게 _R_TAXPREF(TEAM_LEADER+)
       게이트를 걸어 조회/설정 권한을 대칭으로 맞춘다(타인 분개정보 무단 열람 차단)."""
-    from fastapi import HTTPException
-
     from app.services.sales.commission.engine import get_node_tax_type
     # ★[UUID 가드 대칭(iter-6)] set_tax_pref 와 동일하게 node_id 파싱 실패를 전용 400 으로 돌린다.
     #   과거엔 uuid.UUID(node_id) 무가드 호출이 잘못된 쿼리파라미터(비-UUID)에서 ValueError 를 던져
@@ -461,8 +510,6 @@ async def get_tax_pref(node_id: str, db: AsyncSession = Depends(get_db),
 async def commission_settle_summary(node_id: str, db: AsyncSession = Depends(get_db),
                                     ctx: SalesCtx = Depends(require_role(*_R_TEAM))):
     """#5 해촉/정산 — 노드(영업사원) 수수료 정산 명세(기발생−기지급=미지급, 원천/부가세 분개)."""
-    from fastapi import HTTPException
-
     from app.services.sales.commission.engine import settle_summary
     # ★[UUID 가드 대칭(iter-6)] get_tax_pref/set_tax_pref 와 동일하게 node_id 형식오류를 전용 400 으로.
     #   무가드 uuid.UUID(node_id)는 비-UUID 쿼리파라미터에서 전역핸들러 500(클라이언트 입력오류 오표시).
@@ -477,8 +524,6 @@ async def commission_settle_summary(node_id: str, db: AsyncSession = Depends(get
 async def set_tax_pref(body: dict, db: AsyncSession = Depends(get_db),
                        ctx: SalesCtx = Depends(require_role(*_R_TAXPREF))):
     """수령자 세금유형 설정 — 3.3% 원천징수(WITHHOLDING) 또는 부가세 10%(VAT) 중 선택."""
-    from fastapi import HTTPException
-
     from app.services.sales.commission.engine import CrossSiteOwnershipError, set_node_tax_type
     # ★[오안내 해소(iter-5)] node_id 의 UUID 파싱을 try 진입 전에 분리한다. 과거엔 try 안에서
     #   uuid.UUID(body["node_id"]) 가 던지는 ValueError 가 아래 'except ValueError → tax_type 이
@@ -526,8 +571,6 @@ async def unit_lifecycle_action(unit_id: uuid.UUID, body: dict, db: AsyncSession
                                 ctx: SalesCtx = Depends(require_role(*_R_SALES_ALL))):
     """세대 클릭 메뉴 액션 — HOLD_REQUEST(지정대기)/HOLD_CANCEL/CONTRACT_WAIT(계약대기)/
     CONTRACT_CANCEL/CONTRACT_SIGN(계약체결)/CONTRACT_TERMINATE/NOTE(특이사항). 상태전이+해시체인 원장."""
-    from fastapi import HTTPException
-
     from app.services.sales.units.lifecycle_actions import unit_action
     try:
         return await unit_action(db, ctx.site_id, unit_id, body.get("action", ""),
@@ -564,8 +607,6 @@ async def draw_groups_list(db: AsyncSession = Depends(get_db), ctx: SalesCtx = D
 @actions_router.post("/draw/groups")
 async def draw_group_create(body: dict, db: AsyncSession = Depends(get_db),
                             ctx: SalesCtx = Depends(require_role(*_DRAW_MGR))):
-    from fastapi import HTTPException
-
     from app.services.sales.draw.draw_engine import create_group
     try:
         return await create_group(db, ctx.site_id, body.get("name", ""))
@@ -601,8 +642,6 @@ async def draw_from_customers(group_id: uuid.UUID, body: dict, db: AsyncSession 
 async def draw_from_winners(group_id: uuid.UUID, body: dict, db: AsyncSession = Depends(get_db),
                             ctx: SalesCtx = Depends(require_role(*_DRAW_MGR))):
     """청약 당첨자 명부 → 동·호 추첨 대상자 시드(청약→당첨→동·호배정 흐름 연결). body.announcement_id 필수."""
-    from fastapi import HTTPException
-
     from app.services.sales.draw.draw_engine import from_winners
     ann = body.get("announcement_id")
     if not ann:
@@ -617,8 +656,6 @@ async def draw_from_winners(group_id: uuid.UUID, body: dict, db: AsyncSession = 
 async def draw_import_excel(group_id: uuid.UUID, file: UploadFile = File(...), db: AsyncSession = Depends(get_db),
                             ctx: SalesCtx = Depends(require_role(*_DRAW_MGR))):
     """고객명부 Excel(.xlsx) 업로드 → 대상자 등록(이름·연락처 자동인식)."""
-    from fastapi import HTTPException
-
     from app.services.sales.draw.draw_engine import add_candidates, parse_excel
     try:
         content = await file.read()
@@ -634,8 +671,6 @@ async def draw_import_excel(group_id: uuid.UUID, file: UploadFile = File(...), d
 async def draw_run(group_id: uuid.UUID, candidate_id: uuid.UUID, db: AsyncSession = Depends(get_db),
                    ctx: SalesCtx = Depends(require_role("MEMBER", *_DRAW_MGR))):
     """즉석추첨 — 대상자가 누르면 남은 동호 중 무작위 1개 배정·공개(seed 해시체인 감사)."""
-    from fastapi import HTTPException
-
     from app.services.sales.draw.draw_engine import draw_for_candidate
     try:
         return await draw_for_candidate(db, ctx.site_id, group_id, candidate_id, by=getattr(ctx.user, "id", None))
@@ -647,8 +682,6 @@ async def draw_run(group_id: uuid.UUID, candidate_id: uuid.UUID, db: AsyncSessio
 async def draw_candidate_contract(group_id: uuid.UUID, candidate_id: uuid.UUID, db: AsyncSession = Depends(get_db),
                                   ctx: SalesCtx = Depends(require_role(*_DRAW_MGR))):
     """추첨 배정(HOLD) 당첨자 → 계약 생성(청약→당첨→동·호배정→계약 완결). 멱등(기존 계약 시 반환)."""
-    from fastapi import HTTPException
-
     from app.services.sales.draw.draw_engine import contract_from_candidate
     try:
         return await contract_from_candidate(db, ctx.site_id, group_id, candidate_id, by=getattr(ctx.user, "id", None))
@@ -660,8 +693,6 @@ async def draw_candidate_contract(group_id: uuid.UUID, candidate_id: uuid.UUID, 
 async def draw_group_status(group_id: uuid.UUID, db: AsyncSession = Depends(get_db),
                             ctx: SalesCtx = Depends(sales_ctx)):
     """추첨그룹 현황 — 대상자 순번·배정세대·진행률·남은 세대."""
-    from fastapi import HTTPException
-
     from app.services.sales.draw.draw_engine import group_status
     try:
         return await group_status(db, ctx.site_id, group_id)

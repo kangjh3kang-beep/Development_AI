@@ -140,7 +140,7 @@ async def split_commission(db: AsyncSession, site_id, contract):
     ev = SalesCommissionEvent(site_id=site_id, contract_ext_id=contract.id, base_amount=total, status="PENDING")
     db.add(ev)
     await db.flush()
-    chain = await ancestors_path(db, contract.member_node_id)  # [대행사 … 팀원]
+    chain = await ancestors_path(db, site_id, contract.member_node_id)  # [대행사 … 팀원] — 본 현장 격리
     if not chain:
         ev.status = "SPLIT"
         await db.flush()
