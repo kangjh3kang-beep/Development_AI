@@ -2,6 +2,7 @@ import { getDictionary } from "@/i18n/get-dictionary";
 import { isValidLocale, type Locale } from "@/i18n/config";
 import { DeliberationConsole } from "@/components/deliberation/DeliberationConsole";
 import { EngineHealthCard } from "@/components/deliberation/EngineHealthCard";
+import { ShadowConvergenceCard } from "@/components/deliberation/ShadowConvergenceCard";
 
 /**
  * AI 심의분석 엔진 — 차세대 비전 페이지.
@@ -88,10 +89,13 @@ export default async function DeliberationReviewPage({
         </p>
       </section>
 
-      {/* 엔진 연결 상태 — BFF /api/v1/deliberation/health(화이트리스트) 헬스카드 */}
-      <EngineHealthCard />
+      {/* 운영 카드 — 엔진 헬스(BFF health) + 중심엔진 수렴(shadow stats) */}
+      <section className="grid gap-4 md:grid-cols-2">
+        <EngineHealthCard />
+        <ShadowConvergenceCard />
+      </section>
 
-      {/* 라이브 콘솔 — 심의분석 엔진(propai-review) /analyze 배선 */}
+      {/* 라이브 콘솔 — 중심엔진 BFF /api/v1/deliberation/analyze 경유 */}
       <DeliberationConsole />
     </div>
   );
