@@ -5,8 +5,19 @@ import { useParams, useRouter } from "next/navigation";
 import { useProjectStore } from "@/store/useProjectStore";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
-import { GlobalAddressSearch, type AddressEntry } from "@/components/common/GlobalAddressSearch";
-import { ImageUpload } from "@/components/ui/ImageUpload";
+import dynamic from "next/dynamic";
+import type { AddressEntry } from "@/components/common/GlobalAddressSearch";
+// ★성능: 무거운 주소검색/이미지업로드 폼을 dynamic(ssr:false)로 분리해 page 청크·hydration을 줄인다.
+//   '프로젝트 생성' 클릭→이동 시 STEP01 셸(제목·프로젝트명)은 즉시 표시되고 폼은 lazy 로드(스켈레톤)
+//   → 서버 RSC 0.3s·번들 정상(57KB)인데 클라이언트 마운트만 느리던 전환 체감을 완화한다.
+const GlobalAddressSearch = dynamic(
+  () => import("@/components/common/GlobalAddressSearch").then((m) => ({ default: m.GlobalAddressSearch })),
+  { ssr: false, loading: () => <div className="h-44 animate-pulse rounded-2xl border border-[var(--line)] bg-[var(--surface)]" /> },
+);
+const ImageUpload = dynamic(
+  () => import("@/components/ui/ImageUpload").then((m) => ({ default: m.ImageUpload })),
+  { ssr: false, loading: () => <div className="h-40 animate-pulse rounded-2xl border border-[var(--line)] bg-[var(--surface)]" /> },
+);
 import { apiClient } from "@/lib/api-client";
 import { consumePreCheckHandoff, type PreCheckHandoff } from "@/components/precheck/handoff";
 

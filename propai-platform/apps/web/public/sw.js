@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v265-dashboard-image-optim";
+const CACHE_NAME = "propai-v266-projectnew-lazy-form";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",
