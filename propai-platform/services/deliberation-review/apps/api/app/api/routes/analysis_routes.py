@@ -12,7 +12,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_session, get_tenant_id, require_token
+from app.api.deps import get_project_id, get_session, get_tenant_id, require_token
 from app.contracts.analysis import AnalysisInput, AnalysisResult
 from app.core.errors import DomainError
 from app.services.pipeline.analysis_pipeline import run_analysis
@@ -24,7 +24,8 @@ router = APIRouter(prefix="/api/v1", tags=["analysis"])
 
 @router.post("/analyze", response_model=AnalysisResult, dependencies=[Depends(require_token)])
 async def analyze(payload: AnalysisInput, session: AsyncSession = Depends(get_session),
-                  tenant_id: uuid.UUID | None = Depends(get_tenant_id)) -> AnalysisResult:
+                  tenant_id: uuid.UUID | None = Depends(get_tenant_id),
+                  project_id: uuid.UUID | None = Depends(get_project_id)) -> AnalysisResult:
     # INC-11: 분석 전 캐시 적재(L2→L1, snapshot 결속) · 분석 후 신규 fetch 영속(L1→L2). 모두 best-effort
     # (캐시는 데이터 확보 단계만 — 실패해도 분석 진행, 결정론 영향 0).
     from app.adapters.cache.source_cache import flush_to_db, warm_from_db
@@ -51,13 +52,15 @@ async def analyze(payload: AnalysisInput, session: AsyncSession = Depends(get_se
         await session.rollback()  # 캐시 영속 실패 → 다음 분석이 재fetch(분석 결과엔 무영향)
     # INC-14: 원시 입력 보존 — reconcile 불일치 시 이 관할(pnu) 분석을 동일입력으로 재실행(결정론).
     # #8a: BFF가 보낸 X-Tenant-Id를 organization_id로 적재(테넌트 격리 키).
+    # project_id: X-Project-Id를 적재 → 분석 결과를 프로젝트에 귀속(프로젝트 단위 데이터베이스).
     return await save_analysis(session, result, input_payload=payload.model_dump(mode="json"),
-                               tenant_id=tenant_id)
+                               tenant_id=tenant_id, project_id=project_id)
 
 
 @router.post("/analyze/upload", response_model=AnalysisResult, dependencies=[Depends(require_token)])
 async def analyze_upload(payload: dict = Body(...), session: AsyncSession = Depends(get_session),
-                         tenant_id: uuid.UUID | None = Depends(get_tenant_id)) -> AnalysisResult:
+                         tenant_id: uuid.UUID | None = Depends(get_tenant_id),
+                         project_id: uuid.UUID | None = Depends(get_project_id)) -> AnalysisResult:
     """INC-17 — 도면 업로드 분석(멀티모달 진입점). files(base64 이미지/PDF)를 drawings로 자동 구성 후 동일 run_analysis 위임.
 
     멀티파트(python-multipart) 의존 없이 JSON base64 수신(프런트 readAsDataURL 호환). 이미지=data-uri 인라인,
@@ -74,7 +77,7 @@ async def analyze_upload(payload: dict = Body(...), session: AsyncSession = Depe
         inp = AnalysisInput(**payload)
     except ValidationError as exc:  # 입력오류만 422(내부 버그는 500으로 전파)
         raise HTTPException(status_code=422, detail="invalid_input") from exc
-    return await analyze(payload=inp, session=session, tenant_id=tenant_id)
+    return await analyze(payload=inp, session=session, tenant_id=tenant_id, project_id=project_id)
 
 
 @router.get("/analyze/{run_id}", response_model=AnalysisResult, dependencies=[Depends(require_token)])
