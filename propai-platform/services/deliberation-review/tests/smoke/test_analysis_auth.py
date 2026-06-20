@@ -56,3 +56,19 @@ def test_get_tenant_id_rejects_malformed():
     from fastapi import HTTPException
     with pytest.raises(HTTPException):
         deps.get_tenant_id("not-a-uuid")  # 형식 오류 400
+
+
+def test_get_project_id_parses_hex_and_hyphen():
+    # 프로젝트 귀속 — BFF가 보낸 X-Project-Id(hex 또는 하이픈 UUID) 파싱. 미설정=None(프로젝트 미귀속).
+    import uuid
+    u = uuid.uuid4()
+    assert deps.get_project_id(u.hex) == u            # 하이픈 없는 hex 수용
+    assert deps.get_project_id(str(u)) == u           # 하이픈 UUID 수용
+    assert deps.get_project_id(None) is None          # 미설정 → 프로젝트 미귀속(직접/레거시)
+
+
+def test_get_project_id_rejects_malformed():
+    import pytest
+    from fastapi import HTTPException
+    with pytest.raises(HTTPException):
+        deps.get_project_id("not-a-uuid")  # 형식 오류 400

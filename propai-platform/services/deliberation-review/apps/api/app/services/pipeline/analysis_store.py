@@ -23,14 +23,15 @@ def _enum(v: Any) -> Any:
 
 
 def _per_field_rows(result: AnalysisResult, run_id: uuid.UUID,
-                    tenant_id: uuid.UUID | None) -> list[Any]:
+                    tenant_id: uuid.UUID | None, project_id: uuid.UUID | None) -> list[Any]:
     """AnalysisResult의 legal_quantities/findings → per-field ORM 행(analysis_id=run_id). 쿼리가능 granularity.
     calc_trace(provenance·INV-10)는 JSONB로 그대로 영속(도출이유 보존). 검증된 계약 매핑이라 결손 위험 없음.
-    organization_id=tenant_id를 blob과 동일하게 적재(#8a) — per-field 직접 쿼리 시에도 교차테넌트 격리 일관."""
+    organization_id=tenant_id(#8a 격리)·project_id(프로젝트 귀속)를 blob과 동일하게 적재 — per-field 직접
+    쿼리 시에도 교차테넌트 격리·프로젝트 스코프가 blob과 일관(필드별 행을 프로젝트로 집계 가능)."""
     rows: list[Any] = []
     for lq in result.legal_quantities:
         rows.append(LegalQuantityModel(
-            analysis_id=run_id, organization_id=tenant_id,
+            analysis_id=run_id, organization_id=tenant_id, project_id=project_id,
             snapshot_id=(lq.snapshot_id or result.snapshot_id),  # quantity별 snapshot 우선, 없으면 run-level
             variable_id=lq.variable_id, value=lq.value, unit=_enum(lq.unit),
             status=_enum(lq.status), confidence=lq.confidence,
@@ -39,7 +40,8 @@ def _per_field_rows(result: AnalysisResult, run_id: uuid.UUID,
         ))
     for f in result.findings:
         rows.append(FindingModel(
-            analysis_id=run_id, organization_id=tenant_id, snapshot_id=result.snapshot_id,
+            analysis_id=run_id, organization_id=tenant_id, project_id=project_id,
+            snapshot_id=result.snapshot_id,
             rule_id=f.rule_id, verdict=_enum(f.verdict),
             conditional_relaxations=list(f.conditional_relaxations),
             requires_committee=f.requires_committee,
@@ -53,25 +55,30 @@ def _per_field_rows(result: AnalysisResult, run_id: uuid.UUID,
 
 async def save_analysis(session: AsyncSession, result: AnalysisResult,
                         input_payload: dict | None = None,
-                        *, tenant_id: uuid.UUID | None = None) -> AnalysisResult:
+                        *, tenant_id: uuid.UUID | None = None,
+                        project_id: uuid.UUID | None = None) -> AnalysisResult:
     """결과 저장 → run_id 부여한 결과 반환(저장본도 run_id 포함). blob(권위) + per-field 행(쿼리가능) 원자 영속.
 
     input_payload(원시 입력)는 INC-14 reconcile 불일치 시 동일입력 재실행(결정론)에 사용 — 미전달 시 None
     (재실행 불가로 표면화). 결과 JSON엔 원시 입력이 없어 별도 컬럼에 보존.
     tenant_id(#8a): BFF가 X-Tenant-Id로 전달 시 organization_id로 적재 → get_analysis 소유 필터의 격리 키.
+    project_id: BFF가 X-Project-Id로 전달 시 적재 → 분석 결과를 프로젝트에 귀속(프로젝트 단위 데이터베이스).
+    테넌트(보안 격리 경계) 내부의 스코프 — blob·per-field 행에 동일 적재해 프로젝트별 쿼리/집계 일관.
     """
     run_id = uuid.uuid4()
     stored = result.model_copy(update={"run_id": str(run_id)})
     session.add(AnalysisRunModel(
         id=run_id,
         organization_id=tenant_id,
+        project_id=project_id,
         snapshot_id=result.snapshot_id,
         input_hash=result.input_hash,
         status="DONE",
         result=stored.model_dump(mode="json"),
         input_payload=input_payload,
     ))
-    for r in _per_field_rows(result, run_id, tenant_id):  # blob과 동일 트랜잭션·격리키 — 필드별 행 동시 적재
+    # blob과 동일 트랜잭션·격리키·프로젝트키 — 필드별 행 동시 적재(원자성: 셋이 항상 일치)
+    for r in _per_field_rows(result, run_id, tenant_id, project_id):
         session.add(r)
     await session.commit()
     return stored

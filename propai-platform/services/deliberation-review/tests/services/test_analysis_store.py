@@ -91,6 +91,37 @@ async def test_save_analysis_fans_out_per_field_rows(db):
     await db.commit()
 
 
+async def test_save_analysis_attributes_project_id(db):
+    # ★project_id 귀속 — run(blob) + per-field 행 모두에 project_id 동일 적재(프로젝트 단위 데이터베이스).
+    from sqlalchemy import delete, select
+
+    from app.db.models.analysis_models import AnalysisRunModel
+    from app.db.models.r1_5_models import LegalQuantityModel
+    from app.db.models.r3_models import FindingModel
+    inp = AnalysisInput(
+        pnu="1111010100100000007", application_date=date(2026, 1, 1),
+        rules=[{"rule": {"rule_id": "far_limit", "target_variable": "far_floor_area",
+                         "basis_article": "국토계획법 시행령"}, "measured": 250.0, "limit": 200.0}],
+        calc_targets=[{"target": "building_area", "payload": {"outer_area": 500.0},
+                       "elements": [{"semantic_type": "EXT_WALL", "confidence": 0.9}]}],
+    )
+    result = run_analysis(inp)
+    tid, pid = uuid.uuid4(), uuid.uuid4()
+    stored = await save_analysis(db, result, tenant_id=tid, project_id=pid)
+    rid = uuid.UUID(stored.run_id)
+    run = await db.get(AnalysisRunModel, rid)
+    assert run.project_id == pid and run.organization_id == tid  # blob 행 귀속
+    lq = (await db.execute(select(LegalQuantityModel).where(LegalQuantityModel.analysis_id == rid))).scalars().all()
+    fnd = (await db.execute(select(FindingModel).where(FindingModel.analysis_id == rid))).scalars().all()
+    assert lq and fnd, "fan-out 전제(per-field 행 존재)"
+    # per-field 행도 동일 project_id로 귀속(필드별 행을 프로젝트로 집계 가능) + 테넌트 격리키 일관.
+    assert all(r.project_id == pid and r.organization_id == tid for r in (*lq, *fnd))
+    for tbl in (FindingModel, LegalQuantityModel):
+        await db.execute(delete(tbl).where(tbl.analysis_id == rid))
+    await db.execute(delete(AnalysisRunModel).where(AnalysisRunModel.id == rid))
+    await db.commit()
+
+
 async def test_save_analysis_persists_input_payload(db):
     # INC-14: 원시 입력 보존 — reconcile 불일치 시 동일입력 재실행(결정론)을 위해 analysis_run에 저장.
     from sqlalchemy import delete
