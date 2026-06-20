@@ -1,4 +1,4 @@
-const CACHE_NAME = "propai-v266-projectnew-lazy-form";
+const CACHE_NAME = "propai-v267-operations-ssot-sweep";
 const OFFLINE_URL = "/offline";
 const APP_SHELL_ASSETS = [
   "/",

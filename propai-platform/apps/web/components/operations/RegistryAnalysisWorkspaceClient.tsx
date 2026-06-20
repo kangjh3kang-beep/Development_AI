@@ -15,6 +15,7 @@ import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { analyzeRegistry } from "@/lib/registry-analyze";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { useLandScheduleStore, type LandRow } from "@/store/useLandScheduleStore";
+import { effectiveLandAreaSqm } from "@/lib/site-area";
 import type { Locale } from "@/i18n/config";
 
 const EMPTY_ROWS: LandRow[] = [];
@@ -90,7 +91,8 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
           ? {
               pnu: siteAnalysis.pnu || undefined,
               zone_type: siteAnalysis.zoneCode || undefined,
-              land_area_sqm: siteAnalysis.landAreaSqm || undefined,
+              // ★다필지면 통합면적 우선(대표값이 통합을 덮어써도 정확한 면적 사용)
+              land_area_sqm: effectiveLandAreaSqm(siteAnalysis) || undefined,
             }
           : undefined,
       }, setProgress);
@@ -127,7 +129,8 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
       contracted: false, land_use_consent: false, district_consent: false, operator_consent: false, pdf_url: null,
     });
     if (parcels && parcels.length) setRows(projectId, parcels.map((p) => mk(p.address, p.areaSqm ?? null, p.ownerType)));
-    else if (siteAnalysis?.address) setRows(projectId, [mk(siteAnalysis.address, siteAnalysis.landAreaSqm ?? null, "")]);
+    // 폴백 단일행: 다필지면 통합면적 우선(대표값 덮어쓰기 면역).
+    else if (siteAnalysis?.address) setRows(projectId, [mk(siteAnalysis.address, effectiveLandAreaSqm(siteAnalysis), "")]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, siteAnalysis]);
 
@@ -170,8 +173,18 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
             </div>
           </div>
           <div className="mt-5">
-            <ProjectAddressInput value={addr} onChange={setAddr} label="분석 대상지 주소"
-              placeholder="프로젝트를 선택하거나 주소를 검색/입력하세요" pickerLabel="분석 히스토리" disabled={loading} />
+            {/* 대상지 주소: 부지분석에서 주소가 확정된 프로젝트 진입 시엔 읽기전용 요약으로 표시(중복 입력 제거).
+                신규(주소 미보유) 상태에서만 검색·입력 노출. 확정 주소(siteAnalysis.address)는 run()에서
+                addr 폴백으로 그대로 사용되어 분석에 반영된다. */}
+            {!siteAnalysis?.address ? (
+              <ProjectAddressInput value={addr} onChange={setAddr} label="분석 대상지 주소"
+                placeholder="프로젝트를 선택하거나 주소를 검색/입력하세요" pickerLabel="분석 히스토리" disabled={loading} />
+            ) : (
+              <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] px-3.5 py-2.5">
+                <p className="text-[11px] font-semibold text-[var(--text-tertiary)]">분석 대상지 주소</p>
+                <p className="mt-0.5 text-sm font-bold text-[var(--text-primary)]">{siteAnalysis.address}</p>
+              </div>
+            )}
           </div>
           {/* 부동산 구분(토지/집합건물/건물) + 집합건물 동/호 */}
           <div className="mt-3 flex flex-wrap items-center gap-2">

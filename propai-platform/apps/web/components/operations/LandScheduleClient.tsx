@@ -29,6 +29,7 @@ const NearbyTransactionsMap = dynamicMap<React.ComponentProps<typeof NearbyTrans
 import { analyzeRegistry } from "@/lib/registry-analyze";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { useLandScheduleStore, type LandRow, BIZ_METHODS, BIZ_METHOD_PRESETS, DEFAULT_BIZ_METHOD } from "@/store/useLandScheduleStore";
+import { effectiveLandAreaSqm } from "@/lib/site-area";
 import type { Locale } from "@/i18n/config";
 
 const EMPTY_ROWS: LandRow[] = []; // zustand v5: 안정적 참조(매 렌더 새 [] 반환→무한루프 방지)
@@ -201,7 +202,8 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
     if (parcels && parcels.length) {
       setRows(projectId, parcels.map((p) => mk(p.address, p.areaSqm ?? null, p.ownerType, p.pnu)));
     } else if (siteAnalysis?.address) {
-      setRows(projectId, [mk(siteAnalysis.address, siteAnalysis.landAreaSqm ?? null, "", siteAnalysis.pnu)]);
+      // 폴백 단일행: 다필지면 통합면적 우선(대표값 덮어쓰기 면역). parcels 배열 경로는 무변경.
+      setRows(projectId, [mk(siteAnalysis.address, effectiveLandAreaSqm(siteAnalysis), "", siteAnalysis.pnu)]);
     }
   }, [projectId, siteAnalysis, setRows]);
 

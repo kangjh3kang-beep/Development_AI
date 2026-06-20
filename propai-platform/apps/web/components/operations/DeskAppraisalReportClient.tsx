@@ -231,7 +231,17 @@ export function DeskAppraisalReportClient({ locale }: { locale: Locale }) {
 
           <div className="mt-4 flex flex-wrap items-end gap-2">
             <div className="min-w-[280px] flex-1">
-              <ProjectAddressInput value={addr} onChange={setAddr} label="대상지 주소(지번)" placeholder="지번 주소 검색" pickerLabel="분석 히스토리" />
+              {/* 대상지 주소: 부지분석에서 주소가 확정되면 읽기전용 요약으로 표시(중복 입력 제거).
+                  신규(주소 미보유) 상태에서만 검색·입력 노출. 확정 주소는 위 useEffect로 addr에 자동
+                  채워져 '서칭·분석'에 그대로 사용된다. */}
+              {!siteAnalysis?.address ? (
+                <ProjectAddressInput value={addr} onChange={setAddr} label="대상지 주소(지번)" placeholder="지번 주소 검색" pickerLabel="분석 히스토리" />
+              ) : (
+                <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] px-3.5 py-2.5">
+                  <p className="text-[11px] font-semibold text-[var(--text-tertiary)]">대상지 주소(지번)</p>
+                  <p className="mt-0.5 text-sm font-bold text-[var(--text-primary)]">{siteAnalysis.address}</p>
+                </div>
+              )}
             </div>
             <button onClick={() => void run()} disabled={busy !== ""}
               className="h-10 rounded-xl bg-[var(--accent-strong)] px-5 text-sm font-black text-white hover:opacity-90 disabled:opacity-50">

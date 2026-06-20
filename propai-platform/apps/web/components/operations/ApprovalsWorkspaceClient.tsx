@@ -1,12 +1,13 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Button, Card, CardContent, Input } from "@propai/ui";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import { ApiClientError, apiClient } from "@/lib/api-client";
+import { useProjectContextStore } from "@/store/useProjectContextStore";
 import type { Locale } from "@/i18n/config";
 
 /* ------------------------------------------------------------------ */
@@ -219,6 +220,13 @@ export function ApprovalsWorkspaceClient({
   const canUseLiveApi =
     runtimeConfig.mode === "live" || runtimeConfig.hasAccessToken;
 
+  // ★SSOT 읽기소비: 활성 프로젝트의 부지분석(siteAnalysis) 컨텍스트를 구독만 한다(write 금지).
+  // siteAnalysis.address가 있으면 주소바를 자동 채우고 입력창은 숨긴다(불필요 입력 제거).
+  const projectId = useProjectContextStore((s) => s.projectId);
+  const _rawSite = useProjectContextStore((s) => s.siteAnalysis);
+  // 활성 프로젝트일 때만 컨텍스트 부지정보 사용 — 약식 검색이 결재 폼으로 새지 않도록.
+  const siteAnalysis = projectId ? _rawSite : null;
+
   const [workspaceError, setWorkspaceError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [complianceResult, setComplianceResult] =
@@ -228,6 +236,14 @@ export function ApprovalsWorkspaceClient({
     address: "",
     zoning: "제2종일반주거지역",
   });
+
+  // 부지분석 주소(SSOT)를 결재 점검 폼 주소에 자동 채움. 사용자가 이미 입력한 값은 보존.
+  useEffect(() => {
+    setForm((current) => ({
+      ...current,
+      address: current.address || siteAnalysis?.address || "",
+    }));
+  }, [siteAnalysis]);
 
   const projectsQuery = useQuery({
     queryKey: ["projects", "approvals-workspace"],
@@ -384,12 +400,17 @@ export function ApprovalsWorkspaceClient({
             {labels.formTitle}
           </p>
           <form className="mt-4 grid gap-3" onSubmit={handleSubmit}>
-            <ProjectAddressInput
-              value={form.address}
-              onChange={(address) => setForm((c) => ({ ...c, address }))}
-              label={labels.addressLabel}
-              placeholder={labels.addressLabel}
-            />
+            {/* 주소 입력창: 부지분석에서 주소가 확정된 프로젝트 진입 시엔 숨김(불필요 입력 제거).
+                신규(주소 미보유) 상태에서만 노출해 직접 입력 가능. SSOT 주소(siteAnalysis.address)는
+                위 useEffect로 form.address에 이미 자동 채워져 제출에 그대로 사용된다. */}
+            {!siteAnalysis?.address && (
+              <ProjectAddressInput
+                value={form.address}
+                onChange={(address) => setForm((c) => ({ ...c, address }))}
+                label={labels.addressLabel}
+                placeholder={labels.addressLabel}
+              />
+            )}
             <div className="grid gap-3 md:grid-cols-2">
               <Input
                 value={form.zoning}
