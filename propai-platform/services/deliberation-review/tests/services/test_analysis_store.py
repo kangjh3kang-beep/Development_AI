@@ -54,6 +54,43 @@ async def test_legacy_null_org_allows_tenant_get(db):
     await db.commit()
 
 
+async def test_save_analysis_fans_out_per_field_rows(db):
+    # ★per-field 저장 — legal_quantities/findings가 discrete 행으로 영속(analysis_id=run_id), blob과 정합.
+    from sqlalchemy import delete, select
+
+    from app.db.models.analysis_models import AnalysisRunModel
+    from app.db.models.r1_5_models import LegalQuantityModel
+    from app.db.models.r3_models import FindingModel
+    inp = AnalysisInput(
+        pnu="1111010100100000006", application_date=date(2026, 1, 1),
+        rules=[{"rule": {"rule_id": "far_limit", "target_variable": "far_floor_area",
+                         "basis_article": "국토계획법 시행령"}, "measured": 250.0, "limit": 200.0}],
+        calc_targets=[{"target": "building_area", "payload": {"outer_area": 500.0},
+                       "elements": [{"semantic_type": "EXT_WALL", "confidence": 0.9}]}],
+    )
+    result = run_analysis(inp)
+    assert result.findings, "rules → findings 산출 전제"  # fan-out 검증 의미 확보
+    tid = uuid.uuid4()
+    stored = await save_analysis(db, result, tenant_id=tid)
+    rid = uuid.UUID(stored.run_id)
+    lq = (await db.execute(select(LegalQuantityModel).where(LegalQuantityModel.analysis_id == rid))).scalars().all()
+    fnd = (await db.execute(select(FindingModel).where(FindingModel.analysis_id == rid))).scalars().all()
+    # 행 수·식별자 집합이 blob과 일치(순서 무관).
+    assert {r.rule_id for r in fnd} == {f.rule_id for f in result.findings}
+    assert {r.variable_id for r in lq} == {q.variable_id for q in result.legal_quantities}
+    # verdict 등 필드별 값 정합 + analysis_id 귀속 + 테넌트 격리키(blob과 동일) 적재.
+    assert {r.rule_id: r.verdict for r in fnd} == {f.rule_id: f.verdict.value for f in result.findings}
+    assert all(r.analysis_id == rid and r.organization_id == tid for r in (*lq, *fnd))
+    # unit이 enum 문자열값(value)으로 저장(정규화) + calc_trace provenance(INV-10) 보존.
+    assert {r.variable_id: r.unit for r in lq} == {q.variable_id: q.unit.value for q in result.legal_quantities}
+    assert all(r.calc_trace is not None for r in lq
+               if next(q for q in result.legal_quantities if q.variable_id == r.variable_id).calc_trace is not None)
+    for tbl in (FindingModel, LegalQuantityModel):
+        await db.execute(delete(tbl).where(tbl.analysis_id == rid))
+    await db.execute(delete(AnalysisRunModel).where(AnalysisRunModel.id == rid))
+    await db.commit()
+
+
 async def test_save_analysis_persists_input_payload(db):
     # INC-14: 원시 입력 보존 — reconcile 불일치 시 동일입력 재실행(결정론)을 위해 analysis_run에 저장.
     from sqlalchemy import delete

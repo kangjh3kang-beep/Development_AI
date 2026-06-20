@@ -1,18 +1,60 @@
-"""P2 — 분석 실행 영속화/조회. AnalysisResult ↔ analysis_run(JSONB). run_id = 조회 키."""
+"""P2 — 분석 실행 영속화/조회. AnalysisResult ↔ analysis_run(JSONB blob, 권위 조회본). run_id = 조회 키.
+
+★per-field fan-out: legal_quantities/findings를 discrete 행(legal_quantity/finding, analysis_id=run_id FK)으로도
+동시 영속 — blob은 조회/재현 SSOT, per-field 행은 '필드별 데이터' 쿼리가능 granularity(run/프로젝트 역참조·집계).
+blob과 동일 트랜잭션(원자성: 둘이 항상 일치·부분상태 없음). 매핑은 검증된 계약에서만 와 안전.
+"""
 from __future__ import annotations
 
 import uuid
+from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.contracts.analysis import AnalysisResult
 from app.db.models.analysis_models import AnalysisRunModel
+from app.db.models.r1_5_models import LegalQuantityModel
+from app.db.models.r3_models import FindingModel
+
+
+def _enum(v: Any) -> Any:
+    """Enum→value, 그 외 그대로(verdict/status/gated_status가 Enum이든 str이든 컬럼은 문자열)."""
+    return getattr(v, "value", v)
+
+
+def _per_field_rows(result: AnalysisResult, run_id: uuid.UUID,
+                    tenant_id: uuid.UUID | None) -> list[Any]:
+    """AnalysisResult의 legal_quantities/findings → per-field ORM 행(analysis_id=run_id). 쿼리가능 granularity.
+    calc_trace(provenance·INV-10)는 JSONB로 그대로 영속(도출이유 보존). 검증된 계약 매핑이라 결손 위험 없음.
+    organization_id=tenant_id를 blob과 동일하게 적재(#8a) — per-field 직접 쿼리 시에도 교차테넌트 격리 일관."""
+    rows: list[Any] = []
+    for lq in result.legal_quantities:
+        rows.append(LegalQuantityModel(
+            analysis_id=run_id, organization_id=tenant_id,
+            snapshot_id=(lq.snapshot_id or result.snapshot_id),  # quantity별 snapshot 우선, 없으면 run-level
+            variable_id=lq.variable_id, value=lq.value, unit=_enum(lq.unit),
+            status=_enum(lq.status), confidence=lq.confidence,
+            calc_trace=(lq.calc_trace.model_dump(mode="json") if lq.calc_trace is not None else None),
+            calc_rule_version=lq.calc_rule_version,
+        ))
+    for f in result.findings:
+        rows.append(FindingModel(
+            analysis_id=run_id, organization_id=tenant_id, snapshot_id=result.snapshot_id,
+            rule_id=f.rule_id, verdict=_enum(f.verdict),
+            conditional_relaxations=list(f.conditional_relaxations),
+            requires_committee=f.requires_committee,
+            composite_confidence=f.composite_confidence,
+            gated_status=_enum(f.gated_status), conflicts=list(f.conflicts),
+            basis_article=f.basis_article,
+            measured_value=f.measured_value, limit_value=f.limit_value,
+        ))
+    return rows
 
 
 async def save_analysis(session: AsyncSession, result: AnalysisResult,
                         input_payload: dict | None = None,
                         *, tenant_id: uuid.UUID | None = None) -> AnalysisResult:
-    """결과 저장 → run_id 부여한 결과 반환(저장본도 run_id 포함).
+    """결과 저장 → run_id 부여한 결과 반환(저장본도 run_id 포함). blob(권위) + per-field 행(쿼리가능) 원자 영속.
 
     input_payload(원시 입력)는 INC-14 reconcile 불일치 시 동일입력 재실행(결정론)에 사용 — 미전달 시 None
     (재실행 불가로 표면화). 결과 JSON엔 원시 입력이 없어 별도 컬럼에 보존.
@@ -20,7 +62,7 @@ async def save_analysis(session: AsyncSession, result: AnalysisResult,
     """
     run_id = uuid.uuid4()
     stored = result.model_copy(update={"run_id": str(run_id)})
-    row = AnalysisRunModel(
+    session.add(AnalysisRunModel(
         id=run_id,
         organization_id=tenant_id,
         snapshot_id=result.snapshot_id,
@@ -28,8 +70,9 @@ async def save_analysis(session: AsyncSession, result: AnalysisResult,
         status="DONE",
         result=stored.model_dump(mode="json"),
         input_payload=input_payload,
-    )
-    session.add(row)
+    ))
+    for r in _per_field_rows(result, run_id, tenant_id):  # blob과 동일 트랜잭션·격리키 — 필드별 행 동시 적재
+        session.add(r)
     await session.commit()
     return stored
 
