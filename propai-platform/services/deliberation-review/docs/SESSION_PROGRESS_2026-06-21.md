@@ -34,6 +34,7 @@
 | LAW1 | missing_high 25건 추가(집합건물법 등) + 끊긴링크(경관법) 복구, _REFS 26→51 | HIGH 0 | `717d093e` |
 | LAW2 | missing_other 20건 추가(_REFS 51→71) + resolve_text 견고성 근본강화(substring→최장일치→접두 앵커) | 3회 수렴 | `7c8c4167` |
 | EX2 | 심의 에이전트 findings에 근거(법령·조항·요지)+링크 전파 — 설명가능성 기본화 엔진+플랫폼 완성 | HIGH 0 | `170976cf` |
+| ORPH1 | orphan 조문 배선(§77 건폐율 등) + 기준별 정밀 다중 근거(법률+시행령) 연결 — CriterionRef.legal_ref_ids | HIGH 0 | `72f5eeda` |
 
 ## 3. 진행 중
 
@@ -62,7 +63,7 @@
 
 ## 7. 잔여·다음
 
-- 참조법규: 정밀 조문화(law.go.kr 라이브 검증), orphan(국토계획법§77 건폐율·§84 안분) 배선, calc_engine INV-12 슬롯 정리.
+- 참조법규: 정밀 조문화(law.go.kr 라이브 검증), 잔여 orphan(국토계획법§84 둘이상용도지역 안분·§36 용도지역지정 — 안분/zone-designation 로직 소관) 배선, calc_engine INV-12 슬롯 정리.
 - 설계 SpecialistAgent(플랫폼, 동일 _map_permit_response 재사용으로 근거+링크 전파 상속).
 - 시스템2 후속: 설계 SpecialistAgent(플랫폼), Phase2 생성형(매스/세대수 — design_gen 정합).
 - 운영(사용자 승인·실값): DELIBERATION_ENGINE_URL 설정·LIVE_NETWORK 점등(자치법규 실소싱).
